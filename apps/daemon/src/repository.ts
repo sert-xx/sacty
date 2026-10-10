@@ -37,6 +37,8 @@ export interface RepositoryWorkspace {
      */
     date: string;
   }): Promise<{ commit: string }>;
+  /** sacty のブランチを、リモートから消す（中止したとき）。 */
+  deleteBranch(gitDir: string, branch: string): Promise<void>;
 }
 
 /** 起点から変更が無く、コミットするものが無い。 */
@@ -225,6 +227,17 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
       cloneEnv(),
     );
     return { commit };
+  }
+
+  async deleteBranch(gitDir: string, branch: string) {
+    // 人間のブランチを消さないよう、sacty のブランチだけを受け付ける
+    if (!/^sacty\/[\w./-]+$/.test(branch)) throw new Error("sacty のブランチではありません。");
+    // プッシュと同じく、退避したメタデータとホストの認証を使う。作業領域は読まない
+    await git(
+      "push",
+      ["--git-dir", gitDir, "push", "--", "origin", `:refs/heads/${branch}`],
+      cloneEnv(),
+    );
   }
 
   /** コミットの作者。ホストの git の利用者の設定を使い、無ければ sacty にする。 */

@@ -36,6 +36,7 @@ const STATUS_STYLE: Record<Task["status"], { text: string; dot: string }> = {
   paused: { text: "text-warn", dot: "bg-warn" },
   awaiting_approval: { text: "text-warn", dot: "bg-warn" },
   escalated: { text: "text-warn", dot: "bg-warn" },
+  cancelled: { text: "text-muted-foreground", dot: "bg-muted-foreground/40" },
 };
 
 export async function StatusLabel({ task }: { task: Task }) {

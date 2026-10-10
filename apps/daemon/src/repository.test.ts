@@ -183,4 +183,33 @@ describe("対象リポジトリの作業領域（git）", () => {
     expect(retried.commit).toBe(first.commit);
     expect(git(origin, "rev-parse", input.branch)).toBe(first.commit);
   });
+
+  it("中止したときは sacty のブランチだけを消し、ほかのブランチは消さない（PBI-3）", async () => {
+    const origin = makeOrigin();
+    git(origin, "config", "receive.denyCurrentBranch", "ignore");
+    git(origin, "branch", "feature/human");
+    const workspace = new GitRepositoryWorkspace();
+    const clone = join(dir, "task", "repo");
+    const gitDir = join(dir, "_git", "task.git");
+    const { baseCommit } = await workspace.prepare(clone, gitDir, origin, "main");
+    writeFileSync(join(clone, "pay.ts"), "export const pay = () => 1;\n");
+    const branch = "sacty/task-1234abcd";
+    await workspace.publish({
+      dir: clone,
+      gitDir,
+      baseCommit,
+      parent: baseCommit,
+      branch,
+      message: "m",
+      date: "2026-10-10T01:00:00.000Z",
+    });
+    expect(git(origin, "branch", "--list", branch)).toContain(branch);
+
+    await workspace.deleteBranch(gitDir, branch);
+    expect(git(origin, "branch", "--list", branch)).toBe("");
+    await expect(workspace.deleteBranch(gitDir, "feature/human")).rejects.toThrow(
+      /sacty のブランチではありません/,
+    );
+    expect(git(origin, "branch", "--list", "feature/human")).toContain("feature/human");
+  });
 });

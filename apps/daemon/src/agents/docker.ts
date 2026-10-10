@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { type ChildProcess, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   chmodSync,
@@ -44,6 +44,91 @@ export function syncBackIfChanged(
   return "written";
 }
 
+/**
+ * 実行中のコンテナ（docker run の子プロセス）を覚え、人間の一時停止・中止で止める。
+ * コンテナができる前（イメージの取得中など）に止められると `docker kill` は対象が無く失敗するので、
+ * そのときは docker run 自体を止め、遅れてコンテナができても止まるよう `docker kill` を繰り返す。
+ */
+export class RunningContainers {
+  private readonly children = new Map<string, ChildProcess | undefined>();
+  private readonly stopRequested = new Set<string>();
+
+  constructor(
+    private readonly spawnImpl: typeof spawn = spawn,
+    private readonly retryMs = 1_000,
+    private readonly retries = 10,
+  ) {}
+
+  /** docker run を始める前に登録する（起動の途中でも止められるように）。 */
+  register(name: string): void {
+    this.children.set(name, undefined);
+  }
+
+  /** docker run の子プロセスを結びつける。すでに止める要求があれば止める。 */
+  attach(name: string, child: ChildProcess): void {
+    this.children.set(name, child);
+    if (this.stopRequested.has(name)) child.kill("SIGKILL");
+  }
+
+  has(name: string): boolean {
+    return this.children.has(name);
+  }
+
+  /**
+   * docker run が終わったら呼ぶ。止める要求があったなら、コンテナが無くなったことを確かめてから返す
+   * （docker run の子プロセスが終わっても、Docker 側で遅れてコンテナができていることがあるため）。
+   * 確かめられなければ false。
+   */
+  async finish(name: string): Promise<boolean> {
+    this.children.delete(name);
+    if (!this.stopRequested.delete(name)) return true;
+    return this.ensureStopped(name);
+  }
+
+  /** 止める。止める要求は、docker run が終わるまで覚えておく。 */
+  stop(name: string): void {
+    if (!this.children.has(name)) return;
+    this.stopRequested.add(name);
+    void this.command(["kill", name]).then(({ code }) => {
+      // コンテナがまだ無い（作成中）。docker run 自体を止める（遅れてできたコンテナは finish で止める）
+      if (code !== 0) this.children.get(name)?.kill("SIGKILL");
+    });
+  }
+
+  stopAll(): void {
+    for (const name of this.children.keys()) this.stop(name);
+  }
+
+  /**
+   * コンテナが無いことを確かめる。残っていれば止めて、もう一度確かめる。
+   * Docker に問い合わせられない・止まらないまま上限に達したら false。
+   */
+  async ensureStopped(name: string): Promise<boolean> {
+    for (let attempt = 0; attempt <= this.retries; attempt++) {
+      const listed = await this.command(["ps", "-aq", "--filter", `name=^/${name}$`]);
+      if (listed.code === 0 && listed.stdout.trim() === "") return true;
+      if (listed.code === 0) await this.command(["kill", name]);
+      await new Promise((resolve) => setTimeout(resolve, this.retryMs));
+    }
+    return false;
+  }
+
+  private command(args: string[]): Promise<{ code: number; stdout: string }> {
+    return new Promise((resolve) => {
+      const proc = this.spawnImpl("docker", args, {
+        stdio: ["ignore", "pipe", "ignore"],
+        env: dockerClientEnv(),
+      });
+      let stdout = "";
+      proc.stdout?.on("data", (chunk) => {
+        stdout += chunk;
+      });
+      proc.on("error", () => resolve({ code: 1, stdout: "" }));
+      proc.on("close", (code) => resolve({ code: code ?? 1, stdout }));
+    });
+  }
+}
+
 /** エージェントを実行する口。テストでは偽物に差し替える。 */
 export interface AgentExecutor {
   run(input: {
@@ -52,6 +137,10 @@ export interface AgentExecutor {
     workspaceDir: string;
     invocation: Invocation;
   }): Promise<AgentOutcome>;
+  /** 実行中のコンテナを止める（人間が一時停止・中止したとき）。無ければ何もしない。 */
+  kill(runId: string): void;
+  /** コンテナが無いことを確かめる（残っていれば止める）。確かめられなければ false。 */
+  ensureStopped(runId: string): Promise<boolean>;
 }
 
 /**
@@ -101,20 +190,34 @@ export function dockerClientEnv(): Record<string, string> {
 }
 
 export class DockerExecutor implements AgentExecutor {
-  private readonly active = new Set<string>();
+  private readonly containers: RunningContainers;
   private aborting = false;
 
-  constructor(private readonly timeoutMs = 30 * 60_000) {}
+  constructor(
+    private readonly timeoutMs = 30 * 60_000,
+    spawnImpl: typeof spawn = spawn,
+  ) {
+    this.containers = new RunningContainers(spawnImpl);
+    this.spawnImpl = spawnImpl;
+  }
+
+  private readonly spawnImpl: typeof spawn;
 
   /**
    * デーモンの停止時に、実行中のコンテナを止める（コンテナだけが残り続けないように）。
    * 後処理（書き戻し・一時ファイルの削除）は run() の中で行われるので、呼び出し側はその完了を待つこと。
    */
+  kill(runId: string): void {
+    this.containers.stop(`sacty-run-${runId}`);
+  }
+
+  ensureStopped(runId: string): Promise<boolean> {
+    return this.containers.ensureStopped(`sacty-run-${runId}`);
+  }
+
   abortAll(): void {
     this.aborting = true;
-    for (const name of this.active) {
-      spawn("docker", ["kill", name], { stdio: "ignore", env: dockerClientEnv() });
-    }
+    this.containers.stopAll();
   }
 
   async run({
@@ -178,7 +281,7 @@ export class DockerExecutor implements AgentExecutor {
     });
 
     const containerName = `sacty-run-${runId}`;
-    this.active.add(containerName);
+    this.containers.register(containerName);
     let outcome: AgentOutcome;
     try {
       const { exitCode, stdout, stderr } = await new Promise<{
@@ -186,10 +289,11 @@ export class DockerExecutor implements AgentExecutor {
         stdout: string;
         stderr: string;
       }>((resolve, reject) => {
-        const child = spawn("docker", args, {
+        const child = this.spawnImpl("docker", args, {
           env: { ...dockerClientEnv(), ...invocation.env },
           stdio: ["ignore", "pipe", "pipe"],
         });
+        this.containers.attach(containerName, child);
         let out = "";
         let err = "";
         child.stdout.on("data", (chunk) => {
@@ -199,7 +303,7 @@ export class DockerExecutor implements AgentExecutor {
           err += chunk;
         });
         const timer = setTimeout(() => {
-          spawn("docker", ["kill", containerName], { stdio: "ignore", env: dockerClientEnv() });
+          this.containers.stop(containerName);
           reject(
             new Error(`エージェントの実行が ${this.timeoutMs / 60_000} 分を超えたため止めました。`),
           );
@@ -237,7 +341,14 @@ export class DockerExecutor implements AgentExecutor {
             : parseClaudeResult(stdout, exitCode, stderr);
       }
     } finally {
-      this.active.delete(containerName);
+      // 止める要求があったなら、コンテナが無くなったことを確かめるまで完了にしない
+      if (!(await this.containers.finish(containerName))) {
+        outcome = {
+          kind: "failed",
+          reason: "error",
+          message: `コンテナ（${containerName}）の停止を確認できませんでした。docker ps で確認してください。`,
+        };
+      }
       collectSecrets(); // コンテナで更新された認証情報も、出力から取り除く対象にする
       for (const file of syncBacks) {
         try {

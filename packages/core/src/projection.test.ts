@@ -260,6 +260,22 @@ describe("project", () => {
     expect(() => project([...base, applied])).toThrow(/not accepted/);
   });
 
+  it("中止したタスクには、以降のイベントを受け付けない（PBI-3）", () => {
+    const cancel = () => ev("t1", { type: "TaskCancelled", payload: { cleanup: [] } }, "person");
+    seq = 0;
+    const task = project([created("t1"), steps("t1"), cancel()]).get("t1");
+    expect(task?.status).toBe("cancelled");
+    seq = 0;
+    expect(() => project([created("t1"), steps("t1"), cancel(), started("t1", "r1")])).toThrow(
+      /cancelled/,
+    );
+    // 実行中のまま中止は記録できない（先にコンテナを止める）
+    seq = 0;
+    expect(() => project([created("t1"), steps("t1"), started("t1", "r1"), cancel()])).toThrow(
+      /stop the run/,
+    );
+  });
+
   it("同じ台帳から何度復元しても同じ状態になる", () => {
     seq = 0;
     const events = [created("t1"), steps("t1"), started("t1", "r1"), completed("t1", "r1", 0.2)];

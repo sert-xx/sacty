@@ -86,8 +86,15 @@ export const TestMapping = z.object({
 });
 export type TestMapping = z.infer<typeof TestMapping>;
 
-/** タスクが止まった理由。verification：実装の検証が続けて通らない。 */
-export const PauseReason = z.enum(["budget", "usage_limit", "auth", "error", "verification"]);
+/** タスクが止まった理由。verification：実装の検証が続けて通らない。manual：人間が止めた。 */
+export const PauseReason = z.enum([
+  "budget",
+  "usage_limit",
+  "auth",
+  "error",
+  "verification",
+  "manual",
+]);
 export type PauseReason = z.infer<typeof PauseReason>;
 
 const TaskCreated = z.object({
@@ -167,6 +174,11 @@ const TaskPaused = z.object({
     reason: PauseReason,
     /** 止まった理由の詳しい説明（実行の失敗の記録が無い場合）。 */
     message: z.string().optional(),
+    /**
+     * 止めたが、無くなったことを確かめられなかったコンテナ（の実行）。中止や再開の前に確かめ直す
+     * （デーモンを再起動しても追えるよう、台帳に記録する）。
+     */
+    unstoppedRuns: z.array(z.string()).optional(),
   }),
 });
 
@@ -342,7 +354,18 @@ const PullRequestPublished = z.object({
     /** PRを作らない設定（ブランチのプッシュまで）なら無い。 */
     url: z.string().optional(),
     number: z.number().int().positive().optional(),
+    /** PRを作ったリポジトリ（owner/name）。PRの番号はリポジトリの中でしか一意でないため記録する。 */
+    repo: z.string().optional(),
   }),
+});
+
+/**
+ * sacty のブランチにプッシュした（PRの作成の前に記録する。PRの作成に失敗しても、
+ * プッシュ済みのブランチを中止で片付けられるように）。
+ */
+const BranchPushed = z.object({
+  type: z.literal("BranchPushed"),
+  payload: z.object({ branch: z.string().min(1), commit: z.string().min(1) }),
 });
 
 /**
@@ -356,6 +379,34 @@ const GuardianMissed = z.object({
     reviewAt: z.string(),
     /** 人間の指摘。 */
     remarkIds: z.array(z.string()),
+  }),
+});
+
+/** 中止の後片付けの対象。 */
+export const CleanupTarget = z.enum([
+  "container",
+  "workspace",
+  "session",
+  "branch",
+  "pull_request",
+]);
+export type CleanupTarget = z.infer<typeof CleanupTarget>;
+
+/**
+ * 中止した。sacty が作ったもの（コンテナ、作業領域、sacty のブランチ、sacty が作ったPR）を
+ * 片付けた結果を、対象ごとに記録する。台帳は残し、以降の操作は受け付けない。
+ */
+const TaskCancelled = z.object({
+  type: z.literal("TaskCancelled"),
+  payload: z.object({
+    cleanup: z.array(
+      z.object({
+        target: CleanupTarget,
+        /** done：片付けた、skipped：対象が無かった、failed：失敗した（理由は detail）。 */
+        result: z.enum(["done", "skipped", "failed"]),
+        detail: z.string().optional(),
+      }),
+    ),
   }),
 });
 
@@ -424,7 +475,9 @@ export const EventInput = z.discriminatedUnion("type", [
   FinalReviewed,
   FinalReviewFailed,
   PullRequestPublished,
+  BranchPushed,
   GuardianMissed,
+  TaskCancelled,
   ChangesRequested,
   RemarkVoided,
   TaskEscalated,

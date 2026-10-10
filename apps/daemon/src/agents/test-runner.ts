@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { dockerClientEnv, dockerRunArgs } from "./docker.js";
+import { dockerClientEnv, dockerRunArgs, RunningContainers } from "./docker.js";
 
 /** テストの出力は、末尾のこの文字数だけ残す（台帳と画面に載せるため）。 */
 export const TEST_OUTPUT_TAIL = 20_000;
@@ -14,6 +14,10 @@ export interface TestRunner {
     workspaceDir: string;
     command: string;
   }): Promise<TestRunResult>;
+  /** 実行中のコンテナを止める（人間が一時停止・中止したとき）。無ければ何もしない。 */
+  kill(runId: string): void;
+  /** コンテナが無いことを確かめる（残っていれば止める）。確かめられなければ false。 */
+  ensureStopped(runId: string): Promise<boolean>;
 }
 
 /**
@@ -21,15 +25,29 @@ export interface TestRunner {
  * 合否は終了コードで機械的に決める。
  */
 export class DockerTestRunner implements TestRunner {
-  private readonly active = new Set<string>();
+  private readonly containers: RunningContainers;
 
-  constructor(private readonly timeoutMs = 20 * 60_000) {}
+  private readonly spawnImpl: typeof spawn;
+
+  constructor(
+    private readonly timeoutMs = 20 * 60_000,
+    spawnImpl: typeof spawn = spawn,
+  ) {
+    this.containers = new RunningContainers(spawnImpl);
+    this.spawnImpl = spawnImpl;
+  }
 
   /** デーモンの停止時に、実行中のテストのコンテナを止める。 */
+  kill(runId: string): void {
+    this.containers.stop(`sacty-run-${runId}`);
+  }
+
+  ensureStopped(runId: string): Promise<boolean> {
+    return this.containers.ensureStopped(`sacty-run-${runId}`);
+  }
+
   abortAll(): void {
-    for (const name of this.active) {
-      spawn("docker", ["kill", name], { stdio: "ignore", env: dockerClientEnv() });
-    }
+    this.containers.stopAll();
   }
 
   async run({ runId, image, workspaceDir, command }: Parameters<TestRunner["run"]>[0]) {
@@ -43,13 +61,15 @@ export class DockerTestRunner implements TestRunner {
       command: ["sh", "-c", command],
     });
     const started = Date.now();
-    this.active.add(name);
+    this.containers.register(name);
+    let result: TestRunResult;
     try {
-      return await new Promise<TestRunResult>((resolve) => {
-        const child = spawn("docker", args, {
+      result = await new Promise<TestRunResult>((resolve) => {
+        const child = this.spawnImpl("docker", args, {
           env: dockerClientEnv(),
           stdio: ["ignore", "pipe", "pipe"],
         });
+        this.containers.attach(name, child);
         let output = "";
         const keep = (chunk: Buffer) => {
           output = (output + chunk.toString()).slice(-TEST_OUTPUT_TAIL);
@@ -58,7 +78,7 @@ export class DockerTestRunner implements TestRunner {
         child.stderr.on("data", keep);
         const timer = setTimeout(() => {
           output += `\n[sacty] テストの実行が ${this.timeoutMs / 60_000} 分を超えたため止めました。`;
-          spawn("docker", ["kill", name], { stdio: "ignore", env: dockerClientEnv() });
+          this.containers.stop(name);
         }, this.timeoutMs);
         child.on("error", (error) => {
           clearTimeout(timer);
@@ -78,7 +98,15 @@ export class DockerTestRunner implements TestRunner {
         });
       });
     } finally {
-      this.active.delete(name);
+      // 止める要求があったなら、コンテナが無くなったことを確かめるまで完了にしない
+      if (!(await this.containers.finish(name))) {
+        result = {
+          exitCode: 1,
+          output: `[sacty] コンテナ（${name}）の停止を確認できませんでした。docker ps で確認してください。`,
+          durationMs: Date.now() - started,
+        };
+      }
     }
+    return result;
   }
 }

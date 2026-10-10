@@ -1,4 +1,5 @@
 import type {
+  CleanupTarget,
   CreateTicketInput,
   LedgerEvent,
   Project,
@@ -154,6 +155,26 @@ export async function importProject(
   }
   await ensureOk(res);
   return { ok: true, project: ((await res.json()) as { project: Project }).project };
+}
+
+export type CleanupItem = { target: CleanupTarget; present: boolean; detail?: string };
+
+/** 中止したときに片付けるもの（確認の画面に並べる）。 */
+export async function getCleanupPlan(id: string): Promise<CleanupItem[] | null> {
+  const res = await daemonFetch(`/api/tasks/${encodeURIComponent(id)}/cleanup-plan`);
+  if (res.status === 404) return null;
+  await ensureOk(res);
+  return ((await res.json()) as { plan: CleanupItem[] }).plan;
+}
+
+/** 人間が一時停止する（実行中ならコンテナを止める）。 */
+export function pauseTask(id: string): Promise<OpResult> {
+  return postOp(`/api/tasks/${encodeURIComponent(id)}/pause`, {});
+}
+
+/** 中止して、sacty が作ったものを片付ける。 */
+export function cancelTask(id: string): Promise<OpResult> {
+  return postOp(`/api/tasks/${encodeURIComponent(id)}/cancel`, {});
 }
 
 /** GitHub Issue の取り込みを、間隔を待たずに実行する。 */

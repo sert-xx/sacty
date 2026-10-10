@@ -9,9 +9,10 @@ import { Proposals } from "@/components/proposals";
 import { PullRequestCard } from "@/components/pull-request";
 import { ResumeForm } from "@/components/resume-form";
 import { CostMeter, StatusLabel, StepChips } from "@/components/task-bits";
+import { TaskControls } from "@/components/task-controls";
 import { TestViewpoints } from "@/components/test-viewpoints";
 import { getMessages } from "@/i18n/server";
-import { DaemonUnavailableError, getProject, getTask } from "@/lib/daemon";
+import { DaemonUnavailableError, getCleanupPlan, getProject, getTask } from "@/lib/daemon";
 import { describeEvent, formatStamp, isWorking, personAction, statusText } from "@/lib/labels";
 
 export default async function TaskPage({ params }: { params: Promise<{ id: string }> }) {
@@ -45,8 +46,15 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
   const lastFailure = [...ledger].reverse().find((e) => e.type === "AgentRunFailed");
   const proposal = openProposal(task);
   const messages = await getMessages();
-  const { task: m, labels } = messages;
+  const { task: m, labels, parts, locale } = messages;
   const action = personAction(task, labels);
+  // 一時停止できるのは、sacty やエージェントが作業している（または作業を待っている）間。
+  // ゴールガーディアンの変更の申し出の判定中は、すぐ終わるので止めない
+  const canPause =
+    (task.status === "queued" ||
+      task.status === "running" ||
+      (task.status === "idle" && task.verification !== undefined)) &&
+    !(proposal && !proposal.judgement);
 
   return (
     <>
@@ -79,6 +87,14 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
           </Link>
         </p>
         <CostMeter task={task} />
+        {task.status !== "cancelled" && (
+          <TaskControls
+            taskId={task.id}
+            title={task.title}
+            canPause={canPause}
+            plan={(await getCleanupPlan(task.id)) ?? []}
+          />
+        )}
       </div>
 
       {(task.status === "awaiting_approval" || task.status === "escalated") && (
@@ -108,6 +124,35 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
           >
             {action.label}
           </Link>
+        </section>
+      )}
+
+      {task.status === "cancelled" && task.cancelled && (
+        <section
+          aria-labelledby="cancelled"
+          className="flex flex-col gap-2 rounded-xl border border-border bg-card p-5 text-sm"
+        >
+          <h2 id="cancelled" className="text-[15px] font-semibold">
+            {parts.control.cancelledTitle}
+          </h2>
+          <p className="text-muted-foreground">
+            {parts.control.cancelledAt(formatStamp(task.cancelled.at, locale))}
+          </p>
+          <ul className="flex flex-col gap-1.5">
+            {task.cancelled.cleanup.map((c) => (
+              <li key={c.target} className="flex flex-wrap items-baseline gap-2">
+                <span className="font-medium">{labels.cleanupTarget[c.target]}</span>
+                <span className={c.result === "failed" ? "text-warn" : "text-muted-foreground"}>
+                  {labels.cleanupResult[c.result]}
+                </span>
+                {c.detail && (
+                  <span className="font-mono text-xs break-all text-muted-foreground">
+                    {c.detail}
+                  </span>
+                )}
+              </li>
+            ))}
+          </ul>
         </section>
       )}
 
