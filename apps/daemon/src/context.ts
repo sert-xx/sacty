@@ -100,9 +100,19 @@ export type ContextLayer = ContextRef & {
 
 /** コンテキストリポジトリを取得する口。テストでは偽物に差し替える。 */
 export interface ContextFetcher {
-  /** dir にリポジトリの中身を置き、そのコミットを返す。 */
-  fetch(ref: ContextRef, dir: string): Promise<{ commit: string }>;
+  /**
+   * dir にリポジトリの中身を置き、そのコミットを返す。authEnv は HTTPS の GitHub に認証する環境変数
+   * （プロジェクトの gh のアカウントのトークン。PBI-13）。無ければホストの認証を使う。
+   */
+  fetch(
+    ref: ContextRef,
+    dir: string,
+    authEnv?: Record<string, string>,
+  ): Promise<{ commit: string }>;
 }
+
+/** リポジトリ（URL）ごとに、git の認証の環境変数を返す（HTTPS の GitHub 以外は undefined）。 */
+export type ContextAuth = (repo: string) => Promise<Record<string, string> | undefined>;
 
 /** 継承をたどる深さの上限（循環や、誤った設定で延々とたどらないように）。 */
 export const MAX_CONTEXT_DEPTH = 10;
@@ -124,6 +134,7 @@ export async function resolveContext(
   fetcher: ContextFetcher,
   root: ContextRef,
   workDir: string,
+  auth?: ContextAuth,
 ): Promise<ContextLayer[]> {
   const chain: ContextLayer[] = [];
   const seen = new Set<string>();
@@ -138,9 +149,11 @@ export async function resolveContext(
     }
     seen.add(key);
     const dir = join(workDir, String(chain.length));
+    // 認証を用意できない（GitHub のアカウントを選んでいないなど）ときは、その理由のまま止める
+    const authEnv = await auth?.(next.repo);
     let commit: string;
     try {
-      ({ commit } = await fetcher.fetch(next, dir));
+      ({ commit } = await fetcher.fetch(next, dir, authEnv));
     } catch (error) {
       throw new ContextError(message("context.fetchFailed", { key, detail: errorText(error) }));
     }
@@ -518,21 +531,23 @@ function readSkillDescription(path: string): string {
 
 /** git で浅く clone してコンテキストリポジトリを取得する（ホストの認証を使う）。 */
 export class GitContextFetcher implements ContextFetcher {
-  async fetch(ref: ContextRef, dir: string) {
+  async fetch(ref: ContextRef, dir: string, authEnv?: Record<string, string>) {
     if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });
     const branch = ref.ref ? ["--branch", ref.ref] : [];
-    await run(["clone", "--depth", "1", ...branch, "--", ref.repo, dir]);
+    await run(["clone", "--depth", "1", ...branch, "--", ref.repo, dir], undefined, authEnv);
     const commit = (await run(["rev-parse", "HEAD"], dir)).trim();
     return { commit };
   }
 }
 
-function run(args: string[], cwd?: string): Promise<string> {
+function run(args: string[], cwd?: string, authEnv: Record<string, string> = {}): Promise<string> {
   const env: Record<string, string> = { GIT_TERMINAL_PROMPT: "0" };
   for (const key of ["PATH", "HOME", "SSH_AUTH_SOCK", "TMPDIR", "LANG"]) {
     const value = process.env[key];
     if (value) env[key] = value;
   }
+  // HTTPS の GitHub は、プロジェクトの gh のアカウントのトークンで認証する（環境変数でだけ渡す）
+  Object.assign(env, authEnv);
   return new Promise((resolve, reject) => {
     const child = spawn("git", args, { cwd, env, stdio: ["ignore", "pipe", "pipe"] });
     let out = "";
@@ -564,6 +579,8 @@ export async function prepareContext(
   root: ContextRef,
   runtime: "claude-code" | "codex",
   containerDir: string,
+  /** 継承の各リポジトリの git の認証（HTTPS の GitHub はプロジェクトの gh のアカウント）。 */
+  auth?: ContextAuth,
 ): Promise<{
   dir: string;
   layers: { repo: string; ref?: string; commit: string }[];
@@ -574,7 +591,7 @@ export async function prepareContext(
   const work = mkdtempSync(join(tmpdir(), "sacty-context-"));
   const dispose = () => rmSync(work, { recursive: true, force: true });
   try {
-    const layers = await resolveContext(fetcher, root, join(work, "repos"));
+    const layers = await resolveContext(fetcher, root, join(work, "repos"), auth);
     const composed = composeContext(layers);
     const dir = join(work, "out");
     const placed = writeContext(composed, runtime, dir, containerDir);

@@ -8,7 +8,7 @@ const ja = {
   intake: {
     title: "GitHub Issue の取り込み",
     stopped:
-      "取り込みは止まっています。config.yaml に github.token_secret を設定すると、定期的に取り込みます。",
+      "取り込みは止まっています。config.yaml に github: を設定すると、定期的に取り込みます。",
     lastRun: (at: string, n: number) => `最後の取り込み：${at}（${n}件のタスクを作成）`,
     never: "まだ取り込んでいません。",
     errors: "取り込めなかった取り込み元があります（ほかの取り込み元は取り込みました）：",
@@ -44,6 +44,14 @@ const ja = {
     contextRef: "ブランチ・タグ（省略すると既定のブランチ）",
     contextHelp:
       "sacty-context.yaml・rules.md（または rules/*.md）・skills/<名前>/SKILL.md を置いたリポジトリです。空にすると、コンテキストを渡しません。",
+    githubTitle: "GitHub アカウント",
+    githubNote: "Issue の取り込み・clone・プッシュ・PR に使う、gh にログイン済みのアカウント",
+    githubAccount: "アカウント",
+    githubChoose: "選んでください",
+    githubNotLoggedIn: (login: string) => `${login}（gh にログインしていません）`,
+    githubRequired: "GitHub アカウントを選んでください。",
+    githubHelp:
+      "gh auth login でログインしたアカウントから選びます（最初は gh のアクティブなアカウントが選ばれています）。gh でアカウントを切り替えても、ここで選んだアカウントを使います。個人の設定なので、エクスポートには含めません。",
     reposTitle: "リポジトリの設定",
     reposNote: "Issue から作ったタスクは、その Issue のリポジトリに実装します",
     noRepos: "リポジトリの設定はありません。",
@@ -67,8 +75,7 @@ const en: ProjectsMessages = {
   newTitle: "Create a project",
   intake: {
     title: "GitHub Issue intake",
-    stopped:
-      "Intake is stopped. Set github.token_secret in config.yaml to import issues periodically.",
+    stopped: "Intake is stopped. Add github: to config.yaml to import issues periodically.",
     lastRun: (at, n) => `Last intake: ${at} (${n} task${n === 1 ? "" : "s"} created)`,
     never: "Nothing imported yet.",
     errors: "Some intake sources could not be imported (the others were imported):",
@@ -105,6 +112,14 @@ const en: ProjectsMessages = {
     contextRef: "Branch or tag (default branch if empty)",
     contextHelp:
       "A repository with sacty-context.yaml, rules.md (or rules/*.md), and skills/<name>/SKILL.md. Leave empty to pass no context.",
+    githubTitle: "GitHub account",
+    githubNote: "The gh account used for issue intake, clone, push, and PRs",
+    githubAccount: "Account",
+    githubChoose: "Choose an account",
+    githubNotLoggedIn: (login) => `${login} (not signed in to gh)`,
+    githubRequired: "Choose a GitHub account.",
+    githubHelp:
+      "Choose from the accounts signed in with gh auth login (gh's active account is selected at first). This account is used even if you switch accounts in gh. It is a personal setting and is not exported.",
     reposTitle: "Repository settings",
     reposNote: "Tasks from an issue are implemented in that issue's repository",
     noRepos: "No repository settings.",

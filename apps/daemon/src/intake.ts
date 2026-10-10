@@ -2,8 +2,8 @@ import { type DaemonText, message } from "@sacty/core";
 import { redactText } from "./agents/redact.js";
 import type { ConfigResult } from "./config.js";
 import { errorText } from "./errors.js";
+import type { GitHubAuth } from "./gh.js";
 import type { IssueSearch } from "./github.js";
-import type { SecretStore } from "./secrets.js";
 import type { TaskService } from "./service.js";
 
 /**
@@ -25,7 +25,7 @@ export class IssueIntake {
   constructor(
     private readonly service: TaskService,
     private readonly search: IssueSearch,
-    private readonly secrets: SecretStore,
+    private readonly github: GitHubAuth,
     private readonly config: () => ConfigResult,
     private readonly now: () => number = Date.now,
   ) {}
@@ -52,7 +52,7 @@ export class IssueIntake {
       return Promise.resolve();
     }
     this.lastRun = this.now();
-    const run = this.runOnce(github.tokenSecret);
+    const run = this.runOnce();
     this.current = run;
     void run.finally(() => {
       if (this.current === run) this.current = undefined;
@@ -63,20 +63,10 @@ export class IssueIntake {
   /**
    * 取り込み元ごとに検索し、失敗は取り込み元ごとに記録する（1つの取り込み元の失敗で、
    * ほかの取り込み元やプロジェクトの取り込みを止めない）。取れた結果は取り込む。
+   * 検索は、その取り込み元のプロジェクトに設定した gh のアカウントで行う（PBI-13）。
    */
-  private async runOnce(tokenSecret: string): Promise<void> {
+  private async runOnce(): Promise<void> {
     const at = new Date(this.now()).toISOString();
-    let token: string;
-    try {
-      token = await this.secrets.get(tokenSecret);
-    } catch (error) {
-      this.service.recordIntake({
-        lastRunAt: at,
-        imported: 0,
-        errors: [{ message: errorText(error) }],
-      });
-      return;
-    }
     // 担当の判定が変わりうるので、プロジェクトの設定が変わったら先頭から読み直す
     // （以前はほかのプロジェクトの担当で取り込まなかった Issue を、取りこぼさないため）
     const revision = this.service.projectsRevision();
@@ -86,22 +76,47 @@ export class IssueIntake {
     }
     const found = [];
     const errors: { query?: string; message: DaemonText }[] = [];
-    let rateLimited = false;
-    for (const query of this.service.intakeQueries()) {
-      if (rateLimited) {
+    // アカウントごとのトークン（取り出せなければ、その理由）と、レート制限に達したか。
+    // レート制限はトークン（アカウント）ごとなので、ほかのアカウントの検索は続ける
+    const tokens = new Map<string, { token: string } | { error: DaemonText }>();
+    const rateLimited = new Set<string>();
+    const tokenOf = async (account: string) => {
+      let entry = tokens.get(account);
+      if (!entry) {
+        try {
+          entry = { token: await this.github.token(account) };
+        } catch (error) {
+          entry = { error: errorText(error) };
+        }
+        tokens.set(account, entry);
+      }
+      return entry;
+    };
+    for (const { query, account, project } of this.service.intakeSources()) {
+      // アカウントを選んでいないプロジェクトの取り込み元は、理由を示して検索しない
+      if (!account) {
+        errors.push({ query, message: message("github.accountRequired", { project }) });
+        continue;
+      }
+      const auth = await tokenOf(account);
+      if ("error" in auth) {
+        errors.push({ query, message: auth.error });
+        continue;
+      }
+      if (rateLimited.has(account)) {
         errors.push({ query, message: message("intake.skippedRateLimited") });
         continue;
       }
       try {
-        const result = await this.search.search(query, token, this.cursors.get(query));
+        const result = await this.search.search(query, auth.token, this.cursors.get(query));
         found.push(...result.issues);
         if (result.cursor) this.cursors.set(query, result.cursor);
         if (result.incomplete) {
-          errors.push({ query, message: redactText(result.incomplete, [token]) });
+          errors.push({ query, message: redactText(result.incomplete, [auth.token]) });
         }
-        rateLimited = result.rateLimited === true;
+        if (result.rateLimited) rateLimited.add(account);
       } catch (error) {
-        errors.push({ query, message: redactText(errorText(error), [token]) });
+        errors.push({ query, message: redactText(errorText(error), [auth.token]) });
       }
     }
     const created = this.service.importIssues(found);

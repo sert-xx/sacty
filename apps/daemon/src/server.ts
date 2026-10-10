@@ -60,6 +60,9 @@ export function createApp(
 
   app.get("/api/status", (c) => c.json(service.status()));
 
+  // gh にログイン済みの GitHub のアカウント（プロジェクトの設定で選ぶ。PBI-13）。トークンは返さない
+  app.get("/api/github/accounts", async (c) => c.json(await service.githubAccounts()));
+
   app.get("/api/tasks", (c) => c.json({ tasks: service.list() }));
 
   app.get("/api/tasks/:id", (c) => {

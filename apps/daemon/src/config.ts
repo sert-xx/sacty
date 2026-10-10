@@ -125,8 +125,6 @@ const Repository = z.object({
         .string()
         .regex(/^[\w.-]+\/[\w.-]+$/, code("input.invalidRepo"))
         .optional(),
-      /** GitHub のトークンの秘密情報名（`sacty secret set <名前>` で保存）。 */
-      token_secret: SecretName,
     })
     .optional(),
 });
@@ -151,8 +149,6 @@ const ConfigFile = z
     /** GitHub Issue の取り込み（個人の設定。プロジェクトの定義には含めない）。 */
     github: z
       .object({
-        /** GitHub のトークンの秘密情報名（Issue の読み取り。PRを作るなら書き込みも）。 */
-        token_secret: SecretName,
         /** 取り込みの間隔（秒）。 */
         poll_interval_sec: z.number().int().min(60).default(300),
       })
@@ -197,9 +193,10 @@ export type SactyConfig = {
     baseBranch: string;
     testCommand: string;
     testImage: string;
-    pullRequest?: { provider: "github"; repo: string; tokenSecret: string };
+    pullRequest?: { provider: "github"; repo: string };
   };
-  github?: { tokenSecret: string; pollIntervalSec: number };
+  /** GitHub Issue の取り込み。認証はプロジェクトの gh のアカウント（PBI-13）。 */
+  github?: { pollIntervalSec: number };
 };
 
 /** 設定。読めなければ、その理由（文言のコードと引数。PBI-11）。 */
@@ -270,10 +267,7 @@ export function loadConfig(home: string): ConfigResult {
       guardianAgent: resolve(file.guardian_agent ?? file.default_agent),
       ...(file.github
         ? {
-            github: {
-              tokenSecret: file.github.token_secret,
-              pollIntervalSec: file.github.poll_interval_sec,
-            },
+            github: { pollIntervalSec: file.github.poll_interval_sec },
           }
         : {}),
       ...(file.repository
@@ -291,7 +285,6 @@ export function loadConfig(home: string): ConfigResult {
                         file.repository.pull_request.repo ??
                         githubRepoOf(file.repository.url) ??
                         "",
-                      tokenSecret: file.repository.pull_request.token_secret,
                     },
                   }
                 : {}),
@@ -322,15 +315,13 @@ budget:
 #   base_branch: main
 #   test_command: npm ci && npm test
 #   # PRを作る場合（省略すると、sacty のブランチにプッシュするまで）。
-#   # トークンは \`sacty secret set github-token\` で保存する（contents と pull requests の書き込み権限）
+#   # GitHub へのアクセスは、プロジェクトの設定で選んだ gh のアカウントで行う
 #   pull_request:
 #     provider: github
-#     token_secret: github-token
 
-# GitHub Issue の取り込み（取り込み元はプロジェクトの設定で登録する）。
+# GitHub Issue の取り込み（取り込み元と、使う gh のアカウントはプロジェクトの設定で登録する）。
 # Issue から作ったタスクは、その Issue のリポジトリに実装する（設定はプロジェクトのリポジトリの設定）
 # github:
-#   token_secret: github-token
 #   poll_interval_sec: 300
 
 agents:

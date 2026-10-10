@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { EventInput } from "@sacty/core";
-import { renderMessage } from "@sacty/core";
+import { message, renderMessage } from "@sacty/core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { AgentExecutor } from "./agents/docker.js";
 import type { Invocation } from "./agents/invocation.js";
@@ -10,6 +10,8 @@ import type { AgentOutcome } from "./agents/parse.js";
 import type { TestRunner, TestRunResult } from "./agents/test-runner.js";
 import { type AgentConfig, type ConfigResult, loadConfig } from "./config.js";
 import type { ContextFetcher, ContextRef } from "./context.js";
+import { MessageError } from "./errors.js";
+import type { GitHubAuth } from "./gh.js";
 import type { PullRequests } from "./github.js";
 import { SqliteLedgerStore } from "./ledger.js";
 import { MemoryProjectStore } from "./projects.js";
@@ -46,10 +48,9 @@ const configOf =
   (
     a: AgentConfig,
     budgetPerTaskUsd = 1,
-    pullRequest: { provider: "github"; repo: string; tokenSecret: string } | null = {
+    pullRequest: { provider: "github"; repo: string } | null = {
       provider: "github",
       repo: "acme/app",
-      tokenSecret: "github-token",
     },
   ): (() => ConfigResult) =>
   () => ({
@@ -69,22 +70,61 @@ const configOf =
     },
   });
 
+/** gh の偽物。ログイン済みのアカウントごとのトークンを返す。 */
+class FakeGitHub implements GitHubAuth {
+  requested: string[] = [];
+  constructor(private readonly tokens: Record<string, string> = { me: "ghp_secret" }) {}
+  async accounts() {
+    return Object.keys(this.tokens).map((login) => ({ login, active: login === "me" }));
+  }
+  async token(account: string) {
+    this.requested.push(account);
+    const token = this.tokens[account];
+    if (!token) throw new MessageError(message("github.accountUnavailable", { account }));
+    return token;
+  }
+}
+
+/** 既定のプロジェクトに、gh のアカウント（偽物の me）を選んだプロジェクトの置き場所。 */
+function projectsWithAccount(): MemoryProjectStore {
+  const projects = new MemoryProjectStore();
+  projects.put("default", {
+    name: "デフォルト",
+    sources: [],
+    repositories: [],
+    githubAccount: "me",
+  });
+  return projects;
+}
+
 /** clone の代わりに空のディレクトリを作り、決まった差分を返す偽物。 */
 class FakeRepos implements RepositoryWorkspace {
-  prepared: { dir: string; gitDir: string; url: string; baseBranch: string }[] = [];
+  prepared: {
+    dir: string;
+    gitDir: string;
+    url: string;
+    baseBranch: string;
+    authEnv?: Record<string, string>;
+  }[] = [];
   diffText = "diff --git a/src/pay.ts b/src/pay.ts\n+export const pay = () => 1;";
   fail?: string;
   diffFail?: string;
   /** これが設定されていれば、clone を解決するまで待つ（準備中の一時停止のテスト用）。 */
   prepareGate?: Promise<void>;
   prepareStarted = Promise.withResolvers<void>();
-  async prepare(dir: string, gitDir: string, url: string, baseBranch: string) {
+  async prepare(
+    dir: string,
+    gitDir: string,
+    url: string,
+    baseBranch: string,
+    authEnv?: Record<string, string>,
+  ) {
     if (this.fail) throw new Error(this.fail);
     this.prepareStarted.resolve();
     if (this.prepareGate) await this.prepareGate;
     mkdirSync(dir, { recursive: true });
     mkdirSync(gitDir, { recursive: true });
-    this.prepared.push({ dir, gitDir, url, baseBranch });
+    this.prepared.push({ dir, gitDir, url, baseBranch, ...(authEnv ? { authEnv } : {}) });
     return { baseCommit: "base123" };
   }
   deleted: string[] = [];
@@ -113,8 +153,14 @@ class FakeRepos implements RepositoryWorkspace {
 
 /** リポジトリごとに決めたファイルを置く、コンテキストの取得の偽物。 */
 class FakeContexts implements ContextFetcher {
+  /** 取得ごとのリポジトリと、渡された git の認証の環境変数。 */
+  fetched: { repo: string; authEnv?: Record<string, string> }[] = [];
+  /** これが設定されていれば、取得に失敗する（エラー文に、渡されたトークンを含める）。 */
+  fail?: boolean;
   constructor(private readonly repos: Record<string, Record<string, string>> = {}) {}
-  async fetch(ref: ContextRef, out: string) {
+  async fetch(ref: ContextRef, out: string, authEnv?: Record<string, string>) {
+    this.fetched.push({ repo: ref.repo, ...(authEnv ? { authEnv } : {}) });
+    if (this.fail) throw new Error(`Authentication failed ${authEnv?.GIT_CONFIG_VALUE_0 ?? ""}`);
     const files = this.repos[ref.repo];
     if (!files) throw new Error("repository not found");
     for (const [path, content] of Object.entries(files)) {
@@ -250,6 +296,7 @@ function makeService(
     pulls?: FakePulls;
     projects?: MemoryProjectStore;
     contexts?: ContextFetcher;
+    github?: FakeGitHub;
   } = {},
 ) {
   const executor = new FakeExecutor(outcomes);
@@ -266,8 +313,9 @@ function makeService(
     repos,
     tests,
     pulls,
-    projects: options.projects ?? new MemoryProjectStore(),
+    projects: options.projects ?? projectsWithAccount(),
     contexts: options.contexts ?? new FakeContexts(),
+    github: options.github ?? new FakeGitHub(),
     workspaceRoot: join(dir, "workspaces"),
   });
   return { service, executor, repos, tests, pulls };
@@ -2181,7 +2229,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
           ...base.config,
           repository: {
             ...base.config.repository,
-            pullRequest: { provider: "github", repo: prRepo, tokenSecret: "github-token" },
+            pullRequest: { provider: "github", repo: prRepo },
           },
         },
       };
@@ -2317,12 +2365,16 @@ describe("プロジェクトと GitHub Issue の取り込み（PBI-5a）", () =>
     labels,
   });
 
-  function setup(outcomes: AgentOutcome[] = [], options: { config?: () => ConfigResult } = {}) {
+  function setup(
+    outcomes: AgentOutcome[] = [],
+    options: { config?: () => ConfigResult; github?: FakeGitHub } = {},
+  ) {
     const ledger = new SqliteLedgerStore(dbPath);
     const projects = new MemoryProjectStore();
     const made = makeService(ledger, outcomes, { projects, ...options });
     const pay = made.service.saveProject(undefined, {
       name: "決済",
+      githubAccount: "me",
       sources: [{ scope: "org", target: "acme", label: "sacty" }],
       repositories: [
         {
@@ -2373,9 +2425,10 @@ describe("プロジェクトと GitHub Issue の取り込み（PBI-5a）", () =>
 
   it("取り込み元ごとに検索し、担当のプロジェクトのラベルが付いた Issue だけを、二重にならないよう取り込む", () => {
     const { ledger, service, pay, auth } = setup();
-    expect(service.intakeQueries()).toEqual([
-      'is:issue is:open org:acme label:"sacty"',
-      'is:issue is:open repo:acme/auth label:"ai"',
+    // 検索には、プロジェクトに選んだ gh のアカウントを使う（PBI-13）。選んでいなければアカウントは無い
+    expect(service.intakeSources()).toEqual([
+      { query: 'is:issue is:open org:acme label:"sacty"', account: "me", project: "決済" },
+      { query: 'is:issue is:open repo:acme/auth label:"ai"', project: "認証" },
     ]);
     const created = service.importIssues([
       issue("acme/payments", 1, ["sacty"], "冪等性キー"),
@@ -2417,7 +2470,7 @@ describe("プロジェクトと GitHub Issue の取り込み（PBI-5a）", () =>
     if (!base.ok) throw new Error("unreachable");
     return {
       ok: true,
-      config: { ...base.config, github: { tokenSecret: "github-token", pollIntervalSec: 300 } },
+      config: { ...base.config, github: { pollIntervalSec: 300 } },
     };
   };
 
@@ -2470,8 +2523,8 @@ describe("プロジェクトと GitHub Issue の取り込み（PBI-5a）", () =>
     ledger.close();
   });
 
-  it("PRを作る設定なのに GitHub のトークンが無ければ、理由を記録して止める", async () => {
-    const { ledger, service } = setup([
+  it("プロジェクトに選んだ gh のアカウントでトークンを取り出し、HTTPS の clone を認証する（PBI-13）", async () => {
+    const outcomes: AgentOutcome[] = [
       {
         kind: "completed",
         output: "# 要求要件",
@@ -2482,7 +2535,11 @@ describe("プロジェクトと GitHub Issue の取り込み（PBI-5a）", () =>
         output: "# 設計",
         usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 1 },
       },
-    ]);
+    ];
+    // アクティブなアカウントは別のもの。プロジェクトに選んだアカウントのトークンを使う
+    const github = new FakeGitHub({ me: "ghp_active", "side-job": "ghp_side" });
+    const { ledger, service, repos, pay } = setup(outcomes, { github });
+    service.saveProject(pay.id, { ...pay, githubAccount: "side-job" });
     const [task] = service.importIssues([issue("acme/payments", 11, ["sacty"])]);
     const id = task?.id ?? "";
     await service.runNext(id);
@@ -2490,11 +2547,80 @@ describe("プロジェクトと GitHub Issue の取り込み（PBI-5a）", () =>
     await service.runNext(id);
     service.approve(id, { step: "design", submission: 1 });
     await service.runNext(id);
-    const failed = service.get(id)?.ledger.findLast((e) => e.type === "AgentRunFailed");
-    expect(failed?.type === "AgentRunFailed" && ja(failed.payload.message)).toContain(
-      "github.token_secret",
+    expect(github.requested).toEqual(["side-job"]);
+    expect(repos.prepared[0]?.url).toBe("https://github.com/acme/payments.git");
+    // トークンは環境変数でだけ渡し、選んだアカウントのものを使う
+    expect(repos.prepared[0]?.authEnv?.GIT_CONFIG_VALUE_0).toBe(
+      `Authorization: Basic ${Buffer.from("x-access-token:ghp_side").toString("base64")}`,
     );
     ledger.close();
+  });
+
+  it("GitHub のアカウントを選んでいないプロジェクトは、アクティブなアカウントを使わずに理由を記録して止める（PBI-13）", async () => {
+    const outcomes: AgentOutcome[] = [
+      {
+        kind: "completed",
+        output: "# 要求要件",
+        usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 1 },
+      },
+      {
+        kind: "completed",
+        output: "# 設計",
+        usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 1 },
+      },
+    ];
+    const github = new FakeGitHub({ me: "ghp_active" });
+    const { ledger, service, repos, pay } = setup(outcomes, { github });
+    // インポートしたプロジェクトなど、アカウントを選んでいない
+    const { githubAccount: _, ...withoutAccount } = pay;
+    service.saveProject(pay.id, withoutAccount);
+    const [task] = service.importIssues([issue("acme/payments", 13, ["sacty"])]);
+    const id = task?.id ?? "";
+    await service.runNext(id);
+    service.approve(id, { step: "requirements", submission: 1 });
+    await service.runNext(id);
+    service.approve(id, { step: "design", submission: 1 });
+    await service.runNext(id);
+    expect(github.requested).toEqual([]);
+    expect(repos.prepared).toHaveLength(0);
+    const failed = service.get(id)?.ledger.findLast((e) => e.type === "AgentRunFailed");
+    expect(failed?.type === "AgentRunFailed" && failed.payload.message).toEqual({
+      code: "github.accountRequired",
+      params: { project: "決済" },
+    });
+    ledger.close();
+  });
+
+  it("プロジェクトに選んだ gh のアカウントでログインしていなければ、理由を記録して止める（PBI-13）", async () => {
+    const outcomes: AgentOutcome[] = [
+      {
+        kind: "completed",
+        output: "# 要求要件",
+        usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 1 },
+      },
+      {
+        kind: "completed",
+        output: "# 設計",
+        usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 1 },
+      },
+    ];
+    const other = setup(outcomes, { github: new FakeGitHub({ me: "ghp_active" }) });
+    other.service.saveProject(other.pay.id, { ...other.pay, githubAccount: "side-job" });
+    const [t2] = other.service.importIssues([issue("acme/payments", 12, ["sacty"])]);
+    const id2 = t2?.id ?? "";
+    await other.service.runNext(id2);
+    other.service.approve(id2, { step: "requirements", submission: 1 });
+    await other.service.runNext(id2);
+    other.service.approve(id2, { step: "design", submission: 1 });
+    await other.service.runNext(id2);
+    expect(other.service.get(id2)?.task.pausedReason).toBe("error");
+    const failed = other.service.get(id2)?.ledger.findLast((e) => e.type === "AgentRunFailed");
+    expect(failed?.type === "AgentRunFailed" && failed.payload.message).toEqual({
+      code: "github.accountUnavailable",
+      params: { account: "side-job" },
+    });
+    expect(other.repos.prepared).toHaveLength(0);
+    other.ledger.close();
   });
 
   it("Issue のリポジトリの設定がプロジェクトに無ければ、理由を記録して止める", async () => {
@@ -2621,6 +2747,87 @@ describe("コンテキストリポジトリ（PBI-6a）", () => {
     expect(failed?.type === "AgentRunFailed" && renderMessage(failed.payload.message, "en")).toBe(
       "Cannot fetch the context repository (https://example.com/missing.git#): repository not found",
     );
+    ledger.close();
+  });
+});
+
+describe("コンテキストの取得の認証（PBI-13 レビュー指摘）", () => {
+  const out = (text: string): AgentOutcome => ({
+    kind: "completed",
+    output: text,
+    usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 1 },
+  });
+  const basic = (token: string) =>
+    `Authorization: Basic ${Buffer.from(`x-access-token:${token}`).toString("base64")}`;
+
+  it("HTTPS の GitHub のコンテキストと継承先は、プロジェクトに選んだ gh のアカウントで取得する", async () => {
+    const ledger = new SqliteLedgerStore(dbPath);
+    const github = new FakeGitHub({ me: "ghp_active", "side-job": "ghp_side" });
+    const contexts = new FakeContexts({
+      "https://github.com/acme/team-ctx.git": {
+        "rules.md": "# チーム",
+        "sacty-context.yaml": "extends: https://github.com/acme/company-ctx.git#main\n",
+      },
+      "https://github.com/acme/company-ctx.git": {
+        "rules.md": "# 会社",
+        "sacty-context.yaml": "extends: /local/base\n",
+      },
+      "/local/base": { "rules.md": "# 共通" },
+    });
+    const { service } = makeService(ledger, [out("# 要求要件")], { contexts, github });
+    const project = service.saveProject(undefined, {
+      name: "副業",
+      githubAccount: "side-job",
+      context: { repo: "https://github.com/acme/team-ctx.git" },
+    });
+    const { id } = service.createTicket({ title: "A", projectId: project.id });
+    await service.runNext(id);
+    expect(contexts.fetched).toEqual([
+      {
+        repo: "https://github.com/acme/team-ctx.git",
+        authEnv: expect.objectContaining({ GIT_CONFIG_VALUE_0: basic("ghp_side") }),
+      },
+      {
+        repo: "https://github.com/acme/company-ctx.git",
+        authEnv: expect.objectContaining({ GIT_CONFIG_VALUE_0: basic("ghp_side") }),
+      },
+      // GitHub の HTTPS でないもの（ローカルのパス・SSH）は、ホストの認証のまま
+      { repo: "/local/base" },
+    ]);
+    expect(github.requested).toEqual(["side-job", "side-job"]);
+    ledger.close();
+  });
+
+  it("アカウントを選んでいなければ取得せずに止め、取得の失敗ではトークンを残さない", async () => {
+    const ledger = new SqliteLedgerStore(dbPath);
+    const contexts = new FakeContexts({});
+    const { service, executor } = makeService(ledger, [out("# 要求要件")], { contexts });
+    const unset = service.saveProject(undefined, {
+      name: "未選択",
+      context: { repo: "https://github.com/acme/ctx.git" },
+    });
+    const { id } = service.createTicket({ title: "A", projectId: unset.id });
+    await service.runNext(id);
+    expect(contexts.fetched).toEqual([]);
+    expect(executor.calls).toHaveLength(0);
+    const failed = service.get(id)?.ledger.findLast((e) => e.type === "AgentRunFailed");
+    expect(failed?.type === "AgentRunFailed" && failed.payload.message).toEqual({
+      code: "github.accountRequired",
+      params: { project: "未選択" },
+    });
+
+    contexts.fail = true;
+    const chosen = service.saveProject(undefined, {
+      name: "選択済み",
+      githubAccount: "me",
+      context: { repo: "https://github.com/acme/private-ctx.git" },
+    });
+    const second = service.createTicket({ title: "B", projectId: chosen.id });
+    await service.runNext(second.id);
+    const ledgerText = JSON.stringify(service.get(second.id)?.ledger);
+    expect(ledgerText).toContain("context.fetchFailed");
+    expect(ledgerText).not.toContain("ghp_secret");
+    expect(ledgerText).not.toContain(Buffer.from("x-access-token:ghp_secret").toString("base64"));
     ledger.close();
   });
 });
@@ -2759,6 +2966,39 @@ describe("API", () => {
     });
     expect(res.status).toBe(400);
     expect(ledger.all()).toHaveLength(0);
+    ledger.close();
+  });
+
+  it("gh にログイン済みの GitHub のアカウントを返す（トークンは返さない。PBI-13）", async () => {
+    const ledger = new SqliteLedgerStore(dbPath);
+    const app = createApp(
+      makeService(ledger, [], {
+        github: new FakeGitHub({ me: "ghp_active", "side-job": "ghp_side" }),
+      }).service,
+      token,
+    );
+    const res = await app.request("/api/github/accounts", { headers: auth });
+    const body = await res.json();
+    expect(body).toEqual({
+      accounts: [
+        { login: "me", active: true },
+        { login: "side-job", active: false },
+      ],
+    });
+    expect(JSON.stringify(body)).not.toContain("ghp_");
+    const failing = createApp(
+      makeService(ledger, [], {
+        github: Object.assign(new FakeGitHub(), {
+          accounts: () => Promise.reject(new MessageError(message("github.ghMissing"))),
+        }),
+      }).service,
+      token,
+    );
+    expect(await (await failing.request("/api/github/accounts", { headers: auth })).json()).toEqual(
+      {
+        error: { code: "github.ghMissing" },
+      },
+    );
     ledger.close();
   });
 
