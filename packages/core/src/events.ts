@@ -410,6 +410,19 @@ const TaskCancelled = z.object({
   }),
 });
 
+/**
+ * 工程エージェントに渡したコンテキスト（PBI-6）。継承の順（上位から）に、使ったリポジトリと
+ * コミットを記録する。合成で上書き禁止に当たったものなどは warnings に残す。
+ */
+const ContextResolved = z.object({
+  type: z.literal("ContextResolved"),
+  payload: z.object({
+    runId: z.string(),
+    layers: z.array(z.object({ repo: z.string(), ref: z.string().optional(), commit: z.string() })),
+    warnings: z.array(z.string()).default([]),
+  }),
+});
+
 const ChangesRequested = z.object({
   type: z.literal("ChangesRequested"),
   payload: z.object({
@@ -478,6 +491,7 @@ export const EventInput = z.discriminatedUnion("type", [
   BranchPushed,
   GuardianMissed,
   TaskCancelled,
+  ContextResolved,
   ChangesRequested,
   RemarkVoided,
   TaskEscalated,

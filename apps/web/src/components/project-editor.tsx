@@ -30,7 +30,22 @@ export function ProjectEditor({
   const [name, setName] = useState(project?.name ?? "");
   const [sources, setSources] = useState<IssueSource[]>(project?.sources ?? []);
   const [repos, setRepos] = useState<RepositorySettings[]>(project?.repositories ?? []);
-  const definition = JSON.stringify({ name, sources, repositories: repos });
+  const [contextRepo, setContextRepo] = useState(project?.context?.repo ?? "");
+  const [contextRef, setContextRef] = useState(project?.context?.ref ?? "");
+  const definition = JSON.stringify({
+    name,
+    sources,
+    repositories: repos,
+    // コンテキストリポジトリは、空なら渡さない
+    ...(contextRepo.trim()
+      ? {
+          context: {
+            repo: contextRepo.trim(),
+            ...(contextRef.trim() ? { ref: contextRef.trim() } : {}),
+          },
+        }
+      : {}),
+  });
 
   const updateSource = (i: number, patch: Partial<IssueSource>) =>
     setSources((list) => list.map((s, j) => (j === i ? ({ ...s, ...patch } as IssueSource) : s)));
@@ -150,6 +165,45 @@ export function ProjectEditor({
             >
               {t.addSource}
             </Button>
+          </section>
+
+          <section
+            aria-labelledby="context"
+            className="flex flex-col gap-3 rounded-xl border border-border bg-card p-5"
+          >
+            <h2 id="context" className="text-[15px] font-semibold">
+              {t.contextTitle}{" "}
+              <span className="text-[13px] font-normal text-muted-foreground">{t.contextNote}</span>
+            </h2>
+            <div className="flex flex-wrap items-end gap-2">
+              <label
+                htmlFor={`${uid}-context-repo`}
+                className="flex min-w-64 flex-[2] flex-col gap-1 text-xs text-muted-foreground"
+              >
+                {t.contextRepo}
+                <Input
+                  id={`${uid}-context-repo`}
+                  value={contextRepo}
+                  placeholder="git@github.com:acme/sacty-context.git"
+                  onChange={(e) => setContextRepo(e.target.value)}
+                  className="font-mono"
+                />
+              </label>
+              <label
+                htmlFor={`${uid}-context-ref`}
+                className="flex min-w-40 flex-1 flex-col gap-1 text-xs text-muted-foreground"
+              >
+                {t.contextRef}
+                <Input
+                  id={`${uid}-context-ref`}
+                  value={contextRef}
+                  placeholder="main"
+                  onChange={(e) => setContextRef(e.target.value)}
+                  className="font-mono"
+                />
+              </label>
+            </div>
+            <p className="text-xs leading-5 text-muted-foreground">{t.contextHelp}</p>
           </section>
 
           <section

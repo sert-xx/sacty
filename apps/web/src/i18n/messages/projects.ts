@@ -22,7 +22,7 @@ const ja = {
   settingsTitle: (name: string) => `${name} の設定`,
   export: "エクスポート",
   exportNote:
-    "エクスポートには、名前・取り込み元・リポジトリの設定だけを含めます（個人の設定やトークンは含めません）。",
+    "エクスポートには、名前・取り込み元・リポジトリの設定・コンテキストリポジトリだけを含めます（個人の設定やトークンは含めません）。",
   exportNotFound: "プロジェクトが見つかりません。",
   editor: {
     name: "名前",
@@ -38,6 +38,12 @@ const ja = {
     excluded: "除外されるリポジトリ（ほかのプロジェクトが担当）：",
     excludedBy: (project: string) => `（${project}）`,
     addSource: "取り込み元を追加",
+    contextTitle: "コンテキストリポジトリ",
+    contextNote: "工程エージェントに渡す規約とスキル（extends で上位のリポジトリを継承できます）",
+    contextRepo: "リポジトリ（git の URL かローカルのパス）",
+    contextRef: "ブランチ・タグ（省略すると既定のブランチ）",
+    contextHelp:
+      "sacty-context.yaml・rules.md（または rules/*.md）・skills/<名前>/SKILL.md を置いたリポジトリです。空にすると、コンテキストを渡しません。",
     reposTitle: "リポジトリの設定",
     reposNote: "Issue から作ったタスクは、その Issue のリポジトリに実装します",
     noRepos: "リポジトリの設定はありません。",
@@ -76,7 +82,7 @@ const en: ProjectsMessages = {
   settingsTitle: (name) => `${name} settings`,
   export: "Export",
   exportNote:
-    "The export contains only the name, intake sources, and repository settings (no personal settings or tokens).",
+    "The export contains only the name, intake sources, repository settings, and context repository (no personal settings or tokens).",
   exportNotFound: "Project not found.",
   editor: {
     name: "Name",
@@ -92,6 +98,13 @@ const en: ProjectsMessages = {
     excluded: "Excluded repositories (handled by other projects):",
     excludedBy: (project) => ` (${project})`,
     addSource: "Add intake source",
+    contextTitle: "Context repository",
+    contextNote:
+      "Rules and skills for step agents (use extends to inherit from a parent repository)",
+    contextRepo: "Repository (git URL or local path)",
+    contextRef: "Branch or tag (default branch if empty)",
+    contextHelp:
+      "A repository with sacty-context.yaml, rules.md (or rules/*.md), and skills/<name>/SKILL.md. Leave empty to pass no context.",
     reposTitle: "Repository settings",
     reposNote: "Tasks from an issue are implemented in that issue's repository",
     noRepos: "No repository settings.",

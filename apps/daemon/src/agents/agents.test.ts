@@ -28,6 +28,52 @@ describe("認証方式ごとの環境変数", () => {
     else process.env.ANTHROPIC_API_KEY = hostKey;
   });
 
+  it("コンテキストは、実行ごとの空の設定のディレクトリに写して渡す（PBI-6）", async () => {
+    const claude: AgentConfig = {
+      ...base,
+      id: "c",
+      runtime: "claude-code",
+      auth: { mode: "subscription", secret: "claude-oauth-token" },
+    };
+    expect((await buildInvocation(claude, "prompt", secrets)).stage).toBeUndefined();
+    const withContext = await buildInvocation(
+      claude,
+      "prompt",
+      secrets,
+      () => {},
+      "design",
+      "/host/ctx",
+    );
+    expect(withContext.stage).toEqual({
+      containerDir: "/tmp/sacty-claude-config",
+      files: [],
+      seedDir: "/host/ctx",
+    });
+    // 組み込みのメモリーは使わない
+    expect(withContext.env.CLAUDE_CODE_DISABLE_AUTO_MEMORY).toBe("1");
+    expect(withContext.env.CLAUDE_CONFIG_DIR).toBe("/tmp/sacty-claude-config");
+
+    const codex: AgentConfig = {
+      ...base,
+      id: "x",
+      runtime: "codex",
+      auth: { mode: "api-key", secret: "openai-key" },
+    };
+    const codexInv = await buildInvocation(
+      codex,
+      "prompt",
+      new MemorySecretStore({ "openai-key": "sk-x" }),
+      () => {},
+      "design",
+      "/host/ctx",
+    );
+    expect(codexInv.stage).toMatchObject({
+      containerDir: "/tmp/sacty-codex-home",
+      seedDir: "/host/ctx",
+    });
+    expect(codexInv.env.CODEX_HOME).toBe("/tmp/sacty-codex-home");
+  });
+
   it("サブスクリプションでは、ホストにAPIキーがあってもトークンだけを渡す", async () => {
     process.env.ANTHROPIC_API_KEY = "host-key-must-not-leak";
     const agent: AgentConfig = {
@@ -439,5 +485,52 @@ echo '{"type":"turn.completed","usage":{"input_tokens":10,"cached_input_tokens":
       expect(outcome.output).not.toContain(newToken);
     }
     expect(readFileSync(hostAuth, "utf8")).toContain(newToken);
+  });
+
+  it("コンテキストを、マウントする設定のディレクトリに写してから実行する（PBI-6）", async () => {
+    const { chmodSync, mkdirSync } = await import("node:fs");
+    const { DockerExecutor } = await import("./docker.js");
+    dir = mkdtempSync(join(tmpdir(), "sacty-fakedocker-"));
+    const bin = join(dir, "bin");
+    mkdirSync(bin);
+    // run：設定のディレクトリにマウントされたものの一覧を残して、結果を返す
+    writeFileSync(
+      join(bin, "docker"),
+      `#!/bin/sh
+here=$(dirname "$0")
+if [ "$1" != "run" ]; then exit 0; fi
+prev=""
+for a in "$@"; do
+  if [ "$prev" = "-v" ]; then
+    case "$a" in *:/tmp/sacty-claude-config) host="\${a%%:/tmp/sacty-claude-config}"; (cd "$host" && find . -type f | sort) > "$here/seen.txt";; esac
+  fi
+  prev="$a"
+done
+echo '{"type":"result","is_error":false,"result":"ok","usage":{"input_tokens":1,"output_tokens":1}}'
+`,
+    );
+    chmodSync(join(bin, "docker"), 0o755);
+    process.env.PATH = `${bin}:${originalPath}`;
+
+    const ctx = join(dir, "ctx");
+    mkdirSync(join(ctx, "skills", "review"), { recursive: true });
+    writeFileSync(join(ctx, "CLAUDE.md"), "# 規約");
+    writeFileSync(join(ctx, "skills", "review", "SKILL.md"), "スキル");
+    const outcome = await new DockerExecutor().run({
+      runId: "r2",
+      image: "img",
+      workspaceDir: dir,
+      invocation: {
+        command: ["claude"],
+        env: { CLAUDE_CONFIG_DIR: "/tmp/sacty-claude-config" },
+        stage: { containerDir: "/tmp/sacty-claude-config", files: [], seedDir: ctx },
+        parser: "claude-json",
+      },
+    });
+    expect(outcome.kind).toBe("completed");
+    expect(readFileSync(join(bin, "seen.txt"), "utf8").trim().split("\n")).toEqual([
+      "./CLAUDE.md",
+      "./skills/review/SKILL.md",
+    ]);
   });
 });

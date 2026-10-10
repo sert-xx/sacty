@@ -25,6 +25,8 @@ export type Invocation = {
     containerDir: string;
     /** syncBack：コンテナで更新されたら、実行後にホストへ書き戻す（トークンの更新を失わないため）。 */
     files: { hostPath: string; name: string; syncBack: boolean }[];
+    /** この中身を、先に一時ディレクトリへ写す（合成したコンテキストなど。PBI-6）。 */
+    seedDir?: string;
   };
   parser: "claude-json" | "codex-jsonl";
 };
@@ -46,6 +48,11 @@ export async function buildInvocation(
   onSecret: (value: string) => void = () => {},
   /** 実行する工程か、ゴールガーディアン（スタブが出力を選ぶのに使う）。 */
   role?: AgentRole,
+  /**
+   * エージェントの形式に変換したコンテキスト（PBI-6）。実行ごとの空の設定のディレクトリ
+   * （Claude Code は CLAUDE_CONFIG_DIR、Codex は CODEX_HOME）に写して渡す。
+   */
+  contextDir?: string,
 ): Promise<Invocation> {
   const secrets = {
     get: async (name: string) => {
@@ -78,7 +85,15 @@ export async function buildInvocation(
         if (auth.mode === "bedrock") env.ANTHROPIC_MODEL = agent.model;
         else command.push("--model", agent.model);
       }
-      return { command, env, parser: "claude-json" };
+      return {
+        command,
+        env,
+        // 設定のディレクトリは実行ごとに空にし、コンテキストだけを置く（ホストの設定やメモリーは読ませない）
+        ...(contextDir
+          ? { stage: { containerDir: CONTAINER_CLAUDE_CONFIG_DIR, files: [], seedDir: contextDir } }
+          : {}),
+        parser: "claude-json",
+      };
     }
 
     case "codex": {
@@ -107,7 +122,11 @@ export async function buildInvocation(
       return {
         command,
         env,
-        stage: { containerDir: CONTAINER_CODEX_HOME, files },
+        stage: {
+          containerDir: CONTAINER_CODEX_HOME,
+          files,
+          ...(contextDir ? { seedDir: contextDir } : {}),
+        },
         parser: "codex-jsonl",
       };
     }

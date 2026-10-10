@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import {
   chmodSync,
   copyFileSync,
+  cpSync,
   mkdtempSync,
   readFileSync,
   renameSync,
@@ -244,6 +245,10 @@ export class DockerExecutor implements AgentExecutor {
       }
     };
     if (invocation.stage && staging) {
+      // 合成したコンテキストなどを先に写す（認証ファイルは、そのあとに置く）
+      if (invocation.stage.seedDir) {
+        cpSync(invocation.stage.seedDir, staging, { recursive: true });
+      }
       for (const file of invocation.stage.files) {
         const copied = join(staging, basename(file.name));
         try {
