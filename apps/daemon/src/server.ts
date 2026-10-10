@@ -1,12 +1,30 @@
 import { timingSafeEqual } from "node:crypto";
-import { Hono } from "hono";
+import { type Context, Hono } from "hono";
 import { ZodError } from "zod";
-import type { TaskService } from "./service.js";
+import { InvalidOperationError, type TaskService } from "./service.js";
 
 function sameToken(given: string, expected: string): boolean {
   const a = Buffer.from(given);
   const b = Buffer.from(expected);
   return a.length === b.length && timingSafeEqual(a, b);
+}
+
+async function readJson(c: Context): Promise<{ ok: true; body: unknown } | { ok: false }> {
+  try {
+    return { ok: true, body: await c.req.json() };
+  } catch {
+    return { ok: false };
+  }
+}
+
+function handleError(c: Context, error: unknown) {
+  if (error instanceof ZodError) {
+    return c.json({ error: "invalid_input", issues: error.issues }, 400);
+  }
+  if (error instanceof InvalidOperationError) {
+    return c.json({ error: "invalid_operation", message: error.message }, 409);
+  }
+  throw error;
 }
 
 /**
@@ -27,6 +45,8 @@ export function createApp(service: TaskService, token: string) {
 
   app.get("/api/health", (c) => c.json({ ok: true }));
 
+  app.get("/api/status", (c) => c.json(service.status()));
+
   app.get("/api/tasks", (c) => c.json({ tasks: service.list() }));
 
   app.get("/api/tasks/:id", (c) => {
@@ -35,19 +55,22 @@ export function createApp(service: TaskService, token: string) {
   });
 
   app.post("/api/tickets", async (c) => {
-    let body: unknown;
+    const json = await readJson(c);
+    if (!json.ok) return c.json({ error: "invalid_json" }, 400);
     try {
-      body = await c.req.json();
-    } catch {
-      return c.json({ error: "invalid_json" }, 400);
-    }
-    try {
-      return c.json({ task: service.createTicket(body) }, 201);
+      return c.json({ task: service.createTicket(json.body) }, 201);
     } catch (error) {
-      if (error instanceof ZodError) {
-        return c.json({ error: "invalid_input", issues: error.issues }, 400);
-      }
-      throw error;
+      return handleError(c, error);
+    }
+  });
+
+  app.post("/api/tasks/:id/resume", async (c) => {
+    const json = await readJson(c);
+    if (!json.ok) return c.json({ error: "invalid_json" }, 400);
+    try {
+      return c.json({ task: service.resume(c.req.param("id"), json.body) });
+    } catch (error) {
+      return handleError(c, error);
     }
   });
 

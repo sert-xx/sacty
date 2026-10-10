@@ -1,15 +1,92 @@
 #!/usr/bin/env node
 import { type ChildProcess, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
+import {
+  CONFIG_TEMPLATE,
+  configPath,
+  DEFAULT_IMAGE,
+  loadConfig,
+  resolveHome,
+} from "@sacty/daemon/config";
+import { KEYCHAIN_SERVICE } from "@sacty/daemon/secrets";
 
 const require = createRequire(import.meta.url);
 
-const USAGE = `Usage: sacty up [--port <web port>] [--daemon-port <daemon port>]
+const USAGE = `Usage:
+  sacty up [--port <web port>] [--daemon-port <daemon port>]
+      デーモンと画面（Next.js）を起動します。Ctrl+C で両方を終了します。
+  sacty config init [--force]
+      設定ファイル（~/.sacty/config.yaml）の雛形を作ります。
+  sacty secret set <name>
+      秘密情報（トークンやAPIキー）をmacOSのキーチェーンに保存します。値は入力を求められます。
+  sacty image build
+      エージェント実行用のコンテナイメージを作ります。`;
 
-  up    デーモンと画面（Next.js）を起動します。Ctrl+C で両方を終了します。`;
+/** 終了コードを返して終わる子プロセスを、入出力をつないだまま実行する。 */
+function runInherit(command: string, args: string[], cwd?: string): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, { stdio: "inherit", cwd });
+    child.on("error", reject);
+    child.on("close", (code) => resolve(code ?? 1));
+  });
+}
+
+function configInit(force: boolean): void {
+  const home = resolveHome();
+  const path = configPath(home);
+  if (existsSync(path) && !force) {
+    throw new Error(`${path} はすでにあります。上書きする場合は --force を付けてください。`);
+  }
+  mkdirSync(home, { recursive: true });
+  writeFileSync(path, CONFIG_TEMPLATE, { mode: 0o600 });
+  console.log(`[sacty] 設定ファイルを作成しました：${path}`);
+  console.log(
+    "[sacty] 単価と認証方式を確認し、必要な秘密情報を `sacty secret set <名前>` で保存してください。",
+  );
+}
+
+async function secretSet(name: string | undefined): Promise<void> {
+  if (!name || !/^[A-Za-z0-9._-]+$/.test(name)) {
+    throw new Error(
+      "秘密情報の名前を、英数字と . _ - で指定してください（例：claude-oauth-token）。",
+    );
+  }
+  // 値は security コマンドが直接たずねる（-w を最後に置く）。sactyは値に触れず、
+  // コマンドラインやログにも出さない。
+  console.log(
+    `[sacty] 「${name}」の値を入力してください（入力は表示されません。確認のため2回たずねられます）。`,
+  );
+  const code = await runInherit("security", [
+    "add-generic-password",
+    "-U",
+    "-s",
+    KEYCHAIN_SERVICE,
+    "-a",
+    name,
+    "-w",
+  ]);
+  if (code !== 0) throw new Error("キーチェーンに保存できませんでした。");
+  console.log(`[sacty] 「${name}」をキーチェーンに保存しました。`);
+}
+
+async function imageBuild(): Promise<void> {
+  const config = loadConfig(resolveHome());
+  const image = config.ok ? config.config.image : DEFAULT_IMAGE;
+  const dockerDir = fileURLToPath(new URL("../docker", import.meta.url));
+  console.log(`[sacty] イメージ ${image} を作成します。`);
+  const code = await runInherit("docker", ["build", "-t", image, dockerDir]);
+  if (code !== 0) {
+    throw new Error(
+      "イメージを作成できませんでした。上のログで原因を確認してください（Dockerが起動していない、ネットワークに接続できない、など）。",
+    );
+  }
+  console.log(`[sacty] イメージ ${image} を作成しました。`);
+}
 
 async function waitForDaemon(url: string, token: string, timeoutMs: number): Promise<void> {
   const deadline = Date.now() + timeoutMs;
@@ -118,12 +195,21 @@ async function main() {
       port: { type: "string", default: "4700" },
       "daemon-port": { type: "string", default: "4710" },
       help: { type: "boolean", short: "h", default: false },
+      force: { type: "boolean", default: false },
     },
   });
 
-  if (values.help || positionals[0] !== "up") {
+  const [command, sub, arg] = positionals;
+  if (values.help) {
     console.log(USAGE);
-    process.exit(values.help ? 0 : 1);
+    return;
+  }
+  if (command === "config" && sub === "init") return configInit(values.force);
+  if (command === "secret" && sub === "set") return secretSet(arg);
+  if (command === "image" && sub === "build") return imageBuild();
+  if (command !== "up") {
+    console.log(USAGE);
+    process.exit(1);
   }
   const webPort = parsePort("--port", values.port);
   const daemonPort = parsePort("--daemon-port", values["daemon-port"]);
