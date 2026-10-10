@@ -3,8 +3,10 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Suspense } from "react";
 import { AutoRefresh } from "@/components/auto-refresh";
+import { CardSection } from "@/components/card-section";
 import { DaemonError } from "@/components/daemon-error";
 import { Implementation } from "@/components/implementation";
+import { Markdown } from "@/components/markdown";
 import { Proposals } from "@/components/proposals";
 import { PullRequestCard } from "@/components/pull-request";
 import { ResumeForm } from "@/components/resume-form";
@@ -13,7 +15,14 @@ import { TaskControls } from "@/components/task-controls";
 import { TestViewpoints } from "@/components/test-viewpoints";
 import { getMessages } from "@/i18n/server";
 import { DaemonUnavailableError, getCleanupPlan, getProject, getTask } from "@/lib/daemon";
-import { describeEvent, formatStamp, isWorking, personAction, statusText } from "@/lib/labels";
+import {
+  canControl,
+  describeEvent,
+  formatStamp,
+  isWorking,
+  personAction,
+  statusText,
+} from "@/lib/labels";
 
 export default async function TaskPage({ params }: { params: Promise<{ id: string }> }) {
   const m = (await getMessages()).task;
@@ -87,7 +96,7 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
           </Link>
         </p>
         <CostMeter task={task} />
-        {task.status !== "cancelled" && (
+        {canControl(task) && (
           <TaskControls
             taskId={task.id}
             title={task.title}
@@ -175,6 +184,17 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
 
       <div className="flex flex-wrap items-start gap-6">
         <div className="flex min-w-0 flex-[999_1_560px] flex-col gap-6">
+          {/* どこまで進んだかを先に見られるよう、工程はチケットより上に置く */}
+          <section
+            aria-labelledby="steps"
+            className="flex flex-col gap-3 rounded-xl border border-border bg-card p-5"
+          >
+            <h2 id="steps" className="text-[15px] font-semibold">
+              {m.steps}{" "}
+              <span className="text-[13px] font-normal text-muted-foreground">{m.stepsNote}</span>
+            </h2>
+            <StepChips task={task} />
+          </section>
           <section
             aria-labelledby="ticket"
             className="flex flex-col gap-3 rounded-xl border border-border bg-card p-5"
@@ -183,7 +203,7 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
               {m.ticket}
             </h2>
             {task.body ? (
-              <p className="leading-7 whitespace-pre-wrap">{task.body}</p>
+              <Markdown>{task.body}</Markdown>
             ) : (
               <p className="text-sm text-muted-foreground">{m.ticketEmpty}</p>
             )}
@@ -199,16 +219,6 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
           )}
           <PullRequestCard task={task} />
           {(task.approved.requirements || task.proposals.length > 0) && <Proposals task={task} />}
-          <section
-            aria-labelledby="steps"
-            className="flex flex-col gap-3 rounded-xl border border-border bg-card p-5"
-          >
-            <h2 id="steps" className="text-[15px] font-semibold">
-              {m.steps}{" "}
-              <span className="text-[13px] font-normal text-muted-foreground">{m.stepsNote}</span>
-            </h2>
-            <StepChips task={task} />
-          </section>
         </div>
 
         <section
@@ -257,24 +267,23 @@ async function Deliverable({ task, step }: { task: Task; step: StepKey }) {
   const running =
     task.status === "running" && task.steps.some((s) => s.key === step && s.state === "active");
   return (
-    <section
-      aria-labelledby={`deliverable-${step}`}
-      className="flex flex-col gap-3 rounded-xl border border-border bg-card p-5"
+    <CardSection
+      id={`deliverable-${step}`}
+      title={messages.labels.step[step]}
+      note={
+        approved
+          ? m.approved(approved.submission)
+          : fromProposal
+            ? m.fromProposal(fromProposal.id)
+            : stale
+              ? m.stale
+              : m.draft
+      }
+      // 承認済みの成果物は折りたたむ（承認待ち・作業中のものは開いたまま）
+      collapsed={Boolean(approved)}
     >
-      <h2 id={`deliverable-${step}`} className="text-[15px] font-semibold">
-        {messages.labels.step[step]}{" "}
-        <span className="text-[13px] font-normal text-muted-foreground">
-          {approved
-            ? m.approved(approved.submission)
-            : fromProposal
-              ? m.fromProposal(fromProposal.id)
-              : stale
-                ? m.stale
-                : m.draft}
-        </span>
-      </h2>
       {output ? (
-        <pre className="font-sans text-sm leading-7 break-words whitespace-pre-wrap">{output}</pre>
+        <Markdown>{output}</Markdown>
       ) : (
         <p className="text-sm text-muted-foreground">{running ? m.running : m.notYet}</p>
       )}
@@ -289,6 +298,6 @@ async function Deliverable({ task, step }: { task: Task; step: StepKey }) {
           <TestViewpoints viewpoints={viewpoints} />
         </>
       )}
-    </section>
+    </CardSection>
   );
 }

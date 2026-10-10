@@ -56,6 +56,11 @@ export function personAction(task: Task, l: LabelMessages): { href: string; labe
   return { href: `/tasks/${task.id}`, label: l.action.decide };
 }
 
+/** 一時停止・中止の操作を出すか。中止したタスクと、完了したタスクには出さない。 */
+export function canControl(task: Task): boolean {
+  return task.status !== "cancelled" && !isCompleted(task);
+}
+
 /** 人間の判断が必要な状態か（承認待ち・エスカレーション・一時停止）。 */
 export function needsPerson(task: Task): boolean {
   return (

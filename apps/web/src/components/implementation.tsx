@@ -1,5 +1,7 @@
-import type { Task } from "@sacty/core";
+import { isCompleted, type Task } from "@sacty/core";
 import { cn } from "cn";
+import { CardSection } from "@/components/card-section";
+import { Markdown } from "@/components/markdown";
 import { getMessages } from "@/i18n/server";
 import { formatStamp } from "@/lib/labels";
 
@@ -32,16 +34,13 @@ export async function Implementation({ task }: { task: Task }) {
   const running = task.status === "running" && step?.state === "active";
 
   return (
-    <section
-      aria-labelledby="deliverable-implement"
-      className="flex flex-col gap-3 rounded-xl border border-border bg-card p-5"
+    <CardSection
+      id="deliverable-implement"
+      title={m.title}
+      note={step?.state === "done" ? m.passed : m.working}
+      // 成果物チェックで承認された（タスクが完了した）実装は折りたたむ
+      collapsed={isCompleted(task)}
     >
-      <h2 id="deliverable-implement" className="text-[15px] font-semibold">
-        {m.title}{" "}
-        <span className="text-[13px] font-normal text-muted-foreground">
-          {step?.state === "done" ? m.passed : m.working}
-        </span>
-      </h2>
       {task.repository && (
         <p className="text-xs break-all text-muted-foreground">
           {m.repository(task.repository.url, task.repository.baseBranch)}
@@ -50,9 +49,7 @@ export async function Implementation({ task }: { task: Task }) {
         </p>
       )}
       {task.outputs.implement ? (
-        <pre className="font-sans text-sm leading-7 break-words whitespace-pre-wrap">
-          {task.outputs.implement}
-        </pre>
+        <Markdown>{task.outputs.implement}</Markdown>
       ) : (
         <p className="text-sm text-muted-foreground">{running ? m.running : m.notYet}</p>
       )}
@@ -170,6 +167,6 @@ export async function Implementation({ task }: { task: Task }) {
           )}
         </div>
       )}
-    </section>
+    </CardSection>
   );
 }
