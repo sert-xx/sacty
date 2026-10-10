@@ -138,6 +138,8 @@ export interface AgentExecutor {
     runId: string;
     image: string;
     workspaceDir: string;
+    /** 作業領域を読み取り専用でマウントする（要求要件・設計の工程。PBI-15）。 */
+    readOnlyWorkspace?: boolean;
     invocation: Invocation;
   }): Promise<AgentOutcome>;
   /** 実行中のコンテナを止める（人間が一時停止・中止したとき）。無ければ何もしない。 */
@@ -154,6 +156,8 @@ export function dockerRunArgs(input: {
   runId: string;
   image: string;
   workspaceDir: string;
+  /** 作業領域を読み取り専用でマウントする。 */
+  readOnlyWorkspace?: boolean;
   envNames: string[];
   mounts: { hostPath: string; containerPath: string; readOnly: boolean }[];
   command: string[];
@@ -168,7 +172,7 @@ export function dockerRunArgs(input: {
     "--cap-drop",
     "ALL",
     "-v",
-    `${input.workspaceDir}:${CONTAINER_WORKSPACE}`,
+    `${input.workspaceDir}:${CONTAINER_WORKSPACE}${input.readOnlyWorkspace ? ":ro" : ""}`,
     ...input.mounts.flatMap((m) => [
       "-v",
       `${m.hostPath}:${m.containerPath}${m.readOnly ? ":ro" : ""}`,
@@ -227,6 +231,7 @@ export class DockerExecutor implements AgentExecutor {
     runId,
     image,
     workspaceDir,
+    readOnlyWorkspace,
     invocation,
   }: Parameters<AgentExecutor["run"]>[0]): Promise<AgentOutcome> {
     // コピーして渡すファイル（Codexの認証ファイルなど）は、実行ごとの一時ディレクトリに置き、
@@ -282,6 +287,7 @@ export class DockerExecutor implements AgentExecutor {
       runId,
       image,
       workspaceDir,
+      readOnlyWorkspace,
       envNames: Object.keys(invocation.env),
       mounts,
       command: invocation.command,

@@ -21,9 +21,19 @@ export interface RepositoryWorkspace {
     baseBranch: string,
     /** HTTPS の GitHub に認証する環境変数（gh のトークン。PBI-13）。無ければホストの認証を使う。 */
     authEnv?: Record<string, string>,
+    /**
+     * 作業領域を用意し直すときの、記録済みの起点のコミット。ブランチの最新ではなく、このコミットで
+     * 用意する（タスクの起点を最後まで変えないため。PBI-15）。取得できなければエラーにする。
+     */
+    baseCommit?: string,
   ): Promise<{ baseCommit: string }>;
   /** 起点からの差分（新しく作ったファイルを含む）。 */
   diff(dir: string, gitDir: string, baseCommit: string): Promise<string>;
+  /**
+   * 起点のコミットのファイルを、退避したメタデータから outDir に書き出す（.git は含めない）。
+   * 要求要件・設計の工程で、実装の作業領域とは別に、起点のコードを読ませるため（PBI-15）。
+   */
+  snapshot(gitDir: string, baseCommit: string, outDir: string): Promise<void>;
   /**
    * 作業領域の内容をコミットし、ブランチにプッシュする。コミットは parent に積む
    * （前回プッシュしたコミットに積むので、強制プッシュはしない）。
@@ -167,18 +177,53 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
     url: string,
     baseBranch: string,
     authEnv?: Record<string, string>,
+    recorded?: string,
   ) {
+    if (recorded !== undefined && !COMMIT_RE.test(recorded)) {
+      throw new MessageError(message("git.invalidBaseCommit"));
+    }
     // 前回の clone が途中で止まっていれば、作り直す
     for (const path of [dir, gitDir]) {
       if (existsSync(path)) rmSync(path, { recursive: true, force: true });
     }
     const env = cloneEnv(authEnv);
     await git("clone", ["clone", "--branch", baseBranch, "--", url, dir], env);
+    if (recorded) {
+      // 用意し直すときは、記録済みの起点のコミットにする（ブランチが進んでいても変えない）。
+      // ブランチの履歴に無ければ（強制プッシュなど）、コミットを直接取得してみる
+      const checkout = () =>
+        git("checkout", ["checkout", "--quiet", "--detach", recorded], env, dir);
+      try {
+        await checkout();
+      } catch {
+        try {
+          await git("fetch", ["fetch", "--quiet", "origin", recorded], env, dir);
+          await checkout();
+        } catch {
+          throw new MessageError(message("git.baseCommitMissing", { commit: recorded }));
+        }
+      }
+    }
     const baseCommit = (await git("rev-parse", ["rev-parse", "HEAD"], env, dir)).trim();
     // エージェントが触る前のメタデータを、どのコンテナにもマウントしない場所に退避する
     mkdirSync(dirname(gitDir), { recursive: true });
     cpSync(join(dir, ".git"), gitDir, { recursive: true });
     return { baseCommit };
+  }
+
+  async snapshot(gitDir: string, baseCommit: string, outDir: string) {
+    if (!COMMIT_RE.test(baseCommit)) throw new MessageError(message("git.invalidBaseCommit"));
+    mkdirSync(outDir, { recursive: true });
+    // 差分と同じく、利用者やシステムの git の設定を読まない環境で、一時インデックスから書き出す
+    const temp = mkdtempSync(join(tmpdir(), "sacty-git-"));
+    try {
+      const env = isolatedEnv(join(temp, "index"));
+      const base = ["--git-dir", gitDir, "--work-tree", outDir, ...SAFE_CONFIG];
+      await git("read-tree", [...base, "read-tree", baseCommit], env);
+      await git("checkout-index", [...base, "checkout-index", "--all", "--force"], env);
+    } finally {
+      rmSync(temp, { recursive: true, force: true });
+    }
   }
 
   async diff(dir: string, gitDir: string, baseCommit: string) {

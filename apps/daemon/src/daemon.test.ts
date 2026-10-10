@@ -1,4 +1,12 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { EventInput } from "@sacty/core";
@@ -105,7 +113,12 @@ class FakeRepos implements RepositoryWorkspace {
     url: string;
     baseBranch: string;
     authEnv?: Record<string, string>;
+    recorded?: string;
   }[] = [];
+  /** clone したときの、ブランチの最新のコミット。 */
+  head = "base123";
+  /** 記録済みの起点のコミットを取得できない（強制プッシュで消えたなど）。 */
+  recordedMissing = false;
   diffText = "diff --git a/src/pay.ts b/src/pay.ts\n+export const pay = () => 1;";
   fail?: string;
   diffFail?: string;
@@ -118,14 +131,26 @@ class FakeRepos implements RepositoryWorkspace {
     url: string,
     baseBranch: string,
     authEnv?: Record<string, string>,
+    recorded?: string,
   ) {
     if (this.fail) throw new Error(this.fail);
+    if (recorded && this.recordedMissing) {
+      throw new MessageError(message("git.baseCommitMissing", { commit: recorded }));
+    }
     this.prepareStarted.resolve();
     if (this.prepareGate) await this.prepareGate;
     mkdirSync(dir, { recursive: true });
     mkdirSync(gitDir, { recursive: true });
-    this.prepared.push({ dir, gitDir, url, baseBranch, ...(authEnv ? { authEnv } : {}) });
-    return { baseCommit: "base123" };
+    this.prepared.push({
+      dir,
+      gitDir,
+      url,
+      baseBranch,
+      ...(authEnv ? { authEnv } : {}),
+      ...(recorded ? { recorded } : {}),
+    });
+    // 用意し直すときは記録済みの起点、初めてならブランチの最新
+    return { baseCommit: recorded ?? this.head };
   }
   deleted: string[] = [];
   deleteFail?: string;
@@ -136,6 +161,15 @@ class FakeRepos implements RepositoryWorkspace {
   async diff() {
     if (this.diffFail) throw new Error(this.diffFail);
     return this.diffText;
+  }
+  /** 起点のコードの書き出し（要求要件・設計の工程。PBI-15）。 */
+  snapshots: { gitDir: string; baseCommit: string; outDir: string }[] = [];
+  snapshotFail?: string;
+  async snapshot(gitDir: string, baseCommit: string, outDir: string) {
+    if (this.snapshotFail) throw new Error(this.snapshotFail);
+    mkdirSync(outDir, { recursive: true });
+    writeFileSync(join(outDir, "README.md"), `base ${baseCommit}`);
+    this.snapshots.push({ gitDir, baseCommit, outDir });
   }
   published: { parent: string; branch: string; message: string; date: string }[] = [];
   publishFail?: string;
@@ -233,17 +267,25 @@ class FakeExecutor implements AgentExecutor {
   started = Promise.withResolvers<string>();
   private held = new Map<string, (outcome: AgentOutcome) => void>();
   constructor(private readonly outcomes: (AgentOutcome | typeof HOLD)[]) {}
+  /** 実行ごとに、作業領域を読み取り専用で渡したか。 */
+  readOnly: boolean[] = [];
+  /** 実行ごとに、作業領域にあったファイル（実行の後に消されるので、実行の間に読んでおく）。 */
+  workspaceFiles: string[][] = [];
   async run({
     runId,
     invocation,
     workspaceDir,
+    readOnlyWorkspace,
   }: {
     runId: string;
     invocation: Invocation;
     workspaceDir: string;
+    readOnlyWorkspace?: boolean;
   }): Promise<AgentOutcome> {
     this.calls.push(invocation);
     this.dirs.push(workspaceDir);
+    this.readOnly.push(readOnlyWorkspace === true);
+    this.workspaceFiles.push(existsSync(workspaceDir) ? readdirSync(workspaceDir).sort() : []);
     // 渡されたコンテキスト（実行の後に消されるので、実行の間に読んでおく）
     const seed = invocation.stage?.seedDir;
     this.contexts.push(
@@ -368,6 +410,8 @@ describe("工程の実行と費用", () => {
     expect(events?.map((e) => e.type)).toEqual([
       "TaskCreated",
       "StepsChosen",
+      // 対象リポジトリは、タスクの開始時（最初の実行）に用意する（PBI-15）
+      "RepositoryPrepared",
       "AgentRunStarted",
       "AgentRunCompleted",
       "StepSubmitted",
@@ -1825,17 +1869,20 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     ledger.close();
   });
 
-  it("対象リポジトリが無い・clone できなければ、理由を記録して止める", async () => {
+  it("対象リポジトリが無い・clone できなければ、タスクの開始時に理由を記録して止める（PBI-15）", async () => {
+    const ledger = new SqliteLedgerStore(dbPath);
     const repos = new FakeRepos();
     repos.fail = "git clone に失敗しました：Repository not found";
-    const { ledger, service, id } = await toImplement([], { repos });
+    const { service, executor } = makeService(ledger, [out("# 要求要件")], { repos });
+    const { id } = service.createTicket({ title: "A" });
     await service.runNext(id);
     const task = service.get(id)?.task;
     expect(task?.pausedReason).toBe("error");
-    const failed = service.get(id)?.ledger.findLast((e) => e.type === "AgentRunFailed");
-    expect(failed?.type === "AgentRunFailed" && failed.payload.message).toContain(
-      "Repository not found",
-    );
+    // エージェントは実行しない（費用をかける前に止める）
+    expect(executor.calls).toHaveLength(0);
+    expect(task?.steps[0]).toMatchObject({ key: "requirements", state: "active" });
+    // タスクの開始時に止まるので、エージェントの実行の失敗ではなく、一時停止の理由として記録する（PBI-15）
+    expect(service.get(id)?.task.pausedMessage).toContain("Repository not found");
     ledger.close();
   });
 
@@ -2027,6 +2074,125 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     expect(sent.approved.design).toBeUndefined();
     expect(sent.approved.requirements).toBeDefined();
     expect(sent.misses).toHaveLength(1);
+    ledger.close();
+  });
+
+  it("要求要件・設計は、起点のコミットのコードを実行ごとのディレクトリに書き出して読み取り専用で渡し、実装は clone を渡す（PBI-15）", async () => {
+    const { ledger, service, executor, repos, id } = await toImplement([implement("# v1")]);
+    await service.runNext(id); // 実装
+    // 対象リポジトリは、要求要件の工程の前に1回だけ用意する
+    expect(repos.prepared).toHaveLength(1);
+    const repoDir = repos.prepared[0]?.dir;
+    // 要求要件（2回）と設計は、起点のコミットのコードを読み取り専用で、実装は clone を書き込みできる形で
+    expect(executor.readOnly).toEqual([true, true, true, false]);
+    expect(repos.snapshots.map((x) => x.baseCommit)).toEqual(["base123", "base123", "base123"]);
+    expect(executor.workspaceFiles.slice(0, 3)).toEqual([
+      ["README.md"],
+      ["README.md"],
+      ["README.md"],
+    ]);
+    expect(executor.dirs[3]).toBe(repoDir);
+    for (const used of executor.dirs.slice(0, 3)) {
+      expect(used).not.toBe(repoDir);
+      // 書き出したコードは、実行が終わったら消す
+      expect(existsSync(used)).toBe(false);
+    }
+    // 指示で、コードがあることと、読むだけであることを伝える
+    for (const index of [0, 2]) {
+      expect(promptOf(executor, index)).toContain("起点のコミット（base123）のコードがあります");
+      expect(promptOf(executor, index)).toContain("読み取り専用");
+    }
+    ledger.close();
+  });
+
+  it("実装の後に設計へ差し戻しても、実装の変更を含まない起点のコミットのコードを読む（PBI-15）", async () => {
+    const { ledger, service, executor, repos, id } = await toDeliverableGate([design]);
+    const repoDir = repos.prepared[0]?.dir ?? "";
+    // 実装で作業領域が変わっている
+    writeFileSync(join(repoDir, "changed-by-implement.ts"), "x");
+    service.requestChanges(id, { step: "pr", submission: 1, target: "design", comments: ["観点"] });
+    const before = executor.calls.length;
+    await service.runNext(id); // 設計のやり直し
+    expect(executor.readOnly[before]).toBe(true);
+    expect(executor.dirs[before]).not.toBe(repoDir);
+    expect(executor.workspaceFiles[before]).toEqual(["README.md"]);
+    expect(repos.snapshots.at(-1)?.baseCommit).toBe("base123");
+    ledger.close();
+  });
+
+  it("どの工程から始まるタスクでも、タスクの開始時に対象リポジトリを用意する（PBI-15）", async () => {
+    // 今後のタスク種別のように、要求要件から始まらないタスク（実装から始まる）
+    const ledger = new SqliteLedgerStore(dbPath);
+    ledger.append({
+      taskId: "t-impl",
+      projectId: "default",
+      events: [
+        {
+          actor: "person",
+          event: {
+            type: "TaskCreated",
+            payload: { title: "実装だけ", body: "", start: "ticket", budgetCapUsd: 1 },
+          },
+        },
+        { actor: "sacty", event: { type: "StepsChosen", payload: { steps: ["implement", "pr"] } } },
+      ],
+    });
+    const { service, executor, repos } = makeService(ledger, [implement("# v1")]);
+    await service.runNext("t-impl");
+    const types = service.get("t-impl")?.ledger.map((e) => e.type) ?? [];
+    expect(types.indexOf("RepositoryPrepared")).toBeLessThan(types.indexOf("AgentRunStarted"));
+    expect(repos.prepared).toHaveLength(1);
+    // 実装の工程は clone を書き込みできる形で使う
+    expect(executor.dirs[0]).toBe(repos.prepared[0]?.dir);
+    expect(executor.readOnly).toEqual([false]);
+    ledger.close();
+  });
+
+  it("作業領域が消えて用意し直すときも、ブランチの最新ではなく記録済みの起点のコミットを使う（PBI-15 レビュー指摘）", async () => {
+    const ledger = new SqliteLedgerStore(dbPath);
+    const repos = new FakeRepos();
+    const { service } = makeService(ledger, [out("# 要求要件"), design, out("# 要求要件")], {
+      repos,
+    });
+    const { id } = service.createTicket({ title: "A" });
+    await service.runNext(id);
+    service.approve(id, { step: "requirements", submission: 1 });
+    // 作業領域が消え、その間にベースブランチが進んだ
+    rmSync(repos.prepared[0]?.dir ?? "", { recursive: true, force: true });
+    repos.head = "newbase456";
+    await service.runNext(id); // 設計
+    expect(repos.prepared.map((p) => p.recorded)).toEqual([undefined, "base123"]);
+    expect(repos.snapshots.map((x) => x.baseCommit)).toEqual(["base123", "base123"]);
+    expect(service.get(id)?.task.repository?.baseCommit).toBe("base123");
+    const prepared = service.get(id)?.ledger.filter((e) => e.type === "RepositoryPrepared");
+    expect(prepared).toHaveLength(1);
+
+    // 記録済みの起点を取得できなければ、起点を変えずに止める
+    const other = makeService(new SqliteLedgerStore(join(dir, "other.db")), [out("# 要求要件")], {
+      repos: Object.assign(new FakeRepos(), { recordedMissing: true }),
+    });
+    const t = other.service.createTicket({ title: "B" });
+    await other.service.runNext(t.id);
+    other.service.approve(t.id, { step: "requirements", submission: 1 });
+    rmSync(other.repos.prepared[0]?.dir ?? "", { recursive: true, force: true });
+    await other.service.runNext(t.id);
+    expect(other.executor.calls).toHaveLength(1); // 設計のエージェントは実行しない
+    expect(other.service.get(t.id)?.task.repository?.baseCommit).toBe("base123");
+    expect(other.service.get(t.id)?.task.pausedReason).toBe("error");
+    ledger.close();
+  });
+
+  it("起点のコードを書き出せなければ、エージェントを実行せずに理由を記録して止める（PBI-15）", async () => {
+    const ledger = new SqliteLedgerStore(dbPath);
+    const repos = new FakeRepos();
+    repos.snapshotFail = "git read-tree に失敗しました";
+    const { service, executor } = makeService(ledger, [out("# 要求要件")], { repos });
+    const { id } = service.createTicket({ title: "A" });
+    await service.runNext(id);
+    expect(executor.calls).toHaveLength(0);
+    expect(service.get(id)?.task.pausedReason).toBe("error");
+    const failed = service.get(id)?.ledger.findLast((e) => e.type === "AgentRunFailed");
+    expect(failed?.type === "AgentRunFailed" && failed.payload.message).toContain("read-tree");
     ledger.close();
   });
 
@@ -2244,17 +2410,20 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
   });
 
   it("準備の間に一時停止したら、新しいコンテナを起動しない（レビュー指摘）", async () => {
+    // 対象リポジトリは、要求要件の工程の前に用意する（PBI-15）
+    const ledger = new SqliteLedgerStore(dbPath);
     const repos = new FakeRepos();
     const gate = Promise.withResolvers<void>();
     repos.prepareGate = gate.promise;
-    const { ledger, service, executor, id } = await toImplement([implement("# v1")], { repos });
+    const { service, executor } = makeService(ledger, [out("# 要求要件")], { repos });
+    const { id } = service.createTicket({ title: "A" });
     const callsBefore = executor.calls.length;
     const running = service.runNext(id);
     await repos.prepareStarted.promise;
     const pausing = service.pause(id);
     gate.resolve();
     await Promise.all([running, pausing]);
-    expect(executor.calls.length).toBe(callsBefore); // 実装のコンテナは起動していない
+    expect(executor.calls.length).toBe(callsBefore); // 要求要件のコンテナは起動していない
     expect(service.get(id)?.task).toMatchObject({ status: "paused", pausedReason: "manual" });
     ledger.close();
   });
@@ -2576,15 +2745,12 @@ describe("プロジェクトと GitHub Issue の取り込み（PBI-5a）", () =>
     service.saveProject(pay.id, withoutAccount);
     const [task] = service.importIssues([issue("acme/payments", 13, ["sacty"])]);
     const id = task?.id ?? "";
-    await service.runNext(id);
-    service.approve(id, { step: "requirements", submission: 1 });
-    await service.runNext(id);
-    service.approve(id, { step: "design", submission: 1 });
+    // 対象リポジトリは要求要件の工程の前に用意するので、要求要件の前に止まる（PBI-15）
     await service.runNext(id);
     expect(github.requested).toEqual([]);
     expect(repos.prepared).toHaveLength(0);
-    const failed = service.get(id)?.ledger.findLast((e) => e.type === "AgentRunFailed");
-    expect(failed?.type === "AgentRunFailed" && failed.payload.message).toEqual({
+    // タスクの開始時に止まるので、エージェントの実行の失敗ではなく、一時停止の理由として記録する（PBI-15）
+    expect(service.get(id)?.task.pausedMessage).toEqual({
       code: "github.accountRequired",
       params: { project: "決済" },
     });
@@ -2608,14 +2774,11 @@ describe("プロジェクトと GitHub Issue の取り込み（PBI-5a）", () =>
     other.service.saveProject(other.pay.id, { ...other.pay, githubAccount: "side-job" });
     const [t2] = other.service.importIssues([issue("acme/payments", 12, ["sacty"])]);
     const id2 = t2?.id ?? "";
-    await other.service.runNext(id2);
-    other.service.approve(id2, { step: "requirements", submission: 1 });
-    await other.service.runNext(id2);
-    other.service.approve(id2, { step: "design", submission: 1 });
+    // 対象リポジトリは要求要件の工程の前に用意するので、要求要件の前に止まる（PBI-15）
     await other.service.runNext(id2);
     expect(other.service.get(id2)?.task.pausedReason).toBe("error");
-    const failed = other.service.get(id2)?.ledger.findLast((e) => e.type === "AgentRunFailed");
-    expect(failed?.type === "AgentRunFailed" && failed.payload.message).toEqual({
+    // タスクの開始時に止まるので、エージェントの実行の失敗ではなく、一時停止の理由として記録する（PBI-15）
+    expect(other.service.get(id2)?.task.pausedMessage).toEqual({
       code: "github.accountUnavailable",
       params: { account: "side-job" },
     });
@@ -2638,13 +2801,10 @@ describe("プロジェクトと GitHub Issue の取り込み（PBI-5a）", () =>
     ]);
     const [task] = service.importIssues([issue("acme/ledger", 10, ["sacty"])]);
     const id = task?.id ?? "";
+    // 対象リポジトリは要求要件の工程の前に用意するので、要求要件の前に止まる（PBI-15）
     await service.runNext(id);
-    service.approve(id, { step: "requirements", submission: 1 });
-    await service.runNext(id);
-    service.approve(id, { step: "design", submission: 1 });
-    await service.runNext(id);
-    const failed = service.get(id)?.ledger.findLast((e) => e.type === "AgentRunFailed");
-    expect(failed?.type === "AgentRunFailed" && ja(failed.payload.message)).toContain(
+    // タスクの開始時に止まるので、エージェントの実行の失敗ではなく、一時停止の理由として記録する（PBI-15）
+    expect(ja(service.get(id)?.task.pausedMessage)).toContain(
       "プロジェクト「決済」に、acme/ledger のリポジトリの設定",
     );
     ledger.close();

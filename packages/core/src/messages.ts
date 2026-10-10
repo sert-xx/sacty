@@ -110,6 +110,7 @@ const PARAMS = {
   "git.failed": z.object({ command: z.string(), detail: z.string() }),
   "git.exitCode": z.object({ command: z.string(), code: z.number().nullable() }),
   "git.invalidBaseCommit": null,
+  "git.baseCommitMissing": z.object({ commit: z.string() }),
   "git.invalidParentCommit": null,
   "git.invalidBranch": null,
   "git.nothingToCommit": null,
@@ -332,6 +333,8 @@ const ja: MessageDictionary = {
   "git.failed": ({ command, detail }) => `git ${command} に失敗しました：${detail}`,
   "git.exitCode": ({ command, code }) => `git ${command} に失敗しました：終了コード ${code}`,
   "git.invalidBaseCommit": "起点のコミットが不正です。",
+  "git.baseCommitMissing": ({ commit }) =>
+    `作業領域を用意し直そうとしましたが、タスクの起点のコミット（${commit.slice(0, 7)}）を取得できません。起点を変えずに止めました。`,
   "git.invalidParentCommit": "積む先のコミットが不正です。",
   "git.invalidBranch": "ブランチ名が不正です。",
   "git.nothingToCommit": "起点から変更がないため、コミットできません。",
@@ -495,6 +498,8 @@ const en: MessageDictionary = {
   "git.failed": ({ command, detail }) => `git ${command} failed: ${detail}`,
   "git.exitCode": ({ command, code }) => `git ${command} failed: exit code ${code}`,
   "git.invalidBaseCommit": "The base commit is not valid.",
+  "git.baseCommitMissing": ({ commit }) =>
+    `Tried to prepare the workspace again, but the task's base commit (${commit.slice(0, 7)}) could not be fetched. Stopped without changing the base.`,
   "git.invalidParentCommit": "The parent commit is not valid.",
   "git.invalidBranch": "The branch name is not valid.",
   "git.nothingToCommit": "Nothing changed since the base, so there is nothing to commit.",
