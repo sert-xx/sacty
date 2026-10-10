@@ -174,6 +174,11 @@ const TaskPaused = z.object({
     reason: PauseReason,
     /** 止まった理由の詳しい説明（実行の失敗の記録が無い場合）。 */
     message: z.string().optional(),
+    /**
+     * 止めたが、無くなったことを確かめられなかったコンテナ（の実行）。中止や再開の前に確かめ直す
+     * （デーモンを再起動しても追えるよう、台帳に記録する）。
+     */
+    unstoppedRuns: z.array(z.string()).optional(),
   }),
 });
 

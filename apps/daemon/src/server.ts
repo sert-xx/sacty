@@ -185,7 +185,10 @@ export function createApp(
     const json = await readJson(c);
     if (!json.ok) return c.json({ error: "invalid_json" }, 400);
     try {
-      return c.json({ task: service.resume(c.req.param("id"), json.body) });
+      const id = c.req.param("id");
+      // 一時停止のときに停止を確かめられなかったコンテナがあれば、確かめ直してから再開する
+      const containersConfirmed = await service.confirmPausedContainers(id);
+      return c.json({ task: service.resume(id, json.body, { containersConfirmed }) });
     } catch (error) {
       return handleError(c, error);
     }

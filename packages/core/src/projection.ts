@@ -100,6 +100,8 @@ export type Task = {
   pausedReason?: PauseReason;
   /** 止まった理由の詳しい説明。 */
   pausedMessage?: string;
+  /** 止めたが、無くなったことを確かめられなかったコンテナの実行。 */
+  unstoppedRuns?: string[];
   /** 一時停止の直前の状態。再開時、実行待ち（やり直し）に戻すか待機に戻すかを決める。 */
   resumeTo?: "queued" | "idle";
   steps: { key: StepKey; state: StepState }[];
@@ -516,6 +518,7 @@ export function applyEvent(
       task.verification = undefined;
       task.pausedReason = undefined;
       task.pausedMessage = undefined;
+      task.unstoppedRuns = undefined;
       task.resumeTo = undefined;
       break;
 
@@ -581,6 +584,7 @@ export function applyEvent(
       task.status = "paused";
       task.pausedReason = event.payload.reason;
       task.pausedMessage = event.payload.message;
+      task.unstoppedRuns = event.payload.unstoppedRuns;
       break;
 
     case "BudgetCapRaised":
@@ -597,6 +601,7 @@ export function applyEvent(
       if (task.pausedReason === "verification") task.verifyFailures = 0;
       task.pausedReason = undefined;
       task.pausedMessage = undefined;
+      task.unstoppedRuns = undefined;
       task.resumeTo = undefined;
       break;
   }

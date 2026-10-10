@@ -525,26 +525,34 @@ export class TaskService {
     const entry = { runIds: new Set<string>(), done: Promise.resolve() };
     this.inflight.set(taskId, entry);
     this.runningTask = taskId;
-    entry.done = this.runNextInner(taskId);
+    // 完了は、止めたコンテナの確認と一時停止の記録まで含める（一時停止・中止はこれを待つ）
+    entry.done = (async () => {
+      try {
+        await this.runNextInner(taskId);
+      } finally {
+        this.runningTask = undefined;
+        if (this.pauseRequested.has(taskId)) {
+          // 止めたコンテナが本当に無くなったかを確かめてから、一時停止を記録する
+          this.pauseIfRequested(taskId, await this.unstopped(entry.runIds));
+        }
+      }
+    })();
     try {
       await entry.done;
     } finally {
       this.inflight.delete(taskId);
-      this.runningTask = undefined;
-      if (this.pauseRequested.has(taskId)) {
-        // 止めたコンテナが本当に無くなったかを確かめてから、一時停止を記録する
-        const stopped = await this.confirmStopped(entry.runIds);
-        this.pauseIfRequested(taskId, stopped ? undefined : this.notStoppedMessage(entry.runIds));
-      }
     }
   }
 
-  /** 止めたコンテナが、すべて無くなったか。 */
+  /** 止めたコンテナのうち、無くなったことを確かめられなかったもの（の実行）。 */
+  private async unstopped(runIds: Iterable<string>): Promise<string[]> {
+    const list = [...runIds];
+    const results = await Promise.all(list.map((runId) => this.deps.executor.ensureStopped(runId)));
+    return list.filter((_, i) => !results[i]);
+  }
+
   private async confirmStopped(runIds: Iterable<string>): Promise<boolean> {
-    const results = await Promise.all(
-      [...runIds].map((runId) => this.deps.executor.ensureStopped(runId)),
-    );
-    return results.every(Boolean);
+    return (await this.unstopped(runIds)).length === 0;
   }
 
   private notStoppedMessage(runIds: Iterable<string>): string {
@@ -553,7 +561,7 @@ export class TaskService {
   }
 
   /** 一時停止を求められていて、止められる状態なら、人間の一時停止として記録する。 */
-  private pauseIfRequested(taskId: string, message?: string): void {
+  private pauseIfRequested(taskId: string, unstoppedRuns: string[] = []): void {
     if (!this.pauseRequested.has(taskId)) return;
     this.pauseRequested.delete(taskId);
     const task = this.tasks.get(taskId);
@@ -563,7 +571,7 @@ export class TaskService {
         actor: "person",
         event: {
           type: "TaskPaused",
-          payload: { reason: "manual", ...(message ? { message } : {}) },
+          payload: { reason: "manual", ...this.unstoppedPayload(unstoppedRuns) },
         },
       },
     ]);
@@ -573,10 +581,16 @@ export class TaskService {
    * 人間が止めた実行の、一時停止に添える説明。止めたコンテナが無くなったことを確かめられなければ、
    * その旨を返す（再開する前に確かめてもらうため）。
    */
-  private async manualPauseMessage(taskId: string): Promise<string | undefined> {
-    if (!this.pauseRequested.has(taskId)) return undefined;
-    const runIds = this.inflight.get(taskId)?.runIds ?? [];
-    return (await this.confirmStopped(runIds)) ? undefined : this.notStoppedMessage(runIds);
+  private async manualPauseInfo(
+    taskId: string,
+  ): Promise<{ message?: string; unstoppedRuns?: string[] }> {
+    if (!this.pauseRequested.has(taskId)) return {};
+    return this.unstoppedPayload(await this.unstopped(this.inflight.get(taskId)?.runIds ?? []));
+  }
+
+  /** 停止を確かめられなかった実行を、一時停止の記録に添える形にする。 */
+  private unstoppedPayload(runs: string[]): { message?: string; unstoppedRuns?: string[] } {
+    return runs.length > 0 ? { message: this.notStoppedMessage(runs), unstoppedRuns: runs } : {};
   }
 
   /** 実行の失敗で止めるときの理由。人間が止めた（コンテナを止めた）のなら、人間の一時停止。 */
@@ -644,7 +658,7 @@ export class TaskService {
     });
 
     if (outcome.kind === "failed") {
-      const manualMessage = await this.manualPauseMessage(task.id);
+      const manual = await this.manualPauseInfo(task.id);
       this.append(task, [
         {
           actor: "sacty",
@@ -668,7 +682,7 @@ export class TaskService {
             type: "TaskPaused",
             payload: {
               reason: this.stopReason(task.id, outcome.reason),
-              ...(manualMessage ? { message: manualMessage } : {}),
+              ...manual,
             },
           },
         },
@@ -879,7 +893,8 @@ export class TaskService {
             type: "TaskPaused",
             payload: {
               reason: this.stopReason(task.id, outcome.reason),
-              message: (await this.manualPauseMessage(task.id)) ?? message,
+              message,
+              ...(await this.manualPauseInfo(task.id)),
             },
           },
         },
@@ -1048,6 +1063,17 @@ export class TaskService {
     }
   }
 
+  /**
+   * 一時停止のときに停止を確かめられなかったコンテナが、いまは無くなっているかを確かめる
+   * （残っていれば止める）。そのようなコンテナが無ければ true。
+   */
+  async confirmPausedContainers(id: string): Promise<boolean> {
+    const runs = this.tasks.get(id)?.unstoppedRuns ?? [];
+    if (runs.length === 0) return true;
+    this.stopRuns(runs);
+    return this.confirmStopped(runs);
+  }
+
   /** 中止したときに片付けるもの（確認の画面に並べる）。 */
   cleanupPlan(id: string): CleanupItem[] | undefined {
     const task = this.tasks.get(id);
@@ -1057,8 +1083,11 @@ export class TaskService {
     return [
       {
         target: "container",
-        present: Boolean(inflight && inflight.runIds.size > 0),
-        detail: inflight ? [...inflight.runIds].map((r) => `sacty-run-${r}`).join(", ") : undefined,
+        present: Boolean((inflight && inflight.runIds.size > 0) || task.unstoppedRuns?.length),
+        detail:
+          [...(inflight?.runIds ?? []), ...(task.unstoppedRuns ?? [])]
+            .map((r) => `sacty-run-${r}`)
+            .join(", ") || undefined,
       },
       {
         target: "workspace",
@@ -1112,6 +1141,16 @@ export class TaskService {
           containerStopped
             ? { target: "container", result: "done" }
             : { target: "container", result: "failed", detail: this.notStoppedMessage(runIds) },
+        );
+      } else if (task.unstoppedRuns?.length) {
+        // 一時停止のときに停止を確かめられなかったコンテナは、ここで確かめ直す
+        const runs = task.unstoppedRuns;
+        this.stopRuns(runs);
+        containerStopped = await this.confirmStopped(runs);
+        cleanup.push(
+          containerStopped
+            ? { target: "container", result: "done" }
+            : { target: "container", result: "failed", detail: this.notStoppedMessage(runs) },
         );
       } else {
         cleanup.push({ target: "container", result: "skipped" });
@@ -1429,12 +1468,16 @@ export class TaskService {
   }
 
   /** 一時停止中のタスクを再開する。予算で止まった場合は、累計の新しい上限が必要。 */
-  resume(id: string, raw: unknown): Task {
+  resume(id: string, raw: unknown, options: { containersConfirmed?: boolean } = {}): Task {
     const input = ResumeTaskInput.parse(raw);
     const task = this.tasks.get(id);
     if (!task) throw new InvalidOperationError("タスクが見つかりません。");
     if (task.status !== "paused") {
       throw new InvalidOperationError("一時停止中のタスクではありません。");
+    }
+    // 止めたコンテナがまだ残っているかもしれないうちは、再開しない（作業領域を取り合うため）
+    if (task.unstoppedRuns?.length && !options.containersConfirmed) {
+      throw new InvalidOperationError(this.notStoppedMessage(task.unstoppedRuns));
     }
     const events: { actor: Actor; event: EventInput }[] = [];
     const needsCap = task.pausedReason === "budget";

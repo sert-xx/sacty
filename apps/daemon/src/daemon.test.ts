@@ -2175,29 +2175,74 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     ledger.close();
   });
 
-  it("止めたコンテナの停止を確かめられなければ、一時停止に警告を付け、中止では作業領域を消さない（レビュー指摘）", async () => {
-    const { ledger, service, executor, id } = await toImplement([HOLD, HOLD]);
+  it("止めたコンテナの停止を確かめられなければ、一時停止に記録して、再開や中止で確かめ直す（レビュー指摘）", async () => {
+    const { ledger, service, executor, id } = await toImplement([HOLD]);
     executor.stops = false;
     const running = service.runNext(id);
-    await executor.started.promise;
+    const runId = await executor.started.promise;
     await service.pause(id);
     await running;
     const paused = service.get(id)?.task;
-    expect(paused?.pausedReason).toBe("manual");
+    expect(paused).toMatchObject({ pausedReason: "manual", unstoppedRuns: [runId] });
     expect(paused?.pausedMessage).toMatch(/停止を確認できませんでした/);
 
-    service.resume(id, {});
-    executor.started = Promise.withResolvers<string>();
-    const again = service.runNext(id);
-    await executor.started.promise;
-    const cancelled = await service.cancel(id);
-    await again;
+    // 再起動しても、台帳から追える
+    const { service: restarted, executor: restartedExecutor } = makeService(ledger);
+    restartedExecutor.stops = false;
+    expect(restarted.get(id)?.task.unstoppedRuns).toEqual([runId]);
+    // 止まったことを確かめられないうちは、再開しない
+    expect(await restarted.confirmPausedContainers(id)).toBe(false);
+    expect(() => restarted.resume(id, {})).toThrow(/停止を確認できませんでした/);
+    // 一時停止のまま中止しても、作業領域は消さない
+    const cancelled = await restarted.cancel(id);
     const results = Object.fromEntries(
       (cancelled.cancelled?.cleanup ?? []).map((c) => [c.target, c]),
     );
     expect(results.container?.result).toBe("failed");
     expect(results.workspace?.result).toBe("failed");
     expect(existsSync(join(dir, "workspaces", id, "repo"))).toBe(true);
+    ledger.close();
+  });
+
+  it("止まったことを確かめられたら、再開できる（レビュー指摘）", async () => {
+    const { ledger, service, executor, id } = await toImplement([
+      HOLD,
+      implement("# v1"),
+      review(),
+    ]);
+    executor.stops = false;
+    const running = service.runNext(id);
+    await executor.started.promise;
+    await service.pause(id);
+    await running;
+    executor.stops = true; // 遅れて止まった
+    expect(await service.confirmPausedContainers(id)).toBe(true);
+    expect(service.resume(id, {}, { containersConfirmed: true }).status).toBe("queued");
+    expect(service.get(id)?.task.unstoppedRuns).toBeUndefined();
+    ledger.close();
+  });
+
+  it("一時停止は、停止の確認と記録が終わってから返る（レビュー指摘）", async () => {
+    const tests = new FakeTests();
+    tests.hold = true;
+    const { ledger, service, executor, id } = await toImplement([implement("# v1")], { tests });
+    await service.runNext(id); // 実装
+    // 停止の確認に時間がかかる
+    const gate = Promise.withResolvers<boolean>();
+    executor.ensureStopped = () => gate.promise;
+    const verifying = service.runNext(id);
+    await tests.started.promise;
+    let returned = false;
+    const pausing = service.pause(id).then((t) => {
+      returned = true;
+      return t;
+    });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(returned).toBe(false); // 確認が終わるまで返らない
+    gate.resolve(true);
+    const paused = await pausing;
+    await verifying;
+    expect(paused.status).toBe("paused");
     ledger.close();
   });
 
