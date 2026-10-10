@@ -2112,6 +2112,38 @@ describe("プロジェクトと GitHub Issue の取り込み（PBI-5a）", () =>
   });
 });
 
+describe("プロジェクト定義のエクスポート・インポート（PBI-5b）", () => {
+  it("エクスポートした定義を、新しいプロジェクトとしてインポートでき、重複していれば拒否する", () => {
+    const ledger = new SqliteLedgerStore(dbPath);
+    const projects = new MemoryProjectStore();
+    const { service } = makeService(ledger, [], { projects });
+    const pay = service.saveProject(undefined, {
+      name: "決済",
+      sources: [{ scope: "org", target: "acme", label: "sacty" }],
+      repositories: [{ repo: "acme/payments", testCommand: "npm test" }],
+    });
+    const exported = service.exportProject(pay.id);
+    expect(service.exportProject("no-such")).toBeUndefined();
+
+    // 同じ取り込み元のプロジェクトがあるあいだは、インポートできない
+    expect(() => service.importProject(exported)).toThrow(/プロジェクト「決済」に登録されています/);
+    expect(service.listProjects()).toHaveLength(2);
+
+    // 別の sacty（取り込み元が重複しない環境）へは、新しいプロジェクトとしてインポートできる
+    const other = makeService(new SqliteLedgerStore(join(dir, "other.db")), [], {
+      projects: new MemoryProjectStore(),
+    });
+    const imported = other.service.importProject(JSON.parse(JSON.stringify(exported)));
+    expect(imported.id).not.toBe(pay.id);
+    expect(imported).toMatchObject({
+      name: "決済",
+      sources: pay.sources,
+      repositories: pay.repositories,
+    });
+    ledger.close();
+  });
+});
+
 describe("API", () => {
   const token = "test-token";
   const auth = { authorization: `Bearer ${token}` };
@@ -2199,6 +2231,37 @@ describe("API", () => {
     expect((await decide({ accept: true })).status).toBe(409);
     expect((await decide({ accept: "yes" })).status).toBe(400);
     expect(service.get(task.id)?.ledger.map((e) => e.type)).toEqual(["TaskCreated", "StepsChosen"]);
+    ledger.close();
+  });
+
+  it("プロジェクトのエクスポートは定義を返し、インポートは形式の誤りに400・重複に409を返す（PBI-5b）", async () => {
+    const ledger = new SqliteLedgerStore(dbPath);
+    const { service } = makeService(ledger, [], { projects: new MemoryProjectStore() });
+    const app = createApp(service, token);
+    const pay = service.saveProject(undefined, {
+      name: "決済",
+      sources: [{ scope: "repo", target: "acme/payments", label: "sacty" }],
+    });
+    const res = await app.request(`/api/projects/${pay.id}/export`, { headers: auth });
+    expect(res.status).toBe(200);
+    const exported = await res.json();
+    expect(exported).toMatchObject({ sacty: "project", version: 1, project: { name: "決済" } });
+    expect((await app.request("/api/projects/no-such/export", { headers: auth })).status).toBe(404);
+
+    const post = (body: unknown) =>
+      app.request("/api/projects/import", {
+        method: "POST",
+        headers: json,
+        body: JSON.stringify(body),
+      });
+    expect((await post(exported)).status).toBe(409);
+    expect((await post({ ...exported, extra: 1 })).status).toBe(400);
+    expect((await post({ sacty: "project", version: 9, project: { name: "x" } })).status).toBe(400);
+    const created = await post({
+      ...exported,
+      project: { ...exported.project, name: "決済（コピー）", sources: [] },
+    });
+    expect(created.status).toBe(201);
     ledger.close();
   });
 

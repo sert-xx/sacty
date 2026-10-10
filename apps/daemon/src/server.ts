@@ -76,6 +76,22 @@ export function createApp(
     }
   });
 
+  app.get("/api/projects/:id/export", (c) => {
+    const exported = service.exportProject(c.req.param("id"));
+    if (!exported) return c.json({ error: "not_found" }, 404);
+    return c.json(exported);
+  });
+
+  app.post("/api/projects/import", async (c) => {
+    const json = await readJson(c);
+    if (!json.ok) return c.json({ error: "invalid_json" }, 400);
+    try {
+      return c.json({ project: service.importProject(json.body) }, 201);
+    } catch (error) {
+      return handleError(c, error);
+    }
+  });
+
   app.put("/api/projects/:id", async (c) => {
     const json = await readJson(c);
     if (!json.ok) return c.json({ error: "invalid_json" }, 400);

@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   excludedRepositories,
+  exportProject,
   type Project,
   ProjectDefinition,
   type ProjectDefinitionInput,
+  ProjectExport,
   projectConflicts,
   responsibleSource,
 } from "./projects.js";
@@ -85,5 +87,61 @@ describe("プロジェクトの取り込み元（PBI-5）", () => {
       }),
     ).toThrow(/owner\/name/);
     expect(() => ProjectDefinition.parse({ name: " " })).toThrow(/名前を入力/);
+  });
+});
+
+describe("プロジェクト定義のエクスポート・インポート（PBI-5b）", () => {
+  const full = make("p9", {
+    name: "決済",
+    sources: [{ scope: "org", target: "acme", label: "sacty" }],
+    repositories: [{ repo: "acme/payments", testCommand: "npm test" }],
+  });
+
+  it("定義の項目だけを書き出し、ID・日時は含めない。書き出したものはそのまま読める", () => {
+    const exported = exportProject(full);
+    expect(exported).toEqual({
+      sacty: "project",
+      version: 1,
+      project: {
+        name: "決済",
+        sources: [{ scope: "org", target: "acme", label: "sacty" }],
+        repositories: [
+          { repo: "acme/payments", baseBranch: "main", testCommand: "npm test", pullRequest: true },
+        ],
+      },
+    });
+    const text = JSON.stringify(exported);
+    expect(text).not.toContain("p9");
+    expect(text).not.toContain("2026-10-10");
+    expect(ProjectExport.parse(JSON.parse(text))).toEqual(exported);
+  });
+
+  it("形式・版の違うファイルや、知らない項目（秘密情報など）は読まない", () => {
+    const ok = exportProject(full);
+    expect(() => ProjectExport.parse({ ...ok, sacty: "task" })).toThrow(
+      /プロジェクト定義のファイルではありません/,
+    );
+    expect(() => ProjectExport.parse({ ...ok, version: 2 })).toThrow(/対応していない版/);
+    expect(() =>
+      ProjectExport.parse({ ...ok, project: { ...ok.project, token: "ghp_secret" } }),
+    ).toThrow();
+    expect(() =>
+      ProjectExport.parse({
+        ...ok,
+        project: {
+          ...ok.project,
+          repositories: [{ ...ok.project.repositories[0], token_secret: "github-token" }],
+        },
+      }),
+    ).toThrow();
+    expect(() =>
+      ProjectExport.parse({
+        ...ok,
+        project: {
+          ...ok.project,
+          sources: [{ scope: "org", target: "acme", label: "x", token: "t" }],
+        },
+      }),
+    ).toThrow();
   });
 });

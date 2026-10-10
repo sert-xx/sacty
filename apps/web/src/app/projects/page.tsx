@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Suspense } from "react";
 import { runIntakeAction } from "@/app/actions";
 import { DaemonError } from "@/components/daemon-error";
+import { ImportProjectForm } from "@/components/import-project-form";
 import { ProjectEditor } from "@/components/project-editor";
 import { Button } from "@/components/ui/button";
 import { DaemonUnavailableError, getStatus, listProjects } from "@/lib/daemon";
@@ -14,6 +15,12 @@ export default function ProjectsPage() {
       <Suspense fallback={<p className="text-sm text-muted-foreground">読み込み中…</p>}>
         <Projects />
       </Suspense>
+      <section aria-labelledby="import-project" className="flex flex-col gap-3">
+        <h2 id="import-project" className="text-[15px] font-semibold">
+          プロジェクトをインポートする
+        </h2>
+        <ImportProjectForm />
+      </section>
       <section aria-labelledby="new-project" className="flex flex-col gap-3">
         <h2 id="new-project" className="text-[15px] font-semibold">
           プロジェクトを作る

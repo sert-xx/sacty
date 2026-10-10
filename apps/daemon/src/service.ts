@@ -24,6 +24,7 @@ import {
   openProposal,
   type Project,
   ProjectDefinition,
+  ProjectExport,
   project,
   projectConflicts,
   proposalAccepted,
@@ -35,6 +36,7 @@ import {
   type StepKey,
   type Task,
   type TaskProposal,
+  exportProject as toProjectExport,
 } from "@sacty/core";
 import type { AgentExecutor } from "./agents/docker.js";
 import { type AgentRole, buildInvocation } from "./agents/invocation.js";
@@ -172,6 +174,21 @@ export class TaskService {
     const problems = projectConflicts(this.deps.projects.all(), id, definition);
     if (problems.length > 0) throw new InvalidOperationError(problems.join("\n"));
     return this.deps.projects.put(id ?? randomUUID(), definition);
+  }
+
+  /** プロジェクトの定義をエクスポートする（個人の設定や秘密情報は含めない）。 */
+  exportProject(id: string): ProjectExport | undefined {
+    const project = this.deps.projects.get(id);
+    return project ? toProjectExport(project) : undefined;
+  }
+
+  /**
+   * エクスポートしたプロジェクトの定義を、新しいプロジェクトとしてインポートする。
+   * 形式・版・知らない項目を検査し、ほかのプロジェクトと取り込み元が重複していれば拒否する。
+   */
+  importProject(raw: unknown): Project {
+    const { project } = ProjectExport.parse(raw);
+    return this.saveProject(undefined, project);
   }
 
   /** 取り込みで検索する条件（取り込み元ごと）。 */

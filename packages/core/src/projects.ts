@@ -133,3 +133,55 @@ export function repositorySettings(
 ): RepositorySettings | undefined {
   return project?.repositories.find((r) => same(r.repo, repo));
 }
+
+/** エクスポートの形式の版。形を変えたら上げ、インポートで古い版を読めるようにする。 */
+export const PROJECT_EXPORT_VERSION = 1;
+
+/** インポートでは知らない項目を拒否する（秘密情報などを、気づかずに取り込まないため）。 */
+const StrictIssueSource = z.discriminatedUnion("scope", [
+  IssueSource.options[0].strict(),
+  IssueSource.options[1].strict(),
+]);
+
+/**
+ * プロジェクト定義のエクスポートの形式。プロジェクトの定義（名前・取り込み元・リポジトリの設定）
+ * だけを含め、ID・日時、個人の設定や秘密情報（トークンなど）は含めない。
+ */
+export const ProjectExport = z
+  .object({
+    sacty: z.literal("project", { error: "sacty のプロジェクト定義のファイルではありません" }),
+    version: z.literal(PROJECT_EXPORT_VERSION, {
+      error: `対応していない版です（対応している版：${PROJECT_EXPORT_VERSION}）`,
+    }),
+    project: z
+      .object({
+        name: ProjectDefinition.shape.name,
+        sources: z.array(StrictIssueSource).max(50).default([]),
+        repositories: z.array(RepositorySettings.strict()).max(100).default([]),
+      })
+      .strict(),
+  })
+  .strict();
+export type ProjectExport = z.infer<typeof ProjectExport>;
+
+/** プロジェクトを、エクスポートの形式にする（定義の項目だけを取り出す）。 */
+export function exportProject(project: Project): ProjectExport {
+  return {
+    sacty: "project",
+    version: PROJECT_EXPORT_VERSION,
+    project: {
+      name: project.name,
+      sources: project.sources.map((s) =>
+        s.scope === "org"
+          ? { scope: "org" as const, target: s.target, label: s.label }
+          : { scope: "repo" as const, target: s.target, label: s.label },
+      ),
+      repositories: project.repositories.map((r) => ({
+        repo: r.repo,
+        baseBranch: r.baseBranch,
+        testCommand: r.testCommand,
+        pullRequest: r.pullRequest,
+      })),
+    },
+  };
+}
