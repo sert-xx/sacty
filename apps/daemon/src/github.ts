@@ -1,3 +1,6 @@
+import { type DaemonText, message } from "@sacty/core";
+import { errorText, MessageError } from "./errors.js";
+
 /** PRを作る口。テストでは偽物に差し替える。 */
 export interface PullRequests {
   /** PRを作る。number があれば、そのPRの本文を更新する。 */
@@ -53,7 +56,7 @@ export class GitHubPullRequests implements PullRequests {
         body: JSON.stringify({ body: input.body }),
       });
       if (res.ok) return result(json);
-      throw apiError("PRを更新できませんでした", res.status, json);
+      throw apiError("updatePr", res.status, json);
     }
 
     const { res, json } = await call(base, {
@@ -78,7 +81,7 @@ export class GitHubPullRequests implements PullRequests {
         return result(list[0] as Record<string, unknown>);
       }
     }
-    throw apiError("PRを作れませんでした", res.status, json);
+    throw apiError("createPr", res.status, json);
   }
 }
 
@@ -100,19 +103,19 @@ async function closePullRequest(
   });
   if (!res.ok) {
     const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-    throw apiError("PRを閉じられませんでした", res.status, json);
+    throw apiError("closePr", res.status, json);
   }
 }
 
-function apiError(what: string, status: number, json: Record<string, unknown>): Error {
-  const message = typeof json.message === "string" ? json.message : "";
-  const hint =
-    status === 401
-      ? "（トークンが無効です）"
-      : status === 403 || status === 404
-        ? "（トークンの権限か、リポジトリ名を確認してください）"
-        : "";
-  return new Error(`${what}：GitHub API ${status} ${message}${hint}`);
+function apiError(
+  action: "updatePr" | "createPr" | "closePr" | "searchIssues",
+  status: number,
+  json: Record<string, unknown>,
+): Error {
+  // GitHub の文（json.message）は外から来た文なので、翻訳せずに引数で渡す
+  const detail = typeof json.message === "string" ? json.message : "";
+  const hint = status === 401 ? "token" : status === 403 || status === 404 ? "permission" : "none";
+  return new MessageError(message("github.failed", { action, status, detail, hint }));
 }
 
 /** 取り込みの対象として見つかった Issue。 */
@@ -134,7 +137,7 @@ export type IssueSearchResult = {
   issues: FoundIssue[];
   cursor?: string;
   /** 取り切れなかった理由（失敗・上限）。 */
-  incomplete?: string;
+  incomplete?: DaemonText;
   /** レート制限で止まった（この取り込みでは、ほかの検索もしない）。 */
   rateLimited?: boolean;
 };
@@ -145,7 +148,7 @@ export interface IssueSearch {
   search(query: string, token: string, since?: string): Promise<IssueSearchResult>;
 }
 
-class RateLimitedError extends Error {}
+class RateLimitedError extends MessageError {}
 
 /**
  * GitHub の検索 API で、開いている Issue を更新日時の順に探す（PR は除く）。
@@ -186,8 +189,7 @@ export class GitHubIssueSearch implements IssueSearch {
             // この範囲を検索し直す
             return result({
               cursor,
-              incomplete:
-                "GitHub の検索が時間内に終わらず、結果の一部しか得られませんでした（次の取り込みで、この範囲を検索し直します）。",
+              incomplete: message("intake.searchTimedOut"),
             });
           }
           for (const item of items) {
@@ -201,20 +203,19 @@ export class GitHubIssueSearch implements IssueSearch {
         if (cursor === windowStart) {
           return result({
             cursor,
-            incomplete: "同じ日時に更新された Issue が多すぎるため、すべてを検索できませんでした。",
+            incomplete: message("intake.tooManySameTime"),
           });
         }
       }
       return result({
         cursor,
-        incomplete:
-          "Issue が多すぎるため、この取り込みでは途中までしか検索していません（次の取り込みで続きを検索します）。",
+        incomplete: message("intake.partial"),
       });
     } catch (error) {
       // 失敗しても、それまでに取れた分と、どこまで読んだかを返す
       return result({
         cursor,
-        incomplete: error instanceof Error ? error.message : String(error),
+        incomplete: errorText(error),
         rateLimited: error instanceof RateLimitedError,
       });
     }
@@ -234,11 +235,9 @@ export class GitHubIssueSearch implements IssueSearch {
       (res.status === 403 || res.status === 429) &&
       (res.headers.get("x-ratelimit-remaining") === "0" || res.headers.has("retry-after"))
     ) {
-      throw new RateLimitedError(
-        "GitHub の検索のレート制限に達しました。次の取り込みで、続きから検索します。",
-      );
+      throw new RateLimitedError(message("intake.rateLimited"));
     }
-    if (!res.ok) throw apiError("Issue を検索できませんでした", res.status, json);
+    if (!res.ok) throw apiError("searchIssues", res.status, json);
     return {
       items: Array.isArray(json.items) ? (json.items as Record<string, unknown>[]) : [],
       incompleteResults: json.incomplete_results === true,

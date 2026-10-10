@@ -1,3 +1,5 @@
+import type { DaemonText } from "@sacty/core";
+
 export const REDACTED = "[REDACTED]";
 
 /**
@@ -19,6 +21,22 @@ export function redact(text: string, secrets: readonly string[]): string {
     result = result.split(secret).join(REDACTED);
   }
   return result;
+}
+
+/**
+ * 文（コードと引数の文言を含む）から、秘密情報を取り除く。コードと引数の文言は、引数の文を取り除く
+ * （外から来た文を引数に入れているため）。
+ */
+export function redactText<T extends DaemonText>(text: T, secrets: readonly string[]): T {
+  const walk = (value: unknown): unknown => {
+    if (typeof value === "string") return redact(value, secrets);
+    if (Array.isArray(value)) return value.map(walk);
+    if (value && typeof value === "object") {
+      return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, walk(v)]));
+    }
+    return value;
+  };
+  return walk(text) as T;
 }
 
 /** JSON（認証ファイルなど）に含まれる、秘密情報らしい文字列をすべて取り出す。 */

@@ -89,7 +89,7 @@ export function describeEvent(event: LedgerEvent, l: LabelMessages): string {
         event.payload.step === "design" ? event.payload.testViewpoints.length : undefined,
       );
     case "AgentRunFailed":
-      return e.AgentRunFailed(l.step[event.payload.step], event.payload.message);
+      return e.AgentRunFailed(l.step[event.payload.step], l.text(event.payload.message));
     case "BudgetWarned":
       return e.BudgetWarned(usd(event.payload.usedUsd), usd(event.payload.capUsd));
     case "TaskPaused":
@@ -119,7 +119,7 @@ export function describeEvent(event: LedgerEvent, l: LabelMessages): string {
       return e.ChangeJudged(
         event.payload.proposalId,
         l.verdict[event.payload.verdict],
-        event.payload.reason,
+        l.text(event.payload.reason),
         withCost(event.payload.costUsd, event.payload.estimated),
       );
     case "ChangeDecided":
@@ -162,7 +162,7 @@ export function describeEvent(event: LedgerEvent, l: LabelMessages): string {
       return e.GuardianMissed;
     case "FinalReviewFailed":
       return e.FinalReviewFailed(
-        event.payload.message,
+        l.text(event.payload.message),
         cost(event.payload.costUsd, event.payload.estimated),
       );
     case "StepQueued":
@@ -192,7 +192,7 @@ export function describeEvent(event: LedgerEvent, l: LabelMessages): string {
         event.payload.layers.map(
           (layer) => `${layer.repo}${layer.ref ? `#${layer.ref}` : ""}@${layer.commit.slice(0, 7)}`,
         ),
-        event.payload.warnings,
+        event.payload.warnings.map(l.text),
       );
     case "RemarkVoided":
       return e.RemarkVoided(event.payload.remarkId, actor);

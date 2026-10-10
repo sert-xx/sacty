@@ -127,6 +127,7 @@ export async function Implementation({ task }: { task: Task }) {
             </span>
           </summary>
           <p className="mt-2 font-mono text-xs break-all">{tests.command}</p>
+          {tests.note && <p className="mt-2 text-warn">{messages.labels.text(tests.note)}</p>}
           <pre className="mt-2 max-h-80 overflow-auto rounded-lg border border-border bg-muted px-4 py-3 font-mono text-xs leading-5 break-words whitespace-pre-wrap">
             {tests.output || m.noOutput}
           </pre>

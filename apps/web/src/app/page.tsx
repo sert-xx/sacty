@@ -90,7 +90,7 @@ async function AgentStatus() {
         className="rounded-xl border border-warn-line bg-warn-soft p-4 text-sm text-warn"
       >
         {m.cannotRun}
-        {status.problems.join(" ")}
+        {status.problems.map(labels.text).join(" ")}
       </div>
     );
   }

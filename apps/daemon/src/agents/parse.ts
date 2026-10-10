@@ -1,10 +1,16 @@
-import type { TokenUsage } from "@sacty/core";
+import type { DaemonText, TokenUsage } from "@sacty/core";
 
 export type FailureReason = "usage_limit" | "auth" | "error";
 
 export type AgentOutcome =
   | { kind: "completed"; output: string; usage: TokenUsage }
-  | { kind: "failed"; reason: FailureReason; message: string; usage?: TokenUsage };
+  | {
+      kind: "failed";
+      reason: FailureReason;
+      /** エージェントや外から来た文はそのまま、sacty の文言はコードと引数（PBI-11）。 */
+      message: DaemonText;
+      usage?: TokenUsage;
+    };
 
 const ZERO: TokenUsage = { input: 0, cacheRead: 0, cacheWrite: 0, output: 0 };
 

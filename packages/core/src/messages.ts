@@ -1,10 +1,14 @@
 import { z } from "zod";
 import { formatUsd } from "./cost.js";
 import { TICKET_BODY_MAX, TICKET_TITLE_MAX } from "./events.js";
+import { DaemonText } from "./message-code.js";
 import { PROJECT_EXPORT_VERSION } from "./projects.js";
 
 const Scope = z.enum(["org", "repo"]);
 const Count = z.number().int().nonnegative();
+
+/** 引数のうち、それ自体が文（外から来た文か、コードと引数の文言）であるもの。表示の前に文にする。 */
+const TextParam = DaemonText;
 
 /**
  * デーモンが利用者に向けて返す文言のコードと、その引数の形（PBI-11）。デーモンはコードと引数で返し、
@@ -65,6 +69,92 @@ const PARAMS = {
   "input.invalidValue": null,
   "input.unknownKeys": z.object({ keys: z.string() }),
   "input.invalid": null,
+  "input.secretName": null,
+  "input.envName": null,
+  "input.headerName": null,
+  "input.mcpName": null,
+  "input.dollarBrace": null,
+  // 実行（PBI-11b。台帳に記録する）
+  "run.daemonStopped": null,
+  "run.guardianInterrupted": null,
+  "run.stoppedByPerson": null,
+  "run.timeout": z.object({ minutes: z.number() }),
+  "run.testTimeout": z.object({ minutes: z.number() }),
+  "run.dockerUnavailable": z.object({ detail: TextParam }),
+  "run.imageMissing": z.object({ image: z.string() }),
+  "run.authFileUnreadable": z.object({ path: z.string() }),
+  "run.containerNotConfirmed": z.object({ name: z.string() }),
+  "run.secretNotFound": z.object({ name: z.string() }),
+  "run.repositorySettingsMissing": z.object({ project: z.string(), repo: z.string() }),
+  "run.prTokenRequired": null,
+  "run.repositoryNotConfigured": null,
+  "run.guardianFailed": z.object({ detail: TextParam }),
+  "verify.testsUnavailable": z.object({ detail: TextParam }),
+  "verify.workspaceMissing": null,
+  "verify.diffUnavailable": z.object({ detail: TextParam }),
+  "verify.finalReviewFailed": z.object({ detail: TextParam }),
+  "verify.tooManyAttempts": z.object({ count: Count }),
+  "pr.unavailable": z.object({ detail: TextParam }),
+  "pr.workspaceMissing": null,
+  "pr.failed": z.object({ detail: TextParam }),
+  "cleanup.prRepoUnknown": null,
+  "cleanup.noToken": null,
+  "cleanup.noWorkspace": null,
+  "cleanup.containerUnconfirmed": null,
+  "git.unavailable": z.object({ detail: z.string() }),
+  "git.failed": z.object({ command: z.string(), detail: z.string() }),
+  "git.exitCode": z.object({ command: z.string(), code: z.number().nullable() }),
+  "git.invalidBaseCommit": null,
+  "git.invalidParentCommit": null,
+  "git.invalidBranch": null,
+  "git.nothingToCommit": null,
+  "git.notSactyBranch": null,
+  "github.failed": z.object({
+    action: z.enum(["updatePr", "createPr", "closePr", "searchIssues"]),
+    status: z.number(),
+    detail: z.string(),
+    hint: z.enum(["none", "token", "permission"]),
+  }),
+  "intake.searchTimedOut": null,
+  "intake.tooManySameTime": null,
+  "intake.partial": null,
+  "intake.rateLimited": null,
+  "intake.skippedRateLimited": null,
+  "context.cycle": z.object({ key: z.string() }),
+  "context.tooDeep": z.object({ max: Count }),
+  "context.fetchFailed": z.object({ key: z.string(), detail: TextParam }),
+  "context.fileUnreadable": z.object({ key: z.string(), file: z.string(), detail: z.string() }),
+  "context.fileInvalid": z.object({
+    key: z.string(),
+    file: z.string(),
+    path: z.string(),
+    detail: TextParam,
+  }),
+  "context.notPlainFile": z.object({ key: z.string(), path: z.string(), symlink: z.boolean() }),
+  "context.lockedOverride": z.object({
+    from: z.string(),
+    kind: z.enum(["skills", "mcp"]),
+    name: z.string(),
+    lockedBy: z.string(),
+  }),
+  "context.lockedRemove": z.object({
+    from: z.string(),
+    kind: z.enum(["skills", "mcp"]),
+    name: z.string(),
+    lockedBy: z.string(),
+  }),
+  // 設定ファイル（config.yaml）
+  "config.missing": z.object({ path: z.string() }),
+  "config.unreadable": z.object({ detail: z.string() }),
+  "config.invalid": z.object({ path: z.string(), detail: TextParam }),
+  "config.authUnsupported": z.object({
+    runtime: z.string(),
+    mode: z.string(),
+    supported: z.string(),
+  }),
+  "config.subscriptionSecret": null,
+  "config.agentMissing": z.object({ key: z.string(), id: z.string() }),
+  "config.repoUnknown": null,
 } as const satisfies Record<string, z.ZodType | null>;
 
 export type MessageParams = {
@@ -82,15 +172,42 @@ export type DaemonMessage = {
     : { code: K; params: MessageParams[K] };
 }[MessageCode];
 
-/** 言語ごとの文言。引数のあるコードは関数。 */
+/**
+ * 言語ごとの文言。引数のあるコードは関数。引数のうち文であるもの（detail など）は、
+ * 2つ目の引数（text）で画面の言語の文にする。
+ */
 export type MessageDictionary = {
   [K in MessageCode]: MessageParams[K] extends undefined
     ? string
-    : (params: MessageParams[K]) => string;
+    : (params: MessageParams[K], text: (value: DaemonText) => string) => string;
 };
 
 const scopeJa = { org: "Org", repo: "リポジトリ" } as const;
 const scopeEn = { org: "Org", repo: "repository" } as const;
+const githubActionJa = {
+  updatePr: "PRを更新できませんでした",
+  createPr: "PRを作れませんでした",
+  closePr: "PRを閉じられませんでした",
+  searchIssues: "Issue を検索できませんでした",
+} as const;
+const githubActionEn = {
+  updatePr: "Could not update the PR",
+  createPr: "Could not open the PR",
+  closePr: "Could not close the PR",
+  searchIssues: "Could not search issues",
+} as const;
+const githubHintJa = {
+  none: "",
+  token: "（トークンが無効です）",
+  permission: "（トークンの権限か、リポジトリ名を確認してください）",
+} as const;
+const githubHintEn = {
+  none: "",
+  token: " (the token is invalid)",
+  permission: " (check the token's permissions or the repository name)",
+} as const;
+const contextKindJa = { skills: "スキル", mcp: "MCP サーバー" } as const;
+const contextKindEn = { skills: "skill", mcp: "MCP server" } as const;
 
 const ja: MessageDictionary = {
   "task.notFound": "タスクが見つかりません。",
@@ -154,6 +271,95 @@ const ja: MessageDictionary = {
   "input.invalidValue": "値が正しくありません。",
   "input.unknownKeys": ({ keys }) => `知らない項目があります（${keys}）。`,
   "input.invalid": "入力が正しくありません。",
+  "input.secretName": "秘密情報の名前は英数字と . _ - だけで書いてください。",
+  "input.envName": "環境変数の名前が正しくありません。",
+  "input.headerName": "ヘッダーの名前が正しくありません。",
+  "input.mcpName": "MCP サーバーの名前は英数字と _ - だけで書いてください。",
+  "input.dollarBrace":
+    "「$\u007b」は使えません（秘密情報は { secret: 名前 } で参照してください）。",
+  "run.daemonStopped": "デーモンが停止したため、実行が中断されました。",
+  "run.guardianInterrupted": "デーモンが停止したため、ゴールガーディアンの判定が中断されました。",
+  "run.stoppedByPerson": "人間が止めたため、実行しませんでした。",
+  "run.timeout": ({ minutes }) => `エージェントの実行が ${minutes} 分を超えたため止めました。`,
+  "run.testTimeout": ({ minutes }) => `テストの実行が ${minutes} 分を超えたため止めました。`,
+  "run.dockerUnavailable": ({ detail }, text) =>
+    `dockerを実行できません。Dockerが起動しているか確認してください（${text(detail)}）。`,
+  "run.imageMissing": ({ image }) =>
+    `エージェント用のイメージ（${image}）がありません。\`sacty image build\` で作成してください。`,
+  "run.authFileUnreadable": ({ path }) =>
+    `認証ファイル（${path}）を読めません。ログインしているか確認してください。`,
+  "run.containerNotConfirmed": ({ name }) =>
+    `コンテナ（${name}）の停止を確認できませんでした。docker ps で確認してください。`,
+  "run.secretNotFound": ({ name }) =>
+    `秘密情報「${name}」が見つかりません。\`sacty secret set ${name}\` で保存してください。`,
+  "run.repositorySettingsMissing": ({ project, repo }) =>
+    `プロジェクト「${project}」に、${repo} のリポジトリの設定（ベースブランチ・テストのコマンド）がありません。プロジェクトの設定で追加してから再開してください。`,
+  "run.prTokenRequired":
+    "PRを作るには、config.yaml の github.token_secret（GitHub のトークン）が必要です。設定するか、プロジェクトのリポジトリの設定でPRを作らないようにしてから再開してください。",
+  "run.repositoryNotConfigured":
+    "実装の対象リポジトリが設定されていません。config.yaml の repository を設定してから再開してください。",
+  "run.guardianFailed": ({ detail }, text) =>
+    `ゴールガーディアンの実行に失敗しました：${text(detail)}`,
+  "verify.testsUnavailable": ({ detail }, text) => `テストを実行できません：${text(detail)}`,
+  "verify.workspaceMissing": "実装の作業領域が見つからないため、検証できません。",
+  "verify.diffUnavailable": ({ detail }, text) =>
+    `差分を取得できないため、最終レビューをしていません：${text(detail)}`,
+  "verify.finalReviewFailed": ({ detail }, text) =>
+    `ゴールガーディアンの最終レビューを実行できませんでした：${text(detail)}`,
+  "verify.tooManyAttempts": ({ count }) =>
+    `実装の検証（テストと最終レビュー）に、${count}回続けて通りませんでした。`,
+  "pr.unavailable": ({ detail }, text) => `PRを作れません：${text(detail)}`,
+  "pr.workspaceMissing": "実装の作業領域が無いため、PRを作れません。",
+  "pr.failed": ({ detail }, text) => `PRを作れませんでした：${text(detail)}`,
+  "cleanup.prRepoUnknown": "PRを作ったリポジトリの記録が無いため、閉じませんでした。",
+  "cleanup.noToken": "GitHub のトークンの設定が無いため、閉じられません。",
+  "cleanup.noWorkspace": "作業領域が無いため、ブランチを消せません。",
+  "cleanup.containerUnconfirmed":
+    "コンテナが止まったことを確かめられないため、作業領域は消していません。",
+  "git.unavailable": ({ detail }) => `gitを実行できません（${detail}）。`,
+  "git.failed": ({ command, detail }) => `git ${command} に失敗しました：${detail}`,
+  "git.exitCode": ({ command, code }) => `git ${command} に失敗しました：終了コード ${code}`,
+  "git.invalidBaseCommit": "起点のコミットが不正です。",
+  "git.invalidParentCommit": "積む先のコミットが不正です。",
+  "git.invalidBranch": "ブランチ名が不正です。",
+  "git.nothingToCommit": "起点から変更がないため、コミットできません。",
+  "git.notSactyBranch": "sacty のブランチではありません。",
+  "github.failed": ({ action, status, detail, hint }) =>
+    `${githubActionJa[action]}：GitHub API ${status} ${detail}${githubHintJa[hint]}`,
+  "intake.searchTimedOut":
+    "GitHub の検索が時間内に終わらず、結果の一部しか得られませんでした（次の取り込みで、この範囲を検索し直します）。",
+  "intake.tooManySameTime":
+    "同じ日時に更新された Issue が多すぎるため、すべてを検索できませんでした。",
+  "intake.partial":
+    "Issue が多すぎるため、この取り込みでは途中までしか検索していません（次の取り込みで続きを検索します）。",
+  "intake.rateLimited":
+    "GitHub の検索のレート制限に達しました。次の取り込みで、続きから検索します。",
+  "intake.skippedRateLimited": "レート制限のため、次の取り込みで検索します。",
+  "context.cycle": ({ key }) => `コンテキストの継承が循環しています（${key}）。`,
+  "context.tooDeep": ({ max }) => `コンテキストの継承が深すぎます（上限 ${max} 段）。`,
+  "context.fetchFailed": ({ key, detail }, text) =>
+    `コンテキストリポジトリ（${key}）を取得できません：${text(detail)}`,
+  "context.fileUnreadable": ({ key, file, detail }) => `${key} の ${file} を読めません：${detail}`,
+  "context.fileInvalid": ({ key, file, path, detail }, text) =>
+    `${key} の ${file} に誤りがあります（${path}）：${text(detail)}`,
+  "context.notPlainFile": ({ key, path, symlink }) =>
+    `${key} の ${path} は${symlink ? "シンボリックリンク" : "通常のファイルでないもの"}です。コンテキストリポジトリでは、設定・規約・スキルに通常のファイルとディレクトリだけを使えます。`,
+  "context.lockedOverride": ({ from, kind, name, lockedBy }) =>
+    `${from} は${contextKindJa[kind]}「${name}」を上書きしようとしましたが、${lockedBy} で上書き禁止のため上位のものを使いました。`,
+  "context.lockedRemove": ({ from, kind, name, lockedBy }) =>
+    `${from} は${contextKindJa[kind]}「${name}」を取り除こうとしましたが、${lockedBy} で上書き禁止のため残しました。`,
+  "config.missing": ({ path }) =>
+    `設定ファイルがありません（${path}）。\`sacty config init\` で作成してください。`,
+  "config.unreadable": ({ detail }) => `設定ファイルのYAMLを読めません：${detail}`,
+  "config.invalid": ({ path, detail }, text) =>
+    `設定ファイルに誤りがあります（${path}）：${text(detail)}`,
+  "config.authUnsupported": ({ runtime, mode, supported }) =>
+    `${runtime} では ${mode} を使えません（使えるもの：${supported}）。`,
+  "config.subscriptionSecret":
+    "Claude Code のサブスクリプションには、トークンの秘密情報名（secret）が必要です。",
+  "config.agentMissing": ({ key, id }) => `${key} の "${id}" が agents にありません。`,
+  "config.repoUnknown":
+    "url から GitHub のリポジトリが分かりません。owner/name で指定してください。",
 };
 
 /** 英語。用語は画面の用語集（apps/web の labels.ts）に合わせる。 */
@@ -219,6 +425,96 @@ const en: MessageDictionary = {
   "input.invalidValue": "The value is not valid.",
   "input.unknownKeys": ({ keys }) => `Unknown fields: ${keys}.`,
   "input.invalid": "The input is not valid.",
+  "input.secretName": "Use only letters, digits, and . _ - in secret names.",
+  "input.envName": "The environment variable name is not valid.",
+  "input.headerName": "The header name is not valid.",
+  "input.mcpName": "Use only letters, digits, and _ - in MCP server names.",
+  "input.dollarBrace": "“$\u007b” is not allowed (refer to secrets with { secret: name }).",
+  "run.daemonStopped": "The daemon stopped, so the run was interrupted.",
+  "run.guardianInterrupted":
+    "The daemon stopped, so the Goal Guardian's judgement was interrupted.",
+  "run.stoppedByPerson": "Not run because it was stopped by a person.",
+  "run.timeout": ({ minutes }) =>
+    `Stopped the agent because it ran longer than ${minutes} minutes.`,
+  "run.testTimeout": ({ minutes }) =>
+    `Stopped the tests because they ran longer than ${minutes} minutes.`,
+  "run.dockerUnavailable": ({ detail }, text) =>
+    `Cannot run docker. Check that Docker is running (${text(detail)}).`,
+  "run.imageMissing": ({ image }) =>
+    `The agent image (${image}) is missing. Build it with \`sacty image build\`.`,
+  "run.authFileUnreadable": ({ path }) =>
+    `Cannot read the auth file (${path}). Check that you are signed in.`,
+  "run.containerNotConfirmed": ({ name }) =>
+    `Could not confirm that the container (${name}) stopped. Check with docker ps.`,
+  "run.secretNotFound": ({ name }) =>
+    `Secret "${name}" not found. Save it with \`sacty secret set ${name}\`.`,
+  "run.repositorySettingsMissing": ({ project, repo }) =>
+    `The project "${project}" has no repository settings (base branch and test command) for ${repo}. Add them in the project settings, then resume.`,
+  "run.prTokenRequired":
+    "Opening a PR requires github.token_secret (a GitHub token) in config.yaml. Set it, or turn off PRs in the project's repository settings, then resume.",
+  "run.repositoryNotConfigured":
+    "No target repository is configured. Set repository in config.yaml, then resume.",
+  "run.guardianFailed": ({ detail }, text) => `The Goal Guardian run failed: ${text(detail)}`,
+  "verify.testsUnavailable": ({ detail }, text) => `Cannot run the tests: ${text(detail)}`,
+  "verify.workspaceMissing":
+    "The implementation workspace was not found, so it cannot be verified.",
+  "verify.diffUnavailable": ({ detail }, text) =>
+    `Could not get the diff, so the final review was not done: ${text(detail)}`,
+  "verify.finalReviewFailed": ({ detail }, text) =>
+    `Could not run the Goal Guardian's final review: ${text(detail)}`,
+  "verify.tooManyAttempts": ({ count }) =>
+    `Verification of the implementation (tests and final review) failed ${count} times in a row.`,
+  "pr.unavailable": ({ detail }, text) => `Cannot open a PR: ${text(detail)}`,
+  "pr.workspaceMissing": "There is no implementation workspace, so a PR cannot be opened.",
+  "pr.failed": ({ detail }, text) => `Could not open the PR: ${text(detail)}`,
+  "cleanup.prRepoUnknown": "Not closed because the PR's repository was not recorded.",
+  "cleanup.noToken": "Cannot close it because no GitHub token is configured.",
+  "cleanup.noWorkspace": "Cannot delete the branch because there is no workspace.",
+  "cleanup.containerUnconfirmed":
+    "The workspace was kept because the container could not be confirmed as stopped.",
+  "git.unavailable": ({ detail }) => `Cannot run git (${detail}).`,
+  "git.failed": ({ command, detail }) => `git ${command} failed: ${detail}`,
+  "git.exitCode": ({ command, code }) => `git ${command} failed: exit code ${code}`,
+  "git.invalidBaseCommit": "The base commit is not valid.",
+  "git.invalidParentCommit": "The parent commit is not valid.",
+  "git.invalidBranch": "The branch name is not valid.",
+  "git.nothingToCommit": "Nothing changed since the base, so there is nothing to commit.",
+  "git.notSactyBranch": "This is not a sacty branch.",
+  "github.failed": ({ action, status, detail, hint }) =>
+    `${githubActionEn[action]}: GitHub API ${status} ${detail}${githubHintEn[hint]}`,
+  "intake.searchTimedOut":
+    "The GitHub search did not finish in time and returned partial results (this range will be searched again next time).",
+  "intake.tooManySameTime":
+    "Too many issues were updated at the same time, so not all of them could be searched.",
+  "intake.partial":
+    "There are too many issues, so this intake searched only part of them (the rest will be searched next time).",
+  "intake.rateLimited":
+    "Reached the GitHub search rate limit. The search will continue from here next time.",
+  "intake.skippedRateLimited": "Skipped because of the rate limit; it will be searched next time.",
+  "context.cycle": ({ key }) => `The context inheritance has a cycle (${key}).`,
+  "context.tooDeep": ({ max }) => `The context inheritance is too deep (limit ${max} levels).`,
+  "context.fetchFailed": ({ key, detail }, text) =>
+    `Cannot fetch the context repository (${key}): ${text(detail)}`,
+  "context.fileUnreadable": ({ key, file, detail }) => `Cannot read ${file} in ${key}: ${detail}`,
+  "context.fileInvalid": ({ key, file, path, detail }, text) =>
+    `${file} in ${key} has an error (${path}): ${text(detail)}`,
+  "context.notPlainFile": ({ key, path, symlink }) =>
+    `${path} in ${key} is ${symlink ? "a symbolic link" : "not a regular file"}. Context repositories can use only regular files and directories for settings, rules, and skills.`,
+  "context.lockedOverride": ({ from, kind, name, lockedBy }) =>
+    `${from} tried to override the ${contextKindEn[kind]} "${name}", but ${lockedBy} locks it, so the upper one was used.`,
+  "context.lockedRemove": ({ from, kind, name, lockedBy }) =>
+    `${from} tried to remove the ${contextKindEn[kind]} "${name}", but ${lockedBy} locks it, so it was kept.`,
+  "config.missing": ({ path }) =>
+    `The config file is missing (${path}). Create it with \`sacty config init\`.`,
+  "config.unreadable": ({ detail }) => `Cannot read the config file as YAML: ${detail}`,
+  "config.invalid": ({ path, detail }, text) =>
+    `The config file has an error (${path}): ${text(detail)}`,
+  "config.authUnsupported": ({ runtime, mode, supported }) =>
+    `${runtime} cannot use ${mode} (supported: ${supported}).`,
+  "config.subscriptionSecret":
+    "A Claude Code subscription needs the secret name of its token (secret).",
+  "config.agentMissing": ({ key, id }) => `${key} "${id}" is not in agents.`,
+  "config.repoUnknown": "Cannot tell the GitHub repository from url. Specify it as owner/name.",
 };
 
 export const DAEMON_MESSAGES = { ja, en } as const;
@@ -241,13 +537,15 @@ export function renderMessage(value: unknown, locale: keyof typeof DAEMON_MESSAG
   if (value && typeof value === "object" && "code" in value && typeof value.code === "string") {
     // 知らないコード（版の違いなど）は、コードを出す
     if (!isMessageCode(value.code)) return value.code;
-    const entry = dictionary[value.code] as string | ((params: unknown) => string);
+    const entry = dictionary[value.code] as
+      | string
+      | ((params: unknown, text: (value: DaemonText) => string) => string);
     if (typeof entry === "string") return entry;
     // 引数が無い・一部が欠けている・形が合わないときも、コードを出す（例外にしない）
     const parsed = PARAMS[value.code]?.safeParse((value as { params?: unknown }).params);
     if (!parsed?.success) return value.code;
     try {
-      return entry(parsed.data);
+      return entry(parsed.data, (nested) => renderMessage(nested, locale));
     } catch {
       return value.code;
     }
@@ -260,8 +558,12 @@ export function renderMessage(value: unknown, locale: keyof typeof DAEMON_MESSAG
  * 指定していない標準の検査は、誤りの種類ごとのコードにする（画面の言語の文言にできるように）。
  */
 export function issueMessage(issue: z.core.$ZodIssue): DaemonMessage {
-  if (isMessageCode(issue.message) && PARAMS[issue.message] === null) {
-    return { code: issue.message } as DaemonMessage;
+  if (isMessageCode(issue.message)) {
+    if (PARAMS[issue.message] === null) return { code: issue.message } as DaemonMessage;
+    // 引数のあるコードは、検査が引数を添えたとき（custom の params）だけ使う
+    if (issue.code === "custom" && issue.params) {
+      return { code: issue.message, params: issue.params } as DaemonMessage;
+    }
   }
   switch (issue.code) {
     case "too_small": {

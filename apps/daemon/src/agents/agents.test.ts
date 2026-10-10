@@ -2,12 +2,16 @@ import { createHash } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { renderMessage } from "@sacty/core";
 import { afterEach, describe, expect, it } from "vitest";
 import { type AgentConfig, CONFIG_TEMPLATE, loadConfig } from "../config.js";
 import { MemorySecretStore } from "../secrets.js";
 import { dockerRunArgs, syncBackIfChanged } from "./docker.js";
 import { buildInvocation } from "./invocation.js";
 import { classifyFailure, parseClaudeResult, parseCodexEvents } from "./parse.js";
+
+/** 記録した文言（コードと引数）を、日本語の文にする（PBI-11）。 */
+const ja = (text: unknown) => renderMessage(text, "ja");
 
 const price = { input: 3, cached_input: 0.3, cache_write: 3.75, output: 15 };
 const base = {
@@ -360,19 +364,32 @@ agents:
     auth: { mode: bedrock, secret: k, region: us-east-1 }
     price_per_mtok_usd: { input: 1, cached_input: 0.1, output: 2 }
 `);
+    const problem = () => {
+      const result = loadConfig(dir);
+      return result.ok ? "" : ja(result.problem);
+    };
+    expect(problem()).toBe(
+      "設定ファイルに誤りがあります（agents.x.auth.mode）：codex では bedrock を使えません（使えるもの：subscription, api-key）。",
+    );
+    // コードと引数で返す（画面が画面の言語の文にする）
     expect(loadConfig(dir)).toMatchObject({
       ok: false,
-      problem: expect.stringContaining("bedrock"),
+      problem: {
+        code: "config.invalid",
+        params: {
+          detail: { code: "config.authUnsupported", params: { runtime: "codex", mode: "bedrock" } },
+        },
+      },
     });
+    expect(renderMessage((loadConfig(dir) as { problem: unknown }).problem, "en")).toBe(
+      "The config file has an error (agents.x.auth.mode): codex cannot use bedrock (supported: subscription, api-key).",
+    );
     write(`default_agent: missing
 agents: {}
 `);
-    expect(loadConfig(dir)).toMatchObject({
-      ok: false,
-      problem: expect.stringContaining("missing"),
-    });
+    expect(problem()).toContain('default_agent の "missing" が agents にありません');
     write("default_agent: [unclosed");
-    expect(loadConfig(dir)).toMatchObject({ ok: false, problem: expect.stringContaining("YAML") });
+    expect(problem()).toContain("YAML");
   });
 });
 
@@ -421,6 +438,27 @@ describe("秘密情報の除去", () => {
     expect(redact("pin=pin123 / pin1234", ["pin123", "pin1234", ""])).toBe(
       "pin=[REDACTED] / [REDACTED]",
     );
+  });
+
+  it("コードと引数の文言は、引数の文（外から来た文）から秘密情報を取り除く（PBI-11b）", async () => {
+    const { redactText } = await import("./redact.js");
+    expect(
+      redactText(
+        {
+          code: "pr.failed",
+          params: {
+            detail: { code: "git.failed", params: { command: "push", detail: "x ghp_1 y" } },
+          },
+        },
+        ["ghp_1"],
+      ),
+    ).toEqual({
+      code: "pr.failed",
+      params: {
+        detail: { code: "git.failed", params: { command: "push", detail: "x [REDACTED] y" } },
+      },
+    });
+    expect(redactText("token ghp_1", ["ghp_1"])).toBe("token [REDACTED]");
   });
 
   it("認証ファイルのJSONから、トークンらしい文字列を取り出す", async () => {
@@ -500,7 +538,8 @@ while true; do sleep 0.05; done
     executor.abortAll();
     const outcome = await running;
 
-    expect(outcome).toMatchObject({ kind: "failed", message: expect.stringContaining("中断") });
+    expect(outcome).toMatchObject({ kind: "failed", message: { code: "run.daemonStopped" } });
+    expect(outcome.kind === "failed" && ja(outcome.message)).toContain("中断");
     expect(readFileSync(hostAuth, "utf8")).toBe("refreshed-token");
     const staging = readFileSync(join(bin, "staging.path"), "utf8").trim();
     expect(existsSync(staging)).toBe(false);

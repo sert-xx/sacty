@@ -1,5 +1,10 @@
+import { renderMessage } from "@sacty/core";
 import { describe, expect, it } from "vitest";
+import { errorText } from "./errors.js";
 import { GitHubIssueSearch, GitHubPullRequests } from "./github.js";
+
+/** 記録した文言（コードと引数）を、日本語の文にする（PBI-11）。 */
+const ja = (text: unknown) => renderMessage(text, "ja");
 
 type Call = { url: string; method: string; body?: unknown; auth?: string };
 
@@ -69,6 +74,11 @@ describe("GitHub の PR（PBI-10b）", () => {
     const error = await client.upsert({ ...input, number: 7 }).catch((e: Error) => e);
     expect(String(error)).toContain("GitHub API 401 Bad credentials（トークンが無効です）");
     expect(String(error)).not.toContain("ghp_secret");
+    // 理由はコードと引数で持ち、GitHub の文は翻訳せずに引数で渡す（PBI-11b）
+    expect(errorText(error)).toEqual({
+      code: "github.failed",
+      params: { action: "updatePr", status: 401, detail: "Bad credentials", hint: "token" },
+    });
   });
 });
 
@@ -168,7 +178,7 @@ describe("検索の上限の先（レビュー指摘）", () => {
     const { impl } = searchFetch(1200, () => "2026-01-01T00:00:00Z");
     const { issues, incomplete } = await new GitHubIssueSearch(impl).search("repo:acme/app", "t");
     expect(issues).toHaveLength(1000);
-    expect(incomplete).toMatch(/すべてを検索できませんでした/);
+    expect(ja(incomplete)).toMatch(/すべてを検索できませんでした/);
   });
 
   it("結果が不完全なら、取れた分は返すが、どこまで読んだかは先へ進めない（レビュー指摘）", async () => {
@@ -195,7 +205,7 @@ describe("検索の上限の先（レビュー指摘）", () => {
     const first = await search.search("repo:acme/app", "t", "2026-01-01T00:00:00Z");
     expect(first.issues.map((i) => i.number)).toEqual([2]);
     expect(first.cursor).toBe("2026-01-01T00:00:00Z"); // 先へ進めない
-    expect(first.incomplete).toMatch(/検索し直します/);
+    expect(ja(first.incomplete)).toMatch(/検索し直します/);
 
     const second = await search.search("repo:acme/app", "t", first.cursor);
     expect(second.issues.map((i) => i.number)).toEqual([1, 2]);
@@ -212,7 +222,7 @@ describe("検索の上限の先（レビュー指摘）", () => {
     const first = searchFetch(3100, stamp, 30);
     const partial = await new GitHubIssueSearch(first.impl).search("repo:acme/app", "t");
     expect(partial.rateLimited).toBe(true);
-    expect(partial.incomplete).toMatch(/レート制限/);
+    expect(ja(partial.incomplete)).toMatch(/レート制限/);
     expect(partial.issues.length).toBeGreaterThanOrEqual(2900);
     expect(partial.cursor).toBe(stamp(partial.issues.length));
 

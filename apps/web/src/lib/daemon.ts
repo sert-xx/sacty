@@ -1,6 +1,7 @@
 import {
   type CleanupTarget,
   type CreateTicketInput,
+  type DaemonText,
   type LedgerEvent,
   type Project,
   type ProjectDefinitionInput,
@@ -74,12 +75,12 @@ export type IntakeStatus = {
   lastRunAt?: string;
   imported?: number;
   /** 取り込めなかった取り込み元（検索の条件）と理由。 */
-  errors?: { query?: string; message: string }[];
+  errors?: { query?: string; message: DaemonText }[];
 };
 
 export type DaemonStatus = {
   agent: { id: string; runtime: string; authMode: string } | null;
-  problems: string[];
+  problems: DaemonText[];
   /** GitHub Issue の取り込み（設定が無ければ null）。 */
   intake: IntakeStatus | null;
 };
@@ -148,7 +149,7 @@ export async function importProject(
   return { ok: true, project: ((await res.json()) as { project: Project }).project };
 }
 
-export type CleanupItem = { target: CleanupTarget; present: boolean; detail?: string };
+export type CleanupItem = { target: CleanupTarget; present: boolean; detail?: DaemonText };
 
 /** 中止したときに片付けるもの（確認の画面に並べる）。 */
 export async function getCleanupPlan(id: string): Promise<CleanupItem[] | null> {

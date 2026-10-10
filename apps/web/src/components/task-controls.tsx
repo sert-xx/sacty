@@ -90,7 +90,7 @@ export function TaskControls({
                     ) : (
                       item.detail && (
                         <span className="font-mono text-xs break-all text-muted-foreground">
-                          {item.detail}
+                          {m.labels.text(item.detail)}
                         </span>
                       )
                     )}

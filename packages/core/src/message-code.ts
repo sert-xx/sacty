@@ -1,3 +1,4 @@
+import { z } from "zod";
 import type { DaemonMessage, MessageCode, MessageParams } from "./messages.js";
 
 /*
@@ -17,3 +18,13 @@ export function message<K extends MessageCode>(
 ): DaemonMessage {
   return (params.length > 0 ? { code, params: params[0] } : { code }) as DaemonMessage;
 }
+
+/**
+ * 利用者に向けた文。日本語などの文（古い台帳の文や、外から来た文）か、コードと引数の文言（PBI-11）。
+ * 画面は renderMessage で画面の言語の文にする。台帳に記録する文はこの形で持つ。
+ */
+export const DaemonText = z.union([
+  z.string(),
+  z.object({ code: z.string(), params: z.record(z.string(), z.unknown()).optional() }),
+]);
+export type DaemonText = z.infer<typeof DaemonText>;

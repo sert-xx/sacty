@@ -1,12 +1,13 @@
-import type {
-  FinalReview,
-  RemarkResponse,
-  StepKey,
-  Task,
-  TaskProposal,
-  TestMapping,
-  TestViewpoint,
-  Verdict,
+import {
+  type FinalReview,
+  type RemarkResponse,
+  renderMessage,
+  type StepKey,
+  type Task,
+  type TaskProposal,
+  type TestMapping,
+  type TestViewpoint,
+  type Verdict,
 } from "@sacty/core";
 
 /**
@@ -50,6 +51,7 @@ function feedbackLines(task: Task): string[] {
       ...(t.unmappedViewpoints.length > 0
         ? [`テストが対応していない観点：${t.unmappedViewpoints.join(", ")}`]
         : []),
+      ...(t.note ? [`sacty の注記：${renderMessage(t.note, "ja")}`] : []),
       "出力の末尾：",
       t.output.slice(-OUTPUT_IN_PROMPT),
     ];

@@ -1,11 +1,13 @@
-import type {
-  Actor,
-  AuthMode,
-  CleanupTarget,
-  PauseReason,
-  StepKey,
-  Task,
-  Verdict,
+import {
+  type Actor,
+  type AuthMode,
+  type CleanupTarget,
+  type DaemonText,
+  type PauseReason,
+  renderMessage,
+  type StepKey,
+  type Task,
+  type Verdict,
 } from "@sacty/core";
 
 /**
@@ -15,6 +17,8 @@ import type {
  * ゴールガーディアン Goal Guardian、オーケストレーター Orchestrator、台帳 Ledger、人間の対応待ち Needs you）。
  */
 const ja = {
+  /** デーモンが作った文（コードと引数）を、この言語の文にする。古い文や外から来た文はそのまま（PBI-11）。 */
+  text: (value: DaemonText): string => renderMessage(value, "ja"),
   step: {
     requirements: "要求要件",
     design: "設計",
@@ -149,6 +153,7 @@ const ja = {
 export type LabelMessages = typeof ja;
 
 const en: LabelMessages = {
+  text: (value) => renderMessage(value, "en"),
   step: {
     requirements: "Requirements",
     design: "Design",

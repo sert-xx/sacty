@@ -326,3 +326,30 @@ describe("金額の表示", () => {
     expect(formatUsd(12.345)).toBe("$12.35");
   });
 });
+
+describe("台帳の文（PBI-11b）", () => {
+  it("古い台帳の日本語の文も、コードと引数の文言も読める", () => {
+    const old = project([
+      created("t1"),
+      steps("t1"),
+      ev("t1", { type: "TaskPaused", payload: { reason: "error", message: "古い文です。" } }),
+    ]).get("t1");
+    expect(old?.pausedMessage).toBe("古い文です。");
+    const coded = project([
+      created("t2"),
+      steps("t2"),
+      ev("t2", {
+        type: "TaskPaused",
+        payload: { reason: "error", message: { code: "verify.workspaceMissing" } },
+      }),
+    ]).get("t2");
+    expect(coded?.pausedMessage).toEqual({ code: "verify.workspaceMissing" });
+    // コードと引数の文言は、決めた形（code と params）だけを受け付ける
+    expect(() =>
+      EventSchema.parse({
+        type: "TaskPaused",
+        payload: { reason: "error", message: { text: "x" } },
+      }),
+    ).toThrow();
+  });
+});
