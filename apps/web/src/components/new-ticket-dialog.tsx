@@ -55,6 +55,7 @@ export function NewTicketDialog() {
               id="ticket-body"
               name="body"
               rows={6}
+              className="max-h-72 overflow-y-auto"
               defaultValue={state.values?.body}
               placeholder="背景や、満たしてほしい条件"
               aria-invalid={Boolean(state.fieldErrors?.body)}
