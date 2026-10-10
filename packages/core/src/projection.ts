@@ -140,6 +140,8 @@ export type Task = {
   /** 最新のテストの実行結果と、最終レビュー。 */
   lastTests?: TestsRunResult;
   lastReview?: FinalReview;
+  /** 最後に工程エージェントへ渡したコンテキスト（使ったリポジトリとコミット）。 */
+  context?: PayloadOf<"ContextResolved"> & { at: string };
   /** 中止したときの後片付けの結果。 */
   cancelled?: { at: string } & PayloadOf<"TaskCancelled">;
   /** sacty がプッシュしたブランチ（PRの作成の前に記録する）。 */
@@ -506,6 +508,10 @@ export function applyEvent(
       if (task.steps[index + 1]) task.status = "queued";
       break;
     }
+
+    case "ContextResolved":
+      task.context = { ...event.payload, at: event.at };
+      break;
 
     case "TaskCancelled":
       if (task.status === "running") {

@@ -42,11 +42,17 @@ import {
 } from "@sacty/core";
 import { ZodError } from "zod";
 import type { AgentExecutor } from "./agents/docker.js";
-import { type AgentRole, buildInvocation } from "./agents/invocation.js";
+import {
+  type AgentRole,
+  buildInvocation,
+  CONTAINER_CLAUDE_CONFIG_DIR,
+  CONTAINER_CODEX_HOME,
+} from "./agents/invocation.js";
 import type { AgentOutcome } from "./agents/parse.js";
 import { redact } from "./agents/redact.js";
 import type { TestRunner } from "./agents/test-runner.js";
 import type { AgentConfig, ConfigResult, SactyConfig } from "./config.js";
+import { type ContextFetcher, prepareContext } from "./context.js";
 import type { FoundIssue, PullRequests } from "./github.js";
 import type { LedgerStore } from "./ledger.js";
 import type { ProjectStore } from "./projects.js";
@@ -95,6 +101,8 @@ export type ServiceDeps = {
   pulls: PullRequests;
   /** プロジェクトの設定。 */
   projects: ProjectStore;
+  /** コンテキストリポジトリの取得（PBI-6）。 */
+  contexts: ContextFetcher;
   /** テストの実行。 */
   tests: TestRunner;
   /** タスクごとの作業領域を作る場所。 */
@@ -648,14 +656,62 @@ export class TaskService {
       workspaceDir = ready.dir;
     }
 
-    const { outcome, costUsd, estimated } = await this.execute({
-      agent,
-      image: config.config.image,
-      runId,
-      prompt: buildPrompt(this.mustGet(task.id), step),
-      role: step,
-      workspaceDir,
-    });
+    // プロジェクトのコンテキストを取得・合成して渡し、使ったリポジトリとコミットを記録する
+    const contextSource = this.deps.projects.get(task.projectId)?.context;
+    let context: Awaited<ReturnType<typeof prepareContext>> | undefined;
+    if (contextSource) {
+      try {
+        context = await prepareContext(
+          this.deps.contexts,
+          contextSource,
+          agent.runtime === "codex" ? "codex" : "claude-code",
+          agent.runtime === "codex" ? CONTAINER_CODEX_HOME : CONTAINER_CLAUDE_CONFIG_DIR,
+        );
+      } catch (error) {
+        this.append(task, [
+          {
+            actor: "sacty",
+            event: {
+              type: "AgentRunFailed",
+              payload: {
+                runId,
+                step,
+                agentId: agent.id,
+                reason: "error",
+                message: error instanceof Error ? error.message : String(error),
+              },
+            },
+          },
+          { actor: "sacty", event: { type: "TaskPaused", payload: { reason: "error" } } },
+        ]);
+        return;
+      }
+      this.append(task, [
+        {
+          actor: "sacty",
+          event: {
+            type: "ContextResolved",
+            payload: { runId, layers: context.layers, warnings: context.warnings },
+          },
+        },
+      ]);
+    }
+
+    let executed: Awaited<ReturnType<TaskService["execute"]>>;
+    try {
+      executed = await this.execute({
+        agent,
+        image: config.config.image,
+        runId,
+        prompt: buildPrompt(this.mustGet(task.id), step),
+        role: step,
+        workspaceDir,
+        contextDir: context?.dir,
+      });
+    } finally {
+      context?.dispose();
+    }
+    const { outcome, costUsd, estimated } = executed;
 
     if (outcome.kind === "failed") {
       const manual = await this.manualPauseInfo(task.id);
@@ -1245,6 +1301,8 @@ export class TaskService {
     prompt: string;
     role: AgentRole;
     workspaceDir: string;
+    /** エージェントの形式に変換したコンテキスト（工程エージェントだけ。PBI-6）。 */
+    contextDir?: string;
   }): Promise<{ outcome: AgentOutcome; costUsd: number; estimated: boolean }> {
     // 実行に渡した秘密情報。台帳に書く前に、出力やエラー文から取り除く。
     const usedSecrets: string[] = [];
@@ -1256,6 +1314,7 @@ export class TaskService {
         this.deps.secrets,
         (value) => usedSecrets.push(value),
         run.role,
+        run.contextDir,
       );
       mkdirSync(run.workspaceDir, { recursive: true });
       // 準備の間（clone や秘密情報の取り出し）に人間が止めたなら、コンテナを起動しない

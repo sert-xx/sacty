@@ -187,6 +187,13 @@ export function describeEvent(event: LedgerEvent, l: LabelMessages): string {
           .map((c) => l.cleanupTarget[c.target]);
       return e.TaskCancelled(names("done"), names("failed"), actor);
     }
+    case "ContextResolved":
+      return e.ContextResolved(
+        event.payload.layers.map(
+          (layer) => `${layer.repo}${layer.ref ? `#${layer.ref}` : ""}@${layer.commit.slice(0, 7)}`,
+        ),
+        event.payload.warnings,
+      );
     case "RemarkVoided":
       return e.RemarkVoided(event.payload.remarkId, actor);
     case "TaskEscalated":

@@ -4,6 +4,7 @@ import { serve } from "@hono/node-server";
 import { DockerExecutor } from "./agents/docker.js";
 import { DockerTestRunner } from "./agents/test-runner.js";
 import { loadConfig, resolveHome } from "./config.js";
+import { GitContextFetcher } from "./context.js";
 import { GitHubIssueSearch, GitHubPullRequests } from "./github.js";
 import { IssueIntake } from "./intake.js";
 import { SqliteLedgerStore } from "./ledger.js";
@@ -35,6 +36,7 @@ const service = new TaskService({
   config,
   secrets,
   projects,
+  contexts: new GitContextFetcher(),
   executor,
   repos: new GitRepositoryWorkspace(),
   pulls: new GitHubPullRequests(),

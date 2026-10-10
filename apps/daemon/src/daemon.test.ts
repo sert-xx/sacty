@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { EventInput } from "@sacty/core";
@@ -8,6 +8,7 @@ import type { Invocation } from "./agents/invocation.js";
 import type { AgentOutcome } from "./agents/parse.js";
 import type { TestRunner, TestRunResult } from "./agents/test-runner.js";
 import { type AgentConfig, type ConfigResult, loadConfig } from "./config.js";
+import type { ContextFetcher, ContextRef } from "./context.js";
 import type { PullRequests } from "./github.js";
 import { SqliteLedgerStore } from "./ledger.js";
 import { MemoryProjectStore } from "./projects.js";
@@ -106,6 +107,20 @@ class FakeRepos implements RepositoryWorkspace {
   }
 }
 
+/** リポジトリごとに決めたファイルを置く、コンテキストの取得の偽物。 */
+class FakeContexts implements ContextFetcher {
+  constructor(private readonly repos: Record<string, Record<string, string>> = {}) {}
+  async fetch(ref: ContextRef, out: string) {
+    const files = this.repos[ref.repo];
+    if (!files) throw new Error("repository not found");
+    for (const [path, content] of Object.entries(files)) {
+      mkdirSync(join(out, path, ".."), { recursive: true });
+      writeFileSync(join(out, path), content);
+    }
+    return { commit: "c0ffee".padEnd(40, "0") };
+  }
+}
+
 /** PRの作成を記録する偽物。 */
 class FakePulls implements PullRequests {
   calls: Parameters<PullRequests["upsert"]>[0][] = [];
@@ -160,6 +175,8 @@ class FakeExecutor implements AgentExecutor {
   /** 実行ごとにマウントした作業領域。 */
   dirs: string[] = [];
   killed: string[] = [];
+  /** 実行ごとに渡された CLAUDE.md（コンテキストが無ければ undefined）。 */
+  contexts: (string | undefined)[] = [];
   /** HOLD の実行が始まったら解決する。 */
   started = Promise.withResolvers<string>();
   private held = new Map<string, (outcome: AgentOutcome) => void>();
@@ -175,6 +192,13 @@ class FakeExecutor implements AgentExecutor {
   }): Promise<AgentOutcome> {
     this.calls.push(invocation);
     this.dirs.push(workspaceDir);
+    // 渡されたコンテキスト（実行の後に消されるので、実行の間に読んでおく）
+    const seed = invocation.stage?.seedDir;
+    this.contexts.push(
+      seed && existsSync(join(seed, "CLAUDE.md"))
+        ? readFileSync(join(seed, "CLAUDE.md"), "utf8")
+        : undefined,
+    );
     const next = this.outcomes.shift();
     if (!next) throw new Error("no more outcomes");
     if (next.kind === "hold") {
@@ -214,6 +238,7 @@ function makeService(
     tests?: FakeTests;
     pulls?: FakePulls;
     projects?: MemoryProjectStore;
+    contexts?: ContextFetcher;
   } = {},
 ) {
   const executor = new FakeExecutor(outcomes);
@@ -231,6 +256,7 @@ function makeService(
     tests,
     pulls,
     projects: options.projects ?? new MemoryProjectStore(),
+    contexts: options.contexts ?? new FakeContexts(),
     workspaceRoot: join(dir, "workspaces"),
   });
   return { service, executor, repos, tests, pulls };
@@ -466,6 +492,7 @@ describe("秘密情報と予算の通知（レビュー指摘）", () => {
       tests: new FakeTests(),
       pulls: new FakePulls(),
       projects: new MemoryProjectStore(),
+      contexts: new FakeContexts(),
       workspaceRoot: join(dir, "workspaces"),
     });
     const c = throwing.createTicket({ title: "C" });
@@ -546,6 +573,7 @@ describe("秘密情報と予算の通知（レビュー指摘）", () => {
       tests: new FakeTests(),
       pulls: new FakePulls(),
       projects: new MemoryProjectStore(),
+      contexts: new FakeContexts(),
       workspaceRoot: join(dir, "workspaces"),
     });
     const task = service.createTicket({ title: "A" });
@@ -2504,6 +2532,64 @@ describe("プロジェクト定義のエクスポート・インポート（PBI-
       sources: pay.sources,
       repositories: pay.repositories,
     });
+    ledger.close();
+  });
+});
+
+describe("コンテキストリポジトリ（PBI-6a）", () => {
+  const out = (text: string): AgentOutcome => ({
+    kind: "completed",
+    output: text,
+    usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 1 },
+  });
+
+  it("プロジェクトのコンテキストを合成して工程エージェントに渡し、使ったリポジトリとコミットを記録する", async () => {
+    const ledger = new SqliteLedgerStore(dbPath);
+    const projects = new MemoryProjectStore();
+    const contexts = new FakeContexts({
+      "https://example.com/company.git": { "rules.md": "# 会社の規約" },
+      "https://example.com/team.git": {
+        "rules.md": "# チームの規約",
+        "sacty-context.yaml": "extends: https://example.com/company.git#main\n",
+      },
+    });
+    const { service, executor } = makeService(ledger, [out("# 要求要件")], { projects, contexts });
+    const project = service.saveProject(undefined, {
+      name: "決済",
+      context: { repo: "https://example.com/team.git" },
+    });
+    const { id } = service.createTicket({ title: "A", projectId: project.id });
+    await service.runNext(id);
+
+    expect(executor.contexts[0]).toMatch(/会社の規約[\s\S]*チームの規約/);
+    const resolved = service.get(id)?.ledger.find((e) => e.type === "ContextResolved");
+    expect(resolved?.type === "ContextResolved" && resolved.payload.layers).toEqual([
+      { repo: "https://example.com/company.git", ref: "main", commit: "c0ffee".padEnd(40, "0") },
+      { repo: "https://example.com/team.git", commit: "c0ffee".padEnd(40, "0") },
+    ]);
+    expect(service.get(id)?.task.context?.layers).toHaveLength(2);
+    // コンテキストの無いプロジェクトでは、何も渡さない
+    const other = service.createTicket({ title: "B" });
+    expect(executor.contexts).toHaveLength(1);
+    expect(other.projectId).toBe("default");
+    ledger.close();
+  });
+
+  it("コンテキストを取得できなければ、理由を記録して止める", async () => {
+    const ledger = new SqliteLedgerStore(dbPath);
+    const { service, executor } = makeService(ledger, [out("# 要求要件")], {
+      contexts: new FakeContexts({}),
+    });
+    const project = service.saveProject(undefined, {
+      name: "決済",
+      context: { repo: "https://example.com/missing.git" },
+    });
+    const { id } = service.createTicket({ title: "A", projectId: project.id });
+    await service.runNext(id);
+    expect(executor.calls).toHaveLength(0);
+    expect(service.get(id)?.task.pausedReason).toBe("error");
+    const failed = service.get(id)?.ledger.findLast((e) => e.type === "AgentRunFailed");
+    expect(failed?.type === "AgentRunFailed" && failed.payload.message).toMatch(/取得できません/);
     ledger.close();
   });
 });

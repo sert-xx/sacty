@@ -33,6 +33,21 @@ export const RepositorySettings = z.object({
 export type RepositorySettings = z.infer<typeof RepositorySettings>;
 
 /**
+ * コンテキストリポジトリの指定。repo は git の URL かローカルのパス、ref はブランチやタグ
+ * （省略すると既定のブランチ）。
+ */
+export const ContextSource = z.object({
+  repo: z.string().trim().min(1, "コンテキストリポジトリを入力してください").max(500),
+  ref: z
+    .string()
+    .trim()
+    .max(200)
+    .regex(/^[\w./-]*$/, "ref はブランチ名かタグ名で入力してください")
+    .optional(),
+});
+export type ContextSource = z.infer<typeof ContextSource>;
+
+/**
  * プロジェクトの定義。エクスポート・インポートの対象（PBI-5b）なので、
  * 個人の設定や秘密情報は含めない。
  */
@@ -40,6 +55,8 @@ export const ProjectDefinition = z.object({
   name: z.string().trim().min(1, "名前を入力してください").max(80),
   sources: z.array(IssueSource).max(50).default([]),
   repositories: z.array(RepositorySettings).max(100).default([]),
+  /** 工程エージェントに渡すコンテキスト（PBI-6）。 */
+  context: ContextSource.optional(),
 });
 export type ProjectDefinition = z.infer<typeof ProjectDefinition>;
 export type ProjectDefinitionInput = z.input<typeof ProjectDefinition>;
@@ -158,6 +175,7 @@ export const ProjectExport = z
         name: ProjectDefinition.shape.name,
         sources: z.array(StrictIssueSource).max(50).default([]),
         repositories: z.array(RepositorySettings.strict()).max(100).default([]),
+        context: ContextSource.strict().optional(),
       })
       .strict(),
   })
@@ -182,6 +200,14 @@ export function exportProject(project: Project): ProjectExport {
         testCommand: r.testCommand,
         pullRequest: r.pullRequest,
       })),
+      ...(project.context
+        ? {
+            context: {
+              repo: project.context.repo,
+              ...(project.context.ref ? { ref: project.context.ref } : {}),
+            },
+          }
+        : {}),
     },
   };
 }
