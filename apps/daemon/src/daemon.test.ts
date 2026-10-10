@@ -55,16 +55,19 @@ const configOf =
 
 /** clone の代わりに空のディレクトリを作り、決まった差分を返す偽物。 */
 class FakeRepos implements RepositoryWorkspace {
-  prepared: { dir: string; url: string; baseBranch: string }[] = [];
+  prepared: { dir: string; gitDir: string; url: string; baseBranch: string }[] = [];
   diffText = "diff --git a/src/pay.ts b/src/pay.ts\n+export const pay = () => 1;";
   fail?: string;
-  async prepare(dir: string, url: string, baseBranch: string) {
+  diffFail?: string;
+  async prepare(dir: string, gitDir: string, url: string, baseBranch: string) {
     if (this.fail) throw new Error(this.fail);
     mkdirSync(dir, { recursive: true });
-    this.prepared.push({ dir, url, baseBranch });
+    mkdirSync(gitDir, { recursive: true });
+    this.prepared.push({ dir, gitDir, url, baseBranch });
     return { baseCommit: "base123" };
   }
   async diff() {
+    if (this.diffFail) throw new Error(this.diffFail);
     return this.diffText;
   }
 }
@@ -1380,6 +1383,8 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     expect(repos.prepared).toEqual([
       {
         dir: join(dir, "workspaces", id, "repo"),
+        // 退避先は、どのコンテナにもマウントしない場所（タスクの作業領域の外）
+        gitDir: join(dir, "workspaces", "_git", `${id}.git`),
         url: "https://example.com/acme/app.git",
         baseBranch: "main",
       },
@@ -1555,6 +1560,60 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     expect(paused?.pausedMessage).toContain("session limit");
     expect(paused?.verification).toBe("tests_passed");
 
+    service.resume(id, {});
+    await drain(service);
+    expect(tests.calls).toHaveLength(1);
+    expect(service.get(id)?.task.steps[2]?.state).toBe("done");
+    ledger.close();
+  });
+
+  it("最終レビューを実行できなかった分の費用も記録し、予算に入れる（レビュー指摘）", async () => {
+    const { ledger, service, id } = await toImplement([
+      implement("# v1"),
+      {
+        kind: "failed",
+        reason: "usage_limit",
+        message: "You've hit your session limit",
+        usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 1_000_000 }, // $15
+      },
+    ]);
+    const before = service.get(id)?.task.budget.usedUsd ?? 0;
+    await service.runNext(id);
+    await service.runNext(id);
+    const task = service.get(id)?.task;
+    expect(task?.budget.usedUsd).toBeCloseTo(before + 0.0015 + 15, 6);
+    expect(task?.budget.warned).toBe(true);
+    expect(types(service, id).slice(-3)).toEqual([
+      "FinalReviewFailed",
+      "TaskPaused",
+      "BudgetWarned",
+    ]);
+    // 再開するには、使用済みより大きい上限が必要（予算の判定にも入っている）
+    expect(task?.pausedReason).toBe("usage_limit");
+    service.resume(id, {});
+    await service.runNext(id);
+    expect(service.get(id)?.task.pausedReason).toBe("budget");
+    ledger.close();
+  });
+
+  it("差分を取得できなければ最終レビューをせずに止め、再開すると差分の取得からやり直す（レビュー指摘）", async () => {
+    const repos = new FakeRepos();
+    const tests = new FakeTests();
+    const { ledger, service, executor, id } = await toImplement([implement("# v1"), review()], {
+      repos,
+      tests,
+    });
+    repos.diffFail = "git diff に失敗しました：bad object";
+    await service.runNext(id);
+    await service.runNext(id);
+    const paused = service.get(id)?.task;
+    expect(paused?.pausedReason).toBe("error");
+    expect(paused?.pausedMessage).toContain("差分を取得できないため、最終レビューをしていません");
+    expect(paused?.verification).toBe("tests_passed");
+    expect(paused?.steps[2]?.state).toBe("active");
+    expect(executor.calls).toHaveLength(4); // ゴールガーディアンは呼んでいない
+
+    repos.diffFail = undefined;
     service.resume(id, {});
     await drain(service);
     expect(tests.calls).toHaveLength(1);

@@ -216,13 +216,23 @@ export class TaskService {
     return join(this.deps.workspaceRoot, task.id, "repo");
   }
 
+  /**
+   * clone した直後の git のメタデータを退避する場所。どのコンテナにもマウントしない
+   * （エージェントやテストが書き換えた git の設定を、差分を作るときに読まないため）。
+   */
+  private trustedGitDir(task: Task): string {
+    return join(this.deps.workspaceRoot, "_git", `${task.id}.git`);
+  }
+
   /** 実装の対象リポジトリを用意する（初回だけ clone し、起点のコミットを台帳に記録する）。 */
   private async prepareRepository(
     task: Task,
     config: SactyConfig,
   ): Promise<{ ok: true; dir: string } | { ok: false; message: string }> {
     const dir = this.repoDir(task);
-    if (task.repository && existsSync(dir)) return { ok: true, dir };
+    if (task.repository && existsSync(dir) && existsSync(this.trustedGitDir(task))) {
+      return { ok: true, dir };
+    }
     const repo = config.repository;
     if (!repo && !task.repository) {
       return {
@@ -235,7 +245,12 @@ export class TaskService {
     const url = task.repository?.url ?? repo?.url ?? "";
     const baseBranch = task.repository?.baseBranch ?? repo?.baseBranch ?? "main";
     try {
-      const { baseCommit } = await this.deps.repos.prepare(dir, url, baseBranch);
+      const { baseCommit } = await this.deps.repos.prepare(
+        dir,
+        this.trustedGitDir(task),
+        url,
+        baseBranch,
+      );
       this.append(task, [
         {
           actor: "sacty",
@@ -406,7 +421,7 @@ export class TaskService {
     }
     const repo = config.config.repository;
     const dir = this.repoDir(task);
-    if (!task.repository || !repo || !existsSync(dir)) {
+    if (!task.repository || !repo || !existsSync(dir) || !existsSync(this.trustedGitDir(task))) {
       this.append(task, [
         {
           actor: "sacty",
@@ -458,11 +473,25 @@ export class TaskService {
       }
     }
 
+    // 差分は、テストが観点を検証しているかを判断するのに欠かせない。取れなければ最終レビューをせずに止める
+    // （再開すると、差分の取得からやり直す）
     let diff: string;
     try {
-      diff = await this.deps.repos.diff(dir, task.repository.baseCommit);
+      diff = await this.deps.repos.diff(dir, this.trustedGitDir(task), task.repository.baseCommit);
     } catch (error) {
-      diff = `（差分を取得できませんでした：${error instanceof Error ? error.message : String(error)}）`;
+      this.append(current, [
+        {
+          actor: "sacty",
+          event: {
+            type: "TaskPaused",
+            payload: {
+              reason: "error",
+              message: `差分を取得できないため、最終レビューをしていません：${error instanceof Error ? error.message : String(error)}`,
+            },
+          },
+        },
+      ]);
+      return;
     }
     const agent = config.config.guardianAgent;
     const runId = randomUUID();
@@ -482,19 +511,30 @@ export class TaskService {
     }
     const { outcome, costUsd, estimated } = result;
     if (outcome.kind === "failed") {
-      // 実装の問題ではないので、やり直さずに止める。再開すると最終レビューからやり直す
+      // 実装の問題ではないので、やり直さずに止める。再開すると最終レビューからやり直す。
+      // 使った分の費用は記録し、予算に入れる
+      const message = `ゴールガーディアンの最終レビューを実行できませんでした：${outcome.message}`;
       this.append(current, [
         {
-          actor: "sacty",
+          actor: "guardian",
           event: {
-            type: "TaskPaused",
+            type: "FinalReviewFailed",
             payload: {
               reason: outcome.reason,
-              message: `ゴールガーディアンの最終レビューを実行できませんでした：${outcome.message}`,
+              message,
+              agentId: agent.id,
+              usage: outcome.usage,
+              costUsd,
+              estimated,
             },
           },
         },
+        {
+          actor: "sacty",
+          event: { type: "TaskPaused", payload: { reason: outcome.reason, message } },
+        },
       ]);
+      this.warnIfNeeded(this.mustGet(task.id));
       return;
     }
     const review = extractFinalReview(

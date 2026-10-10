@@ -302,6 +302,22 @@ const FinalReviewed = z.object({
   }),
 });
 
+/**
+ * ゴールガーディアンの最終レビューを実行できなかった（利用上限など）。実装の問題ではないので
+ * やり直さずに止め、再開すると最終レビューからやり直す。使った分の費用は予算に入れる。
+ */
+const FinalReviewFailed = z.object({
+  type: z.literal("FinalReviewFailed"),
+  payload: z.object({
+    reason: z.enum(["usage_limit", "auth", "error"]),
+    message: z.string(),
+    agentId: z.string(),
+    usage: TokenUsage.optional(),
+    costUsd: z.number().nonnegative().default(0),
+    estimated: z.boolean().default(false),
+  }),
+});
+
 const ChangesRequested = z.object({
   type: z.literal("ChangesRequested"),
   payload: z.object({
@@ -365,6 +381,7 @@ export const EventInput = z.discriminatedUnion("type", [
   RepositoryPrepared,
   TestsRun,
   FinalReviewed,
+  FinalReviewFailed,
   ChangesRequested,
   RemarkVoided,
   TaskEscalated,

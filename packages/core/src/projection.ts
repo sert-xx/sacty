@@ -482,6 +482,17 @@ export function applyEvent(
       break;
     }
 
+    case "FinalReviewFailed":
+      if (task.status !== "idle" || task.verification !== "tests_passed") {
+        throw new LedgerIntegrityError(event, "final review is not pending");
+      }
+      task.budget = {
+        ...task.budget,
+        usedUsd: addUsd(task.budget.usedUsd, event.payload.costUsd),
+        estimated: task.budget.estimated || event.payload.estimated,
+      };
+      break;
+
     case "TaskEscalated":
       if (event.payload.reason === "change_undecidable") {
         if (task.status !== "idle") throw new LedgerIntegrityError(event, `status ${task.status}`);

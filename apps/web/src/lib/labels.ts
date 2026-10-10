@@ -162,6 +162,8 @@ export function describeEvent(event: LedgerEvent): string {
         event.payload.remarks.filter((r) => !r.notRecurred).length;
       return `最終レビュー：${event.payload.passed ? "合格" : `不合格（${ng}件）`}（${ACTOR_LABEL[event.actor]}${event.payload.costUsd > 0 ? `・${usd(event.payload.costUsd)}${event.payload.estimated ? "・換算値" : ""}` : ""}）`;
     }
+    case "FinalReviewFailed":
+      return `${event.payload.message}（${usd(event.payload.costUsd)}${event.payload.estimated ? "・換算値" : ""}）`;
     case "StepQueued":
       return `${STEP_LABEL[event.payload.step]}を実行待ちにした（実行できるようになったため）`;
     case "ChangesRequested":
