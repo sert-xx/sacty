@@ -1,0 +1,16 @@
+{
+  "name": "@sacty/cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "sacty": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc -b"
+  },
+  "dependencies": {
+    "@sacty/daemon": "0.1.0",
+    "@sacty/web": "0.1.0"
+  }
+}

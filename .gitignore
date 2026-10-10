@@ -1,0 +1,13 @@
+node_modules/
+dist/
+.next/
+out/
+coverage/
+*.tsbuildinfo
+.DS_Store
+.env
+.env.*
+# 一時ファイル（PBIはgit管理しない）
+docs/pbi/
+# ローカル実行データ
+.sacty/

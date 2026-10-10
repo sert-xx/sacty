@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "sacty",
+      "runtimeExecutable": "env",
+      "runtimeArgs": ["SACTY_HOME=.sacty", "npx", "sacty", "up"],
+      "port": 4700,
+      "url": "http://127.0.0.1:4700"
+    }
+  ]
+}
