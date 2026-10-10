@@ -1,6 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { renderMessage } from "@sacty/core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { AgentExecutor } from "./agents/docker.js";
 import type { ConfigResult } from "./config.js";
@@ -11,6 +12,9 @@ import { MemoryProjectStore } from "./projects.js";
 import { buildPullRequestBody } from "./prompts.js";
 import { MemorySecretStore } from "./secrets.js";
 import { TaskService } from "./service.js";
+
+/** 記録した文言（コードと引数）を、日本語の文にする（PBI-11）。 */
+const ja = (text: unknown) => renderMessage(text, "ja");
 
 let dir: string;
 beforeEach(() => {
@@ -163,7 +167,7 @@ describe("GitHub Issue の定期的な取り込み（PBI-5a）", () => {
     search.rateLimited = true;
     await intake.tick(true);
     expect(search.queries).toHaveLength(1); // 1つ目でレート制限になり、2つ目は検索しない
-    expect(service.status().intake?.errors?.map((e) => e.message)).toEqual([
+    expect(service.status().intake?.errors?.map((e) => ja(e.message))).toEqual([
       "レート制限",
       "レート制限のため、次の取り込みで検索します。",
     ]);

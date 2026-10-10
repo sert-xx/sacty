@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { code } from "./message-code.js";
+import { code, DaemonText } from "./message-code.js";
 
 /** 工程の種類。MVPの固定工程は requirements → design → implement → pr。 */
 export const StepKey = z.enum(["requirements", "design", "implement", "pr"]);
@@ -157,7 +157,8 @@ const AgentRunFailed = z.object({
     step: StepKey,
     agentId: z.string(),
     reason: z.enum(["usage_limit", "auth", "error"]),
-    message: z.string(),
+    /** sacty の文言はコードと引数、エージェントや外から来た文はそのまま（PBI-11）。 */
+    message: DaemonText,
     usage: TokenUsage.optional(),
     costUsd: z.number().nonnegative().default(0),
     estimated: z.boolean().default(false),
@@ -174,7 +175,7 @@ const TaskPaused = z.object({
   payload: z.object({
     reason: PauseReason,
     /** 止まった理由の詳しい説明（実行の失敗の記録が無い場合）。 */
-    message: z.string().optional(),
+    message: DaemonText.optional(),
     /**
      * 止めたが、無くなったことを確かめられなかったコンテナ（の実行）。中止や再開の前に確かめ直す
      * （デーモンを再起動しても追えるよう、台帳に記録する）。
@@ -248,7 +249,8 @@ const ChangeJudged = z.object({
   payload: z.object({
     proposalId: z.string(),
     verdict: Verdict,
-    reason: z.string(),
+    /** ゴールガーディアンが書いた理由。実行に失敗したときは sacty の文言（PBI-11）。 */
+    reason: DaemonText,
     agentId: z.string(),
     usage: TokenUsage.optional(),
     costUsd: z.number().nonnegative().default(0),
@@ -296,6 +298,8 @@ const TestsRun = z.object({
     passed: z.boolean(),
     /** 出力の末尾。 */
     output: z.string(),
+    /** sacty の注記（テストを止めた理由など）。テストの出力とは分けて、コードと引数で持つ（PBI-11）。 */
+    note: DaemonText.optional(),
     durationMs: z.number().int().nonnegative(),
   }),
 });
@@ -304,14 +308,15 @@ const ViewpointReview = z.object({
   viewpointId: z.string(),
   /** テストが、その観点を本当に検証しているか。 */
   verified: z.boolean(),
-  reason: z.string(),
+  /** ゴールガーディアンが書いた理由。判定が無いときは sacty の文言（PBI-11）。 */
+  reason: DaemonText,
 });
 
 const RemarkReview = z.object({
   remarkId: z.string(),
   /** 指摘された問題が、今回の成果物で再発していないか。 */
   notRecurred: z.boolean(),
-  reason: z.string(),
+  reason: DaemonText,
 });
 
 /** ゴールガーディアンの最終レビュー。観点ごと・人間の指摘ごとに判定する。 */
@@ -322,7 +327,7 @@ const FinalReviewed = z.object({
     viewpoints: z.array(ViewpointReview),
     remarks: z.array(RemarkReview),
     /** 全体への所見（形式を読めなかった場合の理由など）。 */
-    summary: z.string(),
+    summary: DaemonText,
     agentId: z.string(),
     usage: TokenUsage.optional(),
     costUsd: z.number().nonnegative().default(0),
@@ -338,7 +343,7 @@ const FinalReviewFailed = z.object({
   type: z.literal("FinalReviewFailed"),
   payload: z.object({
     reason: z.enum(["usage_limit", "auth", "error"]),
-    message: z.string(),
+    message: DaemonText,
     agentId: z.string(),
     usage: TokenUsage.optional(),
     costUsd: z.number().nonnegative().default(0),
@@ -405,7 +410,7 @@ const TaskCancelled = z.object({
         target: CleanupTarget,
         /** done：片付けた、skipped：対象が無かった、failed：失敗した（理由は detail）。 */
         result: z.enum(["done", "skipped", "failed"]),
-        detail: z.string().optional(),
+        detail: DaemonText.optional(),
       }),
     ),
   }),
@@ -420,7 +425,7 @@ const ContextResolved = z.object({
   payload: z.object({
     runId: z.string(),
     layers: z.array(z.object({ repo: z.string(), ref: z.string().optional(), commit: z.string() })),
-    warnings: z.array(z.string()).default([]),
+    warnings: z.array(DaemonText).default([]),
   }),
 });
 

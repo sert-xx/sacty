@@ -1,5 +1,7 @@
-import { redact } from "./agents/redact.js";
+import { type DaemonText, message } from "@sacty/core";
+import { redactText } from "./agents/redact.js";
 import type { ConfigResult } from "./config.js";
+import { errorText } from "./errors.js";
 import type { IssueSearch } from "./github.js";
 import type { SecretStore } from "./secrets.js";
 import type { TaskService } from "./service.js";
@@ -71,7 +73,7 @@ export class IssueIntake {
       this.service.recordIntake({
         lastRunAt: at,
         imported: 0,
-        errors: [{ message: describe(error) }],
+        errors: [{ message: errorText(error) }],
       });
       return;
     }
@@ -83,11 +85,11 @@ export class IssueIntake {
       this.revision = revision;
     }
     const found = [];
-    const errors: { query?: string; message: string }[] = [];
+    const errors: { query?: string; message: DaemonText }[] = [];
     let rateLimited = false;
     for (const query of this.service.intakeQueries()) {
       if (rateLimited) {
-        errors.push({ query, message: "レート制限のため、次の取り込みで検索します。" });
+        errors.push({ query, message: message("intake.skippedRateLimited") });
         continue;
       }
       try {
@@ -95,11 +97,11 @@ export class IssueIntake {
         found.push(...result.issues);
         if (result.cursor) this.cursors.set(query, result.cursor);
         if (result.incomplete) {
-          errors.push({ query, message: redact(result.incomplete, [token]) });
+          errors.push({ query, message: redactText(result.incomplete, [token]) });
         }
         rateLimited = result.rateLimited === true;
       } catch (error) {
-        errors.push({ query, message: redact(describe(error), [token]) });
+        errors.push({ query, message: redactText(errorText(error), [token]) });
       }
     }
     const created = this.service.importIssues(found);
@@ -109,8 +111,4 @@ export class IssueIntake {
       ...(errors.length > 0 ? { errors } : {}),
     });
   }
-}
-
-function describe(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

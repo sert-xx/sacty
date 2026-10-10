@@ -104,7 +104,7 @@ function ProposalItem({
           {p.judgement ? (
             <>
               <span className="font-medium">{messages.labels.verdict[p.judgement.verdict]}</span>：
-              {p.judgement.reason}
+              {messages.labels.text(p.judgement.reason)}
               <span className="ml-1 text-xs text-muted-foreground">{m.byGuardian}</span>
             </>
           ) : (

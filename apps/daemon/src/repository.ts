@@ -2,6 +2,8 @@ import { spawn } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { message } from "@sacty/core";
+import { MessageError } from "./errors.js";
 
 /** 差分は、先頭のこのバイト数だけゴールガーディアンに渡す。 */
 export const DIFF_LIMIT = 200_000;
@@ -42,7 +44,7 @@ export interface RepositoryWorkspace {
 }
 
 /** 起点から変更が無く、コミットするものが無い。 */
-export class NothingToCommitError extends Error {}
+export class NothingToCommitError extends MessageError {}
 
 const BASE_ENV_KEYS = ["PATH", "TMPDIR", "LANG"];
 
@@ -106,10 +108,14 @@ function git(
     child.stderr.on("data", (chunk) => {
       err += chunk;
     });
-    child.on("error", (error) => reject(new Error(`gitを実行できません（${error.message}）。`)));
+    child.on("error", (error) =>
+      reject(new MessageError(message("git.unavailable", { detail: error.message }))),
+    );
     child.on("close", (code) => {
       if (code === 0) resolve(out);
-      else reject(new Error(`git ${label} に失敗しました：${err.trim() || `終了コード ${code}`}`));
+      else if (err.trim()) {
+        reject(new MessageError(message("git.failed", { command: label, detail: err.trim() })));
+      } else reject(new MessageError(message("git.exitCode", { command: label, code })));
     });
   });
 }
@@ -127,7 +133,7 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
     baseCommit: string,
     then: (git: (label: string, args: string[]) => Promise<string>) => Promise<T>,
   ): Promise<T> {
-    if (!COMMIT_RE.test(baseCommit)) throw new Error("起点のコミットが不正です。");
+    if (!COMMIT_RE.test(baseCommit)) throw new MessageError(message("git.invalidBaseCommit"));
     // インデックスは一時ファイルにする
     const temp = mkdtempSync(join(tmpdir(), "sacty-git-"));
     try {
@@ -184,16 +190,15 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
     message: string;
     date: string;
   }) {
-    if (!COMMIT_RE.test(input.parent)) throw new Error("積む先のコミットが不正です。");
+    if (!COMMIT_RE.test(input.parent)) throw new MessageError(message("git.invalidParentCommit"));
     if (!/^[\w./-]+$/.test(input.branch) || input.branch.startsWith("-")) {
-      throw new Error("ブランチ名が不正です。");
+      throw new MessageError(message("git.invalidBranch"));
     }
     const author = await this.author();
     const commit = await this.stage(input.dir, input.gitDir, input.baseCommit, async (run) => {
       const tree = (await run("write-tree", ["write-tree"])).trim();
       const baseTree = (await run("rev-parse", ["rev-parse", `${input.baseCommit}^{tree}`])).trim();
-      if (tree === baseTree)
-        throw new NothingToCommitError("起点から変更がないため、コミットできません。");
+      if (tree === baseTree) throw new NothingToCommitError(message("git.nothingToCommit"));
       const parentTree = (await run("rev-parse", ["rev-parse", `${input.parent}^{tree}`])).trim();
       // 前回プッシュした内容から変わっていなければ、同じコミットをそのまま使う
       if (tree === parentTree && input.parent !== input.baseCommit) return input.parent;
@@ -231,7 +236,7 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
 
   async deleteBranch(gitDir: string, branch: string) {
     // 人間のブランチを消さないよう、sacty のブランチだけを受け付ける
-    if (!/^sacty\/[\w./-]+$/.test(branch)) throw new Error("sacty のブランチではありません。");
+    if (!/^sacty\/[\w./-]+$/.test(branch)) throw new MessageError(message("git.notSactyBranch"));
     // プッシュと同じく、退避したメタデータとホストの認証を使う。作業領域は読まない
     await git(
       "push",

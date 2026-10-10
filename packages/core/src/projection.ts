@@ -10,6 +10,7 @@ import type {
   Verdict,
 } from "./events.js";
 import { REWORK_STEPS } from "./events.js";
+import type { DaemonText } from "./message-code.js";
 
 type PayloadOf<T extends ParsedEventInput["type"]> = Extract<
   ParsedEventInput,
@@ -73,7 +74,7 @@ export type TaskProposal = {
   testViewpoints?: TestViewpoint[];
   proposedAt: string;
   /** ゴールガーディアンの判定。無ければ判定中。 */
-  judgement?: { verdict: Verdict; reason: string; at: string };
+  judgement?: { verdict: Verdict; reason: DaemonText; at: string };
   /** 判定できなかった申し出への、人間の判断。 */
   decision?: { accept: boolean; at: string };
   /** 変更を反映したか。 */
@@ -99,7 +100,7 @@ export type Task = {
   status: TaskStatus;
   pausedReason?: PauseReason;
   /** 止まった理由の詳しい説明。 */
-  pausedMessage?: string;
+  pausedMessage?: DaemonText;
   /** 止めたが、無くなったことを確かめられなかったコンテナの実行。 */
   unstoppedRuns?: string[];
   /** 一時停止の直前の状態。再開時、実行待ち（やり直し）に戻すか待機に戻すかを決める。 */

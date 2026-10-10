@@ -227,3 +227,75 @@ describe("一時停止と中止の表示（PBI-3）", () => {
     expect(isWorking(task({ status: "cancelled" }))).toBe(false);
   });
 });
+
+describe("台帳に記録したデーモンの文言（PBI-11b）", () => {
+  const event = (e: Pick<LedgerEvent, "type" | "payload">): LedgerEvent =>
+    ({
+      ...e,
+      seq: 1,
+      id: "e1",
+      taskId: "t1",
+      projectId: "default",
+      at: "2026-10-10T00:00:00.000Z",
+      actor: "sacty",
+    }) as LedgerEvent;
+  const failed = (message: unknown) =>
+    event({
+      type: "AgentRunFailed",
+      payload: {
+        runId: "r",
+        step: "implement",
+        agentId: "a",
+        reason: "error",
+        message,
+        costUsd: 0,
+        estimated: false,
+      },
+    } as Pick<LedgerEvent, "type" | "payload">);
+
+  it("コードと引数の文言は、画面の言語の文にする（外から来た文は引数のまま）", () => {
+    const pr = failed({
+      code: "pr.failed",
+      params: {
+        detail: {
+          code: "github.failed",
+          params: { action: "createPr", status: 401, detail: "Bad credentials", hint: "token" },
+        },
+      },
+    });
+    expect(describeIn(pr, labels.ja)).toBe(
+      "実装の実行が失敗：PRを作れませんでした：PRを作れませんでした：GitHub API 401 Bad credentials（トークンが無効です）",
+    );
+    expect(describeIn(pr, labels.en)).toBe(
+      "Implement failed: Could not open the PR: Could not open the PR: GitHub API 401 Bad credentials (the token is invalid)",
+    );
+  });
+
+  it("古い台帳の日本語の文や、エージェントの文は、そのまま表示する", () => {
+    expect(describeIn(failed("デーモンが停止したため、実行が中断されました。"), labels.en)).toBe(
+      "Implement failed: デーモンが停止したため、実行が中断されました。",
+    );
+    expect(describeIn(failed("API Error: 401 Invalid authentication"), labels.ja)).toBe(
+      "実装の実行が失敗：API Error: 401 Invalid authentication",
+    );
+  });
+
+  it("コンテキストの注意も、画面の言語の文にする", () => {
+    const resolved = event({
+      type: "ContextResolved",
+      payload: {
+        runId: "r",
+        layers: [{ repo: "c.git", commit: "a".repeat(40) }],
+        warnings: [
+          {
+            code: "context.lockedOverride",
+            params: { from: "t@1", kind: "skills", name: "review", lockedBy: "c@2" },
+          },
+        ],
+      },
+    });
+    expect(describeIn(resolved, labels.en)).toContain(
+      'notes: t@1 tried to override the skill "review", but c@2 locks it, so the upper one was used.',
+    );
+  });
+});

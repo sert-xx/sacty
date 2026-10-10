@@ -10,6 +10,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { renderMessage } from "@sacty/core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   type ContextFetcher,
@@ -19,6 +20,9 @@ import {
   prepareContext,
   resolveContext,
 } from "./context.js";
+
+/** 記録した文言（コードと引数）を、日本語の文にする（PBI-11）。 */
+const ja = (text: unknown) => renderMessage(text, "ja");
 
 let dir: string;
 beforeEach(() => {
@@ -91,7 +95,7 @@ describe("コンテキストリポジトリの合成（PBI-6）", () => {
     expect(readFileSync(join(skills.release?.dir ?? "", "SKILL.md"), "utf8")).toContain("チーム版");
     expect(skills.local).toBeDefined();
     expect(composed.warnings).toHaveLength(2); // 取り除き・上書きの両方が、上書き禁止に当たった
-    expect(composed.warnings.join()).toContain("review");
+    expect(composed.warnings.map(ja).join()).toContain("review");
   });
 
   it("上書き禁止でない項目は、下位で取り除ける", async () => {
@@ -209,7 +213,13 @@ describe("MCP サーバーの合成と変換（PBI-6b）", () => {
     expect(Object.keys(mcp).sort()).toEqual(["docs", "github", "local"]);
     expect(mcp.github).toMatchObject({ command: "npx" }); // 上書き禁止
     expect(mcp.docs).toEqual({ url: "https://team.example.com/mcp", headers: {} }); // 下位が上書き
-    expect(composed.warnings).toEqual([expect.stringContaining("MCP サーバー「github」を上書き")]);
+    expect(composed.warnings.map(ja)).toEqual([
+      expect.stringContaining("MCP サーバー「github」を上書き"),
+    ]);
+    expect(composed.warnings[0]).toMatchObject({
+      code: "context.lockedOverride",
+      params: { kind: "mcp", name: "github" },
+    });
   });
 
   it("Claude Code には、秘密情報を環境変数の参照にした mcp.json を書く（値は書かない）", async () => {

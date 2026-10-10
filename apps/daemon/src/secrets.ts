@@ -1,16 +1,16 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { message } from "@sacty/core";
+import { MessageError } from "./errors.js";
 
 const run = promisify(execFile);
 
 /** sactyがキーチェーンに保存するときのサービス名。 */
 export const KEYCHAIN_SERVICE = "sacty";
 
-export class SecretNotFoundError extends Error {
+export class SecretNotFoundError extends MessageError {
   constructor(readonly secretName: string) {
-    super(
-      `秘密情報「${secretName}」が見つかりません。\`sacty secret set ${secretName}\` で保存してください。`,
-    );
+    super(message("run.secretNotFound", { name: secretName }));
   }
 }
 

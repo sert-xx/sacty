@@ -69,9 +69,12 @@ async function Projects() {
                   <p>{t.intake.errors}</p>
                   <ul className="list-disc pl-5">
                     {intake.errors.map((e) => (
-                      <li key={`${e.query ?? ""}:${e.message}`} className="break-words">
+                      <li
+                        key={`${e.query ?? ""}:${JSON.stringify(e.message)}`}
+                        className="break-words"
+                      >
                         {e.query && <span className="font-mono text-xs">{e.query}</span>}{" "}
-                        {e.message}
+                        {m.labels.text(e.message)}
                       </li>
                     ))}
                   </ul>

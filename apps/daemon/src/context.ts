@@ -13,8 +13,10 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
+import { code, type DaemonText, issueMessage, message } from "@sacty/core";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
+import { errorText, MessageError } from "./errors.js";
 
 /**
  * コンテキストリポジトリ（PBI-6）。中立形式は次のとおり。
@@ -43,19 +45,12 @@ const ContextManifest = z
  * （prefix は値の前につける。`Bearer ` など）。
  * Claude Code は設定の `${...}` を環境変数として展開するので、文字列に `${` は書けない。
  */
-const McpLiteral = z
-  .string()
-  .refine(
-    (v) => !v.includes("${"),
-    "「$\u007b」は使えません（秘密情報は { secret: 名前 } で参照してください）",
-  );
+const McpLiteral = z.string().refine((v) => !v.includes("${"), code("input.dollarBrace"));
 const McpValue = z.union([
   McpLiteral,
   z
     .object({
-      secret: z
-        .string()
-        .regex(/^[A-Za-z0-9._-]+$/, "秘密情報の名前は英数字と . _ - だけで書いてください"),
+      secret: z.string().regex(/^[A-Za-z0-9._-]+$/, code("input.secretName")),
       prefix: McpLiteral.default(""),
     })
     .strict(),
@@ -66,10 +61,7 @@ const McpServer = z.union([
       command: McpLiteral.pipe(z.string().min(1)),
       args: z.array(McpLiteral).default([]),
       env: z
-        .record(
-          z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/, "環境変数の名前が正しくありません"),
-          McpValue,
-        )
+        .record(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/, code("input.envName")), McpValue)
         .default({}),
     })
     .strict(),
@@ -78,7 +70,7 @@ const McpServer = z.union([
       url: McpLiteral.pipe(z.url({ protocol: /^https?$/ })),
       headers: z
         .record(
-          z.string().regex(/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/, "ヘッダーの名前が正しくありません"),
+          z.string().regex(/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/, code("input.headerName")),
           McpValue,
         )
         .default({}),
@@ -89,12 +81,7 @@ export type McpServer = z.infer<typeof McpServer>;
 const McpFile = z
   .object({
     servers: z
-      .record(
-        z
-          .string()
-          .regex(/^[A-Za-z0-9_-]+$/, "MCP サーバーの名前は英数字と _ - だけで書いてください"),
-        McpServer,
-      )
+      .record(z.string().regex(/^[A-Za-z0-9_-]+$/, code("input.mcpName")), McpServer)
       .default({}),
   })
   .strict()
@@ -120,7 +107,7 @@ export interface ContextFetcher {
 /** 継承をたどる深さの上限（循環や、誤った設定で延々とたどらないように）。 */
 export const MAX_CONTEXT_DEPTH = 10;
 
-export class ContextError extends Error {}
+export class ContextError extends MessageError {}
 
 /** `URL#ref` の形の extends を分ける。 */
 export function parseExtends(value: string): ContextRef {
@@ -144,10 +131,10 @@ export async function resolveContext(
   while (next) {
     const key = `${next.repo}#${next.ref ?? ""}`;
     if (seen.has(key)) {
-      throw new ContextError(`コンテキストの継承が循環しています（${key}）。`);
+      throw new ContextError(message("context.cycle", { key }));
     }
     if (chain.length >= MAX_CONTEXT_DEPTH) {
-      throw new ContextError(`コンテキストの継承が深すぎます（上限 ${MAX_CONTEXT_DEPTH} 段）。`);
+      throw new ContextError(message("context.tooDeep", { max: MAX_CONTEXT_DEPTH }));
     }
     seen.add(key);
     const dir = join(workDir, String(chain.length));
@@ -155,9 +142,7 @@ export async function resolveContext(
     try {
       ({ commit } = await fetcher.fetch(next, dir));
     } catch (error) {
-      throw new ContextError(
-        `コンテキストリポジトリ（${key}）を取得できません：${error instanceof Error ? error.message : String(error)}`,
-      );
+      throw new ContextError(message("context.fetchFailed", { key, detail: errorText(error) }));
     }
     assertPlainEntries(dir, key);
     const manifest = readManifest(dir, key);
@@ -184,9 +169,12 @@ function assertPlainEntries(dir: string, key: string): void {
       return;
     }
     if (!stat.isFile()) {
-      const kind = stat.isSymbolicLink() ? "シンボリックリンク" : "通常のファイルでないもの";
       throw new ContextError(
-        `${key} の ${relative(dir, path)} は${kind}です。コンテキストリポジトリでは、設定・規約・スキルに通常のファイルとディレクトリだけを使えます。`,
+        message("context.notPlainFile", {
+          key,
+          path: relative(dir, path),
+          symlink: stat.isSymbolicLink(),
+        }),
       );
     }
   };
@@ -212,17 +200,18 @@ function readManifest(dir: string, key: string) {
  */
 function innermost(
   issue: z.core.$ZodIssue | undefined,
-): { path: PropertyKey[]; message: string } | undefined {
+): { path: PropertyKey[]; issue: z.core.$ZodIssue } | undefined {
   if (!issue) return undefined;
   if (issue.code === "invalid_key") {
-    return { path: issue.path, message: issue.issues[0]?.message ?? issue.message };
+    const inner = issue.issues[0];
+    return { path: issue.path, issue: inner ? { ...inner, path: [] } : issue };
   }
   if (issue.code === "invalid_union" && issue.errors.length > 0) {
     const closest = [...issue.errors].sort((a, b) => a.length - b.length)[0] ?? [];
     const inner = innermost(closest[0]);
-    if (inner) return { path: [...issue.path, ...inner.path], message: inner.message };
+    if (inner) return { path: [...issue.path, ...inner.path], issue: inner.issue };
   }
-  return { path: issue.path, message: issue.message };
+  return { path: issue.path, issue };
 }
 
 /** 層の YAML を読んで検査する（無ければ既定値）。 */
@@ -238,13 +227,20 @@ function readYaml<T extends z.ZodType>(
   try {
     raw = parseYaml(readFileSync(path, "utf8"));
   } catch (error) {
-    throw new ContextError(`${key} の ${name} を読めません：${(error as Error).message}`);
+    throw new ContextError(
+      message("context.fileUnreadable", { key, file: name, detail: (error as Error).message }),
+    );
   }
   const parsed = schema.safeParse(raw ?? undefined);
   if (!parsed.success) {
-    const issue = innermost(parsed.error.issues[0]);
+    const found = innermost(parsed.error.issues[0]);
     throw new ContextError(
-      `${key} の ${name} に誤りがあります（${issue?.path.join(".")}）：${issue?.message}`,
+      message("context.fileInvalid", {
+        key,
+        file: name,
+        path: found?.path.join(".") ?? "",
+        detail: found ? issueMessage(found.issue) : "",
+      }),
     );
   }
   return parsed.data;
@@ -259,7 +255,7 @@ export type ComposedContext = {
   /** MCP サーバー（名前ごと。どの層のものか）。 */
   mcp: { name: string; server: McpServer; from: string }[];
   /** 上書き禁止に当たったなど、合成で気づいたこと。 */
-  warnings: string[];
+  warnings: DaemonText[];
 };
 
 const label = (layer: ContextLayer) =>
@@ -298,9 +294,8 @@ function mergeNamed<T>(
   layers: ContextLayer[],
   kind: "skills" | "mcp",
   itemsOf: (layer: ContextLayer) => { name: string; value: T }[],
-  warnings: string[],
+  warnings: DaemonText[],
 ): { name: string; value: T; from: string }[] {
-  const what = kind === "skills" ? "スキル" : "MCP サーバー";
   const merged = new Map<string, { value: T; from: string }>();
   const locked = new Map<string, string>();
   for (const layer of layers) {
@@ -308,7 +303,7 @@ function mergeNamed<T>(
     for (const name of layer.manifest.remove[kind]) {
       if (locked.has(name)) {
         warnings.push(
-          `${from} は${what}「${name}」を取り除こうとしましたが、${locked.get(name)} で上書き禁止のため残しました。`,
+          message("context.lockedRemove", { from, kind, name, lockedBy: locked.get(name) ?? "" }),
         );
       } else {
         merged.delete(name);
@@ -317,7 +312,12 @@ function mergeNamed<T>(
     for (const item of itemsOf(layer)) {
       if (locked.has(item.name)) {
         warnings.push(
-          `${from} は${what}「${item.name}」を上書きしようとしましたが、${locked.get(item.name)} で上書き禁止のため上位のものを使いました。`,
+          message("context.lockedOverride", {
+            from,
+            kind,
+            name: item.name,
+            lockedBy: locked.get(item.name) ?? "",
+          }),
         );
         continue;
       }
@@ -339,7 +339,7 @@ export function composeContext(layers: ContextLayer[]): ComposedContext {
     const text = layerRules(layer);
     if (text) rules.push(`<!-- sacty context: ${label(layer)} -->\n${text}`);
   }
-  const warnings: string[] = [];
+  const warnings: DaemonText[] = [];
   const skills = mergeNamed(
     layers,
     "skills",
@@ -543,10 +543,14 @@ function run(args: string[], cwd?: string): Promise<string> {
     child.stderr.on("data", (chunk) => {
       err += chunk;
     });
-    child.on("error", (error) => reject(new Error(`gitを実行できません（${error.message}）。`)));
+    child.on("error", (error) =>
+      reject(new MessageError(message("git.unavailable", { detail: error.message }))),
+    );
     child.on("close", (code) => {
       if (code === 0) resolve(out);
-      else reject(new Error(err.trim() || `git ${args[0]} の終了コード ${code}`));
+      // git のエラー文は外から来た文なので、そのまま渡す
+      else if (err.trim()) reject(new Error(err.trim()));
+      else reject(new MessageError(message("git.exitCode", { command: args[0] ?? "", code })));
     });
   });
 }
@@ -563,7 +567,7 @@ export async function prepareContext(
 ): Promise<{
   dir: string;
   layers: { repo: string; ref?: string; commit: string }[];
-  warnings: string[];
+  warnings: DaemonText[];
   placed: PlacedContext;
   dispose: () => void;
 }> {

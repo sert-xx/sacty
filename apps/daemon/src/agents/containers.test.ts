@@ -116,3 +116,43 @@ describe("コンテナの停止の確認（PBI-3 レビュー指摘）", () => {
     expect(docker.calls).toEqual([]);
   });
 });
+
+describe("テストの実行の注記（PBI-11b）", () => {
+  it("docker を実行できなければ、出力とは分けて、コードと引数の注記にする", async () => {
+    const spawnImpl = (() => {
+      const child = Object.assign(new EventEmitter(), {
+        stdout: new EventEmitter(),
+        stderr: new EventEmitter(),
+        kill: () => true,
+      });
+      setTimeout(() => child.emit("error", new Error("spawn docker ENOENT")), 0);
+      return child;
+    }) as never;
+    const runner = new DockerTestRunner(60_000, spawnImpl);
+    const result = await runner.run({
+      runId: "r",
+      image: "img",
+      workspaceDir: "/tmp",
+      command: "x",
+    });
+    expect(result).toMatchObject({
+      exitCode: 127,
+      output: "",
+      note: { code: "run.dockerUnavailable", params: { detail: "spawn docker ENOENT" } },
+    });
+  });
+
+  it("時間を超えたら止めて、そのことを注記にする（テストの出力には混ぜない）", async () => {
+    const docker = fakeDocker([0]);
+    const runner = new DockerTestRunner(10, docker.spawnImpl);
+    (runner as unknown as { containers: { retryMs: number } }).containers.retryMs = 1;
+    const result = await runner.run({
+      runId: "r",
+      image: "img",
+      workspaceDir: "/tmp",
+      command: "x",
+    });
+    expect(result.note).toEqual({ code: "run.testTimeout", params: { minutes: 10 / 60_000 } });
+    expect(result.output).not.toContain("[sacty]");
+  });
+});

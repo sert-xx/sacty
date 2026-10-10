@@ -1,10 +1,17 @@
 import { spawn } from "node:child_process";
+import { type DaemonText, message } from "@sacty/core";
 import { dockerClientEnv, dockerRunArgs, RunningContainers } from "./docker.js";
 
 /** テストの出力は、末尾のこの文字数だけ残す（台帳と画面に載せるため）。 */
 export const TEST_OUTPUT_TAIL = 20_000;
 
-export type TestRunResult = { exitCode: number; output: string; durationMs: number };
+export type TestRunResult = {
+  exitCode: number;
+  output: string;
+  /** sacty の注記（テストを止めた理由など）。テストの出力とは分けて持つ（PBI-11）。 */
+  note?: DaemonText;
+  durationMs: number;
+};
 
 /** テストを実行する口。テストでは偽物に差し替える。 */
 export interface TestRunner {
@@ -76,15 +83,17 @@ export class DockerTestRunner implements TestRunner {
         };
         child.stdout.on("data", keep);
         child.stderr.on("data", keep);
+        let note: DaemonText | undefined;
         const timer = setTimeout(() => {
-          output += `\n[sacty] テストの実行が ${this.timeoutMs / 60_000} 分を超えたため止めました。`;
+          note = message("run.testTimeout", { minutes: this.timeoutMs / 60_000 });
           this.containers.stop(name);
         }, this.timeoutMs);
         child.on("error", (error) => {
           clearTimeout(timer);
           resolve({
             exitCode: 127,
-            output: `dockerを実行できません。Dockerが起動しているか確認してください（${error.message}）。`,
+            output: "",
+            note: message("run.dockerUnavailable", { detail: error.message }),
             durationMs: Date.now() - started,
           });
         });
@@ -93,6 +102,7 @@ export class DockerTestRunner implements TestRunner {
           resolve({
             exitCode: code ?? 1,
             output: output.slice(-TEST_OUTPUT_TAIL),
+            ...(note ? { note } : {}),
             durationMs: Date.now() - started,
           });
         });
@@ -102,7 +112,8 @@ export class DockerTestRunner implements TestRunner {
       if (!(await this.containers.finish(name))) {
         result = {
           exitCode: 1,
-          output: `[sacty] コンテナ（${name}）の停止を確認できませんでした。docker ps で確認してください。`,
+          output: "",
+          note: message("run.containerNotConfirmed", { name }),
           durationMs: Date.now() - started,
         };
       }

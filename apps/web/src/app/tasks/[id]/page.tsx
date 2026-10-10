@@ -147,7 +147,7 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
                 </span>
                 {c.detail && (
                   <span className="font-mono text-xs break-all text-muted-foreground">
-                    {c.detail}
+                    {labels.text(c.detail)}
                   </span>
                 )}
               </li>
@@ -162,12 +162,14 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
           reason={task.pausedReason}
           usedUsd={task.budget.usedUsd}
           capUsd={task.budget.capUsd}
-          lastFailure={
-            task.pausedMessage ??
-            (task.pausedReason !== "budget" && lastFailure?.type === "AgentRunFailed"
-              ? lastFailure.payload.message
-              : undefined)
-          }
+          lastFailure={(() => {
+            const failure =
+              task.pausedMessage ??
+              (task.pausedReason !== "budget" && lastFailure?.type === "AgentRunFailed"
+                ? lastFailure.payload.message
+                : undefined);
+            return failure === undefined ? undefined : labels.text(failure);
+          })()}
         />
       )}
 

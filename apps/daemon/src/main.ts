@@ -1,6 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { serve } from "@hono/node-server";
+import { renderMessage } from "@sacty/core";
 import { DockerExecutor } from "./agents/docker.js";
 import { DockerTestRunner } from "./agents/test-runner.js";
 import { loadConfig, resolveHome } from "./config.js";
@@ -47,7 +48,7 @@ service.recoverInterrupted();
 service.queueWaitingSteps();
 
 const status = service.status();
-for (const problem of status.problems) console.warn(`[daemon] ${problem}`);
+for (const problem of status.problems) console.warn(`[daemon] ${renderMessage(problem, "ja")}`);
 
 const worker = new Worker(service);
 const intake = new IssueIntake(service, new GitHubIssueSearch(), secrets, config);

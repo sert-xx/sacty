@@ -106,7 +106,9 @@ export async function Implementation({ task }: { task: Task }) {
                           </Pill>
                         )}
                       </span>
-                      {judged && <span className="break-words">{judged.reason}</span>}
+                      {judged && (
+                        <span className="break-words">{messages.labels.text(judged.reason)}</span>
+                      )}
                     </dd>
                   </dl>
                 </li>
@@ -127,6 +129,7 @@ export async function Implementation({ task }: { task: Task }) {
             </span>
           </summary>
           <p className="mt-2 font-mono text-xs break-all">{tests.command}</p>
+          {tests.note && <p className="mt-2 text-warn">{messages.labels.text(tests.note)}</p>}
           <pre className="mt-2 max-h-80 overflow-auto rounded-lg border border-border bg-muted px-4 py-3 font-mono text-xs leading-5 break-words whitespace-pre-wrap">
             {tests.output || m.noOutput}
           </pre>
@@ -148,7 +151,7 @@ export async function Implementation({ task }: { task: Task }) {
               {formatStamp(review.at, messages.locale)}
             </span>
           </p>
-          {review.summary && <p className="break-words">{review.summary}</p>}
+          {review.summary && <p className="break-words">{messages.labels.text(review.summary)}</p>}
           {review.remarks.length > 0 && (
             <>
               <p className="text-xs text-muted-foreground">{m.recurrence}</p>
@@ -159,7 +162,7 @@ export async function Implementation({ task }: { task: Task }) {
                     <Pill tone={r.notRecurred ? OK : NG}>
                       {r.notRecurred ? m.notRecurred : m.recurred}
                     </Pill>
-                    <span className="break-words">{r.reason}</span>
+                    <span className="break-words">{messages.labels.text(r.reason)}</span>
                   </li>
                 ))}
               </ul>

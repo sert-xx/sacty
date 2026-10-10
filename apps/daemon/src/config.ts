@@ -1,15 +1,21 @@
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { DEFAULT_BUDGET_USD, PricePerMTok, StepKey } from "@sacty/core";
+import {
+  code,
+  type DaemonText,
+  DEFAULT_BUDGET_USD,
+  issueMessage,
+  message,
+  PricePerMTok,
+  StepKey,
+} from "@sacty/core";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 
 export const DEFAULT_IMAGE = "sacty-agent:0.1.0";
 
-const SecretName = z
-  .string()
-  .regex(/^[A-Za-z0-9._-]+$/, "秘密情報の名前は英数字と . _ - だけで書いてください");
+const SecretName = z.string().regex(/^[A-Za-z0-9._-]+$/, code("input.secretName"));
 
 const Auth = z.discriminatedUnion("mode", [
   z.object({
@@ -80,7 +86,12 @@ const Agent = z
       ctx.addIssue({
         code: "custom",
         path: ["auth", "mode"],
-        message: `${agent.runtime} では ${agent.auth.mode} を使えません（使えるもの：${ok[agent.runtime].join(", ")}）`,
+        message: code("config.authUnsupported"),
+        params: {
+          runtime: agent.runtime,
+          mode: agent.auth.mode,
+          supported: ok[agent.runtime].join(", "),
+        },
       });
     }
     if (
@@ -91,7 +102,7 @@ const Agent = z
       ctx.addIssue({
         code: "custom",
         path: ["auth", "secret"],
-        message: "Claude Code のサブスクリプションには、トークンの秘密情報名（secret）が必要です",
+        message: code("config.subscriptionSecret"),
       });
     }
   });
@@ -112,7 +123,7 @@ const Repository = z.object({
       /** owner/name。省略すると url から求める。 */
       repo: z
         .string()
-        .regex(/^[\w.-]+\/[\w.-]+$/, "owner/name の形で指定してください")
+        .regex(/^[\w.-]+\/[\w.-]+$/, code("input.invalidRepo"))
         .optional(),
       /** GitHub のトークンの秘密情報名（`sacty secret set <名前>` で保存）。 */
       token_secret: SecretName,
@@ -152,7 +163,8 @@ const ConfigFile = z
       ctx.addIssue({
         code: "custom",
         path: ["default_agent"],
-        message: `default_agent の "${config.default_agent}" が agents にありません`,
+        message: code("config.agentMissing"),
+        params: { key: "default_agent", id: config.default_agent },
       });
     }
     const pr = config.repository?.pull_request;
@@ -160,14 +172,15 @@ const ConfigFile = z
       ctx.addIssue({
         code: "custom",
         path: ["repository", "pull_request", "repo"],
-        message: "url から GitHub のリポジトリが分かりません。owner/name で指定してください",
+        message: code("config.repoUnknown"),
       });
     }
     if (config.guardian_agent && !config.agents[config.guardian_agent]) {
       ctx.addIssue({
         code: "custom",
         path: ["guardian_agent"],
-        message: `guardian_agent の "${config.guardian_agent}" が agents にありません`,
+        message: code("config.agentMissing"),
+        params: { key: "guardian_agent", id: config.guardian_agent },
       });
     }
   });
@@ -189,7 +202,8 @@ export type SactyConfig = {
   github?: { tokenSecret: string; pollIntervalSec: number };
 };
 
-export type ConfigResult = { ok: true; config: SactyConfig } | { ok: false; problem: string };
+/** 設定。読めなければ、その理由（文言のコードと引数。PBI-11）。 */
+export type ConfigResult = { ok: true; config: SactyConfig } | { ok: false; problem: DaemonText };
 
 /** sactyのデータ（台帳・設定・作業領域）を置く場所。環境変数 SACTY_HOME で変えられる。 */
 export function resolveHome(): string {
@@ -209,21 +223,27 @@ export function loadConfig(home: string): ConfigResult {
   } catch {
     return {
       ok: false,
-      problem: `設定ファイルがありません（${path}）。\`sacty config init\` で作成してください。`,
+      problem: message("config.missing", { path }),
     };
   }
   let raw: unknown;
   try {
     raw = parseYaml(text);
   } catch (error) {
-    return { ok: false, problem: `設定ファイルのYAMLを読めません：${(error as Error).message}` };
+    return {
+      ok: false,
+      problem: message("config.unreadable", { detail: (error as Error).message }),
+    };
   }
   const parsed = ConfigFile.safeParse(raw);
   if (!parsed.success) {
     const first = parsed.error.issues[0];
     return {
       ok: false,
-      problem: `設定ファイルに誤りがあります（${first?.path.join(".")}）：${first?.message}`,
+      problem: message("config.invalid", {
+        path: first?.path.join(".") ?? "",
+        detail: first ? issueMessage(first) : "",
+      }),
     };
   }
   const file = parsed.data;

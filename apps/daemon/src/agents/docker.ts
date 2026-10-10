@@ -12,9 +12,11 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
+import { message } from "@sacty/core";
+import { MessageError } from "../errors.js";
 import type { Invocation } from "./invocation.js";
 import { type AgentOutcome, parseClaudeResult, parseCodexEvents } from "./parse.js";
-import { redact, secretStringsInJson } from "./redact.js";
+import { redact, redactText, secretStringsInJson } from "./redact.js";
 
 export const CONTAINER_WORKSPACE = "/workspace";
 
@@ -263,7 +265,7 @@ export class DockerExecutor implements AgentExecutor {
           return {
             kind: "failed",
             reason: "auth",
-            message: `認証ファイル（${file.hostPath}）を読めません。ログインしているか確認してください。`,
+            message: message("run.authFileUnreadable", { path: file.hostPath }),
           };
         }
         chmodSync(copied, 0o600);
@@ -309,17 +311,11 @@ export class DockerExecutor implements AgentExecutor {
         });
         const timer = setTimeout(() => {
           this.containers.stop(containerName);
-          reject(
-            new Error(`エージェントの実行が ${this.timeoutMs / 60_000} 分を超えたため止めました。`),
-          );
+          reject(new MessageError(message("run.timeout", { minutes: this.timeoutMs / 60_000 })));
         }, this.timeoutMs);
         child.on("error", (error) => {
           clearTimeout(timer);
-          reject(
-            new Error(
-              `dockerを実行できません。Dockerが起動しているか確認してください（${error.message}）。`,
-            ),
-          );
+          reject(new MessageError(message("run.dockerUnavailable", { detail: error.message })));
         });
         child.on("close", (code) => {
           clearTimeout(timer);
@@ -331,13 +327,13 @@ export class DockerExecutor implements AgentExecutor {
         outcome = {
           kind: "failed",
           reason: "error",
-          message: "デーモンが停止したため、実行が中断されました。",
+          message: message("run.daemonStopped"),
         };
       } else if (/Unable to find image|No such image|pull access denied/i.test(stderr)) {
         outcome = {
           kind: "failed",
           reason: "error",
-          message: `エージェント用のイメージ（${image}）がありません。\`sacty image build\` で作成してください。`,
+          message: message("run.imageMissing", { image }),
         };
       } else {
         outcome =
@@ -351,7 +347,7 @@ export class DockerExecutor implements AgentExecutor {
         outcome = {
           kind: "failed",
           reason: "error",
-          message: `コンテナ（${containerName}）の停止を確認できませんでした。docker ps で確認してください。`,
+          message: message("run.containerNotConfirmed", { name: containerName }),
         };
       }
       collectSecrets(); // コンテナで更新された認証情報も、出力から取り除く対象にする
@@ -370,7 +366,7 @@ export class DockerExecutor implements AgentExecutor {
       if (staging) rmSync(staging, { recursive: true, force: true });
     }
     return outcome.kind === "failed"
-      ? { ...outcome, message: redact(outcome.message, stagedSecrets) }
+      ? { ...outcome, message: redactText(outcome.message, stagedSecrets) }
       : { ...outcome, output: redact(outcome.output, stagedSecrets) };
   }
 }

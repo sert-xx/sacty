@@ -13,6 +13,7 @@ import {
   changeRounds,
   computeCostUsd,
   type DaemonMessage,
+  type DaemonText,
   DEFAULT_BUDGET_USD,
   DecideChangeInput,
   EventInput,
@@ -51,10 +52,11 @@ import {
   CONTAINER_CODEX_HOME,
 } from "./agents/invocation.js";
 import type { AgentOutcome } from "./agents/parse.js";
-import { redact } from "./agents/redact.js";
+import { redact, redactText } from "./agents/redact.js";
 import type { TestRunner } from "./agents/test-runner.js";
 import type { AgentConfig, ConfigResult, SactyConfig } from "./config.js";
 import { type ContextFetcher, prepareContext } from "./context.js";
+import { errorText, MessageError } from "./errors.js";
 import type { FoundIssue, PullRequests } from "./github.js";
 import type { LedgerStore } from "./ledger.js";
 import type { ProjectStore } from "./projects.js";
@@ -76,11 +78,11 @@ export const DEFAULT_PROJECT_ID = "default";
 
 type LedgerItem = { actor: Actor; event: EventInput };
 
-export type CleanupItem = { target: CleanupTarget; present: boolean; detail?: string };
+export type CleanupItem = { target: CleanupTarget; present: boolean; detail?: DaemonText };
 type CleanupResult = {
   target: CleanupTarget;
   result: "done" | "skipped" | "failed";
-  detail?: string;
+  detail?: DaemonText;
 };
 
 /** 実装の検証（テストか最終レビュー）を待っているか。変更の申し出の判断待ちの間は検証しない。 */
@@ -120,7 +122,7 @@ export type ServiceDeps = {
 
 export type DaemonStatus = {
   agent: { id: string; runtime: string; authMode: string } | null;
-  problems: string[];
+  problems: DaemonText[];
   /** GitHub Issue の取り込みの状況（設定が無ければ null）。 */
   intake: IntakeStatus | null;
 };
@@ -130,7 +132,7 @@ export type IntakeStatus = {
   /** 直近の取り込みで作ったタスクの数。 */
   imported?: number;
   /** 取り込めなかった取り込み元（検索の条件）と理由。 */
-  errors?: { query?: string; message: string }[];
+  errors?: { query?: string; message: DaemonText }[];
 };
 
 /** プロジェクトと、Org の取り込み元ごとの除外リポジトリ（ほかのプロジェクトが担当）。 */
@@ -383,7 +385,7 @@ export class TaskService {
               payload: {
                 proposalId: judging.id,
                 verdict: "undecidable",
-                reason: "デーモンが停止したため、ゴールガーディアンの判定が中断されました。",
+                reason: message("run.guardianInterrupted"),
                 agentId: "unknown",
               },
             },
@@ -405,7 +407,7 @@ export class TaskService {
               step,
               agentId: "unknown",
               reason: "error",
-              message: "デーモンが停止したため、実行が中断されました。",
+              message: message("run.daemonStopped"),
             },
           },
         },
@@ -452,21 +454,25 @@ export class TaskService {
   private targetRepository(
     task: Task,
     config: SactyConfig,
-  ): { ok: true; repo: NonNullable<SactyConfig["repository"]> } | { ok: false; message: string } {
+  ):
+    | { ok: true; repo: NonNullable<SactyConfig["repository"]> }
+    | { ok: false; message: DaemonText } {
     if (task.source?.kind === "github_issue") {
       const project = this.deps.projects.get(task.projectId);
       const settings = repositorySettings(project, task.source.repo);
       if (!settings) {
         return {
           ok: false,
-          message: `プロジェクト「${project?.name ?? task.projectId}」に、${task.source.repo} のリポジトリの設定（ベースブランチ・テストのコマンド）がありません。プロジェクトの設定で追加してから再開してください。`,
+          message: message("run.repositorySettingsMissing", {
+            project: project?.name ?? task.projectId,
+            repo: task.source.repo,
+          }),
         };
       }
       if (settings.pullRequest && !config.github) {
         return {
           ok: false,
-          message:
-            "PRを作るには、config.yaml の github.token_secret（GitHub のトークン）が必要です。設定するか、プロジェクトのリポジトリの設定でPRを作らないようにしてから再開してください。",
+          message: message("run.prTokenRequired"),
         };
       }
       return {
@@ -491,8 +497,7 @@ export class TaskService {
     if (!config.repository) {
       return {
         ok: false,
-        message:
-          "実装の対象リポジトリが設定されていません。config.yaml の repository を設定してから再開してください。",
+        message: message("run.repositoryNotConfigured"),
       };
     }
     return { ok: true, repo: config.repository };
@@ -502,7 +507,7 @@ export class TaskService {
   private async prepareRepository(
     task: Task,
     config: SactyConfig,
-  ): Promise<{ ok: true; dir: string } | { ok: false; message: string }> {
+  ): Promise<{ ok: true; dir: string } | { ok: false; message: DaemonText }> {
     const dir = this.repoDir(task);
     if (task.repository && existsSync(dir) && existsSync(this.trustedGitDir(task))) {
       return { ok: true, dir };
@@ -528,7 +533,7 @@ export class TaskService {
       ]);
       return { ok: true, dir };
     } catch (error) {
-      return { ok: false, message: error instanceof Error ? error.message : String(error) };
+      return { ok: false, message: errorText(error) };
     }
   }
 
@@ -576,11 +581,6 @@ export class TaskService {
     return message("containers.notStopped", { names });
   }
 
-  /** 台帳に残す文（台帳の文言のコード化は PBI-11b。それまでは日本語で残す）。 */
-  private notStoppedMessage(runIds: Iterable<string>): string {
-    return renderMessage(this.notStopped(runIds), "ja");
-  }
-
   /** 一時停止を求められていて、止められる状態なら、人間の一時停止として記録する。 */
   private pauseIfRequested(taskId: string, unstoppedRuns: string[] = []): void {
     if (!this.pauseRequested.has(taskId)) return;
@@ -604,14 +604,14 @@ export class TaskService {
    */
   private async manualPauseInfo(
     taskId: string,
-  ): Promise<{ message?: string; unstoppedRuns?: string[] }> {
+  ): Promise<{ message?: DaemonText; unstoppedRuns?: string[] }> {
     if (!this.pauseRequested.has(taskId)) return {};
     return this.unstoppedPayload(await this.unstopped(this.inflight.get(taskId)?.runIds ?? []));
   }
 
   /** 停止を確かめられなかった実行を、一時停止の記録に添える形にする。 */
-  private unstoppedPayload(runs: string[]): { message?: string; unstoppedRuns?: string[] } {
-    return runs.length > 0 ? { message: this.notStoppedMessage(runs), unstoppedRuns: runs } : {};
+  private unstoppedPayload(runs: string[]): { message?: DaemonText; unstoppedRuns?: string[] } {
+    return runs.length > 0 ? { message: this.notStopped(runs), unstoppedRuns: runs } : {};
   }
 
   /** 実行の失敗で止めるときの理由。人間が止めた（コンテナを止めた）のなら、人間の一時停止。 */
@@ -691,7 +691,7 @@ export class TaskService {
                 step,
                 agentId: agent.id,
                 reason: "error",
-                message: error instanceof Error ? error.message : String(error),
+                message: errorText(error),
               },
             },
           },
@@ -850,8 +850,8 @@ export class TaskService {
             payload: {
               reason: "error",
               message: !target.ok
-                ? `テストを実行できません：${target.message}`
-                : "実装の作業領域が見つからないため、検証できません。",
+                ? message("verify.testsUnavailable", { detail: target.message })
+                : message("verify.workspaceMissing"),
             },
           },
         },
@@ -889,6 +889,7 @@ export class TaskService {
               unmappedViewpoints,
               passed,
               output: result.output,
+              ...(result.note ? { note: result.note } : {}),
               durationMs: result.durationMs,
             },
           },
@@ -913,7 +914,7 @@ export class TaskService {
             type: "TaskPaused",
             payload: {
               reason: "error",
-              message: `差分を取得できないため、最終レビューをしていません：${error instanceof Error ? error.message : String(error)}`,
+              message: message("verify.diffUnavailable", { detail: errorText(error) }),
             },
           },
         },
@@ -940,7 +941,7 @@ export class TaskService {
     if (outcome.kind === "failed") {
       // 実装の問題ではないので、やり直さずに止める。再開すると最終レビューからやり直す。
       // 使った分の費用は記録し、予算に入れる
-      const message = `ゴールガーディアンの最終レビューを実行できませんでした：${outcome.message}`;
+      const failure = message("verify.finalReviewFailed", { detail: outcome.message });
       this.append(current, [
         {
           actor: "guardian",
@@ -948,7 +949,7 @@ export class TaskService {
             type: "FinalReviewFailed",
             payload: {
               reason: outcome.reason,
-              message,
+              message: failure,
               agentId: agent.id,
               usage: outcome.usage,
               costUsd,
@@ -962,7 +963,7 @@ export class TaskService {
             type: "TaskPaused",
             payload: {
               reason: this.stopReason(task.id, outcome.reason),
-              message,
+              message: failure,
               ...(await this.manualPauseInfo(task.id)),
             },
           },
@@ -999,22 +1000,22 @@ export class TaskService {
     const dir = this.repoDir(task);
     const gitDir = this.trustedGitDir(task);
     const usedSecrets: string[] = [];
-    const fail = (message: string) =>
+    const fail = (text: DaemonText) =>
       this.append(task, [
         {
           actor: "sacty",
           event: {
             type: "TaskPaused",
-            payload: { reason: "error", message: redact(message, usedSecrets) },
+            payload: { reason: "error", message: redactText(text, usedSecrets) },
           },
         },
       ]);
     if (!target.ok) {
-      fail(`PRを作れません：${target.message}`);
+      fail(message("pr.unavailable", { detail: target.message }));
       return;
     }
     if (!task.repository || !existsSync(dir) || !existsSync(gitDir)) {
-      fail("実装の作業領域が無いため、PRを作れません。");
+      fail(message("pr.workspaceMissing"));
       return;
     }
     const repo = target.repo;
@@ -1069,7 +1070,7 @@ export class TaskService {
       ]);
       this.checkBudget(submitted);
     } catch (error) {
-      fail(`PRを作れませんでした：${error instanceof Error ? error.message : String(error)}`);
+      fail(message("pr.failed", { detail: errorText(error) }));
     }
   }
 
@@ -1083,7 +1084,7 @@ export class TaskService {
           type: "TaskPaused",
           payload: {
             reason: "verification",
-            message: `実装の検証（テストと最終レビュー）に、${MAX_VERIFY_ATTEMPTS}回続けて通りませんでした。`,
+            message: message("verify.tooManyAttempts", { count: MAX_VERIFY_ATTEMPTS }),
           },
         },
       },
@@ -1206,7 +1207,7 @@ export class TaskService {
         cleanup.push(
           containerStopped
             ? { target: "container", result: "done" }
-            : { target: "container", result: "failed", detail: this.notStoppedMessage(runIds) },
+            : { target: "container", result: "failed", detail: this.notStopped(runIds) },
         );
       } else if (task.unstoppedRuns?.length) {
         // 一時停止のときに停止を確かめられなかったコンテナは、ここで確かめ直す
@@ -1216,7 +1217,7 @@ export class TaskService {
         cleanup.push(
           containerStopped
             ? { target: "container", result: "done" }
-            : { target: "container", result: "failed", detail: this.notStoppedMessage(runs) },
+            : { target: "container", result: "failed", detail: this.notStopped(runs) },
         );
       } else {
         cleanup.push({ target: "container", result: "skipped" });
@@ -1236,9 +1237,9 @@ export class TaskService {
         const usedSecrets: string[] = [];
         try {
           if (!pr.repo) {
-            throw new Error("PRを作ったリポジトリの記録が無いため、閉じませんでした。");
+            throw new MessageError(message("cleanup.prRepoUnknown"));
           }
-          if (!tokenSecret) throw new Error("GitHub のトークンの設定が無いため、閉じられません。");
+          if (!tokenSecret) throw new MessageError(message("cleanup.noToken"));
           const token = await this.deps.secrets.get(tokenSecret);
           usedSecrets.push(token);
           await this.deps.pulls.close({ repo: pr.repo, token, number: pr.number });
@@ -1247,7 +1248,7 @@ export class TaskService {
           cleanup.push({
             target: "pull_request",
             result: "failed",
-            detail: redact(error instanceof Error ? error.message : String(error), usedSecrets),
+            detail: redactText(errorText(error), usedSecrets),
           });
         }
       } else {
@@ -1259,14 +1260,14 @@ export class TaskService {
       const branch = (latest.pushedBranch ?? pr)?.branch;
       if (branch) {
         try {
-          if (!existsSync(gitDir)) throw new Error("作業領域が無いため、ブランチを消せません。");
+          if (!existsSync(gitDir)) throw new MessageError(message("cleanup.noWorkspace"));
           await this.deps.repos.deleteBranch(gitDir, branch);
           cleanup.push({ target: "branch", result: "done", detail: branch });
         } catch (error) {
           cleanup.push({
             target: "branch",
             result: "failed",
-            detail: error instanceof Error ? error.message : String(error),
+            detail: errorText(error),
           });
         }
       } else {
@@ -1279,7 +1280,7 @@ export class TaskService {
         cleanup.push({
           target: "workspace",
           result: "failed",
-          detail: "コンテナが止まったことを確かめられないため、作業領域は消していません。",
+          detail: message("cleanup.containerUnconfirmed"),
         });
       } else {
         try {
@@ -1290,7 +1291,7 @@ export class TaskService {
           cleanup.push({
             target: "workspace",
             result: "failed",
-            detail: error instanceof Error ? error.message : String(error),
+            detail: errorText(error),
           });
         }
       }
@@ -1333,7 +1334,7 @@ export class TaskService {
           outcome: {
             kind: "failed",
             reason: "error",
-            message: "人間が止めたため、実行しませんでした。",
+            message: message("run.stoppedByPerson"),
           },
           costUsd: 0,
           estimated: false,
@@ -1350,12 +1351,12 @@ export class TaskService {
       outcome = {
         kind: "failed",
         reason: error instanceof SecretNotFoundError ? "auth" : "error",
-        message: error instanceof Error ? error.message : String(error),
+        message: errorText(error),
       };
     }
     outcome =
       outcome.kind === "failed"
-        ? { ...outcome, message: redact(outcome.message, usedSecrets) }
+        ? { ...outcome, message: redactText(outcome.message, usedSecrets) }
         : { ...outcome, output: redact(outcome.output, usedSecrets) };
     // サブスクリプションは実際の請求が発生しないので、同じ単価で換算した値として扱う
     const estimated = run.agent.auth.mode === "subscription" || run.agent.auth.mode === "stub";
@@ -1409,7 +1410,7 @@ export class TaskService {
         ? extractVerdict(outcome.output)
         : {
             verdict: "undecidable" as const,
-            reason: `ゴールガーディアンの実行に失敗しました：${outcome.message}`,
+            reason: message("run.guardianFailed", { detail: outcome.message }),
           };
     return {
       proposalId: proposal.id,

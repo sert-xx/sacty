@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { EventInput } from "@sacty/core";
+import { renderMessage } from "@sacty/core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { AgentExecutor } from "./agents/docker.js";
 import type { Invocation } from "./agents/invocation.js";
@@ -16,6 +17,9 @@ import type { RepositoryWorkspace } from "./repository.js";
 import { MemorySecretStore } from "./secrets.js";
 import { createApp } from "./server.js";
 import { TaskService } from "./service.js";
+
+/** 記録した文言（コードと引数）を、日本語の文にする（PBI-11）。 */
+const ja = (text: unknown) => renderMessage(text, "ja");
 
 let dir: string;
 let dbPath: string;
@@ -424,7 +428,9 @@ describe("工程の実行と費用", () => {
     expect(after?.task.pausedReason).toBe("auth");
     expect(executor.calls).toHaveLength(0);
     const failed = after?.ledger.find((e) => e.type === "AgentRunFailed");
-    expect(JSON.stringify(failed)).toContain("sacty secret set claude-oauth-token");
+    expect(failed?.type === "AgentRunFailed" && ja(failed.payload.message)).toContain(
+      "sacty secret set claude-oauth-token",
+    );
     ledger.close();
   });
 
@@ -437,7 +443,7 @@ describe("工程の実行と費用", () => {
     await service.runNext(task.id);
     expect(service.get(task.id)?.task.status).toBe("queued");
     expect(executor.calls).toHaveLength(0);
-    expect(service.status().problems[0]).toMatch(/sacty config init/);
+    expect(ja(service.status().problems[0])).toMatch(/sacty config init/);
     ledger.close();
   });
 
@@ -1215,7 +1221,7 @@ describe("ゴールガーディアン：変更の申し出の判定（PBI-9）",
     ]);
     const task = service.get(id)?.task;
     expect(task?.status).toBe("escalated");
-    expect(task?.proposals[0]?.judgement?.reason).toContain("session limit");
+    expect(ja(task?.proposals[0]?.judgement?.reason)).toContain("session limit");
     ledger.close();
   });
 
@@ -1283,7 +1289,7 @@ describe("ゴールガーディアン：変更の申し出の判定（PBI-9）",
     restarted.recoverInterrupted();
     const task = restarted.get(id)?.task;
     expect(task?.status).toBe("escalated");
-    expect(task?.proposals[0]?.judgement?.reason).toMatch(/中断/);
+    expect(ja(task?.proposals[0]?.judgement?.reason)).toMatch(/中断/);
     ledger.close();
   });
 
@@ -1651,7 +1657,8 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     expect(failed?.lastReview?.passed).toBe(false);
     expect(failed?.lastReview?.viewpoints).toEqual([
       { viewpointId: "TV-1", verified: true, reason: "TV-1の判定理由" },
-      { viewpointId: "TV-2", verified: false, reason: "判定がありません。" },
+      // 判定が無いことは sacty の文言なので、コードで記録する（PBI-11b）。指示には日本語の文で入れる
+      { viewpointId: "TV-2", verified: false, reason: { code: "review.verdictMissing" } },
     ]);
 
     await drain(service);
@@ -1681,7 +1688,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     const paused = service.get(id)?.task;
     expect(paused?.status).toBe("paused");
     expect(paused?.pausedReason).toBe("verification");
-    expect(paused?.pausedMessage).toMatch(/3回続けて/);
+    expect(ja(paused?.pausedMessage)).toMatch(/3回続けて/);
     expect(paused?.verifyFailures).toBe(3);
 
     const resumed = service.resume(id, {});
@@ -1704,7 +1711,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     await service.runNext(id);
     const paused = service.get(id)?.task;
     expect(paused?.pausedReason).toBe("usage_limit");
-    expect(paused?.pausedMessage).toContain("session limit");
+    expect(ja(paused?.pausedMessage)).toContain("session limit");
     expect(paused?.verification).toBe("tests_passed");
 
     service.resume(id, {});
@@ -1755,7 +1762,9 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     await service.runNext(id);
     const paused = service.get(id)?.task;
     expect(paused?.pausedReason).toBe("error");
-    expect(paused?.pausedMessage).toContain("差分を取得できないため、最終レビューをしていません");
+    expect(ja(paused?.pausedMessage)).toContain(
+      "差分を取得できないため、最終レビューをしていません",
+    );
     expect(paused?.verification).toBe("tests_passed");
     expect(paused?.steps[2]?.state).toBe("active");
     expect(executor.calls).toHaveLength(4); // ゴールガーディアンは呼んでいない
@@ -1979,8 +1988,13 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     const { ledger, service, repos, id } = await toDeliverableGate([], { pulls });
     const task = service.get(id)?.task;
     expect(task?.pausedReason).toBe("error");
-    expect(task?.pausedMessage).toContain("401 Bad credentials");
-    expect(task?.pausedMessage).not.toContain("ghp_secret");
+    expect(ja(task?.pausedMessage)).toContain("401 Bad credentials");
+    // sacty の文言はコードと引数で記録し、外から来た文（ここでは PR の作成のエラー）は引数のまま（PBI-11b）
+    expect(task?.pausedMessage).toMatchObject({
+      code: "pr.failed",
+      params: { detail: expect.stringContaining("401 Bad credentials") },
+    });
+    expect(JSON.stringify(task?.pausedMessage)).not.toContain("ghp_secret");
 
     pulls.fail = undefined;
     service.resume(id, {});
@@ -2219,7 +2233,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     await running;
     const paused = service.get(id)?.task;
     expect(paused).toMatchObject({ pausedReason: "manual", unstoppedRuns: [runId] });
-    expect(paused?.pausedMessage).toMatch(/停止を確認できませんでした/);
+    expect(ja(paused?.pausedMessage)).toMatch(/停止を確認できませんでした/);
 
     // 再起動しても、台帳から追える
     const { service: restarted, executor: restartedExecutor } = makeService(ledger);
@@ -2477,7 +2491,7 @@ describe("プロジェクトと GitHub Issue の取り込み（PBI-5a）", () =>
     service.approve(id, { step: "design", submission: 1 });
     await service.runNext(id);
     const failed = service.get(id)?.ledger.findLast((e) => e.type === "AgentRunFailed");
-    expect(failed?.type === "AgentRunFailed" && failed.payload.message).toContain(
+    expect(failed?.type === "AgentRunFailed" && ja(failed.payload.message)).toContain(
       "github.token_secret",
     );
     ledger.close();
@@ -2504,7 +2518,7 @@ describe("プロジェクトと GitHub Issue の取り込み（PBI-5a）", () =>
     service.approve(id, { step: "design", submission: 1 });
     await service.runNext(id);
     const failed = service.get(id)?.ledger.findLast((e) => e.type === "AgentRunFailed");
-    expect(failed?.type === "AgentRunFailed" && failed.payload.message).toContain(
+    expect(failed?.type === "AgentRunFailed" && ja(failed.payload.message)).toContain(
       "プロジェクト「決済」に、acme/ledger のリポジトリの設定",
     );
     ledger.close();
@@ -2596,7 +2610,17 @@ describe("コンテキストリポジトリ（PBI-6a）", () => {
     expect(executor.calls).toHaveLength(0);
     expect(service.get(id)?.task.pausedReason).toBe("error");
     const failed = service.get(id)?.ledger.findLast((e) => e.type === "AgentRunFailed");
-    expect(failed?.type === "AgentRunFailed" && failed.payload.message).toMatch(/取得できません/);
+    expect(failed?.type === "AgentRunFailed" && ja(failed.payload.message)).toMatch(
+      /取得できません/,
+    );
+    // 台帳にはコードと引数で記録し、画面が画面の言語の文にする（PBI-11b）
+    expect(failed?.type === "AgentRunFailed" && failed.payload.message).toEqual({
+      code: "context.fetchFailed",
+      params: { key: "https://example.com/missing.git#", detail: "repository not found" },
+    });
+    expect(failed?.type === "AgentRunFailed" && renderMessage(failed.payload.message, "en")).toBe(
+      "Cannot fetch the context repository (https://example.com/missing.git#): repository not found",
+    );
     ledger.close();
   });
 });
@@ -2675,7 +2699,7 @@ describe("コンテキストの MCP サーバー（PBI-6b）", () => {
     expect(executor.calls).toHaveLength(0);
     expect(service.get(id)?.task.pausedReason).toBe("auth");
     const failed = service.get(id)?.ledger.findLast((e) => e.type === "AgentRunFailed");
-    expect(failed?.type === "AgentRunFailed" && failed.payload.message).toContain(
+    expect(failed?.type === "AgentRunFailed" && ja(failed.payload.message)).toContain(
       "秘密情報「mcp-github」が見つかりません",
     );
     ledger.close();
