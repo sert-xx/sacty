@@ -12,12 +12,15 @@ const initial: GateState = {};
 export function GateForm({
   taskId,
   step,
+  submission,
   escalated,
   maxChanges,
   pendingComments,
 }: {
   taskId: string;
   step: StepKey;
+  /** 画面が表示している提出回。最新でなければデーモンが拒否する。 */
+  submission: number;
   escalated: boolean;
   maxChanges: number;
   pendingComments: string[];
@@ -28,6 +31,7 @@ export function GateForm({
     <form action={formAction} className="flex flex-col gap-3">
       <input type="hidden" name="taskId" value={taskId} />
       <input type="hidden" name="step" value={step} />
+      <input type="hidden" name="submission" value={submission} />
       {escalated && (
         <p className="rounded-md border border-warn-line bg-warn-soft p-3 text-sm leading-6 text-warn">
           差し戻しが上限（{maxChanges}

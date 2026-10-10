@@ -106,13 +106,13 @@ async function postOp(path: string, body: unknown): Promise<OpResult> {
   return { ok: true };
 }
 
-export function approveStep(id: string, step: StepKey): Promise<OpResult> {
-  return postOp(`/api/tasks/${encodeURIComponent(id)}/approve`, { step });
+export function approveStep(id: string, step: StepKey, submission: number): Promise<OpResult> {
+  return postOp(`/api/tasks/${encodeURIComponent(id)}/approve`, { step, submission });
 }
 
 export function requestChanges(
   id: string,
-  input: { step: StepKey; comments: string[]; continueOverLimit: boolean },
+  input: { step: StepKey; submission: number; comments: string[]; continueOverLimit: boolean },
 ): Promise<OpResult> {
   return postOp(`/api/tasks/${encodeURIComponent(id)}/request-changes`, input);
 }

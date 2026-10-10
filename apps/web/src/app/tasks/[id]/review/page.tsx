@@ -88,6 +88,7 @@ async function Review({ params }: { params: Promise<{ id: string }> }) {
                     key={remark.id}
                     remark={remark}
                     taskId={task.id}
+                    submission={submission}
                     current={remark.round === latestRound}
                   />
                 ))}
@@ -120,6 +121,7 @@ async function Review({ params }: { params: Promise<{ id: string }> }) {
           <GateForm
             taskId={task.id}
             step={step}
+            submission={submission}
             escalated={task.status === "escalated"}
             maxChanges={MAX_CHANGE_REQUESTS}
             pendingComments={task.escalation?.pendingRemarks.map((r) => r.text) ?? []}
@@ -133,10 +135,12 @@ async function Review({ params }: { params: Promise<{ id: string }> }) {
 function RemarkItem({
   remark,
   taskId,
+  submission,
   current,
 }: {
   remark: TaskRemark;
   taskId: string;
+  submission: number;
   current: boolean;
 }) {
   return (
@@ -169,7 +173,16 @@ function RemarkItem({
       </span>
       <span className="pt-0.5 text-xs text-muted-foreground">対応</span>
       <span className={cn(!remark.response && "text-muted-foreground")}>
-        {remark.response ?? "（エージェントの対応の記載なし）"}
+        {remark.voided
+          ? "（無効にした指摘のため、エージェントに渡していません）"
+          : remark.response
+            ? remark.response
+            : `（${submission}回目の提出では、対応の記載がありません）`}
+        {remark.response && remark.respondedIn && !remark.voided && (
+          <span className="ml-2 text-xs text-muted-foreground">
+            {remark.respondedIn}回目の提出での対応
+          </span>
+        )}
       </span>
       {!remark.voided && (
         <form action={voidRemarkAction} className="col-start-2">

@@ -21,6 +21,7 @@ import {
   project,
   RequestChangesInput,
   ResumeTaskInput,
+  type StepKey,
   type Task,
 } from "@sacty/core";
 import type { AgentExecutor } from "./agents/docker.js";
@@ -334,7 +335,7 @@ export class TaskService {
     return this.append(task, events);
   }
 
-  private gateTask(id: string, step: string): Task {
+  private gateTask(id: string, step: StepKey, submission: number): Task {
     const task = this.tasks.get(id);
     if (!task) throw new InvalidOperationError("タスクが見つかりません。");
     if (task.status !== "awaiting_approval" && task.status !== "escalated") {
@@ -344,13 +345,20 @@ export class TaskService {
     if (gateStep !== step) {
       throw new InvalidOperationError("この工程は承認待ちではありません。");
     }
+    // 表示していた成果物と、いま承認待ちの成果物が同じかを確かめる
+    const current = task.gate?.submission ?? task.submissions[step];
+    if (current !== submission) {
+      throw new InvalidOperationError(
+        `表示している成果物（${submission}回目の提出）は最新ではありません。画面を更新して、最新の提出（${current}回目）を確認してください。`,
+      );
+    }
     return task;
   }
 
   /** 承認する。工程を完了にし、次の工程を実行対象にする（実行できる工程なら実行待ちにする）。 */
   approve(id: string, raw: unknown): Task {
-    const { step } = ApproveStepInput.parse(raw);
-    const task = this.gateTask(id, step);
+    const { step, submission } = ApproveStepInput.parse(raw);
+    const task = this.gateTask(id, step, submission);
     const index = task.steps.findIndex((s) => s.key === step);
     const nextStep = task.steps[index + 1]?.key;
     const next = nextStep && EXECUTABLE_STEPS.includes(nextStep) ? "queued" : "idle";
@@ -365,7 +373,7 @@ export class TaskService {
    */
   requestChanges(id: string, raw: unknown): Task {
     const input = RequestChangesInput.parse(raw);
-    const task = this.gateTask(id, input.step);
+    const task = this.gateTask(id, input.step, input.submission);
     const rounds = changeRounds(task, input.step);
 
     if (task.status === "awaiting_approval" && input.comments.length === 0) {

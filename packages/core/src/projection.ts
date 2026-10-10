@@ -24,8 +24,10 @@ export type TaskRemark = {
   /** 何回目の差し戻しで出た指摘か。 */
   round: number;
   text: string;
-  /** 工程エージェントの、最新の対応。 */
+  /** 工程エージェントの、最新の提出での対応。最新の提出で回答がなければ未回答（undefined）。 */
   response?: string;
+  /** 対応を書いた提出回。 */
+  respondedIn?: number;
   /** 前提が変わったなどの理由で、人間が無効にした指摘。エージェントには渡さない。 */
   voided: boolean;
 };
@@ -136,10 +138,18 @@ export function applyEvent(
       };
       if (event.type === "AgentRunCompleted") {
         task.outputs = { ...task.outputs, [event.payload.step]: event.payload.output };
+        // その工程の有効な指摘は、今回の提出で回答がなければ未回答に戻す
+        // （前回の対応文が残ると、最新の成果物への対応だと誤認して承認してしまうため）
+        const step = event.payload.step;
+        const submission = (task.submissions[step] ?? 0) + 1;
         const responses = new Map(event.payload.responses.map((r) => [r.remarkId, r.text]));
-        task.remarks = task.remarks.map((r) =>
-          responses.has(r.id) ? { ...r, response: responses.get(r.id) } : r,
-        );
+        task.remarks = task.remarks.map((r) => {
+          if (r.step !== step || r.voided) return r;
+          const text = responses.get(r.id);
+          return text === undefined
+            ? { ...r, response: undefined, respondedIn: undefined }
+            : { ...r, response: text, respondedIn: submission };
+        });
       }
       break;
     }

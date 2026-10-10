@@ -74,6 +74,12 @@ function makeService(
   return { service, executor };
 }
 
+/** 画面が表示している（いま承認待ちの）提出回。 */
+const current = (svc: TaskService, id: string) => {
+  const t = svc.get(id)?.task;
+  return t?.gate?.submission ?? t?.submissions.requirements ?? 1;
+};
+
 describe("台帳", () => {
   it("UPDATEとDELETEを拒否する", () => {
     const ledger = new SqliteLedgerStore(dbPath);
@@ -135,7 +141,11 @@ describe("工程の実行と費用", () => {
 
     await service.runNext(capped.id); // $1.05 → 承認待ちで止まる（人間の判断待ちなので、ここでは止めない）
     expect(service.get(capped.id)?.task.status).toBe("awaiting_approval");
-    service.requestChanges(capped.id, { step: "requirements", comments: ["直して"] });
+    service.requestChanges(capped.id, {
+      step: "requirements",
+      submission: current(service, capped.id),
+      comments: ["直して"],
+    });
     await service.runNext(capped.id); // 実行前の判定で予算超過 → 実行しない
     expect(executor.calls).toHaveLength(2);
     expect(service.get(capped.id)?.task.status).toBe("paused");
@@ -148,7 +158,11 @@ describe("工程の実行と費用", () => {
     const { service } = makeService(ledger, [completed(70_000)]);
     const task = service.createTicket({ title: "A" });
     await service.runNext(task.id);
-    service.requestChanges(task.id, { step: "requirements", comments: ["直して"] });
+    service.requestChanges(task.id, {
+      step: "requirements",
+      submission: current(service, task.id),
+      comments: ["直して"],
+    });
     await service.runNext(task.id); // 予算超過で止まる
 
     expect(() => service.resume(task.id, {})).toThrow(/新しい上限が必要/);
@@ -399,15 +413,18 @@ describe("承認ゲート（PBI-7）", () => {
     expect(waiting?.gate).toEqual({ step: "requirements", submission: 1 });
     expect(service.queuedTaskIds()).toEqual([]);
 
-    const approved = service.approve(task.id, { step: "requirements" });
+    const approved = service.approve(task.id, {
+      step: "requirements",
+      submission: current(service, task.id),
+    });
     expect(approved.status).toBe("idle"); // 設計の工程はPBI-8で実装
     expect(approved.steps.map((s) => [s.key, s.state]).slice(0, 2)).toEqual([
       ["requirements", "done"],
       ["design", "active"],
     ]);
-    expect(() => service.approve(task.id, { step: "requirements" })).toThrow(
-      /承認待ちのタスクではありません/,
-    );
+    expect(() =>
+      service.approve(task.id, { step: "requirements", submission: current(service, task.id) }),
+    ).toThrow(/承認待ちのタスクではありません/);
     ledger.close();
   });
 
@@ -425,9 +442,17 @@ describe("承認ゲート（PBI-7）", () => {
     await service.runNext(task.id);
 
     expect(() =>
-      service.requestChanges(task.id, { step: "requirements", comments: ["  ", ""] }),
+      service.requestChanges(task.id, {
+        step: "requirements",
+        submission: current(service, task.id),
+        comments: ["  ", ""],
+      }),
     ).toThrow(/1件以上/);
-    service.requestChanges(task.id, { step: "requirements", comments: ["受け入れ条件が足りない"] });
+    service.requestChanges(task.id, {
+      step: "requirements",
+      submission: current(service, task.id),
+      comments: ["受け入れ条件が足りない"],
+    });
     expect(service.get(task.id)?.task.status).toBe("queued");
     await service.runNext(task.id);
 
@@ -440,7 +465,11 @@ describe("承認ゲート（PBI-7）", () => {
       "[requirements-1-1] 受け入れ条件が足りない",
     );
 
-    service.requestChanges(task.id, { step: "requirements", comments: ["対象外が曖昧"] });
+    service.requestChanges(task.id, {
+      step: "requirements",
+      submission: current(service, task.id),
+      comments: ["対象外が曖昧"],
+    });
     service.voidRemark(task.id, "requirements-1-1"); // 前提が変わった
     await service.runNext(task.id);
     const prompt = executor.calls[2]?.command.join(" ") ?? "";
@@ -454,6 +483,56 @@ describe("承認ゲート（PBI-7）", () => {
     ledger.close();
   });
 
+  it("表示していた提出回が最新でなければ、承認も差し戻しも拒否する（レビュー指摘）", async () => {
+    const ledger = new SqliteLedgerStore(dbPath);
+    const { service } = makeService(ledger, [draft("# v1"), draft("# v2")]);
+    const task = service.createTicket({ title: "A" });
+    await service.runNext(task.id);
+    // タブAは1回目を表示したまま、タブBで差し戻して2回目が提出された
+    service.requestChanges(task.id, { step: "requirements", submission: 1, comments: ["直して"] });
+    await service.runNext(task.id);
+
+    expect(() => service.approve(task.id, { step: "requirements", submission: 1 })).toThrow(
+      /最新ではありません/,
+    );
+    expect(() =>
+      service.requestChanges(task.id, { step: "requirements", submission: 1, comments: ["x"] }),
+    ).toThrow(/最新ではありません/);
+    expect(service.get(task.id)?.task.steps[0]?.state).toBe("active"); // 承認されていない
+    expect(service.approve(task.id, { step: "requirements", submission: 2 }).status).toBe("idle");
+    ledger.close();
+  });
+
+  it("今回の提出で回答のない指摘は、前回の対応文を残さず未回答にする（レビュー指摘）", async () => {
+    const ledger = new SqliteLedgerStore(dbPath);
+    const { service } = makeService(ledger, [
+      draft("# v1"),
+      draft("# v2", [{ remarkId: "requirements-1-1", text: "v2で対応しました" }]),
+      draft("# v3", [{ remarkId: "requirements-2-1", text: "Bに対応" }]),
+    ]);
+    const task = service.createTicket({ title: "A" });
+    await service.runNext(task.id);
+    service.requestChanges(task.id, { step: "requirements", submission: 1, comments: ["A"] });
+    await service.runNext(task.id);
+    expect(service.get(task.id)?.task.remarks[0]).toMatchObject({
+      response: "v2で対応しました",
+      respondedIn: 2,
+    });
+
+    service.requestChanges(task.id, { step: "requirements", submission: 2, comments: ["B"] });
+    await service.runNext(task.id);
+    const remarks = service.get(task.id)?.task.remarks;
+    expect(remarks?.find((r) => r.id === "requirements-1-1")).toMatchObject({
+      response: undefined,
+      respondedIn: undefined,
+    });
+    expect(remarks?.find((r) => r.id === "requirements-2-1")).toMatchObject({
+      response: "Bに対応",
+      respondedIn: 3,
+    });
+    ledger.close();
+  });
+
   it("差し戻しが上限（3回）を超えるとエスカレーションになり、続けるか承認するかを選べる", async () => {
     const ledger = new SqliteLedgerStore(dbPath);
     const { service } = makeService(
@@ -463,21 +542,31 @@ describe("承認ゲート（PBI-7）", () => {
     const task = service.createTicket({ title: "A" });
     await service.runNext(task.id);
     for (let i = 1; i <= 3; i++) {
-      service.requestChanges(task.id, { step: "requirements", comments: [`指摘${i}`] });
+      service.requestChanges(task.id, {
+        step: "requirements",
+        submission: current(service, task.id),
+        comments: [`指摘${i}`],
+      });
       await service.runNext(task.id);
     }
     const escalated = service.requestChanges(task.id, {
       step: "requirements",
+      submission: current(service, task.id),
       comments: ["指摘4"],
     });
     expect(escalated.status).toBe("escalated");
     expect(escalated.escalation?.pendingRemarks.map((r) => r.text)).toEqual(["指摘4"]);
 
-    expect(() => service.requestChanges(task.id, { step: "requirements", comments: [] })).toThrow(
-      /上限（3回）/,
-    );
+    expect(() =>
+      service.requestChanges(task.id, {
+        step: "requirements",
+        submission: current(service, task.id),
+        comments: [],
+      }),
+    ).toThrow(/上限（3回）/);
     const continued = service.requestChanges(task.id, {
       step: "requirements",
+      submission: current(service, task.id),
       comments: [],
       continueOverLimit: true,
     });
@@ -487,9 +576,16 @@ describe("承認ゲート（PBI-7）", () => {
     expect(last?.type === "ChangesRequested" && last.payload.overLimit).toBe(true);
 
     await service.runNext(task.id);
-    service.requestChanges(task.id, { step: "requirements", comments: ["指摘5"] });
+    service.requestChanges(task.id, {
+      step: "requirements",
+      submission: current(service, task.id),
+      comments: ["指摘5"],
+    });
     expect(service.get(task.id)?.task.status).toBe("escalated");
-    expect(service.approve(task.id, { step: "requirements" }).status).toBe("idle");
+    expect(
+      service.approve(task.id, { step: "requirements", submission: current(service, task.id) })
+        .status,
+    ).toBe("idle");
     ledger.close();
   });
 
@@ -505,7 +601,11 @@ describe("承認ゲート（PBI-7）", () => {
       "StepSubmitted",
       "BudgetWarned",
     ]);
-    service.requestChanges(task.id, { step: "requirements", comments: ["直して"] });
+    service.requestChanges(task.id, {
+      step: "requirements",
+      submission: current(service, task.id),
+      comments: ["直して"],
+    });
     await service.runNext(task.id);
     expect(service.get(task.id)?.task.pausedReason).toBe("budget");
     ledger.close();

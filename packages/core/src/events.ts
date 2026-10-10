@@ -228,12 +228,16 @@ export const ResumeTaskInput = z.object({
 export type ResumeTaskInput = z.infer<typeof ResumeTaskInput>;
 
 /** 承認ゲートで承認する入力。 */
-export const ApproveStepInput = z.object({ step: StepKey });
+/** 画面が表示していた提出回。現在のゲートと一致しなければ拒否する（古い成果物を見たまま判断させないため）。 */
+const Submission = z.number().int().positive();
+
+export const ApproveStepInput = z.object({ step: StepKey, submission: Submission });
 export type ApproveStepInput = z.infer<typeof ApproveStepInput>;
 
 /** 承認ゲートで差し戻す入力。指摘は1行に1件。 */
 export const RequestChangesInput = z.object({
   step: StepKey,
+  submission: Submission,
   comments: z
     .array(z.string().trim().max(2_000, "指摘は1件あたり2,000文字以内にしてください。"))
     .max(50, "指摘は一度に50件までにしてください。")

@@ -79,12 +79,16 @@ export async function gateAction(_prev: GateState, formData: FormData): Promise<
   const step = StepKey.safeParse(formData.get("step"));
   const decision = String(formData.get("decision") ?? "");
   const comments = String(formData.get("comments") ?? "");
+  const submission = Number(formData.get("submission"));
   if (!step.success) return { message: "工程が不正です。", comments };
+  if (!Number.isInteger(submission) || submission < 1) {
+    return { message: "提出回が不正です。画面を更新してください。", comments };
+  }
 
   let result: Awaited<ReturnType<typeof approveStep>>;
   try {
     if (decision === "approve") {
-      result = await approveStep(taskId, step.data);
+      result = await approveStep(taskId, step.data, submission);
     } else {
       const lines = comments
         .split("\n")
@@ -92,6 +96,7 @@ export async function gateAction(_prev: GateState, formData: FormData): Promise<
         .filter((c) => c.length > 0);
       result = await requestChanges(taskId, {
         step: step.data,
+        submission,
         comments: lines,
         continueOverLimit: decision === "continue",
       });
