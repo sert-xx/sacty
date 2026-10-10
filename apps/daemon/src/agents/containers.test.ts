@@ -1,5 +1,6 @@
 import { EventEmitter } from "node:events";
 import { describe, expect, it } from "vitest";
+import { RunningContainers } from "./docker.js";
 import { DockerTestRunner } from "./test-runner.js";
 
 /** docker コマンドの偽物。docker run は止められるまで終わらず、docker kill は決めた終了コードを返す。 */
@@ -19,6 +20,8 @@ function fakeDocker(killCodes: number[]) {
       },
     });
     if (args[0] === "run") run = child;
+    // ps：コンテナは残っていない（止められた後）
+    if (args[0] === "ps") setTimeout(() => child.emit("close", 0), 0);
     if (args[0] === "kill") {
       const code = killCodes.shift() ?? 0;
       setTimeout(() => {
@@ -45,8 +48,8 @@ describe("コンテナができる前に止めた場合（PBI-3 レビュー指�
     expect(docker.run()?.killedWith).toBe("SIGKILL"); // docker run 自体を止めた
     expect(result.exitCode).toBe(137);
     await new Promise((r) => setTimeout(r, 20));
-    // 遅れてコンテナができた場合に備えて、終わった後も docker kill を繰り返した
-    expect(docker.calls.filter((a) => a[0] === "kill").length).toBeGreaterThanOrEqual(2);
+    // 終わった後に、コンテナが残っていないことを docker ps で確かめた
+    expect(docker.calls.some((a) => a[0] === "ps")).toBe(true);
   });
 
   it("止める要求が子プロセスより先に来ても、起動したら止める", async () => {
@@ -65,5 +68,51 @@ describe("コンテナができる前に止めた場合（PBI-3 レビュー指�
     const running = runner.run({ runId: "r2", image: "img", workspaceDir: "/tmp", command: "x" });
     const result = await running;
     expect(result.exitCode).toBe(137);
+  });
+});
+
+describe("コンテナの停止の確認（PBI-3 レビュー指摘）", () => {
+  /** docker ps は決めた順にコンテナの有無を返し、docker kill は成功する。 */
+  function dockerWithPs(listed: boolean[]) {
+    const calls: string[][] = [];
+    const spawnImpl = ((_cmd: string, args: string[]) => {
+      calls.push(args);
+      const child = Object.assign(new EventEmitter(), {
+        stdout: new EventEmitter(),
+        kill: () => true,
+      });
+      setTimeout(() => {
+        if (args[0] === "ps" && listed.shift()) child.stdout.emit("data", "abc123\n");
+        child.emit("close", 0);
+      }, 0);
+      return child;
+    }) as never;
+    return { spawnImpl, calls };
+  }
+
+  it("止める要求があった実行は、コンテナが無くなったのを確かめるまで完了にしない", async () => {
+    const docker = dockerWithPs([true, true, false]); // 遅れてできたコンテナが、2回目の kill の後に消える
+    const containers = new RunningContainers(docker.spawnImpl, 1, 5);
+    containers.register("sacty-run-r1");
+    containers.stop("sacty-run-r1");
+    expect(await containers.finish("sacty-run-r1")).toBe(true);
+    expect(docker.calls.filter((a) => a[0] === "ps")).toHaveLength(3);
+    expect(docker.calls.filter((a) => a[0] === "kill").length).toBeGreaterThanOrEqual(3);
+  });
+
+  it("止まらないまま上限に達したら、確かめられなかったことを返す", async () => {
+    const docker = dockerWithPs(Array(10).fill(true));
+    const containers = new RunningContainers(docker.spawnImpl, 1, 3);
+    containers.register("sacty-run-r2");
+    containers.stop("sacty-run-r2");
+    expect(await containers.finish("sacty-run-r2")).toBe(false);
+  });
+
+  it("止める要求が無ければ、確かめずに完了にする", async () => {
+    const docker = dockerWithPs([]);
+    const containers = new RunningContainers(docker.spawnImpl, 1, 3);
+    containers.register("sacty-run-r3");
+    expect(await containers.finish("sacty-run-r3")).toBe(true);
+    expect(docker.calls).toEqual([]);
   });
 });

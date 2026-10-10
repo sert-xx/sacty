@@ -142,6 +142,9 @@ class FakeTests implements TestRunner {
     }
     return this.results.shift() ?? { exitCode: 0, output: "ok", durationMs: 5 };
   }
+  async ensureStopped() {
+    return true;
+  }
   kill(runId: string) {
     this.held.get(runId)?.({ exitCode: 137, output: "killed", durationMs: 1 });
     this.held.delete(runId);
@@ -181,6 +184,11 @@ class FakeExecutor implements AgentExecutor {
       });
     }
     return next;
+  }
+  /** false にすると、コンテナの停止を確かめられない（止まらないコンテナがある）ことにする。 */
+  stops = true;
+  async ensureStopped() {
+    return this.stops;
   }
   kill(runId: string) {
     this.killed.push(runId);
@@ -2164,6 +2172,32 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     expect(service.cleanupPlan(id)?.find((p) => p.target === "branch")?.present).toBe(true);
     await service.cancel(id);
     expect(repos.deleted).toEqual([`sacty/task-${id.slice(0, 8)}`]);
+    ledger.close();
+  });
+
+  it("止めたコンテナの停止を確かめられなければ、一時停止に警告を付け、中止では作業領域を消さない（レビュー指摘）", async () => {
+    const { ledger, service, executor, id } = await toImplement([HOLD, HOLD]);
+    executor.stops = false;
+    const running = service.runNext(id);
+    await executor.started.promise;
+    await service.pause(id);
+    await running;
+    const paused = service.get(id)?.task;
+    expect(paused?.pausedReason).toBe("manual");
+    expect(paused?.pausedMessage).toMatch(/停止を確認できませんでした/);
+
+    service.resume(id, {});
+    executor.started = Promise.withResolvers<string>();
+    const again = service.runNext(id);
+    await executor.started.promise;
+    const cancelled = await service.cancel(id);
+    await again;
+    const results = Object.fromEntries(
+      (cancelled.cancelled?.cleanup ?? []).map((c) => [c.target, c]),
+    );
+    expect(results.container?.result).toBe("failed");
+    expect(results.workspace?.result).toBe("failed");
+    expect(existsSync(join(dir, "workspaces", id, "repo"))).toBe(true);
     ledger.close();
   });
 

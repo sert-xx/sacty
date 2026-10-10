@@ -332,6 +332,8 @@ describe("停止時の後処理（偽のdockerコマンド）", () => {
       `#!/bin/sh
 here=$(dirname "$0")
 if [ "$1" = "kill" ]; then kill "$(cat "$here/run.pid")"; exit 0; fi
+# ps：止めたコンテナはもう無い
+if [ "$1" = "ps" ]; then exit 0; fi
 echo $$ > "$here/run.pid"
 prev=""; host=""
 for a in "$@"; do

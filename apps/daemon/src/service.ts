@@ -531,19 +531,52 @@ export class TaskService {
     } finally {
       this.inflight.delete(taskId);
       this.runningTask = undefined;
-      this.pauseIfRequested(taskId);
+      if (this.pauseRequested.has(taskId)) {
+        // 止めたコンテナが本当に無くなったかを確かめてから、一時停止を記録する
+        const stopped = await this.confirmStopped(entry.runIds);
+        this.pauseIfRequested(taskId, stopped ? undefined : this.notStoppedMessage(entry.runIds));
+      }
     }
   }
 
+  /** 止めたコンテナが、すべて無くなったか。 */
+  private async confirmStopped(runIds: Iterable<string>): Promise<boolean> {
+    const results = await Promise.all(
+      [...runIds].map((runId) => this.deps.executor.ensureStopped(runId)),
+    );
+    return results.every(Boolean);
+  }
+
+  private notStoppedMessage(runIds: Iterable<string>): string {
+    const names = [...runIds].map((r) => `sacty-run-${r}`).join(", ");
+    return `コンテナ（${names}）の停止を確認できませんでした。docker ps で止まっていることを確かめてから再開してください。`;
+  }
+
   /** 一時停止を求められていて、止められる状態なら、人間の一時停止として記録する。 */
-  private pauseIfRequested(taskId: string): void {
+  private pauseIfRequested(taskId: string, message?: string): void {
     if (!this.pauseRequested.has(taskId)) return;
     this.pauseRequested.delete(taskId);
     const task = this.tasks.get(taskId);
     if (task?.status !== "queued" && task?.status !== "idle") return;
     this.append(task, [
-      { actor: "person", event: { type: "TaskPaused", payload: { reason: "manual" } } },
+      {
+        actor: "person",
+        event: {
+          type: "TaskPaused",
+          payload: { reason: "manual", ...(message ? { message } : {}) },
+        },
+      },
     ]);
+  }
+
+  /**
+   * 人間が止めた実行の、一時停止に添える説明。止めたコンテナが無くなったことを確かめられなければ、
+   * その旨を返す（再開する前に確かめてもらうため）。
+   */
+  private async manualPauseMessage(taskId: string): Promise<string | undefined> {
+    if (!this.pauseRequested.has(taskId)) return undefined;
+    const runIds = this.inflight.get(taskId)?.runIds ?? [];
+    return (await this.confirmStopped(runIds)) ? undefined : this.notStoppedMessage(runIds);
   }
 
   /** 実行の失敗で止めるときの理由。人間が止めた（コンテナを止めた）のなら、人間の一時停止。 */
@@ -611,6 +644,7 @@ export class TaskService {
     });
 
     if (outcome.kind === "failed") {
+      const manualMessage = await this.manualPauseMessage(task.id);
       this.append(task, [
         {
           actor: "sacty",
@@ -632,7 +666,10 @@ export class TaskService {
           actor: "sacty",
           event: {
             type: "TaskPaused",
-            payload: { reason: this.stopReason(task.id, outcome.reason) },
+            payload: {
+              reason: this.stopReason(task.id, outcome.reason),
+              ...(manualMessage ? { message: manualMessage } : {}),
+            },
           },
         },
       ]);
@@ -840,7 +877,10 @@ export class TaskService {
           actor: "sacty",
           event: {
             type: "TaskPaused",
-            payload: { reason: this.stopReason(task.id, outcome.reason), message },
+            payload: {
+              reason: this.stopReason(task.id, outcome.reason),
+              message: (await this.manualPauseMessage(task.id)) ?? message,
+            },
           },
         },
       ]);
@@ -1060,11 +1100,19 @@ export class TaskService {
     try {
       const cleanup: CleanupResult[] = [];
       const inflight = this.inflight.get(id);
+      // 止めたコンテナが無くなったことを確かめられなければ、作業領域は消さない（まだ書き込まれうるため）
+      let containerStopped = true;
       if (inflight) {
         this.pauseRequested.add(id);
-        this.stopRuns(inflight.runIds);
+        const runIds = [...inflight.runIds];
+        this.stopRuns(runIds);
         await inflight.done.catch(() => {});
-        cleanup.push({ target: "container", result: "done" });
+        containerStopped = await this.confirmStopped(runIds);
+        cleanup.push(
+          containerStopped
+            ? { target: "container", result: "done" }
+            : { target: "container", result: "failed", detail: this.notStoppedMessage(runIds) },
+        );
       } else {
         cleanup.push({ target: "container", result: "skipped" });
       }
@@ -1122,16 +1170,24 @@ export class TaskService {
       // 作業領域：タスクの作業領域と、退避した git のメタデータ
       const workspace = join(this.deps.workspaceRoot, latest.id);
       const existed = existsSync(workspace) || existsSync(gitDir);
-      try {
-        rmSync(workspace, { recursive: true, force: true });
-        rmSync(gitDir, { recursive: true, force: true });
-        cleanup.push({ target: "workspace", result: existed ? "done" : "skipped" });
-      } catch (error) {
+      if (!containerStopped) {
         cleanup.push({
           target: "workspace",
           result: "failed",
-          detail: error instanceof Error ? error.message : String(error),
+          detail: "コンテナが止まったことを確かめられないため、作業領域は消していません。",
         });
+      } else {
+        try {
+          rmSync(workspace, { recursive: true, force: true });
+          rmSync(gitDir, { recursive: true, force: true });
+          cleanup.push({ target: "workspace", result: existed ? "done" : "skipped" });
+        } catch (error) {
+          cleanup.push({
+            target: "workspace",
+            result: "failed",
+            detail: error instanceof Error ? error.message : String(error),
+          });
+        }
       }
       return this.append(this.mustGet(id), [
         { actor: "person", event: { type: "TaskCancelled", payload: { cleanup } } },

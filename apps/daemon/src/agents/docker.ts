@@ -74,36 +74,57 @@ export class RunningContainers {
     return this.children.has(name);
   }
 
-  /** docker run が終わったら呼ぶ。止める要求があったなら、遅れてできたコンテナも念のため止める。 */
-  finish(name: string): void {
+  /**
+   * docker run が終わったら呼ぶ。止める要求があったなら、コンテナが無くなったことを確かめてから返す
+   * （docker run の子プロセスが終わっても、Docker 側で遅れてコンテナができていることがあるため）。
+   * 確かめられなければ false。
+   */
+  async finish(name: string): Promise<boolean> {
     this.children.delete(name);
-    if (this.stopRequested.delete(name)) this.kill(name, 0, () => false);
+    if (!this.stopRequested.delete(name)) return true;
+    return this.ensureStopped(name);
   }
 
   /** 止める。止める要求は、docker run が終わるまで覚えておく。 */
   stop(name: string): void {
     if (!this.children.has(name)) return;
     this.stopRequested.add(name);
-    this.kill(name, 0, () => this.children.has(name));
+    void this.command(["kill", name]).then(({ code }) => {
+      // コンテナがまだ無い（作成中）。docker run 自体を止める（遅れてできたコンテナは finish で止める）
+      if (code !== 0) this.children.get(name)?.kill("SIGKILL");
+    });
   }
 
   stopAll(): void {
     for (const name of this.children.keys()) this.stop(name);
   }
 
-  private kill(name: string, attempt: number, stillRunning: () => boolean): void {
-    const proc = this.spawnImpl("docker", ["kill", name], {
-      stdio: "ignore",
-      env: dockerClientEnv(),
-    });
-    proc.on("error", () => {});
-    proc.on("close", (code) => {
-      if (code === 0 || attempt >= this.retries) return;
-      // コンテナがまだ無い（作成中）。docker run 自体を止め、できてしまった場合に備えて繰り返す
-      if (stillRunning()) this.children.get(name)?.kill("SIGKILL");
-      if (stillRunning() || attempt < 3) {
-        setTimeout(() => this.kill(name, attempt + 1, stillRunning), this.retryMs).unref();
-      }
+  /**
+   * コンテナが無いことを確かめる。残っていれば止めて、もう一度確かめる。
+   * Docker に問い合わせられない・止まらないまま上限に達したら false。
+   */
+  async ensureStopped(name: string): Promise<boolean> {
+    for (let attempt = 0; attempt <= this.retries; attempt++) {
+      const listed = await this.command(["ps", "-aq", "--filter", `name=^/${name}$`]);
+      if (listed.code === 0 && listed.stdout.trim() === "") return true;
+      if (listed.code === 0) await this.command(["kill", name]);
+      await new Promise((resolve) => setTimeout(resolve, this.retryMs));
+    }
+    return false;
+  }
+
+  private command(args: string[]): Promise<{ code: number; stdout: string }> {
+    return new Promise((resolve) => {
+      const proc = this.spawnImpl("docker", args, {
+        stdio: ["ignore", "pipe", "ignore"],
+        env: dockerClientEnv(),
+      });
+      let stdout = "";
+      proc.stdout?.on("data", (chunk) => {
+        stdout += chunk;
+      });
+      proc.on("error", () => resolve({ code: 1, stdout: "" }));
+      proc.on("close", (code) => resolve({ code: code ?? 1, stdout }));
     });
   }
 }
@@ -115,8 +136,11 @@ export interface AgentExecutor {
     image: string;
     workspaceDir: string;
     invocation: Invocation;
-  }): Promise<AgentOutcome> /** 実行中のコンテナを止める（人間が一時停止・中止したとき）。無ければ何もしない。 */;
+  }): Promise<AgentOutcome>;
+  /** 実行中のコンテナを止める（人間が一時停止・中止したとき）。無ければ何もしない。 */
   kill(runId: string): void;
+  /** コンテナが無いことを確かめる（残っていれば止める）。確かめられなければ false。 */
+  ensureStopped(runId: string): Promise<boolean>;
 }
 
 /**
@@ -185,6 +209,10 @@ export class DockerExecutor implements AgentExecutor {
    */
   kill(runId: string): void {
     this.containers.stop(`sacty-run-${runId}`);
+  }
+
+  ensureStopped(runId: string): Promise<boolean> {
+    return this.containers.ensureStopped(`sacty-run-${runId}`);
   }
 
   abortAll(): void {
@@ -313,7 +341,14 @@ export class DockerExecutor implements AgentExecutor {
             : parseClaudeResult(stdout, exitCode, stderr);
       }
     } finally {
-      this.containers.finish(containerName);
+      // 止める要求があったなら、コンテナが無くなったことを確かめるまで完了にしない
+      if (!(await this.containers.finish(containerName))) {
+        outcome = {
+          kind: "failed",
+          reason: "error",
+          message: `コンテナ（${containerName}）の停止を確認できませんでした。docker ps で確認してください。`,
+        };
+      }
       collectSecrets(); // コンテナで更新された認証情報も、出力から取り除く対象にする
       for (const file of syncBacks) {
         try {

@@ -13,8 +13,11 @@ export interface TestRunner {
     image: string;
     workspaceDir: string;
     command: string;
-  }): Promise<TestRunResult> /** 実行中のコンテナを止める（人間が一時停止・中止したとき）。無ければ何もしない。 */;
+  }): Promise<TestRunResult>;
+  /** 実行中のコンテナを止める（人間が一時停止・中止したとき）。無ければ何もしない。 */
   kill(runId: string): void;
+  /** コンテナが無いことを確かめる（残っていれば止める）。確かめられなければ false。 */
+  ensureStopped(runId: string): Promise<boolean>;
 }
 
 /**
@@ -39,6 +42,10 @@ export class DockerTestRunner implements TestRunner {
     this.containers.stop(`sacty-run-${runId}`);
   }
 
+  ensureStopped(runId: string): Promise<boolean> {
+    return this.containers.ensureStopped(`sacty-run-${runId}`);
+  }
+
   abortAll(): void {
     this.containers.stopAll();
   }
@@ -55,8 +62,9 @@ export class DockerTestRunner implements TestRunner {
     });
     const started = Date.now();
     this.containers.register(name);
+    let result: TestRunResult;
     try {
-      return await new Promise<TestRunResult>((resolve) => {
+      result = await new Promise<TestRunResult>((resolve) => {
         const child = this.spawnImpl("docker", args, {
           env: dockerClientEnv(),
           stdio: ["ignore", "pipe", "pipe"],
@@ -90,7 +98,15 @@ export class DockerTestRunner implements TestRunner {
         });
       });
     } finally {
-      this.containers.finish(name);
+      // 止める要求があったなら、コンテナが無くなったことを確かめるまで完了にしない
+      if (!(await this.containers.finish(name))) {
+        result = {
+          exitCode: 1,
+          output: `[sacty] コンテナ（${name}）の停止を確認できませんでした。docker ps で確認してください。`,
+          durationMs: Date.now() - started,
+        };
+      }
     }
+    return result;
   }
 }
