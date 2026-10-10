@@ -1,6 +1,6 @@
 "use server";
 
-import { CreateTicketInput, StepKey } from "@sacty/core";
+import { CreateTicketInput, type ProjectDefinitionInput, StepKey } from "@sacty/core";
 import { refresh } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
@@ -10,6 +10,8 @@ import {
   decideChange,
   requestChanges,
   resumeTask,
+  runIntake,
+  saveProject,
   voidRemark,
 } from "@/lib/daemon";
 
@@ -147,4 +149,36 @@ export async function decideChangeAction(
   if (!result.ok) return { message: result.message };
   refresh();
   return {};
+}
+
+export type SaveProjectState = { message?: string; saved?: boolean };
+
+/** プロジェクトを作る・変える。定義は編集画面が JSON にまとめて送る。 */
+export async function saveProjectAction(
+  _prev: SaveProjectState,
+  formData: FormData,
+): Promise<SaveProjectState> {
+  const id = String(formData.get("id") ?? "") || undefined;
+  let definition: unknown;
+  try {
+    definition = JSON.parse(String(formData.get("definition") ?? ""));
+  } catch {
+    return { message: "入力を読み取れませんでした。画面を更新してください。" };
+  }
+  let result: Awaited<ReturnType<typeof saveProject>>;
+  try {
+    result = await saveProject(id, definition as ProjectDefinitionInput);
+  } catch {
+    return { message: DAEMON_DOWN };
+  }
+  if (!result.ok) return { message: result.message };
+  if (!id) redirect(`/projects/${result.project.id}`);
+  refresh();
+  return { saved: true };
+}
+
+/** GitHub Issue の取り込みを、すぐに実行する。 */
+export async function runIntakeAction(): Promise<void> {
+  await runIntake();
+  refresh();
 }

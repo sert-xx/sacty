@@ -62,6 +62,15 @@ export const TestViewpoint = z.object({
 });
 export type TestViewpoint = z.infer<typeof TestViewpoint>;
 
+/** タスクの取り込み元。 */
+export const TaskSource = z.object({
+  kind: z.literal("github_issue"),
+  repo: z.string(),
+  number: z.number().int().positive(),
+  url: z.string(),
+});
+export type TaskSource = z.infer<typeof TaskSource>;
+
 /** 変更の申し出に対する、ゴールガーディアンの判定。 */
 export const Verdict = z.enum(["approved", "rejected", "undecidable"]);
 export type Verdict = z.infer<typeof Verdict>;
@@ -86,9 +95,12 @@ const TaskCreated = z.object({
   payload: z.object({
     title: z.string(),
     body: z.string(),
-    start: z.enum(["ticket"]),
+    /** ticket：sacty の画面で作った、github_issue：GitHub Issue から取り込んだ。 */
+    start: z.enum(["ticket", "github_issue"]),
     // PBI-1の台帳には無いので既定値で補う
     budgetCapUsd: z.number().positive().default(DEFAULT_BUDGET_USD),
+    /** 取り込み元（GitHub Issue のリポジトリと番号）。 */
+    source: TaskSource.optional(),
   }),
 });
 

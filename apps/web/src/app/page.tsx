@@ -19,7 +19,7 @@ export default function TasksPage() {
     <>
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div className="flex flex-col gap-1">
-          <p className="text-sm text-muted-foreground">プロジェクト：デフォルト</p>
+          <p className="text-sm text-muted-foreground">すべてのプロジェクト</p>
           <h1 className="text-2xl font-bold">タスク</h1>
         </div>
         <NewTicketDialog />
@@ -162,6 +162,11 @@ async function TaskTable() {
               </td>
               <td className="px-3 py-3.5 whitespace-nowrap text-muted-foreground">
                 {START_LABEL[task.start]}
+                {task.source && (
+                  <span className="block font-mono text-xs">
+                    {task.source.repo}#{task.source.number}
+                  </span>
+                )}
               </td>
               <td className="px-3 py-3.5">
                 <StepChips task={task} />

@@ -86,3 +86,66 @@ function apiError(what: string, status: number, json: Record<string, unknown>): 
         : "";
   return new Error(`${what}：GitHub API ${status} ${message}${hint}`);
 }
+
+/** 取り込みの対象として見つかった Issue。 */
+export type FoundIssue = {
+  /** owner/name。 */
+  repo: string;
+  number: number;
+  title: string;
+  body: string;
+  url: string;
+  labels: string[];
+};
+
+/** Issue を探す口。テストでは偽物に差し替える。 */
+export interface IssueSearch {
+  search(query: string, token: string): Promise<FoundIssue[]>;
+}
+
+/** GitHub の検索 API で、開いている Issue を探す（PR は除く）。 */
+export class GitHubIssueSearch implements IssueSearch {
+  constructor(
+    private readonly fetchImpl: Fetch = fetch,
+    private readonly api = API,
+  ) {}
+
+  /** 1ページの件数と、たどるページの上限（検索 API は最大1,000件まで返す）。 */
+  static readonly PER_PAGE = 100;
+  static readonly MAX_PAGES = 10;
+
+  async search(query: string, token: string): Promise<FoundIssue[]> {
+    const found: FoundIssue[] = [];
+    for (let page = 1; page <= GitHubIssueSearch.MAX_PAGES; page++) {
+      const url = `${this.api}/search/issues?q=${encodeURIComponent(query)}&per_page=${GitHubIssueSearch.PER_PAGE}&page=${page}&sort=created&order=asc`;
+      const res = await this.fetchImpl(url, {
+        headers: {
+          accept: "application/vnd.github+json",
+          authorization: `Bearer ${token}`,
+          "x-github-api-version": "2022-11-28",
+        },
+      });
+      const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+      if (!res.ok) throw apiError("Issue を検索できませんでした", res.status, json);
+      const items = Array.isArray(json.items) ? (json.items as Record<string, unknown>[]) : [];
+      found.push(
+        ...items
+          .filter((item) => !item.pull_request)
+          .map((item) => ({
+            repo: String(item.repository_url ?? "").replace(/^.*\/repos\//, ""),
+            number: Number(item.number),
+            title: String(item.title ?? ""),
+            body: typeof item.body === "string" ? item.body : "",
+            url: String(item.html_url ?? ""),
+            labels: Array.isArray(item.labels)
+              ? item.labels.map((l) => String((l as Record<string, unknown>)?.name ?? l))
+              : [],
+          }))
+          .filter((issue) => /^[^/]+\/[^/]+$/.test(issue.repo) && issue.number > 0),
+      );
+      // 最後のページ（件数が1ページに満たない）なら終わる
+      if (items.length < GitHubIssueSearch.PER_PAGE) break;
+    }
+    return found;
+  }
+}

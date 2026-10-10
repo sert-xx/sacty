@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { GitHubPullRequests } from "./github.js";
+import { GitHubIssueSearch, GitHubPullRequests } from "./github.js";
 
 type Call = { url: string; method: string; body?: unknown; auth?: string };
 
@@ -70,4 +70,65 @@ describe("GitHub の PR（PBI-10b）", () => {
     expect(String(error)).toContain("GitHub API 401 Bad credentials（トークンが無効です）");
     expect(String(error)).not.toContain("ghp_secret");
   });
+});
+
+describe("GitHub の Issue の検索（PBI-5a）", () => {
+  it("検索の結果を読み、PR は除く", async () => {
+    const { impl, calls } = fakeFetch([
+      {
+        status: 200,
+        json: {
+          items: [
+            {
+              number: 3,
+              title: "冪等性キー",
+              body: null,
+              html_url: "https://github.com/acme/app/issues/3",
+              repository_url: "https://api.github.com/repos/acme/app",
+              labels: [{ name: "sacty" }],
+            },
+            {
+              number: 4,
+              title: "PR",
+              html_url: "https://github.com/acme/app/pull/4",
+              repository_url: "https://api.github.com/repos/acme/app",
+              labels: [],
+              pull_request: {},
+            },
+          ],
+        },
+      },
+    ]);
+    const found = await new GitHubIssueSearch(impl).search('repo:acme/app label:"sacty"', "t");
+    expect(found).toEqual([
+      {
+        repo: "acme/app",
+        number: 3,
+        title: "冪等性キー",
+        body: "",
+        url: "https://github.com/acme/app/issues/3",
+        labels: ["sacty"],
+      },
+    ]);
+    expect(calls[0]?.url).toContain("q=repo%3Aacme%2Fapp%20label%3A%22sacty%22");
+  });
+});
+
+it("100件を超える結果は、次のページもたどる（DAの見直し）", async () => {
+  const page = (from: number, count: number) => ({
+    items: Array.from({ length: count }, (_, i) => ({
+      number: from + i,
+      title: `#${from + i}`,
+      html_url: `https://github.com/acme/app/issues/${from + i}`,
+      repository_url: "https://api.github.com/repos/acme/app",
+      labels: [{ name: "sacty" }],
+    })),
+  });
+  const { impl, calls } = fakeFetch([
+    { status: 200, json: page(1, 100) },
+    { status: 200, json: page(101, 3) },
+  ]);
+  const found = await new GitHubIssueSearch(impl).search("repo:acme/app", "t");
+  expect(found).toHaveLength(103);
+  expect(calls.map((c) => new URL(c.url).searchParams.get("page"))).toEqual(["1", "2"]);
 });

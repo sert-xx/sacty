@@ -14,6 +14,7 @@ import {
   DEFAULT_BUDGET_USD,
   DecideChangeInput,
   type EventInput,
+  excludedRepositories,
   formatUsd,
   GATED_STEPS,
   type LedgerEvent,
@@ -21,14 +22,21 @@ import {
   MAX_VERIFY_ATTEMPTS,
   MVP_STEPS,
   openProposal,
+  type Project,
+  ProjectDefinition,
   project,
+  projectConflicts,
   proposalAccepted,
   RequestChangesInput,
   ResumeTaskInput,
+  repositorySettings,
+  responsibleSource,
   reworkTargets,
   type StepKey,
   type Task,
   type TaskProposal,
+  TICKET_BODY_MAX,
+  TICKET_TITLE_MAX,
 } from "@sacty/core";
 import type { AgentExecutor } from "./agents/docker.js";
 import { type AgentRole, buildInvocation } from "./agents/invocation.js";
@@ -36,8 +44,9 @@ import type { AgentOutcome } from "./agents/parse.js";
 import { redact } from "./agents/redact.js";
 import type { TestRunner } from "./agents/test-runner.js";
 import type { AgentConfig, ConfigResult, SactyConfig } from "./config.js";
-import type { PullRequests } from "./github.js";
+import type { FoundIssue, PullRequests } from "./github.js";
 import type { LedgerStore } from "./ledger.js";
+import type { ProjectStore } from "./projects.js";
 import {
   buildFinalReviewPrompt,
   buildGuardianPrompt,
@@ -74,6 +83,8 @@ export type ServiceDeps = {
   repos: RepositoryWorkspace;
   /** PRの作成。 */
   pulls: PullRequests;
+  /** プロジェクトの設定。 */
+  projects: ProjectStore;
   /** テストの実行。 */
   tests: TestRunner;
   /** タスクごとの作業領域を作る場所。 */
@@ -83,6 +94,21 @@ export type ServiceDeps = {
 export type DaemonStatus = {
   agent: { id: string; runtime: string; authMode: string } | null;
   problems: string[];
+  /** GitHub Issue の取り込みの状況（設定が無ければ null）。 */
+  intake: IntakeStatus | null;
+};
+
+export type IntakeStatus = {
+  lastRunAt?: string;
+  /** 直近の取り込みで作ったタスクの数。 */
+  imported?: number;
+  error?: string;
+};
+
+/** プロジェクトと、Org の取り込み元ごとの除外リポジトリ（ほかのプロジェクトが担当）。 */
+export type ProjectView = {
+  project: Project;
+  exclusions: { org: string; repos: { repo: string; projectName: string }[] }[];
 };
 
 /**
@@ -92,8 +118,13 @@ export type DaemonStatus = {
 export class TaskService {
   private tasks: Map<string, Task>;
 
+  private intakeStatus: IntakeStatus = {};
+
   constructor(private readonly deps: ServiceDeps) {
     this.tasks = project(deps.ledger.all());
+    if (!deps.projects.get(DEFAULT_PROJECT_ID)) {
+      deps.projects.put(DEFAULT_PROJECT_ID, ProjectDefinition.parse({ name: "デフォルト" }));
+    }
   }
 
   list(): Task[] {
@@ -108,12 +139,108 @@ export class TaskService {
 
   status(): DaemonStatus {
     const config = this.deps.config();
-    if (!config.ok) return { agent: null, problems: [config.problem] };
+    if (!config.ok) return { agent: null, problems: [config.problem], intake: null };
     const agent = config.config.defaultAgent;
     return {
       agent: { id: agent.id, runtime: agent.runtime, authMode: agent.auth.mode },
       problems: [],
+      intake: config.config.github ? this.intakeStatus : null,
     };
+  }
+
+  listProjects(): Project[] {
+    return this.deps.projects.all();
+  }
+
+  getProject(id: string): ProjectView | undefined {
+    const project = this.deps.projects.get(id);
+    if (!project) return undefined;
+    const all = this.deps.projects.all();
+    return {
+      project,
+      exclusions: project.sources
+        .filter((s) => s.scope === "org")
+        .map((s) => ({ org: s.target, repos: excludedRepositories(all, id, s.target) })),
+    };
+  }
+
+  /** プロジェクトを作る、または変える。ほかのプロジェクトと取り込み元が重複していれば拒否する。 */
+  saveProject(id: string | undefined, raw: unknown): Project {
+    const definition = ProjectDefinition.parse(raw);
+    if (id && !this.deps.projects.get(id)) {
+      throw new InvalidOperationError("プロジェクトが見つかりません。");
+    }
+    const problems = projectConflicts(this.deps.projects.all(), id, definition);
+    if (problems.length > 0) throw new InvalidOperationError(problems.join("\n"));
+    return this.deps.projects.put(id ?? randomUUID(), definition);
+  }
+
+  /** 取り込みで検索する条件（取り込み元ごと）。 */
+  intakeQueries(): string[] {
+    const queries = new Set<string>();
+    for (const project of this.deps.projects.all()) {
+      for (const source of project.sources) {
+        const where = source.scope === "org" ? `org:${source.target}` : `repo:${source.target}`;
+        queries.add(`is:issue is:open ${where} label:"${source.label.replace(/"/g, "")}"`);
+      }
+    }
+    return [...queries];
+  }
+
+  recordIntake(status: IntakeStatus): void {
+    this.intakeStatus = status;
+  }
+
+  /**
+   * 見つかった Issue をタスクにする。担当するプロジェクトは取り込むたびに判定し（範囲が狭い
+   * 指定が優先）、その取り込み元のラベルが付いた Issue だけを取り込む。同じ Issue は二重に取り込まない。
+   */
+  importIssues(found: readonly FoundIssue[]): Task[] {
+    const projects = this.deps.projects.all();
+    const key = (repo: string, number: number) => `${repo.toLowerCase()}#${number}`;
+    const known = new Set(
+      [...this.tasks.values()].flatMap((t) =>
+        t.source ? [key(t.source.repo, t.source.number)] : [],
+      ),
+    );
+    const config = this.deps.config();
+    const budgetCapUsd = config.ok ? config.config.budgetPerTaskUsd : DEFAULT_BUDGET_USD;
+    const created: Task[] = [];
+    for (const issue of found) {
+      if (known.has(key(issue.repo, issue.number))) continue;
+      const responsible = responsibleSource(projects, issue.repo);
+      if (!responsible) continue;
+      const label = responsible.source.label.toLowerCase();
+      if (!issue.labels.some((l) => l.toLowerCase() === label)) continue;
+      known.add(key(issue.repo, issue.number));
+      created.push(
+        this.append({ id: randomUUID(), projectId: responsible.project.id }, [
+          {
+            actor: "sacty",
+            event: {
+              type: "TaskCreated",
+              payload: {
+                title: (issue.title.trim() || `${issue.repo}#${issue.number}`).slice(
+                  0,
+                  TICKET_TITLE_MAX,
+                ),
+                body: issue.body.slice(0, TICKET_BODY_MAX),
+                start: "github_issue",
+                budgetCapUsd,
+                source: {
+                  kind: "github_issue",
+                  repo: issue.repo,
+                  number: issue.number,
+                  url: issue.url,
+                },
+              },
+            },
+          },
+          { actor: "sacty", event: { type: "StepsChosen", payload: { steps: [...MVP_STEPS] } } },
+        ]),
+      );
+    }
+    return created;
   }
 
   private append(
@@ -231,6 +358,60 @@ export class TaskService {
     return join(this.deps.workspaceRoot, "_git", `${task.id}.git`);
   }
 
+  /**
+   * タスクの実装の対象リポジトリと、その設定。GitHub Issue から取り込んだタスクは、その Issue の
+   * リポジトリに実装し、設定はプロジェクトのリポジトリの設定を使う。手で作ったタスクは
+   * config.yaml の repository を使う。
+   */
+  private targetRepository(
+    task: Task,
+    config: SactyConfig,
+  ): { ok: true; repo: NonNullable<SactyConfig["repository"]> } | { ok: false; message: string } {
+    if (task.source?.kind === "github_issue") {
+      const project = this.deps.projects.get(task.projectId);
+      const settings = repositorySettings(project, task.source.repo);
+      if (!settings) {
+        return {
+          ok: false,
+          message: `プロジェクト「${project?.name ?? task.projectId}」に、${task.source.repo} のリポジトリの設定（ベースブランチ・テストのコマンド）がありません。プロジェクトの設定で追加してから再開してください。`,
+        };
+      }
+      if (settings.pullRequest && !config.github) {
+        return {
+          ok: false,
+          message:
+            "PRを作るには、config.yaml の github.token_secret（GitHub のトークン）が必要です。設定するか、プロジェクトのリポジトリの設定でPRを作らないようにしてから再開してください。",
+        };
+      }
+      return {
+        ok: true,
+        repo: {
+          url: `https://github.com/${task.source.repo}.git`,
+          baseBranch: settings.baseBranch,
+          testCommand: settings.testCommand,
+          testImage: config.image,
+          ...(settings.pullRequest && config.github
+            ? {
+                pullRequest: {
+                  provider: "github" as const,
+                  repo: task.source.repo,
+                  tokenSecret: config.github.tokenSecret,
+                },
+              }
+            : {}),
+        },
+      };
+    }
+    if (!config.repository) {
+      return {
+        ok: false,
+        message:
+          "実装の対象リポジトリが設定されていません。config.yaml の repository を設定してから再開してください。",
+      };
+    }
+    return { ok: true, repo: config.repository };
+  }
+
   /** 実装の対象リポジトリを用意する（初回だけ clone し、起点のコミットを台帳に記録する）。 */
   private async prepareRepository(
     task: Task,
@@ -240,14 +421,9 @@ export class TaskService {
     if (task.repository && existsSync(dir) && existsSync(this.trustedGitDir(task))) {
       return { ok: true, dir };
     }
-    const repo = config.repository;
-    if (!repo && !task.repository) {
-      return {
-        ok: false,
-        message:
-          "実装の対象リポジトリが設定されていません。config.yaml の repository を設定してから再開してください。",
-      };
-    }
+    const target = this.targetRepository(task, config);
+    if (!target.ok && !task.repository) return target;
+    const repo = target.ok ? target.repo : undefined;
     // 一度用意したタスクは、設定が変わっても同じリポジトリ・ブランチで作業する
     const url = task.repository?.url ?? repo?.url ?? "";
     const baseBranch = task.repository?.baseBranch ?? repo?.baseBranch ?? "main";
@@ -428,9 +604,14 @@ export class TaskService {
       ]);
       return;
     }
-    const repo = config.config.repository;
+    const target = this.targetRepository(task, config.config);
     const dir = this.repoDir(task);
-    if (!task.repository || !repo || !existsSync(dir) || !existsSync(this.trustedGitDir(task))) {
+    if (
+      !target.ok ||
+      !task.repository ||
+      !existsSync(dir) ||
+      !existsSync(this.trustedGitDir(task))
+    ) {
       this.append(task, [
         {
           actor: "sacty",
@@ -438,8 +619,8 @@ export class TaskService {
             type: "TaskPaused",
             payload: {
               reason: "error",
-              message: !repo
-                ? "実装の対象リポジトリが設定されていないため、テストを実行できません。config.yaml の repository を設定してから再開してください。"
+              message: !target.ok
+                ? `テストを実行できません：${target.message}`
                 : "実装の作業領域が見つからないため、検証できません。",
             },
           },
@@ -447,6 +628,7 @@ export class TaskService {
       ]);
       return;
     }
+    const repo = target.repo;
     const viewpointIds = (task.approved.design?.testViewpoints ?? []).map((v) => v.id);
 
     let current = task;
@@ -570,7 +752,7 @@ export class TaskService {
    * メタデータで作る。失敗したら理由を記録して止める（再開するとやり直す）。
    */
   private async publish(task: Task, config: SactyConfig): Promise<void> {
-    const repo = config.repository;
+    const target = this.targetRepository(task, config);
     const dir = this.repoDir(task);
     const gitDir = this.trustedGitDir(task);
     const usedSecrets: string[] = [];
@@ -584,10 +766,15 @@ export class TaskService {
           },
         },
       ]);
-    if (!task.repository || !repo || !existsSync(dir) || !existsSync(gitDir)) {
-      fail("実装の作業領域か対象リポジトリの設定が無いため、PRを作れません。");
+    if (!target.ok) {
+      fail(`PRを作れません：${target.message}`);
       return;
     }
+    if (!task.repository || !existsSync(dir) || !existsSync(gitDir)) {
+      fail("実装の作業領域が無いため、PRを作れません。");
+      return;
+    }
+    const repo = target.repo;
     const branch = task.pullRequest?.branch ?? `sacty/task-${task.id.slice(0, 8)}`;
     try {
       const { commit } = await this.deps.repos.publish({

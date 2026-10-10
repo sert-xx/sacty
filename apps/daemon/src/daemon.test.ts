@@ -10,6 +10,7 @@ import type { TestRunner, TestRunResult } from "./agents/test-runner.js";
 import { type AgentConfig, type ConfigResult, loadConfig } from "./config.js";
 import type { PullRequests } from "./github.js";
 import { SqliteLedgerStore } from "./ledger.js";
+import { MemoryProjectStore } from "./projects.js";
 import type { RepositoryWorkspace } from "./repository.js";
 import { MemorySecretStore } from "./secrets.js";
 import { createApp } from "./server.js";
@@ -152,6 +153,7 @@ function makeService(
     repos?: FakeRepos;
     tests?: FakeTests;
     pulls?: FakePulls;
+    projects?: MemoryProjectStore;
   } = {},
 ) {
   const executor = new FakeExecutor(outcomes);
@@ -168,6 +170,7 @@ function makeService(
     repos,
     tests,
     pulls,
+    projects: options.projects ?? new MemoryProjectStore(),
     workspaceRoot: join(dir, "workspaces"),
   });
   return { service, executor, repos, tests, pulls };
@@ -399,6 +402,10 @@ describe("秘密情報と予算の通知（レビュー指摘）", () => {
           throw new Error("docker failed with oauth-secret");
         },
       },
+      repos: new FakeRepos(),
+      tests: new FakeTests(),
+      pulls: new FakePulls(),
+      projects: new MemoryProjectStore(),
       workspaceRoot: join(dir, "workspaces"),
     });
     const c = throwing.createTicket({ title: "C" });
@@ -475,6 +482,10 @@ describe("秘密情報と予算の通知（レビュー指摘）", () => {
       config: configOf(agent()),
       secrets: new MemorySecretStore({ "claude-oauth-token": "oauth-secret" }),
       executor: { run: () => new Promise<AgentOutcome>((resolve) => (finish = resolve)) },
+      repos: new FakeRepos(),
+      tests: new FakeTests(),
+      pulls: new FakePulls(),
+      projects: new MemoryProjectStore(),
       workspaceRoot: join(dir, "workspaces"),
     });
     const task = service.createTicket({ title: "A" });
@@ -1889,6 +1900,202 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     expect(restarted.queuedTaskIds()).toEqual([id]);
     await restarted.runNext(id);
     expect(restarted.get(id)?.task.steps[2]?.state).toBe("done");
+    ledger.close();
+  });
+});
+
+describe("プロジェクトと GitHub Issue の取り込み（PBI-5a）", () => {
+  const issue = (repo: string, number: number, labels: string[], title = `Issue ${number}`) => ({
+    repo,
+    number,
+    title,
+    body: "Issue の本文",
+    url: `https://github.com/${repo}/issues/${number}`,
+    labels,
+  });
+
+  function setup(outcomes: AgentOutcome[] = [], options: { config?: () => ConfigResult } = {}) {
+    const ledger = new SqliteLedgerStore(dbPath);
+    const projects = new MemoryProjectStore();
+    const made = makeService(ledger, outcomes, { projects, ...options });
+    const pay = made.service.saveProject(undefined, {
+      name: "決済",
+      sources: [{ scope: "org", target: "acme", label: "sacty" }],
+      repositories: [
+        {
+          repo: "acme/payments",
+          baseBranch: "develop",
+          testCommand: "pnpm test",
+          pullRequest: true,
+        },
+      ],
+    });
+    const auth = made.service.saveProject(undefined, {
+      name: "認証",
+      sources: [{ scope: "repo", target: "acme/auth", label: "ai" }],
+    });
+    return { ledger, ...made, pay, auth };
+  }
+
+  it("既定のプロジェクトがあり、取り込み元が重複するプロジェクトは作れない", () => {
+    const { ledger, service } = setup();
+    expect(service.listProjects().map((p) => p.name)).toEqual(["デフォルト", "決済", "認証"]);
+    expect(() =>
+      service.saveProject(undefined, {
+        name: "重複",
+        sources: [{ scope: "org", target: "ACME", label: "x" }],
+      }),
+    ).toThrow(/プロジェクト「決済」に登録されています/);
+    expect(() => service.saveProject("no-such", { name: "x" })).toThrow(/見つかりません/);
+    ledger.close();
+  });
+
+  it("Org の設定画面に、ほかのプロジェクトが担当している除外リポジトリを出す", () => {
+    const { ledger, service, pay } = setup();
+    expect(service.getProject(pay.id)?.exclusions).toEqual([
+      { org: "acme", repos: [{ repo: "acme/auth", projectName: "認証" }] },
+    ]);
+    ledger.close();
+  });
+
+  it("取り込み元ごとに検索し、担当のプロジェクトのラベルが付いた Issue だけを、二重にならないよう取り込む", () => {
+    const { ledger, service, pay, auth } = setup();
+    expect(service.intakeQueries()).toEqual([
+      'is:issue is:open org:acme label:"sacty"',
+      'is:issue is:open repo:acme/auth label:"ai"',
+    ]);
+    const created = service.importIssues([
+      issue("acme/payments", 1, ["sacty"], "冪等性キー"),
+      issue("acme/payments", 2, ["bug"]), // ラベルが違う
+      issue("acme/auth", 3, ["sacty"]), // リポジトリ単位の担当（認証）が優先し、ラベル ai が必要
+      issue("acme/auth", 4, ["AI"]),
+      issue("other/repo", 5, ["sacty"]), // どのプロジェクトも担当していない
+      issue("acme/payments", 1, ["sacty"]), // 同じ取り込みの中の重複
+    ]);
+    expect(created.map((t) => [t.projectId, t.source?.repo, t.source?.number])).toEqual([
+      [pay.id, "acme/payments", 1],
+      [auth.id, "acme/auth", 4],
+    ]);
+    expect(created[0]).toMatchObject({
+      title: "冪等性キー",
+      body: "Issue の本文",
+      start: "github_issue",
+    });
+    const ledgerEvent = service.get(created[0]?.id ?? "")?.ledger[0];
+    expect(ledgerEvent?.type === "TaskCreated" && ledgerEvent.payload.source).toEqual({
+      kind: "github_issue",
+      repo: "acme/payments",
+      number: 1,
+      url: "https://github.com/acme/payments/issues/1",
+    });
+    expect(ledgerEvent?.projectId).toBe(pay.id);
+
+    // 次の取り込みでも、同じ Issue は取り込まない（大文字・小文字は区別しない）
+    expect(service.importIssues([issue("ACME/Payments", 1, ["sacty"])])).toEqual([]);
+    // 担当の判定は取り込むたびに行う（設定の変更をすぐに反映する）
+    service.saveProject(auth.id, { name: "認証", sources: [] });
+    expect(service.importIssues([issue("acme/auth", 6, ["sacty"])])[0]?.projectId).toBe(pay.id);
+    ledger.close();
+  });
+
+  /** GitHub のトークンも設定した設定。 */
+  const withGitHub = (): ConfigResult => {
+    const base = configOf(agent())();
+    if (!base.ok) throw new Error("unreachable");
+    return {
+      ok: true,
+      config: { ...base.config, github: { tokenSecret: "github-token", pollIntervalSec: 300 } },
+    };
+  };
+
+  it("Issue から作ったタスクは、その Issue のリポジトリに、プロジェクトの設定で実装する", async () => {
+    const { ledger, service, repos, id } = await (async () => {
+      const made = setup(
+        [
+          {
+            kind: "completed",
+            output: "# 要求要件",
+            usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 1 },
+          },
+          {
+            kind: "completed",
+            output: `# 設計\n\n\`\`\`json\n${JSON.stringify({ "sacty-test-viewpoints": [{ title: "a", input: "b", expected: "c" }] })}\n\`\`\``,
+            usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 1 },
+          },
+          {
+            kind: "completed",
+            output: `# 実装\n\n\`\`\`json\n${JSON.stringify({ "sacty-test-map": [{ viewpointId: "TV-1", tests: ["t"] }] })}\n\`\`\``,
+            usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 1 },
+          },
+        ],
+        { config: withGitHub },
+      );
+      const [task] = made.service.importIssues([issue("acme/payments", 9, ["sacty"])]);
+      return { ...made, id: task?.id ?? "" };
+    })();
+    await service.runNext(id);
+    service.approve(id, { step: "requirements", submission: 1 });
+    await service.runNext(id);
+    service.approve(id, { step: "design", submission: 1 });
+    await service.runNext(id);
+    expect(repos.prepared[0]).toMatchObject({
+      url: "https://github.com/acme/payments.git",
+      baseBranch: "develop",
+    });
+    ledger.close();
+  });
+
+  it("PRを作る設定なのに GitHub のトークンが無ければ、理由を記録して止める", async () => {
+    const { ledger, service } = setup([
+      {
+        kind: "completed",
+        output: "# 要求要件",
+        usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 1 },
+      },
+      {
+        kind: "completed",
+        output: "# 設計",
+        usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 1 },
+      },
+    ]);
+    const [task] = service.importIssues([issue("acme/payments", 11, ["sacty"])]);
+    const id = task?.id ?? "";
+    await service.runNext(id);
+    service.approve(id, { step: "requirements", submission: 1 });
+    await service.runNext(id);
+    service.approve(id, { step: "design", submission: 1 });
+    await service.runNext(id);
+    const failed = service.get(id)?.ledger.findLast((e) => e.type === "AgentRunFailed");
+    expect(failed?.type === "AgentRunFailed" && failed.payload.message).toContain(
+      "github.token_secret",
+    );
+    ledger.close();
+  });
+
+  it("Issue のリポジトリの設定がプロジェクトに無ければ、理由を記録して止める", async () => {
+    const { ledger, service } = setup([
+      {
+        kind: "completed",
+        output: "# 要求要件",
+        usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 1 },
+      },
+      {
+        kind: "completed",
+        output: "# 設計",
+        usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 1 },
+      },
+    ]);
+    const [task] = service.importIssues([issue("acme/ledger", 10, ["sacty"])]);
+    const id = task?.id ?? "";
+    await service.runNext(id);
+    service.approve(id, { step: "requirements", submission: 1 });
+    await service.runNext(id);
+    service.approve(id, { step: "design", submission: 1 });
+    await service.runNext(id);
+    const failed = service.get(id)?.ledger.findLast((e) => e.type === "AgentRunFailed");
+    expect(failed?.type === "AgentRunFailed" && failed.payload.message).toContain(
+      "プロジェクト「決済」に、acme/ledger のリポジトリの設定",
+    );
     ledger.close();
   });
 });

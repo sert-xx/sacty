@@ -31,7 +31,11 @@ function handleError(c: Context, error: unknown) {
  * デーモンのAPI。呼び出せるのはNext.jsのサーバーだけで、
  * CLIが起動のたびに生成するトークンを必須にする。
  */
-export function createApp(service: TaskService, token: string) {
+export function createApp(
+  service: TaskService,
+  token: string,
+  options: { intake?: { tick(force: boolean): Promise<void> } } = {},
+) {
   const app = new Hono();
 
   app.use("/api/*", async (c, next) => {
@@ -52,6 +56,41 @@ export function createApp(service: TaskService, token: string) {
   app.get("/api/tasks/:id", (c) => {
     const found = service.get(c.req.param("id"));
     return found ? c.json(found) : c.json({ error: "not_found" }, 404);
+  });
+
+  app.get("/api/projects", (c) => c.json({ projects: service.listProjects() }));
+
+  app.get("/api/projects/:id", (c) => {
+    const view = service.getProject(c.req.param("id"));
+    if (!view) return c.json({ error: "not_found" }, 404);
+    return c.json(view);
+  });
+
+  app.post("/api/projects", async (c) => {
+    const json = await readJson(c);
+    if (!json.ok) return c.json({ error: "invalid_json" }, 400);
+    try {
+      return c.json({ project: service.saveProject(undefined, json.body) }, 201);
+    } catch (error) {
+      return handleError(c, error);
+    }
+  });
+
+  app.put("/api/projects/:id", async (c) => {
+    const json = await readJson(c);
+    if (!json.ok) return c.json({ error: "invalid_json" }, 400);
+    try {
+      return c.json({ project: service.saveProject(c.req.param("id"), json.body) });
+    } catch (error) {
+      return handleError(c, error);
+    }
+  });
+
+  /** GitHub Issue の取り込みを、間隔を待たずに実行する。 */
+  app.post("/api/intake/run", async (c) => {
+    if (!options.intake) return c.json({ error: "not_configured" }, 409);
+    await options.intake.tick(true);
+    return c.json({ status: service.status().intake });
   });
 
   app.post("/api/tickets", async (c) => {
