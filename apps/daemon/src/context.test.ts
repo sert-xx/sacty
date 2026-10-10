@@ -167,6 +167,154 @@ describe("コンテキストリポジトリの合成（PBI-6）", () => {
   });
 });
 
+describe("MCP サーバーの合成と変換（PBI-6b）", () => {
+  const companyMcp = {
+    "mcp.yaml": [
+      "servers:",
+      "  github:",
+      "    command: npx",
+      "    args: [-y, server-github]",
+      "    env:",
+      "      GITHUB_TOKEN: { secret: gh-token }",
+      "      LOG_LEVEL: info",
+      "  docs:",
+      "    url: https://docs.example.com/mcp",
+      "    headers:",
+      "      Authorization: { secret: docs-token, prefix: 'Bearer ' }",
+      "      X-Team: company",
+      "  old:",
+      "    command: old-server",
+    ].join("\n"),
+    "sacty-context.yaml": "locked:\n  mcp: [github]\n",
+  };
+  const teamMcp = {
+    "mcp.yaml": [
+      "servers:",
+      "  github:",
+      "    command: team-github",
+      "  docs:",
+      "    url: https://team.example.com/mcp",
+      "  local:",
+      "    command: ./local-server",
+    ].join("\n"),
+    "sacty-context.yaml": "extends: company.git\nremove:\n  mcp: [old]\n",
+  };
+  const fetcher = () => new FakeFetcher({ "company.git": companyMcp, "team.git": teamMcp });
+
+  it("名前ごとに下位が上書きし、上書き禁止は守り、取り除ける", async () => {
+    const composed = composeContext(
+      await resolveContext(fetcher(), { repo: "team.git" }, join(dir, "w")),
+    );
+    const mcp = Object.fromEntries(composed.mcp.map((m) => [m.name, m.server]));
+    expect(Object.keys(mcp).sort()).toEqual(["docs", "github", "local"]);
+    expect(mcp.github).toMatchObject({ command: "npx" }); // 上書き禁止
+    expect(mcp.docs).toEqual({ url: "https://team.example.com/mcp", headers: {} }); // 下位が上書き
+    expect(composed.warnings).toEqual([expect.stringContaining("MCP サーバー「github」を上書き")]);
+  });
+
+  it("Claude Code には、秘密情報を環境変数の参照にした mcp.json を書く（値は書かない）", async () => {
+    const companyOnly = await prepareContext(
+      fetcher(),
+      { repo: "company.git" },
+      "claude-code",
+      "/tmp/sacty-claude-config",
+    );
+    const json = JSON.parse(readFileSync(join(companyOnly.dir, "mcp.json"), "utf8"));
+    expect(json).toEqual({
+      mcpServers: {
+        github: {
+          command: "npx",
+          args: ["-y", "server-github"],
+          // biome-ignore lint/suspicious/noTemplateCurlyInString: 設定に書く参照の文字列そのもの
+          env: { GITHUB_TOKEN: "${SACTY_MCP_SECRET_0}", LOG_LEVEL: "info" },
+        },
+        docs: {
+          type: "http",
+          url: "https://docs.example.com/mcp",
+          // biome-ignore lint/suspicious/noTemplateCurlyInString: 設定に書く参照の文字列そのもの
+          headers: { Authorization: "${SACTY_MCP_SECRET_1}", "X-Team": "company" },
+        },
+        old: { command: "old-server", args: [], env: {} },
+      },
+    });
+    expect(companyOnly.placed).toEqual({
+      mcpServers: ["github", "docs", "old"],
+      secrets: [
+        { env: "SACTY_MCP_SECRET_0", secret: "gh-token", prefix: "" },
+        { env: "SACTY_MCP_SECRET_1", secret: "docs-token", prefix: "Bearer " },
+      ],
+    });
+    companyOnly.dispose();
+  });
+
+  it("Codex には config.toml を書き、秘密情報は env_vars と env_http_headers で名前だけを渡す", async () => {
+    const codex = await prepareContext(
+      fetcher(),
+      { repo: "company.git" },
+      "codex",
+      "/tmp/sacty-codex-home",
+    );
+    const toml = readFileSync(join(codex.dir, "config.toml"), "utf8");
+    expect(toml).toBe(
+      [
+        '[mcp_servers."github"]',
+        'command = "/bin/sh"',
+        'args = ["-c", "export GITHUB_TOKEN=\\"$SACTY_MCP_SECRET_0\\"; exec \\"$0\\" \\"$@\\"", "npx", "-y", "server-github"]',
+        'env_vars = ["SACTY_MCP_SECRET_0"]',
+        'env = { "LOG_LEVEL" = "info" }',
+        "",
+        '[mcp_servers."docs"]',
+        'url = "https://docs.example.com/mcp"',
+        'http_headers = { "X-Team" = "company" }',
+        'env_http_headers = { "Authorization" = "SACTY_MCP_SECRET_1" }',
+        "",
+        '[mcp_servers."old"]',
+        'command = "old-server"',
+        "args = []",
+        "",
+      ].join("\n"),
+    );
+    expect(codex.placed.secrets).toHaveLength(2);
+    codex.dispose();
+  });
+
+  it("TOML で使えない文字（DEL）はエスケープする", async () => {
+    const codex = await prepareContext(
+      new FakeFetcher({
+        "x.git": { "mcp.yaml": 'servers:\n  a:\n    command: x\n    args: ["a\\x7Fb\\n"]\n' },
+      }),
+      { repo: "x.git" },
+      "codex",
+      "/tmp/sacty-codex-home",
+    );
+    expect(readFileSync(join(codex.dir, "config.toml"), "utf8")).toContain(
+      'args = ["a\\u007Fb\\n"]',
+    );
+    codex.dispose();
+  });
+
+  it("誤った MCP の設定は、理由つきで止める", async () => {
+    const cases: [string, RegExp][] = [
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: 設定に書く参照の文字列そのもの
+      ["servers:\n  a:\n    command: x\n    env:\n      K: 'v${HOME}'\n", /servers\.a\.env\.K/],
+      ["servers:\n  a:\n    command: x\n    env:\n      K: { secret: 'a b' }\n", /secret/],
+      ["servers:\n  a.b:\n    command: x\n", /MCP サーバーの名前/],
+      ["servers:\n  a:\n    command: x\n    url: https://x\n", /mcp.yaml に誤り/],
+      ["servers:\n  a:\n    url: file:///etc/passwd\n", /mcp.yaml に誤り/],
+      ["servers:\n  a:\n    command: x\n    env:\n      'A-B': v\n", /環境変数の名前/],
+    ];
+    for (const [i, [yaml, error]] of cases.entries()) {
+      await expect(
+        resolveContext(
+          new FakeFetcher({ "x.git": { "mcp.yaml": yaml } }),
+          { repo: "x.git" },
+          join(dir, String(i)),
+        ),
+      ).rejects.toThrow(error);
+    }
+  });
+});
+
 describe("git でのコンテキストの取得（PBI-6）", () => {
   const git = (cwd: string, ...args: string[]) =>
     execFileSync("git", args, { cwd, encoding: "utf8" }).trim();

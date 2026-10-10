@@ -706,7 +706,7 @@ export class TaskService {
         prompt: buildPrompt(this.mustGet(task.id), step),
         role: step,
         workspaceDir,
-        contextDir: context?.dir,
+        context: context && { dir: context.dir, ...context.placed },
       });
     } finally {
       context?.dispose();
@@ -1302,7 +1302,7 @@ export class TaskService {
     role: AgentRole;
     workspaceDir: string;
     /** エージェントの形式に変換したコンテキスト（工程エージェントだけ。PBI-6）。 */
-    contextDir?: string;
+    context?: Parameters<typeof buildInvocation>[5];
   }): Promise<{ outcome: AgentOutcome; costUsd: number; estimated: boolean }> {
     // 実行に渡した秘密情報。台帳に書く前に、出力やエラー文から取り除く。
     const usedSecrets: string[] = [];
@@ -1314,7 +1314,7 @@ export class TaskService {
         this.deps.secrets,
         (value) => usedSecrets.push(value),
         run.role,
-        run.contextDir,
+        run.context,
       );
       mkdirSync(run.workspaceDir, { recursive: true });
       // 準備の間（clone や秘密情報の取り出し）に人間が止めたなら、コンテナを起動しない

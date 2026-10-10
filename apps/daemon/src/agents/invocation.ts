@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import type { StepKey } from "@sacty/core";
 import type { AgentConfig } from "../config.js";
+import { CLAUDE_MCP_CONFIG, type PlacedContext } from "../context.js";
 import type { SecretStore } from "../secrets.js";
 import { secretStringsInJson } from "./redact.js";
 
@@ -49,10 +50,10 @@ export async function buildInvocation(
   /** 実行する工程か、ゴールガーディアン（スタブが出力を選ぶのに使う）。 */
   role?: AgentRole,
   /**
-   * エージェントの形式に変換したコンテキスト（PBI-6）。実行ごとの空の設定のディレクトリ
+   * エージェントの形式に変換したコンテキスト（PBI-6）。dir は実行ごとの空の設定のディレクトリ
    * （Claude Code は CLAUDE_CONFIG_DIR、Codex は CODEX_HOME）に写して渡す。
    */
-  contextDir?: string,
+  context?: { dir: string } & PlacedContext,
 ): Promise<Invocation> {
   const secrets = {
     get: async (name: string) => {
@@ -61,13 +62,31 @@ export async function buildInvocation(
       return value;
     },
   };
+  // MCP サーバーが参照する秘密情報は、値を環境変数でだけ渡す（設定のファイルには名前だけを書いている）
+  const contextEnv: Record<string, string> = {};
+  if (agent.runtime !== "stub") {
+    for (const s of context?.secrets ?? []) {
+      contextEnv[s.env] = `${s.prefix}${await secrets.get(s.secret)}`;
+    }
+  }
   switch (agent.runtime) {
     case "claude-code": {
       const env: Record<string, string> = {
+        ...contextEnv,
         CLAUDE_CONFIG_DIR: CONTAINER_CLAUDE_CONFIG_DIR,
         CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1",
       };
       const command = ["claude", "-p", prompt, "--output-format", "json"];
+      if (context && context.mcpServers.length > 0) {
+        // コンテキストの MCP サーバーだけを使い、そのツールの使用を許可する
+        command.push(
+          "--mcp-config",
+          `${CONTAINER_CLAUDE_CONFIG_DIR}/${CLAUDE_MCP_CONFIG}`,
+          "--strict-mcp-config",
+          "--allowedTools",
+          context.mcpServers.map((name) => `mcp__${name}`).join(","),
+        );
+      }
       const auth = agent.auth;
       if (auth.mode === "subscription") {
         if (!auth.secret) throw new Error("subscription requires a secret name");
@@ -89,15 +108,17 @@ export async function buildInvocation(
         command,
         env,
         // 設定のディレクトリは実行ごとに空にし、コンテキストだけを置く（ホストの設定やメモリーは読ませない）
-        ...(contextDir
-          ? { stage: { containerDir: CONTAINER_CLAUDE_CONFIG_DIR, files: [], seedDir: contextDir } }
+        ...(context
+          ? {
+              stage: { containerDir: CONTAINER_CLAUDE_CONFIG_DIR, files: [], seedDir: context.dir },
+            }
           : {}),
         parser: "claude-json",
       };
     }
 
     case "codex": {
-      const env: Record<string, string> = { CODEX_HOME: CONTAINER_CODEX_HOME };
+      const env: Record<string, string> = { ...contextEnv, CODEX_HOME: CONTAINER_CODEX_HOME };
       const files: { hostPath: string; name: string; syncBack: boolean }[] = [];
       const auth = agent.auth;
       if (auth.mode === "api-key") {
@@ -125,7 +146,7 @@ export async function buildInvocation(
         stage: {
           containerDir: CONTAINER_CODEX_HOME,
           files,
-          ...(contextDir ? { seedDir: contextDir } : {}),
+          ...(context ? { seedDir: context.dir } : {}),
         },
         parser: "codex-jsonl",
       };
