@@ -13,6 +13,7 @@ import { voidRemarkAction } from "@/app/actions";
 import { DaemonError } from "@/components/daemon-error";
 import { GateForm } from "@/components/gate-form";
 import { Implementation } from "@/components/implementation";
+import { Markdown } from "@/components/markdown";
 import { PullRequestCard } from "@/components/pull-request";
 import { TestViewpoints } from "@/components/test-viewpoints";
 import type { Messages } from "@/i18n";
@@ -159,9 +160,13 @@ async function Review({ params }: { params: Promise<{ id: string }> }) {
                   {stepLabel[step]}
                 </span>
               </h2>
-              <pre className="rounded-lg border border-border bg-muted px-5 py-4 font-sans text-sm leading-7 break-words whitespace-pre-wrap">
-                {task.outputs[step] ?? t.noOutput}
-              </pre>
+              {task.outputs[step] ? (
+                <Markdown className="rounded-lg border border-border bg-muted px-5 py-4">
+                  {task.outputs[step]}
+                </Markdown>
+              ) : (
+                <p className="text-sm text-muted-foreground">{t.noOutput}</p>
+              )}
             </section>
           )}
           {step === "design" && (
@@ -186,9 +191,9 @@ async function Review({ params }: { params: Promise<{ id: string }> }) {
                   {t.frozenNote(frozenRequirements.submission)}
                 </span>
               </summary>
-              <pre className="mt-3 rounded-lg border border-border bg-muted px-5 py-4 font-sans text-sm leading-7 break-words whitespace-pre-wrap">
+              <Markdown className="mt-3 rounded-lg border border-border bg-muted px-5 py-4">
                 {frozenRequirements.output}
-              </pre>
+              </Markdown>
             </details>
           )}
         </div>

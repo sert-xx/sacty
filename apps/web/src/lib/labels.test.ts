@@ -2,6 +2,7 @@ import type { LedgerEvent, Task, TaskProposal } from "@sacty/core";
 import { describe, expect, it } from "vitest";
 import { labels } from "@/i18n/messages/labels";
 import {
+  canControl,
   describeEvent as describeIn,
   isWorking,
   needsPerson,
@@ -297,5 +298,23 @@ describe("台帳に記録したデーモンの文言（PBI-11b）", () => {
     expect(describeIn(resolved, labels.en)).toContain(
       'notes: t@1 tried to override the skill "review", but c@2 locks it, so the upper one was used.',
     );
+  });
+});
+
+describe("一時停止・中止の操作（PBI-12）", () => {
+  it("完了したタスクと中止したタスクには出さない", () => {
+    const done = task({
+      status: "idle",
+      steps: [
+        { key: "requirements", state: "done" },
+        { key: "design", state: "done" },
+        { key: "implement", state: "done" },
+        { key: "pr", state: "done" },
+      ],
+    });
+    expect(canControl(done)).toBe(false);
+    expect(canControl(task({ status: "cancelled" }))).toBe(false);
+    expect(canControl(task({ status: "running" }))).toBe(true);
+    expect(canControl(task({ status: "awaiting_approval" }))).toBe(true);
   });
 });

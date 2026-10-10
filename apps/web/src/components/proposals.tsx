@@ -1,6 +1,7 @@
 import { proposalAccepted, type Task, type TaskProposal } from "@sacty/core";
 import { cn } from "cn";
 import { ChangeDecisionForm } from "@/components/change-decision-form";
+import { Markdown } from "@/components/markdown";
 import { TestViewpoints } from "@/components/test-viewpoints";
 import type { Messages } from "@/i18n";
 import { getMessages } from "@/i18n/server";
@@ -122,9 +123,9 @@ function ProposalItem({
         <summary className="cursor-pointer text-xs text-muted-foreground">
           {m.showProposed(step[p.target])}
         </summary>
-        <pre className="mt-2 rounded-lg border border-border bg-muted px-4 py-3 font-sans text-sm leading-7 break-words whitespace-pre-wrap">
+        <Markdown className="mt-2 rounded-lg border border-border bg-muted px-4 py-3">
           {p.proposed}
-        </pre>
+        </Markdown>
         {p.testViewpoints && (
           <div className="mt-2">
             <TestViewpoints viewpoints={p.testViewpoints} />
