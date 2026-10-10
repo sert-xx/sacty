@@ -671,8 +671,25 @@ export class TaskService {
     if (!step) return;
     const config = this.deps.config();
     if (!config.ok) return; // 設定の問題は status() で画面に出す。タスクは実行待ちのまま。
+
+    // 対象リポジトリは、タスクの開始時（最初の実行）に、ベースブランチの最新を用意する（PBI-15）。
+    // どの工程から始まるタスクでも同じ。以後はその起点のコミットを最後まで使う（途中で取り込み直さない）。
+    // 用意できなければ、エージェントを実行する（費用をかける）前に、理由を記録して止める
+    if (!task.repository) {
+      const ready = await this.prepareRepository(task, config.config);
+      if (!ready.ok) {
+        this.append(task, [
+          {
+            actor: "sacty",
+            event: { type: "TaskPaused", payload: { reason: "error", message: ready.message } },
+          },
+        ]);
+        return;
+      }
+    }
+
     // PR作成は、エージェントではなく sacty が行う
-    if (step === "pr") return this.publish(task, config.config);
+    if (step === "pr") return this.publish(this.mustGet(task.id), config.config);
 
     if (budgetState(task.budget) === "exceeded") {
       this.append(task, [
@@ -693,9 +710,9 @@ export class TaskService {
       },
     ]);
 
-    // 対象リポジトリは、要求要件の工程の前に用意する（PBI-15。用意できなければ、費用をかける前に止める）。
-    // 実装の工程は clone を作業領域にし、要求要件・設計の工程は、起点のコミットのコードを読み取り専用で渡す
-    const ready = await this.prepareRepository(task, config.config);
+    // 実装の工程は clone を作業領域にし、それ以外の工程は、起点のコミットのコードを読み取り専用で渡す
+    // （clone はタスクの開始時に済んでいる。作業領域が消えていれば、同じ起点で用意し直す）
+    const ready = await this.prepareRepository(this.mustGet(task.id), config.config);
     if (!ready.ok) {
       this.append(task, [
         {

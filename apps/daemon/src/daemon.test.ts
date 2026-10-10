@@ -393,9 +393,9 @@ describe("工程の実行と費用", () => {
     expect(events?.map((e) => e.type)).toEqual([
       "TaskCreated",
       "StepsChosen",
-      "AgentRunStarted",
-      // 対象リポジトリは、要求要件の工程の前に用意する（PBI-15）
+      // 対象リポジトリは、タスクの開始時（最初の実行）に用意する（PBI-15）
       "RepositoryPrepared",
+      "AgentRunStarted",
       "AgentRunCompleted",
       "StepSubmitted",
     ]);
@@ -1852,7 +1852,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     ledger.close();
   });
 
-  it("対象リポジトリが無い・clone できなければ、要求要件の工程の前に理由を記録して止める（PBI-15）", async () => {
+  it("対象リポジトリが無い・clone できなければ、タスクの開始時に理由を記録して止める（PBI-15）", async () => {
     const ledger = new SqliteLedgerStore(dbPath);
     const repos = new FakeRepos();
     repos.fail = "git clone に失敗しました：Repository not found";
@@ -1864,10 +1864,8 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     // エージェントは実行しない（費用をかける前に止める）
     expect(executor.calls).toHaveLength(0);
     expect(task?.steps[0]).toMatchObject({ key: "requirements", state: "active" });
-    const failed = service.get(id)?.ledger.findLast((e) => e.type === "AgentRunFailed");
-    expect(failed?.type === "AgentRunFailed" && failed.payload.message).toContain(
-      "Repository not found",
-    );
+    // タスクの開始時に止まるので、エージェントの実行の失敗ではなく、一時停止の理由として記録する（PBI-15）
+    expect(service.get(id)?.task.pausedMessage).toContain("Repository not found");
     ledger.close();
   });
 
@@ -2102,6 +2100,34 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     expect(executor.dirs[before]).not.toBe(repoDir);
     expect(executor.workspaceFiles[before]).toEqual(["README.md"]);
     expect(repos.snapshots.at(-1)?.baseCommit).toBe("base123");
+    ledger.close();
+  });
+
+  it("どの工程から始まるタスクでも、タスクの開始時に対象リポジトリを用意する（PBI-15）", async () => {
+    // 今後のタスク種別のように、要求要件から始まらないタスク（実装から始まる）
+    const ledger = new SqliteLedgerStore(dbPath);
+    ledger.append({
+      taskId: "t-impl",
+      projectId: "default",
+      events: [
+        {
+          actor: "person",
+          event: {
+            type: "TaskCreated",
+            payload: { title: "実装だけ", body: "", start: "ticket", budgetCapUsd: 1 },
+          },
+        },
+        { actor: "sacty", event: { type: "StepsChosen", payload: { steps: ["implement", "pr"] } } },
+      ],
+    });
+    const { service, executor, repos } = makeService(ledger, [implement("# v1")]);
+    await service.runNext("t-impl");
+    const types = service.get("t-impl")?.ledger.map((e) => e.type) ?? [];
+    expect(types.indexOf("RepositoryPrepared")).toBeLessThan(types.indexOf("AgentRunStarted"));
+    expect(repos.prepared).toHaveLength(1);
+    // 実装の工程は clone を書き込みできる形で使う
+    expect(executor.dirs[0]).toBe(repos.prepared[0]?.dir);
+    expect(executor.readOnly).toEqual([false]);
     ledger.close();
   });
 
@@ -2672,8 +2698,8 @@ describe("プロジェクトと GitHub Issue の取り込み（PBI-5a）", () =>
     await service.runNext(id);
     expect(github.requested).toEqual([]);
     expect(repos.prepared).toHaveLength(0);
-    const failed = service.get(id)?.ledger.findLast((e) => e.type === "AgentRunFailed");
-    expect(failed?.type === "AgentRunFailed" && failed.payload.message).toEqual({
+    // タスクの開始時に止まるので、エージェントの実行の失敗ではなく、一時停止の理由として記録する（PBI-15）
+    expect(service.get(id)?.task.pausedMessage).toEqual({
       code: "github.accountRequired",
       params: { project: "決済" },
     });
@@ -2700,8 +2726,8 @@ describe("プロジェクトと GitHub Issue の取り込み（PBI-5a）", () =>
     // 対象リポジトリは要求要件の工程の前に用意するので、要求要件の前に止まる（PBI-15）
     await other.service.runNext(id2);
     expect(other.service.get(id2)?.task.pausedReason).toBe("error");
-    const failed = other.service.get(id2)?.ledger.findLast((e) => e.type === "AgentRunFailed");
-    expect(failed?.type === "AgentRunFailed" && failed.payload.message).toEqual({
+    // タスクの開始時に止まるので、エージェントの実行の失敗ではなく、一時停止の理由として記録する（PBI-15）
+    expect(other.service.get(id2)?.task.pausedMessage).toEqual({
       code: "github.accountUnavailable",
       params: { account: "side-job" },
     });
@@ -2726,8 +2752,8 @@ describe("プロジェクトと GitHub Issue の取り込み（PBI-5a）", () =>
     const id = task?.id ?? "";
     // 対象リポジトリは要求要件の工程の前に用意するので、要求要件の前に止まる（PBI-15）
     await service.runNext(id);
-    const failed = service.get(id)?.ledger.findLast((e) => e.type === "AgentRunFailed");
-    expect(failed?.type === "AgentRunFailed" && ja(failed.payload.message)).toContain(
+    // タスクの開始時に止まるので、エージェントの実行の失敗ではなく、一時停止の理由として記録する（PBI-15）
+    expect(ja(service.get(id)?.task.pausedMessage)).toContain(
       "プロジェクト「決済」に、acme/ledger のリポジトリの設定",
     );
     ledger.close();
