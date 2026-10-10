@@ -1,5 +1,13 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -197,6 +205,63 @@ describe("git でのコンテキストの取得（PBI-6）", () => {
     expect(readFileSync(join(prepared.dir, "CLAUDE.md"), "utf8")).toMatch(
       /会社の規約[\s\S]*チームの規約/,
     );
+    prepared.dispose();
+  });
+
+  it("設定・規約・スキルのシンボリックリンクは、リポジトリの外を指しても中を指しても、理由を示して止める", async () => {
+    const outside = join(dir, "host-secret.txt");
+    writeFileSync(outside, "HOST-ONLY-MARKER");
+    const cases: [string, (repo: string) => void][] = [
+      ["rules.md", (repo) => symlinkSync(outside, join(repo, "rules.md"))],
+      ["sacty-context.yaml", (repo) => symlinkSync(outside, join(repo, "sacty-context.yaml"))],
+      [
+        "rules/01.md",
+        (repo) => {
+          mkdirSync(join(repo, "rules"));
+          symlinkSync(outside, join(repo, "rules", "01.md"));
+        },
+      ],
+      [
+        "skills/sample/ref.md",
+        (repo) => {
+          mkdirSync(join(repo, "skills", "sample"), { recursive: true });
+          writeFileSync(join(repo, "skills", "sample", "SKILL.md"), "スキル");
+          writeFileSync(join(repo, "skills", "sample", "guide.md"), "手引き");
+          symlinkSync("guide.md", join(repo, "skills", "sample", "ref.md"));
+        },
+      ],
+      [
+        "skills",
+        (repo) => {
+          mkdirSync(join(repo, "real-skills", "s"), { recursive: true });
+          writeFileSync(join(repo, "real-skills", "s", "SKILL.md"), "スキル");
+          symlinkSync("real-skills", join(repo, "skills"));
+        },
+      ],
+    ];
+    for (const [i, [path, setup]] of cases.entries()) {
+      const repo = makeRepo(`linked-${i}`, { "README.md": "x" });
+      setup(repo);
+      git(repo, "add", "--all");
+      git(repo, "commit", "-m", "link");
+      await expect(
+        prepareContext(new GitContextFetcher(), { repo }, "claude-code", "/tmp/x"),
+      ).rejects.toThrow(`${path} はシンボリックリンクです`);
+    }
+  });
+
+  it("sacty が読まない場所のシンボリックリンクは、取得を妨げない", async () => {
+    const repo = makeRepo("other-link", { "rules.md": "規約" });
+    symlinkSync("rules.md", join(repo, "README.md"));
+    git(repo, "add", "--all");
+    git(repo, "commit", "-m", "link");
+    const prepared = await prepareContext(
+      new GitContextFetcher(),
+      { repo },
+      "claude-code",
+      "/tmp/x",
+    );
+    expect(readFileSync(join(prepared.dir, "CLAUDE.md"), "utf8")).toContain("規約");
     prepared.dispose();
   });
 });

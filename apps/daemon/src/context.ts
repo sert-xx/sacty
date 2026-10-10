@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import {
   cpSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -11,7 +12,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 
@@ -87,11 +88,46 @@ export async function resolveContext(
         `コンテキストリポジトリ（${key}）を取得できません：${error instanceof Error ? error.message : String(error)}`,
       );
     }
+    assertPlainEntries(dir, key);
     const manifest = readManifest(dir, key);
     chain.push({ ...next, commit, dir, manifest });
     next = manifest.extends ? parseExtends(manifest.extends) : undefined;
   }
   return chain.reverse();
+}
+
+/** sacty が読む・写す項目（設定・規約・スキル）。 */
+const CONTEXT_ENTRIES = ["sacty-context.yaml", "rules.md", "rules", "skills"];
+
+/**
+ * sacty が読む・写す項目に、通常のファイルとディレクトリ以外（シンボリックリンクなど）が無いことを確かめる。
+ * リンクを追うとホストの任意のファイルを取り込めてしまい、写した先ではコンテナから解決できないため、
+ * リンクは扱わずに理由を示して止める。
+ */
+function assertPlainEntries(dir: string, key: string): void {
+  const check = (path: string) => {
+    const stat = lstatSync(path);
+    if (stat.isDirectory()) {
+      for (const name of readdirSync(path)) check(join(path, name));
+      return;
+    }
+    if (!stat.isFile()) {
+      const kind = stat.isSymbolicLink() ? "シンボリックリンク" : "通常のファイルでないもの";
+      throw new ContextError(
+        `${key} の ${relative(dir, path)} は${kind}です。コンテキストリポジトリでは、設定・規約・スキルに通常のファイルとディレクトリだけを使えます。`,
+      );
+    }
+  };
+  for (const entry of CONTEXT_ENTRIES) {
+    const path = join(dir, entry);
+    // リンク自体も見るため、existsSync（リンク先を見る）ではなく lstat で有無を確かめる
+    try {
+      lstatSync(path);
+    } catch {
+      continue;
+    }
+    check(path);
+  }
 }
 
 function readManifest(dir: string, key: string) {
