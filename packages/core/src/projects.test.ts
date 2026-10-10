@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { renderMessage } from "./messages.js";
 import {
   excludedRepositories,
   exportProject,
@@ -34,10 +35,21 @@ describe("プロジェクトの取り込み元（PBI-5）", () => {
         { scope: "repo", target: "Acme/Auth", label: "x" },
       ],
     });
-    expect(projectConflicts(projects, undefined, def)).toEqual([
+    const conflicts = projectConflicts(projects, undefined, def);
+    expect(conflicts).toEqual([
+      { code: "project.sourceTaken", params: { scope: "org", target: "ACME", project: "決済" } },
+      {
+        code: "project.sourceTaken",
+        params: { scope: "repo", target: "Acme/Auth", project: "認証" },
+      },
+    ]);
+    expect(conflicts.map((m) => renderMessage(m, "ja"))).toEqual([
       "Org「ACME」は、プロジェクト「決済」に登録されています。",
       "リポジトリ「Acme/Auth」は、プロジェクト「認証」に登録されています。",
     ]);
+    expect(renderMessage(conflicts[1], "en")).toBe(
+      'The repository "Acme/Auth" is already registered in the project "認証".',
+    );
     // 自分自身の登録は重複にしない
     expect(projectConflicts(projects, "p1", ProjectDefinition.parse(projects[0]))).toEqual([]);
     // Org と、その中のリポジトリを別のプロジェクトに登録するのはよい
@@ -60,7 +72,7 @@ describe("プロジェクトの取り込み元（PBI-5）", () => {
         { repo: "o/R", testCommand: "npm test" },
       ],
     });
-    expect(projectConflicts([], undefined, def)).toEqual([
+    expect(projectConflicts([], undefined, def).map((m) => renderMessage(m, "ja"))).toEqual([
       "リポジトリ「O/R」が重複しています。",
       "リポジトリの設定「o/R」が重複しています。",
     ]);
@@ -85,8 +97,8 @@ describe("プロジェクトの取り込み元（PBI-5）", () => {
         name: "x",
         sources: [{ scope: "repo", target: "acme", label: "a" }],
       }),
-    ).toThrow(/owner\/name/);
-    expect(() => ProjectDefinition.parse({ name: " " })).toThrow(/名前を入力/);
+    ).toThrow(/input\.invalidRepo/);
+    expect(() => ProjectDefinition.parse({ name: " " })).toThrow(/input\.nameRequired/);
   });
 });
 
@@ -118,10 +130,8 @@ describe("プロジェクト定義のエクスポート・インポート（PBI-
 
   it("形式・版の違うファイルや、知らない項目（秘密情報など）は読まない", () => {
     const ok = exportProject(full);
-    expect(() => ProjectExport.parse({ ...ok, sacty: "task" })).toThrow(
-      /プロジェクト定義のファイルではありません/,
-    );
-    expect(() => ProjectExport.parse({ ...ok, version: 2 })).toThrow(/対応していない版/);
+    expect(() => ProjectExport.parse({ ...ok, sacty: "task" })).toThrow(/input\.notExportFile/);
+    expect(() => ProjectExport.parse({ ...ok, version: 2 })).toThrow(/input\.unsupportedVersion/);
     expect(() =>
       ProjectExport.parse({ ...ok, project: { ...ok.project, token: "ghp_secret" } }),
     ).toThrow();

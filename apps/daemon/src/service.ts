@@ -12,16 +12,17 @@ import {
   CreateTicketInput,
   changeRounds,
   computeCostUsd,
+  type DaemonMessage,
   DEFAULT_BUDGET_USD,
   DecideChangeInput,
   EventInput,
   excludedRepositories,
-  formatUsd,
   GATED_STEPS,
   type LedgerEvent,
   MAX_CHANGE_REQUESTS,
   MAX_VERIFY_ATTEMPTS,
   MVP_STEPS,
+  message,
   openProposal,
   type PauseReason,
   type Project,
@@ -32,6 +33,7 @@ import {
   proposalAccepted,
   RequestChangesInput,
   ResumeTaskInput,
+  renderMessage,
   repositorySettings,
   responsibleSource,
   reworkTargets,
@@ -87,7 +89,14 @@ function awaitingVerification(task: Task): boolean {
 }
 
 /** 状態に合わない操作（一時停止していないタスクの再開など）。APIでは409にする。 */
-export class InvalidOperationError extends Error {}
+/** 状態に合わない操作。理由は文言のコードと引数で持ち、画面が画面の言語にする（PBI-11）。 */
+export class InvalidOperationError extends Error {
+  readonly messages: DaemonMessage[];
+  constructor(...messages: [DaemonMessage, ...DaemonMessage[]]) {
+    super(messages.map((m) => renderMessage(m, "ja")).join("\n"));
+    this.messages = messages;
+  }
+}
 
 export type ServiceDeps = {
   ledger: LedgerStore;
@@ -195,10 +204,11 @@ export class TaskService {
   saveProject(id: string | undefined, raw: unknown): Project {
     const definition = ProjectDefinition.parse(raw);
     if (id && !this.deps.projects.get(id)) {
-      throw new InvalidOperationError("プロジェクトが見つかりません。");
+      throw new InvalidOperationError(message("project.notFound"));
     }
     const problems = projectConflicts(this.deps.projects.all(), id, definition);
-    if (problems.length > 0) throw new InvalidOperationError(problems.join("\n"));
+    const [first, ...rest] = problems;
+    if (first) throw new InvalidOperationError(first, ...rest);
     return this.deps.projects.put(id ?? randomUUID(), definition);
   }
 
@@ -313,9 +323,7 @@ export class TaskService {
         });
       } catch (error) {
         if (error instanceof ZodError) throw error;
-        throw new InvalidOperationError(
-          "このタスクの状態では、その操作はできません。画面を更新してください。",
-        );
+        throw new InvalidOperationError(message("task.invalidState"));
       }
     }
     const written = this.deps.ledger.append({
@@ -336,7 +344,7 @@ export class TaskService {
     const input = CreateTicketInput.parse(raw);
     const projectId = input.projectId ?? DEFAULT_PROJECT_ID;
     if (!this.deps.projects.get(projectId)) {
-      throw new InvalidOperationError("プロジェクトが見つかりません。");
+      throw new InvalidOperationError(message("project.notFound"));
     }
     const config = this.deps.config();
     const budgetCapUsd = config.ok ? config.config.budgetPerTaskUsd : DEFAULT_BUDGET_USD;
@@ -563,9 +571,14 @@ export class TaskService {
     return (await this.unstopped(runIds)).length === 0;
   }
 
-  private notStoppedMessage(runIds: Iterable<string>): string {
+  private notStopped(runIds: Iterable<string>): DaemonMessage {
     const names = [...runIds].map((r) => `sacty-run-${r}`).join(", ");
-    return `コンテナ（${names}）の停止を確認できませんでした。docker ps で止まっていることを確かめてから再開してください。`;
+    return message("containers.notStopped", { names });
+  }
+
+  /** 台帳に残す文（台帳の文言のコード化は PBI-11b。それまでは日本語で残す）。 */
+  private notStoppedMessage(runIds: Iterable<string>): string {
+    return renderMessage(this.notStopped(runIds), "ja");
   }
 
   /** 一時停止を求められていて、止められる状態なら、人間の一時停止として記録する。 */
@@ -1088,17 +1101,15 @@ export class TaskService {
    */
   async pause(id: string): Promise<Task> {
     const task = this.tasks.get(id);
-    if (!task) throw new InvalidOperationError("タスクが見つかりません。");
-    if (task.status === "cancelled") throw new InvalidOperationError("中止したタスクです。");
-    if (task.status === "paused") throw new InvalidOperationError("すでに一時停止しています。");
+    if (!task) throw new InvalidOperationError(message("task.notFound"));
+    if (task.status === "cancelled") throw new InvalidOperationError(message("task.cancelled"));
+    if (task.status === "paused") throw new InvalidOperationError(message("pause.alreadyPaused"));
     if (task.status === "awaiting_approval" || task.status === "escalated") {
-      throw new InvalidOperationError("人間の判断待ちのため、一時停止する必要はありません。");
+      throw new InvalidOperationError(message("pause.awaitingPerson"));
     }
     const judging = openProposal(task);
     if (judging && !judging.judgement) {
-      throw new InvalidOperationError(
-        "ゴールガーディアンが変更の申し出を判定しているため、終わるまで一時停止できません。",
-      );
+      throw new InvalidOperationError(message("pause.guardianJudging"));
     }
     this.pauseRequested.add(id);
     const inflight = this.inflight.get(id);
@@ -1172,14 +1183,13 @@ export class TaskService {
    */
   async cancel(id: string): Promise<Task> {
     const task = this.tasks.get(id);
-    if (!task) throw new InvalidOperationError("タスクが見つかりません。");
-    if (task.status === "cancelled") throw new InvalidOperationError("すでに中止しています。");
-    if (this.cancelling.has(id)) throw new InvalidOperationError("中止の後片付けをしています。");
+    if (!task) throw new InvalidOperationError(message("task.notFound"));
+    if (task.status === "cancelled")
+      throw new InvalidOperationError(message("cancel.alreadyCancelled"));
+    if (this.cancelling.has(id)) throw new InvalidOperationError(message("cancel.cleaningUp"));
     const judging = openProposal(task);
     if (judging && !judging.judgement) {
-      throw new InvalidOperationError(
-        "ゴールガーディアンが変更の申し出を判定しているため、終わるまで中止できません。",
-      );
+      throw new InvalidOperationError(message("cancel.guardianJudging"));
     }
     this.cancelling.add(id);
     try {
@@ -1482,10 +1492,10 @@ export class TaskService {
   decideChange(id: string, proposalId: string, raw: unknown): Task {
     const { accept } = DecideChangeInput.parse(raw);
     const task = this.tasks.get(id);
-    if (!task) throw new InvalidOperationError("タスクが見つかりません。");
+    if (!task) throw new InvalidOperationError(message("task.notFound"));
     const open = openProposal(task);
     if (task.status !== "escalated" || open?.id !== proposalId || !open.judgement) {
-      throw new InvalidOperationError("この変更の申し出は、判断待ちではありません。");
+      throw new InvalidOperationError(message("change.notAwaiting"));
     }
     return this.append(task, [
       { actor: "person", event: { type: "ChangeDecided", payload: { proposalId, accept } } },
@@ -1530,23 +1540,23 @@ export class TaskService {
   resume(id: string, raw: unknown, options: { containersConfirmed?: boolean } = {}): Task {
     const input = ResumeTaskInput.parse(raw);
     const task = this.tasks.get(id);
-    if (!task) throw new InvalidOperationError("タスクが見つかりません。");
+    if (!task) throw new InvalidOperationError(message("task.notFound"));
     if (task.status !== "paused") {
-      throw new InvalidOperationError("一時停止中のタスクではありません。");
+      throw new InvalidOperationError(message("resume.notPaused"));
     }
     // 止めたコンテナがまだ残っているかもしれないうちは、再開しない（作業領域を取り合うため）
     if (task.unstoppedRuns?.length && !options.containersConfirmed) {
-      throw new InvalidOperationError(this.notStoppedMessage(task.unstoppedRuns));
+      throw new InvalidOperationError(this.notStopped(task.unstoppedRuns));
     }
     const events: { actor: Actor; event: EventInput }[] = [];
     const needsCap = task.pausedReason === "budget";
     if (needsCap && input.capUsd === undefined) {
-      throw new InvalidOperationError("予算で止まったタスクを再開するには、新しい上限が必要です。");
+      throw new InvalidOperationError(message("resume.capRequired"));
     }
     if (input.capUsd !== undefined) {
       if (input.capUsd <= task.budget.usedUsd) {
         throw new InvalidOperationError(
-          `新しい上限は、使用済み（${formatUsd(task.budget.usedUsd)}）より大きい金額にしてください。`,
+          message("resume.capTooLow", { usedUsd: task.budget.usedUsd }),
         );
       }
       events.push({
@@ -1563,19 +1573,19 @@ export class TaskService {
 
   private gateTask(id: string, step: StepKey, submission: number): Task {
     const task = this.tasks.get(id);
-    if (!task) throw new InvalidOperationError("タスクが見つかりません。");
+    if (!task) throw new InvalidOperationError(message("task.notFound"));
     if (task.status !== "awaiting_approval" && task.status !== "escalated") {
-      throw new InvalidOperationError("承認待ちのタスクではありません。");
+      throw new InvalidOperationError(message("gate.notAwaiting"));
     }
     const gateStep = task.gate?.step ?? task.escalation?.step;
     if (gateStep !== step) {
-      throw new InvalidOperationError("この工程は承認待ちではありません。");
+      throw new InvalidOperationError(message("gate.stepNotAwaiting"));
     }
     // 表示していた成果物と、いま承認待ちの成果物が同じかを確かめる
     const current = task.gate?.submission ?? task.submissions[step];
     if (current !== submission) {
       throw new InvalidOperationError(
-        `表示している成果物（${submission}回目の提出）は最新ではありません。画面を更新して、最新の提出（${current}回目）を確認してください。`,
+        message("gate.staleSubmission", { submission, current: current ?? 0 }),
       );
     }
     return task;
@@ -1607,12 +1617,12 @@ export class TaskService {
     const targets = reworkTargets(task, input.step);
     const target = input.target ?? targets[0];
     if (!target || !targets.includes(target)) {
-      throw new InvalidOperationError("この工程には差し戻せません。");
+      throw new InvalidOperationError(message("gate.invalidTarget"));
     }
     const rounds = changeRounds(task, target);
 
     if (task.status === "awaiting_approval" && input.comments.length === 0) {
-      throw new InvalidOperationError("差し戻すには、指摘を1件以上入力してください。");
+      throw new InvalidOperationError(message("gate.remarksRequired"));
     }
     const round = rounds + 1;
     const toRemarks = (texts: string[]) =>
@@ -1639,9 +1649,7 @@ export class TaskService {
     // エスカレーションの後でも、上限に達していない別の工程に戻すのは通常の差し戻し
     const overLimit = task.status === "escalated" && rounds >= MAX_CHANGE_REQUESTS;
     if (overLimit && !input.continueOverLimit) {
-      throw new InvalidOperationError(
-        `差し戻しが上限（${MAX_CHANGE_REQUESTS}回）に達しています。続ける場合は、上限を超えて差し戻すことを選んでください。`,
-      );
+      throw new InvalidOperationError(message("gate.overLimit", { limit: MAX_CHANGE_REQUESTS }));
     }
     if (task.status === "escalated") {
       // 書きかけの指摘は、エスカレーションしたときと同じ工程に戻す場合だけ引き継ぐ
@@ -1649,7 +1657,7 @@ export class TaskService {
         remarks = task.escalation.pendingRemarks;
       }
       if (remarks.length === 0) {
-        throw new InvalidOperationError("差し戻すには、指摘を1件以上入力してください。");
+        throw new InvalidOperationError(message("gate.remarksRequired"));
       }
     }
     // ゴールガーディアンが最終レビューで合格にした成果物を人間が差し戻したら、見逃しとして記録する
@@ -1681,10 +1689,10 @@ export class TaskService {
   /** 前提が変わった指摘を無効にする。以降、エージェントには渡さない。 */
   voidRemark(id: string, remarkId: string): Task {
     const task = this.tasks.get(id);
-    if (!task) throw new InvalidOperationError("タスクが見つかりません。");
-    if (task.status === "cancelled") throw new InvalidOperationError("中止したタスクです。");
+    if (!task) throw new InvalidOperationError(message("task.notFound"));
+    if (task.status === "cancelled") throw new InvalidOperationError(message("task.cancelled"));
     const remark = task.remarks.find((r) => r.id === remarkId);
-    if (!remark) throw new InvalidOperationError("指摘が見つかりません。");
+    if (!remark) throw new InvalidOperationError(message("remark.notFound"));
     if (remark.voided) return task;
     return this.append(task, [
       { actor: "person", event: { type: "RemarkVoided", payload: { remarkId } } },

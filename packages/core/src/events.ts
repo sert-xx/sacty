@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { code } from "./message-code.js";
 
 /** 工程の種類。MVPの固定工程は requirements → design → implement → pr。 */
 export const StepKey = z.enum(["requirements", "design", "implement", "pr"]);
@@ -517,16 +518,9 @@ export const CreateTicketInput = z.object({
   title: z
     .string()
     .trim()
-    .min(1, "タイトルを入力してください。")
-    .max(TICKET_TITLE_MAX, `タイトルは${TICKET_TITLE_MAX}文字以内で入力してください。`),
-  body: z
-    .string()
-    .trim()
-    .max(
-      TICKET_BODY_MAX,
-      `内容は${TICKET_BODY_MAX.toLocaleString("ja-JP")}文字以内で入力してください。`,
-    )
-    .default(""),
+    .min(1, code("input.titleRequired"))
+    .max(TICKET_TITLE_MAX, code("input.titleTooLong")),
+  body: z.string().trim().max(TICKET_BODY_MAX, code("input.bodyTooLong")).default(""),
   /** 作るプロジェクト。省略すると既定のプロジェクト。 */
   projectId: z.string().min(1).optional(),
 });
@@ -552,8 +546,8 @@ export const RequestChangesInput = z.object({
   /** やり直す工程。省略すると承認ゲートの工程。 */
   target: StepKey.optional(),
   comments: z
-    .array(z.string().trim().max(2_000, "指摘は1件あたり2,000文字以内にしてください。"))
-    .max(50, "指摘は一度に50件までにしてください。")
+    .array(z.string().trim().max(2_000, code("input.remarkTooLong")))
+    .max(50, code("input.tooManyRemarks"))
     .transform((list) => list.filter((c) => c.length > 0)),
   /** エスカレーションの後、上限を超えて差し戻しを続けるか。 */
   continueOverLimit: z.boolean().default(false),

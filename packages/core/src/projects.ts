@@ -1,18 +1,17 @@
 import { z } from "zod";
+import { code, message } from "./message-code.js";
+import type { DaemonMessage } from "./messages.js";
 
 /** GitHub の名前（owner や repo）。大文字・小文字は区別しない。 */
 const Name = z
   .string()
   .trim()
-  .regex(/^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,99})$/, "GitHub の名前として正しくありません");
+  .regex(/^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,99})$/, code("input.invalidGithubName"));
 /** owner/name の形のリポジトリ。 */
 export const RepoName = z
   .string()
   .trim()
-  .regex(
-    /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}\/[A-Za-z0-9._-]{1,100}$/,
-    "リポジトリは owner/name の形で入力してください",
-  );
+  .regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,99}\/[A-Za-z0-9._-]{1,100}$/, code("input.invalidRepo"));
 
 /** GitHub Issue の取り込み元。Org 単位かリポジトリ単位で、条件はラベル。 */
 export const IssueSource = z.discriminatedUnion("scope", [
@@ -26,7 +25,7 @@ export const RepositorySettings = z.object({
   repo: RepoName,
   baseBranch: z.string().trim().min(1).max(100).default("main"),
   /** テストを実行するコマンド。sh -c で実行し、終了コード0で合格。 */
-  testCommand: z.string().trim().min(1, "テストのコマンドを入力してください").max(1000),
+  testCommand: z.string().trim().min(1, code("input.testCommandRequired")).max(1000),
   /** 成果物チェックの前に、GitHub に PR を作るか（作らなければブランチのプッシュまで）。 */
   pullRequest: z.boolean().default(true),
 });
@@ -37,12 +36,12 @@ export type RepositorySettings = z.infer<typeof RepositorySettings>;
  * （省略すると既定のブランチ）。
  */
 export const ContextSource = z.object({
-  repo: z.string().trim().min(1, "コンテキストリポジトリを入力してください").max(500),
+  repo: z.string().trim().min(1, code("input.contextRepoRequired")).max(500),
   ref: z
     .string()
     .trim()
     .max(200)
-    .regex(/^[\w./-]*$/, "ref はブランチ名かタグ名で入力してください")
+    .regex(/^[\w./-]*$/, code("input.invalidRef"))
     .optional(),
 });
 export type ContextSource = z.infer<typeof ContextSource>;
@@ -52,7 +51,7 @@ export type ContextSource = z.infer<typeof ContextSource>;
  * 個人の設定や秘密情報は含めない。
  */
 export const ProjectDefinition = z.object({
-  name: z.string().trim().min(1, "名前を入力してください").max(80),
+  name: z.string().trim().min(1, code("input.nameRequired")).max(80),
   sources: z.array(IssueSource).max(50).default([]),
   repositories: z.array(RepositorySettings).max(100).default([]),
   /** 工程エージェントに渡すコンテキスト（PBI-6）。 */
@@ -75,14 +74,16 @@ export function projectConflicts(
   projects: readonly Project[],
   id: string | undefined,
   definition: ProjectDefinition,
-): string[] {
-  const problems: string[] = [];
+): DaemonMessage[] {
+  const problems: DaemonMessage[] = [];
   const others = projects.filter((p) => p.id !== id);
   const seen = new Set<string>();
   for (const source of definition.sources) {
     const key = `${source.scope}:${source.target.toLowerCase()}`;
     if (seen.has(key)) {
-      problems.push(`${scopeLabel(source)}「${source.target}」が重複しています。`);
+      problems.push(
+        message("project.sourceDuplicated", { scope: source.scope, target: source.target }),
+      );
       continue;
     }
     seen.add(key);
@@ -91,22 +92,22 @@ export function projectConflicts(
     );
     if (owner) {
       problems.push(
-        `${scopeLabel(source)}「${source.target}」は、プロジェクト「${owner.name}」に登録されています。`,
+        message("project.sourceTaken", {
+          scope: source.scope,
+          target: source.target,
+          project: owner.name,
+        }),
       );
     }
   }
   const repos = new Set<string>();
   for (const r of definition.repositories) {
     if (repos.has(r.repo.toLowerCase())) {
-      problems.push(`リポジトリの設定「${r.repo}」が重複しています。`);
+      problems.push(message("project.repositoryDuplicated", { repo: r.repo }));
     }
     repos.add(r.repo.toLowerCase());
   }
   return problems;
-}
-
-function scopeLabel(source: IssueSource): string {
-  return source.scope === "org" ? "Org" : "リポジトリ";
 }
 
 /**
@@ -166,10 +167,8 @@ const StrictIssueSource = z.discriminatedUnion("scope", [
  */
 export const ProjectExport = z
   .object({
-    sacty: z.literal("project", { error: "sacty のプロジェクト定義のファイルではありません" }),
-    version: z.literal(PROJECT_EXPORT_VERSION, {
-      error: `対応していない版です（対応している版：${PROJECT_EXPORT_VERSION}）`,
-    }),
+    sacty: z.literal("project", { error: code("input.notExportFile") }),
+    version: z.literal(PROJECT_EXPORT_VERSION, { error: code("input.unsupportedVersion") }),
     project: z
       .object({
         name: ProjectDefinition.shape.name,

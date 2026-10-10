@@ -22,7 +22,8 @@ function handleError(c: Context, error: unknown) {
     return c.json({ error: "invalid_input", issues: error.issues }, 400);
   }
   if (error instanceof InvalidOperationError) {
-    return c.json({ error: "invalid_operation", message: error.message }, 409);
+    // 理由は文言のコードと引数で返し、画面が画面の言語の文言にする（PBI-11）
+    return c.json({ error: "invalid_operation", messages: error.messages }, 409);
   }
   throw error;
 }
