@@ -3,7 +3,10 @@
 import { Menu } from "@base-ui/react/menu";
 import { cn } from "cn";
 import { BellIcon, ChevronDownIcon, UserRoundIcon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useTransition } from "react";
+import { setLanguageAction } from "@/app/actions";
+import { useMessages } from "@/i18n/client";
+import type { LanguagePreference } from "@/i18n/locale";
 import { applyTheme, readTheme, type ThemePreference, writeTheme } from "@/lib/theme";
 
 const POPUP =
@@ -37,14 +40,15 @@ export function ProjectMenu({
   projects: ProjectOption[];
   current: ProjectOption;
 }) {
+  const t = useMessages().shell.project;
   return (
     <Menu.Root>
       <Menu.Trigger
         className={cn(TRIGGER, "min-w-0 gap-2.5 px-3")}
-        aria-label={`プロジェクト：${current.name}（切り替える）`}
+        aria-label={t.trigger(current.name)}
       >
         <span className="flex min-w-0 flex-col text-left leading-tight">
-          <span className="text-[11px] text-muted-foreground">プロジェクト</span>
+          <span className="text-[11px] text-muted-foreground">{t.label}</span>
           <span className="truncate text-sm font-semibold">{current.name}</span>
         </span>
         <Count n={current.needsYou} />
@@ -53,7 +57,7 @@ export function ProjectMenu({
       <Menu.Portal>
         <Menu.Positioner sideOffset={8} align="start">
           <Menu.Popup className={cn(POPUP, "w-72 p-1.5")}>
-            <p className="px-3 pt-2 pb-1 text-xs text-muted-foreground">プロジェクトを切り替える</p>
+            <p className="px-3 pt-2 pb-1 text-xs text-muted-foreground">{t.switch}</p>
             {projects.map((p) => (
               <Menu.LinkItem
                 key={p.id}
@@ -67,13 +71,15 @@ export function ProjectMenu({
               >
                 <span className="truncate">{p.name}</span>
                 {p.needsYou > 0 ? (
-                  <span className="text-xs whitespace-nowrap text-warn">対応待ち {p.needsYou}</span>
+                  <span className="text-xs whitespace-nowrap text-warn">
+                    {t.needsYou(p.needsYou)}
+                  </span>
                 ) : null}
               </Menu.LinkItem>
             ))}
             <Menu.Separator className="my-1 h-px bg-border" />
             <Menu.LinkItem href="/projects" className={ITEM}>
-              プロジェクトを管理する
+              {t.manage}
             </Menu.LinkItem>
           </Menu.Popup>
         </Menu.Positioner>
@@ -104,6 +110,7 @@ export function NotificationsMenu({
   here: Notice[];
   currentName: string;
 }) {
+  const t = useMessages().shell.notices;
   const total = others.length + here.length;
   const item = (n: Notice) => (
     <Menu.LinkItem
@@ -120,7 +127,7 @@ export function NotificationsMenu({
     <Menu.Root>
       <Menu.Trigger
         className={cn(TRIGGER, "w-11")}
-        aria-label={total > 0 ? `お知らせ（人間の対応待ち ${total}件）` : "お知らせ"}
+        aria-label={total > 0 ? t.labelWithCount(total) : t.label}
       >
         <BellIcon aria-hidden="true" className="size-5" />
         <Count n={total} className="absolute -top-1.5 -right-1.5 border-2 border-chrome" />
@@ -129,16 +136,14 @@ export function NotificationsMenu({
         <Menu.Positioner sideOffset={8} align="end">
           <Menu.Popup className={cn(POPUP, "w-80 p-1.5")}>
             <p className="flex items-center justify-between px-3 pt-2 pb-1 text-sm font-semibold">
-              人間の対応待ち
-              <span className="text-xs font-normal text-muted-foreground">全{total}件</span>
+              {t.title}
+              <span className="text-xs font-normal text-muted-foreground">{t.total(total)}</span>
             </p>
-            {total === 0 && (
-              <p className="px-3 py-4 text-sm text-muted-foreground">対応待ちはありません。</p>
-            )}
+            {total === 0 && <p className="px-3 py-4 text-sm text-muted-foreground">{t.none}</p>}
             {others.length > 0 && (
               <Menu.Group>
                 <Menu.GroupLabel className="mt-1 rounded-md bg-muted px-3 py-1 text-[11px] text-muted-foreground">
-                  ほかのプロジェクト
+                  {t.others}
                 </Menu.GroupLabel>
                 {others.map(item)}
               </Menu.Group>
@@ -146,16 +151,12 @@ export function NotificationsMenu({
             {here.length > 0 && (
               <Menu.Group>
                 <Menu.GroupLabel className="mt-1 rounded-md bg-muted px-3 py-1 text-[11px] text-muted-foreground">
-                  このプロジェクト（{currentName}）
+                  {t.here(currentName)}
                 </Menu.GroupLabel>
                 {here.map(item)}
               </Menu.Group>
             )}
-            {total > 0 && (
-              <p className="px-3 pt-2 pb-1 text-xs text-muted-foreground">
-                開くと、そのプロジェクトに切り替えてタスクを表示します。
-              </p>
-            )}
+            {total > 0 && <p className="px-3 pt-2 pb-1 text-xs text-muted-foreground">{t.hint}</p>}
           </Menu.Popup>
         </Menu.Positioner>
       </Menu.Portal>
@@ -163,15 +164,17 @@ export function NotificationsMenu({
   );
 }
 
-const THEMES: { value: ThemePreference; label: string }[] = [
-  { value: "system", label: "システムに従う" },
-  { value: "light", label: "ライト" },
-  { value: "dark", label: "ダーク" },
-];
+const THEMES: ThemePreference[] = ["system", "light", "dark"];
+const LANGUAGES: LanguagePreference[] = ["system", "ja", "en"];
 
-/** ユーザーメニュー：テーマ（システムに従う・ライト・ダーク）。 */
-export function UserMenu() {
+/**
+ * ユーザーメニュー：テーマ（システムに従う・ライト・ダーク）と言語（システムに従う・日本語・英語）。
+ * 言語はサーバーで描画する文言にも効くので cookie に保存し、画面を描き直す。
+ */
+export function UserMenu({ language }: { language: LanguagePreference }) {
+  const t = useMessages().shell.user;
   const [theme, setTheme] = useState<ThemePreference>("system");
+  const [, startTransition] = useTransition();
   useEffect(() => setTheme(readTheme()), []);
   // システムに従うときは、OS の設定の変更にもついていく
   useEffect(() => {
@@ -184,7 +187,7 @@ export function UserMenu() {
 
   return (
     <Menu.Root>
-      <Menu.Trigger className={cn(TRIGGER, "w-11 rounded-full")} aria-label="ユーザー設定">
+      <Menu.Trigger className={cn(TRIGGER, "w-11 rounded-full")} aria-label={t.label}>
         <UserRoundIcon aria-hidden="true" className="size-5" />
       </Menu.Trigger>
       <Menu.Portal>
@@ -192,7 +195,7 @@ export function UserMenu() {
           <Menu.Popup className={cn(POPUP, "w-60 p-1.5")}>
             <Menu.Group>
               <Menu.GroupLabel className="px-3 pt-2 pb-1 text-xs text-muted-foreground">
-                テーマ
+                {t.theme}
               </Menu.GroupLabel>
               <Menu.RadioGroup
                 value={theme}
@@ -201,19 +204,52 @@ export function UserMenu() {
                   writeTheme(value);
                 }}
               >
-                {THEMES.map((t) => (
-                  <Menu.RadioItem key={t.value} value={t.value} className={cn(ITEM, "min-h-10")}>
-                    <span className="flex size-4 items-center justify-center rounded-full border border-input">
-                      <Menu.RadioItemIndicator className="size-2 rounded-full bg-primary" />
-                    </span>
-                    {t.label}
+                {THEMES.map((value) => (
+                  <Menu.RadioItem key={value} value={value} className={cn(ITEM, "min-h-10")}>
+                    <Radio />
+                    {t.themes[value]}
                   </Menu.RadioItem>
                 ))}
               </Menu.RadioGroup>
+            </Menu.Group>
+            <Menu.Separator className="my-1 h-px bg-border" />
+            <Menu.Group>
+              <Menu.GroupLabel className="px-3 pt-2 pb-1 text-xs text-muted-foreground">
+                {t.language}
+              </Menu.GroupLabel>
+              <Menu.RadioGroup
+                value={language}
+                onValueChange={(value: LanguagePreference) => {
+                  startTransition(() => setLanguageAction(value));
+                }}
+              >
+                {LANGUAGES.map((value) => (
+                  <Menu.RadioItem
+                    key={value}
+                    value={value}
+                    className={cn(ITEM, "min-h-10")}
+                    lang={value === "system" ? undefined : value}
+                  >
+                    <Radio />
+                    {t.languages[value]}
+                  </Menu.RadioItem>
+                ))}
+              </Menu.RadioGroup>
+              <p className="px-3 pt-1 pb-2 text-xs leading-5 text-muted-foreground">
+                {t.languageNote}
+              </p>
             </Menu.Group>
           </Menu.Popup>
         </Menu.Positioner>
       </Menu.Portal>
     </Menu.Root>
+  );
+}
+
+function Radio() {
+  return (
+    <span className="flex size-4 items-center justify-center rounded-full border border-input">
+      <Menu.RadioItemIndicator className="size-2 rounded-full bg-primary" />
+    </span>
   );
 }

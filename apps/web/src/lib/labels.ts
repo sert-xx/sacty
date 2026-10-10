@@ -1,99 +1,33 @@
 import {
-  type Actor,
-  type AuthMode,
   formatUsd,
   GATED_STEPS,
   isCompleted,
   type LedgerEvent,
   openProposal,
-  type PauseReason,
-  type StepKey,
   type Task,
-  type Verdict,
 } from "@sacty/core";
+import type { LabelMessages } from "@/i18n/messages/labels";
 
-/** 画面の表示ラベル。多言語化はPBI-4で行う。 */
-export const STEP_LABEL: Record<StepKey, string> = {
-  requirements: "要求要件",
-  design: "設計",
-  implement: "実装",
-  pr: "PR作成",
-};
-
-export const START_LABEL: Record<Task["start"], string> = {
-  ticket: "sacty",
-  github_issue: "GitHub Issue",
-};
-
-export const STATUS_LABEL: Record<Task["status"], string> = {
-  queued: "実行待ち",
-  running: "実行中",
-  idle: "待機中",
-  paused: "一時停止",
-  awaiting_approval: "承認待ち",
-  escalated: "エスカレーション",
-};
-
-export const PAUSE_LABEL: Record<PauseReason, string> = {
-  budget: "予算上限で一時停止",
-  usage_limit: "利用上限で一時停止",
-  auth: "認証エラーで一時停止",
-  error: "エラーで一時停止",
-  verification: "実装の検証に通らないため一時停止",
-};
-
-export const PAUSE_HELP: Record<PauseReason, string> = {
-  budget: "予算の上限に達したため止まっています。作業中のものは残っています。",
-  usage_limit:
-    "サブスクリプションの利用上限に達したため止まっています。上限が戻ってから再開すると、止まった工程を実行し直します。",
-  auth: "認証に失敗したため止まっています。トークンやAPIキーを確認してから再開してください。",
-  error: "エラーで止まっています。原因を確認してから再開すると、止まった工程を実行し直します。",
-  verification:
-    "実装がテストか最終レビューに続けて通らないため止まっています。結果を確認し、必要なら設計を見直してから再開すると、実装をやり直します。",
-};
-
-export const AUTH_LABEL: Record<AuthMode, string> = {
-  subscription: "サブスクリプション",
-  "api-key": "APIキー",
-  bedrock: "Amazon Bedrock",
-  stub: "スタブ",
-};
-
-export const ACTOR_LABEL: Record<Actor, string> = {
-  person: "人間",
-  sacty: "sacty",
-  orchestrator: "オーケストレーター",
-  guardian: "ゴールガーディアン",
-  agent: "工程エージェント",
-};
-
-export const VERDICT_LABEL: Record<Verdict, string> = {
-  approved: "承認",
-  rejected: "却下",
-  undecidable: "判定できない",
-};
-
+/** 画面の表示ラベル。文言は画面の言語の辞書（i18n/messages/labels）から取る。 */
 export const usd = formatUsd;
 
-export function statusText(task: Task): string {
-  if (task.status === "paused" && task.pausedReason) return PAUSE_LABEL[task.pausedReason];
+export function statusText(task: Task, l: LabelMessages): string {
+  if (task.status === "paused" && task.pausedReason) return l.pause[task.pausedReason];
   const proposal = openProposal(task);
-  if (proposal && !proposal.judgement) return "ゴールガーディアンが判定中";
-  if (task.status === "idle" && isCompleted(task)) return "完了";
-  if (task.status === "idle" && task.verification === "pending") return "テストを実行中";
+  if (proposal && !proposal.judgement) return l.state.guardianJudging;
+  if (task.status === "idle" && isCompleted(task)) return l.state.completed;
+  if (task.status === "idle" && task.verification === "pending") return l.state.testsRunning;
   if (task.status === "idle" && task.verification === "tests_passed") {
-    return "ゴールガーディアンが最終レビュー中";
+    return l.state.finalReviewing;
   }
-  if (task.status === "escalated" && proposal) return "変更の申し出の判断待ち";
+  if (task.status === "escalated" && proposal) return l.state.changeUndecided;
   if (task.status === "awaiting_approval" && task.gate?.step === "pr") {
-    const nth = task.gate.submission > 1 ? `（${task.gate.submission}回目）` : "";
-    return `成果物チェック待ち${nth}`;
+    return l.state.deliverableReview(task.gate.submission);
   }
   if (task.status === "awaiting_approval" && task.gate) {
-    const nth = task.gate.submission > 1 ? `（${task.gate.submission}回目）` : "";
-    return `${STEP_LABEL[task.gate.step]}の承認待ち${nth}`;
+    return l.state.stepApproval(l.step[task.gate.step], task.gate.submission);
   }
-  return STATUS_LABEL[task.status];
+  return l.status[task.status];
 }
 
 /**
@@ -108,16 +42,18 @@ export function isWorking(task: Task): boolean {
 }
 
 /** 人間が判断する場所への導線。 */
-export function personAction(task: Task): { href: string; label: string } {
+export function personAction(task: Task, l: LabelMessages): { href: string; label: string } {
   // ゴールガーディアンが判定できなかった申し出は、タスク詳細の「変更の申し出と判定」で判断する
   if (task.status === "escalated" && openProposal(task)) {
-    return { href: `/tasks/${task.id}#proposals`, label: "判断する" };
+    return { href: `/tasks/${task.id}#proposals`, label: l.action.decide };
   }
-  if (task.status === "escalated") return { href: `/tasks/${task.id}/review`, label: "判断する" };
+  if (task.status === "escalated") {
+    return { href: `/tasks/${task.id}/review`, label: l.action.decide };
+  }
   if (task.status === "awaiting_approval") {
-    return { href: `/tasks/${task.id}/review`, label: "チェックする" };
+    return { href: `/tasks/${task.id}/review`, label: l.action.review };
   }
-  return { href: `/tasks/${task.id}`, label: "判断する" };
+  return { href: `/tasks/${task.id}`, label: l.action.decide };
 }
 
 /** 人間の判断が必要な状態か（承認待ち・エスカレーション・一時停止）。 */
@@ -128,97 +64,143 @@ export function needsPerson(task: Task): boolean {
 }
 
 /** 台帳の1行を、人が読める文にする。 */
-export function describeEvent(event: LedgerEvent): string {
+export function describeEvent(event: LedgerEvent, l: LabelMessages): string {
+  const e = l.event;
+  const actor = l.actor[event.actor];
+  const cost = (costUsd: number, estimated: boolean) =>
+    `${usd(costUsd)}${estimated ? e.estimated : ""}`;
+  const withCost = (costUsd: number, estimated: boolean) =>
+    costUsd > 0 ? e.withCost(actor, cost(costUsd, estimated)) : actor;
   switch (event.type) {
     case "TaskCreated":
-      return `チケットを作成（${ACTOR_LABEL[event.actor]}）`;
+      return e.TaskCreated(actor);
     case "StepsChosen":
-      return `工程を決定：${event.payload.steps.map((s) => STEP_LABEL[s]).join(" → ")}`;
+      return e.StepsChosen(event.payload.steps.map((s) => l.step[s]).join(e.stepsJoin));
     case "AgentRunStarted":
-      return `${STEP_LABEL[event.payload.step]}の実行を開始（${event.payload.agentId}・${AUTH_LABEL[event.payload.authMode]}）`;
+      return e.AgentRunStarted(
+        l.step[event.payload.step],
+        event.payload.agentId,
+        l.auth[event.payload.authMode],
+      );
     case "AgentRunCompleted":
-      return `${STEP_LABEL[event.payload.step]}の実行が完了（${usd(event.payload.costUsd)}${event.payload.estimated ? "・換算値" : ""}${event.payload.step === "design" ? `・テスト観点${event.payload.testViewpoints.length}件` : ""}）`;
+      return e.AgentRunCompleted(
+        l.step[event.payload.step],
+        cost(event.payload.costUsd, event.payload.estimated),
+        event.payload.step === "design" ? event.payload.testViewpoints.length : undefined,
+      );
     case "AgentRunFailed":
-      return `${STEP_LABEL[event.payload.step]}の実行が失敗：${event.payload.message}`;
+      return e.AgentRunFailed(l.step[event.payload.step], event.payload.message);
     case "BudgetWarned":
-      return `予算の80%に到達（${usd(event.payload.usedUsd)} / ${usd(event.payload.capUsd)}）`;
+      return e.BudgetWarned(usd(event.payload.usedUsd), usd(event.payload.capUsd));
     case "TaskPaused":
-      return PAUSE_LABEL[event.payload.reason];
+      return l.pause[event.payload.reason];
     case "BudgetCapRaised":
-      return `予算の上限を${usd(event.payload.capUsd)}に変更（${ACTOR_LABEL[event.actor]}）`;
+      return e.BudgetCapRaised(usd(event.payload.capUsd), actor);
     case "TaskResumed":
-      return `再開（${ACTOR_LABEL[event.actor]}）`;
+      return e.TaskResumed(actor);
     case "StepSubmitted":
-      if (event.payload.step === "pr") {
-        return `成果物チェックに提出（${event.payload.submission}回目）→ 承認待ち`;
-      }
-      return `${STEP_LABEL[event.payload.step]}を提出（${event.payload.submission}回目）→ 承認待ち`;
+      return event.payload.step === "pr"
+        ? e.submittedDeliverable(event.payload.submission)
+        : e.submittedStep(l.step[event.payload.step], event.payload.submission);
     case "StepApproved":
-      if (event.payload.step === "pr") {
-        return `成果物チェックで承認（${ACTOR_LABEL[event.actor]}）`;
-      }
-      return `${STEP_LABEL[event.payload.step]}を承認・凍結（${ACTOR_LABEL[event.actor]}）`;
+      return event.payload.step === "pr"
+        ? e.approvedDeliverable(actor)
+        : e.approvedStep(l.step[event.payload.step], actor);
     case "ChangeProposed":
-      return `${STEP_LABEL[event.payload.fromStep]}の工程が、${STEP_LABEL[event.payload.target]}の変更を申し出（${event.payload.proposalId}）`;
+      return e.ChangeProposed(
+        l.step[event.payload.fromStep],
+        l.step[event.payload.target],
+        event.payload.proposalId,
+      );
     case "ChangeJudged":
-      return `${event.payload.proposalId}を${VERDICT_LABEL[event.payload.verdict]}：${event.payload.reason}（${ACTOR_LABEL[event.actor]}${event.payload.costUsd > 0 ? `・${usd(event.payload.costUsd)}${event.payload.estimated ? "・換算値" : ""}` : ""}）`;
+      return e.ChangeJudged(
+        event.payload.proposalId,
+        l.verdict[event.payload.verdict],
+        event.payload.reason,
+        withCost(event.payload.costUsd, event.payload.estimated),
+      );
     case "ChangeDecided":
-      return `${event.payload.proposalId}を${event.payload.accept ? "認めた" : "認めなかった"}（${ACTOR_LABEL[event.actor]}）`;
+      return e.ChangeDecided(event.payload.proposalId, event.payload.accept, actor);
     case "ChangeApplied":
-      return `${event.payload.proposalId}の変更を反映`;
+      return e.ChangeApplied(event.payload.proposalId);
     case "RepositoryPrepared":
-      return `対象リポジトリを用意（${event.payload.url}・${event.payload.baseBranch}・${event.payload.baseCommit.slice(0, 7)}）`;
+      return e.RepositoryPrepared(
+        event.payload.url,
+        event.payload.baseBranch,
+        event.payload.baseCommit.slice(0, 7),
+      );
     case "TestsRun":
-      return `テストを実行：${event.payload.passed ? "合格" : "不合格"}（終了コード ${event.payload.exitCode}${event.payload.unmappedViewpoints.length > 0 ? `・テストの無い観点 ${event.payload.unmappedViewpoints.join(", ")}` : ""}）`;
+      return e.TestsRun(
+        event.payload.passed,
+        event.payload.exitCode,
+        event.payload.unmappedViewpoints,
+      );
     case "FinalReviewed": {
-      const ng =
+      const failures =
         event.payload.viewpoints.filter((v) => !v.verified).length +
         event.payload.remarks.filter((r) => !r.notRecurred).length;
-      return `最終レビュー：${event.payload.passed ? "合格" : `不合格（${ng}件）`}（${ACTOR_LABEL[event.actor]}${event.payload.costUsd > 0 ? `・${usd(event.payload.costUsd)}${event.payload.estimated ? "・換算値" : ""}` : ""}）`;
+      return e.FinalReviewed(
+        event.payload.passed,
+        failures,
+        withCost(event.payload.costUsd, event.payload.estimated),
+      );
     }
     case "PullRequestPublished":
       return event.payload.url
-        ? `PRを作成・更新（#${event.payload.number}・${event.payload.branch}・${event.payload.commit.slice(0, 7)}）`
-        : `ブランチにプッシュ（${event.payload.branch}・${event.payload.commit.slice(0, 7)}）`;
+        ? e.prPublished(
+            event.payload.number,
+            event.payload.branch,
+            event.payload.commit.slice(0, 7),
+          )
+        : e.branchPushed(event.payload.branch, event.payload.commit.slice(0, 7));
     case "GuardianMissed":
-      return "最終レビューで合格にした成果物が差し戻されたため、ゴールガーディアンの見逃しとして記録";
+      return e.GuardianMissed;
     case "FinalReviewFailed":
-      return `${event.payload.message}（${usd(event.payload.costUsd)}${event.payload.estimated ? "・換算値" : ""}）`;
+      return e.FinalReviewFailed(
+        event.payload.message,
+        cost(event.payload.costUsd, event.payload.estimated),
+      );
     case "StepQueued":
-      return `${STEP_LABEL[event.payload.step]}を実行待ちにした（実行できるようになったため）`;
+      return e.StepQueued(l.step[event.payload.step]);
     case "ChangesRequested": {
       const where =
         event.payload.step === "pr"
-          ? "成果物チェックで差し戻し"
-          : `${STEP_LABEL[event.payload.step]}を差し戻し`;
-      const tail = `：指摘${event.payload.remarks.length}件${event.payload.overLimit ? "（上限を超えて）" : ""}（${ACTOR_LABEL[event.actor]}）`;
+          ? e.changesAtDeliverable
+          : e.changesAtStep(l.step[event.payload.step]);
+      const tail = e.changesTail(event.payload.remarks.length, event.payload.overLimit, actor);
       const target = event.payload.target;
       if (target && target !== event.payload.step) {
         // 承認ゲートのある工程に戻すときだけ、その承認を取り消す
-        const revoke = GATED_STEPS.includes(target)
-          ? `（${STEP_LABEL[target]}の承認を取り消し）`
-          : "";
-        return `${where}、${STEP_LABEL[target]}からやり直し${revoke}${tail}`;
+        return `${e.changesTarget(where, l.step[target], GATED_STEPS.includes(target))}${tail}`;
       }
       return `${where}${tail}`;
     }
     case "RemarkVoided":
-      return `指摘 ${event.payload.remarkId} を無効にした（${ACTOR_LABEL[event.actor]}）`;
+      return e.RemarkVoided(event.payload.remarkId, actor);
     case "TaskEscalated":
-      if (event.payload.reason === "change_undecidable") {
-        return `ゴールガーディアンが${event.payload.proposalId ?? "変更の申し出"}を判定できなかったため、エスカレーション`;
-      }
-      return `${STEP_LABEL[event.payload.target ?? event.payload.step]}への差し戻しが上限に達したため、エスカレーション`;
+      return event.payload.reason === "change_undecidable"
+        ? e.escalatedUndecidable(event.payload.proposalId)
+        : e.escalatedTooMany(l.step[event.payload.target ?? event.payload.step]);
   }
 }
 
-const stampFormat = new Intl.DateTimeFormat("ja-JP", {
-  month: "2-digit",
-  day: "2-digit",
-  hour: "2-digit",
-  minute: "2-digit",
-});
+const stampFormats = {
+  ja: new Intl.DateTimeFormat("ja-JP", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }),
+  en: new Intl.DateTimeFormat("en-US", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }),
+};
 
-export function formatStamp(iso: string): string {
-  return stampFormat.format(new Date(iso));
+/** 台帳などの日時（月/日 時:分）。 */
+export function formatStamp(iso: string, locale: "ja" | "en" = "ja"): string {
+  return stampFormats[locale].format(new Date(iso));
 }

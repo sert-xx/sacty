@@ -14,6 +14,8 @@ export default defineConfig({
       "apps/daemon/src/**/*.test.ts",
       "apps/web/src/lib/**/*.test.ts",
       "apps/web/src/app/**/*.test.ts",
+      "apps/web/src/i18n/**/*.test.ts",
+      "apps/web/src/components/**/*.test.ts",
     ],
   },
 });

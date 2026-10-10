@@ -1,0 +1,108 @@
+/** 画面の文言：プロジェクトの画面と設定（projects・project-editor・export）。英語の用語は labels.ts の用語集に合わせる。 */
+const ja = {
+  loading: "読み込み中…",
+  title: "プロジェクト",
+  breadcrumb: "パンくず",
+  importTitle: "プロジェクトをインポートする",
+  newTitle: "プロジェクトを作る",
+  intake: {
+    title: "GitHub Issue の取り込み",
+    stopped:
+      "取り込みは止まっています。config.yaml に github.token_secret を設定すると、定期的に取り込みます。",
+    lastRun: (at: string, n: number) => `最後の取り込み：${at}（${n}件のタスクを作成）`,
+    never: "まだ取り込んでいません。",
+    errors: "取り込めなかった取り込み元があります（ほかの取り込み元は取り込みました）：",
+    runNow: "今すぐ取り込む",
+  },
+  summary: (sources: number, repos: number) =>
+    `取り込み元 ${sources}件・リポジトリの設定 ${repos}件`,
+  scope: { org: "Org", repo: "リポジトリ" },
+  sourceScope: (scope: string) => `${scope}：`,
+  sourceLabel: (label: string) => `（ラベル ${label}）`,
+  settingsTitle: (name: string) => `${name} の設定`,
+  export: "エクスポート",
+  exportNote:
+    "エクスポートには、名前・取り込み元・リポジトリの設定だけを含めます（個人の設定やトークンは含めません）。",
+  exportNotFound: "プロジェクトが見つかりません。",
+  editor: {
+    name: "名前",
+    sourcesTitle: "GitHub Issue の取り込み元",
+    sourcesNote: "ラベルの付いた、開いている Issue をタスクにします",
+    sourcesHelp:
+      "同じ Org・同じリポジトリは、ほかのプロジェクトに登録できません。Org とその中のリポジトリが別のプロジェクトに登録されていれば、リポジトリの指定が優先します。",
+    noSources: "取り込み元はありません。",
+    scope: "単位",
+    repoTarget: "リポジトリ（owner/name）",
+    label: "ラベル",
+    remove: "削除",
+    excluded: "除外されるリポジトリ（ほかのプロジェクトが担当）：",
+    excludedBy: (project: string) => `（${project}）`,
+    addSource: "取り込み元を追加",
+    reposTitle: "リポジトリの設定",
+    reposNote: "Issue から作ったタスクは、その Issue のリポジトリに実装します",
+    noRepos: "リポジトリの設定はありません。",
+    baseBranch: "ベースブランチ",
+    testCommand: "テストのコマンド",
+    pullRequest: "PRを作る",
+    addRepo: "リポジトリの設定を追加",
+    saved: "保存しました。",
+    save: "保存する",
+    create: "作成する",
+  },
+};
+
+export type ProjectsMessages = typeof ja;
+
+const en: ProjectsMessages = {
+  loading: "Loading…",
+  title: "Projects",
+  breadcrumb: "Breadcrumb",
+  importTitle: "Import a project",
+  newTitle: "Create a project",
+  intake: {
+    title: "GitHub Issue intake",
+    stopped:
+      "Intake is stopped. Set github.token_secret in config.yaml to import issues periodically.",
+    lastRun: (at, n) => `Last intake: ${at} (${n} task${n === 1 ? "" : "s"} created)`,
+    never: "Nothing imported yet.",
+    errors: "Some intake sources could not be imported (the others were imported):",
+    runNow: "Import now",
+  },
+  summary: (sources, repos) =>
+    `${sources} intake source${sources === 1 ? "" : "s"} · ${repos} repository setting${repos === 1 ? "" : "s"}`,
+  scope: { org: "Org", repo: "Repository" },
+  sourceScope: (scope) => `${scope}: `,
+  sourceLabel: (label) => ` (label ${label})`,
+  settingsTitle: (name) => `${name} settings`,
+  export: "Export",
+  exportNote:
+    "The export contains only the name, intake sources, and repository settings (no personal settings or tokens).",
+  exportNotFound: "Project not found.",
+  editor: {
+    name: "Name",
+    sourcesTitle: "GitHub Issue intake sources",
+    sourcesNote: "Open issues with the label become tasks",
+    sourcesHelp:
+      "An org or repository can't be registered in more than one project. If an org and a repository in it are registered in different projects, the repository takes precedence.",
+    noSources: "No intake sources.",
+    scope: "Scope",
+    repoTarget: "Repository (owner/name)",
+    label: "Label",
+    remove: "Remove",
+    excluded: "Excluded repositories (handled by other projects):",
+    excludedBy: (project) => ` (${project})`,
+    addSource: "Add intake source",
+    reposTitle: "Repository settings",
+    reposNote: "Tasks from an issue are implemented in that issue's repository",
+    noRepos: "No repository settings.",
+    baseBranch: "Base branch",
+    testCommand: "Test command",
+    pullRequest: "Open a PR",
+    addRepo: "Add repository setting",
+    saved: "Saved.",
+    save: "Save",
+    create: "Create",
+  },
+};
+
+export const projects = { ja, en };

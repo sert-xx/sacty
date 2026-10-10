@@ -16,6 +16,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { useMessages } from "@/i18n/client";
 
 const initial: CreateTicketState = {};
 
@@ -31,6 +32,7 @@ export function NewTicketDialog({
   projectName: string;
 }) {
   const [state, formAction, pending] = useActionState(createTicketAction, initial);
+  const t = useMessages().forms.ticket;
   // 作成先は、ダイアログを開いたときのプロジェクトに固定し、閉じるまで変えない
   // （入力中に画面が自動で更新され、別のタブで切り替えたプロジェクトが props で渡されても、
   // 書いている途中のチケットの作成先は変えないため）
@@ -42,20 +44,16 @@ export function NewTicketDialog({
         if (open) setTarget({ id: projectId, name: projectName });
       }}
     >
-      <DialogTrigger render={<Button size="lg" />}>チケットを作成</DialogTrigger>
+      <DialogTrigger render={<Button size="lg" />}>{t.create}</DialogTrigger>
       <DialogContent className="sm:max-w-lg">
         <form action={formAction} className="flex flex-col gap-4">
           <input type="hidden" name="projectId" value={target.id} />
           <DialogHeader>
-            <DialogTitle>チケットを作成</DialogTitle>
-            <DialogDescription>
-              プロジェクト「{target.name}
-              」に作成します。作成すると、工程（要求要件 → 設計 → 実装 →
-              PR作成）が決まり、台帳に記録されます。
-            </DialogDescription>
+            <DialogTitle>{t.create}</DialogTitle>
+            <DialogDescription>{t.description(target.name)}</DialogDescription>
           </DialogHeader>
           <div className="flex flex-col gap-2">
-            <Label htmlFor="ticket-title">タイトル</Label>
+            <Label htmlFor="ticket-title">{t.title}</Label>
             <Input
               id="ticket-title"
               name="title"
@@ -71,14 +69,14 @@ export function NewTicketDialog({
             )}
           </div>
           <div className="flex flex-col gap-2">
-            <Label htmlFor="ticket-body">内容</Label>
+            <Label htmlFor="ticket-body">{t.body}</Label>
             <Textarea
               id="ticket-body"
               name="body"
               rows={6}
               className="max-h-72 overflow-y-auto"
               defaultValue={state.values?.body}
-              placeholder="背景や、満たしてほしい条件"
+              placeholder={t.bodyPlaceholder}
               aria-invalid={Boolean(state.fieldErrors?.body)}
               aria-describedby={state.fieldErrors?.body ? "ticket-body-error" : undefined}
             />
@@ -94,9 +92,9 @@ export function NewTicketDialog({
             </p>
           )}
           <DialogFooter>
-            <DialogClose render={<Button variant="outline" type="button" />}>閉じる</DialogClose>
+            <DialogClose render={<Button variant="outline" type="button" />}>{t.close}</DialogClose>
             <Button type="submit" disabled={pending}>
-              {pending ? "作成中…" : "作成する"}
+              {pending ? t.creating : t.submit}
             </Button>
           </DialogFooter>
         </form>

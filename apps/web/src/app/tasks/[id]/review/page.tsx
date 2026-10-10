@@ -15,12 +15,14 @@ import { GateForm } from "@/components/gate-form";
 import { Implementation } from "@/components/implementation";
 import { PullRequestCard } from "@/components/pull-request";
 import { TestViewpoints } from "@/components/test-viewpoints";
+import type { Messages } from "@/i18n";
+import { getMessages } from "@/i18n/server";
 import { DaemonUnavailableError, getTask } from "@/lib/daemon";
-import { STEP_LABEL } from "@/lib/labels";
 
-export default function ReviewPage({ params }: { params: Promise<{ id: string }> }) {
+export default async function ReviewPage({ params }: { params: Promise<{ id: string }> }) {
+  const m = await getMessages();
   return (
-    <Suspense fallback={<p className="text-sm text-muted-foreground">読み込み中…</p>}>
+    <Suspense fallback={<p className="text-sm text-muted-foreground">{m.review.loading}</p>}>
       <Review params={params} />
     </Suspense>
   );
@@ -28,6 +30,9 @@ export default function ReviewPage({ params }: { params: Promise<{ id: string }>
 
 async function Review({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
+  const m = await getMessages();
+  const t = m.review;
+  const stepLabel = m.labels.step;
   let found: Awaited<ReturnType<typeof getTask>>;
   try {
     found = await getTask(id);
@@ -43,9 +48,9 @@ async function Review({ params }: { params: Promise<{ id: string }> }) {
     return (
       <div className="flex flex-col gap-3">
         <h1 className="text-2xl font-bold">{task.title}</h1>
-        <p className="text-sm text-muted-foreground">このタスクは承認待ちではありません。</p>
+        <p className="text-sm text-muted-foreground">{t.notAwaiting}</p>
         <Link href={`/tasks/${task.id}`} className="text-sm text-accent-foreground underline">
-          タスクの詳細に戻る
+          {t.backToTask}
         </Link>
       </div>
     );
@@ -67,23 +72,23 @@ async function Review({ params }: { params: Promise<{ id: string }> }) {
   return (
     <>
       <div className="flex flex-col gap-2">
-        <nav aria-label="パンくず" className="text-sm text-muted-foreground">
+        <nav aria-label={t.breadcrumb} className="text-sm text-muted-foreground">
           <Link href={`/tasks/${task.id}`} className="text-accent-foreground underline">
             {task.title}
           </Link>{" "}
-          / 成果物チェック
+          / {t.deliverableReview}
         </nav>
         <div className="flex flex-wrap items-center gap-3">
           <h1 className="text-2xl font-bold text-balance">
-            {step === "pr" ? "成果物チェック" : `${STEP_LABEL[step]}の承認`}
+            {step === "pr" ? t.deliverableReview : t.stepApproval(stepLabel[step])}
           </h1>
           <span className="rounded-full border border-back-line bg-back-soft px-2.5 py-0.5 text-xs font-semibold text-back">
-            {submission}回目の提出
-            {rounds > 0 ? ` ・ 差し戻し${rounds}回` : ""}
+            {t.submission(submission)}
+            {rounds > 0 ? t.rounds(rounds) : ""}
           </span>
           {task.status === "escalated" && (
             <span className="rounded-full border border-warn-line bg-warn-soft px-2.5 py-0.5 text-xs font-semibold text-warn">
-              エスカレーション
+              {t.escalated}
             </span>
           )}
         </div>
@@ -97,16 +102,16 @@ async function Review({ params }: { params: Promise<{ id: string }> }) {
               className="flex flex-col gap-2 rounded-xl border border-warn-line bg-warn-soft p-5 text-sm leading-6"
             >
               <h2 id="from-proposal" className="text-[15px] font-semibold text-warn">
-                変更の申し出（{fromProposal.id}）による変更案です
+                {t.fromProposalTitle(fromProposal.id)}
               </h2>
               <p>
-                {STEP_LABEL[fromProposal.fromStep]}
-                の工程からの申し出を、
-                {fromProposal.decision ? "人間" : "ゴールガーディアン"}
-                が認めました。承認済みの{STEP_LABEL[step]}
-                を変えるため、もう一度承認してください。
+                {t.fromProposalBody(
+                  stepLabel[fromProposal.fromStep],
+                  Boolean(fromProposal.decision),
+                  stepLabel[step],
+                )}
               </p>
-              <p>理由：{fromProposal.reason}</p>
+              <p>{t.reason(fromProposal.reason)}</p>
               {fromProposal.facts.length > 0 && (
                 <ul className="list-disc pl-5">
                   {fromProposal.facts.map((f) => (
@@ -122,7 +127,7 @@ async function Review({ params }: { params: Promise<{ id: string }> }) {
               className="flex flex-col gap-3 rounded-xl border border-back-line bg-card p-5"
             >
               <h2 id="history" className="text-[15px] font-semibold">
-                これまでの指摘への対応
+                {t.history}
               </h2>
               <ol className="flex flex-col gap-2.5">
                 {remarks.map((remark) => (
@@ -132,6 +137,7 @@ async function Review({ params }: { params: Promise<{ id: string }> }) {
                     taskId={task.id}
                     submission={submission}
                     current={remark.round === latestRound}
+                    t={t.remark}
                   />
                 ))}
               </ol>
@@ -148,13 +154,13 @@ async function Review({ params }: { params: Promise<{ id: string }> }) {
               className="flex flex-col gap-3 rounded-xl border border-border bg-card p-5"
             >
               <h2 id="deliverable" className="text-[15px] font-semibold">
-                成果物{" "}
+                {t.deliverable}{" "}
                 <span className="text-[13px] font-normal text-muted-foreground">
-                  {STEP_LABEL[step]}
+                  {stepLabel[step]}
                 </span>
               </h2>
               <pre className="rounded-lg border border-border bg-muted px-5 py-4 font-sans text-sm leading-7 break-words whitespace-pre-wrap">
-                {task.outputs[step] ?? "（出力がありません）"}
+                {task.outputs[step] ?? t.noOutput}
               </pre>
             </section>
           )}
@@ -164,9 +170,9 @@ async function Review({ params }: { params: Promise<{ id: string }> }) {
               className="flex flex-col gap-3 rounded-xl border border-border bg-card p-5"
             >
               <h2 id="viewpoints" className="text-[15px] font-semibold">
-                テスト観点{" "}
+                {t.viewpoints}{" "}
                 <span className="text-[13px] font-normal text-muted-foreground">
-                  {task.testViewpoints.length}件・承認すると凍結され、最終レビューの基準になります
+                  {t.viewpointsNote(task.testViewpoints.length)}
                 </span>
               </h2>
               <TestViewpoints viewpoints={task.testViewpoints} />
@@ -175,10 +181,9 @@ async function Review({ params }: { params: Promise<{ id: string }> }) {
           {frozenRequirements && (
             <details className="group rounded-xl border border-border bg-card p-5">
               <summary className="cursor-pointer text-[15px] font-semibold">
-                承認済みの要求要件{" "}
+                {t.frozenRequirements}{" "}
                 <span className="text-[13px] font-normal text-muted-foreground">
-                  {frozenRequirements.submission}
-                  回目の提出・凍結（変えるには要求要件へ差し戻し、再承認が必要）
+                  {t.frozenNote(frozenRequirements.submission)}
                 </span>
               </summary>
               <pre className="mt-3 rounded-lg border border-border bg-muted px-5 py-4 font-sans text-sm leading-7 break-words whitespace-pre-wrap">
@@ -193,7 +198,7 @@ async function Review({ params }: { params: Promise<{ id: string }> }) {
           className="flex min-w-0 flex-[1_1_340px] flex-col gap-3 rounded-xl border border-border bg-card p-5"
         >
           <h2 id="decision" className="text-[15px] font-semibold">
-            判断
+            {t.decision}
           </h2>
           <GateForm
             taskId={task.id}
@@ -216,11 +221,13 @@ function RemarkItem({
   taskId,
   submission,
   current,
+  t,
 }: {
   remark: TaskRemark;
   taskId: string;
   submission: number;
   current: boolean;
+  t: Messages["review"]["remark"];
 }) {
   return (
     <li
@@ -230,7 +237,7 @@ function RemarkItem({
         remark.voided && "opacity-60",
       )}
     >
-      <span className="pt-0.5 text-xs text-muted-foreground">指摘</span>
+      <span className="pt-0.5 text-xs text-muted-foreground">{t.label}</span>
       <span className="flex flex-wrap items-center gap-2">
         <span className={cn(remark.voided && "line-through")}>{remark.text}</span>
         <span
@@ -241,25 +248,25 @@ function RemarkItem({
               : "border-input text-muted-foreground",
           )}
         >
-          {remark.round}回目の差し戻し{current ? " ・ 今回" : ""}
+          {t.round(remark.round, current)}
         </span>
         {remark.voided && (
           <span className="rounded-full border border-input px-2 py-0.5 text-xs text-muted-foreground">
-            無効
+            {t.voided}
           </span>
         )}
         <span className="font-mono text-xs text-muted-foreground">{remark.id}</span>
       </span>
-      <span className="pt-0.5 text-xs text-muted-foreground">対応</span>
+      <span className="pt-0.5 text-xs text-muted-foreground">{t.response}</span>
       <span className={cn(!remark.response && "text-muted-foreground")}>
         {remark.voided
-          ? "（無効にした指摘のため、エージェントに渡していません）"
+          ? t.voidedNote
           : remark.response
             ? remark.response
-            : `（${submission}回目の提出では、対応の記載がありません）`}
+            : t.noResponse(submission)}
         {remark.response && remark.respondedIn && !remark.voided && (
           <span className="ml-2 text-xs text-muted-foreground">
-            {remark.respondedIn}回目の提出での対応
+            {t.respondedIn(remark.respondedIn)}
           </span>
         )}
       </span>
@@ -271,7 +278,7 @@ function RemarkItem({
             type="submit"
             className="min-h-8 text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
           >
-            この指摘を無効にする（前提が変わったため、以降エージェントに渡さない）
+            {t.void}
           </button>
         </form>
       )}

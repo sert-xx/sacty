@@ -7,6 +7,7 @@ import type {
   Task,
 } from "@sacty/core";
 import { connection } from "next/server";
+import { getMessages } from "@/i18n/server";
 
 /**
  * デーモンのAPIを呼ぶ。サーバー側でだけ使う（トークンをブラウザに渡さないため）。
@@ -19,9 +20,7 @@ async function daemonFetch(path: string, init: RequestInit = {}): Promise<Respon
   const url = process.env.SACTY_DAEMON_URL;
   const token = process.env.SACTY_DAEMON_TOKEN;
   if (!url || !token) {
-    throw new DaemonUnavailableError(
-      "デーモンの接続先が設定されていません。`sacty up` で起動してください。",
-    );
+    throw new DaemonUnavailableError((await getMessages()).common.daemon.notConfigured);
   }
   try {
     return await fetch(`${url}${path}`, {
@@ -30,9 +29,7 @@ async function daemonFetch(path: string, init: RequestInit = {}): Promise<Respon
       headers: { ...init.headers, authorization: `Bearer ${token}` },
     });
   } catch {
-    throw new DaemonUnavailableError(
-      "デーモンに接続できません。`sacty up` が動いているか確認してください。",
-    );
+    throw new DaemonUnavailableError((await getMessages()).common.daemon.unreachable);
   }
 }
 
@@ -117,7 +114,10 @@ export async function saveProject(
   }
   if (res.status === 400) {
     const json = (await res.json()) as { issues?: { message: string }[] };
-    return { ok: false, message: json.issues?.[0]?.message ?? "入力を確認してください。" };
+    return {
+      ok: false,
+      message: json.issues?.[0]?.message ?? (await getMessages()).common.daemon.checkInput,
+    };
   }
   await ensureOk(res);
   return { ok: true, project: ((await res.json()) as { project: Project }).project };
@@ -149,7 +149,7 @@ export async function importProject(
     const where = issue?.path?.length ? `（${issue.path.join(".")}）` : "";
     return {
       ok: false,
-      message: `${issue?.message ?? "ファイルの内容を確認してください。"}${where}`,
+      message: `${issue?.message ?? (await getMessages()).common.daemon.checkFile}${where}`,
     };
   }
   await ensureOk(res);
@@ -179,7 +179,8 @@ export async function resumeTask(
   if (res.status === 409) {
     return { ok: false, message: ((await res.json()) as { message: string }).message };
   }
-  if (res.status === 400) return { ok: false, message: "金額を正しく入力してください。" };
+  if (res.status === 400)
+    return { ok: false, message: (await getMessages()).common.daemon.invalidAmount };
   await ensureOk(res);
   return { ok: true };
 }
@@ -197,7 +198,10 @@ async function postOp(path: string, body: unknown): Promise<OpResult> {
   }
   if (res.status === 400) {
     const json = (await res.json()) as { issues?: { message: string }[] };
-    return { ok: false, message: json.issues?.[0]?.message ?? "入力を確認してください。" };
+    return {
+      ok: false,
+      message: json.issues?.[0]?.message ?? (await getMessages()).common.daemon.checkInput,
+    };
   }
   await ensureOk(res);
   return { ok: true };

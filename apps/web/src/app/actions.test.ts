@@ -4,7 +4,10 @@ const createTicket = vi.fn();
 vi.mock("@/lib/daemon", () => ({ createTicket }));
 // 送信時の cookie は、別のタブで切り替えた「B」になっている
 vi.mock("next/headers", () => ({
-  cookies: async () => ({ get: () => ({ value: "project-b" }) }),
+  cookies: async () => ({
+    get: (name: string) => (name === "sacty-project" ? { value: "project-b" } : undefined),
+  }),
+  headers: async () => new Headers({ "accept-language": "ja" }),
 }));
 vi.mock("next/navigation", () => ({
   redirect: (to: string) => {

@@ -6,6 +6,7 @@ import { type SaveProjectState, saveProjectAction } from "@/app/actions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { useMessages } from "@/i18n/client";
 
 const initial: SaveProjectState = {};
 
@@ -25,6 +26,7 @@ export function ProjectEditor({
   const [state, formAction, pending] = useActionState(saveProjectAction, initial);
   // 前の画面が隠れて残ることがあるので、id は固定にせず画面ごとに作る
   const uid = useId();
+  const { editor: t, scope: scopeLabel } = useMessages().projects;
   const [name, setName] = useState(project?.name ?? "");
   const [sources, setSources] = useState<IssueSource[]>(project?.sources ?? []);
   const [repos, setRepos] = useState<RepositorySettings[]>(project?.repositories ?? []);
@@ -41,7 +43,7 @@ export function ProjectEditor({
       <input type="hidden" name="definition" value={definition} />
 
       <section className="flex flex-col gap-2 rounded-xl border border-border bg-card p-5">
-        <Label htmlFor={`${uid}-name`}>名前</Label>
+        <Label htmlFor={`${uid}-name`}>{t.name}</Label>
         <Input
           id={`${uid}-name`}
           value={name}
@@ -58,18 +60,11 @@ export function ProjectEditor({
             className="flex flex-col gap-3 rounded-xl border border-border bg-card p-5"
           >
             <h2 id="sources" className="text-[15px] font-semibold">
-              GitHub Issue の取り込み元{" "}
-              <span className="text-[13px] font-normal text-muted-foreground">
-                ラベルの付いた、開いている Issue をタスクにします
-              </span>
+              {t.sourcesTitle}{" "}
+              <span className="text-[13px] font-normal text-muted-foreground">{t.sourcesNote}</span>
             </h2>
-            <p className="text-sm leading-6 text-muted-foreground">
-              同じ Org・同じリポジトリは、ほかのプロジェクトに登録できません。Org
-              とその中のリポジトリが別のプロジェクトに登録されていれば、リポジトリの指定が優先します。
-            </p>
-            {sources.length === 0 && (
-              <p className="text-sm text-muted-foreground">取り込み元はありません。</p>
-            )}
+            <p className="text-sm leading-6 text-muted-foreground">{t.sourcesHelp}</p>
+            {sources.length === 0 && <p className="text-sm text-muted-foreground">{t.noSources}</p>}
             <ul className="flex flex-col gap-2.5">
               {sources.map((source, i) => {
                 const excluded =
@@ -84,7 +79,7 @@ export function ProjectEditor({
                   >
                     <div className="flex flex-wrap items-end gap-2">
                       <label className="flex flex-col gap-1 text-xs text-muted-foreground">
-                        単位
+                        {t.scope}
                         <select
                           className={SELECT}
                           value={source.scope}
@@ -92,15 +87,15 @@ export function ProjectEditor({
                             updateSource(i, { scope: e.target.value as IssueSource["scope"] })
                           }
                         >
-                          <option value="org">Org</option>
-                          <option value="repo">リポジトリ</option>
+                          <option value="org">{scopeLabel.org}</option>
+                          <option value="repo">{scopeLabel.repo}</option>
                         </select>
                       </label>
                       <label
                         htmlFor={`${uid}-src-${i}-target`}
                         className="flex min-w-48 flex-1 flex-col gap-1 text-xs text-muted-foreground"
                       >
-                        {source.scope === "org" ? "Org" : "リポジトリ（owner/name）"}
+                        {source.scope === "org" ? scopeLabel.org : t.repoTarget}
                         <Input
                           id={`${uid}-src-${i}-target`}
                           value={source.target}
@@ -112,7 +107,7 @@ export function ProjectEditor({
                         htmlFor={`${uid}-src-${i}-label`}
                         className="flex w-40 flex-col gap-1 text-xs text-muted-foreground"
                       >
-                        ラベル
+                        {t.label}
                         <Input
                           id={`${uid}-src-${i}-label`}
                           value={source.label}
@@ -125,16 +120,17 @@ export function ProjectEditor({
                         variant="outline"
                         onClick={() => setSources((list) => list.filter((_, j) => j !== i))}
                       >
-                        削除
+                        {t.remove}
                       </Button>
                     </div>
                     {excluded && excluded.repos.length > 0 && (
                       <div className="text-xs leading-5 text-muted-foreground">
-                        <p>除外されるリポジトリ（ほかのプロジェクトが担当）：</p>
+                        <p>{t.excluded}</p>
                         <ul className="list-disc pl-5">
                           {excluded.repos.map((r) => (
                             <li key={r.repo}>
-                              <span className="font-mono">{r.repo}</span>（{r.projectName}）
+                              <span className="font-mono">{r.repo}</span>
+                              {t.excludedBy(r.projectName)}
                             </li>
                           ))}
                         </ul>
@@ -152,7 +148,7 @@ export function ProjectEditor({
                 setSources((list) => [...list, { scope: "repo", target: "", label: "sacty" }])
               }
             >
-              取り込み元を追加
+              {t.addSource}
             </Button>
           </section>
 
@@ -161,14 +157,10 @@ export function ProjectEditor({
             className="flex flex-col gap-3 rounded-xl border border-border bg-card p-5"
           >
             <h2 id="repositories" className="text-[15px] font-semibold">
-              リポジトリの設定{" "}
-              <span className="text-[13px] font-normal text-muted-foreground">
-                Issue から作ったタスクは、その Issue のリポジトリに実装します
-              </span>
+              {t.reposTitle}{" "}
+              <span className="text-[13px] font-normal text-muted-foreground">{t.reposNote}</span>
             </h2>
-            {repos.length === 0 && (
-              <p className="text-sm text-muted-foreground">リポジトリの設定はありません。</p>
-            )}
+            {repos.length === 0 && <p className="text-sm text-muted-foreground">{t.noRepos}</p>}
             <ul className="flex flex-col gap-2.5">
               {repos.map((repo, i) => (
                 <li
@@ -180,7 +172,7 @@ export function ProjectEditor({
                     htmlFor={`${uid}-repo-${i}-repo`}
                     className="flex min-w-48 flex-1 flex-col gap-1 text-xs text-muted-foreground"
                   >
-                    リポジトリ（owner/name）
+                    {t.repoTarget}
                     <Input
                       id={`${uid}-repo-${i}-repo`}
                       value={repo.repo}
@@ -192,7 +184,7 @@ export function ProjectEditor({
                     htmlFor={`${uid}-repo-${i}-branch`}
                     className="flex w-36 flex-col gap-1 text-xs text-muted-foreground"
                   >
-                    ベースブランチ
+                    {t.baseBranch}
                     <Input
                       id={`${uid}-repo-${i}-branch`}
                       value={repo.baseBranch}
@@ -203,7 +195,7 @@ export function ProjectEditor({
                     htmlFor={`${uid}-repo-${i}-test`}
                     className="flex min-w-48 flex-1 flex-col gap-1 text-xs text-muted-foreground"
                   >
-                    テストのコマンド
+                    {t.testCommand}
                     <Input
                       id={`${uid}-repo-${i}-test`}
                       value={repo.testCommand}
@@ -219,14 +211,14 @@ export function ProjectEditor({
                       onChange={(e) => updateRepo(i, { pullRequest: e.target.checked })}
                       className="size-4 accent-primary"
                     />
-                    PRを作る
+                    {t.pullRequest}
                   </label>
                   <Button
                     type="button"
                     variant="outline"
                     onClick={() => setRepos((list) => list.filter((_, j) => j !== i))}
                   >
-                    削除
+                    {t.remove}
                   </Button>
                 </li>
               ))}
@@ -242,7 +234,7 @@ export function ProjectEditor({
                 ])
               }
             >
-              リポジトリの設定を追加
+              {t.addRepo}
             </Button>
           </section>
         </>
@@ -255,11 +247,11 @@ export function ProjectEditor({
       )}
       {state.saved && !state.message && (
         <p role="status" className="text-sm text-accent-foreground">
-          保存しました。
+          {t.saved}
         </p>
       )}
       <Button type="submit" disabled={pending} className="min-h-11 w-fit px-6">
-        {project ? "保存する" : "作成する"}
+        {project ? t.save : t.create}
       </Button>
     </form>
   );

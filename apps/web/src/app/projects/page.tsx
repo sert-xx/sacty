@@ -5,25 +5,27 @@ import { DaemonError } from "@/components/daemon-error";
 import { ImportProjectForm } from "@/components/import-project-form";
 import { ProjectEditor } from "@/components/project-editor";
 import { Button } from "@/components/ui/button";
+import { getMessages } from "@/i18n/server";
 import { DaemonUnavailableError, getStatus, listProjects } from "@/lib/daemon";
 import { formatStamp } from "@/lib/labels";
 
-export default function ProjectsPage() {
+export default async function ProjectsPage() {
+  const t = (await getMessages()).projects;
   return (
     <>
-      <h1 className="text-2xl font-bold">プロジェクト</h1>
-      <Suspense fallback={<p className="text-sm text-muted-foreground">読み込み中…</p>}>
+      <h1 className="text-2xl font-bold">{t.title}</h1>
+      <Suspense fallback={<p className="text-sm text-muted-foreground">{t.loading}</p>}>
         <Projects />
       </Suspense>
       <section aria-labelledby="import-project" className="flex flex-col gap-3">
         <h2 id="import-project" className="text-[15px] font-semibold">
-          プロジェクトをインポートする
+          {t.importTitle}
         </h2>
         <ImportProjectForm />
       </section>
       <section aria-labelledby="new-project" className="flex flex-col gap-3">
         <h2 id="new-project" className="text-[15px] font-semibold">
-          プロジェクトを作る
+          {t.newTitle}
         </h2>
         <ProjectEditor />
       </section>
@@ -32,6 +34,8 @@ export default function ProjectsPage() {
 }
 
 async function Projects() {
+  const m = await getMessages();
+  const t = m.projects;
   let data: [Awaited<ReturnType<typeof listProjects>>, Awaited<ReturnType<typeof getStatus>>];
   try {
     data = await Promise.all([listProjects(), getStatus()]);
@@ -49,23 +53,20 @@ async function Projects() {
       >
         <div className="flex flex-col gap-1">
           <h2 id="intake" className="text-[15px] font-semibold">
-            GitHub Issue の取り込み
+            {t.intake.title}
           </h2>
           {!intake ? (
-            <p className="text-muted-foreground">
-              取り込みは止まっています。config.yaml に github.token_secret
-              を設定すると、定期的に取り込みます。
-            </p>
+            <p className="text-muted-foreground">{t.intake.stopped}</p>
           ) : (
             <>
               <p className="text-muted-foreground">
                 {intake.lastRunAt
-                  ? `最後の取り込み：${formatStamp(intake.lastRunAt)}（${intake.imported ?? 0}件のタスクを作成）`
-                  : "まだ取り込んでいません。"}
+                  ? t.intake.lastRun(formatStamp(intake.lastRunAt, m.locale), intake.imported ?? 0)
+                  : t.intake.never}
               </p>
               {intake.errors && intake.errors.length > 0 && (
                 <div role="alert" className="flex flex-col gap-1 text-warn">
-                  <p>取り込めなかった取り込み元があります（ほかの取り込み元は取り込みました）：</p>
+                  <p>{t.intake.errors}</p>
                   <ul className="list-disc pl-5">
                     {intake.errors.map((e) => (
                       <li key={`${e.query ?? ""}:${e.message}`} className="break-words">
@@ -82,7 +83,7 @@ async function Projects() {
         {intake && (
           <form action={runIntakeAction}>
             <Button type="submit" variant="outline">
-              今すぐ取り込む
+              {t.intake.runNow}
             </Button>
           </form>
         )}
@@ -97,14 +98,15 @@ async function Projects() {
               {p.name}
             </Link>
             <p className="text-sm text-muted-foreground">
-              取り込み元 {p.sources.length}件・リポジトリの設定 {p.repositories.length}件
+              {t.summary(p.sources.length, p.repositories.length)}
             </p>
             {p.sources.length > 0 && (
               <ul className="flex flex-col gap-0.5 text-xs text-muted-foreground">
                 {p.sources.map((s) => (
                   <li key={`${s.scope}:${s.target}`} className="break-all">
-                    {s.scope === "org" ? "Org" : "リポジトリ"}：
-                    <span className="font-mono">{s.target}</span>（ラベル {s.label}）
+                    {t.sourceScope(t.scope[s.scope])}
+                    <span className="font-mono">{s.target}</span>
+                    {t.sourceLabel(s.label)}
                   </li>
                 ))}
               </ul>

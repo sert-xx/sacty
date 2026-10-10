@@ -1,6 +1,7 @@
 import type { Task } from "@sacty/core";
 import { cn } from "cn";
-import { STEP_LABEL, statusText, usd } from "@/lib/labels";
+import { getMessages } from "@/i18n/server";
+import { statusText, usd } from "@/lib/labels";
 
 const STEP_STYLE: Record<Task["steps"][number]["state"], string> = {
   todo: "border-input bg-card text-muted-foreground",
@@ -9,9 +10,10 @@ const STEP_STYLE: Record<Task["steps"][number]["state"], string> = {
   skip: "border-dashed border-input bg-transparent text-muted-foreground line-through",
 };
 
-export function StepChips({ task }: { task: Task }) {
+export async function StepChips({ task }: { task: Task }) {
+  const m = await getMessages();
   return (
-    <ul className="flex flex-wrap gap-1.5" aria-label="工程">
+    <ul className="flex flex-wrap gap-1.5" aria-label={m.parts.bits.steps}>
       {task.steps.map((step) => (
         <li
           key={step.key}
@@ -20,7 +22,7 @@ export function StepChips({ task }: { task: Task }) {
             STEP_STYLE[step.state],
           )}
         >
-          {STEP_LABEL[step.key]}
+          {m.labels.step[step.key]}
         </li>
       ))}
     </ul>
@@ -36,7 +38,8 @@ const STATUS_STYLE: Record<Task["status"], { text: string; dot: string }> = {
   escalated: { text: "text-warn", dot: "bg-warn" },
 };
 
-export function StatusLabel({ task }: { task: Task }) {
+export async function StatusLabel({ task }: { task: Task }) {
+  const m = await getMessages();
   const style = STATUS_STYLE[task.status];
   return (
     <span
@@ -46,20 +49,21 @@ export function StatusLabel({ task }: { task: Task }) {
       )}
     >
       <span aria-hidden="true" className={cn("size-2 rounded-full", style.dot)} />
-      {statusText(task)}
+      {statusText(task, m.labels)}
     </span>
   );
 }
 
-export function CostMeter({ task }: { task: Task }) {
+export async function CostMeter({ task }: { task: Task }) {
+  const m = await getMessages();
   const { usedUsd, capUsd, estimated } = task.budget;
   const ratio = Math.min(1, usedUsd / capUsd);
   const over = usedUsd >= capUsd;
   return (
     <div className="flex flex-wrap items-center gap-3 text-[13px]">
-      <span className="text-muted-foreground">費用</span>
+      <span className="text-muted-foreground">{m.parts.bits.cost}</span>
       <meter className="sr-only" min={0} max={capUsd} value={Math.min(usedUsd, capUsd)}>
-        予算に対する費用
+        {m.parts.bits.costMeter}
       </meter>
       <div
         aria-hidden="true"
@@ -75,10 +79,10 @@ export function CostMeter({ task }: { task: Task }) {
       </span>
       {estimated && (
         <span className="rounded-full border border-input px-2 py-0.5 text-xs text-muted-foreground">
-          換算値（実際の請求ではありません）
+          {m.parts.bits.estimated}
         </span>
       )}
-      <span className="text-muted-foreground">80%で通知、上限で自動的に一時停止</span>
+      <span className="text-muted-foreground">{m.parts.bits.budgetNote}</span>
     </div>
   );
 }

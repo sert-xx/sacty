@@ -6,7 +6,8 @@ import { type ResumeState, resumeTaskAction } from "@/app/actions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { PAUSE_HELP, PAUSE_LABEL, usd } from "@/lib/labels";
+import { useMessages } from "@/i18n/client";
+import { usd } from "@/lib/labels";
 
 const initial: ResumeState = {};
 
@@ -23,6 +24,7 @@ export function ResumeForm({
   capUsd: number;
   lastFailure?: string;
 }) {
+  const m = useMessages();
   const [state, formAction, pending] = useActionState(resumeTaskAction, initial);
   const needsCap = reason === "budget";
   const suggested = Math.max(capUsd * 2, Math.ceil(usedUsd) + 1);
@@ -33,9 +35,9 @@ export function ResumeForm({
       className="flex flex-col gap-3 rounded-xl border border-warn-line bg-warn-soft p-5"
     >
       <h2 id="paused" className="text-[15px] font-semibold text-warn">
-        {PAUSE_LABEL[reason]}
+        {m.labels.pause[reason]}
       </h2>
-      <p className="text-sm leading-6">{PAUSE_HELP[reason]}</p>
+      <p className="text-sm leading-6">{m.labels.pauseHelp[reason]}</p>
       {lastFailure && (
         <p className="rounded-md bg-card px-3 py-2 font-mono text-xs leading-5 break-words whitespace-pre-wrap">
           {lastFailure}
@@ -45,9 +47,7 @@ export function ResumeForm({
         <input type="hidden" name="taskId" value={taskId} />
         {needsCap && (
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor="cap-usd">
-              新しい上限（累計・使用済み {usd(usedUsd)} より大きい金額）
-            </Label>
+            <Label htmlFor="cap-usd">{m.parts.resume.newCap(usd(usedUsd))}</Label>
             <div className="flex items-center gap-2">
               <span className="font-mono">$</span>
               <Input
@@ -66,7 +66,11 @@ export function ResumeForm({
           </div>
         )}
         <Button type="submit" disabled={pending}>
-          {pending ? "再開中…" : needsCap ? "上限を変えて再開" : "再開する"}
+          {pending
+            ? m.parts.resume.resuming
+            : needsCap
+              ? m.parts.resume.resumeWithCap
+              : m.parts.resume.resume}
         </Button>
       </form>
       {state.message && (
@@ -74,11 +78,7 @@ export function ResumeForm({
           {state.message}
         </p>
       )}
-      {needsCap && (
-        <p className="text-xs text-muted-foreground">
-          新しい上限に達したら、もう一度ここで判断します。
-        </p>
-      )}
+      {needsCap && <p className="text-xs text-muted-foreground">{m.parts.resume.capNote}</p>}
     </section>
   );
 }

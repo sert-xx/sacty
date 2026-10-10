@@ -1,11 +1,13 @@
 import type { TestViewpoint } from "@sacty/core";
+import { getMessages } from "@/i18n/server";
 
 /** テスト観点の一覧。狭い画面でも崩れないよう、表ではなく観点ごとのカードで出す。 */
-export function TestViewpoints({ viewpoints }: { viewpoints: TestViewpoint[] }) {
+export async function TestViewpoints({ viewpoints }: { viewpoints: TestViewpoint[] }) {
+  const m = await getMessages();
   if (viewpoints.length === 0) {
     return (
       <p className="rounded-md border border-warn-line bg-warn-soft p-3 text-sm leading-6 text-warn">
-        テスト観点がありません。最終レビューの基準になるため、差し戻してテスト観点を作らせてください。
+        {m.parts.viewpoints.empty}
       </p>
     );
   }
@@ -18,9 +20,9 @@ export function TestViewpoints({ viewpoints }: { viewpoints: TestViewpoint[] }) 
             {v.title}
           </p>
           <dl className="mt-1.5 grid grid-cols-[64px_minmax(0,1fr)] gap-x-3 gap-y-1">
-            <dt className="pt-0.5 text-xs text-muted-foreground">入力</dt>
+            <dt className="pt-0.5 text-xs text-muted-foreground">{m.parts.viewpoints.input}</dt>
             <dd className="break-words whitespace-pre-wrap">{v.input}</dd>
-            <dt className="pt-0.5 text-xs text-muted-foreground">期待結果</dt>
+            <dt className="pt-0.5 text-xs text-muted-foreground">{m.parts.viewpoints.expected}</dt>
             <dd className="break-words whitespace-pre-wrap">{v.expected}</dd>
           </dl>
         </li>
