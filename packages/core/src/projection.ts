@@ -8,6 +8,7 @@ import type {
   TestViewpoint,
   Verdict,
 } from "./events.js";
+import { REWORK_STEPS } from "./events.js";
 
 type PayloadOf<T extends ParsedEventInput["type"]> = Extract<
   ParsedEventInput,
@@ -132,6 +133,10 @@ export type Task = {
   /** 最新のテストの実行結果と、最終レビュー。 */
   lastTests?: TestsRunResult;
   lastReview?: FinalReview;
+  /** sacty が作ったPR（またはブランチ）。 */
+  pullRequest?: PayloadOf<"PullRequestPublished">;
+  /** ゴールガーディアンの見逃し（最終レビューで合格にした成果物を、人間が差し戻した）。 */
+  misses: (PayloadOf<"GuardianMissed"> & { at: string })[];
   /** やり直しの実装に渡す、直前の検証で通らなかった内容。 */
   verifyFeedback?:
     | { kind: "tests"; tests: TestsRunResult }
@@ -216,6 +221,7 @@ export function applyEvent(
       proposals: [],
       testMap: [],
       verifyFailures: 0,
+      misses: [],
       submissions: {},
       remarks: [],
       budget: { usedUsd: 0, capUsd: event.payload.budgetCapUsd, warned: false, estimated: false },
@@ -479,8 +485,22 @@ export function applyEvent(
       task.verification = undefined;
       task.verifyFailures = 0;
       task.verifyFeedback = undefined;
+      // 次の工程（PR作成）は sacty が実行するので、実行待ちにする
+      if (task.steps[index + 1]) task.status = "queued";
       break;
     }
+
+    case "PullRequestPublished":
+      if (task.status !== "queued" || activeStep(task) !== "pr") {
+        throw new LedgerIntegrityError(event, "the pr step is not running");
+      }
+      task.pullRequest = event.payload;
+      task.status = "idle";
+      break;
+
+    case "GuardianMissed":
+      task.misses = [...task.misses, { ...event.payload, at: event.at }];
+      break;
 
     case "FinalReviewFailed":
       if (task.status !== "idle" || task.verification !== "tests_passed") {
@@ -585,4 +605,21 @@ export function openProposal(task: Task): TaskProposal | undefined {
 export function appliedProposalFor(task: Task, step: StepKey): TaskProposal | undefined {
   const last = task.proposals.findLast((p) => p.applied && p.target === step);
   return last && task.outputs[step] === last.proposed ? last : undefined;
+}
+
+/**
+ * 承認ゲートで差し戻すときに選べる、やり直す工程（ゲートに近い順）。
+ * ゲートの工程か、それより前の、工程エージェントが作る工程。
+ */
+export function reworkTargets(task: Task, gateStep: StepKey): StepKey[] {
+  const index = task.steps.findIndex((s) => s.key === gateStep);
+  return task.steps
+    .filter((s, i) => i <= index && REWORK_STEPS.includes(s.key))
+    .map((s) => s.key)
+    .reverse();
+}
+
+/** すべての工程が終わったか。 */
+export function isCompleted(task: Task): boolean {
+  return task.steps.length > 0 && task.steps.every((s) => s.state === "done" || s.state === "skip");
 }

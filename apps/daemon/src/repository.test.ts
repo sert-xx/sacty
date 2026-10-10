@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { GitRepositoryWorkspace } from "./repository.js";
+import { GitRepositoryWorkspace, NothingToCommitError } from "./repository.js";
 
 let dir: string;
 
@@ -88,5 +88,71 @@ describe("対象リポジトリの作業領域（git）", () => {
     await expect(
       workspace.prepare(join(dir, "other"), join(dir, "other.git"), origin, "no-such-branch"),
     ).rejects.toThrow(/git clone に失敗しました/);
+  });
+
+  it("退避したメタデータでコミットしてプッシュし、再提出は前回のコミットに積む（PBI-10b）", async () => {
+    const origin = makeOrigin();
+    git(origin, "config", "receive.denyCurrentBranch", "ignore");
+    const workspace = new GitRepositoryWorkspace();
+    const clone = join(dir, "task", "repo");
+    const gitDir = join(dir, "_git", "task.git");
+    const { baseCommit } = await workspace.prepare(clone, gitDir, origin, "main");
+    const branch = "sacty/task-1234abcd";
+
+    await expect(
+      workspace.publish({
+        dir: clone,
+        gitDir,
+        baseCommit,
+        parent: baseCommit,
+        branch,
+        message: "m",
+      }),
+    ).rejects.toBeInstanceOf(NothingToCommitError);
+
+    // エージェント（コンテナ）が、作業領域の git の設定を書き換えた
+    const marker = join(dir, "pwned");
+    git(clone, "config", "filter.evil.clean", `touch ${marker}; cat`);
+    git(clone, "config", "core.hooksPath", dir);
+    writeFileSync(join(clone, ".gitattributes"), "* filter=evil\n");
+    writeFileSync(join(clone, "pay.ts"), "export const pay = () => 1;\n");
+
+    const first = await workspace.publish({
+      dir: clone,
+      gitDir,
+      baseCommit,
+      parent: baseCommit,
+      branch,
+      message: "決済API\n\nsacty task t1",
+    });
+    expect(existsSync(marker)).toBe(false);
+    expect(git(origin, "rev-parse", branch)).toBe(first.commit);
+    expect(git(origin, "show", `${branch}:pay.ts`)).toBe("export const pay = () => 1;");
+    expect(git(origin, "log", "-1", "--format=%s", branch)).toBe("決済API");
+    // 作業領域の HEAD は動かさない（コミットは退避したメタデータに作る）
+    expect(git(clone, "rev-parse", "HEAD")).toBe(baseCommit);
+
+    writeFileSync(join(clone, "pay.ts"), "export const pay = () => 2;\n");
+    const second = await workspace.publish({
+      dir: clone,
+      gitDir,
+      baseCommit,
+      parent: first.commit,
+      branch,
+      message: "m2",
+    });
+    expect(git(origin, "rev-parse", `${branch}^`)).toBe(first.commit);
+    expect(git(origin, "rev-parse", branch)).toBe(second.commit);
+
+    // 変わっていなければ、同じコミットのまま
+    const third = await workspace.publish({
+      dir: clone,
+      gitDir,
+      baseCommit,
+      parent: second.commit,
+      branch,
+      message: "m3",
+    });
+    expect(third.commit).toBe(second.commit);
   });
 });

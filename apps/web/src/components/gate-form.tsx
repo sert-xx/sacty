@@ -1,6 +1,6 @@
 "use client";
 
-import type { StepKey } from "@sacty/core";
+import { GATED_STEPS, type StepKey } from "@sacty/core";
 import { useActionState } from "react";
 import { type GateState, gateAction } from "@/app/actions";
 import { Button } from "@/components/ui/button";
@@ -57,10 +57,10 @@ export function GateForm({
                 className="mt-1.5 size-4 accent-primary"
               />
               <span>
-                {target === step
+                {target === targets[0]
                   ? `${STEP_LABEL[target]}をやり直す`
                   : `${STEP_LABEL[target]}からやり直す`}
-                {target !== step && (
+                {target !== targets[0] && GATED_STEPS.includes(target) && (
                   <span className="block text-xs text-muted-foreground">
                     {STEP_LABEL[target]}の承認を取り消します。再提出された{STEP_LABEL[target]}
                     を、もう一度承認する必要があります。

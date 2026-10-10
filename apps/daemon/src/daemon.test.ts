@@ -8,6 +8,7 @@ import type { Invocation } from "./agents/invocation.js";
 import type { AgentOutcome } from "./agents/parse.js";
 import type { TestRunner, TestRunResult } from "./agents/test-runner.js";
 import { type AgentConfig, type ConfigResult, loadConfig } from "./config.js";
+import type { PullRequests } from "./github.js";
 import { SqliteLedgerStore } from "./ledger.js";
 import type { RepositoryWorkspace } from "./repository.js";
 import { MemorySecretStore } from "./secrets.js";
@@ -36,7 +37,15 @@ const agent = (overrides: Partial<AgentConfig> = {}): AgentConfig => ({
 });
 
 const configOf =
-  (a: AgentConfig, budgetPerTaskUsd = 1): (() => ConfigResult) =>
+  (
+    a: AgentConfig,
+    budgetPerTaskUsd = 1,
+    pullRequest: { provider: "github"; repo: string; tokenSecret: string } | null = {
+      provider: "github",
+      repo: "acme/app",
+      tokenSecret: "github-token",
+    },
+  ): (() => ConfigResult) =>
   () => ({
     ok: true,
     config: {
@@ -49,6 +58,7 @@ const configOf =
         baseBranch: "main",
         testCommand: "npm test",
         testImage: "sacty-agent:test",
+        ...(pullRequest ? { pullRequest } : {}),
       },
     },
   });
@@ -69,6 +79,24 @@ class FakeRepos implements RepositoryWorkspace {
   async diff() {
     if (this.diffFail) throw new Error(this.diffFail);
     return this.diffText;
+  }
+  published: { parent: string; branch: string; message: string }[] = [];
+  publishFail?: string;
+  async publish(input: { parent: string; branch: string; message: string }) {
+    if (this.publishFail) throw new Error(this.publishFail);
+    this.published.push({ parent: input.parent, branch: input.branch, message: input.message });
+    return { commit: `c${this.published.length}`.padEnd(40, "0") };
+  }
+}
+
+/** PRの作成を記録する偽物。 */
+class FakePulls implements PullRequests {
+  calls: Parameters<PullRequests["upsert"]>[0][] = [];
+  fail?: string;
+  async upsert(input: Parameters<PullRequests["upsert"]>[0]) {
+    if (this.fail) throw new Error(this.fail);
+    this.calls.push(input);
+    return { url: "https://github.com/acme/app/pull/7", number: 7 };
   }
 }
 
@@ -118,21 +146,26 @@ function makeService(
     secrets?: Record<string, string>;
     repos?: FakeRepos;
     tests?: FakeTests;
+    pulls?: FakePulls;
   } = {},
 ) {
   const executor = new FakeExecutor(outcomes);
   const repos = options.repos ?? new FakeRepos();
   const tests = options.tests ?? new FakeTests();
+  const pulls = options.pulls ?? new FakePulls();
   const service = new TaskService({
     ledger,
     config: options.config ?? configOf(agent()),
-    secrets: new MemorySecretStore(options.secrets ?? { "claude-oauth-token": "oauth-secret" }),
+    secrets: new MemorySecretStore(
+      options.secrets ?? { "claude-oauth-token": "oauth-secret", "github-token": "ghp_secret" },
+    ),
     executor,
     repos,
     tests,
+    pulls,
     workspaceRoot: join(dir, "workspaces"),
   });
-  return { service, executor, repos, tests };
+  return { service, executor, repos, tests, pulls };
 }
 
 /** 画面が表示している（いま承認待ちの）提出回。 */
@@ -1440,17 +1473,19 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     expect(existsSync(executor.dirs[4] ?? "")).toBe(false);
 
     const task = service.get(id)?.task;
-    expect(task?.status).toBe("idle");
+    // 実装を完了にし、PR作成（sacty が実行）を経て成果物チェックのゲートで止まる
     expect(task?.steps.map((st) => st.state)).toEqual(["done", "done", "done", "active"]);
+    expect(task?.gate?.step).toBe("pr");
     expect(task?.lastReview).toMatchObject({ passed: true, summary: "所見" });
     expect(task?.lastTests).toMatchObject({ passed: true, exitCode: 0, durationMs: 1200 });
-    expect(types(service, id).slice(-3)).toEqual([
+    expect(types(service, id).slice(-5)).toEqual([
       "AgentRunCompleted",
       "TestsRun",
       "FinalReviewed",
+      "PullRequestPublished",
+      "StepSubmitted",
     ]);
-    expect(service.get(id)?.ledger.at(-1)?.actor).toBe("guardian");
-    expect(service.queuedTaskIds()).toEqual([]); // PR作成の工程は PBI-10b
+    expect(service.get(id)?.ledger.find((e) => e.type === "FinalReviewed")?.actor).toBe("guardian");
     ledger.close();
   });
 
@@ -1690,6 +1725,148 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     expect(task?.verifyFailures).toBe(0);
     expect(task?.verifyFeedback).toBeUndefined();
     expect(task?.verification).toBeUndefined();
+    ledger.close();
+  });
+
+  /** 実装・検証を終え、成果物チェックのゲートまで進める。 */
+  async function toDeliverableGate(
+    outcomes: AgentOutcome[] = [],
+    options: { pulls?: FakePulls; repos?: FakeRepos; config?: () => ConfigResult } = {},
+  ) {
+    const made = await toImplement([implement("# 実装の説明"), review(), ...outcomes], options);
+    await drain(made.service);
+    return made;
+  }
+
+  it("最終レビューに通ったら、ブランチにプッシュしてPRを作り、成果物チェックのゲートで止まる（PBI-10b）", async () => {
+    const { ledger, service, repos, pulls, id } = await toDeliverableGate();
+    expect(repos.published).toEqual([
+      {
+        parent: "base123",
+        branch: `sacty/task-${id.slice(0, 8)}`,
+        message: `決済API\n\nsacty task ${id}`,
+      },
+    ]);
+    expect(pulls.calls).toHaveLength(1);
+    const call = pulls.calls[0];
+    expect(call).toMatchObject({
+      repo: "acme/app",
+      token: "ghp_secret",
+      branch: `sacty/task-${id.slice(0, 8)}`,
+      baseBranch: "main",
+      title: "決済API",
+      number: undefined,
+    });
+    expect(call?.body).toContain(
+      "| TV-1 同じキーの再送 | 同じキーで2回送る | 決済は1回 | pay.test.ts › 同じキーの再送 | ✅ TV-1の判定理由 |",
+    );
+    expect(call?.body).toContain("requirements-1-1：再発なし");
+
+    const task = service.get(id)?.task;
+    expect(task?.status).toBe("awaiting_approval");
+    expect(task?.gate).toEqual({ step: "pr", submission: 1 });
+    expect(task?.pullRequest).toMatchObject({
+      url: "https://github.com/acme/app/pull/7",
+      number: 7,
+    });
+    expect(types(service, id).slice(-2)).toEqual(["PullRequestPublished", "StepSubmitted"]);
+    // トークンは台帳に残さない
+    expect(JSON.stringify(service.get(id)?.ledger)).not.toContain("ghp_secret");
+
+    const done = service.approve(id, { step: "pr", submission: 1 });
+    expect(done.steps.every((st) => st.state === "done")).toBe(true);
+    expect(done.status).toBe("idle");
+    expect(service.queuedTaskIds()).toEqual([]);
+    ledger.close();
+  });
+
+  it("PRの作成先が設定されていなければ、ブランチのプッシュまでで成果物チェックに進む", async () => {
+    const pulls = new FakePulls();
+    const { ledger, service, id } = await toDeliverableGate([], {
+      pulls,
+      config: configOf(agent(), 1, null),
+    });
+    expect(pulls.calls).toEqual([]);
+    const task = service.get(id)?.task;
+    expect(task?.gate).toEqual({ step: "pr", submission: 1 });
+    expect(task?.pullRequest?.url).toBeUndefined();
+    ledger.close();
+  });
+
+  it("成果物チェックで差し戻すと見逃しを記録し、実装をやり直して同じPRを更新する（PBI-10b）", async () => {
+    const { ledger, service, executor, repos, pulls, id } = await toDeliverableGate([
+      out(
+        [
+          "# 実装の説明 v2",
+          block({
+            "sacty-test-map": [
+              { viewpointId: "TV-1", tests: ["a"] },
+              { viewpointId: "TV-2", tests: ["b"] },
+            ],
+          }),
+          block({ "sacty-responses": [{ remarkId: "implement-1-1", text: "ログを足した" }] }),
+        ].join("\n\n"),
+      ),
+      // 判定の無い指摘は不合格になるので、実装への指摘にも判定を返す
+      review(undefined, [
+        ["requirements-1-1", true],
+        ["implement-1-1", true],
+      ]),
+    ]);
+    expect(() =>
+      service.requestChanges(id, { step: "pr", submission: 1, target: "pr", comments: ["x"] }),
+    ).toThrow(/差し戻せません/);
+    const sent = service.requestChanges(id, {
+      step: "pr",
+      submission: 1,
+      comments: ["失敗時のログが無い"],
+    });
+    expect(sent.status).toBe("queued");
+    expect(sent.steps.map((st) => st.state)).toEqual(["done", "done", "active", "todo"]);
+    expect(sent.remarks.at(-1)).toMatchObject({ id: "implement-1-1", step: "implement" });
+    expect(sent.misses).toMatchObject([{ remarkIds: ["implement-1-1"] }]);
+    expect(types(service, id).slice(-2)).toEqual(["GuardianMissed", "ChangesRequested"]);
+
+    await drain(service);
+    const prompt = promptOf(executor, 6);
+    expect(prompt).toContain("[implement-1-1] 失敗時のログが無い");
+    const task = service.get(id)?.task;
+    expect(task?.remarks.at(-1)?.response).toBe("ログを足した");
+    expect(task?.gate).toEqual({ step: "pr", submission: 2 });
+    // 前回プッシュしたコミットに積み、同じPRを更新する
+    expect(repos.published[1]).toMatchObject({ parent: "c1".padEnd(40, "0") });
+    expect(pulls.calls[1]?.number).toBe(7);
+    ledger.close();
+  });
+
+  it("成果物チェックから設計へ差し戻すと、設計の承認を取り消し、見逃しも記録する", async () => {
+    const { ledger, service, id } = await toDeliverableGate();
+    const sent = service.requestChanges(id, {
+      step: "pr",
+      submission: 1,
+      target: "design",
+      comments: ["観点が足りない"],
+    });
+    expect(sent.steps.map((st) => st.state)).toEqual(["done", "active", "todo", "todo"]);
+    expect(sent.approved.design).toBeUndefined();
+    expect(sent.approved.requirements).toBeDefined();
+    expect(sent.misses).toHaveLength(1);
+    ledger.close();
+  });
+
+  it("プッシュやPRの作成に失敗したら理由を記録して止め、トークンは残さない", async () => {
+    const pulls = new FakePulls();
+    pulls.fail = "PRを作れませんでした：GitHub API 401 Bad credentials ghp_secret";
+    const { ledger, service, id } = await toDeliverableGate([], { pulls });
+    const task = service.get(id)?.task;
+    expect(task?.pausedReason).toBe("error");
+    expect(task?.pausedMessage).toContain("401 Bad credentials");
+    expect(task?.pausedMessage).not.toContain("ghp_secret");
+
+    pulls.fail = undefined;
+    service.resume(id, {});
+    await drain(service);
+    expect(service.get(id)?.task.gate).toEqual({ step: "pr", submission: 1 });
     ledger.close();
   });
 

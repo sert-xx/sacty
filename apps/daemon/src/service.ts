@@ -25,6 +25,7 @@ import {
   proposalAccepted,
   RequestChangesInput,
   ResumeTaskInput,
+  reworkTargets,
   type StepKey,
   type Task,
   type TaskProposal,
@@ -35,11 +36,13 @@ import type { AgentOutcome } from "./agents/parse.js";
 import { redact } from "./agents/redact.js";
 import type { TestRunner } from "./agents/test-runner.js";
 import type { AgentConfig, ConfigResult, SactyConfig } from "./config.js";
+import type { PullRequests } from "./github.js";
 import type { LedgerStore } from "./ledger.js";
 import {
   buildFinalReviewPrompt,
   buildGuardianPrompt,
   buildPrompt,
+  buildPullRequestBody,
   changeableSteps,
   EXECUTABLE_STEPS,
   extractBlocks,
@@ -67,8 +70,10 @@ export type ServiceDeps = {
   config: () => ConfigResult;
   secrets: SecretStore;
   executor: AgentExecutor;
-  /** 実装の対象リポジトリの clone と差分。 */
+  /** 実装の対象リポジトリの clone・差分・コミットとプッシュ。 */
   repos: RepositoryWorkspace;
+  /** PRの作成。 */
+  pulls: PullRequests;
   /** テストの実行。 */
   tests: TestRunner;
   /** タスクごとの作業領域を作る場所。 */
@@ -199,7 +204,8 @@ export class TaskService {
   /**
    * 実行できなかったために待機している工程を、実行待ちにする（起動時に呼ぶ）。
    * まだ一度も出力が無い工程だけが対象（PBI-7で承認され設計の工程が無かった、
-   * PBI-8・9で設計が承認され実装の工程が無かったため待機していたタスクなど）。
+   * PBI-8・9で設計が承認され実装の工程が無かった、PBI-10aで最終レビューに通り
+   * PR作成の工程が無かったため待機していたタスクなど）。
    */
   queueWaitingSteps(): void {
     for (const task of this.tasks.values()) {
@@ -207,6 +213,7 @@ export class TaskService {
       if (task.status !== "idle" || !step || openProposal(task)) continue;
       if (!EXECUTABLE_STEPS.includes(step)) continue;
       if (task.outputs[step] !== undefined || task.verification) continue;
+      if (step === "pr" && task.pullRequest) continue;
       this.append(task, [{ actor: "sacty", event: { type: "StepQueued", payload: { step } } }]);
     }
   }
@@ -272,6 +279,8 @@ export class TaskService {
     if (!step) return;
     const config = this.deps.config();
     if (!config.ok) return; // 設定の問題は status() で画面に出す。タスクは実行待ちのまま。
+    // PR作成は、エージェントではなく sacty が行う
+    if (step === "pr") return this.publish(task, config.config);
 
     if (budgetState(task.budget) === "exceeded") {
       this.append(task, [
@@ -553,6 +562,70 @@ export class TaskService {
     ]);
     if (review.passed) this.checkBudget(reviewed);
     else this.pauseIfVerificationKeepsFailing(reviewed);
+  }
+
+  /**
+   * 作業をコミットして sacty のブランチにプッシュし、PRを作って（設定があれば）、
+   * 成果物チェックのゲートで止める。コミットは、エージェントが触れない退避した git の
+   * メタデータで作る。失敗したら理由を記録して止める（再開するとやり直す）。
+   */
+  private async publish(task: Task, config: SactyConfig): Promise<void> {
+    const repo = config.repository;
+    const dir = this.repoDir(task);
+    const gitDir = this.trustedGitDir(task);
+    const usedSecrets: string[] = [];
+    const fail = (message: string) =>
+      this.append(task, [
+        {
+          actor: "sacty",
+          event: {
+            type: "TaskPaused",
+            payload: { reason: "error", message: redact(message, usedSecrets) },
+          },
+        },
+      ]);
+    if (!task.repository || !repo || !existsSync(dir) || !existsSync(gitDir)) {
+      fail("実装の作業領域か対象リポジトリの設定が無いため、PRを作れません。");
+      return;
+    }
+    const branch = task.pullRequest?.branch ?? `sacty/task-${task.id.slice(0, 8)}`;
+    try {
+      const { commit } = await this.deps.repos.publish({
+        dir,
+        gitDir,
+        baseCommit: task.repository.baseCommit,
+        parent: task.pullRequest?.commit ?? task.repository.baseCommit,
+        branch,
+        message: `${task.title}\n\nsacty task ${task.id}`,
+      });
+      let pr: { url: string; number: number } | undefined;
+      if (repo.pullRequest) {
+        const token = await this.deps.secrets.get(repo.pullRequest.tokenSecret);
+        usedSecrets.push(token);
+        pr = await this.deps.pulls.upsert({
+          repo: repo.pullRequest.repo,
+          token,
+          branch,
+          baseBranch: task.repository.baseBranch,
+          title: task.title,
+          body: buildPullRequestBody(task),
+          number: task.pullRequest?.number,
+        });
+      }
+      const submitted = this.append(task, [
+        {
+          actor: "sacty",
+          event: {
+            type: "PullRequestPublished",
+            payload: { branch, commit, ...(pr ? { url: pr.url, number: pr.number } : {}) },
+          },
+        },
+        ...this.submitEvents(task, "pr"),
+      ]);
+      this.checkBudget(submitted);
+    } catch (error) {
+      fail(`PRを作れませんでした：${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   /** 検証が続けて通らなければ、実装のやり直しを止めて人間に判断してもらう。 */
@@ -861,13 +934,12 @@ export class TaskService {
   requestChanges(id: string, raw: unknown): Task {
     const input = RequestChangesInput.parse(raw);
     const task = this.gateTask(id, input.step, input.submission);
-    const target = input.target ?? input.step;
-    if (target !== input.step) {
-      const at = task.steps.findIndex((s) => s.key === input.step);
-      const to = task.steps.findIndex((s) => s.key === target);
-      if (!GATED_STEPS.includes(target) || to < 0 || to >= at) {
-        throw new InvalidOperationError("この工程には差し戻せません。");
-      }
+    // やり直す工程は、ゲートの工程か、それより前の工程エージェントが作る工程。
+    // 成果物チェック（PR作成）のゲートでは、省略すると実装をやり直す
+    const targets = reworkTargets(task, input.step);
+    const target = input.target ?? targets[0];
+    if (!target || !targets.includes(target)) {
+      throw new InvalidOperationError("この工程には差し戻せません。");
     }
     const rounds = changeRounds(task, target);
 
@@ -912,7 +984,22 @@ export class TaskService {
         throw new InvalidOperationError("差し戻すには、指摘を1件以上入力してください。");
       }
     }
+    // ゴールガーディアンが最終レビューで合格にした成果物を人間が差し戻したら、見逃しとして記録する
+    const review = task.lastReview;
+    const missed =
+      input.step === "pr" && review?.passed && !task.misses.some((m) => m.reviewAt === review.at)
+        ? [
+            {
+              actor: "sacty" as const,
+              event: {
+                type: "GuardianMissed" as const,
+                payload: { reviewAt: review.at, remarkIds: remarks.map((r) => r.id) },
+              },
+            },
+          ]
+        : [];
     return this.append(task, [
+      ...missed,
       {
         actor: "person",
         event: {

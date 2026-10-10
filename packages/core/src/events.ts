@@ -7,8 +7,11 @@ export type StepKey = z.infer<typeof StepKey>;
 /** MVPで使う固定の工程。オーケストレーターが工程を選ぶのはPBI-7以降。 */
 export const MVP_STEPS: readonly StepKey[] = ["requirements", "design", "implement", "pr"];
 
-/** 人間の承認ゲートがある工程。 */
-export const GATED_STEPS: readonly StepKey[] = ["requirements", "design"];
+/** 人間の承認ゲートがある工程。PR作成は、成果物チェックのゲート。 */
+export const GATED_STEPS: readonly StepKey[] = ["requirements", "design", "pr"];
+
+/** 差し戻しでやり直せる（工程エージェントが作る）工程。 */
+export const REWORK_STEPS: readonly StepKey[] = ["requirements", "design", "implement"];
 
 /** 同じ工程への差し戻しがこの回数を超えると、エスカレーションになる。 */
 export const MAX_CHANGE_REQUESTS = 3;
@@ -318,6 +321,32 @@ const FinalReviewFailed = z.object({
   }),
 });
 
+/** sacty が作業をコミットしてブランチにプッシュし、PRを作った（または更新した）。 */
+const PullRequestPublished = z.object({
+  type: z.literal("PullRequestPublished"),
+  payload: z.object({
+    branch: z.string().min(1),
+    commit: z.string().min(1),
+    /** PRを作らない設定（ブランチのプッシュまで）なら無い。 */
+    url: z.string().optional(),
+    number: z.number().int().positive().optional(),
+  }),
+});
+
+/**
+ * ゴールガーディアンが最終レビューで合格にした成果物を、人間が差し戻した（見逃し）。
+ * ゴールガーディアンの精度を測るために記録する。
+ */
+const GuardianMissed = z.object({
+  type: z.literal("GuardianMissed"),
+  payload: z.object({
+    /** 見逃した最終レビュー（FinalReviewed の記録時刻）。 */
+    reviewAt: z.string(),
+    /** 人間の指摘。 */
+    remarkIds: z.array(z.string()),
+  }),
+});
+
 const ChangesRequested = z.object({
   type: z.literal("ChangesRequested"),
   payload: z.object({
@@ -382,6 +411,8 @@ export const EventInput = z.discriminatedUnion("type", [
   TestsRun,
   FinalReviewed,
   FinalReviewFailed,
+  PullRequestPublished,
+  GuardianMissed,
   ChangesRequested,
   RemarkVoided,
   TaskEscalated,

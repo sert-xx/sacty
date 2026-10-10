@@ -1,6 +1,6 @@
-import type { Task, TaskProposal } from "@sacty/core";
+import type { LedgerEvent, Task, TaskProposal } from "@sacty/core";
 import { describe, expect, it } from "vitest";
-import { isWorking, needsPerson, personAction, statusText } from "./labels";
+import { describeEvent, isWorking, needsPerson, personAction, statusText } from "./labels";
 
 const proposal = (patch: Partial<TaskProposal> = {}): TaskProposal => ({
   id: "CP-1",
@@ -28,6 +28,7 @@ const task = (patch: Partial<Task> = {}): Task => ({
   proposals: [],
   testMap: [],
   verifyFailures: 0,
+  misses: [],
   submissions: {},
   remarks: [],
   budget: { usedUsd: 0, capUsd: 1, warned: false, estimated: false },
@@ -64,5 +65,55 @@ describe("一覧と詳細の導線（PBI-9 レビュー指摘）", () => {
       label: "チェックする",
     });
     expect(personAction(task({ status: "paused" })).href).toBe("/tasks/t1");
+  });
+});
+
+describe("成果物チェックの表示（PBI-10b）", () => {
+  const event = (e: Pick<LedgerEvent, "type" | "payload">): LedgerEvent =>
+    ({
+      ...e,
+      seq: 1,
+      id: "e1",
+      taskId: "t1",
+      projectId: "default",
+      at: "2026-10-10T00:00:00.000Z",
+      actor: "person",
+    }) as LedgerEvent;
+
+  it("実装へ戻すときは承認の取り消しを書かず、設計へ戻すときは書く", () => {
+    const back = (target: "implement" | "design") =>
+      describeEvent(
+        event({
+          type: "ChangesRequested",
+          payload: {
+            step: "pr",
+            target,
+            round: 1,
+            remarks: [{ id: "x", text: "y" }],
+            overLimit: false,
+          },
+        }),
+      );
+    expect(back("implement")).toBe("成果物チェックで差し戻し、実装からやり直し：指摘1件（人間）");
+    expect(back("design")).toBe(
+      "成果物チェックで差し戻し、設計からやり直し（設計の承認を取り消し）：指摘1件（人間）",
+    );
+    expect(
+      describeEvent(event({ type: "StepSubmitted", payload: { step: "pr", submission: 2 } })),
+    ).toBe("成果物チェックに提出（2回目）→ 承認待ち");
+  });
+
+  it("成果物チェック待ちと完了を表示する", () => {
+    expect(
+      statusText(task({ status: "awaiting_approval", gate: { step: "pr", submission: 1 } })),
+    ).toBe("成果物チェック待ち");
+    const done = task({
+      steps: [
+        { key: "requirements", state: "done" },
+        { key: "pr", state: "done" },
+      ],
+    });
+    expect(statusText(done)).toBe("完了");
+    expect(isWorking(done)).toBe(false);
   });
 });

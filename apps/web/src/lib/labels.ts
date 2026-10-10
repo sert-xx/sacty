@@ -2,6 +2,8 @@ import {
   type Actor,
   type AuthMode,
   formatUsd,
+  GATED_STEPS,
+  isCompleted,
   type LedgerEvent,
   openProposal,
   type PauseReason,
@@ -76,11 +78,16 @@ export function statusText(task: Task): string {
   if (task.status === "paused" && task.pausedReason) return PAUSE_LABEL[task.pausedReason];
   const proposal = openProposal(task);
   if (proposal && !proposal.judgement) return "ゴールガーディアンが判定中";
+  if (task.status === "idle" && isCompleted(task)) return "完了";
   if (task.status === "idle" && task.verification === "pending") return "テストを実行中";
   if (task.status === "idle" && task.verification === "tests_passed") {
     return "ゴールガーディアンが最終レビュー中";
   }
   if (task.status === "escalated" && proposal) return "変更の申し出の判断待ち";
+  if (task.status === "awaiting_approval" && task.gate?.step === "pr") {
+    const nth = task.gate.submission > 1 ? `（${task.gate.submission}回目）` : "";
+    return `成果物チェック待ち${nth}`;
+  }
   if (task.status === "awaiting_approval" && task.gate) {
     const nth = task.gate.submission > 1 ? `（${task.gate.submission}回目）` : "";
     return `${STEP_LABEL[task.gate.step]}の承認待ち${nth}`;
@@ -141,8 +148,14 @@ export function describeEvent(event: LedgerEvent): string {
     case "TaskResumed":
       return `再開（${ACTOR_LABEL[event.actor]}）`;
     case "StepSubmitted":
+      if (event.payload.step === "pr") {
+        return `成果物チェックに提出（${event.payload.submission}回目）→ 承認待ち`;
+      }
       return `${STEP_LABEL[event.payload.step]}を提出（${event.payload.submission}回目）→ 承認待ち`;
     case "StepApproved":
+      if (event.payload.step === "pr") {
+        return `成果物チェックで承認（${ACTOR_LABEL[event.actor]}）`;
+      }
       return `${STEP_LABEL[event.payload.step]}を承認・凍結（${ACTOR_LABEL[event.actor]}）`;
     case "ChangeProposed":
       return `${STEP_LABEL[event.payload.fromStep]}の工程が、${STEP_LABEL[event.payload.target]}の変更を申し出（${event.payload.proposalId}）`;
@@ -162,15 +175,32 @@ export function describeEvent(event: LedgerEvent): string {
         event.payload.remarks.filter((r) => !r.notRecurred).length;
       return `最終レビュー：${event.payload.passed ? "合格" : `不合格（${ng}件）`}（${ACTOR_LABEL[event.actor]}${event.payload.costUsd > 0 ? `・${usd(event.payload.costUsd)}${event.payload.estimated ? "・換算値" : ""}` : ""}）`;
     }
+    case "PullRequestPublished":
+      return event.payload.url
+        ? `PRを作成・更新（#${event.payload.number}・${event.payload.branch}・${event.payload.commit.slice(0, 7)}）`
+        : `ブランチにプッシュ（${event.payload.branch}・${event.payload.commit.slice(0, 7)}）`;
+    case "GuardianMissed":
+      return "最終レビューで合格にした成果物が差し戻されたため、ゴールガーディアンの見逃しとして記録";
     case "FinalReviewFailed":
       return `${event.payload.message}（${usd(event.payload.costUsd)}${event.payload.estimated ? "・換算値" : ""}）`;
     case "StepQueued":
       return `${STEP_LABEL[event.payload.step]}を実行待ちにした（実行できるようになったため）`;
-    case "ChangesRequested":
-      if (event.payload.target && event.payload.target !== event.payload.step) {
-        return `${STEP_LABEL[event.payload.step]}を差し戻し、${STEP_LABEL[event.payload.target]}からやり直し（${STEP_LABEL[event.payload.target]}の承認を取り消し）：指摘${event.payload.remarks.length}件${event.payload.overLimit ? "（上限を超えて）" : ""}（${ACTOR_LABEL[event.actor]}）`;
+    case "ChangesRequested": {
+      const where =
+        event.payload.step === "pr"
+          ? "成果物チェックで差し戻し"
+          : `${STEP_LABEL[event.payload.step]}を差し戻し`;
+      const tail = `：指摘${event.payload.remarks.length}件${event.payload.overLimit ? "（上限を超えて）" : ""}（${ACTOR_LABEL[event.actor]}）`;
+      const target = event.payload.target;
+      if (target && target !== event.payload.step) {
+        // 承認ゲートのある工程に戻すときだけ、その承認を取り消す
+        const revoke = GATED_STEPS.includes(target)
+          ? `（${STEP_LABEL[target]}の承認を取り消し）`
+          : "";
+        return `${where}、${STEP_LABEL[target]}からやり直し${revoke}${tail}`;
       }
-      return `${STEP_LABEL[event.payload.step]}を差し戻し：指摘${event.payload.remarks.length}件${event.payload.overLimit ? "（上限を超えて）" : ""}（${ACTOR_LABEL[event.actor]}）`;
+      return `${where}${tail}`;
+    }
     case "RemarkVoided":
       return `指摘 ${event.payload.remarkId} を無効にした（${ACTOR_LABEL[event.actor]}）`;
     case "TaskEscalated":

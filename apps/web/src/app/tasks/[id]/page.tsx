@@ -6,6 +6,7 @@ import { AutoRefresh } from "@/components/auto-refresh";
 import { DaemonError } from "@/components/daemon-error";
 import { Implementation } from "@/components/implementation";
 import { Proposals } from "@/components/proposals";
+import { PullRequestCard } from "@/components/pull-request";
 import { ResumeForm } from "@/components/resume-form";
 import { CostMeter, StatusLabel, StepChips } from "@/components/task-bits";
 import { TestViewpoints } from "@/components/test-viewpoints";
@@ -133,6 +134,7 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
             task.steps.some((s) => s.key === "implement" && s.state !== "todo")) && (
             <Implementation task={task} />
           )}
+          <PullRequestCard task={task} />
           {(task.approved.requirements || task.proposals.length > 0) && <Proposals task={task} />}
           <section
             aria-labelledby="steps"
