@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { type ChildProcess, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   chmodSync,
@@ -42,6 +42,70 @@ export function syncBackIfChanged(
   writeFileSync(temp, readFileSync(stagedPath), { mode: 0o600 });
   renameSync(temp, hostPath);
   return "written";
+}
+
+/**
+ * 実行中のコンテナ（docker run の子プロセス）を覚え、人間の一時停止・中止で止める。
+ * コンテナができる前（イメージの取得中など）に止められると `docker kill` は対象が無く失敗するので、
+ * そのときは docker run 自体を止め、遅れてコンテナができても止まるよう `docker kill` を繰り返す。
+ */
+export class RunningContainers {
+  private readonly children = new Map<string, ChildProcess | undefined>();
+  private readonly stopRequested = new Set<string>();
+
+  constructor(
+    private readonly spawnImpl: typeof spawn = spawn,
+    private readonly retryMs = 1_000,
+    private readonly retries = 10,
+  ) {}
+
+  /** docker run を始める前に登録する（起動の途中でも止められるように）。 */
+  register(name: string): void {
+    this.children.set(name, undefined);
+  }
+
+  /** docker run の子プロセスを結びつける。すでに止める要求があれば止める。 */
+  attach(name: string, child: ChildProcess): void {
+    this.children.set(name, child);
+    if (this.stopRequested.has(name)) child.kill("SIGKILL");
+  }
+
+  has(name: string): boolean {
+    return this.children.has(name);
+  }
+
+  /** docker run が終わったら呼ぶ。止める要求があったなら、遅れてできたコンテナも念のため止める。 */
+  finish(name: string): void {
+    this.children.delete(name);
+    if (this.stopRequested.delete(name)) this.kill(name, 0, () => false);
+  }
+
+  /** 止める。止める要求は、docker run が終わるまで覚えておく。 */
+  stop(name: string): void {
+    if (!this.children.has(name)) return;
+    this.stopRequested.add(name);
+    this.kill(name, 0, () => this.children.has(name));
+  }
+
+  stopAll(): void {
+    for (const name of this.children.keys()) this.stop(name);
+  }
+
+  private kill(name: string, attempt: number, stillRunning: () => boolean): void {
+    const proc = this.spawnImpl("docker", ["kill", name], {
+      stdio: "ignore",
+      env: dockerClientEnv(),
+    });
+    proc.on("error", () => {});
+    proc.on("close", (code) => {
+      if (code === 0 || attempt >= this.retries) return;
+      // コンテナがまだ無い（作成中）。docker run 自体を止め、できてしまった場合に備えて繰り返す
+      if (stillRunning()) this.children.get(name)?.kill("SIGKILL");
+      if (stillRunning() || attempt < 3) {
+        setTimeout(() => this.kill(name, attempt + 1, stillRunning), this.retryMs).unref();
+      }
+    });
+  }
 }
 
 /** エージェントを実行する口。テストでは偽物に差し替える。 */
@@ -102,26 +166,30 @@ export function dockerClientEnv(): Record<string, string> {
 }
 
 export class DockerExecutor implements AgentExecutor {
-  private readonly active = new Set<string>();
+  private readonly containers: RunningContainers;
   private aborting = false;
 
-  constructor(private readonly timeoutMs = 30 * 60_000) {}
+  constructor(
+    private readonly timeoutMs = 30 * 60_000,
+    spawnImpl: typeof spawn = spawn,
+  ) {
+    this.containers = new RunningContainers(spawnImpl);
+    this.spawnImpl = spawnImpl;
+  }
+
+  private readonly spawnImpl: typeof spawn;
 
   /**
    * デーモンの停止時に、実行中のコンテナを止める（コンテナだけが残り続けないように）。
    * 後処理（書き戻し・一時ファイルの削除）は run() の中で行われるので、呼び出し側はその完了を待つこと。
    */
   kill(runId: string): void {
-    const name = `sacty-run-${runId}`;
-    if (!this.active.has(name)) return;
-    spawn("docker", ["kill", name], { stdio: "ignore", env: dockerClientEnv() });
+    this.containers.stop(`sacty-run-${runId}`);
   }
 
   abortAll(): void {
     this.aborting = true;
-    for (const name of this.active) {
-      spawn("docker", ["kill", name], { stdio: "ignore", env: dockerClientEnv() });
-    }
+    this.containers.stopAll();
   }
 
   async run({
@@ -185,7 +253,7 @@ export class DockerExecutor implements AgentExecutor {
     });
 
     const containerName = `sacty-run-${runId}`;
-    this.active.add(containerName);
+    this.containers.register(containerName);
     let outcome: AgentOutcome;
     try {
       const { exitCode, stdout, stderr } = await new Promise<{
@@ -193,10 +261,11 @@ export class DockerExecutor implements AgentExecutor {
         stdout: string;
         stderr: string;
       }>((resolve, reject) => {
-        const child = spawn("docker", args, {
+        const child = this.spawnImpl("docker", args, {
           env: { ...dockerClientEnv(), ...invocation.env },
           stdio: ["ignore", "pipe", "pipe"],
         });
+        this.containers.attach(containerName, child);
         let out = "";
         let err = "";
         child.stdout.on("data", (chunk) => {
@@ -206,7 +275,7 @@ export class DockerExecutor implements AgentExecutor {
           err += chunk;
         });
         const timer = setTimeout(() => {
-          spawn("docker", ["kill", containerName], { stdio: "ignore", env: dockerClientEnv() });
+          this.containers.stop(containerName);
           reject(
             new Error(`エージェントの実行が ${this.timeoutMs / 60_000} 分を超えたため止めました。`),
           );
@@ -244,7 +313,7 @@ export class DockerExecutor implements AgentExecutor {
             : parseClaudeResult(stdout, exitCode, stderr);
       }
     } finally {
-      this.active.delete(containerName);
+      this.containers.finish(containerName);
       collectSecrets(); // コンテナで更新された認証情報も、出力から取り除く対象にする
       for (const file of syncBacks) {
         try {

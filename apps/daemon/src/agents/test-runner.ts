@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { dockerClientEnv, dockerRunArgs } from "./docker.js";
+import { dockerClientEnv, dockerRunArgs, RunningContainers } from "./docker.js";
 
 /** テストの出力は、末尾のこの文字数だけ残す（台帳と画面に載せるため）。 */
 export const TEST_OUTPUT_TAIL = 20_000;
@@ -22,21 +22,25 @@ export interface TestRunner {
  * 合否は終了コードで機械的に決める。
  */
 export class DockerTestRunner implements TestRunner {
-  private readonly active = new Set<string>();
+  private readonly containers: RunningContainers;
 
-  constructor(private readonly timeoutMs = 20 * 60_000) {}
+  private readonly spawnImpl: typeof spawn;
+
+  constructor(
+    private readonly timeoutMs = 20 * 60_000,
+    spawnImpl: typeof spawn = spawn,
+  ) {
+    this.containers = new RunningContainers(spawnImpl);
+    this.spawnImpl = spawnImpl;
+  }
 
   /** デーモンの停止時に、実行中のテストのコンテナを止める。 */
   kill(runId: string): void {
-    const name = `sacty-run-${runId}`;
-    if (!this.active.has(name)) return;
-    spawn("docker", ["kill", name], { stdio: "ignore", env: dockerClientEnv() });
+    this.containers.stop(`sacty-run-${runId}`);
   }
 
   abortAll(): void {
-    for (const name of this.active) {
-      spawn("docker", ["kill", name], { stdio: "ignore", env: dockerClientEnv() });
-    }
+    this.containers.stopAll();
   }
 
   async run({ runId, image, workspaceDir, command }: Parameters<TestRunner["run"]>[0]) {
@@ -50,13 +54,14 @@ export class DockerTestRunner implements TestRunner {
       command: ["sh", "-c", command],
     });
     const started = Date.now();
-    this.active.add(name);
+    this.containers.register(name);
     try {
       return await new Promise<TestRunResult>((resolve) => {
-        const child = spawn("docker", args, {
+        const child = this.spawnImpl("docker", args, {
           env: dockerClientEnv(),
           stdio: ["ignore", "pipe", "pipe"],
         });
+        this.containers.attach(name, child);
         let output = "";
         const keep = (chunk: Buffer) => {
           output = (output + chunk.toString()).slice(-TEST_OUTPUT_TAIL);
@@ -65,7 +70,7 @@ export class DockerTestRunner implements TestRunner {
         child.stderr.on("data", keep);
         const timer = setTimeout(() => {
           output += `\n[sacty] テストの実行が ${this.timeoutMs / 60_000} 分を超えたため止めました。`;
-          spawn("docker", ["kill", name], { stdio: "ignore", env: dockerClientEnv() });
+          this.containers.stop(name);
         }, this.timeoutMs);
         child.on("error", (error) => {
           clearTimeout(timer);
@@ -85,7 +90,7 @@ export class DockerTestRunner implements TestRunner {
         });
       });
     } finally {
-      this.active.delete(name);
+      this.containers.finish(name);
     }
   }
 }
