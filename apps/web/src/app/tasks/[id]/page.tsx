@@ -9,7 +9,15 @@ import { ResumeForm } from "@/components/resume-form";
 import { CostMeter, StatusLabel, StepChips } from "@/components/task-bits";
 import { TestViewpoints } from "@/components/test-viewpoints";
 import { DaemonUnavailableError, getTask } from "@/lib/daemon";
-import { describeEvent, formatStamp, START_LABEL, STEP_LABEL, statusText } from "@/lib/labels";
+import {
+  describeEvent,
+  formatStamp,
+  isWorking,
+  personAction,
+  START_LABEL,
+  STEP_LABEL,
+  statusText,
+} from "@/lib/labels";
 
 export default function TaskPage({ params }: { params: Promise<{ id: string }> }) {
   return (
@@ -39,11 +47,11 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
   const { task, ledger } = found;
   const lastFailure = [...ledger].reverse().find((e) => e.type === "AgentRunFailed");
   const proposal = openProposal(task);
-  const judging = Boolean(proposal && !proposal.judgement);
+  const action = personAction(task);
 
   return (
     <>
-      <AutoRefresh active={task.status === "queued" || task.status === "running" || judging} />
+      <AutoRefresh active={isWorking(task)} />
       <div className="flex flex-col gap-2">
         <div className="flex flex-wrap items-center gap-3">
           <h1 className="text-2xl font-bold text-balance">{task.title}</h1>
@@ -77,10 +85,10 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
             </p>
           </div>
           <Link
-            href={proposal ? "#proposals" : `/tasks/${task.id}/review`}
+            href={action.href}
             className="inline-flex min-h-11 items-center rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground"
           >
-            {task.status === "escalated" ? "判断する" : "チェックする"}
+            {action.label}
           </Link>
         </section>
       )}

@@ -1,6 +1,7 @@
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { EventInput } from "@sacty/core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { AgentExecutor } from "./agents/docker.js";
 import type { Invocation } from "./agents/invocation.js";
@@ -1089,6 +1090,144 @@ describe("ゴールガーディアン：変更の申し出の判定（PBI-9）",
     expect(task?.status).toBe("escalated");
     expect(task?.proposals[0]?.judgement?.reason).toMatch(/中断/);
     ledger.close();
+  });
+
+  it("判定と後始末は、同じトランザクションで台帳に記録する（レビュー指摘）", async () => {
+    const ledger = new SqliteLedgerStore(dbPath);
+    const appended: string[][] = [];
+    const original = ledger.append.bind(ledger);
+    ledger.append = (entry) => {
+      appended.push(entry.events.map((e) => e.event.type));
+      return original(entry);
+    };
+    const { service } = makeService(ledger, [
+      out("# 要求要件 v1"),
+      designWithProposal(),
+      verdict("approved"),
+    ]);
+    const { id } = service.createTicket({ title: "A" });
+    await service.runNext(id);
+    service.approve(id, { step: "requirements", submission: 1 });
+    await service.runNext(id);
+    expect(appended).toContainEqual(["ChangeJudged", "ChangeApplied", "StepSubmitted"]);
+    // 申し出のない実行も、完了と提出を一緒に記録する
+    expect(appended).toContainEqual(["AgentRunCompleted", "StepSubmitted"]);
+    ledger.close();
+  });
+
+  /** 判定（と人間の判断）までが記録され、後始末が記録されていない台帳を作る。 */
+  async function cutAfter(
+    judged: "approved" | "rejected" | "undecidable",
+    extra: { actor: "person" | "sacty"; event: EventInput }[] = [],
+  ) {
+    const ledger = new SqliteLedgerStore(dbPath);
+    const { service } = makeService(ledger, [out("# 要求要件 v1")]);
+    const { id } = service.createTicket({ title: "A" });
+    await service.runNext(id);
+    service.approve(id, { step: "requirements", submission: 1 });
+    const runId = "run-x";
+    const append = (actor: "agent" | "guardian" | "sacty" | "person", event: EventInput) =>
+      ledger.append({ taskId: id, projectId: "default", events: [{ actor, event }] });
+    append("sacty", {
+      type: "AgentRunStarted",
+      payload: { runId, step: "design", agentId: "a", authMode: "subscription" },
+    });
+    append("agent", {
+      type: "AgentRunCompleted",
+      payload: {
+        runId,
+        step: "design",
+        agentId: "a",
+        authMode: "subscription",
+        usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 0 },
+        costUsd: 0,
+        estimated: true,
+        output: "# 設計",
+      },
+    });
+    append("agent", {
+      type: "ChangeProposed",
+      payload: {
+        proposalId: "CP-1",
+        fromStep: "design",
+        target: "requirements",
+        reason: "r",
+        facts: [],
+        proposed: "# 要求要件 v2",
+      },
+    });
+    append("guardian", {
+      type: "ChangeJudged",
+      payload: { proposalId: "CP-1", verdict: judged, reason: "x", agentId: "g" },
+    });
+    for (const e of extra) append(e.actor, e.event);
+    const { service: restarted } = makeService(ledger);
+    expect(restarted.get(id)?.task.status).toBe("idle"); // どの状態にも進んでいない
+    restarted.recoverInterrupted();
+    return { ledger, service: restarted, id };
+  }
+
+  it("判定まで記録されて止まった台帳も、再起動時に後始末を記録して先に進める（レビュー指摘）", async () => {
+    const undecidable = await cutAfter("undecidable");
+    expect(undecidable.service.get(undecidable.id)?.task.status).toBe("escalated");
+    // 人間の判断も受け付ける
+    expect(
+      undecidable.service.decideChange(undecidable.id, "CP-1", { accept: false }).gate,
+    ).toEqual({ step: "design", submission: 1 });
+    undecidable.ledger.close();
+    rmSync(dbPath, { force: true });
+
+    const approved = await cutAfter("approved");
+    expect(approved.service.get(approved.id)?.task.gate).toEqual({
+      step: "requirements",
+      submission: 2,
+    });
+    approved.service.recoverInterrupted(); // 何度呼んでも同じ（冪等）
+    expect(
+      approved.service.get(approved.id)?.ledger.filter((e) => e.type === "StepSubmitted"),
+    ).toHaveLength(2);
+    approved.ledger.close();
+    rmSync(dbPath, { force: true });
+
+    const rejected = await cutAfter("rejected");
+    expect(rejected.service.get(rejected.id)?.task.gate).toEqual({ step: "design", submission: 1 });
+    rejected.ledger.close();
+  });
+
+  it("人間の判断や反映まで記録されて止まった台帳も、再起動時に先に進める（レビュー指摘）", async () => {
+    const decided = await cutAfter("undecidable", [
+      {
+        actor: "sacty",
+        event: {
+          type: "TaskEscalated",
+          payload: {
+            step: "design",
+            target: "requirements",
+            reason: "change_undecidable",
+            proposalId: "CP-1",
+          },
+        },
+      },
+      {
+        actor: "person",
+        event: { type: "ChangeDecided", payload: { proposalId: "CP-1", accept: true } },
+      },
+    ]);
+    expect(decided.service.get(decided.id)?.task.gate).toEqual({
+      step: "requirements",
+      submission: 2,
+    });
+    decided.ledger.close();
+    rmSync(dbPath, { force: true });
+
+    const applied = await cutAfter("approved", [
+      { actor: "sacty", event: { type: "ChangeApplied", payload: { proposalId: "CP-1" } } },
+    ]);
+    expect(applied.service.get(applied.id)?.task.gate).toEqual({
+      step: "requirements",
+      submission: 2,
+    });
+    applied.ledger.close();
   });
 });
 

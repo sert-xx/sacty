@@ -81,6 +81,29 @@ export function statusText(task: Task): string {
   return STATUS_LABEL[task.status];
 }
 
+/**
+ * sactyやエージェントが作業中か（実行待ち・実行中・ゴールガーディアンの判定中）。
+ * 画面はこのあいだ自動で更新する。判定中のタスクは待機（idle）のままなので、状態だけでは分からない。
+ */
+export function isWorking(task: Task): boolean {
+  if (task.status === "queued" || task.status === "running") return true;
+  const proposal = openProposal(task);
+  return Boolean(proposal && !proposal.judgement);
+}
+
+/** 人間が判断する場所への導線。 */
+export function personAction(task: Task): { href: string; label: string } {
+  // ゴールガーディアンが判定できなかった申し出は、タスク詳細の「変更の申し出と判定」で判断する
+  if (task.status === "escalated" && openProposal(task)) {
+    return { href: `/tasks/${task.id}#proposals`, label: "判断する" };
+  }
+  if (task.status === "escalated") return { href: `/tasks/${task.id}/review`, label: "判断する" };
+  if (task.status === "awaiting_approval") {
+    return { href: `/tasks/${task.id}/review`, label: "チェックする" };
+  }
+  return { href: `/tasks/${task.id}`, label: "判断する" };
+}
+
 /** 人間の判断が必要な状態か（承認待ち・エスカレーション・一時停止）。 */
 export function needsPerson(task: Task): boolean {
   return (
