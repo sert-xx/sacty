@@ -26,6 +26,8 @@ const task = (patch: Partial<Task> = {}): Task => ({
   testViewpoints: [],
   approved: {},
   proposals: [],
+  testMap: [],
+  verifyFailures: 0,
   submissions: {},
   remarks: [],
   budget: { usedUsd: 0, capUsd: 1, warned: false, estimated: false },
@@ -41,6 +43,11 @@ describe("一覧と詳細の導線（PBI-9 レビュー指摘）", () => {
     const judged = proposal({ judgement: { verdict: "rejected", reason: "x", at: "" } });
     expect(isWorking(task({ proposals: [judged] }))).toBe(false);
     expect(isWorking(task({ status: "running" }))).toBe(true);
+    // 実装の検証中（テスト・最終レビュー）も、待機（idle）のまま作業中（PBI-10a）
+    expect(isWorking(task({ verification: "pending" }))).toBe(true);
+    expect(statusText(task({ verification: "tests_passed" }))).toBe(
+      "ゴールガーディアンが最終レビュー中",
+    );
   });
 
   it("判定できなかった申し出は、判断フォームのある「変更の申し出と判定」へ誘導する", () => {

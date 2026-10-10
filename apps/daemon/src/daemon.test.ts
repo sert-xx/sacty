@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { EventInput } from "@sacty/core";
@@ -6,8 +6,10 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { AgentExecutor } from "./agents/docker.js";
 import type { Invocation } from "./agents/invocation.js";
 import type { AgentOutcome } from "./agents/parse.js";
+import type { TestRunner, TestRunResult } from "./agents/test-runner.js";
 import { type AgentConfig, type ConfigResult, loadConfig } from "./config.js";
 import { SqliteLedgerStore } from "./ledger.js";
+import type { RepositoryWorkspace } from "./repository.js";
 import { MemorySecretStore } from "./secrets.js";
 import { createApp } from "./server.js";
 import { TaskService } from "./service.js";
@@ -37,8 +39,45 @@ const configOf =
   (a: AgentConfig, budgetPerTaskUsd = 1): (() => ConfigResult) =>
   () => ({
     ok: true,
-    config: { image: "sacty-agent:test", defaultAgent: a, guardianAgent: a, budgetPerTaskUsd },
+    config: {
+      image: "sacty-agent:test",
+      defaultAgent: a,
+      guardianAgent: a,
+      budgetPerTaskUsd,
+      repository: {
+        url: "https://example.com/acme/app.git",
+        baseBranch: "main",
+        testCommand: "npm test",
+        testImage: "sacty-agent:test",
+      },
+    },
   });
+
+/** clone の代わりに空のディレクトリを作り、決まった差分を返す偽物。 */
+class FakeRepos implements RepositoryWorkspace {
+  prepared: { dir: string; url: string; baseBranch: string }[] = [];
+  diffText = "diff --git a/src/pay.ts b/src/pay.ts\n+export const pay = () => 1;";
+  fail?: string;
+  async prepare(dir: string, url: string, baseBranch: string) {
+    if (this.fail) throw new Error(this.fail);
+    mkdirSync(dir, { recursive: true });
+    this.prepared.push({ dir, url, baseBranch });
+    return { baseCommit: "base123" };
+  }
+  async diff() {
+    return this.diffText;
+  }
+}
+
+/** 決まった結果を順に返す、テスト実行の偽物。 */
+class FakeTests implements TestRunner {
+  calls: { workspaceDir: string; command: string; image: string }[] = [];
+  constructor(readonly results: TestRunResult[] = []) {}
+  async run(input: { workspaceDir: string; command: string; image: string }) {
+    this.calls.push(input);
+    return this.results.shift() ?? { exitCode: 0, output: "ok", durationMs: 5 };
+  }
+}
 
 /** 決まった結果を順に返す偽物の実行器。渡された呼び出し内容も記録する。 */
 class FakeExecutor implements AgentExecutor {
@@ -71,17 +110,26 @@ const completed = (outputTokens: number): AgentOutcome => ({
 function makeService(
   ledger: SqliteLedgerStore,
   outcomes: AgentOutcome[] = [],
-  options: { config?: () => ConfigResult; secrets?: Record<string, string> } = {},
+  options: {
+    config?: () => ConfigResult;
+    secrets?: Record<string, string>;
+    repos?: FakeRepos;
+    tests?: FakeTests;
+  } = {},
 ) {
   const executor = new FakeExecutor(outcomes);
+  const repos = options.repos ?? new FakeRepos();
+  const tests = options.tests ?? new FakeTests();
   const service = new TaskService({
     ledger,
     config: options.config ?? configOf(agent()),
     secrets: new MemorySecretStore(options.secrets ?? { "claude-oauth-token": "oauth-secret" }),
     executor,
+    repos,
+    tests,
     workspaceRoot: join(dir, "workspaces"),
   });
-  return { service, executor };
+  return { service, executor, repos, tests };
 }
 
 /** 画面が表示している（いま承認待ちの）提出回。 */
@@ -680,7 +728,7 @@ describe("設計の工程（PBI-8）", () => {
     ]);
 
     const approved = gate(service, id, "design");
-    expect(approved.status).toBe("idle"); // 実装の工程はPBI-10で実装
+    expect(approved.status).toBe("queued"); // 実装の工程を実行する
     expect(approved.steps.map((s) => s.state)).toEqual(["done", "done", "active", "todo"]);
     expect(approved.approved.design).toMatchObject({
       submission: 1,
@@ -1228,6 +1276,373 @@ describe("ゴールガーディアン：変更の申し出の判定（PBI-9）",
       submission: 2,
     });
     applied.ledger.close();
+  });
+});
+
+describe("実装の工程と最終レビュー（PBI-10a）", () => {
+  const out = (text: string, usageOutput = 100): AgentOutcome => ({
+    kind: "completed",
+    output: text,
+    usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: usageOutput },
+  });
+  const block = (b: Record<string, unknown>) => `\`\`\`json\n${JSON.stringify(b)}\n\`\`\``;
+  const design = out(
+    [
+      "# 設計",
+      block({
+        "sacty-test-viewpoints": [
+          { title: "同じキーの再送", input: "同じキーで2回送る", expected: "決済は1回" },
+          { title: "キーなし", input: "キーを付けない", expected: "400" },
+        ],
+      }),
+    ].join("\n\n"),
+  );
+  const implement = (
+    text: string,
+    map: { viewpointId: string; tests: string[] }[] = [
+      { viewpointId: "TV-1", tests: ["pay.test.ts › 同じキーの再送"] },
+      { viewpointId: "TV-2", tests: ["pay.test.ts › キーなし"] },
+    ],
+  ) => out([text, block({ "sacty-test-map": map })].join("\n\n"));
+  const review = (
+    viewpoints: [string, boolean][] = [
+      ["TV-1", true],
+      ["TV-2", true],
+    ],
+    remarks: [string, boolean][] = [["requirements-1-1", true]],
+    usageOutput = 1000,
+  ) =>
+    out(
+      block({
+        "sacty-final-review": {
+          viewpoints: viewpoints.map(([id, verified]) => ({
+            id,
+            verified,
+            reason: `${id}の判定理由`,
+          })),
+          remarks: remarks.map(([id, notRecurred]) => ({
+            id,
+            notRecurred,
+            reason: `${id}の判定理由`,
+          })),
+          summary: "所見",
+        },
+      }),
+      usageOutput,
+    );
+  const promptOf = (executor: FakeExecutor, i: number) =>
+    executor.calls[i]?.command.join(" ") ?? "";
+  const types = (svc: TaskService, id: string) => svc.get(id)?.ledger.map((e) => e.type) ?? [];
+
+  /** 要求要件（差し戻し1回）と設計を承認し、実装の工程が実行待ちになったところまで進める。 */
+  async function toImplement(
+    outcomes: AgentOutcome[],
+    options: { tests?: FakeTests; repos?: FakeRepos; config?: () => ConfigResult } = {},
+  ) {
+    const ledger = new SqliteLedgerStore(dbPath);
+    const made = makeService(
+      ledger,
+      [out("# 要求要件 v1"), out("# 要求要件 v2"), design, ...outcomes],
+      options,
+    );
+    const { service } = made;
+    const { id } = service.createTicket({ title: "決済API", body: "チケットの本文" });
+    await service.runNext(id);
+    service.requestChanges(id, {
+      step: "requirements",
+      submission: 1,
+      comments: ["失敗時の再試行の条件が無い"],
+    });
+    await service.runNext(id);
+    service.approve(id, { step: "requirements", submission: 2 });
+    await service.runNext(id);
+    service.approve(id, { step: "design", submission: 1 });
+    return { ledger, ...made, id };
+  }
+
+  /** 実装と検証を、止まるまで進める。 */
+  async function drain(service: TaskService, max = 10) {
+    for (let i = 0; i < max; i++) {
+      const ids = service.queuedTaskIds();
+      if (ids.length === 0) return;
+      for (const id of ids) await service.runNext(id);
+    }
+  }
+
+  it("実装は対象リポジトリの clone で、承認済みの成果物と人間の指摘を受け取って実行する", async () => {
+    const { ledger, service, executor, repos, id } = await toImplement([
+      implement("# 実装の説明"),
+      review(),
+    ]);
+    expect(service.queuedTaskIds()).toEqual([id]);
+    await service.runNext(id);
+
+    expect(repos.prepared).toEqual([
+      {
+        dir: join(dir, "workspaces", id, "repo"),
+        url: "https://example.com/acme/app.git",
+        baseBranch: "main",
+      },
+    ]);
+    expect(executor.dirs[3]).toBe(join(dir, "workspaces", id, "repo"));
+    const prompt = promptOf(executor, 3);
+    expect(prompt).toContain("--- 承認済みの要求要件 ---\n# 要求要件 v2");
+    expect(prompt).toContain("--- 承認済みの設計 ---\n# 設計");
+    expect(prompt).toContain(
+      "- [TV-1] 同じキーの再送\n  - 入力：同じキーで2回送る\n  - 期待結果：決済は1回",
+    );
+    expect(prompt).toContain("[requirements-1-1] 失敗時の再試行の条件が無い");
+    expect(prompt).toContain("sacty-test-map");
+
+    const task = service.get(id)?.task;
+    expect(task?.repository).toEqual({
+      url: "https://example.com/acme/app.git",
+      baseBranch: "main",
+      baseCommit: "base123",
+    });
+    expect(task?.outputs.implement).toBe("# 実装の説明");
+    expect(task?.testMap.map((m) => m.viewpointId)).toEqual(["TV-1", "TV-2"]);
+    expect(task?.verification).toBe("pending");
+    ledger.close();
+  });
+
+  it("テストを別に実行して通れば、ゴールガーディアンが新しいセッションで最終レビューし、合格なら実装を完了にする", async () => {
+    const tests = new FakeTests([{ exitCode: 0, output: "2 passed", durationMs: 1200 }]);
+    const { ledger, service, executor, id } = await toImplement(
+      [implement("# 実装の説明（ガーディアンには渡さない）"), review()],
+      { tests },
+    );
+    await drain(service);
+
+    expect(tests.calls).toEqual([
+      {
+        runId: expect.any(String),
+        image: "sacty-agent:test",
+        workspaceDir: join(dir, "workspaces", id, "repo"),
+        command: "npm test",
+      },
+    ]);
+    const guardian = promptOf(executor, 4);
+    expect(guardian).toContain("--- 承認済みの要求要件 ---\n# 要求要件 v2");
+    expect(guardian).toContain("- [TV-2] キーなし");
+    expect(guardian).toContain("- [TV-1] pay.test.ts › 同じキーの再送");
+    expect(guardian).toContain("コマンド：npm test（終了コード 0）\n出力の末尾：\n2 passed");
+    expect(guardian).toContain("- [requirements-1-1] 失敗時の再試行の条件が無い");
+    expect(guardian).toContain("+export const pay = () => 1;");
+    expect(guardian).not.toContain("ガーディアンには渡さない");
+    expect(guardian).not.toContain("チケットの本文");
+    expect(executor.dirs[4]).toContain("_guardian");
+    expect(existsSync(executor.dirs[4] ?? "")).toBe(false);
+
+    const task = service.get(id)?.task;
+    expect(task?.status).toBe("idle");
+    expect(task?.steps.map((st) => st.state)).toEqual(["done", "done", "done", "active"]);
+    expect(task?.lastReview).toMatchObject({ passed: true, summary: "所見" });
+    expect(task?.lastTests).toMatchObject({ passed: true, exitCode: 0, durationMs: 1200 });
+    expect(types(service, id).slice(-3)).toEqual([
+      "AgentRunCompleted",
+      "TestsRun",
+      "FinalReviewed",
+    ]);
+    expect(service.get(id)?.ledger.at(-1)?.actor).toBe("guardian");
+    expect(service.queuedTaskIds()).toEqual([]); // PR作成の工程は PBI-10b
+    ledger.close();
+  });
+
+  it("テストが通らなければ、出力を渡して実装をやり直す", async () => {
+    const tests = new FakeTests([
+      { exitCode: 1, output: "AssertionError: expected 2 to be 1", durationMs: 10 },
+      { exitCode: 0, output: "ok", durationMs: 10 },
+    ]);
+    const { ledger, service, executor, id } = await toImplement(
+      [implement("# v1"), implement("# v2"), review()],
+      { tests },
+    );
+    await drain(service);
+    const retry = promptOf(executor, 4);
+    expect(retry).toContain("--- 前回の検証：テストが通りませんでした ---");
+    expect(retry).toContain("AssertionError: expected 2 to be 1");
+    expect(retry).toContain("--- 前回の実装の説明 ---\n# v1");
+    const task = service.get(id)?.task;
+    expect(task?.steps[2]?.state).toBe("done");
+    expect(task?.verifyFailures).toBe(0);
+    ledger.close();
+  });
+
+  it("テストが通っても、テストの対応していない観点があれば不合格にする", async () => {
+    const { ledger, service, id } = await toImplement([
+      implement("# v1", [{ viewpointId: "TV-1", tests: ["a"] }]),
+    ]);
+    await service.runNext(id);
+    await service.runNext(id);
+    const task = service.get(id)?.task;
+    expect(task?.lastTests).toMatchObject({
+      exitCode: 0,
+      passed: false,
+      unmappedViewpoints: ["TV-2"],
+    });
+    expect(task?.status).toBe("queued");
+    ledger.close();
+  });
+
+  it("最終レビューで、観点を検証していない・指摘が再発している・判定が無いものは不合格にし、所見を渡してやり直す", async () => {
+    const { ledger, service, executor, id } = await toImplement([
+      implement("# v1"),
+      review([["TV-1", true]], [["requirements-1-1", false]]),
+      implement("# v2"),
+      review(),
+    ]);
+    await service.runNext(id); // 実装
+    await service.runNext(id); // テストと最終レビュー
+    const failed = service.get(id)?.task;
+    expect(failed?.status).toBe("queued");
+    expect(failed?.lastReview?.passed).toBe(false);
+    expect(failed?.lastReview?.viewpoints).toEqual([
+      { viewpointId: "TV-1", verified: true, reason: "TV-1の判定理由" },
+      { viewpointId: "TV-2", verified: false, reason: "判定がありません。" },
+    ]);
+
+    await drain(service);
+    const retry = promptOf(executor, 5);
+    expect(retry).toContain("ゴールガーディアンの最終レビューに通りませんでした");
+    expect(retry).toContain("- [TV-2] 観点を検証できていない：判定がありません。");
+    expect(retry).toContain(
+      "- [requirements-1-1] 過去の指摘が再発している：requirements-1-1の判定理由",
+    );
+    // 2回目の最終レビューには、1回目の判定を渡さない
+    const second = promptOf(executor, 6);
+    expect(second).toContain("sacty-final-review");
+    expect(second).not.toContain("判定理由");
+    expect(second).not.toContain("判定がありません");
+    expect(service.get(id)?.task.steps[2]?.state).toBe("done");
+    ledger.close();
+  });
+
+  it("検証に3回続けて通らなければ一時停止し、再開すると数え直して実装をやり直す", async () => {
+    const fail = { exitCode: 1, output: "fail", durationMs: 1 };
+    const tests = new FakeTests([fail, fail, fail]);
+    const { ledger, service, id } = await toImplement(
+      [implement("# v1"), implement("# v2"), implement("# v3"), implement("# v4")],
+      { tests },
+    );
+    await drain(service);
+    const paused = service.get(id)?.task;
+    expect(paused?.status).toBe("paused");
+    expect(paused?.pausedReason).toBe("verification");
+    expect(paused?.pausedMessage).toMatch(/3回続けて/);
+    expect(paused?.verifyFailures).toBe(3);
+
+    const resumed = service.resume(id, {});
+    expect(resumed.status).toBe("queued");
+    expect(resumed.verifyFailures).toBe(0);
+    ledger.close();
+  });
+
+  it("最終レビューを実行できなければ止め、再開するとテストを繰り返さずに最終レビューからやり直す", async () => {
+    const tests = new FakeTests();
+    const { ledger, service, id } = await toImplement(
+      [
+        implement("# v1"),
+        { kind: "failed", reason: "usage_limit", message: "You've hit your session limit" },
+        review(),
+      ],
+      { tests },
+    );
+    await service.runNext(id);
+    await service.runNext(id);
+    const paused = service.get(id)?.task;
+    expect(paused?.pausedReason).toBe("usage_limit");
+    expect(paused?.pausedMessage).toContain("session limit");
+    expect(paused?.verification).toBe("tests_passed");
+
+    service.resume(id, {});
+    await drain(service);
+    expect(tests.calls).toHaveLength(1);
+    expect(service.get(id)?.task.steps[2]?.state).toBe("done");
+    ledger.close();
+  });
+
+  it("対象リポジトリが無い・clone できなければ、理由を記録して止める", async () => {
+    const repos = new FakeRepos();
+    repos.fail = "git clone に失敗しました：Repository not found";
+    const { ledger, service, id } = await toImplement([], { repos });
+    await service.runNext(id);
+    const task = service.get(id)?.task;
+    expect(task?.pausedReason).toBe("error");
+    const failed = service.get(id)?.ledger.findLast((e) => e.type === "AgentRunFailed");
+    expect(failed?.type === "AgentRunFailed" && failed.payload.message).toContain(
+      "Repository not found",
+    );
+    ledger.close();
+  });
+
+  it("PBI-8・9で設計が承認され、実装の工程が無かったため待機していたタスクは、起動時に実装を実行待ちにする", async () => {
+    const ledger = new SqliteLedgerStore(dbPath);
+    const { service } = makeService(ledger, [out("# 要求要件"), design]);
+    const { id } = service.createTicket({ title: "A" });
+    await service.runNext(id);
+    service.approve(id, { step: "requirements", submission: 1 });
+    await service.runNext(id);
+    // PBI-9までの台帳：実装の工程を実行できなかったため、設計の承認後に待機していた
+    ledger.append({
+      taskId: id,
+      projectId: "default",
+      events: [
+        {
+          actor: "person",
+          event: { type: "StepApproved", payload: { step: "design", next: "idle" } },
+        },
+      ],
+    });
+    const { service: restarted } = makeService(ledger, [implement("# v1")]);
+    restarted.queueWaitingSteps();
+    expect(restarted.queuedTaskIds()).toEqual([id]);
+    await restarted.runNext(id);
+    restarted.queueWaitingSteps(); // 実装済み（検証待ち）のタスクには何もしない
+    expect(types(restarted, id).filter((t) => t === "StepQueued")).toHaveLength(1);
+    ledger.close();
+  });
+
+  it("前の工程に戻ったら、検証の失敗の回数と内容を持ち越さない", async () => {
+    const tests = new FakeTests([{ exitCode: 1, output: "fail", durationMs: 1 }]);
+    const proposal = out(
+      [
+        "# v2",
+        block({
+          "sacty-change-proposal": {
+            target: "requirements",
+            reason: "前提が誤っている",
+            facts: ["事実"],
+            proposed: "# 要求要件 v3",
+          },
+        }),
+      ].join("\n\n"),
+    );
+    const verdict = out(block({ "sacty-verdict": { verdict: "approved", reason: "ok" } }));
+    const { ledger, service, id } = await toImplement([implement("# v1"), proposal, verdict], {
+      tests,
+    });
+    await service.runNext(id); // 実装
+    await service.runNext(id); // テストが通らない
+    expect(service.get(id)?.task.verifyFailures).toBe(1);
+    await service.runNext(id); // 実装のやり直しで、要求要件の変更を申し出て認められる
+    const task = service.get(id)?.task;
+    expect(task?.gate).toEqual({ step: "requirements", submission: 3 });
+    expect(task?.verifyFailures).toBe(0);
+    expect(task?.verifyFeedback).toBeUndefined();
+    expect(task?.verification).toBeUndefined();
+    ledger.close();
+  });
+
+  it("デーモンを再起動しても、テストの実行待ちから検証を続ける", async () => {
+    const { ledger, service, id } = await toImplement([implement("# v1")]);
+    await service.runNext(id);
+    const { service: restarted } = makeService(ledger, [review()]);
+    restarted.recoverInterrupted();
+    expect(restarted.queuedTaskIds()).toEqual([id]);
+    await restarted.runNext(id);
+    expect(restarted.get(id)?.task.steps[2]?.state).toBe("done");
+    ledger.close();
   });
 });
 

@@ -63,8 +63,19 @@ export type TestViewpoint = z.infer<typeof TestViewpoint>;
 export const Verdict = z.enum(["approved", "rejected", "undecidable"]);
 export type Verdict = z.infer<typeof Verdict>;
 
-/** タスクが止まった理由。 */
-export const PauseReason = z.enum(["budget", "usage_limit", "auth", "error"]);
+/** 実装の検証（テストと最終レビュー）が、続けて通らなかったときに止める回数。 */
+export const MAX_VERIFY_ATTEMPTS = 3;
+
+/** 観点ごとの、テストの対応。工程エージェントが申告する。 */
+export const TestMapping = z.object({
+  viewpointId: z.string().min(1),
+  /** テストの場所と名前（例：src/pay.test.ts › 同じキーの再送）。 */
+  tests: z.array(z.string().min(1)),
+});
+export type TestMapping = z.infer<typeof TestMapping>;
+
+/** タスクが止まった理由。verification：実装の検証が続けて通らない。 */
+export const PauseReason = z.enum(["budget", "usage_limit", "auth", "error", "verification"]);
 export type PauseReason = z.infer<typeof PauseReason>;
 
 const TaskCreated = z.object({
@@ -111,6 +122,8 @@ const AgentRunCompleted = z.object({
     responses: z.array(RemarkResponse).default([]),
     /** 設計の工程で作ったテスト観点。PBI-7までの台帳には無い。 */
     testViewpoints: z.array(TestViewpoint).default([]),
+    /** 実装の工程が申告した、観点とテストの対応。 */
+    testMap: z.array(TestMapping).default([]),
   }),
 });
 
@@ -135,7 +148,11 @@ const BudgetWarned = z.object({
 
 const TaskPaused = z.object({
   type: z.literal("TaskPaused"),
-  payload: z.object({ reason: PauseReason }),
+  payload: z.object({
+    reason: PauseReason,
+    /** 止まった理由の詳しい説明（実行の失敗の記録が無い場合）。 */
+    message: z.string().optional(),
+  }),
 });
 
 const BudgetCapRaised = z.object({
@@ -226,6 +243,65 @@ const ChangeApplied = z.object({
   payload: z.object({ proposalId: z.string() }),
 });
 
+/** 実装の対象リポジトリを、タスクの作業領域に用意した。 */
+const RepositoryPrepared = z.object({
+  type: z.literal("RepositoryPrepared"),
+  payload: z.object({
+    url: z.string(),
+    baseBranch: z.string(),
+    /** 作業の起点にしたコミット。 */
+    baseCommit: z.string(),
+  }),
+});
+
+/**
+ * sacty がテストを実行した結果。終了コードが0で、すべての観点にテストが対応していれば合格。
+ * 不合格なら実装をやり直す（続けて通らなければ一時停止）。
+ */
+const TestsRun = z.object({
+  type: z.literal("TestsRun"),
+  payload: z.object({
+    command: z.string(),
+    exitCode: z.number().int(),
+    /** テストが対応していない観点。 */
+    unmappedViewpoints: z.array(z.string()),
+    passed: z.boolean(),
+    /** 出力の末尾。 */
+    output: z.string(),
+    durationMs: z.number().int().nonnegative(),
+  }),
+});
+
+const ViewpointReview = z.object({
+  viewpointId: z.string(),
+  /** テストが、その観点を本当に検証しているか。 */
+  verified: z.boolean(),
+  reason: z.string(),
+});
+
+const RemarkReview = z.object({
+  remarkId: z.string(),
+  /** 指摘された問題が、今回の成果物で再発していないか。 */
+  notRecurred: z.boolean(),
+  reason: z.string(),
+});
+
+/** ゴールガーディアンの最終レビュー。観点ごと・人間の指摘ごとに判定する。 */
+const FinalReviewed = z.object({
+  type: z.literal("FinalReviewed"),
+  payload: z.object({
+    passed: z.boolean(),
+    viewpoints: z.array(ViewpointReview),
+    remarks: z.array(RemarkReview),
+    /** 全体への所見（形式を読めなかった場合の理由など）。 */
+    summary: z.string(),
+    agentId: z.string(),
+    usage: TokenUsage.optional(),
+    costUsd: z.number().nonnegative().default(0),
+    estimated: z.boolean().default(false),
+  }),
+});
+
 const ChangesRequested = z.object({
   type: z.literal("ChangesRequested"),
   payload: z.object({
@@ -286,6 +362,9 @@ export const EventInput = z.discriminatedUnion("type", [
   ChangeJudged,
   ChangeDecided,
   ChangeApplied,
+  RepositoryPrepared,
+  TestsRun,
+  FinalReviewed,
   ChangesRequested,
   RemarkVoided,
   TaskEscalated,

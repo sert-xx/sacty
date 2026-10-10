@@ -2,8 +2,10 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { serve } from "@hono/node-server";
 import { DockerExecutor } from "./agents/docker.js";
+import { DockerTestRunner } from "./agents/test-runner.js";
 import { loadConfig, resolveHome } from "./config.js";
 import { SqliteLedgerStore } from "./ledger.js";
+import { GitRepositoryWorkspace } from "./repository.js";
 import { KeychainSecretStore } from "./secrets.js";
 import { createApp } from "./server.js";
 import { TaskService } from "./service.js";
@@ -21,11 +23,14 @@ if (!token) {
 mkdirSync(home, { recursive: true });
 const ledger = new SqliteLedgerStore(join(home, "sacty.db"));
 const executor = new DockerExecutor();
+const tests = new DockerTestRunner();
 const service = new TaskService({
   ledger,
   config: () => loadConfig(home),
   secrets: new KeychainSecretStore(),
   executor,
+  repos: new GitRepositoryWorkspace(),
+  tests,
   workspaceRoot: join(home, "workspaces"),
 });
 service.recoverInterrupted();
@@ -53,6 +58,7 @@ const shutdown = async () => {
   // 一時ファイルの削除）が終わるのを待ってから、台帳を閉じて終了する。
   const draining = worker.drain();
   executor.abortAll();
+  tests.abortAll();
   const timedOut = await Promise.race([
     draining.then(() => false),
     new Promise<boolean>((resolve) => setTimeout(() => resolve(true), DRAIN_TIMEOUT_MS).unref()),
