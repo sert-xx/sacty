@@ -153,8 +153,14 @@ class FakeRepos implements RepositoryWorkspace {
 
 /** リポジトリごとに決めたファイルを置く、コンテキストの取得の偽物。 */
 class FakeContexts implements ContextFetcher {
+  /** 取得ごとのリポジトリと、渡された git の認証の環境変数。 */
+  fetched: { repo: string; authEnv?: Record<string, string> }[] = [];
+  /** これが設定されていれば、取得に失敗する（エラー文に、渡されたトークンを含める）。 */
+  fail?: boolean;
   constructor(private readonly repos: Record<string, Record<string, string>> = {}) {}
-  async fetch(ref: ContextRef, out: string) {
+  async fetch(ref: ContextRef, out: string, authEnv?: Record<string, string>) {
+    this.fetched.push({ repo: ref.repo, ...(authEnv ? { authEnv } : {}) });
+    if (this.fail) throw new Error(`Authentication failed ${authEnv?.GIT_CONFIG_VALUE_0 ?? ""}`);
     const files = this.repos[ref.repo];
     if (!files) throw new Error("repository not found");
     for (const [path, content] of Object.entries(files)) {
@@ -2741,6 +2747,87 @@ describe("コンテキストリポジトリ（PBI-6a）", () => {
     expect(failed?.type === "AgentRunFailed" && renderMessage(failed.payload.message, "en")).toBe(
       "Cannot fetch the context repository (https://example.com/missing.git#): repository not found",
     );
+    ledger.close();
+  });
+});
+
+describe("コンテキストの取得の認証（PBI-13 レビュー指摘）", () => {
+  const out = (text: string): AgentOutcome => ({
+    kind: "completed",
+    output: text,
+    usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 1 },
+  });
+  const basic = (token: string) =>
+    `Authorization: Basic ${Buffer.from(`x-access-token:${token}`).toString("base64")}`;
+
+  it("HTTPS の GitHub のコンテキストと継承先は、プロジェクトに選んだ gh のアカウントで取得する", async () => {
+    const ledger = new SqliteLedgerStore(dbPath);
+    const github = new FakeGitHub({ me: "ghp_active", "side-job": "ghp_side" });
+    const contexts = new FakeContexts({
+      "https://github.com/acme/team-ctx.git": {
+        "rules.md": "# チーム",
+        "sacty-context.yaml": "extends: https://github.com/acme/company-ctx.git#main\n",
+      },
+      "https://github.com/acme/company-ctx.git": {
+        "rules.md": "# 会社",
+        "sacty-context.yaml": "extends: /local/base\n",
+      },
+      "/local/base": { "rules.md": "# 共通" },
+    });
+    const { service } = makeService(ledger, [out("# 要求要件")], { contexts, github });
+    const project = service.saveProject(undefined, {
+      name: "副業",
+      githubAccount: "side-job",
+      context: { repo: "https://github.com/acme/team-ctx.git" },
+    });
+    const { id } = service.createTicket({ title: "A", projectId: project.id });
+    await service.runNext(id);
+    expect(contexts.fetched).toEqual([
+      {
+        repo: "https://github.com/acme/team-ctx.git",
+        authEnv: expect.objectContaining({ GIT_CONFIG_VALUE_0: basic("ghp_side") }),
+      },
+      {
+        repo: "https://github.com/acme/company-ctx.git",
+        authEnv: expect.objectContaining({ GIT_CONFIG_VALUE_0: basic("ghp_side") }),
+      },
+      // GitHub の HTTPS でないもの（ローカルのパス・SSH）は、ホストの認証のまま
+      { repo: "/local/base" },
+    ]);
+    expect(github.requested).toEqual(["side-job", "side-job"]);
+    ledger.close();
+  });
+
+  it("アカウントを選んでいなければ取得せずに止め、取得の失敗ではトークンを残さない", async () => {
+    const ledger = new SqliteLedgerStore(dbPath);
+    const contexts = new FakeContexts({});
+    const { service, executor } = makeService(ledger, [out("# 要求要件")], { contexts });
+    const unset = service.saveProject(undefined, {
+      name: "未選択",
+      context: { repo: "https://github.com/acme/ctx.git" },
+    });
+    const { id } = service.createTicket({ title: "A", projectId: unset.id });
+    await service.runNext(id);
+    expect(contexts.fetched).toEqual([]);
+    expect(executor.calls).toHaveLength(0);
+    const failed = service.get(id)?.ledger.findLast((e) => e.type === "AgentRunFailed");
+    expect(failed?.type === "AgentRunFailed" && failed.payload.message).toEqual({
+      code: "github.accountRequired",
+      params: { project: "未選択" },
+    });
+
+    contexts.fail = true;
+    const chosen = service.saveProject(undefined, {
+      name: "選択済み",
+      githubAccount: "me",
+      context: { repo: "https://github.com/acme/private-ctx.git" },
+    });
+    const second = service.createTicket({ title: "B", projectId: chosen.id });
+    await service.runNext(second.id);
+    const ledgerText = JSON.stringify(service.get(second.id)?.ledger);
+    expect(ledgerText).toContain("context.fetchFailed");
+    expect(ledgerText).not.toContain("ghp_secret");
+    expect(ledgerText).not.toContain(Buffer.from("x-access-token:ghp_secret").toString("base64"));
     ledger.close();
   });
 });

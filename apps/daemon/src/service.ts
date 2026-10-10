@@ -717,12 +717,15 @@ export class TaskService {
     const contextSource = this.deps.projects.get(task.projectId)?.context;
     let context: Awaited<ReturnType<typeof prepareContext>> | undefined;
     if (contextSource) {
+      // コンテキストと継承の各リポジトリも、HTTPS の GitHub はプロジェクトの gh のアカウントで取得する
+      const usedSecrets: string[] = [];
       try {
         context = await prepareContext(
           this.deps.contexts,
           contextSource,
           agent.runtime === "codex" ? "codex" : "claude-code",
           agent.runtime === "codex" ? CONTAINER_CODEX_HOME : CONTAINER_CLAUDE_CONFIG_DIR,
+          (repo) => this.gitAuth(task, repo, usedSecrets),
         );
       } catch (error) {
         this.append(task, [
@@ -735,7 +738,7 @@ export class TaskService {
                 step,
                 agentId: agent.id,
                 reason: "error",
-                message: errorText(error),
+                message: redactText(errorText(error), usedSecrets),
               },
             },
           },
