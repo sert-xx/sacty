@@ -418,9 +418,7 @@ const ContextResolved = z.object({
   type: z.literal("ContextResolved"),
   payload: z.object({
     runId: z.string(),
-    layers: z.array(
-      z.object({ repo: z.string(), ref: z.string().optional(), commit: z.string() }),
-    ),
+    layers: z.array(z.object({ repo: z.string(), ref: z.string().optional(), commit: z.string() })),
     warnings: z.array(z.string()).default([]),
   }),
 });
