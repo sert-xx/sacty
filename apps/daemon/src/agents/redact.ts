@@ -1,4 +1,4 @@
-import type { DaemonText } from "@sacty/core";
+import { type DaemonText, mapFreeText } from "@sacty/core";
 
 export const REDACTED = "[REDACTED]";
 
@@ -28,15 +28,8 @@ export function redact(text: string, secrets: readonly string[]): string {
  * （外から来た文を引数に入れているため）。
  */
 export function redactText<T extends DaemonText>(text: T, secrets: readonly string[]): T {
-  const walk = (value: unknown): unknown => {
-    if (typeof value === "string") return redact(value, secrets);
-    if (Array.isArray(value)) return value.map(walk);
-    if (value && typeof value === "object") {
-      return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, walk(v)]));
-    }
-    return value;
-  };
-  return walk(text) as T;
+  // コードや決まった値の引数（列挙など）は変えない（短い秘密情報と重なっても、文言が壊れないように）
+  return mapFreeText(text, (value) => redact(value, secrets)) as T;
 }
 
 /** JSON（認証ファイルなど）に含まれる、秘密情報らしい文字列をすべて取り出す。 */

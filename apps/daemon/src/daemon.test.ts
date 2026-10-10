@@ -1657,7 +1657,8 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     expect(failed?.lastReview?.passed).toBe(false);
     expect(failed?.lastReview?.viewpoints).toEqual([
       { viewpointId: "TV-1", verified: true, reason: "TV-1の判定理由" },
-      { viewpointId: "TV-2", verified: false, reason: "判定がありません。" },
+      // 判定が無いことは sacty の文言なので、コードで記録する（PBI-11b）。指示には日本語の文で入れる
+      { viewpointId: "TV-2", verified: false, reason: { code: "review.verdictMissing" } },
     ]);
 
     await drain(service);

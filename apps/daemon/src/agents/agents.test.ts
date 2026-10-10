@@ -459,6 +459,40 @@ describe("秘密情報の除去", () => {
       },
     });
     expect(redactText("token ghp_1", ["ghp_1"])).toBe("token [REDACTED]");
+
+    // 秘密情報がコードや決まった値（列挙）と重なっても、文言の形は壊さない（レビュー指摘）
+    const nested = {
+      code: "pr.failed",
+      params: {
+        detail: {
+          code: "github.failed",
+          params: { action: "createPr", status: 401, detail: "failed token", hint: "token" },
+        },
+      },
+    };
+    const redacted = redactText(nested, ["failed", "token"]);
+    expect(redacted).toEqual({
+      code: "pr.failed",
+      params: {
+        detail: {
+          code: "github.failed",
+          params: {
+            action: "createPr",
+            status: 401,
+            detail: "[REDACTED] [REDACTED]",
+            hint: "token",
+          },
+        },
+      },
+    });
+    expect(renderMessage(redacted, "en")).toBe(
+      "Could not open the PR: Could not open the PR: GitHub API 401 [REDACTED] [REDACTED] (the token is invalid)",
+    );
+    // 知らないコードは、コードを変えずに引数の文字列だけを取り除く
+    expect(redactText({ code: "x.failed", params: { a: "failed" } }, ["failed"])).toEqual({
+      code: "x.failed",
+      params: { a: "[REDACTED]" },
+    });
   });
 
   it("認証ファイルのJSONから、トークンらしい文字列を取り出す", async () => {
@@ -649,5 +683,38 @@ echo '{"type":"result","is_error":false,"result":"ok","usage":{"input_tokens":1,
       "./CLAUDE.md",
       "./skills/review/SKILL.md",
     ]);
+  });
+});
+
+describe("判定を読み取れなかったときの文言（PBI-11b レビュー指摘）", () => {
+  it("sacty が補う説明はコードで返し、ゴールガーディアンが書いた理由はそのまま返す", async () => {
+    const { extractVerdict, extractFinalReview } = await import("../prompts.js");
+    const unreadable = extractVerdict("判定はありません");
+    expect(unreadable).toEqual({
+      verdict: "undecidable",
+      reason: { code: "guardian.verdictUnreadable" },
+    });
+    expect(renderMessage(unreadable.reason, "en")).toBe(
+      "Could not read a verdict from the Goal Guardian's output.",
+    );
+    expect(
+      extractVerdict('```json\n{"sacty-verdict": {"verdict": "approved", "reason": "妥当"}}\n```'),
+    ).toEqual({ verdict: "approved", reason: "妥当" });
+
+    const none = extractFinalReview("出力なし", ["TV-1"], ["r-1"]);
+    expect(none.viewpoints[0]?.reason).toEqual({ code: "review.unreadable" });
+    expect(none.remarks[0]?.reason).toEqual({ code: "review.unreadable" });
+    expect(none.summary).toEqual({ code: "review.unreadable" });
+    const partial = extractFinalReview(
+      '```json\n{"sacty-final-review": {"viewpoints": [{"id": "TV-1", "verified": true, "reason": "確認済み"}], "remarks": [], "summary": "所見"}}\n```',
+      ["TV-1", "TV-2"],
+      [],
+    );
+    expect(partial.viewpoints.map((v) => v.reason)).toEqual([
+      "確認済み",
+      { code: "review.verdictMissing" },
+    ]);
+    expect(renderMessage(partial.viewpoints[1]?.reason, "en")).toBe("No verdict was given.");
+    expect(partial.summary).toBe("所見");
   });
 });

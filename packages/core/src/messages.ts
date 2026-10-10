@@ -88,6 +88,9 @@ const PARAMS = {
   "run.repositorySettingsMissing": z.object({ project: z.string(), repo: z.string() }),
   "run.prTokenRequired": null,
   "run.repositoryNotConfigured": null,
+  "guardian.verdictUnreadable": null,
+  "review.verdictMissing": null,
+  "review.unreadable": null,
   "run.guardianFailed": z.object({ detail: TextParam }),
   "verify.testsUnavailable": z.object({ detail: TextParam }),
   "verify.workspaceMissing": null,
@@ -298,6 +301,9 @@ const ja: MessageDictionary = {
     "PRを作るには、config.yaml の github.token_secret（GitHub のトークン）が必要です。設定するか、プロジェクトのリポジトリの設定でPRを作らないようにしてから再開してください。",
   "run.repositoryNotConfigured":
     "実装の対象リポジトリが設定されていません。config.yaml の repository を設定してから再開してください。",
+  "guardian.verdictUnreadable": "ゴールガーディアンの出力から、判定を読み取れませんでした。",
+  "review.verdictMissing": "判定がありません。",
+  "review.unreadable": "最終レビューの出力から、判定を読み取れませんでした。",
   "run.guardianFailed": ({ detail }, text) =>
     `ゴールガーディアンの実行に失敗しました：${text(detail)}`,
   "verify.testsUnavailable": ({ detail }, text) => `テストを実行できません：${text(detail)}`,
@@ -454,6 +460,9 @@ const en: MessageDictionary = {
     "Opening a PR requires github.token_secret (a GitHub token) in config.yaml. Set it, or turn off PRs in the project's repository settings, then resume.",
   "run.repositoryNotConfigured":
     "No target repository is configured. Set repository in config.yaml, then resume.",
+  "guardian.verdictUnreadable": "Could not read a verdict from the Goal Guardian's output.",
+  "review.verdictMissing": "No verdict was given.",
+  "review.unreadable": "Could not read the verdicts from the final review output.",
   "run.guardianFailed": ({ detail }, text) => `The Goal Guardian run failed: ${text(detail)}`,
   "verify.testsUnavailable": ({ detail }, text) => `Cannot run the tests: ${text(detail)}`,
   "verify.workspaceMissing":
@@ -605,4 +614,39 @@ export function issueMessage(issue: z.core.$ZodIssue): DaemonMessage {
     default:
       return { code: "input.invalid" };
   }
+}
+
+/**
+ * 文のうち、外から来た文や自由に書ける引数（文字列の引数と、入れ子の文）だけに fn をかける
+ * （秘密情報を取り除くためなど）。コードと、決まった値の引数（列挙・数値など）は変えない。
+ * 知らないコードは、引数の文字列すべてにかける（コードはそのまま）。
+ */
+export function mapFreeText(value: DaemonText, fn: (text: string) => string): DaemonText {
+  if (typeof value === "string") return fn(value);
+  if (!value.params) return value;
+  const schema = isMessageCode(value.code) ? PARAMS[value.code] : undefined;
+  const shape = schema ? (schema as z.ZodObject).shape : undefined;
+  const mapUnknown = (v: unknown): unknown =>
+    typeof v === "string"
+      ? fn(v)
+      : Array.isArray(v)
+        ? v.map(mapUnknown)
+        : v && typeof v === "object"
+          ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, mapUnknown(x)]))
+          : v;
+  const params = Object.fromEntries(
+    Object.entries(value.params).map(([key, param]) => {
+      const field = shape?.[key];
+      if (!shape) return [key, mapUnknown(param)];
+      // 入れ子の文
+      if (field === TextParam && DaemonText.safeParse(param).success) {
+        return [key, mapFreeText(param as DaemonText, fn)];
+      }
+      // 自由に書ける文字列の引数
+      if (field instanceof z.ZodString && typeof param === "string") return [key, fn(param)];
+      // 決まった値（列挙・数値・真偽）や、形を知らない引数はそのまま
+      return [key, param];
+    }),
+  );
+  return { ...value, params };
 }

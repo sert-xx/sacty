@@ -308,14 +308,15 @@ const ViewpointReview = z.object({
   viewpointId: z.string(),
   /** テストが、その観点を本当に検証しているか。 */
   verified: z.boolean(),
-  reason: z.string(),
+  /** ゴールガーディアンが書いた理由。判定が無いときは sacty の文言（PBI-11）。 */
+  reason: DaemonText,
 });
 
 const RemarkReview = z.object({
   remarkId: z.string(),
   /** 指摘された問題が、今回の成果物で再発していないか。 */
   notRecurred: z.boolean(),
-  reason: z.string(),
+  reason: DaemonText,
 });
 
 /** ゴールガーディアンの最終レビュー。観点ごと・人間の指摘ごとに判定する。 */
@@ -326,7 +327,7 @@ const FinalReviewed = z.object({
     viewpoints: z.array(ViewpointReview),
     remarks: z.array(RemarkReview),
     /** 全体への所見（形式を読めなかった場合の理由など）。 */
-    summary: z.string(),
+    summary: DaemonText,
     agentId: z.string(),
     usage: TokenUsage.optional(),
     costUsd: z.number().nonnegative().default(0),

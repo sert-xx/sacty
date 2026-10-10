@@ -106,7 +106,9 @@ export async function Implementation({ task }: { task: Task }) {
                           </Pill>
                         )}
                       </span>
-                      {judged && <span className="break-words">{judged.reason}</span>}
+                      {judged && (
+                        <span className="break-words">{messages.labels.text(judged.reason)}</span>
+                      )}
                     </dd>
                   </dl>
                 </li>
@@ -149,7 +151,7 @@ export async function Implementation({ task }: { task: Task }) {
               {formatStamp(review.at, messages.locale)}
             </span>
           </p>
-          {review.summary && <p className="break-words">{review.summary}</p>}
+          {review.summary && <p className="break-words">{messages.labels.text(review.summary)}</p>}
           {review.remarks.length > 0 && (
             <>
               <p className="text-xs text-muted-foreground">{m.recurrence}</p>
@@ -160,7 +162,7 @@ export async function Implementation({ task }: { task: Task }) {
                     <Pill tone={r.notRecurred ? OK : NG}>
                       {r.notRecurred ? m.notRecurred : m.recurred}
                     </Pill>
-                    <span className="break-words">{r.reason}</span>
+                    <span className="break-words">{messages.labels.text(r.reason)}</span>
                   </li>
                 ))}
               </ul>

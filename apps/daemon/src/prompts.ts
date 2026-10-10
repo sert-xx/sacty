@@ -1,5 +1,7 @@
 import {
+  type DaemonText,
   type FinalReview,
+  message,
   type RemarkResponse,
   renderMessage,
   type StepKey,
@@ -9,6 +11,9 @@ import {
   type TestViewpoint,
   type Verdict,
 } from "@sacty/core";
+
+/** 記録した文（コードと引数の文言を含む）を、指示や PR の本文に入れる日本語の文にする。 */
+const ja = (value: DaemonText) => renderMessage(value, "ja");
 
 /**
  * 実行できる工程（PR作成はエージェントではなく sacty が実行する）。
@@ -51,7 +56,7 @@ function feedbackLines(task: Task): string[] {
       ...(t.unmappedViewpoints.length > 0
         ? [`テストが対応していない観点：${t.unmappedViewpoints.join(", ")}`]
         : []),
-      ...(t.note ? [`sacty の注記：${renderMessage(t.note, "ja")}`] : []),
+      ...(t.note ? [`sacty の注記：${ja(t.note)}`] : []),
       "出力の末尾：",
       t.output.slice(-OUTPUT_IN_PROMPT),
     ];
@@ -60,13 +65,13 @@ function feedbackLines(task: Task): string[] {
   return [
     "",
     "--- 前回の検証：ゴールガーディアンの最終レビューに通りませんでした ---",
-    ...(r.summary ? [r.summary] : []),
+    ...(r.summary ? [ja(r.summary)] : []),
     ...r.viewpoints
       .filter((v) => !v.verified)
-      .map((v) => `- [${v.viewpointId}] 観点を検証できていない：${v.reason}`),
+      .map((v) => `- [${v.viewpointId}] 観点を検証できていない：${ja(v.reason)}`),
     ...r.remarks
       .filter((m) => !m.notRecurred)
-      .map((m) => `- [${m.remarkId}] 過去の指摘が再発している：${m.reason}`),
+      .map((m) => `- [${m.remarkId}] 過去の指摘が再発している：${ja(m.reason)}`),
   ];
 }
 
@@ -408,7 +413,7 @@ export function buildGuardianPrompt(task: Task, proposal: TaskProposal): string 
 }
 
 /** ゴールガーディアンの出力から判定を読む。読めなければ判定できなかったものとして扱う。 */
-export function extractVerdict(output: string): { verdict: Verdict; reason: string } {
+export function extractVerdict(output: string): { verdict: Verdict; reason: DaemonText } {
   const blocks = [...output.matchAll(/```json\s*\n([\s\S]*?)\n```/g)].reverse();
   for (const block of blocks) {
     try {
@@ -421,10 +426,7 @@ export function extractVerdict(output: string): { verdict: Verdict; reason: stri
       // 次のブロックを試す
     }
   }
-  return {
-    verdict: "undecidable",
-    reason: "ゴールガーディアンの出力から、判定を読み取れませんでした。",
-  };
+  return { verdict: "undecidable", reason: message("guardian.verdictUnreadable") };
 }
 
 /**
@@ -510,9 +512,7 @@ export function extractFinalReview(
   };
   const vs = byId(raw?.viewpoints);
   const rs = byId(raw?.remarks);
-  const missing = raw
-    ? "判定がありません。"
-    : "最終レビューの出力から、判定を読み取れませんでした。";
+  const missing = raw ? message("review.verdictMissing") : message("review.unreadable");
   const viewpoints = viewpointIds.map((id) => {
     const r = vs.get(id);
     return {
@@ -566,7 +566,7 @@ export function buildPullRequestBody(task: Task): string {
     "| --- | --- | --- | --- | --- |",
     ...viewpoints.map((v) => {
       const judged = review?.viewpoints.find((r) => r.viewpointId === v.id);
-      return `| ${v.id} ${cell(v.title)} | ${cell(v.input)} | ${cell(v.expected)} | ${cell((mapped.get(v.id) ?? []).join(" / ") || "（なし）")} | ${judged ? `${judged.verified ? "✅" : "❌"} ${cell(judged.reason)}` : "（なし）"} |`;
+      return `| ${v.id} ${cell(v.title)} | ${cell(v.input)} | ${cell(v.expected)} | ${cell((mapped.get(v.id) ?? []).join(" / ") || "（なし）")} | ${judged ? `${judged.verified ? "✅" : "❌"} ${cell(ja(judged.reason))}` : "（なし）"} |`;
     }),
     "",
     tests
@@ -575,12 +575,13 @@ export function buildPullRequestBody(task: Task): string {
     "",
     "## ゴールガーディアンの最終レビュー",
     "",
-    review ? `${review.passed ? "合格" : "不合格"}。${review.summary}` : "（なし）",
+    review ? `${review.passed ? "合格" : "不合格"}。${ja(review.summary)}` : "（なし）",
     ...(review && review.remarks.length > 0
       ? [
           "",
           ...review.remarks.map(
-            (r) => `- ${r.remarkId}：${r.notRecurred ? "再発なし" : "再発している"}（${r.reason}）`,
+            (r) =>
+              `- ${r.remarkId}：${r.notRecurred ? "再発なし" : "再発している"}（${ja(r.reason)}）`,
           ),
         ]
       : []),
