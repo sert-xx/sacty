@@ -118,23 +118,32 @@ describe("GitHub の Issue の検索（PBI-5a）", () => {
   });
 });
 
-/** created_at の昇順に並んだ Issue を、検索の条件（created:>=）とページに応じて返す fetch の偽物。 */
-function searchFetch(total: number, createdAt: (n: number) => string) {
+/**
+ * updated_at の昇順に並んだ Issue を、検索の条件（updated:>=）とページに応じて返す fetch の偽物。
+ * limitAfter 回目より後のリクエストは、レート制限（403）にする。
+ */
+function searchFetch(total: number, updatedAt: (n: number) => string, limitAfter = Infinity) {
   const all = Array.from({ length: total }, (_, i) => ({
     number: i + 1,
     title: `#${i + 1}`,
     html_url: `https://github.com/acme/app/issues/${i + 1}`,
     repository_url: "https://api.github.com/repos/acme/app",
     labels: [{ name: "sacty" }],
-    created_at: createdAt(i + 1),
+    updated_at: updatedAt(i + 1),
   }));
   const queries: string[] = [];
   const impl = (async (url: string) => {
     const params = new URL(url).searchParams;
     const q = params.get("q") ?? "";
     queries.push(`${q} page=${params.get("page")}`);
-    const since = q.match(/created:>=(\S+)/)?.[1];
-    const matched = all.filter((i) => !since || i.created_at >= since);
+    if (queries.length > limitAfter) {
+      return new Response(JSON.stringify({ message: "API rate limit exceeded" }), {
+        status: 403,
+        headers: { "x-ratelimit-remaining": "0" },
+      });
+    }
+    const since = q.match(/updated:>=(\S+)/)?.[1];
+    const matched = all.filter((i) => !since || i.updated_at >= since);
     const page = Number(params.get("page"));
     // 検索 API と同じく、1つの検索では1,000件までしか返さない
     const items = matched.slice(0, 1000).slice((page - 1) * 100, page * 100);
@@ -144,7 +153,7 @@ function searchFetch(total: number, createdAt: (n: number) => string) {
 }
 
 describe("検索の上限の先（レビュー指摘）", () => {
-  it("100件を超える結果は次のページを、1,000件を超える結果は作成日時で範囲を区切ってたどる", async () => {
+  it("100件を超える結果は次のページを、1,000件を超える結果は更新日時で範囲を区切ってたどる", async () => {
     const { impl, queries } = searchFetch(1001, (n) =>
       new Date(Date.UTC(2026, 0, 1) + n * 1000).toISOString().replace(".000", ""),
     );
@@ -152,7 +161,7 @@ describe("検索の上限の先（レビュー指摘）", () => {
     expect(incomplete).toBeUndefined();
     expect(issues).toHaveLength(1001);
     expect(new Set(issues.map((i) => i.number)).size).toBe(1001);
-    expect(queries.at(-1)).toBe("repo:acme/app created:>=2026-01-01T00:16:40Z page=1");
+    expect(queries.at(-1)).toBe("repo:acme/app updated:>=2026-01-01T00:16:40Z page=1");
   });
 
   it("同じ日時の Issue が多すぎて先へ進めなければ、取り切れなかったことを返す", async () => {
@@ -160,5 +169,28 @@ describe("検索の上限の先（レビュー指摘）", () => {
     const { issues, incomplete } = await new GitHubIssueSearch(impl).search("repo:acme/app", "t");
     expect(issues).toHaveLength(1000);
     expect(incomplete).toMatch(/すべてを検索できませんでした/);
+  });
+
+  it("レート制限で止まっても、それまでに取れた分と、どこまで読んだかを返す（レビュー指摘）", async () => {
+    const stamp = (n: number) =>
+      new Date(Date.UTC(2026, 0, 1) + n * 1000).toISOString().replace(".000", "");
+    const first = searchFetch(3100, stamp, 30);
+    const partial = await new GitHubIssueSearch(first.impl).search("repo:acme/app", "t");
+    expect(partial.rateLimited).toBe(true);
+    expect(partial.incomplete).toMatch(/レート制限/);
+    expect(partial.issues.length).toBeGreaterThanOrEqual(2900);
+    expect(partial.cursor).toBe(stamp(partial.issues.length));
+
+    // 次の取り込みは、読んだところから続け、残りをすべて取れる
+    const next = searchFetch(3100, stamp, 30);
+    const rest = await new GitHubIssueSearch(next.impl).search(
+      "repo:acme/app",
+      "t",
+      partial.cursor,
+    );
+    expect(rest.rateLimited).toBeUndefined();
+    const all = new Set([...partial.issues, ...rest.issues].map((i) => i.number));
+    expect(all.size).toBe(3100);
+    expect(next.queries[0]).toBe(`repo:acme/app updated:>=${partial.cursor} page=1`);
   });
 });

@@ -37,16 +37,26 @@ const config =
 
 class FakeSearch implements IssueSearch {
   queries: string[] = [];
+  /** 検索ごとに渡された、どこまで読んだか。 */
+  sinces: (string | undefined)[] = [];
+  /** 返す、どこまで読んだか。 */
+  cursor?: string;
+  rateLimited = false;
   fail?: string;
   /** この条件の検索だけ失敗させる。 */
   failQuery?: string;
   constructor(private readonly issues: FoundIssue[]) {}
-  async search(query: string, token: string) {
+  async search(query: string, token: string, since?: string) {
     if (this.fail || query === this.failQuery) {
       throw new Error(`${this.fail ?? "Issue を検索できませんでした：GitHub API 422"} ${token}`);
     }
     this.queries.push(query);
-    return { issues: this.issues.filter((i) => query.includes(`repo:${i.repo}`)) };
+    this.sinces.push(since);
+    return {
+      issues: this.issues.filter((i) => query.includes(`repo:${i.repo}`)),
+      cursor: this.cursor,
+      ...(this.rateLimited ? { rateLimited: true, incomplete: "レート制限" } : {}),
+    };
   }
 }
 
@@ -140,6 +150,34 @@ describe("GitHub Issue の定期的な取り込み（PBI-5a）", () => {
         message: "Issue を検索できませんでした：GitHub API 422 [REDACTED]",
       },
     ]);
+    ledger.close();
+  });
+
+  it("読んだところから次の取り込みを続け、レート制限ならその回のほかの検索をやめる（レビュー指摘）", async () => {
+    const { ledger, service, search, intake, advance } = setup();
+    service.saveProject(undefined, {
+      name: "認証",
+      sources: [{ scope: "repo", target: "acme/auth", label: "sacty" }],
+    });
+    search.cursor = "2026-10-10T00:00:00Z";
+    search.rateLimited = true;
+    await intake.tick(true);
+    expect(search.queries).toHaveLength(1); // 1つ目でレート制限になり、2つ目は検索しない
+    expect(service.status().intake?.errors?.map((e) => e.message)).toEqual([
+      "レート制限",
+      "レート制限のため、次の取り込みで検索します。",
+    ]);
+
+    search.rateLimited = false;
+    advance(300_000);
+    await intake.tick();
+    expect(search.sinces).toEqual([undefined, "2026-10-10T00:00:00Z", undefined]);
+
+    // プロジェクトの設定が変わったら、先頭から読み直す
+    service.saveProject(undefined, { name: "請求" });
+    advance(300_000);
+    await intake.tick();
+    expect(search.sinces.slice(-2)).toEqual([undefined, undefined]);
     ledger.close();
   });
 

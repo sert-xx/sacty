@@ -13,6 +13,12 @@ export class IssueIntake {
   private current: Promise<void> | undefined;
   private stopped = false;
   private lastRun = 0;
+  /**
+   * 取り込み元（検索の条件）ごとの、どこまで読んだか（更新日時）。次の取り込みはここから続ける。
+   * デーモンを再起動すると先頭から読み直す（取り込み済みの Issue は二重に取り込まない）。
+   */
+  private readonly cursors = new Map<string, string>();
+  private revision: string | undefined;
 
   constructor(
     private readonly service: TaskService,
@@ -69,13 +75,29 @@ export class IssueIntake {
       });
       return;
     }
+    // 担当の判定が変わりうるので、プロジェクトの設定が変わったら先頭から読み直す
+    // （以前はほかのプロジェクトの担当で取り込まなかった Issue を、取りこぼさないため）
+    const revision = this.service.projectsRevision();
+    if (revision !== this.revision) {
+      this.cursors.clear();
+      this.revision = revision;
+    }
     const found = [];
     const errors: { query?: string; message: string }[] = [];
+    let rateLimited = false;
     for (const query of this.service.intakeQueries()) {
+      if (rateLimited) {
+        errors.push({ query, message: "レート制限のため、次の取り込みで検索します。" });
+        continue;
+      }
       try {
-        const result = await this.search.search(query, token);
+        const result = await this.search.search(query, token, this.cursors.get(query));
         found.push(...result.issues);
-        if (result.incomplete) errors.push({ query, message: result.incomplete });
+        if (result.cursor) this.cursors.set(query, result.cursor);
+        if (result.incomplete) {
+          errors.push({ query, message: redact(result.incomplete, [token]) });
+        }
+        rateLimited = result.rateLimited === true;
       } catch (error) {
         errors.push({ query, message: redact(describe(error), [token]) });
       }

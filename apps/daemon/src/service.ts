@@ -186,6 +186,14 @@ export class TaskService {
     return [...queries];
   }
 
+  /** プロジェクトの設定の版。変わったら、取り込みは読んだ位置を忘れて先頭から読み直す。 */
+  projectsRevision(): string {
+    return this.deps.projects
+      .all()
+      .map((p) => `${p.id}@${p.updatedAt}`)
+      .join(",");
+  }
+
   recordIntake(status: IntakeStatus): void {
     this.intakeStatus = status;
   }
