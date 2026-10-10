@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import {
   type Actor,
@@ -12,28 +12,41 @@ import {
   changeRounds,
   computeCostUsd,
   DEFAULT_BUDGET_USD,
+  DecideChangeInput,
   type EventInput,
   formatUsd,
   GATED_STEPS,
   type LedgerEvent,
   MAX_CHANGE_REQUESTS,
   MVP_STEPS,
+  openProposal,
   project,
+  proposalAccepted,
   RequestChangesInput,
   ResumeTaskInput,
   type StepKey,
   type Task,
+  type TaskProposal,
 } from "@sacty/core";
 import type { AgentExecutor } from "./agents/docker.js";
 import { buildInvocation } from "./agents/invocation.js";
 import type { AgentOutcome } from "./agents/parse.js";
 import { redact } from "./agents/redact.js";
-import type { ConfigResult } from "./config.js";
+import type { AgentConfig, ConfigResult, SactyConfig } from "./config.js";
 import type { LedgerStore } from "./ledger.js";
-import { buildPrompt, EXECUTABLE_STEPS, extractBlocks } from "./prompts.js";
+import {
+  buildGuardianPrompt,
+  buildPrompt,
+  changeableSteps,
+  EXECUTABLE_STEPS,
+  extractBlocks,
+  extractVerdict,
+} from "./prompts.js";
 import { SecretNotFoundError, type SecretStore } from "./secrets.js";
 
 export const DEFAULT_PROJECT_ID = "default";
+
+type LedgerItem = { actor: Actor; event: EventInput };
 
 /** 状態に合わない操作（一時停止していないタスクの再開など）。APIでは409にする。 */
 export class InvalidOperationError extends Error {}
@@ -122,9 +135,32 @@ export class TaskService {
       .map((t) => t.id);
   }
 
-  /** デーモンが止まって中断された実行を、失敗として記録して一時停止する。 */
+  /**
+   * デーモンが止まって中断された実行を、失敗として記録して一時停止する。
+   * 中断されたゴールガーディアンの判定は、判定できなかったものとして人間に判断してもらう。
+   */
   recoverInterrupted(): void {
     for (const task of this.tasks.values()) {
+      const judging = task.proposals.find((p) => !p.judgement);
+      if (task.status === "idle" && judging) {
+        this.append(task, [
+          {
+            actor: "sacty",
+            event: {
+              type: "ChangeJudged",
+              payload: {
+                proposalId: judging.id,
+                verdict: "undecidable",
+                reason: "デーモンが停止したため、ゴールガーディアンの判定が中断されました。",
+                agentId: "unknown",
+              },
+            },
+          },
+          ...this.settleEvents(task, judging, undefined),
+        ]);
+        continue;
+      }
+      if (task.status === "idle" && this.resumeSettlement(task)) continue;
       if (task.status !== "running" || !task.currentRunId) continue;
       const step = activeStep(task) ?? "requirements";
       this.append(task, [
@@ -189,41 +225,14 @@ export class TaskService {
       },
     ]);
 
-    // 実行に渡した秘密情報。台帳に書く前に、出力やエラー文から取り除く。
-    const usedSecrets: string[] = [];
-    let outcome: AgentOutcome;
-    try {
-      const invocation = await buildInvocation(
-        agent,
-        buildPrompt(task, step),
-        this.deps.secrets,
-        (value) => usedSecrets.push(value),
-        step,
-      );
-      const workspaceDir = join(this.deps.workspaceRoot, task.id);
-      mkdirSync(workspaceDir, { recursive: true });
-      outcome = await this.deps.executor.run({
-        runId,
-        image: config.config.image,
-        workspaceDir,
-        invocation,
-      });
-    } catch (error) {
-      outcome = {
-        kind: "failed",
-        reason: error instanceof SecretNotFoundError ? "auth" : "error",
-        message: error instanceof Error ? error.message : String(error),
-      };
-    }
-
-    outcome =
-      outcome.kind === "failed"
-        ? { ...outcome, message: redact(outcome.message, usedSecrets) }
-        : { ...outcome, output: redact(outcome.output, usedSecrets) };
-
-    // サブスクリプションは実際の請求が発生しないので、同じ単価で換算した値として扱う
-    const estimated = agent.auth.mode === "subscription" || agent.auth.mode === "stub";
-    const costUsd = outcome.usage ? computeCostUsd(outcome.usage, agent.price) : 0;
+    const { outcome, costUsd, estimated } = await this.execute({
+      agent,
+      image: config.config.image,
+      runId,
+      prompt: buildPrompt(task, step),
+      role: step,
+      workspaceDir: join(this.deps.workspaceRoot, task.id),
+    });
 
     if (outcome.kind === "failed") {
       this.append(task, [
@@ -251,9 +260,10 @@ export class TaskService {
     }
 
     const latest = this.mustGet(task.id);
-    const { output, responses, testViewpoints } = extractBlocks(
+    const { output, responses, testViewpoints, proposal } = extractBlocks(
       outcome.output,
       new Set(latest.remarks.filter((r) => r.step === step && !r.voided).map((r) => r.id)),
+      changeableSteps(latest, step),
     );
     const events: { actor: Actor; event: EventInput }[] = [
       {
@@ -275,17 +285,220 @@ export class TaskService {
         },
       },
     ];
-    // 承認ゲートのある工程は、人間の承認待ちで止める
-    if (GATED_STEPS.includes(step)) {
-      events.push({
+    if (!proposal) {
+      // 実行の完了と提出は、同じトランザクションで記録する
+      this.checkBudget(this.append(task, [...events, ...this.submitEvents(latest, step)]));
+      return;
+    }
+
+    // 承認済みの成果物への変更の申し出は、提出の前にゴールガーディアンが判定する
+    const proposalId = `CP-${latest.proposals.length + 1}`;
+    events.push({
+      actor: "agent",
+      event: { type: "ChangeProposed", payload: { proposalId, fromStep: step, ...proposal } },
+    });
+    const proposed = this.append(task, events);
+    const judged = proposed.proposals.find((p) => p.id === proposalId);
+    if (!judged) throw new Error(`proposal ${proposalId} is missing`);
+    const judgement = await this.judge(proposed, judged, config.config);
+    // 判定と、その後始末（エスカレーション・反映・提出）は同じトランザクションで記録する。
+    // 間でデーモンが止まると、判定済みなのにどの状態にも進まないタスクが残るため。
+    const accepted =
+      judgement.verdict === "approved"
+        ? true
+        : judgement.verdict === "rejected"
+          ? false
+          : undefined;
+    this.checkBudget(
+      this.append(proposed, [
+        { actor: "guardian", event: { type: "ChangeJudged", payload: judgement } },
+        ...this.settleEvents(proposed, judged, accepted),
+      ]),
+    );
+  }
+
+  /** 秘密情報を取り出してエージェントを実行し、出力やエラー文から秘密情報を取り除いて返す。 */
+  private async execute(run: {
+    agent: AgentConfig;
+    image: string;
+    runId: string;
+    prompt: string;
+    role: StepKey | "guardian";
+    workspaceDir: string;
+  }): Promise<{ outcome: AgentOutcome; costUsd: number; estimated: boolean }> {
+    // 実行に渡した秘密情報。台帳に書く前に、出力やエラー文から取り除く。
+    const usedSecrets: string[] = [];
+    let outcome: AgentOutcome;
+    try {
+      const invocation = await buildInvocation(
+        run.agent,
+        run.prompt,
+        this.deps.secrets,
+        (value) => usedSecrets.push(value),
+        run.role,
+      );
+      mkdirSync(run.workspaceDir, { recursive: true });
+      outcome = await this.deps.executor.run({
+        runId: run.runId,
+        image: run.image,
+        workspaceDir: run.workspaceDir,
+        invocation,
+      });
+    } catch (error) {
+      outcome = {
+        kind: "failed",
+        reason: error instanceof SecretNotFoundError ? "auth" : "error",
+        message: error instanceof Error ? error.message : String(error),
+      };
+    }
+    outcome =
+      outcome.kind === "failed"
+        ? { ...outcome, message: redact(outcome.message, usedSecrets) }
+        : { ...outcome, output: redact(outcome.output, usedSecrets) };
+    // サブスクリプションは実際の請求が発生しないので、同じ単価で換算した値として扱う
+    const estimated = run.agent.auth.mode === "subscription" || run.agent.auth.mode === "stub";
+    const costUsd = outcome.usage ? computeCostUsd(outcome.usage, run.agent.price) : 0;
+    return { outcome, costUsd, estimated };
+  }
+
+  /** 承認ゲートのある工程なら、人間の承認待ちで止めるイベント。 */
+  private submitEvents(task: Task, step: StepKey): LedgerItem[] {
+    if (!GATED_STEPS.includes(step)) return [];
+    return [
+      {
         actor: "sacty",
         event: {
           type: "StepSubmitted",
-          payload: { step, submission: (latest.submissions[step] ?? 0) + 1 },
+          payload: { step, submission: (task.submissions[step] ?? 0) + 1 },
         },
+      },
+    ];
+  }
+
+  /**
+   * ゴールガーディアンが、変更の申し出を判定する。判定ごとに新しいセッション（空の作業領域・
+   * 空の設定）で実行し、承認済みの成果物と申し出の内容だけを渡す。実行に失敗した場合は、
+   * 判定できなかったものとして人間に判断してもらう。
+   */
+  private async judge(
+    task: Task,
+    proposal: TaskProposal,
+    config: SactyConfig,
+  ): Promise<Extract<EventInput, { type: "ChangeJudged" }>["payload"]> {
+    const agent = config.guardianAgent;
+    const runId = randomUUID();
+    const workspaceDir = join(this.deps.workspaceRoot, "_guardian", runId);
+    let result: Awaited<ReturnType<TaskService["execute"]>>;
+    try {
+      result = await this.execute({
+        agent,
+        image: config.image,
+        runId,
+        prompt: buildGuardianPrompt(task, proposal),
+        role: "guardian",
+        workspaceDir,
       });
+    } finally {
+      rmSync(workspaceDir, { recursive: true, force: true });
     }
-    this.checkBudget(this.append(task, events));
+    const { outcome, costUsd, estimated } = result;
+    const judgement =
+      outcome.kind === "completed"
+        ? extractVerdict(outcome.output)
+        : {
+            verdict: "undecidable" as const,
+            reason: `ゴールガーディアンの実行に失敗しました：${outcome.message}`,
+          };
+    return {
+      proposalId: proposal.id,
+      ...judgement,
+      agentId: agent.id,
+      usage: outcome.usage,
+      costUsd,
+      estimated,
+    };
+  }
+
+  /**
+   * 判定（または人間の判断）に従った、申し出の後始末のイベント。判定や判断と同じ
+   * トランザクションで記録する（間で止まっても、どの状態にも進まないタスクを残さないため）。
+   * - 判定できなければエスカレーションにする
+   * - 認められたら変更を反映する。要求要件の変更は、人間の再承認に回す
+   * - 却下されたら（設計の変更が反映された場合も）、申し出た工程の成果物をそのまま提出する
+   * 反映（ChangeApplied）は提出回を変えないので、提出回は記録前のタスクから求めてよい。
+   */
+  private settleEvents(
+    task: Task,
+    proposal: TaskProposal,
+    accepted: boolean | undefined,
+  ): LedgerItem[] {
+    if (accepted === undefined) {
+      return [
+        {
+          actor: "sacty",
+          event: {
+            type: "TaskEscalated",
+            payload: {
+              step: proposal.fromStep,
+              target: proposal.target,
+              reason: "change_undecidable",
+              proposalId: proposal.id,
+            },
+          },
+        },
+      ];
+    }
+    if (!accepted) return this.submitEvents(task, proposal.fromStep);
+    return [
+      { actor: "sacty", event: { type: "ChangeApplied", payload: { proposalId: proposal.id } } },
+      ...this.submitEvents(
+        task,
+        proposal.target === "requirements" ? "requirements" : proposal.fromStep,
+      ),
+    ];
+  }
+
+  /**
+   * 判定や判断は記録されたのに、後始末が記録されていないタスクを先に進める（冪等）。
+   * 判定と後始末は同じトランザクションで記録するので通常は起きないが、
+   * 途中までしか記録されていない台帳でも、タスクが止まったままにならないようにする。
+   */
+  private resumeSettlement(task: Task): boolean {
+    const last = this.deps.ledger.forTask(task.id).at(-1);
+    if (
+      last?.type !== "ChangeJudged" &&
+      last?.type !== "ChangeDecided" &&
+      last?.type !== "ChangeApplied"
+    ) {
+      return false;
+    }
+    const proposal = task.proposals.find((p) => p.id === last.payload.proposalId);
+    if (!proposal) return false;
+    const accepted = proposalAccepted(proposal);
+    const events =
+      last.type === "ChangeApplied"
+        ? this.submitEvents(
+            task,
+            proposal.target === "requirements" ? "requirements" : proposal.fromStep,
+          )
+        : this.settleEvents(task, proposal, accepted);
+    if (events.length > 0) this.append(task, events);
+    return true;
+  }
+
+  /** ゴールガーディアンが判定できなかった変更の申し出を、人間が判断する。 */
+  decideChange(id: string, proposalId: string, raw: unknown): Task {
+    const { accept } = DecideChangeInput.parse(raw);
+    const task = this.tasks.get(id);
+    if (!task) throw new InvalidOperationError("タスクが見つかりません。");
+    const open = openProposal(task);
+    if (task.status !== "escalated" || open?.id !== proposalId || !open.judgement) {
+      throw new InvalidOperationError("この変更の申し出は、判断待ちではありません。");
+    }
+    return this.append(task, [
+      { actor: "person", event: { type: "ChangeDecided", payload: { proposalId, accept } } },
+      ...this.settleEvents(task, open, accept),
+    ]);
   }
 
   private mustGet(id: string): Task {

@@ -199,6 +199,67 @@ describe("project", () => {
     expect(task?.testViewpoints).toEqual([]);
   });
 
+  it("認められた設計の変更は、承認済みの設計とテスト観点を置き換える（PBI-9）", () => {
+    seq = 0;
+    const run = (runId: string, step: "requirements" | "design", output: string) => [
+      ev("t1", {
+        type: "AgentRunStarted",
+        payload: { runId, step, agentId: "a", authMode: "subscription" },
+      }),
+      ev("t1", {
+        type: "AgentRunCompleted",
+        payload: {
+          runId,
+          step,
+          agentId: "a",
+          authMode: "subscription",
+          usage,
+          costUsd: 0,
+          estimated: true,
+          output,
+          testViewpoints:
+            step === "design" ? [{ id: "TV-1", title: "旧", input: "i", expected: "e" }] : [],
+        },
+      }),
+      ev("t1", { type: "StepSubmitted", payload: { step, submission: 1 } }),
+      ev("t1", { type: "StepApproved", payload: { step, next: "queued" } }, "person"),
+    ];
+    const base = [
+      created("t1"),
+      steps("t1"),
+      ...run("r1", "requirements", "# 要求要件"),
+      ...run("r2", "design", "# 設計"),
+      ...run("r3", "implement" as "design", "# 実装").slice(0, 2),
+      ev("t1", {
+        type: "ChangeProposed",
+        payload: {
+          proposalId: "CP-1",
+          fromStep: "implement",
+          target: "design",
+          reason: "r",
+          facts: ["f"],
+          proposed: "# 設計 v2",
+          testViewpoints: [{ id: "TV-1", title: "新", input: "i", expected: "e" }],
+        },
+      }),
+    ];
+    const judged = ev("t1", {
+      type: "ChangeJudged",
+      payload: { proposalId: "CP-1", verdict: "approved", reason: "ok", agentId: "g" },
+    });
+    const applied = ev("t1", { type: "ChangeApplied", payload: { proposalId: "CP-1" } });
+    const task = project([...base, judged, applied]).get("t1");
+    expect(task?.approved.design).toMatchObject({
+      submission: 1,
+      output: "# 設計 v2",
+      testViewpoints: [{ title: "新" }],
+    });
+    expect(task?.approved.requirements?.output).toBe("# 要求要件");
+    expect(task?.steps.map((s) => s.state)).toEqual(["done", "done", "active", "todo"]);
+    // 判定の前や、却下された申し出は反映できない
+    expect(() => project([...base, applied])).toThrow(/not accepted/);
+  });
+
   it("同じ台帳から何度復元しても同じ状態になる", () => {
     seq = 0;
     const events = [created("t1"), steps("t1"), started("t1", "r1"), completed("t1", "r1", 0.2)];

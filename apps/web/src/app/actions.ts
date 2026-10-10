@@ -4,7 +4,14 @@ import { CreateTicketInput, StepKey } from "@sacty/core";
 import { refresh } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
-import { approveStep, createTicket, requestChanges, resumeTask, voidRemark } from "@/lib/daemon";
+import {
+  approveStep,
+  createTicket,
+  decideChange,
+  requestChanges,
+  resumeTask,
+  voidRemark,
+} from "@/lib/daemon";
 
 export type CreateTicketState = {
   fieldErrors?: { title?: string[]; body?: string[] };
@@ -119,4 +126,25 @@ export async function voidRemarkAction(formData: FormData): Promise<void> {
   const remarkId = String(formData.get("remarkId") ?? "");
   await voidRemark(taskId, remarkId);
   refresh();
+}
+
+export type DecideChangeState = { message?: string };
+
+/** ゴールガーディアンが判定できなかった変更の申し出を、認めるか認めないかを決める。 */
+export async function decideChangeAction(
+  _prev: DecideChangeState,
+  formData: FormData,
+): Promise<DecideChangeState> {
+  const taskId = String(formData.get("taskId") ?? "");
+  const proposalId = String(formData.get("proposalId") ?? "");
+  const accept = formData.get("decision") === "accept";
+  let result: Awaited<ReturnType<typeof decideChange>>;
+  try {
+    result = await decideChange(taskId, proposalId, accept);
+  } catch {
+    return { message: DAEMON_DOWN };
+  }
+  if (!result.ok) return { message: result.message };
+  refresh();
+  return {};
 }

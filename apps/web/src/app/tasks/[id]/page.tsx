@@ -1,14 +1,23 @@
-import type { StepKey, Task } from "@sacty/core";
+import { appliedProposalFor, openProposal, type StepKey, type Task } from "@sacty/core";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Suspense } from "react";
 import { AutoRefresh } from "@/components/auto-refresh";
 import { DaemonError } from "@/components/daemon-error";
+import { Proposals } from "@/components/proposals";
 import { ResumeForm } from "@/components/resume-form";
 import { CostMeter, StatusLabel, StepChips } from "@/components/task-bits";
 import { TestViewpoints } from "@/components/test-viewpoints";
 import { DaemonUnavailableError, getTask } from "@/lib/daemon";
-import { describeEvent, formatStamp, START_LABEL, STEP_LABEL, statusText } from "@/lib/labels";
+import {
+  describeEvent,
+  formatStamp,
+  isWorking,
+  personAction,
+  START_LABEL,
+  STEP_LABEL,
+  statusText,
+} from "@/lib/labels";
 
 export default function TaskPage({ params }: { params: Promise<{ id: string }> }) {
   return (
@@ -37,10 +46,12 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
   if (!found) notFound();
   const { task, ledger } = found;
   const lastFailure = [...ledger].reverse().find((e) => e.type === "AgentRunFailed");
+  const proposal = openProposal(task);
+  const action = personAction(task);
 
   return (
     <>
-      <AutoRefresh active={task.status === "queued" || task.status === "running"} />
+      <AutoRefresh active={isWorking(task)} />
       <div className="flex flex-col gap-2">
         <div className="flex flex-wrap items-center gap-3">
           <h1 className="text-2xl font-bold text-balance">{task.title}</h1>
@@ -59,21 +70,25 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
         >
           <div className="flex flex-col gap-1">
             <h2 id="gate" className="text-[15px] font-semibold text-warn">
-              {task.status === "escalated"
-                ? "差し戻しが上限に達しました（エスカレーション）"
-                : statusText(task)}
+              {proposal
+                ? "ゴールガーディアンが変更の申し出を判定できませんでした（エスカレーション）"
+                : task.status === "escalated"
+                  ? "差し戻しが上限に達しました（エスカレーション）"
+                  : statusText(task)}
             </h2>
             <p className="text-sm">
-              {task.status === "escalated"
-                ? "このまま承認するか、上限を超えて差し戻すかを判断してください。"
-                : "成果物を確認し、承認するか差し戻してください。"}
+              {proposal
+                ? "申し出の理由と根拠を確認し、変更を認めるかどうかを判断してください。"
+                : task.status === "escalated"
+                  ? "このまま承認するか、上限を超えて差し戻すかを判断してください。"
+                  : "成果物を確認し、承認するか差し戻してください。"}
             </p>
           </div>
           <Link
-            href={`/tasks/${task.id}/review`}
+            href={action.href}
             className="inline-flex min-h-11 items-center rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground"
           >
-            {task.status === "escalated" ? "判断する" : "チェックする"}
+            {action.label}
           </Link>
         </section>
       )}
@@ -112,6 +127,7 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
             task.steps.some((s) => s.key === "design" && s.state !== "todo")) && (
             <Deliverable task={task} step="design" />
           )}
+          {(task.approved.requirements || task.proposals.length > 0) && <Proposals task={task} />}
           <section
             aria-labelledby="steps"
             className="flex flex-col gap-3 rounded-xl border border-border bg-card p-5"
@@ -164,6 +180,7 @@ function Deliverable({ task, step }: { task: Task; step: StepKey }) {
   const viewpoints = approved?.testViewpoints ?? task.testViewpoints;
   // 前の工程に差し戻されて、まだ実行対象になっていない工程の下書き
   const stale = !approved && task.steps.find((s) => s.key === step)?.state === "todo";
+  const fromProposal = approved ? undefined : appliedProposalFor(task, step);
   const running =
     task.status === "running" && task.steps.some((s) => s.key === step && s.state === "active");
   return (
@@ -176,9 +193,11 @@ function Deliverable({ task, step }: { task: Task; step: StepKey }) {
         <span className="text-[13px] font-normal text-muted-foreground">
           {approved
             ? `人間が承認済み（${approved.submission}回目の提出・凍結）`
-            : stale
-              ? "前回の下書き（前の工程が承認されたあと、作り直します）"
-              : "工程エージェントの下書き"}
+            : fromProposal
+              ? `${fromProposal.id}で申し出られた変更案（人間の再承認待ち）`
+              : stale
+                ? "前回の下書き（前の工程が承認されたあと、作り直します）"
+                : "工程エージェントの下書き"}
         </span>
       </h2>
       {output ? (

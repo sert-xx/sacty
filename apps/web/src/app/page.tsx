@@ -5,7 +5,14 @@ import { DaemonError } from "@/components/daemon-error";
 import { NewTicketDialog } from "@/components/new-ticket-dialog";
 import { StatusLabel, StepChips } from "@/components/task-bits";
 import { DaemonUnavailableError, getStatus, listTasks } from "@/lib/daemon";
-import { AUTH_LABEL, needsPerson, START_LABEL, statusText } from "@/lib/labels";
+import {
+  AUTH_LABEL,
+  isWorking,
+  needsPerson,
+  personAction,
+  START_LABEL,
+  statusText,
+} from "@/lib/labels";
 
 export default function TasksPage() {
   return (
@@ -78,7 +85,7 @@ async function NeedsYou() {
       </h2>
       <ul className="grid grid-cols-[repeat(auto-fit,minmax(280px,1fr))] gap-4">
         {tasks.map((task) => {
-          const toReview = task.status === "awaiting_approval" || task.status === "escalated";
+          const action = personAction(task);
           return (
             <li
               key={task.id}
@@ -88,11 +95,8 @@ async function NeedsYou() {
                 {statusText(task)}
               </span>
               <span className="text-[17px] font-semibold">{task.title}</span>
-              <Link
-                href={toReview ? `/tasks/${task.id}/review` : `/tasks/${task.id}`}
-                className="text-sm font-semibold text-accent-foreground"
-              >
-                {toReview ? "チェックする →" : "判断する →"}
+              <Link href={action.href} className="text-sm font-semibold text-accent-foreground">
+                {action.label} →
               </Link>
             </li>
           );
@@ -127,7 +131,7 @@ async function TaskTable() {
 
   return (
     <div className="overflow-x-auto">
-      <AutoRefresh active={tasks.some((t) => t.status === "queued" || t.status === "running")} />
+      <AutoRefresh active={tasks.some(isWorking)} />
       <table className="w-full min-w-[760px] border-collapse text-sm">
         <thead>
           <tr className="text-left text-xs text-muted-foreground">

@@ -59,6 +59,10 @@ export const TestViewpoint = z.object({
 });
 export type TestViewpoint = z.infer<typeof TestViewpoint>;
 
+/** 変更の申し出に対する、ゴールガーディアンの判定。 */
+export const Verdict = z.enum(["approved", "rejected", "undecidable"]);
+export type Verdict = z.infer<typeof Verdict>;
+
 /** タスクが止まった理由。 */
 export const PauseReason = z.enum(["budget", "usage_limit", "auth", "error"]);
 export type PauseReason = z.infer<typeof PauseReason>;
@@ -170,6 +174,58 @@ const StepQueued = z.object({
   payload: z.object({ step: StepKey }),
 });
 
+/**
+ * 工程エージェントの、承認済みの成果物（要求要件・設計）への変更の申し出。
+ * id はタスクの中で一意（CP-1, CP-2, …）。
+ */
+const ChangeProposed = z.object({
+  type: z.literal("ChangeProposed"),
+  payload: z.object({
+    proposalId: z.string().min(1),
+    /** 申し出た工程。 */
+    fromStep: StepKey,
+    /** 変更したい、承認済みの工程。 */
+    target: StepKey,
+    /** 変更したい理由。 */
+    reason: z.string().min(1),
+    /** 理由の根拠となる事実（コード、仕様、実行結果など）。 */
+    facts: z.array(z.string().min(1)),
+    /** 変更後の成果物の全文。 */
+    proposed: z.string().min(1),
+    /** 設計の変更で、テスト観点も変える場合の変更後の全件。 */
+    testViewpoints: z.array(TestViewpoint).optional(),
+  }),
+});
+
+/** ゴールガーディアンの判定。判定ごとに新しいセッションで実行する。 */
+const ChangeJudged = z.object({
+  type: z.literal("ChangeJudged"),
+  payload: z.object({
+    proposalId: z.string(),
+    verdict: Verdict,
+    reason: z.string(),
+    agentId: z.string(),
+    usage: TokenUsage.optional(),
+    costUsd: z.number().nonnegative().default(0),
+    estimated: z.boolean().default(false),
+  }),
+});
+
+/** ゴールガーディアンが判定できなかった申し出への、人間の判断。 */
+const ChangeDecided = z.object({
+  type: z.literal("ChangeDecided"),
+  payload: z.object({ proposalId: z.string(), accept: z.boolean() }),
+});
+
+/**
+ * 認められた変更を反映する。設計は承認済みの版を置き換える。
+ * 要求要件は承認を取り消し、変更後の要求要件を人間の再承認に回す（続く StepSubmitted）。
+ */
+const ChangeApplied = z.object({
+  type: z.literal("ChangeApplied"),
+  payload: z.object({ proposalId: z.string() }),
+});
+
 const ChangesRequested = z.object({
   type: z.literal("ChangesRequested"),
   payload: z.object({
@@ -200,9 +256,15 @@ const TaskEscalated = z.object({
     step: StepKey,
     /** 差し戻しが上限を超えた工程（やり直す工程）。PBI-7までの台帳には無いので、step で補う。 */
     target: StepKey.optional(),
-    reason: z.enum(["too_many_changes"]),
+    /**
+     * too_many_changes：差し戻しが上限を超えた
+     * change_undecidable：ゴールガーディアンが変更の申し出を判定できなかった
+     */
+    reason: z.enum(["too_many_changes", "change_undecidable"]),
+    /** 判定できなかった申し出（change_undecidable のとき）。 */
+    proposalId: z.string().optional(),
     /** 上限に達したときに人間が書いていた指摘。差し戻しを続ける場合に使う。 */
-    pendingRemarks: z.array(Remark),
+    pendingRemarks: z.array(Remark).default([]),
   }),
 });
 
@@ -220,6 +282,10 @@ export const EventInput = z.discriminatedUnion("type", [
   StepSubmitted,
   StepApproved,
   StepQueued,
+  ChangeProposed,
+  ChangeJudged,
+  ChangeDecided,
+  ChangeApplied,
   ChangesRequested,
   RemarkVoided,
   TaskEscalated,
@@ -285,3 +351,7 @@ export const RequestChangesInput = z.object({
   continueOverLimit: z.boolean().default(false),
 });
 export type RequestChangesInput = z.input<typeof RequestChangesInput>;
+
+/** ゴールガーディアンが判定できなかった変更の申し出を、人間が判断する入力。 */
+export const DecideChangeInput = z.object({ accept: z.boolean() });
+export type DecideChangeInput = z.infer<typeof DecideChangeInput>;

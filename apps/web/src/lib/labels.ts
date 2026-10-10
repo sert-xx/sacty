@@ -3,9 +3,11 @@ import {
   type AuthMode,
   formatUsd,
   type LedgerEvent,
+  openProposal,
   type PauseReason,
   type StepKey,
   type Task,
+  type Verdict,
 } from "@sacty/core";
 
 /** 画面の表示ラベル。多言語化はPBI-4で行う。 */
@@ -59,15 +61,47 @@ export const ACTOR_LABEL: Record<Actor, string> = {
   agent: "工程エージェント",
 };
 
+export const VERDICT_LABEL: Record<Verdict, string> = {
+  approved: "承認",
+  rejected: "却下",
+  undecidable: "判定できない",
+};
+
 export const usd = formatUsd;
 
 export function statusText(task: Task): string {
   if (task.status === "paused" && task.pausedReason) return PAUSE_LABEL[task.pausedReason];
+  const proposal = openProposal(task);
+  if (proposal && !proposal.judgement) return "ゴールガーディアンが判定中";
+  if (task.status === "escalated" && proposal) return "変更の申し出の判断待ち";
   if (task.status === "awaiting_approval" && task.gate) {
     const nth = task.gate.submission > 1 ? `（${task.gate.submission}回目）` : "";
     return `${STEP_LABEL[task.gate.step]}の承認待ち${nth}`;
   }
   return STATUS_LABEL[task.status];
+}
+
+/**
+ * sactyやエージェントが作業中か（実行待ち・実行中・ゴールガーディアンの判定中）。
+ * 画面はこのあいだ自動で更新する。判定中のタスクは待機（idle）のままなので、状態だけでは分からない。
+ */
+export function isWorking(task: Task): boolean {
+  if (task.status === "queued" || task.status === "running") return true;
+  const proposal = openProposal(task);
+  return Boolean(proposal && !proposal.judgement);
+}
+
+/** 人間が判断する場所への導線。 */
+export function personAction(task: Task): { href: string; label: string } {
+  // ゴールガーディアンが判定できなかった申し出は、タスク詳細の「変更の申し出と判定」で判断する
+  if (task.status === "escalated" && openProposal(task)) {
+    return { href: `/tasks/${task.id}#proposals`, label: "判断する" };
+  }
+  if (task.status === "escalated") return { href: `/tasks/${task.id}/review`, label: "判断する" };
+  if (task.status === "awaiting_approval") {
+    return { href: `/tasks/${task.id}/review`, label: "チェックする" };
+  }
+  return { href: `/tasks/${task.id}`, label: "判断する" };
 }
 
 /** 人間の判断が必要な状態か（承認待ち・エスカレーション・一時停止）。 */
@@ -102,6 +136,14 @@ export function describeEvent(event: LedgerEvent): string {
       return `${STEP_LABEL[event.payload.step]}を提出（${event.payload.submission}回目）→ 承認待ち`;
     case "StepApproved":
       return `${STEP_LABEL[event.payload.step]}を承認・凍結（${ACTOR_LABEL[event.actor]}）`;
+    case "ChangeProposed":
+      return `${STEP_LABEL[event.payload.fromStep]}の工程が、${STEP_LABEL[event.payload.target]}の変更を申し出（${event.payload.proposalId}）`;
+    case "ChangeJudged":
+      return `${event.payload.proposalId}を${VERDICT_LABEL[event.payload.verdict]}：${event.payload.reason}（${ACTOR_LABEL[event.actor]}${event.payload.costUsd > 0 ? `・${usd(event.payload.costUsd)}${event.payload.estimated ? "・換算値" : ""}` : ""}）`;
+    case "ChangeDecided":
+      return `${event.payload.proposalId}を${event.payload.accept ? "認めた" : "認めなかった"}（${ACTOR_LABEL[event.actor]}）`;
+    case "ChangeApplied":
+      return `${event.payload.proposalId}の変更を反映`;
     case "StepQueued":
       return `${STEP_LABEL[event.payload.step]}を実行待ちにした（実行できるようになったため）`;
     case "ChangesRequested":
@@ -112,6 +154,9 @@ export function describeEvent(event: LedgerEvent): string {
     case "RemarkVoided":
       return `指摘 ${event.payload.remarkId} を無効にした（${ACTOR_LABEL[event.actor]}）`;
     case "TaskEscalated":
+      if (event.payload.reason === "change_undecidable") {
+        return `ゴールガーディアンが${event.payload.proposalId ?? "変更の申し出"}を判定できなかったため、エスカレーション`;
+      }
       return `${STEP_LABEL[event.payload.target ?? event.payload.step]}への差し戻しが上限に達したため、エスカレーション`;
   }
 }

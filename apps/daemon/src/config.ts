@@ -33,6 +33,12 @@ const StubBehavior = z.object({
   output: z.string().default("# 要求要件（スタブ）\n\n- これはスタブのエージェントの出力です。"),
   /** 工程ごとの出力。無い工程は output を使う。 */
   outputs: z.partialRecord(StepKey, z.string()).default({}),
+  /** ゴールガーディアンとして呼ばれたときの出力。 */
+  guardian: z
+    .string()
+    .default(
+      '```json\n{"sacty-verdict": {"verdict": "undecidable", "reason": "スタブのため判定しません"}}\n```',
+    ),
   usage: z
     .object({
       input: z.number().int().nonnegative().default(1000),
@@ -88,6 +94,8 @@ const ConfigFile = z
   .object({
     image: z.string().default(DEFAULT_IMAGE),
     default_agent: z.string(),
+    /** ゴールガーディアンに使うAI。省略すると default_agent。 */
+    guardian_agent: z.string().optional(),
     budget: z
       .object({ default_per_task_usd: z.number().positive().default(DEFAULT_BUDGET_USD) })
       .prefault({}),
@@ -101,12 +109,21 @@ const ConfigFile = z
         message: `default_agent の "${config.default_agent}" が agents にありません`,
       });
     }
+    if (config.guardian_agent && !config.agents[config.guardian_agent]) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["guardian_agent"],
+        message: `guardian_agent の "${config.guardian_agent}" が agents にありません`,
+      });
+    }
   });
 
 export type AgentConfig = z.infer<typeof Agent> & { id: string; price: PricePerMTok };
 export type SactyConfig = {
   image: string;
   defaultAgent: AgentConfig;
+  /** ゴールガーディアンに使うAI。 */
+  guardianAgent: AgentConfig;
   budgetPerTaskUsd: number;
 };
 
@@ -148,23 +165,27 @@ export function loadConfig(home: string): ConfigResult {
     };
   }
   const file = parsed.data;
-  const agent = file.agents[file.default_agent];
-  if (!agent) throw new Error("unreachable: default agent is validated");
+  const resolve = (id: string): AgentConfig => {
+    const agent = file.agents[id];
+    if (!agent) throw new Error("unreachable: agent ids are validated");
+    return {
+      ...agent,
+      id,
+      price: PricePerMTok.parse({
+        input: agent.price_per_mtok_usd.input,
+        cachedInput: agent.price_per_mtok_usd.cached_input,
+        cacheWrite: agent.price_per_mtok_usd.cache_write,
+        output: agent.price_per_mtok_usd.output,
+      }),
+    };
+  };
   return {
     ok: true,
     config: {
       image: file.image,
       budgetPerTaskUsd: file.budget.default_per_task_usd,
-      defaultAgent: {
-        ...agent,
-        id: file.default_agent,
-        price: PricePerMTok.parse({
-          input: agent.price_per_mtok_usd.input,
-          cachedInput: agent.price_per_mtok_usd.cached_input,
-          cacheWrite: agent.price_per_mtok_usd.cache_write,
-          output: agent.price_per_mtok_usd.output,
-        }),
-      },
+      defaultAgent: resolve(file.default_agent),
+      guardianAgent: resolve(file.guardian_agent ?? file.default_agent),
     },
   };
 }
@@ -176,6 +197,8 @@ export const CONFIG_TEMPLATE = `# sacty の設定
 
 image: ${DEFAULT_IMAGE}
 default_agent: claude-subscription
+# ゴールガーディアン（変更の申し出の判定）に使うAI。省略すると default_agent
+# guardian_agent: claude-subscription
 
 budget:
   default_per_task_usd: ${DEFAULT_BUDGET_USD}
