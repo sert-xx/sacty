@@ -118,6 +118,39 @@ export async function saveProject(
   return { ok: true, project: ((await res.json()) as { project: Project }).project };
 }
 
+/** プロジェクトの定義のエクスポート（JSON）。無ければ null。 */
+export async function exportProject(id: string): Promise<unknown | null> {
+  const res = await daemonFetch(`/api/projects/${encodeURIComponent(id)}/export`);
+  if (res.status === 404) return null;
+  await ensureOk(res);
+  return res.json();
+}
+
+/** エクスポートした定義を、新しいプロジェクトとしてインポートする。 */
+export async function importProject(
+  exported: unknown,
+): Promise<{ ok: true; project: Project } | { ok: false; message: string }> {
+  const res = await daemonFetch("/api/projects/import", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(exported),
+  });
+  if (res.status === 409) {
+    return { ok: false, message: ((await res.json()) as { message: string }).message };
+  }
+  if (res.status === 400) {
+    const json = (await res.json()) as { issues?: { message: string; path?: unknown[] }[] };
+    const issue = json.issues?.[0];
+    const where = issue?.path?.length ? `（${issue.path.join(".")}）` : "";
+    return {
+      ok: false,
+      message: `${issue?.message ?? "ファイルの内容を確認してください。"}${where}`,
+    };
+  }
+  await ensureOk(res);
+  return { ok: true, project: ((await res.json()) as { project: Project }).project };
+}
+
 /** GitHub Issue の取り込みを、間隔を待たずに実行する。 */
 export async function runIntake(): Promise<OpResult> {
   return postOp("/api/intake/run", {});

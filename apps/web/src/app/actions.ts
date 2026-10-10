@@ -8,6 +8,7 @@ import {
   approveStep,
   createTicket,
   decideChange,
+  importProject,
   requestChanges,
   resumeTask,
   runIntake,
@@ -181,4 +182,43 @@ export async function saveProjectAction(
 export async function runIntakeAction(): Promise<void> {
   await runIntake();
   refresh();
+}
+
+export type ImportProjectState = { message?: string };
+
+/** ファイルの大きさの上限（プロジェクトの定義なので、十分に小さい）。 */
+const IMPORT_MAX_BYTES = 1_000_000;
+
+/** エクスポートしたプロジェクトの定義のファイルを、新しいプロジェクトとしてインポートする。 */
+export async function importProjectAction(
+  _prev: ImportProjectState,
+  formData: FormData,
+): Promise<ImportProjectState> {
+  const file = formData.get("file");
+  if (!(file instanceof File) || file.size === 0) {
+    return { message: "インポートするファイルを選んでください。" };
+  }
+  if (file.size > IMPORT_MAX_BYTES) {
+    return {
+      message: "ファイルが大きすぎます。sacty からエクスポートしたファイルを選んでください。",
+    };
+  }
+  let exported: unknown;
+  try {
+    exported = JSON.parse(await file.text());
+  } catch {
+    return {
+      message:
+        "ファイルを JSON として読めません。sacty からエクスポートしたファイルを選んでください。",
+    };
+  }
+  let result: Awaited<ReturnType<typeof importProject>>;
+  try {
+    result = await importProject(exported);
+  } catch {
+    return { message: DAEMON_DOWN };
+  }
+  if (!result.ok) return { message: result.message };
+  // redirect は例外で画面を移すので、try の外で呼ぶ
+  redirect(`/projects/${result.project.id}`);
 }
