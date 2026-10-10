@@ -5,7 +5,7 @@ import { DaemonError } from "@/components/daemon-error";
 import { NewTicketDialog } from "@/components/new-ticket-dialog";
 import { StatusLabel, StepChips } from "@/components/task-bits";
 import { DaemonUnavailableError, getStatus, listTasks } from "@/lib/daemon";
-import { AUTH_LABEL, START_LABEL } from "@/lib/labels";
+import { AUTH_LABEL, needsPerson, START_LABEL, statusText } from "@/lib/labels";
 
 export default function TasksPage() {
   return (
@@ -19,6 +19,9 @@ export default function TasksPage() {
       </div>
       <Suspense fallback={null}>
         <AgentStatus />
+      </Suspense>
+      <Suspense fallback={null}>
+        <NeedsYou />
       </Suspense>
       <section aria-labelledby="all-tasks" className="rounded-xl border border-border bg-card">
         <h2 id="all-tasks" className="px-5 pt-4 pb-3 text-[15px] font-semibold">
@@ -56,6 +59,46 @@ async function AgentStatus() {
       工程を実行するAI：<span className="font-mono">{status.agent.id}</span>（
       {AUTH_LABEL[status.agent.authMode as keyof typeof AUTH_LABEL] ?? status.agent.authMode}）
     </p>
+  );
+}
+
+/** 人間の判断が必要なタスク（承認待ち・エスカレーション・一時停止）。 */
+async function NeedsYou() {
+  let tasks: Awaited<ReturnType<typeof listTasks>>;
+  try {
+    tasks = (await listTasks()).filter(needsPerson);
+  } catch {
+    return null;
+  }
+  if (tasks.length === 0) return null;
+  return (
+    <section aria-labelledby="needs-you" className="flex flex-col gap-3">
+      <h2 id="needs-you" className="text-[15px] font-semibold">
+        あなたの出番
+      </h2>
+      <ul className="grid grid-cols-[repeat(auto-fit,minmax(280px,1fr))] gap-4">
+        {tasks.map((task) => {
+          const toReview = task.status === "awaiting_approval" || task.status === "escalated";
+          return (
+            <li
+              key={task.id}
+              className="flex flex-col gap-2.5 rounded-xl border border-warn-line bg-card p-5"
+            >
+              <span className="w-fit rounded-full border border-warn-line bg-warn-soft px-2.5 py-0.5 text-xs font-semibold text-warn">
+                {statusText(task)}
+              </span>
+              <span className="text-[17px] font-semibold">{task.title}</span>
+              <Link
+                href={toReview ? `/tasks/${task.id}/review` : `/tasks/${task.id}`}
+                className="text-sm font-semibold text-accent-foreground"
+              >
+                {toReview ? "チェックする →" : "判断する →"}
+              </Link>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
   );
 }
 

@@ -25,6 +25,8 @@ export const STATUS_LABEL: Record<Task["status"], string> = {
   running: "実行中",
   idle: "待機中",
   paused: "一時停止",
+  awaiting_approval: "承認待ち",
+  escalated: "エスカレーション",
 };
 
 export const PAUSE_LABEL: Record<PauseReason, string> = {
@@ -60,9 +62,19 @@ export const ACTOR_LABEL: Record<Actor, string> = {
 export const usd = formatUsd;
 
 export function statusText(task: Task): string {
-  return task.status === "paused" && task.pausedReason
-    ? PAUSE_LABEL[task.pausedReason]
-    : STATUS_LABEL[task.status];
+  if (task.status === "paused" && task.pausedReason) return PAUSE_LABEL[task.pausedReason];
+  if (task.status === "awaiting_approval" && task.gate) {
+    const nth = task.gate.submission > 1 ? `（${task.gate.submission}回目）` : "";
+    return `${STEP_LABEL[task.gate.step]}の承認待ち${nth}`;
+  }
+  return STATUS_LABEL[task.status];
+}
+
+/** 人間の判断が必要な状態か（承認待ち・エスカレーション・一時停止）。 */
+export function needsPerson(task: Task): boolean {
+  return (
+    task.status === "awaiting_approval" || task.status === "escalated" || task.status === "paused"
+  );
 }
 
 /** 台帳の1行を、人が読める文にする。 */
@@ -86,6 +98,16 @@ export function describeEvent(event: LedgerEvent): string {
       return `予算の上限を${usd(event.payload.capUsd)}に変更（${ACTOR_LABEL[event.actor]}）`;
     case "TaskResumed":
       return `再開（${ACTOR_LABEL[event.actor]}）`;
+    case "StepSubmitted":
+      return `${STEP_LABEL[event.payload.step]}を提出（${event.payload.submission}回目）→ 承認待ち`;
+    case "StepApproved":
+      return `${STEP_LABEL[event.payload.step]}を承認（${ACTOR_LABEL[event.actor]}）`;
+    case "ChangesRequested":
+      return `${STEP_LABEL[event.payload.step]}を差し戻し：指摘${event.payload.remarks.length}件${event.payload.overLimit ? "（上限を超えて）" : ""}（${ACTOR_LABEL[event.actor]}）`;
+    case "RemarkVoided":
+      return `指摘 ${event.payload.remarkId} を無効にした（${ACTOR_LABEL[event.actor]}）`;
+    case "TaskEscalated":
+      return `${STEP_LABEL[event.payload.step]}の差し戻しが上限に達したため、エスカレーション`;
   }
 }
 

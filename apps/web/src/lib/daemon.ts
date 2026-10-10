@@ -1,4 +1,4 @@
-import type { CreateTicketInput, LedgerEvent, Task } from "@sacty/core";
+import type { CreateTicketInput, LedgerEvent, StepKey, Task } from "@sacty/core";
 import { connection } from "next/server";
 
 /**
@@ -85,4 +85,41 @@ export async function resumeTask(
   if (res.status === 400) return { ok: false, message: "金額を正しく入力してください。" };
   await ensureOk(res);
   return { ok: true };
+}
+
+type OpResult = { ok: true } | { ok: false; message: string };
+
+async function postOp(path: string, body: unknown): Promise<OpResult> {
+  const res = await daemonFetch(path, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (res.status === 409) {
+    return { ok: false, message: ((await res.json()) as { message: string }).message };
+  }
+  if (res.status === 400) {
+    const json = (await res.json()) as { issues?: { message: string }[] };
+    return { ok: false, message: json.issues?.[0]?.message ?? "入力を確認してください。" };
+  }
+  await ensureOk(res);
+  return { ok: true };
+}
+
+export function approveStep(id: string, step: StepKey): Promise<OpResult> {
+  return postOp(`/api/tasks/${encodeURIComponent(id)}/approve`, { step });
+}
+
+export function requestChanges(
+  id: string,
+  input: { step: StepKey; comments: string[]; continueOverLimit: boolean },
+): Promise<OpResult> {
+  return postOp(`/api/tasks/${encodeURIComponent(id)}/request-changes`, input);
+}
+
+export function voidRemark(id: string, remarkId: string): Promise<OpResult> {
+  return postOp(
+    `/api/tasks/${encodeURIComponent(id)}/remarks/${encodeURIComponent(remarkId)}/void`,
+    {},
+  );
 }

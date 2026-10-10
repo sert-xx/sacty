@@ -3,18 +3,23 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import {
   type Actor,
+  ApproveStepInput,
   activeStep,
   applyEvent,
   BUDGET_WARN_RATIO,
   budgetState,
   CreateTicketInput,
+  changeRounds,
   computeCostUsd,
   DEFAULT_BUDGET_USD,
   type EventInput,
   formatUsd,
+  GATED_STEPS,
   type LedgerEvent,
+  MAX_CHANGE_REQUESTS,
   MVP_STEPS,
   project,
+  RequestChangesInput,
   ResumeTaskInput,
   type Task,
 } from "@sacty/core";
@@ -24,7 +29,7 @@ import type { AgentOutcome } from "./agents/parse.js";
 import { redact } from "./agents/redact.js";
 import type { ConfigResult } from "./config.js";
 import type { LedgerStore } from "./ledger.js";
-import { buildPrompt } from "./prompts.js";
+import { buildPrompt, EXECUTABLE_STEPS, extractResponses } from "./prompts.js";
 import { SecretNotFoundError, type SecretStore } from "./secrets.js";
 
 export const DEFAULT_PROJECT_ID = "default";
@@ -228,7 +233,12 @@ export class TaskService {
       return;
     }
 
-    const done = this.append(task, [
+    const latest = this.mustGet(task.id);
+    const { output, responses } = extractResponses(
+      outcome.output,
+      new Set(latest.remarks.filter((r) => r.step === step && !r.voided).map((r) => r.id)),
+    );
+    const events: { actor: Actor; event: EventInput }[] = [
       {
         actor: "agent",
         event: {
@@ -241,12 +251,23 @@ export class TaskService {
             usage: outcome.usage,
             costUsd,
             estimated,
-            output: outcome.output,
+            output,
+            responses,
           },
         },
       },
-    ]);
-    this.checkBudget(done);
+    ];
+    // 承認ゲートのある工程は、人間の承認待ちで止める
+    if (GATED_STEPS.includes(step)) {
+      events.push({
+        actor: "sacty",
+        event: {
+          type: "StepSubmitted",
+          payload: { step, submission: (latest.submissions[step] ?? 0) + 1 },
+        },
+      });
+    }
+    this.checkBudget(this.append(task, events));
   }
 
   private mustGet(id: string): Task {
@@ -274,7 +295,8 @@ export class TaskService {
   /** 実行の完了後に予算を判定する。1回で上限を超えた場合も、通知を記録してから止める。 */
   private checkBudget(task: Task) {
     const warned = this.warnIfNeeded(task);
-    if (budgetState(warned.budget) === "exceeded") {
+    // 承認待ちのタスクは、すでに人間の判断で止まっている。予算超過は次の実行の前に判定する。
+    if (warned.status === "idle" && budgetState(warned.budget) === "exceeded") {
       this.append(warned, [
         { actor: "sacty", event: { type: "TaskPaused", payload: { reason: "budget" } } },
       ]);
@@ -310,5 +332,99 @@ export class TaskService {
       event: { type: "TaskResumed", payload: { retry: task.resumeTo === "queued" } },
     });
     return this.append(task, events);
+  }
+
+  private gateTask(id: string, step: string): Task {
+    const task = this.tasks.get(id);
+    if (!task) throw new InvalidOperationError("タスクが見つかりません。");
+    if (task.status !== "awaiting_approval" && task.status !== "escalated") {
+      throw new InvalidOperationError("承認待ちのタスクではありません。");
+    }
+    const gateStep = task.gate?.step ?? task.escalation?.step;
+    if (gateStep !== step) {
+      throw new InvalidOperationError("この工程は承認待ちではありません。");
+    }
+    return task;
+  }
+
+  /** 承認する。工程を完了にし、次の工程を実行対象にする（実行できる工程なら実行待ちにする）。 */
+  approve(id: string, raw: unknown): Task {
+    const { step } = ApproveStepInput.parse(raw);
+    const task = this.gateTask(id, step);
+    const index = task.steps.findIndex((s) => s.key === step);
+    const nextStep = task.steps[index + 1]?.key;
+    const next = nextStep && EXECUTABLE_STEPS.includes(nextStep) ? "queued" : "idle";
+    return this.append(task, [
+      { actor: "person", event: { type: "StepApproved", payload: { step, next } } },
+    ]);
+  }
+
+  /**
+   * 差し戻す。指摘は台帳に累積し、工程を実行し直す。
+   * 同じ工程への差し戻しが上限を超える場合はエスカレーションにし、人間に続けるかを判断してもらう。
+   */
+  requestChanges(id: string, raw: unknown): Task {
+    const input = RequestChangesInput.parse(raw);
+    const task = this.gateTask(id, input.step);
+    const rounds = changeRounds(task, input.step);
+
+    if (task.status === "awaiting_approval" && input.comments.length === 0) {
+      throw new InvalidOperationError("差し戻すには、指摘を1件以上入力してください。");
+    }
+    const round = rounds + 1;
+    const toRemarks = (texts: string[]) =>
+      texts.map((text, i) => ({ id: `${input.step}-${round}-${i + 1}`, text }));
+
+    if (task.status === "awaiting_approval" && rounds >= MAX_CHANGE_REQUESTS) {
+      return this.append(task, [
+        {
+          actor: "sacty",
+          event: {
+            type: "TaskEscalated",
+            payload: {
+              step: input.step,
+              reason: "too_many_changes",
+              pendingRemarks: toRemarks(input.comments),
+            },
+          },
+        },
+      ]);
+    }
+
+    let remarks = toRemarks(input.comments);
+    let overLimit = false;
+    if (task.status === "escalated") {
+      if (!input.continueOverLimit) {
+        throw new InvalidOperationError(
+          `差し戻しが上限（${MAX_CHANGE_REQUESTS}回）に達しています。続ける場合は、上限を超えて差し戻すことを選んでください。`,
+        );
+      }
+      overLimit = true;
+      if (remarks.length === 0) remarks = task.escalation?.pendingRemarks ?? [];
+      if (remarks.length === 0) {
+        throw new InvalidOperationError("差し戻すには、指摘を1件以上入力してください。");
+      }
+    }
+    return this.append(task, [
+      {
+        actor: "person",
+        event: {
+          type: "ChangesRequested",
+          payload: { step: input.step, round, remarks, overLimit },
+        },
+      },
+    ]);
+  }
+
+  /** 前提が変わった指摘を無効にする。以降、エージェントには渡さない。 */
+  voidRemark(id: string, remarkId: string): Task {
+    const task = this.tasks.get(id);
+    if (!task) throw new InvalidOperationError("タスクが見つかりません。");
+    const remark = task.remarks.find((r) => r.id === remarkId);
+    if (!remark) throw new InvalidOperationError("指摘が見つかりません。");
+    if (remark.voided) return task;
+    return this.append(task, [
+      { actor: "person", event: { type: "RemarkVoided", payload: { remarkId } } },
+    ]);
   }
 }
