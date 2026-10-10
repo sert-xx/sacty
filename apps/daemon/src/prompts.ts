@@ -10,10 +10,10 @@ import type {
 } from "@sacty/core";
 
 /**
- * 実行できる工程。実装（PBI-10）以降は順次追加する。
+ * 実行できる工程（PR作成はエージェントではなく sacty が実行する）。
  * ここに無い工程は、承認後も実行せずに待機する。
  */
-export const EXECUTABLE_STEPS: readonly StepKey[] = ["requirements", "design", "implement"];
+export const EXECUTABLE_STEPS: readonly StepKey[] = ["requirements", "design", "implement", "pr"];
 
 const RESPONSES_HEADING = "sacty-responses";
 const VIEWPOINTS_HEADING = "sacty-test-viewpoints";
@@ -191,7 +191,8 @@ export function buildPrompt(task: Task, step: StepKey): string {
       return lines.join("\n");
     }
     case "implement": {
-      const remarks = humanRemarks(task);
+      // 実装への差し戻しの指摘は、対応を答えてもらう（下の remarkLines）。ほかの工程の指摘は再発の防止に使う
+      const remarks = humanRemarks(task).filter((r) => r.step !== "implement");
       const lines = [
         "あなたはソフトウェア開発の工程エージェントです。",
         "作業ディレクトリは実装の対象リポジトリです。人間が承認した要求要件と設計に従って実装し、",
@@ -222,7 +223,11 @@ export function buildPrompt(task: Task, step: StepKey): string {
         );
       }
       if (previous) lines.push("", "--- 前回の実装の説明 ---", previous);
-      lines.push(...feedbackLines(task), ...proposalLines(task, step));
+      lines.push(
+        ...feedbackLines(task),
+        ...remarkLines(task, step, "観点ごとのテストの対応"),
+        ...proposalLines(task, step),
+      );
       return lines.join("\n");
     }
     default:
@@ -530,4 +535,53 @@ export function extractFinalReview(
     remarks,
     summary: text(raw?.summary) || (raw ? "" : missing),
   };
+}
+
+/** 表のセルに入れられるよう、改行と縦棒を置き換える。 */
+const cell = (value: string) => value.replace(/\r?\n/g, " ").replace(/\|/g, "\\|");
+
+/**
+ * sacty が作るPRの本文。承認済みの要求要件、観点とテストの対応、テストの結果、
+ * ゴールガーディアンの最終レビューを載せる（人間が成果物を確かめるための材料）。
+ */
+export function buildPullRequestBody(task: Task): string {
+  const viewpoints = task.approved.design?.testViewpoints ?? [];
+  const review = task.lastReview;
+  const tests = task.lastTests;
+  const mapped = new Map(task.testMap.map((m) => [m.viewpointId, m.tests]));
+  return [
+    `sacty のタスク「${task.title}」の成果物です（sacty task ${task.id}）。`,
+    "",
+    "## 要求要件（人間が承認済み）",
+    "",
+    task.approved.requirements?.output ?? "（なし）",
+    "",
+    "## 観点 → テスト → 実行結果",
+    "",
+    "| 観点 | 入力 | 期待結果 | テスト | 最終レビュー |",
+    "| --- | --- | --- | --- | --- |",
+    ...viewpoints.map((v) => {
+      const judged = review?.viewpoints.find((r) => r.viewpointId === v.id);
+      return `| ${v.id} ${cell(v.title)} | ${cell(v.input)} | ${cell(v.expected)} | ${cell((mapped.get(v.id) ?? []).join(" / ") || "（なし）")} | ${judged ? `${judged.verified ? "✅" : "❌"} ${cell(judged.reason)}` : "（なし）"} |`;
+    }),
+    "",
+    tests
+      ? `テスト：\`${cell(tests.command)}\` → ${tests.passed ? "合格" : "不合格"}（終了コード ${tests.exitCode}）`
+      : "テスト：（未実行）",
+    "",
+    "## ゴールガーディアンの最終レビュー",
+    "",
+    review ? `${review.passed ? "合格" : "不合格"}。${review.summary}` : "（なし）",
+    ...(review && review.remarks.length > 0
+      ? [
+          "",
+          ...review.remarks.map(
+            (r) => `- ${r.remarkId}：${r.notRecurred ? "再発なし" : "再発している"}（${r.reason}）`,
+          ),
+        ]
+      : []),
+    "",
+    "---",
+    "この PR は sacty が作成しました。sacty の成果物チェックで承認・差し戻しをしてください。",
+  ].join("\n");
 }

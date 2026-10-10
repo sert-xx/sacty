@@ -4,6 +4,7 @@ import { serve } from "@hono/node-server";
 import { DockerExecutor } from "./agents/docker.js";
 import { DockerTestRunner } from "./agents/test-runner.js";
 import { loadConfig, resolveHome } from "./config.js";
+import { GitHubPullRequests } from "./github.js";
 import { SqliteLedgerStore } from "./ledger.js";
 import { GitRepositoryWorkspace } from "./repository.js";
 import { KeychainSecretStore } from "./secrets.js";
@@ -30,6 +31,7 @@ const service = new TaskService({
   secrets: new KeychainSecretStore(),
   executor,
   repos: new GitRepositoryWorkspace(),
+  pulls: new GitHubPullRequests(),
   tests,
   workspaceRoot: join(home, "workspaces"),
 });

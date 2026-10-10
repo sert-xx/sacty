@@ -20,7 +20,27 @@ export interface RepositoryWorkspace {
   ): Promise<{ baseCommit: string }>;
   /** 起点からの差分（新しく作ったファイルを含む）。 */
   diff(dir: string, gitDir: string, baseCommit: string): Promise<string>;
+  /**
+   * 作業領域の内容をコミットし、ブランチにプッシュする。コミットは parent に積む
+   * （前回プッシュしたコミットに積むので、強制プッシュはしない）。
+   */
+  publish(input: {
+    dir: string;
+    gitDir: string;
+    baseCommit: string;
+    parent: string;
+    branch: string;
+    message: string;
+    /**
+     * コミットの日時（ISO 8601）。同じ提出では同じ値を渡す。プッシュの後、台帳に記録する前に
+     * 失敗して再開しても、同じコミットを作り直せる（前回プッシュしたものと枝分かれしない）ように。
+     */
+    date: string;
+  }): Promise<{ commit: string }>;
 }
+
+/** 起点から変更が無く、コミットするものが無い。 */
+export class NothingToCommitError extends Error {}
 
 const BASE_ENV_KEYS = ["PATH", "TMPDIR", "LANG"];
 
@@ -92,7 +112,35 @@ function git(
   });
 }
 
+const COMMIT_RE = /^[0-9a-f]{40,64}$/;
+
 export class GitRepositoryWorkspace implements RepositoryWorkspace {
+  /**
+   * 作業領域のファイルを、退避したメタデータの一時インデックスに載せる。
+   * 作業領域・利用者・システムの git の設定は読まない（外部コマンドを実行させない）。
+   */
+  private async stage<T>(
+    dir: string,
+    gitDir: string,
+    baseCommit: string,
+    then: (git: (label: string, args: string[]) => Promise<string>) => Promise<T>,
+  ): Promise<T> {
+    if (!COMMIT_RE.test(baseCommit)) throw new Error("起点のコミットが不正です。");
+    // インデックスは一時ファイルにする
+    const temp = mkdtempSync(join(tmpdir(), "sacty-git-"));
+    try {
+      const env = isolatedEnv(join(temp, "index"));
+      const base = ["--git-dir", gitDir, "--work-tree", dir, ...SAFE_CONFIG];
+      const run = (label: string, args: string[]) => git(label, [...base, ...args], env);
+      await run("read-tree", ["read-tree", baseCommit]);
+      // 新しく作ったファイルも含めるため、すべてインデックスに載せる
+      await run("add", ["add", "--all"]);
+      return await then(run);
+    } finally {
+      rmSync(temp, { recursive: true, force: true });
+    }
+  }
+
   async prepare(dir: string, gitDir: string, url: string, baseBranch: string) {
     // 前回の clone が途中で止まっていれば、作り直す
     for (const path of [dir, gitDir]) {
@@ -108,35 +156,93 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
   }
 
   async diff(dir: string, gitDir: string, baseCommit: string) {
-    if (!/^[0-9a-f]{40,64}$/.test(baseCommit)) throw new Error("起点のコミットが不正です。");
-    // インデックスは一時ファイルにし、退避したメタデータは書き換えない
-    const temp = mkdtempSync(join(tmpdir(), "sacty-diff-"));
-    try {
-      const env = isolatedEnv(join(temp, "index"));
-      const base = ["--git-dir", gitDir, "--work-tree", dir, ...SAFE_CONFIG];
-      await git("read-tree", [...base, "read-tree", baseCommit], env);
-      // 新しく作ったファイルも差分に含めるため、インデックスに載せてから比べる（コミットはしない）
-      await git("add", [...base, "add", "--all"], env);
+    return this.stage(dir, gitDir, baseCommit, async (run) => {
       // 属性で差分を隠されないよう、外部の差分・変換を使わず、すべてテキストとして出す
-      const diff = await git(
+      const diff = await run("diff", [
         "diff",
-        [
-          ...base,
-          "diff",
-          "--cached",
-          "--no-color",
-          "--no-ext-diff",
-          "--no-textconv",
-          "--text",
-          baseCommit,
-        ],
-        env,
-      );
+        "--cached",
+        "--no-color",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--text",
+        baseCommit,
+      ]);
       return diff.length > DIFF_LIMIT
         ? `${diff.slice(0, DIFF_LIMIT)}\n[sacty] 差分が大きいため、先頭の ${DIFF_LIMIT} バイトだけを渡しています。`
         : diff;
-    } finally {
-      rmSync(temp, { recursive: true, force: true });
+    });
+  }
+
+  async publish(input: {
+    dir: string;
+    gitDir: string;
+    baseCommit: string;
+    parent: string;
+    branch: string;
+    message: string;
+    date: string;
+  }) {
+    if (!COMMIT_RE.test(input.parent)) throw new Error("積む先のコミットが不正です。");
+    if (!/^[\w./-]+$/.test(input.branch) || input.branch.startsWith("-")) {
+      throw new Error("ブランチ名が不正です。");
     }
+    const author = await this.author();
+    const commit = await this.stage(input.dir, input.gitDir, input.baseCommit, async (run) => {
+      const tree = (await run("write-tree", ["write-tree"])).trim();
+      const baseTree = (await run("rev-parse", ["rev-parse", `${input.baseCommit}^{tree}`])).trim();
+      if (tree === baseTree)
+        throw new NothingToCommitError("起点から変更がないため、コミットできません。");
+      const parentTree = (await run("rev-parse", ["rev-parse", `${input.parent}^{tree}`])).trim();
+      // 前回プッシュした内容から変わっていなければ、同じコミットをそのまま使う
+      if (tree === parentTree && input.parent !== input.baseCommit) return input.parent;
+      return (
+        await git(
+          "commit-tree",
+          [
+            "--git-dir",
+            input.gitDir,
+            ...SAFE_CONFIG,
+            "commit-tree",
+            tree,
+            "-p",
+            input.parent,
+            "-m",
+            input.message,
+          ],
+          {
+            ...isolatedEnv("/dev/null"),
+            ...author,
+            GIT_AUTHOR_DATE: input.date,
+            GIT_COMMITTER_DATE: input.date,
+          },
+        )
+      ).trim();
+    });
+    // プッシュはホストの認証（credential helper や ssh-agent）を使う。作業領域は読まない
+    await git(
+      "push",
+      ["--git-dir", input.gitDir, "push", "--", "origin", `${commit}:refs/heads/${input.branch}`],
+      cloneEnv(),
+    );
+    return { commit };
+  }
+
+  /** コミットの作者。ホストの git の利用者の設定を使い、無ければ sacty にする。 */
+  private async author(): Promise<Record<string, string>> {
+    const get = async (key: string) => {
+      try {
+        return (await git("config", ["config", "--global", "--get", key], cloneEnv())).trim();
+      } catch {
+        return "";
+      }
+    };
+    const name = (await get("user.name")) || "sacty";
+    const email = (await get("user.email")) || "sacty@localhost";
+    return {
+      GIT_AUTHOR_NAME: name,
+      GIT_AUTHOR_EMAIL: email,
+      GIT_COMMITTER_NAME: name,
+      GIT_COMMITTER_EMAIL: email,
+    };
   }
 }

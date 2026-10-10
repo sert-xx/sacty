@@ -105,7 +105,26 @@ const Repository = z.object({
   test_command: z.string().min(1),
   /** テストを実行するイメージ。省略すると image。 */
   test_image: z.string().min(1).optional(),
+  /** PRを作る先。省略すると、ブランチのプッシュまでにする。 */
+  pull_request: z
+    .object({
+      provider: z.literal("github"),
+      /** owner/name。省略すると url から求める。 */
+      repo: z
+        .string()
+        .regex(/^[\w.-]+\/[\w.-]+$/, "owner/name の形で指定してください")
+        .optional(),
+      /** GitHub のトークンの秘密情報名（`sacty secret set <名前>` で保存）。 */
+      token_secret: SecretName,
+    })
+    .optional(),
 });
+
+/** GitHub のリポジトリの URL から owner/name を求める。 */
+export function githubRepoOf(url: string): string | undefined {
+  const m = url.match(/github\.com[:/]([\w.-]+)\/([\w.-]+?)(?:\.git)?\/?$/);
+  return m ? `${m[1]}/${m[2]}` : undefined;
+}
 
 const ConfigFile = z
   .object({
@@ -127,6 +146,14 @@ const ConfigFile = z
         message: `default_agent の "${config.default_agent}" が agents にありません`,
       });
     }
+    const pr = config.repository?.pull_request;
+    if (pr && !pr.repo && config.repository && !githubRepoOf(config.repository.url)) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["repository", "pull_request", "repo"],
+        message: "url から GitHub のリポジトリが分かりません。owner/name で指定してください",
+      });
+    }
     if (config.guardian_agent && !config.agents[config.guardian_agent]) {
       ctx.addIssue({
         code: "custom",
@@ -143,7 +170,13 @@ export type SactyConfig = {
   /** ゴールガーディアンに使うAI。 */
   guardianAgent: AgentConfig;
   budgetPerTaskUsd: number;
-  repository?: { url: string; baseBranch: string; testCommand: string; testImage: string };
+  repository?: {
+    url: string;
+    baseBranch: string;
+    testCommand: string;
+    testImage: string;
+    pullRequest?: { provider: "github"; repo: string; tokenSecret: string };
+  };
 };
 
 export type ConfigResult = { ok: true; config: SactyConfig } | { ok: false; problem: string };
@@ -212,6 +245,18 @@ export function loadConfig(home: string): ConfigResult {
               baseBranch: file.repository.base_branch,
               testCommand: file.repository.test_command,
               testImage: file.repository.test_image ?? file.image,
+              ...(file.repository.pull_request
+                ? {
+                    pullRequest: {
+                      provider: file.repository.pull_request.provider,
+                      repo:
+                        file.repository.pull_request.repo ??
+                        githubRepoOf(file.repository.url) ??
+                        "",
+                      tokenSecret: file.repository.pull_request.token_secret,
+                    },
+                  }
+                : {}),
             },
           }
         : {}),
@@ -238,6 +283,11 @@ budget:
 #   url: git@github.com:your-org/your-repo.git
 #   base_branch: main
 #   test_command: npm ci && npm test
+#   # PRを作る場合（省略すると、sacty のブランチにプッシュするまで）。
+#   # トークンは \`sacty secret set github-token\` で保存する（contents と pull requests の書き込み権限）
+#   pull_request:
+#     provider: github
+#     token_secret: github-token
 
 agents:
   # サブスクリプション：\`claude setup-token\` で作ったトークンを

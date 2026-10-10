@@ -1,8 +1,8 @@
 import {
   appliedProposalFor,
   changeRounds,
-  GATED_STEPS,
   MAX_CHANGE_REQUESTS,
+  reworkTargets,
   type TaskRemark,
 } from "@sacty/core";
 import { cn } from "cn";
@@ -12,6 +12,8 @@ import { Suspense } from "react";
 import { voidRemarkAction } from "@/app/actions";
 import { DaemonError } from "@/components/daemon-error";
 import { GateForm } from "@/components/gate-form";
+import { Implementation } from "@/components/implementation";
+import { PullRequestCard } from "@/components/pull-request";
 import { TestViewpoints } from "@/components/test-viewpoints";
 import { DaemonUnavailableError, getTask } from "@/lib/daemon";
 import { STEP_LABEL } from "@/lib/labels";
@@ -49,18 +51,16 @@ async function Review({ params }: { params: Promise<{ id: string }> }) {
     );
   }
 
-  const rounds = changeRounds(task, step);
+  const rounds = changeRounds(task, reworkTargets(task, step)[0] ?? step);
   const latestRound = rounds;
+  // 差し戻し先：この工程か、それより前の工程エージェントが作る工程（ゲートに近い順）
+  const targets = reworkTargets(task, step);
+  // 成果物チェック（PR作成）のゲートでは、実装への指摘を出す
+  const remarkStep = targets[0] ?? step;
   const remarks = task.remarks
-    .filter((r) => r.step === step)
+    .filter((r) => r.step === remarkStep)
     .sort((a, b) => b.round - a.round || a.id.localeCompare(b.id));
   const submission = task.gate?.submission ?? task.submissions[step] ?? 1;
-  // 差し戻し先：この工程か、それより前の承認ゲートのある工程（前に戻すと再承認が必要）
-  const stepIndex = task.steps.findIndex((s) => s.key === step);
-  const targets = task.steps
-    .filter((s, i) => i <= stepIndex && GATED_STEPS.includes(s.key))
-    .map((s) => s.key)
-    .reverse();
   const fromProposal = appliedProposalFor(task, step);
   const frozenRequirements = step !== "requirements" ? task.approved.requirements : undefined;
 
@@ -74,7 +74,9 @@ async function Review({ params }: { params: Promise<{ id: string }> }) {
           / 成果物チェック
         </nav>
         <div className="flex flex-wrap items-center gap-3">
-          <h1 className="text-2xl font-bold text-balance">{STEP_LABEL[step]}の承認</h1>
+          <h1 className="text-2xl font-bold text-balance">
+            {step === "pr" ? "成果物チェック" : `${STEP_LABEL[step]}の承認`}
+          </h1>
           <span className="rounded-full border border-back-line bg-back-soft px-2.5 py-0.5 text-xs font-semibold text-back">
             {submission}回目の提出
             {rounds > 0 ? ` ・ 差し戻し${rounds}回` : ""}
@@ -135,20 +137,27 @@ async function Review({ params }: { params: Promise<{ id: string }> }) {
               </ol>
             </section>
           )}
-          <section
-            aria-labelledby="deliverable"
-            className="flex flex-col gap-3 rounded-xl border border-border bg-card p-5"
-          >
-            <h2 id="deliverable" className="text-[15px] font-semibold">
-              成果物{" "}
-              <span className="text-[13px] font-normal text-muted-foreground">
-                {STEP_LABEL[step]}
-              </span>
-            </h2>
-            <pre className="rounded-lg border border-border bg-muted px-5 py-4 font-sans text-sm leading-7 break-words whitespace-pre-wrap">
-              {task.outputs[step] ?? "（出力がありません）"}
-            </pre>
-          </section>
+          {step === "pr" ? (
+            <>
+              <PullRequestCard task={task} />
+              <Implementation task={task} />
+            </>
+          ) : (
+            <section
+              aria-labelledby="deliverable"
+              className="flex flex-col gap-3 rounded-xl border border-border bg-card p-5"
+            >
+              <h2 id="deliverable" className="text-[15px] font-semibold">
+                成果物{" "}
+                <span className="text-[13px] font-normal text-muted-foreground">
+                  {STEP_LABEL[step]}
+                </span>
+              </h2>
+              <pre className="rounded-lg border border-border bg-muted px-5 py-4 font-sans text-sm leading-7 break-words whitespace-pre-wrap">
+                {task.outputs[step] ?? "（出力がありません）"}
+              </pre>
+            </section>
+          )}
           {step === "design" && (
             <section
               aria-labelledby="viewpoints"
@@ -191,7 +200,7 @@ async function Review({ params }: { params: Promise<{ id: string }> }) {
             step={step}
             submission={submission}
             targets={targets}
-            defaultTarget={task.escalation?.target ?? step}
+            defaultTarget={task.escalation?.target ?? targets[0] ?? step}
             escalated={task.status === "escalated"}
             maxChanges={MAX_CHANGE_REQUESTS}
             pendingComments={task.escalation?.pendingRemarks.map((r) => r.text) ?? []}
