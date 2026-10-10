@@ -693,25 +693,23 @@ export class TaskService {
       },
     ]);
 
-    // 実装の工程は、対象リポジトリの clone を作業領域にする
-    let workspaceDir = join(this.deps.workspaceRoot, task.id);
-    if (step === "implement") {
-      const ready = await this.prepareRepository(task, config.config);
-      if (!ready.ok) {
-        this.append(task, [
-          {
-            actor: "sacty",
-            event: {
-              type: "AgentRunFailed",
-              payload: { runId, step, agentId: agent.id, reason: "error", message: ready.message },
-            },
+    // 対象リポジトリは、要求要件の工程の前に用意する（PBI-15。用意できなければ、費用をかける前に止める）。
+    // 実装の工程は clone を作業領域にし、要求要件・設計の工程は、起点のコミットのコードを読み取り専用で渡す
+    const ready = await this.prepareRepository(task, config.config);
+    if (!ready.ok) {
+      this.append(task, [
+        {
+          actor: "sacty",
+          event: {
+            type: "AgentRunFailed",
+            payload: { runId, step, agentId: agent.id, reason: "error", message: ready.message },
           },
-          { actor: "sacty", event: { type: "TaskPaused", payload: { reason: "error" } } },
-        ]);
-        return;
-      }
-      workspaceDir = ready.dir;
+        },
+        { actor: "sacty", event: { type: "TaskPaused", payload: { reason: "error" } } },
+      ]);
+      return;
     }
+    const readOnlyWorkspace = step !== "implement";
 
     // プロジェクトのコンテキストを取得・合成して渡し、使ったリポジトリとコミットを記録する
     const contextSource = this.deps.projects.get(task.projectId)?.context;
@@ -757,19 +755,42 @@ export class TaskService {
       ]);
     }
 
-    let executed: Awaited<ReturnType<TaskService["execute"]>>;
+    let executed: Awaited<ReturnType<TaskService["execute"]>> | undefined;
+    // 要求要件・設計の工程は、起点のコミットのコードを実行ごとのディレクトリに書き出して渡し、終わったら消す
+    // （実装の作業領域は実装の変更を含むので使わない。差し戻しでやり直しても、同じ起点のコードを読む）
+    const snapshotDir = readOnlyWorkspace
+      ? join(this.deps.workspaceRoot, "_snapshots", runId)
+      : undefined;
     try {
-      executed = await this.execute({
+      if (snapshotDir) {
+        const latest = this.mustGet(task.id);
+        try {
+          await this.deps.repos.snapshot(
+            this.trustedGitDir(latest),
+            latest.repository?.baseCommit ?? "",
+            snapshotDir,
+          );
+        } catch (error) {
+          executed = {
+            outcome: { kind: "failed", reason: "error", message: errorText(error) },
+            costUsd: 0,
+            estimated: false,
+          };
+        }
+      }
+      executed ??= await this.execute({
         agent,
         image: config.config.image,
         runId,
         prompt: buildPrompt(this.mustGet(task.id), step),
         role: step,
-        workspaceDir,
+        workspaceDir: snapshotDir ?? ready.dir,
+        readOnlyWorkspace,
         context: context && { dir: context.dir, ...context.placed },
       });
     } finally {
       context?.dispose();
+      if (snapshotDir) rmSync(snapshotDir, { recursive: true, force: true });
     }
     const { outcome, costUsd, estimated } = executed;
 
@@ -1360,6 +1381,8 @@ export class TaskService {
     prompt: string;
     role: AgentRole;
     workspaceDir: string;
+    /** 作業領域を読み取り専用で渡す（要求要件・設計の工程。PBI-15）。 */
+    readOnlyWorkspace?: boolean;
     /** エージェントの形式に変換したコンテキスト（工程エージェントだけ。PBI-6）。 */
     context?: Parameters<typeof buildInvocation>[5];
   }): Promise<{ outcome: AgentOutcome; costUsd: number; estimated: boolean }> {
@@ -1393,6 +1416,7 @@ export class TaskService {
         runId: run.runId,
         image: run.image,
         workspaceDir: run.workspaceDir,
+        ...(run.readOnlyWorkspace ? { readOnlyWorkspace: true } : {}),
         invocation,
       });
     } catch (error) {

@@ -1,5 +1,13 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -32,6 +40,26 @@ function makeOrigin(): string {
 }
 
 describe("対象リポジトリの作業領域（git）", () => {
+  it("起点のコミットのファイルだけを、.git や作業領域の変更を含めずに書き出す（PBI-15）", async () => {
+    const origin = makeOrigin();
+    const workspace = new GitRepositoryWorkspace();
+    const clone = join(dir, "task", "repo");
+    const gitDir = join(dir, "_git", "task.git");
+    const { baseCommit } = await workspace.prepare(clone, gitDir, origin, "main");
+    // 実装で作業領域を書き換えても、書き出すのは起点のコミットのファイル
+    writeFileSync(join(clone, "pay.ts"), "export const pay = () => 1;\n");
+    writeFileSync(join(clone, "new.ts"), "new\n");
+    // 起点の後に origin が進んでも、起点のコミットのまま
+    writeFileSync(join(origin, "later.ts"), "later\n");
+    git(origin, "add", "--all");
+    git(origin, "commit", "-m", "later");
+    const out = join(dir, "snapshot");
+    await workspace.snapshot(gitDir, baseCommit, out);
+    expect(readdirSync(out).sort()).toEqual(["pay.ts"]);
+    expect(readFileSync(join(out, "pay.ts"), "utf8")).toBe("export const pay = () => 0;\n");
+    await expect(workspace.snapshot(gitDir, "not-a-commit", join(dir, "x"))).rejects.toThrow();
+  });
+
   it("作業領域で書き換えられた git の設定を、差分を作るときに評価しない（レビュー指摘）", async () => {
     const origin = makeOrigin();
     const workspace = new GitRepositoryWorkspace();

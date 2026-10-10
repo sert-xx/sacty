@@ -25,6 +25,11 @@ export interface RepositoryWorkspace {
   /** 起点からの差分（新しく作ったファイルを含む）。 */
   diff(dir: string, gitDir: string, baseCommit: string): Promise<string>;
   /**
+   * 起点のコミットのファイルを、退避したメタデータから outDir に書き出す（.git は含めない）。
+   * 要求要件・設計の工程で、実装の作業領域とは別に、起点のコードを読ませるため（PBI-15）。
+   */
+  snapshot(gitDir: string, baseCommit: string, outDir: string): Promise<void>;
+  /**
    * 作業領域の内容をコミットし、ブランチにプッシュする。コミットは parent に積む
    * （前回プッシュしたコミットに積むので、強制プッシュはしない）。
    */
@@ -179,6 +184,21 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
     mkdirSync(dirname(gitDir), { recursive: true });
     cpSync(join(dir, ".git"), gitDir, { recursive: true });
     return { baseCommit };
+  }
+
+  async snapshot(gitDir: string, baseCommit: string, outDir: string) {
+    if (!COMMIT_RE.test(baseCommit)) throw new MessageError(message("git.invalidBaseCommit"));
+    mkdirSync(outDir, { recursive: true });
+    // 差分と同じく、利用者やシステムの git の設定を読まない環境で、一時インデックスから書き出す
+    const temp = mkdtempSync(join(tmpdir(), "sacty-git-"));
+    try {
+      const env = isolatedEnv(join(temp, "index"));
+      const base = ["--git-dir", gitDir, "--work-tree", outDir, ...SAFE_CONFIG];
+      await git("read-tree", [...base, "read-tree", baseCommit], env);
+      await git("checkout-index", [...base, "checkout-index", "--all", "--force"], env);
+    } finally {
+      rmSync(temp, { recursive: true, force: true });
+    }
   }
 
   async diff(dir: string, gitDir: string, baseCommit: string) {

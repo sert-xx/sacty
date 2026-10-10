@@ -128,6 +128,19 @@ function remarkLines(task: Task, step: StepKey, label: string): string[] {
  * 工程ごとの指示。再提出のときは、前回の下書きと有効な指摘の全件を渡し、
  * 指摘ごとの対応を決まった形式で返してもらう。
  */
+/**
+ * 要求要件・設計の工程で、作業領域にある対象リポジトリのコードについて伝える（PBI-15）。
+ * 起点のコミットのコードを読み取り専用で渡しているので、読むだけにさせる。
+ */
+function codeLines(task: Task): string[] {
+  if (!task.repository) return [];
+  return [
+    "",
+    `作業領域（カレントディレクトリ）に、対象リポジトリ（${task.repository.url}）の起点のコミット（${task.repository.baseCommit.slice(0, 7)}）のコードがあります。既存のコードを読み、構成・規約・影響範囲を踏まえて書いてください。`,
+    "この工程ではコードを読むだけです（作業領域は読み取り専用で、変更はできません）。",
+  ];
+}
+
 export function buildPrompt(task: Task, step: StepKey): string {
   const ticket = [`# ${task.title}`, "", task.body || "（内容なし）"].join("\n");
   const hasRemarks = task.remarks.some((r) => r.step === step && !r.voided);
@@ -143,6 +156,7 @@ export function buildPrompt(task: Task, step: StepKey): string {
         "- 受け入れ条件を、検証できる形の箇条書きで書く",
         "- 実装方法には踏み込まない",
         "- チケットから判断できないことは「確認したいこと」として最後に列挙する",
+        ...codeLines(task),
         "",
         "--- チケット ---",
         ticket,
@@ -162,6 +176,7 @@ export function buildPrompt(task: Task, step: StepKey): string {
         "- 設計はMarkdownで書く（構成、データ、処理の流れ、エラー時の振る舞い、影響範囲）",
         "- テスト観点は、受け入れ条件をすべて網羅し、異常系と境界値を含める",
         "- テスト観点ごとに、何を確かめるか・入力（前提）・期待する結果を、第三者が検証できる具体さで書く",
+        ...codeLines(task),
         "",
         "設計の本文のあとに、テスト観点を次の形式で必ず付けてください。",
         "```json",

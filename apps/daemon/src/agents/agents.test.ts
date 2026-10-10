@@ -252,6 +252,18 @@ describe("dockerの引数", () => {
     expect(args).toEqual(
       expect.arrayContaining(["--rm", "--cap-drop", "ALL", "/ws/t1:/workspace"]),
     );
+    // 要求要件・設計の工程は、作業領域を読み取り専用でマウントする（PBI-15）
+    expect(
+      dockerRunArgs({
+        runId: "r2",
+        image: "sacty-agent:test",
+        workspaceDir: "/ws/snap",
+        readOnlyWorkspace: true,
+        envNames: [],
+        mounts: [],
+        command: ["claude"],
+      }),
+    ).toContain("/ws/snap:/workspace:ro");
     // イメージの後ろにコマンドが続く
     expect(args.slice(args.indexOf("sacty-agent:test") + 1)).toEqual(["claude", "-p", "prompt"]);
   });
