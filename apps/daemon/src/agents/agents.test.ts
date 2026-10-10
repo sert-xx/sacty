@@ -412,12 +412,15 @@ describe("認証ファイルの書き戻し", () => {
 });
 
 describe("秘密情報の除去", () => {
-  it("渡した秘密情報を [REDACTED] に置き換え、短い値は対象にしない", async () => {
+  it("渡した秘密情報を、短くても [REDACTED] に置き換える（空の値は無視する）", async () => {
     const { redact } = await import("./redact.js");
-    expect(redact("token=abcdefgh12345 and abcdefgh12345", ["abcdefgh12345", "1"])).toBe(
+    expect(redact("token=abcdefgh12345 and abcdefgh12345", ["abcdefgh12345"])).toBe(
       "token=[REDACTED] and [REDACTED]",
     );
-    expect(redact("region us-east-1", ["1"])).toBe("region us-east-1");
+    // 名前を指定して取り出した値は、短くても残さない（長い値から先に置き換える）
+    expect(redact("pin=pin123 / pin1234", ["pin123", "pin1234", ""])).toBe(
+      "pin=[REDACTED] / [REDACTED]",
+    );
   });
 
   it("認証ファイルのJSONから、トークンらしい文字列を取り出す", async () => {
@@ -427,6 +430,9 @@ describe("秘密情報の除去", () => {
       last_refresh: "2026",
     });
     expect(secretStringsInJson(json)).toEqual(["a".repeat(40), "r".repeat(40)]);
+    // JSON でないファイルは全体を秘密情報とみなすが、短すぎるものは推測の対象にしない
+    expect(secretStringsInJson("not-json-token-value")).toEqual(["not-json-token-value"]);
+    expect(secretStringsInJson("x\n")).toEqual([]);
   });
 });
 

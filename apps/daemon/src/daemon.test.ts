@@ -2615,6 +2615,24 @@ describe("コンテキストの MCP サーバー（PBI-6b）", () => {
       },
     });
 
+  it("MCP の秘密情報は、短い値でも出力から取り除き、台帳に残さない", async () => {
+    const ledger = new SqliteLedgerStore(dbPath);
+    const { service } = makeService(ledger, [out("# 要求要件\nPIN は pin123 です")], {
+      contexts: contexts(),
+      secrets: { "claude-oauth-token": "oauth-secret", "mcp-github": "pin123" },
+    });
+    const project = service.saveProject(undefined, {
+      name: "決済",
+      context: { repo: "https://example.com/ctx.git" },
+    });
+    const { id } = service.createTicket({ title: "A", projectId: project.id });
+    await service.runNext(id);
+    const ledgerText = JSON.stringify(service.get(id)?.ledger);
+    expect(ledgerText).not.toContain("pin123");
+    expect(ledgerText).toContain("PIN は [REDACTED] です");
+    ledger.close();
+  });
+
   it("MCP の設定には秘密情報の名前だけを書き、値は実行時に環境変数で渡し、出力からは取り除く", async () => {
     const ledger = new SqliteLedgerStore(dbPath);
     const { service, executor } = makeService(
