@@ -4,7 +4,8 @@ import { AutoRefresh } from "@/components/auto-refresh";
 import { DaemonError } from "@/components/daemon-error";
 import { NewTicketDialog } from "@/components/new-ticket-dialog";
 import { StatusLabel, StepChips } from "@/components/task-bits";
-import { DaemonUnavailableError, getStatus, listTasks } from "@/lib/daemon";
+import { currentProjectId, resolveProject } from "@/lib/current-project";
+import { DaemonUnavailableError, getStatus, listProjects, listTasks } from "@/lib/daemon";
 import {
   AUTH_LABEL,
   isWorking,
@@ -19,7 +20,9 @@ export default function TasksPage() {
     <>
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div className="flex flex-col gap-1">
-          <p className="text-sm text-muted-foreground">すべてのプロジェクト</p>
+          <Suspense fallback={<p className="text-sm text-muted-foreground">&nbsp;</p>}>
+            <ProjectName />
+          </Suspense>
           <h1 className="text-2xl font-bold">タスク</h1>
         </div>
         <NewTicketDialog />
@@ -43,6 +46,26 @@ export default function TasksPage() {
 }
 
 /** 工程を実行するAIの設定状況。問題があれば理由を出す。 */
+/** 表示しているプロジェクト（cookie）のタスク。 */
+async function projectTasks() {
+  const [tasks, projects, id] = await Promise.all([
+    listTasks(),
+    listProjects(),
+    currentProjectId(),
+  ]);
+  const project = resolveProject(projects, id);
+  return tasks.filter((t) => t.projectId === project?.id);
+}
+
+async function ProjectName() {
+  try {
+    const project = resolveProject(await listProjects(), await currentProjectId());
+    return <p className="text-sm text-muted-foreground">プロジェクト：{project?.name}</p>;
+  } catch {
+    return null;
+  }
+}
+
 async function AgentStatus() {
   let status: Awaited<ReturnType<typeof getStatus>>;
   try {
@@ -73,7 +96,7 @@ async function AgentStatus() {
 async function NeedsYou() {
   let tasks: Awaited<ReturnType<typeof listTasks>>;
   try {
-    tasks = (await listTasks()).filter(needsPerson);
+    tasks = (await projectTasks()).filter(needsPerson);
   } catch {
     return null;
   }
@@ -109,7 +132,7 @@ async function NeedsYou() {
 async function TaskTable() {
   let tasks: Awaited<ReturnType<typeof listTasks>>;
   try {
-    tasks = await listTasks();
+    tasks = await projectTasks();
   } catch (error) {
     if (error instanceof DaemonUnavailableError) {
       return (

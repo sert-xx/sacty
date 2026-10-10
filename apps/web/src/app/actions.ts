@@ -4,6 +4,7 @@ import { CreateTicketInput, type ProjectDefinitionInput, StepKey } from "@sacty/
 import { refresh } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
+import { currentProjectId } from "@/lib/current-project";
 import {
   approveStep,
   createTicket,
@@ -38,7 +39,9 @@ export async function createTicketAction(
 
   let taskId: string;
   try {
-    taskId = (await createTicket(parsed.data)).id;
+    // 表示しているプロジェクトに作る
+    const projectId = await currentProjectId();
+    taskId = (await createTicket({ ...parsed.data, projectId })).id;
   } catch {
     return {
       message: "チケットを作成できませんでした。sactyのデーモンが動いているか確認してください。",

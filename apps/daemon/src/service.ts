@@ -283,14 +283,20 @@ export class TaskService {
     return updated;
   }
 
+  /** 画面からチケットを作る。プロジェクトを省略すると、既定のプロジェクトに作る。 */
   createTicket(raw: unknown): Task {
     const input = CreateTicketInput.parse(raw);
+    const projectId = input.projectId ?? DEFAULT_PROJECT_ID;
+    if (!this.deps.projects.get(projectId)) {
+      throw new InvalidOperationError("プロジェクトが見つかりません。");
+    }
     const config = this.deps.config();
     const budgetCapUsd = config.ok ? config.config.budgetPerTaskUsd : DEFAULT_BUDGET_USD;
-    return this.append({ id: randomUUID(), projectId: DEFAULT_PROJECT_ID }, [
+    const { title, body } = input;
+    return this.append({ id: randomUUID(), projectId }, [
       {
         actor: "person",
-        event: { type: "TaskCreated", payload: { ...input, start: "ticket", budgetCapUsd } },
+        event: { type: "TaskCreated", payload: { title, body, start: "ticket", budgetCapUsd } },
       },
       { actor: "sacty", event: { type: "StepsChosen", payload: { steps: [...MVP_STEPS] } } },
     ]);

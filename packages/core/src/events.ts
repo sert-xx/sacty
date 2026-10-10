@@ -460,6 +460,8 @@ export const CreateTicketInput = z.object({
       `内容は${TICKET_BODY_MAX.toLocaleString("ja-JP")}文字以内で入力してください。`,
     )
     .default(""),
+  /** 作るプロジェクト。省略すると既定のプロジェクト。 */
+  projectId: z.string().min(1).optional(),
 });
 export type CreateTicketInput = z.infer<typeof CreateTicketInput>;
 
