@@ -124,6 +124,7 @@ describe("対象リポジトリの作業領域（git）", () => {
       parent: baseCommit,
       branch,
       message: "決済API\n\nsacty task t1",
+      date: "2026-10-10T01:00:00.000Z",
     });
     expect(existsSync(marker)).toBe(false);
     expect(git(origin, "rev-parse", branch)).toBe(first.commit);
@@ -140,6 +141,7 @@ describe("対象リポジトリの作業領域（git）", () => {
       parent: first.commit,
       branch,
       message: "m2",
+      date: "2026-10-10T02:00:00.000Z",
     });
     expect(git(origin, "rev-parse", `${branch}^`)).toBe(first.commit);
     expect(git(origin, "rev-parse", branch)).toBe(second.commit);
@@ -152,7 +154,33 @@ describe("対象リポジトリの作業領域（git）", () => {
       parent: second.commit,
       branch,
       message: "m3",
+      date: "2026-10-10T03:00:00.000Z",
     });
     expect(third.commit).toBe(second.commit);
+  });
+
+  it("プッシュの後で止まって再開しても、同じ提出なら同じコミットを作り直し、プッシュが拒否されない（レビュー指摘）", async () => {
+    const origin = makeOrigin();
+    git(origin, "config", "receive.denyCurrentBranch", "ignore");
+    const workspace = new GitRepositoryWorkspace();
+    const clone = join(dir, "task", "repo");
+    const gitDir = join(dir, "_git", "task.git");
+    const { baseCommit } = await workspace.prepare(clone, gitDir, origin, "main");
+    writeFileSync(join(clone, "pay.ts"), "export const pay = () => 1;\n");
+    const input = {
+      dir: clone,
+      gitDir,
+      baseCommit,
+      parent: baseCommit,
+      branch: "sacty/task-1234abcd",
+      message: "決済API",
+      date: "2026-10-10T01:00:00.000Z",
+    };
+    const first = await workspace.publish(input);
+    // プッシュの後、台帳に記録する前に止まり、1秒以上たってから同じ入力で再開した
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    const retried = await workspace.publish(input);
+    expect(retried.commit).toBe(first.commit);
+    expect(git(origin, "rev-parse", input.branch)).toBe(first.commit);
   });
 });

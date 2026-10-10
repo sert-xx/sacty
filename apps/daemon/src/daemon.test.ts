@@ -80,11 +80,16 @@ class FakeRepos implements RepositoryWorkspace {
     if (this.diffFail) throw new Error(this.diffFail);
     return this.diffText;
   }
-  published: { parent: string; branch: string; message: string }[] = [];
+  published: { parent: string; branch: string; message: string; date: string }[] = [];
   publishFail?: string;
-  async publish(input: { parent: string; branch: string; message: string }) {
+  async publish(input: { parent: string; branch: string; message: string; date: string }) {
     if (this.publishFail) throw new Error(this.publishFail);
-    this.published.push({ parent: input.parent, branch: input.branch, message: input.message });
+    this.published.push({
+      parent: input.parent,
+      branch: input.branch,
+      message: input.message,
+      date: input.date,
+    });
     return { commit: `c${this.published.length}`.padEnd(40, "0") };
   }
 }
@@ -1745,6 +1750,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         parent: "base123",
         branch: `sacty/task-${id.slice(0, 8)}`,
         message: `決済API\n\nsacty task ${id}`,
+        date: service.get(id)?.task.lastReview?.at,
       },
     ]);
     expect(pulls.calls).toHaveLength(1);
@@ -1832,6 +1838,8 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     expect(prompt).toContain("[implement-1-1] 失敗時のログが無い");
     const task = service.get(id)?.task;
     expect(task?.remarks.at(-1)?.response).toBe("ログを足した");
+    // 実装への対応は、成果物チェックの2回目の提出での対応として記録する（レビュー指摘）
+    expect(task?.remarks.at(-1)?.respondedIn).toBe(2);
     expect(task?.gate).toEqual({ step: "pr", submission: 2 });
     // 前回プッシュしたコミットに積み、同じPRを更新する
     expect(repos.published[1]).toMatchObject({ parent: "c1".padEnd(40, "0") });
@@ -1857,7 +1865,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
   it("プッシュやPRの作成に失敗したら理由を記録して止め、トークンは残さない", async () => {
     const pulls = new FakePulls();
     pulls.fail = "PRを作れませんでした：GitHub API 401 Bad credentials ghp_secret";
-    const { ledger, service, id } = await toDeliverableGate([], { pulls });
+    const { ledger, service, repos, id } = await toDeliverableGate([], { pulls });
     const task = service.get(id)?.task;
     expect(task?.pausedReason).toBe("error");
     expect(task?.pausedMessage).toContain("401 Bad credentials");
@@ -1867,6 +1875,9 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     service.resume(id, {});
     await drain(service);
     expect(service.get(id)?.task.gate).toEqual({ step: "pr", submission: 1 });
+    // プッシュの後で失敗して再開しても、同じ親・同じ日時でコミットを作り直す（同じコミットになる）
+    const [first, retried] = repos.published;
+    expect(retried).toEqual(first);
     ledger.close();
   });
 

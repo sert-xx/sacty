@@ -275,7 +275,9 @@ export function applyEvent(
         // その工程の有効な指摘は、今回の提出で回答がなければ未回答に戻す
         // （前回の対応文が残ると、最新の成果物への対応だと誤認して承認してしまうため）
         const step = event.payload.step;
-        const submission = (task.submissions[step] ?? 0) + 1;
+        // 実装は、成果物チェック（PR作成のゲート）の提出として人間に示す
+        const shownAt = step === "implement" ? "pr" : step;
+        const submission = (task.submissions[shownAt] ?? 0) + 1;
         const responses = new Map(event.payload.responses.map((r) => [r.remarkId, r.text]));
         task.remarks = task.remarks.map((r) => {
           if (r.step !== step || r.voided) return r;

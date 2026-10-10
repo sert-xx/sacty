@@ -597,6 +597,9 @@ export class TaskService {
         parent: task.pullRequest?.commit ?? task.repository.baseCommit,
         branch,
         message: `${task.title}\n\nsacty task ${task.id}`,
+        // 提出ごとに決まる日時にして、再開しても同じコミットを作る（プッシュ済みなら何も変わらない）
+        // （PR作成の工程は最終レビューに通った後なので、通常は最終レビューの日時になる）
+        date: task.lastReview?.at ?? task.createdAt,
       });
       let pr: { url: string; number: number } | undefined;
       if (repo.pullRequest) {

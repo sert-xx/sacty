@@ -31,6 +31,11 @@ export interface RepositoryWorkspace {
     parent: string;
     branch: string;
     message: string;
+    /**
+     * コミットの日時（ISO 8601）。同じ提出では同じ値を渡す。プッシュの後、台帳に記録する前に
+     * 失敗して再開しても、同じコミットを作り直せる（前回プッシュしたものと枝分かれしない）ように。
+     */
+    date: string;
   }): Promise<{ commit: string }>;
 }
 
@@ -175,6 +180,7 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
     parent: string;
     branch: string;
     message: string;
+    date: string;
   }) {
     if (!COMMIT_RE.test(input.parent)) throw new Error("積む先のコミットが不正です。");
     if (!/^[\w./-]+$/.test(input.branch) || input.branch.startsWith("-")) {
@@ -203,7 +209,12 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
             "-m",
             input.message,
           ],
-          { ...isolatedEnv("/dev/null"), ...author },
+          {
+            ...isolatedEnv("/dev/null"),
+            ...author,
+            GIT_AUTHOR_DATE: input.date,
+            GIT_COMMITTER_DATE: input.date,
+          },
         )
       ).trim();
     });
