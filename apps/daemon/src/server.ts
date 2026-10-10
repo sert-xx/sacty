@@ -92,6 +92,18 @@ export function createApp(service: TaskService, token: string) {
     }
   });
 
+  app.post("/api/tasks/:id/proposals/:proposalId/decide", async (c) => {
+    const json = await readJson(c);
+    if (!json.ok) return c.json({ error: "invalid_json" }, 400);
+    try {
+      return c.json({
+        task: service.decideChange(c.req.param("id"), c.req.param("proposalId"), json.body),
+      });
+    } catch (error) {
+      return handleError(c, error);
+    }
+  });
+
   app.post("/api/tasks/:id/resume", async (c) => {
     const json = await readJson(c);
     if (!json.ok) return c.json({ error: "invalid_json" }, 400);

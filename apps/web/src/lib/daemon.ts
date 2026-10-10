@@ -123,6 +123,13 @@ export function requestChanges(
   return postOp(`/api/tasks/${encodeURIComponent(id)}/request-changes`, input);
 }
 
+export function decideChange(id: string, proposalId: string, accept: boolean): Promise<OpResult> {
+  return postOp(
+    `/api/tasks/${encodeURIComponent(id)}/proposals/${encodeURIComponent(proposalId)}/decide`,
+    { accept },
+  );
+}
+
 export function voidRemark(id: string, remarkId: string): Promise<OpResult> {
   return postOp(
     `/api/tasks/${encodeURIComponent(id)}/remarks/${encodeURIComponent(remarkId)}/void`,

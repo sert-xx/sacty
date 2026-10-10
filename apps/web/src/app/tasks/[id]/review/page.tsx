@@ -1,4 +1,10 @@
-import { changeRounds, GATED_STEPS, MAX_CHANGE_REQUESTS, type TaskRemark } from "@sacty/core";
+import {
+  appliedProposalFor,
+  changeRounds,
+  GATED_STEPS,
+  MAX_CHANGE_REQUESTS,
+  type TaskRemark,
+} from "@sacty/core";
 import { cn } from "cn";
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -55,6 +61,7 @@ async function Review({ params }: { params: Promise<{ id: string }> }) {
     .filter((s, i) => i <= stepIndex && GATED_STEPS.includes(s.key))
     .map((s) => s.key)
     .reverse();
+  const fromProposal = appliedProposalFor(task, step);
   const frozenRequirements = step !== "requirements" ? task.approved.requirements : undefined;
 
   return (
@@ -82,6 +89,31 @@ async function Review({ params }: { params: Promise<{ id: string }> }) {
 
       <div className="flex flex-wrap items-start gap-6">
         <div className="flex min-w-0 flex-[999_1_520px] flex-col gap-6">
+          {fromProposal && (
+            <section
+              aria-labelledby="from-proposal"
+              className="flex flex-col gap-2 rounded-xl border border-warn-line bg-warn-soft p-5 text-sm leading-6"
+            >
+              <h2 id="from-proposal" className="text-[15px] font-semibold text-warn">
+                変更の申し出（{fromProposal.id}）による変更案です
+              </h2>
+              <p>
+                {STEP_LABEL[fromProposal.fromStep]}
+                の工程からの申し出を、
+                {fromProposal.decision ? "人間" : "ゴールガーディアン"}
+                が認めました。承認済みの{STEP_LABEL[step]}
+                を変えるため、もう一度承認してください。
+              </p>
+              <p>理由：{fromProposal.reason}</p>
+              {fromProposal.facts.length > 0 && (
+                <ul className="list-disc pl-5">
+                  {fromProposal.facts.map((f) => (
+                    <li key={f}>{f}</li>
+                  ))}
+                </ul>
+              )}
+            </section>
+          )}
           {remarks.length > 0 && (
             <section
               aria-labelledby="history"

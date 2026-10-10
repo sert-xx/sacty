@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -36,15 +36,24 @@ const configOf =
   (a: AgentConfig, budgetPerTaskUsd = 1): (() => ConfigResult) =>
   () => ({
     ok: true,
-    config: { image: "sacty-agent:test", defaultAgent: a, budgetPerTaskUsd },
+    config: { image: "sacty-agent:test", defaultAgent: a, guardianAgent: a, budgetPerTaskUsd },
   });
 
 /** 決まった結果を順に返す偽物の実行器。渡された呼び出し内容も記録する。 */
 class FakeExecutor implements AgentExecutor {
   calls: Invocation[] = [];
+  /** 実行ごとにマウントした作業領域。 */
+  dirs: string[] = [];
   constructor(private readonly outcomes: AgentOutcome[]) {}
-  async run({ invocation }: { invocation: Invocation }): Promise<AgentOutcome> {
+  async run({
+    invocation,
+    workspaceDir,
+  }: {
+    invocation: Invocation;
+    workspaceDir: string;
+  }): Promise<AgentOutcome> {
     this.calls.push(invocation);
+    this.dirs.push(workspaceDir);
     const next = this.outcomes.shift();
     if (!next) throw new Error("no more outcomes");
     return next;
@@ -848,6 +857,241 @@ describe("設計の工程（PBI-8）", () => {
   });
 });
 
+describe("ゴールガーディアン：変更の申し出の判定（PBI-9）", () => {
+  const out = (text: string, usageOutput = 100): AgentOutcome => ({
+    kind: "completed",
+    output: text,
+    usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: usageOutput },
+  });
+  const block = (b: Record<string, unknown>) => `\`\`\`json\n${JSON.stringify(b)}\n\`\`\``;
+  const designWithProposal = (target = "requirements") =>
+    out(
+      [
+        "# 設計 v1",
+        block({
+          "sacty-test-viewpoints": [{ title: "A", input: "Aの入力", expected: "Aの期待結果" }],
+        }),
+        block({
+          "sacty-change-proposal": {
+            target,
+            reason: "外部APIが冪等性キーに対応していない",
+            facts: ["決済代行のAPI仕様書 v3 に Idempotency-Key が無い"],
+            proposed: "# 要求要件 v2（sacty側で重複を防ぐ）",
+          },
+        }),
+      ].join("\n\n"),
+    );
+  const verdict = (v: string, reason = "事実で裏付けられている") =>
+    out(block({ "sacty-verdict": { verdict: v, reason } }), 1000);
+  const promptOf = (executor: FakeExecutor, i: number) =>
+    executor.calls[i]?.command.join(" ") ?? "";
+
+  /** 要求要件を承認し、設計の実行（申し出つき）とゴールガーディアンの判定まで進める。 */
+  async function proposeAndJudge(outcomes: AgentOutcome[]) {
+    const ledger = new SqliteLedgerStore(dbPath);
+    const made = makeService(ledger, [out("# 要求要件 v1"), ...outcomes]);
+    const task = made.service.createTicket({
+      title: "決済API",
+      body: "チケットの本文（秘密の経緯）",
+    });
+    await made.service.runNext(task.id);
+    made.service.approve(task.id, { step: "requirements", submission: 1 });
+    await made.service.runNext(task.id);
+    return { ledger, ...made, id: task.id };
+  }
+
+  it("設計の工程は要求要件の変更を申し出られ、ゴールガーディアンは新しいセッションで必要な情報だけを受け取る", async () => {
+    const { ledger, service, executor, id } = await proposeAndJudge([
+      designWithProposal(),
+      verdict("rejected", "代替手段がある"),
+    ]);
+    expect(promptOf(executor, 1)).toContain("sacty-change-proposal");
+
+    const guardian = promptOf(executor, 2);
+    expect(guardian).toContain("--- 承認済みの要求要件 ---\n# 要求要件 v1");
+    expect(guardian).toContain("理由：外部APIが冪等性キーに対応していない");
+    expect(guardian).toContain("- 決済代行のAPI仕様書 v3 に Idempotency-Key が無い");
+    expect(guardian).toContain("# 要求要件 v2（sacty側で重複を防ぐ）");
+    // チケットや工程の下書き、過去の経緯は渡さない
+    expect(guardian).not.toContain("チケットの本文");
+    expect(guardian).not.toContain("# 設計 v1");
+    // 工程の作業領域とは別の、空の作業領域で実行する
+    expect(executor.dirs[2]).not.toBe(executor.dirs[1]);
+    expect(executor.dirs[2]).toContain("_guardian");
+    expect(existsSync(executor.dirs[2] ?? "")).toBe(false);
+
+    const task = service.get(id)?.task;
+    expect(task?.proposals).toMatchObject([
+      {
+        id: "CP-1",
+        fromStep: "design",
+        target: "requirements",
+        judgement: { verdict: "rejected", reason: "代替手段がある" },
+        applied: false,
+      },
+    ]);
+    // 却下されたら、設計をそのまま提出する。要求要件は承認済みのまま
+    expect(task?.gate).toEqual({ step: "design", submission: 1 });
+    expect(task?.outputs.design).toBe("# 設計 v1"); // 申し出のJSONは本文から除く
+    expect(task?.approved.requirements?.output).toBe("# 要求要件 v1");
+    // ゴールガーディアンの費用も予算に入る（100 + 100 + 1000 出力トークン × $15/M）
+    expect(task?.budget.usedUsd).toBeCloseTo(0.018, 6);
+    const types = service.get(id)?.ledger.map((e) => e.type) ?? [];
+    expect(types.slice(-4)).toEqual([
+      "AgentRunCompleted",
+      "ChangeProposed",
+      "ChangeJudged",
+      "StepSubmitted",
+    ]);
+    expect(service.get(id)?.ledger.find((e) => e.type === "ChangeJudged")?.actor).toBe("guardian");
+    ledger.close();
+  });
+
+  it("要求要件の変更が承認されても、人間の再承認が必要になる", async () => {
+    const { ledger, service, executor, id } = await proposeAndJudge([
+      designWithProposal(),
+      verdict("approved"),
+      out("# 設計 v2"),
+    ]);
+    const task = service.get(id)?.task;
+    expect(task?.status).toBe("awaiting_approval");
+    expect(task?.gate).toEqual({ step: "requirements", submission: 2 });
+    expect(task?.outputs.requirements).toBe("# 要求要件 v2（sacty側で重複を防ぐ）");
+    expect(task?.approved).toEqual({});
+    expect(task?.steps.map((s) => s.state)).toEqual(["active", "todo", "todo", "todo"]);
+    expect(task?.proposals[0]?.applied).toBe(true);
+
+    service.approve(id, { step: "requirements", submission: 2 });
+    await service.runNext(id);
+    expect(promptOf(executor, 3)).toContain(
+      "--- 承認済みの要求要件 ---\n# 要求要件 v2（sacty側で重複を防ぐ）",
+    );
+    expect(service.get(id)?.task.gate).toEqual({ step: "design", submission: 1 });
+    ledger.close();
+  });
+
+  it("判定できなければエスカレーションになり、人間が認めるか認めないかを決める", async () => {
+    const { ledger, service, id } = await proposeAndJudge([
+      designWithProposal(),
+      out("判定の形式が無い出力"),
+    ]);
+    const escalated = service.get(id)?.task;
+    expect(escalated?.status).toBe("escalated");
+    expect(escalated?.proposals[0]?.judgement).toMatchObject({ verdict: "undecidable" });
+    expect(() => service.approve(id, { step: "design", submission: 1 })).toThrow();
+    expect(() => service.decideChange(id, "CP-9", { accept: true })).toThrow(
+      /判断待ちではありません/,
+    );
+
+    const rejected = service.decideChange(id, "CP-1", { accept: false });
+    expect(rejected.gate).toEqual({ step: "design", submission: 1 });
+    expect(rejected.approved.requirements?.output).toBe("# 要求要件 v1");
+    expect(() => service.decideChange(id, "CP-1", { accept: true })).toThrow(
+      /判断待ちではありません/,
+    );
+    ledger.close();
+  });
+
+  it("人間が認めた要求要件の変更も、再承認に回す", async () => {
+    const { ledger, service, id } = await proposeAndJudge([
+      designWithProposal(),
+      verdict("undecidable", "価値判断を含む"),
+    ]);
+    const accepted = service.decideChange(id, "CP-1", { accept: true });
+    expect(accepted.gate).toEqual({ step: "requirements", submission: 2 });
+    expect(accepted.proposals[0]).toMatchObject({ decision: { accept: true }, applied: true });
+    expect(accepted.approved).toEqual({}); // 承認を取り消している
+    expect(accepted.steps.map((st) => st.state)).toEqual(["active", "todo", "todo", "todo"]);
+    const types = service.get(id)?.ledger.map((e) => e.type) ?? [];
+    expect(types.slice(-4)).toEqual([
+      "TaskEscalated",
+      "ChangeDecided",
+      "ChangeApplied",
+      "StepSubmitted",
+    ]);
+    ledger.close();
+  });
+
+  it("ゴールガーディアンの実行に失敗したら、判定できなかったものとしてエスカレーションにする", async () => {
+    const { ledger, service, id } = await proposeAndJudge([
+      designWithProposal(),
+      { kind: "failed", reason: "usage_limit", message: "You've hit your session limit" },
+    ]);
+    const task = service.get(id)?.task;
+    expect(task?.status).toBe("escalated");
+    expect(task?.proposals[0]?.judgement?.reason).toContain("session limit");
+    ledger.close();
+  });
+
+  it("承認されていない工程への申し出は無視し、そのまま提出する", async () => {
+    const { ledger, service, executor, id } = await proposeAndJudge([designWithProposal("design")]);
+    expect(executor.calls).toHaveLength(2); // ゴールガーディアンは呼ばない
+    const task = service.get(id)?.task;
+    expect(task?.proposals).toEqual([]);
+    expect(task?.gate).toEqual({ step: "design", submission: 1 });
+    ledger.close();
+  });
+
+  it("デーモンの停止で中断された判定は、再起動時にエスカレーションにする", async () => {
+    const ledger = new SqliteLedgerStore(dbPath);
+    const { service } = makeService(ledger, [out("# 要求要件 v1")]);
+    const { id } = service.createTicket({ title: "A" });
+    await service.runNext(id);
+    service.approve(id, { step: "requirements", submission: 1 });
+    // 設計の実行完了と申し出までを記録したところで、デーモンが止まった
+    const runId = "run-x";
+    ledger.append({
+      taskId: id,
+      projectId: "default",
+      events: [
+        {
+          actor: "sacty",
+          event: {
+            type: "AgentRunStarted",
+            payload: { runId, step: "design", agentId: "a", authMode: "subscription" },
+          },
+        },
+        {
+          actor: "agent",
+          event: {
+            type: "AgentRunCompleted",
+            payload: {
+              runId,
+              step: "design",
+              agentId: "a",
+              authMode: "subscription",
+              usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 0 },
+              costUsd: 0,
+              estimated: true,
+              output: "# 設計",
+            },
+          },
+        },
+        {
+          actor: "agent",
+          event: {
+            type: "ChangeProposed",
+            payload: {
+              proposalId: "CP-1",
+              fromStep: "design",
+              target: "requirements",
+              reason: "r",
+              facts: [],
+              proposed: "p",
+            },
+          },
+        },
+      ],
+    });
+    const { service: restarted } = makeService(ledger);
+    restarted.recoverInterrupted();
+    const task = restarted.get(id)?.task;
+    expect(task?.status).toBe("escalated");
+    expect(task?.proposals[0]?.judgement?.reason).toMatch(/中断/);
+    ledger.close();
+  });
+});
+
 describe("API", () => {
   const token = "test-token";
   const auth = { authorization: `Bearer ${token}` };
@@ -918,6 +1162,23 @@ describe("API", () => {
     expect((await resume({})).status).toBe(409);
     expect((await resume({ capUsd: -1 })).status).toBe(400);
     expect((await resume({ capUsd: "3" })).status).toBe(400);
+    ledger.close();
+  });
+
+  it("判断待ちでない変更の申し出への判断は409、不正な入力は400を返す（PBI-9）", async () => {
+    const ledger = new SqliteLedgerStore(dbPath);
+    const { service } = makeService(ledger);
+    const app = createApp(service, token);
+    const task = service.createTicket({ title: "A" });
+    const decide = (body: unknown) =>
+      app.request(`/api/tasks/${task.id}/proposals/CP-1/decide`, {
+        method: "POST",
+        headers: json,
+        body: JSON.stringify(body),
+      });
+    expect((await decide({ accept: true })).status).toBe(409);
+    expect((await decide({ accept: "yes" })).status).toBe(400);
+    expect(service.get(task.id)?.ledger.map((e) => e.type)).toEqual(["TaskCreated", "StepsChosen"]);
     ledger.close();
   });
 

@@ -1,4 +1,11 @@
-import type { LedgerEvent, PauseReason, Remark, StepKey, TestViewpoint } from "./events.js";
+import type {
+  LedgerEvent,
+  PauseReason,
+  Remark,
+  StepKey,
+  TestViewpoint,
+  Verdict,
+} from "./events.js";
 
 export type StepState = "todo" | "active" | "done" | "skip";
 
@@ -41,6 +48,32 @@ export type ApprovedOutput = {
   at: string;
 };
 
+/** 工程エージェントの、承認済みの成果物への変更の申し出と、その判定。 */
+export type TaskProposal = {
+  id: string;
+  fromStep: StepKey;
+  target: StepKey;
+  reason: string;
+  facts: string[];
+  proposed: string;
+  testViewpoints?: TestViewpoint[];
+  proposedAt: string;
+  /** ゴールガーディアンの判定。無ければ判定中。 */
+  judgement?: { verdict: Verdict; reason: string; at: string };
+  /** 判定できなかった申し出への、人間の判断。 */
+  decision?: { accept: boolean; at: string };
+  /** 変更を反映したか。 */
+  applied: boolean;
+};
+
+/** 申し出が認められたか（ゴールガーディアンの承認か、人間の判断）。未決なら undefined。 */
+export function proposalAccepted(p: TaskProposal): boolean | undefined {
+  if (p.decision) return p.decision.accept;
+  if (p.judgement?.verdict === "approved") return true;
+  if (p.judgement?.verdict === "rejected") return false;
+  return undefined;
+}
+
 export type Task = {
   id: string;
   projectId: string;
@@ -71,16 +104,42 @@ export type Task = {
   /** 工程ごとの提出回数。 */
   submissions: Partial<Record<StepKey, number>>;
   remarks: TaskRemark[];
+  /** 変更の申し出（古い順）。 */
+  proposals: TaskProposal[];
   /** エスカレーションの内容（差し戻しを続ける場合に使う、やり直す工程と書きかけの指摘）。 */
   escalation?: { step: StepKey; target: StepKey; pendingRemarks: Remark[] };
   createdAt: string;
   updatedAt: string;
 };
 
+/** 前の工程からやり直す。その工程を実行対象にし、その工程から先の承認は取り消す。 */
+function reopen(task: Task, target: StepKey) {
+  const to = task.steps.findIndex((s) => s.key === target);
+  task.steps = task.steps.map((s, i) => {
+    if (i === to) return { ...s, state: "active" as const };
+    if (i > to) return { ...s, state: "todo" as const };
+    return s;
+  });
+  const keep = new Set(task.steps.slice(0, to).map((s) => s.key));
+  task.approved = Object.fromEntries(
+    Object.entries(task.approved).filter(([key]) => keep.has(key as StepKey)),
+  );
+}
+
 class LedgerIntegrityError extends Error {
   constructor(event: LedgerEvent, detail: string) {
     super(`${event.type} (seq ${event.seq}) on task ${event.taskId}: ${detail}`);
   }
+}
+
+function findProposal(task: Task, event: LedgerEvent, id: string): TaskProposal {
+  const proposal = task.proposals.find((p) => p.id === id);
+  if (!proposal) throw new LedgerIntegrityError(event, `unknown proposal ${id}`);
+  return proposal;
+}
+
+function updateProposal(task: Task, id: string, patch: Partial<TaskProposal>) {
+  task.proposals = task.proposals.map((p) => (p.id === id ? { ...p, ...patch } : p));
 }
 
 /** 浮動小数の誤差を、費用の表示や比較に影響しない桁で丸める。 */
@@ -112,6 +171,7 @@ export function applyEvent(
       outputs: {},
       testViewpoints: [],
       approved: {},
+      proposals: [],
       submissions: {},
       remarks: [],
       budget: { usedUsd: 0, capUsd: event.payload.budgetCapUsd, warned: false, estimated: false },
@@ -228,16 +288,7 @@ export function applyEvent(
         if (to < 0 || to >= at) {
           throw new LedgerIntegrityError(event, "target must be a step before the gate");
         }
-        // 前の工程からやり直す。その工程から先の承認は取り消す
-        task.steps = task.steps.map((s, i) => {
-          if (i === to) return { ...s, state: "active" as const };
-          if (i > to) return { ...s, state: "todo" as const };
-          return s;
-        });
-        const keep = new Set(task.steps.slice(0, to).map((s) => s.key));
-        task.approved = Object.fromEntries(
-          Object.entries(task.approved).filter(([key]) => keep.has(key as StepKey)),
-        );
+        reopen(task, target);
       }
       task.remarks = [
         ...task.remarks,
@@ -264,7 +315,89 @@ export function applyEvent(
       );
       break;
 
+    case "ChangeProposed":
+      if (task.status !== "idle") throw new LedgerIntegrityError(event, `status ${task.status}`);
+      if (task.proposals.some((p) => p.id === event.payload.proposalId)) {
+        throw new LedgerIntegrityError(event, "proposal id is used twice");
+      }
+      if (!task.approved[event.payload.target]) {
+        throw new LedgerIntegrityError(event, "only approved steps can be changed");
+      }
+      {
+        const { proposalId, ...rest } = event.payload;
+        task.proposals = [
+          ...task.proposals,
+          { ...rest, id: proposalId, proposedAt: event.at, applied: false },
+        ];
+      }
+      break;
+
+    case "ChangeJudged": {
+      const proposal = findProposal(task, event, event.payload.proposalId);
+      if (proposal.judgement) throw new LedgerIntegrityError(event, "already judged");
+      task.budget = {
+        ...task.budget,
+        usedUsd: addUsd(task.budget.usedUsd, event.payload.costUsd),
+        estimated: task.budget.estimated || event.payload.estimated,
+      };
+      updateProposal(task, proposal.id, {
+        judgement: { verdict: event.payload.verdict, reason: event.payload.reason, at: event.at },
+      });
+      break;
+    }
+
+    case "ChangeDecided": {
+      const proposal = findProposal(task, event, event.payload.proposalId);
+      if (task.status !== "escalated" || proposal.judgement?.verdict !== "undecidable") {
+        throw new LedgerIntegrityError(event, "the proposal is not waiting for a person");
+      }
+      if (proposal.decision) throw new LedgerIntegrityError(event, "already decided");
+      updateProposal(task, proposal.id, {
+        decision: { accept: event.payload.accept, at: event.at },
+      });
+      task.status = "idle";
+      break;
+    }
+
+    case "ChangeApplied": {
+      const proposal = findProposal(task, event, event.payload.proposalId);
+      if (proposalAccepted(proposal) !== true || proposal.applied) {
+        throw new LedgerIntegrityError(event, "the proposal is not accepted or already applied");
+      }
+      const approved = task.approved[proposal.target];
+      if (!approved) throw new LedgerIntegrityError(event, "the target is no longer approved");
+      if (proposal.target === "requirements") {
+        // 要求要件の変更は、承認を取り消して人間の再承認に回す
+        reopen(task, proposal.target);
+      } else {
+        task.approved = {
+          ...task.approved,
+          [proposal.target]: {
+            ...approved,
+            output: proposal.proposed,
+            testViewpoints: proposal.testViewpoints ?? approved.testViewpoints,
+            at: event.at,
+          },
+        };
+      }
+      task.outputs = { ...task.outputs, [proposal.target]: proposal.proposed };
+      if (proposal.target === "design" && proposal.testViewpoints) {
+        task.testViewpoints = proposal.testViewpoints;
+      }
+      updateProposal(task, proposal.id, { applied: true });
+      break;
+    }
+
     case "TaskEscalated":
+      if (event.payload.reason === "change_undecidable") {
+        if (task.status !== "idle") throw new LedgerIntegrityError(event, `status ${task.status}`);
+        const proposal = findProposal(task, event, event.payload.proposalId ?? "");
+        if (proposal.judgement?.verdict !== "undecidable") {
+          throw new LedgerIntegrityError(event, "the proposal is not undecidable");
+        }
+        task.status = "escalated";
+        break;
+      }
       if (task.status !== "awaiting_approval") {
         throw new LedgerIntegrityError(event, `status ${task.status}`);
       }
@@ -330,4 +463,17 @@ export function activeStep(task: Task): StepKey | undefined {
 /** その工程で、これまでに何回差し戻されたか。 */
 export function changeRounds(task: Task, step: StepKey): number {
   return task.remarks.filter((r) => r.step === step).reduce((max, r) => Math.max(max, r.round), 0);
+}
+
+/** 判定中、または人間の判断待ちの変更の申し出。 */
+export function openProposal(task: Task): TaskProposal | undefined {
+  return task.proposals.find(
+    (p) => !p.judgement || (p.judgement.verdict === "undecidable" && !p.decision),
+  );
+}
+
+/** その工程の最新の出力が、反映された変更の申し出によるものなら、その申し出。 */
+export function appliedProposalFor(task: Task, step: StepKey): TaskProposal | undefined {
+  const last = task.proposals.findLast((p) => p.applied && p.target === step);
+  return last && task.outputs[step] === last.proposed ? last : undefined;
 }
