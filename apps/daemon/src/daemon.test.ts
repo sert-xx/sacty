@@ -2749,7 +2749,13 @@ describe("API", () => {
         headers: json,
         body: JSON.stringify(body),
       });
-    expect((await resume({})).status).toBe(409);
+    const rejected = await resume({});
+    expect(rejected.status).toBe(409);
+    // 理由は文言のコードと引数で返し、画面が画面の言語の文言にする（PBI-11）
+    expect(await rejected.json()).toEqual({
+      error: "invalid_operation",
+      messages: [{ code: "resume.notPaused" }],
+    });
     expect((await resume({ capUsd: -1 })).status).toBe(400);
     expect((await resume({ capUsd: "3" })).status).toBe(400);
     ledger.close();
@@ -2792,9 +2798,34 @@ describe("API", () => {
         headers: json,
         body: JSON.stringify(body),
       });
-    expect((await post(exported)).status).toBe(409);
+    const conflict = await post(exported);
+    expect(conflict.status).toBe(409);
+    expect(((await conflict.json()) as { messages: unknown[] }).messages).toEqual([
+      {
+        code: "project.sourceTaken",
+        params: { scope: "repo", target: "acme/payments", project: "決済" },
+      },
+    ]);
     expect((await post({ ...exported, extra: 1 })).status).toBe(400);
-    expect((await post({ sacty: "project", version: 9, project: { name: "x" } })).status).toBe(400);
+    const badVersion = await post({ sacty: "project", version: 9, project: { name: "x" } });
+    expect(badVersion.status).toBe(400);
+    expect(((await badVersion.json()) as { issues: unknown[] }).issues[0]).toEqual({
+      path: ["version"],
+      message: { code: "input.unsupportedVersion" },
+    });
+    // コードを指定していない標準の検査も、コードと引数で返す（zod の英語の文は返さない）
+    const save = await app.request(`/api/projects/${pay.id}`, {
+      method: "PUT",
+      headers: json,
+      body: JSON.stringify({
+        name: "決済",
+        repositories: [{ repo: "acme/payments", testCommand: "t", baseBranch: "" }],
+      }),
+    });
+    expect(save.status).toBe(400);
+    expect(((await save.json()) as { issues: unknown[] }).issues).toEqual([
+      { path: ["repositories", 0, "baseBranch"], message: { code: "input.required" } },
+    ]);
     const created = await post({
       ...exported,
       project: { ...exported.project, name: "決済（コピー）", sources: [] },

@@ -1,11 +1,12 @@
-import type {
-  CleanupTarget,
-  CreateTicketInput,
-  LedgerEvent,
-  Project,
-  ProjectDefinitionInput,
-  StepKey,
-  Task,
+import {
+  type CleanupTarget,
+  type CreateTicketInput,
+  type LedgerEvent,
+  type Project,
+  type ProjectDefinitionInput,
+  renderMessage,
+  type StepKey,
+  type Task,
 } from "@sacty/core";
 import { connection } from "next/server";
 import { getMessages } from "@/i18n/server";
@@ -63,7 +64,7 @@ export async function createTicket(
     body: JSON.stringify(input),
   });
   if (res.status === 409) {
-    return { ok: false, message: ((await res.json()) as { message: string }).message };
+    return { ok: false, message: await operationMessage(res) };
   }
   await ensureOk(res);
   return { ok: true, task: ((await res.json()) as { task: Task }).task };
@@ -111,14 +112,10 @@ export async function saveProject(
     body: JSON.stringify(definition),
   });
   if (res.status === 409) {
-    return { ok: false, message: ((await res.json()) as { message: string }).message };
+    return { ok: false, message: await operationMessage(res) };
   }
   if (res.status === 400) {
-    const json = (await res.json()) as { issues?: { message: string }[] };
-    return {
-      ok: false,
-      message: json.issues?.[0]?.message ?? (await getMessages()).common.daemon.checkInput,
-    };
+    return { ok: false, message: await inputMessage(res) };
   }
   await ensureOk(res);
   return { ok: true, project: ((await res.json()) as { project: Project }).project };
@@ -142,16 +139,10 @@ export async function importProject(
     body: JSON.stringify(exported),
   });
   if (res.status === 409) {
-    return { ok: false, message: ((await res.json()) as { message: string }).message };
+    return { ok: false, message: await operationMessage(res) };
   }
   if (res.status === 400) {
-    const json = (await res.json()) as { issues?: { message: string; path?: unknown[] }[] };
-    const issue = json.issues?.[0];
-    const where = issue?.path?.length ? `（${issue.path.join(".")}）` : "";
-    return {
-      ok: false,
-      message: `${issue?.message ?? (await getMessages()).common.daemon.checkFile}${where}`,
-    };
+    return { ok: false, message: await inputMessage(res, { file: true }) };
   }
   await ensureOk(res);
   return { ok: true, project: ((await res.json()) as { project: Project }).project };
@@ -198,7 +189,7 @@ export async function resumeTask(
     body: JSON.stringify(capUsd === undefined ? {} : { capUsd }),
   });
   if (res.status === 409) {
-    return { ok: false, message: ((await res.json()) as { message: string }).message };
+    return { ok: false, message: await operationMessage(res) };
   }
   if (res.status === 400)
     return { ok: false, message: (await getMessages()).common.daemon.invalidAmount };
@@ -215,14 +206,10 @@ async function postOp(path: string, body: unknown): Promise<OpResult> {
     body: JSON.stringify(body),
   });
   if (res.status === 409) {
-    return { ok: false, message: ((await res.json()) as { message: string }).message };
+    return { ok: false, message: await operationMessage(res) };
   }
   if (res.status === 400) {
-    const json = (await res.json()) as { issues?: { message: string }[] };
-    return {
-      ok: false,
-      message: json.issues?.[0]?.message ?? (await getMessages()).common.daemon.checkInput,
-    };
+    return { ok: false, message: await inputMessage(res) };
   }
   await ensureOk(res);
   return { ok: true };
@@ -257,4 +244,31 @@ export function voidRemark(id: string, remarkId: string): Promise<OpResult> {
     `/api/tasks/${encodeURIComponent(id)}/remarks/${encodeURIComponent(remarkId)}/void`,
     {},
   );
+}
+
+/**
+ * 状態に合わない操作（409）の理由を、画面の言語の文にする。デーモンは文言のコードと引数で返す（PBI-11）。
+ */
+async function operationMessage(res: Response): Promise<string> {
+  const { locale } = await getMessages();
+  const json = (await res.json()) as { messages?: unknown[]; message?: unknown };
+  // 古いデーモンは、日本語の文（message）で返す
+  const list = json.messages ?? [json.message];
+  return list.map((m) => renderMessage(m, locale)).join("\n");
+}
+
+/**
+ * 入力の誤り（400）の理由を、画面の言語の文にする。デーモンは誤りを文言のコードと引数で返す（PBI-11）。
+ * どの項目の誤りかが分かるように、場所（例：repositories.0.baseBranch）を添える。
+ */
+async function inputMessage(res: Response, options: { file?: boolean } = {}): Promise<string> {
+  const m = await getMessages();
+  const json = (await res.json()) as { issues?: { message?: unknown; path?: unknown[] }[] };
+  const issue = json.issues?.[0];
+  const text = issue?.message
+    ? renderMessage(issue.message, m.locale)
+    : options.file
+      ? m.common.daemon.checkFile
+      : m.common.daemon.checkInput;
+  return issue?.path?.length ? m.common.daemon.atPath(text, issue.path.join(".")) : text;
 }

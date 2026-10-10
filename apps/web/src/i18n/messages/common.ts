@@ -7,6 +7,7 @@ const ja = {
     checkInput: "入力を確認してください。",
     checkFile: "ファイルの内容を確認してください。",
     invalidAmount: "金額を正しく入力してください。",
+    atPath: (text: string, path: string) => `${text}（${path}）`,
   },
   action: {
     daemonDown: "操作できませんでした。sactyのデーモンが動いているか確認してください。",
@@ -38,6 +39,7 @@ const en: CommonMessages = {
     checkInput: "Check your input.",
     checkFile: "Check the contents of the file.",
     invalidAmount: "Enter a valid amount.",
+    atPath: (text, path) => `${text} (${path})`,
   },
   action: {
     daemonDown: "Could not complete the action. Check that the sacty daemon is running.",
