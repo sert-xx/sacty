@@ -80,6 +80,19 @@ export function buildPrompt(task: Task, step: StepKey): string {
           "",
           "--- 前回の下書き（要求要件が変わった場合は、最新の要求要件に合わせてください） ---",
           previous,
+          "",
+          "--- 前回のテスト観点（人間の指摘は、この TV-n の ID で観点を指すことがあります） ---",
+          ...(task.testViewpoints.length > 0
+            ? task.testViewpoints.map((v) =>
+                [
+                  `- [${v.id}] ${v.title}`,
+                  `  - 入力：${v.input}`,
+                  `  - 期待結果：${v.expected}`,
+                ].join("\n"),
+              )
+            : ["（なし）"]),
+          "",
+          "テスト観点は、直さないものも含めて全件を出し直してください（ID は sacty が振り直します）。",
         );
       }
       lines.push(...remarkLines(task, step, "テスト観点"));
