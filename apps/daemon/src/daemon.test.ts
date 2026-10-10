@@ -177,6 +177,8 @@ class FakeExecutor implements AgentExecutor {
   killed: string[] = [];
   /** 実行ごとに渡された CLAUDE.md（コンテキストが無ければ undefined）。 */
   contexts: (string | undefined)[] = [];
+  /** 実行ごとに渡された MCP の設定（mcp.json。無ければ undefined）。 */
+  mcpConfigs: (string | undefined)[] = [];
   /** HOLD の実行が始まったら解決する。 */
   started = Promise.withResolvers<string>();
   private held = new Map<string, (outcome: AgentOutcome) => void>();
@@ -197,6 +199,11 @@ class FakeExecutor implements AgentExecutor {
     this.contexts.push(
       seed && existsSync(join(seed, "CLAUDE.md"))
         ? readFileSync(join(seed, "CLAUDE.md"), "utf8")
+        : undefined,
+    );
+    this.mcpConfigs.push(
+      seed && existsSync(join(seed, "mcp.json"))
+        ? readFileSync(join(seed, "mcp.json"), "utf8")
         : undefined,
     );
     const next = this.outcomes.shift();
@@ -2590,6 +2597,69 @@ describe("コンテキストリポジトリ（PBI-6a）", () => {
     expect(service.get(id)?.task.pausedReason).toBe("error");
     const failed = service.get(id)?.ledger.findLast((e) => e.type === "AgentRunFailed");
     expect(failed?.type === "AgentRunFailed" && failed.payload.message).toMatch(/取得できません/);
+    ledger.close();
+  });
+});
+
+describe("コンテキストの MCP サーバー（PBI-6b）", () => {
+  const out = (text: string): AgentOutcome => ({
+    kind: "completed",
+    output: text,
+    usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 1 },
+  });
+  const contexts = () =>
+    new FakeContexts({
+      "https://example.com/ctx.git": {
+        "mcp.yaml":
+          "servers:\n  github:\n    command: server-github\n    env:\n      GITHUB_TOKEN: { secret: mcp-github }\n",
+      },
+    });
+
+  it("MCP の設定には秘密情報の名前だけを書き、値は実行時に環境変数で渡し、出力からは取り除く", async () => {
+    const ledger = new SqliteLedgerStore(dbPath);
+    const { service, executor } = makeService(
+      ledger,
+      [out("# 要求要件\n値は mcp-value-123 でした")],
+      {
+        contexts: contexts(),
+        secrets: { "claude-oauth-token": "oauth-secret", "mcp-github": "mcp-value-123" },
+      },
+    );
+    const project = service.saveProject(undefined, {
+      name: "決済",
+      context: { repo: "https://example.com/ctx.git" },
+    });
+    const { id } = service.createTicket({ title: "A", projectId: project.id });
+    await service.runNext(id);
+
+    const invocation = executor.calls[0];
+    expect(invocation?.env.SACTY_MCP_SECRET_0).toBe("mcp-value-123");
+    expect(invocation?.command).toContain("--strict-mcp-config");
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: 設定に書く参照の文字列そのもの
+    expect(executor.mcpConfigs[0]).toContain("${SACTY_MCP_SECRET_0}");
+    expect(executor.mcpConfigs[0]).not.toContain("mcp-value-123");
+    // 台帳には値を残さない
+    expect(JSON.stringify(service.get(id)?.ledger)).not.toContain("mcp-value-123");
+    ledger.close();
+  });
+
+  it("MCP サーバーが参照する秘密情報が無ければ、名前を示して止める", async () => {
+    const ledger = new SqliteLedgerStore(dbPath);
+    const { service, executor } = makeService(ledger, [out("# 要求要件")], {
+      contexts: contexts(),
+    });
+    const project = service.saveProject(undefined, {
+      name: "決済",
+      context: { repo: "https://example.com/ctx.git" },
+    });
+    const { id } = service.createTicket({ title: "A", projectId: project.id });
+    await service.runNext(id);
+    expect(executor.calls).toHaveLength(0);
+    expect(service.get(id)?.task.pausedReason).toBe("auth");
+    const failed = service.get(id)?.ledger.findLast((e) => e.type === "AgentRunFailed");
+    expect(failed?.type === "AgentRunFailed" && failed.payload.message).toContain(
+      "秘密情報「mcp-github」が見つかりません",
+    );
     ledger.close();
   });
 });

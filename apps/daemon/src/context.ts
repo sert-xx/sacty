@@ -22,13 +22,82 @@ import { z } from "zod";
  *   locked（下位で上書き・取り除きできない項目）、remove（上位から引き継いだ項目を取り除く）
  * - `rules.md` か `rules/*.md`：規約（上位から順に連結する）
  * - `skills/<名前>/SKILL.md`：スキル（名前ごとに、下位が上書きする）
+ * - `mcp.yaml`：MCP サーバー（名前ごとに、下位が上書きする）。秘密情報は値を書かず、名前で参照する
  */
+const NamedItems = z
+  .object({
+    skills: z.array(z.string()).default([]),
+    mcp: z.array(z.string()).default([]),
+  })
+  .prefault({});
 const ContextManifest = z
   .object({
     extends: z.string().trim().min(1).optional(),
-    locked: z.object({ skills: z.array(z.string()).default([]) }).prefault({}),
-    remove: z.object({ skills: z.array(z.string()).default([]) }).prefault({}),
+    locked: NamedItems,
+    remove: NamedItems,
   })
+  .prefault({});
+
+/**
+ * MCP の設定の値。文字列はそのまま、`{ secret: 名前 }` は実行時に秘密情報の値を入れる
+ * （prefix は値の前につける。`Bearer ` など）。
+ * Claude Code は設定の `${...}` を環境変数として展開するので、文字列に `${` は書けない。
+ */
+const McpLiteral = z
+  .string()
+  .refine(
+    (v) => !v.includes("${"),
+    "「$\u007b」は使えません（秘密情報は { secret: 名前 } で参照してください）",
+  );
+const McpValue = z.union([
+  McpLiteral,
+  z
+    .object({
+      secret: z
+        .string()
+        .regex(/^[A-Za-z0-9._-]+$/, "秘密情報の名前は英数字と . _ - だけで書いてください"),
+      prefix: McpLiteral.default(""),
+    })
+    .strict(),
+]);
+const McpServer = z.union([
+  z
+    .object({
+      command: McpLiteral.pipe(z.string().min(1)),
+      args: z.array(McpLiteral).default([]),
+      env: z
+        .record(
+          z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/, "環境変数の名前が正しくありません"),
+          McpValue,
+        )
+        .default({}),
+    })
+    .strict(),
+  z
+    .object({
+      url: McpLiteral.pipe(z.url({ protocol: /^https?$/ })),
+      headers: z
+        .record(
+          z.string().regex(/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/, "ヘッダーの名前が正しくありません"),
+          McpValue,
+        )
+        .default({}),
+    })
+    .strict(),
+]);
+export type McpServer = z.infer<typeof McpServer>;
+const McpFile = z
+  .object({
+    servers: z
+      .record(
+        z
+          .string()
+          .regex(/^[A-Za-z0-9_-]+$/, "MCP サーバーの名前は英数字と _ - だけで書いてください"),
+        McpServer,
+      )
+      .default({}),
+  })
+  .strict()
   .prefault({});
 
 export type ContextRef = { repo: string; ref?: string };
@@ -38,6 +107,8 @@ export type ContextLayer = ContextRef & {
   commit: string;
   dir: string;
   manifest: z.infer<typeof ContextManifest>;
+  /** この層の MCP サーバー（`mcp.yaml`）。 */
+  mcp: Record<string, McpServer>;
 };
 
 /** コンテキストリポジトリを取得する口。テストでは偽物に差し替える。 */
@@ -90,14 +161,15 @@ export async function resolveContext(
     }
     assertPlainEntries(dir, key);
     const manifest = readManifest(dir, key);
-    chain.push({ ...next, commit, dir, manifest });
+    const mcp = readYaml(dir, "mcp.yaml", key, McpFile).servers;
+    chain.push({ ...next, commit, dir, manifest, mcp });
     next = manifest.extends ? parseExtends(manifest.extends) : undefined;
   }
   return chain.reverse();
 }
 
 /** sacty が読む・写す項目（設定・規約・スキル）。 */
-const CONTEXT_ENTRIES = ["sacty-context.yaml", "rules.md", "rules", "skills"];
+const CONTEXT_ENTRIES = ["sacty-context.yaml", "mcp.yaml", "rules.md", "rules", "skills"];
 
 /**
  * sacty が読む・写す項目に、通常のファイルとディレクトリ以外（シンボリックリンクなど）が無いことを確かめる。
@@ -131,21 +203,48 @@ function assertPlainEntries(dir: string, key: string): void {
 }
 
 function readManifest(dir: string, key: string) {
-  const path = join(dir, "sacty-context.yaml");
-  if (!existsSync(path)) return ContextManifest.parse(undefined);
+  return readYaml(dir, "sacty-context.yaml", key, ContextManifest);
+}
+
+/**
+ * 検査の誤りのうち、人に示すもの。名前（レコードのキー）の誤りは中の検査の文言を、
+ * どの形にも合わない（union）ときは、誤りの最も少ない形の誤りを出す。
+ */
+function innermost(
+  issue: z.core.$ZodIssue | undefined,
+): { path: PropertyKey[]; message: string } | undefined {
+  if (!issue) return undefined;
+  if (issue.code === "invalid_key") {
+    return { path: issue.path, message: issue.issues[0]?.message ?? issue.message };
+  }
+  if (issue.code === "invalid_union" && issue.errors.length > 0) {
+    const closest = [...issue.errors].sort((a, b) => a.length - b.length)[0] ?? [];
+    const inner = innermost(closest[0]);
+    if (inner) return { path: [...issue.path, ...inner.path], message: inner.message };
+  }
+  return { path: issue.path, message: issue.message };
+}
+
+/** 層の YAML を読んで検査する（無ければ既定値）。 */
+function readYaml<T extends z.ZodType>(
+  dir: string,
+  name: string,
+  key: string,
+  schema: T,
+): z.output<T> {
+  const path = join(dir, name);
+  if (!existsSync(path)) return schema.parse(undefined);
   let raw: unknown;
   try {
     raw = parseYaml(readFileSync(path, "utf8"));
   } catch (error) {
-    throw new ContextError(
-      `${key} の sacty-context.yaml を読めません：${(error as Error).message}`,
-    );
+    throw new ContextError(`${key} の ${name} を読めません：${(error as Error).message}`);
   }
-  const parsed = ContextManifest.safeParse(raw ?? undefined);
+  const parsed = schema.safeParse(raw ?? undefined);
   if (!parsed.success) {
-    const issue = parsed.error.issues[0];
+    const issue = innermost(parsed.error.issues[0]);
     throw new ContextError(
-      `${key} の sacty-context.yaml に誤りがあります（${issue?.path.join(".")}）：${issue?.message}`,
+      `${key} の ${name} に誤りがあります（${issue?.path.join(".")}）：${issue?.message}`,
     );
   }
   return parsed.data;
@@ -157,6 +256,8 @@ export type ComposedContext = {
   rules: string;
   /** スキル（名前ごと。どの層のものか）。 */
   skills: { name: string; dir: string; from: string }[];
+  /** MCP サーバー（名前ごと。どの層のものか）。 */
+  mcp: { name: string; server: McpServer; from: string }[];
   /** 上書き禁止に当たったなど、合成で気づいたこと。 */
   warnings: string[];
 };
@@ -190,46 +291,85 @@ function layerSkills(layer: ContextLayer): { name: string; dir: string }[] {
 }
 
 /**
- * 上位から順の層を合成する。規約は上位から連結し、スキルは名前ごとに下位が上書きする。
- * 上位で上書き禁止（locked）にしたスキルは、下位で上書きも取り除きもできない（警告を残して上位を使う）。
+ * 名前のある項目（スキル・MCP サーバー）を、上位から順に合わせる。下位が上書きし、remove で取り除く。
+ * 上位で上書き禁止（locked）にした項目は、下位で上書きも取り除きもできない（警告を残して上位を使う）。
  */
-export function composeContext(layers: ContextLayer[]): ComposedContext {
-  const rules: string[] = [];
-  const skills = new Map<string, { dir: string; from: string }>();
+function mergeNamed<T>(
+  layers: ContextLayer[],
+  kind: "skills" | "mcp",
+  itemsOf: (layer: ContextLayer) => { name: string; value: T }[],
+  warnings: string[],
+): { name: string; value: T; from: string }[] {
+  const what = kind === "skills" ? "スキル" : "MCP サーバー";
+  const merged = new Map<string, { value: T; from: string }>();
   const locked = new Map<string, string>();
-  const warnings: string[] = [];
   for (const layer of layers) {
     const from = label(layer);
-    const text = layerRules(layer);
-    if (text) rules.push(`<!-- sacty context: ${from} -->\n${text}`);
-    for (const name of layer.manifest.remove.skills) {
+    for (const name of layer.manifest.remove[kind]) {
       if (locked.has(name)) {
         warnings.push(
-          `${from} はスキル「${name}」を取り除こうとしましたが、${locked.get(name)} で上書き禁止のため残しました。`,
+          `${from} は${what}「${name}」を取り除こうとしましたが、${locked.get(name)} で上書き禁止のため残しました。`,
         );
       } else {
-        skills.delete(name);
+        merged.delete(name);
       }
     }
-    for (const skill of layerSkills(layer)) {
-      if (locked.has(skill.name)) {
+    for (const item of itemsOf(layer)) {
+      if (locked.has(item.name)) {
         warnings.push(
-          `${from} はスキル「${skill.name}」を上書きしようとしましたが、${locked.get(skill.name)} で上書き禁止のため上位のものを使いました。`,
+          `${from} は${what}「${item.name}」を上書きしようとしましたが、${locked.get(item.name)} で上書き禁止のため上位のものを使いました。`,
         );
         continue;
       }
-      skills.set(skill.name, { dir: skill.dir, from });
+      merged.set(item.name, { value: item.value, from });
     }
-    for (const name of layer.manifest.locked.skills) {
+    for (const name of layer.manifest.locked[kind]) {
       if (!locked.has(name)) locked.set(name, from);
     }
   }
+  return [...merged.entries()].map(([name, m]) => ({ name, ...m }));
+}
+
+/**
+ * 上位から順の層を合成する。規約は上位から連結し、スキルと MCP サーバーは名前ごとに下位が上書きする。
+ */
+export function composeContext(layers: ContextLayer[]): ComposedContext {
+  const rules: string[] = [];
+  for (const layer of layers) {
+    const text = layerRules(layer);
+    if (text) rules.push(`<!-- sacty context: ${label(layer)} -->\n${text}`);
+  }
+  const warnings: string[] = [];
+  const skills = mergeNamed(
+    layers,
+    "skills",
+    (layer) => layerSkills(layer).map((s) => ({ name: s.name, value: s.dir })),
+    warnings,
+  );
+  const mcp = mergeNamed(
+    layers,
+    "mcp",
+    (layer) => Object.entries(layer.mcp).map(([name, value]) => ({ name, value })),
+    warnings,
+  );
   return {
     rules: rules.join("\n\n"),
-    skills: [...skills.entries()].map(([name, s]) => ({ name, ...s })),
+    skills: skills.map((s) => ({ name: s.name, dir: s.value, from: s.from })),
+    mcp: mcp.map((m) => ({ name: m.name, server: m.value, from: m.from })),
     warnings,
   };
 }
+
+/** 実行時に、秘密情報の値をこの環境変数でコンテナに渡す（値は prefix + 秘密情報）。 */
+export type ContextSecret = { env: string; secret: string; prefix: string };
+
+/** 配置したコンテキストのうち、エージェントの起動に必要なもの。 */
+export type PlacedContext = {
+  /** MCP サーバーの名前（Claude Code では、そのツールの使用を許可する）。 */
+  mcpServers: string[];
+  /** 実行時に入れる秘密情報。 */
+  secrets: ContextSecret[];
+};
 
 /**
  * 合成したコンテキストを、エージェントの形式で outDir に書く。outDir は実行ごとの空の設定の
@@ -244,14 +384,44 @@ export function writeContext(
   outDir: string,
   /** コンテナの中での outDir（Codex の AGENTS.md にスキルの場所を書くため）。 */
   containerDir: string,
-): void {
+): PlacedContext {
   mkdirSync(outDir, { recursive: true });
+  const secrets: ContextSecret[] = [];
+  // 秘密情報は設定のファイルに値を書かず、環境変数の名前で参照する（値は実行時に入れる）
+  const resolve = (value: string | { secret: string; prefix: string }) => {
+    if (typeof value === "string") return { literal: value };
+    const env = `SACTY_MCP_SECRET_${secrets.length}`;
+    secrets.push({ env, secret: value.secret, prefix: value.prefix });
+    return { env };
+  };
+  const placed = () => ({ mcpServers: composed.mcp.map((m) => m.name), secrets });
   for (const skill of composed.skills) {
     cpSync(skill.dir, join(outDir, "skills", skill.name), { recursive: true });
   }
   if (runtime === "claude-code") {
     if (composed.rules) writeFileSync(join(outDir, "CLAUDE.md"), `${composed.rules}\n`);
-    return;
+    if (composed.mcp.length > 0) {
+      const values = (record: Record<string, string | { secret: string; prefix: string }>) =>
+        Object.fromEntries(
+          Object.entries(record).map(([k, v]) => {
+            const r = resolve(v);
+            return [k, "env" in r ? `\${${r.env}}` : r.literal];
+          }),
+        );
+      const servers = Object.fromEntries(
+        composed.mcp.map(({ name, server }) => [
+          name,
+          "command" in server
+            ? { command: server.command, args: server.args, env: values(server.env) }
+            : { type: "http", url: server.url, headers: values(server.headers) },
+        ]),
+      );
+      writeFileSync(
+        join(outDir, CLAUDE_MCP_CONFIG),
+        `${JSON.stringify({ mcpServers: servers }, null, 2)}\n`,
+      );
+    }
+    return placed();
   }
   const index = composed.skills.map((s) => {
     const description = readSkillDescription(join(outDir, "skills", s.name, "SKILL.md"));
@@ -264,6 +434,73 @@ export function writeContext(
       : "",
   ].filter(Boolean);
   if (parts.length > 0) writeFileSync(join(outDir, "AGENTS.md"), `${parts.join("\n\n")}\n`);
+  if (composed.mcp.length > 0) {
+    const toml = composed.mcp.map(({ name, server }) => codexServer(name, server, resolve));
+    writeFileSync(join(outDir, "config.toml"), `${toml.join("\n")}`);
+  }
+  return placed();
+}
+
+/** Claude Code に渡す MCP の設定のファイル名（設定のディレクトリの中）。 */
+export const CLAUDE_MCP_CONFIG = "mcp.json";
+
+/**
+ * TOML の文字列（JSON の文字列のエスケープは、TOML の基本文字列でもそのまま使える）。
+ * DEL は JSON では素のままだが、TOML では使えないのでエスケープする。
+ */
+const tomlString = (value: string) => JSON.stringify(value).replaceAll("\u007f", "\\u007F");
+const tomlArray = (values: string[]) => `[${values.map(tomlString).join(", ")}]`;
+const tomlTable = (record: Record<string, string>) =>
+  `{ ${Object.entries(record)
+    .map(([k, v]) => `${tomlString(k)} = ${tomlString(v)}`)
+    .join(", ")} }`;
+
+/**
+ * Codex の config.toml の MCP サーバー。Codex は設定の値の中の環境変数を展開しないので、
+ * 秘密情報は名前で受け渡す（stdio は env_vars で渡した変数を sh で目的の名前に移し、HTTP は env_http_headers）。
+ */
+function codexServer(
+  name: string,
+  server: McpServer,
+  resolve: (
+    value: string | { secret: string; prefix: string },
+  ) => { literal: string } | { env: string },
+): string {
+  const lines = [`[mcp_servers.${tomlString(name)}]`];
+  if ("command" in server) {
+    const literal: Record<string, string> = {};
+    const fromSecret: [string, string][] = [];
+    for (const [key, value] of Object.entries(server.env)) {
+      const r = resolve(value);
+      if ("env" in r) fromSecret.push([key, r.env]);
+      else literal[key] = r.literal;
+    }
+    if (fromSecret.length > 0) {
+      const exports = fromSecret.map(([key, env]) => `export ${key}="$${env}"; `).join("");
+      lines.push(
+        `command = ${tomlString("/bin/sh")}`,
+        `args = ${tomlArray(["-c", `${exports}exec "$0" "$@"`, server.command, ...server.args])}`,
+        `env_vars = ${tomlArray(fromSecret.map(([, env]) => env))}`,
+      );
+    } else {
+      lines.push(`command = ${tomlString(server.command)}`, `args = ${tomlArray(server.args)}`);
+    }
+    if (Object.keys(literal).length > 0) lines.push(`env = ${tomlTable(literal)}`);
+  } else {
+    const literal: Record<string, string> = {};
+    const fromSecret: Record<string, string> = {};
+    for (const [key, value] of Object.entries(server.headers)) {
+      const r = resolve(value);
+      if ("env" in r) fromSecret[key] = r.env;
+      else literal[key] = r.literal;
+    }
+    lines.push(`url = ${tomlString(server.url)}`);
+    if (Object.keys(literal).length > 0) lines.push(`http_headers = ${tomlTable(literal)}`);
+    if (Object.keys(fromSecret).length > 0) {
+      lines.push(`env_http_headers = ${tomlTable(fromSecret)}`);
+    }
+  }
+  return `${lines.join("\n")}\n`;
 }
 
 /** SKILL.md の先頭の front matter から description を読む（無ければ空）。 */
@@ -327,6 +564,7 @@ export async function prepareContext(
   dir: string;
   layers: { repo: string; ref?: string; commit: string }[];
   warnings: string[];
+  placed: PlacedContext;
   dispose: () => void;
 }> {
   const work = mkdtempSync(join(tmpdir(), "sacty-context-"));
@@ -335,7 +573,7 @@ export async function prepareContext(
     const layers = await resolveContext(fetcher, root, join(work, "repos"));
     const composed = composeContext(layers);
     const dir = join(work, "out");
-    writeContext(composed, runtime, dir, containerDir);
+    const placed = writeContext(composed, runtime, dir, containerDir);
     return {
       dir,
       layers: layers.map((l) => ({
@@ -344,6 +582,7 @@ export async function prepareContext(
         commit: l.commit,
       })),
       warnings: composed.warnings,
+      placed,
       dispose,
     };
   } catch (error) {

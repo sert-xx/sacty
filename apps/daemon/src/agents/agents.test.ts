@@ -36,14 +36,11 @@ describe("認証方式ごとの環境変数", () => {
       auth: { mode: "subscription", secret: "claude-oauth-token" },
     };
     expect((await buildInvocation(claude, "prompt", secrets)).stage).toBeUndefined();
-    const withContext = await buildInvocation(
-      claude,
-      "prompt",
-      secrets,
-      () => {},
-      "design",
-      "/host/ctx",
-    );
+    const withContext = await buildInvocation(claude, "prompt", secrets, () => {}, "design", {
+      dir: "/host/ctx",
+      mcpServers: [],
+      secrets: [],
+    });
     expect(withContext.stage).toEqual({
       containerDir: "/tmp/sacty-claude-config",
       files: [],
@@ -65,13 +62,88 @@ describe("認証方式ごとの環境変数", () => {
       new MemorySecretStore({ "openai-key": "sk-x" }),
       () => {},
       "design",
-      "/host/ctx",
+      { dir: "/host/ctx", mcpServers: [], secrets: [] },
     );
     expect(codexInv.stage).toMatchObject({
       containerDir: "/tmp/sacty-codex-home",
       seedDir: "/host/ctx",
     });
     expect(codexInv.env.CODEX_HOME).toBe("/tmp/sacty-codex-home");
+  });
+
+  it("コンテキストの MCP サーバーの秘密情報は、実行時に環境変数で渡し、Claude Code にはそのサーバーだけを使わせる（PBI-6）", async () => {
+    const store = new MemorySecretStore({
+      "claude-oauth-token": "oauth-value",
+      "openai-key": "openai-value",
+      "gh-token": "ghp-value",
+    });
+    const context = {
+      dir: "/host/ctx",
+      mcpServers: ["github", "docs"],
+      secrets: [{ env: "SACTY_MCP_SECRET_0", secret: "gh-token", prefix: "Bearer " }],
+    };
+    const used: string[] = [];
+    const claude = await buildInvocation(
+      {
+        ...base,
+        id: "c",
+        runtime: "claude-code",
+        auth: { mode: "subscription", secret: "claude-oauth-token" },
+      },
+      "prompt",
+      store,
+      (v) => used.push(v),
+      "design",
+      context,
+    );
+    expect(claude.env.SACTY_MCP_SECRET_0).toBe("Bearer ghp-value");
+    // 出力から取り除けるように、取り出した値を知らせる
+    expect(used).toContain("ghp-value");
+    expect(claude.command.slice(5)).toEqual([
+      "--mcp-config",
+      "/tmp/sacty-claude-config/mcp.json",
+      "--strict-mcp-config",
+      "--allowedTools",
+      "mcp__github,mcp__docs",
+    ]);
+
+    const codex = await buildInvocation(
+      { ...base, id: "x", runtime: "codex", auth: { mode: "api-key", secret: "openai-key" } },
+      "prompt",
+      store,
+      () => {},
+      "design",
+      context,
+    );
+    expect(codex.env.SACTY_MCP_SECRET_0).toBe("Bearer ghp-value");
+
+    // MCP サーバーが無ければ、フラグはつけない
+    const plain = await buildInvocation(
+      {
+        ...base,
+        id: "c",
+        runtime: "claude-code",
+        auth: { mode: "subscription", secret: "claude-oauth-token" },
+      },
+      "prompt",
+      store,
+      () => {},
+      "design",
+      { dir: "/host/ctx", mcpServers: [], secrets: [] },
+    );
+    expect(plain.command).not.toContain("--mcp-config");
+
+    // 秘密情報が無ければ、名前を示して止める
+    await expect(
+      buildInvocation(
+        { ...base, id: "x", runtime: "codex", auth: { mode: "api-key", secret: "openai-key" } },
+        "prompt",
+        store,
+        () => {},
+        "design",
+        { ...context, secrets: [{ env: "SACTY_MCP_SECRET_0", secret: "missing", prefix: "" }] },
+      ),
+    ).rejects.toThrow("秘密情報「missing」が見つかりません");
   });
 
   it("サブスクリプションでは、ホストにAPIキーがあってもトークンだけを渡す", async () => {
