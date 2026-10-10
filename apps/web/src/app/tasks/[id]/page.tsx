@@ -10,26 +10,20 @@ import { PullRequestCard } from "@/components/pull-request";
 import { ResumeForm } from "@/components/resume-form";
 import { CostMeter, StatusLabel, StepChips } from "@/components/task-bits";
 import { TestViewpoints } from "@/components/test-viewpoints";
+import { getMessages } from "@/i18n/server";
 import { DaemonUnavailableError, getProject, getTask } from "@/lib/daemon";
-import {
-  describeEvent,
-  formatStamp,
-  isWorking,
-  personAction,
-  START_LABEL,
-  STEP_LABEL,
-  statusText,
-} from "@/lib/labels";
+import { describeEvent, formatStamp, isWorking, personAction, statusText } from "@/lib/labels";
 
-export default function TaskPage({ params }: { params: Promise<{ id: string }> }) {
+export default async function TaskPage({ params }: { params: Promise<{ id: string }> }) {
+  const m = (await getMessages()).task;
   return (
     <>
-      <nav aria-label="パンくず" className="text-sm text-muted-foreground">
+      <nav aria-label={m.breadcrumb} className="text-sm text-muted-foreground">
         <Link href="/" className="text-accent-foreground underline">
-          タスク
+          {m.tasks}
         </Link>
       </nav>
-      <Suspense fallback={<p className="text-sm text-muted-foreground">読み込み中…</p>}>
+      <Suspense fallback={<p className="text-sm text-muted-foreground">{m.loading}</p>}>
         <TaskDetail params={params} />
       </Suspense>
     </>
@@ -50,7 +44,9 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
   const projectName = (await getProject(task.projectId))?.project.name ?? task.projectId;
   const lastFailure = [...ledger].reverse().find((e) => e.type === "AgentRunFailed");
   const proposal = openProposal(task);
-  const action = personAction(task);
+  const messages = await getMessages();
+  const { task: m, labels } = messages;
+  const action = personAction(task, labels);
 
   return (
     <>
@@ -61,10 +57,11 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
           <StatusLabel task={task} />
         </div>
         <p className="text-sm text-muted-foreground">
-          開始地点：{START_LABEL[task.start]}
+          {m.start}
+          {labels.start[task.start]}
           {task.source && (
             <>
-              （
+              {m.sourceOpen}
               <a
                 href={task.source.url}
                 target="_blank"
@@ -73,10 +70,10 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
               >
                 {task.source.repo}#{task.source.number}
               </a>
-              ）
+              {m.sourceClose}
             </>
-          )}{" "}
-          ・ プロジェクト：
+          )}
+          {m.project}
           <Link href={`/projects/${task.projectId}`} className="text-accent-foreground underline">
             {projectName}
           </Link>
@@ -92,17 +89,17 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
           <div className="flex flex-col gap-1">
             <h2 id="gate" className="text-[15px] font-semibold text-warn">
               {proposal
-                ? "ゴールガーディアンが変更の申し出を判定できませんでした（エスカレーション）"
+                ? m.gate.undecidable
                 : task.status === "escalated"
-                  ? "差し戻しが上限に達しました（エスカレーション）"
-                  : statusText(task)}
+                  ? m.gate.tooMany
+                  : statusText(task, labels)}
             </h2>
             <p className="text-sm">
               {proposal
-                ? "申し出の理由と根拠を確認し、変更を認めるかどうかを判断してください。"
+                ? m.gate.undecidableHelp
                 : task.status === "escalated"
-                  ? "このまま承認するか、上限を超えて差し戻すかを判断してください。"
-                  : "成果物を確認し、承認するか差し戻してください。"}
+                  ? m.gate.tooManyHelp
+                  : m.gate.reviewHelp}
             </p>
           </div>
           <Link
@@ -136,12 +133,12 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
             className="flex flex-col gap-3 rounded-xl border border-border bg-card p-5"
           >
             <h2 id="ticket" className="text-[15px] font-semibold">
-              チケット
+              {m.ticket}
             </h2>
             {task.body ? (
               <p className="leading-7 whitespace-pre-wrap">{task.body}</p>
             ) : (
-              <p className="text-sm text-muted-foreground">チケットに内容はありません。</p>
+              <p className="text-sm text-muted-foreground">{m.ticketEmpty}</p>
             )}
           </section>
           <Deliverable task={task} step="requirements" />
@@ -160,10 +157,8 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
             className="flex flex-col gap-3 rounded-xl border border-border bg-card p-5"
           >
             <h2 id="steps" className="text-[15px] font-semibold">
-              工程{" "}
-              <span className="text-[13px] font-normal text-muted-foreground">
-                オーケストレーターが選択
-              </span>
+              {m.steps}{" "}
+              <span className="text-[13px] font-normal text-muted-foreground">{m.stepsNote}</span>
             </h2>
             <StepChips task={task} />
           </section>
@@ -174,7 +169,8 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
           className="flex min-w-0 flex-[1_1_320px] flex-col gap-1 rounded-xl border border-border bg-card p-5"
         >
           <h2 id="ledger" className="pb-2 text-[15px] font-semibold">
-            台帳 <span className="text-[13px] font-normal text-muted-foreground">追記専用</span>
+            {m.ledger}{" "}
+            <span className="text-[13px] font-normal text-muted-foreground">{m.ledgerNote}</span>
           </h2>
           <ol className="flex flex-col">
             {[...ledger].reverse().map((event) => (
@@ -186,9 +182,10 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
                   dateTime={event.at}
                   className="font-mono text-xs text-muted-foreground tabular-nums"
                 >
-                  {formatStamp(event.at)}
+                  {formatStamp(event.at, messages.locale)}
                 </time>
-                <span>{describeEvent(event)}</span>
+                {/* パスやブランチ名など、区切りの無い長い文字列でも幅からはみ出さないようにする */}
+                <span className="[overflow-wrap:anywhere]">{describeEvent(event, labels)}</span>
               </li>
             ))}
           </ol>
@@ -201,7 +198,9 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
 /**
  * 工程の成果物。承認済みなら凍結した版を、そうでなければ工程エージェントの最新の下書きを出す。
  */
-function Deliverable({ task, step }: { task: Task; step: StepKey }) {
+async function Deliverable({ task, step }: { task: Task; step: StepKey }) {
+  const messages = await getMessages();
+  const m = messages.task.deliverable;
   const approved = task.approved[step];
   const output = approved?.output ?? task.outputs[step];
   const viewpoints = approved?.testViewpoints ?? task.testViewpoints;
@@ -216,30 +215,28 @@ function Deliverable({ task, step }: { task: Task; step: StepKey }) {
       className="flex flex-col gap-3 rounded-xl border border-border bg-card p-5"
     >
       <h2 id={`deliverable-${step}`} className="text-[15px] font-semibold">
-        {STEP_LABEL[step]}{" "}
+        {messages.labels.step[step]}{" "}
         <span className="text-[13px] font-normal text-muted-foreground">
           {approved
-            ? `人間が承認済み（${approved.submission}回目の提出・凍結）`
+            ? m.approved(approved.submission)
             : fromProposal
-              ? `${fromProposal.id}で申し出られた変更案（人間の再承認待ち）`
+              ? m.fromProposal(fromProposal.id)
               : stale
-                ? "前回の下書き（前の工程が承認されたあと、作り直します）"
-                : "工程エージェントの下書き"}
+                ? m.stale
+                : m.draft}
         </span>
       </h2>
       {output ? (
         <pre className="font-sans text-sm leading-7 break-words whitespace-pre-wrap">{output}</pre>
       ) : (
-        <p className="text-sm text-muted-foreground">
-          {running ? "工程エージェントが作成しています…" : "まだ作成されていません。"}
-        </p>
+        <p className="text-sm text-muted-foreground">{running ? m.running : m.notYet}</p>
       )}
       {step === "design" && output && (
         <>
           <h3 className="pt-2 text-sm font-semibold">
-            テスト観点{" "}
+            {m.viewpoints}{" "}
             <span className="text-[13px] font-normal text-muted-foreground">
-              {viewpoints.length}件・最終レビューの基準
+              {m.viewpointsNote(viewpoints.length)}
             </span>
           </h3>
           <TestViewpoints viewpoints={viewpoints} />

@@ -1,0 +1,234 @@
+import type { Actor, AuthMode, PauseReason, StepKey, Task, Verdict } from "@sacty/core";
+
+/**
+ * 工程・状態・台帳などの用語。英語は構想ドキュメントの用語集に従う
+ * （要求要件 Requirements、設計 Design、テスト観点 Test viewpoints、成果物チェック Deliverable review、
+ * 差し戻し Request changes、一時停止 Pause、中止 Cancel、エスカレーション Escalation、
+ * ゴールガーディアン Goal Guardian、オーケストレーター Orchestrator、台帳 Ledger、人間の対応待ち Needs you）。
+ */
+const ja = {
+  step: {
+    requirements: "要求要件",
+    design: "設計",
+    implement: "実装",
+    pr: "PR作成",
+  } satisfies Record<StepKey, string>,
+  start: { ticket: "sacty", github_issue: "GitHub Issue" } satisfies Record<Task["start"], string>,
+  status: {
+    queued: "実行待ち",
+    running: "実行中",
+    idle: "待機中",
+    paused: "一時停止",
+    awaiting_approval: "承認待ち",
+    escalated: "エスカレーション",
+  } satisfies Record<Task["status"], string>,
+  pause: {
+    budget: "予算上限で一時停止",
+    usage_limit: "利用上限で一時停止",
+    auth: "認証エラーで一時停止",
+    error: "エラーで一時停止",
+    verification: "実装の検証に通らないため一時停止",
+  } satisfies Record<PauseReason, string>,
+  pauseHelp: {
+    budget: "予算の上限に達したため止まっています。作業中のものは残っています。",
+    usage_limit:
+      "サブスクリプションの利用上限に達したため止まっています。上限が戻ってから再開すると、止まった工程を実行し直します。",
+    auth: "認証に失敗したため止まっています。トークンやAPIキーを確認してから再開してください。",
+    error: "エラーで止まっています。原因を確認してから再開すると、止まった工程を実行し直します。",
+    verification:
+      "実装がテストか最終レビューに続けて通らないため止まっています。結果を確認し、必要なら設計を見直してから再開すると、実装をやり直します。",
+  } satisfies Record<PauseReason, string>,
+  auth: {
+    subscription: "サブスクリプション",
+    "api-key": "APIキー",
+    bedrock: "Amazon Bedrock",
+    stub: "スタブ",
+  } satisfies Record<AuthMode, string>,
+  actor: {
+    person: "人間",
+    sacty: "sacty",
+    orchestrator: "オーケストレーター",
+    guardian: "ゴールガーディアン",
+    agent: "工程エージェント",
+  } satisfies Record<Actor, string>,
+  verdict: {
+    approved: "承認",
+    rejected: "却下",
+    undecidable: "判定できない",
+  } satisfies Record<Verdict, string>,
+  state: {
+    guardianJudging: "ゴールガーディアンが判定中",
+    completed: "完了",
+    testsRunning: "テストを実行中",
+    finalReviewing: "ゴールガーディアンが最終レビュー中",
+    changeUndecided: "変更の申し出の判断待ち",
+    deliverableReview: (n: number) => `成果物チェック待ち${n > 1 ? `（${n}回目）` : ""}`,
+    stepApproval: (step: string, n: number) => `${step}の承認待ち${n > 1 ? `（${n}回目）` : ""}`,
+  },
+  action: { decide: "判断する", review: "チェックする" },
+  /** 台帳の1行。 */
+  event: {
+    estimated: "・換算値",
+    withCost: (actor: string, cost: string) => `${actor}・${cost}`,
+    TaskCreated: (actor: string) => `チケットを作成（${actor}）`,
+    StepsChosen: (steps: string) => `工程を決定：${steps}`,
+    stepsJoin: " → ",
+    AgentRunStarted: (step: string, agent: string, auth: string) =>
+      `${step}の実行を開始（${agent}・${auth}）`,
+    AgentRunCompleted: (step: string, cost: string, viewpoints?: number) =>
+      `${step}の実行が完了（${cost}${viewpoints === undefined ? "" : `・テスト観点${viewpoints}件`}）`,
+    AgentRunFailed: (step: string, message: string) => `${step}の実行が失敗：${message}`,
+    BudgetWarned: (used: string, cap: string) => `予算の80%に到達（${used} / ${cap}）`,
+    BudgetCapRaised: (cap: string, actor: string) => `予算の上限を${cap}に変更（${actor}）`,
+    TaskResumed: (actor: string) => `再開（${actor}）`,
+    submittedDeliverable: (n: number) => `成果物チェックに提出（${n}回目）→ 承認待ち`,
+    submittedStep: (step: string, n: number) => `${step}を提出（${n}回目）→ 承認待ち`,
+    approvedDeliverable: (actor: string) => `成果物チェックで承認（${actor}）`,
+    approvedStep: (step: string, actor: string) => `${step}を承認・凍結（${actor}）`,
+    ChangeProposed: (from: string, target: string, id: string) =>
+      `${from}の工程が、${target}の変更を申し出（${id}）`,
+    ChangeJudged: (id: string, verdict: string, reason: string, tail: string) =>
+      `${id}を${verdict}：${reason}（${tail}）`,
+    ChangeDecided: (id: string, accept: boolean, actor: string) =>
+      `${id}を${accept ? "認めた" : "認めなかった"}（${actor}）`,
+    ChangeApplied: (id: string) => `${id}の変更を反映`,
+    RepositoryPrepared: (url: string, branch: string, commit: string) =>
+      `対象リポジトリを用意（${url}・${branch}・${commit}）`,
+    TestsRun: (passed: boolean, exitCode: number, unmapped: string[]) =>
+      `テストを実行：${passed ? "合格" : "不合格"}（終了コード ${exitCode}${unmapped.length > 0 ? `・テストの無い観点 ${unmapped.join(", ")}` : ""}）`,
+    FinalReviewed: (passed: boolean, failures: number, tail: string) =>
+      `最終レビュー：${passed ? "合格" : `不合格（${failures}件）`}（${tail}）`,
+    prPublished: (number: number | undefined, branch: string, commit: string) =>
+      `PRを作成・更新（#${number}・${branch}・${commit}）`,
+    branchPushed: (branch: string, commit: string) => `ブランチにプッシュ（${branch}・${commit}）`,
+    GuardianMissed:
+      "最終レビューで合格にした成果物が差し戻されたため、ゴールガーディアンの見逃しとして記録",
+    FinalReviewFailed: (message: string, cost: string) => `${message}（${cost}）`,
+    StepQueued: (step: string) => `${step}を実行待ちにした（実行できるようになったため）`,
+    changesAtDeliverable: "成果物チェックで差し戻し",
+    changesAtStep: (step: string) => `${step}を差し戻し`,
+    changesTarget: (where: string, target: string, revoke: boolean) =>
+      `${where}、${target}からやり直し${revoke ? `（${target}の承認を取り消し）` : ""}`,
+    changesTail: (count: number, overLimit: boolean, actor: string) =>
+      `：指摘${count}件${overLimit ? "（上限を超えて）" : ""}（${actor}）`,
+    RemarkVoided: (id: string, actor: string) => `指摘 ${id} を無効にした（${actor}）`,
+    escalatedUndecidable: (id: string | undefined) =>
+      `ゴールガーディアンが${id ?? "変更の申し出"}を判定できなかったため、エスカレーション`,
+    escalatedTooMany: (step: string) => `${step}への差し戻しが上限に達したため、エスカレーション`,
+  },
+};
+
+export type LabelMessages = typeof ja;
+
+const en: LabelMessages = {
+  step: {
+    requirements: "Requirements",
+    design: "Design",
+    implement: "Implement",
+    pr: "Open PR",
+  },
+  start: { ticket: "sacty", github_issue: "GitHub Issue" },
+  status: {
+    queued: "Queued",
+    running: "Running",
+    idle: "Waiting",
+    paused: "Paused",
+    awaiting_approval: "Awaiting approval",
+    escalated: "Escalated",
+  },
+  pause: {
+    budget: "Paused at budget cap",
+    usage_limit: "Paused at usage limit",
+    auth: "Paused: authentication failed",
+    error: "Paused: error",
+    verification: "Paused: implementation keeps failing verification",
+  },
+  pauseHelp: {
+    budget: "The task reached its budget cap and is paused. Its work is kept.",
+    usage_limit:
+      "The subscription reached its usage limit. Resume once the limit resets to rerun the stopped step.",
+    auth: "Authentication failed. Check the token or API key, then resume.",
+    error: "The task stopped on an error. Check the cause, then resume to rerun the stopped step.",
+    verification:
+      "The implementation keeps failing the tests or the final review. Check the results, revisit the design if needed, then resume to implement again.",
+  },
+  auth: {
+    subscription: "Subscription",
+    "api-key": "API key",
+    bedrock: "Amazon Bedrock",
+    stub: "Stub",
+  },
+  actor: {
+    person: "person",
+    sacty: "sacty",
+    orchestrator: "Orchestrator",
+    guardian: "Goal Guardian",
+    agent: "step agent",
+  },
+  verdict: {
+    approved: "Approved",
+    rejected: "Rejected",
+    undecidable: "Undecidable",
+  },
+  state: {
+    guardianJudging: "Goal Guardian is judging",
+    completed: "Done",
+    testsRunning: "Running tests",
+    finalReviewing: "Goal Guardian is doing the final review",
+    changeUndecided: "Change request needs you",
+    deliverableReview: (n) => `Awaiting deliverable review${n > 1 ? ` (submission ${n})` : ""}`,
+    stepApproval: (step, n) => `${step} awaiting approval${n > 1 ? ` (submission ${n})` : ""}`,
+  },
+  action: { decide: "Decide", review: "Review" },
+  event: {
+    estimated: " · estimate",
+    withCost: (actor, cost) => `${actor} · ${cost}`,
+    TaskCreated: (actor) => `Ticket created (${actor})`,
+    StepsChosen: (steps) => `Steps chosen: ${steps}`,
+    stepsJoin: " → ",
+    AgentRunStarted: (step, agent, auth) => `${step} started (${agent} · ${auth})`,
+    AgentRunCompleted: (step, cost, viewpoints) =>
+      `${step} finished (${cost}${viewpoints === undefined ? "" : ` · ${viewpoints} test viewpoint${viewpoints === 1 ? "" : "s"}`})`,
+    AgentRunFailed: (step, message) => `${step} failed: ${message}`,
+    BudgetWarned: (used, cap) => `Reached 80% of budget (${used} / ${cap})`,
+    BudgetCapRaised: (cap, actor) => `Budget cap changed to ${cap} (${actor})`,
+    TaskResumed: (actor) => `Resumed (${actor})`,
+    submittedDeliverable: (n) =>
+      `Submitted for deliverable review (submission ${n}) → awaiting approval`,
+    submittedStep: (step, n) => `${step} submitted (submission ${n}) → awaiting approval`,
+    approvedDeliverable: (actor) => `Approved in deliverable review (${actor})`,
+    approvedStep: (step, actor) => `${step} approved and frozen (${actor})`,
+    ChangeProposed: (from, target, id) =>
+      `The ${from} step requested a change to ${target} (${id})`,
+    ChangeJudged: (id, verdict, reason, tail) =>
+      `${id} ${verdict.toLowerCase()}: ${reason} (${tail})`,
+    ChangeDecided: (id, accept, actor) =>
+      `${id} ${accept ? "accepted" : "not accepted"} (${actor})`,
+    ChangeApplied: (id) => `${id} applied`,
+    RepositoryPrepared: (url, branch, commit) =>
+      `Target repository prepared (${url} · ${branch} · ${commit})`,
+    TestsRun: (passed, exitCode, unmapped) =>
+      `Tests run: ${passed ? "passed" : "failed"} (exit code ${exitCode}${unmapped.length > 0 ? ` · viewpoints without tests: ${unmapped.join(", ")}` : ""})`,
+    FinalReviewed: (passed, failures, tail) =>
+      `Final review: ${passed ? "passed" : `failed (${failures})`} (${tail})`,
+    prPublished: (number, branch, commit) =>
+      `PR opened or updated (#${number} · ${branch} · ${commit})`,
+    branchPushed: (branch, commit) => `Pushed to branch (${branch} · ${commit})`,
+    GuardianMissed:
+      "A deliverable that passed the final review was sent back; recorded as a Goal Guardian miss",
+    FinalReviewFailed: (message, cost) => `${message} (${cost})`,
+    StepQueued: (step) => `${step} queued (it can run now)`,
+    changesAtDeliverable: "Changes requested in deliverable review",
+    changesAtStep: (step) => `Changes requested on ${step}`,
+    changesTarget: (where, target, revoke) =>
+      `${where}; redo from ${target}${revoke ? ` (${target} approval revoked)` : ""}`,
+    changesTail: (count, overLimit, actor) =>
+      `: ${count} comment${count === 1 ? "" : "s"}${overLimit ? " (over the limit)" : ""} (${actor})`,
+    RemarkVoided: (id, actor) => `Comment ${id} voided (${actor})`,
+    escalatedUndecidable: (id) =>
+      `Escalated: the Goal Guardian could not decide ${id ?? "the change request"}`,
+    escalatedTooMany: (step) => `Escalated: changes to ${step} reached the limit`,
+  },
+};
+
+export const labels = { ja, en };

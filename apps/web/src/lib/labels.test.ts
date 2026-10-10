@@ -1,6 +1,19 @@
 import type { LedgerEvent, Task, TaskProposal } from "@sacty/core";
 import { describe, expect, it } from "vitest";
-import { describeEvent, isWorking, needsPerson, personAction, statusText } from "./labels";
+import { labels } from "@/i18n/messages/labels";
+import {
+  describeEvent as describeIn,
+  isWorking,
+  needsPerson,
+  personAction as personActionIn,
+  statusText as statusTextIn,
+} from "./labels";
+
+// 既存のテストは日本語の文言で確かめる
+const ja = labels.ja;
+const statusText = (task: Task) => statusTextIn(task, ja);
+const personAction = (task: Task) => personActionIn(task, ja);
+const describeEvent = (event: LedgerEvent) => describeIn(event, ja);
 
 const proposal = (patch: Partial<TaskProposal> = {}): TaskProposal => ({
   id: "CP-1",
@@ -115,5 +128,63 @@ describe("成果物チェックの表示（PBI-10b）", () => {
     });
     expect(statusText(done)).toBe("完了");
     expect(isWorking(done)).toBe(false);
+  });
+});
+
+describe("英語の表示（PBI-4b）", () => {
+  const en = labels.en;
+  const event = (e: Pick<LedgerEvent, "type" | "payload">): LedgerEvent =>
+    ({
+      ...e,
+      seq: 1,
+      id: "e1",
+      taskId: "t1",
+      projectId: "default",
+      at: "2026-10-10T00:00:00.000Z",
+      actor: "person",
+    }) as LedgerEvent;
+
+  it("用語集の英語で、状態と台帳を表示する", () => {
+    expect(
+      statusTextIn(task({ status: "awaiting_approval", gate: { step: "pr", submission: 2 } }), en),
+    ).toBe("Awaiting deliverable review (submission 2)");
+    expect(
+      statusTextIn(
+        task({ status: "awaiting_approval", gate: { step: "requirements", submission: 1 } }),
+        en,
+      ),
+    ).toBe("Requirements awaiting approval");
+    expect(personActionIn(task({ status: "awaiting_approval" }), en).label).toBe("Review");
+    expect(
+      describeIn(
+        event({
+          type: "ChangesRequested",
+          payload: {
+            step: "pr",
+            target: "design",
+            round: 1,
+            remarks: [{ id: "x", text: "y" }],
+            overLimit: false,
+          },
+        }),
+        en,
+      ),
+    ).toBe(
+      "Changes requested in deliverable review; redo from Design (Design approval revoked): 1 comment (person)",
+    );
+    expect(
+      describeIn(
+        event({
+          type: "TaskEscalated",
+          payload: {
+            step: "design",
+            reason: "change_undecidable",
+            proposalId: "CP-1",
+            pendingRemarks: [],
+          },
+        }),
+        en,
+      ),
+    ).toBe("Escalated: the Goal Guardian could not decide CP-1");
   });
 });

@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { IBM_Plex_Mono, IBM_Plex_Sans_JP } from "next/font/google";
 import { Suspense } from "react";
 import { AppHeader, HeaderFallback } from "@/components/shell/header";
+import { Localized } from "@/components/shell/localized";
 import { AppRail, RailNav } from "@/components/shell/rail";
 import { THEME_SCRIPT } from "@/lib/theme";
 import "./globals.css";
@@ -36,16 +37,25 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
       </head>
       <body className="flex min-h-full flex-col">
+        {/* 画面の言語は cookie とリクエストから決まるので、どこも Suspense の中で決める */}
         <Suspense fallback={<HeaderFallback />}>
-          <AppHeader />
+          <Localized>
+            <AppHeader />
+          </Localized>
         </Suspense>
         <div className="flex flex-1">
-          {/* 表示中の画面（URL）は、描画のたびに決まるので Suspense の中で読む */}
+          {/* 表示中の画面（URL）も、描画のたびに決まるので Suspense の中で読む */}
           <Suspense fallback={<RailNav />}>
-            <AppRail />
+            <Localized>
+              <AppRail />
+            </Localized>
           </Suspense>
           <main className="min-w-0 flex-1 px-4 py-7 sm:px-8">
-            <div className="mx-auto flex max-w-6xl flex-col gap-6">{children}</div>
+            <div className="mx-auto flex max-w-6xl flex-col gap-6">
+              <Suspense fallback={null}>
+                <Localized>{children}</Localized>
+              </Suspense>
+            </div>
           </main>
         </div>
       </body>

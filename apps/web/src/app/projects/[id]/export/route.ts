@@ -1,3 +1,4 @@
+import { getMessages } from "@/i18n/server";
 import { DaemonUnavailableError, exportProject } from "@/lib/daemon";
 
 /** プロジェクトの定義を、JSON ファイルとしてダウンロードさせる。 */
@@ -12,7 +13,8 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
     }
     throw error;
   }
-  if (!exported) return new Response("プロジェクトが見つかりません。", { status: 404 });
+  if (!exported)
+    return new Response((await getMessages()).projects.exportNotFound, { status: 404 });
   const name = (exported as { project?: { name?: string } }).project?.name ?? "project";
   return new Response(`${JSON.stringify(exported, null, 2)}\n`, {
     headers: {

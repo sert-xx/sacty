@@ -3,6 +3,7 @@
 import { useActionState, useId } from "react";
 import { type ImportProjectState, importProjectAction } from "@/app/actions";
 import { Button } from "@/components/ui/button";
+import { useMessages } from "@/i18n/client";
 
 const initial: ImportProjectState = {};
 
@@ -10,14 +11,14 @@ const initial: ImportProjectState = {};
 export function ImportProjectForm() {
   const [state, formAction, pending] = useActionState(importProjectAction, initial);
   const id = useId();
+  const t = useMessages().forms.import;
   return (
     <form
       action={formAction}
       className="flex flex-col gap-3 rounded-xl border border-border bg-card p-5 text-sm"
     >
       <label htmlFor={id} className="leading-6">
-        sacty
-        からエクスポートしたプロジェクトの定義（JSON）を選んでください。新しいプロジェクトとして作ります。取り込み元がほかのプロジェクトと重複していれば、インポートしません。
+        {t.label}
       </label>
       <input
         id={id}
@@ -32,7 +33,7 @@ export function ImportProjectForm() {
         </p>
       )}
       <Button type="submit" variant="outline" disabled={pending} className="w-fit">
-        インポートする
+        {t.submit}
       </Button>
     </form>
   );

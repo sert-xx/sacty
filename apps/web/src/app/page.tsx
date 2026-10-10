@@ -4,18 +4,13 @@ import { AutoRefresh } from "@/components/auto-refresh";
 import { DaemonError } from "@/components/daemon-error";
 import { NewTicketDialog } from "@/components/new-ticket-dialog";
 import { StatusLabel, StepChips } from "@/components/task-bits";
+import { getMessages } from "@/i18n/server";
 import { currentProjectId, resolveProject } from "@/lib/current-project";
 import { DaemonUnavailableError, getStatus, listProjects, listTasks } from "@/lib/daemon";
-import {
-  AUTH_LABEL,
-  isWorking,
-  needsPerson,
-  personAction,
-  START_LABEL,
-  statusText,
-} from "@/lib/labels";
+import { isWorking, needsPerson, personAction, statusText } from "@/lib/labels";
 
-export default function TasksPage() {
+export default async function TasksPage() {
+  const m = (await getMessages()).tasks;
   return (
     <>
       <div className="flex flex-wrap items-end justify-between gap-4">
@@ -23,7 +18,7 @@ export default function TasksPage() {
           <Suspense fallback={<p className="text-sm text-muted-foreground">&nbsp;</p>}>
             <ProjectName />
           </Suspense>
-          <h1 className="text-2xl font-bold">タスク</h1>
+          <h1 className="text-2xl font-bold">{m.title}</h1>
         </div>
         <Suspense fallback={null}>
           <NewTicket />
@@ -37,9 +32,9 @@ export default function TasksPage() {
       </Suspense>
       <section aria-labelledby="all-tasks" className="rounded-xl border border-border bg-card">
         <h2 id="all-tasks" className="px-5 pt-4 pb-3 text-[15px] font-semibold">
-          すべてのタスク
+          {m.allTasks}
         </h2>
-        <Suspense fallback={<p className="px-5 pb-5 text-sm text-muted-foreground">読み込み中…</p>}>
+        <Suspense fallback={<p className="px-5 pb-5 text-sm text-muted-foreground">{m.loading}</p>}>
           <TaskTable />
         </Suspense>
       </section>
@@ -73,7 +68,8 @@ async function NewTicket() {
 async function ProjectName() {
   try {
     const project = resolveProject(await listProjects(), await currentProjectId());
-    return <p className="text-sm text-muted-foreground">プロジェクト：{project?.name}</p>;
+    const m = (await getMessages()).tasks;
+    return <p className="text-sm text-muted-foreground">{m.project(project?.name)}</p>;
   } catch {
     return null;
   }
@@ -86,21 +82,26 @@ async function AgentStatus() {
   } catch {
     return null; // デーモンに届かない場合は一覧側で表示する
   }
+  const { tasks: m, labels } = await getMessages();
   if (status.problems.length > 0) {
     return (
       <div
         role="alert"
         className="rounded-xl border border-warn-line bg-warn-soft p-4 text-sm text-warn"
       >
-        工程を実行できません。{status.problems.join(" ")}
+        {m.cannotRun}
+        {status.problems.join(" ")}
       </div>
     );
   }
   if (!status.agent) return null;
   return (
     <p className="text-sm text-muted-foreground">
-      工程を実行するAI：<span className="font-mono">{status.agent.id}</span>（
-      {AUTH_LABEL[status.agent.authMode as keyof typeof AUTH_LABEL] ?? status.agent.authMode}）
+      {m.agent}
+      <span className="font-mono">{status.agent.id}</span>
+      {m.agentAuth(
+        labels.auth[status.agent.authMode as keyof typeof labels.auth] ?? status.agent.authMode,
+      )}
     </p>
   );
 }
@@ -114,21 +115,22 @@ async function NeedsYou() {
     return null;
   }
   if (tasks.length === 0) return null;
+  const { tasks: m, labels } = await getMessages();
   return (
     <section aria-labelledby="needs-you" className="flex flex-col gap-3">
       <h2 id="needs-you" className="text-[15px] font-semibold">
-        あなたの出番
+        {m.needsYou}
       </h2>
       <ul className="grid grid-cols-[repeat(auto-fit,minmax(280px,1fr))] gap-4">
         {tasks.map((task) => {
-          const action = personAction(task);
+          const action = personAction(task, labels);
           return (
             <li
               key={task.id}
               className="flex flex-col gap-2.5 rounded-xl border border-warn-line bg-card p-5"
             >
               <span className="w-fit rounded-full border border-warn-line bg-warn-soft px-2.5 py-0.5 text-xs font-semibold text-warn">
-                {statusText(task)}
+                {statusText(task, labels)}
               </span>
               <span className="text-[17px] font-semibold">{task.title}</span>
               <Link href={action.href} className="text-sm font-semibold text-accent-foreground">
@@ -156,13 +158,10 @@ async function TaskTable() {
     }
     throw error;
   }
+  const { tasks: m, labels } = await getMessages();
 
   if (tasks.length === 0) {
-    return (
-      <p className="px-5 pb-8 text-sm text-muted-foreground">
-        タスクはまだありません。「チケットを作成」から最初のタスクを作ってください。
-      </p>
-    );
+    return <p className="px-5 pb-8 text-sm text-muted-foreground">{m.empty}</p>;
   }
 
   return (
@@ -172,16 +171,16 @@ async function TaskTable() {
         <thead>
           <tr className="text-left text-xs text-muted-foreground">
             <th scope="col" className="px-5 py-2.5 font-medium">
-              タスク
+              {m.column.task}
             </th>
             <th scope="col" className="px-3 py-2.5 font-medium">
-              開始地点
+              {m.column.start}
             </th>
             <th scope="col" className="px-3 py-2.5 font-medium">
-              工程（オーケストレーターが選択）
+              {m.column.steps}
             </th>
             <th scope="col" className="px-5 py-2.5 font-medium">
-              状態
+              {m.column.status}
             </th>
           </tr>
         </thead>
@@ -197,7 +196,7 @@ async function TaskTable() {
                 </Link>
               </td>
               <td className="px-3 py-3.5 whitespace-nowrap text-muted-foreground">
-                {START_LABEL[task.start]}
+                {labels.start[task.start]}
                 {task.source && (
                   <span className="block font-mono text-xs">
                     {task.source.repo}#{task.source.number}

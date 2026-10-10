@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { AutoRefresh } from "@/components/auto-refresh";
+import { getMessages, languagePreference } from "@/i18n/server";
 import { currentProjectId, resolveProject } from "@/lib/current-project";
 import { listProjects, listTasks } from "@/lib/daemon";
 import { isWorking, needsPerson, personAction, statusText } from "@/lib/labels";
@@ -22,7 +23,7 @@ export function HeaderFallback() {
   return (
     <Frame>
       <span className="flex-1" />
-      <UserMenu />
+      <UserMenu language="system" />
     </Frame>
   );
 }
@@ -36,6 +37,7 @@ export async function AppHeader() {
     return <HeaderFallback />;
   }
   const [projects, tasks] = data;
+  const [m, language] = await Promise.all([getMessages(), languagePreference()]);
   const current = resolveProject(projects, await currentProjectId());
   const waiting = tasks.filter(needsPerson);
   const options = projects.map((p) => ({
@@ -51,12 +53,12 @@ export async function AppHeader() {
       title: t.title,
       projectId: t.projectId,
       projectName: name(t.projectId),
-      status: statusText(t),
-      href: personAction(t).href,
+      status: statusText(t, m.labels),
+      href: personAction(t, m.labels).href,
     }));
   const currentOption = options.find((o) => o.id === current?.id) ?? {
     id: "default",
-    name: "デフォルト",
+    name: m.shell.project.fallbackName,
     needsYou: 0,
   };
   return (
@@ -70,7 +72,7 @@ export async function AppHeader() {
         here={notices.filter((n) => n.projectId === currentOption.id)}
         currentName={currentOption.name}
       />
-      <UserMenu />
+      <UserMenu language={language} />
     </Frame>
   );
 }
