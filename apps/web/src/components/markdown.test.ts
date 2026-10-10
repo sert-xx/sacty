@@ -1,9 +1,9 @@
-import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { Markdown } from "./markdown";
 
-const render = (text: string) => renderToStaticMarkup(createElement(Markdown, { children: text }));
+// JSX を使わない（.test.ts）ので、関数として呼んで要素を作る
+const render = (text: string) => renderToStaticMarkup(Markdown({ children: text }));
 
 describe("Markdown の表示（PBI-12）", () => {
   it("見出し・箇条書き・表・コードを、読みやすい要素にする", () => {
