@@ -58,3 +58,31 @@ export async function createTicket(input: CreateTicketInput): Promise<Task> {
   );
   return ((await res.json()) as { task: Task }).task;
 }
+
+export type DaemonStatus = {
+  agent: { id: string; runtime: string; authMode: string } | null;
+  problems: string[];
+};
+
+export async function getStatus(): Promise<DaemonStatus> {
+  const res = await ensureOk(await daemonFetch("/api/status"));
+  return (await res.json()) as DaemonStatus;
+}
+
+/** 再開する。状態に合わない場合は、画面に出せる理由を返す。 */
+export async function resumeTask(
+  id: string,
+  capUsd: number | undefined,
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  const res = await daemonFetch(`/api/tasks/${encodeURIComponent(id)}/resume`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(capUsd === undefined ? {} : { capUsd }),
+  });
+  if (res.status === 409) {
+    return { ok: false, message: ((await res.json()) as { message: string }).message };
+  }
+  if (res.status === 400) return { ok: false, message: "金額を正しく入力してください。" };
+  await ensureOk(res);
+  return { ok: true };
+}

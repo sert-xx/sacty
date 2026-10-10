@@ -1,8 +1,10 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Suspense } from "react";
+import { AutoRefresh } from "@/components/auto-refresh";
 import { DaemonError } from "@/components/daemon-error";
-import { StatusLabel, StepChips } from "@/components/task-bits";
+import { ResumeForm } from "@/components/resume-form";
+import { CostMeter, StatusLabel, StepChips } from "@/components/task-bits";
 import { DaemonUnavailableError, getTask } from "@/lib/daemon";
 import { describeEvent, formatStamp, START_LABEL } from "@/lib/labels";
 
@@ -32,9 +34,12 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
   }
   if (!found) notFound();
   const { task, ledger } = found;
+  const lastFailure = [...ledger].reverse().find((e) => e.type === "AgentRunFailed");
+  const draft = task.outputs.requirements;
 
   return (
     <>
+      <AutoRefresh active={task.status === "queued" || task.status === "running"} />
       <div className="flex flex-col gap-2">
         <div className="flex flex-wrap items-center gap-3">
           <h1 className="text-2xl font-bold text-balance">{task.title}</h1>
@@ -43,22 +48,57 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
         <p className="text-sm text-muted-foreground">
           開始地点：{START_LABEL[task.start]} ・ プロジェクト：デフォルト
         </p>
+        <CostMeter task={task} />
       </div>
+
+      {task.status === "paused" && task.pausedReason && (
+        <ResumeForm
+          taskId={task.id}
+          reason={task.pausedReason}
+          usedUsd={task.budget.usedUsd}
+          capUsd={task.budget.capUsd}
+          lastFailure={
+            task.pausedReason !== "budget" && lastFailure?.type === "AgentRunFailed"
+              ? lastFailure.payload.message
+              : undefined
+          }
+        />
+      )}
 
       <div className="flex flex-wrap items-start gap-6">
         <div className="flex min-w-0 flex-[999_1_560px] flex-col gap-6">
+          <section
+            aria-labelledby="ticket"
+            className="flex flex-col gap-3 rounded-xl border border-border bg-card p-5"
+          >
+            <h2 id="ticket" className="text-[15px] font-semibold">
+              チケット
+            </h2>
+            {task.body ? (
+              <p className="leading-7 whitespace-pre-wrap">{task.body}</p>
+            ) : (
+              <p className="text-sm text-muted-foreground">チケットに内容はありません。</p>
+            )}
+          </section>
           <section
             aria-labelledby="req"
             className="flex flex-col gap-3 rounded-xl border border-border bg-card p-5"
           >
             <h2 id="req" className="text-[15px] font-semibold">
-              要求要件
+              要求要件{" "}
+              <span className="text-[13px] font-normal text-muted-foreground">
+                工程エージェントの下書き
+              </span>
             </h2>
-            {task.body ? (
-              <p className="leading-7 whitespace-pre-wrap">{task.body}</p>
+            {draft ? (
+              <pre className="font-sans text-sm leading-7 break-words whitespace-pre-wrap">
+                {draft}
+              </pre>
             ) : (
               <p className="text-sm text-muted-foreground">
-                チケットに内容はありません。要求要件の工程で、オーケストレーターが作成します。
+                {task.status === "running"
+                  ? "工程エージェントが作成しています…"
+                  : "まだ作成されていません。"}
               </p>
             )}
           </section>

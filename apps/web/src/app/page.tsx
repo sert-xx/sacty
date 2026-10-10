@@ -1,10 +1,11 @@
 import Link from "next/link";
 import { Suspense } from "react";
+import { AutoRefresh } from "@/components/auto-refresh";
 import { DaemonError } from "@/components/daemon-error";
 import { NewTicketDialog } from "@/components/new-ticket-dialog";
 import { StatusLabel, StepChips } from "@/components/task-bits";
-import { DaemonUnavailableError, listTasks } from "@/lib/daemon";
-import { START_LABEL } from "@/lib/labels";
+import { DaemonUnavailableError, getStatus, listTasks } from "@/lib/daemon";
+import { AUTH_LABEL, START_LABEL } from "@/lib/labels";
 
 export default function TasksPage() {
   return (
@@ -16,6 +17,9 @@ export default function TasksPage() {
         </div>
         <NewTicketDialog />
       </div>
+      <Suspense fallback={null}>
+        <AgentStatus />
+      </Suspense>
       <section aria-labelledby="all-tasks" className="rounded-xl border border-border bg-card">
         <h2 id="all-tasks" className="px-5 pt-4 pb-3 text-[15px] font-semibold">
           すべてのタスク
@@ -25,6 +29,33 @@ export default function TasksPage() {
         </Suspense>
       </section>
     </>
+  );
+}
+
+/** 工程を実行するAIの設定状況。問題があれば理由を出す。 */
+async function AgentStatus() {
+  let status: Awaited<ReturnType<typeof getStatus>>;
+  try {
+    status = await getStatus();
+  } catch {
+    return null; // デーモンに届かない場合は一覧側で表示する
+  }
+  if (status.problems.length > 0) {
+    return (
+      <div
+        role="alert"
+        className="rounded-xl border border-warn-line bg-warn-soft p-4 text-sm text-warn"
+      >
+        工程を実行できません。{status.problems.join(" ")}
+      </div>
+    );
+  }
+  if (!status.agent) return null;
+  return (
+    <p className="text-sm text-muted-foreground">
+      工程を実行するAI：<span className="font-mono">{status.agent.id}</span>（
+      {AUTH_LABEL[status.agent.authMode as keyof typeof AUTH_LABEL] ?? status.agent.authMode}）
+    </p>
   );
 }
 
@@ -53,6 +84,7 @@ async function TaskTable() {
 
   return (
     <div className="overflow-x-auto">
+      <AutoRefresh active={tasks.some((t) => t.status === "queued" || t.status === "running")} />
       <table className="w-full min-w-[760px] border-collapse text-sm">
         <thead>
           <tr className="text-left text-xs text-muted-foreground">
