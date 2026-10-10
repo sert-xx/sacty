@@ -258,3 +258,28 @@ describe("中止したときに PR を閉じる（PBI-3）", () => {
     );
   });
 });
+
+describe("成果物チェックの間の PR の状態（PBI-14a）", () => {
+  it("マージ済み・閉じられた・開いているを読み分け、失敗は理由つきのエラーにする", async () => {
+    const { impl, calls } = fakeFetch([
+      { status: 200, json: { state: "closed", merged: true, merged_by: { login: "reviewer" } } },
+      { status: 200, json: { state: "closed", merged: false } },
+      { status: 200, json: { state: "open", merged: false } },
+      { status: 404, json: { message: "Not Found" } },
+    ]);
+    const client = new GitHubPullRequests(impl);
+    const pr = { repo: "acme/app", token: "ghp_secret", number: 7 };
+    expect(await client.status(pr)).toEqual({ state: "merged", mergedBy: "reviewer" });
+    expect(await client.status(pr)).toEqual({ state: "closed" });
+    expect(await client.status(pr)).toEqual({ state: "open" });
+    expect(errorText(await client.status(pr).catch((e: unknown) => e))).toEqual({
+      code: "github.failed",
+      params: { action: "getPr", status: 404, detail: "Not Found", hint: "permission" },
+    });
+    expect(calls[0]).toMatchObject({
+      url: "https://api.github.com/repos/acme/app/pulls/7",
+      method: "GET",
+      auth: "Bearer ghp_secret",
+    });
+  });
+});

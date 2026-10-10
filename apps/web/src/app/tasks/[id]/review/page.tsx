@@ -214,6 +214,15 @@ async function Review({ params }: { params: Promise<{ id: string }> }) {
             escalated={task.status === "escalated"}
             maxChanges={MAX_CHANGE_REQUESTS}
             pendingComments={task.escalation?.pendingRemarks.map((r) => r.text) ?? []}
+            pullRequest={
+              step === "pr" && task.pullRequest?.number
+                ? {
+                    number: task.pullRequest.number,
+                    url: task.pullRequest.url,
+                    closed: task.pullRequestState === "closed",
+                  }
+                : undefined
+            }
           />
         </section>
       </div>

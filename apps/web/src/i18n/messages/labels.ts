@@ -79,6 +79,8 @@ const ja = {
     finalReviewing: "ゴールガーディアンが最終レビュー中",
     changeUndecided: "変更の申し出の判断待ち",
     deliverableReview: (n: number) => `成果物チェック待ち${n > 1 ? `（${n}回目）` : ""}`,
+    prAwaitingMerge: (n: number) => `PR のマージ待ち${n > 1 ? `（${n}回目）` : ""}`,
+    prClosed: "PR が閉じられた（判断待ち）",
     stepApproval: (step: string, n: number) => `${step}の承認待ち${n > 1 ? `（${n}回目）` : ""}`,
   },
   action: { decide: "判断する", review: "チェックする" },
@@ -129,6 +131,11 @@ const ja = {
       `PRは作らない設定のため、ブランチまで（${branch}・${commit}）`,
     BranchPushed: (branch: string, commit: string) =>
       `sacty のブランチにプッシュ（${branch}・${commit}）`,
+    PullRequestMerged: (number: number, by?: string) =>
+      `PR #${number} がマージされた${by ? `（${by}）` : ""}→ 成果物チェックを承認`,
+    PullRequestClosed: (number: number) =>
+      `PR #${number} がマージされずに閉じられた → 人間の判断待ち`,
+    PullRequestReopened: (number: number) => `PR #${number} が開き直された → マージ待ち`,
     GuardianMissed:
       "最終レビューで合格にした成果物が差し戻されたため、ゴールガーディアンの見逃しとして記録",
     FinalReviewFailed: (message: string, cost: string) => `${message}（${cost}）`,
@@ -214,6 +221,8 @@ const en: LabelMessages = {
     finalReviewing: "Goal Guardian is doing the final review",
     changeUndecided: "Change request needs you",
     deliverableReview: (n) => `Awaiting deliverable review${n > 1 ? ` (submission ${n})` : ""}`,
+    prAwaitingMerge: (n) => `Awaiting PR merge${n > 1 ? ` (submission ${n})` : ""}`,
+    prClosed: "PR closed (needs you)",
     stepApproval: (step, n) => `${step} awaiting approval${n > 1 ? ` (submission ${n})` : ""}`,
   },
   action: { decide: "Decide", review: "Review" },
@@ -261,6 +270,10 @@ const en: LabelMessages = {
       `PR opened or updated (#${number} · ${branch} · ${commit})`,
     branchPushed: (branch, commit) => `No PR configured; branch only (${branch} · ${commit})`,
     BranchPushed: (branch, commit) => `Pushed to sacty branch (${branch} · ${commit})`,
+    PullRequestMerged: (number, by) =>
+      `PR #${number} merged${by ? ` (${by})` : ""} → deliverable review approved`,
+    PullRequestClosed: (number) => `PR #${number} closed without merging → needs you`,
+    PullRequestReopened: (number) => `PR #${number} reopened → awaiting merge`,
     GuardianMissed:
       "A deliverable that passed the final review was sent back; recorded as a Goal Guardian miss",
     FinalReviewFailed: (message, cost) => `${message} (${cost})`,

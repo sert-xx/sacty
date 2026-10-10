@@ -366,6 +366,28 @@ const PullRequestPublished = z.object({
 });
 
 /**
+ * 成果物チェックの間に見守っている PR の状態の変化（PBI-14a）。PR のマージを承認とみなし、
+ * マージされたら続けて成果物チェックの承認（StepApproved）を記録する。マージせずに閉じられたら
+ * 記録して人間の判断を待ち、開き直されたら見守りを続ける。
+ */
+const PullRequestMerged = z.object({
+  type: z.literal("PullRequestMerged"),
+  payload: z.object({
+    number: z.number().int().positive(),
+    /** マージした GitHub のアカウント。 */
+    by: z.string().optional(),
+  }),
+});
+const PullRequestClosed = z.object({
+  type: z.literal("PullRequestClosed"),
+  payload: z.object({ number: z.number().int().positive() }),
+});
+const PullRequestReopened = z.object({
+  type: z.literal("PullRequestReopened"),
+  payload: z.object({ number: z.number().int().positive() }),
+});
+
+/**
  * sacty のブランチにプッシュした（PRの作成の前に記録する。PRの作成に失敗しても、
  * プッシュ済みのブランチを中止で片付けられるように）。
  */
@@ -494,6 +516,9 @@ export const EventInput = z.discriminatedUnion("type", [
   FinalReviewed,
   FinalReviewFailed,
   PullRequestPublished,
+  PullRequestMerged,
+  PullRequestClosed,
+  PullRequestReopened,
   BranchPushed,
   GuardianMissed,
   TaskCancelled,

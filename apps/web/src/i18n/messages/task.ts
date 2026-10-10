@@ -13,6 +13,10 @@ const ja = {
     undecidableHelp: "申し出の理由と根拠を確認し、変更を認めるかどうかを判断してください。",
     tooManyHelp: "このまま承認するか、上限を超えて差し戻すかを判断してください。",
     reviewHelp: "成果物を確認し、承認するか差し戻してください。",
+    prHelp:
+      "GitHub で PR をレビューしてください。PR をマージすると承認になり、タスクが完了します。",
+    prClosedHelp:
+      "PR がマージされずに閉じられました。GitHub で開き直すか、不要なら中止してください。",
   },
   ticket: "チケット",
   ticketEmpty: "チケットに内容はありません。",
@@ -49,6 +53,8 @@ const en: TaskMessages = {
       "Check the reason and supporting facts of the request, then decide whether to accept the change.",
     tooManyHelp: "Decide whether to approve as is or request changes beyond the limit.",
     reviewHelp: "Check the deliverable, then approve it or request changes.",
+    prHelp: "Review the PR on GitHub. Merging it approves the deliverable and completes the task.",
+    prClosedHelp: "The PR was closed without merging. Reopen it on GitHub, or cancel the task.",
   },
   ticket: "Ticket",
   ticketEmpty: "The ticket has no content.",

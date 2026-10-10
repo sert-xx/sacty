@@ -64,7 +64,7 @@ import {
   gitAuthSecrets,
   isGitHubHttps,
 } from "./gh.js";
-import type { FoundIssue, PullRequests } from "./github.js";
+import type { FoundIssue, PullRequestStatus, PullRequests } from "./github.js";
 import type { LedgerStore } from "./ledger.js";
 import type { ProjectStore } from "./projects.js";
 import {
@@ -182,6 +182,76 @@ export class TaskService {
     const task = this.tasks.get(id);
     if (!task) return undefined;
     return { task, ledger: this.deps.ledger.forTask(id) };
+  }
+
+  /**
+   * 成果物チェックで待っているタスクの PR の状態を確かめ、変化を記録する（PBI-14a）。
+   * マージされたら成果物チェックを承認してタスクを完了にし、マージせずに閉じられたら記録して人間の判断を
+   * 待つ（開き直されたら見守りを続ける）。PR は、プロジェクトの gh のアカウントで確かめる。
+   * 確かめられないタスク（ネットワークやアカウントの問題）は、次の確認でやり直す。
+   */
+  async checkPullRequests(): Promise<void> {
+    const waiting = [...this.tasks.values()].filter(
+      (t) =>
+        t.gate?.step === "pr" &&
+        (t.status === "awaiting_approval" || t.status === "escalated") &&
+        t.pullRequest?.number &&
+        t.pullRequest.repo,
+    );
+    for (const task of waiting) {
+      const pr = task.pullRequest;
+      if (!pr?.number || !pr.repo) continue;
+      const usedSecrets: string[] = [];
+      let status: PullRequestStatus;
+      try {
+        const token = await this.githubToken(task, usedSecrets);
+        status = await this.deps.pulls.status({ repo: pr.repo, token, number: pr.number });
+      } catch (error) {
+        console.warn(
+          `[daemon] PR #${pr.number}（${pr.repo}）の状態を確認できませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
+        );
+        continue;
+      }
+      // 確かめている間に、人間が差し戻した・中止したなどで変わっていれば、記録しない
+      const latest = this.tasks.get(task.id);
+      if (!latest) continue;
+      if (
+        latest.gate?.step !== "pr" ||
+        (latest.status !== "awaiting_approval" && latest.status !== "escalated") ||
+        latest.pullRequest?.number !== pr.number
+      ) {
+        continue;
+      }
+      const current = latest.pullRequestState ?? "open";
+      if (status.state === current) continue;
+      if (status.state === "merged") {
+        // マージは人間の承認なので、承認者は人間として記録する
+        this.append(latest, [
+          {
+            actor: "person",
+            event: {
+              type: "PullRequestMerged",
+              payload: { number: pr.number, ...(status.mergedBy ? { by: status.mergedBy } : {}) },
+            },
+          },
+          {
+            actor: "person",
+            event: { type: "StepApproved", payload: { step: "pr", next: "idle" } },
+          },
+        ]);
+      } else if (status.state === "closed") {
+        this.append(latest, [
+          { actor: "sacty", event: { type: "PullRequestClosed", payload: { number: pr.number } } },
+        ]);
+      } else {
+        this.append(latest, [
+          {
+            actor: "sacty",
+            event: { type: "PullRequestReopened", payload: { number: pr.number } },
+          },
+        ]);
+      }
+    }
   }
 
   /** gh にログイン済みの GitHub のアカウント。gh が無いなどで分からなければ、その理由。 */
@@ -1694,6 +1764,12 @@ export class TaskService {
   approve(id: string, raw: unknown): Task {
     const { step, submission } = ApproveStepInput.parse(raw);
     const task = this.gateTask(id, step, submission);
+    // PR を作ったタスクの成果物チェックは、PR のマージで承認する（PBI-14a）
+    if (step === "pr" && task.pullRequest?.number) {
+      throw new InvalidOperationError(
+        message("gate.approveOnPullRequest", { url: task.pullRequest.url ?? "" }),
+      );
+    }
     const index = task.steps.findIndex((s) => s.key === step);
     const nextStep = task.steps[index + 1]?.key;
     const next = nextStep && EXECUTABLE_STEPS.includes(nextStep) ? "queued" : "idle";

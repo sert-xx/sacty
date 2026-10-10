@@ -20,7 +20,7 @@ import { type AgentConfig, type ConfigResult, loadConfig } from "./config.js";
 import type { ContextFetcher, ContextRef } from "./context.js";
 import { MessageError } from "./errors.js";
 import type { GitHubAuth } from "./gh.js";
-import type { PullRequests } from "./github.js";
+import type { PullRequestStatus, PullRequests } from "./github.js";
 import { SqliteLedgerStore } from "./ledger.js";
 import { MemoryProjectStore } from "./projects.js";
 import type { RepositoryWorkspace } from "./repository.js";
@@ -219,6 +219,15 @@ class FakePulls implements PullRequests {
   async close(input: { repo: string; token: string; number: number }) {
     if (this.closeFail) throw new Error(this.closeFail);
     this.closed.push(input);
+  }
+  /** 返す PR の状態（成果物チェックの見守り。PBI-14a）。 */
+  state: PullRequestStatus = { state: "open" };
+  statusFail?: string;
+  checked: { repo: string; token: string; number: number }[] = [];
+  async status(input: { repo: string; token: string; number: number }) {
+    this.checked.push(input);
+    if (this.statusFail) throw new Error(this.statusFail);
+    return this.state;
   }
 }
 
@@ -1994,10 +2003,60 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     // トークンは台帳に残さない
     expect(JSON.stringify(service.get(id)?.ledger)).not.toContain("ghp_secret");
 
-    const done = service.approve(id, { step: "pr", submission: 1 });
-    expect(done.steps.every((st) => st.state === "done")).toBe(true);
-    expect(done.status).toBe("idle");
+    // PR を作ったタスクは、画面では承認できない（PR のマージで承認する。PBI-14a）
+    expect(() => service.approve(id, { step: "pr", submission: 1 })).toThrow(/マージ/);
+    pulls.state = { state: "merged", mergedBy: "reviewer" };
+    await service.checkPullRequests();
+    const done = service.get(id)?.task;
+    expect(done?.steps.every((st) => st.state === "done")).toBe(true);
+    expect(done?.status).toBe("idle");
     expect(service.queuedTaskIds()).toEqual([]);
+    ledger.close();
+  });
+
+  it("成果物チェックの間、プロジェクトの gh のアカウントで PR を見守り、閉じられたら記録して待ち、マージで完了する（PBI-14a）", async () => {
+    const pulls = new FakePulls();
+    const { ledger, service, id } = await toDeliverableGate([], { pulls });
+    // 開いたままなら何も記録しない
+    await service.checkPullRequests();
+    expect(pulls.checked).toEqual([{ repo: "acme/app", token: "ghp_secret", number: 7 }]);
+    expect(types(service, id).at(-1)).toBe("StepSubmitted");
+
+    // 確かめられなければ（ネットワークなど）、何も記録せずに次の確認でやり直す
+    pulls.statusFail = "network";
+    await service.checkPullRequests();
+    expect(types(service, id).at(-1)).toBe("StepSubmitted");
+    pulls.statusFail = undefined;
+
+    // マージせずに閉じられたら、記録して人間の判断を待つ
+    pulls.state = { state: "closed" };
+    await service.checkPullRequests();
+    await service.checkPullRequests(); // 同じ状態は二重に記録しない
+    expect(types(service, id).slice(-1)).toEqual(["PullRequestClosed"]);
+    expect(service.get(id)?.task).toMatchObject({
+      status: "awaiting_approval",
+      pullRequestState: "closed",
+    });
+
+    // 開き直されたら、マージを待つ
+    pulls.state = { state: "open" };
+    await service.checkPullRequests();
+    expect(service.get(id)?.task.pullRequestState).toBe("open");
+
+    // マージは人間の承認として記録し、タスクを完了にする
+    pulls.state = { state: "merged", mergedBy: "reviewer" };
+    await service.checkPullRequests();
+    const ledgerEvents = service.get(id)?.ledger ?? [];
+    expect(ledgerEvents.slice(-2).map((e) => [e.type, e.actor])).toEqual([
+      ["PullRequestMerged", "person"],
+      ["StepApproved", "person"],
+    ]);
+    expect(ledgerEvents.at(-2)?.payload).toEqual({ number: 7, by: "reviewer" });
+    expect(service.get(id)?.task.steps.every((st) => st.state === "done")).toBe(true);
+    // 完了したタスクは、もう確かめない
+    const checks = pulls.checked.length;
+    await service.checkPullRequests();
+    expect(pulls.checked).toHaveLength(checks);
     ledger.close();
   });
 

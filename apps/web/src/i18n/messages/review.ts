@@ -46,6 +46,13 @@ const ja = {
     approve: "承認する",
     note: (max: number) =>
       `指摘はタスクに累積し、再提出のたびにすべてエージェントに渡されます。同じ工程への差し戻しが${max}回を超えるとエスカレーションになります。`,
+    prTitle: "GitHub の PR で判断します",
+    prHelp:
+      "PR をレビューしてマージすると、成果物チェックの承認になり、タスクが完了します（sacty が1分ごとに確かめます）。",
+    prOpen: (n: number) => `PR #${n} を GitHub で開く`,
+    prClosed:
+      "PR はマージされずに閉じられました。GitHub で開き直すと、またマージを待ちます。不要なら、タスク詳細から中止してください。",
+    prRequestNote: "差し戻す場合は、ここで指摘を入力してください。",
   },
 };
 
@@ -98,6 +105,13 @@ const en: ReviewMessages = {
     requestOverLimit: "Request changes beyond the limit",
     request: "Request changes",
     approve: "Approve",
+    prTitle: "Decide on the GitHub PR",
+    prHelp:
+      "Review and merge the PR to approve the deliverable review and complete the task (sacty checks every minute).",
+    prOpen: (n) => `Open PR #${n} on GitHub`,
+    prClosed:
+      "The PR was closed without merging. Reopen it on GitHub to wait for a merge again, or cancel the task from its details.",
+    prRequestNote: "To request changes, enter your comments here.",
     note: (max) =>
       `Comments accumulate on the task and are all passed to the agent on every resubmission. Requesting changes on the same step more than ${max} time${max === 1 ? "" : "s"} escalates the task.`,
   },

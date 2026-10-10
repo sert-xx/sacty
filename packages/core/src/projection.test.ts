@@ -353,3 +353,15 @@ describe("台帳の文（PBI-11b）", () => {
     ).toThrow();
   });
 });
+
+describe("成果物チェックの間の PR の状態（PBI-14a）", () => {
+  it("成果物チェックで待っている、そのタスクの PR の状態だけを記録する", () => {
+    expect(() =>
+      project([
+        created("t9"),
+        steps("t9"),
+        ev("t9", { type: "PullRequestMerged", payload: { number: 7 } }),
+      ]),
+    ).toThrow(/deliverable review is not open/);
+  });
+});

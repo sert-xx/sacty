@@ -15,7 +15,15 @@ export interface PullRequests {
   }): Promise<{ url: string; number: number }>;
   /** PRを閉じる（中止したとき。マージはしない）。 */
   close(input: { repo: string; token: string; number: number }): Promise<void>;
+  /** PR の状態（成果物チェックの間に見守る。PBI-14a）。 */
+  status(input: { repo: string; token: string; number: number }): Promise<PullRequestStatus>;
 }
+
+/** PR の状態。merged はマージ済み、closed はマージせずに閉じられた。 */
+export type PullRequestStatus =
+  | { state: "open" }
+  | { state: "closed" }
+  | { state: "merged"; mergedBy?: string };
 
 const API = "https://api.github.com";
 
@@ -30,6 +38,23 @@ export class GitHubPullRequests implements PullRequests {
 
   close(input: Parameters<PullRequests["close"]>[0]) {
     return closePullRequest(this.fetchImpl, this.api, input);
+  }
+
+  async status(input: Parameters<PullRequests["status"]>[0]): Promise<PullRequestStatus> {
+    const res = await this.fetchImpl(`${this.api}/repos/${input.repo}/pulls/${input.number}`, {
+      headers: {
+        accept: "application/vnd.github+json",
+        authorization: `Bearer ${input.token}`,
+        "x-github-api-version": "2022-11-28",
+      },
+    });
+    const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!res.ok) throw apiError("getPr", res.status, json);
+    if (json.merged === true) {
+      const by = (json.merged_by as { login?: unknown } | null)?.login;
+      return { state: "merged", ...(typeof by === "string" ? { mergedBy: by } : {}) };
+    }
+    return { state: json.state === "closed" ? "closed" : "open" };
   }
 
   async upsert(input: Parameters<PullRequests["upsert"]>[0]) {
@@ -108,7 +133,7 @@ async function closePullRequest(
 }
 
 function apiError(
-  action: "updatePr" | "createPr" | "closePr" | "searchIssues",
+  action: "updatePr" | "createPr" | "closePr" | "getPr" | "searchIssues",
   status: number,
   json: Record<string, unknown>,
 ): Error {

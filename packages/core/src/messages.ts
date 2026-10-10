@@ -39,6 +39,7 @@ const PARAMS = {
   "gate.stepNotAwaiting": null,
   "gate.staleSubmission": z.object({ submission: Count, current: Count }),
   "gate.invalidTarget": null,
+  "gate.approveOnPullRequest": z.object({ url: z.string() }),
   "gate.remarksRequired": null,
   "gate.overLimit": z.object({ limit: Count }),
   "remark.notFound": null,
@@ -116,7 +117,7 @@ const PARAMS = {
   "git.nothingToCommit": null,
   "git.notSactyBranch": null,
   "github.failed": z.object({
-    action: z.enum(["updatePr", "createPr", "closePr", "searchIssues"]),
+    action: z.enum(["updatePr", "createPr", "closePr", "getPr", "searchIssues"]),
     status: z.number(),
     detail: z.string(),
     hint: z.enum(["none", "token", "permission"]),
@@ -194,12 +195,14 @@ const githubActionJa = {
   updatePr: "PRを更新できませんでした",
   createPr: "PRを作れませんでした",
   closePr: "PRを閉じられませんでした",
+  getPr: "PRの状態を確認できませんでした",
   searchIssues: "Issue を検索できませんでした",
 } as const;
 const githubActionEn = {
   updatePr: "Could not update the PR",
   createPr: "Could not open the PR",
   closePr: "Could not close the PR",
+  getPr: "Could not check the PR",
   searchIssues: "Could not search issues",
 } as const;
 const githubHintJa = {
@@ -245,6 +248,8 @@ const ja: MessageDictionary = {
   "gate.staleSubmission": ({ submission, current }) =>
     `表示している成果物（${submission}回目の提出）は最新ではありません。画面を更新して、最新の提出（${current}回目）を確認してください。`,
   "gate.invalidTarget": "この工程には差し戻せません。",
+  "gate.approveOnPullRequest": ({ url }) =>
+    `PR を作ったタスクは、PR をマージすると承認になります。GitHub で PR をレビューしてマージしてください（${url}）。`,
   "gate.remarksRequired": "差し戻すには、指摘を1件以上入力してください。",
   "gate.overLimit": ({ limit }) =>
     `差し戻しが上限（${limit}回）に達しています。続ける場合は、上限を超えて差し戻すことを選んでください。`,
@@ -409,6 +414,8 @@ const en: MessageDictionary = {
   "gate.staleSubmission": ({ submission, current }) =>
     `The deliverable you are viewing (submission ${submission}) is not the latest. Reload the page and review the latest submission (${current}).`,
   "gate.invalidTarget": "Changes cannot be requested on this step.",
+  "gate.approveOnPullRequest": ({ url }) =>
+    `For a task with a PR, merging the PR approves it. Review and merge the PR on GitHub (${url}).`,
   "gate.remarksRequired": "Enter at least one comment to request changes.",
   "gate.overLimit": ({ limit }) =>
     `Change requests reached the limit (${limit}). To continue, choose to request changes over the limit.`,
