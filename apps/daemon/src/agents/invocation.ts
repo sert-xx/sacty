@@ -1,6 +1,8 @@
+import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import type { AgentConfig } from "../config.js";
 import type { SecretStore } from "../secrets.js";
+import { secretStringsInJson } from "./redact.js";
 
 /** コンテナの中での設定ディレクトリ。毎回空の場所を使い、ホストの設定やメモリーを読ませない。 */
 export const CONTAINER_CLAUDE_CONFIG_DIR = "/tmp/sacty-claude-config";
@@ -35,8 +37,17 @@ function expandHome(path: string): string {
 export async function buildInvocation(
   agent: AgentConfig,
   prompt: string,
-  secrets: SecretStore,
+  store: SecretStore,
+  /** 取り出した秘密情報を、その都度知らせる（途中で失敗しても、出力から取り除けるように）。 */
+  onSecret: (value: string) => void = () => {},
 ): Promise<Invocation> {
+  const secrets = {
+    get: async (name: string) => {
+      const value = await store.get(name);
+      onSecret(value);
+      return value;
+    },
+  };
   switch (agent.runtime) {
     case "claude-code": {
       const env: Record<string, string> = {
@@ -73,11 +84,14 @@ export async function buildInvocation(
         env.CODEX_API_KEY = key;
         env.OPENAI_API_KEY = key;
       } else if (auth.mode === "subscription") {
-        files.push({
-          hostPath: expandHome(auth.auth_file ?? "~/.codex/auth.json"),
-          name: "auth.json",
-          syncBack: true,
-        });
+        const hostPath = expandHome(auth.auth_file ?? "~/.codex/auth.json");
+        // 認証ファイルのトークン類も、出力から取り除く対象にする
+        try {
+          for (const value of secretStringsInJson(readFileSync(hostPath, "utf8"))) onSecret(value);
+        } catch {
+          // 読めない場合は実行時に「認証ファイルを読めません」として止まる
+        }
+        files.push({ hostPath, name: "auth.json", syncBack: true });
       } else {
         throw new Error(`codex does not support auth mode ${auth.mode}`);
       }

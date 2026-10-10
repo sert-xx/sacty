@@ -126,10 +126,11 @@ async function up(webPort: number, daemonPort: number) {
       child.kill("SIGTERM");
     }
     // 子が応答しない場合の保険。unref しない（先にイベントループが終わると終了コードが失われるため）。
+    // デーモンは実行中の処理の後片付け（認証ファイルの書き戻しなど）に最大20秒かけるので、それより長く待つ。
     setTimeout(() => {
       for (const child of running()) child.kill("SIGKILL");
       process.exit(code);
-    }, 5_000);
+    }, 30_000);
   };
 
   const watch = (name: string, child: ChildProcess) => {

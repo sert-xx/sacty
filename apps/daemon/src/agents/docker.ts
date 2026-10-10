@@ -101,11 +101,16 @@ function dockerClientEnv(): Record<string, string> {
 
 export class DockerExecutor implements AgentExecutor {
   private readonly active = new Set<string>();
+  private aborting = false;
 
   constructor(private readonly timeoutMs = 30 * 60_000) {}
 
-  /** デーモンの停止時に、実行中のコンテナを止める（コンテナだけが残り続けないように）。 */
+  /**
+   * デーモンの停止時に、実行中のコンテナを止める（コンテナだけが残り続けないように）。
+   * 後処理（書き戻し・一時ファイルの削除）は run() の中で行われるので、呼び出し側はその完了を待つこと。
+   */
   abortAll(): void {
+    this.aborting = true;
     for (const name of this.active) {
       spawn("docker", ["kill", name], { stdio: "ignore", env: dockerClientEnv() });
     }
@@ -197,6 +202,13 @@ export class DockerExecutor implements AgentExecutor {
         });
       });
 
+      if (this.aborting) {
+        return {
+          kind: "failed",
+          reason: "error",
+          message: "デーモンが停止したため、実行が中断されました。",
+        };
+      }
       if (/Unable to find image|No such image|pull access denied/i.test(stderr)) {
         return {
           kind: "failed",

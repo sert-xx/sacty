@@ -41,13 +41,28 @@ const server = serve({ fetch: app.fetch, hostname: "127.0.0.1", port }, (info) =
   worker.start();
 });
 
-const shutdown = () => {
-  worker.stop();
+/** 後処理を待つ上限。CLIはこれより長く待ってから強制終了する。 */
+const DRAIN_TIMEOUT_MS = 20_000;
+
+let shuttingDown = false;
+const shutdown = async () => {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  // 実行中のコンテナを止め、実行の後処理（台帳への記録、認証ファイルの書き戻し、
+  // 一時ファイルの削除）が終わるのを待ってから、台帳を閉じて終了する。
+  const draining = worker.drain();
   executor.abortAll();
+  const timedOut = await Promise.race([
+    draining.then(() => false),
+    new Promise<boolean>((resolve) => setTimeout(() => resolve(true), DRAIN_TIMEOUT_MS).unref()),
+  ]);
+  if (timedOut) {
+    console.warn("[daemon] 実行中の処理の後片付けが時間内に終わりませんでした。");
+  }
   server.close(() => {
     ledger.close();
     process.exit(0);
   });
 };
-process.on("SIGINT", shutdown);
-process.on("SIGTERM", shutdown);
+process.on("SIGINT", () => void shutdown());
+process.on("SIGTERM", () => void shutdown());

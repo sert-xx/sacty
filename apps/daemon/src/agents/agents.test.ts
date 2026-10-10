@@ -292,3 +292,91 @@ describe("認証ファイルの書き戻し", () => {
     expect(readFileSync(host, "utf8")).toBe("re-login by user");
   });
 });
+
+describe("秘密情報の除去", () => {
+  it("渡した秘密情報を [REDACTED] に置き換え、短い値は対象にしない", async () => {
+    const { redact } = await import("./redact.js");
+    expect(redact("token=abcdefgh12345 and abcdefgh12345", ["abcdefgh12345", "1"])).toBe(
+      "token=[REDACTED] and [REDACTED]",
+    );
+    expect(redact("region us-east-1", ["1"])).toBe("region us-east-1");
+  });
+
+  it("認証ファイルのJSONから、トークンらしい文字列を取り出す", async () => {
+    const { secretStringsInJson } = await import("./redact.js");
+    const json = JSON.stringify({
+      tokens: { access_token: "a".repeat(40), refresh_token: "r".repeat(40) },
+      last_refresh: "2026",
+    });
+    expect(secretStringsInJson(json)).toEqual(["a".repeat(40), "r".repeat(40)]);
+  });
+});
+
+describe("停止時の後処理（偽のdockerコマンド）", () => {
+  let dir: string;
+  const originalPath = process.env.PATH;
+  afterEach(() => {
+    process.env.PATH = originalPath;
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("実行中に止めても、更新された認証ファイルを書き戻し、一時ファイルを消す", async () => {
+    const { chmodSync, existsSync, mkdirSync } = await import("node:fs");
+    const { DockerExecutor } = await import("./docker.js");
+    dir = mkdtempSync(join(tmpdir(), "sacty-fakedocker-"));
+    const bin = join(dir, "bin");
+    mkdirSync(bin);
+    // run：マウントされた認証ファイルを更新してから、止められるまで待つ。kill：run を止める。
+    writeFileSync(
+      join(bin, "docker"),
+      `#!/bin/sh
+here=$(dirname "$0")
+if [ "$1" = "kill" ]; then kill "$(cat "$here/run.pid")"; exit 0; fi
+echo $$ > "$here/run.pid"
+prev=""; host=""
+for a in "$@"; do
+  if [ "$prev" = "-v" ]; then
+    case "$a" in *:/tmp/sacty-codex-home*) host="\${a%%:/tmp/sacty-codex-home*}";; esac
+  fi
+  prev="$a"
+done
+echo "$host" > "$here/staging.path"
+printf 'refreshed-token' > "$host/auth.json"
+trap 'exit 137' TERM
+while true; do sleep 0.05; done
+`,
+    );
+    chmodSync(join(bin, "docker"), 0o755);
+    process.env.PATH = `${bin}:${originalPath}`;
+
+    const hostAuth = join(dir, "auth.json");
+    writeFileSync(hostAuth, "old-token");
+    const executor = new DockerExecutor();
+    const running = executor.run({
+      runId: "r1",
+      image: "img",
+      workspaceDir: dir,
+      invocation: {
+        command: ["codex"],
+        env: { CODEX_HOME: "/tmp/sacty-codex-home" },
+        stage: {
+          containerDir: "/tmp/sacty-codex-home",
+          files: [{ hostPath: hostAuth, name: "auth.json", syncBack: true }],
+        },
+        parser: "codex-jsonl",
+      },
+    });
+    // 偽dockerが認証ファイルを更新するまで待ってから止める
+    for (let i = 0; i < 100 && !existsSync(join(bin, "staging.path")); i++) {
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    await new Promise((r) => setTimeout(r, 100));
+    executor.abortAll();
+    const outcome = await running;
+
+    expect(outcome).toMatchObject({ kind: "failed", message: expect.stringContaining("中断") });
+    expect(readFileSync(hostAuth, "utf8")).toBe("refreshed-token");
+    const staging = readFileSync(join(bin, "staging.path"), "utf8").trim();
+    expect(existsSync(staging)).toBe(false);
+  });
+});

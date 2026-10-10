@@ -252,6 +252,105 @@ describe("工程の実行と費用", () => {
   });
 });
 
+describe("秘密情報と予算の通知（レビュー指摘）", () => {
+  it("出力・エラー文・例外に含まれた秘密情報を、台帳に残さない", async () => {
+    const ledger = new SqliteLedgerStore(dbPath);
+    const leaked: AgentOutcome = {
+      kind: "completed",
+      output: "トークンは oauth-secret です",
+      usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 10 },
+    };
+    const { service } = makeService(ledger, [
+      leaked,
+      { kind: "failed", reason: "auth", message: "401 for oauth-secret" },
+    ]);
+    const a = service.createTicket({ title: "A" });
+    const b = service.createTicket({ title: "B" });
+    await service.runNext(a.id);
+    await service.runNext(b.id);
+
+    // 例外の経路
+    const throwing = new TaskService({
+      ledger,
+      config: configOf(agent()),
+      secrets: new MemorySecretStore({ "claude-oauth-token": "oauth-secret" }),
+      executor: {
+        run: async () => {
+          throw new Error("docker failed with oauth-secret");
+        },
+      },
+      workspaceRoot: join(dir, "workspaces"),
+    });
+    const c = throwing.createTicket({ title: "C" });
+    await throwing.runNext(c.id);
+
+    const all = JSON.stringify(ledger.all());
+    expect(all).not.toContain("oauth-secret");
+    expect(all).toContain("[REDACTED]");
+    ledger.close();
+  });
+
+  it("失敗した実行の費用でも、80%の通知を記録する", async () => {
+    const ledger = new SqliteLedgerStore(dbPath);
+    const usage = { input: 0, cacheRead: 0, cacheWrite: 0, output: 57_000 }; // $0.855
+    const { service } = makeService(ledger, [
+      { kind: "failed", reason: "usage_limit", message: "429", usage },
+    ]);
+    const task = service.createTicket({ title: "A" });
+    await service.runNext(task.id);
+    const after = service.get(task.id);
+    expect(after?.task.budget.warned).toBe(true);
+    expect(after?.task.pausedReason).toBe("usage_limit");
+    expect(after?.ledger.map((e) => e.type).slice(-3)).toEqual([
+      "AgentRunFailed",
+      "TaskPaused",
+      "BudgetWarned",
+    ]);
+    ledger.close();
+  });
+
+  it("1回の実行で上限を超えた場合も、通知を記録してから止める", async () => {
+    const ledger = new SqliteLedgerStore(dbPath);
+    const { service } = makeService(ledger, [completed(70_000)]); // $1.05
+    const task = service.createTicket({ title: "A" });
+    await service.runNext(task.id);
+    expect(
+      service
+        .get(task.id)
+        ?.ledger.map((e) => e.type)
+        .slice(-3),
+    ).toEqual(["AgentRunCompleted", "BudgetWarned", "TaskPaused"]);
+    ledger.close();
+  });
+
+  it("停止時は、実行中の処理が台帳に記録されるまで待つ", async () => {
+    const { Worker } = await import("./worker.js");
+    const ledger = new SqliteLedgerStore(dbPath);
+    let finish: (o: AgentOutcome) => void = () => {};
+    const service = new TaskService({
+      ledger,
+      config: configOf(agent()),
+      secrets: new MemorySecretStore({ "claude-oauth-token": "oauth-secret" }),
+      executor: { run: () => new Promise<AgentOutcome>((resolve) => (finish = resolve)) },
+      workspaceRoot: join(dir, "workspaces"),
+    });
+    const task = service.createTicket({ title: "A" });
+    const worker = new Worker(service, 60_000);
+    void worker.tick();
+    await new Promise((r) => setTimeout(r, 20));
+    let drained = false;
+    const draining = worker.drain().then(() => {
+      drained = true;
+    });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(drained).toBe(false); // まだ実行中
+    finish({ kind: "failed", reason: "error", message: "中断" });
+    await draining;
+    expect(service.get(task.id)?.task.status).toBe("paused");
+    ledger.close();
+  });
+});
+
 describe("API", () => {
   const token = "test-token";
   const auth = { authorization: `Bearer ${token}` };

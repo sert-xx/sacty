@@ -5,6 +5,7 @@ import {
   type Actor,
   activeStep,
   applyEvent,
+  BUDGET_WARN_RATIO,
   budgetState,
   CreateTicketInput,
   computeCostUsd,
@@ -20,6 +21,7 @@ import {
 import type { AgentExecutor } from "./agents/docker.js";
 import { buildInvocation } from "./agents/invocation.js";
 import type { AgentOutcome } from "./agents/parse.js";
+import { redact } from "./agents/redact.js";
 import type { ConfigResult } from "./config.js";
 import type { LedgerStore } from "./ledger.js";
 import { buildPrompt } from "./prompts.js";
@@ -166,9 +168,16 @@ export class TaskService {
       },
     ]);
 
+    // 実行に渡した秘密情報。台帳に書く前に、出力やエラー文から取り除く。
+    const usedSecrets: string[] = [];
     let outcome: AgentOutcome;
     try {
-      const invocation = await buildInvocation(agent, buildPrompt(task, step), this.deps.secrets);
+      const invocation = await buildInvocation(
+        agent,
+        buildPrompt(task, step),
+        this.deps.secrets,
+        (value) => usedSecrets.push(value),
+      );
       const workspaceDir = join(this.deps.workspaceRoot, task.id);
       mkdirSync(workspaceDir, { recursive: true });
       outcome = await this.deps.executor.run({
@@ -184,6 +193,11 @@ export class TaskService {
         message: error instanceof Error ? error.message : String(error),
       };
     }
+
+    outcome =
+      outcome.kind === "failed"
+        ? { ...outcome, message: redact(outcome.message, usedSecrets) }
+        : { ...outcome, output: redact(outcome.output, usedSecrets) };
 
     // サブスクリプションは実際の請求が発生しないので、同じ単価で換算した値として扱う
     const estimated = agent.auth.mode === "subscription" || agent.auth.mode === "stub";
@@ -209,6 +223,8 @@ export class TaskService {
         },
         { actor: "sacty", event: { type: "TaskPaused", payload: { reason: outcome.reason } } },
       ]);
+      // 失敗した実行の費用でも、80%の通知は判定する（一時停止はすでにしている）
+      this.warnIfNeeded(this.mustGet(task.id));
       return;
     }
 
@@ -233,20 +249,33 @@ export class TaskService {
     this.checkBudget(done);
   }
 
-  private checkBudget(task: Task) {
-    const state = budgetState(task.budget);
-    if (state === "warn") {
-      this.append(task, [
-        {
-          actor: "sacty",
-          event: {
-            type: "BudgetWarned",
-            payload: { usedUsd: task.budget.usedUsd, capUsd: task.budget.capUsd },
-          },
+  private mustGet(id: string): Task {
+    const task = this.tasks.get(id);
+    if (!task) throw new Error(`task ${id} is missing from the projection`);
+    return task;
+  }
+
+  /** 予算の80%に達していて、まだ通知していなければ通知を記録する。 */
+  private warnIfNeeded(task: Task): Task {
+    if (task.budget.warned || task.budget.usedUsd < task.budget.capUsd * BUDGET_WARN_RATIO) {
+      return task;
+    }
+    return this.append(task, [
+      {
+        actor: "sacty",
+        event: {
+          type: "BudgetWarned",
+          payload: { usedUsd: task.budget.usedUsd, capUsd: task.budget.capUsd },
         },
-      ]);
-    } else if (state === "exceeded") {
-      this.append(task, [
+      },
+    ]);
+  }
+
+  /** 実行の完了後に予算を判定する。1回で上限を超えた場合も、通知を記録してから止める。 */
+  private checkBudget(task: Task) {
+    const warned = this.warnIfNeeded(task);
+    if (budgetState(warned.budget) === "exceeded") {
+      this.append(warned, [
         { actor: "sacty", event: { type: "TaskPaused", payload: { reason: "budget" } } },
       ]);
     }
