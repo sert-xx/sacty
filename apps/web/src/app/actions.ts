@@ -69,7 +69,7 @@ export async function resumeTaskAction(
   return {};
 }
 
-export type GateState = { message?: string; comments?: string };
+export type GateState = { message?: string; comments?: string; target?: StepKey };
 
 const DAEMON_DOWN = "操作できませんでした。sactyのデーモンが動いているか確認してください。";
 
@@ -80,7 +80,11 @@ export async function gateAction(_prev: GateState, formData: FormData): Promise<
   const decision = String(formData.get("decision") ?? "");
   const comments = String(formData.get("comments") ?? "");
   const submission = Number(formData.get("submission"));
-  if (!step.success) return { message: "工程が不正です。", comments };
+  const rawTarget = formData.get("target");
+  const target = rawTarget === null ? undefined : StepKey.safeParse(rawTarget).data;
+  if (!step.success || (rawTarget !== null && !target)) {
+    return { message: "工程が不正です。", comments };
+  }
   if (!Number.isInteger(submission) || submission < 1) {
     return { message: "提出回が不正です。画面を更新してください。", comments };
   }
@@ -97,14 +101,15 @@ export async function gateAction(_prev: GateState, formData: FormData): Promise<
       result = await requestChanges(taskId, {
         step: step.data,
         submission,
+        target,
         comments: lines,
         continueOverLimit: decision === "continue",
       });
     }
   } catch {
-    return { message: DAEMON_DOWN, comments };
+    return { message: DAEMON_DOWN, comments, target };
   }
-  if (!result.ok) return { message: result.message, comments };
+  if (!result.ok) return { message: result.message, comments, target };
   // redirect は例外で画面を移すので、try の外で呼ぶ
   redirect(`/tasks/${taskId}`);
 }

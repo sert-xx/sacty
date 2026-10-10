@@ -87,7 +87,7 @@ export function describeEvent(event: LedgerEvent): string {
     case "AgentRunStarted":
       return `${STEP_LABEL[event.payload.step]}の実行を開始（${event.payload.agentId}・${AUTH_LABEL[event.payload.authMode]}）`;
     case "AgentRunCompleted":
-      return `${STEP_LABEL[event.payload.step]}の実行が完了（${usd(event.payload.costUsd)}${event.payload.estimated ? "・換算値" : ""}）`;
+      return `${STEP_LABEL[event.payload.step]}の実行が完了（${usd(event.payload.costUsd)}${event.payload.estimated ? "・換算値" : ""}${event.payload.step === "design" ? `・テスト観点${event.payload.testViewpoints.length}件` : ""}）`;
     case "AgentRunFailed":
       return `${STEP_LABEL[event.payload.step]}の実行が失敗：${event.payload.message}`;
     case "BudgetWarned":
@@ -101,13 +101,18 @@ export function describeEvent(event: LedgerEvent): string {
     case "StepSubmitted":
       return `${STEP_LABEL[event.payload.step]}を提出（${event.payload.submission}回目）→ 承認待ち`;
     case "StepApproved":
-      return `${STEP_LABEL[event.payload.step]}を承認（${ACTOR_LABEL[event.actor]}）`;
+      return `${STEP_LABEL[event.payload.step]}を承認・凍結（${ACTOR_LABEL[event.actor]}）`;
+    case "StepQueued":
+      return `${STEP_LABEL[event.payload.step]}を実行待ちにした（実行できるようになったため）`;
     case "ChangesRequested":
+      if (event.payload.target && event.payload.target !== event.payload.step) {
+        return `${STEP_LABEL[event.payload.step]}を差し戻し、${STEP_LABEL[event.payload.target]}からやり直し（${STEP_LABEL[event.payload.target]}の承認を取り消し）：指摘${event.payload.remarks.length}件${event.payload.overLimit ? "（上限を超えて）" : ""}（${ACTOR_LABEL[event.actor]}）`;
+      }
       return `${STEP_LABEL[event.payload.step]}を差し戻し：指摘${event.payload.remarks.length}件${event.payload.overLimit ? "（上限を超えて）" : ""}（${ACTOR_LABEL[event.actor]}）`;
     case "RemarkVoided":
       return `指摘 ${event.payload.remarkId} を無効にした（${ACTOR_LABEL[event.actor]}）`;
     case "TaskEscalated":
-      return `${STEP_LABEL[event.payload.step]}の差し戻しが上限に達したため、エスカレーション`;
+      return `${STEP_LABEL[event.payload.target ?? event.payload.step]}への差し戻しが上限に達したため、エスカレーション`;
   }
 }
 

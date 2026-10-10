@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { DEFAULT_BUDGET_USD, PricePerMTok } from "@sacty/core";
+import { DEFAULT_BUDGET_USD, PricePerMTok, StepKey } from "@sacty/core";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 
@@ -31,6 +31,8 @@ const Auth = z.discriminatedUnion("mode", [
 
 const StubBehavior = z.object({
   output: z.string().default("# 要求要件（スタブ）\n\n- これはスタブのエージェントの出力です。"),
+  /** 工程ごとの出力。無い工程は output を使う。 */
+  outputs: z.partialRecord(StepKey, z.string()).default({}),
   usage: z
     .object({
       input: z.number().int().nonnegative().default(1000),

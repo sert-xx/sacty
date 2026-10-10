@@ -1,4 +1,4 @@
-import type { LedgerEvent, PauseReason, Remark, StepKey } from "./events.js";
+import type { LedgerEvent, PauseReason, Remark, StepKey, TestViewpoint } from "./events.js";
 
 export type StepState = "todo" | "active" | "done" | "skip";
 
@@ -32,6 +32,15 @@ export type TaskRemark = {
   voided: boolean;
 };
 
+/** 人間が承認した成果物。承認を取り消す（前の工程に差し戻す）まで変わらない。 */
+export type ApprovedOutput = {
+  submission: number;
+  output: string;
+  /** 設計の工程のテスト観点。 */
+  testViewpoints: TestViewpoint[];
+  at: string;
+};
+
 export type Task = {
   id: string;
   projectId: string;
@@ -45,6 +54,10 @@ export type Task = {
   steps: { key: StepKey; state: StepState }[];
   /** 工程ごとの最新の出力。 */
   outputs: Partial<Record<StepKey, string>>;
+  /** 設計の最新の提出のテスト観点。 */
+  testViewpoints: TestViewpoint[];
+  /** 承認済みで凍結された成果物。 */
+  approved: Partial<Record<StepKey, ApprovedOutput>>;
   budget: {
     usedUsd: number;
     capUsd: number;
@@ -58,8 +71,8 @@ export type Task = {
   /** 工程ごとの提出回数。 */
   submissions: Partial<Record<StepKey, number>>;
   remarks: TaskRemark[];
-  /** エスカレーションの内容（差し戻しを続ける場合に使う、書きかけの指摘）。 */
-  escalation?: { step: StepKey; pendingRemarks: Remark[] };
+  /** エスカレーションの内容（差し戻しを続ける場合に使う、やり直す工程と書きかけの指摘）。 */
+  escalation?: { step: StepKey; target: StepKey; pendingRemarks: Remark[] };
   createdAt: string;
   updatedAt: string;
 };
@@ -97,6 +110,8 @@ export function applyEvent(
       status: "queued",
       steps: [],
       outputs: {},
+      testViewpoints: [],
+      approved: {},
       submissions: {},
       remarks: [],
       budget: { usedUsd: 0, capUsd: event.payload.budgetCapUsd, warned: false, estimated: false },
@@ -137,6 +152,11 @@ export function applyEvent(
         estimated: task.budget.estimated || event.payload.estimated,
       };
       if (event.type === "AgentRunCompleted") {
+        // 承認済みの成果物は凍結されている。変えるには、人間が差し戻して承認を取り消す必要がある
+        if (task.approved[event.payload.step]) {
+          throw new LedgerIntegrityError(event, "the step is already approved (frozen)");
+        }
+        if (event.payload.step === "design") task.testViewpoints = event.payload.testViewpoints;
         task.outputs = { ...task.outputs, [event.payload.step]: event.payload.output };
         // その工程の有効な指摘は、今回の提出で回答がなければ未回答に戻す
         // （前回の対応文が残ると、最新の成果物への対応だと誤認して承認してしまうため）
@@ -174,21 +194,56 @@ export function applyEvent(
         if (i === index + 1) return { ...s, state: "active" as const };
         return s;
       });
+      task.approved = {
+        ...task.approved,
+        [event.payload.step]: {
+          submission: task.gate.submission,
+          output: task.outputs[event.payload.step] ?? "",
+          testViewpoints: event.payload.step === "design" ? task.testViewpoints : [],
+          at: event.at,
+        },
+      };
       task.status = event.payload.next;
       task.gate = undefined;
       task.escalation = undefined;
       break;
     }
 
-    case "ChangesRequested":
+    case "StepQueued":
+      if (task.status !== "idle") throw new LedgerIntegrityError(event, `status ${task.status}`);
+      if (activeStep(task) !== event.payload.step) {
+        throw new LedgerIntegrityError(event, "queued step is not the active step");
+      }
+      task.status = "queued";
+      break;
+
+    case "ChangesRequested": {
       if (task.status !== "awaiting_approval" && task.status !== "escalated") {
         throw new LedgerIntegrityError(event, `status ${task.status}`);
+      }
+      const target = event.payload.target ?? event.payload.step;
+      if (target !== event.payload.step) {
+        const at = task.steps.findIndex((s) => s.key === event.payload.step);
+        const to = task.steps.findIndex((s) => s.key === target);
+        if (to < 0 || to >= at) {
+          throw new LedgerIntegrityError(event, "target must be a step before the gate");
+        }
+        // 前の工程からやり直す。その工程から先の承認は取り消す
+        task.steps = task.steps.map((s, i) => {
+          if (i === to) return { ...s, state: "active" as const };
+          if (i > to) return { ...s, state: "todo" as const };
+          return s;
+        });
+        const keep = new Set(task.steps.slice(0, to).map((s) => s.key));
+        task.approved = Object.fromEntries(
+          Object.entries(task.approved).filter(([key]) => keep.has(key as StepKey)),
+        );
       }
       task.remarks = [
         ...task.remarks,
         ...event.payload.remarks.map((r) => ({
           id: r.id,
-          step: event.payload.step,
+          step: target,
           round: event.payload.round,
           text: r.text,
           voided: false,
@@ -198,6 +253,7 @@ export function applyEvent(
       task.gate = undefined;
       task.escalation = undefined;
       break;
+    }
 
     case "RemarkVoided":
       if (!task.remarks.some((r) => r.id === event.payload.remarkId)) {
@@ -213,7 +269,11 @@ export function applyEvent(
         throw new LedgerIntegrityError(event, `status ${task.status}`);
       }
       task.status = "escalated";
-      task.escalation = { step: event.payload.step, pendingRemarks: event.payload.pendingRemarks };
+      task.escalation = {
+        step: event.payload.step,
+        target: event.payload.target ?? event.payload.step,
+        pendingRemarks: event.payload.pendingRemarks,
+      };
       break;
 
     case "BudgetWarned":

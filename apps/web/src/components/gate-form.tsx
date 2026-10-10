@@ -6,6 +6,7 @@ import { type GateState, gateAction } from "@/app/actions";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { STEP_LABEL } from "@/lib/labels";
 
 const initial: GateState = {};
 
@@ -13,6 +14,8 @@ export function GateForm({
   taskId,
   step,
   submission,
+  targets,
+  defaultTarget,
   escalated,
   maxChanges,
   pendingComments,
@@ -21,6 +24,9 @@ export function GateForm({
   step: StepKey;
   /** 画面が表示している提出回。最新でなければデーモンが拒否する。 */
   submission: number;
+  /** 差し戻し先の候補（先頭が承認ゲートの工程）。1つだけなら選択肢を出さない。 */
+  targets: StepKey[];
+  defaultTarget: StepKey;
   escalated: boolean;
   maxChanges: number;
   pendingComments: string[];
@@ -37,6 +43,33 @@ export function GateForm({
           差し戻しが上限（{maxChanges}
           回）に達しました。要求そのものを見直すなど、方針を判断してください。このまま承認するか、上限を超えて差し戻しを続けられます。
         </p>
+      )}
+      {targets.length > 1 && (
+        <fieldset className="flex flex-col gap-1.5">
+          <legend className="pb-1 text-sm font-medium">差し戻す場合の、やり直す工程</legend>
+          {targets.map((target) => (
+            <label key={target} className="flex min-h-9 items-start gap-2 text-sm leading-6">
+              <input
+                type="radio"
+                name="target"
+                value={target}
+                defaultChecked={target === (state.target ?? defaultTarget)}
+                className="mt-1.5 size-4 accent-primary"
+              />
+              <span>
+                {target === step
+                  ? `${STEP_LABEL[target]}をやり直す`
+                  : `${STEP_LABEL[target]}からやり直す`}
+                {target !== step && (
+                  <span className="block text-xs text-muted-foreground">
+                    {STEP_LABEL[target]}の承認を取り消します。再提出された{STEP_LABEL[target]}
+                    を、もう一度承認する必要があります。
+                  </span>
+                )}
+              </span>
+            </label>
+          ))}
+        </fieldset>
       )}
       <Label htmlFor="gate-comments">指摘（差し戻す場合は必須。1行に1件）</Label>
       <Textarea
