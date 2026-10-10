@@ -29,6 +29,7 @@ const service = new TaskService({
   workspaceRoot: join(home, "workspaces"),
 });
 service.recoverInterrupted();
+service.queueWaitingSteps();
 
 const status = service.status();
 for (const problem of status.problems) console.warn(`[daemon] ${problem}`);

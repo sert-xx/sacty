@@ -1,3 +1,4 @@
+import type { StepKey, Task } from "@sacty/core";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Suspense } from "react";
@@ -5,8 +6,9 @@ import { AutoRefresh } from "@/components/auto-refresh";
 import { DaemonError } from "@/components/daemon-error";
 import { ResumeForm } from "@/components/resume-form";
 import { CostMeter, StatusLabel, StepChips } from "@/components/task-bits";
+import { TestViewpoints } from "@/components/test-viewpoints";
 import { DaemonUnavailableError, getTask } from "@/lib/daemon";
-import { describeEvent, formatStamp, START_LABEL, statusText } from "@/lib/labels";
+import { describeEvent, formatStamp, START_LABEL, STEP_LABEL, statusText } from "@/lib/labels";
 
 export default function TaskPage({ params }: { params: Promise<{ id: string }> }) {
   return (
@@ -35,7 +37,6 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
   if (!found) notFound();
   const { task, ledger } = found;
   const lastFailure = [...ledger].reverse().find((e) => e.type === "AgentRunFailed");
-  const draft = task.outputs.requirements;
 
   return (
     <>
@@ -106,30 +107,11 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
               <p className="text-sm text-muted-foreground">チケットに内容はありません。</p>
             )}
           </section>
-          <section
-            aria-labelledby="req"
-            className="flex flex-col gap-3 rounded-xl border border-border bg-card p-5"
-          >
-            <h2 id="req" className="text-[15px] font-semibold">
-              要求要件{" "}
-              <span className="text-[13px] font-normal text-muted-foreground">
-                {task.steps.find((s) => s.key === "requirements")?.state === "done"
-                  ? "人間が承認済み"
-                  : "工程エージェントの下書き"}
-              </span>
-            </h2>
-            {draft ? (
-              <pre className="font-sans text-sm leading-7 break-words whitespace-pre-wrap">
-                {draft}
-              </pre>
-            ) : (
-              <p className="text-sm text-muted-foreground">
-                {task.status === "running"
-                  ? "工程エージェントが作成しています…"
-                  : "まだ作成されていません。"}
-              </p>
-            )}
-          </section>
+          <Deliverable task={task} step="requirements" />
+          {(task.outputs.design ||
+            task.steps.some((s) => s.key === "design" && s.state !== "todo")) && (
+            <Deliverable task={task} step="design" />
+          )}
           <section
             aria-labelledby="steps"
             className="flex flex-col gap-3 rounded-xl border border-border bg-card p-5"
@@ -170,5 +152,53 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
         </section>
       </div>
     </>
+  );
+}
+
+/**
+ * 工程の成果物。承認済みなら凍結した版を、そうでなければ工程エージェントの最新の下書きを出す。
+ */
+function Deliverable({ task, step }: { task: Task; step: StepKey }) {
+  const approved = task.approved[step];
+  const output = approved?.output ?? task.outputs[step];
+  const viewpoints = approved?.testViewpoints ?? task.testViewpoints;
+  // 前の工程に差し戻されて、まだ実行対象になっていない工程の下書き
+  const stale = !approved && task.steps.find((s) => s.key === step)?.state === "todo";
+  const running =
+    task.status === "running" && task.steps.some((s) => s.key === step && s.state === "active");
+  return (
+    <section
+      aria-labelledby={`deliverable-${step}`}
+      className="flex flex-col gap-3 rounded-xl border border-border bg-card p-5"
+    >
+      <h2 id={`deliverable-${step}`} className="text-[15px] font-semibold">
+        {STEP_LABEL[step]}{" "}
+        <span className="text-[13px] font-normal text-muted-foreground">
+          {approved
+            ? `人間が承認済み（${approved.submission}回目の提出・凍結）`
+            : stale
+              ? "前回の下書き（前の工程が承認されたあと、作り直します）"
+              : "工程エージェントの下書き"}
+        </span>
+      </h2>
+      {output ? (
+        <pre className="font-sans text-sm leading-7 break-words whitespace-pre-wrap">{output}</pre>
+      ) : (
+        <p className="text-sm text-muted-foreground">
+          {running ? "工程エージェントが作成しています…" : "まだ作成されていません。"}
+        </p>
+      )}
+      {step === "design" && output && (
+        <>
+          <h3 className="pt-2 text-sm font-semibold">
+            テスト観点{" "}
+            <span className="text-[13px] font-normal text-muted-foreground">
+              {viewpoints.length}件・最終レビューの基準
+            </span>
+          </h3>
+          <TestViewpoints viewpoints={viewpoints} />
+        </>
+      )}
+    </section>
   );
 }

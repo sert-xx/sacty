@@ -112,7 +112,13 @@ export function approveStep(id: string, step: StepKey, submission: number): Prom
 
 export function requestChanges(
   id: string,
-  input: { step: StepKey; submission: number; comments: string[]; continueOverLimit: boolean },
+  input: {
+    step: StepKey;
+    submission: number;
+    target?: StepKey;
+    comments: string[];
+    continueOverLimit: boolean;
+  },
 ): Promise<OpResult> {
   return postOp(`/api/tasks/${encodeURIComponent(id)}/request-changes`, input);
 }

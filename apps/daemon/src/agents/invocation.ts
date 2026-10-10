@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
+import type { StepKey } from "@sacty/core";
 import type { AgentConfig } from "../config.js";
 import type { SecretStore } from "../secrets.js";
 import { secretStringsInJson } from "./redact.js";
@@ -40,6 +41,8 @@ export async function buildInvocation(
   store: SecretStore,
   /** 取り出した秘密情報を、その都度知らせる（途中で失敗しても、出力から取り除けるように）。 */
   onSecret: (value: string) => void = () => {},
+  /** 実行する工程（スタブが工程ごとの出力を返すのに使う）。 */
+  step?: StepKey,
 ): Promise<Invocation> {
   const secrets = {
     get: async (name: string) => {
@@ -109,6 +112,7 @@ export async function buildInvocation(
     case "stub": {
       const stub = agent.stub ?? {
         output: "# 要求要件（スタブ）",
+        outputs: {},
         usage: { input: 1000, cache_read: 0, cache_write: 0, output: 500 },
       };
       const result = stub.fail
@@ -123,7 +127,7 @@ export async function buildInvocation(
         : {
             type: "result",
             is_error: false,
-            result: stub.output,
+            result: (step && stub.outputs[step]) ?? stub.output,
             usage: {
               input_tokens: stub.usage.input,
               cache_read_input_tokens: stub.usage.cache_read,

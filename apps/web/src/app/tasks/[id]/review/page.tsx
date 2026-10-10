@@ -1,4 +1,4 @@
-import { changeRounds, MAX_CHANGE_REQUESTS, type TaskRemark } from "@sacty/core";
+import { changeRounds, GATED_STEPS, MAX_CHANGE_REQUESTS, type TaskRemark } from "@sacty/core";
 import { cn } from "cn";
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -6,6 +6,7 @@ import { Suspense } from "react";
 import { voidRemarkAction } from "@/app/actions";
 import { DaemonError } from "@/components/daemon-error";
 import { GateForm } from "@/components/gate-form";
+import { TestViewpoints } from "@/components/test-viewpoints";
 import { DaemonUnavailableError, getTask } from "@/lib/daemon";
 import { STEP_LABEL } from "@/lib/labels";
 
@@ -48,6 +49,13 @@ async function Review({ params }: { params: Promise<{ id: string }> }) {
     .filter((r) => r.step === step)
     .sort((a, b) => b.round - a.round || a.id.localeCompare(b.id));
   const submission = task.gate?.submission ?? task.submissions[step] ?? 1;
+  // 差し戻し先：この工程か、それより前の承認ゲートのある工程（前に戻すと再承認が必要）
+  const stepIndex = task.steps.findIndex((s) => s.key === step);
+  const targets = task.steps
+    .filter((s, i) => i <= stepIndex && GATED_STEPS.includes(s.key))
+    .map((s) => s.key)
+    .reverse();
+  const frozenRequirements = step !== "requirements" ? task.approved.requirements : undefined;
 
   return (
     <>
@@ -109,6 +117,34 @@ async function Review({ params }: { params: Promise<{ id: string }> }) {
               {task.outputs[step] ?? "（出力がありません）"}
             </pre>
           </section>
+          {step === "design" && (
+            <section
+              aria-labelledby="viewpoints"
+              className="flex flex-col gap-3 rounded-xl border border-border bg-card p-5"
+            >
+              <h2 id="viewpoints" className="text-[15px] font-semibold">
+                テスト観点{" "}
+                <span className="text-[13px] font-normal text-muted-foreground">
+                  {task.testViewpoints.length}件・承認すると凍結され、最終レビューの基準になります
+                </span>
+              </h2>
+              <TestViewpoints viewpoints={task.testViewpoints} />
+            </section>
+          )}
+          {frozenRequirements && (
+            <details className="group rounded-xl border border-border bg-card p-5">
+              <summary className="cursor-pointer text-[15px] font-semibold">
+                承認済みの要求要件{" "}
+                <span className="text-[13px] font-normal text-muted-foreground">
+                  {frozenRequirements.submission}
+                  回目の提出・凍結（変えるには要求要件へ差し戻し、再承認が必要）
+                </span>
+              </summary>
+              <pre className="mt-3 rounded-lg border border-border bg-muted px-5 py-4 font-sans text-sm leading-7 break-words whitespace-pre-wrap">
+                {frozenRequirements.output}
+              </pre>
+            </details>
+          )}
         </div>
 
         <section
@@ -122,6 +158,8 @@ async function Review({ params }: { params: Promise<{ id: string }> }) {
             taskId={task.id}
             step={step}
             submission={submission}
+            targets={targets}
+            defaultTarget={task.escalation?.target ?? step}
             escalated={task.status === "escalated"}
             maxChanges={MAX_CHANGE_REQUESTS}
             pendingComments={task.escalation?.pendingRemarks.map((r) => r.text) ?? []}

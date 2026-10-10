@@ -44,6 +44,21 @@ export type Remark = z.infer<typeof Remark>;
 export const RemarkResponse = z.object({ remarkId: z.string(), text: z.string() });
 export type RemarkResponse = z.infer<typeof RemarkResponse>;
 
+/**
+ * テスト観点。設計の工程で作り、設計の承認で凍結する。最終レビュー（PBI-10）の基準になる。
+ * id は sacty が提出ごとに振る（TV-1, TV-2, …）。
+ */
+export const TestViewpoint = z.object({
+  id: z.string().min(1),
+  /** 何を確かめるか。 */
+  title: z.string().min(1),
+  /** 入力・前提。 */
+  input: z.string().min(1),
+  /** 期待する結果。 */
+  expected: z.string().min(1),
+});
+export type TestViewpoint = z.infer<typeof TestViewpoint>;
+
 /** タスクが止まった理由。 */
 export const PauseReason = z.enum(["budget", "usage_limit", "auth", "error"]);
 export type PauseReason = z.infer<typeof PauseReason>;
@@ -90,6 +105,8 @@ const AgentRunCompleted = z.object({
     output: z.string(),
     /** 指摘への対応（再提出のとき）。PBI-2の台帳には無い。 */
     responses: z.array(RemarkResponse).default([]),
+    /** 設計の工程で作ったテスト観点。PBI-7までの台帳には無い。 */
+    testViewpoints: z.array(TestViewpoint).default([]),
   }),
 });
 
@@ -144,10 +161,27 @@ const StepApproved = z.object({
   }),
 });
 
+/**
+ * 待機していた工程を実行待ちにする。工程が後から実行できるようになったとき
+ * （例：PBI-7で承認され、設計の工程が無かったため待機していたタスク）に使う。
+ */
+const StepQueued = z.object({
+  type: z.literal("StepQueued"),
+  payload: z.object({ step: StepKey }),
+});
+
 const ChangesRequested = z.object({
   type: z.literal("ChangesRequested"),
   payload: z.object({
+    /** 承認ゲートで止まっていた工程。 */
     step: StepKey,
+    /**
+     * やり直す工程（指摘はこの工程に付く）。承認ゲートの工程か、それより前の工程。
+     * 前の工程に戻すと、その工程から先の承認は取り消され、人間の再承認が必要になる。
+     * PBI-7までの台帳には無いので、step で補う。
+     */
+    target: StepKey.optional(),
+    /** やり直す工程への、何回目の差し戻しか。 */
     round: z.number().int().positive(),
     remarks: z.array(Remark).min(1),
     /** エスカレーションの後、上限を超えて差し戻したか。 */
@@ -164,6 +198,8 @@ const TaskEscalated = z.object({
   type: z.literal("TaskEscalated"),
   payload: z.object({
     step: StepKey,
+    /** 差し戻しが上限を超えた工程（やり直す工程）。PBI-7までの台帳には無いので、step で補う。 */
+    target: StepKey.optional(),
     reason: z.enum(["too_many_changes"]),
     /** 上限に達したときに人間が書いていた指摘。差し戻しを続ける場合に使う。 */
     pendingRemarks: z.array(Remark),
@@ -183,6 +219,7 @@ export const EventInput = z.discriminatedUnion("type", [
   TaskResumed,
   StepSubmitted,
   StepApproved,
+  StepQueued,
   ChangesRequested,
   RemarkVoided,
   TaskEscalated,
@@ -238,6 +275,8 @@ export type ApproveStepInput = z.infer<typeof ApproveStepInput>;
 export const RequestChangesInput = z.object({
   step: StepKey,
   submission: Submission,
+  /** やり直す工程。省略すると承認ゲートの工程。 */
+  target: StepKey.optional(),
   comments: z
     .array(z.string().trim().max(2_000, "指摘は1件あたり2,000文字以内にしてください。"))
     .max(50, "指摘は一度に50件までにしてください。")

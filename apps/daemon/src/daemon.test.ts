@@ -77,7 +77,8 @@ function makeService(
 /** 画面が表示している（いま承認待ちの）提出回。 */
 const current = (svc: TaskService, id: string) => {
   const t = svc.get(id)?.task;
-  return t?.gate?.submission ?? t?.submissions.requirements ?? 1;
+  const step = t?.gate?.step ?? t?.escalation?.step ?? "requirements";
+  return t?.gate?.submission ?? t?.submissions[step] ?? 1;
 };
 
 describe("台帳", () => {
@@ -417,7 +418,7 @@ describe("承認ゲート（PBI-7）", () => {
       step: "requirements",
       submission: current(service, task.id),
     });
-    expect(approved.status).toBe("idle"); // 設計の工程はPBI-8で実装
+    expect(approved.status).toBe("queued"); // 設計の工程を実行する
     expect(approved.steps.map((s) => [s.key, s.state]).slice(0, 2)).toEqual([
       ["requirements", "done"],
       ["design", "active"],
@@ -499,7 +500,7 @@ describe("承認ゲート（PBI-7）", () => {
       service.requestChanges(task.id, { step: "requirements", submission: 1, comments: ["x"] }),
     ).toThrow(/最新ではありません/);
     expect(service.get(task.id)?.task.steps[0]?.state).toBe("active"); // 承認されていない
-    expect(service.approve(task.id, { step: "requirements", submission: 2 }).status).toBe("idle");
+    expect(service.approve(task.id, { step: "requirements", submission: 2 }).status).toBe("queued");
     ledger.close();
   });
 
@@ -585,7 +586,7 @@ describe("承認ゲート（PBI-7）", () => {
     expect(
       service.approve(task.id, { step: "requirements", submission: current(service, task.id) })
         .status,
-    ).toBe("idle");
+    ).toBe("queued");
     ledger.close();
   });
 
@@ -608,6 +609,241 @@ describe("承認ゲート（PBI-7）", () => {
     });
     await service.runNext(task.id);
     expect(service.get(task.id)?.task.pausedReason).toBe("budget");
+    ledger.close();
+  });
+});
+
+describe("設計の工程（PBI-8）", () => {
+  const draft = (text: string, blocks: Record<string, unknown>[] = []): AgentOutcome => ({
+    kind: "completed",
+    output: [text, ...blocks.map((b) => `\`\`\`json\n${JSON.stringify(b)}\n\`\`\``)].join("\n\n"),
+    usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 100 },
+  });
+  const viewpoints = (...titles: string[]) => ({
+    "sacty-test-viewpoints": titles.map((title) => ({
+      title,
+      input: `${title}の入力`,
+      expected: `${title}の期待結果`,
+    })),
+  });
+  const gate = (svc: TaskService, id: string, step: "requirements" | "design") =>
+    svc.approve(id, { step, submission: current(svc, id) });
+
+  /** 要求要件を承認し、設計を1回提出したところまで進める。 */
+  async function toDesignGate(outcomes: AgentOutcome[]) {
+    const ledger = new SqliteLedgerStore(dbPath);
+    const made = makeService(ledger, [draft("# 要求要件 v1"), ...outcomes]);
+    const task = made.service.createTicket({ title: "決済API", body: "二重処理を防ぐ" });
+    await made.service.runNext(task.id);
+    gate(made.service, task.id, "requirements");
+    await made.service.runNext(task.id);
+    return { ledger, ...made, id: task.id };
+  }
+
+  it("承認済みの要求要件から設計とテスト観点を作り、承認ゲートで止まる", async () => {
+    const { ledger, service, executor, id } = await toDesignGate([
+      draft("# 設計 v1", [
+        {
+          "sacty-test-viewpoints": [
+            { title: "同じキーの再送", input: "同じ冪等性キーで2回送る", expected: "処理は1回" },
+            { title: "期待結果が無い", input: "x" }, // 項目が欠けたものは除く
+            { title: " ", input: "x", expected: "y" },
+          ],
+        },
+      ]),
+    ]);
+    const prompt = executor.calls[1]?.command.join(" ") ?? "";
+    expect(prompt).toContain("--- 承認済みの要求要件 ---\n# 要求要件 v1");
+    expect(prompt).toContain("sacty-test-viewpoints");
+
+    const task = service.get(id)?.task;
+    expect(task?.status).toBe("awaiting_approval");
+    expect(task?.gate).toEqual({ step: "design", submission: 1 });
+    expect(task?.outputs.design).toBe("# 設計 v1"); // テスト観点のJSONは本文から除く
+    expect(task?.testViewpoints).toEqual([
+      {
+        id: "TV-1",
+        title: "同じキーの再送",
+        input: "同じ冪等性キーで2回送る",
+        expected: "処理は1回",
+      },
+    ]);
+
+    const approved = gate(service, id, "design");
+    expect(approved.status).toBe("idle"); // 実装の工程はPBI-10で実装
+    expect(approved.steps.map((s) => s.state)).toEqual(["done", "done", "active", "todo"]);
+    expect(approved.approved.design).toMatchObject({
+      submission: 1,
+      output: "# 設計 v1",
+      testViewpoints: [{ id: "TV-1" }],
+    });
+    expect(approved.approved.requirements?.output).toBe("# 要求要件 v1");
+    ledger.close();
+  });
+
+  it("設計を差し戻すと、承認済みの要求要件はそのままで設計だけをやり直す", async () => {
+    const { ledger, service, executor, id } = await toDesignGate([
+      draft("# 設計 v1", [viewpoints("A")]),
+      draft("# 設計 v2", [
+        viewpoints("A", "B"),
+        { "sacty-responses": [{ remarkId: "design-1-1", text: "異常系を足した" }] },
+      ]),
+    ]);
+    const sent = service.requestChanges(id, {
+      step: "design",
+      submission: current(service, id),
+      target: "design",
+      comments: ["異常系のテスト観点が無い"],
+    });
+    expect(sent.status).toBe("queued");
+    expect(sent.approved.requirements?.output).toBe("# 要求要件 v1");
+    await service.runNext(id);
+
+    const prompt = executor.calls[2]?.command.join(" ") ?? "";
+    expect(prompt).toContain("# 設計 v1"); // 前回の下書き
+    // 前回のテスト観点も、IDつきで全項目を渡す（指摘が TV-n を指しても分かるように。レビュー指摘）
+    expect(prompt).toContain("- [TV-1] A\n  - 入力：Aの入力\n  - 期待結果：Aの期待結果");
+    expect(prompt).toContain("[design-1-1] 異常系のテスト観点が無い");
+    const task = service.get(id)?.task;
+    expect(task?.gate).toEqual({ step: "design", submission: 2 });
+    expect(task?.testViewpoints.map((v) => v.id)).toEqual(["TV-1", "TV-2"]);
+    expect(task?.remarks.find((r) => r.id === "design-1-1")?.response).toBe("異常系を足した");
+    expect(task?.steps[0]?.state).toBe("done");
+    ledger.close();
+  });
+
+  it("要求要件へ差し戻すと承認を取り消し、再承認するまで設計を実行しない", async () => {
+    const { ledger, service, executor, id } = await toDesignGate([
+      draft("# 設計 v1", [viewpoints("A")]),
+      draft("# 要求要件 v2", [
+        { "sacty-responses": [{ remarkId: "requirements-1-1", text: "対象外を明記した" }] },
+      ]),
+      draft("# 設計 v2", [viewpoints("A", "B")]),
+    ]);
+    const sent = service.requestChanges(id, {
+      step: "design",
+      submission: current(service, id),
+      target: "requirements",
+      comments: ["対象外が決まっていない"],
+    });
+    expect(sent.status).toBe("queued");
+    expect(sent.steps.map((s) => s.state)).toEqual(["active", "todo", "todo", "todo"]);
+    expect(sent.approved).toEqual({});
+    expect(sent.remarks.at(-1)).toMatchObject({ id: "requirements-1-1", step: "requirements" });
+
+    await service.runNext(id);
+    const resubmitted = service.get(id)?.task;
+    expect(resubmitted?.gate).toEqual({ step: "requirements", submission: 2 }); // 再承認待ち
+    expect(service.queuedTaskIds()).toEqual([]);
+
+    gate(service, id, "requirements");
+    await service.runNext(id);
+    const prompt = executor.calls[3]?.command.join(" ") ?? "";
+    expect(prompt).toContain("--- 承認済みの要求要件 ---\n# 要求要件 v2");
+    expect(prompt).toContain("# 設計 v1"); // 前回の設計の下書きも渡す
+    expect(service.get(id)?.task.gate).toEqual({ step: "design", submission: 2 });
+    ledger.close();
+  });
+
+  it("差し戻せるのは、承認ゲートの工程かそれより前の承認ゲートのある工程だけ", async () => {
+    const ledger = new SqliteLedgerStore(dbPath);
+    const { service } = makeService(ledger, [draft("# 要求要件 v1")]);
+    const { id } = service.createTicket({ title: "A" });
+    await service.runNext(id);
+    for (const target of ["design", "implement"] as const) {
+      expect(() =>
+        service.requestChanges(id, {
+          step: "requirements",
+          submission: 1,
+          target,
+          comments: ["x"],
+        }),
+      ).toThrow(/差し戻せません/);
+    }
+    expect(service.get(id)?.task.status).toBe("awaiting_approval");
+    ledger.close();
+  });
+
+  it("要求要件への差し戻しも上限を数え、エスカレーション後は同じ工程の書きかけの指摘を引き継ぐ", async () => {
+    const outcomes: AgentOutcome[] = [draft("# 設計 v1", [viewpoints("A")])];
+    for (let i = 2; i <= 4; i++) {
+      outcomes.push(draft(`# 要求要件 v${i}`), draft(`# 設計 v${i}`, [viewpoints("A")]));
+    }
+    outcomes.push(draft("# 要求要件 v5"));
+    const { ledger, service, id } = await toDesignGate(outcomes);
+    const back = (comments: string[], extra: Record<string, unknown> = {}) =>
+      service.requestChanges(id, {
+        step: "design",
+        submission: current(service, id),
+        target: "requirements",
+        comments,
+        ...extra,
+      });
+    for (let i = 1; i <= 3; i++) {
+      back([`指摘${i}`]);
+      await service.runNext(id);
+      gate(service, id, "requirements");
+      await service.runNext(id);
+    }
+    const escalated = back(["指摘4"]);
+    expect(escalated.status).toBe("escalated");
+    expect(escalated.escalation).toMatchObject({ step: "design", target: "requirements" });
+
+    // 上限に達していない設計へは、通常の差し戻しとして戻せる（書きかけの指摘は引き継がない）
+    expect(() =>
+      service.requestChanges(id, {
+        step: "design",
+        submission: current(service, id),
+        target: "design",
+        comments: [],
+      }),
+    ).toThrow(/1件以上/);
+
+    const continued = back([], { continueOverLimit: true });
+    expect(continued.remarks.at(-1)).toMatchObject({ id: "requirements-4-1", text: "指摘4" });
+    expect(continued.steps[0]?.state).toBe("active");
+    ledger.close();
+  });
+
+  it("PBI-7で承認され設計のまま待機していたタスクは、起動時に設計を実行待ちにする", async () => {
+    const ledger = new SqliteLedgerStore(dbPath);
+    const { service } = makeService(ledger, [
+      draft("# 要求要件 v1"),
+      draft("# 設計", [viewpoints("A")]),
+    ]);
+    const { id } = service.createTicket({ title: "A" });
+    await service.runNext(id);
+    // PBI-7の台帳：設計を実行できなかったため、承認後に待機していた
+    ledger.append({
+      taskId: id,
+      projectId: "default",
+      events: [
+        {
+          actor: "person",
+          event: { type: "StepApproved", payload: { step: "requirements", next: "idle" } },
+        },
+      ],
+    });
+    const { service: restarted } = makeService(ledger, [draft("# 設計", [viewpoints("A")])]);
+    expect(restarted.get(id)?.task.status).toBe("idle");
+    restarted.queueWaitingSteps();
+    expect(restarted.queuedTaskIds()).toEqual([id]);
+    await restarted.runNext(id);
+    expect(restarted.get(id)?.task.gate).toEqual({ step: "design", submission: 1 });
+    restarted.queueWaitingSteps(); // 承認待ちのタスクには何もしない
+    expect(restarted.get(id)?.task.status).toBe("awaiting_approval");
+    ledger.close();
+  });
+
+  it("承認済みの工程の成果物は凍結され、台帳でも書き換えを受け付けない", async () => {
+    const { ledger, service, id } = await toDesignGate([draft("# 設計 v1", [viewpoints("A")])]);
+    gate(service, id, "design");
+    const task = service.get(id)?.task;
+    expect(task?.outputs.requirements).toBe("# 要求要件 v1");
+    expect(task?.approved.requirements?.output).toBe("# 要求要件 v1");
+    // 承認済みの工程は、差し戻して承認を取り消さない限り実行対象にならない
+    expect(task?.steps.find((s) => s.state === "active")?.key).toBe("implement");
+    expect(() => gate(service, id, "requirements")).toThrow(/承認待ちのタスクではありません/);
     ledger.close();
   });
 });

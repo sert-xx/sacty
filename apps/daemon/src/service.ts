@@ -30,7 +30,7 @@ import type { AgentOutcome } from "./agents/parse.js";
 import { redact } from "./agents/redact.js";
 import type { ConfigResult } from "./config.js";
 import type { LedgerStore } from "./ledger.js";
-import { buildPrompt, EXECUTABLE_STEPS, extractResponses } from "./prompts.js";
+import { buildPrompt, EXECUTABLE_STEPS, extractBlocks } from "./prompts.js";
 import { SecretNotFoundError, type SecretStore } from "./secrets.js";
 
 export const DEFAULT_PROJECT_ID = "default";
@@ -146,6 +146,21 @@ export class TaskService {
     }
   }
 
+  /**
+   * 実行できなかったために待機している工程を、実行待ちにする（起動時に呼ぶ）。
+   * 承認ゲートのある工程で、まだ一度も出力が無いものだけが対象（PBI-7で承認され、
+   * 設計の工程が無かったため待機していたタスクなど）。
+   */
+  queueWaitingSteps(): void {
+    for (const task of this.tasks.values()) {
+      const step = activeStep(task);
+      if (task.status !== "idle" || !step) continue;
+      if (!EXECUTABLE_STEPS.includes(step) || !GATED_STEPS.includes(step)) continue;
+      if (task.outputs[step] !== undefined) continue;
+      this.append(task, [{ actor: "sacty", event: { type: "StepQueued", payload: { step } } }]);
+    }
+  }
+
   /** 実行待ちのタスクの、現在の工程をエージェントで実行する。 */
   async runNext(taskId: string): Promise<void> {
     const task = this.tasks.get(taskId);
@@ -183,6 +198,7 @@ export class TaskService {
         buildPrompt(task, step),
         this.deps.secrets,
         (value) => usedSecrets.push(value),
+        step,
       );
       const workspaceDir = join(this.deps.workspaceRoot, task.id);
       mkdirSync(workspaceDir, { recursive: true });
@@ -235,7 +251,7 @@ export class TaskService {
     }
 
     const latest = this.mustGet(task.id);
-    const { output, responses } = extractResponses(
+    const { output, responses, testViewpoints } = extractBlocks(
       outcome.output,
       new Set(latest.remarks.filter((r) => r.step === step && !r.voided).map((r) => r.id)),
     );
@@ -254,6 +270,7 @@ export class TaskService {
             estimated,
             output,
             responses,
+            ...(step === "design" ? { testViewpoints } : {}),
           },
         },
       },
@@ -369,19 +386,29 @@ export class TaskService {
 
   /**
    * 差し戻す。指摘は台帳に累積し、工程を実行し直す。
+   * やり直す工程には、承認ゲートの工程か、それより前の承認ゲートのある工程を選べる。
+   * 前の工程に戻すと、その工程から先の承認は取り消され、人間の再承認が必要になる。
    * 同じ工程への差し戻しが上限を超える場合はエスカレーションにし、人間に続けるかを判断してもらう。
    */
   requestChanges(id: string, raw: unknown): Task {
     const input = RequestChangesInput.parse(raw);
     const task = this.gateTask(id, input.step, input.submission);
-    const rounds = changeRounds(task, input.step);
+    const target = input.target ?? input.step;
+    if (target !== input.step) {
+      const at = task.steps.findIndex((s) => s.key === input.step);
+      const to = task.steps.findIndex((s) => s.key === target);
+      if (!GATED_STEPS.includes(target) || to < 0 || to >= at) {
+        throw new InvalidOperationError("この工程には差し戻せません。");
+      }
+    }
+    const rounds = changeRounds(task, target);
 
     if (task.status === "awaiting_approval" && input.comments.length === 0) {
       throw new InvalidOperationError("差し戻すには、指摘を1件以上入力してください。");
     }
     const round = rounds + 1;
     const toRemarks = (texts: string[]) =>
-      texts.map((text, i) => ({ id: `${input.step}-${round}-${i + 1}`, text }));
+      texts.map((text, i) => ({ id: `${target}-${round}-${i + 1}`, text }));
 
     if (task.status === "awaiting_approval" && rounds >= MAX_CHANGE_REQUESTS) {
       return this.append(task, [
@@ -391,6 +418,7 @@ export class TaskService {
             type: "TaskEscalated",
             payload: {
               step: input.step,
+              target,
               reason: "too_many_changes",
               pendingRemarks: toRemarks(input.comments),
             },
@@ -400,15 +428,18 @@ export class TaskService {
     }
 
     let remarks = toRemarks(input.comments);
-    let overLimit = false;
+    // エスカレーションの後でも、上限に達していない別の工程に戻すのは通常の差し戻し
+    const overLimit = task.status === "escalated" && rounds >= MAX_CHANGE_REQUESTS;
+    if (overLimit && !input.continueOverLimit) {
+      throw new InvalidOperationError(
+        `差し戻しが上限（${MAX_CHANGE_REQUESTS}回）に達しています。続ける場合は、上限を超えて差し戻すことを選んでください。`,
+      );
+    }
     if (task.status === "escalated") {
-      if (!input.continueOverLimit) {
-        throw new InvalidOperationError(
-          `差し戻しが上限（${MAX_CHANGE_REQUESTS}回）に達しています。続ける場合は、上限を超えて差し戻すことを選んでください。`,
-        );
+      // 書きかけの指摘は、エスカレーションしたときと同じ工程に戻す場合だけ引き継ぐ
+      if (remarks.length === 0 && task.escalation?.target === target) {
+        remarks = task.escalation.pendingRemarks;
       }
-      overLimit = true;
-      if (remarks.length === 0) remarks = task.escalation?.pendingRemarks ?? [];
       if (remarks.length === 0) {
         throw new InvalidOperationError("差し戻すには、指摘を1件以上入力してください。");
       }
@@ -418,7 +449,7 @@ export class TaskService {
         actor: "person",
         event: {
           type: "ChangesRequested",
-          payload: { step: input.step, round, remarks, overLimit },
+          payload: { step: input.step, target, round, remarks, overLimit },
         },
       },
     ]);

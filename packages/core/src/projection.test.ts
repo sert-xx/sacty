@@ -152,6 +152,53 @@ describe("project", () => {
     ).toThrow(/status queued/);
   });
 
+  it("承認済みの工程の実行完了は、凍結されているため受け付けない（PBI-8）", () => {
+    seq = 0;
+    const base = [
+      created("t1"),
+      steps("t1"),
+      started("t1", "r1"),
+      completed("t1", "r1", 0.1),
+      ev("t1", { type: "StepSubmitted", payload: { step: "requirements", submission: 1 } }),
+      ev(
+        "t1",
+        { type: "StepApproved", payload: { step: "requirements", next: "queued" } },
+        "person",
+      ),
+    ];
+    const task = project(base).get("t1");
+    expect(task?.approved.requirements).toMatchObject({ submission: 1, output: "# 要求要件" });
+    expect(() => project([...base, started("t1", "r2"), completed("t1", "r2", 0.1)])).toThrow(
+      /frozen/,
+    );
+  });
+
+  it("PBI-7の台帳（差し戻し先なし）は、承認ゲートの工程への差し戻しとして読む", () => {
+    seq = 0;
+    const task = project([
+      created("t1"),
+      steps("t1"),
+      started("t1", "r1"),
+      completed("t1", "r1", 0.1),
+      ev("t1", { type: "StepSubmitted", payload: { step: "requirements", submission: 1 } }),
+      ev(
+        "t1",
+        {
+          type: "ChangesRequested",
+          payload: {
+            step: "requirements",
+            round: 1,
+            remarks: [{ id: "requirements-1-1", text: "x" }],
+          },
+        },
+        "person",
+      ),
+    ]).get("t1");
+    expect(task?.remarks[0]?.step).toBe("requirements");
+    expect(task?.steps[0]?.state).toBe("active");
+    expect(task?.testViewpoints).toEqual([]);
+  });
+
   it("同じ台帳から何度復元しても同じ状態になる", () => {
     seq = 0;
     const events = [created("t1"), steps("t1"), started("t1", "r1"), completed("t1", "r1", 0.2)];
