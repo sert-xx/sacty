@@ -113,7 +113,12 @@ class FakeRepos implements RepositoryWorkspace {
     url: string;
     baseBranch: string;
     authEnv?: Record<string, string>;
+    recorded?: string;
   }[] = [];
+  /** clone したときの、ブランチの最新のコミット。 */
+  head = "base123";
+  /** 記録済みの起点のコミットを取得できない（強制プッシュで消えたなど）。 */
+  recordedMissing = false;
   diffText = "diff --git a/src/pay.ts b/src/pay.ts\n+export const pay = () => 1;";
   fail?: string;
   diffFail?: string;
@@ -126,14 +131,26 @@ class FakeRepos implements RepositoryWorkspace {
     url: string,
     baseBranch: string,
     authEnv?: Record<string, string>,
+    recorded?: string,
   ) {
     if (this.fail) throw new Error(this.fail);
+    if (recorded && this.recordedMissing) {
+      throw new MessageError(message("git.baseCommitMissing", { commit: recorded }));
+    }
     this.prepareStarted.resolve();
     if (this.prepareGate) await this.prepareGate;
     mkdirSync(dir, { recursive: true });
     mkdirSync(gitDir, { recursive: true });
-    this.prepared.push({ dir, gitDir, url, baseBranch, ...(authEnv ? { authEnv } : {}) });
-    return { baseCommit: "base123" };
+    this.prepared.push({
+      dir,
+      gitDir,
+      url,
+      baseBranch,
+      ...(authEnv ? { authEnv } : {}),
+      ...(recorded ? { recorded } : {}),
+    });
+    // 用意し直すときは記録済みの起点、初めてならブランチの最新
+    return { baseCommit: recorded ?? this.head };
   }
   deleted: string[] = [];
   deleteFail?: string;
@@ -2128,6 +2145,40 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     // 実装の工程は clone を書き込みできる形で使う
     expect(executor.dirs[0]).toBe(repos.prepared[0]?.dir);
     expect(executor.readOnly).toEqual([false]);
+    ledger.close();
+  });
+
+  it("作業領域が消えて用意し直すときも、ブランチの最新ではなく記録済みの起点のコミットを使う（PBI-15 レビュー指摘）", async () => {
+    const ledger = new SqliteLedgerStore(dbPath);
+    const repos = new FakeRepos();
+    const { service } = makeService(ledger, [out("# 要求要件"), design, out("# 要求要件")], {
+      repos,
+    });
+    const { id } = service.createTicket({ title: "A" });
+    await service.runNext(id);
+    service.approve(id, { step: "requirements", submission: 1 });
+    // 作業領域が消え、その間にベースブランチが進んだ
+    rmSync(repos.prepared[0]?.dir ?? "", { recursive: true, force: true });
+    repos.head = "newbase456";
+    await service.runNext(id); // 設計
+    expect(repos.prepared.map((p) => p.recorded)).toEqual([undefined, "base123"]);
+    expect(repos.snapshots.map((x) => x.baseCommit)).toEqual(["base123", "base123"]);
+    expect(service.get(id)?.task.repository?.baseCommit).toBe("base123");
+    const prepared = service.get(id)?.ledger.filter((e) => e.type === "RepositoryPrepared");
+    expect(prepared).toHaveLength(1);
+
+    // 記録済みの起点を取得できなければ、起点を変えずに止める
+    const other = makeService(new SqliteLedgerStore(join(dir, "other.db")), [out("# 要求要件")], {
+      repos: Object.assign(new FakeRepos(), { recordedMissing: true }),
+    });
+    const t = other.service.createTicket({ title: "B" });
+    await other.service.runNext(t.id);
+    other.service.approve(t.id, { step: "requirements", submission: 1 });
+    rmSync(other.repos.prepared[0]?.dir ?? "", { recursive: true, force: true });
+    await other.service.runNext(t.id);
+    expect(other.executor.calls).toHaveLength(1); // 設計のエージェントは実行しない
+    expect(other.service.get(t.id)?.task.repository?.baseCommit).toBe("base123");
+    expect(other.service.get(t.id)?.task.pausedReason).toBe("error");
     ledger.close();
   });
 

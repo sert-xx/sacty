@@ -21,6 +21,11 @@ export interface RepositoryWorkspace {
     baseBranch: string,
     /** HTTPS の GitHub に認証する環境変数（gh のトークン。PBI-13）。無ければホストの認証を使う。 */
     authEnv?: Record<string, string>,
+    /**
+     * 作業領域を用意し直すときの、記録済みの起点のコミット。ブランチの最新ではなく、このコミットで
+     * 用意する（タスクの起点を最後まで変えないため。PBI-15）。取得できなければエラーにする。
+     */
+    baseCommit?: string,
   ): Promise<{ baseCommit: string }>;
   /** 起点からの差分（新しく作ったファイルを含む）。 */
   diff(dir: string, gitDir: string, baseCommit: string): Promise<string>;
@@ -172,13 +177,33 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
     url: string,
     baseBranch: string,
     authEnv?: Record<string, string>,
+    recorded?: string,
   ) {
+    if (recorded !== undefined && !COMMIT_RE.test(recorded)) {
+      throw new MessageError(message("git.invalidBaseCommit"));
+    }
     // 前回の clone が途中で止まっていれば、作り直す
     for (const path of [dir, gitDir]) {
       if (existsSync(path)) rmSync(path, { recursive: true, force: true });
     }
     const env = cloneEnv(authEnv);
     await git("clone", ["clone", "--branch", baseBranch, "--", url, dir], env);
+    if (recorded) {
+      // 用意し直すときは、記録済みの起点のコミットにする（ブランチが進んでいても変えない）。
+      // ブランチの履歴に無ければ（強制プッシュなど）、コミットを直接取得してみる
+      const checkout = () =>
+        git("checkout", ["checkout", "--quiet", "--detach", recorded], env, dir);
+      try {
+        await checkout();
+      } catch {
+        try {
+          await git("fetch", ["fetch", "--quiet", "origin", recorded], env, dir);
+          await checkout();
+        } catch {
+          throw new MessageError(message("git.baseCommitMissing", { commit: recorded }));
+        }
+      }
+    }
     const baseCommit = (await git("rev-parse", ["rev-parse", "HEAD"], env, dir)).trim();
     // エージェントが触る前のメタデータを、どのコンテナにもマウントしない場所に退避する
     mkdirSync(dirname(gitDir), { recursive: true });

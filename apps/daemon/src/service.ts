@@ -542,13 +542,22 @@ export class TaskService {
         url,
         baseBranch,
         await this.gitAuth(task, url, usedSecrets),
+        // 用意し直すとき（作業領域が消えた）は、記録済みの起点のコミットで用意する（PBI-15）
+        task.repository?.baseCommit,
       );
-      this.append(task, [
-        {
-          actor: "sacty",
-          event: { type: "RepositoryPrepared", payload: { url, baseBranch, baseCommit } },
-        },
-      ]);
+      // 起点はタスクの開始時に一度だけ記録し、以後は変えない
+      if (!task.repository) {
+        this.append(task, [
+          {
+            actor: "sacty",
+            event: { type: "RepositoryPrepared", payload: { url, baseBranch, baseCommit } },
+          },
+        ]);
+      } else if (baseCommit !== task.repository.baseCommit) {
+        throw new MessageError(
+          message("git.baseCommitMissing", { commit: task.repository.baseCommit }),
+        );
+      }
       return { ok: true, dir };
     } catch (error) {
       return { ok: false, message: redactText(errorText(error), usedSecrets) };

@@ -40,6 +40,40 @@ function makeOrigin(): string {
 }
 
 describe("対象リポジトリの作業領域（git）", () => {
+  it("用意し直すときは、ブランチが進んでいても記録済みの起点のコミットにする。無ければエラーにする（PBI-15）", async () => {
+    const origin = makeOrigin();
+    const workspace = new GitRepositoryWorkspace();
+    const first = await workspace.prepare(
+      join(dir, "a"),
+      join(dir, "_git", "a.git"),
+      origin,
+      "main",
+    );
+    writeFileSync(join(origin, "later.ts"), "later\n");
+    git(origin, "add", "--all");
+    git(origin, "commit", "-m", "later");
+    const again = await workspace.prepare(
+      join(dir, "b"),
+      join(dir, "_git", "b.git"),
+      origin,
+      "main",
+      undefined,
+      first.baseCommit,
+    );
+    expect(again.baseCommit).toBe(first.baseCommit);
+    expect(existsSync(join(dir, "b", "later.ts"))).toBe(false);
+    await expect(
+      workspace.prepare(
+        join(dir, "c"),
+        join(dir, "_git", "c.git"),
+        origin,
+        "main",
+        undefined,
+        "0".repeat(40),
+      ),
+    ).rejects.toThrow(/起点のコミット/);
+  });
+
   it("起点のコミットのファイルだけを、.git や作業領域の変更を含めずに書き出す（PBI-15）", async () => {
     const origin = makeOrigin();
     const workspace = new GitRepositoryWorkspace();
