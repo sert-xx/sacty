@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "bin": {
-    "sacty": "./dist/index.js"
+    "sacty": "./bin/sacty.js"
   },
   "scripts": {
     "build": "tsc -b"

@@ -41,9 +41,23 @@ export type LedgerEvent = EventInput & {
   actor: Actor;
 };
 
+export const TICKET_TITLE_MAX = 200;
+export const TICKET_BODY_MAX = 10_000;
+
 /** 画面から受け付けるチケット作成の入力。 */
 export const CreateTicketInput = z.object({
-  title: z.string().trim().min(1, "タイトルを入力してください。").max(200),
-  body: z.string().trim().max(10_000).default(""),
+  title: z
+    .string()
+    .trim()
+    .min(1, "タイトルを入力してください。")
+    .max(TICKET_TITLE_MAX, `タイトルは${TICKET_TITLE_MAX}文字以内で入力してください。`),
+  body: z
+    .string()
+    .trim()
+    .max(
+      TICKET_BODY_MAX,
+      `内容は${TICKET_BODY_MAX.toLocaleString("ja-JP")}文字以内で入力してください。`,
+    )
+    .default(""),
 });
 export type CreateTicketInput = z.infer<typeof CreateTicketInput>;

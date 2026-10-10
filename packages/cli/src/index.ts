@@ -33,21 +33,37 @@ async function up(webPort: number, daemonPort: number) {
   const children: ChildProcess[] = [];
   let stopping = false;
 
+  const running = () => children.filter((c) => c.exitCode === null && c.signalCode === null);
+
+  /** 子プロセスをすべて止め、止まったのを確かめてから終了コードを返して終わる。 */
   const stop = (code: number) => {
     if (stopping) return;
     stopping = true;
-    for (const child of children) {
-      if (child.exitCode === null) child.kill("SIGTERM");
+    process.exitCode = code;
+    const alive = running();
+    if (alive.length === 0) process.exit(code);
+    for (const child of alive) {
+      child.once("exit", () => {
+        if (running().length === 0) process.exit(code);
+      });
+      child.kill("SIGTERM");
     }
-    setTimeout(() => process.exit(code), 500).unref();
+    // 子が応答しない場合の保険。unref しない（先にイベントループが終わると終了コードが失われるため）。
+    setTimeout(() => {
+      for (const child of running()) child.kill("SIGKILL");
+      process.exit(code);
+    }, 5_000);
   };
 
   const watch = (name: string, child: ChildProcess) => {
     children.push(child);
-    child.on("exit", (code) => {
+    child.on("exit", (code, signal) => {
       if (!stopping) {
-        console.error(`[sacty] ${name} exited unexpectedly (code ${code}). Stopping.`);
-        stop(code ?? 1);
+        console.error(
+          `[sacty] ${name} exited unexpectedly (${signal ?? `code ${code}`}). Stopping.`,
+        );
+        // 想定外の終了は、子の終了コードが0でも失敗として伝える
+        stop(code && code !== 0 ? code : 1);
       }
     });
   };
@@ -68,7 +84,14 @@ async function up(webPort: number, daemonPort: number) {
     }),
   );
 
-  await waitForDaemon(daemonUrl, token, 15_000);
+  try {
+    await waitForDaemon(daemonUrl, token, 15_000);
+  } catch (error) {
+    console.error("[sacty]", error instanceof Error ? error.message : error);
+    stop(1);
+    return;
+  }
+  if (stopping) return;
 
   const webDir = dirname(require.resolve("@sacty/web/package.json"));
   const nextBin = require.resolve("next/dist/bin/next", { paths: [webDir] });

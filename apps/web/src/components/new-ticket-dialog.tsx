@@ -57,7 +57,14 @@ export function NewTicketDialog() {
               rows={6}
               defaultValue={state.values?.body}
               placeholder="背景や、満たしてほしい条件"
+              aria-invalid={Boolean(state.fieldErrors?.body)}
+              aria-describedby={state.fieldErrors?.body ? "ticket-body-error" : undefined}
             />
+            {state.fieldErrors?.body && (
+              <p id="ticket-body-error" className="text-sm text-warn">
+                {state.fieldErrors.body[0]}
+              </p>
+            )}
           </div>
           {state.message && (
             <p role="alert" className="text-sm text-warn">
