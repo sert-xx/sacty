@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import {
   type Actor,
@@ -18,6 +18,7 @@ import {
   GATED_STEPS,
   type LedgerEvent,
   MAX_CHANGE_REQUESTS,
+  MAX_VERIFY_ATTEMPTS,
   MVP_STEPS,
   openProposal,
   project,
@@ -29,24 +30,33 @@ import {
   type TaskProposal,
 } from "@sacty/core";
 import type { AgentExecutor } from "./agents/docker.js";
-import { buildInvocation } from "./agents/invocation.js";
+import { type AgentRole, buildInvocation } from "./agents/invocation.js";
 import type { AgentOutcome } from "./agents/parse.js";
 import { redact } from "./agents/redact.js";
+import type { TestRunner } from "./agents/test-runner.js";
 import type { AgentConfig, ConfigResult, SactyConfig } from "./config.js";
 import type { LedgerStore } from "./ledger.js";
 import {
+  buildFinalReviewPrompt,
   buildGuardianPrompt,
   buildPrompt,
   changeableSteps,
   EXECUTABLE_STEPS,
   extractBlocks,
+  extractFinalReview,
   extractVerdict,
 } from "./prompts.js";
+import type { RepositoryWorkspace } from "./repository.js";
 import { SecretNotFoundError, type SecretStore } from "./secrets.js";
 
 export const DEFAULT_PROJECT_ID = "default";
 
 type LedgerItem = { actor: Actor; event: EventInput };
+
+/** 実装の検証（テストか最終レビュー）を待っているか。変更の申し出の判断待ちの間は検証しない。 */
+function awaitingVerification(task: Task): boolean {
+  return task.status === "idle" && task.verification !== undefined && !openProposal(task);
+}
 
 /** 状態に合わない操作（一時停止していないタスクの再開など）。APIでは409にする。 */
 export class InvalidOperationError extends Error {}
@@ -57,6 +67,10 @@ export type ServiceDeps = {
   config: () => ConfigResult;
   secrets: SecretStore;
   executor: AgentExecutor;
+  /** 実装の対象リポジトリの clone と差分。 */
+  repos: RepositoryWorkspace;
+  /** テストの実行。 */
+  tests: TestRunner;
   /** タスクごとの作業領域を作る場所。 */
   workspaceRoot: string;
 };
@@ -130,7 +144,7 @@ export class TaskService {
   /** 実行待ちのタスク（古い順）。 */
   queuedTaskIds(): string[] {
     return [...this.tasks.values()]
-      .filter((t) => t.status === "queued" && activeStep(t))
+      .filter((t) => (t.status === "queued" && activeStep(t)) || awaitingVerification(t))
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
       .map((t) => t.id);
   }
@@ -184,22 +198,75 @@ export class TaskService {
 
   /**
    * 実行できなかったために待機している工程を、実行待ちにする（起動時に呼ぶ）。
-   * 承認ゲートのある工程で、まだ一度も出力が無いものだけが対象（PBI-7で承認され、
-   * 設計の工程が無かったため待機していたタスクなど）。
+   * まだ一度も出力が無い工程だけが対象（PBI-7で承認され設計の工程が無かった、
+   * PBI-8・9で設計が承認され実装の工程が無かったため待機していたタスクなど）。
    */
   queueWaitingSteps(): void {
     for (const task of this.tasks.values()) {
       const step = activeStep(task);
-      if (task.status !== "idle" || !step) continue;
-      if (!EXECUTABLE_STEPS.includes(step) || !GATED_STEPS.includes(step)) continue;
-      if (task.outputs[step] !== undefined) continue;
+      if (task.status !== "idle" || !step || openProposal(task)) continue;
+      if (!EXECUTABLE_STEPS.includes(step)) continue;
+      if (task.outputs[step] !== undefined || task.verification) continue;
       this.append(task, [{ actor: "sacty", event: { type: "StepQueued", payload: { step } } }]);
     }
   }
 
-  /** 実行待ちのタスクの、現在の工程をエージェントで実行する。 */
+  /** 実装の対象リポジトリの、タスクごとの clone の場所。 */
+  private repoDir(task: Task): string {
+    return join(this.deps.workspaceRoot, task.id, "repo");
+  }
+
+  /**
+   * clone した直後の git のメタデータを退避する場所。どのコンテナにもマウントしない
+   * （エージェントやテストが書き換えた git の設定を、差分を作るときに読まないため）。
+   */
+  private trustedGitDir(task: Task): string {
+    return join(this.deps.workspaceRoot, "_git", `${task.id}.git`);
+  }
+
+  /** 実装の対象リポジトリを用意する（初回だけ clone し、起点のコミットを台帳に記録する）。 */
+  private async prepareRepository(
+    task: Task,
+    config: SactyConfig,
+  ): Promise<{ ok: true; dir: string } | { ok: false; message: string }> {
+    const dir = this.repoDir(task);
+    if (task.repository && existsSync(dir) && existsSync(this.trustedGitDir(task))) {
+      return { ok: true, dir };
+    }
+    const repo = config.repository;
+    if (!repo && !task.repository) {
+      return {
+        ok: false,
+        message:
+          "実装の対象リポジトリが設定されていません。config.yaml の repository を設定してから再開してください。",
+      };
+    }
+    // 一度用意したタスクは、設定が変わっても同じリポジトリ・ブランチで作業する
+    const url = task.repository?.url ?? repo?.url ?? "";
+    const baseBranch = task.repository?.baseBranch ?? repo?.baseBranch ?? "main";
+    try {
+      const { baseCommit } = await this.deps.repos.prepare(
+        dir,
+        this.trustedGitDir(task),
+        url,
+        baseBranch,
+      );
+      this.append(task, [
+        {
+          actor: "sacty",
+          event: { type: "RepositoryPrepared", payload: { url, baseBranch, baseCommit } },
+        },
+      ]);
+      return { ok: true, dir };
+    } catch (error) {
+      return { ok: false, message: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
+  /** 実行待ちのタスクの、現在の工程をエージェントで実行する（実装の検証待ちなら、検証する）。 */
   async runNext(taskId: string): Promise<void> {
     const task = this.tasks.get(taskId);
+    if (task && awaitingVerification(task)) return this.verify(task);
     if (task?.status !== "queued") return;
     const step = activeStep(task);
     if (!step) return;
@@ -225,13 +292,33 @@ export class TaskService {
       },
     ]);
 
+    // 実装の工程は、対象リポジトリの clone を作業領域にする
+    let workspaceDir = join(this.deps.workspaceRoot, task.id);
+    if (step === "implement") {
+      const ready = await this.prepareRepository(task, config.config);
+      if (!ready.ok) {
+        this.append(task, [
+          {
+            actor: "sacty",
+            event: {
+              type: "AgentRunFailed",
+              payload: { runId, step, agentId: agent.id, reason: "error", message: ready.message },
+            },
+          },
+          { actor: "sacty", event: { type: "TaskPaused", payload: { reason: "error" } } },
+        ]);
+        return;
+      }
+      workspaceDir = ready.dir;
+    }
+
     const { outcome, costUsd, estimated } = await this.execute({
       agent,
       image: config.config.image,
       runId,
-      prompt: buildPrompt(task, step),
+      prompt: buildPrompt(this.mustGet(task.id), step),
       role: step,
-      workspaceDir: join(this.deps.workspaceRoot, task.id),
+      workspaceDir,
     });
 
     if (outcome.kind === "failed") {
@@ -260,7 +347,7 @@ export class TaskService {
     }
 
     const latest = this.mustGet(task.id);
-    const { output, responses, testViewpoints, proposal } = extractBlocks(
+    const { output, responses, testViewpoints, proposal, testMap } = extractBlocks(
       outcome.output,
       new Set(latest.remarks.filter((r) => r.step === step && !r.voided).map((r) => r.id)),
       changeableSteps(latest, step),
@@ -281,6 +368,7 @@ export class TaskService {
             output,
             responses,
             ...(step === "design" ? { testViewpoints } : {}),
+            ...(step === "implement" ? { testMap } : {}),
           },
         },
       },
@@ -317,13 +405,180 @@ export class TaskService {
     );
   }
 
+  /**
+   * 実装を検証する。sacty がテストを別のコンテナで実行し（終了コード0かつ、すべての観点に
+   * テストが対応していれば合格）、通ればゴールガーディアンが新しいセッションで最終レビューする。
+   * 通らなければ失敗の内容を渡して実装をやり直し、続けて通らなければ一時停止する。
+   */
+  private async verify(task: Task): Promise<void> {
+    const config = this.deps.config();
+    if (!config.ok) return;
+    if (budgetState(task.budget) === "exceeded") {
+      this.append(task, [
+        { actor: "sacty", event: { type: "TaskPaused", payload: { reason: "budget" } } },
+      ]);
+      return;
+    }
+    const repo = config.config.repository;
+    const dir = this.repoDir(task);
+    if (!task.repository || !repo || !existsSync(dir) || !existsSync(this.trustedGitDir(task))) {
+      this.append(task, [
+        {
+          actor: "sacty",
+          event: {
+            type: "TaskPaused",
+            payload: {
+              reason: "error",
+              message: !repo
+                ? "実装の対象リポジトリが設定されていないため、テストを実行できません。config.yaml の repository を設定してから再開してください。"
+                : "実装の作業領域が見つからないため、検証できません。",
+            },
+          },
+        },
+      ]);
+      return;
+    }
+    const viewpointIds = (task.approved.design?.testViewpoints ?? []).map((v) => v.id);
+
+    let current = task;
+    if (current.verification === "pending") {
+      const mapped = new Set(current.testMap.map((m) => m.viewpointId));
+      const unmappedViewpoints = viewpointIds.filter((id) => !mapped.has(id));
+      const result = await this.deps.tests.run({
+        runId: randomUUID(),
+        image: repo.testImage,
+        workspaceDir: dir,
+        command: repo.testCommand,
+      });
+      const passed = result.exitCode === 0 && unmappedViewpoints.length === 0;
+      current = this.append(current, [
+        {
+          actor: "sacty",
+          event: {
+            type: "TestsRun",
+            payload: {
+              command: repo.testCommand,
+              exitCode: result.exitCode,
+              unmappedViewpoints,
+              passed,
+              output: result.output,
+              durationMs: result.durationMs,
+            },
+          },
+        },
+      ]);
+      if (!passed) {
+        this.pauseIfVerificationKeepsFailing(current);
+        return;
+      }
+    }
+
+    // 差分は、テストが観点を検証しているかを判断するのに欠かせない。取れなければ最終レビューをせずに止める
+    // （再開すると、差分の取得からやり直す）
+    let diff: string;
+    try {
+      diff = await this.deps.repos.diff(dir, this.trustedGitDir(task), task.repository.baseCommit);
+    } catch (error) {
+      this.append(current, [
+        {
+          actor: "sacty",
+          event: {
+            type: "TaskPaused",
+            payload: {
+              reason: "error",
+              message: `差分を取得できないため、最終レビューをしていません：${error instanceof Error ? error.message : String(error)}`,
+            },
+          },
+        },
+      ]);
+      return;
+    }
+    const agent = config.config.guardianAgent;
+    const runId = randomUUID();
+    const workspaceDir = join(this.deps.workspaceRoot, "_guardian", runId);
+    let result: Awaited<ReturnType<TaskService["execute"]>>;
+    try {
+      result = await this.execute({
+        agent,
+        image: config.config.image,
+        runId,
+        prompt: buildFinalReviewPrompt(current, diff),
+        role: "final-review",
+        workspaceDir,
+      });
+    } finally {
+      rmSync(workspaceDir, { recursive: true, force: true });
+    }
+    const { outcome, costUsd, estimated } = result;
+    if (outcome.kind === "failed") {
+      // 実装の問題ではないので、やり直さずに止める。再開すると最終レビューからやり直す。
+      // 使った分の費用は記録し、予算に入れる
+      const message = `ゴールガーディアンの最終レビューを実行できませんでした：${outcome.message}`;
+      this.append(current, [
+        {
+          actor: "guardian",
+          event: {
+            type: "FinalReviewFailed",
+            payload: {
+              reason: outcome.reason,
+              message,
+              agentId: agent.id,
+              usage: outcome.usage,
+              costUsd,
+              estimated,
+            },
+          },
+        },
+        {
+          actor: "sacty",
+          event: { type: "TaskPaused", payload: { reason: outcome.reason, message } },
+        },
+      ]);
+      this.warnIfNeeded(this.mustGet(task.id));
+      return;
+    }
+    const review = extractFinalReview(
+      outcome.output,
+      viewpointIds,
+      current.remarks.filter((r) => !r.voided).map((r) => r.id),
+    );
+    const reviewed = this.append(current, [
+      {
+        actor: "guardian",
+        event: {
+          type: "FinalReviewed",
+          payload: { ...review, agentId: agent.id, usage: outcome.usage, costUsd, estimated },
+        },
+      },
+    ]);
+    if (review.passed) this.checkBudget(reviewed);
+    else this.pauseIfVerificationKeepsFailing(reviewed);
+  }
+
+  /** 検証が続けて通らなければ、実装のやり直しを止めて人間に判断してもらう。 */
+  private pauseIfVerificationKeepsFailing(task: Task): void {
+    if (task.verifyFailures < MAX_VERIFY_ATTEMPTS) return;
+    this.append(task, [
+      {
+        actor: "sacty",
+        event: {
+          type: "TaskPaused",
+          payload: {
+            reason: "verification",
+            message: `実装の検証（テストと最終レビュー）に、${MAX_VERIFY_ATTEMPTS}回続けて通りませんでした。`,
+          },
+        },
+      },
+    ]);
+  }
+
   /** 秘密情報を取り出してエージェントを実行し、出力やエラー文から秘密情報を取り除いて返す。 */
   private async execute(run: {
     agent: AgentConfig;
     image: string;
     runId: string;
     prompt: string;
-    role: StepKey | "guardian";
+    role: AgentRole;
     workspaceDir: string;
   }): Promise<{ outcome: AgentOutcome; costUsd: number; estimated: boolean }> {
     // 実行に渡した秘密情報。台帳に書く前に、出力やエラー文から取り除く。

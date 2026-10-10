@@ -5,6 +5,9 @@ import type { AgentConfig } from "../config.js";
 import type { SecretStore } from "../secrets.js";
 import { secretStringsInJson } from "./redact.js";
 
+/** 何として実行するか。工程か、ゴールガーディアン（変更の申し出の判定・最終レビュー）。 */
+export type AgentRole = StepKey | "guardian" | "final-review";
+
 /** コンテナの中での設定ディレクトリ。毎回空の場所を使い、ホストの設定やメモリーを読ませない。 */
 export const CONTAINER_CLAUDE_CONFIG_DIR = "/tmp/sacty-claude-config";
 export const CONTAINER_CODEX_HOME = "/tmp/sacty-codex-home";
@@ -42,7 +45,7 @@ export async function buildInvocation(
   /** 取り出した秘密情報を、その都度知らせる（途中で失敗しても、出力から取り除けるように）。 */
   onSecret: (value: string) => void = () => {},
   /** 実行する工程か、ゴールガーディアン（スタブが出力を選ぶのに使う）。 */
-  role?: StepKey | "guardian",
+  role?: AgentRole,
 ): Promise<Invocation> {
   const secrets = {
     get: async (name: string) => {
@@ -114,6 +117,7 @@ export async function buildInvocation(
         output: "# 要求要件（スタブ）",
         outputs: {},
         guardian: "",
+        final_review: "",
         usage: { input: 1000, cache_read: 0, cache_write: 0, output: 500 },
       };
       const result = stub.fail
@@ -129,7 +133,11 @@ export async function buildInvocation(
             type: "result",
             is_error: false,
             result:
-              role === "guardian" ? stub.guardian : ((role && stub.outputs[role]) ?? stub.output),
+              role === "guardian"
+                ? stub.guardian
+                : role === "final-review"
+                  ? stub.final_review
+                  : ((role && stub.outputs[role]) ?? stub.output),
             usage: {
               input_tokens: stub.usage.input,
               cache_read_input_tokens: stub.usage.cache_read,

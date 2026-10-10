@@ -33,6 +33,12 @@ const StubBehavior = z.object({
   output: z.string().default("# 要求要件（スタブ）\n\n- これはスタブのエージェントの出力です。"),
   /** 工程ごとの出力。無い工程は output を使う。 */
   outputs: z.partialRecord(StepKey, z.string()).default({}),
+  /** ゴールガーディアンとして最終レビューをしたときの出力。 */
+  final_review: z
+    .string()
+    .default(
+      '```json\n{"sacty-final-review": {"viewpoints": [], "remarks": [], "summary": "スタブのため判定しません"}}\n```',
+    ),
   /** ゴールガーディアンとして呼ばれたときの出力。 */
   guardian: z
     .string()
@@ -90,6 +96,17 @@ const Agent = z
     }
   });
 
+/** 実装の対象リポジトリ（PBI-5のプロジェクト設定で置き換える）。 */
+const Repository = z.object({
+  /** clone する URL（ホストの git の認証を使う）か、ローカルのパス。 */
+  url: z.string().min(1),
+  base_branch: z.string().min(1).default("main"),
+  /** テストを実行するコマンド。sh -c で実行し、終了コード0で合格とする。 */
+  test_command: z.string().min(1),
+  /** テストを実行するイメージ。省略すると image。 */
+  test_image: z.string().min(1).optional(),
+});
+
 const ConfigFile = z
   .object({
     image: z.string().default(DEFAULT_IMAGE),
@@ -100,6 +117,7 @@ const ConfigFile = z
       .object({ default_per_task_usd: z.number().positive().default(DEFAULT_BUDGET_USD) })
       .prefault({}),
     agents: z.record(z.string(), Agent),
+    repository: Repository.optional(),
   })
   .superRefine((config, ctx) => {
     if (!config.agents[config.default_agent]) {
@@ -125,6 +143,7 @@ export type SactyConfig = {
   /** ゴールガーディアンに使うAI。 */
   guardianAgent: AgentConfig;
   budgetPerTaskUsd: number;
+  repository?: { url: string; baseBranch: string; testCommand: string; testImage: string };
 };
 
 export type ConfigResult = { ok: true; config: SactyConfig } | { ok: false; problem: string };
@@ -186,6 +205,16 @@ export function loadConfig(home: string): ConfigResult {
       budgetPerTaskUsd: file.budget.default_per_task_usd,
       defaultAgent: resolve(file.default_agent),
       guardianAgent: resolve(file.guardian_agent ?? file.default_agent),
+      ...(file.repository
+        ? {
+            repository: {
+              url: file.repository.url,
+              baseBranch: file.repository.base_branch,
+              testCommand: file.repository.test_command,
+              testImage: file.repository.test_image ?? file.image,
+            },
+          }
+        : {}),
     },
   };
 }
@@ -202,6 +231,13 @@ default_agent: claude-subscription
 
 budget:
   default_per_task_usd: ${DEFAULT_BUDGET_USD}
+
+# 実装の対象リポジトリ。実装の工程は、これを clone した作業領域で実装し、
+# test_command を別のコンテナで実行して確かめる（終了コード0で合格）
+# repository:
+#   url: git@github.com:your-org/your-repo.git
+#   base_branch: main
+#   test_command: npm ci && npm test
 
 agents:
   # サブスクリプション：\`claude setup-token\` で作ったトークンを

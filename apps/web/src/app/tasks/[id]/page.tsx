@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { Suspense } from "react";
 import { AutoRefresh } from "@/components/auto-refresh";
 import { DaemonError } from "@/components/daemon-error";
+import { Implementation } from "@/components/implementation";
 import { Proposals } from "@/components/proposals";
 import { ResumeForm } from "@/components/resume-form";
 import { CostMeter, StatusLabel, StepChips } from "@/components/task-bits";
@@ -100,9 +101,10 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
           usedUsd={task.budget.usedUsd}
           capUsd={task.budget.capUsd}
           lastFailure={
-            task.pausedReason !== "budget" && lastFailure?.type === "AgentRunFailed"
+            task.pausedMessage ??
+            (task.pausedReason !== "budget" && lastFailure?.type === "AgentRunFailed"
               ? lastFailure.payload.message
-              : undefined
+              : undefined)
           }
         />
       )}
@@ -126,6 +128,10 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
           {(task.outputs.design ||
             task.steps.some((s) => s.key === "design" && s.state !== "todo")) && (
             <Deliverable task={task} step="design" />
+          )}
+          {(task.outputs.implement ||
+            task.steps.some((s) => s.key === "implement" && s.state !== "todo")) && (
+            <Implementation task={task} />
           )}
           {(task.approved.requirements || task.proposals.length > 0) && <Proposals task={task} />}
           <section

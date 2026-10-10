@@ -1,11 +1,21 @@
 import type {
   LedgerEvent,
+  ParsedEventInput,
   PauseReason,
   Remark,
   StepKey,
+  TestMapping,
   TestViewpoint,
   Verdict,
 } from "./events.js";
+
+type PayloadOf<T extends ParsedEventInput["type"]> = Extract<
+  ParsedEventInput,
+  { type: T }
+>["payload"];
+
+export type TestsRunResult = PayloadOf<"TestsRun"> & { at: string };
+export type FinalReview = PayloadOf<"FinalReviewed"> & { at: string };
 
 export type StepState = "todo" | "active" | "done" | "skip";
 
@@ -82,6 +92,8 @@ export type Task = {
   start: "ticket";
   status: TaskStatus;
   pausedReason?: PauseReason;
+  /** 止まった理由の詳しい説明。 */
+  pausedMessage?: string;
   /** 一時停止の直前の状態。再開時、実行待ち（やり直し）に戻すか待機に戻すかを決める。 */
   resumeTo?: "queued" | "idle";
   steps: { key: StepKey; state: StepState }[];
@@ -106,6 +118,24 @@ export type Task = {
   remarks: TaskRemark[];
   /** 変更の申し出（古い順）。 */
   proposals: TaskProposal[];
+  /** 実装の対象リポジトリ。 */
+  repository?: PayloadOf<"RepositoryPrepared">;
+  /** 実装の最新の提出が申告した、観点とテストの対応。 */
+  testMap: TestMapping[];
+  /**
+   * 実装の検証の進み具合。pending：テストの実行待ち、tests_passed：最終レビュー待ち。
+   * 検証が終わる（合格・不合格）と undefined に戻る。
+   */
+  verification?: "pending" | "tests_passed";
+  /** 検証が続けて通らなかった回数。人間が再開するか、検証に通ると0に戻る。 */
+  verifyFailures: number;
+  /** 最新のテストの実行結果と、最終レビュー。 */
+  lastTests?: TestsRunResult;
+  lastReview?: FinalReview;
+  /** やり直しの実装に渡す、直前の検証で通らなかった内容。 */
+  verifyFeedback?:
+    | { kind: "tests"; tests: TestsRunResult }
+    | { kind: "review"; review: FinalReview };
   /** エスカレーションの内容（差し戻しを続ける場合に使う、やり直す工程と書きかけの指摘）。 */
   escalation?: { step: StepKey; target: StepKey; pendingRemarks: Remark[] };
   createdAt: string;
@@ -120,6 +150,10 @@ function reopen(task: Task, target: StepKey) {
     if (i > to) return { ...s, state: "todo" as const };
     return s;
   });
+  // 前の工程からやり直すので、実装の検証の途中経過と失敗の回数は持ち越さない
+  task.verification = undefined;
+  task.verifyFeedback = undefined;
+  task.verifyFailures = 0;
   const keep = new Set(task.steps.slice(0, to).map((s) => s.key));
   task.approved = Object.fromEntries(
     Object.entries(task.approved).filter(([key]) => keep.has(key as StepKey)),
@@ -130,6 +164,14 @@ class LedgerIntegrityError extends Error {
   constructor(event: LedgerEvent, detail: string) {
     super(`${event.type} (seq ${event.seq}) on task ${event.taskId}: ${detail}`);
   }
+}
+
+/** 検証に通らなかった。失敗の内容を渡して、実装をやり直す（実行待ちに戻す）。 */
+function failVerification(task: Task, feedback: NonNullable<Task["verifyFeedback"]>) {
+  task.verification = undefined;
+  task.verifyFailures += 1;
+  task.verifyFeedback = feedback;
+  task.status = "queued";
 }
 
 function findProposal(task: Task, event: LedgerEvent, id: string): TaskProposal {
@@ -172,6 +214,8 @@ export function applyEvent(
       testViewpoints: [],
       approved: {},
       proposals: [],
+      testMap: [],
+      verifyFailures: 0,
       submissions: {},
       remarks: [],
       budget: { usedUsd: 0, capUsd: event.payload.budgetCapUsd, warned: false, estimated: false },
@@ -217,6 +261,10 @@ export function applyEvent(
           throw new LedgerIntegrityError(event, "the step is already approved (frozen)");
         }
         if (event.payload.step === "design") task.testViewpoints = event.payload.testViewpoints;
+        if (event.payload.step === "implement") {
+          task.testMap = event.payload.testMap;
+          task.verification = "pending";
+        }
         task.outputs = { ...task.outputs, [event.payload.step]: event.payload.output };
         // その工程の有効な指摘は、今回の提出で回答がなければ未回答に戻す
         // （前回の対応文が残ると、最新の成果物への対応だと誤認して承認してしまうため）
@@ -388,6 +436,63 @@ export function applyEvent(
       break;
     }
 
+    case "RepositoryPrepared":
+      task.repository = event.payload;
+      break;
+
+    case "TestsRun": {
+      if (task.status !== "idle" || task.verification !== "pending") {
+        throw new LedgerIntegrityError(event, "tests are not pending");
+      }
+      const tests = { ...event.payload, at: event.at };
+      task.lastTests = tests;
+      if (event.payload.passed) {
+        task.verification = "tests_passed";
+      } else {
+        failVerification(task, { kind: "tests", tests });
+      }
+      break;
+    }
+
+    case "FinalReviewed": {
+      if (task.status !== "idle" || task.verification !== "tests_passed") {
+        throw new LedgerIntegrityError(event, "final review is not pending");
+      }
+      task.budget = {
+        ...task.budget,
+        usedUsd: addUsd(task.budget.usedUsd, event.payload.costUsd),
+        estimated: task.budget.estimated || event.payload.estimated,
+      };
+      const review = { ...event.payload, at: event.at };
+      task.lastReview = review;
+      if (!event.payload.passed) {
+        failVerification(task, { kind: "review", review });
+        break;
+      }
+      // 検証に通った。実装の工程を完了にし、次の工程へ進む
+      const index = task.steps.findIndex((s) => s.key === "implement");
+      task.steps = task.steps.map((s, i) => {
+        if (i === index) return { ...s, state: "done" as const };
+        if (i === index + 1) return { ...s, state: "active" as const };
+        return s;
+      });
+      task.verification = undefined;
+      task.verifyFailures = 0;
+      task.verifyFeedback = undefined;
+      break;
+    }
+
+    case "FinalReviewFailed":
+      if (task.status !== "idle" || task.verification !== "tests_passed") {
+        throw new LedgerIntegrityError(event, "final review is not pending");
+      }
+      task.budget = {
+        ...task.budget,
+        usedUsd: addUsd(task.budget.usedUsd, event.payload.costUsd),
+        estimated: task.budget.estimated || event.payload.estimated,
+      };
+      break;
+
     case "TaskEscalated":
       if (event.payload.reason === "change_undecidable") {
         if (task.status !== "idle") throw new LedgerIntegrityError(event, `status ${task.status}`);
@@ -420,6 +525,7 @@ export function applyEvent(
       task.resumeTo = task.status;
       task.status = "paused";
       task.pausedReason = event.payload.reason;
+      task.pausedMessage = event.payload.message;
       break;
 
     case "BudgetCapRaised":
@@ -432,7 +538,10 @@ export function applyEvent(
     case "TaskResumed":
       if (task.status !== "paused") throw new LedgerIntegrityError(event, `status ${task.status}`);
       task.status = event.payload.retry ? "queued" : "idle";
+      // 人間が再開したら、検証の失敗の回数を数え直す
+      if (task.pausedReason === "verification") task.verifyFailures = 0;
       task.pausedReason = undefined;
+      task.pausedMessage = undefined;
       task.resumeTo = undefined;
       break;
   }

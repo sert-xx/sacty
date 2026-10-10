@@ -90,7 +90,7 @@ export function dockerRunArgs(input: {
 }
 
 /** dockerコマンド自体に必要なホストの環境変数だけを残す。 */
-function dockerClientEnv(): Record<string, string> {
+export function dockerClientEnv(): Record<string, string> {
   const keep = ["PATH", "HOME", "DOCKER_HOST", "DOCKER_CONTEXT", "DOCKER_CONFIG", "TMPDIR"];
   const env: Record<string, string> = {};
   for (const key of keep) {

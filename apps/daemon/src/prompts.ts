@@ -1,8 +1,10 @@
 import type {
+  FinalReview,
   RemarkResponse,
   StepKey,
   Task,
   TaskProposal,
+  TestMapping,
   TestViewpoint,
   Verdict,
 } from "@sacty/core";
@@ -11,12 +13,60 @@ import type {
  * 実行できる工程。実装（PBI-10）以降は順次追加する。
  * ここに無い工程は、承認後も実行せずに待機する。
  */
-export const EXECUTABLE_STEPS: readonly StepKey[] = ["requirements", "design"];
+export const EXECUTABLE_STEPS: readonly StepKey[] = ["requirements", "design", "implement"];
 
 const RESPONSES_HEADING = "sacty-responses";
 const VIEWPOINTS_HEADING = "sacty-test-viewpoints";
 const PROPOSAL_HEADING = "sacty-change-proposal";
 const VERDICT_HEADING = "sacty-verdict";
+const TEST_MAP_HEADING = "sacty-test-map";
+const FINAL_REVIEW_HEADING = "sacty-final-review";
+
+/** テストの出力は、末尾のこの文字数だけプロンプトに入れる。 */
+const OUTPUT_IN_PROMPT = 8_000;
+
+function viewpointLines(viewpoints: readonly TestViewpoint[]): string[] {
+  if (viewpoints.length === 0) return ["（なし）"];
+  return viewpoints.map((v) =>
+    [`- [${v.id}] ${v.title}`, `  - 入力：${v.input}`, `  - 期待結果：${v.expected}`].join("\n"),
+  );
+}
+
+/** 人間の差し戻しの指摘（全工程・無効にしたものを除く）。 */
+function humanRemarks(task: Task) {
+  return task.remarks.filter((r) => !r.voided);
+}
+
+/** 直前の検証で通らなかった内容（実装のやり直しに渡す）。 */
+function feedbackLines(task: Task): string[] {
+  const feedback = task.verifyFeedback;
+  if (!feedback) return [];
+  if (feedback.kind === "tests") {
+    const t = feedback.tests;
+    return [
+      "",
+      "--- 前回の検証：テストが通りませんでした ---",
+      `コマンド：${t.command}（終了コード ${t.exitCode}）`,
+      ...(t.unmappedViewpoints.length > 0
+        ? [`テストが対応していない観点：${t.unmappedViewpoints.join(", ")}`]
+        : []),
+      "出力の末尾：",
+      t.output.slice(-OUTPUT_IN_PROMPT),
+    ];
+  }
+  const r = feedback.review;
+  return [
+    "",
+    "--- 前回の検証：ゴールガーディアンの最終レビューに通りませんでした ---",
+    ...(r.summary ? [r.summary] : []),
+    ...r.viewpoints
+      .filter((v) => !v.verified)
+      .map((v) => `- [${v.viewpointId}] 観点を検証できていない：${v.reason}`),
+    ...r.remarks
+      .filter((m) => !m.notRecurred)
+      .map((m) => `- [${m.remarkId}] 過去の指摘が再発している：${m.reason}`),
+  ];
+}
 
 const STEP_NAME: Record<StepKey, string> = {
   requirements: "要求要件",
@@ -140,6 +190,41 @@ export function buildPrompt(task: Task, step: StepKey): string {
       lines.push(...remarkLines(task, step, "テスト観点"), ...proposalLines(task, step));
       return lines.join("\n");
     }
+    case "implement": {
+      const remarks = humanRemarks(task);
+      const lines = [
+        "あなたはソフトウェア開発の工程エージェントです。",
+        "作業ディレクトリは実装の対象リポジトリです。人間が承認した要求要件と設計に従って実装し、",
+        "テスト観点ごとに、その観点を検証するテストを書いてください。",
+        "",
+        "- テストは、観点の入力を与え、期待結果を確かめるものにする（観点を検証しない形だけのテストにしない）",
+        "- 書いたテストは、リポジトリのテストのコマンドで実行されるようにする",
+        "- コミットやプッシュはしない（sacty が行います）",
+        "- 実装の説明をMarkdownで書き、そのあとに、観点ごとのテストの対応を次の形式で必ず付ける",
+        "```json",
+        `{"${TEST_MAP_HEADING}": [{"viewpointId": "TV-1", "tests": ["テストのファイル › テストの名前"]}]}`,
+        "```",
+        "",
+        "--- 承認済みの要求要件 ---",
+        task.approved.requirements?.output ?? "（なし）",
+        "",
+        "--- 承認済みの設計 ---",
+        task.approved.design?.output ?? "（なし）",
+        "",
+        "--- テスト観点（承認済み・すべてにテストを対応させる） ---",
+        ...viewpointLines(task.approved.design?.testViewpoints ?? []),
+      ];
+      if (remarks.length > 0) {
+        lines.push(
+          "",
+          "--- これまでの人間の指摘（再発させないでください） ---",
+          ...remarks.map((r) => `- [${r.id}] ${r.text}`),
+        );
+      }
+      if (previous) lines.push("", "--- 前回の実装の説明 ---", previous);
+      lines.push(...feedbackLines(task), ...proposalLines(task, step));
+      return lines.join("\n");
+    }
     default:
       return [`工程「${step}」はまだ実装されていません。`, "", ticket].join("\n");
   }
@@ -152,6 +237,8 @@ export type Extracted = {
   testViewpoints: TestViewpoint[];
   /** 承認済みの成果物への変更の申し出（1件まで）。 */
   proposal?: ExtractedProposal;
+  /** 実装の工程が申告した、観点とテストの対応。 */
+  testMap: TestMapping[];
 };
 
 export type ExtractedProposal = Pick<
@@ -176,6 +263,7 @@ export function extractBlocks(
   let testViewpoints: TestViewpoint[] | undefined;
   let proposal: ExtractedProposal | undefined;
   let proposalSeen = false;
+  let testMap: TestMapping[] | undefined;
   let cleaned = output;
   const blocks = [...output.matchAll(/```json\s*\n([\s\S]*?)\n```/g)].reverse();
   for (const block of blocks) {
@@ -189,7 +277,18 @@ export function extractBlocks(
     const list = record[RESPONSES_HEADING];
     const viewpoints = record[VIEWPOINTS_HEADING];
     const proposed = record[PROPOSAL_HEADING];
+    const map = record[TEST_MAP_HEADING];
     let used = false;
+    if (Array.isArray(map)) {
+      used = true;
+      testMap ??= map
+        .map((m) => {
+          const r = (m ?? {}) as Record<string, unknown>;
+          const tests = Array.isArray(r.tests) ? r.tests.map(text).filter(Boolean) : [];
+          return { viewpointId: text(r.viewpointId), tests };
+        })
+        .filter((m) => m.viewpointId && m.tests.length > 0);
+    }
     if (proposed && typeof proposed === "object" && !Array.isArray(proposed)) {
       used = true;
       if (!proposalSeen) {
@@ -218,6 +317,7 @@ export function extractBlocks(
     responses: responses ?? [],
     testViewpoints: testViewpoints ?? [],
     proposal,
+    testMap: testMap ?? [],
   };
 }
 
@@ -317,5 +417,117 @@ export function extractVerdict(output: string): { verdict: Verdict; reason: stri
   return {
     verdict: "undecidable",
     reason: "ゴールガーディアンの出力から、判定を読み取れませんでした。",
+  };
+}
+
+/**
+ * ゴールガーディアンの最終レビューへの指示。判定ごとに新しいセッションで実行する。
+ * 承認済みの要求要件・設計・テスト観点、差分、観点とテストの対応、テストの結果、
+ * 人間の差し戻しの指摘を渡す。過去の最終レビューの判定や、工程エージェントの説明は渡さない。
+ */
+export function buildFinalReviewPrompt(task: Task, diff: string): string {
+  const viewpoints = task.approved.design?.testViewpoints ?? [];
+  const remarks = humanRemarks(task);
+  const tests = task.lastTests;
+  return [
+    "あなたはゴールガーディアンです。人間が承認した成果物（ゴール）を守る立場で、実装を最終レビューしてください。",
+    "",
+    "- テスト観点ごとに、対応するテストがその観点を本当に検証しているか（入力を与え、期待結果を確かめているか）を判定する",
+    "- テストが通っていても、観点を検証していない（形だけ・期待結果を確かめていない・対応が違う）なら不合格にする",
+    "- 人間の過去の指摘ごとに、指摘された問題が今回の実装で再発していないかを判定する",
+    "- 判断の根拠は、下の差分とテストの結果だけにする",
+    "",
+    "--- 承認済みの要求要件 ---",
+    task.approved.requirements?.output ?? "（なし）",
+    "",
+    "--- 承認済みの設計 ---",
+    task.approved.design?.output ?? "（なし）",
+    "",
+    "--- テスト観点 ---",
+    ...viewpointLines(viewpoints),
+    "",
+    "--- 観点とテストの対応（工程エージェントの申告） ---",
+    ...(task.testMap.length > 0
+      ? task.testMap.map((m) => `- [${m.viewpointId}] ${m.tests.join(" / ")}`)
+      : ["（なし）"]),
+    "",
+    "--- テストの結果（sacty が実行） ---",
+    tests
+      ? `コマンド：${tests.command}（終了コード ${tests.exitCode}）\n出力の末尾：\n${tests.output.slice(-OUTPUT_IN_PROMPT)}`
+      : "（なし）",
+    "",
+    "--- 人間の過去の指摘 ---",
+    ...(remarks.length > 0 ? remarks.map((r) => `- [${r.id}] ${r.text}`) : ["（なし）"]),
+    "",
+    "--- 差分 ---",
+    diff || "（差分がありません）",
+    "",
+    "判定を、次の形式で必ず出してください。観点と指摘は、上のものをすべて含めてください。",
+    "```json",
+    `{"${FINAL_REVIEW_HEADING}": {"viewpoints": [{"id": "TV-1", "verified": true, "reason": "理由"}], "remarks": [{"id": "指摘のID", "notRecurred": true, "reason": "理由"}], "summary": "全体の所見"}}`,
+    "```",
+  ].join("\n");
+}
+
+/**
+ * 最終レビューの出力を読む。判定の無い観点・指摘は不合格として扱い、
+ * すべての観点が検証済みで、すべての指摘が再発なしのときだけ合格にする。
+ */
+export function extractFinalReview(
+  output: string,
+  viewpointIds: readonly string[],
+  remarkIds: readonly string[],
+): Pick<FinalReview, "passed" | "viewpoints" | "remarks" | "summary"> {
+  let raw: Record<string, unknown> | undefined;
+  for (const block of [...output.matchAll(/```json\s*\n([\s\S]*?)\n```/g)].reverse()) {
+    try {
+      const parsed = JSON.parse(block[1] ?? "") as Record<string, unknown>;
+      const review = parsed?.[FINAL_REVIEW_HEADING];
+      if (review && typeof review === "object" && !Array.isArray(review)) {
+        raw = review as Record<string, unknown>;
+        break;
+      }
+    } catch {
+      // 次のブロックを試す
+    }
+  }
+  const byId = (list: unknown) => {
+    const map = new Map<string, Record<string, unknown>>();
+    if (!Array.isArray(list)) return map;
+    for (const item of list) {
+      const r = (item ?? {}) as Record<string, unknown>;
+      const id = text(r.id);
+      if (id && !map.has(id)) map.set(id, r);
+    }
+    return map;
+  };
+  const vs = byId(raw?.viewpoints);
+  const rs = byId(raw?.remarks);
+  const missing = raw
+    ? "判定がありません。"
+    : "最終レビューの出力から、判定を読み取れませんでした。";
+  const viewpoints = viewpointIds.map((id) => {
+    const r = vs.get(id);
+    return {
+      viewpointId: id,
+      verified: r?.verified === true,
+      reason: text(r?.reason) || missing,
+    };
+  });
+  const remarks = remarkIds.map((id) => {
+    const r = rs.get(id);
+    return {
+      remarkId: id,
+      notRecurred: r?.notRecurred === true,
+      reason: text(r?.reason) || missing,
+    };
+  });
+  const passed =
+    raw !== undefined && viewpoints.every((v) => v.verified) && remarks.every((r) => r.notRecurred);
+  return {
+    passed,
+    viewpoints,
+    remarks,
+    summary: text(raw?.summary) || (raw ? "" : missing),
   };
 }

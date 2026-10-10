@@ -36,6 +36,7 @@ export const PAUSE_LABEL: Record<PauseReason, string> = {
   usage_limit: "利用上限で一時停止",
   auth: "認証エラーで一時停止",
   error: "エラーで一時停止",
+  verification: "実装の検証に通らないため一時停止",
 };
 
 export const PAUSE_HELP: Record<PauseReason, string> = {
@@ -44,6 +45,8 @@ export const PAUSE_HELP: Record<PauseReason, string> = {
     "サブスクリプションの利用上限に達したため止まっています。上限が戻ってから再開すると、止まった工程を実行し直します。",
   auth: "認証に失敗したため止まっています。トークンやAPIキーを確認してから再開してください。",
   error: "エラーで止まっています。原因を確認してから再開すると、止まった工程を実行し直します。",
+  verification:
+    "実装がテストか最終レビューに続けて通らないため止まっています。結果を確認し、必要なら設計を見直してから再開すると、実装をやり直します。",
 };
 
 export const AUTH_LABEL: Record<AuthMode, string> = {
@@ -73,6 +76,10 @@ export function statusText(task: Task): string {
   if (task.status === "paused" && task.pausedReason) return PAUSE_LABEL[task.pausedReason];
   const proposal = openProposal(task);
   if (proposal && !proposal.judgement) return "ゴールガーディアンが判定中";
+  if (task.status === "idle" && task.verification === "pending") return "テストを実行中";
+  if (task.status === "idle" && task.verification === "tests_passed") {
+    return "ゴールガーディアンが最終レビュー中";
+  }
   if (task.status === "escalated" && proposal) return "変更の申し出の判断待ち";
   if (task.status === "awaiting_approval" && task.gate) {
     const nth = task.gate.submission > 1 ? `（${task.gate.submission}回目）` : "";
@@ -87,6 +94,7 @@ export function statusText(task: Task): string {
  */
 export function isWorking(task: Task): boolean {
   if (task.status === "queued" || task.status === "running") return true;
+  if (task.status === "idle" && task.verification) return true;
   const proposal = openProposal(task);
   return Boolean(proposal && !proposal.judgement);
 }
@@ -144,6 +152,18 @@ export function describeEvent(event: LedgerEvent): string {
       return `${event.payload.proposalId}を${event.payload.accept ? "認めた" : "認めなかった"}（${ACTOR_LABEL[event.actor]}）`;
     case "ChangeApplied":
       return `${event.payload.proposalId}の変更を反映`;
+    case "RepositoryPrepared":
+      return `対象リポジトリを用意（${event.payload.url}・${event.payload.baseBranch}・${event.payload.baseCommit.slice(0, 7)}）`;
+    case "TestsRun":
+      return `テストを実行：${event.payload.passed ? "合格" : "不合格"}（終了コード ${event.payload.exitCode}${event.payload.unmappedViewpoints.length > 0 ? `・テストの無い観点 ${event.payload.unmappedViewpoints.join(", ")}` : ""}）`;
+    case "FinalReviewed": {
+      const ng =
+        event.payload.viewpoints.filter((v) => !v.verified).length +
+        event.payload.remarks.filter((r) => !r.notRecurred).length;
+      return `最終レビュー：${event.payload.passed ? "合格" : `不合格（${ng}件）`}（${ACTOR_LABEL[event.actor]}${event.payload.costUsd > 0 ? `・${usd(event.payload.costUsd)}${event.payload.estimated ? "・換算値" : ""}` : ""}）`;
+    }
+    case "FinalReviewFailed":
+      return `${event.payload.message}（${usd(event.payload.costUsd)}${event.payload.estimated ? "・換算値" : ""}）`;
     case "StepQueued":
       return `${STEP_LABEL[event.payload.step]}を実行待ちにした（実行できるようになったため）`;
     case "ChangesRequested":
