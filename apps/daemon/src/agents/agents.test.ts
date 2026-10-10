@@ -380,3 +380,62 @@ while true; do sleep 0.05; done
     expect(existsSync(staging)).toBe(false);
   });
 });
+
+describe("コンテナで更新されたトークンの除去（偽のdockerコマンド）", () => {
+  let dir: string;
+  const originalPath = process.env.PATH;
+  afterEach(() => {
+    process.env.PATH = originalPath;
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("更新後のトークンを出力に含めても台帳用の出力には残さず、ホストへは書き戻す", async () => {
+    const { chmodSync, mkdirSync } = await import("node:fs");
+    const { DockerExecutor } = await import("./docker.js");
+    dir = mkdtempSync(join(tmpdir(), "sacty-fakedocker-"));
+    const bin = join(dir, "bin");
+    mkdirSync(bin);
+    const newToken = "n".repeat(40);
+    writeFileSync(
+      join(bin, "docker"),
+      `#!/bin/sh
+prev=""; host=""
+for a in "$@"; do
+  if [ "$prev" = "-v" ]; then
+    case "$a" in *:/tmp/sacty-codex-home*) host="\${a%%:/tmp/sacty-codex-home*}";; esac
+  fi
+  prev="$a"
+done
+printf '{"tokens":{"access_token":"${newToken}"}}' > "$host/auth.json"
+echo '{"type":"item.completed","item":{"type":"agent_message","text":"new token is ${newToken}"}}'
+echo '{"type":"turn.completed","usage":{"input_tokens":10,"cached_input_tokens":0,"output_tokens":5}}'
+`,
+    );
+    chmodSync(join(bin, "docker"), 0o755);
+    process.env.PATH = `${bin}:${originalPath}`;
+
+    const hostAuth = join(dir, "auth.json");
+    writeFileSync(hostAuth, JSON.stringify({ tokens: { access_token: "o".repeat(40) } }));
+    const outcome = await new DockerExecutor().run({
+      runId: "r2",
+      image: "img",
+      workspaceDir: dir,
+      invocation: {
+        command: ["codex"],
+        env: { CODEX_HOME: "/tmp/sacty-codex-home" },
+        stage: {
+          containerDir: "/tmp/sacty-codex-home",
+          files: [{ hostPath: hostAuth, name: "auth.json", syncBack: true }],
+        },
+        parser: "codex-jsonl",
+      },
+    });
+
+    expect(outcome.kind).toBe("completed");
+    if (outcome.kind === "completed") {
+      expect(outcome.output).toBe("new token is [REDACTED]");
+      expect(outcome.output).not.toContain(newToken);
+    }
+    expect(readFileSync(hostAuth, "utf8")).toContain(newToken);
+  });
+});

@@ -32,7 +32,7 @@ export class Worker {
   /** テストからも呼べるよう公開する。実行中、または停止後は何もしない。 */
   tick(): Promise<void> {
     if (this.current || this.stopped) return this.current ?? Promise.resolve();
-    this.current = (async () => {
+    const run = (async () => {
       try {
         for (const id of this.service.queuedTaskIds()) {
           if (this.stopped) break;
@@ -40,10 +40,14 @@ export class Worker {
         }
       } catch (error) {
         console.error("[daemon] worker error:", error);
-      } finally {
-        this.current = undefined;
       }
     })();
-    return this.current;
+    // 実行中の印は、代入した後に外す。キューが空だと上の処理は await を通らず同期的に終わるため、
+    // 処理の中で外すと、直後の代入で完了済みの処理が残り、以降の tick がすべて止まってしまう。
+    this.current = run;
+    void run.finally(() => {
+      if (this.current === run) this.current = undefined;
+    });
+    return run;
   }
 }

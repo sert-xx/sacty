@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import type { Invocation } from "./invocation.js";
 import { type AgentOutcome, parseClaudeResult, parseCodexEvents } from "./parse.js";
+import { redact, secretStringsInJson } from "./redact.js";
 
 export const CONTAINER_WORKSPACE = "/workspace";
 
@@ -127,11 +128,24 @@ export class DockerExecutor implements AgentExecutor {
     const staging = invocation.stage ? mkdtempSync(join(tmpdir(), "sacty-run-")) : null;
     const mounts: { hostPath: string; containerPath: string; readOnly: boolean }[] = [];
     const syncBacks: { hostPath: string; stagedPath: string; hashAtCopy: string }[] = [];
+    // ステージした認証ファイルの値（実行前と、コンテナで更新された後の両方）。出力から取り除く。
+    const stagedPaths: string[] = [];
+    const stagedSecrets: string[] = [];
+    const collectSecrets = () => {
+      for (const path of stagedPaths) {
+        try {
+          stagedSecrets.push(...secretStringsInJson(readFileSync(path, "utf8")));
+        } catch {
+          // 消えていれば何もしない
+        }
+      }
+    };
     if (invocation.stage && staging) {
       for (const file of invocation.stage.files) {
         const copied = join(staging, basename(file.name));
         try {
           copyFileSync(file.hostPath, copied);
+          stagedPaths.push(copied);
           const hashAtCopy = hashOf(copied);
           if (file.syncBack && hashAtCopy) {
             syncBacks.push({ hostPath: file.hostPath, stagedPath: copied, hashAtCopy });
@@ -146,6 +160,7 @@ export class DockerExecutor implements AgentExecutor {
         }
         chmodSync(copied, 0o600);
       }
+      collectSecrets();
       mounts.push({
         hostPath: staging,
         containerPath: invocation.stage.containerDir,
@@ -164,6 +179,7 @@ export class DockerExecutor implements AgentExecutor {
 
     const containerName = `sacty-run-${runId}`;
     this.active.add(containerName);
+    let outcome: AgentOutcome;
     try {
       const { exitCode, stdout, stderr } = await new Promise<{
         exitCode: number;
@@ -203,24 +219,26 @@ export class DockerExecutor implements AgentExecutor {
       });
 
       if (this.aborting) {
-        return {
+        outcome = {
           kind: "failed",
           reason: "error",
           message: "デーモンが停止したため、実行が中断されました。",
         };
-      }
-      if (/Unable to find image|No such image|pull access denied/i.test(stderr)) {
-        return {
+      } else if (/Unable to find image|No such image|pull access denied/i.test(stderr)) {
+        outcome = {
           kind: "failed",
           reason: "error",
           message: `エージェント用のイメージ（${image}）がありません。\`sacty image build\` で作成してください。`,
         };
+      } else {
+        outcome =
+          invocation.parser === "codex-jsonl"
+            ? parseCodexEvents(stdout, exitCode, stderr)
+            : parseClaudeResult(stdout, exitCode, stderr);
       }
-      return invocation.parser === "codex-jsonl"
-        ? parseCodexEvents(stdout, exitCode, stderr)
-        : parseClaudeResult(stdout, exitCode, stderr);
     } finally {
       this.active.delete(containerName);
+      collectSecrets(); // コンテナで更新された認証情報も、出力から取り除く対象にする
       for (const file of syncBacks) {
         try {
           const result = syncBackIfChanged(file.hostPath, file.stagedPath, file.hashAtCopy);
@@ -235,5 +253,8 @@ export class DockerExecutor implements AgentExecutor {
       }
       if (staging) rmSync(staging, { recursive: true, force: true });
     }
+    return outcome.kind === "failed"
+      ? { ...outcome, message: redact(outcome.message, stagedSecrets) }
+      : { ...outcome, output: redact(outcome.output, stagedSecrets) };
   }
 }

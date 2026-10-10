@@ -323,6 +323,29 @@ describe("秘密情報と予算の通知（レビュー指摘）", () => {
     ledger.close();
   });
 
+  it("空のキューを処理した後でも、作成・再開したタスクを実行する（回帰）", async () => {
+    const { Worker } = await import("./worker.js");
+    const ledger = new SqliteLedgerStore(dbPath);
+    const { service, executor } = makeService(ledger, [
+      { kind: "failed", reason: "usage_limit", message: "429" },
+      completed(1_000),
+    ]);
+    const worker = new Worker(service, 60_000);
+
+    await worker.tick(); // 空のキュー
+    const task = service.createTicket({ title: "A" });
+    await worker.tick();
+    expect(executor.calls).toHaveLength(1);
+    expect(service.get(task.id)?.task.status).toBe("paused");
+
+    await worker.tick(); // また空のキュー
+    service.resume(task.id, {});
+    await worker.tick();
+    expect(executor.calls).toHaveLength(2);
+    expect(service.get(task.id)?.task.status).toBe("idle");
+    ledger.close();
+  });
+
   it("停止時は、実行中の処理が台帳に記録されるまで待つ", async () => {
     const { Worker } = await import("./worker.js");
     const ledger = new SqliteLedgerStore(dbPath);
