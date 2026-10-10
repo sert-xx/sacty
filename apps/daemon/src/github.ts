@@ -142,23 +142,31 @@ export class GitHubIssueSearch implements IssueSearch {
       ...extra,
     });
     let cursor = since;
-    let incomplete: string | undefined;
     try {
       for (let window = 0; window < GitHubIssueSearch.MAX_WINDOWS; window++) {
         const windowStart = cursor;
         const q = windowStart ? `${query} updated:>=${windowStart}` : query;
         for (let page = 1; page <= GitHubIssueSearch.MAX_PAGES; page++) {
           const { items, incompleteResults } = await this.page(q, page, token);
-          if (incompleteResults) {
-            incomplete = "GitHub の検索が時間内に終わらず、結果の一部しか得られませんでした。";
-          }
           for (const item of items) {
             const issue = toIssue(item);
             if (issue) issues.set(`${issue.repo.toLowerCase()}#${issue.number}`, issue);
+          }
+          if (incompleteResults) {
+            // 結果が不完全なら、返された Issue より前の Issue も取れたとは限らない。
+            // 取れた分は取り込むが、どこまで読んだかはこのページの手前に留め、次の取り込みで
+            // この範囲を検索し直す
+            return result({
+              cursor,
+              incomplete:
+                "GitHub の検索が時間内に終わらず、結果の一部しか得られませんでした（次の取り込みで、この範囲を検索し直します）。",
+            });
+          }
+          for (const item of items) {
             if (typeof item.updated_at === "string") cursor = item.updated_at;
           }
           // 最後のページ（件数が1ページに満たない）なら、すべて取れた
-          if (items.length < GitHubIssueSearch.PER_PAGE) return result({ cursor, incomplete });
+          if (items.length < GitHubIssueSearch.PER_PAGE) return result({ cursor });
         }
         // この範囲で1,000件に達した。最後の Issue の更新日時から先を、次の範囲として検索する
         // （同じ日時の Issue を落とさないよう >= にして、重複は番号で除く）

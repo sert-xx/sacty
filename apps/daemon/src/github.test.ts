@@ -171,6 +171,41 @@ describe("検索の上限の先（レビュー指摘）", () => {
     expect(incomplete).toMatch(/すべてを検索できませんでした/);
   });
 
+  it("結果が不完全なら、取れた分は返すが、どこまで読んだかは先へ進めない（レビュー指摘）", async () => {
+    const item = (number: number, updated: string) => ({
+      number,
+      title: `#${number}`,
+      html_url: `https://github.com/acme/app/issues/${number}`,
+      repository_url: "https://api.github.com/repos/acme/app",
+      labels: [],
+      updated_at: updated,
+    });
+    // #1（00:00:01）と #2（00:00:02）があるが、初回の応答は不完全で #2 だけを返した
+    const { impl, calls } = fakeFetch([
+      { status: 200, json: { incomplete_results: true, items: [item(2, "2026-01-01T00:00:02Z")] } },
+      {
+        status: 200,
+        json: {
+          incomplete_results: false,
+          items: [item(1, "2026-01-01T00:00:01Z"), item(2, "2026-01-01T00:00:02Z")],
+        },
+      },
+    ]);
+    const search = new GitHubIssueSearch(impl);
+    const first = await search.search("repo:acme/app", "t", "2026-01-01T00:00:00Z");
+    expect(first.issues.map((i) => i.number)).toEqual([2]);
+    expect(first.cursor).toBe("2026-01-01T00:00:00Z"); // 先へ進めない
+    expect(first.incomplete).toMatch(/検索し直します/);
+
+    const second = await search.search("repo:acme/app", "t", first.cursor);
+    expect(second.issues.map((i) => i.number)).toEqual([1, 2]);
+    expect(second.cursor).toBe("2026-01-01T00:00:02Z");
+    expect(second.incomplete).toBeUndefined();
+    expect(new URL(calls[1]?.url ?? "").searchParams.get("q")).toBe(
+      "repo:acme/app updated:>=2026-01-01T00:00:00Z",
+    );
+  });
+
   it("レート制限で止まっても、それまでに取れた分と、どこまで読んだかを返す（レビュー指摘）", async () => {
     const stamp = (n: number) =>
       new Date(Date.UTC(2026, 0, 1) + n * 1000).toISOString().replace(".000", "");
