@@ -121,7 +121,10 @@ const ja = {
       `最終レビュー：${passed ? "合格" : `不合格（${failures}件）`}（${tail}）`,
     prPublished: (number: number | undefined, branch: string, commit: string) =>
       `PRを作成・更新（#${number}・${branch}・${commit}）`,
-    branchPushed: (branch: string, commit: string) => `ブランチにプッシュ（${branch}・${commit}）`,
+    branchPushed: (branch: string, commit: string) =>
+      `PRは作らない設定のため、ブランチまで（${branch}・${commit}）`,
+    BranchPushed: (branch: string, commit: string) =>
+      `sacty のブランチにプッシュ（${branch}・${commit}）`,
     GuardianMissed:
       "最終レビューで合格にした成果物が差し戻されたため、ゴールガーディアンの見逃しとして記録",
     FinalReviewFailed: (message: string, cost: string) => `${message}（${cost}）`,
@@ -249,7 +252,8 @@ const en: LabelMessages = {
       `Final review: ${passed ? "passed" : `failed (${failures})`} (${tail})`,
     prPublished: (number, branch, commit) =>
       `PR opened or updated (#${number} · ${branch} · ${commit})`,
-    branchPushed: (branch, commit) => `Pushed to branch (${branch} · ${commit})`,
+    branchPushed: (branch, commit) => `No PR configured; branch only (${branch} · ${commit})`,
+    BranchPushed: (branch, commit) => `Pushed to sacty branch (${branch} · ${commit})`,
     GuardianMissed:
       "A deliverable that passed the final review was sent back; recorded as a Goal Guardian miss",
     FinalReviewFailed: (message, cost) => `${message} (${cost})`,

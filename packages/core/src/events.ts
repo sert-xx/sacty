@@ -349,7 +349,18 @@ const PullRequestPublished = z.object({
     /** PRを作らない設定（ブランチのプッシュまで）なら無い。 */
     url: z.string().optional(),
     number: z.number().int().positive().optional(),
+    /** PRを作ったリポジトリ（owner/name）。PRの番号はリポジトリの中でしか一意でないため記録する。 */
+    repo: z.string().optional(),
   }),
+});
+
+/**
+ * sacty のブランチにプッシュした（PRの作成の前に記録する。PRの作成に失敗しても、
+ * プッシュ済みのブランチを中止で片付けられるように）。
+ */
+const BranchPushed = z.object({
+  type: z.literal("BranchPushed"),
+  payload: z.object({ branch: z.string().min(1), commit: z.string().min(1) }),
 });
 
 /**
@@ -459,6 +470,7 @@ export const EventInput = z.discriminatedUnion("type", [
   FinalReviewed,
   FinalReviewFailed,
   PullRequestPublished,
+  BranchPushed,
   GuardianMissed,
   TaskCancelled,
   ChangesRequested,

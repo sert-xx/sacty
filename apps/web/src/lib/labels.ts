@@ -156,6 +156,8 @@ export function describeEvent(event: LedgerEvent, l: LabelMessages): string {
             event.payload.commit.slice(0, 7),
           )
         : e.branchPushed(event.payload.branch, event.payload.commit.slice(0, 7));
+    case "BranchPushed":
+      return e.BranchPushed(event.payload.branch, event.payload.commit.slice(0, 7));
     case "GuardianMissed":
       return e.GuardianMissed;
     case "FinalReviewFailed":

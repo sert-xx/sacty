@@ -140,6 +140,8 @@ export type Task = {
   lastReview?: FinalReview;
   /** 中止したときの後片付けの結果。 */
   cancelled?: { at: string } & PayloadOf<"TaskCancelled">;
+  /** sacty がプッシュしたブランチ（PRの作成の前に記録する）。 */
+  pushedBranch?: PayloadOf<"BranchPushed">;
   /** sacty が作ったPR（またはブランチ）。 */
   pullRequest?: PayloadOf<"PullRequestPublished">;
   /** ゴールガーディアンの見逃し（最終レビューで合格にした成果物を、人間が差し戻した）。 */
@@ -523,6 +525,12 @@ export function applyEvent(
       }
       task.pullRequest = event.payload;
       task.status = "idle";
+      break;
+
+    case "BranchPushed":
+      if (activeStep(task) !== "pr")
+        throw new LedgerIntegrityError(event, "the pr step is not active");
+      task.pushedBranch = event.payload;
       break;
 
     case "GuardianMissed":

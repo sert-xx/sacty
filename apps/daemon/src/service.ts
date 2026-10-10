@@ -14,7 +14,7 @@ import {
   computeCostUsd,
   DEFAULT_BUDGET_USD,
   DecideChangeInput,
-  type EventInput,
+  EventInput,
   excludedRepositories,
   formatUsd,
   GATED_STEPS,
@@ -40,6 +40,7 @@ import {
   type TaskProposal,
   exportProject as toProjectExport,
 } from "@sacty/core";
+import { ZodError } from "zod";
 import type { AgentExecutor } from "./agents/docker.js";
 import { type AgentRole, buildInvocation } from "./agents/invocation.js";
 import type { AgentOutcome } from "./agents/parse.js";
@@ -287,6 +288,28 @@ export class TaskService {
     task: Pick<Task, "id" | "projectId">,
     events: { actor: Actor; event: EventInput }[],
   ) {
+    // 台帳に書く前に、状態の復元で受け付けられるかを確かめる（受け付けられないイベントを
+    // 書いてしまうと、以降は台帳から状態を復元できず、デーモンが起動できなくなるため）
+    let preview: Map<string, Task> = this.tasks;
+    const at = new Date().toISOString();
+    for (const [i, item] of events.entries()) {
+      try {
+        preview = applyEvent(preview, {
+          ...EventInput.parse(item.event),
+          seq: Number.MAX_SAFE_INTEGER - events.length + i,
+          id: `preview-${i}`,
+          taskId: task.id,
+          projectId: task.projectId,
+          at,
+          actor: item.actor,
+        });
+      } catch (error) {
+        if (error instanceof ZodError) throw error;
+        throw new InvalidOperationError(
+          "このタスクの状態では、その操作はできません。画面を更新してください。",
+        );
+      }
+    }
     const written = this.deps.ledger.append({
       taskId: task.id,
       projectId: task.projectId,
@@ -722,6 +745,8 @@ export class TaskService {
     if (current.verification === "pending") {
       const mapped = new Set(current.testMap.map((m) => m.viewpointId));
       const unmappedViewpoints = viewpointIds.filter((id) => !mapped.has(id));
+      // 人間が止めたなら、テストのコンテナを起動しない（再開するとテストからやり直す）
+      if (this.pauseRequested.has(task.id)) return;
       const testRunId = randomUUID();
       this.track(testRunId);
       const result = await this.deps.tests.run({
@@ -882,6 +907,12 @@ export class TaskService {
         // （PR作成の工程は最終レビューに通った後なので、通常は最終レビューの日時になる）
         date: task.lastReview?.at ?? task.createdAt,
       });
+      // PRの作成の前に、プッシュしたブランチを記録する（PRの作成に失敗しても、中止で片付けられるように）
+      if (task.pushedBranch?.commit !== commit || task.pushedBranch.branch !== branch) {
+        this.append(task, [
+          { actor: "sacty", event: { type: "BranchPushed", payload: { branch, commit } } },
+        ]);
+      }
       let pr: { url: string; number: number } | undefined;
       if (repo.pullRequest) {
         const token = await this.deps.secrets.get(repo.pullRequest.tokenSecret);
@@ -901,7 +932,13 @@ export class TaskService {
           actor: "sacty",
           event: {
             type: "PullRequestPublished",
-            payload: { branch, commit, ...(pr ? { url: pr.url, number: pr.number } : {}) },
+            payload: {
+              branch,
+              commit,
+              ...(pr && repo.pullRequest
+                ? { url: pr.url, number: pr.number, repo: repo.pullRequest.repo }
+                : {}),
+            },
           },
         },
         ...this.submitEvents(task, "pr"),
@@ -990,7 +1027,11 @@ export class TaskService {
       },
       // sacty はエージェントのセッションを保存しない（実行ごとに空の設定で起動する）
       { target: "session", present: false },
-      { target: "branch", present: Boolean(task.pullRequest), detail: task.pullRequest?.branch },
+      {
+        target: "branch",
+        present: Boolean(task.pushedBranch ?? task.pullRequest),
+        detail: (task.pushedBranch ?? task.pullRequest)?.branch,
+      },
       {
         target: "pull_request",
         present: Boolean(task.pullRequest?.number),
@@ -1032,16 +1073,22 @@ export class TaskService {
       const latest = this.mustGet(id);
       const config = this.deps.config();
       const pr = latest.pullRequest;
-      // PR：sacty が作ったものだけを閉じる（マージはしない）
+      // PR：sacty が作ったものだけを閉じる（マージはしない）。番号はリポジトリの中でしか一意でないので、
+      // 作ったときに記録したリポジトリに対してだけ閉じる（いまの設定のリポジトリは使わない）
       if (pr?.number) {
         const target = config.ok ? this.targetRepository(latest, config.config) : undefined;
-        const settings = target?.ok ? target.repo.pullRequest : undefined;
+        const tokenSecret =
+          (target?.ok ? target.repo.pullRequest?.tokenSecret : undefined) ??
+          (config.ok ? config.config.github?.tokenSecret : undefined);
         const usedSecrets: string[] = [];
         try {
-          if (!settings) throw new Error("PRの作成先の設定が無いため、閉じられません。");
-          const token = await this.deps.secrets.get(settings.tokenSecret);
+          if (!pr.repo) {
+            throw new Error("PRを作ったリポジトリの記録が無いため、閉じませんでした。");
+          }
+          if (!tokenSecret) throw new Error("GitHub のトークンの設定が無いため、閉じられません。");
+          const token = await this.deps.secrets.get(tokenSecret);
           usedSecrets.push(token);
-          await this.deps.pulls.close({ repo: settings.repo, token, number: pr.number });
+          await this.deps.pulls.close({ repo: pr.repo, token, number: pr.number });
           cleanup.push({ target: "pull_request", result: "done", detail: pr.url });
         } catch (error) {
           cleanup.push({
@@ -1055,11 +1102,13 @@ export class TaskService {
       }
       // ブランチ：sacty のブランチだけを消す
       const gitDir = this.trustedGitDir(latest);
-      if (pr?.branch) {
+      // PRの作成に失敗していても、プッシュ済みのブランチは記録してある
+      const branch = (latest.pushedBranch ?? pr)?.branch;
+      if (branch) {
         try {
           if (!existsSync(gitDir)) throw new Error("作業領域が無いため、ブランチを消せません。");
-          await this.deps.repos.deleteBranch(gitDir, pr.branch);
-          cleanup.push({ target: "branch", result: "done", detail: pr.branch });
+          await this.deps.repos.deleteBranch(gitDir, branch);
+          cleanup.push({ target: "branch", result: "done", detail: branch });
         } catch (error) {
           cleanup.push({
             target: "branch",
@@ -1114,6 +1163,18 @@ export class TaskService {
         run.role,
       );
       mkdirSync(run.workspaceDir, { recursive: true });
+      // 準備の間（clone や秘密情報の取り出し）に人間が止めたなら、コンテナを起動しない
+      if (this.runningTask && this.pauseRequested.has(this.runningTask)) {
+        return {
+          outcome: {
+            kind: "failed",
+            reason: "error",
+            message: "人間が止めたため、実行しませんでした。",
+          },
+          costUsd: 0,
+          estimated: false,
+        };
+      }
       this.track(run.runId);
       outcome = await this.deps.executor.run({
         runId: run.runId,
@@ -1463,6 +1524,7 @@ export class TaskService {
   voidRemark(id: string, remarkId: string): Task {
     const task = this.tasks.get(id);
     if (!task) throw new InvalidOperationError("タスクが見つかりません。");
+    if (task.status === "cancelled") throw new InvalidOperationError("中止したタスクです。");
     const remark = task.remarks.find((r) => r.id === remarkId);
     if (!remark) throw new InvalidOperationError("指摘が見つかりません。");
     if (remark.voided) return task;

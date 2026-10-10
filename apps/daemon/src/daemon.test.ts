@@ -70,8 +70,13 @@ class FakeRepos implements RepositoryWorkspace {
   diffText = "diff --git a/src/pay.ts b/src/pay.ts\n+export const pay = () => 1;";
   fail?: string;
   diffFail?: string;
+  /** これが設定されていれば、clone を解決するまで待つ（準備中の一時停止のテスト用）。 */
+  prepareGate?: Promise<void>;
+  prepareStarted = Promise.withResolvers<void>();
   async prepare(dir: string, gitDir: string, url: string, baseBranch: string) {
     if (this.fail) throw new Error(this.fail);
+    this.prepareStarted.resolve();
+    if (this.prepareGate) await this.prepareGate;
     mkdirSync(dir, { recursive: true });
     mkdirSync(gitDir, { recursive: true });
     this.prepared.push({ dir, gitDir, url, baseBranch });
@@ -1541,10 +1546,11 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     expect(task?.gate?.step).toBe("pr");
     expect(task?.lastReview).toMatchObject({ passed: true, summary: "所見" });
     expect(task?.lastTests).toMatchObject({ passed: true, exitCode: 0, durationMs: 1200 });
-    expect(types(service, id).slice(-5)).toEqual([
+    expect(types(service, id).slice(-6)).toEqual([
       "AgentRunCompleted",
       "TestsRun",
       "FinalReviewed",
+      "BranchPushed",
       "PullRequestPublished",
       "StepSubmitted",
     ]);
@@ -1833,7 +1839,11 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       url: "https://github.com/acme/app/pull/7",
       number: 7,
     });
-    expect(types(service, id).slice(-2)).toEqual(["PullRequestPublished", "StepSubmitted"]);
+    expect(types(service, id).slice(-3)).toEqual([
+      "BranchPushed",
+      "PullRequestPublished",
+      "StepSubmitted",
+    ]);
     // トークンは台帳に残さない
     expect(JSON.stringify(service.get(id)?.ledger)).not.toContain("ghp_secret");
 
@@ -2056,6 +2066,104 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     expect(results.pull_request?.detail).not.toContain("ghp_secret");
     expect(results.branch?.result).toBe("done");
     expect(results.workspace?.result).toBe("done");
+    ledger.close();
+  });
+
+  it("中止したタスクへの操作は拒否し、台帳に書かない（再起動できる。レビュー指摘）", async () => {
+    const { ledger, service, id } = await toDeliverableGate();
+    service.requestChanges(id, { step: "pr", submission: 1, comments: ["直して"] });
+    await service.cancel(id);
+    const before = service.get(id)?.ledger.length;
+    expect(() => service.voidRemark(id, "implement-1-1")).toThrow(/中止したタスク/);
+    expect(service.get(id)?.ledger.length).toBe(before);
+    // 再起動しても台帳から状態を復元できる
+    const { service: restarted } = makeService(ledger);
+    expect(restarted.get(id)?.task.status).toBe("cancelled");
+    ledger.close();
+  });
+
+  it("状態の復元で受け付けられないイベントは、台帳に書く前に拒否する（レビュー指摘）", async () => {
+    const { ledger, service, id } = await toImplement([]);
+    const before = service.get(id)?.ledger.length;
+    // 内部の操作の誤りで、受け付けられないイベントを書こうとした場合も台帳を汚さない
+    const append = (
+      service as unknown as {
+        append: (task: { id: string; projectId: string }, events: unknown[]) => unknown;
+      }
+    ).append.bind(service);
+    expect(() =>
+      append({ id, projectId: "default" }, [
+        {
+          actor: "sacty",
+          event: {
+            type: "TestsRun",
+            payload: {
+              command: "x",
+              exitCode: 0,
+              unmappedViewpoints: [],
+              passed: true,
+              output: "",
+              durationMs: 1,
+            },
+          },
+        },
+      ]),
+    ).toThrow(/その操作はできません/);
+    expect(service.get(id)?.ledger.length).toBe(before);
+    ledger.close();
+  });
+
+  it("中止で閉じるPRは、作ったときに記録したリポジトリのものだけ（レビュー指摘）", async () => {
+    let prRepo = "acme/app";
+    const config = (): ConfigResult => {
+      const base = configOf(agent())();
+      if (!base.ok || !base.config.repository) throw new Error("unreachable");
+      return {
+        ok: true,
+        config: {
+          ...base.config,
+          repository: {
+            ...base.config.repository,
+            pullRequest: { provider: "github", repo: prRepo, tokenSecret: "github-token" },
+          },
+        },
+      };
+    };
+    const pulls = new FakePulls();
+    const { ledger, service, id } = await toDeliverableGate([], { pulls, config });
+    expect(service.get(id)?.task.pullRequest?.repo).toBe("acme/app");
+    prRepo = "acme/other"; // 設定を変えてから中止した
+    await service.cancel(id);
+    expect(pulls.closed).toEqual([{ repo: "acme/app", token: "ghp_secret", number: 7 }]);
+    ledger.close();
+  });
+
+  it("準備の間に一時停止したら、新しいコンテナを起動しない（レビュー指摘）", async () => {
+    const repos = new FakeRepos();
+    const gate = Promise.withResolvers<void>();
+    repos.prepareGate = gate.promise;
+    const { ledger, service, executor, id } = await toImplement([implement("# v1")], { repos });
+    const callsBefore = executor.calls.length;
+    const running = service.runNext(id);
+    await repos.prepareStarted.promise;
+    const pausing = service.pause(id);
+    gate.resolve();
+    await Promise.all([running, pausing]);
+    expect(executor.calls.length).toBe(callsBefore); // 実装のコンテナは起動していない
+    expect(service.get(id)?.task).toMatchObject({ status: "paused", pausedReason: "manual" });
+    ledger.close();
+  });
+
+  it("PRの作成に失敗しても、プッシュ済みのブランチは中止で消す（レビュー指摘）", async () => {
+    const pulls = new FakePulls();
+    pulls.fail = "PRを作れませんでした：GitHub API 422";
+    const repos = new FakeRepos();
+    const { ledger, service, id } = await toDeliverableGate([], { pulls, repos });
+    expect(service.get(id)?.task.pullRequest).toBeUndefined();
+    expect(service.get(id)?.task.pushedBranch?.branch).toBe(`sacty/task-${id.slice(0, 8)}`);
+    expect(service.cleanupPlan(id)?.find((p) => p.target === "branch")?.present).toBe(true);
+    await service.cancel(id);
+    expect(repos.deleted).toEqual([`sacty/task-${id.slice(0, 8)}`]);
     ledger.close();
   });
 
