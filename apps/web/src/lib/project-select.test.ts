@@ -31,6 +31,9 @@ describe("表示するプロジェクトの切り替え（PBI-4a）", () => {
       "/\t/evil.example/", // タブはブラウザが取り除くので「//evil.example/」になる
       "/\n/evil.example/",
       "/\r/evil.example/",
+      "/a/..//evil.example/", // 正規化すると「//evil.example/」になる（レビュー指摘）
+      "/%2e//evil.example/",
+      "/./..//evil.example/x?y#z",
       "tasks",
       "",
     ]) {

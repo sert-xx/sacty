@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
 import { type CreateTicketState, createTicketAction } from "@/app/actions";
 import { Button } from "@/components/ui/button";
 import {
@@ -31,17 +31,25 @@ export function NewTicketDialog({
   projectName: string;
 }) {
   const [state, formAction, pending] = useActionState(createTicketAction, initial);
+  // 作成先は、ダイアログを開いたときのプロジェクトに固定し、閉じるまで変えない
+  // （入力中に画面が自動で更新され、別のタブで切り替えたプロジェクトが props で渡されても、
+  // 書いている途中のチケットの作成先は変えないため）
+  const [target, setTarget] = useState({ id: projectId, name: projectName });
 
   return (
-    <Dialog>
+    <Dialog
+      onOpenChange={(open) => {
+        if (open) setTarget({ id: projectId, name: projectName });
+      }}
+    >
       <DialogTrigger render={<Button size="lg" />}>チケットを作成</DialogTrigger>
       <DialogContent className="sm:max-w-lg">
         <form action={formAction} className="flex flex-col gap-4">
-          <input type="hidden" name="projectId" value={projectId} />
+          <input type="hidden" name="projectId" value={target.id} />
           <DialogHeader>
             <DialogTitle>チケットを作成</DialogTitle>
             <DialogDescription>
-              プロジェクト「{projectName}
+              プロジェクト「{target.name}
               」に作成します。作成すると、工程（要求要件 → 設計 → 実装 →
               PR作成）が決まり、台帳に記録されます。
             </DialogDescription>

@@ -31,5 +31,13 @@ export function safeLocalPath(path: string): string | undefined {
     return undefined;
   }
   if (url.origin !== BASE) return undefined;
-  return `${url.pathname}${url.search}${url.hash}`;
+  const normalized = `${url.pathname}${url.search}${url.hash}`;
+  // 正規化したパスも、ブラウザがもう一度解釈して同じ画面の中・同じパスになることを確かめる
+  // （「/a/..//evil.example/」は正規化すると「//evil.example/」になり、外部へ解決されるため）
+  if (normalized.startsWith("//")) return undefined;
+  const again = new URL(normalized, BASE);
+  if (again.origin !== BASE || `${again.pathname}${again.search}${again.hash}` !== normalized) {
+    return undefined;
+  }
+  return normalized;
 }
