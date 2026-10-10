@@ -55,15 +55,20 @@ export async function getTask(id: string): Promise<{ task: Task; ledger: LedgerE
   return (await res.json()) as { task: Task; ledger: LedgerEvent[] };
 }
 
-export async function createTicket(input: CreateTicketInput): Promise<Task> {
-  const res = await ensureOk(
-    await daemonFetch("/api/tickets", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(input),
-    }),
-  );
-  return ((await res.json()) as { task: Task }).task;
+/** チケットを作る。作成先のプロジェクトが無いなどは、画面に出せる理由を返す。 */
+export async function createTicket(
+  input: CreateTicketInput,
+): Promise<{ ok: true; task: Task } | { ok: false; message: string }> {
+  const res = await daemonFetch("/api/tickets", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (res.status === 409) {
+    return { ok: false, message: ((await res.json()) as { message: string }).message };
+  }
+  await ensureOk(res);
+  return { ok: true, task: ((await res.json()) as { task: Task }).task };
 }
 
 export type IntakeStatus = {

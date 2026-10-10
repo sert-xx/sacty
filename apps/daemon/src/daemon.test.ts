@@ -1950,6 +1950,16 @@ describe("プロジェクトと GitHub Issue の取り込み（PBI-5a）", () =>
     ledger.close();
   });
 
+  it("画面のチケットは、指定したプロジェクトに作る（無いプロジェクトは拒否する。PBI-4a）", () => {
+    const { ledger, service, pay } = setup();
+    expect(service.createTicket({ title: "A", projectId: pay.id }).projectId).toBe(pay.id);
+    expect(service.createTicket({ title: "B" }).projectId).toBe("default");
+    expect(() => service.createTicket({ title: "C", projectId: "no-such" })).toThrow(
+      /プロジェクトが見つかりません/,
+    );
+    ledger.close();
+  });
+
   it("Org の設定画面に、ほかのプロジェクトが担当している除外リポジトリを出す", () => {
     const { ledger, service, pay } = setup();
     expect(service.getProject(pay.id)?.exclusions).toEqual([

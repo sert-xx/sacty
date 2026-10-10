@@ -111,6 +111,7 @@
 }
 
 .dark {
+  color-scheme: dark;
   --background: #0f1115;
   --foreground: #e8eaf0;
   --chrome: #171a21;

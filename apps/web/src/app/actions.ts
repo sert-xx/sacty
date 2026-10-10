@@ -36,15 +36,22 @@ export async function createTicketAction(
     return { fieldErrors: z.flattenError(parsed.error).fieldErrors, values };
   }
 
-  let taskId: string;
+  // 作成先は、フォームを表示したときのプロジェクト（送信時の cookie ではない）。存在はデーモンが検査する
+  const projectId = String(formData.get("projectId") ?? "");
+  if (!projectId) {
+    return { message: "作成先のプロジェクトが分かりません。画面を更新してください。", values };
+  }
+  let result: Awaited<ReturnType<typeof createTicket>>;
   try {
-    taskId = (await createTicket(parsed.data)).id;
+    result = await createTicket({ ...parsed.data, projectId });
   } catch {
     return {
       message: "チケットを作成できませんでした。sactyのデーモンが動いているか確認してください。",
       values,
     };
   }
+  if (!result.ok) return { message: result.message, values };
+  const taskId = result.task.id;
   redirect(`/tasks/${taskId}`);
 }
 
