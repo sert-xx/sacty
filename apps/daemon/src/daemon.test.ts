@@ -74,6 +74,12 @@ function makeService(
   return { service, executor };
 }
 
+/** 画面が表示している（いま承認待ちの）提出回。 */
+const current = (svc: TaskService, id: string) => {
+  const t = svc.get(id)?.task;
+  return t?.gate?.submission ?? t?.submissions.requirements ?? 1;
+};
+
 describe("台帳", () => {
   it("UPDATEとDELETEを拒否する", () => {
     const ledger = new SqliteLedgerStore(dbPath);
@@ -107,7 +113,7 @@ describe("工程の実行と費用", () => {
 
     await service.runNext(task.id);
     const { task: after, ledger: events } = service.get(task.id) ?? {};
-    expect(after?.status).toBe("idle");
+    expect(after?.status).toBe("awaiting_approval");
     expect(after?.budget.usedUsd).toBe(0.3);
     expect(after?.budget.estimated).toBe(true);
     expect(after?.outputs.requirements).toBe("# 要求要件");
@@ -116,24 +122,32 @@ describe("工程の実行と費用", () => {
       "StepsChosen",
       "AgentRunStarted",
       "AgentRunCompleted",
+      "StepSubmitted",
     ]);
     // 指示にチケットの内容が入っている
     expect(executor.calls[0]?.command.join(" ")).toContain("冪等性");
     ledger.close();
   });
 
-  it("予算の80%で通知し、上限で一時停止する", async () => {
+  it("予算の80%で通知し、上限を超えたら次の実行の前に一時停止する", async () => {
     const ledger = new SqliteLedgerStore(dbPath);
-    const { service } = makeService(ledger, [completed(55_000), completed(70_000)]);
+    const { service, executor } = makeService(ledger, [completed(55_000), completed(70_000)]);
     const warned = service.createTicket({ title: "A" });
     const capped = service.createTicket({ title: "B" });
 
     await service.runNext(warned.id); // $0.825
     expect(service.get(warned.id)?.task.budget.warned).toBe(true);
-    expect(service.get(warned.id)?.task.status).toBe("idle");
     expect(service.get(warned.id)?.ledger.at(-1)?.type).toBe("BudgetWarned");
 
-    await service.runNext(capped.id); // $1.05
+    await service.runNext(capped.id); // $1.05 → 承認待ちで止まる（人間の判断待ちなので、ここでは止めない）
+    expect(service.get(capped.id)?.task.status).toBe("awaiting_approval");
+    service.requestChanges(capped.id, {
+      step: "requirements",
+      submission: current(service, capped.id),
+      comments: ["直して"],
+    });
+    await service.runNext(capped.id); // 実行前の判定で予算超過 → 実行しない
+    expect(executor.calls).toHaveLength(2);
     expect(service.get(capped.id)?.task.status).toBe("paused");
     expect(service.get(capped.id)?.task.pausedReason).toBe("budget");
     ledger.close();
@@ -144,11 +158,17 @@ describe("工程の実行と費用", () => {
     const { service } = makeService(ledger, [completed(70_000)]);
     const task = service.createTicket({ title: "A" });
     await service.runNext(task.id);
+    service.requestChanges(task.id, {
+      step: "requirements",
+      submission: current(service, task.id),
+      comments: ["直して"],
+    });
+    await service.runNext(task.id); // 予算超過で止まる
 
     expect(() => service.resume(task.id, {})).toThrow(/新しい上限が必要/);
     expect(() => service.resume(task.id, { capUsd: 1.05 })).toThrow(/より大きい金額/);
     const resumed = service.resume(task.id, { capUsd: 3 });
-    expect(resumed.status).toBe("idle");
+    expect(resumed.status).toBe("queued"); // まだ実行していないので、実行し直す
     expect(resumed.budget.capUsd).toBe(3);
     expect(() => service.resume(task.id, { capUsd: 5 })).toThrow(
       /一時停止中のタスクではありません/,
@@ -176,7 +196,7 @@ describe("工程の実行と費用", () => {
     expect(service.resume(task.id, { capUsd: 3 }).status).toBe("queued");
     await service.runNext(task.id);
     expect(executor.calls).toHaveLength(2);
-    expect(service.get(task.id)?.task.status).toBe("idle");
+    expect(service.get(task.id)?.task.status).toBe("awaiting_approval");
     ledger.close();
   });
 
@@ -194,7 +214,7 @@ describe("工程の実行と費用", () => {
 
     expect(service.resume(task.id, {}).status).toBe("queued");
     await service.runNext(task.id);
-    expect(service.get(task.id)?.task.status).toBe("idle");
+    expect(service.get(task.id)?.task.status).toBe("awaiting_approval");
     expect(executor.calls).toHaveLength(2);
     ledger.close();
   });
@@ -309,7 +329,7 @@ describe("秘密情報と予算の通知（レビュー指摘）", () => {
     ledger.close();
   });
 
-  it("1回の実行で上限を超えた場合も、通知を記録してから止める", async () => {
+  it("1回の実行で80%未満から上限を超えた場合も、通知を記録する", async () => {
     const ledger = new SqliteLedgerStore(dbPath);
     const { service } = makeService(ledger, [completed(70_000)]); // $1.05
     const task = service.createTicket({ title: "A" });
@@ -319,7 +339,7 @@ describe("秘密情報と予算の通知（レビュー指摘）", () => {
         .get(task.id)
         ?.ledger.map((e) => e.type)
         .slice(-3),
-    ).toEqual(["AgentRunCompleted", "BudgetWarned", "TaskPaused"]);
+    ).toEqual(["AgentRunCompleted", "StepSubmitted", "BudgetWarned"]);
     ledger.close();
   });
 
@@ -342,7 +362,7 @@ describe("秘密情報と予算の通知（レビュー指摘）", () => {
     service.resume(task.id, {});
     await worker.tick();
     expect(executor.calls).toHaveLength(2);
-    expect(service.get(task.id)?.task.status).toBe("idle");
+    expect(service.get(task.id)?.task.status).toBe("awaiting_approval");
     ledger.close();
   });
 
@@ -370,6 +390,224 @@ describe("秘密情報と予算の通知（レビュー指摘）", () => {
     finish({ kind: "failed", reason: "error", message: "中断" });
     await draining;
     expect(service.get(task.id)?.task.status).toBe("paused");
+    ledger.close();
+  });
+});
+
+describe("承認ゲート（PBI-7）", () => {
+  const draft = (text: string, responses?: { remarkId: string; text: string }[]): AgentOutcome => ({
+    kind: "completed",
+    output: responses
+      ? `${text}\n\n\`\`\`json\n${JSON.stringify({ "sacty-responses": responses })}\n\`\`\``
+      : text,
+    usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 100 },
+  });
+
+  it("要求要件を作ると承認待ちで止まり、承認すると設計が実行対象になって待機する", async () => {
+    const ledger = new SqliteLedgerStore(dbPath);
+    const { service } = makeService(ledger, [draft("# 要求要件 v1")]);
+    const task = service.createTicket({ title: "A" });
+    await service.runNext(task.id);
+    const waiting = service.get(task.id)?.task;
+    expect(waiting?.status).toBe("awaiting_approval");
+    expect(waiting?.gate).toEqual({ step: "requirements", submission: 1 });
+    expect(service.queuedTaskIds()).toEqual([]);
+
+    const approved = service.approve(task.id, {
+      step: "requirements",
+      submission: current(service, task.id),
+    });
+    expect(approved.status).toBe("idle"); // 設計の工程はPBI-8で実装
+    expect(approved.steps.map((s) => [s.key, s.state]).slice(0, 2)).toEqual([
+      ["requirements", "done"],
+      ["design", "active"],
+    ]);
+    expect(() =>
+      service.approve(task.id, { step: "requirements", submission: current(service, task.id) }),
+    ).toThrow(/承認待ちのタスクではありません/);
+    ledger.close();
+  });
+
+  it("差し戻すと指摘を累積し、前回の下書きと有効な指摘の全件を渡して実行し直す", async () => {
+    const ledger = new SqliteLedgerStore(dbPath);
+    const { service, executor } = makeService(ledger, [
+      draft("# v1"),
+      draft("# v2", [{ remarkId: "requirements-1-1", text: "受け入れ条件を追加した" }]),
+      draft("# v3", [
+        { remarkId: "requirements-2-1", text: "対象外を明記した" },
+        { remarkId: "unknown-id", text: "無視される" },
+      ]),
+    ]);
+    const task = service.createTicket({ title: "A" });
+    await service.runNext(task.id);
+
+    expect(() =>
+      service.requestChanges(task.id, {
+        step: "requirements",
+        submission: current(service, task.id),
+        comments: ["  ", ""],
+      }),
+    ).toThrow(/1件以上/);
+    service.requestChanges(task.id, {
+      step: "requirements",
+      submission: current(service, task.id),
+      comments: ["受け入れ条件が足りない"],
+    });
+    expect(service.get(task.id)?.task.status).toBe("queued");
+    await service.runNext(task.id);
+
+    const second = service.get(task.id)?.task;
+    expect(second?.gate?.submission).toBe(2);
+    expect(second?.outputs.requirements).toBe("# v2"); // 対応のJSONは本文から除く
+    expect(second?.remarks[0]?.response).toBe("受け入れ条件を追加した");
+    expect(executor.calls[1]?.command.join(" ")).toContain("# v1");
+    expect(executor.calls[1]?.command.join(" ")).toContain(
+      "[requirements-1-1] 受け入れ条件が足りない",
+    );
+
+    service.requestChanges(task.id, {
+      step: "requirements",
+      submission: current(service, task.id),
+      comments: ["対象外が曖昧"],
+    });
+    service.voidRemark(task.id, "requirements-1-1"); // 前提が変わった
+    await service.runNext(task.id);
+    const prompt = executor.calls[2]?.command.join(" ") ?? "";
+    expect(prompt).toContain("requirements-2-1");
+    expect(prompt).not.toContain("requirements-1-1"); // 無効にした指摘は渡さない
+    const third = service.get(task.id)?.task;
+    expect(third?.remarks.find((r) => r.id === "requirements-1-1")?.voided).toBe(true);
+    expect(third?.remarks.find((r) => r.id === "requirements-2-1")?.response).toBe(
+      "対象外を明記した",
+    );
+    ledger.close();
+  });
+
+  it("表示していた提出回が最新でなければ、承認も差し戻しも拒否する（レビュー指摘）", async () => {
+    const ledger = new SqliteLedgerStore(dbPath);
+    const { service } = makeService(ledger, [draft("# v1"), draft("# v2")]);
+    const task = service.createTicket({ title: "A" });
+    await service.runNext(task.id);
+    // タブAは1回目を表示したまま、タブBで差し戻して2回目が提出された
+    service.requestChanges(task.id, { step: "requirements", submission: 1, comments: ["直して"] });
+    await service.runNext(task.id);
+
+    expect(() => service.approve(task.id, { step: "requirements", submission: 1 })).toThrow(
+      /最新ではありません/,
+    );
+    expect(() =>
+      service.requestChanges(task.id, { step: "requirements", submission: 1, comments: ["x"] }),
+    ).toThrow(/最新ではありません/);
+    expect(service.get(task.id)?.task.steps[0]?.state).toBe("active"); // 承認されていない
+    expect(service.approve(task.id, { step: "requirements", submission: 2 }).status).toBe("idle");
+    ledger.close();
+  });
+
+  it("今回の提出で回答のない指摘は、前回の対応文を残さず未回答にする（レビュー指摘）", async () => {
+    const ledger = new SqliteLedgerStore(dbPath);
+    const { service } = makeService(ledger, [
+      draft("# v1"),
+      draft("# v2", [{ remarkId: "requirements-1-1", text: "v2で対応しました" }]),
+      draft("# v3", [{ remarkId: "requirements-2-1", text: "Bに対応" }]),
+    ]);
+    const task = service.createTicket({ title: "A" });
+    await service.runNext(task.id);
+    service.requestChanges(task.id, { step: "requirements", submission: 1, comments: ["A"] });
+    await service.runNext(task.id);
+    expect(service.get(task.id)?.task.remarks[0]).toMatchObject({
+      response: "v2で対応しました",
+      respondedIn: 2,
+    });
+
+    service.requestChanges(task.id, { step: "requirements", submission: 2, comments: ["B"] });
+    await service.runNext(task.id);
+    const remarks = service.get(task.id)?.task.remarks;
+    expect(remarks?.find((r) => r.id === "requirements-1-1")).toMatchObject({
+      response: undefined,
+      respondedIn: undefined,
+    });
+    expect(remarks?.find((r) => r.id === "requirements-2-1")).toMatchObject({
+      response: "Bに対応",
+      respondedIn: 3,
+    });
+    ledger.close();
+  });
+
+  it("差し戻しが上限（3回）を超えるとエスカレーションになり、続けるか承認するかを選べる", async () => {
+    const ledger = new SqliteLedgerStore(dbPath);
+    const { service } = makeService(
+      ledger,
+      Array.from({ length: 5 }, (_, i) => draft(`# v${i + 1}`)),
+    );
+    const task = service.createTicket({ title: "A" });
+    await service.runNext(task.id);
+    for (let i = 1; i <= 3; i++) {
+      service.requestChanges(task.id, {
+        step: "requirements",
+        submission: current(service, task.id),
+        comments: [`指摘${i}`],
+      });
+      await service.runNext(task.id);
+    }
+    const escalated = service.requestChanges(task.id, {
+      step: "requirements",
+      submission: current(service, task.id),
+      comments: ["指摘4"],
+    });
+    expect(escalated.status).toBe("escalated");
+    expect(escalated.escalation?.pendingRemarks.map((r) => r.text)).toEqual(["指摘4"]);
+
+    expect(() =>
+      service.requestChanges(task.id, {
+        step: "requirements",
+        submission: current(service, task.id),
+        comments: [],
+      }),
+    ).toThrow(/上限（3回）/);
+    const continued = service.requestChanges(task.id, {
+      step: "requirements",
+      submission: current(service, task.id),
+      comments: [],
+      continueOverLimit: true,
+    });
+    expect(continued.status).toBe("queued");
+    expect(continued.remarks.at(-1)).toMatchObject({ id: "requirements-4-1", text: "指摘4" });
+    const last = service.get(task.id)?.ledger.at(-1);
+    expect(last?.type === "ChangesRequested" && last.payload.overLimit).toBe(true);
+
+    await service.runNext(task.id);
+    service.requestChanges(task.id, {
+      step: "requirements",
+      submission: current(service, task.id),
+      comments: ["指摘5"],
+    });
+    expect(service.get(task.id)?.task.status).toBe("escalated");
+    expect(
+      service.approve(task.id, { step: "requirements", submission: current(service, task.id) })
+        .status,
+    ).toBe("idle");
+    ledger.close();
+  });
+
+  it("承認待ちのあいだは予算超過で止めず、次の実行の前に判定する", async () => {
+    const ledger = new SqliteLedgerStore(dbPath);
+    const { service } = makeService(ledger, [completed(70_000)]); // $1.05
+    const task = service.createTicket({ title: "A" });
+    await service.runNext(task.id);
+    const after = service.get(task.id);
+    expect(after?.task.status).toBe("awaiting_approval");
+    expect(after?.ledger.map((e) => e.type).slice(-3)).toEqual([
+      "AgentRunCompleted",
+      "StepSubmitted",
+      "BudgetWarned",
+    ]);
+    service.requestChanges(task.id, {
+      step: "requirements",
+      submission: current(service, task.id),
+      comments: ["直して"],
+    });
+    await service.runNext(task.id);
+    expect(service.get(task.id)?.task.pausedReason).toBe("budget");
     ledger.close();
   });
 });

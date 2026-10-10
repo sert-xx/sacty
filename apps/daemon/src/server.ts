@@ -64,6 +64,34 @@ export function createApp(service: TaskService, token: string) {
     }
   });
 
+  app.post("/api/tasks/:id/approve", async (c) => {
+    const json = await readJson(c);
+    if (!json.ok) return c.json({ error: "invalid_json" }, 400);
+    try {
+      return c.json({ task: service.approve(c.req.param("id"), json.body) });
+    } catch (error) {
+      return handleError(c, error);
+    }
+  });
+
+  app.post("/api/tasks/:id/request-changes", async (c) => {
+    const json = await readJson(c);
+    if (!json.ok) return c.json({ error: "invalid_json" }, 400);
+    try {
+      return c.json({ task: service.requestChanges(c.req.param("id"), json.body) });
+    } catch (error) {
+      return handleError(c, error);
+    }
+  });
+
+  app.post("/api/tasks/:id/remarks/:remarkId/void", (c) => {
+    try {
+      return c.json({ task: service.voidRemark(c.req.param("id"), c.req.param("remarkId")) });
+    } catch (error) {
+      return handleError(c, error);
+    }
+  });
+
   app.post("/api/tasks/:id/resume", async (c) => {
     const json = await readJson(c);
     if (!json.ok) return c.json({ error: "invalid_json" }, 400);

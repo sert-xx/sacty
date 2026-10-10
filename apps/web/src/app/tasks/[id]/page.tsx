@@ -6,7 +6,7 @@ import { DaemonError } from "@/components/daemon-error";
 import { ResumeForm } from "@/components/resume-form";
 import { CostMeter, StatusLabel, StepChips } from "@/components/task-bits";
 import { DaemonUnavailableError, getTask } from "@/lib/daemon";
-import { describeEvent, formatStamp, START_LABEL } from "@/lib/labels";
+import { describeEvent, formatStamp, START_LABEL, statusText } from "@/lib/labels";
 
 export default function TaskPage({ params }: { params: Promise<{ id: string }> }) {
   return (
@@ -51,6 +51,32 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
         <CostMeter task={task} />
       </div>
 
+      {(task.status === "awaiting_approval" || task.status === "escalated") && (
+        <section
+          aria-labelledby="gate"
+          className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-warn-line bg-warn-soft p-5"
+        >
+          <div className="flex flex-col gap-1">
+            <h2 id="gate" className="text-[15px] font-semibold text-warn">
+              {task.status === "escalated"
+                ? "差し戻しが上限に達しました（エスカレーション）"
+                : statusText(task)}
+            </h2>
+            <p className="text-sm">
+              {task.status === "escalated"
+                ? "このまま承認するか、上限を超えて差し戻すかを判断してください。"
+                : "成果物を確認し、承認するか差し戻してください。"}
+            </p>
+          </div>
+          <Link
+            href={`/tasks/${task.id}/review`}
+            className="inline-flex min-h-11 items-center rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground"
+          >
+            {task.status === "escalated" ? "判断する" : "チェックする"}
+          </Link>
+        </section>
+      )}
+
       {task.status === "paused" && task.pausedReason && (
         <ResumeForm
           taskId={task.id}
@@ -87,7 +113,9 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
             <h2 id="req" className="text-[15px] font-semibold">
               要求要件{" "}
               <span className="text-[13px] font-normal text-muted-foreground">
-                工程エージェントの下書き
+                {task.steps.find((s) => s.key === "requirements")?.state === "done"
+                  ? "人間が承認済み"
+                  : "工程エージェントの下書き"}
               </span>
             </h2>
             {draft ? (
