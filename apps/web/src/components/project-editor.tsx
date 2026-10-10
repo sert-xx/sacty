@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useMessages } from "@/i18n/client";
+import type { GitHubAccounts } from "@/lib/daemon";
 
 const initial: SaveProjectState = {};
 
@@ -19,14 +20,21 @@ const SELECT =
 export function ProjectEditor({
   project,
   exclusions = [],
+  github,
 }: {
   project?: Project;
   exclusions?: Exclusion[];
+  /** gh にログイン済みのアカウント（PBI-13）。分からなければ、その理由。 */
+  github?: GitHubAccounts;
 }) {
   const [state, formAction, pending] = useActionState(saveProjectAction, initial);
   // 前の画面が隠れて残ることがあるので、id は固定にせず画面ごとに作る
   const uid = useId();
-  const { editor: t, scope: scopeLabel } = useMessages().projects;
+  const messages = useMessages();
+  const { editor: t, scope: scopeLabel } = messages.projects;
+  const [githubAccount, setGithubAccount] = useState(project?.githubAccount ?? "");
+  const accounts = github && "accounts" in github ? github.accounts : [];
+  const activeLogin = accounts.find((a) => a.active)?.login;
   const [name, setName] = useState(project?.name ?? "");
   const [sources, setSources] = useState<IssueSource[]>(project?.sources ?? []);
   const [repos, setRepos] = useState<RepositorySettings[]>(project?.repositories ?? []);
@@ -45,6 +53,8 @@ export function ProjectEditor({
           },
         }
       : {}),
+    // GitHub のアカウントは、選ばなければ渡さない（gh のアクティブなアカウントを使う）
+    ...(githubAccount ? { githubAccount } : {}),
   });
 
   const updateSource = (i: number, patch: Partial<IssueSource>) =>
@@ -165,6 +175,42 @@ export function ProjectEditor({
             >
               {t.addSource}
             </Button>
+          </section>
+
+          <section
+            aria-labelledby="github"
+            className="flex flex-col gap-3 rounded-xl border border-border bg-card p-5"
+          >
+            <h2 id="github" className="text-[15px] font-semibold">
+              {t.githubTitle}{" "}
+              <span className="text-[13px] font-normal text-muted-foreground">{t.githubNote}</span>
+            </h2>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor={`${uid}-github`}>{t.githubAccount}</Label>
+              <select
+                id={`${uid}-github`}
+                value={githubAccount}
+                onChange={(e) => setGithubAccount(e.target.value)}
+                className={`${SELECT} max-w-md`}
+              >
+                <option value="">{t.githubActive(activeLogin)}</option>
+                {accounts.map((a) => (
+                  <option key={a.login} value={a.login}>
+                    {a.login}
+                  </option>
+                ))}
+                {/* 選んでいたアカウントが gh からログアウトしていても、そのまま見えるようにする */}
+                {githubAccount && !accounts.some((a) => a.login === githubAccount) && (
+                  <option value={githubAccount}>{t.githubNotLoggedIn(githubAccount)}</option>
+                )}
+              </select>
+            </div>
+            {github && "error" in github && (
+              <p role="alert" className="text-sm text-warn">
+                {messages.labels.text(github.error)}
+              </p>
+            )}
+            <p className="text-xs text-muted-foreground">{t.githubHelp}</p>
           </section>
 
           <section

@@ -4,7 +4,7 @@ import { Suspense } from "react";
 import { DaemonError } from "@/components/daemon-error";
 import { ProjectEditor } from "@/components/project-editor";
 import { getMessages } from "@/i18n/server";
-import { DaemonUnavailableError, getProject } from "@/lib/daemon";
+import { DaemonUnavailableError, getGitHubAccounts, getProject } from "@/lib/daemon";
 
 export default async function ProjectPage({ params }: { params: Promise<{ id: string }> }) {
   const t = (await getMessages()).projects;
@@ -48,7 +48,11 @@ async function ProjectSettings({ params }: { params: Promise<{ id: string }> }) 
       </div>
       <p className="text-sm text-muted-foreground">{t.exportNote}</p>
       {/* 除外リポジトリはサーバーで決まるので props で受け取る（保存後の refresh で反映される） */}
-      <ProjectEditor project={view.project} exclusions={view.exclusions} />
+      <ProjectEditor
+        project={view.project}
+        exclusions={view.exclusions}
+        github={await getGitHubAccounts()}
+      />
     </>
   );
 }

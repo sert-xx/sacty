@@ -89,6 +89,9 @@ const PARAMS = {
   "run.prTokenRequired": null,
   "run.repositoryNotConfigured": null,
   "guardian.verdictUnreadable": null,
+  "github.ghMissing": null,
+  "github.accountUnavailable": z.object({ account: z.string() }),
+  "github.ghFailed": z.object({ detail: z.string() }),
   "review.verdictMissing": null,
   "review.unreadable": null,
   "run.guardianFailed": z.object({ detail: TextParam }),
@@ -302,6 +305,11 @@ const ja: MessageDictionary = {
   "run.repositoryNotConfigured":
     "実装の対象リポジトリが設定されていません。config.yaml の repository を設定してから再開してください。",
   "guardian.verdictUnreadable": "ゴールガーディアンの出力から、判定を読み取れませんでした。",
+  "github.ghMissing":
+    "gh コマンドが見つかりません。GitHub CLI をインストールし、gh auth login でログインしてください。",
+  "github.accountUnavailable": ({ account }) =>
+    `${account ? `GitHub のアカウント「${account}」` : "GitHub のアクティブなアカウント"}で gh にログインしていません。gh auth login でログインするか、プロジェクトの設定でアカウントを選び直してください。`,
+  "github.ghFailed": ({ detail }) => `gh コマンドが失敗しました：${detail}`,
   "review.verdictMissing": "判定がありません。",
   "review.unreadable": "最終レビューの出力から、判定を読み取れませんでした。",
   "run.guardianFailed": ({ detail }, text) =>
@@ -461,6 +469,11 @@ const en: MessageDictionary = {
   "run.repositoryNotConfigured":
     "No target repository is configured. Set repository in config.yaml, then resume.",
   "guardian.verdictUnreadable": "Could not read a verdict from the Goal Guardian's output.",
+  "github.ghMissing":
+    "The gh command was not found. Install GitHub CLI and sign in with gh auth login.",
+  "github.accountUnavailable": ({ account }) =>
+    `${account ? `The GitHub account "${account}" is` : "No active GitHub account is"} signed in to gh. Sign in with gh auth login, or choose another account in the project settings.`,
+  "github.ghFailed": ({ detail }) => `The gh command failed: ${detail}`,
   "review.verdictMissing": "No verdict was given.",
   "review.unreadable": "Could not read the verdicts from the final review output.",
   "run.guardianFailed": ({ detail }, text) => `The Goal Guardian run failed: ${text(detail)}`,

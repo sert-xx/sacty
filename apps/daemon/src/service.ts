@@ -57,6 +57,13 @@ import type { TestRunner } from "./agents/test-runner.js";
 import type { AgentConfig, ConfigResult, SactyConfig } from "./config.js";
 import { type ContextFetcher, prepareContext } from "./context.js";
 import { errorText, MessageError } from "./errors.js";
+import {
+  type GitHubAccount,
+  type GitHubAuth,
+  gitAuthEnv,
+  gitAuthSecrets,
+  isGitHubHttps,
+} from "./gh.js";
 import type { FoundIssue, PullRequests } from "./github.js";
 import type { LedgerStore } from "./ledger.js";
 import type { ProjectStore } from "./projects.js";
@@ -110,6 +117,8 @@ export type ServiceDeps = {
   repos: RepositoryWorkspace;
   /** PRの作成。 */
   pulls: PullRequests;
+  /** GitHub への認証（ホストの gh のアカウント。PBI-13）。 */
+  github: GitHubAuth;
   /** プロジェクトの設定。 */
   projects: ProjectStore;
   /** コンテキストリポジトリの取得（PBI-6）。 */
@@ -175,6 +184,15 @@ export class TaskService {
     return { task, ledger: this.deps.ledger.forTask(id) };
   }
 
+  /** gh にログイン済みの GitHub のアカウント。gh が無いなどで分からなければ、その理由。 */
+  async githubAccounts(): Promise<{ accounts: GitHubAccount[] } | { error: DaemonText }> {
+    try {
+      return { accounts: await this.deps.github.accounts() };
+    } catch (error) {
+      return { error: errorText(error) };
+    }
+  }
+
   status(): DaemonStatus {
     const config = this.deps.config();
     if (!config.ok) return { agent: null, problems: [config.problem], intake: null };
@@ -230,15 +248,18 @@ export class TaskService {
   }
 
   /** 取り込みで検索する条件（取り込み元ごと）。 */
-  intakeQueries(): string[] {
-    const queries = new Set<string>();
+  /** 取り込み元ごとの検索の条件と、検索に使う gh のアカウント（プロジェクトの設定。PBI-13）。 */
+  intakeSources(): { query: string; account?: string }[] {
+    const sources = new Map<string, { query: string; account?: string }>();
     for (const project of this.deps.projects.all()) {
       for (const source of project.sources) {
         const where = source.scope === "org" ? `org:${source.target}` : `repo:${source.target}`;
-        queries.add(`is:issue is:open ${where} label:"${source.label.replace(/"/g, "")}"`);
+        const query = `is:issue is:open ${where} label:"${source.label.replace(/"/g, "")}"`;
+        const account = project.githubAccount;
+        sources.set(`${account ?? ""}\n${query}`, { query, ...(account ? { account } : {}) });
       }
     }
-    return [...queries];
+    return [...sources.values()];
   }
 
   /** プロジェクトの設定の版。変わったら、取り込みは読んだ位置を忘れて先頭から読み直す。 */
@@ -469,12 +490,6 @@ export class TaskService {
           }),
         };
       }
-      if (settings.pullRequest && !config.github) {
-        return {
-          ok: false,
-          message: message("run.prTokenRequired"),
-        };
-      }
       return {
         ok: true,
         repo: {
@@ -482,14 +497,8 @@ export class TaskService {
           baseBranch: settings.baseBranch,
           testCommand: settings.testCommand,
           testImage: config.image,
-          ...(settings.pullRequest && config.github
-            ? {
-                pullRequest: {
-                  provider: "github" as const,
-                  repo: task.source.repo,
-                  tokenSecret: config.github.tokenSecret,
-                },
-              }
+          ...(settings.pullRequest
+            ? { pullRequest: { provider: "github" as const, repo: task.source.repo } }
             : {}),
         },
       };
@@ -518,12 +527,14 @@ export class TaskService {
     // 一度用意したタスクは、設定が変わっても同じリポジトリ・ブランチで作業する
     const url = task.repository?.url ?? repo?.url ?? "";
     const baseBranch = task.repository?.baseBranch ?? repo?.baseBranch ?? "main";
+    const usedSecrets: string[] = [];
     try {
       const { baseCommit } = await this.deps.repos.prepare(
         dir,
         this.trustedGitDir(task),
         url,
         baseBranch,
+        await this.gitAuth(task, url, usedSecrets),
       );
       this.append(task, [
         {
@@ -533,8 +544,28 @@ export class TaskService {
       ]);
       return { ok: true, dir };
     } catch (error) {
-      return { ok: false, message: errorText(error) };
+      return { ok: false, message: redactText(errorText(error), usedSecrets) };
     }
+  }
+
+  /**
+   * タスクのプロジェクトに設定した gh のアカウント（無ければアクティブなアカウント）で、
+   * GitHub のトークンを取り出す（PBI-13）。取り出した値は、出力やエラー文から取り除く対象にする。
+   */
+  private async githubToken(task: Task, usedSecrets: string[]): Promise<string> {
+    const account = this.deps.projects.get(task.projectId)?.githubAccount;
+    const token = await this.deps.github.token(account);
+    usedSecrets.push(...gitAuthSecrets(token));
+    return token;
+  }
+
+  /** HTTPS の GitHub なら、gh のトークンで git を認証する環境変数。それ以外はホストの認証を使う。 */
+  private async gitAuth(
+    task: Task,
+    url: string,
+    usedSecrets: string[],
+  ): Promise<Record<string, string> | undefined> {
+    return isGitHubHttps(url) ? gitAuthEnv(await this.githubToken(task, usedSecrets)) : undefined;
   }
 
   /**
@@ -1031,6 +1062,7 @@ export class TaskService {
         // 提出ごとに決まる日時にして、再開しても同じコミットを作る（プッシュ済みなら何も変わらない）
         // （PR作成の工程は最終レビューに通った後なので、通常は最終レビューの日時になる）
         date: task.lastReview?.at ?? task.createdAt,
+        authEnv: await this.gitAuth(task, task.repository.url, usedSecrets),
       });
       // PRの作成の前に、プッシュしたブランチを記録する（PRの作成に失敗しても、中止で片付けられるように）
       if (task.pushedBranch?.commit !== commit || task.pushedBranch.branch !== branch) {
@@ -1040,8 +1072,7 @@ export class TaskService {
       }
       let pr: { url: string; number: number } | undefined;
       if (repo.pullRequest) {
-        const token = await this.deps.secrets.get(repo.pullRequest.tokenSecret);
-        usedSecrets.push(token);
+        const token = await this.githubToken(task, usedSecrets);
         pr = await this.deps.pulls.upsert({
           repo: repo.pullRequest.repo,
           token,
@@ -1225,23 +1256,17 @@ export class TaskService {
       cleanup.push({ target: "session", result: "skipped" });
 
       const latest = this.mustGet(id);
-      const config = this.deps.config();
       const pr = latest.pullRequest;
       // PR：sacty が作ったものだけを閉じる（マージはしない）。番号はリポジトリの中でしか一意でないので、
       // 作ったときに記録したリポジトリに対してだけ閉じる（いまの設定のリポジトリは使わない）
       if (pr?.number) {
-        const target = config.ok ? this.targetRepository(latest, config.config) : undefined;
-        const tokenSecret =
-          (target?.ok ? target.repo.pullRequest?.tokenSecret : undefined) ??
-          (config.ok ? config.config.github?.tokenSecret : undefined);
         const usedSecrets: string[] = [];
         try {
           if (!pr.repo) {
             throw new MessageError(message("cleanup.prRepoUnknown"));
           }
-          if (!tokenSecret) throw new MessageError(message("cleanup.noToken"));
-          const token = await this.deps.secrets.get(tokenSecret);
-          usedSecrets.push(token);
+          // PR を作ったときと同じく、プロジェクトの gh のアカウントで閉じる
+          const token = await this.githubToken(latest, usedSecrets);
           await this.deps.pulls.close({ repo: pr.repo, token, number: pr.number });
           cleanup.push({ target: "pull_request", result: "done", detail: pr.url });
         } catch (error) {
@@ -1259,15 +1284,22 @@ export class TaskService {
       // PRの作成に失敗していても、プッシュ済みのブランチは記録してある
       const branch = (latest.pushedBranch ?? pr)?.branch;
       if (branch) {
+        const usedSecrets: string[] = [];
         try {
           if (!existsSync(gitDir)) throw new MessageError(message("cleanup.noWorkspace"));
-          await this.deps.repos.deleteBranch(gitDir, branch);
+          await this.deps.repos.deleteBranch(
+            gitDir,
+            branch,
+            latest.repository
+              ? await this.gitAuth(latest, latest.repository.url, usedSecrets)
+              : undefined,
+          );
           cleanup.push({ target: "branch", result: "done", detail: branch });
         } catch (error) {
           cleanup.push({
             target: "branch",
             result: "failed",
-            detail: errorText(error),
+            detail: redactText(errorText(error), usedSecrets),
           });
         }
       } else {

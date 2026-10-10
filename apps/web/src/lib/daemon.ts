@@ -174,6 +174,16 @@ export async function runIntake(): Promise<OpResult> {
   return postOp("/api/intake/run", {});
 }
 
+export type GitHubAccounts =
+  | { accounts: { login: string; active: boolean }[] }
+  | { error: DaemonText };
+
+/** gh にログイン済みの GitHub のアカウント（PBI-13）。 */
+export async function getGitHubAccounts(): Promise<GitHubAccounts> {
+  const res = await ensureOk(await daemonFetch("/api/github/accounts"));
+  return (await res.json()) as GitHubAccounts;
+}
+
 export async function getStatus(): Promise<DaemonStatus> {
   const res = await ensureOk(await daemonFetch("/api/status"));
   return (await res.json()) as DaemonStatus;

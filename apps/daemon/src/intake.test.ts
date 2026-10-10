@@ -1,10 +1,12 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { renderMessage } from "@sacty/core";
+import { message, renderMessage } from "@sacty/core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { AgentExecutor } from "./agents/docker.js";
 import type { ConfigResult } from "./config.js";
+import { MessageError } from "./errors.js";
+import type { GitHubAuth } from "./gh.js";
 import type { FoundIssue, IssueSearch } from "./github.js";
 import { IssueIntake } from "./intake.js";
 import { SqliteLedgerStore } from "./ledger.js";
@@ -35,12 +37,14 @@ const config =
       budgetPerTaskUsd: 1,
       defaultAgent: { id: "stub", runtime: "stub", auth: { mode: "stub" } } as never,
       guardianAgent: { id: "stub", runtime: "stub", auth: { mode: "stub" } } as never,
-      ...(github ? { github: { tokenSecret: "github-token", pollIntervalSec: 300 } } : {}),
+      ...(github ? { github: { pollIntervalSec: 300 } } : {}),
     },
   });
 
 class FakeSearch implements IssueSearch {
   queries: string[] = [];
+  /** 検索ごとに使われたトークン。 */
+  tokens: string[] = [];
   /** 検索ごとに渡された、どこまで読んだか。 */
   sinces: (string | undefined)[] = [];
   /** 返す、どこまで読んだか。 */
@@ -55,6 +59,7 @@ class FakeSearch implements IssueSearch {
       throw new Error(`${this.fail ?? "Issue を検索できませんでした：GitHub API 422"} ${token}`);
     }
     this.queries.push(query);
+    this.tokens.push(token);
     this.sinces.push(since);
     return {
       issues: this.issues.filter((i) => query.includes(`repo:${i.repo}`)),
@@ -64,17 +69,34 @@ class FakeSearch implements IssueSearch {
   }
 }
 
-function setup(github = true) {
+/** gh の偽物。アカウントごとのトークン（"" はアクティブなアカウント）を返す。 */
+class FakeGh implements GitHubAuth {
+  requested: (string | undefined)[] = [];
+  constructor(public tokens: Record<string, string> = { "": "ghp_secret" }) {}
+  async accounts() {
+    return [];
+  }
+  async token(account?: string) {
+    this.requested.push(account);
+    const token = this.tokens[account ?? ""];
+    if (!token)
+      throw new MessageError(message("github.accountUnavailable", { account: account ?? "" }));
+    return token;
+  }
+}
+
+function setup(github = true, gh = new FakeGh()) {
   const ledger = new SqliteLedgerStore(join(dir, "sacty.db"));
   const service = new TaskService({
     ledger,
     config: config(github),
-    secrets: new MemorySecretStore({ "github-token": "ghp_secret" }),
+    secrets: new MemorySecretStore({}),
     executor: unused as AgentExecutor,
     repos: unused as never,
     tests: unused as never,
     pulls: unused as never,
     projects: new MemoryProjectStore(),
+    github: unused as never,
     workspaceRoot: join(dir, "workspaces"),
   });
   service.saveProject(undefined, {
@@ -92,14 +114,8 @@ function setup(github = true) {
     },
   ]);
   let now = 1_000_000;
-  const intake = new IssueIntake(
-    service,
-    search,
-    new MemorySecretStore({ "github-token": "ghp_secret" }),
-    config(github),
-    () => now,
-  );
-  return { ledger, service, search, intake, advance: (ms: number) => (now += ms) };
+  const intake = new IssueIntake(service, search, gh, config(github), () => now);
+  return { ledger, service, search, intake, gh, advance: (ms: number) => (now += ms) };
 }
 
 describe("GitHub Issue の定期的な取り込み（PBI-5a）", () => {
@@ -154,6 +170,55 @@ describe("GitHub Issue の定期的な取り込み（PBI-5a）", () => {
         message: "Issue を検索できませんでした：GitHub API 422 [REDACTED]",
       },
     ]);
+    ledger.close();
+  });
+
+  it("取り込み元ごとに、そのプロジェクトの gh のアカウントで検索し、ログインしていないアカウントの分だけ失敗にする（PBI-13）", async () => {
+    const gh = new FakeGh({ "": "ghp_active", "side-job": "ghp_side" });
+    const { ledger, service, search, intake } = setup(true, gh);
+    service.saveProject(undefined, {
+      name: "副業",
+      sources: [{ scope: "repo", target: "side/app", label: "sacty" }],
+      githubAccount: "side-job",
+    });
+    service.saveProject(undefined, {
+      name: "ログアウト済み",
+      sources: [{ scope: "repo", target: "old/app", label: "sacty" }],
+      githubAccount: "logged-out",
+    });
+    await intake.tick(true);
+    // 既定（アカウント未設定）はアクティブなアカウント、副業は選んだアカウントのトークン
+    expect(search.queries).toEqual([
+      'is:issue is:open repo:acme/payments label:"sacty"',
+      'is:issue is:open repo:side/app label:"sacty"',
+    ]);
+    expect(search.tokens).toEqual(["ghp_active", "ghp_side"]);
+    expect(gh.requested).toEqual([undefined, "side-job", "logged-out"]);
+    expect(service.status().intake?.errors).toEqual([
+      {
+        query: 'is:issue is:open repo:old/app label:"sacty"',
+        message: { code: "github.accountUnavailable", params: { account: "logged-out" } },
+      },
+    ]);
+    ledger.close();
+  });
+
+  it("レート制限はアカウントごとなので、ほかのアカウントの検索は続ける（PBI-13）", async () => {
+    const gh = new FakeGh({ "": "ghp_active", "side-job": "ghp_side" });
+    const { ledger, service, search, intake } = setup(true, gh);
+    service.saveProject(undefined, {
+      name: "認証",
+      sources: [{ scope: "repo", target: "acme/auth", label: "sacty" }],
+    });
+    service.saveProject(undefined, {
+      name: "副業",
+      sources: [{ scope: "repo", target: "side/app", label: "sacty" }],
+      githubAccount: "side-job",
+    });
+    search.rateLimited = true;
+    await intake.tick(true);
+    // アクティブなアカウントは1つ目でレート制限になり、2つ目は検索しない。副業のアカウントは検索する
+    expect(search.tokens).toEqual(["ghp_active", "ghp_side"]);
     ledger.close();
   });
 

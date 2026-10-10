@@ -107,6 +107,8 @@ describe("プロジェクト定義のエクスポート・インポート（PBI-
     name: "決済",
     sources: [{ scope: "org", target: "acme", label: "sacty" }],
     repositories: [{ repo: "acme/payments", testCommand: "npm test" }],
+    // 個人の設定（gh のアカウント。PBI-13）は書き出さない
+    githubAccount: "side-job",
   });
 
   it("定義の項目だけを書き出し、ID・日時は含めない。書き出したものはそのまま読める", () => {
@@ -125,7 +127,12 @@ describe("プロジェクト定義のエクスポート・インポート（PBI-
     const text = JSON.stringify(exported);
     expect(text).not.toContain("p9");
     expect(text).not.toContain("2026-10-10");
+    expect(text).not.toContain("side-job");
     expect(ProjectExport.parse(JSON.parse(text))).toEqual(exported);
+    // 書き出したファイルに足されていても、読まない（strict）
+    expect(() =>
+      ProjectExport.parse({ ...exported, project: { ...exported.project, githubAccount: "x" } }),
+    ).toThrow();
   });
 
   it("形式・版の違うファイルや、知らない項目（秘密情報など）は読まない", () => {

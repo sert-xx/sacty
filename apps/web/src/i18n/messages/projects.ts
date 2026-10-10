@@ -44,6 +44,14 @@ const ja = {
     contextRef: "ブランチ・タグ（省略すると既定のブランチ）",
     contextHelp:
       "sacty-context.yaml・rules.md（または rules/*.md）・skills/<名前>/SKILL.md を置いたリポジトリです。空にすると、コンテキストを渡しません。",
+    githubTitle: "GitHub アカウント",
+    githubNote: "Issue の取り込み・clone・プッシュ・PR に使う、gh にログイン済みのアカウント",
+    githubAccount: "アカウント",
+    githubActive: (login?: string) =>
+      login ? `gh のアクティブなアカウント（いまは ${login}）` : "gh のアクティブなアカウント",
+    githubNotLoggedIn: (login: string) => `${login}（gh にログインしていません）`,
+    githubHelp:
+      "gh auth login でログインしたアカウントから選べます。個人の設定なので、エクスポートには含めません。",
     reposTitle: "リポジトリの設定",
     reposNote: "Issue から作ったタスクは、その Issue のリポジトリに実装します",
     noRepos: "リポジトリの設定はありません。",
@@ -105,6 +113,13 @@ const en: ProjectsMessages = {
     contextRef: "Branch or tag (default branch if empty)",
     contextHelp:
       "A repository with sacty-context.yaml, rules.md (or rules/*.md), and skills/<name>/SKILL.md. Leave empty to pass no context.",
+    githubTitle: "GitHub account",
+    githubNote: "The gh account used for issue intake, clone, push, and PRs",
+    githubAccount: "Account",
+    githubActive: (login) => (login ? `gh's active account (now ${login})` : "gh's active account"),
+    githubNotLoggedIn: (login) => `${login} (not signed in to gh)`,
+    githubHelp:
+      "Choose from the accounts signed in with gh auth login. This is a personal setting and is not exported.",
     reposTitle: "Repository settings",
     reposNote: "Tasks from an issue are implemented in that issue's repository",
     noRepos: "No repository settings.",

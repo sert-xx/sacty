@@ -43,6 +43,30 @@ npx sacty secret set claude-oauth-token
 
 サブスクリプションでは実際の請求は発生しないが、同じ単価で換算した値を費用として扱い、予算の判定に使う。
 
+### GitHub
+
+GitHub へのアクセス（Issue の取り込み、clone、プッシュ、PR の作成）は、ホストの GitHub CLI（`gh`）に
+ログイン済みのアカウントで行う。使うアカウントはプロジェクトの設定で選ぶ（選ばなければ `gh` のアクティブな
+アカウント）。個人用・仕事用などでアカウントを切り替えていても、プロジェクトごとに同じアカウントを使う。
+
+```sh
+gh auth login   # 使うアカウントごとにログインする
+```
+
+HTTPS の GitHub のリポジトリは、そのアカウントのトークンで clone・プッシュする（ホストの git の認証の設定は
+要らない）。SSH の URL やローカルのパスは、これまでどおりホストの認証（ssh-agent など）を使う。
+トークンは使うたびに `gh` から取り出し、台帳・ログ・画面・コンテナには出さない。
+
+#### 以前の設定からの移行
+
+以前は `config.yaml` に GitHub のトークンの秘密情報名（`github.token_secret`・`repository.pull_request.token_secret`）を
+書いていた。これらは読めるが使わないので、次のようにする。
+
+1. `gh auth login` で、使うアカウントにログインする。
+2. プロジェクトの設定の「GitHub アカウント」で、使うアカウントを選ぶ。
+3. `config.yaml` から `token_secret` の行を消す（`github:` の `poll_interval_sec` は残す）。キーチェーンの
+   トークンが不要なら `security delete-generic-password -s sacty -a github-token` で消す。
+
 ## 起動
 
 ```sh

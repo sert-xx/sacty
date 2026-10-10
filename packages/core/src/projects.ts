@@ -56,6 +56,15 @@ export const ProjectDefinition = z.object({
   repositories: z.array(RepositorySettings).max(100).default([]),
   /** 工程エージェントに渡すコンテキスト（PBI-6）。 */
   context: ContextSource.optional(),
+  /**
+   * GitHub へのアクセスに使う、gh にログイン済みのアカウント（PBI-13）。省略すると gh のアクティブな
+   * アカウント。個人の設定なので、エクスポートには含めない。
+   */
+  githubAccount: z
+    .string()
+    .trim()
+    .regex(/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/, code("input.invalidGithubName"))
+    .optional(),
 });
 export type ProjectDefinition = z.infer<typeof ProjectDefinition>;
 export type ProjectDefinitionInput = z.input<typeof ProjectDefinition>;

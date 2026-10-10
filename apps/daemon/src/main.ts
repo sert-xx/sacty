@@ -6,6 +6,7 @@ import { DockerExecutor } from "./agents/docker.js";
 import { DockerTestRunner } from "./agents/test-runner.js";
 import { loadConfig, resolveHome } from "./config.js";
 import { GitContextFetcher } from "./context.js";
+import { GhCliAuth } from "./gh.js";
 import { GitHubIssueSearch, GitHubPullRequests } from "./github.js";
 import { IssueIntake } from "./intake.js";
 import { SqliteLedgerStore } from "./ledger.js";
@@ -32,6 +33,8 @@ const secrets = new KeychainSecretStore();
 const config = () => loadConfig(home);
 const executor = new DockerExecutor();
 const tests = new DockerTestRunner();
+// GitHub へのアクセスは、ホストの gh のアカウントで行う（PBI-13）
+const github = new GhCliAuth();
 const service = new TaskService({
   ledger,
   config,
@@ -41,6 +44,7 @@ const service = new TaskService({
   executor,
   repos: new GitRepositoryWorkspace(),
   pulls: new GitHubPullRequests(),
+  github,
   tests,
   workspaceRoot: join(home, "workspaces"),
 });
@@ -51,7 +55,7 @@ const status = service.status();
 for (const problem of status.problems) console.warn(`[daemon] ${renderMessage(problem, "ja")}`);
 
 const worker = new Worker(service);
-const intake = new IssueIntake(service, new GitHubIssueSearch(), secrets, config);
+const intake = new IssueIntake(service, new GitHubIssueSearch(), github, config);
 const app = createApp(service, token, { intake });
 
 const server = serve({ fetch: app.fetch, hostname: "127.0.0.1", port }, (info) => {

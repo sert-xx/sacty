@@ -19,6 +19,8 @@ export interface RepositoryWorkspace {
     gitDir: string,
     url: string,
     baseBranch: string,
+    /** HTTPS の GitHub に認証する環境変数（gh のトークン。PBI-13）。無ければホストの認証を使う。 */
+    authEnv?: Record<string, string>,
   ): Promise<{ baseCommit: string }>;
   /** 起点からの差分（新しく作ったファイルを含む）。 */
   diff(dir: string, gitDir: string, baseCommit: string): Promise<string>;
@@ -38,9 +40,11 @@ export interface RepositoryWorkspace {
      * 失敗して再開しても、同じコミットを作り直せる（前回プッシュしたものと枝分かれしない）ように。
      */
     date: string;
+    /** HTTPS の GitHub に認証する環境変数（gh のトークン。PBI-13）。 */
+    authEnv?: Record<string, string>;
   }): Promise<{ commit: string }>;
   /** sacty のブランチを、リモートから消す（中止したとき）。 */
-  deleteBranch(gitDir: string, branch: string): Promise<void>;
+  deleteBranch(gitDir: string, branch: string, authEnv?: Record<string, string>): Promise<void>;
 }
 
 /** 起点から変更が無く、コミットするものが無い。 */
@@ -57,9 +61,17 @@ function pick(keys: string[]): Record<string, string> {
   return env;
 }
 
-/** clone はホストの認証（credential helper や ssh-agent）を使う。エージェントが触る前なので信頼できる。 */
-function cloneEnv(): Record<string, string> {
-  return { ...pick([...BASE_ENV_KEYS, "HOME", "SSH_AUTH_SOCK"]), GIT_TERMINAL_PROMPT: "0" };
+/**
+ * clone・プッシュの環境。エージェントが触る前のメタデータを使うので信頼できる。HTTPS の GitHub は
+ * gh のトークン（authEnv）で、それ以外（SSH・ローカルのパス）はホストの認証（ssh-agent など）で認証する。
+ */
+function cloneEnv(authEnv: Record<string, string> = {}): Record<string, string> {
+  return {
+    ...pick([...BASE_ENV_KEYS, "HOME", "SSH_AUTH_SOCK"]),
+    GIT_TERMINAL_PROMPT: "0",
+    // HTTPS の GitHub は、gh のトークンで認証する（環境変数で渡し、コマンドラインには出さない）
+    ...authEnv,
+  };
 }
 
 /**
@@ -149,12 +161,18 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
     }
   }
 
-  async prepare(dir: string, gitDir: string, url: string, baseBranch: string) {
+  async prepare(
+    dir: string,
+    gitDir: string,
+    url: string,
+    baseBranch: string,
+    authEnv?: Record<string, string>,
+  ) {
     // 前回の clone が途中で止まっていれば、作り直す
     for (const path of [dir, gitDir]) {
       if (existsSync(path)) rmSync(path, { recursive: true, force: true });
     }
-    const env = cloneEnv();
+    const env = cloneEnv(authEnv);
     await git("clone", ["clone", "--branch", baseBranch, "--", url, dir], env);
     const baseCommit = (await git("rev-parse", ["rev-parse", "HEAD"], env, dir)).trim();
     // エージェントが触る前のメタデータを、どのコンテナにもマウントしない場所に退避する
@@ -189,6 +207,7 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
     branch: string;
     message: string;
     date: string;
+    authEnv?: Record<string, string>;
   }) {
     if (!COMMIT_RE.test(input.parent)) throw new MessageError(message("git.invalidParentCommit"));
     if (!/^[\w./-]+$/.test(input.branch) || input.branch.startsWith("-")) {
@@ -225,23 +244,24 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
         )
       ).trim();
     });
-    // プッシュはホストの認証（credential helper や ssh-agent）を使う。作業領域は読まない
+    // プッシュは、HTTPS の GitHub なら gh のトークン、それ以外はホストの認証（ssh-agent など）を使う。
+    // 作業領域は読まない
     await git(
       "push",
       ["--git-dir", input.gitDir, "push", "--", "origin", `${commit}:refs/heads/${input.branch}`],
-      cloneEnv(),
+      cloneEnv(input.authEnv),
     );
     return { commit };
   }
 
-  async deleteBranch(gitDir: string, branch: string) {
+  async deleteBranch(gitDir: string, branch: string, authEnv?: Record<string, string>) {
     // 人間のブランチを消さないよう、sacty のブランチだけを受け付ける
     if (!/^sacty\/[\w./-]+$/.test(branch)) throw new MessageError(message("git.notSactyBranch"));
-    // プッシュと同じく、退避したメタデータとホストの認証を使う。作業領域は読まない
+    // プッシュと同じく、退避したメタデータと、gh のトークンかホストの認証を使う。作業領域は読まない
     await git(
       "push",
       ["--git-dir", gitDir, "push", "--", "origin", `:refs/heads/${branch}`],
-      cloneEnv(),
+      cloneEnv(authEnv),
     );
   }
 
