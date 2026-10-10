@@ -19,7 +19,17 @@ import { Textarea } from "@/components/ui/textarea";
 
 const initial: CreateTicketState = {};
 
-export function NewTicketDialog() {
+/**
+ * チケットの作成。作成先は、この画面を表示したときのプロジェクトに固定する
+ * （入力中に別のタブでプロジェクトを切り替えても、表示していたプロジェクトに作るため）。
+ */
+export function NewTicketDialog({
+  projectId,
+  projectName,
+}: {
+  projectId: string;
+  projectName: string;
+}) {
   const [state, formAction, pending] = useActionState(createTicketAction, initial);
 
   return (
@@ -27,10 +37,13 @@ export function NewTicketDialog() {
       <DialogTrigger render={<Button size="lg" />}>チケットを作成</DialogTrigger>
       <DialogContent className="sm:max-w-lg">
         <form action={formAction} className="flex flex-col gap-4">
+          <input type="hidden" name="projectId" value={projectId} />
           <DialogHeader>
             <DialogTitle>チケットを作成</DialogTitle>
             <DialogDescription>
-              作成すると、工程（要求要件 → 設計 → 実装 → PR作成）が決まり、台帳に記録されます。
+              プロジェクト「{projectName}
+              」に作成します。作成すると、工程（要求要件 → 設計 → 実装 →
+              PR作成）が決まり、台帳に記録されます。
             </DialogDescription>
           </DialogHeader>
           <div className="flex flex-col gap-2">

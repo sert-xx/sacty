@@ -25,7 +25,9 @@ export default function TasksPage() {
           </Suspense>
           <h1 className="text-2xl font-bold">タスク</h1>
         </div>
-        <NewTicketDialog />
+        <Suspense fallback={null}>
+          <NewTicket />
+        </Suspense>
       </div>
       <Suspense fallback={null}>
         <AgentStatus />
@@ -55,6 +57,17 @@ async function projectTasks() {
   ]);
   const project = resolveProject(projects, id);
   return tasks.filter((t) => t.projectId === project?.id);
+}
+
+/** チケットの作成。表示しているプロジェクトを、作成先としてフォームに固定する。 */
+async function NewTicket() {
+  try {
+    const project = resolveProject(await listProjects(), await currentProjectId());
+    if (!project) return null;
+    return <NewTicketDialog projectId={project.id} projectName={project.name} />;
+  } catch {
+    return null;
+  }
 }
 
 async function ProjectName() {

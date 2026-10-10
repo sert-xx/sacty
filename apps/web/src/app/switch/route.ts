@@ -1,5 +1,5 @@
 import { type NextRequest, NextResponse } from "next/server";
-import { isLocalPath, PROJECT_COOKIE } from "@/lib/current-project";
+import { PROJECT_COOKIE, safeLocalPath } from "@/lib/current-project";
 
 /**
  * 表示するプロジェクトを切り替えて、指定の画面へ移る（お知らせから、ほかのプロジェクトの
@@ -12,7 +12,7 @@ export function GET(request: NextRequest) {
   // 違うことがあり、絶対 URL にすると cookie を付けたホストから外れてしまうため）
   const res = new NextResponse(null, {
     status: 303,
-    headers: { location: isLocalPath(to) ? to : "/" },
+    headers: { location: safeLocalPath(to) ?? "/" },
   });
   if (/^[\w-]{1,100}$/.test(project)) {
     res.cookies.set(PROJECT_COOKIE, project, {

@@ -1,7 +1,8 @@
 import Link from "next/link";
+import { AutoRefresh } from "@/components/auto-refresh";
 import { currentProjectId, resolveProject } from "@/lib/current-project";
 import { listProjects, listTasks } from "@/lib/daemon";
-import { needsPerson, personAction, statusText } from "@/lib/labels";
+import { isWorking, needsPerson, personAction, statusText } from "@/lib/labels";
 import { type Notice, NotificationsMenu, ProjectMenu, UserMenu } from "./menus";
 
 function Frame({ children }: { children?: React.ReactNode }) {
@@ -60,6 +61,8 @@ export async function AppHeader() {
   };
   return (
     <Frame>
+      {/* お知らせは全プロジェクトが対象なので、どのプロジェクトのタスクが動いていても最新にする */}
+      <AutoRefresh active={tasks.some(isWorking)} />
       <ProjectMenu projects={options} current={currentOption} />
       <span className="flex-1" />
       <NotificationsMenu
