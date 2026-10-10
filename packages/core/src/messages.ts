@@ -1,52 +1,76 @@
+import { z } from "zod";
 import { formatUsd } from "./cost.js";
 import { TICKET_BODY_MAX, TICKET_TITLE_MAX } from "./events.js";
 import { PROJECT_EXPORT_VERSION } from "./projects.js";
 
+const Scope = z.enum(["org", "repo"]);
+const Count = z.number().int().nonnegative();
+
 /**
- * デーモンが利用者に向けて返す文言のコードと引数（PBI-11）。デーモンはコードと引数で返し、
- * 画面が画面の言語の文言にする。引数の無いコードは undefined。
+ * デーモンが利用者に向けて返す文言のコードと、その引数の形（PBI-11）。デーモンはコードと引数で返し、
+ * 画面が画面の言語の文言にする。引数の無いコードは null。引数は表示の前にこの形で確かめ、
+ * 合わなければ（版の違いなど）コードを出す。
  * 外から来た文（git や GitHub のエラーなど）は、引数としてそのまま渡し、翻訳しない。
  */
-export type MessageParams = {
-  "task.notFound": undefined;
-  "task.cancelled": undefined;
-  "task.invalidState": undefined;
-  "project.notFound": undefined;
-  "project.sourceDuplicated": { scope: "org" | "repo"; target: string };
-  "project.sourceTaken": { scope: "org" | "repo"; target: string; project: string };
-  "project.repositoryDuplicated": { repo: string };
-  "pause.alreadyPaused": undefined;
-  "pause.awaitingPerson": undefined;
-  "pause.guardianJudging": undefined;
-  "cancel.alreadyCancelled": undefined;
-  "cancel.cleaningUp": undefined;
-  "cancel.guardianJudging": undefined;
-  "resume.notPaused": undefined;
-  "resume.capRequired": undefined;
-  "resume.capTooLow": { usedUsd: number };
-  "containers.notStopped": { names: string };
-  "change.notAwaiting": undefined;
-  "gate.notAwaiting": undefined;
-  "gate.stepNotAwaiting": undefined;
-  "gate.staleSubmission": { submission: number; current: number };
-  "gate.invalidTarget": undefined;
-  "gate.remarksRequired": undefined;
-  "gate.overLimit": { limit: number };
-  "remark.notFound": undefined;
+const PARAMS = {
+  "task.notFound": null,
+  "task.cancelled": null,
+  "task.invalidState": null,
+  "project.notFound": null,
+  "project.sourceDuplicated": z.object({ scope: Scope, target: z.string() }),
+  "project.sourceTaken": z.object({ scope: Scope, target: z.string(), project: z.string() }),
+  "project.repositoryDuplicated": z.object({ repo: z.string() }),
+  "pause.alreadyPaused": null,
+  "pause.awaitingPerson": null,
+  "pause.guardianJudging": null,
+  "cancel.alreadyCancelled": null,
+  "cancel.cleaningUp": null,
+  "cancel.guardianJudging": null,
+  "resume.notPaused": null,
+  "resume.capRequired": null,
+  "resume.capTooLow": z.object({ usedUsd: z.number().nonnegative() }),
+  "containers.notStopped": z.object({ names: z.string() }),
+  "change.notAwaiting": null,
+  "gate.notAwaiting": null,
+  "gate.stepNotAwaiting": null,
+  "gate.staleSubmission": z.object({ submission: Count, current: Count }),
+  "gate.invalidTarget": null,
+  "gate.remarksRequired": null,
+  "gate.overLimit": z.object({ limit: Count }),
+  "remark.notFound": null,
   // 入力の検査（zod の検査の文言に、このコードを入れる）
-  "input.titleRequired": undefined;
-  "input.titleTooLong": undefined;
-  "input.bodyTooLong": undefined;
-  "input.remarkTooLong": undefined;
-  "input.tooManyRemarks": undefined;
-  "input.nameRequired": undefined;
-  "input.invalidGithubName": undefined;
-  "input.invalidRepo": undefined;
-  "input.testCommandRequired": undefined;
-  "input.contextRepoRequired": undefined;
-  "input.invalidRef": undefined;
-  "input.notExportFile": undefined;
-  "input.unsupportedVersion": undefined;
+  "input.titleRequired": null,
+  "input.titleTooLong": null,
+  "input.bodyTooLong": null,
+  "input.remarkTooLong": null,
+  "input.tooManyRemarks": null,
+  "input.nameRequired": null,
+  "input.invalidGithubName": null,
+  "input.invalidRepo": null,
+  "input.testCommandRequired": null,
+  "input.contextRepoRequired": null,
+  "input.invalidRef": null,
+  "input.notExportFile": null,
+  "input.unsupportedVersion": null,
+  // 入力の検査のうち、コードを指定していない検査（zod の標準の検査。issueMessage で変換する）
+  "input.required": null,
+  "input.tooShort": z.object({ minimum: Count }),
+  "input.tooLong": z.object({ maximum: Count }),
+  "input.tooFew": z.object({ minimum: Count }),
+  "input.tooMany": z.object({ maximum: Count }),
+  "input.numberTooSmall": z.object({ minimum: z.number(), inclusive: z.boolean() }),
+  "input.numberTooLarge": z.object({ maximum: z.number(), inclusive: z.boolean() }),
+  "input.invalidType": null,
+  "input.invalidFormat": null,
+  "input.invalidValue": null,
+  "input.unknownKeys": z.object({ keys: z.string() }),
+  "input.invalid": null,
+} as const satisfies Record<string, z.ZodType | null>;
+
+export type MessageParams = {
+  [K in keyof typeof PARAMS]: (typeof PARAMS)[K] extends z.ZodType
+    ? z.infer<(typeof PARAMS)[K]>
+    : undefined;
 };
 
 export type MessageCode = keyof MessageParams;
@@ -115,6 +139,21 @@ const ja: MessageDictionary = {
   "input.invalidRef": "ref はブランチ名かタグ名で入力してください。",
   "input.notExportFile": "sacty のプロジェクト定義のファイルではありません。",
   "input.unsupportedVersion": `対応していない版です（対応している版：${PROJECT_EXPORT_VERSION}）。`,
+  "input.required": "入力してください。",
+  "input.tooShort": ({ minimum }) => `${minimum}文字以上で入力してください。`,
+  "input.tooLong": ({ maximum }) =>
+    `${maximum.toLocaleString("ja-JP")}文字以内で入力してください。`,
+  "input.tooFew": ({ minimum }) => `${minimum}件以上にしてください。`,
+  "input.tooMany": ({ maximum }) => `${maximum}件までにしてください。`,
+  "input.numberTooSmall": ({ minimum, inclusive }) =>
+    `${minimum}${inclusive ? "以上" : "より大きい"}値にしてください。`,
+  "input.numberTooLarge": ({ maximum, inclusive }) =>
+    `${maximum}${inclusive ? "以下" : "より小さい"}値にしてください。`,
+  "input.invalidType": "値の種類が正しくありません。",
+  "input.invalidFormat": "形式が正しくありません。",
+  "input.invalidValue": "値が正しくありません。",
+  "input.unknownKeys": ({ keys }) => `知らない項目があります（${keys}）。`,
+  "input.invalid": "入力が正しくありません。",
 };
 
 /** 英語。用語は画面の用語集（apps/web の labels.ts）に合わせる。 */
@@ -166,6 +205,20 @@ const en: MessageDictionary = {
   "input.invalidRef": "Enter a branch or tag name as the ref.",
   "input.notExportFile": "This is not a sacty project definition file.",
   "input.unsupportedVersion": `Unsupported version (supported: ${PROJECT_EXPORT_VERSION}).`,
+  "input.required": "This field is required.",
+  "input.tooShort": ({ minimum }) => `Enter at least ${minimum} characters.`,
+  "input.tooLong": ({ maximum }) => `Keep it within ${maximum.toLocaleString("en-US")} characters.`,
+  "input.tooFew": ({ minimum }) => `Add at least ${minimum}.`,
+  "input.tooMany": ({ maximum }) => `Add up to ${maximum}.`,
+  "input.numberTooSmall": ({ minimum, inclusive }) =>
+    `Enter a value ${inclusive ? "of at least" : "greater than"} ${minimum}.`,
+  "input.numberTooLarge": ({ maximum, inclusive }) =>
+    `Enter a value ${inclusive ? "of at most" : "less than"} ${maximum}.`,
+  "input.invalidType": "The value has the wrong type.",
+  "input.invalidFormat": "The format is not valid.",
+  "input.invalidValue": "The value is not valid.",
+  "input.unknownKeys": ({ keys }) => `Unknown fields: ${keys}.`,
+  "input.invalid": "The input is not valid.",
 };
 
 export const DAEMON_MESSAGES = { ja, en } as const;
@@ -190,14 +243,64 @@ export function renderMessage(value: unknown, locale: keyof typeof DAEMON_MESSAG
     if (!isMessageCode(value.code)) return value.code;
     const entry = dictionary[value.code] as string | ((params: unknown) => string);
     if (typeof entry === "string") return entry;
-    const params = (value as { params?: unknown }).params;
-    // 引数が無い・形が合わないときも、コードを出す（例外にしない）
-    if (!params || typeof params !== "object") return value.code;
+    // 引数が無い・一部が欠けている・形が合わないときも、コードを出す（例外にしない）
+    const parsed = PARAMS[value.code]?.safeParse((value as { params?: unknown }).params);
+    if (!parsed?.success) return value.code;
     try {
-      return entry(params);
+      return entry(parsed.data);
     } catch {
       return value.code;
     }
   }
   return typeof value === "string" ? value : String(value ?? "");
+}
+
+/**
+ * 入力の検査（zod）の誤りを、文言のコードと引数にする。検査にコードを指定していればそのコード、
+ * 指定していない標準の検査は、誤りの種類ごとのコードにする（画面の言語の文言にできるように）。
+ */
+export function issueMessage(issue: z.core.$ZodIssue): DaemonMessage {
+  if (isMessageCode(issue.message) && PARAMS[issue.message] === null) {
+    return { code: issue.message } as DaemonMessage;
+  }
+  switch (issue.code) {
+    case "too_small": {
+      const minimum = Number(issue.minimum);
+      if (issue.origin === "number" || issue.origin === "int" || issue.origin === "bigint") {
+        return {
+          code: "input.numberTooSmall",
+          params: { minimum, inclusive: issue.inclusive ?? true },
+        };
+      }
+      if (minimum <= 1) return { code: "input.required" };
+      return issue.origin === "string"
+        ? { code: "input.tooShort", params: { minimum } }
+        : { code: "input.tooFew", params: { minimum } };
+    }
+    case "too_big": {
+      const maximum = Number(issue.maximum);
+      if (issue.origin === "number" || issue.origin === "int" || issue.origin === "bigint") {
+        return {
+          code: "input.numberTooLarge",
+          params: { maximum, inclusive: issue.inclusive ?? true },
+        };
+      }
+      return issue.origin === "string"
+        ? { code: "input.tooLong", params: { maximum } }
+        : { code: "input.tooMany", params: { maximum } };
+    }
+    case "invalid_type":
+      return { code: "input.invalidType" };
+    case "invalid_format":
+      return { code: "input.invalidFormat" };
+    case "invalid_value":
+    case "invalid_union":
+    case "invalid_key":
+    case "invalid_element":
+      return { code: "input.invalidValue" };
+    case "unrecognized_keys":
+      return { code: "input.unknownKeys", params: { keys: issue.keys.join(", ") } };
+    default:
+      return { code: "input.invalid" };
+  }
 }

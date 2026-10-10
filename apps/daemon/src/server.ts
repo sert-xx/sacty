@@ -1,4 +1,5 @@
 import { timingSafeEqual } from "node:crypto";
+import { issueMessage } from "@sacty/core";
 import { type Context, Hono } from "hono";
 import { ZodError } from "zod";
 import { InvalidOperationError, type TaskService } from "./service.js";
@@ -19,7 +20,14 @@ async function readJson(c: Context): Promise<{ ok: true; body: unknown } | { ok:
 
 function handleError(c: Context, error: unknown) {
   if (error instanceof ZodError) {
-    return c.json({ error: "invalid_input", issues: error.issues }, 400);
+    // 誤りは文言のコードと引数にして返し、画面が画面の言語の文言にする（PBI-11）
+    return c.json(
+      {
+        error: "invalid_input",
+        issues: error.issues.map((issue) => ({ path: issue.path, message: issueMessage(issue) })),
+      },
+      400,
+    );
   }
   if (error instanceof InvalidOperationError) {
     // 理由は文言のコードと引数で返し、画面が画面の言語の文言にする（PBI-11）

@@ -2809,9 +2809,23 @@ describe("API", () => {
     expect((await post({ ...exported, extra: 1 })).status).toBe(400);
     const badVersion = await post({ sacty: "project", version: 9, project: { name: "x" } });
     expect(badVersion.status).toBe(400);
-    expect(
-      ((await badVersion.json()) as { issues: { message: string }[] }).issues[0]?.message,
-    ).toBe("input.unsupportedVersion");
+    expect(((await badVersion.json()) as { issues: unknown[] }).issues[0]).toEqual({
+      path: ["version"],
+      message: { code: "input.unsupportedVersion" },
+    });
+    // コードを指定していない標準の検査も、コードと引数で返す（zod の英語の文は返さない）
+    const save = await app.request(`/api/projects/${pay.id}`, {
+      method: "PUT",
+      headers: json,
+      body: JSON.stringify({
+        name: "決済",
+        repositories: [{ repo: "acme/payments", testCommand: "t", baseBranch: "" }],
+      }),
+    });
+    expect(save.status).toBe(400);
+    expect(((await save.json()) as { issues: unknown[] }).issues).toEqual([
+      { path: ["repositories", 0, "baseBranch"], message: { code: "input.required" } },
+    ]);
     const created = await post({
       ...exported,
       project: { ...exported.project, name: "決済（コピー）", sources: [] },

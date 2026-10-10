@@ -142,7 +142,7 @@ export async function importProject(
     return { ok: false, message: await operationMessage(res) };
   }
   if (res.status === 400) {
-    return { ok: false, message: await inputMessage(res, { withPath: true }) };
+    return { ok: false, message: await inputMessage(res, { file: true }) };
   }
   await ensureOk(res);
   return { ok: true, project: ((await res.json()) as { project: Project }).project };
@@ -257,17 +257,18 @@ async function operationMessage(res: Response): Promise<string> {
   return list.map((m) => renderMessage(m, locale)).join("\n");
 }
 
-/** 入力の誤り（400）の理由を、画面の言語の文にする。検査の文言は、文言のコード。 */
-async function inputMessage(res: Response, options: { withPath?: boolean } = {}): Promise<string> {
+/**
+ * 入力の誤り（400）の理由を、画面の言語の文にする。デーモンは誤りを文言のコードと引数で返す（PBI-11）。
+ * どの項目の誤りかが分かるように、場所（例：repositories.0.baseBranch）を添える。
+ */
+async function inputMessage(res: Response, options: { file?: boolean } = {}): Promise<string> {
   const m = await getMessages();
   const json = (await res.json()) as { issues?: { message?: unknown; path?: unknown[] }[] };
   const issue = json.issues?.[0];
   const text = issue?.message
     ? renderMessage(issue.message, m.locale)
-    : options.withPath
+    : options.file
       ? m.common.daemon.checkFile
       : m.common.daemon.checkInput;
-  return options.withPath && issue?.path?.length
-    ? m.common.daemon.atPath(text, issue.path.join("."))
-    : text;
+  return issue?.path?.length ? m.common.daemon.atPath(text, issue.path.join(".")) : text;
 }
