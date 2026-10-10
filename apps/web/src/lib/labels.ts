@@ -93,7 +93,10 @@ export function describeEvent(event: LedgerEvent, l: LabelMessages): string {
     case "BudgetWarned":
       return e.BudgetWarned(usd(event.payload.usedUsd), usd(event.payload.capUsd));
     case "TaskPaused":
-      return l.pause[event.payload.reason];
+      // 人間が止めたときは、だれが止めたかを残す
+      return event.payload.reason === "manual"
+        ? e.TaskPausedManual(actor)
+        : l.pause[event.payload.reason];
     case "BudgetCapRaised":
       return e.BudgetCapRaised(usd(event.payload.capUsd), actor);
     case "TaskResumed":
@@ -174,6 +177,13 @@ export function describeEvent(event: LedgerEvent, l: LabelMessages): string {
         return `${e.changesTarget(where, l.step[target], GATED_STEPS.includes(target))}${tail}`;
       }
       return `${where}${tail}`;
+    }
+    case "TaskCancelled": {
+      const names = (result: string) =>
+        event.payload.cleanup
+          .filter((c) => c.result === result)
+          .map((c) => l.cleanupTarget[c.target]);
+      return e.TaskCancelled(names("done"), names("failed"), actor);
     }
     case "RemarkVoided":
       return e.RemarkVoided(event.payload.remarkId, actor);

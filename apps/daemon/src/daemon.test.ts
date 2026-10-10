@@ -77,6 +77,12 @@ class FakeRepos implements RepositoryWorkspace {
     this.prepared.push({ dir, gitDir, url, baseBranch });
     return { baseCommit: "base123" };
   }
+  deleted: string[] = [];
+  deleteFail?: string;
+  async deleteBranch(_gitDir: string, branch: string) {
+    if (this.deleteFail) throw new Error(this.deleteFail);
+    this.deleted.push(branch);
+  }
   async diff() {
     if (this.diffFail) throw new Error(this.diffFail);
     return this.diffText;
@@ -104,28 +110,58 @@ class FakePulls implements PullRequests {
     this.calls.push(input);
     return { url: "https://github.com/acme/app/pull/7", number: 7 };
   }
+  closed: { repo: string; token: string; number: number }[] = [];
+  closeFail?: string;
+  async close(input: { repo: string; token: string; number: number }) {
+    if (this.closeFail) throw new Error(this.closeFail);
+    this.closed.push(input);
+  }
 }
 
 /** 決まった結果を順に返す、テスト実行の偽物。 */
 class FakeTests implements TestRunner {
   calls: { workspaceDir: string; command: string; image: string }[] = [];
+  /** true なら、止められるまで終わらない（一時停止のテスト用）。 */
+  hold = false;
+  started = Promise.withResolvers<string>();
+  private held = new Map<string, (r: TestRunResult) => void>();
   constructor(readonly results: TestRunResult[] = []) {}
-  async run(input: { workspaceDir: string; command: string; image: string }) {
+  async run(input: { runId: string; workspaceDir: string; command: string; image: string }) {
     this.calls.push(input);
+    if (this.hold) {
+      this.hold = false;
+      return new Promise<TestRunResult>((resolve) => {
+        this.held.set(input.runId, resolve);
+        this.started.resolve(input.runId);
+      });
+    }
     return this.results.shift() ?? { exitCode: 0, output: "ok", durationMs: 5 };
+  }
+  kill(runId: string) {
+    this.held.get(runId)?.({ exitCode: 137, output: "killed", durationMs: 1 });
+    this.held.delete(runId);
   }
 }
 
 /** 決まった結果を順に返す偽物の実行器。渡された呼び出し内容も記録する。 */
+/** 止められるまで終わらない実行（一時停止・中止のテスト用）。 */
+const HOLD = { kind: "hold" } as const;
+
 class FakeExecutor implements AgentExecutor {
   calls: Invocation[] = [];
   /** 実行ごとにマウントした作業領域。 */
   dirs: string[] = [];
-  constructor(private readonly outcomes: AgentOutcome[]) {}
+  killed: string[] = [];
+  /** HOLD の実行が始まったら解決する。 */
+  started = Promise.withResolvers<string>();
+  private held = new Map<string, (outcome: AgentOutcome) => void>();
+  constructor(private readonly outcomes: (AgentOutcome | typeof HOLD)[]) {}
   async run({
+    runId,
     invocation,
     workspaceDir,
   }: {
+    runId: string;
     invocation: Invocation;
     workspaceDir: string;
   }): Promise<AgentOutcome> {
@@ -133,7 +169,18 @@ class FakeExecutor implements AgentExecutor {
     this.dirs.push(workspaceDir);
     const next = this.outcomes.shift();
     if (!next) throw new Error("no more outcomes");
+    if (next.kind === "hold") {
+      return new Promise((resolve) => {
+        this.held.set(runId, resolve);
+        this.started.resolve(runId);
+      });
+    }
     return next;
+  }
+  kill(runId: string) {
+    this.killed.push(runId);
+    this.held.get(runId)?.({ kind: "failed", reason: "error", message: "container killed" });
+    this.held.delete(runId);
   }
 }
 
@@ -1889,6 +1936,126 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     // プッシュの後で失敗して再開しても、同じ親・同じ日時でコミットを作り直す（同じコミットになる）
     const [first, retried] = repos.published;
     expect(retried).toEqual(first);
+    ledger.close();
+  });
+
+  it("実行待ちのタスクを人間が一時停止し、再開すると実行し直す（PBI-3）", async () => {
+    const { ledger, service, id } = await toImplement([implement("# v1"), review()]);
+    const paused = await service.pause(id);
+    expect(paused).toMatchObject({ status: "paused", pausedReason: "manual" });
+    expect(service.queuedTaskIds()).toEqual([]);
+    await expect(service.pause(id)).rejects.toThrow(/すでに一時停止/);
+    expect(service.resume(id, {}).status).toBe("queued");
+    await drain(service);
+    expect(service.get(id)?.task.steps[2]?.state).toBe("done");
+    ledger.close();
+  });
+
+  it("実行中なら、コンテナを止めて中断を記録し、作業領域を残して一時停止する（PBI-3）", async () => {
+    const { ledger, service, executor, id } = await toImplement([
+      HOLD,
+      implement("# v1"),
+      review(),
+    ]);
+    const running = service.runNext(id);
+    const runId = await executor.started.promise;
+    expect(service.get(id)?.task.status).toBe("running");
+    const paused = await service.pause(id);
+    await running;
+    expect(executor.killed).toEqual([runId]);
+    expect(paused).toMatchObject({ status: "paused", pausedReason: "manual", resumeTo: "queued" });
+    expect(types(service, id).slice(-2)).toEqual(["AgentRunFailed", "TaskPaused"]);
+    expect(existsSync(join(dir, "workspaces", id, "repo"))).toBe(true); // 作業中のものは残す
+
+    service.resume(id, {});
+    await drain(service);
+    expect(service.get(id)?.task.steps[2]?.state).toBe("done");
+    ledger.close();
+  });
+
+  it("テストの実行中に止めたら、結果を記録せず、再開するとテストからやり直す（PBI-3）", async () => {
+    const tests = new FakeTests();
+    tests.hold = true;
+    const { ledger, service, id } = await toImplement([implement("# v1"), review()], { tests });
+    await service.runNext(id); // 実装
+    const verifying = service.runNext(id);
+    await tests.started.promise;
+    await service.pause(id);
+    await verifying;
+    const paused = service.get(id)?.task;
+    expect(paused).toMatchObject({ pausedReason: "manual", verification: "pending" });
+    expect(types(service, id)).not.toContain("TestsRun");
+
+    service.resume(id, {});
+    await drain(service);
+    expect(tests.calls).toHaveLength(2);
+    expect(service.get(id)?.task.steps[2]?.state).toBe("done");
+    ledger.close();
+  });
+
+  it("人間の判断待ち・中止済みのタスクは一時停止しない（PBI-3）", async () => {
+    const { ledger, service, id } = await toDeliverableGate();
+    await expect(service.pause(id)).rejects.toThrow(/人間の判断待ち/);
+    ledger.close();
+  });
+
+  it("中止すると、PRを閉じ・sacty のブランチを消し・作業領域を消して記録し、台帳は残す（PBI-3）", async () => {
+    const { ledger, service, repos, pulls, id } = await toDeliverableGate();
+    const plan = service.cleanupPlan(id);
+    expect(plan?.map((p) => [p.target, p.present])).toEqual([
+      ["container", false],
+      ["workspace", true],
+      ["session", false],
+      ["branch", true],
+      ["pull_request", true],
+    ]);
+
+    const cancelled = await service.cancel(id);
+    expect(cancelled.status).toBe("cancelled");
+    expect(pulls.closed).toEqual([{ repo: "acme/app", token: "ghp_secret", number: 7 }]);
+    expect(repos.deleted).toEqual([`sacty/task-${id.slice(0, 8)}`]);
+    expect(existsSync(join(dir, "workspaces", id))).toBe(false);
+    expect(existsSync(join(dir, "workspaces", "_git", `${id}.git`))).toBe(false);
+    expect(cancelled.cancelled?.cleanup).toEqual([
+      { target: "container", result: "skipped" },
+      { target: "session", result: "skipped" },
+      { target: "pull_request", result: "done", detail: "https://github.com/acme/app/pull/7" },
+      { target: "branch", result: "done", detail: `sacty/task-${id.slice(0, 8)}` },
+      { target: "workspace", result: "done" },
+    ]);
+    // 台帳は残り、中止したタスクへの操作は受け付けない
+    expect(service.get(id)?.ledger.at(-1)?.type).toBe("TaskCancelled");
+    expect(service.get(id)?.ledger.length).toBeGreaterThan(10);
+    expect(() => service.approve(id, { step: "pr", submission: 1 })).toThrow();
+    expect(() => service.resume(id, {})).toThrow();
+    await expect(service.pause(id)).rejects.toThrow(/中止したタスク/);
+    await expect(service.cancel(id)).rejects.toThrow(/すでに中止/);
+    expect(service.queuedTaskIds()).toEqual([]);
+    ledger.close();
+  });
+
+  it("実行中に中止すると、コンテナを止めてから片付け、失敗した片付けも記録して続ける（PBI-3）", async () => {
+    const pulls = new FakePulls();
+    const repos = new FakeRepos();
+    const { ledger, service, executor, id } = await toDeliverableGate([HOLD], { pulls, repos });
+    // 成果物チェックから実装へ差し戻し、実装の実行中に中止する
+    service.requestChanges(id, { step: "pr", submission: 1, comments: ["直して"] });
+    const running = service.runNext(id);
+    await executor.started.promise;
+    expect(service.cleanupPlan(id)?.[0]).toMatchObject({ target: "container", present: true });
+    pulls.closeFail = "PRを閉じられませんでした：GitHub API 401 Bad credentials ghp_secret";
+    const cancelled = await service.cancel(id);
+    await running;
+    expect(executor.killed).toHaveLength(1);
+    expect(cancelled.status).toBe("cancelled");
+    const results = Object.fromEntries(
+      (cancelled.cancelled?.cleanup ?? []).map((c) => [c.target, c]),
+    );
+    expect(results.container?.result).toBe("done");
+    expect(results.pull_request).toMatchObject({ result: "failed" });
+    expect(results.pull_request?.detail).not.toContain("ghp_secret");
+    expect(results.branch?.result).toBe("done");
+    expect(results.workspace?.result).toBe("done");
     ledger.close();
   });
 

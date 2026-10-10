@@ -1,4 +1,12 @@
-import type { Actor, AuthMode, PauseReason, StepKey, Task, Verdict } from "@sacty/core";
+import type {
+  Actor,
+  AuthMode,
+  CleanupTarget,
+  PauseReason,
+  StepKey,
+  Task,
+  Verdict,
+} from "@sacty/core";
 
 /**
  * 工程・状態・台帳などの用語。英語は構想ドキュメントの用語集に従う
@@ -21,6 +29,7 @@ const ja = {
     paused: "一時停止",
     awaiting_approval: "承認待ち",
     escalated: "エスカレーション",
+    cancelled: "中止",
   } satisfies Record<Task["status"], string>,
   pause: {
     budget: "予算上限で一時停止",
@@ -28,6 +37,7 @@ const ja = {
     auth: "認証エラーで一時停止",
     error: "エラーで一時停止",
     verification: "実装の検証に通らないため一時停止",
+    manual: "一時停止中",
   } satisfies Record<PauseReason, string>,
   pauseHelp: {
     budget: "予算の上限に達したため止まっています。作業中のものは残っています。",
@@ -37,6 +47,8 @@ const ja = {
     error: "エラーで止まっています。原因を確認してから再開すると、止まった工程を実行し直します。",
     verification:
       "実装がテストか最終レビューに続けて通らないため止まっています。結果を確認し、必要なら設計を見直してから再開すると、実装をやり直します。",
+    manual:
+      "人間が一時停止しました。作業中のものは残っています。再開すると、止めたところから続けます（実行中だった工程は実行し直します）。",
   } satisfies Record<PauseReason, string>,
   auth: {
     subscription: "サブスクリプション",
@@ -66,6 +78,14 @@ const ja = {
     stepApproval: (step: string, n: number) => `${step}の承認待ち${n > 1 ? `（${n}回目）` : ""}`,
   },
   action: { decide: "判断する", review: "チェックする" },
+  cleanupTarget: {
+    container: "実行中のコンテナ",
+    workspace: "作業領域（タスクの clone）",
+    session: "エージェントのセッション",
+    branch: "sacty が作ったブランチ",
+    pull_request: "sacty が作ったPR（閉じる）",
+  } satisfies Record<CleanupTarget, string>,
+  cleanupResult: { done: "片付けた", skipped: "対象なし", failed: "失敗" },
   /** 台帳の1行。 */
   event: {
     estimated: "・換算値",
@@ -81,6 +101,7 @@ const ja = {
     BudgetWarned: (used: string, cap: string) => `予算の80%に到達（${used} / ${cap}）`,
     BudgetCapRaised: (cap: string, actor: string) => `予算の上限を${cap}に変更（${actor}）`,
     TaskResumed: (actor: string) => `再開（${actor}）`,
+    TaskPausedManual: (actor: string) => `一時停止（${actor}）`,
     submittedDeliverable: (n: number) => `成果物チェックに提出（${n}回目）→ 承認待ち`,
     submittedStep: (step: string, n: number) => `${step}を提出（${n}回目）→ 承認待ち`,
     approvedDeliverable: (actor: string) => `成果物チェックで承認（${actor}）`,
@@ -112,6 +133,8 @@ const ja = {
     changesTail: (count: number, overLimit: boolean, actor: string) =>
       `：指摘${count}件${overLimit ? "（上限を超えて）" : ""}（${actor}）`,
     RemarkVoided: (id: string, actor: string) => `指摘 ${id} を無効にした（${actor}）`,
+    TaskCancelled: (done: string[], failed: string[], actor: string) =>
+      `中止（${actor}）：${done.length > 0 ? `${done.join("・")}を片付けた` : "片付ける対象なし"}${failed.length > 0 ? `／失敗：${failed.join("・")}` : ""}`,
     escalatedUndecidable: (id: string | undefined) =>
       `ゴールガーディアンが${id ?? "変更の申し出"}を判定できなかったため、エスカレーション`,
     escalatedTooMany: (step: string) => `${step}への差し戻しが上限に達したため、エスカレーション`,
@@ -135,6 +158,7 @@ const en: LabelMessages = {
     paused: "Paused",
     awaiting_approval: "Awaiting approval",
     escalated: "Escalated",
+    cancelled: "Cancelled",
   },
   pause: {
     budget: "Paused at budget cap",
@@ -142,6 +166,7 @@ const en: LabelMessages = {
     auth: "Paused: authentication failed",
     error: "Paused: error",
     verification: "Paused: implementation keeps failing verification",
+    manual: "Paused",
   },
   pauseHelp: {
     budget: "The task reached its budget cap and is paused. Its work is kept.",
@@ -151,6 +176,8 @@ const en: LabelMessages = {
     error: "The task stopped on an error. Check the cause, then resume to rerun the stopped step.",
     verification:
       "The implementation keeps failing the tests or the final review. Check the results, revisit the design if needed, then resume to implement again.",
+    manual:
+      "A person paused this task. Its work is kept. Resume to continue from where it stopped (a step that was running runs again).",
   },
   auth: {
     subscription: "Subscription",
@@ -180,6 +207,14 @@ const en: LabelMessages = {
     stepApproval: (step, n) => `${step} awaiting approval${n > 1 ? ` (submission ${n})` : ""}`,
   },
   action: { decide: "Decide", review: "Review" },
+  cleanupTarget: {
+    container: "Running container",
+    workspace: "Workspace (the task's clone)",
+    session: "Agent sessions",
+    branch: "Branch created by sacty",
+    pull_request: "PR opened by sacty (closed)",
+  },
+  cleanupResult: { done: "Cleaned up", skipped: "Nothing to clean", failed: "Failed" },
   event: {
     estimated: " · estimate",
     withCost: (actor, cost) => `${actor} · ${cost}`,
@@ -193,6 +228,7 @@ const en: LabelMessages = {
     BudgetWarned: (used, cap) => `Reached 80% of budget (${used} / ${cap})`,
     BudgetCapRaised: (cap, actor) => `Budget cap changed to ${cap} (${actor})`,
     TaskResumed: (actor) => `Resumed (${actor})`,
+    TaskPausedManual: (actor) => `Paused (${actor})`,
     submittedDeliverable: (n) =>
       `Submitted for deliverable review (submission ${n}) → awaiting approval`,
     submittedStep: (step, n) => `${step} submitted (submission ${n}) → awaiting approval`,
@@ -225,6 +261,8 @@ const en: LabelMessages = {
     changesTail: (count, overLimit, actor) =>
       `: ${count} comment${count === 1 ? "" : "s"}${overLimit ? " (over the limit)" : ""} (${actor})`,
     RemarkVoided: (id, actor) => `Comment ${id} voided (${actor})`,
+    TaskCancelled: (done, failed, actor) =>
+      `Cancelled (${actor}): ${done.length > 0 ? `cleaned up ${done.join(", ")}` : "nothing to clean up"}${failed.length > 0 ? `; failed: ${failed.join(", ")}` : ""}`,
     escalatedUndecidable: (id) =>
       `Escalated: the Goal Guardian could not decide ${id ?? "the change request"}`,
     escalatedTooMany: (step) => `Escalated: changes to ${step} reached the limit`,

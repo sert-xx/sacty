@@ -159,6 +159,28 @@ export function createApp(
     }
   });
 
+  app.post("/api/tasks/:id/pause", async (c) => {
+    try {
+      return c.json({ task: await service.pause(c.req.param("id")) });
+    } catch (error) {
+      return handleError(c, error);
+    }
+  });
+
+  app.get("/api/tasks/:id/cleanup-plan", (c) => {
+    const plan = service.cleanupPlan(c.req.param("id"));
+    if (!plan) return c.json({ error: "not_found" }, 404);
+    return c.json({ plan });
+  });
+
+  app.post("/api/tasks/:id/cancel", async (c) => {
+    try {
+      return c.json({ task: await service.cancel(c.req.param("id")) });
+    } catch (error) {
+      return handleError(c, error);
+    }
+  });
+
   app.post("/api/tasks/:id/resume", async (c) => {
     const json = await readJson(c);
     if (!json.ok) return c.json({ error: "invalid_json" }, 400);

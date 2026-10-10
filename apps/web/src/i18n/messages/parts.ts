@@ -83,6 +83,22 @@ const ja = {
     resume: "再開する",
     capNote: "新しい上限に達したら、もう一度ここで判断します。",
   },
+  control: {
+    pause: "一時停止",
+    pausing: "止めています…",
+    cancel: "中止…",
+    dialogTitle: (title: string) => `「${title}」を中止しますか？`,
+    dialogBody:
+      "中止すると再開できません。sacty が作ったものを、次のとおり片付けます。人間が作ったブランチやPRには触れません。台帳は残し、中止の記録を追記します。",
+    present: "片付ける",
+    absent: "対象なし",
+    sessionNote: "sacty はセッションを保存しないので、消すものはありません",
+    keep: "やめる",
+    confirm: "中止して片付ける",
+    cancelling: "片付けています…",
+    cancelledTitle: "中止しました",
+    cancelledAt: (at: string) => `${at} に中止しました。台帳は残っています。`,
+  },
   changeDecision: {
     requirementsHelp:
       "認めると要求要件の承認を取り消し、変更後の要求要件をもう一度承認していただきます。認めなければ、申し出た工程の成果物をそのまま提出します。",
@@ -179,6 +195,22 @@ const en: PartsMessages = {
     resumeWithCap: "Change cap and resume",
     resume: "Resume",
     capNote: "When the new cap is reached, you will decide here again.",
+  },
+  control: {
+    pause: "Pause",
+    pausing: "Stopping…",
+    cancel: "Cancel…",
+    dialogTitle: (title) => `Cancel "${title}"?`,
+    dialogBody:
+      "A cancelled task can't be resumed. sacty cleans up what it created, as listed below. Branches and PRs made by people aren't touched. The ledger is kept and the cancellation is recorded.",
+    present: "Cleaned up",
+    absent: "Nothing",
+    sessionNote: "sacty doesn't keep sessions, so there is nothing to delete",
+    keep: "Keep task",
+    confirm: "Cancel and clean up",
+    cancelling: "Cleaning up…",
+    cancelledTitle: "Cancelled",
+    cancelledAt: (at) => `Cancelled at ${at}. The ledger is kept.`,
   },
   changeDecision: {
     requirementsHelp:

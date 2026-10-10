@@ -14,9 +14,11 @@ import { isLocale, LANG_COOKIE, type LanguagePreference } from "@/i18n/locale";
 import { getMessages } from "@/i18n/server";
 import {
   approveStep,
+  cancelTask,
   createTicket,
   decideChange,
   importProject,
+  pauseTask,
   requestChanges,
   resumeTask,
   runIntake,
@@ -255,4 +257,40 @@ export async function setLanguageAction(preference: LanguagePreference): Promise
     store.delete(LANG_COOKIE);
   }
   refresh();
+}
+
+export type TaskControlState = { message?: string };
+
+/** 人間が一時停止する。 */
+export async function pauseTaskAction(
+  _prev: TaskControlState,
+  formData: FormData,
+): Promise<TaskControlState> {
+  const a = (await getMessages()).common.action;
+  let result: Awaited<ReturnType<typeof pauseTask>>;
+  try {
+    result = await pauseTask(String(formData.get("taskId") ?? ""));
+  } catch {
+    return { message: a.daemonDown };
+  }
+  if (!result.ok) return { message: result.message };
+  refresh();
+  return {};
+}
+
+/** 中止して、sacty が作ったものを片付ける。 */
+export async function cancelTaskAction(
+  _prev: TaskControlState,
+  formData: FormData,
+): Promise<TaskControlState> {
+  const a = (await getMessages()).common.action;
+  let result: Awaited<ReturnType<typeof cancelTask>>;
+  try {
+    result = await cancelTask(String(formData.get("taskId") ?? ""));
+  } catch {
+    return { message: a.daemonDown };
+  }
+  if (!result.ok) return { message: result.message };
+  refresh();
+  return {};
 }

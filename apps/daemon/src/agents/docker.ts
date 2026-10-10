@@ -51,7 +51,8 @@ export interface AgentExecutor {
     image: string;
     workspaceDir: string;
     invocation: Invocation;
-  }): Promise<AgentOutcome>;
+  }): Promise<AgentOutcome> /** 実行中のコンテナを止める（人間が一時停止・中止したとき）。無ければ何もしない。 */;
+  kill(runId: string): void;
 }
 
 /**
@@ -110,6 +111,12 @@ export class DockerExecutor implements AgentExecutor {
    * デーモンの停止時に、実行中のコンテナを止める（コンテナだけが残り続けないように）。
    * 後処理（書き戻し・一時ファイルの削除）は run() の中で行われるので、呼び出し側はその完了を待つこと。
    */
+  kill(runId: string): void {
+    const name = `sacty-run-${runId}`;
+    if (!this.active.has(name)) return;
+    spawn("docker", ["kill", name], { stdio: "ignore", env: dockerClientEnv() });
+  }
+
   abortAll(): void {
     this.aborting = true;
     for (const name of this.active) {

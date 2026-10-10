@@ -229,3 +229,22 @@ describe("検索の上限の先（レビュー指摘）", () => {
     expect(next.queries[0]).toBe(`repo:acme/app updated:>=${partial.cursor} page=1`);
   });
 });
+
+describe("中止したときに PR を閉じる（PBI-3）", () => {
+  it("PR を閉じ（マージはしない）、失敗は理由つきのエラーにする", async () => {
+    const { impl, calls } = fakeFetch([
+      { status: 200, json: {} },
+      { status: 404, json: { message: "Not Found" } },
+    ]);
+    const client = new GitHubPullRequests(impl);
+    await client.close({ repo: "acme/app", token: "t", number: 7 });
+    expect(calls[0]).toMatchObject({
+      url: "https://api.github.com/repos/acme/app/pulls/7",
+      method: "PATCH",
+      body: { state: "closed" },
+    });
+    await expect(client.close({ repo: "acme/app", token: "t", number: 8 })).rejects.toThrow(
+      /PRを閉じられませんでした：GitHub API 404/,
+    );
+  });
+});

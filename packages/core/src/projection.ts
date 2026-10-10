@@ -28,6 +28,7 @@ export type StepState = "todo" | "active" | "done" | "skip";
  * paused：一時停止中（理由は pausedReason）
  * awaiting_approval：人間の承認待ち（gate の工程）
  * escalated：差し戻しが上限を超えたため、人間の判断待ち
+ * cancelled：中止した（以降の操作は受け付けない。台帳は残る）
  */
 export type TaskStatus =
   | "queued"
@@ -35,7 +36,8 @@ export type TaskStatus =
   | "idle"
   | "paused"
   | "awaiting_approval"
-  | "escalated";
+  | "escalated"
+  | "cancelled";
 
 export type TaskRemark = {
   id: string;
@@ -136,6 +138,8 @@ export type Task = {
   /** 最新のテストの実行結果と、最終レビュー。 */
   lastTests?: TestsRunResult;
   lastReview?: FinalReview;
+  /** 中止したときの後片付けの結果。 */
+  cancelled?: { at: string } & PayloadOf<"TaskCancelled">;
   /** sacty が作ったPR（またはブランチ）。 */
   pullRequest?: PayloadOf<"PullRequestPublished">;
   /** ゴールガーディアンの見逃し（最終レビューで合格にした成果物を、人間が差し戻した）。 */
@@ -236,6 +240,9 @@ export function applyEvent(
   }
 
   if (!current) throw new LedgerIntegrityError(event, "unknown task");
+  if (current.status === "cancelled") {
+    throw new LedgerIntegrityError(event, "the task is cancelled");
+  }
   const task: Task = { ...current, updatedAt: event.at };
 
   switch (event.type) {
@@ -495,6 +502,20 @@ export function applyEvent(
       if (task.steps[index + 1]) task.status = "queued";
       break;
     }
+
+    case "TaskCancelled":
+      if (task.status === "running") {
+        throw new LedgerIntegrityError(event, "stop the run before cancelling");
+      }
+      task.status = "cancelled";
+      task.cancelled = { at: event.at, cleanup: event.payload.cleanup };
+      task.gate = undefined;
+      task.escalation = undefined;
+      task.verification = undefined;
+      task.pausedReason = undefined;
+      task.pausedMessage = undefined;
+      task.resumeTo = undefined;
+      break;
 
     case "PullRequestPublished":
       if (task.status !== "queued" || activeStep(task) !== "pr") {

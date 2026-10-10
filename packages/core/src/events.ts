@@ -86,8 +86,15 @@ export const TestMapping = z.object({
 });
 export type TestMapping = z.infer<typeof TestMapping>;
 
-/** タスクが止まった理由。verification：実装の検証が続けて通らない。 */
-export const PauseReason = z.enum(["budget", "usage_limit", "auth", "error", "verification"]);
+/** タスクが止まった理由。verification：実装の検証が続けて通らない。manual：人間が止めた。 */
+export const PauseReason = z.enum([
+  "budget",
+  "usage_limit",
+  "auth",
+  "error",
+  "verification",
+  "manual",
+]);
 export type PauseReason = z.infer<typeof PauseReason>;
 
 const TaskCreated = z.object({
@@ -359,6 +366,34 @@ const GuardianMissed = z.object({
   }),
 });
 
+/** 中止の後片付けの対象。 */
+export const CleanupTarget = z.enum([
+  "container",
+  "workspace",
+  "session",
+  "branch",
+  "pull_request",
+]);
+export type CleanupTarget = z.infer<typeof CleanupTarget>;
+
+/**
+ * 中止した。sacty が作ったもの（コンテナ、作業領域、sacty のブランチ、sacty が作ったPR）を
+ * 片付けた結果を、対象ごとに記録する。台帳は残し、以降の操作は受け付けない。
+ */
+const TaskCancelled = z.object({
+  type: z.literal("TaskCancelled"),
+  payload: z.object({
+    cleanup: z.array(
+      z.object({
+        target: CleanupTarget,
+        /** done：片付けた、skipped：対象が無かった、failed：失敗した（理由は detail）。 */
+        result: z.enum(["done", "skipped", "failed"]),
+        detail: z.string().optional(),
+      }),
+    ),
+  }),
+});
+
 const ChangesRequested = z.object({
   type: z.literal("ChangesRequested"),
   payload: z.object({
@@ -425,6 +460,7 @@ export const EventInput = z.discriminatedUnion("type", [
   FinalReviewFailed,
   PullRequestPublished,
   GuardianMissed,
+  TaskCancelled,
   ChangesRequested,
   RemarkVoided,
   TaskEscalated,

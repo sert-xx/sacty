@@ -10,6 +10,8 @@ export interface PullRequests {
     body: string;
     number?: number;
   }): Promise<{ url: string; number: number }>;
+  /** PRを閉じる（中止したとき。マージはしない）。 */
+  close(input: { repo: string; token: string; number: number }): Promise<void>;
 }
 
 const API = "https://api.github.com";
@@ -22,6 +24,10 @@ export class GitHubPullRequests implements PullRequests {
     private readonly fetchImpl: Fetch = fetch,
     private readonly api = API,
   ) {}
+
+  close(input: Parameters<PullRequests["close"]>[0]) {
+    return closePullRequest(this.fetchImpl, this.api, input);
+  }
 
   async upsert(input: Parameters<PullRequests["upsert"]>[0]) {
     const headers = {
@@ -73,6 +79,28 @@ export class GitHubPullRequests implements PullRequests {
       }
     }
     throw apiError("PRを作れませんでした", res.status, json);
+  }
+}
+
+/** PRを閉じる。GitHubPullRequests の一部だが、upsert と分けて読みやすくする。 */
+async function closePullRequest(
+  fetchImpl: Fetch,
+  api: string,
+  input: { repo: string; token: string; number: number },
+): Promise<void> {
+  const res = await fetchImpl(`${api}/repos/${input.repo}/pulls/${input.number}`, {
+    method: "PATCH",
+    headers: {
+      accept: "application/vnd.github+json",
+      authorization: `Bearer ${input.token}`,
+      "x-github-api-version": "2022-11-28",
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ state: "closed" }),
+  });
+  if (!res.ok) {
+    const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    throw apiError("PRを閉じられませんでした", res.status, json);
   }
 }
 

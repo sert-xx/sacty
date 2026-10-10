@@ -13,7 +13,8 @@ export interface TestRunner {
     image: string;
     workspaceDir: string;
     command: string;
-  }): Promise<TestRunResult>;
+  }): Promise<TestRunResult> /** 実行中のコンテナを止める（人間が一時停止・中止したとき）。無ければ何もしない。 */;
+  kill(runId: string): void;
 }
 
 /**
@@ -26,6 +27,12 @@ export class DockerTestRunner implements TestRunner {
   constructor(private readonly timeoutMs = 20 * 60_000) {}
 
   /** デーモンの停止時に、実行中のテストのコンテナを止める。 */
+  kill(runId: string): void {
+    const name = `sacty-run-${runId}`;
+    if (!this.active.has(name)) return;
+    spawn("docker", ["kill", name], { stdio: "ignore", env: dockerClientEnv() });
+  }
+
   abortAll(): void {
     for (const name of this.active) {
       spawn("docker", ["kill", name], { stdio: "ignore", env: dockerClientEnv() });

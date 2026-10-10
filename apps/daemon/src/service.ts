@@ -8,6 +8,7 @@ import {
   applyEvent,
   BUDGET_WARN_RATIO,
   budgetState,
+  type CleanupTarget,
   CreateTicketInput,
   changeRounds,
   computeCostUsd,
@@ -22,6 +23,7 @@ import {
   MAX_VERIFY_ATTEMPTS,
   MVP_STEPS,
   openProposal,
+  type PauseReason,
   type Project,
   ProjectDefinition,
   ProjectExport,
@@ -64,6 +66,13 @@ import { SecretNotFoundError, type SecretStore } from "./secrets.js";
 export const DEFAULT_PROJECT_ID = "default";
 
 type LedgerItem = { actor: Actor; event: EventInput };
+
+export type CleanupItem = { target: CleanupTarget; present: boolean; detail?: string };
+type CleanupResult = {
+  target: CleanupTarget;
+  result: "done" | "skipped" | "failed";
+  detail?: string;
+};
 
 /** 実装の検証（テストか最終レビュー）を待っているか。変更の申し出の判断待ちの間は検証しない。 */
 function awaitingVerification(task: Task): boolean {
@@ -120,6 +129,14 @@ export class TaskService {
   private tasks: Map<string, Task>;
 
   private intakeStatus: IntakeStatus = {};
+  /** 実行中のタスクと、そのタスクで動いているコンテナ（一時停止・中止で止めるため）。 */
+  private readonly inflight = new Map<string, { runIds: Set<string>; done: Promise<void> }>();
+  /** いま runNext が処理しているタスク（ワーカーは1件ずつ処理する）。 */
+  private runningTask: string | undefined;
+  /** 人間が一時停止・中止を求めたタスク。実行中の処理は、終わったら一時停止として記録する。 */
+  private readonly pauseRequested = new Set<string>();
+  /** 中止の後片付けをしているタスク（その間に実行を始めないため）。 */
+  private readonly cancelling = new Set<string>();
 
   constructor(private readonly deps: ServiceDeps) {
     this.tasks = project(deps.ledger.all());
@@ -306,6 +323,7 @@ export class TaskService {
   queuedTaskIds(): string[] {
     return [...this.tasks.values()]
       .filter((t) => (t.status === "queued" && activeStep(t)) || awaitingVerification(t))
+      .filter((t) => !this.cancelling.has(t.id) && !this.pauseRequested.has(t.id))
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
       .map((t) => t.id);
   }
@@ -475,8 +493,42 @@ export class TaskService {
     }
   }
 
-  /** 実行待ちのタスクの、現在の工程をエージェントで実行する（実装の検証待ちなら、検証する）。 */
+  /**
+   * 実行待ちのタスクの、現在の工程をエージェントで実行する（実装の検証待ちなら、検証する）。
+   * 実行中に人間が一時停止を求めたら、終わったところで一時停止として記録する。
+   */
   async runNext(taskId: string): Promise<void> {
+    if (this.cancelling.has(taskId) || this.pauseRequested.has(taskId)) return;
+    const entry = { runIds: new Set<string>(), done: Promise.resolve() };
+    this.inflight.set(taskId, entry);
+    this.runningTask = taskId;
+    entry.done = this.runNextInner(taskId);
+    try {
+      await entry.done;
+    } finally {
+      this.inflight.delete(taskId);
+      this.runningTask = undefined;
+      this.pauseIfRequested(taskId);
+    }
+  }
+
+  /** 一時停止を求められていて、止められる状態なら、人間の一時停止として記録する。 */
+  private pauseIfRequested(taskId: string): void {
+    if (!this.pauseRequested.has(taskId)) return;
+    this.pauseRequested.delete(taskId);
+    const task = this.tasks.get(taskId);
+    if (task?.status !== "queued" && task?.status !== "idle") return;
+    this.append(task, [
+      { actor: "person", event: { type: "TaskPaused", payload: { reason: "manual" } } },
+    ]);
+  }
+
+  /** 実行の失敗で止めるときの理由。人間が止めた（コンテナを止めた）のなら、人間の一時停止。 */
+  private stopReason(taskId: string, reason: PauseReason): PauseReason {
+    return this.pauseRequested.has(taskId) ? "manual" : reason;
+  }
+
+  private async runNextInner(taskId: string): Promise<void> {
     const task = this.tasks.get(taskId);
     if (task && awaitingVerification(task)) return this.verify(task);
     if (task?.status !== "queued") return;
@@ -553,7 +605,13 @@ export class TaskService {
             },
           },
         },
-        { actor: "sacty", event: { type: "TaskPaused", payload: { reason: outcome.reason } } },
+        {
+          actor: "sacty",
+          event: {
+            type: "TaskPaused",
+            payload: { reason: this.stopReason(task.id, outcome.reason) },
+          },
+        },
       ]);
       // 失敗した実行の費用でも、80%の通知は判定する（一時停止はすでにしている）
       this.warnIfNeeded(this.mustGet(task.id));
@@ -664,12 +722,16 @@ export class TaskService {
     if (current.verification === "pending") {
       const mapped = new Set(current.testMap.map((m) => m.viewpointId));
       const unmappedViewpoints = viewpointIds.filter((id) => !mapped.has(id));
+      const testRunId = randomUUID();
+      this.track(testRunId);
       const result = await this.deps.tests.run({
-        runId: randomUUID(),
+        runId: testRunId,
         image: repo.testImage,
         workspaceDir: dir,
         command: repo.testCommand,
       });
+      // 人間が止めた（コンテナを止めた）テストの結果は記録しない。再開するとテストからやり直す
+      if (this.pauseRequested.has(task.id)) return;
       const passed = result.exitCode === 0 && unmappedViewpoints.length === 0;
       current = this.append(current, [
         {
@@ -751,7 +813,10 @@ export class TaskService {
         },
         {
           actor: "sacty",
-          event: { type: "TaskPaused", payload: { reason: outcome.reason, message } },
+          event: {
+            type: "TaskPaused",
+            payload: { reason: this.stopReason(task.id, outcome.reason), message },
+          },
         },
       ]);
       this.warnIfNeeded(this.mustGet(task.id));
@@ -864,6 +929,170 @@ export class TaskService {
     ]);
   }
 
+  /** 実行中のタスクのコンテナとして覚える（一時停止・中止で止めるため）。 */
+  private track(runId: string): void {
+    if (this.runningTask) this.inflight.get(this.runningTask)?.runIds.add(runId);
+  }
+
+  /**
+   * 人間が一時停止する。実行中ならコンテナを止め、処理が終わるのを待ってから一時停止として記録する
+   * （作業領域は残すので、再開すると止まった工程からやり直す）。
+   */
+  async pause(id: string): Promise<Task> {
+    const task = this.tasks.get(id);
+    if (!task) throw new InvalidOperationError("タスクが見つかりません。");
+    if (task.status === "cancelled") throw new InvalidOperationError("中止したタスクです。");
+    if (task.status === "paused") throw new InvalidOperationError("すでに一時停止しています。");
+    if (task.status === "awaiting_approval" || task.status === "escalated") {
+      throw new InvalidOperationError("人間の判断待ちのため、一時停止する必要はありません。");
+    }
+    const judging = openProposal(task);
+    if (judging && !judging.judgement) {
+      throw new InvalidOperationError(
+        "ゴールガーディアンが変更の申し出を判定しているため、終わるまで一時停止できません。",
+      );
+    }
+    this.pauseRequested.add(id);
+    const inflight = this.inflight.get(id);
+    if (inflight) {
+      this.stopRuns(inflight.runIds);
+      await inflight.done.catch(() => {});
+      // 記録は runNext の後始末で行う
+      return this.mustGet(id);
+    }
+    this.pauseIfRequested(id);
+    return this.mustGet(id);
+  }
+
+  private stopRuns(runIds: Iterable<string>): void {
+    for (const runId of runIds) {
+      this.deps.executor.kill(runId);
+      this.deps.tests.kill(runId);
+    }
+  }
+
+  /** 中止したときに片付けるもの（確認の画面に並べる）。 */
+  cleanupPlan(id: string): CleanupItem[] | undefined {
+    const task = this.tasks.get(id);
+    if (!task) return undefined;
+    const inflight = this.inflight.get(id);
+    const workspace = join(this.deps.workspaceRoot, task.id);
+    return [
+      {
+        target: "container",
+        present: Boolean(inflight && inflight.runIds.size > 0),
+        detail: inflight ? [...inflight.runIds].map((r) => `sacty-run-${r}`).join(", ") : undefined,
+      },
+      {
+        target: "workspace",
+        present: existsSync(workspace) || existsSync(this.trustedGitDir(task)),
+        detail: workspace,
+      },
+      // sacty はエージェントのセッションを保存しない（実行ごとに空の設定で起動する）
+      { target: "session", present: false },
+      { target: "branch", present: Boolean(task.pullRequest), detail: task.pullRequest?.branch },
+      {
+        target: "pull_request",
+        present: Boolean(task.pullRequest?.number),
+        detail: task.pullRequest?.url,
+      },
+    ];
+  }
+
+  /**
+   * 中止する。実行中ならコンテナを止めて処理の終わりを待ち、sacty が作ったものを片付ける
+   * （PRを閉じる → sacty のブランチを消す → 作業領域を消す）。人間が作ったブランチやPRには触れない。
+   * 片付けの結果を台帳に記録し、台帳は残す。
+   */
+  async cancel(id: string): Promise<Task> {
+    const task = this.tasks.get(id);
+    if (!task) throw new InvalidOperationError("タスクが見つかりません。");
+    if (task.status === "cancelled") throw new InvalidOperationError("すでに中止しています。");
+    if (this.cancelling.has(id)) throw new InvalidOperationError("中止の後片付けをしています。");
+    const judging = openProposal(task);
+    if (judging && !judging.judgement) {
+      throw new InvalidOperationError(
+        "ゴールガーディアンが変更の申し出を判定しているため、終わるまで中止できません。",
+      );
+    }
+    this.cancelling.add(id);
+    try {
+      const cleanup: CleanupResult[] = [];
+      const inflight = this.inflight.get(id);
+      if (inflight) {
+        this.pauseRequested.add(id);
+        this.stopRuns(inflight.runIds);
+        await inflight.done.catch(() => {});
+        cleanup.push({ target: "container", result: "done" });
+      } else {
+        cleanup.push({ target: "container", result: "skipped" });
+      }
+      cleanup.push({ target: "session", result: "skipped" });
+
+      const latest = this.mustGet(id);
+      const config = this.deps.config();
+      const pr = latest.pullRequest;
+      // PR：sacty が作ったものだけを閉じる（マージはしない）
+      if (pr?.number) {
+        const target = config.ok ? this.targetRepository(latest, config.config) : undefined;
+        const settings = target?.ok ? target.repo.pullRequest : undefined;
+        const usedSecrets: string[] = [];
+        try {
+          if (!settings) throw new Error("PRの作成先の設定が無いため、閉じられません。");
+          const token = await this.deps.secrets.get(settings.tokenSecret);
+          usedSecrets.push(token);
+          await this.deps.pulls.close({ repo: settings.repo, token, number: pr.number });
+          cleanup.push({ target: "pull_request", result: "done", detail: pr.url });
+        } catch (error) {
+          cleanup.push({
+            target: "pull_request",
+            result: "failed",
+            detail: redact(error instanceof Error ? error.message : String(error), usedSecrets),
+          });
+        }
+      } else {
+        cleanup.push({ target: "pull_request", result: "skipped" });
+      }
+      // ブランチ：sacty のブランチだけを消す
+      const gitDir = this.trustedGitDir(latest);
+      if (pr?.branch) {
+        try {
+          if (!existsSync(gitDir)) throw new Error("作業領域が無いため、ブランチを消せません。");
+          await this.deps.repos.deleteBranch(gitDir, pr.branch);
+          cleanup.push({ target: "branch", result: "done", detail: pr.branch });
+        } catch (error) {
+          cleanup.push({
+            target: "branch",
+            result: "failed",
+            detail: error instanceof Error ? error.message : String(error),
+          });
+        }
+      } else {
+        cleanup.push({ target: "branch", result: "skipped" });
+      }
+      // 作業領域：タスクの作業領域と、退避した git のメタデータ
+      const workspace = join(this.deps.workspaceRoot, latest.id);
+      const existed = existsSync(workspace) || existsSync(gitDir);
+      try {
+        rmSync(workspace, { recursive: true, force: true });
+        rmSync(gitDir, { recursive: true, force: true });
+        cleanup.push({ target: "workspace", result: existed ? "done" : "skipped" });
+      } catch (error) {
+        cleanup.push({
+          target: "workspace",
+          result: "failed",
+          detail: error instanceof Error ? error.message : String(error),
+        });
+      }
+      return this.append(this.mustGet(id), [
+        { actor: "person", event: { type: "TaskCancelled", payload: { cleanup } } },
+      ]);
+    } finally {
+      this.cancelling.delete(id);
+      this.pauseRequested.delete(id);
+    }
+  }
+
   /** 秘密情報を取り出してエージェントを実行し、出力やエラー文から秘密情報を取り除いて返す。 */
   private async execute(run: {
     agent: AgentConfig;
@@ -885,6 +1114,7 @@ export class TaskService {
         run.role,
       );
       mkdirSync(run.workspaceDir, { recursive: true });
+      this.track(run.runId);
       outcome = await this.deps.executor.run({
         runId: run.runId,
         image: run.image,

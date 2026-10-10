@@ -188,3 +188,42 @@ describe("英語の表示（PBI-4b）", () => {
     ).toBe("Escalated: the Goal Guardian could not decide CP-1");
   });
 });
+
+describe("一時停止と中止の表示（PBI-3）", () => {
+  const event = (e: Pick<LedgerEvent, "type" | "payload">): LedgerEvent =>
+    ({
+      ...e,
+      seq: 1,
+      id: "e1",
+      taskId: "t1",
+      projectId: "default",
+      at: "2026-10-10T00:00:00.000Z",
+      actor: "person",
+    }) as LedgerEvent;
+
+  it("人間の一時停止と、中止の片付けの結果を台帳に出す", () => {
+    expect(describeEvent(event({ type: "TaskPaused", payload: { reason: "manual" } }))).toBe(
+      "一時停止（人間）",
+    );
+    const cancelled = event({
+      type: "TaskCancelled",
+      payload: {
+        cleanup: [
+          { target: "container", result: "done" },
+          { target: "branch", result: "done" },
+          { target: "pull_request", result: "failed", detail: "401" },
+          { target: "session", result: "skipped" },
+        ],
+      },
+    });
+    expect(describeEvent(cancelled)).toBe(
+      "中止（人間）：実行中のコンテナ・sacty が作ったブランチを片付けた／失敗：sacty が作ったPR（閉じる）",
+    );
+    expect(describeIn(cancelled, labels.en)).toBe(
+      "Cancelled (person): cleaned up Running container, Branch created by sacty; failed: PR opened by sacty (closed)",
+    );
+    expect(statusText(task({ status: "cancelled" }))).toBe("中止");
+    expect(needsPerson(task({ status: "cancelled" }))).toBe(false);
+    expect(isWorking(task({ status: "cancelled" }))).toBe(false);
+  });
+});
