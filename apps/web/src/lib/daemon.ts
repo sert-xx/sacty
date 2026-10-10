@@ -66,7 +66,12 @@ export async function createTicket(input: CreateTicketInput): Promise<Task> {
   return ((await res.json()) as { task: Task }).task;
 }
 
-export type IntakeStatus = { lastRunAt?: string; imported?: number; error?: string };
+export type IntakeStatus = {
+  lastRunAt?: string;
+  imported?: number;
+  /** 取り込めなかった取り込み元（検索の条件）と理由。 */
+  errors?: { query?: string; message: string }[];
+};
 
 export type DaemonStatus = {
   agent: { id: string; runtime: string; authMode: string } | null;

@@ -49,17 +49,27 @@ async function Projects() {
               取り込みは止まっています。config.yaml に github.token_secret
               を設定すると、定期的に取り込みます。
             </p>
-          ) : intake.error ? (
-            <p role="alert" className="text-warn">
-              {intake.lastRunAt && `${formatStamp(intake.lastRunAt)}：`}
-              {intake.error}
-            </p>
           ) : (
-            <p className="text-muted-foreground">
-              {intake.lastRunAt
-                ? `最後の取り込み：${formatStamp(intake.lastRunAt)}（${intake.imported ?? 0}件のタスクを作成）`
-                : "まだ取り込んでいません。"}
-            </p>
+            <>
+              <p className="text-muted-foreground">
+                {intake.lastRunAt
+                  ? `最後の取り込み：${formatStamp(intake.lastRunAt)}（${intake.imported ?? 0}件のタスクを作成）`
+                  : "まだ取り込んでいません。"}
+              </p>
+              {intake.errors && intake.errors.length > 0 && (
+                <div role="alert" className="flex flex-col gap-1 text-warn">
+                  <p>取り込めなかった取り込み元があります（ほかの取り込み元は取り込みました）：</p>
+                  <ul className="list-disc pl-5">
+                    {intake.errors.map((e) => (
+                      <li key={`${e.query ?? ""}:${e.message}`} className="break-words">
+                        {e.query && <span className="font-mono text-xs">{e.query}</span>}{" "}
+                        {e.message}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </>
           )}
         </div>
         {intake && (

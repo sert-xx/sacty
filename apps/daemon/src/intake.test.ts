@@ -38,11 +38,15 @@ const config =
 class FakeSearch implements IssueSearch {
   queries: string[] = [];
   fail?: string;
+  /** この条件の検索だけ失敗させる。 */
+  failQuery?: string;
   constructor(private readonly issues: FoundIssue[]) {}
   async search(query: string, token: string) {
-    if (this.fail) throw new Error(`${this.fail} ${token}`);
+    if (this.fail || query === this.failQuery) {
+      throw new Error(`${this.fail ?? "Issue を検索できませんでした：GitHub API 422"} ${token}`);
+    }
     this.queries.push(query);
-    return this.issues;
+    return { issues: this.issues.filter((i) => query.includes(`repo:${i.repo}`)) };
   }
 }
 
@@ -106,7 +110,7 @@ describe("GitHub Issue の定期的な取り込み（PBI-5a）", () => {
     const failing = setup();
     failing.search.fail = "Issue を検索できませんでした：GitHub API 401";
     await failing.intake.tick(true);
-    const error = failing.service.status().intake?.error ?? "";
+    const error = failing.service.status().intake?.errors?.[0]?.message ?? "";
     expect(error).toContain("GitHub API 401");
     expect(error).not.toContain("ghp_secret");
     failing.ledger.close();
@@ -117,6 +121,26 @@ describe("GitHub Issue の定期的な取り込み（PBI-5a）", () => {
     expect(off.search.queries).toEqual([]);
     expect(off.service.status().intake).toBeNull();
     off.ledger.close();
+  });
+
+  it("1つの取り込み元の検索に失敗しても、ほかの取り込み元は取り込む（レビュー指摘）", async () => {
+    const { ledger, service, search, intake } = setup();
+    service.saveProject(undefined, {
+      name: "削除されたリポジトリ",
+      sources: [{ scope: "repo", target: "acme/deleted", label: "sacty" }],
+    });
+    search.failQuery = 'is:issue is:open repo:acme/deleted label:"sacty"';
+    await intake.tick(true);
+    expect(service.list().map((t) => t.source?.repo)).toEqual(["acme/payments"]);
+    const status = service.status().intake;
+    expect(status?.imported).toBe(1);
+    expect(status?.errors).toEqual([
+      {
+        query: 'is:issue is:open repo:acme/deleted label:"sacty"',
+        message: "Issue を検索できませんでした：GitHub API 422 [REDACTED]",
+      },
+    ]);
+    ledger.close();
   });
 
   it("Issue から作ったタスクの PR は、マージで Issue を閉じる", async () => {

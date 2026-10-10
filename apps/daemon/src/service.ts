@@ -35,8 +35,6 @@ import {
   type StepKey,
   type Task,
   type TaskProposal,
-  TICKET_BODY_MAX,
-  TICKET_TITLE_MAX,
 } from "@sacty/core";
 import type { AgentExecutor } from "./agents/docker.js";
 import { type AgentRole, buildInvocation } from "./agents/invocation.js";
@@ -102,7 +100,8 @@ export type IntakeStatus = {
   lastRunAt?: string;
   /** 直近の取り込みで作ったタスクの数。 */
   imported?: number;
-  error?: string;
+  /** 取り込めなかった取り込み元（検索の条件）と理由。 */
+  errors?: { query?: string; message: string }[];
 };
 
 /** プロジェクトと、Org の取り込み元ごとの除外リポジトリ（ほかのプロジェクトが担当）。 */
@@ -220,11 +219,10 @@ export class TaskService {
             event: {
               type: "TaskCreated",
               payload: {
-                title: (issue.title.trim() || `${issue.repo}#${issue.number}`).slice(
-                  0,
-                  TICKET_TITLE_MAX,
-                ),
-                body: issue.body.slice(0, TICKET_BODY_MAX),
+                // Issue の本文とタイトルは切り詰めない（後ろに書かれた条件を失わないため。
+                // GitHub 側の上限があるので、際限なく大きくはならない）
+                title: issue.title.trim() || `${issue.repo}#${issue.number}`,
+                body: issue.body,
                 start: "github_issue",
                 budgetCapUsd,
                 source: {

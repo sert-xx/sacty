@@ -99,7 +99,11 @@ describe("GitHub の Issue の検索（PBI-5a）", () => {
         },
       },
     ]);
-    const found = await new GitHubIssueSearch(impl).search('repo:acme/app label:"sacty"', "t");
+    const { issues: found, incomplete } = await new GitHubIssueSearch(impl).search(
+      'repo:acme/app label:"sacty"',
+      "t",
+    );
+    expect(incomplete).toBeUndefined();
     expect(found).toEqual([
       {
         repo: "acme/app",
@@ -114,21 +118,47 @@ describe("GitHub の Issue の検索（PBI-5a）", () => {
   });
 });
 
-it("100件を超える結果は、次のページもたどる（DAの見直し）", async () => {
-  const page = (from: number, count: number) => ({
-    items: Array.from({ length: count }, (_, i) => ({
-      number: from + i,
-      title: `#${from + i}`,
-      html_url: `https://github.com/acme/app/issues/${from + i}`,
-      repository_url: "https://api.github.com/repos/acme/app",
-      labels: [{ name: "sacty" }],
-    })),
+/** created_at の昇順に並んだ Issue を、検索の条件（created:>=）とページに応じて返す fetch の偽物。 */
+function searchFetch(total: number, createdAt: (n: number) => string) {
+  const all = Array.from({ length: total }, (_, i) => ({
+    number: i + 1,
+    title: `#${i + 1}`,
+    html_url: `https://github.com/acme/app/issues/${i + 1}`,
+    repository_url: "https://api.github.com/repos/acme/app",
+    labels: [{ name: "sacty" }],
+    created_at: createdAt(i + 1),
+  }));
+  const queries: string[] = [];
+  const impl = (async (url: string) => {
+    const params = new URL(url).searchParams;
+    const q = params.get("q") ?? "";
+    queries.push(`${q} page=${params.get("page")}`);
+    const since = q.match(/created:>=(\S+)/)?.[1];
+    const matched = all.filter((i) => !since || i.created_at >= since);
+    const page = Number(params.get("page"));
+    // 検索 API と同じく、1つの検索では1,000件までしか返さない
+    const items = matched.slice(0, 1000).slice((page - 1) * 100, page * 100);
+    return new Response(JSON.stringify({ total_count: matched.length, items }), { status: 200 });
+  }) as unknown as typeof fetch;
+  return { impl, queries };
+}
+
+describe("検索の上限の先（レビュー指摘）", () => {
+  it("100件を超える結果は次のページを、1,000件を超える結果は作成日時で範囲を区切ってたどる", async () => {
+    const { impl, queries } = searchFetch(1001, (n) =>
+      new Date(Date.UTC(2026, 0, 1) + n * 1000).toISOString().replace(".000", ""),
+    );
+    const { issues, incomplete } = await new GitHubIssueSearch(impl).search("repo:acme/app", "t");
+    expect(incomplete).toBeUndefined();
+    expect(issues).toHaveLength(1001);
+    expect(new Set(issues.map((i) => i.number)).size).toBe(1001);
+    expect(queries.at(-1)).toBe("repo:acme/app created:>=2026-01-01T00:16:40Z page=1");
   });
-  const { impl, calls } = fakeFetch([
-    { status: 200, json: page(1, 100) },
-    { status: 200, json: page(101, 3) },
-  ]);
-  const found = await new GitHubIssueSearch(impl).search("repo:acme/app", "t");
-  expect(found).toHaveLength(103);
-  expect(calls.map((c) => new URL(c.url).searchParams.get("page"))).toEqual(["1", "2"]);
+
+  it("同じ日時の Issue が多すぎて先へ進めなければ、取り切れなかったことを返す", async () => {
+    const { impl } = searchFetch(1200, () => "2026-01-01T00:00:00Z");
+    const { issues, incomplete } = await new GitHubIssueSearch(impl).search("repo:acme/app", "t");
+    expect(issues).toHaveLength(1000);
+    expect(incomplete).toMatch(/すべてを検索できませんでした/);
+  });
 });

@@ -2008,6 +2008,18 @@ describe("プロジェクトと GitHub Issue の取り込み（PBI-5a）", () =>
     };
   };
 
+  it("長い Issue の本文やタイトルも切り詰めずに取り込む（レビュー指摘）", () => {
+    const { ledger, service } = setup();
+    const body = `${"a".repeat(10_000)}\n\n## 必須条件\n- 二重に処理しない`;
+    const title = "t".repeat(250);
+    const [task] = service.importIssues([
+      { ...issue("acme/payments", 12, ["sacty"]), body, title },
+    ]);
+    expect(task?.body).toBe(body);
+    expect(task?.title).toBe(title);
+    ledger.close();
+  });
+
   it("Issue から作ったタスクは、その Issue のリポジトリに、プロジェクトの設定で実装する", async () => {
     const { ledger, service, repos, id } = await (async () => {
       const made = setup(

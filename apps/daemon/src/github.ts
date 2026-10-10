@@ -98,54 +98,96 @@ export type FoundIssue = {
   labels: string[];
 };
 
+/** 検索の結果。取り切れなかった範囲があれば、その理由を incomplete に入れる。 */
+export type IssueSearchResult = { issues: FoundIssue[]; incomplete?: string };
+
 /** Issue を探す口。テストでは偽物に差し替える。 */
 export interface IssueSearch {
-  search(query: string, token: string): Promise<FoundIssue[]>;
+  search(query: string, token: string): Promise<IssueSearchResult>;
 }
 
-/** GitHub の検索 API で、開いている Issue を探す（PR は除く）。 */
+/**
+ * GitHub の検索 API で、開いている Issue を探す（PR は除く）。検索 API は1つの検索で
+ * 1,000件までしか返さないので、作成日時で範囲を区切って、その先もたどる。
+ */
 export class GitHubIssueSearch implements IssueSearch {
+  /** 1ページの件数、1つの範囲でたどるページの上限（1,000件）、範囲の数の上限。 */
+  static readonly PER_PAGE = 100;
+  static readonly MAX_PAGES = 10;
+  static readonly MAX_WINDOWS = 20;
+
   constructor(
     private readonly fetchImpl: Fetch = fetch,
     private readonly api = API,
   ) {}
 
-  /** 1ページの件数と、たどるページの上限（検索 API は最大1,000件まで返す）。 */
-  static readonly PER_PAGE = 100;
-  static readonly MAX_PAGES = 10;
-
-  async search(query: string, token: string): Promise<FoundIssue[]> {
-    const found: FoundIssue[] = [];
-    for (let page = 1; page <= GitHubIssueSearch.MAX_PAGES; page++) {
-      const url = `${this.api}/search/issues?q=${encodeURIComponent(query)}&per_page=${GitHubIssueSearch.PER_PAGE}&page=${page}&sort=created&order=asc`;
-      const res = await this.fetchImpl(url, {
-        headers: {
-          accept: "application/vnd.github+json",
-          authorization: `Bearer ${token}`,
-          "x-github-api-version": "2022-11-28",
-        },
-      });
-      const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-      if (!res.ok) throw apiError("Issue を検索できませんでした", res.status, json);
-      const items = Array.isArray(json.items) ? (json.items as Record<string, unknown>[]) : [];
-      found.push(
-        ...items
-          .filter((item) => !item.pull_request)
-          .map((item) => ({
-            repo: String(item.repository_url ?? "").replace(/^.*\/repos\//, ""),
-            number: Number(item.number),
-            title: String(item.title ?? ""),
-            body: typeof item.body === "string" ? item.body : "",
-            url: String(item.html_url ?? ""),
-            labels: Array.isArray(item.labels)
-              ? item.labels.map((l) => String((l as Record<string, unknown>)?.name ?? l))
-              : [],
-          }))
-          .filter((issue) => /^[^/]+\/[^/]+$/.test(issue.repo) && issue.number > 0),
-      );
-      // 最後のページ（件数が1ページに満たない）なら終わる
-      if (items.length < GitHubIssueSearch.PER_PAGE) break;
+  async search(query: string, token: string): Promise<IssueSearchResult> {
+    const issues = new Map<string, FoundIssue>();
+    let incomplete: string | undefined;
+    let since: string | undefined;
+    for (let window = 0; window < GitHubIssueSearch.MAX_WINDOWS; window++) {
+      const q = since ? `${query} created:>=${since}` : query;
+      let last: string | undefined;
+      for (let page = 1; page <= GitHubIssueSearch.MAX_PAGES; page++) {
+        const { items, incompleteResults } = await this.page(q, page, token);
+        if (incompleteResults) {
+          incomplete = "GitHub の検索が時間内に終わらず、結果の一部しか得られませんでした。";
+        }
+        for (const item of items) {
+          const issue = toIssue(item);
+          if (issue) issues.set(`${issue.repo.toLowerCase()}#${issue.number}`, issue);
+          if (typeof item.created_at === "string") last = item.created_at;
+        }
+        // 最後のページ（件数が1ページに満たない）なら、すべて取れた
+        if (items.length < GitHubIssueSearch.PER_PAGE)
+          return { issues: [...issues.values()], incomplete };
+      }
+      // この範囲で1,000件に達した。最後の Issue の作成日時から先を、次の範囲として検索する
+      // （同じ日時の Issue を落とさないよう、>= にして重複は番号で除く）
+      if (!last || last === since) {
+        return {
+          issues: [...issues.values()],
+          incomplete: "同じ日時に作られた Issue が多すぎるため、すべてを検索できませんでした。",
+        };
+      }
+      since = last;
     }
-    return found;
+    return {
+      issues: [...issues.values()],
+      incomplete: `Issue が多すぎるため、検索の上限（${GitHubIssueSearch.MAX_WINDOWS * 1000}件ほど）までしか取り込めませんでした。`,
+    };
   }
+
+  private async page(q: string, page: number, token: string) {
+    const url = `${this.api}/search/issues?q=${encodeURIComponent(q)}&per_page=${GitHubIssueSearch.PER_PAGE}&page=${page}&sort=created&order=asc`;
+    const res = await this.fetchImpl(url, {
+      headers: {
+        accept: "application/vnd.github+json",
+        authorization: `Bearer ${token}`,
+        "x-github-api-version": "2022-11-28",
+      },
+    });
+    const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!res.ok) throw apiError("Issue を検索できませんでした", res.status, json);
+    return {
+      items: Array.isArray(json.items) ? (json.items as Record<string, unknown>[]) : [],
+      incompleteResults: json.incomplete_results === true,
+    };
+  }
+}
+
+/** 検索の結果の1件を読む。PR と、形の読めないものは除く。 */
+function toIssue(item: Record<string, unknown>): FoundIssue | undefined {
+  if (item.pull_request) return undefined;
+  const issue = {
+    repo: String(item.repository_url ?? "").replace(/^.*\/repos\//, ""),
+    number: Number(item.number),
+    title: String(item.title ?? ""),
+    body: typeof item.body === "string" ? item.body : "",
+    url: String(item.html_url ?? ""),
+    labels: Array.isArray(item.labels)
+      ? item.labels.map((l) => String((l as Record<string, unknown>)?.name ?? l))
+      : [],
+  };
+  return /^[^/]+\/[^/]+$/.test(issue.repo) && issue.number > 0 ? issue : undefined;
 }

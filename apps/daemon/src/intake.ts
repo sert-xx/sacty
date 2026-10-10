@@ -52,23 +52,43 @@ export class IssueIntake {
     return run;
   }
 
+  /**
+   * 取り込み元ごとに検索し、失敗は取り込み元ごとに記録する（1つの取り込み元の失敗で、
+   * ほかの取り込み元やプロジェクトの取り込みを止めない）。取れた結果は取り込む。
+   */
   private async runOnce(tokenSecret: string): Promise<void> {
     const at = new Date(this.now()).toISOString();
-    let token: string | undefined;
+    let token: string;
     try {
       token = await this.secrets.get(tokenSecret);
-      const found = [];
-      for (const query of this.service.intakeQueries()) {
-        found.push(...(await this.search.search(query, token)));
-      }
-      const created = this.service.importIssues(found);
-      this.service.recordIntake({ lastRunAt: at, imported: created.length });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
       this.service.recordIntake({
         lastRunAt: at,
-        error: redact(message, token ? [token] : []),
+        imported: 0,
+        errors: [{ message: describe(error) }],
       });
+      return;
     }
+    const found = [];
+    const errors: { query?: string; message: string }[] = [];
+    for (const query of this.service.intakeQueries()) {
+      try {
+        const result = await this.search.search(query, token);
+        found.push(...result.issues);
+        if (result.incomplete) errors.push({ query, message: result.incomplete });
+      } catch (error) {
+        errors.push({ query, message: redact(describe(error), [token]) });
+      }
+    }
+    const created = this.service.importIssues(found);
+    this.service.recordIntake({
+      lastRunAt: at,
+      imported: created.length,
+      ...(errors.length > 0 ? { errors } : {}),
+    });
   }
+}
+
+function describe(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
