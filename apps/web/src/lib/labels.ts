@@ -22,6 +22,7 @@ export const STEP_LABEL: Record<StepKey, string> = {
 
 export const START_LABEL: Record<Task["start"], string> = {
   ticket: "sacty",
+  github_issue: "GitHub Issue",
 };
 
 export const STATUS_LABEL: Record<Task["status"], string> = {

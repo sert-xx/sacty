@@ -10,7 +10,7 @@ import { PullRequestCard } from "@/components/pull-request";
 import { ResumeForm } from "@/components/resume-form";
 import { CostMeter, StatusLabel, StepChips } from "@/components/task-bits";
 import { TestViewpoints } from "@/components/test-viewpoints";
-import { DaemonUnavailableError, getTask } from "@/lib/daemon";
+import { DaemonUnavailableError, getProject, getTask } from "@/lib/daemon";
 import {
   describeEvent,
   formatStamp,
@@ -47,6 +47,7 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
   }
   if (!found) notFound();
   const { task, ledger } = found;
+  const projectName = (await getProject(task.projectId))?.project.name ?? task.projectId;
   const lastFailure = [...ledger].reverse().find((e) => e.type === "AgentRunFailed");
   const proposal = openProposal(task);
   const action = personAction(task);
@@ -60,7 +61,25 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
           <StatusLabel task={task} />
         </div>
         <p className="text-sm text-muted-foreground">
-          開始地点：{START_LABEL[task.start]} ・ プロジェクト：デフォルト
+          開始地点：{START_LABEL[task.start]}
+          {task.source && (
+            <>
+              （
+              <a
+                href={task.source.url}
+                target="_blank"
+                rel="noreferrer"
+                className="font-mono text-accent-foreground underline"
+              >
+                {task.source.repo}#{task.source.number}
+              </a>
+              ）
+            </>
+          )}{" "}
+          ・ プロジェクト：
+          <Link href={`/projects/${task.projectId}`} className="text-accent-foreground underline">
+            {projectName}
+          </Link>
         </p>
         <CostMeter task={task} />
       </div>

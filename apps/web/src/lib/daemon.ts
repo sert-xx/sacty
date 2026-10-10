@@ -1,4 +1,11 @@
-import type { CreateTicketInput, LedgerEvent, StepKey, Task } from "@sacty/core";
+import type {
+  CreateTicketInput,
+  LedgerEvent,
+  Project,
+  ProjectDefinitionInput,
+  StepKey,
+  Task,
+} from "@sacty/core";
 import { connection } from "next/server";
 
 /**
@@ -59,10 +66,62 @@ export async function createTicket(input: CreateTicketInput): Promise<Task> {
   return ((await res.json()) as { task: Task }).task;
 }
 
+export type IntakeStatus = {
+  lastRunAt?: string;
+  imported?: number;
+  /** 取り込めなかった取り込み元（検索の条件）と理由。 */
+  errors?: { query?: string; message: string }[];
+};
+
 export type DaemonStatus = {
   agent: { id: string; runtime: string; authMode: string } | null;
   problems: string[];
+  /** GitHub Issue の取り込み（設定が無ければ null）。 */
+  intake: IntakeStatus | null;
 };
+
+export type ProjectView = {
+  project: Project;
+  exclusions: { org: string; repos: { repo: string; projectName: string }[] }[];
+};
+
+export async function listProjects(): Promise<Project[]> {
+  const res = await ensureOk(await daemonFetch("/api/projects"));
+  return ((await res.json()) as { projects: Project[] }).projects;
+}
+
+export async function getProject(id: string): Promise<ProjectView | null> {
+  const res = await daemonFetch(`/api/projects/${encodeURIComponent(id)}`);
+  if (res.status === 404) return null;
+  await ensureOk(res);
+  return (await res.json()) as ProjectView;
+}
+
+/** プロジェクトを作る（id なし）か変える。入力の誤りや重複は、画面に出せる理由を返す。 */
+export async function saveProject(
+  id: string | undefined,
+  definition: ProjectDefinitionInput,
+): Promise<{ ok: true; project: Project } | { ok: false; message: string }> {
+  const res = await daemonFetch(id ? `/api/projects/${encodeURIComponent(id)}` : "/api/projects", {
+    method: id ? "PUT" : "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(definition),
+  });
+  if (res.status === 409) {
+    return { ok: false, message: ((await res.json()) as { message: string }).message };
+  }
+  if (res.status === 400) {
+    const json = (await res.json()) as { issues?: { message: string }[] };
+    return { ok: false, message: json.issues?.[0]?.message ?? "入力を確認してください。" };
+  }
+  await ensureOk(res);
+  return { ok: true, project: ((await res.json()) as { project: Project }).project };
+}
+
+/** GitHub Issue の取り込みを、間隔を待たずに実行する。 */
+export async function runIntake(): Promise<OpResult> {
+  return postOp("/api/intake/run", {});
+}
 
 export async function getStatus(): Promise<DaemonStatus> {
   const res = await ensureOk(await daemonFetch("/api/status"));

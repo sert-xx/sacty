@@ -552,6 +552,8 @@ export function buildPullRequestBody(task: Task): string {
   return [
     `sacty のタスク「${task.title}」の成果物です（sacty task ${task.id}）。`,
     "",
+    // 取り込んだ Issue と同じリポジトリの PR なら、マージで Issue を閉じる
+    ...(task.source?.kind === "github_issue" ? [`Closes #${task.source.number}`, ""] : []),
     "## 要求要件（人間が承認済み）",
     "",
     task.approved.requirements?.output ?? "（なし）",

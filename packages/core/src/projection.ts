@@ -4,6 +4,7 @@ import type {
   PauseReason,
   Remark,
   StepKey,
+  TaskSource,
   TestMapping,
   TestViewpoint,
   Verdict,
@@ -90,7 +91,9 @@ export type Task = {
   projectId: string;
   title: string;
   body: string;
-  start: "ticket";
+  start: "ticket" | "github_issue";
+  /** 取り込み元（GitHub Issue）。 */
+  source?: TaskSource;
   status: TaskStatus;
   pausedReason?: PauseReason;
   /** 止まった理由の詳しい説明。 */
@@ -213,6 +216,7 @@ export function applyEvent(
       title: event.payload.title,
       body: event.payload.body,
       start: event.payload.start,
+      ...(event.payload.source ? { source: event.payload.source } : {}),
       status: "queued",
       steps: [],
       outputs: {},

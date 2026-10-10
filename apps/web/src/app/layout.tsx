@@ -29,10 +29,15 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             sacty
           </Link>
           <span aria-hidden="true" className="h-7 w-px bg-border" />
-          <div className="flex flex-col leading-tight">
-            <span className="text-[11px] text-muted-foreground">プロジェクト</span>
-            <span className="text-sm font-semibold">デフォルト</span>
-          </div>
+          {/* プロジェクトの切り替えはPBI-4。ここではプロジェクトの設定への入口だけを置く */}
+          <nav aria-label="メイン" className="flex items-center gap-4 text-sm">
+            <Link href="/" className="font-medium text-foreground hover:underline">
+              タスク
+            </Link>
+            <Link href="/projects" className="font-medium text-foreground hover:underline">
+              プロジェクト
+            </Link>
+          </nav>
         </header>
         <main className="flex-1 px-4 py-7 sm:px-8">
           <div className="mx-auto flex max-w-6xl flex-col gap-6">{children}</div>

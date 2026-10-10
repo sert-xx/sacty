@@ -4,8 +4,10 @@ import { serve } from "@hono/node-server";
 import { DockerExecutor } from "./agents/docker.js";
 import { DockerTestRunner } from "./agents/test-runner.js";
 import { loadConfig, resolveHome } from "./config.js";
-import { GitHubPullRequests } from "./github.js";
+import { GitHubIssueSearch, GitHubPullRequests } from "./github.js";
+import { IssueIntake } from "./intake.js";
 import { SqliteLedgerStore } from "./ledger.js";
+import { SqliteProjectStore } from "./projects.js";
 import { GitRepositoryWorkspace } from "./repository.js";
 import { KeychainSecretStore } from "./secrets.js";
 import { createApp } from "./server.js";
@@ -23,12 +25,16 @@ if (!token) {
 
 mkdirSync(home, { recursive: true });
 const ledger = new SqliteLedgerStore(join(home, "sacty.db"));
+const projects = new SqliteProjectStore(join(home, "sacty.db"));
+const secrets = new KeychainSecretStore();
+const config = () => loadConfig(home);
 const executor = new DockerExecutor();
 const tests = new DockerTestRunner();
 const service = new TaskService({
   ledger,
-  config: () => loadConfig(home),
-  secrets: new KeychainSecretStore(),
+  config,
+  secrets,
+  projects,
   executor,
   repos: new GitRepositoryWorkspace(),
   pulls: new GitHubPullRequests(),
@@ -42,11 +48,13 @@ const status = service.status();
 for (const problem of status.problems) console.warn(`[daemon] ${problem}`);
 
 const worker = new Worker(service);
-const app = createApp(service, token);
+const intake = new IssueIntake(service, new GitHubIssueSearch(), secrets, config);
+const app = createApp(service, token, { intake });
 
 const server = serve({ fetch: app.fetch, hostname: "127.0.0.1", port }, (info) => {
   console.log(`[daemon] listening on http://127.0.0.1:${info.port} (data: ${home})`);
   worker.start();
+  intake.start();
 });
 
 /** 後処理を待つ上限。CLIはこれより長く待ってから強制終了する。 */
@@ -58,7 +66,7 @@ const shutdown = async () => {
   shuttingDown = true;
   // 実行中のコンテナを止め、実行の後処理（台帳への記録、認証ファイルの書き戻し、
   // 一時ファイルの削除）が終わるのを待ってから、台帳を閉じて終了する。
-  const draining = worker.drain();
+  const draining = Promise.all([worker.drain(), intake.stop()]);
   executor.abortAll();
   tests.abortAll();
   const timedOut = await Promise.race([
@@ -70,6 +78,7 @@ const shutdown = async () => {
   }
   server.close(() => {
     ledger.close();
+    projects.close();
     process.exit(0);
   });
 };

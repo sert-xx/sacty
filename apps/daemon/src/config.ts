@@ -137,6 +137,15 @@ const ConfigFile = z
       .prefault({}),
     agents: z.record(z.string(), Agent),
     repository: Repository.optional(),
+    /** GitHub Issue の取り込み（個人の設定。プロジェクトの定義には含めない）。 */
+    github: z
+      .object({
+        /** GitHub のトークンの秘密情報名（Issue の読み取り。PRを作るなら書き込みも）。 */
+        token_secret: SecretName,
+        /** 取り込みの間隔（秒）。 */
+        poll_interval_sec: z.number().int().min(60).default(300),
+      })
+      .optional(),
   })
   .superRefine((config, ctx) => {
     if (!config.agents[config.default_agent]) {
@@ -177,6 +186,7 @@ export type SactyConfig = {
     testImage: string;
     pullRequest?: { provider: "github"; repo: string; tokenSecret: string };
   };
+  github?: { tokenSecret: string; pollIntervalSec: number };
 };
 
 export type ConfigResult = { ok: true; config: SactyConfig } | { ok: false; problem: string };
@@ -238,6 +248,14 @@ export function loadConfig(home: string): ConfigResult {
       budgetPerTaskUsd: file.budget.default_per_task_usd,
       defaultAgent: resolve(file.default_agent),
       guardianAgent: resolve(file.guardian_agent ?? file.default_agent),
+      ...(file.github
+        ? {
+            github: {
+              tokenSecret: file.github.token_secret,
+              pollIntervalSec: file.github.poll_interval_sec,
+            },
+          }
+        : {}),
       ...(file.repository
         ? {
             repository: {
@@ -288,6 +306,12 @@ budget:
 #   pull_request:
 #     provider: github
 #     token_secret: github-token
+
+# GitHub Issue の取り込み（取り込み元はプロジェクトの設定で登録する）。
+# Issue から作ったタスクは、その Issue のリポジトリに実装する（設定はプロジェクトのリポジトリの設定）
+# github:
+#   token_secret: github-token
+#   poll_interval_sec: 300
 
 agents:
   # サブスクリプション：\`claude setup-token\` で作ったトークンを
