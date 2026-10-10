@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { AutoRefresh } from "@/components/auto-refresh";
+import type { LanguagePreference } from "@/i18n/locale";
 import { getMessages, languagePreference } from "@/i18n/server";
 import { currentProjectId, resolveProject } from "@/lib/current-project";
 import { listProjects, listTasks } from "@/lib/daemon";
@@ -18,12 +19,16 @@ function Frame({ children }: { children?: React.ReactNode }) {
   );
 }
 
-/** デーモンにつながらない間や読み込み中のヘッダー（テーマは変えられる）。 */
-export function HeaderFallback() {
+/**
+ * 読み込み中や、デーモンにつながらないときのヘッダー（テーマと言語は変えられる）。
+ * 読み込み中の仮表示では言語の設定が分からないので「システムに従う」を選んだ表示にし、
+ * つながらないときは保存済みの言語の設定を渡す。
+ */
+export function HeaderFallback({ language = "system" }: { language?: LanguagePreference }) {
   return (
     <Frame>
       <span className="flex-1" />
-      <UserMenu language="system" />
+      <UserMenu language={language} />
     </Frame>
   );
 }
@@ -34,7 +39,7 @@ export async function AppHeader() {
   try {
     data = await Promise.all([listProjects(), listTasks()]);
   } catch {
-    return <HeaderFallback />;
+    return <HeaderFallback language={await languagePreference()} />;
   }
   const [projects, tasks] = data;
   const [m, language] = await Promise.all([getMessages(), languagePreference()]);
