@@ -57,8 +57,9 @@ export const ProjectDefinition = z.object({
   /** 工程エージェントに渡すコンテキスト（PBI-6）。 */
   context: ContextSource.optional(),
   /**
-   * GitHub へのアクセスに使う、gh にログイン済みのアカウント（PBI-13）。省略すると gh のアクティブな
-   * アカウント。個人の設定なので、エクスポートには含めない。
+   * GitHub へのアクセスに使う、gh にログイン済みのアカウント（PBI-13）。GitHub にアクセスするには必ず選ぶ
+   * （gh のアクティブなアカウントは切り替わるので使わない）。個人の設定なので、エクスポートには含めない。
+   * インポートしたプロジェクトなど、選んでいないあいだは、GitHub へのアクセスを理由つきで止める。
    */
   githubAccount: z
     .string()

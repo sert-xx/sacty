@@ -12,8 +12,8 @@ export type GitHubAccount = { login: string; active: boolean };
 export interface GitHubAuth {
   /** gh にログイン済みのアカウント。 */
   accounts(): Promise<GitHubAccount[]>;
-  /** そのアカウント（省略するとアクティブなアカウント）のトークン。 */
-  token(account?: string): Promise<string>;
+  /** そのアカウントのトークン（アクティブなアカウントは切り替わるので、必ずアカウントを指定する）。 */
+  token(account: string): Promise<string>;
 }
 
 const HOST = "github.com";
@@ -70,13 +70,13 @@ export class GhCliAuth implements GitHubAuth {
       .map((item) => ({ login: String(item.login), active: item.active === true }));
   }
 
-  async token(account?: string): Promise<string> {
-    const args = ["auth", "token", "--hostname", HOST, ...(account ? ["--user", account] : [])];
+  async token(account: string): Promise<string> {
+    const args = ["auth", "token", "--hostname", HOST, "--user", account];
     const { code, stdout } = await this.run(args);
     const token = stdout.trim();
     // エラー文にはトークンは含まれないが、念のため出さない
     if (code !== 0 || !token) {
-      throw new MessageError(message("github.accountUnavailable", { account: account ?? "" }));
+      throw new MessageError(message("github.accountUnavailable", { account }));
     }
     return token;
   }

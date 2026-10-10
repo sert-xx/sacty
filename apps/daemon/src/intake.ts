@@ -84,7 +84,7 @@ export class IssueIntake {
       let entry = tokens.get(account);
       if (!entry) {
         try {
-          entry = { token: await this.github.token(account || undefined) };
+          entry = { token: await this.github.token(account) };
         } catch (error) {
           entry = { error: errorText(error) };
         }
@@ -92,7 +92,12 @@ export class IssueIntake {
       }
       return entry;
     };
-    for (const { query, account = "" } of this.service.intakeSources()) {
+    for (const { query, account, project } of this.service.intakeSources()) {
+      // アカウントを選んでいないプロジェクトの取り込み元は、理由を示して検索しない
+      if (!account) {
+        errors.push({ query, message: message("github.accountRequired", { project }) });
+        continue;
+      }
       const auth = await tokenOf(account);
       if ("error" in auth) {
         errors.push({ query, message: auth.error });

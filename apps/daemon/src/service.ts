@@ -248,15 +248,22 @@ export class TaskService {
   }
 
   /** 取り込みで検索する条件（取り込み元ごと）。 */
-  /** 取り込み元ごとの検索の条件と、検索に使う gh のアカウント（プロジェクトの設定。PBI-13）。 */
-  intakeSources(): { query: string; account?: string }[] {
-    const sources = new Map<string, { query: string; account?: string }>();
+  /**
+   * 取り込み元ごとの検索の条件と、検索に使う gh のアカウント（プロジェクトの設定。PBI-13）。
+   * アカウントを選んでいないプロジェクトは、プロジェクトの名前を返す（取り込みで理由を示す）。
+   */
+  intakeSources(): { query: string; account?: string; project: string }[] {
+    const sources = new Map<string, { query: string; account?: string; project: string }>();
     for (const project of this.deps.projects.all()) {
       for (const source of project.sources) {
         const where = source.scope === "org" ? `org:${source.target}` : `repo:${source.target}`;
         const query = `is:issue is:open ${where} label:"${source.label.replace(/"/g, "")}"`;
         const account = project.githubAccount;
-        sources.set(`${account ?? ""}\n${query}`, { query, ...(account ? { account } : {}) });
+        sources.set(`${account ?? ""}\n${query}`, {
+          query,
+          ...(account ? { account } : {}),
+          project: project.name,
+        });
       }
     }
     return [...sources.values()];
@@ -549,12 +556,18 @@ export class TaskService {
   }
 
   /**
-   * タスクのプロジェクトに設定した gh のアカウント（無ければアクティブなアカウント）で、
-   * GitHub のトークンを取り出す（PBI-13）。取り出した値は、出力やエラー文から取り除く対象にする。
+   * タスクのプロジェクトに設定した gh のアカウントで、GitHub のトークンを取り出す（PBI-13）。
+   * アカウントを選んでいなければ、理由つきで止める（アクティブなアカウントは切り替わるので使わない）。
+   * 取り出した値は、出力やエラー文から取り除く対象にする。
    */
   private async githubToken(task: Task, usedSecrets: string[]): Promise<string> {
-    const account = this.deps.projects.get(task.projectId)?.githubAccount;
-    const token = await this.deps.github.token(account);
+    const project = this.deps.projects.get(task.projectId);
+    if (!project?.githubAccount) {
+      throw new MessageError(
+        message("github.accountRequired", { project: project?.name ?? task.projectId }),
+      );
+    }
+    const token = await this.deps.github.token(project.githubAccount);
     usedSecrets.push(...gitAuthSecrets(token));
     return token;
   }

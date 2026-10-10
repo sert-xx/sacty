@@ -32,9 +32,14 @@ export function ProjectEditor({
   const uid = useId();
   const messages = useMessages();
   const { editor: t, scope: scopeLabel } = messages.projects;
-  const [githubAccount, setGithubAccount] = useState(project?.githubAccount ?? "");
   const accounts = github && "accounts" in github ? github.accounts : [];
-  const activeLogin = accounts.find((a) => a.active)?.login;
+  // GitHub のアカウントは必ず選ぶ。まだ選んでいなければ、gh のアクティブなアカウントを選んでおく
+  // （保存すると、そのアカウントに固定される。gh で切り替えても変わらない）
+  const [githubAccount, setGithubAccount] = useState(
+    project?.githubAccount ?? accounts.find((a) => a.active)?.login ?? "",
+  );
+  // 設定画面（project あり）では、アカウントを選ぶまで保存させない
+  const needsAccount = Boolean(project) && !githubAccount;
   const [name, setName] = useState(project?.name ?? "");
   const [sources, setSources] = useState<IssueSource[]>(project?.sources ?? []);
   const [repos, setRepos] = useState<RepositorySettings[]>(project?.repositories ?? []);
@@ -53,7 +58,6 @@ export function ProjectEditor({
           },
         }
       : {}),
-    // GitHub のアカウントは、選ばなければ渡さない（gh のアクティブなアカウントを使う）
     ...(githubAccount ? { githubAccount } : {}),
   });
 
@@ -193,7 +197,11 @@ export function ProjectEditor({
                 onChange={(e) => setGithubAccount(e.target.value)}
                 className={`${SELECT} max-w-md`}
               >
-                <option value="">{t.githubActive(activeLogin)}</option>
+                {!githubAccount && (
+                  <option value="" disabled>
+                    {t.githubChoose}
+                  </option>
+                )}
                 {accounts.map((a) => (
                   <option key={a.login} value={a.login}>
                     {a.login}
@@ -350,7 +358,12 @@ export function ProjectEditor({
           {t.saved}
         </p>
       )}
-      <Button type="submit" disabled={pending} className="min-h-11 w-fit px-6">
+      {needsAccount && (
+        <p role="alert" className="text-sm text-warn">
+          {t.githubRequired}
+        </p>
+      )}
+      <Button type="submit" disabled={pending || needsAccount} className="min-h-11 w-fit px-6">
         {project ? t.save : t.create}
       </Button>
     </form>

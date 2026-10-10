@@ -77,16 +77,12 @@ describe("gh コマンドでの GitHub の認証（PBI-13）", () => {
     ]);
     expect(gh.calls[0]?.env.GH_TOKEN).toBeUndefined();
     expect(gh.calls[0]?.env.GITHUB_TOKEN).toBeUndefined();
-    // アカウントを選んでいなければ、アクティブなアカウント
-    const active = fakeGh({ stdout: "ghp_active\n" });
-    await new GhCliAuth(active.spawnImpl).token();
-    expect(active.calls[0]?.args).toEqual(["auth", "token", "--hostname", "github.com"]);
   });
 
   it("gh が無い・ログインしていなければ、理由を示す", async () => {
     const missing = fakeGh({ error: "ENOENT" });
     expect(
-      errorText(await new GhCliAuth(missing.spawnImpl).token().catch((e: unknown) => e)),
+      errorText(await new GhCliAuth(missing.spawnImpl).token("me").catch((e: unknown) => e)),
     ).toEqual({ code: "github.ghMissing" });
     const notLoggedIn = fakeGh({ code: 1, stderr: "no oauth token found for github.com" });
     expect(

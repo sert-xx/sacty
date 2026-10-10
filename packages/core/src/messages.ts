@@ -86,10 +86,10 @@ const PARAMS = {
   "run.containerNotConfirmed": z.object({ name: z.string() }),
   "run.secretNotFound": z.object({ name: z.string() }),
   "run.repositorySettingsMissing": z.object({ project: z.string(), repo: z.string() }),
-  "run.prTokenRequired": null,
   "run.repositoryNotConfigured": null,
   "guardian.verdictUnreadable": null,
   "github.ghMissing": null,
+  "github.accountRequired": z.object({ project: z.string() }),
   "github.accountUnavailable": z.object({ account: z.string() }),
   "github.ghFailed": z.object({ detail: z.string() }),
   "review.verdictMissing": null,
@@ -104,7 +104,6 @@ const PARAMS = {
   "pr.workspaceMissing": null,
   "pr.failed": z.object({ detail: TextParam }),
   "cleanup.prRepoUnknown": null,
-  "cleanup.noToken": null,
   "cleanup.noWorkspace": null,
   "cleanup.containerUnconfirmed": null,
   "git.unavailable": z.object({ detail: z.string() }),
@@ -300,15 +299,15 @@ const ja: MessageDictionary = {
     `秘密情報「${name}」が見つかりません。\`sacty secret set ${name}\` で保存してください。`,
   "run.repositorySettingsMissing": ({ project, repo }) =>
     `プロジェクト「${project}」に、${repo} のリポジトリの設定（ベースブランチ・テストのコマンド）がありません。プロジェクトの設定で追加してから再開してください。`,
-  "run.prTokenRequired":
-    "PRを作るには、config.yaml の github.token_secret（GitHub のトークン）が必要です。設定するか、プロジェクトのリポジトリの設定でPRを作らないようにしてから再開してください。",
   "run.repositoryNotConfigured":
     "実装の対象リポジトリが設定されていません。config.yaml の repository を設定してから再開してください。",
   "guardian.verdictUnreadable": "ゴールガーディアンの出力から、判定を読み取れませんでした。",
   "github.ghMissing":
     "gh コマンドが見つかりません。GitHub CLI をインストールし、gh auth login でログインしてください。",
+  "github.accountRequired": ({ project }) =>
+    `プロジェクト「${project}」の GitHub アカウントが選ばれていません。プロジェクトの設定で選んでから再開してください。`,
   "github.accountUnavailable": ({ account }) =>
-    `${account ? `GitHub のアカウント「${account}」` : "GitHub のアクティブなアカウント"}で gh にログインしていません。gh auth login でログインするか、プロジェクトの設定でアカウントを選び直してください。`,
+    `GitHub のアカウント「${account}」で gh にログインしていません。gh auth login でログインするか、プロジェクトの設定でアカウントを選び直してください。`,
   "github.ghFailed": ({ detail }) => `gh コマンドが失敗しました：${detail}`,
   "review.verdictMissing": "判定がありません。",
   "review.unreadable": "最終レビューの出力から、判定を読み取れませんでした。",
@@ -326,7 +325,6 @@ const ja: MessageDictionary = {
   "pr.workspaceMissing": "実装の作業領域が無いため、PRを作れません。",
   "pr.failed": ({ detail }, text) => `PRを作れませんでした：${text(detail)}`,
   "cleanup.prRepoUnknown": "PRを作ったリポジトリの記録が無いため、閉じませんでした。",
-  "cleanup.noToken": "GitHub のトークンの設定が無いため、閉じられません。",
   "cleanup.noWorkspace": "作業領域が無いため、ブランチを消せません。",
   "cleanup.containerUnconfirmed":
     "コンテナが止まったことを確かめられないため、作業領域は消していません。",
@@ -464,15 +462,15 @@ const en: MessageDictionary = {
     `Secret "${name}" not found. Save it with \`sacty secret set ${name}\`.`,
   "run.repositorySettingsMissing": ({ project, repo }) =>
     `The project "${project}" has no repository settings (base branch and test command) for ${repo}. Add them in the project settings, then resume.`,
-  "run.prTokenRequired":
-    "Opening a PR requires github.token_secret (a GitHub token) in config.yaml. Set it, or turn off PRs in the project's repository settings, then resume.",
   "run.repositoryNotConfigured":
     "No target repository is configured. Set repository in config.yaml, then resume.",
   "guardian.verdictUnreadable": "Could not read a verdict from the Goal Guardian's output.",
   "github.ghMissing":
     "The gh command was not found. Install GitHub CLI and sign in with gh auth login.",
+  "github.accountRequired": ({ project }) =>
+    `No GitHub account is chosen for the project "${project}". Choose one in the project settings, then resume.`,
   "github.accountUnavailable": ({ account }) =>
-    `${account ? `The GitHub account "${account}" is` : "No active GitHub account is"} signed in to gh. Sign in with gh auth login, or choose another account in the project settings.`,
+    `The GitHub account "${account}" is not signed in to gh. Sign in with gh auth login, or choose another account in the project settings.`,
   "github.ghFailed": ({ detail }) => `The gh command failed: ${detail}`,
   "review.verdictMissing": "No verdict was given.",
   "review.unreadable": "Could not read the verdicts from the final review output.",
@@ -490,7 +488,6 @@ const en: MessageDictionary = {
   "pr.workspaceMissing": "There is no implementation workspace, so a PR cannot be opened.",
   "pr.failed": ({ detail }, text) => `Could not open the PR: ${text(detail)}`,
   "cleanup.prRepoUnknown": "Not closed because the PR's repository was not recorded.",
-  "cleanup.noToken": "Cannot close it because no GitHub token is configured.",
   "cleanup.noWorkspace": "Cannot delete the branch because there is no workspace.",
   "cleanup.containerUnconfirmed":
     "The workspace was kept because the container could not be confirmed as stopped.",

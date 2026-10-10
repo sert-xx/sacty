@@ -125,11 +125,6 @@ const Repository = z.object({
         .string()
         .regex(/^[\w.-]+\/[\w.-]+$/, code("input.invalidRepo"))
         .optional(),
-      /**
-       * 以前の設定（GitHub のトークンの秘密情報名）。読めるが使わない。GitHub へのアクセスは、
-       * プロジェクトに設定した gh のアカウントで行う（PBI-13）。
-       */
-      token_secret: SecretName.optional(),
     })
     .optional(),
 });
@@ -154,8 +149,6 @@ const ConfigFile = z
     /** GitHub Issue の取り込み（個人の設定。プロジェクトの定義には含めない）。 */
     github: z
       .object({
-        /** 以前の設定（GitHub のトークンの秘密情報名）。読めるが使わない（gh のアカウントを使う。PBI-13）。 */
-        token_secret: SecretName.optional(),
         /** 取り込みの間隔（秒）。 */
         poll_interval_sec: z.number().int().min(60).default(300),
       })
@@ -322,8 +315,7 @@ budget:
 #   base_branch: main
 #   test_command: npm ci && npm test
 #   # PRを作る場合（省略すると、sacty のブランチにプッシュするまで）。
-#   # GitHub へのアクセスは、ホストの gh コマンドのアカウントで行う（プロジェクトの設定で選ぶ。
-#   # 選ばなければ gh のアクティブなアカウント）
+#   # GitHub へのアクセスは、プロジェクトの設定で選んだ gh のアカウントで行う
 #   pull_request:
 #     provider: github
 

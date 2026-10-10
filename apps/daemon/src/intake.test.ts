@@ -69,18 +69,17 @@ class FakeSearch implements IssueSearch {
   }
 }
 
-/** gh の偽物。アカウントごとのトークン（"" はアクティブなアカウント）を返す。 */
+/** gh の偽物。ログイン済みのアカウントごとのトークンを返す。 */
 class FakeGh implements GitHubAuth {
-  requested: (string | undefined)[] = [];
-  constructor(public tokens: Record<string, string> = { "": "ghp_secret" }) {}
+  requested: string[] = [];
+  constructor(public tokens: Record<string, string> = { me: "ghp_secret" }) {}
   async accounts() {
     return [];
   }
-  async token(account?: string) {
+  async token(account: string) {
     this.requested.push(account);
-    const token = this.tokens[account ?? ""];
-    if (!token)
-      throw new MessageError(message("github.accountUnavailable", { account: account ?? "" }));
+    const token = this.tokens[account];
+    if (!token) throw new MessageError(message("github.accountUnavailable", { account }));
     return token;
   }
 }
@@ -101,6 +100,7 @@ function setup(github = true, gh = new FakeGh()) {
   });
   service.saveProject(undefined, {
     name: "決済",
+    githubAccount: "me",
     sources: [{ scope: "repo", target: "acme/payments", label: "sacty" }],
   });
   const search = new FakeSearch([
@@ -157,6 +157,7 @@ describe("GitHub Issue の定期的な取り込み（PBI-5a）", () => {
     const { ledger, service, search, intake } = setup();
     service.saveProject(undefined, {
       name: "削除されたリポジトリ",
+      githubAccount: "me",
       sources: [{ scope: "repo", target: "acme/deleted", label: "sacty" }],
     });
     search.failQuery = 'is:issue is:open repo:acme/deleted label:"sacty"';
@@ -174,7 +175,7 @@ describe("GitHub Issue の定期的な取り込み（PBI-5a）", () => {
   });
 
   it("取り込み元ごとに、そのプロジェクトの gh のアカウントで検索し、ログインしていないアカウントの分だけ失敗にする（PBI-13）", async () => {
-    const gh = new FakeGh({ "": "ghp_active", "side-job": "ghp_side" });
+    const gh = new FakeGh({ me: "ghp_active", "side-job": "ghp_side" });
     const { ledger, service, search, intake } = setup(true, gh);
     service.saveProject(undefined, {
       name: "副業",
@@ -186,6 +187,11 @@ describe("GitHub Issue の定期的な取り込み（PBI-5a）", () => {
       sources: [{ scope: "repo", target: "old/app", label: "sacty" }],
       githubAccount: "logged-out",
     });
+    // アカウントを選んでいないプロジェクトは、アクティブなアカウントで検索せず、理由を示す
+    service.saveProject(undefined, {
+      name: "インポートしたもの",
+      sources: [{ scope: "repo", target: "imported/app", label: "sacty" }],
+    });
     await intake.tick(true);
     // 既定（アカウント未設定）はアクティブなアカウント、副業は選んだアカウントのトークン
     expect(search.queries).toEqual([
@@ -193,21 +199,26 @@ describe("GitHub Issue の定期的な取り込み（PBI-5a）", () => {
       'is:issue is:open repo:side/app label:"sacty"',
     ]);
     expect(search.tokens).toEqual(["ghp_active", "ghp_side"]);
-    expect(gh.requested).toEqual([undefined, "side-job", "logged-out"]);
+    expect(gh.requested).toEqual(["me", "side-job", "logged-out"]);
     expect(service.status().intake?.errors).toEqual([
       {
         query: 'is:issue is:open repo:old/app label:"sacty"',
         message: { code: "github.accountUnavailable", params: { account: "logged-out" } },
+      },
+      {
+        query: 'is:issue is:open repo:imported/app label:"sacty"',
+        message: { code: "github.accountRequired", params: { project: "インポートしたもの" } },
       },
     ]);
     ledger.close();
   });
 
   it("レート制限はアカウントごとなので、ほかのアカウントの検索は続ける（PBI-13）", async () => {
-    const gh = new FakeGh({ "": "ghp_active", "side-job": "ghp_side" });
+    const gh = new FakeGh({ me: "ghp_active", "side-job": "ghp_side" });
     const { ledger, service, search, intake } = setup(true, gh);
     service.saveProject(undefined, {
       name: "認証",
+      githubAccount: "me",
       sources: [{ scope: "repo", target: "acme/auth", label: "sacty" }],
     });
     service.saveProject(undefined, {
@@ -226,6 +237,7 @@ describe("GitHub Issue の定期的な取り込み（PBI-5a）", () => {
     const { ledger, service, search, intake, advance } = setup();
     service.saveProject(undefined, {
       name: "認証",
+      githubAccount: "me",
       sources: [{ scope: "repo", target: "acme/auth", label: "sacty" }],
     });
     search.cursor = "2026-10-10T00:00:00Z";

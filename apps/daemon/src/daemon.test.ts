@@ -70,22 +70,31 @@ const configOf =
     },
   });
 
-/** gh の偽物。アカウントごとのトークン（"" はアクティブなアカウント）を返す。 */
+/** gh の偽物。ログイン済みのアカウントごとのトークンを返す。 */
 class FakeGitHub implements GitHubAuth {
-  requested: (string | undefined)[] = [];
-  constructor(private readonly tokens: Record<string, string> = { "": "ghp_secret" }) {}
+  requested: string[] = [];
+  constructor(private readonly tokens: Record<string, string> = { me: "ghp_secret" }) {}
   async accounts() {
-    return Object.keys(this.tokens)
-      .filter(Boolean)
-      .map((login) => ({ login, active: false }));
+    return Object.keys(this.tokens).map((login) => ({ login, active: login === "me" }));
   }
-  async token(account?: string) {
+  async token(account: string) {
     this.requested.push(account);
-    const token = this.tokens[account ?? ""];
-    if (!token)
-      throw new MessageError(message("github.accountUnavailable", { account: account ?? "" }));
+    const token = this.tokens[account];
+    if (!token) throw new MessageError(message("github.accountUnavailable", { account }));
     return token;
   }
+}
+
+/** 既定のプロジェクトに、gh のアカウント（偽物の me）を選んだプロジェクトの置き場所。 */
+function projectsWithAccount(): MemoryProjectStore {
+  const projects = new MemoryProjectStore();
+  projects.put("default", {
+    name: "デフォルト",
+    sources: [],
+    repositories: [],
+    githubAccount: "me",
+  });
+  return projects;
 }
 
 /** clone の代わりに空のディレクトリを作り、決まった差分を返す偽物。 */
@@ -298,7 +307,7 @@ function makeService(
     repos,
     tests,
     pulls,
-    projects: options.projects ?? new MemoryProjectStore(),
+    projects: options.projects ?? projectsWithAccount(),
     contexts: options.contexts ?? new FakeContexts(),
     github: options.github ?? new FakeGitHub(),
     workspaceRoot: join(dir, "workspaces"),
@@ -2359,6 +2368,7 @@ describe("プロジェクトと GitHub Issue の取り込み（PBI-5a）", () =>
     const made = makeService(ledger, outcomes, { projects, ...options });
     const pay = made.service.saveProject(undefined, {
       name: "決済",
+      githubAccount: "me",
       sources: [{ scope: "org", target: "acme", label: "sacty" }],
       repositories: [
         {
@@ -2409,16 +2419,11 @@ describe("プロジェクトと GitHub Issue の取り込み（PBI-5a）", () =>
 
   it("取り込み元ごとに検索し、担当のプロジェクトのラベルが付いた Issue だけを、二重にならないよう取り込む", () => {
     const { ledger, service, pay, auth } = setup();
+    // 検索には、プロジェクトに選んだ gh のアカウントを使う（PBI-13）。選んでいなければアカウントは無い
     expect(service.intakeSources()).toEqual([
-      { query: 'is:issue is:open org:acme label:"sacty"' },
-      { query: 'is:issue is:open repo:acme/auth label:"ai"' },
+      { query: 'is:issue is:open org:acme label:"sacty"', account: "me", project: "決済" },
+      { query: 'is:issue is:open repo:acme/auth label:"ai"', project: "認証" },
     ]);
-    // 検索には、プロジェクトに選んだ gh のアカウントを使う（PBI-13）
-    service.saveProject(auth.id, { ...auth, githubAccount: "side-job" });
-    expect(service.intakeSources()[1]).toEqual({
-      query: 'is:issue is:open repo:acme/auth label:"ai"',
-      account: "side-job",
-    });
     const created = service.importIssues([
       issue("acme/payments", 1, ["sacty"], "冪等性キー"),
       issue("acme/payments", 2, ["bug"]), // ラベルが違う
@@ -2526,7 +2531,7 @@ describe("プロジェクトと GitHub Issue の取り込み（PBI-5a）", () =>
       },
     ];
     // アクティブなアカウントは別のもの。プロジェクトに選んだアカウントのトークンを使う
-    const github = new FakeGitHub({ "": "ghp_active", "side-job": "ghp_side" });
+    const github = new FakeGitHub({ me: "ghp_active", "side-job": "ghp_side" });
     const { ledger, service, repos, pay } = setup(outcomes, { github });
     service.saveProject(pay.id, { ...pay, githubAccount: "side-job" });
     const [task] = service.importIssues([issue("acme/payments", 11, ["sacty"])]);
@@ -2545,6 +2550,41 @@ describe("プロジェクトと GitHub Issue の取り込み（PBI-5a）", () =>
     ledger.close();
   });
 
+  it("GitHub のアカウントを選んでいないプロジェクトは、アクティブなアカウントを使わずに理由を記録して止める（PBI-13）", async () => {
+    const outcomes: AgentOutcome[] = [
+      {
+        kind: "completed",
+        output: "# 要求要件",
+        usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 1 },
+      },
+      {
+        kind: "completed",
+        output: "# 設計",
+        usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 1 },
+      },
+    ];
+    const github = new FakeGitHub({ me: "ghp_active" });
+    const { ledger, service, repos, pay } = setup(outcomes, { github });
+    // インポートしたプロジェクトなど、アカウントを選んでいない
+    const { githubAccount: _, ...withoutAccount } = pay;
+    service.saveProject(pay.id, withoutAccount);
+    const [task] = service.importIssues([issue("acme/payments", 13, ["sacty"])]);
+    const id = task?.id ?? "";
+    await service.runNext(id);
+    service.approve(id, { step: "requirements", submission: 1 });
+    await service.runNext(id);
+    service.approve(id, { step: "design", submission: 1 });
+    await service.runNext(id);
+    expect(github.requested).toEqual([]);
+    expect(repos.prepared).toHaveLength(0);
+    const failed = service.get(id)?.ledger.findLast((e) => e.type === "AgentRunFailed");
+    expect(failed?.type === "AgentRunFailed" && failed.payload.message).toEqual({
+      code: "github.accountRequired",
+      params: { project: "決済" },
+    });
+    ledger.close();
+  });
+
   it("プロジェクトに選んだ gh のアカウントでログインしていなければ、理由を記録して止める（PBI-13）", async () => {
     const outcomes: AgentOutcome[] = [
       {
@@ -2558,7 +2598,7 @@ describe("プロジェクトと GitHub Issue の取り込み（PBI-5a）", () =>
         usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 1 },
       },
     ];
-    const other = setup(outcomes, { github: new FakeGitHub({ "": "ghp_active" }) });
+    const other = setup(outcomes, { github: new FakeGitHub({ me: "ghp_active" }) });
     other.service.saveProject(other.pay.id, { ...other.pay, githubAccount: "side-job" });
     const [t2] = other.service.importIssues([issue("acme/payments", 12, ["sacty"])]);
     const id2 = t2?.id ?? "";
@@ -2846,13 +2886,18 @@ describe("API", () => {
     const ledger = new SqliteLedgerStore(dbPath);
     const app = createApp(
       makeService(ledger, [], {
-        github: new FakeGitHub({ "": "ghp_active", "side-job": "ghp_side" }),
+        github: new FakeGitHub({ me: "ghp_active", "side-job": "ghp_side" }),
       }).service,
       token,
     );
     const res = await app.request("/api/github/accounts", { headers: auth });
     const body = await res.json();
-    expect(body).toEqual({ accounts: [{ login: "side-job", active: false }] });
+    expect(body).toEqual({
+      accounts: [
+        { login: "me", active: true },
+        { login: "side-job", active: false },
+      ],
+    });
     expect(JSON.stringify(body)).not.toContain("ghp_");
     const failing = createApp(
       makeService(ledger, [], {
