@@ -242,7 +242,7 @@ export function ProjectEditor({
                 <Input
                   id={`${uid}-context-repo`}
                   value={contextRepo}
-                  placeholder="git@github.com:acme/sacty-context.git"
+                  placeholder={t.contextRepoPlaceholder}
                   onChange={(e) => setContextRepo(e.target.value)}
                   className="font-mono"
                 />
@@ -255,7 +255,9 @@ export function ProjectEditor({
                 <Input
                   id={`${uid}-context-ref`}
                   value={contextRef}
-                  placeholder="main"
+                  placeholder={t.contextRefPlaceholder}
+                  // ブランチ・タグは、リポジトリを設定したときだけ使う
+                  disabled={!contextRepo.trim()}
                   onChange={(e) => setContextRef(e.target.value)}
                   className="font-mono"
                 />

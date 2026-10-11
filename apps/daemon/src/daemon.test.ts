@@ -4187,6 +4187,33 @@ describe("コンテキストリポジトリ（PBI-6a）", () => {
     activity.close();
   });
 
+  it("コンテキストリポジトリは任意：外して保存でき、無ければ何も渡さずに工程を実行する", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const contexts = new FakeContexts({ "https://example.com/team.git": { "rules.md": "# 規約" } });
+    const { service, executor } = makeService(activity, [out("# 要求要件")], {
+      projects: projectsWithAccount(),
+      contexts,
+    });
+    const definition = {
+      name: "決済",
+      githubAccount: "me",
+      repositories: [{ repo: "acme/app", testCommand: "npm test" }],
+    };
+    const project = service.saveProject(undefined, {
+      ...definition,
+      context: { repo: "https://example.com/team.git" },
+    });
+    // 設定済みのコンテキストは、定義から外して保存すると外れる
+    expect(service.saveProject(project.id, definition).context).toBeUndefined();
+    const { id } = service.createTask({ title: "A", projectId: project.id });
+    await service.runNext(id);
+    expect(contexts.fetched).toEqual([]);
+    expect(executor.contexts).toEqual([undefined]);
+    expect(service.get(id)?.activity.some((e) => e.type === "ContextResolved")).toBe(false);
+    expect(service.get(id)?.task.gate).toEqual({ step: "requirements", submission: 1 });
+    activity.close();
+  });
+
   it("コンテキストを取得できなければ、理由を記録して止める", async () => {
     const activity = new SqliteActivityStore(dbPath);
     const { service, executor } = makeService(activity, [out("# 要求要件")], {
