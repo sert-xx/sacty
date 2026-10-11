@@ -3,7 +3,7 @@ const ja = {
   ticket: {
     create: "チケットを作成",
     description: (project: string) =>
-      `プロジェクト「${project}」に作成します。作成すると、工程（要求要件 → 設計 → 実装 → PR作成）が決まり、台帳に記録されます。`,
+      `プロジェクト「${project}」に作成します。作成すると、オーケストレーターがチケットと対象リポジトリを読んで工程を選び、台帳に記録します。`,
     title: "タイトル",
     body: "内容",
     bodyPlaceholder: "背景や、満たしてほしい条件",
@@ -24,7 +24,7 @@ const en: FormsMessages = {
   ticket: {
     create: "Create ticket",
     description: (project) =>
-      `Creates the ticket in the project "${project}". On creation, its steps (Requirements → Design → Implement → Open PR) are chosen and recorded in the Ledger.`,
+      `Creates the ticket in the project "${project}". The Orchestrator then reads the ticket and the target repository, chooses the steps, and records them in the Ledger.`,
     title: "Title",
     body: "Description",
     bodyPlaceholder: "Background and the conditions it should meet",

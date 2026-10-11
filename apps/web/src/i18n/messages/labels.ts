@@ -100,7 +100,8 @@ const ja = {
     estimated: "・換算値",
     withCost: (actor: string, cost: string) => `${actor}・${cost}`,
     TaskCreated: (actor: string) => `チケットを作成（${actor}）`,
-    StepsChosen: (steps: string) => `工程を決定：${steps}`,
+    StepsChosen: (steps: string, reason?: string) =>
+      `工程を決定：${steps}${reason ? `（${reason}）` : ""}`,
     stepsJoin: " → ",
     AgentRunStarted: (step: string, agent: string, auth: string) =>
       `${step}の実行を開始（${agent}・${auth}）`,
@@ -252,7 +253,7 @@ const en: LabelMessages = {
     estimated: " · estimate",
     withCost: (actor, cost) => `${actor} · ${cost}`,
     TaskCreated: (actor) => `Ticket created (${actor})`,
-    StepsChosen: (steps) => `Steps chosen: ${steps}`,
+    StepsChosen: (steps, reason) => `Steps chosen: ${steps}${reason ? ` (${reason})` : ""}`,
     stepsJoin: " → ",
     AgentRunStarted: (step, agent, auth) => `${step} started (${agent} · ${auth})`,
     AgentRunCompleted: (step, cost, viewpoints) =>

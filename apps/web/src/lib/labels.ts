@@ -88,7 +88,10 @@ export function describeEvent(event: LedgerEvent, l: LabelMessages): string {
     case "TaskCreated":
       return e.TaskCreated(actor);
     case "StepsChosen":
-      return e.StepsChosen(event.payload.steps.map((s) => l.step[s]).join(e.stepsJoin));
+      return e.StepsChosen(
+        event.payload.steps.map((s) => l.step[s]).join(e.stepsJoin),
+        event.payload.reason === undefined ? undefined : l.text(event.payload.reason),
+      );
     case "AgentRunStarted":
       return e.AgentRunStarted(
         l.step[event.payload.step],

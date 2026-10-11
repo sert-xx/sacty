@@ -5,6 +5,7 @@ import {
   type RemarkResponse,
   renderMessage,
   type StepKey,
+  StepPlan,
   type Task,
   type TaskProposal,
   type TestMapping,
@@ -26,6 +27,9 @@ const VIEWPOINTS_HEADING = "sacty-test-viewpoints";
 const PROPOSAL_HEADING = "sacty-change-proposal";
 const VERDICT_HEADING = "sacty-verdict";
 const REWORK_HEADING = "sacty-rework";
+const PLAN_HEADING = "sacty-steps";
+/** 設計を省いたタスクで、最終レビューの観点にする要求要件の受け入れ条件（PBI-17）。 */
+export const REQUIREMENTS_VIEWPOINT = "REQ";
 const TEST_MAP_HEADING = "sacty-test-map";
 const FINAL_REVIEW_HEADING = "sacty-final-review";
 
@@ -233,10 +237,20 @@ export function buildPrompt(task: Task, step: StepKey): string {
     case "implement": {
       // 実装への差し戻しの指摘は、対応を答えてもらう（下の remarkLines）。ほかの工程の指摘は再発の防止に使う
       const remarks = humanRemarks(task).filter((r) => r.step !== "implement");
+      // 設計を省いたタスク（PBI-17）は、要求要件の受け入れ条件をテストで確かめる
+      const designed = task.steps.some((s) => s.key === "design");
       const lines = [
         "あなたはソフトウェア開発の工程エージェントです。",
-        "作業ディレクトリは実装の対象リポジトリです。人間が承認した要求要件と設計に従って実装し、",
-        "テスト観点ごとに、その観点を検証するテストを書いてください。",
+        ...(designed
+          ? [
+              "作業ディレクトリは実装の対象リポジトリです。人間が承認した要求要件と設計に従って実装し、",
+              "テスト観点ごとに、その観点を検証するテストを書いてください。",
+            ]
+          : [
+              "作業ディレクトリは実装の対象リポジトリです。人間が承認した要求要件に従って実装し、",
+              "受け入れ条件を検証するテストを書いてください（このタスクは、オーケストレーターの判断で設計の工程を省いています。",
+              `観点とテストの対応は、受け入れ条件の観点 ${REQUIREMENTS_VIEWPOINT} に、書いたテストを対応させてください）。`,
+            ]),
         "",
         "- テストは、観点の入力を与え、期待結果を確かめるものにする（観点を検証しない形だけのテストにしない）",
         "- 書いたテストは、リポジトリのテストのコマンドで実行されるようにする",
@@ -253,7 +267,9 @@ export function buildPrompt(task: Task, step: StepKey): string {
         task.approved.design?.output ?? "（なし）",
         "",
         "--- テスト観点（承認済み・すべてにテストを対応させる） ---",
-        ...viewpointLines(task.approved.design?.testViewpoints ?? []),
+        ...(designed
+          ? viewpointLines(task.approved.design?.testViewpoints ?? [])
+          : [`- [${REQUIREMENTS_VIEWPOINT}] 承認済みの要求要件の受け入れ条件`]),
       ];
       if (remarks.length > 0) {
         lines.push(
@@ -470,6 +486,7 @@ export function extractVerdict(output: string): { verdict: Verdict; reason: Daem
  */
 export function buildFinalReviewPrompt(task: Task, diff: string): string {
   const viewpoints = task.approved.design?.testViewpoints ?? [];
+  const designed = task.steps.some((s) => s.key === "design");
   const remarks = humanRemarks(task);
   const tests = task.lastTests;
   return [
@@ -488,7 +505,11 @@ export function buildFinalReviewPrompt(task: Task, diff: string): string {
     task.approved.design?.output ?? "（なし）",
     "",
     "--- テスト観点 ---",
-    ...viewpointLines(viewpoints),
+    ...(designed
+      ? viewpointLines(viewpoints)
+      : [
+          `- [${REQUIREMENTS_VIEWPOINT}] 承認済みの要求要件の受け入れ条件（設計の工程を省いたため、受け入れ条件をすべてテストが検証しているかを、この観点で判定する）`,
+        ]),
     "",
     "--- 観点とテストの対応（工程エージェントの申告） ---",
     ...(task.testMap.length > 0
@@ -691,4 +712,58 @@ export function extractRework(
     }
   }
   return { reason: message("guardian.reworkUnreadable") };
+}
+
+/**
+ * オーケストレーターへの指示（PBI-17）。チケットと対象リポジトリのコードを読んで、決めた候補から
+ * 工程の組み合わせを選ばせる。判断ごとに新しいセッションで実行する。
+ */
+export function buildOrchestratorPrompt(task: Task): string {
+  const plans: Record<StepPlan, string> = {
+    standard:
+      "要求要件 → 設計（テスト観点）→ 実装 → PR作成。既定。振る舞いが複数ある・影響範囲が広い・テスト観点を人間と合意したい変更",
+    "skip-design":
+      "要求要件 → 実装 → PR作成。設計を省く。変更が小さく局所的で、要求要件の受け入れ条件だけで十分にテストできる変更（例：文言の修正、小さな関数の追加）",
+  };
+  return [
+    "あなたはオーケストレーターです。チケットと対象リポジトリのコードを読んで、このタスクの工程を選んでください。",
+    ...(task.repository
+      ? [
+          "",
+          `作業領域（カレントディレクトリ）に、対象リポジトリ（${task.repository.url}）の起点のコミット（${task.repository.baseCommit.slice(0, 7)}）のコードがあります。変更の大きさや影響範囲を判断するために読んでください（読み取り専用です）。`,
+        ]
+      : []),
+    "",
+    "選べる工程の組み合わせ：",
+    ...Object.entries(plans).map(([key, text]) => `- ${key}：${text}`),
+    "",
+    "迷う場合は standard を選んでください。",
+    "",
+    "--- チケット ---",
+    `# ${task.title}`,
+    "",
+    task.body || "（内容なし）",
+    "",
+    "選んだ工程を、次の形式で必ず出してください。",
+    "```json",
+    `{"${PLAN_HEADING}": {"plan": "${Object.keys(plans).join(" または ")}", "reason": "選んだ理由"}}`,
+    "```",
+  ].join("\n");
+}
+
+/** オーケストレーターの出力から、選んだ工程の組み合わせを読む。読めなければ undefined（標準の工程にする）。 */
+export function extractStepPlan(output: string): { plan: StepPlan; reason: string } | undefined {
+  const blocks = [...output.matchAll(/```json\s*\n([\s\S]*?)\n```/g)].reverse();
+  for (const block of blocks) {
+    try {
+      const parsed = JSON.parse(block[1] ?? "") as Record<string, unknown>;
+      const v = (parsed?.[PLAN_HEADING] ?? {}) as Record<string, unknown>;
+      const plan = StepPlan.safeParse(v.plan);
+      const reason = text(v.reason);
+      if (plan.success && reason) return { plan: plan.data, reason };
+    } catch {
+      // 次のブロックを試す
+    }
+  }
+  return undefined;
 }

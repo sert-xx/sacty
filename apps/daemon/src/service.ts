@@ -22,7 +22,6 @@ import {
   type LedgerEvent,
   MAX_CHANGE_REQUESTS,
   MAX_VERIFY_ATTEMPTS,
-  MVP_STEPS,
   message,
   openProposal,
   type PauseReason,
@@ -38,6 +37,7 @@ import {
   repositorySettings,
   responsibleSource,
   reworkTargets,
+  STEP_PLANS,
   type StepKey,
   type Task,
   type TaskProposal,
@@ -70,6 +70,7 @@ import type { ProjectStore } from "./projects.js";
 import {
   buildFinalReviewPrompt,
   buildGuardianPrompt,
+  buildOrchestratorPrompt,
   buildPrompt,
   buildPullRequestBody,
   buildReworkPrompt,
@@ -78,7 +79,9 @@ import {
   extractBlocks,
   extractFinalReview,
   extractRework,
+  extractStepPlan,
   extractVerdict,
+  REQUIREMENTS_VIEWPOINT,
 } from "./prompts.js";
 import type { RepositoryWorkspace } from "./repository.js";
 import { SecretNotFoundError, type SecretStore } from "./secrets.js";
@@ -123,6 +126,8 @@ export type ServiceDeps = {
   github: GitHubAuth;
   /** 現在の時刻（テストで差し替える）。 */
   now?: () => number;
+  /** オーケストレーターの代わりに工程を選ぶ（テストで差し替える。PBI-17）。 */
+  planner?: (task: Task) => Promise<Extract<EventInput, { type: "StepsChosen" }>["payload"]>;
   /** プロジェクトの設定。 */
   projects: ProjectStore;
   /** コンテキストリポジトリの取得（PBI-6）。 */
@@ -440,6 +445,44 @@ export class TaskService {
     }
   }
 
+  /**
+   * オーケストレーターに、タスクの工程を選ばせる（PBI-17）。チケットと対象リポジトリの起点のコードを
+   * 読ませ、候補（STEP_PLANS）から選ばせる。人間の承認は無い。判断できない・実行に失敗したときは、
+   * 標準の工程にして、そのことを記録する。テストでは deps.planner に差し替える。
+   */
+  private async chooseSteps(
+    task: Task,
+    config: SactyConfig,
+  ): Promise<Extract<EventInput, { type: "StepsChosen" }>["payload"]> {
+    if (this.deps.planner) return this.deps.planner(task);
+    const agent = config.defaultAgent;
+    const { outcome, costUsd, estimated } = await this.runGuardian(
+      task,
+      { agent, image: config.image, prompt: buildOrchestratorPrompt(task), role: "orchestrator" },
+      "base",
+    );
+    const cost = { agentId: agent.id, usage: outcome.usage, costUsd, estimated };
+    const chosen = outcome.kind === "completed" ? extractStepPlan(outcome.output) : undefined;
+    if (chosen) {
+      return {
+        steps: [...STEP_PLANS[chosen.plan]],
+        plan: chosen.plan,
+        reason: chosen.reason,
+        fallback: false,
+        ...cost,
+      };
+    }
+    return {
+      steps: [...STEP_PLANS.standard],
+      plan: "standard",
+      reason: message("orchestrator.fallback", {
+        detail: outcome.kind === "failed" ? outcome.message : message("orchestrator.unreadable"),
+      }),
+      fallback: true,
+      ...cost,
+    };
+  }
+
   /** ゴールガーディアンに、PR の指摘の戻し先を判断させる（新しいセッション。PBI-14b）。 */
   private async judgeRework(
     task: Task,
@@ -607,7 +650,6 @@ export class TaskService {
               },
             },
           },
-          { actor: "sacty", event: { type: "StepsChosen", payload: { steps: [...MVP_STEPS] } } },
         ]),
       );
     }
@@ -666,7 +708,6 @@ export class TaskService {
         actor: "person",
         event: { type: "TaskCreated", payload: { title, body, start: "ticket", budgetCapUsd } },
       },
-      { actor: "sacty", event: { type: "StepsChosen", payload: { steps: [...MVP_STEPS] } } },
     ]);
   }
 
@@ -677,7 +718,12 @@ export class TaskService {
 
   queuedTaskIds(): string[] {
     return [...this.tasks.values()]
-      .filter((t) => (t.status === "queued" && activeStep(t)) || awaitingVerification(t))
+      .filter(
+        (t) =>
+          // 工程がまだ決まっていないタスクも、オーケストレーターが選ぶので実行対象にする（PBI-17）
+          (t.status === "queued" && (activeStep(t) || t.steps.length === 0)) ||
+          awaitingVerification(t),
+      )
       .filter((t) => !this.cancelling.has(t.id) && !this.pauseRequested.has(t.id))
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
       .map((t) => t.id);
@@ -959,21 +1005,19 @@ export class TaskService {
   }
 
   private async runNextInner(taskId: string): Promise<void> {
-    const task = this.tasks.get(taskId);
-    if (task && awaitingVerification(task)) return this.verify(task);
-    if (task?.status !== "queued") return;
-    const step = activeStep(task);
-    if (!step) return;
+    const initial = this.tasks.get(taskId);
+    if (initial && awaitingVerification(initial)) return this.verify(initial);
+    if (initial?.status !== "queued") return;
     const config = this.deps.config();
     if (!config.ok) return; // 設定の問題は status() で画面に出す。タスクは実行待ちのまま。
 
     // 対象リポジトリは、タスクの開始時（最初の実行）に、ベースブランチの最新を用意する（PBI-15）。
     // どの工程から始まるタスクでも同じ。以後はその起点のコミットを最後まで使う（途中で取り込み直さない）。
     // 用意できなければ、エージェントを実行する（費用をかける）前に、理由を記録して止める
-    if (!task.repository) {
-      const ready = await this.prepareRepository(task, config.config);
+    if (!initial.repository) {
+      const ready = await this.prepareRepository(initial, config.config);
       if (!ready.ok) {
-        this.append(task, [
+        this.append(initial, [
           {
             actor: "sacty",
             event: { type: "TaskPaused", payload: { reason: "error", message: ready.message } },
@@ -982,6 +1026,34 @@ export class TaskService {
         return;
       }
     }
+
+    // 工程がまだ決まっていなければ、オーケストレーターがチケットとリポジトリを読んで選ぶ（PBI-17）
+    if (this.mustGet(taskId).steps.length === 0) {
+      if (budgetState(this.mustGet(taskId).budget) === "exceeded") {
+        this.append(this.mustGet(taskId), [
+          { actor: "sacty", event: { type: "TaskPaused", payload: { reason: "budget" } } },
+        ]);
+        return;
+      }
+      const chosen = await this.chooseSteps(this.mustGet(taskId), config.config);
+      // 選んでいる間に、人間が止めた・中止したなら、記録しない（止めた記録は runNext の後始末で行う）
+      const latest = this.mustGet(taskId);
+      if (
+        this.pauseRequested.has(taskId) ||
+        this.cancelling.has(taskId) ||
+        latest.status !== "queued" ||
+        latest.steps.length > 0
+      ) {
+        return;
+      }
+      this.append(latest, [
+        { actor: "orchestrator", event: { type: "StepsChosen", payload: chosen } },
+      ]);
+    }
+    const task = this.mustGet(taskId);
+    if (task.status !== "queued") return;
+    const step = activeStep(task);
+    if (!step) return;
 
     // PR作成は、エージェントではなく sacty が行う
     if (step === "pr") return this.publish(this.mustGet(task.id), config.config);
@@ -1347,9 +1419,13 @@ export class TaskService {
       this.warnIfNeeded(this.mustGet(task.id));
       return;
     }
+    // 設計を省いたタスク（PBI-17）は、要求要件の受け入れ条件を1つの観点として判定する
+    const reviewedIds = current.steps.some((st) => st.key === "design")
+      ? viewpointIds
+      : [REQUIREMENTS_VIEWPOINT];
     const review = extractFinalReview(
       outcome.output,
-      viewpointIds,
+      reviewedIds,
       current.remarks.filter((r) => !r.voided).map((r) => r.id),
     );
     const reviewed = this.append(current, [
