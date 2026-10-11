@@ -247,7 +247,19 @@ class FakePulls implements PullRequests {
   async commentIssue(input: { repo: string; token: string; number: number; body: string }) {
     if (this.commentFail) throw new Error(this.commentFail);
     this.issueComments.push(input);
-    return { url: `https://github.com/${input.repo}/issues/${input.number}#issuecomment-1` };
+    return {
+      url: `https://github.com/${input.repo}/issues/${input.number}#issuecomment-${this.issueComments.length}`,
+    };
+  }
+  async findIssueComment(input: { repo: string; number: number; marker: string }) {
+    const index = this.issueComments.findIndex(
+      (c) => c.repo === input.repo && c.number === input.number && c.body.includes(input.marker),
+    );
+    return index < 0
+      ? undefined
+      : {
+          url: `https://github.com/${input.repo}/issues/${input.number}#issuecomment-${index + 1}`,
+        };
   }
   /** 返す PR へのフィードバック（PBI-14b）。 */
   feedbackList: PullRequestFeedback[] = [];
@@ -1766,6 +1778,60 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       expect(pulls.issueComments[0]?.body).toContain("src/pay.ts:12 で再試行");
       expect(service.get(id)?.task.issueComment).toEqual({
         url: "https://github.com/acme/app/issues/5#issuecomment-1",
+      });
+      expect(service.queuedTaskIds()).toEqual([]);
+      ledger.close();
+    });
+
+    it("投稿の後、記録の前に止まっても、次の実行で既存のコメントを使い、同じ結果を二度コメントしない", async () => {
+      const ledger = new SqliteLedgerStore(dbPath);
+      const pulls = new FakePulls();
+      const { service } = makeService(ledger, [out("# 調査の結果")], {
+        pulls,
+        planner: investigatePlanner,
+      });
+      service.saveProject("default", {
+        name: "デフォルト",
+        sources: [{ scope: "repo", target: "acme/app", label: "sacty" }],
+        repositories: [{ repo: "acme/app", testCommand: "npm test" }],
+        githubAccount: "me",
+      });
+      // ほかのタスクの調査の結果は、このタスクのものとして使わない
+      pulls.issueComments.push({
+        repo: "acme/app",
+        token: "ghp_secret",
+        number: 8,
+        body: "<!-- sacty-investigation:other-task -->\n## sacty の調査の結果",
+      });
+      const [task] = service.importIssues([
+        {
+          repo: "acme/app",
+          number: 8,
+          title: "調べて",
+          body: "",
+          url: "https://github.com/acme/app/issues/8",
+          labels: ["sacty"],
+        },
+      ]);
+      const id = task?.id ?? "";
+      await service.runNext(id);
+      service.approve(id, { step: "investigate", submission: 1 });
+      // IssueCommented の記録だけを一度失敗させる
+      const append = ledger.append.bind(ledger);
+      let failOnce = true;
+      ledger.append = (entry) => {
+        if (failOnce && entry.events.some((e) => e.event.type === "IssueCommented")) {
+          failOnce = false;
+          throw new Error("disk full");
+        }
+        return append(entry);
+      };
+      await expect(service.runNext(id)).rejects.toThrow("disk full");
+      expect(pulls.issueComments).toHaveLength(2);
+      await service.runNext(id);
+      expect(pulls.issueComments).toHaveLength(2);
+      expect(service.get(id)?.task.issueComment).toEqual({
+        url: "https://github.com/acme/app/issues/8#issuecomment-2",
       });
       expect(service.queuedTaskIds()).toEqual([]);
       ledger.close();

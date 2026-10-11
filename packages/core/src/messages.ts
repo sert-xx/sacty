@@ -127,6 +127,7 @@ const PARAMS = {
       "getPr",
       "getReviews",
       "commentIssue",
+      "listIssueComments",
       "searchIssues",
     ]),
     status: z.number(),
@@ -209,6 +210,7 @@ const githubActionJa = {
   getPr: "PRの状態を確認できませんでした",
   getReviews: "PRのレビューを確認できませんでした",
   commentIssue: "Issue にコメントできませんでした",
+  listIssueComments: "Issue のコメントを確認できませんでした",
   searchIssues: "Issue を検索できませんでした",
 } as const;
 const githubActionEn = {
@@ -218,6 +220,7 @@ const githubActionEn = {
   getPr: "Could not check the PR",
   getReviews: "Could not check the PR reviews",
   commentIssue: "Could not comment on the issue",
+  listIssueComments: "Could not check the issue comments",
   searchIssues: "Could not search issues",
 } as const;
 const githubHintJa = {

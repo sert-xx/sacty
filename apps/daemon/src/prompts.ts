@@ -800,6 +800,14 @@ export function extractStepPlan(output: string): { plan: StepPlan; reason: strin
 /** Issue のコメントの上限（GitHub の上限より小さく）。 */
 const ISSUE_COMMENT_MAX = 60_000;
 
+/**
+ * 調査の結果のコメントに入れる、タスクごとの目印（表示されない）。投稿の後、記録の前に止まっても、
+ * 次の実行で既存のコメントを見つけて、同じ結果を二度コメントしないため。
+ */
+export function investigationMarker(task: Task): string {
+  return `<!-- sacty-investigation:${task.id} -->`;
+}
+
 /** 調査の結果を、取り込み元の Issue に返すコメント（PBI-18）。人間が承認した結果だけを返す。 */
 export function buildInvestigationComment(task: Task): string {
   const report = task.approved.investigate?.output ?? "";
@@ -808,6 +816,7 @@ export function buildInvestigationComment(task: Task): string {
       ? `${report.slice(0, ISSUE_COMMENT_MAX)}\n\n…（長いため省略しました）`
       : report;
   return [
+    investigationMarker(task),
     "## sacty の調査の結果",
     "",
     body,

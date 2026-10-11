@@ -83,6 +83,7 @@ import {
   extractRework,
   extractStepPlan,
   extractVerdict,
+  investigationMarker,
   REQUIREMENTS_VIEWPOINT,
 } from "./prompts.js";
 import type { RepositoryWorkspace } from "./repository.js";
@@ -458,12 +459,15 @@ export class TaskService {
     let event: EventInput;
     try {
       const token = await this.githubToken(task, usedSecrets);
-      const { url } = await this.deps.pulls.commentIssue({
-        repo: source.repo,
-        token,
-        number: source.number,
-        body: buildInvestigationComment(task),
+      const target = { repo: source.repo, token, number: source.number };
+      // 前回、投稿の後・記録の前に止まっていたら、そのコメントを使う（同じ結果を二度コメントしない）
+      const existing = await this.deps.pulls.findIssueComment({
+        ...target,
+        marker: investigationMarker(task),
       });
+      const { url } =
+        existing ??
+        (await this.deps.pulls.commentIssue({ ...target, body: buildInvestigationComment(task) }));
       event = { type: "IssueCommented", payload: { url } };
     } catch (error) {
       event = {

@@ -22,6 +22,15 @@ export interface PullRequests {
    * PR への通常のコメント。bot のものは含めない。
    */
   feedback(input: { repo: string; token: string; number: number }): Promise<PullRequestFeedback[]>;
+  /**
+   * Issue のコメントのうち、marker を含むものを探す（同じ結果を二度コメントしないため。PBI-18）。
+   */
+  findIssueComment(input: {
+    repo: string;
+    token: string;
+    number: number;
+    marker: string;
+  }): Promise<{ url: string } | undefined>;
   /** Issue にコメントする（調査の結果を返す。PBI-18）。 */
   commentIssue(input: {
     repo: string;
@@ -86,26 +95,7 @@ export class GitHubPullRequests implements PullRequests {
   }
 
   async feedback(input: Parameters<PullRequests["feedback"]>[0]): Promise<PullRequestFeedback[]> {
-    const headers = {
-      accept: "application/vnd.github+json",
-      authorization: `Bearer ${input.token}`,
-      "x-github-api-version": "2022-11-28",
-    };
-    // 一覧は100件ずつのページになるので、Link の next をたどってすべてのページを読む
-    const get = async (path: string) => {
-      const all: Record<string, unknown>[] = [];
-      let url: string | undefined = `${this.api}/repos/${input.repo}${path}`;
-      for (let page = 0; url && page < MAX_PAGES; page++) {
-        const res = await this.fetchImpl(url, { headers });
-        const json = (await res.json().catch(() => ({}))) as unknown;
-        if (!res.ok) throw apiError("getReviews", res.status, json as Record<string, unknown>);
-        if (Array.isArray(json)) all.push(...(json as Record<string, unknown>[]));
-        // トークンを送るので、API と同じ場所の URL だけをたどる
-        const next = nextPage(res.headers.get("link"));
-        url = next?.startsWith(`${this.api}/`) ? next : undefined;
-      }
-      return all;
-    };
+    const get = (path: string) => this.list(input.repo, path, input.token, "getReviews");
     const user = (item: Record<string, unknown>) =>
       (item.user ?? {}) as { login?: unknown; type?: unknown };
     // bot（CI など）のコメントは、人間の指摘ではないので含めない
@@ -162,6 +152,45 @@ export class GitHubPullRequests implements PullRequests {
       });
     }
     return items.sort((a, b) => a.at.localeCompare(b.at));
+  }
+
+  /**
+   * 一覧を読む。100件ずつのページになるので、Link の next をたどってすべてのページを読む。
+   * トークンを送るので、API と同じ場所の URL だけをたどる。
+   */
+  private async list(
+    repo: string,
+    path: string,
+    token: string,
+    action: "getReviews" | "listIssueComments",
+  ): Promise<Record<string, unknown>[]> {
+    const headers = {
+      accept: "application/vnd.github+json",
+      authorization: `Bearer ${token}`,
+      "x-github-api-version": "2022-11-28",
+    };
+    const all: Record<string, unknown>[] = [];
+    let url: string | undefined = `${this.api}/repos/${repo}${path}`;
+    for (let page = 0; url && page < MAX_PAGES; page++) {
+      const res = await this.fetchImpl(url, { headers });
+      const json = (await res.json().catch(() => ({}))) as unknown;
+      if (!res.ok) throw apiError(action, res.status, json as Record<string, unknown>);
+      if (Array.isArray(json)) all.push(...(json as Record<string, unknown>[]));
+      const next = nextPage(res.headers.get("link"));
+      url = next?.startsWith(`${this.api}/`) ? next : undefined;
+    }
+    return all;
+  }
+
+  async findIssueComment(input: Parameters<PullRequests["findIssueComment"]>[0]) {
+    const comments = await this.list(
+      input.repo,
+      `/issues/${input.number}/comments?per_page=100`,
+      input.token,
+      "listIssueComments",
+    );
+    const found = comments.find((c) => typeof c.body === "string" && c.body.includes(input.marker));
+    return found ? { url: String(found.html_url ?? "") } : undefined;
   }
 
   async commentIssue(input: Parameters<PullRequests["commentIssue"]>[0]) {
@@ -285,6 +314,7 @@ function apiError(
     | "getPr"
     | "getReviews"
     | "commentIssue"
+    | "listIssueComments"
     | "searchIssues",
   status: number,
   json: Record<string, unknown>,
