@@ -25,6 +25,7 @@ const RESPONSES_HEADING = "sacty-responses";
 const VIEWPOINTS_HEADING = "sacty-test-viewpoints";
 const PROPOSAL_HEADING = "sacty-change-proposal";
 const VERDICT_HEADING = "sacty-verdict";
+const REWORK_HEADING = "sacty-rework";
 const TEST_MAP_HEADING = "sacty-test-map";
 const FINAL_REVIEW_HEADING = "sacty-final-review";
 
@@ -604,4 +605,70 @@ export function buildPullRequestBody(task: Task): string {
     "---",
     "この PR は sacty が作成しました。sacty の成果物チェックで承認・差し戻しをしてください。",
   ].join("\n");
+}
+
+/**
+ * PR の指摘で、どの工程まで戻すかをゴールガーディアンに判断させる指示（PBI-14b）。判断ごとに新しい
+ * セッションで実行し、承認済みの要求要件・設計と、指摘だけを渡す（チケットや工程の経緯は渡さない）。
+ */
+export function buildReworkPrompt(task: Task, remarks: string[], targets: StepKey[]): string {
+  const approved = (["requirements", "design"] as const)
+    .filter((step) => task.approved[step])
+    .flatMap((step) => [
+      "",
+      `--- 承認済みの${STEP_NAME[step]} ---`,
+      task.approved[step]?.output ?? "",
+    ]);
+  const viewpoints = task.approved.design?.testViewpoints ?? [];
+  return [
+    "あなたはゴールガーディアンです。人間が承認した成果物（ゴール）を守る立場で、",
+    "成果物（PR）に人間が付けた指摘を、どの工程からやり直せば解消できるかを判断してください。",
+    "",
+    "- implement（実装）：承認済みの要求要件・設計のままで、実装を直せば解消できる",
+    "- design（設計）：承認済みの設計（テスト観点を含む）が足りない・誤っているので、設計から直す必要がある",
+    "- requirements（要求要件）：承認済みの要求要件そのものが足りない・誤っている",
+    "- undecidable（判断できない）：指摘の意図が読み取れない、または人間の判断が必要",
+    "",
+    "できるだけ後ろの工程（実装）で解消できるかを先に考え、承認済みの成果物を変える必要があるときだけ、前の工程を選んでください。",
+    ...approved,
+    ...(viewpoints.length > 0
+      ? [
+          "",
+          "--- 承認済みのテスト観点 ---",
+          ...viewpoints.map(
+            (v) => `- [${v.id}] ${v.title}（入力：${v.input} / 期待：${v.expected}）`,
+          ),
+        ]
+      : []),
+    "",
+    "--- PR への人間の指摘 ---",
+    ...remarks.map((r) => `- ${r}`),
+    "",
+    "判断を、次の形式で必ず出してください。",
+    "```json",
+    `{"${REWORK_HEADING}": {"target": "${[...targets, "undecidable"].join(" または ")}", "reason": "判断の理由"}}`,
+    "```",
+  ].join("\n");
+}
+
+/** ゴールガーディアンの出力から、戻し先の判断を読む。読めなければ判断できなかったものとして扱う。 */
+export function extractRework(
+  output: string,
+  targets: readonly StepKey[],
+): { target?: StepKey; reason: DaemonText } {
+  const blocks = [...output.matchAll(/```json\s*\n([\s\S]*?)\n```/g)].reverse();
+  for (const block of blocks) {
+    try {
+      const parsed = JSON.parse(block[1] ?? "") as Record<string, unknown>;
+      const v = (parsed?.[REWORK_HEADING] ?? {}) as Record<string, unknown>;
+      const reason = text(v.reason);
+      if (!reason) continue;
+      if (v.target === "undecidable") return { reason };
+      const target = targets.find((t) => t === v.target);
+      if (target) return { target, reason };
+    } catch {
+      // 次のブロックを試す
+    }
+  }
+  return { reason: message("guardian.reworkUnreadable") };
 }

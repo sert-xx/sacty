@@ -20,7 +20,7 @@ import { type AgentConfig, type ConfigResult, loadConfig } from "./config.js";
 import type { ContextFetcher, ContextRef } from "./context.js";
 import { MessageError } from "./errors.js";
 import type { GitHubAuth } from "./gh.js";
-import type { PullRequestStatus, PullRequests } from "./github.js";
+import type { PullRequestFeedback, PullRequestStatus, PullRequests } from "./github.js";
 import { SqliteLedgerStore } from "./ledger.js";
 import { MemoryProjectStore } from "./projects.js";
 import type { RepositoryWorkspace } from "./repository.js";
@@ -232,6 +232,11 @@ class FakePulls implements PullRequests {
     if (this.statusFail) throw new Error(this.statusFail);
     return this.state;
   }
+  /** 返す PR へのフィードバック（PBI-14b）。 */
+  feedbackList: PullRequestFeedback[] = [];
+  async feedback() {
+    return this.feedbackList;
+  }
 }
 
 /** 決まった結果を順に返す、テスト実行の偽物。 */
@@ -351,6 +356,7 @@ function makeService(
     projects?: MemoryProjectStore;
     contexts?: ContextFetcher;
     github?: FakeGitHub;
+    now?: () => number;
   } = {},
 ) {
   const executor = new FakeExecutor(outcomes);
@@ -370,6 +376,7 @@ function makeService(
     projects: options.projects ?? projectsWithAccount(),
     contexts: options.contexts ?? new FakeContexts(),
     github: options.github ?? new FakeGitHub(),
+    ...(options.now ? { now: options.now } : {}),
     workspaceRoot: join(dir, "workspaces"),
   });
   return { service, executor, repos, tests, pulls };
@@ -1594,7 +1601,13 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
   /** 要求要件（差し戻し1回）と設計を承認し、実装の工程が実行待ちになったところまで進める。 */
   async function toImplement(
     outcomes: AgentOutcome[],
-    options: { tests?: FakeTests; repos?: FakeRepos; config?: () => ConfigResult } = {},
+    options: {
+      tests?: FakeTests;
+      repos?: FakeRepos;
+      pulls?: FakePulls;
+      config?: () => ConfigResult;
+      now?: () => number;
+    } = {},
   ) {
     const ledger = new SqliteLedgerStore(dbPath);
     const made = makeService(
@@ -1959,7 +1972,12 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
   /** 実装・検証を終え、成果物チェックのゲートまで進める。 */
   async function toDeliverableGate(
     outcomes: AgentOutcome[] = [],
-    options: { pulls?: FakePulls; repos?: FakeRepos; config?: () => ConfigResult } = {},
+    options: {
+      pulls?: FakePulls;
+      repos?: FakeRepos;
+      config?: () => ConfigResult;
+      now?: () => number;
+    } = {},
   ) {
     const made = await toImplement([implement("# 実装の説明"), review(), ...outcomes], options);
     await drain(made.service);
@@ -2168,6 +2186,174 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     await service.checkPullRequests();
     expect(service.get(id)?.task.steps.at(-1)?.state).not.toBe("done");
     ledger.close();
+  });
+
+  describe("PR へのフィードバックの取り込み（PBI-14b）", () => {
+    const rework = (target: string, reason = "理由") =>
+      out(`\`\`\`json\n${JSON.stringify({ "sacty-rework": { target, reason } })}\n\`\`\``);
+    const at = "2026-10-11T00:00:00Z";
+    /** 最後のフィードバックから、書き終わるのを待つ時間がたった時刻。 */
+    const later = () => Date.parse(at) + 3 * 60_000;
+    const item = (key: string, patch: Partial<PullRequestFeedback> = {}): PullRequestFeedback => ({
+      key,
+      kind: "comment",
+      author: "reviewer",
+      at,
+      url: `https://github.com/acme/app/pull/7#${key}`,
+      body: "全体として、失敗時のログが足りない",
+      ...patch,
+    });
+
+    it("レビュー・行のコメント・通常のコメントを指摘として取り込み、ゴールガーディアンが実装と判断したら差し戻す", async () => {
+      const pulls = new FakePulls();
+      const { ledger, service, executor, id } = await toDeliverableGate(
+        [rework("implement", "実装で直せる")],
+        { pulls, now: later },
+      );
+      pulls.feedbackList = [
+        item("review:1", { kind: "review", body: "", requestChanges: true }),
+        item("review_comment:2", {
+          kind: "review_comment",
+          path: "src/pay.ts",
+          line: 12,
+          body: "ここで例外を握りつぶしている",
+        }),
+        item("comment:3"),
+      ];
+      const before = executor.calls.length;
+      await service.checkPullRequests();
+      const events = service.get(id)?.ledger ?? [];
+      const imported = events.find((e) => e.type === "PullRequestReviewImported");
+      expect(imported?.actor).toBe("person");
+      expect(imported?.payload).toMatchObject({
+        number: 7,
+        items: [{ key: "review:1" }, { key: "review_comment:2" }, { key: "comment:3" }],
+        remarks: [
+          "reviewer が PR の変更を求めました（コメントなし）。",
+          "src/pay.ts:12：ここで例外を握りつぶしている",
+          "全体として、失敗時のログが足りない",
+        ],
+      });
+      expect(events.slice(-3).map((e) => [e.type, e.actor])).toEqual([
+        ["ReworkJudged", "guardian"],
+        ["GuardianMissed", "sacty"],
+        ["ChangesRequested", "person"],
+      ]);
+      // ゴールガーディアンには、承認済みの成果物と指摘だけを渡す（新しいセッション）
+      expect(executor.calls.length).toBe(before + 1);
+      const prompt = promptOf(executor, before);
+      expect(prompt).toContain("src/pay.ts:12：ここで例外を握りつぶしている");
+      expect(prompt).toContain("承認済みの要求要件");
+      expect(prompt).not.toContain("チケットの本文");
+      const task = service.get(id)?.task;
+      expect(task?.status).toBe("queued");
+      expect(task?.remarks.slice(-3).map((r) => r.step)).toEqual([
+        "implement",
+        "implement",
+        "implement",
+      ]);
+      expect(task?.importedFeedback).toEqual(["review:1", "review_comment:2", "comment:3"]);
+      ledger.close();
+    });
+
+    it("最後のフィードバックから時間がたつまで待ち、取り込んだものは二重に取り込まない", async () => {
+      const pulls = new FakePulls();
+      let now = Date.parse(at) + 30_000; // 最後のコメントから30秒
+      const { ledger, service, id } = await toDeliverableGate(
+        [rework("design", "観点が足りない")],
+        { pulls, now: () => now },
+      );
+      pulls.feedbackList = [item("comment:10")];
+      await service.checkPullRequests();
+      expect(service.get(id)?.task.importedFeedback).toEqual([]);
+      // 書き終わるのを待って、まとめて取り込む
+      now = later();
+      await service.checkPullRequests();
+      await service.checkPullRequests();
+      expect(
+        service.get(id)?.ledger.filter((e) => e.type === "PullRequestReviewImported"),
+      ).toHaveLength(1);
+      ledger.close();
+    });
+
+    it("設計・要求要件まで戻す判断や、判断できないときは、人間の確認に回し、確認した戻し先で指摘を引き継ぐ", async () => {
+      const pulls = new FakePulls();
+      const { ledger, service, id } = await toDeliverableGate(
+        [rework("design", "観点が足りない")],
+        {
+          pulls,
+          now: later,
+        },
+      );
+      pulls.feedbackList = [
+        item("review:201", { kind: "review", body: "観点が足りない", requestChanges: true }),
+        item("comment:202"),
+      ];
+      await service.checkPullRequests();
+      const task = service.get(id)?.task;
+      expect(task?.status).toBe("escalated");
+      expect(task?.escalation).toMatchObject({
+        reason: "rework_confirmation",
+        target: "design",
+        note: "観点が足りない",
+      });
+      // 人間が要求要件まで戻すと確かめたら、取り込んだ指摘を引き継いで差し戻す
+      const sent = service.requestChanges(id, {
+        step: "pr",
+        submission: task?.gate?.submission ?? 1,
+        target: "requirements",
+        comments: [],
+      });
+      expect(sent.status).toBe("queued");
+      expect(sent.remarks.slice(-2).map((r) => [r.step, r.text])).toEqual([
+        ["requirements", "観点が足りない"],
+        ["requirements", "全体として、失敗時のログが足りない"],
+      ]);
+      ledger.close();
+    });
+
+    it("一度に取り込むのは50件まで。残りは取り込み済みにせず、次の取り込みに残す（レビュー指摘）", async () => {
+      const pulls = new FakePulls();
+      const { ledger, service, id } = await toDeliverableGate(
+        [rework("implement", "実装で直せる")],
+        {
+          pulls,
+          now: later,
+        },
+      );
+      pulls.feedbackList = Array.from({ length: 51 }, (_, i) =>
+        item(`comment:${i}`, { body: `指摘${i}` }),
+      );
+      await service.checkPullRequests();
+      const imported = service.get(id)?.ledger.find((e) => e.type === "PullRequestReviewImported");
+      const payload = imported?.type === "PullRequestReviewImported" ? imported.payload : undefined;
+      expect(payload?.items).toHaveLength(50);
+      expect(payload?.remarks).toHaveLength(50);
+      // 取り込み済みにするのは、指摘に反映した50件だけ。51件目は次の取り込みに残る
+      const task = service.get(id)?.task;
+      expect(task?.importedFeedback).toHaveLength(50);
+      expect(task?.importedFeedback).not.toContain("comment:50");
+      ledger.close();
+    });
+
+    it("ゴールガーディアンの実行に失敗したら、判断できなかったものとして人間の確認に回す", async () => {
+      const pulls = new FakePulls();
+      const { ledger, service, id } = await toDeliverableGate(
+        [{ kind: "failed", reason: "usage_limit", message: "session limit" }],
+        { pulls, now: later },
+      );
+      pulls.feedbackList = [item("comment:301")];
+      await service.checkPullRequests();
+      const task = service.get(id)?.task;
+      expect(task?.escalation).toMatchObject({
+        reason: "rework_confirmation",
+        target: "implement",
+      });
+      expect(task?.escalation?.pendingRemarks.map((r) => r.text)).toEqual([
+        "全体として、失敗時のログが足りない",
+      ]);
+      ledger.close();
+    });
   });
 
   it("最新の提出より前の内容でマージされたら、承認にせず記録して人間の判断を待つ（PBI-14a レビュー指摘）", async () => {

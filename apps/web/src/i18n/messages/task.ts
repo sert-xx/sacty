@@ -14,7 +14,10 @@ const ja = {
     tooManyHelp: "このまま承認するか、上限を超えて差し戻すかを判断してください。",
     reviewHelp: "成果物を確認し、承認するか差し戻してください。",
     prHelp:
-      "GitHub で PR をレビューしてください。PR をマージすると承認になり、タスクが完了します。",
+      "GitHub で PR をレビューしてください。マージすると承認になり、タスクが完了します。レビューやコメントで指摘すると、差し戻しとして取り込みます。",
+    rework: "PR の指摘の戻し先を確かめてください（エスカレーション）",
+    reworkHelp: (step: string, note: string) =>
+      `ゴールガーディアンは、PR の指摘を${step}からやり直すことを提案しています（${note}）。承認済みの成果物を変えることになるので、戻し先を確かめて差し戻してください。`,
     prClosedHelp:
       "PR がマージされずに閉じられました。GitHub で開き直すか、不要なら中止してください。",
     prMergedOutdatedHelp:
@@ -55,7 +58,11 @@ const en: TaskMessages = {
       "Check the reason and supporting facts of the request, then decide whether to accept the change.",
     tooManyHelp: "Decide whether to approve as is or request changes beyond the limit.",
     reviewHelp: "Check the deliverable, then approve it or request changes.",
-    prHelp: "Review the PR on GitHub. Merging it approves the deliverable and completes the task.",
+    prHelp:
+      "Review the PR on GitHub. Merging it approves the deliverable and completes the task. Comments in reviews or on the PR are imported as change requests.",
+    rework: "Confirm the step to redo for the PR comments (escalated)",
+    reworkHelp: (step, note) =>
+      `The Goal Guardian suggests redoing from ${step} for the PR comments (${note}). This changes approved deliverables, so confirm the step to redo and request changes.`,
     prClosedHelp: "The PR was closed without merging. Reopen it on GitHub, or cancel the task.",
     prMergedOutdatedHelp:
       "The PR was merged with content older than the latest submission, so the latest submission is not merged. Request changes to open the reworked content as a new PR, or cancel the task.",

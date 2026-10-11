@@ -45,6 +45,12 @@ const StubBehavior = z.object({
     .default(
       '```json\n{"sacty-final-review": {"viewpoints": [], "remarks": [], "summary": "スタブのため判定しません"}}\n```',
     ),
+  /** ゴールガーディアンとして、PR の指摘の戻し先を判断したときの出力（PBI-14b）。 */
+  rework: z
+    .string()
+    .default(
+      '```json\n{"sacty-rework": {"target": "undecidable", "reason": "スタブのため判断しません"}}\n```',
+    ),
   /** ゴールガーディアンとして呼ばれたときの出力。 */
   guardian: z
     .string()

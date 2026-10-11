@@ -48,11 +48,16 @@ const ja = {
       `指摘はタスクに累積し、再提出のたびにすべてエージェントに渡されます。同じ工程への差し戻しが${max}回を超えるとエスカレーションになります。`,
     prTitle: "GitHub の PR で判断します",
     prHelp:
-      "PR をレビューしてマージすると、成果物チェックの承認になり、タスクが完了します（sacty が1分ごとに確かめます）。",
+      "PR をレビューしてマージすると、成果物チェックの承認になり、タスクが完了します。レビューやコメントで指摘すると、差し戻しとして取り込み、ゴールガーディアンが戻し先を判断します（sacty が1分ごとに確かめ、最後のコメントから2分後に取り込みます）。",
     prOpen: (n: number) => `PR #${n} を GitHub で開く`,
     prClosed:
       "PR はマージされずに閉じられました。GitHub で開き直すと、またマージを待ちます。不要なら、タスク詳細から中止してください。",
     prRequestNote: "差し戻す場合は、ここで指摘を入力してください。",
+    reworkTitle: "PR の指摘の戻し先を確かめてください",
+    reworkSuggestion: (step: string, note: string) =>
+      `ゴールガーディアンの提案：${step}からやり直す（${note}）`,
+    reworkHelp:
+      "PR に付いた指摘は取り込み済みです（指摘を空にすると、そのまま使います）。戻し先を選んで差し戻してください。",
     prMergedOutdated:
       "PR は、最新の提出より前の内容でマージされました。差し戻すと、作り直した内容を新しい PR で出します。不要なら、タスク詳細から中止してください。",
   },
@@ -109,11 +114,15 @@ const en: ReviewMessages = {
     approve: "Approve",
     prTitle: "Decide on the GitHub PR",
     prHelp:
-      "Review and merge the PR to approve the deliverable review and complete the task (sacty checks every minute).",
+      "Review and merge the PR to approve the deliverable review and complete the task. Comments in reviews or on the PR are imported as change requests, and the Goal Guardian picks the step to redo (sacty checks every minute and imports two minutes after the last comment).",
     prOpen: (n) => `Open PR #${n} on GitHub`,
     prClosed:
       "The PR was closed without merging. Reopen it on GitHub to wait for a merge again, or cancel the task from its details.",
     prRequestNote: "To request changes, enter your comments here.",
+    reworkTitle: "Confirm the step to redo for the PR comments",
+    reworkSuggestion: (step, note) => `Goal Guardian's suggestion: redo from ${step} (${note})`,
+    reworkHelp:
+      "The PR comments are already imported (leave the comments empty to use them as is). Choose the step to redo, then request changes.",
     prMergedOutdated:
       "The PR was merged with content older than the latest submission. Request changes to open the reworked content as a new PR, or cancel the task from its details.",
     note: (max) =>

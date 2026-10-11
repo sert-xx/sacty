@@ -730,3 +730,25 @@ describe("判定を読み取れなかったときの文言（PBI-11b レビュ�
     expect(partial.summary).toBe("所見");
   });
 });
+
+describe("PR の指摘の戻し先の判断（PBI-14b）", () => {
+  it("選べる工程のうちの戻し先と理由を読み、読めなければ判断できなかったものにする", async () => {
+    const { extractRework } = await import("../prompts.js");
+    const targets = ["implement", "design", "requirements"] as const;
+    const block = (v: unknown) => `\`\`\`json\n${JSON.stringify({ "sacty-rework": v })}\n\`\`\``;
+    expect(extractRework(block({ target: "design", reason: "観点" }), targets)).toEqual({
+      target: "design",
+      reason: "観点",
+    });
+    expect(extractRework(block({ target: "undecidable", reason: "不明" }), targets)).toEqual({
+      reason: "不明",
+    });
+    // 選べない工程や、理由の無い判断は読まない
+    expect(extractRework(block({ target: "pr", reason: "x" }), targets)).toEqual({
+      reason: { code: "guardian.reworkUnreadable" },
+    });
+    expect(extractRework("出力なし", targets)).toEqual({
+      reason: { code: "guardian.reworkUnreadable" },
+    });
+  });
+});

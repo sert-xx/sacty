@@ -78,6 +78,8 @@ const ja = {
     testsRunning: "テストを実行中",
     finalReviewing: "ゴールガーディアンが最終レビュー中",
     changeUndecided: "変更の申し出の判断待ち",
+    reworkConfirmation: "PR の指摘の戻し先の確認待ち",
+    reworkJudging: "ゴールガーディアンが PR の指摘を判断中",
     deliverableReview: (n: number) => `成果物チェック待ち${n > 1 ? `（${n}回目）` : ""}`,
     prAwaitingMerge: (n: number) => `PR のマージ待ち${n > 1 ? `（${n}回目）` : ""}`,
     prClosed: "PR が閉じられた（判断待ち）",
@@ -157,6 +159,12 @@ const ja = {
     escalatedUndecidable: (id: string | undefined) =>
       `ゴールガーディアンが${id ?? "変更の申し出"}を判定できなかったため、エスカレーション`,
     escalatedTooMany: (step: string) => `${step}への差し戻しが上限に達したため、エスカレーション`,
+    escalatedRework: (step: string) =>
+      `PR の指摘で${step}まで戻すかを、人間が確かめる（エスカレーション）`,
+    PullRequestReviewImported: (number: number, authors: string, count: number) =>
+      `PR #${number} への指摘（${authors}）→ ${count}件を取り込み`,
+    ReworkJudged: (target: string | undefined, reason: string, tail: string) =>
+      `ゴールガーディアンが戻し先を判断：${target ?? "判断できない"}（${reason}）（${tail}）`,
   },
 };
 
@@ -223,6 +231,8 @@ const en: LabelMessages = {
     testsRunning: "Running tests",
     finalReviewing: "Goal Guardian is doing the final review",
     changeUndecided: "Change request needs you",
+    reworkConfirmation: "Step to redo for PR comments needs you",
+    reworkJudging: "Goal Guardian is judging PR comments",
     deliverableReview: (n) => `Awaiting deliverable review${n > 1 ? ` (submission ${n})` : ""}`,
     prAwaitingMerge: (n) => `Awaiting PR merge${n > 1 ? ` (submission ${n})` : ""}`,
     prClosed: "PR closed (needs you)",
@@ -298,6 +308,12 @@ const en: LabelMessages = {
     escalatedUndecidable: (id) =>
       `Escalated: the Goal Guardian could not decide ${id ?? "the change request"}`,
     escalatedTooMany: (step) => `Escalated: changes to ${step} reached the limit`,
+    escalatedRework: (step) =>
+      `Escalated: confirm whether to redo from ${step} for the PR comments`,
+    PullRequestReviewImported: (number, authors, count) =>
+      `PR #${number} feedback (${authors}) → ${count} comment${count === 1 ? "" : "s"} imported`,
+    ReworkJudged: (target, reason, tail) =>
+      `Goal Guardian chose the step to redo: ${target ?? "undecided"} (${reason}) (${tail})`,
   },
 };
 

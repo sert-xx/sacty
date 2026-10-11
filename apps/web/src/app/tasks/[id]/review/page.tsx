@@ -224,6 +224,14 @@ async function Review({ params }: { params: Promise<{ id: string }> }) {
                   }
                 : undefined
             }
+            rework={
+              task.status === "escalated" && task.escalation?.reason === "rework_confirmation"
+                ? {
+                    target: task.escalation.target,
+                    note: m.labels.text(task.escalation.note ?? ""),
+                  }
+                : undefined
+            }
           />
         </section>
       </div>

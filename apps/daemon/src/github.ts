@@ -17,7 +17,28 @@ export interface PullRequests {
   close(input: { repo: string; token: string; number: number }): Promise<void>;
   /** PR の状態（成果物チェックの間に見守る。PBI-14a）。 */
   status(input: { repo: string; token: string; number: number }): Promise<PullRequestStatus>;
+  /**
+   * PR へのフィードバック（PBI-14b）。レビュー（Request changes・コメント）の本文、行ごとのコメント、
+   * PR への通常のコメント。bot のものは含めない。
+   */
+  feedback(input: { repo: string; token: string; number: number }): Promise<PullRequestFeedback[]>;
 }
+
+/**
+ * PR へのフィードバックの1件。key は種類と ID（二重に取り込まないため）。requestChanges は
+ * Request changes のレビュー（本文が無くても、変更を求められたこととして扱う）。
+ */
+export type PullRequestFeedback = {
+  key: string;
+  kind: "review" | "review_comment" | "comment";
+  author: string;
+  at: string;
+  url?: string;
+  body: string;
+  path?: string;
+  line?: number;
+  requestChanges?: boolean;
+};
 
 /**
  * PR の状態。merged はマージ済み、closed はマージせずに閉じられた。headSha は PR の先頭のコミット
@@ -31,6 +52,19 @@ export type PullRequestStatus = { headSha?: string } & (
 
 const API = "https://api.github.com";
 
+/** 一覧を読むページの上限（100件ずつ。誤った Link で延々と読まないように）。 */
+const MAX_PAGES = 50;
+
+/** Link ヘッダーの次のページの URL（無ければ undefined）。 */
+export function nextPage(link: string | null): string | undefined {
+  if (!link) return undefined;
+  for (const part of link.split(",")) {
+    const match = part.match(/<([^>]+)>\s*;\s*rel="next"/);
+    if (match) return match[1];
+  }
+  return undefined;
+}
+
 type Fetch = typeof fetch;
 
 /** GitHub の REST API で PR を作る・更新する。 */
@@ -42,6 +76,85 @@ export class GitHubPullRequests implements PullRequests {
 
   close(input: Parameters<PullRequests["close"]>[0]) {
     return closePullRequest(this.fetchImpl, this.api, input);
+  }
+
+  async feedback(input: Parameters<PullRequests["feedback"]>[0]): Promise<PullRequestFeedback[]> {
+    const headers = {
+      accept: "application/vnd.github+json",
+      authorization: `Bearer ${input.token}`,
+      "x-github-api-version": "2022-11-28",
+    };
+    // 一覧は100件ずつのページになるので、Link の next をたどってすべてのページを読む
+    const get = async (path: string) => {
+      const all: Record<string, unknown>[] = [];
+      let url: string | undefined = `${this.api}/repos/${input.repo}${path}`;
+      for (let page = 0; url && page < MAX_PAGES; page++) {
+        const res = await this.fetchImpl(url, { headers });
+        const json = (await res.json().catch(() => ({}))) as unknown;
+        if (!res.ok) throw apiError("getReviews", res.status, json as Record<string, unknown>);
+        if (Array.isArray(json)) all.push(...(json as Record<string, unknown>[]));
+        // トークンを送るので、API と同じ場所の URL だけをたどる
+        const next = nextPage(res.headers.get("link"));
+        url = next?.startsWith(`${this.api}/`) ? next : undefined;
+      }
+      return all;
+    };
+    const user = (item: Record<string, unknown>) =>
+      (item.user ?? {}) as { login?: unknown; type?: unknown };
+    // bot（CI など）のコメントは、人間の指摘ではないので含めない
+    const human = (item: Record<string, unknown>) => user(item).type !== "Bot";
+    const author = (item: Record<string, unknown>) => String(user(item).login ?? "");
+    const url = (item: Record<string, unknown>) =>
+      typeof item.html_url === "string" ? { url: item.html_url } : {};
+    const body = (item: Record<string, unknown>) =>
+      typeof item.body === "string" ? item.body : "";
+    const n = input.number;
+    const [reviews, reviewComments, comments] = [
+      await get(`/pulls/${n}/reviews?per_page=100`),
+      await get(`/pulls/${n}/comments?per_page=100`),
+      await get(`/issues/${n}/comments?per_page=100`),
+    ];
+    const items: PullRequestFeedback[] = [];
+    for (const r of reviews.filter(human)) {
+      // 承認は指摘ではない。コメントだけのレビューは本文があるときだけ
+      const requestChanges = r.state === "CHANGES_REQUESTED";
+      if (!requestChanges && !(r.state === "COMMENTED" && body(r).trim())) continue;
+      items.push({
+        key: `review:${r.id}`,
+        kind: "review",
+        author: author(r),
+        at: String(r.submitted_at ?? ""),
+        ...url(r),
+        body: body(r),
+        ...(requestChanges ? { requestChanges } : {}),
+      });
+    }
+    for (const c of reviewComments.filter(human)) {
+      if (!body(c).trim()) continue;
+      const line = typeof c.line === "number" ? c.line : c.original_line;
+      items.push({
+        key: `review_comment:${c.id}`,
+        kind: "review_comment",
+        author: author(c),
+        at: String(c.created_at ?? ""),
+        ...url(c),
+        body: body(c),
+        path: String(c.path ?? ""),
+        ...(typeof line === "number" ? { line } : {}),
+      });
+    }
+    for (const c of comments.filter(human)) {
+      if (!body(c).trim()) continue;
+      items.push({
+        key: `comment:${c.id}`,
+        kind: "comment",
+        author: author(c),
+        at: String(c.created_at ?? ""),
+        ...url(c),
+        body: body(c),
+      });
+    }
+    return items.sort((a, b) => a.at.localeCompare(b.at));
   }
 
   async status(input: Parameters<PullRequests["status"]>[0]): Promise<PullRequestStatus> {
@@ -139,7 +252,7 @@ async function closePullRequest(
 }
 
 function apiError(
-  action: "updatePr" | "createPr" | "closePr" | "getPr" | "searchIssues",
+  action: "updatePr" | "createPr" | "closePr" | "getPr" | "getReviews" | "searchIssues",
   status: number,
   json: Record<string, unknown>,
 ): Error {
