@@ -20,7 +20,7 @@ import { type AgentConfig, type ConfigResult, loadConfig } from "./config.js";
 import type { ContextFetcher, ContextRef } from "./context.js";
 import { MessageError } from "./errors.js";
 import type { GitHubAuth } from "./gh.js";
-import type { PullRequestChangeRequest, PullRequestStatus, PullRequests } from "./github.js";
+import type { PullRequestFeedback, PullRequestStatus, PullRequests } from "./github.js";
 import { SqliteLedgerStore } from "./ledger.js";
 import { MemoryProjectStore } from "./projects.js";
 import type { RepositoryWorkspace } from "./repository.js";
@@ -232,10 +232,10 @@ class FakePulls implements PullRequests {
     if (this.statusFail) throw new Error(this.statusFail);
     return this.state;
   }
-  /** 返す Request changes のレビュー（PBI-14b）。 */
-  changeRequestList: PullRequestChangeRequest[] = [];
-  async changeRequests() {
-    return this.changeRequestList;
+  /** 返す PR へのフィードバック（PBI-14b）。 */
+  feedbackList: PullRequestFeedback[] = [];
+  async feedback() {
+    return this.feedbackList;
   }
 }
 
@@ -356,6 +356,7 @@ function makeService(
     projects?: MemoryProjectStore;
     contexts?: ContextFetcher;
     github?: FakeGitHub;
+    now?: () => number;
   } = {},
 ) {
   const executor = new FakeExecutor(outcomes);
@@ -375,6 +376,7 @@ function makeService(
     projects: options.projects ?? projectsWithAccount(),
     contexts: options.contexts ?? new FakeContexts(),
     github: options.github ?? new FakeGitHub(),
+    ...(options.now ? { now: options.now } : {}),
     workspaceRoot: join(dir, "workspaces"),
   });
   return { service, executor, repos, tests, pulls };
@@ -1599,7 +1601,13 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
   /** 要求要件（差し戻し1回）と設計を承認し、実装の工程が実行待ちになったところまで進める。 */
   async function toImplement(
     outcomes: AgentOutcome[],
-    options: { tests?: FakeTests; repos?: FakeRepos; config?: () => ConfigResult } = {},
+    options: {
+      tests?: FakeTests;
+      repos?: FakeRepos;
+      pulls?: FakePulls;
+      config?: () => ConfigResult;
+      now?: () => number;
+    } = {},
   ) {
     const ledger = new SqliteLedgerStore(dbPath);
     const made = makeService(
@@ -1964,7 +1972,12 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
   /** 実装・検証を終え、成果物チェックのゲートまで進める。 */
   async function toDeliverableGate(
     outcomes: AgentOutcome[] = [],
-    options: { pulls?: FakePulls; repos?: FakeRepos; config?: () => ConfigResult } = {},
+    options: {
+      pulls?: FakePulls;
+      repos?: FakeRepos;
+      config?: () => ConfigResult;
+      now?: () => number;
+    } = {},
   ) {
     const made = await toImplement([implement("# 実装の説明"), review(), ...outcomes], options);
     await drain(made.service);
@@ -2175,35 +2188,37 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     ledger.close();
   });
 
-  describe("PR の Request changes の取り込み（PBI-14b）", () => {
+  describe("PR へのフィードバックの取り込み（PBI-14b）", () => {
     const rework = (target: string, reason = "理由") =>
       out(`\`\`\`json\n${JSON.stringify({ "sacty-rework": { target, reason } })}\n\`\`\``);
-    const changeRequest = (
-      id: number,
-      commitId: string,
-      patch: Partial<PullRequestChangeRequest> = {},
-    ): PullRequestChangeRequest => ({
-      id,
+    const at = "2026-10-11T00:00:00Z";
+    /** 最後のフィードバックから、書き終わるのを待つ時間がたった時刻。 */
+    const later = () => Date.parse(at) + 3 * 60_000;
+    const item = (key: string, patch: Partial<PullRequestFeedback> = {}): PullRequestFeedback => ({
+      key,
+      kind: "comment",
       author: "reviewer",
-      submittedAt: "2026-10-11T00:00:00Z",
-      commitId,
-      url: `https://github.com/acme/app/pull/7#pullrequestreview-${id}`,
+      at,
+      url: `https://github.com/acme/app/pull/7#${key}`,
       body: "全体として、失敗時のログが足りない",
-      comments: [{ path: "src/pay.ts", line: 12, body: "ここで例外を握りつぶしている" }],
       ...patch,
     });
 
-    it("最新の提出へのレビューを指摘として取り込み、ゴールガーディアンが実装と判断したら差し戻す", async () => {
+    it("レビュー・行のコメント・通常のコメントを指摘として取り込み、ゴールガーディアンが実装と判断したら差し戻す", async () => {
       const pulls = new FakePulls();
       const { ledger, service, executor, id } = await toDeliverableGate(
         [rework("implement", "実装で直せる")],
-        { pulls },
+        { pulls, now: later },
       );
-      const commit = service.get(id)?.task.pullRequest?.commit ?? "";
-      pulls.changeRequestList = [
-        // 前の提出へのレビューは取り込まない
-        changeRequest(100, "0".repeat(40)),
-        changeRequest(101, commit),
+      pulls.feedbackList = [
+        item("review:1", { kind: "review", body: "", requestChanges: true }),
+        item("review_comment:2", {
+          kind: "review_comment",
+          path: "src/pay.ts",
+          line: 12,
+          body: "ここで例外を握りつぶしている",
+        }),
+        item("comment:3"),
       ];
       const before = executor.calls.length;
       await service.checkPullRequests();
@@ -2212,10 +2227,11 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       expect(imported?.actor).toBe("person");
       expect(imported?.payload).toMatchObject({
         number: 7,
-        reviews: [{ id: 101, author: "reviewer" }],
+        items: [{ key: "review:1" }, { key: "review_comment:2" }, { key: "comment:3" }],
         remarks: [
-          "全体として、失敗時のログが足りない",
+          "reviewer が PR の変更を求めました（コメントなし）。",
           "src/pay.ts:12：ここで例外を握りつぶしている",
+          "全体として、失敗時のログが足りない",
         ],
       });
       expect(events.slice(-3).map((e) => [e.type, e.actor])).toEqual([
@@ -2231,9 +2247,32 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       expect(prompt).not.toContain("チケットの本文");
       const task = service.get(id)?.task;
       expect(task?.status).toBe("queued");
-      expect(task?.remarks.slice(-2).map((r) => r.step)).toEqual(["implement", "implement"]);
-      // 同じレビューは二重に取り込まない
-      expect(task?.importedReviewIds).toEqual([101]);
+      expect(task?.remarks.slice(-3).map((r) => r.step)).toEqual([
+        "implement",
+        "implement",
+        "implement",
+      ]);
+      expect(task?.importedFeedback).toEqual(["review:1", "review_comment:2", "comment:3"]);
+      ledger.close();
+    });
+
+    it("最後のフィードバックから時間がたつまで待ち、取り込んだものは二重に取り込まない", async () => {
+      const pulls = new FakePulls();
+      let now = Date.parse(at) + 30_000; // 最後のコメントから30秒
+      const { ledger, service, id } = await toDeliverableGate(
+        [rework("design", "観点が足りない")],
+        { pulls, now: () => now },
+      );
+      pulls.feedbackList = [item("comment:10")];
+      await service.checkPullRequests();
+      expect(service.get(id)?.task.importedFeedback).toEqual([]);
+      // 書き終わるのを待って、まとめて取り込む
+      now = later();
+      await service.checkPullRequests();
+      await service.checkPullRequests();
+      expect(
+        service.get(id)?.ledger.filter((e) => e.type === "PullRequestReviewImported"),
+      ).toHaveLength(1);
       ledger.close();
     });
 
@@ -2243,12 +2282,14 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         [rework("design", "観点が足りない")],
         {
           pulls,
+          now: later,
         },
       );
-      const commit = service.get(id)?.task.pullRequest?.commit ?? "";
-      pulls.changeRequestList = [changeRequest(201, commit)];
+      pulls.feedbackList = [
+        item("review:201", { kind: "review", body: "観点が足りない", requestChanges: true }),
+        item("comment:202"),
+      ];
       await service.checkPullRequests();
-      await service.checkPullRequests(); // 二重に取り込まない
       const task = service.get(id)?.task;
       expect(task?.status).toBe("escalated");
       expect(task?.escalation).toMatchObject({
@@ -2256,9 +2297,6 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         target: "design",
         note: "観点が足りない",
       });
-      expect(
-        service.get(id)?.ledger.filter((e) => e.type === "PullRequestReviewImported"),
-      ).toHaveLength(1);
       // 人間が要求要件まで戻すと確かめたら、取り込んだ指摘を引き継いで差し戻す
       const sent = service.requestChanges(id, {
         step: "pr",
@@ -2268,8 +2306,8 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       });
       expect(sent.status).toBe("queued");
       expect(sent.remarks.slice(-2).map((r) => [r.step, r.text])).toEqual([
+        ["requirements", "観点が足りない"],
         ["requirements", "全体として、失敗時のログが足りない"],
-        ["requirements", "src/pay.ts:12：ここで例外を握りつぶしている"],
       ]);
       ledger.close();
     });
@@ -2278,10 +2316,9 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       const pulls = new FakePulls();
       const { ledger, service, id } = await toDeliverableGate(
         [{ kind: "failed", reason: "usage_limit", message: "session limit" }],
-        { pulls },
+        { pulls, now: later },
       );
-      const commit = service.get(id)?.task.pullRequest?.commit ?? "";
-      pulls.changeRequestList = [changeRequest(301, commit, { body: "", comments: [] })];
+      pulls.feedbackList = [item("comment:301")];
       await service.checkPullRequests();
       const task = service.get(id)?.task;
       expect(task?.escalation).toMatchObject({
@@ -2289,7 +2326,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         target: "implement",
       });
       expect(task?.escalation?.pendingRemarks.map((r) => r.text)).toEqual([
-        "reviewer が PR の変更を求めました（コメントなし）。",
+        "全体として、失敗時のログが足りない",
       ]);
       ledger.close();
     });

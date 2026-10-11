@@ -48,7 +48,7 @@ const ja = {
       `指摘はタスクに累積し、再提出のたびにすべてエージェントに渡されます。同じ工程への差し戻しが${max}回を超えるとエスカレーションになります。`,
     prTitle: "GitHub の PR で判断します",
     prHelp:
-      "PR をレビューしてマージすると、成果物チェックの承認になり、タスクが完了します（sacty が1分ごとに確かめます）。",
+      "PR をレビューしてマージすると、成果物チェックの承認になり、タスクが完了します。レビューやコメントで指摘すると、差し戻しとして取り込み、ゴールガーディアンが戻し先を判断します（sacty が1分ごとに確かめ、最後のコメントから2分後に取り込みます）。",
     prOpen: (n: number) => `PR #${n} を GitHub で開く`,
     prClosed:
       "PR はマージされずに閉じられました。GitHub で開き直すと、またマージを待ちます。不要なら、タスク詳細から中止してください。",
@@ -114,7 +114,7 @@ const en: ReviewMessages = {
     approve: "Approve",
     prTitle: "Decide on the GitHub PR",
     prHelp:
-      "Review and merge the PR to approve the deliverable review and complete the task (sacty checks every minute).",
+      "Review and merge the PR to approve the deliverable review and complete the task. Comments in reviews or on the PR are imported as change requests, and the Goal Guardian picks the step to redo (sacty checks every minute and imports two minutes after the last comment).",
     prOpen: (n) => `Open PR #${n} on GitHub`,
     prClosed:
       "The PR was closed without merging. Reopen it on GitHub to wait for a merge again, or cancel the task from its details.",

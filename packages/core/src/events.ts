@@ -395,19 +395,21 @@ const PullRequestReopened = z.object({
 });
 
 /**
- * PR の Request changes のレビューを、成果物チェックの指摘として取り込んだ（PBI-14b）。最新の提出に
- * 付いたレビューだけを取り込み、同じレビューは二重に取り込まない。指摘は、レビューの本文と行ごとのコメント。
+ * PR へのフィードバックを、成果物チェックの指摘として取り込んだ（PBI-14b）。レビュー（Request changes・
+ * コメント）の本文、行ごとのコメント、PR への通常のコメントを、まだ取り込んでいないものだけ取り込む
+ * （同じものは二重に取り込まない）。指摘は1件ずつ。
  */
 const PullRequestReviewImported = z.object({
   type: z.literal("PullRequestReviewImported"),
   payload: z.object({
     number: z.number().int().positive(),
-    reviews: z
+    items: z
       .array(
         z.object({
-          id: z.number().int(),
+          /** 種類と ID（例：review:123、review_comment:456、comment:789）。 */
+          key: z.string().min(1),
           author: z.string(),
-          submittedAt: z.string(),
+          at: z.string(),
           url: z.string().optional(),
         }),
       )

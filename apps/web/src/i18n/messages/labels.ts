@@ -162,7 +162,7 @@ const ja = {
     escalatedRework: (step: string) =>
       `PR の指摘で${step}まで戻すかを、人間が確かめる（エスカレーション）`,
     PullRequestReviewImported: (number: number, authors: string, count: number) =>
-      `PR #${number} のレビュー（${authors}）で変更を求められた → 指摘 ${count}件を取り込み`,
+      `PR #${number} への指摘（${authors}）→ ${count}件を取り込み`,
     ReworkJudged: (target: string | undefined, reason: string, tail: string) =>
       `ゴールガーディアンが戻し先を判断：${target ?? "判断できない"}（${reason}）（${tail}）`,
   },
@@ -311,7 +311,7 @@ const en: LabelMessages = {
     escalatedRework: (step) =>
       `Escalated: confirm whether to redo from ${step} for the PR comments`,
     PullRequestReviewImported: (number, authors, count) =>
-      `PR #${number} review (${authors}) requested changes → ${count} comment${count === 1 ? "" : "s"} imported`,
+      `PR #${number} feedback (${authors}) → ${count} comment${count === 1 ? "" : "s"} imported`,
     ReworkJudged: (target, reason, tail) =>
       `Goal Guardian chose the step to redo: ${target ?? "undecided"} (${reason}) (${tail})`,
   },

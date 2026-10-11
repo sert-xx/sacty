@@ -376,7 +376,7 @@ describe("PR のレビューの取り込み（PBI-14b）", () => {
           type: "PullRequestReviewImported",
           payload: {
             number: 7,
-            reviews: [{ id: 1, author: "a", submittedAt: "2026-10-11T00:00:00Z" }],
+            items: [{ key: "comment:1", author: "a", at: "2026-10-11T00:00:00Z" }],
             remarks: ["x"],
           },
         }),

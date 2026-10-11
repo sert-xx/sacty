@@ -226,7 +226,7 @@ export function describeEvent(event: LedgerEvent, l: LabelMessages): string {
     case "PullRequestReviewImported":
       return e.PullRequestReviewImported(
         event.payload.number,
-        [...new Set(event.payload.reviews.map((r) => r.author))].join(", "),
+        [...new Set(event.payload.items.map((item) => item.author))].join(", "),
         event.payload.remarks.length,
       );
     case "ReworkJudged":

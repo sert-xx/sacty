@@ -43,7 +43,7 @@ const task = (patch: Partial<Task> = {}): Task => ({
   testMap: [],
   verifyFailures: 0,
   misses: [],
-  importedReviewIds: [],
+  importedFeedback: [],
   submissions: {},
   remarks: [],
   budget: { usedUsd: 0, capUsd: 1, warned: false, estimated: false },
@@ -363,7 +363,7 @@ describe("PR の指摘の取り込み（PBI-14b）", () => {
         task({
           status: "awaiting_approval",
           gate: { step: "pr", submission: 1 },
-          pendingReview: { reviewIds: [1], remarks: ["x"] },
+          pendingReview: { keys: ["comment:1"], remarks: ["x"] },
         }),
       ),
     ).toBe("ゴールガーディアンが PR の指摘を判断中");

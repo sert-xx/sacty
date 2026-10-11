@@ -64,12 +64,7 @@ import {
   gitAuthSecrets,
   isGitHubHttps,
 } from "./gh.js";
-import type {
-  FoundIssue,
-  PullRequestChangeRequest,
-  PullRequestStatus,
-  PullRequests,
-} from "./github.js";
+import type { FoundIssue, PullRequestFeedback, PullRequestStatus, PullRequests } from "./github.js";
 import type { LedgerStore } from "./ledger.js";
 import type { ProjectStore } from "./projects.js";
 import {
@@ -126,6 +121,8 @@ export type ServiceDeps = {
   pulls: PullRequests;
   /** GitHub への認証（ホストの gh のアカウント。PBI-13）。 */
   github: GitHubAuth;
+  /** 現在の時刻（テストで差し替える）。 */
+  now?: () => number;
   /** プロジェクトの設定。 */
   projects: ProjectStore;
   /** コンテキストリポジトリの取得（PBI-6）。 */
@@ -238,7 +235,7 @@ export class TaskService {
         // 開いたままの PR は、Request changes のレビューを指摘として取り込む（PBI-14b）
         if (status.state === "open" && latest.status === "awaiting_approval") {
           try {
-            await this.importChangeRequests(latest, token);
+            await this.importFeedback(latest, token);
           } catch (error) {
             console.warn(
               `[daemon] PR #${pr.number}（${pr.repo}）のレビューを取り込めませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
@@ -301,19 +298,23 @@ export class TaskService {
   }
 
   /**
-   * PR の Request changes のレビューを指摘として取り込み、ゴールガーディアンに戻し先を判断させて、
-   * 差し戻すか人間の確認に回す（PBI-14b）。取り込むのは、最新の提出（記録したコミット）に付いた、
-   * まだ取り込んでいないレビューだけ。途中で止まっても、次の確認で続きから進める（判断・反映）。
+   * PR へのフィードバック（レビュー・行ごとのコメント・通常のコメント）を指摘として取り込み、
+   * ゴールガーディアンに戻し先を判断させて、差し戻すか人間の確認に回す（PBI-14b）。
+   * まだ取り込んでいないものを、最後のフィードバックから一定の時間（書き終わるのを待つ）たってから、
+   * まとめて取り込む。途中で止まっても、次の確認で続きから進める（判断・反映）。
    */
-  private async importChangeRequests(task: Task, token: string): Promise<void> {
+  private async importFeedback(task: Task, token: string): Promise<void> {
     const pr = task.pullRequest;
     if (!pr?.number || !pr.repo) return;
     let current = task;
     if (!current.pendingReview) {
       const fresh = (
-        await this.deps.pulls.changeRequests({ repo: pr.repo, token, number: pr.number })
-      ).filter((r) => r.commitId === pr.commit && !current.importedReviewIds.includes(r.id));
+        await this.deps.pulls.feedback({ repo: pr.repo, token, number: pr.number })
+      ).filter((item) => !current.importedFeedback.includes(item.key));
       if (fresh.length === 0) return;
+      // コメントは何件かに分けて書かれるので、最後のものから一定の時間たつまで待つ
+      const newest = Math.max(...fresh.map((item) => Date.parse(item.at) || 0));
+      if (this.now() - newest < FEEDBACK_QUIET_MS) return;
       const latest = this.tasks.get(task.id);
       if (latest?.status !== "awaiting_approval" || latest.pendingReview) return;
       current = this.append(latest, [
@@ -324,13 +325,13 @@ export class TaskService {
             type: "PullRequestReviewImported",
             payload: {
               number: pr.number,
-              reviews: fresh.map((r) => ({
-                id: r.id,
-                author: r.author,
-                submittedAt: r.submittedAt,
-                ...(r.url ? { url: r.url } : {}),
+              items: fresh.map((item) => ({
+                key: item.key,
+                author: item.author,
+                at: item.at,
+                ...(item.url ? { url: item.url } : {}),
               })),
-              remarks: reviewRemarks(fresh),
+              remarks: feedbackRemarks(fresh),
             },
           },
         },
@@ -347,7 +348,7 @@ export class TaskService {
       if (
         !latest?.pendingReview ||
         latest.pendingReview.judgement ||
-        latest.pendingReview.reviewIds.join() !== pending.reviewIds.join()
+        latest.pendingReview.keys.join() !== pending.keys.join()
       ) {
         return;
       }
@@ -635,6 +636,10 @@ export class TaskService {
   }
 
   /** 実行待ちのタスク（古い順）。 */
+  private now(): number {
+    return (this.deps.now ?? Date.now)();
+  }
+
   queuedTaskIds(): string[] {
     return [...this.tasks.values()]
       .filter((t) => (t.status === "queued" && activeStep(t)) || awaitingVerification(t))
@@ -2072,21 +2077,24 @@ export class TaskService {
 const REMARK_MAX = 2_000;
 const REMARKS_MAX = 50;
 
+/** PR へのフィードバックを取り込むまでに、最後のフィードバックから待つ時間（書き終わるのを待つ）。 */
+export const FEEDBACK_QUIET_MS = 2 * 60_000;
+
 /**
- * PR の Request changes のレビューを、指摘の文にする（PBI-14b）。レビューの本文と、行ごとのコメント
- * （ファイルと行を添える）を1件ずつにする。本文もコメントも無ければ、変更を求められたことを1件にする。
+ * PR へのフィードバックを、指摘の文にする（PBI-14b）。1件ずつ。行ごとのコメントにはファイルと行を添える。
+ * 本文の無い Request changes は、変更を求められたことを1件にする。
  */
-function reviewRemarks(reviews: PullRequestChangeRequest[]): string[] {
+function feedbackRemarks(items: PullRequestFeedback[]): string[] {
   const cut = (text: string) =>
     text.length > REMARK_MAX ? `${text.slice(0, REMARK_MAX - 1)}…` : text;
-  const remarks = reviews.flatMap((r) => {
-    const items = [
-      ...(r.body.trim() ? [r.body.trim()] : []),
-      ...r.comments
-        .filter((c) => c.body.trim())
-        .map((c) => `${c.path}${c.line ? `:${c.line}` : ""}：${c.body.trim()}`),
-    ];
-    return items.length > 0 ? items : [`${r.author} が PR の変更を求めました（コメントなし）。`];
-  });
-  return remarks.slice(0, REMARKS_MAX).map(cut);
+  return items
+    .map((item) => {
+      const body = item.body.trim();
+      if (item.kind === "review_comment") {
+        return `${item.path}${item.line ? `:${item.line}` : ""}：${body}`;
+      }
+      return body || `${item.author} が PR の変更を求めました（コメントなし）。`;
+    })
+    .slice(0, REMARKS_MAX)
+    .map(cut);
 }

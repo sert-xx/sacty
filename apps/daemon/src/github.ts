@@ -17,23 +17,27 @@ export interface PullRequests {
   close(input: { repo: string; token: string; number: number }): Promise<void>;
   /** PR の状態（成果物チェックの間に見守る。PBI-14a）。 */
   status(input: { repo: string; token: string; number: number }): Promise<PullRequestStatus>;
-  /** PR の Request changes のレビューと、その行ごとのコメント（PBI-14b）。 */
-  changeRequests(input: {
-    repo: string;
-    token: string;
-    number: number;
-  }): Promise<PullRequestChangeRequest[]>;
+  /**
+   * PR へのフィードバック（PBI-14b）。レビュー（Request changes・コメント）の本文、行ごとのコメント、
+   * PR への通常のコメント。bot のものは含めない。
+   */
+  feedback(input: { repo: string; token: string; number: number }): Promise<PullRequestFeedback[]>;
 }
 
-/** PR の Request changes のレビュー。commitId はレビューした提出のコミット。 */
-export type PullRequestChangeRequest = {
-  id: number;
+/**
+ * PR へのフィードバックの1件。key は種類と ID（二重に取り込まないため）。requestChanges は
+ * Request changes のレビュー（本文が無くても、変更を求められたこととして扱う）。
+ */
+export type PullRequestFeedback = {
+  key: string;
+  kind: "review" | "review_comment" | "comment";
   author: string;
-  submittedAt: string;
-  commitId: string;
+  at: string;
   url?: string;
   body: string;
-  comments: { path: string; line?: number; body: string }[];
+  path?: string;
+  line?: number;
+  requestChanges?: boolean;
 };
 
 /**
@@ -61,9 +65,7 @@ export class GitHubPullRequests implements PullRequests {
     return closePullRequest(this.fetchImpl, this.api, input);
   }
 
-  async changeRequests(
-    input: Parameters<PullRequests["changeRequests"]>[0],
-  ): Promise<PullRequestChangeRequest[]> {
+  async feedback(input: Parameters<PullRequests["feedback"]>[0]): Promise<PullRequestFeedback[]> {
     const headers = {
       accept: "application/vnd.github+json",
       authorization: `Bearer ${input.token}`,
@@ -75,32 +77,62 @@ export class GitHubPullRequests implements PullRequests {
       if (!res.ok) throw apiError("getReviews", res.status, json as Record<string, unknown>);
       return Array.isArray(json) ? (json as Record<string, unknown>[]) : [];
     };
-    const reviews = await get(`/pulls/${input.number}/reviews?per_page=100`);
-    const result: PullRequestChangeRequest[] = [];
-    for (const review of reviews) {
-      if (review.state !== "CHANGES_REQUESTED" || typeof review.id !== "number") continue;
-      const comments = await get(
-        `/pulls/${input.number}/reviews/${review.id}/comments?per_page=100`,
-      );
-      result.push({
-        id: review.id,
-        author: String((review.user as { login?: unknown } | null)?.login ?? ""),
-        submittedAt: String(review.submitted_at ?? ""),
-        commitId: String(review.commit_id ?? ""),
-        ...(typeof review.html_url === "string" ? { url: review.html_url } : {}),
-        body: typeof review.body === "string" ? review.body : "",
-        comments: comments.map((c) => ({
-          path: String(c.path ?? ""),
-          ...(typeof c.line === "number"
-            ? { line: c.line }
-            : typeof c.original_line === "number"
-              ? { line: c.original_line }
-              : {}),
-          body: typeof c.body === "string" ? c.body : "",
-        })),
+    const user = (item: Record<string, unknown>) =>
+      (item.user ?? {}) as { login?: unknown; type?: unknown };
+    // bot（CI など）のコメントは、人間の指摘ではないので含めない
+    const human = (item: Record<string, unknown>) => user(item).type !== "Bot";
+    const author = (item: Record<string, unknown>) => String(user(item).login ?? "");
+    const url = (item: Record<string, unknown>) =>
+      typeof item.html_url === "string" ? { url: item.html_url } : {};
+    const body = (item: Record<string, unknown>) =>
+      typeof item.body === "string" ? item.body : "";
+    const n = input.number;
+    const [reviews, reviewComments, comments] = [
+      await get(`/pulls/${n}/reviews?per_page=100`),
+      await get(`/pulls/${n}/comments?per_page=100`),
+      await get(`/issues/${n}/comments?per_page=100`),
+    ];
+    const items: PullRequestFeedback[] = [];
+    for (const r of reviews.filter(human)) {
+      // 承認は指摘ではない。コメントだけのレビューは本文があるときだけ
+      const requestChanges = r.state === "CHANGES_REQUESTED";
+      if (!requestChanges && !(r.state === "COMMENTED" && body(r).trim())) continue;
+      items.push({
+        key: `review:${r.id}`,
+        kind: "review",
+        author: author(r),
+        at: String(r.submitted_at ?? ""),
+        ...url(r),
+        body: body(r),
+        ...(requestChanges ? { requestChanges } : {}),
       });
     }
-    return result;
+    for (const c of reviewComments.filter(human)) {
+      if (!body(c).trim()) continue;
+      const line = typeof c.line === "number" ? c.line : c.original_line;
+      items.push({
+        key: `review_comment:${c.id}`,
+        kind: "review_comment",
+        author: author(c),
+        at: String(c.created_at ?? ""),
+        ...url(c),
+        body: body(c),
+        path: String(c.path ?? ""),
+        ...(typeof line === "number" ? { line } : {}),
+      });
+    }
+    for (const c of comments.filter(human)) {
+      if (!body(c).trim()) continue;
+      items.push({
+        key: `comment:${c.id}`,
+        kind: "comment",
+        author: author(c),
+        at: String(c.created_at ?? ""),
+        ...url(c),
+        body: body(c),
+      });
+    }
+    return items.sort((a, b) => a.at.localeCompare(b.at));
   }
 
   async status(input: Parameters<PullRequests["status"]>[0]): Promise<PullRequestStatus> {

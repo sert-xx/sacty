@@ -296,54 +296,100 @@ describe("成果物チェックの間の PR の状態（PBI-14a）", () => {
   });
 });
 
-describe("PR の Request changes のレビュー（PBI-14b）", () => {
-  it("Request changes のレビューだけを、行ごとのコメントとともに読む", async () => {
+describe("PR へのフィードバック（PBI-14b）", () => {
+  it("レビュー（Request changes・本文のあるコメント）、行ごとのコメント、通常のコメントを、時刻の順に読む", async () => {
+    const human = { login: "reviewer", type: "User" };
+    const bot = { login: "ci[bot]", type: "Bot" };
     const { impl, calls } = fakeFetch([
       {
         status: 200,
         json: [
-          { id: 1, state: "APPROVED", user: { login: "a" }, body: "LGTM", commit_id: "c1" },
+          {
+            id: 1,
+            state: "APPROVED",
+            user: human,
+            body: "LGTM",
+            submitted_at: "2026-10-11T00:00:01Z",
+          },
           {
             id: 2,
             state: "CHANGES_REQUESTED",
-            user: { login: "reviewer" },
+            user: human,
+            body: "",
+            submitted_at: "2026-10-11T00:00:05Z",
+          },
+          {
+            id: 3,
+            state: "COMMENTED",
+            user: human,
+            body: "",
+            submitted_at: "2026-10-11T00:00:02Z",
+          },
+          {
+            id: 4,
+            state: "COMMENTED",
+            user: bot,
+            body: "coverage 80%",
+            submitted_at: "2026-10-11T00:00:03Z",
+          },
+          {
+            id: 5,
+            state: "COMMENTED",
+            user: human,
             body: "ログが足りない",
-            commit_id: "c2",
-            submitted_at: "2026-10-11T00:00:00Z",
-            html_url: "https://github.com/acme/app/pull/7#pullrequestreview-2",
+            submitted_at: "2026-10-11T00:00:04Z",
+            html_url: "https://github.com/acme/app/pull/7#pullrequestreview-5",
           },
         ],
       },
       {
         status: 200,
         json: [
-          { path: "src/pay.ts", line: 12, body: "例外を握りつぶしている" },
-          { path: "src/old.ts", line: null, original_line: 3, body: "古い行" },
+          {
+            id: 10,
+            user: human,
+            path: "src/pay.ts",
+            line: 12,
+            body: "例外を握りつぶしている",
+            created_at: "2026-10-11T00:00:06Z",
+          },
+          {
+            id: 11,
+            user: human,
+            path: "src/old.ts",
+            line: null,
+            original_line: 3,
+            body: "古い行",
+            created_at: "2026-10-11T00:00:07Z",
+          },
+        ],
+      },
+      {
+        status: 200,
+        json: [
+          { id: 20, user: human, body: "テストも足してほしい", created_at: "2026-10-11T00:00:08Z" },
+          { id: 21, user: bot, body: "deployed", created_at: "2026-10-11T00:00:09Z" },
         ],
       },
     ]);
-    const reviews = await new GitHubPullRequests(impl).changeRequests({
+    const feedback = await new GitHubPullRequests(impl).feedback({
       repo: "acme/app",
       token: "ghp_secret",
       number: 7,
     });
-    expect(reviews).toEqual([
-      {
-        id: 2,
-        author: "reviewer",
-        submittedAt: "2026-10-11T00:00:00Z",
-        commitId: "c2",
-        url: "https://github.com/acme/app/pull/7#pullrequestreview-2",
-        body: "ログが足りない",
-        comments: [
-          { path: "src/pay.ts", line: 12, body: "例外を握りつぶしている" },
-          { path: "src/old.ts", line: 3, body: "古い行" },
-        ],
-      },
+    expect(feedback.map((f) => [f.key, f.body, f.path ?? "", f.line ?? 0])).toEqual([
+      ["review:5", "ログが足りない", "", 0],
+      ["review:2", "", "", 0],
+      ["review_comment:10", "例外を握りつぶしている", "src/pay.ts", 12],
+      ["review_comment:11", "古い行", "src/old.ts", 3],
+      ["comment:20", "テストも足してほしい", "", 0],
     ]);
+    // 承認・本文の無いコメントだけのレビュー・bot は含めない。本文の無い Request changes は含める
+    expect(feedback.find((f) => f.key === "review:2")?.requestChanges).toBe(true);
     expect(calls.map((c) => c.url)).toEqual([
       "https://api.github.com/repos/acme/app/pulls/7/reviews?per_page=100",
-      "https://api.github.com/repos/acme/app/pulls/7/reviews/2/comments?per_page=100",
+      "https://api.github.com/repos/acme/app/pulls/7/comments?per_page=100",
+      "https://api.github.com/repos/acme/app/issues/7/comments?per_page=100",
     ]);
   });
 });

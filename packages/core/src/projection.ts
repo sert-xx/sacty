@@ -167,11 +167,11 @@ export type Task = {
     /** ゴールガーディアンの判断の理由（PR の指摘の戻し先の確認のとき）。 */
     note?: DaemonText;
   };
-  /** 取り込んだ PR のレビュー（二重に取り込まないため。PBI-14b）。 */
-  importedReviewIds: number[];
+  /** 取り込んだ PR へのフィードバック（種類と ID。二重に取り込まないため。PBI-14b）。 */
+  importedFeedback: string[];
   /** 取り込んで、まだ差し戻しに反映していない PR の指摘と、ゴールガーディアンの戻し先の判断。 */
   pendingReview?: {
-    reviewIds: number[];
+    keys: string[];
     remarks: string[];
     judgement?: { target?: StepKey; reason: DaemonText };
   };
@@ -255,7 +255,7 @@ export function applyEvent(
       testMap: [],
       verifyFailures: 0,
       misses: [],
-      importedReviewIds: [],
+      importedFeedback: [],
       submissions: {},
       remarks: [],
       budget: { usedUsd: 0, capUsd: event.payload.budgetCapUsd, warned: false, estimated: false },
@@ -569,12 +569,12 @@ export function applyEvent(
         throw new LedgerIntegrityError(event, "not the pull request of the task");
       }
       if (task.pendingReview) throw new LedgerIntegrityError(event, "a review is pending");
-      const ids = event.payload.reviews.map((r) => r.id);
-      if (ids.some((id) => task.importedReviewIds.includes(id))) {
-        throw new LedgerIntegrityError(event, "the review is already imported");
+      const keys = event.payload.items.map((i) => i.key);
+      if (keys.some((key) => task.importedFeedback.includes(key))) {
+        throw new LedgerIntegrityError(event, "the feedback is already imported");
       }
-      task.importedReviewIds = [...task.importedReviewIds, ...ids];
-      task.pendingReview = { reviewIds: ids, remarks: event.payload.remarks };
+      task.importedFeedback = [...task.importedFeedback, ...keys];
+      task.pendingReview = { keys, remarks: event.payload.remarks };
       break;
     }
 
