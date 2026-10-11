@@ -39,6 +39,8 @@ const ja = {
     repoTarget: "リポジトリ（owner/name）",
     label: "ラベル",
     remove: "削除",
+    removeSource: (target: string) => `取り込み元「${target || "（未入力）"}」を削除`,
+    removeRepo: (repo: string) => `リポジトリの設定「${repo || "（未入力）"}」を削除`,
     excluded: "除外されるリポジトリ（ほかのプロジェクトが担当）：",
     excludedBy: (project: string) => `（${project}）`,
     addSource: "取り込み元を追加",
@@ -57,11 +59,14 @@ const ja = {
     githubHelp:
       "gh auth login でログインしたアカウントから選びます（最初は gh のアクティブなアカウントが選ばれています）。gh でアカウントを切り替えても、ここで選んだアカウントを使います。個人の設定なので、エクスポートには含めません。",
     reposTitle: "リポジトリの設定",
-    reposNote: "Issue から作ったタスクは、その Issue のリポジトリに実装します",
+    reposNote:
+      "画面で作るタスクは、ここから対象リポジトリを選びます。Issue から作ったタスクは、その Issue のリポジトリが対象です",
     noRepos: "リポジトリの設定はありません。",
     baseBranch: "ベースブランチ",
     testCommand: "テストのコマンド",
-    pullRequest: "PRを作る",
+    pullRequest: "PR作成許可",
+    pullRequestHelp:
+      "PR作成許可：オンにすると、実装が終わった成果物をベースブランチに向けた PR として出し、PR の上で確認します（マージで承認、レビューやコメントで差し戻し）。オフにすると、sacty のブランチへのプッシュまでにして、sacty の画面で承認・差し戻しします。",
     addRepo: "リポジトリの設定を追加",
     saved: "保存しました。",
     save: "保存する",
@@ -110,6 +115,8 @@ const en: ProjectsMessages = {
     repoTarget: "Repository (owner/name)",
     label: "Label",
     remove: "Remove",
+    removeSource: (target) => `Remove intake source "${target || "(empty)"}"`,
+    removeRepo: (repo) => `Remove repository settings "${repo || "(empty)"}"`,
     excluded: "Excluded repositories (handled by other projects):",
     excludedBy: (project) => ` (${project})`,
     addSource: "Add intake source",
@@ -129,11 +136,14 @@ const en: ProjectsMessages = {
     githubHelp:
       "Choose from the accounts signed in with gh auth login (gh's active account is selected at first). This account is used even if you switch accounts in gh. It is a personal setting and is not exported.",
     reposTitle: "Repository settings",
-    reposNote: "Tasks from an issue are implemented in that issue's repository",
+    reposNote:
+      "Tasks created on screen choose their target repository from here. Tasks from an issue target that issue's repository",
     noRepos: "No repository settings.",
     baseBranch: "Base branch",
     testCommand: "Test command",
-    pullRequest: "Open a PR",
+    pullRequest: "Allow PRs",
+    pullRequestHelp:
+      "Allow PRs: when on, the finished deliverable is opened as a PR to the base branch and reviewed there (merging approves, reviews and comments request changes). When off, sacty only pushes its branch, and you approve or request changes on the sacty screen.",
     addRepo: "Add repository setting",
     saved: "Saved.",
     save: "Save",
