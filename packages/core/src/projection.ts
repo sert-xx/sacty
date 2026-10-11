@@ -4,6 +4,7 @@ import type {
   PauseReason,
   Remark,
   StepKey,
+  StepPlan,
   TaskSource,
   TestMapping,
   TestViewpoint,
@@ -167,6 +168,8 @@ export type Task = {
     /** ゴールガーディアンの判断の理由（PR の指摘の戻し先の確認のとき）。 */
     note?: DaemonText;
   };
+  /** オーケストレーターが工程を選んだ理由（PBI-17。固定の工程だった台帳には無い）。 */
+  stepsChoice?: { plan?: StepPlan; reason: DaemonText; fallback: boolean };
   /** 取り込んだ PR へのフィードバック（種類と ID。二重に取り込まないため。PBI-14b）。 */
   importedFeedback: string[];
   /** 取り込んで、まだ差し戻しに反映していない PR の指摘と、ゴールガーディアンの戻し先の判断。 */
@@ -273,10 +276,24 @@ export function applyEvent(
 
   switch (event.type) {
     case "StepsChosen":
+      if (task.steps.length > 0) throw new LedgerIntegrityError(event, "steps are already chosen");
       task.steps = event.payload.steps.map((key, i) => ({
         key,
         state: i === 0 ? ("active" as const) : ("todo" as const),
       }));
+      // オーケストレーターの判断の費用は、タスクの予算に入れる（PBI-17）
+      task.budget = {
+        ...task.budget,
+        usedUsd: addUsd(task.budget.usedUsd, event.payload.costUsd),
+        estimated: task.budget.estimated || event.payload.estimated,
+      };
+      if (event.payload.reason !== undefined) {
+        task.stepsChoice = {
+          ...(event.payload.plan ? { plan: event.payload.plan } : {}),
+          reason: event.payload.reason,
+          fallback: event.payload.fallback,
+        };
+      }
       break;
 
     case "AgentRunStarted":

@@ -27,6 +27,8 @@ const ja = {
   ticketEmpty: "チケットに内容はありません。",
   steps: "工程",
   stepsNote: "オーケストレーターが選択",
+  stepsReason: (reason: string) => `選んだ理由：${reason}`,
+  stepsFallback: "オーケストレーターが選べなかったため、標準の工程で進めています。",
   ledger: "台帳",
   ledgerNote: "追記専用",
   deliverable: {
@@ -71,6 +73,8 @@ const en: TaskMessages = {
   ticketEmpty: "The ticket has no content.",
   steps: "Steps",
   stepsNote: "Chosen by the Orchestrator",
+  stepsReason: (reason) => `Why: ${reason}`,
+  stepsFallback: "The Orchestrator could not choose, so the standard steps are used.",
   ledger: "Ledger",
   ledgerNote: "Append-only",
   deliverable: {

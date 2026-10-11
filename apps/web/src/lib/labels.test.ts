@@ -383,3 +383,26 @@ describe("PR の指摘の取り込み（PBI-14b）", () => {
     ).toBe("PR の指摘の戻し先の確認待ち");
   });
 });
+
+describe("オーケストレーターが選んだ工程（PBI-17）", () => {
+  it("台帳に、選んだ工程と理由を表示する", () => {
+    const event = {
+      type: "StepsChosen",
+      payload: {
+        steps: ["requirements", "implement", "pr"],
+        plan: "skip-design",
+        reason: "小さな変更",
+        fallback: false,
+        costUsd: 0,
+        estimated: false,
+      },
+      seq: 1,
+      id: "e1",
+      taskId: "t1",
+      projectId: "default",
+      at: "2026-10-11T00:00:00.000Z",
+      actor: "orchestrator",
+    } as LedgerEvent;
+    expect(describeEvent(event)).toBe("工程を決定：要求要件 → 実装 → PR作成（小さな変更）");
+  });
+});

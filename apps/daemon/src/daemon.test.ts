@@ -10,7 +10,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { EventInput } from "@sacty/core";
-import { message, renderMessage } from "@sacty/core";
+import { MVP_STEPS, message, renderMessage } from "@sacty/core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { AgentExecutor } from "./agents/docker.js";
 import type { Invocation } from "./agents/invocation.js";
@@ -26,7 +26,7 @@ import { MemoryProjectStore } from "./projects.js";
 import type { RepositoryWorkspace } from "./repository.js";
 import { MemorySecretStore } from "./secrets.js";
 import { createApp } from "./server.js";
-import { TaskService } from "./service.js";
+import { type ServiceDeps, TaskService } from "./service.js";
 
 /** 記録した文言（コードと引数）を、日本語の文にする（PBI-11）。 */
 const ja = (text: unknown) => renderMessage(text, "ja");
@@ -366,6 +366,9 @@ function makeService(
     contexts?: ContextFetcher;
     github?: FakeGitHub;
     now?: () => number;
+    planner?: ServiceDeps["planner"];
+    /** オーケストレーターを差し替えず、エージェントで工程を選ばせる（PBI-17 のテスト）。 */
+    realPlanner?: boolean;
   } = {},
 ) {
   const executor = new FakeExecutor(outcomes);
@@ -386,6 +389,19 @@ function makeService(
     contexts: options.contexts ?? new FakeContexts(),
     github: options.github ?? new FakeGitHub(),
     ...(options.now ? { now: options.now } : {}),
+    // オーケストレーターの代わりに、標準の工程を選ぶ（オーケストレーターのテストでは差し替える）
+    ...(options.realPlanner
+      ? {}
+      : {
+          planner:
+            options.planner ??
+            (async () => ({
+              steps: [...MVP_STEPS],
+              fallback: false,
+              costUsd: 0,
+              estimated: false,
+            })),
+        }),
     workspaceRoot: join(dir, "workspaces"),
   });
   return { service, executor, repos, tests, pulls };
@@ -404,7 +420,8 @@ describe("台帳", () => {
     makeService(ledger).service.createTicket({ title: "A" });
     expect(() => ledger.rawExecForTest("UPDATE ledger SET type = 'x'")).toThrow(/append-only/);
     expect(() => ledger.rawExecForTest("DELETE FROM ledger")).toThrow(/append-only/);
-    expect(ledger.all()).toHaveLength(2);
+    // 工程は、タスクの開始時にオーケストレーターが選ぶので、作った時点では TaskCreated だけ（PBI-17）
+    expect(ledger.all()).toHaveLength(1);
     ledger.close();
   });
 
@@ -437,9 +454,10 @@ describe("工程の実行と費用", () => {
     expect(after?.outputs.requirements).toBe("# 要求要件");
     expect(events?.map((e) => e.type)).toEqual([
       "TaskCreated",
-      "StepsChosen",
       // 対象リポジトリは、タスクの開始時（最初の実行）に用意する（PBI-15）
       "RepositoryPrepared",
+      // 工程は、リポジトリを用意した後に、オーケストレーターが選ぶ（PBI-17）
+      "StepsChosen",
       "AgentRunStarted",
       "AgentRunCompleted",
       "StepSubmitted",
@@ -707,6 +725,13 @@ describe("秘密情報と予算の通知（レビュー指摘）", () => {
       pulls: new FakePulls(),
       projects: new MemoryProjectStore(),
       contexts: new FakeContexts(),
+      github: new FakeGitHub(),
+      planner: async () => ({
+        steps: [...MVP_STEPS],
+        fallback: false,
+        costUsd: 0,
+        estimated: false,
+      }),
       workspaceRoot: join(dir, "workspaces"),
     });
     const task = service.createTicket({ title: "A" });
@@ -1653,6 +1678,150 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     }
   }
 
+  describe("オーケストレーターが工程を選ぶ（PBI-17）", () => {
+    const plan = (value: string, reason = "小さな変更") =>
+      out(block({ "sacty-steps": { plan: value, reason } }), 200);
+
+    it("チケットと起点のコードを読んで工程を選び、理由と費用を記録して、最初の工程を続けて実行する", async () => {
+      const ledger = new SqliteLedgerStore(dbPath);
+      const { service, executor } = makeService(ledger, [plan("skip-design"), out("# 要求要件")], {
+        realPlanner: true,
+      });
+      const { id } = service.createTicket({ title: "文言の修正", body: "ボタンの文言を変える" });
+      await service.runNext(id);
+      // オーケストレーターには、チケットと起点のコードを読み取り専用で渡す
+      const prompt = promptOf(executor, 0);
+      expect(prompt).toContain("あなたはオーケストレーターです");
+      expect(prompt).toContain("ボタンの文言を変える");
+      expect(prompt).toContain("skip-design");
+      expect(executor.readOnly[0]).toBe(true);
+      expect(executor.workspaceFiles[0]).toEqual(["README.md"]);
+      const chosen = service.get(id)?.ledger.find((e) => e.type === "StepsChosen");
+      expect(chosen?.actor).toBe("orchestrator");
+      expect(chosen?.payload).toMatchObject({
+        steps: ["requirements", "implement", "pr"],
+        plan: "skip-design",
+        reason: "小さな変更",
+        fallback: false,
+      });
+      const task = service.get(id)?.task;
+      expect(task?.steps.map((st) => st.key)).toEqual(["requirements", "implement", "pr"]);
+      expect(task?.stepsChoice).toEqual({
+        plan: "skip-design",
+        reason: "小さな変更",
+        fallback: false,
+      });
+      // 判断の費用も予算に入る。最初の工程（要求要件）は、同じ実行で続けて行う
+      expect(task?.budget.usedUsd).toBeGreaterThan(0.0015);
+      expect(task?.gate).toEqual({ step: "requirements", submission: 1 });
+      ledger.close();
+    });
+
+    it("選べない・読めない・実行に失敗したときは、標準の工程で進め、そのことを記録する", async () => {
+      const ledger = new SqliteLedgerStore(dbPath);
+      const { service } = makeService(
+        ledger,
+        [
+          plan("everything"),
+          out("# 要求要件"),
+          { kind: "failed", reason: "usage_limit", message: "session limit" },
+          out("# 要求要件"),
+        ],
+        { realPlanner: true },
+      );
+      const a = service.createTicket({ title: "A" });
+      await service.runNext(a.id);
+      expect(service.get(a.id)?.task.stepsChoice).toEqual({
+        plan: "standard",
+        reason: {
+          code: "orchestrator.fallback",
+          params: { detail: { code: "orchestrator.unreadable" } },
+        },
+        fallback: true,
+      });
+      expect(service.get(a.id)?.task.steps.map((st) => st.key)).toEqual([...MVP_STEPS]);
+      const b = service.createTicket({ title: "B" });
+      await service.runNext(b.id);
+      expect(ja(service.get(b.id)?.task.stepsChoice?.reason)).toContain("session limit");
+      expect(service.get(b.id)?.task.steps.map((st) => st.key)).toEqual([...MVP_STEPS]);
+      ledger.close();
+    });
+
+    it("設計を省いたタスクは、要求要件の受け入れ条件をテストと最終レビューで確かめて、成果物チェックに進む", async () => {
+      const ledger = new SqliteLedgerStore(dbPath);
+      const pulls = new FakePulls();
+      const { service, executor } = makeService(
+        ledger,
+        [
+          out("# 要求要件"),
+          implement("# 実装の説明", [{ viewpointId: "REQ", tests: ["a.test.ts › 受け入れ条件"] }]),
+          review([["REQ", true]], []),
+        ],
+        {
+          pulls,
+          planner: async () => ({
+            steps: ["requirements", "implement", "pr"],
+            plan: "skip-design",
+            reason: "小さな変更",
+            fallback: false,
+            costUsd: 0,
+            estimated: false,
+          }),
+        },
+      );
+      const { id } = service.createTicket({ title: "A" });
+      await service.runNext(id);
+      service.approve(id, { step: "requirements", submission: 1 });
+      await drain(service);
+      const implementPrompt = promptOf(executor, 1);
+      expect(implementPrompt).toContain("設計の工程を省いています");
+      expect(implementPrompt).toContain("[REQ] 承認済みの要求要件の受け入れ条件");
+      const finalPrompt = promptOf(executor, 2);
+      expect(finalPrompt).toContain("[REQ] 承認済みの要求要件の受け入れ条件");
+      const task = service.get(id)?.task;
+      expect(task?.lastReview).toMatchObject({
+        passed: true,
+        viewpoints: [{ viewpointId: "REQ" }],
+      });
+      expect(task?.gate).toEqual({ step: "pr", submission: 1 });
+      ledger.close();
+    });
+
+    it("設計を省いたタスクで、受け入れ条件（REQ）にテストを対応させていなければ、テストの段階で通さない（レビュー指摘）", async () => {
+      const ledger = new SqliteLedgerStore(dbPath);
+      const { service, executor } = makeService(
+        ledger,
+        [out("# 要求要件"), implement("# 実装の説明", []), implement("# 実装の説明 v2", [])],
+        {
+          planner: async () => ({
+            steps: ["requirements", "implement", "pr"],
+            plan: "skip-design",
+            reason: "小さな変更",
+            fallback: false,
+            costUsd: 0,
+            estimated: false,
+          }),
+        },
+      );
+      const { id } = service.createTicket({ title: "A" });
+      await service.runNext(id);
+      service.approve(id, { step: "requirements", submission: 1 });
+      await service.runNext(id); // 実装
+      await service.runNext(id); // テスト
+      const tests = service.get(id)?.ledger.find((e) => e.type === "TestsRun");
+      expect(tests?.type === "TestsRun" && tests.payload).toMatchObject({
+        passed: false,
+        unmappedViewpoints: ["REQ"],
+      });
+      // 最終レビューはせずに、実装をやり直す
+      expect(executor.calls.map((_, i) => promptOf(executor, i)).join()).not.toContain(
+        "sacty-final-review",
+      );
+      expect(service.get(id)?.task.status).toBe("queued");
+      ledger.close();
+    });
+  });
+
   it("実装は対象リポジトリの clone で、承認済みの成果物と人間の指摘を受け取って実行する", async () => {
     const { ledger, service, executor, repos, id } = await toImplement([
       implement("# 実装の説明"),
@@ -1919,7 +2088,8 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     expect(task?.pausedReason).toBe("error");
     // エージェントは実行しない（費用をかける前に止める）
     expect(executor.calls).toHaveLength(0);
-    expect(task?.steps[0]).toMatchObject({ key: "requirements", state: "active" });
+    // 工程を選ぶ前（オーケストレーターも実行しない）
+    expect(task?.steps).toEqual([]);
     // タスクの開始時に止まるので、エージェントの実行の失敗ではなく、一時停止の理由として記録する（PBI-15）
     expect(service.get(id)?.task.pausedMessage).toContain("Repository not found");
     ledger.close();
@@ -3471,10 +3641,7 @@ describe("API", () => {
     const detail = (await (
       await app.request(`/api/tasks/${task.id}`, { headers: auth })
     ).json()) as { ledger: { type: string; actor: string }[] };
-    expect(detail.ledger.map((e) => [e.type, e.actor])).toEqual([
-      ["TaskCreated", "person"],
-      ["StepsChosen", "sacty"],
-    ]);
+    expect(detail.ledger.map((e) => [e.type, e.actor])).toEqual([["TaskCreated", "person"]]);
     ledger.close();
   });
 
@@ -3560,7 +3727,7 @@ describe("API", () => {
       });
     expect((await decide({ accept: true })).status).toBe(409);
     expect((await decide({ accept: "yes" })).status).toBe(400);
-    expect(service.get(task.id)?.ledger.map((e) => e.type)).toEqual(["TaskCreated", "StepsChosen"]);
+    expect(service.get(task.id)?.ledger.map((e) => e.type)).toEqual(["TaskCreated"]);
     ledger.close();
   });
 

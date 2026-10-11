@@ -752,3 +752,17 @@ describe("PR の指摘の戻し先の判断（PBI-14b）", () => {
     });
   });
 });
+
+describe("オーケストレーターの出力（PBI-17）", () => {
+  it("候補の工程の組み合わせと理由を読み、候補に無いもの・理由の無いものは読まない", async () => {
+    const { extractStepPlan } = await import("../prompts.js");
+    const block = (v: unknown) => `\`\`\`json\n${JSON.stringify({ "sacty-steps": v })}\n\`\`\``;
+    expect(extractStepPlan(block({ plan: "skip-design", reason: "小さい" }))).toEqual({
+      plan: "skip-design",
+      reason: "小さい",
+    });
+    expect(extractStepPlan(block({ plan: "investigate", reason: "x" }))).toBeUndefined();
+    expect(extractStepPlan(block({ plan: "standard", reason: "" }))).toBeUndefined();
+    expect(extractStepPlan("出力なし")).toBeUndefined();
+  });
+});

@@ -90,6 +90,8 @@ const PARAMS = {
   "run.repositoryNotConfigured": null,
   "guardian.verdictUnreadable": null,
   "guardian.reworkUnreadable": null,
+  "orchestrator.fallback": z.object({ detail: TextParam }),
+  "orchestrator.unreadable": null,
   "github.ghMissing": null,
   "github.accountRequired": z.object({ project: z.string() }),
   "github.accountUnavailable": z.object({ account: z.string() }),
@@ -312,6 +314,9 @@ const ja: MessageDictionary = {
     "実装の対象リポジトリが設定されていません。config.yaml の repository を設定してから再開してください。",
   "guardian.verdictUnreadable": "ゴールガーディアンの出力から、判定を読み取れませんでした。",
   "guardian.reworkUnreadable": "ゴールガーディアンの出力から、戻し先の判断を読み取れませんでした。",
+  "orchestrator.fallback": ({ detail }, text) =>
+    `オーケストレーターが工程を選べなかったため、標準の工程で進めます（${text(detail)}）。`,
+  "orchestrator.unreadable": "オーケストレーターの出力から、選んだ工程を読み取れませんでした。",
   "github.ghMissing":
     "gh コマンドが見つかりません。GitHub CLI をインストールし、gh auth login でログインしてください。",
   "github.accountRequired": ({ project }) =>
@@ -480,6 +485,9 @@ const en: MessageDictionary = {
     "No target repository is configured. Set repository in config.yaml, then resume.",
   "guardian.verdictUnreadable": "Could not read a verdict from the Goal Guardian's output.",
   "guardian.reworkUnreadable": "Could not read the step to redo from the Goal Guardian's output.",
+  "orchestrator.fallback": ({ detail }, text) =>
+    `The Orchestrator could not choose the steps, so the standard steps are used (${text(detail)}).`,
+  "orchestrator.unreadable": "Could not read the chosen steps from the Orchestrator's output.",
   "github.ghMissing":
     "The gh command was not found. Install GitHub CLI and sign in with gh auth login.",
   "github.accountRequired": ({ project }) =>

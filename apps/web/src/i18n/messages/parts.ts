@@ -2,6 +2,7 @@
 const ja = {
   bits: {
     steps: "工程",
+    choosing: "オーケストレーターが工程を選びます",
     cost: "費用",
     costMeter: "予算に対する費用",
     estimated: "換算値（実際の請求ではありません）",
@@ -114,6 +115,7 @@ export type PartsMessages = typeof ja;
 const en: PartsMessages = {
   bits: {
     steps: "Steps",
+    choosing: "The Orchestrator will choose the steps",
     cost: "Cost",
     costMeter: "Cost against budget",
     estimated: "Estimate (not actual billing)",

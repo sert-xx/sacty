@@ -12,6 +12,10 @@ const STEP_STYLE: Record<Task["steps"][number]["state"], string> = {
 
 export async function StepChips({ task }: { task: Task }) {
   const m = await getMessages();
+  // 工程は、タスクの開始時にオーケストレーターが選ぶ（PBI-17）
+  if (task.steps.length === 0) {
+    return <p className="text-xs text-muted-foreground">{m.parts.bits.choosing}</p>;
+  }
   return (
     <ul className="flex flex-wrap gap-1.5" aria-label={m.parts.bits.steps}>
       {task.steps.map((step) => (

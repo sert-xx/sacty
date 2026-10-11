@@ -209,6 +209,13 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
               <span className="text-[13px] font-normal text-muted-foreground">{m.stepsNote}</span>
             </h2>
             <StepChips task={task} />
+            {task.stepsChoice && (
+              <p className="text-sm leading-6 text-muted-foreground">
+                {task.stepsChoice.fallback
+                  ? labels.text(task.stepsChoice.reason)
+                  : m.stepsReason(labels.text(task.stepsChoice.reason))}
+              </p>
+            )}
           </section>
           <section
             aria-labelledby="ticket"

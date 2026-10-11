@@ -5,8 +5,21 @@ import { code, DaemonText } from "./message-code.js";
 export const StepKey = z.enum(["requirements", "design", "implement", "pr"]);
 export type StepKey = z.infer<typeof StepKey>;
 
-/** MVPで使う固定の工程。オーケストレーターが工程を選ぶのはPBI-7以降。 */
+/** 標準の工程（オーケストレーターが判断できないときも、これで進める）。 */
 export const MVP_STEPS: readonly StepKey[] = ["requirements", "design", "implement", "pr"];
+
+/**
+ * オーケストレーターが選べる工程の組み合わせ（PBI-17）。候補に無い組み合わせは選ばせない。
+ * 工程の種類を増やしたら（調査・レビューなど）、ここに組み合わせを足す。
+ */
+export const STEP_PLANS = {
+  /** 標準：要求要件 → 設計（テスト観点）→ 実装 → PR作成 */
+  standard: ["requirements", "design", "implement", "pr"],
+  /** 小さな変更：設計を省く（要求要件の受け入れ条件をテストで確かめる） */
+  "skip-design": ["requirements", "implement", "pr"],
+} as const satisfies Record<string, readonly StepKey[]>;
+export type StepPlan = keyof typeof STEP_PLANS;
+export const StepPlan = z.enum(Object.keys(STEP_PLANS) as [StepPlan, ...StepPlan[]]);
 
 /** 人間の承認ゲートがある工程。PR作成は、成果物チェックのゲート。 */
 export const GATED_STEPS: readonly StepKey[] = ["requirements", "design", "pr"];
@@ -112,10 +125,24 @@ const TaskCreated = z.object({
   }),
 });
 
+/**
+ * タスクの工程を決めた。PBI-17 からは、オーケストレーター（AI）がチケットと対象リポジトリを読んで、
+ * 候補（STEP_PLANS）から選び、理由とともに記録する（人間の承認は無い）。判断できなければ標準の工程にする。
+ * それより前の台帳は、固定の工程（steps だけ）。
+ */
 const StepsChosen = z.object({
   type: z.literal("StepsChosen"),
   payload: z.object({
     steps: z.array(StepKey).min(1),
+    plan: StepPlan.optional(),
+    /** オーケストレーターが書いた理由。判断できなかったときは sacty の文言。 */
+    reason: DaemonText.optional(),
+    /** 判断できず、標準の工程にした。 */
+    fallback: z.boolean().default(false),
+    agentId: z.string().optional(),
+    usage: TokenUsage.optional(),
+    costUsd: z.number().nonnegative().default(0),
+    estimated: z.boolean().default(false),
   }),
 });
 
