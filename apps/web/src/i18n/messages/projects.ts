@@ -5,6 +5,10 @@ const ja = {
   breadcrumb: "パンくず",
   importTitle: "プロジェクトをインポートする",
   newTitle: "プロジェクトを作る",
+  first: {
+    title: "最初のプロジェクトを作る",
+    note: "sacty を使うには、プロジェクトが必要です。プロジェクトを作るか、エクスポートしたプロジェクトの定義をインポートすると、タスクを作れるようになります。",
+  },
   intake: {
     title: "GitHub Issue の取り込み",
     stopped:
@@ -73,6 +77,10 @@ const en: ProjectsMessages = {
   breadcrumb: "Breadcrumb",
   importTitle: "Import a project",
   newTitle: "Create a project",
+  first: {
+    title: "Create your first project",
+    note: "sacty needs a project. Create one, or import an exported project definition, to start creating tasks.",
+  },
   intake: {
     title: "GitHub Issue intake",
     stopped: "Intake is stopped. Add github: to config.yaml to import issues periodically.",

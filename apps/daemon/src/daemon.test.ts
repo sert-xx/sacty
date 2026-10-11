@@ -520,7 +520,7 @@ const current = (svc: TaskService, id: string) => {
 describe("作業履歴", () => {
   it("UPDATEとDELETEを拒否する", () => {
     const activity = new SqliteActivityStore(dbPath);
-    makeService(activity).service.createTask({ title: "A" });
+    makeService(activity).service.createTask({ projectId: "default", title: "A" });
     expect(() => activity.rawExecForTest("UPDATE activity SET type = 'x'")).toThrow(/append-only/);
     expect(() => activity.rawExecForTest("DELETE FROM activity")).toThrow(/append-only/);
     // 工程は、タスクの開始時にオーケストレーターが選ぶので、作った時点では TaskCreated だけ（PBI-17）
@@ -531,7 +531,7 @@ describe("作業履歴", () => {
   it("再起動しても同じ状態を復元する", async () => {
     const first = new SqliteActivityStore(dbPath);
     const { service } = makeService(first, [completed(20_000)]);
-    const created = service.createTask({ title: "A", body: "B" });
+    const created = service.createTask({ projectId: "default", title: "A", body: "B" });
     await service.runNext(created.id);
     const before = service.get(created.id)?.task;
     first.close();
@@ -546,7 +546,7 @@ describe("工程の実行と費用", () => {
   it("実行すると、費用（換算値）と出力を作業履歴に記録して待機に戻る", async () => {
     const activity = new SqliteActivityStore(dbPath);
     const { service, executor } = makeService(activity, [completed(20_000)]);
-    const task = service.createTask({ title: "決済API", body: "冪等性" });
+    const task = service.createTask({ projectId: "default", title: "決済API", body: "冪等性" });
     expect(service.queuedTaskIds()).toEqual([task.id]);
 
     await service.runNext(task.id);
@@ -573,8 +573,8 @@ describe("工程の実行と費用", () => {
   it("予算の80%で通知し、上限を超えたら次の実行の前に一時停止する", async () => {
     const activity = new SqliteActivityStore(dbPath);
     const { service, executor } = makeService(activity, [completed(55_000), completed(70_000)]);
-    const warned = service.createTask({ title: "A" });
-    const capped = service.createTask({ title: "B" });
+    const warned = service.createTask({ projectId: "default", title: "A" });
+    const capped = service.createTask({ projectId: "default", title: "B" });
 
     await service.runNext(warned.id); // $0.825
     expect(service.get(warned.id)?.task.budget.warned).toBe(true);
@@ -597,7 +597,7 @@ describe("工程の実行と費用", () => {
   it("予算で止まったタスクは、使用済みより大きい上限でだけ再開できる", async () => {
     const activity = new SqliteActivityStore(dbPath);
     const { service } = makeService(activity, [completed(70_000)]);
-    const task = service.createTask({ title: "A" });
+    const task = service.createTask({ projectId: "default", title: "A" });
     await service.runNext(task.id);
     service.requestChanges(task.id, {
       step: "requirements",
@@ -624,7 +624,7 @@ describe("工程の実行と費用", () => {
       { kind: "failed", reason: "usage_limit", message: "429", usage },
       completed(1_000),
     ]);
-    const task = service.createTask({ title: "A" });
+    const task = service.createTask({ projectId: "default", title: "A" });
 
     await service.runNext(task.id); // 利用上限で失敗（費用は予算を超える）
     expect(service.resume(task.id, {}).status).toBe("queued");
@@ -647,7 +647,7 @@ describe("工程の実行と費用", () => {
       { kind: "failed", reason: "usage_limit", message: "You've hit your session limit" },
       completed(1_000),
     ]);
-    const task = service.createTask({ title: "A" });
+    const task = service.createTask({ projectId: "default", title: "A" });
     await service.runNext(task.id);
     const paused = service.get(task.id)?.task;
     expect(paused?.status).toBe("paused");
@@ -663,7 +663,7 @@ describe("工程の実行と費用", () => {
   it("秘密情報が無ければ、認証エラーとして止める（値はどこにも出さない）", async () => {
     const activity = new SqliteActivityStore(dbPath);
     const { service, executor } = makeService(activity, [], { secrets: {} });
-    const task = service.createTask({ title: "A" });
+    const task = service.createTask({ projectId: "default", title: "A" });
     await service.runNext(task.id);
     const after = service.get(task.id);
     expect(after?.task.pausedReason).toBe("auth");
@@ -680,7 +680,7 @@ describe("工程の実行と費用", () => {
     const { service, executor } = makeService(activity, [], {
       config: () => loadConfig(join(dir, "nope")),
     });
-    const task = service.createTask({ title: "A" });
+    const task = service.createTask({ projectId: "default", title: "A" });
     await service.runNext(task.id);
     expect(service.get(task.id)?.task.status).toBe("queued");
     expect(executor.calls).toHaveLength(0);
@@ -691,7 +691,7 @@ describe("工程の実行と費用", () => {
   it("デーモンの停止で中断された実行は、再起動時に失敗として記録して一時停止する", () => {
     const activity = new SqliteActivityStore(dbPath);
     const { service } = makeService(activity);
-    const task = service.createTask({ title: "A" });
+    const task = service.createTask({ projectId: "default", title: "A" });
     activity.append({
       taskId: task.id,
       projectId: "default",
@@ -727,8 +727,8 @@ describe("秘密情報と予算の通知（レビュー指摘）", () => {
       leaked,
       { kind: "failed", reason: "auth", message: "401 for oauth-secret" },
     ]);
-    const a = service.createTask({ title: "A" });
-    const b = service.createTask({ title: "B" });
+    const a = service.createTask({ projectId: "default", title: "A" });
+    const b = service.createTask({ projectId: "default", title: "B" });
     await service.runNext(a.id);
     await service.runNext(b.id);
 
@@ -749,7 +749,7 @@ describe("秘密情報と予算の通知（レビュー指摘）", () => {
       contexts: new FakeContexts(),
       workspaceRoot: join(dir, "workspaces"),
     });
-    const c = throwing.createTask({ title: "C" });
+    const c = throwing.createTask({ projectId: "default", title: "C" });
     await throwing.runNext(c.id);
 
     const all = JSON.stringify(activity.all());
@@ -764,7 +764,7 @@ describe("秘密情報と予算の通知（レビュー指摘）", () => {
     const { service } = makeService(activity, [
       { kind: "failed", reason: "usage_limit", message: "429", usage },
     ]);
-    const task = service.createTask({ title: "A" });
+    const task = service.createTask({ projectId: "default", title: "A" });
     await service.runNext(task.id);
     const after = service.get(task.id);
     expect(after?.task.budget.warned).toBe(true);
@@ -780,7 +780,7 @@ describe("秘密情報と予算の通知（レビュー指摘）", () => {
   it("1回の実行で80%未満から上限を超えた場合も、通知を記録する", async () => {
     const activity = new SqliteActivityStore(dbPath);
     const { service } = makeService(activity, [completed(70_000)]); // $1.05
-    const task = service.createTask({ title: "A" });
+    const task = service.createTask({ projectId: "default", title: "A" });
     await service.runNext(task.id);
     expect(
       service
@@ -801,7 +801,7 @@ describe("秘密情報と予算の通知（レビュー指摘）", () => {
     const worker = new Worker(service, 60_000);
 
     await worker.tick(); // 空のキュー
-    const task = service.createTask({ title: "A" });
+    const task = service.createTask({ projectId: "default", title: "A" });
     await worker.tick();
     expect(executor.calls).toHaveLength(1);
     expect(service.get(task.id)?.task.status).toBe("paused");
@@ -837,7 +837,7 @@ describe("秘密情報と予算の通知（レビュー指摘）", () => {
       }),
       workspaceRoot: join(dir, "workspaces"),
     });
-    const task = service.createTask({ title: "A" });
+    const task = service.createTask({ projectId: "default", title: "A" });
     const worker = new Worker(service, 60_000);
     void worker.tick();
     await new Promise((r) => setTimeout(r, 20));
@@ -866,7 +866,7 @@ describe("承認ゲート（PBI-7）", () => {
   it("要求要件を作ると承認待ちで止まり、承認すると設計が実行対象になって待機する", async () => {
     const activity = new SqliteActivityStore(dbPath);
     const { service } = makeService(activity, [draft("# 要求要件 v1")]);
-    const task = service.createTask({ title: "A" });
+    const task = service.createTask({ projectId: "default", title: "A" });
     await service.runNext(task.id);
     const waiting = service.get(task.id)?.task;
     expect(waiting?.status).toBe("awaiting_approval");
@@ -898,7 +898,7 @@ describe("承認ゲート（PBI-7）", () => {
         { remarkId: "unknown-id", text: "無視される" },
       ]),
     ]);
-    const task = service.createTask({ title: "A" });
+    const task = service.createTask({ projectId: "default", title: "A" });
     await service.runNext(task.id);
 
     expect(() =>
@@ -946,7 +946,7 @@ describe("承認ゲート（PBI-7）", () => {
   it("表示していた提出回が最新でなければ、承認も差し戻しも拒否する（レビュー指摘）", async () => {
     const activity = new SqliteActivityStore(dbPath);
     const { service } = makeService(activity, [draft("# v1"), draft("# v2")]);
-    const task = service.createTask({ title: "A" });
+    const task = service.createTask({ projectId: "default", title: "A" });
     await service.runNext(task.id);
     // タブAは1回目を表示したまま、タブBで差し戻して2回目が提出された
     service.requestChanges(task.id, { step: "requirements", submission: 1, comments: ["直して"] });
@@ -970,7 +970,7 @@ describe("承認ゲート（PBI-7）", () => {
       draft("# v2", [{ remarkId: "requirements-1-1", text: "v2で対応しました" }]),
       draft("# v3", [{ remarkId: "requirements-2-1", text: "Bに対応" }]),
     ]);
-    const task = service.createTask({ title: "A" });
+    const task = service.createTask({ projectId: "default", title: "A" });
     await service.runNext(task.id);
     service.requestChanges(task.id, { step: "requirements", submission: 1, comments: ["A"] });
     await service.runNext(task.id);
@@ -999,7 +999,7 @@ describe("承認ゲート（PBI-7）", () => {
       activity,
       Array.from({ length: 5 }, (_, i) => draft(`# v${i + 1}`)),
     );
-    const task = service.createTask({ title: "A" });
+    const task = service.createTask({ projectId: "default", title: "A" });
     await service.runNext(task.id);
     for (let i = 1; i <= 3; i++) {
       service.requestChanges(task.id, {
@@ -1052,7 +1052,7 @@ describe("承認ゲート（PBI-7）", () => {
   it("承認待ちのあいだは予算超過で止めず、次の実行の前に判定する", async () => {
     const activity = new SqliteActivityStore(dbPath);
     const { service } = makeService(activity, [completed(70_000)]); // $1.05
-    const task = service.createTask({ title: "A" });
+    const task = service.createTask({ projectId: "default", title: "A" });
     await service.runNext(task.id);
     const after = service.get(task.id);
     expect(after?.task.status).toBe("awaiting_approval");
@@ -1092,7 +1092,11 @@ describe("設計の工程（PBI-8）", () => {
   async function toDesignGate(outcomes: AgentOutcome[]) {
     const activity = new SqliteActivityStore(dbPath);
     const made = makeService(activity, [draft("# 要求要件 v1"), ...outcomes]);
-    const task = made.service.createTask({ title: "決済API", body: "二重処理を防ぐ" });
+    const task = made.service.createTask({
+      projectId: "default",
+      title: "決済API",
+      body: "二重処理を防ぐ",
+    });
     await made.service.runNext(task.id);
     gate(made.service, task.id, "requirements");
     await made.service.runNext(task.id);
@@ -1207,7 +1211,7 @@ describe("設計の工程（PBI-8）", () => {
   it("差し戻せるのは、承認ゲートの工程かそれより前の承認ゲートのある工程だけ", async () => {
     const activity = new SqliteActivityStore(dbPath);
     const { service } = makeService(activity, [draft("# 要求要件 v1")]);
-    const { id } = service.createTask({ title: "A" });
+    const { id } = service.createTask({ projectId: "default", title: "A" });
     await service.runNext(id);
     for (const target of ["design", "implement"] as const) {
       expect(() =>
@@ -1270,7 +1274,7 @@ describe("設計の工程（PBI-8）", () => {
       draft("# 要求要件 v1"),
       draft("# 設計", [viewpoints("A")]),
     ]);
-    const { id } = service.createTask({ title: "A" });
+    const { id } = service.createTask({ projectId: "default", title: "A" });
     await service.runNext(id);
     // PBI-7の作業履歴：設計を実行できなかったため、承認後に待機していた
     activity.append({
@@ -1341,6 +1345,7 @@ describe("ゴールガーディアン：変更の申し出の判定（PBI-9）",
     const activity = new SqliteActivityStore(dbPath);
     const made = makeService(activity, [out("# 要求要件 v1"), ...outcomes]);
     const task = made.service.createTask({
+      projectId: "default",
       title: "決済API",
       body: "タスクの本文（秘密の経緯）",
     });
@@ -1494,7 +1499,7 @@ describe("ゴールガーディアン：変更の申し出の判定（PBI-9）",
   it("デーモンの停止で中断された判定は、再起動時にエスカレーションにする", async () => {
     const activity = new SqliteActivityStore(dbPath);
     const { service } = makeService(activity, [out("# 要求要件 v1")]);
-    const { id } = service.createTask({ title: "A" });
+    const { id } = service.createTask({ projectId: "default", title: "A" });
     await service.runNext(id);
     service.approve(id, { step: "requirements", submission: 1 });
     // 設計の実行完了と申し出までを記録したところで、デーモンが止まった
@@ -1563,7 +1568,7 @@ describe("ゴールガーディアン：変更の申し出の判定（PBI-9）",
       designWithProposal(),
       verdict("approved"),
     ]);
-    const { id } = service.createTask({ title: "A" });
+    const { id } = service.createTask({ projectId: "default", title: "A" });
     await service.runNext(id);
     service.approve(id, { step: "requirements", submission: 1 });
     await service.runNext(id);
@@ -1580,7 +1585,7 @@ describe("ゴールガーディアン：変更の申し出の判定（PBI-9）",
   ) {
     const activity = new SqliteActivityStore(dbPath);
     const { service } = makeService(activity, [out("# 要求要件 v1")]);
-    const { id } = service.createTask({ title: "A" });
+    const { id } = service.createTask({ projectId: "default", title: "A" });
     await service.runNext(id);
     service.approve(id, { step: "requirements", submission: 1 });
     const runId = "run-x";
@@ -1762,7 +1767,11 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       options,
     );
     const { service } = made;
-    const { id } = service.createTask({ title: "決済API", body: "タスクの本文" });
+    const { id } = service.createTask({
+      projectId: "default",
+      title: "決済API",
+      body: "タスクの本文",
+    });
     await service.runNext(id);
     service.requestChanges(id, {
       step: "requirements",
@@ -1802,7 +1811,10 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         [out("# 調査の結果 v1"), out("# 調査の結果 v2")],
         { planner: investigatePlanner },
       );
-      const { id } = service.createTask({ title: "決済の再試行はどこで行っている？" });
+      const { id } = service.createTask({
+        projectId: "default",
+        title: "決済の再試行はどこで行っている？",
+      });
       await service.runNext(id);
       expect(promptOf(executor, 0)).toContain("あなたはソフトウェア開発の調査エージェントです");
       expect(promptOf(executor, 0)).toContain("決済の再試行はどこで行っている？");
@@ -2265,7 +2277,11 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       expect(promptOf(executor, 0)).toContain("- review：");
       expect(service.get(withPr)?.task.steps.map((st) => st.key)).toEqual(["review"]);
       // PR の無いタスクでレビューを選んでも、選べない組み合わせとして標準の工程で進める
-      const { id } = service.createTask({ title: "レビューして", body: "PR は無い" });
+      const { id } = service.createTask({
+        projectId: "default",
+        title: "レビューして",
+        body: "PR は無い",
+      });
       await service.runNext(id);
       expect(promptOf(executor, 2)).toContain("あなたはオーケストレーターです");
       expect(promptOf(executor, 2)).not.toContain("- review：");
@@ -2288,7 +2304,11 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
           realPlanner: true,
         },
       );
-      const { id } = service.createTask({ title: "文言の修正", body: "ボタンの文言を変える" });
+      const { id } = service.createTask({
+        projectId: "default",
+        title: "文言の修正",
+        body: "ボタンの文言を変える",
+      });
       await service.runNext(id);
       // オーケストレーターには、タスクの内容と起点のコードを読み取り専用で渡す
       const prompt = promptOf(executor, 0);
@@ -2330,7 +2350,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         ],
         { realPlanner: true },
       );
-      const a = service.createTask({ title: "A" });
+      const a = service.createTask({ projectId: "default", title: "A" });
       await service.runNext(a.id);
       expect(service.get(a.id)?.task.stepsChoice).toEqual({
         plan: "standard",
@@ -2341,7 +2361,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         fallback: true,
       });
       expect(service.get(a.id)?.task.steps.map((st) => st.key)).toEqual([...MVP_STEPS]);
-      const b = service.createTask({ title: "B" });
+      const b = service.createTask({ projectId: "default", title: "B" });
       await service.runNext(b.id);
       expect(ja(service.get(b.id)?.task.stepsChoice?.reason)).toContain("session limit");
       expect(service.get(b.id)?.task.steps.map((st) => st.key)).toEqual([...MVP_STEPS]);
@@ -2370,7 +2390,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
           }),
         },
       );
-      const { id } = service.createTask({ title: "A" });
+      const { id } = service.createTask({ projectId: "default", title: "A" });
       await service.runNext(id);
       service.approve(id, { step: "requirements", submission: 1 });
       await drain(service);
@@ -2404,7 +2424,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
           }),
         },
       );
-      const { id } = service.createTask({ title: "A" });
+      const { id } = service.createTask({ projectId: "default", title: "A" });
       await service.runNext(id);
       service.approve(id, { step: "requirements", submission: 1 });
       await service.runNext(id); // 実装
@@ -2687,7 +2707,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     const repos = new FakeRepos();
     repos.fail = "git clone に失敗しました：Repository not found";
     const { service, executor } = makeService(activity, [out("# 要求要件")], { repos });
-    const { id } = service.createTask({ title: "A" });
+    const { id } = service.createTask({ projectId: "default", title: "A" });
     await service.runNext(id);
     const task = service.get(id)?.task;
     expect(task?.pausedReason).toBe("error");
@@ -2703,7 +2723,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
   it("PBI-8・9で設計が承認され、実装の工程が無かったため待機していたタスクは、起動時に実装を実行待ちにする", async () => {
     const activity = new SqliteActivityStore(dbPath);
     const { service } = makeService(activity, [out("# 要求要件"), design]);
-    const { id } = service.createTask({ title: "A" });
+    const { id } = service.createTask({ projectId: "default", title: "A" });
     await service.runNext(id);
     service.approve(id, { step: "requirements", submission: 1 });
     await service.runNext(id);
@@ -3350,7 +3370,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     const { service } = makeService(activity, [out("# 要求要件"), design, out("# 要求要件")], {
       repos,
     });
-    const { id } = service.createTask({ title: "A" });
+    const { id } = service.createTask({ projectId: "default", title: "A" });
     await service.runNext(id);
     service.approve(id, { step: "requirements", submission: 1 });
     // 作業領域が消え、その間にベースブランチが進んだ
@@ -3367,7 +3387,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     const other = makeService(new SqliteActivityStore(join(dir, "other.db")), [out("# 要求要件")], {
       repos: Object.assign(new FakeRepos(), { recordedMissing: true }),
     });
-    const t = other.service.createTask({ title: "B" });
+    const t = other.service.createTask({ projectId: "default", title: "B" });
     await other.service.runNext(t.id);
     other.service.approve(t.id, { step: "requirements", submission: 1 });
     rmSync(other.repos.prepared[0]?.dir ?? "", { recursive: true, force: true });
@@ -3383,7 +3403,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     const repos = new FakeRepos();
     repos.snapshotFail = "git read-tree に失敗しました";
     const { service, executor } = makeService(activity, [out("# 要求要件")], { repos });
-    const { id } = service.createTask({ title: "A" });
+    const { id } = service.createTask({ projectId: "default", title: "A" });
     await service.runNext(id);
     expect(executor.calls).toHaveLength(0);
     expect(service.get(id)?.task.pausedReason).toBe("error");
@@ -3606,7 +3626,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     const gate = Promise.withResolvers<void>();
     repos.prepareGate = gate.promise;
     const { service, executor } = makeService(activity, [out("# 要求要件")], { repos });
-    const { id } = service.createTask({ title: "A" });
+    const { id } = service.createTask({ projectId: "default", title: "A" });
     const callsBefore = executor.calls.length;
     const running = service.runNext(id);
     await repos.prepareStarted.promise;
@@ -3745,7 +3765,7 @@ describe("タスクの対象リポジトリ（PBI-21）", () => {
       projects: twoRepositories(),
     });
     // 大文字・小文字が違っても、設定のリポジトリ名で記録する
-    const task = service.createTask({ title: "A", repo: "ACME/API" });
+    const task = service.createTask({ projectId: "default", title: "A", repo: "ACME/API" });
     expect(task.repo).toBe("acme/api");
     await service.runNext(task.id);
     expect(repos.prepared[0]).toMatchObject({
@@ -3759,10 +3779,12 @@ describe("タスクの対象リポジトリ（PBI-21）", () => {
   it("リポジトリが複数あるのに選んでいない・設定に無いリポジトリを選んだときは、作らない", () => {
     const activity = new SqliteActivityStore(dbPath);
     const { service } = makeService(activity, [], { projects: twoRepositories() });
-    expect(() => service.createTask({ title: "A" })).toThrow(/対象リポジトリを、プロジェクト/);
-    expect(() => service.createTask({ title: "A", repo: "acme/other" })).toThrow(
+    expect(() => service.createTask({ projectId: "default", title: "A" })).toThrow(
       /対象リポジトリを、プロジェクト/,
     );
+    expect(() =>
+      service.createTask({ projectId: "default", title: "A", repo: "acme/other" }),
+    ).toThrow(/対象リポジトリを、プロジェクト/);
     expect(service.list()).toEqual([]);
     activity.close();
   });
@@ -3830,9 +3852,9 @@ describe("プロジェクトと GitHub Issue の取り込み（PBI-5a）", () =>
     return { activity, ...made, pay, auth };
   }
 
-  it("既定のプロジェクトがあり、取り込み元が重複するプロジェクトは作れない", () => {
+  it("既定のプロジェクトは作らず、取り込み元が重複するプロジェクトは作れない（PBI-22）", () => {
     const { activity, service } = setup();
-    expect(service.listProjects().map((p) => p.name)).toEqual(["デフォルト", "決済", "認証"]);
+    expect(service.listProjects().map((p) => p.name)).toEqual(["決済", "認証"]);
     expect(() =>
       service.saveProject(undefined, {
         name: "重複",
@@ -3844,13 +3866,18 @@ describe("プロジェクトと GitHub Issue の取り込み（PBI-5a）", () =>
   });
 
   it("画面のタスクは、指定したプロジェクトに作る（無いプロジェクトは拒否する。PBI-4a）", () => {
-    const { activity, service, pay } = setup();
+    const { activity, service, pay, auth } = setup();
     const a = service.createTask({ title: "A", projectId: pay.id });
     expect(a.projectId).toBe(pay.id);
     // リポジトリの設定が1つだけなら、それが対象リポジトリになる（PBI-21）
     expect(a.repo).toBe("acme/payments");
     // リポジトリの設定が無いプロジェクトには作れない（PBI-21）
-    expect(() => service.createTask({ title: "B" })).toThrow(/リポジトリの設定がありません/);
+    expect(() => service.createTask({ projectId: auth.id, title: "B" })).toThrow(
+      /リポジトリの設定がありません/,
+    );
+    // 作るプロジェクトを省略すると作らない（既定のプロジェクトは無い。PBI-22）
+    expect(() => service.createTask({ title: "D" })).toThrow();
+    expect(service.list().map((t) => t.title)).toEqual(["A"]);
     expect(() => service.createTask({ title: "C", projectId: "no-such" })).toThrow(
       /プロジェクトが見つかりません/,
     );
@@ -4099,7 +4126,7 @@ describe("プロジェクト定義のエクスポート・インポート（PBI-
 
     // 同じ取り込み元のプロジェクトがあるあいだは、インポートできない
     expect(() => service.importProject(exported)).toThrow(/プロジェクト「決済」に登録されています/);
-    expect(service.listProjects()).toHaveLength(2);
+    expect(service.listProjects()).toHaveLength(1);
 
     // 別の sacty（取り込み元が重複しない環境）へは、新しいプロジェクトとしてインポートできる
     const other = makeService(new SqliteActivityStore(join(dir, "other.db")), [], {
@@ -4154,7 +4181,7 @@ describe("コンテキストリポジトリ（PBI-6a）", () => {
     ]);
     expect(service.get(id)?.task.context?.layers).toHaveLength(2);
     // コンテキストの無いプロジェクトでは、何も渡さない
-    const other = service.createTask({ title: "B" });
+    const other = service.createTask({ projectId: "default", title: "B" });
     expect(executor.contexts).toHaveLength(1);
     expect(other.projectId).toBe("default");
     activity.close();
@@ -4386,7 +4413,11 @@ describe("API", () => {
     const res = await app.request("/api/tasks", {
       method: "POST",
       headers: json,
-      body: JSON.stringify({ title: "  決済APIの設計  ", body: "冪等性キーを扱う" }),
+      body: JSON.stringify({
+        title: "  決済APIの設計  ",
+        body: "冪等性キーを扱う",
+        projectId: "default",
+      }),
     });
     expect(res.status).toBe(201);
     const { task } = (await res.json()) as { task: { id: string; title: string } };
@@ -4454,7 +4485,7 @@ describe("API", () => {
     const activity = new SqliteActivityStore(dbPath);
     const { service } = makeService(activity);
     const app = createApp(service, token);
-    const task = service.createTask({ title: "A" });
+    const task = service.createTask({ projectId: "default", title: "A" });
     const resume = (body: unknown) =>
       app.request(`/api/tasks/${task.id}/resume`, {
         method: "POST",
@@ -4477,7 +4508,7 @@ describe("API", () => {
     const activity = new SqliteActivityStore(dbPath);
     const { service } = makeService(activity);
     const app = createApp(service, token);
-    const task = service.createTask({ title: "A" });
+    const task = service.createTask({ projectId: "default", title: "A" });
     const decide = (body: unknown) =>
       app.request(`/api/tasks/${task.id}/proposals/CP-1/decide`, {
         method: "POST",

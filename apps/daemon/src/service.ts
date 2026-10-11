@@ -95,8 +95,6 @@ import {
 import type { RepositoryWorkspace } from "./repository.js";
 import { SecretNotFoundError, type SecretStore } from "./secrets.js";
 
-export const DEFAULT_PROJECT_ID = "default";
-
 type ActivityItem = { actor: Actor; event: EventInput };
 
 export type CleanupItem = { target: CleanupTarget; present: boolean; detail?: DaemonText };
@@ -187,9 +185,6 @@ export class TaskService {
 
   constructor(private readonly deps: ServiceDeps) {
     this.tasks = project(deps.activity.all());
-    if (!deps.projects.get(DEFAULT_PROJECT_ID)) {
-      deps.projects.put(DEFAULT_PROJECT_ID, ProjectDefinition.parse({ name: "デフォルト" }));
-    }
   }
 
   list(): Task[] {
@@ -823,10 +818,10 @@ export class TaskService {
     return updated;
   }
 
-  /** 画面からタスクを作る。プロジェクトを省略すると、既定のプロジェクトに作る。 */
+  /** 画面からタスクを作る。作るプロジェクトは必ず指定する（既定のプロジェクトは無い。PBI-22）。 */
   createTask(raw: unknown): Task {
     const input = CreateTaskInput.parse(raw);
-    const projectId = input.projectId ?? DEFAULT_PROJECT_ID;
+    const { projectId } = input;
     const project = this.deps.projects.get(projectId);
     if (!project) {
       throw new InvalidOperationError(message("project.notFound"));

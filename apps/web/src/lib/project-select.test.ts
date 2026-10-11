@@ -12,10 +12,12 @@ const project = (id: string): Project => ({
 });
 
 describe("表示するプロジェクトの切り替え（PBI-4a）", () => {
-  it("cookie のプロジェクトを表示し、無くなっていれば既定のプロジェクトにする", () => {
-    const projects = [project("default"), project("p1")];
+  it("cookie のプロジェクトを表示し、無い・無くなっていれば最初のプロジェクトにする（PBI-22）", () => {
+    // 「default」という ID のプロジェクトがあっても、特別扱いしない
+    const projects = [project("p0"), project("default"), project("p1")];
     expect(resolveProject(projects, "p1")?.id).toBe("p1");
-    expect(resolveProject(projects, "deleted")?.id).toBe("default");
+    expect(resolveProject(projects, "deleted")?.id).toBe("p0");
+    expect(resolveProject(projects, "")?.id).toBe("p0");
     expect(resolveProject([project("p1")], "x")?.id).toBe("p1");
     expect(resolveProject([], "x")).toBeUndefined();
   });
