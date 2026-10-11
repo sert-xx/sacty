@@ -25,7 +25,7 @@ const { ProjectEditor } = await import("@/components/project-editor");
 const { ImportProjectForm } = await import("@/components/import-project-form");
 const { AppRail } = await import("@/components/shell/rail");
 
-const project = { id: "p1", name: "決済", sources: [], repositories: [] };
+const project = { id: "p1", name: "決済", targets: [] };
 
 /** 描画した要素の木から、部品（関数）の要素を集める。 */
 function components(node: unknown, found: unknown[] = []): unknown[] {

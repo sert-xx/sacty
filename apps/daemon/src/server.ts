@@ -78,6 +78,13 @@ export function createApp(
     return c.json(view);
   });
 
+  // タスクの対象リポジトリの候補（プロジェクトの対象から。PBI-25）
+  app.get("/api/projects/:id/repositories", async (c) => {
+    const result = await service.projectRepositories(c.req.param("id"));
+    if (!result) return c.json({ error: "not_found" }, 404);
+    return c.json(result);
+  });
+
   app.post("/api/projects", async (c) => {
     const json = await readJson(c);
     if (!json.ok) return c.json({ error: "invalid_json" }, 400);

@@ -6,7 +6,13 @@ import { NewTaskDialog } from "@/components/new-task-dialog";
 import { StatusLabel, StepChips } from "@/components/task-bits";
 import { getMessages } from "@/i18n/server";
 import { currentProjectId, resolveProject } from "@/lib/current-project";
-import { DaemonUnavailableError, getStatus, listProjects, listTasks } from "@/lib/daemon";
+import {
+  DaemonUnavailableError,
+  getStatus,
+  listProjectRepositories,
+  listProjects,
+  listTasks,
+} from "@/lib/daemon";
 import { isWorking, needsPerson, personAction, statusText } from "@/lib/labels";
 
 export default async function TasksPage() {
@@ -59,11 +65,17 @@ async function NewTask() {
   try {
     const project = resolveProject(await listProjects(), await currentProjectId());
     if (!project) return null;
+    // 対象リポジトリの候補（Org の対象は gh で読む。PBI-25）。読めなかった Org は理由を出す
+    const [{ repositories, errors }, m] = await Promise.all([
+      listProjectRepositories(project.id),
+      getMessages(),
+    ]);
     return (
       <NewTaskDialog
         projectId={project.id}
         projectName={project.name}
-        repositories={project.repositories.map((r) => r.repo)}
+        repositories={repositories}
+        problems={errors.map((e) => m.forms.task.listFailed(e.owner, m.labels.text(e.message)))}
       />
     );
   } catch {

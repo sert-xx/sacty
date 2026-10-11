@@ -76,7 +76,7 @@ export async function createTask(
 export type IntakeStatus = {
   lastRunAt?: string;
   imported?: number;
-  /** 取り込めなかった取り込み元（検索の条件）と理由。 */
+  /** 取り込めなかった対象（検索の条件）と理由。 */
   errors?: { query?: string; message: DaemonText }[];
 };
 
@@ -102,6 +102,22 @@ export async function getProject(id: string): Promise<ProjectView | null> {
   if (res.status === 404) return null;
   await ensureOk(res);
   return (await res.json()) as ProjectView;
+}
+
+/**
+ * プロジェクトの対象から選べる、タスクの対象リポジトリ（PBI-25）。Org の対象は gh で読む。
+ * 読めなかった Org は、理由を返す。
+ */
+export async function listProjectRepositories(
+  id: string,
+): Promise<{ repositories: string[]; errors: { owner: string; message: DaemonText }[] }> {
+  const res = await ensureOk(
+    await daemonFetch(`/api/projects/${encodeURIComponent(id)}/repositories`),
+  );
+  return (await res.json()) as {
+    repositories: string[];
+    errors: { owner: string; message: DaemonText }[];
+  };
 }
 
 /** プロジェクトを作る（id なし）か変える。入力の誤りや重複は、画面に出せる理由を返す。 */

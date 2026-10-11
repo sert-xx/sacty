@@ -23,9 +23,8 @@ const PARAMS = {
   "task.cancelled": null,
   "task.invalidState": null,
   "project.notFound": null,
-  "project.sourceDuplicated": z.object({ scope: Scope, target: z.string() }),
-  "project.sourceTaken": z.object({ scope: Scope, target: z.string(), project: z.string() }),
-  "project.repositoryDuplicated": z.object({ repo: z.string() }),
+  "project.targetDuplicated": z.object({ scope: Scope, target: z.string() }),
+  "project.targetTaken": z.object({ scope: Scope, target: z.string(), project: z.string() }),
   "pause.alreadyPaused": null,
   "pause.awaitingPerson": null,
   "pause.guardianJudging": null,
@@ -54,7 +53,6 @@ const PARAMS = {
   "input.nameRequired": null,
   "input.invalidGithubName": null,
   "input.invalidRepo": null,
-  "input.testCommandRequired": null,
   "input.contextRepoRequired": null,
   "input.invalidRef": null,
   "input.notExportFile": null,
@@ -88,12 +86,13 @@ const PARAMS = {
   "run.authFileUnreadable": z.object({ path: z.string() }),
   "run.containerNotConfirmed": z.object({ name: z.string() }),
   "run.secretNotFound": z.object({ name: z.string() }),
-  "run.repositorySettingsMissing": z.object({ project: z.string(), repo: z.string() }),
   "run.repositoryNotConfigured": null,
   "guardian.verdictUnreadable": null,
   "guardian.reworkUnreadable": null,
   "orchestrator.fallback": z.object({ detail: TextParam }),
   "orchestrator.unreadable": null,
+  "orchestrator.testCommandUnknown": null,
+  "orchestrator.baseBranchUnavailable": z.object({ branch: z.string(), detail: TextParam }),
   "review.pullRequestMissing": z.object({ repo: z.string() }),
   "github.ghMissing": null,
   "github.accountRequired": z.object({ project: z.string() }),
@@ -131,6 +130,7 @@ const PARAMS = {
       "getReviews",
       "commentIssue",
       "listIssueComments",
+      "listRepositories",
       "postReview",
       "searchIssues",
     ]),
@@ -214,6 +214,7 @@ const githubActionJa = {
   getReviews: "PRのレビューを確認できませんでした",
   commentIssue: "Issue にコメントできませんでした",
   listIssueComments: "Issue のコメントを確認できませんでした",
+  listRepositories: "リポジトリの一覧を読めませんでした",
   postReview: "PR にレビューを投稿できませんでした",
   searchIssues: "Issue を検索できませんでした",
 } as const;
@@ -225,6 +226,7 @@ const githubActionEn = {
   getReviews: "Could not check the PR reviews",
   commentIssue: "Could not comment on the issue",
   listIssueComments: "Could not check the issue comments",
+  listRepositories: "Could not list the repositories",
   postReview: "Could not post the review to the PR",
   searchIssues: "Could not search issues",
 } as const;
@@ -244,17 +246,16 @@ const contextKindEn = { skills: "skill", mcp: "MCP server" } as const;
 const ja: MessageDictionary = {
   "task.notFound": "タスクが見つかりません。",
   "task.repositoryMissing": ({ project }) =>
-    `プロジェクト「${project}」にリポジトリの設定がありません。プロジェクトの設定でリポジトリを追加してから、タスクを作ってください。`,
+    `プロジェクト「${project}」に対象（Org・リポジトリ）がありません。プロジェクトの設定で対象を追加してから、タスクを作ってください。`,
   "task.repositoryUnknown": ({ project }) =>
-    `対象リポジトリを、プロジェクト「${project}」のリポジトリの設定から選んでください。`,
+    `対象リポジトリを、プロジェクト「${project}」の対象（Org・リポジトリ）の中から選んでください。`,
   "task.cancelled": "中止したタスクです。",
   "task.invalidState": "このタスクの状態では、その操作はできません。画面を更新してください。",
   "project.notFound": "プロジェクトが見つかりません。",
-  "project.sourceDuplicated": ({ scope, target }) =>
+  "project.targetDuplicated": ({ scope, target }) =>
     `${scopeJa[scope]}「${target}」が重複しています。`,
-  "project.sourceTaken": ({ scope, target, project }) =>
+  "project.targetTaken": ({ scope, target, project }) =>
     `${scopeJa[scope]}「${target}」は、プロジェクト「${project}」に登録されています。`,
-  "project.repositoryDuplicated": ({ repo }) => `リポジトリの設定「${repo}」が重複しています。`,
   "pause.alreadyPaused": "すでに一時停止しています。",
   "pause.awaitingPerson": "人間の判断待ちのため、一時停止する必要はありません。",
   "pause.guardianJudging":
@@ -289,7 +290,6 @@ const ja: MessageDictionary = {
   "input.nameRequired": "名前を入力してください。",
   "input.invalidGithubName": "GitHub の名前として正しくありません。",
   "input.invalidRepo": "リポジトリは owner/name の形で入力してください。",
-  "input.testCommandRequired": "テストのコマンドを入力してください。",
   "input.contextRepoRequired": "コンテキストリポジトリを入力してください。",
   "input.invalidRef": "ref はブランチ名かタグ名で入力してください。",
   "input.notExportFile": "sacty のプロジェクト定義のファイルではありません。",
@@ -330,8 +330,6 @@ const ja: MessageDictionary = {
     `コンテナ（${name}）の停止を確認できませんでした。docker ps で確認してください。`,
   "run.secretNotFound": ({ name }) =>
     `秘密情報「${name}」が見つかりません。\`sacty secret set ${name}\` で保存してください。`,
-  "run.repositorySettingsMissing": ({ project, repo }) =>
-    `プロジェクト「${project}」に、${repo} のリポジトリの設定（ベースブランチ・テストのコマンド）がありません。プロジェクトの設定で追加してから再開してください。`,
   "run.repositoryNotConfigured":
     "このタスクには対象リポジトリがありません（対象リポジトリを選ぶ前の版で作ったタスクです）。中止して、タスクを作り直してください。",
   "guardian.verdictUnreadable": "ゴールガーディアンの出力から、判定を読み取れませんでした。",
@@ -339,6 +337,10 @@ const ja: MessageDictionary = {
   "orchestrator.fallback": ({ detail }, text) =>
     `オーケストレーターが工程を選べなかったため、標準の工程で進めます（${text(detail)}）。`,
   "orchestrator.unreadable": "オーケストレーターの出力から、選んだ工程を読み取れませんでした。",
+  "orchestrator.testCommandUnknown":
+    "オーケストレーターが、対象リポジトリのテストのコマンドを決められませんでした。実装を検証できないので止めます。タスクの内容にテストの実行方法を書いて、作り直してください。",
+  "orchestrator.baseBranchUnavailable": ({ branch, detail }, text) =>
+    `オーケストレーターが選んだベースブランチ（${branch}）を用意できなかったため、既定のブランチで進めます（${text(detail)}）。`,
   "review.pullRequestMissing": ({ repo }) =>
     `タスクに、レビューする PR（${repo} の PR の URL）がありません。`,
   "github.ghMissing":
@@ -417,18 +419,16 @@ const ja: MessageDictionary = {
 const en: MessageDictionary = {
   "task.notFound": "Task not found.",
   "task.repositoryMissing": ({ project }) =>
-    `The project "${project}" has no repository settings. Add a repository in the project settings, then create the task.`,
+    `The project "${project}" has no targets (organizations or repositories). Add one in the project settings, then create the task.`,
   "task.repositoryUnknown": ({ project }) =>
-    `Choose the target repository from the repository settings of the project "${project}".`,
+    `Choose the target repository from the targets (organizations or repositories) of the project "${project}".`,
   "task.cancelled": "This task has been cancelled.",
   "task.invalidState": "This action is not available in the task's current state. Reload the page.",
   "project.notFound": "Project not found.",
-  "project.sourceDuplicated": ({ scope, target }) =>
+  "project.targetDuplicated": ({ scope, target }) =>
     `The ${scopeEn[scope]} "${target}" is listed more than once.`,
-  "project.sourceTaken": ({ scope, target, project }) =>
+  "project.targetTaken": ({ scope, target, project }) =>
     `The ${scopeEn[scope]} "${target}" is already registered in the project "${project}".`,
-  "project.repositoryDuplicated": ({ repo }) =>
-    `Repository settings for "${repo}" are listed more than once.`,
   "pause.alreadyPaused": "The task is already paused.",
   "pause.awaitingPerson": "The task is waiting for your decision, so there is no need to pause it.",
   "pause.guardianJudging":
@@ -463,7 +463,6 @@ const en: MessageDictionary = {
   "input.nameRequired": "Enter a name.",
   "input.invalidGithubName": "This is not a valid GitHub name.",
   "input.invalidRepo": "Enter the repository as owner/name.",
-  "input.testCommandRequired": "Enter the test command.",
   "input.contextRepoRequired": "Enter the context repository.",
   "input.invalidRef": "Enter a branch or tag name as the ref.",
   "input.notExportFile": "This is not a sacty project definition file.",
@@ -505,8 +504,6 @@ const en: MessageDictionary = {
     `Could not confirm that the container (${name}) stopped. Check with docker ps.`,
   "run.secretNotFound": ({ name }) =>
     `Secret "${name}" not found. Save it with \`sacty secret set ${name}\`.`,
-  "run.repositorySettingsMissing": ({ project, repo }) =>
-    `The project "${project}" has no repository settings (base branch and test command) for ${repo}. Add them in the project settings, then resume.`,
   "run.repositoryNotConfigured":
     "This task has no target repository (it was created before tasks chose one). Cancel it and create the task again.",
   "guardian.verdictUnreadable": "Could not read a verdict from the Goal Guardian's output.",
@@ -514,6 +511,10 @@ const en: MessageDictionary = {
   "orchestrator.fallback": ({ detail }, text) =>
     `The Orchestrator could not choose the steps, so the standard steps are used (${text(detail)}).`,
   "orchestrator.unreadable": "Could not read the chosen steps from the Orchestrator's output.",
+  "orchestrator.testCommandUnknown":
+    "The Orchestrator could not determine the test command of the target repository, so the implementation cannot be verified. Describe how to run the tests in the task and create it again.",
+  "orchestrator.baseBranchUnavailable": ({ branch, detail }, text) =>
+    `Could not prepare the base branch the Orchestrator chose (${branch}), so the default branch is used (${text(detail)}).`,
   "review.pullRequestMissing": ({ repo }) =>
     `The task has no PR to review (a URL of a PR in ${repo}).`,
   "github.ghMissing":

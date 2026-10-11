@@ -18,7 +18,8 @@ export interface RepositoryWorkspace {
     dir: string,
     gitDir: string,
     url: string,
-    baseBranch: string,
+    /** ベースブランチ。省略すると、リポジトリの既定のブランチ（PBI-25）。 */
+    baseBranch: string | undefined,
     /** HTTPS の GitHub に認証する環境変数（gh のトークン。PBI-13）。無ければホストの認証を使う。 */
     authEnv?: Record<string, string>,
     /**
@@ -26,7 +27,7 @@ export interface RepositoryWorkspace {
      * 用意する（タスクの起点を最後まで変えないため。PBI-15）。取得できなければエラーにする。
      */
     baseCommit?: string,
-  ): Promise<{ baseCommit: string }>;
+  ): Promise<{ baseCommit: string; baseBranch: string }>;
   /** 起点からの差分（新しく作ったファイルを含む）。 */
   diff(dir: string, gitDir: string, baseCommit: string): Promise<string>;
   /**
@@ -187,7 +188,7 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
     dir: string,
     gitDir: string,
     url: string,
-    baseBranch: string,
+    baseBranch: string | undefined,
     authEnv?: Record<string, string>,
     recorded?: string,
   ) {
@@ -199,7 +200,18 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
       if (existsSync(path)) rmSync(path, { recursive: true, force: true });
     }
     const env = cloneEnv(authEnv);
-    await git("clone", ["clone", "--branch", baseBranch, "--", url, dir], env);
+    // ブランチの指定が無ければ、リポジトリの既定のブランチを clone する（PBI-25）
+    if (
+      baseBranch !== undefined &&
+      (!/^[\w./-]+$/.test(baseBranch) || baseBranch.startsWith("-"))
+    ) {
+      throw new MessageError(message("git.invalidBranch"));
+    }
+    await git(
+      "clone",
+      ["clone", ...(baseBranch !== undefined ? ["--branch", baseBranch] : []), "--", url, dir],
+      env,
+    );
     if (recorded) {
       // 用意し直すときは、記録済みの起点のコミットにする（ブランチが進んでいても変えない）。
       // ブランチの履歴に無ければ（強制プッシュなど）、コミットを直接取得してみる
@@ -217,10 +229,14 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
       }
     }
     const baseCommit = (await git("rev-parse", ["rev-parse", "HEAD"], env, dir)).trim();
+    // 用意したブランチ（指定が無ければ、clone した既定のブランチ）
+    const branch =
+      baseBranch ??
+      (await git("symbolic-ref", ["symbolic-ref", "--short", "HEAD"], env, dir)).trim();
     // エージェントが触る前のメタデータを、どのコンテナにもマウントしない場所に退避する
     mkdirSync(dirname(gitDir), { recursive: true });
     cpSync(join(dir, ".git"), gitDir, { recursive: true });
-    return { baseCommit };
+    return { baseCommit, baseBranch: branch };
   }
 
   async copyWorkingTree(dir: string, outDir: string) {

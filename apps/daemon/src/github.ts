@@ -44,6 +44,11 @@ export interface PullRequests {
     number: number;
     body: string;
   }): Promise<{ url: string }>;
+  /**
+   * Org（またはユーザー）のリポジトリ（owner/name。アーカイブしたものは除く）。プロジェクトの対象の
+   * Org から、タスクの対象リポジトリを選ぶため（PBI-25）。
+   */
+  repositories(input: { owner: string; token: string }): Promise<string[]>;
   /** レビューの対象の PR（PBI-19）。 */
   pullRequest(input: { repo: string; token: string; number: number }): Promise<PullRequestInfo>;
   /**
@@ -215,11 +220,20 @@ export class GitHubPullRequests implements PullRequests {
    * 一覧を読む。100件ずつのページになるので、Link の next をたどってすべてのページを読む。
    * トークンを送るので、API と同じ場所の URL だけをたどる。
    */
-  private async list(
+  private list(
     repo: string,
     path: string,
     token: string,
     action: "getReviews" | "listIssueComments",
+  ): Promise<Record<string, unknown>[]> {
+    return this.listAt(`/repos/${repo}${path}`, token, action);
+  }
+
+  /** API の path（/ から）の一覧を、すべてのページから読む。 */
+  private async listAt(
+    path: string,
+    token: string,
+    action: "getReviews" | "listIssueComments" | "listRepositories",
   ): Promise<Record<string, unknown>[]> {
     const headers = {
       accept: "application/vnd.github+json",
@@ -227,7 +241,7 @@ export class GitHubPullRequests implements PullRequests {
       "x-github-api-version": "2022-11-28",
     };
     const all: Record<string, unknown>[] = [];
-    let url: string | undefined = `${this.api}/repos/${repo}${path}`;
+    let url: string | undefined = `${this.api}${path}`;
     for (let page = 0; url && page < MAX_PAGES; page++) {
       const res = await this.fetchImpl(url, { headers });
       const json = (await res.json().catch(() => ({}))) as unknown;
@@ -267,6 +281,23 @@ export class GitHubPullRequests implements PullRequests {
     const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
     if (!res.ok) throw apiError("commentIssue", res.status, json);
     return { url: String(json.html_url ?? "") };
+  }
+
+  async repositories(input: Parameters<PullRequests["repositories"]>[0]): Promise<string[]> {
+    const owner = encodeURIComponent(input.owner);
+    // Org の一覧が無ければ（ユーザーのアカウント）、ユーザーのリポジトリの一覧を読む
+    const read = (path: string) => this.listAt(path, input.token, "listRepositories");
+    const list = await read(`/orgs/${owner}/repos?per_page=100&type=all`).catch(
+      (error: unknown) => {
+        if (githubStatus(error) === 404)
+          return read(`/users/${owner}/repos?per_page=100&type=owner`);
+        throw error;
+      },
+    );
+    return list
+      .filter((r) => r.archived !== true && typeof r.full_name === "string")
+      .map((r) => String(r.full_name))
+      .sort((a, b) => a.localeCompare(b));
   }
 
   async pullRequest(input: Parameters<PullRequests["pullRequest"]>[0]): Promise<PullRequestInfo> {
@@ -437,6 +468,7 @@ function apiError(
     | "getReviews"
     | "commentIssue"
     | "listIssueComments"
+    | "listRepositories"
     | "postReview"
     | "searchIssues",
   status: number,
@@ -589,4 +621,12 @@ function toIssue(item: Record<string, unknown>): FoundIssue | undefined {
       : [],
   };
   return /^[^/]+\/[^/]+$/.test(issue.repo) && issue.number > 0 ? issue : undefined;
+}
+
+/** GitHub の API の失敗の、HTTP のステータス（GitHub の失敗でなければ undefined）。 */
+export function githubStatus(error: unknown): number | undefined {
+  const text = errorText(error);
+  if (typeof text !== "object" || text.code !== "github.failed") return undefined;
+  const status = (text.params as { status?: unknown } | undefined)?.status;
+  return typeof status === "number" ? status : undefined;
 }

@@ -686,3 +686,44 @@ describe("PR のレビュー（PBI-19）", () => {
     expect(feedback.map((f) => f.key)).toEqual(["review:2", "review:3", "review_comment:5"]);
   });
 });
+
+describe("対象の Org のリポジトリ（PBI-25）", () => {
+  it("Org のリポジトリをすべてのページから読み、アーカイブしたものを除いて並べる。Org でなければユーザーのリポジトリを読む", async () => {
+    const api = "https://api.github.com";
+    const { impl, calls } = fakeFetch([
+      {
+        status: 200,
+        json: [
+          { full_name: "acme/web", archived: false },
+          { full_name: "acme/old", archived: true },
+        ],
+        headers: { link: `<${api}/orgs/acme/repos?per_page=100&type=all&page=2>; rel="next"` },
+      },
+      { status: 200, json: [{ full_name: "acme/api" }] },
+      { status: 404, json: { message: "Not Found" } },
+      { status: 200, json: [{ full_name: "someone/dotfiles" }] },
+      { status: 403, json: { message: "Forbidden" } },
+    ]);
+    const client = new GitHubPullRequests(impl);
+    expect(await client.repositories({ owner: "acme", token: "ghp_secret" })).toEqual([
+      "acme/api",
+      "acme/web",
+    ]);
+    expect(calls[0]).toMatchObject({
+      url: `${api}/orgs/acme/repos?per_page=100&type=all`,
+      auth: "Bearer ghp_secret",
+    });
+    expect(await client.repositories({ owner: "someone", token: "ghp_secret" })).toEqual([
+      "someone/dotfiles",
+    ]);
+    expect(calls.map((c) => c.url).slice(2)).toEqual([
+      `${api}/orgs/someone/repos?per_page=100&type=all`,
+      `${api}/users/someone/repos?per_page=100&type=owner`,
+    ]);
+    expect(
+      errorText(
+        await client.repositories({ owner: "acme", token: "ghp_secret" }).catch((e: unknown) => e),
+      ),
+    ).toMatchObject({ code: "github.failed", params: { action: "listRepositories", status: 403 } });
+  });
+});

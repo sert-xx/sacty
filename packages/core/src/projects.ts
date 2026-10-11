@@ -13,23 +13,20 @@ export const RepoName = z
   .trim()
   .regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,99}\/[A-Za-z0-9._-]{1,100}$/, code("input.invalidRepo"));
 
-/** GitHub Issue の取り込み元。Org 単位かリポジトリ単位で、条件はラベル。 */
-export const IssueSource = z.discriminatedUnion("scope", [
-  z.object({ scope: z.literal("org"), target: Name, label: z.string().trim().min(1).max(50) }),
-  z.object({ scope: z.literal("repo"), target: RepoName, label: z.string().trim().min(1).max(50) }),
+/**
+ * プロジェクトの対象（PBI-25）。Org かリポジトリ。対象のリポジトリには画面からタスクを作れ、
+ * 対象の Issue・PR は取り込んでタスクにする。
+ */
+export const ProjectTarget = z.discriminatedUnion("scope", [
+  z.object({ scope: z.literal("org"), target: Name }),
+  z.object({ scope: z.literal("repo"), target: RepoName }),
 ]);
-export type IssueSource = z.infer<typeof IssueSource>;
+export type ProjectTarget = z.infer<typeof ProjectTarget>;
 
-/** 実装の対象リポジトリの設定（Issue のリポジトリごと）。 */
-export const RepositorySettings = z.object({
-  repo: RepoName,
-  baseBranch: z.string().trim().min(1).max(100).default("main"),
-  /** テストを実行するコマンド。sh -c で実行し、終了コード0で合格。 */
-  testCommand: z.string().trim().min(1, code("input.testCommandRequired")).max(1000),
-  /** 成果物チェックの前に、GitHub に PR を作るか（作らなければブランチのプッシュまで）。 */
-  pullRequest: z.boolean().default(true),
-});
-export type RepositorySettings = z.infer<typeof RepositorySettings>;
+/**
+ * 取り込むラベル（PBI-25）。sacty 全体の設定にするまで（PBI-26）、すべての対象でこのラベルを使う。
+ */
+export const INTAKE_LABEL = "sacty";
 
 /**
  * コンテキストリポジトリの指定。repo は git の URL かローカルのパス、ref はブランチやタグ
@@ -52,8 +49,8 @@ export type ContextSource = z.infer<typeof ContextSource>;
  */
 export const ProjectDefinition = z.object({
   name: z.string().trim().min(1, code("input.nameRequired")).max(80),
-  sources: z.array(IssueSource).max(50).default([]),
-  repositories: z.array(RepositorySettings).max(100).default([]),
+  /** 対象（Org・リポジトリ。PBI-25）。 */
+  targets: z.array(ProjectTarget).max(50).default([]),
   /** 工程エージェントに渡すコンテキスト（PBI-6）。 */
   context: ContextSource.optional(),
   /**
@@ -88,58 +85,51 @@ export function projectConflicts(
   const problems: DaemonMessage[] = [];
   const others = projects.filter((p) => p.id !== id);
   const seen = new Set<string>();
-  for (const source of definition.sources) {
-    const key = `${source.scope}:${source.target.toLowerCase()}`;
+  for (const target of definition.targets) {
+    const key = `${target.scope}:${target.target.toLowerCase()}`;
     if (seen.has(key)) {
       problems.push(
-        message("project.sourceDuplicated", { scope: source.scope, target: source.target }),
+        message("project.targetDuplicated", { scope: target.scope, target: target.target }),
       );
       continue;
     }
     seen.add(key);
     const owner = others.find((p) =>
-      p.sources.some((s) => s.scope === source.scope && same(s.target, source.target)),
+      p.targets.some((t) => t.scope === target.scope && same(t.target, target.target)),
     );
     if (owner) {
       problems.push(
-        message("project.sourceTaken", {
-          scope: source.scope,
-          target: source.target,
+        message("project.targetTaken", {
+          scope: target.scope,
+          target: target.target,
           project: owner.name,
         }),
       );
     }
   }
-  const repos = new Set<string>();
-  for (const r of definition.repositories) {
-    if (repos.has(r.repo.toLowerCase())) {
-      problems.push(message("project.repositoryDuplicated", { repo: r.repo }));
-    }
-    repos.add(r.repo.toLowerCase());
-  }
   return problems;
 }
 
 /**
- * そのリポジトリの Issue を担当するプロジェクトと取り込み元。範囲が狭い指定（リポジトリ）が優先し、
- * 無ければ Org の指定。取り込むたびに判定する（設定の変更をすぐに反映するため）。
+ * そのリポジトリを担当するプロジェクトと対象。範囲が狭い指定（リポジトリ）が優先し、
+ * 無ければ Org の指定。使うたびに判定する（設定の変更をすぐに反映するため）。
  */
-export function responsibleSource(
+export function responsibleProject(
   projects: readonly Project[],
   repo: string,
-): { project: Project; source: IssueSource } | undefined {
+): { project: Project; target: ProjectTarget } | undefined {
   for (const project of projects) {
-    const source = project.sources.find((s) => s.scope === "repo" && same(s.target, repo));
-    if (source) return { project, source };
+    const target = project.targets.find((t) => t.scope === "repo" && same(t.target, repo));
+    if (target) return { project, target };
   }
   for (const project of projects) {
-    const source = project.sources.find((s) => s.scope === "org" && same(s.target, ownerOf(repo)));
-    if (source) return { project, source };
+    const target = project.targets.find((t) => t.scope === "org" && same(t.target, ownerOf(repo)));
+    if (target) return { project, target };
   }
   return undefined;
 }
 
-/** Org の取り込み元から除かれる、ほかのプロジェクトがリポジトリ単位で担当しているリポジトリ。 */
+/** Org の対象から除かれる、ほかのプロジェクトがリポジトリ単位で担当しているリポジトリ。 */
 export function excludedRepositories(
   projects: readonly Project[],
   projectId: string,
@@ -148,31 +138,23 @@ export function excludedRepositories(
   return projects
     .filter((p) => p.id !== projectId)
     .flatMap((p) =>
-      p.sources
-        .filter((s) => s.scope === "repo" && same(ownerOf(s.target), org))
-        .map((s) => ({ repo: s.target, projectName: p.name })),
+      p.targets
+        .filter((t) => t.scope === "repo" && same(ownerOf(t.target), org))
+        .map((t) => ({ repo: t.target, projectName: p.name })),
     );
 }
 
-/** プロジェクトの、そのリポジトリの設定。 */
-export function repositorySettings(
-  project: Project | undefined,
-  repo: string,
-): RepositorySettings | undefined {
-  return project?.repositories.find((r) => same(r.repo, repo));
-}
-
 /** エクスポートの形式の版。形を変えたら上げ、インポートで古い版を読めるようにする。 */
-export const PROJECT_EXPORT_VERSION = 1;
+export const PROJECT_EXPORT_VERSION = 2;
 
 /** インポートでは知らない項目を拒否する（秘密情報などを、気づかずに取り込まないため）。 */
-const StrictIssueSource = z.discriminatedUnion("scope", [
-  IssueSource.options[0].strict(),
-  IssueSource.options[1].strict(),
+const StrictProjectTarget = z.discriminatedUnion("scope", [
+  ProjectTarget.options[0].strict(),
+  ProjectTarget.options[1].strict(),
 ]);
 
 /**
- * プロジェクト定義のエクスポートの形式。プロジェクトの定義（名前・取り込み元・リポジトリの設定）
+ * プロジェクト定義のエクスポートの形式。プロジェクトの定義（名前・対象・コンテキストリポジトリ）
  * だけを含め、ID・日時、個人の設定や秘密情報（トークンなど）は含めない。
  */
 export const ProjectExport = z
@@ -182,8 +164,7 @@ export const ProjectExport = z
     project: z
       .object({
         name: ProjectDefinition.shape.name,
-        sources: z.array(StrictIssueSource).max(50).default([]),
-        repositories: z.array(RepositorySettings.strict()).max(100).default([]),
+        targets: z.array(StrictProjectTarget).max(50).default([]),
         context: ContextSource.strict().optional(),
       })
       .strict(),
@@ -198,17 +179,11 @@ export function exportProject(project: Project): ProjectExport {
     version: PROJECT_EXPORT_VERSION,
     project: {
       name: project.name,
-      sources: project.sources.map((s) =>
-        s.scope === "org"
-          ? { scope: "org" as const, target: s.target, label: s.label }
-          : { scope: "repo" as const, target: s.target, label: s.label },
+      targets: project.targets.map((t) =>
+        t.scope === "org"
+          ? { scope: "org" as const, target: t.target }
+          : { scope: "repo" as const, target: t.target },
       ),
-      repositories: project.repositories.map((r) => ({
-        repo: r.repo,
-        baseBranch: r.baseBranch,
-        testCommand: r.testCommand,
-        pullRequest: r.pullRequest,
-      })),
       ...(project.context
         ? {
             context: {

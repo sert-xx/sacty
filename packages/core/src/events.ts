@@ -180,6 +180,11 @@ const StepsChosen = z.object({
     reason: DaemonText.optional(),
     /** 判断できず、標準の工程にした。 */
     fallback: z.boolean().default(false),
+    /**
+     * オーケストレーターが対象リポジトリを読んで決めた、テストのコマンド（PBI-25）。sh -c で実行し、
+     * 終了コード0で合格。分からなければ持たない（実装の工程を含むタスクは止める）。
+     */
+    testCommand: z.string().trim().min(1).max(1000).optional(),
     agentId: z.string().optional(),
     usage: TokenUsage.optional(),
     costUsd: z.number().nonnegative().default(0),

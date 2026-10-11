@@ -8,8 +8,11 @@ const ja = {
     body: "内容",
     bodyPlaceholder: "背景や、満たしてほしい条件",
     repository: "対象リポジトリ",
+    repositoryPlaceholder: "owner/name（入力すると絞り込めます）",
+    listFailed: (owner: string, reason: string) =>
+      `${owner} のリポジトリを読めませんでした：${reason}`,
     noRepository:
-      "このプロジェクトにはリポジトリの設定がありません。先にプロジェクトの設定でリポジトリを追加してください。",
+      "タスクの対象にできるリポジトリがありません。プロジェクトの設定で、対象（Org・リポジトリ）を追加してください。",
     projectSettings: "プロジェクトの設定を開く",
     close: "閉じる",
     creating: "作成中…",
@@ -17,7 +20,7 @@ const ja = {
   },
   import: {
     label:
-      "sacty からエクスポートしたプロジェクトの定義（JSON）を選んでください。新しいプロジェクトとして作ります。取り込み元がほかのプロジェクトと重複していれば、インポートしません。",
+      "sacty からエクスポートしたプロジェクトの定義（JSON）を選んでください。新しいプロジェクトとして作ります。対象がほかのプロジェクトと重複していれば、インポートしません。",
     submit: "インポートする",
   },
 };
@@ -33,8 +36,11 @@ const en: FormsMessages = {
     body: "Description",
     bodyPlaceholder: "Background and the conditions it should meet",
     repository: "Target repository",
+    repositoryPlaceholder: "owner/name (type to filter)",
+    listFailed: (owner: string, reason: string) =>
+      `Could not list the repositories of ${owner}: ${reason}`,
     noRepository:
-      "This project has no repository settings. Add a repository in the project settings first.",
+      "No repository can be a task target. Add targets (orgs or repositories) in the project settings.",
     projectSettings: "Open project settings",
     close: "Close",
     creating: "Creating…",
@@ -42,7 +48,7 @@ const en: FormsMessages = {
   },
   import: {
     label:
-      "Choose a project definition (JSON) exported from sacty. It is created as a new project. If an intake source overlaps with another project, nothing is imported.",
+      "Choose a project definition (JSON) exported from sacty. It is created as a new project. If a target overlaps with another project, nothing is imported.",
     submit: "Import",
   },
 };

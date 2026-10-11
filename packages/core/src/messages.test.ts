@@ -49,12 +49,13 @@ describe("デーモンの文言（PBI-11）", () => {
   it("コードを指定していない標準の検査の誤りも、コードと引数にして画面の言語で出せる", () => {
     const first = (result: { error?: { issues: unknown[] } }) =>
       issueMessage(result.error?.issues[0] as Parameters<typeof issueMessage>[0]);
-    const definition = (repositories: unknown[], context?: unknown) =>
-      ProjectDefinition.safeParse({ name: "x", repositories, context });
+    const definition = (targets: unknown[], context?: unknown) =>
+      ProjectDefinition.safeParse({ name: "x", targets, context });
 
-    const emptyBranch = first(definition([{ repo: "o/r", testCommand: "t", baseBranch: " " }]));
-    expect(emptyBranch).toEqual({ code: "input.required" });
-    expect(renderMessage(emptyBranch, "ja")).toBe("入力してください。");
+    const tooMany = first(
+      definition(Array.from({ length: 51 }, (_, i) => ({ scope: "repo", target: `o/r${i}` }))),
+    );
+    expect(tooMany).toEqual({ code: "input.tooMany", params: { maximum: 50 } });
 
     const longRef = first(definition([], { repo: "ctx", ref: "a".repeat(201) }));
     expect(longRef).toEqual({ code: "input.tooLong", params: { maximum: 200 } });
@@ -62,7 +63,7 @@ describe("デーモンの文言（PBI-11）", () => {
     expect(renderMessage(longRef, "en")).toBe("Keep it within 200 characters.");
 
     const unknown = first(
-      ProjectExport.safeParse({ sacty: "project", version: 1, project: { name: "x" }, token: "t" }),
+      ProjectExport.safeParse({ sacty: "project", version: 2, project: { name: "x" }, token: "t" }),
     );
     expect(unknown).toEqual({ code: "input.unknownKeys", params: { keys: "token" } });
     expect(renderMessage(unknown, "ja")).toBe("知らない項目があります（token）。");
@@ -78,7 +79,7 @@ describe("デーモンの文言（PBI-11）", () => {
     );
 
     // コードを指定した検査は、そのコード
-    expect(first(definition([{ repo: "bad", testCommand: "t" }]))).toEqual({
+    expect(first(definition([{ scope: "repo", target: "bad" }]))).toEqual({
       code: "input.invalidRepo",
     });
   });

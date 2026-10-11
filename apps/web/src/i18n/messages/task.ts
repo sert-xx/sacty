@@ -30,6 +30,9 @@ const ja = {
   stepsNote: "オーケストレーターが選択",
   stepsReason: (reason: string) => `選んだ理由：${reason}`,
   stepsFallback: "オーケストレーターが選べなかったため、標準の工程で進めています。",
+  baseBranch: "ベースブランチ：",
+  testCommand: " ・ テストのコマンド：",
+  testCommandUnknown: "（決められませんでした）",
   activity: "作業履歴",
   activityNote: "追記専用",
   deliverable: {
@@ -81,6 +84,9 @@ const en: TaskMessages = {
   stepsNote: "Chosen by the Orchestrator",
   stepsReason: (reason) => `Why: ${reason}`,
   stepsFallback: "The Orchestrator could not choose, so the standard steps are used.",
+  baseBranch: "Base branch: ",
+  testCommand: " · Test command: ",
+  testCommandUnknown: "(could not determine)",
   activity: "Activity",
   activityNote: "Append-only",
   deliverable: {

@@ -29,11 +29,14 @@ export function NewTaskDialog({
   projectId,
   projectName,
   repositories,
+  problems = [],
 }: {
   projectId: string;
   projectName: string;
-  /** 対象リポジトリの候補（プロジェクトのリポジトリの設定。PBI-21）。 */
+  /** 対象リポジトリの候補（プロジェクトの対象から。Org の対象は gh で読んだもの。PBI-25）。 */
   repositories: string[];
+  /** 候補を読めなかった Org と、その理由。 */
+  problems?: string[];
 }) {
   const [state, formAction, pending] = useActionState(createTaskAction, initial);
   const t = useMessages().forms.task;
@@ -56,6 +59,13 @@ export function NewTaskDialog({
             <DialogTitle>{t.create}</DialogTitle>
             <DialogDescription>{t.description(target.name)}</DialogDescription>
           </DialogHeader>
+          {problems.length > 0 && (
+            <ul role="alert" className="flex flex-col gap-1 text-sm text-warn">
+              {problems.map((p) => (
+                <li key={p}>{p}</li>
+              ))}
+            </ul>
+          )}
           {target.repositories.length === 0 ? (
             <p role="alert" className="text-sm text-warn">
               {t.noRepository}{" "}
@@ -66,18 +76,25 @@ export function NewTaskDialog({
           ) : (
             <div className="flex flex-col gap-2">
               <Label htmlFor="task-repo">{t.repository}</Label>
-              <select
+              {/* Org の対象ではリポジトリが多いので、入力して絞り込めるようにする */}
+              <Input
                 id="task-repo"
                 name="repo"
-                defaultValue={state.values?.repo ?? target.repositories[0]}
-                className="h-9 rounded-md border border-input bg-card px-2 font-mono text-sm focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
-              >
+                list="task-repo-options"
+                required
+                autoComplete="off"
+                defaultValue={
+                  state.values?.repo ??
+                  (target.repositories.length === 1 ? target.repositories[0] : "")
+                }
+                placeholder={t.repositoryPlaceholder}
+                className="font-mono"
+              />
+              <datalist id="task-repo-options">
                 {target.repositories.map((repo) => (
-                  <option key={repo} value={repo}>
-                    {repo}
-                  </option>
+                  <option key={repo} value={repo} />
                 ))}
-              </select>
+              </datalist>
             </div>
           )}
           <div className="flex flex-col gap-2">
