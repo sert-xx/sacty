@@ -92,6 +92,7 @@ const PARAMS = {
   "guardian.reworkUnreadable": null,
   "orchestrator.fallback": z.object({ detail: TextParam }),
   "orchestrator.unreadable": null,
+  "review.pullRequestMissing": z.object({ repo: z.string() }),
   "github.ghMissing": null,
   "github.accountRequired": z.object({ project: z.string() }),
   "github.accountUnavailable": z.object({ account: z.string() }),
@@ -128,6 +129,7 @@ const PARAMS = {
       "getReviews",
       "commentIssue",
       "listIssueComments",
+      "postReview",
       "searchIssues",
     ]),
     status: z.number(),
@@ -211,6 +213,7 @@ const githubActionJa = {
   getReviews: "PRのレビューを確認できませんでした",
   commentIssue: "Issue にコメントできませんでした",
   listIssueComments: "Issue のコメントを確認できませんでした",
+  postReview: "PR にレビューを投稿できませんでした",
   searchIssues: "Issue を検索できませんでした",
 } as const;
 const githubActionEn = {
@@ -221,6 +224,7 @@ const githubActionEn = {
   getReviews: "Could not check the PR reviews",
   commentIssue: "Could not comment on the issue",
   listIssueComments: "Could not check the issue comments",
+  postReview: "Could not post the review to the PR",
   searchIssues: "Could not search issues",
 } as const;
 const githubHintJa = {
@@ -330,6 +334,8 @@ const ja: MessageDictionary = {
   "orchestrator.fallback": ({ detail }, text) =>
     `オーケストレーターが工程を選べなかったため、標準の工程で進めます（${text(detail)}）。`,
   "orchestrator.unreadable": "オーケストレーターの出力から、選んだ工程を読み取れませんでした。",
+  "review.pullRequestMissing": ({ repo }) =>
+    `チケットに、レビューする PR（${repo} の PR の URL）がありません。`,
   "github.ghMissing":
     "gh コマンドが見つかりません。GitHub CLI をインストールし、gh auth login でログインしてください。",
   "github.accountRequired": ({ project }) =>
@@ -501,6 +507,8 @@ const en: MessageDictionary = {
   "orchestrator.fallback": ({ detail }, text) =>
     `The Orchestrator could not choose the steps, so the standard steps are used (${text(detail)}).`,
   "orchestrator.unreadable": "Could not read the chosen steps from the Orchestrator's output.",
+  "review.pullRequestMissing": ({ repo }) =>
+    `The ticket has no PR to review (a URL of a PR in ${repo}).`,
   "github.ghMissing":
     "The gh command was not found. Install GitHub CLI and sign in with gh auth login.",
   "github.accountRequired": ({ project }) =>

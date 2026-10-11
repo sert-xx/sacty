@@ -55,7 +55,7 @@ import {
 import type { AgentOutcome } from "./agents/parse.js";
 import { redact, redactText } from "./agents/redact.js";
 import type { TestRunner } from "./agents/test-runner.js";
-import type { AgentConfig, ConfigResult, SactyConfig } from "./config.js";
+import { type AgentConfig, type ConfigResult, githubRepoOf, type SactyConfig } from "./config.js";
 import { type ContextFetcher, prepareContext } from "./context.js";
 import { errorText, MessageError } from "./errors.js";
 import {
@@ -69,12 +69,14 @@ import type { FoundIssue, PullRequestFeedback, PullRequestStatus, PullRequests }
 import type { LedgerStore } from "./ledger.js";
 import type { ProjectStore } from "./projects.js";
 import {
+  allowedPlans,
   buildFinalReviewPrompt,
   buildGuardianPrompt,
   buildInvestigationComment,
   buildOrchestratorPrompt,
   buildPrompt,
   buildPullRequestBody,
+  buildReviewBody,
   buildReworkPrompt,
   changeableSteps,
   EXECUTABLE_STEPS,
@@ -85,6 +87,8 @@ import {
   extractVerdict,
   investigationMarker,
   REQUIREMENTS_VIEWPOINT,
+  referencedPullRequest,
+  reviewMarker,
 } from "./prompts.js";
 import type { RepositoryWorkspace } from "./repository.js";
 import { SecretNotFoundError, type SecretStore } from "./secrets.js";
@@ -481,6 +485,75 @@ export class TaskService {
   }
 
   /**
+   * レビューの工程の対象の PR を確かめる（PBI-19）。チケットにある、タスクの対象リポジトリの PR を、
+   * プロジェクトの gh のアカウントで読む。確かめられなければ理由を返す（トークンは含めない）。
+   */
+  private async resolveReviewTarget(
+    task: Task,
+  ): Promise<
+    | { ok: true; target: Extract<EventInput, { type: "ReviewTargetResolved" }>["payload"] }
+    | { ok: false; message: DaemonText }
+  > {
+    const ref = referencedPullRequest(task);
+    if (!ref) {
+      const repo = (task.repository && githubRepoOf(task.repository.url)) ?? "";
+      return { ok: false, message: message("review.pullRequestMissing", { repo }) };
+    }
+    const usedSecrets: string[] = [];
+    try {
+      const token = await this.githubToken(task, usedSecrets);
+      const pr = await this.deps.pulls.pullRequest({ ...ref, token });
+      return {
+        ok: true,
+        target: {
+          repo: ref.repo,
+          number: ref.number,
+          url: pr.url,
+          title: pr.title,
+          body: pr.body,
+          headCommit: pr.headSha,
+          baseCommit: pr.baseSha,
+        },
+      };
+    } catch (error) {
+      return { ok: false, message: redactText(errorText(error), usedSecrets) };
+    }
+  }
+
+  /**
+   * 書いたレビューを、対象の PR にレビュー（COMMENT）として投稿する（PBI-19）。人間の承認は待たない。
+   * 投稿するとタスクは完了する。投稿できなければ理由を記録して一時停止する（再開すると投稿からやり直す）。
+   */
+  private async postReview(task: Task): Promise<void> {
+    const target = task.reviewTarget;
+    if (!target) return;
+    const usedSecrets: string[] = [];
+    let event: EventInput;
+    try {
+      const token = await this.githubToken(task, usedSecrets);
+      const pr = { repo: target.repo, token, number: target.number };
+      // 前回、投稿の後・記録の前に止まっていたら、そのレビューを使う（同じレビューを二度投稿しない）
+      const existing = await this.deps.pulls.findReview({ ...pr, marker: reviewMarker(task) });
+      const { url } =
+        existing ??
+        (await this.deps.pulls.postReview({
+          ...pr,
+          commit: target.headCommit,
+          body: buildReviewBody(task),
+        }));
+      event = { type: "PullRequestReviewPosted", payload: { url } };
+    } catch (error) {
+      event = {
+        type: "TaskPaused",
+        payload: { reason: "error", message: redactText(errorText(error), usedSecrets) },
+      };
+    }
+    const latest = this.tasks.get(task.id);
+    if (!latest || !awaitingReviewPost(latest) || this.pauseRequested.has(task.id)) return;
+    this.append(latest, [{ actor: "sacty", event }]);
+  }
+
+  /**
    * オーケストレーターに、タスクの工程を選ばせる（PBI-17）。チケットと対象リポジトリの起点のコードを
    * 読ませ、候補（STEP_PLANS）から選ばせる。人間の承認は無い。判断できない・実行に失敗したときは、
    * 標準の工程にして、そのことを記録する。テストでは deps.planner に差し替える。
@@ -497,7 +570,10 @@ export class TaskService {
       "base",
     );
     const cost = { agentId: agent.id, usage: outcome.usage, costUsd, estimated };
-    const chosen = outcome.kind === "completed" ? extractStepPlan(outcome.output) : undefined;
+    const chosen =
+      outcome.kind === "completed"
+        ? extractStepPlan(outcome.output, allowedPlans(task))
+        : undefined;
     if (chosen) {
       return {
         steps: [...STEP_PLANS[chosen.plan]],
@@ -759,7 +835,9 @@ export class TaskService {
           (t.status === "queued" && (activeStep(t) || t.steps.length === 0)) ||
           awaitingVerification(t) ||
           // 完了した調査の結果を、取り込み元の Issue に返す（PBI-18）
-          awaitingIssueComment(t),
+          awaitingIssueComment(t) ||
+          // 書いたレビューを、対象の PR に投稿する（PBI-19）
+          awaitingReviewPost(t),
       )
       .filter((t) => !this.cancelling.has(t.id) && !this.pauseRequested.has(t.id))
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
@@ -1045,6 +1123,7 @@ export class TaskService {
     const initial = this.tasks.get(taskId);
     if (initial && awaitingVerification(initial)) return this.verify(initial);
     if (initial && awaitingIssueComment(initial)) return this.commentInvestigation(initial);
+    if (initial && awaitingReviewPost(initial)) return this.postReview(initial);
     if (initial?.status !== "queued") return;
     const config = this.deps.config();
     if (!config.ok) return; // 設定の問題は status() で画面に出す。タスクは実行待ちのまま。
@@ -1101,6 +1180,28 @@ export class TaskService {
         { actor: "sacty", event: { type: "TaskPaused", payload: { reason: "budget" } } },
       ]);
       return;
+    }
+
+    // レビューの工程は、エージェントを実行する（費用をかける）前に、対象の PR を確かめて記録する（PBI-19）
+    if (step === "review" && !task.reviewTarget) {
+      const resolved = await this.resolveReviewTarget(task);
+      const latest = this.mustGet(task.id);
+      if (latest.status !== "queued" || this.pauseRequested.has(task.id)) return;
+      this.append(
+        latest,
+        resolved.ok
+          ? [{ actor: "sacty", event: { type: "ReviewTargetResolved", payload: resolved.target } }]
+          : [
+              {
+                actor: "sacty",
+                event: {
+                  type: "TaskPaused",
+                  payload: { reason: "error", message: resolved.message },
+                },
+              },
+            ],
+      );
+      if (!resolved.ok) return;
     }
 
     const agent = config.config.defaultAgent;
@@ -1178,6 +1279,9 @@ export class TaskService {
     }
 
     let executed: Awaited<ReturnType<TaskService["execute"]>> | undefined;
+    // レビューの工程は、起点ではなく PR の先頭のコミットのコードを読ませ、PR の差分を渡す（PBI-19）
+    const reviewTarget = step === "review" ? this.mustGet(task.id).reviewTarget : undefined;
+    let reviewDiff: string | undefined;
     // 要求要件・設計の工程は、起点のコミットのコードを実行ごとのディレクトリに書き出して渡し、終わったら消す
     // （実装の作業領域は実装の変更を含むので使わない。差し戻しでやり直しても、同じ起点のコードを読む）
     const snapshotDir = readOnlyWorkspace
@@ -1186,15 +1290,33 @@ export class TaskService {
     try {
       if (snapshotDir) {
         const latest = this.mustGet(task.id);
+        const usedSecrets: string[] = [];
         try {
+          if (reviewTarget) {
+            const gitDir = this.trustedGitDir(latest);
+            await this.deps.repos.fetchCommits(
+              gitDir,
+              [reviewTarget.headCommit, reviewTarget.baseCommit],
+              await this.gitAuth(latest, latest.repository?.url ?? "", usedSecrets),
+            );
+            reviewDiff = await this.deps.repos.diffCommits(
+              gitDir,
+              reviewTarget.baseCommit,
+              reviewTarget.headCommit,
+            );
+          }
           await this.deps.repos.snapshot(
             this.trustedGitDir(latest),
-            latest.repository?.baseCommit ?? "",
+            reviewTarget?.headCommit ?? latest.repository?.baseCommit ?? "",
             snapshotDir,
           );
         } catch (error) {
           executed = {
-            outcome: { kind: "failed", reason: "error", message: errorText(error) },
+            outcome: {
+              kind: "failed",
+              reason: "error",
+              message: redactText(errorText(error), usedSecrets),
+            },
             costUsd: 0,
             estimated: false,
           };
@@ -1204,7 +1326,11 @@ export class TaskService {
         agent,
         image: config.config.image,
         runId,
-        prompt: buildPrompt(this.mustGet(task.id), step),
+        prompt: buildPrompt(
+          this.mustGet(task.id),
+          step,
+          reviewDiff !== undefined ? { diff: reviewDiff } : {},
+        ),
         role: step,
         workspaceDir: snapshotDir ?? ready.dir,
         readOnlyWorkspace,
@@ -2232,6 +2358,16 @@ function feedbackRemarks(items: PullRequestFeedback[]): string[] {
 }
 
 /** 完了した調査のタスクで、結果をまだ取り込み元の Issue に返していないか（PBI-18）。 */
+/** 書いたレビューを、まだ対象の PR に投稿していない（PBI-19）。 */
+function awaitingReviewPost(task: Task): boolean {
+  return (
+    activeStep(task) === "review" &&
+    task.status === "idle" &&
+    task.outputs.review !== undefined &&
+    !task.reviewPost
+  );
+}
+
 function awaitingIssueComment(task: Task): boolean {
   return (
     isCompleted(task) &&

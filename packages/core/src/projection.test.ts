@@ -384,3 +384,75 @@ describe("PR のレビューの取り込み（PBI-14b）", () => {
     ).toThrow(/deliverable review is not open/);
   });
 });
+
+describe("レビューの工程（PBI-19）", () => {
+  const target = {
+    repo: "acme/app",
+    number: 12,
+    url: "https://github.com/acme/app/pull/12",
+    title: "再試行",
+    headCommit: "h".repeat(40),
+    baseCommit: "b".repeat(40),
+  };
+  const run = (taskId: string) => [
+    created(taskId),
+    ev(taskId, { type: "StepsChosen", payload: { steps: ["review"] } }),
+    ev(taskId, { type: "ReviewTargetResolved", payload: target }),
+    ev(taskId, {
+      type: "AgentRunStarted",
+      payload: { runId: "r1", step: "review", agentId: "a", authMode: "subscription" },
+    }),
+    ev(taskId, {
+      type: "AgentRunCompleted",
+      payload: {
+        runId: "r1",
+        step: "review",
+        agentId: "a",
+        authMode: "subscription",
+        usage,
+        costUsd: 0,
+        estimated: false,
+        output: "# 評価",
+      },
+    }),
+  ];
+
+  it("レビューを投稿すると、承認ゲートを通らずに完了する", () => {
+    const task = project([
+      ...run("t1"),
+      ev("t1", { type: "PullRequestReviewPosted", payload: { url: "https://x/pull/12#r" } }),
+    ]).get("t1");
+    expect(task?.reviewTarget).toMatchObject({ number: 12, body: "" });
+    expect(task?.steps).toEqual([{ key: "review", state: "done" }]);
+    expect(task?.reviewPost).toEqual({ url: "https://x/pull/12#r" });
+    expect(task?.gate).toBeUndefined();
+    expect(task?.approved.review).toBeUndefined();
+  });
+
+  it("レビューを書く前・二度目の投稿・二度目の対象の記録は、台帳の不整合にする", () => {
+    const before = run("t2").slice(0, 3);
+    const posted = ev("t2", { type: "PullRequestReviewPosted", payload: { url: "u" } });
+    expect(() => project([...before, posted])).toThrow(/no review is waiting/);
+    expect(() =>
+      project([
+        ...run("t3"),
+        ev("t3", { type: "PullRequestReviewPosted", payload: { url: "u" } }),
+        ev("t3", { type: "PullRequestReviewPosted", payload: { url: "u" } }),
+      ]),
+    ).toThrow();
+    expect(() =>
+      project([
+        ...run("t4").slice(0, 3),
+        ev("t4", { type: "ReviewTargetResolved", payload: target }),
+      ]),
+    ).toThrow(/already resolved/);
+    // レビューの工程が無いタスクには、対象を記録できない
+    expect(() =>
+      project([
+        created("t5"),
+        steps("t5"),
+        ev("t5", { type: "ReviewTargetResolved", payload: target }),
+      ]),
+    ).toThrow(/not active/);
+  });
+});

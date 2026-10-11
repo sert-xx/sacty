@@ -45,7 +45,8 @@ npx sacty secret set claude-oauth-token
 
 ### GitHub
 
-GitHub へのアクセス（Issue の取り込み、clone、プッシュ、PR の作成）は、ホストの GitHub CLI（`gh`）に
+GitHub へのアクセス（Issue の取り込み、clone、プッシュ、PR の作成、調査の結果の Issue へのコメント、
+レビューの PR への投稿）は、ホストの GitHub CLI（`gh`）に
 ログイン済みのアカウントで行う。使うアカウントは、プロジェクトの設定で必ず選ぶ（最初は `gh` のアクティブな
 アカウントが選ばれている）。`gh` でアカウントを切り替えても、プロジェクトごとに選んだアカウントを使う。
 

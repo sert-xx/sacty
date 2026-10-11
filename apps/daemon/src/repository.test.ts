@@ -76,6 +76,42 @@ describe("対象リポジトリの作業領域（git）", () => {
     ).rejects.toThrow(/起点のコミット/);
   });
 
+  it("PR のコミットを取得し、分岐点からの PR の差分と、PR の先頭のコードを出す（PBI-19）", async () => {
+    const origin = makeOrigin();
+    // GitHub と同じく、PR の先頭はブランチではなく refs/pull/N/head にだけある
+    git(origin, "config", "uploadpack.allowReachableSHA1InWant", "true");
+    git(origin, "checkout", "-b", "feature");
+    writeFileSync(join(origin, "retry.ts"), "export const retry = 3;\n");
+    git(origin, "add", "--all");
+    git(origin, "commit", "-m", "retry");
+    const head = git(origin, "rev-parse", "HEAD");
+    git(origin, "update-ref", "refs/pull/1/head", head);
+    git(origin, "checkout", "main");
+    git(origin, "branch", "-D", "feature");
+    const workspace = new GitRepositoryWorkspace();
+    const gitDir = join(dir, "_git", "a.git");
+    await workspace.prepare(join(dir, "a"), gitDir, origin, "main");
+    // clone の後に、向き先のブランチが進んだ
+    writeFileSync(join(origin, "later.ts"), "later\n");
+    git(origin, "add", "--all");
+    git(origin, "commit", "-m", "later");
+    const base = git(origin, "rev-parse", "HEAD");
+
+    await workspace.fetchCommits(gitDir, [head, base]);
+    // すでにあるコミットは取得し直さない（取得できない場所でも失敗しない）
+    git(gitDir, "remote", "set-url", "origin", join(dir, "missing"));
+    await workspace.fetchCommits(gitDir, [head, base]);
+    const diff = await workspace.diffCommits(gitDir, base, head);
+    expect(diff).toContain("+export const retry = 3;");
+    // 向き先のブランチが後から進んだ分は、PR の差分に含めない
+    expect(diff).not.toContain("later");
+    const out = join(dir, "snapshot");
+    await workspace.snapshot(gitDir, head, out);
+    expect(readdirSync(out).sort()).toEqual(["pay.ts", "retry.ts"]);
+    await expect(workspace.fetchCommits(gitDir, ["--upload-pack=evil"])).rejects.toThrow();
+    await expect(workspace.diffCommits(gitDir, "main", head)).rejects.toThrow();
+  });
+
   it("実装後のコードを、.git を除き、シンボリックリンクはたどらずに写す（PBI-16）", async () => {
     const origin = makeOrigin();
     const workspace = new GitRepositoryWorkspace();

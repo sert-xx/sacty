@@ -234,6 +234,8 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
           {task.steps.some((s) => s.key === "investigate") && (
             <Deliverable task={task} step="investigate" />
           )}
+          {/* レビューの結果（PBI-19）。人間の承認は無く、そのまま PR に投稿する */}
+          {task.steps.some((s) => s.key === "review") && <Deliverable task={task} step="review" />}
           {task.steps.some((s) => s.key === "requirements") && (
             <Deliverable task={task} step="requirements" />
           )}
@@ -301,11 +303,13 @@ async function Deliverable({ task, step }: { task: Task; step: StepKey }) {
       note={
         approved
           ? m.approved(approved.submission)
-          : fromProposal
-            ? m.fromProposal(fromProposal.id)
-            : stale
-              ? m.stale
-              : m.draft
+          : step === "review" && task.reviewPost
+            ? m.reviewPosted
+            : fromProposal
+              ? m.fromProposal(fromProposal.id)
+              : stale
+                ? m.stale
+                : m.draft
       }
       // 承認済みの成果物は折りたたむ（承認待ち・作業中のものは開いたまま）
       collapsed={Boolean(approved)}
@@ -314,6 +318,34 @@ async function Deliverable({ task, step }: { task: Task; step: StepKey }) {
         <Markdown>{output}</Markdown>
       ) : (
         <p className="text-sm text-muted-foreground">{running ? m.running : m.notYet}</p>
+      )}
+      {step === "review" && task.reviewTarget && (
+        <ul className="flex flex-col gap-1 text-sm text-muted-foreground">
+          <li className="[overflow-wrap:anywhere]">
+            {m.reviewTarget}
+            <a
+              href={task.reviewTarget.url}
+              className="text-accent-foreground underline"
+              target="_blank"
+              rel="noreferrer"
+            >
+              #{task.reviewTarget.number} {task.reviewTarget.title}
+            </a>
+          </li>
+          {task.reviewPost && (
+            <li className="[overflow-wrap:anywhere]">
+              {m.reviewPost}
+              <a
+                href={task.reviewPost.url}
+                className="text-accent-foreground underline"
+                target="_blank"
+                rel="noreferrer"
+              >
+                {task.reviewPost.url}
+              </a>
+            </li>
+          )}
+        </ul>
       )}
       {step === "design" && output && (
         <>

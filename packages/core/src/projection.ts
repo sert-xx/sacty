@@ -170,6 +170,10 @@ export type Task = {
   };
   /** 調査の結果を、取り込み元の GitHub Issue に返したか（PBI-18）。 */
   issueComment?: { url: string } | { failed: DaemonText };
+  /** レビューの工程の対象の PR（PBI-19）。 */
+  reviewTarget?: PayloadOf<"ReviewTargetResolved">;
+  /** レビューの結果を投稿した、PR のレビューの URL（PBI-19）。 */
+  reviewPost?: { url: string };
   /** オーケストレーターが工程を選んだ理由（PBI-17。固定の工程だった台帳には無い）。 */
   stepsChoice?: { plan?: StepPlan; reason: DaemonText; fallback: boolean };
   /** 取り込んだ PR へのフィードバック（種類と ID。二重に取り込まないため。PBI-14b）。 */
@@ -613,6 +617,27 @@ export function applyEvent(
           reason: event.payload.reason,
         },
       };
+      break;
+    }
+
+    case "ReviewTargetResolved":
+      if (activeStep(task) !== "review") {
+        throw new LedgerIntegrityError(event, "the review step is not active");
+      }
+      if (task.reviewTarget) throw new LedgerIntegrityError(event, "already resolved");
+      task.reviewTarget = event.payload;
+      break;
+
+    case "PullRequestReviewPosted": {
+      // 書いたレビューを投稿すると、レビューの工程（人間の承認は無い）が終わり、タスクは完了する
+      if (activeStep(task) !== "review" || task.status !== "idle" || !task.outputs.review) {
+        throw new LedgerIntegrityError(event, "no review is waiting to be posted");
+      }
+      if (task.reviewPost) throw new LedgerIntegrityError(event, "already posted");
+      task.steps = task.steps.map((s) =>
+        s.key === "review" ? { ...s, state: "done" as const } : s,
+      );
+      task.reviewPost = { url: event.payload.url };
       break;
     }
 

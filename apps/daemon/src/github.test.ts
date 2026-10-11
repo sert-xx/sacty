@@ -514,3 +514,121 @@ describe("Issue へのコメント（PBI-18）", () => {
     });
   });
 });
+
+describe("PR のレビュー（PBI-19）", () => {
+  const api = "https://api.github.com/repos/acme/app";
+  const target = { repo: "acme/app", token: "ghp_secret", number: 12 };
+
+  it("PR の先頭・向き先のコミットと説明を読み、失敗は理由つきのエラーにする", async () => {
+    const { impl, calls } = fakeFetch([
+      {
+        status: 200,
+        json: {
+          number: 12,
+          html_url: "https://github.com/acme/app/pull/12",
+          title: "再試行",
+          body: null,
+          head: { sha: "h".repeat(40) },
+          base: { sha: "b".repeat(40) },
+        },
+      },
+      { status: 404, json: { message: "Not Found" } },
+    ]);
+    const client = new GitHubPullRequests(impl);
+    expect(await client.pullRequest(target)).toEqual({
+      number: 12,
+      url: "https://github.com/acme/app/pull/12",
+      title: "再試行",
+      body: "",
+      headSha: "h".repeat(40),
+      baseSha: "b".repeat(40),
+    });
+    expect(calls[0]).toMatchObject({ url: `${api}/pulls/12`, auth: "Bearer ghp_secret" });
+    expect(errorText(await client.pullRequest(target).catch((e: unknown) => e))).toMatchObject({
+      code: "github.failed",
+      params: { action: "getPr", status: 404 },
+    });
+  });
+
+  it("コメントのレビュー（承認も変更の要求もしない）を、読んだコミットに投稿する", async () => {
+    const { impl, calls } = fakeFetch([
+      {
+        status: 200,
+        json: { html_url: "https://github.com/acme/app/pull/12#pullrequestreview-5" },
+      },
+      { status: 422, json: { message: "Unprocessable" } },
+    ]);
+    const client = new GitHubPullRequests(impl);
+    const input = { ...target, commit: "h".repeat(40), body: "## sacty のレビュー" };
+    expect(await client.postReview(input)).toEqual({
+      url: "https://github.com/acme/app/pull/12#pullrequestreview-5",
+    });
+    expect(calls[0]).toMatchObject({
+      url: `${api}/pulls/12/reviews`,
+      method: "POST",
+      body: { commit_id: "h".repeat(40), body: "## sacty のレビュー", event: "COMMENT" },
+    });
+    expect(errorText(await client.postReview(input).catch((e: unknown) => e))).toMatchObject({
+      code: "github.failed",
+      params: { action: "postReview", status: 422 },
+    });
+  });
+
+  it("目印を含むレビューを、すべてのページから探す", async () => {
+    const { impl, calls } = fakeFetch([
+      {
+        status: 200,
+        json: [
+          { body: "LGTM", html_url: "https://github.com/acme/app/pull/12#pullrequestreview-1" },
+        ],
+        headers: { link: `<${api}/pulls/12/reviews?per_page=100&page=2>; rel="next"` },
+      },
+      {
+        status: 200,
+        json: [
+          {
+            body: "<!-- sacty-review:t1 -->\n## sacty のレビュー",
+            html_url: "https://github.com/acme/app/pull/12#pullrequestreview-2",
+          },
+        ],
+      },
+    ]);
+    const client = new GitHubPullRequests(impl);
+    expect(await client.findReview({ ...target, marker: "<!-- sacty-review:t1 -->" })).toEqual({
+      url: "https://github.com/acme/app/pull/12#pullrequestreview-2",
+    });
+    expect(calls.map((c) => c.url)).toEqual([
+      `${api}/pulls/12/reviews?per_page=100`,
+      `${api}/pulls/12/reviews?per_page=100&page=2`,
+    ]);
+  });
+
+  it("sacty のレビューの工程が投稿したレビューは、PR へのフィードバックとして取り込まない", async () => {
+    const human = { login: "reviewer", type: "User" };
+    const { impl } = fakeFetch([
+      {
+        status: 200,
+        json: [
+          {
+            id: 1,
+            user: human,
+            state: "COMMENTED",
+            body: "<!-- sacty-review:t1 -->\n## sacty のレビュー\n\n- 上限が無い",
+            submitted_at: "2026-10-11T00:00:01Z",
+          },
+          {
+            id: 2,
+            user: human,
+            state: "COMMENTED",
+            body: "ここを直して",
+            submitted_at: "2026-10-11T00:00:02Z",
+          },
+        ],
+      },
+      { status: 200, json: [] },
+      { status: 200, json: [] },
+    ]);
+    const feedback = await new GitHubPullRequests(impl).feedback(target);
+    expect(feedback.map((f) => f.key)).toEqual(["review:2"]);
+  });
+});

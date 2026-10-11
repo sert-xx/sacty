@@ -12,6 +12,8 @@ import {
   type TestViewpoint,
   type Verdict,
 } from "@sacty/core";
+import { githubRepoOf } from "./config.js";
+import { REVIEW_MARKER_PREFIX } from "./github.js";
 
 /** 記録した文（コードと引数の文言を含む）を、指示や PR の本文に入れる日本語の文にする。 */
 const ja = (value: DaemonText) => renderMessage(value, "ja");
@@ -22,6 +24,7 @@ const ja = (value: DaemonText) => renderMessage(value, "ja");
  */
 export const EXECUTABLE_STEPS: readonly StepKey[] = [
   "investigate",
+  "review",
   "requirements",
   "design",
   "implement",
@@ -88,6 +91,7 @@ function feedbackLines(task: Task): string[] {
 
 const STEP_NAME: Record<StepKey, string> = {
   investigate: "調査",
+  review: "レビュー",
   requirements: "要求要件",
   design: "設計",
   implement: "実装",
@@ -170,7 +174,25 @@ function guardianCodeLines(task: Task, code: "base" | "implemented"): string[] {
   ];
 }
 
-export function buildPrompt(task: Task, step: StepKey): string {
+/**
+ * チケット（タイトルと本文）にある、タスクの対象リポジトリの PR（PBI-19）。最初に出てくるものを使う。
+ * 対象リポジトリが GitHub でなければ、PR は無いものとする。
+ */
+export function referencedPullRequest(task: Task): { repo: string; number: number } | undefined {
+  const repo = task.repository && githubRepoOf(task.repository.url);
+  if (!repo) return undefined;
+  const pattern = /https:\/\/github\.com\/([\w.-]+\/[\w.-]+)\/pull\/(\d+)/g;
+  for (const match of `${task.title}\n${task.body}`.matchAll(pattern)) {
+    const number = Number(match[2]);
+    if (match[1]?.toLowerCase() === repo.toLowerCase() && number > 0) return { repo, number };
+  }
+  return undefined;
+}
+
+/** PR の差分は、この文字数だけプロンプトに入れる。 */
+const PR_DIFF_IN_PROMPT = 100_000;
+
+export function buildPrompt(task: Task, step: StepKey, extra: { diff?: string } = {}): string {
   const ticket = [`# ${task.title}`, "", task.body || "（内容なし）"].join("\n");
   const hasRemarks = task.remarks.some((r) => r.step === step && !r.voided);
   const previous = task.outputs[step];
@@ -195,6 +217,40 @@ export function buildPrompt(task: Task, step: StepKey): string {
       if (hasRemarks) lines.push("", "--- 前回の調査の結果 ---", previous ?? "（なし）");
       lines.push(...remarkLines(task, step, "調査の結果の本文"));
       return lines.join("\n");
+    }
+    case "review": {
+      // レビューは、既存の PR を読んで指摘を書くだけの工程（PBI-19）。書いたものはそのまま PR に投稿する
+      const target = task.reviewTarget;
+      const diff = extra.diff ?? "";
+      return [
+        "あなたはソフトウェア開発のレビューエージェントです。",
+        "次の PR をレビューし、レビューの本文をMarkdownで書いてください。書いた本文は、そのまま PR にレビューとして投稿されます。",
+        "",
+        "- 最初に、PR の評価を短く書く（マージしてよいか、直すべき点があるか）",
+        "- 指摘は重要なものから順に書く。不具合・セキュリティ・データの破損・互換性を、好みの問題より優先する",
+        "- 指摘には、ファイルと行（例：src/pay.ts:12）、何が問題か、どう直すとよいかを添える。推測と、コードで確かめた事実を区別する",
+        "- 問題が無ければ、無理に指摘を作らない",
+        "- コードは変更しない（作業領域は読み取り専用です）",
+        "",
+        ...(target
+          ? [
+              `作業領域（カレントディレクトリ）に、PR（${target.url}）の先頭のコミット（${target.headCommit.slice(0, 7)}）のコードがあります。差分の周辺や呼び出し元も読んで確かめてください。`,
+              "",
+              "--- PR ---",
+              `# ${target.title}`,
+              "",
+              target.body || "（説明なし）",
+            ]
+          : []),
+        "",
+        "--- PR の差分 ---",
+        diff.length > PR_DIFF_IN_PROMPT
+          ? `${diff.slice(0, PR_DIFF_IN_PROMPT)}\n…（差分が大きいため、先頭だけを渡しています。残りは作業領域のコードを読んでください）`
+          : diff || "（差分なし）",
+        "",
+        "--- チケット（レビューの依頼） ---",
+        ticket,
+      ].join("\n");
     }
     case "requirements": {
       const lines = [
@@ -746,14 +802,18 @@ export function extractRework(
  * 工程の組み合わせを選ばせる。判断ごとに新しいセッションで実行する。
  */
 export function buildOrchestratorPrompt(task: Task): string {
-  const plans: Record<StepPlan, string> = {
+  const all: Record<StepPlan, string> = {
     standard:
       "要求要件 → 設計（テスト観点）→ 実装 → PR作成。既定。振る舞いが複数ある・影響範囲が広い・テスト観点を人間と合意したい変更",
     "skip-design":
       "要求要件 → 実装 → PR作成。設計を省く。変更が小さく局所的で、要求要件の受け入れ条件だけで十分にテストできる変更（例：文言の修正、小さな関数の追加）",
     investigate:
       "調査だけ。コードを調べて結果を報告する（実装や PR は作らない）。チケットが質問・原因の調査・影響範囲の確認・見積もりなど、変更ではなく情報を求めているとき",
+    review:
+      "レビューだけ。チケットにある PR をレビューして、PR にレビューを投稿する（実装や PR は作らない）。チケットが PR のレビューを求めているとき",
   };
+  const allowed = allowedPlans(task);
+  const plans = Object.fromEntries(allowed.map((plan) => [plan, all[plan]]));
   return [
     "あなたはオーケストレーターです。チケットと対象リポジトリのコードを読んで、このタスクの工程を選んでください。",
     ...(task.repository
@@ -780,8 +840,22 @@ export function buildOrchestratorPrompt(task: Task): string {
   ].join("\n");
 }
 
-/** オーケストレーターの出力から、選んだ工程の組み合わせを読む。読めなければ undefined（標準の工程にする）。 */
-export function extractStepPlan(output: string): { plan: StepPlan; reason: string } | undefined {
+/**
+ * オーケストレーターが選べる工程の組み合わせ。レビューは、チケットに対象リポジトリの PR があるときだけ（PBI-19）。
+ */
+export function allowedPlans(task: Task): StepPlan[] {
+  const plans = StepPlan.options;
+  return referencedPullRequest(task) ? plans : plans.filter((plan) => plan !== "review");
+}
+
+/**
+ * オーケストレーターの出力から、選んだ工程の組み合わせを読む。読めない・選べない組み合わせなら
+ * undefined（標準の工程にする）。
+ */
+export function extractStepPlan(
+  output: string,
+  allowed: readonly StepPlan[] = StepPlan.options,
+): { plan: StepPlan; reason: string } | undefined {
   const blocks = [...output.matchAll(/```json\s*\n([\s\S]*?)\n```/g)].reverse();
   for (const block of blocks) {
     try {
@@ -789,7 +863,9 @@ export function extractStepPlan(output: string): { plan: StepPlan; reason: strin
       const v = (parsed?.[PLAN_HEADING] ?? {}) as Record<string, unknown>;
       const plan = StepPlan.safeParse(v.plan);
       const reason = text(v.reason);
-      if (plan.success && reason) return { plan: plan.data, reason };
+      if (plan.success && allowed.includes(plan.data) && reason) {
+        return { plan: plan.data, reason };
+      }
     } catch {
       // 次のブロックを試す
     }
@@ -823,5 +899,34 @@ export function buildInvestigationComment(task: Task): string {
     "",
     "---",
     `sacty のタスク ${task.id} で調べ、人間が確認しました。`,
+  ].join("\n");
+}
+
+/** PR のレビューの上限（GitHub の上限より小さく）。 */
+const REVIEW_BODY_MAX = 60_000;
+
+/**
+ * レビューに入れる、タスクごとの目印（表示されない）。投稿の後、記録の前に止まっても、
+ * 次の実行で既存のレビューを見つけて、同じレビューを二度投稿しないため。
+ */
+export function reviewMarker(task: Task): string {
+  return `${REVIEW_MARKER_PREFIX}${task.id} -->`;
+}
+
+/** レビューの工程の結果を、対象の PR に投稿するレビューの本文（PBI-19）。人間の承認は無い。 */
+export function buildReviewBody(task: Task): string {
+  const review = task.outputs.review ?? "";
+  const body =
+    review.length > REVIEW_BODY_MAX
+      ? `${review.slice(0, REVIEW_BODY_MAX)}\n\n…（長いため省略しました）`
+      : review;
+  return [
+    reviewMarker(task),
+    "## sacty のレビュー",
+    "",
+    body,
+    "",
+    "---",
+    `sacty のタスク ${task.id} で、AI がレビューしました（人間は確認していません）。`,
   ].join("\n");
 }

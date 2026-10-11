@@ -4,8 +4,16 @@ import { code, DaemonText } from "./message-code.js";
 /**
  * 工程の種類。標準の工程は requirements → design → implement → pr。
  * investigate（調査）は、コードを調べて報告するだけの工程（PBI-18）。
+ * review（レビュー）は、既存の PR をレビューして、PR に投稿するだけの工程（PBI-19）。
  */
-export const StepKey = z.enum(["investigate", "requirements", "design", "implement", "pr"]);
+export const StepKey = z.enum([
+  "investigate",
+  "review",
+  "requirements",
+  "design",
+  "implement",
+  "pr",
+]);
 export type StepKey = z.infer<typeof StepKey>;
 
 /** 標準の工程（オーケストレーターが判断できないときも、これで進める）。 */
@@ -22,6 +30,8 @@ export const STEP_PLANS = {
   "skip-design": ["requirements", "implement", "pr"],
   /** 調査だけ：コードを調べて報告する。実装や PR は作らない（PBI-18） */
   investigate: ["investigate"],
+  /** レビューだけ：チケットにある PR をレビューして、PR に投稿する（PBI-19） */
+  review: ["review"],
 } as const satisfies Record<string, readonly StepKey[]>;
 export type StepPlan = keyof typeof STEP_PLANS;
 export const StepPlan = z.enum(Object.keys(STEP_PLANS) as [StepPlan, ...StepPlan[]]);
@@ -473,6 +483,30 @@ const ReworkJudged = z.object({
 });
 
 /**
+ * レビューの工程の対象の PR（PBI-19）。最初の実行の前に一度だけ記録し、以後はこのコミットのコードを読む。
+ * headCommit は PR の先頭、baseCommit は PR の向き先のブランチの先頭（差分の起点）。
+ */
+const ReviewTargetResolved = z.object({
+  type: z.literal("ReviewTargetResolved"),
+  payload: z.object({
+    repo: z.string(),
+    number: z.number().int().positive(),
+    url: z.string(),
+    title: z.string(),
+    /** PR の説明（変更の意図。レビューのエージェントに渡す）。 */
+    body: z.string().default(""),
+    headCommit: z.string(),
+    baseCommit: z.string(),
+  }),
+});
+
+/** レビューの結果を、対象の PR にレビュー（COMMENT）として投稿した。これでタスクは完了する（PBI-19）。 */
+const PullRequestReviewPosted = z.object({
+  type: z.literal("PullRequestReviewPosted"),
+  payload: z.object({ url: z.string() }),
+});
+
+/**
  * 完了した調査のタスク（GitHub Issue から取り込んだもの）の結果を、Issue にコメントとして返した（PBI-18）。
  * 返せなければ、その理由を記録する（何度も返そうとしない）。
  */
@@ -625,6 +659,8 @@ export const EventInput = z.discriminatedUnion("type", [
   ReworkJudged,
   IssueCommented,
   IssueCommentFailed,
+  ReviewTargetResolved,
+  PullRequestReviewPosted,
   BranchPushed,
   GuardianMissed,
   TaskCancelled,
