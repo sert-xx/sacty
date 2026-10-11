@@ -429,6 +429,22 @@ describe("レビューの工程（PBI-19）", () => {
     expect(task?.approved.review).toBeUndefined();
   });
 
+  it("本文が空のレビュー（行へのコメントだけ）も、投稿すると完了する（レビュー指摘）", () => {
+    const events = run("t6");
+    const completed = events[4] as Extract<LedgerEvent, { type: "AgentRunCompleted" }>;
+    completed.payload = {
+      ...completed.payload,
+      output: "",
+      reviewComments: [{ path: "src/retry.ts", line: 2, body: "上限が無い" }],
+    };
+    const task = project([
+      ...events,
+      ev("t6", { type: "PullRequestReviewPosted", payload: { url: "u" } }),
+    ]).get("t6");
+    expect(task?.steps).toEqual([{ key: "review", state: "done" }]);
+    expect(task?.reviewComments).toHaveLength(1);
+  });
+
   it("レビューを書く前・二度目の投稿・二度目の対象の記録は、台帳の不整合にする", () => {
     const before = run("t2").slice(0, 3);
     const posted = ev("t2", { type: "PullRequestReviewPosted", payload: { url: "u" } });

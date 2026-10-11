@@ -2094,6 +2094,33 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       ledger.close();
     });
 
+    it("行へのコメントだけのレビューも投稿して完了し、二度は投稿しない（レビュー指摘）", async () => {
+      const ledger = new SqliteLedgerStore(dbPath);
+      const pulls = new FakePulls();
+      const { service } = makeService(
+        ledger,
+        [
+          out(
+            block({
+              "sacty-review-comments": [{ path: "src/retry.ts", line: 2, body: "上限が無い" }],
+            }),
+          ),
+        ],
+        { pulls, planner: reviewPlanner },
+      );
+      const id = importReviewIssue(service, "https://github.com/acme/app/pull/12");
+      await service.runNext(id);
+      expect(service.get(id)?.task.outputs.review).toBe("");
+      await service.runNext(id);
+      const task = service.get(id)?.task;
+      expect(task && isCompleted(task)).toBe(true);
+      expect(task?.reviewPost).toBeDefined();
+      expect(pulls.reviews).toHaveLength(1);
+      expect(pulls.reviews[0]?.comments).toHaveLength(1);
+      expect(service.queuedTaskIds()).toEqual([]);
+      ledger.close();
+    });
+
     it("行へのコメントを GitHub が受け付けなければ、本文に入れて投稿し直す", async () => {
       const ledger = new SqliteLedgerStore(dbPath);
       const pulls = new FakePulls();

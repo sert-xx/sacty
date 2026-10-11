@@ -634,8 +634,13 @@ export function applyEvent(
       break;
 
     case "PullRequestReviewPosted": {
-      // 書いたレビューを投稿すると、レビューの工程（人間の承認は無い）が終わり、タスクは完了する
-      if (activeStep(task) !== "review" || task.status !== "idle" || !task.outputs.review) {
+      // 書いたレビューを投稿すると、レビューの工程（人間の承認は無い）が終わり、タスクは完了する。
+      // 行へのコメントだけのレビューもあるので、本文が空でも書き終えたものとして扱う
+      if (
+        activeStep(task) !== "review" ||
+        task.status !== "idle" ||
+        task.outputs.review === undefined
+      ) {
         throw new LedgerIntegrityError(event, "no review is waiting to be posted");
       }
       if (task.reviewPost) throw new LedgerIntegrityError(event, "already posted");

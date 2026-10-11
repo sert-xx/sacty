@@ -316,7 +316,8 @@ async function Deliverable({ task, step }: { task: Task; step: StepKey }) {
     >
       {output ? (
         <Markdown>{output}</Markdown>
-      ) : (
+      ) : // 行へのコメントだけのレビューは本文が空（書き終えている）
+      step === "review" && output === "" ? null : (
         <p className="text-sm text-muted-foreground">{running ? m.running : m.notYet}</p>
       )}
       {step === "review" && task.reviewComments.length > 0 && (
