@@ -285,19 +285,30 @@ export class GitHubPullRequests implements PullRequests {
 
   async repositories(input: Parameters<PullRequests["repositories"]>[0]): Promise<string[]> {
     const owner = encodeURIComponent(input.owner);
-    // Org の一覧が無ければ（ユーザーのアカウント）、ユーザーのリポジトリの一覧を読む
     const read = (path: string) => this.listAt(path, input.token, "listRepositories");
     const list = await read(`/orgs/${owner}/repos?per_page=100&type=all`).catch(
-      (error: unknown) => {
-        if (githubStatus(error) === 404)
-          return read(`/users/${owner}/repos?per_page=100&type=owner`);
-        throw error;
+      async (error: unknown) => {
+        if (githubStatus(error) !== 404) throw error;
+        // Org でなければ（個人のアカウント）、公開リポジトリ（/users/{owner}/repos は公開のものしか返さない）と、
+        // トークンで読めるリポジトリ（/user/repos。非公開のものを含む）のうち、その持ち主のものを合わせる
+        const [publicRepos, accessible] = [
+          await read(`/users/${owner}/repos?per_page=100&type=owner`),
+          await read("/user/repos?per_page=100&affiliation=owner,collaborator,organization_member"),
+        ];
+        const ownerOf = (r: Record<string, unknown>) =>
+          String((r.owner as { login?: unknown } | null)?.login ?? "").toLowerCase();
+        return [
+          ...publicRepos,
+          ...accessible.filter((r) => ownerOf(r) === input.owner.toLowerCase()),
+        ];
       },
     );
-    return list
-      .filter((r) => r.archived !== true && typeof r.full_name === "string")
-      .map((r) => String(r.full_name))
-      .sort((a, b) => a.localeCompare(b));
+    const names = new Map<string, string>();
+    for (const r of list) {
+      if (r.archived === true || typeof r.full_name !== "string") continue;
+      names.set(r.full_name.toLowerCase(), r.full_name);
+    }
+    return [...names.values()].sort((a, b) => a.localeCompare(b));
   }
 
   async pullRequest(input: Parameters<PullRequests["pullRequest"]>[0]): Promise<PullRequestInfo> {

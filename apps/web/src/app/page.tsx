@@ -75,6 +75,7 @@ async function NewTask() {
         projectId={project.id}
         projectName={project.name}
         repositories={repositories}
+        hasTargets={project.targets.length > 0}
         problems={errors.map((e) => m.forms.task.listFailed(e.owner, m.labels.text(e.message)))}
       />
     );

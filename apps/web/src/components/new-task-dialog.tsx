@@ -29,12 +29,18 @@ export function NewTaskDialog({
   projectId,
   projectName,
   repositories,
+  hasTargets,
   problems = [],
 }: {
   projectId: string;
   projectName: string;
   /** 対象リポジトリの候補（プロジェクトの対象から。Org の対象は gh で読んだもの。PBI-25）。 */
   repositories: string[];
+  /**
+   * プロジェクトに対象があるか。候補が無くても（読めなかったなど）、対象があれば名前を入力できる
+   * （対象の範囲かどうかはデーモンが確かめる）。
+   */
+  hasTargets: boolean;
   /** 候補を読めなかった Org と、その理由。 */
   problems?: string[];
 }) {
@@ -43,12 +49,17 @@ export function NewTaskDialog({
   // 作成先は、ダイアログを開いたときのプロジェクトに固定し、閉じるまで変えない
   // （入力中に画面が自動で更新され、別のタブで切り替えたプロジェクトが props で渡されても、
   // 書いている途中のタスクの作成先は変えないため）
-  const [target, setTarget] = useState({ id: projectId, name: projectName, repositories });
+  const [target, setTarget] = useState({
+    id: projectId,
+    name: projectName,
+    repositories,
+    hasTargets,
+  });
 
   return (
     <Dialog
       onOpenChange={(open) => {
-        if (open) setTarget({ id: projectId, name: projectName, repositories });
+        if (open) setTarget({ id: projectId, name: projectName, repositories, hasTargets });
       }}
     >
       <DialogTrigger render={<Button size="lg" />}>{t.create}</DialogTrigger>
@@ -66,7 +77,7 @@ export function NewTaskDialog({
               ))}
             </ul>
           )}
-          {target.repositories.length === 0 ? (
+          {!target.hasTargets ? (
             <p role="alert" className="text-sm text-warn">
               {t.noRepository}{" "}
               <Link href={`/projects/${target.id}`} className="underline">
@@ -138,7 +149,7 @@ export function NewTaskDialog({
           )}
           <DialogFooter>
             <DialogClose render={<Button variant="outline" type="button" />}>{t.close}</DialogClose>
-            <Button type="submit" disabled={pending || target.repositories.length === 0}>
+            <Button type="submit" disabled={pending || !target.hasTargets}>
               {pending ? t.creating : t.submit}
             </Button>
           </DialogFooter>
