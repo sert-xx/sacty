@@ -42,6 +42,8 @@ export async function AppHeader() {
     return <HeaderFallback language={await languagePreference()} />;
   }
   const [projects, tasks] = data;
+  // プロジェクトが1つも無いときは、切り替えもお知らせも出さない（作成画面のほかへ移らせない。PBI-22）
+  if (projects.length === 0) return <HeaderFallback language={await languagePreference()} />;
   const [m, language] = await Promise.all([getMessages(), languagePreference()]);
   const current = resolveProject(projects, await currentProjectId());
   const waiting = tasks.filter(needsPerson);
@@ -62,7 +64,7 @@ export async function AppHeader() {
       href: personAction(t, m.labels).href,
     }));
   const currentOption = options.find((o) => o.id === current?.id) ?? {
-    id: "default",
+    id: "",
     name: m.shell.project.fallbackName,
     needsYou: 0,
   };

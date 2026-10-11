@@ -2,15 +2,13 @@ import type { Project } from "@sacty/core";
 
 /** 表示しているプロジェクトを覚えておく cookie。 */
 export const PROJECT_COOKIE = "sacty-project";
-export const DEFAULT_PROJECT_ID = "default";
 
-/** 表示しているプロジェクト。cookie のプロジェクトが無くなっていれば、既定のプロジェクト。 */
+/**
+ * 表示しているプロジェクト。cookie のプロジェクトが無い・無くなっていれば、最初のプロジェクト
+ * （既定のプロジェクトは無い。PBI-22）。プロジェクトが1つも無ければ undefined。
+ */
 export function resolveProject(projects: readonly Project[], id: string): Project | undefined {
-  return (
-    projects.find((p) => p.id === id) ??
-    projects.find((p) => p.id === DEFAULT_PROJECT_ID) ??
-    projects[0]
-  );
+  return projects.find((p) => p.id === id) ?? projects[0];
 }
 
 const BASE = "http://sacty.invalid";

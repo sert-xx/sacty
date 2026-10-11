@@ -4,9 +4,10 @@ import { renderMessage } from "./messages.js";
 
 describe("CreateTaskInput", () => {
   it("前後の空白を除いて受け付ける", () => {
-    expect(CreateTaskInput.parse({ title: "  A  ", body: " B " })).toEqual({
+    expect(CreateTaskInput.parse({ title: "  A  ", body: " B ", projectId: "p1" })).toEqual({
       title: "A",
       body: "B",
+      projectId: "p1",
     });
   });
 
@@ -14,6 +15,7 @@ describe("CreateTaskInput", () => {
     const parsed = CreateTaskInput.safeParse({
       title: "あ".repeat(TASK_TITLE_MAX),
       body: "あ".repeat(TASK_BODY_MAX),
+      projectId: "p1",
     });
     expect(parsed.success).toBe(true);
   });
@@ -29,6 +31,12 @@ describe("CreateTaskInput", () => {
     expect(renderMessage(parsed.error?.issues[0]?.message, "en")).toBe(
       "Keep the title within 200 characters.",
     );
+  });
+
+  it("作るプロジェクトは省略できない（既定のプロジェクトは無い。PBI-22）", () => {
+    const parsed = CreateTaskInput.safeParse({ title: "A" });
+    expect(parsed.success).toBe(false);
+    expect(parsed.error?.issues[0]?.path).toEqual(["projectId"]);
   });
 
   it("内容が上限を超えると、文言のコードで拒否する", () => {

@@ -14,7 +14,7 @@ vi.mock("next/navigation", () => ({
     throw new Error(`redirect:${to}`);
   },
 }));
-vi.mock("next/cache", () => ({ refresh: () => {} }));
+vi.mock("next/cache", () => ({ refresh: () => {}, revalidatePath: () => {} }));
 
 const { createTaskAction } = await import("./actions");
 

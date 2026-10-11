@@ -716,8 +716,8 @@ export const CreateTaskInput = z.object({
     .min(1, code("input.titleRequired"))
     .max(TASK_TITLE_MAX, code("input.titleTooLong")),
   body: z.string().trim().max(TASK_BODY_MAX, code("input.bodyTooLong")).default(""),
-  /** 作るプロジェクト。省略すると既定のプロジェクト。 */
-  projectId: z.string().min(1).optional(),
+  /** 作るプロジェクト（必須。既定のプロジェクトは無い。PBI-22）。 */
+  projectId: z.string().min(1),
   /**
    * 対象リポジトリ（owner/name。プロジェクトのリポジトリの設定から選ぶ。PBI-21）。
    * 省略すると、プロジェクトのリポジトリの設定が1つだけならそれにする。

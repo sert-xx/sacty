@@ -3,7 +3,8 @@ import { IBM_Plex_Mono, IBM_Plex_Sans_JP } from "next/font/google";
 import { Suspense } from "react";
 import { AppHeader, HeaderFallback } from "@/components/shell/header";
 import { Localized } from "@/components/shell/localized";
-import { AppRail, RailNav } from "@/components/shell/rail";
+import { ProjectGate, RailGate } from "@/components/shell/project-gate";
+import { RailNav } from "@/components/shell/rail";
 import { THEME_SCRIPT } from "@/lib/theme";
 import "./globals.css";
 
@@ -47,13 +48,15 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           {/* 表示中の画面（URL）も、描画のたびに決まるので Suspense の中で読む */}
           <Suspense fallback={<RailNav />}>
             <Localized>
-              <AppRail />
+              <RailGate />
             </Localized>
           </Suspense>
           <main className="min-w-0 flex-1 px-4 py-7 sm:px-8">
             <div className="mx-auto flex max-w-6xl flex-col gap-6">
               <Suspense fallback={null}>
-                <Localized>{children}</Localized>
+                <Localized>
+                  <ProjectGate>{children}</ProjectGate>
+                </Localized>
               </Suspense>
             </div>
           </main>

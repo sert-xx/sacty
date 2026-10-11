@@ -7,7 +7,7 @@ import {
   TASK_BODY_MAX,
   TASK_TITLE_MAX,
 } from "@sacty/core";
-import { refresh } from "next/cache";
+import { refresh, revalidatePath } from "next/cache";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { isLocale, LANG_COOKIE, type LanguagePreference } from "@/i18n/locale";
@@ -45,7 +45,8 @@ export async function createTaskAction(
     ...(repo ? { repo } : {}),
   };
   const a = (await getMessages()).common.action;
-  const parsed = CreateTaskInput.safeParse(values);
+  // 作成先のプロジェクトは、下で別に確かめる（無ければ、入力の誤りではなく理由を返す）
+  const parsed = CreateTaskInput.omit({ projectId: true }).safeParse(values);
   if (!parsed.success) {
     // 検査の結果を、画面の言語の文言にする
     const fieldErrors: NonNullable<CreateTaskState["fieldErrors"]> = {};
@@ -200,7 +201,11 @@ export async function saveProjectAction(
     return { message: a.daemonDown };
   }
   if (!result.ok) return { message: result.message };
-  if (!id) redirect(`/projects/${result.project.id}`);
+  if (!id) {
+    // 最初のプロジェクトなら、作成画面だけを出していた画面の枠（ヘッダー・サイドメニュー）も作り直す（PBI-22）
+    revalidatePath("/", "layout");
+    redirect(`/projects/${result.project.id}`);
+  }
   refresh();
   return { saved: true };
 }
@@ -242,7 +247,9 @@ export async function importProjectAction(
     return { message: a.daemonDown };
   }
   if (!result.ok) return { message: result.message };
+  // 最初のプロジェクトなら、作成画面だけを出していた画面の枠も作り直す（PBI-22）。
   // redirect は例外で画面を移すので、try の外で呼ぶ
+  revalidatePath("/", "layout");
   redirect(`/projects/${result.project.id}`);
 }
 
