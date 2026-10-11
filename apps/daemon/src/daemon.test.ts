@@ -1786,6 +1786,40 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       expect(task?.gate).toEqual({ step: "pr", submission: 1 });
       ledger.close();
     });
+
+    it("設計を省いたタスクで、受け入れ条件（REQ）にテストを対応させていなければ、テストの段階で通さない（レビュー指摘）", async () => {
+      const ledger = new SqliteLedgerStore(dbPath);
+      const { service, executor } = makeService(
+        ledger,
+        [out("# 要求要件"), implement("# 実装の説明", []), implement("# 実装の説明 v2", [])],
+        {
+          planner: async () => ({
+            steps: ["requirements", "implement", "pr"],
+            plan: "skip-design",
+            reason: "小さな変更",
+            fallback: false,
+            costUsd: 0,
+            estimated: false,
+          }),
+        },
+      );
+      const { id } = service.createTicket({ title: "A" });
+      await service.runNext(id);
+      service.approve(id, { step: "requirements", submission: 1 });
+      await service.runNext(id); // 実装
+      await service.runNext(id); // テスト
+      const tests = service.get(id)?.ledger.find((e) => e.type === "TestsRun");
+      expect(tests?.type === "TestsRun" && tests.payload).toMatchObject({
+        passed: false,
+        unmappedViewpoints: ["REQ"],
+      });
+      // 最終レビューはせずに、実装をやり直す
+      expect(executor.calls.map((_, i) => promptOf(executor, i)).join()).not.toContain(
+        "sacty-final-review",
+      );
+      expect(service.get(id)?.task.status).toBe("queued");
+      ledger.close();
+    });
   });
 
   it("実装は対象リポジトリの clone で、承認済みの成果物と人間の指摘を受け取って実行する", async () => {

@@ -1311,7 +1311,11 @@ export class TaskService {
       return;
     }
     const repo = target.repo;
-    const viewpointIds = (task.approved.design?.testViewpoints ?? []).map((v) => v.id);
+    // テストを対応させる観点。設計を省いたタスク（PBI-17）は、要求要件の受け入れ条件（REQ）を観点にする。
+    // テストの対応の確かめと、最終レビューの両方で同じ観点を使う
+    const viewpointIds = task.steps.some((st) => st.key === "design")
+      ? (task.approved.design?.testViewpoints ?? []).map((v) => v.id)
+      : [REQUIREMENTS_VIEWPOINT];
 
     let current = task;
     if (current.verification === "pending") {
@@ -1419,13 +1423,9 @@ export class TaskService {
       this.warnIfNeeded(this.mustGet(task.id));
       return;
     }
-    // 設計を省いたタスク（PBI-17）は、要求要件の受け入れ条件を1つの観点として判定する
-    const reviewedIds = current.steps.some((st) => st.key === "design")
-      ? viewpointIds
-      : [REQUIREMENTS_VIEWPOINT];
     const review = extractFinalReview(
       outcome.output,
-      reviewedIds,
+      viewpointIds,
       current.remarks.filter((r) => !r.voided).map((r) => r.id),
     );
     const reviewed = this.append(current, [
