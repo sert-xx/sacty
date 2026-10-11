@@ -1,8 +1,8 @@
 import {
+  type ActivityEvent,
   formatUsd,
   GATED_STEPS,
   isCompleted,
-  type LedgerEvent,
   openProposal,
   type Task,
 } from "@sacty/core";
@@ -76,8 +76,8 @@ export function needsPerson(task: Task): boolean {
   );
 }
 
-/** 台帳の1行を、人が読める文にする。 */
-export function describeEvent(event: LedgerEvent, l: LabelMessages): string {
+/** 作業履歴の1行を、人が読める文にする。 */
+export function describeEvent(event: ActivityEvent, l: LabelMessages): string {
   const e = l.event;
   const actor = l.actor[event.actor];
   const cost = (costUsd: number, estimated: boolean) =>
@@ -265,7 +265,7 @@ const stampFormats = {
   }),
 };
 
-/** 台帳などの日時（月/日 時:分）。 */
+/** 作業履歴などの日時（月/日 時:分）。 */
 export function formatStamp(iso: string, locale: "ja" | "en" = "ja"): string {
   return stampFormats[locale].format(new Date(iso));
 }

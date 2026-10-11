@@ -214,7 +214,7 @@ export type SactyConfig = {
 /** 設定。読めなければ、その理由（文言のコードと引数。PBI-11）。 */
 export type ConfigResult = { ok: true; config: SactyConfig } | { ok: false; problem: DaemonText };
 
-/** sactyのデータ（台帳・設定・作業領域）を置く場所。環境変数 SACTY_HOME で変えられる。 */
+/** sactyのデータ（作業履歴・設定・作業領域）を置く場所。環境変数 SACTY_HOME で変えられる。 */
 export function resolveHome(): string {
   return process.env.SACTY_HOME ?? join(homedir(), ".sacty");
 }

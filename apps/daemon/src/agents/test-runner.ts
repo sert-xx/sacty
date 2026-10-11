@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { type DaemonText, message } from "@sacty/core";
 import { dockerClientEnv, dockerRunArgs, RunningContainers } from "./docker.js";
 
-/** テストの出力は、末尾のこの文字数だけ残す（台帳と画面に載せるため）。 */
+/** テストの出力は、末尾のこの文字数だけ残す（作業履歴と画面に載せるため）。 */
 export const TEST_OUTPUT_TAIL = 20_000;
 
 export type TestRunResult = {

@@ -1,5 +1,5 @@
 import type {
-  LedgerEvent,
+  ActivityEvent,
   ParsedEventInput,
   PauseReason,
   Remark,
@@ -31,7 +31,7 @@ export type StepState = "todo" | "active" | "done" | "skip";
  * paused：一時停止中（理由は pausedReason）
  * awaiting_approval：人間の承認待ち（gate の工程）
  * escalated：差し戻しが上限を超えたため、人間の判断待ち
- * cancelled：中止した（以降の操作は受け付けない。台帳は残る）
+ * cancelled：中止した（以降の操作は受け付けない。作業履歴は残る）
  */
 export type TaskStatus =
   | "queued"
@@ -96,7 +96,7 @@ export type Task = {
   projectId: string;
   title: string;
   body: string;
-  start: "ticket" | "github_issue";
+  start: "sacty" | "github_issue";
   /** 取り込み元（GitHub Issue）。 */
   source?: TaskSource;
   status: TaskStatus;
@@ -164,7 +164,7 @@ export type Task = {
     step: StepKey;
     target: StepKey;
     pendingRemarks: Remark[];
-    /** エスカレーションの理由（PBI-14b で足した。古い台帳には無い）。 */
+    /** エスカレーションの理由（PBI-14b で足した。古い作業履歴には無い）。 */
     reason?: PayloadOf<"TaskEscalated">["reason"];
     /** ゴールガーディアンの判断の理由（PR の指摘の戻し先の確認のとき）。 */
     note?: DaemonText;
@@ -177,7 +177,7 @@ export type Task = {
   reviewComments: ReviewComment[];
   /** レビューの結果を投稿した、PR のレビューの URL（PBI-19）。 */
   reviewPost?: { url: string };
-  /** オーケストレーターが工程を選んだ理由（PBI-17。固定の工程だった台帳には無い）。 */
+  /** オーケストレーターが工程を選んだ理由（PBI-17。固定の工程だった作業履歴には無い）。 */
   stepsChoice?: { plan?: StepPlan; reason: DaemonText; fallback: boolean };
   /** 取り込んだ PR へのフィードバック（種類と ID。二重に取り込まないため。PBI-14b）。 */
   importedFeedback: string[];
@@ -209,8 +209,8 @@ function reopen(task: Task, target: StepKey) {
   );
 }
 
-class LedgerIntegrityError extends Error {
-  constructor(event: LedgerEvent, detail: string) {
+class ActivityIntegrityError extends Error {
+  constructor(event: ActivityEvent, detail: string) {
     super(`${event.type} (seq ${event.seq}) on task ${event.taskId}: ${detail}`);
   }
 }
@@ -223,9 +223,9 @@ function failVerification(task: Task, feedback: NonNullable<Task["verifyFeedback
   task.status = "queued";
 }
 
-function findProposal(task: Task, event: LedgerEvent, id: string): TaskProposal {
+function findProposal(task: Task, event: ActivityEvent, id: string): TaskProposal {
   const proposal = task.proposals.find((p) => p.id === id);
-  if (!proposal) throw new LedgerIntegrityError(event, `unknown proposal ${id}`);
+  if (!proposal) throw new ActivityIntegrityError(event, `unknown proposal ${id}`);
   return proposal;
 }
 
@@ -239,18 +239,18 @@ function addUsd(a: number, b: number): number {
 }
 
 /**
- * 1件のイベントをタスクの状態に適用する。台帳を先頭から順に適用すれば、
+ * 1件のイベントをタスクの状態に適用する。作業履歴を先頭から順に適用すれば、
  * いつでも同じ状態を復元できる（デーモンの再起動後も含む）。
  */
 export function applyEvent(
   tasks: ReadonlyMap<string, Task>,
-  event: LedgerEvent,
+  event: ActivityEvent,
 ): Map<string, Task> {
   const next = new Map(tasks);
   const current = next.get(event.taskId);
 
   if (event.type === "TaskCreated") {
-    if (current) throw new LedgerIntegrityError(event, "task is created twice");
+    if (current) throw new ActivityIntegrityError(event, "task is created twice");
     next.set(event.taskId, {
       id: event.taskId,
       projectId: event.projectId,
@@ -278,15 +278,16 @@ export function applyEvent(
     return next;
   }
 
-  if (!current) throw new LedgerIntegrityError(event, "unknown task");
+  if (!current) throw new ActivityIntegrityError(event, "unknown task");
   if (current.status === "cancelled") {
-    throw new LedgerIntegrityError(event, "the task is cancelled");
+    throw new ActivityIntegrityError(event, "the task is cancelled");
   }
   const task: Task = { ...current, updatedAt: event.at };
 
   switch (event.type) {
     case "StepsChosen":
-      if (task.steps.length > 0) throw new LedgerIntegrityError(event, "steps are already chosen");
+      if (task.steps.length > 0)
+        throw new ActivityIntegrityError(event, "steps are already chosen");
       task.steps = event.payload.steps.map((key, i) => ({
         key,
         state: i === 0 ? ("active" as const) : ("todo" as const),
@@ -307,7 +308,8 @@ export function applyEvent(
       break;
 
     case "AgentRunStarted":
-      if (task.status !== "queued") throw new LedgerIntegrityError(event, `status ${task.status}`);
+      if (task.status !== "queued")
+        throw new ActivityIntegrityError(event, `status ${task.status}`);
       task.status = "running";
       task.currentRunId = event.payload.runId;
       break;
@@ -315,7 +317,7 @@ export function applyEvent(
     case "AgentRunCompleted":
     case "AgentRunFailed": {
       if (task.currentRunId !== event.payload.runId) {
-        throw new LedgerIntegrityError(event, "run id does not match the running run");
+        throw new ActivityIntegrityError(event, "run id does not match the running run");
       }
       // 失敗した実行は、再開したときにやり直すので実行待ちに戻す
       task.status = event.type === "AgentRunCompleted" ? "idle" : "queued";
@@ -328,7 +330,7 @@ export function applyEvent(
       if (event.type === "AgentRunCompleted") {
         // 承認済みの成果物は凍結されている。変えるには、人間が差し戻して承認を取り消す必要がある
         if (task.approved[event.payload.step]) {
-          throw new LedgerIntegrityError(event, "the step is already approved (frozen)");
+          throw new ActivityIntegrityError(event, "the step is already approved (frozen)");
         }
         if (event.payload.step === "design") task.testViewpoints = event.payload.testViewpoints;
         if (event.payload.step === "review") task.reviewComments = event.payload.reviewComments;
@@ -356,7 +358,7 @@ export function applyEvent(
     }
 
     case "StepSubmitted":
-      if (task.status !== "idle") throw new LedgerIntegrityError(event, `status ${task.status}`);
+      if (task.status !== "idle") throw new ActivityIntegrityError(event, `status ${task.status}`);
       task.status = "awaiting_approval";
       task.gate = { step: event.payload.step, submission: event.payload.submission };
       task.submissions = { ...task.submissions, [event.payload.step]: event.payload.submission };
@@ -364,10 +366,10 @@ export function applyEvent(
 
     case "StepApproved": {
       if (task.status !== "awaiting_approval" && task.status !== "escalated") {
-        throw new LedgerIntegrityError(event, `status ${task.status}`);
+        throw new ActivityIntegrityError(event, `status ${task.status}`);
       }
       if (task.gate?.step !== event.payload.step) {
-        throw new LedgerIntegrityError(event, "approved step is not at the gate");
+        throw new ActivityIntegrityError(event, "approved step is not at the gate");
       }
       const index = task.steps.findIndex((s) => s.key === event.payload.step);
       task.steps = task.steps.map((s, i) => {
@@ -392,23 +394,23 @@ export function applyEvent(
     }
 
     case "StepQueued":
-      if (task.status !== "idle") throw new LedgerIntegrityError(event, `status ${task.status}`);
+      if (task.status !== "idle") throw new ActivityIntegrityError(event, `status ${task.status}`);
       if (activeStep(task) !== event.payload.step) {
-        throw new LedgerIntegrityError(event, "queued step is not the active step");
+        throw new ActivityIntegrityError(event, "queued step is not the active step");
       }
       task.status = "queued";
       break;
 
     case "ChangesRequested": {
       if (task.status !== "awaiting_approval" && task.status !== "escalated") {
-        throw new LedgerIntegrityError(event, `status ${task.status}`);
+        throw new ActivityIntegrityError(event, `status ${task.status}`);
       }
       const target = event.payload.target ?? event.payload.step;
       if (target !== event.payload.step) {
         const at = task.steps.findIndex((s) => s.key === event.payload.step);
         const to = task.steps.findIndex((s) => s.key === target);
         if (to < 0 || to >= at) {
-          throw new LedgerIntegrityError(event, "target must be a step before the gate");
+          throw new ActivityIntegrityError(event, "target must be a step before the gate");
         }
         reopen(task, target);
       }
@@ -432,7 +434,7 @@ export function applyEvent(
 
     case "RemarkVoided":
       if (!task.remarks.some((r) => r.id === event.payload.remarkId)) {
-        throw new LedgerIntegrityError(event, "unknown remark");
+        throw new ActivityIntegrityError(event, "unknown remark");
       }
       task.remarks = task.remarks.map((r) =>
         r.id === event.payload.remarkId ? { ...r, voided: true } : r,
@@ -440,12 +442,12 @@ export function applyEvent(
       break;
 
     case "ChangeProposed":
-      if (task.status !== "idle") throw new LedgerIntegrityError(event, `status ${task.status}`);
+      if (task.status !== "idle") throw new ActivityIntegrityError(event, `status ${task.status}`);
       if (task.proposals.some((p) => p.id === event.payload.proposalId)) {
-        throw new LedgerIntegrityError(event, "proposal id is used twice");
+        throw new ActivityIntegrityError(event, "proposal id is used twice");
       }
       if (!task.approved[event.payload.target]) {
-        throw new LedgerIntegrityError(event, "only approved steps can be changed");
+        throw new ActivityIntegrityError(event, "only approved steps can be changed");
       }
       {
         const { proposalId, ...rest } = event.payload;
@@ -458,7 +460,7 @@ export function applyEvent(
 
     case "ChangeJudged": {
       const proposal = findProposal(task, event, event.payload.proposalId);
-      if (proposal.judgement) throw new LedgerIntegrityError(event, "already judged");
+      if (proposal.judgement) throw new ActivityIntegrityError(event, "already judged");
       task.budget = {
         ...task.budget,
         usedUsd: addUsd(task.budget.usedUsd, event.payload.costUsd),
@@ -473,9 +475,9 @@ export function applyEvent(
     case "ChangeDecided": {
       const proposal = findProposal(task, event, event.payload.proposalId);
       if (task.status !== "escalated" || proposal.judgement?.verdict !== "undecidable") {
-        throw new LedgerIntegrityError(event, "the proposal is not waiting for a person");
+        throw new ActivityIntegrityError(event, "the proposal is not waiting for a person");
       }
-      if (proposal.decision) throw new LedgerIntegrityError(event, "already decided");
+      if (proposal.decision) throw new ActivityIntegrityError(event, "already decided");
       updateProposal(task, proposal.id, {
         decision: { accept: event.payload.accept, at: event.at },
       });
@@ -486,10 +488,10 @@ export function applyEvent(
     case "ChangeApplied": {
       const proposal = findProposal(task, event, event.payload.proposalId);
       if (proposalAccepted(proposal) !== true || proposal.applied) {
-        throw new LedgerIntegrityError(event, "the proposal is not accepted or already applied");
+        throw new ActivityIntegrityError(event, "the proposal is not accepted or already applied");
       }
       const approved = task.approved[proposal.target];
-      if (!approved) throw new LedgerIntegrityError(event, "the target is no longer approved");
+      if (!approved) throw new ActivityIntegrityError(event, "the target is no longer approved");
       if (proposal.target === "requirements") {
         // 要求要件の変更は、承認を取り消して人間の再承認に回す
         reopen(task, proposal.target);
@@ -518,7 +520,7 @@ export function applyEvent(
 
     case "TestsRun": {
       if (task.status !== "idle" || task.verification !== "pending") {
-        throw new LedgerIntegrityError(event, "tests are not pending");
+        throw new ActivityIntegrityError(event, "tests are not pending");
       }
       const tests = { ...event.payload, at: event.at };
       task.lastTests = tests;
@@ -532,7 +534,7 @@ export function applyEvent(
 
     case "FinalReviewed": {
       if (task.status !== "idle" || task.verification !== "tests_passed") {
-        throw new LedgerIntegrityError(event, "final review is not pending");
+        throw new ActivityIntegrityError(event, "final review is not pending");
       }
       task.budget = {
         ...task.budget,
@@ -566,7 +568,7 @@ export function applyEvent(
 
     case "TaskCancelled":
       if (task.status === "running") {
-        throw new LedgerIntegrityError(event, "stop the run before cancelling");
+        throw new ActivityIntegrityError(event, "stop the run before cancelling");
       }
       task.status = "cancelled";
       task.cancelled = { at: event.at, cleanup: event.payload.cleanup };
@@ -581,7 +583,7 @@ export function applyEvent(
 
     case "PullRequestPublished":
       if (task.status !== "queued" || activeStep(task) !== "pr") {
-        throw new LedgerIntegrityError(event, "the pr step is not running");
+        throw new ActivityIntegrityError(event, "the pr step is not running");
       }
       task.pullRequest = event.payload;
       // 作り直した・更新した PR は、開いているものとして見守り直す
@@ -591,15 +593,15 @@ export function applyEvent(
 
     case "PullRequestReviewImported": {
       if (task.gate?.step !== "pr" || task.status !== "awaiting_approval") {
-        throw new LedgerIntegrityError(event, "the deliverable review is not open");
+        throw new ActivityIntegrityError(event, "the deliverable review is not open");
       }
       if (task.pullRequest?.number !== event.payload.number) {
-        throw new LedgerIntegrityError(event, "not the pull request of the task");
+        throw new ActivityIntegrityError(event, "not the pull request of the task");
       }
-      if (task.pendingReview) throw new LedgerIntegrityError(event, "a review is pending");
+      if (task.pendingReview) throw new ActivityIntegrityError(event, "a review is pending");
       const keys = event.payload.items.map((i) => i.key);
       if (keys.some((key) => task.importedFeedback.includes(key))) {
-        throw new LedgerIntegrityError(event, "the feedback is already imported");
+        throw new ActivityIntegrityError(event, "the feedback is already imported");
       }
       task.importedFeedback = [...task.importedFeedback, ...keys];
       task.pendingReview = { keys, remarks: event.payload.remarks };
@@ -608,7 +610,7 @@ export function applyEvent(
 
     case "ReworkJudged": {
       if (!task.pendingReview || task.pendingReview.judgement) {
-        throw new LedgerIntegrityError(event, "no review is waiting for a judgement");
+        throw new ActivityIntegrityError(event, "no review is waiting for a judgement");
       }
       task.budget = {
         ...task.budget,
@@ -627,9 +629,9 @@ export function applyEvent(
 
     case "ReviewTargetResolved":
       if (activeStep(task) !== "review") {
-        throw new LedgerIntegrityError(event, "the review step is not active");
+        throw new ActivityIntegrityError(event, "the review step is not active");
       }
-      if (task.reviewTarget) throw new LedgerIntegrityError(event, "already resolved");
+      if (task.reviewTarget) throw new ActivityIntegrityError(event, "already resolved");
       task.reviewTarget = event.payload;
       break;
 
@@ -641,9 +643,9 @@ export function applyEvent(
         task.status !== "idle" ||
         task.outputs.review === undefined
       ) {
-        throw new LedgerIntegrityError(event, "no review is waiting to be posted");
+        throw new ActivityIntegrityError(event, "no review is waiting to be posted");
       }
-      if (task.reviewPost) throw new LedgerIntegrityError(event, "already posted");
+      if (task.reviewPost) throw new ActivityIntegrityError(event, "already posted");
       task.steps = task.steps.map((s) =>
         s.key === "review" ? { ...s, state: "done" as const } : s,
       );
@@ -654,9 +656,9 @@ export function applyEvent(
     case "IssueCommented":
     case "IssueCommentFailed":
       if (!isCompleted(task) || task.source?.kind !== "github_issue") {
-        throw new LedgerIntegrityError(event, "the task is not a completed issue task");
+        throw new ActivityIntegrityError(event, "the task is not a completed issue task");
       }
-      if (task.issueComment) throw new LedgerIntegrityError(event, "already commented");
+      if (task.issueComment) throw new ActivityIntegrityError(event, "already commented");
       task.issueComment =
         event.type === "IssueCommented"
           ? { url: event.payload.url }
@@ -671,10 +673,10 @@ export function applyEvent(
         task.gate?.step !== "pr" ||
         (task.status !== "awaiting_approval" && task.status !== "escalated")
       ) {
-        throw new LedgerIntegrityError(event, "the deliverable review is not open");
+        throw new ActivityIntegrityError(event, "the deliverable review is not open");
       }
       if (task.pullRequest?.number !== event.payload.number) {
-        throw new LedgerIntegrityError(event, "not the pull request of the task");
+        throw new ActivityIntegrityError(event, "not the pull request of the task");
       }
       task.pullRequestState =
         event.type === "PullRequestMerged"
@@ -689,7 +691,7 @@ export function applyEvent(
 
     case "BranchPushed":
       if (activeStep(task) !== "pr")
-        throw new LedgerIntegrityError(event, "the pr step is not active");
+        throw new ActivityIntegrityError(event, "the pr step is not active");
       task.pushedBranch = event.payload;
       break;
 
@@ -699,7 +701,7 @@ export function applyEvent(
 
     case "FinalReviewFailed":
       if (task.status !== "idle" || task.verification !== "tests_passed") {
-        throw new LedgerIntegrityError(event, "final review is not pending");
+        throw new ActivityIntegrityError(event, "final review is not pending");
       }
       task.budget = {
         ...task.budget,
@@ -710,16 +712,17 @@ export function applyEvent(
 
     case "TaskEscalated":
       if (event.payload.reason === "change_undecidable") {
-        if (task.status !== "idle") throw new LedgerIntegrityError(event, `status ${task.status}`);
+        if (task.status !== "idle")
+          throw new ActivityIntegrityError(event, `status ${task.status}`);
         const proposal = findProposal(task, event, event.payload.proposalId ?? "");
         if (proposal.judgement?.verdict !== "undecidable") {
-          throw new LedgerIntegrityError(event, "the proposal is not undecidable");
+          throw new ActivityIntegrityError(event, "the proposal is not undecidable");
         }
         task.status = "escalated";
         break;
       }
       if (task.status !== "awaiting_approval") {
-        throw new LedgerIntegrityError(event, `status ${task.status}`);
+        throw new ActivityIntegrityError(event, `status ${task.status}`);
       }
       task.status = "escalated";
       task.escalation = {
@@ -739,7 +742,7 @@ export function applyEvent(
 
     case "TaskPaused":
       if (task.status !== "queued" && task.status !== "idle") {
-        throw new LedgerIntegrityError(event, `pause while ${task.status}`);
+        throw new ActivityIntegrityError(event, `pause while ${task.status}`);
       }
       task.resumeTo = task.status;
       task.status = "paused";
@@ -750,13 +753,14 @@ export function applyEvent(
 
     case "BudgetCapRaised":
       if (event.payload.capUsd <= task.budget.usedUsd) {
-        throw new LedgerIntegrityError(event, "new cap must exceed the amount spent");
+        throw new ActivityIntegrityError(event, "new cap must exceed the amount spent");
       }
       task.budget = { ...task.budget, capUsd: event.payload.capUsd };
       break;
 
     case "TaskResumed":
-      if (task.status !== "paused") throw new LedgerIntegrityError(event, `status ${task.status}`);
+      if (task.status !== "paused")
+        throw new ActivityIntegrityError(event, `status ${task.status}`);
       task.status = event.payload.retry ? "queued" : "idle";
       // 人間が再開したら、検証の失敗の回数を数え直す
       if (task.pausedReason === "verification") task.verifyFailures = 0;
@@ -771,13 +775,13 @@ export function applyEvent(
   return next;
 }
 
-/** 台帳のイベント列から、すべてのタスクの状態を復元する。 */
-export function project(events: Iterable<LedgerEvent>): Map<string, Task> {
+/** 作業履歴のイベント列から、すべてのタスクの状態を復元する。 */
+export function project(events: Iterable<ActivityEvent>): Map<string, Task> {
   let tasks = new Map<string, Task>();
   let lastSeq = 0;
   for (const event of events) {
     if (event.seq <= lastSeq) {
-      throw new Error(`ledger is out of order at seq ${event.seq}`);
+      throw new Error(`activity is out of order at seq ${event.seq}`);
     }
     lastSeq = event.seq;
     tasks = applyEvent(tasks, event);

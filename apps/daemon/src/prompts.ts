@@ -177,7 +177,7 @@ function guardianCodeLines(task: Task, code: "base" | "implemented"): string[] {
 }
 
 /**
- * チケット（タイトルと本文）にある、タスクの対象リポジトリの PR（PBI-19）。最初に出てくるものを使う。
+ * タスク（タイトルと本文）にある、タスクの対象リポジトリの PR（PBI-19）。最初に出てくるものを使う。
  * 対象リポジトリが GitHub でなければ、PR は無いものとする。
  */
 export function referencedPullRequest(task: Task): { repo: string; number: number } | undefined {
@@ -195,7 +195,7 @@ export function referencedPullRequest(task: Task): { repo: string; number: numbe
 const PR_DIFF_IN_PROMPT = 100_000;
 
 export function buildPrompt(task: Task, step: StepKey, extra: { diff?: string } = {}): string {
-  const ticket = [`# ${task.title}`, "", task.body || "（内容なし）"].join("\n");
+  const content = [`# ${task.title}`, "", task.body || "（内容なし）"].join("\n");
   const hasRemarks = task.remarks.some((r) => r.step === step && !r.voided);
   const previous = task.outputs[step];
 
@@ -204,17 +204,17 @@ export function buildPrompt(task: Task, step: StepKey, extra: { diff?: string } 
       // 調査は、コードを読んで報告するだけの工程（PBI-18）。人間が承認すると完了
       const lines = [
         "あなたはソフトウェア開発の調査エージェントです。",
-        "次のチケットが求めていることを、対象リポジトリのコードを読んで調べ、調査の結果をMarkdownで書いてください。",
+        "次のタスクが求めていることを、対象リポジトリのコードを読んで調べ、調査の結果をMarkdownで書いてください。",
         "",
-        "- 最初に、チケットへの答え（結論）を短く書く",
+        "- 最初に、タスクへの答え（結論）を短く書く",
         "- 根拠を、ファイルと行（例：src/pay.ts:12）を添えて書く。推測と、コードで確かめた事実を区別する",
         "- 関係する箇所・影響範囲、対応する場合の選択肢と注意点があれば書く",
         "- コードから判断できないことは「確認したいこと」として最後に列挙する",
         "- コードは変更しない（作業領域は読み取り専用です）",
         ...codeLines(task),
         "",
-        "--- チケット ---",
-        ticket,
+        "--- タスク ---",
+        content,
       ];
       if (hasRemarks) lines.push("", "--- 前回の調査の結果 ---", previous ?? "（なし）");
       lines.push(...remarkLines(task, step, "調査の結果の本文"));
@@ -258,23 +258,23 @@ export function buildPrompt(task: Task, step: StepKey, extra: { diff?: string } 
           ? `${diff.slice(0, PR_DIFF_IN_PROMPT)}\n…（差分が大きいため、先頭だけを渡しています。残りは作業領域のコードを読んでください）`
           : diff || "（差分なし）",
         "",
-        "--- チケット（レビューの依頼） ---",
-        ticket,
+        "--- タスク（レビューの依頼） ---",
+        content,
       ].join("\n");
     }
     case "requirements": {
       const lines = [
         "あなたはソフトウェア開発の工程エージェントです。",
-        "次のチケットから、要求要件をMarkdownで書いてください。",
+        "次のタスクから、要求要件をMarkdownで書いてください。",
         "",
         "- 何を実現するかを1〜3文で書く",
         "- 受け入れ条件を、検証できる形の箇条書きで書く",
         "- 実装方法には踏み込まない",
-        "- チケットから判断できないことは「確認したいこと」として最後に列挙する",
+        "- タスクの内容から判断できないことは「確認したいこと」として最後に列挙する",
         ...codeLines(task),
         "",
-        "--- チケット ---",
-        ticket,
+        "--- タスク ---",
+        content,
       ];
       if (hasRemarks) lines.push("", "--- 前回の下書き ---", previous ?? "（なし）");
       lines.push(...remarkLines(task, step, "要求要件の本文"));
@@ -301,8 +301,8 @@ export function buildPrompt(task: Task, step: StepKey, extra: { diff?: string } 
         "--- 承認済みの要求要件 ---",
         requirements,
         "",
-        "--- チケット ---",
-        ticket,
+        "--- タスク ---",
+        content,
       ];
       if (previous) {
         lines.push(
@@ -380,7 +380,7 @@ export function buildPrompt(task: Task, step: StepKey, extra: { diff?: string } 
       return lines.join("\n");
     }
     default:
-      return [`工程「${step}」はまだ実装されていません。`, "", ticket].join("\n");
+      return [`工程「${step}」はまだ実装されていません。`, "", content].join("\n");
   }
 }
 
@@ -509,7 +509,7 @@ function toProposal(
 
 /**
  * ゴールガーディアンへの指示。判定ごとに新しいセッションで実行し、承認済みの要求要件・設計、
- * 変更理由、根拠となる事実（と変更後の全文）だけを渡す。チケットや工程の経緯、過去の判定は渡さない。
+ * 変更理由、根拠となる事実（と変更後の全文）だけを渡す。タスクの内容や工程の経緯、過去の判定は渡さない。
  */
 export function buildGuardianPrompt(task: Task, proposal: TaskProposal): string {
   const approved = (["requirements", "design"] as const)
@@ -742,7 +742,7 @@ export function buildPullRequestBody(task: Task): string {
 
 /**
  * PR の指摘で、どの工程まで戻すかをゴールガーディアンに判断させる指示（PBI-14b）。判断ごとに新しい
- * セッションで実行し、承認済みの要求要件・設計と、指摘だけを渡す（チケットや工程の経緯は渡さない）。
+ * セッションで実行し、承認済みの要求要件・設計と、指摘だけを渡す（タスクの内容や工程の経緯は渡さない）。
  */
 export function buildReworkPrompt(task: Task, remarks: string[], targets: StepKey[]): string {
   const approved = (["requirements", "design"] as const)
@@ -808,7 +808,7 @@ export function extractRework(
 }
 
 /**
- * オーケストレーターへの指示（PBI-17）。チケットと対象リポジトリのコードを読んで、決めた候補から
+ * オーケストレーターへの指示（PBI-17）。タスクの内容と対象リポジトリのコードを読んで、決めた候補から
  * 工程の組み合わせを選ばせる。判断ごとに新しいセッションで実行する。
  */
 export function buildOrchestratorPrompt(task: Task): string {
@@ -818,14 +818,14 @@ export function buildOrchestratorPrompt(task: Task): string {
     "skip-design":
       "要求要件 → 実装 → PR作成。設計を省く。変更が小さく局所的で、要求要件の受け入れ条件だけで十分にテストできる変更（例：文言の修正、小さな関数の追加）",
     investigate:
-      "調査だけ。コードを調べて結果を報告する（実装や PR は作らない）。チケットが質問・原因の調査・影響範囲の確認・見積もりなど、変更ではなく情報を求めているとき",
+      "調査だけ。コードを調べて結果を報告する（実装や PR は作らない）。タスクが質問・原因の調査・影響範囲の確認・見積もりなど、変更ではなく情報を求めているとき",
     review:
-      "レビューだけ。チケットにある PR をレビューして、PR にレビューを投稿する（実装や PR は作らない）。チケットが PR のレビューを求めているとき",
+      "レビューだけ。タスクにある PR をレビューして、PR にレビューを投稿する（実装や PR は作らない）。タスクが PR のレビューを求めているとき",
   };
   const allowed = allowedPlans(task);
   const plans = Object.fromEntries(allowed.map((plan) => [plan, all[plan]]));
   return [
-    "あなたはオーケストレーターです。チケットと対象リポジトリのコードを読んで、このタスクの工程を選んでください。",
+    "あなたはオーケストレーターです。タスクの内容と対象リポジトリのコードを読んで、このタスクの工程を選んでください。",
     ...(task.repository
       ? [
           "",
@@ -838,7 +838,7 @@ export function buildOrchestratorPrompt(task: Task): string {
     "",
     "迷う場合は standard を選んでください。",
     "",
-    "--- チケット ---",
+    "--- タスク ---",
     `# ${task.title}`,
     "",
     task.body || "（内容なし）",
@@ -851,7 +851,7 @@ export function buildOrchestratorPrompt(task: Task): string {
 }
 
 /**
- * オーケストレーターが選べる工程の組み合わせ。レビューは、チケットに対象リポジトリの PR があるときだけ（PBI-19）。
+ * オーケストレーターが選べる工程の組み合わせ。レビューは、タスクに対象リポジトリの PR があるときだけ（PBI-19）。
  */
 export function allowedPlans(task: Task): StepPlan[] {
   const plans = StepPlan.options;

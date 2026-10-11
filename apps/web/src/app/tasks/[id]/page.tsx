@@ -50,9 +50,9 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
     throw error;
   }
   if (!found) notFound();
-  const { task, ledger } = found;
+  const { task, activity } = found;
   const projectName = (await getProject(task.projectId))?.project.name ?? task.projectId;
-  const lastFailure = [...ledger].reverse().find((e) => e.type === "AgentRunFailed");
+  const lastFailure = [...activity].reverse().find((e) => e.type === "AgentRunFailed");
   const proposal = openProposal(task);
   const messages = await getMessages();
   const { task: m, labels, parts, locale } = messages;
@@ -199,7 +199,7 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
 
       <div className="flex flex-wrap items-start gap-6">
         <div className="flex min-w-0 flex-[999_1_560px] flex-col gap-6">
-          {/* どこまで進んだかを先に見られるよう、工程はチケットより上に置く */}
+          {/* どこまで進んだかを先に見られるよう、工程はタスクの内容より上に置く */}
           <section
             aria-labelledby="steps"
             className="flex flex-col gap-3 rounded-xl border border-border bg-card p-5"
@@ -218,16 +218,16 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
             )}
           </section>
           <section
-            aria-labelledby="ticket"
+            aria-labelledby="content"
             className="flex flex-col gap-3 rounded-xl border border-border bg-card p-5"
           >
-            <h2 id="ticket" className="text-[15px] font-semibold">
-              {m.ticket}
+            <h2 id="content" className="text-[15px] font-semibold">
+              {m.content}
             </h2>
             {task.body ? (
               <Markdown>{task.body}</Markdown>
             ) : (
-              <p className="text-sm text-muted-foreground">{m.ticketEmpty}</p>
+              <p className="text-sm text-muted-foreground">{m.contentEmpty}</p>
             )}
           </section>
           {/* 調査の結果（PBI-18）。要求要件は、その工程があるタスクだけ */}
@@ -252,15 +252,15 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
         </div>
 
         <section
-          aria-labelledby="ledger"
+          aria-labelledby="activity"
           className="flex min-w-0 flex-[1_1_320px] flex-col gap-1 rounded-xl border border-border bg-card p-5"
         >
-          <h2 id="ledger" className="pb-2 text-[15px] font-semibold">
-            {m.ledger}{" "}
-            <span className="text-[13px] font-normal text-muted-foreground">{m.ledgerNote}</span>
+          <h2 id="activity" className="pb-2 text-[15px] font-semibold">
+            {m.activity}{" "}
+            <span className="text-[13px] font-normal text-muted-foreground">{m.activityNote}</span>
           </h2>
           <ol className="flex flex-col">
-            {[...ledger].reverse().map((event) => (
+            {[...activity].reverse().map((event) => (
               <li
                 key={event.id}
                 className="grid grid-cols-[96px_minmax(0,1fr)] gap-3 border-t border-border py-2.5 text-[13px]"

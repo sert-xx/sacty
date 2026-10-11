@@ -20,8 +20,8 @@ export function message<K extends MessageCode>(
 }
 
 /**
- * 利用者に向けた文。日本語などの文（古い台帳の文や、外から来た文）か、コードと引数の文言（PBI-11）。
- * 画面は renderMessage で画面の言語の文にする。台帳に記録する文はこの形で持つ。
+ * 利用者に向けた文。日本語などの文（古い作業履歴の文や、外から来た文）か、コードと引数の文言（PBI-11）。
+ * 画面は renderMessage で画面の言語の文にする。作業履歴に記録する文はこの形で持つ。
  */
 export const DaemonText = z.union([
   z.string(),

@@ -1,7 +1,7 @@
 "use client";
 
 import { useActionState, useState } from "react";
-import { type CreateTicketState, createTicketAction } from "@/app/actions";
+import { type CreateTaskState, createTaskAction } from "@/app/actions";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -18,24 +18,24 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useMessages } from "@/i18n/client";
 
-const initial: CreateTicketState = {};
+const initial: CreateTaskState = {};
 
 /**
- * チケットの作成。作成先は、この画面を表示したときのプロジェクトに固定する
+ * タスクの作成。作成先は、この画面を表示したときのプロジェクトに固定する
  * （入力中に別のタブでプロジェクトを切り替えても、表示していたプロジェクトに作るため）。
  */
-export function NewTicketDialog({
+export function NewTaskDialog({
   projectId,
   projectName,
 }: {
   projectId: string;
   projectName: string;
 }) {
-  const [state, formAction, pending] = useActionState(createTicketAction, initial);
-  const t = useMessages().forms.ticket;
+  const [state, formAction, pending] = useActionState(createTaskAction, initial);
+  const t = useMessages().forms.task;
   // 作成先は、ダイアログを開いたときのプロジェクトに固定し、閉じるまで変えない
   // （入力中に画面が自動で更新され、別のタブで切り替えたプロジェクトが props で渡されても、
-  // 書いている途中のチケットの作成先は変えないため）
+  // 書いている途中のタスクの作成先は変えないため）
   const [target, setTarget] = useState({ id: projectId, name: projectName });
 
   return (
@@ -53,35 +53,35 @@ export function NewTicketDialog({
             <DialogDescription>{t.description(target.name)}</DialogDescription>
           </DialogHeader>
           <div className="flex flex-col gap-2">
-            <Label htmlFor="ticket-title">{t.title}</Label>
+            <Label htmlFor="task-title">{t.title}</Label>
             <Input
-              id="ticket-title"
+              id="task-title"
               name="title"
               defaultValue={state.values?.title}
               aria-invalid={Boolean(state.fieldErrors?.title)}
-              aria-describedby={state.fieldErrors?.title ? "ticket-title-error" : undefined}
+              aria-describedby={state.fieldErrors?.title ? "task-title-error" : undefined}
               autoFocus
             />
             {state.fieldErrors?.title && (
-              <p id="ticket-title-error" className="text-sm text-warn">
+              <p id="task-title-error" className="text-sm text-warn">
                 {state.fieldErrors.title[0]}
               </p>
             )}
           </div>
           <div className="flex flex-col gap-2">
-            <Label htmlFor="ticket-body">{t.body}</Label>
+            <Label htmlFor="task-body">{t.body}</Label>
             <Textarea
-              id="ticket-body"
+              id="task-body"
               name="body"
               rows={6}
               className="max-h-72 overflow-y-auto"
               defaultValue={state.values?.body}
               placeholder={t.bodyPlaceholder}
               aria-invalid={Boolean(state.fieldErrors?.body)}
-              aria-describedby={state.fieldErrors?.body ? "ticket-body-error" : undefined}
+              aria-describedby={state.fieldErrors?.body ? "task-body-error" : undefined}
             />
             {state.fieldErrors?.body && (
-              <p id="ticket-body-error" className="text-sm text-warn">
+              <p id="task-body-error" className="text-sm text-warn">
                 {state.fieldErrors.body[0]}
               </p>
             )}

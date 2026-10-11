@@ -3,13 +3,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { message, renderMessage } from "@sacty/core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { SqliteActivityStore } from "./activity.js";
 import type { AgentExecutor } from "./agents/docker.js";
 import type { ConfigResult } from "./config.js";
 import { MessageError } from "./errors.js";
 import type { GitHubAuth } from "./gh.js";
 import type { FoundIssue, IssueSearch } from "./github.js";
 import { IssueIntake } from "./intake.js";
-import { SqliteLedgerStore } from "./ledger.js";
 import { MemoryProjectStore } from "./projects.js";
 import { buildPullRequestBody } from "./prompts.js";
 import { MemorySecretStore } from "./secrets.js";
@@ -85,9 +85,9 @@ class FakeGh implements GitHubAuth {
 }
 
 function setup(github = true, gh = new FakeGh()) {
-  const ledger = new SqliteLedgerStore(join(dir, "sacty.db"));
+  const activity = new SqliteActivityStore(join(dir, "sacty.db"));
   const service = new TaskService({
-    ledger,
+    activity,
     config: config(github),
     secrets: new MemorySecretStore({}),
     executor: unused as AgentExecutor,
@@ -115,12 +115,12 @@ function setup(github = true, gh = new FakeGh()) {
   ]);
   let now = 1_000_000;
   const intake = new IssueIntake(service, search, gh, config(github), () => now);
-  return { ledger, service, search, intake, gh, advance: (ms: number) => (now += ms) };
+  return { activity, service, search, intake, gh, advance: (ms: number) => (now += ms) };
 }
 
 describe("GitHub Issue の定期的な取り込み（PBI-5a）", () => {
   it("間隔ごとに取り込み元を検索してタスクにし、状況を記録する", async () => {
-    const { ledger, service, search, intake, advance } = setup();
+    const { activity, service, search, intake, advance } = setup();
     await intake.tick();
     expect(search.queries).toEqual(['is:issue is:open repo:acme/payments label:"sacty"']);
     expect(service.list().map((t) => t.title)).toEqual(["冪等性キー"]);
@@ -133,7 +133,7 @@ describe("GitHub Issue の定期的な取り込み（PBI-5a）", () => {
     expect(search.queries).toHaveLength(2);
     expect(service.list()).toHaveLength(1); // 二重に取り込まない
     expect(service.status().intake).toMatchObject({ imported: 0 });
-    ledger.close();
+    activity.close();
   });
 
   it("失敗は理由を記録し、トークンは残さない。設定が無ければ取り込まない", async () => {
@@ -143,18 +143,18 @@ describe("GitHub Issue の定期的な取り込み（PBI-5a）", () => {
     const error = failing.service.status().intake?.errors?.[0]?.message ?? "";
     expect(error).toContain("GitHub API 401");
     expect(error).not.toContain("ghp_secret");
-    failing.ledger.close();
+    failing.activity.close();
     rmSync(join(dir, "sacty.db"), { force: true });
 
     const off = setup(false);
     await off.intake.tick(true);
     expect(off.search.queries).toEqual([]);
     expect(off.service.status().intake).toBeNull();
-    off.ledger.close();
+    off.activity.close();
   });
 
   it("1つの取り込み元の検索に失敗しても、ほかの取り込み元は取り込む（レビュー指摘）", async () => {
-    const { ledger, service, search, intake } = setup();
+    const { activity, service, search, intake } = setup();
     service.saveProject(undefined, {
       name: "削除されたリポジトリ",
       githubAccount: "me",
@@ -171,12 +171,12 @@ describe("GitHub Issue の定期的な取り込み（PBI-5a）", () => {
         message: "Issue を検索できませんでした：GitHub API 422 [REDACTED]",
       },
     ]);
-    ledger.close();
+    activity.close();
   });
 
   it("取り込み元ごとに、そのプロジェクトの gh のアカウントで検索し、ログインしていないアカウントの分だけ失敗にする（PBI-13）", async () => {
     const gh = new FakeGh({ me: "ghp_active", "side-job": "ghp_side" });
-    const { ledger, service, search, intake } = setup(true, gh);
+    const { activity, service, search, intake } = setup(true, gh);
     service.saveProject(undefined, {
       name: "副業",
       sources: [{ scope: "repo", target: "side/app", label: "sacty" }],
@@ -210,12 +210,12 @@ describe("GitHub Issue の定期的な取り込み（PBI-5a）", () => {
         message: { code: "github.accountRequired", params: { project: "インポートしたもの" } },
       },
     ]);
-    ledger.close();
+    activity.close();
   });
 
   it("レート制限はアカウントごとなので、ほかのアカウントの検索は続ける（PBI-13）", async () => {
     const gh = new FakeGh({ me: "ghp_active", "side-job": "ghp_side" });
-    const { ledger, service, search, intake } = setup(true, gh);
+    const { activity, service, search, intake } = setup(true, gh);
     service.saveProject(undefined, {
       name: "認証",
       githubAccount: "me",
@@ -230,11 +230,11 @@ describe("GitHub Issue の定期的な取り込み（PBI-5a）", () => {
     await intake.tick(true);
     // アクティブなアカウントは1つ目でレート制限になり、2つ目は検索しない。副業のアカウントは検索する
     expect(search.tokens).toEqual(["ghp_active", "ghp_side"]);
-    ledger.close();
+    activity.close();
   });
 
   it("読んだところから次の取り込みを続け、レート制限ならその回のほかの検索をやめる（レビュー指摘）", async () => {
-    const { ledger, service, search, intake, advance } = setup();
+    const { activity, service, search, intake, advance } = setup();
     service.saveProject(undefined, {
       name: "認証",
       githubAccount: "me",
@@ -259,15 +259,15 @@ describe("GitHub Issue の定期的な取り込み（PBI-5a）", () => {
     advance(300_000);
     await intake.tick();
     expect(search.sinces.slice(-2)).toEqual([undefined, undefined]);
-    ledger.close();
+    activity.close();
   });
 
   it("Issue から作ったタスクの PR は、マージで Issue を閉じる", async () => {
-    const { ledger, service, intake } = setup();
+    const { activity, service, intake } = setup();
     await intake.tick();
     const task = service.list()[0];
     if (!task) throw new Error("no task");
     expect(buildPullRequestBody(task)).toContain("Closes #7");
-    ledger.close();
+    activity.close();
   });
 });

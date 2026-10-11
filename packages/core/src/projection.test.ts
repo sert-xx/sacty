@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { budgetState, computeCostUsd } from "./cost.js";
-import type { EventInput, LedgerEvent } from "./events.js";
+import type { ActivityEvent, EventInput } from "./events.js";
 import { EventInput as EventSchema, MVP_STEPS } from "./events.js";
 import { project } from "./projection.js";
 
 let seq = 0;
-const ev = (taskId: string, input: EventInput, actor: LedgerEvent["actor"] = "sacty") =>
+const ev = (taskId: string, input: EventInput, actor: ActivityEvent["actor"] = "sacty") =>
   ({
     ...EventSchema.parse(input),
     seq: ++seq,
@@ -14,14 +14,14 @@ const ev = (taskId: string, input: EventInput, actor: LedgerEvent["actor"] = "sa
     projectId: "default",
     actor,
     at: "2026-10-10T00:00:00.000Z",
-  }) as LedgerEvent;
+  }) as ActivityEvent;
 
 const created = (taskId: string, budgetCapUsd?: number) =>
   ev(
     taskId,
     {
       type: "TaskCreated",
-      payload: { title: `title ${taskId}`, body: "body", start: "ticket", budgetCapUsd },
+      payload: { title: `title ${taskId}`, body: "body", start: "sacty", budgetCapUsd },
     },
     "person",
   );
@@ -49,7 +49,7 @@ const completed = (taskId: string, runId: string, costUsd: number) =>
   });
 
 describe("project", () => {
-  it("台帳からタスクの状態を復元する（最初の工程が実行対象になる）", () => {
+  it("作業履歴からタスクの状態を復元する（最初の工程が実行対象になる）", () => {
     seq = 0;
     const task = project([created("t1"), steps("t1")]).get("t1");
     expect(task?.status).toBe("queued");
@@ -62,7 +62,7 @@ describe("project", () => {
     expect(task?.budget).toEqual({ usedUsd: 0, capUsd: 1, warned: false, estimated: false });
   });
 
-  it("PBI-1の台帳（予算の項目なし）も既定の予算で読める", () => {
+  it("PBI-1の作業履歴（予算の項目なし）も既定の予算で読める", () => {
     seq = 0;
     expect(project([created("t1")]).get("t1")?.budget.capUsd).toBe(1);
   });
@@ -173,7 +173,7 @@ describe("project", () => {
     );
   });
 
-  it("PBI-7の台帳（差し戻し先なし）は、承認ゲートの工程への差し戻しとして読む", () => {
+  it("PBI-7の作業履歴（差し戻し先なし）は、承認ゲートの工程への差し戻しとして読む", () => {
     seq = 0;
     const task = project([
       created("t1"),
@@ -276,13 +276,13 @@ describe("project", () => {
     );
   });
 
-  it("同じ台帳から何度復元しても同じ状態になる", () => {
+  it("同じ作業履歴から何度復元しても同じ状態になる", () => {
     seq = 0;
     const events = [created("t1"), steps("t1"), started("t1", "r1"), completed("t1", "r1", 0.2)];
     expect(project(events)).toEqual(project(events));
   });
 
-  it("順序が崩れた台帳・二重作成・存在しないタスクは受け付けない", () => {
+  it("順序が崩れた作業履歴・二重作成・存在しないタスクは受け付けない", () => {
     seq = 0;
     const first = created("t1");
     const second = created("t2");
@@ -327,8 +327,8 @@ describe("金額の表示", () => {
   });
 });
 
-describe("台帳の文（PBI-11b）", () => {
-  it("古い台帳の日本語の文も、コードと引数の文言も読める", () => {
+describe("作業履歴の文（PBI-11b）", () => {
+  it("古い作業履歴の日本語の文も、コードと引数の文言も読める", () => {
     const old = project([
       created("t1"),
       steps("t1"),
@@ -431,7 +431,7 @@ describe("レビューの工程（PBI-19）", () => {
 
   it("本文が空のレビュー（行へのコメントだけ）も、投稿すると完了する（レビュー指摘）", () => {
     const events = run("t6");
-    const completed = events[4] as Extract<LedgerEvent, { type: "AgentRunCompleted" }>;
+    const completed = events[4] as Extract<ActivityEvent, { type: "AgentRunCompleted" }>;
     completed.payload = {
       ...completed.payload,
       output: "",
@@ -445,7 +445,7 @@ describe("レビューの工程（PBI-19）", () => {
     expect(task?.reviewComments).toHaveLength(1);
   });
 
-  it("レビューを書く前・二度目の投稿・二度目の対象の記録は、台帳の不整合にする", () => {
+  it("レビューを書く前・二度目の投稿・二度目の対象の記録は、作業履歴の不整合にする", () => {
     const before = run("t2").slice(0, 3);
     const posted = ev("t2", { type: "PullRequestReviewPosted", payload: { url: "u" } });
     expect(() => project([...before, posted])).toThrow(/no review is waiting/);

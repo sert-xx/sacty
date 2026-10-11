@@ -12,6 +12,7 @@ import { join } from "node:path";
 import type { EventInput } from "@sacty/core";
 import { isCompleted, MVP_STEPS, message, renderMessage } from "@sacty/core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { SqliteActivityStore } from "./activity.js";
 import type { AgentExecutor } from "./agents/docker.js";
 import type { Invocation } from "./agents/invocation.js";
 import type { AgentOutcome } from "./agents/parse.js";
@@ -21,7 +22,6 @@ import type { ContextFetcher, ContextRef } from "./context.js";
 import { MessageError } from "./errors.js";
 import type { GitHubAuth } from "./gh.js";
 import type { PullRequestFeedback, PullRequestStatus, PullRequests } from "./github.js";
-import { SqliteLedgerStore } from "./ledger.js";
 import { MemoryProjectStore } from "./projects.js";
 import type { RepositoryWorkspace } from "./repository.js";
 import { MemorySecretStore } from "./secrets.js";
@@ -461,7 +461,7 @@ const completed = (outputTokens: number): AgentOutcome => ({
 });
 
 function makeService(
-  ledger: SqliteLedgerStore,
+  activity: SqliteActivityStore,
   outcomes: AgentOutcome[] = [],
   options: {
     config?: () => ConfigResult;
@@ -483,7 +483,7 @@ function makeService(
   const tests = options.tests ?? new FakeTests();
   const pulls = options.pulls ?? new FakePulls();
   const service = new TaskService({
-    ledger,
+    activity,
     config: options.config ?? configOf(agent()),
     secrets: new MemorySecretStore(
       options.secrets ?? { "claude-oauth-token": "oauth-secret", "github-token": "ghp_secret" },
@@ -521,40 +521,40 @@ const current = (svc: TaskService, id: string) => {
   return t?.gate?.submission ?? t?.submissions[step] ?? 1;
 };
 
-describe("台帳", () => {
+describe("作業履歴", () => {
   it("UPDATEとDELETEを拒否する", () => {
-    const ledger = new SqliteLedgerStore(dbPath);
-    makeService(ledger).service.createTicket({ title: "A" });
-    expect(() => ledger.rawExecForTest("UPDATE ledger SET type = 'x'")).toThrow(/append-only/);
-    expect(() => ledger.rawExecForTest("DELETE FROM ledger")).toThrow(/append-only/);
+    const activity = new SqliteActivityStore(dbPath);
+    makeService(activity).service.createTask({ title: "A" });
+    expect(() => activity.rawExecForTest("UPDATE activity SET type = 'x'")).toThrow(/append-only/);
+    expect(() => activity.rawExecForTest("DELETE FROM activity")).toThrow(/append-only/);
     // 工程は、タスクの開始時にオーケストレーターが選ぶので、作った時点では TaskCreated だけ（PBI-17）
-    expect(ledger.all()).toHaveLength(1);
-    ledger.close();
+    expect(activity.all()).toHaveLength(1);
+    activity.close();
   });
 
   it("再起動しても同じ状態を復元する", async () => {
-    const first = new SqliteLedgerStore(dbPath);
+    const first = new SqliteActivityStore(dbPath);
     const { service } = makeService(first, [completed(20_000)]);
-    const created = service.createTicket({ title: "A", body: "B" });
+    const created = service.createTask({ title: "A", body: "B" });
     await service.runNext(created.id);
     const before = service.get(created.id)?.task;
     first.close();
 
-    const second = new SqliteLedgerStore(dbPath);
+    const second = new SqliteActivityStore(dbPath);
     expect(makeService(second).service.get(created.id)?.task).toEqual(before);
     second.close();
   });
 });
 
 describe("工程の実行と費用", () => {
-  it("実行すると、費用（換算値）と出力を台帳に記録して待機に戻る", async () => {
-    const ledger = new SqliteLedgerStore(dbPath);
-    const { service, executor } = makeService(ledger, [completed(20_000)]);
-    const task = service.createTicket({ title: "決済API", body: "冪等性" });
+  it("実行すると、費用（換算値）と出力を作業履歴に記録して待機に戻る", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service, executor } = makeService(activity, [completed(20_000)]);
+    const task = service.createTask({ title: "決済API", body: "冪等性" });
     expect(service.queuedTaskIds()).toEqual([task.id]);
 
     await service.runNext(task.id);
-    const { task: after, ledger: events } = service.get(task.id) ?? {};
+    const { task: after, activity: events } = service.get(task.id) ?? {};
     expect(after?.status).toBe("awaiting_approval");
     expect(after?.budget.usedUsd).toBe(0.3);
     expect(after?.budget.estimated).toBe(true);
@@ -569,20 +569,20 @@ describe("工程の実行と費用", () => {
       "AgentRunCompleted",
       "StepSubmitted",
     ]);
-    // 指示にチケットの内容が入っている
+    // 指示にタスクの内容が入っている
     expect(executor.calls[0]?.command.join(" ")).toContain("冪等性");
-    ledger.close();
+    activity.close();
   });
 
   it("予算の80%で通知し、上限を超えたら次の実行の前に一時停止する", async () => {
-    const ledger = new SqliteLedgerStore(dbPath);
-    const { service, executor } = makeService(ledger, [completed(55_000), completed(70_000)]);
-    const warned = service.createTicket({ title: "A" });
-    const capped = service.createTicket({ title: "B" });
+    const activity = new SqliteActivityStore(dbPath);
+    const { service, executor } = makeService(activity, [completed(55_000), completed(70_000)]);
+    const warned = service.createTask({ title: "A" });
+    const capped = service.createTask({ title: "B" });
 
     await service.runNext(warned.id); // $0.825
     expect(service.get(warned.id)?.task.budget.warned).toBe(true);
-    expect(service.get(warned.id)?.ledger.at(-1)?.type).toBe("BudgetWarned");
+    expect(service.get(warned.id)?.activity.at(-1)?.type).toBe("BudgetWarned");
 
     await service.runNext(capped.id); // $1.05 → 承認待ちで止まる（人間の判断待ちなので、ここでは止めない）
     expect(service.get(capped.id)?.task.status).toBe("awaiting_approval");
@@ -595,13 +595,13 @@ describe("工程の実行と費用", () => {
     expect(executor.calls).toHaveLength(2);
     expect(service.get(capped.id)?.task.status).toBe("paused");
     expect(service.get(capped.id)?.task.pausedReason).toBe("budget");
-    ledger.close();
+    activity.close();
   });
 
   it("予算で止まったタスクは、使用済みより大きい上限でだけ再開できる", async () => {
-    const ledger = new SqliteLedgerStore(dbPath);
-    const { service } = makeService(ledger, [completed(70_000)]);
-    const task = service.createTicket({ title: "A" });
+    const activity = new SqliteActivityStore(dbPath);
+    const { service } = makeService(activity, [completed(70_000)]);
+    const task = service.createTask({ title: "A" });
     await service.runNext(task.id);
     service.requestChanges(task.id, {
       step: "requirements",
@@ -618,17 +618,17 @@ describe("工程の実行と費用", () => {
     expect(() => service.resume(task.id, { capUsd: 5 })).toThrow(
       /一時停止中のタスクではありません/,
     );
-    ledger.close();
+    activity.close();
   });
 
   it("実行前に予算を超えていれば、実行せずに止め、上限を上げると実行し直す", async () => {
-    const ledger = new SqliteLedgerStore(dbPath);
+    const activity = new SqliteActivityStore(dbPath);
     const usage = { input: 0, cacheRead: 0, cacheWrite: 0, output: 70_000 }; // $1.05
-    const { service, executor } = makeService(ledger, [
+    const { service, executor } = makeService(activity, [
       { kind: "failed", reason: "usage_limit", message: "429", usage },
       completed(1_000),
     ]);
-    const task = service.createTicket({ title: "A" });
+    const task = service.createTask({ title: "A" });
 
     await service.runNext(task.id); // 利用上限で失敗（費用は予算を超える）
     expect(service.resume(task.id, {}).status).toBe("queued");
@@ -642,16 +642,16 @@ describe("工程の実行と費用", () => {
     await service.runNext(task.id);
     expect(executor.calls).toHaveLength(2);
     expect(service.get(task.id)?.task.status).toBe("awaiting_approval");
-    ledger.close();
+    activity.close();
   });
 
   it("利用上限で失敗したら一時停止し、再開すると実行し直す", async () => {
-    const ledger = new SqliteLedgerStore(dbPath);
-    const { service, executor } = makeService(ledger, [
+    const activity = new SqliteActivityStore(dbPath);
+    const { service, executor } = makeService(activity, [
       { kind: "failed", reason: "usage_limit", message: "You've hit your session limit" },
       completed(1_000),
     ]);
-    const task = service.createTicket({ title: "A" });
+    const task = service.createTask({ title: "A" });
     await service.runNext(task.id);
     const paused = service.get(task.id)?.task;
     expect(paused?.status).toBe("paused");
@@ -661,42 +661,42 @@ describe("工程の実行と費用", () => {
     await service.runNext(task.id);
     expect(service.get(task.id)?.task.status).toBe("awaiting_approval");
     expect(executor.calls).toHaveLength(2);
-    ledger.close();
+    activity.close();
   });
 
   it("秘密情報が無ければ、認証エラーとして止める（値はどこにも出さない）", async () => {
-    const ledger = new SqliteLedgerStore(dbPath);
-    const { service, executor } = makeService(ledger, [], { secrets: {} });
-    const task = service.createTicket({ title: "A" });
+    const activity = new SqliteActivityStore(dbPath);
+    const { service, executor } = makeService(activity, [], { secrets: {} });
+    const task = service.createTask({ title: "A" });
     await service.runNext(task.id);
     const after = service.get(task.id);
     expect(after?.task.pausedReason).toBe("auth");
     expect(executor.calls).toHaveLength(0);
-    const failed = after?.ledger.find((e) => e.type === "AgentRunFailed");
+    const failed = after?.activity.find((e) => e.type === "AgentRunFailed");
     expect(failed?.type === "AgentRunFailed" && ja(failed.payload.message)).toContain(
       "sacty secret set claude-oauth-token",
     );
-    ledger.close();
+    activity.close();
   });
 
   it("設定が無ければ実行せず、理由を状態として返す", async () => {
-    const ledger = new SqliteLedgerStore(dbPath);
-    const { service, executor } = makeService(ledger, [], {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service, executor } = makeService(activity, [], {
       config: () => loadConfig(join(dir, "nope")),
     });
-    const task = service.createTicket({ title: "A" });
+    const task = service.createTask({ title: "A" });
     await service.runNext(task.id);
     expect(service.get(task.id)?.task.status).toBe("queued");
     expect(executor.calls).toHaveLength(0);
     expect(ja(service.status().problems[0])).toMatch(/sacty config init/);
-    ledger.close();
+    activity.close();
   });
 
   it("デーモンの停止で中断された実行は、再起動時に失敗として記録して一時停止する", () => {
-    const ledger = new SqliteLedgerStore(dbPath);
-    const { service } = makeService(ledger);
-    const task = service.createTicket({ title: "A" });
-    ledger.append({
+    const activity = new SqliteActivityStore(dbPath);
+    const { service } = makeService(activity);
+    const task = service.createTask({ title: "A" });
+    activity.append({
       taskId: task.id,
       projectId: "default",
       events: [
@@ -709,36 +709,36 @@ describe("工程の実行と費用", () => {
         },
       ],
     });
-    const { service: restarted } = makeService(ledger);
+    const { service: restarted } = makeService(activity);
     restarted.recoverInterrupted();
     const after = restarted.get(task.id)?.task;
     expect(after?.status).toBe("paused");
     expect(after?.pausedReason).toBe("error");
     expect(restarted.resume(task.id, {}).status).toBe("queued");
-    ledger.close();
+    activity.close();
   });
 });
 
 describe("秘密情報と予算の通知（レビュー指摘）", () => {
-  it("出力・エラー文・例外に含まれた秘密情報を、台帳に残さない", async () => {
-    const ledger = new SqliteLedgerStore(dbPath);
+  it("出力・エラー文・例外に含まれた秘密情報を、作業履歴に残さない", async () => {
+    const activity = new SqliteActivityStore(dbPath);
     const leaked: AgentOutcome = {
       kind: "completed",
       output: "トークンは oauth-secret です",
       usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 10 },
     };
-    const { service } = makeService(ledger, [
+    const { service } = makeService(activity, [
       leaked,
       { kind: "failed", reason: "auth", message: "401 for oauth-secret" },
     ]);
-    const a = service.createTicket({ title: "A" });
-    const b = service.createTicket({ title: "B" });
+    const a = service.createTask({ title: "A" });
+    const b = service.createTask({ title: "B" });
     await service.runNext(a.id);
     await service.runNext(b.id);
 
     // 例外の経路
     const throwing = new TaskService({
-      ledger,
+      activity,
       config: configOf(agent()),
       secrets: new MemorySecretStore({ "claude-oauth-token": "oauth-secret" }),
       executor: {
@@ -753,59 +753,59 @@ describe("秘密情報と予算の通知（レビュー指摘）", () => {
       contexts: new FakeContexts(),
       workspaceRoot: join(dir, "workspaces"),
     });
-    const c = throwing.createTicket({ title: "C" });
+    const c = throwing.createTask({ title: "C" });
     await throwing.runNext(c.id);
 
-    const all = JSON.stringify(ledger.all());
+    const all = JSON.stringify(activity.all());
     expect(all).not.toContain("oauth-secret");
     expect(all).toContain("[REDACTED]");
-    ledger.close();
+    activity.close();
   });
 
   it("失敗した実行の費用でも、80%の通知を記録する", async () => {
-    const ledger = new SqliteLedgerStore(dbPath);
+    const activity = new SqliteActivityStore(dbPath);
     const usage = { input: 0, cacheRead: 0, cacheWrite: 0, output: 57_000 }; // $0.855
-    const { service } = makeService(ledger, [
+    const { service } = makeService(activity, [
       { kind: "failed", reason: "usage_limit", message: "429", usage },
     ]);
-    const task = service.createTicket({ title: "A" });
+    const task = service.createTask({ title: "A" });
     await service.runNext(task.id);
     const after = service.get(task.id);
     expect(after?.task.budget.warned).toBe(true);
     expect(after?.task.pausedReason).toBe("usage_limit");
-    expect(after?.ledger.map((e) => e.type).slice(-3)).toEqual([
+    expect(after?.activity.map((e) => e.type).slice(-3)).toEqual([
       "AgentRunFailed",
       "TaskPaused",
       "BudgetWarned",
     ]);
-    ledger.close();
+    activity.close();
   });
 
   it("1回の実行で80%未満から上限を超えた場合も、通知を記録する", async () => {
-    const ledger = new SqliteLedgerStore(dbPath);
-    const { service } = makeService(ledger, [completed(70_000)]); // $1.05
-    const task = service.createTicket({ title: "A" });
+    const activity = new SqliteActivityStore(dbPath);
+    const { service } = makeService(activity, [completed(70_000)]); // $1.05
+    const task = service.createTask({ title: "A" });
     await service.runNext(task.id);
     expect(
       service
         .get(task.id)
-        ?.ledger.map((e) => e.type)
+        ?.activity.map((e) => e.type)
         .slice(-3),
     ).toEqual(["AgentRunCompleted", "StepSubmitted", "BudgetWarned"]);
-    ledger.close();
+    activity.close();
   });
 
   it("空のキューを処理した後でも、作成・再開したタスクを実行する（回帰）", async () => {
     const { Worker } = await import("./worker.js");
-    const ledger = new SqliteLedgerStore(dbPath);
-    const { service, executor } = makeService(ledger, [
+    const activity = new SqliteActivityStore(dbPath);
+    const { service, executor } = makeService(activity, [
       { kind: "failed", reason: "usage_limit", message: "429" },
       completed(1_000),
     ]);
     const worker = new Worker(service, 60_000);
 
     await worker.tick(); // 空のキュー
-    const task = service.createTicket({ title: "A" });
+    const task = service.createTask({ title: "A" });
     await worker.tick();
     expect(executor.calls).toHaveLength(1);
     expect(service.get(task.id)?.task.status).toBe("paused");
@@ -815,15 +815,15 @@ describe("秘密情報と予算の通知（レビュー指摘）", () => {
     await worker.tick();
     expect(executor.calls).toHaveLength(2);
     expect(service.get(task.id)?.task.status).toBe("awaiting_approval");
-    ledger.close();
+    activity.close();
   });
 
-  it("停止時は、実行中の処理が台帳に記録されるまで待つ", async () => {
+  it("停止時は、実行中の処理が作業履歴に記録されるまで待つ", async () => {
     const { Worker } = await import("./worker.js");
-    const ledger = new SqliteLedgerStore(dbPath);
+    const activity = new SqliteActivityStore(dbPath);
     let finish: (o: AgentOutcome) => void = () => {};
     const service = new TaskService({
-      ledger,
+      activity,
       config: configOf(agent()),
       secrets: new MemorySecretStore({ "claude-oauth-token": "oauth-secret" }),
       executor: { run: () => new Promise<AgentOutcome>((resolve) => (finish = resolve)) },
@@ -841,7 +841,7 @@ describe("秘密情報と予算の通知（レビュー指摘）", () => {
       }),
       workspaceRoot: join(dir, "workspaces"),
     });
-    const task = service.createTicket({ title: "A" });
+    const task = service.createTask({ title: "A" });
     const worker = new Worker(service, 60_000);
     void worker.tick();
     await new Promise((r) => setTimeout(r, 20));
@@ -854,7 +854,7 @@ describe("秘密情報と予算の通知（レビュー指摘）", () => {
     finish({ kind: "failed", reason: "error", message: "中断" });
     await draining;
     expect(service.get(task.id)?.task.status).toBe("paused");
-    ledger.close();
+    activity.close();
   });
 });
 
@@ -868,9 +868,9 @@ describe("承認ゲート（PBI-7）", () => {
   });
 
   it("要求要件を作ると承認待ちで止まり、承認すると設計が実行対象になって待機する", async () => {
-    const ledger = new SqliteLedgerStore(dbPath);
-    const { service } = makeService(ledger, [draft("# 要求要件 v1")]);
-    const task = service.createTicket({ title: "A" });
+    const activity = new SqliteActivityStore(dbPath);
+    const { service } = makeService(activity, [draft("# 要求要件 v1")]);
+    const task = service.createTask({ title: "A" });
     await service.runNext(task.id);
     const waiting = service.get(task.id)?.task;
     expect(waiting?.status).toBe("awaiting_approval");
@@ -889,12 +889,12 @@ describe("承認ゲート（PBI-7）", () => {
     expect(() =>
       service.approve(task.id, { step: "requirements", submission: current(service, task.id) }),
     ).toThrow(/承認待ちのタスクではありません/);
-    ledger.close();
+    activity.close();
   });
 
   it("差し戻すと指摘を累積し、前回の下書きと有効な指摘の全件を渡して実行し直す", async () => {
-    const ledger = new SqliteLedgerStore(dbPath);
-    const { service, executor } = makeService(ledger, [
+    const activity = new SqliteActivityStore(dbPath);
+    const { service, executor } = makeService(activity, [
       draft("# v1"),
       draft("# v2", [{ remarkId: "requirements-1-1", text: "受け入れ条件を追加した" }]),
       draft("# v3", [
@@ -902,7 +902,7 @@ describe("承認ゲート（PBI-7）", () => {
         { remarkId: "unknown-id", text: "無視される" },
       ]),
     ]);
-    const task = service.createTicket({ title: "A" });
+    const task = service.createTask({ title: "A" });
     await service.runNext(task.id);
 
     expect(() =>
@@ -944,13 +944,13 @@ describe("承認ゲート（PBI-7）", () => {
     expect(third?.remarks.find((r) => r.id === "requirements-2-1")?.response).toBe(
       "対象外を明記した",
     );
-    ledger.close();
+    activity.close();
   });
 
   it("表示していた提出回が最新でなければ、承認も差し戻しも拒否する（レビュー指摘）", async () => {
-    const ledger = new SqliteLedgerStore(dbPath);
-    const { service } = makeService(ledger, [draft("# v1"), draft("# v2")]);
-    const task = service.createTicket({ title: "A" });
+    const activity = new SqliteActivityStore(dbPath);
+    const { service } = makeService(activity, [draft("# v1"), draft("# v2")]);
+    const task = service.createTask({ title: "A" });
     await service.runNext(task.id);
     // タブAは1回目を表示したまま、タブBで差し戻して2回目が提出された
     service.requestChanges(task.id, { step: "requirements", submission: 1, comments: ["直して"] });
@@ -964,17 +964,17 @@ describe("承認ゲート（PBI-7）", () => {
     ).toThrow(/最新ではありません/);
     expect(service.get(task.id)?.task.steps[0]?.state).toBe("active"); // 承認されていない
     expect(service.approve(task.id, { step: "requirements", submission: 2 }).status).toBe("queued");
-    ledger.close();
+    activity.close();
   });
 
   it("今回の提出で回答のない指摘は、前回の対応文を残さず未回答にする（レビュー指摘）", async () => {
-    const ledger = new SqliteLedgerStore(dbPath);
-    const { service } = makeService(ledger, [
+    const activity = new SqliteActivityStore(dbPath);
+    const { service } = makeService(activity, [
       draft("# v1"),
       draft("# v2", [{ remarkId: "requirements-1-1", text: "v2で対応しました" }]),
       draft("# v3", [{ remarkId: "requirements-2-1", text: "Bに対応" }]),
     ]);
-    const task = service.createTicket({ title: "A" });
+    const task = service.createTask({ title: "A" });
     await service.runNext(task.id);
     service.requestChanges(task.id, { step: "requirements", submission: 1, comments: ["A"] });
     await service.runNext(task.id);
@@ -994,16 +994,16 @@ describe("承認ゲート（PBI-7）", () => {
       response: "Bに対応",
       respondedIn: 3,
     });
-    ledger.close();
+    activity.close();
   });
 
   it("差し戻しが上限（3回）を超えるとエスカレーションになり、続けるか承認するかを選べる", async () => {
-    const ledger = new SqliteLedgerStore(dbPath);
+    const activity = new SqliteActivityStore(dbPath);
     const { service } = makeService(
-      ledger,
+      activity,
       Array.from({ length: 5 }, (_, i) => draft(`# v${i + 1}`)),
     );
-    const task = service.createTicket({ title: "A" });
+    const task = service.createTask({ title: "A" });
     await service.runNext(task.id);
     for (let i = 1; i <= 3; i++) {
       service.requestChanges(task.id, {
@@ -1036,7 +1036,7 @@ describe("承認ゲート（PBI-7）", () => {
     });
     expect(continued.status).toBe("queued");
     expect(continued.remarks.at(-1)).toMatchObject({ id: "requirements-4-1", text: "指摘4" });
-    const last = service.get(task.id)?.ledger.at(-1);
+    const last = service.get(task.id)?.activity.at(-1);
     expect(last?.type === "ChangesRequested" && last.payload.overLimit).toBe(true);
 
     await service.runNext(task.id);
@@ -1050,17 +1050,17 @@ describe("承認ゲート（PBI-7）", () => {
       service.approve(task.id, { step: "requirements", submission: current(service, task.id) })
         .status,
     ).toBe("queued");
-    ledger.close();
+    activity.close();
   });
 
   it("承認待ちのあいだは予算超過で止めず、次の実行の前に判定する", async () => {
-    const ledger = new SqliteLedgerStore(dbPath);
-    const { service } = makeService(ledger, [completed(70_000)]); // $1.05
-    const task = service.createTicket({ title: "A" });
+    const activity = new SqliteActivityStore(dbPath);
+    const { service } = makeService(activity, [completed(70_000)]); // $1.05
+    const task = service.createTask({ title: "A" });
     await service.runNext(task.id);
     const after = service.get(task.id);
     expect(after?.task.status).toBe("awaiting_approval");
-    expect(after?.ledger.map((e) => e.type).slice(-3)).toEqual([
+    expect(after?.activity.map((e) => e.type).slice(-3)).toEqual([
       "AgentRunCompleted",
       "StepSubmitted",
       "BudgetWarned",
@@ -1072,7 +1072,7 @@ describe("承認ゲート（PBI-7）", () => {
     });
     await service.runNext(task.id);
     expect(service.get(task.id)?.task.pausedReason).toBe("budget");
-    ledger.close();
+    activity.close();
   });
 });
 
@@ -1094,17 +1094,17 @@ describe("設計の工程（PBI-8）", () => {
 
   /** 要求要件を承認し、設計を1回提出したところまで進める。 */
   async function toDesignGate(outcomes: AgentOutcome[]) {
-    const ledger = new SqliteLedgerStore(dbPath);
-    const made = makeService(ledger, [draft("# 要求要件 v1"), ...outcomes]);
-    const task = made.service.createTicket({ title: "決済API", body: "二重処理を防ぐ" });
+    const activity = new SqliteActivityStore(dbPath);
+    const made = makeService(activity, [draft("# 要求要件 v1"), ...outcomes]);
+    const task = made.service.createTask({ title: "決済API", body: "二重処理を防ぐ" });
     await made.service.runNext(task.id);
     gate(made.service, task.id, "requirements");
     await made.service.runNext(task.id);
-    return { ledger, ...made, id: task.id };
+    return { activity, ...made, id: task.id };
   }
 
   it("承認済みの要求要件から設計とテスト観点を作り、承認ゲートで止まる", async () => {
-    const { ledger, service, executor, id } = await toDesignGate([
+    const { activity, service, executor, id } = await toDesignGate([
       draft("# 設計 v1", [
         {
           "sacty-test-viewpoints": [
@@ -1141,11 +1141,11 @@ describe("設計の工程（PBI-8）", () => {
       testViewpoints: [{ id: "TV-1" }],
     });
     expect(approved.approved.requirements?.output).toBe("# 要求要件 v1");
-    ledger.close();
+    activity.close();
   });
 
   it("設計を差し戻すと、承認済みの要求要件はそのままで設計だけをやり直す", async () => {
-    const { ledger, service, executor, id } = await toDesignGate([
+    const { activity, service, executor, id } = await toDesignGate([
       draft("# 設計 v1", [viewpoints("A")]),
       draft("# 設計 v2", [
         viewpoints("A", "B"),
@@ -1172,11 +1172,11 @@ describe("設計の工程（PBI-8）", () => {
     expect(task?.testViewpoints.map((v) => v.id)).toEqual(["TV-1", "TV-2"]);
     expect(task?.remarks.find((r) => r.id === "design-1-1")?.response).toBe("異常系を足した");
     expect(task?.steps[0]?.state).toBe("done");
-    ledger.close();
+    activity.close();
   });
 
   it("要求要件へ差し戻すと承認を取り消し、再承認するまで設計を実行しない", async () => {
-    const { ledger, service, executor, id } = await toDesignGate([
+    const { activity, service, executor, id } = await toDesignGate([
       draft("# 設計 v1", [viewpoints("A")]),
       draft("# 要求要件 v2", [
         { "sacty-responses": [{ remarkId: "requirements-1-1", text: "対象外を明記した" }] },
@@ -1205,13 +1205,13 @@ describe("設計の工程（PBI-8）", () => {
     expect(prompt).toContain("--- 承認済みの要求要件 ---\n# 要求要件 v2");
     expect(prompt).toContain("# 設計 v1"); // 前回の設計の下書きも渡す
     expect(service.get(id)?.task.gate).toEqual({ step: "design", submission: 2 });
-    ledger.close();
+    activity.close();
   });
 
   it("差し戻せるのは、承認ゲートの工程かそれより前の承認ゲートのある工程だけ", async () => {
-    const ledger = new SqliteLedgerStore(dbPath);
-    const { service } = makeService(ledger, [draft("# 要求要件 v1")]);
-    const { id } = service.createTicket({ title: "A" });
+    const activity = new SqliteActivityStore(dbPath);
+    const { service } = makeService(activity, [draft("# 要求要件 v1")]);
+    const { id } = service.createTask({ title: "A" });
     await service.runNext(id);
     for (const target of ["design", "implement"] as const) {
       expect(() =>
@@ -1224,7 +1224,7 @@ describe("設計の工程（PBI-8）", () => {
       ).toThrow(/差し戻せません/);
     }
     expect(service.get(id)?.task.status).toBe("awaiting_approval");
-    ledger.close();
+    activity.close();
   });
 
   it("要求要件への差し戻しも上限を数え、エスカレーション後は同じ工程の書きかけの指摘を引き継ぐ", async () => {
@@ -1233,7 +1233,7 @@ describe("設計の工程（PBI-8）", () => {
       outcomes.push(draft(`# 要求要件 v${i}`), draft(`# 設計 v${i}`, [viewpoints("A")]));
     }
     outcomes.push(draft("# 要求要件 v5"));
-    const { ledger, service, id } = await toDesignGate(outcomes);
+    const { activity, service, id } = await toDesignGate(outcomes);
     const back = (comments: string[], extra: Record<string, unknown> = {}) =>
       service.requestChanges(id, {
         step: "design",
@@ -1265,19 +1265,19 @@ describe("設計の工程（PBI-8）", () => {
     const continued = back([], { continueOverLimit: true });
     expect(continued.remarks.at(-1)).toMatchObject({ id: "requirements-4-1", text: "指摘4" });
     expect(continued.steps[0]?.state).toBe("active");
-    ledger.close();
+    activity.close();
   });
 
   it("PBI-7で承認され設計のまま待機していたタスクは、起動時に設計を実行待ちにする", async () => {
-    const ledger = new SqliteLedgerStore(dbPath);
-    const { service } = makeService(ledger, [
+    const activity = new SqliteActivityStore(dbPath);
+    const { service } = makeService(activity, [
       draft("# 要求要件 v1"),
       draft("# 設計", [viewpoints("A")]),
     ]);
-    const { id } = service.createTicket({ title: "A" });
+    const { id } = service.createTask({ title: "A" });
     await service.runNext(id);
-    // PBI-7の台帳：設計を実行できなかったため、承認後に待機していた
-    ledger.append({
+    // PBI-7の作業履歴：設計を実行できなかったため、承認後に待機していた
+    activity.append({
       taskId: id,
       projectId: "default",
       events: [
@@ -1287,7 +1287,7 @@ describe("設計の工程（PBI-8）", () => {
         },
       ],
     });
-    const { service: restarted } = makeService(ledger, [draft("# 設計", [viewpoints("A")])]);
+    const { service: restarted } = makeService(activity, [draft("# 設計", [viewpoints("A")])]);
     expect(restarted.get(id)?.task.status).toBe("idle");
     restarted.queueWaitingSteps();
     expect(restarted.queuedTaskIds()).toEqual([id]);
@@ -1295,11 +1295,11 @@ describe("設計の工程（PBI-8）", () => {
     expect(restarted.get(id)?.task.gate).toEqual({ step: "design", submission: 1 });
     restarted.queueWaitingSteps(); // 承認待ちのタスクには何もしない
     expect(restarted.get(id)?.task.status).toBe("awaiting_approval");
-    ledger.close();
+    activity.close();
   });
 
-  it("承認済みの工程の成果物は凍結され、台帳でも書き換えを受け付けない", async () => {
-    const { ledger, service, id } = await toDesignGate([draft("# 設計 v1", [viewpoints("A")])]);
+  it("承認済みの工程の成果物は凍結され、作業履歴でも書き換えを受け付けない", async () => {
+    const { activity, service, id } = await toDesignGate([draft("# 設計 v1", [viewpoints("A")])]);
     gate(service, id, "design");
     const task = service.get(id)?.task;
     expect(task?.outputs.requirements).toBe("# 要求要件 v1");
@@ -1307,7 +1307,7 @@ describe("設計の工程（PBI-8）", () => {
     // 承認済みの工程は、差し戻して承認を取り消さない限り実行対象にならない
     expect(task?.steps.find((s) => s.state === "active")?.key).toBe("implement");
     expect(() => gate(service, id, "requirements")).toThrow(/承認待ちのタスクではありません/);
-    ledger.close();
+    activity.close();
   });
 });
 
@@ -1342,20 +1342,20 @@ describe("ゴールガーディアン：変更の申し出の判定（PBI-9）",
 
   /** 要求要件を承認し、設計の実行（申し出つき）とゴールガーディアンの判定まで進める。 */
   async function proposeAndJudge(outcomes: AgentOutcome[]) {
-    const ledger = new SqliteLedgerStore(dbPath);
-    const made = makeService(ledger, [out("# 要求要件 v1"), ...outcomes]);
-    const task = made.service.createTicket({
+    const activity = new SqliteActivityStore(dbPath);
+    const made = makeService(activity, [out("# 要求要件 v1"), ...outcomes]);
+    const task = made.service.createTask({
       title: "決済API",
-      body: "チケットの本文（秘密の経緯）",
+      body: "タスクの本文（秘密の経緯）",
     });
     await made.service.runNext(task.id);
     made.service.approve(task.id, { step: "requirements", submission: 1 });
     await made.service.runNext(task.id);
-    return { ledger, ...made, id: task.id };
+    return { activity, ...made, id: task.id };
   }
 
   it("設計の工程は要求要件の変更を申し出られ、ゴールガーディアンは新しいセッションで必要な情報だけを受け取る", async () => {
-    const { ledger, service, executor, id } = await proposeAndJudge([
+    const { activity, service, executor, id } = await proposeAndJudge([
       designWithProposal(),
       verdict("rejected", "代替手段がある"),
     ]);
@@ -1366,8 +1366,8 @@ describe("ゴールガーディアン：変更の申し出の判定（PBI-9）",
     expect(guardian).toContain("理由：外部APIが冪等性キーに対応していない");
     expect(guardian).toContain("- 決済代行のAPI仕様書 v3 に Idempotency-Key が無い");
     expect(guardian).toContain("# 要求要件 v2（sacty側で重複を防ぐ）");
-    // チケットや工程の下書き、過去の経緯は渡さない
-    expect(guardian).not.toContain("チケットの本文");
+    // タスクの内容や工程の下書き、過去の経緯は渡さない
+    expect(guardian).not.toContain("タスクの本文");
     expect(guardian).not.toContain("# 設計 v1");
     // 工程の作業領域とは別の作業領域に、起点のコミットのコードを読み取り専用で渡す（PBI-16）
     expect(executor.dirs[2]).not.toBe(executor.dirs[1]);
@@ -1395,19 +1395,21 @@ describe("ゴールガーディアン：変更の申し出の判定（PBI-9）",
     expect(task?.approved.requirements?.output).toBe("# 要求要件 v1");
     // ゴールガーディアンの費用も予算に入る（100 + 100 + 1000 出力トークン × $15/M）
     expect(task?.budget.usedUsd).toBeCloseTo(0.018, 6);
-    const types = service.get(id)?.ledger.map((e) => e.type) ?? [];
+    const types = service.get(id)?.activity.map((e) => e.type) ?? [];
     expect(types.slice(-4)).toEqual([
       "AgentRunCompleted",
       "ChangeProposed",
       "ChangeJudged",
       "StepSubmitted",
     ]);
-    expect(service.get(id)?.ledger.find((e) => e.type === "ChangeJudged")?.actor).toBe("guardian");
-    ledger.close();
+    expect(service.get(id)?.activity.find((e) => e.type === "ChangeJudged")?.actor).toBe(
+      "guardian",
+    );
+    activity.close();
   });
 
   it("要求要件の変更が承認されても、人間の再承認が必要になる", async () => {
-    const { ledger, service, executor, id } = await proposeAndJudge([
+    const { activity, service, executor, id } = await proposeAndJudge([
       designWithProposal(),
       verdict("approved"),
       out("# 設計 v2"),
@@ -1426,11 +1428,11 @@ describe("ゴールガーディアン：変更の申し出の判定（PBI-9）",
       "--- 承認済みの要求要件 ---\n# 要求要件 v2（sacty側で重複を防ぐ）",
     );
     expect(service.get(id)?.task.gate).toEqual({ step: "design", submission: 1 });
-    ledger.close();
+    activity.close();
   });
 
   it("判定できなければエスカレーションになり、人間が認めるか認めないかを決める", async () => {
-    const { ledger, service, id } = await proposeAndJudge([
+    const { activity, service, id } = await proposeAndJudge([
       designWithProposal(),
       out("判定の形式が無い出力"),
     ]);
@@ -1448,11 +1450,11 @@ describe("ゴールガーディアン：変更の申し出の判定（PBI-9）",
     expect(() => service.decideChange(id, "CP-1", { accept: true })).toThrow(
       /判断待ちではありません/,
     );
-    ledger.close();
+    activity.close();
   });
 
   it("人間が認めた要求要件の変更も、再承認に回す", async () => {
-    const { ledger, service, id } = await proposeAndJudge([
+    const { activity, service, id } = await proposeAndJudge([
       designWithProposal(),
       verdict("undecidable", "価値判断を含む"),
     ]);
@@ -1461,45 +1463,47 @@ describe("ゴールガーディアン：変更の申し出の判定（PBI-9）",
     expect(accepted.proposals[0]).toMatchObject({ decision: { accept: true }, applied: true });
     expect(accepted.approved).toEqual({}); // 承認を取り消している
     expect(accepted.steps.map((st) => st.state)).toEqual(["active", "todo", "todo", "todo"]);
-    const types = service.get(id)?.ledger.map((e) => e.type) ?? [];
+    const types = service.get(id)?.activity.map((e) => e.type) ?? [];
     expect(types.slice(-4)).toEqual([
       "TaskEscalated",
       "ChangeDecided",
       "ChangeApplied",
       "StepSubmitted",
     ]);
-    ledger.close();
+    activity.close();
   });
 
   it("ゴールガーディアンの実行に失敗したら、判定できなかったものとしてエスカレーションにする", async () => {
-    const { ledger, service, id } = await proposeAndJudge([
+    const { activity, service, id } = await proposeAndJudge([
       designWithProposal(),
       { kind: "failed", reason: "usage_limit", message: "You've hit your session limit" },
     ]);
     const task = service.get(id)?.task;
     expect(task?.status).toBe("escalated");
     expect(ja(task?.proposals[0]?.judgement?.reason)).toContain("session limit");
-    ledger.close();
+    activity.close();
   });
 
   it("承認されていない工程への申し出は無視し、そのまま提出する", async () => {
-    const { ledger, service, executor, id } = await proposeAndJudge([designWithProposal("design")]);
+    const { activity, service, executor, id } = await proposeAndJudge([
+      designWithProposal("design"),
+    ]);
     expect(executor.calls).toHaveLength(2); // ゴールガーディアンは呼ばない
     const task = service.get(id)?.task;
     expect(task?.proposals).toEqual([]);
     expect(task?.gate).toEqual({ step: "design", submission: 1 });
-    ledger.close();
+    activity.close();
   });
 
   it("デーモンの停止で中断された判定は、再起動時にエスカレーションにする", async () => {
-    const ledger = new SqliteLedgerStore(dbPath);
-    const { service } = makeService(ledger, [out("# 要求要件 v1")]);
-    const { id } = service.createTicket({ title: "A" });
+    const activity = new SqliteActivityStore(dbPath);
+    const { service } = makeService(activity, [out("# 要求要件 v1")]);
+    const { id } = service.createTask({ title: "A" });
     await service.runNext(id);
     service.approve(id, { step: "requirements", submission: 1 });
     // 設計の実行完了と申し出までを記録したところで、デーモンが止まった
     const runId = "run-x";
-    ledger.append({
+    activity.append({
       taskId: id,
       projectId: "default",
       events: [
@@ -1542,50 +1546,50 @@ describe("ゴールガーディアン：変更の申し出の判定（PBI-9）",
         },
       ],
     });
-    const { service: restarted } = makeService(ledger);
+    const { service: restarted } = makeService(activity);
     restarted.recoverInterrupted();
     const task = restarted.get(id)?.task;
     expect(task?.status).toBe("escalated");
     expect(ja(task?.proposals[0]?.judgement?.reason)).toMatch(/中断/);
-    ledger.close();
+    activity.close();
   });
 
-  it("判定と後始末は、同じトランザクションで台帳に記録する（レビュー指摘）", async () => {
-    const ledger = new SqliteLedgerStore(dbPath);
+  it("判定と後始末は、同じトランザクションで作業履歴に記録する（レビュー指摘）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
     const appended: string[][] = [];
-    const original = ledger.append.bind(ledger);
-    ledger.append = (entry) => {
+    const original = activity.append.bind(activity);
+    activity.append = (entry) => {
       appended.push(entry.events.map((e) => e.event.type));
       return original(entry);
     };
-    const { service } = makeService(ledger, [
+    const { service } = makeService(activity, [
       out("# 要求要件 v1"),
       designWithProposal(),
       verdict("approved"),
     ]);
-    const { id } = service.createTicket({ title: "A" });
+    const { id } = service.createTask({ title: "A" });
     await service.runNext(id);
     service.approve(id, { step: "requirements", submission: 1 });
     await service.runNext(id);
     expect(appended).toContainEqual(["ChangeJudged", "ChangeApplied", "StepSubmitted"]);
     // 申し出のない実行も、完了と提出を一緒に記録する
     expect(appended).toContainEqual(["AgentRunCompleted", "StepSubmitted"]);
-    ledger.close();
+    activity.close();
   });
 
-  /** 判定（と人間の判断）までが記録され、後始末が記録されていない台帳を作る。 */
+  /** 判定（と人間の判断）までが記録され、後始末が記録されていない作業履歴を作る。 */
   async function cutAfter(
     judged: "approved" | "rejected" | "undecidable",
     extra: { actor: "person" | "sacty"; event: EventInput }[] = [],
   ) {
-    const ledger = new SqliteLedgerStore(dbPath);
-    const { service } = makeService(ledger, [out("# 要求要件 v1")]);
-    const { id } = service.createTicket({ title: "A" });
+    const activity = new SqliteActivityStore(dbPath);
+    const { service } = makeService(activity, [out("# 要求要件 v1")]);
+    const { id } = service.createTask({ title: "A" });
     await service.runNext(id);
     service.approve(id, { step: "requirements", submission: 1 });
     const runId = "run-x";
     const append = (actor: "agent" | "guardian" | "sacty" | "person", event: EventInput) =>
-      ledger.append({ taskId: id, projectId: "default", events: [{ actor, event }] });
+      activity.append({ taskId: id, projectId: "default", events: [{ actor, event }] });
     append("sacty", {
       type: "AgentRunStarted",
       payload: { runId, step: "design", agentId: "a", authMode: "subscription" },
@@ -1619,20 +1623,20 @@ describe("ゴールガーディアン：変更の申し出の判定（PBI-9）",
       payload: { proposalId: "CP-1", verdict: judged, reason: "x", agentId: "g" },
     });
     for (const e of extra) append(e.actor, e.event);
-    const { service: restarted } = makeService(ledger);
+    const { service: restarted } = makeService(activity);
     expect(restarted.get(id)?.task.status).toBe("idle"); // どの状態にも進んでいない
     restarted.recoverInterrupted();
-    return { ledger, service: restarted, id };
+    return { activity, service: restarted, id };
   }
 
-  it("判定まで記録されて止まった台帳も、再起動時に後始末を記録して先に進める（レビュー指摘）", async () => {
+  it("判定まで記録されて止まった作業履歴も、再起動時に後始末を記録して先に進める（レビュー指摘）", async () => {
     const undecidable = await cutAfter("undecidable");
     expect(undecidable.service.get(undecidable.id)?.task.status).toBe("escalated");
     // 人間の判断も受け付ける
     expect(
       undecidable.service.decideChange(undecidable.id, "CP-1", { accept: false }).gate,
     ).toEqual({ step: "design", submission: 1 });
-    undecidable.ledger.close();
+    undecidable.activity.close();
     rmSync(dbPath, { force: true });
 
     const approved = await cutAfter("approved");
@@ -1642,17 +1646,17 @@ describe("ゴールガーディアン：変更の申し出の判定（PBI-9）",
     });
     approved.service.recoverInterrupted(); // 何度呼んでも同じ（冪等）
     expect(
-      approved.service.get(approved.id)?.ledger.filter((e) => e.type === "StepSubmitted"),
+      approved.service.get(approved.id)?.activity.filter((e) => e.type === "StepSubmitted"),
     ).toHaveLength(2);
-    approved.ledger.close();
+    approved.activity.close();
     rmSync(dbPath, { force: true });
 
     const rejected = await cutAfter("rejected");
     expect(rejected.service.get(rejected.id)?.task.gate).toEqual({ step: "design", submission: 1 });
-    rejected.ledger.close();
+    rejected.activity.close();
   });
 
-  it("人間の判断や反映まで記録されて止まった台帳も、再起動時に先に進める（レビュー指摘）", async () => {
+  it("人間の判断や反映まで記録されて止まった作業履歴も、再起動時に先に進める（レビュー指摘）", async () => {
     const decided = await cutAfter("undecidable", [
       {
         actor: "sacty",
@@ -1675,7 +1679,7 @@ describe("ゴールガーディアン：変更の申し出の判定（PBI-9）",
       step: "requirements",
       submission: 2,
     });
-    decided.ledger.close();
+    decided.activity.close();
     rmSync(dbPath, { force: true });
 
     const applied = await cutAfter("approved", [
@@ -1685,7 +1689,7 @@ describe("ゴールガーディアン：変更の申し出の判定（PBI-9）",
       step: "requirements",
       submission: 2,
     });
-    applied.ledger.close();
+    applied.activity.close();
   });
 });
 
@@ -1742,7 +1746,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     );
   const promptOf = (executor: FakeExecutor, i: number) =>
     executor.calls[i]?.command.join(" ") ?? "";
-  const types = (svc: TaskService, id: string) => svc.get(id)?.ledger.map((e) => e.type) ?? [];
+  const types = (svc: TaskService, id: string) => svc.get(id)?.activity.map((e) => e.type) ?? [];
 
   /** 要求要件（差し戻し1回）と設計を承認し、実装の工程が実行待ちになったところまで進める。 */
   async function toImplement(
@@ -1755,14 +1759,14 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       now?: () => number;
     } = {},
   ) {
-    const ledger = new SqliteLedgerStore(dbPath);
+    const activity = new SqliteActivityStore(dbPath);
     const made = makeService(
-      ledger,
+      activity,
       [out("# 要求要件 v1"), out("# 要求要件 v2"), design, ...outcomes],
       options,
     );
     const { service } = made;
-    const { id } = service.createTicket({ title: "決済API", body: "チケットの本文" });
+    const { id } = service.createTask({ title: "決済API", body: "タスクの本文" });
     await service.runNext(id);
     service.requestChanges(id, {
       step: "requirements",
@@ -1773,7 +1777,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     service.approve(id, { step: "requirements", submission: 2 });
     await service.runNext(id);
     service.approve(id, { step: "design", submission: 1 });
-    return { ledger, ...made, id };
+    return { activity, ...made, id };
   }
 
   /** 実装と検証を、止まるまで進める。 */
@@ -1796,13 +1800,13 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     });
 
     it("起点のコードを読み取り専用で読んで調査の結果を書き、人間が承認すると完了する（差し戻しで調べ直す）", async () => {
-      const ledger = new SqliteLedgerStore(dbPath);
+      const activity = new SqliteActivityStore(dbPath);
       const { service, executor, repos } = makeService(
-        ledger,
+        activity,
         [out("# 調査の結果 v1"), out("# 調査の結果 v2")],
         { planner: investigatePlanner },
       );
-      const { id } = service.createTicket({ title: "決済の再試行はどこで行っている？" });
+      const { id } = service.createTask({ title: "決済の再試行はどこで行っている？" });
       await service.runNext(id);
       expect(promptOf(executor, 0)).toContain("あなたはソフトウェア開発の調査エージェントです");
       expect(promptOf(executor, 0)).toContain("決済の再試行はどこで行っている？");
@@ -1822,15 +1826,15 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       const done = service.approve(id, { step: "investigate", submission: 2 });
       expect(isCompleted(done)).toBe(true);
       expect(done.approved.investigate?.output).toBe("# 調査の結果 v2");
-      // チケットから作ったタスクは、Issue には返さない
+      // 画面で作ったタスクは、Issue には返さない
       expect(service.queuedTaskIds()).toEqual([]);
-      ledger.close();
+      activity.close();
     });
 
     it("Issue から取り込んだタスクは、完了したら結果をプロジェクトのアカウントで Issue にコメントし、二度は返さない", async () => {
-      const ledger = new SqliteLedgerStore(dbPath);
+      const activity = new SqliteActivityStore(dbPath);
       const pulls = new FakePulls();
-      const { service } = makeService(ledger, [out("# 調査の結果\n\n- src/pay.ts:12 で再試行")], {
+      const { service } = makeService(activity, [out("# 調査の結果\n\n- src/pay.ts:12 で再試行")], {
         pulls,
         planner: investigatePlanner,
       });
@@ -1867,13 +1871,13 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         url: "https://github.com/acme/app/issues/5#issuecomment-1",
       });
       expect(service.queuedTaskIds()).toEqual([]);
-      ledger.close();
+      activity.close();
     });
 
     it("投稿の後、記録の前に止まっても、次の実行で既存のコメントを使い、同じ結果を二度コメントしない", async () => {
-      const ledger = new SqliteLedgerStore(dbPath);
+      const activity = new SqliteActivityStore(dbPath);
       const pulls = new FakePulls();
-      const { service } = makeService(ledger, [out("# 調査の結果")], {
+      const { service } = makeService(activity, [out("# 調査の結果")], {
         pulls,
         planner: investigatePlanner,
       });
@@ -1904,9 +1908,9 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       await service.runNext(id);
       service.approve(id, { step: "investigate", submission: 1 });
       // IssueCommented の記録だけを一度失敗させる
-      const append = ledger.append.bind(ledger);
+      const append = activity.append.bind(activity);
       let failOnce = true;
-      ledger.append = (entry) => {
+      activity.append = (entry) => {
         if (failOnce && entry.events.some((e) => e.event.type === "IssueCommented")) {
           failOnce = false;
           throw new Error("disk full");
@@ -1921,14 +1925,14 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         url: "https://github.com/acme/app/issues/8#issuecomment-2",
       });
       expect(service.queuedTaskIds()).toEqual([]);
-      ledger.close();
+      activity.close();
     });
 
     it("Issue に返せなければ、理由を記録して、何度も返そうとしない", async () => {
-      const ledger = new SqliteLedgerStore(dbPath);
+      const activity = new SqliteActivityStore(dbPath);
       const pulls = new FakePulls();
       pulls.commentFail = "403 Resource not accessible ghp_secret";
-      const { service } = makeService(ledger, [out("# 調査の結果")], {
+      const { service } = makeService(activity, [out("# 調査の結果")], {
         pulls,
         planner: investigatePlanner,
       });
@@ -1956,7 +1960,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       expect(comment && "failed" in comment && ja(comment.failed)).toContain("403");
       expect(JSON.stringify(comment)).not.toContain("ghp_secret");
       expect(service.queuedTaskIds()).toEqual([]);
-      ledger.close();
+      activity.close();
     });
   });
 
@@ -1991,11 +1995,11 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       return task?.id ?? "";
     };
 
-    it("チケットにある PR の先頭のコードと差分を読んでレビューを書き、人間の承認を待たずに PR に投稿して完了する", async () => {
-      const ledger = new SqliteLedgerStore(dbPath);
+    it("タスクにある PR の先頭のコードと差分を読んでレビューを書き、人間の承認を待たずに PR に投稿して完了する", async () => {
+      const activity = new SqliteActivityStore(dbPath);
       const pulls = new FakePulls();
       const { service, executor, repos } = makeService(
-        ledger,
+        activity,
         [out("# 評価\n\n- src/retry.ts:1 上限が無い")],
         { pulls, planner: reviewPlanner },
       );
@@ -2049,11 +2053,11 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       await service.runNext(id);
       expect(pulls.reviews).toHaveLength(1);
       expect(pulls.issueComments).toHaveLength(0);
-      ledger.close();
+      activity.close();
     });
 
     it("差分の行への指摘は行へのコメントにし、差分の外の指摘は本文に入れて、あわせて投稿する", async () => {
-      const ledger = new SqliteLedgerStore(dbPath);
+      const activity = new SqliteActivityStore(dbPath);
       const pulls = new FakePulls();
       const comments = [
         { path: "src/retry.ts", line: 2, body: "上限を設定から読む" },
@@ -2062,7 +2066,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         { path: "src/other.ts", line: 1, body: "差分に無いファイル" },
       ];
       const { service } = makeService(
-        ledger,
+        activity,
         [out(`# 評価\n\n直す点があります。\n\n${block({ "sacty-review-comments": comments })}`)],
         { pulls, planner: reviewPlanner },
       );
@@ -2091,14 +2095,14 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       ]);
       expect(pulls.reviews[0]?.body).toContain("`src/retry.ts:40` 差分の外の行");
       expect(pulls.reviews[0]?.body).not.toContain("上限を設定から読む");
-      ledger.close();
+      activity.close();
     });
 
     it("行へのコメントだけのレビューも投稿して完了し、二度は投稿しない（レビュー指摘）", async () => {
-      const ledger = new SqliteLedgerStore(dbPath);
+      const activity = new SqliteActivityStore(dbPath);
       const pulls = new FakePulls();
       const { service } = makeService(
-        ledger,
+        activity,
         [
           out(
             block({
@@ -2118,15 +2122,15 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       expect(pulls.reviews).toHaveLength(1);
       expect(pulls.reviews[0]?.comments).toHaveLength(1);
       expect(service.queuedTaskIds()).toEqual([]);
-      ledger.close();
+      activity.close();
     });
 
     it("行へのコメントを GitHub が受け付けなければ、本文に入れて投稿し直す", async () => {
-      const ledger = new SqliteLedgerStore(dbPath);
+      const activity = new SqliteActivityStore(dbPath);
       const pulls = new FakePulls();
       pulls.rejectComments = true;
       const { service } = makeService(
-        ledger,
+        activity,
         [
           out(
             `# 評価\n\n${block({ "sacty-review-comments": [{ path: "src/retry.ts", line: 2, body: "上限が無い" }] })}`,
@@ -2142,11 +2146,11 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       expect(pulls.reviews[0]?.body).toContain("`src/retry.ts:2` 上限が無い");
       const task = service.get(id)?.task;
       expect(task && isCompleted(task)).toBe(true);
-      ledger.close();
+      activity.close();
     });
 
     it("投稿の後、記録の前に止まっても、次の実行で同じレビューを二度投稿しない", async () => {
-      const ledger = new SqliteLedgerStore(dbPath);
+      const activity = new SqliteActivityStore(dbPath);
       const pulls = new FakePulls();
       // ほかのタスクのレビューは、このタスクのものとして使わない
       pulls.reviews.push({
@@ -2156,12 +2160,12 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         commit: "h".repeat(40),
         body: "<!-- sacty-review:other-task -->",
       });
-      const { service } = makeService(ledger, [out("# 評価")], { pulls, planner: reviewPlanner });
+      const { service } = makeService(activity, [out("# 評価")], { pulls, planner: reviewPlanner });
       const id = importReviewIssue(service, "https://github.com/acme/app/pull/12");
       await service.runNext(id);
-      const append = ledger.append.bind(ledger);
+      const append = activity.append.bind(activity);
       let failOnce = true;
-      ledger.append = (entry) => {
+      activity.append = (entry) => {
         if (failOnce && entry.events.some((e) => e.event.type === "PullRequestReviewPosted")) {
           failOnce = false;
           throw new Error("disk full");
@@ -2175,14 +2179,14 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       expect(service.get(id)?.task.reviewPost).toEqual({
         url: "https://github.com/acme/app/pull/12#pullrequestreview-2",
       });
-      ledger.close();
+      activity.close();
     });
 
     it("PR を確かめられなければ、エージェントを実行せずに理由を記録して止まり、再開すると確かめ直す", async () => {
-      const ledger = new SqliteLedgerStore(dbPath);
+      const activity = new SqliteActivityStore(dbPath);
       const pulls = new FakePulls();
       pulls.prInfoFail = "404 Not Found ghp_secret";
-      const { service, executor } = makeService(ledger, [out("# 評価")], {
+      const { service, executor } = makeService(activity, [out("# 評価")], {
         pulls,
         planner: reviewPlanner,
       });
@@ -2200,13 +2204,13 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       task = service.get(id)?.task;
       expect(task?.reviewTarget?.number).toBe(12);
       expect(executor.calls).toHaveLength(1);
-      ledger.close();
+      activity.close();
     });
 
-    it("チケットに対象リポジトリの PR が無ければ、理由を記録して止まる", async () => {
-      const ledger = new SqliteLedgerStore(dbPath);
+    it("タスクに対象リポジトリの PR が無ければ、理由を記録して止まる", async () => {
+      const activity = new SqliteActivityStore(dbPath);
       const pulls = new FakePulls();
-      const { service, executor } = makeService(ledger, [out("# 評価")], {
+      const { service, executor } = makeService(activity, [out("# 評価")], {
         pulls,
         planner: reviewPlanner,
       });
@@ -2220,14 +2224,14 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       });
       expect(pulls.prInfoRequests).toHaveLength(0);
       expect(executor.calls).toHaveLength(0);
-      ledger.close();
+      activity.close();
     });
 
     it("投稿できなければ、理由を記録して止まり、再開するとエージェントを実行し直さずに投稿する", async () => {
-      const ledger = new SqliteLedgerStore(dbPath);
+      const activity = new SqliteActivityStore(dbPath);
       const pulls = new FakePulls();
       pulls.reviewFail = "403 Resource not accessible ghp_secret";
-      const { service, executor } = makeService(ledger, [out("# 評価")], {
+      const { service, executor } = makeService(activity, [out("# 評価")], {
         pulls,
         planner: reviewPlanner,
       });
@@ -2248,15 +2252,15 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       expect(task && isCompleted(task)).toBe(true);
       expect(pulls.reviews).toHaveLength(1);
       expect(executor.calls).toHaveLength(1);
-      ledger.close();
+      activity.close();
     });
 
-    it("オーケストレーターには、チケットに対象リポジトリの PR があるときだけ、レビューを候補に出す", async () => {
-      const ledger = new SqliteLedgerStore(dbPath);
+    it("オーケストレーターには、タスクに対象リポジトリの PR があるときだけ、レビューを候補に出す", async () => {
+      const activity = new SqliteActivityStore(dbPath);
       const plan = (value: string) =>
         out(block({ "sacty-steps": { plan: value, reason: "レビューの依頼" } }), 200);
       const { service, executor } = makeService(
-        ledger,
+        activity,
         [plan("review"), out("# 評価"), plan("review"), out("# 要求要件")],
         { realPlanner: true },
       );
@@ -2264,14 +2268,14 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       await service.runNext(withPr);
       expect(promptOf(executor, 0)).toContain("- review：");
       expect(service.get(withPr)?.task.steps.map((st) => st.key)).toEqual(["review"]);
-      // PR の無いチケットでレビューを選んでも、選べない組み合わせとして標準の工程で進める
-      const { id } = service.createTicket({ title: "レビューして", body: "PR は無い" });
+      // PR の無いタスクでレビューを選んでも、選べない組み合わせとして標準の工程で進める
+      const { id } = service.createTask({ title: "レビューして", body: "PR は無い" });
       await service.runNext(id);
       expect(promptOf(executor, 2)).toContain("あなたはオーケストレーターです");
       expect(promptOf(executor, 2)).not.toContain("- review：");
       expect(service.get(id)?.task.stepsChoice?.fallback).toBe(true);
       expect(service.get(id)?.task.steps.map((st) => st.key)).toEqual([...MVP_STEPS]);
-      ledger.close();
+      activity.close();
     });
   });
 
@@ -2279,21 +2283,25 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     const plan = (value: string, reason = "小さな変更") =>
       out(block({ "sacty-steps": { plan: value, reason } }), 200);
 
-    it("チケットと起点のコードを読んで工程を選び、理由と費用を記録して、最初の工程を続けて実行する", async () => {
-      const ledger = new SqliteLedgerStore(dbPath);
-      const { service, executor } = makeService(ledger, [plan("skip-design"), out("# 要求要件")], {
-        realPlanner: true,
-      });
-      const { id } = service.createTicket({ title: "文言の修正", body: "ボタンの文言を変える" });
+    it("タスクの内容と起点のコードを読んで工程を選び、理由と費用を記録して、最初の工程を続けて実行する", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const { service, executor } = makeService(
+        activity,
+        [plan("skip-design"), out("# 要求要件")],
+        {
+          realPlanner: true,
+        },
+      );
+      const { id } = service.createTask({ title: "文言の修正", body: "ボタンの文言を変える" });
       await service.runNext(id);
-      // オーケストレーターには、チケットと起点のコードを読み取り専用で渡す
+      // オーケストレーターには、タスクの内容と起点のコードを読み取り専用で渡す
       const prompt = promptOf(executor, 0);
       expect(prompt).toContain("あなたはオーケストレーターです");
       expect(prompt).toContain("ボタンの文言を変える");
       expect(prompt).toContain("skip-design");
       expect(executor.readOnly[0]).toBe(true);
       expect(executor.workspaceFiles[0]).toEqual(["README.md"]);
-      const chosen = service.get(id)?.ledger.find((e) => e.type === "StepsChosen");
+      const chosen = service.get(id)?.activity.find((e) => e.type === "StepsChosen");
       expect(chosen?.actor).toBe("orchestrator");
       expect(chosen?.payload).toMatchObject({
         steps: ["requirements", "implement", "pr"],
@@ -2311,13 +2319,13 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       // 判断の費用も予算に入る。最初の工程（要求要件）は、同じ実行で続けて行う
       expect(task?.budget.usedUsd).toBeGreaterThan(0.0015);
       expect(task?.gate).toEqual({ step: "requirements", submission: 1 });
-      ledger.close();
+      activity.close();
     });
 
     it("選べない・読めない・実行に失敗したときは、標準の工程で進め、そのことを記録する", async () => {
-      const ledger = new SqliteLedgerStore(dbPath);
+      const activity = new SqliteActivityStore(dbPath);
       const { service } = makeService(
-        ledger,
+        activity,
         [
           plan("everything"),
           out("# 要求要件"),
@@ -2326,7 +2334,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         ],
         { realPlanner: true },
       );
-      const a = service.createTicket({ title: "A" });
+      const a = service.createTask({ title: "A" });
       await service.runNext(a.id);
       expect(service.get(a.id)?.task.stepsChoice).toEqual({
         plan: "standard",
@@ -2337,18 +2345,18 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         fallback: true,
       });
       expect(service.get(a.id)?.task.steps.map((st) => st.key)).toEqual([...MVP_STEPS]);
-      const b = service.createTicket({ title: "B" });
+      const b = service.createTask({ title: "B" });
       await service.runNext(b.id);
       expect(ja(service.get(b.id)?.task.stepsChoice?.reason)).toContain("session limit");
       expect(service.get(b.id)?.task.steps.map((st) => st.key)).toEqual([...MVP_STEPS]);
-      ledger.close();
+      activity.close();
     });
 
     it("設計を省いたタスクは、要求要件の受け入れ条件をテストと最終レビューで確かめて、成果物チェックに進む", async () => {
-      const ledger = new SqliteLedgerStore(dbPath);
+      const activity = new SqliteActivityStore(dbPath);
       const pulls = new FakePulls();
       const { service, executor } = makeService(
-        ledger,
+        activity,
         [
           out("# 要求要件"),
           implement("# 実装の説明", [{ viewpointId: "REQ", tests: ["a.test.ts › 受け入れ条件"] }]),
@@ -2366,7 +2374,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
           }),
         },
       );
-      const { id } = service.createTicket({ title: "A" });
+      const { id } = service.createTask({ title: "A" });
       await service.runNext(id);
       service.approve(id, { step: "requirements", submission: 1 });
       await drain(service);
@@ -2381,13 +2389,13 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         viewpoints: [{ viewpointId: "REQ" }],
       });
       expect(task?.gate).toEqual({ step: "pr", submission: 1 });
-      ledger.close();
+      activity.close();
     });
 
     it("設計を省いたタスクで、受け入れ条件（REQ）にテストを対応させていなければ、テストの段階で通さない（レビュー指摘）", async () => {
-      const ledger = new SqliteLedgerStore(dbPath);
+      const activity = new SqliteActivityStore(dbPath);
       const { service, executor } = makeService(
-        ledger,
+        activity,
         [out("# 要求要件"), implement("# 実装の説明", []), implement("# 実装の説明 v2", [])],
         {
           planner: async () => ({
@@ -2400,12 +2408,12 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
           }),
         },
       );
-      const { id } = service.createTicket({ title: "A" });
+      const { id } = service.createTask({ title: "A" });
       await service.runNext(id);
       service.approve(id, { step: "requirements", submission: 1 });
       await service.runNext(id); // 実装
       await service.runNext(id); // テスト
-      const tests = service.get(id)?.ledger.find((e) => e.type === "TestsRun");
+      const tests = service.get(id)?.activity.find((e) => e.type === "TestsRun");
       expect(tests?.type === "TestsRun" && tests.payload).toMatchObject({
         passed: false,
         unmappedViewpoints: ["REQ"],
@@ -2415,12 +2423,12 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         "sacty-final-review",
       );
       expect(service.get(id)?.task.status).toBe("queued");
-      ledger.close();
+      activity.close();
     });
   });
 
   it("実装は対象リポジトリの clone で、承認済みの成果物と人間の指摘を受け取って実行する", async () => {
-    const { ledger, service, executor, repos, id } = await toImplement([
+    const { activity, service, executor, repos, id } = await toImplement([
       implement("# 実装の説明"),
       review(),
     ]);
@@ -2455,12 +2463,12 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     expect(task?.outputs.implement).toBe("# 実装の説明");
     expect(task?.testMap.map((m) => m.viewpointId)).toEqual(["TV-1", "TV-2"]);
     expect(task?.verification).toBe("pending");
-    ledger.close();
+    activity.close();
   });
 
   it("テストを別に実行して通れば、ゴールガーディアンが新しいセッションで最終レビューし、合格なら実装を完了にする", async () => {
     const tests = new FakeTests([{ exitCode: 0, output: "2 passed", durationMs: 1200 }]);
-    const { ledger, service, executor, id } = await toImplement(
+    const { activity, service, executor, id } = await toImplement(
       [implement("# 実装の説明（ガーディアンには渡さない）"), review()],
       { tests },
     );
@@ -2482,7 +2490,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     expect(guardian).toContain("- [requirements-1-1] 失敗時の再試行の条件が無い");
     expect(guardian).toContain("+export const pay = () => 1;");
     expect(guardian).not.toContain("ガーディアンには渡さない");
-    expect(guardian).not.toContain("チケットの本文");
+    expect(guardian).not.toContain("タスクの本文");
     expect(executor.dirs[4]).toContain("_guardian");
     expect(existsSync(executor.dirs[4] ?? "")).toBe(false);
 
@@ -2500,8 +2508,10 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       "PullRequestPublished",
       "StepSubmitted",
     ]);
-    expect(service.get(id)?.ledger.find((e) => e.type === "FinalReviewed")?.actor).toBe("guardian");
-    ledger.close();
+    expect(service.get(id)?.activity.find((e) => e.type === "FinalReviewed")?.actor).toBe(
+      "guardian",
+    );
+    activity.close();
   });
 
   it("テストが通らなければ、出力を渡して実装をやり直す", async () => {
@@ -2509,7 +2519,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       { exitCode: 1, output: "AssertionError: expected 2 to be 1", durationMs: 10 },
       { exitCode: 0, output: "ok", durationMs: 10 },
     ]);
-    const { ledger, service, executor, id } = await toImplement(
+    const { activity, service, executor, id } = await toImplement(
       [implement("# v1"), implement("# v2"), review()],
       { tests },
     );
@@ -2521,11 +2531,11 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     const task = service.get(id)?.task;
     expect(task?.steps[2]?.state).toBe("done");
     expect(task?.verifyFailures).toBe(0);
-    ledger.close();
+    activity.close();
   });
 
   it("テストが通っても、テストの対応していない観点があれば不合格にする", async () => {
-    const { ledger, service, id } = await toImplement([
+    const { activity, service, id } = await toImplement([
       implement("# v1", [{ viewpointId: "TV-1", tests: ["a"] }]),
     ]);
     await service.runNext(id);
@@ -2537,11 +2547,11 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       unmappedViewpoints: ["TV-2"],
     });
     expect(task?.status).toBe("queued");
-    ledger.close();
+    activity.close();
   });
 
   it("最終レビューで、観点を検証していない・指摘が再発している・判定が無いものは不合格にし、所見を渡してやり直す", async () => {
-    const { ledger, service, executor, id } = await toImplement([
+    const { activity, service, executor, id } = await toImplement([
       implement("# v1"),
       review([["TV-1", true]], [["requirements-1-1", false]]),
       implement("# v2"),
@@ -2571,13 +2581,13 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     expect(second).not.toContain("判定理由");
     expect(second).not.toContain("判定がありません");
     expect(service.get(id)?.task.steps[2]?.state).toBe("done");
-    ledger.close();
+    activity.close();
   });
 
   it("検証に3回続けて通らなければ一時停止し、再開すると数え直して実装をやり直す", async () => {
     const fail = { exitCode: 1, output: "fail", durationMs: 1 };
     const tests = new FakeTests([fail, fail, fail]);
-    const { ledger, service, id } = await toImplement(
+    const { activity, service, id } = await toImplement(
       [implement("# v1"), implement("# v2"), implement("# v3"), implement("# v4")],
       { tests },
     );
@@ -2591,12 +2601,12 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     const resumed = service.resume(id, {});
     expect(resumed.status).toBe("queued");
     expect(resumed.verifyFailures).toBe(0);
-    ledger.close();
+    activity.close();
   });
 
   it("最終レビューを実行できなければ止め、再開するとテストを繰り返さずに最終レビューからやり直す", async () => {
     const tests = new FakeTests();
-    const { ledger, service, id } = await toImplement(
+    const { activity, service, id } = await toImplement(
       [
         implement("# v1"),
         { kind: "failed", reason: "usage_limit", message: "You've hit your session limit" },
@@ -2615,11 +2625,11 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     await drain(service);
     expect(tests.calls).toHaveLength(1);
     expect(service.get(id)?.task.steps[2]?.state).toBe("done");
-    ledger.close();
+    activity.close();
   });
 
   it("最終レビューを実行できなかった分の費用も記録し、予算に入れる（レビュー指摘）", async () => {
-    const { ledger, service, id } = await toImplement([
+    const { activity, service, id } = await toImplement([
       implement("# v1"),
       {
         kind: "failed",
@@ -2644,13 +2654,13 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     service.resume(id, {});
     await service.runNext(id);
     expect(service.get(id)?.task.pausedReason).toBe("budget");
-    ledger.close();
+    activity.close();
   });
 
   it("差分を取得できなければ最終レビューをせずに止め、再開すると差分の取得からやり直す（レビュー指摘）", async () => {
     const repos = new FakeRepos();
     const tests = new FakeTests();
-    const { ledger, service, executor, id } = await toImplement([implement("# v1"), review()], {
+    const { activity, service, executor, id } = await toImplement([implement("# v1"), review()], {
       repos,
       tests,
     });
@@ -2671,15 +2681,15 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     await drain(service);
     expect(tests.calls).toHaveLength(1);
     expect(service.get(id)?.task.steps[2]?.state).toBe("done");
-    ledger.close();
+    activity.close();
   });
 
   it("対象リポジトリが無い・clone できなければ、タスクの開始時に理由を記録して止める（PBI-15）", async () => {
-    const ledger = new SqliteLedgerStore(dbPath);
+    const activity = new SqliteActivityStore(dbPath);
     const repos = new FakeRepos();
     repos.fail = "git clone に失敗しました：Repository not found";
-    const { service, executor } = makeService(ledger, [out("# 要求要件")], { repos });
-    const { id } = service.createTicket({ title: "A" });
+    const { service, executor } = makeService(activity, [out("# 要求要件")], { repos });
+    const { id } = service.createTask({ title: "A" });
     await service.runNext(id);
     const task = service.get(id)?.task;
     expect(task?.pausedReason).toBe("error");
@@ -2689,18 +2699,18 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     expect(task?.steps).toEqual([]);
     // タスクの開始時に止まるので、エージェントの実行の失敗ではなく、一時停止の理由として記録する（PBI-15）
     expect(service.get(id)?.task.pausedMessage).toContain("Repository not found");
-    ledger.close();
+    activity.close();
   });
 
   it("PBI-8・9で設計が承認され、実装の工程が無かったため待機していたタスクは、起動時に実装を実行待ちにする", async () => {
-    const ledger = new SqliteLedgerStore(dbPath);
-    const { service } = makeService(ledger, [out("# 要求要件"), design]);
-    const { id } = service.createTicket({ title: "A" });
+    const activity = new SqliteActivityStore(dbPath);
+    const { service } = makeService(activity, [out("# 要求要件"), design]);
+    const { id } = service.createTask({ title: "A" });
     await service.runNext(id);
     service.approve(id, { step: "requirements", submission: 1 });
     await service.runNext(id);
-    // PBI-9までの台帳：実装の工程を実行できなかったため、設計の承認後に待機していた
-    ledger.append({
+    // PBI-9までの作業履歴：実装の工程を実行できなかったため、設計の承認後に待機していた
+    activity.append({
       taskId: id,
       projectId: "default",
       events: [
@@ -2710,13 +2720,13 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         },
       ],
     });
-    const { service: restarted } = makeService(ledger, [implement("# v1")]);
+    const { service: restarted } = makeService(activity, [implement("# v1")]);
     restarted.queueWaitingSteps();
     expect(restarted.queuedTaskIds()).toEqual([id]);
     await restarted.runNext(id);
     restarted.queueWaitingSteps(); // 実装済み（検証待ち）のタスクには何もしない
     expect(types(restarted, id).filter((t) => t === "StepQueued")).toHaveLength(1);
-    ledger.close();
+    activity.close();
   });
 
   it("前の工程に戻ったら、検証の失敗の回数と内容を持ち越さない", async () => {
@@ -2735,7 +2745,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       ].join("\n\n"),
     );
     const verdict = out(block({ "sacty-verdict": { verdict: "approved", reason: "ok" } }));
-    const { ledger, service, id } = await toImplement([implement("# v1"), proposal, verdict], {
+    const { activity, service, id } = await toImplement([implement("# v1"), proposal, verdict], {
       tests,
     });
     await service.runNext(id); // 実装
@@ -2747,7 +2757,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     expect(task?.verifyFailures).toBe(0);
     expect(task?.verifyFeedback).toBeUndefined();
     expect(task?.verification).toBeUndefined();
-    ledger.close();
+    activity.close();
   });
 
   /** 実装・検証を終え、成果物チェックのゲートまで進める。 */
@@ -2766,7 +2776,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
   }
 
   it("最終レビューに通ったら、ブランチにプッシュしてPRを作り、成果物チェックのゲートで止まる（PBI-10b）", async () => {
-    const { ledger, service, repos, pulls, id } = await toDeliverableGate();
+    const { activity, service, repos, pulls, id } = await toDeliverableGate();
     expect(repos.published).toEqual([
       {
         parent: "base123",
@@ -2802,8 +2812,8 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       "PullRequestPublished",
       "StepSubmitted",
     ]);
-    // トークンは台帳に残さない
-    expect(JSON.stringify(service.get(id)?.ledger)).not.toContain("ghp_secret");
+    // トークンは作業履歴に残さない
+    expect(JSON.stringify(service.get(id)?.activity)).not.toContain("ghp_secret");
 
     // PR を作ったタスクは、画面では承認できない（PR のマージで承認する。PBI-14a）
     expect(() => service.approve(id, { step: "pr", submission: 1 })).toThrow(/マージ/);
@@ -2817,12 +2827,12 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     expect(done?.steps.every((st) => st.state === "done")).toBe(true);
     expect(done?.status).toBe("idle");
     expect(service.queuedTaskIds()).toEqual([]);
-    ledger.close();
+    activity.close();
   });
 
   it("成果物チェックの間、プロジェクトの gh のアカウントで PR を見守り、閉じられたら記録して待ち、マージで完了する（PBI-14a）", async () => {
     const pulls = new FakePulls();
-    const { ledger, service, id } = await toDeliverableGate([], { pulls });
+    const { activity, service, id } = await toDeliverableGate([], { pulls });
     // 開いたままなら何も記録しない
     await service.checkPullRequests();
     expect(pulls.checked).toEqual([{ repo: "acme/app", token: "ghp_secret", number: 7 }]);
@@ -2853,12 +2863,12 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     const commit = service.get(id)?.task.pullRequest?.commit;
     pulls.state = { state: "merged", mergedBy: "reviewer", headSha: commit };
     await service.checkPullRequests();
-    const ledgerEvents = service.get(id)?.ledger ?? [];
-    expect(ledgerEvents.slice(-2).map((e) => [e.type, e.actor])).toEqual([
+    const activityEvents = service.get(id)?.activity ?? [];
+    expect(activityEvents.slice(-2).map((e) => [e.type, e.actor])).toEqual([
       ["PullRequestMerged", "person"],
       ["StepApproved", "person"],
     ]);
-    expect(ledgerEvents.at(-2)?.payload).toEqual({
+    expect(activityEvents.at(-2)?.payload).toEqual({
       number: 7,
       by: "reviewer",
       commit,
@@ -2869,12 +2879,12 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     const checks = pulls.checked.length;
     await service.checkPullRequests();
     expect(pulls.checked).toHaveLength(checks);
-    ledger.close();
+    activity.close();
   });
 
   it("PRの作成先が設定されていなければ、ブランチのプッシュまでで成果物チェックに進む", async () => {
     const pulls = new FakePulls();
-    const { ledger, service, id } = await toDeliverableGate([], {
+    const { activity, service, id } = await toDeliverableGate([], {
       pulls,
       config: configOf(agent(), 1, null),
     });
@@ -2882,11 +2892,11 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     const task = service.get(id)?.task;
     expect(task?.gate).toEqual({ step: "pr", submission: 1 });
     expect(task?.pullRequest?.url).toBeUndefined();
-    ledger.close();
+    activity.close();
   });
 
   it("成果物チェックで差し戻すと見逃しを記録し、実装をやり直して同じPRを更新する（PBI-10b）", async () => {
-    const { ledger, service, executor, repos, pulls, id } = await toDeliverableGate([
+    const { activity, service, executor, repos, pulls, id } = await toDeliverableGate([
       out(
         [
           "# 実装の説明 v2",
@@ -2930,11 +2940,11 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     // 前回プッシュしたコミットに積み、同じPRを更新する
     expect(repos.published[1]).toMatchObject({ parent: "c1".padEnd(40, "0") });
     expect(pulls.calls[1]?.number).toBe(7);
-    ledger.close();
+    activity.close();
   });
 
   it("差し戻しの間に前の PR がマージされたら、作り直した内容は新しい PR で出し、古い内容のマージでは承認しない（PBI-14a レビュー指摘）", async () => {
-    const { ledger, service, pulls, id } = await toDeliverableGate([
+    const { activity, service, pulls, id } = await toDeliverableGate([
       out(
         [
           "# 実装の説明 v2",
@@ -2966,7 +2976,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     pulls.state = { state: "open", headSha: task?.pullRequest?.commit };
     await service.checkPullRequests();
     expect(service.get(id)?.task.steps.at(-1)?.state).not.toBe("done");
-    ledger.close();
+    activity.close();
   });
 
   describe("PR へのフィードバックの取り込み（PBI-14b）", () => {
@@ -2987,7 +2997,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
 
     it("レビュー・行のコメント・通常のコメントを指摘として取り込み、ゴールガーディアンが実装と判断したら差し戻す", async () => {
       const pulls = new FakePulls();
-      const { ledger, service, executor, id } = await toDeliverableGate(
+      const { activity, service, executor, id } = await toDeliverableGate(
         [rework("implement", "実装で直せる")],
         { pulls, now: later },
       );
@@ -3003,7 +3013,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       ];
       const before = executor.calls.length;
       await service.checkPullRequests();
-      const events = service.get(id)?.ledger ?? [];
+      const events = service.get(id)?.activity ?? [];
       const imported = events.find((e) => e.type === "PullRequestReviewImported");
       // sacty が投稿したレビューを除けるよう、プロジェクトのアカウントを渡して読む（PBI-19）
       expect(pulls.feedbackAccounts.at(-1)).toBe("me");
@@ -3027,7 +3037,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       const prompt = promptOf(executor, before);
       expect(prompt).toContain("src/pay.ts:12：ここで例外を握りつぶしている");
       expect(prompt).toContain("承認済みの要求要件");
-      expect(prompt).not.toContain("チケットの本文");
+      expect(prompt).not.toContain("タスクの本文");
       // 実装で直せるかを判断するので、実装後のコードを読み取り専用で渡す（PBI-16）
       expect(executor.readOnly[before]).toBe(true);
       expect(executor.workspaceFiles[before]).toEqual(["IMPLEMENTED.md"]);
@@ -3039,13 +3049,13 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         "implement",
       ]);
       expect(task?.importedFeedback).toEqual(["review:1", "review_comment:2", "comment:3"]);
-      ledger.close();
+      activity.close();
     });
 
     it("最後のフィードバックから時間がたつまで待ち、取り込んだものは二重に取り込まない", async () => {
       const pulls = new FakePulls();
       let now = Date.parse(at) + 30_000; // 最後のコメントから30秒
-      const { ledger, service, id } = await toDeliverableGate(
+      const { activity, service, id } = await toDeliverableGate(
         [rework("design", "観点が足りない")],
         { pulls, now: () => now },
       );
@@ -3057,14 +3067,14 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       await service.checkPullRequests();
       await service.checkPullRequests();
       expect(
-        service.get(id)?.ledger.filter((e) => e.type === "PullRequestReviewImported"),
+        service.get(id)?.activity.filter((e) => e.type === "PullRequestReviewImported"),
       ).toHaveLength(1);
-      ledger.close();
+      activity.close();
     });
 
     it("設計・要求要件まで戻す判断や、判断できないときは、人間の確認に回し、確認した戻し先で指摘を引き継ぐ", async () => {
       const pulls = new FakePulls();
-      const { ledger, service, id } = await toDeliverableGate(
+      const { activity, service, id } = await toDeliverableGate(
         [rework("design", "観点が足りない")],
         {
           pulls,
@@ -3095,12 +3105,12 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         ["requirements", "観点が足りない"],
         ["requirements", "全体として、失敗時のログが足りない"],
       ]);
-      ledger.close();
+      activity.close();
     });
 
     it("一度に取り込むのは50件まで。残りは取り込み済みにせず、次の取り込みに残す（レビュー指摘）", async () => {
       const pulls = new FakePulls();
-      const { ledger, service, id } = await toDeliverableGate(
+      const { activity, service, id } = await toDeliverableGate(
         [rework("implement", "実装で直せる")],
         {
           pulls,
@@ -3111,7 +3121,9 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         item(`comment:${i}`, { body: `指摘${i}` }),
       );
       await service.checkPullRequests();
-      const imported = service.get(id)?.ledger.find((e) => e.type === "PullRequestReviewImported");
+      const imported = service
+        .get(id)
+        ?.activity.find((e) => e.type === "PullRequestReviewImported");
       const payload = imported?.type === "PullRequestReviewImported" ? imported.payload : undefined;
       expect(payload?.items).toHaveLength(50);
       expect(payload?.remarks).toHaveLength(50);
@@ -3119,12 +3131,12 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       const task = service.get(id)?.task;
       expect(task?.importedFeedback).toHaveLength(50);
       expect(task?.importedFeedback).not.toContain("comment:50");
-      ledger.close();
+      activity.close();
     });
 
     it("ゴールガーディアンの実行に失敗したら、判断できなかったものとして人間の確認に回す", async () => {
       const pulls = new FakePulls();
-      const { ledger, service, id } = await toDeliverableGate(
+      const { activity, service, id } = await toDeliverableGate(
         [{ kind: "failed", reason: "usage_limit", message: "session limit" }],
         { pulls, now: later },
       );
@@ -3138,13 +3150,13 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       expect(task?.escalation?.pendingRemarks.map((r) => r.text)).toEqual([
         "全体として、失敗時のログが足りない",
       ]);
-      ledger.close();
+      activity.close();
     });
   });
 
   it("最新の提出より前の内容でマージされたら、承認にせず記録して人間の判断を待つ（PBI-14a レビュー指摘）", async () => {
     const pulls = new FakePulls();
-    const { ledger, service, id } = await toDeliverableGate([], { pulls });
+    const { activity, service, id } = await toDeliverableGate([], { pulls });
     pulls.state = { state: "merged", mergedBy: "reviewer", headSha: "f".repeat(40) };
     await service.checkPullRequests();
     await service.checkPullRequests(); // 二重に記録しない
@@ -3152,15 +3164,15 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     expect(task?.status).toBe("awaiting_approval");
     expect(task?.pullRequestState).toBe("merged_outdated");
     expect(task?.steps.at(-1)?.state).not.toBe("done");
-    const merged = service.get(id)?.ledger.filter((e) => e.type === "PullRequestMerged");
+    const merged = service.get(id)?.activity.filter((e) => e.type === "PullRequestMerged");
     expect(merged?.map((e) => e.payload)).toEqual([
       { number: 7, by: "reviewer", commit: "f".repeat(40), outdated: true },
     ]);
-    ledger.close();
+    activity.close();
   });
 
   it("成果物チェックから設計へ差し戻すと、設計の承認を取り消し、見逃しも記録する", async () => {
-    const { ledger, service, id } = await toDeliverableGate();
+    const { activity, service, id } = await toDeliverableGate();
     const sent = service.requestChanges(id, {
       step: "pr",
       submission: 1,
@@ -3171,11 +3183,11 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     expect(sent.approved.design).toBeUndefined();
     expect(sent.approved.requirements).toBeDefined();
     expect(sent.misses).toHaveLength(1);
-    ledger.close();
+    activity.close();
   });
 
   it("最終レビューのゴールガーディアンには、実装後のコードを読み取り専用で渡す（PBI-16）", async () => {
-    const { ledger, service, executor, repos, id } = await toImplement([
+    const { activity, service, executor, repos, id } = await toImplement([
       implement("# v1"),
       review(),
     ]);
@@ -3190,13 +3202,13 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     expect(executor.dirs[index]).not.toBe(repos.prepared[0]?.dir);
     expect(existsSync(executor.dirs[index] ?? "")).toBe(false);
     expect(service.get(id)?.task.lastReview?.passed).toBe(true);
-    ledger.close();
+    activity.close();
   });
 
   it("実装後のコードを写せなければ、最終レビューの失敗として止める（PBI-16）", async () => {
     const repos = new FakeRepos();
     repos.copyFail = "写せません";
-    const { ledger, service, executor, id } = await toImplement([implement("# v1")], { repos });
+    const { activity, service, executor, id } = await toImplement([implement("# v1")], { repos });
     await drain(service);
     const task = service.get(id)?.task;
     expect(task?.pausedReason).toBe("error");
@@ -3205,11 +3217,11 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     expect(executor.calls.map((_, i) => promptOf(executor, i)).join()).not.toContain(
       "sacty-final-review",
     );
-    ledger.close();
+    activity.close();
   });
 
   it("要求要件・設計は、起点のコミットのコードを実行ごとのディレクトリに書き出して読み取り専用で渡し、実装は clone を渡す（PBI-15）", async () => {
-    const { ledger, service, executor, repos, id } = await toImplement([implement("# v1")]);
+    const { activity, service, executor, repos, id } = await toImplement([implement("# v1")]);
     await service.runNext(id); // 実装
     // 対象リポジトリは、要求要件の工程の前に1回だけ用意する
     expect(repos.prepared).toHaveLength(1);
@@ -3233,11 +3245,11 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       expect(promptOf(executor, index)).toContain("起点のコミット（base123）のコードがあります");
       expect(promptOf(executor, index)).toContain("読み取り専用");
     }
-    ledger.close();
+    activity.close();
   });
 
   it("実装の後に設計へ差し戻しても、実装の変更を含まない起点のコミットのコードを読む（PBI-15）", async () => {
-    const { ledger, service, executor, repos, id } = await toDeliverableGate([design]);
+    const { activity, service, executor, repos, id } = await toDeliverableGate([design]);
     const repoDir = repos.prepared[0]?.dir ?? "";
     // 実装で作業領域が変わっている
     writeFileSync(join(repoDir, "changed-by-implement.ts"), "x");
@@ -3248,13 +3260,13 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     expect(executor.dirs[before]).not.toBe(repoDir);
     expect(executor.workspaceFiles[before]).toEqual(["README.md"]);
     expect(repos.snapshots.at(-1)?.baseCommit).toBe("base123");
-    ledger.close();
+    activity.close();
   });
 
   it("どの工程から始まるタスクでも、タスクの開始時に対象リポジトリを用意する（PBI-15）", async () => {
     // 今後のタスク種別のように、要求要件から始まらないタスク（実装から始まる）
-    const ledger = new SqliteLedgerStore(dbPath);
-    ledger.append({
+    const activity = new SqliteActivityStore(dbPath);
+    activity.append({
       taskId: "t-impl",
       projectId: "default",
       events: [
@@ -3262,30 +3274,30 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
           actor: "person",
           event: {
             type: "TaskCreated",
-            payload: { title: "実装だけ", body: "", start: "ticket", budgetCapUsd: 1 },
+            payload: { title: "実装だけ", body: "", start: "sacty", budgetCapUsd: 1 },
           },
         },
         { actor: "sacty", event: { type: "StepsChosen", payload: { steps: ["implement", "pr"] } } },
       ],
     });
-    const { service, executor, repos } = makeService(ledger, [implement("# v1")]);
+    const { service, executor, repos } = makeService(activity, [implement("# v1")]);
     await service.runNext("t-impl");
-    const types = service.get("t-impl")?.ledger.map((e) => e.type) ?? [];
+    const types = service.get("t-impl")?.activity.map((e) => e.type) ?? [];
     expect(types.indexOf("RepositoryPrepared")).toBeLessThan(types.indexOf("AgentRunStarted"));
     expect(repos.prepared).toHaveLength(1);
     // 実装の工程は clone を書き込みできる形で使う
     expect(executor.dirs[0]).toBe(repos.prepared[0]?.dir);
     expect(executor.readOnly).toEqual([false]);
-    ledger.close();
+    activity.close();
   });
 
   it("作業領域が消えて用意し直すときも、ブランチの最新ではなく記録済みの起点のコミットを使う（PBI-15 レビュー指摘）", async () => {
-    const ledger = new SqliteLedgerStore(dbPath);
+    const activity = new SqliteActivityStore(dbPath);
     const repos = new FakeRepos();
-    const { service } = makeService(ledger, [out("# 要求要件"), design, out("# 要求要件")], {
+    const { service } = makeService(activity, [out("# 要求要件"), design, out("# 要求要件")], {
       repos,
     });
-    const { id } = service.createTicket({ title: "A" });
+    const { id } = service.createTask({ title: "A" });
     await service.runNext(id);
     service.approve(id, { step: "requirements", submission: 1 });
     // 作業領域が消え、その間にベースブランチが進んだ
@@ -3295,14 +3307,14 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     expect(repos.prepared.map((p) => p.recorded)).toEqual([undefined, "base123"]);
     expect(repos.snapshots.map((x) => x.baseCommit)).toEqual(["base123", "base123"]);
     expect(service.get(id)?.task.repository?.baseCommit).toBe("base123");
-    const prepared = service.get(id)?.ledger.filter((e) => e.type === "RepositoryPrepared");
+    const prepared = service.get(id)?.activity.filter((e) => e.type === "RepositoryPrepared");
     expect(prepared).toHaveLength(1);
 
     // 記録済みの起点を取得できなければ、起点を変えずに止める
-    const other = makeService(new SqliteLedgerStore(join(dir, "other.db")), [out("# 要求要件")], {
+    const other = makeService(new SqliteActivityStore(join(dir, "other.db")), [out("# 要求要件")], {
       repos: Object.assign(new FakeRepos(), { recordedMissing: true }),
     });
-    const t = other.service.createTicket({ title: "B" });
+    const t = other.service.createTask({ title: "B" });
     await other.service.runNext(t.id);
     other.service.approve(t.id, { step: "requirements", submission: 1 });
     rmSync(other.repos.prepared[0]?.dir ?? "", { recursive: true, force: true });
@@ -3310,27 +3322,27 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     expect(other.executor.calls).toHaveLength(1); // 設計のエージェントは実行しない
     expect(other.service.get(t.id)?.task.repository?.baseCommit).toBe("base123");
     expect(other.service.get(t.id)?.task.pausedReason).toBe("error");
-    ledger.close();
+    activity.close();
   });
 
   it("起点のコードを書き出せなければ、エージェントを実行せずに理由を記録して止める（PBI-15）", async () => {
-    const ledger = new SqliteLedgerStore(dbPath);
+    const activity = new SqliteActivityStore(dbPath);
     const repos = new FakeRepos();
     repos.snapshotFail = "git read-tree に失敗しました";
-    const { service, executor } = makeService(ledger, [out("# 要求要件")], { repos });
-    const { id } = service.createTicket({ title: "A" });
+    const { service, executor } = makeService(activity, [out("# 要求要件")], { repos });
+    const { id } = service.createTask({ title: "A" });
     await service.runNext(id);
     expect(executor.calls).toHaveLength(0);
     expect(service.get(id)?.task.pausedReason).toBe("error");
-    const failed = service.get(id)?.ledger.findLast((e) => e.type === "AgentRunFailed");
+    const failed = service.get(id)?.activity.findLast((e) => e.type === "AgentRunFailed");
     expect(failed?.type === "AgentRunFailed" && failed.payload.message).toContain("read-tree");
-    ledger.close();
+    activity.close();
   });
 
   it("プッシュやPRの作成に失敗したら理由を記録して止め、トークンは残さない", async () => {
     const pulls = new FakePulls();
     pulls.fail = "PRを作れませんでした：GitHub API 401 Bad credentials ghp_secret";
-    const { ledger, service, repos, id } = await toDeliverableGate([], { pulls });
+    const { activity, service, repos, id } = await toDeliverableGate([], { pulls });
     const task = service.get(id)?.task;
     expect(task?.pausedReason).toBe("error");
     expect(ja(task?.pausedMessage)).toContain("401 Bad credentials");
@@ -3348,11 +3360,11 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     // プッシュの後で失敗して再開しても、同じ親・同じ日時でコミットを作り直す（同じコミットになる）
     const [first, retried] = repos.published;
     expect(retried).toEqual(first);
-    ledger.close();
+    activity.close();
   });
 
   it("実行待ちのタスクを人間が一時停止し、再開すると実行し直す（PBI-3）", async () => {
-    const { ledger, service, id } = await toImplement([implement("# v1"), review()]);
+    const { activity, service, id } = await toImplement([implement("# v1"), review()]);
     const paused = await service.pause(id);
     expect(paused).toMatchObject({ status: "paused", pausedReason: "manual" });
     expect(service.queuedTaskIds()).toEqual([]);
@@ -3360,11 +3372,11 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     expect(service.resume(id, {}).status).toBe("queued");
     await drain(service);
     expect(service.get(id)?.task.steps[2]?.state).toBe("done");
-    ledger.close();
+    activity.close();
   });
 
   it("実行中なら、コンテナを止めて中断を記録し、作業領域を残して一時停止する（PBI-3）", async () => {
-    const { ledger, service, executor, id } = await toImplement([
+    const { activity, service, executor, id } = await toImplement([
       HOLD,
       implement("# v1"),
       review(),
@@ -3382,13 +3394,13 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     service.resume(id, {});
     await drain(service);
     expect(service.get(id)?.task.steps[2]?.state).toBe("done");
-    ledger.close();
+    activity.close();
   });
 
   it("テストの実行中に止めたら、結果を記録せず、再開するとテストからやり直す（PBI-3）", async () => {
     const tests = new FakeTests();
     tests.hold = true;
-    const { ledger, service, id } = await toImplement([implement("# v1"), review()], { tests });
+    const { activity, service, id } = await toImplement([implement("# v1"), review()], { tests });
     await service.runNext(id); // 実装
     const verifying = service.runNext(id);
     await tests.started.promise;
@@ -3402,17 +3414,17 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     await drain(service);
     expect(tests.calls).toHaveLength(2);
     expect(service.get(id)?.task.steps[2]?.state).toBe("done");
-    ledger.close();
+    activity.close();
   });
 
   it("人間の判断待ち・中止済みのタスクは一時停止しない（PBI-3）", async () => {
-    const { ledger, service, id } = await toDeliverableGate();
+    const { activity, service, id } = await toDeliverableGate();
     await expect(service.pause(id)).rejects.toThrow(/人間の判断待ち/);
-    ledger.close();
+    activity.close();
   });
 
-  it("中止すると、PRを閉じ・sacty のブランチを消し・作業領域を消して記録し、台帳は残す（PBI-3）", async () => {
-    const { ledger, service, repos, pulls, id } = await toDeliverableGate();
+  it("中止すると、PRを閉じ・sacty のブランチを消し・作業領域を消して記録し、作業履歴は残す（PBI-3）", async () => {
+    const { activity, service, repos, pulls, id } = await toDeliverableGate();
     const plan = service.cleanupPlan(id);
     expect(plan?.map((p) => [p.target, p.present])).toEqual([
       ["container", false],
@@ -3435,21 +3447,21 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       { target: "branch", result: "done", detail: `sacty/task-${id.slice(0, 8)}` },
       { target: "workspace", result: "done" },
     ]);
-    // 台帳は残り、中止したタスクへの操作は受け付けない
-    expect(service.get(id)?.ledger.at(-1)?.type).toBe("TaskCancelled");
-    expect(service.get(id)?.ledger.length).toBeGreaterThan(10);
+    // 作業履歴は残り、中止したタスクへの操作は受け付けない
+    expect(service.get(id)?.activity.at(-1)?.type).toBe("TaskCancelled");
+    expect(service.get(id)?.activity.length).toBeGreaterThan(10);
     expect(() => service.approve(id, { step: "pr", submission: 1 })).toThrow();
     expect(() => service.resume(id, {})).toThrow();
     await expect(service.pause(id)).rejects.toThrow(/中止したタスク/);
     await expect(service.cancel(id)).rejects.toThrow(/すでに中止/);
     expect(service.queuedTaskIds()).toEqual([]);
-    ledger.close();
+    activity.close();
   });
 
   it("実行中に中止すると、コンテナを止めてから片付け、失敗した片付けも記録して続ける（PBI-3）", async () => {
     const pulls = new FakePulls();
     const repos = new FakeRepos();
-    const { ledger, service, executor, id } = await toDeliverableGate([HOLD], { pulls, repos });
+    const { activity, service, executor, id } = await toDeliverableGate([HOLD], { pulls, repos });
     // 成果物チェックから実装へ差し戻し、実装の実行中に中止する
     service.requestChanges(id, { step: "pr", submission: 1, comments: ["直して"] });
     const running = service.runNext(id);
@@ -3468,26 +3480,26 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     expect(results.pull_request?.detail).not.toContain("ghp_secret");
     expect(results.branch?.result).toBe("done");
     expect(results.workspace?.result).toBe("done");
-    ledger.close();
+    activity.close();
   });
 
-  it("中止したタスクへの操作は拒否し、台帳に書かない（再起動できる。レビュー指摘）", async () => {
-    const { ledger, service, id } = await toDeliverableGate();
+  it("中止したタスクへの操作は拒否し、作業履歴に書かない（再起動できる。レビュー指摘）", async () => {
+    const { activity, service, id } = await toDeliverableGate();
     service.requestChanges(id, { step: "pr", submission: 1, comments: ["直して"] });
     await service.cancel(id);
-    const before = service.get(id)?.ledger.length;
+    const before = service.get(id)?.activity.length;
     expect(() => service.voidRemark(id, "implement-1-1")).toThrow(/中止したタスク/);
-    expect(service.get(id)?.ledger.length).toBe(before);
-    // 再起動しても台帳から状態を復元できる
-    const { service: restarted } = makeService(ledger);
+    expect(service.get(id)?.activity.length).toBe(before);
+    // 再起動しても作業履歴から状態を復元できる
+    const { service: restarted } = makeService(activity);
     expect(restarted.get(id)?.task.status).toBe("cancelled");
-    ledger.close();
+    activity.close();
   });
 
-  it("状態の復元で受け付けられないイベントは、台帳に書く前に拒否する（レビュー指摘）", async () => {
-    const { ledger, service, id } = await toImplement([]);
-    const before = service.get(id)?.ledger.length;
-    // 内部の操作の誤りで、受け付けられないイベントを書こうとした場合も台帳を汚さない
+  it("状態の復元で受け付けられないイベントは、作業履歴に書く前に拒否する（レビュー指摘）", async () => {
+    const { activity, service, id } = await toImplement([]);
+    const before = service.get(id)?.activity.length;
+    // 内部の操作の誤りで、受け付けられないイベントを書こうとした場合も作業履歴を汚さない
     const append = (
       service as unknown as {
         append: (task: { id: string; projectId: string }, events: unknown[]) => unknown;
@@ -3511,8 +3523,8 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         },
       ]),
     ).toThrow(/その操作はできません/);
-    expect(service.get(id)?.ledger.length).toBe(before);
-    ledger.close();
+    expect(service.get(id)?.activity.length).toBe(before);
+    activity.close();
   });
 
   it("中止で閉じるPRは、作ったときに記録したリポジトリのものだけ（レビュー指摘）", async () => {
@@ -3532,22 +3544,22 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       };
     };
     const pulls = new FakePulls();
-    const { ledger, service, id } = await toDeliverableGate([], { pulls, config });
+    const { activity, service, id } = await toDeliverableGate([], { pulls, config });
     expect(service.get(id)?.task.pullRequest?.repo).toBe("acme/app");
     prRepo = "acme/other"; // 設定を変えてから中止した
     await service.cancel(id);
     expect(pulls.closed).toEqual([{ repo: "acme/app", token: "ghp_secret", number: 7 }]);
-    ledger.close();
+    activity.close();
   });
 
   it("準備の間に一時停止したら、新しいコンテナを起動しない（レビュー指摘）", async () => {
     // 対象リポジトリは、要求要件の工程の前に用意する（PBI-15）
-    const ledger = new SqliteLedgerStore(dbPath);
+    const activity = new SqliteActivityStore(dbPath);
     const repos = new FakeRepos();
     const gate = Promise.withResolvers<void>();
     repos.prepareGate = gate.promise;
-    const { service, executor } = makeService(ledger, [out("# 要求要件")], { repos });
-    const { id } = service.createTicket({ title: "A" });
+    const { service, executor } = makeService(activity, [out("# 要求要件")], { repos });
+    const { id } = service.createTask({ title: "A" });
     const callsBefore = executor.calls.length;
     const running = service.runNext(id);
     await repos.prepareStarted.promise;
@@ -3556,24 +3568,24 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     await Promise.all([running, pausing]);
     expect(executor.calls.length).toBe(callsBefore); // 要求要件のコンテナは起動していない
     expect(service.get(id)?.task).toMatchObject({ status: "paused", pausedReason: "manual" });
-    ledger.close();
+    activity.close();
   });
 
   it("PRの作成に失敗しても、プッシュ済みのブランチは中止で消す（レビュー指摘）", async () => {
     const pulls = new FakePulls();
     pulls.fail = "PRを作れませんでした：GitHub API 422";
     const repos = new FakeRepos();
-    const { ledger, service, id } = await toDeliverableGate([], { pulls, repos });
+    const { activity, service, id } = await toDeliverableGate([], { pulls, repos });
     expect(service.get(id)?.task.pullRequest).toBeUndefined();
     expect(service.get(id)?.task.pushedBranch?.branch).toBe(`sacty/task-${id.slice(0, 8)}`);
     expect(service.cleanupPlan(id)?.find((p) => p.target === "branch")?.present).toBe(true);
     await service.cancel(id);
     expect(repos.deleted).toEqual([`sacty/task-${id.slice(0, 8)}`]);
-    ledger.close();
+    activity.close();
   });
 
   it("止めたコンテナの停止を確かめられなければ、一時停止に記録して、再開や中止で確かめ直す（レビュー指摘）", async () => {
-    const { ledger, service, executor, id } = await toImplement([HOLD]);
+    const { activity, service, executor, id } = await toImplement([HOLD]);
     executor.stops = false;
     const running = service.runNext(id);
     const runId = await executor.started.promise;
@@ -3583,8 +3595,8 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     expect(paused).toMatchObject({ pausedReason: "manual", unstoppedRuns: [runId] });
     expect(ja(paused?.pausedMessage)).toMatch(/停止を確認できませんでした/);
 
-    // 再起動しても、台帳から追える
-    const { service: restarted, executor: restartedExecutor } = makeService(ledger);
+    // 再起動しても、作業履歴から追える
+    const { service: restarted, executor: restartedExecutor } = makeService(activity);
     restartedExecutor.stops = false;
     expect(restarted.get(id)?.task.unstoppedRuns).toEqual([runId]);
     // 止まったことを確かめられないうちは、再開しない
@@ -3598,11 +3610,11 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     expect(results.container?.result).toBe("failed");
     expect(results.workspace?.result).toBe("failed");
     expect(existsSync(join(dir, "workspaces", id, "repo"))).toBe(true);
-    ledger.close();
+    activity.close();
   });
 
   it("止まったことを確かめられたら、再開できる（レビュー指摘）", async () => {
-    const { ledger, service, executor, id } = await toImplement([
+    const { activity, service, executor, id } = await toImplement([
       HOLD,
       implement("# v1"),
       review(),
@@ -3616,13 +3628,13 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     expect(await service.confirmPausedContainers(id)).toBe(true);
     expect(service.resume(id, {}, { containersConfirmed: true }).status).toBe("queued");
     expect(service.get(id)?.task.unstoppedRuns).toBeUndefined();
-    ledger.close();
+    activity.close();
   });
 
   it("一時停止は、停止の確認と記録が終わってから返る（レビュー指摘）", async () => {
     const tests = new FakeTests();
     tests.hold = true;
-    const { ledger, service, executor, id } = await toImplement([implement("# v1")], { tests });
+    const { activity, service, executor, id } = await toImplement([implement("# v1")], { tests });
     await service.runNext(id); // 実装
     // 停止の確認に時間がかかる
     const gate = Promise.withResolvers<boolean>();
@@ -3640,18 +3652,18 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     const paused = await pausing;
     await verifying;
     expect(paused.status).toBe("paused");
-    ledger.close();
+    activity.close();
   });
 
   it("デーモンを再起動しても、テストの実行待ちから検証を続ける", async () => {
-    const { ledger, service, id } = await toImplement([implement("# v1")]);
+    const { activity, service, id } = await toImplement([implement("# v1")]);
     await service.runNext(id);
-    const { service: restarted } = makeService(ledger, [review()]);
+    const { service: restarted } = makeService(activity, [review()]);
     restarted.recoverInterrupted();
     expect(restarted.queuedTaskIds()).toEqual([id]);
     await restarted.runNext(id);
     expect(restarted.get(id)?.task.steps[2]?.state).toBe("done");
-    ledger.close();
+    activity.close();
   });
 });
 
@@ -3669,9 +3681,9 @@ describe("プロジェクトと GitHub Issue の取り込み（PBI-5a）", () =>
     outcomes: AgentOutcome[] = [],
     options: { config?: () => ConfigResult; github?: FakeGitHub } = {},
   ) {
-    const ledger = new SqliteLedgerStore(dbPath);
+    const activity = new SqliteActivityStore(dbPath);
     const projects = new MemoryProjectStore();
-    const made = makeService(ledger, outcomes, { projects, ...options });
+    const made = makeService(activity, outcomes, { projects, ...options });
     const pay = made.service.saveProject(undefined, {
       name: "決済",
       githubAccount: "me",
@@ -3689,11 +3701,11 @@ describe("プロジェクトと GitHub Issue の取り込み（PBI-5a）", () =>
       name: "認証",
       sources: [{ scope: "repo", target: "acme/auth", label: "ai" }],
     });
-    return { ledger, ...made, pay, auth };
+    return { activity, ...made, pay, auth };
   }
 
   it("既定のプロジェクトがあり、取り込み元が重複するプロジェクトは作れない", () => {
-    const { ledger, service } = setup();
+    const { activity, service } = setup();
     expect(service.listProjects().map((p) => p.name)).toEqual(["デフォルト", "決済", "認証"]);
     expect(() =>
       service.saveProject(undefined, {
@@ -3702,29 +3714,29 @@ describe("プロジェクトと GitHub Issue の取り込み（PBI-5a）", () =>
       }),
     ).toThrow(/プロジェクト「決済」に登録されています/);
     expect(() => service.saveProject("no-such", { name: "x" })).toThrow(/見つかりません/);
-    ledger.close();
+    activity.close();
   });
 
-  it("画面のチケットは、指定したプロジェクトに作る（無いプロジェクトは拒否する。PBI-4a）", () => {
-    const { ledger, service, pay } = setup();
-    expect(service.createTicket({ title: "A", projectId: pay.id }).projectId).toBe(pay.id);
-    expect(service.createTicket({ title: "B" }).projectId).toBe("default");
-    expect(() => service.createTicket({ title: "C", projectId: "no-such" })).toThrow(
+  it("画面のタスクは、指定したプロジェクトに作る（無いプロジェクトは拒否する。PBI-4a）", () => {
+    const { activity, service, pay } = setup();
+    expect(service.createTask({ title: "A", projectId: pay.id }).projectId).toBe(pay.id);
+    expect(service.createTask({ title: "B" }).projectId).toBe("default");
+    expect(() => service.createTask({ title: "C", projectId: "no-such" })).toThrow(
       /プロジェクトが見つかりません/,
     );
-    ledger.close();
+    activity.close();
   });
 
   it("Org の設定画面に、ほかのプロジェクトが担当している除外リポジトリを出す", () => {
-    const { ledger, service, pay } = setup();
+    const { activity, service, pay } = setup();
     expect(service.getProject(pay.id)?.exclusions).toEqual([
       { org: "acme", repos: [{ repo: "acme/auth", projectName: "認証" }] },
     ]);
-    ledger.close();
+    activity.close();
   });
 
   it("取り込み元ごとに検索し、担当のプロジェクトのラベルが付いた Issue だけを、二重にならないよう取り込む", () => {
-    const { ledger, service, pay, auth } = setup();
+    const { activity, service, pay, auth } = setup();
     // 検索には、プロジェクトに選んだ gh のアカウントを使う（PBI-13）。選んでいなければアカウントは無い
     expect(service.intakeSources()).toEqual([
       { query: 'is:issue is:open org:acme label:"sacty"', account: "me", project: "決済" },
@@ -3747,21 +3759,21 @@ describe("プロジェクトと GitHub Issue の取り込み（PBI-5a）", () =>
       body: "Issue の本文",
       start: "github_issue",
     });
-    const ledgerEvent = service.get(created[0]?.id ?? "")?.ledger[0];
-    expect(ledgerEvent?.type === "TaskCreated" && ledgerEvent.payload.source).toEqual({
+    const activityEvent = service.get(created[0]?.id ?? "")?.activity[0];
+    expect(activityEvent?.type === "TaskCreated" && activityEvent.payload.source).toEqual({
       kind: "github_issue",
       repo: "acme/payments",
       number: 1,
       url: "https://github.com/acme/payments/issues/1",
     });
-    expect(ledgerEvent?.projectId).toBe(pay.id);
+    expect(activityEvent?.projectId).toBe(pay.id);
 
     // 次の取り込みでも、同じ Issue は取り込まない（大文字・小文字は区別しない）
     expect(service.importIssues([issue("ACME/Payments", 1, ["sacty"])])).toEqual([]);
     // 担当の判定は取り込むたびに行う（設定の変更をすぐに反映する）
     service.saveProject(auth.id, { name: "認証", sources: [] });
     expect(service.importIssues([issue("acme/auth", 6, ["sacty"])])[0]?.projectId).toBe(pay.id);
-    ledger.close();
+    activity.close();
   });
 
   /** GitHub のトークンも設定した設定。 */
@@ -3775,7 +3787,7 @@ describe("プロジェクトと GitHub Issue の取り込み（PBI-5a）", () =>
   };
 
   it("長い Issue の本文やタイトルも切り詰めずに取り込む（レビュー指摘）", () => {
-    const { ledger, service } = setup();
+    const { activity, service } = setup();
     const body = `${"a".repeat(10_000)}\n\n## 必須条件\n- 二重に処理しない`;
     const title = "t".repeat(250);
     const [task] = service.importIssues([
@@ -3783,11 +3795,11 @@ describe("プロジェクトと GitHub Issue の取り込み（PBI-5a）", () =>
     ]);
     expect(task?.body).toBe(body);
     expect(task?.title).toBe(title);
-    ledger.close();
+    activity.close();
   });
 
   it("Issue から作ったタスクは、その Issue のリポジトリに、プロジェクトの設定で実装する", async () => {
-    const { ledger, service, repos, id } = await (async () => {
+    const { activity, service, repos, id } = await (async () => {
       const made = setup(
         [
           {
@@ -3820,7 +3832,7 @@ describe("プロジェクトと GitHub Issue の取り込み（PBI-5a）", () =>
       url: "https://github.com/acme/payments.git",
       baseBranch: "develop",
     });
-    ledger.close();
+    activity.close();
   });
 
   it("プロジェクトに選んだ gh のアカウントでトークンを取り出し、HTTPS の clone を認証する（PBI-13）", async () => {
@@ -3838,7 +3850,7 @@ describe("プロジェクトと GitHub Issue の取り込み（PBI-5a）", () =>
     ];
     // アクティブなアカウントは別のもの。プロジェクトに選んだアカウントのトークンを使う
     const github = new FakeGitHub({ me: "ghp_active", "side-job": "ghp_side" });
-    const { ledger, service, repos, pay } = setup(outcomes, { github });
+    const { activity, service, repos, pay } = setup(outcomes, { github });
     service.saveProject(pay.id, { ...pay, githubAccount: "side-job" });
     const [task] = service.importIssues([issue("acme/payments", 11, ["sacty"])]);
     const id = task?.id ?? "";
@@ -3853,7 +3865,7 @@ describe("プロジェクトと GitHub Issue の取り込み（PBI-5a）", () =>
     expect(repos.prepared[0]?.authEnv?.GIT_CONFIG_VALUE_0).toBe(
       `Authorization: Basic ${Buffer.from("x-access-token:ghp_side").toString("base64")}`,
     );
-    ledger.close();
+    activity.close();
   });
 
   it("GitHub のアカウントを選んでいないプロジェクトは、アクティブなアカウントを使わずに理由を記録して止める（PBI-13）", async () => {
@@ -3870,7 +3882,7 @@ describe("プロジェクトと GitHub Issue の取り込み（PBI-5a）", () =>
       },
     ];
     const github = new FakeGitHub({ me: "ghp_active" });
-    const { ledger, service, repos, pay } = setup(outcomes, { github });
+    const { activity, service, repos, pay } = setup(outcomes, { github });
     // インポートしたプロジェクトなど、アカウントを選んでいない
     const { githubAccount: _, ...withoutAccount } = pay;
     service.saveProject(pay.id, withoutAccount);
@@ -3885,7 +3897,7 @@ describe("プロジェクトと GitHub Issue の取り込み（PBI-5a）", () =>
       code: "github.accountRequired",
       params: { project: "決済" },
     });
-    ledger.close();
+    activity.close();
   });
 
   it("プロジェクトに選んだ gh のアカウントでログインしていなければ、理由を記録して止める（PBI-13）", async () => {
@@ -3914,11 +3926,11 @@ describe("プロジェクトと GitHub Issue の取り込み（PBI-5a）", () =>
       params: { account: "side-job" },
     });
     expect(other.repos.prepared).toHaveLength(0);
-    other.ledger.close();
+    other.activity.close();
   });
 
   it("Issue のリポジトリの設定がプロジェクトに無ければ、理由を記録して止める", async () => {
-    const { ledger, service } = setup([
+    const { activity, service } = setup([
       {
         kind: "completed",
         output: "# 要求要件",
@@ -3930,23 +3942,23 @@ describe("プロジェクトと GitHub Issue の取り込み（PBI-5a）", () =>
         usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 1 },
       },
     ]);
-    const [task] = service.importIssues([issue("acme/ledger", 10, ["sacty"])]);
+    const [task] = service.importIssues([issue("acme/activity", 10, ["sacty"])]);
     const id = task?.id ?? "";
     // 対象リポジトリは要求要件の工程の前に用意するので、要求要件の前に止まる（PBI-15）
     await service.runNext(id);
     // タスクの開始時に止まるので、エージェントの実行の失敗ではなく、一時停止の理由として記録する（PBI-15）
     expect(ja(service.get(id)?.task.pausedMessage)).toContain(
-      "プロジェクト「決済」に、acme/ledger のリポジトリの設定",
+      "プロジェクト「決済」に、acme/activity のリポジトリの設定",
     );
-    ledger.close();
+    activity.close();
   });
 });
 
 describe("プロジェクト定義のエクスポート・インポート（PBI-5b）", () => {
   it("エクスポートした定義を、新しいプロジェクトとしてインポートでき、重複していれば拒否する", () => {
-    const ledger = new SqliteLedgerStore(dbPath);
+    const activity = new SqliteActivityStore(dbPath);
     const projects = new MemoryProjectStore();
-    const { service } = makeService(ledger, [], { projects });
+    const { service } = makeService(activity, [], { projects });
     const pay = service.saveProject(undefined, {
       name: "決済",
       sources: [{ scope: "org", target: "acme", label: "sacty" }],
@@ -3960,7 +3972,7 @@ describe("プロジェクト定義のエクスポート・インポート（PBI-
     expect(service.listProjects()).toHaveLength(2);
 
     // 別の sacty（取り込み元が重複しない環境）へは、新しいプロジェクトとしてインポートできる
-    const other = makeService(new SqliteLedgerStore(join(dir, "other.db")), [], {
+    const other = makeService(new SqliteActivityStore(join(dir, "other.db")), [], {
       projects: new MemoryProjectStore(),
     });
     const imported = other.service.importProject(JSON.parse(JSON.stringify(exported)));
@@ -3970,7 +3982,7 @@ describe("プロジェクト定義のエクスポート・インポート（PBI-
       sources: pay.sources,
       repositories: pay.repositories,
     });
-    ledger.close();
+    activity.close();
   });
 });
 
@@ -3982,7 +3994,7 @@ describe("コンテキストリポジトリ（PBI-6a）", () => {
   });
 
   it("プロジェクトのコンテキストを合成して工程エージェントに渡し、使ったリポジトリとコミットを記録する", async () => {
-    const ledger = new SqliteLedgerStore(dbPath);
+    const activity = new SqliteActivityStore(dbPath);
     const projects = new MemoryProjectStore();
     const contexts = new FakeContexts({
       "https://example.com/company.git": { "rules.md": "# 会社の規約" },
@@ -3991,46 +4003,49 @@ describe("コンテキストリポジトリ（PBI-6a）", () => {
         "sacty-context.yaml": "extends: https://example.com/company.git#main\n",
       },
     });
-    const { service, executor } = makeService(ledger, [out("# 要求要件")], { projects, contexts });
+    const { service, executor } = makeService(activity, [out("# 要求要件")], {
+      projects,
+      contexts,
+    });
     const project = service.saveProject(undefined, {
       name: "決済",
       context: { repo: "https://example.com/team.git" },
     });
-    const { id } = service.createTicket({ title: "A", projectId: project.id });
+    const { id } = service.createTask({ title: "A", projectId: project.id });
     await service.runNext(id);
 
     expect(executor.contexts[0]).toMatch(/会社の規約[\s\S]*チームの規約/);
-    const resolved = service.get(id)?.ledger.find((e) => e.type === "ContextResolved");
+    const resolved = service.get(id)?.activity.find((e) => e.type === "ContextResolved");
     expect(resolved?.type === "ContextResolved" && resolved.payload.layers).toEqual([
       { repo: "https://example.com/company.git", ref: "main", commit: "c0ffee".padEnd(40, "0") },
       { repo: "https://example.com/team.git", commit: "c0ffee".padEnd(40, "0") },
     ]);
     expect(service.get(id)?.task.context?.layers).toHaveLength(2);
     // コンテキストの無いプロジェクトでは、何も渡さない
-    const other = service.createTicket({ title: "B" });
+    const other = service.createTask({ title: "B" });
     expect(executor.contexts).toHaveLength(1);
     expect(other.projectId).toBe("default");
-    ledger.close();
+    activity.close();
   });
 
   it("コンテキストを取得できなければ、理由を記録して止める", async () => {
-    const ledger = new SqliteLedgerStore(dbPath);
-    const { service, executor } = makeService(ledger, [out("# 要求要件")], {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service, executor } = makeService(activity, [out("# 要求要件")], {
       contexts: new FakeContexts({}),
     });
     const project = service.saveProject(undefined, {
       name: "決済",
       context: { repo: "https://example.com/missing.git" },
     });
-    const { id } = service.createTicket({ title: "A", projectId: project.id });
+    const { id } = service.createTask({ title: "A", projectId: project.id });
     await service.runNext(id);
     expect(executor.calls).toHaveLength(0);
     expect(service.get(id)?.task.pausedReason).toBe("error");
-    const failed = service.get(id)?.ledger.findLast((e) => e.type === "AgentRunFailed");
+    const failed = service.get(id)?.activity.findLast((e) => e.type === "AgentRunFailed");
     expect(failed?.type === "AgentRunFailed" && ja(failed.payload.message)).toMatch(
       /取得できません/,
     );
-    // 台帳にはコードと引数で記録し、画面が画面の言語の文にする（PBI-11b）
+    // 作業履歴にはコードと引数で記録し、画面が画面の言語の文にする（PBI-11b）
     expect(failed?.type === "AgentRunFailed" && failed.payload.message).toEqual({
       code: "context.fetchFailed",
       params: { key: "https://example.com/missing.git#", detail: "repository not found" },
@@ -4038,7 +4053,7 @@ describe("コンテキストリポジトリ（PBI-6a）", () => {
     expect(failed?.type === "AgentRunFailed" && renderMessage(failed.payload.message, "en")).toBe(
       "Cannot fetch the context repository (https://example.com/missing.git#): repository not found",
     );
-    ledger.close();
+    activity.close();
   });
 });
 
@@ -4052,7 +4067,7 @@ describe("コンテキストの取得の認証（PBI-13 レビュー指摘）", 
     `Authorization: Basic ${Buffer.from(`x-access-token:${token}`).toString("base64")}`;
 
   it("HTTPS の GitHub のコンテキストと継承先は、プロジェクトに選んだ gh のアカウントで取得する", async () => {
-    const ledger = new SqliteLedgerStore(dbPath);
+    const activity = new SqliteActivityStore(dbPath);
     const github = new FakeGitHub({ me: "ghp_active", "side-job": "ghp_side" });
     const contexts = new FakeContexts({
       "https://github.com/acme/team-ctx.git": {
@@ -4065,13 +4080,13 @@ describe("コンテキストの取得の認証（PBI-13 レビュー指摘）", 
       },
       "/local/base": { "rules.md": "# 共通" },
     });
-    const { service } = makeService(ledger, [out("# 要求要件")], { contexts, github });
+    const { service } = makeService(activity, [out("# 要求要件")], { contexts, github });
     const project = service.saveProject(undefined, {
       name: "副業",
       githubAccount: "side-job",
       context: { repo: "https://github.com/acme/team-ctx.git" },
     });
-    const { id } = service.createTicket({ title: "A", projectId: project.id });
+    const { id } = service.createTask({ title: "A", projectId: project.id });
     await service.runNext(id);
     expect(contexts.fetched).toEqual([
       {
@@ -4086,22 +4101,22 @@ describe("コンテキストの取得の認証（PBI-13 レビュー指摘）", 
       { repo: "/local/base" },
     ]);
     expect(github.requested).toEqual(["side-job", "side-job"]);
-    ledger.close();
+    activity.close();
   });
 
   it("アカウントを選んでいなければ取得せずに止め、取得の失敗ではトークンを残さない", async () => {
-    const ledger = new SqliteLedgerStore(dbPath);
+    const activity = new SqliteActivityStore(dbPath);
     const contexts = new FakeContexts({});
-    const { service, executor } = makeService(ledger, [out("# 要求要件")], { contexts });
+    const { service, executor } = makeService(activity, [out("# 要求要件")], { contexts });
     const unset = service.saveProject(undefined, {
       name: "未選択",
       context: { repo: "https://github.com/acme/ctx.git" },
     });
-    const { id } = service.createTicket({ title: "A", projectId: unset.id });
+    const { id } = service.createTask({ title: "A", projectId: unset.id });
     await service.runNext(id);
     expect(contexts.fetched).toEqual([]);
     expect(executor.calls).toHaveLength(0);
-    const failed = service.get(id)?.ledger.findLast((e) => e.type === "AgentRunFailed");
+    const failed = service.get(id)?.activity.findLast((e) => e.type === "AgentRunFailed");
     expect(failed?.type === "AgentRunFailed" && failed.payload.message).toEqual({
       code: "github.accountRequired",
       params: { project: "未選択" },
@@ -4113,13 +4128,13 @@ describe("コンテキストの取得の認証（PBI-13 レビュー指摘）", 
       githubAccount: "me",
       context: { repo: "https://github.com/acme/private-ctx.git" },
     });
-    const second = service.createTicket({ title: "B", projectId: chosen.id });
+    const second = service.createTask({ title: "B", projectId: chosen.id });
     await service.runNext(second.id);
-    const ledgerText = JSON.stringify(service.get(second.id)?.ledger);
-    expect(ledgerText).toContain("context.fetchFailed");
-    expect(ledgerText).not.toContain("ghp_secret");
-    expect(ledgerText).not.toContain(Buffer.from("x-access-token:ghp_secret").toString("base64"));
-    ledger.close();
+    const activityText = JSON.stringify(service.get(second.id)?.activity);
+    expect(activityText).toContain("context.fetchFailed");
+    expect(activityText).not.toContain("ghp_secret");
+    expect(activityText).not.toContain(Buffer.from("x-access-token:ghp_secret").toString("base64"));
+    activity.close();
   });
 });
 
@@ -4137,9 +4152,9 @@ describe("コンテキストの MCP サーバー（PBI-6b）", () => {
       },
     });
 
-  it("MCP の秘密情報は、短い値でも出力から取り除き、台帳に残さない", async () => {
-    const ledger = new SqliteLedgerStore(dbPath);
-    const { service } = makeService(ledger, [out("# 要求要件\nPIN は pin123 です")], {
+  it("MCP の秘密情報は、短い値でも出力から取り除き、作業履歴に残さない", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service } = makeService(activity, [out("# 要求要件\nPIN は pin123 です")], {
       contexts: contexts(),
       secrets: { "claude-oauth-token": "oauth-secret", "mcp-github": "pin123" },
     });
@@ -4147,18 +4162,18 @@ describe("コンテキストの MCP サーバー（PBI-6b）", () => {
       name: "決済",
       context: { repo: "https://example.com/ctx.git" },
     });
-    const { id } = service.createTicket({ title: "A", projectId: project.id });
+    const { id } = service.createTask({ title: "A", projectId: project.id });
     await service.runNext(id);
-    const ledgerText = JSON.stringify(service.get(id)?.ledger);
-    expect(ledgerText).not.toContain("pin123");
-    expect(ledgerText).toContain("PIN は [REDACTED] です");
-    ledger.close();
+    const activityText = JSON.stringify(service.get(id)?.activity);
+    expect(activityText).not.toContain("pin123");
+    expect(activityText).toContain("PIN は [REDACTED] です");
+    activity.close();
   });
 
   it("MCP の設定には秘密情報の名前だけを書き、値は実行時に環境変数で渡し、出力からは取り除く", async () => {
-    const ledger = new SqliteLedgerStore(dbPath);
+    const activity = new SqliteActivityStore(dbPath);
     const { service, executor } = makeService(
-      ledger,
+      activity,
       [out("# 要求要件\n値は mcp-value-123 でした")],
       {
         contexts: contexts(),
@@ -4169,7 +4184,7 @@ describe("コンテキストの MCP サーバー（PBI-6b）", () => {
       name: "決済",
       context: { repo: "https://example.com/ctx.git" },
     });
-    const { id } = service.createTicket({ title: "A", projectId: project.id });
+    const { id } = service.createTask({ title: "A", projectId: project.id });
     await service.runNext(id);
 
     const invocation = executor.calls[0];
@@ -4178,29 +4193,29 @@ describe("コンテキストの MCP サーバー（PBI-6b）", () => {
     // biome-ignore lint/suspicious/noTemplateCurlyInString: 設定に書く参照の文字列そのもの
     expect(executor.mcpConfigs[0]).toContain("${SACTY_MCP_SECRET_0}");
     expect(executor.mcpConfigs[0]).not.toContain("mcp-value-123");
-    // 台帳には値を残さない
-    expect(JSON.stringify(service.get(id)?.ledger)).not.toContain("mcp-value-123");
-    ledger.close();
+    // 作業履歴には値を残さない
+    expect(JSON.stringify(service.get(id)?.activity)).not.toContain("mcp-value-123");
+    activity.close();
   });
 
   it("MCP サーバーが参照する秘密情報が無ければ、名前を示して止める", async () => {
-    const ledger = new SqliteLedgerStore(dbPath);
-    const { service, executor } = makeService(ledger, [out("# 要求要件")], {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service, executor } = makeService(activity, [out("# 要求要件")], {
       contexts: contexts(),
     });
     const project = service.saveProject(undefined, {
       name: "決済",
       context: { repo: "https://example.com/ctx.git" },
     });
-    const { id } = service.createTicket({ title: "A", projectId: project.id });
+    const { id } = service.createTask({ title: "A", projectId: project.id });
     await service.runNext(id);
     expect(executor.calls).toHaveLength(0);
     expect(service.get(id)?.task.pausedReason).toBe("auth");
-    const failed = service.get(id)?.ledger.findLast((e) => e.type === "AgentRunFailed");
+    const failed = service.get(id)?.activity.findLast((e) => e.type === "AgentRunFailed");
     expect(failed?.type === "AgentRunFailed" && ja(failed.payload.message)).toContain(
       "秘密情報「mcp-github」が見つかりません",
     );
-    ledger.close();
+    activity.close();
   });
 });
 
@@ -4210,20 +4225,20 @@ describe("API", () => {
   const json = { ...auth, "content-type": "application/json" };
 
   it("トークンがないと401を返す", async () => {
-    const ledger = new SqliteLedgerStore(dbPath);
-    const app = createApp(makeService(ledger).service, token);
+    const activity = new SqliteActivityStore(dbPath);
+    const app = createApp(makeService(activity).service, token);
     expect((await app.request("/api/tasks")).status).toBe(401);
     expect(
       (await app.request("/api/tasks", { headers: { authorization: "Bearer wrong" } })).status,
     ).toBe(401);
-    ledger.close();
+    activity.close();
   });
 
-  it("チケットを作ると、一覧と詳細（台帳つき）に現れる", async () => {
-    const ledger = new SqliteLedgerStore(dbPath);
-    const app = createApp(makeService(ledger).service, token);
+  it("タスクを作ると、一覧と詳細（作業履歴つき）に現れる", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const app = createApp(makeService(activity).service, token);
 
-    const res = await app.request("/api/tickets", {
+    const res = await app.request("/api/tasks", {
       method: "POST",
       headers: json,
       body: JSON.stringify({ title: "  決済APIの設計  ", body: "冪等性キーを扱う" }),
@@ -4239,28 +4254,28 @@ describe("API", () => {
 
     const detail = (await (
       await app.request(`/api/tasks/${task.id}`, { headers: auth })
-    ).json()) as { ledger: { type: string; actor: string }[] };
-    expect(detail.ledger.map((e) => [e.type, e.actor])).toEqual([["TaskCreated", "person"]]);
-    ledger.close();
+    ).json()) as { activity: { type: string; actor: string }[] };
+    expect(detail.activity.map((e) => [e.type, e.actor])).toEqual([["TaskCreated", "person"]]);
+    activity.close();
   });
 
-  it("タイトルが空なら400を返し、台帳に何も書かない", async () => {
-    const ledger = new SqliteLedgerStore(dbPath);
-    const app = createApp(makeService(ledger).service, token);
-    const res = await app.request("/api/tickets", {
+  it("タイトルが空なら400を返し、作業履歴に何も書かない", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const app = createApp(makeService(activity).service, token);
+    const res = await app.request("/api/tasks", {
       method: "POST",
       headers: json,
       body: JSON.stringify({ title: "   " }),
     });
     expect(res.status).toBe(400);
-    expect(ledger.all()).toHaveLength(0);
-    ledger.close();
+    expect(activity.all()).toHaveLength(0);
+    activity.close();
   });
 
   it("gh にログイン済みの GitHub のアカウントを返す（トークンは返さない。PBI-13）", async () => {
-    const ledger = new SqliteLedgerStore(dbPath);
+    const activity = new SqliteActivityStore(dbPath);
     const app = createApp(
-      makeService(ledger, [], {
+      makeService(activity, [], {
         github: new FakeGitHub({ me: "ghp_active", "side-job": "ghp_side" }),
       }).service,
       token,
@@ -4275,7 +4290,7 @@ describe("API", () => {
     });
     expect(JSON.stringify(body)).not.toContain("ghp_");
     const failing = createApp(
-      makeService(ledger, [], {
+      makeService(activity, [], {
         github: Object.assign(new FakeGitHub(), {
           accounts: () => Promise.reject(new MessageError(message("github.ghMissing"))),
         }),
@@ -4287,14 +4302,14 @@ describe("API", () => {
         error: { code: "github.ghMissing" },
       },
     );
-    ledger.close();
+    activity.close();
   });
 
   it("状態に合わない再開は409、不正な金額は400を返す", async () => {
-    const ledger = new SqliteLedgerStore(dbPath);
-    const { service } = makeService(ledger);
+    const activity = new SqliteActivityStore(dbPath);
+    const { service } = makeService(activity);
     const app = createApp(service, token);
-    const task = service.createTicket({ title: "A" });
+    const task = service.createTask({ title: "A" });
     const resume = (body: unknown) =>
       app.request(`/api/tasks/${task.id}/resume`, {
         method: "POST",
@@ -4310,14 +4325,14 @@ describe("API", () => {
     });
     expect((await resume({ capUsd: -1 })).status).toBe(400);
     expect((await resume({ capUsd: "3" })).status).toBe(400);
-    ledger.close();
+    activity.close();
   });
 
   it("判断待ちでない変更の申し出への判断は409、不正な入力は400を返す（PBI-9）", async () => {
-    const ledger = new SqliteLedgerStore(dbPath);
-    const { service } = makeService(ledger);
+    const activity = new SqliteActivityStore(dbPath);
+    const { service } = makeService(activity);
     const app = createApp(service, token);
-    const task = service.createTicket({ title: "A" });
+    const task = service.createTask({ title: "A" });
     const decide = (body: unknown) =>
       app.request(`/api/tasks/${task.id}/proposals/CP-1/decide`, {
         method: "POST",
@@ -4326,13 +4341,13 @@ describe("API", () => {
       });
     expect((await decide({ accept: true })).status).toBe(409);
     expect((await decide({ accept: "yes" })).status).toBe(400);
-    expect(service.get(task.id)?.ledger.map((e) => e.type)).toEqual(["TaskCreated"]);
-    ledger.close();
+    expect(service.get(task.id)?.activity.map((e) => e.type)).toEqual(["TaskCreated"]);
+    activity.close();
   });
 
   it("プロジェクトのエクスポートは定義を返し、インポートは形式の誤りに400・重複に409を返す（PBI-5b）", async () => {
-    const ledger = new SqliteLedgerStore(dbPath);
-    const { service } = makeService(ledger, [], { projects: new MemoryProjectStore() });
+    const activity = new SqliteActivityStore(dbPath);
+    const { service } = makeService(activity, [], { projects: new MemoryProjectStore() });
     const app = createApp(service, token);
     const pay = service.saveProject(undefined, {
       name: "決済",
@@ -4383,13 +4398,13 @@ describe("API", () => {
       project: { ...exported.project, name: "決済（コピー）", sources: [] },
     });
     expect(created.status).toBe(201);
-    ledger.close();
+    activity.close();
   });
 
   it("存在しないタスクは404を返す", async () => {
-    const ledger = new SqliteLedgerStore(dbPath);
-    const app = createApp(makeService(ledger).service, token);
+    const activity = new SqliteActivityStore(dbPath);
+    const app = createApp(makeService(activity).service, token);
     expect((await app.request("/api/tasks/nope", { headers: auth })).status).toBe(404);
-    ledger.close();
+    activity.close();
   });
 });

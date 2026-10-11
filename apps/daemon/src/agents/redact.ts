@@ -10,7 +10,7 @@ const MIN_GUESSED_LENGTH = 8;
 
 /**
  * 実行に渡した秘密情報を、文字列から取り除く。長さにかかわらず、渡した値はすべて対象にする。
- * エージェントの出力やエラー文に認証値が含まれても、追記専用の台帳（後から消せない）に残さないため。
+ * エージェントの出力やエラー文に認証値が含まれても、追記専用の作業履歴（後から消せない）に残さないため。
  */
 export function redact(text: string, secrets: readonly string[]): string {
   const targets = [...new Set(secrets)]

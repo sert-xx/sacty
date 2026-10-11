@@ -14,7 +14,7 @@ export class SecretNotFoundError extends MessageError {
   }
 }
 
-/** 秘密情報の取り出し口。値は台帳・ログ・画面に出さない。 */
+/** 秘密情報の取り出し口。値は作業履歴・ログ・画面に出さない。 */
 export interface SecretStore {
   get(name: string): Promise<string>;
 }
