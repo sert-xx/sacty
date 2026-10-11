@@ -149,6 +149,8 @@ export type Task = {
   pushedBranch?: PayloadOf<"BranchPushed">;
   /** sacty が作ったPR（またはブランチ）。 */
   pullRequest?: PayloadOf<"PullRequestPublished">;
+  /** 成果物チェックの間に見守っている PR の状態（PBI-14a）。PR を作っていなければ無い。 */
+  pullRequestState?: "open" | "closed" | "merged" | "merged_outdated";
   /** ゴールガーディアンの見逃し（最終レビューで合格にした成果物を、人間が差し戻した）。 */
   misses: (PayloadOf<"GuardianMissed"> & { at: string })[];
   /** やり直しの実装に渡す、直前の検証で通らなかった内容。 */
@@ -534,8 +536,34 @@ export function applyEvent(
         throw new LedgerIntegrityError(event, "the pr step is not running");
       }
       task.pullRequest = event.payload;
+      // 作り直した・更新した PR は、開いているものとして見守り直す
+      task.pullRequestState = event.payload.number ? "open" : undefined;
       task.status = "idle";
       break;
+
+    case "PullRequestMerged":
+    case "PullRequestClosed":
+    case "PullRequestReopened": {
+      // 見守るのは、成果物チェックで待っている、sacty が作った PR だけ
+      if (
+        task.gate?.step !== "pr" ||
+        (task.status !== "awaiting_approval" && task.status !== "escalated")
+      ) {
+        throw new LedgerIntegrityError(event, "the deliverable review is not open");
+      }
+      if (task.pullRequest?.number !== event.payload.number) {
+        throw new LedgerIntegrityError(event, "not the pull request of the task");
+      }
+      task.pullRequestState =
+        event.type === "PullRequestMerged"
+          ? event.payload.outdated
+            ? "merged_outdated"
+            : "merged"
+          : event.type === "PullRequestClosed"
+            ? "closed"
+            : "open";
+      break;
+    }
 
     case "BranchPushed":
       if (activeStep(task) !== "pr")

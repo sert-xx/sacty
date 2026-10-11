@@ -318,3 +318,39 @@ describe("一時停止・中止の操作（PBI-12）", () => {
     expect(canControl(task({ status: "awaiting_approval" }))).toBe(true);
   });
 });
+
+describe("PR で判断する成果物チェック（PBI-14a）", () => {
+  const atPrGate = (state: Task["pullRequestState"]) =>
+    task({
+      status: "awaiting_approval",
+      gate: { step: "pr", submission: 1 },
+      pullRequestState: state,
+    });
+  it("PR の状態に合わせて、状態を表示する", () => {
+    expect(statusText(atPrGate("open"))).toBe("PR のマージ待ち");
+    expect(statusText(atPrGate("closed"))).toBe("PR が閉じられた（判断待ち）");
+    expect(statusText(atPrGate("merged_outdated"))).toBe("古い提出がマージされた（判断待ち）");
+    // PR を作っていなければ、これまでどおり画面で承認する
+    expect(statusText(atPrGate(undefined))).toBe("成果物チェック待ち");
+    expect(statusTextIn(atPrGate("open"), labels.en)).toBe("Awaiting PR merge");
+  });
+
+  it("台帳に、PR のマージ・クローズ・開き直しを表示する", () => {
+    const event = (e: Pick<LedgerEvent, "type" | "payload">): LedgerEvent =>
+      ({
+        ...e,
+        seq: 1,
+        id: "e1",
+        taskId: "t1",
+        projectId: "default",
+        at: "2026-10-11T00:00:00.000Z",
+        actor: "person",
+      }) as LedgerEvent;
+    expect(
+      describeEvent(event({ type: "PullRequestMerged", payload: { number: 7, by: "reviewer" } })),
+    ).toBe("PR #7 がマージされた（reviewer）→ 成果物チェックを承認");
+    expect(describeEvent(event({ type: "PullRequestClosed", payload: { number: 7 } }))).toBe(
+      "PR #7 がマージされずに閉じられた → 人間の判断待ち",
+    );
+  });
+});

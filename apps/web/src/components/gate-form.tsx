@@ -19,6 +19,7 @@ export function GateForm({
   escalated,
   maxChanges,
   pendingComments,
+  pullRequest,
 }: {
   taskId: string;
   step: StepKey;
@@ -30,6 +31,8 @@ export function GateForm({
   escalated: boolean;
   maxChanges: number;
   pendingComments: string[];
+  /** PR を作ったタスクの成果物チェック。PR のマージで承認するので、承認のボタンは出さない（PBI-14a）。 */
+  pullRequest?: { number: number; url?: string; closed: boolean; mergedOutdated: boolean };
 }) {
   const [state, formAction, pending] = useActionState(gateAction, initial);
   const m = useMessages();
@@ -41,6 +44,25 @@ export function GateForm({
       <input type="hidden" name="taskId" value={taskId} />
       <input type="hidden" name="step" value={step} />
       <input type="hidden" name="submission" value={submission} />
+      {pullRequest && (
+        <div className="flex flex-col gap-2 rounded-md border border-border bg-muted p-3 text-sm leading-6">
+          <p className="font-semibold">{t.prTitle}</p>
+          <p>{t.prHelp}</p>
+          {pullRequest.url && (
+            <a
+              href={pullRequest.url}
+              target="_blank"
+              rel="noreferrer noopener"
+              className="inline-flex min-h-11 w-fit items-center rounded-lg bg-primary px-4 font-semibold text-primary-foreground"
+            >
+              {t.prOpen(pullRequest.number)}
+            </a>
+          )}
+          {pullRequest.closed && <p className="text-warn">{t.prClosed}</p>}
+          {pullRequest.mergedOutdated && <p className="text-warn">{t.prMergedOutdated}</p>}
+          <p className="text-muted-foreground">{t.prRequestNote}</p>
+        </div>
+      )}
       {escalated && (
         <p className="rounded-md border border-warn-line bg-warn-soft p-3 text-sm leading-6 text-warn">
           {t.escalated(maxChanges)}
@@ -97,15 +119,17 @@ export function GateForm({
         >
           {escalated ? t.requestOverLimit : t.request}
         </Button>
-        <Button
-          type="submit"
-          name="decision"
-          value="approve"
-          disabled={pending}
-          className="min-h-11 flex-1"
-        >
-          {t.approve}
-        </Button>
+        {!pullRequest && (
+          <Button
+            type="submit"
+            name="decision"
+            value="approve"
+            disabled={pending}
+            className="min-h-11 flex-1"
+          >
+            {t.approve}
+          </Button>
+        )}
       </div>
       <p className="text-xs leading-5 text-muted-foreground">{t.note(maxChanges)}</p>
     </form>

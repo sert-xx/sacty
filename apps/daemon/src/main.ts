@@ -10,6 +10,7 @@ import { GhCliAuth } from "./gh.js";
 import { GitHubIssueSearch, GitHubPullRequests } from "./github.js";
 import { IssueIntake } from "./intake.js";
 import { SqliteLedgerStore } from "./ledger.js";
+import { PullRequestWatcher } from "./pr-watcher.js";
 import { SqliteProjectStore } from "./projects.js";
 import { GitRepositoryWorkspace } from "./repository.js";
 import { KeychainSecretStore } from "./secrets.js";
@@ -56,12 +57,15 @@ for (const problem of status.problems) console.warn(`[daemon] ${renderMessage(pr
 
 const worker = new Worker(service);
 const intake = new IssueIntake(service, new GitHubIssueSearch(), github, config);
+// 成果物チェックで待っている PR を見守る（マージで承認。PBI-14a）
+const prWatcher = new PullRequestWatcher(service);
 const app = createApp(service, token, { intake });
 
 const server = serve({ fetch: app.fetch, hostname: "127.0.0.1", port }, (info) => {
   console.log(`[daemon] listening on http://127.0.0.1:${info.port} (data: ${home})`);
   worker.start();
   intake.start();
+  prWatcher.start();
 });
 
 /** 後処理を待つ上限。CLIはこれより長く待ってから強制終了する。 */
@@ -73,7 +77,7 @@ const shutdown = async () => {
   shuttingDown = true;
   // 実行中のコンテナを止め、実行の後処理（台帳への記録、認証ファイルの書き戻し、
   // 一時ファイルの削除）が終わるのを待ってから、台帳を閉じて終了する。
-  const draining = Promise.all([worker.drain(), intake.stop()]);
+  const draining = Promise.all([worker.drain(), intake.stop(), prWatcher.stop()]);
   executor.abortAll();
   tests.abortAll();
   const timedOut = await Promise.race([
