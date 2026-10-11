@@ -5,6 +5,7 @@ const ja = {
   loading: "読み込み中…",
   start: "開始地点：",
   project: " ・ プロジェクト：",
+  repository: " ・ 対象リポジトリ：",
   sourceOpen: "（",
   sourceClose: "）",
   gate: {
@@ -55,6 +56,7 @@ const en: TaskMessages = {
   loading: "Loading…",
   start: "Started from: ",
   project: " · Project: ",
+  repository: " · Repository: ",
   sourceOpen: " (",
   sourceClose: ")",
   gate: {

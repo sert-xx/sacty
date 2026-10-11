@@ -99,6 +99,15 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
           <Link href={`/projects/${task.projectId}`} className="text-accent-foreground underline">
             {projectName}
           </Link>
+          {/* 対象リポジトリを選ぶ前の版（PBI-21 より前）のタスクは、用意したリポジトリの URL を出す */}
+          {(task.source?.repo ?? task.repo ?? task.repository?.url) && (
+            <>
+              {m.repository}
+              <span className="font-mono [overflow-wrap:anywhere]">
+                {task.source?.repo ?? task.repo ?? task.repository?.url}
+              </span>
+            </>
+          )}
         </p>
         <CostMeter task={task} />
         {canControl(task) && (

@@ -53,14 +53,7 @@ const agent = (overrides: Partial<AgentConfig> = {}): AgentConfig => ({
 });
 
 const configOf =
-  (
-    a: AgentConfig,
-    budgetPerTaskUsd = 1,
-    pullRequest: { provider: "github"; repo: string } | null = {
-      provider: "github",
-      repo: "acme/app",
-    },
-  ): (() => ConfigResult) =>
+  (a: AgentConfig, budgetPerTaskUsd = 1): (() => ConfigResult) =>
   () => ({
     ok: true,
     config: {
@@ -68,13 +61,6 @@ const configOf =
       defaultAgent: a,
       guardianAgent: a,
       budgetPerTaskUsd,
-      repository: {
-        url: "https://example.com/acme/app.git",
-        baseBranch: "main",
-        testCommand: "npm test",
-        testImage: "sacty-agent:test",
-        ...(pullRequest ? { pullRequest } : {}),
-      },
     },
   });
 
@@ -93,13 +79,23 @@ class FakeGitHub implements GitHubAuth {
   }
 }
 
-/** 既定のプロジェクトに、gh のアカウント（偽物の me）を選んだプロジェクトの置き場所。 */
-function projectsWithAccount(): MemoryProjectStore {
+/**
+ * 既定のプロジェクトに、gh のアカウント（偽物の me）と、対象リポジトリ（acme/app）の設定を
+ * 登録したプロジェクトの置き場所。画面で作るタスクは、このリポジトリが対象になる（PBI-21）。
+ */
+function projectsWithAccount(options: { pullRequest?: boolean } = {}): MemoryProjectStore {
   const projects = new MemoryProjectStore();
   projects.put("default", {
     name: "デフォルト",
     sources: [],
-    repositories: [],
+    repositories: [
+      {
+        repo: "acme/app",
+        baseBranch: "main",
+        testCommand: "npm test",
+        pullRequest: options.pullRequest ?? true,
+      },
+    ],
     githubAccount: "me",
   });
   return projects;
@@ -749,7 +745,7 @@ describe("秘密情報と予算の通知（レビュー指摘）", () => {
       repos: new FakeRepos(),
       tests: new FakeTests(),
       pulls: new FakePulls(),
-      projects: new MemoryProjectStore(),
+      projects: projectsWithAccount(),
       contexts: new FakeContexts(),
       workspaceRoot: join(dir, "workspaces"),
     });
@@ -830,7 +826,7 @@ describe("秘密情報と予算の通知（レビュー指摘）", () => {
       repos: new FakeRepos(),
       tests: new FakeTests(),
       pulls: new FakePulls(),
-      projects: new MemoryProjectStore(),
+      projects: projectsWithAccount(),
       contexts: new FakeContexts(),
       github: new FakeGitHub(),
       planner: async () => ({
@@ -2440,8 +2436,10 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         dir: join(dir, "workspaces", id, "repo"),
         // 退避先は、どのコンテナにもマウントしない場所（タスクの作業領域の外）
         gitDir: join(dir, "workspaces", "_git", `${id}.git`),
-        url: "https://example.com/acme/app.git",
+        url: "https://github.com/acme/app.git",
         baseBranch: "main",
+        // GitHub の HTTPS なので、プロジェクトの gh のアカウントで clone する
+        authEnv: expect.any(Object),
       },
     ]);
     expect(executor.dirs[3]).toBe(join(dir, "workspaces", id, "repo"));
@@ -2456,7 +2454,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
 
     const task = service.get(id)?.task;
     expect(task?.repository).toEqual({
-      url: "https://example.com/acme/app.git",
+      url: "https://github.com/acme/app.git",
       baseBranch: "main",
       baseCommit: "base123",
     });
@@ -2886,7 +2884,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     const pulls = new FakePulls();
     const { activity, service, id } = await toDeliverableGate([], {
       pulls,
-      config: configOf(agent(), 1, null),
+      projects: projectsWithAccount({ pullRequest: false }),
     });
     expect(pulls.calls).toEqual([]);
     const task = service.get(id)?.task;
@@ -3274,7 +3272,13 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
           actor: "person",
           event: {
             type: "TaskCreated",
-            payload: { title: "実装だけ", body: "", start: "sacty", budgetCapUsd: 1 },
+            payload: {
+              title: "実装だけ",
+              body: "",
+              start: "sacty",
+              repo: "acme/app",
+              budgetCapUsd: 1,
+            },
           },
         },
         { actor: "sacty", event: { type: "StepsChosen", payload: { steps: ["implement", "pr"] } } },
@@ -3528,25 +3532,19 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
   });
 
   it("中止で閉じるPRは、作ったときに記録したリポジトリのものだけ（レビュー指摘）", async () => {
-    let prRepo = "acme/app";
-    const config = (): ConfigResult => {
-      const base = configOf(agent())();
-      if (!base.ok || !base.config.repository) throw new Error("unreachable");
-      return {
-        ok: true,
-        config: {
-          ...base.config,
-          repository: {
-            ...base.config.repository,
-            pullRequest: { provider: "github", repo: prRepo },
-          },
-        },
-      };
-    };
     const pulls = new FakePulls();
-    const { activity, service, id } = await toDeliverableGate([], { pulls, config });
+    const projects = projectsWithAccount();
+    const { activity, service, id } = await toDeliverableGate([], { pulls, projects });
     expect(service.get(id)?.task.pullRequest?.repo).toBe("acme/app");
-    prRepo = "acme/other"; // 設定を変えてから中止した
+    // プロジェクトのリポジトリの設定を変えてから中止した
+    const project = projects.get("default");
+    if (!project) throw new Error("unreachable");
+    projects.put("default", {
+      ...project,
+      repositories: [
+        { repo: "acme/other", baseBranch: "main", testCommand: "npm test", pullRequest: true },
+      ],
+    });
     await service.cancel(id);
     expect(pulls.closed).toEqual([{ repo: "acme/app", token: "ghp_secret", number: 7 }]);
     activity.close();
@@ -3667,6 +3665,85 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
   });
 });
 
+describe("タスクの対象リポジトリ（PBI-21）", () => {
+  const out = (text: string): AgentOutcome => ({
+    kind: "completed",
+    output: text,
+    usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 1 },
+  });
+  const twoRepositories = () => {
+    const projects = projectsWithAccount();
+    projects.put("default", {
+      name: "デフォルト",
+      sources: [],
+      repositories: [
+        { repo: "acme/app", baseBranch: "main", testCommand: "npm test", pullRequest: true },
+        {
+          repo: "acme/api",
+          baseBranch: "develop",
+          testCommand: "go test ./...",
+          pullRequest: false,
+        },
+      ],
+      githubAccount: "me",
+    });
+    return projects;
+  };
+
+  it("選んだリポジトリの設定（URL・ベースブランチ）で用意して進む", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service, repos } = makeService(activity, [out("# 要求要件")], {
+      projects: twoRepositories(),
+    });
+    // 大文字・小文字が違っても、設定のリポジトリ名で記録する
+    const task = service.createTask({ title: "A", repo: "ACME/API" });
+    expect(task.repo).toBe("acme/api");
+    await service.runNext(task.id);
+    expect(repos.prepared[0]).toMatchObject({
+      url: "https://github.com/acme/api.git",
+      baseBranch: "develop",
+    });
+    expect(service.get(task.id)?.task.repository?.url).toBe("https://github.com/acme/api.git");
+    activity.close();
+  });
+
+  it("リポジトリが複数あるのに選んでいない・設定に無いリポジトリを選んだときは、作らない", () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service } = makeService(activity, [], { projects: twoRepositories() });
+    expect(() => service.createTask({ title: "A" })).toThrow(/対象リポジトリを、プロジェクト/);
+    expect(() => service.createTask({ title: "A", repo: "acme/other" })).toThrow(
+      /対象リポジトリを、プロジェクト/,
+    );
+    expect(service.list()).toEqual([]);
+    activity.close();
+  });
+
+  it("対象リポジトリを選ぶ前の版で作ったタスクは、理由を記録して止まる", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    activity.append({
+      taskId: "t-old",
+      projectId: "default",
+      events: [
+        {
+          actor: "person",
+          event: {
+            type: "TaskCreated",
+            payload: { title: "古いタスク", body: "", start: "ticket", budgetCapUsd: 1 },
+          },
+        },
+      ],
+    });
+    const { service, repos, executor } = makeService(activity, [out("# 要求要件")]);
+    await service.runNext("t-old");
+    const task = service.get("t-old")?.task;
+    expect(task?.status).toBe("paused");
+    expect(task?.pausedMessage).toEqual({ code: "run.repositoryNotConfigured" });
+    expect(repos.prepared).toEqual([]);
+    expect(executor.calls).toHaveLength(0);
+    activity.close();
+  });
+});
+
 describe("プロジェクトと GitHub Issue の取り込み（PBI-5a）", () => {
   const issue = (repo: string, number: number, labels: string[], title = `Issue ${number}`) => ({
     repo,
@@ -3719,8 +3796,12 @@ describe("プロジェクトと GitHub Issue の取り込み（PBI-5a）", () =>
 
   it("画面のタスクは、指定したプロジェクトに作る（無いプロジェクトは拒否する。PBI-4a）", () => {
     const { activity, service, pay } = setup();
-    expect(service.createTask({ title: "A", projectId: pay.id }).projectId).toBe(pay.id);
-    expect(service.createTask({ title: "B" }).projectId).toBe("default");
+    const a = service.createTask({ title: "A", projectId: pay.id });
+    expect(a.projectId).toBe(pay.id);
+    // リポジトリの設定が1つだけなら、それが対象リポジトリになる（PBI-21）
+    expect(a.repo).toBe("acme/payments");
+    // リポジトリの設定が無いプロジェクトには作れない（PBI-21）
+    expect(() => service.createTask({ title: "B" })).toThrow(/リポジトリの設定がありません/);
     expect(() => service.createTask({ title: "C", projectId: "no-such" })).toThrow(
       /プロジェクトが見つかりません/,
     );
@@ -3995,7 +4076,7 @@ describe("コンテキストリポジトリ（PBI-6a）", () => {
 
   it("プロジェクトのコンテキストを合成して工程エージェントに渡し、使ったリポジトリとコミットを記録する", async () => {
     const activity = new SqliteActivityStore(dbPath);
-    const projects = new MemoryProjectStore();
+    const projects = projectsWithAccount();
     const contexts = new FakeContexts({
       "https://example.com/company.git": { "rules.md": "# 会社の規約" },
       "https://example.com/team.git": {
@@ -4009,6 +4090,8 @@ describe("コンテキストリポジトリ（PBI-6a）", () => {
     });
     const project = service.saveProject(undefined, {
       name: "決済",
+      repositories: [{ repo: "acme/app", testCommand: "npm test" }],
+      githubAccount: "me",
       context: { repo: "https://example.com/team.git" },
     });
     const { id } = service.createTask({ title: "A", projectId: project.id });
@@ -4035,6 +4118,8 @@ describe("コンテキストリポジトリ（PBI-6a）", () => {
     });
     const project = service.saveProject(undefined, {
       name: "決済",
+      repositories: [{ repo: "acme/app", testCommand: "npm test" }],
+      githubAccount: "me",
       context: { repo: "https://example.com/missing.git" },
     });
     const { id } = service.createTask({ title: "A", projectId: project.id });
@@ -4083,6 +4168,7 @@ describe("コンテキストの取得の認証（PBI-13 レビュー指摘）", 
     const { service } = makeService(activity, [out("# 要求要件")], { contexts, github });
     const project = service.saveProject(undefined, {
       name: "副業",
+      repositories: [{ repo: "acme/app", testCommand: "npm test" }],
       githubAccount: "side-job",
       context: { repo: "https://github.com/acme/team-ctx.git" },
     });
@@ -4100,7 +4186,8 @@ describe("コンテキストの取得の認証（PBI-13 レビュー指摘）", 
       // GitHub の HTTPS でないもの（ローカルのパス・SSH）は、ホストの認証のまま
       { repo: "/local/base" },
     ]);
-    expect(github.requested).toEqual(["side-job", "side-job"]);
+    // 対象リポジトリの clone と、コンテキストの2つのリポジトリの取得
+    expect(github.requested).toEqual(["side-job", "side-job", "side-job"]);
     activity.close();
   });
 
@@ -4110,14 +4197,16 @@ describe("コンテキストの取得の認証（PBI-13 レビュー指摘）", 
     const { service, executor } = makeService(activity, [out("# 要求要件")], { contexts });
     const unset = service.saveProject(undefined, {
       name: "未選択",
+      repositories: [{ repo: "acme/app", testCommand: "npm test" }],
       context: { repo: "https://github.com/acme/ctx.git" },
     });
     const { id } = service.createTask({ title: "A", projectId: unset.id });
     await service.runNext(id);
     expect(contexts.fetched).toEqual([]);
     expect(executor.calls).toHaveLength(0);
-    const failed = service.get(id)?.activity.findLast((e) => e.type === "AgentRunFailed");
-    expect(failed?.type === "AgentRunFailed" && failed.payload.message).toEqual({
+    // 対象リポジトリの clone（GitHub の HTTPS）の前に止まる
+    const failed = service.get(id)?.activity.findLast((e) => e.type === "TaskPaused");
+    expect(failed?.type === "TaskPaused" && failed.payload.message).toEqual({
       code: "github.accountRequired",
       params: { project: "未選択" },
     });
@@ -4125,6 +4214,7 @@ describe("コンテキストの取得の認証（PBI-13 レビュー指摘）", 
     contexts.fail = true;
     const chosen = service.saveProject(undefined, {
       name: "選択済み",
+      repositories: [{ repo: "acme/app", testCommand: "npm test" }],
       githubAccount: "me",
       context: { repo: "https://github.com/acme/private-ctx.git" },
     });
@@ -4160,6 +4250,8 @@ describe("コンテキストの MCP サーバー（PBI-6b）", () => {
     });
     const project = service.saveProject(undefined, {
       name: "決済",
+      repositories: [{ repo: "acme/app", testCommand: "npm test" }],
+      githubAccount: "me",
       context: { repo: "https://example.com/ctx.git" },
     });
     const { id } = service.createTask({ title: "A", projectId: project.id });
@@ -4182,6 +4274,8 @@ describe("コンテキストの MCP サーバー（PBI-6b）", () => {
     );
     const project = service.saveProject(undefined, {
       name: "決済",
+      repositories: [{ repo: "acme/app", testCommand: "npm test" }],
+      githubAccount: "me",
       context: { repo: "https://example.com/ctx.git" },
     });
     const { id } = service.createTask({ title: "A", projectId: project.id });
@@ -4205,6 +4299,8 @@ describe("コンテキストの MCP サーバー（PBI-6b）", () => {
     });
     const project = service.saveProject(undefined, {
       name: "決済",
+      repositories: [{ repo: "acme/app", testCommand: "npm test" }],
+      githubAccount: "me",
       context: { repo: "https://example.com/ctx.git" },
     });
     const { id } = service.createTask({ title: "A", projectId: project.id });

@@ -158,6 +158,11 @@ const TaskCreated = z.object({
     budgetCapUsd: z.number().positive().default(DEFAULT_BUDGET_USD),
     /** 取り込み元（GitHub Issue のリポジトリと番号）。 */
     source: TaskSource.optional(),
+    /**
+     * 画面で作ったタスクの対象リポジトリ（owner/name。プロジェクトのリポジトリの設定から選んだもの。PBI-21）。
+     * Issue から取り込んだタスクは、その Issue のリポジトリが対象なので持たない。PBI-21 より前の作業履歴にも無い。
+     */
+    repo: z.string().optional(),
   }),
 });
 
@@ -713,6 +718,11 @@ export const CreateTaskInput = z.object({
   body: z.string().trim().max(TASK_BODY_MAX, code("input.bodyTooLong")).default(""),
   /** 作るプロジェクト。省略すると既定のプロジェクト。 */
   projectId: z.string().min(1).optional(),
+  /**
+   * 対象リポジトリ（owner/name。プロジェクトのリポジトリの設定から選ぶ。PBI-21）。
+   * 省略すると、プロジェクトのリポジトリの設定が1つだけならそれにする。
+   */
+  repo: z.string().trim().min(1).optional(),
 });
 export type CreateTaskInput = z.infer<typeof CreateTaskInput>;
 

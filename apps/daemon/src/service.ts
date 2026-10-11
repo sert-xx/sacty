@@ -827,8 +827,22 @@ export class TaskService {
   createTask(raw: unknown): Task {
     const input = CreateTaskInput.parse(raw);
     const projectId = input.projectId ?? DEFAULT_PROJECT_ID;
-    if (!this.deps.projects.get(projectId)) {
+    const project = this.deps.projects.get(projectId);
+    if (!project) {
       throw new InvalidOperationError(message("project.notFound"));
+    }
+    // 対象リポジトリは、プロジェクトのリポジトリの設定から選ぶ（PBI-21）。1つだけなら選ばなくてよい
+    const repo = input.repo
+      ? repositorySettings(project, input.repo)?.repo
+      : project.repositories.length === 1
+        ? project.repositories[0]?.repo
+        : undefined;
+    if (!repo) {
+      throw new InvalidOperationError(
+        project.repositories.length === 0
+          ? message("task.repositoryMissing", { project: project.name })
+          : message("task.repositoryUnknown", { project: project.name }),
+      );
     }
     const config = this.deps.config();
     const budgetCapUsd = config.ok ? config.config.budgetPerTaskUsd : DEFAULT_BUDGET_USD;
@@ -836,7 +850,10 @@ export class TaskService {
     return this.append({ id: randomUUID(), projectId }, [
       {
         actor: "person",
-        event: { type: "TaskCreated", payload: { title, body, start: "sacty", budgetCapUsd } },
+        event: {
+          type: "TaskCreated",
+          payload: { title, body, start: "sacty", repo, budgetCapUsd },
+        },
       },
     ]);
   }
@@ -948,41 +965,31 @@ export class TaskService {
   private targetRepository(
     task: Task,
     config: SactyConfig,
-  ):
-    | { ok: true; repo: NonNullable<SactyConfig["repository"]> }
-    | { ok: false; message: DaemonText } {
-    if (task.source?.kind === "github_issue") {
-      const project = this.deps.projects.get(task.projectId);
-      const settings = repositorySettings(project, task.source.repo);
-      if (!settings) {
-        return {
-          ok: false,
-          message: message("run.repositorySettingsMissing", {
-            project: project?.name ?? task.projectId,
-            repo: task.source.repo,
-          }),
-        };
-      }
-      return {
-        ok: true,
-        repo: {
-          url: `https://github.com/${task.source.repo}.git`,
-          baseBranch: settings.baseBranch,
-          testCommand: settings.testCommand,
-          testImage: config.image,
-          ...(settings.pullRequest
-            ? { pullRequest: { provider: "github" as const, repo: task.source.repo } }
-            : {}),
-        },
-      };
-    }
-    if (!config.repository) {
+  ): { ok: true; repo: TargetRepository } | { ok: false; message: DaemonText } {
+    // Issue から取り込んだタスクはその Issue のリポジトリ、画面で作ったタスクは作るときに選んだリポジトリ（PBI-21）
+    const repo = task.source?.kind === "github_issue" ? task.source.repo : task.repo;
+    if (!repo) return { ok: false, message: message("run.repositoryNotConfigured") };
+    const project = this.deps.projects.get(task.projectId);
+    const settings = repositorySettings(project, repo);
+    if (!settings) {
       return {
         ok: false,
-        message: message("run.repositoryNotConfigured"),
+        message: message("run.repositorySettingsMissing", {
+          project: project?.name ?? task.projectId,
+          repo,
+        }),
       };
     }
-    return { ok: true, repo: config.repository };
+    return {
+      ok: true,
+      repo: {
+        url: `https://github.com/${repo}.git`,
+        baseBranch: settings.baseBranch,
+        testCommand: settings.testCommand,
+        testImage: config.image,
+        ...(settings.pullRequest ? { pullRequest: { provider: "github" as const, repo } } : {}),
+      },
+    };
   }
 
   /** 実装の対象リポジトリを用意する（初回だけ clone し、起点のコミットを作業履歴に記録する）。 */
@@ -2387,6 +2394,15 @@ function feedbackRemarks(items: PullRequestFeedback[]): string[] {
     return cut(body || `${item.author} が PR の変更を求めました（コメントなし）。`);
   });
 }
+
+/** タスクの対象リポジトリと、その設定（プロジェクトのリポジトリの設定から求める）。 */
+type TargetRepository = {
+  url: string;
+  baseBranch: string;
+  testCommand: string;
+  testImage: string;
+  pullRequest?: { provider: "github"; repo: string };
+};
 
 /** GitHub の API の失敗の、HTTP のステータス（GitHub の失敗でなければ undefined）。 */
 function githubStatusOf(error: unknown): number | undefined {
