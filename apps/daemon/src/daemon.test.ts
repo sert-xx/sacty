@@ -162,6 +162,15 @@ class FakeRepos implements RepositoryWorkspace {
     if (this.diffFail) throw new Error(this.diffFail);
     return this.diffText;
   }
+  /** 実装後のコードの写し（ゴールガーディアン。PBI-16）。 */
+  workingCopies: { dir: string; outDir: string }[] = [];
+  copyFail?: string;
+  async copyWorkingTree(dir: string, outDir: string) {
+    if (this.copyFail) throw new Error(this.copyFail);
+    mkdirSync(outDir, { recursive: true });
+    writeFileSync(join(outDir, "IMPLEMENTED.md"), "implemented");
+    this.workingCopies.push({ dir, outDir });
+  }
   /** 起点のコードの書き出し（要求要件・設計の工程。PBI-15）。 */
   snapshots: { gitDir: string; baseCommit: string; outDir: string }[] = [];
   snapshotFail?: string;
@@ -1228,9 +1237,14 @@ describe("ゴールガーディアン：変更の申し出の判定（PBI-9）",
     // チケットや工程の下書き、過去の経緯は渡さない
     expect(guardian).not.toContain("チケットの本文");
     expect(guardian).not.toContain("# 設計 v1");
-    // 工程の作業領域とは別の、空の作業領域で実行する
+    // 工程の作業領域とは別の作業領域に、起点のコミットのコードを読み取り専用で渡す（PBI-16）
     expect(executor.dirs[2]).not.toBe(executor.dirs[1]);
     expect(executor.dirs[2]).toContain("_guardian");
+    expect(executor.readOnly[2]).toBe(true);
+    expect(executor.workspaceFiles[2]).toEqual(["README.md"]);
+    expect(guardian).toContain("起点のコミット（base123）のコードがあります");
+    // コンテキスト（規約・スキル）は渡さない
+    expect(executor.contexts[2]).toBeUndefined();
     expect(existsSync(executor.dirs[2] ?? "")).toBe(false);
 
     const task = service.get(id)?.task;
@@ -2245,6 +2259,9 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       expect(prompt).toContain("src/pay.ts:12：ここで例外を握りつぶしている");
       expect(prompt).toContain("承認済みの要求要件");
       expect(prompt).not.toContain("チケットの本文");
+      // 実装で直せるかを判断するので、実装後のコードを読み取り専用で渡す（PBI-16）
+      expect(executor.readOnly[before]).toBe(true);
+      expect(executor.workspaceFiles[before]).toEqual(["IMPLEMENTED.md"]);
       const task = service.get(id)?.task;
       expect(task?.status).toBe("queued");
       expect(task?.remarks.slice(-3).map((r) => r.step)).toEqual([
@@ -2385,6 +2402,40 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     expect(sent.approved.design).toBeUndefined();
     expect(sent.approved.requirements).toBeDefined();
     expect(sent.misses).toHaveLength(1);
+    ledger.close();
+  });
+
+  it("最終レビューのゴールガーディアンには、実装後のコードを読み取り専用で渡す（PBI-16）", async () => {
+    const { ledger, service, executor, repos, id } = await toImplement([
+      implement("# v1"),
+      review(),
+    ]);
+    await drain(service);
+    const index = executor.calls.length - 1; // 最終レビュー
+    expect(promptOf(executor, index)).toContain("sacty-final-review");
+    expect(promptOf(executor, index)).toContain("実装後のコード");
+    expect(executor.readOnly[index]).toBe(true);
+    expect(executor.workspaceFiles[index]).toEqual(["IMPLEMENTED.md"]);
+    // 実装の作業領域そのものではなく、写しを渡し、終わったら消す
+    expect(repos.workingCopies.at(-1)?.dir).toBe(repos.prepared[0]?.dir);
+    expect(executor.dirs[index]).not.toBe(repos.prepared[0]?.dir);
+    expect(existsSync(executor.dirs[index] ?? "")).toBe(false);
+    expect(service.get(id)?.task.lastReview?.passed).toBe(true);
+    ledger.close();
+  });
+
+  it("実装後のコードを写せなければ、最終レビューの失敗として止める（PBI-16）", async () => {
+    const repos = new FakeRepos();
+    repos.copyFail = "写せません";
+    const { ledger, service, executor, id } = await toImplement([implement("# v1")], { repos });
+    await drain(service);
+    const task = service.get(id)?.task;
+    expect(task?.pausedReason).toBe("error");
+    expect(ja(task?.pausedMessage)).toContain("写せません");
+    // ゴールガーディアン（最終レビュー）は実行しない
+    expect(executor.calls.map((_, i) => promptOf(executor, i)).join()).not.toContain(
+      "sacty-final-review",
+    );
     ledger.close();
   });
 

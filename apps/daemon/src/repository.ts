@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, relative, sep } from "node:path";
 import { message } from "@sacty/core";
 import { MessageError } from "./errors.js";
 
@@ -34,6 +34,11 @@ export interface RepositoryWorkspace {
    * 要求要件・設計の工程で、実装の作業領域とは別に、起点のコードを読ませるため（PBI-15）。
    */
   snapshot(gitDir: string, baseCommit: string, outDir: string): Promise<void>;
+  /**
+   * 実装の作業領域の内容（.git を除く）を outDir に写す。ゴールガーディアンに、実装後のコードを読み取り専用で
+   * 読ませるため（PBI-16）。シンボリックリンクはたどらず、そのまま写す。
+   */
+  copyWorkingTree(dir: string, outDir: string): Promise<void>;
   /**
    * 作業領域の内容をコミットし、ブランチにプッシュする。コミットは parent に積む
    * （前回プッシュしたコミットに積むので、強制プッシュはしない）。
@@ -209,6 +214,17 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
     mkdirSync(dirname(gitDir), { recursive: true });
     cpSync(join(dir, ".git"), gitDir, { recursive: true });
     return { baseCommit };
+  }
+
+  async copyWorkingTree(dir: string, outDir: string) {
+    if (!existsSync(dir)) throw new MessageError(message("verify.workspaceMissing"));
+    mkdirSync(dirname(outDir), { recursive: true });
+    cpSync(dir, outDir, {
+      recursive: true,
+      // リンクの先は写さない（ホストのファイルを取り込まない）。.git は渡さない
+      verbatimSymlinks: true,
+      filter: (src) => relative(dir, src).split(sep)[0] !== ".git",
+    });
   }
 
   async snapshot(gitDir: string, baseCommit: string, outDir: string) {

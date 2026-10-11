@@ -402,6 +402,44 @@ export class TaskService {
     ]);
   }
 
+  /**
+   * ゴールガーディアンを、対象リポジトリのコードを読み取り専用で渡して実行する（PBI-16）。
+   * base は起点のコミットのコード、implemented は実装後のコード（実装の作業領域。.git を除く）。
+   * コードは実行ごとのディレクトリに書き出し、終わったら消す。書き出せなければ、実行の失敗として返す。
+   */
+  private async runGuardian(
+    task: Task,
+    run: { agent: AgentConfig; image: string; prompt: string; role: AgentRole },
+    code: "base" | "implemented",
+  ): Promise<Awaited<ReturnType<TaskService["execute"]>>> {
+    const runId = randomUUID();
+    const workspaceDir = join(this.deps.workspaceRoot, "_guardian", runId);
+    try {
+      if (task.repository) {
+        try {
+          if (code === "base") {
+            await this.deps.repos.snapshot(
+              this.trustedGitDir(task),
+              task.repository.baseCommit,
+              workspaceDir,
+            );
+          } else {
+            await this.deps.repos.copyWorkingTree(this.repoDir(task), workspaceDir);
+          }
+        } catch (error) {
+          return {
+            outcome: { kind: "failed", reason: "error", message: errorText(error) },
+            costUsd: 0,
+            estimated: false,
+          };
+        }
+      }
+      return await this.execute({ ...run, runId, workspaceDir, readOnlyWorkspace: true });
+    } finally {
+      rmSync(workspaceDir, { recursive: true, force: true });
+    }
+  }
+
   /** ゴールガーディアンに、PR の指摘の戻し先を判断させる（新しいセッション。PBI-14b）。 */
   private async judgeRework(
     task: Task,
@@ -409,23 +447,18 @@ export class TaskService {
     config: SactyConfig,
   ): Promise<Extract<EventInput, { type: "ReworkJudged" }>["payload"]> {
     const agent = config.guardianAgent;
-    const runId = randomUUID();
-    const workspaceDir = join(this.deps.workspaceRoot, "_guardian", runId);
     const targets = reworkTargets(task, "pr");
-    let result: Awaited<ReturnType<TaskService["execute"]>>;
-    try {
-      result = await this.execute({
+    // 指摘が実装で直せるかを判断するので、実装後のコードを読ませる
+    const { outcome, costUsd, estimated } = await this.runGuardian(
+      task,
+      {
         agent,
         image: config.image,
-        runId,
         prompt: buildReworkPrompt(task, remarks, targets),
         role: "rework",
-        workspaceDir,
-      });
-    } finally {
-      rmSync(workspaceDir, { recursive: true, force: true });
-    }
-    const { outcome, costUsd, estimated } = result;
+      },
+      "implemented",
+    );
     const judgement =
       outcome.kind === "completed"
         ? extractRework(outcome.output, targets)
@@ -1269,22 +1302,17 @@ export class TaskService {
       return;
     }
     const agent = config.config.guardianAgent;
-    const runId = randomUUID();
-    const workspaceDir = join(this.deps.workspaceRoot, "_guardian", runId);
-    let result: Awaited<ReturnType<TaskService["execute"]>>;
-    try {
-      result = await this.execute({
+    // 最終レビューは、実装後のコードを読み取り専用で読ませる（差分もこれまでどおり渡す）
+    const { outcome, costUsd, estimated } = await this.runGuardian(
+      current,
+      {
         agent,
         image: config.config.image,
-        runId,
         prompt: buildFinalReviewPrompt(current, diff),
         role: "final-review",
-        workspaceDir,
-      });
-    } finally {
-      rmSync(workspaceDir, { recursive: true, force: true });
-    }
-    const { outcome, costUsd, estimated } = result;
+      },
+      "implemented",
+    );
     if (outcome.kind === "failed") {
       // 実装の問題ではないので、やり直さずに止める。再開すると最終レビューからやり直す。
       // 使った分の費用は記録し、予算に入れる
@@ -1751,22 +1779,12 @@ export class TaskService {
     config: SactyConfig,
   ): Promise<Extract<EventInput, { type: "ChangeJudged" }>["payload"]> {
     const agent = config.guardianAgent;
-    const runId = randomUUID();
-    const workspaceDir = join(this.deps.workspaceRoot, "_guardian", runId);
-    let result: Awaited<ReturnType<TaskService["execute"]>>;
-    try {
-      result = await this.execute({
-        agent,
-        image: config.image,
-        runId,
-        prompt: buildGuardianPrompt(task, proposal),
-        role: "guardian",
-        workspaceDir,
-      });
-    } finally {
-      rmSync(workspaceDir, { recursive: true, force: true });
-    }
-    const { outcome, costUsd, estimated } = result;
+    // 変更の申し出の判定は、起点のコミットのコードを読み取り専用で読ませる
+    const { outcome, costUsd, estimated } = await this.runGuardian(
+      task,
+      { agent, image: config.image, prompt: buildGuardianPrompt(task, proposal), role: "guardian" },
+      "base",
+    );
     const judgement =
       outcome.kind === "completed"
         ? extractVerdict(outcome.output)
