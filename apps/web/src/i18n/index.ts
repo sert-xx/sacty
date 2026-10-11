@@ -5,6 +5,7 @@ import { labels } from "./messages/labels";
 import { parts } from "./messages/parts";
 import { projects } from "./messages/projects";
 import { review } from "./messages/review";
+import { settings } from "./messages/settings";
 import { shell } from "./messages/shell";
 import { task } from "./messages/task";
 import { tasks } from "./messages/tasks";
@@ -22,6 +23,7 @@ export function messagesFor(locale: Locale) {
     review: review[locale],
     forms: forms[locale],
     projects: projects[locale],
+    settings: settings[locale],
   };
 }
 

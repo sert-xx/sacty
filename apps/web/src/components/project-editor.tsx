@@ -1,6 +1,6 @@
 "use client";
 
-import { INTAKE_LABEL, type Project, type ProjectTarget } from "@sacty/core";
+import type { Project, ProjectTarget } from "@sacty/core";
 import { XIcon } from "lucide-react";
 import { startTransition, useActionState, useId, useState } from "react";
 import { type SaveProjectState, saveProjectAction } from "@/app/actions";
@@ -98,7 +98,7 @@ export function ProjectEditor({
               {t.targetsTitle}{" "}
               <span className="text-[13px] font-normal text-muted-foreground">{t.targetsNote}</span>
             </h2>
-            <p className="text-sm leading-6 text-muted-foreground">{t.targetsHelp(INTAKE_LABEL)}</p>
+            <p className="text-sm leading-6 text-muted-foreground">{t.targetsHelp}</p>
             <p className="text-sm leading-6 text-warn">{t.prNotice}</p>
             {targets.length === 0 && <p className="text-sm text-muted-foreground">{t.noTargets}</p>}
             <ul className="flex flex-col gap-2.5">

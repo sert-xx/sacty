@@ -88,7 +88,7 @@ describe("GitHub の PR（PBI-10b）", () => {
 });
 
 describe("GitHub の Issue の検索（PBI-5a）", () => {
-  it("検索の結果を読み、PR は除く", async () => {
+  it("検索の結果を読み、PR も PR であることを添えて読む（PBI-26）", async () => {
     const { impl, calls } = fakeFetch([
       {
         status: 200,
@@ -127,6 +127,15 @@ describe("GitHub の Issue の検索（PBI-5a）", () => {
         body: "",
         url: "https://github.com/acme/app/issues/3",
         labels: ["sacty"],
+      },
+      {
+        repo: "acme/app",
+        number: 4,
+        title: "PR",
+        body: "",
+        url: "https://github.com/acme/app/pull/4",
+        labels: [],
+        pullRequest: true,
       },
     ]);
     expect(calls[0]?.url).toContain("q=repo%3Aacme%2Fapp%20label%3A%22sacty%22");

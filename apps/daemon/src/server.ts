@@ -78,6 +78,18 @@ export function createApp(
     return c.json(view);
   });
 
+  // sacty 全体の設定（取り込むラベルなど。PBI-26）
+  app.get("/api/settings", (c) => c.json({ settings: service.getSettings() }));
+  app.put("/api/settings", async (c) => {
+    const json = await readJson(c);
+    if (!json.ok) return c.json({ error: "invalid_json" }, 400);
+    try {
+      return c.json({ settings: service.saveSettings(json.body) });
+    } catch (error) {
+      return handleError(c, error);
+    }
+  });
+
   // タスクの対象リポジトリの候補（プロジェクトの対象から。PBI-25）
   app.get("/api/projects/:id/repositories", async (c) => {
     const result = await service.projectRepositories(c.req.param("id"));

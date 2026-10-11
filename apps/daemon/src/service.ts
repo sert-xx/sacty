@@ -20,7 +20,6 @@ import {
   EventInput,
   excludedRepositories,
   GATED_STEPS,
-  INTAKE_LABEL,
   isCompleted,
   MAX_CHANGE_REQUESTS,
   MAX_VERIFY_ATTEMPTS,
@@ -39,6 +38,7 @@ import {
   renderMessage,
   responsibleProject,
   reworkTargets,
+  SactySettings,
   STEP_PLANS,
   type StepKey,
   type Task,
@@ -101,6 +101,7 @@ import {
 } from "./prompts.js";
 import type { RepositoryWorkspace } from "./repository.js";
 import { SecretNotFoundError, type SecretStore } from "./secrets.js";
+import type { SettingsStore } from "./settings.js";
 
 type ActivityItem = { actor: Actor; event: EventInput };
 
@@ -144,6 +145,8 @@ export type ServiceDeps = {
   planner?: (task: Task) => Promise<ChosenSteps>;
   /** プロジェクトの設定。 */
   projects: ProjectStore;
+  /** sacty 全体の設定（取り込むラベルなど。PBI-26）。 */
+  settings: SettingsStore;
   /** コンテキストリポジトリの取得（PBI-6）。 */
   contexts: ContextFetcher;
   /** テストの実行。 */
@@ -160,6 +163,8 @@ export type DaemonStatus = {
 };
 
 export type IntakeStatus = {
+  /** 取り込むラベル（sacty の設定。PBI-26）。設定していなければ無い（取り込まない）。 */
+  label?: string;
   lastRunAt?: string;
   /** 直近の取り込みで作ったタスクの数。 */
   imported?: number;
@@ -467,7 +472,8 @@ export class TaskService {
    */
   private async commentInvestigation(task: Task): Promise<void> {
     const source = task.source;
-    if (source?.kind !== "github_issue") return;
+    // PR から取り込んだタスクも、PR の会話にコメントする（PR も Issue のコメントの API で返せる。PBI-26）
+    if (!source) return;
     const usedSecrets: string[] = [];
     let event: EventInput;
     try {
@@ -656,12 +662,28 @@ export class TaskService {
     return {
       agent: { id: agent.id, runtime: agent.runtime, authMode: agent.auth.mode },
       problems: [],
-      intake: config.config.github ? this.intakeStatus : null,
+      intake: config.config.github
+        ? { ...this.intakeStatus, ...this.labelOf(this.deps.settings.get()) }
+        : null,
     };
   }
 
   listProjects(): Project[] {
     return this.deps.projects.all();
+  }
+
+  /** sacty 全体の設定（PBI-26）。 */
+  getSettings(): SactySettings {
+    return this.deps.settings.get();
+  }
+
+  /** sacty 全体の設定を変える。取り込むラベルが変わると、取り込みは先頭から読み直す。 */
+  saveSettings(raw: unknown): SactySettings {
+    return this.deps.settings.put(SactySettings.parse(raw));
+  }
+
+  private labelOf(settings: SactySettings): { label?: string } {
+    return settings.intakeLabel ? { label: settings.intakeLabel } : {};
   }
 
   getProject(id: string): ProjectView | undefined {
@@ -745,14 +767,16 @@ export class TaskService {
   /**
    * 対象ごとの取り込みの検索の条件と、検索に使う gh のアカウント（プロジェクトの設定。PBI-13）。
    * アカウントを選んでいないプロジェクトは、プロジェクトの名前を返す（取り込みで理由を示す）。
-   * ラベルは、sacty 全体の設定にするまで（PBI-26）、すべての対象で INTAKE_LABEL を使う（PBI-25）。
+   * ラベルは sacty 全体の設定（PBI-26）。設定していなければ取り込まない。Issue と PR の両方を探す。
    */
   intakeSources(): { query: string; account?: string; project: string }[] {
+    const label = this.deps.settings.get().intakeLabel;
+    if (!label) return [];
     const sources = new Map<string, { query: string; account?: string; project: string }>();
     for (const project of this.deps.projects.all()) {
       for (const target of project.targets) {
         const where = target.scope === "org" ? `org:${target.target}` : `repo:${target.target}`;
-        const query = `is:issue is:open ${where} label:"${INTAKE_LABEL}"`;
+        const query = `is:open ${where} label:"${label}"`;
         const account = project.githubAccount;
         sources.set(`${account ?? ""}\n${query}`, {
           query,
@@ -764,12 +788,14 @@ export class TaskService {
     return [...sources.values()];
   }
 
-  /** プロジェクトの設定の版。変わったら、取り込みは読んだ位置を忘れて先頭から読み直す。 */
+  /**
+   * プロジェクトの設定と取り込むラベルの版。変わったら、取り込みは読んだ位置を忘れて先頭から読み直す。
+   */
   projectsRevision(): string {
-    return this.deps.projects
-      .all()
-      .map((p) => `${p.id}@${p.updatedAt}`)
-      .join(",");
+    return [
+      `label:${this.deps.settings.get().intakeLabel ?? ""}`,
+      ...this.deps.projects.all().map((p) => `${p.id}@${p.updatedAt}`),
+    ].join(",");
   }
 
   recordIntake(status: IntakeStatus): void {
@@ -777,10 +803,12 @@ export class TaskService {
   }
 
   /**
-   * 見つかった Issue をタスクにする。担当するプロジェクトは取り込むたびに判定し（範囲が狭い
-   * 指定が優先）、取り込むラベルが付いた Issue だけを取り込む。同じ Issue は二重に取り込まない。
+   * 見つかった Issue・PR をタスクにする。担当するプロジェクトは取り込むたびに判定し（範囲が狭い
+   * 指定が優先）、取り込むラベル（sacty の設定）が付いたものだけを取り込む。同じものは二重に取り込まない。
    */
   importIssues(found: readonly FoundIssue[]): Task[] {
+    const label = this.deps.settings.get().intakeLabel?.toLowerCase();
+    if (!label) return [];
     const projects = this.deps.projects.all();
     const key = (repo: string, number: number) => `${repo.toLowerCase()}#${number}`;
     const known = new Set(
@@ -795,7 +823,9 @@ export class TaskService {
       if (known.has(key(issue.repo, issue.number))) continue;
       const responsible = responsibleProject(projects, issue.repo);
       if (!responsible) continue;
-      if (!issue.labels.some((l) => l.toLowerCase() === INTAKE_LABEL)) continue;
+      if (!issue.labels.some((l) => l.toLowerCase() === label)) continue;
+      // PR（PBI-26）は、Issue と同じ番号の空間なので、二重の判定はそのまま使える
+      const kind = issue.pullRequest ? "github_pull_request" : "github_issue";
       known.add(key(issue.repo, issue.number));
       created.push(
         this.append({ id: randomUUID(), projectId: responsible.project.id }, [
@@ -808,10 +838,10 @@ export class TaskService {
                 // GitHub 側の上限があるので、際限なく大きくはならない）
                 title: issue.title.trim() || `${issue.repo}#${issue.number}`,
                 body: issue.body,
-                start: "github_issue",
+                start: kind,
                 budgetCapUsd,
                 source: {
-                  kind: "github_issue",
+                  kind,
                   repo: issue.repo,
                   number: issue.number,
                   url: issue.url,
@@ -1011,10 +1041,9 @@ export class TaskService {
   ): { ok: true; repo: TargetRepository } | { ok: false; message: DaemonText } {
     // Issue から取り込んだタスクはその Issue のリポジトリ、画面で作ったタスクは作るときに選んだリポジトリ（PBI-21）。
     // 対象リポジトリを選ぶ前の版で作り、すでに clone したタスクは、記録した URL のリポジトリで続ける
-    const repo =
-      task.source?.kind === "github_issue"
-        ? task.source.repo
-        : (task.repo ?? (task.repository && githubRepoOf(task.repository.url)));
+    const repo = task.source
+      ? task.source.repo
+      : (task.repo ?? (task.repository && githubRepoOf(task.repository.url)));
     if (!repo) return { ok: false, message: message("run.repositoryNotConfigured") };
     // ベースブランチとテストのコマンドは、タスクの開始時にオーケストレーターが決める（PBI-25）。
     // PR は常に作る（PR作成許可の設定は無い）
@@ -2517,7 +2546,8 @@ function awaitingIssueComment(task: Task): boolean {
   return (
     isCompleted(task) &&
     task.steps.some((st) => st.key === "investigate") &&
-    task.source?.kind === "github_issue" &&
+    // Issue・PR から取り込んだタスク（PBI-26）
+    task.source !== undefined &&
     !task.issueComment
   );
 }

@@ -6,6 +6,8 @@ import {
   type Project,
   type ProjectDefinitionInput,
   renderMessage,
+  type SactySettings,
+  type SactySettingsInput,
   type StepKey,
   type Task,
 } from "@sacty/core";
@@ -74,6 +76,8 @@ export async function createTask(
 }
 
 export type IntakeStatus = {
+  /** 取り込むラベル（sacty の設定。PBI-26）。設定していなければ無い（取り込まない）。 */
+  label?: string;
   lastRunAt?: string;
   imported?: number;
   /** 取り込めなかった対象（検索の条件）と理由。 */
@@ -138,6 +142,26 @@ export async function saveProject(
   }
   await ensureOk(res);
   return { ok: true, project: ((await res.json()) as { project: Project }).project };
+}
+
+/** sacty 全体の設定（取り込むラベルなど。PBI-26）。 */
+export async function getSettings(): Promise<SactySettings> {
+  const res = await ensureOk(await daemonFetch("/api/settings"));
+  return ((await res.json()) as { settings: SactySettings }).settings;
+}
+
+/** sacty 全体の設定を変える。入力の誤りは、画面に出せる理由を返す。 */
+export async function saveSettings(
+  settings: SactySettingsInput,
+): Promise<{ ok: true; settings: SactySettings } | { ok: false; message: string }> {
+  const res = await daemonFetch("/api/settings", {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(settings),
+  });
+  if (res.status === 400) return { ok: false, message: await inputMessage(res) };
+  await ensureOk(res);
+  return { ok: true, settings: ((await res.json()) as { settings: SactySettings }).settings };
 }
 
 /** プロジェクトの定義のエクスポート（JSON）。無ければ null。 */

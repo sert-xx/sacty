@@ -55,6 +55,7 @@ const PARAMS = {
   "input.invalidRepo": null,
   "input.contextRepoRequired": null,
   "input.invalidRef": null,
+  "input.invalidLabel": null,
   "input.notExportFile": null,
   "input.unsupportedVersion": null,
   // 入力の検査のうち、コードを指定していない検査（zod の標準の検査。issueMessage で変換する）
@@ -292,6 +293,7 @@ const ja: MessageDictionary = {
   "input.invalidRepo": "リポジトリは owner/name の形で入力してください。",
   "input.contextRepoRequired": "コンテキストリポジトリを入力してください。",
   "input.invalidRef": "ref はブランチ名かタグ名で入力してください。",
+  "input.invalidLabel": 'ラベルに " と \\ は使えません。',
   "input.notExportFile": "sacty のプロジェクト定義のファイルではありません。",
   "input.unsupportedVersion": `対応していない版です（対応している版：${PROJECT_EXPORT_VERSION}）。`,
   "input.required": "入力してください。",
@@ -465,6 +467,7 @@ const en: MessageDictionary = {
   "input.invalidRepo": "Enter the repository as owner/name.",
   "input.contextRepoRequired": "Enter the context repository.",
   "input.invalidRef": "Enter a branch or tag name as the ref.",
+  "input.invalidLabel": "A label can't contain \" or \\.",
   "input.notExportFile": "This is not a sacty project definition file.",
   "input.unsupportedVersion": `Unsupported version (supported: ${PROJECT_EXPORT_VERSION}).`,
   "input.required": "This field is required.",

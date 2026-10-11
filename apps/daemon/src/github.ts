@@ -500,6 +500,8 @@ export type FoundIssue = {
   body: string;
   url: string;
   labels: string[];
+  /** PR か（PBI-26）。 */
+  pullRequest?: boolean;
 };
 
 /**
@@ -620,7 +622,7 @@ export class GitHubIssueSearch implements IssueSearch {
 
 /** 検索の結果の1件を読む。PR と、形の読めないものは除く。 */
 function toIssue(item: Record<string, unknown>): FoundIssue | undefined {
-  if (item.pull_request) return undefined;
+  // PR も取り込む（PBI-26）。検索の結果では、PR は pull_request を持つ
   const issue = {
     repo: String(item.repository_url ?? "").replace(/^.*\/repos\//, ""),
     number: Number(item.number),
@@ -630,6 +632,7 @@ function toIssue(item: Record<string, unknown>): FoundIssue | undefined {
     labels: Array.isArray(item.labels)
       ? item.labels.map((l) => String((l as Record<string, unknown>)?.name ?? l))
       : [],
+    ...(item.pull_request ? { pullRequest: true } : {}),
   };
   return /^[^/]+\/[^/]+$/.test(issue.repo) && issue.number > 0 ? issue : undefined;
 }

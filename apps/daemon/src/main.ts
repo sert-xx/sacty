@@ -16,6 +16,7 @@ import { GitRepositoryWorkspace } from "./repository.js";
 import { KeychainSecretStore } from "./secrets.js";
 import { createApp } from "./server.js";
 import { TaskService } from "./service.js";
+import { SqliteSettingsStore } from "./settings.js";
 import { Worker } from "./worker.js";
 
 const home = resolveHome();
@@ -30,6 +31,7 @@ if (!token) {
 mkdirSync(home, { recursive: true });
 const activity = new SqliteActivityStore(join(home, "sacty.db"));
 const projects = new SqliteProjectStore(join(home, "sacty.db"));
+const settings = new SqliteSettingsStore(join(home, "sacty.db"));
 const secrets = new KeychainSecretStore();
 const config = () => loadConfig(home);
 const executor = new DockerExecutor();
@@ -41,6 +43,7 @@ const service = new TaskService({
   config,
   secrets,
   projects,
+  settings,
   contexts: new GitContextFetcher(),
   executor,
   repos: new GitRepositoryWorkspace(),
@@ -90,6 +93,7 @@ const shutdown = async () => {
   server.close(() => {
     activity.close();
     projects.close();
+    settings.close();
     process.exit(0);
   });
 };

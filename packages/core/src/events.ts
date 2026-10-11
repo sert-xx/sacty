@@ -96,9 +96,9 @@ export const TestViewpoint = z.object({
 });
 export type TestViewpoint = z.infer<typeof TestViewpoint>;
 
-/** タスクの取り込み元。 */
+/** タスクの取り込み元。GitHub の Issue か PR（PBI-26）。 */
 export const TaskSource = z.object({
-  kind: z.literal("github_issue"),
+  kind: z.enum(["github_issue", "github_pull_request"]),
   repo: z.string(),
   number: z.number().int().positive(),
   url: z.string(),
@@ -148,15 +148,16 @@ const TaskCreated = z.object({
     title: z.string(),
     body: z.string(),
     /**
-     * sacty：sacty の画面で作った、github_issue：GitHub Issue から取り込んだ。
+     * sacty：sacty の画面で作った、github_issue：GitHub Issue から取り込んだ、
+     * github_pull_request：GitHub の PR から取り込んだ（PBI-26）。
      * PBI-20 より前の作業履歴は、画面で作ったタスクを ticket と記録しているので、sacty として読む。
      */
     start: z
-      .enum(["sacty", "github_issue", "ticket"])
+      .enum(["sacty", "github_issue", "github_pull_request", "ticket"])
       .transform((start) => (start === "ticket" ? "sacty" : start)),
     // PBI-1の作業履歴には無いので既定値で補う
     budgetCapUsd: z.number().positive().default(DEFAULT_BUDGET_USD),
-    /** 取り込み元（GitHub Issue のリポジトリと番号）。 */
+    /** 取り込み元（GitHub の Issue・PR のリポジトリと番号）。 */
     source: TaskSource.optional(),
     /**
      * 画面で作ったタスクの対象リポジトリ（owner/name。プロジェクトのリポジトリの設定から選んだもの。PBI-21）。

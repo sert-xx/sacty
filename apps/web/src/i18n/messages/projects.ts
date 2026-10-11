@@ -15,6 +15,9 @@ const ja = {
       "取り込みは止まっています。config.yaml に github: を設定すると、定期的に取り込みます。",
     lastRun: (at: string, n: number) => `最後の取り込み：${at}（${n}件のタスクを作成）`,
     never: "まだ取り込んでいません。",
+    noLabel: "取り込むラベルを設定していないので、取り込みは止まっています。",
+    label: (label: string) => `取り込むラベル：${label}`,
+    settings: "sacty の設定を開く",
     errors: "取り込めなかった対象があります（ほかの対象は取り込みました）：",
     runNow: "今すぐ取り込む",
   },
@@ -30,8 +33,7 @@ const ja = {
     name: "名前",
     targetsTitle: "対象",
     targetsNote: "タスクを作り、Issue を取り込む Org とリポジトリ",
-    targetsHelp: (label: string) =>
-      `対象のリポジトリには、画面からタスクを作れます。対象の、ラベル「${label}」の付いた開いている Issue は、タスクとして取り込みます。ベースブランチとテストのコマンドは、タスクの開始時にオーケストレーターがリポジトリを読んで決めます。同じ Org・同じリポジトリは、ほかのプロジェクトに登録できません。Org とその中のリポジトリが別のプロジェクトに登録されていれば、リポジトリの指定が優先します。`,
+    targetsHelp: `対象のリポジトリには、画面からタスクを作れます。対象の、取り込むラベル（sacty の設定で決めます）の付いた開いている Issue と PR は、タスクとして取り込みます。ベースブランチとテストのコマンドは、タスクの開始時にオーケストレーターがリポジトリを読んで決めます。同じ Org・同じリポジトリは、ほかのプロジェクトに登録できません。Org とその中のリポジトリが別のプロジェクトに登録されていれば、リポジトリの指定が優先します。`,
     prNotice:
       "注意：対象に登録すると、タスクの内容によっては、sacty が対象のリポジトリにブランチをプッシュし、PR を作ります。",
     noTargets: "対象はありません。",
@@ -81,6 +83,9 @@ const en: ProjectsMessages = {
     stopped: "Intake is stopped. Add github: to config.yaml to import issues periodically.",
     lastRun: (at, n) => `Last intake: ${at} (${n} task${n === 1 ? "" : "s"} created)`,
     never: "Nothing imported yet.",
+    noLabel: "No intake label is set, so intake is stopped.",
+    label: (label) => `Intake label: ${label}`,
+    settings: "Open sacty settings",
     errors: "Some targets could not be imported (the others were imported):",
     runNow: "Import now",
   },
@@ -96,8 +101,7 @@ const en: ProjectsMessages = {
     name: "Name",
     targetsTitle: "Targets",
     targetsNote: "Orgs and repositories to create tasks for and import issues from",
-    targetsHelp: (label) =>
-      `You can create tasks for the target repositories. Open issues in the targets with the label "${label}" are imported as tasks. The Orchestrator reads the repository at the start of each task to decide the base branch and test command. An org or repository can't be registered in more than one project. If an org and a repository in it are registered in different projects, the repository takes precedence.`,
+    targetsHelp: `You can create tasks for the target repositories. Open issues and PRs in the targets with the intake label (set in sacty settings) are imported as tasks. The Orchestrator reads the repository at the start of each task to decide the base branch and test command. An org or repository can't be registered in more than one project. If an org and a repository in it are registered in different projects, the repository takes precedence.`,
     prNotice:
       "Note: once registered as a target, sacty may push branches and open PRs in the target repositories, depending on the task.",
     noTargets: "No targets.",
