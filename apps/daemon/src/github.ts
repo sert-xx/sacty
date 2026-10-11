@@ -52,6 +52,19 @@ export type PullRequestStatus = { headSha?: string } & (
 
 const API = "https://api.github.com";
 
+/** 一覧を読むページの上限（100件ずつ。誤った Link で延々と読まないように）。 */
+const MAX_PAGES = 50;
+
+/** Link ヘッダーの次のページの URL（無ければ undefined）。 */
+export function nextPage(link: string | null): string | undefined {
+  if (!link) return undefined;
+  for (const part of link.split(",")) {
+    const match = part.match(/<([^>]+)>\s*;\s*rel="next"/);
+    if (match) return match[1];
+  }
+  return undefined;
+}
+
 type Fetch = typeof fetch;
 
 /** GitHub の REST API で PR を作る・更新する。 */
@@ -71,11 +84,20 @@ export class GitHubPullRequests implements PullRequests {
       authorization: `Bearer ${input.token}`,
       "x-github-api-version": "2022-11-28",
     };
+    // 一覧は100件ずつのページになるので、Link の next をたどってすべてのページを読む
     const get = async (path: string) => {
-      const res = await this.fetchImpl(`${this.api}/repos/${input.repo}${path}`, { headers });
-      const json = (await res.json().catch(() => ({}))) as unknown;
-      if (!res.ok) throw apiError("getReviews", res.status, json as Record<string, unknown>);
-      return Array.isArray(json) ? (json as Record<string, unknown>[]) : [];
+      const all: Record<string, unknown>[] = [];
+      let url: string | undefined = `${this.api}/repos/${input.repo}${path}`;
+      for (let page = 0; url && page < MAX_PAGES; page++) {
+        const res = await this.fetchImpl(url, { headers });
+        const json = (await res.json().catch(() => ({}))) as unknown;
+        if (!res.ok) throw apiError("getReviews", res.status, json as Record<string, unknown>);
+        if (Array.isArray(json)) all.push(...(json as Record<string, unknown>[]));
+        // トークンを送るので、API と同じ場所の URL だけをたどる
+        const next = nextPage(res.headers.get("link"));
+        url = next?.startsWith(`${this.api}/`) ? next : undefined;
+      }
+      return all;
     };
     const user = (item: Record<string, unknown>) =>
       (item.user ?? {}) as { login?: unknown; type?: unknown };

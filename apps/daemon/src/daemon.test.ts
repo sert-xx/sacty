@@ -2312,6 +2312,30 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       ledger.close();
     });
 
+    it("一度に取り込むのは50件まで。残りは取り込み済みにせず、次の取り込みに残す（レビュー指摘）", async () => {
+      const pulls = new FakePulls();
+      const { ledger, service, id } = await toDeliverableGate(
+        [rework("implement", "実装で直せる")],
+        {
+          pulls,
+          now: later,
+        },
+      );
+      pulls.feedbackList = Array.from({ length: 51 }, (_, i) =>
+        item(`comment:${i}`, { body: `指摘${i}` }),
+      );
+      await service.checkPullRequests();
+      const imported = service.get(id)?.ledger.find((e) => e.type === "PullRequestReviewImported");
+      const payload = imported?.type === "PullRequestReviewImported" ? imported.payload : undefined;
+      expect(payload?.items).toHaveLength(50);
+      expect(payload?.remarks).toHaveLength(50);
+      // 取り込み済みにするのは、指摘に反映した50件だけ。51件目は次の取り込みに残る
+      const task = service.get(id)?.task;
+      expect(task?.importedFeedback).toHaveLength(50);
+      expect(task?.importedFeedback).not.toContain("comment:50");
+      ledger.close();
+    });
+
     it("ゴールガーディアンの実行に失敗したら、判断できなかったものとして人間の確認に回す", async () => {
       const pulls = new FakePulls();
       const { ledger, service, id } = await toDeliverableGate(

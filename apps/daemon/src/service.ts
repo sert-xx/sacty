@@ -315,6 +315,8 @@ export class TaskService {
       // コメントは何件かに分けて書かれるので、最後のものから一定の時間たつまで待つ
       const newest = Math.max(...fresh.map((item) => Date.parse(item.at) || 0));
       if (this.now() - newest < FEEDBACK_QUIET_MS) return;
+      // 一度に取り込むのは、指摘の件数の上限まで（古い順）。残りは取り込み済みにせず、次の取り込みに残す
+      const batch = fresh.slice(0, REMARKS_MAX);
       const latest = this.tasks.get(task.id);
       if (latest?.status !== "awaiting_approval" || latest.pendingReview) return;
       current = this.append(latest, [
@@ -325,13 +327,13 @@ export class TaskService {
             type: "PullRequestReviewImported",
             payload: {
               number: pr.number,
-              items: fresh.map((item) => ({
+              items: batch.map((item) => ({
                 key: item.key,
                 author: item.author,
                 at: item.at,
                 ...(item.url ? { url: item.url } : {}),
               })),
-              remarks: feedbackRemarks(fresh),
+              remarks: feedbackRemarks(batch),
             },
           },
         },
@@ -2081,20 +2083,18 @@ const REMARKS_MAX = 50;
 export const FEEDBACK_QUIET_MS = 2 * 60_000;
 
 /**
- * PR へのフィードバックを、指摘の文にする（PBI-14b）。1件ずつ。行ごとのコメントにはファイルと行を添える。
+ * PR へのフィードバックを、指摘の文にする（PBI-14b）。1件のフィードバックを1件の指摘にする（取り込み済みに
+ * するものと、指摘に反映するものを一致させるため）。行ごとのコメントにはファイルと行を添える。
  * 本文の無い Request changes は、変更を求められたことを1件にする。
  */
 function feedbackRemarks(items: PullRequestFeedback[]): string[] {
   const cut = (text: string) =>
     text.length > REMARK_MAX ? `${text.slice(0, REMARK_MAX - 1)}…` : text;
-  return items
-    .map((item) => {
-      const body = item.body.trim();
-      if (item.kind === "review_comment") {
-        return `${item.path}${item.line ? `:${item.line}` : ""}：${body}`;
-      }
-      return body || `${item.author} が PR の変更を求めました（コメントなし）。`;
-    })
-    .slice(0, REMARKS_MAX)
-    .map(cut);
+  return items.map((item) => {
+    const body = item.body.trim();
+    if (item.kind === "review_comment") {
+      return cut(`${item.path}${item.line ? `:${item.line}` : ""}：${body}`);
+    }
+    return cut(body || `${item.author} が PR の変更を求めました（コメントなし）。`);
+  });
 }
