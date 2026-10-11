@@ -440,3 +440,77 @@ describe("フィードバックの次のページ（PBI-14b レビュー指摘�
     ]);
   });
 });
+
+describe("Issue へのコメント（PBI-18）", () => {
+  it("Issue にコメントして URL を返し、失敗は理由つきのエラーにする", async () => {
+    const { impl, calls } = fakeFetch([
+      { status: 201, json: { html_url: "https://github.com/acme/app/issues/5#issuecomment-9" } },
+      { status: 403, json: { message: "Resource not accessible by integration" } },
+    ]);
+    const client = new GitHubPullRequests(impl);
+    const input = { repo: "acme/app", token: "ghp_secret", number: 5, body: "## 調査の結果" };
+    expect(await client.commentIssue(input)).toEqual({
+      url: "https://github.com/acme/app/issues/5#issuecomment-9",
+    });
+    expect(calls[0]).toMatchObject({
+      url: "https://api.github.com/repos/acme/app/issues/5/comments",
+      method: "POST",
+      body: { body: "## 調査の結果" },
+      auth: "Bearer ghp_secret",
+    });
+    expect(errorText(await client.commentIssue(input).catch((e: unknown) => e))).toMatchObject({
+      code: "github.failed",
+      params: { action: "commentIssue", status: 403 },
+    });
+  });
+
+  it("目印を含むコメントを、すべてのページから探す", async () => {
+    const api = "https://api.github.com/repos/acme/app";
+    const { impl, calls } = fakeFetch([
+      {
+        status: 200,
+        json: [
+          {
+            body: "ほかのコメント",
+            html_url: "https://github.com/acme/app/issues/5#issuecomment-1",
+          },
+        ],
+        headers: { link: `<${api}/issues/5/comments?per_page=100&page=2>; rel="next"` },
+      },
+      {
+        status: 200,
+        json: [
+          {
+            body: "<!-- sacty-investigation:t1 -->\n## sacty の調査の結果",
+            html_url: "https://github.com/acme/app/issues/5#issuecomment-2",
+          },
+        ],
+      },
+      { status: 200, json: [] },
+      { status: 404, json: { message: "Not Found" } },
+    ]);
+    const client = new GitHubPullRequests(impl);
+    const target = { repo: "acme/app", token: "ghp_secret", number: 5 };
+    expect(
+      await client.findIssueComment({ ...target, marker: "<!-- sacty-investigation:t1 -->" }),
+    ).toEqual({ url: "https://github.com/acme/app/issues/5#issuecomment-2" });
+    expect(calls.map((c) => c.url)).toEqual([
+      `${api}/issues/5/comments?per_page=100`,
+      `${api}/issues/5/comments?per_page=100&page=2`,
+    ]);
+    expect(calls[0]?.auth).toBe("Bearer ghp_secret");
+    expect(
+      await client.findIssueComment({ ...target, marker: "<!-- sacty-investigation:t2 -->" }),
+    ).toBeUndefined();
+    expect(
+      errorText(
+        await client
+          .findIssueComment({ ...target, marker: "<!-- sacty-investigation:t1 -->" })
+          .catch((e: unknown) => e),
+      ),
+    ).toMatchObject({
+      code: "github.failed",
+      params: { action: "listIssueComments", status: 404 },
+    });
+  });
+});

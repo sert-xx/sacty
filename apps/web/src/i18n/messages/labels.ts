@@ -20,6 +20,7 @@ const ja = {
   /** デーモンが作った文（コードと引数）を、この言語の文にする。古い文や外から来た文はそのまま（PBI-11）。 */
   text: (value: DaemonText): string => renderMessage(value, "ja"),
   step: {
+    investigate: "調査",
     requirements: "要求要件",
     design: "設計",
     implement: "実装",
@@ -142,6 +143,8 @@ const ja = {
     PullRequestClosed: (number: number) =>
       `PR #${number} がマージされずに閉じられた → 人間の判断待ち`,
     PullRequestReopened: (number: number) => `PR #${number} が開き直された → マージ待ち`,
+    IssueCommented: (url: string) => `調査の結果を Issue にコメントした（${url}）`,
+    IssueCommentFailed: (message: string) => `調査の結果を Issue に返せなかった：${message}`,
     GuardianMissed:
       "最終レビューで合格にした成果物が差し戻されたため、ゴールガーディアンの見逃しとして記録",
     FinalReviewFailed: (message: string, cost: string) => `${message}（${cost}）`,
@@ -174,6 +177,7 @@ export type LabelMessages = typeof ja;
 const en: LabelMessages = {
   text: (value) => renderMessage(value, "en"),
   step: {
+    investigate: "Investigate",
     requirements: "Requirements",
     design: "Design",
     implement: "Implement",
@@ -291,6 +295,9 @@ const en: LabelMessages = {
       `PR #${number} was merged with content older than the latest submission${by ? ` (${by})` : ""} → needs you`,
     PullRequestClosed: (number) => `PR #${number} closed without merging → needs you`,
     PullRequestReopened: (number) => `PR #${number} reopened → awaiting merge`,
+    IssueCommented: (url) => `Posted the investigation result to the issue (${url})`,
+    IssueCommentFailed: (message) =>
+      `Could not post the investigation result to the issue: ${message}`,
     GuardianMissed:
       "A deliverable that passed the final review was sent back; recorded as a Goal Guardian miss",
     FinalReviewFailed: (message, cost) => `${message} (${cost})`,

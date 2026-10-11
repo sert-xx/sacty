@@ -10,7 +10,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { EventInput } from "@sacty/core";
-import { MVP_STEPS, message, renderMessage } from "@sacty/core";
+import { isCompleted, MVP_STEPS, message, renderMessage } from "@sacty/core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { AgentExecutor } from "./agents/docker.js";
 import type { Invocation } from "./agents/invocation.js";
@@ -240,6 +240,26 @@ class FakePulls implements PullRequests {
     this.checked.push(input);
     if (this.statusFail) throw new Error(this.statusFail);
     return this.state;
+  }
+  /** Issue へのコメント（調査の結果。PBI-18）。 */
+  issueComments: { repo: string; token: string; number: number; body: string }[] = [];
+  commentFail?: string;
+  async commentIssue(input: { repo: string; token: string; number: number; body: string }) {
+    if (this.commentFail) throw new Error(this.commentFail);
+    this.issueComments.push(input);
+    return {
+      url: `https://github.com/${input.repo}/issues/${input.number}#issuecomment-${this.issueComments.length}`,
+    };
+  }
+  async findIssueComment(input: { repo: string; number: number; marker: string }) {
+    const index = this.issueComments.findIndex(
+      (c) => c.repo === input.repo && c.number === input.number && c.body.includes(input.marker),
+    );
+    return index < 0
+      ? undefined
+      : {
+          url: `https://github.com/${input.repo}/issues/${input.number}#issuecomment-${index + 1}`,
+        };
   }
   /** 返す PR へのフィードバック（PBI-14b）。 */
   feedbackList: PullRequestFeedback[] = [];
@@ -1677,6 +1697,181 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       for (const id of ids) await service.runNext(id);
     }
   }
+
+  describe("調査の工程（PBI-18）", () => {
+    const investigatePlanner = async () => ({
+      steps: ["investigate" as const],
+      plan: "investigate" as const,
+      reason: "質問なので調査だけ",
+      fallback: false,
+      costUsd: 0,
+      estimated: false,
+    });
+
+    it("起点のコードを読み取り専用で読んで調査の結果を書き、人間が承認すると完了する（差し戻しで調べ直す）", async () => {
+      const ledger = new SqliteLedgerStore(dbPath);
+      const { service, executor, repos } = makeService(
+        ledger,
+        [out("# 調査の結果 v1"), out("# 調査の結果 v2")],
+        { planner: investigatePlanner },
+      );
+      const { id } = service.createTicket({ title: "決済の再試行はどこで行っている？" });
+      await service.runNext(id);
+      expect(promptOf(executor, 0)).toContain("あなたはソフトウェア開発の調査エージェントです");
+      expect(promptOf(executor, 0)).toContain("決済の再試行はどこで行っている？");
+      expect(executor.readOnly[0]).toBe(true);
+      expect(executor.workspaceFiles[0]).toEqual(["README.md"]);
+      expect(repos.snapshots).toHaveLength(1);
+      expect(service.get(id)?.task.gate).toEqual({ step: "investigate", submission: 1 });
+
+      service.requestChanges(id, {
+        step: "investigate",
+        submission: 1,
+        comments: ["根拠の行が無い"],
+      });
+      await service.runNext(id);
+      expect(promptOf(executor, 1)).toContain("[investigate-1-1] 根拠の行が無い");
+      expect(promptOf(executor, 1)).toContain("# 調査の結果 v1");
+      const done = service.approve(id, { step: "investigate", submission: 2 });
+      expect(isCompleted(done)).toBe(true);
+      expect(done.approved.investigate?.output).toBe("# 調査の結果 v2");
+      // チケットから作ったタスクは、Issue には返さない
+      expect(service.queuedTaskIds()).toEqual([]);
+      ledger.close();
+    });
+
+    it("Issue から取り込んだタスクは、完了したら結果をプロジェクトのアカウントで Issue にコメントし、二度は返さない", async () => {
+      const ledger = new SqliteLedgerStore(dbPath);
+      const pulls = new FakePulls();
+      const { service } = makeService(ledger, [out("# 調査の結果\n\n- src/pay.ts:12 で再試行")], {
+        pulls,
+        planner: investigatePlanner,
+      });
+      service.saveProject("default", {
+        name: "デフォルト",
+        sources: [{ scope: "repo", target: "acme/app", label: "sacty" }],
+        repositories: [{ repo: "acme/app", testCommand: "npm test" }],
+        githubAccount: "me",
+      });
+      const [task] = service.importIssues([
+        {
+          repo: "acme/app",
+          number: 5,
+          title: "再試行はどこ？",
+          body: "",
+          url: "https://github.com/acme/app/issues/5",
+          labels: ["sacty"],
+        },
+      ]);
+      const id = task?.id ?? "";
+      await service.runNext(id);
+      service.approve(id, { step: "investigate", submission: 1 });
+      expect(service.queuedTaskIds()).toEqual([id]);
+      await service.runNext(id);
+      await service.runNext(id); // 二度は返さない
+      expect(pulls.issueComments).toHaveLength(1);
+      expect(pulls.issueComments[0]).toMatchObject({
+        repo: "acme/app",
+        number: 5,
+        token: "ghp_secret",
+      });
+      expect(pulls.issueComments[0]?.body).toContain("src/pay.ts:12 で再試行");
+      expect(service.get(id)?.task.issueComment).toEqual({
+        url: "https://github.com/acme/app/issues/5#issuecomment-1",
+      });
+      expect(service.queuedTaskIds()).toEqual([]);
+      ledger.close();
+    });
+
+    it("投稿の後、記録の前に止まっても、次の実行で既存のコメントを使い、同じ結果を二度コメントしない", async () => {
+      const ledger = new SqliteLedgerStore(dbPath);
+      const pulls = new FakePulls();
+      const { service } = makeService(ledger, [out("# 調査の結果")], {
+        pulls,
+        planner: investigatePlanner,
+      });
+      service.saveProject("default", {
+        name: "デフォルト",
+        sources: [{ scope: "repo", target: "acme/app", label: "sacty" }],
+        repositories: [{ repo: "acme/app", testCommand: "npm test" }],
+        githubAccount: "me",
+      });
+      // ほかのタスクの調査の結果は、このタスクのものとして使わない
+      pulls.issueComments.push({
+        repo: "acme/app",
+        token: "ghp_secret",
+        number: 8,
+        body: "<!-- sacty-investigation:other-task -->\n## sacty の調査の結果",
+      });
+      const [task] = service.importIssues([
+        {
+          repo: "acme/app",
+          number: 8,
+          title: "調べて",
+          body: "",
+          url: "https://github.com/acme/app/issues/8",
+          labels: ["sacty"],
+        },
+      ]);
+      const id = task?.id ?? "";
+      await service.runNext(id);
+      service.approve(id, { step: "investigate", submission: 1 });
+      // IssueCommented の記録だけを一度失敗させる
+      const append = ledger.append.bind(ledger);
+      let failOnce = true;
+      ledger.append = (entry) => {
+        if (failOnce && entry.events.some((e) => e.event.type === "IssueCommented")) {
+          failOnce = false;
+          throw new Error("disk full");
+        }
+        return append(entry);
+      };
+      await expect(service.runNext(id)).rejects.toThrow("disk full");
+      expect(pulls.issueComments).toHaveLength(2);
+      await service.runNext(id);
+      expect(pulls.issueComments).toHaveLength(2);
+      expect(service.get(id)?.task.issueComment).toEqual({
+        url: "https://github.com/acme/app/issues/8#issuecomment-2",
+      });
+      expect(service.queuedTaskIds()).toEqual([]);
+      ledger.close();
+    });
+
+    it("Issue に返せなければ、理由を記録して、何度も返そうとしない", async () => {
+      const ledger = new SqliteLedgerStore(dbPath);
+      const pulls = new FakePulls();
+      pulls.commentFail = "403 Resource not accessible ghp_secret";
+      const { service } = makeService(ledger, [out("# 調査の結果")], {
+        pulls,
+        planner: investigatePlanner,
+      });
+      service.saveProject("default", {
+        name: "デフォルト",
+        sources: [{ scope: "repo", target: "acme/app", label: "sacty" }],
+        repositories: [{ repo: "acme/app", testCommand: "npm test" }],
+        githubAccount: "me",
+      });
+      const [task] = service.importIssues([
+        {
+          repo: "acme/app",
+          number: 6,
+          title: "調べて",
+          body: "",
+          url: "https://github.com/acme/app/issues/6",
+          labels: ["sacty"],
+        },
+      ]);
+      const id = task?.id ?? "";
+      await service.runNext(id);
+      service.approve(id, { step: "investigate", submission: 1 });
+      await service.runNext(id);
+      const comment = service.get(id)?.task.issueComment;
+      expect(comment && "failed" in comment && ja(comment.failed)).toContain("403");
+      expect(JSON.stringify(comment)).not.toContain("ghp_secret");
+      expect(service.queuedTaskIds()).toEqual([]);
+      ledger.close();
+    });
+  });
 
   describe("オーケストレーターが工程を選ぶ（PBI-17）", () => {
     const plan = (value: string, reason = "小さな変更") =>

@@ -182,6 +182,10 @@ export function describeEvent(event: LedgerEvent, l: LabelMessages): string {
       return e.PullRequestClosed(event.payload.number);
     case "PullRequestReopened":
       return e.PullRequestReopened(event.payload.number);
+    case "IssueCommented":
+      return e.IssueCommented(event.payload.url);
+    case "IssueCommentFailed":
+      return e.IssueCommentFailed(l.text(event.payload.message));
     case "GuardianMissed":
       return e.GuardianMissed;
     case "FinalReviewFailed":
