@@ -47,3 +47,34 @@ describe("タスクの作成先（PBI-4a レビュー指摘）", () => {
     );
   });
 });
+
+describe("タスクの対象リポジトリ（PBI-21）", () => {
+  beforeEach(() => createTask.mockReset());
+
+  it("選んだ対象リポジトリを渡し、作れなければ入力を残して理由を返す", async () => {
+    createTask.mockResolvedValue({ ok: true, task: { id: "t1" } });
+    await expect(
+      createTaskAction(
+        {},
+        form({ title: "決済", body: "", projectId: "project-a", repo: "acme/api" }),
+      ),
+    ).rejects.toThrow("redirect:/tasks/t1");
+    expect(createTask).toHaveBeenCalledWith({
+      title: "決済",
+      body: "",
+      projectId: "project-a",
+      repo: "acme/api",
+    });
+
+    createTask.mockResolvedValue({
+      ok: false,
+      message: "対象リポジトリを、プロジェクト「決済」のリポジトリの設定から選んでください。",
+    });
+    expect(
+      await createTaskAction({}, form({ title: "決済", projectId: "project-a", repo: "acme/x" })),
+    ).toMatchObject({
+      message: expect.stringMatching(/対象リポジトリを/),
+      values: { title: "決済", repo: "acme/x" },
+    });
+  });
+});

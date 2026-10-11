@@ -99,6 +99,8 @@ export type Task = {
   start: "sacty" | "github_issue";
   /** 取り込み元（GitHub Issue）。 */
   source?: TaskSource;
+  /** 画面で作ったタスクの対象リポジトリ（owner/name。PBI-21）。Issue から取り込んだタスクは source.repo。 */
+  repo?: string;
   status: TaskStatus;
   pausedReason?: PauseReason;
   /** 止まった理由の詳しい説明。 */
@@ -258,6 +260,7 @@ export function applyEvent(
       body: event.payload.body,
       start: event.payload.start,
       ...(event.payload.source ? { source: event.payload.source } : {}),
+      ...(event.payload.repo ? { repo: event.payload.repo } : {}),
       status: "queued",
       steps: [],
       outputs: {},

@@ -29,7 +29,7 @@ import {
 export type CreateTaskState = {
   fieldErrors?: { title?: string[]; body?: string[] };
   message?: string;
-  values?: { title: string; body: string };
+  values?: { title: string; body: string; repo?: string };
 };
 
 /** タスクを作成し、作ったタスクの詳細へ移る。 */
@@ -37,9 +37,12 @@ export async function createTaskAction(
   _prev: CreateTaskState,
   formData: FormData,
 ): Promise<CreateTaskState> {
+  const repo = String(formData.get("repo") ?? "");
   const values = {
     title: String(formData.get("title") ?? ""),
     body: String(formData.get("body") ?? ""),
+    // 対象リポジトリ（PBI-21）。プロジェクトの設定にあるかは、デーモンが検査する
+    ...(repo ? { repo } : {}),
   };
   const a = (await getMessages()).common.action;
   const parsed = CreateTaskInput.safeParse(values);

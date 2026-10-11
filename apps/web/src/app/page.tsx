@@ -59,7 +59,13 @@ async function NewTask() {
   try {
     const project = resolveProject(await listProjects(), await currentProjectId());
     if (!project) return null;
-    return <NewTaskDialog projectId={project.id} projectName={project.name} />;
+    return (
+      <NewTaskDialog
+        projectId={project.id}
+        projectName={project.name}
+        repositories={project.repositories.map((r) => r.repo)}
+      />
+    );
   } catch {
     return null;
   }

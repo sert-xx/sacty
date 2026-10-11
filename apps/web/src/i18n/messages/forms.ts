@@ -7,6 +7,10 @@ const ja = {
     title: "タイトル",
     body: "内容",
     bodyPlaceholder: "背景や、満たしてほしい条件",
+    repository: "対象リポジトリ",
+    noRepository:
+      "このプロジェクトにはリポジトリの設定がありません。先にプロジェクトの設定でリポジトリを追加してください。",
+    projectSettings: "プロジェクトの設定を開く",
     close: "閉じる",
     creating: "作成中…",
     submit: "作成する",
@@ -28,6 +32,10 @@ const en: FormsMessages = {
     title: "Title",
     body: "Description",
     bodyPlaceholder: "Background and the conditions it should meet",
+    repository: "Target repository",
+    noRepository:
+      "This project has no repository settings. Add a repository in the project settings first.",
+    projectSettings: "Open project settings",
     close: "Close",
     creating: "Creating…",
     submit: "Create",

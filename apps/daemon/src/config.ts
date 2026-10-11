@@ -119,28 +119,6 @@ const Agent = z
     }
   });
 
-/** 実装の対象リポジトリ（PBI-5のプロジェクト設定で置き換える）。 */
-const Repository = z.object({
-  /** clone する URL（ホストの git の認証を使う）か、ローカルのパス。 */
-  url: z.string().min(1),
-  base_branch: z.string().min(1).default("main"),
-  /** テストを実行するコマンド。sh -c で実行し、終了コード0で合格とする。 */
-  test_command: z.string().min(1),
-  /** テストを実行するイメージ。省略すると image。 */
-  test_image: z.string().min(1).optional(),
-  /** PRを作る先。省略すると、ブランチのプッシュまでにする。 */
-  pull_request: z
-    .object({
-      provider: z.literal("github"),
-      /** owner/name。省略すると url から求める。 */
-      repo: z
-        .string()
-        .regex(/^[\w.-]+\/[\w.-]+$/, code("input.invalidRepo"))
-        .optional(),
-    })
-    .optional(),
-});
-
 /** GitHub のリポジトリの URL から owner/name を求める。 */
 export function githubRepoOf(url: string): string | undefined {
   const m = url.match(/github\.com[:/]([\w.-]+)\/([\w.-]+?)(?:\.git)?\/?$/);
@@ -157,7 +135,6 @@ const ConfigFile = z
       .object({ default_per_task_usd: z.number().positive().default(DEFAULT_BUDGET_USD) })
       .prefault({}),
     agents: z.record(z.string(), Agent),
-    repository: Repository.optional(),
     /** GitHub Issue の取り込み（個人の設定。プロジェクトの定義には含めない）。 */
     github: z
       .object({
@@ -173,14 +150,6 @@ const ConfigFile = z
         path: ["default_agent"],
         message: code("config.agentMissing"),
         params: { key: "default_agent", id: config.default_agent },
-      });
-    }
-    const pr = config.repository?.pull_request;
-    if (pr && !pr.repo && config.repository && !githubRepoOf(config.repository.url)) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["repository", "pull_request", "repo"],
-        message: code("config.repoUnknown"),
       });
     }
     if (config.guardian_agent && !config.agents[config.guardian_agent]) {
@@ -200,13 +169,6 @@ export type SactyConfig = {
   /** ゴールガーディアンに使うAI。 */
   guardianAgent: AgentConfig;
   budgetPerTaskUsd: number;
-  repository?: {
-    url: string;
-    baseBranch: string;
-    testCommand: string;
-    testImage: string;
-    pullRequest?: { provider: "github"; repo: string };
-  };
   /** GitHub Issue の取り込み。認証はプロジェクトの gh のアカウント（PBI-13）。 */
   github?: { pollIntervalSec: number };
 };
@@ -282,27 +244,6 @@ export function loadConfig(home: string): ConfigResult {
             github: { pollIntervalSec: file.github.poll_interval_sec },
           }
         : {}),
-      ...(file.repository
-        ? {
-            repository: {
-              url: file.repository.url,
-              baseBranch: file.repository.base_branch,
-              testCommand: file.repository.test_command,
-              testImage: file.repository.test_image ?? file.image,
-              ...(file.repository.pull_request
-                ? {
-                    pullRequest: {
-                      provider: file.repository.pull_request.provider,
-                      repo:
-                        file.repository.pull_request.repo ??
-                        githubRepoOf(file.repository.url) ??
-                        "",
-                    },
-                  }
-                : {}),
-            },
-          }
-        : {}),
     },
   };
 }
@@ -320,16 +261,8 @@ default_agent: claude-subscription
 budget:
   default_per_task_usd: ${DEFAULT_BUDGET_USD}
 
-# 実装の対象リポジトリ。実装の工程は、これを clone した作業領域で実装し、
-# test_command を別のコンテナで実行して確かめる（終了コード0で合格）
-# repository:
-#   url: git@github.com:your-org/your-repo.git
-#   base_branch: main
-#   test_command: npm ci && npm test
-#   # PRを作る場合（省略すると、sacty のブランチにプッシュするまで）。
-#   # GitHub へのアクセスは、プロジェクトの設定で選んだ gh のアカウントで行う
-#   pull_request:
-#     provider: github
+# タスクの対象リポジトリ（URL・ベースブランチ・テストのコマンド・PR を作るか）は、
+# 画面のプロジェクトの設定で登録する
 
 # GitHub Issue の取り込み（取り込み元と、使う gh のアカウントはプロジェクトの設定で登録する）。
 # Issue から作ったタスクは、その Issue のリポジトリに実装する（設定はプロジェクトのリポジトリの設定）

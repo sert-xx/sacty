@@ -349,6 +349,18 @@ describe("設定ファイル", () => {
     if (dir) rmSync(dir, { recursive: true, force: true });
   });
 
+  it("config.yaml の repository は読まず、雛形にも書かない（PBI-21）", () => {
+    dir = mkdtempSync(join(tmpdir(), "sacty-config-"));
+    expect(CONFIG_TEMPLATE).not.toMatch(/^#?\s*repository:/m);
+    writeFileSync(
+      join(dir, "config.yaml"),
+      `${CONFIG_TEMPLATE}\nrepository:\n  url: git@github.com:acme/app.git\n  test_command: npm test\n`,
+    );
+    const result = loadConfig(dir);
+    expect(result.ok).toBe(true);
+    expect(result.ok && "repository" in result.config).toBe(false);
+  });
+
   it("`sacty config init` の雛形はそのまま読める", () => {
     dir = mkdtempSync(join(tmpdir(), "sacty-config-"));
     writeFileSync(join(dir, "config.yaml"), CONFIG_TEMPLATE);

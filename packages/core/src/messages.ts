@@ -18,6 +18,8 @@ const TextParam = DaemonText;
  */
 const PARAMS = {
   "task.notFound": null,
+  "task.repositoryMissing": z.object({ project: z.string() }),
+  "task.repositoryUnknown": z.object({ project: z.string() }),
   "task.cancelled": null,
   "task.invalidState": null,
   "project.notFound": null,
@@ -175,7 +177,6 @@ const PARAMS = {
   }),
   "config.subscriptionSecret": null,
   "config.agentMissing": z.object({ key: z.string(), id: z.string() }),
-  "config.repoUnknown": null,
 } as const satisfies Record<string, z.ZodType | null>;
 
 export type MessageParams = {
@@ -242,6 +243,10 @@ const contextKindEn = { skills: "skill", mcp: "MCP server" } as const;
 
 const ja: MessageDictionary = {
   "task.notFound": "タスクが見つかりません。",
+  "task.repositoryMissing": ({ project }) =>
+    `プロジェクト「${project}」にリポジトリの設定がありません。プロジェクトの設定でリポジトリを追加してから、タスクを作ってください。`,
+  "task.repositoryUnknown": ({ project }) =>
+    `対象リポジトリを、プロジェクト「${project}」のリポジトリの設定から選んでください。`,
   "task.cancelled": "中止したタスクです。",
   "task.invalidState": "このタスクの状態では、その操作はできません。画面を更新してください。",
   "project.notFound": "プロジェクトが見つかりません。",
@@ -328,7 +333,7 @@ const ja: MessageDictionary = {
   "run.repositorySettingsMissing": ({ project, repo }) =>
     `プロジェクト「${project}」に、${repo} のリポジトリの設定（ベースブランチ・テストのコマンド）がありません。プロジェクトの設定で追加してから再開してください。`,
   "run.repositoryNotConfigured":
-    "実装の対象リポジトリが設定されていません。config.yaml の repository を設定してから再開してください。",
+    "このタスクには対象リポジトリがありません（対象リポジトリを選ぶ前の版で作ったタスクです）。中止して、タスクを作り直してください。",
   "guardian.verdictUnreadable": "ゴールガーディアンの出力から、判定を読み取れませんでした。",
   "guardian.reworkUnreadable": "ゴールガーディアンの出力から、戻し先の判断を読み取れませんでした。",
   "orchestrator.fallback": ({ detail }, text) =>
@@ -406,13 +411,15 @@ const ja: MessageDictionary = {
   "config.subscriptionSecret":
     "Claude Code のサブスクリプションには、トークンの秘密情報名（secret）が必要です。",
   "config.agentMissing": ({ key, id }) => `${key} の "${id}" が agents にありません。`,
-  "config.repoUnknown":
-    "url から GitHub のリポジトリが分かりません。owner/name で指定してください。",
 };
 
 /** 英語。用語は画面の用語集（apps/web の labels.ts）に合わせる。 */
 const en: MessageDictionary = {
   "task.notFound": "Task not found.",
+  "task.repositoryMissing": ({ project }) =>
+    `The project "${project}" has no repository settings. Add a repository in the project settings, then create the task.`,
+  "task.repositoryUnknown": ({ project }) =>
+    `Choose the target repository from the repository settings of the project "${project}".`,
   "task.cancelled": "This task has been cancelled.",
   "task.invalidState": "This action is not available in the task's current state. Reload the page.",
   "project.notFound": "Project not found.",
@@ -501,7 +508,7 @@ const en: MessageDictionary = {
   "run.repositorySettingsMissing": ({ project, repo }) =>
     `The project "${project}" has no repository settings (base branch and test command) for ${repo}. Add them in the project settings, then resume.`,
   "run.repositoryNotConfigured":
-    "No target repository is configured. Set repository in config.yaml, then resume.",
+    "This task has no target repository (it was created before tasks chose one). Cancel it and create the task again.",
   "guardian.verdictUnreadable": "Could not read a verdict from the Goal Guardian's output.",
   "guardian.reworkUnreadable": "Could not read the step to redo from the Goal Guardian's output.",
   "orchestrator.fallback": ({ detail }, text) =>
@@ -579,7 +586,6 @@ const en: MessageDictionary = {
   "config.subscriptionSecret":
     "A Claude Code subscription needs the secret name of its token (secret).",
   "config.agentMissing": ({ key, id }) => `${key} "${id}" is not in agents.`,
-  "config.repoUnknown": "Cannot tell the GitHub repository from url. Specify it as owner/name.",
 };
 
 export const DAEMON_MESSAGES = { ja, en } as const;
