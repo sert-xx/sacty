@@ -58,6 +58,13 @@ export interface RepositoryWorkspace {
     /** HTTPS の GitHub に認証する環境変数（gh のトークン。PBI-13）。 */
     authEnv?: Record<string, string>;
   }): Promise<{ commit: string }>;
+  /**
+   * コミットを、リモートから退避したメタデータに取得する（レビューの対象の PR のコミット。PBI-19）。
+   * すでにあれば取得しない。
+   */
+  fetchCommits(gitDir: string, commits: string[], authEnv?: Record<string, string>): Promise<void>;
+  /** base と head の分岐点から head までの差分（PR の差分。PBI-19）。 */
+  diffCommits(gitDir: string, baseCommit: string, headCommit: string): Promise<string>;
   /** sacty のブランチを、リモートから消す（中止したとき）。 */
   deleteBranch(gitDir: string, branch: string, authEnv?: Record<string, string>): Promise<void>;
 }
@@ -313,6 +320,58 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
       cloneEnv(input.authEnv),
     );
     return { commit };
+  }
+
+  async fetchCommits(gitDir: string, commits: string[], authEnv?: Record<string, string>) {
+    if (!commits.every((c) => COMMIT_RE.test(c))) {
+      throw new MessageError(message("git.invalidBaseCommit"));
+    }
+    const env = cloneEnv(authEnv);
+    const has = async (commit: string) => {
+      try {
+        await git(
+          "cat-file",
+          ["--git-dir", gitDir, ...SAFE_CONFIG, "cat-file", "-e", `${commit}^{commit}`],
+          env,
+        );
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    const missing: string[] = [];
+    for (const commit of commits) if (!(await has(commit))) missing.push(commit);
+    if (missing.length === 0) return;
+    await git(
+      "fetch",
+      ["--git-dir", gitDir, ...SAFE_CONFIG, "fetch", "--quiet", "--", "origin", ...missing],
+      env,
+    );
+  }
+
+  async diffCommits(gitDir: string, baseCommit: string, headCommit: string) {
+    if (!COMMIT_RE.test(baseCommit) || !COMMIT_RE.test(headCommit)) {
+      throw new MessageError(message("git.invalidBaseCommit"));
+    }
+    // 作業領域は使わず、退避したメタデータだけで差分を出す（外部の差分・変換は使わない）
+    const diff = await git(
+      "diff",
+      [
+        "--git-dir",
+        gitDir,
+        ...SAFE_CONFIG,
+        "diff",
+        "--no-color",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--text",
+        `${baseCommit}...${headCommit}`,
+      ],
+      isolatedEnv("/dev/null"),
+    );
+    return diff.length > DIFF_LIMIT
+      ? `${diff.slice(0, DIFF_LIMIT)}\n[sacty] 差分が大きいため、先頭の ${DIFF_LIMIT} バイトだけを渡しています。`
+      : diff;
   }
 
   async deleteBranch(gitDir: string, branch: string, authEnv?: Record<string, string>) {

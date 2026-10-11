@@ -41,6 +41,7 @@ const task = (patch: Partial<Task> = {}): Task => ({
   approved: {},
   proposals: [],
   testMap: [],
+  reviewComments: [],
   verifyFailures: 0,
   misses: [],
   importedFeedback: [],
@@ -423,5 +424,42 @@ describe("調査の工程（PBI-18）", () => {
       describeEvent(event({ type: "IssueCommented", payload: { url: "https://x/issues/5#c" } })),
     ).toBe("調査の結果を Issue にコメントした（https://x/issues/5#c）");
     expect(statusText(task({ steps: [{ key: "investigate", state: "done" }] }))).toBe("完了");
+  });
+});
+
+describe("レビューの工程（PBI-19）", () => {
+  it("台帳に、対象の PR の確認とレビューの投稿を表示する", () => {
+    const event = (e: Pick<LedgerEvent, "type" | "payload">): LedgerEvent =>
+      ({
+        ...e,
+        seq: 1,
+        id: "e1",
+        taskId: "t1",
+        projectId: "default",
+        at: "2026-10-11T00:00:00.000Z",
+        actor: "sacty",
+      }) as LedgerEvent;
+    expect(
+      describeEvent(
+        event({
+          type: "ReviewTargetResolved",
+          payload: {
+            repo: "acme/app",
+            number: 12,
+            url: "https://github.com/acme/app/pull/12",
+            title: "再試行",
+            body: "",
+            headCommit: "abcdef1234".padEnd(40, "0"),
+            baseCommit: "b".repeat(40),
+          },
+        }),
+      ),
+    ).toBe("レビューの対象の PR を確認（https://github.com/acme/app/pull/12・abcdef1）");
+    expect(
+      describeEvent(
+        event({ type: "PullRequestReviewPosted", payload: { url: "https://x/pull/12#r" } }),
+      ),
+    ).toBe("レビューを PR に投稿した（https://x/pull/12#r）");
+    expect(statusText(task({ steps: [{ key: "review", state: "done" }] }))).toBe("完了");
   });
 });

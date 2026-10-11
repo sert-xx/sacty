@@ -21,7 +21,13 @@ export interface PullRequests {
    * PR へのフィードバック（PBI-14b）。レビュー（Request changes・コメント）の本文、行ごとのコメント、
    * PR への通常のコメント。bot のものは含めない。
    */
-  feedback(input: { repo: string; token: string; number: number }): Promise<PullRequestFeedback[]>;
+  feedback(input: {
+    repo: string;
+    token: string;
+    number: number;
+    /** プロジェクトの gh のアカウント。このアカウントが投稿した sacty のレビュー（PBI-19）は含めない。 */
+    account?: string;
+  }): Promise<PullRequestFeedback[]>;
   /**
    * Issue のコメントのうち、marker を含むものを探す（同じ結果を二度コメントしないため。PBI-18）。
    */
@@ -38,6 +44,49 @@ export interface PullRequests {
     number: number;
     body: string;
   }): Promise<{ url: string }>;
+  /** レビューの対象の PR（PBI-19）。 */
+  pullRequest(input: { repo: string; token: string; number: number }): Promise<PullRequestInfo>;
+  /**
+   * account が投稿した PR のレビューのうち、本文が marker で始まるものを探す
+   * （同じレビューを二度投稿しないため。PBI-19）。
+   */
+  findReview(input: {
+    repo: string;
+    token: string;
+    number: number;
+    account: string;
+    marker: string;
+  }): Promise<{ url: string } | undefined>;
+  /**
+   * PR にレビュー（COMMENT。承認も変更の要求もしない）を、行へのコメントとあわせて投稿する（PBI-19）。
+   * 行へのコメントの line は、commit のファイルの行番号（差分の右側）。
+   */
+  postReview(input: {
+    repo: string;
+    token: string;
+    number: number;
+    commit: string;
+    body: string;
+    comments: { path: string; line: number; body: string }[];
+  }): Promise<{ url: string }>;
+}
+
+/** レビューの対象の PR。headSha は PR の先頭、baseSha は向き先のブランチの先頭。 */
+export type PullRequestInfo = {
+  number: number;
+  url: string;
+  title: string;
+  body: string;
+  headSha: string;
+  baseSha: string;
+};
+
+/** sacty のレビューの工程が投稿したレビューの目印（PBI-19）。 */
+export const REVIEW_MARKER_PREFIX = "<!-- sacty-review:";
+
+/** 本文が、sacty のレビューの目印で始まるか。 */
+function isSactyReview(body: unknown): boolean {
+  return typeof body === "string" && body.trimStart().startsWith(REVIEW_MARKER_PREFIX);
 }
 
 /**
@@ -99,7 +148,15 @@ export class GitHubPullRequests implements PullRequests {
     const user = (item: Record<string, unknown>) =>
       (item.user ?? {}) as { login?: unknown; type?: unknown };
     // bot（CI など）のコメントは、人間の指摘ではないので含めない
-    const human = (item: Record<string, unknown>) => user(item).type !== "Bot";
+    // sacty のレビューの工程が、プロジェクトのアカウントで投稿したレビューと行へのコメント（PBI-19）も、
+    // 人間の指摘ではないので含めない（目印で始まるものだけ。人間が引用・転記した目印では除かない）
+    const human = (item: Record<string, unknown>) =>
+      user(item).type !== "Bot" &&
+      !(
+        input.account !== undefined &&
+        user(item).login === input.account &&
+        isSactyReview(item.body)
+      );
     const author = (item: Record<string, unknown>) => String(user(item).login ?? "");
     const url = (item: Record<string, unknown>) =>
       typeof item.html_url === "string" ? { url: item.html_url } : {};
@@ -212,6 +269,71 @@ export class GitHubPullRequests implements PullRequests {
     return { url: String(json.html_url ?? "") };
   }
 
+  async pullRequest(input: Parameters<PullRequests["pullRequest"]>[0]): Promise<PullRequestInfo> {
+    const res = await this.fetchImpl(`${this.api}/repos/${input.repo}/pulls/${input.number}`, {
+      headers: {
+        accept: "application/vnd.github+json",
+        authorization: `Bearer ${input.token}`,
+        "x-github-api-version": "2022-11-28",
+      },
+    });
+    const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!res.ok) throw apiError("getPr", res.status, json);
+    const sha = (key: "head" | "base") => {
+      const value = (json[key] as { sha?: unknown } | null)?.sha;
+      return typeof value === "string" ? value : "";
+    };
+    return {
+      number: Number(json.number ?? input.number),
+      url: String(json.html_url ?? ""),
+      title: typeof json.title === "string" ? json.title : "",
+      body: typeof json.body === "string" ? json.body : "",
+      headSha: sha("head"),
+      baseSha: sha("base"),
+    };
+  }
+
+  async findReview(input: Parameters<PullRequests["findReview"]>[0]) {
+    const reviews = await this.list(
+      input.repo,
+      `/pulls/${input.number}/reviews?per_page=100`,
+      input.token,
+      "getReviews",
+    );
+    // 他人が本文に目印を書いても、投稿済みと見なさない
+    const found = reviews.find(
+      (r) =>
+        (r.user as { login?: unknown } | null)?.login === input.account &&
+        typeof r.body === "string" &&
+        r.body.trimStart().startsWith(input.marker),
+    );
+    return found ? { url: String(found.html_url ?? "") } : undefined;
+  }
+
+  async postReview(input: Parameters<PullRequests["postReview"]>[0]) {
+    const res = await this.fetchImpl(
+      `${this.api}/repos/${input.repo}/pulls/${input.number}/reviews`,
+      {
+        method: "POST",
+        headers: {
+          accept: "application/vnd.github+json",
+          authorization: `Bearer ${input.token}`,
+          "x-github-api-version": "2022-11-28",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          commit_id: input.commit,
+          body: input.body,
+          event: "COMMENT",
+          comments: input.comments.map((c) => ({ ...c, side: "RIGHT" })),
+        }),
+      },
+    );
+    const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!res.ok) throw apiError("postReview", res.status, json);
+    return { url: String(json.html_url ?? "") };
+  }
+
   async status(input: Parameters<PullRequests["status"]>[0]): Promise<PullRequestStatus> {
     const res = await this.fetchImpl(`${this.api}/repos/${input.repo}/pulls/${input.number}`, {
       headers: {
@@ -315,6 +437,7 @@ function apiError(
     | "getReviews"
     | "commentIssue"
     | "listIssueComments"
+    | "postReview"
     | "searchIssues",
   status: number,
   json: Record<string, unknown>,

@@ -21,6 +21,7 @@ const ja = {
   text: (value: DaemonText): string => renderMessage(value, "ja"),
   step: {
     investigate: "調査",
+    review: "レビュー",
     requirements: "要求要件",
     design: "設計",
     implement: "実装",
@@ -145,6 +146,9 @@ const ja = {
     PullRequestReopened: (number: number) => `PR #${number} が開き直された → マージ待ち`,
     IssueCommented: (url: string) => `調査の結果を Issue にコメントした（${url}）`,
     IssueCommentFailed: (message: string) => `調査の結果を Issue に返せなかった：${message}`,
+    ReviewTargetResolved: (url: string, commit: string) =>
+      `レビューの対象の PR を確認（${url}・${commit}）`,
+    PullRequestReviewPosted: (url: string) => `レビューを PR に投稿した（${url}）`,
     GuardianMissed:
       "最終レビューで合格にした成果物が差し戻されたため、ゴールガーディアンの見逃しとして記録",
     FinalReviewFailed: (message: string, cost: string) => `${message}（${cost}）`,
@@ -178,6 +182,7 @@ const en: LabelMessages = {
   text: (value) => renderMessage(value, "en"),
   step: {
     investigate: "Investigate",
+    review: "Review",
     requirements: "Requirements",
     design: "Design",
     implement: "Implement",
@@ -296,6 +301,8 @@ const en: LabelMessages = {
     PullRequestClosed: (number) => `PR #${number} closed without merging → needs you`,
     PullRequestReopened: (number) => `PR #${number} reopened → awaiting merge`,
     IssueCommented: (url) => `Posted the investigation result to the issue (${url})`,
+    ReviewTargetResolved: (url, commit) => `Confirmed the PR to review (${url} · ${commit})`,
+    PullRequestReviewPosted: (url) => `Posted the review to the PR (${url})`,
     IssueCommentFailed: (message) =>
       `Could not post the investigation result to the issue: ${message}`,
     GuardianMissed:

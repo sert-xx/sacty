@@ -40,6 +40,10 @@ const ja = {
     notYet: "まだ作成されていません。",
     viewpoints: "テスト観点",
     viewpointsNote: (n: number) => `${n}件・最終レビューの基準`,
+    reviewPosted: "PR に投稿済み（人間の承認なし）",
+    reviewTarget: "対象の PR：",
+    reviewPost: "投稿したレビュー：",
+    reviewComments: (n: number) => `行へのコメント（${n}件）`,
   },
 };
 
@@ -86,6 +90,10 @@ const en: TaskMessages = {
     notYet: "Not written yet.",
     viewpoints: "Test viewpoints",
     viewpointsNote: (n) => `${n} viewpoint${n === 1 ? "" : "s"} · basis of the final review`,
+    reviewPosted: "Posted to the PR (no human approval)",
+    reviewTarget: "PR under review: ",
+    reviewPost: "Posted review: ",
+    reviewComments: (n) => `Line comments (${n})`,
   },
 };
 
