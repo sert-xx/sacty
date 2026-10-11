@@ -1,11 +1,11 @@
 "use server";
 
 import {
-  CreateTicketInput,
+  CreateTaskInput,
   type ProjectDefinitionInput,
   StepKey,
-  TICKET_BODY_MAX,
-  TICKET_TITLE_MAX,
+  TASK_BODY_MAX,
+  TASK_TITLE_MAX,
 } from "@sacty/core";
 import { refresh } from "next/cache";
 import { cookies } from "next/headers";
@@ -15,7 +15,7 @@ import { getMessages } from "@/i18n/server";
 import {
   approveStep,
   cancelTask,
-  createTicket,
+  createTask,
   decideChange,
   importProject,
   pauseTask,
@@ -26,33 +26,33 @@ import {
   voidRemark,
 } from "@/lib/daemon";
 
-export type CreateTicketState = {
+export type CreateTaskState = {
   fieldErrors?: { title?: string[]; body?: string[] };
   message?: string;
   values?: { title: string; body: string };
 };
 
-/** チケットを作成し、作ったタスクの詳細へ移る。 */
-export async function createTicketAction(
-  _prev: CreateTicketState,
+/** タスクを作成し、作ったタスクの詳細へ移る。 */
+export async function createTaskAction(
+  _prev: CreateTaskState,
   formData: FormData,
-): Promise<CreateTicketState> {
+): Promise<CreateTaskState> {
   const values = {
     title: String(formData.get("title") ?? ""),
     body: String(formData.get("body") ?? ""),
   };
   const a = (await getMessages()).common.action;
-  const parsed = CreateTicketInput.safeParse(values);
+  const parsed = CreateTaskInput.safeParse(values);
   if (!parsed.success) {
     // 検査の結果を、画面の言語の文言にする
-    const fieldErrors: NonNullable<CreateTicketState["fieldErrors"]> = {};
+    const fieldErrors: NonNullable<CreateTaskState["fieldErrors"]> = {};
     for (const issue of parsed.error.issues) {
       if (issue.path[0] === "title") {
         fieldErrors.title = [
-          issue.code === "too_big" ? a.titleTooLong(TICKET_TITLE_MAX) : a.titleRequired,
+          issue.code === "too_big" ? a.titleTooLong(TASK_TITLE_MAX) : a.titleRequired,
         ];
       }
-      if (issue.path[0] === "body") fieldErrors.body = [a.bodyTooLong(TICKET_BODY_MAX)];
+      if (issue.path[0] === "body") fieldErrors.body = [a.bodyTooLong(TASK_BODY_MAX)];
     }
     return { fieldErrors, values };
   }
@@ -60,13 +60,13 @@ export async function createTicketAction(
   // 作成先は、フォームを表示したときのプロジェクト（送信時の cookie ではない）。存在はデーモンが検査する
   const projectId = String(formData.get("projectId") ?? "");
   if (!projectId) {
-    return { message: a.ticketNoProject, values };
+    return { message: a.createNoProject, values };
   }
-  let result: Awaited<ReturnType<typeof createTicket>>;
+  let result: Awaited<ReturnType<typeof createTask>>;
   try {
-    result = await createTicket({ ...parsed.data, projectId });
+    result = await createTask({ ...parsed.data, projectId });
   } catch {
-    return { message: a.ticketFailed, values };
+    return { message: a.createFailed, values };
   }
   if (!result.ok) return { message: result.message, values };
   const taskId = result.task.id;

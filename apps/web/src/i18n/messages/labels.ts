@@ -11,10 +11,10 @@ import {
 } from "@sacty/core";
 
 /**
- * 工程・状態・台帳などの用語。英語は構想ドキュメントの用語集に従う
+ * 工程・状態・作業履歴などの用語。英語は構想ドキュメントの用語集に従う
  * （要求要件 Requirements、設計 Design、テスト観点 Test viewpoints、成果物チェック Deliverable review、
  * 差し戻し Request changes、一時停止 Pause、中止 Cancel、エスカレーション Escalation、
- * ゴールガーディアン Goal Guardian、オーケストレーター Orchestrator、台帳 Ledger、人間の対応待ち Needs you）。
+ * ゴールガーディアン Goal Guardian、オーケストレーター Orchestrator、作業履歴 Activity、人間の対応待ち Needs you）。
  */
 const ja = {
   /** デーモンが作った文（コードと引数）を、この言語の文にする。古い文や外から来た文はそのまま（PBI-11）。 */
@@ -27,7 +27,7 @@ const ja = {
     implement: "実装",
     pr: "PR作成",
   } satisfies Record<StepKey, string>,
-  start: { ticket: "sacty", github_issue: "GitHub Issue" } satisfies Record<Task["start"], string>,
+  start: { sacty: "sacty", github_issue: "GitHub Issue" } satisfies Record<Task["start"], string>,
   status: {
     queued: "実行待ち",
     running: "実行中",
@@ -97,11 +97,11 @@ const ja = {
     pull_request: "sacty が作ったPR（閉じる）",
   } satisfies Record<CleanupTarget, string>,
   cleanupResult: { done: "片付けた", skipped: "対象なし", failed: "失敗" },
-  /** 台帳の1行。 */
+  /** 作業履歴の1行。 */
   event: {
     estimated: "・換算値",
     withCost: (actor: string, cost: string) => `${actor}・${cost}`,
-    TaskCreated: (actor: string) => `チケットを作成（${actor}）`,
+    TaskCreated: (actor: string) => `タスクを作成（${actor}）`,
     StepsChosen: (steps: string, reason?: string) =>
       `工程を決定：${steps}${reason ? `（${reason}）` : ""}`,
     stepsJoin: " → ",
@@ -188,7 +188,7 @@ const en: LabelMessages = {
     implement: "Implement",
     pr: "Open PR",
   },
-  start: { ticket: "sacty", github_issue: "GitHub Issue" },
+  start: { sacty: "sacty", github_issue: "GitHub Issue" },
   status: {
     queued: "Queued",
     running: "Running",
@@ -261,7 +261,7 @@ const en: LabelMessages = {
   event: {
     estimated: " · estimate",
     withCost: (actor, cost) => `${actor} · ${cost}`,
-    TaskCreated: (actor) => `Ticket created (${actor})`,
+    TaskCreated: (actor) => `Task created (${actor})`,
     StepsChosen: (steps, reason) => `Steps chosen: ${steps}${reason ? ` (${reason})` : ""}`,
     stepsJoin: " → ",
     AgentRunStarted: (step, agent, auth) => `${step} started (${agent} · ${auth})`,

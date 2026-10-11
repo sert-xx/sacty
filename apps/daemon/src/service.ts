@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import {
+  type ActivityEvent,
   type Actor,
   ApproveStepInput,
   activeStep,
@@ -9,7 +10,7 @@ import {
   BUDGET_WARN_RATIO,
   budgetState,
   type CleanupTarget,
-  CreateTicketInput,
+  CreateTaskInput,
   changeRounds,
   computeCostUsd,
   type DaemonMessage,
@@ -20,7 +21,6 @@ import {
   excludedRepositories,
   GATED_STEPS,
   isCompleted,
-  type LedgerEvent,
   MAX_CHANGE_REQUESTS,
   MAX_VERIFY_ATTEMPTS,
   message,
@@ -45,6 +45,7 @@ import {
   exportProject as toProjectExport,
 } from "@sacty/core";
 import { ZodError } from "zod";
+import type { ActivityStore } from "./activity.js";
 import type { AgentExecutor } from "./agents/docker.js";
 import {
   type AgentRole,
@@ -66,7 +67,6 @@ import {
   isGitHubHttps,
 } from "./gh.js";
 import type { FoundIssue, PullRequestFeedback, PullRequestStatus, PullRequests } from "./github.js";
-import type { LedgerStore } from "./ledger.js";
 import type { ProjectStore } from "./projects.js";
 import {
   allowedPlans,
@@ -97,7 +97,7 @@ import { SecretNotFoundError, type SecretStore } from "./secrets.js";
 
 export const DEFAULT_PROJECT_ID = "default";
 
-type LedgerItem = { actor: Actor; event: EventInput };
+type ActivityItem = { actor: Actor; event: EventInput };
 
 export type CleanupItem = { target: CleanupTarget; present: boolean; detail?: DaemonText };
 type CleanupResult = {
@@ -122,7 +122,7 @@ export class InvalidOperationError extends Error {
 }
 
 export type ServiceDeps = {
-  ledger: LedgerStore;
+  activity: ActivityStore;
   /** 呼ぶたびに設定を読み直す（デーモンを止めずに設定を変えられるように）。 */
   config: () => ConfigResult;
   secrets: SecretStore;
@@ -169,8 +169,8 @@ export type ProjectView = {
 };
 
 /**
- * タスクの読み書きの窓口。書き込みは必ず台帳への追記を通り、
- * 読み取り用の状態は台帳から復元したものを保持する。
+ * タスクの読み書きの窓口。書き込みは必ず作業履歴への追記を通り、
+ * 読み取り用の状態は作業履歴から復元したものを保持する。
  */
 export class TaskService {
   private tasks: Map<string, Task>;
@@ -186,7 +186,7 @@ export class TaskService {
   private readonly cancelling = new Set<string>();
 
   constructor(private readonly deps: ServiceDeps) {
-    this.tasks = project(deps.ledger.all());
+    this.tasks = project(deps.activity.all());
     if (!deps.projects.get(DEFAULT_PROJECT_ID)) {
       deps.projects.put(DEFAULT_PROJECT_ID, ProjectDefinition.parse({ name: "デフォルト" }));
     }
@@ -196,10 +196,10 @@ export class TaskService {
     return [...this.tasks.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }
 
-  get(id: string): { task: Task; ledger: LedgerEvent[] } | undefined {
+  get(id: string): { task: Task; activity: ActivityEvent[] } | undefined {
     const task = this.tasks.get(id);
     if (!task) return undefined;
-    return { task, ledger: this.deps.ledger.forTask(id) };
+    return { task, activity: this.deps.activity.forTask(id) };
   }
 
   /**
@@ -492,7 +492,7 @@ export class TaskService {
   }
 
   /**
-   * レビューの工程の対象の PR を確かめる（PBI-19）。チケットにある、タスクの対象リポジトリの PR を、
+   * レビューの工程の対象の PR を確かめる（PBI-19）。タスクにある、タスクの対象リポジトリの PR を、
    * プロジェクトの gh のアカウントで読む。確かめられなければ理由を返す（トークンは含めない）。
    */
   private async resolveReviewTarget(
@@ -573,7 +573,7 @@ export class TaskService {
   }
 
   /**
-   * オーケストレーターに、タスクの工程を選ばせる（PBI-17）。チケットと対象リポジトリの起点のコードを
+   * オーケストレーターに、タスクの工程を選ばせる（PBI-17）。タスクの内容と対象リポジトリの起点のコードを
    * 読ませ、候補（STEP_PLANS）から選ばせる。人間の承認は無い。判断できない・実行に失敗したときは、
    * 標準の工程にして、そのことを記録する。テストでは deps.planner に差し替える。
    */
@@ -790,8 +790,8 @@ export class TaskService {
     task: Pick<Task, "id" | "projectId">,
     events: { actor: Actor; event: EventInput }[],
   ) {
-    // 台帳に書く前に、状態の復元で受け付けられるかを確かめる（受け付けられないイベントを
-    // 書いてしまうと、以降は台帳から状態を復元できず、デーモンが起動できなくなるため）
+    // 作業履歴に書く前に、状態の復元で受け付けられるかを確かめる（受け付けられないイベントを
+    // 書いてしまうと、以降は作業履歴から状態を復元できず、デーモンが起動できなくなるため）
     let preview: Map<string, Task> = this.tasks;
     const at = new Date().toISOString();
     for (const [i, item] of events.entries()) {
@@ -810,7 +810,7 @@ export class TaskService {
         throw new InvalidOperationError(message("task.invalidState"));
       }
     }
-    const written = this.deps.ledger.append({
+    const written = this.deps.activity.append({
       taskId: task.id,
       projectId: task.projectId,
       events,
@@ -823,9 +823,9 @@ export class TaskService {
     return updated;
   }
 
-  /** 画面からチケットを作る。プロジェクトを省略すると、既定のプロジェクトに作る。 */
-  createTicket(raw: unknown): Task {
-    const input = CreateTicketInput.parse(raw);
+  /** 画面からタスクを作る。プロジェクトを省略すると、既定のプロジェクトに作る。 */
+  createTask(raw: unknown): Task {
+    const input = CreateTaskInput.parse(raw);
     const projectId = input.projectId ?? DEFAULT_PROJECT_ID;
     if (!this.deps.projects.get(projectId)) {
       throw new InvalidOperationError(message("project.notFound"));
@@ -836,7 +836,7 @@ export class TaskService {
     return this.append({ id: randomUUID(), projectId }, [
       {
         actor: "person",
-        event: { type: "TaskCreated", payload: { title, body, start: "ticket", budgetCapUsd } },
+        event: { type: "TaskCreated", payload: { title, body, start: "sacty", budgetCapUsd } },
       },
     ]);
   }
@@ -985,7 +985,7 @@ export class TaskService {
     return { ok: true, repo: config.repository };
   }
 
-  /** 実装の対象リポジトリを用意する（初回だけ clone し、起点のコミットを台帳に記録する）。 */
+  /** 実装の対象リポジトリを用意する（初回だけ clone し、起点のコミットを作業履歴に記録する）。 */
   private async prepareRepository(
     task: Task,
     config: SactyConfig,
@@ -1169,7 +1169,7 @@ export class TaskService {
       }
     }
 
-    // 工程がまだ決まっていなければ、オーケストレーターがチケットとリポジトリを読んで選ぶ（PBI-17）
+    // 工程がまだ決まっていなければ、オーケストレーターがタスクの内容とリポジトリを読んで選ぶ（PBI-17）
     if (this.mustGet(taskId).steps.length === 0) {
       if (budgetState(this.mustGet(taskId).budget) === "exceeded") {
         this.append(this.mustGet(taskId), [
@@ -1837,7 +1837,7 @@ export class TaskService {
   /**
    * 中止する。実行中ならコンテナを止めて処理の終わりを待ち、sacty が作ったものを片付ける
    * （PRを閉じる → sacty のブランチを消す → 作業領域を消す）。人間が作ったブランチやPRには触れない。
-   * 片付けの結果を台帳に記録し、台帳は残す。
+   * 片付けの結果を作業履歴に記録し、作業履歴は残す。
    */
   async cancel(id: string): Promise<Task> {
     const task = this.tasks.get(id);
@@ -1975,7 +1975,7 @@ export class TaskService {
     /** エージェントの形式に変換したコンテキスト（工程エージェントだけ。PBI-6）。 */
     context?: Parameters<typeof buildInvocation>[5];
   }): Promise<{ outcome: AgentOutcome; costUsd: number; estimated: boolean }> {
-    // 実行に渡した秘密情報。台帳に書く前に、出力やエラー文から取り除く。
+    // 実行に渡した秘密情報。作業履歴に書く前に、出力やエラー文から取り除く。
     const usedSecrets: string[] = [];
     let outcome: AgentOutcome;
     try {
@@ -2026,7 +2026,7 @@ export class TaskService {
   }
 
   /** 承認ゲートのある工程なら、人間の承認待ちで止めるイベント。 */
-  private submitEvents(task: Task, step: StepKey): LedgerItem[] {
+  private submitEvents(task: Task, step: StepKey): ActivityItem[] {
     if (!GATED_STEPS.includes(step)) return [];
     return [
       {
@@ -2085,7 +2085,7 @@ export class TaskService {
     task: Task,
     proposal: TaskProposal,
     accepted: boolean | undefined,
-  ): LedgerItem[] {
+  ): ActivityItem[] {
     if (accepted === undefined) {
       return [
         {
@@ -2115,10 +2115,10 @@ export class TaskService {
   /**
    * 判定や判断は記録されたのに、後始末が記録されていないタスクを先に進める（冪等）。
    * 判定と後始末は同じトランザクションで記録するので通常は起きないが、
-   * 途中までしか記録されていない台帳でも、タスクが止まったままにならないようにする。
+   * 途中までしか記録されていない作業履歴でも、タスクが止まったままにならないようにする。
    */
   private resumeSettlement(task: Task): boolean {
-    const last = this.deps.ledger.forTask(task.id).at(-1);
+    const last = this.deps.activity.forTask(task.id).at(-1);
     if (
       last?.type !== "ChangeJudged" &&
       last?.type !== "ChangeDecided" &&
@@ -2262,7 +2262,7 @@ export class TaskService {
   }
 
   /**
-   * 差し戻す。指摘は台帳に累積し、工程を実行し直す。
+   * 差し戻す。指摘は作業履歴に累積し、工程を実行し直す。
    * やり直す工程には、承認ゲートの工程か、それより前の承認ゲートのある工程を選べる。
    * 前の工程に戻すと、その工程から先の承認は取り消され、人間の再承認が必要になる。
    * 同じ工程への差し戻しが上限を超える場合はエスカレーションにし、人間に続けるかを判断してもらう。

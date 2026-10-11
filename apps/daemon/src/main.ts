@@ -2,6 +2,7 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { serve } from "@hono/node-server";
 import { renderMessage } from "@sacty/core";
+import { SqliteActivityStore } from "./activity.js";
 import { DockerExecutor } from "./agents/docker.js";
 import { DockerTestRunner } from "./agents/test-runner.js";
 import { loadConfig, resolveHome } from "./config.js";
@@ -9,7 +10,6 @@ import { GitContextFetcher } from "./context.js";
 import { GhCliAuth } from "./gh.js";
 import { GitHubIssueSearch, GitHubPullRequests } from "./github.js";
 import { IssueIntake } from "./intake.js";
-import { SqliteLedgerStore } from "./ledger.js";
 import { PullRequestWatcher } from "./pr-watcher.js";
 import { SqliteProjectStore } from "./projects.js";
 import { GitRepositoryWorkspace } from "./repository.js";
@@ -28,7 +28,7 @@ if (!token) {
 }
 
 mkdirSync(home, { recursive: true });
-const ledger = new SqliteLedgerStore(join(home, "sacty.db"));
+const activity = new SqliteActivityStore(join(home, "sacty.db"));
 const projects = new SqliteProjectStore(join(home, "sacty.db"));
 const secrets = new KeychainSecretStore();
 const config = () => loadConfig(home);
@@ -37,7 +37,7 @@ const tests = new DockerTestRunner();
 // GitHub へのアクセスは、ホストの gh のアカウントで行う（PBI-13）
 const github = new GhCliAuth();
 const service = new TaskService({
-  ledger,
+  activity,
   config,
   secrets,
   projects,
@@ -75,8 +75,8 @@ let shuttingDown = false;
 const shutdown = async () => {
   if (shuttingDown) return;
   shuttingDown = true;
-  // 実行中のコンテナを止め、実行の後処理（台帳への記録、認証ファイルの書き戻し、
-  // 一時ファイルの削除）が終わるのを待ってから、台帳を閉じて終了する。
+  // 実行中のコンテナを止め、実行の後処理（作業履歴への記録、認証ファイルの書き戻し、
+  // 一時ファイルの削除）が終わるのを待ってから、作業履歴を閉じて終了する。
   const draining = Promise.all([worker.drain(), intake.stop(), prWatcher.stop()]);
   executor.abortAll();
   tests.abortAll();
@@ -88,7 +88,7 @@ const shutdown = async () => {
     console.warn("[daemon] 実行中の処理の後片付けが時間内に終わりませんでした。");
   }
   server.close(() => {
-    ledger.close();
+    activity.close();
     projects.close();
     process.exit(0);
   });

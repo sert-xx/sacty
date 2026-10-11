@@ -30,7 +30,7 @@ export const STEP_PLANS = {
   "skip-design": ["requirements", "implement", "pr"],
   /** 調査だけ：コードを調べて報告する。実装や PR は作らない（PBI-18） */
   investigate: ["investigate"],
-  /** レビューだけ：チケットにある PR をレビューして、PR に投稿する（PBI-19） */
+  /** レビューだけ：タスクにある PR をレビューして、PR に投稿する（PBI-19） */
   review: ["review"],
 } as const satisfies Record<string, readonly StepKey[]>;
 export type StepPlan = keyof typeof STEP_PLANS;
@@ -73,7 +73,7 @@ export const TokenUsage = z.object({
 });
 export type TokenUsage = z.infer<typeof TokenUsage>;
 
-/** 人間の指摘。id は台帳の中で一意（例：requirements-2-1 は要求要件の2回目の差し戻しの1件目）。 */
+/** 人間の指摘。id は作業履歴の中で一意（例：requirements-2-1 は要求要件の2回目の差し戻しの1件目）。 */
 export const Remark = z.object({ id: z.string().min(1), text: z.string().min(1) });
 export type Remark = z.infer<typeof Remark>;
 
@@ -147,9 +147,14 @@ const TaskCreated = z.object({
   payload: z.object({
     title: z.string(),
     body: z.string(),
-    /** ticket：sacty の画面で作った、github_issue：GitHub Issue から取り込んだ。 */
-    start: z.enum(["ticket", "github_issue"]),
-    // PBI-1の台帳には無いので既定値で補う
+    /**
+     * sacty：sacty の画面で作った、github_issue：GitHub Issue から取り込んだ。
+     * PBI-20 より前の作業履歴は、画面で作ったタスクを ticket と記録しているので、sacty として読む。
+     */
+    start: z
+      .enum(["sacty", "github_issue", "ticket"])
+      .transform((start) => (start === "ticket" ? "sacty" : start)),
+    // PBI-1の作業履歴には無いので既定値で補う
     budgetCapUsd: z.number().positive().default(DEFAULT_BUDGET_USD),
     /** 取り込み元（GitHub Issue のリポジトリと番号）。 */
     source: TaskSource.optional(),
@@ -157,9 +162,9 @@ const TaskCreated = z.object({
 });
 
 /**
- * タスクの工程を決めた。PBI-17 からは、オーケストレーター（AI）がチケットと対象リポジトリを読んで、
+ * タスクの工程を決めた。PBI-17 からは、オーケストレーター（AI）がタスクの内容と対象リポジトリを読んで、
  * 候補（STEP_PLANS）から選び、理由とともに記録する（人間の承認は無い）。判断できなければ標準の工程にする。
- * それより前の台帳は、固定の工程（steps だけ）。
+ * それより前の作業履歴は、固定の工程（steps だけ）。
  */
 const StepsChosen = z.object({
   type: z.literal("StepsChosen"),
@@ -199,9 +204,9 @@ const AgentRunCompleted = z.object({
     /** サブスクリプションなど、実際の請求ではなく換算した値か。 */
     estimated: z.boolean(),
     output: z.string(),
-    /** 指摘への対応（再提出のとき）。PBI-2の台帳には無い。 */
+    /** 指摘への対応（再提出のとき）。PBI-2の作業履歴には無い。 */
     responses: z.array(RemarkResponse).default([]),
-    /** 設計の工程で作ったテスト観点。PBI-7までの台帳には無い。 */
+    /** 設計の工程で作ったテスト観点。PBI-7までの作業履歴には無い。 */
     testViewpoints: z.array(TestViewpoint).default([]),
     /** 実装の工程が申告した、観点とテストの対応。 */
     testMap: z.array(TestMapping).default([]),
@@ -238,7 +243,7 @@ const TaskPaused = z.object({
     message: DaemonText.optional(),
     /**
      * 止めたが、無くなったことを確かめられなかったコンテナ（の実行）。中止や再開の前に確かめ直す
-     * （デーモンを再起動しても追えるよう、台帳に記録する）。
+     * （デーモンを再起動しても追えるよう、作業履歴に記録する）。
      */
     unstoppedRuns: z.array(z.string()).optional(),
   }),
@@ -567,7 +572,7 @@ export type CleanupTarget = z.infer<typeof CleanupTarget>;
 
 /**
  * 中止した。sacty が作ったもの（コンテナ、作業領域、sacty のブランチ、sacty が作ったPR）を
- * 片付けた結果を、対象ごとに記録する。台帳は残し、以降の操作は受け付けない。
+ * 片付けた結果を、対象ごとに記録する。作業履歴は残し、以降の操作は受け付けない。
  */
 const TaskCancelled = z.object({
   type: z.literal("TaskCancelled"),
@@ -604,7 +609,7 @@ const ChangesRequested = z.object({
     /**
      * やり直す工程（指摘はこの工程に付く）。承認ゲートの工程か、それより前の工程。
      * 前の工程に戻すと、その工程から先の承認は取り消され、人間の再承認が必要になる。
-     * PBI-7までの台帳には無いので、step で補う。
+     * PBI-7までの作業履歴には無いので、step で補う。
      */
     target: StepKey.optional(),
     /** やり直す工程への、何回目の差し戻しか。 */
@@ -624,7 +629,7 @@ const TaskEscalated = z.object({
   type: z.literal("TaskEscalated"),
   payload: z.object({
     step: StepKey,
-    /** 差し戻しが上限を超えた工程（やり直す工程）。PBI-7までの台帳には無いので、step で補う。 */
+    /** 差し戻しが上限を超えた工程（やり直す工程）。PBI-7までの作業履歴には無いので、step で補う。 */
     target: StepKey.optional(),
     /**
      * too_many_changes：差し戻しが上限を超えた
@@ -642,7 +647,7 @@ const TaskEscalated = z.object({
   }),
 });
 
-/** 台帳に書けるイベント（追加する前の形）。 */
+/** 作業履歴に書けるイベント（追加する前の形）。 */
 export const EventInput = z.discriminatedUnion("type", [
   TaskCreated,
   StepsChosen,
@@ -685,8 +690,8 @@ export const EventInput = z.discriminatedUnion("type", [
 export type EventInput = z.input<typeof EventInput>;
 export type ParsedEventInput = z.infer<typeof EventInput>;
 
-/** 台帳に記録されたイベント。seq は台帳全体で単調増加する。 */
-export type LedgerEvent = ParsedEventInput & {
+/** 作業履歴に記録されたイベント。seq は作業履歴全体で単調増加する。 */
+export type ActivityEvent = ParsedEventInput & {
   seq: number;
   id: string;
   taskId: string;
@@ -695,21 +700,21 @@ export type LedgerEvent = ParsedEventInput & {
   actor: Actor;
 };
 
-export const TICKET_TITLE_MAX = 200;
-export const TICKET_BODY_MAX = 10_000;
+export const TASK_TITLE_MAX = 200;
+export const TASK_BODY_MAX = 10_000;
 
-/** 画面から受け付けるチケット作成の入力。 */
-export const CreateTicketInput = z.object({
+/** 画面から受け付けるタスク作成の入力。 */
+export const CreateTaskInput = z.object({
   title: z
     .string()
     .trim()
     .min(1, code("input.titleRequired"))
-    .max(TICKET_TITLE_MAX, code("input.titleTooLong")),
-  body: z.string().trim().max(TICKET_BODY_MAX, code("input.bodyTooLong")).default(""),
+    .max(TASK_TITLE_MAX, code("input.titleTooLong")),
+  body: z.string().trim().max(TASK_BODY_MAX, code("input.bodyTooLong")).default(""),
   /** 作るプロジェクト。省略すると既定のプロジェクト。 */
   projectId: z.string().min(1).optional(),
 });
-export type CreateTicketInput = z.infer<typeof CreateTicketInput>;
+export type CreateTaskInput = z.infer<typeof CreateTaskInput>;
 
 /** 一時停止中のタスクを再開する入力。予算で止まった場合は新しい上限（累計）が必要。 */
 export const ResumeTaskInput = z.object({

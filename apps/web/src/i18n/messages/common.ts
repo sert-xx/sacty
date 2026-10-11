@@ -11,8 +11,8 @@ const ja = {
   },
   action: {
     daemonDown: "操作できませんでした。sactyのデーモンが動いているか確認してください。",
-    ticketFailed: "チケットを作成できませんでした。sactyのデーモンが動いているか確認してください。",
-    ticketNoProject: "作成先のプロジェクトが分かりません。画面を更新してください。",
+    createFailed: "タスクを作成できませんでした。sactyのデーモンが動いているか確認してください。",
+    createNoProject: "作成先のプロジェクトが分かりません。画面を更新してください。",
     titleRequired: "タイトルを入力してください。",
     titleTooLong: (max: number) => `タイトルは${max}文字以内で入力してください。`,
     bodyTooLong: (max: number) =>
@@ -43,8 +43,8 @@ const en: CommonMessages = {
   },
   action: {
     daemonDown: "Could not complete the action. Check that the sacty daemon is running.",
-    ticketFailed: "Could not create the ticket. Check that the sacty daemon is running.",
-    ticketNoProject: "The target project is unknown. Reload the page.",
+    createFailed: "Could not create the task. Check that the sacty daemon is running.",
+    createNoProject: "The target project is unknown. Reload the page.",
     titleRequired: "Enter a title.",
     titleTooLong: (max) => `Keep the title within ${max} characters.`,
     bodyTooLong: (max) => `Keep the details within ${max.toLocaleString("en-US")} characters.`,

@@ -1,9 +1,9 @@
-/** 画面の文言：チケットの作成・プロジェクトのインポート。英語の用語は labels.ts の用語集に合わせる。 */
+/** 画面の文言：タスクの作成・プロジェクトのインポート。英語の用語は labels.ts の用語集に合わせる。 */
 const ja = {
-  ticket: {
-    create: "チケットを作成",
+  task: {
+    create: "タスクを作成",
     description: (project: string) =>
-      `プロジェクト「${project}」に作成します。作成すると、オーケストレーターがチケットと対象リポジトリを読んで工程を選び、台帳に記録します。`,
+      `プロジェクト「${project}」に作成します。作成すると、オーケストレーターがタスクの内容と対象リポジトリを読んで工程を選び、作業履歴に記録します。`,
     title: "タイトル",
     body: "内容",
     bodyPlaceholder: "背景や、満たしてほしい条件",
@@ -21,10 +21,10 @@ const ja = {
 export type FormsMessages = typeof ja;
 
 const en: FormsMessages = {
-  ticket: {
-    create: "Create ticket",
+  task: {
+    create: "Create task",
     description: (project) =>
-      `Creates the ticket in the project "${project}". The Orchestrator then reads the ticket and the target repository, chooses the steps, and records them in the Ledger.`,
+      `Creates the task in the project "${project}". The Orchestrator then reads the task and the target repository, chooses the steps, and records them in the Activity.`,
     title: "Title",
     body: "Description",
     bodyPlaceholder: "Background and the conditions it should meet",

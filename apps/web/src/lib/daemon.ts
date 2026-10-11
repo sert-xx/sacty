@@ -1,8 +1,8 @@
 import {
+  type ActivityEvent,
   type CleanupTarget,
-  type CreateTicketInput,
+  type CreateTaskInput,
   type DaemonText,
-  type LedgerEvent,
   type Project,
   type ProjectDefinitionInput,
   renderMessage,
@@ -48,18 +48,20 @@ export async function listTasks(): Promise<Task[]> {
   return ((await res.json()) as { tasks: Task[] }).tasks;
 }
 
-export async function getTask(id: string): Promise<{ task: Task; ledger: LedgerEvent[] } | null> {
+export async function getTask(
+  id: string,
+): Promise<{ task: Task; activity: ActivityEvent[] } | null> {
   const res = await daemonFetch(`/api/tasks/${encodeURIComponent(id)}`);
   if (res.status === 404) return null;
   await ensureOk(res);
-  return (await res.json()) as { task: Task; ledger: LedgerEvent[] };
+  return (await res.json()) as { task: Task; activity: ActivityEvent[] };
 }
 
-/** チケットを作る。作成先のプロジェクトが無いなどは、画面に出せる理由を返す。 */
-export async function createTicket(
-  input: CreateTicketInput,
+/** タスクを作る。作成先のプロジェクトが無いなどは、画面に出せる理由を返す。 */
+export async function createTask(
+  input: CreateTaskInput,
 ): Promise<{ ok: true; task: Task } | { ok: false; message: string }> {
-  const res = await daemonFetch("/api/tickets", {
+  const res = await daemonFetch("/api/tasks", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(input),

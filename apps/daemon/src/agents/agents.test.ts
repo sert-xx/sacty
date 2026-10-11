@@ -600,7 +600,7 @@ describe("コンテナで更新されたトークンの除去（偽のdockerコ�
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it("更新後のトークンを出力に含めても台帳用の出力には残さず、ホストへは書き戻す", async () => {
+  it("更新後のトークンを出力に含めても作業履歴用の出力には残さず、ホストへは書き戻す", async () => {
     const { chmodSync, mkdirSync } = await import("node:fs");
     const { DockerExecutor } = await import("./docker.js");
     dir = mkdtempSync(join(tmpdir(), "sacty-fakedocker-"));

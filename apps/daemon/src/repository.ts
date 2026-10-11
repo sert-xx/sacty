@@ -51,7 +51,7 @@ export interface RepositoryWorkspace {
     branch: string;
     message: string;
     /**
-     * コミットの日時（ISO 8601）。同じ提出では同じ値を渡す。プッシュの後、台帳に記録する前に
+     * コミットの日時（ISO 8601）。同じ提出では同じ値を渡す。プッシュの後、作業履歴に記録する前に
      * 失敗して再開しても、同じコミットを作り直せる（前回プッシュしたものと枝分かれしない）ように。
      */
     date: string;

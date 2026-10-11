@@ -294,7 +294,7 @@ describe("対象リポジトリの作業領域（git）", () => {
       date: "2026-10-10T01:00:00.000Z",
     };
     const first = await workspace.publish(input);
-    // プッシュの後、台帳に記録する前に止まり、1秒以上たってから同じ入力で再開した
+    // プッシュの後、作業履歴に記録する前に止まり、1秒以上たってから同じ入力で再開した
     await new Promise((resolve) => setTimeout(resolve, 1100));
     const retried = await workspace.publish(input);
     expect(retried.commit).toBe(first.commit);

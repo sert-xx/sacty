@@ -121,11 +121,11 @@ export function createApp(
     return c.json({ status: service.status().intake });
   });
 
-  app.post("/api/tickets", async (c) => {
+  app.post("/api/tasks", async (c) => {
     const json = await readJson(c);
     if (!json.ok) return c.json({ error: "invalid_json" }, 400);
     try {
-      return c.json({ task: service.createTicket(json.body) }, 201);
+      return c.json({ task: service.createTask(json.body) }, 201);
     } catch (error) {
       return handleError(c, error);
     }

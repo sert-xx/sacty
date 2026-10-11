@@ -1,4 +1,4 @@
-import type { LedgerEvent, Task, TaskProposal } from "@sacty/core";
+import type { ActivityEvent, Task, TaskProposal } from "@sacty/core";
 import { describe, expect, it } from "vitest";
 import { labels } from "@/i18n/messages/labels";
 import {
@@ -14,7 +14,7 @@ import {
 const ja = labels.ja;
 const statusText = (task: Task) => statusTextIn(task, ja);
 const personAction = (task: Task) => personActionIn(task, ja);
-const describeEvent = (event: LedgerEvent) => describeIn(event, ja);
+const describeEvent = (event: ActivityEvent) => describeIn(event, ja);
 
 const proposal = (patch: Partial<TaskProposal> = {}): TaskProposal => ({
   id: "CP-1",
@@ -33,7 +33,7 @@ const task = (patch: Partial<Task> = {}): Task => ({
   projectId: "default",
   title: "A",
   body: "",
-  start: "ticket",
+  start: "sacty",
   status: "idle",
   steps: [],
   outputs: {},
@@ -85,7 +85,7 @@ describe("一覧と詳細の導線（PBI-9 レビュー指摘）", () => {
 });
 
 describe("成果物チェックの表示（PBI-10b）", () => {
-  const event = (e: Pick<LedgerEvent, "type" | "payload">): LedgerEvent =>
+  const event = (e: Pick<ActivityEvent, "type" | "payload">): ActivityEvent =>
     ({
       ...e,
       seq: 1,
@@ -94,7 +94,7 @@ describe("成果物チェックの表示（PBI-10b）", () => {
       projectId: "default",
       at: "2026-10-10T00:00:00.000Z",
       actor: "person",
-    }) as LedgerEvent;
+    }) as ActivityEvent;
 
   it("実装へ戻すときは承認の取り消しを書かず、設計へ戻すときは書く", () => {
     const back = (target: "implement" | "design") =>
@@ -136,7 +136,7 @@ describe("成果物チェックの表示（PBI-10b）", () => {
 
 describe("英語の表示（PBI-4b）", () => {
   const en = labels.en;
-  const event = (e: Pick<LedgerEvent, "type" | "payload">): LedgerEvent =>
+  const event = (e: Pick<ActivityEvent, "type" | "payload">): ActivityEvent =>
     ({
       ...e,
       seq: 1,
@@ -145,9 +145,9 @@ describe("英語の表示（PBI-4b）", () => {
       projectId: "default",
       at: "2026-10-10T00:00:00.000Z",
       actor: "person",
-    }) as LedgerEvent;
+    }) as ActivityEvent;
 
-  it("用語集の英語で、状態と台帳を表示する", () => {
+  it("用語集の英語で、状態と作業履歴を表示する", () => {
     expect(
       statusTextIn(task({ status: "awaiting_approval", gate: { step: "pr", submission: 2 } }), en),
     ).toBe("Awaiting deliverable review (submission 2)");
@@ -193,7 +193,7 @@ describe("英語の表示（PBI-4b）", () => {
 });
 
 describe("一時停止と中止の表示（PBI-3）", () => {
-  const event = (e: Pick<LedgerEvent, "type" | "payload">): LedgerEvent =>
+  const event = (e: Pick<ActivityEvent, "type" | "payload">): ActivityEvent =>
     ({
       ...e,
       seq: 1,
@@ -202,9 +202,9 @@ describe("一時停止と中止の表示（PBI-3）", () => {
       projectId: "default",
       at: "2026-10-10T00:00:00.000Z",
       actor: "person",
-    }) as LedgerEvent;
+    }) as ActivityEvent;
 
-  it("人間の一時停止と、中止の片付けの結果を台帳に出す", () => {
+  it("人間の一時停止と、中止の片付けの結果を作業履歴に出す", () => {
     expect(describeEvent(event({ type: "TaskPaused", payload: { reason: "manual" } }))).toBe(
       "一時停止（人間）",
     );
@@ -231,8 +231,8 @@ describe("一時停止と中止の表示（PBI-3）", () => {
   });
 });
 
-describe("台帳に記録したデーモンの文言（PBI-11b）", () => {
-  const event = (e: Pick<LedgerEvent, "type" | "payload">): LedgerEvent =>
+describe("作業履歴に記録したデーモンの文言（PBI-11b）", () => {
+  const event = (e: Pick<ActivityEvent, "type" | "payload">): ActivityEvent =>
     ({
       ...e,
       seq: 1,
@@ -241,7 +241,7 @@ describe("台帳に記録したデーモンの文言（PBI-11b）", () => {
       projectId: "default",
       at: "2026-10-10T00:00:00.000Z",
       actor: "sacty",
-    }) as LedgerEvent;
+    }) as ActivityEvent;
   const failed = (message: unknown) =>
     event({
       type: "AgentRunFailed",
@@ -254,7 +254,7 @@ describe("台帳に記録したデーモンの文言（PBI-11b）", () => {
         costUsd: 0,
         estimated: false,
       },
-    } as Pick<LedgerEvent, "type" | "payload">);
+    } as Pick<ActivityEvent, "type" | "payload">);
 
   it("コードと引数の文言は、画面の言語の文にする（外から来た文は引数のまま）", () => {
     const pr = failed({
@@ -274,7 +274,7 @@ describe("台帳に記録したデーモンの文言（PBI-11b）", () => {
     );
   });
 
-  it("古い台帳の日本語の文や、エージェントの文は、そのまま表示する", () => {
+  it("古い作業履歴の日本語の文や、エージェントの文は、そのまま表示する", () => {
     expect(describeIn(failed("デーモンが停止したため、実行が中断されました。"), labels.en)).toBe(
       "Implement failed: デーモンが停止したため、実行が中断されました。",
     );
@@ -337,8 +337,8 @@ describe("PR で判断する成果物チェック（PBI-14a）", () => {
     expect(statusTextIn(atPrGate("open"), labels.en)).toBe("Awaiting PR merge");
   });
 
-  it("台帳に、PR のマージ・クローズ・開き直しを表示する", () => {
-    const event = (e: Pick<LedgerEvent, "type" | "payload">): LedgerEvent =>
+  it("作業履歴に、PR のマージ・クローズ・開き直しを表示する", () => {
+    const event = (e: Pick<ActivityEvent, "type" | "payload">): ActivityEvent =>
       ({
         ...e,
         seq: 1,
@@ -347,7 +347,7 @@ describe("PR で判断する成果物チェック（PBI-14a）", () => {
         projectId: "default",
         at: "2026-10-11T00:00:00.000Z",
         actor: "person",
-      }) as LedgerEvent;
+      }) as ActivityEvent;
     expect(
       describeEvent(event({ type: "PullRequestMerged", payload: { number: 7, by: "reviewer" } })),
     ).toBe("PR #7 がマージされた（reviewer）→ 成果物チェックを承認");
@@ -386,7 +386,7 @@ describe("PR の指摘の取り込み（PBI-14b）", () => {
 });
 
 describe("オーケストレーターが選んだ工程（PBI-17）", () => {
-  it("台帳に、選んだ工程と理由を表示する", () => {
+  it("作業履歴に、選んだ工程と理由を表示する", () => {
     const event = {
       type: "StepsChosen",
       payload: {
@@ -403,14 +403,14 @@ describe("オーケストレーターが選んだ工程（PBI-17）", () => {
       projectId: "default",
       at: "2026-10-11T00:00:00.000Z",
       actor: "orchestrator",
-    } as LedgerEvent;
+    } as ActivityEvent;
     expect(describeEvent(event)).toBe("工程を決定：要求要件 → 実装 → PR作成（小さな変更）");
   });
 });
 
 describe("調査の工程（PBI-18）", () => {
-  it("台帳に、Issue へのコメントを表示する", () => {
-    const event = (e: Pick<LedgerEvent, "type" | "payload">): LedgerEvent =>
+  it("作業履歴に、Issue へのコメントを表示する", () => {
+    const event = (e: Pick<ActivityEvent, "type" | "payload">): ActivityEvent =>
       ({
         ...e,
         seq: 1,
@@ -419,7 +419,7 @@ describe("調査の工程（PBI-18）", () => {
         projectId: "default",
         at: "2026-10-11T00:00:00.000Z",
         actor: "sacty",
-      }) as LedgerEvent;
+      }) as ActivityEvent;
     expect(
       describeEvent(event({ type: "IssueCommented", payload: { url: "https://x/issues/5#c" } })),
     ).toBe("調査の結果を Issue にコメントした（https://x/issues/5#c）");
@@ -428,8 +428,8 @@ describe("調査の工程（PBI-18）", () => {
 });
 
 describe("レビューの工程（PBI-19）", () => {
-  it("台帳に、対象の PR の確認とレビューの投稿を表示する", () => {
-    const event = (e: Pick<LedgerEvent, "type" | "payload">): LedgerEvent =>
+  it("作業履歴に、対象の PR の確認とレビューの投稿を表示する", () => {
+    const event = (e: Pick<ActivityEvent, "type" | "payload">): ActivityEvent =>
       ({
         ...e,
         seq: 1,
@@ -438,7 +438,7 @@ describe("レビューの工程（PBI-19）", () => {
         projectId: "default",
         at: "2026-10-11T00:00:00.000Z",
         actor: "sacty",
-      }) as LedgerEvent;
+      }) as ActivityEvent;
     expect(
       describeEvent(
         event({

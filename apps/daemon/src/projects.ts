@@ -1,7 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { type Project, ProjectDefinition } from "@sacty/core";
 
-/** プロジェクトの保存先。台帳と違い、設定なので書き換えられる。 */
+/** プロジェクトの保存先。作業履歴と違い、設定なので書き換えられる。 */
 export interface ProjectStore {
   all(): Project[];
   get(id: string): Project | undefined;
@@ -30,7 +30,7 @@ function toProject(row: Row): Project {
   };
 }
 
-/** SQLite によるプロジェクトの保存先（台帳と同じファイル）。 */
+/** SQLite によるプロジェクトの保存先（作業履歴と同じファイル）。 */
 export class SqliteProjectStore implements ProjectStore {
   private readonly db: DatabaseSync;
 

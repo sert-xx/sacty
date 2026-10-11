@@ -2,7 +2,7 @@ import Link from "next/link";
 import { Suspense } from "react";
 import { AutoRefresh } from "@/components/auto-refresh";
 import { DaemonError } from "@/components/daemon-error";
-import { NewTicketDialog } from "@/components/new-ticket-dialog";
+import { NewTaskDialog } from "@/components/new-task-dialog";
 import { StatusLabel, StepChips } from "@/components/task-bits";
 import { getMessages } from "@/i18n/server";
 import { currentProjectId, resolveProject } from "@/lib/current-project";
@@ -21,7 +21,7 @@ export default async function TasksPage() {
           <h1 className="text-2xl font-bold">{m.title}</h1>
         </div>
         <Suspense fallback={null}>
-          <NewTicket />
+          <NewTask />
         </Suspense>
       </div>
       <Suspense fallback={null}>
@@ -54,12 +54,12 @@ async function projectTasks() {
   return tasks.filter((t) => t.projectId === project?.id);
 }
 
-/** チケットの作成。表示しているプロジェクトを、作成先としてフォームに固定する。 */
-async function NewTicket() {
+/** タスクの作成。表示しているプロジェクトを、作成先としてフォームに固定する。 */
+async function NewTask() {
   try {
     const project = resolveProject(await listProjects(), await currentProjectId());
     if (!project) return null;
-    return <NewTicketDialog projectId={project.id} projectName={project.name} />;
+    return <NewTaskDialog projectId={project.id} projectName={project.name} />;
   } catch {
     return null;
   }

@@ -15,7 +15,7 @@ describe("デーモンの文言（PBI-11）", () => {
     expect(renderMessage(message("task.notFound"), "en")).toBe("Task not found.");
   });
 
-  it("コードでない文（古い台帳の文や、外から来た文）は、そのまま返す", () => {
+  it("コードでない文（古い作業履歴の文や、外から来た文）は、そのまま返す", () => {
     expect(renderMessage("デーモンが停止したため、実行が中断されました。", "en")).toBe(
       "デーモンが停止したため、実行が中断されました。",
     );

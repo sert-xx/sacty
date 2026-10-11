@@ -8,7 +8,7 @@ const ja = {
   agent: "工程を実行するAI：",
   agentAuth: (auth: string) => `（${auth}）`,
   needsYou: "あなたの出番",
-  empty: "タスクはまだありません。「チケットを作成」から最初のタスクを作ってください。",
+  empty: "タスクはまだありません。「タスクを作成」から最初のタスクを作ってください。",
   column: {
     task: "タスク",
     start: "開始地点",
@@ -28,7 +28,7 @@ const en: TasksMessages = {
   agent: "AI running the steps: ",
   agentAuth: (auth) => ` (${auth})`,
   needsYou: "Needs you",
-  empty: "No tasks yet. Use “Create ticket” to make the first one.",
+  empty: "No tasks yet. Use “Create task” to make the first one.",
   column: {
     task: "Task",
     start: "Started from",

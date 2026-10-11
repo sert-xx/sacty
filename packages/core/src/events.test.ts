@@ -1,25 +1,25 @@
 import { describe, expect, it } from "vitest";
-import { CreateTicketInput, TICKET_BODY_MAX, TICKET_TITLE_MAX } from "./events.js";
+import { CreateTaskInput, TASK_BODY_MAX, TASK_TITLE_MAX } from "./events.js";
 import { renderMessage } from "./messages.js";
 
-describe("CreateTicketInput", () => {
+describe("CreateTaskInput", () => {
   it("前後の空白を除いて受け付ける", () => {
-    expect(CreateTicketInput.parse({ title: "  A  ", body: " B " })).toEqual({
+    expect(CreateTaskInput.parse({ title: "  A  ", body: " B " })).toEqual({
       title: "A",
       body: "B",
     });
   });
 
   it("上限ちょうどの文字数は受け付ける", () => {
-    const parsed = CreateTicketInput.safeParse({
-      title: "あ".repeat(TICKET_TITLE_MAX),
-      body: "あ".repeat(TICKET_BODY_MAX),
+    const parsed = CreateTaskInput.safeParse({
+      title: "あ".repeat(TASK_TITLE_MAX),
+      body: "あ".repeat(TASK_BODY_MAX),
     });
     expect(parsed.success).toBe(true);
   });
 
   it("タイトルが上限を超えると、文言のコードで拒否する（画面の言語の文言にできる）", () => {
-    const parsed = CreateTicketInput.safeParse({ title: "あ".repeat(TICKET_TITLE_MAX + 1) });
+    const parsed = CreateTaskInput.safeParse({ title: "あ".repeat(TASK_TITLE_MAX + 1) });
     expect(parsed.success).toBe(false);
     expect(parsed.error?.issues[0]?.path).toEqual(["title"]);
     expect(parsed.error?.issues[0]?.message).toBe("input.titleTooLong");
@@ -32,9 +32,9 @@ describe("CreateTicketInput", () => {
   });
 
   it("内容が上限を超えると、文言のコードで拒否する", () => {
-    const parsed = CreateTicketInput.safeParse({
+    const parsed = CreateTaskInput.safeParse({
       title: "A",
-      body: "あ".repeat(TICKET_BODY_MAX + 1),
+      body: "あ".repeat(TASK_BODY_MAX + 1),
     });
     expect(parsed.success).toBe(false);
     expect(parsed.error?.issues[0]?.path).toEqual(["body"]);

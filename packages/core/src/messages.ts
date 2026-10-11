@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { formatUsd } from "./cost.js";
-import { TICKET_BODY_MAX, TICKET_TITLE_MAX } from "./events.js";
+import { TASK_BODY_MAX, TASK_TITLE_MAX } from "./events.js";
 import { DaemonText } from "./message-code.js";
 import { PROJECT_EXPORT_VERSION } from "./projects.js";
 
@@ -75,7 +75,7 @@ const PARAMS = {
   "input.headerName": null,
   "input.mcpName": null,
   "input.dollarBrace": null,
-  // 実行（PBI-11b。台帳に記録する）
+  // 実行（PBI-11b。作業履歴に記録する）
   "run.daemonStopped": null,
   "run.guardianInterrupted": null,
   "run.stoppedByPerson": null,
@@ -277,8 +277,8 @@ const ja: MessageDictionary = {
     `差し戻しが上限（${limit}回）に達しています。続ける場合は、上限を超えて差し戻すことを選んでください。`,
   "remark.notFound": "指摘が見つかりません。",
   "input.titleRequired": "タイトルを入力してください。",
-  "input.titleTooLong": `タイトルは${TICKET_TITLE_MAX}文字以内で入力してください。`,
-  "input.bodyTooLong": `内容は${TICKET_BODY_MAX.toLocaleString("ja-JP")}文字以内で入力してください。`,
+  "input.titleTooLong": `タイトルは${TASK_TITLE_MAX}文字以内で入力してください。`,
+  "input.bodyTooLong": `内容は${TASK_BODY_MAX.toLocaleString("ja-JP")}文字以内で入力してください。`,
   "input.remarkTooLong": "指摘は1件あたり2,000文字以内にしてください。",
   "input.tooManyRemarks": "指摘は一度に50件までにしてください。",
   "input.nameRequired": "名前を入力してください。",
@@ -335,7 +335,7 @@ const ja: MessageDictionary = {
     `オーケストレーターが工程を選べなかったため、標準の工程で進めます（${text(detail)}）。`,
   "orchestrator.unreadable": "オーケストレーターの出力から、選んだ工程を読み取れませんでした。",
   "review.pullRequestMissing": ({ repo }) =>
-    `チケットに、レビューする PR（${repo} の PR の URL）がありません。`,
+    `タスクに、レビューする PR（${repo} の PR の URL）がありません。`,
   "github.ghMissing":
     "gh コマンドが見つかりません。GitHub CLI をインストールし、gh auth login でログインしてください。",
   "github.accountRequired": ({ project }) =>
@@ -449,8 +449,8 @@ const en: MessageDictionary = {
     `Change requests reached the limit (${limit}). To continue, choose to request changes over the limit.`,
   "remark.notFound": "Comment not found.",
   "input.titleRequired": "Enter a title.",
-  "input.titleTooLong": `Keep the title within ${TICKET_TITLE_MAX} characters.`,
-  "input.bodyTooLong": `Keep the details within ${TICKET_BODY_MAX.toLocaleString("en-US")} characters.`,
+  "input.titleTooLong": `Keep the title within ${TASK_TITLE_MAX} characters.`,
+  "input.bodyTooLong": `Keep the details within ${TASK_BODY_MAX.toLocaleString("en-US")} characters.`,
   "input.remarkTooLong": "Keep each comment within 2,000 characters.",
   "input.tooManyRemarks": "Enter up to 50 comments at a time.",
   "input.nameRequired": "Enter a name.",
@@ -508,7 +508,7 @@ const en: MessageDictionary = {
     `The Orchestrator could not choose the steps, so the standard steps are used (${text(detail)}).`,
   "orchestrator.unreadable": "Could not read the chosen steps from the Orchestrator's output.",
   "review.pullRequestMissing": ({ repo }) =>
-    `The ticket has no PR to review (a URL of a PR in ${repo}).`,
+    `The task has no PR to review (a URL of a PR in ${repo}).`,
   "github.ghMissing":
     "The gh command was not found. Install GitHub CLI and sign in with gh auth login.",
   "github.accountRequired": ({ project }) =>
@@ -590,7 +590,7 @@ export function isMessageCode(value: unknown): value is MessageCode {
 }
 
 /**
- * デーモンの文言を、指定した言語の文にする。コードと引数でない値（古い台帳の文や、
+ * デーモンの文言を、指定した言語の文にする。コードと引数でない値（古い作業履歴の文や、
  * 外から来た文）は、そのまま返す。文字列がコードそのものなら（zod の検査の文言）、その文言にする。
  */
 export function renderMessage(value: unknown, locale: keyof typeof DAEMON_MESSAGES): string {
