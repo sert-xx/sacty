@@ -24,6 +24,7 @@ export function statusText(task: Task, l: LabelMessages): string {
   if (task.status === "awaiting_approval" && task.gate?.step === "pr") {
     // PR を作ったタスクは、PR のマージで承認する（PBI-14a）
     if (task.pullRequestState === "closed") return l.state.prClosed;
+    if (task.pullRequestState === "merged_outdated") return l.state.prMergedOutdated;
     if (task.pullRequestState === "open") return l.state.prAwaitingMerge(task.gate.submission);
     return l.state.deliverableReview(task.gate.submission);
   }
@@ -167,7 +168,9 @@ export function describeEvent(event: LedgerEvent, l: LabelMessages): string {
     case "BranchPushed":
       return e.BranchPushed(event.payload.branch, event.payload.commit.slice(0, 7));
     case "PullRequestMerged":
-      return e.PullRequestMerged(event.payload.number, event.payload.by);
+      return event.payload.outdated
+        ? e.PullRequestMergedOutdated(event.payload.number, event.payload.by)
+        : e.PullRequestMerged(event.payload.number, event.payload.by);
     case "PullRequestClosed":
       return e.PullRequestClosed(event.payload.number);
     case "PullRequestReopened":

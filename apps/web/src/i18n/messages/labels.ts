@@ -81,6 +81,7 @@ const ja = {
     deliverableReview: (n: number) => `成果物チェック待ち${n > 1 ? `（${n}回目）` : ""}`,
     prAwaitingMerge: (n: number) => `PR のマージ待ち${n > 1 ? `（${n}回目）` : ""}`,
     prClosed: "PR が閉じられた（判断待ち）",
+    prMergedOutdated: "古い提出がマージされた（判断待ち）",
     stepApproval: (step: string, n: number) => `${step}の承認待ち${n > 1 ? `（${n}回目）` : ""}`,
   },
   action: { decide: "判断する", review: "チェックする" },
@@ -133,6 +134,8 @@ const ja = {
       `sacty のブランチにプッシュ（${branch}・${commit}）`,
     PullRequestMerged: (number: number, by?: string) =>
       `PR #${number} がマージされた${by ? `（${by}）` : ""}→ 成果物チェックを承認`,
+    PullRequestMergedOutdated: (number: number, by?: string) =>
+      `PR #${number} が最新の提出より前の内容でマージされた${by ? `（${by}）` : ""}→ 人間の判断待ち`,
     PullRequestClosed: (number: number) =>
       `PR #${number} がマージされずに閉じられた → 人間の判断待ち`,
     PullRequestReopened: (number: number) => `PR #${number} が開き直された → マージ待ち`,
@@ -223,6 +226,7 @@ const en: LabelMessages = {
     deliverableReview: (n) => `Awaiting deliverable review${n > 1 ? ` (submission ${n})` : ""}`,
     prAwaitingMerge: (n) => `Awaiting PR merge${n > 1 ? ` (submission ${n})` : ""}`,
     prClosed: "PR closed (needs you)",
+    prMergedOutdated: "An older submission was merged (needs you)",
     stepApproval: (step, n) => `${step} awaiting approval${n > 1 ? ` (submission ${n})` : ""}`,
   },
   action: { decide: "Decide", review: "Review" },
@@ -272,6 +276,8 @@ const en: LabelMessages = {
     BranchPushed: (branch, commit) => `Pushed to sacty branch (${branch} · ${commit})`,
     PullRequestMerged: (number, by) =>
       `PR #${number} merged${by ? ` (${by})` : ""} → deliverable review approved`,
+    PullRequestMergedOutdated: (number, by) =>
+      `PR #${number} was merged with content older than the latest submission${by ? ` (${by})` : ""} → needs you`,
     PullRequestClosed: (number) => `PR #${number} closed without merging → needs you`,
     PullRequestReopened: (number) => `PR #${number} reopened → awaiting merge`,
     GuardianMissed:

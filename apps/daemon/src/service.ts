@@ -223,7 +223,30 @@ export class TaskService {
         continue;
       }
       const current = latest.pullRequestState ?? "open";
-      if (status.state === current) continue;
+      if (
+        status.state === current ||
+        (status.state === "merged" && current === "merged_outdated")
+      ) {
+        continue;
+      }
+      // 承認にするのは、最新の提出（記録したコミット）がマージされたときだけ
+      if (status.state === "merged" && status.headSha !== pr.commit) {
+        this.append(latest, [
+          {
+            actor: "sacty",
+            event: {
+              type: "PullRequestMerged",
+              payload: {
+                number: pr.number,
+                ...(status.mergedBy ? { by: status.mergedBy } : {}),
+                ...(status.headSha ? { commit: status.headSha } : {}),
+                outdated: true,
+              },
+            },
+          },
+        ]);
+        continue;
+      }
       if (status.state === "merged") {
         // マージは人間の承認なので、承認者は人間として記録する
         this.append(latest, [
@@ -231,7 +254,12 @@ export class TaskService {
             actor: "person",
             event: {
               type: "PullRequestMerged",
-              payload: { number: pr.number, ...(status.mergedBy ? { by: status.mergedBy } : {}) },
+              payload: {
+                number: pr.number,
+                ...(status.mergedBy ? { by: status.mergedBy } : {}),
+                commit: pr.commit,
+                outdated: false,
+              },
             },
           },
           {
@@ -1206,6 +1234,17 @@ export class TaskService {
       let pr: { url: string; number: number } | undefined;
       if (repo.pullRequest) {
         const token = await this.githubToken(task, usedSecrets);
+        // 前の PR がすでにマージされていれば、作り直した内容は新しい PR で出す
+        // （マージ済みの PR を更新しても、マージされていない内容が完了扱いになってしまうため）
+        let number = task.pullRequest?.number;
+        if (number && task.pullRequest?.repo === repo.pullRequest.repo) {
+          const previous = await this.deps.pulls.status({
+            repo: repo.pullRequest.repo,
+            token,
+            number,
+          });
+          if (previous.state === "merged") number = undefined;
+        }
         pr = await this.deps.pulls.upsert({
           repo: repo.pullRequest.repo,
           token,
@@ -1213,7 +1252,7 @@ export class TaskService {
           baseBranch: task.repository.baseBranch,
           title: task.title,
           body: buildPullRequestBody(task),
-          number: task.pullRequest?.number,
+          number,
         });
       }
       const submitted = this.append(task, [

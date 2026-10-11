@@ -329,6 +329,7 @@ describe("PR で判断する成果物チェック（PBI-14a）", () => {
   it("PR の状態に合わせて、状態を表示する", () => {
     expect(statusText(atPrGate("open"))).toBe("PR のマージ待ち");
     expect(statusText(atPrGate("closed"))).toBe("PR が閉じられた（判断待ち）");
+    expect(statusText(atPrGate("merged_outdated"))).toBe("古い提出がマージされた（判断待ち）");
     // PR を作っていなければ、これまでどおり画面で承認する
     expect(statusText(atPrGate(undefined))).toBe("成果物チェック待ち");
     expect(statusTextIn(atPrGate("open"), labels.en)).toBe("Awaiting PR merge");

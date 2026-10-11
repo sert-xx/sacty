@@ -17,6 +17,8 @@ const ja = {
       "GitHub で PR をレビューしてください。PR をマージすると承認になり、タスクが完了します。",
     prClosedHelp:
       "PR がマージされずに閉じられました。GitHub で開き直すか、不要なら中止してください。",
+    prMergedOutdatedHelp:
+      "PR は、最新の提出より前の内容でマージされました。最新の提出はまだマージされていません。差し戻すと、作り直した内容を新しい PR で出します。不要なら中止してください。",
   },
   ticket: "チケット",
   ticketEmpty: "チケットに内容はありません。",
@@ -55,6 +57,8 @@ const en: TaskMessages = {
     reviewHelp: "Check the deliverable, then approve it or request changes.",
     prHelp: "Review the PR on GitHub. Merging it approves the deliverable and completes the task.",
     prClosedHelp: "The PR was closed without merging. Reopen it on GitHub, or cancel the task.",
+    prMergedOutdatedHelp:
+      "The PR was merged with content older than the latest submission, so the latest submission is not merged. Request changes to open the reworked content as a new PR, or cancel the task.",
   },
   ticket: "Ticket",
   ticketEmpty: "The ticket has no content.",

@@ -126,9 +126,11 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
                   ? m.gate.tooManyHelp
                   : task.gate?.step === "pr" && task.pullRequestState === "closed"
                     ? m.gate.prClosedHelp
-                    : task.gate?.step === "pr" && task.pullRequestState === "open"
-                      ? m.gate.prHelp
-                      : m.gate.reviewHelp}
+                    : task.gate?.step === "pr" && task.pullRequestState === "merged_outdated"
+                      ? m.gate.prMergedOutdatedHelp
+                      : task.gate?.step === "pr" && task.pullRequestState === "open"
+                        ? m.gate.prHelp
+                        : m.gate.reviewHelp}
             </p>
           </div>
           <Link

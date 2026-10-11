@@ -32,7 +32,7 @@ export function GateForm({
   maxChanges: number;
   pendingComments: string[];
   /** PR を作ったタスクの成果物チェック。PR のマージで承認するので、承認のボタンは出さない（PBI-14a）。 */
-  pullRequest?: { number: number; url?: string; closed: boolean };
+  pullRequest?: { number: number; url?: string; closed: boolean; mergedOutdated: boolean };
 }) {
   const [state, formAction, pending] = useActionState(gateAction, initial);
   const m = useMessages();
@@ -59,6 +59,7 @@ export function GateForm({
             </a>
           )}
           {pullRequest.closed && <p className="text-warn">{t.prClosed}</p>}
+          {pullRequest.mergedOutdated && <p className="text-warn">{t.prMergedOutdated}</p>}
           <p className="text-muted-foreground">{t.prRequestNote}</p>
         </div>
       )}

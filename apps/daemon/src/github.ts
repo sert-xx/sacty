@@ -19,11 +19,15 @@ export interface PullRequests {
   status(input: { repo: string; token: string; number: number }): Promise<PullRequestStatus>;
 }
 
-/** PR の状態。merged はマージ済み、closed はマージせずに閉じられた。 */
-export type PullRequestStatus =
+/**
+ * PR の状態。merged はマージ済み、closed はマージせずに閉じられた。headSha は PR の先頭のコミット
+ * （マージ済みなら、マージされた内容。最新の提出がマージされたかを確かめるのに使う）。
+ */
+export type PullRequestStatus = { headSha?: string } & (
   | { state: "open" }
   | { state: "closed" }
-  | { state: "merged"; mergedBy?: string };
+  | { state: "merged"; mergedBy?: string }
+);
 
 const API = "https://api.github.com";
 
@@ -50,11 +54,13 @@ export class GitHubPullRequests implements PullRequests {
     });
     const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
     if (!res.ok) throw apiError("getPr", res.status, json);
+    const sha = (json.head as { sha?: unknown } | null)?.sha;
+    const head = typeof sha === "string" ? { headSha: sha } : {};
     if (json.merged === true) {
       const by = (json.merged_by as { login?: unknown } | null)?.login;
-      return { state: "merged", ...(typeof by === "string" ? { mergedBy: by } : {}) };
+      return { state: "merged", ...head, ...(typeof by === "string" ? { mergedBy: by } : {}) };
     }
-    return { state: json.state === "closed" ? "closed" : "open" };
+    return { state: json.state === "closed" ? "closed" : "open", ...head };
   }
 
   async upsert(input: Parameters<PullRequests["upsert"]>[0]) {

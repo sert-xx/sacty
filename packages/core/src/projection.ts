@@ -150,7 +150,7 @@ export type Task = {
   /** sacty が作ったPR（またはブランチ）。 */
   pullRequest?: PayloadOf<"PullRequestPublished">;
   /** 成果物チェックの間に見守っている PR の状態（PBI-14a）。PR を作っていなければ無い。 */
-  pullRequestState?: "open" | "closed" | "merged";
+  pullRequestState?: "open" | "closed" | "merged" | "merged_outdated";
   /** ゴールガーディアンの見逃し（最終レビューで合格にした成果物を、人間が差し戻した）。 */
   misses: (PayloadOf<"GuardianMissed"> & { at: string })[];
   /** やり直しの実装に渡す、直前の検証で通らなかった内容。 */
@@ -556,7 +556,9 @@ export function applyEvent(
       }
       task.pullRequestState =
         event.type === "PullRequestMerged"
-          ? "merged"
+          ? event.payload.outdated
+            ? "merged_outdated"
+            : "merged"
           : event.type === "PullRequestClosed"
             ? "closed"
             : "open";

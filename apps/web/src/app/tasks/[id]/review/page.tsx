@@ -220,6 +220,7 @@ async function Review({ params }: { params: Promise<{ id: string }> }) {
                     number: task.pullRequest.number,
                     url: task.pullRequest.url,
                     closed: task.pullRequestState === "closed",
+                    mergedOutdated: task.pullRequestState === "merged_outdated",
                   }
                 : undefined
             }

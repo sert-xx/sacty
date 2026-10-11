@@ -53,6 +53,8 @@ const ja = {
     prClosed:
       "PR はマージされずに閉じられました。GitHub で開き直すと、またマージを待ちます。不要なら、タスク詳細から中止してください。",
     prRequestNote: "差し戻す場合は、ここで指摘を入力してください。",
+    prMergedOutdated:
+      "PR は、最新の提出より前の内容でマージされました。差し戻すと、作り直した内容を新しい PR で出します。不要なら、タスク詳細から中止してください。",
   },
 };
 
@@ -112,6 +114,8 @@ const en: ReviewMessages = {
     prClosed:
       "The PR was closed without merging. Reopen it on GitHub to wait for a merge again, or cancel the task from its details.",
     prRequestNote: "To request changes, enter your comments here.",
+    prMergedOutdated:
+      "The PR was merged with content older than the latest submission. Request changes to open the reworked content as a new PR, or cancel the task from its details.",
     note: (max) =>
       `Comments accumulate on the task and are all passed to the agent on every resubmission. Requesting changes on the same step more than ${max} time${max === 1 ? "" : "s"} escalates the task.`,
   },

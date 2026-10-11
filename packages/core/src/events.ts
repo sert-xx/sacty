@@ -376,6 +376,13 @@ const PullRequestMerged = z.object({
     number: z.number().int().positive(),
     /** マージした GitHub のアカウント。 */
     by: z.string().optional(),
+    /** マージされた内容（PR の先頭のコミット）。 */
+    commit: z.string().optional(),
+    /**
+     * 最新の提出より前の内容でマージされた（差し戻しの間にマージされたなど）。このときは承認にせず、
+     * 人間の判断を待つ（差し戻すと、作り直した内容は新しい PR で出す）。
+     */
+    outdated: z.boolean().default(false),
   }),
 });
 const PullRequestClosed = z.object({
