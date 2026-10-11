@@ -142,6 +142,23 @@ function codeLines(task: Task): string[] {
   ];
 }
 
+/**
+ * ゴールガーディアンの作業領域にあるコードについて伝える（PBI-16）。base は起点のコミットのコード、
+ * implemented は実装後のコード。どちらも読み取り専用。
+ */
+function guardianCodeLines(task: Task, code: "base" | "implemented"): string[] {
+  if (!task.repository) return [];
+  const what =
+    code === "base"
+      ? `対象リポジトリ（${task.repository.url}）の起点のコミット（${task.repository.baseCommit.slice(0, 7)}）のコード`
+      : `対象リポジトリ（${task.repository.url}）の、実装後のコード（起点のコミット ${task.repository.baseCommit.slice(0, 7)} に実装の変更を加えたもの）`;
+  return [
+    "",
+    `作業領域（カレントディレクトリ）に、${what}があります。判断に必要なら、実際のコードを読んで確かめてください。`,
+    "コードは読むだけです（作業領域は読み取り専用で、変更はできません）。",
+  ];
+}
+
 export function buildPrompt(task: Task, step: StepKey): string {
   const ticket = [`# ${task.title}`, "", task.body || "（内容なし）"].join("\n");
   const hasRemarks = task.remarks.some((r) => r.step === step && !r.voided);
@@ -396,6 +413,7 @@ export function buildGuardianPrompt(task: Task, proposal: TaskProposal): string 
   return [
     "あなたはゴールガーディアンです。人間が承認した成果物（ゴール）を守る立場で、",
     "工程エージェントからの変更の申し出を判定してください。",
+    ...guardianCodeLines(task, "base"),
     "",
     "- 承認：変更しなければゴールを達成できないことが、根拠となる事実で裏付けられている。",
     "  かつ、変更後の全文がゴールの意図を損なわない",
@@ -456,6 +474,7 @@ export function buildFinalReviewPrompt(task: Task, diff: string): string {
   const tests = task.lastTests;
   return [
     "あなたはゴールガーディアンです。人間が承認した成果物（ゴール）を守る立場で、実装を最終レビューしてください。",
+    ...guardianCodeLines(task, "implemented"),
     "",
     "- テスト観点ごとに、対応するテストがその観点を本当に検証しているか（入力を与え、期待結果を確かめているか）を判定する",
     "- テストが通っていても、観点を検証していない（形だけ・期待結果を確かめていない・対応が違う）なら不合格にする",
@@ -623,6 +642,7 @@ export function buildReworkPrompt(task: Task, remarks: string[], targets: StepKe
   return [
     "あなたはゴールガーディアンです。人間が承認した成果物（ゴール）を守る立場で、",
     "成果物（PR）に人間が付けた指摘を、どの工程からやり直せば解消できるかを判断してください。",
+    ...guardianCodeLines(task, "implemented"),
     "",
     "- implement（実装）：承認済みの要求要件・設計のままで、実装を直せば解消できる",
     "- design（設計）：承認済みの設計（テスト観点を含む）が足りない・誤っているので、設計から直す必要がある",

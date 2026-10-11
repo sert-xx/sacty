@@ -1,11 +1,13 @@
 import { execFileSync } from "node:child_process";
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -72,6 +74,23 @@ describe("対象リポジトリの作業領域（git）", () => {
         "0".repeat(40),
       ),
     ).rejects.toThrow(/起点のコミット/);
+  });
+
+  it("実装後のコードを、.git を除き、シンボリックリンクはたどらずに写す（PBI-16）", async () => {
+    const origin = makeOrigin();
+    const workspace = new GitRepositoryWorkspace();
+    const clone = join(dir, "task", "repo");
+    await workspace.prepare(clone, join(dir, "_git", "task.git"), origin, "main");
+    writeFileSync(join(clone, "new.ts"), "new\n");
+    const secret = join(dir, "host-secret.txt");
+    writeFileSync(secret, "HOST-ONLY");
+    symlinkSync(secret, join(clone, "link.txt"));
+    const out = join(dir, "copy");
+    await workspace.copyWorkingTree(clone, out);
+    expect(readdirSync(out).sort()).toEqual(["link.txt", "new.ts", "pay.ts"]);
+    // リンクはリンクのまま（ホストのファイルの中身は写さない）
+    expect(lstatSync(join(out, "link.txt")).isSymbolicLink()).toBe(true);
+    await expect(workspace.copyWorkingTree(join(dir, "missing"), join(dir, "x"))).rejects.toThrow();
   });
 
   it("起点のコミットのファイルだけを、.git や作業領域の変更を含めずに書き出す（PBI-15）", async () => {
