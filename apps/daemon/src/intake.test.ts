@@ -101,7 +101,7 @@ function setup(github = true, gh = new FakeGh()) {
   service.saveProject(undefined, {
     name: "決済",
     githubAccount: "me",
-    sources: [{ scope: "repo", target: "acme/payments", label: "sacty" }],
+    targets: [{ scope: "repo", target: "acme/payments" }],
   });
   const search = new FakeSearch([
     {
@@ -158,7 +158,7 @@ describe("GitHub Issue の定期的な取り込み（PBI-5a）", () => {
     service.saveProject(undefined, {
       name: "削除されたリポジトリ",
       githubAccount: "me",
-      sources: [{ scope: "repo", target: "acme/deleted", label: "sacty" }],
+      targets: [{ scope: "repo", target: "acme/deleted" }],
     });
     search.failQuery = 'is:issue is:open repo:acme/deleted label:"sacty"';
     await intake.tick(true);
@@ -179,18 +179,18 @@ describe("GitHub Issue の定期的な取り込み（PBI-5a）", () => {
     const { activity, service, search, intake } = setup(true, gh);
     service.saveProject(undefined, {
       name: "副業",
-      sources: [{ scope: "repo", target: "side/app", label: "sacty" }],
+      targets: [{ scope: "repo", target: "side/app" }],
       githubAccount: "side-job",
     });
     service.saveProject(undefined, {
       name: "ログアウト済み",
-      sources: [{ scope: "repo", target: "old/app", label: "sacty" }],
+      targets: [{ scope: "repo", target: "old/app" }],
       githubAccount: "logged-out",
     });
     // アカウントを選んでいないプロジェクトは、アクティブなアカウントで検索せず、理由を示す
     service.saveProject(undefined, {
       name: "インポートしたもの",
-      sources: [{ scope: "repo", target: "imported/app", label: "sacty" }],
+      targets: [{ scope: "repo", target: "imported/app" }],
     });
     await intake.tick(true);
     // 既定（アカウント未設定）はアクティブなアカウント、副業は選んだアカウントのトークン
@@ -219,11 +219,11 @@ describe("GitHub Issue の定期的な取り込み（PBI-5a）", () => {
     service.saveProject(undefined, {
       name: "認証",
       githubAccount: "me",
-      sources: [{ scope: "repo", target: "acme/auth", label: "sacty" }],
+      targets: [{ scope: "repo", target: "acme/auth" }],
     });
     service.saveProject(undefined, {
       name: "副業",
-      sources: [{ scope: "repo", target: "side/app", label: "sacty" }],
+      targets: [{ scope: "repo", target: "side/app" }],
       githubAccount: "side-job",
     });
     search.rateLimited = true;
@@ -238,7 +238,7 @@ describe("GitHub Issue の定期的な取り込み（PBI-5a）", () => {
     service.saveProject(undefined, {
       name: "認証",
       githubAccount: "me",
-      sources: [{ scope: "repo", target: "acme/auth", label: "sacty" }],
+      targets: [{ scope: "repo", target: "acme/auth" }],
     });
     search.cursor = "2026-10-10T00:00:00Z";
     search.rateLimited = true;

@@ -1,8 +1,8 @@
 "use client";
 
-import type { IssueSource, Project, RepositorySettings } from "@sacty/core";
+import { INTAKE_LABEL, type Project, type ProjectTarget } from "@sacty/core";
 import { XIcon } from "lucide-react";
-import { useActionState, useId, useState } from "react";
+import { startTransition, useActionState, useId, useState } from "react";
 import { type SaveProjectState, saveProjectAction } from "@/app/actions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -17,7 +17,7 @@ type Exclusion = { org: string; repos: { repo: string; projectName: string }[] }
 const SELECT =
   "h-9 rounded-md border border-input bg-card px-2 text-sm focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none";
 
-/** プロジェクトの設定：名前、GitHub Issue の取り込み元、実装の対象リポジトリの設定。 */
+/** プロジェクトの設定：名前、対象（Org・リポジトリ。PBI-25）、GitHub アカウント、コンテキストリポジトリ。 */
 export function ProjectEditor({
   project,
   exclusions = [],
@@ -42,14 +42,12 @@ export function ProjectEditor({
   // 設定画面（project あり）では、アカウントを選ぶまで保存させない
   const needsAccount = Boolean(project) && !githubAccount;
   const [name, setName] = useState(project?.name ?? "");
-  const [sources, setSources] = useState<IssueSource[]>(project?.sources ?? []);
-  const [repos, setRepos] = useState<RepositorySettings[]>(project?.repositories ?? []);
+  const [targets, setTargets] = useState<ProjectTarget[]>(project?.targets ?? []);
   const [contextRepo, setContextRepo] = useState(project?.context?.repo ?? "");
   const [contextRef, setContextRef] = useState(project?.context?.ref ?? "");
   const definition = JSON.stringify({
     name,
-    sources,
-    repositories: repos,
+    targets,
     // コンテキストリポジトリは、空なら渡さない
     ...(contextRepo.trim()
       ? {
@@ -62,13 +60,20 @@ export function ProjectEditor({
     ...(githubAccount ? { githubAccount } : {}),
   });
 
-  const updateSource = (i: number, patch: Partial<IssueSource>) =>
-    setSources((list) => list.map((s, j) => (j === i ? ({ ...s, ...patch } as IssueSource) : s)));
-  const updateRepo = (i: number, patch: Partial<RepositorySettings>) =>
-    setRepos((list) => list.map((r, j) => (j === i ? { ...r, ...patch } : r)));
+  const updateTarget = (i: number, patch: Partial<ProjectTarget>) =>
+    setTargets((list) => list.map((t, j) => (j === i ? ({ ...t, ...patch } as ProjectTarget) : t)));
 
   return (
-    <form action={formAction} className="flex flex-col gap-6">
+    <form
+      // action に渡すと、送信の後に React がフォームをリセットし、プルダウン（GitHub アカウントや対象の単位）の
+      // 表示だけが最初の選択肢に戻ってしまう（状態は変わらないので書き直されない）。送信は自分で呼び出す
+      onSubmit={(e) => {
+        e.preventDefault();
+        const data = new FormData(e.currentTarget);
+        startTransition(() => formAction(data));
+      }}
+      className="flex flex-col gap-6"
+    >
       <input type="hidden" name="id" value={project?.id ?? ""} />
       <input type="hidden" name="definition" value={definition} />
 
@@ -86,20 +91,21 @@ export function ProjectEditor({
       {project && (
         <>
           <section
-            aria-labelledby="sources"
+            aria-labelledby="targets"
             className="flex flex-col gap-3 rounded-xl border border-border bg-card p-5"
           >
-            <h2 id="sources" className="text-[15px] font-semibold">
-              {t.sourcesTitle}{" "}
-              <span className="text-[13px] font-normal text-muted-foreground">{t.sourcesNote}</span>
+            <h2 id="targets" className="text-[15px] font-semibold">
+              {t.targetsTitle}{" "}
+              <span className="text-[13px] font-normal text-muted-foreground">{t.targetsNote}</span>
             </h2>
-            <p className="text-sm leading-6 text-muted-foreground">{t.sourcesHelp}</p>
-            {sources.length === 0 && <p className="text-sm text-muted-foreground">{t.noSources}</p>}
+            <p className="text-sm leading-6 text-muted-foreground">{t.targetsHelp(INTAKE_LABEL)}</p>
+            <p className="text-sm leading-6 text-warn">{t.prNotice}</p>
+            {targets.length === 0 && <p className="text-sm text-muted-foreground">{t.noTargets}</p>}
             <ul className="flex flex-col gap-2.5">
-              {sources.map((source, i) => {
+              {targets.map((target, i) => {
                 const excluded =
-                  source.scope === "org"
-                    ? exclusions.find((e) => e.org.toLowerCase() === source.target.toLowerCase())
+                  target.scope === "org"
+                    ? exclusions.find((e) => e.org.toLowerCase() === target.target.toLowerCase())
                     : undefined;
                 return (
                   <li
@@ -112,9 +118,9 @@ export function ProjectEditor({
                         {t.scope}
                         <select
                           className={SELECT}
-                          value={source.scope}
+                          value={target.scope}
                           onChange={(e) =>
-                            updateSource(i, { scope: e.target.value as IssueSource["scope"] })
+                            updateTarget(i, { scope: e.target.value as ProjectTarget["scope"] })
                           }
                         >
                           <option value="org">{scopeLabel.org}</option>
@@ -122,36 +128,24 @@ export function ProjectEditor({
                         </select>
                       </label>
                       <label
-                        htmlFor={`${uid}-src-${i}-target`}
+                        htmlFor={`${uid}-target-${i}-target`}
                         className="flex min-w-48 flex-1 flex-col gap-1 text-xs text-muted-foreground"
                       >
-                        {source.scope === "org" ? scopeLabel.org : t.repoTarget}
+                        {target.scope === "org" ? scopeLabel.org : t.repoTarget}
                         <Input
-                          id={`${uid}-src-${i}-target`}
-                          value={source.target}
-                          placeholder={source.scope === "org" ? "acme" : "acme/payments"}
-                          onChange={(e) => updateSource(i, { target: e.target.value })}
-                        />
-                      </label>
-                      <label
-                        htmlFor={`${uid}-src-${i}-label`}
-                        className="flex w-40 flex-col gap-1 text-xs text-muted-foreground"
-                      >
-                        {t.label}
-                        <Input
-                          id={`${uid}-src-${i}-label`}
-                          value={source.label}
-                          placeholder="sacty"
-                          onChange={(e) => updateSource(i, { label: e.target.value })}
+                          id={`${uid}-target-${i}-target`}
+                          value={target.target}
+                          placeholder={target.scope === "org" ? "acme" : "acme/payments"}
+                          onChange={(e) => updateTarget(i, { target: e.target.value })}
                         />
                       </label>
                       <Button
                         type="button"
                         variant="ghost"
                         size="icon-lg"
-                        aria-label={t.removeSource(source.target)}
+                        aria-label={t.removeTarget(target.target)}
                         title={t.remove}
-                        onClick={() => setSources((list) => list.filter((_, j) => j !== i))}
+                        onClick={() => setTargets((list) => list.filter((_, j) => j !== i))}
                       >
                         <XIcon aria-hidden="true" />
                       </Button>
@@ -177,11 +171,9 @@ export function ProjectEditor({
               type="button"
               variant="outline"
               className="w-fit"
-              onClick={() =>
-                setSources((list) => [...list, { scope: "repo", target: "", label: "sacty" }])
-              }
+              onClick={() => setTargets((list) => [...list, { scope: "repo", target: "" }])}
             >
-              {t.addSource}
+              {t.addTarget}
             </Button>
           </section>
 
@@ -264,96 +256,6 @@ export function ProjectEditor({
               </label>
             </div>
             <p className="text-xs leading-5 text-muted-foreground">{t.contextHelp}</p>
-          </section>
-
-          <section
-            aria-labelledby="repositories"
-            className="flex flex-col gap-3 rounded-xl border border-border bg-card p-5"
-          >
-            <h2 id="repositories" className="text-[15px] font-semibold">
-              {t.reposTitle}{" "}
-              <span className="text-[13px] font-normal text-muted-foreground">{t.reposNote}</span>
-            </h2>
-            {repos.length === 0 && <p className="text-sm text-muted-foreground">{t.noRepos}</p>}
-            <p className="text-xs leading-5 text-muted-foreground">{t.pullRequestHelp}</p>
-            <ul className="flex flex-col gap-2.5">
-              {repos.map((repo, i) => (
-                <li
-                  // biome-ignore lint/suspicious/noArrayIndexKey: 行は位置で編集する
-                  key={i}
-                  className="flex flex-wrap items-end gap-2 rounded-lg border border-border p-3"
-                >
-                  <label
-                    htmlFor={`${uid}-repo-${i}-repo`}
-                    className="flex min-w-48 flex-1 flex-col gap-1 text-xs text-muted-foreground"
-                  >
-                    {t.repoTarget}
-                    <Input
-                      id={`${uid}-repo-${i}-repo`}
-                      value={repo.repo}
-                      placeholder="acme/payments"
-                      onChange={(e) => updateRepo(i, { repo: e.target.value })}
-                    />
-                  </label>
-                  <label
-                    htmlFor={`${uid}-repo-${i}-branch`}
-                    className="flex w-36 flex-col gap-1 text-xs text-muted-foreground"
-                  >
-                    {t.baseBranch}
-                    <Input
-                      id={`${uid}-repo-${i}-branch`}
-                      value={repo.baseBranch}
-                      onChange={(e) => updateRepo(i, { baseBranch: e.target.value })}
-                    />
-                  </label>
-                  <label
-                    htmlFor={`${uid}-repo-${i}-test`}
-                    className="flex min-w-48 flex-1 flex-col gap-1 text-xs text-muted-foreground"
-                  >
-                    {t.testCommand}
-                    <Input
-                      id={`${uid}-repo-${i}-test`}
-                      value={repo.testCommand}
-                      placeholder="npm ci && npm test"
-                      onChange={(e) => updateRepo(i, { testCommand: e.target.value })}
-                      className="font-mono"
-                    />
-                  </label>
-                  <label className="flex h-9 items-center gap-2 text-sm">
-                    <input
-                      type="checkbox"
-                      checked={repo.pullRequest}
-                      onChange={(e) => updateRepo(i, { pullRequest: e.target.checked })}
-                      className="size-4 accent-primary"
-                    />
-                    {t.pullRequest}
-                  </label>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon-lg"
-                    aria-label={t.removeRepo(repo.repo)}
-                    title={t.remove}
-                    onClick={() => setRepos((list) => list.filter((_, j) => j !== i))}
-                  >
-                    <XIcon aria-hidden="true" />
-                  </Button>
-                </li>
-              ))}
-            </ul>
-            <Button
-              type="button"
-              variant="outline"
-              className="w-fit"
-              onClick={() =>
-                setRepos((list) => [
-                  ...list,
-                  { repo: "", baseBranch: "main", testCommand: "", pullRequest: true },
-                ])
-              }
-            >
-              {t.addRepo}
-            </Button>
           </section>
         </>
       )}

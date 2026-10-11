@@ -179,6 +179,8 @@ export type Task = {
   reviewComments: ReviewComment[];
   /** レビューの結果を投稿した、PR のレビューの URL（PBI-19）。 */
   reviewPost?: { url: string };
+  /** オーケストレーターが決めた、テストのコマンド（PBI-25）。 */
+  testCommand?: string;
   /** オーケストレーターが工程を選んだ理由（PBI-17。固定の工程だった作業履歴には無い）。 */
   stepsChoice?: { plan?: StepPlan; reason: DaemonText; fallback: boolean };
   /** 取り込んだ PR へのフィードバック（種類と ID。二重に取り込まないため。PBI-14b）。 */
@@ -301,6 +303,7 @@ export function applyEvent(
         usedUsd: addUsd(task.budget.usedUsd, event.payload.costUsd),
         estimated: task.budget.estimated || event.payload.estimated,
       };
+      if (event.payload.testCommand) task.testCommand = event.payload.testCommand;
       if (event.payload.reason !== undefined) {
         task.stepsChoice = {
           ...(event.payload.plan ? { plan: event.payload.plan } : {}),

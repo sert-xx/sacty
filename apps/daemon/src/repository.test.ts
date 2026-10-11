@@ -76,6 +76,34 @@ describe("対象リポジトリの作業領域（git）", () => {
     ).rejects.toThrow(/起点のコミット/);
   });
 
+  it("ブランチを指定しなければ、リポジトリの既定のブランチを clone し、そのブランチ名を返す（PBI-25）", async () => {
+    const origin = makeOrigin();
+    // 既定のブランチが main でないリポジトリ
+    git(origin, "branch", "-m", "main", "trunk");
+    const workspace = new GitRepositoryWorkspace();
+    const prepared = await workspace.prepare(
+      join(dir, "a"),
+      join(dir, "_git", "a.git"),
+      origin,
+      undefined,
+    );
+    expect(prepared.baseBranch).toBe("trunk");
+    expect(prepared.baseCommit).toBe(git(origin, "rev-parse", "trunk"));
+    // 指定したブランチは、そのまま返す
+    git(origin, "branch", "develop");
+    const develop = await workspace.prepare(
+      join(dir, "b"),
+      join(dir, "_git", "b.git"),
+      origin,
+      "develop",
+    );
+    expect(develop.baseBranch).toBe("develop");
+    // オプションに見えるブランチ名は受け付けない
+    await expect(
+      workspace.prepare(join(dir, "c"), join(dir, "_git", "c.git"), origin, "--upload-pack=x"),
+    ).rejects.toThrow();
+  });
+
   it("PR のコミットを取得し、分岐点からの PR の差分と、PR の先頭のコードを出す（PBI-19）", async () => {
     const origin = makeOrigin();
     // GitHub と同じく、PR の先頭はブランチではなく refs/pull/N/head にだけある

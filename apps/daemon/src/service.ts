@@ -20,6 +20,7 @@ import {
   EventInput,
   excludedRepositories,
   GATED_STEPS,
+  INTAKE_LABEL,
   isCompleted,
   MAX_CHANGE_REQUESTS,
   MAX_VERIFY_ATTEMPTS,
@@ -32,11 +33,11 @@ import {
   project,
   projectConflicts,
   proposalAccepted,
+  RepoName,
   RequestChangesInput,
   ResumeTaskInput,
   renderMessage,
-  repositorySettings,
-  responsibleSource,
+  responsibleProject,
   reworkTargets,
   STEP_PLANS,
   type StepKey,
@@ -66,7 +67,13 @@ import {
   gitAuthSecrets,
   isGitHubHttps,
 } from "./gh.js";
-import type { FoundIssue, PullRequestFeedback, PullRequestStatus, PullRequests } from "./github.js";
+import {
+  type FoundIssue,
+  githubStatus,
+  type PullRequestFeedback,
+  type PullRequestStatus,
+  type PullRequests,
+} from "./github.js";
 import type { ProjectStore } from "./projects.js";
 import {
   allowedPlans,
@@ -134,7 +141,7 @@ export type ServiceDeps = {
   /** 現在の時刻（テストで差し替える）。 */
   now?: () => number;
   /** オーケストレーターの代わりに工程を選ぶ（テストで差し替える。PBI-17）。 */
-  planner?: (task: Task) => Promise<Extract<EventInput, { type: "StepsChosen" }>["payload"]>;
+  planner?: (task: Task) => Promise<ChosenSteps>;
   /** プロジェクトの設定。 */
   projects: ProjectStore;
   /** コンテキストリポジトリの取得（PBI-6）。 */
@@ -552,7 +559,7 @@ export class TaskService {
         existing ??
         (await post(false).catch((error: unknown) => {
           // 行へのコメントを受け付けられなかった（行が差分に無いなど）なら、本文に入れて投稿し直す
-          if (task.reviewComments.length > 0 && githubStatusOf(error) === 422) return post(true);
+          if (task.reviewComments.length > 0 && githubStatus(error) === 422) return post(true);
           throw error;
         }));
       event = { type: "PullRequestReviewPosted", payload: { url } };
@@ -572,10 +579,7 @@ export class TaskService {
    * 読ませ、候補（STEP_PLANS）から選ばせる。人間の承認は無い。判断できない・実行に失敗したときは、
    * 標準の工程にして、そのことを記録する。テストでは deps.planner に差し替える。
    */
-  private async chooseSteps(
-    task: Task,
-    config: SactyConfig,
-  ): Promise<Extract<EventInput, { type: "StepsChosen" }>["payload"]> {
+  private async chooseSteps(task: Task, config: SactyConfig): Promise<ChosenSteps> {
     if (this.deps.planner) return this.deps.planner(task);
     const agent = config.defaultAgent;
     const { outcome, costUsd, estimated } = await this.runGuardian(
@@ -594,6 +598,8 @@ export class TaskService {
         plan: chosen.plan,
         reason: chosen.reason,
         fallback: false,
+        ...(chosen.testCommand ? { testCommand: chosen.testCommand } : {}),
+        ...(chosen.baseBranch ? { baseBranch: chosen.baseBranch } : {}),
         ...cost,
       };
     }
@@ -664,13 +670,52 @@ export class TaskService {
     const all = this.deps.projects.all();
     return {
       project,
-      exclusions: project.sources
-        .filter((s) => s.scope === "org")
-        .map((s) => ({ org: s.target, repos: excludedRepositories(all, id, s.target) })),
+      exclusions: project.targets
+        .filter((t) => t.scope === "org")
+        .map((t) => ({ org: t.target, repos: excludedRepositories(all, id, t.target) })),
     };
   }
 
-  /** プロジェクトを作る、または変える。ほかのプロジェクトと取り込み元が重複していれば拒否する。 */
+  /**
+   * プロジェクトの対象から選べる、タスクの対象リポジトリ（PBI-25）。リポジトリの対象はそれ自身、Org の対象は
+   * プロジェクトの gh のアカウントで読んだその Org のリポジトリ（ほかのプロジェクトがリポジトリ単位で担当する
+   * ものを除く）。読めなかった Org は、理由を返す（読めたものは返す）。
+   */
+  async projectRepositories(
+    id: string,
+  ): Promise<
+    { repositories: string[]; errors: { owner: string; message: DaemonText }[] } | undefined
+  > {
+    const project = this.deps.projects.get(id);
+    if (!project) return undefined;
+    const all = this.deps.projects.all();
+    const repositories = new Map<string, string>();
+    const errors: { owner: string; message: DaemonText }[] = [];
+    const add = (repo: string) => {
+      if (responsibleProject(all, repo)?.project.id === id)
+        repositories.set(repo.toLowerCase(), repo);
+    };
+    for (const target of project.targets) {
+      if (target.scope === "repo") {
+        add(target.target);
+        continue;
+      }
+      const usedSecrets: string[] = [];
+      try {
+        const token = await this.githubToken({ projectId: id }, usedSecrets);
+        for (const repo of await this.deps.pulls.repositories({ owner: target.target, token }))
+          add(repo);
+      } catch (error) {
+        errors.push({ owner: target.target, message: redactText(errorText(error), usedSecrets) });
+      }
+    }
+    return {
+      repositories: [...repositories.values()].sort((a, b) => a.localeCompare(b)),
+      errors,
+    };
+  }
+
+  /** プロジェクトを作る、または変える。ほかのプロジェクトと対象が重複していれば拒否する。 */
   saveProject(id: string | undefined, raw: unknown): Project {
     const definition = ProjectDefinition.parse(raw);
     if (id && !this.deps.projects.get(id)) {
@@ -690,24 +735,24 @@ export class TaskService {
 
   /**
    * エクスポートしたプロジェクトの定義を、新しいプロジェクトとしてインポートする。
-   * 形式・版・知らない項目を検査し、ほかのプロジェクトと取り込み元が重複していれば拒否する。
+   * 形式・版・知らない項目を検査し、ほかのプロジェクトと対象が重複していれば拒否する。
    */
   importProject(raw: unknown): Project {
     const { project } = ProjectExport.parse(raw);
     return this.saveProject(undefined, project);
   }
 
-  /** 取り込みで検索する条件（取り込み元ごと）。 */
   /**
-   * 取り込み元ごとの検索の条件と、検索に使う gh のアカウント（プロジェクトの設定。PBI-13）。
+   * 対象ごとの取り込みの検索の条件と、検索に使う gh のアカウント（プロジェクトの設定。PBI-13）。
    * アカウントを選んでいないプロジェクトは、プロジェクトの名前を返す（取り込みで理由を示す）。
+   * ラベルは、sacty 全体の設定にするまで（PBI-26）、すべての対象で INTAKE_LABEL を使う（PBI-25）。
    */
   intakeSources(): { query: string; account?: string; project: string }[] {
     const sources = new Map<string, { query: string; account?: string; project: string }>();
     for (const project of this.deps.projects.all()) {
-      for (const source of project.sources) {
-        const where = source.scope === "org" ? `org:${source.target}` : `repo:${source.target}`;
-        const query = `is:issue is:open ${where} label:"${source.label.replace(/"/g, "")}"`;
+      for (const target of project.targets) {
+        const where = target.scope === "org" ? `org:${target.target}` : `repo:${target.target}`;
+        const query = `is:issue is:open ${where} label:"${INTAKE_LABEL}"`;
         const account = project.githubAccount;
         sources.set(`${account ?? ""}\n${query}`, {
           query,
@@ -733,7 +778,7 @@ export class TaskService {
 
   /**
    * 見つかった Issue をタスクにする。担当するプロジェクトは取り込むたびに判定し（範囲が狭い
-   * 指定が優先）、その取り込み元のラベルが付いた Issue だけを取り込む。同じ Issue は二重に取り込まない。
+   * 指定が優先）、取り込むラベルが付いた Issue だけを取り込む。同じ Issue は二重に取り込まない。
    */
   importIssues(found: readonly FoundIssue[]): Task[] {
     const projects = this.deps.projects.all();
@@ -748,10 +793,9 @@ export class TaskService {
     const created: Task[] = [];
     for (const issue of found) {
       if (known.has(key(issue.repo, issue.number))) continue;
-      const responsible = responsibleSource(projects, issue.repo);
+      const responsible = responsibleProject(projects, issue.repo);
       if (!responsible) continue;
-      const label = responsible.source.label.toLowerCase();
-      if (!issue.labels.some((l) => l.toLowerCase() === label)) continue;
+      if (!issue.labels.some((l) => l.toLowerCase() === INTAKE_LABEL)) continue;
       known.add(key(issue.repo, issue.number));
       created.push(
         this.append({ id: randomUUID(), projectId: responsible.project.id }, [
@@ -826,19 +870,23 @@ export class TaskService {
     if (!project) {
       throw new InvalidOperationError(message("project.notFound"));
     }
-    // 対象リポジトリは、プロジェクトのリポジトリの設定から選ぶ（PBI-21）。1つだけなら選ばなくてよい
-    const repo = input.repo
-      ? repositorySettings(project, input.repo)?.repo
-      : project.repositories.length === 1
-        ? project.repositories[0]?.repo
-        : undefined;
-    if (!repo) {
-      throw new InvalidOperationError(
-        project.repositories.length === 0
-          ? message("task.repositoryMissing", { project: project.name })
-          : message("task.repositoryUnknown", { project: project.name }),
-      );
+    // 対象リポジトリは、プロジェクトの対象（Org・リポジトリ）の中から選ぶ（PBI-25）。
+    // 対象がリポジトリ1つだけなら、選ばなくてよい
+    const [only, ...others] = project.targets;
+    const wanted =
+      input.repo ?? (only?.scope === "repo" && others.length === 0 ? only.target : undefined);
+    if (project.targets.length === 0) {
+      throw new InvalidOperationError(message("task.repositoryMissing", { project: project.name }));
     }
+    const responsible =
+      wanted && RepoName.safeParse(wanted).success
+        ? responsibleProject(this.deps.projects.all(), wanted)
+        : undefined;
+    if (!wanted || responsible?.project.id !== projectId) {
+      throw new InvalidOperationError(message("task.repositoryUnknown", { project: project.name }));
+    }
+    // リポジトリの対象なら、登録した名前にそろえる（大文字・小文字の違い）
+    const repo = responsible.target.scope === "repo" ? responsible.target.target : wanted.trim();
     const config = this.deps.config();
     const budgetCapUsd = config.ok ? config.config.budgetPerTaskUsd : DEFAULT_BUDGET_USD;
     const { title, body } = input;
@@ -962,31 +1010,22 @@ export class TaskService {
     config: SactyConfig,
   ): { ok: true; repo: TargetRepository } | { ok: false; message: DaemonText } {
     // Issue から取り込んだタスクはその Issue のリポジトリ、画面で作ったタスクは作るときに選んだリポジトリ（PBI-21）。
-    // 対象リポジトリを選ぶ前の版で作り、すでに clone したタスクは、記録した URL のリポジトリの設定で続ける
+    // 対象リポジトリを選ぶ前の版で作り、すでに clone したタスクは、記録した URL のリポジトリで続ける
     const repo =
       task.source?.kind === "github_issue"
         ? task.source.repo
         : (task.repo ?? (task.repository && githubRepoOf(task.repository.url)));
     if (!repo) return { ok: false, message: message("run.repositoryNotConfigured") };
-    const project = this.deps.projects.get(task.projectId);
-    const settings = repositorySettings(project, repo);
-    if (!settings) {
-      return {
-        ok: false,
-        message: message("run.repositorySettingsMissing", {
-          project: project?.name ?? task.projectId,
-          repo,
-        }),
-      };
-    }
+    // ベースブランチとテストのコマンドは、タスクの開始時にオーケストレーターが決める（PBI-25）。
+    // PR は常に作る（PR作成許可の設定は無い）
     return {
       ok: true,
       repo: {
         url: `https://github.com/${repo}.git`,
-        baseBranch: settings.baseBranch,
-        testCommand: settings.testCommand,
+        ...(task.repository ? { baseBranch: task.repository.baseBranch } : {}),
+        ...(task.testCommand ? { testCommand: task.testCommand } : {}),
         testImage: config.image,
-        ...(settings.pullRequest ? { pullRequest: { provider: "github" as const, repo } } : {}),
+        pullRequest: { provider: "github" as const, repo },
       },
     };
   }
@@ -995,28 +1034,39 @@ export class TaskService {
   private async prepareRepository(
     task: Task,
     config: SactyConfig,
-  ): Promise<{ ok: true; dir: string } | { ok: false; message: DaemonText }> {
+    /**
+     * オーケストレーターが、既定のブランチとは違うベースブランチを選んだとき（PBI-25）。そのブランチの
+     * 最新で用意し直し、その記録（RepositoryPrepared）は呼び出し側が工程の選択と一緒に書く。
+     */
+    rebase?: { branch: string },
+  ): Promise<
+    | { ok: true; dir: string; prepared?: { url: string; baseBranch: string; baseCommit: string } }
+    | { ok: false; message: DaemonText }
+  > {
     const dir = this.repoDir(task);
-    if (task.repository && existsSync(dir) && existsSync(this.trustedGitDir(task))) {
+    if (!rebase && task.repository && existsSync(dir) && existsSync(this.trustedGitDir(task))) {
       return { ok: true, dir };
     }
     const target = this.targetRepository(task, config);
     if (!target.ok && !task.repository) return target;
     const repo = target.ok ? target.repo : undefined;
-    // 一度用意したタスクは、設定が変わっても同じリポジトリ・ブランチで作業する
+    // 一度用意したタスクは、設定が変わっても同じリポジトリ・ブランチで作業する。
+    // 初めて用意するときは、ブランチを指定せずに既定のブランチを clone する
     const url = task.repository?.url ?? repo?.url ?? "";
-    const baseBranch = task.repository?.baseBranch ?? repo?.baseBranch ?? "main";
+    const branch = rebase?.branch ?? task.repository?.baseBranch;
     const usedSecrets: string[] = [];
     try {
-      const { baseCommit } = await this.deps.repos.prepare(
+      const prepared = await this.deps.repos.prepare(
         dir,
         this.trustedGitDir(task),
         url,
-        baseBranch,
+        branch,
         await this.gitAuth(task, url, usedSecrets),
         // 用意し直すとき（作業領域が消えた）は、記録済みの起点のコミットで用意する（PBI-15）
-        task.repository?.baseCommit,
+        rebase ? undefined : task.repository?.baseCommit,
       );
+      const { baseCommit, baseBranch } = prepared;
+      if (rebase) return { ok: true, dir, prepared: { url, baseBranch, baseCommit } };
       // 起点はタスクの開始時に一度だけ記録し、以後は変えない
       if (!task.repository) {
         this.append(task, [
@@ -1041,7 +1091,7 @@ export class TaskService {
    * アカウントを選んでいなければ、理由つきで止める（アクティブなアカウントは切り替わるので使わない）。
    * 取り出した値は、出力やエラー文から取り除く対象にする。
    */
-  private async githubToken(task: Task, usedSecrets: string[]): Promise<string> {
+  private async githubToken(task: Pick<Task, "projectId">, usedSecrets: string[]): Promise<string> {
     const project = this.deps.projects.get(task.projectId);
     if (!project?.githubAccount) {
       throw new MessageError(
@@ -1183,7 +1233,16 @@ export class TaskService {
         ]);
         return;
       }
-      const chosen = await this.chooseSteps(this.mustGet(taskId), config.config);
+      const { baseBranch, ...chosen } = await this.chooseSteps(this.mustGet(taskId), config.config);
+      // 既定のブランチと違うベースブランチを選んだなら、そのブランチの最新で用意し直す（PBI-25）。
+      // 用意できなければ、既定のブランチのまま進め、そのことを理由に添える
+      const prepared = this.mustGet(taskId).repository;
+      const rebased =
+        baseBranch && prepared && baseBranch !== prepared.baseBranch
+          ? await this.prepareRepository(this.mustGet(taskId), config.config, {
+              branch: baseBranch,
+            })
+          : undefined;
       // 選んでいる間に、人間が止めた・中止したなら、記録しない（止めた記録は runNext の後始末で行う）
       const latest = this.mustGet(taskId);
       if (
@@ -1194,9 +1253,30 @@ export class TaskService {
       ) {
         return;
       }
-      this.append(latest, [
-        { actor: "orchestrator", event: { type: "StepsChosen", payload: chosen } },
-      ]);
+      const events: ActivityItem[] = [];
+      if (rebased?.ok && rebased.prepared) {
+        events.push({
+          actor: "sacty",
+          event: { type: "RepositoryPrepared", payload: rebased.prepared },
+        });
+      } else if (rebased && !rebased.ok && baseBranch) {
+        chosen.reason = message("orchestrator.baseBranchUnavailable", {
+          branch: baseBranch,
+          detail: rebased.message,
+        });
+      }
+      events.push({ actor: "orchestrator", event: { type: "StepsChosen", payload: chosen } });
+      // 実装を含むのにテストのコマンドが分からなければ、検証できないので費用をかける前に止める（PBI-25）
+      if (chosen.steps.includes("implement") && !chosen.testCommand) {
+        events.push({
+          actor: "sacty",
+          event: {
+            type: "TaskPaused",
+            payload: { reason: "error", message: message("orchestrator.testCommandUnknown") },
+          },
+        });
+      }
+      this.append(latest, events);
     }
     const task = this.mustGet(taskId);
     if (task.status !== "queued") return;
@@ -1512,6 +1592,20 @@ export class TaskService {
       return;
     }
     const repo = target.repo;
+    const testCommand = repo.testCommand;
+    // テストのコマンドはオーケストレーターが決める（PBI-25）。分からなければ検証できないので止める
+    if (!testCommand) {
+      this.append(task, [
+        {
+          actor: "sacty",
+          event: {
+            type: "TaskPaused",
+            payload: { reason: "error", message: message("orchestrator.testCommandUnknown") },
+          },
+        },
+      ]);
+      return;
+    }
     // テストを対応させる観点。設計を省いたタスク（PBI-17）は、要求要件の受け入れ条件（REQ）を観点にする。
     // テストの対応の確かめと、最終レビューの両方で同じ観点を使う
     const viewpointIds = task.steps.some((st) => st.key === "design")
@@ -1530,7 +1624,7 @@ export class TaskService {
         runId: testRunId,
         image: repo.testImage,
         workspaceDir: dir,
-        command: repo.testCommand,
+        command: testCommand,
       });
       // 人間が止めた（コンテナを止めた）テストの結果は記録しない。再開するとテストからやり直す
       if (this.pauseRequested.has(task.id)) return;
@@ -1541,7 +1635,7 @@ export class TaskService {
           event: {
             type: "TestsRun",
             payload: {
-              command: repo.testCommand,
+              command: testCommand,
               exitCode: result.exitCode,
               unmappedViewpoints,
               passed,
@@ -1691,30 +1785,25 @@ export class TaskService {
           { actor: "sacty", event: { type: "BranchPushed", payload: { branch, commit } } },
         ]);
       }
-      let pr: { url: string; number: number } | undefined;
-      if (repo.pullRequest) {
-        const token = await this.githubToken(task, usedSecrets);
-        // 前の PR がすでにマージされていれば、作り直した内容は新しい PR で出す
-        // （マージ済みの PR を更新しても、マージされていない内容が完了扱いになってしまうため）
-        let number = task.pullRequest?.number;
-        if (number && task.pullRequest?.repo === repo.pullRequest.repo) {
-          const previous = await this.deps.pulls.status({
-            repo: repo.pullRequest.repo,
-            token,
-            number,
-          });
-          if (previous.state === "merged") number = undefined;
-        }
-        pr = await this.deps.pulls.upsert({
-          repo: repo.pullRequest.repo,
-          token,
-          branch,
-          baseBranch: task.repository.baseBranch,
-          title: task.title,
-          body: buildPullRequestBody(task),
-          number,
-        });
+      // PR は常に作る（PR作成許可の設定は無い。PBI-25）
+      const token = await this.githubToken(task, usedSecrets);
+      const prRepo = repo.pullRequest.repo;
+      // 前の PR がすでにマージされていれば、作り直した内容は新しい PR で出す
+      // （マージ済みの PR を更新しても、マージされていない内容が完了扱いになってしまうため）
+      let number = task.pullRequest?.number;
+      if (number && task.pullRequest?.repo === prRepo) {
+        const previous = await this.deps.pulls.status({ repo: prRepo, token, number });
+        if (previous.state === "merged") number = undefined;
       }
+      const pr = await this.deps.pulls.upsert({
+        repo: prRepo,
+        token,
+        branch,
+        baseBranch: task.repository.baseBranch,
+        title: task.title,
+        body: buildPullRequestBody(task),
+        number,
+      });
       const submitted = this.append(task, [
         {
           actor: "sacty",
@@ -1723,9 +1812,9 @@ export class TaskService {
             payload: {
               branch,
               commit,
-              ...(pr && repo.pullRequest
-                ? { url: pr.url, number: pr.number, repo: repo.pullRequest.repo }
-                : {}),
+              url: pr.url,
+              number: pr.number,
+              repo: prRepo,
             },
           },
         },
@@ -2394,22 +2483,24 @@ function feedbackRemarks(items: PullRequestFeedback[]): string[] {
   });
 }
 
-/** タスクの対象リポジトリと、その設定（プロジェクトのリポジトリの設定から求める）。 */
-type TargetRepository = {
-  url: string;
-  baseBranch: string;
-  testCommand: string;
-  testImage: string;
-  pullRequest?: { provider: "github"; repo: string };
+/**
+ * オーケストレーターが選んだ工程（作業履歴の StepsChosen）と、ベースブランチ（PBI-25）。ベースブランチは、
+ * 既定のブランチと違えば用意し直して RepositoryPrepared として記録する。
+ */
+type ChosenSteps = Extract<EventInput, { type: "StepsChosen" }>["payload"] & {
+  baseBranch?: string;
 };
 
-/** GitHub の API の失敗の、HTTP のステータス（GitHub の失敗でなければ undefined）。 */
-function githubStatusOf(error: unknown): number | undefined {
-  const text = errorText(error);
-  if (typeof text !== "object" || text.code !== "github.failed") return undefined;
-  const status = (text.params as { status?: unknown } | undefined)?.status;
-  return typeof status === "number" ? status : undefined;
-}
+/** タスクの対象リポジトリ。 */
+type TargetRepository = {
+  url: string;
+  /** 用意したベースブランチ（用意する前は無い。既定のブランチを clone する）。 */
+  baseBranch?: string;
+  /** オーケストレーターが決めたテストのコマンド（PBI-25）。 */
+  testCommand?: string;
+  testImage: string;
+  pullRequest: { provider: "github"; repo: string };
+};
 
 /** 書いたレビューを、まだ対象の PR に投稿していない（PBI-19）。 */
 function awaitingReviewPost(task: Task): boolean {

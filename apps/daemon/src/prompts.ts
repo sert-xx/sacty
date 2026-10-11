@@ -829,9 +829,13 @@ export function buildOrchestratorPrompt(task: Task): string {
     ...(task.repository
       ? [
           "",
-          `作業領域（カレントディレクトリ）に、対象リポジトリ（${task.repository.url}）の起点のコミット（${task.repository.baseCommit.slice(0, 7)}）のコードがあります。変更の大きさや影響範囲を判断するために読んでください（読み取り専用です）。`,
+          `作業領域（カレントディレクトリ）に、対象リポジトリ（${task.repository.url}）の既定のブランチ（${task.repository.baseBranch}）の最新のコミット（${task.repository.baseCommit.slice(0, 7)}）のコードがあります。変更の大きさや影響範囲を判断するために読んでください（読み取り専用です）。`,
         ]
       : []),
+    "",
+    "あわせて、コードを読んで次の2つを決めてください（PBI-25）。",
+    `- baseBranch：変更の起点にするブランチ。ふつうは既定のブランチ（${task.repository?.baseBranch ?? "既定のブランチ"}）。CONTRIBUTING などで別のブランチ（例：develop）に向けると決まっているときだけ、そのブランチ名を書く`,
+    "- testCommand：このリポジトリのテストを実行するコマンド（例：npm ci && npm test）。package.json・Makefile・CI の設定などから判断する。sh -c で実行し、終了コード0で合格とみなす。依存関係の取得も含める。分からなければ空にする（推測で書かない）",
     "",
     "選べる工程の組み合わせ：",
     ...Object.entries(plans).map(([key, text]) => `- ${key}：${text}`),
@@ -845,7 +849,7 @@ export function buildOrchestratorPrompt(task: Task): string {
     "",
     "選んだ工程を、次の形式で必ず出してください。",
     "```json",
-    `{"${PLAN_HEADING}": {"plan": "${Object.keys(plans).join(" または ")}", "reason": "選んだ理由"}}`,
+    `{"${PLAN_HEADING}": {"plan": "${Object.keys(plans).join(" または ")}", "reason": "選んだ理由", "baseBranch": "ベースブランチ", "testCommand": "テストのコマンド（分からなければ空）"}}`,
     "```",
   ].join("\n");
 }
@@ -865,7 +869,7 @@ export function allowedPlans(task: Task): StepPlan[] {
 export function extractStepPlan(
   output: string,
   allowed: readonly StepPlan[] = StepPlan.options,
-): { plan: StepPlan; reason: string } | undefined {
+): { plan: StepPlan; reason: string; baseBranch?: string; testCommand?: string } | undefined {
   const blocks = [...output.matchAll(/```json\s*\n([\s\S]*?)\n```/g)].reverse();
   for (const block of blocks) {
     try {
@@ -874,7 +878,15 @@ export function extractStepPlan(
       const plan = StepPlan.safeParse(v.plan);
       const reason = text(v.reason);
       if (plan.success && allowed.includes(plan.data) && reason) {
-        return { plan: plan.data, reason };
+        // ブランチ名とテストのコマンドは、形の正しいものだけを使う（PBI-25）
+        const baseBranch = text(v.baseBranch);
+        const testCommand = text(v.testCommand).slice(0, 1000);
+        return {
+          plan: plan.data,
+          reason,
+          ...(/^[\w./-]+$/.test(baseBranch) && !baseBranch.startsWith("-") ? { baseBranch } : {}),
+          ...(testCommand ? { testCommand } : {}),
+        };
       }
     } catch {
       // 次のブロックを試す

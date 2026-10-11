@@ -686,3 +686,64 @@ describe("PR のレビュー（PBI-19）", () => {
     expect(feedback.map((f) => f.key)).toEqual(["review:2", "review:3", "review_comment:5"]);
   });
 });
+
+describe("対象の Org のリポジトリ（PBI-25）", () => {
+  const api = "https://api.github.com";
+
+  it("Org のリポジトリをすべてのページから読み、アーカイブしたものを除いて並べる", async () => {
+    const { impl, calls } = fakeFetch([
+      {
+        status: 200,
+        json: [
+          { full_name: "acme/web", archived: false },
+          { full_name: "acme/old", archived: true },
+        ],
+        headers: { link: `<${api}/orgs/acme/repos?per_page=100&type=all&page=2>; rel="next"` },
+      },
+      { status: 200, json: [{ full_name: "acme/api", private: true }] },
+      { status: 403, json: { message: "Forbidden" } },
+    ]);
+    const client = new GitHubPullRequests(impl);
+    expect(await client.repositories({ owner: "acme", token: "ghp_secret" })).toEqual([
+      "acme/api",
+      "acme/web",
+    ]);
+    expect(calls[0]).toMatchObject({
+      url: `${api}/orgs/acme/repos?per_page=100&type=all`,
+      auth: "Bearer ghp_secret",
+    });
+    expect(
+      errorText(
+        await client.repositories({ owner: "acme", token: "ghp_secret" }).catch((e: unknown) => e),
+      ),
+    ).toMatchObject({ code: "github.failed", params: { action: "listRepositories", status: 403 } });
+  });
+
+  it("個人のアカウントは、公開リポジトリに加えて、トークンで読めるその持ち主の非公開リポジトリも含める（レビュー指摘）", async () => {
+    const { impl, calls } = fakeFetch([
+      { status: 404, json: { message: "Not Found" } },
+      // 公開のものだけ
+      { status: 200, json: [{ full_name: "Someone/dotfiles", owner: { login: "Someone" } }] },
+      // トークンで読めるもの（ほかの持ち主のものも含む）
+      {
+        status: 200,
+        json: [
+          { full_name: "Someone/private-app", owner: { login: "Someone" }, private: true },
+          { full_name: "Someone/dotfiles", owner: { login: "Someone" } },
+          { full_name: "other/shared", owner: { login: "other" }, private: true },
+          { full_name: "Someone/archived", owner: { login: "Someone" }, archived: true },
+        ],
+      },
+    ]);
+    const client = new GitHubPullRequests(impl);
+    expect(await client.repositories({ owner: "someone", token: "ghp_secret" })).toEqual([
+      "Someone/dotfiles",
+      "Someone/private-app",
+    ]);
+    expect(calls.map((c) => c.url)).toEqual([
+      `${api}/orgs/someone/repos?per_page=100&type=all`,
+      `${api}/users/someone/repos?per_page=100&type=owner`,
+      `${api}/user/repos?per_page=100&affiliation=owner,collaborator,organization_member`,
+    ]);
+  });
+});

@@ -218,6 +218,19 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
               <span className="text-[13px] font-normal text-muted-foreground">{m.stepsNote}</span>
             </h2>
             <StepChips task={task} />
+            {/* オーケストレーターが決めたベースブランチとテストのコマンド（PBI-25） */}
+            {task.repository && task.stepsChoice && (
+              <p className="text-sm leading-6 text-muted-foreground [overflow-wrap:anywhere]">
+                {m.baseBranch}
+                <span className="font-mono">{task.repository.baseBranch}</span>
+                {m.testCommand}
+                {task.testCommand ? (
+                  <span className="font-mono">{task.testCommand}</span>
+                ) : (
+                  m.testCommandUnknown
+                )}
+              </p>
+            )}
             {task.stepsChoice && (
               <p className="text-sm leading-6 text-muted-foreground">
                 {task.stepsChoice.fallback

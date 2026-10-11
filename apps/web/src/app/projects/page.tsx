@@ -100,16 +100,13 @@ async function Projects() {
             <Link href={`/projects/${p.id}`} className="text-[17px] font-semibold hover:underline">
               {p.name}
             </Link>
-            <p className="text-sm text-muted-foreground">
-              {t.summary(p.sources.length, p.repositories.length)}
-            </p>
-            {p.sources.length > 0 && (
+            <p className="text-sm text-muted-foreground">{t.summary(p.targets.length)}</p>
+            {p.targets.length > 0 && (
               <ul className="flex flex-col gap-0.5 text-xs text-muted-foreground">
-                {p.sources.map((s) => (
-                  <li key={`${s.scope}:${s.target}`} className="break-all">
-                    {t.sourceScope(t.scope[s.scope])}
-                    <span className="font-mono">{s.target}</span>
-                    {t.sourceLabel(s.label)}
+                {p.targets.map((target) => (
+                  <li key={`${target.scope}:${target.target}`} className="break-all">
+                    {t.targetScope(t.scope[target.scope])}
+                    <span className="font-mono">{target.target}</span>
                   </li>
                 ))}
               </ul>

@@ -5,8 +5,7 @@ import { resolveProject, safeLocalPath } from "./project-select";
 const project = (id: string): Project => ({
   id,
   name: id,
-  sources: [],
-  repositories: [],
+  targets: [],
   createdAt: "2026-10-10T00:00:00.000Z",
   updatedAt: "2026-10-10T00:00:00.000Z",
 });
