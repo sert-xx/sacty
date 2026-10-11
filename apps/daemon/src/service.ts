@@ -966,8 +966,12 @@ export class TaskService {
     task: Task,
     config: SactyConfig,
   ): { ok: true; repo: TargetRepository } | { ok: false; message: DaemonText } {
-    // Issue から取り込んだタスクはその Issue のリポジトリ、画面で作ったタスクは作るときに選んだリポジトリ（PBI-21）
-    const repo = task.source?.kind === "github_issue" ? task.source.repo : task.repo;
+    // Issue から取り込んだタスクはその Issue のリポジトリ、画面で作ったタスクは作るときに選んだリポジトリ（PBI-21）。
+    // 対象リポジトリを選ぶ前の版で作り、すでに clone したタスクは、記録した URL のリポジトリの設定で続ける
+    const repo =
+      task.source?.kind === "github_issue"
+        ? task.source.repo
+        : (task.repo ?? (task.repository && githubRepoOf(task.repository.url)));
     if (!repo) return { ok: false, message: message("run.repositoryNotConfigured") };
     const project = this.deps.projects.get(task.projectId);
     const settings = repositorySettings(project, repo);

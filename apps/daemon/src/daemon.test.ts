@@ -3295,6 +3295,55 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     activity.close();
   });
 
+  it("対象リポジトリを選ぶ前の版で clone 済みのタスクは、記録した URL のリポジトリの設定で、検証と PR 作成まで続ける（PBI-21 レビュー指摘）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    activity.append({
+      taskId: "t-old",
+      projectId: "default",
+      events: [
+        {
+          actor: "person",
+          event: {
+            type: "TaskCreated",
+            payload: { title: "古いタスク", body: "", start: "ticket", budgetCapUsd: 1 },
+          },
+        },
+        { actor: "sacty", event: { type: "StepsChosen", payload: { steps: ["implement", "pr"] } } },
+        {
+          actor: "sacty",
+          event: {
+            type: "RepositoryPrepared",
+            payload: {
+              url: "git@github.com:acme/app.git",
+              baseBranch: "main",
+              baseCommit: "base123",
+            },
+          },
+        },
+      ],
+    });
+    const tests = new FakeTests();
+    const pulls = new FakePulls();
+    const { service } = makeService(
+      activity,
+      [
+        implement("# v1", [{ viewpointId: "REQ", tests: ["a.test.ts › 受け入れ条件"] }]),
+        review([["REQ", true]], []),
+      ],
+      { tests, pulls },
+    );
+    for (let i = 0; i < 4 && service.queuedTaskIds().includes("t-old"); i++) {
+      await service.runNext("t-old");
+    }
+    const task = service.get("t-old")?.task;
+    // プロジェクトのリポジトリの設定（acme/app）のテストのコマンドで検証し、PR を作って成果物チェックに進む
+    expect(tests.calls.map((c) => c.command)).toEqual(["npm test"]);
+    expect(pulls.calls[0]?.repo).toBe("acme/app");
+    expect(task?.gate).toEqual({ step: "pr", submission: 1 });
+    expect(task?.pausedMessage).toBeUndefined();
+    activity.close();
+  });
+
   it("作業領域が消えて用意し直すときも、ブランチの最新ではなく記録済みの起点のコミットを使う（PBI-15 レビュー指摘）", async () => {
     const activity = new SqliteActivityStore(dbPath);
     const repos = new FakeRepos();
