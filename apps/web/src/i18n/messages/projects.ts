@@ -10,7 +10,7 @@ const ja = {
     note: "sacty を使うには、プロジェクトが必要です。プロジェクトを作るか、エクスポートしたプロジェクトの定義をインポートすると、タスクを作れるようになります。",
   },
   intake: {
-    title: "GitHub Issue の取り込み",
+    title: "GitHub Issue・PR の取り込み",
     stopped:
       "取り込みは止まっています。config.yaml に github: を設定すると、定期的に取り込みます。",
     lastRun: (at: string, n: number) => `最後の取り込み：${at}（${n}件のタスクを作成）`,
@@ -79,7 +79,7 @@ const en: ProjectsMessages = {
     note: "sacty needs a project. Create one, or import an exported project definition, to start creating tasks.",
   },
   intake: {
-    title: "GitHub Issue intake",
+    title: "GitHub issue and PR intake",
     stopped: "Intake is stopped. Add github: to config.yaml to import issues periodically.",
     lastRun: (at, n) => `Last intake: ${at} (${n} task${n === 1 ? "" : "s"} created)`,
     never: "Nothing imported yet.",
