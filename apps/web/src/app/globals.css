@@ -46,6 +46,7 @@
   --color-accent-foreground: var(--accent-foreground);
   --color-accent: var(--accent);
   --color-muted-foreground: var(--muted-foreground);
+  --color-placeholder: var(--placeholder);
   --color-muted: var(--muted);
   --color-secondary-foreground: var(--secondary-foreground);
   --color-secondary: var(--secondary);
@@ -78,6 +79,8 @@
   --secondary-foreground: #16181d;
   --muted: #f6f7f9;
   --muted-foreground: #4b5160;
+  /* 入力欄の例。補足の文字より一段控えめにして、入力済みの値と見分けられるようにする */
+  --placeholder: #6b7180;
   --accent: #eef0fb;
   --accent-foreground: #2e3aa8;
   --accent-line: #c9cef2;
@@ -124,7 +127,9 @@
   --secondary: #232733;
   --secondary-foreground: #e8eaf0;
   --muted: #12141a;
-  --muted-foreground: #a3a9b7;
+  /* 補足の文字。小さく細い文字でも暗い背景に沈まないよう、明るめにする（カードの背景に対して約 9.7:1） */
+  --muted-foreground: #bcc2ce;
+  --placeholder: #858b9a;
   --accent: #232a4d;
   --accent-foreground: #c3caff;
   --accent-line: #3a4380;
@@ -147,7 +152,7 @@
   --chart-4: #7fd3a0;
   --chart-5: #8e95a3;
   --sidebar: #171a21;
-  --sidebar-foreground: #a3a9b7;
+  --sidebar-foreground: #bcc2ce;
   --sidebar-primary: #5b6cff;
   --sidebar-primary-foreground: #0f1115;
   --sidebar-accent: #232a4d;
