@@ -1,6 +1,7 @@
 "use client";
 
 import type { IssueSource, Project, RepositorySettings } from "@sacty/core";
+import { XIcon } from "lucide-react";
 import { useActionState, useId, useState } from "react";
 import { type SaveProjectState, saveProjectAction } from "@/app/actions";
 import { Button } from "@/components/ui/button";
@@ -146,10 +147,13 @@ export function ProjectEditor({
                       </label>
                       <Button
                         type="button"
-                        variant="outline"
+                        variant="ghost"
+                        size="icon-lg"
+                        aria-label={t.removeSource(source.target)}
+                        title={t.remove}
                         onClick={() => setSources((list) => list.filter((_, j) => j !== i))}
                       >
-                        {t.remove}
+                        <XIcon aria-hidden="true" />
                       </Button>
                     </div>
                     {excluded && excluded.repos.length > 0 && (
@@ -238,7 +242,7 @@ export function ProjectEditor({
                 <Input
                   id={`${uid}-context-repo`}
                   value={contextRepo}
-                  placeholder="git@github.com:acme/sacty-context.git"
+                  placeholder={t.contextRepoPlaceholder}
                   onChange={(e) => setContextRepo(e.target.value)}
                   className="font-mono"
                 />
@@ -251,7 +255,9 @@ export function ProjectEditor({
                 <Input
                   id={`${uid}-context-ref`}
                   value={contextRef}
-                  placeholder="main"
+                  placeholder={t.contextRefPlaceholder}
+                  // ブランチ・タグは、リポジトリを設定したときだけ使う
+                  disabled={!contextRepo.trim()}
                   onChange={(e) => setContextRef(e.target.value)}
                   className="font-mono"
                 />
@@ -269,6 +275,7 @@ export function ProjectEditor({
               <span className="text-[13px] font-normal text-muted-foreground">{t.reposNote}</span>
             </h2>
             {repos.length === 0 && <p className="text-sm text-muted-foreground">{t.noRepos}</p>}
+            <p className="text-xs leading-5 text-muted-foreground">{t.pullRequestHelp}</p>
             <ul className="flex flex-col gap-2.5">
               {repos.map((repo, i) => (
                 <li
@@ -323,10 +330,13 @@ export function ProjectEditor({
                   </label>
                   <Button
                     type="button"
-                    variant="outline"
+                    variant="ghost"
+                    size="icon-lg"
+                    aria-label={t.removeRepo(repo.repo)}
+                    title={t.remove}
                     onClick={() => setRepos((list) => list.filter((_, j) => j !== i))}
                   >
-                    {t.remove}
+                    <XIcon aria-hidden="true" />
                   </Button>
                 </li>
               ))}
