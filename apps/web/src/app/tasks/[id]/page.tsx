@@ -230,7 +230,13 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
               <p className="text-sm text-muted-foreground">{m.ticketEmpty}</p>
             )}
           </section>
-          <Deliverable task={task} step="requirements" />
+          {/* 調査の結果（PBI-18）。要求要件は、その工程があるタスクだけ */}
+          {task.steps.some((s) => s.key === "investigate") && (
+            <Deliverable task={task} step="investigate" />
+          )}
+          {task.steps.some((s) => s.key === "requirements") && (
+            <Deliverable task={task} step="requirements" />
+          )}
           {(task.outputs.design ||
             task.steps.some((s) => s.key === "design" && s.state !== "todo")) && (
             <Deliverable task={task} step="design" />

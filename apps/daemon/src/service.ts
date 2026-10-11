@@ -19,6 +19,7 @@ import {
   EventInput,
   excludedRepositories,
   GATED_STEPS,
+  isCompleted,
   type LedgerEvent,
   MAX_CHANGE_REQUESTS,
   MAX_VERIFY_ATTEMPTS,
@@ -70,6 +71,7 @@ import type { ProjectStore } from "./projects.js";
 import {
   buildFinalReviewPrompt,
   buildGuardianPrompt,
+  buildInvestigationComment,
   buildOrchestratorPrompt,
   buildPrompt,
   buildPullRequestBody,
@@ -446,6 +448,35 @@ export class TaskService {
   }
 
   /**
+   * 完了した調査の結果を、取り込み元の GitHub Issue にコメントとして返す（PBI-18）。
+   * プロジェクトの gh のアカウントで返す。返せなければ理由を記録する（何度も返そうとしない）。
+   */
+  private async commentInvestigation(task: Task): Promise<void> {
+    const source = task.source;
+    if (source?.kind !== "github_issue") return;
+    const usedSecrets: string[] = [];
+    let event: EventInput;
+    try {
+      const token = await this.githubToken(task, usedSecrets);
+      const { url } = await this.deps.pulls.commentIssue({
+        repo: source.repo,
+        token,
+        number: source.number,
+        body: buildInvestigationComment(task),
+      });
+      event = { type: "IssueCommented", payload: { url } };
+    } catch (error) {
+      event = {
+        type: "IssueCommentFailed",
+        payload: { message: redactText(errorText(error), usedSecrets) },
+      };
+    }
+    const latest = this.tasks.get(task.id);
+    if (!latest || !awaitingIssueComment(latest)) return;
+    this.append(latest, [{ actor: "sacty", event }]);
+  }
+
+  /**
    * オーケストレーターに、タスクの工程を選ばせる（PBI-17）。チケットと対象リポジトリの起点のコードを
    * 読ませ、候補（STEP_PLANS）から選ばせる。人間の承認は無い。判断できない・実行に失敗したときは、
    * 標準の工程にして、そのことを記録する。テストでは deps.planner に差し替える。
@@ -722,7 +753,9 @@ export class TaskService {
         (t) =>
           // 工程がまだ決まっていないタスクも、オーケストレーターが選ぶので実行対象にする（PBI-17）
           (t.status === "queued" && (activeStep(t) || t.steps.length === 0)) ||
-          awaitingVerification(t),
+          awaitingVerification(t) ||
+          // 完了した調査の結果を、取り込み元の Issue に返す（PBI-18）
+          awaitingIssueComment(t),
       )
       .filter((t) => !this.cancelling.has(t.id) && !this.pauseRequested.has(t.id))
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
@@ -1007,6 +1040,7 @@ export class TaskService {
   private async runNextInner(taskId: string): Promise<void> {
     const initial = this.tasks.get(taskId);
     if (initial && awaitingVerification(initial)) return this.verify(initial);
+    if (initial && awaitingIssueComment(initial)) return this.commentInvestigation(initial);
     if (initial?.status !== "queued") return;
     const config = this.deps.config();
     if (!config.ok) return; // 設定の問題は status() で画面に出す。タスクは実行待ちのまま。
@@ -2191,4 +2225,14 @@ function feedbackRemarks(items: PullRequestFeedback[]): string[] {
     }
     return cut(body || `${item.author} が PR の変更を求めました（コメントなし）。`);
   });
+}
+
+/** 完了した調査のタスクで、結果をまだ取り込み元の Issue に返していないか（PBI-18）。 */
+function awaitingIssueComment(task: Task): boolean {
+  return (
+    isCompleted(task) &&
+    task.steps.some((st) => st.key === "investigate") &&
+    task.source?.kind === "github_issue" &&
+    !task.issueComment
+  );
 }

@@ -406,3 +406,22 @@ describe("オーケストレーターが選んだ工程（PBI-17）", () => {
     expect(describeEvent(event)).toBe("工程を決定：要求要件 → 実装 → PR作成（小さな変更）");
   });
 });
+
+describe("調査の工程（PBI-18）", () => {
+  it("台帳に、Issue へのコメントを表示する", () => {
+    const event = (e: Pick<LedgerEvent, "type" | "payload">): LedgerEvent =>
+      ({
+        ...e,
+        seq: 1,
+        id: "e1",
+        taskId: "t1",
+        projectId: "default",
+        at: "2026-10-11T00:00:00.000Z",
+        actor: "sacty",
+      }) as LedgerEvent;
+    expect(
+      describeEvent(event({ type: "IssueCommented", payload: { url: "https://x/issues/5#c" } })),
+    ).toBe("調査の結果を Issue にコメントした（https://x/issues/5#c）");
+    expect(statusText(task({ steps: [{ key: "investigate", state: "done" }] }))).toBe("完了");
+  });
+});

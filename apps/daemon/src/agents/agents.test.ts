@@ -761,7 +761,11 @@ describe("オーケストレーターの出力（PBI-17）", () => {
       plan: "skip-design",
       reason: "小さい",
     });
-    expect(extractStepPlan(block({ plan: "investigate", reason: "x" }))).toBeUndefined();
+    expect(extractStepPlan(block({ plan: "investigate", reason: "質問" }))).toEqual({
+      plan: "investigate",
+      reason: "質問",
+    });
+    expect(extractStepPlan(block({ plan: "everything", reason: "x" }))).toBeUndefined();
     expect(extractStepPlan(block({ plan: "standard", reason: "" }))).toBeUndefined();
     expect(extractStepPlan("出力なし")).toBeUndefined();
   });

@@ -120,7 +120,15 @@ const PARAMS = {
   "git.nothingToCommit": null,
   "git.notSactyBranch": null,
   "github.failed": z.object({
-    action: z.enum(["updatePr", "createPr", "closePr", "getPr", "getReviews", "searchIssues"]),
+    action: z.enum([
+      "updatePr",
+      "createPr",
+      "closePr",
+      "getPr",
+      "getReviews",
+      "commentIssue",
+      "searchIssues",
+    ]),
     status: z.number(),
     detail: z.string(),
     hint: z.enum(["none", "token", "permission"]),
@@ -200,6 +208,7 @@ const githubActionJa = {
   closePr: "PRを閉じられませんでした",
   getPr: "PRの状態を確認できませんでした",
   getReviews: "PRのレビューを確認できませんでした",
+  commentIssue: "Issue にコメントできませんでした",
   searchIssues: "Issue を検索できませんでした",
 } as const;
 const githubActionEn = {
@@ -208,6 +217,7 @@ const githubActionEn = {
   closePr: "Could not close the PR",
   getPr: "Could not check the PR",
   getReviews: "Could not check the PR reviews",
+  commentIssue: "Could not comment on the issue",
   searchIssues: "Could not search issues",
 } as const;
 const githubHintJa = {

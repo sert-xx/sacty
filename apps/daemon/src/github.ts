@@ -22,6 +22,13 @@ export interface PullRequests {
    * PR への通常のコメント。bot のものは含めない。
    */
   feedback(input: { repo: string; token: string; number: number }): Promise<PullRequestFeedback[]>;
+  /** Issue にコメントする（調査の結果を返す。PBI-18）。 */
+  commentIssue(input: {
+    repo: string;
+    token: string;
+    number: number;
+    body: string;
+  }): Promise<{ url: string }>;
 }
 
 /**
@@ -157,6 +164,25 @@ export class GitHubPullRequests implements PullRequests {
     return items.sort((a, b) => a.at.localeCompare(b.at));
   }
 
+  async commentIssue(input: Parameters<PullRequests["commentIssue"]>[0]) {
+    const res = await this.fetchImpl(
+      `${this.api}/repos/${input.repo}/issues/${input.number}/comments`,
+      {
+        method: "POST",
+        headers: {
+          accept: "application/vnd.github+json",
+          authorization: `Bearer ${input.token}`,
+          "x-github-api-version": "2022-11-28",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ body: input.body }),
+      },
+    );
+    const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!res.ok) throw apiError("commentIssue", res.status, json);
+    return { url: String(json.html_url ?? "") };
+  }
+
   async status(input: Parameters<PullRequests["status"]>[0]): Promise<PullRequestStatus> {
     const res = await this.fetchImpl(`${this.api}/repos/${input.repo}/pulls/${input.number}`, {
       headers: {
@@ -252,7 +278,14 @@ async function closePullRequest(
 }
 
 function apiError(
-  action: "updatePr" | "createPr" | "closePr" | "getPr" | "getReviews" | "searchIssues",
+  action:
+    | "updatePr"
+    | "createPr"
+    | "closePr"
+    | "getPr"
+    | "getReviews"
+    | "commentIssue"
+    | "searchIssues",
   status: number,
   json: Record<string, unknown>,
 ): Error {

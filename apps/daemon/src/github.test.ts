@@ -440,3 +440,27 @@ describe("フィードバックの次のページ（PBI-14b レビュー指摘�
     ]);
   });
 });
+
+describe("Issue へのコメント（PBI-18）", () => {
+  it("Issue にコメントして URL を返し、失敗は理由つきのエラーにする", async () => {
+    const { impl, calls } = fakeFetch([
+      { status: 201, json: { html_url: "https://github.com/acme/app/issues/5#issuecomment-9" } },
+      { status: 403, json: { message: "Resource not accessible by integration" } },
+    ]);
+    const client = new GitHubPullRequests(impl);
+    const input = { repo: "acme/app", token: "ghp_secret", number: 5, body: "## 調査の結果" };
+    expect(await client.commentIssue(input)).toEqual({
+      url: "https://github.com/acme/app/issues/5#issuecomment-9",
+    });
+    expect(calls[0]).toMatchObject({
+      url: "https://api.github.com/repos/acme/app/issues/5/comments",
+      method: "POST",
+      body: { body: "## 調査の結果" },
+      auth: "Bearer ghp_secret",
+    });
+    expect(errorText(await client.commentIssue(input).catch((e: unknown) => e))).toMatchObject({
+      code: "github.failed",
+      params: { action: "commentIssue", status: 403 },
+    });
+  });
+});

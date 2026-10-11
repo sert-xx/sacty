@@ -1,8 +1,11 @@
 import { z } from "zod";
 import { code, DaemonText } from "./message-code.js";
 
-/** 工程の種類。MVPの固定工程は requirements → design → implement → pr。 */
-export const StepKey = z.enum(["requirements", "design", "implement", "pr"]);
+/**
+ * 工程の種類。標準の工程は requirements → design → implement → pr。
+ * investigate（調査）は、コードを調べて報告するだけの工程（PBI-18）。
+ */
+export const StepKey = z.enum(["investigate", "requirements", "design", "implement", "pr"]);
 export type StepKey = z.infer<typeof StepKey>;
 
 /** 標準の工程（オーケストレーターが判断できないときも、これで進める）。 */
@@ -17,15 +20,22 @@ export const STEP_PLANS = {
   standard: ["requirements", "design", "implement", "pr"],
   /** 小さな変更：設計を省く（要求要件の受け入れ条件をテストで確かめる） */
   "skip-design": ["requirements", "implement", "pr"],
+  /** 調査だけ：コードを調べて報告する。実装や PR は作らない（PBI-18） */
+  investigate: ["investigate"],
 } as const satisfies Record<string, readonly StepKey[]>;
 export type StepPlan = keyof typeof STEP_PLANS;
 export const StepPlan = z.enum(Object.keys(STEP_PLANS) as [StepPlan, ...StepPlan[]]);
 
 /** 人間の承認ゲートがある工程。PR作成は、成果物チェックのゲート。 */
-export const GATED_STEPS: readonly StepKey[] = ["requirements", "design", "pr"];
+export const GATED_STEPS: readonly StepKey[] = ["investigate", "requirements", "design", "pr"];
 
 /** 差し戻しでやり直せる（工程エージェントが作る）工程。 */
-export const REWORK_STEPS: readonly StepKey[] = ["requirements", "design", "implement"];
+export const REWORK_STEPS: readonly StepKey[] = [
+  "investigate",
+  "requirements",
+  "design",
+  "implement",
+];
 
 /** 同じ工程への差し戻しがこの回数を超えると、エスカレーションになる。 */
 export const MAX_CHANGE_REQUESTS = 3;
@@ -463,6 +473,19 @@ const ReworkJudged = z.object({
 });
 
 /**
+ * 完了した調査のタスク（GitHub Issue から取り込んだもの）の結果を、Issue にコメントとして返した（PBI-18）。
+ * 返せなければ、その理由を記録する（何度も返そうとしない）。
+ */
+const IssueCommented = z.object({
+  type: z.literal("IssueCommented"),
+  payload: z.object({ url: z.string() }),
+});
+const IssueCommentFailed = z.object({
+  type: z.literal("IssueCommentFailed"),
+  payload: z.object({ message: DaemonText }),
+});
+
+/**
  * sacty のブランチにプッシュした（PRの作成の前に記録する。PRの作成に失敗しても、
  * プッシュ済みのブランチを中止で片付けられるように）。
  */
@@ -600,6 +623,8 @@ export const EventInput = z.discriminatedUnion("type", [
   PullRequestReopened,
   PullRequestReviewImported,
   ReworkJudged,
+  IssueCommented,
+  IssueCommentFailed,
   BranchPushed,
   GuardianMissed,
   TaskCancelled,

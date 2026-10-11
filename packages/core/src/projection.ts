@@ -168,6 +168,8 @@ export type Task = {
     /** ゴールガーディアンの判断の理由（PR の指摘の戻し先の確認のとき）。 */
     note?: DaemonText;
   };
+  /** 調査の結果を、取り込み元の GitHub Issue に返したか（PBI-18）。 */
+  issueComment?: { url: string } | { failed: DaemonText };
   /** オーケストレーターが工程を選んだ理由（PBI-17。固定の工程だった台帳には無い）。 */
   stepsChoice?: { plan?: StepPlan; reason: DaemonText; fallback: boolean };
   /** 取り込んだ PR へのフィードバック（種類と ID。二重に取り込まないため。PBI-14b）。 */
@@ -613,6 +615,18 @@ export function applyEvent(
       };
       break;
     }
+
+    case "IssueCommented":
+    case "IssueCommentFailed":
+      if (!isCompleted(task) || task.source?.kind !== "github_issue") {
+        throw new LedgerIntegrityError(event, "the task is not a completed issue task");
+      }
+      if (task.issueComment) throw new LedgerIntegrityError(event, "already commented");
+      task.issueComment =
+        event.type === "IssueCommented"
+          ? { url: event.payload.url }
+          : { failed: event.payload.message };
+      break;
 
     case "PullRequestMerged":
     case "PullRequestClosed":

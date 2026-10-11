@@ -20,7 +20,13 @@ const ja = (value: DaemonText) => renderMessage(value, "ja");
  * 実行できる工程（PR作成はエージェントではなく sacty が実行する）。
  * ここに無い工程は、承認後も実行せずに待機する。
  */
-export const EXECUTABLE_STEPS: readonly StepKey[] = ["requirements", "design", "implement", "pr"];
+export const EXECUTABLE_STEPS: readonly StepKey[] = [
+  "investigate",
+  "requirements",
+  "design",
+  "implement",
+  "pr",
+];
 
 const RESPONSES_HEADING = "sacty-responses";
 const VIEWPOINTS_HEADING = "sacty-test-viewpoints";
@@ -81,6 +87,7 @@ function feedbackLines(task: Task): string[] {
 }
 
 const STEP_NAME: Record<StepKey, string> = {
+  investigate: "調査",
   requirements: "要求要件",
   design: "設計",
   implement: "実装",
@@ -169,6 +176,26 @@ export function buildPrompt(task: Task, step: StepKey): string {
   const previous = task.outputs[step];
 
   switch (step) {
+    case "investigate": {
+      // 調査は、コードを読んで報告するだけの工程（PBI-18）。人間が承認すると完了
+      const lines = [
+        "あなたはソフトウェア開発の調査エージェントです。",
+        "次のチケットが求めていることを、対象リポジトリのコードを読んで調べ、調査の結果をMarkdownで書いてください。",
+        "",
+        "- 最初に、チケットへの答え（結論）を短く書く",
+        "- 根拠を、ファイルと行（例：src/pay.ts:12）を添えて書く。推測と、コードで確かめた事実を区別する",
+        "- 関係する箇所・影響範囲、対応する場合の選択肢と注意点があれば書く",
+        "- コードから判断できないことは「確認したいこと」として最後に列挙する",
+        "- コードは変更しない（作業領域は読み取り専用です）",
+        ...codeLines(task),
+        "",
+        "--- チケット ---",
+        ticket,
+      ];
+      if (hasRemarks) lines.push("", "--- 前回の調査の結果 ---", previous ?? "（なし）");
+      lines.push(...remarkLines(task, step, "調査の結果の本文"));
+      return lines.join("\n");
+    }
     case "requirements": {
       const lines = [
         "あなたはソフトウェア開発の工程エージェントです。",
@@ -724,6 +751,8 @@ export function buildOrchestratorPrompt(task: Task): string {
       "要求要件 → 設計（テスト観点）→ 実装 → PR作成。既定。振る舞いが複数ある・影響範囲が広い・テスト観点を人間と合意したい変更",
     "skip-design":
       "要求要件 → 実装 → PR作成。設計を省く。変更が小さく局所的で、要求要件の受け入れ条件だけで十分にテストできる変更（例：文言の修正、小さな関数の追加）",
+    investigate:
+      "調査だけ。コードを調べて結果を報告する（実装や PR は作らない）。チケットが質問・原因の調査・影響範囲の確認・見積もりなど、変更ではなく情報を求めているとき",
   };
   return [
     "あなたはオーケストレーターです。チケットと対象リポジトリのコードを読んで、このタスクの工程を選んでください。",
@@ -766,4 +795,24 @@ export function extractStepPlan(output: string): { plan: StepPlan; reason: strin
     }
   }
   return undefined;
+}
+
+/** Issue のコメントの上限（GitHub の上限より小さく）。 */
+const ISSUE_COMMENT_MAX = 60_000;
+
+/** 調査の結果を、取り込み元の Issue に返すコメント（PBI-18）。人間が承認した結果だけを返す。 */
+export function buildInvestigationComment(task: Task): string {
+  const report = task.approved.investigate?.output ?? "";
+  const body =
+    report.length > ISSUE_COMMENT_MAX
+      ? `${report.slice(0, ISSUE_COMMENT_MAX)}\n\n…（長いため省略しました）`
+      : report;
+  return [
+    "## sacty の調査の結果",
+    "",
+    body,
+    "",
+    "---",
+    `sacty のタスク ${task.id} で調べ、人間が確認しました。`,
+  ].join("\n");
 }
