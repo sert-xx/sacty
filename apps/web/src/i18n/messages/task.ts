@@ -43,6 +43,7 @@ const ja = {
     reviewPosted: "PR に投稿済み（人間の承認なし）",
     reviewTarget: "対象の PR：",
     reviewPost: "投稿したレビュー：",
+    reviewComments: (n: number) => `行へのコメント（${n}件）`,
   },
 };
 
@@ -92,6 +93,7 @@ const en: TaskMessages = {
     reviewPosted: "Posted to the PR (no human approval)",
     reviewTarget: "PR under review: ",
     reviewPost: "Posted review: ",
+    reviewComments: (n) => `Line comments (${n})`,
   },
 };
 

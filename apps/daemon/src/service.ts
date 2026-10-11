@@ -77,11 +77,13 @@ import {
   buildPrompt,
   buildPullRequestBody,
   buildReviewBody,
+  buildReviewComments,
   buildReworkPrompt,
   changeableSteps,
   EXECUTABLE_STEPS,
   extractBlocks,
   extractFinalReview,
+  extractReviewComments,
   extractRework,
   extractStepPlan,
   extractVerdict,
@@ -321,7 +323,12 @@ export class TaskService {
     let current = task;
     if (!current.pendingReview) {
       const fresh = (
-        await this.deps.pulls.feedback({ repo: pr.repo, token, number: pr.number })
+        await this.deps.pulls.feedback({
+          repo: pr.repo,
+          token,
+          number: pr.number,
+          ...this.githubAccountOf(current),
+        })
       ).filter((item) => !current.importedFeedback.includes(item.key));
       if (fresh.length === 0) return;
       // コメントは何件かに分けて書かれるので、最後のものから一定の時間たつまで待つ
@@ -531,15 +538,27 @@ export class TaskService {
     let event: EventInput;
     try {
       const token = await this.githubToken(task, usedSecrets);
+      const account = this.githubAccountOf(task).account ?? "";
       const pr = { repo: target.repo, token, number: target.number };
       // 前回、投稿の後・記録の前に止まっていたら、そのレビューを使う（同じレビューを二度投稿しない）
-      const existing = await this.deps.pulls.findReview({ ...pr, marker: reviewMarker(task) });
-      const { url } =
-        existing ??
-        (await this.deps.pulls.postReview({
+      const existing = await this.deps.pulls.findReview({
+        ...pr,
+        account,
+        marker: reviewMarker(task),
+      });
+      const post = (foldComments: boolean) =>
+        this.deps.pulls.postReview({
           ...pr,
           commit: target.headCommit,
-          body: buildReviewBody(task),
+          body: buildReviewBody(task, { foldComments }),
+          comments: foldComments ? [] : buildReviewComments(task),
+        });
+      const { url } =
+        existing ??
+        (await post(false).catch((error: unknown) => {
+          // 行へのコメントを受け付けられなかった（行が差分に無いなど）なら、本文に入れて投稿し直す
+          if (task.reviewComments.length > 0 && githubStatusOf(error) === 422) return post(true);
+          throw error;
         }));
       event = { type: "PullRequestReviewPosted", payload: { url } };
     } catch (error) {
@@ -1028,6 +1047,12 @@ export class TaskService {
     return token;
   }
 
+  /** タスクのプロジェクトで選んだ gh のアカウント（選んでいなければ空）。 */
+  private githubAccountOf(task: Task): { account?: string } {
+    const account = this.deps.projects.get(task.projectId)?.githubAccount;
+    return account ? { account } : {};
+  }
+
   /** HTTPS の GitHub なら、gh のトークンで git を認証する環境変数。それ以外はホストの認証を使う。 */
   private async gitAuth(
     task: Task,
@@ -1378,11 +1403,16 @@ export class TaskService {
     }
 
     const latest = this.mustGet(task.id);
-    const { output, responses, testViewpoints, proposal, testMap } = extractBlocks(
+    const extracted = extractBlocks(
       outcome.output,
       new Set(latest.remarks.filter((r) => r.step === step && !r.voided).map((r) => r.id)),
       changeableSteps(latest, step),
     );
+    const { responses, testViewpoints, proposal, testMap } = extracted;
+    // レビューの工程は、PR の差分に含まれる行へのコメントを取り出す（差分の外のものは本文に入れる）
+    const review =
+      step === "review" ? extractReviewComments(extracted.output, reviewDiff ?? "") : undefined;
+    const output = review?.output ?? extracted.output;
     const events: { actor: Actor; event: EventInput }[] = [
       {
         actor: "agent",
@@ -1400,6 +1430,7 @@ export class TaskService {
             responses,
             ...(step === "design" ? { testViewpoints } : {}),
             ...(step === "implement" ? { testMap } : {}),
+            ...(review ? { reviewComments: review.comments } : {}),
           },
         },
       },
@@ -2357,7 +2388,14 @@ function feedbackRemarks(items: PullRequestFeedback[]): string[] {
   });
 }
 
-/** 完了した調査のタスクで、結果をまだ取り込み元の Issue に返していないか（PBI-18）。 */
+/** GitHub の API の失敗の、HTTP のステータス（GitHub の失敗でなければ undefined）。 */
+function githubStatusOf(error: unknown): number | undefined {
+  const text = errorText(error);
+  if (typeof text !== "object" || text.code !== "github.failed") return undefined;
+  const status = (text.params as { status?: unknown } | undefined)?.status;
+  return typeof status === "number" ? status : undefined;
+}
+
 /** 書いたレビューを、まだ対象の PR に投稿していない（PBI-19）。 */
 function awaitingReviewPost(task: Task): boolean {
   return (
@@ -2368,6 +2406,7 @@ function awaitingReviewPost(task: Task): boolean {
   );
 }
 
+/** 完了した調査のタスクで、結果をまだ取り込み元の Issue に返していないか（PBI-18）。 */
 function awaitingIssueComment(task: Task): boolean {
   return (
     isCompleted(task) &&

@@ -187,7 +187,15 @@ class FakeRepos implements RepositoryWorkspace {
     if (this.fetchFail) throw new Error(this.fetchFail);
     this.fetchedCommits.push({ gitDir, commits, ...(authEnv ? { authEnv } : {}) });
   }
-  prDiff = "diff --git a/src/retry.ts b/src/retry.ts\n+export const retry = 3;";
+  prDiff = [
+    "diff --git a/src/retry.ts b/src/retry.ts",
+    "--- a/src/retry.ts",
+    "+++ b/src/retry.ts",
+    "@@ -1,2 +1,3 @@",
+    " import { pay } from './pay';",
+    "+export const retry = 3;",
+    " export const once = 1;",
+  ].join("\n");
   diffedCommits: { baseCommit: string; headCommit: string }[] = [];
   async diffCommits(_gitDir: string, baseCommit: string, headCommit: string) {
     this.diffedCommits.push({ baseCommit, headCommit });
@@ -290,24 +298,46 @@ class FakePulls implements PullRequests {
     if (this.prInfoFail) throw new Error(this.prInfoFail);
     return this.prInfo;
   }
-  reviews: { repo: string; token: string; number: number; commit: string; body: string }[] = [];
+  reviews: {
+    repo: string;
+    token: string;
+    number: number;
+    commit: string;
+    body: string;
+    comments?: { path: string; line: number; body: string }[];
+  }[] = [];
   reviewFail?: string;
+  /** 行へのコメントがあると、GitHub の 422 で失敗させる（行が差分に無いなど）。 */
+  rejectComments = false;
   async postReview(input: {
     repo: string;
     token: string;
     number: number;
     commit: string;
     body: string;
+    comments: { path: string; line: number; body: string }[];
   }) {
     if (this.reviewFail) throw new Error(this.reviewFail);
+    if (this.rejectComments && input.comments.length > 0) {
+      throw new MessageError(
+        message("github.failed", {
+          action: "postReview",
+          status: 422,
+          detail: "Line could not be resolved",
+          hint: "none",
+        }),
+      );
+    }
     this.reviews.push(input);
     return {
       url: `https://github.com/${input.repo}/pull/${input.number}#pullrequestreview-${this.reviews.length}`,
     };
   }
-  async findReview(input: { repo: string; number: number; marker: string }) {
+  findReviewAccounts: string[] = [];
+  async findReview(input: { repo: string; number: number; account: string; marker: string }) {
+    this.findReviewAccounts.push(input.account);
     const index = this.reviews.findIndex(
-      (r) => r.repo === input.repo && r.number === input.number && r.body.includes(input.marker),
+      (r) => r.repo === input.repo && r.number === input.number && r.body.startsWith(input.marker),
     );
     return index < 0
       ? undefined
@@ -317,7 +347,10 @@ class FakePulls implements PullRequests {
   }
   /** 返す PR へのフィードバック（PBI-14b）。 */
   feedbackList: PullRequestFeedback[] = [];
-  async feedback() {
+  /** フィードバックを読んだときの、プロジェクトのアカウント（sacty のレビューを除くため。PBI-19）。 */
+  feedbackAccounts: (string | undefined)[] = [];
+  async feedback(input: { account?: string }) {
+    this.feedbackAccounts.push(input.account);
     return this.feedbackList;
   }
 }
@@ -2019,6 +2052,72 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       ledger.close();
     });
 
+    it("差分の行への指摘は行へのコメントにし、差分の外の指摘は本文に入れて、あわせて投稿する", async () => {
+      const ledger = new SqliteLedgerStore(dbPath);
+      const pulls = new FakePulls();
+      const comments = [
+        { path: "src/retry.ts", line: 2, body: "上限を設定から読む" },
+        { path: "./src/retry.ts", line: 3, body: "前後の行にも付けられる" },
+        { path: "src/retry.ts", line: 40, body: "差分の外の行" },
+        { path: "src/other.ts", line: 1, body: "差分に無いファイル" },
+      ];
+      const { service } = makeService(
+        ledger,
+        [out(`# 評価\n\n直す点があります。\n\n${block({ "sacty-review-comments": comments })}`)],
+        { pulls, planner: reviewPlanner },
+      );
+      const id = importReviewIssue(service, "https://github.com/acme/app/pull/12");
+      await service.runNext(id);
+      const task = service.get(id)?.task;
+      expect(task?.reviewComments).toEqual([
+        { path: "src/retry.ts", line: 2, body: "上限を設定から読む" },
+        { path: "src/retry.ts", line: 3, body: "前後の行にも付けられる" },
+      ]);
+      expect(task?.outputs.review).not.toContain("sacty-review-comments");
+      expect(task?.outputs.review).toContain("### 行についての指摘");
+      expect(task?.outputs.review).toContain("`src/retry.ts:40` 差分の外の行");
+      expect(task?.outputs.review).toContain("`src/other.ts:1` 差分に無いファイル");
+
+      await service.runNext(id);
+      expect(pulls.findReviewAccounts).toEqual(["me"]);
+      expect(pulls.reviews).toHaveLength(1);
+      expect(pulls.reviews[0]?.comments).toEqual([
+        { path: "src/retry.ts", line: 2, body: `<!-- sacty-review:${id} -->\n上限を設定から読む` },
+        {
+          path: "src/retry.ts",
+          line: 3,
+          body: `<!-- sacty-review:${id} -->\n前後の行にも付けられる`,
+        },
+      ]);
+      expect(pulls.reviews[0]?.body).toContain("`src/retry.ts:40` 差分の外の行");
+      expect(pulls.reviews[0]?.body).not.toContain("上限を設定から読む");
+      ledger.close();
+    });
+
+    it("行へのコメントを GitHub が受け付けなければ、本文に入れて投稿し直す", async () => {
+      const ledger = new SqliteLedgerStore(dbPath);
+      const pulls = new FakePulls();
+      pulls.rejectComments = true;
+      const { service } = makeService(
+        ledger,
+        [
+          out(
+            `# 評価\n\n${block({ "sacty-review-comments": [{ path: "src/retry.ts", line: 2, body: "上限が無い" }] })}`,
+          ),
+        ],
+        { pulls, planner: reviewPlanner },
+      );
+      const id = importReviewIssue(service, "https://github.com/acme/app/pull/12");
+      await service.runNext(id);
+      await service.runNext(id);
+      expect(pulls.reviews).toHaveLength(1);
+      expect(pulls.reviews[0]?.comments).toEqual([]);
+      expect(pulls.reviews[0]?.body).toContain("`src/retry.ts:2` 上限が無い");
+      const task = service.get(id)?.task;
+      expect(task && isCompleted(task)).toBe(true);
+      ledger.close();
+    });
+
     it("投稿の後、記録の前に止まっても、次の実行で同じレビューを二度投稿しない", async () => {
       const ledger = new SqliteLedgerStore(dbPath);
       const pulls = new FakePulls();
@@ -2879,6 +2978,8 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       await service.checkPullRequests();
       const events = service.get(id)?.ledger ?? [];
       const imported = events.find((e) => e.type === "PullRequestReviewImported");
+      // sacty が投稿したレビューを除けるよう、プロジェクトのアカウントを渡して読む（PBI-19）
+      expect(pulls.feedbackAccounts.at(-1)).toBe("me");
       expect(imported?.actor).toBe("person");
       expect(imported?.payload).toMatchObject({
         number: 7,

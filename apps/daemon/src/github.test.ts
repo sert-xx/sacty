@@ -559,14 +559,25 @@ describe("PR のレビュー（PBI-19）", () => {
       { status: 422, json: { message: "Unprocessable" } },
     ]);
     const client = new GitHubPullRequests(impl);
-    const input = { ...target, commit: "h".repeat(40), body: "## sacty のレビュー" };
+    const input = {
+      ...target,
+      commit: "h".repeat(40),
+      body: "## sacty のレビュー",
+      comments: [{ path: "src/retry.ts", line: 3, body: "上限が無い" }],
+    };
     expect(await client.postReview(input)).toEqual({
       url: "https://github.com/acme/app/pull/12#pullrequestreview-5",
     });
     expect(calls[0]).toMatchObject({
       url: `${api}/pulls/12/reviews`,
       method: "POST",
-      body: { commit_id: "h".repeat(40), body: "## sacty のレビュー", event: "COMMENT" },
+      body: {
+        commit_id: "h".repeat(40),
+        body: "## sacty のレビュー",
+        event: "COMMENT",
+        // 行へのコメントは、PR の先頭のファイルの行（差分の右側）に付ける
+        comments: [{ path: "src/retry.ts", line: 3, side: "RIGHT", body: "上限が無い" }],
+      },
     });
     expect(errorText(await client.postReview(input).catch((e: unknown) => e))).toMatchObject({
       code: "github.failed",
@@ -574,12 +585,29 @@ describe("PR のレビュー（PBI-19）", () => {
     });
   });
 
-  it("目印を含むレビューを、すべてのページから探す", async () => {
+  it("プロジェクトのアカウントが投稿した、目印で始まるレビューを、すべてのページから探す", async () => {
+    const me = { login: "sacty-bot", type: "User" };
     const { impl, calls } = fakeFetch([
       {
         status: 200,
         json: [
-          { body: "LGTM", html_url: "https://github.com/acme/app/pull/12#pullrequestreview-1" },
+          {
+            user: me,
+            body: "LGTM",
+            html_url: "https://github.com/acme/app/pull/12#pullrequestreview-1",
+          },
+          // 他人が目印を書いても、投稿済みと見なさない
+          {
+            user: { login: "someone" },
+            body: "<!-- sacty-review:t1 -->",
+            html_url: "https://github.com/acme/app/pull/12#pullrequestreview-9",
+          },
+          // 目印を引用しただけ（目印で始まらない）のものも、投稿済みと見なさない
+          {
+            user: me,
+            body: "> <!-- sacty-review:t1 -->\n引用",
+            html_url: "https://github.com/acme/app/pull/12#pullrequestreview-8",
+          },
         ],
         headers: { link: `<${api}/pulls/12/reviews?per_page=100&page=2>; rel="next"` },
       },
@@ -587,6 +615,7 @@ describe("PR のレビュー（PBI-19）", () => {
         status: 200,
         json: [
           {
+            user: me,
             body: "<!-- sacty-review:t1 -->\n## sacty のレビュー",
             html_url: "https://github.com/acme/app/pull/12#pullrequestreview-2",
           },
@@ -594,41 +623,66 @@ describe("PR のレビュー（PBI-19）", () => {
       },
     ]);
     const client = new GitHubPullRequests(impl);
-    expect(await client.findReview({ ...target, marker: "<!-- sacty-review:t1 -->" })).toEqual({
-      url: "https://github.com/acme/app/pull/12#pullrequestreview-2",
-    });
+    expect(
+      await client.findReview({
+        ...target,
+        account: "sacty-bot",
+        marker: "<!-- sacty-review:t1 -->",
+      }),
+    ).toEqual({ url: "https://github.com/acme/app/pull/12#pullrequestreview-2" });
     expect(calls.map((c) => c.url)).toEqual([
       `${api}/pulls/12/reviews?per_page=100`,
       `${api}/pulls/12/reviews?per_page=100&page=2`,
     ]);
   });
 
-  it("sacty のレビューの工程が投稿したレビューは、PR へのフィードバックとして取り込まない", async () => {
+  it("プロジェクトのアカウントが投稿した sacty のレビューと行へのコメントは取り込まず、人間が目印を写したものは取り込む", async () => {
     const human = { login: "reviewer", type: "User" };
+    const me = { login: "sacty-bot", type: "User" };
+    const at = (n: number) => `2026-10-11T00:00:0${n}Z`;
     const { impl } = fakeFetch([
       {
         status: 200,
         json: [
           {
             id: 1,
-            user: human,
+            user: me,
             state: "COMMENTED",
             body: "<!-- sacty-review:t1 -->\n## sacty のレビュー\n\n- 上限が無い",
-            submitted_at: "2026-10-11T00:00:01Z",
+            submitted_at: at(1),
           },
+          { id: 2, user: human, state: "COMMENTED", body: "ここを直して", submitted_at: at(2) },
+          // 人間が本文に目印を写しても、人間の指摘として取り込む
           {
-            id: 2,
+            id: 3,
             user: human,
             state: "COMMENTED",
-            body: "ここを直して",
-            submitted_at: "2026-10-11T00:00:02Z",
+            body: "<!-- sacty-review:t1 -->\nAI の指摘に同意",
+            submitted_at: at(3),
           },
         ],
       },
-      { status: 200, json: [] },
+      {
+        status: 200,
+        json: [
+          {
+            id: 4,
+            user: me,
+            body: "<!-- sacty-review:t1 -->\n上限が無い",
+            path: "src/retry.ts",
+            line: 3,
+            created_at: at(4),
+          },
+          // 同じアカウントでも、目印で始まらないもの（人間が手で書いた）は取り込む
+          { id: 5, user: me, body: "手で書いた指摘", path: "a.ts", line: 1, created_at: at(5) },
+        ],
+      },
       { status: 200, json: [] },
     ]);
-    const feedback = await new GitHubPullRequests(impl).feedback(target);
-    expect(feedback.map((f) => f.key)).toEqual(["review:2"]);
+    const feedback = await new GitHubPullRequests(impl).feedback({
+      ...target,
+      account: "sacty-bot",
+    });
+    expect(feedback.map((f) => f.key)).toEqual(["review:2", "review:3", "review_comment:5"]);
   });
 });

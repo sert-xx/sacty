@@ -41,6 +41,7 @@ const task = (patch: Partial<Task> = {}): Task => ({
   approved: {},
   proposals: [],
   testMap: [],
+  reviewComments: [],
   verifyFailures: 0,
   misses: [],
   importedFeedback: [],

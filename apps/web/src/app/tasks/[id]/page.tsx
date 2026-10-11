@@ -319,6 +319,27 @@ async function Deliverable({ task, step }: { task: Task; step: StepKey }) {
       ) : (
         <p className="text-sm text-muted-foreground">{running ? m.running : m.notYet}</p>
       )}
+      {step === "review" && task.reviewComments.length > 0 && (
+        <>
+          <h3 className="pt-2 text-sm font-semibold">
+            {m.reviewComments(task.reviewComments.length)}
+          </h3>
+          <ul className="flex flex-col gap-2">
+            {task.reviewComments.map((c) => (
+              <li
+                // 同じ行に複数のコメントがありうるので、本文も含める
+                key={`${c.path}:${c.line}:${c.body}`}
+                className="flex flex-col gap-1 rounded-lg border border-border p-3 text-sm"
+              >
+                <code className="font-mono text-xs text-muted-foreground [overflow-wrap:anywhere]">
+                  {c.path}:{c.line}
+                </code>
+                <Markdown>{c.body}</Markdown>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
       {step === "review" && task.reviewTarget && (
         <ul className="flex flex-col gap-1 text-sm text-muted-foreground">
           <li className="[overflow-wrap:anywhere]">

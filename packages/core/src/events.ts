@@ -105,6 +105,17 @@ export const TaskSource = z.object({
 });
 export type TaskSource = z.infer<typeof TaskSource>;
 
+/**
+ * レビューの工程の、PR の行へのコメント（PBI-19）。line は PR の先頭のファイルの行番号で、
+ * PR の差分に含まれる行だけ（差分の外の指摘は、レビューの本文に入れる）。
+ */
+export const ReviewComment = z.object({
+  path: z.string().min(1),
+  line: z.number().int().positive(),
+  body: z.string().min(1),
+});
+export type ReviewComment = z.infer<typeof ReviewComment>;
+
 /** 変更の申し出に対する、ゴールガーディアンの判定。 */
 export const Verdict = z.enum(["approved", "rejected", "undecidable"]);
 export type Verdict = z.infer<typeof Verdict>;
@@ -194,6 +205,8 @@ const AgentRunCompleted = z.object({
     testViewpoints: z.array(TestViewpoint).default([]),
     /** 実装の工程が申告した、観点とテストの対応。 */
     testMap: z.array(TestMapping).default([]),
+    /** レビューの工程の、PR の行へのコメント（PBI-19）。 */
+    reviewComments: z.array(ReviewComment).default([]),
   }),
 });
 

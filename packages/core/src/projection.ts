@@ -3,6 +3,7 @@ import type {
   ParsedEventInput,
   PauseReason,
   Remark,
+  ReviewComment,
   StepKey,
   StepPlan,
   TaskSource,
@@ -172,6 +173,8 @@ export type Task = {
   issueComment?: { url: string } | { failed: DaemonText };
   /** レビューの工程の対象の PR（PBI-19）。 */
   reviewTarget?: PayloadOf<"ReviewTargetResolved">;
+  /** レビューの工程が書いた、PR の行へのコメント（PBI-19）。 */
+  reviewComments: ReviewComment[];
   /** レビューの結果を投稿した、PR のレビューの URL（PBI-19）。 */
   reviewPost?: { url: string };
   /** オーケストレーターが工程を選んだ理由（PBI-17。固定の工程だった台帳には無い）。 */
@@ -262,6 +265,7 @@ export function applyEvent(
       approved: {},
       proposals: [],
       testMap: [],
+      reviewComments: [],
       verifyFailures: 0,
       misses: [],
       importedFeedback: [],
@@ -327,6 +331,7 @@ export function applyEvent(
           throw new LedgerIntegrityError(event, "the step is already approved (frozen)");
         }
         if (event.payload.step === "design") task.testViewpoints = event.payload.testViewpoints;
+        if (event.payload.step === "review") task.reviewComments = event.payload.reviewComments;
         if (event.payload.step === "implement") {
           task.testMap = event.payload.testMap;
           task.verification = "pending";
