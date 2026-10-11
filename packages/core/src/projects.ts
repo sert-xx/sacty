@@ -24,9 +24,23 @@ export const ProjectTarget = z.discriminatedUnion("scope", [
 export type ProjectTarget = z.infer<typeof ProjectTarget>;
 
 /**
- * 取り込むラベル（PBI-25）。sacty 全体の設定にするまで（PBI-26）、すべての対象でこのラベルを使う。
+ * sacty 全体の設定（プロジェクトとは別。PBI-26）。intakeLabel は、すべてのプロジェクトの対象で取り込む
+ * Issue・PR のラベル。設定していなければ取り込まない。
  */
-export const INTAKE_LABEL = "sacty";
+export const SactySettings = z.object({
+  // 空の入力は「設定しない」として扱う
+  intakeLabel: z.preprocess(
+    (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+    z
+      .string()
+      .trim()
+      .max(50)
+      .regex(/^[^"\\]*$/, code("input.invalidLabel"))
+      .optional(),
+  ),
+});
+export type SactySettings = z.infer<typeof SactySettings>;
+export type SactySettingsInput = z.input<typeof SactySettings>;
 
 /**
  * コンテキストリポジトリの指定。repo は git の URL かローカルのパス、ref はブランチやタグ

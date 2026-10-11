@@ -23,6 +23,7 @@ import {
   resumeTask,
   runIntake,
   saveProject,
+  saveSettings,
   voidRemark,
 } from "@/lib/daemon";
 
@@ -206,6 +207,25 @@ export async function saveProjectAction(
     revalidatePath("/", "layout");
     redirect(`/projects/${result.project.id}`);
   }
+  refresh();
+  return { saved: true };
+}
+
+export type SaveSettingsState = { message?: string; saved?: boolean };
+
+/** sacty 全体の設定（取り込むラベルなど。PBI-26）を保存する。 */
+export async function saveSettingsAction(
+  _prev: SaveSettingsState,
+  formData: FormData,
+): Promise<SaveSettingsState> {
+  const a = (await getMessages()).common.action;
+  let result: Awaited<ReturnType<typeof saveSettings>>;
+  try {
+    result = await saveSettings({ intakeLabel: String(formData.get("intakeLabel") ?? "") });
+  } catch {
+    return { message: a.daemonDown };
+  }
+  if (!result.ok) return { message: result.message };
   refresh();
   return { saved: true };
 }

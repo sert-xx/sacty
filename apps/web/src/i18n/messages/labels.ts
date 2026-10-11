@@ -27,7 +27,11 @@ const ja = {
     implement: "実装",
     pr: "PR作成",
   } satisfies Record<StepKey, string>,
-  start: { sacty: "sacty", github_issue: "GitHub Issue" } satisfies Record<Task["start"], string>,
+  start: {
+    sacty: "sacty",
+    github_issue: "GitHub Issue",
+    github_pull_request: "GitHub PR",
+  } satisfies Record<Task["start"], string>,
   status: {
     queued: "実行待ち",
     running: "実行中",
@@ -188,7 +192,7 @@ const en: LabelMessages = {
     implement: "Implement",
     pr: "Open PR",
   },
-  start: { sacty: "sacty", github_issue: "GitHub Issue" },
+  start: { sacty: "sacty", github_issue: "GitHub Issue", github_pull_request: "GitHub PR" },
   status: {
     queued: "Queued",
     running: "Running",

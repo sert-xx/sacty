@@ -21,6 +21,7 @@ const ja = {
   },
   user: {
     label: "ユーザー設定",
+    settings: "sacty の設定",
     theme: "テーマ",
     themes: { system: "システムに従う", light: "ライト", dark: "ダーク" },
     language: "言語",
@@ -53,6 +54,7 @@ const en: ShellMessages = {
   },
   user: {
     label: "Preferences",
+    settings: "sacty settings",
     theme: "Theme",
     themes: { system: "System", light: "Light", dark: "Dark" },
     language: "Language",

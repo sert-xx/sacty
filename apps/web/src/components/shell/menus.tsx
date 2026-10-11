@@ -193,6 +193,11 @@ export function UserMenu({ language }: { language: LanguagePreference }) {
       <Menu.Portal>
         <Menu.Positioner sideOffset={8} align="end">
           <Menu.Popup className={cn(POPUP, "w-60 p-1.5")}>
+            {/* sacty 全体の設定（プロジェクトとは別。PBI-26） */}
+            <Menu.LinkItem href="/settings" className={ITEM}>
+              {t.settings}
+            </Menu.LinkItem>
+            <Menu.Separator className="my-1 h-px bg-border" />
             <Menu.Group>
               <Menu.GroupLabel className="px-3 pt-2 pb-1 text-xs text-muted-foreground">
                 {t.theme}

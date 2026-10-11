@@ -96,7 +96,7 @@ export type Task = {
   projectId: string;
   title: string;
   body: string;
-  start: "sacty" | "github_issue";
+  start: "sacty" | "github_issue" | "github_pull_request";
   /** 取り込み元（GitHub Issue）。 */
   source?: TaskSource;
   /** 画面で作ったタスクの対象リポジトリ（owner/name。PBI-21）。Issue から取り込んだタスクは source.repo。 */
@@ -661,7 +661,8 @@ export function applyEvent(
 
     case "IssueCommented":
     case "IssueCommentFailed":
-      if (!isCompleted(task) || task.source?.kind !== "github_issue") {
+      // Issue・PR から取り込んだタスク（PR も Issue のコメントの API で返す。PBI-26）
+      if (!isCompleted(task) || !task.source) {
         throw new ActivityIntegrityError(event, "the task is not a completed issue task");
       }
       if (task.issueComment) throw new ActivityIntegrityError(event, "already commented");

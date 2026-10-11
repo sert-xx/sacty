@@ -181,6 +181,10 @@ function guardianCodeLines(task: Task, code: "base" | "implemented"): string[] {
  * 対象リポジトリが GitHub でなければ、PR は無いものとする。
  */
 export function referencedPullRequest(task: Task): { repo: string; number: number } | undefined {
+  // PR から取り込んだタスクは、その PR（PBI-26）
+  if (task.source?.kind === "github_pull_request") {
+    return { repo: task.source.repo, number: task.source.number };
+  }
   const repo = task.repository && githubRepoOf(task.repository.url);
   if (!repo) return undefined;
   const pattern = /https:\/\/github\.com\/([\w.-]+\/[\w.-]+)\/pull\/(\d+)/g;

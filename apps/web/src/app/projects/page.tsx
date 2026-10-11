@@ -57,8 +57,22 @@ async function Projects() {
           </h2>
           {!intake ? (
             <p className="text-muted-foreground">{t.intake.stopped}</p>
+          ) : !intake.label ? (
+            // 取り込むラベルは sacty 全体の設定（PBI-26）
+            <p className="text-warn">
+              {t.intake.noLabel}{" "}
+              <Link href="/settings" className="underline">
+                {t.intake.settings}
+              </Link>
+            </p>
           ) : (
             <>
+              <p className="text-muted-foreground">
+                {t.intake.label(intake.label)}{" "}
+                <Link href="/settings" className="underline">
+                  {t.intake.settings}
+                </Link>
+              </p>
               <p className="text-muted-foreground">
                 {intake.lastRunAt
                   ? t.intake.lastRun(formatStamp(intake.lastRunAt, m.locale), intake.imported ?? 0)

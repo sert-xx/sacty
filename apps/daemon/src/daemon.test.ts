@@ -27,6 +27,7 @@ import type { RepositoryWorkspace } from "./repository.js";
 import { MemorySecretStore } from "./secrets.js";
 import { createApp } from "./server.js";
 import { type ServiceDeps, TaskService } from "./service.js";
+import { MemorySettingsStore } from "./settings.js";
 
 /** 記録した文言（コードと引数）を、日本語の文にする（PBI-11）。 */
 const ja = (text: unknown) => renderMessage(text, "ja");
@@ -480,6 +481,7 @@ function makeService(
     tests?: FakeTests;
     pulls?: FakePulls;
     projects?: MemoryProjectStore;
+    settings?: MemorySettingsStore;
     contexts?: ContextFetcher;
     github?: FakeGitHub;
     now?: () => number;
@@ -503,6 +505,8 @@ function makeService(
     tests,
     pulls,
     projects: options.projects ?? projectsWithAccount(),
+    // 取り込むラベル（sacty の設定。PBI-26）
+    settings: options.settings ?? new MemorySettingsStore({ intakeLabel: "sacty" }),
     contexts: options.contexts ?? new FakeContexts(),
     github: options.github ?? new FakeGitHub(),
     ...(options.now ? { now: options.now } : {}),
@@ -762,6 +766,7 @@ describe("秘密情報と予算の通知（レビュー指摘）", () => {
       pulls: new FakePulls(),
       projects: projectsWithAccount(),
       contexts: new FakeContexts(),
+      settings: new MemorySettingsStore(),
       workspaceRoot: join(dir, "workspaces"),
     });
     const c = throwing.createTask({ projectId: "default", title: "C" });
@@ -843,6 +848,7 @@ describe("秘密情報と予算の通知（レビュー指摘）", () => {
       pulls: new FakePulls(),
       projects: projectsWithAccount(),
       contexts: new FakeContexts(),
+      settings: new MemorySettingsStore(),
       github: new FakeGitHub(),
       planner: async () => ({
         steps: [...MVP_STEPS],
@@ -3908,6 +3914,120 @@ describe("プロジェクトの対象と、オーケストレーターが決め�
   });
 });
 
+describe("sacty の設定と、Issue・PR の取り込み（PBI-26）", () => {
+  const promptOf = (executor: FakeExecutor, i: number) =>
+    executor.calls[i]?.command.join(" ") ?? "";
+  const out = (text: string): AgentOutcome => ({
+    kind: "completed",
+    output: text,
+    usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 1 },
+  });
+  const block = (b: Record<string, unknown>) => `\`\`\`json\n${JSON.stringify(b)}\n\`\`\``;
+  const found = (number: number, labels: string[], pullRequest = false) => ({
+    repo: "acme/app",
+    number,
+    title: `${pullRequest ? "PR" : "Issue"} ${number}`,
+    body: "本文",
+    url: `https://github.com/acme/app/${pullRequest ? "pull" : "issues"}/${number}`,
+    labels,
+    ...(pullRequest ? { pullRequest: true } : {}),
+  });
+
+  it("取り込むラベルは sacty 全体の設定で、設定していなければ取り込まない。変えると取り込みは読み直す", () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const settings = new MemorySettingsStore();
+    const { service } = makeService(activity, [], { settings });
+    expect(service.getSettings()).toEqual({});
+    expect(service.intakeSources()).toEqual([]);
+    expect(service.importIssues([found(1, ["sacty"])])).toEqual([]);
+    const before = service.projectsRevision();
+
+    // 前後の空白は除き、空は「設定しない」
+    expect(service.saveSettings({ intakeLabel: "  ai-task " })).toEqual({ intakeLabel: "ai-task" });
+    expect(service.projectsRevision()).not.toBe(before);
+    expect(service.intakeSources()).toEqual([
+      { query: 'is:open repo:acme/app label:"ai-task"', account: "me", project: "デフォルト" },
+    ]);
+    // ラベルの大文字・小文字は区別しない。ほかのラベルは取り込まない
+    expect(
+      service
+        .importIssues([found(2, ["AI-Task"]), found(3, ["sacty"])])
+        .map((t) => t.source?.number),
+    ).toEqual([2]);
+    expect(service.saveSettings({ intakeLabel: " " })).toEqual({});
+    expect(service.intakeSources()).toEqual([]);
+    // 検索の条件を壊す文字は受け付けない
+    expect(() => service.saveSettings({ intakeLabel: 'a" OR label:"b' })).toThrow();
+    activity.close();
+  });
+
+  it("PR も取り込み、PR から作ったタスクは、その PR をレビューの対象として工程を選ばせる", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const pulls = new FakePulls();
+    pulls.prInfo = { ...pulls.prInfo, number: 8, url: "https://github.com/acme/app/pull/8" };
+    const { service, executor } = makeService(
+      activity,
+      [out(block({ "sacty-steps": { plan: "review", reason: "PR のレビュー" } })), out("# 評価")],
+      { pulls, realPlanner: true },
+    );
+    const [task] = service.importIssues([found(8, ["sacty"], true)]);
+    expect(task?.start).toBe("github_pull_request");
+    expect(task?.source).toEqual({
+      kind: "github_pull_request",
+      repo: "acme/app",
+      number: 8,
+      url: "https://github.com/acme/app/pull/8",
+    });
+    const id = task?.id ?? "";
+    await service.runNext(id);
+    // 本文に PR の URL が無くても、取り込んだ PR そのものをレビューの対象にする
+    expect(promptOf(executor, 0)).toContain("- review：");
+    expect(pulls.prInfoRequests).toEqual([{ repo: "acme/app", number: 8, token: "ghp_secret" }]);
+    await service.runNext(id);
+    expect(pulls.reviews[0]?.number).toBe(8);
+    activity.close();
+  });
+
+  it("PR から作った調査のタスクは、結果を PR にコメントする", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const pulls = new FakePulls();
+    const { service } = makeService(activity, [out("# 調査の結果")], {
+      pulls,
+      planner: async () => ({
+        steps: ["investigate" as const],
+        plan: "investigate" as const,
+        reason: "質問",
+        fallback: false,
+        costUsd: 0,
+        estimated: false,
+      }),
+    });
+    const [task] = service.importIssues([found(9, ["sacty"], true)]);
+    const id = task?.id ?? "";
+    await service.runNext(id);
+    service.approve(id, { step: "investigate", submission: 1 });
+    await service.runNext(id);
+    expect(pulls.issueComments.map((c) => [c.repo, c.number])).toEqual([["acme/app", 9]]);
+    expect(service.get(id)?.task.issueComment).toBeDefined();
+    activity.close();
+  });
+
+  it("状態には、取り込むラベルを含める（設定していなければ無い）", () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const settings = new MemorySettingsStore();
+    const config = (): ConfigResult => {
+      const base = configOf(agent())();
+      if (!base.ok) throw new Error("unreachable");
+      return { ok: true, config: { ...base.config, github: { pollIntervalSec: 300 } } };
+    };
+    const { service } = makeService(activity, [], { settings, config });
+    expect(service.status().intake).toEqual({});
+    service.saveSettings({ intakeLabel: "sacty" });
+    expect(service.status().intake).toEqual({ label: "sacty" });
+    activity.close();
+  });
+});
+
 describe("プロジェクトと GitHub Issue の取り込み（PBI-5a）", () => {
   const issue = (repo: string, number: number, labels: string[], title = `Issue ${number}`) => ({
     repo,
@@ -3989,8 +4109,8 @@ describe("プロジェクトと GitHub Issue の取り込み（PBI-5a）", () =>
     // 検索には、プロジェクトに選んだ gh のアカウントを使う（PBI-13）。選んでいなければアカウントは無い。
     // ラベルは、sacty 全体の設定にするまで（PBI-26）、すべての対象で sacty（PBI-25）
     expect(service.intakeSources()).toEqual([
-      { query: 'is:issue is:open org:acme label:"sacty"', account: "me", project: "決済" },
-      { query: 'is:issue is:open repo:acme/auth label:"sacty"', project: "認証" },
+      { query: 'is:open org:acme label:"sacty"', account: "me", project: "決済" },
+      { query: 'is:open repo:acme/auth label:"sacty"', project: "認証" },
     ]);
     const created = service.importIssues([
       issue("acme/payments", 1, ["sacty"], "冪等性キー"),
@@ -4488,6 +4608,31 @@ describe("API", () => {
   const token = "test-token";
   const auth = { authorization: `Bearer ${token}` };
   const json = { ...auth, "content-type": "application/json" };
+
+  it("sacty の設定を読み書きし、形の誤りは400を返す（PBI-26）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const app = createApp(
+      makeService(activity, [], { settings: new MemorySettingsStore() }).service,
+      token,
+    );
+    expect(await (await app.request("/api/settings", { headers: auth })).json()).toEqual({
+      settings: {},
+    });
+    const put = (body: unknown) =>
+      app.request("/api/settings", { method: "PUT", headers: json, body: JSON.stringify(body) });
+    expect(await (await put({ intakeLabel: "sacty" })).json()).toEqual({
+      settings: { intakeLabel: "sacty" },
+    });
+    const bad = await put({ intakeLabel: 'a"b' });
+    expect(bad.status).toBe(400);
+    expect(((await bad.json()) as { issues: unknown[] }).issues).toEqual([
+      { path: ["intakeLabel"], message: { code: "input.invalidLabel" } },
+    ]);
+    expect(await (await app.request("/api/settings", { headers: auth })).json()).toEqual({
+      settings: { intakeLabel: "sacty" },
+    });
+    activity.close();
+  });
 
   it("トークンがないと401を返す", async () => {
     const activity = new SqliteActivityStore(dbPath);
