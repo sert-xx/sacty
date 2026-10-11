@@ -43,6 +43,7 @@ const task = (patch: Partial<Task> = {}): Task => ({
   testMap: [],
   verifyFailures: 0,
   misses: [],
+  importedReviewIds: [],
   submissions: {},
   remarks: [],
   budget: { usedUsd: 0, capUsd: 1, warned: false, estimated: false },
@@ -352,5 +353,33 @@ describe("PR で判断する成果物チェック（PBI-14a）", () => {
     expect(describeEvent(event({ type: "PullRequestClosed", payload: { number: 7 } }))).toBe(
       "PR #7 がマージされずに閉じられた → 人間の判断待ち",
     );
+  });
+});
+
+describe("PR の指摘の取り込み（PBI-14b）", () => {
+  it("判断中・戻し先の確認待ちを表示する", () => {
+    expect(
+      statusText(
+        task({
+          status: "awaiting_approval",
+          gate: { step: "pr", submission: 1 },
+          pendingReview: { reviewIds: [1], remarks: ["x"] },
+        }),
+      ),
+    ).toBe("ゴールガーディアンが PR の指摘を判断中");
+    expect(
+      statusText(
+        task({
+          status: "escalated",
+          gate: { step: "pr", submission: 1 },
+          escalation: {
+            step: "pr",
+            target: "design",
+            pendingRemarks: [],
+            reason: "rework_confirmation",
+          },
+        }),
+      ),
+    ).toBe("PR の指摘の戻し先の確認待ち");
   });
 });

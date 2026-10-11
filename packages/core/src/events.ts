@@ -395,6 +395,45 @@ const PullRequestReopened = z.object({
 });
 
 /**
+ * PR の Request changes のレビューを、成果物チェックの指摘として取り込んだ（PBI-14b）。最新の提出に
+ * 付いたレビューだけを取り込み、同じレビューは二重に取り込まない。指摘は、レビューの本文と行ごとのコメント。
+ */
+const PullRequestReviewImported = z.object({
+  type: z.literal("PullRequestReviewImported"),
+  payload: z.object({
+    number: z.number().int().positive(),
+    reviews: z
+      .array(
+        z.object({
+          id: z.number().int(),
+          author: z.string(),
+          submittedAt: z.string(),
+          url: z.string().optional(),
+        }),
+      )
+      .min(1),
+    remarks: z.array(z.string().min(1)).min(1),
+  }),
+});
+
+/**
+ * 取り込んだ PR の指摘で、どの工程まで戻すかのゴールガーディアンの判断（PBI-14b）。target が無ければ
+ * 判断できなかった。実装だけならそのまま差し戻し、設計・要求要件まで戻す・判断できないときは人間が確かめる。
+ */
+const ReworkJudged = z.object({
+  type: z.literal("ReworkJudged"),
+  payload: z.object({
+    target: StepKey.optional(),
+    /** ゴールガーディアンが書いた理由。実行に失敗したときは sacty の文言。 */
+    reason: DaemonText,
+    agentId: z.string(),
+    usage: TokenUsage.optional(),
+    costUsd: z.number().nonnegative().default(0),
+    estimated: z.boolean().default(false),
+  }),
+});
+
+/**
  * sacty のブランチにプッシュした（PRの作成の前に記録する。PRの作成に失敗しても、
  * プッシュ済みのブランチを中止で片付けられるように）。
  */
@@ -491,8 +530,12 @@ const TaskEscalated = z.object({
     /**
      * too_many_changes：差し戻しが上限を超えた
      * change_undecidable：ゴールガーディアンが変更の申し出を判定できなかった
+     * rework_confirmation：PR の指摘で、設計・要求要件まで戻す（または戻し先を判断できなかった）ので、
+     *   人間が戻し先を確かめる（PBI-14b）
      */
-    reason: z.enum(["too_many_changes", "change_undecidable"]),
+    reason: z.enum(["too_many_changes", "change_undecidable", "rework_confirmation"]),
+    /** ゴールガーディアンの判断の理由（rework_confirmation のとき）。 */
+    note: DaemonText.optional(),
     /** 判定できなかった申し出（change_undecidable のとき）。 */
     proposalId: z.string().optional(),
     /** 上限に達したときに人間が書いていた指摘。差し戻しを続ける場合に使う。 */
@@ -526,6 +569,8 @@ export const EventInput = z.discriminatedUnion("type", [
   PullRequestMerged,
   PullRequestClosed,
   PullRequestReopened,
+  PullRequestReviewImported,
+  ReworkJudged,
   BranchPushed,
   GuardianMissed,
   TaskCancelled,

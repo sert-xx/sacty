@@ -57,6 +57,11 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
   const messages = await getMessages();
   const { task: m, labels, parts, locale } = messages;
   const action = personAction(task, labels);
+  // PR の指摘の戻し先の確認（PBI-14b）
+  const rework =
+    task.status === "escalated" && task.escalation?.reason === "rework_confirmation"
+      ? task.escalation
+      : undefined;
   // 一時停止できるのは、sacty やエージェントが作業している（または作業を待っている）間。
   // ゴールガーディアンの変更の申し出の判定中は、すぐ終わるので止めない
   const canPause =
@@ -115,22 +120,26 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
             <h2 id="gate" className="text-[15px] font-semibold text-warn">
               {proposal
                 ? m.gate.undecidable
-                : task.status === "escalated"
-                  ? m.gate.tooMany
-                  : statusText(task, labels)}
+                : rework
+                  ? m.gate.rework
+                  : task.status === "escalated"
+                    ? m.gate.tooMany
+                    : statusText(task, labels)}
             </h2>
             <p className="text-sm">
               {proposal
                 ? m.gate.undecidableHelp
-                : task.status === "escalated"
-                  ? m.gate.tooManyHelp
-                  : task.gate?.step === "pr" && task.pullRequestState === "closed"
-                    ? m.gate.prClosedHelp
-                    : task.gate?.step === "pr" && task.pullRequestState === "merged_outdated"
-                      ? m.gate.prMergedOutdatedHelp
-                      : task.gate?.step === "pr" && task.pullRequestState === "open"
-                        ? m.gate.prHelp
-                        : m.gate.reviewHelp}
+                : rework
+                  ? m.gate.reworkHelp(labels.step[rework.target], labels.text(rework.note ?? ""))
+                  : task.status === "escalated"
+                    ? m.gate.tooManyHelp
+                    : task.gate?.step === "pr" && task.pullRequestState === "closed"
+                      ? m.gate.prClosedHelp
+                      : task.gate?.step === "pr" && task.pullRequestState === "merged_outdated"
+                        ? m.gate.prMergedOutdatedHelp
+                        : task.gate?.step === "pr" && task.pullRequestState === "open"
+                          ? m.gate.prHelp
+                          : m.gate.reviewHelp}
             </p>
           </div>
           <Link

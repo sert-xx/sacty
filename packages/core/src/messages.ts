@@ -89,6 +89,7 @@ const PARAMS = {
   "run.repositorySettingsMissing": z.object({ project: z.string(), repo: z.string() }),
   "run.repositoryNotConfigured": null,
   "guardian.verdictUnreadable": null,
+  "guardian.reworkUnreadable": null,
   "github.ghMissing": null,
   "github.accountRequired": z.object({ project: z.string() }),
   "github.accountUnavailable": z.object({ account: z.string() }),
@@ -117,7 +118,7 @@ const PARAMS = {
   "git.nothingToCommit": null,
   "git.notSactyBranch": null,
   "github.failed": z.object({
-    action: z.enum(["updatePr", "createPr", "closePr", "getPr", "searchIssues"]),
+    action: z.enum(["updatePr", "createPr", "closePr", "getPr", "getReviews", "searchIssues"]),
     status: z.number(),
     detail: z.string(),
     hint: z.enum(["none", "token", "permission"]),
@@ -196,6 +197,7 @@ const githubActionJa = {
   createPr: "PRを作れませんでした",
   closePr: "PRを閉じられませんでした",
   getPr: "PRの状態を確認できませんでした",
+  getReviews: "PRのレビューを確認できませんでした",
   searchIssues: "Issue を検索できませんでした",
 } as const;
 const githubActionEn = {
@@ -203,6 +205,7 @@ const githubActionEn = {
   createPr: "Could not open the PR",
   closePr: "Could not close the PR",
   getPr: "Could not check the PR",
+  getReviews: "Could not check the PR reviews",
   searchIssues: "Could not search issues",
 } as const;
 const githubHintJa = {
@@ -308,6 +311,7 @@ const ja: MessageDictionary = {
   "run.repositoryNotConfigured":
     "実装の対象リポジトリが設定されていません。config.yaml の repository を設定してから再開してください。",
   "guardian.verdictUnreadable": "ゴールガーディアンの出力から、判定を読み取れませんでした。",
+  "guardian.reworkUnreadable": "ゴールガーディアンの出力から、戻し先の判断を読み取れませんでした。",
   "github.ghMissing":
     "gh コマンドが見つかりません。GitHub CLI をインストールし、gh auth login でログインしてください。",
   "github.accountRequired": ({ project }) =>
@@ -475,6 +479,7 @@ const en: MessageDictionary = {
   "run.repositoryNotConfigured":
     "No target repository is configured. Set repository in config.yaml, then resume.",
   "guardian.verdictUnreadable": "Could not read a verdict from the Goal Guardian's output.",
+  "guardian.reworkUnreadable": "Could not read the step to redo from the Goal Guardian's output.",
   "github.ghMissing":
     "The gh command was not found. Install GitHub CLI and sign in with gh auth login.",
   "github.accountRequired": ({ project }) =>

@@ -17,7 +17,24 @@ export interface PullRequests {
   close(input: { repo: string; token: string; number: number }): Promise<void>;
   /** PR の状態（成果物チェックの間に見守る。PBI-14a）。 */
   status(input: { repo: string; token: string; number: number }): Promise<PullRequestStatus>;
+  /** PR の Request changes のレビューと、その行ごとのコメント（PBI-14b）。 */
+  changeRequests(input: {
+    repo: string;
+    token: string;
+    number: number;
+  }): Promise<PullRequestChangeRequest[]>;
 }
+
+/** PR の Request changes のレビュー。commitId はレビューした提出のコミット。 */
+export type PullRequestChangeRequest = {
+  id: number;
+  author: string;
+  submittedAt: string;
+  commitId: string;
+  url?: string;
+  body: string;
+  comments: { path: string; line?: number; body: string }[];
+};
 
 /**
  * PR の状態。merged はマージ済み、closed はマージせずに閉じられた。headSha は PR の先頭のコミット
@@ -42,6 +59,48 @@ export class GitHubPullRequests implements PullRequests {
 
   close(input: Parameters<PullRequests["close"]>[0]) {
     return closePullRequest(this.fetchImpl, this.api, input);
+  }
+
+  async changeRequests(
+    input: Parameters<PullRequests["changeRequests"]>[0],
+  ): Promise<PullRequestChangeRequest[]> {
+    const headers = {
+      accept: "application/vnd.github+json",
+      authorization: `Bearer ${input.token}`,
+      "x-github-api-version": "2022-11-28",
+    };
+    const get = async (path: string) => {
+      const res = await this.fetchImpl(`${this.api}/repos/${input.repo}${path}`, { headers });
+      const json = (await res.json().catch(() => ({}))) as unknown;
+      if (!res.ok) throw apiError("getReviews", res.status, json as Record<string, unknown>);
+      return Array.isArray(json) ? (json as Record<string, unknown>[]) : [];
+    };
+    const reviews = await get(`/pulls/${input.number}/reviews?per_page=100`);
+    const result: PullRequestChangeRequest[] = [];
+    for (const review of reviews) {
+      if (review.state !== "CHANGES_REQUESTED" || typeof review.id !== "number") continue;
+      const comments = await get(
+        `/pulls/${input.number}/reviews/${review.id}/comments?per_page=100`,
+      );
+      result.push({
+        id: review.id,
+        author: String((review.user as { login?: unknown } | null)?.login ?? ""),
+        submittedAt: String(review.submitted_at ?? ""),
+        commitId: String(review.commit_id ?? ""),
+        ...(typeof review.html_url === "string" ? { url: review.html_url } : {}),
+        body: typeof review.body === "string" ? review.body : "",
+        comments: comments.map((c) => ({
+          path: String(c.path ?? ""),
+          ...(typeof c.line === "number"
+            ? { line: c.line }
+            : typeof c.original_line === "number"
+              ? { line: c.original_line }
+              : {}),
+          body: typeof c.body === "string" ? c.body : "",
+        })),
+      });
+    }
+    return result;
   }
 
   async status(input: Parameters<PullRequests["status"]>[0]): Promise<PullRequestStatus> {
@@ -139,7 +198,7 @@ async function closePullRequest(
 }
 
 function apiError(
-  action: "updatePr" | "createPr" | "closePr" | "getPr" | "searchIssues",
+  action: "updatePr" | "createPr" | "closePr" | "getPr" | "getReviews" | "searchIssues",
   status: number,
   json: Record<string, unknown>,
 ): Error {

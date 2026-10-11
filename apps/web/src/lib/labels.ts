@@ -21,6 +21,10 @@ export function statusText(task: Task, l: LabelMessages): string {
     return l.state.finalReviewing;
   }
   if (task.status === "escalated" && proposal) return l.state.changeUndecided;
+  if (task.status === "escalated" && task.escalation?.reason === "rework_confirmation") {
+    return l.state.reworkConfirmation;
+  }
+  if (task.status === "awaiting_approval" && task.pendingReview) return l.state.reworkJudging;
   if (task.status === "awaiting_approval" && task.gate?.step === "pr") {
     // PR を作ったタスクは、PR のマージで承認する（PBI-14a）
     if (task.pullRequestState === "closed") return l.state.prClosed;
@@ -216,7 +220,21 @@ export function describeEvent(event: LedgerEvent, l: LabelMessages): string {
     case "TaskEscalated":
       return event.payload.reason === "change_undecidable"
         ? e.escalatedUndecidable(event.payload.proposalId)
-        : e.escalatedTooMany(l.step[event.payload.target ?? event.payload.step]);
+        : event.payload.reason === "rework_confirmation"
+          ? e.escalatedRework(l.step[event.payload.target ?? event.payload.step])
+          : e.escalatedTooMany(l.step[event.payload.target ?? event.payload.step]);
+    case "PullRequestReviewImported":
+      return e.PullRequestReviewImported(
+        event.payload.number,
+        [...new Set(event.payload.reviews.map((r) => r.author))].join(", "),
+        event.payload.remarks.length,
+      );
+    case "ReworkJudged":
+      return e.ReworkJudged(
+        event.payload.target ? l.step[event.payload.target] : undefined,
+        l.text(event.payload.reason),
+        withCost(event.payload.costUsd, event.payload.estimated),
+      );
   }
 }
 

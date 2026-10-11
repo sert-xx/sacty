@@ -365,3 +365,22 @@ describe("成果物チェックの間の PR の状態（PBI-14a）", () => {
     ).toThrow(/deliverable review is not open/);
   });
 });
+
+describe("PR のレビューの取り込み（PBI-14b）", () => {
+  it("成果物チェックで待っていなければ取り込まない", () => {
+    expect(() =>
+      project([
+        created("t8"),
+        steps("t8"),
+        ev("t8", {
+          type: "PullRequestReviewImported",
+          payload: {
+            number: 7,
+            reviews: [{ id: 1, author: "a", submittedAt: "2026-10-11T00:00:00Z" }],
+            remarks: ["x"],
+          },
+        }),
+      ]),
+    ).toThrow(/deliverable review is not open/);
+  });
+});

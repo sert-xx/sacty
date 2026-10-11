@@ -64,7 +64,12 @@ import {
   gitAuthSecrets,
   isGitHubHttps,
 } from "./gh.js";
-import type { FoundIssue, PullRequestStatus, PullRequests } from "./github.js";
+import type {
+  FoundIssue,
+  PullRequestChangeRequest,
+  PullRequestStatus,
+  PullRequests,
+} from "./github.js";
 import type { LedgerStore } from "./ledger.js";
 import type { ProjectStore } from "./projects.js";
 import {
@@ -72,10 +77,12 @@ import {
   buildGuardianPrompt,
   buildPrompt,
   buildPullRequestBody,
+  buildReworkPrompt,
   changeableSteps,
   EXECUTABLE_STEPS,
   extractBlocks,
   extractFinalReview,
+  extractRework,
   extractVerdict,
 } from "./prompts.js";
 import type { RepositoryWorkspace } from "./repository.js";
@@ -203,8 +210,9 @@ export class TaskService {
       if (!pr?.number || !pr.repo) continue;
       const usedSecrets: string[] = [];
       let status: PullRequestStatus;
+      let token: string;
       try {
-        const token = await this.githubToken(task, usedSecrets);
+        token = await this.githubToken(task, usedSecrets);
         status = await this.deps.pulls.status({ repo: pr.repo, token, number: pr.number });
       } catch (error) {
         console.warn(
@@ -227,6 +235,16 @@ export class TaskService {
         status.state === current ||
         (status.state === "merged" && current === "merged_outdated")
       ) {
+        // 開いたままの PR は、Request changes のレビューを指摘として取り込む（PBI-14b）
+        if (status.state === "open" && latest.status === "awaiting_approval") {
+          try {
+            await this.importChangeRequests(latest, token);
+          } catch (error) {
+            console.warn(
+              `[daemon] PR #${pr.number}（${pr.repo}）のレビューを取り込めませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
+            );
+          }
+        }
         continue;
       }
       // 承認にするのは、最新の提出（記録したコミット）がマージされたときだけ
@@ -280,6 +298,136 @@ export class TaskService {
         ]);
       }
     }
+  }
+
+  /**
+   * PR の Request changes のレビューを指摘として取り込み、ゴールガーディアンに戻し先を判断させて、
+   * 差し戻すか人間の確認に回す（PBI-14b）。取り込むのは、最新の提出（記録したコミット）に付いた、
+   * まだ取り込んでいないレビューだけ。途中で止まっても、次の確認で続きから進める（判断・反映）。
+   */
+  private async importChangeRequests(task: Task, token: string): Promise<void> {
+    const pr = task.pullRequest;
+    if (!pr?.number || !pr.repo) return;
+    let current = task;
+    if (!current.pendingReview) {
+      const fresh = (
+        await this.deps.pulls.changeRequests({ repo: pr.repo, token, number: pr.number })
+      ).filter((r) => r.commitId === pr.commit && !current.importedReviewIds.includes(r.id));
+      if (fresh.length === 0) return;
+      const latest = this.tasks.get(task.id);
+      if (latest?.status !== "awaiting_approval" || latest.pendingReview) return;
+      current = this.append(latest, [
+        {
+          // レビューは人間の判断なので、人間の操作として記録する
+          actor: "person",
+          event: {
+            type: "PullRequestReviewImported",
+            payload: {
+              number: pr.number,
+              reviews: fresh.map((r) => ({
+                id: r.id,
+                author: r.author,
+                submittedAt: r.submittedAt,
+                ...(r.url ? { url: r.url } : {}),
+              })),
+              remarks: reviewRemarks(fresh),
+            },
+          },
+        },
+      ]);
+    }
+    const pending = current.pendingReview;
+    if (!pending) return;
+    if (!pending.judgement) {
+      const config = this.deps.config();
+      if (!config.ok) return;
+      const judged = await this.judgeRework(current, pending.remarks, config.config);
+      // 判断の間に、人間が差し戻した・中止したなどで変わっていれば、記録しない
+      const latest = this.tasks.get(task.id);
+      if (
+        !latest?.pendingReview ||
+        latest.pendingReview.judgement ||
+        latest.pendingReview.reviewIds.join() !== pending.reviewIds.join()
+      ) {
+        return;
+      }
+      current = this.append(latest, [
+        { actor: "guardian", event: { type: "ReworkJudged", payload: judged } },
+      ]);
+    }
+    this.settleReview(current);
+  }
+
+  /**
+   * ゴールガーディアンの判断に従って、取り込んだ PR の指摘を反映する。実装だけなら差し戻し
+   * （上限を超えるならエスカレーション）、設計・要求要件まで戻す・判断できないなら人間の確認に回す。
+   */
+  private settleReview(task: Task): void {
+    const pending = task.pendingReview;
+    const judgement = pending?.judgement;
+    if (!pending || !judgement || task.gate?.step !== "pr" || task.status !== "awaiting_approval") {
+      return;
+    }
+    if (judgement.target === "implement") {
+      this.requestChanges(task.id, {
+        step: "pr",
+        submission: task.gate.submission,
+        target: "implement",
+        comments: pending.remarks,
+      });
+      return;
+    }
+    const target = judgement.target ?? "implement";
+    const round = changeRounds(task, target) + 1;
+    this.append(task, [
+      {
+        actor: "sacty",
+        event: {
+          type: "TaskEscalated",
+          payload: {
+            step: "pr",
+            target,
+            reason: "rework_confirmation",
+            note: judgement.reason,
+            pendingRemarks: pending.remarks.map((text, i) => ({
+              id: `${target}-${round}-${i + 1}`,
+              text,
+            })),
+          },
+        },
+      },
+    ]);
+  }
+
+  /** ゴールガーディアンに、PR の指摘の戻し先を判断させる（新しいセッション。PBI-14b）。 */
+  private async judgeRework(
+    task: Task,
+    remarks: string[],
+    config: SactyConfig,
+  ): Promise<Extract<EventInput, { type: "ReworkJudged" }>["payload"]> {
+    const agent = config.guardianAgent;
+    const runId = randomUUID();
+    const workspaceDir = join(this.deps.workspaceRoot, "_guardian", runId);
+    const targets = reworkTargets(task, "pr");
+    let result: Awaited<ReturnType<TaskService["execute"]>>;
+    try {
+      result = await this.execute({
+        agent,
+        image: config.image,
+        runId,
+        prompt: buildReworkPrompt(task, remarks, targets),
+        role: "rework",
+        workspaceDir,
+      });
+    } finally {
+      rmSync(workspaceDir, { recursive: true, force: true });
+    }
+    const { outcome, costUsd, estimated } = result;
+    const judgement =
+      outcome.kind === "completed"
+        ? extractRework(outcome.output, targets)
+        : { reason: message("run.guardianFailed", { detail: outcome.message }) };
+    return { ...judgement, agentId: agent.id, usage: outcome.usage, costUsd, estimated };
   }
 
   /** gh にログイン済みの GitHub のアカウント。gh が無いなどで分からなければ、その理由。 */
@@ -1866,9 +2014,15 @@ export class TaskService {
       throw new InvalidOperationError(message("gate.overLimit", { limit: MAX_CHANGE_REQUESTS }));
     }
     if (task.status === "escalated") {
-      // 書きかけの指摘は、エスカレーションしたときと同じ工程に戻す場合だけ引き継ぐ
-      if (remarks.length === 0 && task.escalation?.target === target) {
-        remarks = task.escalation.pendingRemarks;
+      // 書きかけの指摘は、エスカレーションしたときと同じ工程に戻す場合だけ引き継ぐ。
+      // PR の指摘の戻し先の確認では、人間がどの工程を選んでも引き継ぐ（指摘は人間のレビューなので）
+      const rework = task.escalation?.reason === "rework_confirmation";
+      if (
+        remarks.length === 0 &&
+        task.escalation &&
+        (rework || task.escalation.target === target)
+      ) {
+        remarks = toRemarks(task.escalation.pendingRemarks.map((r) => r.text));
       }
       if (remarks.length === 0) {
         throw new InvalidOperationError(message("gate.remarksRequired"));
@@ -1912,4 +2066,27 @@ export class TaskService {
       { actor: "person", event: { type: "RemarkVoided", payload: { remarkId } } },
     ]);
   }
+}
+
+/** 指摘の1件あたりの上限（差し戻しの入力と同じ）と、件数の上限。 */
+const REMARK_MAX = 2_000;
+const REMARKS_MAX = 50;
+
+/**
+ * PR の Request changes のレビューを、指摘の文にする（PBI-14b）。レビューの本文と、行ごとのコメント
+ * （ファイルと行を添える）を1件ずつにする。本文もコメントも無ければ、変更を求められたことを1件にする。
+ */
+function reviewRemarks(reviews: PullRequestChangeRequest[]): string[] {
+  const cut = (text: string) =>
+    text.length > REMARK_MAX ? `${text.slice(0, REMARK_MAX - 1)}…` : text;
+  const remarks = reviews.flatMap((r) => {
+    const items = [
+      ...(r.body.trim() ? [r.body.trim()] : []),
+      ...r.comments
+        .filter((c) => c.body.trim())
+        .map((c) => `${c.path}${c.line ? `:${c.line}` : ""}：${c.body.trim()}`),
+    ];
+    return items.length > 0 ? items : [`${r.author} が PR の変更を求めました（コメントなし）。`];
+  });
+  return remarks.slice(0, REMARKS_MAX).map(cut);
 }

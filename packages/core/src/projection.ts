@@ -158,7 +158,23 @@ export type Task = {
     | { kind: "tests"; tests: TestsRunResult }
     | { kind: "review"; review: FinalReview };
   /** エスカレーションの内容（差し戻しを続ける場合に使う、やり直す工程と書きかけの指摘）。 */
-  escalation?: { step: StepKey; target: StepKey; pendingRemarks: Remark[] };
+  escalation?: {
+    step: StepKey;
+    target: StepKey;
+    pendingRemarks: Remark[];
+    /** エスカレーションの理由（PBI-14b で足した。古い台帳には無い）。 */
+    reason?: PayloadOf<"TaskEscalated">["reason"];
+    /** ゴールガーディアンの判断の理由（PR の指摘の戻し先の確認のとき）。 */
+    note?: DaemonText;
+  };
+  /** 取り込んだ PR のレビュー（二重に取り込まないため。PBI-14b）。 */
+  importedReviewIds: number[];
+  /** 取り込んで、まだ差し戻しに反映していない PR の指摘と、ゴールガーディアンの戻し先の判断。 */
+  pendingReview?: {
+    reviewIds: number[];
+    remarks: string[];
+    judgement?: { target?: StepKey; reason: DaemonText };
+  };
   createdAt: string;
   updatedAt: string;
 };
@@ -239,6 +255,7 @@ export function applyEvent(
       testMap: [],
       verifyFailures: 0,
       misses: [],
+      importedReviewIds: [],
       submissions: {},
       remarks: [],
       budget: { usedUsd: 0, capUsd: event.payload.budgetCapUsd, warned: false, estimated: false },
@@ -340,6 +357,7 @@ export function applyEvent(
         },
       };
       task.status = event.payload.next;
+      task.pendingReview = undefined;
       task.gate = undefined;
       task.escalation = undefined;
       break;
@@ -379,6 +397,8 @@ export function applyEvent(
       task.status = "queued";
       task.gate = undefined;
       task.escalation = undefined;
+      // PR の指摘は、この差し戻しに反映した
+      task.pendingReview = undefined;
       break;
     }
 
@@ -541,6 +561,42 @@ export function applyEvent(
       task.status = "idle";
       break;
 
+    case "PullRequestReviewImported": {
+      if (task.gate?.step !== "pr" || task.status !== "awaiting_approval") {
+        throw new LedgerIntegrityError(event, "the deliverable review is not open");
+      }
+      if (task.pullRequest?.number !== event.payload.number) {
+        throw new LedgerIntegrityError(event, "not the pull request of the task");
+      }
+      if (task.pendingReview) throw new LedgerIntegrityError(event, "a review is pending");
+      const ids = event.payload.reviews.map((r) => r.id);
+      if (ids.some((id) => task.importedReviewIds.includes(id))) {
+        throw new LedgerIntegrityError(event, "the review is already imported");
+      }
+      task.importedReviewIds = [...task.importedReviewIds, ...ids];
+      task.pendingReview = { reviewIds: ids, remarks: event.payload.remarks };
+      break;
+    }
+
+    case "ReworkJudged": {
+      if (!task.pendingReview || task.pendingReview.judgement) {
+        throw new LedgerIntegrityError(event, "no review is waiting for a judgement");
+      }
+      task.budget = {
+        ...task.budget,
+        usedUsd: addUsd(task.budget.usedUsd, event.payload.costUsd),
+        estimated: task.budget.estimated || event.payload.estimated,
+      };
+      task.pendingReview = {
+        ...task.pendingReview,
+        judgement: {
+          ...(event.payload.target ? { target: event.payload.target } : {}),
+          reason: event.payload.reason,
+        },
+      };
+      break;
+    }
+
     case "PullRequestMerged":
     case "PullRequestClosed":
     case "PullRequestReopened": {
@@ -604,7 +660,11 @@ export function applyEvent(
         step: event.payload.step,
         target: event.payload.target ?? event.payload.step,
         pendingRemarks: event.payload.pendingRemarks,
+        reason: event.payload.reason,
+        ...(event.payload.note ? { note: event.payload.note } : {}),
       };
+      // PR の指摘は、エスカレーションの書きかけの指摘として引き継ぐ（戻し先の確認・上限）
+      task.pendingReview = undefined;
       break;
 
     case "BudgetWarned":

@@ -20,6 +20,7 @@ export function GateForm({
   maxChanges,
   pendingComments,
   pullRequest,
+  rework,
 }: {
   taskId: string;
   step: StepKey;
@@ -33,6 +34,8 @@ export function GateForm({
   pendingComments: string[];
   /** PR を作ったタスクの成果物チェック。PR のマージで承認するので、承認のボタンは出さない（PBI-14a）。 */
   pullRequest?: { number: number; url?: string; closed: boolean; mergedOutdated: boolean };
+  /** PR の指摘の戻し先の確認（PBI-14b）。ゴールガーディアンの提案と理由。 */
+  rework?: { target: StepKey; note: string };
 }) {
   const [state, formAction, pending] = useActionState(gateAction, initial);
   const m = useMessages();
@@ -63,7 +66,14 @@ export function GateForm({
           <p className="text-muted-foreground">{t.prRequestNote}</p>
         </div>
       )}
-      {escalated && (
+      {rework && (
+        <div className="flex flex-col gap-1.5 rounded-md border border-warn-line bg-warn-soft p-3 text-sm leading-6 text-warn">
+          <p className="font-semibold">{t.reworkTitle}</p>
+          <p>{t.reworkSuggestion(stepLabel[rework.target], rework.note)}</p>
+          <p>{t.reworkHelp}</p>
+        </div>
+      )}
+      {escalated && !rework && (
         <p className="rounded-md border border-warn-line bg-warn-soft p-3 text-sm leading-6 text-warn">
           {t.escalated(maxChanges)}
         </p>
@@ -112,12 +122,12 @@ export function GateForm({
         <Button
           type="submit"
           name="decision"
-          value={escalated ? "continue" : "request"}
+          value={escalated && !rework ? "continue" : "request"}
           variant="outline"
           disabled={pending}
           className="min-h-11 flex-1 border-warn-line text-warn"
         >
-          {escalated ? t.requestOverLimit : t.request}
+          {escalated && !rework ? t.requestOverLimit : t.request}
         </Button>
         {!pullRequest && (
           <Button

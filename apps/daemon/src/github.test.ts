@@ -295,3 +295,55 @@ describe("成果物チェックの間の PR の状態（PBI-14a）", () => {
     });
   });
 });
+
+describe("PR の Request changes のレビュー（PBI-14b）", () => {
+  it("Request changes のレビューだけを、行ごとのコメントとともに読む", async () => {
+    const { impl, calls } = fakeFetch([
+      {
+        status: 200,
+        json: [
+          { id: 1, state: "APPROVED", user: { login: "a" }, body: "LGTM", commit_id: "c1" },
+          {
+            id: 2,
+            state: "CHANGES_REQUESTED",
+            user: { login: "reviewer" },
+            body: "ログが足りない",
+            commit_id: "c2",
+            submitted_at: "2026-10-11T00:00:00Z",
+            html_url: "https://github.com/acme/app/pull/7#pullrequestreview-2",
+          },
+        ],
+      },
+      {
+        status: 200,
+        json: [
+          { path: "src/pay.ts", line: 12, body: "例外を握りつぶしている" },
+          { path: "src/old.ts", line: null, original_line: 3, body: "古い行" },
+        ],
+      },
+    ]);
+    const reviews = await new GitHubPullRequests(impl).changeRequests({
+      repo: "acme/app",
+      token: "ghp_secret",
+      number: 7,
+    });
+    expect(reviews).toEqual([
+      {
+        id: 2,
+        author: "reviewer",
+        submittedAt: "2026-10-11T00:00:00Z",
+        commitId: "c2",
+        url: "https://github.com/acme/app/pull/7#pullrequestreview-2",
+        body: "ログが足りない",
+        comments: [
+          { path: "src/pay.ts", line: 12, body: "例外を握りつぶしている" },
+          { path: "src/old.ts", line: 3, body: "古い行" },
+        ],
+      },
+    ]);
+    expect(calls.map((c) => c.url)).toEqual([
+      "https://api.github.com/repos/acme/app/pulls/7/reviews?per_page=100",
+      "https://api.github.com/repos/acme/app/pulls/7/reviews/2/comments?per_page=100",
+    ]);
+  });
+});
