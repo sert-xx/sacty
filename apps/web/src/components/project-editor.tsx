@@ -2,7 +2,7 @@
 
 import { INTAKE_LABEL, type Project, type ProjectTarget } from "@sacty/core";
 import { XIcon } from "lucide-react";
-import { useActionState, useId, useState } from "react";
+import { startTransition, useActionState, useId, useState } from "react";
 import { type SaveProjectState, saveProjectAction } from "@/app/actions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -64,7 +64,16 @@ export function ProjectEditor({
     setTargets((list) => list.map((t, j) => (j === i ? ({ ...t, ...patch } as ProjectTarget) : t)));
 
   return (
-    <form action={formAction} className="flex flex-col gap-6">
+    <form
+      // action に渡すと、送信の後に React がフォームをリセットし、プルダウン（GitHub アカウントや対象の単位）の
+      // 表示だけが最初の選択肢に戻ってしまう（状態は変わらないので書き直されない）。送信は自分で呼び出す
+      onSubmit={(e) => {
+        e.preventDefault();
+        const data = new FormData(e.currentTarget);
+        startTransition(() => formAction(data));
+      }}
+      className="flex flex-col gap-6"
+    >
       <input type="hidden" name="id" value={project?.id ?? ""} />
       <input type="hidden" name="definition" value={definition} />
 
