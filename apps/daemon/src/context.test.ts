@@ -424,6 +424,24 @@ describe("sacty の既定のコンテキスト（PBI-24）", () => {
     ]);
   });
 
+  it("同梱の既定の Codex の設定（サンドボックスを使わない・承認のレビュー）を、worker の config.toml に置く", async () => {
+    const codex = await prepareContext(
+      new FakeFetcher({}),
+      undefined,
+      "codex",
+      "/h",
+      undefined,
+      DEFAULT_CONTEXT_DIR,
+    );
+    // コンテナの中では Codex のサンドボックス（bubblewrap）を作れないので、隔離はコンテナに任せる
+    expect(parseToml(readFileSync(join(codex.dir, "config.toml"), "utf8"))).toEqual({
+      sandbox_mode: "danger-full-access",
+      approvals_reviewer: "auto_review",
+    });
+    expect(codex.warnings).toEqual([]);
+    codex.dispose();
+  });
+
   it("コンテキストリポジトリが無くても、既定の規則とスキルを渡し、中身のハッシュを記録する", async () => {
     const defaultDir = place(join(dir, "default"), {
       "rules.md": "# 既定の規則",

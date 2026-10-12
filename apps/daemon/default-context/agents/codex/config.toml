@@ -1,0 +1,10 @@
+# sacty の既定の Codex の設定（worker の CODEX_HOME/config.toml に置く）。
+# コンテキストリポジトリの agents/codex/config.toml は、この上にキーごとに重なる。
+# 承認の方針（approval_policy）・接続先・MCP は sacty が決めるので、ここには書かない。
+
+# Codex の中のサンドボックス（Linux では bubblewrap）は、sacty のコンテナの中では作れない
+# （権限を落としてあるので namespace を作れず、コマンドの実行が失敗する）。隔離は sacty のコンテナが受け持つ
+# （作業領域だけをマウントし、権限を落としてある）ので、Codex の中では使わない
+sandbox_mode = "danger-full-access"
+# 承認が要る操作は、人を待たずに自動のレビューで判断する
+approvals_reviewer = "auto_review"
