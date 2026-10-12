@@ -2434,7 +2434,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       const activity = new SqliteActivityStore(dbPath);
       const { service } = makeService(
         activity,
-        [plan("everything"), { kind: "failed", reason: "usage_limit", message: "session limit" }],
+        [plan("everything"), { kind: "failed", reason: "error", message: "connection reset" }],
         { realPlanner: true },
       );
       const a = service.createTask({ projectId: "default", title: "A" });
@@ -2455,8 +2455,38 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       });
       const b = service.createTask({ projectId: "default", title: "B" });
       await service.runNext(b.id);
-      expect(ja(service.get(b.id)?.task.stepsChoice?.reason)).toContain("session limit");
+      expect(ja(service.get(b.id)?.task.stepsChoice?.reason)).toContain("connection reset");
       expect(service.get(b.id)?.task.steps.map((st) => st.key)).toEqual([...STEP_PLANS.standard]);
+      activity.close();
+    });
+
+    it("認証の失敗・利用上限なら、標準の工程で進めずに理由を記録して止め、再開すると工程の選択からやり直す（PBI-32）", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const { service } = makeService(
+        activity,
+        [
+          { kind: "failed", reason: "auth", message: "unexpected status 401 Unauthorized" },
+          { kind: "failed", reason: "usage_limit", message: "ThrottlingException" },
+          plan("skip-design"),
+        ],
+        { realPlanner: true },
+      );
+      const a = service.createTask({ projectId: "default", title: "A" });
+      await service.runNext(a.id);
+      const paused = service.get(a.id)?.task;
+      expect(paused?.status).toBe("paused");
+      expect(paused?.pausedReason).toBe("auth");
+      expect(paused?.steps).toEqual([]);
+      expect(ja(paused?.pausedMessage)).toBe(
+        "オーケストレーターを実行できませんでした：unexpected status 401 Unauthorized。再開すると、工程の選択からやり直します。",
+      );
+      service.resume(a.id, {});
+      await service.runNext(a.id);
+      expect(service.get(a.id)?.task.pausedReason).toBe("usage_limit");
+      expect(service.get(a.id)?.task.steps).toEqual([]);
+      service.resume(a.id, {});
+      await service.runNext(a.id);
+      expect(service.get(a.id)?.task.stepsChoice?.plan).toBe("skip-design");
       activity.close();
     });
 

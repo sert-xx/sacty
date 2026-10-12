@@ -603,7 +603,10 @@ export class TaskService {
    * 読ませ、候補（STEP_PLANS）から選ばせる。人間の承認は無い。判断できない・実行に失敗したときは、
    * 標準の工程にして、そのことを記録する。テストでは deps.planner に差し替える。
    */
-  private async chooseSteps(task: Task, config: SactyConfig): Promise<ChosenSteps> {
+  private async chooseSteps(
+    task: Task,
+    config: SactyConfig,
+  ): Promise<ChosenSteps | { failure: { reason: "auth" | "usage_limit"; message: DaemonText } }> {
     if (this.deps.planner) return this.deps.planner(task);
     const agent = config.defaultAgent;
     const { outcome, costUsd, estimated } = await this.runGuardian(
@@ -611,6 +614,16 @@ export class TaskService {
       { agent, image: config.image, prompt: buildOrchestratorPrompt(task), role: "orchestrator" },
       "base",
     );
+    // 認証の失敗・利用上限は、標準の工程で進めても同じく失敗するので、理由を記録して止める（PBI-32）。
+    // 再開すると、工程の選択からやり直す（これらの失敗では、ふつう費用はかかっていない）
+    if (outcome.kind === "failed" && outcome.reason !== "error") {
+      return {
+        failure: {
+          reason: outcome.reason,
+          message: message("orchestrator.failed", { detail: outcome.message }),
+        },
+      };
+    }
     const cost = { agentId: agent.id, usage: outcome.usage, costUsd, estimated };
     const chosen =
       outcome.kind === "completed"
@@ -1301,7 +1314,24 @@ export class TaskService {
         ]);
         return;
       }
-      const { baseBranch, ...chosen } = await this.chooseSteps(this.mustGet(taskId), config.config);
+      const choice = await this.chooseSteps(this.mustGet(taskId), config.config);
+      if ("failure" in choice) {
+        // 選んでいる間に人間が止めた・中止したなら、記録しない（止めた記録は runNext の後始末で行う）
+        const latest = this.mustGet(taskId);
+        if (this.pauseRequested.has(taskId) || this.cancelling.has(taskId)) return;
+        if (latest.status !== "queued" || latest.steps.length > 0) return;
+        this.append(latest, [
+          {
+            actor: "sacty",
+            event: {
+              type: "TaskPaused",
+              payload: { reason: choice.failure.reason, message: choice.failure.message },
+            },
+          },
+        ]);
+        return;
+      }
+      const { baseBranch, ...chosen } = choice;
       // 既定のブランチと違うベースブランチを選んだなら、そのブランチの最新で用意し直す（PBI-25）。
       // 用意できなければ、既定のブランチのまま進め、そのことを理由に添える
       const prepared = this.mustGet(taskId).repository;
