@@ -97,7 +97,7 @@ export const Actor = z.enum(["person", "sacty", "orchestrator", "guardian", "age
 export type Actor = z.infer<typeof Actor>;
 
 /** エージェントの認証方式。 */
-/** provider：config.yaml の providers の OpenAI 互換の接続先（社内の AI gateway など。PBI-40）。 */
+/** provider：config.yaml の providers の OpenAI 互換の接続先（組織の AI gateway など。PBI-40）。 */
 export const AuthMode = z.enum(["subscription", "api-key", "bedrock", "provider", "stub"]);
 export type AuthMode = z.infer<typeof AuthMode>;
 

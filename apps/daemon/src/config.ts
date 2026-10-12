@@ -52,7 +52,7 @@ const Auth = z.discriminatedUnion("mode", [
 ]);
 
 /**
- * OpenAI 互換（Responses API）の接続先（PBI-40）。社内の AI gateway など。Codex の model_providers の base_url・
+ * OpenAI 互換（Responses API）の接続先（PBI-40）。組織の AI gateway など。Codex の model_providers の base_url・
  * env_key と同じく、base_url に API キーを Bearer で付けて送る。
  */
 const Provider = z.object({
@@ -197,7 +197,7 @@ const NPM_SECRET_KEY =
 const ConfigFile = z
   .object({
     image: z.string().default(DEFAULT_IMAGE),
-    /** OpenAI 互換の接続先（社内の AI gateway など。PBI-40）。 */
+    /** OpenAI 互換の接続先（組織の AI gateway など。PBI-40）。 */
     providers: z
       .record(z.string().regex(/^[A-Za-z0-9_-]+$/, code("input.providerName")), Provider)
       .default({}),
@@ -290,7 +290,7 @@ const ConfigFile = z
           })
           .prefault({}),
         /**
-         * 社内 PF の API（PBI-35）。名前ごとに、転送先・認証・使える API を書く。エージェントは
+         * 組織内 PF の API（PBI-35）。名前ごとに、転送先・認証・使える API を書く。エージェントは
          * $SACTY_PF_URL/<名前>/… で呼び、ゲートウェイが認証を付けて転送する。
          */
         platforms: z
@@ -386,7 +386,7 @@ export type SactyConfig = {
   gatewayRetry: RetryPolicy;
   /** コンテナから見たホストのアドレス（host.docker.internal の向き先。PBI-40）。 */
   hostAddress: string;
-  /** 社内 PF の API（PBI-35）。 */
+  /** 組織内 PF の API（PBI-35）。 */
   platforms: Platform[];
   /** ホストで動かす MCP サーバー（PBI-36）。 */
   hostMcp: HostMcpSpec[];
@@ -544,7 +544,7 @@ default_agent: claude-subscription
 #   design: sol-high
 #   implement: sol-medium
 
-# OpenAI 互換（Responses API）の接続先。社内の AI gateway など（Codex の model_providers の base_url・env_key と同じ）。
+# OpenAI 互換（Responses API）の接続先。組織の AI gateway など（Codex の model_providers の base_url・env_key と同じ）。
 # Codex のエージェントは provider: <名前> で使う。via_gateway: true なら、sacty のゲートウェイが API キーを付けて中継し、
 # レート制限（429）をリトライする（API キーはコンテナに渡さない）
 # providers:
@@ -579,12 +579,12 @@ budget:
 #       env: { CLOUD_REGION: ap-northeast-1 }
 #       restart_every_min: 240
 #       ready_timeout_sec: 300   # 起動してから認証が済むまで待つ上限
-#   # 社内 PF の API。エージェントは $SACTY_PF_URL/<名前>/… で呼び、ゲートウェイが認証を付けて転送する
+#   # 組織内 PF の API。エージェントは $SACTY_PF_URL/<名前>/… で呼び、ゲートウェイが認証を付けて転送する
 #   # （認証情報はエージェントに渡さない）。allow に無い API は拒否する（* は1階層、** はそれ以下すべて）
 #   platforms:
 #     ticket:
 #       upstream: https://ticket.internal.example.com
-#       description: 社内のチケット管理
+#       description: チケット管理
 #       auth:                         # 固定のキーをヘッダーに付ける（独自のヘッダーも書ける）
 #         header: X-Internal-Token
 #         secret: op://Work/Ticket/token

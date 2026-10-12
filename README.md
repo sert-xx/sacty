@@ -99,9 +99,9 @@ image_build:
 - `npm_config` はイメージに残り、コンテナの中のすべての npm（対象リポジトリの `npm ci` など）に効く。対象リポジトリの `.npmrc` に同じ項目があれば、そちらが優先する。認証の項目（`_authToken` など）はイメージに残るので書けない
 - 作ったイメージ（`image`）は、エージェントの実行とテストの実行の両方で使う
 
-### 社内の AI gateway と、工程ごとのモデル
+### 組織の AI gateway と、工程ごとのモデル
 
-OpenAI 互換（Responses API）の接続先（社内の AI gateway など）は `providers` に書き、Codex のエージェントから `provider` で使う。エージェントは「接続先・モデル・リーズニングエフォート・単価」の組で書き、`step_agents` で工程とオーケストレーターごとに選ぶ。
+OpenAI 互換（Responses API）の接続先（組織の AI gateway など）は `providers` に書き、Codex のエージェントから `provider` で使う。エージェントは「接続先・モデル・リーズニングエフォート・単価」の組で書き、`step_agents` で工程とオーケストレーターごとに選ぶ。
 
 ```yaml
 providers:
@@ -166,16 +166,16 @@ gateway:
 - 起動し直しても準備ができなければ、タスクの一覧の画面に出し、1分ごとに起動し直す
 - コンテナには、実行ごとのトークンを付けた HTTP の MCP の URL だけを渡す（Claude Code・Codex のどちらにも渡せる）
 
-### 社内 PF の API（ゲートウェイ経由）
+### 組織内 PF の API（ゲートウェイ経由）
 
-MCP サーバーが無い社内 PF は、`gateway.platforms` に書くと、エージェントが API で使える。認証情報はゲートウェイだけが持ち、エージェントには渡さない。
+MCP サーバーが無い組織内 PF は、`gateway.platforms` に書くと、エージェントが API で使える。認証情報はゲートウェイだけが持ち、エージェントには渡さない。
 
 ```yaml
 gateway:
   platforms:
     ticket:                                   # エージェントは $SACTY_PF_URL/ticket/… で呼ぶ
       upstream: https://ticket.internal.example.com
-      description: 社内のチケット管理
+      description: チケット管理
       auth:                                   # 固定のキーを、ヘッダーに付ける（独自のヘッダーも書ける）
         header: X-Internal-Token
         secret: op://Work/Ticket/token

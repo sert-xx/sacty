@@ -58,7 +58,7 @@ const DROP_RESPONSE = new Set([
 /** 実行ごとの転送先。 */
 export type GatewayRoute = {
   /**
-   * 転送先の起点（例 https://bedrock-runtime.us-east-2.amazonaws.com/openai/v1、社内の AI gateway の base_url）。
+   * 転送先の起点（例 https://bedrock-runtime.us-east-2.amazonaws.com/openai/v1、組織の AI gateway の base_url）。
    * エージェントからの /openai/v1/<残り> を、この下の <残り> に送る（PBI-40）。
    */
   base: string;
@@ -93,9 +93,9 @@ export type GatewayDeps = {
   /** 0〜1 の乱数（間隔のゆらぎ）。 */
   random?: () => number;
   now?: () => number;
-  /** 社内 PF の API（PBI-35）。設定を読み直せるよう、リクエストごとに呼ぶ。 */
+  /** 組織内 PF の API（PBI-35）。設定を読み直せるよう、リクエストごとに呼ぶ。 */
   platforms?: () => readonly Platform[];
-  /** 社内 PF の認証の値を用意する（PBI-35）。 */
+  /** 組織内 PF の認証の値を用意する（PBI-35）。 */
   credentials?: Pick<PlatformCredentials, "header" | "invalidate">;
   /** ホストで動かす MCP サーバー（PBI-36）。 */
   hostMcp?: Pick<HostMcpServers, "handle">;
@@ -167,7 +167,7 @@ export class AiGateway {
 
   /**
    * 実行を登録し、その実行だけが使えるトークンを返す。実行が終わったら close する。route があれば AI の呼び出しを
-   * 中継し（PBI-37）、どの実行も社内 PF の API を使える（PBI-35。$SACTY_PF_URL にトークンを含める）。
+   * 中継し（PBI-37）、どの実行も組織内 PF の API を使える（PBI-35。$SACTY_PF_URL にトークンを含める）。
    */
   register(route?: GatewayRoute): { token: string; stats: () => GatewayStats; close: () => void } {
     const token = `sacty-gw-${randomBytes(24).toString("hex")}`;
@@ -184,13 +184,13 @@ export class AiGateway {
     };
   }
 
-  /** コンテナから見た、実行の社内 PF の API の起点（PBI-35）。 */
+  /** コンテナから見た、実行の組織内 PF の API の起点（PBI-35）。 */
   platformsUrl(token: string): string {
     return `${this.containerOrigin()}/r/${token}/pf`;
   }
 
   /**
-   * 社内 PF の API を中継する（PBI-35）。実行のトークンと PF を確かめ、ホワイトリストに合うリクエストだけを、PF の
+   * 組織内 PF の API を中継する（PBI-35）。実行のトークンと PF を確かめ、ホワイトリストに合うリクエストだけを、PF の
    * 認証を付けて転送する。エージェントが付けた認証のヘッダーは捨てる。トークンを取得する PF で拒否（401・403）
    * されたら、トークンを取り直して1回だけ送り直す。
    */
@@ -293,7 +293,7 @@ export class AiGateway {
   }
 
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    // 社内 PF の API：/r/<実行のトークン>/pf/<PF の名前>/<パス>（PBI-35）
+    // 組織内 PF の API：/r/<実行のトークン>/pf/<PF の名前>/<パス>（PBI-35）
     const pf = /^\/r\/([^/]+)\/pf\/([^/?]+)(\/[^?]*)?(\?.*)?$/.exec(req.url ?? "");
     if (pf) {
       return this.handlePlatform(req, res, {

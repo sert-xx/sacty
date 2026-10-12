@@ -4,7 +4,7 @@ import { errorText } from "./errors.js";
 import { SecretRef, type SecretStore } from "./secrets.js";
 
 /**
- * 社内 PF の API（PBI-35）。ホストのゲートウェイが、ホワイトリストに合うリクエストだけを、PF の認証を付けて
+ * 組織内 PF の API（PBI-35）。ホストのゲートウェイが、ホワイトリストに合うリクエストだけを、PF の認証を付けて
  * 転送する。認証情報はゲートウェイだけが持ち、エージェントには渡さない。
  *
  * 認証は「どのヘッダーに・何を付けるか」で書く。値は、秘密情報そのもの（固定のキー）か、秘密情報でトークンの窓口
@@ -49,7 +49,7 @@ export const PlatformFile = z.object({
   description: z.string().default(""),
   auth: z
     .object({
-      /** 認証を付けるヘッダー（社内で定義した独自のヘッダーも書ける）。 */
+      /** 認証を付けるヘッダー（組織で定義した独自のヘッダーも書ける）。 */
       header: HeaderName.default("Authorization"),
       /** 値の前置き（例 "Bearer "）。 */
       prefix: z.string().default(""),
@@ -301,13 +301,13 @@ export class PlatformCredentials {
   }
 }
 
-/** 工程エージェントに伝える、使える社内 PF と API（PBI-35）。 */
+/** 工程エージェントに伝える、使える組織内 PF と API（PBI-35）。 */
 export function platformPromptLines(platforms: readonly Platform[]): string[] {
   if (platforms.length === 0) return [];
   return [
     "",
-    "--- 使える社内 PF の API ---",
-    '次の社内 PF の API を、環境変数 SACTY_PF_URL の下の URL で呼べます（例 curl "$SACTY_PF_URL/<PF の名前>/api/..."）。',
+    "--- 使える組織内 PF の API ---",
+    '次の組織内 PF の API を、環境変数 SACTY_PF_URL の下の URL で呼べます（例 curl "$SACTY_PF_URL/<PF の名前>/api/..."）。',
     "認証は sacty のゲートウェイが付けるので、認証のヘッダーやキーは付けないでください。一覧に無い API は拒否されます（403）。",
     ...platforms.flatMap((p) => [
       `- ${p.name}${p.description ? `：${p.description}` : ""}（$SACTY_PF_URL/${p.name}）`,

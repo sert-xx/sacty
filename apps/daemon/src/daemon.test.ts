@@ -729,13 +729,13 @@ describe("工程の実行と費用", () => {
     activity.close();
   });
 
-  it("社内 PF があれば、工程エージェントに PF の URL（実行のトークンを含む）と使える API を渡し、認証情報は渡さない（PBI-35）", async () => {
+  it("組織内 PF があれば、工程エージェントに PF の URL（実行のトークンを含む）と使える API を渡し、認証情報は渡さない（PBI-35）", async () => {
     const activity = new SqliteActivityStore(dbPath);
     const ticket = toPlatform(
       "ticket",
       PlatformFile.parse({
         upstream: "https://ticket.internal.example.com",
-        description: "社内のチケット管理",
+        description: "チケット管理",
         auth: { header: "X-Internal-Token", secret: "ticket-token" },
         allow: ["GET /api/v1/tickets/**"],
       }),
@@ -770,7 +770,7 @@ describe("工程の実行と費用", () => {
     expect(call?.hostGateway).toBe(true);
     expect(Object.values(call?.env ?? {})).not.toContain("tkt-secret");
     const prompt = call?.command.join(" ") ?? "";
-    expect(prompt).toContain("- ticket：社内のチケット管理（$SACTY_PF_URL/ticket）");
+    expect(prompt).toContain("- ticket：チケット管理（$SACTY_PF_URL/ticket）");
     expect(prompt).toContain("  - GET /api/v1/tickets/**");
     expect(closed).toEqual(["sacty-gw-run"]);
     // 認証情報を用意できない PF は、画面の状態に知らせる（工程は止めない）
@@ -4268,7 +4268,7 @@ describe("プロジェクトの対象と、オーケストレーターが決め�
     const { service, repos } = makeService(activity, [out("# 要求要件")], { github, contexts });
     // 1つのプロジェクトで、GHE の対象と、github.com のコンテキストリポジトリを使う
     const project = service.saveProject(undefined, {
-      name: "社内",
+      name: "GHE",
       targets: [{ scope: "repo", target: "https://ghe.example.co.jp/acme/app" }],
       githubAccounts: { "ghe.example.co.jp": "corp", "github.com": "me" },
       context: { repo: "https://github.com/acme/ctx.git" },

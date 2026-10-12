@@ -174,7 +174,7 @@ describe("GitHub Enterprise Server の検索・Org（PBI-40）", () => {
           items: [
             {
               number: 3,
-              title: "社内",
+              title: "GHE",
               html_url: "https://ghe.example.co.jp/acme/app/issues/3",
               labels: [],
             },

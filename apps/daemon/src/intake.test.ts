@@ -259,7 +259,7 @@ describe("GitHub Issue の定期的な取り込み（PBI-5a）", () => {
     const { activity, service, search, intake } = setup(true, gh);
     // 同じ owner/name が別のホストにあっても、別のリポジトリ
     service.saveProject(undefined, {
-      name: "社内",
+      name: "GHE",
       targets: [
         { scope: "repo", target: "https://ghe.example.co.jp/acme/payments" },
         { scope: "org", target: "https://ghe2.example.co.jp/acme" },
@@ -270,7 +270,7 @@ describe("GitHub Issue の定期的な取り込み（PBI-5a）", () => {
     search.issues.push({
       repo: "https://ghe.example.co.jp/acme/payments",
       number: 7,
-      title: "社内の冪等性キー",
+      title: "GHE の冪等性キー",
       body: "本文",
       url: "https://ghe.example.co.jp/acme/payments/issues/7",
       labels: ["sacty"],
@@ -291,7 +291,7 @@ describe("GitHub Issue の定期的な取り込み（PBI-5a）", () => {
         .map((t) => [t.source?.repo, projects.get(t.projectId)])
         .sort(),
     ).toEqual([
-      ["https://ghe.example.co.jp/acme/payments", "社内"],
+      ["https://ghe.example.co.jp/acme/payments", "GHE"],
       ["https://github.com/acme/payments", "決済"],
     ]);
     activity.close();

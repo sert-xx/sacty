@@ -82,7 +82,7 @@ describe("ホストのゲートウェイ（PBI-37）", () => {
     expect(g.run.stats()).toEqual({ retries: 0, waitedMs: 0, statuses: [], gaveUp: false });
   });
 
-  it("転送先の起点の下に送り、API キーが無い接続先には認証を付けない（社内の AI gateway。PBI-40）", async () => {
+  it("転送先の起点の下に送り、API キーが無い接続先には認証を付けない（組織の AI gateway。PBI-40）", async () => {
     const up = upstream([json(200, { output: "ok" })]);
     gateway = new AiGateway({ fetchImpl: up.fetchImpl });
     const port = await gateway.listen();
@@ -288,7 +288,7 @@ describe("ホストのゲートウェイ（PBI-37）", () => {
   });
 });
 
-describe("社内 PF の API の中継（PBI-35）", () => {
+describe("組織内 PF の API の中継（PBI-35）", () => {
   const ticket = toPlatform(
     "ticket",
     PlatformFile.parse({

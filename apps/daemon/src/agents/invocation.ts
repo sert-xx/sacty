@@ -158,7 +158,7 @@ export async function buildInvocation(
         env.AWS_BEARER_TOKEN_BEDROCK = gateway ? gateway.token : await secrets.get(auth.secret);
         env.AWS_REGION = auth.region;
       } else if (auth.mode === "provider") {
-        // providers の OpenAI 互換の接続先（社内の AI gateway など。PBI-40）。API キーは env_key の環境変数で渡し、
+        // providers の OpenAI 互換の接続先（組織の AI gateway など。PBI-40）。API キーは env_key の環境変数で渡し、
         // Codex が Bearer で付ける。ゲートウェイ経由なら、API キーの代わりに実行ごとのトークンを渡す
         const endpoint = agent.endpoint;
         if (!endpoint) throw new Error(`the provider ${auth.provider} is not configured`);

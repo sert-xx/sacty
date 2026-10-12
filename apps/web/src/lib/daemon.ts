@@ -87,7 +87,7 @@ export type IntakeStatus = {
 export type DaemonStatus = {
   agent: { id: string; runtime: string; authMode: string } | null;
   problems: DaemonText[];
-  /** 動くが、知らせたいこと（認証情報を用意できない社内 PF など。PBI-35）。古いデーモンには無い。 */
+  /** 動くが、知らせたいこと（認証情報を用意できない組織内 PF など。PBI-35）。古いデーモンには無い。 */
   warnings?: DaemonText[];
   /** GitHub Issue の取り込み（設定が無ければ null）。 */
   intake: IntakeStatus | null;

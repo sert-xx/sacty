@@ -124,7 +124,7 @@ async function AgentStatus() {
           labels.auth[status.agent.authMode as keyof typeof labels.auth] ?? status.agent.authMode,
         )}
       </p>
-      {/* 動くが、知らせたいこと（認証情報を用意できない社内 PF など。PBI-35） */}
+      {/* 動くが、知らせたいこと（認証情報を用意できない組織内 PF など。PBI-35） */}
       {(status.warnings ?? []).length > 0 && (
         <ul
           role="status"

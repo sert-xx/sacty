@@ -16,7 +16,7 @@ const platform = (file: unknown, name = "ticket"): Platform =>
 
 const ticket = platform({
   upstream: "https://ticket.internal.example.com/",
-  description: "社内のチケット管理",
+  description: "チケット管理",
   auth: { header: "X-Internal-Token", secret: "ticket-token" },
   allow: ["GET /api/v1/tickets/**", "POST /api/v1/tickets/*/comments", "GET /health"],
 });
@@ -58,7 +58,7 @@ const deploy = (extra: Record<string, unknown> = {}) =>
     "deploy",
   );
 
-describe("社内 PF の API（PBI-35）", () => {
+describe("組織内 PF の API（PBI-35）", () => {
   it("設定：認証は固定のキーかトークンの取得のどちらか一方。使える API は「メソッド パス」", () => {
     expect(ticket).toMatchObject({
       name: "ticket",
@@ -190,7 +190,7 @@ describe("社内 PF の API（PBI-35）", () => {
     const [problem] = creds.unavailable(["deploy", "ticket"]);
     const text = renderMessage(problem, "ja");
     expect(text).toMatch(
-      /^社内 PF「deploy」の認証情報を用意できません：token endpoint returned 401/,
+      /^組織内 PF「deploy」の認証情報を用意できません：token endpoint returned 401/,
     );
     expect(text).not.toContain("api-key-xyz");
     expect(await creds.header(p)).toBe("Bearer jwt");
@@ -247,7 +247,7 @@ describe("社内 PF の API（PBI-35）", () => {
     expect(platformPromptLines([])).toEqual([]);
     const lines = platformPromptLines([ticket]).join("\n");
     expect(lines).toContain('curl "$SACTY_PF_URL/<PF の名前>/api/...');
-    expect(lines).toContain("- ticket：社内のチケット管理（$SACTY_PF_URL/ticket）");
+    expect(lines).toContain("- ticket：チケット管理（$SACTY_PF_URL/ticket）");
     expect(lines).toContain("  - POST /api/v1/tickets/*/comments");
     expect(lines).toContain("認証のヘッダーやキーは付けないでください");
   });

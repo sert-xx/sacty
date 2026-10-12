@@ -182,7 +182,7 @@ export type ServiceDeps = {
   workspaceRoot: string;
   /** ホストのゲートウェイ（PBI-37）。無ければ、ゲートウェイ経由のエージェントは実行できない。 */
   gateway?: Pick<AiGateway, "containerOrigin" | "register" | "platformsUrl">;
-  /** 認証情報を用意できない社内 PF の理由（画面の状態に出す。PBI-35）。 */
+  /** 認証情報を用意できない組織内 PF の理由（画面の状態に出す。PBI-35）。 */
   platformProblems?: (names: readonly string[]) => DaemonText[];
   /** 準備ができないホストの MCP サーバーの理由（画面の状態に出す。PBI-36）。 */
   hostMcpProblems?: () => DaemonText[];
@@ -193,7 +193,7 @@ export type ServiceDeps = {
 export type DaemonStatus = {
   agent: { id: string; runtime: string; authMode: string } | null;
   problems: DaemonText[];
-  /** 動くが、知らせたいこと（認証情報を用意できない社内 PF など。PBI-35）。 */
+  /** 動くが、知らせたいこと（認証情報を用意できない組織内 PF など。PBI-35）。 */
   warnings: DaemonText[];
   /** GitHub Issue の取り込みの状況（設定が無ければ null）。 */
   intake: IntakeStatus | null;
@@ -1622,7 +1622,7 @@ export class TaskService {
             // 修正の子タスクを追加するときは、これまでの子タスクを渡す（PBI-31）
             ...(step === "split" ? { subtasks: this.subtaskSummaries(task) } : {}),
           }),
-          // 使える社内 PF の API（PBI-35）
+          // 使える組織内 PF の API（PBI-35）
           ...platformPromptLines(config.config.platforms),
         ].join("\n"),
         platforms: config.config.platforms,
@@ -2650,7 +2650,7 @@ export class TaskService {
     workspaceDir: string;
     /** エージェントの形式に変換したコンテキスト（工程エージェントだけ。PBI-6）。 */
     context?: Parameters<typeof buildInvocation>[5];
-    /** 使わせる社内 PF の API（工程エージェントだけ。PBI-35）。 */
+    /** 使わせる組織内 PF の API（工程エージェントだけ。PBI-35）。 */
     platforms?: readonly Platform[];
   }): Promise<{ outcome: AgentOutcome; costUsd: number; estimated: boolean }> {
     // 実行に渡した秘密情報。作業履歴に書く前に、出力やエラー文から取り除く。
@@ -2659,9 +2659,9 @@ export class TaskService {
     let gatewayRun: ReturnType<NonNullable<ServiceDeps["gateway"]>["register"]> | undefined;
     try {
       // ゲートウェイ経由なら、API キーはゲートウェイに渡し、コンテナには実行ごとのトークンだけを渡す（PBI-37）
-      // 社内 PF の API を使わせるなら、実行ごとのトークンを含む URL を渡す（認証情報は渡さない。PBI-35）
+      // 組織内 PF の API を使わせるなら、実行ごとのトークンを含む URL を渡す（認証情報は渡さない。PBI-35）
       const auth = run.agent.auth;
-      // Bedrock（PBI-37）か、providers の接続先（社内の AI gateway など。PBI-40）をゲートウェイ経由にする
+      // Bedrock（PBI-37）か、providers の接続先（組織の AI gateway など。PBI-40）をゲートウェイ経由にする
       const endpoint = run.agent.endpoint;
       const viaGateway =
         (run.agent.via_gateway && auth.mode === "bedrock") ||

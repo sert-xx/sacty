@@ -97,7 +97,7 @@ describe("プロジェクトの対象（PBI-5・PBI-25）", () => {
 
   it("対象はホストを含めた URL で書き、ホストが違えば別の対象として扱う（PBI-40）", () => {
     const def = ProjectDefinition.parse({
-      name: "社内",
+      name: "GHE",
       targets: [
         { scope: "repo", target: " https://GHE.example.co.jp/acme/auth.git/ " },
         { scope: "org", target: "https://ghe2.example.co.jp:8443/acme/" },

@@ -366,7 +366,7 @@ const ja: MessageDictionary = {
   "input.invalid": "入力が正しくありません。",
   "input.secretName": "秘密情報の名前は英数字と . _ - だけで書いてください。",
   "input.platformName":
-    "社内 PF の名前は、英小文字・数字・ハイフンで書いてください（先頭は英小文字か数字）。",
+    "組織内 PF の名前は、英小文字・数字・ハイフンで書いてください（先頭は英小文字か数字）。",
   "input.allowRule":
     "使える API は「メソッド パス」で書いてください（例 GET /api/v1/tickets/**。メソッドは GET・POST・PUT・PATCH・DELETE・HEAD）。",
   "input.invalidUrl": "URL（http または https）を書いてください。",
@@ -520,11 +520,11 @@ const ja: MessageDictionary = {
   "config.bedrockEndpointCodexOnly":
     "Bedrock の接続先（endpoint）は Codex だけで選べます。Claude Code では書かないでください。",
   "config.platformAuth":
-    "社内 PF の認証には、secret（固定のキー）か token（トークンの取得）のどちらか一方を書いてください。",
+    "組織内 PF の認証には、secret（固定のキー）か token（トークンの取得）のどちらか一方を書いてください。",
   "gateway.mcpUnavailable": ({ name, detail }, text) =>
     `ホストの MCP サーバー「${name}」の準備ができません（起動・認証に失敗）：${text(detail)}。1分ごとに起動し直します。`,
   "gateway.platformUnavailable": ({ name, detail }, text) =>
-    `社内 PF「${name}」の認証情報を用意できません：${text(detail)}（ほかの PF は使えます）`,
+    `組織内 PF「${name}」の認証情報を用意できません：${text(detail)}（ほかの PF は使えます）`,
   "config.gatewayCodexBedrockOnly":
     "ゲートウェイ経由（via_gateway）は、いまは Codex × Bedrock（auth.mode: bedrock）だけで使えます。",
   "gateway.unavailable":
