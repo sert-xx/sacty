@@ -101,6 +101,10 @@ const AUTH_ERROR =
 
 /** 準備ができないときに、起動し直すまでの間。 */
 const RETRY_MS = 60_000;
+/** ツールの呼び出しを待つ上限（SDK の既定の60秒では、時間のかかるツールが切れるため）。 */
+const CALL_TIMEOUT_MS = 10 * 60_000;
+/** 切り替えた古いプロセスで、途中の呼び出しが終わるのを待つ上限。 */
+const DRAIN_MS = 5 * 60_000;
 
 const withTimeout = <T>(promise: Promise<T>, ms: number, what: string): Promise<T> =>
   new Promise((resolve, reject) => {
@@ -163,6 +167,8 @@ type State = {
 
 export class HostMcpServers {
   private readonly states = new Map<string, State>();
+  /** 接続ごとの、途中の呼び出しの数（切り替えた古いプロセスは、これが0になってから止める）。 */
+  private readonly inFlight = new Map<HostMcpConnection, number>();
   private reconcileTimer: NodeJS.Timeout | undefined;
   private stopped = false;
 
@@ -175,6 +181,8 @@ export class HostMcpServers {
       retryMs?: number;
       /** 起動し直す間隔の1分の長さ（テストでは短くする）。 */
       minuteMs?: number;
+      /** 切り替えた古いプロセスで、途中の呼び出しを待つ上限（テストでは短くする）。 */
+      drainMs?: number;
       log?: (line: string) => void;
     },
   ) {}
@@ -283,7 +291,8 @@ export class HostMcpServers {
           void this.restart(name, "the process exited");
         }
       });
-      await old?.close().catch(() => {});
+      // 古いプロセスは、途中の呼び出しが終わってから止める（待つ間も、新しい呼び出しは新しいプロセスへ）
+      if (old) void this.drain(old);
       // 認証の期限の前に、決めた間隔で起動し直す
       if (spec.restartEveryMin) {
         state.timer = setTimeout(
@@ -300,6 +309,16 @@ export class HostMcpServers {
       }
     });
     return state.starting;
+  }
+
+  /** 途中の呼び出しが終わる（または上限の時間が経つ）のを待ってから、接続を止める。 */
+  private async drain(connection: HostMcpConnection): Promise<void> {
+    const deadline = Date.now() + (this.deps.drainMs ?? DRAIN_MS);
+    while ((this.inFlight.get(connection) ?? 0) > 0 && Date.now() < deadline && !this.stopped) {
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    this.inFlight.delete(connection);
+    await connection.close().catch(() => {});
   }
 
   private async remove(name: string): Promise<void> {
@@ -369,8 +388,12 @@ export class HostMcpServers {
     if (capabilities.tools) {
       server.setRequestHandler(ListToolsRequestSchema, (req) => client.listTools(req.params));
       server.setRequestHandler(CallToolRequestSchema, async (req) => {
+        this.inFlight.set(connection, (this.inFlight.get(connection) ?? 0) + 1);
         try {
-          const result = await client.callTool(req.params);
+          const result = await client.callTool(req.params, undefined, {
+            timeout: CALL_TIMEOUT_MS,
+            resetTimeoutOnProgress: true,
+          });
           if (result.isError && AUTH_ERROR.test(JSON.stringify(result.content ?? ""))) {
             // 認証の期限切れらしい。起動し直して再認証する（この呼び出しは、そのまま返す）
             void this.restart(name, "the tool reported an authentication error");
@@ -387,9 +410,16 @@ export class HostMcpServers {
           }
           return result;
         } catch (error) {
-          // 接続が切れた（プロセスが終わった）なら、起動し直す
-          void this.restart(name, "the call failed");
+          // いま使っている接続が切れた（プロセスが終わった）なら、起動し直す。切り替えた後の古い接続の失敗では
+          // 起動し直さない（切り替えのたびに起動し直してしまうため）
+          if (this.states.get(name)?.current === connection) {
+            void this.restart(name, "the call failed");
+          }
           throw error;
+        } finally {
+          const count = (this.inFlight.get(connection) ?? 1) - 1;
+          if (count > 0) this.inFlight.set(connection, count);
+          else this.inFlight.delete(connection);
         }
       });
     }

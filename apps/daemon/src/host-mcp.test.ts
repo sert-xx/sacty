@@ -22,7 +22,12 @@ const spec = (extra: Record<string, unknown> = {}): HostMcpSpec =>
  * expired が true の世代は、ツールが認証エラーを返す（期限切れ）。
  */
 function fakeServers(
-  options: { fail?: () => boolean; expired?: (generation: number) => boolean } = {},
+  options: {
+    fail?: () => boolean;
+    expired?: (generation: number) => boolean;
+    /** slow のツールが返るまで待つ。 */
+    slow?: Promise<void>;
+  } = {},
 ) {
   let generation = 0;
   const servers: McpServer[] = [];
@@ -38,6 +43,10 @@ function fakeServers(
         ? { isError: true, content: [{ type: "text", text: "401 Unauthorized: token expired" }] }
         : { content: [{ type: "text", text: `generation ${mine}` }] },
     );
+    server.registerTool("slow", { description: "時間のかかるツール" }, async () => {
+      await options.slow;
+      return { content: [{ type: "text", text: `slow done on generation ${mine}` }] };
+    });
     const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
     await server.connect(serverSide);
     const client = new Client({ name: "sacty-gateway", version: "0.1.0" });
@@ -106,7 +115,7 @@ describe("ホストで動かす MCP サーバー（PBI-36）", () => {
     const port = await gateway.listen();
     const run = gateway.register();
     const agent = await agentClient(port, run.token);
-    expect((await agent.listTools()).tools.map((t) => t.name)).toEqual(["whoami"]);
+    expect((await agent.listTools()).tools.map((t) => t.name)).toEqual(["whoami", "slow"]);
     expect(text(await agent.callTool({ name: "whoami", arguments: {} }))).toBe("generation 1");
     await agent.close();
 
@@ -253,5 +262,57 @@ describe("ホストで動かす MCP サーバー（PBI-36）", () => {
     release?.();
     await until(() => fake.generation() === 2);
     expect(started).toEqual([[], ["--profile", "work"]]);
+  });
+
+  it("切り替えた古いプロセスは、途中の呼び出しが終わってから止める（その失敗で、もう一度起動し直さない）", async () => {
+    let finish: (() => void) | undefined;
+    const fake = fakeServers({ slow: new Promise<void>((r) => (finish = r)) });
+    host = new HostMcpServers({
+      specs: () => [spec()],
+      secrets: new MemorySecretStore({}),
+      connect: fake.connect,
+    });
+    host.start();
+    await until(() => fake.generation() === 1);
+    gateway = new AiGateway({ hostMcp: host });
+    const port = await gateway.listen();
+    const agent = await agentClient(port, gateway.register().token);
+    const pending = agent.callTool({ name: "slow", arguments: {} });
+    await new Promise((r) => setTimeout(r, 50));
+    // 途中の呼び出しがある間に、期限の前の起動し直し
+    await host.restart("cloud", "before the authentication expires");
+    expect(fake.generation()).toBe(2);
+    // 新しい呼び出しは、新しいプロセスへ
+    const fresh = await agentClient(port, gateway.register().token);
+    expect(text(await fresh.callTool({ name: "whoami", arguments: {} }))).toBe("generation 2");
+    finish?.();
+    expect(text(await pending)).toBe("slow done on generation 1");
+    await new Promise((r) => setTimeout(r, 300));
+    expect(host.restarts("cloud")).toBe(1);
+    await agent.close();
+    await fresh.close();
+  });
+
+  it("待つ上限を過ぎて古いプロセスを止めたときの途中の呼び出しの失敗では、起動し直さない", async () => {
+    const fake = fakeServers({ slow: new Promise<void>(() => {}) });
+    host = new HostMcpServers({
+      specs: () => [spec()],
+      secrets: new MemorySecretStore({}),
+      connect: fake.connect,
+      drainMs: 50,
+    });
+    host.start();
+    await until(() => fake.generation() === 1);
+    gateway = new AiGateway({ hostMcp: host });
+    const port = await gateway.listen();
+    const agent = await agentClient(port, gateway.register().token);
+    const pending = agent.callTool({ name: "slow", arguments: {} }).catch((e: Error) => e);
+    await new Promise((r) => setTimeout(r, 50));
+    await host.restart("cloud", "before the authentication expires");
+    expect(await pending).toBeInstanceOf(Error);
+    await new Promise((r) => setTimeout(r, 200));
+    expect(fake.generation()).toBe(2);
+    expect(host.restarts("cloud")).toBe(1);
+    await agent.close();
   });
 });
