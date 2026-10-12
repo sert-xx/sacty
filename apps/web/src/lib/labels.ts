@@ -215,6 +215,11 @@ export function describeEvent(event: ActivityEvent, l: LabelMessages): string {
       return e.PullRequestReviewPosted(event.payload.url);
     case "GuardianMissed":
       return e.GuardianMissed;
+    case "OrchestratorFailed":
+      return e.OrchestratorFailed(
+        l.text(event.payload.message),
+        cost(event.payload.costUsd, event.payload.estimated),
+      );
     case "FinalReviewFailed":
       return e.FinalReviewFailed(
         l.text(event.payload.message),

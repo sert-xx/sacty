@@ -31,6 +31,12 @@ const Auth = z.discriminatedUnion("mode", [
     /** BedrockのAPIキー（AWS_BEARER_TOKEN_BEDROCK）の秘密情報名。 */
     secret: SecretName,
     region: z.string().min(1),
+    /**
+     * Codex の接続先（PBI-32）。runtime：Bedrock Runtime（リージョンをまたぐ推論。モデルは推論プロファイル ID、
+     * 例 global.openai.gpt-6-sol）、mantle：Bedrock Mantle（リージョン内の推論。モデルは例 openai.gpt-6-sol）。
+     * 省略すると runtime。Claude Code では使わない。
+     */
+    endpoint: z.enum(["runtime", "mantle"]).optional(),
   }),
   z.object({ mode: z.literal("stub") }),
 ]);
@@ -91,7 +97,7 @@ const Agent = z
   .superRefine((agent, ctx) => {
     const ok: Record<typeof agent.runtime, string[]> = {
       "claude-code": ["subscription", "api-key", "bedrock"],
-      codex: ["subscription", "api-key"],
+      codex: ["subscription", "api-key", "bedrock"],
       stub: ["stub"],
     };
     if (!ok[agent.runtime].includes(agent.auth.mode)) {
@@ -104,6 +110,17 @@ const Agent = z
           mode: agent.auth.mode,
           supported: ok[agent.runtime].join(", "),
         },
+      });
+    }
+    if (
+      agent.runtime === "claude-code" &&
+      agent.auth.mode === "bedrock" &&
+      agent.auth.endpoint !== undefined
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["auth", "endpoint"],
+        message: code("config.bedrockEndpointCodexOnly"),
       });
     }
     if (
@@ -288,6 +305,19 @@ agents:
   #     secret: bedrock-api-key
   #     region: us-east-1
   #   price_per_mtok_usd: { input: 3, cached_input: 0.3, cache_write: 3.75, output: 15 }
+
+  # Codex × Amazon Bedrock の OpenAI のモデル（APIキー）。endpoint は runtime（リージョンをまたぐ推論。
+  # モデルは推論プロファイルID）か mantle（リージョン内の推論。モデルIDは openai. で始まる）。
+  # 単価は契約の単価に合わせてください（費用は、この単価とトークン数から計算します）
+  # codex-bedrock:
+  #   runtime: codex
+  #   model: global.openai.gpt-6-sol
+  #   auth:
+  #     mode: bedrock
+  #     secret: bedrock-api-key
+  #     region: us-east-2
+  #     endpoint: runtime
+  #   price_per_mtok_usd: { input: 1.25, cached_input: 0.125, output: 10 }
 
   # 動作確認用のスタブ（実際のAIは呼ばない）
   stub:

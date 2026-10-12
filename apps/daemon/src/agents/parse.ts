@@ -16,11 +16,17 @@ const ZERO: TokenUsage = { input: 0, cacheRead: 0, cacheWrite: 0, output: 0 };
 
 /** エラー文から、止まった理由を分類する。 */
 export function classifyFailure(message: string): FailureReason {
-  if (/usage limit|session limit|weekly limit|rate limit|\b429\b|quota/i.test(message)) {
+  // Bedrock は、混雑時に ThrottlingException・Too Many Requests を返す（PBI-32）
+  if (
+    /usage limit|session limit|weekly limit|rate limit|\b429\b|quota|throttl|too many requests/i.test(
+      message,
+    )
+  ) {
     return "usage_limit";
   }
   if (
-    /\b401\b|\b403\b|unauthori[sz]ed|invalid authentication|expired|revoked|please run \/login|not logged in/i.test(
+    // Bedrock は、API キーやモデルの権限が無いと AccessDeniedException を返す（PBI-32）
+    /\b401\b|\b403\b|unauthori[sz]ed|invalid authentication|expired|revoked|please run \/login|not logged in|access ?denied/i.test(
       message,
     )
   ) {

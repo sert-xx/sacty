@@ -582,6 +582,33 @@ describe("作業履歴", () => {
 });
 
 describe("工程の実行と費用", () => {
+  it("Codex × Bedrock は、config.yaml の単価で計算した実際の請求として記録する（PBI-32）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const bedrock = agent({
+      id: "codex-bedrock",
+      runtime: "codex",
+      model: "global.openai.gpt-6-sol",
+      auth: { mode: "bedrock", secret: "bedrock-api-key", region: "us-east-2" },
+      // 契約の単価（一般の価格ではない）
+      price_per_mtok_usd: { input: 1, cached_input: 0.1, cache_write: 0, output: 4 },
+      price: { input: 1, cachedInput: 0.1, cacheWrite: 0, output: 4 },
+    });
+    const { service, executor } = makeService(activity, [completed(20_000)], {
+      config: configOf(bedrock),
+      secrets: { "bedrock-api-key": "bedrock-secret" },
+    });
+    const task = service.createTask({ projectId: "default", title: "決済API" });
+    await service.runNext(task.id);
+    const after = service.get(task.id)?.task;
+    // completed(20_000) は出力 20,000 トークン：20,000 × $4 / 100万 = $0.08
+    expect(after?.budget.usedUsd).toBe(0.08);
+    expect(after?.budget.estimated).toBe(false);
+    expect(executor.calls[0]?.env.AWS_BEARER_TOKEN_BEDROCK).toBe("bedrock-secret");
+    // API キーの値は作業履歴に出さない
+    expect(JSON.stringify(service.get(task.id)?.activity)).not.toContain("bedrock-secret");
+    activity.close();
+  });
+
   it("実行すると、費用（換算値）と出力を作業履歴に記録して待機に戻る", async () => {
     const activity = new SqliteActivityStore(dbPath);
     const { service, executor } = makeService(activity, [completed(20_000)]);
@@ -2407,7 +2434,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       const activity = new SqliteActivityStore(dbPath);
       const { service } = makeService(
         activity,
-        [plan("everything"), { kind: "failed", reason: "usage_limit", message: "session limit" }],
+        [plan("everything"), { kind: "failed", reason: "error", message: "connection reset" }],
         { realPlanner: true },
       );
       const a = service.createTask({ projectId: "default", title: "A" });
@@ -2428,8 +2455,51 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       });
       const b = service.createTask({ projectId: "default", title: "B" });
       await service.runNext(b.id);
-      expect(ja(service.get(b.id)?.task.stepsChoice?.reason)).toContain("session limit");
+      expect(ja(service.get(b.id)?.task.stepsChoice?.reason)).toContain("connection reset");
       expect(service.get(b.id)?.task.steps.map((st) => st.key)).toEqual([...STEP_PLANS.standard]);
+      activity.close();
+    });
+
+    it("認証の失敗・利用上限なら、標準の工程で進めずに理由を記録して止め、再開すると工程の選択からやり直す（PBI-32）", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const { service } = makeService(
+        activity,
+        [
+          { kind: "failed", reason: "auth", message: "unexpected status 401 Unauthorized" },
+          {
+            kind: "failed",
+            reason: "usage_limit",
+            message: "ThrottlingException",
+            usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 20_000 },
+          },
+          plan("skip-design"),
+        ],
+        { realPlanner: true },
+      );
+      const a = service.createTask({ projectId: "default", title: "A" });
+      await service.runNext(a.id);
+      const paused = service.get(a.id)?.task;
+      expect(paused?.status).toBe("paused");
+      expect(paused?.pausedReason).toBe("auth");
+      expect(paused?.steps).toEqual([]);
+      expect(ja(paused?.pausedMessage)).toBe(
+        "オーケストレーターを実行できませんでした：unexpected status 401 Unauthorized。再開すると、工程の選択からやり直します。",
+      );
+      service.resume(a.id, {});
+      await service.runNext(a.id);
+      expect(service.get(a.id)?.task.pausedReason).toBe("usage_limit");
+      expect(service.get(a.id)?.task.steps).toEqual([]);
+      // 実行の途中で止まった分の費用も予算に入れる（出力 20,000 トークン × $15/100万 = $0.30。レビュー指摘）
+      expect(service.get(a.id)?.task.budget.usedUsd).toBe(0.3);
+      expect(
+        service
+          .get(a.id)
+          ?.activity.filter((e) => e.type === "OrchestratorFailed")
+          .map((e) => e.actor),
+      ).toEqual(["orchestrator", "orchestrator"]);
+      service.resume(a.id, {});
+      await service.runNext(a.id);
+      expect(service.get(a.id)?.task.stepsChoice?.plan).toBe("skip-design");
       activity.close();
     });
 

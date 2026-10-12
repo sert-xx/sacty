@@ -554,3 +554,22 @@ describe("統合レビューの表示（PBI-31）", () => {
     );
   });
 });
+
+describe("オーケストレーターの失敗の表示（PBI-32）", () => {
+  it("止まった理由と、使った分の費用を作業履歴に出す", () => {
+    const event = {
+      type: "OrchestratorFailed",
+      payload: {
+        reason: "usage_limit",
+        message: { code: "orchestrator.failed", params: { detail: "ThrottlingException" } },
+        agentId: "codex-bedrock",
+        costUsd: 0.3,
+        estimated: false,
+      },
+      actor: "orchestrator",
+    } as unknown as ActivityEvent;
+    expect(describeEvent(event)).toBe(
+      "オーケストレーターを実行できませんでした：ThrottlingException。再開すると、工程の選択からやり直します。（$0.3000）",
+    );
+  });
+});

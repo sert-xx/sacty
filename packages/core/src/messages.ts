@@ -98,6 +98,7 @@ const PARAMS = {
   "orchestrator.fallback": z.object({ detail: TextParam }),
   "orchestrator.unreadable": null,
   "orchestrator.testCommandUnknown": null,
+  "orchestrator.failed": z.object({ detail: TextParam }),
   "orchestrator.baseBranchUnavailable": z.object({ branch: z.string(), detail: TextParam }),
   // タスク分割（PBI-27）
   "split.unreadable": null,
@@ -193,6 +194,7 @@ const PARAMS = {
     supported: z.string(),
   }),
   "config.subscriptionSecret": null,
+  "config.bedrockEndpointCodexOnly": null,
   "config.agentMissing": z.object({ key: z.string(), id: z.string() }),
 } as const satisfies Record<string, z.ZodType | null>;
 
@@ -379,6 +381,8 @@ const ja: MessageDictionary = {
   "integrate.baseUnavailable": ({ branch, detail }, text) =>
     `統合レビューのため、ベースブランチ（${branch}）の最新を取得できませんでした：${text(detail)}。再開すると、統合レビューをやり直します。`,
   "integrate.unreadable": "統合レビューの出力から、判定を読み取れませんでした。",
+  "orchestrator.failed": ({ detail }, text) =>
+    `オーケストレーターを実行できませんでした：${text(detail)}。再開すると、工程の選択からやり直します。`,
   "orchestrator.testCommandUnknown":
     "オーケストレーターが、対象リポジトリのテストのコマンドを決められませんでした。実装を検証できないので止めます。タスクの内容にテストの実行方法を書いて、作り直してください。",
   "orchestrator.baseBranchUnavailable": ({ branch, detail }, text) =>
@@ -456,6 +460,8 @@ const ja: MessageDictionary = {
     `${runtime} では ${mode} を使えません（使えるもの：${supported}）。`,
   "config.subscriptionSecret":
     "Claude Code のサブスクリプションには、トークンの秘密情報名（secret）が必要です。",
+  "config.bedrockEndpointCodexOnly":
+    "Bedrock の接続先（endpoint）は Codex だけで選べます。Claude Code では書かないでください。",
   "config.agentMissing": ({ key, id }) => `${key} の "${id}" が agents にありません。`,
 };
 
@@ -581,6 +587,8 @@ const en: MessageDictionary = {
   "integrate.baseUnavailable": ({ branch, detail }, text) =>
     `Could not fetch the latest base branch (${branch}) for the integration review: ${text(detail)}. Resume to run the integration review again.`,
   "integrate.unreadable": "Could not read the verdicts from the integration review output.",
+  "orchestrator.failed": ({ detail }, text) =>
+    `Could not run the Orchestrator: ${text(detail)}. Resume to choose the steps again.`,
   "orchestrator.testCommandUnknown":
     "The Orchestrator could not determine the test command of the target repository, so the implementation cannot be verified. Describe how to run the tests in the task and create it again.",
   "orchestrator.baseBranchUnavailable": ({ branch, detail }, text) =>
@@ -658,6 +666,8 @@ const en: MessageDictionary = {
     `${runtime} cannot use ${mode} (supported: ${supported}).`,
   "config.subscriptionSecret":
     "A Claude Code subscription needs the secret name of its token (secret).",
+  "config.bedrockEndpointCodexOnly":
+    "The Bedrock endpoint can only be chosen for Codex. Remove it for Claude Code.",
   "config.agentMissing": ({ key, id }) => `${key} "${id}" is not in agents.`,
 };
 

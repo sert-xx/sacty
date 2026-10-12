@@ -235,6 +235,53 @@ describe("認証方式ごとの環境変数", () => {
       files: [{ hostPath: "/path/auth.json", name: "auth.json", syncBack: true }],
     });
   });
+
+  it("Codex × Bedrock は、組み込みの Bedrock のプロバイダーに API キーとリージョンを渡す（PBI-32）", async () => {
+    const bedrock = (endpoint?: "runtime" | "mantle") =>
+      buildInvocation(
+        {
+          ...base,
+          id: "b",
+          runtime: "codex",
+          model: endpoint === "mantle" ? "openai.gpt-6-sol" : "global.openai.gpt-6-sol",
+          auth: {
+            mode: "bedrock",
+            secret: "bedrock-key",
+            region: "us-east-2",
+            ...(endpoint ? { endpoint } : {}),
+          },
+        },
+        "prompt",
+        secrets,
+      );
+    const runtime = await bedrock();
+    // OpenAI の API キーやサブスクリプションの認証ファイルは渡さない
+    expect(runtime.env).toEqual({
+      CODEX_HOME: "/tmp/sacty-codex-home",
+      AWS_BEARER_TOKEN_BEDROCK: "bedrock-value",
+      AWS_REGION: "us-east-2",
+    });
+    expect(runtime.stage?.files).toEqual([]);
+    // 既定は Bedrock Runtime。ホストされた Web 検索は使えないので無効にする
+    expect(runtime.command).toEqual([
+      "codex",
+      "exec",
+      "--json",
+      "--skip-git-repo-check",
+      "-c",
+      'model_provider="amazon-bedrock-runtime"',
+      "-c",
+      'web_search="disabled"',
+      "--model",
+      "global.openai.gpt-6-sol",
+      "prompt",
+    ]);
+    expect(runtime.parser).toBe("codex-jsonl");
+    const mantle = await bedrock("mantle");
+    expect(mantle.command).toContain('model_provider="amazon-bedrock"');
+    expect(mantle.command).not.toContain('web_search="disabled"');
+    expect(mantle.command.slice(-3)).toEqual(["--model", "openai.gpt-6-sol", "prompt"]);
+  });
 });
 
 describe("dockerの引数", () => {
@@ -340,6 +387,14 @@ describe("出力の読み取り", () => {
     expect(classifyFailure("API Error: Request rejected (429)")).toBe("usage_limit");
     expect(classifyFailure("API Error: 401 Invalid authentication credentials")).toBe("auth");
     expect(classifyFailure("ENOSPC")).toBe("error");
+    // Bedrock のエラー（PBI-32）
+    expect(classifyFailure("ThrottlingException: Too many tokens, please wait")).toBe(
+      "usage_limit",
+    );
+    expect(classifyFailure("unexpected status Too Many Requests")).toBe("usage_limit");
+    expect(classifyFailure("AccessDeniedException: You don't have access to the model")).toBe(
+      "auth",
+    );
   });
 });
 
@@ -378,6 +433,30 @@ describe("設定ファイル", () => {
     }
   });
 
+  it("雛形の Codex × Bedrock の例は、コメントを外せばそのまま読める（PBI-32）", () => {
+    dir = mkdtempSync(join(tmpdir(), "sacty-config-"));
+    const lines = CONFIG_TEMPLATE.split("\n");
+    const start = lines.indexOf("  # codex-bedrock:");
+    const end = lines.findIndex((l, i) => i > start && l.trim() === "");
+    const example = lines.slice(start, end).map((l) => l.replace(/^ {2}# ?/, "  "));
+    const yaml = CONFIG_TEMPLATE.replace(
+      "default_agent: claude-subscription",
+      "default_agent: codex-bedrock",
+    ).replace("agents:\n", `agents:\n${example.join("\n")}\n`);
+    writeFileSync(join(dir, "config.yaml"), yaml);
+    const result = loadConfig(dir);
+    expect(result).toMatchObject({
+      ok: true,
+      config: {
+        defaultAgent: {
+          id: "codex-bedrock",
+          runtime: "codex",
+          auth: { mode: "bedrock", secret: "bedrock-api-key", endpoint: "runtime" },
+        },
+      },
+    });
+  });
+
   it("使えない認証方式の組み合わせや、存在しない既定のAIは理由つきで拒否する", () => {
     dir = mkdtempSync(join(tmpdir(), "sacty-config-"));
     const write = (yaml: string) => writeFileSync(join(dir, "config.yaml"), yaml);
@@ -385,7 +464,7 @@ describe("設定ファイル", () => {
 agents:
   x:
     runtime: codex
-    auth: { mode: bedrock, secret: k, region: us-east-1 }
+    auth: { mode: stub }
     price_per_mtok_usd: { input: 1, cached_input: 0.1, output: 2 }
 `);
     const problem = () => {
@@ -393,7 +472,7 @@ agents:
       return result.ok ? "" : ja(result.problem);
     };
     expect(problem()).toBe(
-      "設定ファイルに誤りがあります（agents.x.auth.mode）：codex では bedrock を使えません（使えるもの：subscription, api-key）。",
+      "設定ファイルに誤りがあります（agents.x.auth.mode）：codex では stub を使えません（使えるもの：subscription, api-key, bedrock）。",
     );
     // コードと引数で返す（画面が画面の言語の文にする）
     expect(loadConfig(dir)).toMatchObject({
@@ -401,13 +480,38 @@ agents:
       problem: {
         code: "config.invalid",
         params: {
-          detail: { code: "config.authUnsupported", params: { runtime: "codex", mode: "bedrock" } },
+          detail: { code: "config.authUnsupported", params: { runtime: "codex", mode: "stub" } },
         },
       },
     });
     expect(renderMessage((loadConfig(dir) as { problem: unknown }).problem, "en")).toBe(
-      "The config file has an error (agents.x.auth.mode): codex cannot use bedrock (supported: subscription, api-key).",
+      "The config file has an error (agents.x.auth.mode): codex cannot use stub (supported: subscription, api-key, bedrock).",
     );
+    // Bedrock の接続先は Codex だけ（Claude Code に書いても使われないので、誤りとして知らせる。PBI-32）
+    write(`default_agent: x
+agents:
+  x:
+    runtime: claude-code
+    auth: { mode: bedrock, secret: k, region: us-east-1, endpoint: mantle }
+    price_per_mtok_usd: { input: 1, cached_input: 0.1, output: 2 }
+`);
+    expect(problem()).toBe(
+      "設定ファイルに誤りがあります（agents.x.auth.endpoint）：Bedrock の接続先（endpoint）は Codex だけで選べます。Claude Code では書かないでください。",
+    );
+    write(`default_agent: x
+agents:
+  x:
+    runtime: codex
+    model: global.openai.gpt-6-sol
+    auth: { mode: bedrock, secret: k, region: us-east-2, endpoint: runtime }
+    price_per_mtok_usd: { input: 1.25, cached_input: 0.125, output: 10 }
+`);
+    expect(loadConfig(dir)).toMatchObject({
+      ok: true,
+      config: {
+        defaultAgent: { runtime: "codex", auth: { mode: "bedrock", endpoint: "runtime" } },
+      },
+    });
     write(`default_agent: missing
 agents: {}
 `);
