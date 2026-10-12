@@ -28,10 +28,13 @@ export const MVP_STEPS: readonly StepKey[] = ["requirements", "design", "impleme
  * 工程の種類を増やしたら（調査・レビューなど）、ここに組み合わせを足す。
  */
 export const STEP_PLANS = {
-  /** 標準：要求要件 → 設計（テスト観点）→ 実装 → PR作成 */
-  standard: ["requirements", "design", "implement", "pr"],
+  /**
+   * 標準：調査 → 要求要件 → 設計（テスト観点）→ 実装 → PR作成。実装する組み合わせは、先頭に前段の調査を置き、
+   * その結果を後の工程に渡す。前段の調査は人間が承認しない（PBI-29）
+   */
+  standard: ["investigate", "requirements", "design", "implement", "pr"],
   /** 小さな変更：設計を省く（要求要件の受け入れ条件をテストで確かめる） */
-  "skip-design": ["requirements", "implement", "pr"],
+  "skip-design": ["investigate", "requirements", "implement", "pr"],
   /** 調査だけ：コードを調べて報告する。実装や PR は作らない（PBI-18） */
   investigate: ["investigate"],
   /** レビューだけ：タスクにある PR をレビューして、PR に投稿する（PBI-19） */
@@ -40,11 +43,11 @@ export const STEP_PLANS = {
    * 大きなタスク：要求要件 → 設計 → タスク分割。設計の承認の後に子タスクを作り、子タスクがそれぞれ
    * 実装と PR を行う（PBI-27）。子タスクは分割できない（1段だけ）
    */
-  split: ["requirements", "design", "split"],
+  split: ["investigate", "requirements", "design", "split"],
   /**
    * 不具合の修正：再現 → 実装 → PR作成。不具合を再現する失敗するテストを書き、それを通すように直す（PBI-29）
    */
-  bugfix: ["reproduce", "implement", "pr"],
+  bugfix: ["investigate", "reproduce", "implement", "pr"],
 } as const satisfies Record<string, readonly StepKey[]>;
 export type StepPlan = keyof typeof STEP_PLANS;
 export const StepPlan = z.enum(Object.keys(STEP_PLANS) as [StepPlan, ...StepPlan[]]);
@@ -365,6 +368,18 @@ const StepApproved = z.object({
   payload: z.object({
     step: StepKey,
     /** 承認後の状態。次の工程を実行できるなら実行待ち、まだ実装されていなければ待機。 */
+    next: z.enum(["queued", "idle"]),
+  }),
+});
+
+/**
+ * 人間の承認なしに工程を完了にし、次の工程へ進める（前段の調査。PBI-29）。成果物は承認済みと同じく凍結する。
+ */
+const StepCompleted = z.object({
+  type: z.literal("StepCompleted"),
+  payload: z.object({
+    step: StepKey,
+    /** 次の工程を実行できるなら実行待ち、まだ実装されていなければ待機。 */
     next: z.enum(["queued", "idle"]),
   }),
 });
@@ -747,6 +762,7 @@ export const EventInput = z.discriminatedUnion("type", [
   TaskUnblocked,
   SplitCompleted,
   ReproductionChecked,
+  StepCompleted,
   StepsChosen,
   AgentRunStarted,
   AgentRunCompleted,

@@ -507,5 +507,12 @@ describe("再現の表示（PBI-29）", () => {
     expect(describeIn(event({ reproduced: true, exitCode: 1 }), labels.en)).toBe(
       "Reproduced: the reproduction test failed (exit code 1) → implement",
     );
+    expect(
+      describeEvent({
+        type: "StepCompleted",
+        payload: { step: "investigate", next: "queued" },
+        actor: "sacty",
+      } as unknown as ActivityEvent),
+    ).toBe("調査を完了（前段の調査のため承認なし）→ 次の工程へ");
   });
 });

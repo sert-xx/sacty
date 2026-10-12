@@ -170,6 +170,7 @@ const ja = {
       `子タスク${count}件に分割${reason ? `（${reason}）` : ""}`,
     TaskUnblocked: "依存先の子タスクが完了したため、実行待ちにした",
     SplitCompleted: "子タスクがすべて完了したため、タスク分割を完了",
+    StepCompleted: (step: string) => `${step}を完了（前段の${step}のため承認なし）→ 次の工程へ`,
     reproduced: (exitCode: number | undefined) =>
       `再現を確認：再現のテストが失敗した（終了コード ${exitCode ?? "?"}）→ 実装へ`,
     notReproduced: (detail: string) => `再現できなかった（${detail}）→ 人間の判断待ち`,
@@ -347,6 +348,7 @@ const en: LabelMessages = {
       `Split into ${count} subtask${count === 1 ? "" : "s"}${reason ? ` (${reason})` : ""}`,
     TaskUnblocked: "Queued because the subtasks it depends on are done",
     SplitCompleted: "All subtasks are done, so the task split is complete",
+    StepCompleted: (step) => `${step} done (preliminary, no approval needed) → next step`,
     reproduced: (exitCode) =>
       `Reproduced: the reproduction test failed (exit code ${exitCode ?? "?"}) → implement`,
     notReproduced: (detail) => `Not reproduced (${detail}) → needs your decision`,

@@ -20,6 +20,7 @@ import {
   EventInput,
   excludedRepositories,
   GATED_STEPS,
+  investigationIsGoal,
   isCompleted,
   MAX_CHANGE_REQUESTS,
   MAX_VERIFY_ATTEMPTS,
@@ -2405,6 +2406,13 @@ export class TaskService {
 
   /** 承認ゲートのある工程なら、人間の承認待ちで止めるイベント。 */
   private submitEvents(task: Task, step: StepKey): ActivityItem[] {
+    // 前段の調査（実装する組み合わせの先頭）は、人間の承認なしに次の工程へ進める（PBI-29）
+    if (step === "investigate" && !investigationIsGoal(task)) {
+      const index = task.steps.findIndex((s) => s.key === step);
+      const nextStep = task.steps[index + 1]?.key;
+      const next = nextStep && EXECUTABLE_STEPS.includes(nextStep) ? "queued" : "idle";
+      return [{ actor: "sacty", event: { type: "StepCompleted", payload: { step, next } } }];
+    }
     if (!GATED_STEPS.includes(step)) return [];
     return [
       {
@@ -2807,10 +2815,11 @@ function awaitingReviewPost(task: Task): boolean {
 }
 
 /** 完了した調査のタスクで、結果をまだ取り込み元の Issue に返していないか（PBI-18）。 */
-function awaitingIssueComment(task: Task): boolean {
+export function awaitingIssueComment(task: Task): boolean {
   return (
     isCompleted(task) &&
-    task.steps.some((st) => st.key === "investigate") &&
+    // 調査そのものが目的のタスクだけ（前段の調査の結果は返さない。PBI-29）
+    investigationIsGoal(task) &&
     // Issue・PR から取り込んだタスク（PBI-26）
     task.source !== undefined &&
     !task.issueComment

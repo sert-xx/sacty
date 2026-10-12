@@ -1,4 +1,10 @@
-import { appliedProposalFor, openProposal, type StepKey, type Task } from "@sacty/core";
+import {
+  appliedProposalFor,
+  investigationIsGoal,
+  openProposal,
+  type StepKey,
+  type Task,
+} from "@sacty/core";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Suspense } from "react";
@@ -416,15 +422,17 @@ async function Deliverable({ task, step }: { task: Task; step: StepKey }) {
         // 再現は、sacty がテストで確かめて先へ進む（人間は承認しない。PBI-29）
         approved && step === "reproduce"
           ? m.reproduced
-          : approved
-            ? m.approved(approved.submission)
-            : step === "review" && task.reviewPost
-              ? m.reviewPosted
-              : fromProposal
-                ? m.fromProposal(fromProposal.id)
-                : stale
-                  ? m.stale
-                  : m.draft
+          : approved && step === "investigate" && !investigationIsGoal(task)
+            ? m.preliminary
+            : approved
+              ? m.approved(approved.submission)
+              : step === "review" && task.reviewPost
+                ? m.reviewPosted
+                : fromProposal
+                  ? m.fromProposal(fromProposal.id)
+                  : stale
+                    ? m.stale
+                    : m.draft
       }
       // 承認済みの成果物は折りたたむ（承認待ち・作業中のものは開いたまま）
       collapsed={Boolean(approved)}

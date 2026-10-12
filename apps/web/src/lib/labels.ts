@@ -220,6 +220,8 @@ export function describeEvent(event: ActivityEvent, l: LabelMessages): string {
       return e.TaskUnblocked;
     case "SplitCompleted":
       return e.SplitCompleted;
+    case "StepCompleted":
+      return e.StepCompleted(l.step[event.payload.step]);
     case "ReproductionChecked":
       return event.payload.reproduced
         ? e.reproduced(event.payload.exitCode)

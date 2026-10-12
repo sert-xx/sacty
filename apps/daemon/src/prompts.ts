@@ -1,6 +1,7 @@
 import {
   type DaemonText,
   type FinalReview,
+  investigationIsGoal,
   MAX_SPLIT_CHILDREN,
   MIN_SPLIT_CHILDREN,
   message,
@@ -168,10 +169,20 @@ const STEP_NAME: Record<StepKey, string> = {
 /** その工程の実行中に変更を申し出られる、承認済みの工程（その工程より前のもの）。 */
 export function changeableSteps(task: Task, step: StepKey): StepKey[] {
   const index = task.steps.findIndex((s) => s.key === step);
-  return task.steps
-    .slice(0, Math.max(index, 0))
-    .map((s) => s.key)
-    .filter((key) => task.approved[key]);
+  return (
+    task.steps
+      .slice(0, Math.max(index, 0))
+      .map((s) => s.key)
+      // 変更を申し出られるのは、人間が承認した要求要件と設計だけ（前段の調査・再現は対象外。PBI-29）
+      .filter((key) => (key === "requirements" || key === "design") && task.approved[key])
+  );
+}
+
+/** 前段の調査の結果（実装する組み合わせの先頭の調査。PBI-29）。後の工程に渡す。 */
+function investigationLines(task: Task): string[] {
+  const output = task.approved.investigate?.output;
+  if (!output || investigationIsGoal(task)) return [];
+  return ["", "--- 前段の調査の結果（調査の工程。コードを読んで確かめた事実と推測） ---", output];
 }
 
 /** 承認済みの成果物の変更を申し出る方法。申し出られる工程が無ければ何も足さない。 */
@@ -270,6 +281,28 @@ export function buildPrompt(task: Task, step: StepKey, extra: { diff?: string } 
 
   switch (step) {
     case "investigate": {
+      // 前段の調査（PBI-29）：後の工程のために、関係するコードと事実を集める。人間は承認しない
+      if (!investigationIsGoal(task)) {
+        const next = task.steps
+          .slice(1)
+          .map((s) => STEP_NAME[s.key])
+          .join(" → ");
+        return [
+          "あなたはソフトウェア開発の調査エージェントです。",
+          `このタスクは、このあと ${next} の工程で進めます。後の工程のエージェントが正しく判断できるように、対象リポジトリのコードを読んで、タスクに関係する事実を調べてMarkdownで書いてください。`,
+          "",
+          "- タスクに関係するコードの場所（例：src/pay.ts:12）と、いまの振る舞い・データの流れ",
+          "- 変更の影響範囲（呼び出し元・関係するテスト・設定）と、既存の規約や似た実装",
+          "- テストの書き方と置き場所（テストのフレームワーク・既存のテストの例）",
+          "- 不具合なら、原因の箇所の見当と、再現の手がかり",
+          "- 推測と、コードで確かめた事実を区別する。コードから判断できないことは「確認したいこと」として最後に列挙する",
+          "- 要求要件・設計・修正そのものは書かない。コードは変更しない（作業領域は読み取り専用です）",
+          ...codeLines(task),
+          "",
+          "--- タスク ---",
+          content,
+        ].join("\n");
+      }
       // 調査は、コードを読んで報告するだけの工程（PBI-18）。人間が承認すると完了
       const lines = [
         "あなたはソフトウェア開発の調査エージェントです。",
@@ -342,6 +375,8 @@ export function buildPrompt(task: Task, step: StepKey, extra: { diff?: string } 
         "- タスクの内容から判断できないことは「確認したいこと」として最後に列挙する",
         ...codeLines(task),
         "",
+        ...investigationLines(task),
+        "",
         "--- タスク ---",
         content,
       ];
@@ -369,6 +404,8 @@ export function buildPrompt(task: Task, step: StepKey, extra: { diff?: string } 
         "",
         "--- 承認済みの要求要件 ---",
         requirements,
+        "",
+        ...investigationLines(task),
         "",
         "--- タスク ---",
         content,
@@ -421,6 +458,8 @@ export function buildPrompt(task: Task, step: StepKey, extra: { diff?: string } 
         "--- 承認済みの設計 ---",
         task.approved.design?.output ?? "（承認済みの設計がありません）",
         "",
+        ...investigationLines(task),
+        "",
         "--- タスク ---",
         content,
       ];
@@ -443,6 +482,8 @@ export function buildPrompt(task: Task, step: StepKey, extra: { diff?: string } 
         "```json",
         `{"${REPRODUCTION_HEADING}": {"tests": ["テストのファイル › テストの名前"]}}`,
         "```",
+        "",
+        ...investigationLines(task),
         "",
         "--- タスク ---",
         content,
@@ -487,6 +528,7 @@ export function buildPrompt(task: Task, step: StepKey, extra: { diff?: string } 
           "",
           "--- タスク ---",
           content,
+          ...investigationLines(task),
           "",
           ...reproductionLines(task),
         ];
@@ -528,6 +570,8 @@ export function buildPrompt(task: Task, step: StepKey, extra: { diff?: string } 
         "",
         "--- 承認済みの設計 ---",
         task.approved.design?.output ?? "（なし）",
+        "",
+        ...investigationLines(task),
         "",
         "--- テスト観点（承認済み・すべてにテストを対応させる） ---",
         ...(designed
@@ -1025,17 +1069,17 @@ export function extractRework(
 export function buildOrchestratorPrompt(task: Task): string {
   const all: Record<StepPlan, string> = {
     standard:
-      "要求要件 → 設計（テスト観点）→ 実装 → PR作成。既定。振る舞いが複数ある・影響範囲が広い・テスト観点を人間と合意したい変更",
+      "調査 → 要求要件 → 設計（テスト観点）→ 実装 → PR作成。既定。振る舞いが複数ある・影響範囲が広い・テスト観点を人間と合意したい変更",
     "skip-design":
-      "要求要件 → 実装 → PR作成。設計を省く。変更が小さく局所的で、要求要件の受け入れ条件だけで十分にテストできる変更（例：文言の修正、小さな関数の追加）",
+      "調査 → 要求要件 → 実装 → PR作成。設計を省く。変更が小さく局所的で、要求要件の受け入れ条件だけで十分にテストできる変更（例：文言の修正、小さな関数の追加）",
     investigate:
       "調査だけ。コードを調べて結果を報告する（実装や PR は作らない）。タスクが質問・原因の調査・影響範囲の確認・見積もりなど、変更ではなく情報を求めているとき",
     review:
       "レビューだけ。タスクにある PR をレビューして、PR にレビューを投稿する（実装や PR は作らない）。タスクが PR のレビューを求めているとき",
     bugfix:
-      "再現 → 実装 → PR作成。不具合の修正で、テストで再現できるもの（期待する振る舞いがタスクから分かる）。不具合を再現する失敗するテストを書き、それを通すように直す。直すのに設計の判断が要る大きな不具合は standard を選ぶ",
+      "調査 → 再現 → 実装 → PR作成。不具合の修正で、テストで再現できるもの（期待する振る舞いがタスクから分かる）。不具合を再現する失敗するテストを書き、それを通すように直す。直すのに設計の判断が要る大きな不具合は standard を選ぶ",
     split:
-      "要求要件 → 設計 → タスク分割。変更が大きく、1つの PR では人間がレビューしきれないとき。設計の承認の後に、独立して進められる子タスクに分け、子タスクごとに実装と PR を作る",
+      "調査 → 要求要件 → 設計 → タスク分割。変更が大きく、1つの PR では人間がレビューしきれないとき。設計の承認の後に、独立して進められる子タスクに分け、子タスクごとに実装と PR を作る",
   };
   const allowed = allowedPlans(task);
   const plans = Object.fromEntries(allowed.map((plan) => [plan, all[plan]]));
@@ -1055,7 +1099,7 @@ export function buildOrchestratorPrompt(task: Task): string {
     "選べる工程の組み合わせ：",
     ...Object.entries(plans).map(([key, text]) => `- ${key}：${text}`),
     "",
-    "迷う場合は standard を選んでください。",
+    "迷う場合は standard を選んでください。実装する組み合わせは、先頭の調査（人間の承認なし）の結果を後の工程に渡します。",
     "",
     "--- タスク ---",
     `# ${task.title}`,
