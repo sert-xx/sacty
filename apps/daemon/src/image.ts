@@ -1,7 +1,8 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { SactyConfig } from "./config.js";
+import type { DaemonText } from "@sacty/core";
+import { type ConfigResult, DEFAULT_IMAGE, type SactyConfig } from "./config.js";
 import type { SecretStore } from "./secrets.js";
 
 /**
@@ -9,6 +10,20 @@ import type { SecretStore } from "./secrets.js";
  * 変えてイメージを作る。npm の認証は .npmrc を一時ファイルに書き、BuildKit の secret でビルドのときだけ読ませる
  * （イメージの層・履歴・ビルドの引数には残さない）。一時ファイルは終わったら必ず消す。
  */
+
+/**
+ * 設定から、作るイメージの名前と元を決める（PBI-33）。設定ファイルがまだ無ければ既定で作る。設定ファイルに
+ * 誤りがあれば作らない（プライベートのレジストリの指定を捨てて、公開のレジストリ・既定の名前で作らないため）。
+ */
+export function imageBuildSettings(
+  config: ConfigResult,
+):
+  | { ok: true; image: string; build: SactyConfig["imageBuild"] }
+  | { ok: false; problem: DaemonText } {
+  if (config.ok) return { ok: true, image: config.config.image, build: config.config.imageBuild };
+  const missing = typeof config.problem !== "string" && config.problem.code === "config.missing";
+  return missing ? { ok: true, image: DEFAULT_IMAGE, build: {} } : config;
+}
 
 /** npm の設定（.npmrc）。レジストリと、そのレジストリへの認証トークン。 */
 export function npmrcContent(registry: string | undefined, token: string | undefined): string {

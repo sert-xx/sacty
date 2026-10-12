@@ -1,9 +1,24 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
+import { message } from "@sacty/core";
 import { describe, expect, it } from "vitest";
-import { buildImage, imageBuildArgs, npmrcContent } from "./image.js";
+import { buildImage, imageBuildArgs, imageBuildSettings, npmrcContent } from "./image.js";
 import { MemorySecretStore, SecretNotFoundError } from "./secrets.js";
 
 describe("イメージの作成（PBI-33）", () => {
+  it("設定ファイルが無ければ既定で作り、設定ファイルに誤りがあれば既定に戻さずに止める（レビュー指摘）", () => {
+    expect(
+      imageBuildSettings({ ok: false, problem: message("config.missing", { path: "/x" }) }),
+    ).toEqual({ ok: true, image: "sacty-agent:0.1.0", build: {} });
+    const invalid = message("config.invalid", { path: "image_build.npm_registry", detail: "URL" });
+    expect(imageBuildSettings({ ok: false, problem: invalid })).toEqual({
+      ok: false,
+      problem: invalid,
+    });
+    expect(
+      imageBuildSettings({ ok: false, problem: message("config.unreadable", { detail: "YAML" }) }),
+    ).toMatchObject({ ok: false });
+  });
+
   it("npm の設定は、レジストリと、そのレジストリのホスト・パスに結びつけたトークンにする", () => {
     expect(npmrcContent(undefined, undefined)).toBe("");
     expect(npmrcContent("https://npm.example.com/repository/npm", undefined)).toBe(
