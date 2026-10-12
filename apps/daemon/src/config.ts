@@ -165,6 +165,20 @@ const ConfigFile = z
       .object({ default_per_task_usd: z.number().positive().default(DEFAULT_BUDGET_USD) })
       .prefault({}),
     agents: z.record(z.string(), Agent),
+    /**
+     * `sacty image build` でイメージを作るときの元（PBI-33）。プライベートのレジストリしか使えない環境向け。
+     * 書かなければ、Docker Hub の node のイメージと、npm の公開レジストリから作る。
+     */
+    image_build: z
+      .object({
+        /** 元のイメージ（FROM）。Node.js 22 で、node ユーザーがあること。 */
+        base_image: z.string().trim().min(1).optional(),
+        /** Claude Code・Codex を入れる npm のレジストリ。 */
+        npm_registry: z.url({ protocol: /^https?$/ }).optional(),
+        /** npm のレジストリの認証トークンの秘密情報名（イメージには残さない）。 */
+        npm_token: SecretName.optional(),
+      })
+      .optional(),
     /** ホストのゲートウェイ（PBI-37）。 */
     gateway: z
       .object({
@@ -220,6 +234,8 @@ export type SactyConfig = {
   budgetPerTaskUsd: number;
   /** ゲートウェイの AI の呼び出しのリトライの上限（PBI-37）。 */
   gatewayRetry: RetryPolicy;
+  /** `sacty image build` の元（PBI-33）。 */
+  imageBuild: { baseImage?: string; npmRegistry?: string; npmToken?: string };
   /** GitHub Issue の取り込み。認証はプロジェクトの gh のアカウント（PBI-13）。 */
   github?: { pollIntervalSec: number };
 };
@@ -288,6 +304,11 @@ export function loadConfig(home: string): ConfigResult {
     config: {
       image: file.image,
       budgetPerTaskUsd: file.budget.default_per_task_usd,
+      imageBuild: {
+        ...(file.image_build?.base_image ? { baseImage: file.image_build.base_image } : {}),
+        ...(file.image_build?.npm_registry ? { npmRegistry: file.image_build.npm_registry } : {}),
+        ...(file.image_build?.npm_token ? { npmToken: file.image_build.npm_token } : {}),
+      },
       gatewayRetry: {
         maxAttempts: file.gateway.retry.max_attempts,
         maxWaitMs: file.gateway.retry.max_wait_sec * 1000,
@@ -309,6 +330,13 @@ export const CONFIG_TEMPLATE = `# sacty の設定
 # 秘密情報（secret）には名前だけを書き、値は \`sacty secret set <名前>\` でキーチェーンに保存します。
 
 image: ${DEFAULT_IMAGE}
+# \`sacty image build\` でイメージを作るときの元。プライベートのレジストリしか使えない環境では、元のイメージと
+# npm のレジストリを書く（書かなければ、Docker Hub の node のイメージと npm の公開レジストリ）。
+# 元のイメージは Node.js 22 で、node ユーザーがあること。git が入っていれば、Debian のミラーに届かなくても作れる
+# image_build:
+#   base_image: registry.example.com/library/node:22-bookworm-slim
+#   npm_registry: https://npm.example.com/repository/npm/
+#   npm_token: npm-token   # 認証が要るとき。値は sacty secret set npm-token で保存する
 default_agent: claude-subscription
 # ゴールガーディアン（変更の申し出の判定）に使うAI。省略すると default_agent
 # guardian_agent: claude-subscription

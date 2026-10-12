@@ -10,6 +10,7 @@
     "build": "tsc -b"
   },
   "dependencies": {
+    "@sacty/core": "0.1.0",
     "@sacty/daemon": "0.1.0",
     "@sacty/web": "0.1.0"
   }

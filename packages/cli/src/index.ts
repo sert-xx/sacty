@@ -6,14 +6,10 @@ import { createRequire } from "node:module";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
-import {
-  CONFIG_TEMPLATE,
-  configPath,
-  DEFAULT_IMAGE,
-  loadConfig,
-  resolveHome,
-} from "@sacty/daemon/config";
-import { KEYCHAIN_SERVICE } from "@sacty/daemon/secrets";
+import { renderMessage } from "@sacty/core";
+import { CONFIG_TEMPLATE, configPath, loadConfig, resolveHome } from "@sacty/daemon/config";
+import { buildImage, imageBuildSettings } from "@sacty/daemon/image";
+import { KEYCHAIN_SERVICE, KeychainSecretStore, SecretNotFoundError } from "@sacty/daemon/secrets";
 
 const require = createRequire(import.meta.url);
 
@@ -75,16 +71,37 @@ async function secretSet(name: string | undefined): Promise<void> {
 }
 
 async function imageBuild(): Promise<void> {
-  const config = loadConfig(resolveHome());
-  const image = config.ok ? config.config.image : DEFAULT_IMAGE;
-  const dockerDir = fileURLToPath(new URL("../docker", import.meta.url));
-  console.log(`[sacty] イメージ ${image} を作成します。`);
-  const code = await runInherit("docker", ["build", "-t", image, dockerDir]);
-  if (code !== 0) {
+  // 元のイメージと npm のレジストリは config.yaml の image_build に従う（PBI-33）。設定ファイルに誤りがあれば、
+  // 既定に戻して作らずに止める（プライベートのレジストリの指定を捨てないため）
+  const settings = imageBuildSettings(loadConfig(resolveHome()));
+  if (!settings.ok) {
     throw new Error(
-      "イメージを作成できませんでした。上のログで原因を確認してください（Dockerが起動していない、ネットワークに接続できない、など）。",
+      `${renderMessage(settings.problem, "ja")}設定ファイルを直してから、もう一度実行してください。`,
     );
   }
+  const { image, build } = settings;
+  const dockerDir = fileURLToPath(new URL("../docker", import.meta.url));
+  console.log(
+    `[sacty] イメージ ${image} を作成します（元のイメージ：${build.baseImage ?? "node:22-bookworm-slim"}・npm のレジストリ：${build.npmRegistry ?? "https://registry.npmjs.org/"}）。`,
+  );
+  let failure: string | undefined;
+  try {
+    failure = await buildImage({
+      image,
+      build,
+      dockerDir,
+      secrets: new KeychainSecretStore(),
+      run: (args) => runInherit("docker", args),
+    });
+  } catch (error) {
+    if (error instanceof SecretNotFoundError) {
+      throw new Error(
+        `npm の認証トークン「${error.secretName}」がキーチェーンにありません。sacty secret set ${error.secretName} で保存してください。`,
+      );
+    }
+    throw error;
+  }
+  if (failure) throw new Error(failure);
   console.log(`[sacty] イメージ ${image} を作成しました。`);
 }
 

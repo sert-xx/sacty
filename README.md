@@ -52,6 +52,22 @@ npx sacty secret set claude-oauth-token
 
 費用は、エージェントごとの単価（`price_per_mtok_usd`。100万トークンあたりの米ドル）とトークン数から計算する。契約で単価が違う場合は、その単価を書く。
 
+### プライベートのレジストリからイメージを作る
+
+Docker Hub や npm の公開レジストリを使えない環境では、`config.yaml` の `image_build` に元のイメージと npm のレジストリを書いてから `sacty image build` を実行する。
+
+```yaml
+image: registry.example.com/sacty-agent:0.1.0
+image_build:
+  base_image: registry.example.com/library/node:22-bookworm-slim   # Node.js 22 で node ユーザーがあること
+  npm_registry: https://npm.example.com/repository/npm/
+  npm_token: npm-token   # 認証が要るとき。値は sacty secret set npm-token で保存する
+```
+
+- npm のトークンは、ビルドのときだけ読ませる（BuildKit の secret）。イメージの層・履歴・環境変数には残らない
+- 元のイメージに git が入っていれば、Debian のミラーに届かなくても作れる
+- 作ったイメージ（`image`）は、エージェントの実行とテストの実行の両方で使う
+
 ### ホストのゲートウェイ（Codex × Bedrock）
 
 エージェントに `via_gateway: true` を書くと、AI の呼び出しを sacty がホストで動かすゲートウェイ経由にする。

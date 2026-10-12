@@ -10,6 +10,10 @@
       "types": "./dist/config.d.ts",
       "default": "./dist/config.js"
     },
+    "./image": {
+      "types": "./dist/image.d.ts",
+      "default": "./dist/image.js"
+    },
     "./secrets": {
       "types": "./dist/secrets.d.ts",
       "default": "./dist/secrets.js"
