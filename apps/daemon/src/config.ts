@@ -13,6 +13,7 @@ import {
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 import { DEFAULT_RETRY_POLICY, type RetryPolicy } from "./gateway.js";
+import { HostMcpFile, type HostMcpSpec, toHostMcp } from "./host-mcp.js";
 import { type Platform, PlatformFile, toPlatform } from "./platforms.js";
 import { SecretRef } from "./secrets.js";
 
@@ -211,6 +212,13 @@ const ConfigFile = z
             PlatformFile,
           )
           .default({}),
+        /**
+         * ホストで動かす MCP サーバー（PBI-36）。起動時にブラウザで認証する手元のコマンドの MCP サーバーを、
+         * ゲートウェイが起動して持ち続け、工程エージェントには HTTP の MCP として渡す。
+         */
+        mcp_servers: z
+          .record(z.string().regex(/^[A-Za-z0-9_-]+$/, code("input.mcpName")), HostMcpFile)
+          .default({}),
       })
       .prefault({}),
     /** GitHub Issue の取り込み（個人の設定。プロジェクトの定義には含めない）。 */
@@ -251,6 +259,8 @@ export type SactyConfig = {
   gatewayRetry: RetryPolicy;
   /** 社内 PF の API（PBI-35）。 */
   platforms: Platform[];
+  /** ホストで動かす MCP サーバー（PBI-36）。 */
+  hostMcp: HostMcpSpec[];
   /** 1Password のアカウント（PBI-34）。 */
   onePasswordAccount?: string;
   /** `sacty image build` の元（PBI-33）。 */
@@ -330,6 +340,7 @@ export function loadConfig(home: string): ConfigResult {
         ...(file.image_build?.npm_token ? { npmToken: file.image_build.npm_token } : {}),
       },
       platforms: Object.entries(file.gateway.platforms).map(([name, p]) => toPlatform(name, p)),
+      hostMcp: Object.entries(file.gateway.mcp_servers).map(([name, m]) => toHostMcp(name, m)),
       gatewayRetry: {
         maxAttempts: file.gateway.retry.max_attempts,
         maxWaitMs: file.gateway.retry.max_wait_sec * 1000,
@@ -378,6 +389,17 @@ budget:
 #   retry:
 #     max_attempts: 8     # 1件のリクエストで上流に送る回数の上限
 #     max_wait_sec: 600   # 成功するまでの一続きの失敗で待つ合計の上限
+#   # ホストで動かす MCP サーバー。起動時にブラウザで認証（Okta など）する手元のコマンドの MCP サーバーを、
+#   # ゲートウェイが起動して持ち続け、工程エージェントには HTTP の MCP として渡す（認証情報は渡さない）。
+#   # 認証には期限があるので、restart_every_min ごとに起動し直して再認証する（期限より短くする）。
+#   # プロセスが終わった・ツールが認証エラーを返したときも、起動し直す
+#   mcp_servers:
+#     private-cloud:
+#       command: npx
+#       args: ["-y", "@example/private-cloud-mcp"]
+#       env: { CLOUD_REGION: ap-northeast-1 }
+#       restart_every_min: 240
+#       ready_timeout_sec: 300   # 起動してから認証が済むまで待つ上限
 #   # 社内 PF の API。エージェントは $SACTY_PF_URL/<名前>/… で呼び、ゲートウェイが認証を付けて転送する
 #   # （認証情報はエージェントに渡さない）。allow に無い API は拒否する（* は1階層、** はそれ以下すべて）
 #   platforms:

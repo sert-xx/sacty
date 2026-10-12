@@ -62,7 +62,7 @@ import type { AgentOutcome } from "./agents/parse.js";
 import { redact, redactText } from "./agents/redact.js";
 import type { TestRunner } from "./agents/test-runner.js";
 import { type AgentConfig, type ConfigResult, githubRepoOf, type SactyConfig } from "./config.js";
-import { type ContextFetcher, prepareContext } from "./context.js";
+import { type ContextFetcher, GATEWAY_TOKEN_SECRET, prepareContext } from "./context.js";
 import { errorText, MessageError } from "./errors.js";
 import type { AiGateway, GatewayStats } from "./gateway.js";
 import {
@@ -174,6 +174,8 @@ export type ServiceDeps = {
   gateway?: Pick<AiGateway, "containerOrigin" | "register" | "platformsUrl">;
   /** 認証情報を用意できない社内 PF の理由（画面の状態に出す。PBI-35）。 */
   platformProblems?: (names: readonly string[]) => DaemonText[];
+  /** 準備ができないホストの MCP サーバーの理由（画面の状態に出す。PBI-36）。 */
+  hostMcpProblems?: () => DaemonText[];
 };
 
 export type DaemonStatus = {
@@ -706,7 +708,10 @@ export class TaskService {
     return {
       agent: { id: agent.id, runtime: agent.runtime, authMode: agent.auth.mode },
       problems: [],
-      warnings: this.deps.platformProblems?.(config.config.platforms.map((p) => p.name)) ?? [],
+      warnings: [
+        ...(this.deps.platformProblems?.(config.config.platforms.map((p) => p.name)) ?? []),
+        ...(this.deps.hostMcpProblems?.() ?? []),
+      ],
       intake: config.config.github
         ? { ...this.intakeStatus, ...this.labelOf(this.deps.settings.get()) }
         : null,
@@ -1469,7 +1474,16 @@ export class TaskService {
     const contextSource = this.deps.projects.get(task.projectId)?.context;
     const defaultContext = this.deps.defaultContext;
     let context: Awaited<ReturnType<typeof prepareContext>> | undefined;
-    if (contextSource || defaultContext) {
+    // ホストで動かす MCP サーバーは、ゲートウェイの HTTP の MCP として渡す（PBI-36）
+    const gatewayForMcp = this.deps.gateway;
+    const hostMcp =
+      gatewayForMcp && config.config.hostMcp.length > 0
+        ? config.config.hostMcp.map((m) => ({
+            name: m.name,
+            url: `${gatewayForMcp.containerOrigin()}/mcp/${m.name}`,
+          }))
+        : [];
+    if (contextSource || defaultContext || hostMcp.length > 0) {
       // コンテキストと継承の各リポジトリも、HTTPS の GitHub はプロジェクトの gh のアカウントで取得する
       const usedSecrets: string[] = [];
       try {
@@ -1480,6 +1494,7 @@ export class TaskService {
           agent.runtime === "codex" ? CONTAINER_CODEX_HOME : CONTAINER_CLAUDE_CONFIG_DIR,
           (repo) => this.gitAuth(task, repo, usedSecrets),
           defaultContext,
+          hostMcp,
         );
       } catch (error) {
         this.append(task, [
@@ -2610,8 +2625,12 @@ export class TaskService {
       const auth = run.agent.auth;
       const viaGateway = run.agent.via_gateway && auth.mode === "bedrock";
       const platforms = run.platforms ?? [];
+      // ホストの MCP サーバー（PBI-36）の認証のヘッダーに、実行ごとのトークンを入れる
+      const tokenEnvs = (run.context?.secrets ?? []).filter(
+        (s) => s.secret === GATEWAY_TOKEN_SECRET,
+      );
       let gateway: { origin: string; token: string } | undefined;
-      if (viaGateway || platforms.length > 0) {
+      if (viaGateway || platforms.length > 0 || tokenEnvs.length > 0) {
         if (!this.deps.gateway) throw new MessageError(message("gateway.unavailable"));
         let route: { origin: string; apiKey: string } | undefined;
         if (viaGateway) {
@@ -2636,6 +2655,10 @@ export class TaskService {
       );
       if (gatewayRun && platforms.length > 0 && this.deps.gateway) {
         invocation.env.SACTY_PF_URL = this.deps.gateway.platformsUrl(gatewayRun.token);
+        invocation.hostGateway = true;
+      }
+      if (gatewayRun && tokenEnvs.length > 0) {
+        for (const s of tokenEnvs) invocation.env[s.env] = `${s.prefix}${gatewayRun.token}`;
         invocation.hostGateway = true;
       }
       mkdirSync(run.workspaceDir, { recursive: true });

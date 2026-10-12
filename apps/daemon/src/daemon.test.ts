@@ -30,6 +30,7 @@ import type { ContextFetcher, ContextRef } from "./context.js";
 import { MessageError } from "./errors.js";
 import type { GitHubAuth } from "./gh.js";
 import type { PullRequestFeedback, PullRequestStatus, PullRequests } from "./github.js";
+import { HostMcpFile, type HostMcpSpec, toHostMcp } from "./host-mcp.js";
 import { type Platform, PlatformFile, toPlatform } from "./platforms.js";
 import { MemoryProjectStore } from "./projects.js";
 import { buildOrchestratorPrompt, changeableSteps } from "./prompts.js";
@@ -64,7 +65,12 @@ const agent = (overrides: Partial<AgentConfig> = {}): AgentConfig => ({
 });
 
 const configOf =
-  (a: AgentConfig, budgetPerTaskUsd = 1, platforms: Platform[] = []): (() => ConfigResult) =>
+  (
+    a: AgentConfig,
+    budgetPerTaskUsd = 1,
+    platforms: Platform[] = [],
+    hostMcp: HostMcpSpec[] = [],
+  ): (() => ConfigResult) =>
   () => ({
     ok: true,
     config: {
@@ -75,6 +81,7 @@ const configOf =
       gatewayRetry: { maxAttempts: 8, maxWaitMs: 600_000 },
       imageBuild: {},
       platforms,
+      hostMcp,
     },
   });
 
@@ -515,6 +522,7 @@ function makeService(
     /** 秘密情報の取り出し口を差し替える（1Password。PBI-34）。 */
     secretStore?: ServiceDeps["secrets"];
     platformProblems?: ServiceDeps["platformProblems"];
+    hostMcpProblems?: ServiceDeps["hostMcpProblems"];
   } = {},
 ) {
   const executor = new FakeExecutor(outcomes);
@@ -557,6 +565,7 @@ function makeService(
     workspaceRoot: join(dir, "workspaces"),
     ...(options.gateway ? { gateway: options.gateway } : {}),
     ...(options.platformProblems ? { platformProblems: options.platformProblems } : {}),
+    ...(options.hostMcpProblems ? { hostMcpProblems: options.hostMcpProblems } : {}),
   });
   return { service, executor, repos, tests, pulls };
 }
@@ -594,6 +603,42 @@ describe("作業履歴", () => {
 });
 
 describe("工程の実行と費用", () => {
+  it("ホストの MCP サーバーを、ゲートウェイの HTTP の MCP として渡し、認証のヘッダーには実行ごとのトークンだけを入れる（PBI-36）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const gateway: NonNullable<ServiceDeps["gateway"]> = {
+      containerOrigin: () => "http://host.docker.internal:5001",
+      platformsUrl: (token) => `http://host.docker.internal:5001/r/${token}/pf`,
+      register: () => ({
+        token: "sacty-gw-run",
+        stats: () => ({ retries: 0, waitedMs: 0, statuses: [], gaveUp: false }),
+        close: () => {},
+      }),
+    };
+    const cloud = toHostMcp("private-cloud", HostMcpFile.parse({ command: "cloud-mcp" }));
+    const { service, executor } = makeService(activity, [completed(20_000)], {
+      config: configOf(agent(), 1, [], [cloud]),
+      gateway,
+      hostMcpProblems: () => [
+        message("gateway.mcpUnavailable", { name: "private-cloud", detail: "x" }),
+      ],
+    });
+    const task = service.createTask({ projectId: "default", title: "クラウドを調べる" });
+    await service.runNext(task.id);
+    const call = executor.calls[0];
+    expect(call?.env.SACTY_MCP_SECRET_0).toBe("Bearer sacty-gw-run");
+    expect(call?.hostGateway).toBe(true);
+    // Claude Code には、その MCP のツールの使用を許可する
+    expect(call?.command.join(" ")).toContain("mcp__private-cloud");
+    expect(JSON.parse(executor.mcpConfigs[0] ?? "{}").mcpServers["private-cloud"]).toMatchObject({
+      type: "http",
+      url: "http://host.docker.internal:5001/mcp/private-cloud",
+    });
+    expect(service.status().warnings).toEqual([
+      expect.objectContaining({ code: "gateway.mcpUnavailable" }),
+    ]);
+    activity.close();
+  });
+
   it("社内 PF があれば、工程エージェントに PF の URL（実行のトークンを含む）と使える API を渡し、認証情報は渡さない（PBI-35）", async () => {
     const activity = new SqliteActivityStore(dbPath);
     const ticket = toPlatform(

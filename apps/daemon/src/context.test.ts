@@ -18,6 +18,7 @@ import {
   type ContextRef,
   composeContext,
   DEFAULT_CONTEXT_DIR,
+  GATEWAY_TOKEN_SECRET,
   GitContextFetcher,
   loadDefaultContext,
   prepareContext,
@@ -258,6 +259,46 @@ describe("MCP サーバーの合成と変換（PBI-6b）", () => {
       ],
     });
     companyOnly.dispose();
+  });
+
+  it("ホストの MCP サーバーは、ゲートウェイの HTTP の MCP として加え、認証は実行ごとのトークンにする（PBI-36）", async () => {
+    const hostMcp = [
+      { name: "private-cloud", url: "http://host.docker.internal:5001/mcp/private-cloud" },
+    ];
+    const claude = await prepareContext(
+      new FakeFetcher({}),
+      undefined,
+      "claude-code",
+      "/tmp/sacty-claude-config",
+      undefined,
+      undefined,
+      hostMcp,
+    );
+    const json = JSON.parse(readFileSync(join(claude.dir, "mcp.json"), "utf8"));
+    expect(json.mcpServers["private-cloud"]).toEqual({
+      type: "http",
+      url: "http://host.docker.internal:5001/mcp/private-cloud",
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: 設定に書く参照の文字列そのもの
+      headers: { Authorization: "${SACTY_MCP_SECRET_0}" },
+    });
+    expect(claude.placed).toEqual({
+      mcpServers: ["private-cloud"],
+      secrets: [{ env: "SACTY_MCP_SECRET_0", secret: GATEWAY_TOKEN_SECRET, prefix: "Bearer " }],
+    });
+    claude.dispose();
+    const codex = await prepareContext(
+      new FakeFetcher({}),
+      undefined,
+      "codex",
+      "/tmp/sacty-codex-home",
+      undefined,
+      undefined,
+      hostMcp,
+    );
+    const toml = readFileSync(join(codex.dir, "config.toml"), "utf8");
+    expect(toml).toContain('url = "http://host.docker.internal:5001/mcp/private-cloud"');
+    expect(toml).toContain('env_http_headers = { "Authorization" = "SACTY_MCP_SECRET_0" }');
+    codex.dispose();
   });
 
   it("MCP の秘密情報には、1Password の参照（op://…）も書ける（PBI-34）", async () => {

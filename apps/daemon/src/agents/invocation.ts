@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import type { StepKey } from "@sacty/core";
 import type { AgentConfig } from "../config.js";
-import { CLAUDE_MCP_CONFIG, type PlacedContext } from "../context.js";
+import { CLAUDE_MCP_CONFIG, GATEWAY_TOKEN_SECRET, type PlacedContext } from "../context.js";
 import type { SecretStore } from "../secrets.js";
 import { secretStringsInJson } from "./redact.js";
 
@@ -73,6 +73,8 @@ export async function buildInvocation(
   const contextEnv: Record<string, string> = {};
   if (agent.runtime !== "stub") {
     for (const s of context?.secrets ?? []) {
+      // ホストの MCP サーバーの認証は、実行ごとのゲートウェイのトークン（実行するときに sacty が入れる。PBI-36）
+      if (s.secret === GATEWAY_TOKEN_SECRET) continue;
       contextEnv[s.env] = `${s.prefix}${await secrets.get(s.secret)}`;
     }
   }

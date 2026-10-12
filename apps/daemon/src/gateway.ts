@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { Readable } from "node:stream";
+import type { HostMcpServers } from "./host-mcp.js";
 import { isAllowed, type Platform, type PlatformCredentials } from "./platforms.js";
 
 /**
@@ -89,6 +90,8 @@ export type GatewayDeps = {
   platforms?: () => readonly Platform[];
   /** 社内 PF の認証の値を用意する（PBI-35）。 */
   credentials?: Pick<PlatformCredentials, "header" | "invalidate">;
+  /** ホストで動かす MCP サーバー（PBI-36）。 */
+  hostMcp?: Pick<HostMcpServers, "handle">;
 };
 
 const abortableSleep = (ms: number, signal: AbortSignal) =>
@@ -295,6 +298,25 @@ export class AiGateway {
     }
     const header = req.headers.authorization ?? "";
     const run = header.startsWith("Bearer ") ? this.runs.get(header.slice(7)) : undefined;
+    // ホストの MCP サーバー：/mcp/<名前>（実行のトークンを Bearer で付ける。PBI-36）
+    const mcp = /^\/mcp\/([A-Za-z0-9_-]+)\/?(\?.*)?$/.exec(req.url ?? "");
+    if (mcp) {
+      if (!run) return fail(res, 401, "sacty gateway: unknown or expired run token");
+      if (!this.deps.hostMcp) return fail(res, 404, "sacty gateway: no host MCP servers");
+      let raw: Buffer;
+      try {
+        raw = await readBody(req);
+      } catch {
+        return;
+      }
+      let body: unknown;
+      try {
+        body = raw.length > 0 ? JSON.parse(raw.toString("utf8")) : undefined;
+      } catch {
+        return fail(res, 400, "sacty gateway: the MCP request is not JSON");
+      }
+      return this.deps.hostMcp.handle(mcp[1] ?? "", req, res, body);
+    }
     if (!run?.origin || !run.apiKey) {
       return fail(res, 401, "sacty gateway: unknown or expired run token");
     }

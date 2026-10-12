@@ -10,6 +10,7 @@ import { DEFAULT_CONTEXT_DIR, GitContextFetcher } from "./context.js";
 import { AiGateway } from "./gateway.js";
 import { GhCliAuth } from "./gh.js";
 import { GitHubIssueSearch, GitHubPullRequests } from "./github.js";
+import { HostMcpServers } from "./host-mcp.js";
 import { IssueIntake } from "./intake.js";
 import { PlatformCredentials } from "./platforms.js";
 import { PullRequestWatcher } from "./pr-watcher.js";
@@ -56,7 +57,18 @@ const platforms = () => {
   return c.ok ? c.config.platforms : [];
 };
 const credentials = new PlatformCredentials({ secrets });
+// ホストで動かす MCP サーバー（PBI-36）。認証の期限の前に、起動し直して再認証する
+const hostMcp = new HostMcpServers({
+  specs: () => {
+    const c = config();
+    return c.ok ? c.config.hostMcp : [];
+  },
+  secrets,
+  log: (line) => console.log(line),
+});
+hostMcp.start();
 const gateway = new AiGateway({
+  hostMcp,
   policy: () => {
     const c = config();
     return c.ok ? c.config.gatewayRetry : undefined;
@@ -88,6 +100,7 @@ const service = new TaskService({
   workspaceRoot: join(home, "workspaces"),
   gateway,
   platformProblems: (names) => credentials.unavailable(names),
+  hostMcpProblems: () => hostMcp.problems(),
 });
 service.recoverInterrupted();
 service.queueWaitingSteps();
@@ -128,6 +141,7 @@ const shutdown = async () => {
     console.warn("[daemon] 実行中の処理の後片付けが時間内に終わりませんでした。");
   }
   await gateway.close();
+  await hostMcp.stop();
   server.close(() => {
     activity.close();
     projects.close();
