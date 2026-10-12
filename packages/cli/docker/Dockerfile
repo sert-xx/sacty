@@ -27,7 +27,11 @@ RUN --mount=type=secret,id=npmrc,target=/run/secrets/npmrc \
 # CLI を入れた後に置く（CLI の取得には効かせない）。ファイルの受け渡しは、認証の .npmrc と同じ secret の仕組みを
 # 使う（--build-context は、Docker の構成によっては使えないため）。中身はこの RUN でイメージの設定に書き込む
 RUN --mount=type=secret,id=npmconfig,target=/run/secrets/npmconfig \
-  g="$(npm config get globalconfig)" && mkdir -p "$(dirname "$g")" \
+  if [ ! -f /run/secrets/npmconfig ]; then \
+    echo "sacty: npm の設定のファイルが渡されていません。sacty を作り直して（npm run build）から、sacty image build を実行してください。" >&2; \
+    exit 1; \
+  fi \
+  && g="$(npm config get globalconfig)" && mkdir -p "$(dirname "$g")" \
   && cat /run/secrets/npmconfig >> "$g"
 
 # root では動かさない（node イメージの node ユーザー）
