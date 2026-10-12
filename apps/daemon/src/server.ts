@@ -133,6 +133,16 @@ export function createApp(
     }
   });
 
+  /** プロジェクトの通知先に、テストの通知を送る（PBI-38）。 */
+  app.post("/api/projects/:id/notification-test", async (c) => {
+    try {
+      await service.testNotification(c.req.param("id"));
+      return c.json({ ok: true });
+    } catch (error) {
+      return handleError(c, error);
+    }
+  });
+
   /** GitHub Issue の取り込みを、間隔を待たずに実行する。 */
   app.post("/api/intake/run", async (c) => {
     if (!options.intake) return c.json({ error: "not_configured" }, 409);

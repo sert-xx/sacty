@@ -214,6 +214,11 @@ export function cancelTask(id: string): Promise<OpResult> {
 }
 
 /** GitHub Issue の取り込みを、間隔を待たずに実行する。 */
+/** プロジェクトの通知先に、テストの通知を送る（PBI-38）。 */
+export async function testNotification(projectId: string): Promise<OpResult> {
+  return postOp(`/api/projects/${encodeURIComponent(projectId)}/notification-test`, {});
+}
+
 export async function runIntake(): Promise<OpResult> {
   return postOp("/api/intake/run", {});
 }

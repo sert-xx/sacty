@@ -24,6 +24,7 @@ import {
   runIntake,
   saveProject,
   saveSettings,
+  testNotification,
   voidRemark,
 } from "@/lib/daemon";
 
@@ -234,6 +235,23 @@ export async function saveSettingsAction(
 }
 
 /** GitHub Issue の取り込みを、すぐに実行する。 */
+export type TestNotificationState = { message?: string; sent?: boolean };
+
+/** プロジェクトの通知先に、テストの通知を送る（保存済みの設定で送る。PBI-38）。 */
+export async function testNotificationAction(
+  _prev: TestNotificationState,
+  formData: FormData,
+): Promise<TestNotificationState> {
+  const a = (await getMessages()).common.action;
+  let result: Awaited<ReturnType<typeof testNotification>>;
+  try {
+    result = await testNotification(String(formData.get("projectId") ?? ""));
+  } catch {
+    return { message: a.daemonDown };
+  }
+  return result.ok ? { sent: true } : { message: result.message };
+}
+
 export async function runIntakeAction(): Promise<void> {
   await runIntake();
   refresh();

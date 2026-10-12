@@ -523,6 +523,7 @@ function makeService(
     secretStore?: ServiceDeps["secrets"];
     platformProblems?: ServiceDeps["platformProblems"];
     hostMcpProblems?: ServiceDeps["hostMcpProblems"];
+    notifier?: ServiceDeps["notifier"];
   } = {},
 ) {
   const executor = new FakeExecutor(outcomes);
@@ -566,6 +567,7 @@ function makeService(
     ...(options.gateway ? { gateway: options.gateway } : {}),
     ...(options.platformProblems ? { platformProblems: options.platformProblems } : {}),
     ...(options.hostMcpProblems ? { hostMcpProblems: options.hostMcpProblems } : {}),
+    ...(options.notifier ? { notifier: options.notifier } : {}),
   });
   return { service, executor, repos, tests, pulls };
 }
@@ -603,6 +605,37 @@ describe("作業履歴", () => {
 });
 
 describe("工程の実行と費用", () => {
+  it("承認待ち・一時停止・完了を通知し、人間が自分で止めたときは通知しない。送れなかったら画面に出す（PBI-38）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const sent: string[] = [];
+    const notifier: NonNullable<ServiceDeps["notifier"]> = {
+      notify: async (task, kind) => {
+        sent.push(`${kind}:${task.status}:${task.gate?.step ?? task.pausedReason ?? ""}`);
+      },
+      test: async () => {},
+      problems: () => [message("notify.failed", { project: "デフォルト", detail: "x" })],
+    };
+    const { service } = makeService(activity, [completed(20_000), completed(20_000)], {
+      notifier,
+      config: configOf(agent(), 1),
+    });
+    const task = service.createTask({ projectId: "default", title: "決済API" });
+    await service.runNext(task.id);
+    expect(sent).toEqual(["approval:awaiting_approval:requirements"]);
+    // 差し戻して出し直したら、もう一度知らせる
+    service.requestChanges(task.id, { step: "requirements", submission: 1, comments: ["直して"] });
+    await service.runNext(task.id);
+    expect(sent.at(-1)).toBe("approval:awaiting_approval:requirements");
+    expect(sent).toHaveLength(2);
+    service.approve(task.id, { step: "requirements", submission: 2 });
+    // 人間が自分で止めたときは通知しない
+    await service.pause(task.id);
+    expect(service.get(task.id)?.task.pausedReason).toBe("manual");
+    expect(sent).toHaveLength(2);
+    expect(service.status().warnings).toEqual([expect.objectContaining({ code: "notify.failed" })]);
+    activity.close();
+  });
+
   it("ホストの MCP サーバーを、ゲートウェイの HTTP の MCP として渡し、認証のヘッダーには実行ごとのトークンだけを入れる（PBI-36）", async () => {
     const activity = new SqliteActivityStore(dbPath);
     const gateway: NonNullable<ServiceDeps["gateway"]> = {

@@ -72,6 +72,35 @@ export const ContextSource = z.object({
 });
 export type ContextSource = z.infer<typeof ContextSource>;
 
+/** 秘密情報：キーチェーンの名前か、1Password の参照（op://…。PBI-34）。値は書かない。 */
+const SecretRefInput = z
+  .string()
+  .trim()
+  .regex(/^(?:[A-Za-z0-9._-]+|op:\/\/\S.*)$/, code("input.secretRef"));
+
+/**
+ * プロジェクトの通知先（PBI-38）。Slack API の形（chat.postMessage。Slack Proxy でも使える）か、Incoming Webhook。
+ * 秘密情報（トークン・Webhook の URL）は名前か 1Password の参照で書き、値は書かない。
+ */
+export const ProjectNotification = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("slack-api"),
+    /** 送り先（例 https://slack.com/api/chat.postMessage、Slack Proxy の chat.postMessage）。 */
+    url: z.url({ protocol: /^https?$/, message: code("input.invalidUrl") }),
+    channel: z.string().trim().min(1, code("input.channelRequired")).max(80),
+    /** Slack のトークン（Proxy では書かない）。 */
+    token: SecretRefInput.optional(),
+    language: z.enum(["ja", "en"]).default("ja"),
+  }),
+  z.object({
+    kind: z.literal("slack-webhook"),
+    /** Incoming Webhook の URL（URL そのものが秘密なので、秘密情報として書く）。 */
+    webhook: SecretRefInput,
+    language: z.enum(["ja", "en"]).default("ja"),
+  }),
+]);
+export type ProjectNotification = z.infer<typeof ProjectNotification>;
+
 /**
  * プロジェクトの定義。エクスポート・インポートの対象（PBI-5b）なので、
  * 個人の設定や秘密情報は含めない。
@@ -82,6 +111,8 @@ export const ProjectDefinition = z.object({
   targets: z.array(ProjectTarget).max(50).default([]),
   /** 工程エージェントに渡すコンテキスト（PBI-6）。 */
   context: ContextSource.optional(),
+  /** 人間の出番の通知先（PBI-38）。無ければ通知しない。 */
+  notification: ProjectNotification.optional(),
   /**
    * GitHub へのアクセスに使う、gh にログイン済みのアカウント（PBI-13）。GitHub にアクセスするには必ず選ぶ
    * （gh のアクティブなアカウントは切り替わるので使わない）。個人の設定なので、エクスポートには含めない。
@@ -195,6 +226,8 @@ export const ProjectExport = z
         name: ProjectDefinition.shape.name,
         targets: z.array(StrictProjectTarget).max(50).default([]),
         context: ContextSource.strict().optional(),
+        // 通知先（PBI-38）。秘密情報は名前か参照だけなので、エクスポートに含める
+        notification: ProjectNotification.optional(),
       })
       .strict(),
   })
@@ -221,6 +254,7 @@ export function exportProject(project: Project): ProjectExport {
             },
           }
         : {}),
+      ...(project.notification ? { notification: project.notification } : {}),
     },
   };
 }

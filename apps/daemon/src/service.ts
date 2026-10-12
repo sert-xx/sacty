@@ -79,6 +79,7 @@ import {
   type PullRequestStatus,
   type PullRequests,
 } from "./github.js";
+import { notificationFor, type SlackNotifier } from "./notifier.js";
 import { type Platform, platformPromptLines } from "./platforms.js";
 import type { ProjectStore } from "./projects.js";
 import {
@@ -176,6 +177,8 @@ export type ServiceDeps = {
   platformProblems?: (names: readonly string[]) => DaemonText[];
   /** 準備ができないホストの MCP サーバーの理由（画面の状態に出す。PBI-36）。 */
   hostMcpProblems?: () => DaemonText[];
+  /** 人間の出番の通知（PBI-38）。送るのは待たない。 */
+  notifier?: Pick<SlackNotifier, "notify" | "test" | "problems">;
 };
 
 export type DaemonStatus = {
@@ -711,6 +714,7 @@ export class TaskService {
       warnings: [
         ...(this.deps.platformProblems?.(config.config.platforms.map((p) => p.name)) ?? []),
         ...(this.deps.hostMcpProblems?.() ?? []),
+        ...(this.deps.notifier?.problems() ?? []),
       ],
       intake: config.config.github
         ? { ...this.intakeStatus, ...this.labelOf(this.deps.settings.get()) }
@@ -934,6 +938,7 @@ export class TaskService {
         throw new InvalidOperationError(message("task.invalidState"));
       }
     }
+    const before = this.tasks.get(task.id);
     const written = this.deps.activity.append({
       taskId: task.id,
       projectId: task.projectId,
@@ -944,6 +949,9 @@ export class TaskService {
     }
     const updated = this.tasks.get(task.id);
     if (!updated) throw new Error("task is missing from the projection");
+    // 人間の出番（承認待ち・エスカレーション・一時停止）と完了を通知する（送るのは待たない。PBI-38）
+    const kind = notificationFor(before, updated);
+    if (kind) void this.deps.notifier?.notify(updated, kind);
     return updated;
   }
 
@@ -2887,6 +2895,24 @@ export class TaskService {
       this.append(warned, [
         { actor: "sacty", event: { type: "TaskPaused", payload: { reason: "budget" } } },
       ]);
+    }
+  }
+
+  /** プロジェクトの通知先に、テストの通知を送る（PBI-38）。送れなければ、理由の例外にする。 */
+  async testNotification(projectId: string): Promise<void> {
+    if (!this.deps.projects.get(projectId)) {
+      throw new InvalidOperationError(message("project.notFound"));
+    }
+    if (!this.deps.notifier) throw new InvalidOperationError(message("notify.notConfigured"));
+    try {
+      await this.deps.notifier.test(projectId);
+    } catch (error) {
+      throw new InvalidOperationError(
+        message("notify.failed", {
+          project: this.deps.projects.get(projectId)?.name ?? projectId,
+          detail: error instanceof Error ? error.message : String(error),
+        }),
+      );
     }
   }
 

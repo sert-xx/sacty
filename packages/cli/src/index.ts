@@ -192,6 +192,8 @@ async function up(webPort: number, daemonPort: number) {
         ...process.env,
         SACTY_DAEMON_PORT: String(daemonPort),
         SACTY_DAEMON_TOKEN: token,
+        // 通知のリンクに使う、画面の URL（PBI-38）
+        SACTY_WEB_URL: `http://127.0.0.1:${webPort}`,
       },
     }),
   );
