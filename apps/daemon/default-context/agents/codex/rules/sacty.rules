@@ -1,0 +1,6 @@
+# sacty の既定の Codex のルール（worker の CODEX_HOME/rules/sacty.rules に置く）。
+# コンテキストリポジトリの agents/codex/rules/ に置いたファイルは、名前のまま重ねる。
+# 同じ名前のファイルは上書きするので、この既定を差し替えるとき以外は sacty.rules 以外の名前にする。
+#
+# 例：
+# prefix_rule(pattern = ["npm", "test"], decision = "allow")

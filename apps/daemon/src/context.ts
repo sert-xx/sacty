@@ -110,9 +110,6 @@ export type AgentSettings = { codex: Record<string, unknown>; claude: Record<str
 /** Claude Code に渡す MCP の設定のファイル名（設定のディレクトリの中）。 */
 export const CLAUDE_MCP_CONFIG = "mcp.json";
 
-/** 各層の Codex のルールをまとめて置くファイル（CODEX_HOME の中）。 */
-export const CODEX_RULES = "rules/sacty.rules";
-
 /** 層の中の、エージェントの設定のファイル。 */
 export const AGENT_SETTINGS_FILES = {
   codex: "agents/codex/config.toml",
@@ -481,7 +478,6 @@ const AGENT_DIRS = { codex: "agents/codex", claude: "agents/claude" } as const;
  * 認証のファイル、sacty が作る規約・MCP の設定、スキル（skills/ で管理する）。
  */
 const RESERVED_FILES: Record<keyof AgentSettings, string[]> = {
-  // rules/sacty.rules は予約しない（層に置いても、ほかのルールと同じくまとめる）
   codex: ["auth.json", "AGENTS.md", "skills"],
   claude: [".credentials.json", ".claude.json", "CLAUDE.md", CLAUDE_MCP_CONFIG, "skills"],
 };
@@ -515,11 +511,10 @@ export type ComposedContext = {
   agents: AgentSettings;
   /**
    * エージェントの設定のディレクトリに写すファイル（同じパスは下位が上書き）。
-   * 設定ファイル・sacty が管理するファイル・Codex のルールは含まない。
+   * 設定ファイル・sacty が管理するファイルは含まない。Codex のルール（`rules/*.rules`）も同じく
+   * ファイルごとに扱う（既定のルールは `rules/sacty.rules` にして、層のファイルと名前がぶつかりにくくしている）。
    */
   agentFiles: Record<keyof AgentSettings, { path: string; src: string; from: string }[]>;
-  /** Codex のルール（各層の `rules/*.rules`。上位から順に、1つのファイルにまとめる）。 */
-  codexRules: { from: string; text: string }[];
   /** 上書き禁止に当たったなど、合成で気づいたこと。 */
   warnings: DaemonText[];
 };
@@ -627,7 +622,6 @@ export function composeContext(
     keyof AgentSettings,
     Map<string, { src: string; from: string }>
   >;
-  const codexRules: { from: string; text: string }[] = [];
   const kinds: (keyof AgentSettings)[] = runtime
     ? [runtime === "codex" ? "codex" : "claude"]
     : ["codex", "claude"];
@@ -644,9 +638,6 @@ export function composeContext(
           warnings.push(
             message("context.reservedSetting", { from, file: `${AGENT_DIRS[kind]}/`, key: path }),
           );
-        } else if (kind === "codex" && /^rules\/[^/]+\.rules$/.test(path)) {
-          const text = readFileSync(src, "utf8").trim();
-          if (text) codexRules.push({ from, text });
         } else {
           files[kind].set(path, { src, from });
         }
@@ -662,7 +653,6 @@ export function composeContext(
       codex: [...files.codex.entries()].map(([path, f]) => ({ path, ...f })),
       claude: [...files.claude.entries()].map(([path, f]) => ({ path, ...f })),
     },
-    codexRules,
     warnings,
   };
 }
@@ -753,14 +743,6 @@ export function writeContext(
       : "",
   ].filter(Boolean);
   if (parts.length > 0) writeFileSync(join(outDir, "AGENTS.md"), `${parts.join("\n\n")}\n`);
-  // Codex のルールは、Codex 自身が書き足す default.rules と分けて、sacty.rules にまとめる
-  if (composed.codexRules.length > 0) {
-    mkdirSync(join(outDir, "rules"), { recursive: true });
-    writeFileSync(
-      join(outDir, CODEX_RULES),
-      `${composed.codexRules.map((r) => `# sacty context: ${r.from}\n${r.text}`).join("\n\n")}\n`,
-    );
-  }
   // 層の設定を先に書き、mcp.yaml から作る MCP サーバーの表を後ろに続ける（設定の mcp_servers は除いてある）
   const toml = [
     ...(Object.keys(composed.agents.codex).length > 0

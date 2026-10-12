@@ -10,7 +10,7 @@ sacty に同梱するコンテキストです（PBI-24）。どのプロジェ�
 - `mcp.yaml`：MCP サーバー
 - `agents/codex/`・`agents/claude/`：worker の CODEX_HOME・CLAUDE_CONFIG_DIR に写すファイル（同じパスは下位が上書き）
   - `config.toml`・`settings.json` はキーごとに重ね、下位が上書きする（Claude Code の `permissions.allow / deny / ask` は合わせる）
-  - Codex のルール（`agents/codex/rules/*.rules`）は、全部の層のものを `rules/sacty.rules` にまとめる（Codex が書き足す default.rules と分ける）
+  - Codex のルール（`agents/codex/rules/*.rules`）も、ファイルごとに同じ名前なら下位が上書きする。既定のルールは `sacty.rules` にしてあり、層では別の名前にすれば既定を消さずに足せる
   - 認証のファイル・sacty が作るファイル（AGENTS.md・CLAUDE.md・mcp.json）・skills/ は写さない
 - `sacty-context.yaml`：locked（下位で上書き・取り除きできない項目）。既定は一番上位なので extends は使わない
 

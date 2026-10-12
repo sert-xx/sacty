@@ -346,6 +346,10 @@ describe("sacty の既定のコンテキスト（PBI-24）", () => {
     expect(composed.rules).toContain("サブエージェント");
     // README は渡さない
     expect(composed.rules).not.toContain("sacty に同梱するコンテキストです");
+    // 既定の Codex のルールは sacty.rules（層のファイルと名前がぶつかりにくいように）
+    expect(composeContext([layer], "codex").agentFiles.codex.map((f) => f.path)).toEqual([
+      "rules/sacty.rules",
+    ]);
   });
 
   it("コンテキストリポジトリが無くても、既定の規則とスキルを渡し、中身のハッシュを記録する", async () => {
@@ -510,9 +514,9 @@ describe("エージェントの設定の合成（PBI-24）", () => {
     claude.dispose();
   });
 
-  it("エージェントの設定のディレクトリのファイルを写し（同じパスは下位が上書き）、Codex のルールは sacty.rules にまとめる", async () => {
+  it("エージェントの設定のディレクトリのファイルを写し、Codex のルールもファイルごとに同じ名前は下位が上書きする", async () => {
     const defaultDir = place(join(dir, "default"), {
-      "agents/codex/rules/default.rules":
+      "agents/codex/rules/sacty.rules":
         'prefix_rule(pattern = ["rm", "-rf"], decision = "forbidden")',
       "agents/codex/prompts/fix.md": "既定版",
       "agents/codex/auth.json": "{}",
@@ -522,9 +526,9 @@ describe("エージェントの設定の合成（PBI-24）", () => {
     });
     const fetcher = new FakeFetcher({
       "https://example.com/p.git": {
-        "agents/codex/rules/default.rules":
+        "agents/codex/rules/team.rules":
           'prefix_rule(pattern = ["npm", "test"], decision = "allow")',
-        "agents/codex/rules/sacty.rules":
+        "agents/codex/rules/other.rules":
           'prefix_rule(pattern = ["git", "status"], decision = "allow")',
         "agents/codex/prompts/fix.md": "プロジェクト版",
         "agents/codex/skills/x/SKILL.md": "skills/ で管理する",
@@ -540,9 +544,11 @@ describe("エージェントの設定の合成（PBI-24）", () => {
       undefined,
       defaultDir,
     );
-    // 同じ名前のルールのファイルも、上書きせずに上位から順にまとめる（Codex の default.rules とは分ける）
-    expect(readFileSync(join(codex.dir, "rules", "sacty.rules"), "utf8")).toMatch(
-      /^# sacty context: sacty-default@\w{7}\n.*"rm", "-rf".*\n\n# sacty context: https:\/\/example.com\/p.git@\w{7}\n.*"npm", "test".*\n\n# sacty context: https:\/\/example.com\/p.git@\w{7}\n.*"git", "status"/,
+    // 既定の sacty.rules と名前の違うルールは、既定を消さずに足される
+    expect(readFileSync(join(codex.dir, "rules", "sacty.rules"), "utf8")).toContain('"rm", "-rf"');
+    expect(readFileSync(join(codex.dir, "rules", "team.rules"), "utf8")).toContain('"npm", "test"');
+    expect(readFileSync(join(codex.dir, "rules", "other.rules"), "utf8")).toContain(
+      '"git", "status"',
     );
     expect(existsSync(join(codex.dir, "rules", "default.rules"))).toBe(false);
     expect(readFileSync(join(codex.dir, "prompts", "fix.md"), "utf8")).toBe("プロジェクト版");
@@ -556,6 +562,24 @@ describe("エージェントの設定の合成（PBI-24）", () => {
       expect.stringMatching(/agents\/codex\/ の「skills\/x\/SKILL.md」/),
     ]);
     codex.dispose();
+
+    // 同じ名前（sacty.rules）を置けば、既定のルールを差し替える
+    const replaced = await prepareContext(
+      new FakeFetcher({
+        "https://example.com/p.git": {
+          "agents/codex/rules/sacty.rules": 'prefix_rule(pattern = ["ls"], decision = "allow")',
+        },
+      }),
+      { repo: "https://example.com/p.git" },
+      "codex",
+      "/h",
+      undefined,
+      defaultDir,
+    );
+    expect(readFileSync(join(replaced.dir, "rules", "sacty.rules"), "utf8")).toBe(
+      'prefix_rule(pattern = ["ls"], decision = "allow")',
+    );
+    replaced.dispose();
 
     const claude = await prepareContext(
       fetcher,
