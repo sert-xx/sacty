@@ -5,16 +5,19 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import {
   CallToolRequestSchema,
+  ErrorCode,
   GetPromptRequestSchema,
   ListPromptsRequestSchema,
   ListResourcesRequestSchema,
   ListResourceTemplatesRequestSchema,
   ListToolsRequestSchema,
+  McpError,
   ReadResourceRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import { code, type DaemonText, message } from "@sacty/core";
+import { code, type DaemonText, message, renderMessage } from "@sacty/core";
 import { z } from "zod";
 import { errorText } from "./errors.js";
+import { hideSecret } from "./platforms.js";
 import { SecretRef, type SecretStore } from "./secrets.js";
 
 /**
@@ -105,6 +108,21 @@ const RETRY_MS = 60_000;
 const CALL_TIMEOUT_MS = 10 * 60_000;
 /** 切り替えた古いプロセスで、途中の呼び出しが終わるのを待つ上限。 */
 const DRAIN_MS = 5 * 60_000;
+/** 標準エラーを持っておく長さ（理由には、秘密情報を伏せた後の末尾だけを添える）。 */
+const STDERR_KEEP = 64 * 1024;
+/** 準備ができなかった理由に添える標準エラーの末尾と、理由の長さの上限。 */
+const STDERR_IN_REASON = 300;
+const REASON_MAX = 600;
+
+/** 起動できなかった（標準エラーの末尾を、伏せる前の形で持つ）。 */
+export class StartError extends Error {
+  constructor(
+    message: string,
+    readonly stderr: string,
+  ) {
+    super(message);
+  }
+}
 
 const withTimeout = <T>(promise: Promise<T>, ms: number, what: string): Promise<T> =>
   new Promise((resolve, reject) => {
@@ -129,10 +147,11 @@ const stdioConnector: HostMcpConnector = async (spec, env) => {
     env: { ...(process.env as Record<string, string>), ...env },
     stderr: "pipe",
   });
-  // 標準エラーは読み捨てる（詰まらせない）。最後の部分は、準備ができなかった理由に添える
+  // 標準エラーは読み捨てる（詰まらせない）。末尾は、準備ができなかった理由に添える。秘密情報を伏せる前に短く
+  // 切ると一部が残るので、十分な長さを持っておき、伏せるのは理由を作るとき（呼び出し元）にする
   let tail = "";
   transport.stderr?.on("data", (chunk: Buffer) => {
-    tail = `${tail}${chunk.toString()}`.slice(-1_000);
+    tail = `${tail}${chunk.toString()}`.slice(-STDERR_KEEP);
   });
   const client = new Client({ name: "sacty-gateway", version: "0.1.0" });
   try {
@@ -140,7 +159,7 @@ const stdioConnector: HostMcpConnector = async (spec, env) => {
   } catch (error) {
     await client.close().catch(() => {});
     const detail = error instanceof Error ? error.message : String(error);
-    throw new Error(tail.trim() ? `${detail} (stderr: ${tail.trim().slice(-300)})` : detail);
+    throw new StartError(detail, tail.trim());
   }
   return {
     client,
@@ -160,6 +179,11 @@ type State = {
   /** 起動中のプロセスの設定（起動の途中で設定が変わったら、終わった後に起動し直す）。 */
   startingKey?: string;
   problem?: DaemonText;
+  /**
+   * いまの接続の認証が切れたらしい（ツールが認証エラーを返した）。起動し直して準備ができるまで、新しい呼び出しには
+   * 使わない（準備ができていないと返す）。
+   */
+  expired?: boolean;
   timer?: NodeJS.Timeout;
   /** 起動し直した回数（作業履歴ではなく、画面・ログ・テストで確かめる）。 */
   restarts: number;
@@ -253,21 +277,25 @@ export class HostMcpServers {
     state.startingKey = state.key;
     state.starting = (async () => {
       let next: HostMcpConnection | undefined;
+      const secrets: string[] = [];
       try {
         const env: Record<string, string> = {};
         for (const [key, value] of Object.entries(spec.env)) {
-          env[key] =
-            typeof value === "string"
-              ? value
-              : `${value.prefix}${await this.deps.secrets.get(value.secret)}`;
+          if (typeof value === "string") {
+            env[key] = value;
+            continue;
+          }
+          const secret = await this.deps.secrets.get(value.secret);
+          secrets.push(secret, `${value.prefix}${secret}`);
+          env[key] = `${value.prefix}${secret}`;
         }
         next = await (this.deps.connect ?? stdioConnector)(spec, env);
       } catch (error) {
-        state.problem = message("gateway.mcpUnavailable", {
-          name,
-          detail: errorText(error),
-        });
-        this.deps.log?.(`[gateway] host MCP ${name}: not ready: ${errorText(error)}`);
+        // 理由（画面・ログ・エージェントへの 503）には、秘密情報を伏せてから切り詰めたものだけを出す
+        // （MCP サーバーが認証の失敗で秘密情報を標準エラーに出すこともある。PBI-36 レビュー指摘）
+        const detail = startFailure(error, secrets);
+        state.problem = message("gateway.mcpUnavailable", { name, detail });
+        this.deps.log?.(`[gateway] host MCP ${name}: not ready: ${detail}`);
         state.timer = setTimeout(
           () => void this.restart(name, "retry"),
           this.deps.retryMs ?? RETRY_MS,
@@ -282,6 +310,7 @@ export class HostMcpServers {
       }
       const old = state.current;
       state.current = connection;
+      state.expired = false;
       state.problem = undefined;
       state.restarts += reason === "start" ? 0 : 1;
       // プロセスが終わったら（期限切れで終わる MCP サーバーもある）、起動し直す
@@ -340,7 +369,8 @@ export class HostMcpServers {
     body: unknown,
   ): Promise<void> {
     const state = this.states.get(name);
-    const connection = state?.current;
+    // 認証が切れた接続は、起動し直して準備ができるまで使わない（PBI-36 レビュー指摘）
+    const connection = state?.expired ? undefined : state?.current;
     if (!state || !connection) {
       const reason = state?.problem ? ` (${errorTextOf(state.problem)})` : "";
       res.writeHead(state ? 503 : 404, { "content-type": "application/json" });
@@ -395,8 +425,13 @@ export class HostMcpServers {
             resetTimeoutOnProgress: true,
           });
           if (result.isError && AUTH_ERROR.test(JSON.stringify(result.content ?? ""))) {
-            // 認証の期限切れらしい。起動し直して再認証する（この呼び出しは、そのまま返す）
-            void this.restart(name, "the tool reported an authentication error");
+            // 認証の期限切れらしい。起動し直して再認証する（この呼び出しは、そのまま返す）。いまの接続でだけ、
+            // 1回だけ起動し直す（起動し直しに失敗した後も、呼び出しのたびに起動し直さない。1分ごとに起動し直す）
+            const state = this.states.get(name);
+            if (state?.current === connection && !state.expired) {
+              state.expired = true;
+              void this.restart(name, "the tool reported an authentication error");
+            }
             return {
               ...result,
               content: [
@@ -412,8 +447,12 @@ export class HostMcpServers {
         } catch (error) {
           // いま使っている接続が切れた（プロセスが終わった）なら、起動し直す。切り替えた後の古い接続の失敗では
           // 起動し直さない（切り替えのたびに起動し直してしまうため）
-          if (this.states.get(name)?.current === connection) {
-            void this.restart(name, "the call failed");
+          // ツールの誤り（引数の誤りなど）では起動し直さない
+          const closed = error instanceof McpError && error.code === ErrorCode.ConnectionClosed;
+          const state = this.states.get(name);
+          if (closed && state?.current === connection && !state.expired) {
+            state.expired = true;
+            void this.restart(name, "the connection was closed");
           }
           throw error;
         } finally {
@@ -438,6 +477,17 @@ export class HostMcpServers {
     }
     return server;
   }
+}
+
+/** 起動できなかった理由。秘密情報を伏せてから、標準エラーの末尾を添えて切り詰める。 */
+function startFailure(error: unknown, secrets: readonly string[]): string {
+  const hide = (text: string) => secrets.reduce((t, secret) => hideSecret(t, secret), text);
+  const raw = errorText(error);
+  const detail = hide(typeof raw === "string" ? raw : renderMessage(raw, "ja"));
+  const stderr =
+    error instanceof StartError && error.stderr ? hide(error.stderr).slice(-STDERR_IN_REASON) : "";
+  const reason = stderr ? `${detail} (stderr: ${stderr})` : detail;
+  return reason.length > REASON_MAX ? `${reason.slice(0, REASON_MAX)}…` : reason;
 }
 
 function errorTextOf(text: DaemonText): string {

@@ -2,10 +2,12 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
 import { renderMessage } from "@sacty/core";
 import { afterEach, describe, expect, it } from "vitest";
 import { AiGateway } from "./gateway.js";
 import {
+  type HostMcpConnection,
   type HostMcpConnector,
   HostMcpFile,
   HostMcpServers,
@@ -313,6 +315,132 @@ describe("ホストで動かす MCP サーバー（PBI-36）", () => {
     await new Promise((r) => setTimeout(r, 200));
     expect(fake.generation()).toBe(2);
     expect(host.restarts("cloud")).toBe(1);
+    await agent.close();
+  });
+
+  it("起動に失敗した理由（MCP サーバーの標準エラーを含む）から、秘密情報を伏せてから切り詰める（レビュー指摘）", async () => {
+    const secret = "FAKE-HOST-SECRET-0123456789abcdef";
+    for (const pad of [0, 280, 290, 590, 990, 70_000]) {
+      const lines: string[] = [];
+      const server = new HostMcpServers({
+        specs: () => [
+          toHostMcp(
+            "cloud",
+            HostMcpFile.parse({
+              // 実際の子プロセス（MCP サーバー）が、認証の失敗で秘密情報を標準エラーに出して終わる
+              command: process.execPath,
+              args: [
+                "-e",
+                "process.stderr.write('x'.repeat(Number(process.env.PAD)) + 'token=' + process.env.TOKEN); process.exit(1)",
+              ],
+              env: { PAD: String(pad), TOKEN: { secret: "cloud-token" } },
+              ready_timeout_sec: 10,
+            }),
+          ),
+        ],
+        secrets: new MemorySecretStore({ "cloud-token": secret }),
+        retryMs: 60_000,
+        log: (line) => lines.push(line),
+      });
+      server.start();
+      await until(() => server.problems().length === 1, 10_000);
+      const shown = [renderMessage(server.problems()[0], "ja"), ...lines].join("\n");
+      expect(shown).not.toContain(secret.slice(0, 8));
+      expect(shown).not.toContain(secret.slice(-8));
+      gateway = new AiGateway({ hostMcp: server });
+      const port = await gateway.listen();
+      const res = await fetch(`http://127.0.0.1:${port}/mcp/cloud`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${gateway.register().token}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+      });
+      expect(res.status).toBe(503);
+      expect(await res.text()).not.toContain(secret.slice(0, 8));
+      await gateway.close();
+      gateway = undefined;
+      await server.stop();
+    }
+  }, 60_000);
+
+  it("再認証に失敗したら、期限切れの接続には新しい呼び出しを送らず（503）、呼び出しのたびに起動し直さない（レビュー指摘）", async () => {
+    const fake = fakeServers({
+      expired: (generation) => generation === 1,
+      // 最初の起動だけ成功し、再認証（2回目からの起動）は失敗する
+      fail: () => attempts++ > 0,
+    });
+    let attempts = 0;
+    host = new HostMcpServers({
+      specs: () => [spec()],
+      secrets: new MemorySecretStore({}),
+      connect: fake.connect,
+      retryMs: 60_000,
+    });
+    host.start();
+    await until(() => fake.generation() === 1);
+    gateway = new AiGateway({ hostMcp: host });
+    const port = await gateway.listen();
+    const token = gateway.register().token;
+    const agent = await agentClient(port, token);
+    const expired = await agent.callTool({ name: "whoami", arguments: {} });
+    expect(expired.isError).toBe(true);
+    await until(() => host?.problems().length === 1);
+    const post = () =>
+      fetch(`http://127.0.0.1:${port}/mcp/cloud`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${token}`,
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 2,
+          method: "tools/call",
+          params: { name: "whoami", arguments: {} },
+        }),
+      });
+    for (let i = 0; i < 3; i++) expect((await post()).status).toBe(503);
+    // 起動は、最初と、再認証の1回だけ（次は1分後）
+    expect(fake.envs).toHaveLength(2);
+    await agent.close();
+  });
+
+  it("ツールの誤り（引数の誤りなど）の例外では起動し直さず、接続が切れたときだけ起動し直す", async () => {
+    let connects = 0;
+    let failWith: McpError = new McpError(ErrorCode.InvalidParams, "bad arguments");
+    const connect: HostMcpConnector = async () => {
+      connects += 1;
+      return {
+        client: {
+          getServerCapabilities: () => ({ tools: {} }),
+          listTools: async () => ({ tools: [{ name: "x", inputSchema: { type: "object" } }] }),
+          callTool: async () => {
+            throw failWith;
+          },
+        } as unknown as HostMcpConnection["client"],
+        close: async () => {},
+        onClose: () => {},
+      };
+    };
+    host = new HostMcpServers({
+      specs: () => [spec()],
+      secrets: new MemorySecretStore({}),
+      connect,
+    });
+    host.start();
+    await until(() => connects === 1);
+    gateway = new AiGateway({ hostMcp: host });
+    const port = await gateway.listen();
+    const agent = await agentClient(port, gateway.register().token);
+    await agent.callTool({ name: "x", arguments: {} }).catch(() => undefined);
+    await new Promise((r) => setTimeout(r, 100));
+    expect(connects).toBe(1);
+    failWith = new McpError(ErrorCode.ConnectionClosed, "Connection closed");
+    await agent.callTool({ name: "x", arguments: {} }).catch(() => undefined);
+    await until(() => connects === 2);
     await agent.close();
   });
 });
