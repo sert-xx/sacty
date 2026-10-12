@@ -11,6 +11,7 @@ import { AiGateway } from "./gateway.js";
 import { GhCliAuth } from "./gh.js";
 import { GitHubIssueSearch, GitHubPullRequests } from "./github.js";
 import { IssueIntake } from "./intake.js";
+import { PlatformCredentials } from "./platforms.js";
 import { PullRequestWatcher } from "./pr-watcher.js";
 import { SqliteProjectStore } from "./projects.js";
 import { GitRepositoryWorkspace } from "./repository.js";
@@ -49,13 +50,28 @@ const tests = new DockerTestRunner();
 // GitHub へのアクセスは、ホストの gh のアカウントで行う（PBI-13）
 const github = new GhCliAuth();
 // ホストのゲートウェイ（PBI-37）。リトライの上限は、リクエストごとに設定から読み直す
+// 社内 PF の API（PBI-35）。認証情報はゲートウェイの中だけに持ち、起動時にまとめて用意する
+const platforms = () => {
+  const c = config();
+  return c.ok ? c.config.platforms : [];
+};
+const credentials = new PlatformCredentials({ secrets });
 const gateway = new AiGateway({
   policy: () => {
     const c = config();
     return c.ok ? c.config.gatewayRetry : undefined;
   },
+  platforms,
+  credentials,
 });
 await gateway.listen();
+for (const platform of platforms()) {
+  credentials.header(platform).catch((error) => {
+    console.warn(
+      `[daemon] internal platform ${platform.name}: ${error instanceof Error ? error.message : error}`,
+    );
+  });
+}
 const service = new TaskService({
   activity,
   config,
@@ -71,6 +87,7 @@ const service = new TaskService({
   tests,
   workspaceRoot: join(home, "workspaces"),
   gateway,
+  platformProblems: (names) => credentials.unavailable(names),
 });
 service.recoverInterrupted();
 service.queueWaitingSteps();

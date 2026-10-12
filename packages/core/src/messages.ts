@@ -77,6 +77,8 @@ const PARAMS = {
   "input.invalid": null,
   "input.secretName": null,
   "input.secretRef": null,
+  "input.allowRule": null,
+  "input.platformName": null,
   "input.envName": null,
   "input.headerName": null,
   "input.mcpName": null,
@@ -201,6 +203,8 @@ const PARAMS = {
   "config.subscriptionSecret": null,
   "config.bedrockEndpointCodexOnly": null,
   "config.gatewayCodexBedrockOnly": null,
+  "config.platformAuth": null,
+  "gateway.platformUnavailable": z.object({ name: z.string(), detail: TextParam }),
   "gateway.unavailable": null,
   "config.agentMissing": z.object({ key: z.string(), id: z.string() }),
 } as const satisfies Record<string, z.ZodType | null>;
@@ -344,6 +348,10 @@ const ja: MessageDictionary = {
   "input.unknownKeys": ({ keys }) => `知らない項目があります（${keys}）。`,
   "input.invalid": "入力が正しくありません。",
   "input.secretName": "秘密情報の名前は英数字と . _ - だけで書いてください。",
+  "input.platformName":
+    "社内 PF の名前は、英小文字・数字・ハイフンで書いてください（先頭は英小文字か数字）。",
+  "input.allowRule":
+    "使える API は「メソッド パス」で書いてください（例 GET /api/v1/tickets/**。メソッドは GET・POST・PUT・PATCH・DELETE・HEAD）。",
   "input.secretRef":
     "秘密情報は、キーチェーンの名前（英数字と . _ -）か、1Password の参照（op://保管庫/アイテム/フィールド）で書いてください。",
   "input.envName": "環境変数の名前が正しくありません。",
@@ -477,6 +485,10 @@ const ja: MessageDictionary = {
     "Claude Code のサブスクリプションには、トークンの秘密情報名（secret）が必要です。",
   "config.bedrockEndpointCodexOnly":
     "Bedrock の接続先（endpoint）は Codex だけで選べます。Claude Code では書かないでください。",
+  "config.platformAuth":
+    "社内 PF の認証には、secret（固定のキー）か token（トークンの取得）のどちらか一方を書いてください。",
+  "gateway.platformUnavailable": ({ name, detail }, text) =>
+    `社内 PF「${name}」の認証情報を用意できません：${text(detail)}（ほかの PF は使えます）`,
   "config.gatewayCodexBedrockOnly":
     "ゲートウェイ経由（via_gateway）は、いまは Codex × Bedrock（auth.mode: bedrock）だけで使えます。",
   "gateway.unavailable":
@@ -560,6 +572,10 @@ const en: MessageDictionary = {
   "input.unknownKeys": ({ keys }) => `Unknown fields: ${keys}.`,
   "input.invalid": "The input is not valid.",
   "input.secretName": "Use only letters, digits, and . _ - in secret names.",
+  "input.platformName":
+    "Write an internal platform name in lowercase letters, digits, and hyphens (starting with a letter or digit).",
+  "input.allowRule":
+    'Write an allowed API as "METHOD path" (e.g. GET /api/v1/tickets/**; methods: GET, POST, PUT, PATCH, DELETE, HEAD).',
   "input.secretRef":
     "Write a secret as a keychain name (letters, digits, and . _ -) or a 1Password reference (op://vault/item/field).",
   "input.envName": "The environment variable name is not valid.",
@@ -695,6 +711,10 @@ const en: MessageDictionary = {
     "A Claude Code subscription needs the secret name of its token (secret).",
   "config.bedrockEndpointCodexOnly":
     "The Bedrock endpoint can only be chosen for Codex. Remove it for Claude Code.",
+  "config.platformAuth":
+    "For an internal platform, write either secret (a fixed key) or token (getting a token), not both.",
+  "gateway.platformUnavailable": ({ name, detail }, text) =>
+    `Cannot prepare the credentials for the internal platform "${name}": ${text(detail)} (other platforms still work)`,
   "config.gatewayCodexBedrockOnly":
     "via_gateway currently works only for Codex with Bedrock (auth.mode: bedrock).",
   "gateway.unavailable":
