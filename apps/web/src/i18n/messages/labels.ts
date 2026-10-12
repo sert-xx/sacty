@@ -167,6 +167,7 @@ const ja = {
     GuardianMissed:
       "最終レビューで合格にした成果物が差し戻されたため、ゴールガーディアンの見逃しとして記録",
     FinalReviewFailed: (message: string, cost: string) => `${message}（${cost}）`,
+    OrchestratorFailed: (message: string, cost: string) => `${message}（${cost}）`,
     StepQueued: (step: string) => `${step}を実行待ちにした（実行できるようになったため）`,
     TaskSplit: (count: number, reason: string) =>
       `子タスク${count}件に分割${reason ? `（${reason}）` : ""}`,
@@ -349,6 +350,7 @@ const en: LabelMessages = {
     GuardianMissed:
       "A deliverable that passed the final review was sent back; recorded as a Goal Guardian miss",
     FinalReviewFailed: (message, cost) => `${message} (${cost})`,
+    OrchestratorFailed: (message, cost) => `${message} (${cost})`,
     StepQueued: (step) => `${step} queued (it can run now)`,
     TaskSplit: (count, reason) =>
       `Split into ${count} subtask${count === 1 ? "" : "s"}${reason ? ` (${reason})` : ""}`,

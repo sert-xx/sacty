@@ -778,6 +778,17 @@ export function applyEvent(
       task.misses = [...task.misses, { ...event.payload, at: event.at }];
       break;
 
+    case "OrchestratorFailed":
+      if (task.status !== "queued" || task.steps.length > 0) {
+        throw new ActivityIntegrityError(event, "the steps are not being chosen");
+      }
+      task.budget = {
+        ...task.budget,
+        usedUsd: addUsd(task.budget.usedUsd, event.payload.costUsd),
+        estimated: task.budget.estimated || event.payload.estimated,
+      };
+      break;
+
     case "FinalReviewFailed":
       if (task.status !== "idle" || task.verification !== "tests_passed") {
         throw new ActivityIntegrityError(event, "final review is not pending");

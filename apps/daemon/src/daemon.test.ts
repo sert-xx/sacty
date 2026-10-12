@@ -2466,7 +2466,12 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         activity,
         [
           { kind: "failed", reason: "auth", message: "unexpected status 401 Unauthorized" },
-          { kind: "failed", reason: "usage_limit", message: "ThrottlingException" },
+          {
+            kind: "failed",
+            reason: "usage_limit",
+            message: "ThrottlingException",
+            usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 20_000 },
+          },
           plan("skip-design"),
         ],
         { realPlanner: true },
@@ -2484,6 +2489,14 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       await service.runNext(a.id);
       expect(service.get(a.id)?.task.pausedReason).toBe("usage_limit");
       expect(service.get(a.id)?.task.steps).toEqual([]);
+      // 実行の途中で止まった分の費用も予算に入れる（出力 20,000 トークン × $15/100万 = $0.30。レビュー指摘）
+      expect(service.get(a.id)?.task.budget.usedUsd).toBe(0.3);
+      expect(
+        service
+          .get(a.id)
+          ?.activity.filter((e) => e.type === "OrchestratorFailed")
+          .map((e) => e.actor),
+      ).toEqual(["orchestrator", "orchestrator"]);
       service.resume(a.id, {});
       await service.runNext(a.id);
       expect(service.get(a.id)?.task.stepsChoice?.plan).toBe("skip-design");

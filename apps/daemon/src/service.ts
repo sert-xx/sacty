@@ -606,7 +606,9 @@ export class TaskService {
   private async chooseSteps(
     task: Task,
     config: SactyConfig,
-  ): Promise<ChosenSteps | { failure: { reason: "auth" | "usage_limit"; message: DaemonText } }> {
+  ): Promise<
+    ChosenSteps | { failure: Extract<EventInput, { type: "OrchestratorFailed" }>["payload"] }
+  > {
     if (this.deps.planner) return this.deps.planner(task);
     const agent = config.defaultAgent;
     const { outcome, costUsd, estimated } = await this.runGuardian(
@@ -615,16 +617,17 @@ export class TaskService {
       "base",
     );
     // 認証の失敗・利用上限は、標準の工程で進めても同じく失敗するので、理由を記録して止める（PBI-32）。
-    // 再開すると、工程の選択からやり直す（これらの失敗では、ふつう費用はかかっていない）
+    // 再開すると、工程の選択からやり直す。使った分の費用は記録する
+    const cost = { agentId: agent.id, usage: outcome.usage, costUsd, estimated };
     if (outcome.kind === "failed" && outcome.reason !== "error") {
       return {
         failure: {
           reason: outcome.reason,
           message: message("orchestrator.failed", { detail: outcome.message }),
+          ...cost,
         },
       };
     }
-    const cost = { agentId: agent.id, usage: outcome.usage, costUsd, estimated };
     const chosen =
       outcome.kind === "completed"
         ? extractStepPlan(outcome.output, allowedPlans(task))
@@ -1321,6 +1324,7 @@ export class TaskService {
         if (this.pauseRequested.has(taskId) || this.cancelling.has(taskId)) return;
         if (latest.status !== "queued" || latest.steps.length > 0) return;
         this.append(latest, [
+          { actor: "orchestrator", event: { type: "OrchestratorFailed", payload: choice.failure } },
           {
             actor: "sacty",
             event: {
@@ -1329,6 +1333,8 @@ export class TaskService {
             },
           },
         ]);
+        // 失敗した実行の費用でも、80%の通知は判定する（一時停止はすでにしている）
+        this.warnIfNeeded(this.mustGet(taskId));
         return;
       }
       const { baseBranch, ...chosen } = choice;

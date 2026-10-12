@@ -530,6 +530,22 @@ const FinalReviewed = z.object({
  * ゴールガーディアンの最終レビューを実行できなかった（利用上限など）。実装の問題ではないので
  * やり直さずに止め、再開すると最終レビューからやり直す。使った分の費用は予算に入れる。
  */
+/**
+ * オーケストレーターが、認証の失敗・利用上限で工程を選べなかった（PBI-32）。標準の工程では進めず、続く
+ * TaskPaused で止める（再開すると工程の選択からやり直す）。使った分の費用は予算に入れる。
+ */
+const OrchestratorFailed = z.object({
+  type: z.literal("OrchestratorFailed"),
+  payload: z.object({
+    reason: z.enum(["usage_limit", "auth"]),
+    message: DaemonText,
+    agentId: z.string(),
+    usage: TokenUsage.optional(),
+    costUsd: z.number().nonnegative().default(0),
+    estimated: z.boolean().default(false),
+  }),
+});
+
 const FinalReviewFailed = z.object({
   type: z.literal("FinalReviewFailed"),
   payload: z.object({
@@ -822,6 +838,7 @@ export const EventInput = z.discriminatedUnion("type", [
   TestsRun,
   FinalReviewed,
   FinalReviewFailed,
+  OrchestratorFailed,
   IntegrationReviewed,
   PullRequestPublished,
   PullRequestMerged,

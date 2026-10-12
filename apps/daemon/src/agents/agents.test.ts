@@ -436,7 +436,7 @@ describe("設定ファイル", () => {
   it("雛形の Codex × Bedrock の例は、コメントを外せばそのまま読める（PBI-32）", () => {
     dir = mkdtempSync(join(tmpdir(), "sacty-config-"));
     const lines = CONFIG_TEMPLATE.split("\n");
-    const start = lines.findIndex((l) => l === "  # codex-bedrock:");
+    const start = lines.indexOf("  # codex-bedrock:");
     const end = lines.findIndex((l, i) => i > start && l.trim() === "");
     const example = lines.slice(start, end).map((l) => l.replace(/^ {2}# ?/, "  "));
     const yaml = CONFIG_TEMPLATE.replace(
