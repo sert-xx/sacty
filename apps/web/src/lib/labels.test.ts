@@ -8,6 +8,7 @@ import {
   needsPerson,
   personAction as personActionIn,
   statusText as statusTextIn,
+  usesTestCommand,
 } from "./labels";
 
 // 既存のテストは日本語の文言で確かめる
@@ -461,5 +462,19 @@ describe("レビューの工程（PBI-19）", () => {
       ),
     ).toBe("レビューを PR に投稿した（https://x/pull/12#r）");
     expect(statusText(task({ steps: [{ key: "review", state: "done" }] }))).toBe("完了");
+  });
+});
+
+describe("テストのコマンドの表示（PBI-28）", () => {
+  const withSteps = (...keys: Task["steps"][number]["key"][]) =>
+    ({ steps: keys.map((key) => ({ key, state: "todo" })) }) as unknown as Task;
+
+  it("工程に実装があるタスクだけに出す（調査・レビュー・分割の親・工程を選ぶ前には出さない）", () => {
+    expect(usesTestCommand(withSteps("requirements", "design", "implement", "pr"))).toBe(true);
+    expect(usesTestCommand(withSteps("requirements", "implement", "pr"))).toBe(true);
+    expect(usesTestCommand(withSteps("investigate"))).toBe(false);
+    expect(usesTestCommand(withSteps("review"))).toBe(false);
+    expect(usesTestCommand(withSteps("requirements", "design", "split"))).toBe(false);
+    expect(usesTestCommand(withSteps())).toBe(false);
   });
 });
