@@ -469,7 +469,7 @@ export class TaskService {
   }
 
   /**
-   * ゴールガーディアンを、対象リポジトリのコードを読み取り専用で渡して実行する（PBI-16）。
+   * ゴールガーディアンを、対象リポジトリのコードの使い捨ての写しを渡して実行する（PBI-16）。
    * base は起点のコミットのコード、implemented は実装後のコード（実装の作業領域。.git を除く）。
    * コードは実行ごとのディレクトリに書き出し、終わったら消す。書き出せなければ、実行の失敗として返す。
    */
@@ -500,7 +500,7 @@ export class TaskService {
           };
         }
       }
-      return await this.execute({ ...run, runId, workspaceDir, readOnlyWorkspace: true });
+      return await this.execute({ ...run, runId, workspaceDir });
     } finally {
       rmSync(workspaceDir, { recursive: true, force: true });
     }
@@ -1493,7 +1493,7 @@ export class TaskService {
       },
     ]);
 
-    // 実装の工程は clone を作業領域にし、それ以外の工程は、起点のコミットのコードを読み取り専用で渡す
+    // 実装の工程は clone を作業領域にし、それ以外の工程は、起点のコミットのコードを使い捨ての写しで渡す
     // （clone はタスクの開始時に済んでいる。作業領域が消えていれば、同じ起点で用意し直す）
     const ready = await this.prepareRepository(this.mustGet(task.id), config.config);
     if (!ready.ok) {
@@ -1509,8 +1509,9 @@ export class TaskService {
       ]);
       return;
     }
-    // 実装と再現（再現のテストを書く。PBI-29）は clone を作業領域にし、ほかは読み取り専用
-    const readOnlyWorkspace = step !== "implement" && step !== "reproduce";
+    // 実装と再現（再現のテストを書く。PBI-29）は clone を作業領域にし、ほかは使い捨ての写し（書き込めるので、
+    // リポジトリの手順のセットアップなども実行できる。変更は残らない。PBI-40）
+    const scratch = step !== "implement" && step !== "reproduce";
 
     // sacty の既定のコンテキストと、プロジェクトのコンテキストを取得・合成して渡し、
     // 使ったリポジトリとコミット（既定は中身のハッシュ）を記録する
@@ -1575,9 +1576,7 @@ export class TaskService {
     let reviewDiff: string | undefined;
     // 要求要件・設計の工程は、起点のコミットのコードを実行ごとのディレクトリに書き出して渡し、終わったら消す
     // （実装の作業領域は実装の変更を含むので使わない。差し戻しでやり直しても、同じ起点のコードを読む）
-    const snapshotDir = readOnlyWorkspace
-      ? join(this.deps.workspaceRoot, "_snapshots", runId)
-      : undefined;
+    const snapshotDir = scratch ? join(this.deps.workspaceRoot, "_snapshots", runId) : undefined;
     try {
       if (snapshotDir) {
         const latest = this.mustGet(task.id);
@@ -1629,7 +1628,6 @@ export class TaskService {
         platforms: config.config.platforms,
         role: step,
         workspaceDir: snapshotDir ?? ready.dir,
-        readOnlyWorkspace,
         context: context && { dir: context.dir, ...context.placed },
       });
     } finally {
@@ -1923,7 +1921,7 @@ export class TaskService {
       return;
     }
     const agent = config.config.guardianAgent;
-    // 最終レビューは、実装後のコードを読み取り専用で読ませる（差分もこれまでどおり渡す）
+    // 最終レビューは、実装後のコードを使い捨ての写しで読ませる（差分もこれまでどおり渡す）
     const { outcome, costUsd, estimated } = await this.runGuardian(
       current,
       {
@@ -2399,7 +2397,7 @@ export class TaskService {
 
   /**
    * 統合レビュー（PBI-31）。子タスクの PR がマージされた後のベースブランチの最新を取得し、ゴールガーディアンが
-   * 新しいセッションで、そのコード（読み取り専用）と親の承認済みの要求要件・設計から判定する。合格、または
+   * 新しいセッションで、そのコード（使い捨ての写し）と親の承認済みの要求要件・設計から判定する。合格、または
    * 続けて通らない上限に達したら統合レビューの承認待ちにする。上限の前に不合格なら、作業履歴の適用で
    * タスク分割の工程に戻り、修正の子タスクを追加する。実行できなければ理由を記録して止める（再開でやり直す）。
    */
@@ -2461,7 +2459,6 @@ export class TaskService {
         prompt: buildIntegrationReviewPrompt(latest, subtasks, { baseBranch, commit }),
         role: step,
         workspaceDir,
-        readOnlyWorkspace: true,
       });
     } finally {
       rmSync(workspaceDir, { recursive: true, force: true });
@@ -2651,8 +2648,6 @@ export class TaskService {
     prompt: string;
     role: AgentRole;
     workspaceDir: string;
-    /** 作業領域を読み取り専用で渡す（要求要件・設計の工程。PBI-15）。 */
-    readOnlyWorkspace?: boolean;
     /** エージェントの形式に変換したコンテキスト（工程エージェントだけ。PBI-6）。 */
     context?: Parameters<typeof buildInvocation>[5];
     /** 使わせる社内 PF の API（工程エージェントだけ。PBI-35）。 */
@@ -2734,7 +2729,6 @@ export class TaskService {
         runId: run.runId,
         image: run.image,
         workspaceDir: run.workspaceDir,
-        ...(run.readOnlyWorkspace ? { readOnlyWorkspace: true } : {}),
         invocation,
       });
     } catch (error) {
@@ -2806,7 +2800,7 @@ export class TaskService {
     config: SactyConfig,
   ): Promise<Extract<EventInput, { type: "ChangeJudged" }>["payload"]> {
     const agent = config.guardianAgent;
-    // 変更の申し出の判定は、起点のコミットのコードを読み取り専用で読ませる
+    // 変更の申し出の判定は、起点のコミットのコードを使い捨ての写しで読ませる
     const { outcome, costUsd, estimated } = await this.runGuardian(
       task,
       { agent, image: config.image, prompt: buildGuardianPrompt(task, proposal), role: "guardian" },

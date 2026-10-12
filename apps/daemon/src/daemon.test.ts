@@ -447,23 +447,22 @@ class FakeExecutor implements AgentExecutor {
   private held = new Map<string, (outcome: AgentOutcome) => void>();
   constructor(private readonly outcomes: (AgentOutcome | typeof HOLD)[]) {}
   /** 実行ごとに、作業領域を読み取り専用で渡したか。 */
-  readOnly: boolean[] = [];
+  /** 実行ごとに、使い捨ての写し（実装の作業領域ではない）を渡したか。 */
+  scratch: boolean[] = [];
   /** 実行ごとに、作業領域にあったファイル（実行の後に消されるので、実行の間に読んでおく）。 */
   workspaceFiles: string[][] = [];
   async run({
     runId,
     invocation,
     workspaceDir,
-    readOnlyWorkspace,
   }: {
     runId: string;
     invocation: Invocation;
     workspaceDir: string;
-    readOnlyWorkspace?: boolean;
   }): Promise<AgentOutcome> {
     this.calls.push(invocation);
     this.dirs.push(workspaceDir);
-    this.readOnly.push(readOnlyWorkspace === true);
+    this.scratch.push(/[\\/]_(?:snapshots|guardian)[\\/]/.test(workspaceDir));
     this.workspaceFiles.push(existsSync(workspaceDir) ? readdirSync(workspaceDir).sort() : []);
     // 渡されたコンテキスト（実行の後に消されるので、実行の間に読んでおく）
     const seed = invocation.stage?.seedDir;
@@ -1769,7 +1768,7 @@ describe("ゴールガーディアン：変更の申し出の判定（PBI-9）",
     // 工程の作業領域とは別の作業領域に、起点のコミットのコードを読み取り専用で渡す（PBI-16）
     expect(executor.dirs[2]).not.toBe(executor.dirs[1]);
     expect(executor.dirs[2]).toContain("_guardian");
-    expect(executor.readOnly[2]).toBe(true);
+    expect(executor.scratch[2]).toBe(true);
     expect(executor.workspaceFiles[2]).toEqual(["README.md"]);
     expect(guardian).toContain("起点のコミット（base123）のコードがあります");
     // コンテキスト（規約・スキル）は渡さない
@@ -2214,7 +2213,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       await service.runNext(id);
       expect(promptOf(executor, 0)).toContain("あなたはソフトウェア開発の調査エージェントです");
       expect(promptOf(executor, 0)).toContain("決済の再試行はどこで行っている？");
-      expect(executor.readOnly[0]).toBe(true);
+      expect(executor.scratch[0]).toBe(true);
       expect(executor.workspaceFiles[0]).toEqual(["README.md"]);
       expect(repos.snapshots).toHaveLength(1);
       expect(service.get(id)?.task.gate).toEqual({ step: "investigate", submission: 1 });
@@ -2426,7 +2425,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         { baseCommit: "b".repeat(40), headCommit: "h".repeat(40) },
       ]);
       expect(repos.snapshots.at(-1)?.baseCommit).toBe("h".repeat(40));
-      expect(executor.readOnly[0]).toBe(true);
+      expect(executor.scratch[0]).toBe(true);
       const prompt = promptOf(executor, 0);
       expect(prompt).toContain("あなたはソフトウェア開発のレビューエージェントです");
       expect(prompt).toContain("+export const retry = 3;");
@@ -2715,7 +2714,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       // ベースブランチとテストのコマンドも、リポジトリを読んで決めさせる（PBI-25）
       expect(prompt).toContain("testCommand");
       expect(prompt).toContain("既定のブランチ（main）");
-      expect(executor.readOnly[0]).toBe(true);
+      expect(executor.scratch[0]).toBe(true);
       expect(executor.workspaceFiles[0]).toEqual(["README.md"]);
       const chosen = service.get(id)?.activity.find((e) => e.type === "StepsChosen");
       expect(chosen?.actor).toBe("orchestrator");
@@ -3519,7 +3518,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       expect(prompt).toContain("承認済みの要求要件");
       expect(prompt).not.toContain("タスクの本文");
       // 実装で直せるかを判断するので、実装後のコードを読み取り専用で渡す（PBI-16）
-      expect(executor.readOnly[before]).toBe(true);
+      expect(executor.scratch[before]).toBe(true);
       expect(executor.workspaceFiles[before]).toEqual(["IMPLEMENTED.md"]);
       const task = service.get(id)?.task;
       expect(task?.status).toBe("queued");
@@ -3675,7 +3674,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     const index = executor.calls.length - 1; // 最終レビュー
     expect(promptOf(executor, index)).toContain("sacty-final-review");
     expect(promptOf(executor, index)).toContain("実装後のコード");
-    expect(executor.readOnly[index]).toBe(true);
+    expect(executor.scratch[index]).toBe(true);
     expect(executor.workspaceFiles[index]).toEqual(["IMPLEMENTED.md"]);
     // 実装の作業領域そのものではなく、写しを渡し、終わったら消す
     expect(repos.workingCopies.at(-1)?.dir).toBe(repos.prepared[0]?.dir);
@@ -3700,14 +3699,14 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     activity.close();
   });
 
-  it("要求要件・設計は、起点のコミットのコードを実行ごとのディレクトリに書き出して読み取り専用で渡し、実装は clone を渡す（PBI-15）", async () => {
+  it("要求要件・設計は、起点のコミットのコードを実行ごとの使い捨ての写しで渡し、実装は clone を渡す（PBI-15・PBI-40）", async () => {
     const { activity, service, executor, repos, id } = await toImplement([implement("# v1")]);
     await service.runNext(id); // 実装
     // 対象リポジトリは、要求要件の工程の前に1回だけ用意する
     expect(repos.prepared).toHaveLength(1);
     const repoDir = repos.prepared[0]?.dir;
-    // 要求要件（2回）と設計は、起点のコミットのコードを読み取り専用で、実装は clone を書き込みできる形で
-    expect(executor.readOnly).toEqual([true, true, true, false]);
+    // 要求要件（2回）と設計は、起点のコミットのコードの使い捨ての写しで、実装は clone で
+    expect(executor.scratch).toEqual([true, true, true, false]);
     expect(repos.snapshots.map((x) => x.baseCommit)).toEqual(["base123", "base123", "base123"]);
     expect(executor.workspaceFiles.slice(0, 3)).toEqual([
       ["README.md"],
@@ -3720,10 +3719,14 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       // 書き出したコードは、実行が終わったら消す
       expect(existsSync(used)).toBe(false);
     }
-    // 指示で、コードがあることと、読むだけであることを伝える
+    // 指示で、コードがあることと、使い捨ての写し（セットアップなどは実行できるが、変更は残らない）であること、
+    // コードを変更しないことを伝える
     for (const index of [0, 2]) {
       expect(promptOf(executor, index)).toContain("起点のコミット（base123）のコードがあります");
-      expect(promptOf(executor, index)).toContain("読み取り専用");
+      expect(promptOf(executor, index)).toContain("使い捨ての写しです");
+      expect(promptOf(executor, index)).toContain("セットアップ");
+      expect(promptOf(executor, index)).toContain("コードの変更（実装）はしないでください");
+      expect(promptOf(executor, index)).not.toContain("読み取り専用");
     }
     activity.close();
   });
@@ -3736,7 +3739,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     service.requestChanges(id, { step: "pr", submission: 1, target: "design", comments: ["観点"] });
     const before = executor.calls.length;
     await service.runNext(id); // 設計のやり直し
-    expect(executor.readOnly[before]).toBe(true);
+    expect(executor.scratch[before]).toBe(true);
     expect(executor.dirs[before]).not.toBe(repoDir);
     expect(executor.workspaceFiles[before]).toEqual(["README.md"]);
     expect(repos.snapshots.at(-1)?.baseCommit).toBe("base123");
@@ -3773,7 +3776,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     expect(repos.prepared).toHaveLength(1);
     // 実装の工程は clone を書き込みできる形で使う
     expect(executor.dirs[0]).toBe(repos.prepared[0]?.dir);
-    expect(executor.readOnly).toEqual([false]);
+    expect(executor.scratch).toEqual([false]);
     activity.close();
   });
 
@@ -5480,7 +5483,7 @@ describe("タスク分割（PBI-27）", () => {
     // 分割のエージェントには、承認済みの要求要件・設計を読み取り専用で渡す
     expect(promptOf(executor, 2)).toContain("タスク分割エージェント");
     expect(promptOf(executor, 2)).toContain("# 設計");
-    expect(executor.readOnly[2]).toBe(true);
+    expect(executor.scratch[2]).toBe(true);
 
     const parent = service.get(id)?.task;
     expect(parent?.status).toBe("waiting_children");
@@ -5742,7 +5745,7 @@ describe("統合レビュー（PBI-31）", () => {
       expect.objectContaining({ branch: "main", authEnv: expect.any(Object) }),
     ]);
     const last = executor.calls.length - 1;
-    expect(executor.readOnly[last]).toBe(true);
+    expect(executor.scratch[last]).toBe(true);
     expect(executor.workspaceFiles[last]).toEqual(["README.md"]);
     expect(repos.snapshots.at(-1)?.baseCommit).toBe(repos.branchHead);
     const prompt = promptOf(executor, last);
@@ -6027,10 +6030,10 @@ describe("再現の工程（PBI-29）", () => {
     ]);
     expect(service.get(id)?.activity.some((e) => e.type === "StepSubmitted")).toBe(false);
     executor.calls.shift();
-    executor.readOnly.shift();
+    executor.scratch.shift();
     await service.runNext(id);
     // 再現は clone（書き込める作業領域）で、不具合を直さずにテストを書かせる
-    expect(executor.readOnly[0]).toBe(false);
+    expect(executor.scratch[0]).toBe(false);
     expect(promptOf(executor, 0)).toContain("再現エージェント");
     // 前段の調査の結果を、再現と実装に渡す
     expect(promptOf(executor, 0)).toContain("src/pay.ts:40 で冪等キーを見ていない");

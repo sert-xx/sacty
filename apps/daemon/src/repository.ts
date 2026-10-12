@@ -36,7 +36,7 @@ export interface RepositoryWorkspace {
    */
   snapshot(gitDir: string, baseCommit: string, outDir: string): Promise<void>;
   /**
-   * 実装の作業領域の内容（.git を除く）を outDir に写す。ゴールガーディアンに、実装後のコードを読み取り専用で
+   * 実装の作業領域の内容（.git を除く）を outDir に写す。ゴールガーディアンに、実装後のコードを使い捨ての写しで
    * 読ませるため（PBI-16）。シンボリックリンクはたどらず、そのまま写す。
    */
   copyWorkingTree(dir: string, outDir: string): Promise<void>;

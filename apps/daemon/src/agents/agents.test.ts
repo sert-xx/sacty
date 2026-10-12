@@ -392,18 +392,9 @@ describe("dockerの引数", () => {
     expect(args).toEqual(
       expect.arrayContaining(["--rm", "--cap-drop", "ALL", "/ws/t1:/workspace"]),
     );
-    // 要求要件・設計の工程は、作業領域を読み取り専用でマウントする（PBI-15）
-    expect(
-      dockerRunArgs({
-        runId: "r2",
-        image: "sacty-agent:test",
-        workspaceDir: "/ws/snap",
-        readOnlyWorkspace: true,
-        envNames: [],
-        mounts: [],
-        command: ["claude"],
-      }),
-    ).toContain("/ws/snap:/workspace:ro");
+    // 作業領域は書き込める形でマウントする。要求要件・設計などの工程には使い捨ての写しを渡すので、
+    // リポジトリの手順のセットアップなども実行でき、変更は残らない（PBI-40）
+    expect(args.join(" ")).not.toContain(":/workspace:ro");
     // イメージの後ろにコマンドが続く
     expect(args.slice(args.indexOf("sacty-agent:test") + 1)).toEqual(["claude", "-p", "prompt"]);
     // ゲートウェイ経由の実行だけ、host.docker.internal をホストに向ける（PBI-37）
