@@ -161,6 +161,23 @@ describe("ホストのゲートウェイ（PBI-37）", () => {
     expect(g.waits).toEqual([30_000, 30_000, 30_000]);
   });
 
+  it("回数の上限であきらめた後も、成功するまでのやり直しは待たずに1回だけ転送する", async () => {
+    const g = await start(
+      [
+        json(429, {}, { "retry-after": "30" }),
+        json(429, {}, { "retry-after": "30" }),
+        // エージェント自身のやり直し（待ち時間はまだ上限の手前でも、もう待たない）
+        json(429, {}, { "retry-after": "30" }),
+      ],
+      { maxAttempts: 2, maxWaitMs: 600_000 },
+    );
+    expect((await g.call()).status).toBe(429);
+    expect(g.waits).toEqual([30_000]);
+    expect((await g.call()).status).toBe(429);
+    expect(g.waits).toEqual([30_000]);
+    expect(g.calls).toHaveLength(3);
+  });
+
   it("応答はストリーミングのまま返し、返し始めた後はリトライしない", async () => {
     const encoder = new TextEncoder();
     let pull: (() => void) | undefined;
