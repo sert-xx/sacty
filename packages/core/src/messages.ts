@@ -167,6 +167,7 @@ const PARAMS = {
     name: z.string(),
     lockedBy: z.string(),
   }),
+  "context.reservedSetting": z.object({ from: z.string(), file: z.string(), key: z.string() }),
   // 設定ファイル（config.yaml）
   "config.missing": z.object({ path: z.string() }),
   "config.unreadable": z.object({ detail: z.string() }),
@@ -405,6 +406,8 @@ const ja: MessageDictionary = {
     `${from} は${contextKindJa[kind]}「${name}」を上書きしようとしましたが、${lockedBy} で上書き禁止のため上位のものを使いました。`,
   "context.lockedRemove": ({ from, kind, name, lockedBy }) =>
     `${from} は${contextKindJa[kind]}「${name}」を取り除こうとしましたが、${lockedBy} で上書き禁止のため残しました。`,
+  "context.reservedSetting": ({ from, file, key }) =>
+    `${from} の ${file} の「${key}」は sacty が決める項目のため、使いませんでした。`,
   "config.missing": ({ path }) =>
     `設定ファイルがありません（${path}）。\`sacty config init\` で作成してください。`,
   "config.unreadable": ({ detail }) => `設定ファイルのYAMLを読めません：${detail}`,
@@ -580,6 +583,8 @@ const en: MessageDictionary = {
     `${from} tried to override the ${contextKindEn[kind]} "${name}", but ${lockedBy} locks it, so the upper one was used.`,
   "context.lockedRemove": ({ from, kind, name, lockedBy }) =>
     `${from} tried to remove the ${contextKindEn[kind]} "${name}", but ${lockedBy} locks it, so it was kept.`,
+  "context.reservedSetting": ({ from, file, key }) =>
+    `"${key}" in ${file} of ${from} is set by sacty, so it was not used.`,
   "config.missing": ({ path }) =>
     `The config file is missing (${path}). Create it with \`sacty config init\`.`,
   "config.unreadable": ({ detail }) => `Cannot read the config file as YAML: ${detail}`,

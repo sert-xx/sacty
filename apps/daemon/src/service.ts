@@ -149,6 +149,8 @@ export type ServiceDeps = {
   settings: SettingsStore;
   /** コンテキストリポジトリの取得（PBI-6）。 */
   contexts: ContextFetcher;
+  /** sacty に同梱する既定のコンテキストのディレクトリ（PBI-24）。無ければ、プロジェクトのコンテキストだけを渡す。 */
+  defaultContext?: string;
   /** テストの実行。 */
   tests: TestRunner;
   /** タスクごとの作業領域を作る場所。 */
@@ -1374,10 +1376,12 @@ export class TaskService {
     }
     const readOnlyWorkspace = step !== "implement";
 
-    // プロジェクトのコンテキストを取得・合成して渡し、使ったリポジトリとコミットを記録する
+    // sacty の既定のコンテキストと、プロジェクトのコンテキストを取得・合成して渡し、
+    // 使ったリポジトリとコミット（既定は中身のハッシュ）を記録する
     const contextSource = this.deps.projects.get(task.projectId)?.context;
+    const defaultContext = this.deps.defaultContext;
     let context: Awaited<ReturnType<typeof prepareContext>> | undefined;
-    if (contextSource) {
+    if (contextSource || defaultContext) {
       // コンテキストと継承の各リポジトリも、HTTPS の GitHub はプロジェクトの gh のアカウントで取得する
       const usedSecrets: string[] = [];
       try {
@@ -1387,6 +1391,7 @@ export class TaskService {
           agent.runtime === "codex" ? "codex" : "claude-code",
           agent.runtime === "codex" ? CONTAINER_CODEX_HOME : CONTAINER_CLAUDE_CONFIG_DIR,
           (repo) => this.gitAuth(task, repo, usedSecrets),
+          defaultContext,
         );
       } catch (error) {
         this.append(task, [

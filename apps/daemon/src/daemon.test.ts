@@ -483,6 +483,7 @@ function makeService(
     projects?: MemoryProjectStore;
     settings?: MemorySettingsStore;
     contexts?: ContextFetcher;
+    defaultContext?: string;
     github?: FakeGitHub;
     now?: () => number;
     planner?: ServiceDeps["planner"];
@@ -508,6 +509,7 @@ function makeService(
     // 取り込むラベル（sacty の設定。PBI-26）
     settings: options.settings ?? new MemorySettingsStore({ intakeLabel: "sacty" }),
     contexts: options.contexts ?? new FakeContexts(),
+    defaultContext: options.defaultContext,
     github: options.github ?? new FakeGitHub(),
     ...(options.now ? { now: options.now } : {}),
     // オーケストレーターの代わりに、標準の工程を選ぶ（オーケストレーターのテストでは差し替える）
@@ -4397,6 +4399,47 @@ describe("コンテキストリポジトリ（PBI-6a）", () => {
     expect(executor.contexts).toEqual([undefined]);
     expect(service.get(id)?.activity.some((e) => e.type === "ContextResolved")).toBe(false);
     expect(service.get(id)?.task.gate).toEqual({ step: "requirements", submission: 1 });
+    activity.close();
+  });
+
+  it("既定のコンテキスト（PBI-24）は、コンテキストリポジトリの無いプロジェクトにも渡し、ある場合はその上位に重ねる", async () => {
+    const defaultDir = join(dir, "default-context");
+    mkdirSync(defaultDir, { recursive: true });
+    writeFileSync(join(defaultDir, "rules.md"), "# sacty の既定の規則");
+    const contexts = new FakeContexts({ "https://example.com/team.git": { "rules.md": "# 規約" } });
+    const activity = new SqliteActivityStore(dbPath);
+    const { service, executor } = makeService(activity, [out("# 要求要件"), out("# 要求要件")], {
+      projects: projectsWithAccount(),
+      contexts,
+      defaultContext: defaultDir,
+    });
+    const definition = {
+      name: "決済",
+      targets: [{ scope: "repo" as const, target: "acme/payments" }],
+      githubAccount: "me",
+    };
+    const plain = service.saveProject(undefined, definition);
+    const a = service.createTask({ title: "A", projectId: plain.id });
+    await service.runNext(a.id);
+    expect(contexts.fetched).toEqual([]);
+    expect(executor.contexts[0]).toContain("sacty の既定の規則");
+    expect(service.get(a.id)?.task.context?.layers).toEqual([
+      { repo: "sacty-default", commit: expect.stringMatching(/^[0-9a-f]{64}$/) },
+    ]);
+
+    const withContext = service.saveProject(undefined, {
+      ...definition,
+      name: "決済2",
+      targets: [{ scope: "repo", target: "acme/other" }],
+      context: { repo: "https://example.com/team.git" },
+    });
+    const b = service.createTask({ title: "B", projectId: withContext.id });
+    await service.runNext(b.id);
+    expect(executor.contexts[1]).toMatch(/sacty の既定の規則[\s\S]*# 規約/);
+    expect(service.get(b.id)?.task.context?.layers.map((l) => l.repo)).toEqual([
+      "sacty-default",
+      "https://example.com/team.git",
+    ]);
     activity.close();
   });
 
