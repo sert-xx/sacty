@@ -639,10 +639,11 @@ export class TaskService {
       { agent, image: config.image, prompt: buildOrchestratorPrompt(task), role: "orchestrator" },
       "base",
     );
-    // 認証の失敗・利用上限は、標準の工程で進めても同じく失敗するので、理由を記録して止める（PBI-32）。
+    // 実行に失敗した・選んだ工程を読み取れなかったときは、理由を記録して止める（PBI-32・PBI-40）。
+    // 標準の工程で代わりに進めると、テストのコマンドも決まらず、調査のタスクでも設計・実装に進んでしまうため。
     // 再開すると、工程の選択からやり直す。使った分の費用は記録する
     const cost = { agentId: agent.id, usage: outcome.usage, costUsd, estimated };
-    if (outcome.kind === "failed" && outcome.reason !== "error") {
+    if (outcome.kind === "failed") {
       return {
         failure: {
           reason: outcome.reason,
@@ -651,10 +652,7 @@ export class TaskService {
         },
       };
     }
-    const chosen =
-      outcome.kind === "completed"
-        ? extractStepPlan(outcome.output, allowedPlans(task))
-        : undefined;
+    const chosen = extractStepPlan(outcome.output, allowedPlans(task));
     if (chosen) {
       return {
         steps: [...STEP_PLANS[chosen.plan]],
@@ -667,13 +665,11 @@ export class TaskService {
       };
     }
     return {
-      steps: [...STEP_PLANS.standard],
-      plan: "standard",
-      reason: message("orchestrator.fallback", {
-        detail: outcome.kind === "failed" ? outcome.message : message("orchestrator.unreadable"),
-      }),
-      fallback: true,
-      ...cost,
+      failure: {
+        reason: "error",
+        message: message("orchestrator.failed", { detail: message("orchestrator.unreadable") }),
+        ...cost,
+      },
     };
   }
 

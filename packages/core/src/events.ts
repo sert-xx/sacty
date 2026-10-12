@@ -555,7 +555,8 @@ const AiRequestsRetried = z.object({
 const OrchestratorFailed = z.object({
   type: z.literal("OrchestratorFailed"),
   payload: z.object({
-    reason: z.enum(["usage_limit", "auth"]),
+    // error：実行に失敗した・出力から工程を読み取れなかった（PBI-40）
+    reason: z.enum(["usage_limit", "auth", "error"]),
     message: DaemonText,
     agentId: z.string(),
     usage: TokenUsage.optional(),

@@ -2670,7 +2670,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       await service.runNext(withPr);
       expect(promptOf(executor, 0)).toContain("- review：");
       expect(service.get(withPr)?.task.steps.map((st) => st.key)).toEqual(["review"]);
-      // PR の無いタスクでレビューを選んでも、選べない組み合わせとして標準の工程で進める
+      // PR の無いタスクでレビューを選んでも、選べない組み合わせとして止める（PBI-40）
       const { id } = service.createTask({
         projectId: "default",
         title: "レビューして",
@@ -2679,8 +2679,8 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       await service.runNext(id);
       expect(promptOf(executor, 2)).toContain("あなたはオーケストレーターです");
       expect(promptOf(executor, 2)).not.toContain("- review：");
-      expect(service.get(id)?.task.stepsChoice?.fallback).toBe(true);
-      expect(service.get(id)?.task.steps.map((st) => st.key)).toEqual([...STEP_PLANS.standard]);
+      expect(service.get(id)?.task.steps).toEqual([]);
+      expect(service.get(id)?.task.status).toBe("paused");
       activity.close();
     });
   });
@@ -2759,33 +2759,40 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       activity.close();
     });
 
-    it("選べない・読めない・実行に失敗したときは、標準の工程で進め、そのことを記録する", async () => {
+    it("選べない・読めない・実行に失敗したときは、標準の工程で代わりに進めず、理由を記録して止める。再開すると選び直す（PBI-40）", async () => {
       const activity = new SqliteActivityStore(dbPath);
-      const { service } = makeService(
+      const { service, executor } = makeService(
         activity,
-        [plan("everything"), { kind: "failed", reason: "error", message: "connection reset" }],
+        [
+          plan("everything"),
+          { kind: "failed", reason: "error", message: "connection reset" },
+          // 再開すると、工程の選択からやり直す
+          plan("investigate", "情報を求めている", {}),
+          out("# 調査の結果"),
+        ],
         { realPlanner: true },
       );
       const a = service.createTask({ projectId: "default", title: "A" });
       await service.runNext(a.id);
-      expect(service.get(a.id)?.task.stepsChoice).toEqual({
-        plan: "standard",
-        reason: {
-          code: "orchestrator.fallback",
-          params: { detail: { code: "orchestrator.unreadable" } },
-        },
-        fallback: true,
-      });
-      expect(service.get(a.id)?.task.steps.map((st) => st.key)).toEqual([...STEP_PLANS.standard]);
-      // 標準の工程は実装を含むが、テストのコマンドが分からないので、費用をかける前に止める（PBI-25）
+      // 標準の工程（設計・実装）には進めず、テストのコマンドが無いことでも止めない
+      expect(service.get(a.id)?.task.steps).toEqual([]);
       expect(service.get(a.id)?.task.status).toBe("paused");
-      expect(service.get(a.id)?.task.pausedMessage).toEqual({
-        code: "orchestrator.testCommandUnknown",
-      });
-      const b = service.createTask({ projectId: "default", title: "B" });
+      expect(service.get(a.id)?.task.pausedReason).toBe("error");
+      expect(ja(service.get(a.id)?.task.pausedMessage)).toBe(
+        "オーケストレーターを実行できませんでした：オーケストレーターの出力から、選んだ工程を読み取れませんでした。再開すると、工程の選択からやり直します。",
+      );
+      expect(service.get(a.id)?.activity.map((e) => e.type)).toContain("OrchestratorFailed");
+
+      const b = service.createTask({ projectId: "default", title: "B の調査" });
       await service.runNext(b.id);
-      expect(ja(service.get(b.id)?.task.stepsChoice?.reason)).toContain("connection reset");
-      expect(service.get(b.id)?.task.steps.map((st) => st.key)).toEqual([...STEP_PLANS.standard]);
+      expect(service.get(b.id)?.task.steps).toEqual([]);
+      expect(ja(service.get(b.id)?.task.pausedMessage)).toContain("connection reset");
+      // 再開すると、選び直して調査だけで進む
+      service.resume(b.id, {});
+      await service.runNext(b.id);
+      expect(promptOf(executor, 2)).toContain("あなたはオーケストレーターです");
+      expect(service.get(b.id)?.task.steps.map((st) => st.key)).toEqual(["investigate"]);
+      expect(service.get(b.id)?.task.pausedMessage).toBeUndefined();
       activity.close();
     });
 
