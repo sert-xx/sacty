@@ -39,6 +39,7 @@ npx sacty image build   # エージェント実行用のコンテナイメージ
 | Claude Code | `bedrock` | BedrockのAPIキーと `region`。`model` は推論プロファイルID |
 | Codex | `subscription` | ChatGPTでのログイン（`~/.codex/auth.json`） |
 | Codex | `api-key` | OpenAI APIキー |
+| Codex | `bedrock` | BedrockのAPIキーと `region`。`endpoint` は `runtime`（既定。`model` は推論プロファイルID、例 `global.openai.gpt-6-sol`）か `mantle`（`model` は例 `openai.gpt-6-sol`） |
 | （動作確認用） | `stub` | なし。実際のAIは呼ばない |
 
 トークンやAPIキーは、設定ファイルには名前（`secret`）だけを書き、値はキーチェーンに保存する。
@@ -48,6 +49,8 @@ npx sacty secret set claude-oauth-token
 ```
 
 値は `security` コマンドがたずねる。sactyは値をコマンドライン・作業履歴・ログ・画面に出さない。
+
+費用は、エージェントごとの単価（`price_per_mtok_usd`。100万トークンあたりの米ドル）とトークン数から計算する。契約で単価が違う場合は、その単価を書く。
 コンテナには、選んだ認証方式の環境変数だけを渡す（ホストの `ANTHROPIC_API_KEY` などは引き継がない）。
 
 サブスクリプションでは実際の請求は発生しないが、同じ単価で換算した値を費用として扱い、予算の判定に使う。

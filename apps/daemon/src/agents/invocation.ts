@@ -125,6 +125,10 @@ export async function buildInvocation(
         const key = await secrets.get(auth.secret);
         env.CODEX_API_KEY = key;
         env.OPENAI_API_KEY = key;
+      } else if (auth.mode === "bedrock") {
+        // Codex の組み込みの Bedrock のプロバイダー（PBI-32）。API キーとリージョンは環境変数で渡す
+        env.AWS_BEARER_TOKEN_BEDROCK = await secrets.get(auth.secret);
+        env.AWS_REGION = auth.region;
       } else if (auth.mode === "subscription") {
         const hostPath = expandHome(auth.auth_file ?? "~/.codex/auth.json");
         // 認証ファイルのトークン類も、出力から取り除く対象にする
@@ -138,6 +142,15 @@ export async function buildInvocation(
         throw new Error(`codex does not support auth mode ${auth.mode}`);
       }
       const command = ["codex", "exec", "--json", "--skip-git-repo-check"];
+      if (auth.mode === "bedrock") {
+        // Bedrock Runtime ではホストされた Web 検索を使えないので、無効にする
+        const runtime = (auth.endpoint ?? "runtime") === "runtime";
+        command.push(
+          "-c",
+          `model_provider="${runtime ? "amazon-bedrock-runtime" : "amazon-bedrock"}"`,
+          ...(runtime ? ["-c", 'web_search="disabled"'] : []),
+        );
+      }
       if (agent.model) command.push("--model", agent.model);
       command.push(prompt);
       return {

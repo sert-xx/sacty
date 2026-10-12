@@ -193,6 +193,7 @@ const PARAMS = {
     supported: z.string(),
   }),
   "config.subscriptionSecret": null,
+  "config.bedrockEndpointCodexOnly": null,
   "config.agentMissing": z.object({ key: z.string(), id: z.string() }),
 } as const satisfies Record<string, z.ZodType | null>;
 
@@ -456,6 +457,8 @@ const ja: MessageDictionary = {
     `${runtime} では ${mode} を使えません（使えるもの：${supported}）。`,
   "config.subscriptionSecret":
     "Claude Code のサブスクリプションには、トークンの秘密情報名（secret）が必要です。",
+  "config.bedrockEndpointCodexOnly":
+    "Bedrock の接続先（endpoint）は Codex だけで選べます。Claude Code では書かないでください。",
   "config.agentMissing": ({ key, id }) => `${key} の "${id}" が agents にありません。`,
 };
 
@@ -658,6 +661,8 @@ const en: MessageDictionary = {
     `${runtime} cannot use ${mode} (supported: ${supported}).`,
   "config.subscriptionSecret":
     "A Claude Code subscription needs the secret name of its token (secret).",
+  "config.bedrockEndpointCodexOnly":
+    "The Bedrock endpoint can only be chosen for Codex. Remove it for Claude Code.",
   "config.agentMissing": ({ key, id }) => `${key} "${id}" is not in agents.`,
 };
 

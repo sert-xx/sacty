@@ -582,6 +582,33 @@ describe("作業履歴", () => {
 });
 
 describe("工程の実行と費用", () => {
+  it("Codex × Bedrock は、config.yaml の単価で計算した実際の請求として記録する（PBI-32）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const bedrock = agent({
+      id: "codex-bedrock",
+      runtime: "codex",
+      model: "global.openai.gpt-6-sol",
+      auth: { mode: "bedrock", secret: "bedrock-api-key", region: "us-east-2" },
+      // 契約の単価（一般の価格ではない）
+      price_per_mtok_usd: { input: 1, cached_input: 0.1, cache_write: 0, output: 4 },
+      price: { input: 1, cachedInput: 0.1, cacheWrite: 0, output: 4 },
+    });
+    const { service, executor } = makeService(activity, [completed(20_000)], {
+      config: configOf(bedrock),
+      secrets: { "bedrock-api-key": "bedrock-secret" },
+    });
+    const task = service.createTask({ projectId: "default", title: "決済API" });
+    await service.runNext(task.id);
+    const after = service.get(task.id)?.task;
+    // completed(20_000) は出力 20,000 トークン：20,000 × $4 / 100万 = $0.08
+    expect(after?.budget.usedUsd).toBe(0.08);
+    expect(after?.budget.estimated).toBe(false);
+    expect(executor.calls[0]?.env.AWS_BEARER_TOKEN_BEDROCK).toBe("bedrock-secret");
+    // API キーの値は作業履歴に出さない
+    expect(JSON.stringify(service.get(task.id)?.activity)).not.toContain("bedrock-secret");
+    activity.close();
+  });
+
   it("実行すると、費用（換算値）と出力を作業履歴に記録して待機に戻る", async () => {
     const activity = new SqliteActivityStore(dbPath);
     const { service, executor } = makeService(activity, [completed(20_000)]);
