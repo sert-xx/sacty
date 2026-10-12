@@ -5291,6 +5291,41 @@ describe("再現の工程（PBI-29）", () => {
     activity.close();
   });
 
+  it("テストの実行基盤の失敗は再現できたとせず、理由を示して止め、再開するとテストを実行し直す（レビュー指摘）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const tests = new FakeTests([
+      {
+        exitCode: 127,
+        output: "",
+        note: message("run.dockerUnavailable", { detail: "spawn docker ENOENT" }),
+        infrastructure: true,
+        durationMs: 1,
+      },
+      { exitCode: 1, output: "FAIL", durationMs: 5 },
+    ]);
+    const { service } = makeService(
+      activity,
+      [out("# 前段の調査"), reproduce("# 再現", ["a.test.ts › x"])],
+      { planner, tests },
+    );
+    const { id } = service.createTask({ projectId: "default", title: "不具合" });
+    await drain(service);
+    let task = service.get(id)?.task;
+    expect(task?.status).toBe("paused");
+    expect(task?.reproduction).toBeUndefined();
+    expect(task?.steps.find((s) => s.state === "active")?.key).toBe("reproduce");
+    expect(renderMessage(task?.pausedMessage, "ja")).toMatch(
+      /^再現のテストを実行できませんでした（.*spawn docker ENOENT.*）。再現できたかは確かめていません/,
+    );
+    service.resume(id, {});
+    await service.runNext(id);
+    task = service.get(id)?.task;
+    expect(tests.calls).toHaveLength(2);
+    expect(task?.reproduction?.reproduced).toBe(true);
+    expect(task?.steps.find((s) => s.state === "active")?.key).toBe("implement");
+    activity.close();
+  });
+
   it("再現の後、確かめる前にデーモンが止まっても、再起動の後に確かめる", async () => {
     const activity = new SqliteActivityStore(dbPath);
     const tests = new FakeTests([{ exitCode: 1, output: "FAIL", durationMs: 5 }]);

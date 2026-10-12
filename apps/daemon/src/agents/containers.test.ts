@@ -139,6 +139,8 @@ describe("テストの実行の注記（PBI-11b）", () => {
       exitCode: 127,
       output: "",
       note: { code: "run.dockerUnavailable", params: { detail: "spawn docker ENOENT" } },
+      // 実行基盤の失敗（テストの結果ではない。PBI-29）
+      infrastructure: true,
     });
   });
 
@@ -153,6 +155,7 @@ describe("テストの実行の注記（PBI-11b）", () => {
       command: "x",
     });
     expect(result.note).toEqual({ code: "run.testTimeout", params: { minutes: 10 / 60_000 } });
+    expect(result.infrastructure).toBe(true);
     expect(result.output).not.toContain("[sacty]");
   });
 });

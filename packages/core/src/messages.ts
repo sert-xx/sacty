@@ -44,6 +44,7 @@ const PARAMS = {
   "gate.approveOnPullRequest": z.object({ url: z.string() }),
   "gate.reproduceNotApprovable": null,
   "reproduce.noTests": null,
+  "reproduce.runFailed": z.object({ detail: TextParam }),
   "gate.remarksRequired": null,
   "gate.overLimit": z.object({ limit: Count }),
   "remark.notFound": null,
@@ -296,6 +297,8 @@ const ja: MessageDictionary = {
     "再現できなかったので、先へは進めません。再現の手がかりを指摘に書いて差し戻すと、再現をやり直します。不要なら中止してください。",
   "reproduce.noTests":
     "再現のエージェントが、再現のテストを申告しませんでした（再現できなかった）。",
+  "reproduce.runFailed": ({ detail }, text) =>
+    `再現のテストを実行できませんでした（${text(detail)}）。再現できたかは確かめていません。原因を確かめてから再開すると、テストを実行し直します。`,
   "gate.overLimit": ({ limit }) =>
     `差し戻しが上限（${limit}回）に達しています。続ける場合は、上限を超えて差し戻すことを選んでください。`,
   "remark.notFound": "指摘が見つかりません。",
@@ -490,6 +493,8 @@ const en: MessageDictionary = {
     "The bug was not reproduced, so the task can't move on. Request changes with hints for reproducing it to try again, or cancel the task.",
   "reproduce.noTests":
     "The reproduce agent did not report a test that reproduces the bug (not reproduced).",
+  "reproduce.runFailed": ({ detail }, text) =>
+    `Could not run the reproduction test (${text(detail)}), so the reproduction is not confirmed. Check the cause, then resume to run the test again.`,
   "gate.overLimit": ({ limit }) =>
     `Change requests reached the limit (${limit}). To continue, choose to request changes over the limit.`,
   "remark.notFound": "Comment not found.",

@@ -2233,6 +2233,25 @@ export class TaskService {
       command: testCommand,
     });
     if (this.pauseRequested.has(task.id)) return;
+    // テストの実行基盤の失敗は、テストの失敗（再現できた）と区別し、確かめずに止める。
+    // 再現の確かめを待ったまま止めるので、再開するとテストを実行し直す（PBI-29 レビュー指摘）
+    if (result.infrastructure) {
+      this.append(this.mustGet(task.id), [
+        {
+          actor: "sacty",
+          event: {
+            type: "TaskPaused",
+            payload: {
+              reason: "error",
+              message: message("reproduce.runFailed", {
+                detail: result.note ?? `exit ${result.exitCode}`,
+              }),
+            },
+          },
+        },
+      ]);
+      return;
+    }
     record({
       reproduced: result.exitCode !== 0,
       tests,

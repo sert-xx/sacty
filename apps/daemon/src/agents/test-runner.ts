@@ -10,6 +10,11 @@ export type TestRunResult = {
   output: string;
   /** sacty の注記（テストを止めた理由など）。テストの出力とは分けて持つ（PBI-11）。 */
   note?: DaemonText;
+  /**
+   * テストの実行基盤の失敗（Docker を起動できない・時間切れ・コンテナの停止を確かめられない）。
+   * 終了コードはテストの結果ではない（再現の確かめでは、テストの失敗と区別する。PBI-29）。
+   */
+  infrastructure?: boolean;
   durationMs: number;
 };
 
@@ -94,6 +99,7 @@ export class DockerTestRunner implements TestRunner {
             exitCode: 127,
             output: "",
             note: message("run.dockerUnavailable", { detail: error.message }),
+            infrastructure: true,
             durationMs: Date.now() - started,
           });
         });
@@ -102,7 +108,8 @@ export class DockerTestRunner implements TestRunner {
           resolve({
             exitCode: code ?? 1,
             output: output.slice(-TEST_OUTPUT_TAIL),
-            ...(note ? { note } : {}),
+            // 時間切れで止めたなら、終了コードはテストの結果ではない
+            ...(note ? { note, infrastructure: true } : {}),
             durationMs: Date.now() - started,
           });
         });
@@ -114,6 +121,7 @@ export class DockerTestRunner implements TestRunner {
           exitCode: 1,
           output: "",
           note: message("run.containerNotConfirmed", { name }),
+          infrastructure: true,
           durationMs: Date.now() - started,
         };
       }
