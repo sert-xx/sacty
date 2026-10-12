@@ -225,6 +225,18 @@ describe("社内 PF の API（PBI-35）", () => {
     const [problem] = creds.unavailable(["pf"]);
     expect(renderMessage(problem, "ja")).not.toContain("FAKE-SECRET");
     expect(endpoint.calls).toHaveLength(0);
+    // 窓口の失敗の応答で、切り詰める境界をまたぐ秘密情報も伏せる（レビュー指摘）
+    const secret = "FAKE-SECRET-0123456789-abcdefghijk";
+    for (const pad of [470, 480, 590, 595]) {
+      const boundary = new PlatformCredentials({
+        secrets: new MemorySecretStore({ "deploy-key": secret }),
+        fetchImpl: tokenEndpoint([new Response(`${"x".repeat(pad)}${secret}`, { status: 401 })])
+          .fetchImpl,
+      });
+      const failed = String(await boundary.header(deploy()).catch((e: Error) => e));
+      expect(failed).not.toContain(secret.slice(0, 8));
+      expect(failed.length).toBeLessThan(700);
+    }
     // 値そのもの・JSON の文字列にした形・各行を伏せる
     expect(hideSecret('a "FAKE-SECRET\\nBAD" b FAKE-SECRET\nBAD', "FAKE-SECRET\nBAD")).toBe(
       'a "[secret]" b [secret]',

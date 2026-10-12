@@ -171,6 +171,9 @@ export function hideSecret(text: string, secret: string): string {
   return forms.reduce((t, f) => t.split(f).join("[secret]"), text);
 }
 
+/** トークンを取得できなかった理由の長さの上限（画面・ログ・ゲートウェイの応答に出す）。 */
+const REASON_MAX = 600;
+
 /** トークンを取り直すのは、期限のこの時間前から。 */
 const REFRESH_MARGIN_MS = 30_000;
 
@@ -250,7 +253,9 @@ export class PlatformCredentials {
     try {
       return await this.requestToken(spec, secret);
     } catch (error) {
-      throw new Error(hideSecret(error instanceof Error ? error.message : String(error), secret));
+      // 伏せてから切り詰める（先に切り詰めると、境界をまたぐ秘密情報の一部が残るため。PBI-35 レビュー指摘）
+      const reason = hideSecret(error instanceof Error ? error.message : String(error), secret);
+      throw new Error(reason.length > REASON_MAX ? `${reason.slice(0, REASON_MAX)}…` : reason);
     }
   }
 
@@ -277,7 +282,8 @@ export class PlatformCredentials {
     });
     const text = await res.text();
     if (!res.ok) {
-      throw new Error(`token endpoint returned ${res.status}: ${text.slice(0, 500)}`);
+      // 本文は切り詰めずに渡す（呼び出し元で、秘密情報を伏せてから切り詰める）
+      throw new Error(`token endpoint returned ${res.status}: ${text}`);
     }
     let parsed: unknown;
     try {
