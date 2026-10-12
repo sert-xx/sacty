@@ -46,6 +46,7 @@ describe("イメージの作成（PBI-33）", () => {
         npmrcPath: "/tmp/x/npmrc",
         npmVersion: "11",
         npmConfigPath: "/tmp/x/npmconfig",
+        npmConfigHash: "abc123",
       }),
     ).toEqual([
       "build",
@@ -55,6 +56,9 @@ describe("イメージの作成（PBI-33）", () => {
       "BASE_IMAGE=registry.example.com/library/node:22",
       "--build-arg",
       "NPM_VERSION=11",
+      // secret の中身はキャッシュの判定に入らないので、中身のハッシュで作り直させる
+      "--build-arg",
+      "NPM_CONFIG_HASH=abc123",
       "--secret",
       "id=npmrc,src=/tmp/x/npmrc",
       // イメージに残す npm 全体の設定は、認証の .npmrc とは別のファイルで渡す（PBI-40）。
@@ -70,8 +74,9 @@ describe("イメージの作成（PBI-33）", () => {
         dockerDir: "/d",
         npmrcPath: "/n",
         npmConfigPath: "/c",
+        npmConfigHash: "h",
       }),
-    ).not.toContain("--build-arg");
+    ).not.toContain("BASE_IMAGE=");
   });
 
   it("トークンはビルドの引数に出さず、作った一時ファイル（本人だけが読める）は終わったら消す", async () => {
@@ -122,12 +127,38 @@ describe("イメージの作成（PBI-33）", () => {
         return 0;
       },
     });
-    expect(seen[0]?.config).toBe("replace-registry-host=always\naudit=false\nmin-release-age=7\n");
+    // npm_registry は、コンテナの中の npm の registry にもする
+    expect(seen[0]?.config).toBe(
+      "registry=https://npm.example.com/\nreplace-registry-host=always\naudit=false\nmin-release-age=7\n",
+    );
     // トークンは、ビルドのときだけ読む .npmrc にだけある
     expect(seen[0]?.config).not.toContain("npm_SECRET");
     expect(seen[0]?.npmrc).toContain("npm_SECRET");
     expect(existsSync(seen[0]?.dir ?? "")).toBe(false);
-    expect(npmGlobalConfigContent(undefined)).toBe("");
+    // 設定を変えると、中身のハッシュ（ビルドの引数）が変わる（キャッシュの層を使わずに作り直す）
+    const hashes: string[] = [];
+    for (const audit of ["false", "true", "true"]) {
+      await buildImage({
+        image: "sacty-agent:0.1.0",
+        build: { npmConfig: { audit } },
+        dockerDir: "/d",
+        secrets: new MemorySecretStore({}),
+        run: async (args) => {
+          hashes.push(args.find((a) => a.startsWith("NPM_CONFIG_HASH=")) ?? "");
+          return 0;
+        },
+      });
+    }
+    expect(hashes[0]).not.toBe(hashes[1]);
+    expect(hashes[1]).toBe(hashes[2]);
+    expect(npmGlobalConfigContent({})).toBe("");
+    // npm_config の registry があれば、そちらを優先する
+    expect(
+      npmGlobalConfigContent({
+        npmRegistry: "https://build.example.com/",
+        npmConfig: { registry: "https://run.example.com/" },
+      }),
+    ).toBe("registry=https://run.example.com/\n");
   });
 
   it("失敗したら確かめることを返し、一時ファイルは消す。トークンが無ければ作らずに止める", async () => {

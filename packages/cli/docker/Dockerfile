@@ -25,7 +25,9 @@ RUN --mount=type=secret,id=npmrc,target=/run/secrets/npmrc \
 
 # コンテナの中の npm 全体の設定（config.yaml の image_build.npm_config。認証の項目は含まない。PBI-40）。
 # CLI を入れた後に置く（CLI の取得には効かせない）。ファイルの受け渡しは、認証の .npmrc と同じ secret の仕組みを
-# 使う（--build-context は、Docker の構成によっては使えないため）。中身はこの RUN でイメージの設定に書き込む
+# 使う（--build-context は、Docker の構成によっては使えないため）。中身はこの RUN でイメージの設定に書き込む。
+# secret の中身はビルドのキャッシュの判定に入らないので、中身のハッシュを引数で渡し、変わったら作り直す
+ARG NPM_CONFIG_HASH=
 RUN --mount=type=secret,id=npmconfig,target=/run/secrets/npmconfig \
   if [ ! -f /run/secrets/npmconfig ]; then \
     echo "sacty: npm の設定のファイルが渡されていません。sacty を作り直して（npm run build）から、sacty image build を実行してください。" >&2; \

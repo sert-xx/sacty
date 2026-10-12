@@ -255,9 +255,12 @@ const ConfigFile = z
             }
           })
           .optional(),
-        /** Claude Code・Codex を入れる npm のレジストリ。 */
+        /**
+         * npm のレジストリ。Claude Code・Codex を入れるときに使い、コンテナの中の npm の registry にもする
+         * （npm_config の registry があれば、そちらを優先。PBI-40）。
+         */
         npm_registry: z.url({ protocol: /^https?$/ }).optional(),
-        /** npm のレジストリの認証トークンの秘密情報名（イメージには残さない）。 */
+        /** npm のレジストリの認証トークンの秘密情報名。イメージを作るときだけ使う（イメージには残さない）。 */
         npm_token: SecretName.optional(),
       })
       .optional(),
