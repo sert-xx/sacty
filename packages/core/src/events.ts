@@ -199,7 +199,7 @@ const TaskCreated = z.object({
     /** 取り込み元（GitHub の Issue・PR のリポジトリと番号）。 */
     source: TaskSource.optional(),
     /**
-     * 画面で作ったタスクの対象リポジトリ（owner/name。プロジェクトのリポジトリの設定から選んだもの。PBI-21）。
+     * 画面で作ったタスクの対象リポジトリ（リポジトリの URL。プロジェクトのリポジトリの設定から選んだもの。PBI-21）。
      * Issue から取り込んだタスクは、その Issue のリポジトリが対象なので持たない。PBI-21 より前の作業履歴にも無い。
      */
     repo: z.string().optional(),
@@ -607,7 +607,7 @@ const PullRequestPublished = z.object({
     /** PRを作らない設定（ブランチのプッシュまで）なら無い。 */
     url: z.string().optional(),
     number: z.number().int().positive().optional(),
-    /** PRを作ったリポジトリ（owner/name）。PRの番号はリポジトリの中でしか一意でないため記録する。 */
+    /** PRを作ったリポジトリ（リポジトリの URL）。PRの番号はリポジトリの中でしか一意でないため記録する。 */
     repo: z.string().optional(),
   }),
 });
@@ -904,7 +904,7 @@ export const CreateTaskInput = z.object({
   /** 作るプロジェクト（必須。既定のプロジェクトは無い。PBI-22）。 */
   projectId: z.string().min(1),
   /**
-   * 対象リポジトリ（owner/name。プロジェクトのリポジトリの設定から選ぶ。PBI-21）。
+   * 対象リポジトリ（リポジトリの URL。プロジェクトのリポジトリの設定から選ぶ。PBI-21）。
    * 省略すると、プロジェクトのリポジトリの設定が1つだけならそれにする。
    */
   repo: z.string().trim().min(1).optional(),

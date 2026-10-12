@@ -33,10 +33,12 @@ import {
   type Project,
   ProjectDefinition,
   ProjectExport,
+  parseOrgUrl,
+  parseRepoUrl,
   project,
   projectConflicts,
   proposalAccepted,
-  RepoName,
+  RepoUrl,
   RequestChangesInput,
   ResumeTaskInput,
   renderMessage,
@@ -47,6 +49,7 @@ import {
   type StepKey,
   type Task,
   type TaskProposal,
+  targetHost,
   exportProject as toProjectExport,
 } from "@sacty/core";
 import { ZodError } from "zod";
@@ -76,7 +79,7 @@ import {
   type GitHubAuth,
   gitAuthEnv,
   gitAuthSecrets,
-  isGitHubHttps,
+  httpsHost,
 } from "./gh.js";
 import {
   type FoundIssue,
@@ -267,7 +270,7 @@ export class TaskService {
       let status: PullRequestStatus;
       let token: string;
       try {
-        token = await this.githubToken(task, usedSecrets);
+        token = await this.githubToken(task, pr.repo, usedSecrets);
         status = await this.deps.pulls.status({ repo: pr.repo, token, number: pr.number });
       } catch (error) {
         console.warn(
@@ -371,7 +374,7 @@ export class TaskService {
           repo: pr.repo,
           token,
           number: pr.number,
-          ...this.githubAccountOf(current),
+          ...this.githubAccountOf(current, pr.repo),
         })
       ).filter((item) => !current.importedFeedback.includes(item.key));
       if (fresh.length === 0) return;
@@ -514,7 +517,7 @@ export class TaskService {
     const usedSecrets: string[] = [];
     let event: EventInput;
     try {
-      const token = await this.githubToken(task, usedSecrets);
+      const token = await this.githubToken(task, source.repo, usedSecrets);
       const target = { repo: source.repo, token, number: source.number };
       // 前回、投稿の後・記録の前に止まっていたら、そのコメントを使う（同じ結果を二度コメントしない）
       const existing = await this.deps.pulls.findIssueComment({
@@ -553,7 +556,7 @@ export class TaskService {
     }
     const usedSecrets: string[] = [];
     try {
-      const token = await this.githubToken(task, usedSecrets);
+      const token = await this.githubToken(task, ref.repo, usedSecrets);
       const pr = await this.deps.pulls.pullRequest({ ...ref, token });
       return {
         ok: true,
@@ -582,8 +585,8 @@ export class TaskService {
     const usedSecrets: string[] = [];
     let event: EventInput;
     try {
-      const token = await this.githubToken(task, usedSecrets);
-      const account = this.githubAccountOf(task).account ?? "";
+      const token = await this.githubToken(task, target.repo, usedSecrets);
+      const account = this.githubAccountOf(task, target.repo).account ?? "";
       const pr = { repo: target.repo, token, number: target.number };
       // 前回、投稿の後・記録の前に止まっていたら、そのレビューを使う（同じレビューを二度投稿しない）
       const existing = await this.deps.pulls.findReview({
@@ -772,13 +775,13 @@ export class TaskService {
   async projectRepositories(
     id: string,
   ): Promise<
-    { repositories: string[]; errors: { owner: string; message: DaemonText }[] } | undefined
+    { repositories: string[]; errors: { org: string; message: DaemonText }[] } | undefined
   > {
     const project = this.deps.projects.get(id);
     if (!project) return undefined;
     const all = this.deps.projects.all();
     const repositories = new Map<string, string>();
-    const errors: { owner: string; message: DaemonText }[] = [];
+    const errors: { org: string; message: DaemonText }[] = [];
     const add = (repo: string) => {
       if (responsibleProject(all, repo)?.project.id === id)
         repositories.set(repo.toLowerCase(), repo);
@@ -790,11 +793,11 @@ export class TaskService {
       }
       const usedSecrets: string[] = [];
       try {
-        const token = await this.githubToken({ projectId: id }, usedSecrets);
-        for (const repo of await this.deps.pulls.repositories({ owner: target.target, token }))
+        const token = await this.githubToken({ projectId: id }, target.target, usedSecrets);
+        for (const repo of await this.deps.pulls.repositories({ org: target.target, token }))
           add(repo);
       } catch (error) {
-        errors.push({ owner: target.target, message: redactText(errorText(error), usedSecrets) });
+        errors.push({ org: target.target, message: redactText(errorText(error), usedSecrets) });
       }
     }
     return {
@@ -835,16 +838,25 @@ export class TaskService {
    * アカウントを選んでいないプロジェクトは、プロジェクトの名前を返す（取り込みで理由を示す）。
    * ラベルは sacty 全体の設定（PBI-26）。設定していなければ取り込まない。Issue と PR の両方を探す。
    */
-  intakeSources(): { query: string; account?: string; project: string }[] {
+  intakeSources(): { host: string; query: string; account?: string; project: string }[] {
     const label = this.deps.settings.get().intakeLabel;
     if (!label) return [];
-    const sources = new Map<string, { query: string; account?: string; project: string }>();
+    const sources = new Map<
+      string,
+      { host: string; query: string; account?: string; project: string }
+    >();
     for (const project of this.deps.projects.all()) {
       for (const target of project.targets) {
-        const where = target.scope === "org" ? `org:${target.target}` : `repo:${target.target}`;
+        // 検索は、対象のホストの GitHub で、そのホストのアカウントで行う（PBI-40）
+        const host = targetHost(target);
+        const where =
+          target.scope === "org"
+            ? `org:${parseOrgUrl(target.target)?.owner}`
+            : `repo:${parseRepoUrl(target.target)?.path}`;
         const query = `is:open ${where} label:"${label}"`;
-        const account = project.githubAccount;
-        sources.set(`${account ?? ""}\n${query}`, {
+        const account = project.githubAccounts?.[host];
+        sources.set(`${host}\n${account ?? ""}\n${query}`, {
+          host,
           query,
           ...(account ? { account } : {}),
           project: project.name,
@@ -979,14 +991,15 @@ export class TaskService {
       throw new InvalidOperationError(message("task.repositoryMissing", { project: project.name }));
     }
     const responsible =
-      wanted && RepoName.safeParse(wanted).success
+      wanted && RepoUrl.safeParse(wanted).success
         ? responsibleProject(this.deps.projects.all(), wanted)
         : undefined;
     if (!wanted || responsible?.project.id !== projectId) {
       throw new InvalidOperationError(message("task.repositoryUnknown", { project: project.name }));
     }
     // リポジトリの対象なら、登録した名前にそろえる（大文字・小文字の違い）
-    const repo = responsible.target.scope === "repo" ? responsible.target.target : wanted.trim();
+    const repo =
+      responsible.target.scope === "repo" ? responsible.target.target : RepoUrl.parse(wanted);
     const config = this.deps.config();
     const budgetCapUsd = config.ok ? config.config.budgetPerTaskUsd : DEFAULT_BUDGET_USD;
     const { title, body } = input;
@@ -1127,7 +1140,7 @@ export class TaskService {
     return {
       ok: true,
       repo: {
-        url: `https://github.com/${repo}.git`,
+        url: `${repo}.git`,
         ...(task.repository ? { baseBranch: task.repository.baseBranch } : {}),
         ...(task.testCommand ? { testCommand: task.testCommand } : {}),
         testImage: config.image,
@@ -1193,35 +1206,53 @@ export class TaskService {
   }
 
   /**
-   * タスクのプロジェクトに設定した gh のアカウントで、GitHub のトークンを取り出す（PBI-13）。
-   * アカウントを選んでいなければ、理由つきで止める（アクティブなアカウントは切り替わるので使わない）。
-   * 取り出した値は、出力やエラー文から取り除く対象にする。
+   * タスクのプロジェクトに設定した、url（リポジトリ・Org の URL）のホストの gh のアカウントで、GitHub のトークンを
+   * 取り出す（PBI-13・PBI-40）。アカウントを選んでいなければ、理由つきで止める（アクティブなアカウントは
+   * 切り替わるので使わない）。取り出した値は、出力やエラー文から取り除く対象にする。
    */
-  private async githubToken(task: Pick<Task, "projectId">, usedSecrets: string[]): Promise<string> {
+  private async githubToken(
+    task: Pick<Task, "projectId">,
+    url: string,
+    usedSecrets: string[],
+  ): Promise<string> {
     const project = this.deps.projects.get(task.projectId);
-    if (!project?.githubAccount) {
+    const host = httpsHost(`${url}/`) ?? "";
+    const account = project?.githubAccounts?.[host];
+    if (!account) {
       throw new MessageError(
-        message("github.accountRequired", { project: project?.name ?? task.projectId }),
+        message("github.accountRequired", { project: project?.name ?? task.projectId, host }),
       );
     }
-    const token = await this.deps.github.token(project.githubAccount);
+    const token = await this.deps.github.token(host, account);
     usedSecrets.push(...gitAuthSecrets(token));
     return token;
   }
 
-  /** タスクのプロジェクトで選んだ gh のアカウント（選んでいなければ空）。 */
-  private githubAccountOf(task: Task): { account?: string } {
-    const account = this.deps.projects.get(task.projectId)?.githubAccount;
+  /** タスクのプロジェクトで、url のホストに選んだ gh のアカウント（選んでいなければ空）。 */
+  private githubAccountOf(task: Task, url: string): { account?: string } {
+    const host = httpsHost(`${url}/`) ?? "";
+    const account = this.deps.projects.get(task.projectId)?.githubAccounts?.[host];
     return account ? { account } : {};
   }
 
-  /** HTTPS の GitHub なら、gh のトークンで git を認証する環境変数。それ以外はホストの認証を使う。 */
+  /**
+   * プロジェクトの GitHub（アカウントを選んだホストか、対象のホスト）の HTTPS の URL なら、gh のトークンで git を
+   * 認証する環境変数。それ以外（SSH・ローカルのパス・ほかの git のサーバー）はホストの認証を使う。
+   */
   private async gitAuth(
     task: Task,
     url: string,
     usedSecrets: string[],
   ): Promise<Record<string, string> | undefined> {
-    return isGitHubHttps(url) ? gitAuthEnv(await this.githubToken(task, usedSecrets)) : undefined;
+    const host = httpsHost(url);
+    const project = this.deps.projects.get(task.projectId);
+    const github =
+      host !== undefined &&
+      (project?.githubAccounts?.[host] !== undefined ||
+        (project?.targets.some((t) => targetHost(t) === host) ?? false));
+    return host && github
+      ? gitAuthEnv(host, await this.githubToken(task, url, usedSecrets))
+      : undefined;
   }
 
   /**
@@ -2009,8 +2040,8 @@ export class TaskService {
         ]);
       }
       // PR は常に作る（PR作成許可の設定は無い。PBI-25）
-      const token = await this.githubToken(task, usedSecrets);
       const prRepo = repo.pullRequest.repo;
+      const token = await this.githubToken(task, prRepo, usedSecrets);
       // 前の PR がすでにマージされていれば、作り直した内容は新しい PR で出す
       // （マージ済みの PR を更新しても、マージされていない内容が完了扱いになってしまうため）
       let number = task.pullRequest?.number;
@@ -2214,7 +2245,7 @@ export class TaskService {
             throw new MessageError(message("cleanup.prRepoUnknown"));
           }
           // PR を作ったときと同じく、プロジェクトの gh のアカウントで閉じる
-          const token = await this.githubToken(latest, usedSecrets);
+          const token = await this.githubToken(latest, pr.repo, usedSecrets);
           await this.deps.pulls.close({ repo: pr.repo, token, number: pr.number });
           cleanup.push({ target: "pull_request", result: "done", detail: pr.url });
         } catch (error) {

@@ -11,6 +11,7 @@ import {
   renderMessage,
   type StepKey,
   StepPlan,
+  sameGitHubUrl,
   type Task,
   type TaskProposal,
   type TestMapping,
@@ -267,10 +268,10 @@ export function referencedPullRequest(task: Task): { repo: string; number: numbe
   }
   const repo = task.repository && githubRepoOf(task.repository.url);
   if (!repo) return undefined;
-  const pattern = /https:\/\/github\.com\/([\w.-]+\/[\w.-]+)\/pull\/(\d+)/g;
+  const pattern = /(https:\/\/[^\s/]+\/[\w.-]+\/[\w.-]+)\/pull\/(\d+)/g;
   for (const match of `${task.title}\n${task.body}`.matchAll(pattern)) {
     const number = Number(match[2]);
-    if (match[1]?.toLowerCase() === repo.toLowerCase() && number > 0) return { repo, number };
+    if (match[1] && sameGitHubUrl(match[1], repo) && number > 0) return { repo, number };
   }
   return undefined;
 }

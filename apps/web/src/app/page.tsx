@@ -77,7 +77,7 @@ async function NewTask() {
         projectName={project.name}
         repositories={repositories}
         hasTargets={project.targets.length > 0}
-        problems={errors.map((e) => m.forms.task.listFailed(e.owner, m.labels.text(e.message)))}
+        problems={errors.map((e) => m.forms.task.listFailed(e.org, m.labels.text(e.message)))}
       />
     );
   } catch {

@@ -19,8 +19,11 @@ const make = (id: string, def: ProjectDefinitionInput): Project => ({
 });
 
 const projects = [
-  make("p1", { name: "決済", targets: [{ scope: "org", target: "acme" }] }),
-  make("p2", { name: "認証", targets: [{ scope: "repo", target: "acme/auth" }] }),
+  make("p1", { name: "決済", targets: [{ scope: "org", target: "https://github.com/acme" }] }),
+  make("p2", {
+    name: "認証",
+    targets: [{ scope: "repo", target: "https://github.com/acme/auth" }],
+  }),
 ];
 
 describe("プロジェクトの対象（PBI-5・PBI-25）", () => {
@@ -28,31 +31,34 @@ describe("プロジェクトの対象（PBI-5・PBI-25）", () => {
     const def = ProjectDefinition.parse({
       name: "新規",
       targets: [
-        { scope: "org", target: "ACME" },
-        { scope: "repo", target: "Acme/Auth" },
+        { scope: "org", target: "https://github.com/ACME" },
+        { scope: "repo", target: "https://github.com/Acme/Auth" },
       ],
     });
     const conflicts = projectConflicts(projects, undefined, def);
     expect(conflicts).toEqual([
-      { code: "project.targetTaken", params: { scope: "org", target: "ACME", project: "決済" } },
       {
         code: "project.targetTaken",
-        params: { scope: "repo", target: "Acme/Auth", project: "認証" },
+        params: { scope: "org", target: "https://github.com/ACME", project: "決済" },
+      },
+      {
+        code: "project.targetTaken",
+        params: { scope: "repo", target: "https://github.com/Acme/Auth", project: "認証" },
       },
     ]);
     expect(conflicts.map((m) => renderMessage(m, "ja"))).toEqual([
-      "Org「ACME」は、プロジェクト「決済」に登録されています。",
-      "リポジトリ「Acme/Auth」は、プロジェクト「認証」に登録されています。",
+      "Org「https://github.com/ACME」は、プロジェクト「決済」に登録されています。",
+      "リポジトリ「https://github.com/Acme/Auth」は、プロジェクト「認証」に登録されています。",
     ]);
     expect(renderMessage(conflicts[1], "en")).toBe(
-      'The repository "Acme/Auth" is already registered in the project "認証".',
+      'The repository "https://github.com/Acme/Auth" is already registered in the project "認証".',
     );
     // 自分自身の登録は重複にしない
     expect(projectConflicts(projects, "p1", ProjectDefinition.parse(projects[0]))).toEqual([]);
     // Org と、その中のリポジトリを別のプロジェクトに登録するのはよい
     const narrower = ProjectDefinition.parse({
       name: "請求",
-      targets: [{ scope: "repo", target: "acme/billing" }],
+      targets: [{ scope: "repo", target: "https://github.com/acme/billing" }],
     });
     expect(projectConflicts(projects, undefined, narrower)).toEqual([]);
   });
@@ -61,29 +67,69 @@ describe("プロジェクトの対象（PBI-5・PBI-25）", () => {
     const def = ProjectDefinition.parse({
       name: "x",
       targets: [
-        { scope: "repo", target: "o/r" },
-        { scope: "repo", target: "O/R" },
+        { scope: "repo", target: "https://github.com/o/r" },
+        { scope: "repo", target: "https://github.com/O/R" },
       ],
     });
     expect(projectConflicts([], undefined, def).map((m) => renderMessage(m, "ja"))).toEqual([
-      "リポジトリ「O/R」が重複しています。",
+      "リポジトリ「https://github.com/O/R」が重複しています。",
     ]);
   });
 
   it("範囲が狭い指定（リポジトリ）が優先し、無ければ Org の指定が担当する", () => {
-    expect(responsibleProject(projects, "acme/auth")?.project.id).toBe("p2");
-    expect(responsibleProject(projects, "ACME/payments")).toMatchObject({
+    expect(responsibleProject(projects, "https://github.com/acme/auth")?.project.id).toBe("p2");
+    expect(responsibleProject(projects, "https://github.com/ACME/payments")).toMatchObject({
       project: { id: "p1" },
-      target: { scope: "org", target: "acme" },
+      target: { scope: "org", target: "https://github.com/acme" },
     });
-    expect(responsibleProject(projects, "other/repo")).toBeUndefined();
+    expect(responsibleProject(projects, "https://github.com/other/repo")).toBeUndefined();
   });
 
   it("Org の対象から除かれる、ほかのプロジェクトのリポジトリを返す", () => {
-    expect(excludedRepositories(projects, "p1", "acme")).toEqual([
-      { repo: "acme/auth", projectName: "認証" },
+    expect(excludedRepositories(projects, "p1", "https://github.com/acme")).toEqual([
+      { repo: "https://github.com/acme/auth", projectName: "認証" },
     ]);
-    expect(excludedRepositories(projects, "p2", "acme")).toEqual([]);
+    expect(excludedRepositories(projects, "p2", "https://github.com/acme")).toEqual([]);
+    // 同じ名前の Org でも、ほかのホストなら除かない（PBI-40）
+    expect(excludedRepositories(projects, "p1", "https://ghe.example.co.jp/acme")).toEqual([]);
+  });
+
+  it("対象はホストを含めた URL で書き、ホストが違えば別の対象として扱う（PBI-40）", () => {
+    const def = ProjectDefinition.parse({
+      name: "社内",
+      targets: [
+        { scope: "repo", target: " https://GHE.example.co.jp/acme/auth.git/ " },
+        { scope: "org", target: "https://ghe2.example.co.jp:8443/acme/" },
+      ],
+      githubAccounts: { "ghe.example.co.jp": "corp", "ghe2.example.co.jp:8443": "corp" },
+    });
+    // 書き方の揺れ（前後の空白・末尾の / と .git・ホストの大文字）はそろえる
+    expect(def.targets).toEqual([
+      { scope: "repo", target: "https://ghe.example.co.jp/acme/auth" },
+      { scope: "org", target: "https://ghe2.example.co.jp:8443/acme" },
+    ]);
+    // github.com の同じ名前とは重複しない
+    expect(projectConflicts(projects, undefined, def)).toEqual([]);
+    expect(responsibleProject(projects, "https://ghe.example.co.jp/acme/auth")).toBeUndefined();
+    const all = [...projects, make("p3", def)];
+    expect(responsibleProject(all, "https://ghe.example.co.jp/acme/auth")?.project.id).toBe("p3");
+    expect(responsibleProject(all, "https://ghe2.example.co.jp:8443/acme/x")?.project.id).toBe(
+      "p3",
+    );
+    expect(responsibleProject(all, "https://github.com/acme/auth")?.project.id).toBe("p2");
+    // 短縮表記（owner/name・Org の名前だけ）や、http・ホストの無いものは受け付けない
+    for (const target of [
+      "acme/auth",
+      "http://github.com/acme/auth",
+      "https://github.com/acme/auth/x",
+    ]) {
+      expect(() =>
+        ProjectDefinition.parse({ name: "x", targets: [{ scope: "repo", target }] }),
+      ).toThrow(/input\.invalidRepo/);
+    }
+    expect(() =>
+      ProjectDefinition.parse({ name: "x", targets: [{ scope: "org", target: "acme" }] }),
+    ).toThrow(/input\.invalidOrg/);
   });
 
   it("名前の形を検査し、取り込み元・リポジトリの設定（以前の形）は持たない", () => {
@@ -93,8 +139,8 @@ describe("プロジェクトの対象（PBI-5・PBI-25）", () => {
     expect(() => ProjectDefinition.parse({ name: " " })).toThrow(/input\.nameRequired/);
     const parsed = ProjectDefinition.parse({
       name: "x",
-      sources: [{ scope: "org", target: "acme", label: "sacty" }],
-      repositories: [{ repo: "acme/app", testCommand: "npm test" }],
+      sources: [{ scope: "org", target: "https://github.com/acme", label: "sacty" }],
+      repositories: [{ repo: "https://github.com/acme/app", testCommand: "npm test" }],
     });
     expect(parsed).toEqual({ name: "x", targets: [] });
   });
@@ -104,24 +150,24 @@ describe("プロジェクト定義のエクスポート・インポート（PBI-
   const full = make("p9", {
     name: "決済",
     targets: [
-      { scope: "org", target: "acme" },
-      { scope: "repo", target: "other/payments" },
+      { scope: "org", target: "https://github.com/acme" },
+      { scope: "repo", target: "https://github.com/other/payments" },
     ],
     context: { repo: "https://example.com/ctx.git", ref: "main" },
     // 個人の設定（gh のアカウント。PBI-13）は書き出さない
-    githubAccount: "side-job",
+    githubAccounts: { "github.com": "side-job" },
   });
 
   it("定義の項目だけを書き出し、ID・日時は含めない。書き出したものはそのまま読める", () => {
     const exported = exportProject(full);
     expect(exported).toEqual({
       sacty: "project",
-      version: 2,
+      version: 3,
       project: {
         name: "決済",
         targets: [
-          { scope: "org", target: "acme" },
-          { scope: "repo", target: "other/payments" },
+          { scope: "org", target: "https://github.com/acme" },
+          { scope: "repo", target: "https://github.com/other/payments" },
         ],
         context: { repo: "https://example.com/ctx.git", ref: "main" },
       },
@@ -133,7 +179,10 @@ describe("プロジェクト定義のエクスポート・インポート（PBI-
     expect(ProjectExport.parse(JSON.parse(text))).toEqual(exported);
     // 書き出したファイルに足されていても、読まない（strict）
     expect(() =>
-      ProjectExport.parse({ ...exported, project: { ...exported.project, githubAccount: "x" } }),
+      ProjectExport.parse({
+        ...exported,
+        project: { ...exported.project, githubAccounts: { "github.com": "x" } },
+      }),
     ).toThrow();
   });
 
@@ -150,7 +199,7 @@ describe("プロジェクト定義のエクスポート・インポート（PBI-
         ...ok,
         project: {
           ...ok.project,
-          targets: [{ scope: "org", target: "acme", token: "t" }],
+          targets: [{ scope: "org", target: "https://github.com/acme", token: "t" }],
         },
       }),
     ).toThrow();

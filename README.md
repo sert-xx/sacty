@@ -22,7 +22,8 @@ npx sacty image build   # エージェント実行用のコンテナイメージ
 単価（`price_per_mtok_usd`）は100万トークンあたりの米ドルで、利用するモデルの最新の単価に合わせる。
 
 プロジェクトの「対象」（GitHub の Org またはリポジトリ）と GitHub のアカウントは、画面のプロジェクトの
-設定で登録する。画面でタスクを作るときは、対象の中からリポジトリを選ぶ（Org の対象は、gh で読んだその Org の
+設定で登録する。対象は、ホストを含めた URL で書く（例 `https://github.com/acme/app`、
+`https://ghe.example.co.jp/acme`。github.com も GitHub Enterprise Server も同じ形）。画面でタスクを作るときは、対象の中からリポジトリを選ぶ（Org の対象は、gh で読んだその Org の
 リポジトリから選ぶ）。対象の、取り込むラベルの付いた開いている Issue と PR は、タスクとして取り込む。
 取り込むラベルは、すべてのプロジェクトに共通の設定として、画面の「sacty の設定」（ユーザーメニュー）で決める。
 設定していなければ取り込まない。
@@ -196,14 +197,17 @@ gateway:
 
 GitHub へのアクセス（Issue の取り込み、clone、プッシュ、PR の作成、調査の結果の Issue へのコメント、
 レビューの PR への投稿）は、ホストの GitHub CLI（`gh`）に
-ログイン済みのアカウントで行う。使うアカウントは、プロジェクトの設定で必ず選ぶ（最初は `gh` のアクティブな
+ログイン済みのアカウントで行う。github.com と GitHub Enterprise Server（いくつでも）を同時に使える。
+使うアカウントは、プロジェクトの設定で、対象のホストごとに必ず選ぶ（最初は、そのホストの `gh` のアクティブな
 アカウントが選ばれている）。`gh` でアカウントを切り替えても、プロジェクトごとに選んだアカウントを使う。
 
 ```sh
-gh auth login   # 使うアカウントごとにログインする
+gh auth login                                 # github.com。使うアカウントごとにログインする
+gh auth login --hostname ghe.example.co.jp    # GitHub Enterprise Server も、ホストごとにログインする
 ```
 
-HTTPS の GitHub のリポジトリは、そのアカウントのトークンで clone・プッシュする（ホストの git の認証の設定は
+API は、github.com なら `https://api.github.com`、GitHub Enterprise Server なら `https://<ホスト>/api/v3` を使う。
+HTTPS のリポジトリは、そのホストのアカウントのトークンで clone・プッシュする（ホストの git の認証の設定は
 要らない）。SSH の URL やローカルのパスは、ホストの認証（ssh-agent など）を使う。
 トークンは使うたびに `gh` から取り出し、作業履歴・ログ・画面・コンテナには出さない。
 

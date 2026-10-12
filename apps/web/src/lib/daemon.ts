@@ -116,13 +116,13 @@ export async function getProject(id: string): Promise<ProjectView | null> {
  */
 export async function listProjectRepositories(
   id: string,
-): Promise<{ repositories: string[]; errors: { owner: string; message: DaemonText }[] }> {
+): Promise<{ repositories: string[]; errors: { org: string; message: DaemonText }[] }> {
   const res = await ensureOk(
     await daemonFetch(`/api/projects/${encodeURIComponent(id)}/repositories`),
   );
   return (await res.json()) as {
     repositories: string[];
-    errors: { owner: string; message: DaemonText }[];
+    errors: { org: string; message: DaemonText }[];
   };
 }
 
@@ -224,7 +224,7 @@ export async function runIntake(): Promise<OpResult> {
 }
 
 export type GitHubAccounts =
-  | { accounts: { login: string; active: boolean }[] }
+  | { accounts: { host: string; login: string; active: boolean }[] }
   | { error: DaemonText };
 
 /** gh にログイン済みの GitHub のアカウント（PBI-13）。 */

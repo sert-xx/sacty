@@ -57,6 +57,8 @@ const PARAMS = {
   "input.nameRequired": null,
   "input.invalidGithubName": null,
   "input.invalidRepo": null,
+  "input.invalidOrg": null,
+  "input.invalidHost": null,
   "input.contextRepoRequired": null,
   "input.invalidRef": null,
   "input.invalidLabel": null,
@@ -127,8 +129,8 @@ const PARAMS = {
   "integrate.unreadable": null,
   "review.pullRequestMissing": z.object({ repo: z.string() }),
   "github.ghMissing": null,
-  "github.accountRequired": z.object({ project: z.string() }),
-  "github.accountUnavailable": z.object({ account: z.string() }),
+  "github.accountRequired": z.object({ project: z.string(), host: z.string() }),
+  "github.accountUnavailable": z.object({ account: z.string(), host: z.string() }),
   "github.ghFailed": z.object({ detail: z.string() }),
   "review.verdictMissing": null,
   "review.unreadable": null,
@@ -335,7 +337,9 @@ const ja: MessageDictionary = {
   "input.tooManyRemarks": "指摘は一度に50件までにしてください。",
   "input.nameRequired": "名前を入力してください。",
   "input.invalidGithubName": "GitHub の名前として正しくありません。",
-  "input.invalidRepo": "リポジトリは owner/name の形で入力してください。",
+  "input.invalidRepo": "リポジトリは URL（例 https://github.com/acme/app）で入力してください。",
+  "input.invalidOrg": "Org は URL（例 https://github.com/acme）で入力してください。",
+  "input.invalidHost": "ホスト名として正しくありません。",
   "input.contextRepoRequired": "コンテキストリポジトリを入力してください。",
   "input.invalidRef": "ref はブランチ名かタグ名で入力してください。",
   "input.invalidLabel": 'ラベルに " と \\ は使えません。',
@@ -432,10 +436,10 @@ const ja: MessageDictionary = {
     `タスクに、レビューする PR（${repo} の PR の URL）がありません。`,
   "github.ghMissing":
     "gh コマンドが見つかりません。GitHub CLI をインストールし、gh auth login でログインしてください。",
-  "github.accountRequired": ({ project }) =>
-    `プロジェクト「${project}」の GitHub アカウントが選ばれていません。プロジェクトの設定で選んでから再開してください。`,
-  "github.accountUnavailable": ({ account }) =>
-    `GitHub のアカウント「${account}」で gh にログインしていません。gh auth login でログインするか、プロジェクトの設定でアカウントを選び直してください。`,
+  "github.accountRequired": ({ project, host }) =>
+    `プロジェクト「${project}」の ${host} の GitHub アカウントが選ばれていません。プロジェクトの設定で選んでから再開してください。`,
+  "github.accountUnavailable": ({ account, host }) =>
+    `${host} のアカウント「${account}」で gh にログインしていません。gh auth login --hostname ${host} でログインするか、プロジェクトの設定でアカウントを選び直してください。`,
   "github.ghFailed": ({ detail }) => `gh コマンドが失敗しました：${detail}`,
   "review.verdictMissing": "判定がありません。",
   "review.unreadable": "最終レビューの出力から、判定を読み取れませんでした。",
@@ -571,7 +575,9 @@ const en: MessageDictionary = {
   "input.tooManyRemarks": "Enter up to 50 comments at a time.",
   "input.nameRequired": "Enter a name.",
   "input.invalidGithubName": "This is not a valid GitHub name.",
-  "input.invalidRepo": "Enter the repository as owner/name.",
+  "input.invalidRepo": "Enter the repository as a URL (e.g. https://github.com/acme/app).",
+  "input.invalidOrg": "Enter the org as a URL (e.g. https://github.com/acme).",
+  "input.invalidHost": "This is not a valid host name.",
   "input.contextRepoRequired": "Enter the context repository.",
   "input.invalidRef": "Enter a branch or tag name as the ref.",
   "input.invalidLabel": "A label can't contain \" or \\.",
@@ -669,10 +675,10 @@ const en: MessageDictionary = {
     `The task has no PR to review (a URL of a PR in ${repo}).`,
   "github.ghMissing":
     "The gh command was not found. Install GitHub CLI and sign in with gh auth login.",
-  "github.accountRequired": ({ project }) =>
-    `No GitHub account is chosen for the project "${project}". Choose one in the project settings, then resume.`,
-  "github.accountUnavailable": ({ account }) =>
-    `The GitHub account "${account}" is not signed in to gh. Sign in with gh auth login, or choose another account in the project settings.`,
+  "github.accountRequired": ({ project, host }) =>
+    `No GitHub account for ${host} is chosen for the project "${project}". Choose one in the project settings, then resume.`,
+  "github.accountUnavailable": ({ account, host }) =>
+    `The account "${account}" on ${host} is not signed in to gh. Sign in with gh auth login --hostname ${host}, or choose another account in the project settings.`,
   "github.ghFailed": ({ detail }) => `The gh command failed: ${detail}`,
   "review.verdictMissing": "No verdict was given.",
   "review.unreadable": "Could not read the verdicts from the final review output.",

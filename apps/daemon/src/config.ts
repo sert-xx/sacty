@@ -8,6 +8,7 @@ import {
   issueMessage,
   message,
   PricePerMTok,
+  parseRepoUrl,
   StepKey,
 } from "@sacty/core";
 import { parse as parseYaml } from "yaml";
@@ -183,10 +184,10 @@ const Agent = z
     }
   });
 
-/** GitHub のリポジトリの URL から owner/name を求める。 */
+/** git の URL（HTTPS か SSH）から、GitHub のリポジトリの URL（https://<ホスト>/<owner>/<name>）を求める。 */
 export function githubRepoOf(url: string): string | undefined {
-  const m = url.match(/github\.com[:/]([\w.-]+)\/([\w.-]+?)(?:\.git)?\/?$/);
-  return m ? `${m[1]}/${m[2]}` : undefined;
+  const ssh = url.match(/^(?:ssh:\/\/)?git@([^:/]+)[:/](.+)$/);
+  return parseRepoUrl(ssh ? `https://${ssh[1]}/${ssh[2]}` : url)?.url;
 }
 
 const ConfigFile = z

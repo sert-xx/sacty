@@ -1,6 +1,6 @@
 "use client";
 
-import type { Project, ProjectTarget } from "@sacty/core";
+import { type Project, type ProjectTarget, targetHost } from "@sacty/core";
 import { XIcon } from "lucide-react";
 import { startTransition, useActionState, useId, useState } from "react";
 import {
@@ -39,15 +39,23 @@ export function ProjectEditor({
   const messages = useMessages();
   const { editor: t, scope: scopeLabel } = messages.projects;
   const accounts = github && "accounts" in github ? github.accounts : [];
-  // GitHub のアカウントは必ず選ぶ。まだ選んでいなければ、gh のアクティブなアカウントを選んでおく
-  // （保存すると、そのアカウントに固定される。gh で切り替えても変わらない）
-  const [githubAccount, setGithubAccount] = useState(
-    project?.githubAccount ?? accounts.find((a) => a.active)?.login ?? "",
-  );
-  // 設定画面（project あり）では、アカウントを選ぶまで保存させない
-  const needsAccount = Boolean(project) && !githubAccount;
   const [name, setName] = useState(project?.name ?? "");
   const [targets, setTargets] = useState<ProjectTarget[]>(project?.targets ?? []);
+  // GitHub のアカウントは、対象のホストごとに必ず選ぶ（PBI-40）。まだ選んでいなければ、そのホストの gh の
+  // アクティブなアカウントを選んでおく（保存すると、そのアカウントに固定される。gh で切り替えても変わらない）
+  const [chosenAccounts, setChosenAccounts] = useState<Record<string, string>>(
+    project?.githubAccounts ?? {},
+  );
+  const hosts = [...new Set(targets.map(targetHost).filter(Boolean))];
+  const githubAccounts = Object.fromEntries(
+    hosts.flatMap((host) => {
+      const login =
+        chosenAccounts[host] ?? accounts.find((a) => a.host === host && a.active)?.login;
+      return login ? [[host, login]] : [];
+    }),
+  );
+  // 設定画面（project あり）では、対象のホストのアカウントを選ぶまで保存させない
+  const needsAccount = Boolean(project) && hosts.some((host) => !githubAccounts[host]);
   const [contextRepo, setContextRepo] = useState(project?.context?.repo ?? "");
   const [contextRef, setContextRef] = useState(project?.context?.ref ?? "");
   // Slack の通知先（PBI-38）
@@ -97,7 +105,7 @@ export function ProjectEditor({
           },
         }
       : {}),
-    ...(githubAccount ? { githubAccount } : {}),
+    ...(hosts.length > 0 ? { githubAccounts } : {}),
     ...(notification ? { notification } : {}),
   });
 
@@ -146,7 +154,11 @@ export function ProjectEditor({
               {targets.map((target, i) => {
                 const excluded =
                   target.scope === "org"
-                    ? exclusions.find((e) => e.org.toLowerCase() === target.target.toLowerCase())
+                    ? exclusions.find(
+                        (e) =>
+                          e.org.toLowerCase() ===
+                          target.target.trim().replace(/\/+$/, "").toLowerCase(),
+                      )
                     : undefined;
                 return (
                   <li
@@ -172,11 +184,16 @@ export function ProjectEditor({
                         htmlFor={`${uid}-target-${i}-target`}
                         className="flex min-w-48 flex-1 flex-col gap-1 text-xs text-muted-foreground"
                       >
-                        {target.scope === "org" ? scopeLabel.org : t.repoTarget}
+                        {target.scope === "org" ? t.orgTarget : t.repoTarget}
                         <Input
                           id={`${uid}-target-${i}-target`}
                           value={target.target}
-                          placeholder={target.scope === "org" ? "acme" : "acme/payments"}
+                          className="font-mono"
+                          placeholder={
+                            target.scope === "org"
+                              ? "https://github.com/acme"
+                              : "https://github.com/acme/payments"
+                          }
                           onChange={(e) => updateTarget(i, { target: e.target.value })}
                         />
                       </label>
@@ -226,30 +243,41 @@ export function ProjectEditor({
               {t.githubTitle}{" "}
               <span className="text-[13px] font-normal text-muted-foreground">{t.githubNote}</span>
             </h2>
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor={`${uid}-github`}>{t.githubAccount}</Label>
-              <select
-                id={`${uid}-github`}
-                value={githubAccount}
-                onChange={(e) => setGithubAccount(e.target.value)}
-                className={`${SELECT} max-w-md`}
-              >
-                {!githubAccount && (
-                  <option value="" disabled>
-                    {t.githubChoose}
-                  </option>
-                )}
-                {accounts.map((a) => (
-                  <option key={a.login} value={a.login}>
-                    {a.login}
-                  </option>
-                ))}
-                {/* 選んでいたアカウントが gh からログアウトしていても、そのまま見えるようにする */}
-                {githubAccount && !accounts.some((a) => a.login === githubAccount) && (
-                  <option value={githubAccount}>{t.githubNotLoggedIn(githubAccount)}</option>
-                )}
-              </select>
-            </div>
+            {hosts.length === 0 && (
+              <p className="text-sm text-muted-foreground">{t.githubNoTargets}</p>
+            )}
+            {hosts.map((host) => {
+              const current = githubAccounts[host] ?? "";
+              const onHost = accounts.filter((a) => a.host === host);
+              return (
+                <div key={host} className="flex flex-col gap-1.5">
+                  <Label htmlFor={`${uid}-github-${host}`}>{t.githubAccount(host)}</Label>
+                  <select
+                    id={`${uid}-github-${host}`}
+                    value={current}
+                    onChange={(e) =>
+                      setChosenAccounts((chosen) => ({ ...chosen, [host]: e.target.value }))
+                    }
+                    className={`${SELECT} max-w-md`}
+                  >
+                    {!current && (
+                      <option value="" disabled>
+                        {t.githubChoose}
+                      </option>
+                    )}
+                    {onHost.map((a) => (
+                      <option key={a.login} value={a.login}>
+                        {a.login}
+                      </option>
+                    ))}
+                    {/* 選んでいたアカウントが gh からログアウトしていても、そのまま見えるようにする */}
+                    {current && !onHost.some((a) => a.login === current) && (
+                      <option value={current}>{t.githubNotLoggedIn(current)}</option>
+                    )}
+                  </select>
+                </div>
+              );
+            })}
             {github && "error" in github && (
               <p role="alert" className="text-sm text-warn">
                 {messages.labels.text(github.error)}
