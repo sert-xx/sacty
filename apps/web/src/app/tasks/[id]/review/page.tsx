@@ -15,6 +15,7 @@ import { GateForm } from "@/components/gate-form";
 import { Implementation } from "@/components/implementation";
 import { Markdown } from "@/components/markdown";
 import { PullRequestCard } from "@/components/pull-request";
+import { ReproductionResult } from "@/components/reproduction";
 import { TestViewpoints } from "@/components/test-viewpoints";
 import type { Messages } from "@/i18n";
 import { getMessages } from "@/i18n/server";
@@ -81,7 +82,11 @@ async function Review({ params }: { params: Promise<{ id: string }> }) {
         </nav>
         <div className="flex flex-wrap items-center gap-3">
           <h1 className="text-2xl font-bold text-balance">
-            {step === "pr" ? t.deliverableReview : t.stepApproval(stepLabel[step])}
+            {step === "pr"
+              ? t.deliverableReview
+              : step === "reproduce"
+                ? t.notReproduced
+                : t.stepApproval(stepLabel[step])}
           </h1>
           <span className="rounded-full border border-back-line bg-back-soft px-2.5 py-0.5 text-xs font-semibold text-back">
             {t.submission(submission)}
@@ -169,6 +174,7 @@ async function Review({ params }: { params: Promise<{ id: string }> }) {
               )}
             </section>
           )}
+          {step === "reproduce" && <ReproductionResult task={task} />}
           {step === "design" && (
             <section
               aria-labelledby="viewpoints"
@@ -214,6 +220,7 @@ async function Review({ params }: { params: Promise<{ id: string }> }) {
             escalated={task.status === "escalated"}
             maxChanges={MAX_CHANGE_REQUESTS}
             pendingComments={task.escalation?.pendingRemarks.map((r) => r.text) ?? []}
+            notReproduced={step === "reproduce"}
             pullRequest={
               step === "pr" && task.pullRequest?.number
                 ? {

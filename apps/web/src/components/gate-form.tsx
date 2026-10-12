@@ -21,6 +21,7 @@ export function GateForm({
   pendingComments,
   pullRequest,
   rework,
+  notReproduced = false,
 }: {
   taskId: string;
   step: StepKey;
@@ -36,6 +37,8 @@ export function GateForm({
   pullRequest?: { number: number; url?: string; closed: boolean; mergedOutdated: boolean };
   /** PR の指摘の戻し先の確認（PBI-14b）。ゴールガーディアンの提案と理由。 */
   rework?: { target: StepKey; note: string };
+  /** 再現できなかった（PBI-29）。承認では先へ進めないので、承認のボタンは出さない。 */
+  notReproduced?: boolean;
 }) {
   const [state, formAction, pending] = useActionState(gateAction, initial);
   const m = useMessages();
@@ -71,6 +74,12 @@ export function GateForm({
           <p className="font-semibold">{t.reworkTitle}</p>
           <p>{t.reworkSuggestion(stepLabel[rework.target], rework.note)}</p>
           <p>{t.reworkHelp}</p>
+        </div>
+      )}
+      {notReproduced && (
+        <div className="flex flex-col gap-1.5 rounded-md border border-warn-line bg-warn-soft p-3 text-sm leading-6 text-warn">
+          <p className="font-semibold">{t.notReproducedTitle}</p>
+          <p>{t.notReproducedHelp}</p>
         </div>
       )}
       {escalated && !rework && (
@@ -129,7 +138,7 @@ export function GateForm({
         >
           {escalated && !rework ? t.requestOverLimit : t.request}
         </Button>
-        {!pullRequest && (
+        {!pullRequest && !notReproduced && (
           <Button
             type="submit"
             name="decision"

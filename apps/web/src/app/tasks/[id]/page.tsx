@@ -9,6 +9,7 @@ import { Implementation } from "@/components/implementation";
 import { Markdown } from "@/components/markdown";
 import { Proposals } from "@/components/proposals";
 import { PullRequestCard } from "@/components/pull-request";
+import { ReproductionResult } from "@/components/reproduction";
 import { ResumeForm } from "@/components/resume-form";
 import { CostMeter, StatusLabel, StepChips } from "@/components/task-bits";
 import { TaskControls } from "@/components/task-controls";
@@ -164,13 +165,15 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
                   ? m.gate.reworkHelp(labels.step[rework.target], labels.text(rework.note ?? ""))
                   : task.status === "escalated"
                     ? m.gate.tooManyHelp
-                    : task.gate?.step === "pr" && task.pullRequestState === "closed"
-                      ? m.gate.prClosedHelp
-                      : task.gate?.step === "pr" && task.pullRequestState === "merged_outdated"
-                        ? m.gate.prMergedOutdatedHelp
-                        : task.gate?.step === "pr" && task.pullRequestState === "open"
-                          ? m.gate.prHelp
-                          : m.gate.reviewHelp}
+                    : task.gate?.step === "reproduce"
+                      ? m.gate.notReproducedHelp
+                      : task.gate?.step === "pr" && task.pullRequestState === "closed"
+                        ? m.gate.prClosedHelp
+                        : task.gate?.step === "pr" && task.pullRequestState === "merged_outdated"
+                          ? m.gate.prMergedOutdatedHelp
+                          : task.gate?.step === "pr" && task.pullRequestState === "open"
+                            ? m.gate.prHelp
+                            : m.gate.reviewHelp}
             </p>
           </div>
           <Link
@@ -285,6 +288,13 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
           )}
           {/* レビューの結果（PBI-19）。人間の承認は無く、そのまま PR に投稿する */}
           {task.steps.some((s) => s.key === "review") && <Deliverable task={task} step="review" />}
+          {/* 再現の説明と、sacty が確かめた結果（PBI-29） */}
+          {task.steps.some((s) => s.key === "reproduce") && (
+            <>
+              <Deliverable task={task} step="reproduce" />
+              <ReproductionResult task={task} />
+            </>
+          )}
           {task.steps.some((s) => s.key === "requirements") && (
             <Deliverable task={task} step="requirements" />
           )}

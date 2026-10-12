@@ -42,6 +42,8 @@ const PARAMS = {
   "gate.staleSubmission": z.object({ submission: Count, current: Count }),
   "gate.invalidTarget": null,
   "gate.approveOnPullRequest": z.object({ url: z.string() }),
+  "gate.reproduceNotApprovable": null,
+  "reproduce.noTests": null,
   "gate.remarksRequired": null,
   "gate.overLimit": z.object({ limit: Count }),
   "remark.notFound": null,
@@ -290,6 +292,10 @@ const ja: MessageDictionary = {
   "gate.approveOnPullRequest": ({ url }) =>
     `PR を作ったタスクは、PR をマージすると承認になります。GitHub で PR をレビューしてマージしてください（${url}）。`,
   "gate.remarksRequired": "差し戻すには、指摘を1件以上入力してください。",
+  "gate.reproduceNotApprovable":
+    "再現できなかったので、先へは進めません。再現の手がかりを指摘に書いて差し戻すと、再現をやり直します。不要なら中止してください。",
+  "reproduce.noTests":
+    "再現のエージェントが、再現のテストを申告しませんでした（再現できなかった）。",
   "gate.overLimit": ({ limit }) =>
     `差し戻しが上限（${limit}回）に達しています。続ける場合は、上限を超えて差し戻すことを選んでください。`,
   "remark.notFound": "指摘が見つかりません。",
@@ -480,6 +486,10 @@ const en: MessageDictionary = {
   "gate.approveOnPullRequest": ({ url }) =>
     `For a task with a PR, merging the PR approves it. Review and merge the PR on GitHub (${url}).`,
   "gate.remarksRequired": "Enter at least one comment to request changes.",
+  "gate.reproduceNotApprovable":
+    "The bug was not reproduced, so the task can't move on. Request changes with hints for reproducing it to try again, or cancel the task.",
+  "reproduce.noTests":
+    "The reproduce agent did not report a test that reproduces the bug (not reproduced).",
   "gate.overLimit": ({ limit }) =>
     `Change requests reached the limit (${limit}). To continue, choose to request changes over the limit.`,
   "remark.notFound": "Comment not found.",

@@ -10,7 +10,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { EventInput, Task } from "@sacty/core";
-import { isCompleted, MVP_STEPS, message, renderMessage } from "@sacty/core";
+import { isCompleted, MVP_STEPS, message, renderMessage, reworkTargets } from "@sacty/core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { SqliteActivityStore } from "./activity.js";
 import type { AgentExecutor } from "./agents/docker.js";
@@ -23,6 +23,7 @@ import { MessageError } from "./errors.js";
 import type { GitHubAuth } from "./gh.js";
 import type { PullRequestFeedback, PullRequestStatus, PullRequests } from "./github.js";
 import { MemoryProjectStore } from "./projects.js";
+import { buildOrchestratorPrompt } from "./prompts.js";
 import type { RepositoryWorkspace } from "./repository.js";
 import { MemorySecretStore } from "./secrets.js";
 import { createApp } from "./server.js";
@@ -5084,5 +5085,175 @@ describe("タスク分割（PBI-27）", () => {
     await restarted.runNext(id);
     expect(childrenOf(restarted, id).map((c) => c?.id)).toEqual(ids);
     fresh.close();
+  });
+});
+
+describe("再現の工程（PBI-29）", () => {
+  const out = (text: string): AgentOutcome => ({
+    kind: "completed",
+    output: text,
+    usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 1 },
+  });
+  const block = (b: Record<string, unknown>) => `\`\`\`json\n${JSON.stringify(b)}\n\`\`\``;
+  const promptOf = (executor: FakeExecutor, i: number) =>
+    executor.calls[i]?.command.join(" ") ?? "";
+  const reproduce = (text: string, tests: string[]) =>
+    out([text, block({ "sacty-reproduction": { tests } })].join("\n\n"));
+  const implement = (tests: string[] = ["pay.test.ts › 二重送信"]) =>
+    out(
+      ["# 修正の説明", block({ "sacty-test-map": [{ viewpointId: "REPRO", tests }] })].join("\n\n"),
+    );
+  const review = (verified = true) =>
+    out(
+      block({
+        "sacty-final-review": {
+          viewpoints: [{ id: "REPRO", verified, reason: "判定" }],
+          remarks: [],
+          summary: "所見",
+        },
+      }),
+    );
+  const planner = async () => ({
+    steps: ["reproduce" as const, "implement" as const, "pr" as const],
+    plan: "bugfix" as const,
+    reason: "不具合の修正",
+    fallback: false,
+    testCommand: "npm test",
+    costUsd: 0,
+    estimated: false,
+  });
+  async function drain(service: TaskService, max = 10) {
+    for (let i = 0; i < max; i++) {
+      const ids = service.queuedTaskIds();
+      if (ids.length === 0) return;
+      for (const id of ids) await service.runNext(id);
+    }
+  }
+
+  it("再現のテストが失敗したら、人間の承認なしに実装へ進み、再現のテストを観点にして検証する", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const tests = new FakeTests([
+      { exitCode: 1, output: "FAIL pay.test.ts › 二重送信", durationMs: 5 },
+      { exitCode: 0, output: "ok", durationMs: 5 },
+    ]);
+    const pulls = new FakePulls();
+    const { service, executor } = makeService(
+      activity,
+      [reproduce("# 再現の説明", ["pay.test.ts › 二重送信"]), implement(), review()],
+      { planner, tests, pulls },
+    );
+    const { id } = service.createTask({ projectId: "default", title: "二重に決済される" });
+    await service.runNext(id);
+    // 再現は clone（書き込める作業領域）で、不具合を直さずにテストを書かせる
+    expect(executor.readOnly[0]).toBe(false);
+    expect(promptOf(executor, 0)).toContain("再現エージェント");
+    expect(promptOf(executor, 0)).toContain("npm test");
+    expect(tests.calls).toHaveLength(1);
+    const task = service.get(id)?.task;
+    expect(task?.reproduction).toMatchObject({
+      reproduced: true,
+      exitCode: 1,
+      tests: ["pay.test.ts › 二重送信"],
+    });
+    expect(task?.steps.map((s) => s.state)).toEqual(["done", "active", "todo"]);
+    expect(task?.status).toBe("queued");
+
+    await drain(service);
+    const fix = promptOf(executor, 1);
+    expect(fix).toContain("そのテストが通るように不具合を直してください");
+    expect(fix).toContain("# 再現の説明");
+    expect(fix).toContain("- pay.test.ts › 二重送信");
+    expect(fix).toContain("FAIL pay.test.ts › 二重送信");
+    expect(promptOf(executor, 2)).toContain("[REPRO] 再現のテストが");
+    const done = service.get(id)?.task;
+    expect(done?.lastReview).toMatchObject({
+      passed: true,
+      viewpoints: [{ viewpointId: "REPRO" }],
+    });
+    expect(done?.gate).toEqual({ step: "pr", submission: 1 });
+    // PR の本文には、再現の説明と、再現のテストの観点（REPRO）を載せる
+    const body = pulls.calls[0]?.body ?? "";
+    expect(body).toContain("## 不具合の再現");
+    expect(body).toContain("# 再現の説明");
+    expect(body).toMatch(/\| REPRO 再現のテストが通る \| pay\.test\.ts › 二重送信 \|.*✅/);
+    expect(body).not.toContain("## 要求要件");
+    // 成果物チェックから差し戻すときに、再現には戻せない（実装した後のコードでは再現できない）
+    expect(reworkTargets(done as Task, "pr")).toEqual(["implement"]);
+    activity.close();
+  });
+
+  it("テストが通った・再現のテストが無いなら、人間の判断を待つ。承認では進めず、差し戻すと再現をやり直す", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const tests = new FakeTests([
+      { exitCode: 0, output: "all passed", durationMs: 5 },
+      { exitCode: 1, output: "FAIL", durationMs: 5 },
+    ]);
+    const { service, executor } = makeService(
+      activity,
+      [
+        reproduce("# 再現できた？", ["pay.test.ts › 二重送信"]),
+        reproduce("# テストでは再現できない", []),
+        reproduce("# 再現した", ["pay.test.ts › 連打"]),
+      ],
+      { planner, tests },
+    );
+    const { id } = service.createTask({ projectId: "default", title: "二重に決済される" });
+    await service.runNext(id);
+    let task = service.get(id)?.task;
+    expect(task?.reproduction).toMatchObject({ reproduced: false, exitCode: 0 });
+    expect(task?.status).toBe("awaiting_approval");
+    expect(task?.gate).toEqual({ step: "reproduce", submission: 1 });
+    expect(() => service.approve(id, { step: "reproduce", submission: 1 })).toThrow(
+      /再現できなかったので、先へは進めません/,
+    );
+
+    service.requestChanges(id, { step: "reproduce", submission: 1, comments: ["連打で起きる"] });
+    await service.runNext(id);
+    expect(promptOf(executor, 1)).toContain("[reproduce-1-1] 連打で起きる");
+    expect(promptOf(executor, 1)).toContain("終了コード 0");
+    task = service.get(id)?.task;
+    // 再現のテストが申告されなければ、テストを実行せずに再現できなかったとする
+    expect(tests.calls).toHaveLength(1);
+    expect(renderMessage(task?.reproduction?.note, "ja")).toMatch(/申告しませんでした/);
+    expect(task?.gate).toEqual({ step: "reproduce", submission: 2 });
+
+    service.requestChanges(id, { step: "reproduce", submission: 2, comments: ["決済ボタン"] });
+    await service.runNext(id);
+    task = service.get(id)?.task;
+    expect(task?.reproduction?.reproduced).toBe(true);
+    expect(task?.approved.reproduce?.output).toContain("# 再現した");
+    expect(task?.status).toBe("queued");
+    activity.close();
+  });
+
+  it("再現の後、確かめる前にデーモンが止まっても、再起動の後に確かめる", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const tests = new FakeTests([{ exitCode: 1, output: "FAIL", durationMs: 5 }]);
+    tests.hold = true;
+    const { service } = makeService(activity, [reproduce("# 再現", ["a.test.ts › x"])], {
+      planner,
+      tests,
+    });
+    const { id } = service.createTask({ projectId: "default", title: "不具合" });
+    const running = service.runNext(id);
+    await tests.started.promise;
+    // テストの実行中（確かめる前）の状態は、作業履歴から復元できる
+    const restored = new SqliteActivityStore(dbPath);
+    const { service: restarted, tests: retests } = makeService(restored, [], { planner });
+    expect(restarted.get(id)?.task.reproductionPending).toBe(true);
+    expect(restarted.queuedTaskIds()).toEqual([id]);
+    await restarted.runNext(id);
+    expect(retests.calls).toHaveLength(1);
+    expect(restarted.get(id)?.task.reproduction).toBeDefined();
+    restored.close();
+    tests.kill((await tests.started.promise) as string);
+    await running.catch(() => {});
+    activity.close();
+  });
+
+  it("オーケストレーターは、不具合の修正に bugfix を選べる", () => {
+    expect(buildOrchestratorPrompt({ title: "x", body: "" } as Task)).toContain(
+      "- bugfix：再現 → 実装",
+    );
   });
 });

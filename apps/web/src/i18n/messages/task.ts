@@ -22,6 +22,8 @@ const ja = {
       `ゴールガーディアンは、PR の指摘を${step}からやり直すことを提案しています（${note}）。承認済みの成果物を変えることになるので、戻し先を確かめて差し戻してください。`,
     prClosedHelp:
       "PR がマージされずに閉じられました。GitHub で開き直すか、不要なら中止してください。",
+    notReproducedHelp:
+      "不具合を再現できませんでした。再現の手がかりを指摘に書いて差し戻すと、再現をやり直します。不要なら中止してください。",
     prMergedOutdatedHelp:
       "PR は、最新の提出より前の内容でマージされました。最新の提出はまだマージされていません。差し戻すと、作り直した内容を新しい PR で出します。不要なら中止してください。",
   },
@@ -36,6 +38,16 @@ const ja = {
   testCommandUnknown: "（決められませんでした）",
   activity: "作業履歴",
   activityNote: "追記専用",
+  reproduction: {
+    title: "再現の確かめ",
+    note: "sacty が再現のテストを実行した結果",
+    reproduced: "再現できた（テストが失敗した）→ 実装へ",
+    notReproduced: "再現できなかった",
+    command: (command: string, exitCode?: number) =>
+      `コマンド：${command}${exitCode === undefined ? "" : `（終了コード ${exitCode}）`}`,
+    tests: "再現のテスト",
+    output: "出力の末尾",
+  },
   subtasks: {
     title: "子タスク",
     note: "タスク分割で作ったタスク。依存先の PR がマージされてから始めます",
@@ -87,6 +99,8 @@ const en: TaskMessages = {
     reworkHelp: (step, note) =>
       `The Goal Guardian suggests redoing from ${step} for the PR comments (${note}). This changes approved deliverables, so confirm the step to redo and request changes.`,
     prClosedHelp: "The PR was closed without merging. Reopen it on GitHub, or cancel the task.",
+    notReproducedHelp:
+      "The bug was not reproduced. Request changes with hints for reproducing it to try again, or cancel the task.",
     prMergedOutdatedHelp:
       "The PR was merged with content older than the latest submission, so the latest submission is not merged. Request changes to open the reworked content as a new PR, or cancel the task.",
   },
@@ -101,6 +115,16 @@ const en: TaskMessages = {
   testCommandUnknown: "(could not determine)",
   activity: "Activity",
   activityNote: "Append-only",
+  reproduction: {
+    title: "Reproduction check",
+    note: "Result of sacty running the reproduction test",
+    reproduced: "Reproduced (the test failed) → implement",
+    notReproduced: "Not reproduced",
+    command: (command, exitCode) =>
+      `Command: ${command}${exitCode === undefined ? "" : ` (exit code ${exitCode})`}`,
+    tests: "Reproduction tests",
+    output: "End of output",
+  },
   subtasks: {
     title: "Subtasks",
     note: "Tasks created by the task split. Each starts after the PRs it depends on are merged",

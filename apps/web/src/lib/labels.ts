@@ -17,6 +17,7 @@ export function statusText(task: Task, l: LabelMessages): string {
   if (proposal && !proposal.judgement) return l.state.guardianJudging;
   if (task.status === "idle" && isCompleted(task)) return l.state.completed;
   if (task.status === "idle" && task.verification === "pending") return l.state.testsRunning;
+  if (task.status === "idle" && task.reproductionPending) return l.state.testsRunning;
   if (task.status === "idle" && task.verification === "tests_passed") {
     return l.state.finalReviewing;
   }
@@ -31,6 +32,10 @@ export function statusText(task: Task, l: LabelMessages): string {
     if (task.pullRequestState === "merged_outdated") return l.state.prMergedOutdated;
     if (task.pullRequestState === "open") return l.state.prAwaitingMerge(task.gate.submission);
     return l.state.deliverableReview(task.gate.submission);
+  }
+  // 再現できなかった（PBI-29）。承認ではなく、差し戻すか中止するかの判断
+  if (task.status === "awaiting_approval" && task.gate?.step === "reproduce") {
+    return l.state.notReproduced;
   }
   if (task.status === "awaiting_approval" && task.gate) {
     return l.state.stepApproval(l.step[task.gate.step], task.gate.submission);
@@ -53,6 +58,8 @@ export function usesTestCommand(task: Task): boolean {
 export function isWorking(task: Task): boolean {
   if (task.status === "queued" || task.status === "running") return true;
   if (task.status === "idle" && task.verification) return true;
+  // 再現のテストを実行して確かめている（PBI-29）
+  if (task.status === "idle" && task.reproductionPending) return true;
   const proposal = openProposal(task);
   return Boolean(proposal && !proposal.judgement);
 }
@@ -213,6 +220,12 @@ export function describeEvent(event: ActivityEvent, l: LabelMessages): string {
       return e.TaskUnblocked;
     case "SplitCompleted":
       return e.SplitCompleted;
+    case "ReproductionChecked":
+      return event.payload.reproduced
+        ? e.reproduced(event.payload.exitCode)
+        : e.notReproduced(
+            event.payload.note ? l.text(event.payload.note) : e.testsPassed(event.payload.exitCode),
+          );
     case "ChangesRequested": {
       const where =
         event.payload.step === "pr"
