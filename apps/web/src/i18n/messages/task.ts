@@ -6,6 +6,7 @@ const ja = {
   start: "開始地点：",
   project: " ・ プロジェクト：",
   repository: " ・ 対象リポジトリ：",
+  parent: " ・ 親タスク：",
   sourceOpen: "（",
   sourceClose: "）",
   gate: {
@@ -35,6 +36,16 @@ const ja = {
   testCommandUnknown: "（決められませんでした）",
   activity: "作業履歴",
   activityNote: "追記専用",
+  subtasks: {
+    title: "子タスク",
+    note: "タスク分割で作ったタスク。依存先の PR がマージされてから始めます",
+    progress: (done: number, total: number) => `${total}件中${done}件が完了`,
+    cost: (usd: string) => `子タスクの費用の合計：${usd}`,
+    reason: (reason: string) => `分け方：${reason}`,
+    dependsOn: (titles: string[]) => `依存：${titles.map((t) => `「${t}」`).join("・")}`,
+    pullRequest: "PR",
+    missing: "（作成中）",
+  },
   deliverable: {
     approved: (n: number) => `人間が承認済み（${n}回目の提出・凍結）`,
     fromProposal: (id: string) => `${id}で申し出られた変更案（人間の再承認待ち）`,
@@ -60,6 +71,7 @@ const en: TaskMessages = {
   start: "Started from: ",
   project: " · Project: ",
   repository: " · Repository: ",
+  parent: " · Parent task: ",
   sourceOpen: " (",
   sourceClose: ")",
   gate: {
@@ -89,6 +101,16 @@ const en: TaskMessages = {
   testCommandUnknown: "(could not determine)",
   activity: "Activity",
   activityNote: "Append-only",
+  subtasks: {
+    title: "Subtasks",
+    note: "Tasks created by the task split. Each starts after the PRs it depends on are merged",
+    progress: (done, total) => `${done} of ${total} done`,
+    cost: (usd) => `Total cost of subtasks: ${usd}`,
+    reason: (reason) => `How it was split: ${reason}`,
+    dependsOn: (titles) => `Depends on: ${titles.map((t) => `"${t}"`).join(", ")}`,
+    pullRequest: "PR",
+    missing: "(being created)",
+  },
   deliverable: {
     approved: (n) => `Approved by a person (submission ${n}, frozen)`,
     fromProposal: (id) => `Change proposed in ${id} (awaiting your re-approval)`,

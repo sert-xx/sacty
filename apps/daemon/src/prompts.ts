@@ -1,6 +1,8 @@
 import {
   type DaemonText,
   type FinalReview,
+  MAX_SPLIT_CHILDREN,
+  MIN_SPLIT_CHILDREN,
   message,
   type RemarkResponse,
   type ReviewComment,
@@ -28,6 +30,7 @@ export const EXECUTABLE_STEPS: readonly StepKey[] = [
   "review",
   "requirements",
   "design",
+  "split",
   "implement",
   "pr",
 ];
@@ -43,6 +46,7 @@ export const REQUIREMENTS_VIEWPOINT = "REQ";
 const TEST_MAP_HEADING = "sacty-test-map";
 const REVIEW_COMMENTS_HEADING = "sacty-review-comments";
 const FINAL_REVIEW_HEADING = "sacty-final-review";
+const SPLIT_HEADING = "sacty-split";
 
 /** テストの出力は、末尾のこの文字数だけプロンプトに入れる。 */
 const OUTPUT_IN_PROMPT = 8_000;
@@ -96,6 +100,7 @@ const STEP_NAME: Record<StepKey, string> = {
   review: "レビュー",
   requirements: "要求要件",
   design: "設計",
+  split: "タスク分割",
   implement: "実装",
   pr: "PR作成",
 };
@@ -329,6 +334,36 @@ export function buildPrompt(task: Task, step: StepKey, extra: { diff?: string } 
         );
       }
       lines.push(...remarkLines(task, step, "テスト観点"), ...proposalLines(task, step));
+      return lines.join("\n");
+    }
+    case "split": {
+      // タスク分割は、承認済みの要求要件と設計から子タスクを決める（PBI-27）。人間の承認は無い
+      const lines = [
+        "あなたはソフトウェア開発のタスク分割エージェントです。",
+        "人間が承認した要求要件と設計を、独立して実装・レビューできる子タスクに分けてください。",
+        "",
+        "- 子タスクは、それぞれ1つの PR になります（対象リポジトリのベースブランチへの PR）。人間が1回でレビューできる大きさにする",
+        "- 層（画面だけ・API だけ）ではなく、動く機能の単位で分ける。各子タスクは、それだけでテストが通り、マージできる状態にする",
+        "- 子タスクの内容には、何を実現するか・受け入れ条件・範囲外のことを Markdown で書く。親の要求要件と設計は sacty が子タスクに添えるので、繰り返さなくてよい",
+        "- 先に別の子タスクのマージが必要なら dependsOn にその key を書く。依存先の PR がマージされてから、その子タスクを始める。並べられるものは依存させない",
+        `- 子タスクは ${MIN_SPLIT_CHILDREN}〜${MAX_SPLIT_CHILDREN} 件。子タスクをさらに分割することはできない`,
+        "- コードは変更しない（作業領域は読み取り専用です）",
+        ...codeLines(task),
+        "",
+        "最初に分け方の考え方を短く書き、そのあとに子タスクの一覧を次の形式で必ず付けてください。",
+        "```json",
+        `{"${SPLIT_HEADING}": {"reason": "分け方の理由", "children": [{"key": "A", "title": "子タスクのタイトル", "body": "内容と受け入れ条件（Markdown）", "dependsOn": []}, {"key": "B", "title": "…", "body": "…", "dependsOn": ["A"]}]}}`,
+        "```",
+        "",
+        "--- 承認済みの要求要件 ---",
+        task.approved.requirements?.output ?? "（承認済みの要求要件がありません）",
+        "",
+        "--- 承認済みの設計 ---",
+        task.approved.design?.output ?? "（承認済みの設計がありません）",
+        "",
+        "--- タスク ---",
+        content,
+      ];
       return lines.join("\n");
     }
     case "implement": {
@@ -825,6 +860,8 @@ export function buildOrchestratorPrompt(task: Task): string {
       "調査だけ。コードを調べて結果を報告する（実装や PR は作らない）。タスクが質問・原因の調査・影響範囲の確認・見積もりなど、変更ではなく情報を求めているとき",
     review:
       "レビューだけ。タスクにある PR をレビューして、PR にレビューを投稿する（実装や PR は作らない）。タスクが PR のレビューを求めているとき",
+    split:
+      "要求要件 → 設計 → タスク分割。変更が大きく、1つの PR では人間がレビューしきれないとき。設計の承認の後に、独立して進められる子タスクに分け、子タスクごとに実装と PR を作る",
   };
   const allowed = allowedPlans(task);
   const plans = Object.fromEntries(allowed.map((plan) => [plan, all[plan]]));
@@ -862,8 +899,119 @@ export function buildOrchestratorPrompt(task: Task): string {
  * オーケストレーターが選べる工程の組み合わせ。レビューは、タスクに対象リポジトリの PR があるときだけ（PBI-19）。
  */
 export function allowedPlans(task: Task): StepPlan[] {
-  const plans = StepPlan.options;
-  return referencedPullRequest(task) ? plans : plans.filter((plan) => plan !== "review");
+  return StepPlan.options.filter(
+    (plan) =>
+      (plan !== "review" || referencedPullRequest(task)) &&
+      // 分割は1段だけ。子タスクは分割できない（PBI-27）
+      (plan !== "split" || !task.parent),
+  );
+}
+
+/** 分割案の子タスク（key は分割案の中だけの名前）。 */
+export type SplitChild = { key: string; title: string; body: string; dependsOn: string[] };
+
+/**
+ * タスク分割の出力から、子タスクの一覧を読んで確かめる（PBI-27）。数・key の重複・存在しない依存・
+ * 依存の循環があれば、理由を返す。
+ */
+export function extractSplitPlan(
+  output: string,
+): { ok: true; reason: string; children: SplitChild[] } | { ok: false; message: DaemonText } {
+  const blocks = [...output.matchAll(/```json\s*\n([\s\S]*?)\n```/g)].reverse();
+  let found: { reason: string; children: unknown[] } | undefined;
+  for (const block of blocks) {
+    try {
+      const parsed = JSON.parse(block[1] ?? "") as Record<string, unknown>;
+      const v = parsed?.[SPLIT_HEADING] as Record<string, unknown> | undefined;
+      if (v && Array.isArray(v.children)) {
+        found = { reason: text(v.reason), children: v.children };
+        break;
+      }
+    } catch {
+      // 次のブロックを試す
+    }
+  }
+  if (!found) return { ok: false, message: message("split.unreadable") };
+  const children: SplitChild[] = [];
+  for (const raw of found.children) {
+    const c = (raw ?? {}) as Record<string, unknown>;
+    const key = text(c.key);
+    const title = text(c.title);
+    if (!key || !title) return { ok: false, message: message("split.unreadable") };
+    const dependsOn = Array.isArray(c.dependsOn) ? c.dependsOn.map(text).filter(Boolean) : [];
+    children.push({ key, title: title.slice(0, 200), body: text(c.body), dependsOn });
+  }
+  const count = children.length;
+  if (count < MIN_SPLIT_CHILDREN || count > MAX_SPLIT_CHILDREN) {
+    return {
+      ok: false,
+      message: message("split.childCount", {
+        min: MIN_SPLIT_CHILDREN,
+        max: MAX_SPLIT_CHILDREN,
+        count,
+      }),
+    };
+  }
+  const keys = new Set<string>();
+  for (const c of children) {
+    if (keys.has(c.key))
+      return { ok: false, message: message("split.duplicateKey", { key: c.key }) };
+    keys.add(c.key);
+  }
+  for (const c of children) {
+    const unknown = c.dependsOn.find((d) => !keys.has(d) || d === c.key);
+    if (unknown !== undefined) {
+      return {
+        ok: false,
+        message: message("split.unknownDependency", { key: c.key, dependsOn: unknown }),
+      };
+    }
+  }
+  // 依存の循環：依存先から順に並べられないものが残れば循環
+  const done = new Set<string>();
+  let progressed = true;
+  while (progressed) {
+    progressed = false;
+    for (const c of children) {
+      if (!done.has(c.key) && c.dependsOn.every((d) => done.has(d))) {
+        done.add(c.key);
+        progressed = true;
+      }
+    }
+  }
+  if (done.size < children.length) {
+    const keys = children.filter((c) => !done.has(c.key)).map((c) => c.key);
+    return { ok: false, message: message("split.cycle", { keys: keys.join(", ") }) };
+  }
+  return { ok: true, reason: found.reason, children };
+}
+
+/**
+ * 子タスクの内容。分割案の内容に、親タスクの承認済みの要求要件と設計を添える
+ * （子タスクの工程エージェントが、親の決めたことを引き継げるように）。
+ */
+export function buildChildBody(
+  parent: Task,
+  child: SplitChild,
+  titles: Map<string, string>,
+): string {
+  const deps = child.dependsOn.map((d) => `「${titles.get(d) ?? d}」`);
+  return [
+    child.body || "（内容なし）",
+    "",
+    "---",
+    "",
+    `このタスクは、親タスク「${parent.title}」をタスク分割で分けた子タスクの1つです。親の要求要件と設計のうち、このタスクの範囲だけを実現してください。`,
+    ...(deps.length > 0 ? [`先に、子タスク ${deps.join("・")} の PR がマージされています。`] : []),
+    "",
+    "## 親タスクの要求要件（承認済み）",
+    "",
+    parent.approved.requirements?.output ?? "（なし）",
+    "",
+    "## 親タスクの設計（承認済み）",
+    "",
+    parent.approved.design?.output ?? "（なし）",
+  ].join("\n");
 }
 
 /**

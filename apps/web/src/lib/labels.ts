@@ -199,6 +199,12 @@ export function describeEvent(event: ActivityEvent, l: LabelMessages): string {
       );
     case "StepQueued":
       return e.StepQueued(l.step[event.payload.step]);
+    case "TaskSplit":
+      return e.TaskSplit(event.payload.children.length, event.payload.reason);
+    case "TaskUnblocked":
+      return e.TaskUnblocked;
+    case "SplitCompleted":
+      return e.SplitCompleted;
     case "ChangesRequested": {
       const where =
         event.payload.step === "pr"

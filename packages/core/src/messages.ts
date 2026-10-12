@@ -27,6 +27,7 @@ const PARAMS = {
   "project.targetTaken": z.object({ scope: Scope, target: z.string(), project: z.string() }),
   "pause.alreadyPaused": null,
   "pause.awaitingPerson": null,
+  "pause.waitingTasks": null,
   "pause.guardianJudging": null,
   "cancel.alreadyCancelled": null,
   "cancel.cleaningUp": null,
@@ -94,6 +95,13 @@ const PARAMS = {
   "orchestrator.unreadable": null,
   "orchestrator.testCommandUnknown": null,
   "orchestrator.baseBranchUnavailable": z.object({ branch: z.string(), detail: TextParam }),
+  // タスク分割（PBI-27）
+  "split.unreadable": null,
+  "split.childCount": z.object({ min: Count, max: Count, count: Count }),
+  "split.duplicateKey": z.object({ key: z.string() }),
+  "split.unknownDependency": z.object({ key: z.string(), dependsOn: z.string() }),
+  "split.cycle": z.object({ keys: z.string() }),
+  "split.childCancelled": z.object({ titles: z.string() }),
   "review.pullRequestMissing": z.object({ repo: z.string() }),
   "github.ghMissing": null,
   "github.accountRequired": z.object({ project: z.string() }),
@@ -260,6 +268,7 @@ const ja: MessageDictionary = {
     `${scopeJa[scope]}「${target}」は、プロジェクト「${project}」に登録されています。`,
   "pause.alreadyPaused": "すでに一時停止しています。",
   "pause.awaitingPerson": "人間の判断待ちのため、一時停止する必要はありません。",
+  "pause.waitingTasks": "ほかのタスクの完了を待っているため、一時停止する必要はありません。",
   "pause.guardianJudging":
     "ゴールガーディアンが変更の申し出を判定しているため、終わるまで一時停止できません。",
   "cancel.alreadyCancelled": "すでに中止しています。",
@@ -340,6 +349,18 @@ const ja: MessageDictionary = {
   "orchestrator.fallback": ({ detail }, text) =>
     `オーケストレーターが工程を選べなかったため、標準の工程で進めます（${text(detail)}）。`,
   "orchestrator.unreadable": "オーケストレーターの出力から、選んだ工程を読み取れませんでした。",
+  "split.unreadable":
+    "タスク分割の出力から、子タスクの一覧を読み取れませんでした。再開すると、分割をやり直します。",
+  "split.childCount": ({ min, max, count }) =>
+    `子タスクは${min}〜${max}件にしてください（分割案は${count}件）。再開すると、分割をやり直します。`,
+  "split.duplicateKey": ({ key }) =>
+    `分割案の子タスクの key「${key}」が重複しています。再開すると、分割をやり直します。`,
+  "split.unknownDependency": ({ key, dependsOn }) =>
+    `分割案の子タスク「${key}」が、存在しない子タスク「${dependsOn}」に依存しています。再開すると、分割をやり直します。`,
+  "split.cycle": ({ keys }) =>
+    `分割案の子タスクの依存が循環しています（${keys}）。再開すると、分割をやり直します。`,
+  "split.childCancelled": ({ titles }) =>
+    `子タスク（${titles}）が中止されました。再開すると、中止した子タスクを除いて進めます（中止した子タスクに依存する子タスクも始めます）。中止すると、終わっていない子タスクも中止します。`,
   "orchestrator.testCommandUnknown":
     "オーケストレーターが、対象リポジトリのテストのコマンドを決められませんでした。実装を検証できないので止めます。タスクの内容にテストの実行方法を書いて、作り直してください。",
   "orchestrator.baseBranchUnavailable": ({ branch, detail }, text) =>
@@ -436,6 +457,8 @@ const en: MessageDictionary = {
     `The ${scopeEn[scope]} "${target}" is already registered in the project "${project}".`,
   "pause.alreadyPaused": "The task is already paused.",
   "pause.awaitingPerson": "The task is waiting for your decision, so there is no need to pause it.",
+  "pause.waitingTasks":
+    "The task is waiting for other tasks to finish, so there is no need to pause it.",
   "pause.guardianJudging":
     "The Goal Guardian is judging a change request. You can pause once it finishes.",
   "cancel.alreadyCancelled": "The task is already cancelled.",
@@ -517,6 +540,18 @@ const en: MessageDictionary = {
   "orchestrator.fallback": ({ detail }, text) =>
     `The Orchestrator could not choose the steps, so the standard steps are used (${text(detail)}).`,
   "orchestrator.unreadable": "Could not read the chosen steps from the Orchestrator's output.",
+  "split.unreadable":
+    "Could not read the list of subtasks from the task split output. Resume to split again.",
+  "split.childCount": ({ min, max, count }) =>
+    `Split into ${min}–${max} subtasks (the split has ${count}). Resume to split again.`,
+  "split.duplicateKey": ({ key }) =>
+    `The subtask key "${key}" is used more than once. Resume to split again.`,
+  "split.unknownDependency": ({ key, dependsOn }) =>
+    `Subtask "${key}" depends on "${dependsOn}", which is not in the split. Resume to split again.`,
+  "split.cycle": ({ keys }) =>
+    `The subtask dependencies form a cycle (${keys}). Resume to split again.`,
+  "split.childCancelled": ({ titles }) =>
+    `Subtasks were cancelled (${titles}). Resume to continue without them (subtasks that depend on them also start). Cancel to also cancel the unfinished subtasks.`,
   "orchestrator.testCommandUnknown":
     "The Orchestrator could not determine the test command of the target repository, so the implementation cannot be verified. Describe how to run the tests in the task and create it again.",
   "orchestrator.baseBranchUnavailable": ({ branch, detail }, text) =>

@@ -24,6 +24,7 @@ const ja = {
     review: "レビュー",
     requirements: "要求要件",
     design: "設計",
+    split: "タスク分割",
     implement: "実装",
     pr: "PR作成",
   } satisfies Record<StepKey, string>,
@@ -31,8 +32,11 @@ const ja = {
     sacty: "sacty",
     github_issue: "GitHub Issue",
     github_pull_request: "GitHub PR",
+    split: "タスク分割",
   } satisfies Record<Task["start"], string>,
   status: {
+    blocked: "依存待ち",
+    waiting_children: "子タスクの完了待ち",
     queued: "実行待ち",
     running: "実行中",
     idle: "待機中",
@@ -48,6 +52,7 @@ const ja = {
     error: "エラーで一時停止",
     verification: "実装の検証に通らないため一時停止",
     manual: "一時停止中",
+    child_cancelled: "子タスクの中止で一時停止",
   } satisfies Record<PauseReason, string>,
   pauseHelp: {
     budget: "予算の上限に達したため止まっています。作業中のものは残っています。",
@@ -59,6 +64,8 @@ const ja = {
       "実装がテストか最終レビューに続けて通らないため止まっています。結果を確認し、必要なら設計を見直してから再開すると、実装をやり直します。",
     manual:
       "人間が一時停止しました。作業中のものは残っています。再開すると、止めたところから続けます（実行中だった工程は実行し直します）。",
+    child_cancelled:
+      "子タスクが中止されたため止まっています。再開すると、中止した子タスクを除いて進めます（中止した子タスクに依存する子タスクも始めます）。中止すると、終わっていない子タスクも中止します。",
   } satisfies Record<PauseReason, string>,
   auth: {
     subscription: "サブスクリプション",
@@ -157,6 +164,10 @@ const ja = {
       "最終レビューで合格にした成果物が差し戻されたため、ゴールガーディアンの見逃しとして記録",
     FinalReviewFailed: (message: string, cost: string) => `${message}（${cost}）`,
     StepQueued: (step: string) => `${step}を実行待ちにした（実行できるようになったため）`,
+    TaskSplit: (count: number, reason: string) =>
+      `子タスク${count}件に分割${reason ? `（${reason}）` : ""}`,
+    TaskUnblocked: "依存先の子タスクが完了したため、実行待ちにした",
+    SplitCompleted: "子タスクがすべて完了したため、タスク分割を完了",
     changesAtDeliverable: "成果物チェックで差し戻し",
     changesAtStep: (step: string) => `${step}を差し戻し`,
     changesTarget: (where: string, target: string, revoke: boolean) =>
@@ -189,11 +200,19 @@ const en: LabelMessages = {
     review: "Review",
     requirements: "Requirements",
     design: "Design",
+    split: "Task split",
     implement: "Implement",
     pr: "Open PR",
   },
-  start: { sacty: "sacty", github_issue: "GitHub Issue", github_pull_request: "GitHub PR" },
+  start: {
+    sacty: "sacty",
+    github_issue: "GitHub Issue",
+    github_pull_request: "GitHub PR",
+    split: "Task split",
+  },
   status: {
+    blocked: "Blocked",
+    waiting_children: "Waiting for subtasks",
     queued: "Queued",
     running: "Running",
     idle: "Waiting",
@@ -209,6 +228,7 @@ const en: LabelMessages = {
     error: "Paused: error",
     verification: "Paused: implementation keeps failing verification",
     manual: "Paused",
+    child_cancelled: "Paused: a subtask was cancelled",
   },
   pauseHelp: {
     budget: "The task reached its budget cap and is paused. Its work is kept.",
@@ -220,6 +240,8 @@ const en: LabelMessages = {
       "The implementation keeps failing the tests or the final review. Check the results, revisit the design if needed, then resume to implement again.",
     manual:
       "A person paused this task. Its work is kept. Resume to continue from where it stopped (a step that was running runs again).",
+    child_cancelled:
+      "A subtask was cancelled, so this task is paused. Resume to continue without the cancelled subtasks (subtasks that depend on them also start). Cancel to also cancel the unfinished subtasks.",
   },
   auth: {
     subscription: "Subscription",
@@ -313,6 +335,10 @@ const en: LabelMessages = {
       "A deliverable that passed the final review was sent back; recorded as a Goal Guardian miss",
     FinalReviewFailed: (message, cost) => `${message} (${cost})`,
     StepQueued: (step) => `${step} queued (it can run now)`,
+    TaskSplit: (count, reason) =>
+      `Split into ${count} subtask${count === 1 ? "" : "s"}${reason ? ` (${reason})` : ""}`,
+    TaskUnblocked: "Queued because the subtasks it depends on are done",
+    SplitCompleted: "All subtasks are done, so the task split is complete",
     changesAtDeliverable: "Changes requested in deliverable review",
     changesAtStep: (step) => `Changes requested on ${step}`,
     changesTarget: (where, target, revoke) =>
