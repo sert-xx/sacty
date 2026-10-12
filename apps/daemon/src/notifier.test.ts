@@ -194,6 +194,41 @@ describe("Slack の通知（PBI-38）", () => {
     expect(String(api.calls.at(-1)?.body.text)).toContain("テストの通知");
   });
 
+  it("HTTP の失敗の本文で、切り詰める境界をまたぐトークン・Webhook の URL も伏せる（レビュー指摘）", async () => {
+    const token = "xoxb-FAKE-TOKEN-0123456789abcdef";
+    const webhook = "https://hooks.slack.com/services/T000/B000/FAKEWEBHOOKSECRET";
+    for (const pad of [0, 280, 290, 380, 395, 5_000]) {
+      for (const [destination, secrets, secret] of [
+        [
+          {
+            kind: "slack-api",
+            url: "https://proxy.example.com/api/chat.postMessage",
+            channel: "#a",
+            token: "bot",
+            language: "ja",
+          },
+          { bot: token },
+          token,
+        ],
+        [{ kind: "slack-webhook", webhook: "hook", language: "ja" }, { hook: webhook }, webhook],
+      ] as const) {
+        const lines: string[] = [];
+        const notifier = new SlackNotifier({
+          project: () => project(destination as Project["notification"]),
+          secrets: new MemorySecretStore(secrets as Record<string, string>),
+          webUrl: "http://x",
+          fetchImpl: slack(() => new Response(`${"x".repeat(pad)}${secret}`, { status: 500 }))
+            .fetchImpl,
+          log: (line) => lines.push(line),
+        });
+        const thrown = String(await notifier.test("p1").catch((e: Error) => e));
+        const shown = [thrown, renderMessage(notifier.problems()[0], "ja"), ...lines].join("\n");
+        expect(shown).not.toContain(secret.slice(0, 12));
+        expect(shown).not.toContain(secret.slice(-8));
+      }
+    }
+  });
+
   it("通知先が無いプロジェクトには送らず、テストの通知は理由を返す", async () => {
     const api = slack();
     const notifier = new SlackNotifier({

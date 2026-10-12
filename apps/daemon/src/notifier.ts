@@ -19,6 +19,9 @@ import type { SecretStore } from "./secrets.js";
  * Incoming Webhook。送れなくてもタスクは止めず、理由をプロジェクトごとに持って画面に出す（次に送れたら消す）。
  */
 
+/** 送れなかった理由の長さの上限（画面・ログに出す。秘密情報を伏せてから切り詰める）。 */
+const REASON_MAX = 400;
+
 export type NotificationKind = "approval" | "escalation" | "paused" | "completed";
 
 type Language = "ja" | "en";
@@ -253,7 +256,8 @@ export class SlackNotifier {
         });
       }
       const body = await res.text();
-      if (!res.ok) throw new Error(`HTTP ${res.status}: ${body.slice(0, 300)}`);
+      // 本文は切り詰めずに理由に入れる（秘密情報を伏せてから切り詰める。PBI-38 レビュー指摘）
+      if (!res.ok) throw new Error(`HTTP ${res.status}: ${body}`);
       // Slack API は、失敗しても 200 で {"ok": false, "error": …} を返す
       if (destination.kind === "slack-api") {
         let parsed: { ok?: boolean; error?: string } | undefined;
@@ -267,10 +271,11 @@ export class SlackNotifier {
       this.failures.delete(project.id);
     } catch (error) {
       const raw = errorText(error);
-      const detail = secrets.reduce(
+      const hidden = secrets.reduce(
         (t, s) => hideSecret(t, s),
         typeof raw === "string" ? raw : renderMessage(raw, "ja"),
       );
+      const detail = hidden.length > REASON_MAX ? `${hidden.slice(0, REASON_MAX)}…` : hidden;
       this.failures.set(project.id, message("notify.failed", { project: project.name, detail }));
       this.deps.log?.(`[notify] ${project.name}: ${detail}`);
       throw new Error(detail);
