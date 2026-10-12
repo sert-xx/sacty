@@ -37,6 +37,14 @@ export function statusText(task: Task, l: LabelMessages): string {
   if (task.status === "awaiting_approval" && task.gate?.step === "reproduce") {
     return l.state.notReproduced;
   }
+  // 統合レビューに続けて通らなかった（PBI-31）。不合格のまま承認するか、差し戻すかの判断
+  if (
+    task.status === "awaiting_approval" &&
+    task.gate?.step === "integrate" &&
+    task.integration?.passed === false
+  ) {
+    return l.state.integrationFailed;
+  }
   if (task.status === "awaiting_approval" && task.gate) {
     return l.state.stepApproval(l.step[task.gate.step], task.gate.submission);
   }
@@ -220,6 +228,13 @@ export function describeEvent(event: ActivityEvent, l: LabelMessages): string {
       return e.TaskUnblocked;
     case "SplitCompleted":
       return e.SplitCompleted;
+    case "IntegrationReviewed":
+      return e.IntegrationReviewed(
+        event.payload.passed,
+        event.payload.baseBranch,
+        event.payload.commit.slice(0, 7),
+        event.payload.findings.length,
+      );
     case "StepCompleted":
       return e.StepCompleted(l.step[event.payload.step]);
     case "ReproductionChecked":

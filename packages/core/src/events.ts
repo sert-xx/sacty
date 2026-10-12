@@ -7,6 +7,8 @@ import { code, DaemonText } from "./message-code.js";
  * review（レビュー）は、既存の PR をレビューして、PR に投稿するだけの工程（PBI-19）。
  * split（タスク分割）は、承認済みの設計から子タスクを作り、子タスクの完了を待つ工程（PBI-27）。
  * reproduce（再現）は、不具合を再現する失敗するテストを書き、sacty が失敗を確かめる工程（PBI-29）。
+ * integrate（統合レビュー）は、子タスクの成果を組み合わせて親の要求要件を満たすかを、ゴールガーディアンが
+ * 確かめる工程（PBI-31）。タスク分割の後に置く。
  */
 export const StepKey = z.enum([
   "investigate",
@@ -14,6 +16,7 @@ export const StepKey = z.enum([
   "requirements",
   "design",
   "split",
+  "integrate",
   "reproduce",
   "implement",
   "pr",
@@ -40,10 +43,11 @@ export const STEP_PLANS = {
   /** レビューだけ：タスクにある PR をレビューして、PR に投稿する（PBI-19） */
   review: ["review"],
   /**
-   * 大きなタスク：要求要件 → 設計 → タスク分割。設計の承認の後に子タスクを作り、子タスクがそれぞれ
-   * 実装と PR を行う（PBI-27）。子タスクは分割できない（1段だけ）
+   * 大きなタスク：要求要件 → 設計 → タスク分割 → 統合レビュー。設計の承認の後に子タスクを作り、子タスクが
+   * それぞれ実装と PR を行う（PBI-27）。子タスクは分割できない（1段だけ）。子がすべて片付いたら、
+   * 統合レビューを通して人間が承認すると完了する（PBI-31）
    */
-  split: ["investigate", "requirements", "design", "split"],
+  split: ["investigate", "requirements", "design", "split", "integrate"],
   /**
    * 不具合の修正：再現 → 実装 → PR作成。不具合を再現する失敗するテストを書き、それを通すように直す（PBI-29）
    */
@@ -52,8 +56,14 @@ export const STEP_PLANS = {
 export type StepPlan = keyof typeof STEP_PLANS;
 export const StepPlan = z.enum(Object.keys(STEP_PLANS) as [StepPlan, ...StepPlan[]]);
 
-/** 人間の承認ゲートがある工程。PR作成は、成果物チェックのゲート。 */
-export const GATED_STEPS: readonly StepKey[] = ["investigate", "requirements", "design", "pr"];
+/** 人間の承認ゲートがある工程。PR作成は、成果物チェックのゲート。統合レビューは、親タスクの最後の確認（PBI-31）。 */
+export const GATED_STEPS: readonly StepKey[] = [
+  "investigate",
+  "requirements",
+  "design",
+  "integrate",
+  "pr",
+];
 
 /** 差し戻しでやり直せる（工程エージェントが作る）工程。 */
 export const REWORK_STEPS: readonly StepKey[] = [
@@ -73,6 +83,11 @@ export const DEFAULT_BUDGET_USD = 1;
 /** タスク分割で作る子タスクの数の範囲（PBI-27）。 */
 export const MIN_SPLIT_CHILDREN = 2;
 export const MAX_SPLIT_CHILDREN = 10;
+
+/**
+ * 統合レビューが続けてこの回数通らなければ、修正の子タスクを追加せずに、不合格のまま人間の承認待ちにする（PBI-31）。
+ */
+export const MAX_INTEGRATION_ATTEMPTS = 3;
 
 /** 予算のこの割合に達したら通知する。 */
 export const BUDGET_WARN_RATIO = 0.8;
@@ -242,7 +257,10 @@ const TaskUnblocked = z.object({
   payload: z.object({}),
 });
 
-/** 子タスクがすべて完了（中止を認めたものを含む）したので、タスク分割の工程を完了にする（PBI-27）。 */
+/**
+ * 子タスクがすべて完了（中止を認めたものを含む）したので、タスク分割の工程を完了にする（PBI-27）。
+ * 次の工程（統合レビュー。PBI-31）があれば実行待ちにする。
+ */
 const SplitCompleted = z.object({
   type: z.literal("SplitCompleted"),
   payload: z.object({}),
@@ -524,6 +542,28 @@ const FinalReviewFailed = z.object({
   }),
 });
 
+/**
+ * ゴールガーディアンの統合レビュー（PBI-31）。子タスクの PR がマージされた後のベースブランチのコードで、
+ * 親の要求要件・テスト観点を満たすかを判定する。合格、または続けて通らない上限に達したら、統合レビューの
+ * 承認待ちにする（続く StepSubmitted）。上限の前に不合格なら、タスク分割の工程をやり直して修正の子タスクを
+ * 追加する。費用は、続く前の AgentRunCompleted に記録する。
+ */
+const IntegrationReviewed = z.object({
+  type: z.literal("IntegrationReviewed"),
+  payload: z.object({
+    passed: z.boolean(),
+    /** 読んだベースブランチと、そのコミット。 */
+    baseBranch: z.string(),
+    commit: z.string(),
+    viewpoints: z.array(ViewpointReview),
+    remarks: z.array(RemarkReview),
+    /** 足りないこと（修正の子タスクで直すこと）。 */
+    findings: z.array(z.string()),
+    /** 全体への所見（形式を読めなかった場合の理由など）。 */
+    summary: DaemonText,
+  }),
+});
+
 /** sacty が作業をコミットしてブランチにプッシュし、PRを作った（または更新した）。 */
 const PullRequestPublished = z.object({
   type: z.literal("PullRequestPublished"),
@@ -782,6 +822,7 @@ export const EventInput = z.discriminatedUnion("type", [
   TestsRun,
   FinalReviewed,
   FinalReviewFailed,
+  IntegrationReviewed,
   PullRequestPublished,
   PullRequestMerged,
   PullRequestClosed,

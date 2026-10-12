@@ -25,6 +25,7 @@ import {
   investigationIsGoal,
   isCompleted,
   MAX_CHANGE_REQUESTS,
+  MAX_INTEGRATION_ATTEMPTS,
   MAX_VERIFY_ATTEMPTS,
   message,
   openProposal,
@@ -83,6 +84,7 @@ import {
   buildChildBody,
   buildFinalReviewPrompt,
   buildGuardianPrompt,
+  buildIntegrationReviewPrompt,
   buildInvestigationComment,
   buildOrchestratorPrompt,
   buildPrompt,
@@ -94,17 +96,20 @@ import {
   EXECUTABLE_STEPS,
   extractBlocks,
   extractFinalReview,
+  extractIntegrationReview,
   extractReproduction,
   extractReviewComments,
   extractRework,
   extractSplitPlan,
   extractStepPlan,
   extractVerdict,
+  integrationViewpointIds,
   investigationMarker,
   REPRODUCTION_VIEWPOINT,
   REQUIREMENTS_VIEWPOINT,
   referencedPullRequest,
   reviewMarker,
+  type SubtaskSummary,
   verificationBasis,
 } from "./prompts.js";
 import type { RepositoryWorkspace } from "./repository.js";
@@ -1356,6 +1361,9 @@ export class TaskService {
       return;
     }
 
+    // 統合レビューは、ゴールガーディアンがベースブランチの最新のコードで行う（PBI-31）
+    if (step === "integrate") return this.integrate(task, config.config);
+
     // レビューの工程は、エージェントを実行する（費用をかける）前に、対象の PR を確かめて記録する（PBI-19）
     if (step === "review" && !task.reviewTarget) {
       const resolved = await this.resolveReviewTarget(task);
@@ -1504,11 +1512,11 @@ export class TaskService {
         agent,
         image: config.config.image,
         runId,
-        prompt: buildPrompt(
-          this.mustGet(task.id),
-          step,
-          reviewDiff !== undefined ? { diff: reviewDiff } : {},
-        ),
+        prompt: buildPrompt(this.mustGet(task.id), step, {
+          ...(reviewDiff !== undefined ? { diff: reviewDiff } : {}),
+          // 修正の子タスクを追加するときは、これまでの子タスクを渡す（PBI-31）
+          ...(step === "split" ? { subtasks: this.subtaskSummaries(task) } : {}),
+        }),
         role: step,
         workspaceDir: snapshotDir ?? ready.dir,
         readOnlyWorkspace,
@@ -1558,8 +1566,15 @@ export class TaskService {
     const latest = this.mustGet(task.id);
     // タスク分割は、子タスクの一覧を確かめて記録し、子タスクを作る（PBI-27）
     if (step === "split") {
-      const plan = extractSplitPlan(outcome.output);
+      // 統合レビューの後に追加する修正の子タスクは、1件から作れる（PBI-31）
+      const plan = extractSplitPlan(outcome.output, latest.split ? 1 : undefined);
       const run = { runId, step, agentId: agent.id, costUsd, estimated, usage: outcome.usage };
+      // 人間の差し戻しの指摘（統合レビューの承認待ちから。PBI-31）への対応
+      const { responses } = extractBlocks(
+        outcome.output,
+        new Set(latest.remarks.filter((r) => r.step === step && !r.voided).map((r) => r.id)),
+        [],
+      );
       if (!plan.ok) {
         this.append(latest, [
           {
@@ -1581,7 +1596,7 @@ export class TaskService {
           actor: "agent",
           event: {
             type: "AgentRunCompleted",
-            payload: { ...run, authMode: agent.auth.mode, output: outcome.output },
+            payload: { ...run, authMode: agent.auth.mode, output: outcome.output, responses },
           },
         },
         {
@@ -2272,6 +2287,155 @@ export class TaskService {
     });
   }
 
+  /**
+   * 統合レビュー（PBI-31）。子タスクの PR がマージされた後のベースブランチの最新を取得し、ゴールガーディアンが
+   * 新しいセッションで、そのコード（読み取り専用）と親の承認済みの要求要件・設計から判定する。合格、または
+   * 続けて通らない上限に達したら統合レビューの承認待ちにする。上限の前に不合格なら、作業履歴の適用で
+   * タスク分割の工程に戻り、修正の子タスクを追加する。実行できなければ理由を記録して止める（再開でやり直す）。
+   */
+  private async integrate(task: Task, config: SactyConfig): Promise<void> {
+    const step = "integrate" as const;
+    const agent = config.guardianAgent;
+    const runId = randomUUID();
+    this.append(task, [
+      {
+        actor: "sacty",
+        event: {
+          type: "AgentRunStarted",
+          payload: { runId, step, agentId: agent.id, authMode: agent.auth.mode },
+        },
+      },
+    ]);
+    const workspaceDir = join(this.deps.workspaceRoot, "_guardian", runId);
+    const subtasks = this.subtaskSummaries(task);
+    let baseBranch = task.repository?.baseBranch ?? "";
+    let commit = "";
+    let executed: Awaited<ReturnType<TaskService["execute"]>> | undefined;
+    const failed = (detail: DaemonText) => ({
+      outcome: { kind: "failed" as const, reason: "error" as const, message: detail },
+      costUsd: 0,
+      estimated: false,
+    });
+    try {
+      // 起点の clone（退避したメタデータ）が無ければ用意し直してから、ベースブランチの最新を取得する
+      const ready = await this.prepareRepository(this.mustGet(task.id), config);
+      const latest = this.mustGet(task.id);
+      baseBranch = latest.repository?.baseBranch ?? baseBranch;
+      if (!ready.ok) {
+        executed = failed(
+          message("integrate.baseUnavailable", { branch: baseBranch, detail: ready.message }),
+        );
+      } else {
+        const usedSecrets: string[] = [];
+        try {
+          const gitDir = this.trustedGitDir(latest);
+          commit = await this.deps.repos.fetchBranch(
+            gitDir,
+            baseBranch,
+            await this.gitAuth(latest, latest.repository?.url ?? "", usedSecrets),
+          );
+          await this.deps.repos.snapshot(gitDir, commit, workspaceDir);
+        } catch (error) {
+          executed = failed(
+            message("integrate.baseUnavailable", {
+              branch: baseBranch,
+              detail: redactText(errorText(error), usedSecrets),
+            }),
+          );
+        }
+      }
+      executed ??= await this.execute({
+        agent,
+        image: config.image,
+        runId,
+        prompt: buildIntegrationReviewPrompt(latest, subtasks, { baseBranch, commit }),
+        role: step,
+        workspaceDir,
+        readOnlyWorkspace: true,
+      });
+    } finally {
+      rmSync(workspaceDir, { recursive: true, force: true });
+    }
+    const { outcome, costUsd, estimated } = executed;
+    if (outcome.kind === "failed") {
+      const manual = await this.manualPauseInfo(task.id);
+      this.append(this.mustGet(task.id), [
+        {
+          actor: "sacty",
+          event: {
+            type: "AgentRunFailed",
+            payload: {
+              runId,
+              step,
+              agentId: agent.id,
+              reason: outcome.reason,
+              message: outcome.message,
+              usage: outcome.usage,
+              costUsd,
+              estimated,
+            },
+          },
+        },
+        {
+          actor: "sacty",
+          event: {
+            type: "TaskPaused",
+            payload: { reason: this.stopReason(task.id, outcome.reason), ...manual },
+          },
+        },
+      ]);
+      this.warnIfNeeded(this.mustGet(task.id));
+      return;
+    }
+    const latest = this.mustGet(task.id);
+    const { output, ...review } = extractIntegrationReview(
+      outcome.output,
+      integrationViewpointIds(latest),
+      latest.remarks.filter((r) => !r.voided).map((r) => r.id),
+    );
+    const events: ActivityItem[] = [
+      {
+        actor: "guardian",
+        event: {
+          type: "AgentRunCompleted",
+          payload: {
+            runId,
+            step,
+            agentId: agent.id,
+            authMode: agent.auth.mode,
+            usage: outcome.usage,
+            costUsd,
+            estimated,
+            output,
+          },
+        },
+      },
+      {
+        actor: "guardian",
+        event: { type: "IntegrationReviewed", payload: { ...review, baseBranch, commit } },
+      },
+    ];
+    // 合格、または続けて通らない上限に達したら、人間の承認待ちにする（不合格のまま判断してもらう）
+    if (review.passed || latest.integrationFailures + 1 >= MAX_INTEGRATION_ATTEMPTS) {
+      events.push(...this.submitEvents(latest, step));
+    }
+    this.checkBudget(this.append(latest, events));
+  }
+
+  /** 分割で作った子タスクの要約（統合レビュー・修正の子タスクの追加に渡す。PBI-31）。 */
+  private subtaskSummaries(parent: Task): SubtaskSummary[] {
+    return (parent.split?.children ?? []).map((c) => {
+      const child = this.tasks.get(c.taskId);
+      const url = child?.pullRequest?.url;
+      return {
+        title: c.title,
+        state: child && isCompleted(child) ? ("completed" as const) : ("cancelled" as const),
+        ...(url ? { pullRequestUrl: url } : {}),
+        round: c.round,
+      };
+    });
+  }
+
   /** 分割で作った子タスクで、親が中止されているか（PBI-27）。 */
   private parentCancelled(task: Task): boolean {
     return Boolean(task.parent && this.tasks.get(task.parent.taskId)?.status === "cancelled");
@@ -2744,9 +2908,15 @@ export class TaskService {
       }
     }
     // ゴールガーディアンが最終レビューで合格にした成果物を人間が差し戻したら、見逃しとして記録する
-    const review = task.lastReview;
+    // 統合レビュー（PBI-31）で合格にしたものを差し戻した場合も、見逃しとして記録する
+    const review =
+      input.step === "pr"
+        ? task.lastReview
+        : input.step === "integrate"
+          ? task.integration
+          : undefined;
     const missed =
-      input.step === "pr" && review?.passed && !task.misses.some((m) => m.reviewAt === review.at)
+      review?.passed && !task.misses.some((m) => m.reviewAt === review.at)
         ? [
             {
               actor: "sacty" as const,

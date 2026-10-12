@@ -64,6 +64,11 @@ export interface RepositoryWorkspace {
    * すでにあれば取得しない。
    */
   fetchCommits(gitDir: string, commits: string[], authEnv?: Record<string, string>): Promise<void>;
+  /**
+   * ブランチの最新のコミットを、リモートから退避したメタデータに取得して返す（統合レビューで、子タスクの
+   * PR がマージされた後のベースブランチを読むため。PBI-31）。
+   */
+  fetchBranch(gitDir: string, branch: string, authEnv?: Record<string, string>): Promise<string>;
   /** base と head の分岐点から head までの差分（PR の差分。PBI-19）。 */
   diffCommits(gitDir: string, baseCommit: string, headCommit: string): Promise<string>;
   /** sacty のブランチを、リモートから消す（中止したとき）。 */
@@ -363,6 +368,37 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
       ["--git-dir", gitDir, ...SAFE_CONFIG, "fetch", "--quiet", "--", "origin", ...missing],
       env,
     );
+  }
+
+  async fetchBranch(gitDir: string, branch: string, authEnv?: Record<string, string>) {
+    if (!/^[\w./-]+$/.test(branch) || branch.startsWith("-")) {
+      throw new MessageError(message("git.invalidBranch"));
+    }
+    // 取得したコミットは FETCH_HEAD に残る（退避したメタデータのブランチや設定は変えない）
+    await git(
+      "fetch",
+      [
+        "--git-dir",
+        gitDir,
+        ...SAFE_CONFIG,
+        "fetch",
+        "--quiet",
+        "--no-tags",
+        "--",
+        "origin",
+        `refs/heads/${branch}`,
+      ],
+      cloneEnv(authEnv),
+    );
+    const commit = (
+      await git(
+        "rev-parse",
+        ["--git-dir", gitDir, ...SAFE_CONFIG, "rev-parse", "--verify", "FETCH_HEAD^{commit}"],
+        isolatedEnv("/dev/null"),
+      )
+    ).trim();
+    if (!COMMIT_RE.test(commit)) throw new MessageError(message("git.invalidBaseCommit"));
+    return commit;
   }
 
   async diffCommits(gitDir: string, baseCommit: string, headCommit: string) {

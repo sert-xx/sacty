@@ -106,6 +106,9 @@ const PARAMS = {
   "split.unknownDependency": z.object({ key: z.string(), dependsOn: z.string() }),
   "split.cycle": z.object({ keys: z.string() }),
   "split.childCancelled": z.object({ titles: z.string() }),
+  // 統合レビュー（PBI-31）
+  "integrate.baseUnavailable": z.object({ branch: z.string(), detail: TextParam }),
+  "integrate.unreadable": null,
   "review.pullRequestMissing": z.object({ repo: z.string() }),
   "github.ghMissing": null,
   "github.accountRequired": z.object({ project: z.string() }),
@@ -373,6 +376,9 @@ const ja: MessageDictionary = {
     `分割案の子タスクの依存が循環しています（${keys}）。再開すると、分割をやり直します。`,
   "split.childCancelled": ({ titles }) =>
     `子タスク（${titles}）が中止されました。再開すると、中止した子タスクを除いて進めます（中止した子タスクに依存する子タスクも始めます）。中止すると、終わっていない子タスクも中止します。`,
+  "integrate.baseUnavailable": ({ branch, detail }, text) =>
+    `統合レビューのため、ベースブランチ（${branch}）の最新を取得できませんでした：${text(detail)}。再開すると、統合レビューをやり直します。`,
+  "integrate.unreadable": "統合レビューの出力から、判定を読み取れませんでした。",
   "orchestrator.testCommandUnknown":
     "オーケストレーターが、対象リポジトリのテストのコマンドを決められませんでした。実装を検証できないので止めます。タスクの内容にテストの実行方法を書いて、作り直してください。",
   "orchestrator.baseBranchUnavailable": ({ branch, detail }, text) =>
@@ -572,6 +578,9 @@ const en: MessageDictionary = {
     `The subtask dependencies form a cycle (${keys}). Resume to split again.`,
   "split.childCancelled": ({ titles }) =>
     `Subtasks were cancelled (${titles}). Resume to continue without them (subtasks that depend on them also start). Cancel to also cancel the unfinished subtasks.`,
+  "integrate.baseUnavailable": ({ branch, detail }, text) =>
+    `Could not fetch the latest base branch (${branch}) for the integration review: ${text(detail)}. Resume to run the integration review again.`,
+  "integrate.unreadable": "Could not read the verdicts from the integration review output.",
   "orchestrator.testCommandUnknown":
     "The Orchestrator could not determine the test command of the target repository, so the implementation cannot be verified. Describe how to run the tests in the task and create it again.",
   "orchestrator.baseBranchUnavailable": ({ branch, detail }, text) =>

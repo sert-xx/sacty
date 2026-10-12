@@ -11,7 +11,7 @@ import type {
   TestViewpoint,
   Verdict,
 } from "./events.js";
-import { REWORK_STEPS } from "./events.js";
+import { MAX_INTEGRATION_ATTEMPTS, REWORK_STEPS } from "./events.js";
 import type { DaemonText } from "./message-code.js";
 
 type PayloadOf<T extends ParsedEventInput["type"]> = Extract<
@@ -21,6 +21,7 @@ type PayloadOf<T extends ParsedEventInput["type"]> = Extract<
 
 export type TestsRunResult = PayloadOf<"TestsRun"> & { at: string };
 export type FinalReview = PayloadOf<"FinalReviewed"> & { at: string };
+export type IntegrationReview = PayloadOf<"IntegrationReviewed"> & { at: string };
 
 export type StepState = "todo" | "active" | "done" | "skip";
 
@@ -110,8 +111,13 @@ export type Task = {
   parent?: { taskId: string; dependsOn: string[] };
   /** タスク分割で決めた子タスク（PBI-27）。 */
   split?: {
-    /** 子タスク（内容は、デーモンが止まって作れなかった子タスクを作り直すために持つ）。 */
-    children: { taskId: string; title: string; body: string; dependsOn: string[] }[];
+    /**
+     * 子タスク（内容は、デーモンが止まって作れなかった子タスクを作り直すために持つ）。round は何回目の
+     * 分割で作ったか（1 が最初の分割、2 以降は統合レビューの後に追加した修正の子タスク。PBI-31）。
+     */
+    children: { taskId: string; title: string; body: string; dependsOn: string[]; round: number }[];
+    /** 分割した回数（最初の分割と、修正の子タスクの追加。PBI-31）。 */
+    rounds: number;
     reason: string;
     at: string;
     /** 人間が中止を認めた子タスク（親を再開した）。完了したものと同じく扱う。 */
@@ -165,6 +171,10 @@ export type Task = {
   /** 最新のテストの実行結果と、最終レビュー。 */
   lastTests?: TestsRunResult;
   lastReview?: FinalReview;
+  /** 最新の統合レビュー（PBI-31）。 */
+  integration?: IntegrationReview;
+  /** 統合レビューが続けて通らなかった回数。合格するか、人間が差し戻すと0に戻る（PBI-31）。 */
+  integrationFailures: number;
   /** 最後に工程エージェントへ渡したコンテキスト（使ったリポジトリとコミット）。 */
   context?: PayloadOf<"ContextResolved"> & { at: string };
   /** 中止したときの後片付けの結果。 */
@@ -301,6 +311,7 @@ export function applyEvent(
       reviewComments: [],
       reproductionTests: [],
       verifyFailures: 0,
+      integrationFailures: 0,
       misses: [],
       importedFeedback: [],
       submissions: {},
@@ -491,6 +502,8 @@ export function applyEvent(
       task.status = "queued";
       task.gate = undefined;
       task.escalation = undefined;
+      // 統合レビューの承認待ちで差し戻したら、修正の子タスクを追加して、統合レビューの回数を数え直す（PBI-31）
+      if (event.payload.step === "integrate") task.integrationFailures = 0;
       // PR の指摘は、この差し戻しに反映した
       task.pendingReview = undefined;
       break;
@@ -822,18 +835,29 @@ export function applyEvent(
       task.pausedCancelledChildren = event.payload.cancelledChildren;
       break;
 
-    case "TaskSplit":
+    case "TaskSplit": {
       if (task.status !== "idle" || activeStep(task) !== "split") {
         throw new ActivityIntegrityError(event, "the split step is not running");
       }
+      // 2回目からは、統合レビューの後に追加する修正の子タスク。既存の子タスクはそのまま（PBI-31）
+      const known = new Set(task.split?.children.map((c) => c.taskId));
+      if (event.payload.children.some((c) => known.has(c.taskId))) {
+        throw new ActivityIntegrityError(event, "the subtask already exists");
+      }
+      const round = (task.split?.rounds ?? 0) + 1;
       task.split = {
-        children: event.payload.children,
+        children: [
+          ...(task.split?.children ?? []),
+          ...event.payload.children.map((c) => ({ ...c, round })),
+        ],
+        rounds: round,
         reason: event.payload.reason,
         at: event.at,
-        acceptedCancellations: [],
+        acceptedCancellations: task.split?.acceptedCancellations ?? [],
       };
       task.status = "waiting_children";
       break;
+    }
 
     case "ReproductionChecked": {
       if (task.status !== "idle" || activeStep(task) !== "reproduce" || !task.reproductionPending) {
@@ -879,11 +903,36 @@ export function applyEvent(
       if (task.status !== "waiting_children" || activeStep(task) !== "split") {
         throw new ActivityIntegrityError(event, `status ${task.status}`);
       }
-      task.steps = task.steps.map((s) =>
-        s.key === "split" ? { ...s, state: "done" as const } : s,
-      );
-      task.status = "idle";
+      {
+        const index = task.steps.findIndex((s) => s.key === "split");
+        task.steps = task.steps.map((s, i) => {
+          if (i === index) return { ...s, state: "done" as const };
+          if (i === index + 1) return { ...s, state: "active" as const };
+          return s;
+        });
+        // 統合レビュー（PBI-31）へ進む。それより前に分割したタスクは、これで完了する
+        task.status = task.steps[index + 1] ? "queued" : "idle";
+      }
       break;
+
+    case "IntegrationReviewed": {
+      if (task.status !== "idle" || activeStep(task) !== "integrate") {
+        throw new ActivityIntegrityError(event, "the integration review is not running");
+      }
+      task.integration = { ...event.payload, at: event.at };
+      if (event.payload.passed) {
+        task.integrationFailures = 0;
+        break;
+      }
+      task.integrationFailures += 1;
+      // 上限までは、タスク分割の工程をやり直して修正の子タスクを追加する。上限に達したら、
+      // 不合格のまま人間の承認待ちにする（続く StepSubmitted）
+      if (task.integrationFailures < MAX_INTEGRATION_ATTEMPTS) {
+        reopen(task, "split");
+        task.status = "queued";
+      }
+      break;
+    }
 
     case "BudgetCapRaised":
       if (event.payload.capUsd <= task.budget.usedUsd) {
@@ -967,6 +1016,9 @@ export function appliedProposalFor(task: Task, step: StepKey): TaskProposal | un
  * ゲートの工程か、それより前の、工程エージェントが作る工程。
  */
 export function reworkTargets(task: Task, gateStep: StepKey): StepKey[] {
+  // 統合レビューの承認待ちで差し戻すと、タスク分割をやり直して修正の子タスクを追加する（PBI-31）。
+  // 親の要求要件・設計は、子タスクが作られた後なので戻さない
+  if (gateStep === "integrate") return task.steps.some((s) => s.key === "split") ? ["split"] : [];
   const index = task.steps.findIndex((s) => s.key === gateStep);
   return (
     task.steps
