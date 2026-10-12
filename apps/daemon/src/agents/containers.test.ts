@@ -118,6 +118,31 @@ describe("コンテナの停止の確認（PBI-3 レビュー指摘）", () => {
 });
 
 describe("テストの実行の注記（PBI-11b）", () => {
+  const closing = (code: number) =>
+    (() => {
+      const child = Object.assign(new EventEmitter(), {
+        stdout: new EventEmitter(),
+        stderr: new EventEmitter(),
+        kill: () => true,
+      });
+      setTimeout(() => child.emit("close", code), 0);
+      return child;
+    }) as never;
+  const run = (runner: DockerTestRunner) =>
+    runner.run({ runId: "r", image: "img", workspaceDir: "/tmp", command: "x" });
+
+  it("docker run の終了コード 125 は Docker 自身の失敗として印を付け、テストの失敗（1 など）とは区別する（PBI-29 レビュー指摘）", async () => {
+    expect(await run(new DockerTestRunner(60_000, closing(125)))).toMatchObject({
+      exitCode: 125,
+      note: { code: "run.dockerFailed" },
+      infrastructure: true,
+    });
+    const failed = await run(new DockerTestRunner(60_000, closing(1)));
+    expect(failed.exitCode).toBe(1);
+    expect(failed.infrastructure).toBeUndefined();
+    expect(failed.note).toBeUndefined();
+  });
+
   it("docker を実行できなければ、出力とは分けて、コードと引数の注記にする", async () => {
     const spawnImpl = (() => {
       const child = Object.assign(new EventEmitter(), {
@@ -139,6 +164,8 @@ describe("テストの実行の注記（PBI-11b）", () => {
       exitCode: 127,
       output: "",
       note: { code: "run.dockerUnavailable", params: { detail: "spawn docker ENOENT" } },
+      // 実行基盤の失敗（テストの結果ではない。PBI-29）
+      infrastructure: true,
     });
   });
 
@@ -153,6 +180,7 @@ describe("テストの実行の注記（PBI-11b）", () => {
       command: "x",
     });
     expect(result.note).toEqual({ code: "run.testTimeout", params: { minutes: 10 / 60_000 } });
+    expect(result.infrastructure).toBe(true);
     expect(result.output).not.toContain("[sacty]");
   });
 });

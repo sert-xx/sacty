@@ -42,6 +42,9 @@ const PARAMS = {
   "gate.staleSubmission": z.object({ submission: Count, current: Count }),
   "gate.invalidTarget": null,
   "gate.approveOnPullRequest": z.object({ url: z.string() }),
+  "gate.reproduceNotApprovable": null,
+  "reproduce.noTests": null,
+  "reproduce.runFailed": z.object({ detail: TextParam }),
   "gate.remarksRequired": null,
   "gate.overLimit": z.object({ limit: Count }),
   "remark.notFound": null,
@@ -84,6 +87,7 @@ const PARAMS = {
   "run.timeout": z.object({ minutes: z.number() }),
   "run.testTimeout": z.object({ minutes: z.number() }),
   "run.dockerUnavailable": z.object({ detail: TextParam }),
+  "run.dockerFailed": null,
   "run.imageMissing": z.object({ image: z.string() }),
   "run.authFileUnreadable": z.object({ path: z.string() }),
   "run.containerNotConfirmed": z.object({ name: z.string() }),
@@ -290,6 +294,12 @@ const ja: MessageDictionary = {
   "gate.approveOnPullRequest": ({ url }) =>
     `PR を作ったタスクは、PR をマージすると承認になります。GitHub で PR をレビューしてマージしてください（${url}）。`,
   "gate.remarksRequired": "差し戻すには、指摘を1件以上入力してください。",
+  "gate.reproduceNotApprovable":
+    "再現できなかったので、先へは進めません。再現の手がかりを指摘に書いて差し戻すと、再現をやり直します。不要なら中止してください。",
+  "reproduce.noTests":
+    "再現のエージェントが、再現のテストを申告しませんでした（再現できなかった）。",
+  "reproduce.runFailed": ({ detail }, text) =>
+    `再現のテストを実行できませんでした（${text(detail)}）。再現できたかは確かめていません。原因を確かめてから再開すると、テストを実行し直します。`,
   "gate.overLimit": ({ limit }) =>
     `差し戻しが上限（${limit}回）に達しています。続ける場合は、上限を超えて差し戻すことを選んでください。`,
   "remark.notFound": "指摘が見つかりません。",
@@ -334,6 +344,8 @@ const ja: MessageDictionary = {
   "run.testTimeout": ({ minutes }) => `テストの実行が ${minutes} 分を超えたため止めました。`,
   "run.dockerUnavailable": ({ detail }, text) =>
     `dockerを実行できません。Dockerが起動しているか確認してください（${text(detail)}）。`,
+  "run.dockerFailed":
+    "Docker がコンテナを実行できませんでした（docker run の終了コード 125）。Docker の起動・接続やイメージを確認してください。",
   "run.imageMissing": ({ image }) =>
     `エージェント用のイメージ（${image}）がありません。\`sacty image build\` で作成してください。`,
   "run.authFileUnreadable": ({ path }) =>
@@ -480,6 +492,12 @@ const en: MessageDictionary = {
   "gate.approveOnPullRequest": ({ url }) =>
     `For a task with a PR, merging the PR approves it. Review and merge the PR on GitHub (${url}).`,
   "gate.remarksRequired": "Enter at least one comment to request changes.",
+  "gate.reproduceNotApprovable":
+    "The bug was not reproduced, so the task can't move on. Request changes with hints for reproducing it to try again, or cancel the task.",
+  "reproduce.noTests":
+    "The reproduce agent did not report a test that reproduces the bug (not reproduced).",
+  "reproduce.runFailed": ({ detail }, text) =>
+    `Could not run the reproduction test (${text(detail)}), so the reproduction is not confirmed. Check the cause, then resume to run the test again.`,
   "gate.overLimit": ({ limit }) =>
     `Change requests reached the limit (${limit}). To continue, choose to request changes over the limit.`,
   "remark.notFound": "Comment not found.",
@@ -525,6 +543,8 @@ const en: MessageDictionary = {
     `Stopped the tests because they ran longer than ${minutes} minutes.`,
   "run.dockerUnavailable": ({ detail }, text) =>
     `Cannot run docker. Check that Docker is running (${text(detail)}).`,
+  "run.dockerFailed":
+    "Docker could not run the container (docker run exit code 125). Check that Docker is running and reachable, and check the image.",
   "run.imageMissing": ({ image }) =>
     `The agent image (${image}) is missing. Build it with \`sacty image build\`.`,
   "run.authFileUnreadable": ({ path }) =>

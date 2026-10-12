@@ -197,6 +197,12 @@ export type Task = {
   reviewTarget?: PayloadOf<"ReviewTargetResolved">;
   /** レビューの工程が書いた、PR の行へのコメント（PBI-19）。 */
   reviewComments: ReviewComment[];
+  /** 再現の工程が申告した、再現のテスト（PBI-29）。 */
+  reproductionTests: string[];
+  /** 再現の工程の後、sacty がテストで再現を確かめる前（PBI-29）。 */
+  reproductionPending?: boolean;
+  /** 最新の、再現の確かめの結果（PBI-29）。 */
+  reproduction?: PayloadOf<"ReproductionChecked"> & { at: string };
   /** レビューの結果を投稿した、PR のレビューの URL（PBI-19）。 */
   reviewPost?: { url: string };
   /** オーケストレーターが決めた、テストのコマンド（PBI-25）。 */
@@ -293,6 +299,7 @@ export function applyEvent(
       proposals: [],
       testMap: [],
       reviewComments: [],
+      reproductionTests: [],
       verifyFailures: 0,
       misses: [],
       importedFeedback: [],
@@ -362,6 +369,10 @@ export function applyEvent(
         }
         if (event.payload.step === "design") task.testViewpoints = event.payload.testViewpoints;
         if (event.payload.step === "review") task.reviewComments = event.payload.reviewComments;
+        if (event.payload.step === "reproduce") {
+          task.reproductionTests = event.payload.reproductionTests;
+          task.reproductionPending = true;
+        }
         if (event.payload.step === "implement") {
           task.testMap = event.payload.testMap;
           task.verification = "pending";
@@ -418,6 +429,31 @@ export function applyEvent(
       task.pendingReview = undefined;
       task.gate = undefined;
       task.escalation = undefined;
+      break;
+    }
+
+    case "StepCompleted": {
+      if (task.status !== "idle" || activeStep(task) !== event.payload.step) {
+        throw new ActivityIntegrityError(event, "the completed step is not the active step");
+      }
+      const index = task.steps.findIndex((s) => s.key === event.payload.step);
+      task.steps = task.steps.map((s, i) => {
+        if (i === index) return { ...s, state: "done" as const };
+        if (i === index + 1) return { ...s, state: "active" as const };
+        return s;
+      });
+      const submission = (task.submissions[event.payload.step] ?? 0) + 1;
+      task.submissions = { ...task.submissions, [event.payload.step]: submission };
+      task.approved = {
+        ...task.approved,
+        [event.payload.step]: {
+          submission,
+          output: task.outputs[event.payload.step] ?? "",
+          testViewpoints: [],
+          at: event.at,
+        },
+      };
+      task.status = event.payload.next;
       break;
     }
 
@@ -799,6 +835,40 @@ export function applyEvent(
       task.status = "waiting_children";
       break;
 
+    case "ReproductionChecked": {
+      if (task.status !== "idle" || activeStep(task) !== "reproduce" || !task.reproductionPending) {
+        throw new ActivityIntegrityError(event, "the reproduce step is not waiting for a check");
+      }
+      const submission = (task.submissions.reproduce ?? 0) + 1;
+      task.submissions = { ...task.submissions, reproduce: submission };
+      task.reproduction = { ...event.payload, at: event.at };
+      task.reproductionPending = undefined;
+      if (event.payload.reproduced) {
+        // 再現できたら、人間の承認なしに次の工程（実装）へ進む
+        const index = task.steps.findIndex((s) => s.key === "reproduce");
+        task.steps = task.steps.map((s, i) => {
+          if (i === index) return { ...s, state: "done" as const };
+          if (i === index + 1) return { ...s, state: "active" as const };
+          return s;
+        });
+        task.approved = {
+          ...task.approved,
+          reproduce: {
+            submission,
+            output: task.outputs.reproduce ?? "",
+            testViewpoints: [],
+            at: event.at,
+          },
+        };
+        task.status = "queued";
+      } else {
+        // 再現できなかったら、人間の判断を待つ（差し戻すと再現をやり直す）
+        task.status = "awaiting_approval";
+        task.gate = { step: "reproduce", submission };
+      }
+      break;
+    }
+
     case "TaskUnblocked":
       if (task.status !== "blocked")
         throw new ActivityIntegrityError(event, `status ${task.status}`);
@@ -898,10 +968,23 @@ export function appliedProposalFor(task: Task, step: StepKey): TaskProposal | un
  */
 export function reworkTargets(task: Task, gateStep: StepKey): StepKey[] {
   const index = task.steps.findIndex((s) => s.key === gateStep);
-  return task.steps
-    .filter((s, i) => i <= index && REWORK_STEPS.includes(s.key))
-    .map((s) => s.key)
-    .reverse();
+  return (
+    task.steps
+      .filter((s, i) => i <= index && REWORK_STEPS.includes(s.key))
+      // 再現は、実装した後のコードでは再現できないので、再現の判断待ちのときだけやり直せる。
+      // 前段の調査は人間が承認しない工程なので、調査そのものが目的のとき（調査の承認待ち）だけ（PBI-29）
+      .filter((s) => (s.key !== "reproduce" && s.key !== "investigate") || gateStep === s.key)
+      .map((s) => s.key)
+      .reverse()
+  );
+}
+
+/**
+ * 調査そのものがタスクの目的か（調査だけの組み合わせ。PBI-18）。実装する組み合わせの先頭の調査は、
+ * 後の工程のための前段の調査で、人間は承認しない（PBI-29）。
+ */
+export function investigationIsGoal(task: Task): boolean {
+  return task.steps.at(-1)?.key === "investigate";
 }
 
 /** すべての工程が終わったか。 */

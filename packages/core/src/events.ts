@@ -6,6 +6,7 @@ import { code, DaemonText } from "./message-code.js";
  * investigate（調査）は、コードを調べて報告するだけの工程（PBI-18）。
  * review（レビュー）は、既存の PR をレビューして、PR に投稿するだけの工程（PBI-19）。
  * split（タスク分割）は、承認済みの設計から子タスクを作り、子タスクの完了を待つ工程（PBI-27）。
+ * reproduce（再現）は、不具合を再現する失敗するテストを書き、sacty が失敗を確かめる工程（PBI-29）。
  */
 export const StepKey = z.enum([
   "investigate",
@@ -13,6 +14,7 @@ export const StepKey = z.enum([
   "requirements",
   "design",
   "split",
+  "reproduce",
   "implement",
   "pr",
 ]);
@@ -26,10 +28,13 @@ export const MVP_STEPS: readonly StepKey[] = ["requirements", "design", "impleme
  * 工程の種類を増やしたら（調査・レビューなど）、ここに組み合わせを足す。
  */
 export const STEP_PLANS = {
-  /** 標準：要求要件 → 設計（テスト観点）→ 実装 → PR作成 */
-  standard: ["requirements", "design", "implement", "pr"],
+  /**
+   * 標準：調査 → 要求要件 → 設計（テスト観点）→ 実装 → PR作成。実装する組み合わせは、先頭に前段の調査を置き、
+   * その結果を後の工程に渡す。前段の調査は人間が承認しない（PBI-29）
+   */
+  standard: ["investigate", "requirements", "design", "implement", "pr"],
   /** 小さな変更：設計を省く（要求要件の受け入れ条件をテストで確かめる） */
-  "skip-design": ["requirements", "implement", "pr"],
+  "skip-design": ["investigate", "requirements", "implement", "pr"],
   /** 調査だけ：コードを調べて報告する。実装や PR は作らない（PBI-18） */
   investigate: ["investigate"],
   /** レビューだけ：タスクにある PR をレビューして、PR に投稿する（PBI-19） */
@@ -38,7 +43,11 @@ export const STEP_PLANS = {
    * 大きなタスク：要求要件 → 設計 → タスク分割。設計の承認の後に子タスクを作り、子タスクがそれぞれ
    * 実装と PR を行う（PBI-27）。子タスクは分割できない（1段だけ）
    */
-  split: ["requirements", "design", "split"],
+  split: ["investigate", "requirements", "design", "split"],
+  /**
+   * 不具合の修正：再現 → 実装 → PR作成。不具合を再現する失敗するテストを書き、それを通すように直す（PBI-29）
+   */
+  bugfix: ["investigate", "reproduce", "implement", "pr"],
 } as const satisfies Record<string, readonly StepKey[]>;
 export type StepPlan = keyof typeof STEP_PLANS;
 export const StepPlan = z.enum(Object.keys(STEP_PLANS) as [StepPlan, ...StepPlan[]]);
@@ -49,6 +58,7 @@ export const GATED_STEPS: readonly StepKey[] = ["investigate", "requirements", "
 /** 差し戻しでやり直せる（工程エージェントが作る）工程。 */
 export const REWORK_STEPS: readonly StepKey[] = [
   "investigate",
+  "reproduce",
   "requirements",
   "design",
   "implement",
@@ -207,6 +217,25 @@ const TaskSplit = z.object({
   }),
 });
 
+/**
+ * 再現の工程の後に、sacty がテストを実行して再現を確かめた（PBI-29）。テストが失敗したら再現できたとして
+ * 実装へ進む（人間の承認なし）。通った・再現のテストが無いなら、再現できなかったとして人間の判断を待つ。
+ */
+const ReproductionChecked = z.object({
+  type: z.literal("ReproductionChecked"),
+  payload: z.object({
+    reproduced: z.boolean(),
+    tests: z.array(z.string()),
+    /** 実行したテストのコマンド（再現のテストが無く、実行しなかったときは無い）。 */
+    command: z.string().optional(),
+    exitCode: z.number().int().optional(),
+    /** 出力の末尾。 */
+    output: z.string().default(""),
+    note: DaemonText.optional(),
+    durationMs: z.number().int().nonnegative().default(0),
+  }),
+});
+
 /** 依存先の子タスクがすべて完了したので、子タスクを実行待ちにする（PBI-27）。 */
 const TaskUnblocked = z.object({
   type: z.literal("TaskUnblocked"),
@@ -275,6 +304,8 @@ const AgentRunCompleted = z.object({
     testMap: z.array(TestMapping).default([]),
     /** レビューの工程の、PR の行へのコメント（PBI-19）。 */
     reviewComments: z.array(ReviewComment).default([]),
+    /** 再現の工程が申告した、不具合を再現するテスト（PBI-29）。 */
+    reproductionTests: z.array(z.string()).default([]),
   }),
 });
 
@@ -337,6 +368,18 @@ const StepApproved = z.object({
   payload: z.object({
     step: StepKey,
     /** 承認後の状態。次の工程を実行できるなら実行待ち、まだ実装されていなければ待機。 */
+    next: z.enum(["queued", "idle"]),
+  }),
+});
+
+/**
+ * 人間の承認なしに工程を完了にし、次の工程へ進める（前段の調査。PBI-29）。成果物は承認済みと同じく凍結する。
+ */
+const StepCompleted = z.object({
+  type: z.literal("StepCompleted"),
+  payload: z.object({
+    step: StepKey,
+    /** 次の工程を実行できるなら実行待ち、まだ実装されていなければ待機。 */
     next: z.enum(["queued", "idle"]),
   }),
 });
@@ -718,6 +761,8 @@ export const EventInput = z.discriminatedUnion("type", [
   TaskSplit,
   TaskUnblocked,
   SplitCompleted,
+  ReproductionChecked,
+  StepCompleted,
   StepsChosen,
   AgentRunStarted,
   AgentRunCompleted,

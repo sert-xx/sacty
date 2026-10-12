@@ -43,6 +43,7 @@ const task = (patch: Partial<Task> = {}): Task => ({
   proposals: [],
   testMap: [],
   reviewComments: [],
+  reproductionTests: [],
   verifyFailures: 0,
   misses: [],
   importedFeedback: [],
@@ -476,5 +477,42 @@ describe("テストのコマンドの表示（PBI-28）", () => {
     expect(usesTestCommand(withSteps("review"))).toBe(false);
     expect(usesTestCommand(withSteps("requirements", "design", "split"))).toBe(false);
     expect(usesTestCommand(withSteps())).toBe(false);
+  });
+});
+
+describe("再現の表示（PBI-29）", () => {
+  it("再現できなかったときは承認待ちではなく判断待ちと出し、作業履歴に結果を出す", () => {
+    expect(
+      statusText(task({ status: "awaiting_approval", gate: { step: "reproduce", submission: 1 } })),
+    ).toBe("再現できなかった（判断待ち）");
+    // 再現のテストを実行している間は作業中（画面を自動で更新する）
+    const checking = task({ status: "idle", reproductionPending: true });
+    expect(isWorking(checking)).toBe(true);
+    expect(statusText(checking)).toBe("テストを実行中");
+    const event = (payload: Record<string, unknown>) =>
+      ({
+        type: "ReproductionChecked",
+        payload: { tests: [], output: "", durationMs: 0, ...payload },
+        actor: "sacty",
+      }) as unknown as ActivityEvent;
+    expect(describeEvent(event({ reproduced: true, exitCode: 1 }))).toBe(
+      "再現を確認：再現のテストが失敗した（終了コード 1）→ 実装へ",
+    );
+    expect(describeEvent(event({ reproduced: false, exitCode: 0 }))).toBe(
+      "再現できなかった（テストが通った・終了コード 0）→ 人間の判断待ち",
+    );
+    expect(
+      describeEvent(event({ reproduced: false, note: { code: "reproduce.noTests" } })),
+    ).toMatch(/^再現できなかった（再現のエージェントが、再現のテストを申告しませんでした/);
+    expect(describeIn(event({ reproduced: true, exitCode: 1 }), labels.en)).toBe(
+      "Reproduced: the reproduction test failed (exit code 1) → implement",
+    );
+    expect(
+      describeEvent({
+        type: "StepCompleted",
+        payload: { step: "investigate", next: "queued" },
+        actor: "sacty",
+      } as unknown as ActivityEvent),
+    ).toBe("調査を完了（前段の調査のため承認なし）→ 次の工程へ");
   });
 });

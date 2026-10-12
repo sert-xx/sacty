@@ -6,6 +6,7 @@ const ja = {
   breadcrumb: "パンくず",
   deliverableReview: "成果物チェック",
   stepApproval: (step: string) => `${step}の承認`,
+  notReproduced: "再現できなかった（判断待ち）",
   submission: (n: number) => `${n}回目の提出`,
   rounds: (n: number) => ` ・ 差し戻し${n}回`,
   escalated: "エスカレーション",
@@ -44,6 +45,9 @@ const ja = {
     requestOverLimit: "上限を超えて差し戻す",
     request: "差し戻す",
     approve: "承認する",
+    notReproducedTitle: "再現できませんでした",
+    notReproducedHelp:
+      "再現のテストが失敗しなかった（または、再現のテストが無かった）ので、先へは進めません。再現の手がかり（手順・入力・環境など）を指摘に書いて差し戻すと、再現をやり直します。不要なら、タスクを中止してください。",
     note: (max: number) =>
       `指摘はタスクに累積し、再提出のたびにすべてエージェントに渡されます。同じ工程への差し戻しが${max}回を超えるとエスカレーションになります。`,
     prTitle: "GitHub の PR で判断します",
@@ -72,6 +76,7 @@ const en: ReviewMessages = {
   breadcrumb: "Breadcrumb",
   deliverableReview: "Deliverable review",
   stepApproval: (step) => `${step} approval`,
+  notReproduced: "Not reproduced (needs your decision)",
   submission: (n) => `Submission ${n}`,
   rounds: (n) => ` · changes requested ${n} time${n === 1 ? "" : "s"}`,
   escalated: "Escalated",
@@ -112,6 +117,9 @@ const en: ReviewMessages = {
     requestOverLimit: "Request changes beyond the limit",
     request: "Request changes",
     approve: "Approve",
+    notReproducedTitle: "The bug was not reproduced",
+    notReproducedHelp:
+      "The reproduction test did not fail (or there was no reproduction test), so the task can't move on. Request changes with hints for reproducing it (steps, input, environment) to try again, or cancel the task.",
     prTitle: "Decide on the GitHub PR",
     prHelp:
       "Review and merge the PR to approve the deliverable review and complete the task. Comments in reviews or on the PR are imported as change requests, and the Goal Guardian picks the step to redo (sacty checks every minute and imports two minutes after the last comment).",

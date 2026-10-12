@@ -2,6 +2,9 @@ import { spawn } from "node:child_process";
 import { type DaemonText, message } from "@sacty/core";
 import { dockerClientEnv, dockerRunArgs, RunningContainers } from "./docker.js";
 
+/** docker run が、Docker 自身の失敗で終わったときの終了コード（コンテナの中のコマンドの結果ではない）。 */
+const DOCKER_RUN_FAILED = 125;
+
 /** テストの出力は、末尾のこの文字数だけ残す（作業履歴と画面に載せるため）。 */
 export const TEST_OUTPUT_TAIL = 20_000;
 
@@ -10,6 +13,11 @@ export type TestRunResult = {
   output: string;
   /** sacty の注記（テストを止めた理由など）。テストの出力とは分けて持つ（PBI-11）。 */
   note?: DaemonText;
+  /**
+   * テストの実行基盤の失敗（Docker を起動できない・時間切れ・コンテナの停止を確かめられない）。
+   * 終了コードはテストの結果ではない（再現の確かめでは、テストの失敗と区別する。PBI-29）。
+   */
+  infrastructure?: boolean;
   durationMs: number;
 };
 
@@ -94,15 +102,20 @@ export class DockerTestRunner implements TestRunner {
             exitCode: 127,
             output: "",
             note: message("run.dockerUnavailable", { detail: error.message }),
+            infrastructure: true,
             durationMs: Date.now() - started,
           });
         });
         child.on("close", (code) => {
           clearTimeout(timer);
+          // docker run の終了コード 125 は、Docker 自身の失敗（デーモンに接続できない・イメージを取得できないなど）。
+          // テストは実行されていない（PBI-29 レビュー指摘）
+          if (!note && code === DOCKER_RUN_FAILED) note = message("run.dockerFailed");
           resolve({
             exitCode: code ?? 1,
             output: output.slice(-TEST_OUTPUT_TAIL),
-            ...(note ? { note } : {}),
+            // 時間切れで止めた・Docker 自身が失敗したなら、終了コードはテストの結果ではない
+            ...(note ? { note, infrastructure: true } : {}),
             durationMs: Date.now() - started,
           });
         });
@@ -114,6 +127,7 @@ export class DockerTestRunner implements TestRunner {
           exitCode: 1,
           output: "",
           note: message("run.containerNotConfirmed", { name }),
+          infrastructure: true,
           durationMs: Date.now() - started,
         };
       }

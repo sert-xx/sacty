@@ -1,6 +1,7 @@
 import {
   type DaemonText,
   type FinalReview,
+  investigationIsGoal,
   MAX_SPLIT_CHILDREN,
   MIN_SPLIT_CHILDREN,
   message,
@@ -31,6 +32,7 @@ export const EXECUTABLE_STEPS: readonly StepKey[] = [
   "requirements",
   "design",
   "split",
+  "reproduce",
   "implement",
   "pr",
 ];
@@ -43,6 +45,64 @@ const REWORK_HEADING = "sacty-rework";
 const PLAN_HEADING = "sacty-steps";
 /** 設計を省いたタスクで、最終レビューの観点にする要求要件の受け入れ条件（PBI-17）。 */
 export const REQUIREMENTS_VIEWPOINT = "REQ";
+/** 不具合の修正（再現 → 実装）で、最終レビューの観点にする「再現のテストが通る」（PBI-29）。 */
+export const REPRODUCTION_VIEWPOINT = "REPRO";
+const REPRODUCTION_HEADING = "sacty-reproduction";
+
+/**
+ * 実装の検証の基準。設計があればテスト観点、再現があれば再現のテスト（PBI-29）、
+ * どちらも無ければ要求要件の受け入れ条件（PBI-17）。
+ */
+export function verificationBasis(task: Task): "design" | "reproduce" | "requirements" {
+  if (task.steps.some((s) => s.key === "design")) return "design";
+  if (task.steps.some((s) => s.key === "reproduce")) return "reproduce";
+  return "requirements";
+}
+
+/** 再現の説明と、sacty が確かめた結果（実装・最終レビューに渡す）。 */
+function reproductionLines(task: Task): string[] {
+  const r = task.reproduction;
+  return [
+    "--- 再現の説明（再現の工程） ---",
+    task.approved.reproduce?.output ?? "（なし）",
+    "",
+    "--- 再現のテスト（このテストが失敗することで、不具合を再現した） ---",
+    ...(task.reproductionTests.length > 0
+      ? task.reproductionTests.map((t) => `- ${t}`)
+      : ["（なし）"]),
+    ...(r?.command
+      ? [
+          "",
+          `--- 再現を確かめたときのテストの結果（コマンド：${r.command}・終了コード ${r.exitCode ?? "?"}） ---`,
+          r.output.slice(-OUTPUT_IN_PROMPT),
+        ]
+      : []),
+  ];
+}
+
+/**
+ * 再現の工程の出力から、申告された再現のテストを読み、その形式のブロックを本文から取り除く（PBI-29）。
+ * 読めなければテストは空。
+ */
+export function extractReproduction(output: string): { output: string; tests: string[] } {
+  const blocks = [...output.matchAll(/```json\s*\n([\s\S]*?)\n```/g)].reverse();
+  for (const block of blocks) {
+    try {
+      const parsed = JSON.parse(block[1] ?? "") as Record<string, unknown>;
+      const v = parsed?.[REPRODUCTION_HEADING] as Record<string, unknown> | undefined;
+      if (v && Array.isArray(v.tests)) {
+        const tests = v.tests
+          .map((t) => (typeof t === "string" ? t.trim() : ""))
+          .filter(Boolean)
+          .slice(0, 20);
+        return { output: output.replace(block[0], "").trim(), tests };
+      }
+    } catch {
+      // 次のブロックを試す
+    }
+  }
+  return { output, tests: [] };
+}
 const TEST_MAP_HEADING = "sacty-test-map";
 const REVIEW_COMMENTS_HEADING = "sacty-review-comments";
 const FINAL_REVIEW_HEADING = "sacty-final-review";
@@ -101,6 +161,7 @@ const STEP_NAME: Record<StepKey, string> = {
   requirements: "要求要件",
   design: "設計",
   split: "タスク分割",
+  reproduce: "再現",
   implement: "実装",
   pr: "PR作成",
 };
@@ -108,10 +169,20 @@ const STEP_NAME: Record<StepKey, string> = {
 /** その工程の実行中に変更を申し出られる、承認済みの工程（その工程より前のもの）。 */
 export function changeableSteps(task: Task, step: StepKey): StepKey[] {
   const index = task.steps.findIndex((s) => s.key === step);
-  return task.steps
-    .slice(0, Math.max(index, 0))
-    .map((s) => s.key)
-    .filter((key) => task.approved[key]);
+  return (
+    task.steps
+      .slice(0, Math.max(index, 0))
+      .map((s) => s.key)
+      // 変更を申し出られるのは、人間が承認した要求要件と設計だけ（前段の調査・再現は対象外。PBI-29）
+      .filter((key) => (key === "requirements" || key === "design") && task.approved[key])
+  );
+}
+
+/** 前段の調査の結果（実装する組み合わせの先頭の調査。PBI-29）。後の工程に渡す。 */
+function investigationLines(task: Task): string[] {
+  const output = task.approved.investigate?.output;
+  if (!output || investigationIsGoal(task)) return [];
+  return ["", "--- 前段の調査の結果（調査の工程。コードを読んで確かめた事実と推測） ---", output];
 }
 
 /** 承認済みの成果物の変更を申し出る方法。申し出られる工程が無ければ何も足さない。 */
@@ -210,6 +281,28 @@ export function buildPrompt(task: Task, step: StepKey, extra: { diff?: string } 
 
   switch (step) {
     case "investigate": {
+      // 前段の調査（PBI-29）：後の工程のために、関係するコードと事実を集める。人間は承認しない
+      if (!investigationIsGoal(task)) {
+        const next = task.steps
+          .slice(1)
+          .map((s) => STEP_NAME[s.key])
+          .join(" → ");
+        return [
+          "あなたはソフトウェア開発の調査エージェントです。",
+          `このタスクは、このあと ${next} の工程で進めます。後の工程のエージェントが正しく判断できるように、対象リポジトリのコードを読んで、タスクに関係する事実を調べてMarkdownで書いてください。`,
+          "",
+          "- タスクに関係するコードの場所（例：src/pay.ts:12）と、いまの振る舞い・データの流れ",
+          "- 変更の影響範囲（呼び出し元・関係するテスト・設定）と、既存の規約や似た実装",
+          "- テストの書き方と置き場所（テストのフレームワーク・既存のテストの例）",
+          "- 不具合なら、原因の箇所の見当と、再現の手がかり",
+          "- 推測と、コードで確かめた事実を区別する。コードから判断できないことは「確認したいこと」として最後に列挙する",
+          "- 要求要件・設計・修正そのものは書かない。コードは変更しない（作業領域は読み取り専用です）",
+          ...codeLines(task),
+          "",
+          "--- タスク ---",
+          content,
+        ].join("\n");
+      }
       // 調査は、コードを読んで報告するだけの工程（PBI-18）。人間が承認すると完了
       const lines = [
         "あなたはソフトウェア開発の調査エージェントです。",
@@ -282,6 +375,8 @@ export function buildPrompt(task: Task, step: StepKey, extra: { diff?: string } 
         "- タスクの内容から判断できないことは「確認したいこと」として最後に列挙する",
         ...codeLines(task),
         "",
+        ...investigationLines(task),
+        "",
         "--- タスク ---",
         content,
       ];
@@ -309,6 +404,8 @@ export function buildPrompt(task: Task, step: StepKey, extra: { diff?: string } 
         "",
         "--- 承認済みの要求要件 ---",
         requirements,
+        "",
+        ...investigationLines(task),
         "",
         "--- タスク ---",
         content,
@@ -361,16 +458,92 @@ export function buildPrompt(task: Task, step: StepKey, extra: { diff?: string } 
         "--- 承認済みの設計 ---",
         task.approved.design?.output ?? "（承認済みの設計がありません）",
         "",
+        ...investigationLines(task),
+        "",
         "--- タスク ---",
         content,
       ];
       return lines.join("\n");
     }
+    case "reproduce": {
+      // 再現は、不具合を再現する失敗するテストを書く工程（PBI-29）。sacty がテストを実行し、失敗を確かめる
+      const lines = [
+        "あなたはソフトウェア開発の再現エージェントです。",
+        "作業ディレクトリは対象リポジトリです（書き込めます）。次のタスクの不具合を再現するテストを書いてください。",
+        "",
+        "- 不具合があるために失敗するテストを書く。不具合が直れば通るテストにする（期待する正しい振る舞いを確かめる）",
+        "- 不具合そのものは直さない。テスト以外のコードは変えない",
+        `- 書いたテストは、リポジトリのテストのコマンド（${task.testCommand ?? "オーケストレーターが決めたもの"}）で実行されるようにする。sacty がこのコマンドを実行し、失敗することで再現を確かめる`,
+        "- テストの失敗が、不具合以外の理由（構文の誤り・依存の不足など）にならないようにする",
+        "- コミットやプッシュはしない（sacty が行います）",
+        "- 再現できない・テストで再現できない場合は、無理にテストを作らず、理由と、再現に必要な情報を書く（tests は空にする）",
+        "",
+        "再現の説明（不具合の振る舞い・原因の見当・書いたテスト）をMarkdownで書き、そのあとに、書いたテストを次の形式で必ず付けてください。",
+        "```json",
+        `{"${REPRODUCTION_HEADING}": {"tests": ["テストのファイル › テストの名前"]}}`,
+        "```",
+        "",
+        ...investigationLines(task),
+        "",
+        "--- タスク ---",
+        content,
+      ];
+      if (hasRemarks) {
+        lines.push(
+          "",
+          "--- 前回の再現の説明 ---",
+          previous ?? "（なし）",
+          ...(task.reproduction
+            ? [
+                "",
+                `--- 前回、sacty が確かめた結果：${task.reproduction.command ? `終了コード ${task.reproduction.exitCode ?? "?"}` : "テストの申告なし"}（再現できなかった） ---`,
+                task.reproduction.output.slice(-OUTPUT_IN_PROMPT) || "（出力なし）",
+              ]
+            : []),
+        );
+      }
+      lines.push(...remarkLines(task, step, "再現の説明の本文"));
+      return lines.join("\n");
+    }
     case "implement": {
       // 実装への差し戻しの指摘は、対応を答えてもらう（下の remarkLines）。ほかの工程の指摘は再発の防止に使う
       const remarks = humanRemarks(task).filter((r) => r.step !== "implement");
-      // 設計を省いたタスク（PBI-17）は、要求要件の受け入れ条件をテストで確かめる
-      const designed = task.steps.some((s) => s.key === "design");
+      // 設計を省いたタスク（PBI-17）は、要求要件の受け入れ条件をテストで確かめる。
+      // 不具合の修正（PBI-29）は、再現のテストを通す
+      const basis = verificationBasis(task);
+      const designed = basis === "design";
+      if (basis === "reproduce") {
+        const lines = [
+          "あなたはソフトウェア開発の工程エージェントです。",
+          "作業ディレクトリは実装の対象リポジトリです。再現の工程で、不具合を再現する失敗するテストを書いてあります。",
+          "そのテストが通るように不具合を直してください。",
+          "",
+          "- 再現のテストは、不具合を直すために変えない（テストの誤りを直す場合は、その理由を説明に書く）",
+          "- ほかのテストも通るようにする。必要なら、直した振る舞いを確かめるテストを足す",
+          "- コミットやプッシュはしない（sacty が行います）",
+          `- 修正の説明をMarkdownで書き、そのあとに、観点 ${REPRODUCTION_VIEWPOINT}（再現のテストが通る）とテストの対応を次の形式で必ず付ける`,
+          "```json",
+          `{"${TEST_MAP_HEADING}": [{"viewpointId": "${REPRODUCTION_VIEWPOINT}", "tests": ["テストのファイル › テストの名前"]}]}`,
+          "```",
+          "",
+          "--- タスク ---",
+          content,
+          ...investigationLines(task),
+          "",
+          ...reproductionLines(task),
+        ];
+        const remarks = humanRemarks(task).filter((r) => r.step !== "implement");
+        if (remarks.length > 0) {
+          lines.push(
+            "",
+            "--- これまでの人間の指摘（再発させないでください） ---",
+            ...remarks.map((r) => `- [${r.id}] ${r.text}`),
+          );
+        }
+        if (previous) lines.push("", "--- 前回の修正の説明 ---", previous);
+        lines.push(...feedbackLines(task), ...remarkLines(task, step, "観点ごとのテストの対応"));
+        return lines.join("\n");
+      }
       const lines = [
         "あなたはソフトウェア開発の工程エージェントです。",
         ...(designed
@@ -397,6 +570,8 @@ export function buildPrompt(task: Task, step: StepKey, extra: { diff?: string } 
         "",
         "--- 承認済みの設計 ---",
         task.approved.design?.output ?? "（なし）",
+        "",
+        ...investigationLines(task),
         "",
         "--- テスト観点（承認済み・すべてにテストを対応させる） ---",
         ...(designed
@@ -618,7 +793,8 @@ export function extractVerdict(output: string): { verdict: Verdict; reason: Daem
  */
 export function buildFinalReviewPrompt(task: Task, diff: string): string {
   const viewpoints = task.approved.design?.testViewpoints ?? [];
-  const designed = task.steps.some((s) => s.key === "design");
+  const basis = verificationBasis(task);
+  const designed = basis === "design";
   const remarks = humanRemarks(task);
   const tests = task.lastTests;
   return [
@@ -630,18 +806,33 @@ export function buildFinalReviewPrompt(task: Task, diff: string): string {
     "- 人間の過去の指摘ごとに、指摘された問題が今回の実装で再発していないかを判定する",
     "- 判断の根拠は、下の差分とテストの結果だけにする",
     "",
-    "--- 承認済みの要求要件 ---",
-    task.approved.requirements?.output ?? "（なし）",
-    "",
-    "--- 承認済みの設計 ---",
-    task.approved.design?.output ?? "（なし）",
+    ...(basis === "reproduce"
+      ? [
+          "--- タスク（不具合） ---",
+          `# ${task.title}`,
+          "",
+          task.body || "（内容なし）",
+          "",
+          ...reproductionLines(task),
+        ]
+      : [
+          "--- 承認済みの要求要件 ---",
+          task.approved.requirements?.output ?? "（なし）",
+          "",
+          "--- 承認済みの設計 ---",
+          task.approved.design?.output ?? "（なし）",
+        ]),
     "",
     "--- テスト観点 ---",
     ...(designed
       ? viewpointLines(viewpoints)
-      : [
-          `- [${REQUIREMENTS_VIEWPOINT}] 承認済みの要求要件の受け入れ条件（設計の工程を省いたため、受け入れ条件をすべてテストが検証しているかを、この観点で判定する）`,
-        ]),
+      : basis === "reproduce"
+        ? [
+            `- [${REPRODUCTION_VIEWPOINT}] 再現のテストが、不具合の振る舞いを確かめたまま通る（再現のテストを弱めて通していない・不具合が直っている）`,
+          ]
+        : [
+            `- [${REQUIREMENTS_VIEWPOINT}] 承認済みの要求要件の受け入れ条件（設計の工程を省いたため、受け入れ条件をすべてテストが検証しているかを、この観点で判定する）`,
+          ]),
     "",
     "--- 観点とテストの対応（工程エージェントの申告） ---",
     ...(task.testMap.length > 0
@@ -735,7 +926,28 @@ const cell = (value: string) => value.replace(/\r?\n/g, " ").replace(/\|/g, "\\|
  * ゴールガーディアンの最終レビューを載せる（人間が成果物を確かめるための材料）。
  */
 export function buildPullRequestBody(task: Task): string {
-  const viewpoints = task.approved.design?.testViewpoints ?? [];
+  const basis = verificationBasis(task);
+  // 設計を省いたタスクは、要求要件の受け入れ条件（REQ）・再現のテスト（REPRO。PBI-29）を観点として並べる
+  const viewpoints: TestViewpoint[] =
+    basis === "design"
+      ? (task.approved.design?.testViewpoints ?? [])
+      : basis === "reproduce"
+        ? [
+            {
+              id: REPRODUCTION_VIEWPOINT,
+              title: "再現のテストが通る",
+              input: task.reproductionTests.join(" / ") || "（なし）",
+              expected: "不具合が直り、再現のテストが通る",
+            },
+          ]
+        : [
+            {
+              id: REQUIREMENTS_VIEWPOINT,
+              title: "要求要件の受け入れ条件",
+              input: "承認済みの要求要件",
+              expected: "受け入れ条件を満たす",
+            },
+          ];
   const review = task.lastReview;
   const tests = task.lastTests;
   const mapped = new Map(task.testMap.map((m) => [m.viewpointId, m.tests]));
@@ -744,9 +956,13 @@ export function buildPullRequestBody(task: Task): string {
     "",
     // 取り込んだ Issue と同じリポジトリの PR なら、マージで Issue を閉じる
     ...(task.source?.kind === "github_issue" ? [`Closes #${task.source.number}`, ""] : []),
-    "## 要求要件（人間が承認済み）",
-    "",
-    task.approved.requirements?.output ?? "（なし）",
+    ...(basis === "reproduce"
+      ? [
+          "## 不具合の再現（失敗するテストで再現し、sacty が失敗を確かめた）",
+          "",
+          task.approved.reproduce?.output ?? "（なし）",
+        ]
+      : ["## 要求要件（人間が承認済み）", "", task.approved.requirements?.output ?? "（なし）"]),
     "",
     "## 観点 → テスト → 実行結果",
     "",
@@ -853,15 +1069,17 @@ export function extractRework(
 export function buildOrchestratorPrompt(task: Task): string {
   const all: Record<StepPlan, string> = {
     standard:
-      "要求要件 → 設計（テスト観点）→ 実装 → PR作成。既定。振る舞いが複数ある・影響範囲が広い・テスト観点を人間と合意したい変更",
+      "調査 → 要求要件 → 設計（テスト観点）→ 実装 → PR作成。既定。振る舞いが複数ある・影響範囲が広い・テスト観点を人間と合意したい変更",
     "skip-design":
-      "要求要件 → 実装 → PR作成。設計を省く。変更が小さく局所的で、要求要件の受け入れ条件だけで十分にテストできる変更（例：文言の修正、小さな関数の追加）",
+      "調査 → 要求要件 → 実装 → PR作成。設計を省く。変更が小さく局所的で、要求要件の受け入れ条件だけで十分にテストできる変更（例：文言の修正、小さな関数の追加）",
     investigate:
       "調査だけ。コードを調べて結果を報告する（実装や PR は作らない）。タスクが質問・原因の調査・影響範囲の確認・見積もりなど、変更ではなく情報を求めているとき",
     review:
       "レビューだけ。タスクにある PR をレビューして、PR にレビューを投稿する（実装や PR は作らない）。タスクが PR のレビューを求めているとき",
+    bugfix:
+      "調査 → 再現 → 実装 → PR作成。不具合の修正で、テストで再現できるもの（期待する振る舞いがタスクから分かる）。不具合を再現する失敗するテストを書き、それを通すように直す。直すのに設計の判断が要る大きな不具合は standard を選ぶ",
     split:
-      "要求要件 → 設計 → タスク分割。変更が大きく、1つの PR では人間がレビューしきれないとき。設計の承認の後に、独立して進められる子タスクに分け、子タスクごとに実装と PR を作る",
+      "調査 → 要求要件 → 設計 → タスク分割。変更が大きく、1つの PR では人間がレビューしきれないとき。設計の承認の後に、独立して進められる子タスクに分け、子タスクごとに実装と PR を作る",
   };
   const allowed = allowedPlans(task);
   const plans = Object.fromEntries(allowed.map((plan) => [plan, all[plan]]));
@@ -881,7 +1099,7 @@ export function buildOrchestratorPrompt(task: Task): string {
     "選べる工程の組み合わせ：",
     ...Object.entries(plans).map(([key, text]) => `- ${key}：${text}`),
     "",
-    "迷う場合は standard を選んでください。",
+    "迷う場合は standard を選んでください。実装する組み合わせは、先頭の調査（人間の承認なし）の結果を後の工程に渡します。",
     "",
     "--- タスク ---",
     `# ${task.title}`,

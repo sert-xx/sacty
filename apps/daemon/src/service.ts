@@ -20,6 +20,7 @@ import {
   EventInput,
   excludedRepositories,
   GATED_STEPS,
+  investigationIsGoal,
   isCompleted,
   MAX_CHANGE_REQUESTS,
   MAX_VERIFY_ATTEMPTS,
@@ -91,15 +92,18 @@ import {
   EXECUTABLE_STEPS,
   extractBlocks,
   extractFinalReview,
+  extractReproduction,
   extractReviewComments,
   extractRework,
   extractSplitPlan,
   extractStepPlan,
   extractVerdict,
   investigationMarker,
+  REPRODUCTION_VIEWPOINT,
   REQUIREMENTS_VIEWPOINT,
   referencedPullRequest,
   reviewMarker,
+  verificationBasis,
 } from "./prompts.js";
 import type { RepositoryWorkspace } from "./repository.js";
 import { SecretNotFoundError, type SecretStore } from "./secrets.js";
@@ -955,7 +959,9 @@ export class TaskService {
             // 書いたレビューを、対象の PR に投稿する（PBI-19）
             awaitingReviewPost(t) ||
             // 分割した子タスクを作る・始める、子タスクがすべて終わったら完了にする（PBI-27）
-            this.splitPending(t),
+            this.splitPending(t) ||
+            // 再現のテストを実行して、再現できたかを確かめる（PBI-29）
+            awaitingReproductionCheck(t),
       )
       .filter((t) => !this.cancelling.has(t.id) && !this.pauseRequested.has(t.id))
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
@@ -1253,6 +1259,7 @@ export class TaskService {
     if (initial && awaitingIssueComment(initial)) return this.commentInvestigation(initial);
     if (initial && awaitingReviewPost(initial)) return this.postReview(initial);
     if (initial && this.splitPending(initial)) return this.settleSplit(initial);
+    if (initial && awaitingReproductionCheck(initial)) return this.checkReproduction(initial);
     if (initial?.status !== "queued") return;
     const config = this.deps.config();
     if (!config.ok) return; // 設定の問題は status() で画面に出す。タスクは実行待ちのまま。
@@ -1391,7 +1398,8 @@ export class TaskService {
       ]);
       return;
     }
-    const readOnlyWorkspace = step !== "implement";
+    // 実装と再現（再現のテストを書く。PBI-29）は clone を作業領域にし、ほかは読み取り専用
+    const readOnlyWorkspace = step !== "implement" && step !== "reproduce";
 
     // sacty の既定のコンテキストと、プロジェクトのコンテキストを取得・合成して渡し、
     // 使ったリポジトリとコミット（既定は中身のハッシュ）を記録する
@@ -1596,7 +1604,9 @@ export class TaskService {
     // レビューの工程は、PR の差分に含まれる行へのコメントを取り出す（差分の外のものは本文に入れる）
     const review =
       step === "review" ? extractReviewComments(extracted.output, reviewDiff ?? "") : undefined;
-    const output = review?.output ?? extracted.output;
+    // 再現の工程は、申告された再現のテストを取り出す（PBI-29）
+    const reproduction = step === "reproduce" ? extractReproduction(extracted.output) : undefined;
+    const output = review?.output ?? reproduction?.output ?? extracted.output;
     const events: { actor: Actor; event: EventInput }[] = [
       {
         actor: "agent",
@@ -1615,13 +1625,17 @@ export class TaskService {
             ...(step === "design" ? { testViewpoints } : {}),
             ...(step === "implement" ? { testMap } : {}),
             ...(review ? { reviewComments: review.comments } : {}),
+            ...(reproduction ? { reproductionTests: reproduction.tests } : {}),
           },
         },
       },
     ];
     if (!proposal) {
       // 実行の完了と提出は、同じトランザクションで記録する
-      this.checkBudget(this.append(task, [...events, ...this.submitEvents(latest, step)]));
+      const submitted = this.append(task, [...events, ...this.submitEvents(latest, step)]);
+      this.checkBudget(submitted);
+      // 再現は、続けて sacty がテストを実行して確かめる（PBI-29）
+      if (awaitingReproductionCheck(submitted)) return this.checkReproduction(submitted);
       return;
     }
 
@@ -1706,9 +1720,14 @@ export class TaskService {
     }
     // テストを対応させる観点。設計を省いたタスク（PBI-17）は、要求要件の受け入れ条件（REQ）を観点にする。
     // テストの対応の確かめと、最終レビューの両方で同じ観点を使う
-    const viewpointIds = task.steps.some((st) => st.key === "design")
-      ? (task.approved.design?.testViewpoints ?? []).map((v) => v.id)
-      : [REQUIREMENTS_VIEWPOINT];
+    // 不具合の修正（PBI-29）は、再現のテストが通ること（REPRO）を観点にする
+    const basis = verificationBasis(task);
+    const viewpointIds =
+      basis === "design"
+        ? (task.approved.design?.testViewpoints ?? []).map((v) => v.id)
+        : basis === "reproduce"
+          ? [REPRODUCTION_VIEWPOINT]
+          : [REQUIREMENTS_VIEWPOINT];
 
     let current = task;
     if (current.verification === "pending") {
@@ -2165,6 +2184,85 @@ export class TaskService {
     }
   }
 
+  /**
+   * 再現の工程の後に、テストを実行して再現を確かめる（PBI-29）。再現のテストが失敗すれば再現できたとして
+   * 実装へ進む。通った・再現のテストが無いなら、再現できなかったとして人間の判断を待つ。
+   */
+  private async checkReproduction(task: Task): Promise<void> {
+    const config = this.deps.config();
+    if (!config.ok) return;
+    const record = (payload: Extract<EventInput, { type: "ReproductionChecked" }>["payload"]) =>
+      this.append(this.mustGet(task.id), [
+        { actor: "sacty", event: { type: "ReproductionChecked", payload } },
+      ]);
+    const tests = task.reproductionTests;
+    if (tests.length === 0) {
+      record({ reproduced: false, tests, note: message("reproduce.noTests") });
+      return;
+    }
+    const target = this.targetRepository(task, config.config);
+    const dir = this.repoDir(task);
+    const testCommand = target.ok ? target.repo.testCommand : undefined;
+    if (!target.ok || !testCommand || !existsSync(dir)) {
+      this.append(task, [
+        {
+          actor: "sacty",
+          event: {
+            type: "TaskPaused",
+            payload: {
+              reason: "error",
+              message: !target.ok
+                ? message("verify.testsUnavailable", { detail: target.message })
+                : !testCommand
+                  ? message("orchestrator.testCommandUnknown")
+                  : message("verify.workspaceMissing"),
+            },
+          },
+        },
+      ]);
+      return;
+    }
+    // 人間が止めたなら、テストのコンテナを起動しない（再開すると確かめ直す）
+    if (this.pauseRequested.has(task.id)) return;
+    const runId = randomUUID();
+    this.track(runId);
+    const result = await this.deps.tests.run({
+      runId,
+      image: target.repo.testImage,
+      workspaceDir: dir,
+      command: testCommand,
+    });
+    if (this.pauseRequested.has(task.id)) return;
+    // テストの実行基盤の失敗は、テストの失敗（再現できた）と区別し、確かめずに止める。
+    // 再現の確かめを待ったまま止めるので、再開するとテストを実行し直す（PBI-29 レビュー指摘）
+    if (result.infrastructure) {
+      this.append(this.mustGet(task.id), [
+        {
+          actor: "sacty",
+          event: {
+            type: "TaskPaused",
+            payload: {
+              reason: "error",
+              message: message("reproduce.runFailed", {
+                detail: result.note ?? `exit ${result.exitCode}`,
+              }),
+            },
+          },
+        },
+      ]);
+      return;
+    }
+    record({
+      reproduced: result.exitCode !== 0,
+      tests,
+      command: testCommand,
+      exitCode: result.exitCode,
+      output: result.output,
+      ...(result.note ? { note: result.note } : {}),
+      durationMs: result.durationMs,
+    });
+  }
+
   /** 分割で作った子タスクで、親が中止されているか（PBI-27）。 */
   private parentCancelled(task: Task): boolean {
     return Boolean(task.parent && this.tasks.get(task.parent.taskId)?.status === "cancelled");
@@ -2327,6 +2425,13 @@ export class TaskService {
 
   /** 承認ゲートのある工程なら、人間の承認待ちで止めるイベント。 */
   private submitEvents(task: Task, step: StepKey): ActivityItem[] {
+    // 前段の調査（実装する組み合わせの先頭）は、人間の承認なしに次の工程へ進める（PBI-29）
+    if (step === "investigate" && !investigationIsGoal(task)) {
+      const index = task.steps.findIndex((s) => s.key === step);
+      const nextStep = task.steps[index + 1]?.key;
+      const next = nextStep && EXECUTABLE_STEPS.includes(nextStep) ? "queued" : "idle";
+      return [{ actor: "sacty", event: { type: "StepCompleted", payload: { step, next } } }];
+    }
     if (!GATED_STEPS.includes(step)) return [];
     return [
       {
@@ -2547,6 +2652,10 @@ export class TaskService {
   approve(id: string, raw: unknown): Task {
     const { step, submission } = ApproveStepInput.parse(raw);
     const task = this.gateTask(id, step, submission);
+    // 再現できなかったときは、先へは進めない（差し戻すか中止する。PBI-29）
+    if (step === "reproduce") {
+      throw new InvalidOperationError(message("gate.reproduceNotApprovable"));
+    }
     // PR を作ったタスクの成果物チェックは、PR のマージで承認する（PBI-14a）
     if (step === "pr" && task.pullRequest?.number) {
       throw new InvalidOperationError(
@@ -2707,6 +2816,13 @@ type TargetRepository = {
   pullRequest: { provider: "github"; repo: string };
 };
 
+/** 再現の工程が終わり、テストでの再現の確かめを待っている（PBI-29）。 */
+function awaitingReproductionCheck(task: Task): boolean {
+  return (
+    task.status === "idle" && activeStep(task) === "reproduce" && Boolean(task.reproductionPending)
+  );
+}
+
 /** 書いたレビューを、まだ対象の PR に投稿していない（PBI-19）。 */
 function awaitingReviewPost(task: Task): boolean {
   return (
@@ -2718,10 +2834,11 @@ function awaitingReviewPost(task: Task): boolean {
 }
 
 /** 完了した調査のタスクで、結果をまだ取り込み元の Issue に返していないか（PBI-18）。 */
-function awaitingIssueComment(task: Task): boolean {
+export function awaitingIssueComment(task: Task): boolean {
   return (
     isCompleted(task) &&
-    task.steps.some((st) => st.key === "investigate") &&
+    // 調査そのものが目的のタスクだけ（前段の調査の結果は返さない。PBI-29）
+    investigationIsGoal(task) &&
     // Issue・PR から取り込んだタスク（PBI-26）
     task.source !== undefined &&
     !task.issueComment

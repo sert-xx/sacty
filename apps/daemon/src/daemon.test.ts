@@ -1,3 +1,4 @@
+import { EventEmitter } from "node:events";
 import {
   existsSync,
   mkdirSync,
@@ -10,23 +11,31 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { EventInput, Task } from "@sacty/core";
-import { isCompleted, MVP_STEPS, message, renderMessage } from "@sacty/core";
+import {
+  isCompleted,
+  MVP_STEPS,
+  message,
+  renderMessage,
+  reworkTargets,
+  STEP_PLANS,
+} from "@sacty/core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { SqliteActivityStore } from "./activity.js";
 import type { AgentExecutor } from "./agents/docker.js";
 import type { Invocation } from "./agents/invocation.js";
 import type { AgentOutcome } from "./agents/parse.js";
-import type { TestRunner, TestRunResult } from "./agents/test-runner.js";
+import { DockerTestRunner, type TestRunner, type TestRunResult } from "./agents/test-runner.js";
 import { type AgentConfig, type ConfigResult, loadConfig } from "./config.js";
 import type { ContextFetcher, ContextRef } from "./context.js";
 import { MessageError } from "./errors.js";
 import type { GitHubAuth } from "./gh.js";
 import type { PullRequestFeedback, PullRequestStatus, PullRequests } from "./github.js";
 import { MemoryProjectStore } from "./projects.js";
+import { buildOrchestratorPrompt, changeableSteps } from "./prompts.js";
 import type { RepositoryWorkspace } from "./repository.js";
 import { MemorySecretStore } from "./secrets.js";
 import { createApp } from "./server.js";
-import { type ServiceDeps, TaskService } from "./service.js";
+import { awaitingIssueComment, type ServiceDeps, TaskService } from "./service.js";
 import { MemorySettingsStore } from "./settings.js";
 
 /** 記録した文言（コードと引数）を、日本語の文にする（PBI-11）。 */
@@ -2306,7 +2315,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       expect(promptOf(executor, 2)).toContain("あなたはオーケストレーターです");
       expect(promptOf(executor, 2)).not.toContain("- review：");
       expect(service.get(id)?.task.stepsChoice?.fallback).toBe(true);
-      expect(service.get(id)?.task.steps.map((st) => st.key)).toEqual([...MVP_STEPS]);
+      expect(service.get(id)?.task.steps.map((st) => st.key)).toEqual([...STEP_PLANS.standard]);
       activity.close();
     });
   });
@@ -2322,7 +2331,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       const activity = new SqliteActivityStore(dbPath);
       const { service, executor } = makeService(
         activity,
-        [plan("skip-design"), out("# 要求要件")],
+        [plan("skip-design"), out("# 前段の調査\n\n- src/button.ts:3 に文言"), out("# 要求要件")],
         {
           realPlanner: true,
         },
@@ -2346,14 +2355,34 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       const chosen = service.get(id)?.activity.find((e) => e.type === "StepsChosen");
       expect(chosen?.actor).toBe("orchestrator");
       expect(chosen?.payload).toMatchObject({
-        steps: ["requirements", "implement", "pr"],
+        steps: ["investigate", "requirements", "implement", "pr"],
         plan: "skip-design",
         reason: "小さな変更",
         fallback: false,
         testCommand: "npm test",
       });
+      // 実装する組み合わせは、先頭の前段の調査を同じ実行で続けて行い、人間の承認なしに次の工程へ進む（PBI-29）
+      expect(promptOf(executor, 1)).toContain("このあと 要求要件 → 実装 → PR作成 の工程で進めます");
+      const investigated = service.get(id)?.task;
+      expect(investigated?.steps.map((st) => [st.key, st.state])).toEqual([
+        ["investigate", "done"],
+        ["requirements", "active"],
+        ["implement", "todo"],
+        ["pr", "todo"],
+      ]);
+      expect(investigated?.status).toBe("queued");
+      expect(investigated?.gate).toBeUndefined();
+      // 前段の調査の結果は、後の工程（要求要件）に渡す
+      await service.runNext(id);
+      expect(promptOf(executor, 2)).toContain("--- 前段の調査の結果");
+      expect(promptOf(executor, 2)).toContain("src/button.ts:3 に文言");
       const task = service.get(id)?.task;
-      expect(task?.steps.map((st) => st.key)).toEqual(["requirements", "implement", "pr"]);
+      expect(task?.steps.map((st) => st.key)).toEqual([
+        "investigate",
+        "requirements",
+        "implement",
+        "pr",
+      ]);
       expect(task?.stepsChoice).toEqual({
         plan: "skip-design",
         reason: "小さな変更",
@@ -2382,7 +2411,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         },
         fallback: true,
       });
-      expect(service.get(a.id)?.task.steps.map((st) => st.key)).toEqual([...MVP_STEPS]);
+      expect(service.get(a.id)?.task.steps.map((st) => st.key)).toEqual([...STEP_PLANS.standard]);
       // 標準の工程は実装を含むが、テストのコマンドが分からないので、費用をかける前に止める（PBI-25）
       expect(service.get(a.id)?.task.status).toBe("paused");
       expect(service.get(a.id)?.task.pausedMessage).toEqual({
@@ -2391,7 +2420,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       const b = service.createTask({ projectId: "default", title: "B" });
       await service.runNext(b.id);
       expect(ja(service.get(b.id)?.task.stepsChoice?.reason)).toContain("session limit");
-      expect(service.get(b.id)?.task.steps.map((st) => st.key)).toEqual([...MVP_STEPS]);
+      expect(service.get(b.id)?.task.steps.map((st) => st.key)).toEqual([...STEP_PLANS.standard]);
       activity.close();
     });
 
@@ -3857,7 +3886,8 @@ describe("プロジェクトの対象と、オーケストレーターが決め�
     expect(service.get(a.id)?.activity.filter((e) => e.type === "RepositoryPrepared")).toHaveLength(
       2,
     );
-    expect(task?.gate).toEqual({ step: "requirements", submission: 1 });
+    // 先頭の前段の調査を終え、承認なしに要求要件へ進んでいる（PBI-29）
+    expect(task?.steps.find((st) => st.state === "active")?.key).toBe("requirements");
 
     const b = service.createTask({ projectId: "default", title: "B" });
     await service.runNext(b.id);
@@ -3866,7 +3896,9 @@ describe("プロジェクトの対象と、オーケストレーターが決め�
       code: "orchestrator.baseBranchUnavailable",
       params: { branch: "nope" },
     });
-    expect(service.get(b.id)?.task.gate).toEqual({ step: "requirements", submission: 1 });
+    expect(service.get(b.id)?.task.steps.find((st) => st.state === "active")?.key).toBe(
+      "requirements",
+    );
     activity.close();
   });
 
@@ -5084,5 +5116,274 @@ describe("タスク分割（PBI-27）", () => {
     await restarted.runNext(id);
     expect(childrenOf(restarted, id).map((c) => c?.id)).toEqual(ids);
     fresh.close();
+  });
+});
+
+describe("再現の工程（PBI-29）", () => {
+  const out = (text: string): AgentOutcome => ({
+    kind: "completed",
+    output: text,
+    usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 1 },
+  });
+  const block = (b: Record<string, unknown>) => `\`\`\`json\n${JSON.stringify(b)}\n\`\`\``;
+  const promptOf = (executor: FakeExecutor, i: number) =>
+    executor.calls[i]?.command.join(" ") ?? "";
+  const reproduce = (text: string, tests: string[]) =>
+    out([text, block({ "sacty-reproduction": { tests } })].join("\n\n"));
+  const implement = (tests: string[] = ["pay.test.ts › 二重送信"]) =>
+    out(
+      ["# 修正の説明", block({ "sacty-test-map": [{ viewpointId: "REPRO", tests }] })].join("\n\n"),
+    );
+  const review = (verified = true) =>
+    out(
+      block({
+        "sacty-final-review": {
+          viewpoints: [{ id: "REPRO", verified, reason: "判定" }],
+          remarks: [],
+          summary: "所見",
+        },
+      }),
+    );
+  const planner = async () => ({
+    steps: [...STEP_PLANS.bugfix],
+    plan: "bugfix" as const,
+    reason: "不具合の修正",
+    fallback: false,
+    testCommand: "npm test",
+    costUsd: 0,
+    estimated: false,
+  });
+  async function drain(service: TaskService, max = 10) {
+    for (let i = 0; i < max; i++) {
+      const ids = service.queuedTaskIds();
+      if (ids.length === 0) return;
+      for (const id of ids) await service.runNext(id);
+    }
+  }
+
+  it("再現のテストが失敗したら、人間の承認なしに実装へ進み、再現のテストを観点にして検証する", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const tests = new FakeTests([
+      { exitCode: 1, output: "FAIL pay.test.ts › 二重送信", durationMs: 5 },
+      { exitCode: 0, output: "ok", durationMs: 5 },
+    ]);
+    const pulls = new FakePulls();
+    const { service, executor } = makeService(
+      activity,
+      [
+        out("# 前段の調査\n\n- src/pay.ts:40 で冪等キーを見ていない"),
+        reproduce("# 再現の説明", ["pay.test.ts › 二重送信"]),
+        implement(),
+        review(),
+      ],
+      { planner, tests, pulls },
+    );
+    const { id } = service.createTask({ projectId: "default", title: "二重に決済される" });
+    // 前段の調査は、人間の承認なしに再現へ進む
+    await service.runNext(id);
+    expect(service.get(id)?.task.steps.map((s) => s.state)).toEqual([
+      "done",
+      "active",
+      "todo",
+      "todo",
+    ]);
+    expect(service.get(id)?.activity.some((e) => e.type === "StepSubmitted")).toBe(false);
+    executor.calls.shift();
+    executor.readOnly.shift();
+    await service.runNext(id);
+    // 再現は clone（書き込める作業領域）で、不具合を直さずにテストを書かせる
+    expect(executor.readOnly[0]).toBe(false);
+    expect(promptOf(executor, 0)).toContain("再現エージェント");
+    // 前段の調査の結果を、再現と実装に渡す
+    expect(promptOf(executor, 0)).toContain("src/pay.ts:40 で冪等キーを見ていない");
+    expect(promptOf(executor, 0)).toContain("npm test");
+    expect(tests.calls).toHaveLength(1);
+    const task = service.get(id)?.task;
+    expect(task?.reproduction).toMatchObject({
+      reproduced: true,
+      exitCode: 1,
+      tests: ["pay.test.ts › 二重送信"],
+    });
+    // 申告の形式のブロックは、再現の説明から取り除く
+    expect(task?.outputs.reproduce).toBe("# 再現の説明");
+    expect(task?.steps.map((s) => s.state)).toEqual(["done", "done", "active", "todo"]);
+    expect(task?.status).toBe("queued");
+
+    await drain(service);
+    const fix = promptOf(executor, 1);
+    expect(fix).toContain("そのテストが通るように不具合を直してください");
+    expect(fix).toContain("# 再現の説明");
+    expect(fix).toContain("- pay.test.ts › 二重送信");
+    expect(fix).toContain("FAIL pay.test.ts › 二重送信");
+    expect(fix).toContain("src/pay.ts:40 で冪等キーを見ていない");
+    expect(promptOf(executor, 2)).toContain("[REPRO] 再現のテストが");
+    const done = service.get(id)?.task;
+    expect(done?.lastReview).toMatchObject({
+      passed: true,
+      viewpoints: [{ viewpointId: "REPRO" }],
+    });
+    expect(done?.gate).toEqual({ step: "pr", submission: 1 });
+    // PR の本文には、再現の説明と、再現のテストの観点（REPRO）を載せる
+    const body = pulls.calls[0]?.body ?? "";
+    expect(body).toContain("## 不具合の再現");
+    expect(body).toContain("# 再現の説明");
+    expect(body).toMatch(/\| REPRO 再現のテストが通る \| pay\.test\.ts › 二重送信 \|.*✅/);
+    expect(body).not.toContain("## 要求要件");
+    // 成果物チェックから差し戻すときに、再現・前段の調査には戻せない（実装した後のコードでは再現できない。
+    // 前段の調査は人間が承認しない工程）
+    expect(reworkTargets(done as Task, "pr")).toEqual(["implement"]);
+    // 実装の工程は、前段の調査・再現の変更を申し出られない（要求要件・設計だけ）
+    expect(changeableSteps(done as Task, "implement")).toEqual([]);
+    // 前段の調査の結果は、取り込み元の Issue に返さない（調査だけのタスクだけが返す）
+    const finished = {
+      ...done,
+      steps: done?.steps.map((s) => ({ ...s, state: "done" })),
+      source: { kind: "github_issue", repo: "acme/app", number: 1, url: "u" },
+    } as Task;
+    expect(awaitingIssueComment(finished)).toBe(false);
+    expect(
+      awaitingIssueComment({ ...finished, steps: [{ key: "investigate", state: "done" }] }),
+    ).toBe(true);
+    activity.close();
+  });
+
+  it("テストが通った・再現のテストが無いなら、人間の判断を待つ。承認では進めず、差し戻すと再現をやり直す", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const tests = new FakeTests([
+      { exitCode: 0, output: "all passed", durationMs: 5 },
+      { exitCode: 1, output: "FAIL", durationMs: 5 },
+    ]);
+    const { service, executor } = makeService(
+      activity,
+      [
+        out("# 前段の調査"),
+        reproduce("# 再現できた？", ["pay.test.ts › 二重送信"]),
+        reproduce("# テストでは再現できない", []),
+        reproduce("# 再現した", ["pay.test.ts › 連打"]),
+      ],
+      { planner, tests },
+    );
+    const { id } = service.createTask({ projectId: "default", title: "二重に決済される" });
+    await drain(service);
+    let task = service.get(id)?.task;
+    expect(task?.reproduction).toMatchObject({ reproduced: false, exitCode: 0 });
+    expect(task?.status).toBe("awaiting_approval");
+    expect(task?.gate).toEqual({ step: "reproduce", submission: 1 });
+    expect(() => service.approve(id, { step: "reproduce", submission: 1 })).toThrow(
+      /再現できなかったので、先へは進めません/,
+    );
+
+    service.requestChanges(id, { step: "reproduce", submission: 1, comments: ["連打で起きる"] });
+    await service.runNext(id);
+    expect(promptOf(executor, 2)).toContain("[reproduce-1-1] 連打で起きる");
+    expect(promptOf(executor, 2)).toContain("終了コード 0");
+    task = service.get(id)?.task;
+    // 再現のテストが申告されなければ、テストを実行せずに再現できなかったとする
+    expect(tests.calls).toHaveLength(1);
+    expect(renderMessage(task?.reproduction?.note, "ja")).toMatch(/申告しませんでした/);
+    expect(task?.gate).toEqual({ step: "reproduce", submission: 2 });
+
+    service.requestChanges(id, { step: "reproduce", submission: 2, comments: ["決済ボタン"] });
+    await service.runNext(id);
+    task = service.get(id)?.task;
+    expect(task?.reproduction?.reproduced).toBe(true);
+    expect(task?.approved.reproduce?.output).toContain("# 再現した");
+    expect(task?.status).toBe("queued");
+    activity.close();
+  });
+
+  it("テストの実行基盤の失敗は再現できたとせず、理由を示して止め、再開するとテストを実行し直す（レビュー指摘）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const tests = new FakeTests([
+      {
+        exitCode: 127,
+        output: "",
+        note: message("run.dockerUnavailable", { detail: "spawn docker ENOENT" }),
+        infrastructure: true,
+        durationMs: 1,
+      },
+      { exitCode: 1, output: "FAIL", durationMs: 5 },
+    ]);
+    const { service } = makeService(
+      activity,
+      [out("# 前段の調査"), reproduce("# 再現", ["a.test.ts › x"])],
+      { planner, tests },
+    );
+    const { id } = service.createTask({ projectId: "default", title: "不具合" });
+    await drain(service);
+    let task = service.get(id)?.task;
+    expect(task?.status).toBe("paused");
+    expect(task?.reproduction).toBeUndefined();
+    expect(task?.steps.find((s) => s.state === "active")?.key).toBe("reproduce");
+    expect(renderMessage(task?.pausedMessage, "ja")).toMatch(
+      /^再現のテストを実行できませんでした（.*spawn docker ENOENT.*）。再現できたかは確かめていません/,
+    );
+    service.resume(id, {});
+    await service.runNext(id);
+    task = service.get(id)?.task;
+    expect(tests.calls).toHaveLength(2);
+    expect(task?.reproduction?.reproduced).toBe(true);
+    expect(task?.steps.find((s) => s.state === "active")?.key).toBe("implement");
+    activity.close();
+  });
+
+  it("docker run が Docker 自身の失敗（終了コード 125）で終わっても、再現できたとせずに止める（レビュー指摘）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    // 実際のテストの実行基盤に、docker run が 125 で終わる docker を渡す
+    const spawnImpl = (() => {
+      const child = Object.assign(new EventEmitter(), {
+        stdout: new EventEmitter(),
+        stderr: new EventEmitter(),
+        kill: () => true,
+      });
+      setTimeout(() => child.emit("close", 125), 0);
+      return child;
+    }) as never;
+    const { service } = makeService(
+      activity,
+      [out("# 前段の調査"), reproduce("# 再現", ["a.test.ts › x"])],
+      { planner, tests: new DockerTestRunner(60_000, spawnImpl) as unknown as FakeTests },
+    );
+    const { id } = service.createTask({ projectId: "default", title: "不具合" });
+    await drain(service);
+    const task = service.get(id)?.task;
+    expect(task?.status).toBe("paused");
+    expect(task?.reproduction).toBeUndefined();
+    expect(task?.reproductionPending).toBe(true);
+    expect(renderMessage(task?.pausedMessage, "ja")).toMatch(/docker run の終了コード 125/);
+    activity.close();
+  });
+
+  it("再現の後、確かめる前にデーモンが止まっても、再起動の後に確かめる", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const tests = new FakeTests([{ exitCode: 1, output: "FAIL", durationMs: 5 }]);
+    tests.hold = true;
+    const { service } = makeService(
+      activity,
+      [out("# 前段の調査"), reproduce("# 再現", ["a.test.ts › x"])],
+      { planner, tests },
+    );
+    const { id } = service.createTask({ projectId: "default", title: "不具合" });
+    await service.runNext(id);
+    const running = service.runNext(id);
+    await tests.started.promise;
+    // テストの実行中（確かめる前）の状態は、作業履歴から復元できる
+    const restored = new SqliteActivityStore(dbPath);
+    const { service: restarted, tests: retests } = makeService(restored, [], { planner });
+    expect(restarted.get(id)?.task.reproductionPending).toBe(true);
+    expect(restarted.queuedTaskIds()).toEqual([id]);
+    await restarted.runNext(id);
+    expect(retests.calls).toHaveLength(1);
+    expect(restarted.get(id)?.task.reproduction).toBeDefined();
+    restored.close();
+    tests.kill((await tests.started.promise) as string);
+    await running.catch(() => {});
+    activity.close();
+  });
+
+  it("オーケストレーターは、不具合の修正に bugfix を選べる", () => {
+    expect(buildOrchestratorPrompt({ title: "x", body: "" } as Task)).toContain(
+      "- bugfix：調査 → 再現 → 実装",
+    );
   });
 });
