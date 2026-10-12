@@ -14,7 +14,13 @@ import { CostMeter, StatusLabel, StepChips } from "@/components/task-bits";
 import { TaskControls } from "@/components/task-controls";
 import { TestViewpoints } from "@/components/test-viewpoints";
 import { getMessages } from "@/i18n/server";
-import { DaemonUnavailableError, getCleanupPlan, getProject, getTask } from "@/lib/daemon";
+import {
+  DaemonUnavailableError,
+  getCleanupPlan,
+  getProject,
+  getTask,
+  listTasks,
+} from "@/lib/daemon";
 import {
   canControl,
   describeEvent,
@@ -22,7 +28,9 @@ import {
   isWorking,
   personAction,
   statusText,
+  usd,
 } from "@/lib/labels";
+import { subtaskSummary } from "@/lib/subtasks";
 
 export default async function TaskPage({ params }: { params: Promise<{ id: string }> }) {
   const m = (await getMessages()).task;
@@ -52,6 +60,8 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
   if (!found) notFound();
   const { task, activity } = found;
   const projectName = (await getProject(task.projectId))?.project.name ?? task.projectId;
+  // 分割で作った子タスクの親（PBI-27）
+  const parent = task.parent ? (await getTask(task.parent.taskId))?.task : undefined;
   const lastFailure = [...activity].reverse().find((e) => e.type === "AgentRunFailed");
   const proposal = openProposal(task);
   const messages = await getMessages();
@@ -106,6 +116,17 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
               <span className="font-mono [overflow-wrap:anywhere]">
                 {task.source?.repo ?? task.repo ?? task.repository?.url}
               </span>
+            </>
+          )}
+          {task.parent && (
+            <>
+              {m.parent}
+              <Link
+                href={`/tasks/${task.parent.taskId}`}
+                className="text-accent-foreground underline"
+              >
+                {parent?.title ?? task.parent.taskId}
+              </Link>
             </>
           )}
         </p>
@@ -265,6 +286,7 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
             task.steps.some((s) => s.key === "design" && s.state !== "todo")) && (
             <Deliverable task={task} step="design" />
           )}
+          {task.split && <Subtasks task={task} />}
           {(task.outputs.implement ||
             task.steps.some((s) => s.key === "implement" && s.state !== "todo")) && (
             <Implementation task={task} />
@@ -301,6 +323,58 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
         </section>
       </div>
     </>
+  );
+}
+
+/** タスク分割で作った子タスク（状態・依存・PR）と、進み具合・費用の合計（PBI-27）。 */
+async function Subtasks({ task }: { task: Task }) {
+  const m = (await getMessages()).task.subtasks;
+  const all = new Map((await listTasks()).map((t) => [t.id, t]));
+  const { children, done, costUsd } = subtaskSummary(task, all);
+  const titles = new Map(children.map((c) => [c.taskId, c.title]));
+  return (
+    <CardSection id="subtasks" title={m.title} note={m.note}>
+      <p className="text-sm text-muted-foreground">
+        {m.progress(done, children.length)} ・ {m.cost(usd(costUsd))}
+      </p>
+      {task.split?.reason && (
+        <p className="text-sm leading-6 text-muted-foreground">{m.reason(task.split.reason)}</p>
+      )}
+      <ol className="flex flex-col">
+        {children.map((c) => (
+          <li
+            key={c.taskId}
+            className="flex flex-col gap-1 border-t border-border py-2.5 text-sm first:border-t-0"
+          >
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+              <Link href={`/tasks/${c.taskId}`} className="font-medium hover:underline">
+                {c.title}
+              </Link>
+              {c.task ? (
+                <StatusLabel task={c.task} />
+              ) : (
+                <span className="text-muted-foreground">{m.missing}</span>
+              )}
+              {c.task?.pullRequest?.url && (
+                <a
+                  href={c.task.pullRequest.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-accent-foreground underline"
+                >
+                  {m.pullRequest} #{c.task.pullRequest.number}
+                </a>
+              )}
+            </div>
+            {c.dependsOn.length > 0 && (
+              <p className="text-xs text-muted-foreground">
+                {m.dependsOn(c.dependsOn.map((d) => titles.get(d) ?? d))}
+              </p>
+            )}
+          </li>
+        ))}
+      </ol>
+    </CardSection>
   );
 }
 

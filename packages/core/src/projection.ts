@@ -32,8 +32,12 @@ export type StepState = "todo" | "active" | "done" | "skip";
  * awaiting_approval：人間の承認待ち（gate の工程）
  * escalated：差し戻しが上限を超えたため、人間の判断待ち
  * cancelled：中止した（以降の操作は受け付けない。作業履歴は残る）
+ * blocked：分割で作った子タスクが、依存先の子タスクの完了を待っている（PBI-27）
+ * waiting_children：タスク分割の後、子タスクの完了を待っている（PBI-27）
  */
 export type TaskStatus =
+  | "blocked"
+  | "waiting_children"
   | "queued"
   | "running"
   | "idle"
@@ -96,19 +100,35 @@ export type Task = {
   projectId: string;
   title: string;
   body: string;
-  start: "sacty" | "github_issue" | "github_pull_request";
+  start: "sacty" | "github_issue" | "github_pull_request" | "split";
   /** 取り込み元（GitHub Issue）。 */
   source?: TaskSource;
   /** 画面で作ったタスクの対象リポジトリ（owner/name。PBI-21）。Issue から取り込んだタスクは source.repo。 */
   repo?: string;
   status: TaskStatus;
+  /** 分割で作った子タスクの親と、依存先の子タスク（PBI-27）。 */
+  parent?: { taskId: string; dependsOn: string[] };
+  /** タスク分割で決めた子タスク（PBI-27）。 */
+  split?: {
+    /** 子タスク（内容は、デーモンが止まって作れなかった子タスクを作り直すために持つ）。 */
+    children: { taskId: string; title: string; body: string; dependsOn: string[] }[];
+    reason: string;
+    at: string;
+    /** 人間が中止を認めた子タスク（親を再開した）。完了したものと同じく扱う。 */
+    acceptedCancellations: string[];
+  };
   pausedReason?: PauseReason;
   /** 止まった理由の詳しい説明。 */
   pausedMessage?: DaemonText;
   /** 止めたが、無くなったことを確かめられなかったコンテナの実行。 */
   unstoppedRuns?: string[];
-  /** 一時停止の直前の状態。再開時、実行待ち（やり直し）に戻すか待機に戻すかを決める。 */
-  resumeTo?: "queued" | "idle";
+  /** 中止されたので親を止めた子タスク（再開すると、中止を認めたことになる。PBI-27）。 */
+  pausedCancelledChildren?: string[];
+  /**
+   * 一時停止の直前の状態。再開時、実行待ち（やり直し）に戻すか待機に戻すかを決める。
+   * 子タスクの完了を待っていたタスクは、その待ちに戻す（PBI-27）。
+   */
+  resumeTo?: "queued" | "idle" | "waiting_children";
   steps: { key: StepKey; state: StepState }[];
   /** 工程ごとの最新の出力。 */
   outputs: Partial<Record<StepKey, string>>;
@@ -263,7 +283,9 @@ export function applyEvent(
       start: event.payload.start,
       ...(event.payload.source ? { source: event.payload.source } : {}),
       ...(event.payload.repo ? { repo: event.payload.repo } : {}),
-      status: "queued",
+      ...(event.payload.parent ? { parent: event.payload.parent } : {}),
+      // 依存先の子タスクがあれば、それが完了するまで待つ（PBI-27）
+      status: event.payload.parent?.dependsOn.length ? "blocked" : "queued",
       steps: [],
       outputs: {},
       testViewpoints: [],
@@ -585,6 +607,7 @@ export function applyEvent(
       task.pausedMessage = undefined;
       task.unstoppedRuns = undefined;
       task.resumeTo = undefined;
+      task.pausedCancelledChildren = undefined;
       break;
 
     case "PullRequestPublished":
@@ -748,7 +771,11 @@ export function applyEvent(
       break;
 
     case "TaskPaused":
-      if (task.status !== "queued" && task.status !== "idle") {
+      if (
+        task.status !== "queued" &&
+        task.status !== "idle" &&
+        task.status !== "waiting_children"
+      ) {
         throw new ActivityIntegrityError(event, `pause while ${task.status}`);
       }
       task.resumeTo = task.status;
@@ -756,6 +783,36 @@ export function applyEvent(
       task.pausedReason = event.payload.reason;
       task.pausedMessage = event.payload.message;
       task.unstoppedRuns = event.payload.unstoppedRuns;
+      task.pausedCancelledChildren = event.payload.cancelledChildren;
+      break;
+
+    case "TaskSplit":
+      if (task.status !== "idle" || activeStep(task) !== "split") {
+        throw new ActivityIntegrityError(event, "the split step is not running");
+      }
+      task.split = {
+        children: event.payload.children,
+        reason: event.payload.reason,
+        at: event.at,
+        acceptedCancellations: [],
+      };
+      task.status = "waiting_children";
+      break;
+
+    case "TaskUnblocked":
+      if (task.status !== "blocked")
+        throw new ActivityIntegrityError(event, `status ${task.status}`);
+      task.status = "queued";
+      break;
+
+    case "SplitCompleted":
+      if (task.status !== "waiting_children" || activeStep(task) !== "split") {
+        throw new ActivityIntegrityError(event, `status ${task.status}`);
+      }
+      task.steps = task.steps.map((s) =>
+        s.key === "split" ? { ...s, state: "done" as const } : s,
+      );
+      task.status = "idle";
       break;
 
     case "BudgetCapRaised":
@@ -768,9 +825,25 @@ export function applyEvent(
     case "TaskResumed":
       if (task.status !== "paused")
         throw new ActivityIntegrityError(event, `status ${task.status}`);
-      task.status = event.payload.retry ? "queued" : "idle";
+      task.status =
+        task.resumeTo === "waiting_children"
+          ? "waiting_children"
+          : event.payload.retry
+            ? "queued"
+            : "idle";
       // 人間が再開したら、検証の失敗の回数を数え直す
       if (task.pausedReason === "verification") task.verifyFailures = 0;
+      // 中止された子タスクで止めた親を再開したら、その中止を認めたことにする（PBI-27）
+      if (task.split && task.pausedCancelledChildren?.length) {
+        task.split = {
+          ...task.split,
+          acceptedCancellations: [
+            ...task.split.acceptedCancellations,
+            ...task.pausedCancelledChildren,
+          ],
+        };
+      }
+      task.pausedCancelledChildren = undefined;
       task.pausedReason = undefined;
       task.pausedMessage = undefined;
       task.unstoppedRuns = undefined;

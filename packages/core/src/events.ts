@@ -5,12 +5,14 @@ import { code, DaemonText } from "./message-code.js";
  * 工程の種類。標準の工程は requirements → design → implement → pr。
  * investigate（調査）は、コードを調べて報告するだけの工程（PBI-18）。
  * review（レビュー）は、既存の PR をレビューして、PR に投稿するだけの工程（PBI-19）。
+ * split（タスク分割）は、承認済みの設計から子タスクを作り、子タスクの完了を待つ工程（PBI-27）。
  */
 export const StepKey = z.enum([
   "investigate",
   "review",
   "requirements",
   "design",
+  "split",
   "implement",
   "pr",
 ]);
@@ -32,6 +34,11 @@ export const STEP_PLANS = {
   investigate: ["investigate"],
   /** レビューだけ：タスクにある PR をレビューして、PR に投稿する（PBI-19） */
   review: ["review"],
+  /**
+   * 大きなタスク：要求要件 → 設計 → タスク分割。設計の承認の後に子タスクを作り、子タスクがそれぞれ
+   * 実装と PR を行う（PBI-27）。子タスクは分割できない（1段だけ）
+   */
+  split: ["requirements", "design", "split"],
 } as const satisfies Record<string, readonly StepKey[]>;
 export type StepPlan = keyof typeof STEP_PLANS;
 export const StepPlan = z.enum(Object.keys(STEP_PLANS) as [StepPlan, ...StepPlan[]]);
@@ -52,6 +59,10 @@ export const MAX_CHANGE_REQUESTS = 3;
 
 /** 予算の既定値（1タスクあたり、米ドル）。 */
 export const DEFAULT_BUDGET_USD = 1;
+
+/** タスク分割で作る子タスクの数の範囲（PBI-27）。 */
+export const MIN_SPLIT_CHILDREN = 2;
+export const MAX_SPLIT_CHILDREN = 10;
 
 /** 予算のこの割合に達したら通知する。 */
 export const BUDGET_WARN_RATIO = 0.8;
@@ -139,6 +150,8 @@ export const PauseReason = z.enum([
   "error",
   "verification",
   "manual",
+  // 子タスクが中止された（親は人間の判断を待つ。PBI-27）
+  "child_cancelled",
 ]);
 export type PauseReason = z.infer<typeof PauseReason>;
 
@@ -149,11 +162,11 @@ const TaskCreated = z.object({
     body: z.string(),
     /**
      * sacty：sacty の画面で作った、github_issue：GitHub Issue から取り込んだ、
-     * github_pull_request：GitHub の PR から取り込んだ（PBI-26）。
+     * github_pull_request：GitHub の PR から取り込んだ（PBI-26）、split：親タスクの分割で作った（PBI-27）。
      * PBI-20 より前の作業履歴は、画面で作ったタスクを ticket と記録しているので、sacty として読む。
      */
     start: z
-      .enum(["sacty", "github_issue", "github_pull_request", "ticket"])
+      .enum(["sacty", "github_issue", "github_pull_request", "split", "ticket"])
       .transform((start) => (start === "ticket" ? "sacty" : start)),
     // PBI-1の作業履歴には無いので既定値で補う
     budgetCapUsd: z.number().positive().default(DEFAULT_BUDGET_USD),
@@ -164,7 +177,46 @@ const TaskCreated = z.object({
      * Issue から取り込んだタスクは、その Issue のリポジトリが対象なので持たない。PBI-21 より前の作業履歴にも無い。
      */
     repo: z.string().optional(),
+    /**
+     * 分割で作った子タスクの親と、先に完了している必要がある子タスク（PBI-27）。
+     * 依存がある子タスクは、依存先がすべて完了するまで待つ（blocked）。
+     */
+    parent: z.object({ taskId: z.string(), dependsOn: z.array(z.string()) }).optional(),
   }),
+});
+
+/**
+ * タスク分割の工程が、子タスクを決めた（PBI-27）。子タスクの ID はここで決め、続けて（デーモンが
+ * 止まって途中になっても、再起動の後に）その ID で子タスクを作る。親は子タスクの完了を待つ。
+ */
+const TaskSplit = z.object({
+  type: z.literal("TaskSplit"),
+  payload: z.object({
+    children: z
+      .array(
+        z.object({
+          taskId: z.string().min(1),
+          title: z.string().min(1),
+          body: z.string(),
+          dependsOn: z.array(z.string()),
+        }),
+      )
+      .min(1),
+    /** 分割のエージェントが書いた、分け方の理由。 */
+    reason: z.string(),
+  }),
+});
+
+/** 依存先の子タスクがすべて完了したので、子タスクを実行待ちにする（PBI-27）。 */
+const TaskUnblocked = z.object({
+  type: z.literal("TaskUnblocked"),
+  payload: z.object({}),
+});
+
+/** 子タスクがすべて完了（中止を認めたものを含む）したので、タスク分割の工程を完了にする（PBI-27）。 */
+const SplitCompleted = z.object({
+  type: z.literal("SplitCompleted"),
+  payload: z.object({}),
 });
 
 /**
@@ -257,6 +309,8 @@ const TaskPaused = z.object({
      * （デーモンを再起動しても追えるよう、作業履歴に記録する）。
      */
     unstoppedRuns: z.array(z.string()).optional(),
+    /** 中止された子タスク（reason が child_cancelled のとき）。再開すると、中止を認めたことになる。 */
+    cancelledChildren: z.array(z.string()).optional(),
   }),
 });
 
@@ -661,6 +715,9 @@ const TaskEscalated = z.object({
 /** 作業履歴に書けるイベント（追加する前の形）。 */
 export const EventInput = z.discriminatedUnion("type", [
   TaskCreated,
+  TaskSplit,
+  TaskUnblocked,
+  SplitCompleted,
   StepsChosen,
   AgentRunStarted,
   AgentRunCompleted,

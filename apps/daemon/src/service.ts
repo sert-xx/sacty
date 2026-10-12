@@ -77,6 +77,7 @@ import {
 import type { ProjectStore } from "./projects.js";
 import {
   allowedPlans,
+  buildChildBody,
   buildFinalReviewPrompt,
   buildGuardianPrompt,
   buildInvestigationComment,
@@ -92,6 +93,7 @@ import {
   extractFinalReview,
   extractReviewComments,
   extractRework,
+  extractSplitPlan,
   extractStepPlan,
   extractVerdict,
   investigationMarker,
@@ -948,7 +950,9 @@ export class TaskService {
           // 完了した調査の結果を、取り込み元の Issue に返す（PBI-18）
           awaitingIssueComment(t) ||
           // 書いたレビューを、対象の PR に投稿する（PBI-19）
-          awaitingReviewPost(t),
+          awaitingReviewPost(t) ||
+          // 分割した子タスクを作る・始める、子タスクがすべて終わったら完了にする（PBI-27）
+          this.splitPending(t),
       )
       .filter((t) => !this.cancelling.has(t.id) && !this.pauseRequested.has(t.id))
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
@@ -1236,6 +1240,7 @@ export class TaskService {
     if (initial && awaitingVerification(initial)) return this.verify(initial);
     if (initial && awaitingIssueComment(initial)) return this.commentInvestigation(initial);
     if (initial && awaitingReviewPost(initial)) return this.postReview(initial);
+    if (initial && this.splitPending(initial)) return this.settleSplit(initial);
     if (initial?.status !== "queued") return;
     const config = this.deps.config();
     if (!config.ok) return; // 設定の問題は status() で画面に出す。タスクは実行待ちのまま。
@@ -1523,6 +1528,53 @@ export class TaskService {
     }
 
     const latest = this.mustGet(task.id);
+    // タスク分割は、子タスクの一覧を確かめて記録し、子タスクを作る（PBI-27）
+    if (step === "split") {
+      const plan = extractSplitPlan(outcome.output);
+      const run = { runId, step, agentId: agent.id, costUsd, estimated, usage: outcome.usage };
+      if (!plan.ok) {
+        this.append(latest, [
+          {
+            actor: "sacty",
+            event: {
+              type: "AgentRunFailed",
+              payload: { ...run, reason: "error", message: plan.message },
+            },
+          },
+          { actor: "sacty", event: { type: "TaskPaused", payload: { reason: "error" } } },
+        ]);
+        this.warnIfNeeded(this.mustGet(task.id));
+        return;
+      }
+      const ids = new Map(plan.children.map((c) => [c.key, randomUUID()]));
+      const titles = new Map(plan.children.map((c) => [c.key, c.title]));
+      const split = this.append(latest, [
+        {
+          actor: "agent",
+          event: {
+            type: "AgentRunCompleted",
+            payload: { ...run, authMode: agent.auth.mode, output: outcome.output },
+          },
+        },
+        {
+          actor: "agent",
+          event: {
+            type: "TaskSplit",
+            payload: {
+              reason: plan.reason,
+              children: plan.children.map((c) => ({
+                taskId: ids.get(c.key) ?? "",
+                title: c.title,
+                body: buildChildBody(latest, c, titles),
+                dependsOn: c.dependsOn.map((d) => ids.get(d) ?? ""),
+              })),
+            },
+          },
+        },
+      ]);
+      this.checkBudget(split);
+      return this.settleSplit(this.mustGet(task.id));
+    }
     const extracted = extractBlocks(
       outcome.output,
       new Set(latest.remarks.filter((r) => r.step === step && !r.voided).map((r) => r.id)),
@@ -1894,6 +1946,9 @@ export class TaskService {
     if (task.status === "awaiting_approval" || task.status === "escalated") {
       throw new InvalidOperationError(message("pause.awaitingPerson"));
     }
+    if (task.status === "blocked" || task.status === "waiting_children") {
+      throw new InvalidOperationError(message("pause.waitingTasks"));
+    }
     const judging = openProposal(task);
     if (judging && !judging.judgement) {
       throw new InvalidOperationError(message("pause.guardianJudging"));
@@ -2082,12 +2137,111 @@ export class TaskService {
           });
         }
       }
-      return this.append(this.mustGet(id), [
+      const cancelled = this.append(this.mustGet(id), [
         { actor: "person", event: { type: "TaskCancelled", payload: { cleanup } } },
       ]);
+      // 分割したタスクを中止したら、終わっていない子タスクも中止する（PBI-27）
+      for (const child of cancelled.split?.children ?? []) {
+        const current = this.tasks.get(child.taskId);
+        if (!current || current.status === "cancelled" || isCompleted(current)) continue;
+        await this.cancel(child.taskId).catch(() => {});
+      }
+      return this.mustGet(id);
     } finally {
       this.cancelling.delete(id);
       this.pauseRequested.delete(id);
+    }
+  }
+
+  /** 子タスクが片付いたか（完了したか、人間が中止を認めたか）。PBI-27 */
+  private childSettled(parent: Task, childId: string): boolean {
+    const child = this.tasks.get(childId);
+    if (child && isCompleted(child)) return true;
+    return parent.split?.acceptedCancellations.includes(childId) ?? false;
+  }
+
+  /** 中止されたが、まだ人間が認めていない子タスク。 */
+  private unacceptedCancellations(parent: Task): string[] {
+    return (parent.split?.children ?? [])
+      .filter((c) => this.tasks.get(c.taskId)?.status === "cancelled")
+      .filter((c) => !parent.split?.acceptedCancellations.includes(c.taskId))
+      .map((c) => c.taskId);
+  }
+
+  /** 子タスクの完了を待っている親タスクに、sacty が進めることがあるか（PBI-27）。 */
+  private splitPending(task: Task): boolean {
+    if (task.status !== "waiting_children" || !task.split) return false;
+    const { children } = task.split;
+    return (
+      children.some((c) => !this.tasks.has(c.taskId)) ||
+      this.unacceptedCancellations(task).length > 0 ||
+      children.every((c) => this.childSettled(task, c.taskId)) ||
+      children.some(
+        (c) =>
+          this.tasks.get(c.taskId)?.status === "blocked" &&
+          c.dependsOn.every((d) => this.childSettled(task, d)),
+      )
+    );
+  }
+
+  /**
+   * 分割したタスクを進める（PBI-27）。まだ作っていない子タスクを作り、中止された子タスクがあれば
+   * 親を止めて人間の判断を待ち、依存先が片付いた子タスクを実行待ちにし、すべて片付いたら完了にする。
+   */
+  private settleSplit(parent: Task): void {
+    const split = parent.split;
+    if (parent.status !== "waiting_children" || !split) return;
+    const config = this.deps.config();
+    const budgetCapUsd = config.ok ? config.config.budgetPerTaskUsd : DEFAULT_BUDGET_USD;
+    const repo = parent.repo ?? parent.source?.repo;
+    for (const child of split.children) {
+      if (this.tasks.has(child.taskId)) continue;
+      this.append({ id: child.taskId, projectId: parent.projectId }, [
+        {
+          actor: "sacty",
+          event: {
+            type: "TaskCreated",
+            payload: {
+              title: child.title,
+              body: child.body,
+              start: "split",
+              budgetCapUsd,
+              ...(repo ? { repo } : {}),
+              parent: { taskId: parent.id, dependsOn: child.dependsOn },
+            },
+          },
+        },
+      ]);
+    }
+    const cancelled = this.unacceptedCancellations(parent);
+    if (cancelled.length > 0) {
+      const titles = split.children
+        .filter((c) => cancelled.includes(c.taskId))
+        .map((c) => `「${c.title}」`)
+        .join("・");
+      this.append(parent, [
+        {
+          actor: "sacty",
+          event: {
+            type: "TaskPaused",
+            payload: {
+              reason: "child_cancelled",
+              message: message("split.childCancelled", { titles }),
+              cancelledChildren: cancelled,
+            },
+          },
+        },
+      ]);
+      return;
+    }
+    for (const child of split.children) {
+      const current = this.tasks.get(child.taskId);
+      if (current?.status !== "blocked") continue;
+      if (!child.dependsOn.every((d) => this.childSettled(parent, d))) continue;
+      this.append(current, [{ actor: "sacty", event: { type: "TaskUnblocked", payload: {} } }]);
+    }
+    if (split.children.every((c) => this.childSettled(parent, c.taskId))) {
+      this.append(parent, [{ actor: "sacty", event: { type: "SplitCompleted", payload: {} } }]);
     }
   }
 

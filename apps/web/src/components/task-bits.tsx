@@ -34,6 +34,8 @@ export async function StepChips({ task }: { task: Task }) {
 }
 
 const STATUS_STYLE: Record<Task["status"], { text: string; dot: string }> = {
+  blocked: { text: "text-muted-foreground", dot: "bg-muted-foreground/60" },
+  waiting_children: { text: "text-accent-foreground", dot: "bg-primary/60" },
   queued: { text: "text-muted-foreground", dot: "bg-muted-foreground/60" },
   running: { text: "text-accent-foreground", dot: "bg-primary" },
   idle: { text: "text-muted-foreground", dot: "bg-muted-foreground/60" },

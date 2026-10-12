@@ -9,7 +9,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { EventInput } from "@sacty/core";
+import type { EventInput, Task } from "@sacty/core";
 import { isCompleted, MVP_STEPS, message, renderMessage } from "@sacty/core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { SqliteActivityStore } from "./activity.js";
@@ -4867,5 +4867,190 @@ describe("API", () => {
     const app = createApp(makeService(activity).service, token);
     expect((await app.request("/api/tasks/nope", { headers: auth })).status).toBe(404);
     activity.close();
+  });
+});
+
+describe("タスク分割（PBI-27）", () => {
+  const out = (text: string): AgentOutcome => ({
+    kind: "completed",
+    output: text,
+    usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 1 },
+  });
+  const promptOf = (executor: FakeExecutor, i: number) =>
+    executor.calls[i]?.command.join(" ") ?? "";
+  const design = out(
+    '# 設計\n\n```json\n{"sacty-test-viewpoints": [{"title": "t", "input": "i", "expected": "e"}]}\n```',
+  );
+  const splitOutput = (children: unknown[]) =>
+    out(
+      `分け方\n\n\`\`\`json\n${JSON.stringify({ "sacty-split": { reason: "機能ごとに分ける", children } })}\n\`\`\``,
+    );
+  const twoChildren = [
+    { key: "A", title: "決済の API", body: "- API を作る", dependsOn: [] },
+    { key: "B", title: "決済の画面", body: "- 画面を作る", dependsOn: ["A"] },
+  ];
+  /** 親は分割、子は調査だけ（承認で完了する）を選ぶ。 */
+  const planner = async (task: Task) =>
+    task.parent
+      ? {
+          steps: ["investigate" as const],
+          plan: "investigate" as const,
+          reason: "子",
+          fallback: false,
+          costUsd: 0,
+          estimated: false,
+        }
+      : {
+          steps: ["requirements" as const, "design" as const, "split" as const],
+          plan: "split" as const,
+          reason: "大きいので分ける",
+          fallback: false,
+          costUsd: 0,
+          estimated: false,
+        };
+
+  /** 親タスクを、設計の承認とタスク分割の実行まで進める。 */
+  async function splitParent(outcomes: AgentOutcome[]) {
+    const activity = new SqliteActivityStore(dbPath);
+    const made = makeService(activity, [out("# 要求要件"), design, ...outcomes], { planner });
+    const { service } = made;
+    const { id } = service.createTask({ projectId: "default", title: "決済をまるごと作る" });
+    await service.runNext(id);
+    service.approve(id, { step: "requirements", submission: 1 });
+    await service.runNext(id);
+    service.approve(id, { step: "design", submission: 1 });
+    expect(service.queuedTaskIds()).toEqual([id]);
+    await service.runNext(id);
+    return { ...made, activity, id };
+  }
+  const childrenOf = (service: TaskService, id: string) =>
+    (service.get(id)?.task.split?.children ?? []).map((c) => service.get(c.taskId)?.task);
+
+  it("設計の承認の後に子タスクを作り、依存の順に進めて、子がすべて完了したら親も完了する", async () => {
+    const { service, executor, activity, id } = await splitParent([
+      splitOutput(twoChildren),
+      out("# A の調査"),
+      out("# B の調査"),
+    ]);
+    // 分割のエージェントには、承認済みの要求要件・設計を読み取り専用で渡す
+    expect(promptOf(executor, 2)).toContain("タスク分割エージェント");
+    expect(promptOf(executor, 2)).toContain("# 設計");
+    expect(executor.readOnly[2]).toBe(true);
+
+    const parent = service.get(id)?.task;
+    expect(parent?.status).toBe("waiting_children");
+    expect(parent?.split?.reason).toBe("機能ごとに分ける");
+    const [a, b] = childrenOf(service, id);
+    expect(a).toMatchObject({ title: "決済の API", start: "split", status: "queued" });
+    expect(a?.parent).toEqual({ taskId: id, dependsOn: [] });
+    // 依存のある子は、依存先が完了するまで待つ
+    expect(b).toMatchObject({ title: "決済の画面", status: "blocked" });
+    expect(b?.parent).toEqual({ taskId: id, dependsOn: [a?.id] });
+    // 子の内容には、親の承認済みの要求要件と設計を添える
+    expect(b?.body).toMatch(/- 画面を作る[\s\S]*「決済の API」[\s\S]*# 要求要件[\s\S]*# 設計/);
+    expect(service.queuedTaskIds()).toEqual([a?.id]);
+
+    await service.runNext(a?.id ?? "");
+    // 子タスクは分割を選べない（オーケストレーターに渡す候補にも出さない）
+    service.approve(a?.id ?? "", { step: "investigate", submission: 1 });
+    expect(service.queuedTaskIds()).toEqual([id]);
+    await service.runNext(id);
+    expect(service.get(b?.id ?? "")?.task.status).toBe("queued");
+    expect(service.get(id)?.task.status).toBe("waiting_children");
+
+    await service.runNext(b?.id ?? "");
+    service.approve(b?.id ?? "", { step: "investigate", submission: 1 });
+    await service.runNext(id);
+    const done = service.get(id)?.task;
+    expect(done && isCompleted(done)).toBe(true);
+    expect(service.queuedTaskIds()).toEqual([]);
+    activity.close();
+  });
+
+  it("分割案が不正なら理由を記録して止め、再開すると分割をやり直す", async () => {
+    const { service, activity, id } = await splitParent([
+      splitOutput([twoChildren[0]]),
+      splitOutput([
+        { key: "A", title: "a", body: "", dependsOn: ["B"] },
+        { key: "B", title: "b", body: "", dependsOn: ["A"] },
+      ]),
+      splitOutput(twoChildren),
+    ]);
+    const failed = () =>
+      (service.get(id)?.activity ?? [])
+        .filter((e) => e.type === "AgentRunFailed")
+        .map((e) => (e.type === "AgentRunFailed" ? renderMessage(e.payload.message, "ja") : ""));
+    expect(service.get(id)?.task.status).toBe("paused");
+    expect(failed()).toEqual([
+      expect.stringMatching(/子タスクは2〜10件にしてください（分割案は1件）/),
+    ]);
+    service.resume(id, {});
+    await service.runNext(id);
+    expect(failed()[1]).toMatch(/依存が循環しています（A, B）/);
+    expect(service.get(id)?.task.split).toBeUndefined();
+    service.resume(id, {});
+    await service.runNext(id);
+    expect(service.get(id)?.task.split?.children).toHaveLength(2);
+    activity.close();
+  });
+
+  it("子タスクが中止されたら親は人間の判断を待ち、再開すると中止を認めて依存する子も始める", async () => {
+    const { service, activity, id } = await splitParent([splitOutput(twoChildren)]);
+    const [a, b] = childrenOf(service, id);
+    await service.cancel(a?.id ?? "");
+    expect(service.queuedTaskIds()).toEqual([id]);
+    await service.runNext(id);
+    const paused = service.get(id)?.task;
+    expect(paused?.status).toBe("paused");
+    expect(paused?.pausedReason).toBe("child_cancelled");
+    expect(renderMessage(paused?.pausedMessage, "ja")).toContain("「決済の API」");
+    // 依存先が中止されたままでは、依存する子は始めない
+    expect(service.get(b?.id ?? "")?.task.status).toBe("blocked");
+
+    service.resume(id, {});
+    expect(service.get(id)?.task.status).toBe("waiting_children");
+    await service.runNext(id);
+    expect(service.get(b?.id ?? "")?.task.status).toBe("queued");
+    expect(service.get(id)?.task.split?.acceptedCancellations).toEqual([a?.id]);
+    activity.close();
+  });
+
+  it("親を中止すると、終わっていない子タスクも中止する。待っている間は一時停止できない", async () => {
+    const { service, activity, id } = await splitParent([splitOutput(twoChildren)]);
+    await expect(service.pause(id)).rejects.toThrow(/完了を待っている/);
+    const [a] = childrenOf(service, id);
+    await expect(service.pause(a?.id ?? "")).resolves.toBeDefined();
+    await service.cancel(id);
+    expect(childrenOf(service, id).map((c) => c?.status)).toEqual(["cancelled", "cancelled"]);
+    // 親の中止に続く子の中止では、親を止めない（親は中止のまま）
+    expect(service.get(id)?.task.status).toBe("cancelled");
+    expect(service.queuedTaskIds()).toEqual([]);
+    activity.close();
+  });
+
+  it("子タスクを作る前にデーモンが止まっても、再起動の後に同じ ID で作る", async () => {
+    const { service, activity, id } = await splitParent([splitOutput(twoChildren)]);
+    const ids = service.get(id)?.task.split?.children.map((c) => c.taskId);
+    activity.close();
+
+    // 子タスクの TaskCreated だけが無い作業履歴を作る
+    const raw = new SqliteActivityStore(dbPath);
+    const kept = raw.all().filter((e) => !(e.type === "TaskCreated" && ids?.includes(e.taskId)));
+    raw.close();
+    rmSync(dbPath);
+    const fresh = new SqliteActivityStore(dbPath);
+    for (const e of kept) {
+      fresh.append({
+        taskId: e.taskId,
+        projectId: e.projectId,
+        events: [{ actor: e.actor, event: { type: e.type, payload: e.payload } as EventInput }],
+      });
+    }
+    const { service: restarted } = makeService(fresh, [], { planner });
+    expect(restarted.get(ids?.[0] ?? "")).toBeUndefined();
+    expect(restarted.queuedTaskIds()).toEqual([id]);
+    await restarted.runNext(id);
+    expect(childrenOf(restarted, id).map((c) => c?.id)).toEqual(ids);
+    fresh.close();
   });
 });

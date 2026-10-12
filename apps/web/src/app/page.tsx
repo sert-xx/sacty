@@ -14,6 +14,7 @@ import {
   listTasks,
 } from "@/lib/daemon";
 import { isWorking, needsPerson, personAction, statusText } from "@/lib/labels";
+import { withSubtasks } from "@/lib/subtasks";
 
 export default async function TasksPage() {
   const m = (await getMessages()).tasks;
@@ -204,9 +205,15 @@ async function TaskTable() {
           </tr>
         </thead>
         <tbody>
-          {tasks.map((task) => (
+          {/* 分割で作った子タスクは、親のすぐ下に字下げして出す（PBI-27） */}
+          {withSubtasks(tasks).map(({ task, child }) => (
             <tr key={task.id} className="border-t border-border hover:bg-muted">
-              <td className="px-5 py-3.5">
+              <td className={child ? "py-3.5 pr-5 pl-10" : "px-5 py-3.5"}>
+                {child && (
+                  <span aria-hidden="true" className="mr-1.5 text-muted-foreground">
+                    ↳
+                  </span>
+                )}
                 <Link
                   href={`/tasks/${task.id}`}
                   className="font-medium text-foreground hover:underline"
