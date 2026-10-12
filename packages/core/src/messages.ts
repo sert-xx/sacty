@@ -77,6 +77,11 @@ const PARAMS = {
   "input.invalid": null,
   "input.secretName": null,
   "input.secretRef": null,
+  "input.invalidUrl": null,
+  "input.channelRequired": null,
+  // Slack の通知（PBI-38）
+  "notify.failed": z.object({ project: z.string(), detail: TextParam }),
+  "notify.notConfigured": null,
   "input.allowRule": null,
   "input.platformName": null,
   "input.envName": null,
@@ -353,6 +358,11 @@ const ja: MessageDictionary = {
     "社内 PF の名前は、英小文字・数字・ハイフンで書いてください（先頭は英小文字か数字）。",
   "input.allowRule":
     "使える API は「メソッド パス」で書いてください（例 GET /api/v1/tickets/**。メソッドは GET・POST・PUT・PATCH・DELETE・HEAD）。",
+  "input.invalidUrl": "URL（http または https）を書いてください。",
+  "input.channelRequired": "チャンネルを書いてください。",
+  "notify.failed": ({ project, detail }, text) =>
+    `プロジェクト「${project}」の Slack の通知を送れませんでした：${text(detail)}（タスクは止めていません）`,
+  "notify.notConfigured": "このプロジェクトには、通知先が設定されていません。",
   "input.secretRef":
     "秘密情報は、キーチェーンの名前（英数字と . _ -）か、1Password の参照（op://保管庫/アイテム/フィールド）で書いてください。",
   "input.envName": "環境変数の名前が正しくありません。",
@@ -579,6 +589,11 @@ const en: MessageDictionary = {
     "Write an internal platform name in lowercase letters, digits, and hyphens (starting with a letter or digit).",
   "input.allowRule":
     'Write an allowed API as "METHOD path" (e.g. GET /api/v1/tickets/**; methods: GET, POST, PUT, PATCH, DELETE, HEAD).',
+  "input.invalidUrl": "Write a URL (http or https).",
+  "input.channelRequired": "Write a channel.",
+  "notify.failed": ({ project, detail }, text) =>
+    `Could not send the Slack notification for the project "${project}": ${text(detail)} (tasks keep running)`,
+  "notify.notConfigured": "No notification destination is set for this project.",
   "input.secretRef":
     "Write a secret as a keychain name (letters, digits, and . _ -) or a 1Password reference (op://vault/item/field).",
   "input.envName": "The environment variable name is not valid.",

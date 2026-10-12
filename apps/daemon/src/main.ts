@@ -12,6 +12,7 @@ import { GhCliAuth } from "./gh.js";
 import { GitHubIssueSearch, GitHubPullRequests } from "./github.js";
 import { HostMcpServers } from "./host-mcp.js";
 import { IssueIntake } from "./intake.js";
+import { SlackNotifier } from "./notifier.js";
 import { PlatformCredentials } from "./platforms.js";
 import { PullRequestWatcher } from "./pr-watcher.js";
 import { SqliteProjectStore } from "./projects.js";
@@ -101,6 +102,13 @@ const service = new TaskService({
   gateway,
   platformProblems: (names) => credentials.unavailable(names),
   hostMcpProblems: () => hostMcp.problems(),
+  // 人間の出番を Slack に通知する（PBI-38）。リンクは、起動した画面の URL
+  notifier: new SlackNotifier({
+    project: (id) => projects.get(id),
+    secrets,
+    webUrl: process.env.SACTY_WEB_URL ?? "http://127.0.0.1:4700",
+    log: (line) => console.warn(line),
+  }),
 });
 service.recoverInterrupted();
 service.queueWaitingSteps();

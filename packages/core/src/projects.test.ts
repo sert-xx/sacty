@@ -156,3 +156,44 @@ describe("プロジェクト定義のエクスポート・インポート（PBI-
     ).toThrow();
   });
 });
+
+describe("通知先（PBI-38）", () => {
+  it("Slack API の形と Incoming Webhook を受け付け、秘密情報は名前か参照だけ。エクスポートにも含める", () => {
+    const api = ProjectDefinition.parse({
+      name: "決済",
+      notification: {
+        kind: "slack-api",
+        url: "https://slack-proxy-b.example.com/api/chat.postMessage",
+        channel: "#sacty",
+      },
+    });
+    expect(api.notification).toEqual({
+      kind: "slack-api",
+      url: "https://slack-proxy-b.example.com/api/chat.postMessage",
+      channel: "#sacty",
+      language: "ja",
+    });
+    expect(
+      ProjectDefinition.safeParse({
+        name: "x",
+        notification: { kind: "slack-webhook", webhook: "op://Work/Slack/webhook", language: "en" },
+      }).success,
+    ).toBe(true);
+    // 秘密情報の値（URL）をそのまま書いたら受け付けない
+    expect(
+      ProjectDefinition.safeParse({
+        name: "x",
+        notification: { kind: "slack-webhook", webhook: "https://hooks.slack.com/services/T/B/X" },
+      }).success,
+    ).toBe(false);
+    expect(
+      ProjectDefinition.safeParse({
+        name: "x",
+        notification: { kind: "slack-api", url: "not a url", channel: "#a" },
+      }).success,
+    ).toBe(false);
+    const exported = exportProject({ ...api, targets: [], id: "p", createdAt: "", updatedAt: "" });
+    expect(exported.project.notification).toEqual(api.notification);
+    expect(ProjectExport.parse(exported).project.notification).toEqual(api.notification);
+  });
+});
