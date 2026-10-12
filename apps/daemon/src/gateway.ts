@@ -116,7 +116,16 @@ export class AiGateway {
 
   /** 127.0.0.1 で待ち受ける（port 0 なら空いているポート）。 */
   async listen(port = 0): Promise<number> {
-    const server = createServer((req, res) => void this.handle(req, res));
+    const server = createServer((req, res) => {
+      // 接続の失敗（本文の途中でコンテナを止めたなど）は、そのリクエストだけの終わりとして扱う。
+      // 例外やエラーのイベントを取りこぼすと、デーモン全体が終わってしまう（PBI-37 レビュー指摘）
+      req.on("error", () => {});
+      res.on("error", () => {});
+      this.handle(req, res).catch(() => {
+        if (!res.headersSent && !res.destroyed) fail(res, 502, "sacty gateway: request failed");
+        else res.destroy();
+      });
+    });
     await new Promise<void>((resolve, reject) => {
       server.once("error", reject);
       server.listen(port, "127.0.0.1", () => resolve());
@@ -168,7 +177,13 @@ export class AiGateway {
     res.on("close", () => {
       if (!res.writableFinished) aborter.abort();
     });
-    const body = await readBody(req);
+    let body: Buffer;
+    try {
+      body = await readBody(req);
+    } catch {
+      // 本文を受け取り終える前に、コンテナとの接続が切れた
+      return;
+    }
     const headers = new Headers();
     for (const [name, value] of Object.entries(req.headers)) {
       if (value === undefined || DROP_REQUEST.has(name)) continue;
@@ -242,6 +257,10 @@ function readBody(req: IncomingMessage): Promise<Buffer> {
     req.on("data", (chunk: Buffer) => chunks.push(chunk));
     req.on("end", () => resolve(Buffer.concat(chunks)));
     req.on("error", reject);
+    // 本文の途中で切れたとき、error を出さずに aborted・close だけになることもある
+    req.on("close", () => {
+      if (!req.complete) reject(new Error("the request was aborted"));
+    });
   });
 }
 

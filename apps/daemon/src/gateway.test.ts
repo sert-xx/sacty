@@ -1,3 +1,4 @@
+import { connect } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
 import { AiGateway, type GatewayDeps, type RetryPolicy, retryAfterMs } from "./gateway.js";
 
@@ -233,6 +234,31 @@ describe("ホストのゲートウェイ（PBI-37）", () => {
     // 接続が切れた後に、上流へ送り直していない
     expect(g.calls).toHaveLength(1);
     waiting?.();
+  });
+
+  it("本文を受け取り終える前に接続が切れても、デーモンは終わらず、次のリクエストを受け付ける（レビュー指摘）", async () => {
+    const g = await start([json(200, { output: "ok" })]);
+    const socket = connect(g.port, "127.0.0.1");
+    await new Promise<void>((resolve) => socket.once("connect", () => resolve()));
+    socket.write(
+      [
+        "POST /openai/v1/responses HTTP/1.1",
+        "Host: 127.0.0.1",
+        `Authorization: Bearer ${g.run.token}`,
+        "Content-Type: application/json",
+        "Content-Length: 10000",
+        "",
+        "{",
+      ].join("\r\n"),
+    );
+    await new Promise((r) => setTimeout(r, 50));
+    socket.destroy();
+    await new Promise((r) => setTimeout(r, 50));
+    // 途中で切れたリクエストは、上流に送っていない
+    expect(g.calls).toHaveLength(0);
+    const res = await g.call();
+    expect(res.status).toBe(200);
+    expect(g.calls).toHaveLength(1);
   });
 
   it("Retry-After は秒と HTTP の日時を読む", () => {
