@@ -163,13 +163,11 @@ describe("コンテキストリポジトリの合成（PBI-6）", () => {
       fetcher,
       { repo: "https://example.com/team.git" },
       "codex",
-      "/tmp/sacty-codex-home",
+      "/.codex",
     );
     const agents = readFileSync(join(codex.dir, "AGENTS.md"), "utf8");
     expect(agents).toContain("チームの規約");
-    expect(agents).toContain(
-      "- release：チームのリリース手順（/tmp/sacty-codex-home/skills/release/SKILL.md）",
-    );
+    expect(agents).toContain("- release：チームのリリース手順（/.codex/skills/release/SKILL.md）");
     expect(existsSync(join(codex.dir, "CLAUDE.md"))).toBe(false);
     codex.dispose();
   });
@@ -290,7 +288,7 @@ describe("MCP サーバーの合成と変換（PBI-6b）", () => {
       new FakeFetcher({}),
       undefined,
       "codex",
-      "/tmp/sacty-codex-home",
+      "/.codex",
       undefined,
       undefined,
       hostMcp,
@@ -333,12 +331,7 @@ describe("MCP サーバーの合成と変換（PBI-6b）", () => {
   });
 
   it("Codex には config.toml を書き、秘密情報は env_vars と env_http_headers で名前だけを渡す", async () => {
-    const codex = await prepareContext(
-      fetcher(),
-      { repo: "company.git" },
-      "codex",
-      "/tmp/sacty-codex-home",
-    );
+    const codex = await prepareContext(fetcher(), { repo: "company.git" }, "codex", "/.codex");
     const toml = readFileSync(join(codex.dir, "config.toml"), "utf8");
     expect(toml).toBe(
       [
@@ -370,7 +363,7 @@ describe("MCP サーバーの合成と変換（PBI-6b）", () => {
       }),
       { repo: "x.git" },
       "codex",
-      "/tmp/sacty-codex-home",
+      "/.codex",
     );
     expect(readFileSync(join(codex.dir, "config.toml"), "utf8")).toContain(
       'args = ["a\\u007Fb\\n"]',
@@ -433,9 +426,8 @@ describe("sacty の既定のコンテキスト（PBI-24）", () => {
       undefined,
       DEFAULT_CONTEXT_DIR,
     );
-    // コンテナの中では Codex のサンドボックス（bubblewrap）を作れないので、隔離はコンテナに任せる
+    // サンドボックスはコマンドの引数で決めるので、設定には書かない（PBI-40）
     expect(parseToml(readFileSync(join(codex.dir, "config.toml"), "utf8"))).toEqual({
-      sandbox_mode: "danger-full-access",
       approvals_reviewer: "auto_review",
     });
     expect(codex.warnings).toEqual([]);
@@ -520,9 +512,9 @@ describe("エージェントの設定の合成（PBI-24）", () => {
       'sandbox_mode = "workspace-write"',
       'approval_policy = "on-request"',
       "",
-      "[sandbox_workspace_write]",
-      "network_access = false",
-      'writable_roots = ["/a", "/b"]',
+      "[shell_environment_policy]",
+      'inherit = "core"',
+      'include_only = ["/a", "/b"]',
       "",
     ].join("\n"),
     "agents/claude/settings.json": JSON.stringify({
@@ -533,6 +525,9 @@ describe("エージェントの設定の合成（PBI-24）", () => {
   const projectFiles = {
     "agents/codex/config.toml": [
       'model_reasoning_effort = "high"',
+      "",
+      "[shell_environment_policy]",
+      'include_only = ["/c"]',
       "",
       "[sandbox_workspace_write]",
       'writable_roots = ["/c"]',
@@ -562,15 +557,21 @@ describe("エージェントの設定の合成（PBI-24）", () => {
     );
     const config = parseToml(readFileSync(join(codex.dir, "config.toml"), "utf8"));
     expect(config).toEqual({
-      sandbox_mode: "workspace-write",
       model_reasoning_effort: "high",
-      sandbox_workspace_write: { network_access: false, writable_roots: ["/c"] },
+      shell_environment_policy: { inherit: "core", include_only: ["/c"] },
       // MCP は mcp.yaml から作ったものだけ
       mcp_servers: { docs: { url: "https://docs.example/mcp" } },
     });
+    // サンドボックスも sacty が決める（コンテナの中では Codex のサンドボックスを作れない。PBI-40）
     expect(codex.warnings.map(ja)).toEqual([
       expect.stringMatching(
+        /^sacty-default@\w{7} の agents\/codex\/config.toml の「sandbox_mode」は sacty が決める項目/,
+      ),
+      expect.stringMatching(
         /^sacty-default@\w{7} の agents\/codex\/config.toml の「approval_policy」は sacty が決める項目/,
+      ),
+      expect.stringMatching(
+        /^https:\/\/example.com\/p.git@\w{7} の agents\/codex\/config.toml の「sandbox_workspace_write」/,
       ),
       expect.stringMatching(
         /^https:\/\/example.com\/p.git@\w{7} の agents\/codex\/config.toml の「mcp_servers」/,

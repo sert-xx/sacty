@@ -11,7 +11,11 @@ export type AgentRole = StepKey | "guardian" | "final-review" | "rework" | "orch
 
 /** コンテナの中での設定ディレクトリ。毎回空の場所を使い、ホストの設定やメモリーを読ませない。 */
 export const CONTAINER_CLAUDE_CONFIG_DIR = "/tmp/sacty-claude-config";
-export const CONTAINER_CODEX_HOME = "/tmp/sacty-codex-home";
+/**
+ * Codex は、CODEX_HOME が一時ディレクトリ（/tmp）の下にあると、サンドボックスの補助のプログラムを用意せず、
+ * コマンドの実行で `--sandbox-policy-cwd` を認識できずに終了することがあるので、/tmp の外に置く（PBI-40）。
+ */
+export const CONTAINER_CODEX_HOME = "/.codex";
 
 /** コンテナで実行するコマンドと、コンテナに渡す環境変数・ファイル。 */
 export type Invocation = {
@@ -176,7 +180,17 @@ export async function buildInvocation(
       } else {
         throw new Error(`codex does not support auth mode ${auth.mode}`);
       }
-      const command = ["codex", "exec", "--json", "--skip-git-repo-check"];
+      // Codex の中のサンドボックス（Linux では bubblewrap）は、権限を落とした sacty のコンテナの中では作れず、
+      // コマンドの実行が失敗する。隔離は sacty のコンテナが受け持つので、どの設定ファイル（コンテキストや
+      // 対象リポジトリの .codex/config.toml）よりも優先される引数で、サンドボックスを使わないことにする（PBI-40）
+      const command = [
+        "codex",
+        "exec",
+        "--json",
+        "--skip-git-repo-check",
+        "--sandbox",
+        "danger-full-access",
+      ];
       if (auth.mode === "bedrock") {
         // Bedrock Runtime ではホストされた Web 検索を使えないので、無効にする
         const runtime = (auth.endpoint ?? "runtime") === "runtime";

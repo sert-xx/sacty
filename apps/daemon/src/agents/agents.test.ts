@@ -69,10 +69,10 @@ describe("認証方式ごとの環境変数", () => {
       { dir: "/host/ctx", mcpServers: [], secrets: [] },
     );
     expect(codexInv.stage).toMatchObject({
-      containerDir: "/tmp/sacty-codex-home",
+      containerDir: "/.codex",
       seedDir: "/host/ctx",
     });
-    expect(codexInv.env.CODEX_HOME).toBe("/tmp/sacty-codex-home");
+    expect(codexInv.env.CODEX_HOME).toBe("/.codex");
   });
 
   it("コンテキストの MCP サーバーの秘密情報は、実行時に環境変数で渡し、Claude Code にはそのサーバーだけを使わせる（PBI-6）", async () => {
@@ -230,6 +230,8 @@ describe("認証方式ごとの環境変数", () => {
       "exec",
       "--json",
       "--skip-git-repo-check",
+      "--sandbox",
+      "danger-full-access",
       "-c",
       'model_provider="sacty-provider"',
       "-c",
@@ -300,9 +302,9 @@ describe("認証方式ごとの環境変数", () => {
       "prompt",
       secrets,
     );
-    expect(sub.env).toEqual({ CODEX_HOME: "/tmp/sacty-codex-home" });
+    expect(sub.env).toEqual({ CODEX_HOME: "/.codex" });
     expect(sub.stage).toEqual({
-      containerDir: "/tmp/sacty-codex-home",
+      containerDir: "/.codex",
       files: [{ hostPath: "/path/auth.json", name: "auth.json", syncBack: true }],
     });
   });
@@ -328,7 +330,7 @@ describe("認証方式ごとの環境変数", () => {
     const runtime = await bedrock();
     // OpenAI の API キーやサブスクリプションの認証ファイルは渡さない
     expect(runtime.env).toEqual({
-      CODEX_HOME: "/tmp/sacty-codex-home",
+      CODEX_HOME: "/.codex",
       AWS_BEARER_TOKEN_BEDROCK: "bedrock-value",
       AWS_REGION: "us-east-2",
     });
@@ -339,6 +341,8 @@ describe("認証方式ごとの環境変数", () => {
       "exec",
       "--json",
       "--skip-git-repo-check",
+      "--sandbox",
+      "danger-full-access",
       "-c",
       'model_provider="amazon-bedrock-runtime"',
       "-c",
@@ -989,7 +993,7 @@ echo $$ > "$here/run.pid"
 prev=""; host=""
 for a in "$@"; do
   if [ "$prev" = "-v" ]; then
-    case "$a" in *:/tmp/sacty-codex-home*) host="\${a%%:/tmp/sacty-codex-home*}";; esac
+    case "$a" in *:/.codex*) host="\${a%%:/.codex*}";; esac
   fi
   prev="$a"
 done
@@ -1011,9 +1015,9 @@ while true; do sleep 0.05; done
       workspaceDir: dir,
       invocation: {
         command: ["codex"],
-        env: { CODEX_HOME: "/tmp/sacty-codex-home" },
+        env: { CODEX_HOME: "/.codex" },
         stage: {
-          containerDir: "/tmp/sacty-codex-home",
+          containerDir: "/.codex",
           files: [{ hostPath: hostAuth, name: "auth.json", syncBack: true }],
         },
         parser: "codex-jsonl",
@@ -1056,7 +1060,7 @@ describe("コンテナで更新されたトークンの除去（偽のdockerコ�
 prev=""; host=""
 for a in "$@"; do
   if [ "$prev" = "-v" ]; then
-    case "$a" in *:/tmp/sacty-codex-home*) host="\${a%%:/tmp/sacty-codex-home*}";; esac
+    case "$a" in *:/.codex*) host="\${a%%:/.codex*}";; esac
   fi
   prev="$a"
 done
@@ -1076,9 +1080,9 @@ echo '{"type":"turn.completed","usage":{"input_tokens":10,"cached_input_tokens":
       workspaceDir: dir,
       invocation: {
         command: ["codex"],
-        env: { CODEX_HOME: "/tmp/sacty-codex-home" },
+        env: { CODEX_HOME: "/.codex" },
         stage: {
-          containerDir: "/tmp/sacty-codex-home",
+          containerDir: "/.codex",
           files: [{ hostPath: hostAuth, name: "auth.json", syncBack: true }],
         },
         parser: "codex-jsonl",

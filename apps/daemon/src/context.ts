@@ -362,6 +362,7 @@ function readAgentSettings(
  * - MCP は mcp.yaml から sacty が作る（秘密情報を名前で渡すため）
  * - 認証・接続先は、AI の定義と秘密情報で sacty が決める（トークンを別の宛先に送らせないため）
  * - Codex の承認の方針とプロファイルは、人のいない実行が承認待ちで止まらないように使わない
+ * - Codex のサンドボックスは、コンテナの中では作れないので使わない（隔離はコンテナが受け持つ）
  * モデルは、AI の定義に model があればコマンドの引数で渡すので、設定より優先する。
  */
 const RESERVED_SETTINGS: Record<keyof AgentSettings, { keys: string[]; env?: string[] }> = {
@@ -374,6 +375,9 @@ const RESERVED_SETTINGS: Record<keyof AgentSettings, { keys: string[]; env?: str
       "forced_chatgpt_workspace_id",
       "chatgpt_base_url",
       "approval_policy",
+      // サンドボックスは、コマンドの引数で sacty が決める（コンテナの中では Codex のサンドボックスを作れない。PBI-40）
+      "sandbox_mode",
+      "sandbox_workspace_write",
       "profile",
       "profiles",
     ],
