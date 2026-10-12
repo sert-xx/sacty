@@ -64,6 +64,7 @@ import type { TestRunner } from "./agents/test-runner.js";
 import { type AgentConfig, type ConfigResult, githubRepoOf, type SactyConfig } from "./config.js";
 import { type ContextFetcher, prepareContext } from "./context.js";
 import { errorText, MessageError } from "./errors.js";
+import type { AiGateway, GatewayStats } from "./gateway.js";
 import {
   type GitHubAccount,
   type GitHubAuth,
@@ -168,6 +169,8 @@ export type ServiceDeps = {
   tests: TestRunner;
   /** タスクごとの作業領域を作る場所。 */
   workspaceRoot: string;
+  /** ホストのゲートウェイ（PBI-37）。無ければ、ゲートウェイ経由のエージェントは実行できない。 */
+  gateway?: Pick<AiGateway, "containerOrigin" | "register">;
 };
 
 export type DaemonStatus = {
@@ -2585,7 +2588,19 @@ export class TaskService {
     // 実行に渡した秘密情報。作業履歴に書く前に、出力やエラー文から取り除く。
     const usedSecrets: string[] = [];
     let outcome: AgentOutcome;
+    let gatewayRun: ReturnType<NonNullable<ServiceDeps["gateway"]>["register"]> | undefined;
     try {
+      // ゲートウェイ経由なら、API キーはゲートウェイに渡し、コンテナには実行ごとのトークンだけを渡す（PBI-37）
+      const auth = run.agent.auth;
+      let gateway: { origin: string; token: string } | undefined;
+      if (run.agent.via_gateway && auth.mode === "bedrock") {
+        if (!this.deps.gateway) throw new MessageError(message("gateway.unavailable"));
+        const apiKey = await this.deps.secrets.get(auth.secret);
+        usedSecrets.push(apiKey);
+        gatewayRun = this.deps.gateway.register({ origin: bedrockOrigin(auth), apiKey });
+        usedSecrets.push(gatewayRun.token);
+        gateway = { origin: this.deps.gateway.containerOrigin(), token: gatewayRun.token };
+      }
       const invocation = await buildInvocation(
         run.agent,
         run.prompt,
@@ -2593,6 +2608,7 @@ export class TaskService {
         (value) => usedSecrets.push(value),
         run.role,
         run.context,
+        gateway,
       );
       mkdirSync(run.workspaceDir, { recursive: true });
       // 準備の間（clone や秘密情報の取り出し）に人間が止めたなら、コンテナを起動しない
@@ -2622,6 +2638,13 @@ export class TaskService {
         reason: error instanceof SecretNotFoundError ? "auth" : "error",
         message: errorText(error),
       };
+    } finally {
+      gatewayRun?.close();
+    }
+    // ゲートウェイがリトライしたら、どの実行のものかを作業履歴に残す（PBI-37）
+    const retried = gatewayRun?.stats();
+    if (retried && retried.retries + (retried.gaveUp ? 1 : 0) > 0) {
+      this.recordRetries(run.runId, run.agent.id, retried);
     }
     outcome =
       outcome.kind === "failed"
@@ -2631,6 +2654,19 @@ export class TaskService {
     const estimated = run.agent.auth.mode === "subscription" || run.agent.auth.mode === "stub";
     const costUsd = outcome.usage ? computeCostUsd(outcome.usage, run.agent.price) : 0;
     return { outcome, costUsd, estimated };
+  }
+
+  /** ゲートウェイのリトライを、実行中のタスクの作業履歴に記録する（PBI-37）。 */
+  private recordRetries(runId: string, agentId: string, stats: GatewayStats): void {
+    const taskId = this.runningTask.getStore();
+    const task = taskId ? this.tasks.get(taskId) : undefined;
+    if (!task || task.status === "cancelled") return;
+    this.append(task, [
+      {
+        actor: "sacty",
+        event: { type: "AiRequestsRetried", payload: { runId, agentId, ...stats } },
+      },
+    ]);
   }
 
   /** 承認ゲートのある工程なら、人間の承認待ちで止めるイベント。 */
@@ -3059,4 +3095,11 @@ export function awaitingIssueComment(task: Task): boolean {
     task.source !== undefined &&
     !task.issueComment
   );
+}
+
+/** Bedrock の OpenAI 互換の API の起点（Codex の組み込みのプロバイダーと同じ。PBI-37）。 */
+function bedrockOrigin(auth: { region: string; endpoint?: "runtime" | "mantle" }): string {
+  return (auth.endpoint ?? "runtime") === "runtime"
+    ? `https://bedrock-runtime.${auth.region}.amazonaws.com`
+    : `https://bedrock-mantle.${auth.region}.api.aws`;
 }

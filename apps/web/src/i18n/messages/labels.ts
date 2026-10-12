@@ -59,7 +59,7 @@ const ja = {
   pauseHelp: {
     budget: "予算の上限に達したため止まっています。作業中のものは残っています。",
     usage_limit:
-      "サブスクリプションの利用上限に達したため止まっています。上限が戻ってから再開すると、止まった工程を実行し直します。",
+      "AI の利用上限（サブスクリプションの上限や、API のレート制限）に達したため止まっています。上限が戻ってから再開すると、止まった工程を実行し直します。",
     auth: "認証に失敗したため止まっています。トークンやAPIキーを確認してから再開してください。",
     error: "エラーで止まっています。原因を確認してから再開すると、止まった工程を実行し直します。",
     verification:
@@ -168,6 +168,8 @@ const ja = {
       "最終レビューで合格にした成果物が差し戻されたため、ゴールガーディアンの見逃しとして記録",
     FinalReviewFailed: (message: string, cost: string) => `${message}（${cost}）`,
     OrchestratorFailed: (message: string, cost: string) => `${message}（${cost}）`,
+    AiRequestsRetried: (retries: number, seconds: number, statuses: string, gaveUp: boolean) =>
+      `ゲートウェイが AI の呼び出しを${retries}回リトライ（${statuses}・合計${seconds}秒待った）${gaveUp ? "→ 上限に達したため、あきらめた" : ""}`,
     StepQueued: (step: string) => `${step}を実行待ちにした（実行できるようになったため）`,
     TaskSplit: (count: number, reason: string) =>
       `子タスク${count}件に分割${reason ? `（${reason}）` : ""}`,
@@ -247,7 +249,7 @@ const en: LabelMessages = {
   pauseHelp: {
     budget: "The task reached its budget cap and is paused. Its work is kept.",
     usage_limit:
-      "The subscription reached its usage limit. Resume once the limit resets to rerun the stopped step.",
+      "The AI reached its usage limit (a subscription limit or an API rate limit). Resume once the limit resets to rerun the stopped step.",
     auth: "Authentication failed. Check the token or API key, then resume.",
     error: "The task stopped on an error. Check the cause, then resume to rerun the stopped step.",
     verification:
@@ -351,6 +353,8 @@ const en: LabelMessages = {
       "A deliverable that passed the final review was sent back; recorded as a Goal Guardian miss",
     FinalReviewFailed: (message, cost) => `${message} (${cost})`,
     OrchestratorFailed: (message, cost) => `${message} (${cost})`,
+    AiRequestsRetried: (retries, seconds, statuses, gaveUp) =>
+      `The gateway retried the AI call ${retries} time${retries === 1 ? "" : "s"} (${statuses}; waited ${seconds}s in total)${gaveUp ? " → gave up at the limit" : ""}`,
     StepQueued: (step) => `${step} queued (it can run now)`,
     TaskSplit: (count, reason) =>
       `Split into ${count} subtask${count === 1 ? "" : "s"}${reason ? ` (${reason})` : ""}`,

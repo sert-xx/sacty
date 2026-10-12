@@ -7,6 +7,7 @@ import { DockerExecutor } from "./agents/docker.js";
 import { DockerTestRunner } from "./agents/test-runner.js";
 import { loadConfig, resolveHome } from "./config.js";
 import { DEFAULT_CONTEXT_DIR, GitContextFetcher } from "./context.js";
+import { AiGateway } from "./gateway.js";
 import { GhCliAuth } from "./gh.js";
 import { GitHubIssueSearch, GitHubPullRequests } from "./github.js";
 import { IssueIntake } from "./intake.js";
@@ -38,6 +39,14 @@ const executor = new DockerExecutor();
 const tests = new DockerTestRunner();
 // GitHub へのアクセスは、ホストの gh のアカウントで行う（PBI-13）
 const github = new GhCliAuth();
+// ホストのゲートウェイ（PBI-37）。リトライの上限は、リクエストごとに設定から読み直す
+const gateway = new AiGateway({
+  policy: () => {
+    const c = config();
+    return c.ok ? c.config.gatewayRetry : undefined;
+  },
+});
+await gateway.listen();
 const service = new TaskService({
   activity,
   config,
@@ -52,6 +61,7 @@ const service = new TaskService({
   github,
   tests,
   workspaceRoot: join(home, "workspaces"),
+  gateway,
 });
 service.recoverInterrupted();
 service.queueWaitingSteps();
@@ -91,6 +101,7 @@ const shutdown = async () => {
   if (timedOut) {
     console.warn("[daemon] 実行中の処理の後片付けが時間内に終わりませんでした。");
   }
+  await gateway.close();
   server.close(() => {
     activity.close();
     projects.close();

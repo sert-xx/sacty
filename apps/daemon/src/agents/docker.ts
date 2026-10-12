@@ -161,10 +161,13 @@ export function dockerRunArgs(input: {
   envNames: string[];
   mounts: { hostPath: string; containerPath: string; readOnly: boolean }[];
   command: string[];
+  /** ホストのゲートウェイに届くよう、host.docker.internal をホストに向ける（PBI-37）。 */
+  hostGateway?: boolean;
 }): string[] {
   return [
     "run",
     "--rm",
+    ...(input.hostGateway ? ["--add-host", "host.docker.internal:host-gateway"] : []),
     "--name",
     `sacty-run-${input.runId}`,
     "--security-opt",
@@ -291,6 +294,7 @@ export class DockerExecutor implements AgentExecutor {
       envNames: Object.keys(invocation.env),
       mounts,
       command: invocation.command,
+      ...(invocation.hostGateway ? { hostGateway: true } : {}),
     });
 
     const containerName = `sacty-run-${runId}`;

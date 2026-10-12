@@ -215,6 +215,14 @@ export function describeEvent(event: ActivityEvent, l: LabelMessages): string {
       return e.PullRequestReviewPosted(event.payload.url);
     case "GuardianMissed":
       return e.GuardianMissed;
+    case "AiRequestsRetried":
+      return e.AiRequestsRetried(
+        event.payload.retries,
+        Math.round(event.payload.waitedMs / 1000),
+        // 0 は、上流に届かなかった（接続の失敗）
+        event.payload.statuses.map((s) => (s === 0 ? "connection" : String(s))).join(", "),
+        event.payload.gaveUp,
+      );
     case "OrchestratorFailed":
       return e.OrchestratorFailed(
         l.text(event.payload.message),

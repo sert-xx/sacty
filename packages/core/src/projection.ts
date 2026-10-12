@@ -774,6 +774,10 @@ export function applyEvent(
       task.pushedBranch = event.payload;
       break;
 
+    case "AiRequestsRetried":
+      // 記録だけ（作業履歴で確かめる。PBI-37）
+      break;
+
     case "GuardianMissed":
       task.misses = [...task.misses, { ...event.payload, at: event.at }];
       break;
