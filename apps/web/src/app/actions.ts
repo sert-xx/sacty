@@ -221,7 +221,10 @@ export async function saveSettingsAction(
   const a = (await getMessages()).common.action;
   let result: Awaited<ReturnType<typeof saveSettings>>;
   try {
-    result = await saveSettings({ intakeLabel: String(formData.get("intakeLabel") ?? "") });
+    result = await saveSettings({
+      intakeLabel: String(formData.get("intakeLabel") ?? ""),
+      maxParallelTasks: String(formData.get("maxParallelTasks") ?? ""),
+    });
   } catch {
     return { message: a.daemonDown };
   }

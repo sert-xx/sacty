@@ -28,5 +28,10 @@ async function Settings() {
     if (error instanceof DaemonUnavailableError) return <DaemonError message={error.message} />;
     throw error;
   }
-  return <SettingsForm intakeLabel={settings.intakeLabel ?? ""} />;
+  return (
+    <SettingsForm
+      intakeLabel={settings.intakeLabel ?? ""}
+      maxParallelTasks={settings.maxParallelTasks}
+    />
+  );
 }
