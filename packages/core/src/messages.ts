@@ -397,7 +397,7 @@ const ja: MessageDictionary = {
     `統合レビューのため、ベースブランチ（${branch}）の最新を取得できませんでした：${text(detail)}。再開すると、統合レビューをやり直します。`,
   "integrate.unreadable": "統合レビューの出力から、判定を読み取れませんでした。",
   "orchestrator.failed": ({ detail }, text) =>
-    `オーケストレーターを実行できませんでした：${text(detail)}。再開すると、工程の選択からやり直します。`,
+    `オーケストレーターを実行できませんでした：${text(detail).replace(/[。.]\s*$/, "")}。再開すると、工程の選択からやり直します。`,
   "orchestrator.testCommandUnknown":
     "オーケストレーターが、対象リポジトリのテストのコマンドを決められませんでした。実装を検証できないので止めます。タスクの内容にテストの実行方法を書いて、作り直してください。",
   "orchestrator.baseBranchUnavailable": ({ branch, detail }, text) =>
@@ -615,7 +615,7 @@ const en: MessageDictionary = {
     `Could not fetch the latest base branch (${branch}) for the integration review: ${text(detail)}. Resume to run the integration review again.`,
   "integrate.unreadable": "Could not read the verdicts from the integration review output.",
   "orchestrator.failed": ({ detail }, text) =>
-    `Could not run the Orchestrator: ${text(detail)}. Resume to choose the steps again.`,
+    `Could not run the Orchestrator: ${text(detail).replace(/[。.]\s*$/, "")}. Resume to choose the steps again.`,
   "orchestrator.testCommandUnknown":
     "The Orchestrator could not determine the test command of the target repository, so the implementation cannot be verified. Describe how to run the tests in the task and create it again.",
   "orchestrator.baseBranchUnavailable": ({ branch, detail }, text) =>
