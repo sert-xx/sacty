@@ -23,9 +23,14 @@ export const ProjectTarget = z.discriminatedUnion("scope", [
 ]);
 export type ProjectTarget = z.infer<typeof ProjectTarget>;
 
+/** 同時に実行するタスクの数の既定値と範囲（PBI-30）。 */
+export const DEFAULT_MAX_PARALLEL_TASKS = 3;
+export const MAX_PARALLEL_TASKS_LIMIT = 10;
+
 /**
  * sacty 全体の設定（プロジェクトとは別。PBI-26）。intakeLabel は、すべてのプロジェクトの対象で取り込む
- * Issue・PR のラベル。設定していなければ取り込まない。
+ * Issue・PR のラベル。設定していなければ取り込まない。maxParallelTasks は、同時に実行するタスクの数
+ * （設定していなければ DEFAULT_MAX_PARALLEL_TASKS。PBI-30）。
  */
 export const SactySettings = z.object({
   // 空の入力は「設定しない」として扱う
@@ -37,6 +42,16 @@ export const SactySettings = z.object({
       .max(50)
       .regex(/^[^"\\]*$/, code("input.invalidLabel"))
       .optional(),
+  ),
+  // 画面の入力（文字列）も受け付ける。空は「設定しない」
+  maxParallelTasks: z.preprocess(
+    (v) =>
+      v === undefined || v === null || (typeof v === "string" && v.trim() === "")
+        ? undefined
+        : typeof v === "string"
+          ? Number(v)
+          : v,
+    z.number().int().min(1).max(MAX_PARALLEL_TASKS_LIMIT).optional(),
   ),
 });
 export type SactySettings = z.infer<typeof SactySettings>;

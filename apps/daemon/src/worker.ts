@@ -1,12 +1,13 @@
 import type { TaskService } from "./service.js";
 
 /**
- * 実行待ちのタスクを、古い順に1件ずつ実行する。
- * MVPでは同時に1件だけ実行する（ローカルのマシンの負荷と、利用上限の消費を抑えるため）。
+ * 実行待ちのタスクを、古い順に、上限の数まで同時に実行する（PBI-30）。上限は sacty の設定で決める
+ * （ローカルのマシンの負荷と、利用上限の消費を抑えるため）。同じタスクを同時に2つ実行しない。
  */
 export class Worker {
   private timer: NodeJS.Timeout | undefined;
-  private current: Promise<void> | undefined;
+  /** 実行中のタスクと、その処理。 */
+  private readonly running = new Map<string, Promise<void>>();
   private stopped = false;
 
   constructor(
@@ -21,33 +22,40 @@ export class Worker {
 
   /**
    * 新しい実行を始めないようにし、実行中の処理（作業履歴への記録、認証ファイルの書き戻し、
-   * 一時ファイルの削除を含む）が終わるのを待つ。
+   * 一時ファイルの削除を含む）がすべて終わるのを待つ。
    */
   async drain(): Promise<void> {
     this.stopped = true;
     if (this.timer) clearInterval(this.timer);
-    await this.current;
+    await Promise.all(this.running.values());
   }
 
-  /** テストからも呼べるよう公開する。実行中、または停止後は何もしない。 */
+  /**
+   * 空いている数だけ、実行待ちのタスクの実行を始める。返す Promise は、いま実行中のすべての処理の終わり
+   * （テストからも呼べるよう公開する）。停止後は何も始めない。
+   */
   tick(): Promise<void> {
-    if (this.current || this.stopped) return this.current ?? Promise.resolve();
-    const run = (async () => {
+    if (!this.stopped) {
+      let limit: number;
+      let queued: string[];
       try {
-        for (const id of this.service.queuedTaskIds()) {
-          if (this.stopped) break;
-          await this.service.runNext(id);
-        }
+        limit = this.service.maxParallelTasks();
+        queued = this.service.queuedTaskIds();
       } catch (error) {
         console.error("[daemon] worker error:", error);
+        queued = [];
+        limit = 0;
       }
-    })();
-    // 実行中の印は、代入した後に外す。キューが空だと上の処理は await を通らず同期的に終わるため、
-    // 処理の中で外すと、直後の代入で完了済みの処理が残り、以降の tick がすべて止まってしまう。
-    this.current = run;
-    void run.finally(() => {
-      if (this.current === run) this.current = undefined;
-    });
-    return run;
+      for (const id of queued) {
+        if (this.running.size >= limit) break;
+        if (this.running.has(id)) continue;
+        const run = this.service
+          .runNext(id)
+          .catch((error) => console.error("[daemon] worker error:", error))
+          .finally(() => this.running.delete(id));
+        this.running.set(id, run);
+      }
+    }
+    return Promise.all(this.running.values()).then(() => {});
   }
 }

@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
@@ -16,6 +17,7 @@ import {
   type DaemonMessage,
   type DaemonText,
   DEFAULT_BUDGET_USD,
+  DEFAULT_MAX_PARALLEL_TASKS,
   DecideChangeInput,
   EventInput,
   excludedRepositories,
@@ -196,8 +198,11 @@ export class TaskService {
   private intakeStatus: IntakeStatus = {};
   /** 実行中のタスクと、そのタスクで動いているコンテナ（一時停止・中止で止めるため）。 */
   private readonly inflight = new Map<string, { runIds: Set<string>; done: Promise<void> }>();
-  /** いま runNext が処理しているタスク（ワーカーは1件ずつ処理する）。 */
-  private runningTask: string | undefined;
+  /**
+   * いま runNext が処理しているタスク。ワーカーは複数のタスクを同時に処理するので（PBI-30）、
+   * 処理の流れごとに持つ（コンテナを、どのタスクの実行として覚えるかに使う）。
+   */
+  private readonly runningTask = new AsyncLocalStorage<string>();
   /** 人間が一時停止・中止を求めたタスク。実行中の処理は、終わったら一時停止として記録する。 */
   private readonly pauseRequested = new Set<string>();
   /** 中止の後片付けをしているタスク（その間に実行を始めないため）。 */
@@ -683,6 +688,11 @@ export class TaskService {
   /** sacty 全体の設定（PBI-26）。 */
   getSettings(): SactySettings {
     return this.deps.settings.get();
+  }
+
+  /** 同時に実行するタスクの数（sacty の設定。設定していなければ既定値。PBI-30）。 */
+  maxParallelTasks(): number {
+    return this.deps.settings.get().maxParallelTasks ?? DEFAULT_MAX_PARALLEL_TASKS;
   }
 
   /** sacty 全体の設定を変える。取り込むラベルが変わると、取り込みは先頭から読み直す。 */
@@ -1179,19 +1189,17 @@ export class TaskService {
     }
     const entry = { runIds: new Set<string>(), done: Promise.resolve() };
     this.inflight.set(taskId, entry);
-    this.runningTask = taskId;
     // 完了は、止めたコンテナの確認と一時停止の記録まで含める（一時停止・中止はこれを待つ）
-    entry.done = (async () => {
+    entry.done = this.runningTask.run(taskId, async () => {
       try {
         await this.runNextInner(taskId);
       } finally {
-        this.runningTask = undefined;
         if (this.pauseRequested.has(taskId)) {
           // 止めたコンテナが本当に無くなったかを確かめてから、一時停止を記録する
           this.pauseIfRequested(taskId, await this.unstopped(entry.runIds));
         }
       }
-    })();
+    });
     try {
       await entry.done;
     } finally {
@@ -1962,7 +1970,8 @@ export class TaskService {
 
   /** 実行中のタスクのコンテナとして覚える（一時停止・中止で止めるため）。 */
   private track(runId: string): void {
-    if (this.runningTask) this.inflight.get(this.runningTask)?.runIds.add(runId);
+    const taskId = this.runningTask.getStore();
+    if (taskId) this.inflight.get(taskId)?.runIds.add(runId);
   }
 
   /**
@@ -2387,7 +2396,8 @@ export class TaskService {
       );
       mkdirSync(run.workspaceDir, { recursive: true });
       // 準備の間（clone や秘密情報の取り出し）に人間が止めたなら、コンテナを起動しない
-      if (this.runningTask && this.pauseRequested.has(this.runningTask)) {
+      const running = this.runningTask.getStore();
+      if (running && this.pauseRequested.has(running)) {
         return {
           outcome: {
             kind: "failed",

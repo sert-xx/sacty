@@ -5387,3 +5387,166 @@ describe("再現の工程（PBI-29）", () => {
     );
   });
 });
+
+describe("タスクの並行実行（PBI-30）", () => {
+  /** 止めるか終えるまで返さない偽物（実行中のタスクを数える）。 */
+  class HeldExecutor implements AgentExecutor {
+    held = new Map<string, { title: string; resolve: (o: AgentOutcome) => void }>();
+    killed: string[] = [];
+    async run(input: { runId: string; invocation: Invocation }): Promise<AgentOutcome> {
+      const prompt = input.invocation.command.join(" ");
+      const title = /# (タスク\S+)/.exec(prompt)?.[1] ?? "?";
+      return new Promise((resolve) => this.held.set(input.runId, { title, resolve }));
+    }
+    kill(runId: string) {
+      this.killed.push(runId);
+      this.held.get(runId)?.resolve({ kind: "failed", reason: "error", message: "stopped" });
+      this.held.delete(runId);
+    }
+    async ensureStopped() {
+      return true;
+    }
+    finish(title: string) {
+      for (const [runId, h] of this.held) {
+        if (h.title !== title) continue;
+        h.resolve({
+          kind: "completed",
+          output: "# 要求要件",
+          usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 1 },
+        });
+        this.held.delete(runId);
+      }
+    }
+    titles() {
+      return [...this.held.values()].map((h) => h.title).sort();
+    }
+  }
+  const settle = () => new Promise((r) => setTimeout(r, 30));
+
+  function setup(settings: MemorySettingsStore, planner?: ServiceDeps["planner"]) {
+    const activity = new SqliteActivityStore(dbPath);
+    const executor = new HeldExecutor();
+    const service = new TaskService({
+      activity,
+      config: configOf(agent()),
+      secrets: new MemorySecretStore({ "claude-oauth-token": "oauth-secret" }),
+      executor,
+      repos: new FakeRepos(),
+      tests: new FakeTests(),
+      pulls: new FakePulls(),
+      projects: projectsWithAccount(),
+      contexts: new FakeContexts(),
+      settings,
+      github: new FakeGitHub(),
+      planner:
+        planner ??
+        (async () => ({
+          steps: [...MVP_STEPS],
+          fallback: false,
+          testCommand: "npm test",
+          costUsd: 0,
+          estimated: false,
+        })),
+      workspaceRoot: join(dir, "workspaces"),
+    });
+    return { activity, executor, service };
+  }
+
+  it("実行待ちのタスクを、古い順に上限の数まで同時に実行し、空いたら次を始める", async () => {
+    const { Worker } = await import("./worker.js");
+    const { activity, executor, service } = setup(new MemorySettingsStore({ maxParallelTasks: 2 }));
+    for (const title of ["タスク1", "タスク2", "タスク3"]) {
+      service.createTask({ projectId: "default", title });
+    }
+    const worker = new Worker(service, 60_000);
+    void worker.tick();
+    await settle();
+    expect(executor.titles()).toEqual(["タスク1", "タスク2"]);
+    // 実行中のタスクは、重ねて始めない（上限にも達している）
+    void worker.tick();
+    await settle();
+    expect(executor.titles()).toEqual(["タスク1", "タスク2"]);
+
+    executor.finish("タスク1");
+    await settle();
+    void worker.tick();
+    await settle();
+    expect(executor.titles()).toEqual(["タスク2", "タスク3"]);
+    executor.finish("タスク2");
+    executor.finish("タスク3");
+    await worker.drain();
+    expect(service.list().map((t) => t.status)).toEqual([
+      "awaiting_approval",
+      "awaiting_approval",
+      "awaiting_approval",
+    ]);
+    activity.close();
+  });
+
+  it("同時に実行している中の1件を一時停止すると、そのタスクのコンテナだけを止める", async () => {
+    const { Worker } = await import("./worker.js");
+    const { activity, executor, service } = setup(new MemorySettingsStore());
+    expect(service.maxParallelTasks()).toBe(3);
+    const a = service.createTask({ projectId: "default", title: "タスクA" });
+    const b = service.createTask({ projectId: "default", title: "タスクB" });
+    const worker = new Worker(service, 60_000);
+    void worker.tick();
+    await settle();
+    expect(executor.titles()).toEqual(["タスクA", "タスクB"]);
+    const runOf = (id: string) => service.get(id)?.task.currentRunId ?? "";
+    const runB = runOf(b.id);
+    await service.pause(a.id);
+    expect(executor.killed).toHaveLength(1);
+    expect(executor.killed).not.toContain(runB);
+    expect(service.get(a.id)?.task.status).toBe("paused");
+    expect(service.get(b.id)?.task.status).toBe("running");
+    executor.finish("タスクB");
+    await worker.drain();
+    expect(service.get(b.id)?.task.status).toBe("awaiting_approval");
+    activity.close();
+  });
+
+  it("工程を選んでいる間（まだ実行待ちの状態）も、同じタスクを重ねて始めない", async () => {
+    const { Worker } = await import("./worker.js");
+    let calls = 0;
+    const choosing = Promise.withResolvers<void>();
+    const { activity, service } = setup(new MemorySettingsStore(), async () => {
+      calls += 1;
+      await choosing.promise;
+      return {
+        steps: [...MVP_STEPS],
+        fallback: false,
+        testCommand: "npm test",
+        costUsd: 0,
+        estimated: false,
+      };
+    });
+    const task = service.createTask({ projectId: "default", title: "タスクA" });
+    const worker = new Worker(service, 60_000);
+    void worker.tick();
+    await settle();
+    expect(service.get(task.id)?.task.status).toBe("queued");
+    void worker.tick();
+    await settle();
+    expect(calls).toBe(1);
+    choosing.resolve();
+    await settle();
+    await service.pause(task.id);
+    await worker.drain();
+    activity.close();
+  });
+
+  it("上限は 1〜10 の整数で、空なら既定（3）", () => {
+    const { activity, service } = setup(new MemorySettingsStore());
+    expect(service.saveSettings({ intakeLabel: "", maxParallelTasks: "5" }).maxParallelTasks).toBe(
+      5,
+    );
+    expect(service.maxParallelTasks()).toBe(5);
+    expect(service.saveSettings({ maxParallelTasks: "" }).maxParallelTasks).toBeUndefined();
+    expect(service.maxParallelTasks()).toBe(3);
+    for (const bad of ["0", "11", "1.5", "abc", -1]) {
+      expect(() => service.saveSettings({ maxParallelTasks: bad })).toThrow();
+    }
+    activity.close();
+  });
+});
