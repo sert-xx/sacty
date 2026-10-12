@@ -942,17 +942,20 @@ export class TaskService {
 
   queuedTaskIds(): string[] {
     return [...this.tasks.values()]
-      .filter(
-        (t) =>
-          // 工程がまだ決まっていないタスクも、オーケストレーターが選ぶので実行対象にする（PBI-17）
-          (t.status === "queued" && (activeStep(t) || t.steps.length === 0)) ||
-          awaitingVerification(t) ||
-          // 完了した調査の結果を、取り込み元の Issue に返す（PBI-18）
-          awaitingIssueComment(t) ||
-          // 書いたレビューを、対象の PR に投稿する（PBI-19）
-          awaitingReviewPost(t) ||
-          // 分割した子タスクを作る・始める、子タスクがすべて終わったら完了にする（PBI-27）
-          this.splitPending(t),
+      .filter((t) =>
+        // 親が中止された子タスクは実行せず、中止する（親の中止の途中でデーモンが止まっても、
+        // 再起動の後に中止を終えるため。PBI-27 レビュー指摘）
+        this.parentCancelled(t)
+          ? t.status !== "cancelled" && !isCompleted(t)
+          : // 工程がまだ決まっていないタスクも、オーケストレーターが選ぶので実行対象にする（PBI-17）
+            (t.status === "queued" && (activeStep(t) || t.steps.length === 0)) ||
+            awaitingVerification(t) ||
+            // 完了した調査の結果を、取り込み元の Issue に返す（PBI-18）
+            awaitingIssueComment(t) ||
+            // 書いたレビューを、対象の PR に投稿する（PBI-19）
+            awaitingReviewPost(t) ||
+            // 分割した子タスクを作る・始める、子タスクがすべて終わったら完了にする（PBI-27）
+            this.splitPending(t),
       )
       .filter((t) => !this.cancelling.has(t.id) && !this.pauseRequested.has(t.id))
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
@@ -1159,6 +1162,15 @@ export class TaskService {
    */
   async runNext(taskId: string): Promise<void> {
     if (this.cancelling.has(taskId) || this.pauseRequested.has(taskId)) return;
+    const task = this.tasks.get(taskId);
+    if (task && this.parentCancelled(task)) {
+      if (task.status === "cancelled" || isCompleted(task)) return;
+      // 実行の印（inflight）を付ける前に中止する（中止は、実行中の処理の終わりを待つため）
+      await this.cancel(taskId).catch((error) => {
+        console.error(`[daemon] could not cancel subtask ${taskId}:`, error);
+      });
+      return;
+    }
     const entry = { runIds: new Set<string>(), done: Promise.resolve() };
     this.inflight.set(taskId, entry);
     this.runningTask = taskId;
@@ -2151,6 +2163,11 @@ export class TaskService {
       this.cancelling.delete(id);
       this.pauseRequested.delete(id);
     }
+  }
+
+  /** 分割で作った子タスクで、親が中止されているか（PBI-27）。 */
+  private parentCancelled(task: Task): boolean {
+    return Boolean(task.parent && this.tasks.get(task.parent.taskId)?.status === "cancelled");
   }
 
   /** 子タスクが片付いたか（完了したか、人間が中止を認めたか）。PBI-27 */

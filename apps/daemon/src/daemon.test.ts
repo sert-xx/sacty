@@ -5028,6 +5028,38 @@ describe("タスク分割（PBI-27）", () => {
     activity.close();
   });
 
+  it("親の中止の後、子の中止の前にデーモンが止まっても、再起動の後に子を実行せずに中止する（レビュー指摘）", async () => {
+    const { service, activity, id } = await splitParent([splitOutput(twoChildren)]);
+    const ids = service.get(id)?.task.split?.children.map((c) => c.taskId) ?? [];
+    await service.cancel(id);
+    activity.close();
+
+    // 親の TaskCancelled までで、子の TaskCancelled が無い作業履歴を作る
+    const raw = new SqliteActivityStore(dbPath);
+    const kept = raw.all().filter((e) => !(e.type === "TaskCancelled" && ids.includes(e.taskId)));
+    raw.close();
+    rmSync(dbPath);
+    const fresh = new SqliteActivityStore(dbPath);
+    for (const e of kept) {
+      fresh.append({
+        taskId: e.taskId,
+        projectId: e.projectId,
+        events: [{ actor: e.actor, event: { type: e.type, payload: e.payload } as EventInput }],
+      });
+    }
+    const { service: restarted, executor } = makeService(fresh, [out("# 実行してはいけない")], {
+      planner,
+    });
+    expect(ids.map((c) => restarted.get(c)?.task.status)).toEqual(["queued", "blocked"]);
+    // 親が中止された子は、実行の対象ではなく中止の対象として拾う
+    expect(restarted.queuedTaskIds()).toEqual(ids);
+    for (const c of restarted.queuedTaskIds()) await restarted.runNext(c);
+    expect(executor.calls).toHaveLength(0);
+    expect(ids.map((c) => restarted.get(c)?.task.status)).toEqual(["cancelled", "cancelled"]);
+    expect(restarted.queuedTaskIds()).toEqual([]);
+    fresh.close();
+  });
+
   it("子タスクを作る前にデーモンが止まっても、再起動の後に同じ ID で作る", async () => {
     const { service, activity, id } = await splitParent([splitOutput(twoChildren)]);
     const ids = service.get(id)?.task.split?.children.map((c) => c.taskId);
