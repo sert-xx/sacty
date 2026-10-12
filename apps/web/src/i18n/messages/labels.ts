@@ -59,7 +59,7 @@ const ja = {
   pauseHelp: {
     budget: "予算の上限に達したため止まっています。作業中のものは残っています。",
     usage_limit:
-      "サブスクリプションの利用上限に達したため止まっています。上限が戻ってから再開すると、止まった工程を実行し直します。",
+      "AI の利用上限（サブスクリプションの上限や、API のレート制限）に達したため止まっています。上限が戻ってから再開すると、止まった工程を実行し直します。",
     auth: "認証に失敗したため止まっています。トークンやAPIキーを確認してから再開してください。",
     error: "エラーで止まっています。原因を確認してから再開すると、止まった工程を実行し直します。",
     verification:
@@ -249,7 +249,7 @@ const en: LabelMessages = {
   pauseHelp: {
     budget: "The task reached its budget cap and is paused. Its work is kept.",
     usage_limit:
-      "The subscription reached its usage limit. Resume once the limit resets to rerun the stopped step.",
+      "The AI reached its usage limit (a subscription limit or an API rate limit). Resume once the limit resets to rerun the stopped step.",
     auth: "Authentication failed. Check the token or API key, then resume.",
     error: "The task stopped on an error. Check the cause, then resume to rerun the stopped step.",
     verification:
