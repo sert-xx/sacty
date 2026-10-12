@@ -91,7 +91,7 @@ import {
   EXECUTABLE_STEPS,
   extractBlocks,
   extractFinalReview,
-  extractReproductionTests,
+  extractReproduction,
   extractReviewComments,
   extractRework,
   extractSplitPlan,
@@ -1603,7 +1603,9 @@ export class TaskService {
     // レビューの工程は、PR の差分に含まれる行へのコメントを取り出す（差分の外のものは本文に入れる）
     const review =
       step === "review" ? extractReviewComments(extracted.output, reviewDiff ?? "") : undefined;
-    const output = review?.output ?? extracted.output;
+    // 再現の工程は、申告された再現のテストを取り出す（PBI-29）
+    const reproduction = step === "reproduce" ? extractReproduction(extracted.output) : undefined;
+    const output = review?.output ?? reproduction?.output ?? extracted.output;
     const events: { actor: Actor; event: EventInput }[] = [
       {
         actor: "agent",
@@ -1622,9 +1624,7 @@ export class TaskService {
             ...(step === "design" ? { testViewpoints } : {}),
             ...(step === "implement" ? { testMap } : {}),
             ...(review ? { reviewComments: review.comments } : {}),
-            ...(step === "reproduce"
-              ? { reproductionTests: extractReproductionTests(extracted.output) }
-              : {}),
+            ...(reproduction ? { reproductionTests: reproduction.tests } : {}),
           },
         },
       },

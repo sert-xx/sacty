@@ -5155,6 +5155,8 @@ describe("再現の工程（PBI-29）", () => {
       exitCode: 1,
       tests: ["pay.test.ts › 二重送信"],
     });
+    // 申告の形式のブロックは、再現の説明から取り除く
+    expect(task?.outputs.reproduce).toBe("# 再現の説明");
     expect(task?.steps.map((s) => s.state)).toEqual(["done", "active", "todo"]);
     expect(task?.status).toBe("queued");
 

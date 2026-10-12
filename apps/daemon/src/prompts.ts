@@ -79,24 +79,28 @@ function reproductionLines(task: Task): string[] {
   ];
 }
 
-/** 再現の工程の出力から、申告された再現のテストを読む（PBI-29）。読めなければ空。 */
-export function extractReproductionTests(output: string): string[] {
+/**
+ * 再現の工程の出力から、申告された再現のテストを読み、その形式のブロックを本文から取り除く（PBI-29）。
+ * 読めなければテストは空。
+ */
+export function extractReproduction(output: string): { output: string; tests: string[] } {
   const blocks = [...output.matchAll(/```json\s*\n([\s\S]*?)\n```/g)].reverse();
   for (const block of blocks) {
     try {
       const parsed = JSON.parse(block[1] ?? "") as Record<string, unknown>;
       const v = parsed?.[REPRODUCTION_HEADING] as Record<string, unknown> | undefined;
       if (v && Array.isArray(v.tests)) {
-        return v.tests
+        const tests = v.tests
           .map((t) => (typeof t === "string" ? t.trim() : ""))
           .filter(Boolean)
           .slice(0, 20);
+        return { output: output.replace(block[0], "").trim(), tests };
       }
     } catch {
       // 次のブロックを試す
     }
   }
-  return [];
+  return { output, tests: [] };
 }
 const TEST_MAP_HEADING = "sacty-test-map";
 const REVIEW_COMMENTS_HEADING = "sacty-review-comments";
