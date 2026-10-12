@@ -23,11 +23,7 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     // テーマのクラスは、最初の描画の前にスクリプトで付ける（サーバーの描画と食い違ってよい）
-    <html
-      lang="ja"
-      suppressHydrationWarning
-      className="h-full antialiased"
-    >
+    <html lang="ja" suppressHydrationWarning className="h-full antialiased">
       <head>
         {/* biome-ignore lint/security/noDangerouslySetInnerHtml: 固定の文字列で、利用者の入力を含まない */}
         <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
