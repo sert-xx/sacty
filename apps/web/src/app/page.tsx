@@ -116,13 +116,26 @@ async function AgentStatus() {
   }
   if (!status.agent) return null;
   return (
-    <p className="text-sm text-muted-foreground">
-      {m.agent}
-      <span className="font-mono">{status.agent.id}</span>
-      {m.agentAuth(
-        labels.auth[status.agent.authMode as keyof typeof labels.auth] ?? status.agent.authMode,
+    <>
+      <p className="text-sm text-muted-foreground">
+        {m.agent}
+        <span className="font-mono">{status.agent.id}</span>
+        {m.agentAuth(
+          labels.auth[status.agent.authMode as keyof typeof labels.auth] ?? status.agent.authMode,
+        )}
+      </p>
+      {/* 動くが、知らせたいこと（認証情報を用意できない社内 PF など。PBI-35） */}
+      {(status.warnings ?? []).length > 0 && (
+        <ul
+          role="status"
+          className="flex flex-col gap-1 rounded-xl border border-warn-line bg-warn-soft p-4 text-sm text-warn"
+        >
+          {(status.warnings ?? []).map((w) => (
+            <li key={labels.text(w)}>{labels.text(w)}</li>
+          ))}
+        </ul>
       )}
-    </p>
+    </>
   );
 }
 

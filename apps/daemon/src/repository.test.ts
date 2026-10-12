@@ -41,7 +41,8 @@ function makeOrigin(): string {
   return origin;
 }
 
-describe("対象リポジトリの作業領域（git）", () => {
+// 実際の git を動かすので、テストをまとめて実行して重いときも時間切れにしない（PBI-35 レビューでの5秒の時間切れ）
+describe("対象リポジトリの作業領域（git）", { timeout: 30_000 }, () => {
   it("用意し直すときは、ブランチが進んでいても記録済みの起点のコミットにする。無ければエラーにする（PBI-15）", async () => {
     const origin = makeOrigin();
     const workspace = new GitRepositoryWorkspace();

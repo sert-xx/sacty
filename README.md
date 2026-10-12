@@ -92,6 +92,42 @@ image_build:
 - リトライの上限は `gateway.retry`（`max_attempts`：1件のリクエストで送る回数、`max_wait_sec`：成功するまでに待つ合計）で変えられる。上限に達すると、エージェントは利用上限として一時停止し、再開でやり直せる
 - リトライした実行は、作業履歴に回数と待った時間を残す
 - ゲートウェイは 127.0.0.1 だけで待ち受け、実行中のエージェントのトークンを持つリクエストだけを受け付ける
+
+### 社内 PF の API（ゲートウェイ経由）
+
+MCP サーバーが無い社内 PF は、`gateway.platforms` に書くと、エージェントが API で使える。認証情報はゲートウェイだけが持ち、エージェントには渡さない。
+
+```yaml
+gateway:
+  platforms:
+    ticket:                                   # エージェントは $SACTY_PF_URL/ticket/… で呼ぶ
+      upstream: https://ticket.internal.example.com
+      description: 社内のチケット管理
+      auth:                                   # 固定のキーを、ヘッダーに付ける（独自のヘッダーも書ける）
+        header: X-Internal-Token
+        secret: op://Work/Ticket/token
+      allow:                                  # 使える API（* は1階層、** はそれ以下すべて）
+        - GET /api/v1/tickets/**
+        - POST /api/v1/tickets/*/comments
+    deploy:
+      upstream: https://deploy.internal.example.com
+      auth:                                   # API キーでトークン（JWT など）を取得して付ける
+        header: Authorization
+        prefix: "Bearer "
+        token:
+          url: https://auth.internal.example.com/api/token
+          json: { apiKey: "{{secret}}" }      # form（フォーム）や headers にも {{secret}} を書ける
+          secret: op://Work/Deploy/api-key
+          token_path: data.accessToken        # 応答の JSON の、トークンの場所
+          expires_in_path: data.expiresIn     # 期限（秒）の場所。無ければ ttl_sec（既定 300）
+      allow:
+        - GET /api/v1/deployments/**
+```
+
+- 工程エージェントの指示に、使える PF と API の一覧を入れる。エージェントは認証を意識せずに呼べる
+- ホワイトリストに無いリクエストは拒否する（403。何が使えるかを返す）
+- トークンは期限の前に取り直し、拒否（401・403）されたら取り直して1回だけ送り直す
+- 認証情報はデーモンの起動時に用意する。用意できない PF は、タスクの一覧の画面に出す（ほかの PF は使える）
 コンテナには、選んだ認証方式の環境変数だけを渡す（ホストの `ANTHROPIC_API_KEY` などは引き継がない）。
 
 サブスクリプションでは実際の請求は発生しないが、同じ単価で換算した値を費用として扱い、予算の判定に使う。

@@ -13,6 +13,7 @@ import {
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 import { DEFAULT_RETRY_POLICY, type RetryPolicy } from "./gateway.js";
+import { type Platform, PlatformFile, toPlatform } from "./platforms.js";
 import { SecretRef } from "./secrets.js";
 
 export const DEFAULT_IMAGE = "sacty-agent:0.1.0";
@@ -200,6 +201,16 @@ const ConfigFile = z
               .default(DEFAULT_RETRY_POLICY.maxWaitMs / 1000),
           })
           .prefault({}),
+        /**
+         * 社内 PF の API（PBI-35）。名前ごとに、転送先・認証・使える API を書く。エージェントは
+         * $SACTY_PF_URL/<名前>/… で呼び、ゲートウェイが認証を付けて転送する。
+         */
+        platforms: z
+          .record(
+            z.string().regex(/^[a-z0-9][a-z0-9-]*$/, code("input.platformName")),
+            PlatformFile,
+          )
+          .default({}),
       })
       .prefault({}),
     /** GitHub Issue の取り込み（個人の設定。プロジェクトの定義には含めない）。 */
@@ -238,6 +249,8 @@ export type SactyConfig = {
   budgetPerTaskUsd: number;
   /** ゲートウェイの AI の呼び出しのリトライの上限（PBI-37）。 */
   gatewayRetry: RetryPolicy;
+  /** 社内 PF の API（PBI-35）。 */
+  platforms: Platform[];
   /** 1Password のアカウント（PBI-34）。 */
   onePasswordAccount?: string;
   /** `sacty image build` の元（PBI-33）。 */
@@ -316,6 +329,7 @@ export function loadConfig(home: string): ConfigResult {
         ...(file.image_build?.npm_registry ? { npmRegistry: file.image_build.npm_registry } : {}),
         ...(file.image_build?.npm_token ? { npmToken: file.image_build.npm_token } : {}),
       },
+      platforms: Object.entries(file.gateway.platforms).map(([name, p]) => toPlatform(name, p)),
       gatewayRetry: {
         maxAttempts: file.gateway.retry.max_attempts,
         maxWaitMs: file.gateway.retry.max_wait_sec * 1000,
@@ -364,6 +378,31 @@ budget:
 #   retry:
 #     max_attempts: 8     # 1件のリクエストで上流に送る回数の上限
 #     max_wait_sec: 600   # 成功するまでの一続きの失敗で待つ合計の上限
+#   # 社内 PF の API。エージェントは $SACTY_PF_URL/<名前>/… で呼び、ゲートウェイが認証を付けて転送する
+#   # （認証情報はエージェントに渡さない）。allow に無い API は拒否する（* は1階層、** はそれ以下すべて）
+#   platforms:
+#     ticket:
+#       upstream: https://ticket.internal.example.com
+#       description: 社内のチケット管理
+#       auth:                         # 固定のキーをヘッダーに付ける（独自のヘッダーも書ける）
+#         header: X-Internal-Token
+#         secret: op://Work/Ticket/token
+#       allow:
+#         - GET /api/v1/tickets/**
+#         - POST /api/v1/tickets/*/comments
+#     deploy:
+#       upstream: https://deploy.internal.example.com
+#       auth:                         # API キーで JWT を取得して付ける（期限の前に取り直す）
+#         header: Authorization
+#         prefix: "Bearer "
+#         token:
+#           url: https://auth.internal.example.com/api/token
+#           json: { apiKey: "{{secret}}" }
+#           secret: op://Work/Deploy/api-key
+#           token_path: data.accessToken
+#           expires_in_path: data.expiresIn
+#       allow:
+#         - GET /api/v1/deployments/**
 
 # GitHub Issue の取り込み（取り込み元と、使う gh のアカウントはプロジェクトの設定で登録する）。
 # Issue から作ったタスクは、その Issue のリポジトリに実装する（設定はプロジェクトのリポジトリの設定）

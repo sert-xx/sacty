@@ -79,6 +79,7 @@ import {
   type PullRequestStatus,
   type PullRequests,
 } from "./github.js";
+import { type Platform, platformPromptLines } from "./platforms.js";
 import type { ProjectStore } from "./projects.js";
 import {
   allowedPlans,
@@ -170,12 +171,16 @@ export type ServiceDeps = {
   /** タスクごとの作業領域を作る場所。 */
   workspaceRoot: string;
   /** ホストのゲートウェイ（PBI-37）。無ければ、ゲートウェイ経由のエージェントは実行できない。 */
-  gateway?: Pick<AiGateway, "containerOrigin" | "register">;
+  gateway?: Pick<AiGateway, "containerOrigin" | "register" | "platformsUrl">;
+  /** 認証情報を用意できない社内 PF の理由（画面の状態に出す。PBI-35）。 */
+  platformProblems?: (names: readonly string[]) => DaemonText[];
 };
 
 export type DaemonStatus = {
   agent: { id: string; runtime: string; authMode: string } | null;
   problems: DaemonText[];
+  /** 動くが、知らせたいこと（認証情報を用意できない社内 PF など。PBI-35）。 */
+  warnings: DaemonText[];
   /** GitHub Issue の取り込みの状況（設定が無ければ null）。 */
   intake: IntakeStatus | null;
 };
@@ -694,11 +699,14 @@ export class TaskService {
 
   status(): DaemonStatus {
     const config = this.deps.config();
-    if (!config.ok) return { agent: null, problems: [config.problem], intake: null };
+    if (!config.ok) {
+      return { agent: null, problems: [config.problem], warnings: [], intake: null };
+    }
     const agent = config.config.defaultAgent;
     return {
       agent: { id: agent.id, runtime: agent.runtime, authMode: agent.auth.mode },
       problems: [],
+      warnings: this.deps.platformProblems?.(config.config.platforms.map((p) => p.name)) ?? [],
       intake: config.config.github
         ? { ...this.intakeStatus, ...this.labelOf(this.deps.settings.get()) }
         : null,
@@ -1551,11 +1559,16 @@ export class TaskService {
         agent,
         image: config.config.image,
         runId,
-        prompt: buildPrompt(this.mustGet(task.id), step, {
-          ...(reviewDiff !== undefined ? { diff: reviewDiff } : {}),
-          // 修正の子タスクを追加するときは、これまでの子タスクを渡す（PBI-31）
-          ...(step === "split" ? { subtasks: this.subtaskSummaries(task) } : {}),
-        }),
+        prompt: [
+          buildPrompt(this.mustGet(task.id), step, {
+            ...(reviewDiff !== undefined ? { diff: reviewDiff } : {}),
+            // 修正の子タスクを追加するときは、これまでの子タスクを渡す（PBI-31）
+            ...(step === "split" ? { subtasks: this.subtaskSummaries(task) } : {}),
+          }),
+          // 使える社内 PF の API（PBI-35）
+          ...platformPromptLines(config.config.platforms),
+        ].join("\n"),
+        platforms: config.config.platforms,
         role: step,
         workspaceDir: snapshotDir ?? ready.dir,
         readOnlyWorkspace,
@@ -2584,6 +2597,8 @@ export class TaskService {
     readOnlyWorkspace?: boolean;
     /** エージェントの形式に変換したコンテキスト（工程エージェントだけ。PBI-6）。 */
     context?: Parameters<typeof buildInvocation>[5];
+    /** 使わせる社内 PF の API（工程エージェントだけ。PBI-35）。 */
+    platforms?: readonly Platform[];
   }): Promise<{ outcome: AgentOutcome; costUsd: number; estimated: boolean }> {
     // 実行に渡した秘密情報。作業履歴に書く前に、出力やエラー文から取り除く。
     const usedSecrets: string[] = [];
@@ -2591,15 +2606,24 @@ export class TaskService {
     let gatewayRun: ReturnType<NonNullable<ServiceDeps["gateway"]>["register"]> | undefined;
     try {
       // ゲートウェイ経由なら、API キーはゲートウェイに渡し、コンテナには実行ごとのトークンだけを渡す（PBI-37）
+      // 社内 PF の API を使わせるなら、実行ごとのトークンを含む URL を渡す（認証情報は渡さない。PBI-35）
       const auth = run.agent.auth;
+      const viaGateway = run.agent.via_gateway && auth.mode === "bedrock";
+      const platforms = run.platforms ?? [];
       let gateway: { origin: string; token: string } | undefined;
-      if (run.agent.via_gateway && auth.mode === "bedrock") {
+      if (viaGateway || platforms.length > 0) {
         if (!this.deps.gateway) throw new MessageError(message("gateway.unavailable"));
-        const apiKey = await this.deps.secrets.get(auth.secret);
-        usedSecrets.push(apiKey);
-        gatewayRun = this.deps.gateway.register({ origin: bedrockOrigin(auth), apiKey });
+        let route: { origin: string; apiKey: string } | undefined;
+        if (viaGateway) {
+          const apiKey = await this.deps.secrets.get(auth.secret);
+          usedSecrets.push(apiKey);
+          route = { origin: bedrockOrigin(auth), apiKey };
+        }
+        gatewayRun = this.deps.gateway.register(route);
         usedSecrets.push(gatewayRun.token);
-        gateway = { origin: this.deps.gateway.containerOrigin(), token: gatewayRun.token };
+        if (viaGateway) {
+          gateway = { origin: this.deps.gateway.containerOrigin(), token: gatewayRun.token };
+        }
       }
       const invocation = await buildInvocation(
         run.agent,
@@ -2610,6 +2634,10 @@ export class TaskService {
         run.context,
         gateway,
       );
+      if (gatewayRun && platforms.length > 0 && this.deps.gateway) {
+        invocation.env.SACTY_PF_URL = this.deps.gateway.platformsUrl(gatewayRun.token);
+        invocation.hostGateway = true;
+      }
       mkdirSync(run.workspaceDir, { recursive: true });
       // 準備の間（clone や秘密情報の取り出し）に人間が止めたなら、コンテナを起動しない
       const running = this.runningTask.getStore();

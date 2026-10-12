@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { Readable } from "node:stream";
+import { isAllowed, type Platform, type PlatformCredentials } from "./platforms.js";
 
 /**
  * ホストで動かすゲートウェイ（PBI-37）。エージェントのコンテナからの AI の呼び出しを受け、上流（Bedrock）に
@@ -69,7 +70,7 @@ export type GatewayStats = {
   gaveUp: boolean;
 };
 
-type RunState = GatewayRoute & {
+type RunState = Partial<GatewayRoute> & {
   stats: GatewayStats;
   /** いまの一続きの失敗で待った合計。成功すると0に戻る。 */
   streakWaitedMs: number;
@@ -84,6 +85,10 @@ export type GatewayDeps = {
   /** 0〜1 の乱数（間隔のゆらぎ）。 */
   random?: () => number;
   now?: () => number;
+  /** 社内 PF の API（PBI-35）。設定を読み直せるよう、リクエストごとに呼ぶ。 */
+  platforms?: () => readonly Platform[];
+  /** 社内 PF の認証の値を用意する（PBI-35）。 */
+  credentials?: Pick<PlatformCredentials, "header" | "invalidate">;
 };
 
 const abortableSleep = (ms: number, signal: AbortSignal) =>
@@ -150,8 +155,11 @@ export class AiGateway {
     return `http://host.docker.internal:${this.port}`;
   }
 
-  /** 実行の転送先を登録し、その実行だけが使えるトークンを返す。実行が終わったら close する。 */
-  register(route: GatewayRoute): { token: string; stats: () => GatewayStats; close: () => void } {
+  /**
+   * 実行を登録し、その実行だけが使えるトークンを返す。実行が終わったら close する。route があれば AI の呼び出しを
+   * 中継し（PBI-37）、どの実行も社内 PF の API を使える（PBI-35。$SACTY_PF_URL にトークンを含める）。
+   */
+  register(route?: GatewayRoute): { token: string; stats: () => GatewayStats; close: () => void } {
     const token = `sacty-gw-${randomBytes(24).toString("hex")}`;
     const state: RunState = {
       ...route,
@@ -166,10 +174,130 @@ export class AiGateway {
     };
   }
 
+  /** コンテナから見た、実行の社内 PF の API の起点（PBI-35）。 */
+  platformsUrl(token: string): string {
+    return `${this.containerOrigin()}/r/${token}/pf`;
+  }
+
+  /**
+   * 社内 PF の API を中継する（PBI-35）。実行のトークンと PF を確かめ、ホワイトリストに合うリクエストだけを、PF の
+   * 認証を付けて転送する。エージェントが付けた認証のヘッダーは捨てる。トークンを取得する PF で拒否（401・403）
+   * されたら、トークンを取り直して1回だけ送り直す。
+   */
+  private async handlePlatform(
+    req: IncomingMessage,
+    res: ServerResponse,
+    target: { token: string; name: string; path: string; query: string },
+  ): Promise<void> {
+    if (!this.runs.has(target.token)) {
+      return fail(res, 401, "sacty gateway: unknown or expired run token");
+    }
+    const platform = (this.deps.platforms?.() ?? []).find((p) => p.name === target.name);
+    if (!platform || !this.deps.credentials) {
+      return fail(res, 404, `sacty gateway: unknown internal platform "${target.name}"`);
+    }
+    const method = (req.method ?? "GET").toUpperCase();
+    // 判定したパスと、実際に送るパスを一致させる。# など、URL として解釈すると変わる入力は送らない
+    // （# 以降はフラグメントとして落ち、許可していないパスに送られてしまうため。PBI-35 レビュー指摘）
+    const sent = sentUrl(platform.upstream, target.path, target.query);
+    if (!sent) {
+      return fail(
+        res,
+        400,
+        `sacty gateway: the path "${target.path}" changes when sent as a URL (remove characters such as #)`,
+      );
+    }
+    if (!isAllowed(platform, method, target.path)) {
+      return fail(
+        res,
+        403,
+        `sacty gateway: ${method} ${target.path} is not allowed for "${platform.name}". Allowed: ${platform.allow.join(", ")}`,
+      );
+    }
+    const aborter = new AbortController();
+    res.on("close", () => {
+      if (!res.writableFinished) aborter.abort();
+    });
+    let body: Buffer;
+    try {
+      body = await readBody(req);
+    } catch {
+      return;
+    }
+    const authHeader = platform.auth.header.toLowerCase();
+    const headers = new Headers();
+    for (const [name, value] of Object.entries(req.headers)) {
+      if (
+        value === undefined ||
+        DROP_REQUEST.has(name) ||
+        name === "cookie" ||
+        name === authHeader
+      ) {
+        continue;
+      }
+      headers.set(name, Array.isArray(value) ? value.join(", ") : value);
+    }
+    const url = sent;
+    const fetchImpl = this.deps.fetchImpl ?? fetch;
+    const credentials = this.deps.credentials;
+    for (let attempt = 1; ; attempt++) {
+      let value: string;
+      try {
+        value = await credentials.header(platform);
+      } catch (error) {
+        return fail(
+          res,
+          502,
+          `sacty gateway: cannot prepare the credentials for "${platform.name}": ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+      headers.set(platform.auth.header, value);
+      let upstream: Response;
+      try {
+        upstream = await fetchImpl(url, {
+          method,
+          headers,
+          ...(body.length > 0 && method !== "GET" && method !== "HEAD" ? { body } : {}),
+          signal: aborter.signal,
+          redirect: "manual",
+        });
+      } catch (error) {
+        if (aborter.signal.aborted) return;
+        return fail(
+          res,
+          502,
+          `sacty gateway: could not reach "${platform.name}": ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+      if (
+        platform.auth.token &&
+        attempt === 1 &&
+        (upstream.status === 401 || upstream.status === 403)
+      ) {
+        await upstream.body?.cancel().catch(() => {});
+        credentials.invalidate(platform);
+        continue;
+      }
+      return pipe(upstream, res);
+    }
+  }
+
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    // 社内 PF の API：/r/<実行のトークン>/pf/<PF の名前>/<パス>（PBI-35）
+    const pf = /^\/r\/([^/]+)\/pf\/([^/?]+)(\/[^?]*)?(\?.*)?$/.exec(req.url ?? "");
+    if (pf) {
+      return this.handlePlatform(req, res, {
+        token: pf[1] ?? "",
+        name: pf[2] ?? "",
+        path: pf[3] || "/",
+        query: pf[4] ?? "",
+      });
+    }
     const header = req.headers.authorization ?? "";
     const run = header.startsWith("Bearer ") ? this.runs.get(header.slice(7)) : undefined;
-    if (!run) return fail(res, 401, "sacty gateway: unknown or expired run token");
+    if (!run?.origin || !run.apiKey) {
+      return fail(res, 401, "sacty gateway: unknown or expired run token");
+    }
     if (!req.url?.startsWith("/openai/v1/")) return fail(res, 404, "sacty gateway: not found");
 
     // コンテナとの接続が切れたら（人間の一時停止・中止でコンテナを止めた）、待つのも転送もやめる
@@ -189,7 +317,6 @@ export class AiGateway {
       if (value === undefined || DROP_REQUEST.has(name)) continue;
       headers.set(name, Array.isArray(value) ? value.join(", ") : value);
     }
-    headers.set("authorization", `Bearer ${run.apiKey}`);
 
     const policy = this.deps.policy?.() ?? DEFAULT_RETRY_POLICY;
     const fetchImpl = this.deps.fetchImpl ?? fetch;
@@ -197,6 +324,8 @@ export class AiGateway {
     const now = this.deps.now ?? Date.now;
     const random = this.deps.random ?? Math.random;
     const url = `${run.origin}${req.url}`;
+    const apiKey = run.apiKey;
+    headers.set("authorization", `Bearer ${apiKey}`);
 
     for (let attempt = 1; ; attempt++) {
       if (aborter.signal.aborted) return;
@@ -249,6 +378,23 @@ export class AiGateway {
       run.streakWaitedMs += waited;
     }
   }
+}
+
+/**
+ * 転送する URL。パス・クエリを URL として解釈しても変わらないときだけ返す（# のフラグメント・. や .. の
+ * まとめなどで、許可を判定したパスと違うパスに送らないため）。変わるなら undefined。
+ */
+export function sentUrl(upstream: string, path: string, query: string): string | undefined {
+  if (/[#\s]/.test(path) || /[#\s]/.test(query)) return undefined;
+  let url: URL;
+  try {
+    url = new URL(`${upstream}${path}${query}`);
+  } catch {
+    return undefined;
+  }
+  const base = new URL(upstream).pathname.replace(/\/+$/, "");
+  if (url.pathname !== `${base}${path}` || url.search !== query || url.hash) return undefined;
+  return url.toString();
 }
 
 function readBody(req: IncomingMessage): Promise<Buffer> {

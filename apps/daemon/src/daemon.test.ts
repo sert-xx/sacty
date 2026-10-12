@@ -30,6 +30,7 @@ import type { ContextFetcher, ContextRef } from "./context.js";
 import { MessageError } from "./errors.js";
 import type { GitHubAuth } from "./gh.js";
 import type { PullRequestFeedback, PullRequestStatus, PullRequests } from "./github.js";
+import { type Platform, PlatformFile, toPlatform } from "./platforms.js";
 import { MemoryProjectStore } from "./projects.js";
 import { buildOrchestratorPrompt, changeableSteps } from "./prompts.js";
 import type { RepositoryWorkspace } from "./repository.js";
@@ -63,7 +64,7 @@ const agent = (overrides: Partial<AgentConfig> = {}): AgentConfig => ({
 });
 
 const configOf =
-  (a: AgentConfig, budgetPerTaskUsd = 1): (() => ConfigResult) =>
+  (a: AgentConfig, budgetPerTaskUsd = 1, platforms: Platform[] = []): (() => ConfigResult) =>
   () => ({
     ok: true,
     config: {
@@ -71,6 +72,9 @@ const configOf =
       defaultAgent: a,
       guardianAgent: a,
       budgetPerTaskUsd,
+      gatewayRetry: { maxAttempts: 8, maxWaitMs: 600_000 },
+      imageBuild: {},
+      platforms,
     },
   });
 
@@ -510,6 +514,7 @@ function makeService(
     gateway?: ServiceDeps["gateway"];
     /** 秘密情報の取り出し口を差し替える（1Password。PBI-34）。 */
     secretStore?: ServiceDeps["secrets"];
+    platformProblems?: ServiceDeps["platformProblems"];
   } = {},
 ) {
   const executor = new FakeExecutor(outcomes);
@@ -551,6 +556,7 @@ function makeService(
         }),
     workspaceRoot: join(dir, "workspaces"),
     ...(options.gateway ? { gateway: options.gateway } : {}),
+    ...(options.platformProblems ? { platformProblems: options.platformProblems } : {}),
   });
   return { service, executor, repos, tests, pulls };
 }
@@ -588,6 +594,58 @@ describe("作業履歴", () => {
 });
 
 describe("工程の実行と費用", () => {
+  it("社内 PF があれば、工程エージェントに PF の URL（実行のトークンを含む）と使える API を渡し、認証情報は渡さない（PBI-35）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const ticket = toPlatform(
+      "ticket",
+      PlatformFile.parse({
+        upstream: "https://ticket.internal.example.com",
+        description: "社内のチケット管理",
+        auth: { header: "X-Internal-Token", secret: "ticket-token" },
+        allow: ["GET /api/v1/tickets/**"],
+      }),
+    );
+    const closed: string[] = [];
+    const gateway: NonNullable<ServiceDeps["gateway"]> = {
+      containerOrigin: () => "http://host.docker.internal:5001",
+      platformsUrl: (token) => `http://host.docker.internal:5001/r/${token}/pf`,
+      register: (route) => {
+        // AI は中継しない（このエージェントはゲートウェイ経由ではない）
+        expect(route).toBeUndefined();
+        return {
+          token: "sacty-gw-run",
+          stats: () => ({ retries: 0, waitedMs: 0, statuses: [], gaveUp: false }),
+          close: () => closed.push("sacty-gw-run"),
+        };
+      },
+    };
+    const { service, executor } = makeService(activity, [completed(20_000)], {
+      config: configOf(agent(), 1, [ticket]),
+      secrets: { "claude-oauth-token": "oauth-secret", "ticket-token": "tkt-secret" },
+      gateway,
+      platformProblems: (names) =>
+        names.includes("ticket")
+          ? [message("gateway.platformUnavailable", { name: "ticket", detail: "x" })]
+          : [],
+    });
+    const task = service.createTask({ projectId: "default", title: "チケットを調べる" });
+    await service.runNext(task.id);
+    const call = executor.calls[0];
+    expect(call?.env.SACTY_PF_URL).toBe("http://host.docker.internal:5001/r/sacty-gw-run/pf");
+    expect(call?.hostGateway).toBe(true);
+    expect(Object.values(call?.env ?? {})).not.toContain("tkt-secret");
+    const prompt = call?.command.join(" ") ?? "";
+    expect(prompt).toContain("- ticket：社内のチケット管理（$SACTY_PF_URL/ticket）");
+    expect(prompt).toContain("  - GET /api/v1/tickets/**");
+    expect(closed).toEqual(["sacty-gw-run"]);
+    // 認証情報を用意できない PF は、画面の状態に知らせる（工程は止めない）
+    expect(service.status()).toMatchObject({
+      problems: [],
+      warnings: [{ code: "gateway.platformUnavailable", params: { name: "ticket" } }],
+    });
+    activity.close();
+  });
+
   it("1Password の参照の秘密情報を取り出して渡し、取り出せなければ理由を記録して止める（PBI-34）", async () => {
     const activity = new SqliteActivityStore(dbPath);
     let signedIn = false;
@@ -632,6 +690,7 @@ describe("工程の実行と費用", () => {
     const registered: { origin: string; apiKey: string; closed: boolean }[] = [];
     const gateway: NonNullable<ServiceDeps["gateway"]> = {
       containerOrigin: () => "http://host.docker.internal:5001",
+      platformsUrl: (token) => `http://host.docker.internal:5001/r/${token}/pf`,
       register: (route) => {
         const entry = { ...route, closed: false };
         registered.push(entry);

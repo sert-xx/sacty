@@ -1,6 +1,9 @@
+import { request } from "node:http";
 import { connect } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
-import { AiGateway, type GatewayDeps, type RetryPolicy, retryAfterMs } from "./gateway.js";
+import { AiGateway, type GatewayDeps, type RetryPolicy, retryAfterMs, sentUrl } from "./gateway.js";
+import { PlatformCredentials, PlatformFile, toPlatform } from "./platforms.js";
+import { MemorySecretStore } from "./secrets.js";
 
 /** 上流の偽物。呼ばれるたびに、決めた順に応答を返す（Error なら接続の失敗）。 */
 function upstream(responses: (Response | Error | (() => Response))[]) {
@@ -266,5 +269,189 @@ describe("ホストのゲートウェイ（PBI-37）", () => {
     expect(retryAfterMs(new Date(5_000).toUTCString(), 1_000)).toBe(4_000);
     expect(retryAfterMs("soon", 0)).toBeUndefined();
     expect(retryAfterMs(null, 0)).toBeUndefined();
+  });
+});
+
+describe("社内 PF の API の中継（PBI-35）", () => {
+  const ticket = toPlatform(
+    "ticket",
+    PlatformFile.parse({
+      upstream: "https://ticket.internal.example.com",
+      auth: { header: "X-Internal-Token", secret: "ticket-token" },
+      allow: ["GET /api/v1/tickets/**", "POST /api/v1/tickets/*/comments"],
+    }),
+  );
+  const deploy = toPlatform(
+    "deploy",
+    PlatformFile.parse({
+      upstream: "https://deploy.internal.example.com",
+      auth: {
+        prefix: "Bearer ",
+        token: {
+          url: "https://auth.internal.example.com/token",
+          json: { apiKey: "{{secret}}" },
+          secret: "deploy-key",
+          token_path: "token",
+        },
+      },
+      allow: ["GET /api/**"],
+    }),
+  );
+
+  async function startPf(responses: Parameters<typeof upstream>[0]) {
+    const up = upstream(responses);
+    const credentials = new PlatformCredentials({
+      secrets: new MemorySecretStore({ "ticket-token": "tkt-secret", "deploy-key": "dk" }),
+      fetchImpl: up.fetchImpl,
+    });
+    gateway = new AiGateway({
+      fetchImpl: up.fetchImpl,
+      platforms: () => [ticket, deploy],
+      credentials,
+    });
+    const port = await gateway.listen();
+    const run = gateway.register();
+    const base = `http://127.0.0.1:${port}/r/${run.token}/pf`;
+    return { ...up, run, base, port };
+  }
+
+  it("ホワイトリストに合うリクエストだけを、PF の認証を付けて転送する（エージェントが付けた認証・クッキーは捨てる）", async () => {
+    const g = await startPf([json(200, { id: 42 }), json(201, { ok: true })]);
+    expect(gateway?.platformsUrl(g.run.token)).toBe(
+      `http://host.docker.internal:${g.port}/r/${g.run.token}/pf`,
+    );
+    const got = await fetch(`${g.base}/ticket/api/v1/tickets/42?expand=1`, {
+      headers: { "x-internal-token": "agent-made-up", cookie: "a=b", accept: "application/json" },
+    });
+    expect(got.status).toBe(200);
+    expect(await got.json()).toEqual({ id: 42 });
+    expect(g.calls[0]?.url).toBe("https://ticket.internal.example.com/api/v1/tickets/42?expand=1");
+    expect(g.calls[0]?.headers.get("x-internal-token")).toBe("tkt-secret");
+    expect(g.calls[0]?.headers.get("cookie")).toBeNull();
+    expect(g.calls[0]?.headers.get("accept")).toBe("application/json");
+    const posted = await fetch(`${g.base}/ticket/api/v1/tickets/42/comments`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text: "調べました" }),
+    });
+    expect(posted.status).toBe(201);
+    expect(g.calls[1]?.body).toBe('{"text":"調べました"}');
+  });
+
+  it("ホワイトリストに無い・知らない PF・知らないトークンは、上流に送らずに拒否する", async () => {
+    const g = await startPf([]);
+    const denied = await fetch(`${g.base}/ticket/api/v1/users`);
+    expect(denied.status).toBe(403);
+    expect(await denied.text()).toContain(
+      'GET /api/v1/users is not allowed for \\"ticket\\". Allowed: GET /api/v1/tickets/**, POST /api/v1/tickets/*/comments',
+    );
+    expect((await fetch(`${g.base}/ticket/api/v1/tickets/42`, { method: "DELETE" })).status).toBe(
+      403,
+    );
+    expect((await fetch(`${g.base}/unknown/api`)).status).toBe(404);
+    expect(
+      (await fetch(`http://127.0.0.1:${g.port}/r/sacty-gw-unknown/pf/ticket/api/v1/tickets/1`))
+        .status,
+    ).toBe(401);
+    g.run.close();
+    expect((await fetch(`${g.base}/ticket/api/v1/tickets/1`)).status).toBe(401);
+    expect(g.calls).toHaveLength(0);
+  });
+
+  it("# など URL として解釈すると変わるパスは、許可の判定をすり抜けられず、上流に一切送らない（レビュー指摘）", async () => {
+    const g = await startPf([json(200, {})]);
+    // fetch は # を落とすので、node:http で生のパスを送る
+    const raw = (path: string) =>
+      new Promise<{ status: number; body: string }>((resolve, reject) => {
+        const req = request({ host: "127.0.0.1", port: g.port, method: "POST", path }, (res) => {
+          let body = "";
+          res.on("data", (c) => (body += c));
+          res.on("end", () => resolve({ status: res.statusCode ?? 0, body }));
+        });
+        req.on("error", reject);
+        req.end("{}");
+      });
+    const base = `/r/${g.run.token}/pf/ticket`;
+    const fragment = await raw(`${base}/api/v1/tickets/123#x/comments`);
+    expect(fragment.status).toBe(400);
+    expect(fragment.body).toContain("changes when sent as a URL");
+    expect((await raw(`${base}/api/v1/tickets/123/./comments`)).status).not.toBe(200);
+    expect((await raw(`${base}/api/v1/tickets/123/comments?a=1#frag`)).status).toBe(400);
+    expect(g.calls).toHaveLength(0);
+  });
+
+  it("送る URL は、パス・クエリが URL として変わらないときだけ作る", () => {
+    const up = "https://ticket.example.com";
+    expect(sentUrl(up, "/api/v1/tickets/1", "?a=1")).toBe(
+      "https://ticket.example.com/api/v1/tickets/1?a=1",
+    );
+    expect(sentUrl("https://ex.com/base", "/api/x", "")).toBe("https://ex.com/base/api/x");
+    expect(sentUrl(up, "/api/1#x/comments", "")).toBeUndefined();
+    expect(sentUrl(up, "/api/./x", "")).toBeUndefined();
+    expect(sentUrl(up, "/api/../x", "")).toBeUndefined();
+    expect(sentUrl(up, "/api/x", "?a=1#f")).toBeUndefined();
+    expect(sentUrl(up, "/api/x y", "")).toBeUndefined();
+  });
+
+  it("トークンを取得する PF は、拒否（401）されたらトークンを取り直して1回だけ送り直す", async () => {
+    const g = await startPf([
+      json(200, { token: "jwt-old" }),
+      json(401, { message: "expired" }),
+      json(200, { token: "jwt-new" }),
+      json(200, { deployments: [] }),
+    ]);
+    const res = await fetch(`${g.base}/deploy/api/v1/deployments`);
+    expect(res.status).toBe(200);
+    expect(g.calls.map((c) => c.url)).toEqual([
+      "https://auth.internal.example.com/token",
+      "https://deploy.internal.example.com/api/v1/deployments",
+      "https://auth.internal.example.com/token",
+      "https://deploy.internal.example.com/api/v1/deployments",
+    ]);
+    expect(g.calls[1]?.headers.get("authorization")).toBe("Bearer jwt-old");
+    expect(g.calls[3]?.headers.get("authorization")).toBe("Bearer jwt-new");
+  });
+
+  it("トークンの取得に失敗しても、ゲートウェイの応答に秘密情報を出さない（レビュー指摘）", async () => {
+    const up = upstream([]);
+    const bad = toPlatform(
+      "bad",
+      PlatformFile.parse({
+        upstream: "https://bad.example.com",
+        auth: {
+          token: {
+            url: "https://auth.example.com/token",
+            headers: { "X-Key": "{{secret}}" },
+            secret: "bad-key",
+            token_path: "token",
+          },
+        },
+        allow: ["GET /**"],
+      }),
+    );
+    gateway = new AiGateway({
+      fetchImpl: up.fetchImpl,
+      platforms: () => [bad],
+      credentials: new PlatformCredentials({
+        secrets: new MemorySecretStore({ "bad-key": "FAKE-SECRET\nBAD" }),
+        fetchImpl: up.fetchImpl,
+      }),
+    });
+    const port = await gateway.listen();
+    const run = gateway.register();
+    const res = await fetch(`http://127.0.0.1:${port}/r/${run.token}/pf/bad/x`);
+    expect(res.status).toBe(502);
+    const text = await res.text();
+    expect(text).toContain("[secret]");
+    expect(text).not.toContain("FAKE-SECRET");
+    expect(up.calls).toHaveLength(0);
+  });
+
+  it("認証情報を用意できなければ、理由を返して上流に送らない", async () => {
+    const g = await startPf([json(500, { message: "auth down" })]);
+    const res = await fetch(`${g.base}/deploy/api/v1/deployments`);
+    expect(res.status).toBe(502);
+    expect(await res.text()).toContain('cannot prepare the credentials for \\"deploy\\"');
+    expect(g.calls.map((c) => c.url)).toEqual(["https://auth.internal.example.com/token"]);
   });
 });
