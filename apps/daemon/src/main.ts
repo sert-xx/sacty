@@ -14,7 +14,7 @@ import { IssueIntake } from "./intake.js";
 import { PullRequestWatcher } from "./pr-watcher.js";
 import { SqliteProjectStore } from "./projects.js";
 import { GitRepositoryWorkspace } from "./repository.js";
-import { KeychainSecretStore } from "./secrets.js";
+import { KeychainSecretStore, OnePasswordSecretStore, ResolvingSecretStore } from "./secrets.js";
 import { createApp } from "./server.js";
 import { TaskService } from "./service.js";
 import { SqliteSettingsStore } from "./settings.js";
@@ -33,8 +33,17 @@ mkdirSync(home, { recursive: true });
 const activity = new SqliteActivityStore(join(home, "sacty.db"));
 const projects = new SqliteProjectStore(join(home, "sacty.db"));
 const settings = new SqliteSettingsStore(join(home, "sacty.db"));
-const secrets = new KeychainSecretStore();
 const config = () => loadConfig(home);
+// 秘密情報は、キーチェーンの名前か 1Password の参照（op://…。PBI-34）
+const secrets = new ResolvingSecretStore(
+  new KeychainSecretStore(),
+  new OnePasswordSecretStore({
+    account: () => {
+      const c = config();
+      return c.ok ? c.config.onePasswordAccount : undefined;
+    },
+  }),
+);
 const executor = new DockerExecutor();
 const tests = new DockerTestRunner();
 // GitHub へのアクセスは、ホストの gh のアカウントで行う（PBI-13）

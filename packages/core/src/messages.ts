@@ -76,6 +76,7 @@ const PARAMS = {
   "input.unknownKeys": z.object({ keys: z.string() }),
   "input.invalid": null,
   "input.secretName": null,
+  "input.secretRef": null,
   "input.envName": null,
   "input.headerName": null,
   "input.mcpName": null,
@@ -92,6 +93,10 @@ const PARAMS = {
   "run.authFileUnreadable": z.object({ path: z.string() }),
   "run.containerNotConfirmed": z.object({ name: z.string() }),
   "run.secretNotFound": z.object({ name: z.string() }),
+  // 1Password（PBI-34）
+  "secret.opMissing": null,
+  "secret.opSignedOut": z.object({ ref: z.string() }),
+  "secret.opFailed": z.object({ ref: z.string(), detail: z.string() }),
   "run.repositoryNotConfigured": null,
   "guardian.verdictUnreadable": null,
   "guardian.reworkUnreadable": null,
@@ -339,6 +344,8 @@ const ja: MessageDictionary = {
   "input.unknownKeys": ({ keys }) => `知らない項目があります（${keys}）。`,
   "input.invalid": "入力が正しくありません。",
   "input.secretName": "秘密情報の名前は英数字と . _ - だけで書いてください。",
+  "input.secretRef":
+    "秘密情報は、キーチェーンの名前（英数字と . _ -）か、1Password の参照（op://保管庫/アイテム/フィールド）で書いてください。",
   "input.envName": "環境変数の名前が正しくありません。",
   "input.headerName": "ヘッダーの名前が正しくありません。",
   "input.mcpName": "MCP サーバーの名前は英数字と _ - だけで書いてください。",
@@ -361,6 +368,12 @@ const ja: MessageDictionary = {
     `コンテナ（${name}）の停止を確認できませんでした。docker ps で確認してください。`,
   "run.secretNotFound": ({ name }) =>
     `秘密情報「${name}」が見つかりません。\`sacty secret set ${name}\` で保存してください。`,
+  "secret.opMissing":
+    "1Password の op コマンドが見つかりません。1Password CLI をインストールし、サインインしてから再開してください。",
+  "secret.opSignedOut": ({ ref }) =>
+    `1Password にサインインしていないため、「${ref}」を取り出せません。op signin（または 1Password のアプリとの連携）でサインインしてから再開してください。`,
+  "secret.opFailed": ({ ref, detail }) =>
+    `1Password から「${ref}」を取り出せませんでした（${detail}）。参照（保管庫・アイテム・フィールド）を確かめてから再開してください。`,
   "run.repositoryNotConfigured":
     "このタスクには対象リポジトリがありません（対象リポジトリを選ぶ前の版で作ったタスクです）。中止して、タスクを作り直してください。",
   "guardian.verdictUnreadable": "ゴールガーディアンの出力から、判定を読み取れませんでした。",
@@ -547,6 +560,8 @@ const en: MessageDictionary = {
   "input.unknownKeys": ({ keys }) => `Unknown fields: ${keys}.`,
   "input.invalid": "The input is not valid.",
   "input.secretName": "Use only letters, digits, and . _ - in secret names.",
+  "input.secretRef":
+    "Write a secret as a keychain name (letters, digits, and . _ -) or a 1Password reference (op://vault/item/field).",
   "input.envName": "The environment variable name is not valid.",
   "input.headerName": "The header name is not valid.",
   "input.mcpName": "Use only letters, digits, and _ - in MCP server names.",
@@ -571,6 +586,12 @@ const en: MessageDictionary = {
     `Could not confirm that the container (${name}) stopped. Check with docker ps.`,
   "run.secretNotFound": ({ name }) =>
     `Secret "${name}" not found. Save it with \`sacty secret set ${name}\`.`,
+  "secret.opMissing":
+    "The 1Password op command was not found. Install 1Password CLI, sign in, and resume.",
+  "secret.opSignedOut": ({ ref }) =>
+    `Cannot read "${ref}" because 1Password is not signed in. Sign in with op signin (or the 1Password app integration) and resume.`,
+  "secret.opFailed": ({ ref, detail }) =>
+    `Could not read "${ref}" from 1Password (${detail}). Check the reference (vault, item, and field) and resume.`,
   "run.repositoryNotConfigured":
     "This task has no target repository (it was created before tasks chose one). Cancel it and create the task again.",
   "guardian.verdictUnreadable": "Could not read a verdict from the Goal Guardian's output.",

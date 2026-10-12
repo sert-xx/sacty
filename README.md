@@ -50,6 +50,21 @@ npx sacty secret set claude-oauth-token
 
 値は `security` コマンドがたずねる。sactyは値をコマンドライン・作業履歴・ログ・画面に出さない。
 
+1Password に保存した秘密情報は、名前の代わりに参照（`op://保管庫/アイテム/フィールド`）を書く。エージェントの認証・MCP・npm のトークンなど、秘密情報を書くすべての所で使える。
+
+```yaml
+agents:
+  codex-bedrock:
+    auth: { mode: bedrock, secret: "op://Work/Bedrock/credential", region: us-east-2 }
+# 複数の 1Password のアカウントにサインインしているときは、使うアカウントを書く
+onepassword:
+  account: my-company.1password.com
+```
+
+- 1Password CLI（`op`）で取り出す。先に `op signin`（または 1Password のアプリとの連携）でサインインしておく
+- 取り出した値は、デーモンが動いている間だけメモリーに持ち、同じ参照で何度も問い合わせない（ディスクには書かない）
+- サインインしていない・参照先が無いときは、どの参照かと理由を記録してタスクを止める。サインインしてから再開すると、取り出し直す
+
 費用は、エージェントごとの単価（`price_per_mtok_usd`。100万トークンあたりの米ドル）とトークン数から計算する。契約で単価が違う場合は、その単価を書く。
 
 ### プライベートのレジストリからイメージを作る

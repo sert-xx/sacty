@@ -20,6 +20,7 @@ import { parse as parseToml, stringify as stringifyToml } from "smol-toml";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 import { errorText, MessageError } from "./errors.js";
+import { SecretRef } from "./secrets.js";
 
 /**
  * コンテキストリポジトリ（PBI-6）。中立形式は次のとおり。
@@ -54,7 +55,8 @@ const McpValue = z.union([
   McpLiteral,
   z
     .object({
-      secret: z.string().regex(/^[A-Za-z0-9._-]+$/, code("input.secretName")),
+      // キーチェーンの名前か、1Password の参照（PBI-34）
+      secret: SecretRef,
       prefix: McpLiteral.default(""),
     })
     .strict(),
