@@ -26,7 +26,8 @@ RUN --mount=type=secret,id=npmrc,target=/run/secrets/npmrc \
 # コンテナの中の npm 全体の設定（config.yaml の image_build.npm_config。認証の項目は含まない。PBI-40）。
 # CLI を入れた後に置く（CLI の取得には効かせない）。ファイルの受け渡しは、認証の .npmrc と同じ secret の仕組みを
 # 使う（--build-context は、Docker の構成によっては使えないため）。中身はこの RUN でイメージの設定に書き込む。
-# secret の中身はビルドのキャッシュの判定に入らないので、中身のハッシュを引数で渡し、変わったら作り直す
+# secret の中身はビルドのキャッシュの判定に入らないので、中身のハッシュを引数で渡し、変わったら作り直す。
+# 元のイメージにすでに設定があり、最後の行が改行で終わっていなければ、改行してから書き足す（行がつながらないように）
 ARG NPM_CONFIG_HASH=
 RUN --mount=type=secret,id=npmconfig,target=/run/secrets/npmconfig \
   if [ ! -f /run/secrets/npmconfig ]; then \
@@ -34,7 +35,7 @@ RUN --mount=type=secret,id=npmconfig,target=/run/secrets/npmconfig \
     exit 1; \
   fi \
   && g="$(npm config get globalconfig)" && mkdir -p "$(dirname "$g")" \
-  && cat /run/secrets/npmconfig >> "$g"
+  && { [ ! -s "$g" ] || [ -z "$(tail -c 1 "$g")" ] || echo; cat /run/secrets/npmconfig; } >> "$g"
 
 # root では動かさない（node イメージの node ユーザー）
 USER node
