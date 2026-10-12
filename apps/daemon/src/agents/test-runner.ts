@@ -2,6 +2,9 @@ import { spawn } from "node:child_process";
 import { type DaemonText, message } from "@sacty/core";
 import { dockerClientEnv, dockerRunArgs, RunningContainers } from "./docker.js";
 
+/** docker run が、Docker 自身の失敗で終わったときの終了コード（コンテナの中のコマンドの結果ではない）。 */
+const DOCKER_RUN_FAILED = 125;
+
 /** テストの出力は、末尾のこの文字数だけ残す（作業履歴と画面に載せるため）。 */
 export const TEST_OUTPUT_TAIL = 20_000;
 
@@ -105,10 +108,13 @@ export class DockerTestRunner implements TestRunner {
         });
         child.on("close", (code) => {
           clearTimeout(timer);
+          // docker run の終了コード 125 は、Docker 自身の失敗（デーモンに接続できない・イメージを取得できないなど）。
+          // テストは実行されていない（PBI-29 レビュー指摘）
+          if (!note && code === DOCKER_RUN_FAILED) note = message("run.dockerFailed");
           resolve({
             exitCode: code ?? 1,
             output: output.slice(-TEST_OUTPUT_TAIL),
-            // 時間切れで止めたなら、終了コードはテストの結果ではない
+            // 時間切れで止めた・Docker 自身が失敗したなら、終了コードはテストの結果ではない
             ...(note ? { note, infrastructure: true } : {}),
             durationMs: Date.now() - started,
           });

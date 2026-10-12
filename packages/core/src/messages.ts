@@ -87,6 +87,7 @@ const PARAMS = {
   "run.timeout": z.object({ minutes: z.number() }),
   "run.testTimeout": z.object({ minutes: z.number() }),
   "run.dockerUnavailable": z.object({ detail: TextParam }),
+  "run.dockerFailed": null,
   "run.imageMissing": z.object({ image: z.string() }),
   "run.authFileUnreadable": z.object({ path: z.string() }),
   "run.containerNotConfirmed": z.object({ name: z.string() }),
@@ -343,6 +344,8 @@ const ja: MessageDictionary = {
   "run.testTimeout": ({ minutes }) => `テストの実行が ${minutes} 分を超えたため止めました。`,
   "run.dockerUnavailable": ({ detail }, text) =>
     `dockerを実行できません。Dockerが起動しているか確認してください（${text(detail)}）。`,
+  "run.dockerFailed":
+    "Docker がコンテナを実行できませんでした（docker run の終了コード 125）。Docker の起動・接続やイメージを確認してください。",
   "run.imageMissing": ({ image }) =>
     `エージェント用のイメージ（${image}）がありません。\`sacty image build\` で作成してください。`,
   "run.authFileUnreadable": ({ path }) =>
@@ -540,6 +543,8 @@ const en: MessageDictionary = {
     `Stopped the tests because they ran longer than ${minutes} minutes.`,
   "run.dockerUnavailable": ({ detail }, text) =>
     `Cannot run docker. Check that Docker is running (${text(detail)}).`,
+  "run.dockerFailed":
+    "Docker could not run the container (docker run exit code 125). Check that Docker is running and reachable, and check the image.",
   "run.imageMissing": ({ image }) =>
     `The agent image (${image}) is missing. Build it with \`sacty image build\`.`,
   "run.authFileUnreadable": ({ path }) =>

@@ -1,3 +1,4 @@
+import { EventEmitter } from "node:events";
 import {
   existsSync,
   mkdirSync,
@@ -23,7 +24,7 @@ import { SqliteActivityStore } from "./activity.js";
 import type { AgentExecutor } from "./agents/docker.js";
 import type { Invocation } from "./agents/invocation.js";
 import type { AgentOutcome } from "./agents/parse.js";
-import type { TestRunner, TestRunResult } from "./agents/test-runner.js";
+import { DockerTestRunner, type TestRunner, type TestRunResult } from "./agents/test-runner.js";
 import { type AgentConfig, type ConfigResult, loadConfig } from "./config.js";
 import type { ContextFetcher, ContextRef } from "./context.js";
 import { MessageError } from "./errors.js";
@@ -5323,6 +5324,33 @@ describe("再現の工程（PBI-29）", () => {
     expect(tests.calls).toHaveLength(2);
     expect(task?.reproduction?.reproduced).toBe(true);
     expect(task?.steps.find((s) => s.state === "active")?.key).toBe("implement");
+    activity.close();
+  });
+
+  it("docker run が Docker 自身の失敗（終了コード 125）で終わっても、再現できたとせずに止める（レビュー指摘）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    // 実際のテストの実行基盤に、docker run が 125 で終わる docker を渡す
+    const spawnImpl = (() => {
+      const child = Object.assign(new EventEmitter(), {
+        stdout: new EventEmitter(),
+        stderr: new EventEmitter(),
+        kill: () => true,
+      });
+      setTimeout(() => child.emit("close", 125), 0);
+      return child;
+    }) as never;
+    const { service } = makeService(
+      activity,
+      [out("# 前段の調査"), reproduce("# 再現", ["a.test.ts › x"])],
+      { planner, tests: new DockerTestRunner(60_000, spawnImpl) as unknown as FakeTests },
+    );
+    const { id } = service.createTask({ projectId: "default", title: "不具合" });
+    await drain(service);
+    const task = service.get(id)?.task;
+    expect(task?.status).toBe("paused");
+    expect(task?.reproduction).toBeUndefined();
+    expect(task?.reproductionPending).toBe(true);
+    expect(renderMessage(task?.pausedMessage, "ja")).toMatch(/docker run の終了コード 125/);
     activity.close();
   });
 
