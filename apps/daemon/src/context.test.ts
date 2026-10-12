@@ -495,7 +495,8 @@ describe("エージェントの設定の合成（PBI-24）", () => {
       defaultDir,
     );
     expect(JSON.parse(readFileSync(join(claude.dir, "settings.json"), "utf8"))).toEqual({
-      permissions: { allow: ["Bash(npm run lint)"], deny: ["Read(./.env)"] },
+      // 許可・禁止のルールは、置き換えずに合わせる
+      permissions: { allow: ["Bash(npm test)", "Bash(npm run lint)"], deny: ["Read(./.env)"] },
       env: { FOO: "default", BAR: "project" },
     });
     expect(claude.warnings.map(ja)).toEqual([
@@ -506,6 +507,75 @@ describe("エージェントの設定の合成（PBI-24）", () => {
       expect.stringMatching(/「apiKeyHelper」/),
     ]);
     expect(existsSync(join(claude.dir, "config.toml"))).toBe(false);
+    claude.dispose();
+  });
+
+  it("エージェントの設定のディレクトリのファイルを写し（同じパスは下位が上書き）、Codex のルールは sacty.rules にまとめる", async () => {
+    const defaultDir = place(join(dir, "default"), {
+      "agents/codex/rules/default.rules":
+        'prefix_rule(pattern = ["rm", "-rf"], decision = "forbidden")',
+      "agents/codex/prompts/fix.md": "既定版",
+      "agents/codex/auth.json": "{}",
+      "agents/claude/agents/reviewer.md": "既定のレビュアー",
+      "agents/claude/commands/check.md": "既定版",
+      "agents/claude/.credentials.json": "{}",
+    });
+    const fetcher = new FakeFetcher({
+      "https://example.com/p.git": {
+        "agents/codex/rules/default.rules":
+          'prefix_rule(pattern = ["npm", "test"], decision = "allow")',
+        "agents/codex/rules/sacty.rules":
+          'prefix_rule(pattern = ["git", "status"], decision = "allow")',
+        "agents/codex/prompts/fix.md": "プロジェクト版",
+        "agents/codex/skills/x/SKILL.md": "skills/ で管理する",
+        "agents/claude/commands/check.md": "プロジェクト版",
+        "agents/claude/CLAUDE.md": "sacty が作る",
+      },
+    });
+    const codex = await prepareContext(
+      fetcher,
+      { repo: "https://example.com/p.git" },
+      "codex",
+      "/h",
+      undefined,
+      defaultDir,
+    );
+    // 同じ名前のルールのファイルも、上書きせずに上位から順にまとめる（Codex の default.rules とは分ける）
+    expect(readFileSync(join(codex.dir, "rules", "sacty.rules"), "utf8")).toMatch(
+      /^# sacty context: sacty-default@\w{7}\n.*"rm", "-rf".*\n\n# sacty context: https:\/\/example.com\/p.git@\w{7}\n.*"npm", "test".*\n\n# sacty context: https:\/\/example.com\/p.git@\w{7}\n.*"git", "status"/,
+    );
+    expect(existsSync(join(codex.dir, "rules", "default.rules"))).toBe(false);
+    expect(readFileSync(join(codex.dir, "prompts", "fix.md"), "utf8")).toBe("プロジェクト版");
+    expect(existsSync(join(codex.dir, "auth.json"))).toBe(false);
+    expect(existsSync(join(codex.dir, "skills"))).toBe(false);
+    expect(existsSync(join(codex.dir, "agents"))).toBe(false);
+    expect(codex.warnings.map(ja)).toEqual([
+      expect.stringMatching(
+        /^sacty-default@\w{7} の agents\/codex\/ の「auth.json」は sacty が決める項目/,
+      ),
+      expect.stringMatching(/agents\/codex\/ の「skills\/x\/SKILL.md」/),
+    ]);
+    codex.dispose();
+
+    const claude = await prepareContext(
+      fetcher,
+      { repo: "https://example.com/p.git" },
+      "claude-code",
+      "/c",
+      undefined,
+      defaultDir,
+    );
+    expect(readFileSync(join(claude.dir, "agents", "reviewer.md"), "utf8")).toBe(
+      "既定のレビュアー",
+    );
+    expect(readFileSync(join(claude.dir, "commands", "check.md"), "utf8")).toBe("プロジェクト版");
+    expect(existsSync(join(claude.dir, ".credentials.json"))).toBe(false);
+    expect(existsSync(join(claude.dir, "CLAUDE.md"))).toBe(false);
+    expect(existsSync(join(claude.dir, "rules"))).toBe(false);
+    expect(claude.warnings.map(ja)).toEqual([
+      expect.stringMatching(/「\.credentials\.json」/),
+      expect.stringMatching(/「CLAUDE\.md」/),
+    ]);
     claude.dispose();
   });
 

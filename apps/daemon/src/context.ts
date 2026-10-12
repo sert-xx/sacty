@@ -13,7 +13,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, relative } from "node:path";
+import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { code, type DaemonText, issueMessage, message } from "@sacty/core";
 import { parse as parseToml, stringify as stringifyToml } from "smol-toml";
@@ -106,6 +106,12 @@ export type ContextLayer = ContextRef & {
 
 /** エージェントの設定（Codex は config.toml、Claude Code は settings.json の中身）。 */
 export type AgentSettings = { codex: Record<string, unknown>; claude: Record<string, unknown> };
+
+/** Claude Code に渡す MCP の設定のファイル名（設定のディレクトリの中）。 */
+export const CLAUDE_MCP_CONFIG = "mcp.json";
+
+/** 各層の Codex のルールをまとめて置くファイル（CODEX_HOME の中）。 */
+export const CODEX_RULES = "rules/sacty.rules";
 
 /** 層の中の、エージェントの設定のファイル。 */
 export const AGENT_SETTINGS_FILES = {
@@ -430,18 +436,71 @@ function withoutReserved(
   return result;
 }
 
-/** 設定を重ねる。表（オブジェクト）はキーごとに合わせ、それ以外（配列も）は下位の値で置き換える。 */
+/**
+ * 設定を重ねる。表（オブジェクト）はキーごとに合わせ、それ以外（配列も）は下位の値で置き換える。
+ * union に当たる配列だけは、上位と下位を合わせる（重複は除く）。
+ */
 function mergeSettings(
   base: Record<string, unknown>,
   over: Record<string, unknown>,
+  union: (path: string[]) => boolean = () => false,
+  path: string[] = [],
 ): Record<string, unknown> {
   const result: Record<string, unknown> = { ...base };
   for (const [key, value] of Object.entries(over)) {
     const current = result[key];
-    result[key] =
-      isPlainObject(current) && isPlainObject(value) ? mergeSettings(current, value) : value;
+    const at = [...path, key];
+    if (isPlainObject(current) && isPlainObject(value)) {
+      result[key] = mergeSettings(current, value, union, at);
+    } else if (Array.isArray(current) && Array.isArray(value) && union(at)) {
+      result[key] = [...new Set([...current, ...value])];
+    } else {
+      result[key] = value;
+    }
   }
   return result;
+}
+
+/**
+ * 層を重ねても合わせる配列。Claude Code の許可・禁止のルールは、既定で決めたものに
+ * プロジェクトが足していけるように、置き換えずに合わせる。
+ */
+const UNION_SETTINGS: Record<keyof AgentSettings, (path: string[]) => boolean> = {
+  codex: () => false,
+  claude: (path) =>
+    path.length === 2 &&
+    path[0] === "permissions" &&
+    ["allow", "deny", "ask"].includes(path[1] ?? ""),
+};
+
+/** 層の、エージェントの設定のディレクトリ（`agents/codex`・`agents/claude`）。 */
+const AGENT_DIRS = { codex: "agents/codex", claude: "agents/claude" } as const;
+
+/**
+ * エージェントの設定のディレクトリのうち、sacty が作る・管理するもの。層に置いても写さない（警告を残す）。
+ * 認証のファイル、sacty が作る規約・MCP の設定、スキル（skills/ で管理する）。
+ */
+const RESERVED_FILES: Record<keyof AgentSettings, string[]> = {
+  // rules/sacty.rules は予約しない（層に置いても、ほかのルールと同じくまとめる）
+  codex: ["auth.json", "AGENTS.md", "skills"],
+  claude: [".credentials.json", ".claude.json", "CLAUDE.md", CLAUDE_MCP_CONFIG, "skills"],
+};
+
+/** 層の、エージェントの設定のディレクトリにあるファイル（ディレクトリからの相対パス）。 */
+function layerAgentFiles(layer: ContextLayer, kind: keyof AgentSettings): string[] {
+  const root = join(layer.dir, AGENT_DIRS[kind]);
+  if (!existsSync(root)) return [];
+  const files: string[] = [];
+  const visit = (rel: string) => {
+    const path = join(root, rel);
+    if (statSync(path).isDirectory()) {
+      for (const name of readdirSync(path).sort()) visit(rel ? `${rel}/${name}` : name);
+    } else {
+      files.push(rel);
+    }
+  };
+  visit("");
+  return files;
 }
 
 /** 合成したコンテキスト。 */
@@ -454,6 +513,13 @@ export type ComposedContext = {
   mcp: { name: string; server: McpServer; from: string }[];
   /** エージェントの設定（上位から重ねたもの。sacty が決める項目は除いてある）。 */
   agents: AgentSettings;
+  /**
+   * エージェントの設定のディレクトリに写すファイル（同じパスは下位が上書き）。
+   * 設定ファイル・sacty が管理するファイル・Codex のルールは含まない。
+   */
+  agentFiles: Record<keyof AgentSettings, { path: string; src: string; from: string }[]>;
+  /** Codex のルール（各層の `rules/*.rules`。上位から順に、1つのファイルにまとめる）。 */
+  codexRules: { from: string; text: string }[];
   /** 上書き禁止に当たったなど、合成で気づいたこと。 */
   warnings: DaemonText[];
 };
@@ -557,13 +623,34 @@ export function composeContext(
     warnings,
   );
   const agents: AgentSettings = { codex: {}, claude: {} };
+  const files = { codex: new Map(), claude: new Map() } as Record<
+    keyof AgentSettings,
+    Map<string, { src: string; from: string }>
+  >;
+  const codexRules: { from: string; text: string }[] = [];
+  const kinds: (keyof AgentSettings)[] = runtime
+    ? [runtime === "codex" ? "codex" : "claude"]
+    : ["codex", "claude"];
   for (const layer of layers) {
-    const kinds = runtime
-      ? [runtime === "codex" ? "codex" : "claude"]
-      : (["codex", "claude"] as const);
-    for (const kind of kinds as (keyof AgentSettings)[]) {
-      const own = withoutReserved(kind, layer.agents[kind], label(layer), warnings);
-      agents[kind] = mergeSettings(agents[kind], own);
+    const from = label(layer);
+    for (const kind of kinds) {
+      const own = withoutReserved(kind, layer.agents[kind], from, warnings);
+      agents[kind] = mergeSettings(agents[kind], own, UNION_SETTINGS[kind]);
+      const settingsFile = AGENT_SETTINGS_FILES[kind].slice(AGENT_DIRS[kind].length + 1);
+      for (const path of layerAgentFiles(layer, kind)) {
+        if (path === settingsFile) continue;
+        const src = join(layer.dir, AGENT_DIRS[kind], path);
+        if (RESERVED_FILES[kind].some((r) => path === r || path.startsWith(`${r}/`))) {
+          warnings.push(
+            message("context.reservedSetting", { from, file: `${AGENT_DIRS[kind]}/`, key: path }),
+          );
+        } else if (kind === "codex" && /^rules\/[^/]+\.rules$/.test(path)) {
+          const text = readFileSync(src, "utf8").trim();
+          if (text) codexRules.push({ from, text });
+        } else {
+          files[kind].set(path, { src, from });
+        }
+      }
     }
   }
   return {
@@ -571,6 +658,11 @@ export function composeContext(
     skills: skills.map((s) => ({ name: s.name, dir: s.value, from: s.from })),
     mcp: mcp.map((m) => ({ name: m.name, server: m.value, from: m.from })),
     agents,
+    agentFiles: {
+      codex: [...files.codex.entries()].map(([path, f]) => ({ path, ...f })),
+      claude: [...files.claude.entries()].map(([path, f]) => ({ path, ...f })),
+    },
+    codexRules,
     warnings,
   };
 }
@@ -610,6 +702,12 @@ export function writeContext(
     return { env };
   };
   const placed = () => ({ mcpServers: composed.mcp.map((m) => m.name), secrets });
+  // 層のエージェントの設定のディレクトリのファイルを先に写す（sacty が作るファイルは除いてある）
+  for (const file of composed.agentFiles[runtime === "codex" ? "codex" : "claude"]) {
+    const to = join(outDir, file.path);
+    mkdirSync(dirname(to), { recursive: true });
+    cpSync(file.src, to);
+  }
   for (const skill of composed.skills) {
     cpSync(skill.dir, join(outDir, "skills", skill.name), { recursive: true });
   }
@@ -655,6 +753,14 @@ export function writeContext(
       : "",
   ].filter(Boolean);
   if (parts.length > 0) writeFileSync(join(outDir, "AGENTS.md"), `${parts.join("\n\n")}\n`);
+  // Codex のルールは、Codex 自身が書き足す default.rules と分けて、sacty.rules にまとめる
+  if (composed.codexRules.length > 0) {
+    mkdirSync(join(outDir, "rules"), { recursive: true });
+    writeFileSync(
+      join(outDir, CODEX_RULES),
+      `${composed.codexRules.map((r) => `# sacty context: ${r.from}\n${r.text}`).join("\n\n")}\n`,
+    );
+  }
   // 層の設定を先に書き、mcp.yaml から作る MCP サーバーの表を後ろに続ける（設定の mcp_servers は除いてある）
   const toml = [
     ...(Object.keys(composed.agents.codex).length > 0
@@ -665,9 +771,6 @@ export function writeContext(
   if (toml.length > 0) writeFileSync(join(outDir, "config.toml"), `${toml.join("\n")}`);
   return placed();
 }
-
-/** Claude Code に渡す MCP の設定のファイル名（設定のディレクトリの中）。 */
-export const CLAUDE_MCP_CONFIG = "mcp.json";
 
 /**
  * TOML の文字列（JSON の文字列のエスケープは、TOML の基本文字列でもそのまま使える）。
