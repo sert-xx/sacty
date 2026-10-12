@@ -74,7 +74,7 @@ const ja = {
     notifyUrl: "送り先の URL",
     notifyChannel: "チャンネル",
     notifyToken: "トークン（任意）",
-    notifyTokenPlaceholder: "Proxy なら空。例：slack-bot-token・op://…",
+    notifyTokenPlaceholder: "Proxy なら空",
     notifyWebhookSecret: "Webhook の URL",
     notifyHelp:
       "トークンと Webhook の URL は、秘密情報の名前か 1Password の参照（op://…）で書きます。\n人が自分で一時停止したときは通知しません。",
@@ -167,7 +167,7 @@ const en: ProjectsMessages = {
     notifyUrl: "URL to send to",
     notifyChannel: "Channel",
     notifyToken: "Token (optional)",
-    notifyTokenPlaceholder: "Empty for a proxy. e.g. slack-bot-token, op://…",
+    notifyTokenPlaceholder: "Empty for a proxy",
     notifyWebhookSecret: "Webhook URL",
     notifyHelp:
       "Write tokens and the webhook URL as a secret name or a 1Password reference (op://…).\nPausing a task yourself is not notified.",
