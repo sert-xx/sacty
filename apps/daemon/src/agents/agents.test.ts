@@ -469,6 +469,41 @@ describe("設定ファイル", () => {
     }
   });
 
+  it("イメージの作成の元（元のイメージ・npm のレジストリ・トークンの名前）を読む（PBI-33）", () => {
+    dir = mkdtempSync(join(tmpdir(), "sacty-config-"));
+    const write = (extra: string) =>
+      writeFileSync(
+        join(dir, "config.yaml"),
+        `default_agent: x
+agents:
+  x:
+    runtime: stub
+    auth: { mode: stub }
+    price_per_mtok_usd: { input: 1, cached_input: 0.1, output: 2 }
+${extra}`,
+      );
+    write("");
+    expect(loadConfig(dir)).toMatchObject({ ok: true, config: { imageBuild: {} } });
+    write(`image_build:
+  base_image: registry.example.com/library/node:22-bookworm-slim
+  npm_registry: https://npm.example.com/repository/npm/
+  npm_token: npm-token
+`);
+    expect(loadConfig(dir)).toMatchObject({
+      ok: true,
+      config: {
+        imageBuild: {
+          baseImage: "registry.example.com/library/node:22-bookworm-slim",
+          npmRegistry: "https://npm.example.com/repository/npm/",
+          npmToken: "npm-token",
+        },
+      },
+    });
+    write("image_build:\n  npm_registry: ftp://npm.example.com/\n");
+    const result = loadConfig(dir);
+    expect(result.ok ? "" : ja(result.problem)).toContain("image_build.npm_registry");
+  });
+
   it("ゲートウェイ経由は Codex × Bedrock だけ。リトライの上限を読み、書かなければ既定にする（PBI-37）", () => {
     dir = mkdtempSync(join(tmpdir(), "sacty-config-"));
     const write = (yaml: string) => writeFileSync(join(dir, "config.yaml"), yaml);
