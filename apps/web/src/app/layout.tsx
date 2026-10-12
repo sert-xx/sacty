@@ -1,5 +1,12 @@
 import type { Metadata } from "next";
-import { IBM_Plex_Mono, IBM_Plex_Sans_JP } from "next/font/google";
+// フォントは npm のパッケージから読む（ビルドのときに Google Fonts に取りに行かない。外への通信が制限された
+// 環境でもビルドできるように。PBI-39）。使う文字の範囲だけを、ブラウザが必要なときに読む
+import "@fontsource/ibm-plex-sans-jp/400.css";
+import "@fontsource/ibm-plex-sans-jp/500.css";
+import "@fontsource/ibm-plex-sans-jp/600.css";
+import "@fontsource/ibm-plex-sans-jp/700.css";
+import "@fontsource/ibm-plex-mono/latin-400.css";
+import "@fontsource/ibm-plex-mono/latin-500.css";
 import { Suspense } from "react";
 import { AppHeader, HeaderFallback } from "@/components/shell/header";
 import { Localized } from "@/components/shell/localized";
@@ -7,18 +14,6 @@ import { ProjectGate, RailGate } from "@/components/shell/project-gate";
 import { RailNav } from "@/components/shell/rail";
 import { THEME_SCRIPT } from "@/lib/theme";
 import "./globals.css";
-
-const plexSans = IBM_Plex_Sans_JP({
-  variable: "--font-plex-sans",
-  weight: ["400", "500", "600", "700"],
-  preload: false,
-});
-
-const plexMono = IBM_Plex_Mono({
-  variable: "--font-plex-mono",
-  weight: ["400", "500"],
-  subsets: ["latin"],
-});
 
 export const metadata: Metadata = {
   title: "sacty",
@@ -31,7 +26,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html
       lang="ja"
       suppressHydrationWarning
-      className={`${plexSans.variable} ${plexMono.variable} h-full antialiased`}
+      className="h-full antialiased"
     >
       <head>
         {/* biome-ignore lint/security/noDangerouslySetInnerHtml: 固定の文字列で、利用者の入力を含まない */}

@@ -12,9 +12,10 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-plex-sans), -apple-system, "Hiragino Sans", sans-serif;
-  --font-mono: var(--font-plex-mono), ui-monospace, Menlo, monospace;
-  --font-heading: var(--font-plex-sans), -apple-system, "Hiragino Sans", sans-serif;
+  /* フォントは npm のパッケージ（@fontsource）から読む（PBI-39） */
+  --font-sans: "IBM Plex Sans JP", -apple-system, "Hiragino Sans", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+  --font-heading: "IBM Plex Sans JP", -apple-system, "Hiragino Sans", sans-serif;
   --color-chrome: var(--chrome);
   --color-warn: var(--warn);
   --color-warn-soft: var(--warn-soft);
