@@ -2716,6 +2716,9 @@ export class TaskService {
         for (const s of tokenEnvs) invocation.env[s.env] = `${s.prefix}${gatewayRun.token}`;
         invocation.hostGateway = true;
       }
+      // コンテナから見たホストのアドレス（Rancher Desktop など。PBI-40）
+      const config = this.deps.config();
+      if (invocation.hostGateway && config.ok) invocation.hostAddress = config.config.hostAddress;
       mkdirSync(run.workspaceDir, { recursive: true });
       // 準備の間（clone や秘密情報の取り出し）に人間が止めたなら、コンテナを起動しない
       const running = this.runningTask.getStore();

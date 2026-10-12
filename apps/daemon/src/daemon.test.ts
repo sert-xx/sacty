@@ -79,6 +79,7 @@ const configOf =
       guardianAgent: a,
       budgetPerTaskUsd,
       gatewayRetry: { maxAttempts: 8, maxWaitMs: 600_000 },
+      hostAddress: "host-gateway",
       imageBuild: {},
       platforms,
       hostMcp,
@@ -845,13 +846,19 @@ describe("工程の実行と費用", () => {
       auth: { mode: "bedrock", secret: "bedrock-api-key", region: "us-east-2", endpoint: "mantle" },
       via_gateway: true,
     });
+    // Rancher Desktop など、コンテナから見たホストのアドレスを設定で変えたとき（PBI-40）
+    const config = configOf(bedrock);
     const { service, executor } = makeService(activity, [completed(20_000)], {
-      config: configOf(bedrock),
+      config: () => {
+        const c = config();
+        return c.ok ? { ok: true, config: { ...c.config, hostAddress: "192.168.5.2" } } : c;
+      },
       secrets: { "bedrock-api-key": "ABSK-real-key" },
       gateway,
     });
     const task = service.createTask({ projectId: "default", title: "決済API" });
     await service.runNext(task.id);
+    expect(executor.calls[0]).toMatchObject({ hostGateway: true, hostAddress: "192.168.5.2" });
     expect(registered).toEqual([
       {
         base: "https://bedrock-mantle.us-east-2.api.aws/openai/v1",

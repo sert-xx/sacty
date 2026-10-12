@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { type AgentConfig, agentFor, CONFIG_TEMPLATE, loadConfig } from "../config.js";
 import { MemorySecretStore } from "../secrets.js";
 import { dockerRunArgs, syncBackIfChanged } from "./docker.js";
-import { buildInvocation } from "./invocation.js";
+import { buildInvocation, type Invocation } from "./invocation.js";
 import { classifyFailure, parseClaudeResult, parseCodexEvents } from "./parse.js";
 
 /** 記録した文言（コードと引数）を、日本語の文にする（PBI-11）。 */
@@ -415,11 +415,24 @@ describe("dockerの引数", () => {
       envNames: [],
       mounts: [],
       command: ["codex"],
-      hostGateway: true,
+      hostGateway: "host-gateway",
     });
     expect(
       viaGateway.slice(viaGateway.indexOf("--add-host"), viaGateway.indexOf("--add-host") + 2),
     ).toEqual(["--add-host", "host.docker.internal:host-gateway"]);
+    // Rancher Desktop など、仮想マシンの中の Docker では、ホストのアドレスに向ける（PBI-40）
+    const rancher = dockerRunArgs({
+      runId: "r4",
+      image: "sacty-agent:test",
+      workspaceDir: "/ws/t1",
+      envNames: [],
+      mounts: [],
+      command: ["codex"],
+      hostGateway: "192.168.5.2",
+    });
+    expect(rancher.slice(rancher.indexOf("--add-host"), rancher.indexOf("--add-host") + 2)).toEqual(
+      ["--add-host", "host.docker.internal:192.168.5.2"],
+    );
   });
 });
 
@@ -708,8 +721,21 @@ agents:
     );
     expect(loadConfig(dir)).toMatchObject({
       ok: true,
-      config: { gatewayRetry: { maxAttempts: 3, maxWaitMs: 30_000 } },
+      config: { gatewayRetry: { maxAttempts: 3, maxWaitMs: 30_000 }, hostAddress: "host-gateway" },
     });
+    // コンテナから見たホストのアドレス（Rancher Desktop。PBI-40）
+    write(
+      `${agentYaml("codex", "{ mode: bedrock, secret: k, region: us-east-2 }")}gateway:\n  host_address: 192.168.5.2\n`,
+    );
+    expect(loadConfig(dir)).toMatchObject({ ok: true, config: { hostAddress: "192.168.5.2" } });
+    // docker の引数に紛れ込むものは書けない
+    write(
+      `${agentYaml("codex", "{ mode: bedrock, secret: k, region: us-east-2 }")}gateway:\n  host_address: "1.2.3.4 --privileged"\n`,
+    );
+    const bad = loadConfig(dir);
+    expect(bad.ok ? "" : ja(bad.problem)).toContain(
+      "gateway.host_address は、ホスト名か IP アドレス",
+    );
   });
 
   it("雛形の Codex × Bedrock の例は、コメントを外せばそのまま読める（PBI-32）", () => {
@@ -1074,6 +1100,42 @@ echo '{"type":"turn.completed","usage":{"input_tokens":10,"cached_input_tokens":
       expect(outcome.output).not.toContain(newToken);
     }
     expect(readFileSync(hostAuth, "utf8")).toContain(newToken);
+  });
+
+  it("ゲートウェイに届くよう、host.docker.internal を設定のホストのアドレスに向けて起動する（PBI-40）", async () => {
+    const { chmodSync, mkdirSync } = await import("node:fs");
+    const { DockerExecutor } = await import("./docker.js");
+    dir = mkdtempSync(join(tmpdir(), "sacty-fakedocker-"));
+    const bin = join(dir, "bin");
+    mkdirSync(bin);
+    // run：受け取った引数を残して、結果を返す
+    writeFileSync(
+      join(bin, "docker"),
+      `#!/bin/sh
+here=$(dirname "$0")
+if [ "$1" != "run" ]; then exit 0; fi
+printf '%s\\n' "$@" > "$here/args.txt"
+echo '{"type":"result","is_error":false,"result":"ok","usage":{"input_tokens":1,"output_tokens":1}}'
+`,
+    );
+    chmodSync(join(bin, "docker"), 0o755);
+    process.env.PATH = `${bin}:${originalPath}`;
+    const addHost = async (invocation: Partial<Invocation>) => {
+      await new DockerExecutor().run({
+        runId: "r5",
+        image: "img",
+        workspaceDir: dir,
+        invocation: { command: ["claude"], env: {}, parser: "claude-json", ...invocation },
+      });
+      const args = readFileSync(join(bin, "args.txt"), "utf8").split("\n");
+      const i = args.indexOf("--add-host");
+      return i < 0 ? undefined : args[i + 1];
+    };
+    expect(await addHost({})).toBeUndefined();
+    expect(await addHost({ hostGateway: true })).toBe("host.docker.internal:host-gateway");
+    expect(await addHost({ hostGateway: true, hostAddress: "192.168.5.2" })).toBe(
+      "host.docker.internal:192.168.5.2",
+    );
   });
 
   it("コンテキストを、マウントする設定のディレクトリに写してから実行する（PBI-6）", async () => {

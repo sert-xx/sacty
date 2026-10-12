@@ -17,6 +17,10 @@ import { isAllowed, type Platform, type PlatformCredentials } from "./platforms.
  */
 
 /** リトライの上限。 */
+
+/** コンテナから見たホストのアドレスの既定（Docker Desktop。PBI-40）。 */
+export const DEFAULT_HOST_ADDRESS = "host-gateway";
+
 export type RetryPolicy = {
   /** 1件のリクエストで、上流に送る回数の上限（最初の1回を含む）。 */
   maxAttempts: number;

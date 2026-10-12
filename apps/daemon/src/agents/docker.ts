@@ -14,6 +14,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { message } from "@sacty/core";
 import { MessageError } from "../errors.js";
+import { DEFAULT_HOST_ADDRESS } from "../gateway.js";
 import type { Invocation } from "./invocation.js";
 import { type AgentOutcome, parseClaudeResult, parseCodexEvents } from "./parse.js";
 import { redact, redactText, secretStringsInJson } from "./redact.js";
@@ -161,13 +162,16 @@ export function dockerRunArgs(input: {
   envNames: string[];
   mounts: { hostPath: string; containerPath: string; readOnly: boolean }[];
   command: string[];
-  /** ホストのゲートウェイに届くよう、host.docker.internal をホストに向ける（PBI-37）。 */
-  hostGateway?: boolean;
+  /**
+   * ホストのゲートウェイに届くよう、host.docker.internal をホストのアドレスに向ける（PBI-37）。
+   * host-gateway（Docker Desktop）か、ホストのアドレス（Rancher Desktop など。PBI-40）。
+   */
+  hostGateway?: string;
 }): string[] {
   return [
     "run",
     "--rm",
-    ...(input.hostGateway ? ["--add-host", "host.docker.internal:host-gateway"] : []),
+    ...(input.hostGateway ? ["--add-host", `host.docker.internal:${input.hostGateway}`] : []),
     "--name",
     `sacty-run-${input.runId}`,
     "--security-opt",
@@ -294,7 +298,9 @@ export class DockerExecutor implements AgentExecutor {
       envNames: Object.keys(invocation.env),
       mounts,
       command: invocation.command,
-      ...(invocation.hostGateway ? { hostGateway: true } : {}),
+      ...(invocation.hostGateway
+        ? { hostGateway: invocation.hostAddress ?? DEFAULT_HOST_ADDRESS }
+        : {}),
     });
 
     const containerName = `sacty-run-${runId}`;

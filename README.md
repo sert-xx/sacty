@@ -131,6 +131,12 @@ step_agents:          # 書かなければ default_agent（統合レビューは
 - API キーはゲートウェイだけが持ち、エージェントのコンテナには実行ごとのトークンだけを渡す
 - レート制限（429）と一時的な失敗（5xx・接続の失敗）は、`Retry-After`（無ければ1秒から倍にしていく間隔）で待ってリトライする
 - リトライの上限は `gateway.retry`（`max_attempts`：1件のリクエストで送る回数、`max_wait_sec`：成功するまでに待つ合計）で変えられる。上限に達すると、エージェントは利用上限として一時停止し、再開でやり直せる
+- コンテナは `host.docker.internal` でゲートウェイにつなぐ。Docker Desktop ではそのまま届く。Rancher Desktop など、仮想マシンの中の Docker では `host-gateway` が仮想マシンを指して届かない（`Reconnecting... error sending request` のまま進まない）ので、`gateway.host_address` にホストに届くアドレスを書く（Rancher Desktop は `192.168.5.2`）
+
+```yaml
+gateway:
+  host_address: 192.168.5.2   # Rancher Desktop
+```
 - リトライした実行は、作業履歴に回数と待った時間を残す
 - ゲートウェイは 127.0.0.1 だけで待ち受け、実行中のエージェントのトークンを持つリクエストだけを受け付ける
 

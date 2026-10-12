@@ -13,7 +13,7 @@ import {
 } from "@sacty/core";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
-import { DEFAULT_RETRY_POLICY, type RetryPolicy } from "./gateway.js";
+import { DEFAULT_HOST_ADDRESS, DEFAULT_RETRY_POLICY, type RetryPolicy } from "./gateway.js";
 import { HostMcpFile, type HostMcpSpec, toHostMcp } from "./host-mcp.js";
 import { type Platform, PlatformFile, toPlatform } from "./platforms.js";
 import { SecretRef } from "./secrets.js";
@@ -229,6 +229,15 @@ const ConfigFile = z
     /** ホストのゲートウェイ（PBI-37）。 */
     gateway: z
       .object({
+        /**
+         * コンテナから見たホストのアドレス（PBI-40）。既定は host-gateway（Docker Desktop）。Rancher Desktop など、
+         * 仮想マシンの中の Docker では、ホストに届くアドレス（Rancher Desktop は 192.168.5.2）を書く。
+         */
+        host_address: z
+          .string()
+          .trim()
+          .regex(/^[A-Za-z0-9.:-]+$/, code("config.hostAddress"))
+          .default(DEFAULT_HOST_ADDRESS),
         /** AI の呼び出しのリトライの上限。 */
         retry: z
           .object({
@@ -338,6 +347,8 @@ export type SactyConfig = {
   budgetPerTaskUsd: number;
   /** ゲートウェイの AI の呼び出しのリトライの上限（PBI-37）。 */
   gatewayRetry: RetryPolicy;
+  /** コンテナから見たホストのアドレス（host.docker.internal の向き先。PBI-40）。 */
+  hostAddress: string;
   /** 社内 PF の API（PBI-35）。 */
   platforms: Platform[];
   /** ホストで動かす MCP サーバー（PBI-36）。 */
@@ -434,6 +445,7 @@ export function loadConfig(home: string): ConfigResult {
       },
       platforms: Object.entries(file.gateway.platforms).map(([name, p]) => toPlatform(name, p)),
       hostMcp: Object.entries(file.gateway.mcp_servers).map(([name, m]) => toHostMcp(name, m)),
+      hostAddress: file.gateway.host_address,
       gatewayRetry: {
         maxAttempts: file.gateway.retry.max_attempts,
         maxWaitMs: file.gateway.retry.max_wait_sec * 1000,
@@ -497,6 +509,9 @@ budget:
 # ホストのゲートウェイ（via_gateway: true のエージェントの AI の呼び出しを中継する）。
 # レート制限（429）や一時的な失敗（5xx）は、Retry-After（無ければ1秒から倍にしていく間隔）で待ってリトライする
 # gateway:
+#   # コンテナから見たホストのアドレス。既定は host-gateway（Docker Desktop）。
+#   # Rancher Desktop では、host-gateway が仮想マシンを指してゲートウェイに届かないので 192.168.5.2 を書く
+#   host_address: 192.168.5.2
 #   retry:
 #     max_attempts: 8     # 1件のリクエストで上流に送る回数の上限
 #     max_wait_sec: 600   # 成功するまでの一続きの失敗で待つ合計の上限

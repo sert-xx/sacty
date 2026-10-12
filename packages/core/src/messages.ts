@@ -83,6 +83,7 @@ const PARAMS = {
   "input.reasoningEffort": null,
   "input.providerName": null,
   "config.providerMissing": z.object({ id: z.string() }),
+  "config.hostAddress": null,
   "input.channelRequired": null,
   // Slack の通知（PBI-38）
   "notify.failed": z.object({ project: z.string(), detail: TextParam }),
@@ -370,6 +371,8 @@ const ja: MessageDictionary = {
     "リーズニングエフォートは、英小文字で書いてください（例：low・medium・high・xhigh）。",
   "input.providerName": "接続先の名前は、英数字・_・- で書いてください。",
   "config.providerMissing": ({ id }) => `providers に "${id}" がありません。`,
+  "config.hostAddress":
+    "gateway.host_address は、ホスト名か IP アドレス（または host-gateway）で書いてください。",
   "input.channelRequired": "チャンネルを書いてください。",
   "notify.failed": ({ project, detail }, text) =>
     `プロジェクト「${project}」の Slack の通知を送れませんでした：${text(detail)}（タスクは止めていません）`,
@@ -607,6 +610,8 @@ const en: MessageDictionary = {
     "Write the reasoning effort in lowercase letters (e.g. low, medium, high, xhigh).",
   "input.providerName": "Use only letters, digits, _ and - in provider names.",
   "config.providerMissing": ({ id }) => `"${id}" is not in providers.`,
+  "config.hostAddress":
+    "Write gateway.host_address as a host name or IP address (or host-gateway).",
   "input.channelRequired": "Write a channel.",
   "notify.failed": ({ project, detail }, text) =>
     `Could not send the Slack notification for the project "${project}": ${text(detail)} (tasks keep running)`,

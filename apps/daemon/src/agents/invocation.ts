@@ -32,6 +32,11 @@ export type Invocation = {
   parser: "claude-json" | "codex-jsonl";
   /** コンテナから、ホストのゲートウェイ（host.docker.internal）に届くようにする（PBI-37）。 */
   hostGateway?: boolean;
+  /**
+   * コンテナから見たホストのアドレス（host.docker.internal の向き先。PBI-40）。無ければ host-gateway（Docker Desktop）。
+   * Rancher Desktop などの仮想マシンの中の Docker では、host-gateway は仮想マシンを指すので、ホストのアドレスを書く。
+   */
+  hostAddress?: string;
 };
 
 /** providers の接続先を、Codex の自前のプロバイダーとして渡すときの名前と、API キーの環境変数（PBI-40）。 */
