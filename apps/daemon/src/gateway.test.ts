@@ -1,6 +1,7 @@
+import { request } from "node:http";
 import { connect } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
-import { AiGateway, type GatewayDeps, type RetryPolicy, retryAfterMs } from "./gateway.js";
+import { AiGateway, type GatewayDeps, type RetryPolicy, retryAfterMs, sentUrl } from "./gateway.js";
 import { PlatformCredentials, PlatformFile, toPlatform } from "./platforms.js";
 import { MemorySecretStore } from "./secrets.js";
 
@@ -357,6 +358,41 @@ describe("社内 PF の API の中継（PBI-35）", () => {
     expect(g.calls).toHaveLength(0);
   });
 
+  it("# など URL として解釈すると変わるパスは、許可の判定をすり抜けられず、上流に一切送らない（レビュー指摘）", async () => {
+    const g = await startPf([json(200, {})]);
+    // fetch は # を落とすので、node:http で生のパスを送る
+    const raw = (path: string) =>
+      new Promise<{ status: number; body: string }>((resolve, reject) => {
+        const req = request({ host: "127.0.0.1", port: g.port, method: "POST", path }, (res) => {
+          let body = "";
+          res.on("data", (c) => (body += c));
+          res.on("end", () => resolve({ status: res.statusCode ?? 0, body }));
+        });
+        req.on("error", reject);
+        req.end("{}");
+      });
+    const base = `/r/${g.run.token}/pf/ticket`;
+    const fragment = await raw(`${base}/api/v1/tickets/123#x/comments`);
+    expect(fragment.status).toBe(400);
+    expect(fragment.body).toContain("changes when sent as a URL");
+    expect((await raw(`${base}/api/v1/tickets/123/./comments`)).status).not.toBe(200);
+    expect((await raw(`${base}/api/v1/tickets/123/comments?a=1#frag`)).status).toBe(400);
+    expect(g.calls).toHaveLength(0);
+  });
+
+  it("送る URL は、パス・クエリが URL として変わらないときだけ作る", () => {
+    const up = "https://ticket.example.com";
+    expect(sentUrl(up, "/api/v1/tickets/1", "?a=1")).toBe(
+      "https://ticket.example.com/api/v1/tickets/1?a=1",
+    );
+    expect(sentUrl("https://ex.com/base", "/api/x", "")).toBe("https://ex.com/base/api/x");
+    expect(sentUrl(up, "/api/1#x/comments", "")).toBeUndefined();
+    expect(sentUrl(up, "/api/./x", "")).toBeUndefined();
+    expect(sentUrl(up, "/api/../x", "")).toBeUndefined();
+    expect(sentUrl(up, "/api/x", "?a=1#f")).toBeUndefined();
+    expect(sentUrl(up, "/api/x y", "")).toBeUndefined();
+  });
+
   it("トークンを取得する PF は、拒否（401）されたらトークンを取り直して1回だけ送り直す", async () => {
     const g = await startPf([
       json(200, { token: "jwt-old" }),
@@ -374,6 +410,41 @@ describe("社内 PF の API の中継（PBI-35）", () => {
     ]);
     expect(g.calls[1]?.headers.get("authorization")).toBe("Bearer jwt-old");
     expect(g.calls[3]?.headers.get("authorization")).toBe("Bearer jwt-new");
+  });
+
+  it("トークンの取得に失敗しても、ゲートウェイの応答に秘密情報を出さない（レビュー指摘）", async () => {
+    const up = upstream([]);
+    const bad = toPlatform(
+      "bad",
+      PlatformFile.parse({
+        upstream: "https://bad.example.com",
+        auth: {
+          token: {
+            url: "https://auth.example.com/token",
+            headers: { "X-Key": "{{secret}}" },
+            secret: "bad-key",
+            token_path: "token",
+          },
+        },
+        allow: ["GET /**"],
+      }),
+    );
+    gateway = new AiGateway({
+      fetchImpl: up.fetchImpl,
+      platforms: () => [bad],
+      credentials: new PlatformCredentials({
+        secrets: new MemorySecretStore({ "bad-key": "FAKE-SECRET\nBAD" }),
+        fetchImpl: up.fetchImpl,
+      }),
+    });
+    const port = await gateway.listen();
+    const run = gateway.register();
+    const res = await fetch(`http://127.0.0.1:${port}/r/${run.token}/pf/bad/x`);
+    expect(res.status).toBe(502);
+    const text = await res.text();
+    expect(text).toContain("[secret]");
+    expect(text).not.toContain("FAKE-SECRET");
+    expect(up.calls).toHaveLength(0);
   });
 
   it("認証情報を用意できなければ、理由を返して上流に送らない", async () => {

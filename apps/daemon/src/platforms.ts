@@ -162,6 +162,15 @@ function fill(value: unknown, secret: string): unknown {
   return value;
 }
 
+/** 文から秘密情報を伏せる。値そのもの・JSON の文字列にした形・各行（短すぎる行は除く）を伏せる。 */
+export function hideSecret(text: string, secret: string): string {
+  if (!secret) return text;
+  const forms = [secret, JSON.stringify(secret).slice(1, -1), ...secret.split(/\r?\n/)]
+    .filter((f) => f.length >= 4)
+    .sort((a, b) => b.length - a.length);
+  return forms.reduce((t, f) => t.split(f).join("[secret]"), text);
+}
+
 /** トークンを取り直すのは、期限のこの時間前から。 */
 const REFRESH_MARGIN_MS = 30_000;
 
@@ -235,10 +244,21 @@ export class PlatformCredentials {
   private async fetchToken(platform: Platform): Promise<{ value: string; expiresAt: number }> {
     const spec = platform.auth.token;
     if (!spec) throw new Error("the platform does not get a token");
-    const now = this.deps.now ?? Date.now;
     const secret = await this.deps.secrets.get(spec.secret);
-    // 窓口の応答の文に秘密情報が含まれていても、理由（画面・ログ）には出さない
-    const hide = (text: string) => (secret ? text.split(secret).join("[secret]") : text);
+    // 取り出した後の失敗（ヘッダーの組み立て・送信・応答の読み取り）は、どれも理由（画面・ログ・ゲートウェイの応答）
+    // に秘密情報を出さない（値そのもの・JSON の文字列にした形・各行を伏せる。PBI-35 レビュー指摘）
+    try {
+      return await this.requestToken(spec, secret);
+    } catch (error) {
+      throw new Error(hideSecret(error instanceof Error ? error.message : String(error), secret));
+    }
+  }
+
+  private async requestToken(
+    spec: NonNullable<Platform["auth"]["token"]>,
+    secret: string,
+  ): Promise<{ value: string; expiresAt: number }> {
+    const now = this.deps.now ?? Date.now;
     const headers = new Headers(fill(spec.headers, secret) as Record<string, string>);
     let body: string | undefined;
     if (spec.json !== undefined) {
@@ -257,7 +277,7 @@ export class PlatformCredentials {
     });
     const text = await res.text();
     if (!res.ok) {
-      throw new Error(hide(`token endpoint returned ${res.status}: ${text.slice(0, 500)}`));
+      throw new Error(`token endpoint returned ${res.status}: ${text.slice(0, 500)}`);
     }
     let parsed: unknown;
     try {

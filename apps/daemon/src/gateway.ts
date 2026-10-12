@@ -197,6 +197,16 @@ export class AiGateway {
       return fail(res, 404, `sacty gateway: unknown internal platform "${target.name}"`);
     }
     const method = (req.method ?? "GET").toUpperCase();
+    // 判定したパスと、実際に送るパスを一致させる。# など、URL として解釈すると変わる入力は送らない
+    // （# 以降はフラグメントとして落ち、許可していないパスに送られてしまうため。PBI-35 レビュー指摘）
+    const sent = sentUrl(platform.upstream, target.path, target.query);
+    if (!sent) {
+      return fail(
+        res,
+        400,
+        `sacty gateway: the path "${target.path}" changes when sent as a URL (remove characters such as #)`,
+      );
+    }
     if (!isAllowed(platform, method, target.path)) {
       return fail(
         res,
@@ -227,7 +237,7 @@ export class AiGateway {
       }
       headers.set(name, Array.isArray(value) ? value.join(", ") : value);
     }
-    const url = `${platform.upstream}${target.path}${target.query}`;
+    const url = sent;
     const fetchImpl = this.deps.fetchImpl ?? fetch;
     const credentials = this.deps.credentials;
     for (let attempt = 1; ; attempt++) {
@@ -368,6 +378,23 @@ export class AiGateway {
       run.streakWaitedMs += waited;
     }
   }
+}
+
+/**
+ * 転送する URL。パス・クエリを URL として解釈しても変わらないときだけ返す（# のフラグメント・. や .. の
+ * まとめなどで、許可を判定したパスと違うパスに送らないため）。変わるなら undefined。
+ */
+export function sentUrl(upstream: string, path: string, query: string): string | undefined {
+  if (/[#\s]/.test(path) || /[#\s]/.test(query)) return undefined;
+  let url: URL;
+  try {
+    url = new URL(`${upstream}${path}${query}`);
+  } catch {
+    return undefined;
+  }
+  const base = new URL(upstream).pathname.replace(/\/+$/, "");
+  if (url.pathname !== `${base}${path}` || url.search !== query || url.hash) return undefined;
+  return url.toString();
 }
 
 function readBody(req: IncomingMessage): Promise<Buffer> {

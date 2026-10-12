@@ -1,6 +1,7 @@
 import { renderMessage } from "@sacty/core";
 import { describe, expect, it } from "vitest";
 import {
+  hideSecret,
   isAllowed,
   type Platform,
   PlatformCredentials,
@@ -194,6 +195,40 @@ describe("社内 PF の API（PBI-35）", () => {
     expect(text).not.toContain("api-key-xyz");
     expect(await creds.header(p)).toBe("Bearer jwt");
     expect(creds.unavailable(["deploy"])).toEqual([]);
+  });
+
+  it("トークンの取得のどの失敗でも、理由に秘密情報を出さない（ヘッダーの組み立ての失敗など。レビュー指摘）", async () => {
+    const endpoint = tokenEndpoint([]);
+    const creds = new PlatformCredentials({
+      secrets: new MemorySecretStore({ "deploy-key": "FAKE-SECRET\nBAD" }),
+      fetchImpl: endpoint.fetchImpl,
+    });
+    const p = platform(
+      {
+        upstream: "https://pf.example.com",
+        auth: {
+          token: {
+            url: "https://pf.example.com/login",
+            headers: { "X-Key": "{{secret}}" },
+            secret: "deploy-key",
+            token_path: "token",
+          },
+        },
+        allow: ["GET /**"],
+      },
+      "pf",
+    );
+    const error = await creds.header(p).catch((e: Error) => e);
+    expect(String(error)).toContain("[secret]");
+    expect(String(error)).not.toContain("FAKE-SECRET");
+    expect(String(error)).not.toContain("BAD");
+    const [problem] = creds.unavailable(["pf"]);
+    expect(renderMessage(problem, "ja")).not.toContain("FAKE-SECRET");
+    expect(endpoint.calls).toHaveLength(0);
+    // 値そのもの・JSON の文字列にした形・各行を伏せる
+    expect(hideSecret('a "FAKE-SECRET\\nBAD" b FAKE-SECRET\nBAD', "FAKE-SECRET\nBAD")).toBe(
+      'a "[secret]" b [secret]',
+    );
   });
 
   it("工程エージェントに、使える PF と API と、呼び方を伝える", () => {
