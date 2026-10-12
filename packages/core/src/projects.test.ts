@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { parseRepoUrl, RepoUrl } from "./github-url.js";
 import { renderMessage } from "./messages.js";
 import {
   excludedRepositories,
@@ -130,6 +131,36 @@ describe("プロジェクトの対象（PBI-5・PBI-25）", () => {
     expect(() =>
       ProjectDefinition.parse({ name: "x", targets: [{ scope: "org", target: "acme" }] }),
     ).toThrow(/input\.invalidOrg/);
+  });
+
+  it("リポジトリ名は、先頭がドット・アンダースコアのもの（.github・_tools）も受け付ける（PBI-40 レビュー指摘）", () => {
+    for (const host of ["github.com", "ghe.example.co.jp"]) {
+      for (const name of [".github", "_tools", "a", "x.y_z-1"]) {
+        const url = `https://${host}/acme/${name}`;
+        expect(RepoUrl.safeParse(url).success).toBe(true);
+        expect(parseRepoUrl(url)).toMatchObject({
+          host,
+          owner: "acme",
+          name,
+          path: `acme/${name}`,
+        });
+        // Org の対象から担当を判定できる
+        const project = make("p9", {
+          name: "x",
+          targets: [{ scope: "org", target: `https://${host}/acme` }],
+        });
+        expect(responsibleProject([project], url)?.project.id).toBe("p9");
+      }
+      // . と .. は名前にできない。Org 名は先頭が英数字
+      for (const bad of [
+        `https://${host}/acme/.`,
+        `https://${host}/acme/..`,
+        `https://${host}/.acme/app`,
+        `https://${host}/_acme/app`,
+      ]) {
+        expect(RepoUrl.safeParse(bad).success).toBe(false);
+      }
+    }
   });
 
   it("名前の形を検査し、取り込み元・リポジトリの設定（以前の形）は持たない", () => {

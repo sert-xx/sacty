@@ -178,6 +178,13 @@ describe("GitHub Enterprise Server の検索・Org（PBI-40）", () => {
               html_url: "https://ghe.example.co.jp/acme/app/issues/3",
               labels: [],
             },
+            // 先頭がドットのリポジトリ名も読む（PBI-40 レビュー指摘）
+            {
+              number: 5,
+              title: "ドットのリポジトリ",
+              html_url: "https://ghe.example.co.jp/acme/.github/issues/5",
+              labels: [],
+            },
             // 検索したホストではない URL は、取り込まない
             {
               number: 4,
@@ -195,7 +202,10 @@ describe("GitHub Enterprise Server の検索・Org（PBI-40）", () => {
       "t",
     );
     expect(calls[0]?.url).toMatch(/^https:\/\/ghe\.example\.co\.jp\/api\/v3\/search\/issues\?/);
-    expect(issues.map((i) => i.repo)).toEqual(["https://ghe.example.co.jp/acme/app"]);
+    expect(issues.map((i) => i.repo)).toEqual([
+      "https://ghe.example.co.jp/acme/app",
+      "https://ghe.example.co.jp/acme/.github",
+    ]);
   });
 
   it("Org のリポジトリを、そのホストの /api/v3 で読み、URL で返す。ほかのホストの次のページはたどらない", async () => {

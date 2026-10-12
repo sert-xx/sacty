@@ -6,10 +6,16 @@ import { code } from "./message-code.js";
  * 例 https://github.com/acme/app、https://ghe.example.co.jp/acme。
  */
 
-const SEGMENT = "[A-Za-z0-9][A-Za-z0-9._-]{0,99}";
+/** Org・ユーザーの名前（先頭は英数字）。 */
+const OWNER = "[A-Za-z0-9][A-Za-z0-9._-]{0,99}";
+/**
+ * リポジトリの名前。GitHub では先頭がドット・アンダースコアのもの（.github、_tools など）も作れるので、
+ * 先頭も制限しない。. と .. だけは名前にできない（PBI-40 レビュー指摘）。
+ */
+const NAME = "(?!\\.{1,2}$)[A-Za-z0-9._-]{1,100}";
 const HOST = "[A-Za-z0-9.-]+(?::\\d+)?";
-const REPO_URL = new RegExp(`^https://(${HOST})/(${SEGMENT})/(${SEGMENT})$`);
-const ORG_URL = new RegExp(`^https://(${HOST})/(${SEGMENT})$`);
+const REPO_URL = new RegExp(`^https://(${HOST})/(${OWNER})/(${NAME})$`);
+const ORG_URL = new RegExp(`^https://(${HOST})/(${OWNER})$`);
 
 /** 書き方の揺れ（末尾の /・.git、ホストの大文字）をそろえる。 */
 function normalize(url: string): string {

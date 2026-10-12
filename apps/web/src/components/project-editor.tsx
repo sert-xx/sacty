@@ -1,6 +1,6 @@
 "use client";
 
-import { type Project, type ProjectTarget, targetHost } from "@sacty/core";
+import type { Project, ProjectTarget } from "@sacty/core";
 import { XIcon } from "lucide-react";
 import { startTransition, useActionState, useId, useState } from "react";
 import {
@@ -14,6 +14,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useMessages } from "@/i18n/client";
 import type { GitHubAccounts } from "@/lib/daemon";
+import { githubAccountChoices } from "@/lib/github-accounts";
 
 const initial: SaveProjectState = {};
 
@@ -41,22 +42,20 @@ export function ProjectEditor({
   const accounts = github && "accounts" in github ? github.accounts : [];
   const [name, setName] = useState(project?.name ?? "");
   const [targets, setTargets] = useState<ProjectTarget[]>(project?.targets ?? []);
-  // GitHub のアカウントは、対象のホストごとに必ず選ぶ（PBI-40）。まだ選んでいなければ、そのホストの gh の
-  // アクティブなアカウントを選んでおく（保存すると、そのアカウントに固定される。gh で切り替えても変わらない）
+  const [contextRepo, setContextRepo] = useState(project?.context?.repo ?? "");
+  // GitHub のアカウントは、ホストごとに選ぶ（PBI-40）。対象のホストは必ず選び、コンテキストリポジトリのホストと
+  // 保存済みのホストも選べる。空は「選ばない」（そのホストは、ホストの git の認証を使う）
   const [chosenAccounts, setChosenAccounts] = useState<Record<string, string>>(
     project?.githubAccounts ?? {},
   );
-  const hosts = [...new Set(targets.map(targetHost).filter(Boolean))];
-  const githubAccounts = Object.fromEntries(
-    hosts.flatMap((host) => {
-      const login =
-        chosenAccounts[host] ?? accounts.find((a) => a.host === host && a.active)?.login;
-      return login ? [[host, login]] : [];
-    }),
-  );
+  const { hosts, githubAccounts, missing } = githubAccountChoices({
+    targets,
+    contextRepo,
+    chosen: chosenAccounts,
+    accounts,
+  });
   // 設定画面（project あり）では、対象のホストのアカウントを選ぶまで保存させない
-  const needsAccount = Boolean(project) && hosts.some((host) => !githubAccounts[host]);
-  const [contextRepo, setContextRepo] = useState(project?.context?.repo ?? "");
+  const needsAccount = Boolean(project) && missing;
   const [contextRef, setContextRef] = useState(project?.context?.ref ?? "");
   // Slack の通知先（PBI-38）
   const saved = project?.notification;
@@ -243,15 +242,22 @@ export function ProjectEditor({
               {t.githubTitle}{" "}
               <span className="text-[13px] font-normal text-muted-foreground">{t.githubNote}</span>
             </h2>
-            {hosts.length === 0 && (
+            {!hosts.some((h) => h.required) && (
               <p className="text-sm text-muted-foreground">{t.githubNoTargets}</p>
             )}
-            {hosts.map((host) => {
+            {hosts.map(({ host, required, forContext }) => {
               const current = githubAccounts[host] ?? "";
               const onHost = accounts.filter((a) => a.host === host);
               return (
                 <div key={host} className="flex flex-col gap-1.5">
-                  <Label htmlFor={`${uid}-github-${host}`}>{t.githubAccount(host)}</Label>
+                  <Label htmlFor={`${uid}-github-${host}`}>
+                    {t.githubAccount(host)}
+                    {!required && (
+                      <span className="font-normal text-muted-foreground">
+                        {forContext ? t.githubForContext : t.githubOptional}
+                      </span>
+                    )}
+                  </Label>
                   <select
                     id={`${uid}-github-${host}`}
                     value={current}
@@ -260,11 +266,13 @@ export function ProjectEditor({
                     }
                     className={`${SELECT} max-w-md`}
                   >
-                    {!current && (
+                    {required && !current && (
                       <option value="" disabled>
                         {t.githubChoose}
                       </option>
                     )}
+                    {/* 対象ではないホストは、選ばない（ホストの git の認証を使う）こともできる */}
+                    {!required && <option value="">{t.githubNone}</option>}
                     {onHost.map((a) => (
                       <option key={a.login} value={a.login}>
                         {a.login}
