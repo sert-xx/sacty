@@ -408,7 +408,7 @@ describe("ホストで動かす MCP サーバー（PBI-36）", () => {
     await agent.close();
   });
 
-  it("ツールの誤り（引数の誤りなど）の例外では起動し直さず、接続が切れたときだけ起動し直す", async () => {
+  it("ツールの誤り（引数の誤りなど）の例外では起動し直さず、接続が切れた・認証が切れた（JSON-RPC のエラー）ときに起動し直す", async () => {
     let connects = 0;
     let failWith: McpError = new McpError(ErrorCode.InvalidParams, "bad arguments");
     const connect: HostMcpConnector = async () => {
@@ -441,6 +441,10 @@ describe("ホストで動かす MCP サーバー（PBI-36）", () => {
     failWith = new McpError(ErrorCode.ConnectionClosed, "Connection closed");
     await agent.callTool({ name: "x", arguments: {} }).catch(() => undefined);
     await until(() => connects === 2);
+    // 認証切れを JSON-RPC のエラーとして返す MCP サーバーでも、再認証する（レビュー指摘）
+    failWith = new McpError(-32001, "401 Unauthorized: token expired");
+    await agent.callTool({ name: "x", arguments: {} }).catch(() => undefined);
+    await until(() => connects === 3);
     await agent.close();
   });
 });

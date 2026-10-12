@@ -447,12 +447,19 @@ export class HostMcpServers {
         } catch (error) {
           // いま使っている接続が切れた（プロセスが終わった）なら、起動し直す。切り替えた後の古い接続の失敗では
           // 起動し直さない（切り替えのたびに起動し直してしまうため）
-          // ツールの誤り（引数の誤りなど）では起動し直さない
+          // 接続が切れた・認証が切れた（JSON-RPC のエラーとして返す MCP サーバーもある）ときだけ起動し直す。
+          // ツールの誤り（引数の誤りなど）では起動し直さない（PBI-36 レビュー指摘）
           const closed = error instanceof McpError && error.code === ErrorCode.ConnectionClosed;
+          const unauthorized = AUTH_ERROR.test(
+            error instanceof Error ? error.message : String(error),
+          );
           const state = this.states.get(name);
-          if (closed && state?.current === connection && !state.expired) {
+          if ((closed || unauthorized) && state?.current === connection && !state.expired) {
             state.expired = true;
-            void this.restart(name, "the connection was closed");
+            void this.restart(
+              name,
+              closed ? "the connection was closed" : "the tool reported an authentication error",
+            );
           }
           throw error;
         } finally {
