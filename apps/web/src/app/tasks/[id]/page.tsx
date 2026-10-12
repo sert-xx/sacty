@@ -29,6 +29,7 @@ import {
   personAction,
   statusText,
   usd,
+  usesTestCommand,
 } from "@/lib/labels";
 import { subtaskSummary } from "@/lib/subtasks";
 
@@ -244,11 +245,16 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
               <p className="text-sm leading-6 text-muted-foreground [overflow-wrap:anywhere]">
                 {m.baseBranch}
                 <span className="font-mono">{task.repository.baseBranch}</span>
-                {m.testCommand}
-                {task.testCommand ? (
-                  <span className="font-mono">{task.testCommand}</span>
-                ) : (
-                  m.testCommandUnknown
+                {/* テストのコマンドは、実装を検証するときだけ使う（PBI-28） */}
+                {usesTestCommand(task) && (
+                  <>
+                    {m.testCommand}
+                    {task.testCommand ? (
+                      <span className="font-mono">{task.testCommand}</span>
+                    ) : (
+                      m.testCommandUnknown
+                    )}
+                  </>
                 )}
               </p>
             )}

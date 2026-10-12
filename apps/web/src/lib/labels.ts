@@ -39,6 +39,14 @@ export function statusText(task: Task, l: LabelMessages): string {
 }
 
 /**
+ * テストのコマンドを使うタスクか（工程に実装がある）。調査・レビュー・タスク分割の親など、
+ * 実装しないタスクには、テストのコマンドを出さない（PBI-28）。
+ */
+export function usesTestCommand(task: Task): boolean {
+  return task.steps.some((s) => s.key === "implement");
+}
+
+/**
  * sactyやエージェントが作業中か（実行待ち・実行中・ゴールガーディアンの判定中）。
  * 画面はこのあいだ自動で更新する。判定中のタスクは待機（idle）のままなので、状態だけでは分からない。
  */
