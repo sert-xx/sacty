@@ -6,7 +6,8 @@ const task = (id: string, extra: Partial<Task> = {}) =>
   ({ id, steps: [], budget: { usedUsd: 0 }, ...extra }) as unknown as Task;
 const split = (...ids: string[]) =>
   ({
-    children: ids.map((taskId) => ({ taskId, title: taskId, body: "", dependsOn: [] })),
+    children: ids.map((taskId) => ({ taskId, title: taskId, body: "", dependsOn: [], round: 1 })),
+    rounds: 1,
     reason: "",
     at: "",
     acceptedCancellations: [],

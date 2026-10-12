@@ -22,6 +22,10 @@ const ja = {
       `ゴールガーディアンは、PR の指摘を${step}からやり直すことを提案しています（${note}）。承認済みの成果物を変えることになるので、戻し先を確かめて差し戻してください。`,
     prClosedHelp:
       "PR がマージされずに閉じられました。GitHub で開き直すか、不要なら中止してください。",
+    integrateHelp:
+      "ゴールガーディアンが、子タスクの成果を組み合わせた結果をレビューしました。承認すると完了します。足りないことがあれば差し戻すと、指摘をもとに修正の子タスクを追加します。",
+    integrateFailedHelp: (count: number) =>
+      `統合レビューに${count}回続けて通らなかったため、人間の判断を待っています。承認すると、不合格のまま完了にします。差し戻すと、指摘をもとに修正の子タスクを追加します。`,
     notReproducedHelp:
       "不具合を再現できませんでした。再現の手がかりを指摘に書いて差し戻すと、再現をやり直します。不要なら中止してください。",
     prMergedOutdatedHelp:
@@ -57,6 +61,24 @@ const ja = {
     dependsOn: (titles: string[]) => `依存：${titles.map((t) => `「${t}」`).join("・")}`,
     pullRequest: "PR",
     missing: "（作成中）",
+    fix: "修正",
+    fixNote: "統合レビューの後に追加した、修正の子タスク",
+  },
+  integration: {
+    title: "統合レビュー",
+    note: "ゴールガーディアンが、子タスクの PR がマージされた後のコードで、親の要求要件を満たすかを確かめた結果",
+    passed: "合格",
+    failed: "不合格",
+    failures: (count: number, max: number) => `続けて${count}回不合格（${max}回で人間の判断待ち）`,
+    target: (branch: string, commit: string) => `読んだコード：${branch} の ${commit}`,
+    findings: "足りないこと",
+    viewpoints: "観点ごとの判定",
+    recurrence: "過去の指摘の再発",
+    verified: "満たす",
+    notVerified: "満たさない",
+    notRecurred: "再発なし",
+    recurred: "再発",
+    explanation: "ゴールガーディアンの説明",
   },
   deliverable: {
     approved: (n: number) => `人間が承認済み（${n}回目の提出・凍結）`,
@@ -101,6 +123,10 @@ const en: TaskMessages = {
     reworkHelp: (step, note) =>
       `The Goal Guardian suggests redoing from ${step} for the PR comments (${note}). This changes approved deliverables, so confirm the step to redo and request changes.`,
     prClosedHelp: "The PR was closed without merging. Reopen it on GitHub, or cancel the task.",
+    integrateHelp:
+      "The Goal Guardian reviewed the combined result of the subtasks. Approve to complete the task. If something is missing, request changes to add subtasks that fix it.",
+    integrateFailedHelp: (count) =>
+      `The integration review failed ${count} times in a row, so it needs you. Approve to complete the task as it is, or request changes to add subtasks that fix it.`,
     notReproducedHelp:
       "The bug was not reproduced. Request changes with hints for reproducing it to try again, or cancel the task.",
     prMergedOutdatedHelp:
@@ -136,6 +162,25 @@ const en: TaskMessages = {
     dependsOn: (titles) => `Depends on: ${titles.map((t) => `"${t}"`).join(", ")}`,
     pullRequest: "PR",
     missing: "(being created)",
+    fix: "Fix",
+    fixNote: "A subtask added after the integration review to fix it",
+  },
+  integration: {
+    title: "Integration review",
+    note: "Result of the Goal Guardian checking whether the code after the subtask PRs were merged meets the parent's requirements",
+    passed: "Passed",
+    failed: "Failed",
+    failures: (count, max) =>
+      `Failed ${count} time${count === 1 ? "" : "s"} in a row (needs you at ${max})`,
+    target: (branch, commit) => `Code read: ${commit} on ${branch}`,
+    findings: "Missing",
+    viewpoints: "Verdict per viewpoint",
+    recurrence: "Recurrence of past comments",
+    verified: "Met",
+    notVerified: "Not met",
+    notRecurred: "Not recurred",
+    recurred: "Recurred",
+    explanation: "Goal Guardian's explanation",
   },
   deliverable: {
     approved: (n) => `Approved by a person (submission ${n}, frozen)`,

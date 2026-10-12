@@ -1,6 +1,7 @@
 import {
   type DaemonText,
   type FinalReview,
+  type IntegrationReview,
   investigationIsGoal,
   MAX_SPLIT_CHILDREN,
   MIN_SPLIT_CHILDREN,
@@ -32,6 +33,7 @@ export const EXECUTABLE_STEPS: readonly StepKey[] = [
   "requirements",
   "design",
   "split",
+  "integrate",
   "reproduce",
   "implement",
   "pr",
@@ -107,6 +109,7 @@ const TEST_MAP_HEADING = "sacty-test-map";
 const REVIEW_COMMENTS_HEADING = "sacty-review-comments";
 const FINAL_REVIEW_HEADING = "sacty-final-review";
 const SPLIT_HEADING = "sacty-split";
+const INTEGRATION_HEADING = "sacty-integration-review";
 
 /** テストの出力は、末尾のこの文字数だけプロンプトに入れる。 */
 const OUTPUT_IN_PROMPT = 8_000;
@@ -161,6 +164,7 @@ const STEP_NAME: Record<StepKey, string> = {
   requirements: "要求要件",
   design: "設計",
   split: "タスク分割",
+  integrate: "統合レビュー",
   reproduce: "再現",
   implement: "実装",
   pr: "PR作成",
@@ -274,7 +278,46 @@ export function referencedPullRequest(task: Task): { repo: string; number: numbe
 /** PR の差分は、この文字数だけプロンプトに入れる。 */
 const PR_DIFF_IN_PROMPT = 100_000;
 
-export function buildPrompt(task: Task, step: StepKey, extra: { diff?: string } = {}): string {
+/** 分割で作った子タスクの、親のエージェントに渡す要約（PBI-31）。 */
+export type SubtaskSummary = {
+  title: string;
+  /** completed：完了（PR がマージされた）、cancelled：人間が中止を認めた。 */
+  state: "completed" | "cancelled";
+  pullRequestUrl?: string;
+  /** 何回目の分割で作ったか（2 以降は修正の子タスク）。 */
+  round: number;
+};
+
+function subtaskLines(children: readonly SubtaskSummary[]): string[] {
+  if (children.length === 0) return ["（なし）"];
+  return children.map((c) => {
+    const state =
+      c.state === "completed"
+        ? `完了${c.pullRequestUrl ? `（PR：${c.pullRequestUrl}）` : ""}`
+        : "中止（人間が中止を認めた。実装されていない）";
+    return `- ${c.title}：${state}${c.round > 1 ? "［修正の子タスク］" : ""}`;
+  });
+}
+
+/** 統合レビューの結果のうち、足りないことと、検証できていない観点・再発した指摘（PBI-31）。 */
+function integrationFindingLines(review: IntegrationReview): string[] {
+  return [
+    ...(review.summary ? [ja(review.summary)] : []),
+    ...review.findings.map((f) => `- 足りないこと：${f}`),
+    ...review.viewpoints
+      .filter((v) => !v.verified)
+      .map((v) => `- [${v.viewpointId}] 観点を満たしていない：${ja(v.reason)}`),
+    ...review.remarks
+      .filter((m) => !m.notRecurred)
+      .map((m) => `- [${m.remarkId}] 過去の指摘が再発している：${ja(m.reason)}`),
+  ];
+}
+
+export function buildPrompt(
+  task: Task,
+  step: StepKey,
+  extra: { diff?: string; subtasks?: readonly SubtaskSummary[] } = {},
+): string {
   const content = [`# ${task.title}`, "", task.body || "（内容なし）"].join("\n");
   const hasRemarks = task.remarks.some((r) => r.step === step && !r.voided);
   const previous = task.outputs[step];
@@ -434,6 +477,44 @@ export function buildPrompt(task: Task, step: StepKey, extra: { diff?: string } 
       return lines.join("\n");
     }
     case "split": {
+      // 2回目からは、統合レビューの指摘・人間の差し戻しをもとに、修正の子タスクを追加する（PBI-31）
+      if (task.split) {
+        const review = task.integration?.passed === false ? task.integration : undefined;
+        return [
+          "あなたはソフトウェア開発のタスク分割エージェントです。",
+          "このタスクは、すでに子タスクに分けて進め、子タスクの PR はベースブランチにマージされています。ところが、子タスクの成果を組み合わせた状態が、親の要求要件をまだ満たしていません。",
+          "下の統合レビューの結果と人間の指摘をもとに、足りないことを直す修正の子タスクを追加してください。",
+          "",
+          "- 既存の子タスクは変えない（完了しています）。足りないことだけを直す子タスクを作る",
+          "- 子タスクは、それぞれ1つの PR になります（対象リポジトリのベースブランチへの PR）。人間が1回でレビューできる大きさにする",
+          "- 子タスクの内容には、何を直すか・受け入れ条件・範囲外のことを Markdown で書く。親の要求要件と設計は sacty が子タスクに添えるので、繰り返さなくてよい",
+          "- 先に別の（今回追加する）子タスクのマージが必要なら dependsOn にその key を書く",
+          `- 子タスクは 1〜${MAX_SPLIT_CHILDREN} 件。子タスクをさらに分割することはできない`,
+          "- コードは変更しない（作業領域は読み取り専用です）",
+          ...codeLines(task),
+          "",
+          "最初に直し方の考え方を短く書き、そのあとに追加する子タスクの一覧を次の形式で必ず付けてください。",
+          "```json",
+          `{"${SPLIT_HEADING}": {"reason": "追加する理由", "children": [{"key": "A", "title": "子タスクのタイトル", "body": "内容と受け入れ条件（Markdown）", "dependsOn": []}]}}`,
+          "```",
+          ...remarkLines(task, step, "子タスクの一覧"),
+          "",
+          "--- 統合レビューの結果（ゴールガーディアン） ---",
+          ...(review ? integrationFindingLines(review) : ["（不合格の統合レビューはありません）"]),
+          "",
+          "--- これまでの子タスク ---",
+          ...subtaskLines(extra.subtasks ?? []),
+          "",
+          "--- 承認済みの要求要件 ---",
+          task.approved.requirements?.output ?? "（承認済みの要求要件がありません）",
+          "",
+          "--- 承認済みの設計 ---",
+          task.approved.design?.output ?? "（承認済みの設計がありません）",
+          "",
+          "--- タスク ---",
+          content,
+        ].join("\n");
+      }
       // タスク分割は、承認済みの要求要件と設計から子タスクを決める（PBI-27）。人間の承認は無い
       const lines = [
         "あなたはソフトウェア開発のタスク分割エージェントです。",
@@ -866,19 +947,39 @@ export function extractFinalReview(
   viewpointIds: readonly string[],
   remarkIds: readonly string[],
 ): Pick<FinalReview, "passed" | "viewpoints" | "remarks" | "summary"> {
-  let raw: Record<string, unknown> | undefined;
+  const found = findBlock(output, FINAL_REVIEW_HEADING);
+  return readVerdicts(found?.raw, viewpointIds, remarkIds, message("review.unreadable"));
+}
+
+/** 出力の json ブロックのうち、見出しのオブジェクトを持つ最後のもの。 */
+function findBlock(
+  output: string,
+  heading: string,
+): { raw: Record<string, unknown>; block: string } | undefined {
   for (const block of [...output.matchAll(/```json\s*\n([\s\S]*?)\n```/g)].reverse()) {
     try {
       const parsed = JSON.parse(block[1] ?? "") as Record<string, unknown>;
-      const review = parsed?.[FINAL_REVIEW_HEADING];
-      if (review && typeof review === "object" && !Array.isArray(review)) {
-        raw = review as Record<string, unknown>;
-        break;
+      const value = parsed?.[heading];
+      if (value && typeof value === "object" && !Array.isArray(value)) {
+        return { raw: value as Record<string, unknown>, block: block[0] };
       }
     } catch {
       // 次のブロックを試す
     }
   }
+  return undefined;
+}
+
+/**
+ * ゴールガーディアンの、観点ごと・指摘ごとの判定を読む（最終レビュー・統合レビュー）。判定の無い観点・指摘は
+ * 不合格として扱い、すべての観点が検証済みで、すべての指摘が再発なしのときだけ合格にする。
+ */
+function readVerdicts(
+  raw: Record<string, unknown> | undefined,
+  viewpointIds: readonly string[],
+  remarkIds: readonly string[],
+  unreadable: DaemonText,
+): Pick<FinalReview, "passed" | "viewpoints" | "remarks" | "summary"> {
   const byId = (list: unknown) => {
     const map = new Map<string, Record<string, unknown>>();
     if (!Array.isArray(list)) return map;
@@ -891,7 +992,7 @@ export function extractFinalReview(
   };
   const vs = byId(raw?.viewpoints);
   const rs = byId(raw?.remarks);
-  const missing = raw ? message("review.verdictMissing") : message("review.unreadable");
+  const missing = raw ? message("review.verdictMissing") : unreadable;
   const viewpoints = viewpointIds.map((id) => {
     const r = vs.get(id);
     return {
@@ -915,6 +1016,95 @@ export function extractFinalReview(
     viewpoints,
     remarks,
     summary: text(raw?.summary) || (raw ? "" : missing),
+  };
+}
+
+/** 統合レビューの観点。設計のテスト観点が無ければ、要求要件の受け入れ条件（REQ）にする（PBI-31）。 */
+export function integrationViewpointIds(task: Task): string[] {
+  const ids = (task.approved.design?.testViewpoints ?? []).map((v) => v.id);
+  return ids.length > 0 ? ids : [REQUIREMENTS_VIEWPOINT];
+}
+
+/**
+ * 統合レビューの指示（PBI-31）。ゴールガーディアンが、子タスクの PR がマージされた後のベースブランチの
+ * コードを読み、子タスクの成果を組み合わせた状態が親の要求要件・テスト観点を満たすかを判定する。
+ */
+export function buildIntegrationReviewPrompt(
+  task: Task,
+  subtasks: readonly SubtaskSummary[],
+  target: { baseBranch: string; commit: string },
+): string {
+  const viewpoints = task.approved.design?.testViewpoints ?? [];
+  const remarks = humanRemarks(task);
+  return [
+    "あなたはゴールガーディアンです。人間が承認した成果物（ゴール）を守る立場で、子タスクに分けて進めたタスクを、統合の観点で最終レビューしてください。",
+    "",
+    `作業領域（カレントディレクトリ）に、対象リポジトリ${task.repository ? `（${task.repository.url}）` : ""}のベースブランチ（${target.baseBranch}）の最新のコミット（${target.commit.slice(0, 7)}）のコードがあります。子タスクの PR は、このブランチにマージされています。`,
+    "コードは読むだけです（作業領域は読み取り専用で、変更はできません）。",
+    "",
+    "- 子タスクの成果を組み合わせた状態で、承認済みの要求要件を満たすかを、実際のコードを読んで判定する（子タスクが個別に完了していることは前提にしない）",
+    "- テスト観点ごとに、その観点の振る舞いがコードとテストで実現されているかを判定する",
+    "- 子タスクの間のつなぎ目（呼び出し・データの受け渡し・設定・画面の導線）が抜けていないかを確かめる",
+    "- 中止された子タスクの範囲が、要求要件を満たすために必要なら、足りないこととして挙げる",
+    "- 人間の過去の指摘ごとに、指摘された問題が再発していないかを判定する",
+    "- findings には、要求要件を満たすために直す必要があること（修正の子タスクで直すこと）だけを、1件ずつ具体的に書く。合格なら空にする。好みや改善の提案は書かない",
+    "",
+    "--- 承認済みの要求要件 ---",
+    task.approved.requirements?.output ?? "（なし）",
+    "",
+    "--- 承認済みの設計 ---",
+    task.approved.design?.output ?? "（なし）",
+    "",
+    "--- テスト観点 ---",
+    ...(viewpoints.length > 0
+      ? viewpointLines(viewpoints)
+      : [
+          `- [${REQUIREMENTS_VIEWPOINT}] 承認済みの要求要件の受け入れ条件（設計にテスト観点が無いため、受け入れ条件をすべて満たすかを、この観点で判定する）`,
+        ]),
+    "",
+    "--- 子タスク ---",
+    ...subtaskLines(subtasks),
+    "",
+    "--- 人間の過去の指摘 ---",
+    ...(remarks.length > 0 ? remarks.map((r) => `- [${r.id}] ${r.text}`) : ["（なし）"]),
+    "",
+    "--- タスク ---",
+    `# ${task.title}`,
+    "",
+    task.body || "（内容なし）",
+    "",
+    "判定の説明をMarkdownで書き、そのあとに判定を次の形式で必ず出してください。観点と指摘は、上のものをすべて含めてください。",
+    "```json",
+    `{"${INTEGRATION_HEADING}": {"viewpoints": [{"id": "TV-1", "verified": true, "reason": "理由"}], "remarks": [{"id": "指摘のID", "notRecurred": true, "reason": "理由"}], "findings": ["直す必要があること"], "summary": "全体の所見"}}`,
+    "```",
+  ].join("\n");
+}
+
+/**
+ * 統合レビューの出力を読む（PBI-31）。判定の無い観点・指摘は不合格として扱い、すべての観点を満たし、
+ * すべての指摘が再発なしで、足りないことが無いときだけ合格にする。output は判定の形式を除いた説明。
+ */
+export function extractIntegrationReview(
+  output: string,
+  viewpointIds: readonly string[],
+  remarkIds: readonly string[],
+): Pick<IntegrationReview, "passed" | "viewpoints" | "remarks" | "findings" | "summary"> & {
+  output: string;
+} {
+  const found = findBlock(output, INTEGRATION_HEADING);
+  const verdicts = readVerdicts(
+    found?.raw,
+    viewpointIds,
+    remarkIds,
+    message("integrate.unreadable"),
+  );
+  const list = found?.raw.findings;
+  const findings = Array.isArray(list) ? list.map(text).filter(Boolean) : [];
+  return {
+    ...verdicts,
+    passed: verdicts.passed && findings.length === 0,
+    findings,
+    output: found ? output.replace(found.block, "").trim() : output,
   };
 }
 
@@ -1079,7 +1269,7 @@ export function buildOrchestratorPrompt(task: Task): string {
     bugfix:
       "調査 → 再現 → 実装 → PR作成。不具合の修正で、テストで再現できるもの（期待する振る舞いがタスクから分かる）。不具合を再現する失敗するテストを書き、それを通すように直す。直すのに設計の判断が要る大きな不具合は standard を選ぶ",
     split:
-      "調査 → 要求要件 → 設計 → タスク分割。変更が大きく、1つの PR では人間がレビューしきれないとき。設計の承認の後に、独立して進められる子タスクに分け、子タスクごとに実装と PR を作る",
+      "調査 → 要求要件 → 設計 → タスク分割 → 統合レビュー。変更が大きく、1つの PR では人間がレビューしきれないとき。設計の承認の後に、独立して進められる子タスクに分け、子タスクごとに実装と PR を作る。子タスクがすべて終わったら、組み合わせた結果が要求要件を満たすかをレビューする",
   };
   const allowed = allowedPlans(task);
   const plans = Object.fromEntries(allowed.map((plan) => [plan, all[plan]]));
@@ -1134,6 +1324,8 @@ export type SplitChild = { key: string; title: string; body: string; dependsOn: 
  */
 export function extractSplitPlan(
   output: string,
+  /** 子タスクの最小の数。修正の子タスクの追加（PBI-31）は1件から。 */
+  min: number = MIN_SPLIT_CHILDREN,
 ): { ok: true; reason: string; children: SplitChild[] } | { ok: false; message: DaemonText } {
   const blocks = [...output.matchAll(/```json\s*\n([\s\S]*?)\n```/g)].reverse();
   let found: { reason: string; children: unknown[] } | undefined;
@@ -1160,11 +1352,11 @@ export function extractSplitPlan(
     children.push({ key, title: title.slice(0, 200), body: text(c.body), dependsOn });
   }
   const count = children.length;
-  if (count < MIN_SPLIT_CHILDREN || count > MAX_SPLIT_CHILDREN) {
+  if (count < min || count > MAX_SPLIT_CHILDREN) {
     return {
       ok: false,
       message: message("split.childCount", {
-        min: MIN_SPLIT_CHILDREN,
+        min,
         max: MAX_SPLIT_CHILDREN,
         count,
       }),
@@ -1219,7 +1411,9 @@ export function buildChildBody(
     "",
     "---",
     "",
-    `このタスクは、親タスク「${parent.title}」をタスク分割で分けた子タスクの1つです。親の要求要件と設計のうち、このタスクの範囲だけを実現してください。`,
+    parent.split
+      ? `このタスクは、親タスク「${parent.title}」の統合レビューの指摘を直す、修正の子タスクです。親の要求要件と設計のうち、このタスクの範囲だけを直してください。`
+      : `このタスクは、親タスク「${parent.title}」をタスク分割で分けた子タスクの1つです。親の要求要件と設計のうち、このタスクの範囲だけを実現してください。`,
     ...(deps.length > 0 ? [`先に、子タスク ${deps.join("・")} の PR がマージされています。`] : []),
     "",
     "## 親タスクの要求要件（承認済み）",

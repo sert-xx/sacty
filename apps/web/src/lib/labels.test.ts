@@ -45,6 +45,7 @@ const task = (patch: Partial<Task> = {}): Task => ({
   reviewComments: [],
   reproductionTests: [],
   verifyFailures: 0,
+  integrationFailures: 0,
   misses: [],
   importedFeedback: [],
   submissions: {},
@@ -514,5 +515,42 @@ describe("再現の表示（PBI-29）", () => {
         actor: "sacty",
       } as unknown as ActivityEvent),
     ).toBe("調査を完了（前段の調査のため承認なし）→ 次の工程へ");
+  });
+});
+
+describe("統合レビューの表示（PBI-31）", () => {
+  const review = (passed: boolean) =>
+    ({
+      passed,
+      baseBranch: "main",
+      commit: "c".repeat(40),
+      viewpoints: [],
+      remarks: [],
+      findings: passed ? [] : ["つなぐ", "表示する"],
+      summary: "",
+      at: "",
+    }) as Task["integration"];
+  it("合格なら統合レビューの承認待ち、続けて通らなければ判断待ちと出し、作業履歴に結果を出す", () => {
+    const gate = {
+      status: "awaiting_approval" as const,
+      gate: { step: "integrate" as const, submission: 1 },
+    };
+    expect(statusText(task({ ...gate, integration: review(true) }))).toBe("統合レビューの承認待ち");
+    expect(statusText(task({ ...gate, integration: review(false) }))).toBe(
+      "統合レビューに通らない（判断待ち）",
+    );
+    const event = (passed: boolean) =>
+      ({
+        type: "IntegrationReviewed",
+        payload: review(passed),
+        actor: "guardian",
+      }) as unknown as ActivityEvent;
+    expect(describeEvent(event(true))).toBe("統合レビュー（main・ccccccc）：合格 → 人間の承認待ち");
+    expect(describeEvent(event(false))).toBe(
+      "統合レビュー（main・ccccccc）：不合格（足りないこと2件）",
+    );
+    expect(describeIn(event(false), labels.en)).toBe(
+      "Integration review (main · ccccccc): failed (2 missing items)",
+    );
   });
 });

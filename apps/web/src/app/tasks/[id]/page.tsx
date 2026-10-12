@@ -12,6 +12,7 @@ import { AutoRefresh } from "@/components/auto-refresh";
 import { CardSection } from "@/components/card-section";
 import { DaemonError } from "@/components/daemon-error";
 import { Implementation } from "@/components/implementation";
+import { IntegrationResult } from "@/components/integration";
 import { Markdown } from "@/components/markdown";
 import { Proposals } from "@/components/proposals";
 import { PullRequestCard } from "@/components/pull-request";
@@ -173,13 +174,17 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
                     ? m.gate.tooManyHelp
                     : task.gate?.step === "reproduce"
                       ? m.gate.notReproducedHelp
-                      : task.gate?.step === "pr" && task.pullRequestState === "closed"
-                        ? m.gate.prClosedHelp
-                        : task.gate?.step === "pr" && task.pullRequestState === "merged_outdated"
-                          ? m.gate.prMergedOutdatedHelp
-                          : task.gate?.step === "pr" && task.pullRequestState === "open"
-                            ? m.gate.prHelp
-                            : m.gate.reviewHelp}
+                      : task.gate?.step === "integrate"
+                        ? task.integration?.passed === false
+                          ? m.gate.integrateFailedHelp(task.integrationFailures)
+                          : m.gate.integrateHelp
+                        : task.gate?.step === "pr" && task.pullRequestState === "closed"
+                          ? m.gate.prClosedHelp
+                          : task.gate?.step === "pr" && task.pullRequestState === "merged_outdated"
+                            ? m.gate.prMergedOutdatedHelp
+                            : task.gate?.step === "pr" && task.pullRequestState === "open"
+                              ? m.gate.prHelp
+                              : m.gate.reviewHelp}
             </p>
           </div>
           <Link
@@ -309,6 +314,8 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
             <Deliverable task={task} step="design" />
           )}
           {task.split && <Subtasks task={task} />}
+          {/* 統合レビューの結果（PBI-31） */}
+          <IntegrationResult task={task} />
           {(task.outputs.implement ||
             task.steps.some((s) => s.key === "implement" && s.state !== "todo")) && (
             <Implementation task={task} />
@@ -372,6 +379,15 @@ async function Subtasks({ task }: { task: Task }) {
               <Link href={`/tasks/${c.taskId}`} className="font-medium hover:underline">
                 {c.title}
               </Link>
+              {/* 統合レビューの後に追加した修正の子タスク（PBI-31） */}
+              {c.round > 1 && (
+                <span
+                  title={m.fixNote}
+                  className="rounded-full border border-back-line bg-back-soft px-2 py-0.5 text-xs font-semibold text-back"
+                >
+                  {m.fix}
+                </span>
+              )}
               {c.task ? (
                 <StatusLabel task={c.task} />
               ) : (

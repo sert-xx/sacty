@@ -4,6 +4,7 @@ import {
   allowedPlans,
   buildOrchestratorPrompt,
   commentableLines,
+  extractIntegrationReview,
   extractReviewComments,
   extractSplitPlan,
 } from "./prompts.js";
@@ -119,5 +120,52 @@ describe("タスク分割（PBI-27）", () => {
     expect(ja(plan([child("A", ["C"]), child("B", ["A"]), child("C", ["B"]), child("D")]))).toMatch(
       /循環しています（A, B, C）/,
     );
+  });
+});
+
+describe("統合レビュー（PBI-31）", () => {
+  const review = (r: Record<string, unknown>) =>
+    `# 説明\n\n\`\`\`json\n${JSON.stringify({ "sacty-integration-review": r })}\n\`\`\``;
+  const verified = { viewpoints: [{ id: "TV-1", verified: true, reason: "満たす" }], remarks: [] };
+
+  it("すべての観点を満たし、足りないことが無いときだけ合格にし、判定の形式を除いた説明を返す", () => {
+    const passed = extractIntegrationReview(
+      review({ ...verified, findings: [], summary: "所見" }),
+      ["TV-1"],
+      [],
+    );
+    expect(passed).toMatchObject({ passed: true, findings: [], summary: "所見", output: "# 説明" });
+    // 観点を満たすと書いても、足りないことがあれば不合格（修正の子タスクで直す）
+    expect(
+      extractIntegrationReview(review({ ...verified, findings: ["つなぐ", " "] }), ["TV-1"], []),
+    ).toMatchObject({ passed: false, findings: ["つなぐ"] });
+    // 判定の無い観点・指摘は不合格
+    const missing = extractIntegrationReview(
+      review({ ...verified, findings: [] }),
+      ["TV-1", "TV-2"],
+      ["split-1-1"],
+    );
+    expect(missing.passed).toBe(false);
+    expect(renderMessage(missing.viewpoints[1]?.reason, "ja")).toBe("判定がありません。");
+    expect(missing.remarks).toEqual([
+      expect.objectContaining({ remarkId: "split-1-1", notRecurred: false }),
+    ]);
+  });
+
+  it("判定を読めなければ、統合レビューを読めなかった理由で不合格にする", () => {
+    const unreadable = extractIntegrationReview("判定なし", ["TV-1"], []);
+    expect(unreadable.passed).toBe(false);
+    expect(unreadable.output).toBe("判定なし");
+    expect(renderMessage(unreadable.summary, "ja")).toMatch(/統合レビューの出力から/);
+    expect(renderMessage(unreadable.viewpoints[0]?.reason, "ja")).toMatch(/統合レビューの出力から/);
+  });
+
+  it("修正の子タスクの追加は、1件から作れる", () => {
+    const one = `\`\`\`json\n${JSON.stringify({ "sacty-split": { reason: "直す", children: [{ key: "F", title: "F" }] } })}\n\`\`\``;
+    expect(extractSplitPlan(one).ok).toBe(false);
+    expect(extractSplitPlan(one, 1).ok).toBe(true);
+    expect(
+      extractSplitPlan(one.replace('"children":[{"key":"F","title":"F"}]', '"children":[]'), 1),
+    ).toMatchObject({ ok: false });
   });
 });

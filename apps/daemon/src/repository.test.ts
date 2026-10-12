@@ -140,6 +140,28 @@ describe("対象リポジトリの作業領域（git）", () => {
     await expect(workspace.diffCommits(gitDir, "main", head)).rejects.toThrow();
   });
 
+  it("ベースブランチの最新を取得し、そのコミットのコードを書き出す（統合レビュー。PBI-31）", async () => {
+    const origin = makeOrigin();
+    const workspace = new GitRepositoryWorkspace();
+    const gitDir = join(dir, "_git", "a.git");
+    const prepared = await workspace.prepare(join(dir, "a"), gitDir, origin, "main");
+    // 子タスクの PR がマージされて、ベースブランチが進んだ
+    writeFileSync(join(origin, "merged.ts"), "export const merged = 1;\n");
+    git(origin, "add", "--all");
+    git(origin, "commit", "-m", "merged");
+    const latest = git(origin, "rev-parse", "HEAD");
+
+    const commit = await workspace.fetchBranch(gitDir, "main");
+    expect(commit).toBe(latest);
+    expect(commit).not.toBe(prepared.baseCommit);
+    const out = join(dir, "integrated");
+    await workspace.snapshot(gitDir, commit, out);
+    expect(readdirSync(out).sort()).toEqual(["merged.ts", "pay.ts"]);
+    // オプションに見えるブランチ名・存在しないブランチは受け付けない
+    await expect(workspace.fetchBranch(gitDir, "--upload-pack=evil")).rejects.toThrow();
+    await expect(workspace.fetchBranch(gitDir, "missing")).rejects.toThrow();
+  });
+
   it("実装後のコードを、.git を除き、シンボリックリンクはたどらずに写す（PBI-16）", async () => {
     const origin = makeOrigin();
     const workspace = new GitRepositoryWorkspace();

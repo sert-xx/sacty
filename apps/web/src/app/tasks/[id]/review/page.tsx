@@ -13,6 +13,7 @@ import { voidRemarkAction } from "@/app/actions";
 import { DaemonError } from "@/components/daemon-error";
 import { GateForm } from "@/components/gate-form";
 import { Implementation } from "@/components/implementation";
+import { IntegrationResult } from "@/components/integration";
 import { Markdown } from "@/components/markdown";
 import { PullRequestCard } from "@/components/pull-request";
 import { ReproductionResult } from "@/components/reproduction";
@@ -154,6 +155,9 @@ async function Review({ params }: { params: Promise<{ id: string }> }) {
               <PullRequestCard task={task} />
               <Implementation task={task} />
             </>
+          ) : step === "integrate" ? (
+            // 統合レビュー（PBI-31）は、ゴールガーディアンの判定と説明を成果物として出す
+            <IntegrationResult task={task} />
           ) : (
             <section
               aria-labelledby="deliverable"

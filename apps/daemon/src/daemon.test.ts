@@ -198,6 +198,15 @@ class FakeRepos implements RepositoryWorkspace {
     if (this.fetchFail) throw new Error(this.fetchFail);
     this.fetchedCommits.push({ gitDir, commits, ...(authEnv ? { authEnv } : {}) });
   }
+  /** ベースブランチの最新の取得（統合レビュー。PBI-31）。 */
+  branchHead = "c".repeat(40);
+  fetchedBranches: { gitDir: string; branch: string; authEnv?: Record<string, string> }[] = [];
+  fetchBranchFail?: string;
+  async fetchBranch(gitDir: string, branch: string, authEnv?: Record<string, string>) {
+    if (this.fetchBranchFail) throw new Error(this.fetchBranchFail);
+    this.fetchedBranches.push({ gitDir, branch, ...(authEnv ? { authEnv } : {}) });
+    return this.branchHead;
+  }
   prDiff = [
     "diff --git a/src/retry.ts b/src/retry.ts",
     "--- a/src/retry.ts",
@@ -5116,6 +5125,331 @@ describe("タスク分割（PBI-27）", () => {
     await restarted.runNext(id);
     expect(childrenOf(restarted, id).map((c) => c?.id)).toEqual(ids);
     fresh.close();
+  });
+});
+
+describe("統合レビュー（PBI-31）", () => {
+  const out = (text: string, output = 1): AgentOutcome => ({
+    kind: "completed",
+    output: text,
+    usage: { input: 0, cacheRead: 0, cacheWrite: 0, output },
+  });
+  const block = (b: Record<string, unknown>) => `\`\`\`json\n${JSON.stringify(b)}\n\`\`\``;
+  const promptOf = (executor: FakeExecutor, i: number) =>
+    executor.calls[i]?.command.join(" ") ?? "";
+  const design = out(
+    `# 設計\n\n${block({ "sacty-test-viewpoints": [{ title: "t", input: "i", expected: "e" }] })}`,
+  );
+  const splitOutput = (children: unknown[]) =>
+    out(`分け方\n\n${block({ "sacty-split": { reason: "機能ごとに分ける", children } })}`);
+  const twoChildren = [
+    { key: "A", title: "決済の API", body: "- API を作る", dependsOn: [] },
+    { key: "B", title: "決済の画面", body: "- 画面を作る", dependsOn: [] },
+  ];
+  const integration = (passed: boolean, findings: string[] = [], remarks: unknown[] = []) =>
+    out(
+      [
+        passed ? "# 統合できている" : "# つなぎ目が抜けている",
+        block({
+          "sacty-integration-review": {
+            viewpoints: [
+              {
+                id: "TV-1",
+                verified: passed,
+                reason: passed ? "満たす" : "画面から API を呼んでいない",
+              },
+            ],
+            remarks,
+            findings,
+            summary: passed ? "要求要件を満たす" : "画面と API がつながっていない",
+          },
+        }),
+      ].join("\n\n"),
+      1000,
+    );
+  /** 親はタスク分割の組み合わせ（統合レビューまで）、子は調査だけ（承認で完了する）を選ぶ。 */
+  const planner = async (task: Task) =>
+    task.parent
+      ? {
+          steps: ["investigate" as const],
+          plan: "investigate" as const,
+          reason: "子",
+          fallback: false,
+          costUsd: 0,
+          estimated: false,
+        }
+      : {
+          steps: [...STEP_PLANS.split].filter((s) => s !== "investigate"),
+          plan: "split" as const,
+          reason: "大きいので分ける",
+          fallback: false,
+          costUsd: 0,
+          estimated: false,
+        };
+
+  /** 親タスクを、設計の承認とタスク分割の実行まで進める。 */
+  async function splitParent(outcomes: AgentOutcome[], repos = new FakeRepos()) {
+    const activity = new SqliteActivityStore(dbPath);
+    const made = makeService(activity, [out("# 要求要件"), design, ...outcomes], {
+      planner,
+      repos,
+    });
+    const { service } = made;
+    const { id } = service.createTask({ projectId: "default", title: "決済をまるごと作る" });
+    await service.runNext(id);
+    service.approve(id, { step: "requirements", submission: 1 });
+    await service.runNext(id);
+    service.approve(id, { step: "design", submission: 1 });
+    await service.runNext(id);
+    return { ...made, activity, id };
+  }
+  /** 実行待ちを処理し、調査の承認待ちの子タスクを承認する（子が片付き、親が止まるまで）。 */
+  async function drain(service: TaskService, parentId: string) {
+    for (let i = 0; i < 20; i++) {
+      const ids = service.queuedTaskIds();
+      for (const id of ids) await service.runNext(id);
+      const children = service.get(parentId)?.task.split?.children ?? [];
+      const waiting = children.filter(
+        (c) => service.get(c.taskId)?.task.gate?.step === "investigate",
+      );
+      for (const c of waiting) {
+        service.approve(c.taskId, { step: "investigate", submission: current(service, c.taskId) });
+      }
+      if (ids.length === 0 && waiting.length === 0) return;
+    }
+  }
+  const integrationOf = (service: TaskService, id: string) => service.get(id)?.task.integration;
+
+  it("子がすべて完了しても親は完了せず、ベースブランチの最新で統合レビューをして、人間が承認したら完了する", async () => {
+    const repos = new FakeRepos();
+    const { service, executor, activity, id } = await splitParent(
+      [splitOutput(twoChildren), out("# A の調査"), out("# B の調査"), integration(true)],
+      repos,
+    );
+    await drain(service, id);
+    const parent = service.get(id)?.task;
+    expect(parent && isCompleted(parent)).toBe(false);
+    expect(parent?.status).toBe("awaiting_approval");
+    expect(parent?.gate).toEqual({ step: "integrate", submission: 1 });
+    expect(parent?.steps.map((s) => s.state)).toEqual(["done", "done", "done", "active"]);
+
+    // ゴールガーディアンが、子の PR がマージされた後のベースブランチの最新のコードを読み取り専用で読む
+    expect(repos.fetchedBranches).toEqual([
+      expect.objectContaining({ branch: "main", authEnv: expect.any(Object) }),
+    ]);
+    const last = executor.calls.length - 1;
+    expect(executor.readOnly[last]).toBe(true);
+    expect(executor.workspaceFiles[last]).toEqual(["README.md"]);
+    expect(repos.snapshots.at(-1)?.baseCommit).toBe(repos.branchHead);
+    const prompt = promptOf(executor, last);
+    expect(prompt).toContain("統合の観点で最終レビュー");
+    expect(prompt).toMatch(/決済の API：完了[\s\S]*決済の画面：完了/);
+    expect(prompt).toContain("# 要求要件");
+    expect(prompt).toContain("[TV-1]");
+
+    const review = integrationOf(service, id);
+    expect(review).toMatchObject({
+      passed: true,
+      baseBranch: "main",
+      commit: repos.branchHead,
+      findings: [],
+      viewpoints: [{ viewpointId: "TV-1", verified: true }],
+    });
+    // 判定の形式は除いて、説明だけを成果物にする。費用は親の予算に入れる
+    expect(parent?.outputs.integrate).toBe("# 統合できている");
+    expect(
+      service
+        .get(id)
+        ?.activity.find((e) => e.type === "AgentRunCompleted" && e.payload.step === "integrate")
+        ?.actor,
+    ).toBe("guardian");
+    expect(parent?.budget.usedUsd).toBeGreaterThan(0);
+
+    service.approve(id, { step: "integrate", submission: 1 });
+    const done = service.get(id)?.task;
+    expect(done && isCompleted(done)).toBe(true);
+    expect(service.queuedTaskIds()).toEqual([]);
+    activity.close();
+  });
+
+  it("不合格なら、足りないことをもとに修正の子タスクを追加し、それが完了したら統合レビューをやり直す", async () => {
+    const { service, executor, activity, id } = await splitParent([
+      splitOutput(twoChildren),
+      out("# A の調査"),
+      out("# B の調査"),
+      integration(false, ["画面の送信ボタンから決済の API を呼ぶ"]),
+      // 修正の子タスクは1件から作れる
+      splitOutput([
+        { key: "F", title: "画面と API をつなぐ", body: "- 送信で API を呼ぶ", dependsOn: [] },
+      ]),
+      out("# F の調査"),
+      integration(true),
+    ]);
+    await drain(service, id);
+
+    const fixPrompt = promptOf(executor, 6);
+    expect(fixPrompt).toContain("修正の子タスクを追加");
+    expect(fixPrompt).toContain("足りないこと：画面の送信ボタンから決済の API を呼ぶ");
+    expect(fixPrompt).toContain("[TV-1] 観点を満たしていない：画面から API を呼んでいない");
+    expect(fixPrompt).toMatch(/決済の API：完了[\s\S]*決済の画面：完了/);
+
+    const parent = service.get(id)?.task;
+    expect(parent?.split?.rounds).toBe(2);
+    expect(parent?.split?.children.map((c) => [c.title, c.round])).toEqual([
+      ["決済の API", 1],
+      ["決済の画面", 1],
+      ["画面と API をつなぐ", 2],
+    ]);
+    const fix = service.get(parent?.split?.children[2]?.taskId ?? "")?.task;
+    expect(fix?.body).toContain("統合レビューの指摘を直す、修正の子タスク");
+    expect(fix && isCompleted(fix)).toBe(true);
+    // 2回目の統合レビューは、修正の子タスクも含めて読む
+    expect(promptOf(executor, 8)).toMatch(/画面と API をつなぐ：完了［修正の子タスク］/);
+    expect(parent?.gate).toEqual({ step: "integrate", submission: 1 });
+    expect(parent?.integration?.passed).toBe(true);
+    expect(parent?.integrationFailures).toBe(0);
+    activity.close();
+  });
+
+  it("続けて3回通らなければ、不合格のまま人間の承認待ちにする。差し戻すと指摘をもとに修正の子タスクを追加し、回数を数え直す", async () => {
+    const fixChild = (key: string) =>
+      splitOutput([{ key, title: `修正 ${key}`, body: "-", dependsOn: [] }]);
+    const { service, executor, activity, id } = await splitParent([
+      splitOutput(twoChildren),
+      out("# A"),
+      out("# B"),
+      integration(false, ["足りない 1"]),
+      fixChild("F1"),
+      out("# F1"),
+      integration(false, ["足りない 2"]),
+      fixChild("F2"),
+      out("# F2"),
+      integration(false, ["足りない 3"]),
+      // 人間の差し戻しの後
+      out(
+        `直し方\n\n${block({ "sacty-split": { reason: "指摘に対応", children: [{ key: "H", title: "人間の指摘を直す", body: "-", dependsOn: [] }] } })}\n\n${block({ "sacty-responses": [{ remarkId: "split-1-1", text: "子タスクで直す" }] })}`,
+      ),
+      out("# H"),
+      // 人間の指摘の再発の判定が無ければ合格にならないので、判定を付ける
+      integration(true, [], [{ id: "split-1-1", notRecurred: true, reason: "表示している" }]),
+    ]);
+    await drain(service, id);
+    let parent = service.get(id)?.task;
+    expect(parent?.status).toBe("awaiting_approval");
+    expect(parent?.gate?.step).toBe("integrate");
+    expect(parent?.integration).toMatchObject({ passed: false, findings: ["足りない 3"] });
+    expect(parent?.integrationFailures).toBe(3);
+    expect(parent?.split?.rounds).toBe(3);
+    // 差し戻すと、タスク分割をやり直す（親の要求要件・設計には戻せない）
+    expect(reworkTargets(parent as Task, "integrate")).toEqual(["split"]);
+    service.requestChanges(id, {
+      step: "integrate",
+      submission: current(service, id),
+      comments: ["エラーの表示が無い"],
+    });
+    parent = service.get(id)?.task;
+    expect(parent?.status).toBe("queued");
+    expect(parent?.integrationFailures).toBe(0);
+    // 不合格だった統合レビューを差し戻しても、見逃しにはしない
+    expect(parent?.misses).toEqual([]);
+    await drain(service, id);
+    const prompt = promptOf(executor, 12);
+    expect(prompt).toContain("[split-1-1] エラーの表示が無い");
+    expect(prompt).toContain("足りないこと：足りない 3");
+    parent = service.get(id)?.task;
+    expect(parent?.remarks[0]).toMatchObject({ step: "split", response: "子タスクで直す" });
+    expect(parent?.split?.children.at(-1)?.title).toBe("人間の指摘を直す");
+    expect(parent?.gate?.step).toBe("integrate");
+    expect(parent?.integration?.passed).toBe(true);
+    // 統合レビューには、人間の指摘の再発の判定も求める
+    expect(promptOf(executor, 14)).toContain("[split-1-1] エラーの表示が無い");
+    activity.close();
+  });
+
+  it("合格だった統合レビューを人間が差し戻したら、ゴールガーディアンの見逃しとして記録する", async () => {
+    const { service, activity, id } = await splitParent([
+      splitOutput(twoChildren),
+      out("# A"),
+      out("# B"),
+      integration(true),
+    ]);
+    await drain(service, id);
+    const at = service.get(id)?.task.integration?.at;
+    service.requestChanges(id, {
+      step: "integrate",
+      submission: current(service, id),
+      comments: ["画面が崩れている"],
+    });
+    expect(service.get(id)?.task.misses).toEqual([
+      expect.objectContaining({ reviewAt: at, remarkIds: ["split-1-1"] }),
+    ]);
+    activity.close();
+  });
+
+  it("ベースブランチを取得できなければ、理由を記録して止め、再開すると統合レビューからやり直す", async () => {
+    const repos = new FakeRepos();
+    repos.fetchBranchFail = "fatal: could not read from remote";
+    const { service, executor, activity, id } = await splitParent(
+      [splitOutput(twoChildren), out("# A"), out("# B"), integration(true)],
+      repos,
+    );
+    await drain(service, id);
+    const paused = service.get(id)?.task;
+    expect(paused?.status).toBe("paused");
+    expect(paused?.pausedReason).toBe("error");
+    const failed = service.get(id)?.activity.findLast((e) => e.type === "AgentRunFailed");
+    expect(
+      failed?.type === "AgentRunFailed" && renderMessage(failed.payload.message, "ja"),
+    ).toMatch(
+      /ベースブランチ（main）の最新を取得できませんでした：fatal: could not read from remote/,
+    );
+    // ゴールガーディアンは実行していない（費用をかけていない）
+    expect(executor.calls).toHaveLength(5);
+
+    repos.fetchBranchFail = undefined;
+    service.resume(id, {});
+    await drain(service, id);
+    expect(service.get(id)?.task.gate).toEqual({ step: "integrate", submission: 1 });
+    activity.close();
+  });
+
+  it("この PBI より前に分割したタスク（統合レビューの工程が無い）は、これまでどおり子の完了で完了する", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service } = makeService(
+      activity,
+      [out("# 要求要件"), design, splitOutput(twoChildren), out("# A"), out("# B")],
+      {
+        planner: async (task: Task) =>
+          task.parent
+            ? {
+                steps: ["investigate" as const],
+                plan: "investigate" as const,
+                reason: "子",
+                fallback: false,
+                costUsd: 0,
+                estimated: false,
+              }
+            : {
+                steps: ["requirements" as const, "design" as const, "split" as const],
+                plan: "split" as const,
+                reason: "分ける",
+                fallback: false,
+                costUsd: 0,
+                estimated: false,
+              },
+      },
+    );
+    const { id } = service.createTask({ projectId: "default", title: "古い分割" });
+    await service.runNext(id);
+    service.approve(id, { step: "requirements", submission: 1 });
+    await service.runNext(id);
+    service.approve(id, { step: "design", submission: 1 });
+    await service.runNext(id);
+    await drain(service, id);
+    const done = service.get(id)?.task;
+    expect(done && isCompleted(done)).toBe(true);
+    expect(done?.integration).toBeUndefined();
+    activity.close();
   });
 });
 

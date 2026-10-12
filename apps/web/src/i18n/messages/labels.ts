@@ -25,6 +25,7 @@ const ja = {
     requirements: "要求要件",
     design: "設計",
     split: "タスク分割",
+    integrate: "統合レビュー",
     reproduce: "再現",
     implement: "実装",
     pr: "PR作成",
@@ -99,6 +100,7 @@ const ja = {
     prClosed: "PR が閉じられた（判断待ち）",
     prMergedOutdated: "古い提出がマージされた（判断待ち）",
     notReproduced: "再現できなかった（判断待ち）",
+    integrationFailed: "統合レビューに通らない（判断待ち）",
     stepApproval: (step: string, n: number) => `${step}の承認待ち${n > 1 ? `（${n}回目）` : ""}`,
   },
   action: { decide: "判断する", review: "チェックする" },
@@ -170,6 +172,8 @@ const ja = {
       `子タスク${count}件に分割${reason ? `（${reason}）` : ""}`,
     TaskUnblocked: "依存先の子タスクが完了したため、実行待ちにした",
     SplitCompleted: "子タスクがすべて完了したため、タスク分割を完了",
+    IntegrationReviewed: (passed: boolean, branch: string, commit: string, findings: number) =>
+      `統合レビュー（${branch}・${commit}）：${passed ? "合格 → 人間の承認待ち" : `不合格（足りないこと${findings}件）`}`,
     StepCompleted: (step: string) => `${step}を完了（前段の${step}のため承認なし）→ 次の工程へ`,
     reproduced: (exitCode: number | undefined) =>
       `再現を確認：再現のテストが失敗した（終了コード ${exitCode ?? "?"}）→ 実装へ`,
@@ -208,6 +212,7 @@ const en: LabelMessages = {
     requirements: "Requirements",
     design: "Design",
     split: "Task split",
+    integrate: "Integration review",
     reproduce: "Reproduce",
     implement: "Implement",
     pr: "Open PR",
@@ -282,6 +287,7 @@ const en: LabelMessages = {
     prClosed: "PR closed (needs you)",
     prMergedOutdated: "An older submission was merged (needs you)",
     notReproduced: "Not reproduced (needs your decision)",
+    integrationFailed: "Integration review failed (needs your decision)",
     stepApproval: (step, n) => `${step} awaiting approval${n > 1 ? ` (submission ${n})` : ""}`,
   },
   action: { decide: "Decide", review: "Review" },
@@ -348,6 +354,8 @@ const en: LabelMessages = {
       `Split into ${count} subtask${count === 1 ? "" : "s"}${reason ? ` (${reason})` : ""}`,
     TaskUnblocked: "Queued because the subtasks it depends on are done",
     SplitCompleted: "All subtasks are done, so the task split is complete",
+    IntegrationReviewed: (passed, branch, commit, findings) =>
+      `Integration review (${branch} · ${commit}): ${passed ? "passed → needs your approval" : `failed (${findings} missing item${findings === 1 ? "" : "s"})`}`,
     StepCompleted: (step) => `${step} done (preliminary, no approval needed) → next step`,
     reproduced: (exitCode) =>
       `Reproduced: the reproduction test failed (exit code ${exitCode ?? "?"}) → implement`,
