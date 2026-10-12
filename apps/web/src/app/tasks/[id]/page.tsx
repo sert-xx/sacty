@@ -413,15 +413,18 @@ async function Deliverable({ task, step }: { task: Task; step: StepKey }) {
       id={`deliverable-${step}`}
       title={messages.labels.step[step]}
       note={
-        approved
-          ? m.approved(approved.submission)
-          : step === "review" && task.reviewPost
-            ? m.reviewPosted
-            : fromProposal
-              ? m.fromProposal(fromProposal.id)
-              : stale
-                ? m.stale
-                : m.draft
+        // 再現は、sacty がテストで確かめて先へ進む（人間は承認しない。PBI-29）
+        approved && step === "reproduce"
+          ? m.reproduced
+          : approved
+            ? m.approved(approved.submission)
+            : step === "review" && task.reviewPost
+              ? m.reviewPosted
+              : fromProposal
+                ? m.fromProposal(fromProposal.id)
+                : stale
+                  ? m.stale
+                  : m.draft
       }
       // 承認済みの成果物は折りたたむ（承認待ち・作業中のものは開いたまま）
       collapsed={Boolean(approved)}
