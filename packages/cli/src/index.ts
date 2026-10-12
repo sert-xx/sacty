@@ -9,7 +9,14 @@ import { parseArgs } from "node:util";
 import { renderMessage } from "@sacty/core";
 import { CONFIG_TEMPLATE, configPath, loadConfig, resolveHome } from "@sacty/daemon/config";
 import { buildImage, imageBuildSettings } from "@sacty/daemon/image";
-import { KEYCHAIN_SERVICE, KeychainSecretStore, SecretNotFoundError } from "@sacty/daemon/secrets";
+import {
+  isOnePasswordRef,
+  KEYCHAIN_SERVICE,
+  KeychainSecretStore,
+  OnePasswordSecretStore,
+  ResolvingSecretStore,
+  SecretNotFoundError,
+} from "@sacty/daemon/secrets";
 
 const require = createRequire(import.meta.url);
 
@@ -73,7 +80,8 @@ async function secretSet(name: string | undefined): Promise<void> {
 async function imageBuild(): Promise<void> {
   // 元のイメージと npm のレジストリは config.yaml の image_build に従う（PBI-33）。設定ファイルに誤りがあれば、
   // 既定に戻して作らずに止める（プライベートのレジストリの指定を捨てないため）
-  const settings = imageBuildSettings(loadConfig(resolveHome()));
+  const config = loadConfig(resolveHome());
+  const settings = imageBuildSettings(config);
   if (!settings.ok) {
     throw new Error(
       `${renderMessage(settings.problem, "ja")}設定ファイルを直してから、もう一度実行してください。`,
@@ -90,10 +98,19 @@ async function imageBuild(): Promise<void> {
       image,
       build,
       dockerDir,
-      secrets: new KeychainSecretStore(),
+      // npm のトークンは、キーチェーンの名前か 1Password の参照（PBI-34）
+      secrets: new ResolvingSecretStore(
+        new KeychainSecretStore(),
+        new OnePasswordSecretStore({
+          account: () => (config.ok ? config.config.onePasswordAccount : undefined),
+        }),
+      ),
       run: (args) => runInherit("docker", args),
     });
   } catch (error) {
+    if (error instanceof SecretNotFoundError && isOnePasswordRef(error.secretName)) {
+      throw new Error(error.message);
+    }
     if (error instanceof SecretNotFoundError) {
       throw new Error(
         `npm の認証トークン「${error.secretName}」がキーチェーンにありません。sacty secret set ${error.secretName} で保存してください。`,

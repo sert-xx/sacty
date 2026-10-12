@@ -33,7 +33,7 @@ import type { PullRequestFeedback, PullRequestStatus, PullRequests } from "./git
 import { MemoryProjectStore } from "./projects.js";
 import { buildOrchestratorPrompt, changeableSteps } from "./prompts.js";
 import type { RepositoryWorkspace } from "./repository.js";
-import { MemorySecretStore } from "./secrets.js";
+import { MemorySecretStore, OnePasswordSecretStore, ResolvingSecretStore } from "./secrets.js";
 import { createApp } from "./server.js";
 import { awaitingIssueComment, type ServiceDeps, TaskService } from "./service.js";
 import { MemorySettingsStore } from "./settings.js";
@@ -508,6 +508,8 @@ function makeService(
     /** オーケストレーターを差し替えず、エージェントで工程を選ばせる（PBI-17 のテスト）。 */
     realPlanner?: boolean;
     gateway?: ServiceDeps["gateway"];
+    /** 秘密情報の取り出し口を差し替える（1Password。PBI-34）。 */
+    secretStore?: ServiceDeps["secrets"];
   } = {},
 ) {
   const executor = new FakeExecutor(outcomes);
@@ -517,9 +519,11 @@ function makeService(
   const service = new TaskService({
     activity,
     config: options.config ?? configOf(agent()),
-    secrets: new MemorySecretStore(
-      options.secrets ?? { "claude-oauth-token": "oauth-secret", "github-token": "ghp_secret" },
-    ),
+    secrets:
+      options.secretStore ??
+      new MemorySecretStore(
+        options.secrets ?? { "claude-oauth-token": "oauth-secret", "github-token": "ghp_secret" },
+      ),
     executor,
     repos,
     tests,
@@ -584,6 +588,45 @@ describe("作業履歴", () => {
 });
 
 describe("工程の実行と費用", () => {
+  it("1Password の参照の秘密情報を取り出して渡し、取り出せなければ理由を記録して止める（PBI-34）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    let signedIn = false;
+    const secretStore = new ResolvingSecretStore(
+      new MemorySecretStore({}),
+      new OnePasswordSecretStore({
+        run: async () =>
+          signedIn
+            ? { code: 0, stdout: "oauth-from-1password", stderr: "" }
+            : {
+                code: 1,
+                stdout: "",
+                stderr: "[ERROR] 2026/10/12 12:00:00 You are not currently signed in.",
+              },
+      }),
+    );
+    const { service, executor } = makeService(activity, [completed(20_000)], {
+      config: configOf(agent({ auth: { mode: "subscription", secret: "op://Work/Claude/token" } })),
+      secretStore,
+    });
+    const task = service.createTask({ projectId: "default", title: "決済API" });
+    await service.runNext(task.id);
+    const paused = service.get(task.id)?.task;
+    expect(paused?.status).toBe("paused");
+    expect(paused?.pausedReason).toBe("auth");
+    const failed = service.get(task.id)?.activity.find((e) => e.type === "AgentRunFailed");
+    expect(failed?.type === "AgentRunFailed" && ja(failed.payload.message)).toMatch(
+      /1Password にサインインしていないため、「op:\/\/Work\/Claude\/token」を取り出せません/,
+    );
+    expect(executor.calls).toHaveLength(0);
+    // サインインして再開すると、取り出した値をコンテナに渡す（作業履歴には出さない）
+    signedIn = true;
+    service.resume(task.id, {});
+    await service.runNext(task.id);
+    expect(executor.calls[0]?.env.CLAUDE_CODE_OAUTH_TOKEN).toBe("oauth-from-1password");
+    expect(JSON.stringify(service.get(task.id)?.activity)).not.toContain("oauth-from-1password");
+    activity.close();
+  });
+
   it("ゲートウェイ経由のエージェントは、API キーをゲートウェイに渡し、コンテナには実行ごとのトークンだけを渡す（PBI-37）", async () => {
     const activity = new SqliteActivityStore(dbPath);
     const registered: { origin: string; apiKey: string; closed: boolean }[] = [];

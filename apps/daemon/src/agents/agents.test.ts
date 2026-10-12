@@ -469,6 +469,34 @@ describe("設定ファイル", () => {
     }
   });
 
+  it("秘密情報には 1Password の参照も書け、使うアカウントを読む（PBI-34）", () => {
+    dir = mkdtempSync(join(tmpdir(), "sacty-config-"));
+    const write = (secret: string, extra = "") =>
+      writeFileSync(
+        join(dir, "config.yaml"),
+        `default_agent: x
+agents:
+  x:
+    runtime: codex
+    auth: { mode: bedrock, secret: "${secret}", region: us-east-2 }
+    price_per_mtok_usd: { input: 1, cached_input: 0.1, output: 2 }
+${extra}`,
+      );
+    write("op://Work/Bedrock/credential", "onepassword:\n  account: my-company.1password.com\n");
+    expect(loadConfig(dir)).toMatchObject({
+      ok: true,
+      config: {
+        defaultAgent: { auth: { secret: "op://Work/Bedrock/credential" } },
+        onePasswordAccount: "my-company.1password.com",
+      },
+    });
+    write("op://Work/Bedrock");
+    const result = loadConfig(dir);
+    expect(result.ok ? "" : ja(result.problem)).toContain(
+      "1Password の参照（op://保管庫/アイテム/フィールド）",
+    );
+  });
+
   it("イメージの作成の元（元のイメージ・npm のレジストリ・トークンの名前）を読む（PBI-33）", () => {
     dir = mkdtempSync(join(tmpdir(), "sacty-config-"));
     const write = (extra: string) =>

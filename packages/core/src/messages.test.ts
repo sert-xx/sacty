@@ -84,3 +84,19 @@ describe("デーモンの文言（PBI-11）", () => {
     });
   });
 });
+
+describe("オーケストレーターを実行できなかった理由（PBI-34）", () => {
+  it("理由の文の終わりの句点を重ねない", () => {
+    const detail = message("secret.opSignedOut", { ref: "op://Work/Bedrock/credential" });
+    const ja = renderMessage(message("orchestrator.failed", { detail }), "ja");
+    expect(ja).not.toContain("。。");
+    expect(ja).toMatch(/再開してください。再開すると、工程の選択からやり直します。$/);
+    const en = renderMessage(message("orchestrator.failed", { detail }), "en");
+    expect(en).not.toContain("..");
+    expect(
+      renderMessage(message("orchestrator.failed", { detail: "401 Unauthorized" }), "ja"),
+    ).toBe(
+      "オーケストレーターを実行できませんでした：401 Unauthorized。再開すると、工程の選択からやり直します。",
+    );
+  });
+});

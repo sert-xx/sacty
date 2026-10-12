@@ -260,6 +260,37 @@ describe("MCP サーバーの合成と変換（PBI-6b）", () => {
     companyOnly.dispose();
   });
 
+  it("MCP の秘密情報には、1Password の参照（op://…）も書ける（PBI-34）", async () => {
+    const op = await prepareContext(
+      new FakeFetcher({
+        "op.git": {
+          "mcp.yaml":
+            "servers:\n  pf:\n    url: https://pf.example.com/mcp\n    headers:\n      Authorization: { secret: op://Work/PF/token, prefix: 'Bearer ' }\n",
+        },
+      }),
+      { repo: "op.git" },
+      "claude-code",
+      "/tmp/sacty-claude-config",
+    );
+    expect(op.placed.secrets).toEqual([
+      { env: "SACTY_MCP_SECRET_0", secret: "op://Work/PF/token", prefix: "Bearer " },
+    ]);
+    op.dispose();
+    await expect(
+      prepareContext(
+        new FakeFetcher({
+          "bad.git": {
+            "mcp.yaml":
+              "servers:\n  pf:\n    url: https://pf.example.com/mcp\n    headers:\n      Authorization: { secret: op://Work }\n",
+          },
+        }),
+        { repo: "bad.git" },
+        "claude-code",
+        "/tmp/sacty-claude-config",
+      ),
+    ).rejects.toThrow(/1Password の参照/);
+  });
+
   it("Codex には config.toml を書き、秘密情報は env_vars と env_http_headers で名前だけを渡す", async () => {
     const codex = await prepareContext(
       fetcher(),

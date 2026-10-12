@@ -13,10 +13,12 @@ import {
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 import { DEFAULT_RETRY_POLICY, type RetryPolicy } from "./gateway.js";
+import { SecretRef } from "./secrets.js";
 
 export const DEFAULT_IMAGE = "sacty-agent:0.1.0";
 
-const SecretName = z.string().regex(/^[A-Za-z0-9._-]+$/, code("input.secretName"));
+/** 秘密情報：キーチェーンの名前か、1Password の参照（op://…。PBI-34）。 */
+const SecretName = SecretRef;
 
 const Auth = z.discriminatedUnion("mode", [
   z.object({
@@ -179,6 +181,8 @@ const ConfigFile = z
         npm_token: SecretName.optional(),
       })
       .optional(),
+    /** 1Password（PBI-34）。複数のアカウントにサインインしているときは、使うアカウントを書く。 */
+    onepassword: z.object({ account: z.string().trim().min(1).optional() }).optional(),
     /** ホストのゲートウェイ（PBI-37）。 */
     gateway: z
       .object({
@@ -234,6 +238,8 @@ export type SactyConfig = {
   budgetPerTaskUsd: number;
   /** ゲートウェイの AI の呼び出しのリトライの上限（PBI-37）。 */
   gatewayRetry: RetryPolicy;
+  /** 1Password のアカウント（PBI-34）。 */
+  onePasswordAccount?: string;
   /** `sacty image build` の元（PBI-33）。 */
   imageBuild: { baseImage?: string; npmRegistry?: string; npmToken?: string };
   /** GitHub Issue の取り込み。認証はプロジェクトの gh のアカウント（PBI-13）。 */
@@ -304,6 +310,7 @@ export function loadConfig(home: string): ConfigResult {
     config: {
       image: file.image,
       budgetPerTaskUsd: file.budget.default_per_task_usd,
+      ...(file.onepassword?.account ? { onePasswordAccount: file.onepassword.account } : {}),
       imageBuild: {
         ...(file.image_build?.base_image ? { baseImage: file.image_build.base_image } : {}),
         ...(file.image_build?.npm_registry ? { npmRegistry: file.image_build.npm_registry } : {}),
@@ -328,6 +335,10 @@ export function loadConfig(home: string): ConfigResult {
 export const CONFIG_TEMPLATE = `# sacty の設定
 # 単価（price_per_mtok_usd）は100万トークンあたりの米ドル。利用するモデルの最新の単価に合わせてください。
 # 秘密情報（secret）には名前だけを書き、値は \`sacty secret set <名前>\` でキーチェーンに保存します。
+# 1Password に保存した秘密情報は、名前の代わりに参照（op://保管庫/アイテム/フィールド）を書きます（op CLI で取り出す）。
+# 複数の 1Password のアカウントにサインインしているときは、使うアカウントを書きます
+# onepassword:
+#   account: my-company.1password.com
 
 image: ${DEFAULT_IMAGE}
 # \`sacty image build\` でイメージを作るときの元。プライベートのレジストリしか使えない環境では、元のイメージと
