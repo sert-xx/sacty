@@ -9,8 +9,16 @@ const run = promisify(execFile);
 /** sactyがキーチェーンに保存するときのサービス名。 */
 export const KEYCHAIN_SERVICE = "sacty";
 
-/** 1Password の秘密情報の参照（op://保管庫/アイテム/[セクション/]フィールド。PBI-34）。 */
-const ONE_PASSWORD_REF = /^op:\/\/[^/\s]+\/[^/\s]+(\/[^/\s]+)?\/[^/\s]+$/;
+/**
+ * 1Password の秘密情報の参照（op://保管庫/アイテム/[セクション/]フィールド[?attribute=…]。PBI-34）。
+ * 1Password の仕様に合わせ、各要素は英数字・ハイフン・アンダースコア・ピリオド・空白（空白だけは不可）。
+ * それ以外の文字を含む名前は、1Password の ID で書く（https://www.1password.dev/cli/secret-reference-syntax）。
+ */
+const SEGMENT = "(?=[^/?]*[A-Za-z0-9._-])[A-Za-z0-9._ -]+";
+const QUERY = "[A-Za-z-]+=[A-Za-z0-9-]+";
+const ONE_PASSWORD_REF = new RegExp(
+  `^op://${SEGMENT}/${SEGMENT}(/${SEGMENT})?/${SEGMENT}(\\?${QUERY}(&${QUERY})*)?$`,
+);
 
 /** 1Password の参照か。 */
 export function isOnePasswordRef(ref: string): boolean {
@@ -101,17 +109,20 @@ export class OnePasswordSecretStore implements SecretStore {
   ) {}
 
   get(ref: string): Promise<string> {
-    const cached = this.cache.get(ref);
+    // アカウントは取り出すときに決め、アカウントと参照の組で持つ（設定でアカウントを変えたら、前のアカウントの
+    // 値を使い回さない。同じ名前の保管庫・アイテムが複数のアカウントにありうるため。PBI-34 レビュー指摘）
+    const account = this.options.account?.();
+    const key = `${account ?? ""}\u0000${ref}`;
+    const cached = this.cache.get(key);
     if (cached) return cached;
-    const pending = this.read(ref);
-    this.cache.set(ref, pending);
-    pending.catch(() => this.cache.delete(ref));
+    const pending = this.read(ref, account);
+    this.cache.set(key, pending);
+    pending.catch(() => this.cache.delete(key));
     return pending;
   }
 
-  private async read(ref: string): Promise<string> {
+  private async read(ref: string, account: string | undefined): Promise<string> {
     if (!isOnePasswordRef(ref)) throw new SecretNotFoundError(ref);
-    const account = this.options.account?.();
     let result: Awaited<ReturnType<OpRunner>>;
     try {
       result = await (this.options.run ?? runOp)([

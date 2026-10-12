@@ -33,10 +33,26 @@ describe("1Password の秘密情報（PBI-34）", () => {
     expect(isOnePasswordRef("op://Work/Bedrock/credential")).toBe(true);
     expect(isOnePasswordRef("op://Work/Bedrock/api/credential")).toBe(true);
     expect(isOnePasswordRef("op://Work/Bedrock")).toBe(false);
-    expect(isOnePasswordRef("op://Work/Bed rock/credential")).toBe(false);
+    // 1Password の仕様どおり、空白を含む名前と、attribute などのクエリも受け付ける（レビュー指摘）
+    expect(isOnePasswordRef("op://development/aws/Access Keys/access_key_id")).toBe(true);
+    expect(isOnePasswordRef("op://Work/Bed rock/credential")).toBe(true);
+    expect(
+      isOnePasswordRef("op://development/GitHub/Security/one-time password?attribute=otp"),
+    ).toBe(true);
+    expect(isOnePasswordRef("op://Private/ssh keys/ssh key/private key?ssh-format=openssh")).toBe(
+      true,
+    );
+    // 仕様に無い文字・空白だけの要素・要素の数の違いは受け付けない（その名前は ID で書く）
+    expect(isOnePasswordRef("op://Work/Bed@rock/credential")).toBe(false);
+    expect(isOnePasswordRef("op://Work/ /credential")).toBe(false);
+    expect(isOnePasswordRef("op://Work/a/b/c/d")).toBe(false);
+    expect(isOnePasswordRef("op://Work/a/b?attribute")).toBe(false);
     expect(SecretRef.safeParse("bedrock-api-key").success).toBe(true);
     expect(SecretRef.safeParse("op://Work/Bedrock/credential").success).toBe(true);
     expect(SecretRef.safeParse("op://Work").success).toBe(false);
+    expect(SecretRef.safeParse("op://development/aws/Access Keys/access_key_id").success).toBe(
+      true,
+    );
     expect(SecretRef.safeParse("my key").success).toBe(false);
   });
 
@@ -52,6 +68,24 @@ describe("1Password の秘密情報（PBI-34）", () => {
     expect(op.calls).toEqual([
       ["read", "--no-newline", "--account", "my.1password.com", "op://Work/Bedrock/credential"],
     ]);
+  });
+
+  it("アカウントを変えたら、前のアカウントで取り出した値を使い回さない（レビュー指摘）", async () => {
+    let account = "a.1password.com";
+    const op = fakeOp((args) => ({
+      code: 0,
+      stdout: `value-of-${args[args.indexOf("--account") + 1]}`,
+      stderr: "",
+    }));
+    const store = new OnePasswordSecretStore({ run: op.run, account: () => account });
+    const ref = "op://Work/Bedrock/credential";
+    expect(await store.get(ref)).toBe("value-of-a.1password.com");
+    account = "b.1password.com";
+    expect(await store.get(ref)).toBe("value-of-b.1password.com");
+    // それぞれのアカウントの値は、アカウントごとに持ち続ける
+    account = "a.1password.com";
+    expect(await store.get(ref)).toBe("value-of-a.1password.com");
+    expect(op.calls.map((c) => c[3])).toEqual(["a.1password.com", "b.1password.com"]);
   });
 
   it("取り出せなかった参照は持たず、次は問い合わせ直す（サインインし直せば取り出せる）", async () => {
