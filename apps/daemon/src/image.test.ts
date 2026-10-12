@@ -1,5 +1,4 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
 import { message } from "@sacty/core";
 import { describe, expect, it } from "vitest";
 import {
@@ -46,7 +45,7 @@ describe("イメージの作成（PBI-33）", () => {
         baseImage: "registry.example.com/library/node:22",
         npmrcPath: "/tmp/x/npmrc",
         npmVersion: "11",
-        npmConfigDir: "/tmp/x/npmconfig",
+        npmConfigPath: "/tmp/x/npmconfig",
       }),
     ).toEqual([
       "build",
@@ -58,9 +57,10 @@ describe("イメージの作成（PBI-33）", () => {
       "NPM_VERSION=11",
       "--secret",
       "id=npmrc,src=/tmp/x/npmrc",
-      // イメージに残す npm 全体の設定は、認証の .npmrc とは別に渡す（PBI-40）
-      "--build-context",
-      "npmconfig=/tmp/x/npmconfig",
+      // イメージに残す npm 全体の設定は、認証の .npmrc とは別のファイルで渡す（PBI-40）。
+      // --build-context は Docker の構成によっては使えないので、使わない
+      "--secret",
+      "id=npmconfig,src=/tmp/x/npmconfig",
       "/pkg/docker",
     ]);
     // 書かなければ、Dockerfile の既定（Docker Hub の node・その npm）のまま
@@ -69,7 +69,7 @@ describe("イメージの作成（PBI-33）", () => {
         image: "sacty-agent:0.1.0",
         dockerDir: "/d",
         npmrcPath: "/n",
-        npmConfigDir: "/c",
+        npmConfigPath: "/c",
       }),
     ).not.toContain("--build-arg");
   });
@@ -112,10 +112,10 @@ describe("イメージの作成（PBI-33）", () => {
       dockerDir: "/d",
       secrets: new MemorySecretStore({ "npm-token": "npm_SECRET" }),
       run: async (args) => {
-        const dir = (args.find((a) => a.startsWith("npmconfig=")) ?? "").slice(10);
+        const dir = (args.find((a) => a.startsWith("id=npmconfig,src=")) ?? "").slice(17);
         const npmrc = (args.find((a) => a.startsWith("id=npmrc,src=")) ?? "").slice(13);
         seen.push({
-          config: readFileSync(join(dir, "npmrc"), "utf8"),
+          config: readFileSync(dir, "utf8"),
           npmrc: readFileSync(npmrc, "utf8"),
           dir,
         });

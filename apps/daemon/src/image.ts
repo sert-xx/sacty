@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { DaemonText } from "@sacty/core";
@@ -52,8 +52,8 @@ export function imageBuildArgs(input: {
   npmrcPath: string;
   /** イメージに入れる npm の版（PBI-40）。 */
   npmVersion?: string;
-  /** イメージの中の npm 全体の設定（npmrc）を置いたディレクトリ（PBI-40）。 */
-  npmConfigDir: string;
+  /** イメージの中の npm 全体の設定（npmrc）のファイル（PBI-40）。 */
+  npmConfigPath: string;
 }): string[] {
   return [
     "build",
@@ -63,8 +63,9 @@ export function imageBuildArgs(input: {
     ...(input.npmVersion ? ["--build-arg", `NPM_VERSION=${input.npmVersion}`] : []),
     "--secret",
     `id=npmrc,src=${input.npmrcPath}`,
-    "--build-context",
-    `npmconfig=${input.npmConfigDir}`,
+    // --build-context は Docker の構成によっては使えないので、認証の .npmrc と同じ secret の仕組みで渡す
+    "--secret",
+    `id=npmconfig,src=${input.npmConfigPath}`,
     input.dockerDir,
   ];
 }
@@ -97,9 +98,8 @@ export async function buildImage(deps: {
     const npmrcPath = join(dir, "npmrc");
     writeFileSync(npmrcPath, npmrcContent(deps.build.npmRegistry, token), { mode: 0o600 });
     // イメージに残す npm 全体の設定は、認証の .npmrc とは別のディレクトリに置く（PBI-40）
-    const npmConfigDir = join(dir, "npmconfig");
-    mkdirSync(npmConfigDir);
-    writeFileSync(join(npmConfigDir, "npmrc"), npmGlobalConfigContent(deps.build.npmConfig));
+    const npmConfigPath = join(dir, "npmconfig");
+    writeFileSync(npmConfigPath, npmGlobalConfigContent(deps.build.npmConfig));
     const code = await deps.run(
       imageBuildArgs({
         image: deps.image,
@@ -107,7 +107,7 @@ export async function buildImage(deps: {
         ...(deps.build.baseImage ? { baseImage: deps.build.baseImage } : {}),
         ...(deps.build.npmVersion ? { npmVersion: deps.build.npmVersion } : {}),
         npmrcPath,
-        npmConfigDir,
+        npmConfigPath,
       }),
     );
     return code === 0 ? undefined : imageBuildFailure(deps.build);

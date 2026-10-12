@@ -24,10 +24,11 @@ RUN --mount=type=secret,id=npmrc,target=/run/secrets/npmrc \
   && npm cache clean --force
 
 # コンテナの中の npm 全体の設定（config.yaml の image_build.npm_config。認証の項目は含まない。PBI-40）。
-# CLI を入れた後に置く（CLI の取得には効かせない）
-COPY --from=npmconfig npmrc /tmp/sacty-npmrc
-RUN g="$(npm config get globalconfig)" && mkdir -p "$(dirname "$g")" \
-  && cat /tmp/sacty-npmrc >> "$g" && rm /tmp/sacty-npmrc
+# CLI を入れた後に置く（CLI の取得には効かせない）。ファイルの受け渡しは、認証の .npmrc と同じ secret の仕組みを
+# 使う（--build-context は、Docker の構成によっては使えないため）。中身はこの RUN でイメージの設定に書き込む
+RUN --mount=type=secret,id=npmconfig,target=/run/secrets/npmconfig \
+  g="$(npm config get globalconfig)" && mkdir -p "$(dirname "$g")" \
+  && cat /run/secrets/npmconfig >> "$g"
 
 # root では動かさない（node イメージの node ユーザー）
 USER node
