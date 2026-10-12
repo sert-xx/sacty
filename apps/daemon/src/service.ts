@@ -61,7 +61,13 @@ import {
 import type { AgentOutcome } from "./agents/parse.js";
 import { redact, redactText } from "./agents/redact.js";
 import type { TestRunner } from "./agents/test-runner.js";
-import { type AgentConfig, type ConfigResult, githubRepoOf, type SactyConfig } from "./config.js";
+import {
+  type AgentConfig,
+  agentFor,
+  type ConfigResult,
+  githubRepoOf,
+  type SactyConfig,
+} from "./config.js";
 import { type ContextFetcher, GATEWAY_TOKEN_SECRET, prepareContext } from "./context.js";
 import { errorText, MessageError } from "./errors.js";
 import type { AiGateway, GatewayStats } from "./gateway.js";
@@ -623,7 +629,8 @@ export class TaskService {
     ChosenSteps | { failure: Extract<EventInput, { type: "OrchestratorFailed" }>["payload"] }
   > {
     if (this.deps.planner) return this.deps.planner(task);
-    const agent = config.defaultAgent;
+    // オーケストレーターに使う AI（step_agents.orchestrator か default_agent。PBI-40）
+    const agent = agentFor(config, "orchestrator");
     const { outcome, costUsd, estimated } = await this.runGuardian(
       task,
       { agent, image: config.image, prompt: buildOrchestratorPrompt(task), role: "orchestrator" },
@@ -1446,7 +1453,8 @@ export class TaskService {
       if (!resolved.ok) return;
     }
 
-    const agent = config.config.defaultAgent;
+    // 工程に使う AI（step_agents か default_agent。PBI-40）
+    const agent = agentFor(config.config, step);
     const runId = randomUUID();
     this.append(task, [
       {
@@ -2370,7 +2378,7 @@ export class TaskService {
    */
   private async integrate(task: Task, config: SactyConfig): Promise<void> {
     const step = "integrate" as const;
-    const agent = config.guardianAgent;
+    const agent = agentFor(config, step);
     const runId = randomUUID();
     this.append(task, [
       {
@@ -2631,7 +2639,11 @@ export class TaskService {
       // ゲートウェイ経由なら、API キーはゲートウェイに渡し、コンテナには実行ごとのトークンだけを渡す（PBI-37）
       // 社内 PF の API を使わせるなら、実行ごとのトークンを含む URL を渡す（認証情報は渡さない。PBI-35）
       const auth = run.agent.auth;
-      const viaGateway = run.agent.via_gateway && auth.mode === "bedrock";
+      // Bedrock（PBI-37）か、providers の接続先（社内の AI gateway など。PBI-40）をゲートウェイ経由にする
+      const endpoint = run.agent.endpoint;
+      const viaGateway =
+        (run.agent.via_gateway && auth.mode === "bedrock") ||
+        (auth.mode === "provider" && Boolean(endpoint?.viaGateway));
       const platforms = run.platforms ?? [];
       // ホストの MCP サーバー（PBI-36）の認証のヘッダーに、実行ごとのトークンを入れる
       const tokenEnvs = (run.context?.secrets ?? []).filter(
@@ -2640,11 +2652,15 @@ export class TaskService {
       let gateway: { origin: string; token: string } | undefined;
       if (viaGateway || platforms.length > 0 || tokenEnvs.length > 0) {
         if (!this.deps.gateway) throw new MessageError(message("gateway.unavailable"));
-        let route: { origin: string; apiKey: string } | undefined;
-        if (viaGateway) {
+        let route: { base: string; apiKey?: string } | undefined;
+        if (viaGateway && auth.mode === "bedrock") {
           const apiKey = await this.deps.secrets.get(auth.secret);
           usedSecrets.push(apiKey);
-          route = { origin: bedrockOrigin(auth), apiKey };
+          route = { base: `${bedrockOrigin(auth)}/openai/v1`, apiKey };
+        } else if (viaGateway && endpoint) {
+          const apiKey = endpoint.secret ? await this.deps.secrets.get(endpoint.secret) : undefined;
+          if (apiKey) usedSecrets.push(apiKey);
+          route = { base: endpoint.baseUrl, ...(apiKey ? { apiKey } : {}) };
         }
         gatewayRun = this.deps.gateway.register(route);
         usedSecrets.push(gatewayRun.token);

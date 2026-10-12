@@ -44,7 +44,26 @@ const Auth = z.discriminatedUnion("mode", [
     endpoint: z.enum(["runtime", "mantle"]).optional(),
   }),
   z.object({ mode: z.literal("stub") }),
+  /**
+   * config.yaml の providers の接続先（PBI-40）。エージェントには provider: <名前> と書けばよい（この形に直す）。
+   */
+  z.object({ mode: z.literal("provider"), provider: z.string().min(1) }),
 ]);
+
+/**
+ * OpenAI 互換（Responses API）の接続先（PBI-40）。社内の AI gateway など。Codex の model_providers の base_url・
+ * env_key と同じく、base_url に API キーを Bearer で付けて送る。
+ */
+const Provider = z.object({
+  base_url: z.url({ protocol: /^https?$/, message: code("input.invalidUrl") }),
+  /** API キー（秘密情報の名前か 1Password の参照）。認証が要らなければ書かない。 */
+  secret: SecretName.optional(),
+  /** sacty のゲートウェイ経由にする（429 のリトライ。API キーをコンテナに渡さない。PBI-37）。 */
+  via_gateway: z.boolean().default(false),
+});
+
+/** リーズニングエフォート（Codex の model_reasoning_effort・Claude Code の --effort。PBI-40）。 */
+const ReasoningEffort = z.string().regex(/^[a-z][a-z0-9_-]{0,30}$/, code("input.reasoningEffort"));
 
 const StubBehavior = z.object({
   output: z.string().default("# 要求要件（スタブ）\n\n- これはスタブのエージェントの出力です。"),
@@ -87,23 +106,34 @@ const StubBehavior = z.object({
 });
 
 const Agent = z
-  .object({
-    runtime: z.enum(["claude-code", "codex", "stub"]),
-    model: z.string().min(1).optional(),
-    auth: Auth,
-    price_per_mtok_usd: z.object({
-      input: z.number().nonnegative(),
-      cached_input: z.number().nonnegative(),
-      cache_write: z.number().nonnegative().default(0),
-      output: z.number().nonnegative(),
+  .preprocess(
+    // provider: <名前> だけを書いたエージェントは、その接続先を使う
+    (v) =>
+      v && typeof v === "object" && "provider" in v && !("auth" in v)
+        ? { ...v, auth: { mode: "provider", provider: (v as { provider: unknown }).provider } }
+        : v,
+    z.object({
+      runtime: z.enum(["claude-code", "codex", "stub"]),
+      model: z.string().min(1).optional(),
+      /** リーズニングエフォート（PBI-40）。書かなければ、エージェントの既定。 */
+      reasoning_effort: ReasoningEffort.optional(),
+      auth: Auth,
+      /** auth の代わりに書く、providers の接続先の名前（PBI-40）。 */
+      provider: z.string().optional(),
+      price_per_mtok_usd: z.object({
+        input: z.number().nonnegative(),
+        cached_input: z.number().nonnegative(),
+        cache_write: z.number().nonnegative().default(0),
+        output: z.number().nonnegative(),
+      }),
+      stub: StubBehavior.optional(),
+      /**
+       * AI の呼び出しを、ホストのゲートウェイ経由にする（PBI-37）。ゲートウェイが API キーを持ち、レート制限（429）や
+       * 一時的な失敗をリトライする。API キーはコンテナに渡さない。いまは Codex × Bedrock だけ。
+       */
+      via_gateway: z.boolean().default(false),
     }),
-    stub: StubBehavior.optional(),
-    /**
-     * AI の呼び出しを、ホストのゲートウェイ経由にする（PBI-37）。ゲートウェイが API キーを持ち、レート制限（429）や
-     * 一時的な失敗をリトライする。API キーはコンテナに渡さない。いまは Codex × Bedrock だけ。
-     */
-    via_gateway: z.boolean().default(false),
-  })
+  )
   .superRefine((agent, ctx) => {
     if (agent.via_gateway && !(agent.runtime === "codex" && agent.auth.mode === "bedrock")) {
       ctx.addIssue({
@@ -114,7 +144,7 @@ const Agent = z
     }
     const ok: Record<typeof agent.runtime, string[]> = {
       "claude-code": ["subscription", "api-key", "bedrock"],
-      codex: ["subscription", "api-key", "bedrock"],
+      codex: ["subscription", "api-key", "bedrock", "provider"],
       stub: ["stub"],
     };
     if (!ok[agent.runtime].includes(agent.auth.mode)) {
@@ -162,7 +192,17 @@ export function githubRepoOf(url: string): string | undefined {
 const ConfigFile = z
   .object({
     image: z.string().default(DEFAULT_IMAGE),
+    /** OpenAI 互換の接続先（社内の AI gateway など。PBI-40）。 */
+    providers: z
+      .record(z.string().regex(/^[A-Za-z0-9_-]+$/, code("input.providerName")), Provider)
+      .default({}),
     default_agent: z.string(),
+    /**
+     * 工程とオーケストレーターごとに使う AI（PBI-40）。書かなければ default_agent（統合レビューは guardian_agent）。
+     */
+    step_agents: z
+      .partialRecord(z.enum([...StepKey.options, "orchestrator"]), z.string())
+      .default({}),
     /** ゴールガーディアンに使うAI。省略すると default_agent。 */
     guardian_agent: z.string().optional(),
     budget: z
@@ -246,14 +286,54 @@ const ConfigFile = z
         params: { key: "guardian_agent", id: config.guardian_agent },
       });
     }
+    for (const [role, id] of Object.entries(config.step_agents)) {
+      if (id && !config.agents[id]) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["step_agents", role],
+          message: code("config.agentMissing"),
+          params: { key: `step_agents.${role}`, id },
+        });
+      }
+    }
+    for (const [id, agent] of Object.entries(config.agents)) {
+      if (agent.auth.mode === "provider" && !config.providers[agent.auth.provider]) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["agents", id, "provider"],
+          message: code("config.providerMissing"),
+          params: { id: agent.auth.provider },
+        });
+      }
+    }
   });
 
-export type AgentConfig = z.infer<typeof Agent> & { id: string; price: PricePerMTok };
+export type AgentConfig = z.infer<typeof Agent> & {
+  id: string;
+  price: PricePerMTok;
+  /** providers の接続先（auth.mode が provider のとき。PBI-40）。 */
+  endpoint?: { name: string; baseUrl: string; secret?: string; viaGateway: boolean };
+};
+
+/** 工程・オーケストレーターの役割（step_agents のキー。PBI-40）。 */
+export type AgentRoleKey = StepKey | "orchestrator";
+
+/**
+ * 役割に使う AI（PBI-40）。step_agents に書いてあればそれ、無ければ default_agent。統合レビューはゴールガーディアンが
+ * 行うので、書いてなければ guardian_agent。
+ */
+export function agentFor(config: SactyConfig, role: AgentRoleKey): AgentConfig {
+  return (
+    config.stepAgents?.[role] ?? (role === "integrate" ? config.guardianAgent : config.defaultAgent)
+  );
+}
 export type SactyConfig = {
   image: string;
   defaultAgent: AgentConfig;
   /** ゴールガーディアンに使うAI。 */
   guardianAgent: AgentConfig;
+  /** 工程・オーケストレーターごとに使う AI（書いてある役割だけ。PBI-40）。 */
+  stepAgents?: Partial<Record<AgentRoleKey, AgentConfig>>;
   budgetPerTaskUsd: number;
   /** ゲートウェイの AI の呼び出しのリトライの上限（PBI-37）。 */
   gatewayRetry: RetryPolicy;
@@ -317,9 +397,21 @@ export function loadConfig(home: string): ConfigResult {
   const resolve = (id: string): AgentConfig => {
     const agent = file.agents[id];
     if (!agent) throw new Error("unreachable: agent ids are validated");
+    const provider =
+      agent.auth.mode === "provider" ? file.providers[agent.auth.provider] : undefined;
     return {
       ...agent,
       id,
+      ...(agent.auth.mode === "provider" && provider
+        ? {
+            endpoint: {
+              name: agent.auth.provider,
+              baseUrl: provider.base_url.replace(/\/+$/, ""),
+              ...(provider.secret ? { secret: provider.secret } : {}),
+              viaGateway: provider.via_gateway,
+            },
+          }
+        : {}),
       price: PricePerMTok.parse({
         input: agent.price_per_mtok_usd.input,
         cachedInput: agent.price_per_mtok_usd.cached_input,
@@ -347,6 +439,9 @@ export function loadConfig(home: string): ConfigResult {
       },
       defaultAgent: resolve(file.default_agent),
       guardianAgent: resolve(file.guardian_agent ?? file.default_agent),
+      stepAgents: Object.fromEntries(
+        Object.entries(file.step_agents).flatMap(([role, id]) => (id ? [[role, resolve(id)]] : [])),
+      ),
       ...(file.github
         ? {
             github: { pollIntervalSec: file.github.poll_interval_sec },
@@ -376,6 +471,21 @@ image: ${DEFAULT_IMAGE}
 default_agent: claude-subscription
 # ゴールガーディアン（変更の申し出の判定）に使うAI。省略すると default_agent
 # guardian_agent: claude-subscription
+# 工程・オーケストレーターごとに使う AI（書かなければ default_agent。統合レビューは guardian_agent）
+# step_agents:
+#   orchestrator: luna-low
+#   requirements: sol-high
+#   design: sol-high
+#   implement: sol-medium
+
+# OpenAI 互換（Responses API）の接続先。社内の AI gateway など（Codex の model_providers の base_url・env_key と同じ）。
+# Codex のエージェントは provider: <名前> で使う。via_gateway: true なら、sacty のゲートウェイが API キーを付けて中継し、
+# レート制限（429）をリトライする（API キーはコンテナに渡さない）
+# providers:
+#   corp-gw:
+#     base_url: https://ai-gateway.example.com/v1
+#     secret: op://Work/AI-Gateway/api-key
+#     via_gateway: true
 
 budget:
   default_per_task_usd: ${DEFAULT_BUDGET_USD}
@@ -450,6 +560,14 @@ agents:
   #     secret: bedrock-api-key
   #     region: us-east-1
   #   price_per_mtok_usd: { input: 3, cached_input: 0.3, cache_write: 3.75, output: 15 }
+
+  # providers の接続先を使う Codex のエージェント。モデル・リーズニングエフォート・単価の組ごとに書く
+  # sol-high:
+  #   runtime: codex
+  #   provider: corp-gw
+  #   model: gpt-6-sol
+  #   reasoning_effort: high     # Codex は model_reasoning_effort、Claude Code は --effort
+  #   price_per_mtok_usd: { input: 1.25, cached_input: 0.125, output: 10 }
 
   # Codex × Amazon Bedrock の OpenAI のモデル（APIキー）。endpoint は runtime（リージョンをまたぐ推論。
   # モデルは推論プロファイルID）か mantle（リージョン内の推論。モデルIDは openai. で始まる）。

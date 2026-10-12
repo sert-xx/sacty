@@ -73,6 +73,7 @@ const ja = {
     subscription: "サブスクリプション",
     "api-key": "APIキー",
     bedrock: "Amazon Bedrock",
+    provider: "接続先（providers）",
     stub: "スタブ",
   } satisfies Record<AuthMode, string>,
   actor: {
@@ -263,6 +264,7 @@ const en: LabelMessages = {
     subscription: "Subscription",
     "api-key": "API key",
     bedrock: "Amazon Bedrock",
+    provider: "Provider (providers)",
     stub: "Stub",
   },
   actor: {

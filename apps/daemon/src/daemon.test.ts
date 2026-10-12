@@ -25,7 +25,7 @@ import type { AgentExecutor } from "./agents/docker.js";
 import type { Invocation } from "./agents/invocation.js";
 import type { AgentOutcome } from "./agents/parse.js";
 import { DockerTestRunner, type TestRunner, type TestRunResult } from "./agents/test-runner.js";
-import { type AgentConfig, type ConfigResult, loadConfig } from "./config.js";
+import { type AgentConfig, type ConfigResult, loadConfig, type SactyConfig } from "./config.js";
 import type { ContextFetcher, ContextRef } from "./context.js";
 import { MessageError } from "./errors.js";
 import type { GitHubAuth } from "./gh.js";
@@ -605,6 +605,58 @@ describe("作業履歴", () => {
 });
 
 describe("工程の実行と費用", () => {
+  it("工程・オーケストレーターごとに選んだエージェントで実行し、その単価で費用を記録する（PBI-40）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const cheap = agent({
+      id: "luna-low",
+      price_per_mtok_usd: { input: 1, cached_input: 0.1, cache_write: 0, output: 1 },
+      price: { input: 1, cachedInput: 0.1, cacheWrite: 0, output: 1 },
+    });
+    const strong = agent({
+      id: "sol-high",
+      price_per_mtok_usd: { input: 1, cached_input: 0.1, cache_write: 0, output: 10 },
+      price: { input: 1, cachedInput: 0.1, cacheWrite: 0, output: 10 },
+    });
+    const orchestrator = agent({
+      id: "orchestrator",
+      price_per_mtok_usd: { input: 0, cached_input: 0, cache_write: 0, output: 0 },
+      price: { input: 0, cachedInput: 0, cacheWrite: 0, output: 0 },
+    });
+    const plan = {
+      kind: "completed" as const,
+      output:
+        '```json\n{"sacty-steps": {"plan": "skip-design", "reason": "小さい", "testCommand": "npm test"}}\n```',
+      usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 100 },
+    };
+    const { service } = makeService(activity, [plan, completed(20_000), completed(20_000)], {
+      realPlanner: true,
+      config: () => ({
+        ok: true,
+        config: {
+          ...(configOf(cheap)() as { ok: true; config: SactyConfig }).config,
+          stepAgents: { orchestrator, requirements: strong },
+        },
+      }),
+    });
+    const task = service.createTask({ projectId: "default", title: "決済API" });
+    await service.runNext(task.id);
+    await service.runNext(task.id);
+    const events = service.get(task.id)?.activity ?? [];
+    const chosen = events.find((e) => e.type === "StepsChosen");
+    expect(chosen?.type === "StepsChosen" && chosen.payload.agentId).toBe("orchestrator");
+    // 前段の調査は default_agent、要求要件は step_agents の sol-high
+    const started = events
+      .filter((e) => e.type === "AgentRunStarted")
+      .map((e) => (e.type === "AgentRunStarted" ? `${e.payload.step}:${e.payload.agentId}` : ""));
+    expect(started).toEqual(["investigate:luna-low", "requirements:sol-high"]);
+    // 要求要件の費用は sol-high の単価（出力 20,000 × $10/100万 = $0.2）
+    const done = events.find(
+      (e) => e.type === "AgentRunCompleted" && e.payload.step === "requirements",
+    );
+    expect(done?.type === "AgentRunCompleted" && done.payload.costUsd).toBe(0.2);
+    activity.close();
+  });
+
   it("承認待ち・一時停止・完了を通知し、人間が自分で止めたときは通知しない。送れなかったら画面に出す（PBI-38）", async () => {
     const activity = new SqliteActivityStore(dbPath);
     const sent: string[] = [];
@@ -765,7 +817,7 @@ describe("工程の実行と費用", () => {
 
   it("ゲートウェイ経由のエージェントは、API キーをゲートウェイに渡し、コンテナには実行ごとのトークンだけを渡す（PBI-37）", async () => {
     const activity = new SqliteActivityStore(dbPath);
-    const registered: { origin: string; apiKey: string; closed: boolean }[] = [];
+    const registered: { base: string; apiKey?: string; closed: boolean }[] = [];
     const gateway: NonNullable<ServiceDeps["gateway"]> = {
       containerOrigin: () => "http://host.docker.internal:5001",
       platformsUrl: (token) => `http://host.docker.internal:5001/r/${token}/pf`,
@@ -796,7 +848,11 @@ describe("工程の実行と費用", () => {
     const task = service.createTask({ projectId: "default", title: "決済API" });
     await service.runNext(task.id);
     expect(registered).toEqual([
-      { origin: "https://bedrock-mantle.us-east-2.api.aws", apiKey: "ABSK-real-key", closed: true },
+      {
+        base: "https://bedrock-mantle.us-east-2.api.aws/openai/v1",
+        apiKey: "ABSK-real-key",
+        closed: true,
+      },
     ]);
     const env = executor.calls[0]?.env ?? {};
     expect(env.AWS_BEARER_TOKEN_BEDROCK).toBe("sacty-gw-run-token");

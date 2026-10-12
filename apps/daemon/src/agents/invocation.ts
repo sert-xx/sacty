@@ -34,6 +34,13 @@ export type Invocation = {
   hostGateway?: boolean;
 };
 
+/** providers の接続先を、Codex の自前のプロバイダーとして渡すときの名前と、API キーの環境変数（PBI-40）。 */
+const PROVIDER_ID = "sacty-provider";
+const PROVIDER_KEY_ENV = "SACTY_PROVIDER_API_KEY";
+
+/** TOML の文字列（Codex の -c の値は TOML として読まれる）。 */
+const tomlString = (value: string) => JSON.stringify(value);
+
 function expandHome(path: string): string {
   return path.startsWith("~/") ? `${homedir()}${path.slice(1)}` : path;
 }
@@ -113,6 +120,8 @@ export async function buildInvocation(
         if (auth.mode === "bedrock") env.ANTHROPIC_MODEL = agent.model;
         else command.push("--model", agent.model);
       }
+      // リーズニングエフォート（PBI-40）
+      if (agent.reasoning_effort) command.push("--effort", agent.reasoning_effort);
       return {
         command,
         env,
@@ -139,6 +148,17 @@ export async function buildInvocation(
         // ゲートウェイ経由なら、API キーの代わりに実行ごとのトークンを渡す（Codex はこれを Bearer で送る。PBI-37）
         env.AWS_BEARER_TOKEN_BEDROCK = gateway ? gateway.token : await secrets.get(auth.secret);
         env.AWS_REGION = auth.region;
+      } else if (auth.mode === "provider") {
+        // providers の OpenAI 互換の接続先（社内の AI gateway など。PBI-40）。API キーは env_key の環境変数で渡し、
+        // Codex が Bearer で付ける。ゲートウェイ経由なら、API キーの代わりに実行ごとのトークンを渡す
+        const endpoint = agent.endpoint;
+        if (!endpoint) throw new Error(`the provider ${auth.provider} is not configured`);
+        const key = gateway
+          ? gateway.token
+          : endpoint.secret
+            ? await secrets.get(endpoint.secret)
+            : undefined;
+        if (key) env[PROVIDER_KEY_ENV] = key;
       } else if (auth.mode === "subscription") {
         const hostPath = expandHome(auth.auth_file ?? "~/.codex/auth.json");
         // 認証ファイルのトークン類も、出力から取り除く対象にする
@@ -166,7 +186,22 @@ export async function buildInvocation(
             : []),
         );
       }
+      if (auth.mode === "provider" && agent.endpoint) {
+        // Codex の自前のプロバイダー（Responses API の形）として、接続先（ゲートウェイ経由ならゲートウェイ）を渡す
+        const baseUrl = gateway ? `${gateway.origin}/openai/v1` : agent.endpoint.baseUrl;
+        const keyed = Boolean(gateway || agent.endpoint.secret);
+        command.push(
+          "-c",
+          `model_provider="${PROVIDER_ID}"`,
+          "-c",
+          `model_providers.${PROVIDER_ID}={ name = ${tomlString(agent.endpoint.name)}, base_url = ${tomlString(baseUrl)}, wire_api = "responses"${keyed ? `, env_key = "${PROVIDER_KEY_ENV}"` : ""} }`,
+        );
+      }
       if (agent.model) command.push("--model", agent.model);
+      // リーズニングエフォート（PBI-40）
+      if (agent.reasoning_effort) {
+        command.push("-c", `model_reasoning_effort=${tomlString(agent.reasoning_effort)}`);
+      }
       command.push(prompt);
       return {
         command,

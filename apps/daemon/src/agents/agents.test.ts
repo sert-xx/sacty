@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { renderMessage } from "@sacty/core";
 import { afterEach, describe, expect, it } from "vitest";
-import { type AgentConfig, CONFIG_TEMPLATE, loadConfig } from "../config.js";
+import { type AgentConfig, agentFor, CONFIG_TEMPLATE, loadConfig } from "../config.js";
 import { MemorySecretStore } from "../secrets.js";
 import { dockerRunArgs, syncBackIfChanged } from "./docker.js";
 import { buildInvocation } from "./invocation.js";
@@ -205,6 +205,77 @@ describe("認証方式ごとの環境変数", () => {
     });
     expect(inv.env.ANTHROPIC_API_KEY).toBeUndefined();
     expect(inv.command).not.toContain("--model");
+  });
+
+  it("Codex は providers の接続先を自前のプロバイダーとして使い、リーズニングエフォートを渡す（PBI-40）", async () => {
+    const provider = (secret?: string): AgentConfig => ({
+      ...base,
+      id: "sol-high",
+      runtime: "codex",
+      model: "gpt-6-sol",
+      reasoning_effort: "high",
+      auth: { mode: "provider", provider: "corp-gw" },
+      via_gateway: false,
+      endpoint: {
+        name: "corp-gw",
+        baseUrl: "https://ai-gw.example.com/llm/v1",
+        ...(secret ? { secret } : {}),
+        viaGateway: false,
+      },
+    });
+    const direct = await buildInvocation(provider("openai-key"), "prompt", secrets);
+    expect(direct.env.SACTY_PROVIDER_API_KEY).toBe("openai-value");
+    expect(direct.command).toEqual([
+      "codex",
+      "exec",
+      "--json",
+      "--skip-git-repo-check",
+      "-c",
+      'model_provider="sacty-provider"',
+      "-c",
+      'model_providers.sacty-provider={ name = "corp-gw", base_url = "https://ai-gw.example.com/llm/v1", wire_api = "responses", env_key = "SACTY_PROVIDER_API_KEY" }',
+      "--model",
+      "gpt-6-sol",
+      "-c",
+      'model_reasoning_effort="high"',
+      "prompt",
+    ]);
+    expect(direct.hostGateway).toBeUndefined();
+    // 認証が要らない接続先には、API キーを渡さない
+    const open = await buildInvocation(provider(), "prompt", secrets);
+    expect(open.env.SACTY_PROVIDER_API_KEY).toBeUndefined();
+    expect(open.command.join(" ")).not.toContain("env_key");
+    // ゲートウェイ経由なら、向き先はゲートウェイ、API キーの代わりに実行ごとのトークン
+    const via = await buildInvocation(
+      provider("openai-key"),
+      "prompt",
+      secrets,
+      () => {},
+      "design",
+      undefined,
+      {
+        origin: "http://host.docker.internal:5001",
+        token: "sacty-gw-run",
+      },
+    );
+    expect(via.env.SACTY_PROVIDER_API_KEY).toBe("sacty-gw-run");
+    expect(via.command.join(" ")).toContain(
+      'base_url = "http://host.docker.internal:5001/openai/v1"',
+    );
+    expect(via.hostGateway).toBe(true);
+    // Claude Code には --effort で渡す
+    const claude = await buildInvocation(
+      {
+        ...base,
+        id: "c",
+        runtime: "claude-code",
+        reasoning_effort: "xhigh",
+        auth: { mode: "api-key", secret: "anthropic-key" },
+      },
+      "prompt",
+      secrets,
+    );
+    expect(claude.command.slice(-2)).toEqual(["--effort", "xhigh"]);
   });
 
   it("CodexのAPIキーと、サブスクリプション（認証ファイルをコピーして渡す）", async () => {
@@ -497,6 +568,82 @@ ${extra}`,
     );
   });
 
+  it("providers の接続先・エージェントごとのモデルとリーズニングエフォート・工程ごとのエージェントを読む（PBI-40）", () => {
+    dir = mkdtempSync(join(tmpdir(), "sacty-config-"));
+    const write = (yaml: string) => writeFileSync(join(dir, "config.yaml"), yaml);
+    const base = `providers:
+  corp-gw:
+    base_url: https://ai-gw.example.com/llm/v1/
+    secret: op://Work/AI-GW/api-key
+    via_gateway: true
+agents:
+  sol-high:
+    runtime: codex
+    provider: corp-gw
+    model: gpt-6-sol
+    reasoning_effort: high
+    price_per_mtok_usd: { input: 2, cached_input: 0.2, output: 12 }
+  luna-low:
+    runtime: codex
+    provider: corp-gw
+    model: gpt-6-luna
+    reasoning_effort: low
+    price_per_mtok_usd: { input: 0.3, cached_input: 0.03, output: 1.5 }
+`;
+    write(`${base}default_agent: luna-low
+guardian_agent: sol-high
+step_agents:
+  orchestrator: luna-low
+  design: sol-high
+`);
+    const result = loadConfig(dir);
+    if (!result.ok) throw new Error(ja(result.problem));
+    const sol = result.config.stepAgents?.design;
+    expect(sol).toMatchObject({
+      id: "sol-high",
+      model: "gpt-6-sol",
+      reasoning_effort: "high",
+      auth: { mode: "provider", provider: "corp-gw" },
+      endpoint: {
+        name: "corp-gw",
+        baseUrl: "https://ai-gw.example.com/llm/v1",
+        secret: "op://Work/AI-GW/api-key",
+        viaGateway: true,
+      },
+      price: { input: 2, cachedInput: 0.2, output: 12 },
+    });
+    // 工程ごとに書いたものはそれ、書いていなければ default_agent（統合レビューは guardian_agent）
+    expect(agentFor(result.config, "design").id).toBe("sol-high");
+    expect(agentFor(result.config, "orchestrator").id).toBe("luna-low");
+    expect(agentFor(result.config, "implement").id).toBe("luna-low");
+    expect(agentFor(result.config, "integrate").id).toBe("sol-high");
+
+    const problem = (yaml: string) => {
+      write(yaml);
+      const r = loadConfig(dir);
+      return r.ok ? "" : ja(r.problem);
+    };
+    expect(problem(`${base}default_agent: luna-low\nstep_agents:\n  design: nope\n`)).toContain(
+      'step_agents.design の "nope" が agents にありません',
+    );
+    expect(
+      problem(
+        `${base.replace("provider: corp-gw\n    model: gpt-6-sol", "provider: other\n    model: gpt-6-sol")}default_agent: luna-low\n`,
+      ),
+    ).toContain('providers に "other" がありません');
+    expect(
+      problem(
+        `${base.replace("reasoning_effort: high", "reasoning_effort: HIGH!")}default_agent: luna-low\n`,
+      ),
+    ).toContain("リーズニングエフォート");
+    // 接続先は、いまは Codex だけ
+    expect(
+      problem(
+        `${base.replace("runtime: codex\n    provider: corp-gw\n    model: gpt-6-sol", "runtime: claude-code\n    provider: corp-gw\n    model: gpt-6-sol")}default_agent: luna-low\n`,
+      ),
+    ).toContain("claude-code では provider を使えません");
+  });
+
   it("イメージの作成の元（元のイメージ・npm のレジストリ・トークンの名前）を読む（PBI-33）", () => {
     dir = mkdtempSync(join(tmpdir(), "sacty-config-"));
     const write = (extra: string) =>
@@ -574,7 +721,7 @@ agents:
     const yaml = CONFIG_TEMPLATE.replace(
       "default_agent: claude-subscription",
       "default_agent: codex-bedrock",
-    ).replace("agents:\n", `agents:\n${example.join("\n")}\n`);
+    ).replace("\nagents:\n", `\nagents:\n${example.join("\n")}\n`);
     writeFileSync(join(dir, "config.yaml"), yaml);
     const result = loadConfig(dir);
     expect(result).toMatchObject({
@@ -587,6 +734,37 @@ agents:
         },
       },
     });
+  });
+
+  it("雛形の providers・接続先を使うエージェント・step_agents の例は、コメントを外せばそのまま読める（PBI-40）", () => {
+    dir = mkdtempSync(join(tmpdir(), "sacty-config-"));
+    const lines = CONFIG_TEMPLATE.split("\n");
+    const block = (first: string) => {
+      const start = lines.indexOf(first);
+      const end = lines.findIndex((l, i) => i > start && !l.trimStart().startsWith("#"));
+      return lines.slice(start, end).map((l) => l.replace(/^( *)# ?/, "$1"));
+    };
+    const providers = block("# providers:");
+    const agentExample = block("  # sol-high:");
+    const stepAgents = block("# step_agents:").map((l) =>
+      l.replaceAll("luna-low", "sol-high").replaceAll("sol-medium", "sol-high"),
+    );
+    const yaml = CONFIG_TEMPLATE.replace(
+      "default_agent: claude-subscription",
+      "default_agent: sol-high",
+    ).replace(
+      "\nagents:\n",
+      `\n${providers.join("\n")}\n${stepAgents.join("\n")}\nagents:\n${agentExample.join("\n")}\n`,
+    );
+    writeFileSync(join(dir, "config.yaml"), yaml);
+    const result = loadConfig(dir);
+    if (!result.ok) throw new Error(ja(result.problem));
+    expect(result.config.defaultAgent).toMatchObject({
+      id: "sol-high",
+      reasoning_effort: "high",
+      endpoint: { name: "corp-gw", viaGateway: true },
+    });
+    expect(result.config.stepAgents?.design?.id).toBe("sol-high");
   });
 
   it("使えない認証方式の組み合わせや、存在しない既定のAIは理由つきで拒否する", () => {
@@ -604,7 +782,7 @@ agents:
       return result.ok ? "" : ja(result.problem);
     };
     expect(problem()).toBe(
-      "設定ファイルに誤りがあります（agents.x.auth.mode）：codex では stub を使えません（使えるもの：subscription, api-key, bedrock）。",
+      "設定ファイルに誤りがあります（agents.x.auth.mode）：codex では stub を使えません（使えるもの：subscription, api-key, bedrock, provider）。",
     );
     // コードと引数で返す（画面が画面の言語の文にする）
     expect(loadConfig(dir)).toMatchObject({
@@ -617,7 +795,7 @@ agents:
       },
     });
     expect(renderMessage((loadConfig(dir) as { problem: unknown }).problem, "en")).toBe(
-      "The config file has an error (agents.x.auth.mode): codex cannot use stub (supported: subscription, api-key, bedrock).",
+      "The config file has an error (agents.x.auth.mode): codex cannot use stub (supported: subscription, api-key, bedrock, provider).",
     );
     // Bedrock の接続先は Codex だけ（Claude Code に書いても使われないので、誤りとして知らせる。PBI-32）
     write(`default_agent: x

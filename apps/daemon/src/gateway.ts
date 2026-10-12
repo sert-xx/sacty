@@ -53,10 +53,13 @@ const DROP_RESPONSE = new Set([
 
 /** 実行ごとの転送先。 */
 export type GatewayRoute = {
-  /** 上流の起点（例 https://bedrock-runtime.us-east-2.amazonaws.com）。リクエストのパスを足して転送する。 */
-  origin: string;
-  /** 上流に付ける API キー（Authorization: Bearer）。 */
-  apiKey: string;
+  /**
+   * 転送先の起点（例 https://bedrock-runtime.us-east-2.amazonaws.com/openai/v1、社内の AI gateway の base_url）。
+   * エージェントからの /openai/v1/<残り> を、この下の <残り> に送る（PBI-40）。
+   */
+  base: string;
+  /** 上流に付ける API キー（Authorization: Bearer）。認証が要らなければ無い。 */
+  apiKey?: string;
 };
 
 /** 実行ごとのリトライの記録。 */
@@ -317,7 +320,7 @@ export class AiGateway {
       }
       return this.deps.hostMcp.handle(mcp[1] ?? "", req, res, body);
     }
-    if (!run?.origin || !run.apiKey) {
+    if (!run?.base) {
       return fail(res, 401, "sacty gateway: unknown or expired run token");
     }
     if (!req.url?.startsWith("/openai/v1/")) return fail(res, 404, "sacty gateway: not found");
@@ -345,9 +348,9 @@ export class AiGateway {
     const sleep = this.deps.sleep ?? abortableSleep;
     const now = this.deps.now ?? Date.now;
     const random = this.deps.random ?? Math.random;
-    const url = `${run.origin}${req.url}`;
-    const apiKey = run.apiKey;
-    headers.set("authorization", `Bearer ${apiKey}`);
+    // /openai/v1/<残り> を、転送先の起点（base）の下に送る（PBI-40）
+    const url = `${run.base}${req.url.slice("/openai/v1".length)}`;
+    if (run.apiKey) headers.set("authorization", `Bearer ${run.apiKey}`);
 
     for (let attempt = 1; ; attempt++) {
       if (aborter.signal.aborted) return;

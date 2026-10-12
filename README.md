@@ -92,6 +92,37 @@ image_build:
 - 元のイメージに git が入っていれば、Debian のミラーに届かなくても作れる
 - 作ったイメージ（`image`）は、エージェントの実行とテストの実行の両方で使う
 
+### 社内の AI gateway と、工程ごとのモデル
+
+OpenAI 互換（Responses API）の接続先（社内の AI gateway など）は `providers` に書き、Codex のエージェントから `provider` で使う。エージェントは「接続先・モデル・リーズニングエフォート・単価」の組で書き、`step_agents` で工程とオーケストレーターごとに選ぶ。
+
+```yaml
+providers:
+  corp-gw:
+    base_url: https://ai-gateway.example.com/v1   # Codex の model_providers の base_url と同じ
+    secret: op://Work/AI-Gateway/api-key           # env_key に入れていた API キー
+    via_gateway: true                              # sacty のゲートウェイ経由（429 のリトライ・キーをコンテナに渡さない）
+agents:
+  sol-high:
+    runtime: codex
+    provider: corp-gw
+    model: gpt-6-sol
+    reasoning_effort: high
+    price_per_mtok_usd: { input: 1.25, cached_input: 0.125, output: 10 }
+  luna-low:
+    runtime: codex
+    provider: corp-gw
+    model: gpt-6-luna
+    reasoning_effort: low
+    price_per_mtok_usd: { input: 0.3, cached_input: 0.03, output: 1.5 }
+default_agent: luna-low
+guardian_agent: sol-high
+step_agents:          # 書かなければ default_agent（統合レビューは guardian_agent）
+  orchestrator: luna-low
+  requirements: sol-high
+  design: sol-high
+```
+
 ### ホストのゲートウェイ（Codex × Bedrock）
 
 エージェントに `via_gateway: true` を書くと、AI の呼び出しを sacty がホストで動かすゲートウェイ経由にする。
