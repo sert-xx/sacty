@@ -146,8 +146,10 @@ export function ProjectEditor({
               {t.targetsTitle}{" "}
               <span className="text-[13px] font-normal text-muted-foreground">{t.targetsNote}</span>
             </h2>
-            <p className="text-sm leading-6 text-muted-foreground">{t.targetsHelp}</p>
-            <p className="text-sm leading-6 text-warn">{t.prNotice}</p>
+            <p className="text-sm leading-6 text-muted-foreground whitespace-pre-line">
+              {t.targetsHelp}
+            </p>
+            <p className="text-sm leading-6 text-warn whitespace-pre-line">{t.prNotice}</p>
             {targets.length === 0 && <p className="text-sm text-muted-foreground">{t.noTargets}</p>}
             <ul className="flex flex-col gap-2.5">
               {targets.map((target, i) => {
@@ -272,7 +274,9 @@ export function ProjectEditor({
                 />
               </label>
             </div>
-            <p className="text-xs leading-5 text-muted-foreground">{t.contextHelp}</p>
+            <p className="text-xs leading-5 text-muted-foreground whitespace-pre-line">
+              {t.contextHelp}
+            </p>
           </section>
 
           <section
@@ -332,7 +336,7 @@ export function ProjectEditor({
                 {messages.labels.text(github.error)}
               </p>
             )}
-            <p className="text-xs text-muted-foreground">{t.githubHelp}</p>
+            <p className="text-xs text-muted-foreground whitespace-pre-line">{t.githubHelp}</p>
           </section>
 
           <section
@@ -428,7 +432,9 @@ export function ProjectEditor({
                 />
               </label>
             )}
-            <p className="text-xs leading-5 text-muted-foreground">{t.notifyHelp}</p>
+            <p className="text-xs leading-5 text-muted-foreground whitespace-pre-line">
+              {t.notifyHelp}
+            </p>
             {saved && project && (
               <div className="flex flex-wrap items-center gap-3">
                 <Button

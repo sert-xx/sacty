@@ -56,7 +56,9 @@ export function SettingsForm({
             className="max-w-xs"
           />
         </div>
-        <p className="text-xs leading-5 text-muted-foreground">{t.intakeHelp}</p>
+        <p className="text-xs leading-5 text-muted-foreground whitespace-pre-line">
+          {t.intakeHelp}
+        </p>
         <p className={intakeLabel ? "text-sm" : "text-sm text-warn"}>
           {intakeLabel ? t.intakeOn(intakeLabel) : t.intakeOff}
         </p>
@@ -85,7 +87,7 @@ export function SettingsForm({
             className="max-w-32"
           />
         </div>
-        <p className="text-xs leading-5 text-muted-foreground">
+        <p className="text-xs leading-5 whitespace-pre-line text-muted-foreground">
           {t.parallelHelp(DEFAULT_MAX_PARALLEL_TASKS, MAX_PARALLEL_TASKS_LIMIT)}
         </p>
         <p className="text-sm">

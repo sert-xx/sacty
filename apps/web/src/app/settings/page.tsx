@@ -11,7 +11,7 @@ export default async function SettingsPage() {
     <>
       <div className="flex flex-col gap-2">
         <h1 className="text-2xl font-bold">{t.title}</h1>
-        <p className="text-sm leading-6 text-muted-foreground">{t.note}</p>
+        <p className="text-sm leading-6 text-muted-foreground whitespace-pre-line">{t.note}</p>
       </div>
       <Suspense fallback={<p className="text-sm text-muted-foreground">{t.loading}</p>}>
         <Settings />
