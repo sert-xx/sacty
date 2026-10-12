@@ -146,7 +146,7 @@ export function ProjectEditor({
               {t.targetsTitle}{" "}
               <span className="text-[13px] font-normal text-muted-foreground">{t.targetsNote}</span>
             </h2>
-            <p className="text-sm leading-6 text-muted-foreground whitespace-pre-line">
+            <p className="text-sm leading-6 whitespace-pre-line text-muted-foreground">
               {t.targetsHelp}
             </p>
             <p className="text-sm leading-6 text-warn whitespace-pre-line">{t.prNotice}</p>
@@ -244,6 +244,9 @@ export function ProjectEditor({
               {t.contextTitle}{" "}
               <span className="text-[13px] font-normal text-muted-foreground">{t.contextNote}</span>
             </h2>
+            <p className="text-sm leading-6 whitespace-pre-line text-muted-foreground">
+              {t.contextHelp}
+            </p>
             <div className="flex flex-wrap items-end gap-2">
               <label
                 htmlFor={`${uid}-context-repo`}
@@ -274,9 +277,6 @@ export function ProjectEditor({
                 />
               </label>
             </div>
-            <p className="text-xs leading-5 text-muted-foreground whitespace-pre-line">
-              {t.contextHelp}
-            </p>
           </section>
 
           <section
@@ -287,6 +287,9 @@ export function ProjectEditor({
               {t.githubTitle}{" "}
               <span className="text-[13px] font-normal text-muted-foreground">{t.githubNote}</span>
             </h2>
+            <p className="text-sm leading-6 whitespace-pre-line text-muted-foreground">
+              {t.githubHelp}
+            </p>
             {!hosts.some((h) => h.required) && (
               <p className="text-sm text-muted-foreground">{t.githubNoTargets}</p>
             )}
@@ -336,7 +339,6 @@ export function ProjectEditor({
                 {messages.labels.text(github.error)}
               </p>
             )}
-            <p className="text-xs text-muted-foreground whitespace-pre-line">{t.githubHelp}</p>
           </section>
 
           <section
@@ -347,6 +349,9 @@ export function ProjectEditor({
               {t.notifyTitle}{" "}
               <span className="text-[13px] font-normal text-muted-foreground">{t.notifyNote}</span>
             </h2>
+            <p className="text-sm leading-6 whitespace-pre-line text-muted-foreground">
+              {t.notifyHelp}
+            </p>
             <div className="flex flex-wrap items-end gap-2">
               <label className="flex flex-col gap-1 text-xs text-muted-foreground">
                 {t.notifyKind}
@@ -432,9 +437,6 @@ export function ProjectEditor({
                 />
               </label>
             )}
-            <p className="text-xs leading-5 text-muted-foreground whitespace-pre-line">
-              {t.notifyHelp}
-            </p>
             {saved && project && (
               <div className="flex flex-wrap items-center gap-3">
                 <Button
