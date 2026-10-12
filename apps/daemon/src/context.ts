@@ -659,6 +659,12 @@ export function composeContext(
   };
 }
 
+/**
+ * ホストの MCP サーバー（PBI-36）の認証のヘッダーに入れる、実行ごとのゲートウェイのトークン。秘密情報の取り出し口
+ * からは取り出さず、実行するときに sacty が入れる（秘密情報の参照としては書けない名前にしてある）。
+ */
+export const GATEWAY_TOKEN_SECRET = "sacty:gateway-token";
+
 /** 実行時に、秘密情報の値をこの環境変数でコンテナに渡す（値は prefix + 秘密情報）。 */
 export type ContextSecret = { env: string; secret: string; prefix: string };
 
@@ -883,6 +889,11 @@ export async function prepareContext(
   auth?: ContextAuth,
   /** 既定のコンテキストのディレクトリ（PBI-24）。一番上位の層として重ねる。 */
   defaultDir?: string,
+  /**
+   * ホストの MCP サーバー（PBI-36）。ゲートウェイの HTTP の MCP として、層の MCP サーバーに加える（同じ名前なら、
+   * こちらを使う）。認証のヘッダーには、実行ごとのゲートウェイのトークンを入れる。
+   */
+  hostMcp: readonly { name: string; url: string }[] = [],
 ): Promise<{
   dir: string;
   layers: { repo: string; ref?: string; commit: string }[];
@@ -898,6 +909,20 @@ export async function prepareContext(
       ...(root ? await resolveContext(fetcher, root, join(work, "repos"), auth) : []),
     ];
     const composed = composeContext(layers, runtime);
+    if (hostMcp.length > 0) {
+      const names = new Set(hostMcp.map((m) => m.name));
+      composed.mcp = [
+        ...composed.mcp.filter((m) => !names.has(m.name)),
+        ...hostMcp.map((m) => ({
+          name: m.name,
+          from: "sacty-gateway",
+          server: {
+            url: m.url,
+            headers: { Authorization: { secret: GATEWAY_TOKEN_SECRET, prefix: "Bearer " } },
+          },
+        })),
+      ];
+    }
     const dir = join(work, "out");
     const placed = writeContext(composed, runtime, dir, containerDir);
     return {

@@ -205,6 +205,7 @@ const PARAMS = {
   "config.gatewayCodexBedrockOnly": null,
   "config.platformAuth": null,
   "gateway.platformUnavailable": z.object({ name: z.string(), detail: TextParam }),
+  "gateway.mcpUnavailable": z.object({ name: z.string(), detail: TextParam }),
   "gateway.unavailable": null,
   "config.agentMissing": z.object({ key: z.string(), id: z.string() }),
 } as const satisfies Record<string, z.ZodType | null>;
@@ -487,6 +488,8 @@ const ja: MessageDictionary = {
     "Bedrock の接続先（endpoint）は Codex だけで選べます。Claude Code では書かないでください。",
   "config.platformAuth":
     "社内 PF の認証には、secret（固定のキー）か token（トークンの取得）のどちらか一方を書いてください。",
+  "gateway.mcpUnavailable": ({ name, detail }, text) =>
+    `ホストの MCP サーバー「${name}」の準備ができません（起動・認証に失敗）：${text(detail)}。1分ごとに起動し直します。`,
   "gateway.platformUnavailable": ({ name, detail }, text) =>
     `社内 PF「${name}」の認証情報を用意できません：${text(detail)}（ほかの PF は使えます）`,
   "config.gatewayCodexBedrockOnly":
@@ -713,6 +716,8 @@ const en: MessageDictionary = {
     "The Bedrock endpoint can only be chosen for Codex. Remove it for Claude Code.",
   "config.platformAuth":
     "For an internal platform, write either secret (a fixed key) or token (getting a token), not both.",
+  "gateway.mcpUnavailable": ({ name, detail }, text) =>
+    `The host MCP server "${name}" is not ready (failed to start or authenticate): ${text(detail)}. sacty restarts it every minute.`,
   "gateway.platformUnavailable": ({ name, detail }, text) =>
     `Cannot prepare the credentials for the internal platform "${name}": ${text(detail)} (other platforms still work)`,
   "config.gatewayCodexBedrockOnly":
