@@ -6,7 +6,7 @@ import { SqliteActivityStore } from "./activity.js";
 import { DockerExecutor } from "./agents/docker.js";
 import { DockerTestRunner } from "./agents/test-runner.js";
 import { loadConfig, resolveHome } from "./config.js";
-import { GitContextFetcher } from "./context.js";
+import { DEFAULT_CONTEXT_DIR, GitContextFetcher } from "./context.js";
 import { GhCliAuth } from "./gh.js";
 import { GitHubIssueSearch, GitHubPullRequests } from "./github.js";
 import { IssueIntake } from "./intake.js";
@@ -45,6 +45,7 @@ const service = new TaskService({
   projects,
   settings,
   contexts: new GitContextFetcher(),
+  defaultContext: DEFAULT_CONTEXT_DIR,
   executor,
   repos: new GitRepositoryWorkspace(),
   pulls: new GitHubPullRequests(),

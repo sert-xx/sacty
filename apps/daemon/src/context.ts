@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   cpSync,
   existsSync,
@@ -13,7 +14,9 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
+import { fileURLToPath } from "node:url";
 import { code, type DaemonText, issueMessage, message } from "@sacty/core";
+import { parse as parseToml, stringify as stringifyToml } from "smol-toml";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 import { errorText, MessageError } from "./errors.js";
@@ -25,6 +28,7 @@ import { errorText, MessageError } from "./errors.js";
  * - `rules.md` か `rules/*.md`：規約（上位から順に連結する）
  * - `skills/<名前>/SKILL.md`：スキル（名前ごとに、下位が上書きする）
  * - `mcp.yaml`：MCP サーバー（名前ごとに、下位が上書きする）。秘密情報は値を書かず、名前で参照する
+ * - `agents/codex/config.toml`・`agents/claude/settings.json`：エージェントの設定（キーごとに、下位が上書きする。PBI-24）
  */
 const NamedItems = z
   .object({
@@ -96,7 +100,18 @@ export type ContextLayer = ContextRef & {
   manifest: z.infer<typeof ContextManifest>;
   /** この層の MCP サーバー（`mcp.yaml`）。 */
   mcp: Record<string, McpServer>;
+  /** この層のエージェントの設定（`agents/` の下。無ければ空）。 */
+  agents: AgentSettings;
 };
+
+/** エージェントの設定（Codex は config.toml、Claude Code は settings.json の中身）。 */
+export type AgentSettings = { codex: Record<string, unknown>; claude: Record<string, unknown> };
+
+/** 層の中の、エージェントの設定のファイル。 */
+export const AGENT_SETTINGS_FILES = {
+  codex: "agents/codex/config.toml",
+  claude: "agents/claude/settings.json",
+} as const;
 
 /** コンテキストリポジトリを取得する口。テストでは偽物に差し替える。 */
 export interface ContextFetcher {
@@ -157,17 +172,65 @@ export async function resolveContext(
     } catch (error) {
       throw new ContextError(message("context.fetchFailed", { key, detail: errorText(error) }));
     }
-    assertPlainEntries(dir, key);
-    const manifest = readManifest(dir, key);
-    const mcp = readYaml(dir, "mcp.yaml", key, McpFile).servers;
-    chain.push({ ...next, commit, dir, manifest, mcp });
-    next = manifest.extends ? parseExtends(manifest.extends) : undefined;
+    const layer = readLayer(dir, key);
+    chain.push({ ...next, commit, dir, ...layer });
+    next = layer.manifest.extends ? parseExtends(layer.manifest.extends) : undefined;
   }
   return chain.reverse();
 }
 
-/** sacty が読む・写す項目（設定・規約・スキル）。 */
-const CONTEXT_ENTRIES = ["sacty-context.yaml", "mcp.yaml", "rules.md", "rules", "skills"];
+/** 層のディレクトリから、設定（sacty-context.yaml・mcp.yaml・エージェントの設定）を読む。 */
+function readLayer(dir: string, key: string): Pick<ContextLayer, "manifest" | "mcp" | "agents"> {
+  assertPlainEntries(dir, key);
+  return {
+    manifest: readManifest(dir, key),
+    mcp: readYaml(dir, "mcp.yaml", key, McpFile).servers,
+    agents: {
+      codex: readAgentSettings(dir, key, AGENT_SETTINGS_FILES.codex, parseToml),
+      claude: readAgentSettings(dir, key, AGENT_SETTINGS_FILES.claude, JSON.parse),
+    },
+  };
+}
+
+/** sacty に同梱する既定のコンテキストの名前（作業履歴で、層のリポジトリとして記録する）。 */
+export const DEFAULT_CONTEXT_REPO = "sacty-default";
+
+/**
+ * sacty に同梱する既定のコンテキスト（PBI-24）。コンテキストリポジトリと同じ形式で、
+ * ここに置いた規約・スキル・MCP・エージェントの設定は、どのプロジェクトでも一番上位の層になる。
+ * （src からも dist からも、1つ上の default-context を指す）
+ */
+export const DEFAULT_CONTEXT_DIR = fileURLToPath(new URL("../default-context", import.meta.url));
+
+/**
+ * 既定のコンテキストの層。取得はせず、同梱のディレクトリをそのまま読む。
+ * コミットの代わりに中身のハッシュを記録する（どの版の既定を使ったかが分かるように）。
+ * 既定は一番上位なので、extends は読まない。
+ */
+export function loadDefaultContext(dir: string): ContextLayer {
+  const key = DEFAULT_CONTEXT_REPO;
+  return { repo: key, commit: hashEntries(dir), dir, ...readLayer(dir, key) };
+}
+
+/** sacty が読む項目の中身のハッシュ（パスの順に、パスと中身から作る）。 */
+function hashEntries(dir: string): string {
+  const hash = createHash("sha256");
+  const visit = (path: string) => {
+    if (!existsSync(path)) return;
+    if (statSync(path).isDirectory()) {
+      for (const name of readdirSync(path).sort()) visit(join(path, name));
+      return;
+    }
+    hash.update(`${relative(dir, path)}\0`);
+    hash.update(readFileSync(path));
+    hash.update("\0");
+  };
+  for (const entry of [...CONTEXT_ENTRIES].sort()) visit(join(dir, entry));
+  return hash.digest("hex");
+}
+
+/** sacty が読む・写す項目（設定・規約・スキル・エージェントの設定）。 */
+const CONTEXT_ENTRIES = ["sacty-context.yaml", "mcp.yaml", "rules.md", "rules", "skills", "agents"];
 
 /**
  * sacty が読む・写す項目に、通常のファイルとディレクトリ以外（シンボリックリンクなど）が無いことを確かめる。
@@ -259,6 +322,128 @@ function readYaml<T extends z.ZodType>(
   return parsed.data;
 }
 
+const isPlainObject = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" &&
+  value !== null &&
+  (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null);
+
+/** 層のエージェントの設定のファイルを読む（無ければ空）。中身は表（オブジェクト）でなければならない。 */
+function readAgentSettings(
+  dir: string,
+  key: string,
+  file: string,
+  parse: (text: string) => unknown,
+): Record<string, unknown> {
+  const path = join(dir, file);
+  if (!existsSync(path)) return {};
+  let raw: unknown;
+  try {
+    raw = parse(readFileSync(path, "utf8"));
+  } catch (error) {
+    throw new ContextError(
+      message("context.fileUnreadable", { key, file, detail: (error as Error).message }),
+    );
+  }
+  if (!isPlainObject(raw)) {
+    throw new ContextError(
+      message("context.fileInvalid", { key, file, path: "", detail: message("input.invalidType") }),
+    );
+  }
+  return raw;
+}
+
+/**
+ * エージェントの設定のうち、sacty が決める項目。層に書かれていても使わない（警告を残す）。
+ * - MCP は mcp.yaml から sacty が作る（秘密情報を名前で渡すため）
+ * - 認証・接続先は、AI の定義と秘密情報で sacty が決める（トークンを別の宛先に送らせないため）
+ * - Codex の承認の方針とプロファイルは、人のいない実行が承認待ちで止まらないように使わない
+ * モデルは、AI の定義に model があればコマンドの引数で渡すので、設定より優先する。
+ */
+const RESERVED_SETTINGS: Record<keyof AgentSettings, { keys: string[]; env?: string[] }> = {
+  codex: {
+    keys: [
+      "mcp_servers",
+      "model_provider",
+      "model_providers",
+      "forced_login_method",
+      "forced_chatgpt_workspace_id",
+      "chatgpt_base_url",
+      "approval_policy",
+      "profile",
+      "profiles",
+    ],
+  },
+  claude: {
+    keys: [
+      "apiKeyHelper",
+      "awsAuthRefresh",
+      "awsCredentialExport",
+      "forceLoginMethod",
+      "forceLoginOrgUUID",
+    ],
+    // settings.json の env は実行時の環境変数になるので、sacty が入れる変数と認証・接続先の変数は使わない
+    env: [
+      "ANTHROPIC_API_KEY",
+      "ANTHROPIC_AUTH_TOKEN",
+      "ANTHROPIC_BASE_URL",
+      "ANTHROPIC_MODEL",
+      "CLAUDE_CODE_OAUTH_TOKEN",
+      "CLAUDE_CODE_USE_BEDROCK",
+      "CLAUDE_CODE_USE_VERTEX",
+      "AWS_BEARER_TOKEN_BEDROCK",
+      "AWS_REGION",
+      "CLAUDE_CONFIG_DIR",
+      "CLAUDE_CODE_DISABLE_AUTO_MEMORY",
+    ],
+  },
+};
+
+/** 層の設定から、sacty が決める項目を取り除く（取り除いたものは警告に残す）。 */
+function withoutReserved(
+  kind: keyof AgentSettings,
+  settings: Record<string, unknown>,
+  from: string,
+  warnings: DaemonText[],
+): Record<string, unknown> {
+  const file = AGENT_SETTINGS_FILES[kind];
+  const reserved = RESERVED_SETTINGS[kind];
+  const result: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(settings)) {
+    if (reserved.keys.includes(key)) {
+      warnings.push(message("context.reservedSetting", { from, file, key }));
+      continue;
+    }
+    if (key === "env" && reserved.env && isPlainObject(value)) {
+      const env: Record<string, unknown> = {};
+      for (const [name, v] of Object.entries(value)) {
+        if (reserved.env.includes(name) || name.startsWith("SACTY_")) {
+          warnings.push(message("context.reservedSetting", { from, file, key: `env.${name}` }));
+        } else {
+          env[name] = v;
+        }
+      }
+      result[key] = env;
+      continue;
+    }
+    result[key] = value;
+  }
+  return result;
+}
+
+/** 設定を重ねる。表（オブジェクト）はキーごとに合わせ、それ以外（配列も）は下位の値で置き換える。 */
+function mergeSettings(
+  base: Record<string, unknown>,
+  over: Record<string, unknown>,
+): Record<string, unknown> {
+  const result: Record<string, unknown> = { ...base };
+  for (const [key, value] of Object.entries(over)) {
+    const current = result[key];
+    result[key] =
+      isPlainObject(current) && isPlainObject(value) ? mergeSettings(current, value) : value;
+  }
+  return result;
+}
+
 /** 合成したコンテキスト。 */
 export type ComposedContext = {
   /** 規約（上位から連結。どの層のものかの見出しつき）。 */
@@ -267,6 +452,8 @@ export type ComposedContext = {
   skills: { name: string; dir: string; from: string }[];
   /** MCP サーバー（名前ごと。どの層のものか）。 */
   mcp: { name: string; server: McpServer; from: string }[];
+  /** エージェントの設定（上位から重ねたもの。sacty が決める項目は除いてある）。 */
+  agents: AgentSettings;
   /** 上書き禁止に当たったなど、合成で気づいたこと。 */
   warnings: DaemonText[];
 };
@@ -346,7 +533,11 @@ function mergeNamed<T>(
 /**
  * 上位から順の層を合成する。規約は上位から連結し、スキルと MCP サーバーは名前ごとに下位が上書きする。
  */
-export function composeContext(layers: ContextLayer[]): ComposedContext {
+export function composeContext(
+  layers: ContextLayer[],
+  /** 渡すエージェント。指定すれば、そのエージェントの設定だけを重ねる（ほかの設定の警告を出さないため）。 */
+  runtime?: "claude-code" | "codex",
+): ComposedContext {
   const rules: string[] = [];
   for (const layer of layers) {
     const text = layerRules(layer);
@@ -365,10 +556,21 @@ export function composeContext(layers: ContextLayer[]): ComposedContext {
     (layer) => Object.entries(layer.mcp).map(([name, value]) => ({ name, value })),
     warnings,
   );
+  const agents: AgentSettings = { codex: {}, claude: {} };
+  for (const layer of layers) {
+    const kinds = runtime
+      ? [runtime === "codex" ? "codex" : "claude"]
+      : (["codex", "claude"] as const);
+    for (const kind of kinds as (keyof AgentSettings)[]) {
+      const own = withoutReserved(kind, layer.agents[kind], label(layer), warnings);
+      agents[kind] = mergeSettings(agents[kind], own);
+    }
+  }
   return {
     rules: rules.join("\n\n"),
     skills: skills.map((s) => ({ name: s.name, dir: s.value, from: s.from })),
     mcp: mcp.map((m) => ({ name: m.name, server: m.value, from: m.from })),
+    agents,
     warnings,
   };
 }
@@ -413,6 +615,12 @@ export function writeContext(
   }
   if (runtime === "claude-code") {
     if (composed.rules) writeFileSync(join(outDir, "CLAUDE.md"), `${composed.rules}\n`);
+    if (Object.keys(composed.agents.claude).length > 0) {
+      writeFileSync(
+        join(outDir, "settings.json"),
+        `${JSON.stringify(composed.agents.claude, null, 2)}\n`,
+      );
+    }
     if (composed.mcp.length > 0) {
       const values = (record: Record<string, string | { secret: string; prefix: string }>) =>
         Object.fromEntries(
@@ -447,10 +655,14 @@ export function writeContext(
       : "",
   ].filter(Boolean);
   if (parts.length > 0) writeFileSync(join(outDir, "AGENTS.md"), `${parts.join("\n\n")}\n`);
-  if (composed.mcp.length > 0) {
-    const toml = composed.mcp.map(({ name, server }) => codexServer(name, server, resolve));
-    writeFileSync(join(outDir, "config.toml"), `${toml.join("\n")}`);
-  }
+  // 層の設定を先に書き、mcp.yaml から作る MCP サーバーの表を後ろに続ける（設定の mcp_servers は除いてある）
+  const toml = [
+    ...(Object.keys(composed.agents.codex).length > 0
+      ? [stringifyToml(composed.agents.codex)]
+      : []),
+    ...composed.mcp.map(({ name, server }) => codexServer(name, server, resolve)),
+  ];
+  if (toml.length > 0) writeFileSync(join(outDir, "config.toml"), `${toml.join("\n")}`);
   return placed();
 }
 
@@ -576,11 +788,14 @@ function run(args: string[], cwd?: string, authEnv: Record<string, string> = {})
  */
 export async function prepareContext(
   fetcher: ContextFetcher,
-  root: ContextRef,
+  /** プロジェクトのコンテキストリポジトリ（無ければ既定のコンテキストだけ）。 */
+  root: ContextRef | undefined,
   runtime: "claude-code" | "codex",
   containerDir: string,
   /** 継承の各リポジトリの git の認証（HTTPS の GitHub はプロジェクトの gh のアカウント）。 */
   auth?: ContextAuth,
+  /** 既定のコンテキストのディレクトリ（PBI-24）。一番上位の層として重ねる。 */
+  defaultDir?: string,
 ): Promise<{
   dir: string;
   layers: { repo: string; ref?: string; commit: string }[];
@@ -591,8 +806,11 @@ export async function prepareContext(
   const work = mkdtempSync(join(tmpdir(), "sacty-context-"));
   const dispose = () => rmSync(work, { recursive: true, force: true });
   try {
-    const layers = await resolveContext(fetcher, root, join(work, "repos"), auth);
-    const composed = composeContext(layers);
+    const layers = [
+      ...(defaultDir ? [loadDefaultContext(defaultDir)] : []),
+      ...(root ? await resolveContext(fetcher, root, join(work, "repos"), auth) : []),
+    ];
+    const composed = composeContext(layers, runtime);
     const dir = join(work, "out");
     const placed = writeContext(composed, runtime, dir, containerDir);
     return {

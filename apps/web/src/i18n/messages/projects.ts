@@ -51,7 +51,7 @@ const ja = {
     contextRepoPlaceholder: "例：git@github.com:acme/sacty-context.git",
     contextRefPlaceholder: "例：main",
     contextHelp:
-      "sacty-context.yaml・rules.md（または rules/*.md）・skills/<名前>/SKILL.md を置いたリポジトリです。設定しなければ、コンテキストを渡さずに工程を実行します。設定済みのものは、リポジトリの欄を空にして保存すると外れます。",
+      "sacty-context.yaml・rules.md（または rules/*.md）・skills/<名前>/SKILL.md・mcp.yaml・エージェントの設定（agents/codex/config.toml・agents/claude/settings.json）を置いたリポジトリです。sacty の既定のコンテキストの上に重ねて渡します。設定しなければ、sacty の既定のコンテキストだけを渡します。設定済みのものは、リポジトリの欄を空にして保存すると外れます。",
     githubTitle: "GitHub アカウント",
     githubNote: "Issue の取り込み・clone・プッシュ・PR に使う、gh にログイン済みのアカウント",
     githubAccount: "アカウント",
@@ -120,7 +120,7 @@ const en: ProjectsMessages = {
     contextRepoPlaceholder: "e.g. git@github.com:acme/sacty-context.git",
     contextRefPlaceholder: "e.g. main",
     contextHelp:
-      "A repository with sacty-context.yaml, rules.md (or rules/*.md), and skills/<name>/SKILL.md. If not set, steps run without context. To remove one, clear the repository field and save.",
+      "A repository with sacty-context.yaml, rules.md (or rules/*.md), skills/<name>/SKILL.md, mcp.yaml, and agent settings (agents/codex/config.toml, agents/claude/settings.json). It is layered on top of sacty's default context. If not set, only sacty's default context is passed. To remove one, clear the repository field and save.",
     githubTitle: "GitHub account",
     githubNote: "The gh account used for issue intake, clone, push, and PRs",
     githubAccount: "Account",
