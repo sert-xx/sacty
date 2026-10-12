@@ -84,6 +84,9 @@ const PARAMS = {
   "input.providerName": null,
   "config.providerMissing": z.object({ id: z.string() }),
   "config.hostAddress": null,
+  "config.npmVersion": null,
+  "config.npmConfigKey": null,
+  "config.npmConfigSecret": null,
   "input.channelRequired": null,
   // Slack の通知（PBI-38）
   "notify.failed": z.object({ project: z.string(), detail: TextParam }),
@@ -373,6 +376,12 @@ const ja: MessageDictionary = {
   "config.providerMissing": ({ id }) => `providers に "${id}" がありません。`,
   "config.hostAddress":
     "gateway.host_address は、ホスト名か IP アドレス（または host-gateway）で書いてください。",
+  "config.npmVersion":
+    "image_build.npm_version は、版（例 11、11.6.2）か latest で書いてください。",
+  "config.npmConfigKey":
+    "image_build.npm_config の項目は、npm の設定の名前と、1行の値で書いてください。",
+  "config.npmConfigSecret":
+    "image_build.npm_config には、認証の項目（_authToken など）は書けません（イメージに残るため）。認証は image_build.npm_token か、対象リポジトリの設定で行ってください。",
   "input.channelRequired": "チャンネルを書いてください。",
   "notify.failed": ({ project, detail }, text) =>
     `プロジェクト「${project}」の Slack の通知を送れませんでした：${text(detail)}（タスクは止めていません）`,
@@ -612,6 +621,11 @@ const en: MessageDictionary = {
   "config.providerMissing": ({ id }) => `"${id}" is not in providers.`,
   "config.hostAddress":
     "Write gateway.host_address as a host name or IP address (or host-gateway).",
+  "config.npmVersion": "Write image_build.npm_version as a version (e.g. 11, 11.6.2) or latest.",
+  "config.npmConfigKey":
+    "Write each image_build.npm_config item as an npm config name and a one-line value.",
+  "config.npmConfigSecret":
+    "image_build.npm_config can't contain authentication items (such as _authToken), because they would stay in the image. Use image_build.npm_token or the target repository's settings.",
   "input.channelRequired": "Write a channel.",
   "notify.failed": ({ project, detail }, text) =>
     `Could not send the Slack notification for the project "${project}": ${text(detail)} (tasks keep running)`,

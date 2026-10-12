@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { DaemonText } from "@sacty/core";
@@ -38,20 +38,33 @@ export function npmrcContent(registry: string | undefined, token: string | undef
   return lines.length > 0 ? `${lines.join("\n")}\n` : "";
 }
 
+/** イメージの中の npm 全体の設定（global の npmrc。PBI-40）。秘密情報は含まない（設定で拒否している）。 */
+export function npmGlobalConfigContent(config: Record<string, string> | undefined): string {
+  const lines = Object.entries(config ?? {}).map(([key, value]) => `${key}=${value}`);
+  return lines.length > 0 ? `${lines.join("\n")}\n` : "";
+}
+
 /** `docker build` の引数。秘密情報の値は含めない（.npmrc はファイルの場所だけを渡す）。 */
 export function imageBuildArgs(input: {
   image: string;
   dockerDir: string;
   baseImage?: string;
   npmrcPath: string;
+  /** イメージに入れる npm の版（PBI-40）。 */
+  npmVersion?: string;
+  /** イメージの中の npm 全体の設定（npmrc）を置いたディレクトリ（PBI-40）。 */
+  npmConfigDir: string;
 }): string[] {
   return [
     "build",
     "-t",
     input.image,
     ...(input.baseImage ? ["--build-arg", `BASE_IMAGE=${input.baseImage}`] : []),
+    ...(input.npmVersion ? ["--build-arg", `NPM_VERSION=${input.npmVersion}`] : []),
     "--secret",
     `id=npmrc,src=${input.npmrcPath}`,
+    "--build-context",
+    `npmconfig=${input.npmConfigDir}`,
     input.dockerDir,
   ];
 }
@@ -83,12 +96,18 @@ export async function buildImage(deps: {
   try {
     const npmrcPath = join(dir, "npmrc");
     writeFileSync(npmrcPath, npmrcContent(deps.build.npmRegistry, token), { mode: 0o600 });
+    // イメージに残す npm 全体の設定は、認証の .npmrc とは別のディレクトリに置く（PBI-40）
+    const npmConfigDir = join(dir, "npmconfig");
+    mkdirSync(npmConfigDir);
+    writeFileSync(join(npmConfigDir, "npmrc"), npmGlobalConfigContent(deps.build.npmConfig));
     const code = await deps.run(
       imageBuildArgs({
         image: deps.image,
         dockerDir: deps.dockerDir,
         ...(deps.build.baseImage ? { baseImage: deps.build.baseImage } : {}),
+        ...(deps.build.npmVersion ? { npmVersion: deps.build.npmVersion } : {}),
         npmrcPath,
+        npmConfigDir,
       }),
     );
     return code === 0 ? undefined : imageBuildFailure(deps.build);

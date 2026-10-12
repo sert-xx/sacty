@@ -685,6 +685,45 @@ ${extra}`,
     write("image_build:\n  npm_registry: ftp://npm.example.com/\n");
     const result = loadConfig(dir);
     expect(result.ok ? "" : ja(result.problem)).toContain("image_build.npm_registry");
+    // npm の版と、コンテナの中の npm 全体の設定（PBI-40）。値は文字列にそろえる
+    write(`image_build:
+  npm_version: 11
+  npm_config:
+    replace-registry-host: always
+    audit: false
+    min-release-age: 7
+    "@acme:registry": https://npm.example.com/acme/
+`);
+    expect(loadConfig(dir)).toMatchObject({
+      ok: true,
+      config: {
+        imageBuild: {
+          npmVersion: "11",
+          npmConfig: {
+            "replace-registry-host": "always",
+            audit: "false",
+            "min-release-age": "7",
+            "@acme:registry": "https://npm.example.com/acme/",
+          },
+        },
+      },
+    });
+    // 認証の項目はイメージに残るので書けない。値の改行（別の項目を足せる）・誤った版も拒否する
+    for (const bad of [
+      '"//npm.example.com/:_authToken": abc',
+      "_auth: abc",
+      "_password: abc",
+      "keyfile: /k",
+    ]) {
+      write(`image_build:\n  npm_config:\n    ${bad}\n`);
+      const rejected = loadConfig(dir);
+      expect(rejected.ok ? "" : ja(rejected.problem)).toContain("認証の項目");
+    }
+    write('image_build:\n  npm_config:\n    audit: "false\\n_authToken=x"\n');
+    expect(loadConfig(dir).ok).toBe(false);
+    write("image_build:\n  npm_version: '11; rm -rf /'\n");
+    const version = loadConfig(dir);
+    expect(version.ok ? "" : ja(version.problem)).toContain("image_build.npm_version");
   });
 
   it("ゲートウェイ経由は Codex × Bedrock だけ。リトライの上限を読み、書かなければ既定にする（PBI-37）", () => {

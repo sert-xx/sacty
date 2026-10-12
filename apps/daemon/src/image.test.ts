@@ -1,7 +1,14 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
+import { join } from "node:path";
 import { message } from "@sacty/core";
 import { describe, expect, it } from "vitest";
-import { buildImage, imageBuildArgs, imageBuildSettings, npmrcContent } from "./image.js";
+import {
+  buildImage,
+  imageBuildArgs,
+  imageBuildSettings,
+  npmGlobalConfigContent,
+  npmrcContent,
+} from "./image.js";
 import { MemorySecretStore, SecretNotFoundError } from "./secrets.js";
 
 describe("イメージの作成（PBI-33）", () => {
@@ -38,6 +45,8 @@ describe("イメージの作成（PBI-33）", () => {
         dockerDir: "/pkg/docker",
         baseImage: "registry.example.com/library/node:22",
         npmrcPath: "/tmp/x/npmrc",
+        npmVersion: "11",
+        npmConfigDir: "/tmp/x/npmconfig",
       }),
     ).toEqual([
       "build",
@@ -45,13 +54,23 @@ describe("イメージの作成（PBI-33）", () => {
       "registry.example.com/sacty-agent:0.1.0",
       "--build-arg",
       "BASE_IMAGE=registry.example.com/library/node:22",
+      "--build-arg",
+      "NPM_VERSION=11",
       "--secret",
       "id=npmrc,src=/tmp/x/npmrc",
+      // イメージに残す npm 全体の設定は、認証の .npmrc とは別に渡す（PBI-40）
+      "--build-context",
+      "npmconfig=/tmp/x/npmconfig",
       "/pkg/docker",
     ]);
-    // 書かなければ、Dockerfile の既定（Docker Hub の node）のまま
+    // 書かなければ、Dockerfile の既定（Docker Hub の node・その npm）のまま
     expect(
-      imageBuildArgs({ image: "sacty-agent:0.1.0", dockerDir: "/d", npmrcPath: "/n" }),
+      imageBuildArgs({
+        image: "sacty-agent:0.1.0",
+        dockerDir: "/d",
+        npmrcPath: "/n",
+        npmConfigDir: "/c",
+      }),
     ).not.toContain("--build-arg");
   });
 
@@ -78,6 +97,37 @@ describe("イメージの作成（PBI-33）", () => {
     expect(seen[0]?.mode).toBe(0o600);
     expect(seen[0]?.args.join(" ")).not.toContain("npm_SECRET");
     expect(existsSync(seen[0]?.path ?? "")).toBe(false);
+  });
+
+  it("npm 全体の設定は、イメージに残すファイルに書き、認証のトークンは含めない（PBI-40）", async () => {
+    const seen: { config: string; npmrc: string; dir: string }[] = [];
+    await buildImage({
+      image: "sacty-agent:0.1.0",
+      build: {
+        npmRegistry: "https://npm.example.com/",
+        npmToken: "npm-token",
+        npmVersion: "11",
+        npmConfig: { "replace-registry-host": "always", audit: "false", "min-release-age": "7" },
+      },
+      dockerDir: "/d",
+      secrets: new MemorySecretStore({ "npm-token": "npm_SECRET" }),
+      run: async (args) => {
+        const dir = (args.find((a) => a.startsWith("npmconfig=")) ?? "").slice(10);
+        const npmrc = (args.find((a) => a.startsWith("id=npmrc,src=")) ?? "").slice(13);
+        seen.push({
+          config: readFileSync(join(dir, "npmrc"), "utf8"),
+          npmrc: readFileSync(npmrc, "utf8"),
+          dir,
+        });
+        return 0;
+      },
+    });
+    expect(seen[0]?.config).toBe("replace-registry-host=always\naudit=false\nmin-release-age=7\n");
+    // トークンは、ビルドのときだけ読む .npmrc にだけある
+    expect(seen[0]?.config).not.toContain("npm_SECRET");
+    expect(seen[0]?.npmrc).toContain("npm_SECRET");
+    expect(existsSync(seen[0]?.dir ?? "")).toBe(false);
+    expect(npmGlobalConfigContent(undefined)).toBe("");
   });
 
   it("失敗したら確かめることを返し、一時ファイルは消す。トークンが無ければ作らずに止める", async () => {

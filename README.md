@@ -84,13 +84,19 @@ Docker Hub や npm の公開レジストリを使えない環境では、`config
 ```yaml
 image: registry.example.com/sacty-agent:0.1.0
 image_build:
-  base_image: registry.example.com/library/node:22-bookworm-slim   # Node.js 22 で node ユーザーがあること
+  base_image: registry.example.com/library/node:22-bookworm-slim   # Node.js 18 以上で node ユーザーがあること
   npm_registry: https://npm.example.com/repository/npm/
   npm_token: npm-token   # 認証が要るとき。値は sacty secret set npm-token で保存する
+  npm_version: 11        # イメージに入れる npm の版（書かなければ元のイメージの npm）
+  npm_config:            # コンテナの中の npm 全体の設定（global の npmrc）
+    replace-registry-host: always   # package-lock.json の古い取得元の URL を、いまの registry に置き換える
+    audit: false
+    min-release-age: 7              # 公開から7日たっていない版は入れない（npm 11 から）
 ```
 
 - npm のトークンは、ビルドのときだけ読ませる（BuildKit の secret）。イメージの層・履歴・環境変数には残らない
 - 元のイメージに git が入っていれば、Debian のミラーに届かなくても作れる
+- `npm_config` はイメージに残り、コンテナの中のすべての npm（対象リポジトリの `npm ci` など）に効く。対象リポジトリの `.npmrc` に同じ項目があれば、そちらが優先する。認証の項目（`_authToken` など）はイメージに残るので書けない
 - 作ったイメージ（`image`）は、エージェントの実行とテストの実行の両方で使う
 
 ### 社内の AI gateway と、工程ごとのモデル

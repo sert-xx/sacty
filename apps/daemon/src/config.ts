@@ -190,6 +190,10 @@ export function githubRepoOf(url: string): string | undefined {
   return parseRepoUrl(ssh ? `https://${ssh[1]}/${ssh[2]}` : url)?.url;
 }
 
+/** npm の設定のうち、認証の項目（イメージに残すと漏れるので、npm_config には書けない。PBI-40）。 */
+const NPM_SECRET_KEY =
+  /(?:^|:)(?:_auth|_authToken|_password|username|email|certfile|keyfile)$|^(?:cert|key)$/i;
+
 const ConfigFile = z
   .object({
     image: z.string().default(DEFAULT_IMAGE),
@@ -216,8 +220,41 @@ const ConfigFile = z
      */
     image_build: z
       .object({
-        /** 元のイメージ（FROM）。Node.js 22 で、node ユーザーがあること。 */
+        /** 元のイメージ（FROM）。Node.js 18 以上で、node ユーザーがあること。 */
         base_image: z.string().trim().min(1).optional(),
+        /** イメージに入れる npm の版（例 11。min-release-age などは npm 11 から。PBI-40）。書かなければ元のイメージの npm。 */
+        npm_version: z
+          .union([z.string(), z.number()])
+          .transform(String)
+          .pipe(z.string().regex(/^(?:latest|\d+(?:\.\d+){0,2})$/, code("config.npmVersion")))
+          .optional(),
+        /**
+         * イメージの中の npm 全体の設定（global の npmrc。PBI-40）。コンテナの中のすべての npm に効く
+         * （例 replace-registry-host: always、audit: false）。認証の項目はイメージに残るので書けない。
+         */
+        npm_config: z
+          .record(
+            z.string(),
+            z
+              .union([z.string(), z.number(), z.boolean()])
+              .transform(String)
+              .pipe(z.string().regex(/^[^\r\n]*$/, code("config.npmConfigKey"))),
+          )
+          // 認証の項目かを先に見る（レジストリに結びつけた //host/:_authToken なども拒否する）
+          .superRefine((config, ctx) => {
+            for (const key of Object.keys(config)) {
+              if (NPM_SECRET_KEY.test(key)) {
+                ctx.addIssue({
+                  code: "custom",
+                  path: [key],
+                  message: code("config.npmConfigSecret"),
+                });
+              } else if (!/^(?:\/\/)?[@A-Za-z0-9][@A-Za-z0-9/:._-]*$/.test(key)) {
+                ctx.addIssue({ code: "custom", path: [key], message: code("config.npmConfigKey") });
+              }
+            }
+          })
+          .optional(),
         /** Claude Code・Codex を入れる npm のレジストリ。 */
         npm_registry: z.url({ protocol: /^https?$/ }).optional(),
         /** npm のレジストリの認証トークンの秘密情報名（イメージには残さない）。 */
@@ -356,7 +393,15 @@ export type SactyConfig = {
   /** 1Password のアカウント（PBI-34）。 */
   onePasswordAccount?: string;
   /** `sacty image build` の元（PBI-33）。 */
-  imageBuild: { baseImage?: string; npmRegistry?: string; npmToken?: string };
+  imageBuild: {
+    baseImage?: string;
+    npmRegistry?: string;
+    npmToken?: string;
+    /** イメージに入れる npm の版（PBI-40）。 */
+    npmVersion?: string;
+    /** イメージの中の npm 全体の設定（PBI-40）。 */
+    npmConfig?: Record<string, string>;
+  };
   /** GitHub Issue の取り込み。認証はプロジェクトの gh のアカウント（PBI-13）。 */
   github?: { pollIntervalSec: number };
 };
@@ -442,6 +487,8 @@ export function loadConfig(home: string): ConfigResult {
         ...(file.image_build?.base_image ? { baseImage: file.image_build.base_image } : {}),
         ...(file.image_build?.npm_registry ? { npmRegistry: file.image_build.npm_registry } : {}),
         ...(file.image_build?.npm_token ? { npmToken: file.image_build.npm_token } : {}),
+        ...(file.image_build?.npm_version ? { npmVersion: file.image_build.npm_version } : {}),
+        ...(file.image_build?.npm_config ? { npmConfig: file.image_build.npm_config } : {}),
       },
       platforms: Object.entries(file.gateway.platforms).map(([name, p]) => toPlatform(name, p)),
       hostMcp: Object.entries(file.gateway.mcp_servers).map(([name, m]) => toHostMcp(name, m)),
@@ -476,11 +523,17 @@ export const CONFIG_TEMPLATE = `# sacty の設定
 image: ${DEFAULT_IMAGE}
 # \`sacty image build\` でイメージを作るときの元。プライベートのレジストリしか使えない環境では、元のイメージと
 # npm のレジストリを書く（書かなければ、Docker Hub の node のイメージと npm の公開レジストリ）。
-# 元のイメージは Node.js 22 で、node ユーザーがあること。git が入っていれば、Debian のミラーに届かなくても作れる
+# 元のイメージは Node.js 18 以上で、node ユーザーがあること。git が入っていれば、Debian のミラーに届かなくても作れる
 # image_build:
 #   base_image: registry.example.com/library/node:22-bookworm-slim
 #   npm_registry: https://npm.example.com/repository/npm/
 #   npm_token: npm-token   # 認証が要るとき。値は sacty secret set npm-token で保存する
+#   npm_version: 11        # イメージに入れる npm の版（min-release-age は npm 11 から）
+#   # コンテナの中の npm 全体の設定（認証の項目は書けない）
+#   npm_config:
+#     replace-registry-host: always   # package-lock.json の古い取得元の URL を、いまの registry に置き換える
+#     audit: false
+#     min-release-age: 7              # 公開から7日たっていない版は入れない
 default_agent: claude-subscription
 # ゴールガーディアン（変更の申し出の判定）に使うAI。省略すると default_agent
 # guardian_agent: claude-subscription
