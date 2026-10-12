@@ -277,6 +277,28 @@ describe("認証方式ごとの環境変数", () => {
       "prompt",
     ]);
     expect(runtime.parser).toBe("codex-jsonl");
+    // ゲートウェイ経由（PBI-37）：API キーの代わりに実行ごとのトークンを渡し、向き先だけをゲートウェイにする
+    const viaGateway = await buildInvocation(
+      {
+        ...base,
+        id: "b",
+        runtime: "codex",
+        auth: { mode: "bedrock", secret: "missing-secret", region: "us-east-2" },
+        via_gateway: true,
+      },
+      "prompt",
+      secrets,
+      () => {},
+      "requirements",
+      undefined,
+      { origin: "http://host.docker.internal:5001", token: "sacty-gw-token" },
+    );
+    expect(viaGateway.env.AWS_BEARER_TOKEN_BEDROCK).toBe("sacty-gw-token");
+    expect(viaGateway.command).toContain(
+      'model_providers.amazon-bedrock-runtime.base_url="http://host.docker.internal:5001/openai/v1"',
+    );
+    expect(viaGateway.hostGateway).toBe(true);
+    expect(runtime.hostGateway).toBeUndefined();
     const mantle = await bedrock("mantle");
     expect(mantle.command).toContain('model_provider="amazon-bedrock"');
     expect(mantle.command).not.toContain('web_search="disabled"');
@@ -313,6 +335,20 @@ describe("dockerの引数", () => {
     ).toContain("/ws/snap:/workspace:ro");
     // イメージの後ろにコマンドが続く
     expect(args.slice(args.indexOf("sacty-agent:test") + 1)).toEqual(["claude", "-p", "prompt"]);
+    // ゲートウェイ経由の実行だけ、host.docker.internal をホストに向ける（PBI-37）
+    expect(args).not.toContain("--add-host");
+    const viaGateway = dockerRunArgs({
+      runId: "r3",
+      image: "sacty-agent:test",
+      workspaceDir: "/ws/t1",
+      envNames: [],
+      mounts: [],
+      command: ["codex"],
+      hostGateway: true,
+    });
+    expect(
+      viaGateway.slice(viaGateway.indexOf("--add-host"), viaGateway.indexOf("--add-host") + 2),
+    ).toEqual(["--add-host", "host.docker.internal:host-gateway"]);
   });
 });
 
@@ -431,6 +467,39 @@ describe("設定ファイル", () => {
         output: 15,
       });
     }
+  });
+
+  it("ゲートウェイ経由は Codex × Bedrock だけ。リトライの上限を読み、書かなければ既定にする（PBI-37）", () => {
+    dir = mkdtempSync(join(tmpdir(), "sacty-config-"));
+    const write = (yaml: string) => writeFileSync(join(dir, "config.yaml"), yaml);
+    const agentYaml = (runtime: string, auth: string) => `default_agent: x
+agents:
+  x:
+    runtime: ${runtime}
+    auth: ${auth}
+    via_gateway: true
+    price_per_mtok_usd: { input: 1, cached_input: 0.1, output: 2 }
+`;
+    write(agentYaml("codex", "{ mode: api-key, secret: k }"));
+    const result = loadConfig(dir);
+    expect(result.ok ? "" : ja(result.problem)).toBe(
+      "設定ファイルに誤りがあります（agents.x.via_gateway）：ゲートウェイ経由（via_gateway）は、いまは Codex × Bedrock（auth.mode: bedrock）だけで使えます。",
+    );
+    write(agentYaml("codex", "{ mode: bedrock, secret: k, region: us-east-2 }"));
+    expect(loadConfig(dir)).toMatchObject({
+      ok: true,
+      config: {
+        defaultAgent: { via_gateway: true },
+        gatewayRetry: { maxAttempts: 8, maxWaitMs: 600_000 },
+      },
+    });
+    write(
+      `${agentYaml("codex", "{ mode: bedrock, secret: k, region: us-east-2 }")}gateway:\n  retry:\n    max_attempts: 3\n    max_wait_sec: 30\n`,
+    );
+    expect(loadConfig(dir)).toMatchObject({
+      ok: true,
+      config: { gatewayRetry: { maxAttempts: 3, maxWaitMs: 30_000 } },
+    });
   });
 
   it("雛形の Codex × Bedrock の例は、コメントを外せばそのまま読める（PBI-32）", () => {

@@ -12,6 +12,7 @@ import {
 } from "@sacty/core";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
+import { DEFAULT_RETRY_POLICY, type RetryPolicy } from "./gateway.js";
 
 export const DEFAULT_IMAGE = "sacty-agent:0.1.0";
 
@@ -93,8 +94,20 @@ const Agent = z
       output: z.number().nonnegative(),
     }),
     stub: StubBehavior.optional(),
+    /**
+     * AI の呼び出しを、ホストのゲートウェイ経由にする（PBI-37）。ゲートウェイが API キーを持ち、レート制限（429）や
+     * 一時的な失敗をリトライする。API キーはコンテナに渡さない。いまは Codex × Bedrock だけ。
+     */
+    via_gateway: z.boolean().default(false),
   })
   .superRefine((agent, ctx) => {
+    if (agent.via_gateway && !(agent.runtime === "codex" && agent.auth.mode === "bedrock")) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["via_gateway"],
+        message: code("config.gatewayCodexBedrockOnly"),
+      });
+    }
     const ok: Record<typeof agent.runtime, string[]> = {
       "claude-code": ["subscription", "api-key", "bedrock"],
       codex: ["subscription", "api-key", "bedrock"],
@@ -152,6 +165,25 @@ const ConfigFile = z
       .object({ default_per_task_usd: z.number().positive().default(DEFAULT_BUDGET_USD) })
       .prefault({}),
     agents: z.record(z.string(), Agent),
+    /** ホストのゲートウェイ（PBI-37）。 */
+    gateway: z
+      .object({
+        /** AI の呼び出しのリトライの上限。 */
+        retry: z
+          .object({
+            /** 1件のリクエストで、上流に送る回数の上限（最初の1回を含む）。 */
+            max_attempts: z.number().int().min(1).max(50).default(DEFAULT_RETRY_POLICY.maxAttempts),
+            /** 一続きの失敗で待つ合計の上限（秒）。 */
+            max_wait_sec: z
+              .number()
+              .int()
+              .min(0)
+              .max(86_400)
+              .default(DEFAULT_RETRY_POLICY.maxWaitMs / 1000),
+          })
+          .prefault({}),
+      })
+      .prefault({}),
     /** GitHub Issue の取り込み（個人の設定。プロジェクトの定義には含めない）。 */
     github: z
       .object({
@@ -186,6 +218,8 @@ export type SactyConfig = {
   /** ゴールガーディアンに使うAI。 */
   guardianAgent: AgentConfig;
   budgetPerTaskUsd: number;
+  /** ゲートウェイの AI の呼び出しのリトライの上限（PBI-37）。 */
+  gatewayRetry: RetryPolicy;
   /** GitHub Issue の取り込み。認証はプロジェクトの gh のアカウント（PBI-13）。 */
   github?: { pollIntervalSec: number };
 };
@@ -254,6 +288,10 @@ export function loadConfig(home: string): ConfigResult {
     config: {
       image: file.image,
       budgetPerTaskUsd: file.budget.default_per_task_usd,
+      gatewayRetry: {
+        maxAttempts: file.gateway.retry.max_attempts,
+        maxWaitMs: file.gateway.retry.max_wait_sec * 1000,
+      },
       defaultAgent: resolve(file.default_agent),
       guardianAgent: resolve(file.guardian_agent ?? file.default_agent),
       ...(file.github
@@ -280,6 +318,13 @@ budget:
 
 # タスクの対象リポジトリ（URL・ベースブランチ・テストのコマンド・PR を作るか）は、
 # 画面のプロジェクトの設定で登録する
+
+# ホストのゲートウェイ（via_gateway: true のエージェントの AI の呼び出しを中継する）。
+# レート制限（429）や一時的な失敗（5xx）は、Retry-After（無ければ1秒から倍にしていく間隔）で待ってリトライする
+# gateway:
+#   retry:
+#     max_attempts: 8     # 1件のリクエストで上流に送る回数の上限
+#     max_wait_sec: 600   # 成功するまでの一続きの失敗で待つ合計の上限
 
 # GitHub Issue の取り込み（取り込み元と、使う gh のアカウントはプロジェクトの設定で登録する）。
 # Issue から作ったタスクは、その Issue のリポジトリに実装する（設定はプロジェクトのリポジトリの設定）
@@ -317,6 +362,8 @@ agents:
   #     secret: bedrock-api-key
   #     region: us-east-2
   #     endpoint: runtime
+  #   # ホストのゲートウェイ経由にすると、API キーをコンテナに渡さず、レート制限（429）をリトライする
+  #   via_gateway: true
   #   price_per_mtok_usd: { input: 1.25, cached_input: 0.125, output: 10 }
 
   # 動作確認用のスタブ（実際のAIは呼ばない）

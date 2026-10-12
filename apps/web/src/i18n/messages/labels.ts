@@ -168,6 +168,8 @@ const ja = {
       "最終レビューで合格にした成果物が差し戻されたため、ゴールガーディアンの見逃しとして記録",
     FinalReviewFailed: (message: string, cost: string) => `${message}（${cost}）`,
     OrchestratorFailed: (message: string, cost: string) => `${message}（${cost}）`,
+    AiRequestsRetried: (retries: number, seconds: number, statuses: string, gaveUp: boolean) =>
+      `ゲートウェイが AI の呼び出しを${retries}回リトライ（${statuses}・合計${seconds}秒待った）${gaveUp ? "→ 上限に達したため、あきらめた" : ""}`,
     StepQueued: (step: string) => `${step}を実行待ちにした（実行できるようになったため）`,
     TaskSplit: (count: number, reason: string) =>
       `子タスク${count}件に分割${reason ? `（${reason}）` : ""}`,
@@ -351,6 +353,8 @@ const en: LabelMessages = {
       "A deliverable that passed the final review was sent back; recorded as a Goal Guardian miss",
     FinalReviewFailed: (message, cost) => `${message} (${cost})`,
     OrchestratorFailed: (message, cost) => `${message} (${cost})`,
+    AiRequestsRetried: (retries, seconds, statuses, gaveUp) =>
+      `The gateway retried the AI call ${retries} time${retries === 1 ? "" : "s"} (${statuses}; waited ${seconds}s in total)${gaveUp ? " → gave up at the limit" : ""}`,
     StepQueued: (step) => `${step} queued (it can run now)`,
     TaskSplit: (count, reason) =>
       `Split into ${count} subtask${count === 1 ? "" : "s"}${reason ? ` (${reason})` : ""}`,

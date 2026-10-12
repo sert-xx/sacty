@@ -531,6 +531,23 @@ const FinalReviewed = z.object({
  * やり直さずに止め、再開すると最終レビューからやり直す。使った分の費用は予算に入れる。
  */
 /**
+ * ホストのゲートウェイが、エージェントの AI の呼び出しをリトライした（PBI-37）。実行の終わりに、リトライが
+ * あった実行だけ記録する。gaveUp は、上限に達してあきらめたか。
+ */
+const AiRequestsRetried = z.object({
+  type: z.literal("AiRequestsRetried"),
+  payload: z.object({
+    runId: z.string(),
+    agentId: z.string(),
+    retries: z.number().int().nonnegative(),
+    waitedMs: z.number().nonnegative(),
+    /** リトライの原因になった上流の状態（上流に届かなかったときは 0）。 */
+    statuses: z.array(z.number().int()),
+    gaveUp: z.boolean(),
+  }),
+});
+
+/**
  * オーケストレーターが、認証の失敗・利用上限で工程を選べなかった（PBI-32）。標準の工程では進めず、続く
  * TaskPaused で止める（再開すると工程の選択からやり直す）。使った分の費用は予算に入れる。
  */
@@ -839,6 +856,7 @@ export const EventInput = z.discriminatedUnion("type", [
   FinalReviewed,
   FinalReviewFailed,
   OrchestratorFailed,
+  AiRequestsRetried,
   IntegrationReviewed,
   PullRequestPublished,
   PullRequestMerged,

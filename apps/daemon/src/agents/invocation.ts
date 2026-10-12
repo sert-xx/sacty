@@ -30,6 +30,8 @@ export type Invocation = {
     seedDir?: string;
   };
   parser: "claude-json" | "codex-jsonl";
+  /** コンテナから、ホストのゲートウェイ（host.docker.internal）に届くようにする（PBI-37）。 */
+  hostGateway?: boolean;
 };
 
 function expandHome(path: string): string {
@@ -54,6 +56,11 @@ export async function buildInvocation(
    * （Claude Code は CLAUDE_CONFIG_DIR、Codex は CODEX_HOME）に写して渡す。
    */
   context?: { dir: string } & PlacedContext,
+  /**
+   * ホストのゲートウェイ（PBI-37）。あれば、AI の呼び出しの向き先をゲートウェイにし、API キーの代わりに
+   * 実行ごとのトークンを渡す（API キーはゲートウェイだけが持つ）。
+   */
+  gateway?: { origin: string; token: string },
 ): Promise<Invocation> {
   const secrets = {
     get: async (name: string) => {
@@ -126,8 +133,9 @@ export async function buildInvocation(
         env.CODEX_API_KEY = key;
         env.OPENAI_API_KEY = key;
       } else if (auth.mode === "bedrock") {
-        // Codex の組み込みの Bedrock のプロバイダー（PBI-32）。API キーとリージョンは環境変数で渡す
-        env.AWS_BEARER_TOKEN_BEDROCK = await secrets.get(auth.secret);
+        // Codex の組み込みの Bedrock のプロバイダー（PBI-32）。API キーとリージョンは環境変数で渡す。
+        // ゲートウェイ経由なら、API キーの代わりに実行ごとのトークンを渡す（Codex はこれを Bearer で送る。PBI-37）
+        env.AWS_BEARER_TOKEN_BEDROCK = gateway ? gateway.token : await secrets.get(auth.secret);
         env.AWS_REGION = auth.region;
       } else if (auth.mode === "subscription") {
         const hostPath = expandHome(auth.auth_file ?? "~/.codex/auth.json");
@@ -145,10 +153,15 @@ export async function buildInvocation(
       if (auth.mode === "bedrock") {
         // Bedrock Runtime ではホストされた Web 検索を使えないので、無効にする
         const runtime = (auth.endpoint ?? "runtime") === "runtime";
+        const provider = runtime ? "amazon-bedrock-runtime" : "amazon-bedrock";
         command.push(
           "-c",
-          `model_provider="${runtime ? "amazon-bedrock-runtime" : "amazon-bedrock"}"`,
+          `model_provider="${provider}"`,
           ...(runtime ? ["-c", 'web_search="disabled"'] : []),
+          // 組み込みのプロバイダーのまま、向き先だけをゲートウェイにする（base_url は上書きできる）
+          ...(gateway
+            ? ["-c", `model_providers.${provider}.base_url="${gateway.origin}/openai/v1"`]
+            : []),
         );
       }
       if (agent.model) command.push("--model", agent.model);
@@ -162,6 +175,7 @@ export async function buildInvocation(
           ...(context ? { seedDir: context.dir } : {}),
         },
         parser: "codex-jsonl",
+        ...(gateway ? { hostGateway: true } : {}),
       };
     }
 

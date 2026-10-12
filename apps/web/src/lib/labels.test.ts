@@ -573,3 +573,30 @@ describe("オーケストレーターの失敗の表示（PBI-32）", () => {
     );
   });
 });
+
+describe("ゲートウェイのリトライの表示（PBI-37）", () => {
+  it("リトライした回数・原因・待った時間と、あきらめたかを出す", () => {
+    const event = (gaveUp: boolean) =>
+      ({
+        type: "AiRequestsRetried",
+        payload: {
+          runId: "r",
+          agentId: "a",
+          retries: 3,
+          waitedMs: 21_400,
+          statuses: [429, 0],
+          gaveUp,
+        },
+        actor: "sacty",
+      }) as unknown as ActivityEvent;
+    expect(describeEvent(event(false))).toBe(
+      "ゲートウェイが AI の呼び出しを3回リトライ（429, connection・合計21秒待った）",
+    );
+    expect(describeEvent(event(true))).toBe(
+      "ゲートウェイが AI の呼び出しを3回リトライ（429, connection・合計21秒待った）→ 上限に達したため、あきらめた",
+    );
+    expect(describeIn(event(true), labels.en)).toBe(
+      "The gateway retried the AI call 3 times (429, connection; waited 21s in total) → gave up at the limit",
+    );
+  });
+});

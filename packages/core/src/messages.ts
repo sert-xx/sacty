@@ -195,6 +195,8 @@ const PARAMS = {
   }),
   "config.subscriptionSecret": null,
   "config.bedrockEndpointCodexOnly": null,
+  "config.gatewayCodexBedrockOnly": null,
+  "gateway.unavailable": null,
   "config.agentMissing": z.object({ key: z.string(), id: z.string() }),
 } as const satisfies Record<string, z.ZodType | null>;
 
@@ -462,6 +464,10 @@ const ja: MessageDictionary = {
     "Claude Code のサブスクリプションには、トークンの秘密情報名（secret）が必要です。",
   "config.bedrockEndpointCodexOnly":
     "Bedrock の接続先（endpoint）は Codex だけで選べます。Claude Code では書かないでください。",
+  "config.gatewayCodexBedrockOnly":
+    "ゲートウェイ経由（via_gateway）は、いまは Codex × Bedrock（auth.mode: bedrock）だけで使えます。",
+  "gateway.unavailable":
+    "ホストのゲートウェイが起動していないため、ゲートウェイ経由のエージェントを実行できません。sacty を起動し直してください。",
   "config.agentMissing": ({ key, id }) => `${key} の "${id}" が agents にありません。`,
 };
 
@@ -668,6 +674,10 @@ const en: MessageDictionary = {
     "A Claude Code subscription needs the secret name of its token (secret).",
   "config.bedrockEndpointCodexOnly":
     "The Bedrock endpoint can only be chosen for Codex. Remove it for Claude Code.",
+  "config.gatewayCodexBedrockOnly":
+    "via_gateway currently works only for Codex with Bedrock (auth.mode: bedrock).",
+  "gateway.unavailable":
+    "The host gateway is not running, so an agent that goes through it cannot run. Restart sacty.",
   "config.agentMissing": ({ key, id }) => `${key} "${id}" is not in agents.`,
 };
 

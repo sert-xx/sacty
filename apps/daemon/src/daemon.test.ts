@@ -507,6 +507,7 @@ function makeService(
     planner?: ServiceDeps["planner"];
     /** オーケストレーターを差し替えず、エージェントで工程を選ばせる（PBI-17 のテスト）。 */
     realPlanner?: boolean;
+    gateway?: ServiceDeps["gateway"];
   } = {},
 ) {
   const executor = new FakeExecutor(outcomes);
@@ -545,6 +546,7 @@ function makeService(
             })),
         }),
     workspaceRoot: join(dir, "workspaces"),
+    ...(options.gateway ? { gateway: options.gateway } : {}),
   });
   return { service, executor, repos, tests, pulls };
 }
@@ -582,6 +584,83 @@ describe("作業履歴", () => {
 });
 
 describe("工程の実行と費用", () => {
+  it("ゲートウェイ経由のエージェントは、API キーをゲートウェイに渡し、コンテナには実行ごとのトークンだけを渡す（PBI-37）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const registered: { origin: string; apiKey: string; closed: boolean }[] = [];
+    const gateway: NonNullable<ServiceDeps["gateway"]> = {
+      containerOrigin: () => "http://host.docker.internal:5001",
+      register: (route) => {
+        const entry = { ...route, closed: false };
+        registered.push(entry);
+        return {
+          token: "sacty-gw-run-token",
+          // ゲートウェイが、この実行で 429 を2回リトライした
+          stats: () => ({ retries: 2, waitedMs: 9_000, statuses: [429], gaveUp: false }),
+          close: () => {
+            entry.closed = true;
+          },
+        };
+      },
+    };
+    const bedrock = agent({
+      id: "codex-bedrock",
+      runtime: "codex",
+      auth: { mode: "bedrock", secret: "bedrock-api-key", region: "us-east-2", endpoint: "mantle" },
+      via_gateway: true,
+    });
+    const { service, executor } = makeService(activity, [completed(20_000)], {
+      config: configOf(bedrock),
+      secrets: { "bedrock-api-key": "ABSK-real-key" },
+      gateway,
+    });
+    const task = service.createTask({ projectId: "default", title: "決済API" });
+    await service.runNext(task.id);
+    expect(registered).toEqual([
+      { origin: "https://bedrock-mantle.us-east-2.api.aws", apiKey: "ABSK-real-key", closed: true },
+    ]);
+    const env = executor.calls[0]?.env ?? {};
+    expect(env.AWS_BEARER_TOKEN_BEDROCK).toBe("sacty-gw-run-token");
+    expect(Object.values(env)).not.toContain("ABSK-real-key");
+    const { activity: events } = service.get(task.id) ?? {};
+    const started = events?.find((e) => e.type === "AgentRunStarted");
+    const retried = events?.find((e) => e.type === "AiRequestsRetried");
+    // どの実行のリトライかが分かる
+    expect(retried?.payload).toEqual({
+      runId: started?.type === "AgentRunStarted" ? started.payload.runId : "",
+      agentId: "codex-bedrock",
+      retries: 2,
+      waitedMs: 9_000,
+      statuses: [429],
+      gaveUp: false,
+    });
+    expect(JSON.stringify(events)).not.toContain("ABSK-real-key");
+    expect(service.get(task.id)?.task.status).toBe("awaiting_approval");
+    activity.close();
+  });
+
+  it("ゲートウェイが動いていなければ、ゲートウェイ経由のエージェントは理由を記録して止める（PBI-37）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const bedrock = agent({
+      id: "codex-bedrock",
+      runtime: "codex",
+      auth: { mode: "bedrock", secret: "bedrock-api-key", region: "us-east-2" },
+      via_gateway: true,
+    });
+    const { service, executor } = makeService(activity, [completed(20_000)], {
+      config: configOf(bedrock),
+      secrets: { "bedrock-api-key": "ABSK-real-key" },
+    });
+    const task = service.createTask({ projectId: "default", title: "決済API" });
+    await service.runNext(task.id);
+    expect(executor.calls).toHaveLength(0);
+    expect(service.get(task.id)?.task.status).toBe("paused");
+    const failed = service.get(task.id)?.activity.find((e) => e.type === "AgentRunFailed");
+    expect(failed?.type === "AgentRunFailed" && ja(failed.payload.message)).toMatch(
+      /ゲートウェイが起動していない/,
+    );
+    activity.close();
+  });
+
   it("Codex × Bedrock は、config.yaml の単価で計算した実際の請求として記録する（PBI-32）", async () => {
     const activity = new SqliteActivityStore(dbPath);
     const bedrock = agent({
