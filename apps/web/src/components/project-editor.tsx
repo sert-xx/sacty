@@ -23,7 +23,7 @@ type Exclusion = { org: string; repos: { repo: string; projectName: string }[] }
 const SELECT =
   "h-9 rounded-md border border-input bg-card px-2 text-sm focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none";
 
-/** プロジェクトの設定：名前、対象（Org・リポジトリ。PBI-25）、GitHub アカウント、コンテキストリポジトリ。 */
+/** プロジェクトの設定：名前、対象（Org・リポジトリ。PBI-25）、コンテキストリポジトリ、GitHub アカウント、通知。 */
 export function ProjectEditor({
   project,
   exclusions = [],
@@ -235,6 +235,47 @@ export function ProjectEditor({
           </section>
 
           <section
+            aria-labelledby="context"
+            className="flex flex-col gap-3 rounded-xl border border-border bg-card p-5"
+          >
+            <h2 id="context" className="text-[15px] font-semibold">
+              {t.contextTitle}{" "}
+              <span className="text-[13px] font-normal text-muted-foreground">{t.contextNote}</span>
+            </h2>
+            <div className="flex flex-wrap items-end gap-2">
+              <label
+                htmlFor={`${uid}-context-repo`}
+                className="flex min-w-64 flex-[2] flex-col gap-1 text-xs text-muted-foreground"
+              >
+                {t.contextRepo}
+                <Input
+                  id={`${uid}-context-repo`}
+                  value={contextRepo}
+                  placeholder={t.contextRepoPlaceholder}
+                  onChange={(e) => setContextRepo(e.target.value)}
+                  className="font-mono"
+                />
+              </label>
+              <label
+                htmlFor={`${uid}-context-ref`}
+                className="flex min-w-40 flex-1 flex-col gap-1 text-xs text-muted-foreground"
+              >
+                {t.contextRef}
+                <Input
+                  id={`${uid}-context-ref`}
+                  value={contextRef}
+                  placeholder={t.contextRefPlaceholder}
+                  // ブランチ・タグは、リポジトリを設定したときだけ使う
+                  disabled={!contextRepo.trim()}
+                  onChange={(e) => setContextRef(e.target.value)}
+                  className="font-mono"
+                />
+              </label>
+            </div>
+            <p className="text-xs leading-5 text-muted-foreground">{t.contextHelp}</p>
+          </section>
+
+          <section
             aria-labelledby="github"
             className="flex flex-col gap-3 rounded-xl border border-border bg-card p-5"
           >
@@ -292,47 +333,6 @@ export function ProjectEditor({
               </p>
             )}
             <p className="text-xs text-muted-foreground">{t.githubHelp}</p>
-          </section>
-
-          <section
-            aria-labelledby="context"
-            className="flex flex-col gap-3 rounded-xl border border-border bg-card p-5"
-          >
-            <h2 id="context" className="text-[15px] font-semibold">
-              {t.contextTitle}{" "}
-              <span className="text-[13px] font-normal text-muted-foreground">{t.contextNote}</span>
-            </h2>
-            <div className="flex flex-wrap items-end gap-2">
-              <label
-                htmlFor={`${uid}-context-repo`}
-                className="flex min-w-64 flex-[2] flex-col gap-1 text-xs text-muted-foreground"
-              >
-                {t.contextRepo}
-                <Input
-                  id={`${uid}-context-repo`}
-                  value={contextRepo}
-                  placeholder={t.contextRepoPlaceholder}
-                  onChange={(e) => setContextRepo(e.target.value)}
-                  className="font-mono"
-                />
-              </label>
-              <label
-                htmlFor={`${uid}-context-ref`}
-                className="flex min-w-40 flex-1 flex-col gap-1 text-xs text-muted-foreground"
-              >
-                {t.contextRef}
-                <Input
-                  id={`${uid}-context-ref`}
-                  value={contextRef}
-                  placeholder={t.contextRefPlaceholder}
-                  // ブランチ・タグは、リポジトリを設定したときだけ使う
-                  disabled={!contextRepo.trim()}
-                  onChange={(e) => setContextRef(e.target.value)}
-                  className="font-mono"
-                />
-              </label>
-            </div>
-            <p className="text-xs leading-5 text-muted-foreground">{t.contextHelp}</p>
           </section>
 
           <section
