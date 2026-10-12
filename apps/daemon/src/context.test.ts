@@ -707,7 +707,8 @@ describe("エージェントの設定の合成（PBI-24）", () => {
   });
 });
 
-describe("git でのコンテキストの取得（PBI-6）", () => {
+// 実際の git を動かすので、テストをまとめて実行して重いときも時間切れにしない（repository.test.ts と同じ）
+describe("git でのコンテキストの取得（PBI-6）", { timeout: 30_000 }, () => {
   const git = (cwd: string, ...args: string[]) =>
     execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
 
