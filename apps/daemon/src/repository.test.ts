@@ -428,6 +428,21 @@ describe("対象リポジトリの作業領域（git）", { timeout: 30_000 }, (
     expect(git(origin, "show", `${taskBranch}:${path}`)).toBe("# 要求要件");
     expect(git(origin, "show", `${taskBranch}:pay.ts`)).toBe("export const pay = () => 1;");
     expect(implemented.commit).toBe(git(origin, "rev-parse", taskBranch));
+    // sacty が積んだ後の、タスクブランチの変更のパス（人が直接積んだ変更を見つける。レビュー指摘）
+    expect(await workspace.changedPaths(gitDir, implemented.commit, implemented.commit)).toEqual(
+      [],
+    );
+    git(origin, "checkout", "--quiet", taskBranch);
+    writeFileSync(join(origin, "human-fix.ts"), "export const fix = 1;\n");
+    git(origin, "add", "human-fix.ts");
+    git(origin, "commit", "--quiet", "-m", "human fix");
+    git(origin, "checkout", "--quiet", "main");
+    const touched = await workspace.fetchBranch(gitDir, taskBranch);
+    expect(await workspace.changedPaths(gitDir, implemented.commit, touched)).toEqual([
+      "human-fix.ts",
+    ]);
+    expect(await workspace.changedPaths(gitDir, baseCommit, head)).toEqual([path]);
+    await expect(workspace.changedPaths(gitDir, "--output=x", touched)).rejects.toThrow();
     // 作業領域に変更が無ければ、引き継ぐファイルがあってもコミットしない
     writeFileSync(join(clone, "pay.ts"), "export const pay = () => 0;\n");
     await expect(

@@ -3285,6 +3285,28 @@ export class TaskService {
         parent = await this.deps.repos.fetchBranch(gitDir, taskBranch.branch, authEnv);
         const paths = [...new Set(task.stepPullRequests.map((p) => p.path))];
         if (paths.length > 0) keep = { commit: parent, paths };
+        // 実装の作業領域は起点のコミットのままなので、sacty が最後に積んだコミット（無ければ起点）の後にタスクブランチへ
+        // 積まれた変更（人が直接積んだ・ベースブランチをマージした）は、実装のコミットで消えてしまう。要求要件・設計の
+        // ファイルのほかに変更があれば、消さないように公開を止める（人が判断する）
+        const known =
+          task.pushedBranch?.branch === taskBranch.branch
+            ? task.pushedBranch.commit
+            : task.repository.baseCommit;
+        if (known !== parent) {
+          const unexpected = (await this.deps.repos.changedPaths(gitDir, known, parent)).filter(
+            (p) => !paths.includes(p),
+          );
+          if (unexpected.length > 0) {
+            fail(
+              message("pr.taskBranchChanged", {
+                branch: taskBranch.branch,
+                paths: unexpected.slice(0, 10).join(", "),
+                count: unexpected.length,
+              }),
+            );
+            return;
+          }
+        }
       }
       const { commit } = await this.deps.repos.publish({
         dir,

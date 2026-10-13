@@ -97,6 +97,11 @@ export interface RepositoryWorkspace {
    * PR がマージされた後のベースブランチを読むため。PBI-31）。
    */
   fetchBranch(gitDir: string, branch: string, authEnv?: Record<string, string>): Promise<string>;
+  /**
+   * 2つのコミットの間で変わったパス（PBI-57）。タスクブランチに、sacty が積んでいない変更（人が直接積んだ・
+   * ベースブランチをマージした）が無いかを、実装を積む前に確かめるために使う。どちらのコミットも取得済みであること。
+   */
+  changedPaths(gitDir: string, from: string, to: string): Promise<string[]>;
   /** base と head の分岐点から head までの差分（PR の差分。PBI-19）。 */
   diffCommits(gitDir: string, baseCommit: string, headCommit: string): Promise<string>;
   /** sacty のブランチを、リモートから消す（中止したとき）。 */
@@ -510,6 +515,29 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
       ["--git-dir", gitDir, ...SAFE_CONFIG, "fetch", "--quiet", "--", "origin", ...missing],
       env,
     );
+  }
+
+  async changedPaths(gitDir: string, from: string, to: string) {
+    if (!COMMIT_RE.test(from) || !COMMIT_RE.test(to)) {
+      throw new MessageError(message("git.invalidParentCommit"));
+    }
+    const out = await git(
+      "diff",
+      [
+        "--git-dir",
+        gitDir,
+        ...SAFE_CONFIG,
+        "diff",
+        "--name-only",
+        "-z",
+        "--no-renames",
+        from,
+        to,
+        "--",
+      ],
+      isolatedEnv("/dev/null"),
+    );
+    return out.split("\0").filter(Boolean);
   }
 
   async fetchBranch(gitDir: string, branch: string, authEnv?: Record<string, string>) {

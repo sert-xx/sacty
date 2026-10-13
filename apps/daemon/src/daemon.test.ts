@@ -261,6 +261,13 @@ class FakeRepos implements RepositoryWorkspace {
     this.fetchedBranches.push({ gitDir, branch, ...(authEnv ? { authEnv } : {}) });
     return this.remote[branch] ?? this.branchHead;
   }
+  /** タスクブランチの、sacty が積んだ後の変更（PBI-57）。テストで、人が直接積んだ変更を表す。 */
+  changed: string[] = [];
+  changedCalls: { from: string; to: string }[] = [];
+  async changedPaths(_gitDir: string, from: string, to: string) {
+    this.changedCalls.push({ from, to });
+    return this.changed;
+  }
   /** リモートのブランチの先頭（タスクブランチ・工程のブランチ。PBI-57）。PR のマージは、テストで書き換える。 */
   remote: Record<string, string> = {};
   /** プッシュしたコミット（タスクブランチの作成。PBI-57）。 */
@@ -9469,6 +9476,57 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
     repos.remote[taskBranchOf(id)] = `m${pr.number}`.padEnd(40, "0");
     await service.checkPullRequests();
   }
+
+  it("タスクブランチに sacty が積んでいない変更があれば、実装で消さないよう、実装の PR を出さずに止める（レビュー指摘）", async () => {
+    const made = await start([
+      out("# 要求要件"),
+      design(),
+      implement(),
+      review(),
+      rework("implement"),
+      implement("# 直した実装"),
+      review(["TV-1"], ["implement-1-1"]),
+    ]);
+    const { service, repos, pulls, id } = made;
+    await merge(made, "requirements");
+    await service.runNext(id);
+    await merge(made, "design");
+    // 人がタスクブランチに直接積んだ（要求要件・設計のファイルの変更は、sacty のものなので除く）
+    repos.changed = [docOf(id, "requirements"), "human-fix.ts", "src/b.ts"];
+    await drain(service);
+    const task = taskOf(service, id);
+    expect(task.status).toBe("paused");
+    const text = ja(task.pausedMessage);
+    expect(text).toContain(
+      `タスクブランチ ${taskBranchOf(id)} に、sacty が積んでいない変更があります（human-fix.ts, src/b.ts）`,
+    );
+    expect(text).not.toContain("requirements.md");
+    // 起点（sacty がまだ実装を積んでいない）から、タスクブランチの先頭までを確かめた
+    expect(repos.changedCalls.at(-1)).toEqual({ from: "base123", to: "m8".padEnd(40, "0") });
+    expect(repos.published).toEqual([]);
+    expect(pulls.calls.filter((c) => c.baseBranch === "main")).toEqual([]);
+    // 人が取り除いて再開すると、実装の PR を出す
+    repos.changed = [docOf(id, "requirements"), docOf(id, "design")];
+    service.resume(id, {});
+    await drain(service);
+    expect(repos.published).toHaveLength(1);
+    const implPr = pulls.calls.filter((c) => c.baseBranch === "main");
+    expect(implPr).toHaveLength(1);
+    // 実装の PR の指摘で実装をやり直して出し直すときは、sacty が積んだ実装のコミットの後の変更を確かめる
+    // （起点から確かめると、sacty 自身の実装の変更を人の変更と取り違える）
+    const pushed = taskOf(service, id).pushedBranch?.commit ?? "";
+    expect(pushed).not.toBe("");
+    // タスクブランチは、sacty の実装のコミットの後に進んでいる（GitHub の画面で PR のブランチを更新したなど。中身は同じ）
+    repos.remote[taskBranchOf(id)] = "d".repeat(40);
+    repos.changed = [];
+    const number = taskOf(service, id).pullRequest?.number ?? 0;
+    pulls.feedbackBy[number] = [item("comment:50", { body: "エラー時の処理が無い" })];
+    await service.checkPullRequests();
+    await drain(service);
+    expect(repos.changedCalls.at(-1)?.from).toBe(pushed);
+    expect(repos.published).toHaveLength(2);
+    made.activity.close();
+  });
 
   it("タスクブランチを作り、要求要件・設計の PR を成果のファイル入りでタスクブランチに向けて順に作り、マージで承認して進み、実装の PR はベースブランチに向ける（受け入れ条件 1・2・4）", async () => {
     const made = await start([out("# 要求要件 v1"), design(), implement(), review()]);
