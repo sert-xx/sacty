@@ -843,6 +843,26 @@ ${extra}`,
       image(`    packages: [${name}]\n`);
       expect(problem()).toContain("パッケージの名前");
     }
+    // 有効にするパッケージのリポジトリ（PBI-59）。書かなければ渡さない
+    image("    packages: [nss]\n");
+    const loaded = loadConfig(dir);
+    expect(loaded.ok && loaded.config.images?.java?.enableRepos).toBeUndefined();
+    image("    enable_repos: [corp-baseos, 'corp.app_stream:9', crb]\n    packages: [nss]\n");
+    expect(loadConfig(dir)).toMatchObject({
+      ok: true,
+      config: { images: { java: { enableRepos: ["corp-baseos", "corp.app_stream:9", "crb"] } } },
+    });
+    image("    enable_repos: []\n    packages: [nss]\n");
+    const empty = loadConfig(dir);
+    expect(empty.ok && empty.config.images?.java?.enableRepos).toBeUndefined();
+    // Dockerfile の RUN に展開するので、シェルの特別な文字・空白・オプションに見える ID は書けない
+    for (const id of ["'a;id'", "'$(id)'", "'-x'", "'a b'", "''", "'a,b'", "'a*'", "'.hidden'"]) {
+      image(`    enable_repos: [${id}]\n    packages: [nss]\n`);
+      expect(problem()).toContain("リポジトリの ID");
+    }
+    // packages が無ければ、書いても効かないので止める
+    image("    enable_repos: [crb]\n");
+    expect(problem()).toContain("packages も書いてください");
     image('    run: ["a\\nb"]\n');
     expect(problem()).toContain("1行のコマンド");
     image("    run: ['']\n");

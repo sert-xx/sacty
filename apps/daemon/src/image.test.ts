@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { message } from "@sacty/core";
 import { describe, expect, it } from "vitest";
@@ -360,5 +361,58 @@ describe("イメージの作成（PBI-33）", () => {
     const none = await build(base);
     expect(none.args.some((v) => v.startsWith("SACTY_PACKAGES="))).toBe(false);
     expect(none.script).toBe("");
+  });
+
+  it("有効にするリポジトリを渡し、変えたら作り直させる。書かなければ、これまでと同じ（PBI-59）", async () => {
+    const base = {
+      name: "rocky",
+      image: "sacty-agent-rocky:0.1.0",
+      description: "Rocky",
+      baseImage: "rockylinux:9",
+      env: {},
+      packages: ["nss", "nspr"],
+      run: ["pf --version"],
+    };
+    const build = async (language: typeof base & { enableRepos?: string[] }) => {
+      let args: string[] = [];
+      await buildImage({
+        image: "x",
+        build: {},
+        dockerDir: "/d",
+        secrets: new MemorySecretStore({}),
+        language,
+        run: async (a) => {
+          args = a;
+          return 0;
+        },
+      });
+      const arg = (name: string) => args.find((v) => v.startsWith(`${name}=`));
+      return {
+        args,
+        repos: arg("SACTY_ENABLE_REPOS"),
+        hash: arg("SACTY_SETUP_HASH"),
+        packages: arg("SACTY_PACKAGES"),
+      };
+    };
+    const one = await build({ ...base, enableRepos: ["corp-baseos"] });
+    const two = await build({ ...base, enableRepos: ["corp-baseos", "corp-appstream"] });
+    const none = await build(base);
+    const empty = await build({ ...base, enableRepos: [] });
+    expect(one.repos).toBe("SACTY_ENABLE_REPOS=corp-baseos");
+    expect(two.repos).toBe("SACTY_ENABLE_REPOS=corp-baseos corp-appstream");
+    // --build-arg の値として、1つの引数で渡す（直前が --build-arg）
+    expect(two.args[two.args.indexOf(two.repos ?? "") - 1]).toBe("--build-arg");
+    expect(two.packages).toBe("SACTY_PACKAGES=nss nspr");
+    // 書かない・空なら渡さず、ハッシュもこれまでと同じ（作り直さない）
+    expect(none.repos).toBeUndefined();
+    expect(empty.repos).toBeUndefined();
+    expect(empty.hash).toBe(none.hash);
+    const previous = createHash("sha256")
+      .update(JSON.stringify({ packages: base.packages, setupScript: "pf --version\n" }))
+      .digest("hex")
+      .slice(0, 16);
+    expect(none.hash).toBe(`SACTY_SETUP_HASH=${previous}`);
+    // 有効にするリポジトリを変えると、ハッシュが変わる（作り直させる）
+    expect(new Set([none.hash, one.hash, two.hash]).size).toBe(3);
   });
 });
