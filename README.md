@@ -156,7 +156,7 @@ npx sacty image build java17     # 名前を指定して作る（default は既�
 - イメージの名前は、書かなければ `sacty-agent-<名前>:0.1.0`（`image` で変えられる）
 - `env` は、組織のレジストリなど（`PIP_INDEX_URL`・`UV_DEFAULT_INDEX`・`GOPROXY`・`GONOSUMDB` など）。コンテナの中のすべてのコマンドに見えるので、認証の値（`TOKEN`・`PASSWORD` などを含む名前、ユーザー名・パスワードを含む URL）は書けない
 - `maven_mirror` は、Maven（`settings.xml` の mirror）と Gradle（init スクリプト）の取得先を、すべてその URL に向ける
-- `packages` に書いた OS のパッケージを、イメージを作るときに root で入れる（dnf・microdnf・yum・apt-get のうち、元のイメージにあるもの）。`run` に書いたコマンドは、イメージを作るときに root で上から順に実行する（社内のパッケージのリポジトリの設定、CLI の導入など。失敗したら止める）。`packages`・`run` を変えると、`sacty image build` で作り直される。イメージに残るので、`run` に秘密情報は書かない
+- `packages` に書いた OS のパッケージを、イメージを作るときに root で入れる（dnf・microdnf・yum・apt-get のうち、元のイメージにあるもの）。`run` に書いたコマンドは、イメージを作るときに root で上から順に実行する（組織のパッケージのリポジトリの設定、CLI の導入など。失敗したら止める）。`packages`・`run` を変えると、`sacty image build` で作り直される。イメージに残るので、`run` に秘密情報は書かない
   ```yaml
   images:
     node-pw:
@@ -300,6 +300,44 @@ gateway:
 - ホワイトリストに無いリクエストは拒否する（403。何が使えるかを返す）
 - トークンは期限の前に取り直し、拒否（401・403）されたら取り直して1回だけ送り直す
 - 認証情報はデーモンの起動時に用意する。用意できない PF は、タスクの一覧の画面に出す（ほかの PF は使える）
+
+### JIRA のチケットの取り込み
+
+JIRA（Jira Cloud・Jira Server / Data Center）の接続先は、組織内 PF（`gateway.platforms`）として書く。JIRA 専用の設定は無い。
+
+```yaml
+gateway:
+  platforms:
+    jira:                                     # Jira Server / Data Center（個人用アクセストークン）
+      upstream: https://jira.example.com
+      description: JIRA
+      auth:
+        header: Authorization
+        prefix: "Bearer "
+        secret: op://Work/Jira/token
+      allow:
+        - GET /rest/api/2/search              # 取り込み（デーモンがチケットを探す）
+        - GET /rest/api/2/issue/**            # オーケストレーターがチケット・親・サブタスクを読む
+        - POST /rest/api/2/issue/*/comment    # 調査の結果と PR の URL をコメントする
+    jira-cloud:                               # Jira Cloud（メールアドレス:API トークン を base64 にした値）
+      upstream: https://example.atlassian.net
+      description: JIRA Cloud
+      auth:
+        header: Authorization
+        prefix: "Basic "
+        secret: op://Work/JiraCloud/basic     # echo -n 'me@example.com:<API トークン>' | base64
+      allow:
+        - GET /rest/api/3/search/jql
+        - GET /rest/api/2/issue/**
+        - GET /rest/api/3/issue/**
+        - POST /rest/api/2/issue/*/comment
+```
+
+- プロジェクトの設定の「チケットの取り込み」に、接続先（上の名前）・種類（Jira Cloud / Jira Server・Data Center）・JIRA のプロジェクトのキー（PAY など）を書く。1つのプロジェクトに複数書ける。同じ接続先の同じキーは、1つのプロジェクトにだけ書ける
+- 「sacty の設定」の取り込むラベル（全取り込み先で共通）が付いた、終わっていないチケットをタスクにする。On/Off も「sacty の設定」で切り替える
+- デーモンはチケットのキーと要約だけを探す。オーケストレーターがゲートウェイ経由でチケット（サブタスクなら親とほかのサブタスク）を読み、プロジェクトの対象から作業するリポジトリを選び、タスクの題と概要を書く。選べなければタスクは止まり、タスクの画面でリポジトリを選んで再開できる
+- 調査の結果と PR の URL は、チケットにコメントする（チケットの状態は変えない）
+- `allow` に無い API は、デーモンも呼ばない。JIRA ではない接続先を選んだときの動きは保証しない
 コンテナには、選んだ認証方式の環境変数だけを渡す（ホストの `ANTHROPIC_API_KEY` などは引き継がない）。
 
 サブスクリプションでは実際の請求は発生しないが、同じ単価で換算した値を費用として扱い、予算の判定に使う。

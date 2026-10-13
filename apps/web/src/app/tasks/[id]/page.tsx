@@ -1,5 +1,6 @@
 import {
   appliedProposalFor,
+  awaitingTicketTriage,
   canRereview,
   investigationIsGoal,
   openProposal,
@@ -30,6 +31,7 @@ import {
   getCleanupPlan,
   getProject,
   getTask,
+  listProjectRepositories,
   listTasks,
 } from "@/lib/daemon";
 import {
@@ -86,6 +88,11 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
       : undefined;
   // 一時停止できるのは、sacty やエージェントが作業している（または作業を待っている）間。
   // ゴールガーディアンの変更の申し出の判定中は、すぐ終わるので止めない
+  // チケットのタスクで、チケットを読む段階で止まったら、人がリポジトリを選ぶ（選び直せる。PBI-52）
+  const ticketRepositories =
+    awaitingTicketTriage(task) && task.status === "paused"
+      ? ((await listProjectRepositories(task.projectId).catch(() => undefined))?.repositories ?? [])
+      : undefined;
   const canPause =
     (task.status === "queued" ||
       task.status === "running" ||
@@ -113,6 +120,20 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
                 className="font-mono text-accent-foreground underline"
               >
                 {task.source.repo}#{task.source.number}
+              </a>
+              {m.sourceClose}
+            </>
+          )}
+          {task.ticket && (
+            <>
+              {m.sourceOpen}
+              <a
+                href={task.ticket.url}
+                target="_blank"
+                rel="noreferrer"
+                className="font-mono text-accent-foreground underline"
+              >
+                {task.ticket.key}
               </a>
               {m.sourceClose}
             </>
@@ -232,6 +253,8 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
       {task.status === "paused" && task.pausedReason && (
         <ResumeForm
           taskId={task.id}
+          repositories={ticketRepositories}
+          chosenRepo={task.repo}
           reason={task.pausedReason}
           usedUsd={task.budget.usedUsd}
           capUsd={task.budget.capUsd}

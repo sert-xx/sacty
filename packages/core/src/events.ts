@@ -215,8 +215,20 @@ const TaskCreated = z.object({
      * PBI-20 より前の作業履歴は、画面で作ったタスクを ticket と記録しているので、sacty として読む。
      */
     start: z
-      .enum(["sacty", "github_issue", "github_pull_request", "split", "ticket"])
+      .enum(["sacty", "github_issue", "github_pull_request", "split", "ticket", "jira"])
       .transform((start) => (start === "ticket" ? "sacty" : start)),
+    /**
+     * 取り込んだチケット（JIRA など。PBI-52）。接続先（gateway.platforms の名前）・種類・キー・チケットの URL。
+     * 作業するリポジトリは、オーケストレーターがチケットを読んで決める（TicketTriaged）。
+     */
+    ticket: z
+      .object({
+        platform: z.string(),
+        service: z.enum(["jira-cloud", "jira-server"]),
+        key: z.string(),
+        url: z.string(),
+      })
+      .optional(),
     // PBI-1の作業履歴には無いので既定値で補う
     budgetCapUsd: z.number().positive().default(DEFAULT_BUDGET_USD),
     /** 取り込み元（GitHub の Issue・PR のリポジトリと番号）。 */
@@ -612,6 +624,32 @@ const AiRequestsRetried = z.object({
  * TaskPaused で止める（再開すると工程の選択からやり直す）。使った分の費用は予算に入れる。
  */
 /** 工程・テストの実行のために、docker compose のサービスを起動した（PBI-47）。実行が終わると消す。 */
+/**
+ * チケットから取り込んだタスクの、作業するリポジトリ・題・概要を決めた（PBI-52）。オーケストレーターがチケットを読んで
+ * 決める（actor は orchestrator。費用を含む）。決められなかったときは、人がリポジトリを選ぶ（actor は person）。
+ */
+const TicketTriaged = z.object({
+  type: z.literal("TicketTriaged"),
+  payload: z.object({
+    repo: z.string(),
+    /** タスクの題と概要（人が選んだときは無い。いまの題・本文のまま）。 */
+    title: z.string().min(1).max(200).optional(),
+    body: z.string().max(20_000).optional(),
+    reason: DaemonText,
+    agentId: z.string().optional(),
+    ...AgentSetting,
+    usage: TokenUsage.optional(),
+    costUsd: z.number().nonnegative().default(0),
+    estimated: z.boolean().default(false),
+  }),
+});
+
+/** チケットに PR の URL をコメントした・できなかった（PBI-52）。PR を作ったら1回だけ。 */
+const TicketPullRequestCommented = z.object({
+  type: z.literal("TicketPullRequestCommented"),
+  payload: z.object({ url: z.string().optional(), failed: DaemonText.optional() }),
+});
+
 const ServicesStarted = z.object({
   type: z.literal("ServicesStarted"),
   payload: z.object({
@@ -930,6 +968,8 @@ export const EventInput = z.discriminatedUnion("type", [
   StepCompleted,
   StepsChosen,
   ServicesStarted,
+  TicketTriaged,
+  TicketPullRequestCommented,
   AgentRunStarted,
   AgentRunCompleted,
   AgentRunFailed,

@@ -18,6 +18,9 @@ import { githubAccountChoices } from "@/lib/github-accounts";
 
 const initial: SaveProjectState = {};
 
+/** 画面で編集する、チケットの取り込み先の1行（PBI-52）。 */
+type TicketRow = { platform: string; service: "jira-cloud" | "jira-server"; keys: string };
+
 type Exclusion = { org: string; repos: { repo: string; projectName: string }[] };
 
 const SELECT =
@@ -29,6 +32,7 @@ export function ProjectEditor({
   exclusions = [],
   github,
   images = [],
+  platforms = [],
 }: {
   project?: Project;
   exclusions?: Exclusion[];
@@ -36,6 +40,8 @@ export function ProjectEditor({
   github?: GitHubAccounts;
   /** 対象で選べる、言語ごとのイメージ（config.yaml の images。PBI-41）。 */
   images?: { name: string; description: string }[];
+  /** チケットの取り込み先に選べる接続先（gateway.platforms の名前。PBI-52）。 */
+  platforms?: string[];
 }) {
   const [state, formAction, pending] = useActionState(saveProjectAction, initial);
   // 前の画面が隠れて残ることがあるので、id は固定にせず画面ごとに作る
@@ -45,6 +51,12 @@ export function ProjectEditor({
   const accounts = github && "accounts" in github ? github.accounts : [];
   const [name, setName] = useState(project?.name ?? "");
   const [targets, setTargets] = useState<ProjectTarget[]>(project?.targets ?? []);
+  // チケットの取り込み先（PBI-52）。キーは編集しやすいよう、カンマ区切りの文字列で持つ
+  const [tickets, setTickets] = useState<TicketRow[]>(
+    (project?.tickets ?? []).map((t) => ({ ...t, keys: t.keys.join(", ") })),
+  );
+  const updateTicket = (i: number, patch: Partial<TicketRow>) =>
+    setTickets((list) => list.map((t, j) => (j === i ? { ...t, ...patch } : t)));
   const [contextRepo, setContextRepo] = useState(project?.context?.repo ?? "");
   // GitHub のアカウントは、ホストごとに選ぶ（PBI-40）。対象のホストは必ず選び、コンテキストリポジトリのホストと
   // 保存済みのホストも選べる。空は「選ばない」（そのホストは、ホストの git の認証を使う）
@@ -109,6 +121,19 @@ export function ProjectEditor({
       : {}),
     ...(hosts.length > 0 ? { githubAccounts } : {}),
     ...(notification ? { notification } : {}),
+    // チケットの取り込み先（PBI-52）。キーは、カンマか空白で区切って書く
+    ...(tickets.length > 0
+      ? {
+          tickets: tickets.map((ticket) => ({
+            platform: ticket.platform,
+            service: ticket.service,
+            keys: ticket.keys
+              .split(/[\s,、]+/)
+              .map((k) => k.trim())
+              .filter(Boolean),
+          })),
+        }
+      : {}),
   });
 
   const updateTarget = (i: number, patch: Partial<ProjectTarget>) =>
@@ -368,6 +393,93 @@ export function ProjectEditor({
                 {messages.labels.text(github.error)}
               </p>
             )}
+          </section>
+
+          <section
+            aria-labelledby="tickets"
+            className="flex flex-col gap-3 rounded-xl border border-border bg-card p-5"
+          >
+            <h2 id="tickets" className="text-[15px] font-semibold">
+              {t.ticketsTitle}{" "}
+              <span className="text-[13px] font-normal text-muted-foreground">{t.ticketsNote}</span>
+            </h2>
+            <p className="text-sm leading-6 whitespace-pre-line text-muted-foreground">
+              {platforms.length > 0 ? t.ticketsHelp : t.ticketsNoPlatforms}
+            </p>
+            <ul className="flex flex-col gap-2.5">
+              {tickets.map((ticket, i) => (
+                <li
+                  // biome-ignore lint/suspicious/noArrayIndexKey: 行は位置で編集する
+                  key={i}
+                  className="flex flex-wrap items-end gap-2 rounded-lg border border-border p-3"
+                >
+                  <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+                    {t.ticketPlatform}
+                    <select
+                      className={SELECT}
+                      value={ticket.platform}
+                      onChange={(e) => updateTicket(i, { platform: e.target.value })}
+                    >
+                      {[...new Set([ticket.platform, ...platforms])].filter(Boolean).map((name) => (
+                        <option key={name} value={name}>
+                          {name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+                    {t.ticketService}
+                    <select
+                      className={SELECT}
+                      value={ticket.service}
+                      onChange={(e) =>
+                        updateTicket(i, { service: e.target.value as TicketRow["service"] })
+                      }
+                    >
+                      <option value="jira-server">{t.ticketServiceServer}</option>
+                      <option value="jira-cloud">{t.ticketServiceCloud}</option>
+                    </select>
+                  </label>
+                  <label
+                    htmlFor={`${uid}-ticket-${i}-keys`}
+                    className="flex min-w-48 flex-1 flex-col gap-1 text-xs text-muted-foreground"
+                  >
+                    {t.ticketKeys}
+                    <Input
+                      id={`${uid}-ticket-${i}-keys`}
+                      value={ticket.keys}
+                      className="font-mono"
+                      placeholder={t.ticketKeysPlaceholder}
+                      onChange={(e) => updateTicket(i, { keys: e.target.value })}
+                    />
+                  </label>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-lg"
+                    aria-label={t.removeTicket(ticket.platform)}
+                    title={t.remove}
+                    onClick={() => setTickets((list) => list.filter((_, j) => j !== i))}
+                  >
+                    <XIcon aria-hidden="true" />
+                  </Button>
+                </li>
+              ))}
+            </ul>
+            <Button
+              type="button"
+              variant="outline"
+              className="w-fit"
+              disabled={platforms.length === 0}
+              onClick={() =>
+                setTickets((list) => [
+                  ...list,
+                  { platform: platforms[0] ?? "", service: "jira-server", keys: "" },
+                ])
+              }
+            >
+              {t.addTicket}
+            </Button>
           </section>
 
           <section

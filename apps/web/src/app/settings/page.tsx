@@ -37,6 +37,7 @@ async function Settings() {
       reviewLabel={settings.reviewLabel ?? ""}
       reviewRequested={settings.reviewRequested === true}
       triageOff={settings.triageOff ?? []}
+      ticketLabel={settings.ticketLabel ?? ""}
       maxParallelTasks={settings.maxParallelTasks}
     />
   );

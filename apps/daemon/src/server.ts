@@ -222,6 +222,19 @@ export function createApp(
     }
   });
 
+  // チケットから取り込んだタスクの、作業するリポジトリを人が選ぶ（PBI-52）
+  app.post("/api/tasks/:id/repository", async (c) => {
+    const json = await readJson(c);
+    if (!json.ok) return c.json({ error: "invalid_json" }, 400);
+    const repo = (json.body as { repo?: unknown } | undefined)?.repo;
+    if (typeof repo !== "string") return c.json({ error: "invalid_repo" }, 400);
+    try {
+      return c.json({ task: await service.chooseTicketRepository(c.req.param("id"), repo) });
+    } catch (error) {
+      return handleError(c, error);
+    }
+  });
+
   // 再レビュー（PBI-44）
   app.post("/api/tasks/:id/rereview", (c) => {
     try {

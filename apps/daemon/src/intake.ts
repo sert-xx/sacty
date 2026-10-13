@@ -5,6 +5,7 @@ import { errorText } from "./errors.js";
 import type { GitHubAuth } from "./gh.js";
 import type { IssueSearch } from "./github.js";
 import type { TaskService } from "./service.js";
+import { type FoundTicket, type TicketClient, ticketErrorText, ticketJql } from "./tickets.js";
 
 /**
  * GitHub Issue を定期的に探して、タスクに取り込む（PR のレビューの取り込みの PR も。PBI-44）。検索はプロジェクトの取り込み元ごとに行い、
@@ -28,6 +29,8 @@ export class IssueIntake {
     private readonly github: GitHubAuth,
     private readonly config: () => ConfigResult,
     private readonly now: () => number = Date.now,
+    /** チケット（JIRA など）の検索（PBI-52）。無ければ、チケットを取り込まない。 */
+    private readonly tickets?: TicketClient,
   ) {}
 
   /** 設定の間隔は毎回読み直す（デーモンを止めずに変えられるように）。確認は30秒ごと。 */
@@ -139,9 +142,44 @@ export class IssueIntake {
       }
     }
     const created = this.service.importIssues(found);
+    // チケット（JIRA など。PBI-52）。接続先は gateway.platforms の組織内 PF（認証もその設定）
+    const tickets: FoundTicket[] = [];
+    const config = this.config();
+    const platforms = (config.ok ? config.config.platforms : undefined) ?? [];
+    const client = this.tickets;
+    if (client) {
+      for (const source of this.service.ticketSources()) {
+        const query = `${source.platform}: ${ticketJql(source.keys, source.label)}`;
+        const platform = platforms.find((p) => p.name === source.platform);
+        if (!platform) {
+          errors.push({
+            query,
+            message: message("ticket.platformMissing", { platform: source.platform }),
+          });
+          continue;
+        }
+        // 読む上限を超える数のチケットがあれば、次の回は続きから読む（最後まで読んだら先頭に戻る）
+        const cursorKey = `ticket ${source.service} ${query}`;
+        try {
+          const result = await client.search({
+            ...source,
+            platform,
+            ...(this.cursors.has(cursorKey) ? { cursor: this.cursors.get(cursorKey) } : {}),
+          });
+          tickets.push(...result.tickets);
+          if (result.cursor) this.cursors.set(cursorKey, result.cursor);
+          else this.cursors.delete(cursorKey);
+        } catch (error) {
+          // 続きの位置が使えなくなった（期限切れなど）かもしれないので、次の回は先頭から読む
+          this.cursors.delete(cursorKey);
+          errors.push({ query, message: ticketErrorText(error) });
+        }
+      }
+    }
+    const createdTickets = this.service.importTickets(tickets);
     this.service.recordIntake({
       lastRunAt: at,
-      imported: created.length,
+      imported: created.length + createdTickets.length,
       ...(errors.length > 0 ? { errors } : {}),
     });
   }

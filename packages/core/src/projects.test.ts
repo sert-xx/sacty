@@ -10,6 +10,7 @@ import {
   ProjectExport,
   projectConflicts,
   responsibleProject,
+  responsibleTicketProject,
   targetImageOf,
 } from "./projects.js";
 
@@ -304,5 +305,90 @@ describe("通知先（PBI-38）", () => {
         targets: [{ scope: "repo", target: "https://github.com/a/b", image: "Java 17" }],
       }),
     ).toThrow();
+  });
+});
+
+describe("チケットの取り込み先（PBI-52）", () => {
+  const payments = make("p1", {
+    name: "決済",
+    targets: [{ scope: "repo", target: "https://github.com/acme/payments" }],
+    tickets: [
+      { platform: "jira", service: "jira-server", keys: ["PAY", "BILL"] },
+      { platform: "cloud", service: "jira-cloud", keys: ["PAY"] },
+    ],
+  });
+
+  it("取り込み先を複数書け、キーの形と上限を確かめる", () => {
+    expect(payments.tickets).toHaveLength(2);
+    for (const keys of [[], ["pay"], ["1PAY"], ["PAY-1"], ["A".repeat(51)]]) {
+      expect(() =>
+        ProjectDefinition.parse({
+          name: "x",
+          tickets: [{ platform: "jira", service: "jira-server", keys }],
+        }),
+      ).toThrow();
+    }
+    expect(() =>
+      ProjectDefinition.parse({
+        name: "x",
+        tickets: [{ platform: "jira", service: "asana", keys: ["PAY"] }],
+      }),
+    ).toThrow();
+    expect(() =>
+      ProjectDefinition.parse({
+        name: "x",
+        tickets: [{ platform: "a/b", service: "jira-server", keys: ["PAY"] }],
+      }),
+    ).toThrow();
+    // 前後の空白は除く
+    expect(
+      ProjectDefinition.parse({
+        name: "x",
+        tickets: [{ platform: "jira", service: "jira-server", keys: [" PAY "] }],
+      }).tickets?.[0]?.keys,
+    ).toEqual(["PAY"]);
+  });
+
+  it("同じ接続先の同じキーは、1つのプロジェクトにだけ書ける（接続先が違えば別）", () => {
+    const def = ProjectDefinition.parse({
+      name: "請求",
+      tickets: [
+        { platform: "jira", service: "jira-server", keys: ["BILL", "OPS", "OPS"] },
+        { platform: "other", service: "jira-server", keys: ["PAY"] },
+      ],
+    });
+    expect(projectConflicts([payments], undefined, def).map((m) => renderMessage(m, "ja"))).toEqual(
+      [expect.stringContaining("BILL"), expect.stringContaining("OPS")],
+    );
+    // 自分自身とは重ならない
+    expect(projectConflicts([payments], "p1", ProjectDefinition.parse(payments))).toEqual([]);
+  });
+
+  it("担当のプロジェクトは、接続先とキー（番号の前）で決める", () => {
+    const ops = make("p2", {
+      name: "運用",
+      tickets: [{ platform: "jira", service: "jira-server", keys: ["OPS"] }],
+    });
+    expect(responsibleTicketProject([payments, ops], "jira", "PAY-12")?.project.id).toBe("p1");
+    expect(responsibleTicketProject([payments, ops], "jira", "OPS-3")?.project.id).toBe("p2");
+    expect(responsibleTicketProject([payments, ops], "cloud", "PAY-1")?.source.service).toBe(
+      "jira-cloud",
+    );
+    expect(responsibleTicketProject([payments, ops], "cloud", "OPS-3")).toBeUndefined();
+    expect(responsibleTicketProject([payments, ops], "jira", "PAYX-1")).toBeUndefined();
+  });
+
+  it("取り込み先と、対象のイメージを書き出す", () => {
+    const withImage = make("p3", {
+      name: "決済",
+      targets: [{ scope: "repo", target: "https://github.com/acme/payments", image: "java" }],
+      tickets: [{ platform: "jira", service: "jira-server", keys: ["PAY"] }],
+    });
+    const exported = exportProject(withImage);
+    expect(exported.project).toMatchObject({
+      targets: [{ scope: "repo", target: "https://github.com/acme/payments", image: "java" }],
+      tickets: [{ platform: "jira", service: "jira-server", keys: ["PAY"] }],
+    });
+    expect(ProjectExport.parse(JSON.parse(JSON.stringify(exported)))).toEqual(exported);
   });
 });

@@ -10,11 +10,13 @@ import { MessageError } from "./errors.js";
 import type { GitHubAuth } from "./gh.js";
 import type { FoundIssue, IssueSearch } from "./github.js";
 import { IssueIntake } from "./intake.js";
+import { PlatformFile, toPlatform } from "./platforms.js";
 import { MemoryProjectStore } from "./projects.js";
 import { buildPullRequestBody } from "./prompts.js";
 import { MemorySecretStore } from "./secrets.js";
 import { TaskService } from "./service.js";
 import { MemorySettingsStore } from "./settings.js";
+import type { TicketClient } from "./tickets.js";
 
 /** 記録した文言（コードと引数）を、日本語の文にする（PBI-11）。 */
 const ja = (text: unknown) => renderMessage(text, "ja");
@@ -355,5 +357,139 @@ describe("GitHub Issue の定期的な取り込み（PBI-5a）", () => {
     if (!task) throw new Error("no task");
     expect(buildPullRequestBody(task)).toContain("Closes #7");
     activity.close();
+  });
+});
+
+describe("JIRA のチケットの取り込み（PBI-52）", () => {
+  const jira = toPlatform(
+    "jira",
+    PlatformFile.parse({
+      upstream: "https://jira.example.com",
+      description: "JIRA",
+      auth: { header: "Authorization", prefix: "Bearer ", secret: "jira-token" },
+      allow: ["GET /rest/api/**"],
+    }),
+  );
+  class FakeTicketSearch implements TicketClient {
+    searched: {
+      platform: string;
+      service: string;
+      keys: readonly string[];
+      label: string;
+      cursor?: string;
+    }[] = [];
+    fail?: string;
+    /** 返す続きの位置（順に）。 */
+    next: (string | undefined)[] = [];
+    async search(input: Parameters<TicketClient["search"]>[0]) {
+      this.searched.push({ ...input, platform: input.platform.name });
+      if (this.fail) throw new Error(this.fail);
+      return {
+        tickets: [
+          {
+            platform: input.platform.name,
+            service: input.service,
+            key: "PAY-1",
+            summary: "決済の再送",
+            url: "https://jira.example.com/browse/PAY-1",
+          },
+        ],
+        ...(this.next.length > 0 ? { cursor: this.next.shift() } : {}),
+      };
+    }
+    async comment(): Promise<{ url: string }> {
+      throw new Error("unused");
+    }
+  }
+  const ticketSetup = (platforms = [jira], settings = { ticketLabel: "sacty" }) => {
+    const activity = new SqliteActivityStore(join(dir, "sacty.db"));
+    const withPlatforms = (): ConfigResult => {
+      const base = config(true)();
+      return base.ok ? { ok: true, config: { ...base.config, platforms } } : base;
+    };
+    const service = new TaskService({
+      activity,
+      config: withPlatforms,
+      secrets: new MemorySecretStore({}),
+      executor: unused as AgentExecutor,
+      repos: unused as never,
+      tests: unused as never,
+      pulls: unused as never,
+      projects: new MemoryProjectStore(),
+      settings: new MemorySettingsStore(settings),
+      github: unused as never,
+      workspaceRoot: join(dir, "workspaces"),
+    });
+    service.saveProject(undefined, {
+      name: "決済",
+      targets: [{ scope: "repo", target: "https://github.com/acme/payments" }],
+      tickets: [
+        { platform: "jira", service: "jira-server", keys: ["PAY"] },
+        { platform: "gone", service: "jira-cloud", keys: ["GONE"] },
+      ],
+    });
+    const tickets = new FakeTicketSearch();
+    const intake = new IssueIntake(
+      service,
+      new FakeSearch([]),
+      new FakeGh(),
+      withPlatforms,
+      () => 1_000_000,
+      tickets,
+    );
+    return { activity, service, intake, tickets };
+  };
+
+  it("取り込み先ごとに探してタスクにし、接続先が無い取り込み先は理由を記録する。二度は取り込まない", async () => {
+    const { activity, service, intake, tickets } = ticketSetup();
+    await intake.tick(true);
+    expect(tickets.searched).toEqual([
+      { platform: "jira", service: "jira-server", keys: ["PAY"], label: "sacty" },
+    ]);
+    expect(service.list().map((t) => [t.title, t.start])).toEqual([["PAY-1 決済の再送", "jira"]]);
+    const status = service.status().intake;
+    expect(status).toMatchObject({ imported: 1, ticketLabel: "sacty" });
+    expect(status?.errors?.map((e) => [e.query, ja(e.message)])).toEqual([
+      [expect.stringContaining('gone: project in ("GONE")'), expect.stringContaining("gone")],
+    ]);
+    await intake.tick(true);
+    expect(service.list()).toHaveLength(1);
+    expect(service.status().intake).toMatchObject({ imported: 0 });
+    activity.close();
+  });
+
+  it("読む上限を超えたら、次の回は続きの位置から読み、最後まで読んだら先頭に戻る。失敗したら先頭から読み直す", async () => {
+    const { activity, intake, tickets } = ticketSetup();
+    tickets.next = ["500", undefined, "500"];
+    for (let i = 0; i < 3; i++) await intake.tick(true);
+    tickets.fail = "JIRA 400";
+    await intake.tick(true);
+    tickets.fail = undefined;
+    await intake.tick(true);
+    expect(tickets.searched.map((s) => s.cursor)).toEqual([
+      undefined,
+      "500",
+      undefined,
+      "500",
+      undefined,
+    ]);
+    activity.close();
+  });
+
+  it("検索の失敗は取り込み先ごとに記録し、Off なら探さない", async () => {
+    const failing = ticketSetup();
+    failing.tickets.fail = "JIRA 500";
+    await failing.intake.tick(true);
+    expect(failing.service.status().intake?.errors?.map((e) => ja(e.message))).toContainEqual(
+      expect.stringContaining("JIRA 500"),
+    );
+    failing.activity.close();
+    rmSync(join(dir, "sacty.db"), { force: true });
+
+    const off = ticketSetup([jira], { ticketLabel: "sacty", triageOff: ["tickets"] } as never);
+    await off.intake.tick(true);
+    expect(off.tickets.searched).toEqual([]);
+    expect(off.service.list()).toEqual([]);
+    off.activity.close();
   });
 });

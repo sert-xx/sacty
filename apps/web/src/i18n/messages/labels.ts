@@ -35,6 +35,7 @@ const ja = {
     github_issue: "GitHub Issue",
     github_pull_request: "GitHub PR",
     split: "タスク分割",
+    jira: "JIRA",
   } satisfies Record<Task["start"], string>,
   status: {
     blocked: "依存待ち",
@@ -125,6 +126,14 @@ const ja = {
       ` / イメージ：${images}（${source === "project" ? "プロジェクトの対象の指定" : reason ? `オーケストレーター：${reason}` : "オーケストレーター"}）`,
     stepImage: (step: string, image: string) => `${step}＝${image}`,
     imagesJoin: "、",
+    TicketTriaged: (repo: string, reason: string, byPerson: boolean) =>
+      byPerson
+        ? `作業するリポジトリを選んだ：${repo}（人間）`
+        : `チケットを読んで、作業するリポジトリを決めた：${repo}（${reason}）`,
+    TicketPullRequestCommented: (url?: string) =>
+      url
+        ? `PR の URL をチケットにコメントした（${url}）`
+        : "PR の URL をチケットにコメントできなかった",
     ServicesStarted: (step: string, file: string, services: string, forTests: boolean) =>
       `${forTests ? `${step}のテスト` : step}のためにサービスを起動：${services}（${file}。実行の後に消す）`,
     AgentRunStarted: (step: string, agent: string, auth: string) =>
@@ -236,6 +245,7 @@ const en: LabelMessages = {
     github_issue: "GitHub Issue",
     github_pull_request: "GitHub PR",
     split: "Task split",
+    jira: "JIRA",
   },
   status: {
     blocked: "Blocked",
@@ -323,6 +333,14 @@ const en: LabelMessages = {
       ` / images: ${images} (${source === "project" ? "set on the project target" : reason ? `Orchestrator: ${reason}` : "Orchestrator"})`,
     stepImage: (step, image) => `${step}=${image}`,
     imagesJoin: ", ",
+    TicketTriaged: (repo, reason, byPerson) =>
+      byPerson
+        ? `Chose the repository: ${repo} (person)`
+        : `Read the ticket and decided the repository: ${repo} (${reason})`,
+    TicketPullRequestCommented: (url) =>
+      url
+        ? `Commented the PR URL on the ticket (${url})`
+        : "Could not comment the PR URL on the ticket",
     ServicesStarted: (step, file, services, forTests) =>
       `Started services for ${forTests ? `the ${step} tests` : step}: ${services} (${file}; removed after the run)`,
     stepsJoin: " → ",

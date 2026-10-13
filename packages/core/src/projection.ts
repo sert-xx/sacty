@@ -102,9 +102,15 @@ export type Task = {
   projectId: string;
   title: string;
   body: string;
-  start: "sacty" | "github_issue" | "github_pull_request" | "split";
+  start: "sacty" | "github_issue" | "github_pull_request" | "split" | "jira";
   /** 取り込み元（GitHub Issue）。 */
   source?: TaskSource;
+  /** 取り込み元のチケット（JIRA など。PBI-52）。 */
+  ticket?: { platform: string; service: "jira-cloud" | "jira-server"; key: string; url: string };
+  /** チケットから作業するリポジトリ・題・概要を決めた理由（PBI-52）。人が選んだら by は person。 */
+  ticketTriage?: { reason: DaemonText; by: "orchestrator" | "person" };
+  /** チケットに PR の URL をコメントした結果（PBI-52）。 */
+  ticketPrComment?: { url: string } | { failed: DaemonText };
   /** 画面で作ったタスクの対象リポジトリ（リポジトリの URL。PBI-21・PBI-40）。Issue から取り込んだタスクは source.repo。 */
   repo?: string;
   status: TaskStatus;
@@ -307,6 +313,7 @@ export function applyEvent(
       body: event.payload.body,
       start: event.payload.start,
       ...(event.payload.source ? { source: event.payload.source } : {}),
+      ...(event.payload.ticket ? { ticket: event.payload.ticket } : {}),
       ...(event.payload.repo ? { repo: event.payload.repo } : {}),
       ...(event.payload.parent ? { parent: event.payload.parent } : {}),
       // 依存先の子タスクがあれば、それが完了するまで待つ（PBI-27）
@@ -762,7 +769,8 @@ export function applyEvent(
     case "IssueCommented":
     case "IssueCommentFailed":
       // Issue・PR から取り込んだタスク（PR も Issue のコメントの API で返す。PBI-26）
-      if (!isCompleted(task) || !task.source) {
+      // チケットから取り込んだタスクも、調査の結果をチケットにコメントする（PBI-52）
+      if (!isCompleted(task) || (!task.source && !task.ticket)) {
         throw new ActivityIntegrityError(event, "the task is not a completed issue task");
       }
       if (task.issueComment) throw new ActivityIntegrityError(event, "already commented");
@@ -808,6 +816,34 @@ export function applyEvent(
 
     case "GuardianMissed":
       task.misses = [...task.misses, { ...event.payload, at: event.at }];
+      break;
+
+    // チケットから作業するリポジトリ・題・概要を決めた（PBI-52）。工程を選ぶ前だけ
+    case "TicketTriaged":
+      if (!task.ticket || task.steps.length > 0) {
+        throw new ActivityIntegrityError(event, "not a ticket task waiting for triage");
+      }
+      task.repo = event.payload.repo;
+      if (event.payload.title) task.title = event.payload.title;
+      if (event.payload.body !== undefined) task.body = event.payload.body;
+      task.ticketTriage = {
+        reason: event.payload.reason,
+        by: event.actor === "person" ? "person" : "orchestrator",
+      };
+      task.budget = {
+        ...task.budget,
+        usedUsd: addUsd(task.budget.usedUsd, event.payload.costUsd),
+        estimated: task.budget.estimated || event.payload.estimated,
+      };
+      break;
+
+    case "TicketPullRequestCommented":
+      if (!task.ticket || task.ticketPrComment) {
+        throw new ActivityIntegrityError(event, "already commented or not a ticket task");
+      }
+      task.ticketPrComment = event.payload.url
+        ? { url: event.payload.url }
+        : { failed: event.payload.failed ?? "" };
       break;
 
     // サービスの起動は記録だけ（タスクの状態は変えない。PBI-47）
@@ -1099,4 +1135,17 @@ export function canRereview(task: Task): boolean {
 
 export function isCompleted(task: Task): boolean {
   return task.steps.length > 0 && task.steps.every((s) => s.state === "done" || s.state === "skip");
+}
+
+/**
+ * チケットから取り込んだタスクで、オーケストレーターがチケットを読む（リポジトリ・題・概要を決める）のを待っているか
+ * （PBI-52）。人がリポジトリを選んだ後も、そのリポジトリで題と概要を書くために、もう一度読む。
+ */
+export function awaitingTicketTriage(task: Task): boolean {
+  return (
+    task.ticket !== undefined &&
+    task.steps.length === 0 &&
+    task.repository === undefined &&
+    (!task.repo || task.ticketTriage?.by === "person")
+  );
 }

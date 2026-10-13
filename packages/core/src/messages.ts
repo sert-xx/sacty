@@ -25,6 +25,12 @@ const PARAMS = {
   "project.notFound": null,
   "project.targetDuplicated": z.object({ scope: Scope, target: z.string() }),
   "project.targetTaken": z.object({ scope: Scope, target: z.string(), project: z.string() }),
+  "project.ticketKeyDuplicated": z.object({ platform: z.string(), key: z.string() }),
+  "project.ticketKeyTaken": z.object({
+    platform: z.string(),
+    key: z.string(),
+    project: z.string(),
+  }),
   "pause.alreadyPaused": null,
   "pause.awaitingPerson": null,
   "pause.waitingTasks": null,
@@ -106,6 +112,21 @@ const PARAMS = {
   "notify.notConfigured": null,
   "input.allowRule": null,
   "input.platformName": null,
+  "input.ticketKey": null,
+  // チケットの取り込み（PBI-52）
+  "ticket.platformMissing": z.object({ platform: z.string() }),
+  "ticket.notAllowed": z.object({ platform: z.string(), method: z.string(), path: z.string() }),
+  "ticket.requestFailed": z.object({
+    platform: z.string(),
+    status: z.number(),
+    detail: z.string(),
+  }),
+  "ticket.triageFailed": z.object({ detail: TextParam }),
+  "ticket.triageUnreadable": null,
+  "ticket.repoNotCandidate": z.object({ repo: z.string() }),
+  "ticket.noCandidates": null,
+  "ticket.repoChosenByPerson": null,
+  "ticket.notTriageable": null,
   "input.envName": null,
   "input.headerName": null,
   "input.mcpName": null,
@@ -317,6 +338,10 @@ const ja: MessageDictionary = {
   "project.notFound": "プロジェクトが見つかりません。",
   "project.targetDuplicated": ({ scope, target }) =>
     `${scopeJa[scope]}「${target}」が重複しています。`,
+  "project.ticketKeyDuplicated": ({ platform, key }) =>
+    `チケットの取り込み先（${platform}）のキー「${key}」が重複しています。`,
+  "project.ticketKeyTaken": ({ platform, key, project }) =>
+    `チケットの取り込み先（${platform}）のキー「${key}」は、プロジェクト「${project}」が取り込んでいます。`,
   "project.targetTaken": ({ scope, target, project }) =>
     `${scopeJa[scope]}「${target}」は、プロジェクト「${project}」に登録されています。`,
   "pause.alreadyPaused": "すでに一時停止しています。",
@@ -383,6 +408,25 @@ const ja: MessageDictionary = {
   "input.unknownKeys": ({ keys }) => `知らない項目があります（${keys}）。`,
   "input.invalid": "入力が正しくありません。",
   "input.secretName": "秘密情報の名前は英数字と . _ - だけで書いてください。",
+  "input.ticketKey":
+    "JIRA のプロジェクトのキーは、英大文字で始まる英大文字・数字・_ で書いてください（例 PAY）。1つ以上書きます。",
+  "ticket.platformMissing": ({ platform }) =>
+    `チケットの取り込み先の接続先「${platform}」が、config.yaml の gateway.platforms にありません。`,
+  "ticket.notAllowed": ({ platform, method, path }) =>
+    `接続先「${platform}」の allow に「${method} ${path}」がありません。config.yaml の gateway.platforms.${platform}.allow に足してください。`,
+  "ticket.requestFailed": ({ platform, status, detail }) =>
+    `接続先「${platform}」の API が失敗しました（${status}）：${detail}`,
+  "ticket.triageFailed": ({ detail }, text) =>
+    `オーケストレーターが、チケットを読んで作業するリポジトリを決められませんでした：${text(detail)} リポジトリを選んで再開してください。`,
+  "ticket.triageUnreadable":
+    "オーケストレーターの出力から、作業するリポジトリ・題・概要を読み取れませんでした。",
+  "ticket.repoNotCandidate": ({ repo }) =>
+    `オーケストレーターが選んだリポジトリ（${repo}）は、プロジェクトの対象にありません。`,
+  "ticket.noCandidates":
+    "プロジェクトの対象に、作業するリポジトリの候補がありません（Org の対象のリポジトリを読めなかった可能性があります）。",
+  "ticket.repoChosenByPerson": "人がリポジトリを選びました。",
+  "ticket.notTriageable":
+    "リポジトリを選べるのは、チケットから取り込み、まだリポジトリが決まっていないタスクだけです。",
   "input.platformName":
     "組織内 PF の名前は、英小文字・数字・ハイフンで書いてください（先頭は英小文字か数字）。",
   "input.allowRule":
@@ -589,6 +633,10 @@ const en: MessageDictionary = {
   "project.notFound": "Project not found.",
   "project.targetDuplicated": ({ scope, target }) =>
     `The ${scopeEn[scope]} "${target}" is listed more than once.`,
+  "project.ticketKeyDuplicated": ({ platform, key }) =>
+    `The key "${key}" of the ticket source (${platform}) is duplicated.`,
+  "project.ticketKeyTaken": ({ platform, key, project }) =>
+    `The key "${key}" of the ticket source (${platform}) is already imported by the project "${project}".`,
   "project.targetTaken": ({ scope, target, project }) =>
     `The ${scopeEn[scope]} "${target}" is already registered in the project "${project}".`,
   "pause.alreadyPaused": "The task is already paused.",
@@ -655,6 +703,25 @@ const en: MessageDictionary = {
   "input.unknownKeys": ({ keys }) => `Unknown fields: ${keys}.`,
   "input.invalid": "The input is not valid.",
   "input.secretName": "Use only letters, digits, and . _ - in secret names.",
+  "input.ticketKey":
+    "Write JIRA project keys in uppercase letters, digits and _, starting with a letter (e.g. PAY). Write at least one.",
+  "ticket.platformMissing": ({ platform }) =>
+    `The ticket source "${platform}" is not in gateway.platforms in config.yaml.`,
+  "ticket.notAllowed": ({ platform, method, path }) =>
+    `"${method} ${path}" is not in the allow list of "${platform}". Add it to gateway.platforms.${platform}.allow in config.yaml.`,
+  "ticket.requestFailed": ({ platform, status, detail }) =>
+    `The API of "${platform}" failed (${status}): ${detail}`,
+  "ticket.triageFailed": ({ detail }, text) =>
+    `The Orchestrator could not decide the repository from the ticket: ${text(detail)} Choose a repository and resume.`,
+  "ticket.triageUnreadable":
+    "Could not read the repository, title and summary from the Orchestrator's output.",
+  "ticket.repoNotCandidate": ({ repo }) =>
+    `The repository the Orchestrator chose (${repo}) is not a target of the project.`,
+  "ticket.noCandidates":
+    "The project has no candidate repository (the repositories of org targets may not be readable).",
+  "ticket.repoChosenByPerson": "A person chose the repository.",
+  "ticket.notTriageable":
+    "A repository can be chosen only for a task imported from a ticket whose repository is not decided yet.",
   "input.platformName":
     "Write an internal platform name in lowercase letters, digits, and hyphens (starting with a letter or digit).",
   "input.allowRule":

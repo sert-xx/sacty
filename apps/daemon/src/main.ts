@@ -22,6 +22,7 @@ import { createApp } from "./server.js";
 import { TaskService } from "./service.js";
 import { DockerComposeServices } from "./services.js";
 import { SqliteSettingsStore } from "./settings.js";
+import { JiraTickets } from "./tickets.js";
 import { Worker } from "./worker.js";
 
 const home = resolveHome();
@@ -62,6 +63,8 @@ const platforms = () => {
   return c.ok ? c.config.platforms : [];
 };
 const credentials = new PlatformCredentials({ secrets });
+// チケット（JIRA など）の検索とコメント。接続先と認証は gateway.platforms のもの（PBI-52）
+const tickets = new JiraTickets({ credentials });
 // ホストで動かす MCP サーバー（PBI-36）。認証の期限の前に、起動し直して再認証する
 const hostMcp = new HostMcpServers({
   specs: () => {
@@ -95,6 +98,7 @@ const service = new TaskService({
   github,
   tests,
   services: composeServices,
+  tickets,
   workspaceRoot: join(home, "workspaces"),
   gateway,
   platformProblems: (names) => credentials.unavailable(names),
@@ -114,7 +118,7 @@ const status = service.status();
 for (const problem of status.problems) console.warn(`[daemon] ${renderMessage(problem, "ja")}`);
 
 const worker = new Worker(service);
-const intake = new IssueIntake(service, new GitHubIssueSearch(), github, config);
+const intake = new IssueIntake(service, new GitHubIssueSearch(), github, config, Date.now, tickets);
 // 成果物チェックで待っている PR を見守る（マージで承認。PBI-14a）
 const prWatcher = new PullRequestWatcher(service);
 const app = createApp(service, token, { intake });
