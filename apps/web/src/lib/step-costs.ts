@@ -169,14 +169,3 @@ export function stepCosts(task: Task, activity: readonly ActivityEvent[]) {
     total: { usage: total.usage, costUsd: total.costUsd, estimated: total.estimated },
   };
 }
-
-/**
- * 実行の設定の、重ならない値（古い順）。記録が無い実行は undefined として含める（「—」と出す）。
- * 同じ工程を違う設定で動かした（設定を変えた後に差し戻した）ときは、複数の値になる。
- */
-export function distinctSetting(
-  runs: readonly CostRun[],
-  key: "model" | "reasoningEffort",
-): (string | undefined)[] {
-  return [...new Set(runs.map((r) => r[key]))];
-}

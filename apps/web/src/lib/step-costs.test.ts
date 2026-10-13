@@ -1,6 +1,6 @@
 import { type ActivityEvent, EventInput, project, type Task } from "@sacty/core";
 import { describe, expect, it } from "vitest";
-import { distinctSetting, stepCosts } from "./step-costs";
+import { stepCosts } from "./step-costs";
 
 let seq = 0;
 const ev = (input: EventInput, actor: ActivityEvent["actor"] = "sacty", taskId = "t1") =>
@@ -236,10 +236,10 @@ describe("工程ごとの費用（PBI-46）", () => {
       ["a", "subscription", undefined, 0.0105, "completed"],
     ]);
     expect(requirements?.runs[1]?.usage).toBeUndefined();
-    // 設定を変えて動かしたときは、値をすべて出す（記録の無い回は「—」）
-    expect(distinctSetting(requirements?.runs ?? [], "model")).toEqual(["m1", "m2", undefined]);
-    expect(distinctSetting(requirements?.runs ?? [], "reasoningEffort")).toEqual([
+    // 設定を変えて動かしたときは、回ごとの設定を持つ（記録の無い回は undefined で、画面では「—」）
+    expect(requirements?.runs.map((r) => r.reasoningEffort)).toEqual([
       "high",
+      undefined,
       undefined,
     ]);
   });
