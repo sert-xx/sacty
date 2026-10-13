@@ -1875,6 +1875,18 @@ describe("ゴールガーディアン：変更の申し出の判定（PBI-9）",
     activity.close();
   });
 
+  it("ゴールガーディアンの実行に失敗したら、判定の記録に実行の失敗を残す（PBI-46 レビュー指摘）", async () => {
+    const { activity, service, id } = await proposeAndJudge([
+      designWithProposal(),
+      { kind: "failed", reason: "auth", message: "401 Unauthorized" },
+    ]);
+    expect(service.get(id)?.task.status).toBe("escalated");
+    expect(service.get(id)?.activity.find((e) => e.type === "ChangeJudged")?.payload).toMatchObject(
+      { verdict: "undecidable", runResult: "failed" },
+    );
+    activity.close();
+  });
+
   it("判定できなければエスカレーションになり、人間が認めるか認めないかを決める", async () => {
     const { activity, service, id } = await proposeAndJudge([
       designWithProposal(),
@@ -1883,6 +1895,10 @@ describe("ゴールガーディアン：変更の申し出の判定（PBI-9）",
     const escalated = service.get(id)?.task;
     expect(escalated?.status).toBe("escalated");
     expect(escalated?.proposals[0]?.judgement).toMatchObject({ verdict: "undecidable" });
+    // 実行はできた（判断できなかっただけ）ことを記録する（PBI-46 レビュー指摘）
+    expect(service.get(id)?.activity.find((e) => e.type === "ChangeJudged")?.payload).toMatchObject(
+      { runResult: "completed" },
+    );
     expect(() => service.approve(id, { step: "design", submission: 1 })).toThrow();
     expect(() => service.decideChange(id, "CP-9", { accept: true })).toThrow(
       /判断待ちではありません/,
@@ -1995,6 +2011,9 @@ describe("ゴールガーディアン：変更の申し出の判定（PBI-9）",
     const task = restarted.get(id)?.task;
     expect(task?.status).toBe("escalated");
     expect(ja(task?.proposals[0]?.judgement?.reason)).toMatch(/中断/);
+    expect(
+      restarted.get(id)?.activity.find((e) => e.type === "ChangeJudged")?.payload,
+    ).toMatchObject({ runResult: "interrupted" });
     activity.close();
   });
 

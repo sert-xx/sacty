@@ -706,6 +706,7 @@ export class TaskService {
         : { reason: message("run.guardianFailed", { detail: outcome.message }) };
     return {
       ...judgement,
+      runResult: outcome.kind === "completed" ? "completed" : "failed",
       agentId: agent.id,
       ...agentSetting(agent),
       usage: outcome.usage,
@@ -1072,6 +1073,7 @@ export class TaskService {
                 verdict: "undecidable",
                 reason: message("run.guardianInterrupted"),
                 agentId: "unknown",
+                runResult: "interrupted",
               },
             },
           },
@@ -2839,6 +2841,7 @@ export class TaskService {
     return {
       proposalId: proposal.id,
       ...judgement,
+      runResult: outcome.kind === "completed" ? "completed" : "failed",
       agentId: agent.id,
       ...agentSetting(agent),
       usage: outcome.usage,

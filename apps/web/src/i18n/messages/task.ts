@@ -119,7 +119,7 @@ const ja = {
     children: "子タスクの合計",
     breakdown: (n: number) => `各回の内訳（${n}回）`,
     nth: (n: number) => `${n}回目`,
-    result: { completed: "完了", failed: "失敗", running: "実行中" },
+    result: { completed: "完了", failed: "失敗", interrupted: "中断", running: "実行中" },
   },
 };
 
@@ -245,7 +245,12 @@ const en: TaskMessages = {
     children: "Total for subtasks",
     breakdown: (n) => `Breakdown per run (${n})`,
     nth: (n) => `Run ${n}`,
-    result: { completed: "Completed", failed: "Failed", running: "Running" },
+    result: {
+      completed: "Completed",
+      failed: "Failed",
+      interrupted: "Interrupted",
+      running: "Running",
+    },
   },
 };
 

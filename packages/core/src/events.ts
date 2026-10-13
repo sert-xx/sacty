@@ -460,6 +460,13 @@ const ChangeProposed = z.object({
 });
 
 /** ゴールガーディアンの判定。判定ごとに新しいセッションで実行する。 */
+/**
+ * ゴールガーディアンの実行の結果（PBI-46）。completed：実行できた（判断できなかった場合も含む）、failed：実行に
+ * 失敗した、interrupted：デーモンの停止で中断した。以前の作業履歴には無い（理由の文言から判別する）。
+ */
+export const GuardianRunResult = z.enum(["completed", "failed", "interrupted"]);
+export type GuardianRunResult = z.infer<typeof GuardianRunResult>;
+
 const ChangeJudged = z.object({
   type: z.literal("ChangeJudged"),
   payload: z.object({
@@ -468,6 +475,7 @@ const ChangeJudged = z.object({
     /** ゴールガーディアンが書いた理由。実行に失敗したときは sacty の文言（PBI-11）。 */
     reason: DaemonText,
     agentId: z.string(),
+    runResult: GuardianRunResult.optional(),
     ...AgentSetting,
     usage: TokenUsage.optional(),
     costUsd: z.number().nonnegative().default(0),
@@ -705,6 +713,7 @@ const ReworkJudged = z.object({
     /** ゴールガーディアンが書いた理由。実行に失敗したときは sacty の文言。 */
     reason: DaemonText,
     agentId: z.string(),
+    runResult: GuardianRunResult.optional(),
     ...AgentSetting,
     usage: TokenUsage.optional(),
     costUsd: z.number().nonnegative().default(0),

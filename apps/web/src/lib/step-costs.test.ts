@@ -357,6 +357,49 @@ describe("工程ごとの費用（PBI-46）", () => {
     expect(total).toEqual({ usage: undefined, costUsd: 0, estimated: false });
   });
 
+  it("ゴールガーディアンの実行の失敗・中断は、判定の記録でも「完了」にしない（以前の記録は理由の文言で判別する）", () => {
+    seq = 0;
+    const failed = { code: "run.guardianFailed", params: { detail: "401 Unauthorized" } } as const;
+    const interrupted = { code: "run.guardianInterrupted" } as const;
+    const judged = (payload: Record<string, unknown>, type = "ChangeJudged") =>
+      ev(
+        (type === "ChangeJudged"
+          ? {
+              type,
+              payload: { proposalId: "CP-1", verdict: "undecidable", agentId: "g", ...payload },
+            }
+          : { type, payload: { agentId: "g", ...payload } }) as EventInput,
+        "guardian",
+      );
+    const events = [
+      // 記録した実行の結果
+      judged({ reason: failed, runResult: "failed" }),
+      judged({ reason: interrupted, runResult: "interrupted" }),
+      judged({ reason: "判断できない", runResult: "completed" }),
+      judged({ reason: failed, runResult: "failed" }, "ReworkJudged"),
+      // 以前の記録（実行の結果が無い）
+      judged({ reason: failed }),
+      judged({ reason: interrupted }),
+      judged({ reason: failed }, "ReworkJudged"),
+      judged({ reason: "PR の指摘は実装で直せる" }, "ReworkJudged"),
+      // 実行の結果の記録は、理由の文言より優先する
+      judged({ reason: "途中で止まった", runResult: "interrupted" }),
+    ];
+    const task = { id: "t1", steps: [] as Task["steps"] } as Task;
+    const { rows } = stepCosts(task, events);
+    expect(rows[0]?.runs.map((r) => r.result)).toEqual([
+      "failed",
+      "interrupted",
+      "completed",
+      "failed",
+      "failed",
+      "interrupted",
+      "failed",
+      "completed",
+      "interrupted",
+    ]);
+  });
+
   it("開始の記録が無い実行も、費用を落とさない", () => {
     seq = 0;
     const done = ev({

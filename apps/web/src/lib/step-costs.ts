@@ -1,4 +1,12 @@
-import type { ActivityEvent, AuthMode, StepKey, Task, TokenUsage } from "@sacty/core";
+import type {
+  ActivityEvent,
+  AuthMode,
+  DaemonText,
+  GuardianRunResult,
+  StepKey,
+  Task,
+  TokenUsage,
+} from "@sacty/core";
 
 /** 費用の表の行。工程と、オーケストレーター（工程の選択）・ゴールガーディアン（判定・最終レビュー）。 */
 export type CostRole = StepKey | "orchestrator" | "guardian";
@@ -17,7 +25,7 @@ export type CostRun = {
   /** 換算した値（サブスクリプションなど）で、実際の請求ではない。 */
   estimated: boolean;
   /** running：開始の記録だけがある（実行中）。 */
-  result: "completed" | "failed" | "running";
+  result: "completed" | "failed" | "interrupted" | "running";
 };
 
 export type CostRow = {
@@ -141,8 +149,11 @@ export function stepCosts(task: Task, activity: readonly ActivityEvent[]) {
         break;
       }
       case "ChangeJudged":
-      case "FinalReviewed":
       case "ReworkJudged":
+        // 実行に失敗・中断したときも、判定の記録として残る。実行の結果で分ける
+        push("guardian", runOf(event, event.payload, guardianRunResult(event.payload)));
+        break;
+      case "FinalReviewed":
         push("guardian", runOf(event, event.payload, "completed"));
         break;
       case "FinalReviewFailed":
@@ -168,4 +179,20 @@ export function stepCosts(task: Task, activity: readonly ActivityEvent[]) {
     rows,
     total: { usage: total.usage, costUsd: total.costUsd, estimated: total.estimated },
   };
+}
+
+/**
+ * ゴールガーディアンの判定の記録から、実行の結果を出す（PBI-46）。以前の作業履歴（runResult が無い）は、
+ * sacty が書いた失敗・中断の理由の文言で判別する（それ以外は、ゴールガーディアンが実行して書いた理由）。
+ */
+function guardianRunResult(payload: {
+  runResult?: GuardianRunResult;
+  reason: DaemonText;
+}): CostRun["result"] {
+  if (payload.runResult) return payload.runResult;
+  if (typeof payload.reason !== "string") {
+    if (payload.reason.code === "run.guardianFailed") return "failed";
+    if (payload.reason.code === "run.guardianInterrupted") return "interrupted";
+  }
+  return "completed";
 }

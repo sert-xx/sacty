@@ -135,7 +135,7 @@ export async function StepCosts({ task, activity }: { task: Task; activity: Acti
                       </td>
                       <td
                         className={
-                          run.result === "failed"
+                          run.result === "failed" || run.result === "interrupted"
                             ? "py-2 pl-3 whitespace-nowrap text-warn"
                             : "py-2 pl-3 whitespace-nowrap text-muted-foreground"
                         }
