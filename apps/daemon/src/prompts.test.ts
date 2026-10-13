@@ -1,9 +1,18 @@
-import { renderMessage, type Task } from "@sacty/core";
+import {
+  type ActivityEvent,
+  EventInput,
+  project,
+  renderMessage,
+  type Task,
+  type TaskQuestion,
+} from "@sacty/core";
 import { describe, expect, it } from "vitest";
 import {
   allowedPlans,
+  buildChatPrompt,
   buildOrchestratorPrompt,
   buildPrompt,
+  CHAT_PROMPT_MAX,
   commentableLines,
   extractIntegrationReview,
   extractReviewComments,
@@ -333,5 +342,67 @@ describe("工程の選択と内容の調査では、開発のセットアップ�
       "- mock",
     ]);
     expect(servicePromptLines([])).toEqual([]);
+  });
+});
+
+describe("オーケストレーターへの質問の指示（PBI-54）", () => {
+  let seq = 0;
+  const ev = (input: EventInput, actor: ActivityEvent["actor"] = "sacty") =>
+    ({
+      ...EventInput.parse(input),
+      seq: ++seq,
+      id: `e${seq}`,
+      taskId: "t1",
+      projectId: "default",
+      actor,
+      at: "2026-10-13T00:00:00.000Z",
+    }) as ActivityEvent;
+  const ledger = (body: string, extra: EventInput[]) => {
+    seq = 0;
+    const events = [
+      ev({ type: "TaskCreated", payload: { title: "決済API", body, start: "sacty" } }, "person"),
+      ev({ type: "StepsChosen", payload: { steps: ["requirements", "design"] } }),
+      ...extra.map((input) => ev(input)),
+      ev({ type: "QuestionAsked", payload: { questionId: "Q-1", text: "いまどこ？" } }, "person"),
+    ];
+    const task = project(events).get("t1") as Task;
+    return { task, events, question: task.questions[0] as TaskQuestion };
+  };
+
+  it("台帳がどれだけ長くても上限の長さに収め、質問と新しい作業履歴を残す（古い作業履歴から省く）", () => {
+    // 日本語の長い内容と、たくさんの作業履歴
+    const many = Array.from(
+      { length: 2000 },
+      (_, i): EventInput => ({
+        type: "AiRequestsRetried",
+        payload: {
+          runId: `run-${i}`,
+          agentId: "あ".repeat(400),
+          retries: 1,
+          waitedMs: 1,
+          statuses: [429],
+          gaveUp: false,
+        },
+      }),
+    );
+    for (const body of ["い".repeat(200_000), "短い本文"]) {
+      const { task, events, question } = ledger(body, many);
+      const prompt = buildChatPrompt(task, events, question);
+      expect(prompt.length).toBeLessThanOrEqual(CHAT_PROMPT_MAX);
+      // 日本語（3バイト）でも、コマンドの引数の上限（128KiB）に収まる
+      expect(Buffer.byteLength(prompt)).toBeLessThan(128 * 1024);
+      expect(prompt.endsWith("--- 質問 ---\nいまどこ？")).toBe(true);
+      expect(prompt).toContain("run-1999");
+      expect(prompt).not.toContain('run-0"');
+    }
+  });
+
+  it("作業履歴が少なければすべて入れ、質問と答えのイベントは作業履歴に重ねない", () => {
+    const { task, events, question } = ledger("本文", []);
+    const prompt = buildChatPrompt(task, events, question);
+    expect(prompt).toContain("person TaskCreated");
+    expect(prompt).toContain("sacty StepsChosen");
+    expect(prompt).not.toContain("QuestionAsked");
+    expect(prompt).toContain("要求要件（active） → 設計（todo）");
   });
 });

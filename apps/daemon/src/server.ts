@@ -235,6 +235,17 @@ export function createApp(
     }
   });
 
+  // タスクの詳細で、オーケストレーターに質問する（PBI-54）。答えは待たずに返す（画面は答えが出るまで更新する）
+  app.post("/api/tasks/:id/questions", async (c) => {
+    const json = await readJson(c);
+    if (!json.ok) return c.json({ error: "invalid_json" }, 400);
+    try {
+      return c.json({ task: service.askQuestion(c.req.param("id"), json.body).task }, 201);
+    } catch (error) {
+      return handleError(c, error);
+    }
+  });
+
   // 再レビュー（PBI-44）
   app.post("/api/tasks/:id/rereview", (c) => {
     try {

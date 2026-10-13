@@ -49,6 +49,7 @@ const task = (patch: Partial<Task> = {}): Task => ({
   integrationFailures: 0,
   misses: [],
   importedFeedback: [],
+  questions: [],
   submissions: {},
   remarks: [],
   budget: { usedUsd: 0, capUsd: 1, warned: false, estimated: false },
@@ -735,5 +736,51 @@ describe("PR のレビューの取り込み（PBI-44）", () => {
     expect(
       describeIn(ev("TaskCancelled", { reason: "pull_request_merged", cleanup: [] }), labels.en),
     ).toContain("(the PR was merged)");
+  });
+});
+
+describe("オーケストレーターへの質問の作業履歴（PBI-54）", () => {
+  const event = (e: Pick<ActivityEvent, "type" | "payload" | "actor">): ActivityEvent =>
+    ({
+      ...e,
+      seq: 1,
+      id: "e1",
+      taskId: "t1",
+      projectId: "default",
+      at: "2026-10-13T00:00:00.000Z",
+    }) as ActivityEvent;
+
+  it("質問の本文・答えは作業履歴に出さず、ID・費用・答えられなかった理由を出す", () => {
+    expect(
+      describeEvent(
+        event({
+          type: "QuestionAsked",
+          actor: "person",
+          payload: { questionId: "Q-1", text: "本文は出さない" },
+        }),
+      ),
+    ).toBe("オーケストレーターに質問した（Q-1・人間）");
+    const answered = (payload: Record<string, unknown>) =>
+      event({
+        type: "QuestionAnswered",
+        actor: "orchestrator",
+        payload: {
+          questionId: "Q-1",
+          runResult: "completed",
+          agentId: "o",
+          costUsd: 0.0123,
+          estimated: false,
+          ...payload,
+        },
+      } as Pick<ActivityEvent, "type" | "payload" | "actor">);
+    expect(describeEvent(answered({ answer: "答えの本文" }))).toBe(
+      "オーケストレーターが質問に答えた（Q-1・$0.0123）",
+    );
+    expect(describeEvent(answered({ failed: { code: "chat.emptyAnswer" } }))).toBe(
+      "オーケストレーターが質問に答えられなかった（Q-1・$0.0123）：オーケストレーターの答えが空でした。",
+    );
+    expect(describeIn(answered({ answer: "x" }), labels.en)).toBe(
+      "The Orchestrator answered the question (Q-1, $0.0123)",
+    );
   });
 });

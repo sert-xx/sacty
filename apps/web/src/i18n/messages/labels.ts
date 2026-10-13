@@ -220,6 +220,11 @@ const ja = {
       `PR の指摘で${step}まで戻すかを、人間が確かめる（エスカレーション）`,
     PullRequestReviewImported: (number: number, authors: string, count: number) =>
       `PR #${number} への指摘（${authors}）→ ${count}件を取り込み`,
+    QuestionAsked: (id: string, actor: string) => `オーケストレーターに質問した（${id}・${actor}）`,
+    QuestionAnswered: (id: string, failed: string | undefined, cost: string) =>
+      failed === undefined
+        ? `オーケストレーターが質問に答えた（${id}・${cost}）`
+        : `オーケストレーターが質問に答えられなかった（${id}・${cost}）：${failed}`,
     ReworkJudged: (target: string | undefined, reason: string, tail: string) =>
       `ゴールガーディアンが戻し先を判断：${target ?? "判断できない"}（${reason}）（${tail}）`,
   },
@@ -425,6 +430,11 @@ const en: LabelMessages = {
       `Escalated: confirm whether to redo from ${step} for the PR comments`,
     PullRequestReviewImported: (number, authors, count) =>
       `PR #${number} feedback (${authors}) → ${count} comment${count === 1 ? "" : "s"} imported`,
+    QuestionAsked: (id, actor) => `Asked the Orchestrator a question (${id}, ${actor})`,
+    QuestionAnswered: (id, failed, cost) =>
+      failed === undefined
+        ? `The Orchestrator answered the question (${id}, ${cost})`
+        : `The Orchestrator could not answer the question (${id}, ${cost}): ${failed}`,
     ReworkJudged: (target, reason, tail) =>
       `Goal Guardian chose the step to redo: ${target ?? "undecided"} (${reason}) (${tail})`,
   },

@@ -12,9 +12,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { DaemonText, EventInput, StepKey, Task } from "@sacty/core";
 import {
+  ANSWER_MAX,
   isCompleted,
   MVP_STEPS,
   message,
+  QUESTION_MAX,
   renderMessage,
   reworkTargets,
   STEP_PLANS,
@@ -7881,6 +7883,437 @@ describe("JIRA のチケットの取り込みとトリアージ（PBI-52）", ()
     await expect(
       service.chooseTicketRepository(plain.id, "https://github.com/acme/app"),
     ).rejects.toThrow();
+    activity.close();
+  });
+});
+
+describe("タスクの詳細での、オーケストレーターへの質問（PBI-54）", () => {
+  const out = (text: string, usageOutput = 100): AgentOutcome => ({
+    kind: "completed",
+    output: text,
+    usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: usageOutput },
+  });
+  const promptOf = (executor: FakeExecutor, i: number) => executor.calls[i]?.command[2] ?? "";
+  /** 質問しても変わってはいけない、タスクの状態・工程・承認済みの内容。 */
+  const planOf = (task: Task | undefined) => ({
+    status: task?.status,
+    steps: task?.steps,
+    approved: task?.approved,
+    gate: task?.gate,
+    outputs: task?.outputs,
+    currentRunId: task?.currentRunId,
+    pausedReason: task?.pausedReason,
+  });
+
+  /** 要求要件を承認して、設計の実行待ちにしたタスク（対象リポジトリを用意済み）。 */
+  async function approvedRequirements(
+    outcomes: (AgentOutcome | typeof HOLD)[],
+    options: { repos?: FakeRepos } = {},
+  ) {
+    const activity = new SqliteActivityStore(dbPath);
+    const made = makeService(
+      activity,
+      [out("# 要求要件\n\n- 再試行は3回まで"), ...outcomes],
+      options,
+    );
+    const { service } = made;
+    const { id } = service.createTask({
+      projectId: "default",
+      title: "決済API",
+      body: "冪等にする",
+    });
+    await service.runNext(id);
+    service.approve(id, { step: "requirements", submission: 1 });
+    return { ...made, activity, id };
+  }
+
+  it("答えを記録できなければ、答えられなかったこととして記録し、次の質問を塞がない", async () => {
+    const { activity, service, id } = await approvedRequirements([out("答え1"), out("答え2")]);
+    // 答えの記録だけを一度失敗させる
+    const append = activity.append.bind(activity);
+    let failOnce = true;
+    activity.append = (entry) => {
+      if (
+        failOnce &&
+        entry.events.some((e) => e.event.type === "QuestionAnswered" && "answer" in e.event.payload)
+      ) {
+        failOnce = false;
+        throw new Error("disk full");
+      }
+      return append(entry);
+    };
+    const usedBefore = service.get(id)?.task.budget.usedUsd ?? 0;
+    await service.askQuestion(id, { text: "Q1" }).answered;
+    // 実行にかかった費用（100出力トークン = $0.0015）は、答えられなかったときも記録する
+    expect(service.get(id)?.task.budget.usedUsd).toBeCloseTo(usedBefore + 0.0015, 6);
+    expect(service.get(id)?.task.budget.estimated).toBe(true);
+    expect(service.get(id)?.activity.at(-1)).toMatchObject({
+      type: "QuestionAnswered",
+      payload: {
+        runResult: "failed",
+        costUsd: 0.0015,
+        usage: { output: 100 },
+        agentId: "claude-subscription",
+      },
+    });
+    const first = service.get(id)?.task.questions[0]?.answer;
+    expect(first && "failed" in first ? ja(first.failed) : "").toContain("disk full");
+    await service.askQuestion(id, { text: "Q2" }).answered;
+    expect(service.get(id)?.task.questions[1]?.answer?.text).toBe("答え2");
+    activity.close();
+  });
+
+  it("質問すると、台帳を読んだオーケストレーターが答え、状態・工程・承認済みの内容は変わらない", async () => {
+    const { activity, service, executor, repos, id } = await approvedRequirements([
+      out("いまは**設計**の実行待ちです。", 1000),
+    ]);
+    const before = service.get(id)?.task;
+    const usedBefore = before?.budget.usedUsd ?? 0;
+    const { task: asked, answered } = service.askQuestion(id, { text: "  いまどこまで進んだ？  " });
+    expect(asked.questions).toEqual([
+      { id: "Q-1", text: "いまどこまで進んだ？", askedAt: expect.any(String) },
+    ]);
+    await answered;
+
+    const task = service.get(id)?.task;
+    expect(task?.questions).toEqual([
+      {
+        id: "Q-1",
+        text: "いまどこまで進んだ？",
+        askedAt: expect.any(String),
+        answer: { text: "いまは**設計**の実行待ちです。", at: expect.any(String) },
+      },
+    ]);
+    expect(planOf(task)).toEqual(planOf(before));
+    expect(service.queuedTaskIds()).toEqual([id]);
+    // 費用はタスクの費用に入る（1000出力トークン = $0.015）
+    expect(task?.budget.usedUsd).toBeCloseTo(usedBefore + 0.015, 6);
+    expect(service.get(id)?.activity.at(-1)).toMatchObject({
+      type: "QuestionAnswered",
+      actor: "orchestrator",
+      payload: { questionId: "Q-1", runResult: "completed", agentId: "claude-subscription" },
+    });
+
+    // 台帳（承認済みの要求要件・工程・作業履歴・費用）と質問を渡し、計画は変えさせない
+    const prompt = promptOf(executor, 1);
+    expect(prompt).toContain("あなたはオーケストレーターです");
+    expect(prompt).toContain("--- 承認済みの要求要件 ---\n# 要求要件\n\n- 再試行は3回まで");
+    expect(prompt).toContain("要求要件（done） → 設計（active）");
+    expect(prompt).toContain("StepApproved");
+    expect(prompt).toContain(
+      "タスクの計画（工程・承認済みの成果物・タスクの状態）は変えられません",
+    );
+    expect(prompt).toContain("--- 質問 ---\nいまどこまで進んだ？");
+    // 用意済みのタスクは、対象リポジトリの起点のコードを使い捨ての写しで渡す
+    expect(repos.snapshots.at(-1)?.baseCommit).toBe("base123");
+    expect(executor.scratch[1]).toBe(true);
+    expect(executor.workspaceFiles[1]).toEqual(["README.md"]);
+    expect(existsSync(executor.dirs[1] ?? "")).toBe(false);
+    expect(prompt).toContain("起点のコミット（base123）のコードがあります");
+
+    // 開き直しても（作業履歴から復元しても）読める
+    const reopened = makeService(activity).service;
+    expect(reopened.get(id)?.task.questions).toEqual(task?.questions);
+    activity.close();
+  });
+
+  it("まだ対象リポジトリを用意していないタスクでは、コードを渡さずに台帳だけで答える", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service, executor, repos } = makeService(activity, [out("工程はまだ決めていません。")]);
+    const { id } = service.createTask({ projectId: "default", title: "決済API", body: "" });
+    await service.askQuestion(id, { text: "工程は？" }).answered;
+    expect(repos.snapshots).toEqual([]);
+    expect(executor.workspaceFiles[0]).toEqual([]);
+    expect(promptOf(executor, 0)).toContain("対象リポジトリはまだ用意されていないため");
+    expect(service.get(id)?.task).toMatchObject({ status: "queued", steps: [] });
+    activity.close();
+  });
+
+  it("作業中（工程の実行中）のタスクでも質問でき、作業中の実行を止めない", async () => {
+    const { activity, service, executor, id } = await approvedRequirements([
+      HOLD,
+      out("設計を書いています。"),
+    ]);
+    const running = service.runNext(id);
+    const stepRun = await executor.started.promise;
+    const before = service.get(id)?.task;
+    expect(before?.status).toBe("running");
+
+    await service.askQuestion(id, { text: "いま何をしている？" }).answered;
+    const task = service.get(id)?.task;
+    expect(task?.questions[0]?.answer?.text).toBe("設計を書いています。");
+    expect(planOf(task)).toEqual(planOf(before));
+    expect(executor.killed).toEqual([]);
+    // 作業中の実行には話しかけない（別の実行。プロンプトも別）
+    expect(executor.dirs[2]).not.toBe(executor.dirs[1]);
+    expect(promptOf(executor, 2)).toContain("--- 質問 ---\nいま何をしている？");
+
+    // 一時停止は工程の実行だけを止める
+    await service.pause(id);
+    await running;
+    expect(executor.killed).toEqual([stepRun]);
+    activity.close();
+  });
+
+  it("答えを待っている間は次の質問を受け付けず、答えが出たら続けて質問でき、すべて残る", async () => {
+    const { activity, service, executor, id } = await approvedRequirements([
+      HOLD,
+      out("2つ目の答え"),
+      out("3つ目の答え"),
+    ]);
+    expect(service.get(id)?.task.questions).toEqual([]);
+    const first = service.askQuestion(id, { text: "1つ目" });
+    const chatRun = await executor.started.promise;
+    expect(() => service.askQuestion(id, { text: "同時の質問" })).toThrow(
+      expect.objectContaining({ messages: [{ code: "chat.answering" }] }),
+    );
+    // 1つ目の実行が失敗しても、使った分を記録して次の質問を受け付ける
+    executor.kill(chatRun);
+    await first.answered;
+    expect(service.get(id)?.task.questions[0]?.answer).toEqual({
+      failed: message("chat.failed", { detail: "container killed" }),
+      at: expect.any(String),
+    });
+
+    await service.askQuestion(id, { text: "2つ目" }).answered;
+    await service.askQuestion(id, { text: "3つ目" }).answered;
+    const questions = service.get(id)?.task.questions ?? [];
+    expect(questions.map((q) => [q.id, q.text, q.answer?.text])).toEqual([
+      ["Q-1", "1つ目", undefined],
+      ["Q-2", "2つ目", "2つ目の答え"],
+      ["Q-3", "3つ目", "3つ目の答え"],
+    ]);
+    // 前の質問と答えも渡す（答えられなかったものは渡さない）
+    const third = promptOf(executor, 3);
+    expect(third).toContain("[Q-2] 質問：2つ目\n答え：2つ目の答え");
+    expect(third).not.toContain("[Q-1]");
+    expect(service.get(id)?.task.status).toBe("queued");
+    activity.close();
+  });
+
+  it("予算の上限に達したタスク（ちょうど上限を含む）では質問できず、理由を返す", async () => {
+    // 要求要件の実行で 1000 出力トークン = $0.015。上限 $0.015 ちょうどに達する
+    const activity = new SqliteActivityStore(dbPath);
+    const { service, executor } = makeService(activity, [out("# 要求要件", 1000)], {
+      config: configOf(agent(), 0.015),
+    });
+    const { id } = service.createTask({ projectId: "default", title: "決済API", body: "" });
+    await service.runNext(id);
+    expect(service.get(id)?.task.budget.usedUsd).toBe(0.015);
+    expect(() => service.askQuestion(id, { text: "まだ質問できる？" })).toThrow(
+      expect.objectContaining({
+        messages: [message("chat.budgetExceeded", { usedUsd: 0.015, capUsd: 0.015 })],
+      }),
+    );
+    expect(service.get(id)?.task.questions).toEqual([]);
+    expect(executor.calls).toHaveLength(1);
+    expect(ja(message("chat.budgetExceeded", { usedUsd: 0.015, capUsd: 0.015 }))).toContain(
+      "予算の上限に達しているため、質問できません",
+    );
+    activity.close();
+  });
+
+  it("上限の手前なら質問でき、答えで上限を超えても、タスクの状態は変えない（次の実行の前に止まる）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service } = makeService(activity, [out("# 要求要件", 999), out("答え", 1000)], {
+      config: configOf(agent(), 0.015),
+    });
+    const { id } = service.createTask({ projectId: "default", title: "決済API", body: "" });
+    await service.runNext(id);
+    const before = service.get(id)?.task;
+    await service.askQuestion(id, { text: "質問" }).answered;
+    const task = service.get(id)?.task;
+    expect(task?.questions[0]?.answer?.text).toBe("答え");
+    expect(task?.budget.usedUsd).toBeCloseTo(0.029985, 6);
+    expect(task?.budget.warned).toBe(true);
+    expect(planOf(task)).toEqual(planOf(before));
+    expect(() => service.askQuestion(id, { text: "もう1つ" })).toThrow(
+      expect.objectContaining({
+        messages: [expect.objectContaining({ code: "chat.budgetExceeded" })],
+      }),
+    );
+    activity.close();
+  });
+
+  it("答えに含まれる秘密情報は、切り詰める前に伏せ、答え・作業履歴に残さない", async () => {
+    // 実行に渡した秘密情報（サブスクリプションのトークン）を、答えの切り詰めの境界をまたぐ位置に置く
+    const secret = "oauth-secret";
+    for (const pad of [ANSWER_MAX - 6, ANSWER_MAX - 1, ANSWER_MAX, 10]) {
+      rmSync(dbPath, { force: true });
+      const activity = new SqliteActivityStore(dbPath);
+      const { service } = makeService(activity, [out(`${"x".repeat(pad)}${secret}末尾`)]);
+      const { id } = service.createTask({ projectId: "default", title: "決済API", body: "" });
+      await service.askQuestion(id, { text: "トークンを教えて" }).answered;
+      const answer = service.get(id)?.task.questions[0]?.answer?.text ?? "";
+      // 長い答えは、上限の長さで切り詰めて記録する（記録できずに答えを失わない）
+      expect(answer.length).toBe(Math.min(ANSWER_MAX, pad + "[REDACTED]末尾".length));
+      expect(answer.startsWith("x".repeat(Math.min(pad, ANSWER_MAX - 1)))).toBe(true);
+      for (let n = 4; n <= secret.length; n++) {
+        expect(answer).not.toContain(secret.slice(0, n));
+      }
+      expect(JSON.stringify(service.get(id)?.activity)).not.toContain(secret);
+      activity.close();
+    }
+  });
+
+  it("答えられなかったときも理由と費用を記録し、理由から秘密情報を除く", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service } = makeService(activity, [
+      { kind: "failed", reason: "error", message: "boom oauth-secret" },
+      out("   "),
+    ]);
+    const { id } = service.createTask({ projectId: "default", title: "決済API", body: "" });
+    await service.askQuestion(id, { text: "1" }).answered;
+    await service.askQuestion(id, { text: "2" }).answered;
+    const [first, second] = service.get(id)?.task.questions ?? [];
+    expect(ja(first?.answer?.failed)).toContain("boom [REDACTED]");
+    expect(second?.answer?.failed).toEqual(message("chat.emptyAnswer"));
+    expect(service.get(id)?.task.budget.usedUsd).toBeCloseTo(0.0015, 6);
+    expect(JSON.stringify(service.get(id)?.activity)).not.toContain("oauth-secret");
+    activity.close();
+  });
+
+  it("一時停止しても答えている実行は止めず、一時停止中のタスクにも答えを記録する（状態は一時停止のまま）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service, executor } = makeService(activity, [HOLD]);
+    const { id } = service.createTask({ projectId: "default", title: "決済API", body: "" });
+    const { answered } = service.askQuestion(id, { text: "質問" });
+    const chatRun = await executor.started.promise;
+    const paused = await service.pause(id);
+    expect(paused).toMatchObject({ status: "paused", pausedReason: "manual" });
+    expect(executor.killed).toEqual([]);
+    // 一時停止中も質問は1件ずつ
+    expect(() => service.askQuestion(id, { text: "もう1つ" })).toThrow(
+      expect.objectContaining({ messages: [{ code: "chat.answering" }] }),
+    );
+    executor.kill(chatRun);
+    await answered;
+    const task = service.get(id)?.task;
+    expect(task).toMatchObject({ status: "paused", pausedReason: "manual" });
+    expect(task?.questions[0]?.answer?.failed).toEqual(
+      message("chat.failed", { detail: "container killed" }),
+    );
+    activity.close();
+  });
+
+  it("中止すると、答えている実行を止めて中断を記録してから中止し、以後は質問できない", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service, executor } = makeService(activity, [HOLD]);
+    const { id } = service.createTask({ projectId: "default", title: "決済API", body: "" });
+    const { answered } = service.askQuestion(id, { text: "質問" });
+    const chatRun = await executor.started.promise;
+    await service.cancel(id);
+    await answered;
+    expect(executor.killed).toEqual([chatRun]);
+    const types = service.get(id)?.activity.map((e) => e.type) ?? [];
+    expect(types.slice(-2)).toEqual(["QuestionAnswered", "TaskCancelled"]);
+    expect(service.get(id)?.task.questions[0]?.answer?.failed).toEqual(message("chat.cancelled"));
+    expect(() => service.askQuestion(id, { text: "もう1つ" })).toThrow(
+      expect.objectContaining({ messages: [{ code: "task.cancelled" }] }),
+    );
+    activity.close();
+  });
+
+  it("コードを書き出している間に中止したら、コンテナを起動せずに中断を記録する", async () => {
+    const gate = Promise.withResolvers<void>();
+    const entered = Promise.withResolvers<void>();
+    class GatedRepos extends FakeRepos {
+      armed = false;
+      override async snapshot(gitDir: string, baseCommit: string, outDir: string) {
+        if (this.armed) {
+          entered.resolve();
+          await gate.promise;
+        }
+        return super.snapshot(gitDir, baseCommit, outDir);
+      }
+    }
+    const repos = new GatedRepos();
+    const { activity, service, executor, id } = await approvedRequirements([out("答え")], {
+      repos,
+    });
+    repos.armed = true;
+    const { answered } = service.askQuestion(id, { text: "質問" });
+    await entered.promise;
+    const cancelling = service.cancel(id);
+    gate.resolve();
+    await cancelling;
+    await answered;
+    expect(executor.calls).toHaveLength(1);
+    const question = service.get(id)?.task.questions[0];
+    expect(question?.answer?.failed).toEqual(message("chat.cancelled"));
+    expect(service.get(id)?.activity.findLast((e) => e.type === "QuestionAnswered")).toMatchObject({
+      payload: { runResult: "interrupted", costUsd: 0 },
+    });
+    expect(service.get(id)?.task.status).toBe("cancelled");
+    activity.close();
+  });
+
+  it("デーモンが止まって答えられなかった質問は、起動のときに中断として記録し、また質問できる", async () => {
+    const first = new SqliteActivityStore(dbPath);
+    const { service: before } = makeService(first, [HOLD]);
+    const { id } = before.createTask({ projectId: "default", title: "決済API", body: "" });
+    before.askQuestion(id, { text: "質問" });
+
+    const second = new SqliteActivityStore(dbPath);
+    const { service } = makeService(second, [out("答え")]);
+    expect(service.get(id)?.task.questions[0]?.answer).toBeUndefined();
+    service.recoverInterrupted();
+    expect(service.get(id)?.task.questions[0]?.answer?.failed).toEqual(
+      message("run.daemonStopped"),
+    );
+    expect(service.get(id)?.task.status).toBe("queued");
+    await service.askQuestion(id, { text: "もう一度" }).answered;
+    expect(service.get(id)?.task.questions[1]?.answer?.text).toBe("答え");
+    first.close();
+    second.close();
+  });
+
+  it("API：質問を受け付けて 201、空・長すぎる質問は 400、質問できない状態は 409 で理由を返す", async () => {
+    const token = "test-token";
+    const headers = { authorization: `Bearer ${token}`, "content-type": "application/json" };
+    const activity = new SqliteActivityStore(dbPath);
+    const { service } = makeService(activity, [HOLD]);
+    const app = createApp(service, token);
+    const { id } = service.createTask({ projectId: "default", title: "決済API", body: "" });
+    const ask = (taskId: string, body: unknown) =>
+      app.request(`/api/tasks/${taskId}/questions`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(body),
+      });
+    const empty = await ask(id, { text: "   " });
+    expect(empty.status).toBe(400);
+    expect(await empty.json()).toMatchObject({
+      issues: [{ path: ["text"], message: { code: "input.questionRequired" } }],
+    });
+    expect((await ask(id, { text: "あ".repeat(QUESTION_MAX + 1) })).status).toBe(400);
+    const ok = await ask(id, { text: "あ".repeat(QUESTION_MAX) });
+    expect(ok.status).toBe(201);
+    expect(((await ok.json()) as { task: Task }).task.questions).toHaveLength(1);
+    const again = await ask(id, { text: "続けて" });
+    expect(again.status).toBe(409);
+    expect(await again.json()).toEqual({
+      error: "invalid_operation",
+      messages: [{ code: "chat.answering" }],
+    });
+    expect((await ask("nope", { text: "質問" })).status).toBe(409);
+    activity.close();
+  });
+
+  it("設定に問題があれば、質問を記録せずに理由を返す", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { id } = makeService(activity).service.createTask({
+      projectId: "default",
+      title: "決済API",
+      body: "",
+    });
+    const { service } = makeService(activity, [], {
+      config: () => ({ ok: false, problem: "config.yaml が読めません" }),
+    });
+    expect(() => service.askQuestion(id, { text: "質問" })).toThrow(
+      expect.objectContaining({ messages: [{ code: "chat.unavailable" }] }),
+    );
+    expect(service.get(id)?.task.questions).toEqual([]);
     activity.close();
   });
 });

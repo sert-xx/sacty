@@ -1,4 +1,5 @@
 import {
+  type ActivityEvent,
   type DaemonText,
   type FinalReview,
   type IntegrationReview,
@@ -15,6 +16,7 @@ import {
   sameGitHubUrl,
   type Task,
   type TaskProposal,
+  type TaskQuestion,
   type TestMapping,
   type TestViewpoint,
   type Verdict,
@@ -1282,6 +1284,165 @@ export function extractRework(
     }
   }
   return { reason: message("guardian.reworkUnreadable") };
+}
+
+/**
+ * 質問への答えの指示の長さの上限（文字数。PBI-54）。指示はコンテナのコマンドの引数で渡すので、1つの引数の上限
+ * （Linux の 128KiB）に、日本語（UTF-8 で3バイト）でも収まるようにする。作業履歴は、残りに入る分だけ新しいものから入れる。
+ */
+export const CHAT_PROMPT_MAX = 40_000;
+/** 成果物・タスクの内容は、それぞれ先頭のこの文字数だけ入れる。 */
+const CHAT_TEXT_IN_PROMPT = 4_000;
+/** これまでの質問と答えは、直近のこの件数を、答えの先頭のこの文字数だけ入れる。 */
+const CHAT_HISTORY_IN_PROMPT = 3;
+const CHAT_ANSWER_IN_PROMPT = 1_500;
+/** 作業履歴の1件の内容は、先頭のこの文字数だけ入れる。 */
+const CHAT_EVENT_IN_PROMPT = 300;
+
+/** 長い文を先頭だけにする。 */
+function clip(text: string, max: number): string {
+  return text.length > max ? `${text.slice(0, max)}\n…（長いため、先頭だけ）` : text;
+}
+
+/** 作業履歴の1件を、指示に入れる1行にする（長い内容は切り詰める）。 */
+function chatEventLine(event: ActivityEvent): string {
+  const payload = JSON.stringify(event.payload);
+  const shown =
+    payload.length > CHAT_EVENT_IN_PROMPT ? `${payload.slice(0, CHAT_EVENT_IN_PROMPT)}…` : payload;
+  return `- ${event.at} ${event.actor} ${event.type} ${shown}`;
+}
+
+/** 質問への答えに渡す、判定（テスト・最終レビュー・統合レビュー・再現・変更の申し出）。 */
+function chatJudgementLines(task: Task): string[] {
+  const lines: string[] = [];
+  if (task.lastTests) {
+    const t = task.lastTests;
+    lines.push(
+      `- テストの実行（${t.at}）：${t.passed ? "合格" : "不合格"}（${t.command}・終了コード ${t.exitCode}）`,
+    );
+  }
+  if (task.lastReview) {
+    const r = task.lastReview;
+    lines.push(
+      `- 最終レビュー（${r.at}）：${r.passed ? "合格" : "不合格"}${r.summary ? `（${ja(r.summary)}）` : ""}`,
+      ...r.viewpoints.map(
+        (v) =>
+          `  - [${v.viewpointId}] ${v.verified ? "検証している" : "検証していない"}：${ja(v.reason)}`,
+      ),
+    );
+  }
+  if (task.integration) {
+    const i = task.integration;
+    lines.push(
+      `- 統合レビュー（${i.at}）：${i.passed ? "合格" : "不合格"}${i.summary ? `（${ja(i.summary)}）` : ""}`,
+      ...i.findings.map((f) => `  - 足りないこと：${f}`),
+    );
+  }
+  if (task.reproduction) {
+    lines.push(
+      `- 再現の確かめ（${task.reproduction.at}）：${task.reproduction.reproduced ? "再現できた" : "再現できなかった"}`,
+    );
+  }
+  for (const p of task.proposals) {
+    lines.push(
+      `- 変更の申し出 ${p.id}（${STEP_NAME[p.target]}）：${p.judgement ? `${p.judgement.verdict}（${ja(p.judgement.reason)}）` : "判定中"}${p.applied ? "・反映済み" : ""}`,
+    );
+  }
+  return lines.length > 0 ? lines : ["（なし）"];
+}
+
+/**
+ * タスクの詳細で受けた質問への、オーケストレーターの指示（PBI-54）。タスクの台帳（作業履歴・承認済みの成果物・
+ * 工程の出力・判定・費用）を渡して答えさせる。作業中の実行には話しかけず、計画（工程・承認済みの内容）は変えさせない。
+ * 質問ごとに新しいセッションで実行する（これまでの質問と答えは、直近の分を台帳と一緒に渡す）。
+ */
+export function buildChatPrompt(
+  task: Task,
+  activity: readonly ActivityEvent[],
+  question: TaskQuestion,
+): string {
+  const approved = task.steps
+    .filter((s) => task.approved[s.key])
+    .flatMap((s) => [
+      "",
+      `--- 承認済みの${STEP_NAME[s.key]} ---`,
+      clip(task.approved[s.key]?.output ?? "", CHAT_TEXT_IN_PROMPT),
+    ]);
+  const drafts = task.steps
+    .filter((s) => !task.approved[s.key] && task.outputs[s.key] !== undefined)
+    .flatMap((s) => [
+      "",
+      `--- ${STEP_NAME[s.key]}の最新の出力（未承認） ---`,
+      clip(task.outputs[s.key] ?? "", CHAT_TEXT_IN_PROMPT),
+    ]);
+  const viewpoints = task.approved.design?.testViewpoints ?? task.testViewpoints;
+  const remarks = humanRemarks(task);
+  const history = task.questions
+    .filter((q) => q.id !== question.id && q.answer?.text)
+    .slice(-CHAT_HISTORY_IN_PROMPT)
+    .flatMap((q) => [
+      "",
+      `[${q.id}] 質問：${q.text}`,
+      `答え：${clip(q.answer?.text ?? "", CHAT_ANSWER_IN_PROMPT)}`,
+    ]);
+  const repository = task.repository;
+  const head = [
+    "あなたはオーケストレーターです。人間から、このタスクの状況について質問を受けました。",
+    "下のタスクの台帳（作業履歴・承認済みの成果物・工程の出力・判定・費用）を読んで、事実に基づいて答えてください。",
+    "",
+    "- 答えるだけです。タスクの計画（工程・承認済みの成果物・タスクの状態）は変えられません。変更を勧めるときは、人が行う通常の操作（差し戻し・変更の申し出への判断・一時停止・中止など）として書いてください",
+    "- 作業中の工程エージェントには話しかけられません。台帳とコードから分からないことは、分からないと書いてください",
+    "- 秘密情報（API キー・トークン・パスワードなど）は、コードや台帳にあっても答えに書かないでください",
+    "- 質問と同じ言語で、Markdown で答えてください。出力はそのまま人間に見せるので、答えの本文だけを書いてください",
+    ...NO_SETUP_LINES,
+    "",
+    repository
+      ? `作業領域（カレントディレクトリ）に、対象リポジトリ（${repository.url}）の起点のコミット（${repository.baseCommit.slice(0, 7)}）のコードがあります。この実行のための使い捨ての写しで、変更は残りません。コードを読む必要がある質問なら、読んで確かめてください。コードの変更はしないでください。`
+      : "対象リポジトリはまだ用意されていないため、コードは読めません。台帳から答えてください。",
+    "",
+    "--- タスク ---",
+    `タイトル：${task.title}`,
+    `状態：${task.status}${task.pausedReason ? `（一時停止の理由：${task.pausedReason}）` : ""}`,
+    `工程：${task.steps.length > 0 ? task.steps.map((s) => `${STEP_NAME[s.key]}（${s.state}）`).join(" → ") : "（まだ決めていない）"}`,
+    ...(repository
+      ? [
+          `対象リポジトリ：${repository.url}（${repository.baseBranch}・${repository.baseCommit.slice(0, 7)}）`,
+        ]
+      : []),
+    ...(task.pullRequest?.url ? [`PR：${task.pullRequest.url}`] : []),
+    `費用：$${task.budget.usedUsd.toFixed(4)}（予算の上限 $${task.budget.capUsd.toFixed(2)}${task.budget.estimated ? "・換算値を含む" : ""}）`,
+    "",
+    "--- タスクの内容 ---",
+    clip(task.body, CHAT_TEXT_IN_PROMPT) || "（なし）",
+    ...approved,
+    ...drafts,
+    "",
+    "--- テスト観点 ---",
+    ...viewpointLines(viewpoints),
+    "",
+    "--- 判定 ---",
+    ...chatJudgementLines(task),
+    "",
+    "--- 人間の指摘 ---",
+    ...(remarks.length > 0 ? remarks.map((r) => `- [${r.id}] ${r.text}`) : ["（なし）"]),
+    ...(history.length > 0 ? ["", "--- これまでの質問と答え ---", ...history] : []),
+  ].join("\n");
+  const tail = ["", "--- 質問 ---", question.text].join("\n");
+  const heading = "\n--- 作業履歴（古い順。入りきらない古いものは省略） ---";
+  // 台帳が長すぎるときは、質問と作業履歴の見出しの分を残して切り詰める
+  const ledger = clip(head, CHAT_PROMPT_MAX - tail.length - heading.length - 100);
+  // 作業履歴は、残りに入る分だけ新しいものから入れる（質問と答えは、上の「これまでの質問と答え」で渡す）
+  // 改行と「（なし）」の分を残す
+  let room = CHAT_PROMPT_MAX - ledger.length - heading.length - tail.length - 10;
+  const lines: string[] = [];
+  for (const event of [...activity].reverse()) {
+    if (event.type === "QuestionAsked" || event.type === "QuestionAnswered") continue;
+    const line = chatEventLine(event);
+    if (line.length + 1 > room) break;
+    lines.unshift(line);
+    room -= line.length + 1;
+  }
+  return [ledger, heading, ...(lines.length > 0 ? lines : ["（なし）"])].join("\n") + tail;
 }
 
 /**

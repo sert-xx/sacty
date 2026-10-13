@@ -8,8 +8,11 @@ import type {
   TokenUsage,
 } from "@sacty/core";
 
-/** 費用の表の行。工程と、オーケストレーター（工程の選択）・ゴールガーディアン（判定・最終レビュー）。 */
-export type CostRole = StepKey | "orchestrator" | "guardian";
+/**
+ * 費用の表の行。工程と、オーケストレーター（工程の選択）・質問への答え（オーケストレーター。PBI-54）・
+ * ゴールガーディアン（判定・最終レビュー）。
+ */
+export type CostRole = StepKey | "orchestrator" | "chat" | "guardian";
 
 /** 1回の実行。作業履歴に記録が無い項目（PBI-46 より前のモデル・エフォートなど）は持たない。 */
 export type CostRun = {
@@ -159,6 +162,10 @@ export function stepCosts(task: Task, activity: readonly ActivityEvent[]) {
       case "FinalReviewFailed":
         push("guardian", runOf(event, event.payload, "failed"));
         break;
+      // タスクの詳細での質問への答え（PBI-54）
+      case "QuestionAnswered":
+        push("chat", runOf(event, event.payload, event.payload.runResult));
+        break;
     }
   }
 
@@ -169,8 +176,12 @@ export function stepCosts(task: Task, activity: readonly ActivityEvent[]) {
     // 工程の一覧に無い工程の記録（作業履歴の不整合）も、費用を落とさない
     ...[...runs.keys()].filter(
       (role): role is StepKey =>
-        role !== "orchestrator" && role !== "guardian" && !stepKeys.includes(role),
+        role !== "orchestrator" &&
+        role !== "chat" &&
+        role !== "guardian" &&
+        !stepKeys.includes(role),
     ),
+    ...(runs.has("chat") ? ["chat" as const] : []),
     ...(runs.has("guardian") ? ["guardian" as const] : []),
   ];
   const rows: CostRow[] = roles.map((role) => summarize({ role, runs: runs.get(role) ?? [] }));

@@ -14,6 +14,7 @@ import { isLocale, LANG_COOKIE, type LanguagePreference } from "@/i18n/locale";
 import { getMessages } from "@/i18n/server";
 import {
   approveStep,
+  askQuestion,
   cancelTask,
   chooseTicketRepository,
   createTask,
@@ -374,6 +375,26 @@ export async function rereviewTaskAction(
     return { message: a.daemonDown };
   }
   if (!result.ok) return { message: result.message };
+  refresh();
+  return {};
+}
+
+export type QuestionState = { message?: string; text?: string };
+
+/** タスクの詳細で、オーケストレーターに質問する（PBI-54）。送れなければ、書いた質問を残して理由を出す。 */
+export async function askQuestionAction(
+  _prev: QuestionState,
+  formData: FormData,
+): Promise<QuestionState> {
+  const a = (await getMessages()).common.action;
+  const text = String(formData.get("text") ?? "");
+  let result: Awaited<ReturnType<typeof askQuestion>>;
+  try {
+    result = await askQuestion(String(formData.get("taskId") ?? ""), text);
+  } catch {
+    return { message: a.daemonDown, text };
+  }
+  if (!result.ok) return { message: result.message, text };
   refresh();
   return {};
 }
