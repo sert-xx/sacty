@@ -1,14 +1,18 @@
 import type { Task } from "@sacty/core";
 import { getMessages } from "@/i18n/server";
 
-/** sacty が作ったPR（またはブランチ）と、ゴールガーディアンの見逃しの記録。 */
+/**
+ * sacty が作ったPR（またはブランチ）と、ゴールガーディアンの見逃しの記録。要求要件・設計の PR とタスクブランチ
+ * （PBI-57）も並べる。
+ */
 export async function PullRequestCard({ task }: { task: Task }) {
   const pr = task.pullRequest;
-  if (!pr && task.misses.length === 0) return null;
+  const steps = task.stepPullRequests;
+  if (!pr && task.misses.length === 0 && steps.length === 0) return null;
   const messages = await getMessages();
   const m = messages.parts.pullRequest;
   const { step, text } = messages.labels;
-  // 最後に PR の指摘で差し戻した戻し先と、ゴールガーディアンの判断の理由（PBI-58）
+  // 最後に PR の指摘で差し戻した戻し先と、ゴールガーディアンの判断の理由（PBI-58・PBI-57）
   const rework = task.prRework;
   return (
     <section
@@ -18,27 +22,65 @@ export async function PullRequestCard({ task }: { task: Task }) {
       <h2 id="pull-request" className="text-[15px] font-semibold">
         PR <span className="text-[13px] font-normal text-muted-foreground">{m.note}</span>
       </h2>
-      {pr && (
+      {(pr || steps.length > 0 || rework) && (
         <dl className="grid grid-cols-[72px_minmax(0,1fr)] gap-x-3 gap-y-1.5 text-sm leading-6">
-          <dt className="pt-0.5 text-xs text-muted-foreground">PR</dt>
-          <dd className="break-all">
-            {pr.url ? (
-              <a
-                href={pr.url}
-                target="_blank"
-                rel="noreferrer"
-                className="font-semibold text-accent-foreground underline"
-              >
-                {m.open(pr.number)}
-              </a>
-            ) : (
-              <span className="text-muted-foreground">{m.notCreated}</span>
-            )}
-          </dd>
-          <dt className="pt-0.5 text-xs text-muted-foreground">{m.branch}</dt>
-          <dd className="font-mono text-xs leading-6 break-all">{pr.branch}</dd>
-          <dt className="pt-0.5 text-xs text-muted-foreground">{m.commit}</dt>
-          <dd className="font-mono text-xs leading-6">{pr.commit.slice(0, 12)}</dd>
+          {pr && (
+            <>
+              <dt className="pt-0.5 text-xs text-muted-foreground">PR</dt>
+              <dd className="break-all">
+                {pr.url ? (
+                  <a
+                    href={pr.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="font-semibold text-accent-foreground underline"
+                  >
+                    {m.open(pr.number)}
+                  </a>
+                ) : (
+                  <span className="text-muted-foreground">{m.notCreated}</span>
+                )}
+              </dd>
+              <dt className="pt-0.5 text-xs text-muted-foreground">{m.branch}</dt>
+              <dd className="font-mono text-xs leading-6 break-all">{pr.branch}</dd>
+              <dt className="pt-0.5 text-xs text-muted-foreground">{m.commit}</dt>
+              <dd className="font-mono text-xs leading-6">{pr.commit.slice(0, 12)}</dd>
+            </>
+          )}
+          {task.taskBranch && !pr && (
+            <>
+              <dt className="pt-0.5 text-xs text-muted-foreground">{m.taskBranch}</dt>
+              <dd className="font-mono text-xs leading-6 break-all">{task.taskBranch.branch}</dd>
+            </>
+          )}
+          {steps.length > 0 && (
+            <>
+              <dt className="pt-0.5 text-xs text-muted-foreground">{m.stepPullRequests}</dt>
+              <dd>
+                <ul className="flex flex-col gap-1">
+                  {steps.map((p) => (
+                    <li key={p.number} className="[overflow-wrap:anywhere]">
+                      <span className="font-medium">{step[p.step]}</span>{" "}
+                      <a
+                        href={p.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="font-semibold text-accent-foreground underline"
+                      >
+                        {m.open(p.number)}
+                      </a>{" "}
+                      <span className="text-muted-foreground">
+                        {p.superseded ? m.stepState.superseded : m.stepState[p.state]}
+                      </span>
+                      <span className="block font-mono text-xs text-muted-foreground">
+                        {p.path}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </dd>
+            </>
+          )}
           {rework && (
             <>
               <dt className="pt-0.5 text-xs text-muted-foreground">{m.rework}</dt>

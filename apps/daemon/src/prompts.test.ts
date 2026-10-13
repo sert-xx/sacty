@@ -15,6 +15,10 @@ import {
   buildOrchestratorPrompt,
   buildPrompt,
   buildPullRequestBody,
+  buildReworkPrompt,
+  buildStepDocument,
+  buildStepPullRequestBody,
+  buildStepPullRequestTitle,
   buildTicketPullRequestComment,
   CHAT_PROMPT_MAX,
   commentableLines,
@@ -419,6 +423,7 @@ describe("成果の書き出し（PBI-56）", () => {
     body: "",
     steps: [{ key: "requirements", state: "done" }],
     exports: {},
+    stepPullRequests: [],
   } as unknown as Task;
 
   it("使える接続先を渡したときだけ、書き出し先を決めさせる（取り込み元と規約も渡す）", () => {
@@ -572,5 +577,82 @@ describe("成果の書き出し（PBI-56）", () => {
     expect(buildTicketPullRequestComment({ ...task, exports: {} })).toBe(
       "sacty が PR を作りました：https://github.com/acme/app/pull/7\n\n（sacty のタスク t1）",
     );
+  });
+});
+
+describe("要求要件・設計の PR（PBI-57）", () => {
+  const plan = (v: Record<string, unknown>) =>
+    `\`\`\`json\n${JSON.stringify({ "sacty-steps": { plan: "standard", reason: "r", ...v } })}\n\`\`\``;
+
+  it("オーケストレーターに、規約に置き場所があるときだけ置き場所を書かせ、使える形のものだけ読む", () => {
+    const task = {
+      id: "t1",
+      title: "決済",
+      body: "",
+      steps: [],
+      exports: {},
+      stepPullRequests: [],
+    } as unknown as Task;
+    expect(buildOrchestratorPrompt(task)).not.toContain("documentsDir");
+    const prompt = buildOrchestratorPrompt(task, {
+      documents: { rules: "設計書は docs/adr に置く" },
+    });
+    expect(prompt).toContain("- documentsDir：");
+    expect(prompt).toContain("既定は docs/sacty");
+    expect(prompt).toContain("設計書は docs/adr に置く");
+    expect(prompt).toContain('"documentsDir"');
+    expect(extractStepPlan(plan({ documentsDir: "docs/adr/" }))?.documentsDir).toBe("docs/adr");
+    for (const bad of ["../x", "/abs", ".GIT/hooks", "a/./b", "a b", ""]) {
+      expect(extractStepPlan(plan({ documentsDir: bad }))?.documentsDir).toBeUndefined();
+    }
+  });
+
+  it("設計のファイルにはテスト観点を入れ、PR の本文にはマージが承認であることと置き場所を書く", () => {
+    const task = {
+      id: "t1",
+      title: "決済",
+      outputs: { requirements: "# 要求要件", design: "# 設計" },
+      testViewpoints: [{ id: "TV-1", title: "再送", input: "2回", expected: "1回" }],
+      remarks: [
+        {
+          id: "design-1-1",
+          step: "design",
+          round: 1,
+          text: "観点が足りない",
+          response: "足した",
+          voided: false,
+        },
+      ],
+      stepPullRequests: [
+        { step: "requirements", state: "merged", url: "https://github.com/acme/app/pull/7" },
+      ],
+    } as unknown as Task;
+    expect(buildStepDocument(task, "requirements")).toBe(
+      "<!-- sacty task t1 の要求要件。sacty が作成しました。 -->\n\n# 要求要件\n",
+    );
+    const doc = buildStepDocument(task, "design");
+    expect(doc).toContain("# 設計\n\n## テスト観点\n\n- [TV-1] 再送");
+    expect(buildStepPullRequestTitle(task, "design")).toBe("[設計] 決済");
+    const body = buildStepPullRequestBody(task, "design", "docs/sacty/t1/design.md");
+    expect(body).toContain("成果のファイル：`docs/sacty/t1/design.md`");
+    expect(body).toContain("この PR をマージすると、設計を承認したことになり");
+    expect(body).toContain("- 要求要件：https://github.com/acme/app/pull/7");
+    expect(body).toContain("- [design-1-1] 観点が足りない\n  - 対応：足した");
+  });
+
+  it("成果物チェックの PR の指摘の判断の指示は、これまでと同じ（実装・設計・要求要件から選ぶ）", () => {
+    const task = {
+      id: "t1",
+      approved: { requirements: { output: "# 承認済みの要求要件" } },
+      outputs: {},
+      testViewpoints: [],
+    } as unknown as Task;
+    const pr = buildReworkPrompt(task, ["x"], ["implement", "requirements"]);
+    expect(pr).toContain("成果物（PR）に人間が付けた指摘");
+    expect(pr).toContain("- implement（実装）：");
+    const step = buildReworkPrompt(task, ["x"], ["design", "requirements"], "design");
+    expect(step).toContain("設計の PR に人間が付けた指摘");
+    expect(step).not.toContain("implement");
+    expect(step).toContain("（設計をやり直します）");
   });
 });

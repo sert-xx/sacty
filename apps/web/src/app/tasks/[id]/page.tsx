@@ -4,6 +4,7 @@ import {
   canRereview,
   canRetryExport,
   exportDue,
+  gatePullRequest,
   investigationIsGoal,
   openProposal,
   pendingQuestion,
@@ -83,6 +84,8 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
   const parent = task.parent ? (await getTask(task.parent.taskId))?.task : undefined;
   const lastFailure = [...activity].reverse().find((e) => e.type === "AgentRunFailed");
   const proposal = openProposal(task);
+  // 承認ゲートで見守っている、sacty が作った PR（成果物チェック・要求要件・設計。PBI-57）
+  const watched = gatePullRequest(task);
   const messages = await getMessages();
   const { task: m, labels, parts, locale } = messages;
   const action = personAction(task, labels);
@@ -215,13 +218,16 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
                         ? task.integration?.passed === false
                           ? m.gate.integrateFailedHelp(task.integrationFailures)
                           : m.gate.integrateHelp
-                        : task.gate?.step === "pr" && task.pullRequestState === "closed"
+                        : // 成果物チェックの PR と、要求要件・設計の PR（PBI-57）
+                          watched?.state === "closed"
                           ? m.gate.prClosedHelp
-                          : task.gate?.step === "pr" && task.pullRequestState === "merged_outdated"
+                          : watched?.state === "merged_outdated"
                             ? m.gate.prMergedOutdatedHelp
-                            : task.gate?.step === "pr" && task.pullRequestState === "open"
+                            : watched?.step === "pr"
                               ? m.gate.prHelp
-                              : m.gate.reviewHelp}
+                              : watched
+                                ? m.gate.stepPrHelp(labels.step[watched.step])
+                                : m.gate.reviewHelp}
             </p>
           </div>
           <Link
@@ -246,7 +252,11 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
           </p>
           <ul className="flex flex-col gap-1.5">
             {task.cancelled.cleanup.map((c) => (
-              <li key={c.target} className="flex flex-wrap items-baseline gap-2">
+              // 要求要件・設計の PR とブランチ（PBI-57）は、対象ごとに複数ある（片付けた先で区別する）
+              <li
+                key={`${c.target}:${c.result}:${labels.text(c.detail ?? "")}`}
+                className="flex flex-wrap items-baseline gap-2"
+              >
                 <span className="font-medium">{labels.cleanupTarget[c.target]}</span>
                 <span className={c.result === "failed" ? "text-warn" : "text-muted-foreground"}>
                   {labels.cleanupResult[c.result]}

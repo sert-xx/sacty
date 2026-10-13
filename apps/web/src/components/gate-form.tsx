@@ -53,7 +53,7 @@ export function GateForm({
       {pullRequest && (
         <div className="flex flex-col gap-2 rounded-md border border-border bg-muted p-3 text-sm leading-6">
           <p className="font-semibold">{t.prTitle}</p>
-          <p>{t.prHelp}</p>
+          <p>{step === "pr" ? t.prHelp : t.stepPrHelp(stepLabel[step])}</p>
           {pullRequest.url && (
             <a
               href={pullRequest.url}

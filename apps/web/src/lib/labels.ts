@@ -2,6 +2,7 @@ import {
   type ActivityEvent,
   formatUsd,
   GATED_STEPS,
+  gatePullRequest,
   isCompleted,
   openProposal,
   type StepKey,
@@ -33,6 +34,13 @@ export function statusText(task: Task, l: LabelMessages): string {
     if (task.pullRequestState === "merged_outdated") return l.state.prMergedOutdated;
     if (task.pullRequestState === "open") return l.state.prAwaitingMerge(task.gate.submission);
     return l.state.deliverableReview(task.gate.submission);
+  }
+  // 要求要件・設計の PR を作った工程も、PR のマージで承認する（PBI-57）
+  const stepPr = task.status === "awaiting_approval" ? gatePullRequest(task) : undefined;
+  if (task.gate && stepPr) {
+    if (stepPr.state === "closed") return l.state.prClosed;
+    if (stepPr.state === "merged_outdated") return l.state.prMergedOutdated;
+    return l.state.stepPrAwaitingMerge(l.step[task.gate.step], task.gate.submission);
   }
   // 再現できなかった（PBI-29）。承認ではなく、差し戻すか中止するかの判断
   if (task.status === "awaiting_approval" && task.gate?.step === "reproduce") {
@@ -257,6 +265,21 @@ export function describeEvent(event: ActivityEvent, l: LabelMessages): string {
         : e.branchPushed(event.payload.branch, event.payload.commit.slice(0, 7));
     case "BranchPushed":
       return e.BranchPushed(event.payload.branch, event.payload.commit.slice(0, 7));
+    case "TaskBranchCreated":
+      return e.TaskBranchCreated(event.payload.branch, event.payload.commit.slice(0, 7));
+    case "StepBranchPushed":
+      return e.StepBranchPushed(
+        l.step[event.payload.step],
+        event.payload.branch,
+        event.payload.commit.slice(0, 7),
+      );
+    case "StepPullRequestPublished":
+      return e.StepPullRequestPublished(
+        l.step[event.payload.step],
+        event.payload.number,
+        event.payload.path,
+        event.payload.supersedes,
+      );
     case "PullRequestMerged":
       return event.payload.outdated
         ? e.PullRequestMergedOutdated(event.payload.number, event.payload.by)
@@ -330,10 +353,14 @@ export function describeEvent(event: ActivityEvent, l: LabelMessages): string {
       return `${where}${tail}`;
     }
     case "TaskCancelled": {
-      const names = (result: string) =>
-        event.payload.cleanup
-          .filter((c) => c.result === result)
-          .map((c) => l.cleanupTarget[c.target]);
+      const names = (result: string) => [
+        // 要求要件・設計の PR とブランチ（PBI-57）は、対象ごとに複数あるので、名前は1つにまとめる
+        ...new Set(
+          event.payload.cleanup
+            .filter((c) => c.result === result)
+            .map((c) => l.cleanupTarget[c.target]),
+        ),
+      ];
       const cancelled = e.TaskCancelled(names("done"), names("failed"), actor);
       // sacty が中止した理由（レビューの PR がマージされた・閉じられた。PBI-44）
       return event.payload.reason ? e.cancelledBecause(cancelled, event.payload.reason) : cancelled;

@@ -75,6 +75,32 @@ describe("Slack の通知（PBI-38）", () => {
     expect(ja).toContain("<https://github.com/acme/app/pull/7|#7>（マージで承認）");
     const en = notificationText(pr, "approval", "en", "http://127.0.0.1:4700");
     expect(en).toContain("Deliverable review is waiting for your approval");
+    // 要求要件・設計の PR（PBI-57）も、マージで承認する PR を添える
+    const step = notificationText(
+      task({
+        status: "awaiting_approval",
+        gate: { step: "requirements", submission: 1 },
+        stepPullRequests: [
+          {
+            step: "requirements",
+            branch: "b",
+            commit: "c",
+            base: "b",
+            path: "p",
+            url: "https://github.com/acme/app/pull/8",
+            number: 8,
+            repo: "https://github.com/acme/app",
+            submission: 1,
+            state: "open",
+          },
+        ],
+      }),
+      "approval",
+      "ja",
+      "http://x",
+    );
+    expect(step).toContain("要求要件の承認を待っています");
+    expect(step).toContain("<https://github.com/acme/app/pull/8|#8>（マージで承認）");
     const paused = notificationText(
       task({
         status: "paused",

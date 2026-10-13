@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, sep } from "node:path";
 import { message } from "@sacty/core";
@@ -58,6 +58,34 @@ export interface RepositoryWorkspace {
     date: string;
     /** HTTPS の GitHub に認証する環境変数（gh のトークン。PBI-13）。 */
     authEnv?: Record<string, string>;
+    /**
+     * このコミットから、そのまま引き継ぐパス（タスクブランチに積んだ要求要件・設計のファイル。PBI-57）。作業領域には
+     * 無いので、コミットの内容はこのパスだけ commit のものにする（作業領域の変更が無ければ、これまでどおりエラー）。
+     */
+    keep?: { commit: string; paths: string[] };
+  }): Promise<{ commit: string }>;
+  /** 既にあるコミットを、ブランチにプッシュする（タスクブランチを作る。PBI-57）。強制プッシュはしない。 */
+  pushCommit(
+    gitDir: string,
+    commit: string,
+    branch: string,
+    authEnv?: Record<string, string>,
+  ): Promise<void>;
+  /**
+   * parent のコミットに、files（リポジトリの根からの相対パス → 内容）を書いたコミットを作り、ブランチにプッシュする
+   * （要求要件・設計の成果のファイル。PBI-57）。作業領域は使わない。内容が parent と変わらなければ parent をそのまま
+   * 使う（allowEmpty なら、変わらなくても新しいコミットを作る。新しい PR に差分のコミットが要るため）。
+   */
+  commitFiles(input: {
+    gitDir: string;
+    parent: string;
+    files: Record<string, string>;
+    branch: string;
+    message: string;
+    /** コミットの日時（同じ提出では同じ値。再開しても同じコミットを作り直せるように）。 */
+    date: string;
+    allowEmpty?: boolean;
+    authEnv?: Record<string, string>;
   }): Promise<{ commit: string }>;
   /**
    * コミットを、リモートから退避したメタデータに取得する（レビューの対象の PR のコミット。PBI-19）。
@@ -69,6 +97,11 @@ export interface RepositoryWorkspace {
    * PR がマージされた後のベースブランチを読むため。PBI-31）。
    */
   fetchBranch(gitDir: string, branch: string, authEnv?: Record<string, string>): Promise<string>;
+  /**
+   * 2つのコミットの間で変わったパス（PBI-57）。タスクブランチに、sacty が積んでいない変更（人が直接積んだ・
+   * ベースブランチをマージした）が無いかを、実装を積む前に確かめるために使う。どちらのコミットも取得済みであること。
+   */
+  changedPaths(gitDir: string, from: string, to: string): Promise<string[]>;
   /** base と head の分岐点から head までの差分（PR の差分。PBI-19）。 */
   diffCommits(gitDir: string, baseCommit: string, headCommit: string): Promise<string>;
   /** sacty のブランチを、リモートから消す（中止したとき）。 */
@@ -161,6 +194,19 @@ function git(
 }
 
 const COMMIT_RE = /^[0-9a-f]{40,64}$/;
+
+/** ブランチの名前として受け付けるか（オプションに見えるもの・使えない文字を除く）。 */
+function validBranch(branch: string): boolean {
+  return /^[\w./-]+$/.test(branch) && !branch.startsWith("-");
+}
+
+/** コミットに書くファイルのパスとして受け付けるか（リポジトリの中の相対パス。.git・. と .. を含まない）。 */
+function validPath(path: string): boolean {
+  if (!/^[\w./-]+$/.test(path)) return false;
+  return path
+    .split("/")
+    .every((p) => p !== "" && p !== "." && p !== ".." && p.toLowerCase() !== ".git");
+}
 
 export class GitRepositoryWorkspace implements RepositoryWorkspace {
   /**
@@ -288,25 +334,42 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
     });
   }
 
-  async publish(input: {
-    dir: string;
-    gitDir: string;
-    baseCommit: string;
-    parent: string;
-    branch: string;
-    message: string;
-    date: string;
-    authEnv?: Record<string, string>;
-  }) {
+  async publish(input: Parameters<RepositoryWorkspace["publish"]>[0]) {
     if (!COMMIT_RE.test(input.parent)) throw new MessageError(message("git.invalidParentCommit"));
-    if (!/^[\w./-]+$/.test(input.branch) || input.branch.startsWith("-")) {
-      throw new MessageError(message("git.invalidBranch"));
+    if (!validBranch(input.branch)) throw new MessageError(message("git.invalidBranch"));
+    const keep = input.keep;
+    if (keep && !COMMIT_RE.test(keep.commit)) {
+      throw new MessageError(message("git.invalidParentCommit"));
     }
+    if (keep && !keep.paths.every(validPath)) throw new MessageError(message("git.invalidPath"));
     const author = await this.author();
     const commit = await this.stage(input.dir, input.gitDir, input.baseCommit, async (run) => {
-      const tree = (await run("write-tree", ["write-tree"])).trim();
+      let tree = (await run("write-tree", ["write-tree"])).trim();
       const baseTree = (await run("rev-parse", ["rev-parse", `${input.baseCommit}^{tree}`])).trim();
       if (tree === baseTree) throw new NothingToCommitError(message("git.nothingToCommit"));
+      if (keep && keep.paths.length > 0) {
+        // 引き継ぐパスは、作業領域の内容ではなく、keep.commit の内容にする
+        await run("rm", ["rm", "--cached", "-r", "-q", "--ignore-unmatch", "--", ...keep.paths]);
+        const listed = await run("ls-tree", [
+          "ls-tree",
+          "-r",
+          "-z",
+          keep.commit,
+          "--",
+          ...keep.paths,
+        ]);
+        for (const entry of listed.split("\0").filter(Boolean)) {
+          const match = entry.match(/^(\d+) blob ([0-9a-f]+)\t(.+)$/s);
+          if (!match) continue;
+          await run("update-index", [
+            "update-index",
+            "--add",
+            "--cacheinfo",
+            `${match[1]},${match[2]},${match[3]}`,
+          ]);
+        }
+        tree = (await run("write-tree", ["write-tree"])).trim();
+      }
       const parentTree = (await run("rev-parse", ["rev-parse", `${input.parent}^{tree}`])).trim();
       // 前回プッシュした内容から変わっていなければ、同じコミットをそのまま使う
       if (tree === parentTree && input.parent !== input.baseCommit) return input.parent;
@@ -343,6 +406,90 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
     return { commit };
   }
 
+  async pushCommit(
+    gitDir: string,
+    commit: string,
+    branch: string,
+    authEnv?: Record<string, string>,
+  ): Promise<void> {
+    if (!COMMIT_RE.test(commit)) throw new MessageError(message("git.invalidParentCommit"));
+    if (!validBranch(branch)) throw new MessageError(message("git.invalidBranch"));
+    await git(
+      "push",
+      ["--git-dir", gitDir, "push", "--", "origin", `${commit}:refs/heads/${branch}`],
+      cloneEnv(authEnv),
+    );
+  }
+
+  async commitFiles(input: Parameters<RepositoryWorkspace["commitFiles"]>[0]) {
+    if (!COMMIT_RE.test(input.parent)) throw new MessageError(message("git.invalidParentCommit"));
+    if (!validBranch(input.branch)) throw new MessageError(message("git.invalidBranch"));
+    const files = Object.entries(input.files);
+    if (files.length === 0 || !files.every(([path]) => validPath(path))) {
+      throw new MessageError(message("git.invalidPath"));
+    }
+    const author = await this.author();
+    // 差分と同じく、利用者やシステムの git の設定を読まない環境で、一時インデックスにファイルを書く（作業領域は使わない）
+    const temp = mkdtempSync(join(tmpdir(), "sacty-git-"));
+    let commit: string;
+    try {
+      const env = isolatedEnv(join(temp, "index"));
+      const run = (label: string, args: string[]) =>
+        git(label, ["--git-dir", input.gitDir, ...SAFE_CONFIG, ...args], env);
+      await run("read-tree", ["read-tree", input.parent]);
+      for (const [i, [path, content]] of files.entries()) {
+        const file = join(temp, `file-${i}`);
+        writeFileSync(file, content);
+        // 属性のフィルター（外部コマンド）を通さずに、そのままの内容で書く
+        const blob = (
+          await run("hash-object", ["hash-object", "-w", "--no-filters", "--", file])
+        ).trim();
+        await run("update-index", [
+          "update-index",
+          "--add",
+          "--cacheinfo",
+          `100644,${blob},${path}`,
+        ]);
+      }
+      const tree = (await run("write-tree", ["write-tree"])).trim();
+      const parentTree = (await run("rev-parse", ["rev-parse", `${input.parent}^{tree}`])).trim();
+      commit =
+        tree === parentTree && !input.allowEmpty
+          ? input.parent
+          : (
+              await git(
+                "commit-tree",
+                [
+                  "--git-dir",
+                  input.gitDir,
+                  ...SAFE_CONFIG,
+                  "commit-tree",
+                  tree,
+                  "-p",
+                  input.parent,
+                  "-m",
+                  input.message,
+                ],
+                {
+                  ...isolatedEnv("/dev/null"),
+                  ...author,
+                  GIT_AUTHOR_DATE: input.date,
+                  GIT_COMMITTER_DATE: input.date,
+                },
+              )
+            ).trim();
+    } finally {
+      rmSync(temp, { recursive: true, force: true });
+    }
+    // プッシュは、HTTPS の GitHub なら gh のトークン、それ以外はホストの認証を使う。強制プッシュはしない
+    await git(
+      "push",
+      ["--git-dir", input.gitDir, "push", "--", "origin", `${commit}:refs/heads/${input.branch}`],
+      cloneEnv(input.authEnv),
+    );
+    return { commit };
+  }
+
   async fetchCommits(gitDir: string, commits: string[], authEnv?: Record<string, string>) {
     if (!commits.every((c) => COMMIT_RE.test(c))) {
       throw new MessageError(message("git.invalidBaseCommit"));
@@ -368,6 +515,29 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
       ["--git-dir", gitDir, ...SAFE_CONFIG, "fetch", "--quiet", "--", "origin", ...missing],
       env,
     );
+  }
+
+  async changedPaths(gitDir: string, from: string, to: string) {
+    if (!COMMIT_RE.test(from) || !COMMIT_RE.test(to)) {
+      throw new MessageError(message("git.invalidParentCommit"));
+    }
+    const out = await git(
+      "diff",
+      [
+        "--git-dir",
+        gitDir,
+        ...SAFE_CONFIG,
+        "diff",
+        "--name-only",
+        "-z",
+        "--no-renames",
+        from,
+        to,
+        "--",
+      ],
+      isolatedEnv("/dev/null"),
+    );
+    return out.split("\0").filter(Boolean);
   }
 
   async fetchBranch(gitDir: string, branch: string, authEnv?: Record<string, string>) {
@@ -430,11 +600,23 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
     // 人間のブランチを消さないよう、sacty のブランチだけを受け付ける
     if (!/^sacty\/[\w./-]+$/.test(branch)) throw new MessageError(message("git.notSactyBranch"));
     // プッシュと同じく、退避したメタデータと、gh のトークンかホストの認証を使う。作業領域は読まない
-    await git(
-      "push",
-      ["--git-dir", gitDir, "push", "--", "origin", `:refs/heads/${branch}`],
-      cloneEnv(authEnv),
-    );
+    try {
+      await git(
+        "push",
+        ["--git-dir", gitDir, "push", "--", "origin", `:refs/heads/${branch}`],
+        // すでに無いブランチの理由を読むので、git の文言は訳さない
+        { ...cloneEnv(authEnv), LC_ALL: "C" },
+      );
+    } catch (error) {
+      // すでに無いブランチ（マージの後に GitHub が消した要求要件・設計のブランチなど。PBI-57）は、消せたものとする
+      if (
+        error instanceof MessageError &&
+        /remote ref does not exist/.test(JSON.stringify(error.text))
+      ) {
+        return;
+      }
+      throw error;
+    }
   }
 
   /** コミットの作者。ホストの git の利用者の設定を使い、無ければ sacty にする。 */

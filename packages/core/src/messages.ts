@@ -208,6 +208,7 @@ const PARAMS = {
   "verify.tooManyAttempts": z.object({ count: Count }),
   "pr.unavailable": z.object({ detail: TextParam }),
   "pr.workspaceMissing": null,
+  "pr.taskBranchChanged": z.object({ branch: TextParam, paths: TextParam, count: z.number() }),
   "pr.failed": z.object({ detail: TextParam }),
   "cleanup.prRepoUnknown": null,
   "cleanup.noWorkspace": null,
@@ -219,6 +220,7 @@ const PARAMS = {
   "git.baseCommitMissing": z.object({ commit: z.string() }),
   "git.invalidParentCommit": null,
   "git.invalidBranch": null,
+  "git.invalidPath": null,
   "git.nothingToCommit": null,
   "git.notSactyBranch": null,
   "github.failed": z.object({
@@ -607,6 +609,8 @@ const ja: MessageDictionary = {
     `実装の検証（テストと最終レビュー）に、${count}回続けて通りませんでした。`,
   "pr.unavailable": ({ detail }, text) => `PRを作れません：${text(detail)}`,
   "pr.workspaceMissing": "実装の作業領域が無いため、PRを作れません。",
+  "pr.taskBranchChanged": ({ branch, paths, count }, text) =>
+    `タスクブランチ ${text(branch)} に、sacty が積んでいない変更があります（${text(paths)}${count > 10 ? ` ほか、全${count}件` : ""}）。実装の作業領域には含まれていないので、このまま実装を積むと消えてしまうため、PR を出すのを止めました。タスクブランチからその変更を取り除いてから再開してください（変更が必要なら、PR の指摘として書くと、sacty が実装に反映します）。`,
   "pr.failed": ({ detail }, text) => `PRを作れませんでした：${text(detail)}`,
   "cleanup.prRepoUnknown": "PRを作ったリポジトリの記録が無いため、閉じませんでした。",
   "cleanup.noWorkspace": "作業領域が無いため、ブランチを消せません。",
@@ -620,6 +624,7 @@ const ja: MessageDictionary = {
     `作業領域を用意し直そうとしましたが、タスクの起点のコミット（${commit.slice(0, 7)}）を取得できません。起点を変えずに止めました。`,
   "git.invalidParentCommit": "積む先のコミットが不正です。",
   "git.invalidBranch": "ブランチ名が不正です。",
+  "git.invalidPath": "コミットするファイルのパスが不正です。",
   "git.nothingToCommit": "起点から変更がないため、コミットできません。",
   "git.notSactyBranch": "sacty のブランチではありません。",
   "github.failed": ({ action, status, detail, hint }) =>
@@ -931,6 +936,8 @@ const en: MessageDictionary = {
     `Verification of the implementation (tests and final review) failed ${count} times in a row.`,
   "pr.unavailable": ({ detail }, text) => `Cannot open a PR: ${text(detail)}`,
   "pr.workspaceMissing": "There is no implementation workspace, so a PR cannot be opened.",
+  "pr.taskBranchChanged": ({ branch, paths, count }, text) =>
+    `The task branch ${text(branch)} has changes that sacty did not push (${text(paths)}${count > 10 ? ` and more, ${count} in total` : ""}). They are not in the implementation workspace and would be removed by the implementation commit, so the PR was not published. Remove those changes from the task branch, then resume (if the change is needed, write it as a PR comment and sacty will apply it in the implementation).`,
   "pr.failed": ({ detail }, text) => `Could not open the PR: ${text(detail)}`,
   "cleanup.prRepoUnknown": "Not closed because the PR's repository was not recorded.",
   "cleanup.noWorkspace": "Cannot delete the branch because there is no workspace.",
@@ -944,6 +951,7 @@ const en: MessageDictionary = {
     `Tried to prepare the workspace again, but the task's base commit (${commit.slice(0, 7)}) could not be fetched. Stopped without changing the base.`,
   "git.invalidParentCommit": "The parent commit is not valid.",
   "git.invalidBranch": "The branch name is not valid.",
+  "git.invalidPath": "The path of the file to commit is not valid.",
   "git.nothingToCommit": "Nothing changed since the base, so there is nothing to commit.",
   "git.notSactyBranch": "This is not a sacty branch.",
   "github.failed": ({ action, status, detail, hint }) =>

@@ -1,11 +1,13 @@
 import {
   type ActivityEvent,
   type DaemonText,
+  DEFAULT_DOCUMENTS_DIR,
   ExportVia,
   type FinalReview,
   type IntegrationReview,
   InvestigationKind,
   investigationIsGoal,
+  isDocumentsDir,
   MAX_SPLIT_CHILDREN,
   MIN_SPLIT_CHILDREN,
   message,
@@ -14,6 +16,7 @@ import {
   renderMessage,
   StepKey,
   StepPlan,
+  type StepPullRequestKey,
   sameGitHubUrl,
   type Task,
   type TaskProposal,
@@ -1192,6 +1195,10 @@ export function buildPullRequestBody(task: Task): string {
     "",
     // 書き出した成果（要求要件・設計など）の URL（PBI-56）
     ...(exportedUrls(task).length > 0 ? ["## 書き出した成果", "", ...exportedUrls(task), ""] : []),
+    // 要求要件・設計の PR（マージで承認済み。成果のファイルは、この PR にも含まれる。PBI-57）
+    ...(mergedStepPullRequests(task).length > 0
+      ? ["## 要求要件・設計の PR（マージで承認済み）", "", ...mergedStepPullRequests(task), ""]
+      : []),
     "## 観点 → テスト → 実行結果",
     "",
     "| 観点 | 入力 | 期待結果 | テスト | 最終レビュー |",
@@ -1223,11 +1230,84 @@ export function buildPullRequestBody(task: Task): string {
   ].join("\n");
 }
 
+/** マージで承認した、要求要件・設計の PR の一覧（工程ごとに1行。PBI-57）。 */
+function mergedStepPullRequests(task: Task): string[] {
+  return task.stepPullRequests
+    .filter((p) => p.state === "merged")
+    .map((p) => `- ${STEP_NAME[p.step]}：${p.url}（\`${p.path}\`）`);
+}
+
+/** 要求要件・設計の PR の題（PBI-57）。 */
+export function buildStepPullRequestTitle(task: Task, step: StepPullRequestKey): string {
+  return `[${STEP_NAME[step]}] ${task.title}`;
+}
+
+/**
+ * 要求要件・設計の PR に入れる、成果のファイルの内容（PBI-57）。設計は、テスト観点も含める（最終レビューの基準になる
+ * ので、人間が PR で確かめられるように）。
+ */
+export function buildStepDocument(task: Task, step: StepPullRequestKey): string {
+  const output = (task.outputs[step] ?? "").trimEnd();
+  const lines = [
+    `<!-- sacty task ${task.id} の${STEP_NAME[step]}。sacty が作成しました。 -->`,
+    "",
+    output || "（なし）",
+  ];
+  if (step === "design") {
+    lines.push("", "## テスト観点", "", ...viewpointLines(task.testViewpoints));
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+/**
+ * 要求要件・設計の PR の本文（PBI-57）。マージが承認であること、指摘の伝え方、成果のファイルの場所を書く。
+ * 指摘への対応（差し戻しの後の再提出）があれば、指摘ごとに載せる。
+ */
+export function buildStepPullRequestBody(
+  task: Task,
+  step: StepPullRequestKey,
+  path: string,
+): string {
+  const name = STEP_NAME[step];
+  const responded = task.remarks.filter((r) => r.step === step && !r.voided && r.response);
+  const earlier = task.stepPullRequests.filter((p) => p.step !== step && p.state === "merged");
+  return [
+    `sacty のタスク「${task.title}」の${name}です（sacty task ${task.id}）。`,
+    "",
+    `成果のファイル：\`${path}\``,
+    "",
+    `- この PR をマージすると、${name}を承認したことになり、sacty は次の工程に進みます（sacty の画面からは承認しません）。`,
+    "- 直してほしいことは、この PR のレビュー・行へのコメント・コメントで伝えてください。sacty が取り込み、ゴールガーディアンが、この工程のやり直し（この PR を更新します）か、前の工程への差し戻しかを判断します。",
+    "- ファイルを直接直してマージすると、sacty の成果と違う内容が承認されるため、sacty は承認として扱わずに判断を待ちます。",
+    ...(earlier.length > 0
+      ? ["", "承認済みの前の工程：", ...earlier.map((p) => `- ${STEP_NAME[p.step]}：${p.url}`)]
+      : []),
+    ...(responded.length > 0
+      ? [
+          "",
+          "## 指摘への対応",
+          "",
+          ...responded.map((r) => `- [${r.id}] ${r.text}\n  - 対応：${r.response}`),
+        ]
+      : []),
+    "",
+    "---",
+    "この PR は sacty が作成しました。",
+  ].join("\n");
+}
+
 /**
  * PR の指摘で、どの工程まで戻すかをゴールガーディアンに判断させる指示（PBI-14b）。判断ごとに新しい
  * セッションで実行し、承認済みの要求要件・設計と、指摘だけを渡す（タスクの内容や工程の経緯は渡さない）。
  */
-export function buildReworkPrompt(task: Task, remarks: string[], targets: StepKey[]): string {
+export function buildReworkPrompt(
+  task: Task,
+  remarks: string[],
+  targets: StepKey[],
+  /** 指摘が付いた PR の工程。成果物チェック（実装の PR）か、要求要件・設計の PR（PBI-57）。 */
+  gateStep: StepKey = "pr",
+): string {
+  if (gateStep !== "pr") return buildStepReworkPrompt(task, remarks, targets, gateStep);
   const approved = (["requirements", "design"] as const)
     .filter((step) => task.approved[step])
     .flatMap((step) => [
@@ -1253,6 +1333,65 @@ export function buildReworkPrompt(task: Task, remarks: string[], targets: StepKe
       ? [
           "",
           "--- 承認済みのテスト観点 ---",
+          ...viewpoints.map(
+            (v) => `- [${v.id}] ${v.title}（入力：${v.input} / 期待：${v.expected}）`,
+          ),
+        ]
+      : []),
+    "",
+    "--- PR への人間の指摘 ---",
+    ...remarks.map((r) => `- ${r}`),
+    "",
+    "判断を、次の形式で必ず出してください。",
+    "```json",
+    `{"${REWORK_HEADING}": {"target": "${[...targets, "undecidable"].join(" または ")}", "reason": "判断の理由"}}`,
+    "```",
+  ].join("\n");
+}
+
+/**
+ * 要求要件・設計の PR の指摘で、その工程をやり直す（同じ PR を更新する）か、前の工程に戻すかをゴールガーディアンに
+ * 判断させる指示（PBI-57）。PR の内容（その工程の成果）と、承認済みの前の工程の成果を渡す。
+ */
+function buildStepReworkPrompt(
+  task: Task,
+  remarks: string[],
+  targets: StepKey[],
+  gateStep: StepKey,
+): string {
+  const name = STEP_NAME[gateStep];
+  const describe = (step: StepKey) =>
+    step === gateStep
+      ? `- ${step}（${STEP_NAME[step]}）：この PR の${name}を直せば解消できる（同じ PR を更新します）`
+      : step === "requirements"
+        ? "- requirements（要求要件）：承認済みの要求要件そのものが足りない・誤っているので、要求要件から直す必要がある（要求要件の直しの PR を新しく作り、承認されたら、この工程の PR を作り直します）"
+        : `- ${step}（${STEP_NAME[step]}）：承認済みの${STEP_NAME[step]}から直す必要がある`;
+  const approved = (["requirements", "design"] as const)
+    .filter((step) => step !== gateStep && task.approved[step])
+    .flatMap((step) => [
+      "",
+      `--- 承認済みの${STEP_NAME[step]} ---`,
+      task.approved[step]?.output ?? "",
+    ]);
+  const viewpoints = gateStep === "design" ? task.testViewpoints : [];
+  return [
+    "あなたはゴールガーディアンです。人間が承認した成果物（ゴール）を守る立場で、",
+    `${name}の PR に人間が付けた指摘を、どの工程からやり直せば解消できるかを判断してください。`,
+    ...guardianCodeLines(task, "base"),
+    "",
+    ...targets.map(describe),
+    `- undecidable（判断できない）：指摘の意図が読み取れず、戻し先を決められない（${name}をやり直します）`,
+    "",
+    "判断した工程に、そのまま差し戻します。前の工程を選ぶと、承認済みの成果物を作り直し、人間がもう一度承認します。",
+    `できるだけこの工程（${name}）で解消できるかを先に考え、承認済みの成果物を変える必要があるときだけ、前の工程を選んでください。`,
+    ...approved,
+    "",
+    `--- この PR の${name}（指摘の対象） ---`,
+    task.outputs[gateStep] ?? "",
+    ...(viewpoints.length > 0
+      ? [
+          "",
+          "--- この PR のテスト観点 ---",
           ...viewpoints.map(
             (v) => `- [${v.id}] ${v.title}（入力：${v.input} / 期待：${v.expected}）`,
           ),
@@ -1487,6 +1626,24 @@ function exportChoiceLines(
 }
 
 /**
+ * オーケストレーターに、要求要件・設計の成果のファイルの置き場所を決めさせる指示（PBI-57）。rules は、書き出し先の
+ * 指示で渡していなければ渡す（プロジェクトのコンテキストの規約）。
+ */
+function documentsChoiceLines(rules: string | undefined): string[] {
+  return [
+    `- documentsDir：要求要件・設計は、成果をファイル（requirements.md・design.md）にして対象リポジトリへの PR でレビューする（PBI-57）。リポジトリ（AGENTS.md・CONTRIBUTING・docs の構成など）やプロジェクトのコンテキストの規約に、要求要件・設計の文書の置き場所が決まっているときだけ、そのディレクトリ（リポジトリの根からの相対パス）を書く。sacty は、その下のタスクの短い ID のディレクトリに置く。決まっていなければ書かない（既定は ${DEFAULT_DOCUMENTS_DIR}）`,
+    ...(rules?.trim()
+      ? [
+          "  - プロジェクトのコンテキストの規約（置き場所の手がかり）：",
+          "",
+          clip(rules.trim(), EXPORT_RULES_IN_PROMPT),
+          "",
+        ]
+      : []),
+  ];
+}
+
+/**
  * オーケストレーターへの指示（PBI-17）。タスクの内容と対象リポジトリのコードを読んで、決めた候補から
  * 工程の組み合わせを選ばせる。判断ごとに新しいセッションで実行する。
  */
@@ -1503,6 +1660,11 @@ export function buildOrchestratorPrompt(
      * 無ければ渡さない（書き出し先を決めさせない）。
      */
     exports?: { destinations: readonly ExportDestination[]; rules?: string };
+    /**
+     * 要求要件・設計を対象リポジトリへの PR でレビューするか（PBI-57）。成果のファイルの置き場所を決めさせる。rules は
+     * プロジェクトのコンテキストの規約（置き場所の手がかり）。
+     */
+    documents?: { rules?: string };
   } = {},
 ): string {
   const images = options.images ?? [];
@@ -1553,6 +1715,9 @@ export function buildOrchestratorPrompt(
     ...(destinations.length > 0
       ? exportChoiceLines(task, destinations, options.exports?.rules)
       : []),
+    ...(options.documents
+      ? documentsChoiceLines(destinations.length > 0 ? undefined : options.documents.rules)
+      : []),
     "",
     "選べる工程の組み合わせ：",
     ...Object.entries(plans).map(([key, text]) => `- ${key}：${text}`),
@@ -1566,7 +1731,7 @@ export function buildOrchestratorPrompt(
     "",
     "選んだ工程を、次の形式で必ず出してください。",
     "```json",
-    `{"${PLAN_HEADING}": {"plan": "${Object.keys(plans).join(" または ")}", "reason": "選んだ理由", "baseBranch": "ベースブランチ", "testCommand": "テストのコマンド（分からなければ空）", "investigation": "content または bug"${images.length > 0 ? ', "images": {"implement": "イメージの名前"}, "imageReason": "イメージを選んだ理由"' : ""}${task.repository ? ', "services": {"file": "compose ファイル", "names": ["db"], "steps": ["implement"]}（要らなければ書かない）' : ""}${destinations.length > 0 ? ', "exports": {"requirements": {"to": "接続先の名前", "via": "platform または mcp", "location": "置き場所の手がかり", "reason": "そこに書き出す理由"}, "design": {"to": "", "reason": "書き出さない理由"}}' : ""}}}`,
+    `{"${PLAN_HEADING}": {"plan": "${Object.keys(plans).join(" または ")}", "reason": "選んだ理由", "baseBranch": "ベースブランチ", "testCommand": "テストのコマンド（分からなければ空）", "investigation": "content または bug"${images.length > 0 ? ', "images": {"implement": "イメージの名前"}, "imageReason": "イメージを選んだ理由"' : ""}${task.repository ? ', "services": {"file": "compose ファイル", "names": ["db"], "steps": ["implement"]}（要らなければ書かない）' : ""}${destinations.length > 0 ? ', "exports": {"requirements": {"to": "接続先の名前", "via": "platform または mcp", "location": "置き場所の手がかり", "reason": "そこに書き出す理由"}, "design": {"to": "", "reason": "書き出さない理由"}}' : ""}${options.documents ? ', "documentsDir": "要求要件・設計のファイルを置くディレクトリ（決まっていなければ書かない）"' : ""}}}`,
     "```",
   ].join("\n");
 }
@@ -1715,6 +1880,8 @@ export function extractStepPlan(
       services?: { file: string; names: string[]; steps: StepKey[] };
       /** 工程ごとの書き出し先（PBI-56）。接続先があるかは、呼び出し側が確かめる（via が無ければ名前で探す）。 */
       exports?: Partial<Record<StepKey, RawExportPlan>>;
+      /** 要求要件・設計のファイルを置くディレクトリ（PBI-57）。使える形のものだけ。 */
+      documentsDir?: string;
     }
   | undefined {
   const blocks = [...output.matchAll(/```json\s*\n([\s\S]*?)\n```/g)].reverse();
@@ -1745,7 +1912,10 @@ export function extractStepPlan(
         const imageReason = text(v.imageReason).slice(0, 1000);
         const services = composeServicesOf(v.services);
         const exports = exportPlansOf(v.exports);
+        // 置き場所は、リポジトリの中の相対パスの形のものだけを使う（末尾の / は除く。PBI-57）
+        const documentsDir = text(v.documentsDir).replace(/\/+$/, "");
         return {
+          ...(isDocumentsDir(documentsDir) ? { documentsDir } : {}),
           plan: plan.data,
           reason,
           ...(/^[\w./-]+$/.test(baseBranch) && !baseBranch.startsWith("-") ? { baseBranch } : {}),
