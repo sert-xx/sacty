@@ -123,6 +123,8 @@ const PARAMS = {
   "config.mavenMirror": null,
   "config.imagePackage": null,
   "config.imageRun": null,
+  "config.imageRepo": null,
+  "config.imageRepoPackages": null,
   "image.unknown": z.object({ name: z.string() }),
   // docker compose のサービス（PBI-47）
   "services.unsafe": z.object({ file: z.string(), detail: z.string() }),
@@ -502,6 +504,10 @@ const ja: MessageDictionary = {
     "images の packages には、パッケージの名前（英数字と . _ + : @ ~ = -）を書いてください。",
   "config.imageRun":
     "images の run には、1行のコマンドを書いてください（複数のコマンドは、項目を分けて書く）。",
+  "config.imageRepo":
+    "images の enable_repos には、パッケージのリポジトリの ID（英数字で始まり、英数字と . _ : - だけ）を書いてください。",
+  "config.imageRepoPackages":
+    "images の enable_repos は、packages を入れるときに有効にするリポジトリです。packages も書いてください。",
   "config.mavenMirror":
     "images の maven_mirror は、ユーザー名・パスワードを含まない URL（http または https）で書いてください。",
   "services.unsafe": ({ file, detail }) =>
@@ -821,6 +827,10 @@ const en: MessageDictionary = {
     "Write package names in images packages (letters, digits and . _ + : @ ~ = -).",
   "config.imageRun":
     "Write one command per line in images run (use separate items for several commands).",
+  "config.imageRepo":
+    "Write package repository IDs in images enable_repos (starting with a letter or digit; letters, digits and . _ : - only).",
+  "config.imageRepoPackages":
+    "images enable_repos are the repositories enabled while installing packages. Write packages as well.",
   "config.mavenMirror":
     "Write images maven_mirror as a URL (http or https) without a user name or password.",
   "services.unsafe": ({ file, detail }) =>

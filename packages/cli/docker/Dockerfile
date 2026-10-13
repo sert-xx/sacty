@@ -104,15 +104,23 @@ RUN --mount=type=secret,id=npmconfig,target=/run/secrets/npmconfig \
 # イメージを作るときに入れる OS のパッケージと、実行するコマンド（言語ごとのイメージの packages・run。PBI-50）。
 # パッケージは、元のイメージにあるパッケージの管理のコマンド（dnf・microdnf・yum・apt-get）で入れる。コマンドは
 # 上から順に root で実行し、失敗したら止める（bash があれば pipefail で、パイプの途中の失敗でも止める）。
-# コマンドのファイルは secret の仕組みで受け取る（中身のハッシュで作り直す）
+# SACTY_ENABLE_REPOS（images の enable_repos。PBI-59）は、元のイメージで無効にしてあるリポジトリを、dnf・microdnf・yum の
+# --enablerepo で有効にして入れる（apt-get では使えないので止める）。ID は設定の読み込みで、シェルの特別な文字を含まない
+# 形に限っている。コマンドのファイルは secret の仕組みで受け取る（中身のハッシュで作り直す）
 ARG SACTY_PACKAGES=
+ARG SACTY_ENABLE_REPOS=
 ARG SACTY_SETUP_HASH=
 RUN --mount=type=secret,id=setup,target=/run/secrets/setup \
   if [ -n "$SACTY_PACKAGES" ]; then \
-    if command -v dnf >/dev/null 2>&1; then dnf install -y $SACTY_PACKAGES && dnf clean all; \
-    elif command -v microdnf >/dev/null 2>&1; then microdnf install -y $SACTY_PACKAGES && microdnf clean all; \
-    elif command -v yum >/dev/null 2>&1; then yum install -y $SACTY_PACKAGES && yum clean all; \
+    repos=""; for r in $SACTY_ENABLE_REPOS; do repos="$repos --enablerepo=$r"; done; \
+    if command -v dnf >/dev/null 2>&1; then dnf $repos install -y $SACTY_PACKAGES && dnf $repos clean all; \
+    elif command -v microdnf >/dev/null 2>&1; then microdnf $repos install -y $SACTY_PACKAGES && microdnf $repos clean all; \
+    elif command -v yum >/dev/null 2>&1; then yum $repos install -y $SACTY_PACKAGES && yum $repos clean all; \
     elif command -v apt-get >/dev/null 2>&1; then \
+      if [ -n "$SACTY_ENABLE_REPOS" ]; then \
+        echo "sacty: enable_repos（$SACTY_ENABLE_REPOS）は dnf・microdnf・yum のリポジトリを有効にするものです。apt-get のイメージでは使えないので、images の enable_repos を消し、リポジトリの設定は run で行ってください。" >&2; \
+        exit 1; \
+      fi; \
       apt-get update && apt-get install -y --no-install-recommends $SACTY_PACKAGES && rm -rf /var/lib/apt/lists/*; \
     else echo "sacty: パッケージの管理のコマンド（dnf・microdnf・yum・apt-get）が見つからないので、packages を入れられません。" >&2; exit 1; \
     fi; \

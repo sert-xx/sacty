@@ -113,9 +113,15 @@ export function imageBuildArgs(input: {
   language?: { nodeImage?: string; mavenMirror?: string };
   /**
    * イメージを作るときに入れる OS のパッケージと、実行するコマンド（PBI-50）。コマンドは、ファイル（setupPath）に
-   * 書いて secret の仕組みで渡し、中身のハッシュ（パッケージを含む）で作り直させる。
+   * 書いて secret の仕組みで渡し、中身のハッシュ（パッケージを含む）で作り直させる。enableRepos は、パッケージを
+   * 入れるときに有効にするリポジトリ（PBI-59）。
    */
-  setup: { packages: readonly string[]; path: string; hash: string };
+  setup: {
+    packages: readonly string[];
+    enableRepos?: readonly string[];
+    path: string;
+    hash: string;
+  };
 }): string[] {
   return [
     "build",
@@ -144,6 +150,9 @@ export function imageBuildArgs(input: {
     `id=npmconfig,src=${input.npmConfigPath}`,
     ...(input.setup.packages.length > 0
       ? ["--build-arg", `SACTY_PACKAGES=${input.setup.packages.join(" ")}`]
+      : []),
+    ...(input.setup.enableRepos && input.setup.enableRepos.length > 0
+      ? ["--build-arg", `SACTY_ENABLE_REPOS=${input.setup.enableRepos.join(" ")}`]
       : []),
     "--build-arg",
     `SACTY_SETUP_HASH=${input.setup.hash}`,
@@ -201,8 +210,16 @@ export async function buildImage(deps: {
     const setupScript = (language?.run ?? []).map((line) => `${line}\n`).join("");
     writeFileSync(setupPath, setupScript);
     const packages = language?.packages ?? [];
+    const enableRepos = language?.enableRepos ?? [];
+    // 有効にするリポジトリを変えても作り直させる（PBI-59）。書かなければ、これまでと同じハッシュ
     const setupHash = createHash("sha256")
-      .update(JSON.stringify({ packages, setupScript }))
+      .update(
+        JSON.stringify({
+          packages,
+          setupScript,
+          ...(enableRepos.length > 0 ? { enableRepos } : {}),
+        }),
+      )
       .digest("hex")
       .slice(0, 16);
     const baseImage = language ? language.baseImage : deps.build.baseImage;
@@ -225,7 +242,7 @@ export async function buildImage(deps: {
         npmrcPath,
         npmConfigPath,
         npmConfigHash: createHash("sha256").update(npmConfig).digest("hex").slice(0, 16),
-        setup: { packages, path: setupPath, hash: setupHash },
+        setup: { packages, enableRepos, path: setupPath, hash: setupHash },
       }),
     );
     return code === 0 ? undefined : imageBuildFailure(deps.build, language);

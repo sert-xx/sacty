@@ -341,12 +341,21 @@ const ConfigFile = z
            */
           /**
            * イメージを作るときに root で入れる OS のパッケージ（PBI-50）。dnf・microdnf・yum・apt-get のうち、元のイメージに
-           * あるもので入れる（組織の rpm リポジトリなど、パッケージのリポジトリの設定は元のイメージか run で行う）。
+           * あるもので入れる（組織の rpm リポジトリなど、パッケージのリポジトリの設定は元のイメージか run で行う。無効にして
+           * あるリポジトリは enable_repos で有効にする）。
            */
           packages: z
             .array(
               z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._+:@~=-]*$/, code("config.imagePackage")),
             )
+            .default([]),
+          /**
+           * packages を入れるときに有効にするパッケージのリポジトリの ID（PBI-59）。元のイメージに設定があるが無効にしてある
+           * リポジトリ（組織の rpm リポジトリなど）を、dnf・microdnf・yum の --enablerepo で有効にする（apt-get では使えない）。
+           * Dockerfile の RUN にそのまま展開するので、シェルの特別な文字を含まない形に限る。
+           */
+          enable_repos: z
+            .array(z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/, code("config.imageRepo")))
             .default([]),
           /**
            * イメージを作るときに root で実行するシェルのコマンド（PBI-50。CLI の導入、Playwright の OS のライブラリなど）。
@@ -372,9 +381,17 @@ const ConfigFile = z
       )
       // 名前の形は record 全体で確かめる（名前の検査は、項目ごとの文言にならないため）
       .superRefine((images, ctx) => {
-        for (const name of Object.keys(images)) {
+        for (const [name, image] of Object.entries(images)) {
           if (!/^(?!default$)[a-z0-9][a-z0-9_-]{0,39}$/.test(name)) {
             ctx.addIssue({ code: "custom", path: [name], message: code("config.imageName") });
+          }
+          // enable_repos は packages を入れるときだけ効く（packages が無ければ、書いても何も起きないため。PBI-59）
+          if (image.enable_repos.length > 0 && image.packages.length === 0) {
+            ctx.addIssue({
+              code: "custom",
+              path: [name, "enable_repos"],
+              message: code("config.imageRepoPackages"),
+            });
           }
         }
       })
@@ -551,6 +568,8 @@ export type LanguageImage = {
   mavenMirror?: string;
   /** イメージを作るときに入れる OS のパッケージと、実行するコマンド（PBI-50）。 */
   packages?: string[];
+  /** packages を入れるときに有効にするパッケージのリポジトリの ID（PBI-59）。 */
+  enableRepos?: string[];
   run?: string[];
 };
 
@@ -672,6 +691,7 @@ export function loadConfig(home: string): ConfigResult {
             env: image.env,
             ...(image.maven_mirror ? { mavenMirror: image.maven_mirror } : {}),
             packages: image.packages,
+            ...(image.enable_repos.length > 0 ? { enableRepos: image.enable_repos } : {}),
             run: image.run,
           },
         ]),
