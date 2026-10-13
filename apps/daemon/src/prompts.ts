@@ -1337,6 +1337,11 @@ export function buildOrchestratorPrompt(
           "- imageReason：イメージをそう選んだ理由（根拠にしたファイル）",
         ]
       : []),
+    ...(task.repository
+      ? [
+          "- services：テストや動作確認に、docker compose で起動するサービス（DB・モック API など）が要るとき（PBI-47）。compose ファイル（docker-compose.yml・compose.yaml など）・README・AGENTS.md・テストの設定から判断する。file は compose ファイルの、リポジトリの根からの相対パス、names は起動するサービスの名前（依存するサービスも起動する。テストを動かすアプリ本体など、要らないサービスは含めない）、steps はサービスを使う工程（コードを動かす reproduce・implement と、不具合の調査の investigate）。sacty が工程とテストの実行ごとに起動し、終わったら消す。サービスにはサービス名とコンテナのポートで接続する（例 db:5432。localhost ではない）。要らなければ書かない",
+        ]
+      : []),
     "",
     "選べる工程の組み合わせ：",
     ...Object.entries(plans).map(([key, text]) => `- ${key}：${text}`),
@@ -1350,7 +1355,7 @@ export function buildOrchestratorPrompt(
     "",
     "選んだ工程を、次の形式で必ず出してください。",
     "```json",
-    `{"${PLAN_HEADING}": {"plan": "${Object.keys(plans).join(" または ")}", "reason": "選んだ理由", "baseBranch": "ベースブランチ", "testCommand": "テストのコマンド（分からなければ空）", "investigation": "content または bug"${images.length > 0 ? ', "images": {"implement": "イメージの名前"}, "imageReason": "イメージを選んだ理由"' : ""}}}`,
+    `{"${PLAN_HEADING}": {"plan": "${Object.keys(plans).join(" または ")}", "reason": "選んだ理由", "baseBranch": "ベースブランチ", "testCommand": "テストのコマンド（分からなければ空）", "investigation": "content または bug"${images.length > 0 ? ', "images": {"implement": "イメージの名前"}, "imageReason": "イメージを選んだ理由"' : ""}${task.repository ? ', "services": {"file": "compose ファイル", "names": ["db"], "steps": ["implement"]}（要らなければ書かない）' : ""}}}`,
     "```",
   ].join("\n");
 }
@@ -1495,6 +1500,8 @@ export function extractStepPlan(
       /** 工程ごとのイメージの名前（PBI-41）。名前が images にあるかは、呼び出し側が確かめる。 */
       images?: Partial<Record<StepKey, string>>;
       imageReason?: string;
+      /** 起動する docker compose のサービス（PBI-47）。ファイルがあるかは、起動するときに確かめる。 */
+      services?: { file: string; names: string[]; steps: StepKey[] };
     }
   | undefined {
   const blocks = [...output.matchAll(/```json\s*\n([\s\S]*?)\n```/g)].reverse();
@@ -1523,6 +1530,7 @@ export function extractStepPlan(
           }),
         ) as Partial<Record<StepKey, string>>;
         const imageReason = text(v.imageReason).slice(0, 1000);
+        const services = composeServicesOf(v.services);
         return {
           plan: plan.data,
           reason,
@@ -1531,6 +1539,7 @@ export function extractStepPlan(
           ...(investigation.success ? { investigation: investigation.data } : {}),
           ...(Object.keys(images).length > 0 ? { images } : {}),
           ...(imageReason ? { imageReason } : {}),
+          ...(services ? { services } : {}),
         };
       }
     } catch {
@@ -1538,6 +1547,51 @@ export function extractStepPlan(
     }
   }
   return undefined;
+}
+
+/**
+ * オーケストレーターが書いたサービスの指定（PBI-47）。ファイルはリポジトリの中の相対パス、サービスの名前は compose の
+ * 名前の形、工程はサービスを使える工程（コードを動かす工程）だけを使う。使える工程が無ければ、指定しなかったことにする。
+ */
+function composeServicesOf(
+  value: unknown,
+): { file: string; names: string[]; steps: StepKey[] } | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const v = value as Record<string, unknown>;
+  const file = text(v.file);
+  if (!file || file.length > 300 || file.startsWith("/") || file.split(/[\\/]/).includes("..")) {
+    return undefined;
+  }
+  const names = (Array.isArray(v.names) ? v.names : [])
+    .map((n) => text(n))
+    .filter((n) => /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,99}$/.test(n))
+    .slice(0, 20);
+  const steps = (Array.isArray(v.steps) ? v.steps : []).flatMap((step) => {
+    const key = StepKey.safeParse(step);
+    return key.success && SERVICE_STEPS.includes(key.data) ? [key.data] : [];
+  });
+  return steps.length > 0
+    ? { file, names: [...new Set(names)], steps: [...new Set(steps)] }
+    : undefined;
+}
+
+/** docker compose のサービスを使える工程（コードを動かす工程。PBI-47）。 */
+export const SERVICE_STEPS: readonly StepKey[] = ["investigate", "reproduce", "implement"];
+
+/** 工程のエージェントに伝える、起動したサービスの接続先（PBI-47）。 */
+export function servicePromptLines(
+  services: readonly { name: string; ports: readonly number[] }[],
+): string[] {
+  if (services.length === 0) return [];
+  return [
+    "",
+    "--- 起動しているサービス（docker compose） ---",
+    "sacty が、この実行のために次のサービスを起動しています。サービス名とコンテナのポートで接続してください（localhost ではありません）。docker・docker compose のコマンドは使えません（サービスの起動・停止は不要です）。この実行が終わると、サービスとデータは消えます。",
+    ...services.map(
+      (s) =>
+        `- ${s.name}${s.ports.length > 0 ? `：${s.ports.map((p) => `${s.name}:${p}`).join("、")}` : ""}`,
+    ),
+  ];
 }
 
 /** Issue のコメントの上限（GitHub の上限より小さく）。 */

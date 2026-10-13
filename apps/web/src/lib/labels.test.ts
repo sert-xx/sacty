@@ -445,6 +445,35 @@ describe("オーケストレーターが選んだ工程（PBI-17）", () => {
       describeIn(chosen({ images: { implement: "py" }, imageSource: "project" }), labels.en),
     ).toContain("images: Implement=py (set on the project target)");
   });
+
+  it("サービスの起動を表示する（PBI-47）", () => {
+    const started = (forTests?: boolean) =>
+      ({
+        type: "ServicesStarted",
+        payload: {
+          runId: "r",
+          step: "implement",
+          file: "compose.yaml",
+          services: [
+            { name: "db", ports: [5432] },
+            { name: "mock", ports: [] },
+          ],
+          ...(forTests ? { forTests } : {}),
+        },
+        seq: 1,
+        id: "e1",
+        taskId: "t1",
+        projectId: "default",
+        at: "2026-10-11T00:00:00.000Z",
+        actor: "sacty",
+      }) as ActivityEvent;
+    expect(describeEvent(started())).toBe(
+      "実装のためにサービスを起動：db、mock（compose.yaml。実行の後に消す）",
+    );
+    expect(describeEvent(started(true))).toBe(
+      "実装のテストのためにサービスを起動：db、mock（compose.yaml。実行の後に消す）",
+    );
+  });
 });
 
 describe("調査の工程（PBI-18）", () => {

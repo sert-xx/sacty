@@ -64,7 +64,7 @@ import {
 } from "./agents/invocation.js";
 import type { AgentOutcome } from "./agents/parse.js";
 import { redact, redactText } from "./agents/redact.js";
-import type { TestRunner } from "./agents/test-runner.js";
+import type { TestRunner, TestRunResult } from "./agents/test-runner.js";
 import {
   type AgentConfig,
   agentFor,
@@ -125,10 +125,12 @@ import {
   referencedPullRequest,
   reviewMarker,
   type SubtaskSummary,
+  servicePromptLines,
   verificationBasis,
 } from "./prompts.js";
 import type { RepositoryWorkspace } from "./repository.js";
 import { SecretNotFoundError, type SecretStore } from "./secrets.js";
+import type { ServiceRunner, ServicesSpec, StartedServices } from "./services.js";
 import type { SettingsStore } from "./settings.js";
 
 type ActivityItem = { actor: Actor; event: EventInput };
@@ -171,6 +173,8 @@ export type ServiceDeps = {
   now?: () => number;
   /** オーケストレーターの代わりに工程を選ぶ（テストで差し替える。PBI-17）。 */
   planner?: (task: Task) => Promise<ChosenSteps>;
+  /** docker compose のサービスを起動する口（PBI-47）。無ければ、サービスを使わない。 */
+  services?: ServiceRunner;
   /** プロジェクトの設定。 */
   projects: ProjectStore;
   /** sacty 全体の設定（取り込むラベルなど。PBI-26）。 */
@@ -648,6 +652,79 @@ export class TaskService {
     return this.withImages(choice, config, pinned);
   }
 
+  /**
+   * 工程で使う docker compose のサービス（PBI-47）。オーケストレーターが決めた工程だけ。内容の調査では起動しない。
+   */
+  private serviceSpec(task: Task, step: StepKey): ServicesSpec | undefined {
+    const services = task.services;
+    if (!this.deps.services || !services?.steps.includes(step)) return undefined;
+    if (step === "investigate" && task.investigation !== "bug") return undefined;
+    return { file: services.file, names: services.names };
+  }
+
+  /** 工程・テストの実行の前に、サービスを起動する（PBI-47）。使わない工程なら undefined。 */
+  private async startServices(
+    task: Task,
+    step: StepKey,
+    runId: string,
+    workspaceDir: string,
+    forTests = false,
+  ): Promise<
+    { ok: true; started: StartedServices } | { ok: false; message: DaemonText } | undefined
+  > {
+    const spec = this.serviceSpec(task, step);
+    if (!spec || !this.deps.services) return undefined;
+    // 人間が止めたなら、起動しない
+    if (this.pauseRequested.has(task.id)) return undefined;
+    const result = await this.deps.services.start({ runId, workspaceDir, spec });
+    if (result.ok) {
+      this.append(this.mustGet(task.id), [
+        {
+          actor: "sacty",
+          event: {
+            type: "ServicesStarted",
+            payload: {
+              runId,
+              step,
+              file: spec.file,
+              services: result.started.services,
+              ...(forTests ? { forTests } : {}),
+            },
+          },
+        },
+      ]);
+    }
+    return result;
+  }
+
+  /**
+   * テストを実行する。確かめる工程でサービスを使うなら、テストの前に起動し、終わったら消す（PBI-47）。
+   * サービスを起動できなければ、テストを実行せずに理由を返す。
+   */
+  private async runTests(
+    task: Task,
+    step: StepKey,
+    input: Parameters<TestRunner["run"]>[0],
+  ): Promise<{ ok: true; result: TestRunResult } | { ok: false; message: DaemonText }> {
+    const services = await this.startServices(task, step, input.runId, input.workspaceDir, true);
+    if (services && !services.ok) return services;
+    try {
+      const result = await this.deps.tests.run({
+        ...input,
+        ...(services?.ok ? { network: services.started.network } : {}),
+      });
+      return { ok: true, result };
+    } finally {
+      await this.stopServices(task, step, input.runId);
+    }
+  }
+
+  /** サービスを止めて消す（PBI-47）。使わない工程なら何もしない。止められなくても、工程の結果は変えない。 */
+  private async stopServices(task: Task, step: StepKey, runId: string): Promise<void> {
+    if (!this.serviceSpec(this.tasks.get(task.id) ?? task, step) || !this.deps.services) return;
+    await this.deps.services.stop(runId).catch(() => undefined);
+  }
+
   /** プロジェクトの対象で指定したイメージの名前（PBI-41）。 */
   private pinnedImage(task: Task): string | undefined {
     const repo = task.source
@@ -751,6 +828,7 @@ export class TaskService {
         ...(chosen.investigation ? { investigation: chosen.investigation } : {}),
         ...(chosen.images ? { images: chosen.images } : {}),
         ...(chosen.imageReason ? { imageReason: chosen.imageReason } : {}),
+        ...(chosen.services ? { services: chosen.services } : {}),
         ...(chosen.baseBranch ? { baseBranch: chosen.baseBranch } : {}),
         ...cost,
       };
@@ -1727,10 +1805,24 @@ export class TaskService {
           estimated: false,
         };
       }
+      // docker compose のサービス（PBI-47）。この工程で使うなら、実行の前に起動し、終わったら消す
+      const workspaceDir = snapshotDir ?? ready.dir;
+      const services = executed
+        ? undefined
+        : await this.startServices(this.mustGet(task.id), step, runId, workspaceDir);
+      if (services && !services.ok) {
+        executed = {
+          outcome: { kind: "failed", reason: "error", message: services.message },
+          costUsd: 0,
+          estimated: false,
+        };
+      }
+      const started = services?.ok ? services.started : undefined;
       executed ??= await this.execute({
         agent,
         image: stepImage.ok ? stepImage.image : config.config.image,
         ...(stepImage.ok ? { imageEnv: stepImage.env } : {}),
+        ...(started ? { network: started.network } : {}),
         runId,
         prompt: [
           buildPrompt(this.mustGet(task.id), step, {
@@ -1740,13 +1832,17 @@ export class TaskService {
           }),
           // 使える組織内 PF の API（PBI-35）
           ...platformPromptLines(config.config.platforms),
+          // 起動したサービスの接続先（PBI-47）
+          ...servicePromptLines(started?.services ?? []),
         ].join("\n"),
         platforms: config.config.platforms,
         role: step,
-        workspaceDir: snapshotDir ?? ready.dir,
+        workspaceDir,
         context: context && { dir: context.dir, ...context.placed },
       });
     } finally {
+      // サービスは、作業領域（ビルドの context）を消す前に止めて消す
+      await this.stopServices(task, step, runId);
       context?.dispose();
       if (snapshotDir) rmSync(snapshotDir, { recursive: true, force: true });
     }
@@ -2001,13 +2097,30 @@ export class TaskService {
       if (this.pauseRequested.has(task.id)) return;
       const testRunId = randomUUID();
       this.track(testRunId);
-      const result = await this.deps.tests.run({
+      const ran = await this.runTests(current, "implement", {
         runId: testRunId,
         image: repo.testImage,
         ...(Object.keys(repo.testEnv).length > 0 ? { env: repo.testEnv } : {}),
         workspaceDir: dir,
         command: testCommand,
       });
+      // テストに使うサービスを起動できなければ、テストを実行せずに止める（再開するとテストからやり直す。PBI-47）
+      if (!ran.ok) {
+        this.append(this.mustGet(task.id), [
+          {
+            actor: "sacty",
+            event: {
+              type: "TaskPaused",
+              payload: {
+                reason: "error",
+                message: message("verify.testsUnavailable", { detail: ran.message }),
+              },
+            },
+          },
+        ]);
+        return;
+      }
+      const result = ran.result;
       // 人間が止めた（コンテナを止めた）テストの結果は記録しない。再開するとテストからやり直す
       if (this.pauseRequested.has(task.id)) return;
       const passed = result.exitCode === 0 && unmappedViewpoints.length === 0;
@@ -2513,13 +2626,17 @@ export class TaskService {
     if (this.pauseRequested.has(task.id)) return;
     const runId = randomUUID();
     this.track(runId);
-    const result = await this.deps.tests.run({
+    const ran = await this.runTests(task, "reproduce", {
       runId,
       image: target.repo.testImage,
       ...(Object.keys(target.repo.testEnv).length > 0 ? { env: target.repo.testEnv } : {}),
       workspaceDir: dir,
       command: testCommand,
     });
+    // サービスを起動できなければ、テストの実行基盤の失敗として扱う（再現できたとはみなさない。PBI-47）
+    const result: TestRunResult = ran.ok
+      ? ran.result
+      : { exitCode: 125, output: "", note: ran.message, infrastructure: true, durationMs: 0 };
     if (this.pauseRequested.has(task.id)) return;
     // テストの実行基盤の失敗は、テストの失敗（再現できた）と区別し、確かめずに止める。
     // 再現の確かめを待ったまま止めるので、再開するとテストを実行し直す（PBI-29 レビュー指摘）
@@ -2814,6 +2931,8 @@ export class TaskService {
     platforms?: readonly Platform[];
     /** イメージの環境変数（言語ごとのイメージの env。PBI-41）。 */
     imageEnv?: Record<string, string>;
+    /** つなぐネットワーク（docker compose のサービス。PBI-47）。 */
+    network?: string;
   }): Promise<{ outcome: AgentOutcome; costUsd: number; estimated: boolean }> {
     // 実行に渡した秘密情報。作業履歴に書く前に、出力やエラー文から取り除く。
     const usedSecrets: string[] = [];
@@ -2893,6 +3012,7 @@ export class TaskService {
         workspaceDir: run.workspaceDir,
         invocation,
         ...(run.imageEnv && Object.keys(run.imageEnv).length > 0 ? { imageEnv: run.imageEnv } : {}),
+        ...(run.network ? { network: run.network } : {}),
       });
     } catch (error) {
       outcome = {

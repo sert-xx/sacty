@@ -125,6 +125,8 @@ const ja = {
       ` / イメージ：${images}（${source === "project" ? "プロジェクトの対象の指定" : reason ? `オーケストレーター：${reason}` : "オーケストレーター"}）`,
     stepImage: (step: string, image: string) => `${step}＝${image}`,
     imagesJoin: "、",
+    ServicesStarted: (step: string, file: string, services: string, forTests: boolean) =>
+      `${forTests ? `${step}のテスト` : step}のためにサービスを起動：${services}（${file}。実行の後に消す）`,
     AgentRunStarted: (step: string, agent: string, auth: string) =>
       `${step}の実行を開始（${agent}・${auth}）`,
     AgentRunCompleted: (step: string, cost: string, viewpoints?: number) =>
@@ -317,6 +319,8 @@ const en: LabelMessages = {
       ` / images: ${images} (${source === "project" ? "set on the project target" : reason ? `Orchestrator: ${reason}` : "Orchestrator"})`,
     stepImage: (step, image) => `${step}=${image}`,
     imagesJoin: ", ",
+    ServicesStarted: (step, file, services, forTests) =>
+      `Started services for ${forTests ? `the ${step} tests` : step}: ${services} (${file}; removed after the run)`,
     stepsJoin: " → ",
     AgentRunStarted: (step, agent, auth) => `${step} started (${agent} · ${auth})`,
     AgentRunCompleted: (step, cost, viewpoints) =>

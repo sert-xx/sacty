@@ -9,6 +9,7 @@ import {
   extractReviewComments,
   extractSplitPlan,
   extractStepPlan,
+  servicePromptLines,
 } from "./prompts.js";
 
 const diff = [
@@ -279,5 +280,58 @@ describe("工程の選択と内容の調査では、開発のセットアップ�
     expect(extractStepPlan(output("java17"))).not.toHaveProperty("images");
     expect(extractStepPlan(output({}))).not.toHaveProperty("images");
     expect(extractStepPlan(output(undefined))).not.toHaveProperty("imageReason");
+  });
+
+  it("サービスの指定は、リポジトリの中の相対パスと、コードを動かす工程だけを読む（PBI-47）", () => {
+    const output = (services: unknown) =>
+      `\`\`\`json\n${JSON.stringify({ "sacty-steps": { plan: "standard", reason: "r", services } })}\n\`\`\``;
+    expect(
+      extractStepPlan(
+        output({
+          file: "deploy/compose.yaml",
+          names: ["db", "db", "mock-api", "bad name", 3],
+          steps: ["implement", "design", "reproduce", "nope"],
+        }),
+      ),
+    ).toMatchObject({
+      services: {
+        file: "deploy/compose.yaml",
+        names: ["db", "mock-api"],
+        steps: ["implement", "reproduce"],
+      },
+    });
+    for (const file of ["/etc/compose.yaml", "../other/compose.yaml", "a/../../compose.yaml", ""]) {
+      expect(extractStepPlan(output({ file, names: [], steps: ["implement"] }))).not.toHaveProperty(
+        "services",
+      );
+    }
+    // 使える工程が無ければ、指定しなかったことにする
+    expect(
+      extractStepPlan(output({ file: "compose.yaml", names: [], steps: ["design"] })),
+    ).not.toHaveProperty("services");
+    // オーケストレーターには、対象リポジトリがあるときだけ聞く
+    const withRepo = {
+      title: "x",
+      body: "",
+      steps: [],
+      repository: { url: "https://github.com/a/b.git", baseBranch: "main", baseCommit: "abc1234" },
+    } as unknown as Task;
+    expect(buildOrchestratorPrompt(withRepo)).toContain("- services：テストや動作確認に");
+    expect(
+      buildOrchestratorPrompt({ title: "x", body: "", steps: [] } as unknown as Task),
+    ).not.toContain("- services：");
+    expect(
+      servicePromptLines([
+        { name: "db", ports: [5432, 5433] },
+        { name: "mock", ports: [] },
+      ]),
+    ).toEqual([
+      "",
+      "--- 起動しているサービス（docker compose） ---",
+      expect.stringContaining("docker・docker compose のコマンドは使えません"),
+      "- db：db:5432、db:5433",
+      "- mock",
+    ]);
+    expect(servicePromptLines([])).toEqual([]);
   });
 });

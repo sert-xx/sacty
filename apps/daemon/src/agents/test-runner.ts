@@ -30,6 +30,8 @@ export interface TestRunner {
     command: string;
     /** イメージの環境変数（言語ごとのイメージの env。PBI-41）。 */
     env?: Record<string, string>;
+    /** つなぐネットワーク（docker compose のサービス。PBI-47）。 */
+    network?: string;
   }): Promise<TestRunResult>;
   /** 実行中のコンテナを止める（人間が一時停止・中止したとき）。無ければ何もしない。 */
   kill(runId: string): void;
@@ -67,7 +69,14 @@ export class DockerTestRunner implements TestRunner {
     this.containers.stopAll();
   }
 
-  async run({ runId, image, workspaceDir, command, env = {} }: Parameters<TestRunner["run"]>[0]) {
+  async run({
+    runId,
+    image,
+    workspaceDir,
+    command,
+    env = {},
+    network,
+  }: Parameters<TestRunner["run"]>[0]) {
     const name = `sacty-run-${runId}`;
     const args = dockerRunArgs({
       runId,
@@ -75,6 +84,7 @@ export class DockerTestRunner implements TestRunner {
       workspaceDir,
       envNames: Object.keys(env),
       mounts: [],
+      ...(network ? { network } : {}),
       command: ["sh", "-c", command],
     });
     const started = Date.now();

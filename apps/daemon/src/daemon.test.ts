@@ -10,7 +10,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { EventInput, Task } from "@sacty/core";
+import type { DaemonText, EventInput, StepKey, Task } from "@sacty/core";
 import {
   isCompleted,
   MVP_STEPS,
@@ -38,6 +38,7 @@ import type { RepositoryWorkspace } from "./repository.js";
 import { MemorySecretStore, OnePasswordSecretStore, ResolvingSecretStore } from "./secrets.js";
 import { createApp } from "./server.js";
 import { awaitingIssueComment, type ServiceDeps, TaskService } from "./service.js";
+import type { ServiceRunner, ServicesSpec } from "./services.js";
 import { MemorySettingsStore } from "./settings.js";
 
 /** 記録した文言（コードと引数）を、日本語の文にする（PBI-11）。 */
@@ -118,6 +119,27 @@ function projectsWithAccount(): MemoryProjectStore {
     githubAccounts: { "github.com": "me" },
   });
   return projects;
+}
+
+/** docker compose のサービスの偽物（PBI-47）。起動と停止を記録する。 */
+class FakeServices implements ServiceRunner {
+  started: { runId: string; workspaceDir: string; spec: ServicesSpec }[] = [];
+  stopped: string[] = [];
+  constructor(private readonly fail?: DaemonText) {}
+  async start(input: { runId: string; workspaceDir: string; spec: ServicesSpec }) {
+    this.started.push(input);
+    if (this.fail) return { ok: false as const, message: this.fail };
+    return {
+      ok: true as const,
+      started: {
+        network: `sacty-svc-${input.runId}_sacty`,
+        services: [{ name: "db", ports: [5432] }],
+      },
+    };
+  }
+  async stop(runId: string) {
+    this.stopped.push(runId);
+  }
 }
 
 /** clone の代わりに空のディレクトリを作り、決まった差分を返す偽物。 */
@@ -408,6 +430,7 @@ class FakeTests implements TestRunner {
     command: string;
     image: string;
     env?: Record<string, string>;
+    network?: string;
   }[] = [];
   /** true なら、止められるまで終わらない（一時停止のテスト用）。 */
   hold = false;
@@ -420,6 +443,7 @@ class FakeTests implements TestRunner {
     command: string;
     image: string;
     env?: Record<string, string>;
+    network?: string;
   }) {
     this.calls.push(input);
     if (this.hold) {
@@ -464,20 +488,25 @@ class FakeExecutor implements AgentExecutor {
   workspaceFiles: string[][] = [];
   /** 実行ごとのイメージと、イメージの環境変数（PBI-41）。 */
   images: { image: string; env?: Record<string, string> }[] = [];
+  /** 実行ごとにつないだネットワーク（PBI-47）。 */
+  networks: (string | undefined)[] = [];
   async run({
     runId,
     image,
     invocation,
     workspaceDir,
     imageEnv,
+    network,
   }: {
     runId: string;
     image: string;
     invocation: Invocation;
     workspaceDir: string;
     imageEnv?: Record<string, string>;
+    network?: string;
   }): Promise<AgentOutcome> {
     this.calls.push(invocation);
+    this.networks.push(network);
     this.images.push({ image, ...(imageEnv ? { env: imageEnv } : {}) });
     this.dirs.push(workspaceDir);
     this.scratch.push(/[\\/]_(?:snapshots|guardian)[\\/]/.test(workspaceDir));
@@ -547,6 +576,7 @@ function makeService(
     platformProblems?: ServiceDeps["platformProblems"];
     hostMcpProblems?: ServiceDeps["hostMcpProblems"];
     notifier?: ServiceDeps["notifier"];
+    services?: ServiceRunner;
   } = {},
 ) {
   const executor = new FakeExecutor(outcomes);
@@ -591,6 +621,7 @@ function makeService(
     ...(options.platformProblems ? { platformProblems: options.platformProblems } : {}),
     ...(options.hostMcpProblems ? { hostMcpProblems: options.hostMcpProblems } : {}),
     ...(options.notifier ? { notifier: options.notifier } : {}),
+    ...(options.services ? { services: options.services } : {}),
   });
   return { service, executor, repos, tests, pulls };
 }
@@ -2239,6 +2270,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       config?: () => ConfigResult;
       now?: () => number;
       planner?: ServiceDeps["planner"];
+      services?: ServiceRunner;
     } = {},
   ) {
     const activity = new SqliteActivityStore(dbPath);
@@ -2460,6 +2492,122 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         "イメージ「java」",
       );
       activity.close();
+    });
+  });
+
+  describe("docker compose のサービス（PBI-47）", () => {
+    const servicesPlan =
+      (steps: StepKey[] = ["implement"], extra: Record<string, unknown> = {}) =>
+      async () => ({
+        steps: [...MVP_STEPS],
+        fallback: false,
+        testCommand: "npm test",
+        costUsd: 0,
+        estimated: false,
+        services: { file: "compose.yaml", names: ["db"], steps },
+        ...extra,
+      });
+
+    it("サービスを使う工程とそのテストの前に起動してネットワークにつなぎ、終わったら消す。ほかの工程では起動しない", async () => {
+      const services = new FakeServices();
+      const tests = new FakeTests([{ exitCode: 0, output: "ok", durationMs: 1 }]);
+      const { activity, service, executor, id } = await toImplement(
+        [implement("# 実装"), review()],
+        { tests, services, planner: servicesPlan() },
+      );
+      // 要求要件・設計では起動しない
+      expect(services.started).toHaveLength(0);
+      await drain(service);
+      // 実装の実行と、そのテストの実行で、それぞれ起動して消す（実行ごとに別のプロジェクト）
+      expect(services.started.map((s) => s.spec)).toEqual([
+        { file: "compose.yaml", names: ["db"] },
+        { file: "compose.yaml", names: ["db"] },
+      ]);
+      const [agentRun, testRun] = services.started;
+      expect(agentRun?.workspaceDir).toBe(join(dir, "workspaces", id, "repo"));
+      expect(services.stopped).toEqual([agentRun?.runId, testRun?.runId]);
+      // 実装のエージェントとテストのコンテナを、サービスのネットワークにつなぐ
+      expect(executor.networks[3]).toBe(`sacty-svc-${agentRun?.runId}_sacty`);
+      expect(executor.networks.filter(Boolean)).toHaveLength(1);
+      expect(tests.calls[0]?.network).toBe(`sacty-svc-${testRun?.runId}_sacty`);
+      // 接続先をエージェントに伝える
+      expect(promptOf(executor, 3)).toContain("--- 起動しているサービス（docker compose） ---");
+      expect(promptOf(executor, 3)).toContain("- db：db:5432");
+      expect(promptOf(executor, 2)).not.toContain("起動しているサービス");
+      // 起動したことを作業履歴に残す
+      const started = service.get(id)?.activity.filter((e) => e.type === "ServicesStarted") ?? [];
+      expect(started.map((e) => e.type === "ServicesStarted" && e.payload.forTests)).toEqual([
+        undefined,
+        true,
+      ]);
+      activity.close();
+    });
+
+    it("サービスを起動できなければ、工程を実行せずに理由を示して止まる", async () => {
+      const services = new FakeServices(
+        message("services.unsafe", { file: "compose.yaml", detail: "db：privileged は使えません" }),
+      );
+      const { activity, service, executor, id } = await toImplement([], {
+        services,
+        planner: servicesPlan(),
+      });
+      const before = executor.calls.length;
+      await drain(service);
+      expect(executor.calls).toHaveLength(before);
+      expect(service.get(id)?.task.status).toBe("paused");
+      const failed = service.get(id)?.activity.find((e) => e.type === "AgentRunFailed");
+      expect(ja(failed?.type === "AgentRunFailed" ? failed.payload.message : undefined)).toContain(
+        "db：privileged は使えません",
+      );
+      activity.close();
+    });
+
+    it("テストの前にサービスを起動できなければ、テストを実行せずに止まる", async () => {
+      const failing = new FakeServices();
+      const tests = new FakeTests();
+      const { activity, service, id } = await toImplement([implement("# 実装")], {
+        tests,
+        services: failing,
+        planner: servicesPlan(),
+      });
+      await service.runNext(id); // 実装（起動できる）
+      (failing as unknown as { fail: DaemonText }).fail = message("services.failed", {
+        file: "compose.yaml",
+        detail: "pull access denied",
+      });
+      await drain(service);
+      expect(tests.calls).toHaveLength(0);
+      expect(service.get(id)?.task.status).toBe("paused");
+      expect(ja(service.get(id)?.task.pausedMessage)).toContain("pull access denied");
+      activity.close();
+    });
+
+    it("内容の調査では、指定があっても起動しない。不具合の調査では起動する", async () => {
+      for (const [investigation, expected] of [
+        ["content", 0],
+        ["bug", 1],
+      ] as const) {
+        const activity = new SqliteActivityStore(join(dir, `${investigation}.db`));
+        const services = new FakeServices();
+        const { service } = makeService(activity, [out("# 調査")], {
+          services,
+          planner: async () => ({
+            steps: [...STEP_PLANS.investigate],
+            plan: "investigate" as const,
+            reason: "調査",
+            fallback: false,
+            costUsd: 0,
+            estimated: false,
+            investigation,
+            services: { file: "compose.yaml", names: [], steps: ["investigate"] as StepKey[] },
+          }),
+        });
+        const task = service.createTask({ projectId: "default", title: "調べて" });
+        await service.runNext(task.id);
+        expect(services.started).toHaveLength(expected);
+        expect(services.stopped).toHaveLength(expected);
+        activity.close();
+      }
     });
   });
 

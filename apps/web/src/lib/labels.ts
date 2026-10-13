@@ -148,6 +148,13 @@ export function describeEvent(event: ActivityEvent, l: LabelMessages): string {
         )
       );
     }
+    case "ServicesStarted":
+      return e.ServicesStarted(
+        l.step[event.payload.step],
+        event.payload.file,
+        event.payload.services.map((s) => s.name).join(e.imagesJoin),
+        event.payload.forTests === true,
+      );
     case "AgentRunStarted":
       return e.AgentRunStarted(
         l.step[event.payload.step],

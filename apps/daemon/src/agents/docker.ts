@@ -142,6 +142,8 @@ export interface AgentExecutor {
     invocation: Invocation;
     /** イメージの環境変数（言語ごとのイメージの env。PBI-41）。実行の環境変数が同じ名前なら、そちらを使う。 */
     imageEnv?: Record<string, string>;
+    /** つなぐネットワーク（docker compose のサービス。PBI-47）。 */
+    network?: string;
   }): Promise<AgentOutcome>;
   /** 実行中のコンテナを止める（人間が一時停止・中止したとき）。無ければ何もしない。 */
   kill(runId: string): void;
@@ -165,10 +167,13 @@ export function dockerRunArgs(input: {
    * host-gateway（Docker Desktop）か、ホストのアドレス（Rancher Desktop など。PBI-40）。
    */
   hostGateway?: string;
+  /** つなぐネットワーク（docker compose のサービスのネットワーク。PBI-47）。 */
+  network?: string;
 }): string[] {
   return [
     "run",
     "--rm",
+    ...(input.network ? ["--network", input.network] : []),
     ...(input.hostGateway ? ["--add-host", `host.docker.internal:${input.hostGateway}`] : []),
     "--name",
     `sacty-run-${input.runId}`,
@@ -238,6 +243,7 @@ export class DockerExecutor implements AgentExecutor {
     workspaceDir,
     invocation,
     imageEnv = {},
+    network,
   }: Parameters<AgentExecutor["run"]>[0]): Promise<AgentOutcome> {
     const env = { ...imageEnv, ...invocation.env };
     // コピーして渡すファイル（Codexの認証ファイルなど）は、実行ごとの一時ディレクトリに置き、
@@ -295,6 +301,7 @@ export class DockerExecutor implements AgentExecutor {
       workspaceDir,
       envNames: Object.keys(env),
       mounts,
+      ...(network ? { network } : {}),
       command: invocation.command,
       ...(invocation.hostGateway
         ? { hostGateway: invocation.hostAddress ?? DEFAULT_HOST_ADDRESS }
