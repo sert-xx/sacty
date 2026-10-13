@@ -602,17 +602,46 @@ describe("ゲートウェイのリトライの表示（PBI-37）", () => {
   });
 });
 
-describe("状態の色の種類（PBI-42）", () => {
-  it("完了と中止を別の色の種類にする", () => {
+describe("状態の表示の種類（PBI-42）", () => {
+  it("完了と中止を、ほかの状態とも別の種類にする", () => {
     const done = task({ steps: [{ key: "investigate", state: "done" }] });
     expect(statusText(done)).toBe("完了");
     expect(statusTone(done)).toBe("completed");
     expect(statusTone(task({ status: "cancelled" }))).toBe("cancelled");
   });
 
-  it("終わっていない idle や、ほかの状態は、状態のまま", () => {
-    expect(statusTone(task({ steps: [{ key: "investigate", state: "active" }] }))).toBe("idle");
-    expect(statusTone(task({ status: "running" }))).toBe("running");
-    expect(statusTone(task({ status: "paused" }))).toBe("paused");
+  it("AI・sacty が進めている状態は working", () => {
+    expect(statusTone(task({ status: "running" }))).toBe("working");
+    expect(statusTone(task({ status: "waiting_children" }))).toBe("working");
+    // テストの実行を待っている idle（完了していない）
+    const verifying = task({
+      steps: [{ key: "implement", state: "active" }],
+      verification: "pending",
+    });
+    expect(statusText(verifying)).toBe("テストを実行中");
+    expect(statusTone(verifying)).toBe("working");
+  });
+
+  it("順番・依存を待っている状態は waiting", () => {
+    expect(statusTone(task({ status: "queued" }))).toBe("waiting");
+    expect(statusTone(task({ status: "blocked" }))).toBe("waiting");
+  });
+
+  it("人の出番は person", () => {
+    expect(statusTone(task({ status: "paused" }))).toBe("person");
+    expect(statusTone(task({ status: "escalated" }))).toBe("person");
+    expect(
+      statusTone(task({ status: "awaiting_approval", gate: { step: "design", submission: 1 } })),
+    ).toBe("person");
+  });
+
+  it("ゴールガーディアンが PR の指摘を判断している間は、承認待ちでも working", () => {
+    const judging = task({
+      status: "awaiting_approval",
+      gate: { step: "pr", submission: 1 },
+      pendingReview: { keys: ["comment:1"], remarks: ["x"] },
+    });
+    expect(statusText(judging)).toBe("ゴールガーディアンが PR の指摘を判断中");
+    expect(statusTone(judging)).toBe("working");
   });
 });
