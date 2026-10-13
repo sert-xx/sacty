@@ -29,6 +29,14 @@ const ja = {
     `いまは ${n} 件まで同時に実行します${byDefault ? "（既定）" : ""}。`,
   save: "保存する",
   saved: "保存しました。",
+  secretsTitle: "秘密情報",
+  secretsNote: "sacty up の起動のときに、使う秘密情報をまとめて取り出します",
+  secretsHelp:
+    "1Password の認証は、起動のときの1回だけです。\n1Password にサインインし直したときや、参照を直したときは、取り出し直してください。",
+  secretsFetch: "秘密情報を取り出し直す",
+  secretsFetching: "取り出しています…",
+  secretsResult: (ok: number, total: number) =>
+    total === 0 ? "使う秘密情報はありません。" : `${total} 件のうち ${ok} 件を取り出しました。`,
 };
 
 export type SettingsMessages = typeof ja;
@@ -63,6 +71,14 @@ const en: SettingsMessages = {
     `Up to ${n} task${n === 1 ? "" : "s"} run at the same time now${byDefault ? " (default)" : ""}.`,
   save: "Save",
   saved: "Saved.",
+  secretsTitle: "Secrets",
+  secretsNote: "sacty up gets the secrets it uses all at once at startup",
+  secretsHelp:
+    "1Password asks for authentication only once, at startup.\nGet the secrets again after you sign in to 1Password again or fix a reference.",
+  secretsFetch: "Get secrets again",
+  secretsFetching: "Getting…",
+  secretsResult: (ok, total) =>
+    total === 0 ? "No secrets are used." : `Got ${ok} of ${total} secrets.`,
 };
 
 export const settings = { ja, en };

@@ -71,7 +71,6 @@ const hostMcp = new HostMcpServers({
   secrets,
   log: (line) => console.log(line),
 });
-hostMcp.start();
 const gateway = new AiGateway({
   hostMcp,
   policy: () => {
@@ -82,13 +81,6 @@ const gateway = new AiGateway({
   credentials,
 });
 await gateway.listen();
-for (const platform of platforms()) {
-  credentials.header(platform).catch((error) => {
-    console.warn(
-      `[daemon] internal platform ${platform.name}: ${error instanceof Error ? error.message : error}`,
-    );
-  });
-}
 const service = new TaskService({
   activity,
   config,
@@ -129,9 +121,35 @@ const app = createApp(service, token, { intake });
 
 const server = serve({ fetch: app.fetch, hostname: "127.0.0.1", port }, (info) => {
   console.log(`[daemon] listening on http://127.0.0.1:${info.port} (data: ${home})`);
-  worker.start();
-  intake.start();
-  prWatcher.start();
+  // 使う秘密情報をまとめて取り出してから（1Password の認証は起動のときの1回。PBI-48）、タスクの実行と取り込みを始める
+  void service
+    .prefetchSecrets()
+    .then(({ total, problems }) => {
+      if (total > 0) {
+        console.log(
+          `[daemon] 秘密情報を取り出しました（${total - problems.length}/${total} 件）。`,
+        );
+      }
+      for (const problem of problems) console.warn(`[daemon] ${renderMessage(problem, "ja")}`);
+    })
+    .catch((error: unknown) =>
+      console.warn("[daemon] 秘密情報をまとめて取り出せませんでした：", error),
+    )
+    .finally(() => {
+      // 秘密情報を使うホストの MCP サーバーの起動と、組織内 PF の認証の用意も、まとめて取り出した後にする
+      // （先に始めると、それぞれが個別に 1Password に問い合わせるため。PBI-48 レビュー指摘）
+      hostMcp.start();
+      for (const platform of platforms()) {
+        credentials.header(platform).catch((error) => {
+          console.warn(
+            `[daemon] internal platform ${platform.name}: ${error instanceof Error ? error.message : error}`,
+          );
+        });
+      }
+      worker.start();
+      intake.start();
+      prWatcher.start();
+    });
 });
 
 /** 後処理を待つ上限。CLIはこれより長く待ってから強制終了する。 */

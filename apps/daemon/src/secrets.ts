@@ -1,4 +1,7 @@
 import { execFile } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { promisify } from "node:util";
 import { code, type DaemonMessage, message } from "@sacty/core";
 import { z } from "zod";
@@ -108,6 +111,89 @@ export class OnePasswordSecretStore implements SecretStore {
     } = {},
   ) {}
 
+  /**
+   * 参照をまとめて取り出し、メモリーに持つ（sacty up の起動時。PBI-48）。1回の op run ですべての参照を環境変数として
+   * 子のプロセスに渡し、子が JSON で返す（認証を1回にする。値はコマンドラインにもファイルにも出さない）。
+   * まとめて取り出せなければ、参照ごとに取り出し直して、取り出せなかった参照と理由を返す。
+   */
+  async prefetch(refs: readonly string[]): Promise<{ ref: string; error: SecretNotFoundError }[]> {
+    const account = this.options.account?.();
+    const keyOf = (ref: string) => `${account ?? ""}\u0000${ref}`;
+    const unique = [...new Set(refs)].filter(isOnePasswordRef);
+    // すでに取り出し中・取り出し済みの参照は、その結果を待つ（戻ったときに、すべて取り出し終えているように）
+    const failures: { ref: string; error: SecretNotFoundError }[] = [];
+    const known = unique.filter((ref) => this.cache.has(keyOf(ref)));
+    for (const ref of known) {
+      await this.cache.get(keyOf(ref))?.catch((error: unknown) => {
+        failures.push({
+          ref,
+          error: error instanceof SecretNotFoundError ? error : new SecretNotFoundError(ref),
+        });
+      });
+    }
+    const wanted = unique.filter((ref) => !known.includes(ref));
+    if (wanted.length === 0) return failures;
+    const dir = mkdtempSync(join(tmpdir(), "sacty-op-"));
+    try {
+      // 参照だけを書いたファイル（値は書かない）。本人だけが読める
+      const envFile = join(dir, "refs.env");
+      writeFileSync(envFile, wanted.map((ref, i) => `SACTY_OP_${i}="${ref}"\n`).join(""), {
+        mode: 0o600,
+      });
+      const names = wanted.map((_, i) => `SACTY_OP_${i}`);
+      const script = `process.stdout.write(JSON.stringify(${JSON.stringify(names)}.map((n) => process.env[n] ?? null)))`;
+      let result: Awaited<ReturnType<OpRunner>> | undefined;
+      try {
+        result = await (this.options.run ?? runOp)([
+          "run",
+          "--no-masking",
+          ...(account ? ["--account", account] : []),
+          "--env-file",
+          envFile,
+          "--",
+          process.execPath,
+          "-e",
+          script,
+        ]);
+      } catch {
+        result = undefined;
+      }
+      let values: unknown;
+      try {
+        values = result && result.code === 0 ? JSON.parse(result.stdout) : undefined;
+      } catch {
+        values = undefined;
+      }
+      if (
+        Array.isArray(values) &&
+        values.length === wanted.length &&
+        values.every((v) => typeof v === "string" && v !== "")
+      ) {
+        for (const [i, ref] of wanted.entries()) {
+          this.cache.set(keyOf(ref), Promise.resolve(values[i] as string));
+        }
+        return failures;
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+    // まとめて取り出せなかった（参照の誤り・サインインしていないなど）。どれが取り出せないかを参照ごとに確かめる
+    for (const ref of wanted) {
+      await this.get(ref).catch((error: unknown) => {
+        failures.push({
+          ref,
+          error: error instanceof SecretNotFoundError ? error : new SecretNotFoundError(ref),
+        });
+      });
+    }
+    return failures;
+  }
+
+  /** メモリーに持った値を捨てる（画面から取り出し直すとき。PBI-48）。 */
+  clear(): void {
+    this.cache.clear();
+  }
+
   get(ref: string): Promise<string> {
     // アカウントは取り出すときに決め、アカウントと参照の組で持つ（設定でアカウントを変えたら、前のアカウントの
     // 値を使い回さない。同じ名前の保管庫・アイテムが複数のアカウントにありうるため。PBI-34 レビュー指摘）
@@ -147,14 +233,61 @@ export class OnePasswordSecretStore implements SecretStore {
 }
 
 /** 参照の形で取得元を選ぶ（op:// は 1Password、それ以外はキーチェーン。PBI-34）。 */
-export class ResolvingSecretStore implements SecretStore {
+export class ResolvingSecretStore implements SecretStore, PrefetchingSecretStore {
   constructor(
     private readonly keychain: SecretStore,
-    private readonly onePassword: SecretStore,
+    private readonly onePassword: SecretStore &
+      Partial<Pick<OnePasswordSecretStore, "prefetch" | "clear">>,
   ) {}
   get(ref: string): Promise<string> {
     return isOnePasswordRef(ref) ? this.onePassword.get(ref) : this.keychain.get(ref);
   }
+
+  /**
+   * 参照をまとめて取り出す（PBI-48）。1Password はまとめて取り出してメモリーに持ち、キーチェーンは取り出せるかを
+   * 確かめる（キーチェーンは使うたびに取り出す。`sacty secret set` で変えた値をすぐに使うため）。
+   * 取り出せなかった参照と理由を返す。fresh なら、持っている値を捨ててから取り出し直す。
+   */
+  async prefetch(
+    refs: readonly string[],
+    options: { fresh?: boolean } = {},
+  ): Promise<{ ref: string; error: SecretNotFoundError }[]> {
+    if (options.fresh) this.onePassword.clear?.();
+    const unique = [...new Set(refs)];
+    const failures: { ref: string; error: SecretNotFoundError }[] = [];
+    const onePasswordRefs = unique.filter(isOnePasswordRef);
+    if (onePasswordRefs.length > 0) {
+      if (this.onePassword.prefetch)
+        failures.push(...(await this.onePassword.prefetch(onePasswordRefs)));
+      else {
+        for (const ref of onePasswordRefs) {
+          await this.onePassword.get(ref).catch((error: unknown) => {
+            failures.push({
+              ref,
+              error: error instanceof SecretNotFoundError ? error : new SecretNotFoundError(ref),
+            });
+          });
+        }
+      }
+    }
+    for (const ref of unique.filter((r) => !isOnePasswordRef(r))) {
+      await this.keychain.get(ref).catch((error: unknown) => {
+        failures.push({
+          ref,
+          error: error instanceof SecretNotFoundError ? error : new SecretNotFoundError(ref),
+        });
+      });
+    }
+    return failures;
+  }
+}
+
+/** 参照をまとめて取り出せる取り出し口（PBI-48）。 */
+export interface PrefetchingSecretStore {
+  prefetch(
+    refs: readonly string[],
+    options?: { fresh?: boolean },
+  ): Promise<{ ref: string; error: SecretNotFoundError }[]>;
 }
 
 /** テスト用。 */

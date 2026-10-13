@@ -231,6 +231,12 @@ export function createApp(
     }
   });
 
+  // 秘密情報を取り出し直す（PBI-48）。値は返さない
+  app.post("/api/secrets/prefetch", async (c) => {
+    const { total, problems } = await service.prefetchSecrets({ fresh: true });
+    return c.json({ total, problems });
+  });
+
   app.post("/api/tasks/:id/resume", async (c) => {
     const json = await readJson(c);
     if (!json.ok) return c.json({ error: "invalid_json" }, 400);

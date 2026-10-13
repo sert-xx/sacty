@@ -124,6 +124,8 @@ const PARAMS = {
   "secret.opMissing": null,
   "secret.opSignedOut": z.object({ ref: z.string() }),
   "secret.opFailed": z.object({ ref: z.string(), detail: z.string() }),
+  // 起動時にまとめて取り出す（PBI-48）
+  "secret.prefetchFailed": z.object({ where: z.string(), detail: TextParam }),
   "run.repositoryNotConfigured": null,
   "guardian.verdictUnreadable": null,
   "guardian.reworkUnreadable": null,
@@ -443,6 +445,8 @@ const ja: MessageDictionary = {
     `秘密情報「${name}」が見つかりません。\`sacty secret set ${name}\` で保存してください。`,
   "secret.opMissing":
     "1Password の op コマンドが見つかりません。1Password CLI をインストールし、サインインしてから再開してください。",
+  "secret.prefetchFailed": ({ where, detail }, text) =>
+    `起動のときに、秘密情報（${where}）を取り出せませんでした：${text(detail)}用意してから、「sacty の設定」の「秘密情報を取り出し直す」を押してください（使うときにも、もう一度取り出します）。`,
   "secret.opSignedOut": ({ ref }) =>
     `1Password にサインインしていないため、「${ref}」を取り出せません。op signin（または 1Password のアプリとの連携）でサインインしてから再開してください。`,
   "secret.opFailed": ({ ref, detail }) =>
@@ -711,6 +715,8 @@ const en: MessageDictionary = {
     `Secret "${name}" not found. Save it with \`sacty secret set ${name}\`.`,
   "secret.opMissing":
     "The 1Password op command was not found. Install 1Password CLI, sign in, and resume.",
+  "secret.prefetchFailed": ({ where, detail }, text) =>
+    `Could not get the secret (${where}) at startup: ${text(detail)} Set it up, then press "Get secrets again" in sacty settings (sacty also tries again when it is used).`,
   "secret.opSignedOut": ({ ref }) =>
     `Cannot read "${ref}" because 1Password is not signed in. Sign in with op signin (or the 1Password app integration) and resume.`,
   "secret.opFailed": ({ ref, detail }) =>
