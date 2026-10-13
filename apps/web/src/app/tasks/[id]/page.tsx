@@ -403,8 +403,6 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
           )}
           <PullRequestCard task={task} />
           {(task.approved.requirements || task.proposals.length > 0) && <Proposals task={task} />}
-          {/* オーケストレーターへの質問と答え（PBI-54） */}
-          <TaskChat task={task} />
           {/* 工程ごとのエージェント・設定・費用（PBI-46） */}
           <StepCosts task={task} activity={activity} />
         </div>
@@ -436,6 +434,8 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
           </ol>
         </section>
       </div>
+      {/* オーケストレーターへの質問と答え（PBI-54）。画面の右の AI のアイコンから開くサイドパネル（PBI-61） */}
+      <TaskChat task={task} />
     </>
   );
 }

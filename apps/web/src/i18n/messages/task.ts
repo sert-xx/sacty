@@ -112,6 +112,9 @@ const ja = {
     send: "質問する",
     sending: "送っています…",
     help: "答えの費用は、このタスクの費用に入ります。計画を変えるには、差し戻しなどの通常の操作をしてください。",
+    open: "オーケストレーターに質問",
+    openPending: "オーケストレーターに質問（答えを書いています）",
+    close: "閉じる",
   },
   deliverable: {
     approved: (n: number) => `人間が承認済み（${n}回目の提出・凍結）`,
@@ -274,6 +277,9 @@ const en: TaskMessages = {
     send: "Ask",
     sending: "Sending…",
     help: "The cost of answers is added to this task's cost. To change the plan, use the usual actions such as requesting changes.",
+    open: "Ask the Orchestrator",
+    openPending: "Ask the Orchestrator (writing an answer)",
+    close: "Close",
   },
   deliverable: {
     approved: (n) => `Approved by a person (submission ${n}, frozen)`,
