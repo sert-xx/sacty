@@ -387,6 +387,23 @@ describe("工程の選択と内容の調査では、開発のセットアップ�
     expect(servicePromptLines([{ name: "db", ports: [5432] }])[2]).toContain(
       "そのポート（localhost:15432）でも届きます",
     );
+    // 同じサービスの中では、ホストに出すポートの対応を優先する。UDP は転送しない（PBI-60 レビュー指摘）
+    const app = {
+      name: "app",
+      ports: [80, 8080],
+      hostPorts: [
+        { port: 8080, target: 80 },
+        { port: 18080, target: 8080 },
+      ],
+      otherPorts: [{ port: 8125, protocol: "udp" }],
+    };
+    expect(servicePromptLines([app]).slice(4)).toEqual([
+      "- app：app:80 または localhost:80・localhost:8080、app:8080 または localhost:18080、app:8125/udp（localhost には転送していません）",
+    ]);
+    expect(servicePromptLines([app, { name: "mock", ports: [8080] }]).slice(4)).toEqual([
+      "- app：app:80 または localhost:80（localhost:8080 は、複数のサービスが使う番号のため、転送していません）、app:8080 または localhost:18080、app:8125/udp（localhost には転送していません）",
+      "- mock：mock:8080（localhost:8080 は、複数のサービスが使う番号のため、転送していません）",
+    ]);
     expect(servicePromptLines([])).toEqual([]);
   });
 });

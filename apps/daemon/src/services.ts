@@ -30,13 +30,15 @@ export type StartedServices = {
 };
 
 /**
- * 起動したサービス。ports はコンテナのポート。hostPorts は、compose の ports でホストに出すポート（published）が
+ * 起動したサービス。ports はコンテナの TCP のポート。hostPorts は、compose の ports でホストに出すポート（published）が
  * コンテナのポートと違うもの（"15432:5432" など。PBI-60）。sacty はホストに出さないが、localhost の転送に使う。
+ * otherPorts は TCP 以外（UDP など）のポート。localhost には転送しない（接続先として伝えるだけ）。
  */
 export type StartedService = {
   name: string;
   ports: number[];
   hostPorts?: { port: number; target: number }[];
+  otherPorts?: { port: number; protocol: string }[];
 };
 
 /**
@@ -49,13 +51,16 @@ export function localForwards(services: readonly StartedService[]): {
   forwards: LocalForward[];
   shared: number[];
 } {
-  // localhost の番号ごとの、転送先の候補（サービスごとに1つ。コンテナのポートと同じ番号を先にする）
+  // localhost の番号ごとの、転送先の候補（サービスごとに1つ）。リポジトリの開発の設定の localhost:<番号> は
+  // ホストから見た番号なので、同じサービスの中では、ホストに出すポートの対応（"8080:80" なら 8080 → 80）を先にする
   const users = new Map<number, LocalForward[]>();
   for (const service of services) {
     const mine = new Map<number, LocalForward>();
-    for (const port of service.ports) mine.set(port, { port, host: service.name });
     for (const { port, target } of service.hostPorts ?? []) {
       if (!mine.has(port)) mine.set(port, { port, host: service.name, target });
+    }
+    for (const port of service.ports) {
+      if (!mine.has(port)) mine.set(port, { port, host: service.name });
     }
     for (const [port, forward] of mine) users.set(port, [...(users.get(port) ?? []), forward]);
   }
@@ -82,9 +87,11 @@ function portRange(text: string): number[] | undefined {
  * compose の ports の1つから、コンテナのポートと、ホストに出すポート（published）の組を取る（PBI-60）。
  * 長い書き方（target・published。正規化した設定はこちら）と、短い書き方（"5432"・"15432:5432"・
  * "127.0.0.1:15432:5432"・"8000-8001:8000-8001"・"5432/tcp"）の両方を読む。published が無い・範囲が
- * 合わない・UDP のものは、コンテナのポートだけ。
+ * 合わないものは、コンテナのポートだけ。TCP 以外（UDP など）は protocol を付けて返す（published は付けない）。
  */
-export function composePorts(entry: unknown): { target: number; published?: number }[] {
+export function composePorts(
+  entry: unknown,
+): { target: number; published?: number; protocol?: string }[] {
   let targetText: string;
   let publishedText: string | undefined;
   let protocol = "tcp";
@@ -110,8 +117,9 @@ export function composePorts(entry: unknown): { target: number; published?: numb
     return [];
   }
   const targets = portRange(targetText) ?? [];
+  if (protocol !== "tcp") return targets.map((target) => ({ target, protocol }));
   const published = publishedText === undefined ? undefined : portRange(publishedText);
-  if (protocol !== "tcp" || !published || published.length !== targets.length) {
+  if (!published || published.length !== targets.length) {
     return targets.map((target) => ({ target }));
   }
   return targets.map((target, i) => ({ target, published: published[i] as number }));
@@ -258,15 +266,21 @@ export function sanitizeCompose(
       }
     }
     // ホストのポートに出さない・固定の名前を使わない（ほかのタスクとぶつかるため）。つなぐ先はネットワークの中
-    const published = (Array.isArray(service.ports) ? (service.ports as unknown[]) : []).flatMap(
-      composePorts,
-    );
-    const ports = [
-      ...published.map((p) => p.target),
-      ...(Array.isArray(service.expose) ? (service.expose as unknown[]) : []).map((p) =>
-        Number(String(p).split("/")[0]),
+    // ports と expose（"8125/udp" のようにプロトコルを書ける）。TCP 以外は、localhost の転送の候補にも、
+    // ぶつかりの判定にも入れない（PBI-60）
+    const declared = [
+      ...(Array.isArray(service.ports) ? (service.ports as unknown[]) : []).flatMap(composePorts),
+      ...(Array.isArray(service.expose) ? (service.expose as unknown[]) : []).flatMap((p) =>
+        composePorts(String(p)),
       ),
-    ].filter((p) => Number.isInteger(p) && p > 0);
+    ];
+    const published = declared.filter((p) => p.protocol === undefined);
+    const ports = published.map((p) => p.target);
+    const otherPorts = new Map<string, { port: number; protocol: string }>();
+    for (const { target, protocol } of declared) {
+      if (protocol !== undefined)
+        otherPorts.set(`${target}/${protocol}`, { port: target, protocol });
+    }
     // ホストに出すポートがコンテナのポートと違うもの（localhost の転送に使う。PBI-60）
     const hostPorts = new Map<number, number>();
     for (const { target, published: port } of published) {
@@ -286,6 +300,9 @@ export function sanitizeCompose(
       _hostPorts: [...hostPorts]
         .sort(([a], [b]) => a - b)
         .map(([port, target]) => ({ port, target })),
+      _otherPorts: [...otherPorts.values()].sort(
+        (a, b) => a.port - b.port || a.protocol.localeCompare(b.protocol),
+      ),
     };
   }
 
@@ -333,9 +350,16 @@ export function sanitizeCompose(
   const started = Object.entries(services).map(([name, service]) => {
     const ports = service._ports as number[];
     const hostPorts = service._hostPorts as { port: number; target: number }[];
+    const otherPorts = service._otherPorts as { port: number; protocol: string }[];
     delete service._ports;
     delete service._hostPorts;
-    return { name, ports, ...(hostPorts.length > 0 ? { hostPorts } : {}) };
+    delete service._otherPorts;
+    return {
+      name,
+      ports,
+      ...(hostPorts.length > 0 ? { hostPorts } : {}),
+      ...(otherPorts.length > 0 ? { otherPorts } : {}),
+    };
   });
   return {
     ok: true,

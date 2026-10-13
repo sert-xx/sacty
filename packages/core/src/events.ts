@@ -807,6 +807,8 @@ const ServicesStarted = z.object({
         hostPorts: z
           .array(z.object({ port: z.number().int(), target: z.number().int() }))
           .optional(),
+        /** TCP 以外（UDP など）のポート。localhost には転送しない（PBI-60）。 */
+        otherPorts: z.array(z.object({ port: z.number().int(), protocol: z.string() })).optional(),
       }),
     ),
     /** テストの実行のための起動か（無ければ工程のエージェントの実行）。 */

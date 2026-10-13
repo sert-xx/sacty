@@ -2010,8 +2010,10 @@ export function servicePromptLines(services: readonly StartedService[]): string[
     const reachable = forwards
       .filter((f) => f.host === service.name && (f.target ?? f.port) === port)
       .map((f) => `localhost:${f.port}`);
+    // localhost のこの番号は、同じサービスの中でホストに出すポートの対応（"8080:80" の 8080）が先
+    const overridden = (service.hostPorts ?? []).some((h) => h.port === port && h.target !== port);
     const blocked = [
-      port,
+      ...(overridden ? [] : [port]),
       ...(service.hostPorts ?? []).filter((h) => h.target === port).map((h) => h.port),
     ]
       .filter((n) => shared.includes(n))
@@ -2029,10 +2031,16 @@ export function servicePromptLines(services: readonly StartedService[]): string[
     "--- 起動しているサービス（docker compose） ---",
     'sacty が、この実行のために次のサービスを起動しています。サービス名とコンテナのポート（db:5432 など）でも、localhost のそのポート（localhost:5432・127.0.0.1:5432 など）でも接続できます。compose ファイルでホストに別のポートで出している（ports: "15432:5432" など）なら、そのポート（localhost:15432）でも届きます（sacty がサービスに転送しています）。リポジトリの設定の接続先は、書き換えずにそのまま使ってください。docker・docker compose のコマンドは使えません（サービスの起動・停止は不要です）。この実行が終わると、サービスとデータは消えます。',
     "localhost で届かないとき（そのポートをほかのものが使っていたときなど）は、サービス名で接続してください。MySQL のクライアントなど、ホストに localhost と書くと UNIX ソケットで接続するものは、127.0.0.1 と書いてください。サービスと同じポートでアプリを待ち受けさせると、転送とぶつかります（アプリのポートを変えてください）。",
-    ...services.map(
-      (s) =>
-        `- ${s.name}${s.ports.length > 0 ? `：${s.ports.map((p) => target(s, p)).join("、")}` : ""}`,
-    ),
+    ...services.map((s) => {
+      const targets = [
+        ...s.ports.map((p) => target(s, p)),
+        // TCP 以外（UDP など）は、localhost に転送しない
+        ...(s.otherPorts ?? []).map(
+          (o) => `${s.name}:${o.port}/${o.protocol}（localhost には転送していません）`,
+        ),
+      ];
+      return `- ${s.name}${targets.length > 0 ? `：${targets.join("、")}` : ""}`;
+    }),
   ];
 }
 

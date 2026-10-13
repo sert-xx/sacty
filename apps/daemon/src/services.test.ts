@@ -465,10 +465,13 @@ describe("compose の ports から、ホストに出すポートとコンテナ�
     expect(composePorts("9000-9002:8000-8001")).toEqual([{ target: 8000 }, { target: 8001 }]);
     expect(composePorts("abc:5432")).toEqual([{ target: 5432 }]);
     expect(composePorts("70000:5432")).toEqual([{ target: 5432 }]);
-    expect(composePorts("15353:53/udp")).toEqual([{ target: 53 }]);
+    // TCP 以外は、プロトコルを付けて返す（published は付けない）
+    expect(composePorts("15353:53/udp")).toEqual([{ target: 53, protocol: "udp" }]);
+    expect(composePorts("53/UDP")).toEqual([{ target: 53, protocol: "udp" }]);
     expect(composePorts({ target: 53, published: "15353", protocol: "udp" })).toEqual([
-      { target: 53 },
+      { target: 53, protocol: "udp" },
     ]);
+    expect(composePorts("9000/sctp")).toEqual([{ target: 9000, protocol: "sctp" }]);
     expect(composePorts("x")).toEqual([]);
     expect(composePorts(null)).toEqual([]);
     expect(composePorts({ target: "x" })).toEqual([]);
@@ -546,15 +549,105 @@ describe("ホストに出すポートからも localhost に転送する（PBI-6
     });
   });
 
-  it("同じサービスの中で、ホストのポートがコンテナのポートと同じ番号なら、コンテナのポートを優先する", () => {
+  it("同じサービスの中で、ホストのポートがほかのコンテナのポートと同じ番号なら、ホストのポートの対応を優先する", () => {
     expect(
       localForwards([{ name: "app", ports: [80, 8080], hostPorts: [{ port: 8080, target: 80 }] }]),
     ).toEqual({
       forwards: [
         { port: 80, host: "app" },
-        { port: 8080, host: "app" },
+        { port: 8080, host: "app", target: 80 },
       ],
       shared: [],
+    });
+  });
+});
+
+describe("正規化した compose の設定から、localhost に転送するポートを決める（PBI-60 レビュー指摘）", () => {
+  const startedFrom = (services: Record<string, unknown>) => {
+    const result = sanitizeCompose({ services }, ws, []);
+    if (!result.ok) throw new Error(result.problems.join());
+    return result.services;
+  };
+
+  it("UDP のポートは、転送の候補にも、ぶつかりの判定にも入れない（同じ番号の TCP は転送する）", () => {
+    const services = startedFrom({
+      tcp: { image: "a", ports: [{ target: 8125, published: "8125", protocol: "tcp" }] },
+      udp: {
+        image: "b",
+        ports: [{ target: 8125, published: "8125", protocol: "udp" }],
+        expose: ["9125/udp", "9126"],
+      },
+    });
+    expect(services).toEqual([
+      { name: "tcp", ports: [8125] },
+      {
+        name: "udp",
+        ports: [9126],
+        otherPorts: [
+          { port: 8125, protocol: "udp" },
+          { port: 9125, protocol: "udp" },
+        ],
+      },
+    ]);
+    expect(localForwards(services)).toEqual({
+      forwards: [
+        { port: 8125, host: "tcp" },
+        { port: 9126, host: "udp" },
+      ],
+      shared: [],
+    });
+    // 短い書き方でも同じ
+    expect(
+      localForwards(
+        startedFrom({
+          tcp: { image: "a", ports: ["8125:8125/tcp"] },
+          udp: { image: "b", ports: ["8125:8125/udp"] },
+        }),
+      ),
+    ).toEqual({ forwards: [{ port: 8125, host: "tcp" }], shared: [] });
+  });
+
+  it('"8080:80" と "18080:8080" なら、localhost:8080 は app:80、localhost:18080 は app:8080 に転送する', () => {
+    const services = startedFrom({
+      app: {
+        image: "a",
+        ports: [
+          { target: 80, published: "8080", protocol: "tcp" },
+          { target: 8080, published: "18080", protocol: "tcp" },
+        ],
+      },
+    });
+    expect(services).toEqual([
+      {
+        name: "app",
+        ports: [80, 8080],
+        hostPorts: [
+          { port: 8080, target: 80 },
+          { port: 18080, target: 8080 },
+        ],
+      },
+    ]);
+    expect(localForwards(services)).toEqual({
+      forwards: [
+        { port: 80, host: "app" },
+        { port: 8080, host: "app", target: 80 },
+        { port: 18080, host: "app", target: 8080 },
+      ],
+      shared: [],
+    });
+  });
+
+  it("ほかのサービスとぶつかる番号は、これまでどおり転送しない", () => {
+    const services = startedFrom({
+      app: { image: "a", ports: ["8080:80", "18080:8080"] },
+      mock: { image: "m", ports: ["8080"] },
+    });
+    expect(localForwards(services)).toEqual({
+      forwards: [
+        { port: 80, host: "app" },
+        { port: 18080, host: "app", target: 8080 },
+      ],
+      shared: [8080],
     });
   });
 });
