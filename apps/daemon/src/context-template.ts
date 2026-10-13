@@ -87,6 +87,30 @@ export function initContextRepo(dir: string, force: boolean): string[] {
       return false;
     }
   };
+  // 途中のディレクトリ（skills・agents・agents/codex）がリンクやファイルだと、書き込みがリンクの先や外へ
+  // 届くので、--force でも書かずに止める（リンクの先のファイルを書き換えないため）
+  const parents = [
+    ...new Set(
+      paths.flatMap((path) =>
+        path
+          .split("/")
+          .slice(0, -1)
+          .map((_, i, parts) => parts.slice(0, i + 1).join("/")),
+      ),
+    ),
+  ];
+  const unsafe = parents.filter((path) => {
+    try {
+      return !lstatSync(join(dir, path)).isDirectory();
+    } catch {
+      return false;
+    }
+  });
+  if (unsafe.length > 0) {
+    throw new Error(
+      `${dir} の ${unsafe.join("・")} がディレクトリではありません（シンボリックリンクなど）。リンクの先に書き込まないよう、作成を止めました。通常のディレクトリにしてから実行してください。`,
+    );
+  }
   // rules/ があると、作る rules.md が優先されて rules/*.md が読まれなくなるので、ある場合も止める
   const existing = [...paths, "rules"].filter((path) => exists(join(dir, path)));
   if (existing.length > 0 && !force) {
