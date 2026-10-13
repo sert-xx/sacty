@@ -23,7 +23,7 @@ import {
   reworkTargets,
   STEP_PLANS,
 } from "@sacty/core";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SqliteActivityStore } from "./activity.js";
 import type { AgentExecutor } from "./agents/docker.js";
 import type { LocalForward } from "./agents/forward.js";
@@ -320,10 +320,13 @@ class FakeRepos implements RepositoryWorkspace {
    */
   files: Record<string, Record<string, string | null>> = {};
   readFail?: string;
+  /** ファイルの問題ではない失敗（git を実行できないなど）。 */
+  readError?: string;
   readCalls: { gitDir: string; commit: string; path: string }[] = [];
   async readFile(gitDir: string, commit: string, path: string) {
     this.readCalls.push({ gitDir, commit, path });
     if (this.readFail) throw new MessageError(message("git.fileNotText", { path }));
+    if (this.readError) throw new Error(this.readError);
     const at = this.files[commit];
     if (at && path in at) return at[path] ?? undefined;
     return this.committedFiles.findLast((c) => path in c.files)?.files[path];
@@ -10600,22 +10603,46 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       expect(doc).toMatchObject({ fallback: "unreadable" });
       expect(ja(doc?.reason)).toContain("UTF-8 のテキストではありません");
       unreadable.activity.close();
+    });
 
-      // タスクブランチを取得できない（エラー文の秘密情報は残さない）
-      const offline = new FakeRepos();
-      const fetchFail = await start([out("# 要求要件 v1")], {
-        repos: offline,
-        db: join(dir, "offline.db"),
-      });
-      offline.fetchBranchFail = "could not read ghp_secret";
-      mergeEdited(fetchFail, "requirements", "人が直した");
-      await fetchFail.service.checkPullRequests();
-      task = taskOf(fetchFail.service, fetchFail.id);
-      expect(task.status).toBe("queued");
-      expect(task.approved.requirements?.edited).toEqual({ fallback: "unreadable" });
-      const reason = mergedOf(fetchFail.service, fetchFail.id)[0]?.payload.document?.reason;
-      expect(JSON.stringify(reason)).not.toContain("ghp_secret");
-      fetchFail.activity.close();
+    it("タスクブランチを取得できない・git を実行できないときは、何も記録せずにログに理由を出し、次の確認で取得できたら人の版で承認する", async () => {
+      const repos = new FakeRepos();
+      const made = await start([out("# 要求要件 v1")], { repos });
+      const { activity, service, id } = made;
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        repos.fetchBranchFail = "could not read ghp_secret";
+        mergeEdited(made, "requirements", "# 人が直した要求要件\n");
+        await service.checkPullRequests();
+        await service.checkPullRequests();
+        let task = taskOf(service, id);
+        expect(task.status).toBe("awaiting_approval");
+        expect(task.approved.requirements).toBeUndefined();
+        expect(types(service, id)).not.toContain("PullRequestMerged");
+        // 理由はデーモンのログに出す（トークンは伏せる）
+        const logged = warn.mock.calls.map((c) => c.join(" ")).join("\n");
+        expect(logged).toContain("次の確認でやり直します");
+        expect(logged).toContain("could not read");
+        expect(logged).not.toContain("ghp_secret");
+        // ファイルの問題ではない読み取りの失敗も、やり直す
+        repos.fetchBranchFail = undefined;
+        repos.readError = "git が見つからない";
+        await service.checkPullRequests();
+        expect(types(service, id)).not.toContain("PullRequestMerged");
+        // 取得できたら、人が直した版で承認する
+        repos.readError = undefined;
+        await service.checkPullRequests();
+        task = taskOf(service, id);
+        expect(task.status).toBe("queued");
+        expect(task.approved.requirements).toMatchObject({
+          output: "# 人が直した要求要件",
+          edited: { sacty: "# 要求要件 v1" },
+        });
+        expect(mergedOf(service, id)).toHaveLength(1);
+      } finally {
+        warn.mockRestore();
+      }
+      activity.close();
     });
 
     it("前の版で merged_outdated のまま止まった要求要件・設計も、再起動の後の次の確認で、人が直した版を承認して進む（受け入れ条件 5・6）", async () => {

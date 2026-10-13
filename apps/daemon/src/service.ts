@@ -416,7 +416,10 @@ export class TaskService {
         const edited = status.headSha !== pr.commit;
         let document: PullRequestMerge["document"];
         if (edited && pr.step !== "pr") {
-          document = await this.readMergedDocument(latest, pr.number, usedSecrets);
+          const read = await this.readMergedDocument(latest, pr.number, usedSecrets);
+          // タスクブランチを取得できなければ、何も記録せずに次の確認でやり直す
+          if (read === "retry") continue;
+          document = read;
           const again = stillWatched();
           if (!again) continue;
           latest = again.latest;
@@ -471,56 +474,66 @@ export class TaskService {
   /**
    * 人が PR の中で直してからマージした、要求要件・設計の成果のファイルを、マージ後のタスクブランチから読む（PBI-63）。
    * 退避した git のメタデータで読み、作業領域・利用者の git の設定は使わない。読むのは、その PR に出した成果のファイルの
-   * パスだけ。sacty の版と違えば両方の本文を、同じなら本文を残さない。消された・読めない（タスクブランチを取得できない
-   * ことも含む）なら、sacty の版を承認済みにするよう、そのことを残す（止めない）。
+   * パスだけ。sacty の版と違えば両方の本文を、同じなら本文を残さない。取得はできたが、ファイルが消された・中身を読めない
+   * （大きすぎる・UTF-8 でない・NUL を含む・通常のファイルでない）なら、sacty の版を承認済みにするよう、そのことを残す。
+   * タスクブランチを取得できない（ネットワーク・認証・GitHub の一時的なエラーなど）なら retry を返し、何も記録せずに
+   * 次の確認でやり直す（理由はデーモンのログに出す。秘密情報は伏せる）。
    */
   private async readMergedDocument(
     task: Task,
     number: number,
     usedSecrets: string[],
-  ): Promise<PullRequestMerge["document"]> {
+  ): Promise<PullRequestMerge["document"] | "retry"> {
     const entry = task.stepPullRequests.find((p) => p.number === number);
     if (!entry) return undefined;
     const { step, path } = entry;
-    const sacty = buildStepDocument(task, step);
-    const fallback = (reason?: DaemonText): NonNullable<PullRequestMerge["document"]> => {
+    const retry = (reason: DaemonText): "retry" => {
       console.warn(
-        `[daemon] PR #${number} でマージされた ${path} を読めませんでした。sacty の版を承認済みにします${reason ? `：${renderMessage(redactText(reason, usedSecrets), "ja")}` : ""}`,
+        `[daemon] PR #${number} でマージされた ${path} を取得できませんでした。次の確認でやり直します：${renderMessage(redactText(reason, usedSecrets), "ja")}`,
       );
-      return {
-        path,
-        fallback: "unreadable",
-        ...(reason ? { reason: redactText(reason, usedSecrets) } : {}),
-      };
+      return "retry";
     };
     const loaded = this.deps.config();
-    if (!loaded.ok) return fallback(loaded.problem);
+    if (!loaded.ok) return retry(loaded.problem);
     // 退避した git のメタデータが無ければ、同じ起点で用意し直す
     const ready = await this.prepareRepository(task, loaded.config);
-    if (!ready.ok) return fallback(ready.message);
+    if (!ready.ok) return retry(ready.message);
     const current = this.mustGet(task.id);
     const taskBranch = current.taskBranch;
-    if (!current.repository || !taskBranch) return fallback();
+    if (!current.repository || !taskBranch) return retry(message("pr.workspaceMissing"));
     const gitDir = this.trustedGitDir(current);
+    let commit: string;
     try {
       const authEnv = await this.gitAuth(current, current.repository.url, usedSecrets);
-      const commit = await this.deps.repos.fetchBranch(gitDir, taskBranch.branch, authEnv);
-      let content: string | undefined;
-      try {
-        content = await this.deps.repos.readFile(gitDir, commit, path);
-      } catch (error) {
-        return { ...fallback(errorText(error)), commit };
-      }
-      if (content === undefined) {
-        console.warn(
-          `[daemon] PR #${number} のマージで ${path} が消されました。sacty の版を承認済みにします`,
-        );
-        return { path, commit, fallback: "deleted" };
-      }
-      return content === sacty ? { path, commit } : { path, commit, sacty, final: content };
+      commit = await this.deps.repos.fetchBranch(gitDir, taskBranch.branch, authEnv);
     } catch (error) {
-      return fallback(errorText(error));
+      return retry(errorText(error));
     }
+    let content: string | undefined;
+    try {
+      content = await this.deps.repos.readFile(gitDir, commit, path);
+    } catch (error) {
+      const reason = redactText(errorText(error), usedSecrets);
+      // 中身を読めない（ファイルの問題）ときだけ、sacty の版で承認する。git を実行できないなどは、やり直す
+      if (
+        typeof reason === "string" ||
+        !["git.fileNotRegular", "git.fileTooLarge", "git.fileNotText"].includes(reason.code)
+      ) {
+        return retry(reason);
+      }
+      console.warn(
+        `[daemon] PR #${number} でマージされた ${path} を読めませんでした。sacty の版を承認済みにします：${renderMessage(reason, "ja")}`,
+      );
+      return { path, commit, fallback: "unreadable", reason };
+    }
+    if (content === undefined) {
+      console.warn(
+        `[daemon] PR #${number} のマージで ${path} が消されました。sacty の版を承認済みにします`,
+      );
+      return { path, commit, fallback: "deleted" };
+    }
+    const sacty = buildStepDocument(task, step);
+    return content === sacty ? { path, commit } : { path, commit, sacty, final: content };
   }
 
   /**
