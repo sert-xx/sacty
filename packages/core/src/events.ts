@@ -118,6 +118,16 @@ export const TokenUsage = z.object({
 });
 export type TokenUsage = z.infer<typeof TokenUsage>;
 
+/**
+ * 実行に使った AI の設定（接続先・モデル・リーズニングエフォート。PBI-46）。タスクの詳細の、工程ごとの費用の表に出す。
+ * PBI-46 より前の作業履歴には無い。モデル・エフォートは、設定に書いてなければ（エージェントの既定なら）持たない。
+ */
+const AgentSetting = {
+  authMode: AuthMode.optional(),
+  model: z.string().optional(),
+  reasoningEffort: z.string().optional(),
+};
+
 /** 人間の指摘。id は作業履歴の中で一意（例：requirements-2-1 は要求要件の2回目の差し戻しの1件目）。 */
 export const Remark = z.object({ id: z.string().min(1), text: z.string().min(1) });
 export type Remark = z.infer<typeof Remark>;
@@ -297,6 +307,7 @@ const StepsChosen = z.object({
     /** 調査の工程の性質（PBI-43）。無ければ内容の調査として扱う（セットアップをしない側）。 */
     investigation: InvestigationKind.optional(),
     agentId: z.string().optional(),
+    ...AgentSetting,
     usage: TokenUsage.optional(),
     costUsd: z.number().nonnegative().default(0),
     estimated: z.boolean().default(false),
@@ -310,6 +321,9 @@ const AgentRunStarted = z.object({
     step: StepKey,
     agentId: z.string(),
     authMode: AuthMode,
+    /** モデル・リーズニングエフォート（PBI-46）。 */
+    model: AgentSetting.model,
+    reasoningEffort: AgentSetting.reasoningEffort,
   }),
 });
 
@@ -454,6 +468,7 @@ const ChangeJudged = z.object({
     /** ゴールガーディアンが書いた理由。実行に失敗したときは sacty の文言（PBI-11）。 */
     reason: DaemonText,
     agentId: z.string(),
+    ...AgentSetting,
     usage: TokenUsage.optional(),
     costUsd: z.number().nonnegative().default(0),
     estimated: z.boolean().default(false),
@@ -531,6 +546,7 @@ const FinalReviewed = z.object({
     /** 全体への所見（形式を読めなかった場合の理由など）。 */
     summary: DaemonText,
     agentId: z.string(),
+    ...AgentSetting,
     usage: TokenUsage.optional(),
     costUsd: z.number().nonnegative().default(0),
     estimated: z.boolean().default(false),
@@ -569,6 +585,7 @@ const OrchestratorFailed = z.object({
     reason: z.enum(["usage_limit", "auth", "error"]),
     message: DaemonText,
     agentId: z.string(),
+    ...AgentSetting,
     usage: TokenUsage.optional(),
     costUsd: z.number().nonnegative().default(0),
     estimated: z.boolean().default(false),
@@ -581,6 +598,7 @@ const FinalReviewFailed = z.object({
     reason: z.enum(["usage_limit", "auth", "error"]),
     message: DaemonText,
     agentId: z.string(),
+    ...AgentSetting,
     usage: TokenUsage.optional(),
     costUsd: z.number().nonnegative().default(0),
     estimated: z.boolean().default(false),
@@ -687,6 +705,7 @@ const ReworkJudged = z.object({
     /** ゴールガーディアンが書いた理由。実行に失敗したときは sacty の文言。 */
     reason: DaemonText,
     agentId: z.string(),
+    ...AgentSetting,
     usage: TokenUsage.optional(),
     costUsd: z.number().nonnegative().default(0),
     estimated: z.boolean().default(false),
