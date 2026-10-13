@@ -85,6 +85,11 @@ function secretForms(secrets: Iterable<string>): string[] {
   return [...forms].sort((a, b) => b.length - a.length);
 }
 
+/** UTF-16 のサロゲートペアの前半（後ろに後半が続く）か。 */
+function isHighSurrogate(code: number): boolean {
+  return code >= 0xd800 && code <= 0xdbff;
+}
+
 /**
  * 少しずつ届く出力から、秘密情報を伏せる。届いた分の末尾（一番長い秘密情報より1文字短い分）は書かずに持っておき、
  * 次に届いた分とつなげてから伏せる（値が、届いた分・行・JSON の出来事の境目をまたいでも伏せるため）。
@@ -98,9 +103,12 @@ export class StreamRedactor {
     const forms = secretForms(this.secrets());
     const longest = forms[0]?.length ?? 0;
     const redacted = redact(this.pending + text, forms);
-    const keep = Math.min(redacted.length, Math.max(0, longest - 1));
-    this.pending = redacted.slice(redacted.length - keep);
-    return redacted.slice(0, redacted.length - keep);
+    let cut = redacted.length - Math.min(redacted.length, Math.max(0, longest - 1));
+    // サロゲートペア（絵文字・補助漢字）の途中で分けない（分けると、UTF-8 にするときに文字が壊れる）。
+    // 持っておく分を1つ増やすので、持っておく長さは足りたまま
+    if (cut > 0 && isHighSurrogate(redacted.charCodeAt(cut - 1))) cut--;
+    this.pending = redacted.slice(cut);
+    return redacted.slice(0, cut);
   }
 
   flush(): string {

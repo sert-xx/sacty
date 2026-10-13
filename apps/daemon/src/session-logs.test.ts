@@ -2,8 +2,13 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { DockerExecutor } from "./agents/docker.js";
-import { parseClaudeResult, parseCodexEvents } from "./agents/parse.js";
+import { DockerExecutor, HeadTailText } from "./agents/docker.js";
+import {
+  ClaudeOutcomeReader,
+  CodexOutcomeReader,
+  parseClaudeResult,
+  parseCodexEvents,
+} from "./agents/parse.js";
 import { SessionLogStore, StreamRedactor, TRUNCATED_EVENT, validLogId } from "./session-logs.js";
 
 let dir: string;
@@ -498,5 +503,203 @@ while true; do sleep 0.05; done
       kind: "failed",
       message: { code: "run.daemonStopped" },
     });
+  });
+});
+
+describe("絵文字・補助漢字（サロゲートペア）を壊さない（PR 71 のレビュー指摘）", () => {
+  const info = {
+    taskId: "task-1",
+    runId: "run-1",
+    role: "design",
+    agentId: "claude",
+    runtime: "claude-code",
+    authMode: "subscription",
+  };
+  const failed = { kind: "failed" as const, reason: "error" as const, message: "x" };
+
+  it("秘密情報を伏せるために持っておく分の切れ目で、文字を壊さない（再現の例）", () => {
+    const store = new SessionLogStore(join(dir, "runs"));
+    const log = store.open(info, () => ["abcdef"]);
+    log.stderr("😀1234");
+    log.stdout('{"text":"😀1234"}\n');
+    log.close(failed);
+    const read = store.read("task-1", "run-1");
+    expect(read?.stderr).toBe("😀1234");
+    expect(read?.events).toBe('{"text":"😀1234"}\n');
+  });
+
+  it("届いた分の境目・持っておく分の切れ目・先頭と末尾の切れ目がどこでも、文字を壊さない（総当たり）", () => {
+    const secret = "S3CRET-𠮷-value";
+    const lines = [
+      `{"text":"😀${secret}𠮷"}\n`,
+      `{"text":"𠮷😀😀"}\n`,
+      `{"text":"a😀b${secret}"}\n`,
+      `{"text":"𩸽😀"}\n`,
+    ];
+    const text = lines.join("");
+    const expected = text.split(secret).join("[REDACTED]");
+    const markerLine = new RegExp(`^.*${TRUNCATED_EVENT}.*\n`, "m");
+    const stderrMarker = /\n?\[sacty\] truncated: [^\n]*omitted\.\n/;
+    let n = 0;
+    for (const secrets of [[secret], ["xyz"], []]) {
+      const want = secrets.includes(secret) ? expected : text;
+      for (let cut = 1; cut < text.length; cut += 2) {
+        for (const [head, tail] of [
+          [1000, 1000],
+          [40, 30],
+          [33, 61],
+          [7, 9],
+          [50, 5],
+        ] as const) {
+          n++;
+          const root = join(dir, `runs-${n}`);
+          const store = new SessionLogStore(root, {
+            events: { head, tail },
+            stderr: { head, tail },
+          });
+          const log = store.open(info, () => secrets);
+          // サロゲートペアの途中で分かれて届くこともある
+          log.stdout(text.slice(0, cut));
+          log.stdout(text.slice(cut));
+          log.stderr(text.slice(0, cut));
+          log.stderr(text.slice(cut));
+          log.close(failed);
+          const read = store.read("task-1", "run-1");
+          for (const out of [read?.events ?? "", read?.stderr ?? ""]) {
+            expect(out).not.toContain("�");
+            if (secrets.includes(secret)) expect(out).not.toContain(secret.slice(0, 6));
+          }
+          // 間を省いても、残った先頭と末尾は元の内容の先頭と末尾のまま
+          const [eventsHead = "", eventsTail = ""] = (read?.events ?? "").split(markerLine);
+          expect(want.startsWith(eventsHead)).toBe(true);
+          expect(want.endsWith(eventsTail)).toBe(true);
+          const [errHead = "", errTail = ""] = (read?.stderr ?? "").split(stderrMarker);
+          expect(want.startsWith(errHead)).toBe(true);
+          expect(want.endsWith(errTail)).toBe(true);
+          if (head === 1000) {
+            expect(read?.events).toBe(want);
+            expect(read?.stderr).toBe(want);
+          }
+        }
+      }
+    }
+  });
+
+  it("持っておく分の切れ目は、秘密情報が届いた分の境目をまたいでも伏せられる長さのまま", () => {
+    const secret = "😀secret😀";
+    const text = `x${secret}y${secret}`;
+    for (let cut = 1; cut < text.length; cut++) {
+      const r = new StreamRedactor(() => [secret]);
+      const written = r.push(text.slice(0, cut)) + r.push(text.slice(cut)) + r.flush();
+      expect(written).toBe("x[REDACTED]y[REDACTED]");
+    }
+  });
+});
+
+describe("最後の答えの読み取りは、出力の全体を持たずに逐次に読む（PR 71 のレビュー指摘）", () => {
+  const events = [
+    { type: "system", subtype: "init" },
+    { type: "assistant", message: { content: [{ type: "text", text: "途中 😀" }] } },
+    { type: "user", message: { content: [{ type: "tool_result", content: "x".repeat(5000) }] } },
+    { type: "result", is_error: false, result: "# 答え 😀", usage },
+  ];
+  const stdout = `warning\n${jsonl(...events)}\n`;
+
+  it("届いた分の境目がどこでも、まとめて読んだときと同じ結果になる", () => {
+    const whole = parseClaudeResult(stdout, 0);
+    expect(whole).toMatchObject({ kind: "completed", output: "# 答え 😀" });
+    for (const size of [1, 2, 7, 100, 4096]) {
+      const reader = new ClaudeOutcomeReader();
+      for (let i = 0; i < stdout.length; i += size) reader.push(stdout.slice(i, i + size));
+      expect(reader.finish(0)).toEqual(whole);
+    }
+    const codex = jsonl(
+      { type: "item.completed", item: { type: "agent_message", text: "答え" } },
+      {
+        type: "turn.completed",
+        usage: { input_tokens: 10, cached_input_tokens: 4, output_tokens: 2 },
+      },
+    );
+    const reader = new CodexOutcomeReader();
+    for (let i = 0; i < codex.length; i += 3) reader.push(codex.slice(i, i + 3));
+    expect(reader.finish(0)).toEqual(parseCodexEvents(codex, 0));
+  });
+
+  it("上限より長い行は読まずに飛ばし、その後の行（最後の result）は読む", () => {
+    const reader = new ClaudeOutcomeReader(1000);
+    reader.push(`${JSON.stringify(events[1])}\n`);
+    // 長い行は、少しずつ届いても持ち続けない
+    reader.push('{"type":"user","message":{"content":"');
+    for (let i = 0; i < 100; i++) reader.push("y".repeat(100));
+    reader.push('"}}\n');
+    reader.push(`${JSON.stringify(events[3])}\n`);
+    expect(reader.finish(0)).toMatchObject({ kind: "completed", output: "# 答え 😀" });
+    // result の行が長すぎれば、result が無いものとして失敗にする（途中の発言を理由にする）
+    const long = new ClaudeOutcomeReader(1000);
+    long.push(`${JSON.stringify(events[1])}\n`);
+    long.push(`${JSON.stringify({ ...events[3], result: "z".repeat(2000) })}\n`);
+    expect(long.finish(0)).toMatchObject({ kind: "failed", message: "途中 😀" });
+  });
+
+  it("改行が届かない長い行は、少しずつ届いても持ち続けず、読まない", () => {
+    const reader = new ClaudeOutcomeReader(1000);
+    reader.push(`${JSON.stringify(events[1])}\n`);
+    reader.push('{"type":"assistant","message":{"content":[{"type":"text","text":"長い');
+    for (let i = 0; i < 100; i++) {
+      reader.push("y".repeat(100));
+      expect(reader.buffered).toBeLessThanOrEqual(1000);
+    }
+    reader.push('"}]}}\n');
+    // result が無いので失敗。理由は、読めた最後の発言（長い行は読んでいない）
+    expect(reader.finish(1)).toMatchObject({ kind: "failed", message: "途中 😀" });
+  });
+
+  it("result が複数あれば、最後のものを読む", () => {
+    const two = jsonl(
+      { type: "result", is_error: false, result: "1回目", usage },
+      { type: "result", is_error: false, result: "2回目", usage },
+    );
+    const reader = new ClaudeOutcomeReader();
+    reader.push(two);
+    expect(reader.finish(0)).toMatchObject({ kind: "completed", output: "2回目" });
+  });
+
+  it("JSON の行が無い出力は、先頭（上限まで）だけを持つ。整形した大きすぎる JSON は読まない", () => {
+    const big = JSON.stringify(
+      { type: "result", is_error: false, result: "r".repeat(300 * 1024), usage },
+      null,
+      2,
+    );
+    expect(parseClaudeResult(big, 0)).toMatchObject({ kind: "failed" });
+    const small = JSON.stringify({ type: "result", is_error: false, result: "ok", usage }, null, 2);
+    expect(parseClaudeResult(small, 0)).toMatchObject({ kind: "completed", output: "ok" });
+  });
+
+  it("JSON の行が無い出力は、先頭だけを理由に使う", () => {
+    const reader = new ClaudeOutcomeReader();
+    for (let i = 0; i < 100; i++) reader.push("error line\n".repeat(1000));
+    const outcome = reader.finish(1);
+    expect(outcome.kind).toBe("failed");
+    expect(outcome.kind === "failed" && String(outcome.message).length).toBeLessThanOrEqual(2000);
+  });
+
+  it("標準エラー出力は、先頭と末尾だけを持つ", () => {
+    const text = new HeadTailText(10, 20);
+    text.push("0123456789HEAD-DONE");
+    for (let i = 0; i < 1000; i++) text.push("middle ");
+    text.push("...the last error");
+    const kept = text.toString();
+    expect(kept.startsWith("0123456789\n…\n")).toBe(true);
+    expect(kept.endsWith("...the last error")).toBe(true);
+    expect(kept.length).toBeLessThanOrEqual(10 + 3 + 20);
+    // 末尾が上限の2倍に届かなくても、返すときは末尾の上限に収める
+    const mid = new HeadTailText(5, 10);
+    mid.push("01234");
+    mid.push("abcdefghijklmno");
+    expect(mid.toString()).toBe("01234\n…\nfghijklmno");
+    const small = new HeadTailText(10, 20);
+    small.push("short");
+    small.push(" and fits");
+    expect(small.toString()).toBe("short and fits");
   });
 });

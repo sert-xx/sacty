@@ -19,10 +19,53 @@ import { DEFAULT_HOST_ADDRESS } from "../gateway.js";
 import type { SessionLogSink } from "../session-logs.js";
 import { forwardNotices, type LocalForward, withLocalForwards } from "./forward.js";
 import type { Invocation } from "./invocation.js";
-import { type AgentOutcome, parseClaudeResult, parseCodexEvents } from "./parse.js";
+import { type AgentOutcome, ClaudeOutcomeReader, CodexOutcomeReader } from "./parse.js";
 import { redact, redactText, secretStringsInJson } from "./redact.js";
 
 export const CONTAINER_WORKSPACE = "/workspace";
+
+/**
+ * 診断に使う出力（標準エラー出力）の、先頭と末尾だけを持つ（PBI-62）。長い実行でも、デーモンのメモリが出力の大きさに
+ * 比例して増えないように。先頭には起動の失敗（イメージが無い・転送の知らせ）、末尾には終わりの原因が出る。
+ */
+export class HeadTailText {
+  private head = "";
+  private tail = "";
+  private dropped = false;
+
+  constructor(
+    private readonly headLimit: number,
+    private readonly tailLimit: number,
+  ) {}
+
+  push(text: string): void {
+    if (!text) return;
+    const room = this.headLimit - this.head.length;
+    if (room > 0) {
+      this.head += text.slice(0, room);
+      text = text.slice(room);
+    }
+    if (!text) return;
+    this.tail += text;
+    // 毎回切り出すと遅いので、上限の2倍を超えたら末尾の上限の分だけにする
+    if (this.tail.length > this.tailLimit * 2) {
+      this.tail = this.tail.slice(-this.tailLimit);
+      this.dropped = true;
+    }
+  }
+
+  toString(): string {
+    if (this.tail.length > this.tailLimit) {
+      this.tail = this.tail.slice(-this.tailLimit);
+      this.dropped = true;
+    }
+    return this.dropped ? `${this.head}\n…\n${this.tail}` : this.head + this.tail;
+  }
+}
+
+/** 標準エラー出力の、持っておく先頭と末尾（文字数）。 */
+const STDERR_HEAD = 64 * 1024;
+const STDERR_TAIL = 256 * 1024;
 
 function hashOf(path: string): string | undefined {
   try {
@@ -323,9 +366,11 @@ export class DockerExecutor implements AgentExecutor {
     this.containers.register(containerName);
     let outcome: AgentOutcome;
     try {
-      const { exitCode, stdout, stderr } = await new Promise<{
+      // 標準出力は全体を持たず、行ごとに読んで最後の答えに要るものだけを持つ（PBI-62）
+      const reader =
+        invocation.parser === "codex-jsonl" ? new CodexOutcomeReader() : new ClaudeOutcomeReader();
+      const { exitCode, stderr } = await new Promise<{
         exitCode: number;
-        stdout: string;
         stderr: string;
       }>((resolve, reject) => {
         const child = this.spawnImpl("docker", args, {
@@ -333,8 +378,7 @@ export class DockerExecutor implements AgentExecutor {
           stdio: ["ignore", "pipe", "pipe"],
         });
         this.containers.attach(containerName, child);
-        let out = "";
-        let err = "";
+        const err = new HeadTailText(STDERR_HEAD, STDERR_TAIL);
         // 届いた分の境目で、複数バイトの文字が壊れないようにつなげて読む
         const outText = new StringDecoder("utf8");
         const errText = new StringDecoder("utf8");
@@ -342,12 +386,12 @@ export class DockerExecutor implements AgentExecutor {
           typeof chunk === "string" ? chunk : decoder.write(chunk);
         child.stdout.on("data", (chunk: Buffer | string) => {
           const piece = text(outText, chunk);
-          out += piece;
+          reader.push(piece);
           log?.stdout(piece);
         });
         child.stderr.on("data", (chunk: Buffer | string) => {
           const piece = text(errText, chunk);
-          err += piece;
+          err.push(piece);
           log?.stderr(piece);
         });
         const timer = setTimeout(() => {
@@ -362,9 +406,11 @@ export class DockerExecutor implements AgentExecutor {
           clearTimeout(timer);
           const outRest = outText.end();
           const errRest = errText.end();
+          reader.push(outRest);
+          err.push(errRest);
           log?.stdout(outRest);
           log?.stderr(errRest);
-          resolve({ exitCode: code ?? 1, stdout: out + outRest, stderr: err + errRest });
+          resolve({ exitCode: code ?? 1, stderr: err.toString() });
         });
       });
 
@@ -384,10 +430,7 @@ export class DockerExecutor implements AgentExecutor {
           message: message("run.imageMissing", { image }),
         };
       } else {
-        outcome =
-          invocation.parser === "codex-jsonl"
-            ? parseCodexEvents(stdout, exitCode, stderr)
-            : parseClaudeResult(stdout, exitCode, stderr);
+        outcome = reader.finish(exitCode, stderr);
       }
     } finally {
       // 止める要求があったなら、コンテナが無くなったことを確かめるまで完了にしない
