@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { type DaemonText, message } from "@sacty/core";
 import { dockerClientEnv, dockerRunArgs, RunningContainers } from "./docker.js";
 import { type LocalForward, withLocalForwards } from "./forward.js";
+import { withOutputRelay } from "./output-relay.js";
 
 /** docker run が、Docker 自身の失敗で終わったときの終了コード（コンテナの中のコマンドの結果ではない）。 */
 const DOCKER_RUN_FAILED = 125;
@@ -92,7 +93,8 @@ export class DockerTestRunner implements TestRunner {
       envNames: Object.keys(env),
       mounts: [],
       ...(network ? { network } : {}),
-      command: withLocalForwards(["sh", "-c", command], forwards),
+      // 出力は中継を通して受け取る（標準出力が非ブロッキングにされても、テストが EAGAIN で落ちないように。PBI-64）
+      command: withOutputRelay(withLocalForwards(["sh", "-c", command], forwards)),
     });
     const started = Date.now();
     this.containers.register(name);

@@ -2,6 +2,7 @@ import { EventEmitter } from "node:events";
 import { describe, expect, it, vi } from "vitest";
 import { RunningContainers } from "./docker.js";
 import { FORWARD_NOTICE_PREFIX, withLocalForwards } from "./forward.js";
+import { withOutputRelay } from "./output-relay.js";
 import { DockerTestRunner } from "./test-runner.js";
 
 /** docker コマンドの偽物。docker run は止められるまで終わらず、docker kill は決めた終了コードを返す。 */
@@ -261,13 +262,16 @@ describe("イメージの環境変数（PBI-41）", () => {
     });
     const [forwarded, plain, none] = docker.runs.map((r) => r.args);
     const afterImage = (args?: string[]) => args?.slice(args.indexOf("img") + 1);
+    // 出力の中継（PBI-64）の下で、転送を起動してからテストのコマンドを動かす
     expect(afterImage(forwarded)).toEqual(
-      withLocalForwards(["sh", "-c", "npm test"], [{ port: 5432, host: "db" }]),
+      withOutputRelay(withLocalForwards(["sh", "-c", "npm test"], [{ port: 5432, host: "db" }])),
     );
-    expect(afterImage(forwarded)?.slice(0, 2)).toEqual(["node", "-e"]);
-    // サービスを使わないテストは、これまでどおり（コマンドも同じ）
-    expect(afterImage(plain)).toEqual(["sh", "-c", "npm test"]);
-    expect(afterImage(none)).toEqual(["sh", "-c", "npm test"]);
+    expect(
+      withLocalForwards(["sh", "-c", "npm test"], [{ port: 5432, host: "db" }]).slice(0, 2),
+    ).toEqual(["node", "-e"]);
+    // サービスを使わないテストは、転送を起動しない（中継の下で、コマンドをそのまま動かす）
+    expect(afterImage(plain)).toEqual(withOutputRelay(["sh", "-c", "npm test"]));
+    expect(afterImage(none)).toEqual(withOutputRelay(["sh", "-c", "npm test"]));
   });
 
   it("エージェントの実行でも、転送するときだけ転送を起動し、転送しなかった理由をデーモンのログに出す（PBI-60）", async () => {
@@ -309,7 +313,7 @@ describe("イメージの環境変数（PBI-41）", () => {
       // 出力の読み取りは変わらない
       expect(outcome).toMatchObject({ kind: "completed", output: "done" });
       expect(runs[0]?.slice(runs[0].indexOf("img") + 1)).toEqual(
-        withLocalForwards(["claude", "-p", "x"], [{ port: 5432, host: "db" }]),
+        withOutputRelay(withLocalForwards(["claude", "-p", "x"], [{ port: 5432, host: "db" }])),
       );
       expect(warn.mock.calls.map((c) => String(c[0]))).toEqual([
         expect.stringContaining(
@@ -317,7 +321,9 @@ describe("イメージの環境変数（PBI-41）", () => {
         ),
       ]);
       await executor.run({ runId: "a2", image: "img", workspaceDir: "/tmp", invocation });
-      expect(runs[1]?.slice(runs[1].indexOf("img") + 1)).toEqual(["claude", "-p", "x"]);
+      expect(runs[1]?.slice(runs[1].indexOf("img") + 1)).toEqual(
+        withOutputRelay(["claude", "-p", "x"]),
+      );
     } finally {
       warn.mockRestore();
     }
@@ -341,7 +347,9 @@ describe("イメージの環境変数（PBI-41）", () => {
     const run = docker.runs[0];
     expect(run?.env.SHARED).toBe("from-run");
     expect(run?.env.PIP_INDEX_URL).toBe("https://pypi.example.com/simple");
-    const names = run?.args.filter((_, i, a) => a[i - 1] === "-e") ?? [];
+    // イメージより前（docker run の引数）だけを見る（後ろはコンテナで実行するコマンド）
+    const dockerArgs = run?.args.slice(0, run.args.indexOf("sacty-agent-java:test")) ?? [];
+    const names = dockerArgs.filter((_, i, a) => a[i - 1] === "-e");
     expect(names.sort()).toEqual(["CODEX_HOME", "PIP_INDEX_URL", "SHARED"]);
   });
 });

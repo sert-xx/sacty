@@ -19,6 +19,7 @@ import { DEFAULT_HOST_ADDRESS } from "../gateway.js";
 import type { SessionLogSink } from "../session-logs.js";
 import { forwardNotices, type LocalForward, withLocalForwards } from "./forward.js";
 import type { Invocation } from "./invocation.js";
+import { withOutputRelay } from "./output-relay.js";
 import { type AgentOutcome, ClaudeOutcomeReader, CodexOutcomeReader } from "./parse.js";
 import { redact, redactText, secretStringsInJson } from "./redact.js";
 
@@ -356,7 +357,8 @@ export class DockerExecutor implements AgentExecutor {
       envNames: Object.keys(env),
       mounts,
       ...(network ? { network } : {}),
-      command: withLocalForwards(invocation.command, forwards),
+      // 出力は中継を通して受け取る（標準出力が非ブロッキングにされても、コマンドが EAGAIN で落ちないように。PBI-64）
+      command: withOutputRelay(withLocalForwards(invocation.command, forwards)),
       ...(invocation.hostGateway
         ? { hostGateway: invocation.hostAddress ?? DEFAULT_HOST_ADDRESS }
         : {}),
