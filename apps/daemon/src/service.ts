@@ -75,9 +75,14 @@ import {
   resolveImage,
   type SactyConfig,
 } from "./config.js";
-import { type ContextFetcher, GATEWAY_TOKEN_SECRET, prepareContext } from "./context.js";
+import {
+  type ContextFetcher,
+  GATEWAY_TOKEN_SECRET,
+  type GatewayMcpServer,
+  prepareContext,
+} from "./context.js";
 import { errorText, MessageError } from "./errors.js";
-import type { AiGateway, GatewayStats } from "./gateway.js";
+import type { AiGateway, ContextMcpRoute, GatewayStats } from "./gateway.js";
 import {
   type GitHubAccount,
   type GitHubAuth,
@@ -1836,6 +1841,8 @@ export class TaskService {
           (repo) => this.gitAuth(task, repo, usedSecrets),
           defaultContext,
           hostMcp,
+          // 層の HTTP の MCP サーバーは、ゲートウェイ経由にする（PBI-49）
+          gatewayForMcp?.containerOrigin(),
         );
       } catch (error) {
         this.append(task, [
@@ -1952,6 +1959,7 @@ export class TaskService {
         role: step,
         workspaceDir,
         context: context && { dir: context.dir, ...context.placed },
+        ...(context && context.gatewayMcp.length > 0 ? { contextMcp: context.gatewayMcp } : {}),
       });
     } finally {
       // サービスは、作業領域（ビルドの context）を消す前に止めて消す
@@ -3053,6 +3061,8 @@ export class TaskService {
     imageEnv?: Record<string, string>;
     /** つなぐネットワーク（docker compose のサービス。PBI-47）。 */
     network?: string;
+    /** ゲートウェイ経由にした、コンテキストの HTTP の MCP サーバー（PBI-49）。 */
+    contextMcp?: readonly GatewayMcpServer[];
   }): Promise<{ outcome: AgentOutcome; costUsd: number; estimated: boolean }> {
     // 実行に渡した秘密情報。作業履歴に書く前に、出力やエラー文から取り除く。
     const usedSecrets: string[] = [];
@@ -3085,7 +3095,23 @@ export class TaskService {
           if (apiKey) usedSecrets.push(apiKey);
           route = { base: endpoint.baseUrl, ...(apiKey ? { apiKey } : {}) };
         }
-        gatewayRun = this.deps.gateway.register(route);
+        // コンテキストの HTTP の MCP サーバー（PBI-49）。認証のヘッダーの秘密情報はホストで取り出し、ゲートウェイだけに
+        // 持たせる（コンテナには渡さない）
+        const contextMcp: Record<string, ContextMcpRoute> = {};
+        for (const server of run.contextMcp ?? []) {
+          const headers: Record<string, string> = {};
+          for (const [name, value] of Object.entries(server.headers)) {
+            if (typeof value === "string") {
+              headers[name] = value;
+              continue;
+            }
+            const secret = await this.deps.secrets.get(value.secret);
+            usedSecrets.push(secret);
+            headers[name] = `${value.prefix}${secret}`;
+          }
+          contextMcp[server.name] = { url: server.url, headers };
+        }
+        gatewayRun = this.deps.gateway.register(route, contextMcp);
         usedSecrets.push(gatewayRun.token);
         if (viaGateway) {
           gateway = { origin: this.deps.gateway.containerOrigin(), token: gatewayRun.token };

@@ -66,6 +66,21 @@ export type GatewayRoute = {
   apiKey?: string;
 };
 
+/** コンテキストリポジトリの HTTP の MCP サーバーの中継先（PBI-49）。 */
+export type ContextMcpRoute = { url: string; headers: Record<string, string> };
+
+/**
+ * コンテキストの MCP の中継で、エージェントから上流へ送るヘッダー（MCP の Streamable HTTP に要るものだけ）。
+ * 認証のヘッダー（ゲートウェイのトークン）などは送らない。
+ */
+const CONTEXT_MCP_REQUEST = new Set([
+  "content-type",
+  "accept",
+  "mcp-session-id",
+  "mcp-protocol-version",
+  "last-event-id",
+]);
+
 /** 実行ごとのリトライの記録。 */
 export type GatewayStats = {
   /** リトライした回数（最初の1回を除く）。 */
@@ -79,6 +94,11 @@ export type GatewayStats = {
 };
 
 type RunState = Partial<GatewayRoute> & {
+  /**
+   * コンテキストリポジトリの HTTP の MCP サーバー（PBI-49）。名前ごとに、中継先の URL と、上流に付けるヘッダー
+   * （秘密情報の値を入れたもの。ホストだけに持ち、コンテナには渡さない）。
+   */
+  mcp?: Record<string, ContextMcpRoute>;
   stats: GatewayStats;
   /** いまの一続きの失敗で待った合計。成功すると0に戻る。 */
   streakWaitedMs: number;
@@ -169,10 +189,15 @@ export class AiGateway {
    * 実行を登録し、その実行だけが使えるトークンを返す。実行が終わったら close する。route があれば AI の呼び出しを
    * 中継し（PBI-37）、どの実行も組織内 PF の API を使える（PBI-35。$SACTY_PF_URL にトークンを含める）。
    */
-  register(route?: GatewayRoute): { token: string; stats: () => GatewayStats; close: () => void } {
+  register(
+    route?: GatewayRoute,
+    /** コンテキストリポジトリの HTTP の MCP サーバー（PBI-49）。 */
+    mcp?: Record<string, ContextMcpRoute>,
+  ): { token: string; stats: () => GatewayStats; close: () => void } {
     const token = `sacty-gw-${randomBytes(24).toString("hex")}`;
     const state: RunState = {
       ...route,
+      ...(mcp && Object.keys(mcp).length > 0 ? { mcp } : {}),
       stats: { retries: 0, waitedMs: 0, statuses: [], gaveUp: false },
       streakWaitedMs: 0,
     };
@@ -292,6 +317,53 @@ export class AiGateway {
     }
   }
 
+  /**
+   * コンテキストリポジトリの HTTP の MCP サーバーへ中継する（PBI-49）。MCP の Streamable HTTP に要るヘッダーだけを
+   * 送り、認証のヘッダーはホストに持った値を付ける（エージェントが付けたものは送らない）。応答（SSE を含む）は
+   * そのまま流す。リダイレクトはたどらない（認証のヘッダーをほかの宛先に送らないため）。
+   */
+  private async handleContextMcp(
+    req: IncomingMessage,
+    res: ServerResponse,
+    target: ContextMcpRoute,
+    query: string,
+  ): Promise<void> {
+    const aborter = new AbortController();
+    res.on("close", () => {
+      if (!res.writableFinished) aborter.abort();
+    });
+    const method = (req.method ?? "GET").toUpperCase();
+    let body: Buffer | undefined;
+    if (method !== "GET" && method !== "HEAD") {
+      try {
+        body = await readBody(req);
+      } catch {
+        return;
+      }
+    }
+    const headers: Record<string, string> = {};
+    for (const [name, value] of Object.entries(req.headers)) {
+      if (value === undefined || !CONTEXT_MCP_REQUEST.has(name)) continue;
+      headers[name] = Array.isArray(value) ? value.join(", ") : value;
+    }
+    Object.assign(headers, target.headers);
+    let upstream: Response;
+    try {
+      const url = new URL(target.url);
+      if (query) url.search = query.slice(1);
+      upstream = await (this.deps.fetchImpl ?? fetch)(url, {
+        method,
+        headers,
+        ...(body ? { body: new Uint8Array(body) } : {}),
+        redirect: "manual",
+        signal: aborter.signal,
+      });
+    } catch {
+      return fail(res, 502, "sacty gateway: the MCP server could not be reached");
+    }
+    return pipe(upstream, res);
+  }
+
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
     // 組織内 PF の API：/r/<実行のトークン>/pf/<PF の名前>/<パス>（PBI-35）
     const pf = /^\/r\/([^/]+)\/pf\/([^/?]+)(\/[^?]*)?(\?.*)?$/.exec(req.url ?? "");
@@ -305,6 +377,14 @@ export class AiGateway {
     }
     const header = req.headers.authorization ?? "";
     const run = header.startsWith("Bearer ") ? this.runs.get(header.slice(7)) : undefined;
+    // コンテキストリポジトリの HTTP の MCP サーバー：/ctx-mcp/<名前>（実行のトークンを Bearer で付ける。PBI-49）
+    const contextMcp = /^\/ctx-mcp\/([A-Za-z0-9_-]+)\/?(\?.*)?$/.exec(req.url ?? "");
+    if (contextMcp) {
+      if (!run) return fail(res, 401, "sacty gateway: unknown or expired run token");
+      const target = run.mcp?.[contextMcp[1] ?? ""];
+      if (!target) return fail(res, 404, `sacty gateway: unknown MCP server "${contextMcp[1]}"`);
+      return this.handleContextMcp(req, res, target, contextMcp[2] ?? "");
+    }
     // ホストの MCP サーバー：/mcp/<名前>（実行のトークンを Bearer で付ける。PBI-36）
     const mcp = /^\/mcp\/([A-Za-z0-9_-]+)\/?(\?.*)?$/.exec(req.url ?? "");
     if (mcp) {

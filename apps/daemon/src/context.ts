@@ -80,6 +80,11 @@ const McpServer = z.union([
           McpValue,
         )
         .default({}),
+      /**
+       * sacty のゲートウェイ経由で使うか（PBI-49。既定は経由）。経由なら、エージェントにはゲートウェイの URL と
+       * 実行ごとのトークンだけを渡し、認証のヘッダー（秘密情報）はホストで付ける。false なら、コンテナから直接つなぐ。
+       */
+      via_gateway: z.boolean().default(true),
     })
     .strict(),
 ]);
@@ -669,6 +674,13 @@ export function composeContext(
  */
 export const GATEWAY_TOKEN_SECRET = "sacty:gateway-token";
 
+/** ゲートウェイ経由にした、コンテキストの HTTP の MCP サーバー（PBI-49）。ヘッダーの秘密情報は参照のまま。 */
+export type GatewayMcpServer = {
+  name: string;
+  url: string;
+  headers: Record<string, string | { secret: string; prefix: string }>;
+};
+
 /** 実行時に、秘密情報の値をこの環境変数でコンテナに渡す（値は prefix + 秘密情報）。 */
 export type ContextSecret = { env: string; secret: string; prefix: string };
 
@@ -898,11 +910,18 @@ export async function prepareContext(
    * こちらを使う）。認証のヘッダーには、実行ごとのゲートウェイのトークンを入れる。
    */
   hostMcp: readonly { name: string; url: string }[] = [],
+  /**
+   * コンテナから見たゲートウェイの起点（PBI-49）。あれば、層の HTTP の MCP サーバー（via_gateway）を、ゲートウェイの
+   * URL（/ctx-mcp/<名前>）に置き換え、元の URL と認証のヘッダーは gatewayMcp として返す（ゲートウェイに持たせる）。
+   */
+  gatewayOrigin?: string,
 ): Promise<{
   dir: string;
   layers: { repo: string; ref?: string; commit: string }[];
   warnings: DaemonText[];
   placed: PlacedContext;
+  /** ゲートウェイ経由にした、層の HTTP の MCP サーバーの中継先（PBI-49）。ヘッダーの秘密情報は参照のまま。 */
+  gatewayMcp: GatewayMcpServer[];
   dispose: () => void;
 }> {
   const work = mkdtempSync(join(tmpdir(), "sacty-context-"));
@@ -913,6 +932,23 @@ export async function prepareContext(
       ...(root ? await resolveContext(fetcher, root, join(work, "repos"), auth) : []),
     ];
     const composed = composeContext(layers, runtime);
+    // 層の HTTP の MCP サーバーは、ゲートウェイ経由にする（PBI-49）。ホストの MCP サーバーと同じく、認証のヘッダーには
+    // 実行ごとのゲートウェイのトークンだけを入れる
+    const gatewayMcp: GatewayMcpServer[] = [];
+    if (gatewayOrigin) {
+      composed.mcp = composed.mcp.map((m) => {
+        if ("command" in m.server || !m.server.via_gateway) return m;
+        gatewayMcp.push({ name: m.name, url: m.server.url, headers: m.server.headers });
+        return {
+          ...m,
+          server: {
+            url: `${gatewayOrigin}/ctx-mcp/${m.name}`,
+            headers: { Authorization: { secret: GATEWAY_TOKEN_SECRET, prefix: "Bearer " } },
+            via_gateway: true,
+          },
+        };
+      });
+    }
     if (hostMcp.length > 0) {
       const names = new Set(hostMcp.map((m) => m.name));
       composed.mcp = [
@@ -923,6 +959,7 @@ export async function prepareContext(
           server: {
             url: m.url,
             headers: { Authorization: { secret: GATEWAY_TOKEN_SECRET, prefix: "Bearer " } },
+            via_gateway: true,
           },
         })),
       ];
@@ -938,6 +975,10 @@ export async function prepareContext(
       })),
       warnings: composed.warnings,
       placed,
+      // ホストの MCP サーバーと同じ名前で置き換えられたものは、中継しない
+      gatewayMcp: gatewayMcp.filter((m) =>
+        composed.mcp.some((c) => c.name === m.name && c.from !== "sacty-gateway"),
+      ),
       dispose,
     };
   } catch (error) {
