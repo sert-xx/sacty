@@ -349,6 +349,14 @@ export function describeEvent(event: ActivityEvent, l: LabelMessages): string {
         [...new Set(event.payload.items.map((item) => item.author))].join(", "),
         event.payload.remarks.length,
       );
+    case "QuestionAsked":
+      return e.QuestionAsked(event.payload.questionId, actor);
+    case "QuestionAnswered":
+      return e.QuestionAnswered(
+        event.payload.questionId,
+        event.payload.failed === undefined ? undefined : l.text(event.payload.failed),
+        cost(event.payload.costUsd, event.payload.estimated),
+      );
     case "ReworkJudged":
       return e.ReworkJudged(
         event.payload.target ? l.step[event.payload.target] : undefined,

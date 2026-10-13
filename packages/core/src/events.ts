@@ -650,6 +650,41 @@ const TicketPullRequestCommented = z.object({
   payload: z.object({ url: z.string().optional(), failed: DaemonText.optional() }),
 });
 
+/** 質問・答えの文字数の上限（PBI-54）。 */
+export const QUESTION_MAX = 2_000;
+export const ANSWER_MAX = 20_000;
+
+/**
+ * 人間が、タスクの詳細でオーケストレーターに質問した（PBI-54）。id はタスクの中で一意（Q-1, Q-2, …）。
+ * 質問はタスクの状態・工程・承認済みの内容を変えない。答えを待つ質問は、1タスクに1件まで。
+ */
+const QuestionAsked = z.object({
+  type: z.literal("QuestionAsked"),
+  payload: z.object({
+    questionId: z.string().min(1),
+    text: z.string().min(1).max(QUESTION_MAX),
+  }),
+});
+
+/**
+ * オーケストレーターが、タスクの台帳を読んで質問に答えた（PBI-54）。答えられなければ answer の代わりに failed
+ * （理由）を持つ。費用はタスクの予算に入れる（タスクの状態は変えない）。
+ */
+const QuestionAnswered = z.object({
+  type: z.literal("QuestionAnswered"),
+  payload: z.object({
+    questionId: z.string().min(1),
+    answer: z.string().min(1).max(ANSWER_MAX).optional(),
+    failed: DaemonText.optional(),
+    runResult: GuardianRunResult,
+    agentId: z.string(),
+    ...AgentSetting,
+    usage: TokenUsage.optional(),
+    costUsd: z.number().nonnegative().default(0),
+    estimated: z.boolean().default(false),
+  }),
+});
+
 const ServicesStarted = z.object({
   type: z.literal("ServicesStarted"),
   payload: z.object({
@@ -970,6 +1005,8 @@ export const EventInput = z.discriminatedUnion("type", [
   ServicesStarted,
   TicketTriaged,
   TicketPullRequestCommented,
+  QuestionAsked,
+  QuestionAnswered,
   AgentRunStarted,
   AgentRunCompleted,
   AgentRunFailed,
@@ -1071,6 +1108,16 @@ export const RequestChangesInput = z.object({
   continueOverLimit: z.boolean().default(false),
 });
 export type RequestChangesInput = z.input<typeof RequestChangesInput>;
+
+/** タスクの詳細で、オーケストレーターに質問する入力（PBI-54）。 */
+export const AskQuestionInput = z.object({
+  text: z
+    .string()
+    .trim()
+    .min(1, code("input.questionRequired"))
+    .max(QUESTION_MAX, code("input.questionTooLong")),
+});
+export type AskQuestionInput = z.infer<typeof AskQuestionInput>;
 
 /** ゴールガーディアンが判定できなかった変更の申し出を、人間が判断する入力。 */
 export const DecideChangeInput = z.object({ accept: z.boolean() });

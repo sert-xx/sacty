@@ -5,7 +5,9 @@ import { join } from "node:path";
 import {
   type ActivityEvent,
   type Actor,
+  ANSWER_MAX,
   ApproveStepInput,
+  AskQuestionInput,
   activeStep,
   applyEvent,
   awaitingTicketTriage,
@@ -37,9 +39,11 @@ import {
   ProjectExport,
   parseOrgUrl,
   parseRepoUrl,
+  pendingQuestion,
   project,
   projectConflicts,
   proposalAccepted,
+  questionBlocked,
   RepoUrl,
   RequestChangesInput,
   ResumeTaskInput,
@@ -107,6 +111,7 @@ import { type Platform, platformPromptLines } from "./platforms.js";
 import type { ProjectStore } from "./projects.js";
 import {
   allowedPlans,
+  buildChatPrompt,
   buildChildBody,
   buildFinalReviewPrompt,
   buildGuardianPrompt,
@@ -282,6 +287,10 @@ export class TaskService {
   private readonly pauseRequested = new Set<string>();
   /** 中止の後片付けをしているタスク（その間に実行を始めないため）。 */
   private readonly cancelling = new Set<string>();
+  /**
+   * 質問に答えているタスクと、その実行（PBI-54）。工程の実行とは別に持つ（一時停止では止めず、中止では止める）。
+   */
+  private readonly chats = new Map<string, { runId: string; done: Promise<void> }>();
 
   constructor(private readonly deps: ServiceDeps) {
     this.tasks = project(deps.activity.all());
@@ -572,10 +581,14 @@ export class TaskService {
       role: AgentRole;
       /** 使わせる組織内 PF の API（チケットを読む1段目。PBI-52）。 */
       platforms?: readonly Platform[];
+      /** 実行の ID（止めるために、呼ぶ側で決めるとき。PBI-54）。 */
+      runId?: string;
+      /** true を返すと、コンテナを起動しない（準備の間に中止されたなど。PBI-54）。 */
+      stopped?: () => boolean;
     },
     code: "base" | "implemented",
   ): Promise<Awaited<ReturnType<TaskService["execute"]>>> {
-    const runId = randomUUID();
+    const runId = run.runId ?? randomUUID();
     const workspaceDir = join(this.deps.workspaceRoot, "_guardian", runId);
     try {
       if (task.repository) {
@@ -1657,6 +1670,25 @@ export class TaskService {
    * 中断されたゴールガーディアンの判定は、判定できなかったものとして人間に判断してもらう。
    */
   recoverInterrupted(): void {
+    // デーモンが止まって答えられなかった質問は、中断として記録する（次の質問を受け付けるため。PBI-54）
+    for (const task of [...this.tasks.values()]) {
+      const question = pendingQuestion(task);
+      if (!question || task.status === "cancelled") continue;
+      this.append(task, [
+        {
+          actor: "sacty",
+          event: {
+            type: "QuestionAnswered",
+            payload: {
+              questionId: question.id,
+              failed: message("run.daemonStopped"),
+              runResult: "interrupted",
+              agentId: "unknown",
+            },
+          },
+        },
+      ]);
+    }
     for (const task of this.tasks.values()) {
       const judging = task.proposals.find((p) => !p.judgement);
       if (task.status === "idle" && judging) {
@@ -2911,6 +2943,12 @@ export class TaskService {
     }
     this.cancelling.add(id);
     try {
+      // 質問に答えている実行は止めて、答えの記録（中断・費用）を待つ（PBI-54）
+      const chat = this.chats.get(id);
+      if (chat) {
+        this.deps.executor.kill(chat.runId);
+        await chat.done;
+      }
       const cleanup: CleanupResult[] = [];
       const inflight = this.inflight.get(id);
       // 止めたコンテナが無くなったことを確かめられなければ、作業領域は消さない（まだ書き込まれうるため）
@@ -3396,6 +3434,8 @@ export class TaskService {
     network?: string;
     /** ゲートウェイ経由にした、コンテキストの HTTP の MCP サーバー（PBI-49）。 */
     contextMcp?: readonly GatewayMcpServer[];
+    /** true を返すと、コンテナを起動しない（質問への答えの実行が中止されたなど。PBI-54）。 */
+    stopped?: () => boolean;
   }): Promise<{ outcome: AgentOutcome; costUsd: number; estimated: boolean }> {
     // 実行に渡した秘密情報。作業履歴に書く前に、出力やエラー文から取り除く。
     const usedSecrets: string[] = [];
@@ -3473,7 +3513,7 @@ export class TaskService {
       mkdirSync(run.workspaceDir, { recursive: true });
       // 準備の間（clone や秘密情報の取り出し）に人間が止めたなら、コンテナを起動しない
       const running = this.runningTask.getStore();
-      if (running && this.pauseRequested.has(running)) {
+      if ((running && this.pauseRequested.has(running)) || run.stopped?.()) {
         return {
           outcome: {
             kind: "failed",
@@ -3731,6 +3771,118 @@ export class TaskService {
     return this.append(task, [
       { actor: "person", event: { type: "ReviewRestarted", payload: {} } },
     ]);
+  }
+
+  /**
+   * タスクの詳細で、オーケストレーターに質問する（PBI-54）。質問を記録し、答えは待たずに返す（answered で待てる）。
+   * 作業中のタスクでも質問でき、タスクの状態・工程・承認済みの内容は変えない（作業中の実行には話しかけない）。
+   * 中止したタスク・予算の上限に達したタスクでは質問できない。答えを待つ質問は、1タスクに1件まで。
+   */
+  askQuestion(id: string, raw: unknown): { task: Task; answered: Promise<void> } {
+    const { text } = AskQuestionInput.parse(raw);
+    const task = this.tasks.get(id);
+    if (!task) throw new InvalidOperationError(message("task.notFound"));
+    const blocked = questionBlocked(task);
+    if (blocked) throw new InvalidOperationError(blocked);
+    // 中止の後片付けの間も、質問を受け付けない
+    if (this.cancelling.has(id)) throw new InvalidOperationError(message("task.cancelled"));
+    const config = this.deps.config();
+    if (!config.ok) throw new InvalidOperationError(message("chat.unavailable"));
+    const questionId = `Q-${task.questions.length + 1}`;
+    const asked = this.append(task, [
+      { actor: "person", event: { type: "QuestionAsked", payload: { questionId, text } } },
+    ]);
+    const runId = randomUUID();
+    const answered = this.answerQuestion(asked, questionId, runId, config.config)
+      .catch((error) => {
+        console.error(`[daemon] could not record the answer for task ${id}:`, error);
+      })
+      .finally(() => {
+        // 次の質問の実行を消さないよう、この実行の分だけを消す
+        if (this.chats.get(id)?.runId === runId) this.chats.delete(id);
+      });
+    this.chats.set(id, { runId, done: answered });
+    return { task: asked, answered };
+  }
+
+  /**
+   * オーケストレーターに、タスクの台帳を読ませて質問に答えさせる（PBI-54）。用意済みのタスクは、対象リポジトリの
+   * 起点のコードの使い捨ての写しを渡す（変更は残らない）。答えから秘密情報を取り除いてから、長ければ切り詰める。
+   * 答えられなくても、使った分の費用は記録する。
+   */
+  private async answerQuestion(
+    task: Task,
+    questionId: string,
+    runId: string,
+    config: SactyConfig,
+  ): Promise<void> {
+    const question = task.questions.find((q) => q.id === questionId);
+    if (!question) return;
+    // オーケストレーターに使う AI（step_agents.orchestrator か default_agent。PBI-40）
+    const agent = agentFor(config, "orchestrator");
+    const setting = { agentId: agent.id, ...agentSetting(agent) };
+    let payload: Extract<EventInput, { type: "QuestionAnswered" }>["payload"];
+    try {
+      const { outcome, costUsd, estimated } = await this.runGuardian(
+        task,
+        {
+          agent,
+          image: config.image,
+          prompt: buildChatPrompt(task, this.deps.activity.forTask(task.id), question),
+          role: "chat",
+          runId,
+          // 準備の間（コードの書き出しなど）に中止されたなら、コンテナを起動しない
+          stopped: () => this.cancelling.has(task.id),
+        },
+        "base",
+      );
+      const cost = {
+        ...setting,
+        ...(outcome.usage ? { usage: outcome.usage } : {}),
+        costUsd,
+        estimated,
+      };
+      // 秘密情報は、execute が出力の全文から取り除いている（切り詰めるのは、その後）
+      const answer = outcome.kind === "completed" ? outcome.output.trim() : "";
+      if (this.cancelling.has(task.id)) {
+        payload = {
+          questionId,
+          failed: message("chat.cancelled"),
+          runResult: "interrupted",
+          ...cost,
+        };
+      } else if (outcome.kind === "failed") {
+        payload = {
+          questionId,
+          failed: message("chat.failed", { detail: outcome.message }),
+          runResult: "failed",
+          ...cost,
+        };
+      } else if (!answer) {
+        payload = { questionId, failed: message("chat.emptyAnswer"), runResult: "failed", ...cost };
+      } else {
+        payload = {
+          questionId,
+          answer: answer.length > ANSWER_MAX ? `${answer.slice(0, ANSWER_MAX - 1)}…` : answer,
+          runResult: "completed",
+          ...cost,
+        };
+      }
+    } catch (error) {
+      payload = {
+        questionId,
+        failed: message("chat.failed", { detail: errorText(error) }),
+        runResult: "failed",
+        ...setting,
+      };
+    }
+    const latest = this.tasks.get(task.id);
+    if (!latest || latest.status === "cancelled" || pendingQuestion(latest)?.id !== questionId) {
+      return;
+    }
+    this.append(latest, [{ actor: "orchestrator", event: { type: "QuestionAnswered", payload } }]);
+    // 予算の通知は記録するが、タスクは止めない（次の工程の実行の前に、予算で止まる）
+    this.warnIfNeeded(this.mustGet(task.id));
   }
 
   /** 起動のときに取り出せなかった秘密情報（PBI-48）。取り出し直すと置き換える。 */

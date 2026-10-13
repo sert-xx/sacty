@@ -1,3 +1,4 @@
+import { budgetState } from "./cost.js";
 import type {
   ActivityEvent,
   InvestigationKind,
@@ -13,7 +14,8 @@ import type {
   Verdict,
 } from "./events.js";
 import { MAX_INTEGRATION_ATTEMPTS, REWORK_STEPS } from "./events.js";
-import type { DaemonText } from "./message-code.js";
+import { type DaemonText, message } from "./message-code.js";
+import type { DaemonMessage } from "./messages.js";
 
 type PayloadOf<T extends ParsedEventInput["type"]> = Extract<
   ParsedEventInput,
@@ -87,6 +89,17 @@ export type TaskProposal = {
   decision?: { accept: boolean; at: string };
   /** 変更を反映したか。 */
   applied: boolean;
+};
+
+/**
+ * タスクの詳細で、オーケストレーターにした質問と答え（PBI-54）。answer が無ければ答えを待っている。
+ * 答えられなかったときは、text の代わりに failed（理由）を持つ。
+ */
+export type TaskQuestion = {
+  id: string;
+  text: string;
+  askedAt: string;
+  answer?: { text?: string; failed?: DaemonText; at: string };
 };
 
 /** 申し出が認められたか（ゴールガーディアンの承認か、人間の判断）。未決なら undefined。 */
@@ -236,6 +249,8 @@ export type Task = {
   stepsChoice?: { plan?: StepPlan; reason: DaemonText; fallback: boolean };
   /** 取り込んだ PR へのフィードバック（種類と ID。二重に取り込まないため。PBI-14b）。 */
   importedFeedback: string[];
+  /** オーケストレーターへの質問と答え（古い順。PBI-54）。 */
+  questions: TaskQuestion[];
   /** 取り込んで、まだ差し戻しに反映していない PR の指摘と、ゴールガーディアンの戻し先の判断。 */
   pendingReview?: {
     keys: string[];
@@ -330,6 +345,7 @@ export function applyEvent(
       integrationFailures: 0,
       misses: [],
       importedFeedback: [],
+      questions: [],
       submissions: {},
       remarks: [],
       budget: { usedUsd: 0, capUsd: event.payload.budgetCapUsd, warned: false, estimated: false },
@@ -846,6 +862,39 @@ export function applyEvent(
         : { failed: event.payload.failed ?? "" };
       break;
 
+    // 質問と答え（PBI-54）。タスクの状態・工程・承認済みの内容は変えない（作業中でも受け付ける）。
+    // 答えを待つ質問は1件まで。答えの費用は予算に入れる
+    case "QuestionAsked":
+      if (pendingQuestion(task)) throw new ActivityIntegrityError(event, "a question is pending");
+      if (task.questions.some((q) => q.id === event.payload.questionId)) {
+        throw new ActivityIntegrityError(event, "question id is used twice");
+      }
+      task.questions = [
+        ...task.questions,
+        { id: event.payload.questionId, text: event.payload.text, askedAt: event.at },
+      ];
+      break;
+
+    case "QuestionAnswered": {
+      if (pendingQuestion(task)?.id !== event.payload.questionId) {
+        throw new ActivityIntegrityError(event, "the question is not waiting for an answer");
+      }
+      const answer = {
+        ...(event.payload.answer !== undefined ? { text: event.payload.answer } : {}),
+        ...(event.payload.failed !== undefined ? { failed: event.payload.failed } : {}),
+        at: event.at,
+      };
+      task.questions = task.questions.map((q) =>
+        q.id === event.payload.questionId ? { ...q, answer } : q,
+      );
+      task.budget = {
+        ...task.budget,
+        usedUsd: addUsd(task.budget.usedUsd, event.payload.costUsd),
+        estimated: task.budget.estimated || event.payload.estimated,
+      };
+      break;
+    }
+
     // サービスの起動は記録だけ（タスクの状態は変えない。PBI-47）
     case "ServicesStarted":
       break;
@@ -1069,6 +1118,27 @@ export function project(events: Iterable<ActivityEvent>): Map<string, Task> {
     tasks = applyEvent(tasks, event);
   }
   return tasks;
+}
+
+/** 答えを待っている、オーケストレーターへの質問（PBI-54）。 */
+export function pendingQuestion(task: Task): TaskQuestion | undefined {
+  return task.questions.find((q) => !q.answer);
+}
+
+/**
+ * オーケストレーターに質問できない理由（PBI-54）。中止したタスク・答えを待つ質問があるタスク・予算の上限に
+ * 達したタスクでは質問できない。質問できるなら undefined。
+ */
+export function questionBlocked(task: Task): DaemonMessage | undefined {
+  if (task.status === "cancelled") return message("task.cancelled");
+  if (pendingQuestion(task)) return message("chat.answering");
+  if (budgetState(task.budget) === "exceeded") {
+    return message("chat.budgetExceeded", {
+      usedUsd: task.budget.usedUsd,
+      capUsd: task.budget.capUsd,
+    });
+  }
+  return undefined;
 }
 
 /** 現在実行対象の工程（active な工程）。 */

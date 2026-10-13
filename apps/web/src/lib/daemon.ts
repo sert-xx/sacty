@@ -229,6 +229,11 @@ export function rereviewTask(id: string): Promise<OpResult> {
   return postOp(`/api/tasks/${encodeURIComponent(id)}/rereview`, {});
 }
 
+/** タスクの詳細で、オーケストレーターに質問する（PBI-54）。答えは待たない（画面が答えの出るまで更新する）。 */
+export function askQuestion(id: string, text: string): Promise<OpResult> {
+  return postOp(`/api/tasks/${encodeURIComponent(id)}/questions`, { text });
+}
+
 /** GitHub Issue の取り込みを、間隔を待たずに実行する。 */
 /** プロジェクトの通知先に、テストの通知を送る（PBI-38）。 */
 export async function testNotification(projectId: string): Promise<OpResult> {

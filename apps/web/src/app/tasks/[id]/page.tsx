@@ -4,6 +4,7 @@ import {
   canRereview,
   investigationIsGoal,
   openProposal,
+  pendingQuestion,
   type StepKey,
   type Task,
 } from "@sacty/core";
@@ -23,6 +24,7 @@ import { RereviewButton } from "@/components/rereview-button";
 import { ResumeForm } from "@/components/resume-form";
 import { StepCosts } from "@/components/step-costs";
 import { CostMeter, StatusLabel, StepChips } from "@/components/task-bits";
+import { TaskChat } from "@/components/task-chat";
 import { TaskControls } from "@/components/task-controls";
 import { TestViewpoints } from "@/components/test-viewpoints";
 import { getMessages } from "@/i18n/server";
@@ -101,7 +103,8 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
 
   return (
     <>
-      <AutoRefresh active={isWorking(task)} />
+      {/* オーケストレーターが質問に答えている間も、答えが出るまで更新する（PBI-54） */}
+      <AutoRefresh active={isWorking(task) || pendingQuestion(task) !== undefined} />
       <div className="flex flex-col gap-2">
         <div className="flex flex-wrap items-center gap-3">
           <h1 className="text-2xl font-bold text-balance">{task.title}</h1>
@@ -352,6 +355,8 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
           )}
           <PullRequestCard task={task} />
           {(task.approved.requirements || task.proposals.length > 0) && <Proposals task={task} />}
+          {/* オーケストレーターへの質問と答え（PBI-54） */}
+          <TaskChat task={task} />
           {/* 工程ごとのエージェント・設定・費用（PBI-46） */}
           <StepCosts task={task} activity={activity} />
         </div>

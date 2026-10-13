@@ -82,6 +82,8 @@ const StubBehavior = z.object({
     .default(
       '```json\n{"sacty-steps": {"plan": "standard", "reason": "スタブのため標準の工程"}}\n```',
     ),
+  /** オーケストレーターとして、タスクの詳細での質問に答えたときの出力（PBI-54）。 */
+  chat: z.string().default("スタブのため、質問には答えません。"),
   /** ゴールガーディアンとして、PR の指摘の戻し先を判断したときの出力（PBI-14b）。 */
   rework: z
     .string()

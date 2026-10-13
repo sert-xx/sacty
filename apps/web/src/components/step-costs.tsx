@@ -25,7 +25,11 @@ export async function StepCosts({ task, activity }: { task: Task; activity: Acti
     : undefined;
   const count = new Intl.NumberFormat(NUMBER_LOCALE[locale]);
   const roleLabel = (role: CostRole) =>
-    role === "orchestrator" || role === "guardian" ? labels.actor[role] : labels.step[role];
+    role === "chat"
+      ? m.chat
+      : role === "orchestrator" || role === "guardian"
+        ? labels.actor[role]
+        : labels.step[role];
   const ran = rows.filter((r) => r.runs.length > 0);
 
   return (

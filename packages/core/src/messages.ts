@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { formatUsd } from "./cost.js";
-import { TASK_BODY_MAX, TASK_TITLE_MAX } from "./events.js";
+import { QUESTION_MAX, TASK_BODY_MAX, TASK_TITLE_MAX } from "./events.js";
 import { DaemonText } from "./message-code.js";
 import { PROJECT_EXPORT_VERSION } from "./projects.js";
 
@@ -59,6 +59,18 @@ const PARAMS = {
   "input.titleTooLong": null,
   "input.bodyTooLong": null,
   "input.remarkTooLong": null,
+  // オーケストレーターへの質問（PBI-54）
+  "input.questionRequired": null,
+  "input.questionTooLong": null,
+  "chat.answering": null,
+  "chat.budgetExceeded": z.object({
+    usedUsd: z.number().nonnegative(),
+    capUsd: z.number().nonnegative(),
+  }),
+  "chat.unavailable": null,
+  "chat.failed": z.object({ detail: TextParam }),
+  "chat.emptyAnswer": null,
+  "chat.cancelled": null,
   "input.tooManyRemarks": null,
   "input.nameRequired": null,
   "input.invalidGithubName": null,
@@ -381,6 +393,17 @@ const ja: MessageDictionary = {
   "input.titleTooLong": `タイトルは${TASK_TITLE_MAX}文字以内で入力してください。`,
   "input.bodyTooLong": `内容は${TASK_BODY_MAX.toLocaleString("ja-JP")}文字以内で入力してください。`,
   "input.remarkTooLong": "指摘は1件あたり2,000文字以内にしてください。",
+  "input.questionRequired": "質問を入力してください。",
+  "input.questionTooLong": `質問は${QUESTION_MAX.toLocaleString("ja-JP")}文字以内にしてください。`,
+  "chat.answering": "前の質問に答えているところです。答えが出てから質問してください。",
+  "chat.budgetExceeded": ({ usedUsd, capUsd }) =>
+    `予算の上限に達しているため、質問できません（${formatUsd(usedUsd)} / ${formatUsd(capUsd)}）。答えの費用もタスクの予算に入ります。`,
+  "chat.unavailable":
+    "設定（config.yaml）に問題があるため、質問できません。画面の上の問題を確かめてください。",
+  "chat.failed": ({ detail }, text) =>
+    `オーケストレーターが質問に答えられませんでした：${text(detail).replace(/[。.]\s*$/, "")}。`,
+  "chat.emptyAnswer": "オーケストレーターの答えが空でした。",
+  "chat.cancelled": "タスクを中止したため、答えるのをやめました。",
   "input.tooManyRemarks": "指摘は一度に50件までにしてください。",
   "input.nameRequired": "名前を入力してください。",
   "input.invalidGithubName": "GitHub の名前として正しくありません。",
@@ -677,6 +700,18 @@ const en: MessageDictionary = {
   "input.titleTooLong": `Keep the title within ${TASK_TITLE_MAX} characters.`,
   "input.bodyTooLong": `Keep the details within ${TASK_BODY_MAX.toLocaleString("en-US")} characters.`,
   "input.remarkTooLong": "Keep each comment within 2,000 characters.",
+  "input.questionRequired": "Enter a question.",
+  "input.questionTooLong": `Keep the question within ${QUESTION_MAX.toLocaleString("en-US")} characters.`,
+  "chat.answering":
+    "The previous question is still being answered. Ask again after the answer appears.",
+  "chat.budgetExceeded": ({ usedUsd, capUsd }) =>
+    `You can't ask because the budget cap has been reached (${formatUsd(usedUsd)} / ${formatUsd(capUsd)}). The cost of answers is part of the task's budget.`,
+  "chat.unavailable":
+    "You can't ask because of a problem in the settings (config.yaml). Check the problem shown at the top of the page.",
+  "chat.failed": ({ detail }, text) =>
+    `The Orchestrator could not answer the question: ${text(detail).replace(/[。.]\s*$/, "")}.`,
+  "chat.emptyAnswer": "The Orchestrator's answer was empty.",
+  "chat.cancelled": "Stopped answering because the task was cancelled.",
   "input.tooManyRemarks": "Enter up to 50 comments at a time.",
   "input.nameRequired": "Enter a name.",
   "input.invalidGithubName": "This is not a valid GitHub name.",

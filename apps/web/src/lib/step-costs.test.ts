@@ -425,3 +425,80 @@ describe("工程ごとの費用（PBI-46）", () => {
     expect(total.costUsd).toBe(0.4);
   });
 });
+
+describe("質問への答えの費用（PBI-54）", () => {
+  const asked = (questionId: string) =>
+    ev({ type: "QuestionAsked", payload: { questionId, text: "いまどこ？" } }, "person");
+
+  it("質問が無ければ行を出さず、答えた・答えられなかった・中断した回をすべて「質問への答え」の行に出す。合計はタスクの費用と一致する", () => {
+    const none = history();
+    expect(stepCosts(taskOf(none), none).rows.map((r) => r.role)).not.toContain("chat");
+
+    const events = [
+      ...history(),
+      asked("Q-1"),
+      ev(
+        {
+          type: "QuestionAnswered",
+          payload: {
+            questionId: "Q-1",
+            answer: "設計です",
+            runResult: "completed",
+            agentId: "orc",
+            authMode: "api-key",
+            model: "gpt-x",
+            usage: usage(300, 30),
+            costUsd: 0.03,
+          },
+        },
+        "orchestrator",
+      ),
+      asked("Q-2"),
+      ev(
+        {
+          type: "QuestionAnswered",
+          payload: {
+            questionId: "Q-2",
+            failed: "失敗",
+            runResult: "failed",
+            agentId: "orc",
+            usage: usage(10, 1),
+            costUsd: 0.001,
+            estimated: true,
+          },
+        },
+        "orchestrator",
+      ),
+      asked("Q-3"),
+      ev({
+        type: "QuestionAnswered",
+        payload: {
+          questionId: "Q-3",
+          failed: "止まった",
+          runResult: "interrupted",
+          agentId: "unknown",
+        },
+      }),
+    ];
+    const task = taskOf(events);
+    const { rows, total } = stepCosts(task, events);
+    // 工程の行の後、ゴールガーディアンの前
+    expect(rows.map((r) => r.role)).toEqual([
+      "orchestrator",
+      "requirements",
+      "design",
+      "implement",
+      "pr",
+      "chat",
+      "guardian",
+    ]);
+    const chat = rows.find((r) => r.role === "chat");
+    expect(chat?.runs.map((r) => [r.result, r.costUsd, r.model])).toEqual([
+      ["completed", 0.03, "gpt-x"],
+      ["failed", 0.001, undefined],
+      ["interrupted", 0, undefined],
+    ]);
+    expect(chat).toMatchObject({ costUsd: 0.031, estimated: true, usage: usage(310, 31) });
+    expect(total.costUsd).toBe(task.budget.usedUsd);
+  });
+});

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { budgetState, computeCostUsd } from "./cost.js";
 import type { ActivityEvent, EventInput } from "./events.js";
 import { EventInput as EventSchema, MVP_STEPS } from "./events.js";
-import { project } from "./projection.js";
+import { pendingQuestion, project, questionBlocked } from "./projection.js";
 
 let seq = 0;
 const ev = (taskId: string, input: EventInput, actor: ActivityEvent["actor"] = "sacty") =>
@@ -470,5 +470,92 @@ describe("レビューの工程（PBI-19）", () => {
         ev("t5", { type: "ReviewTargetResolved", payload: target }),
       ]),
     ).toThrow(/not active/);
+  });
+});
+
+describe("オーケストレーターへの質問（PBI-54）", () => {
+  const asked = (taskId: string, questionId: string) =>
+    ev(taskId, { type: "QuestionAsked", payload: { questionId, text: "いまどこ？" } }, "person");
+  const answered = (taskId: string, questionId: string, costUsd: number) =>
+    ev(
+      taskId,
+      {
+        type: "QuestionAnswered",
+        payload: { questionId, answer: "設計です", runResult: "completed", agentId: "o", costUsd },
+      },
+      "orchestrator",
+    );
+
+  it("質問と答えを残し、費用を予算に入れる。状態・工程は変えない（実行中でも受け付ける）", () => {
+    seq = 0;
+    const base = [created("t1"), steps("t1"), started("t1", "r1")];
+    const before = project(base).get("t1");
+    const task = project([
+      ...base,
+      asked("t1", "Q-1"),
+      answered("t1", "Q-1", 0.25),
+      asked("t1", "Q-2"),
+    ]).get("t1");
+    expect(task?.questions.map((q) => [q.id, q.answer?.text])).toEqual([
+      ["Q-1", "設計です"],
+      ["Q-2", undefined],
+    ]);
+    expect(task && pendingQuestion(task)?.id).toBe("Q-2");
+    expect(task?.status).toBe("running");
+    expect(task?.currentRunId).toBe("r1");
+    expect(task?.steps).toEqual(before?.steps);
+    expect(task?.budget.usedUsd).toBe(0.25);
+  });
+
+  it("答えを待つ質問は1件まで。答えの無い質問への答え・同じ ID の質問は受け付けない", () => {
+    seq = 0;
+    expect(() => project([created("t1"), asked("t1", "Q-1"), asked("t1", "Q-2")])).toThrow(
+      /a question is pending/,
+    );
+    seq = 0;
+    expect(() => project([created("t1"), answered("t1", "Q-1", 0)])).toThrow(
+      /not waiting for an answer/,
+    );
+    seq = 0;
+    expect(() =>
+      project([
+        created("t1"),
+        asked("t1", "Q-1"),
+        answered("t1", "Q-1", 0),
+        answered("t1", "Q-1", 0),
+      ]),
+    ).toThrow(/not waiting for an answer/);
+    seq = 0;
+    expect(() =>
+      project([created("t1"), asked("t1", "Q-1"), answered("t1", "Q-1", 0), asked("t1", "Q-1")]),
+    ).toThrow(/used twice/);
+  });
+
+  it("質問できない理由：中止・答えを待っている・予算の上限（ちょうどを含む）", () => {
+    seq = 0;
+    const capped = (used: number) =>
+      project([
+        created("t1", 0.5),
+        steps("t1"),
+        started("t1", "r1"),
+        completed("t1", "r1", used),
+      ]).get("t1");
+    const exactly = capped(0.5);
+    expect(exactly && questionBlocked(exactly)).toEqual({
+      code: "chat.budgetExceeded",
+      params: { usedUsd: 0.5, capUsd: 0.5 },
+    });
+    seq = 0;
+    const below = capped(0.499999);
+    expect(below && questionBlocked(below)).toBeUndefined();
+    seq = 0;
+    const pending = project([created("t1"), asked("t1", "Q-1")]).get("t1");
+    expect(pending && questionBlocked(pending)).toEqual({ code: "chat.answering" });
+    seq = 0;
+    const cancelled = project([
+      created("t1"),
+      ev("t1", { type: "TaskCancelled", payload: { cleanup: [] } }, "person"),
+    ]).get("t1");
+    expect(cancelled && questionBlocked(cancelled)).toEqual({ code: "task.cancelled" });
   });
 });
