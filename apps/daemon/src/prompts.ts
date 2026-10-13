@@ -1,6 +1,7 @@
 import {
   type ActivityEvent,
   type DaemonText,
+  ExportVia,
   type FinalReview,
   type IntegrationReview,
   InvestigationKind,
@@ -49,6 +50,7 @@ const PROPOSAL_HEADING = "sacty-change-proposal";
 const VERDICT_HEADING = "sacty-verdict";
 const REWORK_HEADING = "sacty-rework";
 const PLAN_HEADING = "sacty-steps";
+const EXPORT_HEADING = "sacty-export";
 /** 設計を省いたタスクで、最終レビューの観点にする要求要件の受け入れ条件（PBI-17）。 */
 export const REQUIREMENTS_VIEWPOINT = "REQ";
 /** 不具合の修正（再現 → 実装）で、最終レビューの観点にする「再現のテストが通る」（PBI-29）。 */
@@ -1188,6 +1190,8 @@ export function buildPullRequestBody(task: Task): string {
         ]
       : ["## 要求要件（人間が承認済み）", "", task.approved.requirements?.output ?? "（なし）"]),
     "",
+    // 書き出した成果（要求要件・設計など）の URL（PBI-56）
+    ...(exportedUrls(task).length > 0 ? ["## 書き出した成果", "", ...exportedUrls(task), ""] : []),
     "## 観点 → テスト → 実行結果",
     "",
     "| 観点 | 入力 | 期待結果 | テスト | 最終レビュー |",
@@ -1446,6 +1450,42 @@ export function buildChatPrompt(
   return [ledger, heading, ...(lines.length > 0 ? lines : ["（なし）"])].join("\n") + tail;
 }
 
+/** 成果の書き出し先に使える接続先（PBI-56）。ゲートウェイの接続先（gateway.platforms）か MCP サーバー。 */
+export type ExportDestination = { via: ExportVia; name: string; description: string };
+
+/** オーケストレーターに渡す、プロジェクトのコンテキストの規約の上限（文字数。PBI-56）。 */
+const EXPORT_RULES_IN_PROMPT = 8_000;
+
+/** オーケストレーターに、工程ごとの成果の書き出し先を決めさせる指示（PBI-56）。 */
+function exportChoiceLines(
+  task: Task,
+  destinations: readonly ExportDestination[],
+  rules: string | undefined,
+): string[] {
+  const source = task.source
+    ? `${task.source.repo}#${task.source.number}（${task.source.url}）`
+    : task.ticket
+      ? `${task.ticket.key}（${task.ticket.url}）`
+      : undefined;
+  return [
+    "- exports：人間が承認した成果（investigate の調査の結果は調査だけのとき・requirements の要求要件・design の設計とテスト観点）を、Confluence・Notion などに書き出すか（PBI-56）。選んだ組み合わせのこれらの工程ごとに、書き出し先の接続先の名前（to）と種類（via）、置き場所の手がかり（location。例：Confluence のスペースと親のページ、Notion の親のページ）、理由（reason）を書く。書き出さない工程は to を空にして、理由を書く。タスクの内容・取り込み元のチケット・プロジェクトのコンテキストの規約（どこに何を書くか）・接続先の説明から判断し、規約や指示が無いのに推測で書き出さない。書き出しは、工程の承認の後に sacty が行う（ここでは書き出さない）",
+    ...(source ? [`  - 取り込み元：${source}`] : []),
+    "  - 使える接続先：",
+    ...destinations.map(
+      (d) =>
+        `    - ${d.name}（${d.via === "platform" ? "via: platform・ゲートウェイの接続先" : "via: mcp・MCP サーバー"}）${d.description ? `：${d.description}` : ""}`,
+    ),
+    ...(rules?.trim()
+      ? [
+          "  - プロジェクトのコンテキストの規約（書き出し先の手がかり）：",
+          "",
+          clip(rules.trim(), EXPORT_RULES_IN_PROMPT),
+          "",
+        ]
+      : []),
+  ];
+}
+
 /**
  * オーケストレーターへの指示（PBI-17）。タスクの内容と対象リポジトリのコードを読んで、決めた候補から
  * 工程の組み合わせを選ばせる。判断ごとに新しいセッションで実行する。
@@ -1458,9 +1498,15 @@ export function buildOrchestratorPrompt(
      * images を書いていないときは渡さない（イメージを選ばせない）。
      */
     images?: readonly { name: string; description: string }[];
+    /**
+     * 成果の書き出し先に使える接続先と、プロジェクトのコンテキストの規約（どこに何を書くか。PBI-56）。接続先が
+     * 無ければ渡さない（書き出し先を決めさせない）。
+     */
+    exports?: { destinations: readonly ExportDestination[]; rules?: string };
   } = {},
 ): string {
   const images = options.images ?? [];
+  const destinations = options.exports?.destinations ?? [];
   const all: Record<StepPlan, string> = {
     standard:
       "調査 → 要求要件 → 設計（テスト観点）→ 実装 → PR作成。既定。振る舞いが複数ある・影響範囲が広い・テスト観点を人間と合意したい変更",
@@ -1504,6 +1550,9 @@ export function buildOrchestratorPrompt(
           "- services：テストや動作確認に、docker compose で起動するサービス（DB・モック API など）が要るとき（PBI-47）。compose ファイル（docker-compose.yml・compose.yaml など）・README・AGENTS.md・テストの設定から判断する。file は compose ファイルの、リポジトリの根からの相対パス、names は起動するサービスの名前（依存するサービスも起動する。テストを動かすアプリ本体など、要らないサービスは含めない）、steps はサービスを使う工程（コードを動かす reproduce・implement と、不具合の調査の investigate）。sacty が工程とテストの実行ごとに起動し、終わったら消す。サービスにはサービス名とコンテナのポートで接続する（例 db:5432。localhost ではない）。要らなければ書かない",
         ]
       : []),
+    ...(destinations.length > 0
+      ? exportChoiceLines(task, destinations, options.exports?.rules)
+      : []),
     "",
     "選べる工程の組み合わせ：",
     ...Object.entries(plans).map(([key, text]) => `- ${key}：${text}`),
@@ -1517,7 +1566,7 @@ export function buildOrchestratorPrompt(
     "",
     "選んだ工程を、次の形式で必ず出してください。",
     "```json",
-    `{"${PLAN_HEADING}": {"plan": "${Object.keys(plans).join(" または ")}", "reason": "選んだ理由", "baseBranch": "ベースブランチ", "testCommand": "テストのコマンド（分からなければ空）", "investigation": "content または bug"${images.length > 0 ? ', "images": {"implement": "イメージの名前"}, "imageReason": "イメージを選んだ理由"' : ""}${task.repository ? ', "services": {"file": "compose ファイル", "names": ["db"], "steps": ["implement"]}（要らなければ書かない）' : ""}}}`,
+    `{"${PLAN_HEADING}": {"plan": "${Object.keys(plans).join(" または ")}", "reason": "選んだ理由", "baseBranch": "ベースブランチ", "testCommand": "テストのコマンド（分からなければ空）", "investigation": "content または bug"${images.length > 0 ? ', "images": {"implement": "イメージの名前"}, "imageReason": "イメージを選んだ理由"' : ""}${task.repository ? ', "services": {"file": "compose ファイル", "names": ["db"], "steps": ["implement"]}（要らなければ書かない）' : ""}${destinations.length > 0 ? ', "exports": {"requirements": {"to": "接続先の名前", "via": "platform または mcp", "location": "置き場所の手がかり", "reason": "そこに書き出す理由"}, "design": {"to": "", "reason": "書き出さない理由"}}' : ""}}}`,
     "```",
   ].join("\n");
 }
@@ -1664,6 +1713,8 @@ export function extractStepPlan(
       imageReason?: string;
       /** 起動する docker compose のサービス（PBI-47）。ファイルがあるかは、起動するときに確かめる。 */
       services?: { file: string; names: string[]; steps: StepKey[] };
+      /** 工程ごとの書き出し先（PBI-56）。接続先があるかは、呼び出し側が確かめる（via が無ければ名前で探す）。 */
+      exports?: Partial<Record<StepKey, RawExportPlan>>;
     }
   | undefined {
   const blocks = [...output.matchAll(/```json\s*\n([\s\S]*?)\n```/g)].reverse();
@@ -1693,6 +1744,7 @@ export function extractStepPlan(
         ) as Partial<Record<StepKey, string>>;
         const imageReason = text(v.imageReason).slice(0, 1000);
         const services = composeServicesOf(v.services);
+        const exports = exportPlansOf(v.exports);
         return {
           plan: plan.data,
           reason,
@@ -1702,6 +1754,7 @@ export function extractStepPlan(
           ...(Object.keys(images).length > 0 ? { images } : {}),
           ...(imageReason ? { imageReason } : {}),
           ...(services ? { services } : {}),
+          ...(exports ? { exports } : {}),
         };
       }
     } catch {
@@ -1709,6 +1762,40 @@ export function extractStepPlan(
     }
   }
   return undefined;
+}
+
+/** オーケストレーターが書いた書き出し先（PBI-56）。接続先の種類が無ければ、名前で探す。 */
+export type RawExportPlan = {
+  to?: { via?: ExportVia; name: string; location: string };
+  reason: string;
+};
+
+/** オーケストレーターが書いた、工程ごとの書き出し先を読む（PBI-56）。工程の名前の形が正しいものだけを使う。 */
+function exportPlansOf(value: unknown): Partial<Record<StepKey, RawExportPlan>> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const plans = Object.fromEntries(
+    Object.entries(value as Record<string, unknown>).flatMap(([step, raw]) => {
+      const key = StepKey.safeParse(step);
+      if (!key.success || !raw || typeof raw !== "object" || Array.isArray(raw)) return [];
+      const v = raw as Record<string, unknown>;
+      const name = text(v.to).slice(0, 100);
+      const via = ExportVia.safeParse(v.via);
+      const plan: RawExportPlan = {
+        ...(name
+          ? {
+              to: {
+                ...(via.success ? { via: via.data } : {}),
+                name,
+                location: text(v.location).slice(0, 1000),
+              },
+            }
+          : {}),
+        reason: text(v.reason).slice(0, 2000),
+      };
+      return [[key.data, plan]];
+    }),
+  ) as Partial<Record<StepKey, RawExportPlan>>;
+  return Object.keys(plans).length > 0 ? plans : undefined;
 }
 
 /**
@@ -1781,6 +1868,8 @@ export function buildInvestigationComment(task: Task): string {
     body,
     "",
     "---",
+    // 書き出した先があれば、その URL を添える（PBI-56）
+    ...(task.exports.investigate?.url ? [`書き出した先：${task.exports.investigate.url}`, ""] : []),
     `sacty のタスク ${task.id} で調べ、人間が確認しました。`,
   ].join("\n");
 }
@@ -1788,6 +1877,129 @@ export function buildInvestigationComment(task: Task): string {
 /** チケット（JIRA）へ返す調査の結果（PBI-52）。JIRA は HTML のコメントを表示してしまうので、目印は入れない。 */
 export function buildTicketInvestigationComment(task: Task): string {
   return buildInvestigationComment(task).replace(`${investigationMarker(task)}\n`, "");
+}
+
+/** 書き出した成果の URL の一覧（工程ごとに1行。PBI-56）。 */
+function exportedUrls(task: Task): string[] {
+  return task.steps.flatMap((s) => {
+    const url = task.exports[s.key]?.url;
+    return url ? [`- ${STEP_NAME[s.key]}：${url}`] : [];
+  });
+}
+
+/** 作った PR の URL を、取り込み元のチケットに返すコメント（PBI-52）。書き出した成果の URL も添える（PBI-56）。 */
+export function buildTicketPullRequestComment(task: Task): string {
+  const exported = exportedUrls(task);
+  return [
+    `sacty が PR を作りました：${task.pullRequest?.url ?? ""}`,
+    ...(exported.length > 0 ? ["", "書き出した成果：", ...exported] : []),
+    "",
+    `（sacty のタスク ${task.id}）`,
+  ].join("\n");
+}
+
+/** 書き出す成果のファイル（書き出しのエージェントの作業領域に置く。PBI-56）。 */
+export const EXPORT_FILE = "sacty-export.md";
+
+/**
+ * 書き出した成果に入れる目印（PBI-56）。書き出しの後・記録の前に止まっても、次の書き出しで同じページを見つけて
+ * 更新し、同じ成果を二重に書き出さないため（書き出し先に依らず読めるよう、本文の文字で入れる）。
+ */
+export function exportMarker(task: Task, step: StepKey): string {
+  return `sacty-export:${task.id}:${step}`;
+}
+
+/** 書き出す成果（人間が承認した版。PBI-56）。設計はテスト観点を含める。 */
+export function buildExportDocument(task: Task, step: StepKey): string {
+  const approved = task.approved[step];
+  return [
+    `# ${task.title}：${STEP_NAME[step]}`,
+    "",
+    approved?.output ?? "",
+    ...(step === "design"
+      ? ["", "## テスト観点", "", ...viewpointLines(approved?.testViewpoints ?? [])]
+      : []),
+    "",
+    "---",
+    `sacty のタスク ${task.id} の${STEP_NAME[step]}（${approved?.submission ?? 0}回目の提出）を、人間が承認しました。`,
+    `目印：${exportMarker(task, step)}`,
+  ].join("\n");
+}
+
+/**
+ * 承認した成果を書き出させる指示（PBI-56）。書き出す内容は作業領域のファイルで渡す。前に書き出した先があれば、
+ * そのページを更新させる（新しく作らない）。無ければ、目印のあるページを探してから作らせる（前の書き出しが記録の前に
+ * 止まった・結果を返せなかったときに、二重に作らないため）。
+ */
+export function buildExportPrompt(
+  task: Task,
+  step: StepKey,
+  input: {
+    via: ExportVia;
+    name: string;
+    description: string;
+    location: string;
+    previousUrl?: string;
+    interrupted: boolean;
+  },
+): string {
+  const marker = exportMarker(task, step);
+  return [
+    "あなたは sacty の書き出しのエージェントです。人間が承認したタスクの成果を、決められた書き出し先に書き出してください。",
+    "",
+    `- 書き出す内容：作業領域（カレントディレクトリ）の ${EXPORT_FILE}（Markdown）。内容は変えずに、書き出し先の形式に合わせて書く`,
+    `- ページの題：${task.title}：${STEP_NAME[step]}`,
+    `- 書き出し先：${input.name}（${input.via === "platform" ? "ゲートウェイの接続先。下の API で書く" : "MCP サーバー。そのツールで書く"}）${input.description ? `：${input.description}` : ""}`,
+    `- 置き場所の手がかり：${input.location || "（なし。書き出し先の説明から判断する）"}`,
+    ...(input.previousUrl
+      ? [
+          `- 前にこの成果を書き出したページ（${input.previousUrl}）を、この内容で更新する（新しいページは作らない）。更新できなければ、新しく作らずに error に理由を書く`,
+        ]
+      : input.interrupted
+        ? [
+            `- 前の書き出しが、結果を記録する前に止まりました。置き場所で、目印「${marker}」を含むページを探し、あればそのページを更新する（新しく作らない）。無ければ新しく作る`,
+          ]
+        : [
+            // 前の書き出しが、ページを作った後に結果を返せなかった（出力を読めない・異常終了）かもしれないので、先に探す
+            `- 置き場所で、目印「${marker}」を含むページを探し、あればそのページを更新する（新しく作らない）。無ければ、新しいページを作る`,
+          ]),
+    "- 書き出し先への書き込みのほかは、何も変更しない。秘密情報（API キー・トークンなど）は出力に書かない",
+    "- 書き出せないとき（接続できない・権限が無い・置き場所が分からないなど）は、推測でほかの場所に書かずに、理由を error に書く",
+    "",
+    "最後に、次の形式で必ず出してください。",
+    "```json",
+    `{"${EXPORT_HEADING}": {"url": "書き出したページの URL（書き出せなければ空）", "error": "書き出せなかった理由（書き出せたら空）"}}`,
+    "```",
+  ].join("\n");
+}
+
+/** 書き出せなかった理由の上限（文字数。PBI-56）。 */
+const EXPORT_ERROR_MAX = 1_000;
+
+/**
+ * 書き出しのエージェントの出力を読む（PBI-56）。URL は http(s) の形のものだけ。秘密情報は、呼び出し側が出力の全文から
+ * 取り除いている（理由を切り詰めるのは、その後）。読めなければ undefined。
+ */
+export function extractExport(output: string): { url: string } | { error: string } | undefined {
+  const blocks = [...output.matchAll(/```json\s*\n([\s\S]*?)\n```/g)].reverse();
+  for (const block of blocks) {
+    try {
+      const parsed = JSON.parse(block[1] ?? "") as Record<string, unknown>;
+      const v = parsed?.[EXPORT_HEADING] as Record<string, unknown> | undefined;
+      if (!v || typeof v !== "object") continue;
+      const url = text(v.url);
+      if (/^https?:\/\/\S+$/.test(url) && url.length <= 2000) return { url };
+      const error = text(v.error);
+      if (error) {
+        return {
+          error: error.length > EXPORT_ERROR_MAX ? `${error.slice(0, EXPORT_ERROR_MAX)}…` : error,
+        };
+      }
+    } catch {
+      // 次のブロックを試す
+    }
+  }
+  return undefined;
 }
 
 /** チケットの取り込みの1段目（PBI-52）の出力の見出し。 */

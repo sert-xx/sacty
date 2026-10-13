@@ -27,9 +27,11 @@ export async function StepCosts({ task, activity }: { task: Task; activity: Acti
   const roleLabel = (role: CostRole) =>
     role === "chat"
       ? m.chat
-      : role === "orchestrator" || role === "guardian"
-        ? labels.actor[role]
-        : labels.step[role];
+      : role === "export"
+        ? m.export
+        : role === "orchestrator" || role === "guardian"
+          ? labels.actor[role]
+          : labels.step[role];
   const ran = rows.filter((r) => r.runs.length > 0);
 
   return (

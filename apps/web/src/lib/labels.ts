@@ -136,16 +136,28 @@ export function describeEvent(event: ActivityEvent, l: LabelMessages): string {
       );
       // 工程ごとのイメージ（PBI-41）。書いていない工程は既定のイメージ
       const images = Object.entries(event.payload.images ?? {});
-      if (images.length === 0) return chosen;
+      // 工程ごとの書き出し先と理由（PBI-56）
+      const exports = Object.entries(event.payload.exports ?? {});
       return (
         chosen +
-        e.stepsImages(
-          images
-            .map(([step, image]) => e.stepImage(l.step[step as StepKey], image))
-            .join(e.imagesJoin),
-          event.payload.imageSource ?? "orchestrator",
-          event.payload.imageReason,
-        )
+        (images.length > 0
+          ? e.stepsImages(
+              images
+                .map(([step, image]) => e.stepImage(l.step[step as StepKey], image))
+                .join(e.imagesJoin),
+              event.payload.imageSource ?? "orchestrator",
+              event.payload.imageReason,
+            )
+          : "") +
+        (exports.length > 0
+          ? e.stepsExports(
+              exports
+                .map(([step, plan]) =>
+                  e.stepExport(l.step[step as StepKey], plan?.to, plan ? l.text(plan.reason) : ""),
+                )
+                .join(e.imagesJoin),
+            )
+          : "")
       );
     }
     case "TicketTriaged":
@@ -351,6 +363,23 @@ export function describeEvent(event: ActivityEvent, l: LabelMessages): string {
       );
     case "QuestionAsked":
       return e.QuestionAsked(event.payload.questionId, actor);
+    case "ExportStarted":
+      return e.ExportStarted(l.step[event.payload.step]);
+    case "OutputExported": {
+      const p = event.payload;
+      return e.OutputExported(
+        l.step[p.step],
+        p.name,
+        p.url
+          ? { url: p.url }
+          : p.runResult === "interrupted"
+            ? { interrupted: l.text(p.failed ?? "") }
+            : { failed: l.text(p.failed ?? "") },
+        cost(p.costUsd, p.estimated),
+      );
+    }
+    case "ExportRequested":
+      return e.ExportRequested(l.step[event.payload.step], actor);
     case "QuestionAnswered":
       return e.QuestionAnswered(
         event.payload.questionId,

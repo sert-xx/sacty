@@ -1,6 +1,7 @@
 import { budgetState } from "./cost.js";
 import type {
   ActivityEvent,
+  ExportPlan,
   InvestigationKind,
   ParsedEventInput,
   PauseReason,
@@ -13,7 +14,7 @@ import type {
   TestViewpoint,
   Verdict,
 } from "./events.js";
-import { MAX_INTEGRATION_ATTEMPTS, REWORK_STEPS } from "./events.js";
+import { EXPORT_STEPS, exportSteps, MAX_INTEGRATION_ATTEMPTS, REWORK_STEPS } from "./events.js";
 import { type DaemonText, message } from "./message-code.js";
 import type { DaemonMessage } from "./messages.js";
 
@@ -100,6 +101,26 @@ export type TaskQuestion = {
   text: string;
   askedAt: string;
   answer?: { text?: string; failed?: DaemonText; at: string };
+};
+
+/**
+ * 工程の成果の書き出し（PBI-56）。url は最後に書き出せた先（差し戻しの後に承認し直したら、ここを更新する）。
+ * last は最後に結果を記録した書き出し、started は始めて、まだ結果を記録していない書き出し（デーモンが止まった・
+ * 人間が止めたなど。次の書き出しで、目印のあるページを探して続ける）。retry は、人間が書き出し直しを求めた。
+ */
+export type TaskExport = {
+  url?: string;
+  last?: {
+    approvedAt: string;
+    submission: number;
+    via: "platform" | "mcp";
+    name: string;
+    url?: string;
+    failed?: DaemonText;
+    at: string;
+  };
+  started?: { approvedAt: string; runId: string; at: string };
+  retry?: boolean;
 };
 
 /** 申し出が認められたか（ゴールガーディアンの承認か、人間の判断）。未決なら undefined。 */
@@ -245,6 +266,10 @@ export type Task = {
   images?: Partial<Record<StepKey, string>>;
   /** 工程・テストの実行の前に起動する docker compose のサービス（PBI-47）。 */
   services?: { file: string; names: string[]; steps: StepKey[] };
+  /** オーケストレーターが決めた、工程ごとの書き出し先と理由（PBI-56。使える接続先が無かったときは無い）。 */
+  exportPlans?: Partial<Record<StepKey, ExportPlan>>;
+  /** 工程ごとの成果の書き出し（PBI-56）。 */
+  exports: Partial<Record<StepKey, TaskExport>>;
   /** オーケストレーターが工程を選んだ理由（PBI-17。固定の工程だった作業履歴には無い）。 */
   stepsChoice?: { plan?: StepPlan; reason: DaemonText; fallback: boolean };
   /** 取り込んだ PR へのフィードバック（種類と ID。二重に取り込まないため。PBI-14b）。 */
@@ -351,6 +376,7 @@ export function applyEvent(
       misses: [],
       importedFeedback: [],
       questions: [],
+      exports: {},
       submissions: {},
       remarks: [],
       budget: { usedUsd: 0, capUsd: event.payload.budgetCapUsd, warned: false, estimated: false },
@@ -384,6 +410,7 @@ export function applyEvent(
       if (event.payload.investigation) task.investigation = event.payload.investigation;
       if (event.payload.images) task.images = event.payload.images;
       if (event.payload.services) task.services = event.payload.services;
+      if (event.payload.exports) task.exportPlans = event.payload.exports;
       if (event.payload.reason !== undefined) {
         task.stepsChoice = {
           ...(event.payload.plan ? { plan: event.payload.plan } : {}),
@@ -915,6 +942,65 @@ export function applyEvent(
       break;
     }
 
+    // 成果の書き出し（PBI-56）。タスクの状態・工程は変えない（書き出せなくても、タスクは止めない）
+    case "ExportStarted": {
+      const { step, runId, approvedAt } = event.payload;
+      if (!task.exportPlans?.[step]?.to || task.approved[step]?.at !== approvedAt) {
+        throw new ActivityIntegrityError(
+          event,
+          "the approved output is not waiting to be exported",
+        );
+      }
+      task.exports = {
+        ...task.exports,
+        [step]: { ...task.exports[step], started: { approvedAt, runId, at: event.at } },
+      };
+      break;
+    }
+
+    case "OutputExported": {
+      const p = event.payload;
+      if (!EXPORT_STEPS.includes(p.step)) {
+        throw new ActivityIntegrityError(event, "the step is not exported");
+      }
+      task.budget = {
+        ...task.budget,
+        usedUsd: addUsd(task.budget.usedUsd, p.costUsd),
+        estimated: task.budget.estimated || p.estimated,
+      };
+      const previous = task.exports[p.step] ?? {};
+      // 人間が止めた・中止したので結果が分からない。始めた記録を残して、次の書き出しで目印を探させる
+      if (p.runResult === "interrupted") break;
+      const { started: _started, retry: _retry, ...rest } = previous;
+      task.exports = {
+        ...task.exports,
+        [p.step]: {
+          ...rest,
+          ...(p.url ? { url: p.url } : {}),
+          last: {
+            approvedAt: p.approvedAt,
+            submission: p.submission,
+            via: p.via,
+            name: p.name,
+            ...(p.url ? { url: p.url } : {}),
+            ...(p.failed !== undefined ? { failed: p.failed } : {}),
+            at: event.at,
+          },
+        },
+      };
+      break;
+    }
+
+    case "ExportRequested":
+      if (!canRetryExport(task, event.payload.step)) {
+        throw new ActivityIntegrityError(event, "the export cannot be retried");
+      }
+      task.exports = {
+        ...task.exports,
+        [event.payload.step]: { ...task.exports[event.payload.step], retry: true },
+      };
+      break;
+
     // サービスの起動は記録だけ（タスクの状態は変えない。PBI-47）
     case "ServicesStarted":
       break;
@@ -1159,6 +1245,32 @@ export function questionBlocked(task: Task): DaemonMessage | undefined {
     });
   }
   return undefined;
+}
+
+/**
+ * 承認した版をまだ書き出していない（人間が書き出し直しを求めた）工程（PBI-56）。決めた書き出し先がある、書き出せる
+ * 工程だけ。タスクの状態は見ない（取り込み元へのコメントを、書き出しの後にするため）。
+ */
+export function exportDue(task: Task): StepKey | undefined {
+  if (task.status === "cancelled") return undefined;
+  return exportSteps(task.steps.map((s) => s.key)).find((step) => {
+    const approved = task.approved[step];
+    if (!task.exportPlans?.[step]?.to || !approved) return false;
+    const exported = task.exports[step];
+    return exported?.retry === true || exported?.last?.approvedAt !== approved.at;
+  });
+}
+
+/** 書き出せなかった成果を、画面から書き出し直せるか（PBI-56）。 */
+export function canRetryExport(task: Task, step: StepKey): boolean {
+  const last = task.exports[step]?.last;
+  return (
+    task.status !== "cancelled" &&
+    Boolean(task.exportPlans?.[step]?.to) &&
+    last?.failed !== undefined &&
+    task.approved[step]?.at === last.approvedAt &&
+    exportDue(task) === undefined
+  );
 }
 
 /** 現在実行対象の工程（active な工程）。 */

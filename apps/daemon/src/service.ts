@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   type ActivityEvent,
@@ -16,6 +16,7 @@ import {
   type CleanupTarget,
   CreateTaskInput,
   canRereview,
+  canRetryExport,
   changeRounds,
   computeCostUsd,
   type DaemonMessage,
@@ -24,7 +25,10 @@ import {
   DEFAULT_MAX_PARALLEL_TASKS,
   DecideChangeInput,
   EventInput,
+  type ExportPlan,
   excludedRepositories,
+  exportDue,
+  exportSteps,
   GATED_STEPS,
   investigationIsGoal,
   isCompleted,
@@ -53,7 +57,7 @@ import {
   reworkTargets,
   SactySettings,
   STEP_PLANS,
-  type StepKey,
+  StepKey,
   sameGitHubUrl,
   type Task,
   type TaskProposal,
@@ -86,6 +90,7 @@ import {
 } from "./config.js";
 import {
   type ContextFetcher,
+  contextExportInfo,
   GATEWAY_TOKEN_SECRET,
   type GatewayMcpServer,
   prepareContext,
@@ -113,6 +118,8 @@ import {
   allowedPlans,
   buildChatPrompt,
   buildChildBody,
+  buildExportDocument,
+  buildExportPrompt,
   buildFinalReviewPrompt,
   buildGuardianPrompt,
   buildIntegrationReviewPrompt,
@@ -124,10 +131,14 @@ import {
   buildReviewComments,
   buildReworkPrompt,
   buildTicketInvestigationComment,
+  buildTicketPullRequestComment,
   buildTicketTriagePrompt,
   changeableSteps,
   EXECUTABLE_STEPS,
+  EXPORT_FILE,
+  type ExportDestination,
   extractBlocks,
+  extractExport,
   extractFinalReview,
   extractIntegrationReview,
   extractReproduction,
@@ -139,6 +150,7 @@ import {
   extractVerdict,
   integrationViewpointIds,
   investigationMarker,
+  type RawExportPlan,
   REPRODUCTION_VIEWPOINT,
   REQUIREMENTS_VIEWPOINT,
   referencedPullRequest,
@@ -193,7 +205,7 @@ export type ServiceDeps = {
   /** 現在の時刻（テストで差し替える）。 */
   now?: () => number;
   /** オーケストレーターの代わりに工程を選ぶ（テストで差し替える。PBI-17）。 */
-  planner?: (task: Task) => Promise<ChosenSteps>;
+  planner?: (task: Task) => Promise<PlannedSteps>;
   /** チケット（JIRA など）の検索とコメント（PBI-52）。無ければ、チケットを扱わない。 */
   tickets?: TicketClient;
   /** docker compose のサービスを起動する口（PBI-47）。無ければ、サービスを使わない。 */
@@ -730,11 +742,80 @@ export class TaskService {
     const candidates = pinned
       ? []
       : Object.values(config.images ?? {}).map(({ name, description }) => ({ name, description }));
+    // 成果の書き出し先に使える接続先と、プロジェクトのコンテキストの規約（PBI-56）
+    const exports = await this.exportDestinations(task, config);
     const choice = this.deps.planner
       ? await this.deps.planner(task)
-      : await this.askOrchestrator(task, config, candidates);
+      : await this.askOrchestrator(task, config, candidates, exports);
     if ("failure" in choice) return choice;
-    return this.withImages(choice, config, pinned);
+    return this.withImages(this.withExports(choice, exports.destinations), config, pinned);
+  }
+
+  /**
+   * 成果の書き出し先に使える接続先（PBI-56）。ゲートウェイの接続先（gateway.platforms）と、MCP サーバー（ホストの MCP・
+   * プロジェクトのコンテキストの MCP）。あわせて、プロジェクトのコンテキストの規約（どこに何を書くか）を読む。
+   * コンテキストを読めなければ、コンテキストの MCP サーバーは候補にしない（工程の実行で、いつもどおり理由を出す）。
+   */
+  private async exportDestinations(
+    task: Task,
+    config: SactyConfig,
+  ): Promise<{ destinations: ExportDestination[]; rules: string }> {
+    const platforms = config.platforms.map(
+      (p): ExportDestination => ({ via: "platform", name: p.name, description: p.description }),
+    );
+    // ホストの MCP サーバーは、ゲートウェイがあるときだけ渡せる（PBI-36）
+    const host = this.deps.gateway
+      ? config.hostMcp.map(
+          (m): ExportDestination => ({ via: "mcp", name: m.name, description: m.description }),
+        )
+      : [];
+    const root = this.deps.projects.get(task.projectId)?.context;
+    let info = { mcp: [] as string[], rules: "" };
+    if (root || this.deps.defaultContext) {
+      try {
+        info = await contextExportInfo(
+          this.deps.contexts,
+          root,
+          (repo) => this.gitAuth(task, repo, []),
+          this.deps.defaultContext,
+        );
+      } catch {
+        // 読めなければ、コンテキストの MCP サーバーと規約は渡さない
+      }
+    }
+    const hostNames = new Set(host.map((h) => h.name));
+    const contextMcp = info.mcp
+      .filter((name) => !hostNames.has(name))
+      .map((name): ExportDestination => ({ via: "mcp", name, description: "" }));
+    return { destinations: [...platforms, ...host, ...contextMcp], rules: info.rules };
+  }
+
+  /**
+   * オーケストレーターが決めた書き出し先を、使える接続先と照らして記録する形にする（PBI-56）。書き出せる工程ごとに、
+   * 書き出し先（無ければ書き出さない）と理由を必ず持たせる。使える接続先が無い・書き出せる工程が無いなら、持たない。
+   */
+  private withExports(
+    choice: PlannedSteps,
+    destinations: readonly ExportDestination[],
+  ): ChosenSteps {
+    const { exports: raw, ...rest } = choice;
+    const steps = exportSteps(choice.steps);
+    if (destinations.length === 0 || steps.length === 0) return rest;
+    const planOf = (plan: RawExportPlan | undefined): ExportPlan => {
+      if (!plan) return { reason: message("export.notDecided") };
+      if (!plan.to) return { reason: plan.reason || message("export.notDecided") };
+      const { name, via } = plan.to;
+      const found = destinations.find((d) => d.name === name && (!via || d.via === via));
+      if (!found) return { reason: message("export.destinationUnknown", { name }) };
+      return {
+        to: { via: found.via, name: found.name, location: plan.to.location ?? "" },
+        reason: plan.reason,
+      };
+    };
+    return {
+      ...rest,
+      exports: Object.fromEntries(steps.map((step) => [step, planOf(raw?.[step])])),
+    };
   }
 
   /**
@@ -868,8 +949,9 @@ export class TaskService {
     task: Task,
     config: SactyConfig,
     images: { name: string; description: string }[],
+    exports: { destinations: ExportDestination[]; rules: string },
   ): Promise<
-    ChosenSteps | { failure: Extract<EventInput, { type: "OrchestratorFailed" }>["payload"] }
+    PlannedSteps | { failure: Extract<EventInput, { type: "OrchestratorFailed" }>["payload"] }
   > {
     // オーケストレーターに使う AI（step_agents.orchestrator か default_agent。PBI-40）。既定のイメージで動く
     const agent = agentFor(config, "orchestrator");
@@ -878,7 +960,10 @@ export class TaskService {
       {
         agent,
         image: config.image,
-        prompt: buildOrchestratorPrompt(task, { images }),
+        prompt: buildOrchestratorPrompt(task, {
+          images,
+          ...(exports.destinations.length > 0 ? { exports } : {}),
+        }),
         role: "orchestrator",
       },
       "base",
@@ -915,6 +1000,7 @@ export class TaskService {
         ...(chosen.imageReason ? { imageReason: chosen.imageReason } : {}),
         ...(chosen.services ? { services: chosen.services } : {}),
         ...(chosen.baseBranch ? { baseBranch: chosen.baseBranch } : {}),
+        ...(chosen.exports ? { exports: chosen.exports } : {}),
         ...cost,
       };
     }
@@ -1497,11 +1583,7 @@ export class TaskService {
 
   /** 作った PR の URL を、取り込み元のチケットにコメントする（PBI-52）。1回だけ。 */
   private async commentTicketPullRequest(task: Task): Promise<void> {
-    const url = task.pullRequest?.url ?? "";
-    const event = await this.commentTicket(
-      task,
-      `sacty が PR を作りました：${url}\n\n（sacty のタスク ${task.id}）`,
-    );
+    const event = await this.commentTicket(task, buildTicketPullRequestComment(task));
     const latest = this.tasks.get(task.id);
     if (!latest || !awaitingTicketPrComment(latest)) return;
     this.append(latest, [
@@ -1640,7 +1722,9 @@ export class TaskService {
             // 再現のテストを実行して、再現できたかを確かめる（PBI-29）
             awaitingReproductionCheck(t) ||
             // 作った PR の URL を、チケットにコメントする（PBI-52）
-            awaitingTicketPrComment(t),
+            awaitingTicketPrComment(t) ||
+            // 承認した成果を、決めた書き出し先に書き出す（PBI-56）
+            awaitingExport(t) !== undefined,
       )
       .filter((t) => !this.cancelling.has(t.id) && !this.pauseRequested.has(t.id))
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
@@ -1972,6 +2056,9 @@ export class TaskService {
 
   private async runNextInner(taskId: string): Promise<void> {
     const initial = this.tasks.get(taskId);
+    // 承認した成果の書き出しは、次の工程と取り込み元へのコメントの前に行う（コメントに URL を添えるため。PBI-56）
+    const exporting = initial && awaitingExport(initial);
+    if (initial && exporting) return this.exportOutput(initial, exporting);
     if (initial && awaitingVerification(initial)) return this.verify(initial);
     if (initial && awaitingIssueComment(initial)) return this.commentInvestigation(initial);
     if (initial && awaitingReviewPost(initial)) return this.postReview(initial);
@@ -2164,33 +2251,11 @@ export class TaskService {
 
     // sacty の既定のコンテキストと、プロジェクトのコンテキストを取得・合成して渡し、
     // 使ったリポジトリとコミット（既定は中身のハッシュ）を記録する
-    const contextSource = this.deps.projects.get(task.projectId)?.context;
-    const defaultContext = this.deps.defaultContext;
     let context: Awaited<ReturnType<typeof prepareContext>> | undefined;
-    // ホストで動かす MCP サーバーは、ゲートウェイの HTTP の MCP として渡す（PBI-36）
-    const gatewayForMcp = this.deps.gateway;
-    const hostMcp =
-      gatewayForMcp && config.config.hostMcp.length > 0
-        ? config.config.hostMcp.map((m) => ({
-            name: m.name,
-            url: `${gatewayForMcp.containerOrigin()}/mcp/${m.name}`,
-          }))
-        : [];
-    if (contextSource || defaultContext || hostMcp.length > 0) {
-      // コンテキストと継承の各リポジトリも、HTTPS の GitHub はプロジェクトの gh のアカウントで取得する
+    {
       const usedSecrets: string[] = [];
       try {
-        context = await prepareContext(
-          this.deps.contexts,
-          contextSource,
-          agent.runtime === "codex" ? "codex" : "claude-code",
-          agent.runtime === "codex" ? CONTAINER_CODEX_HOME : CONTAINER_CLAUDE_CONFIG_DIR,
-          (repo) => this.gitAuth(task, repo, usedSecrets),
-          defaultContext,
-          hostMcp,
-          // 層の HTTP の MCP サーバーは、ゲートウェイ経由にする（PBI-49）
-          gatewayForMcp?.containerOrigin(),
-        );
+        context = await this.runContext(task, agent, config.config, usedSecrets);
       } catch (error) {
         this.append(task, [
           {
@@ -2210,15 +2275,17 @@ export class TaskService {
         ]);
         return;
       }
-      this.append(task, [
-        {
-          actor: "sacty",
-          event: {
-            type: "ContextResolved",
-            payload: { runId, layers: context.layers, warnings: context.warnings },
+      if (context) {
+        this.append(task, [
+          {
+            actor: "sacty",
+            event: {
+              type: "ContextResolved",
+              payload: { runId, layers: context.layers, warnings: context.warnings },
+            },
           },
-        },
-      ]);
+        ]);
+      }
     }
 
     let executed: Awaited<ReturnType<TaskService["execute"]>> | undefined;
@@ -2474,6 +2541,206 @@ export class TaskService {
         ...this.settleEvents(proposed, judged, accepted),
       ]),
     );
+  }
+
+  /**
+   * エージェントに渡すコンテキスト（sacty の既定のコンテキストと、プロジェクトのコンテキストを合成したもの）。ホストで
+   * 動かす MCP サーバーは、ゲートウェイの HTTP の MCP として加える（PBI-36）。どれも無ければ undefined。取得できなければ
+   * 例外にする（呼ぶ側で、usedSecrets を取り除いてから理由を記録する）。
+   */
+  private async runContext(
+    task: Task,
+    agent: AgentConfig,
+    config: SactyConfig,
+    usedSecrets: string[],
+    /** 渡す MCP サーバーを、この名前の1つに絞る（成果の書き出し。PBI-56）。 */
+    onlyMcp?: string,
+  ): Promise<Awaited<ReturnType<typeof prepareContext>> | undefined> {
+    const contextSource = this.deps.projects.get(task.projectId)?.context;
+    const defaultContext = this.deps.defaultContext;
+    const gatewayForMcp = this.deps.gateway;
+    const hostMcp =
+      gatewayForMcp && config.hostMcp.length > 0
+        ? config.hostMcp.map((m) => ({
+            name: m.name,
+            url: `${gatewayForMcp.containerOrigin()}/mcp/${m.name}`,
+          }))
+        : [];
+    if (!contextSource && !defaultContext && hostMcp.length === 0) return undefined;
+    // コンテキストと継承の各リポジトリも、HTTPS の GitHub はプロジェクトの gh のアカウントで取得する
+    return prepareContext(
+      this.deps.contexts,
+      contextSource,
+      agent.runtime === "codex" ? "codex" : "claude-code",
+      agent.runtime === "codex" ? CONTAINER_CODEX_HOME : CONTAINER_CLAUDE_CONFIG_DIR,
+      (repo) => this.gitAuth(task, repo, usedSecrets),
+      defaultContext,
+      hostMcp,
+      // 層の HTTP の MCP サーバーは、ゲートウェイ経由にする（PBI-49）
+      gatewayForMcp?.containerOrigin(),
+      onlyMcp,
+    );
+  }
+
+  /**
+   * 人間が承認した成果を、オーケストレーターが決めた書き出し先に、工程のエージェントで書き出す（PBI-56）。ゲートウェイの
+   * 接続先は実行ごとのトークンを含む URL（SACTY_PF_URL）で、MCP サーバーはコンテキストの MCP・ホストの MCP として渡す
+   * （どちらも認証はコンテナに渡さない）。前に書き出した先があれば、そのページを更新させる（新しく作らない）。
+   * 書き出せなければ理由を記録して、いまの仕様（sacty の中に残す・取り込み元へのコメント）のまま進める（タスクは
+   * 止めない。画面から書き出し直せる）。費用はタスクの予算に入れる。
+   */
+  private async exportOutput(task: Task, step: StepKey): Promise<void> {
+    const to = task.exportPlans?.[step]?.to;
+    const approved = task.approved[step];
+    const loaded = this.deps.config();
+    // 設定の問題は status() で画面に出す。書き出しは待ったままにする
+    if (!to || !approved || !loaded.ok) return;
+    const config = loaded.config;
+    // 書き出しは、その工程のエージェント（step_agents か default_agent）で行う
+    const agent = agentFor(config, step);
+    const runId = randomUUID();
+    const previous = task.exports[step];
+    const base = {
+      step,
+      runId,
+      approvedAt: approved.at,
+      submission: approved.submission,
+      via: to.via,
+      name: to.name,
+      agentId: agent.id,
+      ...agentSetting(agent),
+    };
+    type Payload = Extract<EventInput, { type: "OutputExported" }>["payload"];
+    const record = (actor: Actor, payload: Payload) => {
+      const latest = this.tasks.get(task.id);
+      if (!latest || latest.status === "cancelled") return;
+      this.append(latest, [{ actor, event: { type: "OutputExported", payload } }]);
+      // 予算の通知は記録するが、タスクは止めない（次の工程の実行の前に、予算で止まる）
+      this.warnIfNeeded(this.mustGet(task.id));
+    };
+    const fail = (failed: DaemonText) =>
+      record("sacty", { ...base, failed, runResult: "failed", costUsd: 0, estimated: false });
+    if (budgetState(task.budget) === "exceeded") return fail(message("export.budgetExceeded"));
+    const platform =
+      to.via === "platform" ? config.platforms.find((p) => p.name === to.name) : undefined;
+    if (to.via === "platform" && !platform) {
+      return fail(message("export.destinationMissing", { name: to.name }));
+    }
+    const usedSecrets: string[] = [];
+    let context: Awaited<ReturnType<typeof prepareContext>> | undefined;
+    if (to.via === "mcp") {
+      try {
+        // 決めた接続先の MCP サーバーだけを渡す（ほかの MCP サーバーは使わせず、その認証も取り出さない）
+        context = await this.runContext(task, agent, config, usedSecrets, to.name);
+      } catch (error) {
+        return fail(
+          message("export.failed", { detail: redactText(errorText(error), usedSecrets) }),
+        );
+      }
+      if (!context?.placed.mcpServers.includes(to.name)) {
+        context?.dispose();
+        return fail(message("export.destinationMissing", { name: to.name }));
+      }
+    }
+    const workspaceDir = join(this.deps.workspaceRoot, "_export", runId);
+    let executed: Awaited<ReturnType<TaskService["execute"]>>;
+    try {
+      // 書き出す内容は、作業領域のファイルで渡す（指示の長さの上限に関わらず、全文を渡すため）
+      try {
+        mkdirSync(workspaceDir, { recursive: true });
+        writeFileSync(join(workspaceDir, EXPORT_FILE), buildExportDocument(task, step));
+      } catch (error) {
+        return fail(message("export.failed", { detail: errorText(error) }));
+      }
+      // 準備の間に人間が止めた・中止した・承認が取り消されたなら、始めない（再開・承認し直すと書き出す）
+      const latest = this.mustGet(task.id);
+      if (
+        this.pauseRequested.has(task.id) ||
+        this.cancelling.has(task.id) ||
+        latest.approved[step]?.at !== approved.at
+      ) {
+        return;
+      }
+      this.append(latest, [
+        {
+          actor: "sacty",
+          event: { type: "ExportStarted", payload: { step, runId, approvedAt: approved.at } },
+        },
+      ]);
+      executed = await this.execute({
+        agent,
+        image: config.image,
+        runId,
+        prompt: [
+          buildExportPrompt(task, step, {
+            via: to.via,
+            name: to.name,
+            description:
+              platform?.description ??
+              config.hostMcp.find((m) => m.name === to.name)?.description ??
+              "",
+            location: to.location,
+            ...(previous?.url ? { previousUrl: previous.url } : {}),
+            interrupted: previous?.started !== undefined,
+          }),
+          // 使わせるのは、決めた接続先の API だけ（PBI-35）
+          ...(platform ? platformPromptLines([platform]) : []),
+        ].join("\n"),
+        role: "export",
+        workspaceDir,
+        ...(platform ? { platforms: [platform] } : {}),
+        ...(context ? { context: { dir: context.dir, ...context.placed } } : {}),
+        ...(context && context.gatewayMcp.length > 0 ? { contextMcp: context.gatewayMcp } : {}),
+      });
+    } finally {
+      context?.dispose();
+      rmSync(workspaceDir, { recursive: true, force: true });
+    }
+    const { outcome, costUsd, estimated } = executed;
+    const cost = { ...(outcome.usage ? { usage: outcome.usage } : {}), costUsd, estimated };
+    // 人間が止めた・中止したなら、書き出せたかが分からない。費用だけを記録し、再開すると目印で探して続ける
+    if (this.pauseRequested.has(task.id) || this.cancelling.has(task.id)) {
+      return record("sacty", {
+        ...base,
+        ...cost,
+        failed: message("export.stopped"),
+        runResult: "interrupted",
+      });
+    }
+    if (outcome.kind === "failed") {
+      return record("agent", {
+        ...base,
+        ...cost,
+        failed: message("export.failed", { detail: outcome.message }),
+        runResult: "failed",
+      });
+    }
+    // 秘密情報は、execute が出力の全文から取り除いている（理由を切り詰めるのは、その後）
+    const result = extractExport(outcome.output);
+    if (result && "url" in result) {
+      return record("agent", { ...base, ...cost, url: result.url, runResult: "completed" });
+    }
+    return record("agent", {
+      ...base,
+      ...cost,
+      failed: result
+        ? message("export.failed", { detail: result.error })
+        : message("export.unreadable"),
+      runResult: "completed",
+    });
+  }
+
+  /** 書き出せなかった承認済みの成果を、画面から書き出し直す（PBI-56）。 */
+  retryExport(id: string, raw: unknown): Task {
+    const task = this.tasks.get(id);
+    if (!task) throw new InvalidOperationError(message("task.notFound"));
+    const step = StepKey.safeParse(raw);
+    if (!step.success || !canRetryExport(task, step.data) || this.cancelling.has(id)) {
+      throw new InvalidOperationError(message("export.notRetryable"));
+    }
+    return this.append(task, [
+      { actor: "person", event: { type: "ExportRequested", payload: { step: step.data } } },
+    ]);
   }
 
   /**
@@ -4135,6 +4402,14 @@ type ChosenSteps = Extract<EventInput, { type: "StepsChosen" }>["payload"] & {
   baseBranch?: string;
 };
 
+/**
+ * オーケストレーター（テストでは planner）が選んだ工程。書き出し先（PBI-56）は、使える接続先と照らす前の形
+ * （接続先の種類が無ければ名前で探す）。
+ */
+export type PlannedSteps = Omit<ChosenSteps, "exports"> & {
+  exports?: Partial<Record<StepKey, RawExportPlan>>;
+};
+
 /** PR のレビューの取り込みのタスクの工程（レビューだけ。オーケストレーターは使わないので費用は無い。PBI-44）。 */
 function reviewOnlySteps(via: "requested" | "label"): ChosenSteps {
   return {
@@ -4188,10 +4463,21 @@ function awaitingReviewPost(task: Task): boolean {
   );
 }
 
+/**
+ * 承認した成果を、決めた書き出し先に書き出すのを待っている工程（PBI-56）。一時停止中・実行中は書き出さない
+ * （一時停止を再開したら書き出す）。
+ */
+function awaitingExport(task: Task): StepKey | undefined {
+  if (task.status === "paused" || task.status === "running") return undefined;
+  return exportDue(task);
+}
+
 /** 完了した調査のタスクで、結果をまだ取り込み元の Issue に返していないか（PBI-18）。 */
 export function awaitingIssueComment(task: Task): boolean {
   return (
     isCompleted(task) &&
+    // 書き出す成果は、書き出してから返す（コメントに URL を添えるため。PBI-56）
+    exportDue(task) === undefined &&
     // 調査そのものが目的のタスクだけ（前段の調査の結果は返さない。PBI-29）
     investigationIsGoal(task) &&
     // Issue・PR・チケットから取り込んだタスク（PBI-26・PBI-52）

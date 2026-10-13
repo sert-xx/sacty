@@ -255,6 +255,15 @@ export function createApp(
     }
   });
 
+  // 書き出せなかった承認済みの成果を、書き出し直す（PBI-56）。書き出しは待たずに返す
+  app.post("/api/tasks/:id/exports/:step/retry", (c) => {
+    try {
+      return c.json({ task: service.retryExport(c.req.param("id"), c.req.param("step")) });
+    } catch (error) {
+      return handleError(c, error);
+    }
+  });
+
   // 秘密情報を取り出し直す（PBI-48）。値は返さない
   app.post("/api/secrets/prefetch", async (c) => {
     const { total, problems } = await service.prefetchSecrets({ fresh: true });

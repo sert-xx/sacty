@@ -126,6 +126,13 @@ const ja = {
       ` / イメージ：${images}（${source === "project" ? "プロジェクトの対象の指定" : reason ? `オーケストレーター：${reason}` : "オーケストレーター"}）`,
     stepImage: (step: string, image: string) => `${step}＝${image}`,
     imagesJoin: "、",
+    stepsExports: (exports: string) => ` / 書き出し：${exports}`,
+    stepExport: (
+      step: string,
+      to: { name: string; location: string } | undefined,
+      reason: string,
+    ) =>
+      `${step}＝${to ? `${to.name}${to.location ? `：${to.location}` : ""}` : "書き出さない"}${reason ? `（${reason}）` : ""}`,
     TicketTriaged: (repo: string, reason: string, byPerson: boolean) =>
       byPerson
         ? `作業するリポジトリを選んだ：${repo}（人間）`
@@ -221,6 +228,19 @@ const ja = {
     PullRequestReviewImported: (number: number, authors: string, count: number) =>
       `PR #${number} への指摘（${authors}）→ ${count}件を取り込み`,
     QuestionAsked: (id: string, actor: string) => `オーケストレーターに質問した（${id}・${actor}）`,
+    ExportStarted: (step: string) => `${step}の書き出しを始めた`,
+    OutputExported: (
+      step: string,
+      name: string,
+      result: { url: string } | { failed: string } | { interrupted: string },
+      cost: string,
+    ) =>
+      "url" in result
+        ? `${step}を ${name} に書き出した（${result.url}・${cost}）`
+        : "failed" in result
+          ? `${step}を ${name} に書き出せなかった（${cost}）：${result.failed}`
+          : `${step}の ${name} への書き出しを中断した（${cost}）：${result.interrupted}`,
+    ExportRequested: (step: string, actor: string) => `${step}の書き出し直しを求めた（${actor}）`,
     QuestionAnswered: (id: string, failed: string | undefined, cost: string) =>
       failed === undefined
         ? `オーケストレーターが質問に答えた（${id}・${cost}）`
@@ -338,6 +358,9 @@ const en: LabelMessages = {
       ` / images: ${images} (${source === "project" ? "set on the project target" : reason ? `Orchestrator: ${reason}` : "Orchestrator"})`,
     stepImage: (step, image) => `${step}=${image}`,
     imagesJoin: ", ",
+    stepsExports: (exports) => ` / Export: ${exports}`,
+    stepExport: (step, to, reason) =>
+      `${step}=${to ? `${to.name}${to.location ? `: ${to.location}` : ""}` : "not exported"}${reason ? ` (${reason})` : ""}`,
     TicketTriaged: (repo, reason, byPerson) =>
       byPerson
         ? `Chose the repository: ${repo} (person)`
@@ -431,6 +454,14 @@ const en: LabelMessages = {
     PullRequestReviewImported: (number, authors, count) =>
       `PR #${number} feedback (${authors}) → ${count} comment${count === 1 ? "" : "s"} imported`,
     QuestionAsked: (id, actor) => `Asked the Orchestrator a question (${id}, ${actor})`,
+    ExportStarted: (step) => `Started exporting the ${step}`,
+    OutputExported: (step, name, result, cost) =>
+      "url" in result
+        ? `Exported the ${step} to ${name} (${result.url}, ${cost})`
+        : "failed" in result
+          ? `Could not export the ${step} to ${name} (${cost}): ${result.failed}`
+          : `Interrupted exporting the ${step} to ${name} (${cost}): ${result.interrupted}`,
+    ExportRequested: (step, actor) => `Asked to export the ${step} again (${actor})`,
     QuestionAnswered: (id, failed, cost) =>
       failed === undefined
         ? `The Orchestrator answered the question (${id}, ${cost})`

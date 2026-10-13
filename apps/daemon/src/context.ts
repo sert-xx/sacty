@@ -915,6 +915,11 @@ export async function prepareContext(
    * URL（/ctx-mcp/<名前>）に置き換え、元の URL と認証のヘッダーは gatewayMcp として返す（ゲートウェイに持たせる）。
    */
   gatewayOrigin?: string,
+  /**
+   * 渡す MCP サーバーを、この名前の1つに絞る（成果の書き出し。PBI-56）。決めた接続先のほかは渡さない（使わせない。
+   * ほかの MCP サーバーの認証も取り出さない）。
+   */
+  onlyMcp?: string,
 ): Promise<{
   dir: string;
   layers: { repo: string; ref?: string; commit: string }[];
@@ -964,6 +969,7 @@ export async function prepareContext(
         })),
       ];
     }
+    if (onlyMcp !== undefined) composed.mcp = composed.mcp.filter((m) => m.name === onlyMcp);
     const dir = join(work, "out");
     const placed = writeContext(composed, runtime, dir, containerDir);
     return {
@@ -984,5 +990,30 @@ export async function prepareContext(
   } catch (error) {
     dispose();
     throw error;
+  }
+}
+
+/**
+ * 書き出し先を決めるための、プロジェクトのコンテキストの MCP サーバーの名前と規約（PBI-56）。オーケストレーターに、
+ * 使える接続先と、どこに何を書くかの規約を渡すために読む（取得したリポジトリは、読んだら消す）。
+ */
+export async function contextExportInfo(
+  fetcher: ContextFetcher,
+  root: ContextRef | undefined,
+  auth?: ContextAuth,
+  defaultDir?: string,
+): Promise<{ mcp: string[]; rules: string }> {
+  if (!root && !defaultDir) return { mcp: [], rules: "" };
+  const work = mkdtempSync(join(tmpdir(), "sacty-context-"));
+  try {
+    const own = root ? await resolveContext(fetcher, root, join(work, "repos"), auth) : [];
+    const layers = [...(defaultDir ? [loadDefaultContext(defaultDir)] : []), ...own];
+    // 規約は、プロジェクトのコンテキストのものだけ（sacty の既定の規約は、書き出し先の手がかりではないため）
+    return {
+      mcp: composeContext(layers).mcp.map((m) => m.name),
+      rules: own.length > 0 ? composeContext(own).rules : "",
+    };
+  } finally {
+    rmSync(work, { recursive: true, force: true });
   }
 }

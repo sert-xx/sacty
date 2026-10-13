@@ -2,6 +2,8 @@ import {
   appliedProposalFor,
   awaitingTicketTriage,
   canRereview,
+  canRetryExport,
+  exportDue,
   investigationIsGoal,
   openProposal,
   pendingQuestion,
@@ -14,6 +16,7 @@ import { Suspense } from "react";
 import { AutoRefresh } from "@/components/auto-refresh";
 import { CardSection } from "@/components/card-section";
 import { DaemonError } from "@/components/daemon-error";
+import { ExportRetryButton } from "@/components/export-retry-button";
 import { Implementation } from "@/components/implementation";
 import { IntegrationResult } from "@/components/integration";
 import { Markdown } from "@/components/markdown";
@@ -103,8 +106,14 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
 
   return (
     <>
-      {/* オーケストレーターが質問に答えている間も、答えが出るまで更新する（PBI-54） */}
-      <AutoRefresh active={isWorking(task) || pendingQuestion(task) !== undefined} />
+      {/* オーケストレーターが質問に答えている間・承認した成果を書き出している間も、終わるまで更新する（PBI-54・PBI-56） */}
+      <AutoRefresh
+        active={
+          isWorking(task) ||
+          pendingQuestion(task) !== undefined ||
+          (task.status !== "paused" && exportDue(task) !== undefined)
+        }
+      />
       <div className="flex flex-col gap-2">
         <div className="flex flex-wrap items-center gap-3">
           <h1 className="text-2xl font-bold text-balance">{task.title}</h1>
@@ -312,6 +321,35 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
                   : m.stepsReason(labels.text(task.stepsChoice.reason))}
               </p>
             )}
+            {/* オーケストレーターが工程ごとに決めた書き出し先と理由（PBI-56） */}
+            {task.exportPlans && Object.keys(task.exportPlans).length > 0 && (
+              <div className="flex flex-col gap-1 text-sm leading-6">
+                <h3 className="font-semibold">{m.exports.title}</h3>
+                <ul className="flex flex-col gap-1 text-muted-foreground">
+                  {task.steps
+                    .filter((s) => task.exportPlans?.[s.key])
+                    .map((s) => {
+                      const plan = task.exportPlans?.[s.key];
+                      return (
+                        <li key={s.key} className="[overflow-wrap:anywhere]">
+                          <span className="font-medium text-foreground">{labels.step[s.key]}</span>
+                          {m.exports.sep}
+                          {plan?.to ? (
+                            <span className="font-mono">
+                              {m.exports.to(plan.to.name, plan.to.location)}
+                            </span>
+                          ) : (
+                            m.exports.none
+                          )}
+                          {plan && labels.text(plan.reason) && (
+                            <> ・ {m.exports.reason(labels.text(plan.reason))}</>
+                          )}
+                        </li>
+                      );
+                    })}
+                </ul>
+              </div>
+            )}
           </section>
           <section
             aria-labelledby="content"
@@ -489,6 +527,8 @@ async function Deliverable({ task, step }: { task: Task; step: StepKey }) {
       }
       // 承認済みの成果物は折りたたむ（承認待ち・作業中のものは開いたまま）
       collapsed={Boolean(approved)}
+      // 承認した成果の書き出しの結果（PBI-56）。折りたたんでも見えるようにする
+      footer={task.exportPlans?.[step]?.to ? <ExportResult task={task} step={step} /> : undefined}
     >
       {output ? (
         <Markdown>{output}</Markdown>
@@ -557,5 +597,75 @@ async function Deliverable({ task, step }: { task: Task; step: StepKey }) {
         </>
       )}
     </CardSection>
+  );
+}
+
+/**
+ * 承認した成果の書き出しの結果（PBI-56）。書き出した先の URL か、書き出せなかった理由（いまの仕様のまま進める）と、
+ * 書き出し直す操作。差し戻しの後に承認し直した版は、前に書き出した先を更新する。
+ */
+async function ExportResult({ task, step }: { task: Task; step: StepKey }) {
+  const messages = await getMessages();
+  const m = messages.task.exports;
+  const exported = task.exports[step];
+  const last = exported?.last;
+  const approved = task.approved[step];
+  // 承認した版が、まだ書き出されていない（書き出し中・書き出し直しを求めた）
+  const due = approved !== undefined && exportDue(task) === step;
+  if (!approved && !exported?.url) return null;
+  return (
+    <div className="flex flex-col gap-2 rounded-lg border border-border p-3 text-sm">
+      <h3 className="font-semibold">{m.result}</h3>
+      {due ? (
+        <>
+          <p className="text-muted-foreground">{task.status === "paused" ? m.paused : m.pending}</p>
+          {exported?.url && (
+            <p className="[overflow-wrap:anywhere] text-muted-foreground">
+              {m.previous}
+              <a
+                href={exported.url}
+                target="_blank"
+                rel="noreferrer"
+                className="text-accent-foreground underline"
+              >
+                {exported.url}
+              </a>
+            </p>
+          )}
+        </>
+      ) : last?.url ? (
+        <p className="[overflow-wrap:anywhere]">
+          {m.exported(last.submission)}
+          <a
+            href={last.url}
+            target="_blank"
+            rel="noreferrer"
+            className="text-accent-foreground underline"
+          >
+            {last.url}
+          </a>
+        </p>
+      ) : last?.failed !== undefined ? (
+        <>
+          <p className="text-warn [overflow-wrap:anywhere]">
+            {m.failed(last.submission, messages.labels.text(last.failed))}
+          </p>
+          {exported?.url && (
+            <p className="[overflow-wrap:anywhere] text-muted-foreground">
+              {m.previous}
+              <a
+                href={exported.url}
+                target="_blank"
+                rel="noreferrer"
+                className="text-accent-foreground underline"
+              >
+                {exported.url}
+              </a>
+            </p>
+          )}
+          {canRetryExport(task, step) && <ExportRetryButton taskId={task.id} step={step} />}
+        </>
+      ) : null}
+    </div>
   );
 }

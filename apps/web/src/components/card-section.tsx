@@ -9,12 +9,15 @@ export function CardSection({
   title,
   note,
   collapsed = false,
+  footer,
   children,
 }: {
   id: string;
   title: ReactNode;
   note?: ReactNode;
   collapsed?: boolean;
+  /** 折りたたんでも見せるもの（書き出した先の URL など）。中身の後に出す。 */
+  footer?: ReactNode;
   children: ReactNode;
 }) {
   const heading = (
@@ -30,13 +33,13 @@ export function CardSection({
   );
   if (collapsed) {
     return (
-      <details
-        aria-labelledby={id}
-        className="group rounded-xl border border-border bg-card p-5 [&[open]>summary]:mb-3"
-      >
-        <summary className="cursor-pointer marker:text-muted-foreground">{heading}</summary>
-        <div className="flex flex-col gap-3">{children}</div>
-      </details>
+      <div className="flex flex-col gap-3 rounded-xl border border-border bg-card p-5">
+        <details aria-labelledby={id} className="group [&[open]>summary]:mb-3">
+          <summary className="cursor-pointer marker:text-muted-foreground">{heading}</summary>
+          <div className="flex flex-col gap-3">{children}</div>
+        </details>
+        {footer}
+      </div>
     );
   }
   return (
@@ -46,6 +49,7 @@ export function CardSection({
     >
       {heading}
       {children}
+      {footer}
     </section>
   );
 }

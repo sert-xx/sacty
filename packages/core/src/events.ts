@@ -64,6 +64,42 @@ export const StepPlan = z.enum(Object.keys(STEP_PLANS) as [StepPlan, ...StepPlan
 export const InvestigationKind = z.enum(["content", "bug"]);
 export type InvestigationKind = z.infer<typeof InvestigationKind>;
 
+/**
+ * 成果を外（Confluence・Notion など）に書き出せる工程（PBI-56）。人間が承認した版だけを書き出すので、調査は、
+ * 調査そのものが目的のタスク（調査だけの組み合わせ）のときだけ（前段の調査は人間が承認しない）。
+ */
+export const EXPORT_STEPS: readonly StepKey[] = ["investigate", "requirements", "design"];
+
+/** 工程の組み合わせのうち、書き出せる工程（PBI-56）。 */
+export function exportSteps(steps: readonly StepKey[]): StepKey[] {
+  return steps.filter(
+    (step) => EXPORT_STEPS.includes(step) && (step !== "investigate" || steps.at(-1) === step),
+  );
+}
+
+/**
+ * 書き出しの接続先の種類（PBI-56）。platform：ゲートウェイの接続先（gateway.platforms）、mcp：MCP サーバー
+ * （コンテキストの MCP・ホストの MCP）。sacty は、書き出し先の種類（Confluence・Notion など）ごとの設定を持たない。
+ */
+export const ExportVia = z.enum(["platform", "mcp"]);
+export type ExportVia = z.infer<typeof ExportVia>;
+
+/**
+ * オーケストレーターが決めた、工程の書き出し先と理由（PBI-56）。to が無ければ書き出さない。location は置き場所の
+ * 手がかり（例：Confluence のスペース・親のページ）。
+ */
+export const ExportPlan = z.object({
+  to: z
+    .object({
+      via: ExportVia,
+      name: z.string().min(1).max(100),
+      location: z.string().max(1000).default(""),
+    })
+    .optional(),
+  reason: DaemonText,
+});
+export type ExportPlan = z.infer<typeof ExportPlan>;
+
 /** 人間の承認ゲートがある工程。PR作成は、成果物チェックのゲート。統合レビューは、親タスクの最後の確認（PBI-31）。 */
 export const GATED_STEPS: readonly StepKey[] = [
   "investigate",
@@ -343,6 +379,11 @@ const StepsChosen = z.object({
         steps: z.array(StepKey).min(1),
       })
       .optional(),
+    /**
+     * 工程ごとの書き出し先（書き出さないことも含む）と理由（PBI-56）。書き出せる工程（exportSteps）だけ。使える
+     * 接続先が1つも無いときは持たない（オーケストレーターに決めさせない）。
+     */
+    exports: z.partialRecord(StepKey, ExportPlan).optional(),
     agentId: z.string().optional(),
     ...AgentSetting,
     usage: TokenUsage.optional(),
@@ -685,6 +726,47 @@ const QuestionAnswered = z.object({
   }),
 });
 
+/**
+ * 承認した成果の書き出しを始めた（PBI-56）。結果（OutputExported）の前にデーモンが止まったら、次の書き出しで、
+ * 書き出し先に目印のあるページを探して更新させる（同じ成果を二重に書き出さない）。approvedAt は書き出す承認済みの版。
+ */
+const ExportStarted = z.object({
+  type: z.literal("ExportStarted"),
+  payload: z.object({ step: StepKey, runId: z.string(), approvedAt: z.string() }),
+});
+
+/**
+ * 承認した成果を、決めた書き出し先に書き出した・書き出せなかった（PBI-56）。書き出せなければ failed（理由）を持ち、
+ * いまの仕様（sacty の中に残す・取り込み元へのコメント）のまま進める（タスクは止めない）。interrupted は、人間が
+ * 止めた・中止したので結果が分からない（費用だけを記録し、再開すると目印で探して続ける）。費用はタスクの予算に入れる。
+ */
+const OutputExported = z.object({
+  type: z.literal("OutputExported"),
+  payload: z.object({
+    step: StepKey,
+    runId: z.string(),
+    approvedAt: z.string(),
+    /** 書き出した承認済みの版（何回目の提出か）。 */
+    submission: z.number().int().positive(),
+    via: ExportVia,
+    name: z.string(),
+    url: z.string().max(2000).optional(),
+    failed: DaemonText.optional(),
+    runResult: GuardianRunResult,
+    agentId: z.string(),
+    ...AgentSetting,
+    usage: TokenUsage.optional(),
+    costUsd: z.number().nonnegative().default(0),
+    estimated: z.boolean().default(false),
+  }),
+});
+
+/** 人間が、書き出せなかった成果の書き出し直しを求めた（PBI-56）。 */
+const ExportRequested = z.object({
+  type: z.literal("ExportRequested"),
+  payload: z.object({ step: StepKey }),
+});
+
 const ServicesStarted = z.object({
   type: z.literal("ServicesStarted"),
   payload: z.object({
@@ -1008,6 +1090,9 @@ export const EventInput = z.discriminatedUnion("type", [
   TicketPullRequestCommented,
   QuestionAsked,
   QuestionAnswered,
+  ExportStarted,
+  OutputExported,
+  ExportRequested,
   AgentRunStarted,
   AgentRunCompleted,
   AgentRunFailed,

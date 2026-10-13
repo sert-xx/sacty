@@ -50,6 +50,7 @@ const task = (patch: Partial<Task> = {}): Task => ({
   misses: [],
   importedFeedback: [],
   questions: [],
+  exports: {},
   submissions: {},
   remarks: [],
   budget: { usedUsd: 0, capUsd: 1, warned: false, estimated: false },
@@ -781,6 +782,87 @@ describe("オーケストレーターへの質問の作業履歴（PBI-54）", (
     );
     expect(describeIn(answered({ answer: "x" }), labels.en)).toBe(
       "The Orchestrator answered the question (Q-1, $0.0123)",
+    );
+  });
+});
+
+describe("成果の書き出しの作業履歴（PBI-56）", () => {
+  const event = (e: Pick<ActivityEvent, "type" | "payload" | "actor">): ActivityEvent =>
+    ({
+      ...e,
+      seq: 1,
+      id: "e1",
+      taskId: "t1",
+      projectId: "default",
+      at: "2026-10-13T00:00:00.000Z",
+    }) as ActivityEvent;
+  const exported = (payload: Record<string, unknown>) =>
+    event({
+      type: "OutputExported",
+      actor: "agent",
+      payload: {
+        step: "requirements",
+        runId: "x1",
+        approvedAt: "a",
+        submission: 1,
+        via: "platform",
+        name: "confluence",
+        agentId: "a",
+        costUsd: 0.015,
+        estimated: false,
+        ...payload,
+      },
+    } as Pick<ActivityEvent, "type" | "payload" | "actor">);
+
+  it("工程ごとの書き出し先（書き出さないことも含む）と理由を、工程の決定の行に出す", () => {
+    const chosen = event({
+      type: "StepsChosen",
+      actor: "orchestrator",
+      payload: {
+        steps: ["requirements", "design", "implement", "pr"],
+        fallback: false,
+        costUsd: 0,
+        estimated: false,
+        exports: {
+          requirements: {
+            to: { via: "platform", name: "confluence", location: "DEV" },
+            reason: "規約",
+          },
+          design: { reason: { code: "export.notDecided" } },
+        },
+      },
+    } as Pick<ActivityEvent, "type" | "payload" | "actor">);
+    expect(describeEvent(chosen)).toBe(
+      "工程を決定：要求要件 → 設計 → 実装 → PR作成 / 書き出し：要求要件＝confluence：DEV（規約）、設計＝書き出さない（オーケストレーターが書き出し先を決めなかったため、書き出しません。）",
+    );
+  });
+
+  it("書き出した URL・書き出せなかった理由・中断と費用を出す", () => {
+    expect(describeEvent(exported({ url: "https://wiki/1", runResult: "completed" }))).toBe(
+      "要求要件を confluence に書き出した（https://wiki/1・$0.0150）",
+    );
+    expect(
+      describeEvent(
+        exported({
+          failed: { code: "export.failed", params: { detail: "権限が無い" } },
+          runResult: "completed",
+        }),
+      ),
+    ).toBe(
+      "要求要件を confluence に書き出せなかった（$0.0150）：書き出せませんでした：権限が無い。",
+    );
+    expect(
+      describeEvent(exported({ failed: { code: "export.stopped" }, runResult: "interrupted" })),
+    ).toBe(
+      "要求要件の confluence への書き出しを中断した（$0.0150）：人間が止めたため、書き出しを中断しました。",
+    );
+    expect(
+      describeEvent(
+        event({ type: "ExportRequested", actor: "person", payload: { step: "design" } }),
+      ),
+    ).toBe("設計の書き出し直しを求めた（人間）");
+    expect(describeIn(exported({ url: "https://wiki/1", runResult: "completed" }), labels.en)).toBe(
+      "Exported the Requirements to confluence (https://wiki/1, $0.0150)",
     );
   });
 });

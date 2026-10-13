@@ -71,6 +71,15 @@ const PARAMS = {
   "chat.failed": z.object({ detail: TextParam }),
   "chat.emptyAnswer": null,
   "chat.cancelled": null,
+  // 成果の書き出し（PBI-56）
+  "export.notDecided": null,
+  "export.destinationUnknown": z.object({ name: z.string() }),
+  "export.destinationMissing": z.object({ name: z.string() }),
+  "export.failed": z.object({ detail: TextParam }),
+  "export.unreadable": null,
+  "export.budgetExceeded": null,
+  "export.stopped": null,
+  "export.notRetryable": null,
   "input.tooManyRemarks": null,
   "input.nameRequired": null,
   "input.invalidGithubName": null,
@@ -404,6 +413,19 @@ const ja: MessageDictionary = {
     `オーケストレーターが質問に答えられませんでした：${text(detail).replace(/[。.]\s*$/, "")}。`,
   "chat.emptyAnswer": "オーケストレーターの答えが空でした。",
   "chat.cancelled": "タスクを中止したため、答えるのをやめました。",
+  "export.notDecided": "オーケストレーターが書き出し先を決めなかったため、書き出しません。",
+  "export.destinationUnknown": ({ name }) =>
+    `オーケストレーターが選んだ書き出し先「${name}」は、使える接続先（gateway.platforms・MCP サーバー）に無いため、書き出しません。`,
+  "export.destinationMissing": ({ name }) =>
+    `書き出し先「${name}」が、使える接続先（gateway.platforms・MCP サーバー）にありません。`,
+  "export.failed": ({ detail }, text) =>
+    `書き出せませんでした：${text(detail).replace(/[。.]\s*$/, "")}。`,
+  "export.unreadable":
+    "書き出しのエージェントの出力から、書き出した先の URL を読み取れませんでした。",
+  "export.budgetExceeded":
+    "予算の上限に達しているため、書き出しませんでした。予算の上限を上げてから、書き出し直してください。",
+  "export.stopped": "人間が止めたため、書き出しを中断しました。",
+  "export.notRetryable": "書き出し直せるのは、書き出せなかった承認済みの成果だけです。",
   "input.tooManyRemarks": "指摘は一度に50件までにしてください。",
   "input.nameRequired": "名前を入力してください。",
   "input.invalidGithubName": "GitHub の名前として正しくありません。",
@@ -712,6 +734,18 @@ const en: MessageDictionary = {
     `The Orchestrator could not answer the question: ${text(detail).replace(/[。.]\s*$/, "")}.`,
   "chat.emptyAnswer": "The Orchestrator's answer was empty.",
   "chat.cancelled": "Stopped answering because the task was cancelled.",
+  "export.notDecided": "Not exported because the Orchestrator did not choose where to export.",
+  "export.destinationUnknown": ({ name }) =>
+    `Not exported because "${name}", chosen by the Orchestrator, is not an available connection (gateway.platforms or an MCP server).`,
+  "export.destinationMissing": ({ name }) =>
+    `The export destination "${name}" is not an available connection (gateway.platforms or an MCP server).`,
+  "export.failed": ({ detail }, text) =>
+    `Could not export: ${text(detail).replace(/[。.]\s*$/, "")}.`,
+  "export.unreadable": "Could not read the exported URL from the export agent's output.",
+  "export.budgetExceeded":
+    "Not exported because the budget cap has been reached. Raise the cap, then export again.",
+  "export.stopped": "The export was interrupted because a person stopped it.",
+  "export.notRetryable": "Only approved outputs that could not be exported can be exported again.",
   "input.tooManyRemarks": "Enter up to 50 comments at a time.",
   "input.nameRequired": "Enter a name.",
   "input.invalidGithubName": "This is not a valid GitHub name.",
