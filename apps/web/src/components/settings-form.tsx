@@ -16,6 +16,7 @@ export function SettingsForm({
   reviewLabel: savedReviewLabel,
   reviewRequested: savedReviewRequested,
   triageOff = [],
+  ticketLabel: savedTicketLabel = "",
   maxParallelTasks,
 }: {
   intakeLabel: string;
@@ -24,6 +25,8 @@ export function SettingsForm({
   reviewRequested: boolean;
   /** Off にしたトリアージの種類（PBI-53）。 */
   triageOff?: string[];
+  /** チケットの取り込むラベル（PBI-52）。 */
+  ticketLabel?: string;
   /** 設定していなければ undefined（既定の数で実行する）。 */
   maxParallelTasks?: number;
 }) {
@@ -38,12 +41,15 @@ export function SettingsForm({
     issues: !triageOff.includes("issues"),
     pullRequests: !triageOff.includes("pullRequests"),
     reviewLabel: !triageOff.includes("reviewLabel"),
+    tickets: !triageOff.includes("tickets"),
   });
   const savedOn = {
     issues: !triageOff.includes("issues"),
     pullRequests: !triageOff.includes("pullRequests"),
     reviewLabel: !triageOff.includes("reviewLabel"),
+    tickets: !triageOff.includes("tickets"),
   };
+  const [ticketLabel, setTicketLabel] = useState(savedTicketLabel);
   const toggle = (kind: keyof typeof on, label: string) => (
     <label className="flex items-center gap-2 text-sm">
       <input
@@ -152,6 +158,38 @@ export function SettingsForm({
           {savedReviewRequested || (savedReviewLabel && savedOn.reviewLabel)
             ? t.reviewOn(savedReviewRequested, savedOn.reviewLabel ? savedReviewLabel : "")
             : t.reviewOff}
+        </p>
+      </section>
+      <section
+        aria-labelledby={`${uid}-tickets`}
+        className="flex flex-col gap-3 rounded-xl border border-border bg-card p-5"
+      >
+        <h2 id={`${uid}-tickets`} className="text-[15px] font-semibold">
+          {t.ticketsTitle}{" "}
+          <span className="text-[13px] font-normal text-muted-foreground">{t.ticketsNote}</span>
+        </h2>
+        <p className="text-sm leading-6 whitespace-pre-line text-muted-foreground">
+          {t.ticketsHelp}
+        </p>
+        {toggle("tickets", t.triageTickets)}
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor={`${uid}-ticket-label`}>{t.ticketLabel}</Label>
+          <Input
+            id={`${uid}-ticket-label`}
+            name="ticketLabel"
+            value={ticketLabel}
+            maxLength={50}
+            placeholder={t.intakePlaceholder}
+            onChange={(e) => setTicketLabel(e.target.value)}
+            className="max-w-xs"
+          />
+        </div>
+        <p
+          className={
+            savedTicketLabel && savedOn.tickets ? "text-sm" : "text-sm text-muted-foreground"
+          }
+        >
+          {savedTicketLabel && savedOn.tickets ? t.ticketsOn(savedTicketLabel) : t.ticketsOff}
         </p>
       </section>
       <section

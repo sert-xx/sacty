@@ -82,7 +82,9 @@ export type IntakeStatus = {
   reviewLabel?: string;
   reviewRequested?: boolean;
   /** Off にしたトリアージの種類（PBI-53）。 */
-  triageOff?: ("issues" | "pullRequests" | "reviewLabel")[];
+  triageOff?: ("issues" | "pullRequests" | "reviewLabel" | "tickets")[];
+  /** チケットの取り込むラベル（sacty の設定。PBI-52）。 */
+  ticketLabel?: string;
   lastRunAt?: string;
   imported?: number;
   /** 取り込めなかった対象（検索の条件）と理由。 */
@@ -98,6 +100,8 @@ export type DaemonStatus = {
   intake: IntakeStatus | null;
   /** プロジェクトの対象で選べる、言語ごとのイメージ（PBI-41）。古いデーモンには無い。 */
   images?: { name: string; description: string }[];
+  /** チケットの取り込み先に選べる接続先（PBI-52）。古いデーモンには無い。 */
+  platforms?: string[];
 };
 
 export type ProjectView = {
@@ -282,6 +286,11 @@ export async function resumeTask(
 }
 
 type OpResult = { ok: true } | { ok: false; message: string };
+
+/** チケットのタスクの、作業するリポジトリを人が選ぶ（PBI-52）。 */
+export async function chooseTicketRepository(id: string, repo: string): Promise<OpResult> {
+  return postOp(`/api/tasks/${encodeURIComponent(id)}/repository`, { repo });
+}
 
 async function postOp(path: string, body: unknown): Promise<OpResult> {
   const res = await daemonFetch(path, {

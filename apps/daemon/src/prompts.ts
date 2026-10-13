@@ -1623,6 +1623,76 @@ export function buildInvestigationComment(task: Task): string {
   ].join("\n");
 }
 
+/** チケット（JIRA）へ返す調査の結果（PBI-52）。JIRA は HTML のコメントを表示してしまうので、目印は入れない。 */
+export function buildTicketInvestigationComment(task: Task): string {
+  return buildInvestigationComment(task).replace(`${investigationMarker(task)}\n`, "");
+}
+
+/** チケットの取り込みの1段目（PBI-52）の出力の見出し。 */
+const TICKET_HEADING = "sacty-ticket";
+
+/**
+ * チケットの取り込みの1段目（PBI-52）。オーケストレーターが、ゲートウェイ経由でチケットを読み、サブタスクならスコープを
+ * 判定し、作業するリポジトリを候補から選び、タスクの題と概要を書く。工程は、リポジトリを用意した後に選ぶ（2段目）。
+ */
+export function buildTicketTriagePrompt(
+  task: Task,
+  candidates: readonly string[],
+  platformName: string,
+): string {
+  const ticket = task.ticket;
+  const api =
+    ticket?.service === "jira-cloud"
+      ? "Jira Cloud（REST API：/rest/api/3/issue/<キー>、/rest/api/3/search/jql?jql=…）"
+      : "Jira Server / Data Center（REST API：/rest/api/2/issue/<キー>、/rest/api/2/search?jql=…）";
+  return [
+    "あなたはオーケストレーターです。取り込んだ JIRA のチケットを読んで、このタスクの作業するリポジトリと、タスクの題と概要を決めてください。工程はまだ選びません（リポジトリを用意した後に選びます）。",
+    "",
+    `チケット：${ticket?.key ?? ""}（${ticket?.url ?? ""}）`,
+    `接続先：$SACTY_PF_URL/${platformName}（${api}）`,
+    "",
+    "手順：",
+    `1. チケットを読む（例 curl "$SACTY_PF_URL/${platformName}/rest/api/2/issue/${ticket?.key ?? "<キー>"}"）。説明・コンポーネント・ラベル・リンク・コメントも見る`,
+    "2. サブタスクなら、親のチケットと、親のほかのサブタスクも読む。このサブタスクのスコープ（親の目的の中で受け持つ範囲、ほかのサブタスクとの境目）を判定する",
+    "3. チケットの内容から、作業するリポジトリを、次の候補から1つ選ぶ（候補に無いリポジトリは選べない）",
+    ...candidates.map((repo) => `   - ${repo}`),
+    "4. タスクの題（チケットのキーを先頭に付ける。例 PAY-123 決済の再送で二重に請求される）と、概要（チケットの目的・やること・受け入れの条件、サブタスクならスコープとほかのサブタスクとの境目。後の工程のエージェントは、この概要を読んで作業する）を書く",
+    "",
+    "コードの変更や、チケットへの書き込みはしないでください（読むだけ）。決められなければ、repo を空にして、理由を reason に書いてください。",
+    "",
+    "最後に、次の形式で必ず出してください。",
+    "```json",
+    `{"${TICKET_HEADING}": {"repo": "候補のリポジトリの URL", "title": "タスクの題", "summary": "タスクの概要（Markdown）", "reason": "そのリポジトリを選んだ理由（サブタスクならスコープの判定も）"}}`,
+    "```",
+  ].join("\n");
+}
+
+/** チケットの取り込みの1段目の出力を読む（PBI-52）。リポジトリが候補にあるかは、呼び出し側が確かめる。 */
+export function extractTicketTriage(
+  output: string,
+): { repo: string; title: string; summary: string; reason: string } | undefined {
+  const blocks = [...output.matchAll(/```json\s*\n([\s\S]*?)\n```/g)].reverse();
+  for (const block of blocks) {
+    try {
+      const parsed = JSON.parse(block[1] ?? "") as Record<string, unknown>;
+      const v = parsed?.[TICKET_HEADING] as Record<string, unknown> | undefined;
+      if (!v || typeof v !== "object") continue;
+      const repo = text(v.repo);
+      const reason = text(v.reason);
+      if (!repo && !reason) continue;
+      return {
+        repo,
+        title: text(v.title).slice(0, 200),
+        summary: (typeof v.summary === "string" ? v.summary.trim() : "").slice(0, 20_000),
+        reason: reason.slice(0, 2000),
+      };
+    } catch {
+      // 次のブロックを試す
+    }
+  }
+  return undefined;
+}
+
 /** PR のレビューの上限（GitHub の上限より小さく）。 */
 const REVIEW_BODY_MAX = 60_000;
 

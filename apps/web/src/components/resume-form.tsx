@@ -17,12 +17,15 @@ export function ResumeForm({
   usedUsd,
   capUsd,
   lastFailure,
+  repositories,
 }: {
   taskId: string;
   reason: PauseReason;
   usedUsd: number;
   capUsd: number;
   lastFailure?: string;
+  /** チケットのタスクで、リポジトリが決まっていなければ、選べる候補（PBI-52）。 */
+  repositories?: string[];
 }) {
   const m = useMessages();
   const [state, formAction, pending] = useActionState(resumeTaskAction, initial);
@@ -45,6 +48,27 @@ export function ResumeForm({
       )}
       <form action={formAction} className="flex flex-wrap items-end gap-3">
         <input type="hidden" name="taskId" value={taskId} />
+        {repositories && (
+          <div className="flex min-w-0 flex-col gap-1.5">
+            <Label htmlFor="ticket-repo">{m.parts.resume.ticketRepo}</Label>
+            {repositories.length > 0 ? (
+              <select
+                id="ticket-repo"
+                name="repo"
+                required
+                className="h-9 max-w-full rounded-md border border-border bg-card px-2 font-mono text-sm"
+              >
+                {repositories.map((r) => (
+                  <option key={r} value={r}>
+                    {r}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <p className="text-sm text-warn">{m.parts.resume.ticketNoRepo}</p>
+            )}
+          </div>
+        )}
         {needsCap && (
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="cap-usd">{m.parts.resume.newCap(usd(usedUsd))}</Label>
@@ -65,7 +89,7 @@ export function ResumeForm({
             </div>
           </div>
         )}
-        <Button type="submit" disabled={pending}>
+        <Button type="submit" disabled={pending || repositories?.length === 0}>
           {pending
             ? m.parts.resume.resuming
             : needsCap

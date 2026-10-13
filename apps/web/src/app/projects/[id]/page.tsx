@@ -54,6 +54,7 @@ async function ProjectSettings({ params }: { params: Promise<{ id: string }> }) 
         github={await getGitHubAccounts()}
         // 選べるイメージ（PBI-41）。状態を取れなければ、選ぶ欄を出さない（指定済みのイメージは出す）
         images={(await getStatus().catch(() => undefined))?.images ?? []}
+        platforms={(await getStatus().catch(() => undefined))?.platforms ?? []}
       />
     </>
   );

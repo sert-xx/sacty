@@ -30,7 +30,10 @@ export async function ProjectGate({ children }: { children: React.ReactNode }) {
         <h2 id="new-project" className="text-[15px] font-semibold">
           {t.newTitle}
         </h2>
-        <ProjectEditor images={(await getStatus().catch(() => undefined))?.images ?? []} />
+        <ProjectEditor
+          images={(await getStatus().catch(() => undefined))?.images ?? []}
+          platforms={(await getStatus().catch(() => undefined))?.platforms ?? []}
+        />
       </section>
       <section aria-labelledby="import-project" className="flex flex-col gap-3">
         <h2 id="import-project" className="text-[15px] font-semibold">

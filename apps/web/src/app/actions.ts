@@ -15,6 +15,7 @@ import { getMessages } from "@/i18n/server";
 import {
   approveStep,
   cancelTask,
+  chooseTicketRepository,
   createTask,
   decideChange,
   importProject,
@@ -100,7 +101,13 @@ export async function resumeTaskAction(
     }
   }
 
+  // チケットのタスクで、リポジトリを人が選んだ（PBI-52）
+  const repo = String(formData.get("repo") ?? "");
   try {
+    if (repo) {
+      const chosen = await chooseTicketRepository(taskId, repo);
+      if (!chosen.ok) return { message: chosen.message, capUsd: capText };
+    }
     const result = await resumeTask(taskId, capUsd);
     if (!result.ok) return { message: result.message, capUsd: capText };
   } catch {
@@ -230,7 +237,9 @@ export async function saveSettingsAction(
       reviewLabel: String(formData.get("reviewLabel") ?? ""),
       reviewRequested: formData.get("reviewRequested") === "on",
       // チェックを外した種類を Off にする（PBI-53）
-      triageOff: (["issues", "pullRequests", "reviewLabel"] as const).filter(
+      // チケット（PBI-52）
+      ticketLabel: String(formData.get("ticketLabel") ?? ""),
+      triageOff: (["issues", "pullRequests", "reviewLabel", "tickets"] as const).filter(
         (kind) => formData.get(`triage-${kind}`) !== "on",
       ),
       maxParallelTasks: String(formData.get("maxParallelTasks") ?? ""),

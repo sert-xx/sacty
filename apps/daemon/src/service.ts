@@ -44,12 +44,15 @@ import {
   ResumeTaskInput,
   renderMessage,
   responsibleProject,
+  responsibleTicketProject,
   reworkTargets,
   SactySettings,
   STEP_PLANS,
   type StepKey,
+  sameGitHubUrl,
   type Task,
   type TaskProposal,
+  type TicketService,
   type TriageKind,
   targetHost,
   targetImageOf,
@@ -114,6 +117,8 @@ import {
   buildReviewBody,
   buildReviewComments,
   buildReworkPrompt,
+  buildTicketInvestigationComment,
+  buildTicketTriagePrompt,
   changeableSteps,
   EXECUTABLE_STEPS,
   extractBlocks,
@@ -124,6 +129,7 @@ import {
   extractRework,
   extractSplitPlan,
   extractStepPlan,
+  extractTicketTriage,
   extractVerdict,
   integrationViewpointIds,
   investigationMarker,
@@ -140,6 +146,7 @@ import { secretUses } from "./secret-uses.js";
 import { type PrefetchingSecretStore, SecretNotFoundError, type SecretStore } from "./secrets.js";
 import type { ServiceRunner, ServicesSpec, StartedServices } from "./services.js";
 import type { SettingsStore } from "./settings.js";
+import { type FoundTicket, type TicketClient, ticketErrorText } from "./tickets.js";
 
 type ActivityItem = { actor: Actor; event: EventInput };
 
@@ -181,6 +188,8 @@ export type ServiceDeps = {
   now?: () => number;
   /** オーケストレーターの代わりに工程を選ぶ（テストで差し替える。PBI-17）。 */
   planner?: (task: Task) => Promise<ChosenSteps>;
+  /** チケット（JIRA など）の検索とコメント（PBI-52）。無ければ、チケットを扱わない。 */
+  tickets?: TicketClient;
   /** docker compose のサービスを起動する口（PBI-47）。無ければ、サービスを使わない。 */
   services?: ServiceRunner;
   /** プロジェクトの設定。 */
@@ -214,6 +223,8 @@ export type DaemonStatus = {
   intake: IntakeStatus | null;
   /** プロジェクトの対象で選べる、言語ごとのイメージ（名前と説明。PBI-41）。 */
   images: { name: string; description: string }[];
+  /** チケットの取り込み先に選べる接続先（gateway.platforms の名前。PBI-52）。 */
+  platforms: string[];
 };
 
 export type IntakeStatus = {
@@ -224,6 +235,8 @@ export type IntakeStatus = {
   reviewRequested?: boolean;
   /** Off にしたトリアージの種類（sacty の設定。PBI-53）。 */
   triageOff?: TriageKind[];
+  /** チケットの取り込むラベル（sacty の設定。PBI-52）。 */
+  ticketLabel?: string;
   lastRunAt?: string;
   /** 直近の取り込みで作ったタスクの数。 */
   imported?: number;
@@ -551,7 +564,14 @@ export class TaskService {
    */
   private async runGuardian(
     task: Task,
-    run: { agent: AgentConfig; image: string; prompt: string; role: AgentRole },
+    run: {
+      agent: AgentConfig;
+      image: string;
+      prompt: string;
+      role: AgentRole;
+      /** 使わせる組織内 PF の API（チケットを読む1段目。PBI-52）。 */
+      platforms?: readonly Platform[];
+    },
     code: "base" | "implemented",
   ): Promise<Awaited<ReturnType<TaskService["execute"]>>> {
     const runId = randomUUID();
@@ -587,6 +607,8 @@ export class TaskService {
    * プロジェクトの gh のアカウントで返す。返せなければ理由を記録する（何度も返そうとしない）。
    */
   private async commentInvestigation(task: Task): Promise<void> {
+    // チケットから取り込んだタスクは、チケットにコメントする（PBI-52）
+    if (task.ticket && !task.source) return this.commentTicketInvestigation(task);
     const source = task.source;
     // PR から取り込んだタスクも、PR の会話にコメントする（PR も Issue のコメントの API で返せる。PBI-26）
     if (!source) return;
@@ -955,7 +977,14 @@ export class TaskService {
   status(): DaemonStatus {
     const config = this.deps.config();
     if (!config.ok) {
-      return { agent: null, problems: [config.problem], warnings: [], intake: null, images: [] };
+      return {
+        agent: null,
+        problems: [config.problem],
+        warnings: [],
+        intake: null,
+        images: [],
+        platforms: [],
+      };
     }
     const agent = config.config.defaultAgent;
     return {
@@ -975,6 +1004,8 @@ export class TaskService {
         name,
         description,
       })),
+      // チケットの取り込み先に選べる接続先（PBI-52）
+      platforms: (config.config.platforms ?? []).map((p) => p.name),
     };
   }
 
@@ -1003,6 +1034,7 @@ export class TaskService {
     return {
       ...(settings.intakeLabel ? { label: settings.intakeLabel } : {}),
       ...(settings.reviewLabel ? { reviewLabel: settings.reviewLabel } : {}),
+      ...(settings.ticketLabel ? { ticketLabel: settings.ticketLabel } : {}),
       ...(settings.reviewRequested ? { reviewRequested: true } : {}),
       // Off にしたトリアージの種類（PBI-53）
       ...(settings.triageOff ? { triageOff: settings.triageOff } : {}),
@@ -1149,6 +1181,7 @@ export class TaskService {
       `label:${settings.intakeLabel ?? ""}`,
       `review:${settings.reviewLabel ?? ""}:${settings.reviewRequested ? "requested" : ""}`,
       `off:${(settings.triageOff ?? []).join("+")}`,
+      `ticket:${settings.ticketLabel ?? ""}`,
       ...this.deps.projects.all().map((p) => `${p.id}@${p.updatedAt}`),
     ].join(",");
   }
@@ -1235,6 +1268,265 @@ export class TaskService {
       );
     }
     return created;
+  }
+
+  /**
+   * チケットの取り込み先（PBI-52）。すべてのプロジェクトの取り込み先を、接続先と種類ごとにまとめる（キーは合わせる）。
+   * 取り込むラベル（sacty の設定）が無いか、チケットのトリアージを Off にしていれば、取り込まない。
+   */
+  ticketSources(): {
+    platform: string;
+    service: TicketService;
+    keys: string[];
+    label: string;
+  }[] {
+    const settings = this.deps.settings.get();
+    const label = settings.ticketLabel;
+    if (!label || settings.triageOff?.includes("tickets")) return [];
+    const groups = new Map<
+      string,
+      { platform: string; service: TicketService; keys: Set<string> }
+    >();
+    for (const project of this.deps.projects.all()) {
+      for (const source of project.tickets ?? []) {
+        const id = `${source.platform}\u0000${source.service}`;
+        const group = groups.get(id) ?? {
+          platform: source.platform,
+          service: source.service,
+          keys: new Set<string>(),
+        };
+        for (const key of source.keys) group.keys.add(key);
+        groups.set(id, group);
+      }
+    }
+    return [...groups.values()].map((g) => ({
+      platform: g.platform,
+      service: g.service,
+      keys: [...g.keys].sort(),
+      label,
+    }));
+  }
+
+  /**
+   * 見つかったチケットをタスクにする（PBI-52）。担当するプロジェクトは、接続先とチケットのキーで決める（取り込むたびに
+   * 判定する）。同じチケットは二度取り込まない。中身はオーケストレーターが読むので、題はキーと要約だけにする。
+   */
+  importTickets(found: readonly FoundTicket[]): Task[] {
+    const settings = this.deps.settings.get();
+    if (!settings.ticketLabel || settings.triageOff?.includes("tickets")) return [];
+    const projects = this.deps.projects.all();
+    const id = (platform: string, key: string) => `${platform}\u0000${key}`;
+    const known = new Set(
+      [...this.tasks.values()].flatMap((t) =>
+        t.ticket ? [id(t.ticket.platform, t.ticket.key)] : [],
+      ),
+    );
+    const config = this.deps.config();
+    const budgetCapUsd = config.ok ? config.config.budgetPerTaskUsd : DEFAULT_BUDGET_USD;
+    const created: Task[] = [];
+    for (const ticket of found) {
+      if (known.has(id(ticket.platform, ticket.key))) continue;
+      const responsible = responsibleTicketProject(projects, ticket.platform, ticket.key);
+      if (!responsible) continue;
+      known.add(id(ticket.platform, ticket.key));
+      created.push(
+        this.append({ id: randomUUID(), projectId: responsible.project.id }, [
+          {
+            actor: "sacty",
+            event: {
+              type: "TaskCreated",
+              payload: {
+                title: `${ticket.key} ${ticket.summary}`.trim(),
+                body: `JIRA のチケット ${ticket.key}（${ticket.url}）から取り込みました。オーケストレーターがチケットを読んで、作業するリポジトリと概要を決めます。`,
+                start: "jira",
+                budgetCapUsd,
+                ticket: {
+                  platform: ticket.platform,
+                  service: ticket.service,
+                  key: ticket.key,
+                  url: ticket.url,
+                },
+              },
+            },
+          },
+        ]),
+      );
+    }
+    return created;
+  }
+
+  /**
+   * チケットの取り込みの1段目（PBI-52）。オーケストレーターが、ゲートウェイ経由でチケット（サブタスクなら親とほかの
+   * サブタスクも）を読み、プロジェクトの対象のリポジトリから作業するリポジトリを選び、題と概要を書く。決められなければ、
+   * 理由を記録して止める（人がリポジトリを選んで再開できる。再開すると、もう一度読む）。
+   */
+  private async triageTicket(task: Task, config: SactyConfig): Promise<void> {
+    const ticket = task.ticket;
+    if (!ticket) return;
+    const pause = (reason: PauseReason, text: DaemonText) =>
+      this.append(this.mustGet(task.id), [
+        { actor: "sacty", event: { type: "TaskPaused", payload: { reason, message: text } } },
+      ]);
+    if (budgetState(task.budget) === "exceeded") {
+      this.append(task, [
+        { actor: "sacty", event: { type: "TaskPaused", payload: { reason: "budget" } } },
+      ]);
+      return;
+    }
+    const platform = config.platforms.find((p) => p.name === ticket.platform);
+    if (!platform) {
+      pause(
+        "error",
+        message("ticket.triageFailed", {
+          detail: message("ticket.platformMissing", { platform: ticket.platform }),
+        }),
+      );
+      return;
+    }
+    const candidates = (await this.projectRepositories(task.projectId))?.repositories ?? [];
+    if (candidates.length === 0) {
+      pause("error", message("ticket.triageFailed", { detail: message("ticket.noCandidates") }));
+      return;
+    }
+    const agent = agentFor(config, "orchestrator");
+    const { outcome, costUsd, estimated } = await this.runGuardian(
+      task,
+      {
+        agent,
+        image: config.image,
+        prompt: [
+          buildTicketTriagePrompt(task, candidates, platform.name),
+          ...platformPromptLines([platform]),
+        ].join("\n"),
+        role: "orchestrator",
+        platforms: [platform],
+      },
+      "base",
+    );
+    // 読んでいる間に、人間が止めた・中止した・ほかで決まったなら、記録しない
+    const latest = this.mustGet(task.id);
+    if (this.pauseRequested.has(task.id) || this.cancelling.has(task.id)) return;
+    if (latest.status !== "queued" || latest.repo) return;
+    const cost = {
+      agentId: agent.id,
+      ...agentSetting(agent),
+      ...(outcome.usage ? { usage: outcome.usage } : {}),
+      costUsd,
+      estimated,
+    };
+    const fail = (reason: "usage_limit" | "auth" | "error", detail: DaemonText) => {
+      const text = message("ticket.triageFailed", { detail });
+      this.append(latest, [
+        {
+          actor: "orchestrator",
+          event: { type: "OrchestratorFailed", payload: { reason, message: text, ...cost } },
+        },
+        { actor: "sacty", event: { type: "TaskPaused", payload: { reason, message: text } } },
+      ]);
+      this.warnIfNeeded(this.mustGet(task.id));
+    };
+    if (outcome.kind === "failed") return fail(outcome.reason, outcome.message);
+    const triage = extractTicketTriage(outcome.output);
+    if (!triage) return fail("error", message("ticket.triageUnreadable"));
+    if (!triage.repo) return fail("error", triage.reason || message("ticket.triageUnreadable"));
+    const repo = candidates.find((c) => sameGitHubUrl(c, triage.repo));
+    if (!repo) return fail("error", message("ticket.repoNotCandidate", { repo: triage.repo }));
+    this.append(latest, [
+      {
+        actor: "orchestrator",
+        event: {
+          type: "TicketTriaged",
+          payload: {
+            repo,
+            ...(triage.title ? { title: triage.title } : {}),
+            ...(triage.summary ? { body: triage.summary } : {}),
+            reason: triage.reason,
+            ...cost,
+          },
+        },
+      },
+    ]);
+    this.warnIfNeeded(this.mustGet(task.id));
+  }
+
+  /**
+   * チケットから取り込んだタスクの、作業するリポジトリを人が選ぶ（PBI-52。オーケストレーターが決められなかったとき）。
+   * まだ工程を決めていないタスクだけ。選んだ後に再開すると、そのリポジトリで工程を選ぶ。
+   */
+  async chooseTicketRepository(id: string, repo: string): Promise<Task> {
+    const task = this.tasks.get(id);
+    if (!task) throw new InvalidOperationError(message("task.notFound"));
+    if (!task.ticket || task.steps.length > 0 || task.status === "cancelled" || task.repository) {
+      throw new InvalidOperationError(message("ticket.notTriageable"));
+    }
+    const candidates = (await this.projectRepositories(task.projectId))?.repositories ?? [];
+    const chosen = candidates.find((c) => sameGitHubUrl(c, repo));
+    if (!chosen) throw new InvalidOperationError(message("ticket.repoNotCandidate", { repo }));
+    return this.append(this.mustGet(id), [
+      {
+        actor: "person",
+        event: {
+          type: "TicketTriaged",
+          payload: { repo: chosen, reason: message("ticket.repoChosenByPerson") },
+        },
+      },
+    ]);
+  }
+
+  /** 完了した調査の結果を、取り込み元のチケットにコメントする（PBI-52）。返せなければ理由を記録する。 */
+  private async commentTicketInvestigation(task: Task): Promise<void> {
+    const event = await this.commentTicket(task, buildTicketInvestigationComment(task));
+    const latest = this.tasks.get(task.id);
+    if (!latest || !awaitingIssueComment(latest)) return;
+    this.append(latest, [
+      {
+        actor: "sacty",
+        event:
+          "url" in event
+            ? { type: "IssueCommented", payload: { url: event.url } }
+            : { type: "IssueCommentFailed", payload: { message: event.failed } },
+      },
+    ]);
+  }
+
+  /** 作った PR の URL を、取り込み元のチケットにコメントする（PBI-52）。1回だけ。 */
+  private async commentTicketPullRequest(task: Task): Promise<void> {
+    const url = task.pullRequest?.url ?? "";
+    const event = await this.commentTicket(
+      task,
+      `sacty が PR を作りました：${url}\n\n（sacty のタスク ${task.id}）`,
+    );
+    const latest = this.tasks.get(task.id);
+    if (!latest || !awaitingTicketPrComment(latest)) return;
+    this.append(latest, [
+      { actor: "sacty", event: { type: "TicketPullRequestCommented", payload: event } },
+    ]);
+  }
+
+  private async commentTicket(
+    task: Task,
+    body: string,
+  ): Promise<{ url: string } | { failed: DaemonText }> {
+    const ticket = task.ticket;
+    const config = this.deps.config();
+    const platform = config.ok
+      ? config.config.platforms.find((p) => p.name === ticket?.platform)
+      : undefined;
+    if (!ticket || !this.deps.tickets) {
+      return { failed: message("ticket.platformMissing", { platform: ticket?.platform ?? "" }) };
+    }
+    if (!platform)
+      return { failed: message("ticket.platformMissing", { platform: ticket.platform }) };
+    try {
+      return await this.deps.tickets.comment({
+        platform,
+        service: ticket.service,
+        key: ticket.key,
+        body,
+      });
+    } catch (error) {
+      return { failed: ticketErrorText(error) };
+    }
   }
 
   private append(
@@ -1340,7 +1632,9 @@ export class TaskService {
             // 分割した子タスクを作る・始める、子タスクがすべて終わったら完了にする（PBI-27）
             this.splitPending(t) ||
             // 再現のテストを実行して、再現できたかを確かめる（PBI-29）
-            awaitingReproductionCheck(t),
+            awaitingReproductionCheck(t) ||
+            // 作った PR の URL を、チケットにコメントする（PBI-52）
+            awaitingTicketPrComment(t),
       )
       .filter((t) => !this.cancelling.has(t.id) && !this.pauseRequested.has(t.id))
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
@@ -1658,9 +1952,15 @@ export class TaskService {
     if (initial && awaitingReviewPost(initial)) return this.postReview(initial);
     if (initial && this.splitPending(initial)) return this.settleSplit(initial);
     if (initial && awaitingReproductionCheck(initial)) return this.checkReproduction(initial);
+    // 作った PR の URL を、取り込み元のチケットにコメントする（PBI-52）
+    if (initial && awaitingTicketPrComment(initial)) return this.commentTicketPullRequest(initial);
     if (initial?.status !== "queued") return;
     const config = this.deps.config();
     if (!config.ok) return; // 設定の問題は status() で画面に出す。タスクは実行待ちのまま。
+
+    // チケットから取り込んだタスクは、まずオーケストレーターがチケットを読んで、作業するリポジトリ・題・概要を決める
+    // （PBI-52。1段目）。リポジトリを用意した後に、いつもどおり工程を選ぶ（2段目）
+    if (initial.ticket && !initial.repo) return this.triageTicket(initial, config.config);
 
     // 対象リポジトリは、タスクの開始時（最初の実行）に、ベースブランチの最新を用意する（PBI-15）。
     // どの工程から始まるタスクでも同じ。以後はその起点のコミットを最後まで使う（途中で取り込み直さない）。
@@ -3727,9 +4027,19 @@ export function awaitingIssueComment(task: Task): boolean {
     isCompleted(task) &&
     // 調査そのものが目的のタスクだけ（前段の調査の結果は返さない。PBI-29）
     investigationIsGoal(task) &&
-    // Issue・PR から取り込んだタスク（PBI-26）
-    task.source !== undefined &&
+    // Issue・PR・チケットから取り込んだタスク（PBI-26・PBI-52）
+    (task.source !== undefined || task.ticket !== undefined) &&
     !task.issueComment
+  );
+}
+
+/** 作った PR の URL を、取り込み元のチケットにコメントするのを待っている（PBI-52）。 */
+export function awaitingTicketPrComment(task: Task): boolean {
+  return (
+    task.ticket !== undefined &&
+    task.status !== "cancelled" &&
+    Boolean(task.pullRequest?.url) &&
+    !task.ticketPrComment
   );
 }
 

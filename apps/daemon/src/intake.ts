@@ -5,6 +5,7 @@ import { errorText } from "./errors.js";
 import type { GitHubAuth } from "./gh.js";
 import type { IssueSearch } from "./github.js";
 import type { TaskService } from "./service.js";
+import { type FoundTicket, type TicketClient, ticketErrorText, ticketJql } from "./tickets.js";
 
 /**
  * GitHub Issue を定期的に探して、タスクに取り込む（PR のレビューの取り込みの PR も。PBI-44）。検索はプロジェクトの取り込み元ごとに行い、
@@ -28,6 +29,8 @@ export class IssueIntake {
     private readonly github: GitHubAuth,
     private readonly config: () => ConfigResult,
     private readonly now: () => number = Date.now,
+    /** チケット（JIRA など）の検索（PBI-52）。無ければ、チケットを取り込まない。 */
+    private readonly tickets?: TicketClient,
   ) {}
 
   /** 設定の間隔は毎回読み直す（デーモンを止めずに変えられるように）。確認は30秒ごと。 */
@@ -139,9 +142,33 @@ export class IssueIntake {
       }
     }
     const created = this.service.importIssues(found);
+    // チケット（JIRA など。PBI-52）。接続先は gateway.platforms の組織内 PF（認証もその設定）
+    const tickets: FoundTicket[] = [];
+    const config = this.config();
+    const platforms = (config.ok ? config.config.platforms : undefined) ?? [];
+    const client = this.tickets;
+    if (client) {
+      for (const source of this.service.ticketSources()) {
+        const query = `${source.platform}: ${ticketJql(source.keys, source.label)}`;
+        const platform = platforms.find((p) => p.name === source.platform);
+        if (!platform) {
+          errors.push({
+            query,
+            message: message("ticket.platformMissing", { platform: source.platform }),
+          });
+          continue;
+        }
+        try {
+          tickets.push(...(await client.search({ ...source, platform })));
+        } catch (error) {
+          errors.push({ query, message: ticketErrorText(error) });
+        }
+      }
+    }
+    const createdTickets = this.service.importTickets(tickets);
     this.service.recordIntake({
       lastRunAt: at,
-      imported: created.length,
+      imported: created.length + createdTickets.length,
       ...(errors.length > 0 ? { errors } : {}),
     });
   }

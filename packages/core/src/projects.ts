@@ -58,13 +58,16 @@ const IntakeLabelInput = z.preprocess(
  */
 /**
  * 自動のトリアージの種類（PBI-53）。issues：取り込むラベルの Issue、pullRequests：取り込むラベルの PR、
- * reviewLabel：レビュー用のラベルの PR。自分へのレビューの依頼は、reviewRequested の切り替えで決める。
+ * reviewLabel：レビュー用のラベルの PR、tickets：チケット（JIRA など。PBI-52）。自分へのレビューの依頼は、
+ * reviewRequested の切り替えで決める。
  */
-export const TriageKind = z.enum(["issues", "pullRequests", "reviewLabel"]);
+export const TriageKind = z.enum(["issues", "pullRequests", "reviewLabel", "tickets"]);
 export type TriageKind = z.infer<typeof TriageKind>;
 
 export const SactySettings = z.object({
   intakeLabel: IntakeLabelInput,
+  /** チケット（JIRA など）の取り込むラベル。すべての取り込み先で共通（PBI-52）。空なら取り込まない。 */
+  ticketLabel: IntakeLabelInput,
   /**
    * Off にした自動のトリアージの種類（PBI-53）。ラベルなどの設定は残したまま止められる。書いていない種類は On
    * （この項目の無い、これまでの設定は、すべて On として動く）。空なら持たない。
@@ -144,6 +147,35 @@ export type ProjectNotification = z.infer<typeof ProjectNotification>;
  * プロジェクトの定義。エクスポート・インポートの対象（PBI-5b）なので、
  * 個人の設定や秘密情報は含めない。
  */
+/**
+ * チケットの管理のサービス（PBI-52）。API の形（検索・コメント）を選ぶ。接続先と認証は、ゲートウェイの組織内 PF の
+ * 設定（gateway.platforms）に書き、その名前を取り込み先に書く。
+ */
+export const TicketService = z.enum(["jira-cloud", "jira-server"]);
+export type TicketService = z.infer<typeof TicketService>;
+
+/**
+ * プロジェクトのチケットの取り込み先（PBI-52）。接続先（gateway.platforms の名前）・種類・JIRA のプロジェクトのキーの組。
+ * 書いたキーの、取り込むラベル（sacty の設定）の付いたチケットを、このプロジェクトのタスクにする。
+ */
+export const TicketSourceConfig = z.object({
+  platform: z
+    .string()
+    .trim()
+    .regex(/^[A-Za-z0-9_-]+$/, code("input.platformName")),
+  service: TicketService,
+  keys: z
+    .array(
+      z
+        .string()
+        .trim()
+        .regex(/^[A-Z][A-Z0-9_]{0,49}$/, code("input.ticketKey")),
+    )
+    .min(1, code("input.ticketKey"))
+    .max(50),
+});
+export type TicketSourceConfig = z.infer<typeof TicketSourceConfig>;
+
 export const ProjectDefinition = z.object({
   name: z.string().trim().min(1, code("input.nameRequired")).max(80),
   /** 対象（Org・リポジトリ。PBI-25）。 */
@@ -152,6 +184,8 @@ export const ProjectDefinition = z.object({
   context: ContextSource.optional(),
   /** 人間の出番の通知先（PBI-38）。無ければ通知しない。 */
   notification: ProjectNotification.optional(),
+  /** チケットの取り込み先（JIRA など。PBI-52）。複数書ける。 */
+  tickets: z.array(TicketSourceConfig).max(20).optional(),
   /**
    * GitHub へのアクセスに使う、gh にログイン済みのアカウント（PBI-13）。ホストごとに選ぶ（PBI-40。例
    * { "github.com": "me", "ghe.example.co.jp": "me-corp" }）。GitHub にアクセスするには、そのホストのものを必ず選ぶ
@@ -215,6 +249,30 @@ export function projectConflicts(
       );
     }
   }
+  // チケットの取り込み先：同じ接続先の同じキーは、1つのプロジェクトだけ（PBI-52）
+  const seenKeys = new Set<string>();
+  for (const source of definition.tickets ?? []) {
+    for (const key of source.keys) {
+      const id = `${source.platform}\u0000${key}`;
+      if (seenKeys.has(id)) {
+        problems.push(message("project.ticketKeyDuplicated", { platform: source.platform, key }));
+        continue;
+      }
+      seenKeys.add(id);
+      const owner = others.find((p) =>
+        (p.tickets ?? []).some((t) => t.platform === source.platform && t.keys.includes(key)),
+      );
+      if (owner) {
+        problems.push(
+          message("project.ticketKeyTaken", {
+            platform: source.platform,
+            key,
+            project: owner.name,
+          }),
+        );
+      }
+    }
+  }
   return problems;
 }
 
@@ -249,6 +307,24 @@ export function targetImageOf(project: Project, repo: string): string | undefine
     (t) => t.scope === "org" && sameGitHubUrl(t.target, orgUrlOf(repo)),
   );
   return byRepo?.image ?? byOrg?.image;
+}
+
+/**
+ * そのチケットを担当するプロジェクトと取り込み先（PBI-52）。接続先と、チケットのキー（PAY-123 の PAY）で決める。
+ */
+export function responsibleTicketProject(
+  projects: readonly Project[],
+  platform: string,
+  ticketKey: string,
+): { project: Project; source: TicketSourceConfig } | undefined {
+  const key = ticketKey.split("-")[0] ?? "";
+  for (const project of projects) {
+    const source = (project.tickets ?? []).find(
+      (t) => t.platform === platform && t.keys.includes(key),
+    );
+    if (source) return { project, source };
+  }
+  return undefined;
 }
 
 /** Org の対象から除かれる、ほかのプロジェクトがリポジトリ単位で担当しているリポジトリ。 */
@@ -290,6 +366,8 @@ export const ProjectExport = z
         context: ContextSource.strict().optional(),
         // 通知先（PBI-38）。秘密情報は名前か参照だけなので、エクスポートに含める
         notification: ProjectNotification.optional(),
+        // チケットの取り込み先（PBI-52）。秘密情報は含まない（接続先の名前だけ）
+        tickets: z.array(TicketSourceConfig.strict()).max(20).optional(),
       })
       .strict(),
   })
@@ -303,10 +381,11 @@ export function exportProject(project: Project): ProjectExport {
     version: PROJECT_EXPORT_VERSION,
     project: {
       name: project.name,
+      // 対象ごとのイメージの指定（PBI-41）も含める
       targets: project.targets.map((t) =>
         t.scope === "org"
-          ? { scope: "org" as const, target: t.target }
-          : { scope: "repo" as const, target: t.target },
+          ? { scope: "org" as const, target: t.target, ...(t.image ? { image: t.image } : {}) }
+          : { scope: "repo" as const, target: t.target, ...(t.image ? { image: t.image } : {}) },
       ),
       ...(project.context
         ? {
@@ -317,6 +396,7 @@ export function exportProject(project: Project): ProjectExport {
           }
         : {}),
       ...(project.notification ? { notification: project.notification } : {}),
+      ...(project.tickets && project.tickets.length > 0 ? { tickets: project.tickets } : {}),
     },
   };
 }

@@ -81,6 +81,9 @@ const ja = {
     newCap: (used: string) => `新しい上限（累計・使用済み ${used} より大きい金額）`,
     resuming: "再開中…",
     resumeWithCap: "上限を変えて再開",
+    ticketRepo: "作業するリポジトリ（チケット）",
+    ticketNoRepo:
+      "プロジェクトの対象に、選べるリポジトリがありません。プロジェクトの設定を見直してください。",
     resume: "再開する",
     capNote: "新しい上限に達したら、もう一度ここで判断します。",
   },
@@ -198,6 +201,8 @@ const en: PartsMessages = {
     newCap: (used) => `New cap (total; more than the ${used} already used)`,
     resuming: "Resuming…",
     resumeWithCap: "Change cap and resume",
+    ticketRepo: "Repository to work in (ticket)",
+    ticketNoRepo: "The project has no repositories to choose from. Check the project settings.",
     resume: "Resume",
     capNote: "When the new cap is reached, you will decide here again.",
   },

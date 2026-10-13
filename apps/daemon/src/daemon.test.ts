@@ -45,6 +45,7 @@ import { createApp } from "./server.js";
 import { awaitingIssueComment, type ServiceDeps, TaskService } from "./service.js";
 import type { ServiceRunner, ServicesSpec } from "./services.js";
 import { MemorySettingsStore } from "./settings.js";
+import type { FoundTicket, TicketClient } from "./tickets.js";
 
 /** 記録した文言（コードと引数）を、日本語の文にする（PBI-11）。 */
 const ja = (text: unknown) => renderMessage(text, "ja");
@@ -582,6 +583,7 @@ function makeService(
     hostMcpProblems?: ServiceDeps["hostMcpProblems"];
     notifier?: ServiceDeps["notifier"];
     services?: ServiceRunner;
+    tickets?: ServiceDeps["tickets"];
   } = {},
 ) {
   const executor = new FakeExecutor(outcomes);
@@ -627,9 +629,74 @@ function makeService(
     ...(options.hostMcpProblems ? { hostMcpProblems: options.hostMcpProblems } : {}),
     ...(options.notifier ? { notifier: options.notifier } : {}),
     ...(options.services ? { services: options.services } : {}),
+    ...(options.tickets ? { tickets: options.tickets } : {}),
   });
   return { service, executor, repos, tests, pulls };
 }
+
+/** チケットの管理のサービス（JIRA）の偽物（PBI-52）。コメントを記録する。 */
+class FakeTickets implements TicketClient {
+  comments: { platform: string; service: string; key: string; body: string }[] = [];
+  searched: { platform: string; service: string; keys: readonly string[]; label: string }[] = [];
+  commentFail?: string;
+  found: FoundTicket[] = [];
+  async search(input: Parameters<TicketClient["search"]>[0]) {
+    this.searched.push({ ...input, platform: input.platform.name });
+    return this.found;
+  }
+  async comment(input: Parameters<TicketClient["comment"]>[0]) {
+    if (this.commentFail)
+      throw new MessageError(
+        message("ticket.requestFailed", {
+          platform: input.platform.name,
+          status: 500,
+          detail: this.commentFail,
+        }),
+      );
+    this.comments.push({ ...input, platform: input.platform.name });
+    return {
+      url: `${input.platform.upstream}/browse/${input.key}?focusedCommentId=${this.comments.length}`,
+    };
+  }
+}
+
+/** JIRA の接続先（gateway.platforms。PBI-52）。 */
+const jiraPlatform = () =>
+  toPlatform(
+    "jira",
+    PlatformFile.parse({
+      upstream: "https://jira.example.com",
+      description: "JIRA",
+      auth: { header: "Authorization", prefix: "Bearer ", secret: "jira-token" },
+      allow: ["GET /rest/api/**", "POST /rest/api/2/issue/*/comment"],
+    }),
+  );
+
+/** ゲートウェイの偽物（実行ごとのトークンを返す）。 */
+const fakeGateway = (): NonNullable<ServiceDeps["gateway"]> => ({
+  containerOrigin: () => "http://host.docker.internal:5001",
+  platformsUrl: (token) => `http://host.docker.internal:5001/r/${token}/pf`,
+  register: () => ({
+    token: "sacty-gw-run",
+    stats: () => ({ retries: 0, waitedMs: 0, statuses: [], gaveUp: false }),
+    close: () => {},
+  }),
+});
+
+/** チケットの取り込みの1段目の出力（PBI-52）。 */
+const triageOut = (v: Record<string, unknown>, output = 100): AgentOutcome => ({
+  kind: "completed",
+  output: `読みました\n\n\`\`\`json\n${JSON.stringify({ "sacty-ticket": v })}\n\`\`\``,
+  usage: { input: 0, cacheRead: 0, cacheWrite: 0, output },
+});
+
+const foundTicket = (key: string, summary = `${key} の要約`): FoundTicket => ({
+  platform: "jira",
+  service: "jira-server",
+  key,
+  summary,
+  url: `https://jira.example.com/browse/${key}`,
+});
 
 /** 画面が表示している（いま承認待ちの）提出回。 */
 const current = (svc: TaskService, id: string) => {
@@ -4728,6 +4795,112 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     expect(restarted.get(id)?.task.steps[2]?.state).toBe("done");
     activity.close();
   });
+  describe("チケットへの結果のコメント（PBI-52）", () => {
+    const ticketProjects = () => {
+      const projects = new MemoryProjectStore();
+      projects.put("default", {
+        name: "デフォルト",
+        targets: [{ scope: "repo", target: "https://github.com/acme/app" }],
+        githubAccounts: { "github.com": "me" },
+        tickets: [{ platform: "jira", service: "jira-server", keys: ["PAY"] }],
+      });
+      return projects;
+    };
+    const chooseApp = triageOut({
+      repo: "https://github.com/acme/app",
+      title: "PAY-1 決済の再送",
+      summary: "再送で二重に請求される",
+      reason: "決済のコードがある",
+    });
+    const options = (tickets: FakeTickets, extra: Parameters<typeof makeService>[2] = {}) => ({
+      config: configOf(agent(), 1, [jiraPlatform()]),
+      secrets: { "claude-oauth-token": "oauth-secret", "jira-token": "jira-secret" },
+      gateway: fakeGateway(),
+      projects: ticketProjects(),
+      settings: new MemorySettingsStore({ ticketLabel: "sacty" }),
+      tickets,
+      ...extra,
+    });
+
+    it("調査の結果をチケットにコメントし、二度は返さない。返せなければ理由を記録する", async () => {
+      for (const fail of [false, true]) {
+        const activity = new SqliteActivityStore(join(dir, `ticket-${fail}.db`));
+        const tickets = new FakeTickets();
+        if (fail) tickets.commentFail = "boom";
+        const { service, pulls } = makeService(
+          activity,
+          [chooseApp, out("# 調査の結果\n\n- src/pay.ts:12 で再送")],
+          options(tickets, {
+            planner: async () => ({
+              steps: ["investigate" as const],
+              plan: "investigate" as const,
+              reason: "調査だけ",
+              fallback: false,
+              costUsd: 0,
+              estimated: false,
+            }),
+          }),
+        );
+        const [task] = service.importTickets([foundTicket("PAY-1")]);
+        const id = task?.id ?? "";
+        await service.runNext(id); // チケットを読む
+        await service.runNext(id); // 調査
+        service.approve(id, { step: "investigate", submission: 1 });
+        await service.runNext(id);
+        await service.runNext(id); // 二度は返さない
+        expect(pulls.issueComments).toEqual([]);
+        if (fail) {
+          expect(tickets.comments).toEqual([]);
+          expect(ja(service.get(id)?.task.issueComment?.failed)).toContain("boom");
+        } else {
+          expect(tickets.comments).toHaveLength(1);
+          expect(tickets.comments[0]).toMatchObject({
+            platform: "jira",
+            service: "jira-server",
+            key: "PAY-1",
+          });
+          expect(tickets.comments[0]?.body).toContain("src/pay.ts:12 で再送");
+          // GitHub の目印（HTML のコメント）は JIRA では文字のまま出るので付けない
+          expect(tickets.comments[0]?.body).not.toContain("<!--");
+          expect(service.get(id)?.task.issueComment).toEqual({
+            url: "https://jira.example.com/browse/PAY-1?focusedCommentId=1",
+          });
+        }
+        expect(service.queuedTaskIds()).toEqual([]);
+        activity.close();
+      }
+    });
+
+    it("PR を作ったら、PR の URL をチケットに1回だけコメントする", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const tickets = new FakeTickets();
+      const { service, pulls } = makeService(
+        activity,
+        [chooseApp, out("# 要求要件"), design, implement("# 実装の説明"), review(undefined, [])],
+        options(tickets),
+      );
+      const [task] = service.importTickets([foundTicket("PAY-1")]);
+      const id = task?.id ?? "";
+      await service.runNext(id); // チケットを読む
+      await service.runNext(id); // 要求要件
+      service.approve(id, { step: "requirements", submission: 1 });
+      await service.runNext(id);
+      service.approve(id, { step: "design", submission: 1 });
+      await drain(service);
+      await drain(service);
+      expect(pulls.calls).toHaveLength(1);
+      expect(pulls.calls[0]?.title).toBe("PAY-1 決済の再送");
+      expect(tickets.comments).toHaveLength(1);
+      expect(tickets.comments[0]?.body).toContain(
+        "sacty が PR を作りました：https://github.com/acme/app/pull/7",
+      );
+      expect(service.get(id)?.task.ticketPrComment).toEqual({
+        url: "https://jira.example.com/browse/PAY-1?focusedCommentId=1",
+      });
+      expect(service.queuedTaskIds()).toEqual([]);
+      activity.close();
+    });
+  });
 });
 
 describe("プロジェクトの対象と、オーケストレーターが決めるベースブランチ・テストのコマンド（PBI-25）", () => {
@@ -7463,6 +7636,189 @@ describe("タスクの並行実行（PBI-30）", () => {
     for (const bad of ["0", "11", "1.5", "abc", -1]) {
       expect(() => service.saveSettings({ maxParallelTasks: bad })).toThrow();
     }
+    activity.close();
+  });
+});
+
+describe("JIRA のチケットの取り込みとトリアージ（PBI-52）", () => {
+  const projects = () => {
+    const store = new MemoryProjectStore();
+    store.put("default", {
+      name: "デフォルト",
+      targets: [
+        { scope: "repo", target: "https://github.com/acme/app" },
+        { scope: "repo", target: "https://github.com/acme/api" },
+      ],
+      githubAccounts: { "github.com": "me" },
+      tickets: [{ platform: "jira", service: "jira-server", keys: ["PAY"] }],
+    });
+    store.put("ops", {
+      name: "運用",
+      targets: [{ scope: "repo", target: "https://github.com/acme/ops" }],
+      githubAccounts: { "github.com": "me" },
+      tickets: [
+        { platform: "jira", service: "jira-server", keys: ["OPS", "PAY"] },
+        { platform: "cloud", service: "jira-cloud", keys: ["WEB"] },
+      ],
+    });
+    return store;
+  };
+  const setup = (
+    outcomes: AgentOutcome[] = [],
+    extra: { platforms?: Platform[]; settings?: MemorySettingsStore } = {},
+  ) => {
+    const activity = new SqliteActivityStore(dbPath);
+    const made = makeService(activity, outcomes, {
+      config: configOf(agent(), 1, extra.platforms ?? [jiraPlatform()]),
+      secrets: { "claude-oauth-token": "oauth-secret", "jira-token": "jira-secret" },
+      gateway: fakeGateway(),
+      projects: projects(),
+      settings: extra.settings ?? new MemorySettingsStore({ ticketLabel: "sacty" }),
+      tickets: new FakeTickets(),
+    });
+    return { activity, ...made };
+  };
+
+  it("取り込み先を接続先と種類ごとにまとめ、ラベルが無いか Off なら探さない", () => {
+    const settings = new MemorySettingsStore({});
+    const { activity, service } = setup([], { settings });
+    expect(service.ticketSources()).toEqual([]);
+    expect(service.importTickets([foundTicket("PAY-1")])).toEqual([]);
+    service.saveSettings({ ticketLabel: " sacty " });
+    expect(service.ticketSources()).toEqual([
+      { platform: "jira", service: "jira-server", keys: ["OPS", "PAY"], label: "sacty" },
+      { platform: "cloud", service: "jira-cloud", keys: ["WEB"], label: "sacty" },
+    ]);
+    service.saveSettings({ ticketLabel: "sacty", triageOff: ["tickets"] });
+    expect(service.ticketSources()).toEqual([]);
+    expect(service.importTickets([foundTicket("PAY-1")])).toEqual([]);
+    // ラベルは残る
+    expect(service.getSettings()).toMatchObject({ ticketLabel: "sacty", triageOff: ["tickets"] });
+    activity.close();
+  });
+
+  it("書いたキーのチケットだけを、担当のプロジェクトのタスクにし、二度は取り込まない", () => {
+    const { activity, service } = setup();
+    const created = service.importTickets([
+      foundTicket("PAY-1", "決済の再送"),
+      foundTicket("PAY-1", "決済の再送"),
+      foundTicket("OPS-2"),
+      foundTicket("ZZZ-3"),
+      { ...foundTicket("WEB-4"), platform: "cloud", service: "jira-cloud" },
+    ]);
+    expect(created.map((t) => [t.title, t.projectId, t.start, t.repo])).toEqual([
+      ["PAY-1 決済の再送", expect.any(String), "jira", undefined],
+      ["OPS-2 OPS-2 の要約", "ops", "jira", undefined],
+      ["WEB-4 WEB-4 の要約", "ops", "jira", undefined],
+    ]);
+    expect(created[0]?.ticket).toEqual({
+      platform: "jira",
+      service: "jira-server",
+      key: "PAY-1",
+      url: "https://jira.example.com/browse/PAY-1",
+    });
+    // 同じキーを書いたプロジェクトが複数あっても、1つのタスクだけ
+    expect(service.importTickets([foundTicket("PAY-1"), foundTicket("OPS-2")])).toEqual([]);
+    // ほかの接続先の同じキーは、別のチケット
+    expect(
+      service.importTickets([{ ...foundTicket("OPS-2"), platform: "cloud" }]).map((t) => t.title),
+    ).toEqual([]);
+    activity.close();
+  });
+
+  it("オーケストレーターがゲートウェイ経由でチケットを読み、リポジトリ・題・概要を決め、その後に工程を選ぶ", async () => {
+    const { activity, service, executor, repos } = setup([
+      triageOut({
+        repo: "https://github.com/acme/api/",
+        title: "PAY-1 決済の再送で二重に請求される",
+        summary: "## 目的\n二重請求を防ぐ\n\n## スコープ\nAPI 側の再送の判定だけ",
+        reason: "サブタスク。親は決済の改修。API の再送の判定を受け持つ",
+      }),
+      completed(20_000),
+    ]);
+    const [task] = service.importTickets([foundTicket("PAY-1")]);
+    const id = task?.id ?? "";
+    expect(service.queuedTaskIds()).toContain(id);
+    await service.runNext(id);
+    const triaged = service.get(id)?.task;
+    expect(triaged).toMatchObject({
+      repo: "https://github.com/acme/api",
+      title: "PAY-1 決済の再送で二重に請求される",
+      body: "## 目的\n二重請求を防ぐ\n\n## スコープ\nAPI 側の再送の判定だけ",
+      ticketTriage: {
+        by: "orchestrator",
+        reason: "サブタスク。親は決済の改修。API の再送の判定を受け持つ",
+      },
+      status: "queued",
+      steps: [],
+    });
+    expect(triaged?.budget.usedUsd).toBeGreaterThan(0);
+    const call = executor.calls[0];
+    const prompt = call?.command.join(" ") ?? "";
+    expect(prompt).toContain("PAY-1");
+    expect(prompt).toContain("$SACTY_PF_URL/jira");
+    expect(prompt).toContain("   - https://github.com/acme/app");
+    expect(prompt).toContain("   - https://github.com/acme/api");
+    expect(call?.env.SACTY_PF_URL).toBe("http://host.docker.internal:5001/r/sacty-gw-run/pf");
+    expect(JSON.stringify(call)).not.toContain("jira-secret");
+    expect(JSON.stringify(service.get(id)?.activity)).not.toContain("jira-secret");
+    // 次の実行で、選んだリポジトリを用意して工程を選ぶ
+    await service.runNext(id);
+    expect(repos.prepared[0]?.url).toBe("https://github.com/acme/api.git");
+    expect(service.get(id)?.task.steps.length).toBeGreaterThan(0);
+    activity.close();
+  });
+
+  it("選べなければ止まり、人が候補からリポジトリを選んで再開できる", async () => {
+    for (const bad of [
+      triageOut({ repo: "", reason: "どのリポジトリか分からない" }),
+      triageOut({ repo: "https://github.com/evil/other", reason: "x" }),
+      { kind: "completed", output: "JSON なし" } as AgentOutcome,
+    ]) {
+      const { activity, service, executor } = setup([bad, completed(20_000)]);
+      const [task] = service.importTickets([foundTicket("PAY-1")]);
+      const id = task?.id ?? "";
+      await service.runNext(id);
+      const paused = service.get(id)?.task;
+      expect(paused?.status).toBe("paused");
+      expect(paused?.repo).toBeUndefined();
+      expect(service.get(id)?.activity.map((e) => e.type)).toContain("OrchestratorFailed");
+      await expect(
+        service.chooseTicketRepository(id, "https://github.com/acme/ops"),
+      ).rejects.toThrow();
+      await service.chooseTicketRepository(id, "https://github.com/acme/app");
+      expect(service.get(id)?.task).toMatchObject({
+        repo: "https://github.com/acme/app",
+        ticketTriage: { by: "person" },
+      });
+      service.resume(id, {});
+      await service.runNext(id);
+      expect(executor.calls).toHaveLength(2); // チケットは読み直さない
+      expect(service.get(id)?.task.steps.length).toBeGreaterThan(0);
+      // 工程を選んだ後は、リポジトリを変えられない
+      await expect(
+        service.chooseTicketRepository(id, "https://github.com/acme/api"),
+      ).rejects.toThrow();
+      activity.close();
+      rmSync(dbPath, { force: true });
+    }
+  });
+
+  it("接続先が設定に無ければ、チケットを読まずに止まる。チケットでないタスクのリポジトリは選べない", async () => {
+    const { activity, service, executor } = setup([], { platforms: [] });
+    const [task] = service.importTickets([foundTicket("PAY-1")]);
+    await service.runNext(task?.id ?? "");
+    expect(executor.calls).toHaveLength(0);
+    expect(service.get(task?.id ?? "")?.task.status).toBe("paused");
+    expect(ja(service.get(task?.id ?? "")?.task.pausedMessage)).toContain("jira");
+    const plain = service.createTask({
+      projectId: "default",
+      title: "A",
+      repo: "https://github.com/acme/app",
+    });
+    await expect(
+      service.chooseTicketRepository(plain.id, "https://github.com/acme/app"),
+    ).rejects.toThrow();
     activity.close();
   });
 });

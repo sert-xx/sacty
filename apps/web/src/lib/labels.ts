@@ -148,6 +148,14 @@ export function describeEvent(event: ActivityEvent, l: LabelMessages): string {
         )
       );
     }
+    case "TicketTriaged":
+      return e.TicketTriaged(
+        event.payload.repo,
+        l.text(event.payload.reason),
+        event.actor === "person",
+      );
+    case "TicketPullRequestCommented":
+      return e.TicketPullRequestCommented(event.payload.url);
     case "ServicesStarted":
       return e.ServicesStarted(
         l.step[event.payload.step],

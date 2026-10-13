@@ -15,6 +15,14 @@ const ja = {
   triageIssues: "Issue を取り込む",
   triagePullRequests: "PR を取り込む",
   triageReviewLabel: "レビュー用のラベルの PR を取り込む",
+  triageTickets: "チケットを取り込む",
+  ticketsTitle: "チケットの取り込み",
+  ticketsNote: "JIRA などのチケットをタスクにします",
+  ticketsHelp:
+    "取り込み先（接続先と JIRA のプロジェクトのキー）は、プロジェクトの設定に書きます。\nラベルは、すべての取り込み先で共通です。",
+  ticketLabel: "取り込むラベル",
+  ticketsOn: (label: string) => `ラベル「${label}」の付いたチケットを取り込みます。`,
+  ticketsOff: "ラベルを設定していないか Off にしているので、チケットの取り込みは止まっています。",
   reviewTitle: "PR のレビューの取り込み",
   reviewNote: "取り込んだ PR は、レビューだけを行って PR に投稿します",
   reviewHelp:
@@ -61,6 +69,14 @@ const en: SettingsMessages = {
   triageIssues: "Import issues",
   triagePullRequests: "Import PRs",
   triageReviewLabel: "Import PRs with the review label",
+  triageTickets: "Import tickets",
+  ticketsTitle: "Ticket intake",
+  ticketsNote: "Tickets in JIRA and similar services become tasks",
+  ticketsHelp:
+    "Write the ticket sources (connection and JIRA project keys) in the project settings.\nThe label is shared by all ticket sources.",
+  ticketLabel: "Label to import",
+  ticketsOn: (label) => `Tickets labeled "${label}" are imported.`,
+  ticketsOff: "No label is set or it is off, so ticket intake is stopped.",
   reviewTitle: "PR review intake",
   reviewNote: "Imported PRs are only reviewed, and the review is posted to the PR",
   reviewHelp:

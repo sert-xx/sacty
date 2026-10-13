@@ -27,7 +27,10 @@ export default async function ProjectsPage() {
         <h2 id="new-project" className="text-[15px] font-semibold">
           {t.newTitle}
         </h2>
-        <ProjectEditor images={(await getStatus().catch(() => undefined))?.images ?? []} />
+        <ProjectEditor
+          images={(await getStatus().catch(() => undefined))?.images ?? []}
+          platforms={(await getStatus().catch(() => undefined))?.platforms ?? []}
+        />
       </section>
     </>
   );
@@ -57,7 +60,10 @@ async function Projects() {
           </h2>
           {!intake ? (
             <p className="text-muted-foreground">{t.intake.stopped}</p>
-          ) : !intake.label && !intake.reviewLabel && !intake.reviewRequested ? (
+          ) : !intake.label &&
+            !intake.reviewLabel &&
+            !intake.reviewRequested &&
+            !intake.ticketLabel ? (
             // 取り込むラベルは sacty 全体の設定（PBI-26）
             <p className="text-warn">
               {t.intake.noLabel}{" "}
@@ -77,6 +83,10 @@ async function Projects() {
                         intake.reviewRequested === true,
                         intake.triageOff?.includes("reviewLabel") ? "" : (intake.reviewLabel ?? ""),
                       )
+                    : "",
+                  // チケット（PBI-52）。Off なら出さない
+                  intake.ticketLabel && !intake.triageOff?.includes("tickets")
+                    ? t.intake.ticket(intake.ticketLabel)
                     : "",
                 ]
                   .filter(Boolean)
@@ -129,12 +139,18 @@ async function Projects() {
               {p.name}
             </Link>
             <p className="text-sm text-muted-foreground">{t.summary(p.targets.length)}</p>
-            {p.targets.length > 0 && (
+            {(p.targets.length > 0 || (p.tickets ?? []).length > 0) && (
               <ul className="flex flex-col gap-0.5 text-xs text-muted-foreground">
                 {p.targets.map((target) => (
                   <li key={`${target.scope}:${target.target}`} className="break-all">
                     {t.targetScope(t.scope[target.scope])}
                     <span className="font-mono">{target.target}</span>
+                  </li>
+                ))}
+                {/* チケットの取り込み先（PBI-52） */}
+                {(p.tickets ?? []).map((source) => (
+                  <li key={`ticket:${source.platform}:${source.service}`} className="break-all">
+                    {t.ticketSource(source.platform, source.keys)}
                   </li>
                 ))}
               </ul>
