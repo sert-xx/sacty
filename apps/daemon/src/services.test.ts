@@ -237,6 +237,36 @@ describe("正規化で元の参照が消えるファイルの確かめ（PBI-47 
     ]);
   });
 
+  it("マージキー（<<: *anchor）で継承した label_file・include・extends も確かめる（レビュー指摘）", () => {
+    write(
+      join(ws, "compose.yaml"),
+      [
+        "x-base: &base",
+        "  label_file: /tmp/outside-labels.txt",
+        "x-ext: &ext",
+        "  extends: { file: ../base.yaml, service: b }",
+        "x-inc: &inc",
+        "  env_file: ../values.env",
+        "include:",
+        "  - <<: *inc",
+        "    path: inc.yaml",
+        "services:",
+        "  a:",
+        "    <<: *base",
+        "    image: postgres:17",
+        "  b:",
+        "    <<: [*ext]",
+        "    image: x",
+      ].join("\n"),
+    );
+    write(join(ws, "inc.yaml"), "services:\n  c:\n    image: x\n");
+    expect(checkComposeSources(ws, join(ws, "compose.yaml"))).toEqual([
+      "作業領域の外のinclude の env_file（../values.env）は使えません",
+      "作業領域の外のlabel_file（/tmp/outside-labels.txt）は使えません",
+      "作業領域の外のextends のファイル（../base.yaml）は使えません",
+    ]);
+  });
+
   it("extends でたどったファイルも確かめる。同じファイルを何度もたどらない", () => {
     write(
       join(ws, "compose.yaml"),

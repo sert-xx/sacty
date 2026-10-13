@@ -262,7 +262,8 @@ export function checkComposeSources(workspaceDir: string, file: string): string[
     seen.add(path);
     let doc: unknown;
     try {
-      doc = parseYaml(readFileSync(path, "utf8"));
+      // Compose と同じく、マージキー（<<: *anchor）を解決してから確かめる（PBI-47 レビュー指摘）
+      doc = parseYaml(readFileSync(path, "utf8"), { merge: true });
     } catch {
       return; // 読めないファイルは、正規化で理由が出る
     }
