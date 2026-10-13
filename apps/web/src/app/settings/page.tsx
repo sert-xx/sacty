@@ -1,5 +1,6 @@
 import { Suspense } from "react";
 import { DaemonError } from "@/components/daemon-error";
+import { SecretsSection } from "@/components/secrets-section";
 import { SettingsForm } from "@/components/settings-form";
 import { getMessages } from "@/i18n/server";
 import { DaemonUnavailableError, getSettings } from "@/lib/daemon";
@@ -16,6 +17,8 @@ export default async function SettingsPage() {
       <Suspense fallback={<p className="text-sm text-muted-foreground">{t.loading}</p>}>
         <Settings />
       </Suspense>
+      {/* 秘密情報の取り出し直し（PBI-48） */}
+      <SecretsSection />
     </>
   );
 }

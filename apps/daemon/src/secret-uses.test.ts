@@ -1,0 +1,133 @@
+import type { Project } from "@sacty/core";
+import { describe, expect, it } from "vitest";
+import type { AgentConfig, SactyConfig } from "./config.js";
+import { GATEWAY_TOKEN_SECRET } from "./context.js";
+import { secretUses } from "./secret-uses.js";
+
+const agent = (id: string, auth: AgentConfig["auth"], extra: Partial<AgentConfig> = {}) =>
+  ({ id, runtime: "codex", auth, ...extra }) as AgentConfig;
+
+const config = (patch: Partial<SactyConfig> = {}): SactyConfig =>
+  ({
+    image: "x",
+    defaultAgent: agent("main", { mode: "subscription", secret: "claude-token" }),
+    guardianAgent: agent("main", { mode: "subscription", secret: "claude-token" }),
+    budgetPerTaskUsd: 1,
+    gatewayRetry: { maxAttempts: 1, maxWaitMs: 0 },
+    hostAddress: "host-gateway",
+    imageBuild: { npmToken: "npm-token" },
+    platforms: [],
+    hostMcp: [],
+    ...patch,
+  }) as SactyConfig;
+
+describe("起動時に取り出す秘密情報の参照（PBI-48）", () => {
+  it("使うエージェント・接続先・PF・ホストの MCP・プロジェクトの通知先の参照を、重ねずに集める", () => {
+    const uses = secretUses(
+      config({
+        guardianAgent: agent("guard", { mode: "api-key", secret: "op://Work/Anthropic/key" }),
+        stepAgents: {
+          implement: agent(
+            "gw",
+            { mode: "provider", provider: "corp" } as unknown as AgentConfig["auth"],
+            {
+              endpoint: {
+                name: "corp",
+                baseUrl: "https://gw",
+                secret: "op://Work/GW/key",
+                viaGateway: true,
+              },
+            },
+          ),
+          design: agent("main", { mode: "subscription", secret: "claude-token" }),
+        },
+        platforms: [
+          {
+            name: "ticket",
+            upstream: "https://t",
+            description: "",
+            auth: {
+              header: "Authorization",
+              prefix: "",
+              token: {
+                url: "https://t/token",
+                method: "POST",
+                headers: {},
+                secret: "op://Work/Ticket/client",
+                tokenPath: "token",
+                ttlSec: 60,
+              },
+            },
+            allow: [],
+          },
+        ],
+        hostMcp: [
+          {
+            name: "docs",
+            command: "x",
+            args: [],
+            env: { PLAIN: "v", TOKEN: { secret: "op://Work/Docs/token", prefix: "" } },
+            description: "",
+            readyTimeoutSec: 5,
+          },
+        ],
+      }),
+      [
+        {
+          id: "p",
+          name: "決済",
+          notification: {
+            kind: "slack-webhook",
+            webhook: "op://Work/Slack/webhook",
+            language: "ja",
+          },
+        } as unknown as Project,
+        {
+          id: "q",
+          name: "認証",
+          notification: {
+            kind: "slack-api",
+            url: "https://slack",
+            channel: "#c",
+            token: "slack-token",
+            language: "ja",
+          },
+        } as unknown as Project,
+        { id: "r", name: "通知なし" } as unknown as Project,
+      ],
+    );
+    expect(uses).toEqual([
+      { ref: "claude-token", where: "agents.main.auth.secret" },
+      { ref: "op://Work/Anthropic/key", where: "agents.guard.auth.secret" },
+      { ref: "op://Work/GW/key", where: "providers.corp.secret" },
+      { ref: "op://Work/Ticket/client", where: "gateway.platforms.ticket.auth.token.secret" },
+      { ref: "op://Work/Docs/token", where: "gateway.mcp_servers.docs.env.TOKEN" },
+      { ref: "op://Work/Slack/webhook", where: "プロジェクト「決済」の通知先（Webhook の URL）" },
+      { ref: "slack-token", where: "プロジェクト「認証」の通知先（Slack のトークン）" },
+    ]);
+    // イメージの作成だけで使う npm のトークンは含めない
+    expect(uses.some((u) => u.ref === "npm-token")).toBe(false);
+  });
+
+  it("秘密情報を使わない設定（stub・ゲートウェイのトークン）では、何も集めない", () => {
+    expect(
+      secretUses(
+        config({
+          defaultAgent: agent("stub", { mode: "stub" }),
+          guardianAgent: agent("stub", { mode: "stub" }),
+          hostMcp: [
+            {
+              name: "x",
+              command: "x",
+              args: [],
+              env: { T: { secret: GATEWAY_TOKEN_SECRET, prefix: "" } },
+              description: "",
+              readyTimeoutSec: 5,
+            },
+          ],
+        }),
+        [],
+      ),
+    ).toEqual([]);
+  });
+});

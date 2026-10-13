@@ -35,7 +35,12 @@ import { type Platform, PlatformFile, toPlatform } from "./platforms.js";
 import { MemoryProjectStore } from "./projects.js";
 import { buildOrchestratorPrompt, changeableSteps } from "./prompts.js";
 import type { RepositoryWorkspace } from "./repository.js";
-import { MemorySecretStore, OnePasswordSecretStore, ResolvingSecretStore } from "./secrets.js";
+import {
+  MemorySecretStore,
+  OnePasswordSecretStore,
+  ResolvingSecretStore,
+  SecretNotFoundError,
+} from "./secrets.js";
 import { createApp } from "./server.js";
 import { awaitingIssueComment, type ServiceDeps, TaskService } from "./service.js";
 import type { ServiceRunner, ServicesSpec } from "./services.js";
@@ -4878,6 +4883,57 @@ describe("プロジェクトの対象と、オーケストレーターが決め�
     expect(task?.pausedMessage).toEqual({ code: "run.repositoryNotConfigured" });
     expect(repos.prepared).toEqual([]);
     expect(executor.calls).toHaveLength(0);
+    activity.close();
+  });
+});
+
+describe("起動時に秘密情報をまとめて取り出す（PBI-48）", () => {
+  /** まとめて取り出せる取り出し口の偽物。取り出せるものを持ち、呼ばれた参照を記録する。 */
+  class PrefetchStore extends MemorySecretStore {
+    prefetched: { refs: string[]; fresh?: boolean }[] = [];
+    constructor(private readonly available: Record<string, string>) {
+      super(available);
+    }
+    async prefetch(refs: readonly string[], options: { fresh?: boolean } = {}) {
+      this.prefetched.push({ refs: [...refs], ...(options.fresh ? { fresh: true } : {}) });
+      return refs
+        .filter((ref) => !(ref in this.available))
+        .map((ref) => ({ ref, error: new SecretNotFoundError(ref) }));
+    }
+  }
+
+  it("使う参照をまとめて取り出し、取り出せなかったものを画面の警告に出す（値は出さない）。取り出し直すと消える", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const store = new PrefetchStore({});
+    const { service } = makeService(activity, [], { secretStore: store });
+    const first = await service.prefetchSecrets();
+    // 既定のエージェントの Claude Code のトークン
+    expect(store.prefetched).toEqual([{ refs: ["claude-oauth-token"] }]);
+    expect(first.total).toBe(1);
+    expect(service.status().warnings.map((w) => ja(w))).toEqual([
+      expect.stringContaining(
+        "起動のときに、秘密情報（agents.claude-subscription.auth.secret）を取り出せませんでした",
+      ),
+    ]);
+    (store as unknown as { available: Record<string, string> }).available["claude-oauth-token"] =
+      "oauth-secret";
+    const again = await service.prefetchSecrets({ fresh: true });
+    expect(store.prefetched.at(-1)).toEqual({ refs: ["claude-oauth-token"], fresh: true });
+    expect(again.problems).toEqual([]);
+    expect(service.status().warnings).toEqual([]);
+    expect(JSON.stringify(service.status())).not.toContain("oauth-secret");
+    activity.close();
+  });
+
+  it("まとめて取り出せない取り出し口や、設定に誤りがあるときは、何もしない", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service } = makeService(activity, []);
+    expect(await service.prefetchSecrets()).toEqual({ total: 0, problems: [] });
+    const broken = makeService(activity, [], {
+      secretStore: new PrefetchStore({}),
+      config: () => ({ ok: false, problem: message("config.missing", { path: "x" }) }),
+    });
+    expect(await broken.service.prefetchSecrets()).toEqual({ total: 0, problems: [] });
     activity.close();
   });
 });

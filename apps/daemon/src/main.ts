@@ -129,9 +129,25 @@ const app = createApp(service, token, { intake });
 
 const server = serve({ fetch: app.fetch, hostname: "127.0.0.1", port }, (info) => {
   console.log(`[daemon] listening on http://127.0.0.1:${info.port} (data: ${home})`);
-  worker.start();
-  intake.start();
-  prWatcher.start();
+  // 使う秘密情報をまとめて取り出してから（1Password の認証は起動のときの1回。PBI-48）、タスクの実行と取り込みを始める
+  void service
+    .prefetchSecrets()
+    .then(({ total, problems }) => {
+      if (total > 0) {
+        console.log(
+          `[daemon] 秘密情報を取り出しました（${total - problems.length}/${total} 件）。`,
+        );
+      }
+      for (const problem of problems) console.warn(`[daemon] ${renderMessage(problem, "ja")}`);
+    })
+    .catch((error: unknown) =>
+      console.warn("[daemon] 秘密情報をまとめて取り出せませんでした：", error),
+    )
+    .finally(() => {
+      worker.start();
+      intake.start();
+      prWatcher.start();
+    });
 });
 
 /** 後処理を待つ上限。CLIはこれより長く待ってから強制終了する。 */

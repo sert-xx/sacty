@@ -229,6 +229,18 @@ export async function testNotification(projectId: string): Promise<OpResult> {
   return postOp(`/api/projects/${encodeURIComponent(projectId)}/notification-test`, {});
 }
 
+/** 使う秘密情報を取り出し直す（PBI-48）。取り出した数と、取り出せなかった理由を返す（値は返さない）。 */
+export async function prefetchSecrets(): Promise<{ total: number; problems: DaemonText[] }> {
+  const res = await ensureOk(
+    await daemonFetch("/api/secrets/prefetch", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    }),
+  );
+  return (await res.json()) as { total: number; problems: DaemonText[] };
+}
+
 export async function runIntake(): Promise<OpResult> {
   return postOp("/api/intake/run", {});
 }

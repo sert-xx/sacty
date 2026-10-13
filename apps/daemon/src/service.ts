@@ -130,7 +130,8 @@ import {
   verificationBasis,
 } from "./prompts.js";
 import type { RepositoryWorkspace } from "./repository.js";
-import { SecretNotFoundError, type SecretStore } from "./secrets.js";
+import { secretUses } from "./secret-uses.js";
+import { type PrefetchingSecretStore, SecretNotFoundError, type SecretStore } from "./secrets.js";
 import type { ServiceRunner, ServicesSpec, StartedServices } from "./services.js";
 import type { SettingsStore } from "./settings.js";
 
@@ -953,6 +954,8 @@ export class TaskService {
       agent: { id: agent.id, runtime: agent.runtime, authMode: agent.auth.mode },
       problems: [],
       warnings: [
+        // 起動のときに取り出せなかった秘密情報（PBI-48）
+        ...this.secretProblems,
         ...(this.deps.platformProblems?.(config.config.platforms.map((p) => p.name)) ?? []),
         ...(this.deps.hostMcpProblems?.() ?? []),
         ...(this.deps.notifier?.problems() ?? []),
@@ -3369,6 +3372,35 @@ export class TaskService {
     return this.append(task, [
       { actor: "person", event: { type: "ReviewRestarted", payload: {} } },
     ]);
+  }
+
+  /** 起動のときに取り出せなかった秘密情報（PBI-48）。取り出し直すと置き換える。 */
+  private secretProblems: DaemonText[] = [];
+
+  /**
+   * 設定とプロジェクトで使う秘密情報を、まとめて取り出す（sacty up の起動時。PBI-48）。1Password の認証を1回にし、
+   * タスクの実行中に認証を求めないため。取り出せなかったものは、画面の警告に出す（値は出さない）。fresh なら、
+   * 持っている値を捨てて取り出し直す（画面の「取り出し直す」）。
+   */
+  async prefetchSecrets(options: { fresh?: boolean } = {}): Promise<{
+    total: number;
+    problems: DaemonText[];
+  }> {
+    const config = this.deps.config();
+    const secrets = this.deps.secrets as SecretStore & Partial<PrefetchingSecretStore>;
+    if (!config.ok || !secrets.prefetch) return { total: 0, problems: [] };
+    const uses = secretUses(config.config, this.deps.projects.all());
+    const failures = await secrets.prefetch(
+      uses.map((u) => u.ref),
+      options,
+    );
+    this.secretProblems = failures.map(({ ref, error }) =>
+      message("secret.prefetchFailed", {
+        where: uses.find((u) => u.ref === ref)?.where ?? ref,
+        detail: error.text,
+      }),
+    );
+    return { total: uses.length, problems: this.secretProblems };
   }
 
   /** 一時停止中のタスクを再開する。予算で止まった場合は、累計の新しい上限が必要。 */
