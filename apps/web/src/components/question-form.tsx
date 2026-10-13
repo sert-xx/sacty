@@ -32,6 +32,8 @@ export function QuestionForm({ taskId, blocked }: { taskId: string; blocked?: st
         defaultValue={state.text ?? ""}
         disabled={blocked !== undefined || pending}
         aria-describedby="question-help"
+        // 長い質問（ログの貼り付けなど）でも、送信のボタンがパネルからはみ出さないよう、高さに上限を付けて中をスクロールする
+        className="max-h-[min(12rem,25vh)] overflow-y-auto"
       />
       <div className="flex flex-wrap items-center gap-3">
         <Button type="submit" disabled={blocked !== undefined || pending} className="min-h-10">

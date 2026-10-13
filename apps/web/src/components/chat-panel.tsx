@@ -96,7 +96,10 @@ export function ChatPanel({
           <div ref={scroller} className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-4">
             {children}
           </div>
-          <div className="border-t border-border p-4">{form}</div>
+          {/* 入力の領域も、パネルの6割までにする（低い画面でも、質問の一覧と送信のボタンに届くように） */}
+          <div className="max-h-[60%] shrink-0 overflow-y-auto border-t border-border p-4">
+            {form}
+          </div>
         </DialogPrimitive.Popup>
       </DialogPrimitive.Portal>
     </DialogPrimitive.Root>
