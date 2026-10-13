@@ -36,7 +36,6 @@ RUN if command -v node >/dev/null 2>&1 && command -v npm >/dev/null 2>&1 \
     echo "sacty: 元のイメージに Node.js 18 以上と npm が無く、Node.js を写す元のイメージ（images の node_image か image_build.base_image）にも node と npm が見つかりません。node と npm の入ったイメージを node_image に書いてください。" >&2; \
     exit 1; \
   fi
-ENV PATH=/opt/sacty-node/bin:$PATH
 # root では動かさない。元のイメージに node ユーザーが無ければ作る（UID 1000 が使われていれば、空いている番号）
 RUN if ! id node >/dev/null 2>&1; then \
     if command -v useradd >/dev/null 2>&1; then \
@@ -45,7 +44,16 @@ RUN if ! id node >/dev/null 2>&1; then \
     else \
       adduser -D -s /bin/sh node; \
     fi; \
-  fi
+  fi \
+  && mkdir -p /home/node/go \
+  && chown -R "node:$(id -g node)" /home/node
+# エージェントを動かす node ユーザーの場所を既定にする。CI のイメージは HOME・GOPATH を root 向けの場所（/root など）に
+# していることがあり、node ユーザーでは書けないため（Go のキャッシュ・モジュール、Maven の設定など）。
+# 元のイメージの PATH は残し（入っているツールはそのまま使える）、go install で入れたツールの場所を足す。
+# GOPATH を別の場所にしたいときは、images の env で上書きする
+ENV HOME=/home/node \
+  GOPATH=/home/node/go \
+  PATH=/opt/sacty-node/bin:$PATH:/home/node/go/bin
 
 FROM base-${BASE_KIND}
 # イメージに入れる npm の版（config.yaml の image_build.npm_version。空なら元のイメージの npm。PBI-40）
@@ -71,11 +79,13 @@ RUN if ! command -v git >/dev/null 2>&1; then \
 
 # エージェントのCLI。版を固定し、上げるときはこのファイルを変える。
 # npm のレジストリと認証は、sacty が作った .npmrc をビルドのときだけ読ませる（イメージには残らない。PBI-33）
+# キャッシュは一時的な場所に置いて消す（HOME の下に root の持ち物を残すと、node ユーザーの npm が書けなくなるため）
 RUN --mount=type=secret,id=npmrc,target=/run/secrets/npmrc \
   NPM_CONFIG_USERCONFIG=/run/secrets/npmrc \
+  NPM_CONFIG_CACHE=/tmp/sacty-npm-cache \
   npm install -g @anthropic-ai/claude-code@2.1.296 @openai/codex@0.160.0 \
     ${NPM_VERSION:+npm@${NPM_VERSION}} \
-  && npm cache clean --force
+  && rm -rf /tmp/sacty-npm-cache
 
 # コンテナの中の npm 全体の設定（config.yaml の image_build.npm_config。認証の項目は含まない。PBI-40）。
 # CLI を入れた後に置く（CLI の取得には効かせない）。ファイルの受け渡しは、認証の .npmrc と同じ secret の仕組みを
@@ -90,6 +100,9 @@ RUN --mount=type=secret,id=npmconfig,target=/run/secrets/npmconfig \
   fi \
   && g="$(npm config get globalconfig)" && mkdir -p "$(dirname "$g")" \
   && { [ ! -s "$g" ] || [ -z "$(tail -c 1 "$g")" ] || echo; cat /run/secrets/npmconfig; } >> "$g"
+
+# root で実行した手順（npm など）が HOME の下に作ったものを、node ユーザーの持ち物に戻す
+RUN if [ -d /home/node ]; then chown -R "node:$(id -g node)" /home/node; fi
 
 # root では動かさない（node ユーザー）
 USER node
