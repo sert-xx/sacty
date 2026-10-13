@@ -152,7 +152,7 @@ npx sacty image build            # 既定のイメージと images のすべて
 npx sacty image build java17     # 名前を指定して作る（default は既定のイメージ）
 ```
 
-- sacty が、元のイメージに git・Claude Code・Codex を足し、`node` ユーザーで動かす。元のイメージに Node.js 18 以上と npm があればそれを使い、無ければ `node_image`（無ければ `image_build.base_image` か `node:22-bookworm-slim`）から写す（npm は `npm root -g`・`/usr/local/lib/node_modules`・`/usr/lib/node_modules` から探す）。npm の設定は `image_build` のものを使う
+- sacty が、元のイメージに git・Claude Code・Codex を足し、`node` ユーザーで動かす。元のイメージに Node.js 18 以上と npm があればそれを使い、無ければ `node_image`（無ければ `image_build.base_image` か `node:22-bookworm-slim`）から写す（npm は `npm root -g`・`/usr/local/lib/node_modules`・`/usr/lib/node_modules` から探す）。npm の設定は `image_build` のものを使う。エージェントは `node` ユーザーで動くので、`HOME` は `/home/node`、`GOPATH` は `/home/node/go`（`/home/node/go/bin` を PATH に足す）にする（CI のイメージが root 向けの場所にしていても書けるように。`GOPATH` は `env` で上書きできる）
 - イメージの名前は、書かなければ `sacty-agent-<名前>:0.1.0`（`image` で変えられる）
 - `env` は、組織のレジストリなど（`PIP_INDEX_URL`・`UV_DEFAULT_INDEX`・`GOPROXY`・`GONOSUMDB` など）。コンテナの中のすべてのコマンドに見えるので、認証の値（`TOKEN`・`PASSWORD` などを含む名前、ユーザー名・パスワードを含む URL）は書けない
 - `maven_mirror` は、Maven（`settings.xml` の mirror）と Gradle（init スクリプト）の取得先を、すべてその URL に向ける
