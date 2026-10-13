@@ -2553,6 +2553,8 @@ export class TaskService {
     agent: AgentConfig,
     config: SactyConfig,
     usedSecrets: string[],
+    /** 渡す MCP サーバーを、この名前の1つに絞る（成果の書き出し。PBI-56）。 */
+    onlyMcp?: string,
   ): Promise<Awaited<ReturnType<typeof prepareContext>> | undefined> {
     const contextSource = this.deps.projects.get(task.projectId)?.context;
     const defaultContext = this.deps.defaultContext;
@@ -2576,6 +2578,7 @@ export class TaskService {
       hostMcp,
       // 層の HTTP の MCP サーバーは、ゲートウェイ経由にする（PBI-49）
       gatewayForMcp?.containerOrigin(),
+      onlyMcp,
     );
   }
 
@@ -2627,7 +2630,8 @@ export class TaskService {
     let context: Awaited<ReturnType<typeof prepareContext>> | undefined;
     if (to.via === "mcp") {
       try {
-        context = await this.runContext(task, agent, config, usedSecrets);
+        // 決めた接続先の MCP サーバーだけを渡す（ほかの MCP サーバーは使わせず、その認証も取り出さない）
+        context = await this.runContext(task, agent, config, usedSecrets, to.name);
       } catch (error) {
         return fail(
           message("export.failed", { detail: redactText(errorText(error), usedSecrets) }),

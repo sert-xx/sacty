@@ -479,7 +479,10 @@ describe("成果の書き出し（PBI-56）", () => {
       location: "DEV",
     } as const;
     const fresh = buildExportPrompt(base, "requirements", { ...input, interrupted: false });
-    expect(fresh).toContain("置き場所に、新しいページを作る");
+    // 前の書き出しが結果を返せなかったかもしれないので、作る前に目印で探させる
+    expect(fresh).toContain(
+      "目印「sacty-export:t1:requirements」を含むページを探し、あればそのページを更新する（新しく作らない）。無ければ、新しいページを作る",
+    );
     expect(fresh).toContain("ページの題：決済の再送：要求要件");
     const update = buildExportPrompt(base, "requirements", {
       ...input,

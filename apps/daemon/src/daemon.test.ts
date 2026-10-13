@@ -8672,7 +8672,9 @@ describe("成果の書き出し（PBI-56）", () => {
     expect(prompt).toContain("sacty-export.md");
     expect(prompt).toContain("$SACTY_PF_URL/confluence");
     expect(prompt).toContain("DEV スペースの「要件」");
-    expect(prompt).toContain("置き場所に、新しいページを作る");
+    expect(prompt).toContain(
+      "を含むページを探し、あればそのページを更新する（新しく作らない）。無ければ、新しいページを作る",
+    );
     // 書き出す内容は、作業領域のファイルで渡す
     expect(executor.workspaceFiles[1]).toEqual(["sacty-export.md"]);
     const task = taskOf(service, id);
@@ -8852,6 +8854,63 @@ describe("成果の書き出し（PBI-56）", () => {
     activity.close();
   });
 
+  it("書き出しには決めた MCP サーバーだけを渡す（ほかの MCP サーバーの認証が取れなくても書き出せる）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const contexts = new FakeContexts({
+      "https://github.com/acme/ctx.git": {
+        "mcp.yaml": [
+          "servers:",
+          "  docs:",
+          "    url: https://docs.example.com/mcp",
+          "    headers:",
+          "      Authorization: { secret: docs-token, prefix: 'Bearer ' }",
+          "  other:",
+          "    url: https://other.example.com/mcp",
+          "    headers:",
+          "      Authorization: { secret: other-token, prefix: 'Bearer ' }",
+        ].join("\n"),
+      },
+    });
+    // 承認の後は、other の認証だけを取り出せなくする
+    let otherGone = false;
+    const values: Record<string, string> = { ...secrets, "other-token": "other-secret-value" };
+    const secretStore = {
+      async get(name: string) {
+        if (name === "other-token" && otherGone) throw new Error("other-token を取り出せません");
+        const value = values[name];
+        if (value === undefined) throw new Error(`no secret ${name}`);
+        return value;
+      },
+    };
+    const { service, executor } = makeService(
+      activity,
+      [out("# 要求要件"), exportOut({ url: "https://docs.example.com/p/9" })],
+      {
+        gateway: fakeGateway(),
+        contexts,
+        secretStore,
+        planner: plannerWith({
+          requirements: { to: { via: "mcp", name: "docs", location: "" }, reason: "規約" },
+        }),
+      },
+    );
+    service.saveProject("default", {
+      name: "デフォルト",
+      targets: [{ scope: "repo", target: "https://github.com/acme/app" }],
+      githubAccounts: { "github.com": "me" },
+      context: { repo: "https://github.com/acme/ctx.git" },
+    });
+    const { id } = service.createTask({ projectId: "default", title: "A" });
+    await approveRequirements(service, id);
+    otherGone = true;
+    await service.runNext(id);
+    const servers = JSON.parse(executor.mcpConfigs[1] ?? "{}").mcpServers;
+    expect(Object.keys(servers)).toEqual(["docs"]);
+    expect(taskOf(service, id).exports.requirements?.url).toBe("https://docs.example.com/p/9");
+    expect(JSON.stringify(executor.calls[1])).not.toContain("other");
+    activity.close();
+  });
+
   it("書き出せなければ理由を残して進め（タスクは止めない）、画面から書き出し直せる", async () => {
     const activity = new SqliteActivityStore(dbPath);
     const { service, executor } = makeService(
@@ -8896,6 +8955,41 @@ describe("成果の書き出し（PBI-56）", () => {
     expect(taskOf(service, id).status).toBe("awaiting_approval");
     expect(executor.calls).toHaveLength(4);
     expect(service.queuedTaskIds()).toEqual([]);
+    activity.close();
+  });
+
+  it("結果を読めなかった（ページを作ったかもしれない）書き出しを書き出し直すと、作る前に目印で既存のページを探させる", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service, executor } = makeService(
+      activity,
+      [
+        out("# 要求要件"),
+        out("ページを作りました（結果の JSON を出し忘れた）"),
+        out("# 設計"),
+        exportOut({ url: URL1 }),
+      ],
+      {
+        config: configOf(agent(), 1, [confluence()]),
+        gateway: fakeGateway(),
+        planner: toConfluence,
+        secrets,
+      },
+    );
+    const { id } = service.createTask({ projectId: "default", title: "A" });
+    await approveRequirements(service, id);
+    await service.runNext(id); // 書き出し（結果を読めない）
+    expect(taskOf(service, id).exports.requirements?.last?.failed).toBeDefined();
+    await service.runNext(id); // 設計
+    service.retryExport(id, "requirements");
+    await service.runNext(id);
+    const retried = promptOf(executor, 3);
+    expect(retried).toContain(
+      "目印「sacty-export:" +
+        id +
+        ":requirements」を含むページを探し、あればそのページを更新する（新しく作らない）",
+    );
+    expect(retried).not.toContain("置き場所に、新しいページを作る");
+    expect(taskOf(service, id).exports.requirements?.url).toBe(URL1);
     activity.close();
   });
 
