@@ -13,9 +13,14 @@ const initial: SaveSettingsState = {};
 /** sacty 全体の設定の編集（取り込むラベル。PBI-26。同時に実行するタスクの数。PBI-30）。 */
 export function SettingsForm({
   intakeLabel,
+  reviewLabel: savedReviewLabel,
+  reviewRequested: savedReviewRequested,
   maxParallelTasks,
 }: {
   intakeLabel: string;
+  /** PR のレビューの取り込み（PBI-44）。 */
+  reviewLabel: string;
+  reviewRequested: boolean;
   /** 設定していなければ undefined（既定の数で実行する）。 */
   maxParallelTasks?: number;
 }) {
@@ -23,6 +28,8 @@ export function SettingsForm({
   const t = useMessages().settings;
   const uid = useId();
   const [label, setLabel] = useState(intakeLabel);
+  const [reviewLabel, setReviewLabel] = useState(savedReviewLabel);
+  const [reviewRequested, setReviewRequested] = useState(savedReviewRequested);
   const [parallel, setParallel] = useState(
     maxParallelTasks === undefined ? "" : String(maxParallelTasks),
   );
@@ -61,6 +68,49 @@ export function SettingsForm({
         </div>
         <p className={intakeLabel ? "text-sm" : "text-sm text-warn"}>
           {intakeLabel ? t.intakeOn(intakeLabel) : t.intakeOff}
+        </p>
+      </section>
+      <section
+        aria-labelledby={`${uid}-review`}
+        className="flex flex-col gap-3 rounded-xl border border-border bg-card p-5"
+      >
+        <h2 id={`${uid}-review`} className="text-[15px] font-semibold">
+          {t.reviewTitle}{" "}
+          <span className="text-[13px] font-normal text-muted-foreground">{t.reviewNote}</span>
+        </h2>
+        <p className="text-sm leading-6 whitespace-pre-line text-muted-foreground">
+          {t.reviewHelp}
+        </p>
+        <label className="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            name="reviewRequested"
+            checked={reviewRequested}
+            onChange={(e) => setReviewRequested(e.target.checked)}
+            className="size-4"
+          />
+          {t.reviewRequested}
+        </label>
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor={`${uid}-review-label`}>{t.reviewLabel}</Label>
+          <Input
+            id={`${uid}-review-label`}
+            name="reviewLabel"
+            value={reviewLabel}
+            maxLength={50}
+            placeholder={t.reviewPlaceholder}
+            onChange={(e) => setReviewLabel(e.target.value)}
+            className="max-w-xs"
+          />
+        </div>
+        <p
+          className={
+            savedReviewRequested || savedReviewLabel ? "text-sm" : "text-sm text-muted-foreground"
+          }
+        >
+          {savedReviewRequested || savedReviewLabel
+            ? t.reviewOn(savedReviewRequested, savedReviewLabel)
+            : t.reviewOff}
         </p>
       </section>
       <section

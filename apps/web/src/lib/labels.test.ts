@@ -709,3 +709,31 @@ describe("状態の表示の種類（PBI-42）", () => {
     expect(statusTone(judging)).toBe("working");
   });
 });
+
+describe("PR のレビューの取り込み（PBI-44）", () => {
+  const ev = (type: string, payload: Record<string, unknown>, actor = "sacty") =>
+    ({
+      type,
+      payload,
+      seq: 1,
+      id: "e1",
+      taskId: "t1",
+      projectId: "default",
+      at: "2026-10-11T00:00:00.000Z",
+      actor,
+    }) as ActivityEvent;
+  it("PR のマージ・クローズで中止した理由と、再レビューを表示する", () => {
+    expect(describeEvent(ev("TaskCancelled", { reason: "pull_request_merged", cleanup: [] }))).toBe(
+      `${describeEvent(ev("TaskCancelled", { cleanup: [] }))}（PR がマージされたため）`,
+    );
+    expect(
+      describeEvent(ev("TaskCancelled", { reason: "pull_request_closed", cleanup: [] })),
+    ).toContain("（PR が閉じられたため）");
+    expect(describeEvent(ev("ReviewRestarted", {}, "person"))).toBe(
+      "再レビューを始めた（PR の最新のコミットをレビューする。人間）",
+    );
+    expect(
+      describeIn(ev("TaskCancelled", { reason: "pull_request_merged", cleanup: [] }), labels.en),
+    ).toContain("(the PR was merged)");
+  });
+});

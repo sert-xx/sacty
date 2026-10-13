@@ -143,6 +143,9 @@ const PARAMS = {
   "integrate.baseUnavailable": z.object({ branch: z.string(), detail: TextParam }),
   "integrate.unreadable": null,
   "review.pullRequestMissing": z.object({ repo: z.string() }),
+  // PR のレビューだけを行う取り込み（PBI-44）
+  "review.reviewOnly": z.object({ via: z.enum(["requested", "label"]) }),
+  "review.notRereviewable": null,
   "github.ghMissing": null,
   "github.accountRequired": z.object({ project: z.string(), host: z.string() }),
   "github.accountUnavailable": z.object({ account: z.string(), host: z.string() }),
@@ -474,6 +477,10 @@ const ja: MessageDictionary = {
     `オーケストレーターが選んだベースブランチ（${branch}）を用意できなかったため、既定のブランチで進めます（${text(detail)}）。`,
   "review.pullRequestMissing": ({ repo }) =>
     `タスクに、レビューする PR（${repo} の PR の URL）がありません。`,
+  "review.reviewOnly": ({ via }) =>
+    `${via === "requested" ? "自分にレビューが依頼された" : "レビュー用のラベルの付いた"} PR なので、レビューだけを行います（オーケストレーターは使いません）。`,
+  "review.notRereviewable":
+    "再レビューできるのは、レビューを PR に投稿して完了したタスクだけです。",
   "github.ghMissing":
     "gh コマンドが見つかりません。GitHub CLI をインストールし、gh auth login でログインしてください。",
   "github.accountRequired": ({ project, host }) =>
@@ -738,6 +745,9 @@ const en: MessageDictionary = {
     `Could not prepare the base branch the Orchestrator chose (${branch}), so the default branch is used (${text(detail)}).`,
   "review.pullRequestMissing": ({ repo }) =>
     `The task has no PR to review (a URL of a PR in ${repo}).`,
+  "review.reviewOnly": ({ via }) =>
+    `The PR ${via === "requested" ? "requests your review" : "has the review label"}, so sacty only reviews it (the Orchestrator is not used).`,
+  "review.notRereviewable": "Only a task that posted its review to the PR can be reviewed again.",
   "github.ghMissing":
     "The gh command was not found. Install GitHub CLI and sign in with gh auth login.",
   "github.accountRequired": ({ project, host }) =>

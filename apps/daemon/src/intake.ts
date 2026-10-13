@@ -7,7 +7,7 @@ import type { IssueSearch } from "./github.js";
 import type { TaskService } from "./service.js";
 
 /**
- * GitHub Issue を定期的に探して、タスクに取り込む。検索はプロジェクトの取り込み元ごとに行い、
+ * GitHub Issue を定期的に探して、タスクに取り込む（PR のレビューの取り込みの PR も。PBI-44）。検索はプロジェクトの取り込み元ごとに行い、
  * 担当の判定と重複の判定は TaskService が取り込むたびに行う。
  */
 export class IssueIntake {
@@ -94,7 +94,7 @@ export class IssueIntake {
       }
       return entry;
     };
-    for (const { host, query, account, project } of this.service.intakeSources()) {
+    for (const { host, query, account, project, review } of this.service.intakeSources()) {
       // アカウントを選んでいないプロジェクトの取り込み元は、理由を示して検索しない
       if (!account) {
         errors.push({ query, message: message("github.accountRequired", { project, host }) });
@@ -118,7 +118,17 @@ export class IssueIntake {
           auth.token,
           this.cursors.get(cursorKey),
         );
-        found.push(...result.issues);
+        // PR のレビューの取り込みの検索（PBI-44）で見つかったものは、そのことを添える
+        found.push(
+          ...(review
+            ? result.issues.map((i) => ({
+                ...i,
+                review,
+                // 依頼の検索なら、誰への依頼を探したか（担当のプロジェクトのアカウントと照らし合わせる）
+                ...(review === "requested" ? { requestedFor: account } : {}),
+              }))
+            : result.issues),
+        );
         if (result.cursor) this.cursors.set(cursorKey, result.cursor);
         if (result.incomplete) {
           errors.push({ query, message: redactText(result.incomplete, [auth.token]) });

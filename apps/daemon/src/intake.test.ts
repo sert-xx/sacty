@@ -297,6 +297,28 @@ describe("GitHub Issue の定期的な取り込み（PBI-5a）", () => {
     activity.close();
   });
 
+  it("レビューの依頼の検索で見つけた PR には、誰への依頼を探したかを付けて、レビューだけのタスクにする（PBI-44）", async () => {
+    const { activity, service, search, intake } = setup();
+    service.saveSettings({ intakeLabel: "sacty", reviewRequested: true });
+    search.issues.push({
+      repo: "https://github.com/acme/payments",
+      number: 9,
+      title: "PR 9",
+      body: "",
+      url: "https://github.com/acme/payments/pull/9",
+      labels: [],
+      pullRequest: true,
+    });
+    await intake.tick(true);
+    expect(search.queries).toEqual([
+      'is:open repo:acme/payments label:"sacty"',
+      "is:open is:pr repo:acme/payments user-review-requested:me",
+    ]);
+    const pr = service.list().find((t) => t.source?.number === 9);
+    expect(pr?.source).toMatchObject({ kind: "github_pull_request", review: "requested" });
+    activity.close();
+  });
+
   it("読んだところから次の取り込みを続け、レート制限ならその回のほかの検索をやめる（レビュー指摘）", async () => {
     const { activity, service, search, intake, advance } = setup();
     service.saveProject(undefined, {

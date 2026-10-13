@@ -87,6 +87,9 @@ const ja = {
   control: {
     pause: "一時停止",
     pausing: "止めています…",
+    rereview: "再レビュー",
+    rereviewing: "始めています…",
+    rereviewNote: "PR の最新のコミットを、もう一度レビューして投稿します。",
     cancel: "中止…",
     dialogTitle: (title: string) => `「${title}」を中止しますか？`,
     dialogBody:
@@ -201,6 +204,9 @@ const en: PartsMessages = {
   control: {
     pause: "Pause",
     pausing: "Stopping…",
+    rereview: "Review again",
+    rereviewing: "Starting…",
+    rereviewNote: "Reviews the latest commit of the PR again and posts the review.",
     cancel: "Cancel…",
     dialogTitle: (title) => `Cancel "${title}"?`,
     dialogBody:

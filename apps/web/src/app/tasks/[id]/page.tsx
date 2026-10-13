@@ -1,5 +1,6 @@
 import {
   appliedProposalFor,
+  canRereview,
   investigationIsGoal,
   openProposal,
   type StepKey,
@@ -17,6 +18,7 @@ import { Markdown } from "@/components/markdown";
 import { Proposals } from "@/components/proposals";
 import { PullRequestCard } from "@/components/pull-request";
 import { ReproductionResult } from "@/components/reproduction";
+import { RereviewButton } from "@/components/rereview-button";
 import { ResumeForm } from "@/components/resume-form";
 import { StepCosts } from "@/components/step-costs";
 import { CostMeter, StatusLabel, StepChips } from "@/components/task-bits";
@@ -141,6 +143,7 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
           )}
         </p>
         <CostMeter task={task} />
+        {canRereview(task) && <RereviewButton taskId={task.id} />}
         {canControl(task) && (
           <TaskControls
             taskId={task.id}
@@ -252,7 +255,10 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
           >
             <h2 id="steps" className="text-[15px] font-semibold">
               {m.steps}{" "}
-              <span className="text-[13px] font-normal text-muted-foreground">{m.stepsNote}</span>
+              <span className="text-[13px] font-normal text-muted-foreground">
+                {/* PR のレビューの取り込みのタスクは、sacty がレビューだけにする（PBI-44） */}
+                {task.source?.review ? m.stepsNoteReview : m.stepsNote}
+              </span>
             </h2>
             <StepChips task={task} />
             {/* オーケストレーターが決めたベースブランチとテストのコマンド（PBI-25） */}

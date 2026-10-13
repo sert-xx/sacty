@@ -314,8 +314,12 @@ export function describeEvent(event: ActivityEvent, l: LabelMessages): string {
         event.payload.cleanup
           .filter((c) => c.result === result)
           .map((c) => l.cleanupTarget[c.target]);
-      return e.TaskCancelled(names("done"), names("failed"), actor);
+      const cancelled = e.TaskCancelled(names("done"), names("failed"), actor);
+      // sacty が中止した理由（レビューの PR がマージされた・閉じられた。PBI-44）
+      return event.payload.reason ? e.cancelledBecause(cancelled, event.payload.reason) : cancelled;
     }
+    case "ReviewRestarted":
+      return e.ReviewRestarted(actor);
     case "ContextResolved":
       return e.ContextResolved(
         event.payload.layers.map(

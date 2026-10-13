@@ -216,6 +216,8 @@ export type Task = {
   reproduction?: PayloadOf<"ReproductionChecked"> & { at: string };
   /** レビューの結果を投稿した、PR のレビューの URL（PBI-19）。 */
   reviewPost?: { url: string };
+  /** 何回目のレビューか（「再レビュー」で2回目から。最初のレビューでは無い。PBI-44）。 */
+  reviewRound?: number;
   /** オーケストレーターが決めた、テストのコマンド（PBI-25）。 */
   testCommand?: string;
   /** オーケストレーターが判断した、調査の工程の性質（PBI-43）。無ければ内容の調査として扱う。 */
@@ -658,7 +660,7 @@ export function applyEvent(
         throw new ActivityIntegrityError(event, "stop the run before cancelling");
       }
       task.status = "cancelled";
-      task.cancelled = { at: event.at, cleanup: event.payload.cleanup };
+      task.cancelled = { at: event.at, ...event.payload };
       task.gate = undefined;
       task.escalation = undefined;
       task.verification = undefined;
@@ -740,6 +742,22 @@ export function applyEvent(
       task.reviewPost = { url: event.payload.url };
       break;
     }
+
+    case "ReviewRestarted":
+      // レビューを投稿して完了したタスクだけ。前回の対象・行へのコメント・投稿は持ち越さない（PBI-44）
+      if (!canRereview(task)) throw new ActivityIntegrityError(event, "no posted review to redo");
+      task.steps = task.steps.map((s) =>
+        s.key === "review" ? { ...s, state: "active" as const } : s,
+      );
+      task.status = "queued";
+      task.reviewTarget = undefined;
+      task.reviewComments = [];
+      task.reviewPost = undefined;
+      task.outputs = Object.fromEntries(
+        Object.entries(task.outputs).filter(([key]) => key !== "review"),
+      );
+      task.reviewRound = (task.reviewRound ?? 1) + 1;
+      break;
 
     case "IssueCommented":
     case "IssueCommentFailed":
@@ -1069,6 +1087,16 @@ export function investigationIsGoal(task: Task): boolean {
 }
 
 /** すべての工程が終わったか。 */
+/** 「再レビュー」できるか（レビューを PR に投稿して完了したタスク。PBI-44）。 */
+export function canRereview(task: Task): boolean {
+  return (
+    task.status !== "cancelled" &&
+    task.reviewPost !== undefined &&
+    task.steps.some((s) => s.key === "review") &&
+    isCompleted(task)
+  );
+}
+
 export function isCompleted(task: Task): boolean {
   return task.steps.length > 0 && task.steps.every((s) => s.state === "done" || s.state === "skip");
 }

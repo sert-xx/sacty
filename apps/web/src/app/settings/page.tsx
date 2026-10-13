@@ -31,6 +31,8 @@ async function Settings() {
   return (
     <SettingsForm
       intakeLabel={settings.intakeLabel ?? ""}
+      reviewLabel={settings.reviewLabel ?? ""}
+      reviewRequested={settings.reviewRequested === true}
       maxParallelTasks={settings.maxParallelTasks}
     />
   );

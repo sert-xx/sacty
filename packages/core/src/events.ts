@@ -157,6 +157,11 @@ export const TaskSource = z.object({
   repo: z.string(),
   number: z.number().int().positive(),
   url: z.string(),
+  /**
+   * PR のレビューだけを行う取り込み（PBI-44）。requested：自分にレビューが依頼された、label：PR のレビュー用の
+   * ラベルが付いていた。この取り込みのタスクは、工程をレビューだけにする（オーケストレーターに選ばせない）。
+   */
+  review: z.enum(["requested", "label"]).optional(),
 });
 export type TaskSource = z.infer<typeof TaskSource>;
 
@@ -779,6 +784,15 @@ const PullRequestReviewPosted = z.object({
 });
 
 /**
+ * 人間が「再レビュー」を求めた（PBI-44）。レビューを投稿して完了したタスクのレビューの工程をやり直し、PR の最新の
+ * コミットに対してもう一度レビューして投稿する（対象の PR は、実行の前に確かめ直す）。
+ */
+const ReviewRestarted = z.object({
+  type: z.literal("ReviewRestarted"),
+  payload: z.object({}),
+});
+
+/**
  * 完了した調査のタスク（GitHub Issue から取り込んだもの）の結果を、Issue にコメントとして返した（PBI-18）。
  * 返せなければ、その理由を記録する（何度も返そうとしない）。
  */
@@ -831,6 +845,11 @@ export type CleanupTarget = z.infer<typeof CleanupTarget>;
 const TaskCancelled = z.object({
   type: z.literal("TaskCancelled"),
   payload: z.object({
+    /**
+     * sacty が中止した理由（PBI-44）。レビューの PR がマージされた・マージされずに閉じられたので、終わっていない
+     * レビューのタスクを中止した。人間が中止したときは無い。
+     */
+    reason: z.enum(["pull_request_merged", "pull_request_closed"]).optional(),
     cleanup: z.array(
       z.object({
         target: CleanupTarget,
@@ -942,6 +961,7 @@ export const EventInput = z.discriminatedUnion("type", [
   IssueCommentFailed,
   ReviewTargetResolved,
   PullRequestReviewPosted,
+  ReviewRestarted,
   BranchPushed,
   GuardianMissed,
   TaskCancelled,

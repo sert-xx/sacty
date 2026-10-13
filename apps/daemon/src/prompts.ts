@@ -1638,7 +1638,9 @@ const REVIEW_COMMENT_MAX = 8_000;
  * sacty が投稿したものを PR へのフィードバックとして取り込まないようにする。
  */
 export function reviewMarker(task: Task): string {
-  return `${REVIEW_MARKER_PREFIX}${task.id} -->`;
+  // 再レビュー（PBI-44）は回ごとに別の目印にする（前回のレビューを、今回の投稿済みと見なさないため）
+  const round = task.reviewRound && task.reviewRound > 1 ? `:${task.reviewRound}` : "";
+  return `${REVIEW_MARKER_PREFIX}${task.id}${round} -->`;
 }
 
 /**
