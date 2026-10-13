@@ -2758,6 +2758,39 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       activity.close();
     });
 
+    it("オーケストレーターが判断した調査の性質を記録し、内容の調査だけセットアップを省く指示を出す（PBI-43）", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const { service, executor } = makeService(
+        activity,
+        [
+          plan("investigate", "仕組みの質問", { investigation: "content" }),
+          out("# 調査の結果"),
+          plan("investigate", "不具合の原因の調査", { investigation: "bug" }),
+          out("# 調査の結果"),
+        ],
+        { realPlanner: true },
+      );
+      const noSetup =
+        "開発のためのセットアップ（依存関係のインストール・ビルド・setup のスクリプトなど）は実行しない";
+      const a = service.createTask({ projectId: "default", title: "仕組みを知りたい" });
+      await service.runNext(a.id);
+      expect(promptOf(executor, 0)).toContain(noSetup);
+      expect(
+        service.get(a.id)?.activity.find((e) => e.type === "StepsChosen")?.payload,
+      ).toMatchObject({
+        investigation: "content",
+      });
+      expect(service.get(a.id)?.task.investigation).toBe("content");
+      expect(promptOf(executor, 1)).toContain(noSetup);
+
+      const b = service.createTask({ projectId: "default", title: "落ちる原因を知りたい" });
+      await service.runNext(b.id);
+      expect(service.get(b.id)?.task.investigation).toBe("bug");
+      expect(promptOf(executor, 3)).toContain("あなたはソフトウェア開発の調査エージェントです");
+      expect(promptOf(executor, 3)).not.toContain(noSetup);
+      activity.close();
+    });
+
     it("選べない・読めない・実行に失敗したときは、標準の工程で代わりに進めず、理由を記録して止める。再開すると選び直す（PBI-40）", async () => {
       const activity = new SqliteActivityStore(dbPath);
       const { service, executor } = makeService(
