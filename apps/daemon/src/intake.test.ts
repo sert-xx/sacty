@@ -371,20 +371,31 @@ describe("JIRA のチケットの取り込み（PBI-52）", () => {
     }),
   );
   class FakeTicketSearch implements TicketClient {
-    searched: { platform: string; service: string; keys: readonly string[]; label: string }[] = [];
+    searched: {
+      platform: string;
+      service: string;
+      keys: readonly string[];
+      label: string;
+      cursor?: string;
+    }[] = [];
     fail?: string;
+    /** 返す続きの位置（順に）。 */
+    next: (string | undefined)[] = [];
     async search(input: Parameters<TicketClient["search"]>[0]) {
       this.searched.push({ ...input, platform: input.platform.name });
       if (this.fail) throw new Error(this.fail);
-      return [
-        {
-          platform: input.platform.name,
-          service: input.service,
-          key: "PAY-1",
-          summary: "決済の再送",
-          url: "https://jira.example.com/browse/PAY-1",
-        },
-      ];
+      return {
+        tickets: [
+          {
+            platform: input.platform.name,
+            service: input.service,
+            key: "PAY-1",
+            summary: "決済の再送",
+            url: "https://jira.example.com/browse/PAY-1",
+          },
+        ],
+        ...(this.next.length > 0 ? { cursor: this.next.shift() } : {}),
+      };
     }
     async comment(): Promise<{ url: string }> {
       throw new Error("unused");
@@ -444,6 +455,24 @@ describe("JIRA のチケットの取り込み（PBI-52）", () => {
     await intake.tick(true);
     expect(service.list()).toHaveLength(1);
     expect(service.status().intake).toMatchObject({ imported: 0 });
+    activity.close();
+  });
+
+  it("読む上限を超えたら、次の回は続きの位置から読み、最後まで読んだら先頭に戻る。失敗したら先頭から読み直す", async () => {
+    const { activity, intake, tickets } = ticketSetup();
+    tickets.next = ["500", undefined, "500"];
+    for (let i = 0; i < 3; i++) await intake.tick(true);
+    tickets.fail = "JIRA 400";
+    await intake.tick(true);
+    tickets.fail = undefined;
+    await intake.tick(true);
+    expect(tickets.searched.map((s) => s.cursor)).toEqual([
+      undefined,
+      "500",
+      undefined,
+      "500",
+      undefined,
+    ]);
     activity.close();
   });
 

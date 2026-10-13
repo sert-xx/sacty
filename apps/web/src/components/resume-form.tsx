@@ -18,6 +18,7 @@ export function ResumeForm({
   capUsd,
   lastFailure,
   repositories,
+  chosenRepo,
 }: {
   taskId: string;
   reason: PauseReason;
@@ -26,6 +27,8 @@ export function ResumeForm({
   lastFailure?: string;
   /** チケットのタスクで、リポジトリが決まっていなければ、選べる候補（PBI-52）。 */
   repositories?: string[];
+  /** 前に人が選んだリポジトリ（選び直せる）。 */
+  chosenRepo?: string;
 }) {
   const m = useMessages();
   const [state, formAction, pending] = useActionState(resumeTaskAction, initial);
@@ -56,6 +59,7 @@ export function ResumeForm({
                 id="ticket-repo"
                 name="repo"
                 required
+                defaultValue={chosenRepo}
                 className="h-9 max-w-full rounded-md border border-border bg-card px-2 font-mono text-sm"
               >
                 {repositories.map((r) => (

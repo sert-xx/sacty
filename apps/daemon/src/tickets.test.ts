@@ -68,12 +68,13 @@ describe("JIRA のチケットの検索とコメント（PBI-52）", () => {
         ],
       }),
     ]);
-    const found = await client.search({
+    const { tickets: found, cursor } = await client.search({
       platform: jira(ALL),
       service: "jira-server",
       keys: ["PAY"],
       label: "sacty",
     });
+    expect(cursor).toBeUndefined();
     expect(found).toEqual([
       {
         platform: "jira",
@@ -110,7 +111,7 @@ describe("JIRA のチケットの検索とコメント（PBI-52）", () => {
       keys: ["OPS"],
       label: "sacty",
     });
-    expect(found.map((t) => t.key)).toEqual(["OPS-9"]);
+    expect(found.tickets.map((t) => t.key)).toEqual(["OPS-9"]);
     expect(new URL(calls[0]?.url ?? "").pathname).toBe("/rest/api/3/search/jql");
   });
 
@@ -127,7 +128,8 @@ describe("JIRA のチケットの検索とコメント（PBI-52）", () => {
       keys: ["PAY"],
       label: "sacty",
     });
-    expect(s1.map((t) => t.key)).toEqual(["PAY-1", "PAY-2", "PAY-3"]);
+    expect(s1.tickets.map((t) => t.key)).toEqual(["PAY-1", "PAY-2", "PAY-3"]);
+    expect(s1.cursor).toBeUndefined();
     expect(server.calls.map((c) => new URL(c.url).searchParams.get("startAt"))).toEqual(["0", "2"]);
     const cloud = fakeJira([
       page(["OPS-1"], { nextPageToken: "t2", isLast: false }),
@@ -139,7 +141,8 @@ describe("JIRA のチケットの検索とコメント（PBI-52）", () => {
       keys: ["OPS"],
       label: "sacty",
     });
-    expect(c1.map((t) => t.key)).toEqual(["OPS-1", "OPS-2"]);
+    expect(c1.tickets.map((t) => t.key)).toEqual(["OPS-1", "OPS-2"]);
+    expect(c1.cursor).toBeUndefined();
     expect(cloud.calls.map((c) => new URL(c.url).searchParams.get("nextPageToken"))).toEqual([
       null,
       "t2",
@@ -148,13 +151,56 @@ describe("JIRA のチケットの検索とコメント（PBI-52）", () => {
     const endless = fakeJira(
       Array.from({ length: 20 }, (_, i) => page([`PAY-${i + 1}`], { total: 1000 })),
     );
-    await endless.client.search({
+    const first = await endless.client.search({
       platform: jira(ALL),
       service: "jira-server",
       keys: ["PAY"],
       label: "sacty",
     });
     expect(endless.calls).toHaveLength(10);
+    // 続きの位置を返し、渡されたらそこから読む
+    expect(first.cursor).toBe("10");
+    await endless.client.search({
+      platform: jira(ALL),
+      service: "jira-server",
+      keys: ["PAY"],
+      label: "sacty",
+      cursor: first.cursor,
+    });
+    expect(new URL(endless.calls[10]?.url ?? "").searchParams.get("startAt")).toBe("10");
+    // Cloud も、上限で止めたら次のページの印を返す
+    const cloudEndless = fakeJira(
+      Array.from({ length: 20 }, (_, i) =>
+        page([`OPS-${i + 1}`], { nextPageToken: `t${i + 2}`, isLast: false }),
+      ),
+    );
+    const c2 = await cloudEndless.client.search({
+      platform: jira(ALL),
+      service: "jira-cloud",
+      keys: ["OPS"],
+      label: "sacty",
+    });
+    expect(c2.cursor).toBe("t11");
+    await cloudEndless.client.search({
+      platform: jira(ALL),
+      service: "jira-cloud",
+      keys: ["OPS"],
+      label: "sacty",
+      cursor: c2.cursor,
+    });
+    expect(new URL(cloudEndless.calls[10]?.url ?? "").searchParams.get("nextPageToken")).toBe(
+      "t11",
+    );
+    // 壊れた位置は先頭から
+    const bad = fakeJira([page([], { total: 0 })]);
+    await bad.client.search({
+      platform: jira(ALL),
+      service: "jira-server",
+      keys: ["PAY"],
+      label: "sacty",
+      cursor: "-5",
+    });
+    expect(new URL(bad.calls[0]?.url ?? "").searchParams.get("startAt")).toBe("0");
   });
 
   it("allow に無い API は呼ばない", async () => {

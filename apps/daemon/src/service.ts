@@ -8,6 +8,7 @@ import {
   ApproveStepInput,
   activeStep,
   applyEvent,
+  awaitingTicketTriage,
   BUDGET_WARN_RATIO,
   budgetState,
   type CleanupTarget,
@@ -1383,7 +1384,11 @@ export class TaskService {
       );
       return;
     }
-    const candidates = (await this.projectRepositories(task.projectId))?.repositories ?? [];
+    // 人がリポジトリを選んでいれば、そのリポジトリに固定する（チケットの要件は読み直して書く）
+    const fixed = task.repo && task.ticketTriage?.by === "person" ? task.repo : undefined;
+    const candidates = fixed
+      ? [fixed]
+      : ((await this.projectRepositories(task.projectId))?.repositories ?? []);
     if (candidates.length === 0) {
       pause("error", message("ticket.triageFailed", { detail: message("ticket.noCandidates") }));
       return;
@@ -1395,7 +1400,7 @@ export class TaskService {
         agent,
         image: config.image,
         prompt: [
-          buildTicketTriagePrompt(task, candidates, platform.name),
+          buildTicketTriagePrompt(task, candidates, platform.name, fixed !== undefined),
           ...platformPromptLines([platform]),
         ].join("\n"),
         role: "orchestrator",
@@ -1406,7 +1411,9 @@ export class TaskService {
     // 読んでいる間に、人間が止めた・中止した・ほかで決まったなら、記録しない
     const latest = this.mustGet(task.id);
     if (this.pauseRequested.has(task.id) || this.cancelling.has(task.id)) return;
-    if (latest.status !== "queued" || latest.repo) return;
+    if (latest.status !== "queued" || !awaitingTicketTriage(latest) || latest.repo !== task.repo) {
+      return;
+    }
     const cost = {
       agentId: agent.id,
       ...agentSetting(agent),
@@ -1428,8 +1435,14 @@ export class TaskService {
     if (outcome.kind === "failed") return fail(outcome.reason, outcome.message);
     const triage = extractTicketTriage(outcome.output);
     if (!triage) return fail("error", message("ticket.triageUnreadable"));
-    if (!triage.repo) return fail("error", triage.reason || message("ticket.triageUnreadable"));
-    const repo = candidates.find((c) => sameGitHubUrl(c, triage.repo));
+    // 固定したリポジトリなら、出力のリポジトリは使わない。題か概要が無ければ、要件を書けていない
+    if (fixed && !triage.title && !triage.summary) {
+      return fail("error", triage.reason || message("ticket.triageUnreadable"));
+    }
+    if (!fixed && !triage.repo) {
+      return fail("error", triage.reason || message("ticket.triageUnreadable"));
+    }
+    const repo = fixed ?? candidates.find((c) => sameGitHubUrl(c, triage.repo));
     if (!repo) return fail("error", message("ticket.repoNotCandidate", { repo: triage.repo }));
     this.append(latest, [
       {
@@ -1960,7 +1973,8 @@ export class TaskService {
 
     // チケットから取り込んだタスクは、まずオーケストレーターがチケットを読んで、作業するリポジトリ・題・概要を決める
     // （PBI-52。1段目）。リポジトリを用意した後に、いつもどおり工程を選ぶ（2段目）
-    if (initial.ticket && !initial.repo) return this.triageTicket(initial, config.config);
+    // 人がリポジトリを選んだ後も、そのリポジトリで題と概要を書くために、もう一度チケットを読む
+    if (awaitingTicketTriage(initial)) return this.triageTicket(initial, config.config);
 
     // 対象リポジトリは、タスクの開始時（最初の実行）に、ベースブランチの最新を用意する（PBI-15）。
     // どの工程から始まるタスクでも同じ。以後はその起点のコミットを最後まで使う（途中で取り込み直さない）。

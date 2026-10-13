@@ -1136,3 +1136,16 @@ export function canRereview(task: Task): boolean {
 export function isCompleted(task: Task): boolean {
   return task.steps.length > 0 && task.steps.every((s) => s.state === "done" || s.state === "skip");
 }
+
+/**
+ * チケットから取り込んだタスクで、オーケストレーターがチケットを読む（リポジトリ・題・概要を決める）のを待っているか
+ * （PBI-52）。人がリポジトリを選んだ後も、そのリポジトリで題と概要を書くために、もう一度読む。
+ */
+export function awaitingTicketTriage(task: Task): boolean {
+  return (
+    task.ticket !== undefined &&
+    task.steps.length === 0 &&
+    task.repository === undefined &&
+    (!task.repo || task.ticketTriage?.by === "person")
+  );
+}

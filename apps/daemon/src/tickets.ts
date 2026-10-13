@@ -18,13 +18,17 @@ export type FoundTicket = {
 };
 
 export interface TicketClient {
-  /** キーのプロジェクトの、ラベルの付いた、終わっていないチケットを探す。 */
+  /**
+   * キーのプロジェクトの、ラベルの付いた、終わっていないチケットを探す。読むページには上限があるので、
+   * 続きがあれば、次の回に渡す位置（cursor）を返す。最後まで読んだら返さない（次の回は先頭から読む）。
+   */
   search(input: {
     platform: Platform;
     service: TicketService;
     keys: readonly string[];
     label: string;
-  }): Promise<FoundTicket[]>;
+    cursor?: string;
+  }): Promise<{ tickets: FoundTicket[]; cursor?: string }>;
   /** チケットにコメントする。コメントの URL を返す。 */
   comment(input: {
     platform: Platform;
@@ -106,11 +110,15 @@ export class JiraTickets implements TicketClient {
     }
   }
 
-  async search(input: Parameters<TicketClient["search"]>[0]): Promise<FoundTicket[]> {
+  async search(input: Parameters<TicketClient["search"]>[0]): ReturnType<TicketClient["search"]> {
     const found: FoundTicket[] = [];
-    // 古い順に読むので、ページを送らないと、取り込み済みの先頭のチケットだけを読み続けてしまう
-    let startAt = 0;
-    let pageToken: string | undefined;
+    // 古い順に読むので、ページを送らないと、取り込み済みの先頭のチケットだけを読み続けてしまう。
+    // 上限のページで止めたら、続きの位置を返し、次の回はそこから読む
+    const cloud = input.service === "jira-cloud";
+    const resumeAt = cloud ? 0 : Number(input.cursor ?? 0);
+    let startAt = Number.isSafeInteger(resumeAt) && resumeAt > 0 ? resumeAt : 0;
+    let pageToken: string | undefined = cloud ? input.cursor : undefined;
+    let done = false;
     for (let page = 0; page < SEARCH_PAGES; page++) {
       const query = new URLSearchParams({
         jql: ticketJql(input.keys, input.label),
@@ -147,16 +155,26 @@ export class JiraTickets implements TicketClient {
           url: ticketUrl(input.platform, key),
         });
       }
-      if (issues.length === 0) break;
-      if (input.service === "jira-cloud") {
-        if (result.isLast === true || typeof result.nextPageToken !== "string") break;
+      if (issues.length === 0) {
+        done = true;
+        break;
+      }
+      if (cloud) {
+        if (result.isLast === true || typeof result.nextPageToken !== "string") {
+          done = true;
+          break;
+        }
         pageToken = result.nextPageToken;
       } else {
         startAt += issues.length;
-        if (typeof result.total !== "number" || startAt >= result.total) break;
+        if (typeof result.total !== "number" || startAt >= result.total) {
+          done = true;
+          break;
+        }
       }
     }
-    return found;
+    if (done) return { tickets: found };
+    return { tickets: found, cursor: cloud ? pageToken : String(startAt) };
   }
 
   async comment(input: Parameters<TicketClient["comment"]>[0]): Promise<{ url: string }> {

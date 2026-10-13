@@ -642,7 +642,7 @@ class FakeTickets implements TicketClient {
   found: FoundTicket[] = [];
   async search(input: Parameters<TicketClient["search"]>[0]) {
     this.searched.push({ ...input, platform: input.platform.name });
-    return this.found;
+    return { tickets: this.found };
   }
   async comment(input: Parameters<TicketClient["comment"]>[0]) {
     if (this.commentFail)
@@ -7769,13 +7769,20 @@ describe("JIRA のチケットの取り込みとトリアージ（PBI-52）", ()
     activity.close();
   });
 
-  it("選べなければ止まり、人が候補からリポジトリを選んで再開できる", async () => {
+  it("選べなければ止まり、人が候補からリポジトリを選ぶと、そのリポジトリでチケットを読み直して題と概要を書く", async () => {
+    // 人が選んだ後の読み直し。出力のリポジトリは使わない（人が決めたリポジトリに固定）
+    const rewrite = triageOut({
+      repo: "https://github.com/acme/api",
+      title: "PAY-1 画面の再送ボタンを二重に押せないようにする",
+      summary: "## 目的\n二重請求を防ぐ（画面側）",
+      reason: "人が選んだリポジトリで書いた",
+    });
     for (const bad of [
-      triageOut({ repo: "", reason: "どのリポジトリか分からない" }),
+      triageOut({ repo: "", summary: "読んだ要件", reason: "どのリポジトリか分からない" }),
       triageOut({ repo: "https://github.com/evil/other", reason: "x" }),
       { kind: "completed", output: "JSON なし" } as AgentOutcome,
     ]) {
-      const { activity, service, executor } = setup([bad, completed(20_000)]);
+      const { activity, service, executor } = setup([bad, rewrite, completed(20_000)]);
       const [task] = service.importTickets([foundTicket("PAY-1")]);
       const id = task?.id ?? "";
       await service.runNext(id);
@@ -7792,8 +7799,20 @@ describe("JIRA のチケットの取り込みとトリアージ（PBI-52）", ()
         ticketTriage: { by: "person" },
       });
       service.resume(id, {});
-      await service.runNext(id);
-      expect(executor.calls).toHaveLength(2); // チケットは読み直さない
+      await service.runNext(id); // 選んだリポジトリで、チケットを読み直す
+      const prompt = executor.calls[1]?.command.join(" ") ?? "";
+      expect(prompt).toContain("人が次のリポジトリに決めました");
+      expect(prompt).toContain("   - https://github.com/acme/app");
+      expect(prompt).not.toContain("   - https://github.com/acme/api");
+      expect(service.get(id)?.task).toMatchObject({
+        repo: "https://github.com/acme/app",
+        title: "PAY-1 画面の再送ボタンを二重に押せないようにする",
+        body: "## 目的\n二重請求を防ぐ（画面側）",
+        ticketTriage: { by: "orchestrator" },
+        steps: [],
+      });
+      await service.runNext(id); // 工程を選ぶ
+      expect(executor.calls).toHaveLength(3);
       expect(service.get(id)?.task.steps.length).toBeGreaterThan(0);
       // 工程を選んだ後は、リポジトリを変えられない
       await expect(
@@ -7802,6 +7821,38 @@ describe("JIRA のチケットの取り込みとトリアージ（PBI-52）", ()
       activity.close();
       rmSync(dbPath, { force: true });
     }
+  });
+
+  it("人が選んだリポジトリで読み直しても要件を書けなければ、工程を選ばずに止まり、選び直せる", async () => {
+    const { activity, service, executor } = setup([
+      triageOut({ repo: "", reason: "分からない" }),
+      triageOut({ repo: "https://github.com/acme/app", reason: "要件が読めない" }),
+      triageOut({
+        repo: "",
+        title: "PAY-1 API の再送の判定",
+        summary: "API 側",
+        reason: "選び直したリポジトリで書いた",
+      }),
+    ]);
+    const [task] = service.importTickets([foundTicket("PAY-1")]);
+    const id = task?.id ?? "";
+    await service.runNext(id);
+    await service.chooseTicketRepository(id, "https://github.com/acme/app");
+    service.resume(id, {});
+    await service.runNext(id);
+    expect(service.get(id)?.task).toMatchObject({ status: "paused", steps: [] });
+    expect(service.get(id)?.task.repository).toBeUndefined();
+    // 選び直して再開すると、そのリポジトリで読み直す
+    await service.chooseTicketRepository(id, "https://github.com/acme/api");
+    service.resume(id, {});
+    await service.runNext(id);
+    expect(executor.calls[2]?.command.join(" ")).toContain("   - https://github.com/acme/api");
+    expect(service.get(id)?.task).toMatchObject({
+      repo: "https://github.com/acme/api",
+      title: "PAY-1 API の再送の判定",
+      ticketTriage: { by: "orchestrator" },
+    });
+    activity.close();
   });
 
   it("接続先が設定に無ければ、チケットを読まずに止まる。チケットでないタスクのリポジトリは選べない", async () => {

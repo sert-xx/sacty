@@ -158,9 +158,20 @@ export class IssueIntake {
           });
           continue;
         }
+        // 読む上限を超える数のチケットがあれば、次の回は続きから読む（最後まで読んだら先頭に戻る）
+        const cursorKey = `ticket ${source.service} ${query}`;
         try {
-          tickets.push(...(await client.search({ ...source, platform })));
+          const result = await client.search({
+            ...source,
+            platform,
+            ...(this.cursors.has(cursorKey) ? { cursor: this.cursors.get(cursorKey) } : {}),
+          });
+          tickets.push(...result.tickets);
+          if (result.cursor) this.cursors.set(cursorKey, result.cursor);
+          else this.cursors.delete(cursorKey);
         } catch (error) {
+          // 続きの位置が使えなくなった（期限切れなど）かもしれないので、次の回は先頭から読む
+          this.cursors.delete(cursorKey);
           errors.push({ query, message: ticketErrorText(error) });
         }
       }
