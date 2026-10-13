@@ -527,6 +527,8 @@ async function Deliverable({ task, step }: { task: Task; step: StepKey }) {
       }
       // 承認済みの成果物は折りたたむ（承認待ち・作業中のものは開いたまま）
       collapsed={Boolean(approved)}
+      // 承認した成果の書き出しの結果（PBI-56）。折りたたんでも見えるようにする
+      footer={task.exportPlans?.[step]?.to ? <ExportResult task={task} step={step} /> : undefined}
     >
       {output ? (
         <Markdown>{output}</Markdown>
@@ -583,8 +585,6 @@ async function Deliverable({ task, step }: { task: Task; step: StepKey }) {
           )}
         </ul>
       )}
-      {/* 承認した成果の書き出しの結果（PBI-56） */}
-      {task.exportPlans?.[step]?.to && <ExportResult task={task} step={step} />}
       {step === "design" && output && (
         <>
           <h3 className="pt-2 text-sm font-semibold">
