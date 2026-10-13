@@ -70,12 +70,19 @@ async function Projects() {
               <p className="text-muted-foreground">
                 {[
                   intake.label ? t.intake.label(intake.label) : "",
-                  intake.reviewRequested || intake.reviewLabel
-                    ? t.intake.review(intake.reviewRequested === true, intake.reviewLabel ?? "")
+                  // Off にしたレビュー用のラベルは出さない（PBI-53）
+                  intake.reviewRequested ||
+                  (intake.reviewLabel && !intake.triageOff?.includes("reviewLabel"))
+                    ? t.intake.review(
+                        intake.reviewRequested === true,
+                        intake.triageOff?.includes("reviewLabel") ? "" : (intake.reviewLabel ?? ""),
+                      )
                     : "",
                 ]
                   .filter(Boolean)
-                  .join(" / ")}{" "}
+                  .join(" / ")}
+                {(intake.triageOff ?? []).length > 0 &&
+                  t.intake.off((intake.triageOff ?? []).map((kind) => t.intake.kinds[kind]))}{" "}
                 <Link href="/settings" className="underline">
                   {t.intake.settings}
                 </Link>

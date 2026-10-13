@@ -8,8 +8,13 @@ const ja = {
   intakeLabel: "取り込むラベル",
   intakePlaceholder: "例：sacty",
   intakeHelp: "すべてのプロジェクトの対象で取り込みます。",
-  intakeOff: "ラベルを設定していないので、取り込みは止まっています。",
-  intakeOn: (label: string) => `ラベル「${label}」の付いた Issue と PR を取り込みます。`,
+  intakeOff:
+    "ラベルを設定していないか、Issue と PR の両方を Off にしているので、取り込みは止まっています。",
+  intakeOn: (label: string, issues: boolean, pullRequests: boolean) =>
+    `ラベル「${label}」の付いた ${[issues ? "Issue" : "", pullRequests ? "PR" : ""].filter(Boolean).join(" と ")} を取り込みます。`,
+  triageIssues: "Issue を取り込む",
+  triagePullRequests: "PR を取り込む",
+  triageReviewLabel: "レビュー用のラベルの PR を取り込む",
   reviewTitle: "PR のレビューの取り込み",
   reviewNote: "取り込んだ PR は、レビューだけを行って PR に投稿します",
   reviewHelp:
@@ -50,8 +55,12 @@ const en: SettingsMessages = {
   intakeLabel: "Label to import",
   intakePlaceholder: "e.g. sacty",
   intakeHelp: "Applies to the targets of every project.",
-  intakeOff: "No label is set, so intake is stopped.",
-  intakeOn: (label) => `Issues and PRs labeled "${label}" are imported.`,
+  intakeOff: "No label is set, or both issues and PRs are off, so intake is stopped.",
+  intakeOn: (label, issues, pullRequests) =>
+    `${[issues ? "Issues" : "", pullRequests ? "PRs" : ""].filter(Boolean).join(" and ")} labeled "${label}" are imported.`,
+  triageIssues: "Import issues",
+  triagePullRequests: "Import PRs",
+  triageReviewLabel: "Import PRs with the review label",
   reviewTitle: "PR review intake",
   reviewNote: "Imported PRs are only reviewed, and the review is posted to the PR",
   reviewHelp:

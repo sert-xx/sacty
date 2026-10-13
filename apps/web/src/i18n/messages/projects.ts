@@ -18,6 +18,8 @@ const ja = {
     noLabel:
       "取り込むラベルも PR のレビューの取り込みも設定していないので、取り込みは止まっています。",
     label: (label: string) => `取り込むラベル：${label}`,
+    off: (kinds: string[]) => `（Off：${kinds.join("・")}）`,
+    kinds: { issues: "Issue", pullRequests: "PR", reviewLabel: "レビュー用のラベル" },
     review: (requested: boolean, label: string) =>
       `PR のレビュー：${[requested ? "自分への依頼" : "", label ? `ラベル ${label}` : ""].filter(Boolean).join("・")}`,
     settings: "sacty の設定を開く",
@@ -113,6 +115,8 @@ const en: ProjectsMessages = {
     never: "Nothing imported yet.",
     noLabel: "Neither an intake label nor PR review intake is set, so intake is stopped.",
     label: (label) => `Intake label: ${label}`,
+    off: (kinds) => ` (off: ${kinds.join(", ")})`,
+    kinds: { issues: "issues", pullRequests: "PRs", reviewLabel: "review label" },
     review: (requested, label) =>
       `PR reviews: ${[requested ? "requested from me" : "", label ? `label ${label}` : ""].filter(Boolean).join(", ")}`,
     settings: "Open sacty settings",

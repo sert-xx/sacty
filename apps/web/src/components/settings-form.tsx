@@ -15,12 +15,15 @@ export function SettingsForm({
   intakeLabel,
   reviewLabel: savedReviewLabel,
   reviewRequested: savedReviewRequested,
+  triageOff = [],
   maxParallelTasks,
 }: {
   intakeLabel: string;
   /** PR のレビューの取り込み（PBI-44）。 */
   reviewLabel: string;
   reviewRequested: boolean;
+  /** Off にしたトリアージの種類（PBI-53）。 */
+  triageOff?: string[];
   /** 設定していなければ undefined（既定の数で実行する）。 */
   maxParallelTasks?: number;
 }) {
@@ -30,6 +33,29 @@ export function SettingsForm({
   const [label, setLabel] = useState(intakeLabel);
   const [reviewLabel, setReviewLabel] = useState(savedReviewLabel);
   const [reviewRequested, setReviewRequested] = useState(savedReviewRequested);
+  // トリアージの種類ごとの On/Off（PBI-53）。ラベルは残したまま Off にできる
+  const [on, setOn] = useState({
+    issues: !triageOff.includes("issues"),
+    pullRequests: !triageOff.includes("pullRequests"),
+    reviewLabel: !triageOff.includes("reviewLabel"),
+  });
+  const savedOn = {
+    issues: !triageOff.includes("issues"),
+    pullRequests: !triageOff.includes("pullRequests"),
+    reviewLabel: !triageOff.includes("reviewLabel"),
+  };
+  const toggle = (kind: keyof typeof on, label: string) => (
+    <label className="flex items-center gap-2 text-sm">
+      <input
+        type="checkbox"
+        name={`triage-${kind}`}
+        checked={on[kind]}
+        onChange={(e) => setOn((current) => ({ ...current, [kind]: e.target.checked }))}
+        className="size-4"
+      />
+      {label}
+    </label>
+  );
   const [parallel, setParallel] = useState(
     maxParallelTasks === undefined ? "" : String(maxParallelTasks),
   );
@@ -54,6 +80,10 @@ export function SettingsForm({
         <p className="text-sm leading-6 whitespace-pre-line text-muted-foreground">
           {t.intakeHelp}
         </p>
+        <div className="flex flex-wrap gap-x-6 gap-y-2">
+          {toggle("issues", t.triageIssues)}
+          {toggle("pullRequests", t.triagePullRequests)}
+        </div>
         <div className="flex flex-col gap-1.5">
           <Label htmlFor={`${uid}-label`}>{t.intakeLabel}</Label>
           <Input
@@ -66,8 +96,16 @@ export function SettingsForm({
             className="max-w-xs"
           />
         </div>
-        <p className={intakeLabel ? "text-sm" : "text-sm text-warn"}>
-          {intakeLabel ? t.intakeOn(intakeLabel) : t.intakeOff}
+        <p
+          className={
+            intakeLabel && (savedOn.issues || savedOn.pullRequests)
+              ? "text-sm"
+              : "text-sm text-warn"
+          }
+        >
+          {intakeLabel && (savedOn.issues || savedOn.pullRequests)
+            ? t.intakeOn(intakeLabel, savedOn.issues, savedOn.pullRequests)
+            : t.intakeOff}
         </p>
       </section>
       <section
@@ -91,6 +129,7 @@ export function SettingsForm({
           />
           {t.reviewRequested}
         </label>
+        {toggle("reviewLabel", t.triageReviewLabel)}
         <div className="flex flex-col gap-1.5">
           <Label htmlFor={`${uid}-review-label`}>{t.reviewLabel}</Label>
           <Input
@@ -105,11 +144,13 @@ export function SettingsForm({
         </div>
         <p
           className={
-            savedReviewRequested || savedReviewLabel ? "text-sm" : "text-sm text-muted-foreground"
+            savedReviewRequested || (savedReviewLabel && savedOn.reviewLabel)
+              ? "text-sm"
+              : "text-sm text-muted-foreground"
           }
         >
-          {savedReviewRequested || savedReviewLabel
-            ? t.reviewOn(savedReviewRequested, savedReviewLabel)
+          {savedReviewRequested || (savedReviewLabel && savedOn.reviewLabel)
+            ? t.reviewOn(savedReviewRequested, savedOn.reviewLabel ? savedReviewLabel : "")
             : t.reviewOff}
         </p>
       </section>
