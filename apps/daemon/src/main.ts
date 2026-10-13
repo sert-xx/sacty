@@ -71,7 +71,6 @@ const hostMcp = new HostMcpServers({
   secrets,
   log: (line) => console.log(line),
 });
-hostMcp.start();
 const gateway = new AiGateway({
   hostMcp,
   policy: () => {
@@ -82,13 +81,6 @@ const gateway = new AiGateway({
   credentials,
 });
 await gateway.listen();
-for (const platform of platforms()) {
-  credentials.header(platform).catch((error) => {
-    console.warn(
-      `[daemon] internal platform ${platform.name}: ${error instanceof Error ? error.message : error}`,
-    );
-  });
-}
 const service = new TaskService({
   activity,
   config,
@@ -144,6 +136,16 @@ const server = serve({ fetch: app.fetch, hostname: "127.0.0.1", port }, (info) =
       console.warn("[daemon] 秘密情報をまとめて取り出せませんでした：", error),
     )
     .finally(() => {
+      // 秘密情報を使うホストの MCP サーバーの起動と、組織内 PF の認証の用意も、まとめて取り出した後にする
+      // （先に始めると、それぞれが個別に 1Password に問い合わせるため。PBI-48 レビュー指摘）
+      hostMcp.start();
+      for (const platform of platforms()) {
+        credentials.header(platform).catch((error) => {
+          console.warn(
+            `[daemon] internal platform ${platform.name}: ${error instanceof Error ? error.message : error}`,
+          );
+        });
+      }
       worker.start();
       intake.start();
       prWatcher.start();

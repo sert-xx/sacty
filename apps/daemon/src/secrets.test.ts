@@ -248,6 +248,37 @@ exit 1
       expect(op.calls()).toHaveLength(3);
     });
 
+    it("先に始まった取り出しがあれば、その完了を待ってから戻り、失敗も返す（レビュー指摘）", async () => {
+      let release: (() => void) | undefined;
+      const calls: string[] = [];
+      const store = new OnePasswordSecretStore({
+        run: async (args) => {
+          calls.push(args[0] ?? "");
+          if (args[0] === "read") {
+            await new Promise<void>((r) => {
+              release = r;
+            });
+            return { code: 1, stdout: "", stderr: "[ERROR] 2026/10/13 00:00:00 item not found" };
+          }
+          return { code: 0, stdout: JSON.stringify(["v"]), stderr: "" };
+        },
+      });
+      // PF の認証の用意などで、先に個別の取り出しが始まっている
+      const early = store.get("op://Work/Early/f").catch(() => undefined);
+      let done = false;
+      const prefetching = store.prefetch(["op://Work/Early/f", "op://Work/Other/f"]).then((r) => {
+        done = true;
+        return r;
+      });
+      await new Promise((r) => setTimeout(r, 20));
+      expect(done).toBe(false);
+      release?.();
+      const failures = await prefetching;
+      await early;
+      expect(failures.map((f) => f.ref)).toEqual(["op://Work/Early/f"]);
+      expect(calls).toEqual(["read", "run"]);
+    });
+
     it("取り出し直し（fresh）は、持っている値を捨ててから取り出す。キーチェーンは取り出せるかを確かめる", async () => {
       const op = installOp({ "op://Work/A/f": "v1" });
       const resolving = new ResolvingSecretStore(

@@ -119,10 +119,20 @@ export class OnePasswordSecretStore implements SecretStore {
   async prefetch(refs: readonly string[]): Promise<{ ref: string; error: SecretNotFoundError }[]> {
     const account = this.options.account?.();
     const keyOf = (ref: string) => `${account ?? ""}\u0000${ref}`;
-    const wanted = [...new Set(refs)].filter(
-      (ref) => isOnePasswordRef(ref) && !this.cache.has(keyOf(ref)),
-    );
-    if (wanted.length === 0) return [];
+    const unique = [...new Set(refs)].filter(isOnePasswordRef);
+    // すでに取り出し中・取り出し済みの参照は、その結果を待つ（戻ったときに、すべて取り出し終えているように）
+    const failures: { ref: string; error: SecretNotFoundError }[] = [];
+    const known = unique.filter((ref) => this.cache.has(keyOf(ref)));
+    for (const ref of known) {
+      await this.cache.get(keyOf(ref))?.catch((error: unknown) => {
+        failures.push({
+          ref,
+          error: error instanceof SecretNotFoundError ? error : new SecretNotFoundError(ref),
+        });
+      });
+    }
+    const wanted = unique.filter((ref) => !known.includes(ref));
+    if (wanted.length === 0) return failures;
     const dir = mkdtempSync(join(tmpdir(), "sacty-op-"));
     try {
       // 参照だけを書いたファイル（値は書かない）。本人だけが読める
@@ -159,16 +169,15 @@ export class OnePasswordSecretStore implements SecretStore {
         values.length === wanted.length &&
         values.every((v) => typeof v === "string" && v !== "")
       ) {
-        wanted.forEach((ref, i) =>
-          this.cache.set(keyOf(ref), Promise.resolve(values[i] as string)),
-        );
-        return [];
+        for (const [i, ref] of wanted.entries()) {
+          this.cache.set(keyOf(ref), Promise.resolve(values[i] as string));
+        }
+        return failures;
       }
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
     // まとめて取り出せなかった（参照の誤り・サインインしていないなど）。どれが取り出せないかを参照ごとに確かめる
-    const failures: { ref: string; error: SecretNotFoundError }[] = [];
     for (const ref of wanted) {
       await this.get(ref).catch((error: unknown) => {
         failures.push({
