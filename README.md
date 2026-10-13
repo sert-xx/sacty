@@ -156,6 +156,20 @@ npx sacty image build java17     # 名前を指定して作る（default は既�
 - イメージの名前は、書かなければ `sacty-agent-<名前>:0.1.0`（`image` で変えられる）
 - `env` は、組織のレジストリなど（`PIP_INDEX_URL`・`UV_DEFAULT_INDEX`・`GOPROXY`・`GONOSUMDB` など）。コンテナの中のすべてのコマンドに見えるので、認証の値（`TOKEN`・`PASSWORD` などを含む名前、ユーザー名・パスワードを含む URL）は書けない
 - `maven_mirror` は、Maven（`settings.xml` の mirror）と Gradle（init スクリプト）の取得先を、すべてその URL に向ける
+- `packages` に書いた OS のパッケージを、イメージを作るときに root で入れる（dnf・microdnf・yum・apt-get のうち、元のイメージにあるもの）。`run` に書いたコマンドは、イメージを作るときに root で上から順に実行する（社内のパッケージのリポジトリの設定、CLI の導入など。失敗したら止める）。`packages`・`run` を変えると、`sacty image build` で作り直される。イメージに残るので、`run` に秘密情報は書かない
+  ```yaml
+  images:
+    node-pw:
+      description: Node.js 22・Playwright
+      base_image: registry.example.com/ci/node:22
+      packages: [nss, nspr, atk, at-spi2-atk, cups-libs, libdrm, libxkbcommon, mesa-libgbm, pango, alsa-lib]   # RHEL 系
+      run:
+        # 取得とインストールを分ける（取得に失敗したら、そこで止まる）
+        - curl -fsSL https://artifacts.example.com/pf-cli/install.sh -o /tmp/pf-install.sh
+        - sh /tmp/pf-install.sh
+  ```
+  `run` のコマンドは、終了コードが 0 でなければ止まる。元のイメージに bash があれば `pipefail` で実行するのでパイプの途中の失敗でも止まるが、bash が無いイメージ（`sh` で実行）では、パイプの最後のコマンドの終了コードしか見ない。取得して実行するような処理は、パイプでつながずに項目を分ける
+  エージェントは root ではないので、タスクの中では OS のパッケージを入れられない。Playwright のブラウザ本体は、リポジトリの版に合わせてタスクの中で `npx playwright install chromium` で取る（OS のライブラリだけをイメージに入れる。Debian 系なら `run: [npx -y playwright@<版> install-deps chromium]` でもよい）
 - 工程ごとのイメージは、オーケストレーターが工程を選ぶときに、リポジトリ（`pom.xml`・`go.mod`・`pyproject.toml`・`package.json` など。モノレポなら工程で触るディレクトリ）を読んで選ぶ。テストは、実装（不具合の修正では再現）の工程のイメージで実行する。オーケストレーター自身は既定のイメージで動く
 - プロジェクトの対象（リポジトリ・Org）ごとにイメージを指定すると、オーケストレーターに選ばせず、すべての工程でそれを使う（リポジトリの指定が Org の指定より優先）
 - 選んだイメージと理由は作業履歴に残る。`images` に無い名前を選んだ・指定したときは、理由を示して止まる

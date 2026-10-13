@@ -94,6 +94,8 @@ const PARAMS = {
   "config.imageEnvSecret": null,
   "config.imageEnvReserved": null,
   "config.mavenMirror": null,
+  "config.imagePackage": null,
+  "config.imageRun": null,
   "image.unknown": z.object({ name: z.string() }),
   // docker compose のサービス（PBI-47）
   "services.unsafe": z.object({ file: z.string(), detail: z.string() }),
@@ -407,6 +409,10 @@ const ja: MessageDictionary = {
     "images の env には、認証の値（TOKEN・PASSWORD などを含む名前や、ユーザー名・パスワードを含む URL）は書けません（コンテナの中のすべてのコマンドに見えるため）。",
   "config.imageEnvReserved":
     "images の env には、PATH・HOME や、DOCKER_・SACTY_・CODEX_・CLAUDE_・ANTHROPIC_・OPENAI_・NPM_CONFIG_ で始まる名前は書けません（sacty と docker の設定とぶつかるため）。",
+  "config.imagePackage":
+    "images の packages には、パッケージの名前（英数字と . _ + : @ ~ = -）を書いてください。",
+  "config.imageRun":
+    "images の run には、1行のコマンドを書いてください（複数のコマンドは、項目を分けて書く）。",
   "config.mavenMirror":
     "images の maven_mirror は、ユーザー名・パスワードを含まない URL（http または https）で書いてください。",
   "services.unsafe": ({ file, detail }) =>
@@ -675,6 +681,10 @@ const en: MessageDictionary = {
     "images env can't contain credentials (names with TOKEN, PASSWORD and so on, or URLs with a user name or password), because every command in the container can read them.",
   "config.imageEnvReserved":
     "images env can't use PATH, HOME, or names starting with DOCKER_, SACTY_, CODEX_, CLAUDE_, ANTHROPIC_, OPENAI_ or NPM_CONFIG_ (they would clash with sacty and docker settings).",
+  "config.imagePackage":
+    "Write package names in images packages (letters, digits and . _ + : @ ~ = -).",
+  "config.imageRun":
+    "Write one command per line in images run (use separate items for several commands).",
   "config.mavenMirror":
     "Write images maven_mirror as a URL (http or https) without a user name or password.",
   "services.unsafe": ({ file, detail }) =>

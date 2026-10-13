@@ -101,6 +101,27 @@ RUN --mount=type=secret,id=npmconfig,target=/run/secrets/npmconfig \
   && g="$(npm config get globalconfig)" && mkdir -p "$(dirname "$g")" \
   && { [ ! -s "$g" ] || [ -z "$(tail -c 1 "$g")" ] || echo; cat /run/secrets/npmconfig; } >> "$g"
 
+# イメージを作るときに入れる OS のパッケージと、実行するコマンド（言語ごとのイメージの packages・run。PBI-50）。
+# パッケージは、元のイメージにあるパッケージの管理のコマンド（dnf・microdnf・yum・apt-get）で入れる。コマンドは
+# 上から順に root で実行し、失敗したら止める（bash があれば pipefail で、パイプの途中の失敗でも止める）。
+# コマンドのファイルは secret の仕組みで受け取る（中身のハッシュで作り直す）
+ARG SACTY_PACKAGES=
+ARG SACTY_SETUP_HASH=
+RUN --mount=type=secret,id=setup,target=/run/secrets/setup \
+  if [ -n "$SACTY_PACKAGES" ]; then \
+    if command -v dnf >/dev/null 2>&1; then dnf install -y $SACTY_PACKAGES && dnf clean all; \
+    elif command -v microdnf >/dev/null 2>&1; then microdnf install -y $SACTY_PACKAGES && microdnf clean all; \
+    elif command -v yum >/dev/null 2>&1; then yum install -y $SACTY_PACKAGES && yum clean all; \
+    elif command -v apt-get >/dev/null 2>&1; then \
+      apt-get update && apt-get install -y --no-install-recommends $SACTY_PACKAGES && rm -rf /var/lib/apt/lists/*; \
+    else echo "sacty: パッケージの管理のコマンド（dnf・microdnf・yum・apt-get）が見つからないので、packages を入れられません。" >&2; exit 1; \
+    fi; \
+  fi \
+  && if [ -s /run/secrets/setup ]; then \
+    if command -v bash >/dev/null 2>&1; then bash -ex -o pipefail /run/secrets/setup; \
+    else sh -ex /run/secrets/setup; fi; \
+  fi
+
 # root で実行した手順（npm など）が HOME の下に作ったものを、node ユーザーの持ち物に戻す
 RUN if [ -d /home/node ]; then chown -R "node:$(id -g node)" /home/node; fi
 
