@@ -27,7 +27,8 @@ import { SecretRef } from "./secrets.js";
  * - `sacty-context.yaml`：extends（親のリポジトリ。`URL#ref` で ref を指定できる）、
  *   locked（下位で上書き・取り除きできない項目）、remove（上位から引き継いだ項目を取り除く）
  * - `rules.md` か `rules/*.md`：規約（上位から順に連結する）
- * - `skills/<名前>/SKILL.md`：スキル（名前ごとに、下位が上書きする）
+ * - `skills/<名前>/SKILL.md`：スキル（名前ごとに、下位が上書きする）。SKILL.md の無いディレクトリはグループで、
+ *   `skills/<グループ>/<名前>/SKILL.md` も名前 `<名前>` のスキルになる（PBI-65）
  * - `mcp.yaml`：MCP サーバー（名前ごとに、下位が上書きする）。秘密情報は値を書かず、名前で参照する
  * - `agents/codex/config.toml`・`agents/claude/settings.json`：エージェントの設定（キーごとに、下位が上書きする。PBI-24）
  */
@@ -547,15 +548,45 @@ function layerRules(layer: ContextLayer): string {
     .join("\n\n");
 }
 
-/** 層のスキル（`skills/<名前>/SKILL.md` があるディレクトリ）。 */
-function layerSkills(layer: ContextLayer): { name: string; dir: string }[] {
+/**
+ * 層のスキル。`skills/` の下で SKILL.md のあるディレクトリがスキルで、名前はそのディレクトリの名前。
+ * SKILL.md の無いディレクトリはグループで、その下を再帰的に探す（`skills/<グループ>/<名前>/SKILL.md`。PBI-65）。
+ * 同じ層に同じ名前のスキルが重なれば、パスの順で先のものを使い、警告を残す。
+ */
+function layerSkills(
+  layer: ContextLayer,
+  warnings?: DaemonText[],
+): { name: string; dir: string }[] {
   const root = join(layer.dir, "skills");
   if (!existsSync(root)) return [];
-  return readdirSync(root)
-    .filter((name) => /^[\w.-]+$/.test(name) && statSync(join(root, name)).isDirectory())
-    .filter((name) => existsSync(join(root, name, "SKILL.md")))
-    .sort()
-    .map((name) => ({ name, dir: join(root, name) }));
+  const found = new Map<string, string>();
+  const walk = (dir: string) => {
+    for (const name of readdirSync(dir).sort()) {
+      const path = join(dir, name);
+      if (!/^[\w.-]+$/.test(name) || !statSync(path).isDirectory()) continue;
+      if (!existsSync(join(path, "SKILL.md"))) {
+        walk(path);
+        continue;
+      }
+      const used = found.get(name);
+      if (used) {
+        warnings?.push(
+          message("context.duplicateSkill", {
+            from: label(layer),
+            name,
+            path: path.slice(root.length + 1),
+            usedPath: used.slice(root.length + 1),
+          }),
+        );
+        continue;
+      }
+      found.set(name, path);
+    }
+  };
+  walk(root);
+  return [...found.entries()]
+    .map(([name, dir]) => ({ name, dir }))
+    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
 }
 
 /**
@@ -619,7 +650,7 @@ export function composeContext(
   const skills = mergeNamed(
     layers,
     "skills",
-    (layer) => layerSkills(layer).map((s) => ({ name: s.name, value: s.dir })),
+    (layer) => layerSkills(layer, warnings).map((s) => ({ name: s.name, value: s.dir })),
     warnings,
   );
   const mcp = mergeNamed(

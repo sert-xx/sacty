@@ -6,7 +6,7 @@ sacty に同梱するコンテキストです（PBI-24）。どのプロジェ�
 形式はコンテキストリポジトリと同じです（このファイルは渡しません）。
 
 - `rules.md`（または `rules/*.md`）：規則。Claude Code には CLAUDE.md、Codex には AGENTS.md として渡す
-- `skills/<名前>/SKILL.md`：スキル。ディレクトリを置けば、コードを変えずに既定のスキルになる
+- `skills/<名前>/SKILL.md`：スキル。ディレクトリを置けば、コードを変えずに既定のスキルになる。SKILL.md の無いディレクトリはグループで、`skills/<グループ>/<名前>/SKILL.md` も名前 `<名前>` のスキルになる（関連するスキルをまとめて置ける。例：`skills/review/`）
 - `mcp.yaml`：MCP サーバー
 - `agents/codex/`・`agents/claude/`：worker の CODEX_HOME・CLAUDE_CONFIG_DIR に写すファイル（同じパスは下位が上書き）
   - `config.toml`・`settings.json` はキーごとに重ね、下位が上書きする（Claude Code の `permissions.allow / deny / ask` は合わせる）

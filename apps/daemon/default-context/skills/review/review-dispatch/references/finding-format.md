@@ -1,6 +1,6 @@
 # 観点担当の出力の形式
 
-観点担当（review-execution.md）が返し、親（aggregation.md）が読む、1観点の結果の形式。担当は JSON だけを返し、前後に説明を付けない。人向けの文章は日本語で書く。
+観点担当（スキル review-execution）が返し、親（aggregation.md）が読む、1観点の結果の形式。review-execution の SKILL.md の「出力形式」と同じ内容（変えるときは両方を変える）。担当は JSON だけを返し、前後に説明を付けない。人向けの文章は日本語で書く。
 
 ```json
 {

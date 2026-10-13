@@ -14,7 +14,7 @@ sacty の工程エージェントに渡す規則・スキル・MCP・エージ�
 このファイル（README.md）はエージェントに渡しません。
 
 - \`rules.md\`（または \`rules/*.md\`）：規則。Claude Code には CLAUDE.md、Codex には AGENTS.md として渡す
-- \`skills/<名前>/SKILL.md\`：スキル。上位の層の同じ名前のスキルは上書きする
+- \`skills/<名前>/SKILL.md\`：スキル。上位の層の同じ名前のスキルは上書きする。SKILL.md の無いディレクトリはグループ（\`skills/<グループ>/<名前>/SKILL.md\` も名前 \`<名前>\` のスキル）
 - \`mcp.yaml\`：MCP サーバー。秘密情報は値を書かず、名前か 1Password の参照で書く
 - \`agents/codex/\`・\`agents/claude/\`：worker の CODEX_HOME・CLAUDE_CONFIG_DIR に写すファイル（同じパスは下位が上書き）
   - \`config.toml\`・\`settings.json\` はキーごとに重ね、下位が上書きする
@@ -34,6 +34,7 @@ sacty の工程エージェントに渡す規則・スキル・MCP・エージ�
   "skills/README.md": `# スキル
 
 \`skills/<名前>/SKILL.md\` に置いたディレクトリが、スキルになります（このファイルは渡しません）。
+SKILL.md の無いディレクトリはグループで、\`skills/<グループ>/<名前>/SKILL.md\` も名前 \`<名前>\` のスキルになります（関連するスキルをまとめて置けます）。
 SKILL.md の先頭の front matter の description に、いつ使うスキルかを書きます。
 
 \`\`\`markdown

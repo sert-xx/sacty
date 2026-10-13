@@ -80,7 +80,10 @@ describe("コンテキストリポジトリの雛形（PBI-45）", () => {
         ]);
         expect(prepared.placed.mcpServers).toEqual([]);
         // 雛形のスキルの説明（skills/README.md）はスキルにならず、既定のスキル（review）だけが置かれる
-        expect(readdirSync(join(prepared.dir, "skills"))).toEqual(["review"]);
+        expect(readdirSync(join(prepared.dir, "skills"))).toEqual([
+          "review-dispatch",
+          "review-execution",
+        ]);
       } finally {
         prepared.dispose();
       }
@@ -95,7 +98,10 @@ describe("コンテキストリポジトリの雛形（PBI-45）", () => {
       expect(withTemplate.agents).toEqual(defaultOnly.agents);
       expect(withTemplate.agentFiles).toEqual(defaultOnly.agentFiles);
       expect(withTemplate.skills).toEqual(defaultOnly.skills);
-      expect(defaultOnly.skills.map((s) => s.name)).toEqual(["review"]);
+      expect(defaultOnly.skills.map((s) => s.name)).toEqual([
+        "review-dispatch",
+        "review-execution",
+      ]);
     },
   );
 
