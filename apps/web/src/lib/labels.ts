@@ -182,6 +182,7 @@ export function describeEvent(event: ActivityEvent, l: LabelMessages): string {
         event.payload.file,
         event.payload.services.map((s) => s.name).join(e.imagesJoin),
         event.payload.forTests === true,
+        (event.payload.sharedPorts ?? []).join(e.imagesJoin),
       );
     case "AgentRunStarted":
       return e.AgentRunStarted(

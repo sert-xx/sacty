@@ -802,6 +802,8 @@ const ServicesStarted = z.object({
     services: z.array(z.object({ name: z.string(), ports: z.array(z.number().int()) })),
     /** テストの実行のための起動か（無ければ工程のエージェントの実行）。 */
     forTests: z.boolean().optional(),
+    /** 複数のサービスが使うため、localhost に転送しなかったポート（PBI-60）。 */
+    sharedPorts: z.array(z.number().int()).optional(),
   }),
 });
 

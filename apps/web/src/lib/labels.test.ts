@@ -522,7 +522,7 @@ describe("オーケストレーターが選んだ工程（PBI-17）", () => {
   });
 
   it("サービスの起動を表示する（PBI-47）", () => {
-    const started = (forTests?: boolean) =>
+    const started = (forTests?: boolean, sharedPorts?: number[]) =>
       ({
         type: "ServicesStarted",
         payload: {
@@ -534,6 +534,7 @@ describe("オーケストレーターが選んだ工程（PBI-17）", () => {
             { name: "mock", ports: [] },
           ],
           ...(forTests ? { forTests } : {}),
+          ...(sharedPorts ? { sharedPorts } : {}),
         },
         seq: 1,
         id: "e1",
@@ -547,6 +548,13 @@ describe("オーケストレーターが選んだ工程（PBI-17）", () => {
     );
     expect(describeEvent(started(true))).toBe(
       "実装のテストのためにサービスを起動：db、mock（compose.yaml。実行の後に消す）",
+    );
+    // 複数のサービスが使うため、localhost に転送しなかったポート（PBI-60）
+    expect(describeEvent(started(false, [8080, 9000]))).toBe(
+      "実装のためにサービスを起動：db、mock（compose.yaml。実行の後に消す） / 複数のサービスが使うため localhost に転送しないポート：8080、9000",
+    );
+    expect(describeIn(started(false, [8080]), labels.en)).toContain(
+      "not forwarded to localhost because several services use them: 8080",
     );
   });
 });

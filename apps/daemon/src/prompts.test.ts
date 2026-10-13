@@ -347,8 +347,27 @@ describe("工程の選択と内容の調査では、開発のセットアップ�
       "",
       "--- 起動しているサービス（docker compose） ---",
       expect.stringContaining("docker・docker compose のコマンドは使えません"),
-      "- db：db:5432、db:5433",
+      expect.stringContaining("127.0.0.1 と書いてください"),
+      "- db：db:5432 または localhost:5432、db:5433 または localhost:5433",
       "- mock",
+    ]);
+    // localhost でもサービス名でも接続できる。設定は書き換えさせない（PBI-60）
+    const intro = servicePromptLines([{ name: "db", ports: [5432] }])[2];
+    expect(intro).toContain("localhost のそのポート");
+    expect(intro).toContain("書き換えずにそのまま使ってください");
+    expect(intro).not.toContain("localhost ではありません");
+    expect(servicePromptLines([{ name: "db", ports: [5432] }])[3]).toContain(
+      "サービスと同じポートでアプリを待ち受けさせると、転送とぶつかります",
+    );
+    // 複数のサービスが使うポートは、localhost に転送していないと伝える
+    expect(
+      servicePromptLines([
+        { name: "a", ports: [8080, 9000] },
+        { name: "b", ports: [8080] },
+      ]).slice(4),
+    ).toEqual([
+      "- a：a:8080（複数のサービスが使うポートのため、localhost には転送していません）、a:9000 または localhost:9000",
+      "- b：b:8080（複数のサービスが使うポートのため、localhost には転送していません）",
     ]);
     expect(servicePromptLines([])).toEqual([]);
   });

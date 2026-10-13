@@ -74,6 +74,7 @@ import {
 import { ZodError } from "zod";
 import type { ActivityStore } from "./activity.js";
 import type { AgentExecutor } from "./agents/docker.js";
+import type { LocalForward } from "./agents/forward.js";
 import {
   type AgentRole,
   buildInvocation,
@@ -169,7 +170,12 @@ import {
 import type { RepositoryWorkspace } from "./repository.js";
 import { secretUses } from "./secret-uses.js";
 import { type PrefetchingSecretStore, SecretNotFoundError, type SecretStore } from "./secrets.js";
-import type { ServiceRunner, ServicesSpec, StartedServices } from "./services.js";
+import {
+  localForwards,
+  type ServiceRunner,
+  type ServicesSpec,
+  type StartedServices,
+} from "./services.js";
 import type { SettingsStore } from "./settings.js";
 import { type FoundTicket, type TicketClient, ticketErrorText } from "./tickets.js";
 
@@ -183,6 +189,18 @@ type CleanupResult = {
 };
 
 /** 実装の検証（テストか最終レビュー）を待っているか。変更の申し出の判断待ちの間は検証しない。 */
+/**
+ * 起動したサービスに、エージェント・テストのコンテナからつなぐ設定（PBI-47）。ネットワークと、
+ * localhost に転送するポート（PBI-60。転送するものが無ければ渡さない）。
+ */
+function serviceConnection(started: StartedServices): {
+  network: string;
+  forwards?: LocalForward[];
+} {
+  const { forwards } = localForwards(started.services);
+  return { network: started.network, ...(forwards.length > 0 ? { forwards } : {}) };
+}
+
 function awaitingVerification(task: Task): boolean {
   return task.status === "idle" && task.verification !== undefined && !openProposal(task);
 }
@@ -865,6 +883,8 @@ export class TaskService {
     if (this.pauseRequested.has(task.id)) return undefined;
     const result = await this.deps.services.start({ runId, workspaceDir, spec });
     if (result.ok) {
+      // 複数のサービスが使うポートは、localhost に転送しない（PBI-60）
+      const { shared } = localForwards(result.started.services);
       this.append(this.mustGet(task.id), [
         {
           actor: "sacty",
@@ -876,6 +896,7 @@ export class TaskService {
               file: spec.file,
               services: result.started.services,
               ...(forTests ? { forTests } : {}),
+              ...(shared.length > 0 ? { sharedPorts: shared } : {}),
             },
           },
         },
@@ -898,7 +919,7 @@ export class TaskService {
     try {
       const result = await this.deps.tests.run({
         ...input,
-        ...(services?.ok ? { network: services.started.network } : {}),
+        ...(services?.ok ? serviceConnection(services.started) : {}),
       });
       return { ok: true, result };
     } finally {
@@ -2389,7 +2410,7 @@ export class TaskService {
         agent,
         image: stepImage.ok ? stepImage.image : config.config.image,
         ...(stepImage.ok ? { imageEnv: stepImage.env } : {}),
-        ...(started ? { network: started.network } : {}),
+        ...(started ? serviceConnection(started) : {}),
         runId,
         prompt: [
           buildPrompt(this.mustGet(task.id), step, {
@@ -4010,6 +4031,8 @@ export class TaskService {
     imageEnv?: Record<string, string>;
     /** つなぐネットワーク（docker compose のサービス。PBI-47）。 */
     network?: string;
+    /** コンテナの中で localhost に転送するサービスのポート（PBI-60）。 */
+    forwards?: readonly LocalForward[];
     /** ゲートウェイ経由にした、コンテキストの HTTP の MCP サーバー（PBI-49）。 */
     contextMcp?: readonly GatewayMcpServer[];
     /** true を返すと、コンテナを起動しない（質問への答えの実行が中止されたなど。PBI-54）。 */
@@ -4110,6 +4133,7 @@ export class TaskService {
         invocation,
         ...(run.imageEnv && Object.keys(run.imageEnv).length > 0 ? { imageEnv: run.imageEnv } : {}),
         ...(run.network ? { network: run.network } : {}),
+        ...(run.forwards ? { forwards: run.forwards } : {}),
       });
     } catch (error) {
       outcome = {

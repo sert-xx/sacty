@@ -27,6 +27,7 @@ import {
 } from "@sacty/core";
 import { githubRepoOf } from "./config.js";
 import { REVIEW_MARKER_PREFIX } from "./github.js";
+import { localForwards } from "./services.js";
 
 /** 記録した文（コードと引数の文言を含む）を、指示や PR の本文に入れる日本語の文にする。 */
 const ja = (value: DaemonText) => renderMessage(value, "ja");
@@ -1997,18 +1998,27 @@ function composeServicesOf(
 /** docker compose のサービスを使える工程（コードを動かす工程。PBI-47）。 */
 export const SERVICE_STEPS: readonly StepKey[] = ["investigate", "reproduce", "implement"];
 
-/** 工程のエージェントに伝える、起動したサービスの接続先（PBI-47）。 */
+/**
+ * 工程のエージェントに伝える、起動したサービスの接続先（PBI-47）。ポートは localhost にも転送する（PBI-60）。
+ * 複数のサービスが使うポートは転送しないので、サービス名で接続してもらう。
+ */
 export function servicePromptLines(
   services: readonly { name: string; ports: readonly number[] }[],
 ): string[] {
   if (services.length === 0) return [];
+  const { shared } = localForwards(services.map((s) => ({ name: s.name, ports: [...s.ports] })));
+  const target = (name: string, port: number) =>
+    shared.includes(port)
+      ? `${name}:${port}（複数のサービスが使うポートのため、localhost には転送していません）`
+      : `${name}:${port} または localhost:${port}`;
   return [
     "",
     "--- 起動しているサービス（docker compose） ---",
-    "sacty が、この実行のために次のサービスを起動しています。サービス名とコンテナのポートで接続してください（localhost ではありません）。docker・docker compose のコマンドは使えません（サービスの起動・停止は不要です）。この実行が終わると、サービスとデータは消えます。",
+    "sacty が、この実行のために次のサービスを起動しています。サービス名とコンテナのポート（db:5432 など）でも、localhost のそのポート（localhost:5432・127.0.0.1:5432 など。sacty がサービスに転送しています）でも接続できます。リポジトリの設定の接続先は、書き換えずにそのまま使ってください。docker・docker compose のコマンドは使えません（サービスの起動・停止は不要です）。この実行が終わると、サービスとデータは消えます。",
+    "localhost で届かないとき（そのポートをほかのものが使っていたときなど）は、サービス名で接続してください。MySQL のクライアントなど、ホストに localhost と書くと UNIX ソケットで接続するものは、127.0.0.1 と書いてください。サービスと同じポートでアプリを待ち受けさせると、転送とぶつかります（アプリのポートを変えてください）。",
     ...services.map(
       (s) =>
-        `- ${s.name}${s.ports.length > 0 ? `：${s.ports.map((p) => `${s.name}:${p}`).join("、")}` : ""}`,
+        `- ${s.name}${s.ports.length > 0 ? `：${s.ports.map((p) => target(s.name, p)).join("、")}` : ""}`,
     ),
   ];
 }

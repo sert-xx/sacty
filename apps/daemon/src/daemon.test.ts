@@ -26,6 +26,7 @@ import {
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { SqliteActivityStore } from "./activity.js";
 import type { AgentExecutor } from "./agents/docker.js";
+import type { LocalForward } from "./agents/forward.js";
 import type { Invocation } from "./agents/invocation.js";
 import type { AgentOutcome } from "./agents/parse.js";
 import { DockerTestRunner, type TestRunner, type TestRunResult } from "./agents/test-runner.js";
@@ -140,16 +141,18 @@ function projectsWithAccount(): MemoryProjectStore {
 class FakeServices implements ServiceRunner {
   started: { runId: string; workspaceDir: string; spec: ServicesSpec }[] = [];
   stopped: string[] = [];
-  constructor(private readonly fail?: DaemonText) {}
+  constructor(
+    private readonly fail?: DaemonText,
+    private readonly services: { name: string; ports: number[] }[] = [
+      { name: "db", ports: [5432] },
+    ],
+  ) {}
   async start(input: { runId: string; workspaceDir: string; spec: ServicesSpec }) {
     this.started.push(input);
     if (this.fail) return { ok: false as const, message: this.fail };
     return {
       ok: true as const,
-      started: {
-        network: `sacty-svc-${input.runId}_sacty`,
-        services: [{ name: "db", ports: [5432] }],
-      },
+      started: { network: `sacty-svc-${input.runId}_sacty`, services: this.services },
     };
   }
   async stop(runId: string) {
@@ -517,6 +520,7 @@ class FakeTests implements TestRunner {
     image: string;
     env?: Record<string, string>;
     network?: string;
+    forwards?: readonly LocalForward[];
   }[] = [];
   /** true なら、止められるまで終わらない（一時停止のテスト用）。 */
   hold = false;
@@ -530,6 +534,7 @@ class FakeTests implements TestRunner {
     image: string;
     env?: Record<string, string>;
     network?: string;
+    forwards?: readonly LocalForward[];
   }) {
     this.calls.push(input);
     if (this.hold) {
@@ -576,6 +581,8 @@ class FakeExecutor implements AgentExecutor {
   images: { image: string; env?: Record<string, string> }[] = [];
   /** 実行ごとにつないだネットワーク（PBI-47）。 */
   networks: (string | undefined)[] = [];
+  /** 実行ごとに渡された、localhost に転送するポート（PBI-60）。 */
+  forwards: (readonly LocalForward[] | undefined)[] = [];
   async run({
     runId,
     image,
@@ -583,6 +590,7 @@ class FakeExecutor implements AgentExecutor {
     workspaceDir,
     imageEnv,
     network,
+    forwards,
   }: {
     runId: string;
     image: string;
@@ -590,9 +598,11 @@ class FakeExecutor implements AgentExecutor {
     workspaceDir: string;
     imageEnv?: Record<string, string>;
     network?: string;
+    forwards?: readonly LocalForward[];
   }): Promise<AgentOutcome> {
     this.calls.push(invocation);
     this.networks.push(network);
+    this.forwards.push(forwards);
     this.images.push({ image, ...(imageEnv ? { env: imageEnv } : {}) });
     this.dirs.push(workspaceDir);
     this.scratch.push(/[\\/]_(?:snapshots|guardian)[\\/]/.test(workspaceDir));
@@ -2759,7 +2769,53 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         undefined,
         true,
       ]);
+      // サービスのポートを localhost に転送する（PBI-60）。サービスを使わない工程では渡さない
+      expect(executor.forwards[3]).toEqual([{ port: 5432, host: "db" }]);
+      expect(executor.forwards.filter(Boolean)).toHaveLength(1);
+      expect(tests.calls[0]?.forwards).toEqual([{ port: 5432, host: "db" }]);
+      expect(started.every((e) => e.type === "ServicesStarted" && !e.payload.sharedPorts)).toBe(
+        true,
+      );
       activity.close();
+    });
+
+    it("複数のサービスが使うポートは localhost に転送せず、作業履歴と指示に残す。ポートが無ければ転送を渡さない（PBI-60）", async () => {
+      const services = new FakeServices(undefined, [
+        { name: "api", ports: [8080, 9000] },
+        { name: "mock", ports: [8080] },
+        { name: "worker", ports: [] },
+      ]);
+      const tests = new FakeTests([{ exitCode: 0, output: "ok", durationMs: 1 }]);
+      const { activity, service, executor, id } = await toImplement(
+        [implement("# 実装"), review()],
+        { tests, services, planner: servicesPlan() },
+      );
+      await drain(service);
+      expect(executor.forwards[3]).toEqual([{ port: 9000, host: "api" }]);
+      expect(tests.calls[0]?.forwards).toEqual([{ port: 9000, host: "api" }]);
+      const started = service.get(id)?.activity.filter((e) => e.type === "ServicesStarted") ?? [];
+      expect(started.map((e) => e.type === "ServicesStarted" && e.payload.sharedPorts)).toEqual([
+        [8080],
+        [8080],
+      ]);
+      expect(promptOf(executor, 3)).toContain(
+        "- mock：mock:8080（複数のサービスが使うポートのため、localhost には転送していません）",
+      );
+      activity.close();
+
+      // 転送するポートが無ければ、転送を渡さない（コマンドはこれまでどおり）
+      const portless = new FakeServices(undefined, [{ name: "worker", ports: [] }]);
+      const tests2 = new FakeTests([{ exitCode: 0, output: "ok", durationMs: 1 }]);
+      const second = await toImplement([implement("# 実装"), review()], {
+        tests: tests2,
+        services: portless,
+        planner: servicesPlan(),
+      });
+      await drain(second.service);
+      expect(second.executor.networks[3]).toBeDefined();
+      expect(second.executor.forwards.filter(Boolean)).toHaveLength(0);
+      expect(tests2.calls[0]).not.toHaveProperty("forwards");
+      second.activity.close();
     });
 
     it("サービスを起動できなければ、工程を実行せずに理由を示して止まる", async () => {

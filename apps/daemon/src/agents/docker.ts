@@ -15,6 +15,7 @@ import { basename, dirname, join } from "node:path";
 import { message } from "@sacty/core";
 import { MessageError } from "../errors.js";
 import { DEFAULT_HOST_ADDRESS } from "../gateway.js";
+import { forwardNotices, type LocalForward, withLocalForwards } from "./forward.js";
 import type { Invocation } from "./invocation.js";
 import { type AgentOutcome, parseClaudeResult, parseCodexEvents } from "./parse.js";
 import { redact, redactText, secretStringsInJson } from "./redact.js";
@@ -144,6 +145,8 @@ export interface AgentExecutor {
     imageEnv?: Record<string, string>;
     /** つなぐネットワーク（docker compose のサービス。PBI-47）。 */
     network?: string;
+    /** コンテナの中で localhost に転送するサービスのポート（PBI-60）。無ければ、コマンドはそのまま。 */
+    forwards?: readonly LocalForward[];
   }): Promise<AgentOutcome>;
   /** 実行中のコンテナを止める（人間が一時停止・中止したとき）。無ければ何もしない。 */
   kill(runId: string): void;
@@ -244,6 +247,7 @@ export class DockerExecutor implements AgentExecutor {
     invocation,
     imageEnv = {},
     network,
+    forwards = [],
   }: Parameters<AgentExecutor["run"]>[0]): Promise<AgentOutcome> {
     const env = { ...imageEnv, ...invocation.env };
     // コピーして渡すファイル（Codexの認証ファイルなど）は、実行ごとの一時ディレクトリに置き、
@@ -302,7 +306,7 @@ export class DockerExecutor implements AgentExecutor {
       envNames: Object.keys(env),
       mounts,
       ...(network ? { network } : {}),
-      command: invocation.command,
+      command: withLocalForwards(invocation.command, forwards),
       ...(invocation.hostGateway
         ? { hostGateway: invocation.hostAddress ?? DEFAULT_HOST_ADDRESS }
         : {}),
@@ -344,6 +348,9 @@ export class DockerExecutor implements AgentExecutor {
         });
       });
 
+      // 転送しなかったポート（すでに使われていたなど。PBI-60）は、デーモンのログに残す
+      for (const notice of forwardNotices(stderr))
+        console.warn(`[daemon] ${containerName}：${notice}`);
       if (this.aborting) {
         outcome = {
           kind: "failed",

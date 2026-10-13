@@ -5,6 +5,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from "node:pat
 import { type DaemonText, message } from "@sacty/core";
 import { parse as parseYaml } from "yaml";
 import { dockerClientEnv } from "./agents/docker.js";
+import type { LocalForward } from "./agents/forward.js";
 
 /**
  * docker compose のサービス（DB・モック API など）を、工程の実行・テストの実行ごとに起動する（PBI-47）。
@@ -27,6 +28,29 @@ export type StartedServices = {
   network: string;
   services: { name: string; ports: number[] }[];
 };
+
+/**
+ * コンテナの中で localhost に転送するポート（PBI-60）。`127.0.0.1:<ポート>` → `<サービス名>:<ポート>`。
+ * 複数のサービスが使うポートは、どれにつなぐか決められないので転送しない（shared。サービス名で接続してもらう）。
+ */
+export function localForwards(services: StartedServices["services"]): {
+  forwards: LocalForward[];
+  shared: number[];
+} {
+  const users = new Map<number, string[]>();
+  for (const service of services) {
+    for (const port of new Set(service.ports)) {
+      users.set(port, [...(users.get(port) ?? []), service.name]);
+    }
+  }
+  const forwards: LocalForward[] = [];
+  const shared: number[] = [];
+  for (const [port, names] of [...users].sort(([a], [b]) => a - b)) {
+    if (names.length > 1) shared.push(port);
+    else forwards.push({ port, host: names[0] as string });
+  }
+  return { forwards, shared };
+}
 
 /** エージェント・テストのコンテナをつなぐ、sacty が足すネットワークの名前（compose の中の名前）。 */
 const SACTY_NETWORK = "sacty";

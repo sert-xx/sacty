@@ -8,6 +8,7 @@ import {
   checkComposeSources,
   composeProject,
   DockerComposeServices,
+  localForwards,
   sanitizeCompose,
 } from "./services.js";
 
@@ -376,5 +377,51 @@ describe("docker compose の実行（PBI-47 レビュー指摘）", () => {
       }),
     });
     expect(docker.calls).toEqual([]);
+  });
+});
+
+describe("localhost に転送するポート（PBI-60）", () => {
+  it("サービスが無い・ポートが無いサービスだけなら、転送しない", () => {
+    expect(localForwards([])).toEqual({ forwards: [], shared: [] });
+    expect(localForwards([{ name: "worker", ports: [] }])).toEqual({ forwards: [], shared: [] });
+  });
+
+  it("サービスのポートを、同じポートでサービス名に転送する（1つ・複数）", () => {
+    expect(localForwards([{ name: "db", ports: [5432] }])).toEqual({
+      forwards: [{ port: 5432, host: "db" }],
+      shared: [],
+    });
+    expect(
+      localForwards([
+        { name: "mock", ports: [8080, 3000] },
+        { name: "db", ports: [5432] },
+        { name: "worker", ports: [] },
+      ]),
+    ).toEqual({
+      forwards: [
+        { port: 3000, host: "mock" },
+        { port: 5432, host: "db" },
+        { port: 8080, host: "mock" },
+      ],
+      shared: [],
+    });
+  });
+
+  it("複数のサービスが使うポートは転送しない（ほかのポートは転送する）", () => {
+    expect(
+      localForwards([
+        { name: "api", ports: [8080, 9000] },
+        { name: "mock", ports: [8080] },
+        { name: "db", ports: [5432] },
+        { name: "db2", ports: [5432] },
+      ]),
+    ).toEqual({ forwards: [{ port: 9000, host: "api" }], shared: [5432, 8080] });
+  });
+
+  it("1つのサービスに同じポートが重なっていても、複数のサービスとは数えない", () => {
+    expect(localForwards([{ name: "db", ports: [5432, 5432] }])).toEqual({
+      forwards: [{ port: 5432, host: "db" }],
+      shared: [],
+    });
   });
 });
