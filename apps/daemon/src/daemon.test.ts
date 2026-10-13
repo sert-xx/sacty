@@ -7927,6 +7927,29 @@ describe("タスクの詳細での、オーケストレーターへの質問（P
     return { ...made, activity, id };
   }
 
+  it("答えを記録できなければ、答えられなかったこととして記録し、次の質問を塞がない", async () => {
+    const { activity, service, id } = await approvedRequirements([out("答え1"), out("答え2")]);
+    // 答えの記録だけを一度失敗させる
+    const append = activity.append.bind(activity);
+    let failOnce = true;
+    activity.append = (entry) => {
+      if (
+        failOnce &&
+        entry.events.some((e) => e.event.type === "QuestionAnswered" && "answer" in e.event.payload)
+      ) {
+        failOnce = false;
+        throw new Error("disk full");
+      }
+      return append(entry);
+    };
+    await service.askQuestion(id, { text: "Q1" }).answered;
+    const first = service.get(id)?.task.questions[0]?.answer;
+    expect(first && "failed" in first ? ja(first.failed) : "").toContain("disk full");
+    await service.askQuestion(id, { text: "Q2" }).answered;
+    expect(service.get(id)?.task.questions[1]?.answer?.text).toBe("答え2");
+    activity.close();
+  });
+
   it("質問すると、台帳を読んだオーケストレーターが答え、状態・工程・承認済みの内容は変わらない", async () => {
     const { activity, service, executor, repos, id } = await approvedRequirements([
       out("いまは**設計**の実行待ちです。", 1000),

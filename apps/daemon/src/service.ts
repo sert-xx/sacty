@@ -3880,7 +3880,27 @@ export class TaskService {
     if (!latest || latest.status === "cancelled" || pendingQuestion(latest)?.id !== questionId) {
       return;
     }
-    this.append(latest, [{ actor: "orchestrator", event: { type: "QuestionAnswered", payload } }]);
+    try {
+      this.append(latest, [
+        { actor: "orchestrator", event: { type: "QuestionAnswered", payload } },
+      ]);
+    } catch (error) {
+      // 答えを記録できなければ、答えられなかったこととして記録する（答え待ちのまま、次の質問を塞がない）
+      this.append(this.mustGet(task.id), [
+        {
+          actor: "orchestrator",
+          event: {
+            type: "QuestionAnswered",
+            payload: {
+              questionId,
+              failed: message("chat.failed", { detail: errorText(error) }),
+              runResult: "failed",
+              ...setting,
+            },
+          },
+        },
+      ]);
+    }
     // 予算の通知は記録するが、タスクは止めない（次の工程の実行の前に、予算で止まる）
     this.warnIfNeeded(this.mustGet(task.id));
   }
