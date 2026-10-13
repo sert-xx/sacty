@@ -1,5 +1,6 @@
 import {
   type DaemonText,
+  gatePullRequest,
   isCompleted,
   message,
   type PauseReason,
@@ -103,12 +104,13 @@ export function notificationText(
           : ja
             ? `${stepName}の承認を待っています`
             : `${stepName} is waiting for your approval`;
-    const pr =
-      step === "pr" && task.pullRequest?.url
-        ? ja
-          ? `PR：${link(task.pullRequest.url, `#${task.pullRequest.number ?? ""}`)}（マージで承認）`
-          : `PR: ${link(task.pullRequest.url, `#${task.pullRequest.number ?? ""}`)} (merge to approve)`
-        : "";
+    // 成果物チェックの PR と、要求要件・設計の PR（PBI-57）は、マージで承認する
+    const watched = gatePullRequest(task);
+    const pr = watched?.url
+      ? ja
+        ? `PR：${link(watched.url, `#${watched.number}`)}（マージで承認）`
+        : `PR: ${link(watched.url, `#${watched.number}`)} (merge to approve)`
+      : "";
     return [
       `:raising_hand: ${title}`,
       what,

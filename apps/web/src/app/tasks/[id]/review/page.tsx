@@ -1,6 +1,7 @@
 import {
   appliedProposalFor,
   changeRounds,
+  gatePullRequest,
   MAX_CHANGE_REQUESTS,
   reworkTargets,
   type TaskRemark,
@@ -71,6 +72,7 @@ async function Review({ params }: { params: Promise<{ id: string }> }) {
   const submission = task.gate?.submission ?? task.submissions[step] ?? 1;
   const fromProposal = appliedProposalFor(task, step);
   const frozenRequirements = step !== "requirements" ? task.approved.requirements : undefined;
+  const watched = gatePullRequest(task);
 
   return (
     <>
@@ -179,6 +181,10 @@ async function Review({ params }: { params: Promise<{ id: string }> }) {
             </section>
           )}
           {step === "reproduce" && <ReproductionResult task={task} />}
+          {/* 要求要件・設計の PR と、PR の指摘の戻し先の判断（PBI-57） */}
+          {(step === "requirements" || step === "design") && watched && (
+            <PullRequestCard task={task} />
+          )}
           {step === "design" && (
             <section
               aria-labelledby="viewpoints"
@@ -226,12 +232,13 @@ async function Review({ params }: { params: Promise<{ id: string }> }) {
             pendingComments={task.escalation?.pendingRemarks.map((r) => r.text) ?? []}
             notReproduced={step === "reproduce"}
             pullRequest={
-              step === "pr" && task.pullRequest?.number
+              // 成果物チェックの PR と、要求要件・設計の PR（PBI-57）。PR のマージで承認する
+              watched?.step === step
                 ? {
-                    number: task.pullRequest.number,
-                    url: task.pullRequest.url,
-                    closed: task.pullRequestState === "closed",
-                    mergedOutdated: task.pullRequestState === "merged_outdated",
+                    number: watched.number,
+                    ...(watched.url ? { url: watched.url } : {}),
+                    closed: watched.state === "closed",
+                    mergedOutdated: watched.state === "merged_outdated",
                   }
                 : undefined
             }

@@ -30,8 +30,10 @@ import {
   exportDue,
   exportSteps,
   GATED_STEPS,
+  gatePullRequest,
   investigationIsGoal,
   isCompleted,
+  latestStepPullRequest,
   MAX_CHANGE_REQUESTS,
   MAX_INTEGRATION_ATTEMPTS,
   MAX_VERIFY_ATTEMPTS,
@@ -58,7 +60,9 @@ import {
   SactySettings,
   STEP_PLANS,
   StepKey,
+  StepPullRequestKey,
   sameGitHubUrl,
+  stepDocumentPath,
   type Task,
   type TaskProposal,
   type TicketService,
@@ -130,6 +134,9 @@ import {
   buildReviewBody,
   buildReviewComments,
   buildReworkPrompt,
+  buildStepDocument,
+  buildStepPullRequestBody,
+  buildStepPullRequestTitle,
   buildTicketInvestigationComment,
   buildTicketPullRequestComment,
   buildTicketTriagePrompt,
@@ -230,6 +237,11 @@ export type ServiceDeps = {
   hostMcpProblems?: () => DaemonText[];
   /** 人間の出番の通知（PBI-38）。送るのは待たない。 */
   notifier?: Pick<SlackNotifier, "notify" | "test" | "problems">;
+  /**
+   * 要求要件・設計を、対象のリポジトリへの PR のマージで承認するか（PBI-57）。既定は承認する（PR を作れるタスクだけ）。
+   * false なら、これまでどおり sacty の画面で承認する（画面の承認の流れを確かめるテストで切る）。
+   */
+  stepPullRequests?: boolean;
 };
 
 export type DaemonStatus = {
@@ -325,15 +337,13 @@ export class TaskService {
    * 確かめられないタスク（ネットワークやアカウントの問題）は、次の確認でやり直す。
    */
   async checkPullRequests(): Promise<void> {
+    // 成果物チェックの PR と、要求要件・設計の PR（PBI-57）
     const waiting = [...this.tasks.values()].filter(
       (t) =>
-        t.gate?.step === "pr" &&
-        (t.status === "awaiting_approval" || t.status === "escalated") &&
-        t.pullRequest?.number &&
-        t.pullRequest.repo,
+        (t.status === "awaiting_approval" || t.status === "escalated") && gatePullRequest(t)?.repo,
     );
     for (const task of waiting) {
-      const pr = task.pullRequest;
+      const pr = gatePullRequest(task);
       if (!pr?.number || !pr.repo) continue;
       const usedSecrets: string[] = [];
       let status: PullRequestStatus;
@@ -350,19 +360,20 @@ export class TaskService {
       // 確かめている間に、人間が差し戻した・中止したなどで変わっていれば、記録しない
       const latest = this.tasks.get(task.id);
       if (!latest) continue;
+      const watched = gatePullRequest(latest);
       if (
-        latest.gate?.step !== "pr" ||
+        watched?.step !== pr.step ||
         (latest.status !== "awaiting_approval" && latest.status !== "escalated") ||
-        latest.pullRequest?.number !== pr.number
+        watched.number !== pr.number
       ) {
         continue;
       }
-      const current = latest.pullRequestState ?? "open";
+      const current = watched.state;
       if (
         status.state === current ||
         (status.state === "merged" && current === "merged_outdated")
       ) {
-        // 開いたままの PR は、Request changes のレビューを指摘として取り込む（PBI-14b）
+        // 開いたままの PR は、レビュー・コメントを指摘として取り込む（PBI-14b・PBI-57）
         if (status.state === "open" && latest.status === "awaiting_approval") {
           try {
             await this.importFeedback(latest, token);
@@ -393,7 +404,8 @@ export class TaskService {
         continue;
       }
       if (status.state === "merged") {
-        // マージは人間の承認なので、承認者は人間として記録する
+        // マージは人間の承認なので、承認者は人間として記録する。要求要件・設計の PR（PBI-57）は、その工程の承認として
+        // 次の工程に進める（承認した成果の書き出し（PBI-56）は、この承認の後に行う）
         this.append(latest, [
           {
             actor: "person",
@@ -409,7 +421,13 @@ export class TaskService {
           },
           {
             actor: "person",
-            event: { type: "StepApproved", payload: { step: "pr", next: "idle" } },
+            event: {
+              type: "StepApproved",
+              payload: {
+                step: pr.step,
+                next: pr.step === "pr" ? "idle" : this.nextAfterApproval(latest, pr.step),
+              },
+            },
           },
         ]);
       } else if (status.state === "closed") {
@@ -476,7 +494,8 @@ export class TaskService {
    * まとめて取り込む。途中で止まっても、次の確認で続きから進める（判断・反映）。
    */
   private async importFeedback(task: Task, token: string): Promise<void> {
-    const pr = task.pullRequest;
+    // 成果物チェックの PR と、要求要件・設計の PR（PBI-57）の指摘
+    const pr = gatePullRequest(task);
     if (!pr?.number || !pr.repo) return;
     let current = task;
     if (!current.pendingReview) {
@@ -521,7 +540,7 @@ export class TaskService {
     if (!pending.judgement) {
       const config = this.deps.config();
       if (!config.ok) return;
-      const judged = await this.judgeRework(current, pending.remarks, config.config);
+      const judged = await this.judgeRework(current, pr.step, pending.remarks, config.config);
       // 判断の間に、人間が差し戻した・中止したなどで変わっていれば、記録しない
       const latest = this.tasks.get(task.id);
       if (
@@ -546,16 +565,18 @@ export class TaskService {
   private settleReview(task: Task): void {
     const pending = task.pendingReview;
     const judgement = pending?.judgement;
-    if (!pending || !judgement || task.gate?.step !== "pr" || task.status !== "awaiting_approval") {
-      return;
-    }
+    const gate = task.gate;
+    if (!pending || !judgement || !gate || !gatePullRequest(task)) return;
+    if (task.status !== "awaiting_approval") return;
+    // 判断できなければ、その工程をやり直す（成果物チェックなら実装。要求要件・設計なら同じ PR を更新する。PBI-57）
+    const targets = reworkTargets(task, gate.step);
     const target =
-      judgement.target && reworkTargets(task, "pr").includes(judgement.target)
+      judgement.target && targets.includes(judgement.target)
         ? judgement.target
-        : "implement";
+        : (targets[0] ?? gate.step);
     this.requestChanges(task.id, {
-      step: "pr",
-      submission: task.gate.submission,
+      step: gate.step,
+      submission: gate.submission,
       target,
       comments: pending.remarks,
     });
@@ -963,6 +984,10 @@ export class TaskService {
         prompt: buildOrchestratorPrompt(task, {
           images,
           ...(exports.destinations.length > 0 ? { exports } : {}),
+          // 要求要件・設計を PR でレビューするなら、成果のファイルの置き場所を決めさせる（PBI-57）
+          ...(task.repository && this.deps.stepPullRequests !== false
+            ? { documents: { rules: exports.rules } }
+            : {}),
         }),
         role: "orchestrator",
       },
@@ -1001,6 +1026,7 @@ export class TaskService {
         ...(chosen.services ? { services: chosen.services } : {}),
         ...(chosen.baseBranch ? { baseBranch: chosen.baseBranch } : {}),
         ...(chosen.exports ? { exports: chosen.exports } : {}),
+        ...(chosen.documentsDir ? { documentsDir: chosen.documentsDir } : {}),
         ...cost,
       };
     }
@@ -1016,21 +1042,23 @@ export class TaskService {
   /** ゴールガーディアンに、PR の指摘の戻し先を判断させる（新しいセッション。PBI-14b）。 */
   private async judgeRework(
     task: Task,
+    gateStep: StepKey,
     remarks: string[],
     config: SactyConfig,
   ): Promise<Extract<EventInput, { type: "ReworkJudged" }>["payload"]> {
     const agent = config.guardianAgent;
-    const targets = reworkTargets(task, "pr");
-    // 指摘が実装で直せるかを判断するので、実装後のコードを読ませる
+    const targets = reworkTargets(task, gateStep);
+    // 成果物チェックは、指摘が実装で直せるかを判断するので実装後のコードを、要求要件・設計の PR（PBI-57）は
+    // 起点のコードを読ませる
     const { outcome, costUsd, estimated } = await this.runGuardian(
       task,
       {
         agent,
         image: config.image,
-        prompt: buildReworkPrompt(task, remarks, targets),
+        prompt: buildReworkPrompt(task, remarks, targets, gateStep),
         role: "rework",
       },
-      "implemented",
+      gateStep === "pr" ? "implemented" : "base",
     );
     const judgement =
       outcome.kind === "completed"
@@ -1724,7 +1752,9 @@ export class TaskService {
             // 作った PR の URL を、チケットにコメントする（PBI-52）
             awaitingTicketPrComment(t) ||
             // 承認した成果を、決めた書き出し先に書き出す（PBI-56）
-            awaitingExport(t) !== undefined,
+            awaitingExport(t) !== undefined ||
+            // 要求要件・設計の成果を、タスクブランチへの PR にする（PBI-57）
+            this.awaitingStepPullRequest(t) !== undefined,
       )
       .filter((t) => !this.cancelling.has(t.id) && !this.pauseRequested.has(t.id))
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
@@ -2060,6 +2090,9 @@ export class TaskService {
     const exporting = initial && awaitingExport(initial);
     if (initial && exporting) return this.exportOutput(initial, exporting);
     if (initial && awaitingVerification(initial)) return this.verify(initial);
+    // 要求要件・設計の成果を、タスクブランチへの PR にして承認待ちにする（PBI-57）
+    const waitingPr = initial && this.awaitingStepPullRequest(initial);
+    if (initial && waitingPr) return this.publishStepPullRequest(initial, waitingPr);
     if (initial && awaitingIssueComment(initial)) return this.commentInvestigation(initial);
     if (initial && awaitingReviewPost(initial)) return this.postReview(initial);
     if (initial && this.splitPending(initial)) return this.settleSplit(initial);
@@ -2511,6 +2544,13 @@ export class TaskService {
     if (!proposal) {
       // 実行の完了と提出は、同じトランザクションで記録する
       const submitted = this.append(task, [...events, ...this.submitEvents(latest, step)]);
+      // PR で承認する工程（PBI-57）は、続けて成果を PR にしてから承認待ちにする（予算は、その後に判定する）
+      const stepPr = this.awaitingStepPullRequest(submitted);
+      if (stepPr) {
+        await this.publishStepPullRequest(submitted, stepPr);
+        this.checkBudget(this.mustGet(task.id));
+        return;
+      }
       this.checkBudget(submitted);
       // 再現は、続けて sacty がテストを実行して確かめる（PBI-29）
       if (awaitingReproductionCheck(submitted)) return this.checkReproduction(submitted);
@@ -2535,12 +2575,14 @@ export class TaskService {
         : judgement.verdict === "rejected"
           ? false
           : undefined;
-    this.checkBudget(
-      this.append(proposed, [
-        { actor: "guardian", event: { type: "ChangeJudged", payload: judgement } },
-        ...this.settleEvents(proposed, judged, accepted),
-      ]),
-    );
+    const settled = this.append(proposed, [
+      { actor: "guardian", event: { type: "ChangeJudged", payload: judgement } },
+      ...this.settleEvents(proposed, judged, accepted),
+    ]);
+    // PR で承認する工程（PBI-57）の提出は、成果を PR にしてから承認待ちにする
+    const stepPr = this.awaitingStepPullRequest(settled);
+    if (stepPr) await this.publishStepPullRequest(settled, stepPr);
+    this.checkBudget(this.mustGet(task.id));
   }
 
   /**
@@ -2974,6 +3016,233 @@ export class TaskService {
     else this.pauseIfVerificationKeepsFailing(reviewed);
   }
 
+  /** タスクの対象リポジトリ（リポジトリの URL）。PR を作るリポジトリ。 */
+  private taskRepo(task: Task): string | undefined {
+    return task.source
+      ? task.source.repo
+      : (task.repo ?? (task.repository && githubRepoOf(task.repository.url)));
+  }
+
+  /**
+   * 要求要件・設計を、対象のリポジトリへの PR のマージで承認するタスクか（PBI-57）。タスクブランチを作ったタスクは、
+   * 最後まで PR で承認する。まだ作っていなければ、対象のリポジトリがあり、プロジェクトでそのホストの gh のアカウントを
+   * 選んでいて（PR を作れる）、これまでの流れ（画面）で要求要件・設計を提出していないタスクだけ。要求要件・設計の
+   * 工程でだけ判断するので、調査だけ・レビューだけ・不具合の修正のように、要求要件・設計の無いタスクは PR を作らない。
+   */
+  private stepPullRequestsOn(task: Task): boolean {
+    if (task.taskBranch) return true;
+    if (this.deps.stepPullRequests === false || !task.repository) return false;
+    if (task.submissions.requirements || task.submissions.design) return false;
+    const repo = this.taskRepo(task);
+    return Boolean(repo && this.githubAccountOf(task, repo).account);
+  }
+
+  /**
+   * 要求要件・設計の成果を、タスクブランチへの PR にするのを待っている工程（PBI-57）。工程の実行が終わり（成果があり）、
+   * まだ提出していない（承認待ちになっていない）とき。PR で承認するタスクでなくなっていたら（タスクブランチを作る前に
+   * アカウントの設定を外したなど）、PR を作らずに提出する（publishStepPullRequest）。
+   */
+  private awaitingStepPullRequest(task: Task): StepPullRequestKey | undefined {
+    if (task.status !== "idle" || task.gate) return undefined;
+    const step = activeStep(task);
+    if (!step || !isStepPullRequestKey(step) || task.outputs[step] === undefined) return undefined;
+    if (openProposal(task)) return undefined;
+    return step;
+  }
+
+  /** 工程を承認した後の状態（次の工程を実行できるなら実行待ち、まだ実装されていなければ待機）。 */
+  private nextAfterApproval(task: Task, step: StepKey): "queued" | "idle" {
+    const index = task.steps.findIndex((s) => s.key === step);
+    const nextStep = task.steps[index + 1]?.key;
+    return nextStep && EXECUTABLE_STEPS.includes(nextStep) ? "queued" : "idle";
+  }
+
+  /** 工程の最新の成果ができた時刻（PR のコミットの日時。再開しても同じコミットを作り直すため。PBI-57）。 */
+  private outputAt(task: Task, step: StepKey): string {
+    const events = this.deps.activity.forTask(task.id);
+    for (let i = events.length - 1; i >= 0; i--) {
+      const event = events[i];
+      if (event?.type === "AgentRunCompleted" && event.payload.step === step) return event.at;
+      if (
+        event?.type === "ChangeApplied" &&
+        task.proposals.find((p) => p.id === event.payload.proposalId)?.target === step
+      ) {
+        return event.at;
+      }
+    }
+    return task.updatedAt;
+  }
+
+  /**
+   * 要求要件・設計の成果を、ファイルにしてタスクブランチへの PR にし、その工程の承認待ちにする（PBI-57）。
+   * - タスクブランチが無ければ、ベースブランチの起点のコミットから作る
+   * - その工程の PR が開いていて、タスクブランチの先頭が変わっていなければ、同じ PR を更新する（その工程のやり直し）
+   * - マージ済み・閉じられた、または前の工程の直しがマージされてタスクブランチが進んだなら、タスクブランチの最新から
+   *   新しいブランチと PR を作る（開いていた前の PR は閉じる）
+   * PR を作れなければ、理由を記録して止める（再開すると、ここからやり直す）。
+   */
+  private async publishStepPullRequest(task: Task, step: StepPullRequestKey): Promise<void> {
+    // PR で承認するタスクでなければ、これまでどおり画面での承認待ちにする
+    if (!this.stepPullRequestsOn(task)) {
+      this.append(task, this.submitEvents(task, step));
+      return;
+    }
+    const loaded = this.deps.config();
+    if (!loaded.ok || this.cancelling.has(task.id) || this.pauseRequested.has(task.id)) return;
+    const usedSecrets: string[] = [];
+    const fail = (text: DaemonText) => {
+      const latest = this.tasks.get(task.id);
+      if (latest?.status !== "idle") return;
+      this.append(latest, [
+        {
+          actor: "sacty",
+          event: {
+            type: "TaskPaused",
+            payload: { reason: "error", message: redactText(text, usedSecrets) },
+          },
+        },
+      ]);
+    };
+    const repo = this.taskRepo(task);
+    if (!repo) {
+      fail(message("pr.unavailable", { detail: message("run.repositoryNotConfigured") }));
+      return;
+    }
+    // 退避した git のメタデータが無ければ、同じ起点で用意し直す
+    const ready = await this.prepareRepository(task, loaded.config);
+    if (!ready.ok) {
+      fail(message("pr.failed", { detail: ready.message }));
+      return;
+    }
+    let current = this.mustGet(task.id);
+    const repository = current.repository;
+    if (!repository) {
+      fail(message("pr.workspaceMissing"));
+      return;
+    }
+    const gitDir = this.trustedGitDir(current);
+    try {
+      const authEnv = await this.gitAuth(current, repository.url, usedSecrets);
+      const token = await this.githubToken(current, repo, usedSecrets);
+      // タスクブランチは、ベースブランチの起点のコミットから作る（作ったら、中止で消せるように記録する）
+      if (!current.taskBranch) {
+        const branch = taskBranchName(current);
+        await this.deps.repos.pushCommit(gitDir, repository.baseCommit, branch, authEnv);
+        current = this.append(this.mustGet(task.id), [
+          {
+            actor: "sacty",
+            event: {
+              type: "TaskBranchCreated",
+              payload: { branch, commit: repository.baseCommit },
+            },
+          },
+        ]);
+      }
+      const taskBranch = current.taskBranch;
+      if (!taskBranch) return;
+      const head = await this.deps.repos.fetchBranch(gitDir, taskBranch.branch, authEnv);
+      // 同じ PR を更新するか（開いていて、タスクブランチが進んでいない）、作り直すか
+      const last = latestStepPullRequest(current, step);
+      let reuse: typeof last;
+      let supersede: number | undefined;
+      // 前回の作り直しで閉じた後、記録の前に止まっていた（もう閉じている）なら、閉じたものとして記録する
+      let superseded: number | undefined;
+      if (last && !last.superseded && last.state === "open") {
+        const status = await this.deps.pulls.status({
+          repo: last.repo,
+          token,
+          number: last.number,
+        });
+        if (status.state === "open") {
+          if (last.base === head) reuse = last;
+          else supersede = last.number;
+        } else if (status.state === "closed") {
+          superseded = last.number;
+        }
+      }
+      const attempt = current.stepPullRequests.filter((p) => p.step === step).length + 1;
+      const branch = reuse?.branch ?? `${taskBranch.branch}-${step}-${attempt}`;
+      const path = stepDocumentPath(current, step);
+      // 同じ PR を更新するときは、その PR のブランチの最新に積む（人がレビューの提案をコミットしていても、
+      // 強制プッシュせずに積めるように）
+      const parent = reuse
+        ? await this.deps.repos.fetchBranch(gitDir, reuse.branch, authEnv)
+        : head;
+      const { commit } = await this.deps.repos.commitFiles({
+        gitDir,
+        parent,
+        files: { [path]: buildStepDocument(current, step) },
+        branch,
+        message: `${buildStepPullRequestTitle(current, step)}\n\nsacty task ${current.id}`,
+        date: this.outputAt(current, step),
+        // 新しい PR には、内容が同じでもコミットが要る（差分のコミットが無いと PR を作れない）
+        allowEmpty: !reuse,
+        authEnv,
+      });
+      // PR の作成の前に、プッシュしたブランチを記録する（PR の作成に失敗しても、中止で消せるように）
+      if (!this.mustGet(task.id).stepBranches.includes(branch)) {
+        current = this.append(this.mustGet(task.id), [
+          {
+            actor: "sacty",
+            event: { type: "StepBranchPushed", payload: { step, branch, commit } },
+          },
+        ]);
+      }
+      // 作り直すときは、開いていた前の PR を閉じる（マージされないように。閉じられなければ、中止のときに閉じる）
+      if (supersede !== undefined && last) {
+        try {
+          await this.deps.pulls.close({ repo: last.repo, token, number: supersede });
+          superseded = supersede;
+        } catch (error) {
+          console.warn(
+            `[daemon] 前の PR #${supersede}（${last.repo}）を閉じられませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
+          );
+        }
+      }
+      const pr = await this.deps.pulls.upsert({
+        repo,
+        token,
+        branch,
+        baseBranch: taskBranch.branch,
+        title: buildStepPullRequestTitle(current, step),
+        body: buildStepPullRequestBody(current, step, path),
+        ...(reuse ? { number: reuse.number } : {}),
+      });
+      // 作った PR は、中止・一時停止を求められていても記録する（中止の後片付けで閉じるため）
+      const latest = this.mustGet(task.id);
+      if (this.awaitingStepPullRequest(latest) !== step) return;
+      const submitted = this.append(latest, [
+        {
+          actor: "sacty",
+          event: {
+            type: "StepPullRequestPublished",
+            payload: {
+              step,
+              branch,
+              commit,
+              base: reuse?.base ?? head,
+              path,
+              url: pr.url,
+              number: pr.number,
+              repo,
+              ...(superseded !== undefined ? { supersedes: superseded } : {}),
+            },
+          },
+        },
+        {
+          actor: "sacty",
+          event: {
+            type: "StepSubmitted",
+            payload: { step, submission: (latest.submissions[step] ?? 0) + 1 },
+          },
+        },
+      ]);
+      this.warnIfNeeded(submitted);
+    } catch (error) {
+      fail(message("pr.failed", { detail: errorText(error) }));
+    }
+  }
+
   /**
    * 作業をコミットして sacty のブランチにプッシュし、PRを作って（設定があれば）、
    * 成果物チェックのゲートで止める。コミットは、エージェントが触れない退避した git の
@@ -3003,19 +3272,32 @@ export class TaskService {
       return;
     }
     const repo = target.repo;
-    const branch = task.pullRequest?.branch ?? `sacty/task-${task.id.slice(0, 8)}`;
+    // タスクブランチのあるタスク（PBI-57）は、タスクブランチに実装を積み、タスクブランチからベースブランチへの PR にする
+    const taskBranch = task.taskBranch;
+    const branch = taskBranch?.branch ?? task.pullRequest?.branch ?? taskBranchName(task);
     try {
+      const authEnv = await this.gitAuth(task, task.repository.url, usedSecrets);
+      let parent = task.pullRequest?.commit ?? task.repository.baseCommit;
+      let keep: { commit: string; paths: string[] } | undefined;
+      if (taskBranch) {
+        // タスクブランチの最新（マージした要求要件・設計の PR を含む）に積む。要求要件・設計のファイルは実装の作業領域に
+        // 無いので、タスクブランチのものを引き継ぐ
+        parent = await this.deps.repos.fetchBranch(gitDir, taskBranch.branch, authEnv);
+        const paths = [...new Set(task.stepPullRequests.map((p) => p.path))];
+        if (paths.length > 0) keep = { commit: parent, paths };
+      }
       const { commit } = await this.deps.repos.publish({
         dir,
         gitDir,
         baseCommit: task.repository.baseCommit,
-        parent: task.pullRequest?.commit ?? task.repository.baseCommit,
+        parent,
         branch,
         message: `${task.title}\n\nsacty task ${task.id}`,
         // 提出ごとに決まる日時にして、再開しても同じコミットを作る（プッシュ済みなら何も変わらない）
         // （PR作成の工程は最終レビューに通った後なので、通常は最終レビューの日時になる）
         date: task.lastReview?.at ?? task.createdAt,
-        authEnv: await this.gitAuth(task, task.repository.url, usedSecrets),
+        authEnv,
+        ...(keep ? { keep } : {}),
       });
       // PRの作成の前に、プッシュしたブランチを記録する（PRの作成に失敗しても、中止で片付けられるように）
       if (task.pushedBranch?.commit !== commit || task.pushedBranch.branch !== branch) {
@@ -3160,13 +3442,19 @@ export class TaskService {
       { target: "session", present: false },
       {
         target: "branch",
-        present: Boolean(task.pushedBranch ?? task.pullRequest),
-        detail: (task.pushedBranch ?? task.pullRequest)?.branch,
+        present: sactyBranches(task).length > 0,
+        detail: sactyBranches(task).join(", ") || undefined,
       },
       {
         target: "pull_request",
-        present: Boolean(task.pullRequest?.number),
-        detail: task.pullRequest?.url,
+        present: Boolean(task.pullRequest?.number) || openStepPullRequests(task).length > 0,
+        detail:
+          [
+            task.pullRequest?.number ? task.pullRequest.url : undefined,
+            ...openStepPullRequests(task).map((p) => p.url),
+          ]
+            .filter(Boolean)
+            .join(", ") || undefined,
       },
     ];
   }
@@ -3249,14 +3537,34 @@ export class TaskService {
             detail: redactText(errorText(error), usedSecrets),
           });
         }
-      } else {
+      }
+      // 要求要件・設計の PR（PBI-57）：sacty が作り、まだ開いているものを閉じる（マージ済み・閉じられたものはそのまま）
+      for (const step of openStepPullRequests(latest)) {
+        const usedSecrets: string[] = [];
+        try {
+          const token = await this.githubToken(latest, step.repo, usedSecrets);
+          const now = await this.deps.pulls
+            .status({ repo: step.repo, token, number: step.number })
+            .catch(() => undefined);
+          if (now && now.state !== "open") continue;
+          await this.deps.pulls.close({ repo: step.repo, token, number: step.number });
+          cleanup.push({ target: "pull_request", result: "done", detail: step.url });
+        } catch (error) {
+          cleanup.push({
+            target: "pull_request",
+            result: "failed",
+            detail: redactText(errorText(error), usedSecrets),
+          });
+        }
+      }
+      if (!cleanup.some((c) => c.target === "pull_request")) {
         cleanup.push({ target: "pull_request", result: "skipped" });
       }
-      // ブランチ：sacty のブランチだけを消す
+      // ブランチ：sacty のブランチだけを消す（実装の PR のブランチ・タスクブランチ・要求要件と設計のブランチ。PBI-57）
       const gitDir = this.trustedGitDir(latest);
       // PRの作成に失敗していても、プッシュ済みのブランチは記録してある
-      const branch = (latest.pushedBranch ?? pr)?.branch;
-      if (branch) {
+      const branches = sactyBranches(latest);
+      for (const branch of branches) {
         const usedSecrets: string[] = [];
         try {
           if (!existsSync(gitDir)) throw new MessageError(message("cleanup.noWorkspace"));
@@ -3275,9 +3583,8 @@ export class TaskService {
             detail: redactText(errorText(error), usedSecrets),
           });
         }
-      } else {
-        cleanup.push({ target: "branch", result: "skipped" });
       }
+      if (branches.length === 0) cleanup.push({ target: "branch", result: "skipped" });
       // 作業領域：タスクの作業領域と、退避した git のメタデータ
       const workspace = join(this.deps.workspaceRoot, latest.id);
       const existed = existsSync(workspace) || existsSync(gitDir);
@@ -3829,6 +4136,8 @@ export class TaskService {
       return [{ actor: "sacty", event: { type: "StepCompleted", payload: { step, next } } }];
     }
     if (!GATED_STEPS.includes(step)) return [];
+    // PR で承認する工程（PBI-57）は、成果を PR にしてから承認待ちにする（PR の記録と一緒に提出する）
+    if (isStepPullRequestKey(step) && this.stepPullRequestsOn(task)) return [];
     return [
       {
         actor: "sacty",
@@ -4253,9 +4562,14 @@ export class TaskService {
         message("gate.approveOnPullRequest", { url: task.pullRequest.url ?? "" }),
       );
     }
-    const index = task.steps.findIndex((s) => s.key === step);
-    const nextStep = task.steps[index + 1]?.key;
-    const next = nextStep && EXECUTABLE_STEPS.includes(nextStep) ? "queued" : "idle";
+    // 要求要件・設計の PR を作った工程も、PR のマージで承認する（PBI-57）
+    const watched = gatePullRequest(task);
+    if (watched && watched.step === step) {
+      throw new InvalidOperationError(
+        message("gate.approveOnPullRequest", { url: watched.url ?? "" }),
+      );
+    }
+    const next = this.nextAfterApproval(task, step);
     return this.append(task, [
       { actor: "person", event: { type: "StepApproved", payload: { step, next } } },
     ]);
@@ -4444,6 +4758,37 @@ function testImageOf(
   return resolved.ok
     ? { testImage: resolved.image, testEnv: resolved.env }
     : { testImage: config.image, testEnv: {} };
+}
+
+/** PR で承認する工程か（要求要件・設計。PBI-57）。 */
+function isStepPullRequestKey(step: StepKey): step is StepPullRequestKey {
+  return (StepPullRequestKey.options as readonly StepKey[]).includes(step);
+}
+
+/**
+ * タスクブランチの名前（PBI-57）。実装の PR は、このブランチからベースブランチに向けて作る（タスクブランチの無いタスク
+ * の実装の PR のブランチと同じ名前）。
+ */
+function taskBranchName(task: Pick<Task, "id">): string {
+  return `sacty/task-${task.id.slice(0, 8)}`;
+}
+
+/**
+ * sacty がプッシュしたブランチ（中止で消す）。実装の PR のブランチ（PR の作成に失敗しても記録してある）と、タスク
+ * ブランチ・要求要件と設計のブランチ（PBI-57）。
+ */
+function sactyBranches(task: Task): string[] {
+  const branches = [
+    (task.pushedBranch ?? task.pullRequest)?.branch,
+    task.taskBranch?.branch,
+    ...task.stepBranches,
+  ];
+  return [...new Set(branches.filter((b): b is string => Boolean(b)))];
+}
+
+/** sacty が作った、要求要件・設計の PR のうち、閉じていない（と記録している）もの（PBI-57）。 */
+function openStepPullRequests(task: Task) {
+  return task.stepPullRequests.filter((p) => p.state === "open" && !p.superseded);
 }
 
 /** 再現の工程が終わり、テストでの再現の確かめを待っている（PBI-29）。 */

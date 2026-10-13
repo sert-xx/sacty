@@ -81,6 +81,15 @@ const ja = {
       `PR の指摘で${step}からやり直し（ゴールガーディアンの判断：${reason}）`,
     reworkUndecided: (step: string, reason: string) =>
       `ゴールガーディアンが戻し先を判断できなかったため、${step}からやり直し（${reason}）`,
+    taskBranch: "タスクブランチ",
+    stepPullRequests: "要求要件・設計",
+    stepState: {
+      open: "マージ待ち",
+      merged: "マージ済み（承認）",
+      merged_outdated: "古い提出がマージされた",
+      closed: "閉じられた",
+      superseded: "作り直したので閉じた",
+    },
   },
   resume: {
     newCap: (used: string) => `新しい上限（累計・使用済み ${used} より大きい金額）`,
@@ -206,6 +215,15 @@ const en: PartsMessages = {
       `Redoing from ${step} for the PR comments (Goal Guardian's judgement: ${reason})`,
     reworkUndecided: (step, reason) =>
       `The Goal Guardian could not decide the step to redo, so redoing from ${step} (${reason})`,
+    taskBranch: "Task branch",
+    stepPullRequests: "Requirements / design",
+    stepState: {
+      open: "awaiting merge",
+      merged: "merged (approved)",
+      merged_outdated: "an older submission was merged",
+      closed: "closed",
+      superseded: "closed because it was recreated",
+    },
   },
   resume: {
     newCap: (used) => `New cap (total; more than the ${used} already used)`,

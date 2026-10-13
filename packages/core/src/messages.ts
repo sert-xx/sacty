@@ -217,6 +217,7 @@ const PARAMS = {
   "git.baseCommitMissing": z.object({ commit: z.string() }),
   "git.invalidParentCommit": null,
   "git.invalidBranch": null,
+  "git.invalidPath": null,
   "git.nothingToCommit": null,
   "git.notSactyBranch": null,
   "github.failed": z.object({
@@ -614,6 +615,7 @@ const ja: MessageDictionary = {
     `作業領域を用意し直そうとしましたが、タスクの起点のコミット（${commit.slice(0, 7)}）を取得できません。起点を変えずに止めました。`,
   "git.invalidParentCommit": "積む先のコミットが不正です。",
   "git.invalidBranch": "ブランチ名が不正です。",
+  "git.invalidPath": "コミットするファイルのパスが不正です。",
   "git.nothingToCommit": "起点から変更がないため、コミットできません。",
   "git.notSactyBranch": "sacty のブランチではありません。",
   "github.failed": ({ action, status, detail, hint }) =>
@@ -934,6 +936,7 @@ const en: MessageDictionary = {
     `Tried to prepare the workspace again, but the task's base commit (${commit.slice(0, 7)}) could not be fetched. Stopped without changing the base.`,
   "git.invalidParentCommit": "The parent commit is not valid.",
   "git.invalidBranch": "The branch name is not valid.",
+  "git.invalidPath": "The path of the file to commit is not valid.",
   "git.nothingToCommit": "Nothing changed since the base, so there is nothing to commit.",
   "git.notSactyBranch": "This is not a sacty branch.",
   "github.failed": ({ action, status, detail, hint }) =>

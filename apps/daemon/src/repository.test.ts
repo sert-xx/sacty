@@ -352,6 +352,109 @@ describe("対象リポジトリの作業領域（git）", { timeout: 30_000 }, (
     expect(git(origin, "rev-parse", input.branch)).toBe(first.commit);
   });
 
+  it("タスクブランチを作り、成果のファイルを工程のブランチにコミットし、実装はタスクブランチのファイルを引き継いで積む（PBI-57）", async () => {
+    const origin = makeOrigin();
+    git(origin, "config", "receive.denyCurrentBranch", "ignore");
+    const workspace = new GitRepositoryWorkspace();
+    const clone = join(dir, "task", "repo");
+    const gitDir = join(dir, "_git", "task.git");
+    const { baseCommit } = await workspace.prepare(clone, gitDir, origin, "main");
+    const taskBranch = "sacty/task-1234abcd";
+    const stepBranch = `${taskBranch}-requirements-1`;
+    const path = "docs/sacty/1234abcd/requirements.md";
+
+    // タスクブランチは、起点のコミットから作る
+    await workspace.pushCommit(gitDir, baseCommit, taskBranch);
+    expect(git(origin, "rev-parse", taskBranch)).toBe(baseCommit);
+    // 同じコミットをもう一度プッシュしても失敗しない（作った後・記録の前に止まって再開した）
+    await workspace.pushCommit(gitDir, baseCommit, taskBranch);
+
+    // エージェント（コンテナ）が作業領域の git の設定を書き換えていても、評価しない
+    const marker = join(dir, "pwned");
+    git(clone, "config", "filter.evil.clean", `touch ${marker}; cat`);
+    writeFileSync(join(clone, ".gitattributes"), "* filter=evil\n");
+    const input = {
+      gitDir,
+      parent: baseCommit,
+      files: { [path]: "# 要求要件\n" },
+      branch: stepBranch,
+      message: "[要求要件] 決済API\n\nsacty task t1",
+      date: "2026-10-10T01:00:00.000Z",
+      allowEmpty: true,
+    };
+    const first = await workspace.commitFiles(input);
+    expect(existsSync(marker)).toBe(false);
+    expect(git(origin, "rev-parse", `${stepBranch}^`)).toBe(baseCommit);
+    expect(git(origin, "show", `${stepBranch}:${path}`)).toBe("# 要求要件");
+    expect(git(origin, "show", `${stepBranch}:pay.ts`)).toBe("export const pay = () => 0;");
+    // 作業領域は使わない（HEAD も変えない）
+    expect(git(clone, "rev-parse", "HEAD")).toBe(baseCommit);
+    // 同じ提出なら、再開しても同じコミットを作り直す（プッシュが拒否されない）
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    expect((await workspace.commitFiles(input)).commit).toBe(first.commit);
+    // 内容が変わらなければ、積む先のコミットをそのまま使う（同じ PR を更新するとき）
+    expect(
+      (await workspace.commitFiles({ ...input, parent: first.commit, allowEmpty: false })).commit,
+    ).toBe(first.commit);
+    // 新しい PR のために、内容が同じでもコミットを作れる
+    const empty = await workspace.commitFiles({
+      ...input,
+      parent: first.commit,
+      branch: `${taskBranch}-requirements-2`,
+    });
+    expect(empty.commit).not.toBe(first.commit);
+
+    // GitHub で、要求要件の PR がタスクブランチにマージされた
+    git(origin, "checkout", "--quiet", taskBranch);
+    git(origin, "merge", "--quiet", "--no-ff", stepBranch, "-m", "merge requirements");
+    git(origin, "checkout", "--quiet", "main");
+    const head = await workspace.fetchBranch(gitDir, taskBranch);
+    expect(head).toBe(git(origin, "rev-parse", taskBranch));
+
+    // 実装は、タスクブランチの最新に積む。成果のファイルは作業領域に無いが、タスクブランチのものを引き継ぐ
+    writeFileSync(join(clone, "pay.ts"), "export const pay = () => 1;\n");
+    rmSync(join(clone, ".gitattributes"));
+    const implemented = await workspace.publish({
+      dir: clone,
+      gitDir,
+      baseCommit,
+      parent: head,
+      branch: taskBranch,
+      message: "決済API",
+      date: "2026-10-10T02:00:00.000Z",
+      keep: { commit: head, paths: [path, "docs/sacty/1234abcd/design.md"] },
+    });
+    expect(git(origin, "rev-parse", `${taskBranch}^`)).toBe(head);
+    expect(git(origin, "show", `${taskBranch}:${path}`)).toBe("# 要求要件");
+    expect(git(origin, "show", `${taskBranch}:pay.ts`)).toBe("export const pay = () => 1;");
+    expect(implemented.commit).toBe(git(origin, "rev-parse", taskBranch));
+    // 作業領域に変更が無ければ、引き継ぐファイルがあってもコミットしない
+    writeFileSync(join(clone, "pay.ts"), "export const pay = () => 0;\n");
+    await expect(
+      workspace.publish({
+        dir: clone,
+        gitDir,
+        baseCommit,
+        parent: implemented.commit,
+        branch: taskBranch,
+        message: "m",
+        date: "2026-10-10T03:00:00.000Z",
+        keep: { commit: head, paths: [path] },
+      }),
+    ).rejects.toBeInstanceOf(NothingToCommitError);
+
+    // リポジトリの外・.git を指すパスは受け付けない
+    for (const bad of ["../x.md", ".git/config", "/abs.md", "a//b.md"]) {
+      await expect(workspace.commitFiles({ ...input, files: { [bad]: "x" } })).rejects.toThrow(
+        /パスが不正/,
+      );
+    }
+    // すでに無い sacty のブランチ（マージの後に GitHub が消した）を消しても、失敗にしない
+    await workspace.deleteBranch(gitDir, `${taskBranch}-design-9`);
+    await workspace.deleteBranch(gitDir, stepBranch);
+    expect(git(origin, "branch", "--list", stepBranch)).toBe("");
+  });
+
   it("中止したときは sacty のブランチだけを消し、ほかのブランチは消さない（PBI-3）", async () => {
     const origin = makeOrigin();
     git(origin, "config", "receive.denyCurrentBranch", "ignore");

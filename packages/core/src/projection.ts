@@ -9,12 +9,20 @@ import type {
   ReviewComment,
   StepKey,
   StepPlan,
+  StepPullRequestKey,
   TaskSource,
   TestMapping,
   TestViewpoint,
   Verdict,
 } from "./events.js";
-import { EXPORT_STEPS, exportSteps, MAX_INTEGRATION_ATTEMPTS, REWORK_STEPS } from "./events.js";
+import {
+  DEFAULT_DOCUMENTS_DIR,
+  EXPORT_STEPS,
+  exportSteps,
+  isDocumentsDir,
+  MAX_INTEGRATION_ATTEMPTS,
+  REWORK_STEPS,
+} from "./events.js";
 import { type DaemonText, message } from "./message-code.js";
 import type { DaemonMessage } from "./messages.js";
 
@@ -123,6 +131,17 @@ export type TaskExport = {
   retry?: boolean;
 };
 
+/**
+ * 要求要件・設計の PR（PBI-57）。state は見守っている状態（open：開いている、merged：マージ済み、merged_outdated：
+ * 最新の内容より前のものがマージされた、closed：マージせずに閉じられた）。superseded は、作り直したので sacty が閉じた。
+ * submission は、何回目の提出の PR か（同じ PR を更新すると、最新の提出回にする）。
+ */
+export type StepPullRequest = PayloadOf<"StepPullRequestPublished"> & {
+  submission: number;
+  state: "open" | "closed" | "merged" | "merged_outdated";
+  superseded?: boolean;
+};
+
 /** 申し出が認められたか（ゴールガーディアンの承認か、人間の判断）。未決なら undefined。 */
 export function proposalAccepted(p: TaskProposal): boolean | undefined {
   if (p.decision) return p.decision.accept;
@@ -226,6 +245,17 @@ export type Task = {
   pullRequest?: PayloadOf<"PullRequestPublished">;
   /** 成果物チェックの間に見守っている PR の状態（PBI-14a）。PR を作っていなければ無い。 */
   pullRequestState?: "open" | "closed" | "merged" | "merged_outdated";
+  /**
+   * タスクブランチ（PBI-57）。これがあるタスクは、要求要件・設計をタスクブランチへの PR のマージで承認し、実装の PR を
+   * タスクブランチからベースブランチに向けて作る。
+   */
+  taskBranch?: PayloadOf<"TaskBranchCreated">;
+  /** 要求要件・設計の PR（作った順。同じ PR を更新したら、その PR を置き換える。PBI-57）。 */
+  stepPullRequests: StepPullRequest[];
+  /** sacty がプッシュした、要求要件・設計のブランチ（中止で消す。PBI-57）。 */
+  stepBranches: string[];
+  /** 要求要件・設計の成果のファイルを置くディレクトリ（オーケストレーターが決めた。無ければ既定。PBI-57）。 */
+  documentsDir?: string;
   /** ゴールガーディアンの見逃し（最終レビューで合格にした成果物を、人間が差し戻した）。 */
   misses: (PayloadOf<"GuardianMissed"> & { at: string })[];
   /** やり直しの実装に渡す、直前の検証で通らなかった内容。 */
@@ -377,6 +407,8 @@ export function applyEvent(
       importedFeedback: [],
       questions: [],
       exports: {},
+      stepPullRequests: [],
+      stepBranches: [],
       submissions: {},
       remarks: [],
       budget: { usedUsd: 0, capUsd: event.payload.budgetCapUsd, warned: false, estimated: false },
@@ -411,6 +443,7 @@ export function applyEvent(
       if (event.payload.images) task.images = event.payload.images;
       if (event.payload.services) task.services = event.payload.services;
       if (event.payload.exports) task.exportPlans = event.payload.exports;
+      if (event.payload.documentsDir) task.documentsDir = event.payload.documentsDir;
       if (event.payload.reason !== undefined) {
         task.stepsChoice = {
           ...(event.payload.plan ? { plan: event.payload.plan } : {}),
@@ -574,9 +607,11 @@ export function applyEvent(
       // PR の指摘は、この差し戻しに反映した。ゴールガーディアンの判断で戻したなら、戻し先と理由を残す（PBI-58）。
       // 判断の後に人間が別の差し戻しをした（再起動の前など）なら、ゴールガーディアンの判断としては残さない
       const judged = task.pendingReview?.judgement;
+      // 判断できなければ、その工程をやり直す（成果物チェックなら実装、要求要件・設計の PR ならその工程。PBI-57）
+      const undecided = event.payload.step === "pr" ? "implement" : event.payload.step;
       if (
         judged &&
-        target === (judged.target ?? "implement") &&
+        target === (judged.target ?? undecided) &&
         JSON.stringify(event.payload.remarks.map((r) => r.text)) ===
           JSON.stringify(task.pendingReview?.remarks)
       ) {
@@ -752,10 +787,12 @@ export function applyEvent(
       break;
 
     case "PullRequestReviewImported": {
-      if (task.gate?.step !== "pr" || task.status !== "awaiting_approval") {
+      // 成果物チェックの PR と、要求要件・設計の PR（PBI-57）の指摘
+      const watched = gatePullRequest(task);
+      if (!watched || task.status !== "awaiting_approval") {
         throw new ActivityIntegrityError(event, "the deliverable review is not open");
       }
-      if (task.pullRequest?.number !== event.payload.number) {
+      if (watched.number !== event.payload.number) {
         throw new ActivityIntegrityError(event, "not the pull request of the task");
       }
       if (task.pendingReview) throw new ActivityIntegrityError(event, "a review is pending");
@@ -846,24 +883,75 @@ export function applyEvent(
     case "PullRequestMerged":
     case "PullRequestClosed":
     case "PullRequestReopened": {
-      // 見守るのは、成果物チェックで待っている、sacty が作った PR だけ
-      if (
-        task.gate?.step !== "pr" ||
-        (task.status !== "awaiting_approval" && task.status !== "escalated")
-      ) {
+      // 見守るのは、承認ゲートで待っている、sacty が作った PR だけ（成果物チェックと、要求要件・設計。PBI-57）
+      const watched = gatePullRequest(task);
+      if (!watched || (task.status !== "awaiting_approval" && task.status !== "escalated")) {
         throw new ActivityIntegrityError(event, "the deliverable review is not open");
       }
-      if (task.pullRequest?.number !== event.payload.number) {
+      if (watched.number !== event.payload.number) {
         throw new ActivityIntegrityError(event, "not the pull request of the task");
       }
-      task.pullRequestState =
+      const state =
         event.type === "PullRequestMerged"
           ? event.payload.outdated
-            ? "merged_outdated"
-            : "merged"
+            ? ("merged_outdated" as const)
+            : ("merged" as const)
           : event.type === "PullRequestClosed"
-            ? "closed"
-            : "open";
+            ? ("closed" as const)
+            : ("open" as const);
+      if (watched.step === "pr") task.pullRequestState = state;
+      else {
+        task.stepPullRequests = task.stepPullRequests.map((p) =>
+          p.number === watched.number ? { ...p, state } : p,
+        );
+      }
+      break;
+    }
+
+    case "TaskBranchCreated":
+      if (task.taskBranch) throw new ActivityIntegrityError(event, "the task branch exists");
+      if (!task.repository) throw new ActivityIntegrityError(event, "no repository");
+      task.taskBranch = event.payload;
+      break;
+
+    case "StepBranchPushed":
+      if (!task.taskBranch || activeStep(task) !== event.payload.step) {
+        throw new ActivityIntegrityError(event, "the step is not active");
+      }
+      if (!task.stepBranches.includes(event.payload.branch)) {
+        task.stepBranches = [...task.stepBranches, event.payload.branch];
+      }
+      break;
+
+    case "StepPullRequestPublished": {
+      const p = event.payload;
+      if (
+        !task.taskBranch ||
+        task.status !== "idle" ||
+        activeStep(task) !== p.step ||
+        task.outputs[p.step] === undefined
+      ) {
+        throw new ActivityIntegrityError(event, "the step is not waiting for a pull request");
+      }
+      const entry: StepPullRequest = {
+        ...p,
+        submission: (task.submissions[p.step] ?? 0) + 1,
+        state: "open",
+      };
+      const known = task.stepPullRequests.some((x) => x.number === p.number);
+      task.stepPullRequests = [
+        ...task.stepPullRequests.map((x) =>
+          x.number === p.number
+            ? entry
+            : x.number === p.supersedes
+              ? { ...x, state: "closed" as const, superseded: true }
+              : x,
+        ),
+        ...(known ? [] : [entry]),
+      ];
+      if (!task.stepBranches.includes(p.branch)) {
+        task.stepBranches = [...task.stepBranches, p.branch];
+      }
       break;
     }
 
@@ -1224,6 +1312,69 @@ export function project(events: Iterable<ActivityEvent>): Map<string, Task> {
     tasks = applyEvent(tasks, event);
   }
   return tasks;
+}
+
+/**
+ * 承認ゲートで見守っている、sacty が作った PR（PBI-14a・PBI-57）。成果物チェックなら実装の PR、要求要件・設計なら
+ * その提出の PR。PR を作っていないゲートなら undefined。
+ */
+export function gatePullRequest(task: Task):
+  | {
+      step: StepKey;
+      number: number;
+      url?: string;
+      repo?: string;
+      commit: string;
+      state: "open" | "closed" | "merged" | "merged_outdated";
+    }
+  | undefined {
+  const gate = task.gate;
+  if (!gate) return undefined;
+  if (gate.step === "pr") {
+    const pr = task.pullRequest;
+    if (!pr?.number) return undefined;
+    return {
+      step: "pr",
+      number: pr.number,
+      ...(pr.url ? { url: pr.url } : {}),
+      ...(pr.repo ? { repo: pr.repo } : {}),
+      commit: pr.commit,
+      state: task.pullRequestState ?? "open",
+    };
+  }
+  // 作業履歴から復元したタスクには必ずある（部分的に作ったタスクでも読めるようにする）
+  const found = (task.stepPullRequests ?? []).findLast(
+    (p) => p.step === gate.step && p.submission === gate.submission && !p.superseded,
+  );
+  if (!found) return undefined;
+  return {
+    step: found.step,
+    number: found.number,
+    url: found.url,
+    repo: found.repo,
+    commit: found.commit,
+    state: found.state,
+  };
+}
+
+/** 工程の、最後に作った PR（PBI-57）。 */
+export function latestStepPullRequest(
+  task: Task,
+  step: StepPullRequestKey,
+): StepPullRequest | undefined {
+  return task.stepPullRequests.findLast((p) => p.step === step);
+}
+
+/**
+ * 要求要件・設計の成果のファイルの、リポジトリの根からの相対パス（PBI-57）。オーケストレーターが決めたディレクトリ
+ * （無い・使えない形なら既定）の下の、タスクの短い ID のディレクトリに置く。
+ */
+export function stepDocumentPath(task: Task, step: StepPullRequestKey): string {
+  const dir =
+    task.documentsDir && isDocumentsDir(task.documentsDir)
+      ? task.documentsDir
+      : DEFAULT_DOCUMENTS_DIR;
+  return `${dir}/${task.id.slice(0, 8)}/${step}.md`;
 }
 
 /** 答えを待っている、オーケストレーターへの質問（PBI-54）。 */

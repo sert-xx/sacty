@@ -17,6 +17,8 @@ const ja = {
     reviewHelp: "成果物を確認し、承認するか差し戻してください。",
     prHelp:
       "GitHub で PR をレビューしてください。マージすると承認になり、タスクが完了します。レビューやコメントで指摘すると、差し戻しとして取り込みます。",
+    stepPrHelp: (step: string) =>
+      `GitHub で${step}の PR をレビューしてください。マージすると${step}の承認になり、次の工程に進みます。レビューやコメントで指摘すると、差し戻しとして取り込みます。`,
     rework: "PR の指摘の戻し先を確かめてください（エスカレーション）",
     reworkHelp: (step: string, note: string) =>
       `ゴールガーディアンは、PR の指摘を${step}からやり直すことを提案しています（${note}）。承認済みの成果物を変えることになるので、戻し先を確かめて差し戻してください。`,
@@ -177,6 +179,8 @@ const en: TaskMessages = {
     reviewHelp: "Check the deliverable, then approve it or request changes.",
     prHelp:
       "Review the PR on GitHub. Merging it approves the deliverable and completes the task. Comments in reviews or on the PR are imported as change requests.",
+    stepPrHelp: (step) =>
+      `Review the ${step} PR on GitHub. Merging it approves the ${step} and moves on to the next step. Comments in reviews or on the PR are imported as change requests.`,
     rework: "Confirm the step to redo for the PR comments (escalated)",
     reworkHelp: (step, note) =>
       `The Goal Guardian suggests redoing from ${step} for the PR comments (${note}). This changes approved deliverables, so confirm the step to redo and request changes.`,

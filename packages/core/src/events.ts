@@ -118,6 +118,26 @@ export const REWORK_STEPS: readonly StepKey[] = [
   "implement",
 ];
 
+/**
+ * 対象のリポジトリへの PR で人間が承認する工程（PBI-57）。成果をファイルでタスクブランチへの PR にし、PR のマージを
+ * 承認とする。実装の成果物チェック（pr）は、タスクブランチからベースブランチへの PR。
+ */
+export const StepPullRequestKey = z.enum(["requirements", "design"]);
+export type StepPullRequestKey = z.infer<typeof StepPullRequestKey>;
+
+/** 工程の成果のファイルを置く、既定のディレクトリ（この下のタスクの短い ID のディレクトリに置く。PBI-57）。 */
+export const DEFAULT_DOCUMENTS_DIR = "docs/sacty";
+
+/**
+ * 成果のファイルを置くディレクトリとして使えるか（PBI-57）。リポジトリの根からの相対パスで、. と .. の区切り・
+ * .git・先頭や末尾の / を含まないもの。
+ */
+export function isDocumentsDir(value: string): boolean {
+  if (value.length === 0 || value.length > 300 || !/^[\w./-]+$/.test(value)) return false;
+  const parts = value.split("/");
+  return parts.every((p) => p !== "" && p !== "." && p !== ".." && p.toLowerCase() !== ".git");
+}
+
 /** 同じ工程への差し戻しがこの回数を超えると、エスカレーションになる。 */
 export const MAX_CHANGE_REQUESTS = 3;
 
@@ -384,6 +404,12 @@ const StepsChosen = z.object({
      * 接続先が1つも無いときは持たない（オーケストレーターに決めさせない）。
      */
     exports: z.partialRecord(StepKey, ExportPlan).optional(),
+    /**
+     * 要求要件・設計を PR でレビューするときに、成果のファイルを置くディレクトリ（リポジトリの根からの相対パス。
+     * PBI-57）。リポジトリのコンテキストの規約に置き場所があるときだけ、オーケストレーターが書く。無ければ既定
+     * （DEFAULT_DOCUMENTS_DIR）。ファイルは、この下のタスクの短い ID のディレクトリに置く。
+     */
+    documentsDir: z.string().min(1).max(300).optional(),
     agentId: z.string().optional(),
     ...AgentSetting,
     usage: TokenUsage.optional(),
@@ -843,9 +869,54 @@ const PullRequestPublished = z.object({
 });
 
 /**
+ * sacty が、ベースブランチの起点のコミットからタスクブランチを作った（PBI-57）。要求要件・設計の PR はタスクブランチ
+ * に向けて作り、実装の PR はタスクブランチからベースブランチに向けて作る。これが記録されたタスクは、要求要件・設計を
+ * PR のマージで承認する（それより前の作業履歴のタスクは、これまでどおり画面で承認する）。
+ */
+const TaskBranchCreated = z.object({
+  type: z.literal("TaskBranchCreated"),
+  payload: z.object({ branch: z.string().min(1), commit: z.string().min(1) }),
+});
+
+/**
+ * 要求要件・設計の成果のファイルを、工程のブランチにコミットしてプッシュした（PR の作成の前に記録する。PR の作成に
+ * 失敗しても、プッシュ済みのブランチを中止で片付けられるように。PBI-57）。
+ */
+const StepBranchPushed = z.object({
+  type: z.literal("StepBranchPushed"),
+  payload: z.object({
+    step: StepPullRequestKey,
+    branch: z.string().min(1),
+    commit: z.string().min(1),
+  }),
+});
+
+/**
+ * 要求要件・設計の成果のファイルを、タスクブランチへの PR にした（作った・更新した。PBI-57）。続けてその工程の承認待ち
+ * （StepSubmitted）にする。base は、工程のブランチを作ったときのタスクブランチの先頭（同じ PR を更新するときは変えない）。
+ * supersedes は、作り直したので sacty が閉じた、その工程の前の PR（前の工程に戻した後など）。
+ */
+const StepPullRequestPublished = z.object({
+  type: z.literal("StepPullRequestPublished"),
+  payload: z.object({
+    step: StepPullRequestKey,
+    branch: z.string().min(1),
+    commit: z.string().min(1),
+    base: z.string().min(1),
+    /** 成果のファイル（リポジトリの根からの相対パス）。 */
+    path: z.string().min(1),
+    url: z.string(),
+    number: z.number().int().positive(),
+    repo: z.string(),
+    supersedes: z.number().int().positive().optional(),
+  }),
+});
+
+/**
  * 成果物チェックの間に見守っている PR の状態の変化（PBI-14a）。PR のマージを承認とみなし、
  * マージされたら続けて成果物チェックの承認（StepApproved）を記録する。マージせずに閉じられたら
- * 記録して人間の判断を待ち、開き直されたら見守りを続ける。
+ * 記録して人間の判断を待ち、開き直されたら見守りを続ける。要求要件・設計の PR（PBI-57）も同じく見守り、マージされたら
+ * その工程の承認（StepApproved）を記録する。
  */
 const PullRequestMerged = z.object({
   type: z.literal("PullRequestMerged"),
@@ -874,7 +945,7 @@ const PullRequestReopened = z.object({
 /**
  * PR へのフィードバックを、成果物チェックの指摘として取り込んだ（PBI-14b）。レビュー（Request changes・
  * コメント）の本文、行ごとのコメント、PR への通常のコメントを、まだ取り込んでいないものだけ取り込む
- * （同じものは二重に取り込まない）。指摘は1件ずつ。
+ * （同じものは二重に取り込まない）。指摘は1件ずつ。要求要件・設計の PR（PBI-57）の指摘も、その工程の指摘として取り込む。
  */
 const PullRequestReviewImported = z.object({
   type: z.literal("PullRequestReviewImported"),
@@ -1115,6 +1186,9 @@ export const EventInput = z.discriminatedUnion("type", [
   AiRequestsRetried,
   IntegrationReviewed,
   PullRequestPublished,
+  TaskBranchCreated,
+  StepBranchPushed,
+  StepPullRequestPublished,
   PullRequestMerged,
   PullRequestClosed,
   PullRequestReopened,

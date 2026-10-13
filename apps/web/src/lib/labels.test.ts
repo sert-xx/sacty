@@ -51,6 +51,8 @@ const task = (patch: Partial<Task> = {}): Task => ({
   importedFeedback: [],
   questions: [],
   exports: {},
+  stepPullRequests: [],
+  stepBranches: [],
   submissions: {},
   remarks: [],
   budget: { usedUsd: 0, capUsd: 1, warned: false, estimated: false },
@@ -356,10 +358,81 @@ describe("PR で判断する成果物チェック（PBI-14a）", () => {
       }) as ActivityEvent;
     expect(
       describeEvent(event({ type: "PullRequestMerged", payload: { number: 7, by: "reviewer" } })),
-    ).toBe("PR #7 がマージされた（reviewer）→ 成果物チェックを承認");
+    ).toBe("PR #7 がマージされた（reviewer）→ 承認");
     expect(describeEvent(event({ type: "PullRequestClosed", payload: { number: 7 } }))).toBe(
       "PR #7 がマージされずに閉じられた → 人間の判断待ち",
     );
+  });
+});
+
+describe("要求要件・設計の PR（PBI-57）", () => {
+  const pr = (state: Task["stepPullRequests"][number]["state"], submission = 1) =>
+    task({
+      status: "awaiting_approval",
+      gate: { step: "design", submission },
+      stepPullRequests: [
+        {
+          step: "design",
+          branch: "sacty/task-t1-design-1",
+          commit: "c",
+          base: "b",
+          path: "docs/sacty/t1/design.md",
+          url: "https://github.com/acme/app/pull/8",
+          number: 8,
+          repo: "https://github.com/acme/app",
+          submission,
+          state,
+        },
+      ],
+    });
+  it("PR を作った工程は、PR の状態に合わせて表示する。PR が無ければ、これまでどおり承認待ち", () => {
+    expect(statusText(pr("open"))).toBe("設計の PR のマージ待ち");
+    expect(statusText(pr("open", 2))).toBe("設計の PR のマージ待ち（2回目）");
+    expect(statusText(pr("closed"))).toBe("PR が閉じられた（判断待ち）");
+    expect(statusText(pr("merged_outdated"))).toBe("古い提出がマージされた（判断待ち）");
+    expect(statusTextIn(pr("open"), labels.en)).toBe("Design PR awaiting merge");
+    expect(
+      statusText(task({ status: "awaiting_approval", gate: { step: "design", submission: 1 } })),
+    ).toBe("設計の承認待ち");
+  });
+
+  it("作業履歴に、タスクブランチと工程の PR を表示する", () => {
+    const event = (e: Pick<ActivityEvent, "type" | "payload">): ActivityEvent =>
+      ({
+        ...e,
+        seq: 1,
+        id: "e1",
+        taskId: "t1",
+        projectId: "default",
+        at: "2026-10-11T00:00:00.000Z",
+        actor: "sacty",
+      }) as ActivityEvent;
+    expect(
+      describeEvent(
+        event({
+          type: "TaskBranchCreated",
+          payload: { branch: "sacty/task-t1", commit: "a".repeat(40) },
+        }),
+      ),
+    ).toBe("タスクブランチを作成（sacty/task-t1・aaaaaaa）");
+    expect(
+      describeEvent(
+        event({
+          type: "StepPullRequestPublished",
+          payload: {
+            step: "design",
+            branch: "sacty/task-t1-design-2",
+            commit: "c",
+            base: "b",
+            path: "docs/sacty/t1/design.md",
+            url: "u",
+            number: 10,
+            repo: "r",
+            supersedes: 8,
+          },
+        }),
+      ),
+    ).toBe("設計の PR を作成・更新（#10・docs/sacty/t1/design.md）。作り直したので PR #8 を閉じた");
   });
 });
 

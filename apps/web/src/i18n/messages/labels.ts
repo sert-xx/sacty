@@ -99,6 +99,8 @@ const ja = {
     reworkJudging: "ゴールガーディアンが PR の指摘を判断中",
     deliverableReview: (n: number) => `成果物チェック待ち${n > 1 ? `（${n}回目）` : ""}`,
     prAwaitingMerge: (n: number) => `PR のマージ待ち${n > 1 ? `（${n}回目）` : ""}`,
+    stepPrAwaitingMerge: (step: string, n: number) =>
+      `${step}の PR のマージ待ち${n > 1 ? `（${n}回目）` : ""}`,
     prClosed: "PR が閉じられた（判断待ち）",
     prMergedOutdated: "古い提出がマージされた（判断待ち）",
     notReproduced: "再現できなかった（判断待ち）",
@@ -175,8 +177,14 @@ const ja = {
       `PRは作らない設定のため、ブランチまで（${branch}・${commit}）`,
     BranchPushed: (branch: string, commit: string) =>
       `sacty のブランチにプッシュ（${branch}・${commit}）`,
+    TaskBranchCreated: (branch: string, commit: string) =>
+      `タスクブランチを作成（${branch}・${commit}）`,
+    StepBranchPushed: (step: string, branch: string, commit: string) =>
+      `${step}のファイルをブランチにプッシュ（${branch}・${commit}）`,
+    StepPullRequestPublished: (step: string, number: number, path: string, supersedes?: number) =>
+      `${step}の PR を作成・更新（#${number}・${path}）${supersedes ? `。作り直したので PR #${supersedes} を閉じた` : ""}`,
     PullRequestMerged: (number: number, by?: string) =>
-      `PR #${number} がマージされた${by ? `（${by}）` : ""}→ 成果物チェックを承認`,
+      `PR #${number} がマージされた${by ? `（${by}）` : ""}→ 承認`,
     PullRequestMergedOutdated: (number: number, by?: string) =>
       `PR #${number} が最新の提出より前の内容でマージされた${by ? `（${by}）` : ""}→ 人間の判断待ち`,
     PullRequestClosed: (number: number) =>
@@ -334,6 +342,8 @@ const en: LabelMessages = {
     reworkJudging: "Goal Guardian is judging PR comments",
     deliverableReview: (n) => `Awaiting deliverable review${n > 1 ? ` (submission ${n})` : ""}`,
     prAwaitingMerge: (n) => `Awaiting PR merge${n > 1 ? ` (submission ${n})` : ""}`,
+    stepPrAwaitingMerge: (step, n) =>
+      `${step} PR awaiting merge${n > 1 ? ` (submission ${n})` : ""}`,
     prClosed: "PR closed (needs you)",
     prMergedOutdated: "An older submission was merged (needs you)",
     notReproduced: "Not reproduced (needs your decision)",
@@ -402,8 +412,12 @@ const en: LabelMessages = {
       `PR opened or updated (#${number} · ${branch} · ${commit})`,
     branchPushed: (branch, commit) => `No PR configured; branch only (${branch} · ${commit})`,
     BranchPushed: (branch, commit) => `Pushed to sacty branch (${branch} · ${commit})`,
-    PullRequestMerged: (number, by) =>
-      `PR #${number} merged${by ? ` (${by})` : ""} → deliverable review approved`,
+    TaskBranchCreated: (branch, commit) => `Created the task branch (${branch} · ${commit})`,
+    StepBranchPushed: (step, branch, commit) =>
+      `Pushed the ${step} file to a branch (${branch} · ${commit})`,
+    StepPullRequestPublished: (step, number, path, supersedes) =>
+      `Opened or updated the ${step} PR (#${number} · ${path})${supersedes ? `; closed PR #${supersedes} because it was recreated` : ""}`,
+    PullRequestMerged: (number, by) => `PR #${number} merged${by ? ` (${by})` : ""} → approved`,
     PullRequestMergedOutdated: (number, by) =>
       `PR #${number} was merged with content older than the latest submission${by ? ` (${by})` : ""} → needs you`,
     PullRequestClosed: (number) => `PR #${number} closed without merging → needs you`,
