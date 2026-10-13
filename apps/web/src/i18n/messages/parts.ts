@@ -107,7 +107,7 @@ const ja = {
     rereview: "再レビュー",
     rereviewing: "始めています…",
     rereviewNote: "PR の最新のコミットを、もう一度レビューして投稿します。",
-    cancel: "中止…",
+    cancel: "中止",
     dialogTitle: (title: string) => `「${title}」を中止しますか？`,
     dialogBody:
       "中止すると再開できません。sacty が作ったものを、次のとおり片付けます。人間が作ったブランチやPRには触れません。作業履歴は残し、中止の記録を追記します。",
@@ -240,7 +240,7 @@ const en: PartsMessages = {
     rereview: "Review again",
     rereviewing: "Starting…",
     rereviewNote: "Reviews the latest commit of the PR again and posts the review.",
-    cancel: "Cancel…",
+    cancel: "Cancel",
     dialogTitle: (title) => `Cancel "${title}"?`,
     dialogBody:
       "A cancelled task can't be resumed. sacty cleans up what it created, as listed below. Branches and PRs made by people aren't touched. The activity history is kept and the cancellation is recorded.",

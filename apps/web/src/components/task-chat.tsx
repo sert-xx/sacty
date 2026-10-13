@@ -1,5 +1,5 @@
-import { questionBlocked, type Task } from "@sacty/core";
-import { CardSection } from "@/components/card-section";
+import { pendingQuestion, questionBlocked, type Task } from "@sacty/core";
+import { ChatPanel } from "@/components/chat-panel";
 import { Markdown } from "@/components/markdown";
 import { QuestionForm } from "@/components/question-form";
 import { getMessages } from "@/i18n/server";
@@ -7,6 +7,7 @@ import { formatStamp } from "@/lib/labels";
 
 /**
  * オーケストレーターへの質問と答え（PBI-54）。質問と答えはタスクごとに残り、開き直しても読める。
+ * 画面の右の AI のアイコンから開くサイドパネルに出す（PBI-61）。
  * 答えを待っている間は、画面の自動の更新で答えを出す。質問できないときは、理由を出す。
  */
 export async function TaskChat({ task }: { task: Task }) {
@@ -15,7 +16,13 @@ export async function TaskChat({ task }: { task: Task }) {
   const m = messages.task.chat;
   const blocked = questionBlocked(task);
   return (
-    <CardSection id="chat" title={m.title} note={m.note}>
+    <ChatPanel
+      pending={pendingQuestion(task) !== undefined}
+      count={task.questions.length}
+      form={
+        <QuestionForm taskId={task.id} {...(blocked ? { blocked: labels.text(blocked) } : {})} />
+      }
+    >
       {task.questions.length === 0 ? (
         <p className="text-sm text-muted-foreground">{m.empty}</p>
       ) : (
@@ -35,7 +42,7 @@ export async function TaskChat({ task }: { task: Task }) {
                 </p>
                 <p className="leading-6 whitespace-pre-wrap [overflow-wrap:anywhere]">{q.text}</p>
               </div>
-              <div className="flex flex-col gap-1 rounded-lg border border-border bg-muted/40 p-3">
+              <div className="flex min-w-0 flex-col gap-1 rounded-lg border border-border bg-muted/40 p-3">
                 <p className="flex flex-wrap gap-x-2 text-xs text-muted-foreground">
                   <span>{m.answer}</span>
                   {q.answer && (
@@ -58,7 +65,6 @@ export async function TaskChat({ task }: { task: Task }) {
           ))}
         </ol>
       )}
-      <QuestionForm taskId={task.id} {...(blocked ? { blocked: labels.text(blocked) } : {})} />
-    </CardSection>
+    </ChatPanel>
   );
 }
