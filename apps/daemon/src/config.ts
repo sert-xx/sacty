@@ -294,7 +294,7 @@ const ConfigFile = z
           /** 作るイメージの名前。書かなければ sacty-agent-<名前>:<版>。 */
           image: z.string().trim().min(1).optional(),
           /**
-           * Node.js を写す元のイメージ（元のイメージに Node.js が無いとき）。書かなければ image_build.base_image、
+           * Node.js を写す元のイメージ（元のイメージに Node.js 18 以上と npm が無いとき）。書かなければ image_build.base_image、
            * それも無ければ node:22-bookworm-slim。
            */
           node_image: z.string().trim().min(1).optional(),
@@ -690,7 +690,7 @@ image: ${DEFAULT_IMAGE}
 #     min-release-age: 7              # 公開から7日たっていない版は入れない
 # 言語ごとのイメージ。工程ごとに、オーケストレーターが説明を見て選ぶ（プロジェクトの対象で指定もできる）。
 # 元のイメージは、言語のツールが入った Debian・Ubuntu 系か RHEL 系（Rocky Linux など）のイメージ（CI のイメージなど）。
-# sacty が Node.js（image_build.base_image か node_image から写す）とエージェントの CLI を足して作る。
+# sacty がエージェントの CLI を足して作る。元のイメージに Node.js 18 以上と npm が無ければ、node_image（無ければ image_build.base_image）から写す。
 # env はエージェントとテストのコンテナに渡す（認証の値は書けない）。maven_mirror は Maven・Gradle の取得先を向ける
 # images:
 #   java17:
