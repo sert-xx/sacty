@@ -1,8 +1,9 @@
 import { spawn } from "node:child_process";
-import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { type DaemonText, message } from "@sacty/core";
+import { parse as parseYaml } from "yaml";
 import { dockerClientEnv } from "./agents/docker.js";
 
 /**
@@ -108,6 +109,9 @@ export function sanitizeCompose(
       }
     }
     if (service.cgroup_parent !== undefined) bad("cgroup_parent は使えません");
+    // Docker の API のソケットを渡す・ホストでコマンドを動かす指定（PBI-47 レビュー指摘）
+    if (service.use_api_socket === true) bad("use_api_socket は使えません");
+    if (service.provider !== undefined) bad("provider は使えません");
     const mode = typeof service.network_mode === "string" ? service.network_mode : undefined;
     if (mode !== undefined && !mode.startsWith("service:") && mode !== "bridge") {
       bad(`network_mode: ${mode} は使えません`);
@@ -150,6 +154,13 @@ export function sanitizeCompose(
       }
       if (isObject(service.build.additional_contexts))
         bad("build.additional_contexts は使えません");
+      // ビルドにホストの SSH エージェント・ネットワーク・特権を渡す指定
+      if (service.build.ssh !== undefined) bad("build.ssh は使えません");
+      if (service.build.network === "host") bad("build.network: host は使えません");
+      if (service.build.privileged === true) bad("build.privileged は使えません");
+      if (Array.isArray(service.build.entitlements) && service.build.entitlements.length > 0) {
+        bad("build.entitlements は使えません");
+      }
     }
     for (const file of Array.isArray(service.env_file) ? (service.env_file as unknown[]) : []) {
       const path = isObject(file) ? file.path : file;
@@ -235,6 +246,67 @@ export function sanitizeCompose(
   };
 }
 
+/**
+ * compose ファイルが参照するファイルのうち、正規化（`docker compose config`）で元の参照が消えるもの（include の
+ * path・env_file・project_directory、extends の file、label_file）が、作業領域の中かを確かめる（PBI-47 レビュー指摘）。
+ * include・extends でたどったファイルも確かめる。変数を含むパスは、展開した先が分からないので使えない。
+ * 問題があれば、その理由を返す。
+ */
+export function checkComposeSources(workspaceDir: string, file: string): string[] {
+  const problems: string[] = [];
+  const seen = new Set<string>();
+  const list = (value: unknown): unknown[] =>
+    value === undefined || value === null ? [] : Array.isArray(value) ? value : [value];
+  const visit = (path: string, projectDir: string) => {
+    if (seen.has(path)) return;
+    seen.add(path);
+    let doc: unknown;
+    try {
+      doc = parseYaml(readFileSync(path, "utf8"));
+    } catch {
+      return; // 読めないファイルは、正規化で理由が出る
+    }
+    if (!isObject(doc)) return;
+    // パスが作業領域の中か。変数を含むものは使えない
+    const target = (raw: unknown, base: string, what: string): string | undefined => {
+      if (typeof raw !== "string" || raw === "") return undefined;
+      if (raw.includes("$")) {
+        problems.push(`${what}（${raw}）に変数は使えません`);
+        return undefined;
+      }
+      const resolved = resolve(base, raw);
+      if (!inside(workspaceDir, resolved)) {
+        problems.push(`作業領域の外の${what}（${raw}）は使えません`);
+        return undefined;
+      }
+      return resolved;
+    };
+    for (const entry of list(doc.include)) {
+      const item = isObject(entry) ? entry : { path: entry };
+      const base = dirname(path);
+      // include したファイルの中の相対パスは、project_directory（書かなければ include したファイルの場所）が基準
+      const dir = target(item.project_directory, base, "include の project_directory");
+      for (const envFile of list(item.env_file)) target(envFile, base, "include の env_file");
+      for (const included of list(item.path)) {
+        const next = target(included, base, "include のファイル");
+        if (next) visit(next, dir ?? dirname(next));
+      }
+    }
+    for (const service of Object.values(isObject(doc.services) ? doc.services : {})) {
+      if (!isObject(service)) continue;
+      for (const labelFile of list(service.label_file)) {
+        target(labelFile, projectDir, "label_file");
+      }
+      const extended = isObject(service.extends) ? service.extends.file : undefined;
+      // extends したファイルの中の相対パスは、そのファイルの場所が基準
+      const next = target(extended, dirname(path), "extends のファイル");
+      if (next) visit(next, dirname(next));
+    }
+  };
+  visit(file, dirname(file));
+  return problems;
+}
+
 /** compose のプロジェクトの名前（実行ごと。ほかのタスク・実行とぶつからない）。 */
 export function composeProject(runId: string): string {
   return `sacty-svc-${runId
@@ -264,22 +336,30 @@ export class DockerComposeServices implements ServiceRunner {
     private readonly waitSec = 300,
   ) {}
 
-  private compose(args: string[], cwd?: string): Promise<{ code: number; out: string }> {
+  /**
+   * docker compose を実行する。stdout（JSON など）と stderr（警告・エラー）は分けて返す（警告が出ても
+   * stdout の JSON を読めるように。PBI-47 レビュー指摘）。out は両方（失敗の理由に添える）。
+   */
+  private compose(
+    args: string[],
+    cwd?: string,
+  ): Promise<{ code: number; stdout: string; out: string }> {
     return new Promise((done) => {
       const child = this.spawnImpl("docker", ["compose", ...args], {
         env: dockerClientEnv(),
         ...(cwd ? { cwd } : {}),
         stdio: ["ignore", "pipe", "pipe"],
       });
-      let out = "";
+      let stdout = "";
+      let stderr = "";
       child.stdout?.on("data", (chunk) => {
-        out += chunk;
+        stdout += chunk;
       });
       child.stderr?.on("data", (chunk) => {
-        out += chunk;
+        stderr += chunk;
       });
-      child.on("error", (error) => done({ code: 127, out: error.message }));
-      child.on("close", (code) => done({ code: code ?? 1, out }));
+      child.on("error", (error) => done({ code: 127, stdout, out: error.message }));
+      child.on("close", (code) => done({ code: code ?? 1, stdout, out: stdout + stderr }));
     });
   }
 
@@ -294,8 +374,21 @@ export class DockerComposeServices implements ServiceRunner {
         }),
       };
     }
+    // 正規化の前に、正規化で元の参照が消える指定（include・extends のファイル、label_file）を確かめる。
+    // 正規化は env_file を読まずに（--no-env-resolution）行い、env_file のパスは後で確かめる。起動のときに
+    // compose が読む（PBI-47 レビュー指摘）
+    const sources = checkComposeSources(workspaceDir, file);
+    if (sources.length > 0) {
+      return {
+        ok: false as const,
+        message: message("services.unsafe", { file: spec.file, detail: sources.join("、") }),
+      };
+    }
     // 正規化（include・extends・変数の展開・相対パスの解決）してから確かめる
-    const normalized = await this.compose(["-f", file, "config", "--format", "json"], workspaceDir);
+    const normalized = await this.compose(
+      ["-f", file, "config", "--format", "json", "--no-env-resolution"],
+      workspaceDir,
+    );
     if (normalized.code !== 0) {
       return {
         ok: false as const,
@@ -307,7 +400,7 @@ export class DockerComposeServices implements ServiceRunner {
     }
     let parsed: unknown;
     try {
-      parsed = JSON.parse(normalized.out);
+      parsed = JSON.parse(normalized.stdout);
     } catch {
       return {
         ok: false as const,

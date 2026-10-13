@@ -160,7 +160,8 @@ npx sacty image build java17     # 名前を指定して作る（default は既�
 - エージェントとテストは、サービス名とコンテナのポートで接続する（例 `db:5432`）。`ports`（ホストのポート）と `container_name` は外して起動する
 - compose ファイルは `docker compose config` で正規化してから確かめ、使うサービスとその依存に次の設定があれば、起動せずに理由を示して止まる
   - `privileged`・`cap_add`・`devices`・`volumes_from`・ホストのネットワーク・PID など（`network_mode: host`・`pid: host` など）・`security_opt` の unconfined
-  - 作業領域の外のパスのマウント（Docker のソケットを含む）・作業領域の外の `build`・`env_file`・`secrets`
+  - Docker の API のソケットを渡す `use_api_socket`・ホストでコマンドを動かす `provider`・ビルドの `ssh`・`network: host`・`privileged`・`entitlements`
+  - 作業領域の外のパスのマウント（Docker のソケットを含む）・作業領域の外の `build`・`env_file`・`label_file`・`secrets`・`include`・`extends` のファイル（これらのパスに変数は使えない）
   - external のネットワーク・ボリューム、bridge 以外のネットワークのドライバー、ボリュームのドライバーの指定
 - サービスのイメージは、compose ファイルに書かれた名前のまま、ホストの Docker で取得・ビルドする（組織のレジストリのイメージは、ホストで `docker login` しておく）
 - デーモンが途中で終わって残ったサービスは、次の起動のときに消す
