@@ -248,55 +248,151 @@ describe("セッションログの保存（PBI-62）", () => {
     expect(read?.stderr).toBe("[REDACTED]\n");
   });
 
-  it("上限を超えたら行の切れ目で切り詰め、切り詰めたことを末尾の行と記録に残す", () => {
-    const store = new SessionLogStore(join(dir, "runs"), { events: 50, stderr: 30 });
-    const log = store.open(info, () => []);
-    const line = `${JSON.stringify({ n: "x".repeat(6) })}\n`; // 15 バイト
-    expect(Buffer.byteLength(line)).toBe(15);
-    for (let i = 0; i < 10; i++) log.stdout(line);
-    log.stderr("e".repeat(100));
-    log.close({
-      kind: "completed",
-      output: "",
-      usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 0 },
+  const done = {
+    kind: "completed" as const,
+    output: "",
+    usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 0 },
+  };
+  const line = (n: number) => `${JSON.stringify({ n: String(n).padStart(6, "0") })}\n`; // 15 バイト
+
+  it("上限を超えたら先頭と末尾を行の切れ目で残し、間を省いたことを目印の行と記録に残す", () => {
+    const store = new SessionLogStore(join(dir, "runs"), {
+      events: { head: 50, tail: 47 },
+      stderr: { head: 30, tail: 20 },
     });
+    const log = store.open(info, () => []);
+    expect(Buffer.byteLength(line(0))).toBe(15);
+    for (let i = 0; i < 10; i++) log.stdout(line(i));
+    log.stdout('{"type":"result","result":"ok"}\n');
+    log.stderr("e".repeat(100));
+    log.stderr("最後のエラー\n");
+    log.close(done);
     const read = store.read("task-1", "run-1");
     const lines = read?.events.trimEnd().split("\n") ?? [];
-    // 50 バイトに収まる3行と、切り詰めの目印
-    expect(lines.slice(0, 3)).toEqual([line.trim(), line.trim(), line.trim()]);
+    // 先頭：50 バイトに収まる3行。末尾：47 バイトに収まる行の頭から（最後の result の行が残る）
+    expect(lines.slice(0, 3)).toEqual([0, 1, 2].map((i) => line(i).trim()));
     expect(JSON.parse(lines[3] ?? "")).toEqual({
       type: TRUNCATED_EVENT,
-      limitBytes: 50,
-      droppedBytes: 150 - 45,
+      droppedBytes: 15 * 6,
+      droppedLines: 6,
+      headBytes: 50,
+      tailBytes: 47,
     });
-    expect(lines).toHaveLength(4);
-    // 改行の無い標準エラー出力は、文字の切れ目で切る
+    expect(lines.slice(4)).toEqual([line(9).trim(), '{"type":"result","result":"ok"}']);
+    // どの行も壊れた JSON ではない
+    for (const l of lines) expect(() => JSON.parse(l)).not.toThrow();
+    // 改行の無い標準エラー出力は、先頭も末尾も文字の切れ目で切る
     expect(read?.stderr.startsWith(`${"e".repeat(30)}\n[sacty] truncated`)).toBe(true);
-    expect(read?.meta.truncated).toEqual({ events: 105, stderr: 70 });
+    expect(read?.stderr.endsWith("e最後のエラー\n")).toBe(true);
+    expect(read?.meta.truncated).toEqual({
+      events: { droppedBytes: 90, droppedLines: 6 },
+      stderr: { droppedBytes: 100 + 19 - 30 - 20, droppedLines: 0 },
+    });
   });
 
-  it("伏せてから切り詰める（上限の境目にまたがる秘密情報の、前半も残さない）", () => {
-    const secret = "S3CR3T-0123456789abcdef";
-    for (let limit = 1; limit < 40; limit++) {
-      const root = join(dir, `runs-${limit}`);
-      const store = new SessionLogStore(root, { events: limit, stderr: limit });
-      const log = store.open(info, () => [secret]);
-      // 値が上限の境目にまたがり、さらに届いた分の境目でも切れる
-      const text = `ab${secret}cd`;
-      log.stderr(text.slice(0, 7));
-      log.stderr(text.slice(7));
-      log.close({ kind: "failed", reason: "error", message: "x" });
-      const stderr = store.read("task-1", "run-1")?.stderr ?? "";
-      expect(stderr).not.toContain(secret.slice(0, 6));
+  it("先頭と末尾に収まれば、何も省かず目印も足さない（改行で終わらない最後の行も残す）", () => {
+    const store = new SessionLogStore(join(dir, "runs"), {
+      events: { head: 30, tail: 40 },
+      stderr: { head: 5, tail: 5 },
+    });
+    const log = store.open(info, () => []);
+    const text = `${line(1)}${line(2)}${line(3)}{"type":"result"}`;
+    // 届いた分の境目は、行の途中にもある
+    for (let i = 0; i < text.length; i += 7) log.stdout(text.slice(i, i + 7));
+    log.stderr("0123456789");
+    log.close(done);
+    const read = store.read("task-1", "run-1");
+    expect(read?.events).toBe(text);
+    expect(read?.stderr).toBe("0123456789");
+    expect(read?.meta.truncated).toBeUndefined();
+  });
+
+  it("届いた分の境目がどこでも、先頭は行の切れ目で終わり、末尾は行の頭から始まる", () => {
+    const text = Array.from({ length: 20 }, (_, i) => line(i)).join("");
+    for (const size of [1, 4, 15, 16, 31, 64]) {
+      const root = join(dir, `runs-chunk-${size}`);
+      const store = new SessionLogStore(root, {
+        events: { head: 37, tail: 37 },
+        stderr: { head: 10, tail: 10 },
+      });
+      const log = store.open(info, () => []);
+      for (let i = 0; i < text.length; i += size) log.stdout(text.slice(i, i + size));
+      log.close(done);
+      const lines = store.read("task-1", "run-1")?.events.trimEnd().split("\n") ?? [];
+      expect(lines).toEqual([
+        line(0).trim(),
+        line(1).trim(),
+        expect.stringContaining(TRUNCATED_EVENT),
+        line(18).trim(),
+        line(19).trim(),
+      ]);
     }
   });
 
-  it("UTF-8 の文字の途中では切らない", () => {
-    const store = new SessionLogStore(join(dir, "runs"), { events: 10, stderr: 10 });
+  it("伏せてから切り詰める（先頭・末尾の切れ目にまたがる秘密情報の、一部も残さない）", () => {
+    const secret = "S3CR3T-0123456789abcdef";
+    const text = `ab${secret}cd${"x".repeat(30)}ef${secret}gh`;
+    for (let head = 1; head < 40; head += 2) {
+      for (let tail = 1; tail < 40; tail += 3) {
+        const root = join(dir, `runs-${head}-${tail}`);
+        const store = new SessionLogStore(root, {
+          events: { head, tail },
+          stderr: { head, tail },
+        });
+        const log = store.open(info, () => [secret]);
+        // 届いた分の境目でも切れる
+        log.stderr(text.slice(0, 7));
+        log.stderr(text.slice(7, 40));
+        log.stderr(text.slice(40));
+        log.close({ kind: "failed", reason: "error", message: "x" });
+        const stderr = store.read("task-1", "run-1")?.stderr ?? "";
+        for (let i = 0; i + 6 <= secret.length; i++) {
+          expect(stderr).not.toContain(secret.slice(i, i + 6));
+        }
+      }
+    }
+  });
+
+  it("先頭に収まる、改行で終わらない最後の行（スタブの出力など）も残す", () => {
+    const store = new SessionLogStore(join(dir, "runs"), {
+      events: { head: 100, tail: 10 },
+      stderr: { head: 10, tail: 10 },
+    });
     const log = store.open(info, () => []);
-    log.stderr("あいうえお"); // 15 バイト
+    log.stdout(line(1));
+    log.stdout('{"type":"res');
+    log.stdout('ult"}');
+    log.close(done);
+    expect(store.read("task-1", "run-1")?.events).toBe(`${line(1)}{"type":"result"}`);
+  });
+
+  it("先頭に収まらない長い行は、改行が届かなくても先頭の上限を超えて書かない", () => {
+    const store = new SessionLogStore(join(dir, "runs"), {
+      events: { head: 20, tail: 10 },
+      stderr: { head: 10, tail: 10 },
+    });
+    const log = store.open(info, () => []);
+    log.stdout(line(1));
+    for (let i = 0; i < 10; i++) log.stdout('"xxxx"');
+    log.close(done);
+    const events = store.read("task-1", "run-1")?.events ?? "";
+    // 先頭の1行と、間を省いた目印だけ（途中から始まる行は末尾にも残さない）
+    const lines = events.trimEnd().split("\n");
+    expect(lines).toEqual([line(1).trim(), expect.stringContaining(TRUNCATED_EVENT)]);
+    expect(JSON.parse(lines[1] ?? "")).toMatchObject({ droppedBytes: 60, droppedLines: 0 });
+  });
+
+  it("UTF-8 の文字の途中では切らない", () => {
+    const store = new SessionLogStore(join(dir, "runs"), {
+      events: { head: 10, tail: 10 },
+      stderr: { head: 10, tail: 10 },
+    });
+    const log = store.open(info, () => []);
+    log.stderr("あいうえおかきくけこ"); // 30 バイト
     log.close({ kind: "failed", reason: "error", message: "x" });
-    expect(store.read("task-1", "run-1")?.stderr.startsWith("あいう\n[sacty]")).toBe(true);
+    const stderr = store.read("task-1", "run-1")?.stderr ?? "";
+    expect(stderr.startsWith("あいう\n[sacty]")).toBe(true);
+    expect(stderr.endsWith("omitted.\nくけこ")).toBe(true);
   });
 
   it("パスに使えない ID では書かず・読まない（ほかの場所を読ませない）", () => {

@@ -16,15 +16,17 @@ const ja = {
   download: "生のファイルをダウンロード",
   downloadEvents: "途中の出来事（JSONL）",
   downloadStderr: "標準エラー出力",
-  truncated: (file: string, limit: string, dropped: string) =>
-    `${file}は上限（${limit}）を超えたため切り詰めました（${dropped}を省略）。`,
+  truncated: (file: string, head: string, tail: string, dropped: string, lines: number) =>
+    `${file}は上限（先頭 ${head}・末尾 ${tail}）を超えたため、先頭と末尾を残し、間の ${dropped}（${lines.toLocaleString("ja-JP")}行）を省きました。`,
   events: "途中の出来事",
   eventsEmpty: "途中の出来事はありません。",
   stderr: "標準エラー出力",
   stderrEmpty: "標準エラー出力はありません。",
   shown: (shown: number, total: number) =>
-    `出来事が多いため、最初の${shown}件を表示しています（全${total}件）。残りは生のファイルで確かめてください。`,
-  clipped: "（長いため、一部だけ表示しています。全文は生のファイルにあります）",
+    `出来事が多いため、最初と最後の${shown}件ずつを表示しています（全${total}件）。間は生のファイルで確かめてください。`,
+  skipped: (n: number) =>
+    `…ここで${n}件の出来事を表示から省いています（生のファイルにはあります）…`,
+  clipped: "……（長いため、先頭と末尾だけを表示しています。全文は生のファイルにあります）……",
   notFound: "この実行のセッションログはありません。",
   notFoundHelp:
     "ログを残すようになる前の実行か、エージェントを起動する前に止まった実行です。作業履歴の記録を確かめてください。",
@@ -42,7 +44,7 @@ const ja = {
     turn: "ターンの終わり",
     error: "エラー",
     raw: "生の行",
-    truncated: "ここで切り詰めました",
+    truncated: "ここで間を省きました",
   },
   roles: {
     orchestrator: "オーケストレーター",
@@ -75,15 +77,17 @@ const en: RunLogMessages = {
   download: "Download the raw files",
   downloadEvents: "Events (JSONL)",
   downloadStderr: "Standard error",
-  truncated: (file: string, limit: string, dropped: string) =>
-    `The ${file} exceeded the limit (${limit}) and was truncated (${dropped} omitted).`,
+  truncated: (file: string, head: string, tail: string, dropped: string, lines: number) =>
+    `The ${file} exceeded the limit (first ${head}, last ${tail}), so the beginning and the end were kept and ${dropped} (${lines.toLocaleString("en-US")} lines) in between was omitted.`,
   events: "Events",
   eventsEmpty: "No events.",
   stderr: "Standard error",
   stderrEmpty: "No standard error output.",
   shown: (shown: number, total: number) =>
-    `There are many events, so the first ${shown} of ${total} are shown. Check the raw file for the rest.`,
-  clipped: "(Long, so only part is shown. The raw file has the full text.)",
+    `There are many events, so the first and last ${shown} of ${total} are shown. Check the raw file for the rest.`,
+  skipped: (n: number) => `… ${n} events are not shown here (they are in the raw file) …`,
+  clipped:
+    "…… (Long, so only the beginning and the end are shown. The raw file has the full text.) ……",
   notFound: "There is no session log for this run.",
   notFoundHelp:
     "The run is from before session logs were kept, or it stopped before the agent started. Check the activity records.",
@@ -101,7 +105,7 @@ const en: RunLogMessages = {
     turn: "End of turn",
     error: "Error",
     raw: "Raw line",
-    truncated: "Truncated here",
+    truncated: "Omitted here",
   },
   roles: {
     orchestrator: "Orchestrator",

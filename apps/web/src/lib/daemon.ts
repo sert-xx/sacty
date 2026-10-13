@@ -392,9 +392,13 @@ export type RunLogMeta = {
   /** 無ければ、終わりを記録できなかった（デーモンが落ちたなど）か、実行中。 */
   finishedAt?: string;
   outcome?: { kind: "completed" } | { kind: "failed"; reason: string; message: DaemonText };
-  /** 上限で切り詰めたファイルと、捨てた大きさ（バイト）。 */
-  truncated?: { events?: number; stderr?: number };
-  limits: { events: number; stderr: number };
+  /** 上限で間を省いたファイルと、省いた大きさ（バイト）・行数。 */
+  truncated?: {
+    events?: { droppedBytes: number; droppedLines: number };
+    stderr?: { droppedBytes: number; droppedLines: number };
+  };
+  /** 残す先頭と末尾の大きさ（バイト）。 */
+  limits: { events: { head: number; tail: number }; stderr: { head: number; tail: number } };
 };
 
 export type RunLog = { meta: RunLogMeta; events: string; stderr: string };

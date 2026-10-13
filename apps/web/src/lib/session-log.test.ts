@@ -122,14 +122,21 @@ describe("セッションログの並べ方（PBI-62）", () => {
         '{"type":"assistant","message":{"content":[{"type":"te',
         '{"type":"something_new","x":1}',
         "",
-        '{"type":"sacty.truncated","limitBytes":100,"droppedBytes":42}',
+        '{"type":"sacty.truncated","droppedBytes":42,"droppedLines":3,"headBytes":100,"tailBytes":50}',
       ].join("\n"),
     );
     expect(entries).toEqual([
       { line: 1, kind: "raw", text: "warning: plain text" },
       { line: 2, kind: "raw", text: '{"type":"assistant","message":{"content":[{"type":"te' },
       { line: 3, kind: "raw", text: '{"type":"something_new","x":1}' },
-      { line: 5, kind: "truncated", limitBytes: 100, droppedBytes: 42 },
+      {
+        line: 5,
+        kind: "truncated",
+        droppedBytes: 42,
+        droppedLines: 3,
+        headBytes: 100,
+        tailBytes: 50,
+      },
     ]);
     expect(parseSessionLog("")).toEqual([]);
   });

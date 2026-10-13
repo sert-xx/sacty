@@ -16,11 +16,22 @@ import { redact, redactText } from "./agents/redact.js";
 /**
  * エージェントの実行ごとのセッションログ（PBI-62）。途中の出来事（エージェントの標準出力の JSONL）と標準エラー出力を、
  * sacty のデータの場所の下の runs/<タスク>/<実行>.jsonl・.stderr.log に残す（作業履歴には入れない。大きいため）。
- * 秘密情報は書く前に伏せ、伏せた後の大きさで上限を超えたら切り詰める（切り詰めたことを残す）。
+ * 秘密情報は書く前に伏せ、伏せた後の大きさで上限を超えたら、先頭と末尾を残して間を捨てる（捨てたことを残す）。
+ * エラーで止まった原因や最後の result の行は末尾に出るので、末尾も残す（監査と原因の調査のため）。
  */
 
-/** 1実行あたりの上限（途中の出来事 18MB・標準エラー出力 2MB。合わせて 20MB）。 */
-export const SESSION_LOG_LIMITS = { events: 18 * 1024 * 1024, stderr: 2 * 1024 * 1024 };
+const MB = 1024 * 1024;
+
+/** 残す先頭と末尾の大きさ（バイト）。 */
+export type HeadTail = { head: number; tail: number };
+
+/**
+ * 1実行あたりの上限。途中の出来事は先頭 15MB・末尾 3MB、標準エラー出力は先頭 1MB・末尾 1MB（合わせて 20MB）。
+ */
+export const SESSION_LOG_LIMITS: Record<SessionLogFile, HeadTail> = {
+  events: { head: 15 * MB, tail: 3 * MB },
+  stderr: { head: MB, tail: MB },
+};
 
 export type SessionLogFile = "events" | "stderr";
 
@@ -49,9 +60,9 @@ export type SessionLogMeta = {
   /** 無ければ、終わりを記録できなかった（デーモンが落ちたなど）。 */
   finishedAt?: string;
   outcome?: { kind: "completed" } | { kind: "failed"; reason: string; message: DaemonText };
-  /** 上限で切り詰めたファイルと、捨てた大きさ（バイト）。 */
-  truncated?: Partial<Record<SessionLogFile, number>>;
-  limits: Record<SessionLogFile, number>;
+  /** 上限で間を省いたファイルと、省いた大きさ（バイト）・行数（改行の数）。 */
+  truncated?: Partial<Record<SessionLogFile, { droppedBytes: number; droppedLines: number }>>;
+  limits: Record<SessionLogFile, HeadTail>;
 };
 
 /** 実行器が、出力を受け取るたびに渡す先。 */
@@ -99,19 +110,46 @@ export class StreamRedactor {
   }
 }
 
+const NEWLINE = 0x0a;
+
+function newlines(buf: Buffer): number {
+  let n = 0;
+  for (let i = buf.indexOf(NEWLINE); i >= 0; i = buf.indexOf(NEWLINE, i + 1)) n++;
+  return n;
+}
+
+/** UTF-8 の1文字の途中で切らない位置（at から前に戻す）。 */
+function charStartBefore(buf: Buffer, at: number): number {
+  let cut = Math.max(0, Math.min(at, buf.length));
+  while (cut > 0 && ((buf[cut] ?? 0) & 0xc0) === 0x80) cut--;
+  return cut;
+}
+
 /**
- * 上限まで書くファイル。超えたら、行の切れ目（無ければ文字の切れ目）で切り、捨てた大きさを数える。
- * lines（途中の出来事の JSONL）なら、行の頭から上限をまたぐ行は、途中まで書かずに捨てる（壊れた JSON の行を残さない）。
+ * 先頭と末尾を残すファイル。先頭の上限までは書きながらファイルに足し、超えた後は末尾の上限の分だけをメモリに持つ
+ * （全体は持たない）。閉じるときに、省いたことの目印と末尾を書く。
+ * lines（途中の出来事の JSONL）なら、先頭は行の切れ目で終え、末尾は行の頭から始める（壊れた JSON の行を残さない）。
+ * 先頭の途中の行は、改行が届くまで書かずに持つ。
  */
-class CappedFile {
+class HeadTailFile {
   private fd: number | undefined;
-  written = 0;
-  dropped = 0;
+  private written = 0;
+  private headFull = false;
   private endsWithNewline = true;
+  /** lines で、まだ改行が届いていない先頭の行。 */
+  private pending: Buffer = Buffer.alloc(0);
+  private tail: Buffer[] = [];
+  private tailSize = 0;
+  private evictedBytes = 0;
+  private evictedLines = 0;
+  /** 末尾から押し出した最後のバイト（末尾が行の頭から始まっているかを知るため）。 */
+  private lastEvicted: number | undefined;
+  /** 閉じた後の、省いた大きさ・行数。 */
+  dropped = { bytes: 0, lines: 0 };
 
   constructor(
     readonly path: string,
-    private readonly limit: number,
+    private readonly limits: HeadTail,
     private readonly lines: boolean,
     private readonly onError: (error: unknown) => void,
   ) {
@@ -125,33 +163,72 @@ class CappedFile {
   write(text: string): void {
     if (!text) return;
     const buf = Buffer.from(text, "utf8");
-    if (this.dropped > 0) {
-      this.dropped += buf.length;
+    if (this.headFull) {
+      this.toTail(buf);
       return;
     }
-    const room = this.limit - this.written;
+    const room = this.limits.head - this.written;
+    if (this.lines) {
+      const data = this.pending.length > 0 ? Buffer.concat([this.pending, buf]) : buf;
+      const complete = data.lastIndexOf(NEWLINE) + 1;
+      if (complete <= room) {
+        this.put(data.subarray(0, complete));
+        this.pending = Buffer.from(data.subarray(complete));
+        // 終わっていない行が、先頭に収まらないなら、その行からは末尾に回す
+        if (this.pending.length > this.limits.head - this.written) {
+          this.headFull = true;
+          const rest = this.pending;
+          this.pending = Buffer.alloc(0);
+          this.toTail(rest);
+        }
+        return;
+      }
+      const cut = room > 0 ? data.subarray(0, room).lastIndexOf(NEWLINE) + 1 : 0;
+      this.put(data.subarray(0, cut));
+      this.pending = Buffer.alloc(0);
+      this.headFull = true;
+      this.toTail(data.subarray(cut));
+      return;
+    }
     if (buf.length <= room) {
       this.put(buf);
       return;
     }
-    let cut = room <= 0 ? 0 : buf.subarray(0, room).lastIndexOf(0x0a) + 1;
-    if (cut <= 0 && this.lines && this.endsWithNewline) cut = 0;
-    else if (cut <= 0) {
-      cut = Math.max(0, room);
-      // UTF-8 の1文字の途中で切らない
-      while (cut > 0 && ((buf[cut] ?? 0) & 0xc0) === 0x80) cut--;
-    }
+    const cut = charStartBefore(buf, room);
     this.put(buf.subarray(0, cut));
-    this.dropped += buf.length - cut;
-    // 捨てた大きさが 0 になる切り方は無い（room < buf.length）。0 バイトだけ超えた、は起きない
+    this.headFull = true;
+    this.toTail(buf.subarray(cut));
   }
 
-  /** 切り詰めの目印を足して閉じる。 */
-  close(marker: (dropped: number) => string): void {
-    if (this.dropped > 0 && this.fd !== undefined) {
-      const text = `${this.endsWithNewline ? "" : "\n"}${marker(this.dropped)}`;
-      this.raw(Buffer.from(text, "utf8"));
+  /** 省いたことの目印（省いた大きさ・行数から作る）を間に入れ、末尾を書いて閉じる。 */
+  close(marker: (droppedBytes: number, droppedLines: number) => string): void {
+    if (this.pending.length > 0) this.put(this.pending); // 改行で終わらない最後の行
+    this.pending = Buffer.alloc(0);
+    if (this.headFull) {
+      const tail = Buffer.concat(this.tail);
+      if (this.evictedBytes === 0) {
+        this.raw(tail); // 省いたものは無い（先頭と末尾がつながっている）
+      } else {
+        let start = 0;
+        if (this.lines) {
+          // 末尾は行の頭から始める（途中から始まる行は捨てる）
+          if (this.lastEvicted !== NEWLINE) {
+            const i = tail.indexOf(NEWLINE);
+            start = i < 0 ? tail.length : i + 1;
+          }
+        } else {
+          while (start < tail.length && ((tail[start] ?? 0) & 0xc0) === 0x80) start++;
+        }
+        this.dropped = {
+          bytes: this.evictedBytes + start,
+          lines: this.evictedLines + newlines(tail.subarray(0, start)),
+        };
+        const text = marker(this.dropped.bytes, this.dropped.lines);
+        this.raw(Buffer.from(`${this.endsWithNewline ? "" : "\n"}${text}`, "utf8"));
+        this.raw(tail.subarray(start));
+      }
     }
+    this.tail = [];
     if (this.fd !== undefined) {
       try {
         closeSync(this.fd);
@@ -159,6 +236,25 @@ class CappedFile {
         // 閉じられなくても、書いた分は残る
       }
       this.fd = undefined;
+    }
+  }
+
+  private toTail(buf: Buffer): void {
+    if (buf.length === 0) return;
+    this.tail.push(Buffer.from(buf));
+    this.tailSize += buf.length;
+    // 末尾の上限を超えた分は、前から捨てる
+    while (this.tailSize > this.limits.tail) {
+      const first = this.tail[0];
+      if (!first) break;
+      const over = this.tailSize - this.limits.tail;
+      const out = over >= first.length ? first : first.subarray(0, over);
+      this.evictedBytes += out.length;
+      this.evictedLines += newlines(out);
+      this.lastEvicted = out[out.length - 1];
+      this.tailSize -= out.length;
+      if (out === first) this.tail.shift();
+      else this.tail[0] = first.subarray(over);
     }
   }
 
@@ -172,7 +268,7 @@ class CappedFile {
     if (this.fd === undefined || buf.length === 0) return;
     try {
       writeSync(this.fd, buf);
-      this.endsWithNewline = buf[buf.length - 1] === 0x0a;
+      this.endsWithNewline = buf[buf.length - 1] === NEWLINE;
     } catch (error) {
       this.onError(error);
       try {
@@ -194,7 +290,7 @@ function writeJsonAtomic(path: string, value: unknown): void {
 /** 1回の実行のセッションログ。書き込みに失敗しても、実行は止めない（ログを残せなかったことをデーモンのログに出す）。 */
 export class SessionLog implements SessionLogSink {
   private readonly extra = new Set<string>();
-  private readonly files: Record<SessionLogFile, CappedFile>;
+  private readonly files: Record<SessionLogFile, HeadTailFile>;
   private readonly redactors: Record<SessionLogFile, StreamRedactor>;
   /** 書き始めた時点の秘密情報の数（後から増えたら、閉じるときに全体を伏せ直す）。 */
   private secretsAtFirstWrite: number | undefined;
@@ -205,12 +301,12 @@ export class SessionLog implements SessionLogSink {
     private readonly base: string,
     private readonly meta: SessionLogMeta,
     private readonly secrets: () => readonly string[],
-    limits: Record<SessionLogFile, number>,
+    limits: Record<SessionLogFile, HeadTail>,
   ) {
     const onError = (error: unknown) => this.warn(error);
     this.files = {
-      events: new CappedFile(`${base}${EXTENSIONS.events}`, limits.events, true, onError),
-      stderr: new CappedFile(`${base}${EXTENSIONS.stderr}`, limits.stderr, false, onError),
+      events: new HeadTailFile(`${base}${EXTENSIONS.events}`, limits.events, true, onError),
+      stderr: new HeadTailFile(`${base}${EXTENSIONS.stderr}`, limits.stderr, false, onError),
     };
     const all = () => this.allSecrets();
     this.redactors = { events: new StreamRedactor(all), stderr: new StreamRedactor(all) };
@@ -238,12 +334,18 @@ export class SessionLog implements SessionLogSink {
     }
     const limits = this.meta.limits;
     this.files.events.close(
-      (dropped) =>
-        `${JSON.stringify({ type: TRUNCATED_EVENT, limitBytes: limits.events, droppedBytes: dropped })}\n`,
+      (droppedBytes, droppedLines) =>
+        `${JSON.stringify({
+          type: TRUNCATED_EVENT,
+          droppedBytes,
+          droppedLines,
+          headBytes: limits.events.head,
+          tailBytes: limits.events.tail,
+        })}\n`,
     );
     this.files.stderr.close(
-      (dropped) =>
-        `[sacty] truncated: the log exceeded ${limits.stderr} bytes; ${dropped} bytes were dropped.\n`,
+      (droppedBytes, droppedLines) =>
+        `[sacty] truncated: ${droppedBytes} bytes (${droppedLines} lines) between the first ${limits.stderr.head} bytes and the last ${limits.stderr.tail} bytes were omitted.\n`,
     );
     // 書き始めた後に分かった秘密情報（コンテナで更新されたトークンなど）は、書いたファイル全体から伏せ直す
     const all = this.allSecrets();
@@ -260,9 +362,10 @@ export class SessionLog implements SessionLogSink {
         }
       }
     }
-    const truncated: Partial<Record<SessionLogFile, number>> = {};
+    const truncated: NonNullable<SessionLogMeta["truncated"]> = {};
     for (const file of ["events", "stderr"] as const) {
-      if (this.files[file].dropped > 0) truncated[file] = this.files[file].dropped;
+      const { bytes, lines } = this.files[file].dropped;
+      if (bytes > 0) truncated[file] = { droppedBytes: bytes, droppedLines: lines };
     }
     this.meta.finishedAt = new Date().toISOString();
     this.meta.outcome =
@@ -325,7 +428,7 @@ export type StoredSessionLog = {
 export class SessionLogStore {
   constructor(
     private readonly root: string,
-    private readonly limits: Record<SessionLogFile, number> = SESSION_LOG_LIMITS,
+    private readonly limits: Record<SessionLogFile, HeadTail> = SESSION_LOG_LIMITS,
   ) {}
 
   /** 実行の始めに開く。secrets は、実行に渡した秘密情報（呼ぶ側が実行の間に足していく配列でよい）。 */

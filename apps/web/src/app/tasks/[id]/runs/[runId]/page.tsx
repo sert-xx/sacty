@@ -34,8 +34,12 @@ function bytes(n: number): string {
 }
 
 function clip(text: string, m: Messages["runLog"]): { text: string; clipped: boolean } {
+  // 長ければ、先頭と末尾を出す（エラーの原因は末尾に出ることが多いため）
   return text.length > MAX_TEXT
-    ? { text: `${text.slice(0, MAX_TEXT)}\n${m.clipped}`, clipped: true }
+    ? {
+        text: `${text.slice(0, MAX_TEXT / 2)}\n${m.clipped}\n${text.slice(-MAX_TEXT / 2)}`,
+        clipped: true,
+      }
     : { text, clipped: false };
 }
 
@@ -188,13 +192,20 @@ function Summary({ meta, messages }: { meta: RunLogMeta; messages: Messages }) {
       </dl>
       {(["events", "stderr"] as const).map((file) => {
         const dropped = meta.truncated?.[file];
+        const limit = meta.limits[file];
         return dropped ? (
           <p
             key={file}
             role="note"
             className="rounded-lg border border-warn-line bg-warn-soft px-3 py-2 text-warn"
           >
-            {m.truncated(files[file], bytes(meta.limits[file]), bytes(dropped))}
+            {m.truncated(
+              files[file],
+              bytes(limit.head),
+              bytes(limit.tail),
+              bytes(dropped.droppedBytes),
+              dropped.droppedLines,
+            )}
           </p>
         ) : null;
       })}
@@ -205,7 +216,17 @@ function Summary({ meta, messages }: { meta: RunLogMeta; messages: Messages }) {
 function Events({ text, messages }: { text: string; messages: Messages }) {
   const m = messages.runLog;
   const entries = parseSessionLog(text);
-  const shown = entries.slice(0, MAX_ENTRIES);
+  // 多すぎるときは、最初と最後を出す（エラーの原因や最後の答えは末尾に出るため）
+  const many = entries.length > MAX_ENTRIES;
+  const half = MAX_ENTRIES / 2;
+  const first = many ? entries.slice(0, half) : entries;
+  const last = many ? entries.slice(-half) : [];
+  const item = (entry: LogEntry, i: number) => (
+    // 1行から複数の出来事を作るので、行の番号と並びの位置で区別する
+    <li key={`${entry.line}-${i}`}>
+      <Entry entry={entry} m={m} />
+    </li>
+  );
   return (
     <section
       aria-labelledby="run-events"
@@ -214,21 +235,25 @@ function Events({ text, messages }: { text: string; messages: Messages }) {
       <h2 id="run-events" className="text-[15px] font-semibold">
         {m.events}
       </h2>
-      {entries.length > MAX_ENTRIES && (
+      {many && (
         <p role="note" className="text-sm text-warn">
-          {m.shown(MAX_ENTRIES, entries.length)}
+          {m.shown(half, entries.length)}
         </p>
       )}
       {entries.length === 0 ? (
         <p className="text-sm text-muted-foreground">{m.eventsEmpty}</p>
       ) : (
         <ol className="flex flex-col gap-2">
-          {shown.map((entry, i) => (
-            // biome-ignore lint/suspicious/noArrayIndexKey: 1行から複数の出来事を作るので、並びの位置で区別する
-            <li key={`${entry.line}-${i}`}>
-              <Entry entry={entry} m={m} />
+          {first.map((entry, i) => item(entry, i))}
+          {many && (
+            <li
+              role="note"
+              className="rounded-lg border border-dashed border-warn-line px-3 py-2 text-sm text-warn"
+            >
+              {m.skipped(entries.length - half * 2)}
             </li>
-          ))}
+          )}
+          {last.map((entry, i) => item(entry, half + i))}
         </ol>
       )}
     </section>
@@ -351,7 +376,13 @@ function Entry({ entry, m }: { entry: LogEntry; m: Messages["runLog"] }) {
           <Label tone="warn">{m.kind.truncated}</Label>
           {line}
           <span className="ml-2 text-xs">
-            {m.truncated(m.events, bytes(entry.limitBytes), bytes(entry.droppedBytes))}
+            {m.truncated(
+              m.events,
+              bytes(entry.headBytes),
+              bytes(entry.tailBytes),
+              bytes(entry.droppedBytes),
+              entry.droppedLines,
+            )}
           </span>
         </div>
       );

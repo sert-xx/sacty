@@ -38,7 +38,13 @@ export type LogEntry = { line: number } & (
   | { kind: "result"; isError: boolean; text: string; detail: string }
   | { kind: "turn"; text: string }
   | { kind: "error"; text: string }
-  | { kind: "truncated"; droppedBytes: number; limitBytes: number }
+  | {
+      kind: "truncated";
+      droppedBytes: number;
+      droppedLines: number;
+      headBytes: number;
+      tailBytes: number;
+    }
   | { kind: "raw"; text: string }
 );
 
@@ -270,7 +276,9 @@ export function parseSessionLog(text: string): LogEntry[] {
         line,
         kind: "truncated",
         droppedBytes: Number(event.droppedBytes) || 0,
-        limitBytes: Number(event.limitBytes) || 0,
+        droppedLines: Number(event.droppedLines) || 0,
+        headBytes: Number(event.headBytes) || 0,
+        tailBytes: Number(event.tailBytes) || 0,
       });
       return;
     }
