@@ -20,6 +20,7 @@ const RUN_EVENTS = new Set<ActivityEvent["type"]>([
   "QuestionAnswered",
   "ExportStarted",
   "OutputExported",
+  "AgentSessionArchived",
 ]);
 
 /** 作業履歴の行から、ログを見られる実行の ID。実行の行でない・ID の無い古い行なら undefined。 */

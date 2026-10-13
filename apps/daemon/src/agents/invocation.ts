@@ -49,6 +49,11 @@ export type Invocation = {
    */
   mounts?: { hostPath: string; containerPath: string; readOnly: boolean }[];
   parser: "claude-json" | "codex-jsonl";
+  /**
+   * 実行の後に、stage の場所（エージェントの設定の場所）から元のセッションのファイルを写す（PBI-66）。どのエージェントの
+   * 形で選ぶか。無ければ写さない（スタブ）。
+   */
+  sessionFiles?: "claude-code" | "codex";
   /** コンテナから、ホストのゲートウェイ（host.docker.internal）に届くようにする（PBI-37）。 */
   hostGateway?: boolean;
   /**
@@ -151,13 +156,15 @@ export async function buildInvocation(
       return {
         command,
         env,
-        // 設定のディレクトリは実行ごとに空にし、コンテキストだけを置く（ホストの設定やメモリーは読ませない）
-        ...(context
-          ? {
-              stage: { containerDir: CONTAINER_CLAUDE_CONFIG_DIR, files: [], seedDir: context.dir },
-            }
-          : {}),
+        // 設定のディレクトリは実行ごとに空にし、コンテキストだけを置く（ホストの設定やメモリーは読ませない）。
+        // コンテキストが無くても、実行ごとの場所をマウントする（元のセッションのファイルを、実行の後に写すため。PBI-66）
+        stage: {
+          containerDir: CONTAINER_CLAUDE_CONFIG_DIR,
+          files: [],
+          ...(context ? { seedDir: context.dir } : {}),
+        },
         parser: "claude-json",
+        sessionFiles: "claude-code",
       };
     }
 
@@ -248,6 +255,7 @@ export async function buildInvocation(
           ...(context ? { seedDir: context.dir } : {}),
         },
         parser: "codex-jsonl",
+        sessionFiles: "codex",
         ...(gateway ? { hostGateway: true } : {}),
       };
     }

@@ -6,7 +6,14 @@ import { Suspense } from "react";
 import { DaemonError } from "@/components/daemon-error";
 import type { Messages } from "@/i18n";
 import { getMessages } from "@/i18n/server";
-import { DaemonUnavailableError, getRunLog, getTask, type RunLogMeta } from "@/lib/daemon";
+import {
+  type AgentFiles,
+  DaemonUnavailableError,
+  getAgentFiles,
+  getRunLog,
+  getTask,
+  type RunLogMeta,
+} from "@/lib/daemon";
 import { describeEvent, formatStamp } from "@/lib/labels";
 import { type LogEntry, parseSessionLog, runLogId } from "@/lib/session-log";
 
@@ -49,9 +56,12 @@ async function RunLogView({ params }: Params) {
   const m = messages.runLog;
   let found: Awaited<ReturnType<typeof getTask>>;
   let log: Awaited<ReturnType<typeof getRunLog>>;
+  let agentFiles: AgentFiles | null;
   try {
     found = await getTask(id);
-    log = found ? await getRunLog(id, runId) : null;
+    [log, agentFiles] = found
+      ? await Promise.all([getRunLog(id, runId), getAgentFiles(id, runId)])
+      : [null, null];
   } catch (error) {
     if (error instanceof DaemonUnavailableError) return <DaemonError message={error.message} />;
     throw error;
@@ -63,6 +73,8 @@ async function RunLogView({ params }: Params) {
   const back = `/tasks/${encodeURIComponent(task.id)}`;
   const raw = (file: "events" | "stderr") =>
     `${back}/runs/${encodeURIComponent(runId)}/raw/${file}`;
+  const agentFile = (path: string) =>
+    `${back}/runs/${encodeURIComponent(runId)}/agent?path=${encodeURIComponent(path)}`;
 
   return (
     <div className="flex flex-col gap-4">
@@ -107,10 +119,13 @@ async function RunLogView({ params }: Params) {
       )}
 
       {!log ? (
-        <section className="rounded-xl border border-border bg-card p-5 text-sm">
-          <p className="font-semibold">{m.notFound}</p>
-          <p className="pt-1 text-muted-foreground">{m.notFoundHelp}</p>
-        </section>
+        <>
+          <section className="rounded-xl border border-border bg-card p-5 text-sm">
+            <p className="font-semibold">{m.notFound}</p>
+            <p className="pt-1 text-muted-foreground">{m.notFoundHelp}</p>
+          </section>
+          {agentFiles && <AgentFilesView files={agentFiles} href={agentFile} messages={messages} />}
+        </>
       ) : (
         <>
           <Summary meta={log.meta} messages={messages} />
@@ -128,6 +143,7 @@ async function RunLogView({ params }: Params) {
               {m.downloadStderr}
             </a>
           </section>
+          {agentFiles && <AgentFilesView files={agentFiles} href={agentFile} messages={messages} />}
           <Events text={log.events} messages={messages} />
           <section
             aria-labelledby="run-stderr"
@@ -209,6 +225,97 @@ function Summary({ meta, messages }: { meta: RunLogMeta; messages: Messages }) {
           </p>
         ) : null;
       })}
+    </section>
+  );
+}
+
+/** 写したエージェントの元のファイル（PBI-66）。作業履歴に記録したハッシュと、いまのファイルが一致するかを出す。 */
+function AgentFilesView({
+  files,
+  href,
+  messages,
+}: {
+  files: AgentFiles;
+  href: (path: string) => string;
+  messages: Messages;
+}) {
+  const m = messages.runLog.agentFiles;
+  const unmatched = files.files.filter((f) => f.status !== "match").length;
+  const truncated = files.files.some((f) => f.truncated);
+  return (
+    <section
+      aria-labelledby="run-agent-files"
+      className="flex flex-col gap-3 rounded-xl border border-border bg-card p-5 text-sm"
+    >
+      <h2 id="run-agent-files" className="text-[15px] font-semibold">
+        {m.title}
+      </h2>
+      <p className="text-muted-foreground">{m.help}</p>
+      <dl className="grid grid-cols-[max-content_minmax(0,1fr)] gap-x-4 gap-y-1">
+        <dt className="text-muted-foreground">{m.session}</dt>
+        <dd className="font-mono text-xs break-all">
+          {[m.runtime[files.runtime] ?? files.runtime, files.sessionId].filter(Boolean).join("・")}
+        </dd>
+      </dl>
+      {unmatched > 0 && (
+        <p
+          role="alert"
+          className="rounded-lg border border-warn-line bg-warn-soft px-3 py-2 text-warn"
+        >
+          {m.mismatchNote(unmatched)}
+        </p>
+      )}
+      {truncated && (
+        <p role="note" className="text-warn">
+          {m.limit(bytes(files.limitBytes))}
+        </p>
+      )}
+      <ul className="flex flex-col">
+        {files.files.map((file) => (
+          <li
+            key={file.path}
+            className="flex flex-col gap-1 border-t border-border py-2 [overflow-wrap:anywhere]"
+          >
+            <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+              <span className="font-mono text-xs">{file.path}</span>
+              <span className="text-xs text-muted-foreground">{bytes(file.bytes)}</span>
+              <span
+                className={cn(
+                  "text-xs font-semibold",
+                  file.status === "match" ? "text-accent-foreground" : "text-warn",
+                )}
+              >
+                {m.status[file.status]}
+              </span>
+              {file.status !== "missing" && (
+                <a
+                  href={href(file.path)}
+                  download
+                  className="text-xs text-accent-foreground underline"
+                >
+                  {m.download}
+                </a>
+              )}
+            </div>
+            <span className="font-mono text-[11px] break-all text-muted-foreground">
+              {`${m.hash}：${file.sha256}`}
+            </span>
+            {file.status === "mismatch" && file.current && (
+              <span className="font-mono text-[11px] break-all text-warn">
+                {m.currentHash(file.current.sha256)}
+              </span>
+            )}
+            {file.truncated && (
+              <span role="note" className="text-xs text-warn">
+                {m.truncated(bytes(file.truncated.droppedBytes), file.truncated.droppedLines)}
+              </span>
+            )}
+          </li>
+        ))}
+      </ul>
+      {files.skipped.length > 0 && (
+        <p className="text-warn [overflow-wrap:anywhere]">{m.skipped(files.skipped.join("、"))}</p>
+      )}
     </section>
   );
 }

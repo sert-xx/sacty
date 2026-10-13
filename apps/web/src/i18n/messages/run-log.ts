@@ -56,6 +56,31 @@ const ja = {
   } as Record<string, string>,
   hiddenThinking: "（内容は伏せられています）",
   line: (n: number) => `${n}行目`,
+  agentFiles: {
+    title: "エージェントの元のファイル",
+    help: "AI エージェントが自分で書いたセッションのファイルの写しです（秘密情報は伏せています）。大きさとハッシュは作業履歴に記録しており、いまのファイルと一致するかを確かめています。",
+    session: "セッション",
+    runtime: { "claude-code": "Claude Code", codex: "Codex" } as Record<string, string>,
+    file: "ファイル",
+    size: "大きさ",
+    hash: "SHA-256（記録）",
+    check: "記録との一致",
+    status: {
+      match: "一致",
+      mismatch: "不一致（書き換えられています）",
+      missing: "ファイルがありません",
+    },
+    currentHash: (hash: string) => `いまのファイル：${hash}`,
+    download: "ダウンロード",
+    truncated: (dropped: string, lines: number) =>
+      `上限を超えたため、先頭と末尾を残し、間の ${dropped}（${lines.toLocaleString("ja-JP")}行）を省きました`,
+    limit: (limit: string) =>
+      `1実行あたりの上限 ${limit} を超えたファイルは、先頭と末尾を残して間を省いています。`,
+    mismatchNote: (n: number) =>
+      `${n}件のファイルが、作業履歴に記録した内容と一致しません。写した後に書き換えられたか、消されています。`,
+    skipped: (paths: string) => `読めずに写せなかったファイル：${paths}`,
+    notFound: "このファイルはありません。",
+  },
 };
 
 export type RunLogMessages = typeof ja;
@@ -117,6 +142,27 @@ const en: RunLogMessages = {
   },
   hiddenThinking: "(Content is hidden)",
   line: (n: number) => `Line ${n}`,
+  agentFiles: {
+    title: "Agent's original files",
+    help: "Copies of the session files the AI agent wrote itself (secrets are redacted). Their sizes and hashes are recorded in the activity log, and the current files are checked against them.",
+    session: "Session",
+    runtime: { "claude-code": "Claude Code", codex: "Codex" },
+    file: "File",
+    size: "Size",
+    hash: "SHA-256 (recorded)",
+    check: "Matches the record",
+    status: { match: "Matches", mismatch: "Does not match (modified)", missing: "File is missing" },
+    currentHash: (hash: string) => `Current file: ${hash}`,
+    download: "Download",
+    truncated: (dropped: string, lines: number) =>
+      `Exceeded the limit, so the beginning and the end were kept and ${dropped} (${lines.toLocaleString("en-US")} lines) in between was omitted`,
+    limit: (limit: string) =>
+      `Files over the per-run limit of ${limit} keep only their beginning and end.`,
+    mismatchNote: (n: number) =>
+      `${n} file${n === 1 ? " does" : "s do"} not match the activity record. ${n === 1 ? "It was" : "They were"} modified or removed after copying.`,
+    skipped: (paths: string) => `Files that could not be read and were not copied: ${paths}`,
+    notFound: "This file does not exist.",
+  },
 };
 
 export const runLog = { ja, en };

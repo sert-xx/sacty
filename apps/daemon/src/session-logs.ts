@@ -10,6 +10,14 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import type { DaemonText } from "@sacty/core";
+import {
+  AGENT_FILES_DIR,
+  AGENT_FILES_LIMIT,
+  type AgentArchive,
+  type AgentSessionRuntime,
+  archiveAgentSessionFiles,
+  guessSessionId,
+} from "./agent-sessions.js";
 import type { AgentOutcome } from "./agents/parse.js";
 import { redact, redactText } from "./agents/redact.js";
 
@@ -71,10 +79,26 @@ export interface SessionLogSink {
   stderr(text: string): void;
   /** 実行の途中で分かった秘密情報（コンテナで更新された認証ファイルの値など）。 */
   addSecrets(values: readonly string[]): void;
+  /**
+   * コンテナが終わった後、実行ごとの設定の場所（dir）から、エージェントの元のセッションのファイルを写す（PBI-66）。
+   * 写せなくても、実行は止めない。
+   */
+  archiveAgentFiles(input: {
+    dir: string;
+    runtime: AgentSessionRuntime;
+    /** 出力から読んだセッションの ID（無ければ、写したファイルの名前から推し量る）。 */
+    sessionId?: string;
+  }): Promise<void>;
 }
 
+/** 写したエージェントのファイル（PBI-66）。作業履歴に記録する。 */
+export type ArchivedAgentSession = AgentArchive & {
+  runtime: AgentSessionRuntime;
+  sessionId?: string;
+};
+
 /** 秘密情報と、JSON の文字列の中に書かれたときの形（エスケープされた形）。長い順。 */
-function secretForms(secrets: Iterable<string>): string[] {
+export function secretForms(secrets: Iterable<string>): string[] {
   const forms = new Set<string>();
   for (const secret of secrets) {
     if (!secret) continue;
@@ -139,7 +163,7 @@ function charStartBefore(buf: Buffer, at: number): number {
  * lines（途中の出来事の JSONL）なら、先頭は行の切れ目で終え、末尾は行の頭から始める（壊れた JSON の行を残さない）。
  * 先頭の途中の行は、改行が届くまで書かずに持つ。
  */
-class HeadTailFile {
+export class HeadTailFile {
   private fd: number | undefined;
   private written = 0;
   private headFull = false;
@@ -168,9 +192,10 @@ class HeadTailFile {
     }
   }
 
-  write(text: string): void {
-    if (!text) return;
-    const buf = Buffer.from(text, "utf8");
+  /** 文字列は UTF-8 で書く。バイト列（エージェントの元のファイル。PBI-66）は、そのまま書く。 */
+  write(text: string | Buffer): void {
+    if (text.length === 0) return;
+    const buf = typeof text === "string" ? Buffer.from(text, "utf8") : text;
     if (this.headFull) {
       this.toTail(buf);
       return;
@@ -304,12 +329,15 @@ export class SessionLog implements SessionLogSink {
   private secretsAtFirstWrite: number | undefined;
   private warned = false;
   private closed = false;
+  /** 写したエージェントのファイル（PBI-66）。写していなければ undefined。 */
+  archived: ArchivedAgentSession | undefined;
 
   constructor(
     private readonly base: string,
     private readonly meta: SessionLogMeta,
     private readonly secrets: () => readonly string[],
     limits: Record<SessionLogFile, HeadTail>,
+    private readonly agentLimit: number = AGENT_FILES_LIMIT,
   ) {
     const onError = (error: unknown) => this.warn(error);
     this.files = {
@@ -331,6 +359,30 @@ export class SessionLog implements SessionLogSink {
 
   addSecrets(values: readonly string[]): void {
     for (const value of values) if (value) this.extra.add(value);
+  }
+
+  async archiveAgentFiles(
+    input: Parameters<SessionLogSink["archiveAgentFiles"]>[0],
+  ): Promise<void> {
+    if (this.archived) return;
+    try {
+      // 秘密情報は、コンテナが終わった後に分かった分（更新された認証ファイルの値）も含めて、写す前に伏せる
+      const archive = await archiveAgentSessionFiles({
+        runtime: input.runtime,
+        configDir: input.dir,
+        dest: join(this.base, AGENT_FILES_DIR),
+        secrets: this.allSecrets(),
+        limit: this.agentLimit,
+      });
+      if (archive.files.length === 0 && archive.skipped.length === 0) return; // 元のファイルが無い
+      const sessionId = input.sessionId ?? guessSessionId(input.runtime, archive.files);
+      this.archived = { ...archive, runtime: input.runtime, ...(sessionId ? { sessionId } : {}) };
+    } catch (error) {
+      console.warn(
+        `[daemon] エージェントのセッションのファイルを写せませんでした（${this.meta.runId}）：`,
+        error instanceof Error ? error.message : error,
+      );
+    }
   }
 
   /** 実行の結果を残して閉じる（結果の文は、伏せた後のもの）。2回目以降は何もしない。 */
@@ -421,10 +473,12 @@ const NOOP_LOG = {
   stdout() {},
   stderr() {},
   addSecrets() {},
+  async archiveAgentFiles() {},
   close() {},
-} satisfies SessionLogSink & Pick<SessionLog, "close">;
+  archived: undefined,
+} satisfies SessionLogSink & Pick<SessionLog, "close" | "archived">;
 
-export type SessionLogHandle = SessionLogSink & Pick<SessionLog, "close">;
+export type SessionLogHandle = SessionLogSink & Pick<SessionLog, "close" | "archived">;
 
 export type StoredSessionLog = {
   meta: SessionLogMeta;
@@ -437,6 +491,8 @@ export class SessionLogStore {
   constructor(
     private readonly root: string,
     private readonly limits: Record<SessionLogFile, HeadTail> = SESSION_LOG_LIMITS,
+    /** エージェントの元のファイルの、1実行あたりの上限（PBI-66）。 */
+    private readonly agentLimit: number = AGENT_FILES_LIMIT,
   ) {}
 
   /** 実行の始めに開く。secrets は、実行に渡した秘密情報（呼ぶ側が実行の間に足していく配列でよい）。 */
@@ -460,7 +516,17 @@ export class SessionLogStore {
       { ...info, startedAt: new Date().toISOString(), limits: this.limits },
       secrets,
       this.limits,
+      this.agentLimit,
     );
+  }
+
+  /**
+   * 写したエージェントの元のファイルの場所（runs/<タスク>/<実行>/agent。PBI-66）。ID の形が正しくなければ undefined
+   * （ファイルの有無は見ない）。この下に、設定の場所からの相対パスのまま置く。
+   */
+  agentFilesDir(taskId: string, runId: string): string | undefined {
+    if (!validLogId(taskId) || !validLogId(runId)) return undefined;
+    return join(this.root, taskId, runId, AGENT_FILES_DIR);
   }
 
   /** 生のファイルの場所。ID の形が正しくなければ undefined（ファイルの有無は見ない）。 */

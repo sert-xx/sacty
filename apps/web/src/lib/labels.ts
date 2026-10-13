@@ -327,6 +327,11 @@ export function describeEvent(event: ActivityEvent, l: LabelMessages): string {
         event.payload.statuses.map((s) => (s === 0 ? "connection" : String(s))).join(", "),
         event.payload.gaveUp,
       );
+    case "AgentSessionArchived":
+      return e.AgentSessionArchived(
+        event.payload.files.length,
+        event.payload.files.filter((f) => f.truncated).length,
+      );
     case "OrchestratorFailed":
       return e.OrchestratorFailed(
         l.text(event.payload.message),

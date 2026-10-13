@@ -219,6 +219,8 @@ const ja = {
       "最終レビューで合格にした成果物が差し戻されたため、ゴールガーディアンの見逃しとして記録",
     FinalReviewFailed: (message: string, cost: string) => `${message}（${cost}）`,
     OrchestratorFailed: (message: string, cost: string) => `${message}（${cost}）`,
+    AgentSessionArchived: (files: number, truncated: number) =>
+      `エージェントの元のファイル${files}件を写し、大きさとハッシュを記録${truncated > 0 ? `（うち${truncated}件は上限を超えたため、間を省いた）` : ""}`,
     AiRequestsRetried: (retries: number, seconds: number, statuses: string, gaveUp: boolean) =>
       `ゲートウェイが AI の呼び出しを${retries}回リトライ（${statuses}・合計${seconds}秒待った）${gaveUp ? "→ 上限に達したため、あきらめた" : ""}`,
     StepQueued: (step: string) => `${step}を実行待ちにした（実行できるようになったため）`,
@@ -454,6 +456,8 @@ const en: LabelMessages = {
       "A deliverable that passed the final review was sent back; recorded as a Goal Guardian miss",
     FinalReviewFailed: (message, cost) => `${message} (${cost})`,
     OrchestratorFailed: (message, cost) => `${message} (${cost})`,
+    AgentSessionArchived: (files, truncated) =>
+      `Copied ${files} original file${files === 1 ? "" : "s"} written by the agent and recorded ${files === 1 ? "its size and hash" : "their sizes and hashes"}${truncated > 0 ? ` (${truncated} exceeded the limit, so the middle was omitted)` : ""}`,
     AiRequestsRetried: (retries, seconds, statuses, gaveUp) =>
       `The gateway retried the AI call ${retries} time${retries === 1 ? "" : "s"} (${statuses}; waited ${seconds}s in total)${gaveUp ? " → gave up at the limit" : ""}`,
     StepQueued: (step) => `${step} queued (it can run now)`,

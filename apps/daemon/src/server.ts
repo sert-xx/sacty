@@ -4,6 +4,7 @@ import { Readable } from "node:stream";
 import { issueMessage } from "@sacty/core";
 import { type Context, Hono } from "hono";
 import { ZodError } from "zod";
+import { safeRelativePath } from "./agent-sessions.js";
 import { InvalidOperationError, type TaskService } from "./service.js";
 import { validLogId } from "./session-logs.js";
 
@@ -94,6 +95,33 @@ export function createApp(
       headers: {
         "content-type":
           file === "events" ? "application/x-ndjson; charset=utf-8" : "text/plain; charset=utf-8",
+      },
+    });
+  });
+
+  // 写したエージェントの元のファイルの一覧と、作業履歴に記録したハッシュとの一致（PBI-66）
+  app.get("/api/tasks/:id/runs/:runId/agent-files", async (c) => {
+    const { id, runId } = c.req.param();
+    if (!validLogId(id) || !validLogId(runId)) return c.json({ error: "invalid_id" }, 400);
+    const files = await service.agentSessionFiles(id, runId);
+    return files ? c.json(files) : c.json({ error: "not_found" }, 404);
+  });
+
+  // 写したエージェントの元のファイル1つ（path は一覧の相対パス。作業履歴に記録したものだけを返す）
+  app.get("/api/tasks/:id/runs/:runId/agent-files/raw", (c) => {
+    const { id, runId } = c.req.param();
+    const path = c.req.query("path") ?? "";
+    if (!validLogId(id) || !validLogId(runId) || !safeRelativePath(path)) {
+      return c.json({ error: "invalid_id" }, 400);
+    }
+    const file = service.agentSessionFile(id, runId, path);
+    if (!file) return c.json({ error: "not_found" }, 404);
+    const stream = Readable.toWeb(createReadStream(file)) as ReadableStream;
+    return new Response(stream, {
+      headers: {
+        "content-type": path.endsWith(".jsonl")
+          ? "application/x-ndjson; charset=utf-8"
+          : "application/octet-stream",
       },
     });
   });

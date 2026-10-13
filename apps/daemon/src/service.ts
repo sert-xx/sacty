@@ -74,6 +74,7 @@ import {
 } from "@sacty/core";
 import { ZodError } from "zod";
 import type { ActivityStore } from "./activity.js";
+import { archivedFilePath, type CheckedAgentFile, checkArchivedFiles } from "./agent-sessions.js";
 import { type AgentExecutor, CONTAINER_REVIEW_DIR } from "./agents/docker.js";
 import type { LocalForward } from "./agents/forward.js";
 import {
@@ -370,6 +371,49 @@ export class TaskService {
   sessionLog(taskId: string, runId: string): StoredSessionLog | undefined {
     if (!this.tasks.has(taskId)) return undefined;
     return this.deps.sessionLogs?.read(taskId, runId);
+  }
+
+  /**
+   * 写したエージェントの元のファイル（PBI-66）の一覧と、作業履歴に記録したハッシュとの一致。タスクが無い・その実行で
+   * 写していなければ undefined。記録はタスクの作業履歴から探すので、ほかのタスクの実行の ID を渡しても読めない。
+   */
+  async agentSessionFiles(
+    taskId: string,
+    runId: string,
+  ): Promise<
+    | (Omit<Extract<ActivityEvent, { type: "AgentSessionArchived" }>["payload"], "files"> & {
+        archivedAt: string;
+        files: CheckedAgentFile[];
+      })
+    | undefined
+  > {
+    const found = this.archivedAgentSession(taskId, runId);
+    const root = this.deps.sessionLogs?.agentFilesDir(taskId, runId);
+    if (!found || !root) return undefined;
+    const { files, ...rest } = found.payload;
+    return { ...rest, archivedAt: found.at, files: await checkArchivedFiles(root, files) };
+  }
+
+  /** 写したエージェントのファイルの場所（ダウンロード用。PBI-66）。作業履歴に記録したファイルだけを返す。 */
+  agentSessionFile(taskId: string, runId: string, path: string): string | undefined {
+    const found = this.archivedAgentSession(taskId, runId);
+    const root = this.deps.sessionLogs?.agentFilesDir(taskId, runId);
+    if (!found || !root || !found.payload.files.some((f) => f.path === path)) return undefined;
+    return archivedFilePath(root, path);
+  }
+
+  private archivedAgentSession(
+    taskId: string,
+    runId: string,
+  ): Extract<ActivityEvent, { type: "AgentSessionArchived" }> | undefined {
+    if (!this.tasks.has(taskId)) return undefined;
+    return this.deps.activity
+      .forTask(taskId)
+      .filter(
+        (e): e is Extract<ActivityEvent, { type: "AgentSessionArchived" }> =>
+          e.type === "AgentSessionArchived" && e.payload.runId === runId,
+      )
+      .at(-1);
   }
 
   /** セッションログの生のファイルの場所（ダウンロード用。PBI-62）。タスクやログが無ければ undefined。 */
@@ -4216,6 +4260,46 @@ export class TaskService {
     } catch (error) {
       log?.close({ kind: "failed", reason: "error", message: errorText(error) });
       throw error;
+    } finally {
+      this.recordAgentSession(run, log);
+    }
+  }
+
+  /**
+   * 写したエージェントの元のファイル（PBI-66）の大きさとハッシュを、作業履歴に記録する（監査で書き換えを見つけるため）。
+   * 中止したタスクにも記録する。記録できなくても、実行の結果は変えない。
+   */
+  private recordAgentSession(
+    run: Parameters<TaskService["execute"]>[0],
+    log: SessionLogHandle | undefined,
+  ): void {
+    const archived = log?.archived;
+    const task = this.tasks.get(run.taskId);
+    if (!archived || !task) return;
+    try {
+      this.append(task, [
+        {
+          actor: "sacty",
+          event: {
+            type: "AgentSessionArchived",
+            payload: {
+              runId: run.runId,
+              role: run.role,
+              agentId: run.agent.id,
+              runtime: archived.runtime,
+              ...(archived.sessionId ? { sessionId: archived.sessionId } : {}),
+              files: archived.files,
+              limitBytes: archived.limitBytes,
+              skipped: archived.skipped,
+            },
+          },
+        },
+      ]);
+    } catch (error) {
+      console.warn(
+        `[daemon] 写したエージェントのファイルを作業履歴に記録できませんでした（${run.runId}）：`,
+        error instanceof Error ? error.message : error,
+      );
     }
   }
 

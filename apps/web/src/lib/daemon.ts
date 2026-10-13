@@ -424,3 +424,48 @@ export async function getRunLogFile(
   if (res.status === 404 || res.status === 400) return null;
   return ensureOk(res);
 }
+
+/** 写したエージェントの元のファイル1つと、作業履歴に記録したハッシュとの一致（デーモンの CheckedAgentFile。PBI-66）。 */
+export type AgentFile = {
+  /** 実行の設定の場所（CLAUDE_CONFIG_DIR・CODEX_HOME）からの相対パス。 */
+  path: string;
+  bytes: number;
+  sha256: string;
+  sourceBytes: number;
+  truncated?: { droppedBytes: number; droppedLines: number };
+  status: "match" | "mismatch" | "missing";
+  current?: { bytes: number; sha256: string };
+};
+
+export type AgentFiles = {
+  runId: string;
+  role: string;
+  agentId: string;
+  runtime: "claude-code" | "codex";
+  sessionId?: string;
+  limitBytes: number;
+  skipped: string[];
+  archivedAt: string;
+  files: AgentFile[];
+};
+
+/** 実行で写したエージェントの元のファイル（PBI-66）。写していない（ID の形が違うことも含む）なら null。 */
+export async function getAgentFiles(taskId: string, runId: string): Promise<AgentFiles | null> {
+  const res = await daemonFetch(`${runPath(taskId, runId)}/agent-files`);
+  if (res.status === 404 || res.status === 400) return null;
+  await ensureOk(res);
+  return (await res.json()) as AgentFiles;
+}
+
+/** 写したエージェントの元のファイル1つ（ダウンロード用。PBI-66）。無ければ null。 */
+export async function getAgentFile(
+  taskId: string,
+  runId: string,
+  path: string,
+): Promise<Response | null> {
+  const res = await daemonFetch(
+    `${runPath(taskId, runId)}/agent-files/raw?path=${encodeURIComponent(path)}`,
+  );
+  if (res.status === 404 || res.status === 400) return null;
+  return ensureOk(res);
+}
