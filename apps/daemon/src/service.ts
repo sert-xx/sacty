@@ -1145,12 +1145,20 @@ export class TaskService {
     if (!label && !reviewLabel && !settings.reviewRequested) return [];
     const has = (issue: FoundIssue, name: string | undefined) =>
       name !== undefined && issue.labels.some((l) => l.toLowerCase() === name);
+    const projects = this.deps.projects.all();
     const reviewOf = (issue: FoundIssue): "requested" | "label" | undefined => {
       if (!issue.pullRequest) return undefined;
-      if (issue.review === "requested" && settings.reviewRequested) return "requested";
+      // 依頼は、担当のプロジェクトでそのホストに選んだ本人への依頼だけ（ほかのプロジェクトのアカウントへの依頼を、
+      // 担当のプロジェクトのアカウントで取り込んで投稿しない。PBI-44 レビュー指摘）
+      if (issue.review === "requested" && settings.reviewRequested && issue.requestedFor) {
+        const host = httpsHost(`${issue.repo}/`);
+        const account =
+          host && responsibleProject(projects, issue.repo)?.project.githubAccounts?.[host];
+        if (account && account.toLowerCase() === issue.requestedFor.toLowerCase())
+          return "requested";
+      }
       return has(issue, reviewLabel) ? "label" : undefined;
     };
-    const projects = this.deps.projects.all();
     const key = (repo: string, number: number) => `${repo.toLowerCase()}#${number}`;
     const known = new Set(
       [...this.tasks.values()].flatMap((t) =>
@@ -1651,8 +1659,13 @@ export class TaskService {
       }
       // PR のレビューの取り込みのタスクは、工程をレビューだけにする（オーケストレーターに選ばせない。PBI-44）
       const review = this.mustGet(taskId).source?.review;
+      // プロジェクトの対象で指定したイメージ（PBI-41）は、レビューだけの工程にも同じく使い、名前も確かめる（PBI-44 レビュー指摘）
       const choice = review
-        ? reviewOnlySteps(review)
+        ? this.withImages(
+            reviewOnlySteps(review),
+            config.config,
+            this.pinnedImage(this.mustGet(taskId)),
+          )
         : await this.chooseSteps(this.mustGet(taskId), config.config);
       if ("failure" in choice) {
         // 選んでいる間に人間が止めた・中止したなら、記録しない（止めた記録は runNext の後始末で行う）

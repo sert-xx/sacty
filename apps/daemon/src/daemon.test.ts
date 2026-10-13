@@ -5089,10 +5089,10 @@ describe("PR のレビューだけを行う取り込み（PBI-44）", () => {
     });
     const { service } = makeService(activity, [], { settings });
     const created = service.importIssues([
-      pr(1, [], { review: "requested" }),
+      pr(1, [], { review: "requested", requestedFor: "me" }),
       pr(2, ["Sacty-Review"]),
       // 依頼とラベルの両方に当てはまる
-      pr(3, ["sacty-review"], { review: "requested" }),
+      pr(3, ["sacty-review"], { review: "requested", requestedFor: "me" }),
       pr(3, ["sacty-review"], { review: "label" }),
       // レビュー用のラベルの Issue は取り込まない
       {
@@ -5109,10 +5109,100 @@ describe("PR のレビューだけを行う取り込み（PBI-44）", () => {
     ]);
     // 二度は取り込まない
     expect(
-      service.importIssues([pr(1, [], { review: "requested" }), pr(2, ["sacty-review"])]),
+      service.importIssues([
+        pr(1, [], { review: "requested", requestedFor: "me" }),
+        pr(2, ["sacty-review"]),
+      ]),
     ).toEqual([]);
     service.saveSettings({ reviewLabel: "sacty-review" });
-    expect(service.importIssues([pr(5, [], { review: "requested" })])).toEqual([]);
+    expect(service.importIssues([pr(5, [], { review: "requested", requestedFor: "me" })])).toEqual(
+      [],
+    );
+    activity.close();
+  });
+
+  it("依頼は、担当のプロジェクトでそのホストに選んだ本人への依頼だけを取り込む（レビュー指摘）", () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const settings = new MemorySettingsStore({ reviewRequested: true });
+    const projects = new MemoryProjectStore();
+    // Org のプロジェクトは alice、その中のリポジトリのプロジェクトは bob
+    projects.put("org", {
+      name: "Org",
+      targets: [{ scope: "org", target: "https://github.com/acme" }],
+      githubAccounts: { "github.com": "alice" },
+    });
+    projects.put("repo", {
+      name: "リポジトリ",
+      targets: [{ scope: "repo", target: "https://github.com/acme/app" }],
+      githubAccounts: { "github.com": "Bob" },
+    });
+    const { service } = makeService(activity, [], { settings, projects });
+    const created = service.importIssues([
+      // alice への依頼が Org の検索で見つかったが、acme/app の担当は bob のプロジェクト
+      pr(20, [], { review: "requested", requestedFor: "alice" }),
+      // bob への依頼（大文字・小文字は区別しない）
+      pr(21, [], { review: "requested", requestedFor: "bob" }),
+      // 誰への依頼かが分からないものは取り込まない
+      pr(22, [], { review: "requested" }),
+      // alice の担当のリポジトリ
+      {
+        ...pr(23, [], { review: "requested", requestedFor: "alice" }),
+        repo: "https://github.com/acme/web",
+        url: "https://github.com/acme/web/pull/23",
+      },
+    ]);
+    expect(created.map((t) => [t.projectId, t.source?.repo, t.source?.number])).toEqual([
+      ["repo", "https://github.com/acme/app", 21],
+      ["org", "https://github.com/acme/web", 23],
+    ]);
+    activity.close();
+  });
+
+  it("プロジェクトの対象で指定したイメージを、レビューだけの工程にも使い、無い名前なら止まる（レビュー指摘）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const java = {
+      name: "java",
+      image: "sacty-agent-java:test",
+      description: "Java",
+      baseImage: "java",
+      env: { MAVEN_OPTS: "-Xmx1g" },
+    };
+    const projects = new MemoryProjectStore();
+    const put = (image: string) =>
+      projects.put("default", {
+        name: "デフォルト",
+        targets: [{ scope: "repo", target: "https://github.com/acme/app", image }],
+        githubAccounts: { "github.com": "me" },
+      });
+    put("java");
+    const pulls = new FakePulls();
+    pulls.prInfo = { ...pulls.prInfo, number: 30, url: "https://github.com/acme/app/pull/30" };
+    const { service, executor } = makeService(activity, [out("# 評価")], {
+      pulls,
+      projects,
+      settings: new MemorySettingsStore({ reviewLabel: "sacty-review" }),
+      config: () => ({
+        ok: true,
+        config: {
+          ...(configOf(agent())() as { ok: true; config: SactyConfig }).config,
+          images: { java },
+        },
+      }),
+    });
+    const [task] = service.importIssues([pr(30, ["sacty-review"])]);
+    await service.runNext(task?.id ?? "");
+    const chosen = service.get(task?.id ?? "")?.activity.find((e) => e.type === "StepsChosen");
+    expect(chosen?.type === "StepsChosen" && chosen.payload.images).toEqual({ review: "java" });
+    expect(executor.images[0]).toEqual({ image: java.image, env: java.env });
+
+    // 無い名前を指定していたら、工程を決めずに止まる
+    put("python");
+    const [other] = service.importIssues([pr(31, ["sacty-review"])]);
+    await service.runNext(other?.id ?? "");
+    const stopped = service.get(other?.id ?? "")?.task;
+    expect(stopped?.status).toBe("paused");
+    expect(stopped?.steps).toEqual([]);
+    expect(ja(stopped?.pausedMessage)).toContain("イメージ「python」");
     activity.close();
   });
 
@@ -5142,7 +5232,7 @@ describe("PR のレビューだけを行う取り込み（PBI-44）", () => {
       settings,
       realPlanner: true,
     });
-    const [task] = service.importIssues([pr(8, [], { review: "requested" })]);
+    const [task] = service.importIssues([pr(8, [], { review: "requested", requestedFor: "me" })]);
     const id = task?.id ?? "";
     await service.runNext(id);
     const chosen = service.get(id)?.activity.find((e) => e.type === "StepsChosen");

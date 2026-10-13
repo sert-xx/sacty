@@ -513,6 +513,8 @@ export type FoundIssue = {
    * ラベル。検索の結果には依頼されたレビュアーが無いので、どの検索で見つかったかで判断する。
    */
   review?: "requested" | "label";
+  /** レビューの依頼の検索で、誰への依頼を探したか（そのホストのアカウント。PBI-44 レビュー指摘）。 */
+  requestedFor?: string;
 };
 
 /**

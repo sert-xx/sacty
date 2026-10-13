@@ -119,7 +119,16 @@ export class IssueIntake {
           this.cursors.get(cursorKey),
         );
         // PR のレビューの取り込みの検索（PBI-44）で見つかったものは、そのことを添える
-        found.push(...(review ? result.issues.map((i) => ({ ...i, review })) : result.issues));
+        found.push(
+          ...(review
+            ? result.issues.map((i) => ({
+                ...i,
+                review,
+                // 依頼の検索なら、誰への依頼を探したか（担当のプロジェクトのアカウントと照らし合わせる）
+                ...(review === "requested" ? { requestedFor: account } : {}),
+              }))
+            : result.issues),
+        );
         if (result.cursor) this.cursors.set(cursorKey, result.cursor);
         if (result.incomplete) {
           errors.push({ query, message: redactText(result.incomplete, [auth.token]) });
