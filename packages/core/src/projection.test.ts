@@ -387,7 +387,7 @@ describe("PR のレビューの取り込み（PBI-14b）", () => {
 
 describe("レビューの工程（PBI-19）", () => {
   const target = {
-    repo: "acme/app",
+    repo: "https://github.com/acme/app",
     number: 12,
     url: "https://github.com/acme/app/pull/12",
     title: "再試行",

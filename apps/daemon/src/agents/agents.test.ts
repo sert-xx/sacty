@@ -4,10 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { renderMessage } from "@sacty/core";
 import { afterEach, describe, expect, it } from "vitest";
-import { type AgentConfig, CONFIG_TEMPLATE, loadConfig } from "../config.js";
+import { type AgentConfig, agentFor, CONFIG_TEMPLATE, loadConfig } from "../config.js";
 import { MemorySecretStore } from "../secrets.js";
 import { dockerRunArgs, syncBackIfChanged } from "./docker.js";
-import { buildInvocation } from "./invocation.js";
+import { buildInvocation, type Invocation } from "./invocation.js";
 import { classifyFailure, parseClaudeResult, parseCodexEvents } from "./parse.js";
 
 /** 記録した文言（コードと引数）を、日本語の文にする（PBI-11）。 */
@@ -69,10 +69,10 @@ describe("認証方式ごとの環境変数", () => {
       { dir: "/host/ctx", mcpServers: [], secrets: [] },
     );
     expect(codexInv.stage).toMatchObject({
-      containerDir: "/tmp/sacty-codex-home",
+      containerDir: "/.codex",
       seedDir: "/host/ctx",
     });
-    expect(codexInv.env.CODEX_HOME).toBe("/tmp/sacty-codex-home");
+    expect(codexInv.env.CODEX_HOME).toBe("/.codex");
   });
 
   it("コンテキストの MCP サーバーの秘密情報は、実行時に環境変数で渡し、Claude Code にはそのサーバーだけを使わせる（PBI-6）", async () => {
@@ -207,6 +207,79 @@ describe("認証方式ごとの環境変数", () => {
     expect(inv.command).not.toContain("--model");
   });
 
+  it("Codex は providers の接続先を自前のプロバイダーとして使い、リーズニングエフォートを渡す（PBI-40）", async () => {
+    const provider = (secret?: string): AgentConfig => ({
+      ...base,
+      id: "sol-high",
+      runtime: "codex",
+      model: "gpt-6-sol",
+      reasoning_effort: "high",
+      auth: { mode: "provider", provider: "corp-gw" },
+      via_gateway: false,
+      endpoint: {
+        name: "corp-gw",
+        baseUrl: "https://ai-gw.example.com/llm/v1",
+        ...(secret ? { secret } : {}),
+        viaGateway: false,
+      },
+    });
+    const direct = await buildInvocation(provider("openai-key"), "prompt", secrets);
+    expect(direct.env.SACTY_PROVIDER_API_KEY).toBe("openai-value");
+    expect(direct.command).toEqual([
+      "codex",
+      "exec",
+      "--json",
+      "--skip-git-repo-check",
+      "--sandbox",
+      "danger-full-access",
+      "-c",
+      'model_provider="sacty-provider"',
+      "-c",
+      'model_providers.sacty-provider={ name = "corp-gw", base_url = "https://ai-gw.example.com/llm/v1", wire_api = "responses", env_key = "SACTY_PROVIDER_API_KEY" }',
+      "--model",
+      "gpt-6-sol",
+      "-c",
+      'model_reasoning_effort="high"',
+      "prompt",
+    ]);
+    expect(direct.hostGateway).toBeUndefined();
+    // 認証が要らない接続先には、API キーを渡さない
+    const open = await buildInvocation(provider(), "prompt", secrets);
+    expect(open.env.SACTY_PROVIDER_API_KEY).toBeUndefined();
+    expect(open.command.join(" ")).not.toContain("env_key");
+    // ゲートウェイ経由なら、向き先はゲートウェイ、API キーの代わりに実行ごとのトークン
+    const via = await buildInvocation(
+      provider("openai-key"),
+      "prompt",
+      secrets,
+      () => {},
+      "design",
+      undefined,
+      {
+        origin: "http://host.docker.internal:5001",
+        token: "sacty-gw-run",
+      },
+    );
+    expect(via.env.SACTY_PROVIDER_API_KEY).toBe("sacty-gw-run");
+    expect(via.command.join(" ")).toContain(
+      'base_url = "http://host.docker.internal:5001/openai/v1"',
+    );
+    expect(via.hostGateway).toBe(true);
+    // Claude Code には --effort で渡す
+    const claude = await buildInvocation(
+      {
+        ...base,
+        id: "c",
+        runtime: "claude-code",
+        reasoning_effort: "xhigh",
+        auth: { mode: "api-key", secret: "anthropic-key" },
+      },
+      "prompt",
+      secrets,
+    );
+    expect(claude.command.slice(-2)).toEqual(["--effort", "xhigh"]);
+  });
+
   it("CodexのAPIキーと、サブスクリプション（認証ファイルをコピーして渡す）", async () => {
     const api = await buildInvocation(
       { ...base, id: "x", runtime: "codex", auth: { mode: "api-key", secret: "openai-key" } },
@@ -229,9 +302,9 @@ describe("認証方式ごとの環境変数", () => {
       "prompt",
       secrets,
     );
-    expect(sub.env).toEqual({ CODEX_HOME: "/tmp/sacty-codex-home" });
+    expect(sub.env).toEqual({ CODEX_HOME: "/.codex" });
     expect(sub.stage).toEqual({
-      containerDir: "/tmp/sacty-codex-home",
+      containerDir: "/.codex",
       files: [{ hostPath: "/path/auth.json", name: "auth.json", syncBack: true }],
     });
   });
@@ -257,7 +330,7 @@ describe("認証方式ごとの環境変数", () => {
     const runtime = await bedrock();
     // OpenAI の API キーやサブスクリプションの認証ファイルは渡さない
     expect(runtime.env).toEqual({
-      CODEX_HOME: "/tmp/sacty-codex-home",
+      CODEX_HOME: "/.codex",
       AWS_BEARER_TOKEN_BEDROCK: "bedrock-value",
       AWS_REGION: "us-east-2",
     });
@@ -268,6 +341,8 @@ describe("認証方式ごとの環境変数", () => {
       "exec",
       "--json",
       "--skip-git-repo-check",
+      "--sandbox",
+      "danger-full-access",
       "-c",
       'model_provider="amazon-bedrock-runtime"',
       "-c",
@@ -321,18 +396,9 @@ describe("dockerの引数", () => {
     expect(args).toEqual(
       expect.arrayContaining(["--rm", "--cap-drop", "ALL", "/ws/t1:/workspace"]),
     );
-    // 要求要件・設計の工程は、作業領域を読み取り専用でマウントする（PBI-15）
-    expect(
-      dockerRunArgs({
-        runId: "r2",
-        image: "sacty-agent:test",
-        workspaceDir: "/ws/snap",
-        readOnlyWorkspace: true,
-        envNames: [],
-        mounts: [],
-        command: ["claude"],
-      }),
-    ).toContain("/ws/snap:/workspace:ro");
+    // 作業領域は書き込める形でマウントする。要求要件・設計などの工程には使い捨ての写しを渡すので、
+    // リポジトリの手順のセットアップなども実行でき、変更は残らない（PBI-40）
+    expect(args.join(" ")).not.toContain(":/workspace:ro");
     // イメージの後ろにコマンドが続く
     expect(args.slice(args.indexOf("sacty-agent:test") + 1)).toEqual(["claude", "-p", "prompt"]);
     // ゲートウェイ経由の実行だけ、host.docker.internal をホストに向ける（PBI-37）
@@ -344,11 +410,24 @@ describe("dockerの引数", () => {
       envNames: [],
       mounts: [],
       command: ["codex"],
-      hostGateway: true,
+      hostGateway: "host-gateway",
     });
     expect(
       viaGateway.slice(viaGateway.indexOf("--add-host"), viaGateway.indexOf("--add-host") + 2),
     ).toEqual(["--add-host", "host.docker.internal:host-gateway"]);
+    // Rancher Desktop など、仮想マシンの中の Docker では、ホストのアドレスに向ける（PBI-40）
+    const rancher = dockerRunArgs({
+      runId: "r4",
+      image: "sacty-agent:test",
+      workspaceDir: "/ws/t1",
+      envNames: [],
+      mounts: [],
+      command: ["codex"],
+      hostGateway: "192.168.5.2",
+    });
+    expect(rancher.slice(rancher.indexOf("--add-host"), rancher.indexOf("--add-host") + 2)).toEqual(
+      ["--add-host", "host.docker.internal:192.168.5.2"],
+    );
   });
 });
 
@@ -497,6 +576,82 @@ ${extra}`,
     );
   });
 
+  it("providers の接続先・エージェントごとのモデルとリーズニングエフォート・工程ごとのエージェントを読む（PBI-40）", () => {
+    dir = mkdtempSync(join(tmpdir(), "sacty-config-"));
+    const write = (yaml: string) => writeFileSync(join(dir, "config.yaml"), yaml);
+    const base = `providers:
+  corp-gw:
+    base_url: https://ai-gw.example.com/llm/v1/
+    secret: op://Work/AI-GW/api-key
+    via_gateway: true
+agents:
+  sol-high:
+    runtime: codex
+    provider: corp-gw
+    model: gpt-6-sol
+    reasoning_effort: high
+    price_per_mtok_usd: { input: 2, cached_input: 0.2, output: 12 }
+  luna-low:
+    runtime: codex
+    provider: corp-gw
+    model: gpt-6-luna
+    reasoning_effort: low
+    price_per_mtok_usd: { input: 0.3, cached_input: 0.03, output: 1.5 }
+`;
+    write(`${base}default_agent: luna-low
+guardian_agent: sol-high
+step_agents:
+  orchestrator: luna-low
+  design: sol-high
+`);
+    const result = loadConfig(dir);
+    if (!result.ok) throw new Error(ja(result.problem));
+    const sol = result.config.stepAgents?.design;
+    expect(sol).toMatchObject({
+      id: "sol-high",
+      model: "gpt-6-sol",
+      reasoning_effort: "high",
+      auth: { mode: "provider", provider: "corp-gw" },
+      endpoint: {
+        name: "corp-gw",
+        baseUrl: "https://ai-gw.example.com/llm/v1",
+        secret: "op://Work/AI-GW/api-key",
+        viaGateway: true,
+      },
+      price: { input: 2, cachedInput: 0.2, output: 12 },
+    });
+    // 工程ごとに書いたものはそれ、書いていなければ default_agent（統合レビューは guardian_agent）
+    expect(agentFor(result.config, "design").id).toBe("sol-high");
+    expect(agentFor(result.config, "orchestrator").id).toBe("luna-low");
+    expect(agentFor(result.config, "implement").id).toBe("luna-low");
+    expect(agentFor(result.config, "integrate").id).toBe("sol-high");
+
+    const problem = (yaml: string) => {
+      write(yaml);
+      const r = loadConfig(dir);
+      return r.ok ? "" : ja(r.problem);
+    };
+    expect(problem(`${base}default_agent: luna-low\nstep_agents:\n  design: nope\n`)).toContain(
+      'step_agents.design の "nope" が agents にありません',
+    );
+    expect(
+      problem(
+        `${base.replace("provider: corp-gw\n    model: gpt-6-sol", "provider: other\n    model: gpt-6-sol")}default_agent: luna-low\n`,
+      ),
+    ).toContain('providers に "other" がありません');
+    expect(
+      problem(
+        `${base.replace("reasoning_effort: high", "reasoning_effort: HIGH!")}default_agent: luna-low\n`,
+      ),
+    ).toContain("リーズニングエフォート");
+    // 接続先は、いまは Codex だけ
+    expect(
+      problem(
+        `${base.replace("runtime: codex\n    provider: corp-gw\n    model: gpt-6-sol", "runtime: claude-code\n    provider: corp-gw\n    model: gpt-6-sol")}default_agent: luna-low\n`,
+      ),
+    ).toContain("claude-code では provider を使えません");
+  });
+
   it("イメージの作成の元（元のイメージ・npm のレジストリ・トークンの名前）を読む（PBI-33）", () => {
     dir = mkdtempSync(join(tmpdir(), "sacty-config-"));
     const write = (extra: string) =>
@@ -530,6 +685,45 @@ ${extra}`,
     write("image_build:\n  npm_registry: ftp://npm.example.com/\n");
     const result = loadConfig(dir);
     expect(result.ok ? "" : ja(result.problem)).toContain("image_build.npm_registry");
+    // npm の版と、コンテナの中の npm 全体の設定（PBI-40）。値は文字列にそろえる
+    write(`image_build:
+  npm_version: 11
+  npm_config:
+    replace-registry-host: always
+    audit: false
+    min-release-age: 7
+    "@acme:registry": https://npm.example.com/acme/
+`);
+    expect(loadConfig(dir)).toMatchObject({
+      ok: true,
+      config: {
+        imageBuild: {
+          npmVersion: "11",
+          npmConfig: {
+            "replace-registry-host": "always",
+            audit: "false",
+            "min-release-age": "7",
+            "@acme:registry": "https://npm.example.com/acme/",
+          },
+        },
+      },
+    });
+    // 認証の項目はイメージに残るので書けない。値の改行（別の項目を足せる）・誤った版も拒否する
+    for (const bad of [
+      '"//npm.example.com/:_authToken": abc',
+      "_auth: abc",
+      "_password: abc",
+      "keyfile: /k",
+    ]) {
+      write(`image_build:\n  npm_config:\n    ${bad}\n`);
+      const rejected = loadConfig(dir);
+      expect(rejected.ok ? "" : ja(rejected.problem)).toContain("認証の項目");
+    }
+    write('image_build:\n  npm_config:\n    audit: "false\\n_authToken=x"\n');
+    expect(loadConfig(dir).ok).toBe(false);
+    write("image_build:\n  npm_version: '11; rm -rf /'\n");
+    const version = loadConfig(dir);
+    expect(version.ok ? "" : ja(version.problem)).toContain("image_build.npm_version");
   });
 
   it("ゲートウェイ経由は Codex × Bedrock だけ。リトライの上限を読み、書かなければ既定にする（PBI-37）", () => {
@@ -561,8 +755,21 @@ agents:
     );
     expect(loadConfig(dir)).toMatchObject({
       ok: true,
-      config: { gatewayRetry: { maxAttempts: 3, maxWaitMs: 30_000 } },
+      config: { gatewayRetry: { maxAttempts: 3, maxWaitMs: 30_000 }, hostAddress: "host-gateway" },
     });
+    // コンテナから見たホストのアドレス（Rancher Desktop。PBI-40）
+    write(
+      `${agentYaml("codex", "{ mode: bedrock, secret: k, region: us-east-2 }")}gateway:\n  host_address: 192.168.5.2\n`,
+    );
+    expect(loadConfig(dir)).toMatchObject({ ok: true, config: { hostAddress: "192.168.5.2" } });
+    // docker の引数に紛れ込むものは書けない
+    write(
+      `${agentYaml("codex", "{ mode: bedrock, secret: k, region: us-east-2 }")}gateway:\n  host_address: "1.2.3.4 --privileged"\n`,
+    );
+    const bad = loadConfig(dir);
+    expect(bad.ok ? "" : ja(bad.problem)).toContain(
+      "gateway.host_address は、ホスト名か IP アドレス",
+    );
   });
 
   it("雛形の Codex × Bedrock の例は、コメントを外せばそのまま読める（PBI-32）", () => {
@@ -574,7 +781,7 @@ agents:
     const yaml = CONFIG_TEMPLATE.replace(
       "default_agent: claude-subscription",
       "default_agent: codex-bedrock",
-    ).replace("agents:\n", `agents:\n${example.join("\n")}\n`);
+    ).replace("\nagents:\n", `\nagents:\n${example.join("\n")}\n`);
     writeFileSync(join(dir, "config.yaml"), yaml);
     const result = loadConfig(dir);
     expect(result).toMatchObject({
@@ -587,6 +794,37 @@ agents:
         },
       },
     });
+  });
+
+  it("雛形の providers・接続先を使うエージェント・step_agents の例は、コメントを外せばそのまま読める（PBI-40）", () => {
+    dir = mkdtempSync(join(tmpdir(), "sacty-config-"));
+    const lines = CONFIG_TEMPLATE.split("\n");
+    const block = (first: string) => {
+      const start = lines.indexOf(first);
+      const end = lines.findIndex((l, i) => i > start && !l.trimStart().startsWith("#"));
+      return lines.slice(start, end).map((l) => l.replace(/^( *)# ?/, "$1"));
+    };
+    const providers = block("# providers:");
+    const agentExample = block("  # sol-high:");
+    const stepAgents = block("# step_agents:").map((l) =>
+      l.replaceAll("luna-low", "sol-high").replaceAll("sol-medium", "sol-high"),
+    );
+    const yaml = CONFIG_TEMPLATE.replace(
+      "default_agent: claude-subscription",
+      "default_agent: sol-high",
+    ).replace(
+      "\nagents:\n",
+      `\n${providers.join("\n")}\n${stepAgents.join("\n")}\nagents:\n${agentExample.join("\n")}\n`,
+    );
+    writeFileSync(join(dir, "config.yaml"), yaml);
+    const result = loadConfig(dir);
+    if (!result.ok) throw new Error(ja(result.problem));
+    expect(result.config.defaultAgent).toMatchObject({
+      id: "sol-high",
+      reasoning_effort: "high",
+      endpoint: { name: "corp-gw", viaGateway: true },
+    });
+    expect(result.config.stepAgents?.design?.id).toBe("sol-high");
   });
 
   it("使えない認証方式の組み合わせや、存在しない既定のAIは理由つきで拒否する", () => {
@@ -604,7 +842,7 @@ agents:
       return result.ok ? "" : ja(result.problem);
     };
     expect(problem()).toBe(
-      "設定ファイルに誤りがあります（agents.x.auth.mode）：codex では stub を使えません（使えるもの：subscription, api-key, bedrock）。",
+      "設定ファイルに誤りがあります（agents.x.auth.mode）：codex では stub を使えません（使えるもの：subscription, api-key, bedrock, provider）。",
     );
     // コードと引数で返す（画面が画面の言語の文にする）
     expect(loadConfig(dir)).toMatchObject({
@@ -617,7 +855,7 @@ agents:
       },
     });
     expect(renderMessage((loadConfig(dir) as { problem: unknown }).problem, "en")).toBe(
-      "The config file has an error (agents.x.auth.mode): codex cannot use stub (supported: subscription, api-key, bedrock).",
+      "The config file has an error (agents.x.auth.mode): codex cannot use stub (supported: subscription, api-key, bedrock, provider).",
     );
     // Bedrock の接続先は Codex だけ（Claude Code に書いても使われないので、誤りとして知らせる。PBI-32）
     write(`default_agent: x
@@ -794,7 +1032,7 @@ echo $$ > "$here/run.pid"
 prev=""; host=""
 for a in "$@"; do
   if [ "$prev" = "-v" ]; then
-    case "$a" in *:/tmp/sacty-codex-home*) host="\${a%%:/tmp/sacty-codex-home*}";; esac
+    case "$a" in *:/.codex*) host="\${a%%:/.codex*}";; esac
   fi
   prev="$a"
 done
@@ -816,9 +1054,9 @@ while true; do sleep 0.05; done
       workspaceDir: dir,
       invocation: {
         command: ["codex"],
-        env: { CODEX_HOME: "/tmp/sacty-codex-home" },
+        env: { CODEX_HOME: "/.codex" },
         stage: {
-          containerDir: "/tmp/sacty-codex-home",
+          containerDir: "/.codex",
           files: [{ hostPath: hostAuth, name: "auth.json", syncBack: true }],
         },
         parser: "codex-jsonl",
@@ -861,7 +1099,7 @@ describe("コンテナで更新されたトークンの除去（偽のdockerコ�
 prev=""; host=""
 for a in "$@"; do
   if [ "$prev" = "-v" ]; then
-    case "$a" in *:/tmp/sacty-codex-home*) host="\${a%%:/tmp/sacty-codex-home*}";; esac
+    case "$a" in *:/.codex*) host="\${a%%:/.codex*}";; esac
   fi
   prev="$a"
 done
@@ -881,9 +1119,9 @@ echo '{"type":"turn.completed","usage":{"input_tokens":10,"cached_input_tokens":
       workspaceDir: dir,
       invocation: {
         command: ["codex"],
-        env: { CODEX_HOME: "/tmp/sacty-codex-home" },
+        env: { CODEX_HOME: "/.codex" },
         stage: {
-          containerDir: "/tmp/sacty-codex-home",
+          containerDir: "/.codex",
           files: [{ hostPath: hostAuth, name: "auth.json", syncBack: true }],
         },
         parser: "codex-jsonl",
@@ -896,6 +1134,42 @@ echo '{"type":"turn.completed","usage":{"input_tokens":10,"cached_input_tokens":
       expect(outcome.output).not.toContain(newToken);
     }
     expect(readFileSync(hostAuth, "utf8")).toContain(newToken);
+  });
+
+  it("ゲートウェイに届くよう、host.docker.internal を設定のホストのアドレスに向けて起動する（PBI-40）", async () => {
+    const { chmodSync, mkdirSync } = await import("node:fs");
+    const { DockerExecutor } = await import("./docker.js");
+    dir = mkdtempSync(join(tmpdir(), "sacty-fakedocker-"));
+    const bin = join(dir, "bin");
+    mkdirSync(bin);
+    // run：受け取った引数を残して、結果を返す
+    writeFileSync(
+      join(bin, "docker"),
+      `#!/bin/sh
+here=$(dirname "$0")
+if [ "$1" != "run" ]; then exit 0; fi
+printf '%s\\n' "$@" > "$here/args.txt"
+echo '{"type":"result","is_error":false,"result":"ok","usage":{"input_tokens":1,"output_tokens":1}}'
+`,
+    );
+    chmodSync(join(bin, "docker"), 0o755);
+    process.env.PATH = `${bin}:${originalPath}`;
+    const addHost = async (invocation: Partial<Invocation>) => {
+      await new DockerExecutor().run({
+        runId: "r5",
+        image: "img",
+        workspaceDir: dir,
+        invocation: { command: ["claude"], env: {}, parser: "claude-json", ...invocation },
+      });
+      const args = readFileSync(join(bin, "args.txt"), "utf8").split("\n");
+      const i = args.indexOf("--add-host");
+      return i < 0 ? undefined : args[i + 1];
+    };
+    expect(await addHost({})).toBeUndefined();
+    expect(await addHost({ hostGateway: true })).toBe("host.docker.internal:host-gateway");
+    expect(await addHost({ hostGateway: true, hostAddress: "192.168.5.2" })).toBe(
+      "host.docker.internal:192.168.5.2",
+    );
   });
 
   it("コンテキストを、マウントする設定のディレクトリに写してから実行する（PBI-6）", async () => {

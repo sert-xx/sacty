@@ -80,41 +80,50 @@ export class IssueIntake {
     // レート制限はトークン（アカウント）ごとなので、ほかのアカウントの検索は続ける
     const tokens = new Map<string, { token: string } | { error: DaemonText }>();
     const rateLimited = new Set<string>();
-    const tokenOf = async (account: string) => {
-      let entry = tokens.get(account);
+    // アカウントは、ホストごと（PBI-40）
+    const tokenOf = async (host: string, account: string) => {
+      const key = `${host} ${account}`;
+      let entry = tokens.get(key);
       if (!entry) {
         try {
-          entry = { token: await this.github.token(account) };
+          entry = { token: await this.github.token(host, account) };
         } catch (error) {
           entry = { error: errorText(error) };
         }
-        tokens.set(account, entry);
+        tokens.set(key, entry);
       }
       return entry;
     };
-    for (const { query, account, project } of this.service.intakeSources()) {
+    for (const { host, query, account, project } of this.service.intakeSources()) {
       // アカウントを選んでいないプロジェクトの取り込み元は、理由を示して検索しない
       if (!account) {
-        errors.push({ query, message: message("github.accountRequired", { project }) });
+        errors.push({ query, message: message("github.accountRequired", { project, host }) });
         continue;
       }
-      const auth = await tokenOf(account);
+      const auth = await tokenOf(host, account);
+      const key = `${host} ${account}`;
+      const cursorKey = `${host} ${query}`;
       if ("error" in auth) {
         errors.push({ query, message: auth.error });
         continue;
       }
-      if (rateLimited.has(account)) {
+      if (rateLimited.has(key)) {
         errors.push({ query, message: message("intake.skippedRateLimited") });
         continue;
       }
       try {
-        const result = await this.search.search(query, auth.token, this.cursors.get(query));
+        const result = await this.search.search(
+          host,
+          query,
+          auth.token,
+          this.cursors.get(cursorKey),
+        );
         found.push(...result.issues);
-        if (result.cursor) this.cursors.set(query, result.cursor);
+        if (result.cursor) this.cursors.set(cursorKey, result.cursor);
         if (result.incomplete) {
           errors.push({ query, message: redactText(result.incomplete, [auth.token]) });
         }
-        if (result.rateLimited) rateLimited.add(account);
+        if (result.rateLimited) rateLimited.add(key);
       } catch (error) {
         errors.push({ query, message: redactText(errorText(error), [auth.token]) });
       }

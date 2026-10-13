@@ -2,21 +2,19 @@ import { spawn } from "node:child_process";
 import { message } from "@sacty/core";
 import { MessageError } from "./errors.js";
 
-/** gh にログイン済みの GitHub のアカウント。 */
-export type GitHubAccount = { login: string; active: boolean };
+/** gh にログイン済みの GitHub のアカウント。host は github.com や GitHub Enterprise Server のホスト（PBI-40）。 */
+export type GitHubAccount = { host: string; login: string; active: boolean };
 
 /**
  * GitHub への認証を、ホストの gh コマンドから得る口（PBI-13）。テストでは偽物に差し替える。
  * トークンは使う都度に取り出し、保存しない。
  */
 export interface GitHubAuth {
-  /** gh にログイン済みのアカウント。 */
+  /** gh にログイン済みのアカウント（すべてのホスト）。 */
   accounts(): Promise<GitHubAccount[]>;
-  /** そのアカウントのトークン（アクティブなアカウントは切り替わるので、必ずアカウントを指定する）。 */
-  token(account: string): Promise<string>;
+  /** そのホストのアカウントのトークン（アクティブなアカウントは切り替わるので、必ずアカウントを指定する）。 */
+  token(host: string, account: string): Promise<string>;
 }
-
-const HOST = "github.com";
 
 /**
  * gh に渡す環境変数。gh の設定とキーチェーンを読むのに要るものだけを渡す。
@@ -44,14 +42,7 @@ export class GhCliAuth implements GitHubAuth {
 
   async accounts(): Promise<GitHubAccount[]> {
     // トークンは出さない（--show-token は付けない）
-    const { code, stdout, stderr } = await this.run([
-      "auth",
-      "status",
-      "--json",
-      "hosts",
-      "--hostname",
-      HOST,
-    ]);
+    const { code, stdout, stderr } = await this.run(["auth", "status", "--json", "hosts"]);
     let parsed: unknown;
     try {
       parsed = JSON.parse(stdout);
@@ -62,21 +53,24 @@ export class GhCliAuth implements GitHubAuth {
         message("github.ghFailed", { detail: stderr.trim() || stdout.trim() }),
       );
     }
-    const list = (parsed as { hosts?: Record<string, unknown> })?.hosts?.[HOST];
-    if (!Array.isArray(list)) return [];
-    return list
-      .map((item) => item as { login?: unknown; active?: unknown; state?: unknown })
-      .filter((item) => typeof item.login === "string" && item.state === "success")
-      .map((item) => ({ login: String(item.login), active: item.active === true }));
+    const hosts = (parsed as { hosts?: Record<string, unknown> })?.hosts ?? {};
+    return Object.entries(hosts).flatMap(([host, list]) =>
+      Array.isArray(list)
+        ? list
+            .map((item) => item as { login?: unknown; active?: unknown; state?: unknown })
+            .filter((item) => typeof item.login === "string" && item.state === "success")
+            .map((item) => ({ host, login: String(item.login), active: item.active === true }))
+        : [],
+    );
   }
 
-  async token(account: string): Promise<string> {
-    const args = ["auth", "token", "--hostname", HOST, "--user", account];
+  async token(host: string, account: string): Promise<string> {
+    const args = ["auth", "token", "--hostname", host, "--user", account];
     const { code, stdout } = await this.run(args);
     const token = stdout.trim();
     // エラー文にはトークンは含まれないが、念のため出さない
     if (code !== 0 || !token) {
-      throw new MessageError(message("github.accountUnavailable", { account }));
+      throw new MessageError(message("github.accountUnavailable", { account, host }));
     }
     return token;
   }
@@ -111,11 +105,11 @@ export class GhCliAuth implements GitHubAuth {
  * HTTPS の GitHub に git で認証するための環境変数（トークンはコマンドラインに出さない）。
  * ホストの git の認証の設定（credential helper など）に頼らずに、clone・プッシュできるようにする。
  */
-export function gitAuthEnv(token: string): Record<string, string> {
+export function gitAuthEnv(host: string, token: string): Record<string, string> {
   const basic = basicAuth(token);
   return {
     GIT_CONFIG_COUNT: "1",
-    GIT_CONFIG_KEY_0: `http.https://${HOST}/.extraheader`,
+    GIT_CONFIG_KEY_0: `http.https://${host}/.extraheader`,
     GIT_CONFIG_VALUE_0: `Authorization: Basic ${basic}`,
   };
 }
@@ -129,7 +123,7 @@ export function gitAuthSecrets(token: string): string[] {
   return [token, basicAuth(token)];
 }
 
-/** HTTPS の GitHub の URL か（トークンで認証する対象）。SSH やローカルのパスは、ホストの認証を使う。 */
-export function isGitHubHttps(url: string): boolean {
-  return /^https:\/\/github\.com\//i.test(url);
+/** git の HTTPS の URL のホスト（トークンで認証する対象を選ぶ）。SSH やローカルのパスは undefined（ホストの認証を使う）。 */
+export function httpsHost(url: string): string | undefined {
+  return url.match(/^https:\/\/([^/@]+)\//i)?.[1]?.toLowerCase();
 }

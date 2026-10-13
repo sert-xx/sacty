@@ -1,7 +1,7 @@
-import { type DaemonText, message } from "@sacty/core";
+import { type DaemonText, githubApiBase, message, parseOrgUrl, parseRepoUrl } from "@sacty/core";
 import { errorText, MessageError } from "./errors.js";
 
-/** PRを作る口。テストでは偽物に差し替える。 */
+/** PRを作る口。テストでは偽物に差し替える。repo はリポジトリの URL（https://<ホスト>/<owner>/<name>。PBI-40）。 */
 export interface PullRequests {
   /** PRを作る。number があれば、そのPRの本文を更新する。 */
   upsert(input: {
@@ -45,10 +45,10 @@ export interface PullRequests {
     body: string;
   }): Promise<{ url: string }>;
   /**
-   * Org（またはユーザー）のリポジトリ（owner/name。アーカイブしたものは除く）。プロジェクトの対象の
+   * Org（またはユーザー）の URL の、リポジトリの URL（アーカイブしたものは除く）。プロジェクトの対象の
    * Org から、タスクの対象リポジトリを選ぶため（PBI-25）。
    */
-  repositories(input: { owner: string; token: string }): Promise<string[]>;
+  repositories(input: { org: string; token: string }): Promise<string[]>;
   /** レビューの対象の PR（PBI-19）。 */
   pullRequest(input: { repo: string; token: string; number: number }): Promise<PullRequestInfo>;
   /**
@@ -120,8 +120,6 @@ export type PullRequestStatus = { headSha?: string } & (
   | { state: "merged"; mergedBy?: string }
 );
 
-const API = "https://api.github.com";
-
 /** 一覧を読むページの上限（100件ずつ。誤った Link で延々と読まないように）。 */
 const MAX_PAGES = 50;
 
@@ -137,15 +135,20 @@ export function nextPage(link: string | null): string | undefined {
 
 type Fetch = typeof fetch;
 
+/** リポジトリの URL の、REST API の URL（https://api.github.com/repos/<owner>/<name> など）と API の URL。 */
+function repoApi(repoUrl: string): { api: string; base: string } {
+  const repo = parseRepoUrl(repoUrl);
+  if (!repo) throw new MessageError(message("input.invalidRepo"));
+  const api = githubApiBase(repo.host);
+  return { api, base: `${api}/repos/${repo.path}` };
+}
+
 /** GitHub の REST API で PR を作る・更新する。 */
 export class GitHubPullRequests implements PullRequests {
-  constructor(
-    private readonly fetchImpl: Fetch = fetch,
-    private readonly api = API,
-  ) {}
+  constructor(private readonly fetchImpl: Fetch = fetch) {}
 
   close(input: Parameters<PullRequests["close"]>[0]) {
-    return closePullRequest(this.fetchImpl, this.api, input);
+    return closePullRequest(this.fetchImpl, input);
   }
 
   async feedback(input: Parameters<PullRequests["feedback"]>[0]): Promise<PullRequestFeedback[]> {
@@ -226,12 +229,14 @@ export class GitHubPullRequests implements PullRequests {
     token: string,
     action: "getReviews" | "listIssueComments",
   ): Promise<Record<string, unknown>[]> {
-    return this.listAt(`/repos/${repo}${path}`, token, action);
+    const { api, base } = repoApi(repo);
+    return this.listAt(api, `${base}${path}`, token, action);
   }
 
-  /** API の path（/ から）の一覧を、すべてのページから読む。 */
+  /** API の URL の一覧を、すべてのページから読む。 */
   private async listAt(
-    path: string,
+    api: string,
+    first: string,
     token: string,
     action: "getReviews" | "listIssueComments" | "listRepositories",
   ): Promise<Record<string, unknown>[]> {
@@ -241,14 +246,14 @@ export class GitHubPullRequests implements PullRequests {
       "x-github-api-version": "2022-11-28",
     };
     const all: Record<string, unknown>[] = [];
-    let url: string | undefined = `${this.api}${path}`;
+    let url: string | undefined = first;
     for (let page = 0; url && page < MAX_PAGES; page++) {
       const res = await this.fetchImpl(url, { headers });
       const json = (await res.json().catch(() => ({}))) as unknown;
       if (!res.ok) throw apiError(action, res.status, json as Record<string, unknown>);
       if (Array.isArray(json)) all.push(...(json as Record<string, unknown>[]));
       const next = nextPage(res.headers.get("link"));
-      url = next?.startsWith(`${this.api}/`) ? next : undefined;
+      url = next?.startsWith(`${api}/`) ? next : undefined;
     }
     return all;
   }
@@ -266,7 +271,7 @@ export class GitHubPullRequests implements PullRequests {
 
   async commentIssue(input: Parameters<PullRequests["commentIssue"]>[0]) {
     const res = await this.fetchImpl(
-      `${this.api}/repos/${input.repo}/issues/${input.number}/comments`,
+      `${repoApi(input.repo).base}/issues/${input.number}/comments`,
       {
         method: "POST",
         headers: {
@@ -284,8 +289,12 @@ export class GitHubPullRequests implements PullRequests {
   }
 
   async repositories(input: Parameters<PullRequests["repositories"]>[0]): Promise<string[]> {
-    const owner = encodeURIComponent(input.owner);
-    const read = (path: string) => this.listAt(path, input.token, "listRepositories");
+    const org = parseOrgUrl(input.org);
+    if (!org) throw new MessageError(message("input.invalidOrg"));
+    const api = githubApiBase(org.host);
+    const owner = encodeURIComponent(org.owner);
+    const read = (path: string) =>
+      this.listAt(api, `${api}${path}`, input.token, "listRepositories");
     const list = await read(`/orgs/${owner}/repos?per_page=100&type=all`).catch(
       async (error: unknown) => {
         if (githubStatus(error) !== 404) throw error;
@@ -299,20 +308,20 @@ export class GitHubPullRequests implements PullRequests {
           String((r.owner as { login?: unknown } | null)?.login ?? "").toLowerCase();
         return [
           ...publicRepos,
-          ...accessible.filter((r) => ownerOf(r) === input.owner.toLowerCase()),
+          ...accessible.filter((r) => ownerOf(r) === org.owner.toLowerCase()),
         ];
       },
     );
     const names = new Map<string, string>();
     for (const r of list) {
       if (r.archived === true || typeof r.full_name !== "string") continue;
-      names.set(r.full_name.toLowerCase(), r.full_name);
+      names.set(r.full_name.toLowerCase(), `https://${org.host}/${r.full_name}`);
     }
     return [...names.values()].sort((a, b) => a.localeCompare(b));
   }
 
   async pullRequest(input: Parameters<PullRequests["pullRequest"]>[0]): Promise<PullRequestInfo> {
-    const res = await this.fetchImpl(`${this.api}/repos/${input.repo}/pulls/${input.number}`, {
+    const res = await this.fetchImpl(`${repoApi(input.repo).base}/pulls/${input.number}`, {
       headers: {
         accept: "application/vnd.github+json",
         authorization: `Bearer ${input.token}`,
@@ -353,31 +362,28 @@ export class GitHubPullRequests implements PullRequests {
   }
 
   async postReview(input: Parameters<PullRequests["postReview"]>[0]) {
-    const res = await this.fetchImpl(
-      `${this.api}/repos/${input.repo}/pulls/${input.number}/reviews`,
-      {
-        method: "POST",
-        headers: {
-          accept: "application/vnd.github+json",
-          authorization: `Bearer ${input.token}`,
-          "x-github-api-version": "2022-11-28",
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({
-          commit_id: input.commit,
-          body: input.body,
-          event: "COMMENT",
-          comments: input.comments.map((c) => ({ ...c, side: "RIGHT" })),
-        }),
+    const res = await this.fetchImpl(`${repoApi(input.repo).base}/pulls/${input.number}/reviews`, {
+      method: "POST",
+      headers: {
+        accept: "application/vnd.github+json",
+        authorization: `Bearer ${input.token}`,
+        "x-github-api-version": "2022-11-28",
+        "content-type": "application/json",
       },
-    );
+      body: JSON.stringify({
+        commit_id: input.commit,
+        body: input.body,
+        event: "COMMENT",
+        comments: input.comments.map((c) => ({ ...c, side: "RIGHT" })),
+      }),
+    });
     const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
     if (!res.ok) throw apiError("postReview", res.status, json);
     return { url: String(json.html_url ?? "") };
   }
 
   async status(input: Parameters<PullRequests["status"]>[0]): Promise<PullRequestStatus> {
-    const res = await this.fetchImpl(`${this.api}/repos/${input.repo}/pulls/${input.number}`, {
+    const res = await this.fetchImpl(`${repoApi(input.repo).base}/pulls/${input.number}`, {
       headers: {
         accept: "application/vnd.github+json",
         authorization: `Bearer ${input.token}`,
@@ -402,7 +408,8 @@ export class GitHubPullRequests implements PullRequests {
       "x-github-api-version": "2022-11-28",
       "content-type": "application/json",
     };
-    const base = `${this.api}/repos/${input.repo}/pulls`;
+    const repo = parseRepoUrl(input.repo);
+    const base = `${repoApi(input.repo).base}/pulls`;
     const call = async (url: string, init: RequestInit) => {
       const res = await this.fetchImpl(url, { ...init, headers });
       const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
@@ -434,7 +441,7 @@ export class GitHubPullRequests implements PullRequests {
     if (res.ok) return result(json);
     // すでに同じブランチのPRがある（前回、作成後の記録の前に止まったなど）なら、それを使う
     if (res.status === 422) {
-      const owner = input.repo.split("/")[0];
+      const owner = repo?.owner ?? "";
       const found = await call(
         `${base}?state=open&head=${encodeURIComponent(`${owner}:${input.branch}`)}`,
         { method: "GET" },
@@ -451,10 +458,9 @@ export class GitHubPullRequests implements PullRequests {
 /** PRを閉じる。GitHubPullRequests の一部だが、upsert と分けて読みやすくする。 */
 async function closePullRequest(
   fetchImpl: Fetch,
-  api: string,
   input: { repo: string; token: string; number: number },
 ): Promise<void> {
-  const res = await fetchImpl(`${api}/repos/${input.repo}/pulls/${input.number}`, {
+  const res = await fetchImpl(`${repoApi(input.repo).base}/pulls/${input.number}`, {
     method: "PATCH",
     headers: {
       accept: "application/vnd.github+json",
@@ -493,7 +499,7 @@ function apiError(
 
 /** 取り込みの対象として見つかった Issue。 */
 export type FoundIssue = {
-  /** owner/name。 */
+  /** リポジトリの URL。 */
   repo: string;
   number: number;
   title: string;
@@ -519,8 +525,8 @@ export type IssueSearchResult = {
 
 /** Issue を探す口。テストでは偽物に差し替える。 */
 export interface IssueSearch {
-  /** since があれば、その更新日時以降に更新された Issue だけを探す。 */
-  search(query: string, token: string, since?: string): Promise<IssueSearchResult>;
+  /** host の GitHub で探す。since があれば、その更新日時以降に更新された Issue だけを探す。 */
+  search(host: string, query: string, token: string, since?: string): Promise<IssueSearchResult>;
 }
 
 class RateLimitedError extends MessageError {}
@@ -536,12 +542,15 @@ export class GitHubIssueSearch implements IssueSearch {
   static readonly MAX_PAGES = 10;
   static readonly MAX_WINDOWS = 20;
 
-  constructor(
-    private readonly fetchImpl: Fetch = fetch,
-    private readonly api = API,
-  ) {}
+  constructor(private readonly fetchImpl: Fetch = fetch) {}
 
-  async search(query: string, token: string, since?: string): Promise<IssueSearchResult> {
+  async search(
+    host: string,
+    query: string,
+    token: string,
+    since?: string,
+  ): Promise<IssueSearchResult> {
+    const api = githubApiBase(host);
     const issues = new Map<string, FoundIssue>();
     const result = (extra: Omit<IssueSearchResult, "issues">): IssueSearchResult => ({
       issues: [...issues.values()],
@@ -553,9 +562,9 @@ export class GitHubIssueSearch implements IssueSearch {
         const windowStart = cursor;
         const q = windowStart ? `${query} updated:>=${windowStart}` : query;
         for (let page = 1; page <= GitHubIssueSearch.MAX_PAGES; page++) {
-          const { items, incompleteResults } = await this.page(q, page, token);
+          const { items, incompleteResults } = await this.page(api, q, page, token);
           for (const item of items) {
-            const issue = toIssue(item);
+            const issue = toIssue(item, host);
             if (issue) issues.set(`${issue.repo.toLowerCase()}#${issue.number}`, issue);
           }
           if (incompleteResults) {
@@ -596,8 +605,8 @@ export class GitHubIssueSearch implements IssueSearch {
     }
   }
 
-  private async page(q: string, page: number, token: string) {
-    const url = `${this.api}/search/issues?q=${encodeURIComponent(q)}&per_page=${GitHubIssueSearch.PER_PAGE}&page=${page}&sort=updated&order=asc`;
+  private async page(api: string, q: string, page: number, token: string) {
+    const url = `${api}/search/issues?q=${encodeURIComponent(q)}&per_page=${GitHubIssueSearch.PER_PAGE}&page=${page}&sort=updated&order=asc`;
     const res = await this.fetchImpl(url, {
       headers: {
         accept: "application/vnd.github+json",
@@ -620,21 +629,28 @@ export class GitHubIssueSearch implements IssueSearch {
   }
 }
 
-/** 検索の結果の1件を読む。PR と、形の読めないものは除く。 */
-function toIssue(item: Record<string, unknown>): FoundIssue | undefined {
+/**
+ * 検索の結果の1件を読む。形の読めないもの、検索したホストではないものは除く（ほかのホストのリポジトリとして
+ * 取り込まないため）。リポジトリの URL は、Issue・PR の URL から読む。
+ */
+function toIssue(item: Record<string, unknown>, host: string): FoundIssue | undefined {
+  const url = String(item.html_url ?? "");
+  const repo = parseRepoUrl(
+    url.match(/^(https:\/\/[^/]+\/[^/]+\/[^/]+)\/(?:issues|pull)\/\d+$/)?.[1] ?? "",
+  );
   // PR も取り込む（PBI-26）。検索の結果では、PR は pull_request を持つ
   const issue = {
-    repo: String(item.repository_url ?? "").replace(/^.*\/repos\//, ""),
+    repo: repo?.url ?? "",
     number: Number(item.number),
     title: String(item.title ?? ""),
     body: typeof item.body === "string" ? item.body : "",
-    url: String(item.html_url ?? ""),
+    url,
     labels: Array.isArray(item.labels)
       ? item.labels.map((l) => String((l as Record<string, unknown>)?.name ?? l))
       : [],
     ...(item.pull_request ? { pullRequest: true } : {}),
   };
-  return /^[^/]+\/[^/]+$/.test(issue.repo) && issue.number > 0 ? issue : undefined;
+  return repo?.host === host && issue.number > 0 ? issue : undefined;
 }
 
 /** GitHub の API の失敗の、HTTP のステータス（GitHub の失敗でなければ undefined）。 */

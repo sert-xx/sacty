@@ -52,7 +52,7 @@ const tests = new DockerTestRunner();
 // GitHub へのアクセスは、ホストの gh のアカウントで行う（PBI-13）
 const github = new GhCliAuth();
 // ホストのゲートウェイ（PBI-37）。リトライの上限は、リクエストごとに設定から読み直す
-// 社内 PF の API（PBI-35）。認証情報はゲートウェイの中だけに持ち、起動時にまとめて用意する
+// 組織内 PF の API（PBI-35）。認証情報はゲートウェイの中だけに持ち、起動時にまとめて用意する
 const platforms = () => {
   const c = config();
   return c.ok ? c.config.platforms : [];

@@ -77,7 +77,7 @@ async function NewTask() {
         projectName={project.name}
         repositories={repositories}
         hasTargets={project.targets.length > 0}
-        problems={errors.map((e) => m.forms.task.listFailed(e.owner, m.labels.text(e.message)))}
+        problems={errors.map((e) => m.forms.task.listFailed(e.org, m.labels.text(e.message)))}
       />
     );
   } catch {
@@ -124,7 +124,7 @@ async function AgentStatus() {
           labels.auth[status.agent.authMode as keyof typeof labels.auth] ?? status.agent.authMode,
         )}
       </p>
-      {/* 動くが、知らせたいこと（認証情報を用意できない社内 PF など。PBI-35） */}
+      {/* 動くが、知らせたいこと（認証情報を用意できない組織内 PF など。PBI-35） */}
       {(status.warnings ?? []).length > 0 && (
         <ul
           role="status"

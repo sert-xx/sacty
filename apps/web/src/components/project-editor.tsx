@@ -14,6 +14,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useMessages } from "@/i18n/client";
 import type { GitHubAccounts } from "@/lib/daemon";
+import { githubAccountChoices } from "@/lib/github-accounts";
 
 const initial: SaveProjectState = {};
 
@@ -22,7 +23,7 @@ type Exclusion = { org: string; repos: { repo: string; projectName: string }[] }
 const SELECT =
   "h-9 rounded-md border border-input bg-card px-2 text-sm focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none";
 
-/** プロジェクトの設定：名前、対象（Org・リポジトリ。PBI-25）、GitHub アカウント、コンテキストリポジトリ。 */
+/** プロジェクトの設定：名前、対象（Org・リポジトリ。PBI-25）、コンテキストリポジトリ、GitHub アカウント、通知。 */
 export function ProjectEditor({
   project,
   exclusions = [],
@@ -39,16 +40,22 @@ export function ProjectEditor({
   const messages = useMessages();
   const { editor: t, scope: scopeLabel } = messages.projects;
   const accounts = github && "accounts" in github ? github.accounts : [];
-  // GitHub のアカウントは必ず選ぶ。まだ選んでいなければ、gh のアクティブなアカウントを選んでおく
-  // （保存すると、そのアカウントに固定される。gh で切り替えても変わらない）
-  const [githubAccount, setGithubAccount] = useState(
-    project?.githubAccount ?? accounts.find((a) => a.active)?.login ?? "",
-  );
-  // 設定画面（project あり）では、アカウントを選ぶまで保存させない
-  const needsAccount = Boolean(project) && !githubAccount;
   const [name, setName] = useState(project?.name ?? "");
   const [targets, setTargets] = useState<ProjectTarget[]>(project?.targets ?? []);
   const [contextRepo, setContextRepo] = useState(project?.context?.repo ?? "");
+  // GitHub のアカウントは、ホストごとに選ぶ（PBI-40）。対象のホストは必ず選び、コンテキストリポジトリのホストと
+  // 保存済みのホストも選べる。空は「選ばない」（そのホストは、ホストの git の認証を使う）
+  const [chosenAccounts, setChosenAccounts] = useState<Record<string, string>>(
+    project?.githubAccounts ?? {},
+  );
+  const { hosts, githubAccounts, missing } = githubAccountChoices({
+    targets,
+    contextRepo,
+    chosen: chosenAccounts,
+    accounts,
+  });
+  // 設定画面（project あり）では、対象のホストのアカウントを選ぶまで保存させない
+  const needsAccount = Boolean(project) && missing;
   const [contextRef, setContextRef] = useState(project?.context?.ref ?? "");
   // Slack の通知先（PBI-38）
   const saved = project?.notification;
@@ -97,7 +104,7 @@ export function ProjectEditor({
           },
         }
       : {}),
-    ...(githubAccount ? { githubAccount } : {}),
+    ...(hosts.length > 0 ? { githubAccounts } : {}),
     ...(notification ? { notification } : {}),
   });
 
@@ -139,14 +146,20 @@ export function ProjectEditor({
               {t.targetsTitle}{" "}
               <span className="text-[13px] font-normal text-muted-foreground">{t.targetsNote}</span>
             </h2>
-            <p className="text-sm leading-6 text-muted-foreground">{t.targetsHelp}</p>
-            <p className="text-sm leading-6 text-warn">{t.prNotice}</p>
+            <p className="text-sm leading-6 whitespace-pre-line text-muted-foreground">
+              {t.targetsHelp}
+            </p>
+            <p className="text-sm leading-6 text-warn whitespace-pre-line">{t.prNotice}</p>
             {targets.length === 0 && <p className="text-sm text-muted-foreground">{t.noTargets}</p>}
             <ul className="flex flex-col gap-2.5">
               {targets.map((target, i) => {
                 const excluded =
                   target.scope === "org"
-                    ? exclusions.find((e) => e.org.toLowerCase() === target.target.toLowerCase())
+                    ? exclusions.find(
+                        (e) =>
+                          e.org.toLowerCase() ===
+                          target.target.trim().replace(/\/+$/, "").toLowerCase(),
+                      )
                     : undefined;
                 return (
                   <li
@@ -172,11 +185,16 @@ export function ProjectEditor({
                         htmlFor={`${uid}-target-${i}-target`}
                         className="flex min-w-48 flex-1 flex-col gap-1 text-xs text-muted-foreground"
                       >
-                        {target.scope === "org" ? scopeLabel.org : t.repoTarget}
+                        {target.scope === "org" ? t.orgTarget : t.repoTarget}
                         <Input
                           id={`${uid}-target-${i}-target`}
                           value={target.target}
-                          placeholder={target.scope === "org" ? "acme" : "acme/payments"}
+                          className="font-mono"
+                          placeholder={
+                            target.scope === "org"
+                              ? "https://github.com/acme"
+                              : "https://github.com/acme/payments"
+                          }
                           onChange={(e) => updateTarget(i, { target: e.target.value })}
                         />
                       </label>
@@ -219,46 +237,6 @@ export function ProjectEditor({
           </section>
 
           <section
-            aria-labelledby="github"
-            className="flex flex-col gap-3 rounded-xl border border-border bg-card p-5"
-          >
-            <h2 id="github" className="text-[15px] font-semibold">
-              {t.githubTitle}{" "}
-              <span className="text-[13px] font-normal text-muted-foreground">{t.githubNote}</span>
-            </h2>
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor={`${uid}-github`}>{t.githubAccount}</Label>
-              <select
-                id={`${uid}-github`}
-                value={githubAccount}
-                onChange={(e) => setGithubAccount(e.target.value)}
-                className={`${SELECT} max-w-md`}
-              >
-                {!githubAccount && (
-                  <option value="" disabled>
-                    {t.githubChoose}
-                  </option>
-                )}
-                {accounts.map((a) => (
-                  <option key={a.login} value={a.login}>
-                    {a.login}
-                  </option>
-                ))}
-                {/* 選んでいたアカウントが gh からログアウトしていても、そのまま見えるようにする */}
-                {githubAccount && !accounts.some((a) => a.login === githubAccount) && (
-                  <option value={githubAccount}>{t.githubNotLoggedIn(githubAccount)}</option>
-                )}
-              </select>
-            </div>
-            {github && "error" in github && (
-              <p role="alert" className="text-sm text-warn">
-                {messages.labels.text(github.error)}
-              </p>
-            )}
-            <p className="text-xs text-muted-foreground">{t.githubHelp}</p>
-          </section>
-
-          <section
             aria-labelledby="context"
             className="flex flex-col gap-3 rounded-xl border border-border bg-card p-5"
           >
@@ -266,6 +244,9 @@ export function ProjectEditor({
               {t.contextTitle}{" "}
               <span className="text-[13px] font-normal text-muted-foreground">{t.contextNote}</span>
             </h2>
+            <p className="text-sm leading-6 whitespace-pre-line text-muted-foreground">
+              {t.contextHelp}
+            </p>
             <div className="flex flex-wrap items-end gap-2">
               <label
                 htmlFor={`${uid}-context-repo`}
@@ -296,7 +277,68 @@ export function ProjectEditor({
                 />
               </label>
             </div>
-            <p className="text-xs leading-5 text-muted-foreground">{t.contextHelp}</p>
+          </section>
+
+          <section
+            aria-labelledby="github"
+            className="flex flex-col gap-3 rounded-xl border border-border bg-card p-5"
+          >
+            <h2 id="github" className="text-[15px] font-semibold">
+              {t.githubTitle}{" "}
+              <span className="text-[13px] font-normal text-muted-foreground">{t.githubNote}</span>
+            </h2>
+            <p className="text-sm leading-6 whitespace-pre-line text-muted-foreground">
+              {t.githubHelp}
+            </p>
+            {!hosts.some((h) => h.required) && (
+              <p className="text-sm text-muted-foreground">{t.githubNoTargets}</p>
+            )}
+            {hosts.map(({ host, required, forContext }) => {
+              const current = githubAccounts[host] ?? "";
+              const onHost = accounts.filter((a) => a.host === host);
+              return (
+                <div key={host} className="flex flex-col gap-1.5">
+                  <Label htmlFor={`${uid}-github-${host}`}>
+                    {t.githubAccount(host)}
+                    {!required && (
+                      <span className="font-normal text-muted-foreground">
+                        {forContext ? t.githubForContext : t.githubOptional}
+                      </span>
+                    )}
+                  </Label>
+                  <select
+                    id={`${uid}-github-${host}`}
+                    value={current}
+                    onChange={(e) =>
+                      setChosenAccounts((chosen) => ({ ...chosen, [host]: e.target.value }))
+                    }
+                    className={`${SELECT} max-w-md`}
+                  >
+                    {required && !current && (
+                      <option value="" disabled>
+                        {t.githubChoose}
+                      </option>
+                    )}
+                    {/* 対象ではないホストは、選ばない（ホストの git の認証を使う）こともできる */}
+                    {!required && <option value="">{t.githubNone}</option>}
+                    {onHost.map((a) => (
+                      <option key={a.login} value={a.login}>
+                        {a.login}
+                      </option>
+                    ))}
+                    {/* 選んでいたアカウントが gh からログアウトしていても、そのまま見えるようにする */}
+                    {current && !onHost.some((a) => a.login === current) && (
+                      <option value={current}>{t.githubNotLoggedIn(current)}</option>
+                    )}
+                  </select>
+                </div>
+              );
+            })}
+            {github && "error" in github && (
+              <p role="alert" className="text-sm text-warn">
+                {messages.labels.text(github.error)}
+              </p>
+            )}
           </section>
 
           <section
@@ -307,6 +349,9 @@ export function ProjectEditor({
               {t.notifyTitle}{" "}
               <span className="text-[13px] font-normal text-muted-foreground">{t.notifyNote}</span>
             </h2>
+            <p className="text-sm leading-6 whitespace-pre-line text-muted-foreground">
+              {t.notifyHelp}
+            </p>
             <div className="flex flex-wrap items-end gap-2">
               <label className="flex flex-col gap-1 text-xs text-muted-foreground">
                 {t.notifyKind}
@@ -392,7 +437,6 @@ export function ProjectEditor({
                 />
               </label>
             )}
-            <p className="text-xs leading-5 text-muted-foreground">{t.notifyHelp}</p>
             {saved && project && (
               <div className="flex flex-wrap items-center gap-3">
                 <Button

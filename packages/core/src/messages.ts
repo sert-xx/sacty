@@ -57,6 +57,8 @@ const PARAMS = {
   "input.nameRequired": null,
   "input.invalidGithubName": null,
   "input.invalidRepo": null,
+  "input.invalidOrg": null,
+  "input.invalidHost": null,
   "input.contextRepoRequired": null,
   "input.invalidRef": null,
   "input.invalidLabel": null,
@@ -78,6 +80,13 @@ const PARAMS = {
   "input.secretName": null,
   "input.secretRef": null,
   "input.invalidUrl": null,
+  "input.reasoningEffort": null,
+  "input.providerName": null,
+  "config.providerMissing": z.object({ id: z.string() }),
+  "config.hostAddress": null,
+  "config.npmVersion": null,
+  "config.npmConfigKey": null,
+  "config.npmConfigSecret": null,
   "input.channelRequired": null,
   // Slack の通知（PBI-38）
   "notify.failed": z.object({ project: z.string(), detail: TextParam }),
@@ -124,8 +133,8 @@ const PARAMS = {
   "integrate.unreadable": null,
   "review.pullRequestMissing": z.object({ repo: z.string() }),
   "github.ghMissing": null,
-  "github.accountRequired": z.object({ project: z.string() }),
-  "github.accountUnavailable": z.object({ account: z.string() }),
+  "github.accountRequired": z.object({ project: z.string(), host: z.string() }),
+  "github.accountUnavailable": z.object({ account: z.string(), host: z.string() }),
   "github.ghFailed": z.object({ detail: z.string() }),
   "review.verdictMissing": null,
   "review.unreadable": null,
@@ -332,7 +341,9 @@ const ja: MessageDictionary = {
   "input.tooManyRemarks": "指摘は一度に50件までにしてください。",
   "input.nameRequired": "名前を入力してください。",
   "input.invalidGithubName": "GitHub の名前として正しくありません。",
-  "input.invalidRepo": "リポジトリは owner/name の形で入力してください。",
+  "input.invalidRepo": "リポジトリは URL（例 https://github.com/acme/app）で入力してください。",
+  "input.invalidOrg": "Org は URL（例 https://github.com/acme）で入力してください。",
+  "input.invalidHost": "ホスト名として正しくありません。",
   "input.contextRepoRequired": "コンテキストリポジトリを入力してください。",
   "input.invalidRef": "ref はブランチ名かタグ名で入力してください。",
   "input.invalidLabel": 'ラベルに " と \\ は使えません。',
@@ -355,10 +366,22 @@ const ja: MessageDictionary = {
   "input.invalid": "入力が正しくありません。",
   "input.secretName": "秘密情報の名前は英数字と . _ - だけで書いてください。",
   "input.platformName":
-    "社内 PF の名前は、英小文字・数字・ハイフンで書いてください（先頭は英小文字か数字）。",
+    "組織内 PF の名前は、英小文字・数字・ハイフンで書いてください（先頭は英小文字か数字）。",
   "input.allowRule":
     "使える API は「メソッド パス」で書いてください（例 GET /api/v1/tickets/**。メソッドは GET・POST・PUT・PATCH・DELETE・HEAD）。",
   "input.invalidUrl": "URL（http または https）を書いてください。",
+  "input.reasoningEffort":
+    "リーズニングエフォートは、英小文字で書いてください（例：low・medium・high・xhigh）。",
+  "input.providerName": "接続先の名前は、英数字・_・- で書いてください。",
+  "config.providerMissing": ({ id }) => `providers に "${id}" がありません。`,
+  "config.hostAddress":
+    "gateway.host_address は、ホスト名か IP アドレス（または host-gateway）で書いてください。",
+  "config.npmVersion":
+    "image_build.npm_version は、版（例 11、11.6.2）か latest で書いてください。",
+  "config.npmConfigKey":
+    "image_build.npm_config の項目は、npm の設定の名前と、1行の値で書いてください。",
+  "config.npmConfigSecret":
+    "image_build.npm_config には、認証の項目（_authToken など）は書けません（イメージに残るため）。認証は image_build.npm_token か、対象リポジトリの設定で行ってください。",
   "input.channelRequired": "チャンネルを書いてください。",
   "notify.failed": ({ project, detail }, text) =>
     `プロジェクト「${project}」の Slack の通知を送れませんでした：${text(detail)}（タスクは止めていません）`,
@@ -425,10 +448,10 @@ const ja: MessageDictionary = {
     `タスクに、レビューする PR（${repo} の PR の URL）がありません。`,
   "github.ghMissing":
     "gh コマンドが見つかりません。GitHub CLI をインストールし、gh auth login でログインしてください。",
-  "github.accountRequired": ({ project }) =>
-    `プロジェクト「${project}」の GitHub アカウントが選ばれていません。プロジェクトの設定で選んでから再開してください。`,
-  "github.accountUnavailable": ({ account }) =>
-    `GitHub のアカウント「${account}」で gh にログインしていません。gh auth login でログインするか、プロジェクトの設定でアカウントを選び直してください。`,
+  "github.accountRequired": ({ project, host }) =>
+    `プロジェクト「${project}」の ${host} の GitHub アカウントが選ばれていません。プロジェクトの設定で選んでから再開してください。`,
+  "github.accountUnavailable": ({ account, host }) =>
+    `${host} のアカウント「${account}」で gh にログインしていません。gh auth login --hostname ${host} でログインするか、プロジェクトの設定でアカウントを選び直してください。`,
   "github.ghFailed": ({ detail }) => `gh コマンドが失敗しました：${detail}`,
   "review.verdictMissing": "判定がありません。",
   "review.unreadable": "最終レビューの出力から、判定を読み取れませんでした。",
@@ -497,11 +520,11 @@ const ja: MessageDictionary = {
   "config.bedrockEndpointCodexOnly":
     "Bedrock の接続先（endpoint）は Codex だけで選べます。Claude Code では書かないでください。",
   "config.platformAuth":
-    "社内 PF の認証には、secret（固定のキー）か token（トークンの取得）のどちらか一方を書いてください。",
+    "組織内 PF の認証には、secret（固定のキー）か token（トークンの取得）のどちらか一方を書いてください。",
   "gateway.mcpUnavailable": ({ name, detail }, text) =>
     `ホストの MCP サーバー「${name}」の準備ができません（起動・認証に失敗）：${text(detail)}。1分ごとに起動し直します。`,
   "gateway.platformUnavailable": ({ name, detail }, text) =>
-    `社内 PF「${name}」の認証情報を用意できません：${text(detail)}（ほかの PF は使えます）`,
+    `組織内 PF「${name}」の認証情報を用意できません：${text(detail)}（ほかの PF は使えます）`,
   "config.gatewayCodexBedrockOnly":
     "ゲートウェイ経由（via_gateway）は、いまは Codex × Bedrock（auth.mode: bedrock）だけで使えます。",
   "gateway.unavailable":
@@ -564,7 +587,9 @@ const en: MessageDictionary = {
   "input.tooManyRemarks": "Enter up to 50 comments at a time.",
   "input.nameRequired": "Enter a name.",
   "input.invalidGithubName": "This is not a valid GitHub name.",
-  "input.invalidRepo": "Enter the repository as owner/name.",
+  "input.invalidRepo": "Enter the repository as a URL (e.g. https://github.com/acme/app).",
+  "input.invalidOrg": "Enter the org as a URL (e.g. https://github.com/acme).",
+  "input.invalidHost": "This is not a valid host name.",
   "input.contextRepoRequired": "Enter the context repository.",
   "input.invalidRef": "Enter a branch or tag name as the ref.",
   "input.invalidLabel": "A label can't contain \" or \\.",
@@ -590,6 +615,17 @@ const en: MessageDictionary = {
   "input.allowRule":
     'Write an allowed API as "METHOD path" (e.g. GET /api/v1/tickets/**; methods: GET, POST, PUT, PATCH, DELETE, HEAD).',
   "input.invalidUrl": "Write a URL (http or https).",
+  "input.reasoningEffort":
+    "Write the reasoning effort in lowercase letters (e.g. low, medium, high, xhigh).",
+  "input.providerName": "Use only letters, digits, _ and - in provider names.",
+  "config.providerMissing": ({ id }) => `"${id}" is not in providers.`,
+  "config.hostAddress":
+    "Write gateway.host_address as a host name or IP address (or host-gateway).",
+  "config.npmVersion": "Write image_build.npm_version as a version (e.g. 11, 11.6.2) or latest.",
+  "config.npmConfigKey":
+    "Write each image_build.npm_config item as an npm config name and a one-line value.",
+  "config.npmConfigSecret":
+    "image_build.npm_config can't contain authentication items (such as _authToken), because they would stay in the image. Use image_build.npm_token or the target repository's settings.",
   "input.channelRequired": "Write a channel.",
   "notify.failed": ({ project, detail }, text) =>
     `Could not send the Slack notification for the project "${project}": ${text(detail)} (tasks keep running)`,
@@ -658,10 +694,10 @@ const en: MessageDictionary = {
     `The task has no PR to review (a URL of a PR in ${repo}).`,
   "github.ghMissing":
     "The gh command was not found. Install GitHub CLI and sign in with gh auth login.",
-  "github.accountRequired": ({ project }) =>
-    `No GitHub account is chosen for the project "${project}". Choose one in the project settings, then resume.`,
-  "github.accountUnavailable": ({ account }) =>
-    `The GitHub account "${account}" is not signed in to gh. Sign in with gh auth login, or choose another account in the project settings.`,
+  "github.accountRequired": ({ project, host }) =>
+    `No GitHub account for ${host} is chosen for the project "${project}". Choose one in the project settings, then resume.`,
+  "github.accountUnavailable": ({ account, host }) =>
+    `The account "${account}" on ${host} is not signed in to gh. Sign in with gh auth login --hostname ${host}, or choose another account in the project settings.`,
   "github.ghFailed": ({ detail }) => `The gh command failed: ${detail}`,
   "review.verdictMissing": "No verdict was given.",
   "review.unreadable": "Could not read the verdicts from the final review output.",

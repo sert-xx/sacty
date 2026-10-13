@@ -25,7 +25,7 @@ import type { AgentExecutor } from "./agents/docker.js";
 import type { Invocation } from "./agents/invocation.js";
 import type { AgentOutcome } from "./agents/parse.js";
 import { DockerTestRunner, type TestRunner, type TestRunResult } from "./agents/test-runner.js";
-import { type AgentConfig, type ConfigResult, loadConfig } from "./config.js";
+import { type AgentConfig, type ConfigResult, loadConfig, type SactyConfig } from "./config.js";
 import type { ContextFetcher, ContextRef } from "./context.js";
 import { MessageError } from "./errors.js";
 import type { GitHubAuth } from "./gh.js";
@@ -79,6 +79,7 @@ const configOf =
       guardianAgent: a,
       budgetPerTaskUsd,
       gatewayRetry: { maxAttempts: 8, maxWaitMs: 600_000 },
+      hostAddress: "host-gateway",
       imageBuild: {},
       platforms,
       hostMcp,
@@ -89,13 +90,18 @@ const configOf =
 class FakeGitHub implements GitHubAuth {
   requested: string[] = [];
   constructor(private readonly tokens: Record<string, string> = { me: "ghp_secret" }) {}
+  /** github.com のアカウントは名前だけ、ほかのホストは「ホスト/名前」で持つ。 */
   async accounts() {
-    return Object.keys(this.tokens).map((login) => ({ login, active: login === "me" }));
+    return Object.keys(this.tokens).map((key) => {
+      const [host, login] = key.includes("/") ? key.split("/") : ["github.com", key];
+      return { host: host ?? "", login: login ?? "", active: login === "me" };
+    });
   }
-  async token(account: string) {
-    this.requested.push(account);
-    const token = this.tokens[account];
-    if (!token) throw new MessageError(message("github.accountUnavailable", { account }));
+  async token(host: string, account: string) {
+    const key = host === "github.com" ? account : `${host}/${account}`;
+    this.requested.push(key);
+    const token = this.tokens[key];
+    if (!token) throw new MessageError(message("github.accountUnavailable", { account, host }));
     return token;
   }
 }
@@ -108,8 +114,8 @@ function projectsWithAccount(): MemoryProjectStore {
   const projects = new MemoryProjectStore();
   projects.put("default", {
     name: "デフォルト",
-    targets: [{ scope: "repo", target: "acme/app" }],
-    githubAccount: "me",
+    targets: [{ scope: "repo", target: "https://github.com/acme/app" }],
+    githubAccounts: { "github.com": "me" },
   });
   return projects;
 }
@@ -300,7 +306,7 @@ class FakePulls implements PullRequests {
     if (this.commentFail) throw new Error(this.commentFail);
     this.issueComments.push(input);
     return {
-      url: `https://github.com/${input.repo}/issues/${input.number}#issuecomment-${this.issueComments.length}`,
+      url: `${input.repo}/issues/${input.number}#issuecomment-${this.issueComments.length}`,
     };
   }
   async findIssueComment(input: { repo: string; number: number; marker: string }) {
@@ -310,17 +316,17 @@ class FakePulls implements PullRequests {
     return index < 0
       ? undefined
       : {
-          url: `https://github.com/${input.repo}/issues/${input.number}#issuecomment-${index + 1}`,
+          url: `${input.repo}/issues/${input.number}#issuecomment-${index + 1}`,
         };
   }
   /** Org（ユーザー）ごとのリポジトリ（PBI-25）。 */
   ownerRepos: Record<string, string[]> = {};
   repositoriesFail?: string;
-  repositoryRequests: { owner: string; token: string }[] = [];
-  async repositories(input: { owner: string; token: string }) {
+  repositoryRequests: { org: string; token: string }[] = [];
+  async repositories(input: { org: string; token: string }) {
     this.repositoryRequests.push(input);
     if (this.repositoriesFail) throw new Error(this.repositoriesFail);
-    return this.ownerRepos[input.owner] ?? [];
+    return this.ownerRepos[input.org] ?? [];
   }
   /** レビューの対象の PR と、投稿したレビュー（PBI-19）。 */
   prInfo = {
@@ -370,7 +376,7 @@ class FakePulls implements PullRequests {
     }
     this.reviews.push(input);
     return {
-      url: `https://github.com/${input.repo}/pull/${input.number}#pullrequestreview-${this.reviews.length}`,
+      url: `${input.repo}/pull/${input.number}#pullrequestreview-${this.reviews.length}`,
     };
   }
   findReviewAccounts: string[] = [];
@@ -382,7 +388,7 @@ class FakePulls implements PullRequests {
     return index < 0
       ? undefined
       : {
-          url: `https://github.com/${input.repo}/pull/${input.number}#pullrequestreview-${index + 1}`,
+          url: `${input.repo}/pull/${input.number}#pullrequestreview-${index + 1}`,
         };
   }
   /** 返す PR へのフィードバック（PBI-14b）。 */
@@ -441,23 +447,22 @@ class FakeExecutor implements AgentExecutor {
   private held = new Map<string, (outcome: AgentOutcome) => void>();
   constructor(private readonly outcomes: (AgentOutcome | typeof HOLD)[]) {}
   /** 実行ごとに、作業領域を読み取り専用で渡したか。 */
-  readOnly: boolean[] = [];
+  /** 実行ごとに、使い捨ての写し（実装の作業領域ではない）を渡したか。 */
+  scratch: boolean[] = [];
   /** 実行ごとに、作業領域にあったファイル（実行の後に消されるので、実行の間に読んでおく）。 */
   workspaceFiles: string[][] = [];
   async run({
     runId,
     invocation,
     workspaceDir,
-    readOnlyWorkspace,
   }: {
     runId: string;
     invocation: Invocation;
     workspaceDir: string;
-    readOnlyWorkspace?: boolean;
   }): Promise<AgentOutcome> {
     this.calls.push(invocation);
     this.dirs.push(workspaceDir);
-    this.readOnly.push(readOnlyWorkspace === true);
+    this.scratch.push(/[\\/]_(?:snapshots|guardian)[\\/]/.test(workspaceDir));
     this.workspaceFiles.push(existsSync(workspaceDir) ? readdirSync(workspaceDir).sort() : []);
     // 渡されたコンテキスト（実行の後に消されるので、実行の間に読んでおく）
     const seed = invocation.stage?.seedDir;
@@ -605,6 +610,58 @@ describe("作業履歴", () => {
 });
 
 describe("工程の実行と費用", () => {
+  it("工程・オーケストレーターごとに選んだエージェントで実行し、その単価で費用を記録する（PBI-40）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const cheap = agent({
+      id: "luna-low",
+      price_per_mtok_usd: { input: 1, cached_input: 0.1, cache_write: 0, output: 1 },
+      price: { input: 1, cachedInput: 0.1, cacheWrite: 0, output: 1 },
+    });
+    const strong = agent({
+      id: "sol-high",
+      price_per_mtok_usd: { input: 1, cached_input: 0.1, cache_write: 0, output: 10 },
+      price: { input: 1, cachedInput: 0.1, cacheWrite: 0, output: 10 },
+    });
+    const orchestrator = agent({
+      id: "orchestrator",
+      price_per_mtok_usd: { input: 0, cached_input: 0, cache_write: 0, output: 0 },
+      price: { input: 0, cachedInput: 0, cacheWrite: 0, output: 0 },
+    });
+    const plan = {
+      kind: "completed" as const,
+      output:
+        '```json\n{"sacty-steps": {"plan": "skip-design", "reason": "小さい", "testCommand": "npm test"}}\n```',
+      usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 100 },
+    };
+    const { service } = makeService(activity, [plan, completed(20_000), completed(20_000)], {
+      realPlanner: true,
+      config: () => ({
+        ok: true,
+        config: {
+          ...(configOf(cheap)() as { ok: true; config: SactyConfig }).config,
+          stepAgents: { orchestrator, requirements: strong },
+        },
+      }),
+    });
+    const task = service.createTask({ projectId: "default", title: "決済API" });
+    await service.runNext(task.id);
+    await service.runNext(task.id);
+    const events = service.get(task.id)?.activity ?? [];
+    const chosen = events.find((e) => e.type === "StepsChosen");
+    expect(chosen?.type === "StepsChosen" && chosen.payload.agentId).toBe("orchestrator");
+    // 前段の調査は default_agent、要求要件は step_agents の sol-high
+    const started = events
+      .filter((e) => e.type === "AgentRunStarted")
+      .map((e) => (e.type === "AgentRunStarted" ? `${e.payload.step}:${e.payload.agentId}` : ""));
+    expect(started).toEqual(["investigate:luna-low", "requirements:sol-high"]);
+    // 要求要件の費用は sol-high の単価（出力 20,000 × $10/100万 = $0.2）
+    const done = events.find(
+      (e) => e.type === "AgentRunCompleted" && e.payload.step === "requirements",
+    );
+    expect(done?.type === "AgentRunCompleted" && done.payload.costUsd).toBe(0.2);
+    activity.close();
+  });
+
   it("承認待ち・一時停止・完了を通知し、人間が自分で止めたときは通知しない。送れなかったら画面に出す（PBI-38）", async () => {
     const activity = new SqliteActivityStore(dbPath);
     const sent: string[] = [];
@@ -672,13 +729,13 @@ describe("工程の実行と費用", () => {
     activity.close();
   });
 
-  it("社内 PF があれば、工程エージェントに PF の URL（実行のトークンを含む）と使える API を渡し、認証情報は渡さない（PBI-35）", async () => {
+  it("組織内 PF があれば、工程エージェントに PF の URL（実行のトークンを含む）と使える API を渡し、認証情報は渡さない（PBI-35）", async () => {
     const activity = new SqliteActivityStore(dbPath);
     const ticket = toPlatform(
       "ticket",
       PlatformFile.parse({
         upstream: "https://ticket.internal.example.com",
-        description: "社内のチケット管理",
+        description: "チケット管理",
         auth: { header: "X-Internal-Token", secret: "ticket-token" },
         allow: ["GET /api/v1/tickets/**"],
       }),
@@ -713,7 +770,7 @@ describe("工程の実行と費用", () => {
     expect(call?.hostGateway).toBe(true);
     expect(Object.values(call?.env ?? {})).not.toContain("tkt-secret");
     const prompt = call?.command.join(" ") ?? "";
-    expect(prompt).toContain("- ticket：社内のチケット管理（$SACTY_PF_URL/ticket）");
+    expect(prompt).toContain("- ticket：チケット管理（$SACTY_PF_URL/ticket）");
     expect(prompt).toContain("  - GET /api/v1/tickets/**");
     expect(closed).toEqual(["sacty-gw-run"]);
     // 認証情報を用意できない PF は、画面の状態に知らせる（工程は止めない）
@@ -765,7 +822,7 @@ describe("工程の実行と費用", () => {
 
   it("ゲートウェイ経由のエージェントは、API キーをゲートウェイに渡し、コンテナには実行ごとのトークンだけを渡す（PBI-37）", async () => {
     const activity = new SqliteActivityStore(dbPath);
-    const registered: { origin: string; apiKey: string; closed: boolean }[] = [];
+    const registered: { base: string; apiKey?: string; closed: boolean }[] = [];
     const gateway: NonNullable<ServiceDeps["gateway"]> = {
       containerOrigin: () => "http://host.docker.internal:5001",
       platformsUrl: (token) => `http://host.docker.internal:5001/r/${token}/pf`,
@@ -788,15 +845,25 @@ describe("工程の実行と費用", () => {
       auth: { mode: "bedrock", secret: "bedrock-api-key", region: "us-east-2", endpoint: "mantle" },
       via_gateway: true,
     });
+    // Rancher Desktop など、コンテナから見たホストのアドレスを設定で変えたとき（PBI-40）
+    const config = configOf(bedrock);
     const { service, executor } = makeService(activity, [completed(20_000)], {
-      config: configOf(bedrock),
+      config: () => {
+        const c = config();
+        return c.ok ? { ok: true, config: { ...c.config, hostAddress: "192.168.5.2" } } : c;
+      },
       secrets: { "bedrock-api-key": "ABSK-real-key" },
       gateway,
     });
     const task = service.createTask({ projectId: "default", title: "決済API" });
     await service.runNext(task.id);
+    expect(executor.calls[0]).toMatchObject({ hostGateway: true, hostAddress: "192.168.5.2" });
     expect(registered).toEqual([
-      { origin: "https://bedrock-mantle.us-east-2.api.aws", apiKey: "ABSK-real-key", closed: true },
+      {
+        base: "https://bedrock-mantle.us-east-2.api.aws/openai/v1",
+        apiKey: "ABSK-real-key",
+        closed: true,
+      },
     ]);
     const env = executor.calls[0]?.env ?? {};
     expect(env.AWS_BEARER_TOKEN_BEDROCK).toBe("sacty-gw-run-token");
@@ -1701,7 +1768,7 @@ describe("ゴールガーディアン：変更の申し出の判定（PBI-9）",
     // 工程の作業領域とは別の作業領域に、起点のコミットのコードを読み取り専用で渡す（PBI-16）
     expect(executor.dirs[2]).not.toBe(executor.dirs[1]);
     expect(executor.dirs[2]).toContain("_guardian");
-    expect(executor.readOnly[2]).toBe(true);
+    expect(executor.scratch[2]).toBe(true);
     expect(executor.workspaceFiles[2]).toEqual(["README.md"]);
     expect(guardian).toContain("起点のコミット（base123）のコードがあります");
     // コンテキスト（規約・スキル）は渡さない
@@ -2146,7 +2213,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       await service.runNext(id);
       expect(promptOf(executor, 0)).toContain("あなたはソフトウェア開発の調査エージェントです");
       expect(promptOf(executor, 0)).toContain("決済の再試行はどこで行っている？");
-      expect(executor.readOnly[0]).toBe(true);
+      expect(executor.scratch[0]).toBe(true);
       expect(executor.workspaceFiles[0]).toEqual(["README.md"]);
       expect(repos.snapshots).toHaveLength(1);
       expect(service.get(id)?.task.gate).toEqual({ step: "investigate", submission: 1 });
@@ -2176,12 +2243,12 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       });
       service.saveProject("default", {
         name: "デフォルト",
-        targets: [{ scope: "repo", target: "acme/app" }],
-        githubAccount: "me",
+        targets: [{ scope: "repo", target: "https://github.com/acme/app" }],
+        githubAccounts: { "github.com": "me" },
       });
       const [task] = service.importIssues([
         {
-          repo: "acme/app",
+          repo: "https://github.com/acme/app",
           number: 5,
           title: "再試行はどこ？",
           body: "",
@@ -2197,7 +2264,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       await service.runNext(id); // 二度は返さない
       expect(pulls.issueComments).toHaveLength(1);
       expect(pulls.issueComments[0]).toMatchObject({
-        repo: "acme/app",
+        repo: "https://github.com/acme/app",
         number: 5,
         token: "ghp_secret",
       });
@@ -2218,19 +2285,19 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       });
       service.saveProject("default", {
         name: "デフォルト",
-        targets: [{ scope: "repo", target: "acme/app" }],
-        githubAccount: "me",
+        targets: [{ scope: "repo", target: "https://github.com/acme/app" }],
+        githubAccounts: { "github.com": "me" },
       });
       // ほかのタスクの調査の結果は、このタスクのものとして使わない
       pulls.issueComments.push({
-        repo: "acme/app",
+        repo: "https://github.com/acme/app",
         token: "ghp_secret",
         number: 8,
         body: "<!-- sacty-investigation:other-task -->\n## sacty の調査の結果",
       });
       const [task] = service.importIssues([
         {
-          repo: "acme/app",
+          repo: "https://github.com/acme/app",
           number: 8,
           title: "調べて",
           body: "",
@@ -2272,12 +2339,12 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       });
       service.saveProject("default", {
         name: "デフォルト",
-        targets: [{ scope: "repo", target: "acme/app" }],
-        githubAccount: "me",
+        targets: [{ scope: "repo", target: "https://github.com/acme/app" }],
+        githubAccounts: { "github.com": "me" },
       });
       const [task] = service.importIssues([
         {
-          repo: "acme/app",
+          repo: "https://github.com/acme/app",
           number: 6,
           title: "調べて",
           body: "",
@@ -2311,12 +2378,12 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     const importReviewIssue = (service: TaskService, body: string) => {
       service.saveProject("default", {
         name: "デフォルト",
-        targets: [{ scope: "repo", target: "acme/app" }],
-        githubAccount: "me",
+        targets: [{ scope: "repo", target: "https://github.com/acme/app" }],
+        githubAccounts: { "github.com": "me" },
       });
       const [task] = service.importIssues([
         {
-          repo: "acme/app",
+          repo: "https://github.com/acme/app",
           number: 30,
           title: "この PR をレビューして",
           body,
@@ -2341,10 +2408,12 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       );
       await service.runNext(id);
       // 対象の PR を、プロジェクトのアカウントで確かめて記録する
-      expect(pulls.prInfoRequests).toEqual([{ repo: "acme/app", number: 12, token: "ghp_secret" }]);
+      expect(pulls.prInfoRequests).toEqual([
+        { repo: "https://github.com/acme/app", number: 12, token: "ghp_secret" },
+      ]);
       const task = service.get(id)?.task;
       expect(task?.reviewTarget).toMatchObject({
-        repo: "acme/app",
+        repo: "https://github.com/acme/app",
         number: 12,
         headCommit: "h".repeat(40),
         baseCommit: "b".repeat(40),
@@ -2356,7 +2425,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         { baseCommit: "b".repeat(40), headCommit: "h".repeat(40) },
       ]);
       expect(repos.snapshots.at(-1)?.baseCommit).toBe("h".repeat(40));
-      expect(executor.readOnly[0]).toBe(true);
+      expect(executor.scratch[0]).toBe(true);
       const prompt = promptOf(executor, 0);
       expect(prompt).toContain("あなたはソフトウェア開発のレビューエージェントです");
       expect(prompt).toContain("+export const retry = 3;");
@@ -2368,7 +2437,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       await service.runNext(id);
       expect(pulls.reviews).toHaveLength(1);
       expect(pulls.reviews[0]).toMatchObject({
-        repo: "acme/app",
+        repo: "https://github.com/acme/app",
         number: 12,
         token: "ghp_secret",
         commit: "h".repeat(40),
@@ -2486,7 +2555,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       const pulls = new FakePulls();
       // ほかのタスクのレビューは、このタスクのものとして使わない
       pulls.reviews.push({
-        repo: "acme/app",
+        repo: "https://github.com/acme/app",
         token: "ghp_secret",
         number: 12,
         commit: "h".repeat(40),
@@ -2552,7 +2621,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       expect(task?.status).toBe("paused");
       expect(task?.pausedMessage).toEqual({
         code: "review.pullRequestMissing",
-        params: { repo: "acme/app" },
+        params: { repo: "https://github.com/acme/app" },
       });
       expect(pulls.prInfoRequests).toHaveLength(0);
       expect(executor.calls).toHaveLength(0);
@@ -2600,7 +2669,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       await service.runNext(withPr);
       expect(promptOf(executor, 0)).toContain("- review：");
       expect(service.get(withPr)?.task.steps.map((st) => st.key)).toEqual(["review"]);
-      // PR の無いタスクでレビューを選んでも、選べない組み合わせとして標準の工程で進める
+      // PR の無いタスクでレビューを選んでも、選べない組み合わせとして止める（PBI-40）
       const { id } = service.createTask({
         projectId: "default",
         title: "レビューして",
@@ -2609,8 +2678,8 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       await service.runNext(id);
       expect(promptOf(executor, 2)).toContain("あなたはオーケストレーターです");
       expect(promptOf(executor, 2)).not.toContain("- review：");
-      expect(service.get(id)?.task.stepsChoice?.fallback).toBe(true);
-      expect(service.get(id)?.task.steps.map((st) => st.key)).toEqual([...STEP_PLANS.standard]);
+      expect(service.get(id)?.task.steps).toEqual([]);
+      expect(service.get(id)?.task.status).toBe("paused");
       activity.close();
     });
   });
@@ -2645,7 +2714,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       // ベースブランチとテストのコマンドも、リポジトリを読んで決めさせる（PBI-25）
       expect(prompt).toContain("testCommand");
       expect(prompt).toContain("既定のブランチ（main）");
-      expect(executor.readOnly[0]).toBe(true);
+      expect(executor.scratch[0]).toBe(true);
       expect(executor.workspaceFiles[0]).toEqual(["README.md"]);
       const chosen = service.get(id)?.activity.find((e) => e.type === "StepsChosen");
       expect(chosen?.actor).toBe("orchestrator");
@@ -2689,33 +2758,40 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       activity.close();
     });
 
-    it("選べない・読めない・実行に失敗したときは、標準の工程で進め、そのことを記録する", async () => {
+    it("選べない・読めない・実行に失敗したときは、標準の工程で代わりに進めず、理由を記録して止める。再開すると選び直す（PBI-40）", async () => {
       const activity = new SqliteActivityStore(dbPath);
-      const { service } = makeService(
+      const { service, executor } = makeService(
         activity,
-        [plan("everything"), { kind: "failed", reason: "error", message: "connection reset" }],
+        [
+          plan("everything"),
+          { kind: "failed", reason: "error", message: "connection reset" },
+          // 再開すると、工程の選択からやり直す
+          plan("investigate", "情報を求めている", {}),
+          out("# 調査の結果"),
+        ],
         { realPlanner: true },
       );
       const a = service.createTask({ projectId: "default", title: "A" });
       await service.runNext(a.id);
-      expect(service.get(a.id)?.task.stepsChoice).toEqual({
-        plan: "standard",
-        reason: {
-          code: "orchestrator.fallback",
-          params: { detail: { code: "orchestrator.unreadable" } },
-        },
-        fallback: true,
-      });
-      expect(service.get(a.id)?.task.steps.map((st) => st.key)).toEqual([...STEP_PLANS.standard]);
-      // 標準の工程は実装を含むが、テストのコマンドが分からないので、費用をかける前に止める（PBI-25）
+      // 標準の工程（設計・実装）には進めず、テストのコマンドが無いことでも止めない
+      expect(service.get(a.id)?.task.steps).toEqual([]);
       expect(service.get(a.id)?.task.status).toBe("paused");
-      expect(service.get(a.id)?.task.pausedMessage).toEqual({
-        code: "orchestrator.testCommandUnknown",
-      });
-      const b = service.createTask({ projectId: "default", title: "B" });
+      expect(service.get(a.id)?.task.pausedReason).toBe("error");
+      expect(ja(service.get(a.id)?.task.pausedMessage)).toBe(
+        "オーケストレーターを実行できませんでした：オーケストレーターの出力から、選んだ工程を読み取れませんでした。再開すると、工程の選択からやり直します。",
+      );
+      expect(service.get(a.id)?.activity.map((e) => e.type)).toContain("OrchestratorFailed");
+
+      const b = service.createTask({ projectId: "default", title: "B の調査" });
       await service.runNext(b.id);
-      expect(ja(service.get(b.id)?.task.stepsChoice?.reason)).toContain("connection reset");
-      expect(service.get(b.id)?.task.steps.map((st) => st.key)).toEqual([...STEP_PLANS.standard]);
+      expect(service.get(b.id)?.task.steps).toEqual([]);
+      expect(ja(service.get(b.id)?.task.pausedMessage)).toContain("connection reset");
+      // 再開すると、選び直して調査だけで進む
+      service.resume(b.id, {});
+      await service.runNext(b.id);
+      expect(promptOf(executor, 2)).toContain("あなたはオーケストレーターです");
+      expect(service.get(b.id)?.task.steps.map((st) => st.key)).toEqual(["investigate"]);
+      expect(service.get(b.id)?.task.pausedMessage).toBeUndefined();
       activity.close();
     });
 
@@ -3202,7 +3278,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     expect(pulls.calls).toHaveLength(1);
     const call = pulls.calls[0];
     expect(call).toMatchObject({
-      repo: "acme/app",
+      repo: "https://github.com/acme/app",
       token: "ghp_secret",
       branch: `sacty/task-${id.slice(0, 8)}`,
       baseBranch: "main",
@@ -3249,7 +3325,9 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     const { activity, service, id } = await toDeliverableGate([], { pulls });
     // 開いたままなら何も記録しない
     await service.checkPullRequests();
-    expect(pulls.checked).toEqual([{ repo: "acme/app", token: "ghp_secret", number: 7 }]);
+    expect(pulls.checked).toEqual([
+      { repo: "https://github.com/acme/app", token: "ghp_secret", number: 7 },
+    ]);
     expect(types(service, id).at(-1)).toBe("StepSubmitted");
 
     // 確かめられなければ（ネットワークなど）、何も記録せずに次の確認でやり直す
@@ -3440,7 +3518,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       expect(prompt).toContain("承認済みの要求要件");
       expect(prompt).not.toContain("タスクの本文");
       // 実装で直せるかを判断するので、実装後のコードを読み取り専用で渡す（PBI-16）
-      expect(executor.readOnly[before]).toBe(true);
+      expect(executor.scratch[before]).toBe(true);
       expect(executor.workspaceFiles[before]).toEqual(["IMPLEMENTED.md"]);
       const task = service.get(id)?.task;
       expect(task?.status).toBe("queued");
@@ -3596,7 +3674,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     const index = executor.calls.length - 1; // 最終レビュー
     expect(promptOf(executor, index)).toContain("sacty-final-review");
     expect(promptOf(executor, index)).toContain("実装後のコード");
-    expect(executor.readOnly[index]).toBe(true);
+    expect(executor.scratch[index]).toBe(true);
     expect(executor.workspaceFiles[index]).toEqual(["IMPLEMENTED.md"]);
     // 実装の作業領域そのものではなく、写しを渡し、終わったら消す
     expect(repos.workingCopies.at(-1)?.dir).toBe(repos.prepared[0]?.dir);
@@ -3621,14 +3699,14 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     activity.close();
   });
 
-  it("要求要件・設計は、起点のコミットのコードを実行ごとのディレクトリに書き出して読み取り専用で渡し、実装は clone を渡す（PBI-15）", async () => {
+  it("要求要件・設計は、起点のコミットのコードを実行ごとの使い捨ての写しで渡し、実装は clone を渡す（PBI-15・PBI-40）", async () => {
     const { activity, service, executor, repos, id } = await toImplement([implement("# v1")]);
     await service.runNext(id); // 実装
     // 対象リポジトリは、要求要件の工程の前に1回だけ用意する
     expect(repos.prepared).toHaveLength(1);
     const repoDir = repos.prepared[0]?.dir;
-    // 要求要件（2回）と設計は、起点のコミットのコードを読み取り専用で、実装は clone を書き込みできる形で
-    expect(executor.readOnly).toEqual([true, true, true, false]);
+    // 要求要件（2回）と設計は、起点のコミットのコードの使い捨ての写しで、実装は clone で
+    expect(executor.scratch).toEqual([true, true, true, false]);
     expect(repos.snapshots.map((x) => x.baseCommit)).toEqual(["base123", "base123", "base123"]);
     expect(executor.workspaceFiles.slice(0, 3)).toEqual([
       ["README.md"],
@@ -3641,10 +3719,14 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       // 書き出したコードは、実行が終わったら消す
       expect(existsSync(used)).toBe(false);
     }
-    // 指示で、コードがあることと、読むだけであることを伝える
+    // 指示で、コードがあることと、使い捨ての写し（セットアップなどは実行できるが、変更は残らない）であること、
+    // コードを変更しないことを伝える
     for (const index of [0, 2]) {
       expect(promptOf(executor, index)).toContain("起点のコミット（base123）のコードがあります");
-      expect(promptOf(executor, index)).toContain("読み取り専用");
+      expect(promptOf(executor, index)).toContain("使い捨ての写しです");
+      expect(promptOf(executor, index)).toContain("セットアップ");
+      expect(promptOf(executor, index)).toContain("コードの変更（実装）はしないでください");
+      expect(promptOf(executor, index)).not.toContain("読み取り専用");
     }
     activity.close();
   });
@@ -3657,7 +3739,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     service.requestChanges(id, { step: "pr", submission: 1, target: "design", comments: ["観点"] });
     const before = executor.calls.length;
     await service.runNext(id); // 設計のやり直し
-    expect(executor.readOnly[before]).toBe(true);
+    expect(executor.scratch[before]).toBe(true);
     expect(executor.dirs[before]).not.toBe(repoDir);
     expect(executor.workspaceFiles[before]).toEqual(["README.md"]);
     expect(repos.snapshots.at(-1)?.baseCommit).toBe("base123");
@@ -3679,7 +3761,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
               title: "実装だけ",
               body: "",
               start: "sacty",
-              repo: "acme/app",
+              repo: "https://github.com/acme/app",
               budgetCapUsd: 1,
             },
           },
@@ -3694,7 +3776,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     expect(repos.prepared).toHaveLength(1);
     // 実装の工程は clone を書き込みできる形で使う
     expect(executor.dirs[0]).toBe(repos.prepared[0]?.dir);
-    expect(executor.readOnly).toEqual([false]);
+    expect(executor.scratch).toEqual([false]);
     activity.close();
   });
 
@@ -3747,7 +3829,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     const task = service.get("t-old")?.task;
     // オーケストレーターが決めたテストのコマンドで検証し、記録した URL のリポジトリ（acme/app）に PR を作る
     expect(tests.calls.map((c) => c.command)).toEqual(["npm test"]);
-    expect(pulls.calls[0]?.repo).toBe("acme/app");
+    expect(pulls.calls[0]?.repo).toBe("https://github.com/acme/app");
     expect(task?.gate).toEqual({ step: "pr", submission: 1 });
     expect(task?.pausedMessage).toBeUndefined();
     activity.close();
@@ -3898,7 +3980,9 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
 
     const cancelled = await service.cancel(id);
     expect(cancelled.status).toBe("cancelled");
-    expect(pulls.closed).toEqual([{ repo: "acme/app", token: "ghp_secret", number: 7 }]);
+    expect(pulls.closed).toEqual([
+      { repo: "https://github.com/acme/app", token: "ghp_secret", number: 7 },
+    ]);
     expect(repos.deleted).toEqual([`sacty/task-${id.slice(0, 8)}`]);
     expect(existsSync(join(dir, "workspaces", id))).toBe(false);
     expect(existsSync(join(dir, "workspaces", "_git", `${id}.git`))).toBe(false);
@@ -3993,7 +4077,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     const pulls = new FakePulls();
     const projects = projectsWithAccount();
     const { activity, service, id } = await toDeliverableGate([], { pulls, projects });
-    expect(service.get(id)?.task.pullRequest?.repo).toBe("acme/app");
+    expect(service.get(id)?.task.pullRequest?.repo).toBe("https://github.com/acme/app");
     // プロジェクトのリポジトリの設定を変えてから中止した
     const project = projects.get("default");
     if (!project) throw new Error("unreachable");
@@ -4001,7 +4085,9 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       ...project,
     });
     await service.cancel(id);
-    expect(pulls.closed).toEqual([{ repo: "acme/app", token: "ghp_secret", number: 7 }]);
+    expect(pulls.closed).toEqual([
+      { repo: "https://github.com/acme/app", token: "ghp_secret", number: 7 },
+    ]);
     activity.close();
   });
 
@@ -4135,15 +4221,15 @@ describe("プロジェクトの対象と、オーケストレーターが決め�
     projects.put("default", {
       name: "デフォルト",
       targets: [
-        { scope: "repo", target: "acme/app" },
-        { scope: "org", target: "tools" },
+        { scope: "repo", target: "https://github.com/acme/app" },
+        { scope: "org", target: "https://github.com/tools" },
       ],
-      githubAccount: "me",
+      githubAccounts: { "github.com": "me" },
     });
     projects.put("other", {
       name: "ほか",
-      targets: [{ scope: "repo", target: "tools/secret" }],
-      githubAccount: "me",
+      targets: [{ scope: "repo", target: "https://github.com/tools/secret" }],
+      githubAccounts: { "github.com": "me" },
     });
     return projects;
   };
@@ -4152,12 +4238,17 @@ describe("プロジェクトの対象と、オーケストレーターが決め�
     const activity = new SqliteActivityStore(dbPath);
     const { service, repos } = makeService(activity, [out("# 要求要件")], { projects: targets() });
     // リポジトリの対象は、登録した名前にそろえる
-    expect(service.createTask({ projectId: "default", title: "A", repo: "ACME/APP" }).repo).toBe(
-      "acme/app",
-    );
+    expect(
+      service.createTask({ projectId: "default", title: "A", repo: "https://github.com/ACME/APP" })
+        .repo,
+    ).toBe("https://github.com/acme/app");
     // Org の対象の中のリポジトリも選べる
-    const task = service.createTask({ projectId: "default", title: "B", repo: "tools/cli" });
-    expect(task.repo).toBe("tools/cli");
+    const task = service.createTask({
+      projectId: "default",
+      title: "B",
+      repo: "https://github.com/tools/cli",
+    });
+    expect(task.repo).toBe("https://github.com/tools/cli");
     await service.runNext(task.id);
     expect(repos.prepared[0]?.url).toBe("https://github.com/tools/cli.git");
     expect(repos.prepared[0]?.baseBranch).toBeUndefined();
@@ -4168,10 +4259,48 @@ describe("プロジェクトの対象と、オーケストレーターが決め�
     activity.close();
   });
 
+  it("GitHub Enterprise Server のリポジトリは、そのホストの、そのホストのアカウントのトークンで clone する（PBI-40）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const github = new FakeGitHub({ me: "ghp_secret", "ghe.example.co.jp/corp": "ghp_corp" });
+    const contexts = new FakeContexts({
+      "https://github.com/acme/ctx.git": { "rules.md": "# 規約" },
+    });
+    const { service, repos } = makeService(activity, [out("# 要求要件")], { github, contexts });
+    // 1つのプロジェクトで、GHE の対象と、github.com のコンテキストリポジトリを使う
+    const project = service.saveProject(undefined, {
+      name: "GHE",
+      targets: [{ scope: "repo", target: "https://ghe.example.co.jp/acme/app" }],
+      githubAccounts: { "ghe.example.co.jp": "corp", "github.com": "me" },
+      context: { repo: "https://github.com/acme/ctx.git" },
+    });
+    const task = service.createTask({ projectId: project.id, title: "A" });
+    expect(task.repo).toBe("https://ghe.example.co.jp/acme/app");
+    await service.runNext(task.id);
+    const header = (token: string) =>
+      `Authorization: Basic ${Buffer.from(`x-access-token:${token}`).toString("base64")}`;
+    expect(repos.prepared[0]).toMatchObject({
+      url: "https://ghe.example.co.jp/acme/app.git",
+      authEnv: {
+        GIT_CONFIG_KEY_0: "http.https://ghe.example.co.jp/.extraheader",
+        GIT_CONFIG_VALUE_0: header("ghp_corp"),
+      },
+    });
+    expect(contexts.fetched[0]?.authEnv).toMatchObject({
+      GIT_CONFIG_KEY_0: "http.https://github.com/.extraheader",
+      GIT_CONFIG_VALUE_0: header("ghp_secret"),
+    });
+    activity.close();
+  });
+
   it("対象の外・ほかのプロジェクトが担当するリポジトリや、選んでいない（対象が複数）ときは作らない", () => {
     const activity = new SqliteActivityStore(dbPath);
     const { service } = makeService(activity, [], { projects: targets() });
-    for (const repo of [undefined, "tools/secret", "other/app", "not a repo"]) {
+    for (const repo of [
+      undefined,
+      "https://github.com/tools/secret",
+      "https://github.com/other/app",
+      "not a repo",
+    ]) {
       expect(() =>
         service.createTask({ projectId: "default", title: "A", ...(repo ? { repo } : {}) }),
       ).toThrow(/対象リポジトリを、プロジェクト/);
@@ -4183,18 +4312,30 @@ describe("プロジェクトの対象と、オーケストレーターが決め�
   it("対象のリポジトリの候補は、リポジトリの対象と、gh で読んだ Org のリポジトリ（ほかのプロジェクトの担当を除く）", async () => {
     const activity = new SqliteActivityStore(dbPath);
     const pulls = new FakePulls();
-    pulls.ownerRepos = { tools: ["tools/cli", "tools/secret", "tools/web"] };
+    pulls.ownerRepos = {
+      "https://github.com/tools": [
+        "https://github.com/tools/cli",
+        "https://github.com/tools/secret",
+        "https://github.com/tools/web",
+      ],
+    };
     const { service } = makeService(activity, [], { projects: targets(), pulls });
     expect(await service.projectRepositories("default")).toEqual({
-      repositories: ["acme/app", "tools/cli", "tools/web"],
+      repositories: [
+        "https://github.com/acme/app",
+        "https://github.com/tools/cli",
+        "https://github.com/tools/web",
+      ],
       errors: [],
     });
-    expect(pulls.repositoryRequests).toEqual([{ owner: "tools", token: "ghp_secret" }]);
+    expect(pulls.repositoryRequests).toEqual([
+      { org: "https://github.com/tools", token: "ghp_secret" },
+    ]);
     // 読めなかった Org は、トークンを伏せた理由を返す（読めたものは返す）
     pulls.repositoriesFail = "404 Not Found ghp_secret";
     const failed = await service.projectRepositories("default");
-    expect(failed?.repositories).toEqual(["acme/app"]);
-    expect(failed?.errors[0]?.owner).toBe("tools");
+    expect(failed?.repositories).toEqual(["https://github.com/acme/app"]);
+    expect(failed?.errors[0]?.org).toBe("https://github.com/tools");
     expect(JSON.stringify(failed?.errors)).not.toContain("ghp_secret");
     expect(await service.projectRepositories("no-such")).toBeUndefined();
     activity.close();
@@ -4296,7 +4437,7 @@ describe("sacty の設定と、Issue・PR の取り込み（PBI-26）", () => {
   });
   const block = (b: Record<string, unknown>) => `\`\`\`json\n${JSON.stringify(b)}\n\`\`\``;
   const found = (number: number, labels: string[], pullRequest = false) => ({
-    repo: "acme/app",
+    repo: "https://github.com/acme/app",
     number,
     title: `${pullRequest ? "PR" : "Issue"} ${number}`,
     body: "本文",
@@ -4318,7 +4459,12 @@ describe("sacty の設定と、Issue・PR の取り込み（PBI-26）", () => {
     expect(service.saveSettings({ intakeLabel: "  ai-task " })).toEqual({ intakeLabel: "ai-task" });
     expect(service.projectsRevision()).not.toBe(before);
     expect(service.intakeSources()).toEqual([
-      { query: 'is:open repo:acme/app label:"ai-task"', account: "me", project: "デフォルト" },
+      {
+        host: "github.com",
+        query: 'is:open repo:acme/app label:"ai-task"',
+        account: "me",
+        project: "デフォルト",
+      },
     ]);
     // ラベルの大文字・小文字は区別しない。ほかのラベルは取り込まない
     expect(
@@ -4346,7 +4492,7 @@ describe("sacty の設定と、Issue・PR の取り込み（PBI-26）", () => {
     expect(task?.start).toBe("github_pull_request");
     expect(task?.source).toEqual({
       kind: "github_pull_request",
-      repo: "acme/app",
+      repo: "https://github.com/acme/app",
       number: 8,
       url: "https://github.com/acme/app/pull/8",
     });
@@ -4354,7 +4500,9 @@ describe("sacty の設定と、Issue・PR の取り込み（PBI-26）", () => {
     await service.runNext(id);
     // 本文に PR の URL が無くても、取り込んだ PR そのものをレビューの対象にする
     expect(promptOf(executor, 0)).toContain("- review：");
-    expect(pulls.prInfoRequests).toEqual([{ repo: "acme/app", number: 8, token: "ghp_secret" }]);
+    expect(pulls.prInfoRequests).toEqual([
+      { repo: "https://github.com/acme/app", number: 8, token: "ghp_secret" },
+    ]);
     await service.runNext(id);
     expect(pulls.reviews[0]?.number).toBe(8);
     activity.close();
@@ -4379,7 +4527,9 @@ describe("sacty の設定と、Issue・PR の取り込み（PBI-26）", () => {
     await service.runNext(id);
     service.approve(id, { step: "investigate", submission: 1 });
     await service.runNext(id);
-    expect(pulls.issueComments.map((c) => [c.repo, c.number])).toEqual([["acme/app", 9]]);
+    expect(pulls.issueComments.map((c) => [c.repo, c.number])).toEqual([
+      ["https://github.com/acme/app", 9],
+    ]);
     expect(service.get(id)?.task.issueComment).toBeDefined();
     activity.close();
   });
@@ -4406,7 +4556,7 @@ describe("プロジェクトと GitHub Issue の取り込み（PBI-5a）", () =>
     number,
     title,
     body: "Issue の本文",
-    url: `https://github.com/${repo}/issues/${number}`,
+    url: `${repo}/issues/${number}`,
     labels,
   });
 
@@ -4419,12 +4569,12 @@ describe("プロジェクトと GitHub Issue の取り込み（PBI-5a）", () =>
     const made = makeService(activity, outcomes, { projects, ...options });
     const pay = made.service.saveProject(undefined, {
       name: "決済",
-      githubAccount: "me",
-      targets: [{ scope: "org", target: "acme" }],
+      githubAccounts: { "github.com": "me" },
+      targets: [{ scope: "org", target: "https://github.com/acme" }],
     });
     const auth = made.service.saveProject(undefined, {
       name: "認証",
-      targets: [{ scope: "repo", target: "acme/auth" }],
+      targets: [{ scope: "repo", target: "https://github.com/acme/auth" }],
     });
     return { activity, ...made, pay, auth };
   }
@@ -4435,7 +4585,7 @@ describe("プロジェクトと GitHub Issue の取り込み（PBI-5a）", () =>
     expect(() =>
       service.saveProject(undefined, {
         name: "重複",
-        targets: [{ scope: "org", target: "ACME" }],
+        targets: [{ scope: "org", target: "https://github.com/ACME" }],
       }),
     ).toThrow(/プロジェクト「決済」に登録されています/);
     expect(() => service.saveProject("no-such", { name: "x" })).toThrow(/見つかりません/);
@@ -4444,11 +4594,17 @@ describe("プロジェクトと GitHub Issue の取り込み（PBI-5a）", () =>
 
   it("画面のタスクは、指定したプロジェクトに作る（無いプロジェクトは拒否する。PBI-4a）", () => {
     const { activity, service, pay, auth } = setup();
-    const a = service.createTask({ title: "A", projectId: pay.id, repo: "acme/payments" });
+    const a = service.createTask({
+      title: "A",
+      projectId: pay.id,
+      repo: "https://github.com/acme/payments",
+    });
     expect(a.projectId).toBe(pay.id);
-    expect(a.repo).toBe("acme/payments");
+    expect(a.repo).toBe("https://github.com/acme/payments");
     // 対象がリポジトリ1つだけなら、選ばなくてもそれが対象リポジトリになる（PBI-25）
-    expect(service.createTask({ projectId: auth.id, title: "B" }).repo).toBe("acme/auth");
+    expect(service.createTask({ projectId: auth.id, title: "B" }).repo).toBe(
+      "https://github.com/acme/auth",
+    );
     // 対象が無いプロジェクトには作れない（PBI-25）
     const empty = service.saveProject(undefined, { name: "空" });
     expect(() => service.createTask({ projectId: empty.id, title: "E" })).toThrow(
@@ -4471,7 +4627,10 @@ describe("プロジェクトと GitHub Issue の取り込み（PBI-5a）", () =>
   it("Org の設定画面に、ほかのプロジェクトが担当している除外リポジトリを出す", () => {
     const { activity, service, pay } = setup();
     expect(service.getProject(pay.id)?.exclusions).toEqual([
-      { org: "acme", repos: [{ repo: "acme/auth", projectName: "認証" }] },
+      {
+        org: "https://github.com/acme",
+        repos: [{ repo: "https://github.com/acme/auth", projectName: "認証" }],
+      },
     ]);
     activity.close();
   });
@@ -4481,19 +4640,24 @@ describe("プロジェクトと GitHub Issue の取り込み（PBI-5a）", () =>
     // 検索には、プロジェクトに選んだ gh のアカウントを使う（PBI-13）。選んでいなければアカウントは無い。
     // ラベルは、sacty 全体の設定にするまで（PBI-26）、すべての対象で sacty（PBI-25）
     expect(service.intakeSources()).toEqual([
-      { query: 'is:open org:acme label:"sacty"', account: "me", project: "決済" },
-      { query: 'is:open repo:acme/auth label:"sacty"', project: "認証" },
+      {
+        host: "github.com",
+        query: 'is:open org:acme label:"sacty"',
+        account: "me",
+        project: "決済",
+      },
+      { host: "github.com", query: 'is:open repo:acme/auth label:"sacty"', project: "認証" },
     ]);
     const created = service.importIssues([
-      issue("acme/payments", 1, ["sacty"], "冪等性キー"),
-      issue("acme/payments", 2, ["bug"]), // ラベルが違う
-      issue("acme/auth", 3, ["SACTY"]), // リポジトリ単位の担当（認証）が優先する
-      issue("other/repo", 5, ["sacty"]), // どのプロジェクトも担当していない
-      issue("acme/payments", 1, ["sacty"]), // 同じ取り込みの中の重複
+      issue("https://github.com/acme/payments", 1, ["sacty"], "冪等性キー"),
+      issue("https://github.com/acme/payments", 2, ["bug"]), // ラベルが違う
+      issue("https://github.com/acme/auth", 3, ["SACTY"]), // リポジトリ単位の担当（認証）が優先する
+      issue("https://github.com/other/repo", 5, ["sacty"]), // どのプロジェクトも担当していない
+      issue("https://github.com/acme/payments", 1, ["sacty"]), // 同じ取り込みの中の重複
     ]);
     expect(created.map((t) => [t.projectId, t.source?.repo, t.source?.number])).toEqual([
-      [pay.id, "acme/payments", 1],
-      [auth.id, "acme/auth", 3],
+      [pay.id, "https://github.com/acme/payments", 1],
+      [auth.id, "https://github.com/acme/auth", 3],
     ]);
     expect(created[0]).toMatchObject({
       title: "冪等性キー",
@@ -4503,17 +4667,21 @@ describe("プロジェクトと GitHub Issue の取り込み（PBI-5a）", () =>
     const activityEvent = service.get(created[0]?.id ?? "")?.activity[0];
     expect(activityEvent?.type === "TaskCreated" && activityEvent.payload.source).toEqual({
       kind: "github_issue",
-      repo: "acme/payments",
+      repo: "https://github.com/acme/payments",
       number: 1,
       url: "https://github.com/acme/payments/issues/1",
     });
     expect(activityEvent?.projectId).toBe(pay.id);
 
     // 次の取り込みでも、同じ Issue は取り込まない（大文字・小文字は区別しない）
-    expect(service.importIssues([issue("ACME/Payments", 1, ["sacty"])])).toEqual([]);
+    expect(service.importIssues([issue("https://github.com/ACME/Payments", 1, ["sacty"])])).toEqual(
+      [],
+    );
     // 担当の判定は取り込むたびに行う（設定の変更をすぐに反映する）
     service.saveProject(auth.id, { name: "認証", targets: [] });
-    expect(service.importIssues([issue("acme/auth", 6, ["sacty"])])[0]?.projectId).toBe(pay.id);
+    expect(
+      service.importIssues([issue("https://github.com/acme/auth", 6, ["sacty"])])[0]?.projectId,
+    ).toBe(pay.id);
     activity.close();
   });
 
@@ -4532,7 +4700,7 @@ describe("プロジェクトと GitHub Issue の取り込み（PBI-5a）", () =>
     const body = `${"a".repeat(10_000)}\n\n## 必須条件\n- 二重に処理しない`;
     const title = "t".repeat(250);
     const [task] = service.importIssues([
-      { ...issue("acme/payments", 12, ["sacty"]), body, title },
+      { ...issue("https://github.com/acme/payments", 12, ["sacty"]), body, title },
     ]);
     expect(task?.body).toBe(body);
     expect(task?.title).toBe(title);
@@ -4561,7 +4729,9 @@ describe("プロジェクトと GitHub Issue の取り込み（PBI-5a）", () =>
         ],
         { config: withGitHub },
       );
-      const [task] = made.service.importIssues([issue("acme/payments", 9, ["sacty"])]);
+      const [task] = made.service.importIssues([
+        issue("https://github.com/acme/payments", 9, ["sacty"]),
+      ]);
       return { ...made, id: task?.id ?? "" };
     })();
     await service.runNext(id);
@@ -4592,8 +4762,8 @@ describe("プロジェクトと GitHub Issue の取り込み（PBI-5a）", () =>
     // アクティブなアカウントは別のもの。プロジェクトに選んだアカウントのトークンを使う
     const github = new FakeGitHub({ me: "ghp_active", "side-job": "ghp_side" });
     const { activity, service, repos, pay } = setup(outcomes, { github });
-    service.saveProject(pay.id, { ...pay, githubAccount: "side-job" });
-    const [task] = service.importIssues([issue("acme/payments", 11, ["sacty"])]);
+    service.saveProject(pay.id, { ...pay, githubAccounts: { "github.com": "side-job" } });
+    const [task] = service.importIssues([issue("https://github.com/acme/payments", 11, ["sacty"])]);
     const id = task?.id ?? "";
     await service.runNext(id);
     service.approve(id, { step: "requirements", submission: 1 });
@@ -4625,9 +4795,9 @@ describe("プロジェクトと GitHub Issue の取り込み（PBI-5a）", () =>
     const github = new FakeGitHub({ me: "ghp_active" });
     const { activity, service, repos, pay } = setup(outcomes, { github });
     // インポートしたプロジェクトなど、アカウントを選んでいない
-    const { githubAccount: _, ...withoutAccount } = pay;
+    const { githubAccounts: _, ...withoutAccount } = pay;
     service.saveProject(pay.id, withoutAccount);
-    const [task] = service.importIssues([issue("acme/payments", 13, ["sacty"])]);
+    const [task] = service.importIssues([issue("https://github.com/acme/payments", 13, ["sacty"])]);
     const id = task?.id ?? "";
     // 対象リポジトリは要求要件の工程の前に用意するので、要求要件の前に止まる（PBI-15）
     await service.runNext(id);
@@ -4636,7 +4806,7 @@ describe("プロジェクトと GitHub Issue の取り込み（PBI-5a）", () =>
     // タスクの開始時に止まるので、エージェントの実行の失敗ではなく、一時停止の理由として記録する（PBI-15）
     expect(service.get(id)?.task.pausedMessage).toEqual({
       code: "github.accountRequired",
-      params: { project: "決済" },
+      params: { project: "決済", host: "github.com" },
     });
     activity.close();
   });
@@ -4655,8 +4825,13 @@ describe("プロジェクトと GitHub Issue の取り込み（PBI-5a）", () =>
       },
     ];
     const other = setup(outcomes, { github: new FakeGitHub({ me: "ghp_active" }) });
-    other.service.saveProject(other.pay.id, { ...other.pay, githubAccount: "side-job" });
-    const [t2] = other.service.importIssues([issue("acme/payments", 12, ["sacty"])]);
+    other.service.saveProject(other.pay.id, {
+      ...other.pay,
+      githubAccounts: { "github.com": "side-job" },
+    });
+    const [t2] = other.service.importIssues([
+      issue("https://github.com/acme/payments", 12, ["sacty"]),
+    ]);
     const id2 = t2?.id ?? "";
     // 対象リポジトリは要求要件の工程の前に用意するので、要求要件の前に止まる（PBI-15）
     await other.service.runNext(id2);
@@ -4664,7 +4839,7 @@ describe("プロジェクトと GitHub Issue の取り込み（PBI-5a）", () =>
     // タスクの開始時に止まるので、エージェントの実行の失敗ではなく、一時停止の理由として記録する（PBI-15）
     expect(other.service.get(id2)?.task.pausedMessage).toEqual({
       code: "github.accountUnavailable",
-      params: { account: "side-job" },
+      params: { account: "side-job", host: "github.com" },
     });
     expect(other.repos.prepared).toHaveLength(0);
     other.activity.close();
@@ -4678,7 +4853,7 @@ describe("プロジェクト定義のエクスポート・インポート（PBI-
     const { service } = makeService(activity, [], { projects });
     const pay = service.saveProject(undefined, {
       name: "決済",
-      targets: [{ scope: "org", target: "acme" }],
+      targets: [{ scope: "org", target: "https://github.com/acme" }],
     });
     const exported = service.exportProject(pay.id);
     expect(service.exportProject("no-such")).toBeUndefined();
@@ -4724,8 +4899,8 @@ describe("コンテキストリポジトリ（PBI-6a）", () => {
     });
     const project = service.saveProject(undefined, {
       name: "決済",
-      targets: [{ scope: "repo", target: "acme/payments" }],
-      githubAccount: "me",
+      targets: [{ scope: "repo", target: "https://github.com/acme/payments" }],
+      githubAccounts: { "github.com": "me" },
       context: { repo: "https://example.com/team.git" },
     });
     const { id } = service.createTask({ title: "A", projectId: project.id });
@@ -4754,8 +4929,8 @@ describe("コンテキストリポジトリ（PBI-6a）", () => {
     });
     const definition = {
       name: "決済",
-      targets: [{ scope: "repo" as const, target: "acme/payments" }],
-      githubAccount: "me",
+      targets: [{ scope: "repo" as const, target: "https://github.com/acme/payments" }],
+      githubAccounts: { "github.com": "me" },
     };
     const project = service.saveProject(undefined, {
       ...definition,
@@ -4785,8 +4960,8 @@ describe("コンテキストリポジトリ（PBI-6a）", () => {
     });
     const definition = {
       name: "決済",
-      targets: [{ scope: "repo" as const, target: "acme/payments" }],
-      githubAccount: "me",
+      targets: [{ scope: "repo" as const, target: "https://github.com/acme/payments" }],
+      githubAccounts: { "github.com": "me" },
     };
     const plain = service.saveProject(undefined, definition);
     const a = service.createTask({ title: "A", projectId: plain.id });
@@ -4800,7 +4975,7 @@ describe("コンテキストリポジトリ（PBI-6a）", () => {
     const withContext = service.saveProject(undefined, {
       ...definition,
       name: "決済2",
-      targets: [{ scope: "repo", target: "acme/other" }],
+      targets: [{ scope: "repo", target: "https://github.com/acme/other" }],
       context: { repo: "https://example.com/team.git" },
     });
     const b = service.createTask({ title: "B", projectId: withContext.id });
@@ -4820,8 +4995,8 @@ describe("コンテキストリポジトリ（PBI-6a）", () => {
     });
     const project = service.saveProject(undefined, {
       name: "決済",
-      targets: [{ scope: "repo", target: "acme/payments" }],
-      githubAccount: "me",
+      targets: [{ scope: "repo", target: "https://github.com/acme/payments" }],
+      githubAccounts: { "github.com": "me" },
       context: { repo: "https://example.com/missing.git" },
     });
     const { id } = service.createTask({ title: "A", projectId: project.id });
@@ -4870,8 +5045,8 @@ describe("コンテキストの取得の認証（PBI-13 レビュー指摘）", 
     const { service } = makeService(activity, [out("# 要求要件")], { contexts, github });
     const project = service.saveProject(undefined, {
       name: "副業",
-      targets: [{ scope: "repo", target: "side/app" }],
-      githubAccount: "side-job",
+      targets: [{ scope: "repo", target: "https://github.com/side/app" }],
+      githubAccounts: { "github.com": "side-job" },
       context: { repo: "https://github.com/acme/team-ctx.git" },
     });
     const { id } = service.createTask({ title: "A", projectId: project.id });
@@ -4899,7 +5074,7 @@ describe("コンテキストの取得の認証（PBI-13 レビュー指摘）", 
     const { service, executor } = makeService(activity, [out("# 要求要件")], { contexts });
     const unset = service.saveProject(undefined, {
       name: "未選択",
-      targets: [{ scope: "repo", target: "acme/unset" }],
+      targets: [{ scope: "repo", target: "https://github.com/acme/unset" }],
       context: { repo: "https://github.com/acme/ctx.git" },
     });
     const { id } = service.createTask({ title: "A", projectId: unset.id });
@@ -4910,14 +5085,14 @@ describe("コンテキストの取得の認証（PBI-13 レビュー指摘）", 
     const failed = service.get(id)?.activity.findLast((e) => e.type === "TaskPaused");
     expect(failed?.type === "TaskPaused" && failed.payload.message).toEqual({
       code: "github.accountRequired",
-      params: { project: "未選択" },
+      params: { project: "未選択", host: "github.com" },
     });
 
     contexts.fail = true;
     const chosen = service.saveProject(undefined, {
       name: "選択済み",
-      targets: [{ scope: "repo", target: "acme/chosen" }],
-      githubAccount: "me",
+      targets: [{ scope: "repo", target: "https://github.com/acme/chosen" }],
+      githubAccounts: { "github.com": "me" },
       context: { repo: "https://github.com/acme/private-ctx.git" },
     });
     const second = service.createTask({ title: "B", projectId: chosen.id });
@@ -4952,8 +5127,8 @@ describe("コンテキストの MCP サーバー（PBI-6b）", () => {
     });
     const project = service.saveProject(undefined, {
       name: "決済",
-      targets: [{ scope: "repo", target: "acme/payments" }],
-      githubAccount: "me",
+      targets: [{ scope: "repo", target: "https://github.com/acme/payments" }],
+      githubAccounts: { "github.com": "me" },
       context: { repo: "https://example.com/ctx.git" },
     });
     const { id } = service.createTask({ title: "A", projectId: project.id });
@@ -4976,8 +5151,8 @@ describe("コンテキストの MCP サーバー（PBI-6b）", () => {
     );
     const project = service.saveProject(undefined, {
       name: "決済",
-      targets: [{ scope: "repo", target: "acme/payments" }],
-      githubAccount: "me",
+      targets: [{ scope: "repo", target: "https://github.com/acme/payments" }],
+      githubAccounts: { "github.com": "me" },
       context: { repo: "https://example.com/ctx.git" },
     });
     const { id } = service.createTask({ title: "A", projectId: project.id });
@@ -5001,8 +5176,8 @@ describe("コンテキストの MCP サーバー（PBI-6b）", () => {
     });
     const project = service.saveProject(undefined, {
       name: "決済",
-      targets: [{ scope: "repo", target: "acme/payments" }],
-      githubAccount: "me",
+      targets: [{ scope: "repo", target: "https://github.com/acme/payments" }],
+      githubAccounts: { "github.com": "me" },
       context: { repo: "https://example.com/ctx.git" },
     });
     const { id } = service.createTask({ title: "A", projectId: project.id });
@@ -5111,8 +5286,8 @@ describe("API", () => {
     const body = await res.json();
     expect(body).toEqual({
       accounts: [
-        { login: "me", active: true },
-        { login: "side-job", active: false },
+        { host: "github.com", login: "me", active: true },
+        { host: "github.com", login: "side-job", active: false },
       ],
     });
     expect(JSON.stringify(body)).not.toContain("ghp_");
@@ -5178,15 +5353,18 @@ describe("API", () => {
     const app = createApp(service, token);
     const pay = service.saveProject(undefined, {
       name: "決済",
-      targets: [{ scope: "repo", target: "acme/payments" }],
+      targets: [{ scope: "repo", target: "https://github.com/acme/payments" }],
     });
     const res = await app.request(`/api/projects/${pay.id}/export`, { headers: auth });
     expect(res.status).toBe(200);
     const exported = await res.json();
     expect(exported).toMatchObject({
       sacty: "project",
-      version: 2,
-      project: { name: "決済", targets: [{ scope: "repo", target: "acme/payments" }] },
+      version: 3,
+      project: {
+        name: "決済",
+        targets: [{ scope: "repo", target: "https://github.com/acme/payments" }],
+      },
     });
     expect((await app.request("/api/projects/no-such/export", { headers: auth })).status).toBe(404);
 
@@ -5201,7 +5379,7 @@ describe("API", () => {
     expect(((await conflict.json()) as { messages: unknown[] }).messages).toEqual([
       {
         code: "project.targetTaken",
-        params: { scope: "repo", target: "acme/payments", project: "決済" },
+        params: { scope: "repo", target: "https://github.com/acme/payments", project: "決済" },
       },
     ]);
     expect((await post({ ...exported, extra: 1 })).status).toBe(400);
@@ -5305,7 +5483,7 @@ describe("タスク分割（PBI-27）", () => {
     // 分割のエージェントには、承認済みの要求要件・設計を読み取り専用で渡す
     expect(promptOf(executor, 2)).toContain("タスク分割エージェント");
     expect(promptOf(executor, 2)).toContain("# 設計");
-    expect(executor.readOnly[2]).toBe(true);
+    expect(executor.scratch[2]).toBe(true);
 
     const parent = service.get(id)?.task;
     expect(parent?.status).toBe("waiting_children");
@@ -5567,7 +5745,7 @@ describe("統合レビュー（PBI-31）", () => {
       expect.objectContaining({ branch: "main", authEnv: expect.any(Object) }),
     ]);
     const last = executor.calls.length - 1;
-    expect(executor.readOnly[last]).toBe(true);
+    expect(executor.scratch[last]).toBe(true);
     expect(executor.workspaceFiles[last]).toEqual(["README.md"]);
     expect(repos.snapshots.at(-1)?.baseCommit).toBe(repos.branchHead);
     const prompt = promptOf(executor, last);
@@ -5852,10 +6030,10 @@ describe("再現の工程（PBI-29）", () => {
     ]);
     expect(service.get(id)?.activity.some((e) => e.type === "StepSubmitted")).toBe(false);
     executor.calls.shift();
-    executor.readOnly.shift();
+    executor.scratch.shift();
     await service.runNext(id);
     // 再現は clone（書き込める作業領域）で、不具合を直さずにテストを書かせる
-    expect(executor.readOnly[0]).toBe(false);
+    expect(executor.scratch[0]).toBe(false);
     expect(promptOf(executor, 0)).toContain("再現エージェント");
     // 前段の調査の結果を、再現と実装に渡す
     expect(promptOf(executor, 0)).toContain("src/pay.ts:40 で冪等キーを見ていない");
@@ -5901,7 +6079,7 @@ describe("再現の工程（PBI-29）", () => {
     const finished = {
       ...done,
       steps: done?.steps.map((s) => ({ ...s, state: "done" })),
-      source: { kind: "github_issue", repo: "acme/app", number: 1, url: "u" },
+      source: { kind: "github_issue", repo: "https://github.com/acme/app", number: 1, url: "u" },
     } as Task;
     expect(awaitingIssueComment(finished)).toBe(false);
     expect(

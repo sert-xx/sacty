@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -38,20 +39,51 @@ export function npmrcContent(registry: string | undefined, token: string | undef
   return lines.length > 0 ? `${lines.join("\n")}\n` : "";
 }
 
+/**
+ * イメージの中の npm 全体の設定（global の npmrc。PBI-40）。npm_registry があれば、コンテナの中の npm の registry にも
+ * する（npm_config の registry があれば、そちらを優先）。トークンは含めない（イメージに残るため）。
+ */
+export function npmGlobalConfigContent(build: {
+  npmRegistry?: string;
+  npmConfig?: Record<string, string>;
+}): string {
+  const config = {
+    ...(build.npmRegistry ? { registry: build.npmRegistry } : {}),
+    ...build.npmConfig,
+  };
+  const lines = Object.entries(config).map(([key, value]) => `${key}=${value}`);
+  return lines.length > 0 ? `${lines.join("\n")}\n` : "";
+}
+
 /** `docker build` の引数。秘密情報の値は含めない（.npmrc はファイルの場所だけを渡す）。 */
 export function imageBuildArgs(input: {
   image: string;
   dockerDir: string;
   baseImage?: string;
   npmrcPath: string;
+  /** イメージに入れる npm の版（PBI-40）。 */
+  npmVersion?: string;
+  /** イメージの中の npm 全体の設定（npmrc）のファイル（PBI-40）。 */
+  npmConfigPath: string;
+  /**
+   * npm 全体の設定の中身のハッシュ。secret の中身はビルドのキャッシュの判定に入らないので、これを引数で渡し、
+   * 設定を変えたら作り直させる（PBI-40）。
+   */
+  npmConfigHash: string;
 }): string[] {
   return [
     "build",
     "-t",
     input.image,
     ...(input.baseImage ? ["--build-arg", `BASE_IMAGE=${input.baseImage}`] : []),
+    ...(input.npmVersion ? ["--build-arg", `NPM_VERSION=${input.npmVersion}`] : []),
+    "--build-arg",
+    `NPM_CONFIG_HASH=${input.npmConfigHash}`,
     "--secret",
     `id=npmrc,src=${input.npmrcPath}`,
+    // --build-context は Docker の構成によっては使えないので、認証の .npmrc と同じ secret の仕組みで渡す
+    "--secret",
+    `id=npmconfig,src=${input.npmConfigPath}`,
     input.dockerDir,
   ];
 }
@@ -83,12 +115,19 @@ export async function buildImage(deps: {
   try {
     const npmrcPath = join(dir, "npmrc");
     writeFileSync(npmrcPath, npmrcContent(deps.build.npmRegistry, token), { mode: 0o600 });
+    // イメージに残す npm 全体の設定は、認証の .npmrc とは別のディレクトリに置く（PBI-40）
+    const npmConfigPath = join(dir, "npmconfig");
+    const npmConfig = npmGlobalConfigContent(deps.build);
+    writeFileSync(npmConfigPath, npmConfig);
     const code = await deps.run(
       imageBuildArgs({
         image: deps.image,
         dockerDir: deps.dockerDir,
         ...(deps.build.baseImage ? { baseImage: deps.build.baseImage } : {}),
+        ...(deps.build.npmVersion ? { npmVersion: deps.build.npmVersion } : {}),
         npmrcPath,
+        npmConfigPath,
+        npmConfigHash: createHash("sha256").update(npmConfig).digest("hex").slice(0, 16),
       }),
     );
     return code === 0 ? undefined : imageBuildFailure(deps.build);

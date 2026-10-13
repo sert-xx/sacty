@@ -1,25 +1,22 @@
 import { z } from "zod";
+import {
+  OrgUrl,
+  orgUrlOf,
+  parseOrgUrl,
+  parseRepoUrl,
+  RepoUrl,
+  sameGitHubUrl,
+} from "./github-url.js";
 import { code, message } from "./message-code.js";
 import type { DaemonMessage } from "./messages.js";
 
-/** GitHub の名前（owner や repo）。大文字・小文字は区別しない。 */
-const Name = z
-  .string()
-  .trim()
-  .regex(/^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,99})$/, code("input.invalidGithubName"));
-/** owner/name の形のリポジトリ。 */
-export const RepoName = z
-  .string()
-  .trim()
-  .regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,99}\/[A-Za-z0-9._-]{1,100}$/, code("input.invalidRepo"));
-
 /**
- * プロジェクトの対象（PBI-25）。Org かリポジトリ。対象のリポジトリには画面からタスクを作れ、
- * 対象の Issue・PR は取り込んでタスクにする。
+ * プロジェクトの対象（PBI-25）。Org かリポジトリを、ホストを含めた URL で書く（GitHub Enterprise Server も同じ。PBI-40）。
+ * 対象のリポジトリには画面からタスクを作れ、対象の Issue・PR は取り込んでタスクにする。
  */
 export const ProjectTarget = z.discriminatedUnion("scope", [
-  z.object({ scope: z.literal("org"), target: Name }),
-  z.object({ scope: z.literal("repo"), target: RepoName }),
+  z.object({ scope: z.literal("org"), target: OrgUrl }),
+  z.object({ scope: z.literal("repo"), target: RepoUrl }),
 ]);
 export type ProjectTarget = z.infer<typeof ProjectTarget>;
 
@@ -114,14 +111,19 @@ export const ProjectDefinition = z.object({
   /** 人間の出番の通知先（PBI-38）。無ければ通知しない。 */
   notification: ProjectNotification.optional(),
   /**
-   * GitHub へのアクセスに使う、gh にログイン済みのアカウント（PBI-13）。GitHub にアクセスするには必ず選ぶ
+   * GitHub へのアクセスに使う、gh にログイン済みのアカウント（PBI-13）。ホストごとに選ぶ（PBI-40。例
+   * { "github.com": "me", "ghe.example.co.jp": "me-corp" }）。GitHub にアクセスするには、そのホストのものを必ず選ぶ
    * （gh のアクティブなアカウントは切り替わるので使わない）。個人の設定なので、エクスポートには含めない。
-   * インポートしたプロジェクトなど、選んでいないあいだは、GitHub へのアクセスを理由つきで止める。
+   * 選んでいないあいだは、そのホストへのアクセスを理由つきで止める。
    */
-  githubAccount: z
-    .string()
-    .trim()
-    .regex(/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/, code("input.invalidGithubName"))
+  githubAccounts: z
+    .record(
+      z.string().regex(/^[A-Za-z0-9.-]+(?::\d+)?$/, code("input.invalidHost")),
+      z
+        .string()
+        .trim()
+        .regex(/^[A-Za-z0-9](?:[A-Za-z0-9_-]{0,38})$/, code("input.invalidGithubName")),
+    )
     .optional(),
 });
 export type ProjectDefinition = z.infer<typeof ProjectDefinition>;
@@ -129,8 +131,12 @@ export type ProjectDefinitionInput = z.input<typeof ProjectDefinition>;
 
 export type Project = ProjectDefinition & { id: string; createdAt: string; updatedAt: string };
 
-const same = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
-const ownerOf = (repo: string) => repo.split("/")[0] ?? "";
+/** 対象の URL のホスト。 */
+export function targetHost(target: ProjectTarget): string {
+  return (
+    (target.scope === "org" ? parseOrgUrl(target.target) : parseRepoUrl(target.target))?.host ?? ""
+  );
+}
 
 /**
  * プロジェクトの定義が、ほかのプロジェクトや自分自身と重複していないかを調べる。
@@ -155,7 +161,7 @@ export function projectConflicts(
     }
     seen.add(key);
     const owner = others.find((p) =>
-      p.targets.some((t) => t.scope === target.scope && same(t.target, target.target)),
+      p.targets.some((t) => t.scope === target.scope && sameGitHubUrl(t.target, target.target)),
     );
     if (owner) {
       problems.push(
@@ -179,11 +185,13 @@ export function responsibleProject(
   repo: string,
 ): { project: Project; target: ProjectTarget } | undefined {
   for (const project of projects) {
-    const target = project.targets.find((t) => t.scope === "repo" && same(t.target, repo));
+    const target = project.targets.find((t) => t.scope === "repo" && sameGitHubUrl(t.target, repo));
     if (target) return { project, target };
   }
   for (const project of projects) {
-    const target = project.targets.find((t) => t.scope === "org" && same(t.target, ownerOf(repo)));
+    const target = project.targets.find(
+      (t) => t.scope === "org" && sameGitHubUrl(t.target, orgUrlOf(repo)),
+    );
     if (target) return { project, target };
   }
   return undefined;
@@ -199,13 +207,13 @@ export function excludedRepositories(
     .filter((p) => p.id !== projectId)
     .flatMap((p) =>
       p.targets
-        .filter((t) => t.scope === "repo" && same(ownerOf(t.target), org))
+        .filter((t) => t.scope === "repo" && sameGitHubUrl(orgUrlOf(t.target), org))
         .map((t) => ({ repo: t.target, projectName: p.name })),
     );
 }
 
 /** エクスポートの形式の版。形を変えたら上げ、インポートで古い版を読めるようにする。 */
-export const PROJECT_EXPORT_VERSION = 2;
+export const PROJECT_EXPORT_VERSION = 3;
 
 /** インポートでは知らない項目を拒否する（秘密情報などを、気づかずに取り込まないため）。 */
 const StrictProjectTarget = z.discriminatedUnion("scope", [

@@ -8,11 +8,12 @@ import {
   issueMessage,
   message,
   PricePerMTok,
+  parseRepoUrl,
   StepKey,
 } from "@sacty/core";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
-import { DEFAULT_RETRY_POLICY, type RetryPolicy } from "./gateway.js";
+import { DEFAULT_HOST_ADDRESS, DEFAULT_RETRY_POLICY, type RetryPolicy } from "./gateway.js";
 import { HostMcpFile, type HostMcpSpec, toHostMcp } from "./host-mcp.js";
 import { type Platform, PlatformFile, toPlatform } from "./platforms.js";
 import { SecretRef } from "./secrets.js";
@@ -44,7 +45,26 @@ const Auth = z.discriminatedUnion("mode", [
     endpoint: z.enum(["runtime", "mantle"]).optional(),
   }),
   z.object({ mode: z.literal("stub") }),
+  /**
+   * config.yaml の providers の接続先（PBI-40）。エージェントには provider: <名前> と書けばよい（この形に直す）。
+   */
+  z.object({ mode: z.literal("provider"), provider: z.string().min(1) }),
 ]);
+
+/**
+ * OpenAI 互換（Responses API）の接続先（PBI-40）。組織の AI gateway など。Codex の model_providers の base_url・
+ * env_key と同じく、base_url に API キーを Bearer で付けて送る。
+ */
+const Provider = z.object({
+  base_url: z.url({ protocol: /^https?$/, message: code("input.invalidUrl") }),
+  /** API キー（秘密情報の名前か 1Password の参照）。認証が要らなければ書かない。 */
+  secret: SecretName.optional(),
+  /** sacty のゲートウェイ経由にする（429 のリトライ。API キーをコンテナに渡さない。PBI-37）。 */
+  via_gateway: z.boolean().default(false),
+});
+
+/** リーズニングエフォート（Codex の model_reasoning_effort・Claude Code の --effort。PBI-40）。 */
+const ReasoningEffort = z.string().regex(/^[a-z][a-z0-9_-]{0,30}$/, code("input.reasoningEffort"));
 
 const StubBehavior = z.object({
   output: z.string().default("# 要求要件（スタブ）\n\n- これはスタブのエージェントの出力です。"),
@@ -87,23 +107,34 @@ const StubBehavior = z.object({
 });
 
 const Agent = z
-  .object({
-    runtime: z.enum(["claude-code", "codex", "stub"]),
-    model: z.string().min(1).optional(),
-    auth: Auth,
-    price_per_mtok_usd: z.object({
-      input: z.number().nonnegative(),
-      cached_input: z.number().nonnegative(),
-      cache_write: z.number().nonnegative().default(0),
-      output: z.number().nonnegative(),
+  .preprocess(
+    // provider: <名前> だけを書いたエージェントは、その接続先を使う
+    (v) =>
+      v && typeof v === "object" && "provider" in v && !("auth" in v)
+        ? { ...v, auth: { mode: "provider", provider: (v as { provider: unknown }).provider } }
+        : v,
+    z.object({
+      runtime: z.enum(["claude-code", "codex", "stub"]),
+      model: z.string().min(1).optional(),
+      /** リーズニングエフォート（PBI-40）。書かなければ、エージェントの既定。 */
+      reasoning_effort: ReasoningEffort.optional(),
+      auth: Auth,
+      /** auth の代わりに書く、providers の接続先の名前（PBI-40）。 */
+      provider: z.string().optional(),
+      price_per_mtok_usd: z.object({
+        input: z.number().nonnegative(),
+        cached_input: z.number().nonnegative(),
+        cache_write: z.number().nonnegative().default(0),
+        output: z.number().nonnegative(),
+      }),
+      stub: StubBehavior.optional(),
+      /**
+       * AI の呼び出しを、ホストのゲートウェイ経由にする（PBI-37）。ゲートウェイが API キーを持ち、レート制限（429）や
+       * 一時的な失敗をリトライする。API キーはコンテナに渡さない。いまは Codex × Bedrock だけ。
+       */
+      via_gateway: z.boolean().default(false),
     }),
-    stub: StubBehavior.optional(),
-    /**
-     * AI の呼び出しを、ホストのゲートウェイ経由にする（PBI-37）。ゲートウェイが API キーを持ち、レート制限（429）や
-     * 一時的な失敗をリトライする。API キーはコンテナに渡さない。いまは Codex × Bedrock だけ。
-     */
-    via_gateway: z.boolean().default(false),
-  })
+  )
   .superRefine((agent, ctx) => {
     if (agent.via_gateway && !(agent.runtime === "codex" && agent.auth.mode === "bedrock")) {
       ctx.addIssue({
@@ -114,7 +145,7 @@ const Agent = z
     }
     const ok: Record<typeof agent.runtime, string[]> = {
       "claude-code": ["subscription", "api-key", "bedrock"],
-      codex: ["subscription", "api-key", "bedrock"],
+      codex: ["subscription", "api-key", "bedrock", "provider"],
       stub: ["stub"],
     };
     if (!ok[agent.runtime].includes(agent.auth.mode)) {
@@ -153,16 +184,30 @@ const Agent = z
     }
   });
 
-/** GitHub のリポジトリの URL から owner/name を求める。 */
+/** git の URL（HTTPS か SSH）から、GitHub のリポジトリの URL（https://<ホスト>/<owner>/<name>）を求める。 */
 export function githubRepoOf(url: string): string | undefined {
-  const m = url.match(/github\.com[:/]([\w.-]+)\/([\w.-]+?)(?:\.git)?\/?$/);
-  return m ? `${m[1]}/${m[2]}` : undefined;
+  const ssh = url.match(/^(?:ssh:\/\/)?git@([^:/]+)[:/](.+)$/);
+  return parseRepoUrl(ssh ? `https://${ssh[1]}/${ssh[2]}` : url)?.url;
 }
+
+/** npm の設定のうち、認証の項目（イメージに残すと漏れるので、npm_config には書けない。PBI-40）。 */
+const NPM_SECRET_KEY =
+  /(?:^|:)(?:_auth|_authToken|_password|username|email|certfile|keyfile)$|^(?:cert|key)$/i;
 
 const ConfigFile = z
   .object({
     image: z.string().default(DEFAULT_IMAGE),
+    /** OpenAI 互換の接続先（組織の AI gateway など。PBI-40）。 */
+    providers: z
+      .record(z.string().regex(/^[A-Za-z0-9_-]+$/, code("input.providerName")), Provider)
+      .default({}),
     default_agent: z.string(),
+    /**
+     * 工程とオーケストレーターごとに使う AI（PBI-40）。書かなければ default_agent（統合レビューは guardian_agent）。
+     */
+    step_agents: z
+      .partialRecord(z.enum([...StepKey.options, "orchestrator"]), z.string())
+      .default({}),
     /** ゴールガーディアンに使うAI。省略すると default_agent。 */
     guardian_agent: z.string().optional(),
     budget: z
@@ -175,11 +220,47 @@ const ConfigFile = z
      */
     image_build: z
       .object({
-        /** 元のイメージ（FROM）。Node.js 22 で、node ユーザーがあること。 */
+        /** 元のイメージ（FROM）。Node.js 18 以上で、node ユーザーがあること。 */
         base_image: z.string().trim().min(1).optional(),
-        /** Claude Code・Codex を入れる npm のレジストリ。 */
+        /** イメージに入れる npm の版（例 11。min-release-age などは npm 11 から。PBI-40）。書かなければ元のイメージの npm。 */
+        npm_version: z
+          .union([z.string(), z.number()])
+          .transform(String)
+          .pipe(z.string().regex(/^(?:latest|\d+(?:\.\d+){0,2})$/, code("config.npmVersion")))
+          .optional(),
+        /**
+         * イメージの中の npm 全体の設定（global の npmrc。PBI-40）。コンテナの中のすべての npm に効く
+         * （例 replace-registry-host: always、audit: false）。認証の項目はイメージに残るので書けない。
+         */
+        npm_config: z
+          .record(
+            z.string(),
+            z
+              .union([z.string(), z.number(), z.boolean()])
+              .transform(String)
+              .pipe(z.string().regex(/^[^\r\n]*$/, code("config.npmConfigKey"))),
+          )
+          // 認証の項目かを先に見る（レジストリに結びつけた //host/:_authToken なども拒否する）
+          .superRefine((config, ctx) => {
+            for (const key of Object.keys(config)) {
+              if (NPM_SECRET_KEY.test(key)) {
+                ctx.addIssue({
+                  code: "custom",
+                  path: [key],
+                  message: code("config.npmConfigSecret"),
+                });
+              } else if (!/^(?:\/\/)?[@A-Za-z0-9][@A-Za-z0-9/:._-]*$/.test(key)) {
+                ctx.addIssue({ code: "custom", path: [key], message: code("config.npmConfigKey") });
+              }
+            }
+          })
+          .optional(),
+        /**
+         * npm のレジストリ。Claude Code・Codex を入れるときに使い、コンテナの中の npm の registry にもする
+         * （npm_config の registry があれば、そちらを優先。PBI-40）。
+         */
         npm_registry: z.url({ protocol: /^https?$/ }).optional(),
-        /** npm のレジストリの認証トークンの秘密情報名（イメージには残さない）。 */
+        /** npm のレジストリの認証トークンの秘密情報名。イメージを作るときだけ使う（イメージには残さない）。 */
         npm_token: SecretName.optional(),
       })
       .optional(),
@@ -188,6 +269,15 @@ const ConfigFile = z
     /** ホストのゲートウェイ（PBI-37）。 */
     gateway: z
       .object({
+        /**
+         * コンテナから見たホストのアドレス（PBI-40）。既定は host-gateway（Docker Desktop）。Rancher Desktop など、
+         * 仮想マシンの中の Docker では、ホストに届くアドレス（Rancher Desktop は 192.168.5.2）を書く。
+         */
+        host_address: z
+          .string()
+          .trim()
+          .regex(/^[A-Za-z0-9.:-]+$/, code("config.hostAddress"))
+          .default(DEFAULT_HOST_ADDRESS),
         /** AI の呼び出しのリトライの上限。 */
         retry: z
           .object({
@@ -203,7 +293,7 @@ const ConfigFile = z
           })
           .prefault({}),
         /**
-         * 社内 PF の API（PBI-35）。名前ごとに、転送先・認証・使える API を書く。エージェントは
+         * 組織内 PF の API（PBI-35）。名前ごとに、転送先・認証・使える API を書く。エージェントは
          * $SACTY_PF_URL/<名前>/… で呼び、ゲートウェイが認証を付けて転送する。
          */
         platforms: z
@@ -246,25 +336,75 @@ const ConfigFile = z
         params: { key: "guardian_agent", id: config.guardian_agent },
       });
     }
+    for (const [role, id] of Object.entries(config.step_agents)) {
+      if (id && !config.agents[id]) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["step_agents", role],
+          message: code("config.agentMissing"),
+          params: { key: `step_agents.${role}`, id },
+        });
+      }
+    }
+    for (const [id, agent] of Object.entries(config.agents)) {
+      if (agent.auth.mode === "provider" && !config.providers[agent.auth.provider]) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["agents", id, "provider"],
+          message: code("config.providerMissing"),
+          params: { id: agent.auth.provider },
+        });
+      }
+    }
   });
 
-export type AgentConfig = z.infer<typeof Agent> & { id: string; price: PricePerMTok };
+export type AgentConfig = z.infer<typeof Agent> & {
+  id: string;
+  price: PricePerMTok;
+  /** providers の接続先（auth.mode が provider のとき。PBI-40）。 */
+  endpoint?: { name: string; baseUrl: string; secret?: string; viaGateway: boolean };
+};
+
+/** 工程・オーケストレーターの役割（step_agents のキー。PBI-40）。 */
+export type AgentRoleKey = StepKey | "orchestrator";
+
+/**
+ * 役割に使う AI（PBI-40）。step_agents に書いてあればそれ、無ければ default_agent。統合レビューはゴールガーディアンが
+ * 行うので、書いてなければ guardian_agent。
+ */
+export function agentFor(config: SactyConfig, role: AgentRoleKey): AgentConfig {
+  return (
+    config.stepAgents?.[role] ?? (role === "integrate" ? config.guardianAgent : config.defaultAgent)
+  );
+}
 export type SactyConfig = {
   image: string;
   defaultAgent: AgentConfig;
   /** ゴールガーディアンに使うAI。 */
   guardianAgent: AgentConfig;
+  /** 工程・オーケストレーターごとに使う AI（書いてある役割だけ。PBI-40）。 */
+  stepAgents?: Partial<Record<AgentRoleKey, AgentConfig>>;
   budgetPerTaskUsd: number;
   /** ゲートウェイの AI の呼び出しのリトライの上限（PBI-37）。 */
   gatewayRetry: RetryPolicy;
-  /** 社内 PF の API（PBI-35）。 */
+  /** コンテナから見たホストのアドレス（host.docker.internal の向き先。PBI-40）。 */
+  hostAddress: string;
+  /** 組織内 PF の API（PBI-35）。 */
   platforms: Platform[];
   /** ホストで動かす MCP サーバー（PBI-36）。 */
   hostMcp: HostMcpSpec[];
   /** 1Password のアカウント（PBI-34）。 */
   onePasswordAccount?: string;
   /** `sacty image build` の元（PBI-33）。 */
-  imageBuild: { baseImage?: string; npmRegistry?: string; npmToken?: string };
+  imageBuild: {
+    baseImage?: string;
+    npmRegistry?: string;
+    npmToken?: string;
+    /** イメージに入れる npm の版（PBI-40）。 */
+    npmVersion?: string;
+    /** イメージの中の npm 全体の設定（PBI-40）。 */
+    npmConfig?: Record<string, string>;
+  };
   /** GitHub Issue の取り込み。認証はプロジェクトの gh のアカウント（PBI-13）。 */
   github?: { pollIntervalSec: number };
 };
@@ -317,9 +457,21 @@ export function loadConfig(home: string): ConfigResult {
   const resolve = (id: string): AgentConfig => {
     const agent = file.agents[id];
     if (!agent) throw new Error("unreachable: agent ids are validated");
+    const provider =
+      agent.auth.mode === "provider" ? file.providers[agent.auth.provider] : undefined;
     return {
       ...agent,
       id,
+      ...(agent.auth.mode === "provider" && provider
+        ? {
+            endpoint: {
+              name: agent.auth.provider,
+              baseUrl: provider.base_url.replace(/\/+$/, ""),
+              ...(provider.secret ? { secret: provider.secret } : {}),
+              viaGateway: provider.via_gateway,
+            },
+          }
+        : {}),
       price: PricePerMTok.parse({
         input: agent.price_per_mtok_usd.input,
         cachedInput: agent.price_per_mtok_usd.cached_input,
@@ -338,15 +490,21 @@ export function loadConfig(home: string): ConfigResult {
         ...(file.image_build?.base_image ? { baseImage: file.image_build.base_image } : {}),
         ...(file.image_build?.npm_registry ? { npmRegistry: file.image_build.npm_registry } : {}),
         ...(file.image_build?.npm_token ? { npmToken: file.image_build.npm_token } : {}),
+        ...(file.image_build?.npm_version ? { npmVersion: file.image_build.npm_version } : {}),
+        ...(file.image_build?.npm_config ? { npmConfig: file.image_build.npm_config } : {}),
       },
       platforms: Object.entries(file.gateway.platforms).map(([name, p]) => toPlatform(name, p)),
       hostMcp: Object.entries(file.gateway.mcp_servers).map(([name, m]) => toHostMcp(name, m)),
+      hostAddress: file.gateway.host_address,
       gatewayRetry: {
         maxAttempts: file.gateway.retry.max_attempts,
         maxWaitMs: file.gateway.retry.max_wait_sec * 1000,
       },
       defaultAgent: resolve(file.default_agent),
       guardianAgent: resolve(file.guardian_agent ?? file.default_agent),
+      stepAgents: Object.fromEntries(
+        Object.entries(file.step_agents).flatMap(([role, id]) => (id ? [[role, resolve(id)]] : [])),
+      ),
       ...(file.github
         ? {
             github: { pollIntervalSec: file.github.poll_interval_sec },
@@ -368,14 +526,35 @@ export const CONFIG_TEMPLATE = `# sacty の設定
 image: ${DEFAULT_IMAGE}
 # \`sacty image build\` でイメージを作るときの元。プライベートのレジストリしか使えない環境では、元のイメージと
 # npm のレジストリを書く（書かなければ、Docker Hub の node のイメージと npm の公開レジストリ）。
-# 元のイメージは Node.js 22 で、node ユーザーがあること。git が入っていれば、Debian のミラーに届かなくても作れる
+# 元のイメージは Node.js 18 以上で、node ユーザーがあること。git が入っていれば、Debian のミラーに届かなくても作れる
 # image_build:
 #   base_image: registry.example.com/library/node:22-bookworm-slim
 #   npm_registry: https://npm.example.com/repository/npm/
 #   npm_token: npm-token   # 認証が要るとき。値は sacty secret set npm-token で保存する
+#   npm_version: 11        # イメージに入れる npm の版（min-release-age は npm 11 から）
+#   # コンテナの中の npm 全体の設定（認証の項目は書けない）
+#   npm_config:
+#     replace-registry-host: always   # package-lock.json の古い取得元の URL を、いまの registry に置き換える
+#     audit: false
+#     min-release-age: 7              # 公開から7日たっていない版は入れない
 default_agent: claude-subscription
 # ゴールガーディアン（変更の申し出の判定）に使うAI。省略すると default_agent
 # guardian_agent: claude-subscription
+# 工程・オーケストレーターごとに使う AI（書かなければ default_agent。統合レビューは guardian_agent）
+# step_agents:
+#   orchestrator: luna-low
+#   requirements: sol-high
+#   design: sol-high
+#   implement: sol-medium
+
+# OpenAI 互換（Responses API）の接続先。組織の AI gateway など（Codex の model_providers の base_url・env_key と同じ）。
+# Codex のエージェントは provider: <名前> で使う。via_gateway: true なら、sacty のゲートウェイが API キーを付けて中継し、
+# レート制限（429）をリトライする（API キーはコンテナに渡さない）
+# providers:
+#   corp-gw:
+#     base_url: https://ai-gateway.example.com/v1
+#     secret: op://Work/AI-Gateway/api-key
+#     via_gateway: true
 
 budget:
   default_per_task_usd: ${DEFAULT_BUDGET_USD}
@@ -386,6 +565,9 @@ budget:
 # ホストのゲートウェイ（via_gateway: true のエージェントの AI の呼び出しを中継する）。
 # レート制限（429）や一時的な失敗（5xx）は、Retry-After（無ければ1秒から倍にしていく間隔）で待ってリトライする
 # gateway:
+#   # コンテナから見たホストのアドレス。既定は host-gateway（Docker Desktop）。
+#   # Rancher Desktop では、host-gateway が仮想マシンを指してゲートウェイに届かないので 192.168.5.2 を書く
+#   host_address: 192.168.5.2
 #   retry:
 #     max_attempts: 8     # 1件のリクエストで上流に送る回数の上限
 #     max_wait_sec: 600   # 成功するまでの一続きの失敗で待つ合計の上限
@@ -400,12 +582,12 @@ budget:
 #       env: { CLOUD_REGION: ap-northeast-1 }
 #       restart_every_min: 240
 #       ready_timeout_sec: 300   # 起動してから認証が済むまで待つ上限
-#   # 社内 PF の API。エージェントは $SACTY_PF_URL/<名前>/… で呼び、ゲートウェイが認証を付けて転送する
+#   # 組織内 PF の API。エージェントは $SACTY_PF_URL/<名前>/… で呼び、ゲートウェイが認証を付けて転送する
 #   # （認証情報はエージェントに渡さない）。allow に無い API は拒否する（* は1階層、** はそれ以下すべて）
 #   platforms:
 #     ticket:
 #       upstream: https://ticket.internal.example.com
-#       description: 社内のチケット管理
+#       description: チケット管理
 #       auth:                         # 固定のキーをヘッダーに付ける（独自のヘッダーも書ける）
 #         header: X-Internal-Token
 #         secret: op://Work/Ticket/token
@@ -450,6 +632,14 @@ agents:
   #     secret: bedrock-api-key
   #     region: us-east-1
   #   price_per_mtok_usd: { input: 3, cached_input: 0.3, cache_write: 3.75, output: 15 }
+
+  # providers の接続先を使う Codex のエージェント。モデル・リーズニングエフォート・単価の組ごとに書く
+  # sol-high:
+  #   runtime: codex
+  #   provider: corp-gw
+  #   model: gpt-6-sol
+  #   reasoning_effort: high     # Codex は model_reasoning_effort、Claude Code は --effort
+  #   price_per_mtok_usd: { input: 1.25, cached_input: 0.125, output: 10 }
 
   # Codex × Amazon Bedrock の OpenAI のモデル（APIキー）。endpoint は runtime（リージョンをまたぐ推論。
   # モデルは推論プロファイルID）か mantle（リージョン内の推論。モデルIDは openai. で始まる）。

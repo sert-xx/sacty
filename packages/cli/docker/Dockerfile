@@ -1,8 +1,10 @@
 # sacty のエージェント実行用イメージ。タスクごとにこのイメージからコンテナを作る。
 # 元のイメージは、config.yaml の image_build.base_image で変えられる（プライベートのレジストリなど。PBI-33）。
-# 元のイメージは Node.js 22 で、node ユーザーがあること（公式の node のイメージを写したものなど）。
+# 元のイメージは Node.js 18 以上で、node ユーザーがあること（公式の node のイメージを写したものなど）。
 ARG BASE_IMAGE=node:22-bookworm-slim
 FROM ${BASE_IMAGE}
+# イメージに入れる npm の版（config.yaml の image_build.npm_version。空なら元のイメージの npm。PBI-40）
+ARG NPM_VERSION=
 
 USER root
 
@@ -18,7 +20,22 @@ RUN if ! command -v git >/dev/null 2>&1; then \
 RUN --mount=type=secret,id=npmrc,target=/run/secrets/npmrc \
   NPM_CONFIG_USERCONFIG=/run/secrets/npmrc \
   npm install -g @anthropic-ai/claude-code@2.1.296 @openai/codex@0.160.0 \
+    ${NPM_VERSION:+npm@${NPM_VERSION}} \
   && npm cache clean --force
+
+# コンテナの中の npm 全体の設定（config.yaml の image_build.npm_config。認証の項目は含まない。PBI-40）。
+# CLI を入れた後に置く（CLI の取得には効かせない）。ファイルの受け渡しは、認証の .npmrc と同じ secret の仕組みを
+# 使う（--build-context は、Docker の構成によっては使えないため）。中身はこの RUN でイメージの設定に書き込む。
+# secret の中身はビルドのキャッシュの判定に入らないので、中身のハッシュを引数で渡し、変わったら作り直す。
+# 元のイメージにすでに設定があり、最後の行が改行で終わっていなければ、改行してから書き足す（行がつながらないように）
+ARG NPM_CONFIG_HASH=
+RUN --mount=type=secret,id=npmconfig,target=/run/secrets/npmconfig \
+  if [ ! -f /run/secrets/npmconfig ]; then \
+    echo "sacty: npm の設定のファイルが渡されていません。sacty を作り直して（npm run build）から、sacty image build を実行してください。" >&2; \
+    exit 1; \
+  fi \
+  && g="$(npm config get globalconfig)" && mkdir -p "$(dirname "$g")" \
+  && { [ ! -s "$g" ] || [ -z "$(tail -c 1 "$g")" ] || echo; cat /run/secrets/npmconfig; } >> "$g"
 
 # root では動かさない（node イメージの node ユーザー）
 USER node

@@ -8,7 +8,7 @@ const ja = {
     body: "内容",
     bodyPlaceholder: "背景や、満たしてほしい条件",
     repository: "対象リポジトリ",
-    repositoryPlaceholder: "owner/name（入力すると絞り込めます）",
+    repositoryPlaceholder: "リポジトリの URL（入力すると絞り込めます）",
     listFailed: (owner: string, reason: string) =>
       `${owner} のリポジトリを読めませんでした：${reason}`,
     noRepository:
@@ -36,7 +36,7 @@ const en: FormsMessages = {
     body: "Description",
     bodyPlaceholder: "Background and the conditions it should meet",
     repository: "Target repository",
-    repositoryPlaceholder: "owner/name (type to filter)",
+    repositoryPlaceholder: "Repository URL (type to filter)",
     listFailed: (owner: string, reason: string) =>
       `Could not list the repositories of ${owner}: ${reason}`,
     noRepository:

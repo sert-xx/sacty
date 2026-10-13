@@ -14,6 +14,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { message } from "@sacty/core";
 import { MessageError } from "../errors.js";
+import { DEFAULT_HOST_ADDRESS } from "../gateway.js";
 import type { Invocation } from "./invocation.js";
 import { type AgentOutcome, parseClaudeResult, parseCodexEvents } from "./parse.js";
 import { redact, redactText, secretStringsInJson } from "./redact.js";
@@ -138,8 +139,6 @@ export interface AgentExecutor {
     runId: string;
     image: string;
     workspaceDir: string;
-    /** 作業領域を読み取り専用でマウントする（要求要件・設計の工程。PBI-15）。 */
-    readOnlyWorkspace?: boolean;
     invocation: Invocation;
   }): Promise<AgentOutcome>;
   /** 実行中のコンテナを止める（人間が一時停止・中止したとき）。無ければ何もしない。 */
@@ -156,18 +155,19 @@ export function dockerRunArgs(input: {
   runId: string;
   image: string;
   workspaceDir: string;
-  /** 作業領域を読み取り専用でマウントする。 */
-  readOnlyWorkspace?: boolean;
   envNames: string[];
   mounts: { hostPath: string; containerPath: string; readOnly: boolean }[];
   command: string[];
-  /** ホストのゲートウェイに届くよう、host.docker.internal をホストに向ける（PBI-37）。 */
-  hostGateway?: boolean;
+  /**
+   * ホストのゲートウェイに届くよう、host.docker.internal をホストのアドレスに向ける（PBI-37）。
+   * host-gateway（Docker Desktop）か、ホストのアドレス（Rancher Desktop など。PBI-40）。
+   */
+  hostGateway?: string;
 }): string[] {
   return [
     "run",
     "--rm",
-    ...(input.hostGateway ? ["--add-host", "host.docker.internal:host-gateway"] : []),
+    ...(input.hostGateway ? ["--add-host", `host.docker.internal:${input.hostGateway}`] : []),
     "--name",
     `sacty-run-${input.runId}`,
     "--security-opt",
@@ -175,7 +175,7 @@ export function dockerRunArgs(input: {
     "--cap-drop",
     "ALL",
     "-v",
-    `${input.workspaceDir}:${CONTAINER_WORKSPACE}${input.readOnlyWorkspace ? ":ro" : ""}`,
+    `${input.workspaceDir}:${CONTAINER_WORKSPACE}`,
     ...input.mounts.flatMap((m) => [
       "-v",
       `${m.hostPath}:${m.containerPath}${m.readOnly ? ":ro" : ""}`,
@@ -234,7 +234,6 @@ export class DockerExecutor implements AgentExecutor {
     runId,
     image,
     workspaceDir,
-    readOnlyWorkspace,
     invocation,
   }: Parameters<AgentExecutor["run"]>[0]): Promise<AgentOutcome> {
     // コピーして渡すファイル（Codexの認証ファイルなど）は、実行ごとの一時ディレクトリに置き、
@@ -290,11 +289,12 @@ export class DockerExecutor implements AgentExecutor {
       runId,
       image,
       workspaceDir,
-      readOnlyWorkspace,
       envNames: Object.keys(invocation.env),
       mounts,
       command: invocation.command,
-      ...(invocation.hostGateway ? { hostGateway: true } : {}),
+      ...(invocation.hostGateway
+        ? { hostGateway: invocation.hostAddress ?? DEFAULT_HOST_ADDRESS }
+        : {}),
     });
 
     const containerName = `sacty-run-${runId}`;

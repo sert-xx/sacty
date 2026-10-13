@@ -33,10 +33,12 @@ import {
   type Project,
   ProjectDefinition,
   ProjectExport,
+  parseOrgUrl,
+  parseRepoUrl,
   project,
   projectConflicts,
   proposalAccepted,
-  RepoName,
+  RepoUrl,
   RequestChangesInput,
   ResumeTaskInput,
   renderMessage,
@@ -47,6 +49,7 @@ import {
   type StepKey,
   type Task,
   type TaskProposal,
+  targetHost,
   exportProject as toProjectExport,
 } from "@sacty/core";
 import { ZodError } from "zod";
@@ -61,7 +64,13 @@ import {
 import type { AgentOutcome } from "./agents/parse.js";
 import { redact, redactText } from "./agents/redact.js";
 import type { TestRunner } from "./agents/test-runner.js";
-import { type AgentConfig, type ConfigResult, githubRepoOf, type SactyConfig } from "./config.js";
+import {
+  type AgentConfig,
+  agentFor,
+  type ConfigResult,
+  githubRepoOf,
+  type SactyConfig,
+} from "./config.js";
 import { type ContextFetcher, GATEWAY_TOKEN_SECRET, prepareContext } from "./context.js";
 import { errorText, MessageError } from "./errors.js";
 import type { AiGateway, GatewayStats } from "./gateway.js";
@@ -70,7 +79,7 @@ import {
   type GitHubAuth,
   gitAuthEnv,
   gitAuthSecrets,
-  isGitHubHttps,
+  httpsHost,
 } from "./gh.js";
 import {
   type FoundIssue,
@@ -173,7 +182,7 @@ export type ServiceDeps = {
   workspaceRoot: string;
   /** ホストのゲートウェイ（PBI-37）。無ければ、ゲートウェイ経由のエージェントは実行できない。 */
   gateway?: Pick<AiGateway, "containerOrigin" | "register" | "platformsUrl">;
-  /** 認証情報を用意できない社内 PF の理由（画面の状態に出す。PBI-35）。 */
+  /** 認証情報を用意できない組織内 PF の理由（画面の状態に出す。PBI-35）。 */
   platformProblems?: (names: readonly string[]) => DaemonText[];
   /** 準備ができないホストの MCP サーバーの理由（画面の状態に出す。PBI-36）。 */
   hostMcpProblems?: () => DaemonText[];
@@ -184,7 +193,7 @@ export type ServiceDeps = {
 export type DaemonStatus = {
   agent: { id: string; runtime: string; authMode: string } | null;
   problems: DaemonText[];
-  /** 動くが、知らせたいこと（認証情報を用意できない社内 PF など。PBI-35）。 */
+  /** 動くが、知らせたいこと（認証情報を用意できない組織内 PF など。PBI-35）。 */
   warnings: DaemonText[];
   /** GitHub Issue の取り込みの状況（設定が無ければ null）。 */
   intake: IntakeStatus | null;
@@ -261,7 +270,7 @@ export class TaskService {
       let status: PullRequestStatus;
       let token: string;
       try {
-        token = await this.githubToken(task, usedSecrets);
+        token = await this.githubToken(task, pr.repo, usedSecrets);
         status = await this.deps.pulls.status({ repo: pr.repo, token, number: pr.number });
       } catch (error) {
         console.warn(
@@ -365,7 +374,7 @@ export class TaskService {
           repo: pr.repo,
           token,
           number: pr.number,
-          ...this.githubAccountOf(current),
+          ...this.githubAccountOf(current, pr.repo),
         })
       ).filter((item) => !current.importedFeedback.includes(item.key));
       if (fresh.length === 0) return;
@@ -460,7 +469,7 @@ export class TaskService {
   }
 
   /**
-   * ゴールガーディアンを、対象リポジトリのコードを読み取り専用で渡して実行する（PBI-16）。
+   * ゴールガーディアンを、対象リポジトリのコードの使い捨ての写しを渡して実行する（PBI-16）。
    * base は起点のコミットのコード、implemented は実装後のコード（実装の作業領域。.git を除く）。
    * コードは実行ごとのディレクトリに書き出し、終わったら消す。書き出せなければ、実行の失敗として返す。
    */
@@ -491,7 +500,7 @@ export class TaskService {
           };
         }
       }
-      return await this.execute({ ...run, runId, workspaceDir, readOnlyWorkspace: true });
+      return await this.execute({ ...run, runId, workspaceDir });
     } finally {
       rmSync(workspaceDir, { recursive: true, force: true });
     }
@@ -508,7 +517,7 @@ export class TaskService {
     const usedSecrets: string[] = [];
     let event: EventInput;
     try {
-      const token = await this.githubToken(task, usedSecrets);
+      const token = await this.githubToken(task, source.repo, usedSecrets);
       const target = { repo: source.repo, token, number: source.number };
       // 前回、投稿の後・記録の前に止まっていたら、そのコメントを使う（同じ結果を二度コメントしない）
       const existing = await this.deps.pulls.findIssueComment({
@@ -547,7 +556,7 @@ export class TaskService {
     }
     const usedSecrets: string[] = [];
     try {
-      const token = await this.githubToken(task, usedSecrets);
+      const token = await this.githubToken(task, ref.repo, usedSecrets);
       const pr = await this.deps.pulls.pullRequest({ ...ref, token });
       return {
         ok: true,
@@ -576,8 +585,8 @@ export class TaskService {
     const usedSecrets: string[] = [];
     let event: EventInput;
     try {
-      const token = await this.githubToken(task, usedSecrets);
-      const account = this.githubAccountOf(task).account ?? "";
+      const token = await this.githubToken(task, target.repo, usedSecrets);
+      const account = this.githubAccountOf(task, target.repo).account ?? "";
       const pr = { repo: target.repo, token, number: target.number };
       // 前回、投稿の後・記録の前に止まっていたら、そのレビューを使う（同じレビューを二度投稿しない）
       const existing = await this.deps.pulls.findReview({
@@ -623,16 +632,18 @@ export class TaskService {
     ChosenSteps | { failure: Extract<EventInput, { type: "OrchestratorFailed" }>["payload"] }
   > {
     if (this.deps.planner) return this.deps.planner(task);
-    const agent = config.defaultAgent;
+    // オーケストレーターに使う AI（step_agents.orchestrator か default_agent。PBI-40）
+    const agent = agentFor(config, "orchestrator");
     const { outcome, costUsd, estimated } = await this.runGuardian(
       task,
       { agent, image: config.image, prompt: buildOrchestratorPrompt(task), role: "orchestrator" },
       "base",
     );
-    // 認証の失敗・利用上限は、標準の工程で進めても同じく失敗するので、理由を記録して止める（PBI-32）。
+    // 実行に失敗した・選んだ工程を読み取れなかったときは、理由を記録して止める（PBI-32・PBI-40）。
+    // 標準の工程で代わりに進めると、テストのコマンドも決まらず、調査のタスクでも設計・実装に進んでしまうため。
     // 再開すると、工程の選択からやり直す。使った分の費用は記録する
     const cost = { agentId: agent.id, usage: outcome.usage, costUsd, estimated };
-    if (outcome.kind === "failed" && outcome.reason !== "error") {
+    if (outcome.kind === "failed") {
       return {
         failure: {
           reason: outcome.reason,
@@ -641,10 +652,7 @@ export class TaskService {
         },
       };
     }
-    const chosen =
-      outcome.kind === "completed"
-        ? extractStepPlan(outcome.output, allowedPlans(task))
-        : undefined;
+    const chosen = extractStepPlan(outcome.output, allowedPlans(task));
     if (chosen) {
       return {
         steps: [...STEP_PLANS[chosen.plan]],
@@ -657,13 +665,11 @@ export class TaskService {
       };
     }
     return {
-      steps: [...STEP_PLANS.standard],
-      plan: "standard",
-      reason: message("orchestrator.fallback", {
-        detail: outcome.kind === "failed" ? outcome.message : message("orchestrator.unreadable"),
-      }),
-      fallback: true,
-      ...cost,
+      failure: {
+        reason: "error",
+        message: message("orchestrator.failed", { detail: message("orchestrator.unreadable") }),
+        ...cost,
+      },
     };
   }
 
@@ -765,13 +771,13 @@ export class TaskService {
   async projectRepositories(
     id: string,
   ): Promise<
-    { repositories: string[]; errors: { owner: string; message: DaemonText }[] } | undefined
+    { repositories: string[]; errors: { org: string; message: DaemonText }[] } | undefined
   > {
     const project = this.deps.projects.get(id);
     if (!project) return undefined;
     const all = this.deps.projects.all();
     const repositories = new Map<string, string>();
-    const errors: { owner: string; message: DaemonText }[] = [];
+    const errors: { org: string; message: DaemonText }[] = [];
     const add = (repo: string) => {
       if (responsibleProject(all, repo)?.project.id === id)
         repositories.set(repo.toLowerCase(), repo);
@@ -783,11 +789,11 @@ export class TaskService {
       }
       const usedSecrets: string[] = [];
       try {
-        const token = await this.githubToken({ projectId: id }, usedSecrets);
-        for (const repo of await this.deps.pulls.repositories({ owner: target.target, token }))
+        const token = await this.githubToken({ projectId: id }, target.target, usedSecrets);
+        for (const repo of await this.deps.pulls.repositories({ org: target.target, token }))
           add(repo);
       } catch (error) {
-        errors.push({ owner: target.target, message: redactText(errorText(error), usedSecrets) });
+        errors.push({ org: target.target, message: redactText(errorText(error), usedSecrets) });
       }
     }
     return {
@@ -828,16 +834,25 @@ export class TaskService {
    * アカウントを選んでいないプロジェクトは、プロジェクトの名前を返す（取り込みで理由を示す）。
    * ラベルは sacty 全体の設定（PBI-26）。設定していなければ取り込まない。Issue と PR の両方を探す。
    */
-  intakeSources(): { query: string; account?: string; project: string }[] {
+  intakeSources(): { host: string; query: string; account?: string; project: string }[] {
     const label = this.deps.settings.get().intakeLabel;
     if (!label) return [];
-    const sources = new Map<string, { query: string; account?: string; project: string }>();
+    const sources = new Map<
+      string,
+      { host: string; query: string; account?: string; project: string }
+    >();
     for (const project of this.deps.projects.all()) {
       for (const target of project.targets) {
-        const where = target.scope === "org" ? `org:${target.target}` : `repo:${target.target}`;
+        // 検索は、対象のホストの GitHub で、そのホストのアカウントで行う（PBI-40）
+        const host = targetHost(target);
+        const where =
+          target.scope === "org"
+            ? `org:${parseOrgUrl(target.target)?.owner}`
+            : `repo:${parseRepoUrl(target.target)?.path}`;
         const query = `is:open ${where} label:"${label}"`;
-        const account = project.githubAccount;
-        sources.set(`${account ?? ""}\n${query}`, {
+        const account = project.githubAccounts?.[host];
+        sources.set(`${host}\n${account ?? ""}\n${query}`, {
+          host,
           query,
           ...(account ? { account } : {}),
           project: project.name,
@@ -972,14 +987,15 @@ export class TaskService {
       throw new InvalidOperationError(message("task.repositoryMissing", { project: project.name }));
     }
     const responsible =
-      wanted && RepoName.safeParse(wanted).success
+      wanted && RepoUrl.safeParse(wanted).success
         ? responsibleProject(this.deps.projects.all(), wanted)
         : undefined;
     if (!wanted || responsible?.project.id !== projectId) {
       throw new InvalidOperationError(message("task.repositoryUnknown", { project: project.name }));
     }
     // リポジトリの対象なら、登録した名前にそろえる（大文字・小文字の違い）
-    const repo = responsible.target.scope === "repo" ? responsible.target.target : wanted.trim();
+    const repo =
+      responsible.target.scope === "repo" ? responsible.target.target : RepoUrl.parse(wanted);
     const config = this.deps.config();
     const budgetCapUsd = config.ok ? config.config.budgetPerTaskUsd : DEFAULT_BUDGET_USD;
     const { title, body } = input;
@@ -1120,7 +1136,7 @@ export class TaskService {
     return {
       ok: true,
       repo: {
-        url: `https://github.com/${repo}.git`,
+        url: `${repo}.git`,
         ...(task.repository ? { baseBranch: task.repository.baseBranch } : {}),
         ...(task.testCommand ? { testCommand: task.testCommand } : {}),
         testImage: config.image,
@@ -1186,35 +1202,53 @@ export class TaskService {
   }
 
   /**
-   * タスクのプロジェクトに設定した gh のアカウントで、GitHub のトークンを取り出す（PBI-13）。
-   * アカウントを選んでいなければ、理由つきで止める（アクティブなアカウントは切り替わるので使わない）。
-   * 取り出した値は、出力やエラー文から取り除く対象にする。
+   * タスクのプロジェクトに設定した、url（リポジトリ・Org の URL）のホストの gh のアカウントで、GitHub のトークンを
+   * 取り出す（PBI-13・PBI-40）。アカウントを選んでいなければ、理由つきで止める（アクティブなアカウントは
+   * 切り替わるので使わない）。取り出した値は、出力やエラー文から取り除く対象にする。
    */
-  private async githubToken(task: Pick<Task, "projectId">, usedSecrets: string[]): Promise<string> {
+  private async githubToken(
+    task: Pick<Task, "projectId">,
+    url: string,
+    usedSecrets: string[],
+  ): Promise<string> {
     const project = this.deps.projects.get(task.projectId);
-    if (!project?.githubAccount) {
+    const host = httpsHost(`${url}/`) ?? "";
+    const account = project?.githubAccounts?.[host];
+    if (!account) {
       throw new MessageError(
-        message("github.accountRequired", { project: project?.name ?? task.projectId }),
+        message("github.accountRequired", { project: project?.name ?? task.projectId, host }),
       );
     }
-    const token = await this.deps.github.token(project.githubAccount);
+    const token = await this.deps.github.token(host, account);
     usedSecrets.push(...gitAuthSecrets(token));
     return token;
   }
 
-  /** タスクのプロジェクトで選んだ gh のアカウント（選んでいなければ空）。 */
-  private githubAccountOf(task: Task): { account?: string } {
-    const account = this.deps.projects.get(task.projectId)?.githubAccount;
+  /** タスクのプロジェクトで、url のホストに選んだ gh のアカウント（選んでいなければ空）。 */
+  private githubAccountOf(task: Task, url: string): { account?: string } {
+    const host = httpsHost(`${url}/`) ?? "";
+    const account = this.deps.projects.get(task.projectId)?.githubAccounts?.[host];
     return account ? { account } : {};
   }
 
-  /** HTTPS の GitHub なら、gh のトークンで git を認証する環境変数。それ以外はホストの認証を使う。 */
+  /**
+   * プロジェクトの GitHub（アカウントを選んだホストか、対象のホスト）の HTTPS の URL なら、gh のトークンで git を
+   * 認証する環境変数。それ以外（SSH・ローカルのパス・ほかの git のサーバー）はホストの認証を使う。
+   */
   private async gitAuth(
     task: Task,
     url: string,
     usedSecrets: string[],
   ): Promise<Record<string, string> | undefined> {
-    return isGitHubHttps(url) ? gitAuthEnv(await this.githubToken(task, usedSecrets)) : undefined;
+    const host = httpsHost(url);
+    const project = this.deps.projects.get(task.projectId);
+    const github =
+      host !== undefined &&
+      (project?.githubAccounts?.[host] !== undefined ||
+        (project?.targets.some((t) => targetHost(t) === host) ?? false));
+    return host && github
+      ? gitAuthEnv(host, await this.githubToken(task, url, usedSecrets))
+      : undefined;
   }
 
   /**
@@ -1446,7 +1480,8 @@ export class TaskService {
       if (!resolved.ok) return;
     }
 
-    const agent = config.config.defaultAgent;
+    // 工程に使う AI（step_agents か default_agent。PBI-40）
+    const agent = agentFor(config.config, step);
     const runId = randomUUID();
     this.append(task, [
       {
@@ -1458,7 +1493,7 @@ export class TaskService {
       },
     ]);
 
-    // 実装の工程は clone を作業領域にし、それ以外の工程は、起点のコミットのコードを読み取り専用で渡す
+    // 実装の工程は clone を作業領域にし、それ以外の工程は、起点のコミットのコードを使い捨ての写しで渡す
     // （clone はタスクの開始時に済んでいる。作業領域が消えていれば、同じ起点で用意し直す）
     const ready = await this.prepareRepository(this.mustGet(task.id), config.config);
     if (!ready.ok) {
@@ -1474,8 +1509,9 @@ export class TaskService {
       ]);
       return;
     }
-    // 実装と再現（再現のテストを書く。PBI-29）は clone を作業領域にし、ほかは読み取り専用
-    const readOnlyWorkspace = step !== "implement" && step !== "reproduce";
+    // 実装と再現（再現のテストを書く。PBI-29）は clone を作業領域にし、ほかは使い捨ての写し（書き込めるので、
+    // リポジトリの手順のセットアップなども実行できる。変更は残らない。PBI-40）
+    const scratch = step !== "implement" && step !== "reproduce";
 
     // sacty の既定のコンテキストと、プロジェクトのコンテキストを取得・合成して渡し、
     // 使ったリポジトリとコミット（既定は中身のハッシュ）を記録する
@@ -1540,9 +1576,7 @@ export class TaskService {
     let reviewDiff: string | undefined;
     // 要求要件・設計の工程は、起点のコミットのコードを実行ごとのディレクトリに書き出して渡し、終わったら消す
     // （実装の作業領域は実装の変更を含むので使わない。差し戻しでやり直しても、同じ起点のコードを読む）
-    const snapshotDir = readOnlyWorkspace
-      ? join(this.deps.workspaceRoot, "_snapshots", runId)
-      : undefined;
+    const snapshotDir = scratch ? join(this.deps.workspaceRoot, "_snapshots", runId) : undefined;
     try {
       if (snapshotDir) {
         const latest = this.mustGet(task.id);
@@ -1588,13 +1622,12 @@ export class TaskService {
             // 修正の子タスクを追加するときは、これまでの子タスクを渡す（PBI-31）
             ...(step === "split" ? { subtasks: this.subtaskSummaries(task) } : {}),
           }),
-          // 使える社内 PF の API（PBI-35）
+          // 使える組織内 PF の API（PBI-35）
           ...platformPromptLines(config.config.platforms),
         ].join("\n"),
         platforms: config.config.platforms,
         role: step,
         workspaceDir: snapshotDir ?? ready.dir,
-        readOnlyWorkspace,
         context: context && { dir: context.dir, ...context.placed },
       });
     } finally {
@@ -1888,7 +1921,7 @@ export class TaskService {
       return;
     }
     const agent = config.config.guardianAgent;
-    // 最終レビューは、実装後のコードを読み取り専用で読ませる（差分もこれまでどおり渡す）
+    // 最終レビューは、実装後のコードを使い捨ての写しで読ませる（差分もこれまでどおり渡す）
     const { outcome, costUsd, estimated } = await this.runGuardian(
       current,
       {
@@ -2001,8 +2034,8 @@ export class TaskService {
         ]);
       }
       // PR は常に作る（PR作成許可の設定は無い。PBI-25）
-      const token = await this.githubToken(task, usedSecrets);
       const prRepo = repo.pullRequest.repo;
+      const token = await this.githubToken(task, prRepo, usedSecrets);
       // 前の PR がすでにマージされていれば、作り直した内容は新しい PR で出す
       // （マージ済みの PR を更新しても、マージされていない内容が完了扱いになってしまうため）
       let number = task.pullRequest?.number;
@@ -2206,7 +2239,7 @@ export class TaskService {
             throw new MessageError(message("cleanup.prRepoUnknown"));
           }
           // PR を作ったときと同じく、プロジェクトの gh のアカウントで閉じる
-          const token = await this.githubToken(latest, usedSecrets);
+          const token = await this.githubToken(latest, pr.repo, usedSecrets);
           await this.deps.pulls.close({ repo: pr.repo, token, number: pr.number });
           cleanup.push({ target: "pull_request", result: "done", detail: pr.url });
         } catch (error) {
@@ -2364,13 +2397,13 @@ export class TaskService {
 
   /**
    * 統合レビュー（PBI-31）。子タスクの PR がマージされた後のベースブランチの最新を取得し、ゴールガーディアンが
-   * 新しいセッションで、そのコード（読み取り専用）と親の承認済みの要求要件・設計から判定する。合格、または
+   * 新しいセッションで、そのコード（使い捨ての写し）と親の承認済みの要求要件・設計から判定する。合格、または
    * 続けて通らない上限に達したら統合レビューの承認待ちにする。上限の前に不合格なら、作業履歴の適用で
    * タスク分割の工程に戻り、修正の子タスクを追加する。実行できなければ理由を記録して止める（再開でやり直す）。
    */
   private async integrate(task: Task, config: SactyConfig): Promise<void> {
     const step = "integrate" as const;
-    const agent = config.guardianAgent;
+    const agent = agentFor(config, step);
     const runId = randomUUID();
     this.append(task, [
       {
@@ -2426,7 +2459,6 @@ export class TaskService {
         prompt: buildIntegrationReviewPrompt(latest, subtasks, { baseBranch, commit }),
         role: step,
         workspaceDir,
-        readOnlyWorkspace: true,
       });
     } finally {
       rmSync(workspaceDir, { recursive: true, force: true });
@@ -2616,11 +2648,9 @@ export class TaskService {
     prompt: string;
     role: AgentRole;
     workspaceDir: string;
-    /** 作業領域を読み取り専用で渡す（要求要件・設計の工程。PBI-15）。 */
-    readOnlyWorkspace?: boolean;
     /** エージェントの形式に変換したコンテキスト（工程エージェントだけ。PBI-6）。 */
     context?: Parameters<typeof buildInvocation>[5];
-    /** 使わせる社内 PF の API（工程エージェントだけ。PBI-35）。 */
+    /** 使わせる組織内 PF の API（工程エージェントだけ。PBI-35）。 */
     platforms?: readonly Platform[];
   }): Promise<{ outcome: AgentOutcome; costUsd: number; estimated: boolean }> {
     // 実行に渡した秘密情報。作業履歴に書く前に、出力やエラー文から取り除く。
@@ -2629,9 +2659,13 @@ export class TaskService {
     let gatewayRun: ReturnType<NonNullable<ServiceDeps["gateway"]>["register"]> | undefined;
     try {
       // ゲートウェイ経由なら、API キーはゲートウェイに渡し、コンテナには実行ごとのトークンだけを渡す（PBI-37）
-      // 社内 PF の API を使わせるなら、実行ごとのトークンを含む URL を渡す（認証情報は渡さない。PBI-35）
+      // 組織内 PF の API を使わせるなら、実行ごとのトークンを含む URL を渡す（認証情報は渡さない。PBI-35）
       const auth = run.agent.auth;
-      const viaGateway = run.agent.via_gateway && auth.mode === "bedrock";
+      // Bedrock（PBI-37）か、providers の接続先（組織の AI gateway など。PBI-40）をゲートウェイ経由にする
+      const endpoint = run.agent.endpoint;
+      const viaGateway =
+        (run.agent.via_gateway && auth.mode === "bedrock") ||
+        (auth.mode === "provider" && Boolean(endpoint?.viaGateway));
       const platforms = run.platforms ?? [];
       // ホストの MCP サーバー（PBI-36）の認証のヘッダーに、実行ごとのトークンを入れる
       const tokenEnvs = (run.context?.secrets ?? []).filter(
@@ -2640,11 +2674,15 @@ export class TaskService {
       let gateway: { origin: string; token: string } | undefined;
       if (viaGateway || platforms.length > 0 || tokenEnvs.length > 0) {
         if (!this.deps.gateway) throw new MessageError(message("gateway.unavailable"));
-        let route: { origin: string; apiKey: string } | undefined;
-        if (viaGateway) {
+        let route: { base: string; apiKey?: string } | undefined;
+        if (viaGateway && auth.mode === "bedrock") {
           const apiKey = await this.deps.secrets.get(auth.secret);
           usedSecrets.push(apiKey);
-          route = { origin: bedrockOrigin(auth), apiKey };
+          route = { base: `${bedrockOrigin(auth)}/openai/v1`, apiKey };
+        } else if (viaGateway && endpoint) {
+          const apiKey = endpoint.secret ? await this.deps.secrets.get(endpoint.secret) : undefined;
+          if (apiKey) usedSecrets.push(apiKey);
+          route = { base: endpoint.baseUrl, ...(apiKey ? { apiKey } : {}) };
         }
         gatewayRun = this.deps.gateway.register(route);
         usedSecrets.push(gatewayRun.token);
@@ -2669,6 +2707,9 @@ export class TaskService {
         for (const s of tokenEnvs) invocation.env[s.env] = `${s.prefix}${gatewayRun.token}`;
         invocation.hostGateway = true;
       }
+      // コンテナから見たホストのアドレス（Rancher Desktop など。PBI-40）
+      const config = this.deps.config();
+      if (invocation.hostGateway && config.ok) invocation.hostAddress = config.config.hostAddress;
       mkdirSync(run.workspaceDir, { recursive: true });
       // 準備の間（clone や秘密情報の取り出し）に人間が止めたなら、コンテナを起動しない
       const running = this.runningTask.getStore();
@@ -2688,7 +2729,6 @@ export class TaskService {
         runId: run.runId,
         image: run.image,
         workspaceDir: run.workspaceDir,
-        ...(run.readOnlyWorkspace ? { readOnlyWorkspace: true } : {}),
         invocation,
       });
     } catch (error) {
@@ -2760,7 +2800,7 @@ export class TaskService {
     config: SactyConfig,
   ): Promise<Extract<EventInput, { type: "ChangeJudged" }>["payload"]> {
     const agent = config.guardianAgent;
-    // 変更の申し出の判定は、起点のコミットのコードを読み取り専用で読ませる
+    // 変更の申し出の判定は、起点のコミットのコードを使い捨ての写しで読ませる
     const { outcome, costUsd, estimated } = await this.runGuardian(
       task,
       { agent, image: config.image, prompt: buildGuardianPrompt(task, proposal), role: "guardian" },

@@ -87,7 +87,7 @@ export type IntakeStatus = {
 export type DaemonStatus = {
   agent: { id: string; runtime: string; authMode: string } | null;
   problems: DaemonText[];
-  /** 動くが、知らせたいこと（認証情報を用意できない社内 PF など。PBI-35）。古いデーモンには無い。 */
+  /** 動くが、知らせたいこと（認証情報を用意できない組織内 PF など。PBI-35）。古いデーモンには無い。 */
   warnings?: DaemonText[];
   /** GitHub Issue の取り込み（設定が無ければ null）。 */
   intake: IntakeStatus | null;
@@ -116,13 +116,13 @@ export async function getProject(id: string): Promise<ProjectView | null> {
  */
 export async function listProjectRepositories(
   id: string,
-): Promise<{ repositories: string[]; errors: { owner: string; message: DaemonText }[] }> {
+): Promise<{ repositories: string[]; errors: { org: string; message: DaemonText }[] }> {
   const res = await ensureOk(
     await daemonFetch(`/api/projects/${encodeURIComponent(id)}/repositories`),
   );
   return (await res.json()) as {
     repositories: string[];
-    errors: { owner: string; message: DaemonText }[];
+    errors: { org: string; message: DaemonText }[];
   };
 }
 
@@ -224,7 +224,7 @@ export async function runIntake(): Promise<OpResult> {
 }
 
 export type GitHubAccounts =
-  | { accounts: { login: string; active: boolean }[] }
+  | { accounts: { host: string; login: string; active: boolean }[] }
   | { error: DaemonText };
 
 /** gh にログイン済みの GitHub のアカウント（PBI-13）。 */

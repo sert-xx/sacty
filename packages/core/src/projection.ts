@@ -104,7 +104,7 @@ export type Task = {
   start: "sacty" | "github_issue" | "github_pull_request" | "split";
   /** 取り込み元（GitHub Issue）。 */
   source?: TaskSource;
-  /** 画面で作ったタスクの対象リポジトリ（owner/name。PBI-21）。Issue から取り込んだタスクは source.repo。 */
+  /** 画面で作ったタスクの対象リポジトリ（リポジトリの URL。PBI-21・PBI-40）。Issue から取り込んだタスクは source.repo。 */
   repo?: string;
   status: TaskStatus;
   /** 分割で作った子タスクの親と、依存先の子タスク（PBI-27）。 */

@@ -52,7 +52,7 @@ async function start(
   });
   const port = await gateway.listen();
   const run = gateway.register({
-    origin: "https://bedrock-runtime.us-east-2.amazonaws.com",
+    base: "https://bedrock-runtime.us-east-2.amazonaws.com/openai/v1",
     apiKey: "ABSK-real-key",
   });
   const call = (token = run.token, path = "/openai/v1/responses", init: RequestInit = {}) =>
@@ -80,6 +80,22 @@ describe("ホストのゲートウェイ（PBI-37）", () => {
     expect(g.calls[0]?.body).toBe('{"model":"global.openai.gpt-6-sol"}');
     expect(gateway?.containerOrigin()).toBe(`http://host.docker.internal:${g.port}`);
     expect(g.run.stats()).toEqual({ retries: 0, waitedMs: 0, statuses: [], gaveUp: false });
+  });
+
+  it("転送先の起点の下に送り、API キーが無い接続先には認証を付けない（組織の AI gateway。PBI-40）", async () => {
+    const up = upstream([json(200, { output: "ok" })]);
+    gateway = new AiGateway({ fetchImpl: up.fetchImpl });
+    const port = await gateway.listen();
+    const run = gateway.register({ base: "https://ai-gw.example.com/llm/v1" });
+    const res = await fetch(`http://127.0.0.1:${port}/openai/v1/responses`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${run.token}`, "content-type": "application/json" },
+      body: "{}",
+    });
+    expect(res.status).toBe(200);
+    expect(up.calls[0]?.url).toBe("https://ai-gw.example.com/llm/v1/responses");
+    // エージェントが付けた（実行のトークンの）認証は、上流に送らない
+    expect(up.calls[0]?.headers.get("authorization")).toBeNull();
   });
 
   it("知らないトークン・終わった実行・OpenAI 互換の API 以外のパスは受け付けない", async () => {
@@ -272,7 +288,7 @@ describe("ホストのゲートウェイ（PBI-37）", () => {
   });
 });
 
-describe("社内 PF の API の中継（PBI-35）", () => {
+describe("組織内 PF の API の中継（PBI-35）", () => {
   const ticket = toPlatform(
     "ticket",
     PlatformFile.parse({

@@ -22,7 +22,8 @@ npx sacty image build   # エージェント実行用のコンテナイメージ
 単価（`price_per_mtok_usd`）は100万トークンあたりの米ドルで、利用するモデルの最新の単価に合わせる。
 
 プロジェクトの「対象」（GitHub の Org またはリポジトリ）と GitHub のアカウントは、画面のプロジェクトの
-設定で登録する。画面でタスクを作るときは、対象の中からリポジトリを選ぶ（Org の対象は、gh で読んだその Org の
+設定で登録する。対象は、ホストを含めた URL で書く（例 `https://github.com/acme/app`、
+`https://ghe.example.co.jp/acme`。github.com も GitHub Enterprise Server も同じ形）。画面でタスクを作るときは、対象の中からリポジトリを選ぶ（Org の対象は、gh で読んだその Org の
 リポジトリから選ぶ）。対象の、取り込むラベルの付いた開いている Issue と PR は、タスクとして取り込む。
 取り込むラベルは、すべてのプロジェクトに共通の設定として、画面の「sacty の設定」（ユーザーメニュー）で決める。
 設定していなければ取り込まない。
@@ -83,14 +84,52 @@ Docker Hub や npm の公開レジストリを使えない環境では、`config
 ```yaml
 image: registry.example.com/sacty-agent:0.1.0
 image_build:
-  base_image: registry.example.com/library/node:22-bookworm-slim   # Node.js 22 で node ユーザーがあること
+  base_image: registry.example.com/library/node:22-bookworm-slim   # Node.js 18 以上で node ユーザーがあること
   npm_registry: https://npm.example.com/repository/npm/
   npm_token: npm-token   # 認証が要るとき。値は sacty secret set npm-token で保存する
+  npm_version: 11        # イメージに入れる npm の版（書かなければ元のイメージの npm）
+  npm_config:            # コンテナの中の npm 全体の設定（global の npmrc）
+    replace-registry-host: always   # package-lock.json の古い取得元の URL を、いまの registry に置き換える
+    audit: false
+    min-release-age: 7              # 公開から7日たっていない版は入れない（npm 11 から）
 ```
 
 - npm のトークンは、ビルドのときだけ読ませる（BuildKit の secret）。イメージの層・履歴・環境変数には残らない
 - 元のイメージに git が入っていれば、Debian のミラーに届かなくても作れる
+- `npm_registry` は、コンテナの中の npm の registry にもなる（`npm_config` の `registry` があれば、そちらが優先）。`npm_token` はイメージを作るときだけ使い、コンテナの中では使わない
+- `npm_config` はイメージに残り、コンテナの中のすべての npm（対象リポジトリの `npm ci` など）に効く。対象リポジトリの `.npmrc` に同じ項目があれば、そちらが優先する。認証の項目（`_authToken` など）はイメージに残るので書けない
 - 作ったイメージ（`image`）は、エージェントの実行とテストの実行の両方で使う
+
+### 組織の AI gateway と、工程ごとのモデル
+
+OpenAI 互換（Responses API）の接続先（組織の AI gateway など）は `providers` に書き、Codex のエージェントから `provider` で使う。エージェントは「接続先・モデル・リーズニングエフォート・単価」の組で書き、`step_agents` で工程とオーケストレーターごとに選ぶ。
+
+```yaml
+providers:
+  corp-gw:
+    base_url: https://ai-gateway.example.com/v1   # Codex の model_providers の base_url と同じ
+    secret: op://Work/AI-Gateway/api-key           # env_key に入れていた API キー
+    via_gateway: true                              # sacty のゲートウェイ経由（429 のリトライ・キーをコンテナに渡さない）
+agents:
+  sol-high:
+    runtime: codex
+    provider: corp-gw
+    model: gpt-6-sol
+    reasoning_effort: high
+    price_per_mtok_usd: { input: 1.25, cached_input: 0.125, output: 10 }
+  luna-low:
+    runtime: codex
+    provider: corp-gw
+    model: gpt-6-luna
+    reasoning_effort: low
+    price_per_mtok_usd: { input: 0.3, cached_input: 0.03, output: 1.5 }
+default_agent: luna-low
+guardian_agent: sol-high
+step_agents:          # 書かなければ default_agent（統合レビューは guardian_agent）
+  orchestrator: luna-low
+  requirements: sol-high
+  design: sol-high
+```
 
 ### ホストのゲートウェイ（Codex × Bedrock）
 
@@ -99,6 +138,12 @@ image_build:
 - API キーはゲートウェイだけが持ち、エージェントのコンテナには実行ごとのトークンだけを渡す
 - レート制限（429）と一時的な失敗（5xx・接続の失敗）は、`Retry-After`（無ければ1秒から倍にしていく間隔）で待ってリトライする
 - リトライの上限は `gateway.retry`（`max_attempts`：1件のリクエストで送る回数、`max_wait_sec`：成功するまでに待つ合計）で変えられる。上限に達すると、エージェントは利用上限として一時停止し、再開でやり直せる
+- コンテナは `host.docker.internal` でゲートウェイにつなぐ。Docker Desktop ではそのまま届く。Rancher Desktop など、仮想マシンの中の Docker では `host-gateway` が仮想マシンを指して届かない（`Reconnecting... error sending request` のまま進まない）ので、`gateway.host_address` にホストに届くアドレスを書く（Rancher Desktop は `192.168.5.2`）
+
+```yaml
+gateway:
+  host_address: 192.168.5.2   # Rancher Desktop
+```
 - リトライした実行は、作業履歴に回数と待った時間を残す
 - ゲートウェイは 127.0.0.1 だけで待ち受け、実行中のエージェントのトークンを持つリクエストだけを受け付ける
 
@@ -122,16 +167,16 @@ gateway:
 - 起動し直しても準備ができなければ、タスクの一覧の画面に出し、1分ごとに起動し直す
 - コンテナには、実行ごとのトークンを付けた HTTP の MCP の URL だけを渡す（Claude Code・Codex のどちらにも渡せる）
 
-### 社内 PF の API（ゲートウェイ経由）
+### 組織内 PF の API（ゲートウェイ経由）
 
-MCP サーバーが無い社内 PF は、`gateway.platforms` に書くと、エージェントが API で使える。認証情報はゲートウェイだけが持ち、エージェントには渡さない。
+MCP サーバーが無い組織内 PF は、`gateway.platforms` に書くと、エージェントが API で使える。認証情報はゲートウェイだけが持ち、エージェントには渡さない。
 
 ```yaml
 gateway:
   platforms:
     ticket:                                   # エージェントは $SACTY_PF_URL/ticket/… で呼ぶ
       upstream: https://ticket.internal.example.com
-      description: 社内のチケット管理
+      description: チケット管理
       auth:                                   # 固定のキーを、ヘッダーに付ける（独自のヘッダーも書ける）
         header: X-Internal-Token
         secret: op://Work/Ticket/token
@@ -165,14 +210,17 @@ gateway:
 
 GitHub へのアクセス（Issue の取り込み、clone、プッシュ、PR の作成、調査の結果の Issue へのコメント、
 レビューの PR への投稿）は、ホストの GitHub CLI（`gh`）に
-ログイン済みのアカウントで行う。使うアカウントは、プロジェクトの設定で必ず選ぶ（最初は `gh` のアクティブな
+ログイン済みのアカウントで行う。github.com と GitHub Enterprise Server（いくつでも）を同時に使える。
+使うアカウントは、プロジェクトの設定で、対象のホストごとに必ず選ぶ（最初は、そのホストの `gh` のアクティブな
 アカウントが選ばれている）。`gh` でアカウントを切り替えても、プロジェクトごとに選んだアカウントを使う。
 
 ```sh
-gh auth login   # 使うアカウントごとにログインする
+gh auth login                                 # github.com。使うアカウントごとにログインする
+gh auth login --hostname ghe.example.co.jp    # GitHub Enterprise Server も、ホストごとにログインする
 ```
 
-HTTPS の GitHub のリポジトリは、そのアカウントのトークンで clone・プッシュする（ホストの git の認証の設定は
+API は、github.com なら `https://api.github.com`、GitHub Enterprise Server なら `https://<ホスト>/api/v3` を使う。
+HTTPS のリポジトリは、そのホストのアカウントのトークンで clone・プッシュする（ホストの git の認証の設定は
 要らない）。SSH の URL やローカルのパスは、ホストの認証（ssh-agent など）を使う。
 トークンは使うたびに `gh` から取り出し、作業履歴・ログ・画面・コンテナには出さない。
 

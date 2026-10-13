@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { message, renderMessage } from "@sacty/core";
+import { message, parseRepoUrl, renderMessage } from "@sacty/core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { SqliteActivityStore } from "./activity.js";
 import type { AgentExecutor } from "./agents/docker.js";
@@ -54,16 +54,22 @@ class FakeSearch implements IssueSearch {
   fail?: string;
   /** この条件の検索だけ失敗させる。 */
   failQuery?: string;
-  constructor(private readonly issues: FoundIssue[]) {}
-  async search(query: string, token: string, since?: string) {
+  /** 検索ごとのホスト（PBI-40）。 */
+  hosts: string[] = [];
+  constructor(readonly issues: FoundIssue[]) {}
+  async search(host: string, query: string, token: string, since?: string) {
     if (this.fail || query === this.failQuery) {
       throw new Error(`${this.fail ?? "Issue を検索できませんでした：GitHub API 422"} ${token}`);
     }
+    this.hosts.push(host);
     this.queries.push(query);
     this.tokens.push(token);
     this.sinces.push(since);
     return {
-      issues: this.issues.filter((i) => query.includes(`repo:${i.repo}`)),
+      issues: this.issues.filter((i) => {
+        const repo = parseRepoUrl(i.repo);
+        return repo?.host === host && query.includes(`repo:${repo.path}`);
+      }),
       cursor: this.cursor,
       ...(this.rateLimited ? { rateLimited: true, incomplete: "レート制限" } : {}),
     };
@@ -77,10 +83,12 @@ class FakeGh implements GitHubAuth {
   async accounts() {
     return [];
   }
-  async token(account: string) {
-    this.requested.push(account);
-    const token = this.tokens[account];
-    if (!token) throw new MessageError(message("github.accountUnavailable", { account }));
+  /** github.com のアカウントは名前だけ、ほかのホストは「ホスト/名前」で持つ。 */
+  async token(host: string, account: string) {
+    const key = host === "github.com" ? account : `${host}/${account}`;
+    this.requested.push(key);
+    const token = this.tokens[key];
+    if (!token) throw new MessageError(message("github.accountUnavailable", { account, host }));
     return token;
   }
 }
@@ -103,12 +111,12 @@ function setup(github = true, gh = new FakeGh()) {
   });
   service.saveProject(undefined, {
     name: "決済",
-    githubAccount: "me",
-    targets: [{ scope: "repo", target: "acme/payments" }],
+    githubAccounts: { "github.com": "me" },
+    targets: [{ scope: "repo", target: "https://github.com/acme/payments" }],
   });
   const search = new FakeSearch([
     {
-      repo: "acme/payments",
+      repo: "https://github.com/acme/payments",
       number: 7,
       title: "冪等性キー",
       body: "本文",
@@ -160,12 +168,12 @@ describe("GitHub Issue の定期的な取り込み（PBI-5a）", () => {
     const { activity, service, search, intake } = setup();
     service.saveProject(undefined, {
       name: "削除されたリポジトリ",
-      githubAccount: "me",
-      targets: [{ scope: "repo", target: "acme/deleted" }],
+      githubAccounts: { "github.com": "me" },
+      targets: [{ scope: "repo", target: "https://github.com/acme/deleted" }],
     });
     search.failQuery = 'is:open repo:acme/deleted label:"sacty"';
     await intake.tick(true);
-    expect(service.list().map((t) => t.source?.repo)).toEqual(["acme/payments"]);
+    expect(service.list().map((t) => t.source?.repo)).toEqual(["https://github.com/acme/payments"]);
     const status = service.status().intake;
     expect(status?.imported).toBe(1);
     expect(status?.errors).toEqual([
@@ -182,18 +190,18 @@ describe("GitHub Issue の定期的な取り込み（PBI-5a）", () => {
     const { activity, service, search, intake } = setup(true, gh);
     service.saveProject(undefined, {
       name: "副業",
-      targets: [{ scope: "repo", target: "side/app" }],
-      githubAccount: "side-job",
+      targets: [{ scope: "repo", target: "https://github.com/side/app" }],
+      githubAccounts: { "github.com": "side-job" },
     });
     service.saveProject(undefined, {
       name: "ログアウト済み",
-      targets: [{ scope: "repo", target: "old/app" }],
-      githubAccount: "logged-out",
+      targets: [{ scope: "repo", target: "https://github.com/old/app" }],
+      githubAccounts: { "github.com": "logged-out" },
     });
     // アカウントを選んでいないプロジェクトは、アクティブなアカウントで検索せず、理由を示す
     service.saveProject(undefined, {
       name: "インポートしたもの",
-      targets: [{ scope: "repo", target: "imported/app" }],
+      targets: [{ scope: "repo", target: "https://github.com/imported/app" }],
     });
     await intake.tick(true);
     // 既定（アカウント未設定）はアクティブなアカウント、副業は選んだアカウントのトークン
@@ -206,11 +214,17 @@ describe("GitHub Issue の定期的な取り込み（PBI-5a）", () => {
     expect(service.status().intake?.errors).toEqual([
       {
         query: 'is:open repo:old/app label:"sacty"',
-        message: { code: "github.accountUnavailable", params: { account: "logged-out" } },
+        message: {
+          code: "github.accountUnavailable",
+          params: { account: "logged-out", host: "github.com" },
+        },
       },
       {
         query: 'is:open repo:imported/app label:"sacty"',
-        message: { code: "github.accountRequired", params: { project: "インポートしたもの" } },
+        message: {
+          code: "github.accountRequired",
+          params: { project: "インポートしたもの", host: "github.com" },
+        },
       },
     ]);
     activity.close();
@@ -221,13 +235,13 @@ describe("GitHub Issue の定期的な取り込み（PBI-5a）", () => {
     const { activity, service, search, intake } = setup(true, gh);
     service.saveProject(undefined, {
       name: "認証",
-      githubAccount: "me",
-      targets: [{ scope: "repo", target: "acme/auth" }],
+      githubAccounts: { "github.com": "me" },
+      targets: [{ scope: "repo", target: "https://github.com/acme/auth" }],
     });
     service.saveProject(undefined, {
       name: "副業",
-      targets: [{ scope: "repo", target: "side/app" }],
-      githubAccount: "side-job",
+      targets: [{ scope: "repo", target: "https://github.com/side/app" }],
+      githubAccounts: { "github.com": "side-job" },
     });
     search.rateLimited = true;
     await intake.tick(true);
@@ -236,12 +250,59 @@ describe("GitHub Issue の定期的な取り込み（PBI-5a）", () => {
     activity.close();
   });
 
+  it("GitHub Enterprise Server の対象は、そのホストで、そのホストのアカウントで検索する（PBI-40）", async () => {
+    const gh = new FakeGh({
+      me: "ghp_secret",
+      "ghe.example.co.jp/corp": "ghp_corp",
+      "ghe2.example.co.jp/corp": "ghp_corp2",
+    });
+    const { activity, service, search, intake } = setup(true, gh);
+    // 同じ owner/name が別のホストにあっても、別のリポジトリ
+    service.saveProject(undefined, {
+      name: "GHE",
+      targets: [
+        { scope: "repo", target: "https://ghe.example.co.jp/acme/payments" },
+        { scope: "org", target: "https://ghe2.example.co.jp/acme" },
+      ],
+      githubAccounts: { "ghe.example.co.jp": "corp", "ghe2.example.co.jp": "corp" },
+    });
+    // github.com と同じ owner/name・番号の Issue
+    search.issues.push({
+      repo: "https://ghe.example.co.jp/acme/payments",
+      number: 7,
+      title: "GHE の冪等性キー",
+      body: "本文",
+      url: "https://ghe.example.co.jp/acme/payments/issues/7",
+      labels: ["sacty"],
+    });
+    await intake.tick(true);
+    expect(search.hosts).toEqual(["github.com", "ghe.example.co.jp", "ghe2.example.co.jp"]);
+    expect(search.queries).toEqual([
+      'is:open repo:acme/payments label:"sacty"',
+      'is:open repo:acme/payments label:"sacty"',
+      'is:open org:acme label:"sacty"',
+    ]);
+    expect(search.tokens).toEqual(["ghp_secret", "ghp_corp", "ghp_corp2"]);
+    // 同じ owner/name・番号でも、ホストが違えば別の Issue として、それぞれのプロジェクトに取り込む
+    const projects = new Map(service.listProjects().map((p) => [p.id, p.name]));
+    expect(
+      service
+        .list()
+        .map((t) => [t.source?.repo, projects.get(t.projectId)])
+        .sort(),
+    ).toEqual([
+      ["https://ghe.example.co.jp/acme/payments", "GHE"],
+      ["https://github.com/acme/payments", "決済"],
+    ]);
+    activity.close();
+  });
+
   it("読んだところから次の取り込みを続け、レート制限ならその回のほかの検索をやめる（レビュー指摘）", async () => {
     const { activity, service, search, intake, advance } = setup();
     service.saveProject(undefined, {
       name: "認証",
-      githubAccount: "me",
-      targets: [{ scope: "repo", target: "acme/auth" }],
+      githubAccounts: { "github.com": "me" },
+      targets: [{ scope: "repo", target: "https://github.com/acme/auth" }],
     });
     search.cursor = "2026-10-10T00:00:00Z";
     search.rateLimited = true;

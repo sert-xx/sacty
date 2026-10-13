@@ -97,7 +97,8 @@ export const Actor = z.enum(["person", "sacty", "orchestrator", "guardian", "age
 export type Actor = z.infer<typeof Actor>;
 
 /** エージェントの認証方式。 */
-export const AuthMode = z.enum(["subscription", "api-key", "bedrock", "stub"]);
+/** provider：config.yaml の providers の OpenAI 互換の接続先（組織の AI gateway など。PBI-40）。 */
+export const AuthMode = z.enum(["subscription", "api-key", "bedrock", "provider", "stub"]);
 export type AuthMode = z.infer<typeof AuthMode>;
 
 /** 1回の実行で使ったトークン数。キャッシュ読み込みは入力とは別枠にそろえて記録する。 */
@@ -198,7 +199,7 @@ const TaskCreated = z.object({
     /** 取り込み元（GitHub の Issue・PR のリポジトリと番号）。 */
     source: TaskSource.optional(),
     /**
-     * 画面で作ったタスクの対象リポジトリ（owner/name。プロジェクトのリポジトリの設定から選んだもの。PBI-21）。
+     * 画面で作ったタスクの対象リポジトリ（リポジトリの URL。プロジェクトのリポジトリの設定から選んだもの。PBI-21）。
      * Issue から取り込んだタスクは、その Issue のリポジトリが対象なので持たない。PBI-21 より前の作業履歴にも無い。
      */
     repo: z.string().optional(),
@@ -554,7 +555,8 @@ const AiRequestsRetried = z.object({
 const OrchestratorFailed = z.object({
   type: z.literal("OrchestratorFailed"),
   payload: z.object({
-    reason: z.enum(["usage_limit", "auth"]),
+    // error：実行に失敗した・出力から工程を読み取れなかった（PBI-40）
+    reason: z.enum(["usage_limit", "auth", "error"]),
     message: DaemonText,
     agentId: z.string(),
     usage: TokenUsage.optional(),
@@ -606,7 +608,7 @@ const PullRequestPublished = z.object({
     /** PRを作らない設定（ブランチのプッシュまで）なら無い。 */
     url: z.string().optional(),
     number: z.number().int().positive().optional(),
-    /** PRを作ったリポジトリ（owner/name）。PRの番号はリポジトリの中でしか一意でないため記録する。 */
+    /** PRを作ったリポジトリ（リポジトリの URL）。PRの番号はリポジトリの中でしか一意でないため記録する。 */
     repo: z.string().optional(),
   }),
 });
@@ -903,7 +905,7 @@ export const CreateTaskInput = z.object({
   /** 作るプロジェクト（必須。既定のプロジェクトは無い。PBI-22）。 */
   projectId: z.string().min(1),
   /**
-   * 対象リポジトリ（owner/name。プロジェクトのリポジトリの設定から選ぶ。PBI-21）。
+   * 対象リポジトリ（リポジトリの URL。プロジェクトのリポジトリの設定から選ぶ。PBI-21）。
    * 省略すると、プロジェクトのリポジトリの設定が1つだけならそれにする。
    */
   repo: z.string().trim().min(1).optional(),

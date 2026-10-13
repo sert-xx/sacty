@@ -44,6 +44,9 @@ export function SettingsForm({
           {t.intakeTitle}{" "}
           <span className="text-[13px] font-normal text-muted-foreground">{t.intakeNote}</span>
         </h2>
+        <p className="text-sm leading-6 whitespace-pre-line text-muted-foreground">
+          {t.intakeHelp}
+        </p>
         <div className="flex flex-col gap-1.5">
           <Label htmlFor={`${uid}-label`}>{t.intakeLabel}</Label>
           <Input
@@ -56,7 +59,6 @@ export function SettingsForm({
             className="max-w-xs"
           />
         </div>
-        <p className="text-xs leading-5 text-muted-foreground">{t.intakeHelp}</p>
         <p className={intakeLabel ? "text-sm" : "text-sm text-warn"}>
           {intakeLabel ? t.intakeOn(intakeLabel) : t.intakeOff}
         </p>
@@ -69,6 +71,9 @@ export function SettingsForm({
           {t.parallelTitle}{" "}
           <span className="text-[13px] font-normal text-muted-foreground">{t.parallelNote}</span>
         </h2>
+        <p className="text-sm leading-6 whitespace-pre-line text-muted-foreground">
+          {t.parallelHelp(DEFAULT_MAX_PARALLEL_TASKS, MAX_PARALLEL_TASKS_LIMIT)}
+        </p>
         <div className="flex flex-col gap-1.5">
           <Label htmlFor={`${uid}-parallel-input`}>{t.parallelLabel}</Label>
           <Input
@@ -85,9 +90,6 @@ export function SettingsForm({
             className="max-w-32"
           />
         </div>
-        <p className="text-xs leading-5 text-muted-foreground">
-          {t.parallelHelp(DEFAULT_MAX_PARALLEL_TASKS, MAX_PARALLEL_TASKS_LIMIT)}
-        </p>
         <p className="text-sm">
           {t.parallelCurrent(
             maxParallelTasks ?? DEFAULT_MAX_PARALLEL_TASKS,

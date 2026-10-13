@@ -53,7 +53,12 @@ describe("デーモンの文言（PBI-11）", () => {
       ProjectDefinition.safeParse({ name: "x", targets, context });
 
     const tooMany = first(
-      definition(Array.from({ length: 51 }, (_, i) => ({ scope: "repo", target: `o/r${i}` }))),
+      definition(
+        Array.from({ length: 51 }, (_, i) => ({
+          scope: "repo",
+          target: `https://github.com/o/r${i}`,
+        })),
+      ),
     );
     expect(tooMany).toEqual({ code: "input.tooMany", params: { maximum: 50 } });
 
@@ -63,7 +68,7 @@ describe("デーモンの文言（PBI-11）", () => {
     expect(renderMessage(longRef, "en")).toBe("Keep it within 200 characters.");
 
     const unknown = first(
-      ProjectExport.safeParse({ sacty: "project", version: 2, project: { name: "x" }, token: "t" }),
+      ProjectExport.safeParse({ sacty: "project", version: 3, project: { name: "x" }, token: "t" }),
     );
     expect(unknown).toEqual({ code: "input.unknownKeys", params: { keys: "token" } });
     expect(renderMessage(unknown, "ja")).toBe("知らない項目があります（token）。");

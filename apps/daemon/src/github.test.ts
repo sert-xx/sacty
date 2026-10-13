@@ -31,7 +31,7 @@ function fakeFetch(
 }
 
 const input = {
-  repo: "acme/app",
+  repo: "https://github.com/acme/app",
   token: "ghp_secret",
   branch: "sacty/task-1234abcd",
   baseBranch: "main",
@@ -53,6 +53,28 @@ describe("GitHub の PR（PBI-10b）", () => {
         body: { title: "決済API", head: "sacty/task-1234abcd", base: "main", body: "本文" },
         auth: "Bearer ghp_secret",
       },
+    ]);
+  });
+
+  it("GitHub Enterprise Server のリポジトリは、そのホストの /api/v3 で PR を作る（PBI-40）", async () => {
+    const { impl, calls } = fakeFetch([
+      {
+        status: 201,
+        json: { html_url: "https://ghe.example.co.jp/acme/app/pull/3", number: 3 },
+      },
+      { status: 201, json: { html_url: "https://ghe.example.co.jp/acme/app/issues/3#c1" } },
+    ]);
+    const client = new GitHubPullRequests(impl);
+    await client.upsert({ ...input, repo: "https://ghe.example.co.jp/acme/app" });
+    await client.commentIssue({
+      repo: "https://ghe.example.co.jp/acme/app",
+      token: "t",
+      number: 3,
+      body: "b",
+    });
+    expect(calls.map((c) => c.url)).toEqual([
+      "https://ghe.example.co.jp/api/v3/repos/acme/app/pulls",
+      "https://ghe.example.co.jp/api/v3/repos/acme/app/issues/3/comments",
     ]);
   });
 
@@ -115,13 +137,14 @@ describe("GitHub の Issue の検索（PBI-5a）", () => {
       },
     ]);
     const { issues: found, incomplete } = await new GitHubIssueSearch(impl).search(
+      "github.com",
       'repo:acme/app label:"sacty"',
       "t",
     );
     expect(incomplete).toBeUndefined();
     expect(found).toEqual([
       {
-        repo: "acme/app",
+        repo: "https://github.com/acme/app",
         number: 3,
         title: "冪等性キー",
         body: "",
@@ -129,7 +152,7 @@ describe("GitHub の Issue の検索（PBI-5a）", () => {
         labels: ["sacty"],
       },
       {
-        repo: "acme/app",
+        repo: "https://github.com/acme/app",
         number: 4,
         title: "PR",
         body: "",
@@ -139,6 +162,68 @@ describe("GitHub の Issue の検索（PBI-5a）", () => {
       },
     ]);
     expect(calls[0]?.url).toContain("q=repo%3Aacme%2Fapp%20label%3A%22sacty%22");
+  });
+});
+
+describe("GitHub Enterprise Server の検索・Org（PBI-40）", () => {
+  it("そのホストの /api/v3 で検索し、リポジトリは Issue の URL で返す（ほかのホストのものは除く）", async () => {
+    const { impl, calls } = fakeFetch([
+      {
+        status: 200,
+        json: {
+          items: [
+            {
+              number: 3,
+              title: "GHE",
+              html_url: "https://ghe.example.co.jp/acme/app/issues/3",
+              labels: [],
+            },
+            // 先頭がドットのリポジトリ名も読む（PBI-40 レビュー指摘）
+            {
+              number: 5,
+              title: "ドットのリポジトリ",
+              html_url: "https://ghe.example.co.jp/acme/.github/issues/5",
+              labels: [],
+            },
+            // 検索したホストではない URL は、取り込まない
+            {
+              number: 4,
+              title: "ほかのホスト",
+              html_url: "https://github.com/acme/app/issues/4",
+              labels: [],
+            },
+          ],
+        },
+      },
+    ]);
+    const { issues } = await new GitHubIssueSearch(impl).search(
+      "ghe.example.co.jp",
+      "repo:acme/app",
+      "t",
+    );
+    expect(calls[0]?.url).toMatch(/^https:\/\/ghe\.example\.co\.jp\/api\/v3\/search\/issues\?/);
+    expect(issues.map((i) => i.repo)).toEqual([
+      "https://ghe.example.co.jp/acme/app",
+      "https://ghe.example.co.jp/acme/.github",
+    ]);
+  });
+
+  it("Org のリポジトリを、そのホストの /api/v3 で読み、URL で返す。ほかのホストの次のページはたどらない", async () => {
+    const api = "https://ghe.example.co.jp/api/v3";
+    const { impl, calls } = fakeFetch([
+      {
+        status: 200,
+        json: [{ full_name: "acme/web" }],
+        headers: { link: `<https://api.github.com/orgs/acme/repos?page=2>; rel="next"` },
+      },
+    ]);
+    expect(
+      await new GitHubPullRequests(impl).repositories({
+        org: "https://ghe.example.co.jp/acme",
+        token: "t",
+      }),
+    ).toEqual(["https://ghe.example.co.jp/acme/web"]);
+    expect(calls.map((c) => c.url)).toEqual([`${api}/orgs/acme/repos?per_page=100&type=all`]);
   });
 });
 
@@ -181,7 +266,11 @@ describe("検索の上限の先（レビュー指摘）", () => {
     const { impl, queries } = searchFetch(1001, (n) =>
       new Date(Date.UTC(2026, 0, 1) + n * 1000).toISOString().replace(".000", ""),
     );
-    const { issues, incomplete } = await new GitHubIssueSearch(impl).search("repo:acme/app", "t");
+    const { issues, incomplete } = await new GitHubIssueSearch(impl).search(
+      "github.com",
+      "repo:acme/app",
+      "t",
+    );
     expect(incomplete).toBeUndefined();
     expect(issues).toHaveLength(1001);
     expect(new Set(issues.map((i) => i.number)).size).toBe(1001);
@@ -190,7 +279,11 @@ describe("検索の上限の先（レビュー指摘）", () => {
 
   it("同じ日時の Issue が多すぎて先へ進めなければ、取り切れなかったことを返す", async () => {
     const { impl } = searchFetch(1200, () => "2026-01-01T00:00:00Z");
-    const { issues, incomplete } = await new GitHubIssueSearch(impl).search("repo:acme/app", "t");
+    const { issues, incomplete } = await new GitHubIssueSearch(impl).search(
+      "github.com",
+      "repo:acme/app",
+      "t",
+    );
     expect(issues).toHaveLength(1000);
     expect(ja(incomplete)).toMatch(/すべてを検索できませんでした/);
   });
@@ -216,12 +309,12 @@ describe("検索の上限の先（レビュー指摘）", () => {
       },
     ]);
     const search = new GitHubIssueSearch(impl);
-    const first = await search.search("repo:acme/app", "t", "2026-01-01T00:00:00Z");
+    const first = await search.search("github.com", "repo:acme/app", "t", "2026-01-01T00:00:00Z");
     expect(first.issues.map((i) => i.number)).toEqual([2]);
     expect(first.cursor).toBe("2026-01-01T00:00:00Z"); // 先へ進めない
     expect(ja(first.incomplete)).toMatch(/検索し直します/);
 
-    const second = await search.search("repo:acme/app", "t", first.cursor);
+    const second = await search.search("github.com", "repo:acme/app", "t", first.cursor);
     expect(second.issues.map((i) => i.number)).toEqual([1, 2]);
     expect(second.cursor).toBe("2026-01-01T00:00:02Z");
     expect(second.incomplete).toBeUndefined();
@@ -234,7 +327,11 @@ describe("検索の上限の先（レビュー指摘）", () => {
     const stamp = (n: number) =>
       new Date(Date.UTC(2026, 0, 1) + n * 1000).toISOString().replace(".000", "");
     const first = searchFetch(3100, stamp, 30);
-    const partial = await new GitHubIssueSearch(first.impl).search("repo:acme/app", "t");
+    const partial = await new GitHubIssueSearch(first.impl).search(
+      "github.com",
+      "repo:acme/app",
+      "t",
+    );
     expect(partial.rateLimited).toBe(true);
     expect(ja(partial.incomplete)).toMatch(/レート制限/);
     expect(partial.issues.length).toBeGreaterThanOrEqual(2900);
@@ -243,6 +340,7 @@ describe("検索の上限の先（レビュー指摘）", () => {
     // 次の取り込みは、読んだところから続け、残りをすべて取れる
     const next = searchFetch(3100, stamp, 30);
     const rest = await new GitHubIssueSearch(next.impl).search(
+      "github.com",
       "repo:acme/app",
       "t",
       partial.cursor,
@@ -261,15 +359,15 @@ describe("中止したときに PR を閉じる（PBI-3）", () => {
       { status: 404, json: { message: "Not Found" } },
     ]);
     const client = new GitHubPullRequests(impl);
-    await client.close({ repo: "acme/app", token: "t", number: 7 });
+    await client.close({ repo: "https://github.com/acme/app", token: "t", number: 7 });
     expect(calls[0]).toMatchObject({
       url: "https://api.github.com/repos/acme/app/pulls/7",
       method: "PATCH",
       body: { state: "closed" },
     });
-    await expect(client.close({ repo: "acme/app", token: "t", number: 8 })).rejects.toThrow(
-      /PRを閉じられませんでした：GitHub API 404/,
-    );
+    await expect(
+      client.close({ repo: "https://github.com/acme/app", token: "t", number: 8 }),
+    ).rejects.toThrow(/PRを閉じられませんでした：GitHub API 404/);
   });
 });
 
@@ -290,7 +388,7 @@ describe("成果物チェックの間の PR の状態（PBI-14a）", () => {
       { status: 404, json: { message: "Not Found" } },
     ]);
     const client = new GitHubPullRequests(impl);
-    const pr = { repo: "acme/app", token: "ghp_secret", number: 7 };
+    const pr = { repo: "https://github.com/acme/app", token: "ghp_secret", number: 7 };
     expect(await client.status(pr)).toEqual({
       state: "merged",
       mergedBy: "reviewer",
@@ -387,7 +485,7 @@ describe("PR へのフィードバック（PBI-14b）", () => {
       },
     ]);
     const feedback = await new GitHubPullRequests(impl).feedback({
-      repo: "acme/app",
+      repo: "https://github.com/acme/app",
       token: "ghp_secret",
       number: 7,
     });
@@ -436,7 +534,7 @@ describe("フィードバックの次のページ（PBI-14b レビュー指摘�
       },
     ]);
     const feedback = await new GitHubPullRequests(impl).feedback({
-      repo: "acme/app",
+      repo: "https://github.com/acme/app",
       token: "ghp_secret",
       number: 7,
     });
@@ -457,7 +555,12 @@ describe("Issue へのコメント（PBI-18）", () => {
       { status: 403, json: { message: "Resource not accessible by integration" } },
     ]);
     const client = new GitHubPullRequests(impl);
-    const input = { repo: "acme/app", token: "ghp_secret", number: 5, body: "## 調査の結果" };
+    const input = {
+      repo: "https://github.com/acme/app",
+      token: "ghp_secret",
+      number: 5,
+      body: "## 調査の結果",
+    };
     expect(await client.commentIssue(input)).toEqual({
       url: "https://github.com/acme/app/issues/5#issuecomment-9",
     });
@@ -499,7 +602,7 @@ describe("Issue へのコメント（PBI-18）", () => {
       { status: 404, json: { message: "Not Found" } },
     ]);
     const client = new GitHubPullRequests(impl);
-    const target = { repo: "acme/app", token: "ghp_secret", number: 5 };
+    const target = { repo: "https://github.com/acme/app", token: "ghp_secret", number: 5 };
     expect(
       await client.findIssueComment({ ...target, marker: "<!-- sacty-investigation:t1 -->" }),
     ).toEqual({ url: "https://github.com/acme/app/issues/5#issuecomment-2" });
@@ -526,7 +629,7 @@ describe("Issue へのコメント（PBI-18）", () => {
 
 describe("PR のレビュー（PBI-19）", () => {
   const api = "https://api.github.com/repos/acme/app";
-  const target = { repo: "acme/app", token: "ghp_secret", number: 12 };
+  const target = { repo: "https://github.com/acme/app", token: "ghp_secret", number: 12 };
 
   it("PR の先頭・向き先のコミットと説明を読み、失敗は理由つきのエラーにする", async () => {
     const { impl, calls } = fakeFetch([
@@ -713,17 +816,18 @@ describe("対象の Org のリポジトリ（PBI-25）", () => {
       { status: 403, json: { message: "Forbidden" } },
     ]);
     const client = new GitHubPullRequests(impl);
-    expect(await client.repositories({ owner: "acme", token: "ghp_secret" })).toEqual([
-      "acme/api",
-      "acme/web",
-    ]);
+    expect(
+      await client.repositories({ org: "https://github.com/acme", token: "ghp_secret" }),
+    ).toEqual(["https://github.com/acme/api", "https://github.com/acme/web"]);
     expect(calls[0]).toMatchObject({
       url: `${api}/orgs/acme/repos?per_page=100&type=all`,
       auth: "Bearer ghp_secret",
     });
     expect(
       errorText(
-        await client.repositories({ owner: "acme", token: "ghp_secret" }).catch((e: unknown) => e),
+        await client
+          .repositories({ org: "https://github.com/acme", token: "ghp_secret" })
+          .catch((e: unknown) => e),
       ),
     ).toMatchObject({ code: "github.failed", params: { action: "listRepositories", status: 403 } });
   });
@@ -732,23 +836,37 @@ describe("対象の Org のリポジトリ（PBI-25）", () => {
     const { impl, calls } = fakeFetch([
       { status: 404, json: { message: "Not Found" } },
       // 公開のものだけ
-      { status: 200, json: [{ full_name: "Someone/dotfiles", owner: { login: "Someone" } }] },
+      {
+        status: 200,
+        json: [{ full_name: "Someone/dotfiles", owner: { login: "Someone" } }],
+      },
       // トークンで読めるもの（ほかの持ち主のものも含む）
       {
         status: 200,
         json: [
-          { full_name: "Someone/private-app", owner: { login: "Someone" }, private: true },
+          {
+            full_name: "Someone/private-app",
+            owner: { login: "Someone" },
+            private: true,
+          },
           { full_name: "Someone/dotfiles", owner: { login: "Someone" } },
-          { full_name: "other/shared", owner: { login: "other" }, private: true },
-          { full_name: "Someone/archived", owner: { login: "Someone" }, archived: true },
+          {
+            full_name: "other/shared",
+            owner: { login: "other" },
+            private: true,
+          },
+          {
+            full_name: "Someone/archived",
+            owner: { login: "Someone" },
+            archived: true,
+          },
         ],
       },
     ]);
     const client = new GitHubPullRequests(impl);
-    expect(await client.repositories({ owner: "someone", token: "ghp_secret" })).toEqual([
-      "Someone/dotfiles",
-      "Someone/private-app",
-    ]);
+    expect(
+      await client.repositories({ org: "https://github.com/someone", token: "ghp_secret" }),
+    ).toEqual(["https://github.com/Someone/dotfiles", "https://github.com/Someone/private-app"]);
     expect(calls.map((c) => c.url)).toEqual([
       `${api}/orgs/someone/repos?per_page=100&type=all`,
       `${api}/users/someone/repos?per_page=100&type=owner`,
