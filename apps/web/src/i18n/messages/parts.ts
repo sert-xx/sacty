@@ -76,6 +76,11 @@ const ja = {
       "最終レビューで合格にした成果物を、人間が成果物チェックで差し戻しました。ゴールガーディアンの精度の記録として残しています。",
     remarks: (ids: string) => `指摘：${ids}`,
     none: "（なし）",
+    rework: "戻し先",
+    reworkJudged: (step: string, reason: string) =>
+      `PR の指摘で${step}からやり直し（ゴールガーディアンの判断：${reason}）`,
+    reworkUndecided: (step: string, reason: string) =>
+      `ゴールガーディアンが戻し先を判断できなかったため、${step}からやり直し（${reason}）`,
   },
   resume: {
     newCap: (used: string) => `新しい上限（累計・使用済み ${used} より大きい金額）`,
@@ -196,6 +201,11 @@ const en: PartsMessages = {
       "A person requested changes in the deliverable review on a deliverable that passed the final review. Kept as a record of the Goal Guardian's accuracy.",
     remarks: (ids) => `Comments: ${ids}`,
     none: "(none)",
+    rework: "Redo from",
+    reworkJudged: (step, reason) =>
+      `Redoing from ${step} for the PR comments (Goal Guardian's judgement: ${reason})`,
+    reworkUndecided: (step, reason) =>
+      `The Goal Guardian could not decide the step to redo, so redoing from ${step} (${reason})`,
   },
   resume: {
     newCap: (used) => `New cap (total; more than the ${used} already used)`,

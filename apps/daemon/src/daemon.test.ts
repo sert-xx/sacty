@@ -4110,6 +4110,9 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       expect(prompt).toContain("src/pay.ts:12：ここで例外を握りつぶしている");
       expect(prompt).toContain("承認済みの要求要件");
       expect(prompt).not.toContain("タスクの本文");
+      // 人間の確認を挟まず、判断した工程に差し戻すことを伝える（PBI-58）
+      expect(prompt).toContain("判断した工程に、そのまま差し戻します");
+      expect(prompt).not.toContain("人間の判断が必要");
       // 実装で直せるかを判断するので、実装後のコードを読み取り専用で渡す（PBI-16）
       expect(executor.scratch[before]).toBe(true);
       expect(executor.workspaceFiles[before]).toEqual(["IMPLEMENTED.md"]);
@@ -4144,39 +4147,106 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       activity.close();
     });
 
-    it("設計・要求要件まで戻す判断や、判断できないときは、人間の確認に回し、確認した戻し先で指摘を引き継ぐ", async () => {
+    it("設計まで戻す判断なら、人間の確認を待たずに設計に差し戻し、作り直した設計を人間の承認に回す（PBI-58）", async () => {
       const pulls = new FakePulls();
-      const { activity, service, id } = await toDeliverableGate(
-        [rework("design", "観点が足りない")],
-        {
-          pulls,
-          now: later,
-        },
+      const { activity, service, executor, id } = await toDeliverableGate(
+        [rework("design", "観点が足りない"), design],
+        { pulls, now: later },
       );
       pulls.feedbackList = [
         item("review:201", { kind: "review", body: "観点が足りない", requestChanges: true }),
         item("comment:202"),
       ];
       await service.checkPullRequests();
-      const task = service.get(id)?.task;
-      expect(task?.status).toBe("escalated");
-      expect(task?.escalation).toMatchObject({
-        reason: "rework_confirmation",
-        target: "design",
-        note: "観点が足りない",
-      });
-      // 人間が要求要件まで戻すと確かめたら、取り込んだ指摘を引き継いで差し戻す
-      const sent = service.requestChanges(id, {
-        step: "pr",
-        submission: task?.gate?.submission ?? 1,
-        target: "requirements",
-        comments: [],
-      });
-      expect(sent.status).toBe("queued");
-      expect(sent.remarks.slice(-2).map((r) => [r.step, r.text])).toEqual([
-        ["requirements", "観点が足りない"],
-        ["requirements", "全体として、失敗時のログが足りない"],
+      const events = service.get(id)?.activity ?? [];
+      expect(events.some((e) => e.type === "TaskEscalated")).toBe(false);
+      expect(events.slice(-3).map((e) => [e.type, e.actor])).toEqual([
+        ["ReworkJudged", "guardian"],
+        ["GuardianMissed", "sacty"],
+        ["ChangesRequested", "person"],
       ]);
+      const task = service.get(id)?.task;
+      expect(task?.status).toBe("queued");
+      expect(task?.steps.map((st) => st.state)).toEqual(["done", "active", "todo", "todo"]);
+      // 設計の承認は取り消し、指摘は設計への指摘として記録する
+      expect(task?.approved.design).toBeUndefined();
+      expect(task?.remarks.slice(-2).map((r) => [r.id, r.step, r.text])).toEqual([
+        ["design-1-1", "design", "観点が足りない"],
+        ["design-1-2", "design", "全体として、失敗時のログが足りない"],
+      ]);
+      // 戻し先と理由を、画面（PR の欄）に出せるよう残す
+      expect(task?.prRework).toMatchObject({
+        target: "design",
+        decided: true,
+        reason: "観点が足りない",
+      });
+      // 作り直した設計は、いつもどおり人間の承認を待つ
+      const before = executor.calls.length;
+      await service.runNext(id);
+      expect(promptOf(executor, before)).toContain("[design-1-1] 観点が足りない");
+      const redone = service.get(id)?.task;
+      expect(redone?.status).toBe("awaiting_approval");
+      expect(redone?.gate).toEqual({ step: "design", submission: 2 });
+      activity.close();
+    });
+
+    it("要求要件まで戻す判断なら、人間の確認を待たずに要求要件に差し戻し、作り直した要求要件を人間の承認に回す（PBI-58）", async () => {
+      const pulls = new FakePulls();
+      const { activity, service, id } = await toDeliverableGate(
+        [rework("requirements", "前提が誤っている"), out("# 要求要件 v3")],
+        { pulls, now: later },
+      );
+      pulls.feedbackList = [item("comment:211", { body: "そもそも対象が違う" })];
+      await service.checkPullRequests();
+      const task = service.get(id)?.task;
+      expect(task?.status).toBe("queued");
+      expect(task?.escalation).toBeUndefined();
+      expect(task?.steps.map((st) => st.state)).toEqual(["active", "todo", "todo", "todo"]);
+      expect(task?.approved).toEqual({});
+      // 要求要件への差し戻しは2回目（作業の途中で1回差し戻している）
+      expect(task?.remarks.at(-1)).toMatchObject({
+        id: "requirements-2-1",
+        step: "requirements",
+        text: "そもそも対象が違う",
+      });
+      expect(task?.prRework).toMatchObject({ target: "requirements", decided: true });
+      await service.runNext(id);
+      const redone = service.get(id)?.task;
+      expect(redone?.status).toBe("awaiting_approval");
+      expect(redone?.gate).toEqual({ step: "requirements", submission: 3 });
+      activity.close();
+    });
+
+    it("戻し先を判断できなければ、実装をやり直し、判断できなかったことと理由を台帳に残す（PBI-58）", async () => {
+      const pulls = new FakePulls();
+      const { activity, service, id } = await toDeliverableGate(
+        [rework("undecidable", "指摘の意図が読み取れない")],
+        { pulls, now: later },
+      );
+      pulls.feedbackList = [item("comment:221")];
+      await service.checkPullRequests();
+      const events = service.get(id)?.activity ?? [];
+      const judged = events.find((e) => e.type === "ReworkJudged");
+      expect(judged?.type === "ReworkJudged" && judged.payload.target).toBeUndefined();
+      expect(judged?.type === "ReworkJudged" && judged.payload.reason).toBe(
+        "指摘の意図が読み取れない",
+      );
+      expect(events.at(-1)).toMatchObject({
+        type: "ChangesRequested",
+        payload: { step: "pr", target: "implement", round: 1 },
+      });
+      const task = service.get(id)?.task;
+      expect(task?.status).toBe("queued");
+      expect(task?.steps.map((st) => st.state)).toEqual(["done", "done", "active", "todo"]);
+      expect(task?.remarks.at(-1)).toMatchObject({
+        step: "implement",
+        text: "全体として、失敗時のログが足りない",
+      });
+      expect(task?.prRework).toMatchObject({
+        target: "implement",
+        decided: false,
+        reason: "指摘の意図が読み取れない",
+      });
       activity.close();
     });
 
@@ -4206,7 +4276,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       activity.close();
     });
 
-    it("ゴールガーディアンの実行に失敗したら、判断できなかったものとして人間の確認に回す", async () => {
+    it("ゴールガーディアンの実行に失敗したら、判断できなかったものとして実装をやり直す（PBI-58）", async () => {
       const pulls = new FakePulls();
       const { activity, service, id } = await toDeliverableGate(
         [{ kind: "failed", reason: "usage_limit", message: "session limit" }],
@@ -4215,13 +4285,179 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       pulls.feedbackList = [item("comment:301")];
       await service.checkPullRequests();
       const task = service.get(id)?.task;
+      expect(task?.status).toBe("queued");
+      expect(task?.escalation).toBeUndefined();
+      expect(task?.remarks.at(-1)).toMatchObject({
+        step: "implement",
+        text: "全体として、失敗時のログが足りない",
+      });
+      expect(task?.prRework).toMatchObject({ target: "implement", decided: false });
+      expect(ja(task?.prRework?.reason)).toContain("session limit");
+      activity.close();
+    });
+
+    it("差し戻しの回数が上限を超えるなら、PR の指摘でもエスカレーションにする（PBI-58）", async () => {
+      const pulls = new FakePulls();
+      const round = (n: number) => [
+        implement(`# 実装の説明 v${n + 1}`),
+        review(undefined, [
+          ["requirements-1-1", true],
+          ...Array.from({ length: n }, (_, i): [string, boolean] => [`implement-${i + 1}-1`, true]),
+        ]),
+      ];
+      const { activity, service, id } = await toDeliverableGate(
+        [...round(1), ...round(2), ...round(3), rework("implement", "実装で直せる")],
+        { pulls, now: later },
+      );
+      for (let n = 1; n <= 3; n++) {
+        service.requestChanges(id, {
+          step: "pr",
+          submission: service.get(id)?.task.gate?.submission ?? 0,
+          comments: [`指摘${n}`],
+        });
+        await drain(service);
+        expect(service.get(id)?.task.gate?.step).toBe("pr");
+      }
+      pulls.feedbackList = [item("comment:401")];
+      await service.checkPullRequests();
+      const task = service.get(id)?.task;
+      expect(task?.status).toBe("escalated");
+      expect(task?.escalation).toMatchObject({ reason: "too_many_changes", target: "implement" });
+      expect(task?.escalation?.pendingRemarks).toEqual([
+        { id: "implement-4-1", text: "全体として、失敗時のログが足りない" },
+      ]);
+      activity.close();
+    });
+
+    /** 設計まで戻す判断を記録したところで止まった作業履歴（反映の前にデーモンが止まった）。 */
+    async function judgedThenStopped(pulls: FakePulls) {
+      const made = await toDeliverableGate([], { pulls, now: later });
+      const { activity, id } = made;
+      activity.append({
+        taskId: id,
+        projectId: made.service.get(id)?.task.projectId ?? "default",
+        events: [
+          {
+            actor: "person",
+            event: {
+              type: "PullRequestReviewImported",
+              payload: {
+                number: 7,
+                items: [{ key: "comment:601", author: "reviewer", at }],
+                remarks: ["観点が足りない"],
+              },
+            },
+          },
+          {
+            actor: "guardian",
+            event: {
+              type: "ReworkJudged",
+              payload: { target: "design", reason: "観点が足りない", agentId: "luna" },
+            },
+          },
+        ],
+      });
+      return { activity, id, ...makeService(activity, [], { pulls, now: later }) };
+    }
+
+    it("判断を記録して止まったら、再起動の後に、もう一度判断せずに判断した工程に差し戻す（PBI-58）", async () => {
+      const pulls = new FakePulls();
+      const { activity, service, executor, id } = await judgedThenStopped(pulls);
+      await service.checkPullRequests();
+      expect(executor.calls).toHaveLength(0);
+      const task = service.get(id)?.task;
+      expect(task?.status).toBe("queued");
+      expect(task?.remarks.at(-1)).toMatchObject({ step: "design", text: "観点が足りない" });
+      expect(task?.prRework).toMatchObject({ target: "design", decided: true });
+      activity.close();
+    });
+
+    it("判断の後、反映の前に人間が別の工程へ差し戻したら、ゴールガーディアンの判断としては残さない（PBI-58）", async () => {
+      const pulls = new FakePulls();
+      const { activity, service, id } = await judgedThenStopped(pulls);
+      const sent = service.requestChanges(id, {
+        step: "pr",
+        submission: service.get(id)?.task.gate?.submission ?? 1,
+        target: "implement",
+        comments: ["観点が足りない"],
+      });
+      expect(sent.remarks.at(-1)).toMatchObject({ step: "implement", text: "観点が足りない" });
+      expect(sent.prRework).toBeUndefined();
+      // 反映済みなので、続きの確認でもう一度差し戻さない
+      await service.checkPullRequests();
+      expect(service.get(id)?.activity.filter((e) => e.type === "ChangesRequested").length).toBe(2);
+      activity.close();
+    });
+
+    it("人間が戻し先を確かめていた作業履歴（rework_confirmation）も読み込み、確かめた戻し先で指摘を引き継ぐ（PBI-58 より前）", async () => {
+      const pulls = new FakePulls();
+      const made = await toDeliverableGate([], { pulls, now: later });
+      const { activity, id } = made;
+      const projectId = made.service.get(id)?.task.projectId ?? "default";
+      // PBI-58 より前の版が記録した、戻し先の確認のエスカレーション
+      activity.append({
+        taskId: id,
+        projectId,
+        events: [
+          {
+            actor: "person",
+            event: {
+              type: "PullRequestReviewImported",
+              payload: {
+                number: 7,
+                items: [{ key: "comment:501", author: "reviewer", at }],
+                remarks: ["観点が足りない"],
+              },
+            },
+          },
+          {
+            actor: "guardian",
+            event: {
+              type: "ReworkJudged",
+              payload: { target: "design", reason: "観点が足りない", agentId: "luna" },
+            },
+          },
+          {
+            actor: "sacty",
+            event: {
+              type: "TaskEscalated",
+              payload: {
+                step: "pr",
+                target: "design",
+                reason: "rework_confirmation",
+                note: "観点が足りない",
+                pendingRemarks: [{ id: "design-1-1", text: "観点が足りない" }],
+              },
+            },
+          },
+        ],
+      });
+      // 再起動して、作業履歴から状態を復元する
+      const { service } = makeService(activity, [], { pulls, now: later });
+      const task = service.get(id)?.task;
+      expect(task?.status).toBe("escalated");
       expect(task?.escalation).toMatchObject({
         reason: "rework_confirmation",
-        target: "implement",
+        target: "design",
+        note: "観点が足りない",
       });
-      expect(task?.escalation?.pendingRemarks.map((r) => r.text)).toEqual([
-        "全体として、失敗時のログが足りない",
-      ]);
+      expect(task?.pendingReview).toBeUndefined();
+      expect(task?.importedFeedback).toEqual(["comment:501"]);
+      // 確かめを待っている間は、PR の指摘を取り込まない
+      pulls.feedbackList = [item("comment:501"), item("comment:502")];
+      await service.checkPullRequests();
+      expect(service.get(id)?.task.importedFeedback).toEqual(["comment:501"]);
+      // 人間が要求要件まで戻すと確かめたら、取り込んだ指摘を引き継いで差し戻す
+      const sent = service.requestChanges(id, {
+        step: "pr",
+        submission: task?.gate?.submission ?? 1,
+        target: "requirements",
+        comments: [],
+      });
+      expect(sent.status).toBe("queued");
+      expect(sent.remarks.at(-1)).toMatchObject({ step: "requirements", text: "観点が足りない" });
+      // 人間が選んだ戻し先なので、ゴールガーディアンの判断としては残さない
+      expect(sent.prRework).toBeUndefined();
       activity.close();
     });
   });

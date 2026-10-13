@@ -52,7 +52,7 @@ const ja = {
       `指摘はタスクに累積し、再提出のたびにすべてエージェントに渡されます。同じ工程への差し戻しが${max}回を超えるとエスカレーションになります。`,
     prTitle: "GitHub の PR で判断します",
     prHelp:
-      "PR をレビューしてマージすると、成果物チェックの承認になり、タスクが完了します。レビューやコメントで指摘すると、差し戻しとして取り込み、ゴールガーディアンが戻し先を判断します（sacty が1分ごとに確かめ、最後のコメントから2分後に取り込みます）。",
+      "PR をレビューしてマージすると、成果物チェックの承認になり、タスクが完了します。レビューやコメントで指摘すると、差し戻しとして取り込み、ゴールガーディアンが判断した工程（実装・設計・要求要件。判断できなければ実装）からやり直します（sacty が1分ごとに確かめ、最後のコメントから2分後に取り込みます）。設計・要求要件からやり直したときは、作り直した成果をもう一度承認してください。",
     prOpen: (n: number) => `PR #${n} を GitHub で開く`,
     prClosed:
       "PR はマージされずに閉じられました。GitHub で開き直すと、またマージを待ちます。不要なら、タスク詳細から中止してください。",
@@ -122,7 +122,7 @@ const en: ReviewMessages = {
       "The reproduction test did not fail (or there was no reproduction test), so the task can't move on. Request changes with hints for reproducing it (steps, input, environment) to try again, or cancel the task.",
     prTitle: "Decide on the GitHub PR",
     prHelp:
-      "Review and merge the PR to approve the deliverable review and complete the task. Comments in reviews or on the PR are imported as change requests, and the Goal Guardian picks the step to redo (sacty checks every minute and imports two minutes after the last comment).",
+      "Review and merge the PR to approve the deliverable review and complete the task. Comments in reviews or on the PR are imported as change requests, and the work is redone from the step the Goal Guardian picks (implementation, design, or requirements; implementation if it can't decide). sacty checks every minute and imports two minutes after the last comment. When design or requirements are redone, approve the reworked deliverable again.",
     prOpen: (n) => `Open PR #${n} on GitHub`,
     prClosed:
       "The PR was closed without merging. Reopen it on GitHub to wait for a merge again, or cancel the task from its details.",

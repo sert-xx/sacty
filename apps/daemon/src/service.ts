@@ -459,7 +459,7 @@ export class TaskService {
 
   /**
    * PR へのフィードバック（レビュー・行ごとのコメント・通常のコメント）を指摘として取り込み、
-   * ゴールガーディアンに戻し先を判断させて、差し戻すか人間の確認に回す（PBI-14b）。
+   * ゴールガーディアンに戻し先を判断させて、その工程に差し戻す（PBI-14b・PBI-58）。
    * まだ取り込んでいないものを、最後のフィードバックから一定の時間（書き終わるのを待つ）たってから、
    * まとめて取り込む。途中で止まっても、次の確認で続きから進める（判断・反映）。
    */
@@ -527,8 +527,9 @@ export class TaskService {
   }
 
   /**
-   * ゴールガーディアンの判断に従って、取り込んだ PR の指摘を反映する。実装だけなら差し戻し
-   * （上限を超えるならエスカレーション）、設計・要求要件まで戻す・判断できないなら人間の確認に回す。
+   * ゴールガーディアンの判断に従って、取り込んだ PR の指摘を、判断した工程に差し戻す（人間の確認は待たない。
+   * 設計・要求要件に戻したら、作り直した成果をいつもどおり人間が承認する）。判断できなければ実装をやり直す
+   * （判断できなかったことと理由は ReworkJudged に残る）。上限を超えるならエスカレーションになる（PBI-58）。
    */
   private settleReview(task: Task): void {
     const pending = task.pendingReview;
@@ -536,35 +537,16 @@ export class TaskService {
     if (!pending || !judgement || task.gate?.step !== "pr" || task.status !== "awaiting_approval") {
       return;
     }
-    if (judgement.target === "implement") {
-      this.requestChanges(task.id, {
-        step: "pr",
-        submission: task.gate.submission,
-        target: "implement",
-        comments: pending.remarks,
-      });
-      return;
-    }
-    const target = judgement.target ?? "implement";
-    const round = changeRounds(task, target) + 1;
-    this.append(task, [
-      {
-        actor: "sacty",
-        event: {
-          type: "TaskEscalated",
-          payload: {
-            step: "pr",
-            target,
-            reason: "rework_confirmation",
-            note: judgement.reason,
-            pendingRemarks: pending.remarks.map((text, i) => ({
-              id: `${target}-${round}-${i + 1}`,
-              text,
-            })),
-          },
-        },
-      },
-    ]);
+    const target =
+      judgement.target && reworkTargets(task, "pr").includes(judgement.target)
+        ? judgement.target
+        : "implement";
+    this.requestChanges(task.id, {
+      step: "pr",
+      submission: task.gate.submission,
+      target,
+      comments: pending.remarks,
+    });
   }
 
   /**
@@ -4062,7 +4044,7 @@ export class TaskService {
     }
     if (task.status === "escalated") {
       // 書きかけの指摘は、エスカレーションしたときと同じ工程に戻す場合だけ引き継ぐ。
-      // PR の指摘の戻し先の確認では、人間がどの工程を選んでも引き継ぐ（指摘は人間のレビューなので）
+      // PR の指摘の戻し先の確認（PBI-58 より前の作業履歴）では、人間がどの工程を選んでも引き継ぐ（指摘は人間のレビューなので）
       const rework = task.escalation?.reason === "rework_confirmation";
       if (
         remarks.length === 0 &&
