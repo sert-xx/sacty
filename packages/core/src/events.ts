@@ -315,6 +315,17 @@ const StepsChosen = z.object({
     imageSource: z.enum(["project", "orchestrator"]).optional(),
     /** オーケストレーターがイメージを選んだ理由。 */
     imageReason: z.string().max(1000).optional(),
+    /**
+     * 工程・テストの実行の前に起動する docker compose のサービス（DB・モック API など。PBI-47）。file は作業領域からの
+     * 相対パス、names は起動するサービス（空ならすべて）、steps はサービスを使う工程。
+     */
+    services: z
+      .object({
+        file: z.string().min(1).max(300),
+        names: z.array(z.string().min(1).max(100)).max(20),
+        steps: z.array(StepKey).min(1),
+      })
+      .optional(),
     agentId: z.string().optional(),
     ...AgentSetting,
     usage: TokenUsage.optional(),
@@ -595,6 +606,19 @@ const AiRequestsRetried = z.object({
  * オーケストレーターが、認証の失敗・利用上限で工程を選べなかった（PBI-32）。標準の工程では進めず、続く
  * TaskPaused で止める（再開すると工程の選択からやり直す）。使った分の費用は予算に入れる。
  */
+/** 工程・テストの実行のために、docker compose のサービスを起動した（PBI-47）。実行が終わると消す。 */
+const ServicesStarted = z.object({
+  type: z.literal("ServicesStarted"),
+  payload: z.object({
+    runId: z.string(),
+    step: StepKey,
+    file: z.string(),
+    services: z.array(z.object({ name: z.string(), ports: z.array(z.number().int()) })),
+    /** テストの実行のための起動か（無ければ工程のエージェントの実行）。 */
+    forTests: z.boolean().optional(),
+  }),
+});
+
 const OrchestratorFailed = z.object({
   type: z.literal("OrchestratorFailed"),
   payload: z.object({
@@ -886,6 +910,7 @@ export const EventInput = z.discriminatedUnion("type", [
   ReproductionChecked,
   StepCompleted,
   StepsChosen,
+  ServicesStarted,
   AgentRunStarted,
   AgentRunCompleted,
   AgentRunFailed,

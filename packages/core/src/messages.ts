@@ -95,6 +95,9 @@ const PARAMS = {
   "config.imageEnvReserved": null,
   "config.mavenMirror": null,
   "image.unknown": z.object({ name: z.string() }),
+  // docker compose のサービス（PBI-47）
+  "services.unsafe": z.object({ file: z.string(), detail: z.string() }),
+  "services.failed": z.object({ file: z.string(), detail: z.string() }),
   "input.channelRequired": null,
   // Slack の通知（PBI-38）
   "notify.failed": z.object({ project: z.string(), detail: TextParam }),
@@ -401,6 +404,10 @@ const ja: MessageDictionary = {
     "images の env には、PATH・HOME や、DOCKER_・SACTY_・CODEX_・CLAUDE_・ANTHROPIC_・OPENAI_・NPM_CONFIG_ で始まる名前は書けません（sacty と docker の設定とぶつかるため）。",
   "config.mavenMirror":
     "images の maven_mirror は、ユーザー名・パスワードを含まない URL（http または https）で書いてください。",
+  "services.unsafe": ({ file, detail }) =>
+    `compose ファイル（${file}）に、sacty が起動できない設定があります：${detail}。エージェントにホストの権限を渡さないため、privileged・ホストのネットワーク・作業領域の外のマウントなどは使えません。`,
+  "services.failed": ({ file, detail }) =>
+    `compose ファイル（${file}）のサービスを起動できませんでした。出力の末尾：${detail}`,
   "image.unknown": ({ name }) =>
     `イメージ「${name}」は config.yaml の images にありません。images に書くか、プロジェクトの対象のイメージの指定を直してから、再開してください。`,
   "input.channelRequired": "チャンネルを書いてください。",
@@ -659,6 +666,10 @@ const en: MessageDictionary = {
     "images env can't use PATH, HOME, or names starting with DOCKER_, SACTY_, CODEX_, CLAUDE_, ANTHROPIC_, OPENAI_ or NPM_CONFIG_ (they would clash with sacty and docker settings).",
   "config.mavenMirror":
     "Write images maven_mirror as a URL (http or https) without a user name or password.",
+  "services.unsafe": ({ file, detail }) =>
+    `The compose file (${file}) has settings sacty can't start: ${detail}. To keep host privileges away from agents, privileged, host networking, mounts outside the workspace and so on are not allowed.`,
+  "services.failed": ({ file, detail }) =>
+    `Could not start the services in the compose file (${file}). End of the output: ${detail}`,
   "image.unknown": ({ name }) =>
     `The image "${name}" is not in images in config.yaml. Add it to images, or fix the image of the project target, then resume.`,
   "input.channelRequired": "Write a channel.",

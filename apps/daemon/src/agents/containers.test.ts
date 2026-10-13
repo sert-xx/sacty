@@ -219,6 +219,25 @@ describe("イメージの環境変数（PBI-41）", () => {
     expect(run?.args).toContain("sacty-agent-java:test");
   });
 
+  it("サービスのネットワークにつなぐ（PBI-47）。指定が無ければ --network を付けない", async () => {
+    const docker = recordingDocker();
+    const runner = new DockerTestRunner(60_000, docker.spawnImpl);
+    await runner.run({
+      runId: "r3",
+      image: "img",
+      workspaceDir: "/tmp",
+      command: "x",
+      network: "sacty-svc-r3_sacty",
+    });
+    await runner.run({ runId: "r4", image: "img", workspaceDir: "/tmp", command: "x" });
+    const args = docker.runs.map((r) => r.args);
+    expect(args[0]?.slice(0, 4)).toEqual(["run", "--rm", "--network", "sacty-svc-r3_sacty"]);
+    expect(args[1]).not.toContain("--network");
+    // 権限は落としたまま（Docker のソケットも渡さない）
+    expect(args[0]).toContain("ALL");
+    expect(args[0]?.join(" ")).not.toContain("docker.sock");
+  });
+
   it("エージェントの実行では、実行の環境変数がイメージの環境変数より優先する", async () => {
     const { DockerExecutor } = await import("./docker.js");
     const docker = recordingDocker();

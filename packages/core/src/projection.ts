@@ -222,6 +222,8 @@ export type Task = {
   investigation?: InvestigationKind;
   /** 工程ごとに使うイメージの名前（PBI-41）。書いていない工程は既定のイメージ。 */
   images?: Partial<Record<StepKey, string>>;
+  /** 工程・テストの実行の前に起動する docker compose のサービス（PBI-47）。 */
+  services?: { file: string; names: string[]; steps: StepKey[] };
   /** オーケストレーターが工程を選んだ理由（PBI-17。固定の工程だった作業履歴には無い）。 */
   stepsChoice?: { plan?: StepPlan; reason: DaemonText; fallback: boolean };
   /** 取り込んだ PR へのフィードバック（種類と ID。二重に取り込まないため。PBI-14b）。 */
@@ -351,6 +353,7 @@ export function applyEvent(
       if (event.payload.testCommand) task.testCommand = event.payload.testCommand;
       if (event.payload.investigation) task.investigation = event.payload.investigation;
       if (event.payload.images) task.images = event.payload.images;
+      if (event.payload.services) task.services = event.payload.services;
       if (event.payload.reason !== undefined) {
         task.stepsChoice = {
           ...(event.payload.plan ? { plan: event.payload.plan } : {}),
@@ -787,6 +790,10 @@ export function applyEvent(
 
     case "GuardianMissed":
       task.misses = [...task.misses, { ...event.payload, at: event.at }];
+      break;
+
+    // サービスの起動は記録だけ（タスクの状態は変えない。PBI-47）
+    case "ServicesStarted":
       break;
 
     case "OrchestratorFailed":

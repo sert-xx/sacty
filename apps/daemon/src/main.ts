@@ -20,6 +20,7 @@ import { GitRepositoryWorkspace } from "./repository.js";
 import { KeychainSecretStore, OnePasswordSecretStore, ResolvingSecretStore } from "./secrets.js";
 import { createApp } from "./server.js";
 import { TaskService } from "./service.js";
+import { DockerComposeServices } from "./services.js";
 import { SqliteSettingsStore } from "./settings.js";
 import { Worker } from "./worker.js";
 
@@ -49,6 +50,9 @@ const secrets = new ResolvingSecretStore(
 );
 const executor = new DockerExecutor();
 const tests = new DockerTestRunner();
+// docker compose のサービス（PBI-47）。前回、止める前にデーモンが終わって残ったサービスを片付ける
+const composeServices = new DockerComposeServices();
+void composeServices.cleanupAll();
 // GitHub へのアクセスは、ホストの gh のアカウントで行う（PBI-13）
 const github = new GhCliAuth();
 // ホストのゲートウェイ（PBI-37）。リトライの上限は、リクエストごとに設定から読み直す
@@ -98,6 +102,7 @@ const service = new TaskService({
   pulls: new GitHubPullRequests(),
   github,
   tests,
+  services: composeServices,
   workspaceRoot: join(home, "workspaces"),
   gateway,
   platformProblems: (names) => credentials.unavailable(names),
