@@ -46,7 +46,7 @@ RUN if ! id node >/dev/null 2>&1; then \
     fi; \
   fi \
   && mkdir -p /home/node/go \
-  && chown -R node:node /home/node
+  && chown -R "node:$(id -g node)" /home/node
 # エージェントを動かす node ユーザーの場所を既定にする。CI のイメージは HOME・GOPATH を root 向けの場所（/root など）に
 # していることがあり、node ユーザーでは書けないため（Go のキャッシュ・モジュール、Maven の設定など）。
 # 元のイメージの PATH は残し（入っているツールはそのまま使える）、go install で入れたツールの場所を足す。
@@ -102,7 +102,7 @@ RUN --mount=type=secret,id=npmconfig,target=/run/secrets/npmconfig \
   && { [ ! -s "$g" ] || [ -z "$(tail -c 1 "$g")" ] || echo; cat /run/secrets/npmconfig; } >> "$g"
 
 # root で実行した手順（npm など）が HOME の下に作ったものを、node ユーザーの持ち物に戻す
-RUN if [ -d /home/node ]; then chown -R node:node /home/node; fi
+RUN if [ -d /home/node ]; then chown -R "node:$(id -g node)" /home/node; fi
 
 # root では動かさない（node ユーザー）
 USER node
