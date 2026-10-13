@@ -51,12 +51,22 @@ export function statusText(task: Task, l: LabelMessages): string {
   return l.status[task.status];
 }
 
-/** 状態の表示の色の種類。完了したタスクは、中止（cancelled）と見分けられるよう別にする（PBI-42）。 */
-export type StatusTone = Task["status"] | "completed";
+/**
+ * 状態の表示の種類（PBI-42）。色は意味で分ける。working：AI・sacty が進めている（青）、waiting：順番・依存を
+ * 待っている（灰）、person：人の出番（橙）、completed：完了（緑）、cancelled：中止（灰の輪）。
+ * 完了と中止は、色に加えて印の形も変える（色だけに頼らない）。
+ */
+export type StatusTone = "working" | "waiting" | "person" | "completed" | "cancelled";
 
 export function statusTone(task: Task): StatusTone {
+  if (task.status === "cancelled") return "cancelled";
   if (task.status === "idle" && isCompleted(task)) return "completed";
-  return task.status;
+  // ゴールガーディアンが PR の指摘の戻し先を判断している間は、承認待ちでも AI が進めている
+  if (task.status === "awaiting_approval" && task.pendingReview) return "working";
+  if (needsPerson(task)) return "person";
+  if (task.status === "queued" || task.status === "blocked") return "waiting";
+  // 実行中・子タスクの進行中に加え、テスト・最終レビュー・判定など、完了していない idle も sacty が進めている
+  return "working";
 }
 
 /**

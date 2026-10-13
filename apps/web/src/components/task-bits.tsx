@@ -1,5 +1,6 @@
 import type { Task } from "@sacty/core";
 import { cn } from "cn";
+import { Check } from "lucide-react";
 import { getMessages } from "@/i18n/server";
 import { type StatusTone, statusText, statusTone, usd } from "@/lib/labels";
 
@@ -33,23 +34,22 @@ export async function StepChips({ task }: { task: Task }) {
   );
 }
 
-const STATUS_STYLE: Record<StatusTone, { text: string; dot: string }> = {
-  // 完了は、中止（灰色）と見分けられる色にする（PBI-42）
-  completed: { text: "text-ok", dot: "bg-ok" },
-  blocked: { text: "text-muted-foreground", dot: "bg-muted-foreground/60" },
-  waiting_children: { text: "text-accent-foreground", dot: "bg-primary/60" },
-  queued: { text: "text-muted-foreground", dot: "bg-muted-foreground/60" },
-  running: { text: "text-accent-foreground", dot: "bg-primary" },
-  idle: { text: "text-muted-foreground", dot: "bg-muted-foreground/60" },
-  paused: { text: "text-warn", dot: "bg-warn" },
-  awaiting_approval: { text: "text-warn", dot: "bg-warn" },
-  escalated: { text: "text-warn", dot: "bg-warn" },
-  cancelled: { text: "text-muted-foreground", dot: "bg-muted-foreground/40" },
+const STATUS_STYLE: Record<StatusTone, { text: string; mark: string }> = {
+  working: { text: "text-accent-foreground", mark: "size-2 rounded-full bg-primary" },
+  waiting: { text: "text-muted-foreground", mark: "size-2 rounded-full bg-muted-foreground/60" },
+  person: { text: "text-warn", mark: "size-2 rounded-full bg-warn" },
+  completed: { text: "text-ok", mark: "size-3.5 text-ok" },
+  // 中止は、待っている（灰の点）と見分けられるよう、中を抜いた輪にする
+  cancelled: {
+    text: "text-muted-foreground",
+    mark: "size-2 rounded-full border border-muted-foreground/70",
+  },
 };
 
 export async function StatusLabel({ task }: { task: Task }) {
   const m = await getMessages();
-  const style = STATUS_STYLE[statusTone(task)];
+  const tone = statusTone(task);
+  const style = STATUS_STYLE[tone];
   return (
     <span
       className={cn(
@@ -57,7 +57,11 @@ export async function StatusLabel({ task }: { task: Task }) {
         style.text,
       )}
     >
-      <span aria-hidden="true" className={cn("size-2 rounded-full", style.dot)} />
+      {tone === "completed" ? (
+        <Check aria-hidden="true" strokeWidth={3} className={style.mark} />
+      ) : (
+        <span aria-hidden="true" className={style.mark} />
+      )}
       {statusText(task, m.labels)}
     </span>
   );
