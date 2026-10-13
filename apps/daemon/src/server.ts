@@ -1,8 +1,11 @@
 import { timingSafeEqual } from "node:crypto";
+import { createReadStream } from "node:fs";
+import { Readable } from "node:stream";
 import { issueMessage } from "@sacty/core";
 import { type Context, Hono } from "hono";
 import { ZodError } from "zod";
 import { InvalidOperationError, type TaskService } from "./service.js";
+import { validLogId } from "./session-logs.js";
 
 function sameToken(given: string, expected: string): boolean {
   const a = Buffer.from(given);
@@ -68,6 +71,31 @@ export function createApp(
   app.get("/api/tasks/:id", (c) => {
     const found = service.get(c.req.param("id"));
     return found ? c.json(found) : c.json({ error: "not_found" }, 404);
+  });
+
+  // エージェントの実行のセッションログ（PBI-62）。タスクごとの場所から読むので、ほかのタスクの実行は読めない
+  app.get("/api/tasks/:id/runs/:runId/log", (c) => {
+    const { id, runId } = c.req.param();
+    if (!validLogId(id) || !validLogId(runId)) return c.json({ error: "invalid_id" }, 400);
+    const log = service.sessionLog(id, runId);
+    return log ? c.json(log) : c.json({ error: "not_found" }, 404);
+  });
+
+  // セッションログの生のファイル（events：途中の出来事の JSONL、stderr：標準エラー出力）
+  app.get("/api/tasks/:id/runs/:runId/files/:file", (c) => {
+    const { id, runId, file } = c.req.param();
+    if (!validLogId(id) || !validLogId(runId) || (file !== "events" && file !== "stderr")) {
+      return c.json({ error: "invalid_id" }, 400);
+    }
+    const path = service.sessionLogFile(id, runId, file);
+    if (!path) return c.json({ error: "not_found" }, 404);
+    const stream = Readable.toWeb(createReadStream(path)) as ReadableStream;
+    return new Response(stream, {
+      headers: {
+        "content-type":
+          file === "events" ? "application/x-ndjson; charset=utf-8" : "text/plain; charset=utf-8",
+      },
+    });
   });
 
   app.get("/api/projects", (c) => c.json({ projects: service.listProjects() }));

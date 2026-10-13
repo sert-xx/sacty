@@ -5,6 +5,7 @@ import { labels } from "./messages/labels";
 import { parts } from "./messages/parts";
 import { projects } from "./messages/projects";
 import { review } from "./messages/review";
+import { runLog } from "./messages/run-log";
 import { settings } from "./messages/settings";
 import { shell } from "./messages/shell";
 import { task } from "./messages/task";
@@ -21,6 +22,7 @@ export function messagesFor(locale: Locale) {
     task: task[locale],
     parts: parts[locale],
     review: review[locale],
+    runLog: runLog[locale],
     forms: forms[locale],
     projects: projects[locale],
     settings: settings[locale],

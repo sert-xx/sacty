@@ -177,6 +177,12 @@ import {
   type ServicesSpec,
   type StartedServices,
 } from "./services.js";
+import type {
+  SessionLogFile,
+  SessionLogHandle,
+  SessionLogStore,
+  StoredSessionLog,
+} from "./session-logs.js";
 import type { SettingsStore } from "./settings.js";
 import { type FoundTicket, type TicketClient, ticketErrorText } from "./tickets.js";
 
@@ -261,6 +267,8 @@ export type ServiceDeps = {
    * false なら、これまでどおり sacty の画面で承認する（画面の承認の流れを確かめるテストで切る）。
    */
   stepPullRequests?: boolean;
+  /** エージェントの実行ごとのセッションログの置き場所（PBI-62）。無ければ、残さない。 */
+  sessionLogs?: SessionLogStore;
 };
 
 export type DaemonStatus = {
@@ -347,6 +355,22 @@ export class TaskService {
     const task = this.tasks.get(id);
     if (!task) return undefined;
     return { task, activity: this.deps.activity.forTask(id) };
+  }
+
+  /**
+   * タスクのエージェントの実行のセッションログ（PBI-62）。タスクが無い・その実行のログが無ければ undefined。
+   * ログはタスクごとの場所に置くので、ほかのタスクの実行の ID を渡しても読めない。
+   */
+  sessionLog(taskId: string, runId: string): StoredSessionLog | undefined {
+    if (!this.tasks.has(taskId)) return undefined;
+    return this.deps.sessionLogs?.read(taskId, runId);
+  }
+
+  /** セッションログの生のファイルの場所（ダウンロード用。PBI-62）。タスクやログが無ければ undefined。 */
+  sessionLogFile(taskId: string, runId: string, file: SessionLogFile): string | undefined {
+    if (!this.tasks.has(taskId)) return undefined;
+    const path = this.deps.sessionLogs?.path(taskId, runId, file);
+    return path && existsSync(path) ? path : undefined;
   }
 
   /**
@@ -707,7 +731,7 @@ export class TaskService {
       stopped?: () => boolean;
     },
     code: "base" | "implemented",
-  ): Promise<Awaited<ReturnType<TaskService["execute"]>>> {
+  ): Promise<Awaited<ReturnType<TaskService["execute"]>> & { runId: string }> {
     const runId = run.runId ?? randomUUID();
     const workspaceDir = join(this.deps.workspaceRoot, "_guardian", runId);
     try {
@@ -727,10 +751,11 @@ export class TaskService {
             outcome: { kind: "failed", reason: "error", message: errorText(error) },
             costUsd: 0,
             estimated: false,
+            runId,
           };
         }
       }
-      return await this.execute({ ...run, runId, workspaceDir });
+      return { ...(await this.execute({ ...run, taskId: task.id, runId, workspaceDir })), runId };
     } finally {
       rmSync(workspaceDir, { recursive: true, force: true });
     }
@@ -1084,7 +1109,7 @@ export class TaskService {
   > {
     // オーケストレーターに使う AI（step_agents.orchestrator か default_agent。PBI-40）。既定のイメージで動く
     const agent = agentFor(config, "orchestrator");
-    const { outcome, costUsd, estimated } = await this.runGuardian(
+    const { outcome, costUsd, estimated, runId } = await this.runGuardian(
       task,
       {
         agent,
@@ -1107,6 +1132,7 @@ export class TaskService {
     const cost = {
       agentId: agent.id,
       ...agentSetting(agent),
+      runId,
       usage: outcome.usage,
       costUsd,
       estimated,
@@ -1158,7 +1184,7 @@ export class TaskService {
     const targets = reworkTargets(task, gateStep);
     // 成果物チェックは、指摘が実装で直せるかを判断するので実装後のコードを、要求要件・設計の PR（PBI-57）は
     // 起点のコードを読ませる
-    const { outcome, costUsd, estimated } = await this.runGuardian(
+    const { outcome, costUsd, estimated, runId } = await this.runGuardian(
       task,
       {
         agent,
@@ -1177,6 +1203,7 @@ export class TaskService {
       runResult: outcome.kind === "completed" ? "completed" : "failed",
       agentId: agent.id,
       ...agentSetting(agent),
+      runId,
       usage: outcome.usage,
       costUsd,
       estimated,
@@ -1611,7 +1638,7 @@ export class TaskService {
       return;
     }
     const agent = agentFor(config, "orchestrator");
-    const { outcome, costUsd, estimated } = await this.runGuardian(
+    const { outcome, costUsd, estimated, runId } = await this.runGuardian(
       task,
       {
         agent,
@@ -1634,6 +1661,7 @@ export class TaskService {
     const cost = {
       agentId: agent.id,
       ...agentSetting(agent),
+      runId,
       ...(outcome.usage ? { usage: outcome.usage } : {}),
       costUsd,
       estimated,
@@ -2495,6 +2523,7 @@ export class TaskService {
       const started = services?.ok ? services.started : undefined;
       executed ??= await this.execute({
         agent,
+        taskId: task.id,
         image: stepImage.ok ? stepImage.image : config.config.image,
         ...(stepImage.ok ? { imageEnv: stepImage.env } : {}),
         ...(started ? serviceConnection(started) : {}),
@@ -2819,6 +2848,7 @@ export class TaskService {
       ]);
       executed = await this.execute({
         agent,
+        taskId: task.id,
         image: config.image,
         runId,
         prompt: [
@@ -3054,7 +3084,7 @@ export class TaskService {
     }
     const agent = config.config.guardianAgent;
     // 最終レビューは、実装後のコードを使い捨ての写しで読ませる（差分もこれまでどおり渡す）
-    const { outcome, costUsd, estimated } = await this.runGuardian(
+    const { outcome, costUsd, estimated, runId } = await this.runGuardian(
       current,
       {
         agent,
@@ -3078,6 +3108,7 @@ export class TaskService {
               message: failure,
               agentId: agent.id,
               ...agentSetting(agent),
+              runId,
               usage: outcome.usage,
               costUsd,
               estimated,
@@ -3113,6 +3144,7 @@ export class TaskService {
             ...review,
             agentId: agent.id,
             ...agentSetting(agent),
+            runId,
             usage: outcome.usage,
             costUsd,
             estimated,
@@ -3915,6 +3947,7 @@ export class TaskService {
       if (!stepImage.ok) executed ??= failed(stepImage.message);
       executed ??= await this.execute({
         agent,
+        taskId: task.id,
         image: stepImage.ok ? stepImage.image : config.image,
         ...(stepImage.ok ? { imageEnv: stepImage.env } : {}),
         runId,
@@ -4106,6 +4139,8 @@ export class TaskService {
   private async execute(run: {
     agent: AgentConfig;
     image: string;
+    /** 実行するタスク（セッションログの置き場所。PBI-62）。 */
+    taskId: string;
     runId: string;
     prompt: string;
     role: AgentRole;
@@ -4127,6 +4162,35 @@ export class TaskService {
   }): Promise<{ outcome: AgentOutcome; costUsd: number; estimated: boolean }> {
     // 実行に渡した秘密情報。作業履歴に書く前に、出力やエラー文から取り除く。
     const usedSecrets: string[] = [];
+    // セッションログ（PBI-62）。実行に渡した秘密情報は、書く前に伏せる（準備の間に増えた分も）
+    const log = this.deps.sessionLogs?.open(
+      {
+        taskId: run.taskId,
+        runId: run.runId,
+        role: run.role,
+        agentId: run.agent.id,
+        runtime: run.agent.runtime,
+        authMode: run.agent.auth.mode,
+        ...(run.agent.model ? { model: run.agent.model } : {}),
+      },
+      () => usedSecrets,
+    );
+    try {
+      const executed = await this.executeLogged(run, usedSecrets, log);
+      // 失敗した実行・止めた実行も、結果を残して閉じる（結果の文は、伏せた後のもの）
+      log?.close(executed.outcome);
+      return executed;
+    } catch (error) {
+      log?.close({ kind: "failed", reason: "error", message: errorText(error) });
+      throw error;
+    }
+  }
+
+  private async executeLogged(
+    run: Parameters<TaskService["execute"]>[0],
+    usedSecrets: string[],
+    log: SessionLogHandle | undefined,
+  ): Promise<{ outcome: AgentOutcome; costUsd: number; estimated: boolean }> {
     let outcome: AgentOutcome;
     let gatewayRun: ReturnType<NonNullable<ServiceDeps["gateway"]>["register"]> | undefined;
     try {
@@ -4221,6 +4285,7 @@ export class TaskService {
         ...(run.imageEnv && Object.keys(run.imageEnv).length > 0 ? { imageEnv: run.imageEnv } : {}),
         ...(run.network ? { network: run.network } : {}),
         ...(run.forwards ? { forwards: run.forwards } : {}),
+        ...(log ? { log } : {}),
       });
     } catch (error) {
       outcome = {
@@ -4294,7 +4359,7 @@ export class TaskService {
   ): Promise<Extract<EventInput, { type: "ChangeJudged" }>["payload"]> {
     const agent = config.guardianAgent;
     // 変更の申し出の判定は、起点のコミットのコードを使い捨ての写しで読ませる
-    const { outcome, costUsd, estimated } = await this.runGuardian(
+    const { outcome, costUsd, estimated, runId } = await this.runGuardian(
       task,
       { agent, image: config.image, prompt: buildGuardianPrompt(task, proposal), role: "guardian" },
       "base",
@@ -4312,6 +4377,7 @@ export class TaskService {
       runResult: outcome.kind === "completed" ? "completed" : "failed",
       agentId: agent.id,
       ...agentSetting(agent),
+      runId,
       usage: outcome.usage,
       costUsd,
       estimated,
@@ -4511,7 +4577,7 @@ export class TaskService {
     if (!question) return;
     // オーケストレーターに使う AI（step_agents.orchestrator か default_agent。PBI-40）
     const agent = agentFor(config, "orchestrator");
-    const setting = { agentId: agent.id, ...agentSetting(agent) };
+    const setting = { agentId: agent.id, ...agentSetting(agent), runId };
     let payload: Extract<EventInput, { type: "QuestionAnswered" }>["payload"];
     try {
       const { outcome, costUsd, estimated } = await this.runGuardian(

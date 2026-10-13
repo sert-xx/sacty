@@ -184,6 +184,12 @@ const AgentSetting = {
   reasoningEffort: z.string().optional(),
 };
 
+/**
+ * 工程の実行（AgentRun…）のほかのエージェントの実行（オーケストレーター・ゴールガーディアンなど）の ID。
+ * 実行のセッションログを辿るのに使う（PBI-62）。PBI-62 より前の作業履歴には無い。
+ */
+const RunRef = { runId: z.string().optional() };
+
 /** 人間の指摘。id は作業履歴の中で一意（例：requirements-2-1 は要求要件の2回目の差し戻しの1件目）。 */
 export const Remark = z.object({ id: z.string().min(1), text: z.string().min(1) });
 export type Remark = z.infer<typeof Remark>;
@@ -412,6 +418,7 @@ const StepsChosen = z.object({
     documentsDir: z.string().min(1).max(300).optional(),
     agentId: z.string().optional(),
     ...AgentSetting,
+    ...RunRef,
     usage: TokenUsage.optional(),
     costUsd: z.number().nonnegative().default(0),
     estimated: z.boolean().default(false),
@@ -581,6 +588,7 @@ const ChangeJudged = z.object({
     agentId: z.string(),
     runResult: GuardianRunResult.optional(),
     ...AgentSetting,
+    ...RunRef,
     usage: TokenUsage.optional(),
     costUsd: z.number().nonnegative().default(0),
     estimated: z.boolean().default(false),
@@ -659,6 +667,7 @@ const FinalReviewed = z.object({
     summary: DaemonText,
     agentId: z.string(),
     ...AgentSetting,
+    ...RunRef,
     usage: TokenUsage.optional(),
     costUsd: z.number().nonnegative().default(0),
     estimated: z.boolean().default(false),
@@ -705,6 +714,7 @@ const TicketTriaged = z.object({
     reason: DaemonText,
     agentId: z.string().optional(),
     ...AgentSetting,
+    ...RunRef,
     usage: TokenUsage.optional(),
     costUsd: z.number().nonnegative().default(0),
     estimated: z.boolean().default(false),
@@ -746,6 +756,7 @@ const QuestionAnswered = z.object({
     runResult: GuardianRunResult,
     agentId: z.string(),
     ...AgentSetting,
+    ...RunRef,
     usage: TokenUsage.optional(),
     costUsd: z.number().nonnegative().default(0),
     estimated: z.boolean().default(false),
@@ -826,6 +837,7 @@ const OrchestratorFailed = z.object({
     message: DaemonText,
     agentId: z.string(),
     ...AgentSetting,
+    ...RunRef,
     usage: TokenUsage.optional(),
     costUsd: z.number().nonnegative().default(0),
     estimated: z.boolean().default(false),
@@ -839,6 +851,7 @@ const FinalReviewFailed = z.object({
     message: DaemonText,
     agentId: z.string(),
     ...AgentSetting,
+    ...RunRef,
     usage: TokenUsage.optional(),
     costUsd: z.number().nonnegative().default(0),
     estimated: z.boolean().default(false),
@@ -1019,6 +1032,7 @@ const ReworkJudged = z.object({
     agentId: z.string(),
     runResult: GuardianRunResult.optional(),
     ...AgentSetting,
+    ...RunRef,
     usage: TokenUsage.optional(),
     costUsd: z.number().nonnegative().default(0),
     estimated: z.boolean().default(false),
