@@ -7942,7 +7942,20 @@ describe("タスクの詳細での、オーケストレーターへの質問（P
       }
       return append(entry);
     };
+    const usedBefore = service.get(id)?.task.budget.usedUsd ?? 0;
     await service.askQuestion(id, { text: "Q1" }).answered;
+    // 実行にかかった費用（100出力トークン = $0.0015）は、答えられなかったときも記録する
+    expect(service.get(id)?.task.budget.usedUsd).toBeCloseTo(usedBefore + 0.0015, 6);
+    expect(service.get(id)?.task.budget.estimated).toBe(true);
+    expect(service.get(id)?.activity.at(-1)).toMatchObject({
+      type: "QuestionAnswered",
+      payload: {
+        runResult: "failed",
+        costUsd: 0.0015,
+        usage: { output: 100 },
+        agentId: "claude-subscription",
+      },
+    });
     const first = service.get(id)?.task.questions[0]?.answer;
     expect(first && "failed" in first ? ja(first.failed) : "").toContain("disk full");
     await service.askQuestion(id, { text: "Q2" }).answered;

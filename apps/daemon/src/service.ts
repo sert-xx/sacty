@@ -3885,17 +3885,18 @@ export class TaskService {
         { actor: "orchestrator", event: { type: "QuestionAnswered", payload } },
       ]);
     } catch (error) {
-      // 答えを記録できなければ、答えられなかったこととして記録する（答え待ちのまま、次の質問を塞がない）
+      // 答えを記録できなければ、答えられなかったこととして記録する（答え待ちのまま、次の質問を塞がない）。
+      // 実行にかかった費用（使用量・換算か）は、そのまま記録する
+      const { answer: _answer, failed: _failed, ...rest } = payload;
       this.append(this.mustGet(task.id), [
         {
           actor: "orchestrator",
           event: {
             type: "QuestionAnswered",
             payload: {
-              questionId,
+              ...rest,
               failed: message("chat.failed", { detail: errorText(error) }),
               runResult: "failed",
-              ...setting,
             },
           },
         },
