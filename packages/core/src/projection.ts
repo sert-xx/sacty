@@ -242,6 +242,11 @@ export type Task = {
     remarks: string[];
     judgement?: { target?: StepKey; reason: DaemonText };
   };
+  /**
+   * 最後に PR の指摘で差し戻した戻し先と、ゴールガーディアンの判断の理由（PBI-58）。decided が false なら、
+   * 戻し先を判断できなかったので実装をやり直した。人間が戻し先を確かめた作業履歴（PBI-14b）には無い。
+   */
+  prRework?: { target: StepKey; decided: boolean; reason: DaemonText; at: string };
   createdAt: string;
   updatedAt: string;
 };
@@ -523,7 +528,22 @@ export function applyEvent(
       task.escalation = undefined;
       // 統合レビューの承認待ちで差し戻したら、修正の子タスクを追加して、統合レビューの回数を数え直す（PBI-31）
       if (event.payload.step === "integrate") task.integrationFailures = 0;
-      // PR の指摘は、この差し戻しに反映した
+      // PR の指摘は、この差し戻しに反映した。ゴールガーディアンの判断で戻したなら、戻し先と理由を残す（PBI-58）。
+      // 判断の後に人間が別の差し戻しをした（再起動の前など）なら、ゴールガーディアンの判断としては残さない
+      const judged = task.pendingReview?.judgement;
+      if (
+        judged &&
+        target === (judged.target ?? "implement") &&
+        JSON.stringify(event.payload.remarks.map((r) => r.text)) ===
+          JSON.stringify(task.pendingReview?.remarks)
+      ) {
+        task.prRework = {
+          target,
+          decided: judged.target !== undefined,
+          reason: judged.reason,
+          at: event.at,
+        };
+      }
       task.pendingReview = undefined;
       break;
     }

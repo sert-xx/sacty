@@ -5,7 +5,11 @@ import { getMessages } from "@/i18n/server";
 export async function PullRequestCard({ task }: { task: Task }) {
   const pr = task.pullRequest;
   if (!pr && task.misses.length === 0) return null;
-  const m = (await getMessages()).parts.pullRequest;
+  const messages = await getMessages();
+  const m = messages.parts.pullRequest;
+  const { step, text } = messages.labels;
+  // 最後に PR の指摘で差し戻した戻し先と、ゴールガーディアンの判断の理由（PBI-58）
+  const rework = task.prRework;
   return (
     <section
       aria-labelledby="pull-request"
@@ -35,6 +39,16 @@ export async function PullRequestCard({ task }: { task: Task }) {
           <dd className="font-mono text-xs leading-6 break-all">{pr.branch}</dd>
           <dt className="pt-0.5 text-xs text-muted-foreground">{m.commit}</dt>
           <dd className="font-mono text-xs leading-6">{pr.commit.slice(0, 12)}</dd>
+          {rework && (
+            <>
+              <dt className="pt-0.5 text-xs text-muted-foreground">{m.rework}</dt>
+              <dd>
+                {rework.decided
+                  ? m.reworkJudged(step[rework.target], text(rework.reason))
+                  : m.reworkUndecided(step[rework.target], text(rework.reason))}
+              </dd>
+            </>
+          )}
         </dl>
       )}
       {task.misses.length > 0 && (

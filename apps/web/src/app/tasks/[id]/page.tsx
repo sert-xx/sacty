@@ -81,7 +81,7 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
   const messages = await getMessages();
   const { task: m, labels, parts, locale } = messages;
   const action = personAction(task, labels);
-  // PR の指摘の戻し先の確認（PBI-14b）
+  // PR の指摘の戻し先の確認（PBI-14b。PBI-58 より前の作業履歴だけ）
   const rework =
     task.status === "escalated" && task.escalation?.reason === "rework_confirmation"
       ? task.escalation

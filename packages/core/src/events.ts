@@ -780,7 +780,8 @@ const PullRequestReviewImported = z.object({
 
 /**
  * 取り込んだ PR の指摘で、どの工程まで戻すかのゴールガーディアンの判断（PBI-14b）。target が無ければ
- * 判断できなかった。実装だけならそのまま差し戻し、設計・要求要件まで戻す・判断できないときは人間が確かめる。
+ * 判断できなかった。判断した工程に、人間の確認を待たずに差し戻す。判断できなければ実装をやり直す（PBI-58）。
+ * PBI-58 より前の作業履歴では、設計・要求要件まで戻す・判断できないときは人間が確かめた（rework_confirmation）。
  */
 const ReworkJudged = z.object({
   type: z.literal("ReworkJudged"),
@@ -946,7 +947,7 @@ const TaskEscalated = z.object({
      * too_many_changes：差し戻しが上限を超えた
      * change_undecidable：ゴールガーディアンが変更の申し出を判定できなかった
      * rework_confirmation：PR の指摘で、設計・要求要件まで戻す（または戻し先を判断できなかった）ので、
-     *   人間が戻し先を確かめる（PBI-14b）
+     *   人間が戻し先を確かめる（PBI-14b）。PBI-58 から記録しない（過去の作業履歴を読むために残す）
      */
     reason: z.enum(["too_many_changes", "change_undecidable", "rework_confirmation"]),
     /** ゴールガーディアンの判断の理由（rework_confirmation のとき）。 */
