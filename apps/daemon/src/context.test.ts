@@ -214,7 +214,12 @@ describe("MCP サーバーの合成と変換（PBI-6b）", () => {
     const mcp = Object.fromEntries(composed.mcp.map((m) => [m.name, m.server]));
     expect(Object.keys(mcp).sort()).toEqual(["docs", "github", "local"]);
     expect(mcp.github).toMatchObject({ command: "npx" }); // 上書き禁止
-    expect(mcp.docs).toEqual({ url: "https://team.example.com/mcp", headers: {} }); // 下位が上書き
+    expect(mcp.docs).toEqual({
+      url: "https://team.example.com/mcp",
+      headers: {},
+      // 既定はゲートウェイ経由（PBI-49）
+      via_gateway: true,
+    }); // 下位が上書き
     expect(composed.warnings.map(ja)).toEqual([
       expect.stringContaining("MCP サーバー「github」を上書き"),
     ]);
@@ -297,6 +302,105 @@ describe("MCP サーバーの合成と変換（PBI-6b）", () => {
     expect(toml).toContain('url = "http://host.docker.internal:5001/mcp/private-cloud"');
     expect(toml).toContain('env_http_headers = { "Authorization" = "SACTY_MCP_SECRET_0" }');
     codex.dispose();
+  });
+
+  it("HTTP の MCP サーバーは、ゲートウェイの URL と実行ごとのトークンにし、元の URL と認証はゲートウェイに渡す（PBI-49）", async () => {
+    const files = {
+      "ctx.git": {
+        "mcp.yaml": [
+          "servers:",
+          "  docs:",
+          "    url: https://docs.example.com/mcp",
+          "    headers:",
+          "      Authorization: { secret: docs-token, prefix: 'Bearer ' }",
+          "      X-Team: company",
+          "  direct:",
+          "    url: https://direct.example.com/mcp",
+          "    via_gateway: false",
+          "    headers:",
+          "      X-Key: { secret: direct-key }",
+          "  local:",
+          "    command: local-server",
+          "    env:",
+          "      TOKEN: { secret: local-token }",
+          "  private-cloud:",
+          "    url: https://shadowed.example.com/mcp",
+        ].join("\n"),
+      },
+    };
+    const origin = "http://host.docker.internal:5001";
+    const hostMcp = [{ name: "private-cloud", url: `${origin}/mcp/private-cloud` }];
+    const claude = await prepareContext(
+      new FakeFetcher(files),
+      { repo: "ctx.git" },
+      "claude-code",
+      "/tmp/sacty-claude-config",
+      undefined,
+      undefined,
+      hostMcp,
+      origin,
+    );
+    const json = JSON.parse(readFileSync(join(claude.dir, "mcp.json"), "utf8"));
+    expect(json.mcpServers.docs).toEqual({
+      type: "http",
+      url: `${origin}/ctx-mcp/docs`,
+      headers: { Authorization: expect.stringMatching(/^\$\{SACTY_MCP_SECRET_\d+\}$/) },
+    });
+    // その環境変数には、実行ごとのゲートウェイのトークンを入れる
+    const env = String(json.mcpServers.docs.headers.Authorization).slice(2, -1);
+    expect(claude.placed.secrets.find((s) => s.env === env)).toEqual({
+      env,
+      secret: GATEWAY_TOKEN_SECRET,
+      prefix: "Bearer ",
+    });
+    // via_gateway: false は直接（これまでどおり、秘密情報はコンテナに渡す）。stdio もこれまでどおり
+    expect(json.mcpServers.direct.url).toBe("https://direct.example.com/mcp");
+    expect(json.mcpServers.local.command).toBe("local-server");
+    // ゲートウェイに渡す中継先（秘密情報は参照のまま）。ホストの MCP サーバーと同じ名前のものは中継しない
+    expect(claude.gatewayMcp).toEqual([
+      {
+        name: "docs",
+        url: "https://docs.example.com/mcp",
+        headers: {
+          Authorization: { secret: "docs-token", prefix: "Bearer " },
+          "X-Team": "company",
+        },
+      },
+    ]);
+    // docs の秘密情報（docs-token）は、コンテナに渡す秘密情報に入らない（実行ごとのトークンだけ）
+    expect(claude.placed.secrets.map((s) => s.secret).sort()).toEqual(
+      [GATEWAY_TOKEN_SECRET, GATEWAY_TOKEN_SECRET, "direct-key", "local-token"].sort(),
+    );
+    expect(JSON.stringify(json)).not.toContain("docs.example.com");
+    claude.dispose();
+
+    const codex = await prepareContext(
+      new FakeFetcher(files),
+      { repo: "ctx.git" },
+      "codex",
+      "/.codex",
+      undefined,
+      undefined,
+      [],
+      origin,
+    );
+    const toml = readFileSync(join(codex.dir, "config.toml"), "utf8");
+    expect(toml).toContain(`url = "${origin}/ctx-mcp/docs"`);
+    expect(toml).not.toContain("docs.example.com");
+    codex.dispose();
+
+    // ゲートウェイが無ければ（起点を渡さなければ）、これまでどおり直接つなぐ
+    const direct = await prepareContext(
+      new FakeFetcher(files),
+      { repo: "ctx.git" },
+      "claude-code",
+      "/c",
+    );
+    expect(JSON.parse(readFileSync(join(direct.dir, "mcp.json"), "utf8")).mcpServers.docs.url).toBe(
+      "https://docs.example.com/mcp",
+    );
+    expect(direct.gatewayMcp).toEqual([]);
+    direct.dispose();
   });
 
   it("MCP の秘密情報には、1Password の参照（op://…）も書ける（PBI-34）", async () => {

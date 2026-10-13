@@ -831,6 +831,70 @@ describe("工程の実行と費用", () => {
     activity.close();
   });
 
+  it("コンテキストの HTTP の MCP サーバーは、ゲートウェイに中継先と認証を渡し、コンテナには実行ごとのトークンだけを渡す（PBI-49）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const registered: unknown[] = [];
+    const gateway: NonNullable<ServiceDeps["gateway"]> = {
+      containerOrigin: () => "http://host.docker.internal:5001",
+      platformsUrl: (token) => `http://host.docker.internal:5001/r/${token}/pf`,
+      register: (_route, mcp) => {
+        registered.push(mcp);
+        return {
+          token: "sacty-gw-run",
+          stats: () => ({ retries: 0, waitedMs: 0, statuses: [], gaveUp: false }),
+          close: () => {},
+        };
+      },
+    };
+    const contexts = new FakeContexts({
+      "https://github.com/acme/ctx.git": {
+        "mcp.yaml": [
+          "servers:",
+          "  docs:",
+          "    url: https://docs.example.com/mcp",
+          "    headers:",
+          "      Authorization: { secret: docs-token, prefix: 'Bearer ' }",
+          "      X-Team: company",
+        ].join("\n"),
+      },
+    });
+    const { service, executor } = makeService(activity, [completed(20_000)], {
+      gateway,
+      contexts,
+      secrets: {
+        "claude-oauth-token": "oauth-secret",
+        "github-token": "ghp_secret",
+        "docs-token": "docs-secret-value",
+      },
+    });
+    const project = service.saveProject("default", {
+      name: "デフォルト",
+      targets: [{ scope: "repo", target: "https://github.com/acme/app" }],
+      githubAccounts: { "github.com": "me" },
+      context: { repo: "https://github.com/acme/ctx.git" },
+    });
+    const task = service.createTask({ projectId: project.id, title: "ドキュメントを調べる" });
+    await service.runNext(task.id);
+    // ゲートウェイには、元の URL と、ホストで取り出した認証を渡す
+    expect(registered).toEqual([
+      {
+        docs: {
+          url: "https://docs.example.com/mcp",
+          headers: { Authorization: "Bearer docs-secret-value", "X-Team": "company" },
+        },
+      },
+    ]);
+    // コンテナには、ゲートウェイの URL と実行ごとのトークンだけ（認証の値は渡さない）
+    const call = executor.calls[0];
+    expect(JSON.stringify(call?.env)).not.toContain("docs-secret-value");
+    expect(Object.values(call?.env ?? {})).toContain("Bearer sacty-gw-run");
+    expect(call?.hostGateway).toBe(true);
+    const mcp = JSON.parse(executor.mcpConfigs[0] ?? "{}").mcpServers.docs;
+    expect(mcp.url).toBe("http://host.docker.internal:5001/ctx-mcp/docs");
+    expect(JSON.stringify(executor.mcpConfigs[0])).not.toContain("docs.example.com");
+    activity.close();
+  });
+
   it("組織内 PF があれば、工程エージェントに PF の URL（実行のトークンを含む）と使える API を渡し、認証情報は渡さない（PBI-35）", async () => {
     const activity = new SqliteActivityStore(dbPath);
     const ticket = toPlatform(

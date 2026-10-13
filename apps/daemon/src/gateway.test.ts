@@ -471,3 +471,146 @@ describe("組織内 PF の API の中継（PBI-35）", () => {
     expect(g.calls.map((c) => c.url)).toEqual(["https://auth.internal.example.com/token"]);
   });
 });
+
+describe("コンテキストの HTTP の MCP サーバーの中継（PBI-49）", () => {
+  /** MCP サーバーの偽物（本物の HTTP）。受けたリクエストを記録し、POST は SSE、GET は SSE、DELETE は 204 を返す。 */
+  async function mcpServer() {
+    const { createServer } = await import("node:http");
+    const seen: { method: string; url: string; headers: Record<string, unknown>; body: string }[] =
+      [];
+    const server = createServer((req, res) => {
+      let body = "";
+      req.on("data", (c) => {
+        body += c;
+      });
+      req.on("end", () => {
+        seen.push({ method: req.method ?? "", url: req.url ?? "", headers: req.headers, body });
+        if (req.url?.startsWith("/redirect")) {
+          res.writeHead(302, { location: "https://elsewhere.example.com/steal" });
+          return res.end();
+        }
+        if (req.method === "DELETE") {
+          res.writeHead(204);
+          return res.end();
+        }
+        res.writeHead(200, { "content-type": "text/event-stream", "mcp-session-id": "sess-1" });
+        res.write(`event: message\ndata: {"jsonrpc":"2.0","id":1,"result":{"ok":1}}\n\n`);
+        setTimeout(() => {
+          res.write(`event: message\ndata: {"jsonrpc":"2.0","id":2,"result":{"ok":2}}\n\n`);
+          res.end();
+        }, 30);
+      });
+    });
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
+    const address = server.address();
+    const port = typeof address === "object" && address ? address.port : 0;
+    return { url: `http://127.0.0.1:${port}/mcp`, seen, close: () => server.close() };
+  }
+
+  async function send(
+    port: number,
+    path: string,
+    options: { method?: string; headers?: Record<string, string>; body?: string } = {},
+  ) {
+    const res = await fetch(`http://127.0.0.1:${port}${path}`, {
+      method: options.method ?? "POST",
+      headers: options.headers ?? {},
+      ...(options.body ? { body: options.body } : {}),
+      redirect: "manual",
+    });
+    return { status: res.status, headers: res.headers, body: await res.text() };
+  }
+
+  it("実行のトークンを確かめ、ホストに持った認証を付けて中継する（エージェントの認証・ほかのヘッダーは送らない）", async () => {
+    const upstreamMcp = await mcpServer();
+    gateway = new AiGateway();
+    const port = await gateway.listen();
+    const run = gateway.register(undefined, {
+      docs: { url: upstreamMcp.url, headers: { Authorization: "Bearer docs-secret" } },
+    });
+    const res = await send(port, "/ctx-mcp/docs", {
+      headers: {
+        authorization: `Bearer ${run.token}`,
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        "mcp-session-id": "sess-1",
+        "mcp-protocol-version": "2025-06-18",
+        cookie: "x=1",
+        "x-other": "y",
+      },
+      body: '{"jsonrpc":"2.0","id":1,"method":"tools/list"}',
+    });
+    expect(res.status).toBe(200);
+    // SSE の応答とセッションのヘッダーをそのまま返す
+    expect(res.headers.get("content-type")).toBe("text/event-stream");
+    expect(res.headers.get("mcp-session-id")).toBe("sess-1");
+    expect(res.body).toContain('"result":{"ok":1}');
+    expect(res.body).toContain('"result":{"ok":2}');
+    const seen = upstreamMcp.seen[0];
+    expect(seen?.url).toBe("/mcp");
+    expect(seen?.body).toBe('{"jsonrpc":"2.0","id":1,"method":"tools/list"}');
+    expect(seen?.headers.authorization).toBe("Bearer docs-secret");
+    expect(seen?.headers["mcp-session-id"]).toBe("sess-1");
+    expect(seen?.headers["mcp-protocol-version"]).toBe("2025-06-18");
+    expect(seen?.headers.accept).toBe("application/json, text/event-stream");
+    expect(seen?.headers.cookie).toBeUndefined();
+    expect(seen?.headers["x-other"]).toBeUndefined();
+    expect(JSON.stringify(seen?.headers)).not.toContain(run.token);
+
+    // GET（SSE）・DELETE（セッションの終わり）も中継する。クエリは付け替える
+    expect(
+      (
+        await send(port, "/ctx-mcp/docs?a=1", {
+          method: "GET",
+          headers: { authorization: `Bearer ${run.token}` },
+        })
+      ).status,
+    ).toBe(200);
+    expect(upstreamMcp.seen[1]).toMatchObject({ method: "GET", url: "/mcp?a=1" });
+    expect(
+      (
+        await send(port, "/ctx-mcp/docs", {
+          method: "DELETE",
+          headers: { authorization: `Bearer ${run.token}` },
+        })
+      ).status,
+    ).toBe(204);
+    upstreamMcp.close();
+  });
+
+  it("知らないトークン・終わった実行・登録していないサーバーは中継しない。リダイレクトはたどらない", async () => {
+    const upstreamMcp = await mcpServer();
+    gateway = new AiGateway();
+    const port = await gateway.listen();
+    const run = gateway.register(undefined, {
+      docs: { url: upstreamMcp.url, headers: { Authorization: "Bearer docs-secret" } },
+      moved: { url: upstreamMcp.url.replace("/mcp", "/redirect"), headers: { "X-Api-Key": "k" } },
+    });
+    expect((await send(port, "/ctx-mcp/docs")).status).toBe(401);
+    expect(
+      (await send(port, "/ctx-mcp/docs", { headers: { authorization: "Bearer nope" } })).status,
+    ).toBe(401);
+    expect(
+      (await send(port, "/ctx-mcp/other", { headers: { authorization: `Bearer ${run.token}` } }))
+        .status,
+    ).toBe(404);
+    // ほかの実行（MCP を登録していない）のトークンでは使えない
+    const other = gateway.register();
+    expect(
+      (await send(port, "/ctx-mcp/docs", { headers: { authorization: `Bearer ${other.token}` } }))
+        .status,
+    ).toBe(404);
+    const moved = await send(port, "/ctx-mcp/moved", {
+      headers: { authorization: `Bearer ${run.token}` },
+    });
+    expect(moved.status).toBe(302);
+    run.close();
+    expect(
+      (await send(port, "/ctx-mcp/docs", { headers: { authorization: `Bearer ${run.token}` } }))
+        .status,
+    ).toBe(401);
+    // 上流に届いたのは、リダイレクトを返したものだけ
+    expect(upstreamMcp.seen.map((s) => s.url)).toEqual(["/redirect"]);
+    upstreamMcp.close();
+  });
+});

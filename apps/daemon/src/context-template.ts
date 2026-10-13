@@ -45,6 +45,8 @@ description: リリースの手順
 `,
   "mcp.yaml": `# 工程エージェントに渡す MCP サーバー。名前ごとに、上位の層の同じ名前のサーバーを上書きする。
 # 秘密情報は値を書かず、{ secret: 名前 } でキーチェーンの名前か 1Password の参照を書く（prefix は値の前につける）。
+# HTTP のサーバーは、sacty のゲートウェイ経由で使う（認証のヘッダーはホストで付け、コンテナには渡さない）。
+# コンテナから直接つなぐときは via_gateway: false と書く。command のサーバーは、コンテナの中で起動する。
 # servers:
 #   docs:
 #     url: https://mcp.example.com/mcp
