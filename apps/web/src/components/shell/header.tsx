@@ -6,11 +6,16 @@ import { currentProjectId, resolveProject } from "@/lib/current-project";
 import { listProjects, listTasks } from "@/lib/daemon";
 import { isWorking, needsPerson, personAction, statusText } from "@/lib/labels";
 import { type Notice, NotificationsMenu, ProjectMenu, UserMenu } from "./menus";
+import { SactyMark } from "./sacty-mark";
 
 function Frame({ children }: { children?: React.ReactNode }) {
   return (
     <header className="sticky top-0 z-30 flex h-16 items-center gap-2 border-b border-border bg-chrome px-2.5 sm:gap-3 sm:px-4">
-      <Link href="/" className="text-xl font-bold tracking-wide text-foreground">
+      <Link
+        href="/"
+        className="flex items-center gap-2 text-xl font-bold tracking-wide text-foreground"
+      >
+        <SactyMark className="size-7 shrink-0 rounded-[23%] dark:ring-1 dark:ring-white/20" />
         sacty
       </Link>
       <span aria-hidden="true" className="hidden h-7 w-px bg-border sm:block" />

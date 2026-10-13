@@ -157,8 +157,10 @@ describe("Slack の通知（PBI-38）", () => {
       unfurl_links: false,
       // 送り手の名前とアイコン（PBI-68）
       username: "Sacty",
-      icon_emoji: ":factory:",
+      icon_url: "https://raw.githubusercontent.com/sert-xx/sacty/main/assets/sacty-icon.png",
     });
+    // 絵文字のアイコンは付けない（icon_url と競合させない）
+    expect(api.calls[0]?.body).not.toHaveProperty("icon_emoji");
     expect(String(api.calls[0]?.body.text)).toContain("要求要件の承認を待っています");
 
     const withToken = slack();
