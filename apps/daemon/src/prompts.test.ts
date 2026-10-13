@@ -14,6 +14,7 @@ import {
   buildExportPrompt,
   buildOrchestratorPrompt,
   buildPrompt,
+  buildPullRequestBody,
   buildTicketPullRequestComment,
   CHAT_PROMPT_MAX,
   commentableLines,
@@ -526,6 +527,29 @@ describe("成果の書き出し（PBI-56）", () => {
     const long = extractExport(output({ error: "x".repeat(1500) }));
     expect(long && "error" in long && long.error).toBe(`${"x".repeat(1000)}…`);
     expect(extractExport("書きました")).toBeUndefined();
+  });
+
+  it("PR の本文に、書き出した成果の URL を入れる。書き出していなければ入れない", () => {
+    const task = {
+      ...base,
+      steps: [
+        { key: "requirements", state: "done" },
+        { key: "design", state: "done" },
+        { key: "implement", state: "done" },
+      ],
+      approved: {},
+      testMap: [],
+      reproductionTests: [],
+      exports: {
+        requirements: { url: "https://wiki/1" },
+        design: { url: "https://wiki/2" },
+      },
+    } as unknown as Task;
+    const body = buildPullRequestBody(task);
+    expect(body).toContain(
+      "## 書き出した成果\n\n- 要求要件：https://wiki/1\n- 設計：https://wiki/2\n",
+    );
+    expect(buildPullRequestBody({ ...task, exports: {} })).not.toContain("書き出した成果");
   });
 
   it("チケットへの PR のコメントに、書き出した成果の URL を添える", () => {

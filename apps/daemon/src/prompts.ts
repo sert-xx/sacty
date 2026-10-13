@@ -1190,6 +1190,8 @@ export function buildPullRequestBody(task: Task): string {
         ]
       : ["## 要求要件（人間が承認済み）", "", task.approved.requirements?.output ?? "（なし）"]),
     "",
+    // 書き出した成果（要求要件・設計など）の URL（PBI-56）
+    ...(exportedUrls(task).length > 0 ? ["## 書き出した成果", "", ...exportedUrls(task), ""] : []),
     "## 観点 → テスト → 実行結果",
     "",
     "| 観点 | 入力 | 期待結果 | テスト | 最終レビュー |",
@@ -1877,12 +1879,17 @@ export function buildTicketInvestigationComment(task: Task): string {
   return buildInvestigationComment(task).replace(`${investigationMarker(task)}\n`, "");
 }
 
-/** 作った PR の URL を、取り込み元のチケットに返すコメント（PBI-52）。書き出した成果の URL も添える（PBI-56）。 */
-export function buildTicketPullRequestComment(task: Task): string {
-  const exported = task.steps.flatMap((s) => {
+/** 書き出した成果の URL の一覧（工程ごとに1行。PBI-56）。 */
+function exportedUrls(task: Task): string[] {
+  return task.steps.flatMap((s) => {
     const url = task.exports[s.key]?.url;
     return url ? [`- ${STEP_NAME[s.key]}：${url}`] : [];
   });
+}
+
+/** 作った PR の URL を、取り込み元のチケットに返すコメント（PBI-52）。書き出した成果の URL も添える（PBI-56）。 */
+export function buildTicketPullRequestComment(task: Task): string {
+  const exported = exportedUrls(task);
   return [
     `sacty が PR を作りました：${task.pullRequest?.url ?? ""}`,
     ...(exported.length > 0 ? ["", "書き出した成果：", ...exported] : []),
