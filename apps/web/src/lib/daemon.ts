@@ -229,6 +229,14 @@ export function rereviewTask(id: string): Promise<OpResult> {
   return postOp(`/api/tasks/${encodeURIComponent(id)}/rereview`, {});
 }
 
+/** 書き出せなかった承認済みの成果を、書き出し直す（PBI-56）。書き出しは待たない。 */
+export function retryExport(id: string, step: string): Promise<OpResult> {
+  return postOp(
+    `/api/tasks/${encodeURIComponent(id)}/exports/${encodeURIComponent(step)}/retry`,
+    {},
+  );
+}
+
 /** タスクの詳細で、オーケストレーターに質問する（PBI-54）。答えは待たない（画面が答えの出るまで更新する）。 */
 export function askQuestion(id: string, text: string): Promise<OpResult> {
   return postOp(`/api/tasks/${encodeURIComponent(id)}/questions`, { text });

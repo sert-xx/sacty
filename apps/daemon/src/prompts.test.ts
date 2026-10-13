@@ -10,10 +10,14 @@ import { describe, expect, it } from "vitest";
 import {
   allowedPlans,
   buildChatPrompt,
+  buildExportDocument,
+  buildExportPrompt,
   buildOrchestratorPrompt,
   buildPrompt,
+  buildTicketPullRequestComment,
   CHAT_PROMPT_MAX,
   commentableLines,
+  extractExport,
   extractIntegrationReview,
   extractReviewComments,
   extractSplitPlan,
@@ -404,5 +408,142 @@ describe("オーケストレーターへの質問の指示（PBI-54）", () => {
     expect(prompt).toContain("sacty StepsChosen");
     expect(prompt).not.toContain("QuestionAsked");
     expect(prompt).toContain("要求要件（active） → 設計（todo）");
+  });
+});
+
+describe("成果の書き出し（PBI-56）", () => {
+  const base = {
+    id: "t1",
+    title: "決済の再送",
+    body: "",
+    steps: [{ key: "requirements", state: "done" }],
+    exports: {},
+  } as unknown as Task;
+
+  it("使える接続先を渡したときだけ、書き出し先を決めさせる（取り込み元と規約も渡す）", () => {
+    const none = buildOrchestratorPrompt(base);
+    expect(none).not.toContain("exports：");
+    expect(none).not.toContain('"exports"');
+    const prompt = buildOrchestratorPrompt(
+      { ...base, ticket: { key: "PAY-1", url: "https://jira/PAY-1" } } as unknown as Task,
+      {
+        exports: {
+          destinations: [
+            { via: "platform", name: "confluence", description: "Confluence" },
+            { via: "mcp", name: "docs", description: "" },
+          ],
+          rules: "要件は DEV に置く",
+        },
+      },
+    );
+    expect(prompt).toContain("- exports：人間が承認した成果");
+    expect(prompt).toContain("取り込み元：PAY-1（https://jira/PAY-1）");
+    expect(prompt).toContain("confluence（via: platform・ゲートウェイの接続先）：Confluence");
+    expect(prompt).toContain("docs（via: mcp・MCP サーバー）");
+    expect(prompt).toContain("要件は DEV に置く");
+    expect(prompt).toContain('"exports": {"requirements": {"to": "接続先の名前"');
+  });
+
+  it("オーケストレーターの出力から、工程ごとの書き出し先を読む（工程の名前の形が正しいものだけ）", () => {
+    const output = (exports: unknown) =>
+      `\`\`\`json\n${JSON.stringify({ "sacty-steps": { plan: "standard", reason: "r", exports } })}\n\`\`\``;
+    expect(
+      extractStepPlan(
+        output({
+          requirements: { to: "confluence", via: "platform", location: "DEV", reason: "規約" },
+          design: { to: "", reason: "要らない" },
+          nope: { to: "x", reason: "y" },
+          investigate: "broken",
+          integrate: { to: "docs", via: "other", reason: "?" },
+        }),
+      )?.exports,
+    ).toEqual({
+      requirements: {
+        to: { via: "platform", name: "confluence", location: "DEV" },
+        reason: "規約",
+      },
+      design: { reason: "要らない" },
+      integrate: { to: { name: "docs", location: "" }, reason: "?" },
+    });
+    expect(extractStepPlan(output(undefined))).not.toHaveProperty("exports");
+    expect(extractStepPlan(output({}))).not.toHaveProperty("exports");
+    expect(extractStepPlan(output(["requirements"]))).not.toHaveProperty("exports");
+  });
+
+  it("書き出しの指示：前に書き出した先があれば更新させ、中断の後は目印で探させる", () => {
+    const input = {
+      via: "platform",
+      name: "confluence",
+      description: "",
+      location: "DEV",
+    } as const;
+    const fresh = buildExportPrompt(base, "requirements", { ...input, interrupted: false });
+    expect(fresh).toContain("置き場所に、新しいページを作る");
+    expect(fresh).toContain("ページの題：決済の再送：要求要件");
+    const update = buildExportPrompt(base, "requirements", {
+      ...input,
+      previousUrl: "https://wiki/1",
+      interrupted: true,
+    });
+    expect(update).toContain(
+      "前にこの成果を書き出したページ（https://wiki/1）を、この内容で更新する",
+    );
+    expect(update).not.toContain("新しいページを作る");
+    const resumed = buildExportPrompt(base, "requirements", { ...input, interrupted: true });
+    expect(resumed).toContain("目印「sacty-export:t1:requirements」を含むページを探し");
+  });
+
+  it("書き出す内容は承認済みの版で、設計はテスト観点を含め、目印を入れる", () => {
+    const task = {
+      ...base,
+      approved: {
+        design: {
+          submission: 2,
+          output: "# 設計 v2",
+          testViewpoints: [{ id: "TV-1", title: "再送", input: "同じキー", expected: "1回だけ" }],
+          at: "x",
+        },
+      },
+      outputs: { design: "# 下書き" },
+    } as unknown as Task;
+    const doc = buildExportDocument(task, "design");
+    expect(doc).toContain("# 設計 v2");
+    expect(doc).not.toContain("# 下書き");
+    expect(doc).toContain("[TV-1] 再送");
+    expect(doc).toContain("2回目の提出");
+    expect(doc).toContain("目印：sacty-export:t1:design");
+  });
+
+  it("書き出しの出力から、URL（http(s) の形）か、書き出せなかった理由（長ければ切り詰める）を読む", () => {
+    const output = (v: unknown) => `\`\`\`json\n${JSON.stringify({ "sacty-export": v })}\n\`\`\``;
+    expect(extractExport(output({ url: "https://wiki/1", error: "" }))).toEqual({
+      url: "https://wiki/1",
+    });
+    expect(extractExport(output({ url: "javascript:alert(1)", error: "" }))).toBeUndefined();
+    expect(extractExport(output({ url: "", error: "権限が無い" }))).toEqual({
+      error: "権限が無い",
+    });
+    const long = extractExport(output({ error: "x".repeat(1500) }));
+    expect(long && "error" in long && long.error).toBe(`${"x".repeat(1000)}…`);
+    expect(extractExport("書きました")).toBeUndefined();
+  });
+
+  it("チケットへの PR のコメントに、書き出した成果の URL を添える", () => {
+    const task = {
+      ...base,
+      steps: [
+        { key: "requirements", state: "done" },
+        { key: "design", state: "done" },
+      ],
+      pullRequest: { url: "https://github.com/acme/app/pull/7" },
+      exports: { requirements: { url: "https://wiki/1" } },
+    } as unknown as Task;
+    const body = buildTicketPullRequestComment(task);
+    expect(body).toContain("sacty が PR を作りました：https://github.com/acme/app/pull/7");
+    expect(body).toContain("- 要求要件：https://wiki/1");
+    expect(body).not.toContain("設計：");
+    expect(buildTicketPullRequestComment({ ...task, exports: {} })).toBe(
+      "sacty が PR を作りました：https://github.com/acme/app/pull/7\n\n（sacty のタスク t1）",
+    );
   });
 });

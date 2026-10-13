@@ -10,9 +10,9 @@ import type {
 
 /**
  * 費用の表の行。工程と、オーケストレーター（工程の選択）・質問への答え（オーケストレーター。PBI-54）・
- * ゴールガーディアン（判定・最終レビュー）。
+ * 承認した成果の書き出し（PBI-56）・ゴールガーディアン（判定・最終レビュー）。
  */
-export type CostRole = StepKey | "orchestrator" | "chat" | "guardian";
+export type CostRole = StepKey | "orchestrator" | "chat" | "export" | "guardian";
 
 /** 1回の実行。作業履歴に記録が無い項目（PBI-46 より前のモデル・エフォートなど）は持たない。 */
 export type CostRun = {
@@ -166,6 +166,10 @@ export function stepCosts(task: Task, activity: readonly ActivityEvent[]) {
       case "QuestionAnswered":
         push("chat", runOf(event, event.payload, event.payload.runResult));
         break;
+      // 承認した成果の書き出し（PBI-56）
+      case "OutputExported":
+        push("export", runOf(event, event.payload, event.payload.runResult));
+        break;
     }
   }
 
@@ -178,9 +182,11 @@ export function stepCosts(task: Task, activity: readonly ActivityEvent[]) {
       (role): role is StepKey =>
         role !== "orchestrator" &&
         role !== "chat" &&
+        role !== "export" &&
         role !== "guardian" &&
         !stepKeys.includes(role),
     ),
+    ...(runs.has("export") ? ["export" as const] : []),
     ...(runs.has("chat") ? ["chat" as const] : []),
     ...(runs.has("guardian") ? ["guardian" as const] : []),
   ];

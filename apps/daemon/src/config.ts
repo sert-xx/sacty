@@ -84,6 +84,10 @@ const StubBehavior = z.object({
     ),
   /** オーケストレーターとして、タスクの詳細での質問に答えたときの出力（PBI-54）。 */
   chat: z.string().default("スタブのため、質問には答えません。"),
+  /** 承認した成果を書き出したときの出力（PBI-56）。 */
+  export: z
+    .string()
+    .default('```json\n{"sacty-export": {"error": "スタブのため書き出しません"}}\n```'),
   /** ゴールガーディアンとして、PR の指摘の戻し先を判断したときの出力（PBI-14b）。 */
   rework: z
     .string()

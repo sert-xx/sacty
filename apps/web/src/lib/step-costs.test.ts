@@ -502,3 +502,59 @@ describe("質問への答えの費用（PBI-54）", () => {
     expect(total.costUsd).toBe(task.budget.usedUsd);
   });
 });
+
+describe("成果の書き出しの費用（PBI-56）", () => {
+  const exported = (payload: Record<string, unknown>) =>
+    ev(
+      {
+        type: "OutputExported",
+        payload: {
+          step: "requirements",
+          runId: `x${seq}`,
+          approvedAt: "2026-10-10T00:00:00.000Z",
+          submission: 1,
+          via: "platform",
+          name: "confluence",
+          agentId: "claude",
+          costUsd: 0,
+          ...payload,
+        },
+      } as EventInput,
+      "agent",
+    );
+
+  it("書き出しが無ければ行を出さず、書き出した・書き出せなかった・中断した回を「書き出し」の行に出す。合計はタスクの費用と一致する", () => {
+    const none = history();
+    expect(stepCosts(taskOf(none), none).rows.map((r) => r.role)).not.toContain("export");
+    const events = [
+      ...history(),
+      exported({
+        url: "https://wiki/1",
+        runResult: "completed",
+        usage: usage(100, 10),
+        costUsd: 0.02,
+      }),
+      exported({ failed: "権限", runResult: "completed", costUsd: 0.005, estimated: true }),
+      exported({ failed: "止めた", runResult: "interrupted", costUsd: 0.001 }),
+    ];
+    const task = taskOf(events);
+    const { rows, total } = stepCosts(task, events);
+    expect(rows.map((r) => r.role)).toEqual([
+      "orchestrator",
+      "requirements",
+      "design",
+      "implement",
+      "pr",
+      "export",
+      "guardian",
+    ]);
+    const row = rows.find((r) => r.role === "export");
+    expect(row?.runs.map((r) => [r.result, r.costUsd])).toEqual([
+      ["completed", 0.02],
+      ["completed", 0.005],
+      ["interrupted", 0.001],
+    ]);
+    expect(row).toMatchObject({ costUsd: 0.026, estimated: true });
+    expect(total.costUsd).toBe(task.budget.usedUsd);
+  });
+});

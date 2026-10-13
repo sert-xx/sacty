@@ -8,9 +8,16 @@ import { secretStringsInJson } from "./redact.js";
 
 /**
  * 何として実行するか。工程か、ゴールガーディアン（変更の申し出の判定・最終レビュー）か、オーケストレーター
- * （工程の選択。chat はタスクの詳細での質問への答え。PBI-54）。
+ * （工程の選択。chat はタスクの詳細での質問への答え。PBI-54）。export は、承認した成果の書き出し（PBI-56）。
  */
-export type AgentRole = StepKey | "guardian" | "final-review" | "rework" | "orchestrator" | "chat";
+export type AgentRole =
+  | StepKey
+  | "guardian"
+  | "final-review"
+  | "rework"
+  | "orchestrator"
+  | "chat"
+  | "export";
 
 /** コンテナの中での設定ディレクトリ。毎回空の場所を使い、ホストの設定やメモリーを読ませない。 */
 export const CONTAINER_CLAUDE_CONFIG_DIR = "/tmp/sacty-claude-config";
@@ -247,6 +254,7 @@ export async function buildInvocation(
         rework: "",
         orchestrator: "",
         chat: "",
+        export: "",
         usage: { input: 1000, cache_read: 0, cache_write: 0, output: 500 },
       };
       const result = stub.fail
@@ -272,7 +280,9 @@ export async function buildInvocation(
                       ? stub.orchestrator
                       : role === "chat"
                         ? stub.chat
-                        : ((role && stub.outputs[role]) ?? stub.output),
+                        : role === "export"
+                          ? stub.export
+                          : ((role && stub.outputs[role]) ?? stub.output),
             usage: {
               input_tokens: stub.usage.input,
               cache_read_input_tokens: stub.usage.cache_read,

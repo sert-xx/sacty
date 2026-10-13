@@ -13,6 +13,7 @@ import { join } from "node:path";
 import type { DaemonText, EventInput, StepKey, Task } from "@sacty/core";
 import {
   ANSWER_MAX,
+  exportDue,
   isCompleted,
   MVP_STEPS,
   message,
@@ -44,7 +45,12 @@ import {
   SecretNotFoundError,
 } from "./secrets.js";
 import { createApp } from "./server.js";
-import { awaitingIssueComment, type ServiceDeps, TaskService } from "./service.js";
+import {
+  awaitingIssueComment,
+  InvalidOperationError,
+  type ServiceDeps,
+  TaskService,
+} from "./service.js";
 import type { ServiceRunner, ServicesSpec } from "./services.js";
 import { MemorySettingsStore } from "./settings.js";
 import type { FoundTicket, TicketClient } from "./tickets.js";
@@ -6439,7 +6445,7 @@ describe("コンテキストの取得の認証（PBI-13 レビュー指摘）", 
     });
     const { id } = service.createTask({ title: "A", projectId: project.id });
     await service.runNext(id);
-    expect(contexts.fetched).toEqual([
+    const chain = [
       {
         repo: "https://github.com/acme/team-ctx.git",
         authEnv: expect.objectContaining({ GIT_CONFIG_VALUE_0: basic("ghp_side") }),
@@ -6450,9 +6456,11 @@ describe("コンテキストの取得の認証（PBI-13 レビュー指摘）", 
       },
       // GitHub の HTTPS でないもの（ローカルのパス・SSH）は、ホストの認証のまま
       { repo: "/local/base" },
-    ]);
-    // 対象リポジトリの clone と、コンテキストの2つのリポジトリの取得
-    expect(github.requested).toEqual(["side-job", "side-job", "side-job"]);
+    ];
+    // 工程の選択（書き出し先の候補の MCP サーバーと規約を読む。PBI-56）と、工程の実行で取得する
+    expect(contexts.fetched).toEqual([...chain, ...chain]);
+    // 対象リポジトリの clone と、コンテキストの2つのリポジトリの取得（工程の選択と実行）
+    expect(github.requested).toEqual(Array(5).fill("side-job"));
     activity.close();
   });
 
@@ -8550,6 +8558,627 @@ describe("タスクの詳細での、オーケストレーターへの質問（P
       expect.objectContaining({ messages: [{ code: "chat.unavailable" }] }),
     );
     expect(service.get(id)?.task.questions).toEqual([]);
+    activity.close();
+  });
+});
+
+describe("成果の書き出し（PBI-56）", () => {
+  const out = (text: string, output = 1): AgentOutcome => ({
+    kind: "completed",
+    output: text,
+    usage: { input: 0, cacheRead: 0, cacheWrite: 0, output },
+  });
+  /** 書き出しのエージェントの出力。100万出力トークン = $15 なので、1000 で $0.015。 */
+  const exportOut = (v: Record<string, unknown>): AgentOutcome =>
+    out(`書きました\n\n\`\`\`json\n${JSON.stringify({ "sacty-export": v })}\n\`\`\``, 1000);
+  const URL1 = "https://wiki.example.com/pages/101";
+  const confluence = () =>
+    toPlatform(
+      "confluence",
+      PlatformFile.parse({
+        upstream: "https://wiki.example.com",
+        description: "Confluence（設計書は DEV スペース）",
+        auth: { header: "Authorization", prefix: "Bearer ", secret: "wiki-token" },
+        allow: ["GET /rest/api/content/**", "POST /rest/api/content", "PUT /rest/api/content/*"],
+      }),
+    );
+  const secrets = {
+    "claude-oauth-token": "oauth-secret",
+    "github-token": "ghp_secret",
+    "wiki-token": "wiki-secret-value",
+    "docs-token": "docs-secret-value",
+  };
+  /** 決めた書き出し先を返す、オーケストレーターの代わり。 */
+  const plannerWith =
+    (exports: Record<string, unknown>): ServiceDeps["planner"] =>
+    async () => ({
+      steps: [...MVP_STEPS],
+      fallback: false,
+      testCommand: "npm test",
+      costUsd: 0,
+      estimated: false,
+      exports: exports as never,
+    });
+  /** 要求要件を confluence に書き出し、設計は書き出さないと決める。 */
+  const toConfluence = plannerWith({
+    requirements: {
+      to: { via: "platform", name: "confluence", location: "DEV スペースの「要件」" },
+      reason: "規約で要件は Confluence に置く",
+    },
+    design: { reason: "設計は sacty の中だけで足りる" },
+  });
+  const investigateToConfluence: ServiceDeps["planner"] = async () => ({
+    steps: [...STEP_PLANS.investigate],
+    plan: "investigate",
+    reason: "質問",
+    fallback: false,
+    costUsd: 0,
+    estimated: false,
+    exports: {
+      investigate: { to: { via: "platform", name: "confluence", location: "" }, reason: "r" },
+    },
+  });
+  const promptOf = (executor: { calls: Invocation[] }, i: number) =>
+    executor.calls[i]?.command.join(" ") ?? "";
+  const exportEvents = (activity: SqliteActivityStore, id: string) =>
+    activity.forTask(id).filter((e) => e.type === "OutputExported");
+  const taskOf = (service: TaskService, id: string) => service.get(id)?.task as Task;
+  const issue = {
+    repo: "https://github.com/acme/app",
+    number: 5,
+    title: "再試行はどこ？",
+    body: "",
+    url: "https://github.com/acme/app/issues/5",
+    labels: ["sacty"],
+  };
+
+  /** 工程を選んで要求要件を実行し、承認するところまで進める。 */
+  async function approveRequirements(service: TaskService, id: string) {
+    await service.runNext(id);
+    service.approve(id, { step: "requirements", submission: current(service, id) });
+  }
+
+  it("オーケストレーターが決めた書き出し先と理由を記録し、承認した要求要件をゲートウェイの接続先に書き出して URL を残す（認証はコンテナにも作業履歴にも出ない）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service, executor } = makeService(
+      activity,
+      [out("# 要求要件 v1"), exportOut({ url: URL1 }), out("# 設計")],
+      {
+        config: configOf(agent(), 1, [confluence()]),
+        gateway: fakeGateway(),
+        planner: toConfluence,
+        secrets,
+      },
+    );
+    const { id } = service.createTask({ projectId: "default", title: "決済の再送" });
+    await approveRequirements(service, id);
+    // 工程ごとの書き出し先（書き出さないことも含む）と理由（作業履歴と画面）
+    const chosen = activity.forTask(id).find((e) => e.type === "StepsChosen");
+    expect(chosen?.type === "StepsChosen" && chosen.payload.exports).toEqual({
+      requirements: {
+        to: { via: "platform", name: "confluence", location: "DEV スペースの「要件」" },
+        reason: "規約で要件は Confluence に置く",
+      },
+      design: { reason: "設計は sacty の中だけで足りる" },
+    });
+    expect(exportDue(taskOf(service, id))).toBe("requirements");
+    expect(service.queuedTaskIds()).toEqual([id]);
+
+    // 承認の後、次の工程の前に書き出す
+    await service.runNext(id);
+    const call = executor.calls[1];
+    expect(call?.env.SACTY_PF_URL).toBe("http://host.docker.internal:5001/r/sacty-gw-run/pf");
+    const prompt = promptOf(executor, 1);
+    expect(prompt).toContain("sacty-export.md");
+    expect(prompt).toContain("$SACTY_PF_URL/confluence");
+    expect(prompt).toContain("DEV スペースの「要件」");
+    expect(prompt).toContain("置き場所に、新しいページを作る");
+    // 書き出す内容は、作業領域のファイルで渡す
+    expect(executor.workspaceFiles[1]).toEqual(["sacty-export.md"]);
+    const task = taskOf(service, id);
+    expect(task.exports.requirements).toMatchObject({
+      url: URL1,
+      last: { submission: 1, via: "platform", name: "confluence", url: URL1 },
+    });
+    expect(task.status).toBe("queued");
+    // 費用はタスクの予算に入る
+    expect(task.budget.usedUsd).toBeCloseTo(0.015 + 0.000015, 6);
+    const [exported] = exportEvents(activity, id);
+    expect(exported).toMatchObject({
+      actor: "agent",
+      payload: { url: URL1, runResult: "completed", costUsd: 0.015 },
+    });
+    // 認証の値は、コンテナにも作業履歴にも出ない
+    expect(JSON.stringify(executor.calls)).not.toContain("wiki-secret-value");
+    expect(JSON.stringify(activity.forTask(id))).not.toContain("wiki-secret-value");
+
+    // 続けて設計へ進む。書き出さないと決めた設計は、承認しても書き出さない
+    await service.runNext(id);
+    expect(executor.calls).toHaveLength(3);
+    service.approve(id, { step: "design", submission: 1 });
+    expect(exportDue(taskOf(service, id))).toBeUndefined();
+    activity.close();
+  });
+
+  it("使える接続先が無ければ、書き出し先を決めさせず、承認しても書き出さない", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service, executor } = makeService(activity, [out("# 要求要件"), out("# 設計")], {
+      planner: toConfluence,
+    });
+    const { id } = service.createTask({ projectId: "default", title: "A" });
+    await approveRequirements(service, id);
+    const chosen = activity.forTask(id).find((e) => e.type === "StepsChosen");
+    expect(chosen?.type === "StepsChosen" && chosen.payload.exports).toBeUndefined();
+    await service.runNext(id);
+    // 書き出さずに設計を実行した
+    expect(executor.calls).toHaveLength(2);
+    expect(exportEvents(activity, id)).toEqual([]);
+    activity.close();
+  });
+
+  it("オーケストレーターに使える接続先（ゲートウェイの接続先・ホストの MCP）と規約を渡し、選んだ MCP サーバーで書き出す", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const notion = toHostMcp(
+      "notion",
+      HostMcpFile.parse({ command: "notion-mcp", description: "Notion（チームのワークスペース）" }),
+    );
+    const contexts = new FakeContexts({
+      "https://github.com/acme/ctx.git": {
+        "rules.md": "# 規約\n\n要求要件は Notion の「仕様」に置く",
+      },
+    });
+    const plan = out(
+      `\`\`\`json\n${JSON.stringify({
+        "sacty-steps": {
+          plan: "skip-design",
+          reason: "小さい",
+          testCommand: "npm test",
+          exports: {
+            requirements: { to: "notion", via: "mcp", location: "仕様", reason: "規約で Notion" },
+            design: { to: "confluence", reason: "設計も" },
+          },
+        },
+      })}\n\`\`\``,
+    );
+    const { service, executor } = makeService(
+      activity,
+      [
+        plan,
+        out("# 調査の結果"),
+        out("# 要求要件"),
+        exportOut({ url: "https://notion.example.com/p/1" }),
+      ],
+      {
+        config: configOf(agent(), 1, [confluence()], [notion]),
+        gateway: fakeGateway(),
+        contexts,
+        realPlanner: true,
+        secrets,
+      },
+    );
+    service.saveProject("default", {
+      name: "デフォルト",
+      targets: [{ scope: "repo", target: "https://github.com/acme/app" }],
+      githubAccounts: { "github.com": "me" },
+      context: { repo: "https://github.com/acme/ctx.git" },
+    });
+    const { id } = service.createTask({ projectId: "default", title: "A" });
+    // 工程を選んで、前段の調査（人間の承認なし）と要求要件を実行する
+    await service.runNext(id);
+    await service.runNext(id);
+    const orchestrator = promptOf(executor, 0);
+    expect(orchestrator).toContain("confluence（via: platform・ゲートウェイの接続先）");
+    expect(orchestrator).toContain(
+      "notion（via: mcp・MCP サーバー）：Notion（チームのワークスペース）",
+    );
+    expect(orchestrator).toContain("要求要件は Notion の「仕様」に置く");
+    // skip-design なので、書き出せる工程は要求要件だけ（設計の指定は使わない）
+    expect(taskOf(service, id).exportPlans).toEqual({
+      requirements: {
+        to: { via: "mcp", name: "notion", location: "仕様" },
+        reason: "規約で Notion",
+      },
+    });
+    service.approve(id, { step: "requirements", submission: 1 });
+    await service.runNext(id);
+    // MCP サーバーは、ゲートウェイの HTTP の MCP として渡し、PF の URL は渡さない
+    const call = executor.calls[3];
+    expect(call?.env.SACTY_PF_URL).toBeUndefined();
+    expect(JSON.parse(executor.mcpConfigs[3] ?? "{}").mcpServers.notion).toMatchObject({
+      url: "http://host.docker.internal:5001/mcp/notion",
+    });
+    expect(promptOf(executor, 3)).toContain("MCP サーバー。そのツールで書く");
+    expect(promptOf(executor, 3)).toContain("Notion（チームのワークスペース）");
+    expect(taskOf(service, id).exports.requirements?.url).toBe("https://notion.example.com/p/1");
+    activity.close();
+  });
+
+  it("使える接続先に無い名前・決めなかった工程は、理由を添えて書き出さない", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service } = makeService(activity, [out("# 要求要件")], {
+      config: configOf(agent(), 1, [confluence()]),
+      gateway: fakeGateway(),
+      planner: plannerWith({ requirements: { to: { name: "nowhere" }, reason: "?" } }),
+    });
+    const { id } = service.createTask({ projectId: "default", title: "A" });
+    await service.runNext(id);
+    expect(taskOf(service, id).exportPlans).toEqual({
+      requirements: { reason: message("export.destinationUnknown", { name: "nowhere" }) },
+      design: { reason: message("export.notDecided") },
+    });
+    activity.close();
+  });
+
+  it("コンテキストの MCP サーバーでも書き出せる。認証のヘッダーはゲートウェイだけが持つ", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const contexts = new FakeContexts({
+      "https://github.com/acme/ctx.git": {
+        "mcp.yaml": [
+          "servers:",
+          "  docs:",
+          "    url: https://docs.example.com/mcp",
+          "    headers:",
+          "      Authorization: { secret: docs-token, prefix: 'Bearer ' }",
+        ].join("\n"),
+      },
+    });
+    const { service, executor } = makeService(
+      activity,
+      [out("# 要求要件"), exportOut({ url: "https://docs.example.com/p/9" })],
+      {
+        gateway: fakeGateway(),
+        contexts,
+        secrets,
+        planner: plannerWith({
+          requirements: { to: { via: "mcp", name: "docs", location: "" }, reason: "規約" },
+        }),
+      },
+    );
+    service.saveProject("default", {
+      name: "デフォルト",
+      targets: [{ scope: "repo", target: "https://github.com/acme/app" }],
+      githubAccounts: { "github.com": "me" },
+      context: { repo: "https://github.com/acme/ctx.git" },
+    });
+    const { id } = service.createTask({ projectId: "default", title: "A" });
+    await approveRequirements(service, id);
+    expect(taskOf(service, id).exportPlans?.requirements?.to?.name).toBe("docs");
+    await service.runNext(id);
+    const mcp = JSON.parse(executor.mcpConfigs[1] ?? "{}").mcpServers.docs;
+    expect(mcp.url).toBe("http://host.docker.internal:5001/ctx-mcp/docs");
+    expect(JSON.stringify(executor.calls[1])).not.toContain("docs-secret-value");
+    expect(JSON.stringify(activity.forTask(id))).not.toContain("docs-secret-value");
+    expect(taskOf(service, id).exports.requirements?.url).toBe("https://docs.example.com/p/9");
+    activity.close();
+  });
+
+  it("書き出せなければ理由を残して進め（タスクは止めない）、画面から書き出し直せる", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service, executor } = makeService(
+      activity,
+      [
+        out("# 要求要件"),
+        exportOut({ error: "スペース DEV に書き込む権限がありません" }),
+        out("# 設計"),
+        exportOut({ url: URL1 }),
+      ],
+      {
+        config: configOf(agent(), 1, [confluence()]),
+        gateway: fakeGateway(),
+        planner: toConfluence,
+        secrets,
+      },
+    );
+    const { id } = service.createTask({ projectId: "default", title: "A" });
+    await approveRequirements(service, id);
+    // 書き出し直せるのは、書き出せなかったものだけ
+    expect(() => service.retryExport(id, "requirements")).toThrow(InvalidOperationError);
+    await service.runNext(id);
+    const failed = taskOf(service, id).exports.requirements;
+    expect(failed?.url).toBeUndefined();
+    expect(ja(failed?.last?.failed)).toContain("スペース DEV に書き込む権限がありません");
+    // タスクは止まらず、設計へ進む
+    expect(taskOf(service, id).status).toBe("queued");
+    await service.runNext(id);
+    expect(taskOf(service, id).gate?.step).toBe("design");
+    expect(() => service.retryExport(id, "design")).toThrow(InvalidOperationError);
+    expect(() => service.retryExport(id, "nope")).toThrow(InvalidOperationError);
+    // 画面から書き出し直す（設計の承認待ちのまま）
+    service.retryExport(id, "requirements");
+    expect(() => service.retryExport(id, "requirements")).toThrow(InvalidOperationError);
+    expect(service.queuedTaskIds()).toEqual([id]);
+    await service.runNext(id);
+    expect(taskOf(service, id).exports.requirements).toMatchObject({
+      url: URL1,
+      last: { url: URL1 },
+    });
+    expect(taskOf(service, id).exports.requirements?.retry).toBeUndefined();
+    expect(taskOf(service, id).status).toBe("awaiting_approval");
+    expect(executor.calls).toHaveLength(4);
+    expect(service.queuedTaskIds()).toEqual([]);
+    activity.close();
+  });
+
+  it("接続できない（エージェントの実行に失敗した・接続先が設定から消えた）ときも、理由を残して進める", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    let platforms = [confluence()];
+    const config = () => configOf(agent(), 1, platforms)();
+    const { service, executor } = makeService(
+      activity,
+      [
+        out("# 要求要件"),
+        { kind: "failed", reason: "error", message: "connect ECONNREFUSED wiki.example.com" },
+        out("# 設計"),
+      ],
+      { config, gateway: fakeGateway(), planner: toConfluence },
+    );
+    const { id } = service.createTask({ projectId: "default", title: "A" });
+    await approveRequirements(service, id);
+    await service.runNext(id);
+    expect(taskOf(service, id).exports.requirements?.last?.failed).toEqual(
+      message("export.failed", { detail: "connect ECONNREFUSED wiki.example.com" }),
+    );
+    expect(taskOf(service, id).pausedReason).toBeUndefined();
+    await service.runNext(id);
+    expect(taskOf(service, id).gate?.step).toBe("design");
+    // 接続先が設定から消えた（エージェントは実行しない）
+    platforms = [];
+    service.retryExport(id, "requirements");
+    await service.runNext(id);
+    expect(taskOf(service, id).exports.requirements?.last?.failed).toEqual(
+      message("export.destinationMissing", { name: "confluence" }),
+    );
+    expect(executor.calls).toHaveLength(3);
+    expect(taskOf(service, id).status).toBe("awaiting_approval");
+    activity.close();
+  });
+
+  it("予算の上限に達していれば、書き出さずに理由を残す", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service, executor } = makeService(activity, [out("# 要求要件", 70_000)], {
+      config: configOf(agent(), 1, [confluence()]),
+      gateway: fakeGateway(),
+      planner: toConfluence,
+    });
+    const { id } = service.createTask({ projectId: "default", title: "A" });
+    await approveRequirements(service, id);
+    await service.runNext(id);
+    expect(taskOf(service, id).exports.requirements?.last?.failed).toEqual(
+      message("export.budgetExceeded"),
+    );
+    expect(executor.calls).toHaveLength(1);
+    activity.close();
+  });
+
+  it("差し戻しの後に承認し直すと、前に書き出したページを更新させる（新しく作らない）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service, executor } = makeService(
+      activity,
+      [
+        out("# 要求要件 v1"),
+        exportOut({ url: URL1 }),
+        out("# 設計"),
+        out("# 要求要件 v2"),
+        exportOut({ url: URL1 }),
+      ],
+      {
+        config: configOf(agent(), 1, [confluence()]),
+        gateway: fakeGateway(),
+        planner: toConfluence,
+      },
+    );
+    const { id } = service.createTask({ projectId: "default", title: "A" });
+    await approveRequirements(service, id);
+    await service.runNext(id);
+    await service.runNext(id);
+    // 設計の承認待ちで、要求要件まで差し戻す（承認を取り消すので、書き出しは待たない）
+    service.requestChanges(id, {
+      step: "design",
+      submission: 1,
+      target: "requirements",
+      comments: ["受け入れ条件を足して"],
+    });
+    expect(exportDue(taskOf(service, id))).toBeUndefined();
+    await service.runNext(id);
+    service.approve(id, { step: "requirements", submission: 2 });
+    expect(exportDue(taskOf(service, id))).toBe("requirements");
+    await service.runNext(id);
+    const prompt = promptOf(executor, 4);
+    expect(prompt).toContain(`前にこの成果を書き出したページ（${URL1}）を、この内容で更新する`);
+    expect(prompt).not.toContain("新しいページを作る");
+    expect(taskOf(service, id).exports.requirements).toMatchObject({
+      url: URL1,
+      last: { submission: 2, url: URL1 },
+    });
+    expect(exportEvents(activity, id)).toHaveLength(2);
+    activity.close();
+  });
+
+  it("書き出しの後・記録の前にデーモンが止まったら、再起動の後に目印のあるページを探して更新させ、二重に書き出さない", async () => {
+    const first = new SqliteActivityStore(dbPath);
+    const { service, executor } = makeService(first, [out("# 要求要件"), HOLD as never], {
+      config: configOf(agent(), 1, [confluence()]),
+      gateway: fakeGateway(),
+      planner: toConfluence,
+    });
+    const { id } = service.createTask({ projectId: "default", title: "A" });
+    await approveRequirements(service, id);
+    void service.runNext(id);
+    await executor.started.promise;
+    // 書き出しを始めた記録だけがある（ここでデーモンが止まった）
+    expect(first.forTask(id).at(-1)?.type).toBe("ExportStarted");
+    first.close();
+
+    const second = new SqliteActivityStore(dbPath);
+    const restarted = makeService(second, [exportOut({ url: URL1 }), out("# 設計")], {
+      config: configOf(agent(), 1, [confluence()]),
+      gateway: fakeGateway(),
+      planner: toConfluence,
+    });
+    restarted.service.recoverInterrupted();
+    expect(restarted.service.queuedTaskIds()).toEqual([id]);
+    await restarted.service.runNext(id);
+    const prompt = promptOf(restarted.executor, 0);
+    expect(prompt).toContain(`目印「sacty-export:${id}:requirements」を含むページを探し`);
+    expect(restarted.executor.workspaceFiles[0]).toEqual(["sacty-export.md"]);
+    const exported = taskOf(restarted.service, id).exports.requirements;
+    expect(exported?.url).toBe(URL1);
+    expect(exported?.started).toBeUndefined();
+    // 書き出しの後は、続けて設計へ進む
+    await restarted.service.runNext(id);
+    expect(taskOf(restarted.service, id).gate?.step).toBe("design");
+    second.close();
+  });
+
+  it("書き出し中に一時停止すると、結果を記録せずに止まり、再開すると目印で探して書き出しを続ける", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service, executor } = makeService(
+      activity,
+      [out("# 要求要件"), HOLD as never, exportOut({ url: URL1 })],
+      {
+        config: configOf(agent(), 1, [confluence()]),
+        gateway: fakeGateway(),
+        planner: toConfluence,
+      },
+    );
+    const { id } = service.createTask({ projectId: "default", title: "A" });
+    await approveRequirements(service, id);
+    const running = service.runNext(id);
+    await executor.started.promise;
+    await service.pause(id);
+    await running;
+    const paused = taskOf(service, id);
+    expect(paused.status).toBe("paused");
+    expect(paused.exports.requirements?.started).toBeDefined();
+    expect(paused.exports.requirements?.last).toBeUndefined();
+    expect(exportEvents(activity, id).at(-1)?.payload).toMatchObject({
+      runResult: "interrupted",
+      failed: message("export.stopped"),
+    });
+    // 一時停止中は書き出さない
+    expect(service.queuedTaskIds()).toEqual([]);
+    service.resume(id, {});
+    await service.runNext(id);
+    expect(promptOf(executor, 2)).toContain(`目印「sacty-export:${id}:requirements」`);
+    expect(taskOf(service, id).exports.requirements?.url).toBe(URL1);
+    activity.close();
+  });
+
+  it("書き出し中に中止すると、コンテナを止めて中止できる（以後は書き出さない）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service, executor } = makeService(activity, [out("# 要求要件"), HOLD as never], {
+      config: configOf(agent(), 1, [confluence()]),
+      gateway: fakeGateway(),
+      planner: toConfluence,
+    });
+    const { id } = service.createTask({ projectId: "default", title: "A" });
+    await approveRequirements(service, id);
+    const running = service.runNext(id);
+    const runId = await executor.started.promise;
+    const cancelled = await service.cancel(id);
+    await running;
+    expect(executor.killed).toContain(runId);
+    expect(cancelled.status).toBe("cancelled");
+    expect(exportDue(cancelled)).toBeUndefined();
+    expect(service.queuedTaskIds()).toEqual([]);
+    expect(() => service.retryExport(id, "requirements")).toThrow(InvalidOperationError);
+    activity.close();
+  });
+
+  it("書き出せなかった理由は、秘密情報を伏せてから切り詰める（境界をまたぐトークンを残さない）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    // 理由の上限（1000文字）の境界を、実行ごとのトークンがまたぐ
+    const error = `${"x".repeat(995)}sacty-gw-run の認証で拒否されました`;
+    const { service } = makeService(activity, [out("# 要求要件"), exportOut({ error })], {
+      config: configOf(agent(), 1, [confluence()]),
+      gateway: fakeGateway(),
+      planner: toConfluence,
+    });
+    const { id } = service.createTask({ projectId: "default", title: "A" });
+    await approveRequirements(service, id);
+    await service.runNext(id);
+    const failed = ja(taskOf(service, id).exports.requirements?.last?.failed);
+    expect(failed).toContain("x".repeat(995));
+    expect(failed).not.toContain("sacty");
+    expect(JSON.stringify(activity.forTask(id))).not.toContain("sacty-gw");
+    activity.close();
+  });
+
+  it("Issue から取り込んだ調査のタスクは、書き出してから、書き出した先の URL を添えて Issue にコメントする", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const pulls = new FakePulls();
+    const { service } = makeService(activity, [out("# 調査の結果"), exportOut({ url: URL1 })], {
+      pulls,
+      config: configOf(agent(), 1, [confluence()]),
+      gateway: fakeGateway(),
+      planner: investigateToConfluence,
+    });
+    const [task] = service.importIssues([issue]);
+    const id = task?.id ?? "";
+    await service.runNext(id);
+    service.approve(id, { step: "investigate", submission: 1 });
+    expect(awaitingIssueComment(taskOf(service, id))).toBe(false);
+    await service.runNext(id);
+    // 書き出しの前には、コメントしない
+    expect(pulls.issueComments).toHaveLength(0);
+    await service.runNext(id);
+    expect(pulls.issueComments[0]?.body).toContain(`書き出した先：${URL1}`);
+    expect(service.queuedTaskIds()).toEqual([]);
+    activity.close();
+  });
+
+  it("書き出せなかったときは、URL を添えずに Issue にコメントする（いまの仕様にフォールバックする）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const pulls = new FakePulls();
+    const { service } = makeService(
+      activity,
+      [out("# 調査の結果"), exportOut({ error: "接続できません" })],
+      {
+        pulls,
+        config: configOf(agent(), 1, [confluence()]),
+        gateway: fakeGateway(),
+        planner: investigateToConfluence,
+      },
+    );
+    const [task] = service.importIssues([issue]);
+    const id = task?.id ?? "";
+    await service.runNext(id);
+    service.approve(id, { step: "investigate", submission: 1 });
+    await service.runNext(id);
+    await service.runNext(id);
+    expect(pulls.issueComments).toHaveLength(1);
+    expect(pulls.issueComments[0]?.body).toContain("# 調査の結果");
+    expect(pulls.issueComments[0]?.body).not.toContain("書き出した先");
+    activity.close();
+  });
+
+  it("書き出しの API から、承認済みの成果を書き出し直せる（書き出せないものは 409）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service } = makeService(
+      activity,
+      [out("# 要求要件"), exportOut({ error: "だめ" }), out("# 設計")],
+      {
+        config: configOf(agent(), 1, [confluence()]),
+        gateway: fakeGateway(),
+        planner: toConfluence,
+      },
+    );
+    const { id } = service.createTask({ projectId: "default", title: "A" });
+    await approveRequirements(service, id);
+    await service.runNext(id);
+    const app = createApp(service, "export-token");
+    const headers = { authorization: "Bearer export-token" };
+    const denied = await app.request(`/api/tasks/${id}/exports/design/retry`, {
+      method: "POST",
+      headers,
+    });
+    expect(denied.status).toBe(409);
+    const ok = await app.request(`/api/tasks/${id}/exports/requirements/retry`, {
+      method: "POST",
+      headers,
+    });
+    expect(ok.status).toBe(200);
+    expect(taskOf(service, id).exports.requirements?.retry).toBe(true);
     activity.close();
   });
 });

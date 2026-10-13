@@ -25,6 +25,7 @@ import {
   requestChanges,
   rereviewTask,
   resumeTask,
+  retryExport,
   runIntake,
   saveProject,
   saveSettings,
@@ -371,6 +372,26 @@ export async function rereviewTaskAction(
   let result: Awaited<ReturnType<typeof rereviewTask>>;
   try {
     result = await rereviewTask(String(formData.get("taskId") ?? ""));
+  } catch {
+    return { message: a.daemonDown };
+  }
+  if (!result.ok) return { message: result.message };
+  refresh();
+  return {};
+}
+
+/** 書き出せなかった承認済みの成果を、書き出し直す（PBI-56）。 */
+export async function retryExportAction(
+  _prev: TaskControlState,
+  formData: FormData,
+): Promise<TaskControlState> {
+  const a = (await getMessages()).common.action;
+  let result: Awaited<ReturnType<typeof retryExport>>;
+  try {
+    result = await retryExport(
+      String(formData.get("taskId") ?? ""),
+      String(formData.get("step") ?? ""),
+    );
   } catch {
     return { message: a.daemonDown };
   }

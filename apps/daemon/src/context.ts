@@ -986,3 +986,28 @@ export async function prepareContext(
     throw error;
   }
 }
+
+/**
+ * 書き出し先を決めるための、プロジェクトのコンテキストの MCP サーバーの名前と規約（PBI-56）。オーケストレーターに、
+ * 使える接続先と、どこに何を書くかの規約を渡すために読む（取得したリポジトリは、読んだら消す）。
+ */
+export async function contextExportInfo(
+  fetcher: ContextFetcher,
+  root: ContextRef | undefined,
+  auth?: ContextAuth,
+  defaultDir?: string,
+): Promise<{ mcp: string[]; rules: string }> {
+  if (!root && !defaultDir) return { mcp: [], rules: "" };
+  const work = mkdtempSync(join(tmpdir(), "sacty-context-"));
+  try {
+    const own = root ? await resolveContext(fetcher, root, join(work, "repos"), auth) : [];
+    const layers = [...(defaultDir ? [loadDefaultContext(defaultDir)] : []), ...own];
+    // 規約は、プロジェクトのコンテキストのものだけ（sacty の既定の規約は、書き出し先の手がかりではないため）
+    return {
+      mcp: composeContext(layers).mcp.map((m) => m.name),
+      rules: own.length > 0 ? composeContext(own).rules : "",
+    };
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+}

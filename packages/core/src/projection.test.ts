@@ -1,8 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { budgetState, computeCostUsd } from "./cost.js";
 import type { ActivityEvent, EventInput } from "./events.js";
-import { EventInput as EventSchema, MVP_STEPS } from "./events.js";
-import { pendingQuestion, project, questionBlocked } from "./projection.js";
+import { EventInput as EventSchema, exportSteps, MVP_STEPS } from "./events.js";
+import {
+  canRetryExport,
+  exportDue,
+  pendingQuestion,
+  project,
+  questionBlocked,
+} from "./projection.js";
 
 let seq = 0;
 const ev = (taskId: string, input: EventInput, actor: ActivityEvent["actor"] = "sacty") =>
@@ -557,5 +563,171 @@ describe("オーケストレーターへの質問（PBI-54）", () => {
       ev("t1", { type: "TaskCancelled", payload: { cleanup: [] } }, "person"),
     ]).get("t1");
     expect(cancelled && questionBlocked(cancelled)).toEqual({ code: "task.cancelled" });
+  });
+});
+
+describe("成果の書き出し（PBI-56）", () => {
+  const chosen = (taskId: string) =>
+    ev(
+      taskId,
+      {
+        type: "StepsChosen",
+        payload: {
+          steps: [...MVP_STEPS],
+          exports: {
+            requirements: {
+              to: { via: "platform", name: "confluence", location: "DEV" },
+              reason: "規約",
+            },
+            design: { reason: "書き出さない" },
+          },
+        },
+      },
+      "orchestrator",
+    );
+  const approvedAt = "2026-10-10T00:00:00.000Z";
+  const approved = (taskId: string) => [
+    started(taskId, "r1"),
+    completed(taskId, "r1", 0),
+    ev(taskId, { type: "StepSubmitted", payload: { step: "requirements", submission: 1 } }),
+    ev(
+      taskId,
+      { type: "StepApproved", payload: { step: "requirements", next: "queued" } },
+      "person",
+    ),
+  ];
+  const exportStarted = (taskId: string, runId: string, at = approvedAt) =>
+    ev(taskId, { type: "ExportStarted", payload: { step: "requirements", runId, approvedAt: at } });
+  const exported = (
+    taskId: string,
+    runId: string,
+    result: { url?: string; failed?: string; runResult: "completed" | "failed" | "interrupted" },
+    costUsd = 0.1,
+  ) =>
+    ev(
+      taskId,
+      {
+        type: "OutputExported",
+        payload: {
+          step: "requirements",
+          runId,
+          approvedAt,
+          submission: 1,
+          via: "platform",
+          name: "confluence",
+          agentId: "a",
+          costUsd,
+          ...result,
+        },
+      },
+      "agent",
+    );
+  const retried = (taskId: string) =>
+    ev(taskId, { type: "ExportRequested", payload: { step: "requirements" } }, "person");
+
+  it("書き出せる工程は、要求要件・設計と、調査だけのときの調査", () => {
+    expect(exportSteps(MVP_STEPS)).toEqual(["requirements", "design"]);
+    expect(exportSteps(["investigate", "requirements", "design", "implement", "pr"])).toEqual([
+      "requirements",
+      "design",
+    ]);
+    expect(exportSteps(["investigate"])).toEqual(["investigate"]);
+    expect(exportSteps(["review"])).toEqual([]);
+  });
+
+  it("決めた書き出し先を持ち、承認した版だけを書き出し待ちにする。状態・工程は変えない", () => {
+    seq = 0;
+    const before = project([created("t1"), chosen("t1"), ...approved("t1").slice(0, 3)]).get("t1");
+    expect(before?.exportPlans?.design).toEqual({ reason: "書き出さない" });
+    expect(before && exportDue(before)).toBeUndefined();
+    seq = 0;
+    const base = [created("t1"), chosen("t1"), ...approved("t1")];
+    const due = project(base).get("t1");
+    expect(due && exportDue(due)).toBe("requirements");
+    const exporting = project([...base, exportStarted("t1", "x1")]).get("t1");
+    expect(exporting?.status).toBe(due?.status);
+    expect(exporting?.steps).toEqual(due?.steps);
+    expect(exporting?.exports.requirements?.started?.runId).toBe("x1");
+  });
+
+  it("中断した書き出しは、始めた記録を残して書き出し待ちのまま。費用は予算に入れる", () => {
+    seq = 0;
+    const task = project([
+      created("t1"),
+      chosen("t1"),
+      ...approved("t1"),
+      exportStarted("t1", "x1"),
+      exported("t1", "x1", { failed: "止めた", runResult: "interrupted" }, 0.2),
+    ]).get("t1");
+    expect(task?.exports.requirements?.started?.runId).toBe("x1");
+    expect(task?.exports.requirements?.last).toBeUndefined();
+    expect(task && exportDue(task)).toBe("requirements");
+    expect(task?.budget.usedUsd).toBe(0.2);
+  });
+
+  it("書き出せなかったら理由を残し、書き出し直しを求めると書き出し待ちに戻る。書き出せたら URL を残す", () => {
+    seq = 0;
+    const base = [
+      created("t1"),
+      chosen("t1"),
+      ...approved("t1"),
+      exportStarted("t1", "x1"),
+      exported("t1", "x1", { failed: "権限が無い", runResult: "completed" }),
+    ];
+    const failed = project(base).get("t1");
+    expect(failed?.exports.requirements?.last?.failed).toBe("権限が無い");
+    expect(failed?.exports.requirements?.started).toBeUndefined();
+    expect(failed && exportDue(failed)).toBeUndefined();
+    expect(failed && canRetryExport(failed, "requirements")).toBe(true);
+    expect(failed && canRetryExport(failed, "design")).toBe(false);
+    const retry = project([...base, retried("t1")]).get("t1");
+    expect(retry && exportDue(retry)).toBe("requirements");
+    expect(retry && canRetryExport(retry, "requirements")).toBe(false);
+    const done = project([
+      ...base,
+      retried("t1"),
+      exportStarted("t1", "x2"),
+      exported("t1", "x2", { url: "https://wiki/1", runResult: "completed" }),
+      // 後の書き出しに失敗しても、前に書き出した先は残す（承認し直したら、ここを更新する）
+      exported("t1", "x3", { failed: "落ちた", runResult: "failed" }),
+    ]).get("t1");
+    expect(done?.exports.requirements?.url).toBe("https://wiki/1");
+    expect(done?.exports.requirements?.last?.failed).toBe("落ちた");
+    expect(done?.exports.requirements?.retry).toBeUndefined();
+    expect(done?.budget.usedUsd).toBeCloseTo(0.3, 6);
+  });
+
+  it("承認していない版・書き出し先の無い工程の書き出しの開始、書き出せたものの書き出し直しは受け付けない", () => {
+    seq = 0;
+    expect(() => project([created("t1"), chosen("t1"), exportStarted("t1", "x1")])).toThrow(
+      /not waiting to be exported/,
+    );
+    seq = 0;
+    expect(() =>
+      project([
+        created("t1"),
+        chosen("t1"),
+        ...approved("t1"),
+        exportStarted("t1", "x1", "2026-01-01T00:00:00.000Z"),
+      ]),
+    ).toThrow(/not waiting to be exported/);
+    seq = 0;
+    expect(() =>
+      project([
+        created("t1"),
+        chosen("t1"),
+        ...approved("t1"),
+        exported("t1", "x1", { url: "https://wiki/1", runResult: "completed" }),
+        retried("t1"),
+      ]),
+    ).toThrow(/cannot be retried/);
+    seq = 0;
+    const cancelled = project([
+      created("t1"),
+      chosen("t1"),
+      ...approved("t1"),
+      ev("t1", { type: "TaskCancelled", payload: { cleanup: [] } }, "person"),
+    ]).get("t1");
+    expect(cancelled && exportDue(cancelled)).toBeUndefined();
   });
 });
