@@ -102,6 +102,12 @@ export interface RepositoryWorkspace {
    * ベースブランチをマージした）が無いかを、実装を積む前に確かめるために使う。どちらのコミットも取得済みであること。
    */
   changedPaths(gitDir: string, from: string, to: string): Promise<string[]>;
+  /**
+   * コミットにあるファイルの本文を、退避したメタデータから読む（人が PR の中で直してマージした、要求要件・設計の成果の
+   * ファイル。PBI-63）。作業領域・利用者の git の設定は使わない。ファイルが無ければ undefined。通常のファイルでない・
+   * 大きすぎる・UTF-8 のテキストでなければエラー。コミットは取得済みであること。
+   */
+  readFile(gitDir: string, commit: string, path: string): Promise<string | undefined>;
   /** base と head の分岐点から head までの差分（PR の差分。PBI-19）。 */
   diffCommits(gitDir: string, baseCommit: string, headCommit: string): Promise<string>;
   /** sacty のブランチを、リモートから消す（中止したとき）。 */
@@ -171,12 +177,22 @@ function git(
   env: Record<string, string>,
   cwd?: string,
 ): Promise<string> {
+  return gitBytes(label, args, env, cwd).then((out) => out.toString("utf8"));
+}
+
+/** git を実行し、標準出力をそのままのバイト列で返す（複数バイトの文字が、読み込みの区切りで壊れないように）。 */
+function gitBytes(
+  label: string,
+  args: string[],
+  env: Record<string, string>,
+  cwd?: string,
+): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const child = spawn("git", args, { cwd, env, stdio: ["ignore", "pipe", "pipe"] });
-    let out = "";
+    const out: Buffer[] = [];
     let err = "";
-    child.stdout.on("data", (chunk) => {
-      out += chunk;
+    child.stdout.on("data", (chunk: Buffer) => {
+      out.push(chunk);
     });
     child.stderr.on("data", (chunk) => {
       err += chunk;
@@ -185,7 +201,7 @@ function git(
       reject(new MessageError(message("git.unavailable", { detail: error.message }))),
     );
     child.on("close", (code) => {
-      if (code === 0) resolve(out);
+      if (code === 0) resolve(Buffer.concat(out));
       else if (err.trim()) {
         reject(new MessageError(message("git.failed", { command: label, detail: err.trim() })));
       } else reject(new MessageError(message("git.exitCode", { command: label, code })));
@@ -194,6 +210,9 @@ function git(
 }
 
 const COMMIT_RE = /^[0-9a-f]{40,64}$/;
+
+/** コミットから読むファイルの大きさの上限（要求要件・設計の成果のファイル。PBI-63）。 */
+const FILE_LIMIT = 1024 * 1024;
 
 /** ブランチの名前として受け付けるか（オプションに見えるもの・使えない文字を除く）。 */
 function validBranch(branch: string): boolean {
@@ -538,6 +557,47 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
       isolatedEnv("/dev/null"),
     );
     return out.split("\0").filter(Boolean);
+  }
+
+  async readFile(gitDir: string, commit: string, path: string) {
+    if (!COMMIT_RE.test(commit)) throw new MessageError(message("git.invalidBaseCommit"));
+    if (!validPath(path)) throw new MessageError(message("git.invalidPath"));
+    const env = isolatedEnv("/dev/null");
+    const run = (label: string, args: string[]) =>
+      git(label, ["--git-dir", gitDir, ...SAFE_CONFIG, ...args], env);
+    // パスの種類を確かめる（シンボリックリンク・サブモジュール・ディレクトリは読まない）
+    const listed = await run("ls-tree", ["ls-tree", "-z", "--full-tree", commit, "--", path]);
+    const found = listed
+      .split("\0")
+      .filter(Boolean)
+      .map((line) => {
+        const tab = line.indexOf("\t");
+        const [mode = "", type = "", object = ""] = line.slice(0, tab).split(" ");
+        return { mode, type, object, name: line.slice(tab + 1) };
+      })
+      .find((e) => e.name === path);
+    if (!found) return undefined;
+    if (found.type !== "blob" || (found.mode !== "100644" && found.mode !== "100755")) {
+      throw new MessageError(message("git.fileNotRegular", { path }));
+    }
+    const size = Number((await run("cat-file", ["cat-file", "-s", found.object])).trim());
+    if (!Number.isFinite(size) || size > FILE_LIMIT) {
+      throw new MessageError(message("git.fileTooLarge", { path, limit: FILE_LIMIT }));
+    }
+    // 属性のフィルター・変換は通さず、そのままの内容を読む
+    const bytes = await gitBytes(
+      "cat-file",
+      ["--git-dir", gitDir, ...SAFE_CONFIG, "cat-file", "blob", found.object],
+      env,
+    );
+    let text: string;
+    try {
+      text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    } catch {
+      throw new MessageError(message("git.fileNotText", { path }));
+    }
+    if (text.includes("\0")) throw new MessageError(message("git.fileNotText", { path }));
+    return text;
   }
 
   async fetchBranch(gitDir: string, branch: string, authEnv?: Record<string, string>) {

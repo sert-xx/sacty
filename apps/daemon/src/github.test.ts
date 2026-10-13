@@ -381,6 +381,7 @@ describe("成果物チェックの間の PR の状態（PBI-14a）", () => {
           merged: true,
           merged_by: { login: "reviewer" },
           head: { sha: "abc" },
+          merge_commit_sha: "def",
         },
       },
       { status: 200, json: { state: "closed", merged: false } },
@@ -393,6 +394,7 @@ describe("成果物チェックの間の PR の状態（PBI-14a）", () => {
       state: "merged",
       mergedBy: "reviewer",
       headSha: "abc",
+      mergeCommit: "def",
     });
     expect(await client.status(pr)).toEqual({ state: "closed" });
     expect(await client.status(pr)).toEqual({ state: "open" });

@@ -1,5 +1,54 @@
-import type { Task } from "@sacty/core";
+import { type PullRequestMerge, parseRepoUrl, type Task } from "@sacty/core";
 import { getMessages } from "@/i18n/server";
+
+type PullRequestMessages = Awaited<ReturnType<typeof getMessages>>["parts"]["pullRequest"];
+
+/**
+ * 人が PR の中で直してからマージしたこと（PBI-63）。sacty が出したコミットと人が直した最終のコミット、GitHub の
+ * 比較へのリンク、マージのコミット（取れれば）を出す。
+ */
+function EditedMerge({
+  merge,
+  repo,
+  m,
+}: {
+  merge: PullRequestMerge | undefined;
+  repo: string | undefined;
+  m: PullRequestMessages;
+}) {
+  if (!merge?.edited) return null;
+  const submitted = merge.submitted ?? "";
+  const final = merge.commit ?? "";
+  const github = repo ? parseRepoUrl(repo) : undefined;
+  const compare =
+    github && /^[0-9a-f]{7,64}$/.test(submitted) && /^[0-9a-f]{7,64}$/.test(final)
+      ? `${github.url}/compare/${submitted}...${final}`
+      : undefined;
+  return (
+    <span className="block text-xs text-warn [overflow-wrap:anywhere]">
+      <span className="font-semibold">{m.edited}</span>{" "}
+      <span className="font-mono">{m.editedCommits(submitted.slice(0, 7), final.slice(0, 7))}</span>
+      {compare && (
+        <>
+          {" "}
+          <a
+            href={compare}
+            target="_blank"
+            rel="noreferrer"
+            className="text-accent-foreground underline"
+          >
+            {m.compare}
+          </a>
+        </>
+      )}
+      {merge.mergeCommit && (
+        <span className="block font-mono text-muted-foreground">
+          {m.mergeCommit(merge.mergeCommit.slice(0, 7))}
+        </span>
+      )}
+    </span>
+  );
+}
 
 /**
  * sacty が作ったPR（またはブランチ）と、ゴールガーディアンの見逃しの記録。要求要件・設計の PR とタスクブランチ
@@ -44,7 +93,10 @@ export async function PullRequestCard({ task }: { task: Task }) {
               <dt className="pt-0.5 text-xs text-muted-foreground">{m.branch}</dt>
               <dd className="font-mono text-xs leading-6 break-all">{pr.branch}</dd>
               <dt className="pt-0.5 text-xs text-muted-foreground">{m.commit}</dt>
-              <dd className="font-mono text-xs leading-6">{pr.commit.slice(0, 12)}</dd>
+              <dd className="font-mono text-xs leading-6">
+                {pr.commit.slice(0, 12)}
+                <EditedMerge merge={task.pullRequestMerge} repo={pr.repo} m={m} />
+              </dd>
             </>
           )}
           {task.taskBranch && !pr && (
@@ -75,6 +127,7 @@ export async function PullRequestCard({ task }: { task: Task }) {
                       <span className="block font-mono text-xs text-muted-foreground">
                         {p.path}
                       </span>
+                      <EditedMerge merge={p.merge} repo={p.repo} m={m} />
                     </li>
                   ))}
                 </ul>

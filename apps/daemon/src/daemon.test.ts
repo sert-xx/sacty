@@ -314,6 +314,20 @@ class FakeRepos implements RepositoryWorkspace {
     this.remote[input.branch] = commit;
     return { commit };
   }
+  /**
+   * コミットにあるファイル（人が PR の中で直してマージした成果のファイル。PBI-63）。commit → path → 本文（null は
+   * 消された）。無いコミットは、sacty が最後にコミットした本文を返す（そのままマージされた）。
+   */
+  files: Record<string, Record<string, string | null>> = {};
+  readFail?: string;
+  readCalls: { gitDir: string; commit: string; path: string }[] = [];
+  async readFile(gitDir: string, commit: string, path: string) {
+    this.readCalls.push({ gitDir, commit, path });
+    if (this.readFail) throw new MessageError(message("git.fileNotText", { path }));
+    const at = this.files[commit];
+    if (at && path in at) return at[path] ?? undefined;
+    return this.committedFiles.findLast((c) => path in c.files)?.files[path];
+  }
   prDiff = [
     "diff --git a/src/retry.ts b/src/retry.ts",
     "--- a/src/retry.ts",
@@ -4095,6 +4109,8 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       by: "reviewer",
       commit,
       outdated: false,
+      submitted: commit,
+      edited: false,
     });
     expect(service.get(id)?.task.steps.every((st) => st.state === "done")).toBe(true);
     // 完了したタスクは、もう確かめない
@@ -4599,20 +4615,80 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     });
   });
 
-  it("最新の提出より前の内容でマージされたら、承認にせず記録して人間の判断を待つ（PBI-14a レビュー指摘）", async () => {
+  it("人が PR の中で直してからマージしても、承認としてタスクを完了にし、sacty が出したコミットと人が直したコミットを残す（PBI-63）", async () => {
     const pulls = new FakePulls();
-    const { activity, service, id } = await toDeliverableGate([], { pulls });
-    pulls.state = { state: "merged", mergedBy: "reviewer", headSha: "f".repeat(40) };
+    const { activity, service, executor, id } = await toDeliverableGate([], { pulls });
+    const submitted = service.get(id)?.task.pullRequest?.commit;
+    const runs = executor.calls.length;
+    pulls.state = {
+      state: "merged",
+      mergedBy: "reviewer",
+      headSha: "f".repeat(40),
+      mergeCommit: "e".repeat(40),
+    };
     await service.checkPullRequests();
     await service.checkPullRequests(); // 二重に記録しない
     const task = service.get(id)?.task;
-    expect(task?.status).toBe("awaiting_approval");
-    expect(task?.pullRequestState).toBe("merged_outdated");
-    expect(task?.steps.at(-1)?.state).not.toBe("done");
+    expect(task?.status).toBe("idle");
+    expect(task?.steps.every((st) => st.state === "done")).toBe(true);
+    expect(task?.pullRequestState).toBe("merged");
+    expect(task?.pullRequestMerge).toMatchObject({
+      by: "reviewer",
+      submitted,
+      commit: "f".repeat(40),
+      mergeCommit: "e".repeat(40),
+      edited: true,
+    });
     const merged = service.get(id)?.activity.filter((e) => e.type === "PullRequestMerged");
-    expect(merged?.map((e) => e.payload)).toEqual([
-      { number: 7, by: "reviewer", commit: "f".repeat(40), outdated: true },
+    expect(merged?.map((e) => [e.actor, e.payload])).toEqual([
+      [
+        "person",
+        {
+          number: 7,
+          by: "reviewer",
+          commit: "f".repeat(40),
+          outdated: false,
+          submitted,
+          mergeCommit: "e".repeat(40),
+          edited: true,
+        },
+      ],
     ]);
+    // 人がマージした＝人が承認したので、最終レビューはやり直さない
+    expect(executor.calls).toHaveLength(runs);
+    activity.close();
+  });
+
+  it("前の版で、違う内容でのマージとして止めた（merged_outdated）実装の PR も、再起動の後の次の確認で完了にする（PBI-63）", async () => {
+    const pulls = new FakePulls();
+    const { activity, service, id } = await toDeliverableGate([], { pulls });
+    const before = service.get(id)?.task;
+    // 前の版が記録した作業履歴（outdated: true）
+    activity.append({
+      taskId: id,
+      projectId: before?.projectId ?? "default",
+      events: [
+        {
+          actor: "sacty",
+          event: {
+            type: "PullRequestMerged",
+            payload: { number: 7, by: "reviewer", commit: "f".repeat(40), outdated: true },
+          },
+        },
+      ],
+    });
+    // 再起動して、作業履歴から状態を復元する（過去の作業履歴を読める）
+    const { service: again } = makeService(activity, [], { pulls });
+    expect(again.get(id)?.task.pullRequestState).toBe("merged_outdated");
+    expect(again.get(id)?.task.status).toBe("awaiting_approval");
+    pulls.state = { state: "merged", mergedBy: "reviewer", headSha: "f".repeat(40) };
+    await again.checkPullRequests();
+    const task = again.get(id)?.task;
+    expect(task?.status).toBe("idle");
+    expect(task?.steps.every((st) => st.state === "done")).toBe(true);
+    expect(task?.pullRequestMerge).toMatchObject({ commit: "f".repeat(40), edited: true });
+    const merged = again.get(id)?.activity.filter((e) => e.type === "PullRequestMerged") ?? [];
+    expect(merged.map((e) => e.payload.outdated)).toEqual([true, false]);
     activity.close();
   });
 
@@ -10023,7 +10099,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
     closed.activity.close();
   });
 
-  it("マージされずに閉じられた・古い内容でマージされたら承認にせず人の判断を待ち、画面で差し戻すと新しい PR で出す", async () => {
+  it("マージされずに閉じられたら承認にせず人の判断を待ち、画面で差し戻すと新しい PR で出す", async () => {
     const made = await start([out("# 要求要件 v1"), out("# 要求要件 v2")]);
     const { activity, service, pulls, id } = made;
     pulls.states[7] = { state: "closed" };
@@ -10035,11 +10111,11 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
     pulls.states[7] = { state: "open" };
     await service.checkPullRequests();
     expect(taskOf(service, id).stepPullRequests[0]?.state).toBe("open");
-    // 人が PR のファイルを直してマージした（sacty の内容と違う）なら、承認にしない
-    pulls.states[7] = { state: "merged", headSha: "human-edit" };
+    // もう一度閉じられた
+    pulls.states[7] = { state: "closed" };
     await service.checkPullRequests();
     let task = taskOf(service, id);
-    expect(task.stepPullRequests[0]?.state).toBe("merged_outdated");
+    expect(task.stepPullRequests[0]?.state).toBe("closed");
     expect(task.approved.requirements).toBeUndefined();
     expect(task.status).toBe("awaiting_approval");
     // 画面から差し戻すと、作り直した要求要件を新しい PR で出す
@@ -10328,5 +10404,301 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       [id, ...children].map(taskBranchOf).sort(),
     );
     activity.close();
+  });
+
+  describe("人が PR の中で直してからマージした（PBI-63）", () => {
+    /**
+     * 工程の PR を、人が成果のファイルを直してからマージしたことにする（PR の先頭は sacty のコミットと違う）。
+     * content は、マージ後のタスクブランチの成果のファイル（null は消された、undefined は sacty の版のまま）。
+     */
+    function mergeEdited(
+      made: Pick<Made, "service" | "pulls" | "repos" | "id">,
+      step: StepKey,
+      content: string | null | undefined,
+    ) {
+      const { service, pulls, repos, id } = made;
+      const task = taskOf(service, id);
+      const pr =
+        step === "pr"
+          ? { number: task.pullRequest?.number ?? 0, path: "" }
+          : task.stepPullRequests.findLast((p) => p.step === step);
+      if (!pr) throw new Error(`no pull request for ${step}`);
+      const head = `e${pr.number}`.padEnd(40, "0");
+      const mergeCommit = `f${pr.number}`.padEnd(40, "0");
+      pulls.states[pr.number] = {
+        state: "merged",
+        mergedBy: "reviewer",
+        headSha: head,
+        mergeCommit,
+      };
+      repos.remote[taskBranchOf(id)] = mergeCommit;
+      if (content !== undefined) repos.files[mergeCommit] = { [pr.path]: content };
+      return { head, mergeCommit };
+    }
+    const header = (id: string, name: string) =>
+      `<!-- sacty task ${id} の${name}。sacty が作成しました。 -->\n\n`;
+    const mergedOf = (svc: TaskService, id: string) =>
+      svc.get(id)?.activity.filter((e) => e.type === "PullRequestMerged") ?? [];
+
+    it("要求要件・設計・実装の PR を人が直してマージしても、承認として進み、人が直した版を承認済みにし、両方の版とコミットを残す（受け入れ条件 1・2・3）", async () => {
+      const made = await start([out("# 要求要件 v1"), design(), implement(), review()]);
+      const { activity, service, executor, repos, id } = made;
+      const reqPr = taskOf(service, id).stepPullRequests[0];
+      const sactyReq = repos.committedFiles[0]?.files[docOf(id, "requirements")] ?? "";
+      // 要求要件：人が PR の中でファイルを直してマージした
+      const human = `${header(id, "要求要件")}# 要求要件（人が直した）\n\n- 返金も扱う\n`;
+      const req = mergeEdited(made, "requirements", human);
+      await service.checkPullRequests();
+      let task = taskOf(service, id);
+      // 承認として次の工程（設計）に進み、承認済みの成果は人が直した版（sacty の目印の行は除く）
+      expect(task.steps.map((s) => s.state)).toEqual(["done", "active", "todo", "todo"]);
+      expect(task.status).toBe("queued");
+      expect(task.approved.requirements).toMatchObject({
+        submission: 1,
+        output: "# 要求要件（人が直した）\n\n- 返金も扱う",
+        edited: { sacty: "# 要求要件 v1" },
+      });
+      // 台帳に、sacty が出したコミット・人が直した最終のコミット・マージのコミット・違いの有無と、両方の版の本文
+      expect(mergedOf(service, id).map((e) => [e.actor, e.payload])).toEqual([
+        [
+          "person",
+          {
+            number: reqPr?.number,
+            by: "reviewer",
+            commit: req.head,
+            outdated: false,
+            submitted: reqPr?.commit,
+            mergeCommit: req.mergeCommit,
+            edited: true,
+            document: {
+              path: docOf(id, "requirements"),
+              commit: req.mergeCommit,
+              sacty: sactyReq,
+              final: human,
+            },
+          },
+        ],
+      ]);
+      expect(task.stepPullRequests[0]?.merge).toMatchObject({
+        submitted: reqPr?.commit,
+        commit: req.head,
+        mergeCommit: req.mergeCommit,
+        edited: true,
+      });
+      // 読んだのは、マージ後のタスクブランチの、その PR の成果のファイルだけ（退避した git のメタデータで）
+      expect(repos.readCalls).toEqual([
+        {
+          gitDir: join(dir, "workspaces", "_git", `${id}.git`),
+          commit: req.mergeCommit,
+          path: docOf(id, "requirements"),
+        },
+      ]);
+      expect(repos.fetchedBranches.at(-1)?.branch).toBe(taskBranchOf(id));
+
+      // 設計の工程は、人が直した要求要件を読んで作業する
+      await service.runNext(id);
+      expect(promptOf(executor, executor.calls.length - 1)).toContain("返金も扱う");
+      expect(promptOf(executor, executor.calls.length - 1)).not.toContain("# 要求要件 v1");
+      // 設計：人が直してマージした
+      const humanDesign = "# 設計（人が直した）\n";
+      mergeEdited(made, "design", humanDesign);
+      await service.checkPullRequests();
+      task = taskOf(service, id);
+      expect(task.approved.design).toMatchObject({
+        output: "# 設計（人が直した）",
+        edited: { sacty: "# 設計" },
+      });
+      // テスト観点は、sacty が出したもの（最終レビューの基準）を引き継ぐ
+      expect(task.approved.design?.testViewpoints.map((v) => v.id)).toEqual(["TV-1"]);
+      await drain(service);
+      // 実装の工程は、人が直した設計を読む
+      const implementPrompt = executor.calls
+        .map((c) => c.command.join(" "))
+        .find((c) => c.includes("sacty-test-map"));
+      expect(implementPrompt).toContain("設計（人が直した）");
+      task = taskOf(service, id);
+      expect(task.gate?.step).toBe("pr");
+
+      // 実装の PR：人が直してマージしても、タスクを完了にする（最終レビューはやり直さない）
+      const runs = executor.calls.length;
+      const implSubmitted = task.pullRequest?.commit;
+      const impl = mergeEdited(made, "pr", undefined);
+      await service.checkPullRequests();
+      task = taskOf(service, id);
+      expect(task.status).toBe("idle");
+      expect(task.steps.every((s) => s.state === "done")).toBe(true);
+      expect(executor.calls).toHaveLength(runs);
+      expect(task.pullRequestMerge).toMatchObject({
+        submitted: implSubmitted,
+        commit: impl.head,
+        mergeCommit: impl.mergeCommit,
+        edited: true,
+      });
+      expect(mergedOf(service, id).at(-1)?.payload.document).toBeUndefined();
+      // 実装の PR では、成果のファイルは読まない
+      expect(repos.readCalls).toHaveLength(2);
+
+      // 再起動しても、作業履歴から同じ状態を復元する
+      activity.close();
+      const again = new SqliteActivityStore(dbPath);
+      const restored = makeService(again, [], { stepPullRequests: true }).service;
+      const back = taskOf(restored, id);
+      expect(back.approved.requirements?.output).toBe(task.approved.requirements?.output);
+      expect(back.approved.requirements?.edited).toEqual({ sacty: "# 要求要件 v1" });
+      expect(back.stepPullRequests.map((p) => p.merge?.edited)).toEqual([true, true]);
+      expect(back.pullRequestMerge?.commit).toBe(impl.head);
+      again.close();
+    });
+
+    it("違うコミットでマージされても、成果のファイルが sacty の版と同じなら、sacty の版を承認済みにし、本文は残さない", async () => {
+      const made = await start([out("# 要求要件 v1")]);
+      const { activity, service, id } = made;
+      mergeEdited(made, "requirements", undefined);
+      await service.checkPullRequests();
+      const task = taskOf(service, id);
+      expect(task.approved.requirements).toMatchObject({ output: "# 要求要件 v1", edited: {} });
+      const doc = mergedOf(service, id)[0]?.payload.document;
+      expect(doc).toEqual({ path: docOf(id, "requirements"), commit: "f7".padEnd(40, "0") });
+      activity.close();
+    });
+
+    it("成果のファイルが消された・読めないときは、止めずに sacty の版を承認済みにし、そのことを残す", async () => {
+      // 消された
+      const deleted = await start([out("# 要求要件 v1")]);
+      mergeEdited(deleted, "requirements", null);
+      await deleted.service.checkPullRequests();
+      let task = taskOf(deleted.service, deleted.id);
+      expect(task.status).toBe("queued");
+      expect(task.approved.requirements).toMatchObject({
+        output: "# 要求要件 v1",
+        edited: { fallback: "deleted" },
+      });
+      expect(task.approved.requirements?.edited?.sacty).toBeUndefined();
+      expect(mergedOf(deleted.service, deleted.id)[0]?.payload.document).toEqual({
+        path: docOf(deleted.id, "requirements"),
+        commit: "f7".padEnd(40, "0"),
+        fallback: "deleted",
+      });
+      deleted.activity.close();
+
+      // 読めない（テキストでないなど）
+      const repos = new FakeRepos();
+      repos.readFail = "binary";
+      const unreadable = await start([out("# 要求要件 v1")], {
+        repos,
+        db: join(dir, "unreadable.db"),
+      });
+      mergeEdited(unreadable, "requirements", "人が直した");
+      await unreadable.service.checkPullRequests();
+      task = taskOf(unreadable.service, unreadable.id);
+      expect(task.status).toBe("queued");
+      expect(task.approved.requirements).toMatchObject({
+        output: "# 要求要件 v1",
+        edited: { fallback: "unreadable" },
+      });
+      const doc = mergedOf(unreadable.service, unreadable.id)[0]?.payload.document;
+      expect(doc).toMatchObject({ fallback: "unreadable" });
+      expect(ja(doc?.reason)).toContain("UTF-8 のテキストではありません");
+      unreadable.activity.close();
+
+      // タスクブランチを取得できない（エラー文の秘密情報は残さない）
+      const offline = new FakeRepos();
+      const fetchFail = await start([out("# 要求要件 v1")], {
+        repos: offline,
+        db: join(dir, "offline.db"),
+      });
+      offline.fetchBranchFail = "could not read ghp_secret";
+      mergeEdited(fetchFail, "requirements", "人が直した");
+      await fetchFail.service.checkPullRequests();
+      task = taskOf(fetchFail.service, fetchFail.id);
+      expect(task.status).toBe("queued");
+      expect(task.approved.requirements?.edited).toEqual({ fallback: "unreadable" });
+      const reason = mergedOf(fetchFail.service, fetchFail.id)[0]?.payload.document?.reason;
+      expect(JSON.stringify(reason)).not.toContain("ghp_secret");
+      fetchFail.activity.close();
+    });
+
+    it("前の版で merged_outdated のまま止まった要求要件・設計も、再起動の後の次の確認で、人が直した版を承認して進む（受け入れ条件 5・6）", async () => {
+      const made = await start([out("# 要求要件 v1"), design()]);
+      const { activity, service, pulls, repos, id } = made;
+      await merge(made, "requirements");
+      await service.runNext(id);
+      const pr = taskOf(service, id).stepPullRequests.findLast((p) => p.step === "design");
+      // 前の版が記録した作業履歴（違う内容でのマージで止めた）
+      activity.append({
+        taskId: id,
+        projectId: "default",
+        events: [
+          {
+            actor: "sacty",
+            event: {
+              type: "PullRequestMerged",
+              payload: {
+                number: pr?.number ?? 0,
+                by: "reviewer",
+                commit: "e".repeat(40),
+                outdated: true,
+              },
+            },
+          },
+        ],
+      });
+      activity.close();
+      // 再起動
+      const again = new SqliteActivityStore(dbPath);
+      const restarted = makeService(again, [], { stepPullRequests: true, pulls, repos });
+      let task = taskOf(restarted.service, id);
+      expect(task.stepPullRequests.at(-1)?.state).toBe("merged_outdated");
+      expect(task.stepPullRequests.at(-1)?.merge).toBeUndefined();
+      expect(task.status).toBe("awaiting_approval");
+      // 作業履歴の表示に使う、過去のイベントも読める
+      expect(mergedOf(restarted.service, id).map((e) => e.payload.outdated)).toEqual([false, true]);
+      pulls.states[pr?.number ?? 0] = {
+        state: "merged",
+        mergedBy: "reviewer",
+        headSha: "e".repeat(40),
+      };
+      repos.remote[taskBranchOf(id)] = "a".repeat(40);
+      repos.files["a".repeat(40)] = { [docOf(id, "design")]: "# 人が直した設計\n" };
+      await restarted.service.checkPullRequests();
+      task = taskOf(restarted.service, id);
+      expect(task.steps.map((s) => s.state)).toEqual(["done", "done", "active", "todo"]);
+      expect(task.approved.design).toMatchObject({
+        output: "# 人が直した設計",
+        edited: { sacty: "# 設計" },
+      });
+      expect(mergedOf(restarted.service, id).at(-1)?.payload).toMatchObject({
+        submitted: pr?.commit,
+        commit: "e".repeat(40),
+        edited: true,
+      });
+      again.close();
+    });
+
+    it("成果のファイルを読んでいる間に中止されたら、承認を記録しない", async () => {
+      const repos = new FakeRepos();
+      const made = await start([out("# 要求要件 v1")], { repos });
+      const { activity, service, id } = made;
+      mergeEdited(made, "requirements", "人が直した");
+      const reading = Promise.withResolvers<void>();
+      const release = Promise.withResolvers<void>();
+      const original = repos.readFile.bind(repos);
+      repos.readFile = async (gitDir: string, commit: string, path: string) => {
+        reading.resolve();
+        await release.promise;
+        return original(gitDir, commit, path);
+      };
+      const checking = service.checkPullRequests();
+      await reading.promise;
+      const cancelling = service.cancel(id);
+      release.resolve();
+      await checking;
+      await cancelling;
+      const task = taskOf(service, id);
+      expect(task.status).toBe("cancelled");
+      expect(task.approved.requirements).toBeUndefined();
+      expect(types(service, id)).not.toContain("PullRequestMerged");
+      activity.close();
+    });
   });
 });

@@ -4,6 +4,7 @@ import type { ActivityEvent, EventInput } from "./events.js";
 import { EventInput as EventSchema, exportSteps, MVP_STEPS } from "./events.js";
 import {
   canRetryExport,
+  documentOutput,
   exportDue,
   pendingQuestion,
   project,
@@ -369,6 +370,33 @@ describe("成果物チェックの間の PR の状態（PBI-14a）", () => {
         ev("t9", { type: "PullRequestMerged", payload: { number: 7 } }),
       ]),
     ).toThrow(/deliverable review is not open/);
+  });
+});
+
+describe("人が PR の中で直してからマージした（PBI-63）", () => {
+  it("前の版の作業履歴（outdated・edited の無い PullRequestMerged）も読める", () => {
+    const parsed = EventSchema.parse({
+      type: "PullRequestMerged",
+      payload: { number: 7, commit: "f".repeat(40), outdated: true },
+    });
+    expect(parsed.payload).toEqual({
+      number: 7,
+      commit: "f".repeat(40),
+      outdated: true,
+      edited: false,
+    });
+  });
+
+  it("成果のファイルから、sacty の目印の行だけを除いて承認済みの成果にする", () => {
+    expect(
+      documentOutput("<!-- sacty task t1 の要求要件。sacty が作成しました。 -->\n\n# 要求\n"),
+    ).toBe("# 要求");
+    expect(documentOutput("<!-- sacty task t1 の設計。 -->\r\n\r\n# 設計\r\n")).toBe("# 設計");
+    // 人が目印の行を消した・途中にあるなら、そのまま
+    expect(documentOutput("# 要求\n<!-- sacty task t1 -->\n")).toBe(
+      "# 要求\n<!-- sacty task t1 -->",
+    );
+    expect(documentOutput("<!-- 人のコメント -->\n# 要求")).toBe("<!-- 人のコメント -->\n# 要求");
   });
 });
 

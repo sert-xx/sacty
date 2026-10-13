@@ -293,9 +293,18 @@ export function describeEvent(event: ActivityEvent, l: LabelMessages): string {
         event.payload.supersedes,
       );
     case "PullRequestMerged":
+      // 前の版の、古い内容でのマージ（承認にしなかった）・人が直してからのマージ（PBI-63）・そのままのマージ
       return event.payload.outdated
         ? e.PullRequestMergedOutdated(event.payload.number, event.payload.by)
-        : e.PullRequestMerged(event.payload.number, event.payload.by);
+        : event.payload.edited
+          ? e.PullRequestMergedEdited(
+              event.payload.number,
+              event.payload.by,
+              (event.payload.submitted ?? "").slice(0, 7),
+              (event.payload.commit ?? "").slice(0, 7),
+              event.payload.document?.fallback,
+            )
+          : e.PullRequestMerged(event.payload.number, event.payload.by);
     case "PullRequestClosed":
       return e.PullRequestClosed(event.payload.number);
     case "PullRequestReopened":

@@ -470,6 +470,71 @@ describe("対象リポジトリの作業領域（git）", { timeout: 30_000 }, (
     expect(git(origin, "branch", "--list", stepBranch)).toBe("");
   });
 
+  it("人が PR の中で直してマージした成果のファイルを、マージ後のタスクブランチから、退避したメタデータで読む（PBI-63）", async () => {
+    const origin = makeOrigin();
+    const workspace = new GitRepositoryWorkspace();
+    const clone = join(dir, "task", "repo");
+    const gitDir = join(dir, "_git", "task.git");
+    const { baseCommit } = await workspace.prepare(clone, gitDir, origin, "main");
+    const taskBranch = "sacty/task-1234abcd";
+    const stepBranch = `${taskBranch}-requirements-1`;
+    const path = "docs/sacty/1234abcd/requirements.md";
+    await workspace.pushCommit(gitDir, baseCommit, taskBranch);
+    await workspace.commitFiles({
+      gitDir,
+      parent: baseCommit,
+      files: {
+        [path]: "<!-- sacty task t1 の要求要件。sacty が作成しました。 -->\n\n# 要求要件\n",
+      },
+      branch: stepBranch,
+      message: "[要求要件] 決済API",
+      date: "2026-10-10T01:00:00.000Z",
+      allowEmpty: true,
+    });
+    // GitHub で、人が PR の中でファイルを直し（大きな日本語の本文。読み込みの区切りで文字が壊れないこと）、マージした
+    const human = `# 要求要件（人が直した）\n\n${"返金も扱う。".repeat(30_000)}\n`;
+    git(origin, "checkout", "--quiet", stepBranch);
+    writeFileSync(join(origin, path), human);
+    writeFileSync(join(origin, "binary.md"), Buffer.from([0x89, 0x50, 0xff, 0xfe, 0x41]));
+    writeFileSync(join(origin, "nul.md"), "a\0b");
+    writeFileSync(join(origin, "big.md"), "a".repeat(1024 * 1024 + 1));
+    symlinkSync("../../../pay.ts", join(origin, "docs/sacty/1234abcd/design.md"));
+    git(origin, "add", "--all");
+    git(origin, "commit", "--quiet", "-m", "human edit");
+    git(origin, "checkout", "--quiet", taskBranch);
+    git(origin, "merge", "--quiet", "--no-ff", stepBranch, "-m", "merge requirements");
+    git(origin, "checkout", "--quiet", "main");
+    // 作業領域の git の設定（エージェントが書き換えうる）は評価しない
+    const marker = join(dir, "pwned");
+    git(clone, "config", "filter.evil.smudge", `touch ${marker}; cat`);
+    writeFileSync(join(clone, ".gitattributes"), "* filter=evil\n");
+
+    const merged = await workspace.fetchBranch(gitDir, taskBranch);
+    expect(await workspace.readFile(gitDir, merged, path)).toBe(human);
+    expect(existsSync(marker)).toBe(false);
+    // マージの前（起点）には無い
+    expect(await workspace.readFile(gitDir, baseCommit, path)).toBeUndefined();
+    // 消されたファイル
+    expect(await workspace.readFile(gitDir, merged, "docs/sacty/1234abcd/missing.md")).toBe(
+      undefined,
+    );
+    // テキストでない・大きすぎる・シンボリックリンク・ディレクトリは読めない
+    await expect(workspace.readFile(gitDir, merged, "binary.md")).rejects.toThrow(/UTF-8/);
+    await expect(workspace.readFile(gitDir, merged, "nul.md")).rejects.toThrow(/UTF-8/);
+    await expect(workspace.readFile(gitDir, merged, "big.md")).rejects.toThrow(/大きすぎます/);
+    await expect(
+      workspace.readFile(gitDir, merged, "docs/sacty/1234abcd/design.md"),
+    ).rejects.toThrow(/通常のファイルではありません/);
+    await expect(workspace.readFile(gitDir, merged, "docs/sacty")).rejects.toThrow(
+      /通常のファイルではありません/,
+    );
+    // リポジトリの外・オプションに見えるもの・不正なコミットは受け付けない
+    for (const bad of ["../x.md", ".git/config", "/abs.md", "--output=x"]) {
+      await expect(workspace.readFile(gitDir, merged, bad)).rejects.toThrow(/パスが不正/);
+    }
+    await expect(workspace.readFile(gitDir, "HEAD", path)).rejects.toThrow();
+  });
+
   it("中止したときは sacty のブランチだけを消し、ほかのブランチは消さない（PBI-3）", async () => {
     const origin = makeOrigin();
     git(origin, "config", "receive.denyCurrentBranch", "ignore");

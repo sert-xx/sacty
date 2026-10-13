@@ -65,7 +65,7 @@ const ja = {
     reworkHelp:
       "PR に付いた指摘は取り込み済みです（指摘を空にすると、そのまま使います）。戻し先を選んで差し戻してください。",
     prMergedOutdated:
-      "PR は、最新の提出より前の内容でマージされました。差し戻すと、作り直した内容を新しい PR で出します。不要なら、タスク詳細から中止してください。",
+      "PR は、sacty の提出と違う内容でマージされました（前の版の記録）。次の確認で、人が直した内容を承認として進めます。",
   },
 };
 
@@ -136,7 +136,7 @@ const en: ReviewMessages = {
     reworkHelp:
       "The PR comments are already imported (leave the comments empty to use them as is). Choose the step to redo, then request changes.",
     prMergedOutdated:
-      "The PR was merged with content older than the latest submission. Request changes to open the reworked content as a new PR, or cancel the task from its details.",
+      "The PR was merged with content different from sacty's submission (recorded by an earlier version). On the next check, the merged content is approved and the task moves on.",
     note: (max) =>
       `Comments accumulate on the task and are all passed to the agent on every resubmission. Requesting changes on the same step more than ${max} time${max === 1 ? "" : "s"} escalates the task.`,
   },

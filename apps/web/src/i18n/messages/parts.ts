@@ -86,10 +86,15 @@ const ja = {
     stepState: {
       open: "マージ待ち",
       merged: "マージ済み（承認）",
-      merged_outdated: "古い提出がマージされた",
+      merged_outdated: "違う内容でマージされた（次の確認で承認として進めます）",
       closed: "閉じられた",
       superseded: "作り直したので閉じた",
     },
+    edited: "人が直してマージした",
+    editedCommits: (submitted: string, final: string) =>
+      `sacty の提出 ${submitted} → 人が直した最終 ${final}`,
+    compare: "差分を見る",
+    mergeCommit: (commit: string) => `マージのコミット ${commit}`,
   },
   resume: {
     newCap: (used: string) => `新しい上限（累計・使用済み ${used} より大きい金額）`,
@@ -220,10 +225,14 @@ const en: PartsMessages = {
     stepState: {
       open: "awaiting merge",
       merged: "merged (approved)",
-      merged_outdated: "an older submission was merged",
+      merged_outdated: "merged with different content (approved on the next check)",
       closed: "closed",
       superseded: "closed because it was recreated",
     },
+    edited: "Edited by a person before merging",
+    editedCommits: (submitted, final) => `sacty's submission ${submitted} → final ${final}`,
+    compare: "View the diff",
+    mergeCommit: (commit) => `Merge commit ${commit}`,
   },
   resume: {
     newCap: (used) => `New cap (total; more than the ${used} already used)`,

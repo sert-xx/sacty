@@ -31,7 +31,7 @@ const ja = {
     notReproducedHelp:
       "不具合を再現できませんでした。再現の手がかりを指摘に書いて差し戻すと、再現をやり直します。不要なら中止してください。",
     prMergedOutdatedHelp:
-      "PR は、最新の提出より前の内容でマージされました。最新の提出はまだマージされていません。差し戻すと、作り直した内容を新しい PR で出します。不要なら中止してください。",
+      "PR は、sacty の提出と違う内容でマージされました（前の版の記録）。次の確認で、人が直した内容を承認として進めます。",
   },
   content: "内容",
   contentEmpty: "内容はありません。",
@@ -118,6 +118,10 @@ const ja = {
   },
   deliverable: {
     approved: (n: number) => `人間が承認済み（${n}回目の提出・凍結）`,
+    approvedEdited: (n: number) => `人が PR で直してマージした版（承認済み・${n}回目の提出・凍結）`,
+    approvedFallback: (n: number, deleted: boolean) =>
+      `人が直してマージしましたが、成果のファイルが${deleted ? "消されていた" : "読めなかった"}ため、sacty の版を承認済みにしました（${n}回目の提出・凍結）`,
+    sactyVersion: "sacty が出した版を見る",
     fromProposal: (id: string) => `${id}で申し出られた変更案（人間の再承認待ち）`,
     stale: "前回の下書き（前の工程が承認されたあと、作り直します）",
     draft: "工程エージェントの下書き",
@@ -195,7 +199,7 @@ const en: TaskMessages = {
     notReproducedHelp:
       "The bug was not reproduced. Request changes with hints for reproducing it to try again, or cancel the task.",
     prMergedOutdatedHelp:
-      "The PR was merged with content older than the latest submission, so the latest submission is not merged. Request changes to open the reworked content as a new PR, or cancel the task.",
+      "The PR was merged with content different from sacty's submission (recorded by an earlier version). On the next check, the merged content is approved and the task moves on.",
   },
   content: "Description",
   contentEmpty: "No description.",
@@ -283,6 +287,11 @@ const en: TaskMessages = {
   },
   deliverable: {
     approved: (n) => `Approved by a person (submission ${n}, frozen)`,
+    approvedEdited: (n) =>
+      `Version a person edited in the PR and merged (approved, submission ${n}, frozen)`,
+    approvedFallback: (n, deleted) =>
+      `A person edited and merged the PR, but the file was ${deleted ? "deleted" : "unreadable"}, so sacty's version was approved (submission ${n}, frozen)`,
+    sactyVersion: "Show sacty's version",
     fromProposal: (id) => `Change proposed in ${id} (awaiting your re-approval)`,
     stale: "Previous draft (redone after the earlier step is approved)",
     draft: "Step agent's draft",

@@ -112,12 +112,13 @@ export type PullRequestFeedback = {
 
 /**
  * PR の状態。merged はマージ済み、closed はマージせずに閉じられた。headSha は PR の先頭のコミット
- * （マージ済みなら、マージされた内容。最新の提出がマージされたかを確かめるのに使う）。
+ * （マージ済みなら、マージされた内容。最新の提出がマージされたかを確かめるのに使う）。mergeCommit はマージのコミット
+ * （取れれば。PBI-63）。
  */
 export type PullRequestStatus = { headSha?: string } & (
   | { state: "open" }
   | { state: "closed" }
-  | { state: "merged"; mergedBy?: string }
+  | { state: "merged"; mergedBy?: string; mergeCommit?: string }
 );
 
 /** 一覧を読むページの上限（100件ずつ。誤った Link で延々と読まないように）。 */
@@ -396,7 +397,13 @@ export class GitHubPullRequests implements PullRequests {
     const head = typeof sha === "string" ? { headSha: sha } : {};
     if (json.merged === true) {
       const by = (json.merged_by as { login?: unknown } | null)?.login;
-      return { state: "merged", ...head, ...(typeof by === "string" ? { mergedBy: by } : {}) };
+      const mergeCommit = json.merge_commit_sha;
+      return {
+        state: "merged",
+        ...head,
+        ...(typeof by === "string" ? { mergedBy: by } : {}),
+        ...(typeof mergeCommit === "string" && mergeCommit ? { mergeCommit } : {}),
+      };
     }
     return { state: json.state === "closed" ? "closed" : "open", ...head };
   }

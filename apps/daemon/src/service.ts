@@ -43,6 +43,7 @@ import {
   type Project,
   ProjectDefinition,
   ProjectExport,
+  type PullRequestMerge,
   parseOrgUrl,
   parseRepoUrl,
   pendingQuestion,
@@ -376,21 +377,26 @@ export class TaskService {
         continue;
       }
       // 確かめている間に、人間が差し戻した・中止したなどで変わっていれば、記録しない
-      const latest = this.tasks.get(task.id);
-      if (!latest) continue;
-      const watched = gatePullRequest(latest);
-      if (
-        watched?.step !== pr.step ||
-        (latest.status !== "awaiting_approval" && latest.status !== "escalated") ||
-        watched.number !== pr.number
-      ) {
-        continue;
-      }
-      const current = watched.state;
-      if (
-        status.state === current ||
-        (status.state === "merged" && current === "merged_outdated")
-      ) {
+      const stillWatched = () => {
+        const latest = this.tasks.get(task.id);
+        if (!latest || this.cancelling.has(task.id)) return undefined;
+        const watched = gatePullRequest(latest);
+        if (
+          watched?.step !== pr.step ||
+          (latest.status !== "awaiting_approval" && latest.status !== "escalated") ||
+          watched.number !== pr.number ||
+          watched.commit !== pr.commit
+        ) {
+          return undefined;
+        }
+        return { latest, watched };
+      };
+      const found = stillWatched();
+      if (!found) continue;
+      let latest = found.latest;
+      const current = found.watched.state;
+      // 前の版で、違う内容でのマージとして止めた（merged_outdated）タスクも、承認として進める（PBI-63）
+      if (status.state === current) {
         // 開いたままの PR は、レビュー・コメントを指摘として取り込む（PBI-14b・PBI-57）
         if (status.state === "open" && latest.status === "awaiting_approval") {
           try {
@@ -403,27 +409,21 @@ export class TaskService {
         }
         continue;
       }
-      // 承認にするのは、最新の提出（記録したコミット）がマージされたときだけ
-      if (status.state === "merged" && status.headSha !== pr.commit) {
-        this.append(latest, [
-          {
-            actor: "sacty",
-            event: {
-              type: "PullRequestMerged",
-              payload: {
-                number: pr.number,
-                ...(status.mergedBy ? { by: status.mergedBy } : {}),
-                ...(status.headSha ? { commit: status.headSha } : {}),
-                outdated: true,
-              },
-            },
-          },
-        ]);
-        continue;
-      }
       if (status.state === "merged") {
+        // sacty が出したコミットと違う内容でマージされた（人が PR の中で直した・提案のコミットを積んだ）も、人がマージした
+        // ＝人が承認したので、承認として進める（最終レビューはやり直さない。PBI-63）。監査のため、sacty が出したコミットと
+        // 人が直した最終のコミットを両方残す。要求要件・設計は、人が直したファイルを承認済みの成果にする
+        const edited = status.headSha !== pr.commit;
+        let document: PullRequestMerge["document"];
+        if (edited && pr.step !== "pr") {
+          document = await this.readMergedDocument(latest, pr.number, usedSecrets);
+          const again = stillWatched();
+          if (!again) continue;
+          latest = again.latest;
+        }
         // マージは人間の承認なので、承認者は人間として記録する。要求要件・設計の PR（PBI-57）は、その工程の承認として
         // 次の工程に進める（承認した成果の書き出し（PBI-56）は、この承認の後に行う）
+        const head = edited ? status.headSha : pr.commit;
         this.append(latest, [
           {
             actor: "person",
@@ -432,8 +432,12 @@ export class TaskService {
               payload: {
                 number: pr.number,
                 ...(status.mergedBy ? { by: status.mergedBy } : {}),
-                commit: pr.commit,
+                ...(head ? { commit: head } : {}),
                 outdated: false,
+                submitted: pr.commit,
+                ...(status.mergeCommit ? { mergeCommit: status.mergeCommit } : {}),
+                edited,
+                ...(document ? { document } : {}),
               },
             },
           },
@@ -462,6 +466,61 @@ export class TaskService {
       }
     }
     await this.checkReviewPullRequests();
+  }
+
+  /**
+   * 人が PR の中で直してからマージした、要求要件・設計の成果のファイルを、マージ後のタスクブランチから読む（PBI-63）。
+   * 退避した git のメタデータで読み、作業領域・利用者の git の設定は使わない。読むのは、その PR に出した成果のファイルの
+   * パスだけ。sacty の版と違えば両方の本文を、同じなら本文を残さない。消された・読めない（タスクブランチを取得できない
+   * ことも含む）なら、sacty の版を承認済みにするよう、そのことを残す（止めない）。
+   */
+  private async readMergedDocument(
+    task: Task,
+    number: number,
+    usedSecrets: string[],
+  ): Promise<PullRequestMerge["document"]> {
+    const entry = task.stepPullRequests.find((p) => p.number === number);
+    if (!entry) return undefined;
+    const { step, path } = entry;
+    const sacty = buildStepDocument(task, step);
+    const fallback = (reason?: DaemonText): NonNullable<PullRequestMerge["document"]> => {
+      console.warn(
+        `[daemon] PR #${number} でマージされた ${path} を読めませんでした。sacty の版を承認済みにします${reason ? `：${renderMessage(redactText(reason, usedSecrets), "ja")}` : ""}`,
+      );
+      return {
+        path,
+        fallback: "unreadable",
+        ...(reason ? { reason: redactText(reason, usedSecrets) } : {}),
+      };
+    };
+    const loaded = this.deps.config();
+    if (!loaded.ok) return fallback(loaded.problem);
+    // 退避した git のメタデータが無ければ、同じ起点で用意し直す
+    const ready = await this.prepareRepository(task, loaded.config);
+    if (!ready.ok) return fallback(ready.message);
+    const current = this.mustGet(task.id);
+    const taskBranch = current.taskBranch;
+    if (!current.repository || !taskBranch) return fallback();
+    const gitDir = this.trustedGitDir(current);
+    try {
+      const authEnv = await this.gitAuth(current, current.repository.url, usedSecrets);
+      const commit = await this.deps.repos.fetchBranch(gitDir, taskBranch.branch, authEnv);
+      let content: string | undefined;
+      try {
+        content = await this.deps.repos.readFile(gitDir, commit, path);
+      } catch (error) {
+        return { ...fallback(errorText(error)), commit };
+      }
+      if (content === undefined) {
+        console.warn(
+          `[daemon] PR #${number} のマージで ${path} が消されました。sacty の版を承認済みにします`,
+        );
+        return { path, commit, fallback: "deleted" };
+      }
+      return content === sacty ? { path, commit } : { path, commit, sacty, final: content };
+    } catch (error) {
+      return fallback(errorText(error));
+    }
   }
 
   /**

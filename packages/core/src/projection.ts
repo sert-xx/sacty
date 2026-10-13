@@ -80,6 +80,19 @@ export type ApprovedOutput = {
   /** 設計の工程のテスト観点。 */
   testViewpoints: TestViewpoint[];
   at: string;
+  /**
+   * 人が PR の中で直してからマージして承認した（PBI-63）。sacty は、sacty が出した版（output を人が直した版にした
+   * ときだけ）。fallback は、成果のファイルが消された・読めないので、sacty の版を承認済みにした。
+   */
+  edited?: { sacty?: string; fallback?: "deleted" | "unreadable" };
+};
+
+/**
+ * PR のマージの記録（PBI-63。監査のため）。submitted は sacty が PR に出した最後のコミット、commit は PR の先頭の
+ * コミット（人が直した最終のコミット）、mergeCommit はマージのコミット（取れれば）。edited は人が直してマージした。
+ */
+export type PullRequestMerge = Omit<PayloadOf<"PullRequestMerged">, "number" | "outdated"> & {
+  at: string;
 };
 
 /** 工程エージェントの、承認済みの成果物への変更の申し出と、その判定。 */
@@ -140,6 +153,8 @@ export type StepPullRequest = PayloadOf<"StepPullRequestPublished"> & {
   submission: number;
   state: "open" | "closed" | "merged" | "merged_outdated";
   superseded?: boolean;
+  /** マージの記録（PBI-63）。 */
+  merge?: PullRequestMerge;
 };
 
 /** 申し出が認められたか（ゴールガーディアンの承認か、人間の判断）。未決なら undefined。 */
@@ -245,6 +260,8 @@ export type Task = {
   pullRequest?: PayloadOf<"PullRequestPublished">;
   /** 成果物チェックの間に見守っている PR の状態（PBI-14a）。PR を作っていなければ無い。 */
   pullRequestState?: "open" | "closed" | "merged" | "merged_outdated";
+  /** 実装の PR のマージの記録（PBI-63）。 */
+  pullRequestMerge?: PullRequestMerge;
   /**
    * タスクブランチ（PBI-57）。これがあるタスクは、要求要件・設計をタスクブランチへの PR のマージで承認し、実装の PR を
    * タスクブランチからベースブランチに向けて作る。
@@ -527,13 +544,29 @@ export function applyEvent(
         if (i === index + 1) return { ...s, state: "active" as const };
         return s;
       });
+      const step = event.payload.step;
+      const submitted = task.outputs[step] ?? "";
+      // 人が PR の中で直してからマージした（PBI-63）。要求要件・設計は、人が直したファイルの内容を承認済みの成果にする
+      // （後の工程は、人が直した版を読む。差し戻されたときも、人が直した版から作り直す）
+      const merge = gateMerge(task);
+      const final = merge?.document?.final;
+      const output = final !== undefined ? documentOutput(final) : submitted;
+      if (final !== undefined) task.outputs = { ...task.outputs, [step]: output };
       task.approved = {
         ...task.approved,
-        [event.payload.step]: {
+        [step]: {
           submission: task.gate.submission,
-          output: task.outputs[event.payload.step] ?? "",
-          testViewpoints: event.payload.step === "design" ? task.testViewpoints : [],
+          output,
+          testViewpoints: step === "design" ? task.testViewpoints : [],
           at: event.at,
+          ...(merge?.edited
+            ? {
+                edited: {
+                  ...(final !== undefined ? { sacty: submitted } : {}),
+                  ...(merge.document?.fallback ? { fallback: merge.document.fallback } : {}),
+                },
+              }
+            : {}),
         },
       };
       task.status = event.payload.next;
@@ -783,6 +816,7 @@ export function applyEvent(
       task.pullRequest = event.payload;
       // 作り直した・更新した PR は、開いているものとして見守り直す
       task.pullRequestState = event.payload.number ? "open" : undefined;
+      task.pullRequestMerge = undefined;
       task.status = "idle";
       break;
 
@@ -899,10 +933,18 @@ export function applyEvent(
           : event.type === "PullRequestClosed"
             ? ("closed" as const)
             : ("open" as const);
-      if (watched.step === "pr") task.pullRequestState = state;
-      else {
+      // 承認にしたマージ（PBI-63 より前の版の、古い内容でのマージは除く）は、監査のために記録する
+      let merge: PullRequestMerge | undefined;
+      if (event.type === "PullRequestMerged" && !event.payload.outdated) {
+        const { number: _number, outdated: _outdated, ...rest } = event.payload;
+        merge = { ...rest, at: event.at };
+      }
+      if (watched.step === "pr") {
+        task.pullRequestState = state;
+        if (merge) task.pullRequestMerge = merge;
+      } else {
         task.stepPullRequests = task.stepPullRequests.map((p) =>
-          p.number === watched.number ? { ...p, state } : p,
+          p.number === watched.number ? { ...p, state, ...(merge ? { merge } : {}) } : p,
         );
       }
       break;
@@ -1355,6 +1397,25 @@ export function gatePullRequest(task: Task):
     commit: found.commit,
     state: found.state,
   };
+}
+
+/** 承認ゲートで見守っている PR の、マージの記録（PBI-63）。マージされていなければ undefined。 */
+function gateMerge(task: Task): PullRequestMerge | undefined {
+  const watched = gatePullRequest(task);
+  if (!watched) return undefined;
+  if (watched.step === "pr") return task.pullRequestMerge;
+  return task.stepPullRequests.find((p) => p.number === watched.number)?.merge;
+}
+
+/** sacty が成果のファイルの先頭に書く、目印の行（PBI-57）。 */
+const DOCUMENT_HEADER = /^<!-- sacty task [^\r\n]* -->\r?\n(?:\r?\n)?/;
+
+/**
+ * 成果のファイルの本文から、承認済みの成果にする本文を取り出す（PBI-63）。sacty が書いた先頭の目印の行を除く
+ * （人が消していれば、そのまま）。
+ */
+export function documentOutput(content: string): string {
+  return content.replace(DOCUMENT_HEADER, "").trimEnd();
 }
 
 /** 工程の、最後に作った PR（PBI-57）。 */

@@ -525,15 +525,20 @@ async function Deliverable({ task, step }: { task: Task; step: StepKey }) {
           ? m.reproduced
           : approved && step === "investigate" && !investigationIsGoal(task)
             ? m.preliminary
-            : approved
-              ? m.approved(approved.submission)
-              : step === "review" && task.reviewPost
-                ? m.reviewPosted
-                : fromProposal
-                  ? m.fromProposal(fromProposal.id)
-                  : stale
-                    ? m.stale
-                    : m.draft
+            : approved?.edited?.fallback
+              ? // 人が直してマージしたが、成果のファイルが消された・読めなかった（PBI-63）
+                m.approvedFallback(approved.submission, approved.edited.fallback === "deleted")
+              : approved?.edited?.sacty !== undefined
+                ? m.approvedEdited(approved.submission)
+                : approved
+                  ? m.approved(approved.submission)
+                  : step === "review" && task.reviewPost
+                    ? m.reviewPosted
+                    : fromProposal
+                      ? m.fromProposal(fromProposal.id)
+                      : stale
+                        ? m.stale
+                        : m.draft
       }
       // 承認済みの成果物は折りたたむ（承認待ち・作業中のものは開いたまま）
       collapsed={Boolean(approved)}
@@ -545,6 +550,15 @@ async function Deliverable({ task, step }: { task: Task; step: StepKey }) {
       ) : // 行へのコメントだけのレビューは本文が空（書き終えている）
       step === "review" && output === "" ? null : (
         <p className="text-sm text-muted-foreground">{running ? m.running : m.notYet}</p>
+      )}
+      {/* 人が PR で直してマージした版を承認済みにしたときの、sacty が出した版（PBI-63） */}
+      {approved?.edited?.sacty !== undefined && (
+        <details className="rounded-lg border border-border p-3.5 text-sm">
+          <summary className="cursor-pointer font-semibold">{m.sactyVersion}</summary>
+          <div className="mt-2">
+            <Markdown>{approved.edited.sacty}</Markdown>
+          </div>
+        </details>
       )}
       {step === "review" && task.reviewComments.length > 0 && (
         <>

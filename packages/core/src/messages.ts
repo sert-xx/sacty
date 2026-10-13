@@ -223,6 +223,9 @@ const PARAMS = {
   "git.invalidPath": null,
   "git.nothingToCommit": null,
   "git.notSactyBranch": null,
+  "git.fileNotRegular": z.object({ path: z.string() }),
+  "git.fileTooLarge": z.object({ path: z.string(), limit: Count }),
+  "git.fileNotText": z.object({ path: z.string() }),
   "github.failed": z.object({
     action: z.enum([
       "updatePr",
@@ -627,6 +630,9 @@ const ja: MessageDictionary = {
   "git.invalidPath": "コミットするファイルのパスが不正です。",
   "git.nothingToCommit": "起点から変更がないため、コミットできません。",
   "git.notSactyBranch": "sacty のブランチではありません。",
+  "git.fileNotRegular": ({ path }) => `${path} は通常のファイルではありません。`,
+  "git.fileTooLarge": ({ path, limit }) => `${path} が大きすぎます（上限 ${limit} バイト）。`,
+  "git.fileNotText": ({ path }) => `${path} は UTF-8 のテキストではありません。`,
   "github.failed": ({ action, status, detail, hint }) =>
     `${githubActionJa[action]}：GitHub API ${status} ${detail}${githubHintJa[hint]}`,
   "intake.searchTimedOut":
@@ -954,6 +960,9 @@ const en: MessageDictionary = {
   "git.invalidPath": "The path of the file to commit is not valid.",
   "git.nothingToCommit": "Nothing changed since the base, so there is nothing to commit.",
   "git.notSactyBranch": "This is not a sacty branch.",
+  "git.fileNotRegular": ({ path }) => `${path} is not a regular file.`,
+  "git.fileTooLarge": ({ path, limit }) => `${path} is too large (limit ${limit} bytes).`,
+  "git.fileNotText": ({ path }) => `${path} is not UTF-8 text.`,
   "github.failed": ({ action, status, detail, hint }) =>
     `${githubActionEn[action]}: GitHub API ${status} ${detail}${githubHintEn[hint]}`,
   "intake.searchTimedOut":
