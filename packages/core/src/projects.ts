@@ -56,8 +56,26 @@ const IntakeLabelInput = z.preprocess(
  * （そのホストでプロジェクトに選んだ gh のアカウント）にレビューが依頼された PR を取り込むか、reviewLabel は
  * PR のレビュー用のラベル（Issue は取り込まない）。
  */
+/**
+ * 自動のトリアージの種類（PBI-53）。issues：取り込むラベルの Issue、pullRequests：取り込むラベルの PR、
+ * reviewLabel：レビュー用のラベルの PR。自分へのレビューの依頼は、reviewRequested の切り替えで決める。
+ */
+export const TriageKind = z.enum(["issues", "pullRequests", "reviewLabel"]);
+export type TriageKind = z.infer<typeof TriageKind>;
+
 export const SactySettings = z.object({
   intakeLabel: IntakeLabelInput,
+  /**
+   * Off にした自動のトリアージの種類（PBI-53）。ラベルなどの設定は残したまま止められる。書いていない種類は On
+   * （この項目の無い、これまでの設定は、すべて On として動く）。空なら持たない。
+   */
+  triageOff: z.preprocess(
+    (v) => (Array.isArray(v) && v.length === 0 ? undefined : v),
+    z
+      .array(TriageKind)
+      .transform((kinds) => [...new Set(kinds)].sort())
+      .optional(),
+  ),
   reviewLabel: IntakeLabelInput,
   // 画面のチェックボックス（on）も受け付ける。切っているときは持たない
   reviewRequested: z.preprocess(

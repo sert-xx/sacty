@@ -5125,6 +5125,91 @@ describe("sacty の設定と、Issue・PR の取り込み（PBI-26）", () => {
   });
 });
 
+describe("自動のトリアージの種類ごとの On/Off（PBI-53）", () => {
+  const found = (number: number, labels: string[], pullRequest = false) => ({
+    repo: "https://github.com/acme/app",
+    number,
+    title: `#${number}`,
+    body: "",
+    url: `https://github.com/acme/app/${pullRequest ? "pull" : "issues"}/${number}`,
+    labels,
+    ...(pullRequest ? { pullRequest: true } : {}),
+  });
+
+  it("Off にした種類は検索せず、取り込まない。ラベルなどの設定は残る。これまでの設定はすべて On", () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const settings = new MemorySettingsStore({
+      intakeLabel: "sacty",
+      reviewLabel: "sacty-review",
+      reviewRequested: true,
+    });
+    const { service } = makeService(activity, [], { settings });
+    const queries = () => service.intakeSources().map((s) => s.query);
+    // これまでの設定（On/Off の項目が無い）は、すべて On
+    expect(queries()).toEqual([
+      'is:open repo:acme/app label:"sacty"',
+      'is:open is:pr repo:acme/app label:"sacty-review"',
+      "is:open is:pr repo:acme/app user-review-requested:me",
+    ]);
+    const before = service.projectsRevision();
+
+    // Issue を Off：取り込むラベルは PR だけを探す。重ねて書いても1つ、並びはそろえる
+    expect(
+      service.saveSettings({
+        intakeLabel: "sacty",
+        reviewLabel: "sacty-review",
+        reviewRequested: true,
+        triageOff: ["issues", "issues"],
+      }),
+    ).toMatchObject({ intakeLabel: "sacty", reviewLabel: "sacty-review", triageOff: ["issues"] });
+    expect(service.projectsRevision()).not.toBe(before);
+    expect(queries()[0]).toBe('is:open is:pr repo:acme/app label:"sacty"');
+    expect(
+      service
+        .importIssues([found(1, ["sacty"]), found(2, ["sacty"], true)])
+        .map((t) => t.source?.number),
+    ).toEqual([2]);
+
+    // PR を Off：取り込むラベルは Issue だけを探す
+    service.saveSettings({
+      intakeLabel: "sacty",
+      reviewLabel: "sacty-review",
+      triageOff: ["pullRequests"],
+    });
+    expect(queries()[0]).toBe('is:open is:issue repo:acme/app label:"sacty"');
+    expect(
+      service
+        .importIssues([found(3, ["sacty"]), found(4, ["sacty"], true)])
+        .map((t) => t.source?.number),
+    ).toEqual([3]);
+
+    // 両方 Off とレビュー用のラベルを Off：その検索をしない。ラベルは残る
+    service.saveSettings({
+      intakeLabel: "sacty",
+      reviewLabel: "sacty-review",
+      reviewRequested: true,
+      triageOff: ["pullRequests", "issues", "reviewLabel"],
+    });
+    expect(queries()).toEqual(["is:open is:pr repo:acme/app user-review-requested:me"]);
+    expect(service.getSettings()).toMatchObject({
+      intakeLabel: "sacty",
+      reviewLabel: "sacty-review",
+      triageOff: ["issues", "pullRequests", "reviewLabel"],
+    });
+    expect(service.importIssues([found(5, ["sacty"]), found(6, ["sacty-review"], true)])).toEqual(
+      [],
+    );
+    // 状況（画面）にも出す
+    expect(service.status().intake).toBeNull(); // github の設定が無い構成
+    // すべて On に戻すと、項目を持たない
+    expect(service.saveSettings({ intakeLabel: "sacty", triageOff: [] })).toEqual({
+      intakeLabel: "sacty",
+    });
+    expect(() => service.saveSettings({ triageOff: ["jira-unknown"] })).toThrow();
+    activity.close();
+  });
+});
+
 describe("PR のレビューだけを行う取り込み（PBI-44）", () => {
   const out = (text: string): AgentOutcome => ({
     kind: "completed",

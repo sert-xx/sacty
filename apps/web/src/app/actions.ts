@@ -229,6 +229,10 @@ export async function saveSettingsAction(
       // PR のレビューの取り込み（PBI-44）
       reviewLabel: String(formData.get("reviewLabel") ?? ""),
       reviewRequested: formData.get("reviewRequested") === "on",
+      // チェックを外した種類を Off にする（PBI-53）
+      triageOff: (["issues", "pullRequests", "reviewLabel"] as const).filter(
+        (kind) => formData.get(`triage-${kind}`) !== "on",
+      ),
       maxParallelTasks: String(formData.get("maxParallelTasks") ?? ""),
     });
   } catch {

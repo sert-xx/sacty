@@ -36,6 +36,7 @@ async function Settings() {
       intakeLabel={settings.intakeLabel ?? ""}
       reviewLabel={settings.reviewLabel ?? ""}
       reviewRequested={settings.reviewRequested === true}
+      triageOff={settings.triageOff ?? []}
       maxParallelTasks={settings.maxParallelTasks}
     />
   );

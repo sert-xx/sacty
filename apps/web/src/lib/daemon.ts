@@ -81,6 +81,8 @@ export type IntakeStatus = {
   /** PR のレビューの取り込み（sacty の設定。PBI-44）。 */
   reviewLabel?: string;
   reviewRequested?: boolean;
+  /** Off にしたトリアージの種類（PBI-53）。 */
+  triageOff?: ("issues" | "pullRequests" | "reviewLabel")[];
   lastRunAt?: string;
   imported?: number;
   /** 取り込めなかった対象（検索の条件）と理由。 */

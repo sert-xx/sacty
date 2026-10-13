@@ -50,6 +50,7 @@ import {
   type StepKey,
   type Task,
   type TaskProposal,
+  type TriageKind,
   targetHost,
   targetImageOf,
   exportProject as toProjectExport,
@@ -221,6 +222,8 @@ export type IntakeStatus = {
   /** PR のレビュー用のラベルと、自分にレビューが依頼された PR を取り込むか（sacty の設定。PBI-44）。 */
   reviewLabel?: string;
   reviewRequested?: boolean;
+  /** Off にしたトリアージの種類（sacty の設定。PBI-53）。 */
+  triageOff?: TriageKind[];
   lastRunAt?: string;
   /** 直近の取り込みで作ったタスクの数。 */
   imported?: number;
@@ -1001,6 +1004,8 @@ export class TaskService {
       ...(settings.intakeLabel ? { label: settings.intakeLabel } : {}),
       ...(settings.reviewLabel ? { reviewLabel: settings.reviewLabel } : {}),
       ...(settings.reviewRequested ? { reviewRequested: true } : {}),
+      // Off にしたトリアージの種類（PBI-53）
+      ...(settings.triageOff ? { triageOff: settings.triageOff } : {}),
     };
   }
 
@@ -1109,8 +1114,20 @@ export class TaskService {
             project: project.name,
             ...(review ? { review } : {}),
           });
-        if (settings.intakeLabel) add(`is:open ${where} label:"${settings.intakeLabel}"`);
-        if (settings.reviewLabel) {
+        // 取り込むラベルは、Issue と PR の On/Off で検索を絞る（Off の種類は検索しない。PBI-53）
+        const off = new Set(settings.triageOff ?? []);
+        const kinds =
+          off.has("issues") && off.has("pullRequests")
+            ? undefined
+            : off.has("issues")
+              ? "is:pr "
+              : off.has("pullRequests")
+                ? "is:issue "
+                : "";
+        if (settings.intakeLabel && kinds !== undefined) {
+          add(`is:open ${kinds}${where} label:"${settings.intakeLabel}"`);
+        }
+        if (settings.reviewLabel && !off.has("reviewLabel")) {
           add(`is:open is:pr ${where} label:"${settings.reviewLabel}"`, "label");
         }
         // チームへの依頼は含めない（user-review-requested は、個人として依頼されたものだけ）。
@@ -1131,6 +1148,7 @@ export class TaskService {
     return [
       `label:${settings.intakeLabel ?? ""}`,
       `review:${settings.reviewLabel ?? ""}:${settings.reviewRequested ? "requested" : ""}`,
+      `off:${(settings.triageOff ?? []).join("+")}`,
       ...this.deps.projects.all().map((p) => `${p.id}@${p.updatedAt}`),
     ].join(",");
   }
@@ -1148,9 +1166,12 @@ export class TaskService {
    */
   importIssues(found: readonly FoundIssue[]): Task[] {
     const settings = this.deps.settings.get();
+    // Off にした種類は取り込まない（検索の後に設定を変えたときも。PBI-53）
+    const off = new Set(settings.triageOff ?? []);
     const label = settings.intakeLabel?.toLowerCase();
-    const reviewLabel = settings.reviewLabel?.toLowerCase();
+    const reviewLabel = off.has("reviewLabel") ? undefined : settings.reviewLabel?.toLowerCase();
     if (!label && !reviewLabel && !settings.reviewRequested) return [];
+    const intakeOn = (issue: FoundIssue) => !off.has(issue.pullRequest ? "pullRequests" : "issues");
     const has = (issue: FoundIssue, name: string | undefined) =>
       name !== undefined && issue.labels.some((l) => l.toLowerCase() === name);
     const projects = this.deps.projects.all();
@@ -1183,7 +1204,7 @@ export class TaskService {
       const responsible = responsibleProject(projects, issue.repo);
       if (!responsible) continue;
       const review = reviewOf(issue);
-      if (!review && !has(issue, label)) continue;
+      if (!review && !(has(issue, label) && intakeOn(issue))) continue;
       // PR（PBI-26）は、Issue と同じ番号の空間なので、二重の判定はそのまま使える
       const kind = issue.pullRequest ? "github_pull_request" : "github_issue";
       known.add(key(issue.repo, issue.number));
