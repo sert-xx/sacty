@@ -164,8 +164,11 @@ npx sacty image build java17     # 名前を指定して作る（default は既�
       base_image: registry.example.com/ci/node:22
       packages: [nss, nspr, atk, at-spi2-atk, cups-libs, libdrm, libxkbcommon, mesa-libgbm, pango, alsa-lib]   # RHEL 系
       run:
-        - curl -fsSL https://artifacts.example.com/pf-cli/install.sh | sh
+        # 取得とインストールを分ける（取得に失敗したら、そこで止まる）
+        - curl -fsSL https://artifacts.example.com/pf-cli/install.sh -o /tmp/pf-install.sh
+        - sh /tmp/pf-install.sh
   ```
+  `run` のコマンドは、終了コードが 0 でなければ止まる。元のイメージに bash があれば `pipefail` で実行するのでパイプの途中の失敗でも止まるが、bash が無いイメージ（`sh` で実行）では、パイプの最後のコマンドの終了コードしか見ない。取得して実行するような処理は、パイプでつながずに項目を分ける
   エージェントは root ではないので、タスクの中では OS のパッケージを入れられない。Playwright のブラウザ本体は、リポジトリの版に合わせてタスクの中で `npx playwright install chromium` で取る（OS のライブラリだけをイメージに入れる。Debian 系なら `run: [npx -y playwright@<版> install-deps chromium]` でもよい）
 - 工程ごとのイメージは、オーケストレーターが工程を選ぶときに、リポジトリ（`pom.xml`・`go.mod`・`pyproject.toml`・`package.json` など。モノレポなら工程で触るディレクトリ）を読んで選ぶ。テストは、実装（不具合の修正では再現）の工程のイメージで実行する。オーケストレーター自身は既定のイメージで動く
 - プロジェクトの対象（リポジトリ・Org）ごとにイメージを指定すると、オーケストレーターに選ばせず、すべての工程でそれを使う（リポジトリの指定が Org の指定より優先）
