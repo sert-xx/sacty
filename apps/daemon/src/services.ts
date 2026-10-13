@@ -261,13 +261,23 @@ export function checkComposeSources(workspaceDir: string, file: string): string[
     if (seen.has(path)) return;
     seen.add(path);
     let doc: unknown;
+    // 読めない・解析できないファイルは、参照するファイルを確かめられないので止める（Compose は読めることがあるため。
+    // 例：別名を多く使うファイルは、yaml が資源の枯渇を防ぐために拒否する。PBI-47 レビュー指摘）
+    const unreadable = (detail: string) =>
+      problems.push(
+        `${relative(workspaceDir, path) || path} を読めないため、参照するファイルを確かめられません（${detail}）`,
+      );
     try {
       // Compose と同じく、マージキー（<<: *anchor）を解決してから確かめる（PBI-47 レビュー指摘）
       doc = parseYaml(readFileSync(path, "utf8"), { merge: true });
-    } catch {
-      return; // 読めないファイルは、正規化で理由が出る
+    } catch (error) {
+      unreadable(error instanceof Error ? (error.message.split("\n")[0] ?? "") : String(error));
+      return;
     }
-    if (!isObject(doc)) return;
+    if (!isObject(doc)) {
+      unreadable("compose ファイルの形ではありません");
+      return;
+    }
     // パスが作業領域の中か。変数を含むものは使えない
     const target = (raw: unknown, base: string, what: string): string | undefined => {
       if (typeof raw !== "string" || raw === "") return undefined;

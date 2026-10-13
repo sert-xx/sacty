@@ -228,6 +228,7 @@ describe("正規化で元の参照が消えるファイルの確かめ（PBI-47 
         "    label_file: $HOME/labels.txt",
       ].join("\n"),
     );
+    write(join(ws, "inc2.yaml"), "services:\n  d:\n    image: x\n");
     expect(checkComposeSources(ws, join(ws, "compose.yaml"))).toEqual([
       "作業領域の外のinclude のファイル（../other.yaml）は使えません",
       "作業領域の外のinclude の project_directory（..）は使えません",
@@ -264,6 +265,38 @@ describe("正規化で元の参照が消えるファイルの確かめ（PBI-47 
       "作業領域の外のinclude の env_file（../values.env）は使えません",
       "作業領域の外のlabel_file（/tmp/outside-labels.txt）は使えません",
       "作業領域の外のextends のファイル（../base.yaml）は使えません",
+    ]);
+  });
+
+  it("読めない・解析できないファイルは、確かめられないので止める（レビュー指摘）", () => {
+    // 別名を多く使うファイル（yaml は資源の枯渇を防ぐために拒否するが、Compose は読める）
+    write(
+      join(ws, "compose.yaml"),
+      [
+        "x-base: &base",
+        "  label_file: /tmp/outside-labels.txt",
+        `x-repeat: [${Array(110).fill("*base").join(", ")}]`,
+        "services:",
+        "  a:",
+        "    <<: *base",
+        "    image: postgres:17",
+      ].join("\n"),
+    );
+    const [problem, ...rest] = checkComposeSources(ws, join(ws, "compose.yaml"));
+    expect(rest).toEqual([]);
+    expect(problem).toMatch(
+      /^compose\.yaml を読めないため、参照するファイルを確かめられません（.*alias/i,
+    );
+    // include したファイルが無い・壊れている・形が違う
+    write(join(ws, "compose.yaml"), "include:\n  - missing.yaml\nservices: {}\n");
+    expect(checkComposeSources(ws, join(ws, "compose.yaml"))).toEqual([
+      expect.stringMatching(/^missing\.yaml を読めないため/),
+    ]);
+    write(join(ws, "compose.yaml"), "services: [unclosed\n");
+    expect(checkComposeSources(ws, join(ws, "compose.yaml"))).toHaveLength(1);
+    write(join(ws, "compose.yaml"), "- a\n- b\n");
+    expect(checkComposeSources(ws, join(ws, "compose.yaml"))).toEqual([
+      "compose.yaml を読めないため、参照するファイルを確かめられません（compose ファイルの形ではありません）",
     ]);
   });
 
