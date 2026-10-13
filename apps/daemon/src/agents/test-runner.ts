@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { type DaemonText, message } from "@sacty/core";
 import { dockerClientEnv, dockerRunArgs, RunningContainers } from "./docker.js";
+import { type LocalForward, withLocalForwards } from "./forward.js";
 
 /** docker run が、Docker 自身の失敗で終わったときの終了コード（コンテナの中のコマンドの結果ではない）。 */
 const DOCKER_RUN_FAILED = 125;
@@ -32,6 +33,11 @@ export interface TestRunner {
     env?: Record<string, string>;
     /** つなぐネットワーク（docker compose のサービス。PBI-47）。 */
     network?: string;
+    /**
+     * コンテナの中で localhost に転送するサービスのポート（PBI-60）。無ければ、コマンドはそのまま。
+     * 転送しなかったポートの理由は、テストの出力（標準エラー出力）に出る。
+     */
+    forwards?: readonly LocalForward[];
   }): Promise<TestRunResult>;
   /** 実行中のコンテナを止める（人間が一時停止・中止したとき）。無ければ何もしない。 */
   kill(runId: string): void;
@@ -76,6 +82,7 @@ export class DockerTestRunner implements TestRunner {
     command,
     env = {},
     network,
+    forwards = [],
   }: Parameters<TestRunner["run"]>[0]) {
     const name = `sacty-run-${runId}`;
     const args = dockerRunArgs({
@@ -85,7 +92,7 @@ export class DockerTestRunner implements TestRunner {
       envNames: Object.keys(env),
       mounts: [],
       ...(network ? { network } : {}),
-      command: ["sh", "-c", command],
+      command: withLocalForwards(["sh", "-c", command], forwards),
     });
     const started = Date.now();
     this.containers.register(name);

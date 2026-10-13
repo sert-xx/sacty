@@ -180,8 +180,20 @@ export function describeEvent(event: ActivityEvent, l: LabelMessages): string {
       return e.ServicesStarted(
         l.step[event.payload.step],
         event.payload.file,
-        event.payload.services.map((s) => s.name).join(e.imagesJoin),
+        event.payload.services
+          .map((s) =>
+            s.hostPorts && s.hostPorts.length > 0
+              ? e.serviceHostPorts(
+                  s.name,
+                  s.hostPorts
+                    .map((h) => `localhost:${h.port} → ${s.name}:${h.target}`)
+                    .join(e.imagesJoin),
+                )
+              : s.name,
+          )
+          .join(e.imagesJoin),
         event.payload.forTests === true,
+        (event.payload.sharedPorts ?? []).join(e.imagesJoin),
       );
     case "AgentRunStarted":
       return e.AgentRunStarted(

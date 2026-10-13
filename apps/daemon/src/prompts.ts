@@ -27,6 +27,7 @@ import {
 } from "@sacty/core";
 import { githubRepoOf } from "./config.js";
 import { REVIEW_MARKER_PREFIX } from "./github.js";
+import { localForwards, type StartedService } from "./services.js";
 
 /** 記録した文（コードと引数の文言を含む）を、指示や PR の本文に入れる日本語の文にする。 */
 const ja = (value: DaemonText) => renderMessage(value, "ja");
@@ -1997,19 +1998,49 @@ function composeServicesOf(
 /** docker compose のサービスを使える工程（コードを動かす工程。PBI-47）。 */
 export const SERVICE_STEPS: readonly StepKey[] = ["investigate", "reproduce", "implement"];
 
-/** 工程のエージェントに伝える、起動したサービスの接続先（PBI-47）。 */
-export function servicePromptLines(
-  services: readonly { name: string; ports: readonly number[] }[],
-): string[] {
+/**
+ * 工程のエージェントに伝える、起動したサービスの接続先（PBI-47）。ポートは localhost にも転送する（PBI-60）。
+ * 複数のサービスが使うポートは転送しないので、サービス名で接続してもらう。
+ */
+export function servicePromptLines(services: readonly StartedService[]): string[] {
   if (services.length === 0) return [];
+  const { forwards, shared } = localForwards(services);
+  // コンテナのポートごとに、localhost で届く番号と、ぶつかるため転送しなかった番号
+  const target = (service: StartedService, port: number) => {
+    const reachable = forwards
+      .filter((f) => f.host === service.name && (f.target ?? f.port) === port)
+      .map((f) => `localhost:${f.port}`);
+    // localhost のこの番号は、同じサービスの中でホストに出すポートの対応（"8080:80" の 8080）が先
+    const overridden = (service.hostPorts ?? []).some((h) => h.port === port && h.target !== port);
+    const blocked = [
+      ...(overridden ? [] : [port]),
+      ...(service.hostPorts ?? []).filter((h) => h.target === port).map((h) => h.port),
+    ]
+      .filter((n) => shared.includes(n))
+      .map((n) => `localhost:${n}`);
+    return [
+      `${service.name}:${port}`,
+      reachable.length > 0 ? ` または ${reachable.join("・")}` : "",
+      blocked.length > 0
+        ? `（${blocked.join("・")} は、複数のサービスが使う番号のため、転送していません）`
+        : "",
+    ].join("");
+  };
   return [
     "",
     "--- 起動しているサービス（docker compose） ---",
-    "sacty が、この実行のために次のサービスを起動しています。サービス名とコンテナのポートで接続してください（localhost ではありません）。docker・docker compose のコマンドは使えません（サービスの起動・停止は不要です）。この実行が終わると、サービスとデータは消えます。",
-    ...services.map(
-      (s) =>
-        `- ${s.name}${s.ports.length > 0 ? `：${s.ports.map((p) => `${s.name}:${p}`).join("、")}` : ""}`,
-    ),
+    'sacty が、この実行のために次のサービスを起動しています。サービス名とコンテナのポート（db:5432 など）でも、localhost のそのポート（localhost:5432・127.0.0.1:5432 など）でも接続できます。compose ファイルでホストに別のポートで出している（ports: "15432:5432" など）なら、そのポート（localhost:15432）でも届きます（sacty がサービスに転送しています）。リポジトリの設定の接続先は、書き換えずにそのまま使ってください。docker・docker compose のコマンドは使えません（サービスの起動・停止は不要です）。この実行が終わると、サービスとデータは消えます。',
+    "localhost で届かないとき（そのポートをほかのものが使っていたときなど）は、サービス名で接続してください。MySQL のクライアントなど、ホストに localhost と書くと UNIX ソケットで接続するものは、127.0.0.1 と書いてください。サービスと同じポートでアプリを待ち受けさせると、転送とぶつかります（アプリのポートを変えてください）。",
+    ...services.map((s) => {
+      const targets = [
+        ...s.ports.map((p) => target(s, p)),
+        // TCP 以外（UDP など）は、localhost に転送しない
+        ...(s.otherPorts ?? []).map(
+          (o) => `${s.name}:${o.port}/${o.protocol}（localhost には転送していません）`,
+        ),
+      ];
+      return `- ${s.name}${targets.length > 0 ? `：${targets.join("、")}` : ""}`;
+    }),
   ];
 }
 

@@ -1,6 +1,7 @@
 import { EventEmitter } from "node:events";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { RunningContainers } from "./docker.js";
+import { FORWARD_NOTICE_PREFIX, withLocalForwards } from "./forward.js";
 import { DockerTestRunner } from "./test-runner.js";
 
 /** docker コマンドの偽物。docker run は止められるまで終わらず、docker kill は決めた終了コードを返す。 */
@@ -236,6 +237,90 @@ describe("イメージの環境変数（PBI-41）", () => {
     // 権限は落としたまま（Docker のソケットも渡さない）
     expect(args[0]).toContain("ALL");
     expect(args[0]?.join(" ")).not.toContain("docker.sock");
+  });
+
+  it("サービスのポートを localhost に転送するときだけ、転送を起動してからテストのコマンドを動かす（PBI-60）", async () => {
+    const docker = recordingDocker();
+    const runner = new DockerTestRunner(60_000, docker.spawnImpl);
+    await runner.run({
+      runId: "r5",
+      image: "img",
+      workspaceDir: "/tmp",
+      command: "npm test",
+      network: "n",
+      forwards: [{ port: 5432, host: "db" }],
+    });
+    await runner.run({ runId: "r6", image: "img", workspaceDir: "/tmp", command: "npm test" });
+    await runner.run({
+      runId: "r7",
+      image: "img",
+      workspaceDir: "/tmp",
+      command: "npm test",
+      network: "n",
+      forwards: [],
+    });
+    const [forwarded, plain, none] = docker.runs.map((r) => r.args);
+    const afterImage = (args?: string[]) => args?.slice(args.indexOf("img") + 1);
+    expect(afterImage(forwarded)).toEqual(
+      withLocalForwards(["sh", "-c", "npm test"], [{ port: 5432, host: "db" }]),
+    );
+    expect(afterImage(forwarded)?.slice(0, 2)).toEqual(["node", "-e"]);
+    // サービスを使わないテストは、これまでどおり（コマンドも同じ）
+    expect(afterImage(plain)).toEqual(["sh", "-c", "npm test"]);
+    expect(afterImage(none)).toEqual(["sh", "-c", "npm test"]);
+  });
+
+  it("エージェントの実行でも、転送するときだけ転送を起動し、転送しなかった理由をデーモンのログに出す（PBI-60）", async () => {
+    const { DockerExecutor } = await import("./docker.js");
+    const runs: string[][] = [];
+    const spawnImpl = ((_cmd: string, args: string[]) => {
+      const child = Object.assign(new EventEmitter(), {
+        stdout: new EventEmitter(),
+        stderr: new EventEmitter(),
+        kill: () => true,
+      });
+      if (args[0] === "run") runs.push(args);
+      setTimeout(() => {
+        child.stdout.emit("data", '{"type":"result","subtype":"success","result":"done"}\n');
+        child.stderr.emit(
+          "data",
+          `${FORWARD_NOTICE_PREFIX}127.0.0.1:5432 を db:5432 に転送しません（すでに使われています）。db:5432 で接続してください\nother\n`,
+        );
+        child.emit("close", 0);
+      }, 0);
+      return child;
+    }) as never;
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const executor = new DockerExecutor(60_000, spawnImpl);
+      const invocation = {
+        command: ["claude", "-p", "x"],
+        env: {},
+        parser: "claude-json" as const,
+      };
+      const outcome = await executor.run({
+        runId: "a1",
+        image: "img",
+        workspaceDir: "/tmp",
+        invocation,
+        network: "n",
+        forwards: [{ port: 5432, host: "db" }],
+      });
+      // 出力の読み取りは変わらない
+      expect(outcome).toMatchObject({ kind: "completed", output: "done" });
+      expect(runs[0]?.slice(runs[0].indexOf("img") + 1)).toEqual(
+        withLocalForwards(["claude", "-p", "x"], [{ port: 5432, host: "db" }]),
+      );
+      expect(warn.mock.calls.map((c) => String(c[0]))).toEqual([
+        expect.stringContaining(
+          "sacty-run-a1：[sacty] localhost の転送：127.0.0.1:5432 を db:5432",
+        ),
+      ]);
+      await executor.run({ runId: "a2", image: "img", workspaceDir: "/tmp", invocation });
+      expect(runs[1]?.slice(runs[1].indexOf("img") + 1)).toEqual(["claude", "-p", "x"]);
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("エージェントの実行では、実行の環境変数がイメージの環境変数より優先する", async () => {

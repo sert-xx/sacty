@@ -6,8 +6,10 @@ import { message } from "@sacty/core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   checkComposeSources,
+  composePorts,
   composeProject,
   DockerComposeServices,
+  localForwards,
   sanitizeCompose,
 } from "./services.js";
 
@@ -376,5 +378,276 @@ describe("docker compose の実行（PBI-47 レビュー指摘）", () => {
       }),
     });
     expect(docker.calls).toEqual([]);
+  });
+});
+
+describe("localhost に転送するポート（PBI-60）", () => {
+  it("サービスが無い・ポートが無いサービスだけなら、転送しない", () => {
+    expect(localForwards([])).toEqual({ forwards: [], shared: [] });
+    expect(localForwards([{ name: "worker", ports: [] }])).toEqual({ forwards: [], shared: [] });
+  });
+
+  it("サービスのポートを、同じポートでサービス名に転送する（1つ・複数）", () => {
+    expect(localForwards([{ name: "db", ports: [5432] }])).toEqual({
+      forwards: [{ port: 5432, host: "db" }],
+      shared: [],
+    });
+    expect(
+      localForwards([
+        { name: "mock", ports: [8080, 3000] },
+        { name: "db", ports: [5432] },
+        { name: "worker", ports: [] },
+      ]),
+    ).toEqual({
+      forwards: [
+        { port: 3000, host: "mock" },
+        { port: 5432, host: "db" },
+        { port: 8080, host: "mock" },
+      ],
+      shared: [],
+    });
+  });
+
+  it("複数のサービスが使うポートは転送しない（ほかのポートは転送する）", () => {
+    expect(
+      localForwards([
+        { name: "api", ports: [8080, 9000] },
+        { name: "mock", ports: [8080] },
+        { name: "db", ports: [5432] },
+        { name: "db2", ports: [5432] },
+      ]),
+    ).toEqual({ forwards: [{ port: 9000, host: "api" }], shared: [5432, 8080] });
+  });
+
+  it("1つのサービスに同じポートが重なっていても、複数のサービスとは数えない", () => {
+    expect(localForwards([{ name: "db", ports: [5432, 5432] }])).toEqual({
+      forwards: [{ port: 5432, host: "db" }],
+      shared: [],
+    });
+  });
+});
+
+describe("compose の ports から、ホストに出すポートとコンテナのポートの組を取る（PBI-60）", () => {
+  it("短い書き方", () => {
+    expect(composePorts("5432")).toEqual([{ target: 5432 }]);
+    expect(composePorts(5432)).toEqual([{ target: 5432 }]);
+    expect(composePorts("15432:5432")).toEqual([{ target: 5432, published: 15432 }]);
+    expect(composePorts("127.0.0.1:15432:5432")).toEqual([{ target: 5432, published: 15432 }]);
+    expect(composePorts("[::1]:15432:5432")).toEqual([{ target: 5432, published: 15432 }]);
+    expect(composePorts("15432:5432/tcp")).toEqual([{ target: 5432, published: 15432 }]);
+    expect(composePorts("8000-8001:8000-8001")).toEqual([
+      { target: 8000, published: 8000 },
+      { target: 8001, published: 8001 },
+    ]);
+    expect(composePorts("9000-9001:8000-8001")).toEqual([
+      { target: 8000, published: 9000 },
+      { target: 8001, published: 9001 },
+    ]);
+    expect(composePorts("8000-8001")).toEqual([{ target: 8000 }, { target: 8001 }]);
+  });
+
+  it("長い書き方（正規化した設定）", () => {
+    expect(composePorts({ target: 5432, published: "15432", protocol: "tcp" })).toEqual([
+      { target: 5432, published: 15432 },
+    ]);
+    expect(composePorts({ target: 5432, published: 15432 })).toEqual([
+      { target: 5432, published: 15432 },
+    ]);
+    expect(composePorts({ target: 5432, host_ip: "127.0.0.1", protocol: "tcp" })).toEqual([
+      { target: 5432 },
+    ]);
+  });
+
+  it("published が無い・範囲が合わない・読めない・UDP なら、コンテナのポートだけ", () => {
+    expect(composePorts("127.0.0.1::7000")).toEqual([{ target: 7000 }]);
+    expect(composePorts("[::1]::7000")).toEqual([{ target: 7000 }]);
+    expect(composePorts({ target: 9000, published: "9000-9001" })).toEqual([{ target: 9000 }]);
+    expect(composePorts("9000-9002:8000-8001")).toEqual([{ target: 8000 }, { target: 8001 }]);
+    expect(composePorts("abc:5432")).toEqual([{ target: 5432 }]);
+    expect(composePorts("70000:5432")).toEqual([{ target: 5432 }]);
+    // TCP 以外は、プロトコルを付けて返す（published は付けない）
+    expect(composePorts("15353:53/udp")).toEqual([{ target: 53, protocol: "udp" }]);
+    expect(composePorts("53/UDP")).toEqual([{ target: 53, protocol: "udp" }]);
+    expect(composePorts({ target: 53, published: "15353", protocol: "udp" })).toEqual([
+      { target: 53, protocol: "udp" },
+    ]);
+    expect(composePorts("9000/sctp")).toEqual([{ target: 9000, protocol: "sctp" }]);
+    expect(composePorts("x")).toEqual([]);
+    expect(composePorts(null)).toEqual([]);
+    expect(composePorts({ target: "x" })).toEqual([]);
+  });
+
+  it("正規化した設定から、ホストに出すポートが違うものだけを返す（同じなら1つ）", () => {
+    const result = sanitizeCompose(
+      {
+        services: {
+          db: {
+            image: "postgres",
+            ports: [
+              { target: 5432, published: "15432", protocol: "tcp" },
+              { target: 5432, published: "25432", protocol: "tcp" },
+              { target: 6379, published: "6379", protocol: "tcp" },
+              { target: 7000, protocol: "tcp" },
+            ],
+          },
+          worker: { image: "w" },
+        },
+      },
+      ws,
+      [],
+    );
+    if (!result.ok) throw new Error(result.problems.join());
+    expect(result.services).toEqual([
+      {
+        name: "db",
+        ports: [5432, 6379, 7000],
+        hostPorts: [
+          { port: 15432, target: 5432 },
+          { port: 25432, target: 5432 },
+        ],
+      },
+      { name: "worker", ports: [] },
+    ]);
+    // ホストのポートには出さない（これまでどおり）
+    expect(
+      (result.config.services as Record<string, Record<string, unknown>>).db,
+    ).not.toHaveProperty("ports");
+  });
+});
+
+describe("ホストに出すポートからも localhost に転送する（PBI-60）", () => {
+  it("ホストのポート → コンテナのポートと、コンテナのポートの両方を転送する", () => {
+    expect(
+      localForwards([{ name: "db", ports: [5432], hostPorts: [{ port: 15432, target: 5432 }] }]),
+    ).toEqual({
+      forwards: [
+        { port: 5432, host: "db" },
+        { port: 15432, host: "db", target: 5432 },
+      ],
+      shared: [],
+    });
+  });
+
+  it("ホストのポートが、ほかのサービスのコンテナのポート・ホストのポートとぶつかれば、その番号は転送しない", () => {
+    expect(
+      localForwards([
+        { name: "db", ports: [5432], hostPorts: [{ port: 8080, target: 5432 }] },
+        { name: "mock", ports: [8080] },
+      ]),
+    ).toEqual({ forwards: [{ port: 5432, host: "db" }], shared: [8080] });
+    expect(
+      localForwards([
+        { name: "db", ports: [5432], hostPorts: [{ port: 15432, target: 5432 }] },
+        { name: "db2", ports: [5433], hostPorts: [{ port: 15432, target: 5433 }] },
+      ]),
+    ).toEqual({
+      forwards: [
+        { port: 5432, host: "db" },
+        { port: 5433, host: "db2" },
+      ],
+      shared: [15432],
+    });
+  });
+
+  it("同じサービスの中で、ホストのポートがほかのコンテナのポートと同じ番号なら、ホストのポートの対応を優先する", () => {
+    expect(
+      localForwards([{ name: "app", ports: [80, 8080], hostPorts: [{ port: 8080, target: 80 }] }]),
+    ).toEqual({
+      forwards: [
+        { port: 80, host: "app" },
+        { port: 8080, host: "app", target: 80 },
+      ],
+      shared: [],
+    });
+  });
+});
+
+describe("正規化した compose の設定から、localhost に転送するポートを決める（PBI-60 レビュー指摘）", () => {
+  const startedFrom = (services: Record<string, unknown>) => {
+    const result = sanitizeCompose({ services }, ws, []);
+    if (!result.ok) throw new Error(result.problems.join());
+    return result.services;
+  };
+
+  it("UDP のポートは、転送の候補にも、ぶつかりの判定にも入れない（同じ番号の TCP は転送する）", () => {
+    const services = startedFrom({
+      tcp: { image: "a", ports: [{ target: 8125, published: "8125", protocol: "tcp" }] },
+      udp: {
+        image: "b",
+        ports: [{ target: 8125, published: "8125", protocol: "udp" }],
+        expose: ["9125/udp", "9126"],
+      },
+    });
+    expect(services).toEqual([
+      { name: "tcp", ports: [8125] },
+      {
+        name: "udp",
+        ports: [9126],
+        otherPorts: [
+          { port: 8125, protocol: "udp" },
+          { port: 9125, protocol: "udp" },
+        ],
+      },
+    ]);
+    expect(localForwards(services)).toEqual({
+      forwards: [
+        { port: 8125, host: "tcp" },
+        { port: 9126, host: "udp" },
+      ],
+      shared: [],
+    });
+    // 短い書き方でも同じ
+    expect(
+      localForwards(
+        startedFrom({
+          tcp: { image: "a", ports: ["8125:8125/tcp"] },
+          udp: { image: "b", ports: ["8125:8125/udp"] },
+        }),
+      ),
+    ).toEqual({ forwards: [{ port: 8125, host: "tcp" }], shared: [] });
+  });
+
+  it('"8080:80" と "18080:8080" なら、localhost:8080 は app:80、localhost:18080 は app:8080 に転送する', () => {
+    const services = startedFrom({
+      app: {
+        image: "a",
+        ports: [
+          { target: 80, published: "8080", protocol: "tcp" },
+          { target: 8080, published: "18080", protocol: "tcp" },
+        ],
+      },
+    });
+    expect(services).toEqual([
+      {
+        name: "app",
+        ports: [80, 8080],
+        hostPorts: [
+          { port: 8080, target: 80 },
+          { port: 18080, target: 8080 },
+        ],
+      },
+    ]);
+    expect(localForwards(services)).toEqual({
+      forwards: [
+        { port: 80, host: "app" },
+        { port: 8080, host: "app", target: 80 },
+        { port: 18080, host: "app", target: 8080 },
+      ],
+      shared: [],
+    });
+  });
+
+  it("ほかのサービスとぶつかる番号は、これまでどおり転送しない", () => {
+    const services = startedFrom({
+      app: { image: "a", ports: ["8080:80", "18080:8080"] },
+      mock: { image: "m", ports: ["8080"] },
+    });
+    expect(localForwards(services)).toEqual({
+      forwards: [
+        { port: 80, host: "app" },
+        { port: 18080, host: "app", target: 8080 },
+      ],
+      shared: [8080],
+    });
   });
 });
