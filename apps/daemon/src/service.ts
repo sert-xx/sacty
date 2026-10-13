@@ -67,6 +67,7 @@ import type { TestRunner } from "./agents/test-runner.js";
 import {
   type AgentConfig,
   agentFor,
+  agentSetting,
   type ConfigResult,
   githubRepoOf,
   type SactyConfig,
@@ -642,7 +643,13 @@ export class TaskService {
     // 実行に失敗した・選んだ工程を読み取れなかったときは、理由を記録して止める（PBI-32・PBI-40）。
     // 標準の工程で代わりに進めると、テストのコマンドも決まらず、調査のタスクでも設計・実装に進んでしまうため。
     // 再開すると、工程の選択からやり直す。使った分の費用は記録する
-    const cost = { agentId: agent.id, usage: outcome.usage, costUsd, estimated };
+    const cost = {
+      agentId: agent.id,
+      ...agentSetting(agent),
+      usage: outcome.usage,
+      costUsd,
+      estimated,
+    };
     if (outcome.kind === "failed") {
       return {
         failure: {
@@ -697,7 +704,15 @@ export class TaskService {
       outcome.kind === "completed"
         ? extractRework(outcome.output, targets)
         : { reason: message("run.guardianFailed", { detail: outcome.message }) };
-    return { ...judgement, agentId: agent.id, usage: outcome.usage, costUsd, estimated };
+    return {
+      ...judgement,
+      runResult: outcome.kind === "completed" ? "completed" : "failed",
+      agentId: agent.id,
+      ...agentSetting(agent),
+      usage: outcome.usage,
+      costUsd,
+      estimated,
+    };
   }
 
   /** gh にログイン済みの GitHub のアカウント。gh が無いなどで分からなければ、その理由。 */
@@ -1058,6 +1073,7 @@ export class TaskService {
                 verdict: "undecidable",
                 reason: message("run.guardianInterrupted"),
                 agentId: "unknown",
+                runResult: "interrupted",
               },
             },
           },
@@ -1489,7 +1505,7 @@ export class TaskService {
         actor: "sacty",
         event: {
           type: "AgentRunStarted",
-          payload: { runId, step, agentId: agent.id, authMode: agent.auth.mode },
+          payload: { runId, step, agentId: agent.id, ...agentSetting(agent) },
         },
       },
     ]);
@@ -1946,6 +1962,7 @@ export class TaskService {
               reason: outcome.reason,
               message: failure,
               agentId: agent.id,
+              ...agentSetting(agent),
               usage: outcome.usage,
               costUsd,
               estimated,
@@ -1977,7 +1994,14 @@ export class TaskService {
         actor: "guardian",
         event: {
           type: "FinalReviewed",
-          payload: { ...review, agentId: agent.id, usage: outcome.usage, costUsd, estimated },
+          payload: {
+            ...review,
+            agentId: agent.id,
+            ...agentSetting(agent),
+            usage: outcome.usage,
+            costUsd,
+            estimated,
+          },
         },
       },
     ]);
@@ -2411,7 +2435,7 @@ export class TaskService {
         actor: "sacty",
         event: {
           type: "AgentRunStarted",
-          payload: { runId, step, agentId: agent.id, authMode: agent.auth.mode },
+          payload: { runId, step, agentId: agent.id, ...agentSetting(agent) },
         },
       },
     ]);
@@ -2817,7 +2841,9 @@ export class TaskService {
     return {
       proposalId: proposal.id,
       ...judgement,
+      runResult: outcome.kind === "completed" ? "completed" : "failed",
       agentId: agent.id,
+      ...agentSetting(agent),
       usage: outcome.usage,
       costUsd,
       estimated,

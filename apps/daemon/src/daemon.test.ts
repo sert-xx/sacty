@@ -662,6 +662,54 @@ describe("工程の実行と費用", () => {
     activity.close();
   });
 
+  it("実行に使った AI の接続先・モデル・リーズニングエフォートを記録する。書いていない設定は記録しない（PBI-46）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const plain = agent({ id: "luna" });
+    const strong = agent({ id: "sol-high", model: "gpt-sol", reasoning_effort: "high" });
+    const orchestrator = agent({ id: "orchestrator", model: "gpt-luna", reasoning_effort: "low" });
+    const plan = {
+      kind: "completed" as const,
+      output:
+        '```json\n{"sacty-steps": {"plan": "skip-design", "reason": "小さい", "testCommand": "npm test"}}\n```',
+      usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 100 },
+    };
+    const { service } = makeService(activity, [plan, completed(20_000), completed(20_000)], {
+      realPlanner: true,
+      config: () => ({
+        ok: true,
+        config: {
+          ...(configOf(plain)() as { ok: true; config: SactyConfig }).config,
+          stepAgents: { orchestrator, requirements: strong },
+        },
+      }),
+    });
+    const task = service.createTask({ projectId: "default", title: "決済API" });
+    await service.runNext(task.id);
+    await service.runNext(task.id);
+    const events = service.get(task.id)?.activity ?? [];
+    const chosen = events.find((e) => e.type === "StepsChosen");
+    expect(chosen?.type === "StepsChosen" && chosen.payload).toMatchObject({
+      agentId: "orchestrator",
+      authMode: plain.auth.mode,
+      model: "gpt-luna",
+      reasoningEffort: "low",
+    });
+    const started = events.flatMap((e) => (e.type === "AgentRunStarted" ? [e.payload] : []));
+    expect(started.map(({ runId: _, ...rest }) => rest)).toEqual([
+      { step: "investigate", agentId: "luna", authMode: plain.auth.mode },
+      {
+        step: "requirements",
+        agentId: "sol-high",
+        authMode: plain.auth.mode,
+        model: "gpt-sol",
+        reasoningEffort: "high",
+      },
+    ]);
+    // 秘密情報の名前（認証の設定）は記録しない
+    expect(JSON.stringify(events)).not.toContain("claude-oauth-token");
+    activity.close();
+  });
+
   it("承認待ち・一時停止・完了を通知し、人間が自分で止めたときは通知しない。送れなかったら画面に出す（PBI-38）", async () => {
     const activity = new SqliteActivityStore(dbPath);
     const sent: string[] = [];
@@ -1827,6 +1875,18 @@ describe("ゴールガーディアン：変更の申し出の判定（PBI-9）",
     activity.close();
   });
 
+  it("ゴールガーディアンの実行に失敗したら、判定の記録に実行の失敗を残す（PBI-46 レビュー指摘）", async () => {
+    const { activity, service, id } = await proposeAndJudge([
+      designWithProposal(),
+      { kind: "failed", reason: "auth", message: "401 Unauthorized" },
+    ]);
+    expect(service.get(id)?.task.status).toBe("escalated");
+    expect(service.get(id)?.activity.find((e) => e.type === "ChangeJudged")?.payload).toMatchObject(
+      { verdict: "undecidable", runResult: "failed" },
+    );
+    activity.close();
+  });
+
   it("判定できなければエスカレーションになり、人間が認めるか認めないかを決める", async () => {
     const { activity, service, id } = await proposeAndJudge([
       designWithProposal(),
@@ -1835,6 +1895,10 @@ describe("ゴールガーディアン：変更の申し出の判定（PBI-9）",
     const escalated = service.get(id)?.task;
     expect(escalated?.status).toBe("escalated");
     expect(escalated?.proposals[0]?.judgement).toMatchObject({ verdict: "undecidable" });
+    // 実行はできた（判断できなかっただけ）ことを記録する（PBI-46 レビュー指摘）
+    expect(service.get(id)?.activity.find((e) => e.type === "ChangeJudged")?.payload).toMatchObject(
+      { runResult: "completed" },
+    );
     expect(() => service.approve(id, { step: "design", submission: 1 })).toThrow();
     expect(() => service.decideChange(id, "CP-9", { accept: true })).toThrow(
       /判断待ちではありません/,
@@ -1947,6 +2011,9 @@ describe("ゴールガーディアン：変更の申し出の判定（PBI-9）",
     const task = restarted.get(id)?.task;
     expect(task?.status).toBe("escalated");
     expect(ja(task?.proposals[0]?.judgement?.reason)).toMatch(/中断/);
+    expect(
+      restarted.get(id)?.activity.find((e) => e.type === "ChangeJudged")?.payload,
+    ).toMatchObject({ runResult: "interrupted" });
     activity.close();
   });
 

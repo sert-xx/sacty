@@ -96,6 +96,31 @@ const ja = {
     reviewPost: "投稿したレビュー：",
     reviewComments: (n: number) => `行へのコメント（${n}件）`,
   },
+  costs: {
+    title: "工程ごとの費用",
+    note: "エージェント・設定・トークンの使用量。記録に無い項目は「—」",
+    column: {
+      role: "工程（エージェント・接続先・モデル・エフォート）",
+      run: "実行（日時・設定）",
+      input: "入力",
+      output: "出力",
+      cache: "キャッシュ（読み / 書き）",
+      cost: "費用",
+      runs: "回数",
+      result: "結果",
+    },
+    runs: (n: number) => `${n}回`,
+    estimated: "概算",
+    estimatedNote: "サブスクリプションなどの換算値で、実際の請求ではありません",
+    none: "—",
+    setting: (agent: string, auth: string, model: string, effort: string) =>
+      `${agent}・${auth}・${model}・${effort}`,
+    total: "このタスクの合計",
+    children: "子タスクの合計",
+    breakdown: (n: number) => `各回の内訳（${n}回）`,
+    nth: (n: number) => `${n}回目`,
+    result: { completed: "完了", failed: "失敗", interrupted: "中断", running: "実行中" },
+  },
 };
 
 export type TaskMessages = typeof ja;
@@ -197,6 +222,35 @@ const en: TaskMessages = {
     reviewTarget: "PR under review: ",
     reviewPost: "Posted review: ",
     reviewComments: (n) => `Line comments (${n})`,
+  },
+  costs: {
+    title: "Cost per step",
+    note: "Agents, settings and token usage. Items not recorded are shown as “—”",
+    column: {
+      role: "Step (agent · connection · model · effort)",
+      run: "Run (time · settings)",
+      input: "Input",
+      output: "Output",
+      cache: "Cache (read / write)",
+      cost: "Cost",
+      runs: "Runs",
+      result: "Result",
+    },
+    runs: (n) => `${n} run${n === 1 ? "" : "s"}`,
+    estimated: "Estimate",
+    estimatedNote: "Converted value (such as a subscription), not an actual charge",
+    none: "—",
+    setting: (agent, auth, model, effort) => `${agent} · ${auth} · ${model} · ${effort}`,
+    total: "Total for this task",
+    children: "Total for subtasks",
+    breakdown: (n) => `Breakdown per run (${n})`,
+    nth: (n) => `Run ${n}`,
+    result: {
+      completed: "Completed",
+      failed: "Failed",
+      interrupted: "Interrupted",
+      running: "Running",
+    },
   },
 };
 

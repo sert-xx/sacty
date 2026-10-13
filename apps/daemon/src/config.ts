@@ -377,6 +377,18 @@ export function agentFor(config: SactyConfig, role: AgentRoleKey): AgentConfig {
     config.stepAgents?.[role] ?? (role === "integrate" ? config.guardianAgent : config.defaultAgent)
   );
 }
+/**
+ * 作業履歴に記録する、実行に使った AI の設定（接続先・モデル・リーズニングエフォート。PBI-46）。
+ * 秘密の値（API キーや接続先の URL）は含めない。
+ */
+export function agentSetting(agent: AgentConfig) {
+  return {
+    authMode: agent.auth.mode,
+    ...(agent.model ? { model: agent.model } : {}),
+    ...(agent.reasoning_effort ? { reasoningEffort: agent.reasoning_effort } : {}),
+  };
+}
+
 export type SactyConfig = {
   image: string;
   defaultAgent: AgentConfig;

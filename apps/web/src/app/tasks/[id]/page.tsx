@@ -18,6 +18,7 @@ import { Proposals } from "@/components/proposals";
 import { PullRequestCard } from "@/components/pull-request";
 import { ReproductionResult } from "@/components/reproduction";
 import { ResumeForm } from "@/components/resume-form";
+import { StepCosts } from "@/components/step-costs";
 import { CostMeter, StatusLabel, StepChips } from "@/components/task-bits";
 import { TaskControls } from "@/components/task-controls";
 import { TestViewpoints } from "@/components/test-viewpoints";
@@ -322,6 +323,8 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
           )}
           <PullRequestCard task={task} />
           {(task.approved.requirements || task.proposals.length > 0) && <Proposals task={task} />}
+          {/* 工程ごとのエージェント・設定・費用（PBI-46） */}
+          <StepCosts task={task} activity={activity} />
         </div>
 
         <section
