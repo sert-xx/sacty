@@ -8,6 +8,7 @@ import {
   needsPerson,
   personAction as personActionIn,
   statusText as statusTextIn,
+  statusTone,
   usesTestCommand,
 } from "./labels";
 
@@ -598,5 +599,20 @@ describe("ゲートウェイのリトライの表示（PBI-37）", () => {
     expect(describeIn(event(true), labels.en)).toBe(
       "The gateway retried the AI call 3 times (429, connection; waited 21s in total) → gave up at the limit",
     );
+  });
+});
+
+describe("状態の色の種類（PBI-42）", () => {
+  it("完了と中止を別の色の種類にする", () => {
+    const done = task({ steps: [{ key: "investigate", state: "done" }] });
+    expect(statusText(done)).toBe("完了");
+    expect(statusTone(done)).toBe("completed");
+    expect(statusTone(task({ status: "cancelled" }))).toBe("cancelled");
+  });
+
+  it("終わっていない idle や、ほかの状態は、状態のまま", () => {
+    expect(statusTone(task({ steps: [{ key: "investigate", state: "active" }] }))).toBe("idle");
+    expect(statusTone(task({ status: "running" }))).toBe("running");
+    expect(statusTone(task({ status: "paused" }))).toBe("paused");
   });
 });

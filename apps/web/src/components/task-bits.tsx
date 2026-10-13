@@ -1,7 +1,7 @@
 import type { Task } from "@sacty/core";
 import { cn } from "cn";
 import { getMessages } from "@/i18n/server";
-import { statusText, usd } from "@/lib/labels";
+import { type StatusTone, statusText, statusTone, usd } from "@/lib/labels";
 
 const STEP_STYLE: Record<Task["steps"][number]["state"], string> = {
   todo: "border-input bg-card text-muted-foreground",
@@ -33,7 +33,9 @@ export async function StepChips({ task }: { task: Task }) {
   );
 }
 
-const STATUS_STYLE: Record<Task["status"], { text: string; dot: string }> = {
+const STATUS_STYLE: Record<StatusTone, { text: string; dot: string }> = {
+  // 完了は、中止（灰色）と見分けられる色にする（PBI-42）
+  completed: { text: "text-ok", dot: "bg-ok" },
   blocked: { text: "text-muted-foreground", dot: "bg-muted-foreground/60" },
   waiting_children: { text: "text-accent-foreground", dot: "bg-primary/60" },
   queued: { text: "text-muted-foreground", dot: "bg-muted-foreground/60" },
@@ -47,7 +49,7 @@ const STATUS_STYLE: Record<Task["status"], { text: string; dot: string }> = {
 
 export async function StatusLabel({ task }: { task: Task }) {
   const m = await getMessages();
-  const style = STATUS_STYLE[task.status];
+  const style = STATUS_STYLE[statusTone(task)];
   return (
     <span
       className={cn(

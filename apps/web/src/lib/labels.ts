@@ -51,6 +51,14 @@ export function statusText(task: Task, l: LabelMessages): string {
   return l.status[task.status];
 }
 
+/** 状態の表示の色の種類。完了したタスクは、中止（cancelled）と見分けられるよう別にする（PBI-42）。 */
+export type StatusTone = Task["status"] | "completed";
+
+export function statusTone(task: Task): StatusTone {
+  if (task.status === "idle" && isCompleted(task)) return "completed";
+  return task.status;
+}
+
 /**
  * テストのコマンドを使うタスクか（工程に実装がある）。調査・レビュー・タスク分割の親など、
  * 実装しないタスクには、テストのコマンドを出さない（PBI-28）。
