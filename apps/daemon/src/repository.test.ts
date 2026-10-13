@@ -503,14 +503,22 @@ describe("対象リポジトリの作業領域（git）", { timeout: 30_000 }, (
     git(origin, "commit", "--quiet", "-m", "human edit");
     git(origin, "checkout", "--quiet", taskBranch);
     git(origin, "merge", "--quiet", "--no-ff", stepBranch, "-m", "merge requirements");
+    const merged = git(origin, "rev-parse", "HEAD");
+    // マージの後に、タスクブランチへ未レビューの変更が積まれた
+    writeFileSync(join(origin, path), "Later unreviewed change\n");
+    git(origin, "commit", "--quiet", "-am", "later");
     git(origin, "checkout", "--quiet", "main");
     // 作業領域の git の設定（エージェントが書き換えうる）は評価しない
     const marker = join(dir, "pwned");
     git(clone, "config", "filter.evil.smudge", `touch ${marker}; cat`);
     writeFileSync(join(clone, ".gitattributes"), "* filter=evil\n");
 
-    const merged = await workspace.fetchBranch(gitDir, taskBranch);
+    const tip = await workspace.fetchBranch(gitDir, taskBranch);
+    expect(tip).not.toBe(merged);
+    await workspace.fetchCommits(gitDir, [merged]);
+    // マージのコミットからは承認する本文、先端からは後の変更が読める（先端は読まないこと）
     expect(await workspace.readFile(gitDir, merged, path)).toBe(human);
+    expect(await workspace.readFile(gitDir, tip, path)).toBe("Later unreviewed change\n");
     expect(existsSync(marker)).toBe(false);
     // マージの前（起点）には無い
     expect(await workspace.readFile(gitDir, baseCommit, path)).toBeUndefined();

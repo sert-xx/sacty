@@ -10434,7 +10434,10 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         headSha: head,
         mergeCommit,
       };
-      repos.remote[taskBranchOf(id)] = mergeCommit;
+      // マージの後、確認までの間に、タスクブランチへ未レビューの変更が積まれた（承認済みの成果にしてはいけない）
+      const later = `a${pr.number}`.padEnd(40, "0");
+      repos.remote[taskBranchOf(id)] = later;
+      repos.files[later] = { [pr.path]: "Later unreviewed change\n" };
       if (content !== undefined) repos.files[mergeCommit] = { [pr.path]: content };
       return { head, mergeCommit };
     }
@@ -10497,6 +10500,9 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         },
       ]);
       expect(repos.fetchedBranches.at(-1)?.branch).toBe(taskBranchOf(id));
+      // マージのコミットが退避したメタデータに無ければ取得する
+      expect(repos.fetchedCommits.at(-1)?.commits).toEqual([req.mergeCommit]);
+      expect(JSON.stringify(task.approved)).not.toContain("Later unreviewed change");
 
       // 設計の工程は、人が直した要求要件を読んで作業する
       await service.runNext(id);
@@ -10605,6 +10611,32 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       unreadable.activity.close();
     });
 
+    it("読むコミット（マージのコミット）を取得できないときは、何も記録せずに次の確認でやり直し、取得できたらマージのコミットの本文で承認する", async () => {
+      const repos = new FakeRepos();
+      const made = await start([out("# 要求要件 v1")], { repos });
+      const { activity, service, id } = made;
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        repos.fetchFail = "not our ref";
+        const { mergeCommit } = mergeEdited(made, "requirements", "# 承認する本文\n");
+        await service.checkPullRequests();
+        expect(types(service, id)).not.toContain("PullRequestMerged");
+        expect(taskOf(service, id).status).toBe("awaiting_approval");
+        repos.fetchFail = undefined;
+        await service.checkPullRequests();
+        const task = taskOf(service, id);
+        expect(task.approved.requirements?.output).toBe("# 承認する本文");
+        // 実際に読んだコミット（マージのコミット）を記録する
+        expect(mergedOf(service, id)[0]?.payload).toMatchObject({
+          mergeCommit,
+          document: { commit: mergeCommit },
+        });
+      } finally {
+        warn.mockRestore();
+      }
+      activity.close();
+    });
+
     it("タスクブランチを取得できない・git を実行できないときは、何も記録せずにログに理由を出し、次の確認で取得できたら人の版で承認する", async () => {
       const repos = new FakeRepos();
       const made = await start([out("# 要求要件 v1")], { repos });
@@ -10685,8 +10717,10 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         mergedBy: "reviewer",
         headSha: "e".repeat(40),
       };
+      // マージのコミットが取れないときは、PR の先頭のコミットから読む（タスクブランチの先端は読まない）
       repos.remote[taskBranchOf(id)] = "a".repeat(40);
-      repos.files["a".repeat(40)] = { [docOf(id, "design")]: "# 人が直した設計\n" };
+      repos.files["a".repeat(40)] = { [docOf(id, "design")]: "Later unreviewed change\n" };
+      repos.files["e".repeat(40)] = { [docOf(id, "design")]: "# 人が直した設計\n" };
       await restarted.service.checkPullRequests();
       task = taskOf(restarted.service, id);
       expect(task.steps.map((s) => s.state)).toEqual(["done", "done", "active", "todo"]);

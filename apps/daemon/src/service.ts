@@ -416,7 +416,14 @@ export class TaskService {
         const edited = status.headSha !== pr.commit;
         let document: PullRequestMerge["document"];
         if (edited && pr.step !== "pr") {
-          const read = await this.readMergedDocument(latest, pr.number, usedSecrets);
+          // 読むのは、マージの時点を特定できるコミット（マージのコミット、取れなければ PR の先頭）。タスクブランチの
+          // 先端は、マージの後に積まれた未レビューの変更を含みうるので使わない
+          const read = await this.readMergedDocument(
+            latest,
+            pr.number,
+            status.mergeCommit ?? status.headSha,
+            usedSecrets,
+          );
           // タスクブランチを取得できなければ、何も記録せずに次の確認でやり直す
           if (read === "retry") continue;
           document = read;
@@ -474,7 +481,9 @@ export class TaskService {
   /**
    * 人が PR の中で直してからマージした、要求要件・設計の成果のファイルを、マージ後のタスクブランチから読む（PBI-63）。
    * 退避した git のメタデータで読み、作業領域・利用者の git の設定は使わない。読むのは、その PR に出した成果のファイルの
-   * パスだけ。sacty の版と違えば両方の本文を、同じなら本文を残さない。取得はできたが、ファイルが消された・中身を読めない
+   * パスだけ。読むコミットは、マージの時点を特定できるコミット（マージのコミット、取れなければ PR の先頭のコミット）で、
+   * 退避したメタデータに無ければ取得する（タスクブランチの先端は、マージの後に積まれた未レビューの変更を含みうるので
+   * 読まない）。sacty の版と違えば両方の本文を、同じなら本文を残さない。取得はできたが、ファイルが消された・中身を読めない
    * （大きすぎる・UTF-8 でない・NUL を含む・通常のファイルでない）なら、sacty の版を承認済みにするよう、そのことを残す。
    * タスクブランチを取得できない（ネットワーク・認証・GitHub の一時的なエラーなど）なら retry を返し、何も記録せずに
    * 次の確認でやり直す（理由はデーモンのログに出す。秘密情報は伏せる）。
@@ -482,6 +491,7 @@ export class TaskService {
   private async readMergedDocument(
     task: Task,
     number: number,
+    merged: string | undefined,
     usedSecrets: string[],
   ): Promise<PullRequestMerge["document"] | "retry"> {
     const entry = task.stepPullRequests.find((p) => p.number === number);
@@ -501,11 +511,16 @@ export class TaskService {
     const current = this.mustGet(task.id);
     const taskBranch = current.taskBranch;
     if (!current.repository || !taskBranch) return retry(message("pr.workspaceMissing"));
+    // マージの時点を特定できるコミットが GitHub から取れなければ、次の確認でやり直す
+    if (!merged) return retry(message("git.invalidBaseCommit"));
+    const commit = merged;
     const gitDir = this.trustedGitDir(current);
-    let commit: string;
     try {
       const authEnv = await this.gitAuth(current, current.repository.url, usedSecrets);
-      commit = await this.deps.repos.fetchBranch(gitDir, taskBranch.branch, authEnv);
+      // タスクブランチを取得すれば、マージのコミットは通常それに含まれる。含まれなければ（PR の先頭のコミットなど）、
+      // そのコミットを取得する（すでにあれば取得しない）
+      await this.deps.repos.fetchBranch(gitDir, taskBranch.branch, authEnv);
+      await this.deps.repos.fetchCommits(gitDir, [commit], authEnv);
     } catch (error) {
       return retry(errorText(error));
     }
