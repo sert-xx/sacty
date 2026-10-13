@@ -660,6 +660,7 @@ export class TaskService {
         reason: chosen.reason,
         fallback: false,
         ...(chosen.testCommand ? { testCommand: chosen.testCommand } : {}),
+        ...(chosen.investigation ? { investigation: chosen.investigation } : {}),
         ...(chosen.baseBranch ? { baseBranch: chosen.baseBranch } : {}),
         ...cost,
       };

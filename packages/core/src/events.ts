@@ -56,6 +56,14 @@ export const STEP_PLANS = {
 export type StepPlan = keyof typeof STEP_PLANS;
 export const StepPlan = z.enum(Object.keys(STEP_PLANS) as [StepPlan, ...StepPlan[]]);
 
+/**
+ * 調査の工程の性質（PBI-43）。オーケストレーターが工程を選ぶときに判断する。
+ * content（内容の調査）は、コードや仕組みを読んで説明する調査で、開発のためのセットアップをしない。
+ * bug（不具合の調査）は、再現や原因の特定のために動かして確かめる調査で、リポジトリの指示どおりセットアップする。
+ */
+export const InvestigationKind = z.enum(["content", "bug"]);
+export type InvestigationKind = z.infer<typeof InvestigationKind>;
+
 /** 人間の承認ゲートがある工程。PR作成は、成果物チェックのゲート。統合レビューは、親タスクの最後の確認（PBI-31）。 */
 export const GATED_STEPS: readonly StepKey[] = [
   "investigate",
@@ -286,6 +294,8 @@ const StepsChosen = z.object({
      * 終了コード0で合格。分からなければ持たない（実装の工程を含むタスクは止める）。
      */
     testCommand: z.string().trim().min(1).max(1000).optional(),
+    /** 調査の工程の性質（PBI-43）。無ければ内容の調査として扱う（セットアップをしない側）。 */
+    investigation: InvestigationKind.optional(),
     agentId: z.string().optional(),
     usage: TokenUsage.optional(),
     costUsd: z.number().nonnegative().default(0),

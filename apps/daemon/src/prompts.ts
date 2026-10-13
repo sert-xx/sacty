@@ -2,6 +2,7 @@ import {
   type DaemonText,
   type FinalReview,
   type IntegrationReview,
+  InvestigationKind,
   investigationIsGoal,
   MAX_SPLIT_CHILDREN,
   MIN_SPLIT_CHILDREN,
@@ -231,12 +232,40 @@ function remarkLines(task: Task, step: StepKey, label: string): string[] {
  * 要求要件・設計の工程で、作業領域にある対象リポジトリのコードについて伝える（PBI-15）。
  * 起点のコミットのコードを使い捨ての写しで渡す（セットアップなどのコマンドは実行できるが、変更は残らない）。
  */
-function codeLines(task: Task): string[] {
+function codeLines(task: Task, options: { setup: boolean } = { setup: true }): string[] {
   if (!task.repository) return [];
   return [
     "",
     `作業領域（カレントディレクトリ）に、対象リポジトリ（${task.repository.url}）の起点のコミット（${task.repository.baseCommit.slice(0, 7)}）のコードがあります。既存のコードを読み、構成・規約・影響範囲を踏まえて書いてください。`,
-    "作業領域は、この実行のための使い捨ての写しです。リポジトリの手順にあるセットアップ（依存関係の取得など）や、調べるためのコマンド・テストは実行してかまいませんが、変更は残りません。この工程では、コードの変更（実装）はしないでください。",
+    options.setup
+      ? "作業領域は、この実行のための使い捨ての写しです。リポジトリの手順にあるセットアップ（依存関係の取得など）や、調べるためのコマンド・テストは実行してかまいませんが、変更は残りません。この工程では、コードの変更（実装）はしないでください。"
+      : "作業領域は、この実行のための使い捨ての写しです。変更は残りません。この工程では、コードの変更（実装）はしないでください。",
+  ];
+}
+
+/**
+ * 開発のためのセットアップをしない指示（PBI-43）。コードを読めば足りる場面（工程の選択・内容の調査）で、
+ * リポジトリの AGENTS.md などに「最初にセットアップを実行する」とあっても、時間と失敗の原因を増やさないため。
+ */
+const NO_SETUP_LINES = [
+  "- 開発のためのセットアップ（依存関係のインストール・ビルド・setup のスクリプトなど）は実行しない。コードと設定のファイルを読んで判断する",
+  "- リポジトリの AGENTS.md・CLAUDE.md・README などの指示とぶつかる場合は、このプロンプトの指示を優先する（「最初にセットアップを実行する」とあっても実行しない）",
+];
+
+/** 調査の工程の性質（PBI-43）。オーケストレーターが判断しなかったときは、セットアップをしない内容の調査にする。 */
+function investigationKind(task: Task): InvestigationKind {
+  return task.investigation ?? "content";
+}
+
+/**
+ * 調査の工程での、セットアップについての指示（PBI-43）。内容の調査はセットアップをしない。
+ * 不具合の調査は、動かして確かめるので、これまでどおりリポジトリの指示に従う（何も足さない）。
+ */
+function investigationSetupLines(task: Task): string[] {
+  if (investigationKind(task) === "bug") return [];
+  return [
+    ...NO_SETUP_LINES,
+    "- コードを読むだけでは確かめられず、動かして確かめる必要がある場合に限り、セットアップしてよい（そのときは、必要だった理由を調査の結果に書く）",
   ];
 }
 
@@ -341,7 +370,8 @@ export function buildPrompt(
           "- 不具合なら、原因の箇所の見当と、再現の手がかり",
           "- 推測と、コードで確かめた事実を区別する。コードから判断できないことは「確認したいこと」として最後に列挙する",
           "- 要求要件・設計・修正そのものは書かない。コードは変更しない（作業領域は使い捨ての写しで、変更は残らない）",
-          ...codeLines(task),
+          ...investigationSetupLines(task),
+          ...codeLines(task, { setup: investigationKind(task) === "bug" }),
           "",
           "--- タスク ---",
           content,
@@ -357,7 +387,8 @@ export function buildPrompt(
         "- 関係する箇所・影響範囲、対応する場合の選択肢と注意点があれば書く",
         "- コードから判断できないことは「確認したいこと」として最後に列挙する",
         "- コードは変更しない（作業領域は使い捨ての写しで、変更は残らない）",
-        ...codeLines(task),
+        ...investigationSetupLines(task),
+        ...codeLines(task, { setup: investigationKind(task) === "bug" }),
         "",
         "--- タスク ---",
         content,
@@ -1280,12 +1311,14 @@ export function buildOrchestratorPrompt(task: Task): string {
       ? [
           "",
           `作業領域（カレントディレクトリ）に、対象リポジトリ（${task.repository.url}）の既定のブランチ（${task.repository.baseBranch}）の最新のコミット（${task.repository.baseCommit.slice(0, 7)}）のコードがあります。変更の大きさや影響範囲を判断するために読んでください（使い捨ての写しです。変更は残りません）。`,
+          ...NO_SETUP_LINES,
         ]
       : []),
     "",
-    "あわせて、コードを読んで次の2つを決めてください（PBI-25）。",
+    "あわせて、コードを読んで次のことを決めてください（PBI-25・PBI-43）。",
     `- baseBranch：変更の起点にするブランチ。ふつうは既定のブランチ（${task.repository?.baseBranch ?? "既定のブランチ"}）。CONTRIBUTING などで別のブランチ（例：develop）に向けると決まっているときだけ、そのブランチ名を書く`,
-    "- testCommand：このリポジトリのテストを実行するコマンド（例：npm ci && npm test）。package.json・Makefile・CI の設定などから判断する。sh -c で実行し、終了コード0で合格とみなす。依存関係の取得も含める。分からなければ空にする（推測で書かない）",
+    "- testCommand：このリポジトリのテストを実行するコマンド（例：npm ci && npm test）。package.json・Makefile・CI の設定などから判断する（ここでは実行しない）。sh -c で実行し、終了コード0で合格とみなす。依存関係の取得も含める。分からなければ空にする（推測で書かない）",
+    "- investigation：調査の工程の性質（PBI-43）。content（内容の調査：コードや仕組みを読んで説明する。開発のセットアップをしない）か、bug（不具合の調査：不具合の再現や原因の特定のために、動かして確かめる。セットアップをする）。不具合の修正（bugfix）や、不具合の原因を調べる調査は bug。迷う場合は content にする",
     "",
     "選べる工程の組み合わせ：",
     ...Object.entries(plans).map(([key, text]) => `- ${key}：${text}`),
@@ -1299,7 +1332,7 @@ export function buildOrchestratorPrompt(task: Task): string {
     "",
     "選んだ工程を、次の形式で必ず出してください。",
     "```json",
-    `{"${PLAN_HEADING}": {"plan": "${Object.keys(plans).join(" または ")}", "reason": "選んだ理由", "baseBranch": "ベースブランチ", "testCommand": "テストのコマンド（分からなければ空）"}}`,
+    `{"${PLAN_HEADING}": {"plan": "${Object.keys(plans).join(" または ")}", "reason": "選んだ理由", "baseBranch": "ベースブランチ", "testCommand": "テストのコマンド（分からなければ空）", "investigation": "content または bug"}}`,
     "```",
   ].join("\n");
 }
@@ -1434,7 +1467,15 @@ export function buildChildBody(
 export function extractStepPlan(
   output: string,
   allowed: readonly StepPlan[] = StepPlan.options,
-): { plan: StepPlan; reason: string; baseBranch?: string; testCommand?: string } | undefined {
+):
+  | {
+      plan: StepPlan;
+      reason: string;
+      baseBranch?: string;
+      testCommand?: string;
+      investigation?: InvestigationKind;
+    }
+  | undefined {
   const blocks = [...output.matchAll(/```json\s*\n([\s\S]*?)\n```/g)].reverse();
   for (const block of blocks) {
     try {
@@ -1446,11 +1487,14 @@ export function extractStepPlan(
         // ブランチ名とテストのコマンドは、形の正しいものだけを使う（PBI-25）
         const baseBranch = text(v.baseBranch);
         const testCommand = text(v.testCommand).slice(0, 1000);
+        // 調査の性質は、決めた値のときだけ使う（無ければ内容の調査として扱う。PBI-43）
+        const investigation = InvestigationKind.safeParse(v.investigation);
         return {
           plan: plan.data,
           reason,
           ...(/^[\w./-]+$/.test(baseBranch) && !baseBranch.startsWith("-") ? { baseBranch } : {}),
           ...(testCommand ? { testCommand } : {}),
+          ...(investigation.success ? { investigation: investigation.data } : {}),
         };
       }
     } catch {
