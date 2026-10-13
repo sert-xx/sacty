@@ -6002,11 +6002,20 @@ describe("統合レビュー（PBI-31）", () => {
         };
 
   /** 親タスクを、設計の承認とタスク分割の実行まで進める。 */
-  async function splitParent(outcomes: AgentOutcome[], repos = new FakeRepos()) {
+  async function splitParent(
+    outcomes: AgentOutcome[],
+    repos = new FakeRepos(),
+    options: { config?: () => ConfigResult; images?: Record<string, string> } = {},
+  ) {
     const activity = new SqliteActivityStore(dbPath);
     const made = makeService(activity, [out("# 要求要件"), design, ...outcomes], {
-      planner,
+      // 工程ごとのイメージ（PBI-41）は、親の工程の選択に足す
+      planner: async (task) => ({
+        ...(await planner(task)),
+        ...(options.images && !task.parent ? { images: options.images } : {}),
+      }),
       repos,
+      ...(options.config ? { config: options.config } : {}),
     });
     const { service } = made;
     const { id } = service.createTask({ projectId: "default", title: "決済をまるごと作る" });
@@ -6198,6 +6207,54 @@ describe("統合レビュー（PBI-31）", () => {
       expect.objectContaining({ reviewAt: at, remarkIds: ["split-1-1"] }),
     ]);
     activity.close();
+  });
+
+  it("統合レビューは、選んだイメージとその環境変数で実行し、設定から消したら実行せずに止まる（PBI-41 レビュー指摘）", async () => {
+    const java = {
+      name: "java",
+      image: "sacty-agent-java:test",
+      description: "Java",
+      baseImage: "java",
+      env: { MAVEN_OPTS: "-Xmx1g" },
+    };
+    let images: Record<string, typeof java> = { java };
+    const config = () => ({
+      ok: true as const,
+      config: {
+        ...(configOf(agent())() as { ok: true; config: SactyConfig }).config,
+        images,
+      },
+    });
+    const { service, executor, activity, id } = await splitParent(
+      [splitOutput(twoChildren), out("# A の調査"), out("# B の調査"), integration(true)],
+      new FakeRepos(),
+      { config, images: { integrate: "java" } },
+    );
+    await drain(service, id);
+    expect(service.get(id)?.task.gate).toEqual({ step: "integrate", submission: 1 });
+    expect(executor.images.at(-1)).toEqual({ image: java.image, env: java.env });
+    activity.close();
+
+    // 工程を決めた後、統合レビューの前に images から消したら、実行せずに理由を示して止まる
+    images = { java };
+    const second = await splitParent(
+      [splitOutput(twoChildren), out("# A の調査"), out("# B の調査")],
+      new FakeRepos(),
+      { config, images: { integrate: "java" } },
+    );
+    images = {};
+    const calls = () => second.executor.calls.length;
+    await drain(second.service, second.id);
+    const parent = second.service.get(second.id);
+    expect(parent?.task.status).toBe("paused");
+    expect(calls()).toBe(5); // 要求要件・設計・分割・子の調査2件。統合レビューは実行しない
+    const failed = parent?.activity.find(
+      (e) => e.type === "AgentRunFailed" && e.payload.step === "integrate",
+    );
+    expect(ja(failed?.type === "AgentRunFailed" ? failed.payload.message : undefined)).toContain(
+      "イメージ「java」",
+    );
+    second.activity.close();
   });
 
   it("ベースブランチを取得できなければ、理由を記録して止め、再開すると統合レビューからやり直す", async () => {

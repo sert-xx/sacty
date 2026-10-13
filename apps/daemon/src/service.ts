@@ -2608,9 +2608,13 @@ export class TaskService {
           );
         }
       }
+      // 統合レビューのイメージ（PBI-41）。images から消した名前なら、実行せずに理由を示して止める
+      const stepImage = resolveImage(config, latest.images?.[step]);
+      if (!stepImage.ok) executed ??= failed(stepImage.message);
       executed ??= await this.execute({
         agent,
-        image: config.image,
+        image: stepImage.ok ? stepImage.image : config.image,
+        ...(stepImage.ok ? { imageEnv: stepImage.env } : {}),
         runId,
         prompt: buildIntegrationReviewPrompt(latest, subtasks, { baseBranch, commit }),
         role: step,
