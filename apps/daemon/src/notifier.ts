@@ -74,6 +74,10 @@ const PAUSE: Record<Language, Record<PauseReason, string>> = {
 };
 
 /** Slack の mrkdwn で特別な意味を持つ文字を逃がす。 */
+/** Slack の通知の送り手の名前とアイコン（PBI-68）。sacty は AI のソフトウェア工場なので、工場の絵文字にする。 */
+export const SLACK_USERNAME = "Sacty";
+export const SLACK_ICON_EMOJI = ":factory:";
+
 const escapeMrkdwn = (text: string) =>
   text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 const link = (url: string, label: string) => `<${url}|${escapeMrkdwn(label)}>`;
@@ -241,6 +245,9 @@ export class SlackNotifier {
           },
           body: JSON.stringify({
             channel: destination.channel,
+            // 送り手の名前とアイコン（PBI-68）。ボットのトークンに chat:write.customize の権限が無いと、Slack は無視する
+            username: SLACK_USERNAME,
+            icon_emoji: SLACK_ICON_EMOJI,
             text,
             unfurl_links: false,
             unfurl_media: false,
