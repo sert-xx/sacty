@@ -1,24 +1,41 @@
 # sacty のエージェント実行用イメージ。タスクごとにこのイメージからコンテナを作る。
 # 既定のイメージ：元のイメージは config.yaml の image_build.base_image で変えられる（プライベートのレジストリなど。PBI-33）。
 #   Node.js 18 以上で、node ユーザーがあること（公式の node のイメージを写したものなど）。
-# 言語ごとのイメージ（config.yaml の images。PBI-41）：BASE_KIND=lang で、Node.js の入っていない元のイメージ
-#   （Debian・Ubuntu 系か、Rocky Linux などの RHEL 系。glibc のもの）に、NODE_IMAGE から Node.js を写して作る。
+# 言語ごとのイメージ（config.yaml の images。PBI-41）：BASE_KIND=lang。元のイメージ（Debian・Ubuntu 系か、Rocky Linux
+#   などの RHEL 系。glibc のもの）に Node.js 18 以上と npm があればそれを使い、無ければ NODE_IMAGE から写して作る。
 ARG BASE_IMAGE=node:22-bookworm-slim
 ARG NODE_IMAGE=node:22-bookworm-slim
 # node：元のイメージをそのまま使う。lang：Node.js を写し、node ユーザーを作る
 ARG BASE_KIND=node
 
+# Node.js を写す元（元のイメージに使える Node.js が無いとき）。node と npm の実際の場所を探して /sacty-node に集める
+# （npm が /usr/local/lib/node_modules に無いイメージもあるため）。無ければ空のまま（使うときに理由を示す）
 FROM ${NODE_IMAGE} AS sacty-node
+USER root
+RUN mkdir -p /sacty-node/bin /sacty-node/lib/node_modules \
+  && n="$(command -v node || true)" \
+  && if [ -n "$n" ]; then cp "$(readlink -f "$n")" /sacty-node/bin/node; fi \
+  && for d in "$(npm root -g 2>/dev/null || true)" /usr/local/lib/node_modules /usr/lib/node_modules; do \
+    if [ -n "$d" ] && [ -f "$d/npm/bin/npm-cli.js" ]; then cp -R "$d/npm" /sacty-node/lib/node_modules/npm; break; fi; \
+  done
 
 FROM ${BASE_IMAGE} AS base-node
 
 FROM ${BASE_IMAGE} AS base-lang
 USER root
-# Node.js（と npm）を、ほかのツールとぶつからない場所に写す。グローバルに入れる CLI もここに入る
-COPY --from=sacty-node /usr/local/bin/node /opt/sacty-node/bin/node
-COPY --from=sacty-node /usr/local/lib/node_modules/npm /opt/sacty-node/lib/node_modules/npm
-RUN ln -s ../lib/node_modules/npm/bin/npm-cli.js /opt/sacty-node/bin/npm \
-  && ln -s ../lib/node_modules/npm/bin/npx-cli.js /opt/sacty-node/bin/npx
+# 元のイメージに Node.js 18 以上と npm があれば、それを使う（Node.js のイメージなど）。無ければ、写す元から写した
+# Node.js（と npm）を、ほかのツールとぶつからない場所に置く。グローバルに入れる CLI もそこに入る
+COPY --from=sacty-node /sacty-node /opt/sacty-node
+RUN if command -v node >/dev/null 2>&1 && command -v npm >/dev/null 2>&1 \
+    && [ "$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)" -ge 18 ]; then \
+    rm -rf /opt/sacty-node; \
+  elif [ -x /opt/sacty-node/bin/node ] && [ -f /opt/sacty-node/lib/node_modules/npm/bin/npm-cli.js ]; then \
+    ln -s ../lib/node_modules/npm/bin/npm-cli.js /opt/sacty-node/bin/npm \
+    && ln -s ../lib/node_modules/npm/bin/npx-cli.js /opt/sacty-node/bin/npx; \
+  else \
+    echo "sacty: 元のイメージに Node.js 18 以上と npm が無く、Node.js を写す元のイメージ（images の node_image か image_build.base_image）にも node と npm が見つかりません。node と npm の入ったイメージを node_image に書いてください。" >&2; \
+    exit 1; \
+  fi
 ENV PATH=/opt/sacty-node/bin:$PATH
 # root では動かさない。元のイメージに node ユーザーが無ければ作る（UID 1000 が使われていれば、空いている番号）
 RUN if ! id node >/dev/null 2>&1; then \
