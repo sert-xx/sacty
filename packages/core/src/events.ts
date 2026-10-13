@@ -937,13 +937,39 @@ const PullRequestMerged = z.object({
     number: z.number().int().positive(),
     /** マージした GitHub のアカウント。 */
     by: z.string().optional(),
-    /** マージされた内容（PR の先頭のコミット）。 */
+    /** マージされた内容（PR の先頭のコミット。人が直したなら、人が直した最終のコミット）。 */
     commit: z.string().optional(),
     /**
-     * 最新の提出より前の内容でマージされた（差し戻しの間にマージされたなど）。このときは承認にせず、
-     * 人間の判断を待つ（差し戻すと、作り直した内容は新しい PR で出す）。
+     * 最新の提出より前の内容でマージされた（PBI-63 より前の版の記録）。このときは承認にせず、人間の判断を待った。
+     * いまの版は、違う内容でのマージも edited として承認にする（この記録で止まっているタスクも、次の確認で進める）。
      */
     outdated: z.boolean().default(false),
+    /** sacty が PR に出した最後のコミット（PBI-63。監査のため）。 */
+    submitted: z.string().optional(),
+    /** マージのコミット（GitHub から取れれば。PBI-63）。 */
+    mergeCommit: z.string().optional(),
+    /**
+     * 人が PR の中で直してからマージした（PR の先頭のコミットが、sacty が出したコミットと違う。PBI-63）。人がマージした
+     * ＝人が承認したので、承認として進める（最終レビューはやり直さない）。
+     */
+    edited: z.boolean().default(false),
+    /**
+     * 要求要件・設計の成果のファイル（人が直してマージしたときだけ。PBI-63）。マージ後のタスクブランチ（commit）から
+     * 読む。sacty の版と違えば、sacty の版（sacty）と人が直した版（final）の両方の本文を残し、人が直した版を承認済みの
+     * 成果にする。同じなら本文は残さない。消された・読めないなら、sacty の版を承認済みにし、そのことを残す（fallback）。
+     */
+    document: z
+      .object({
+        path: z.string().min(1),
+        /** ファイルを読んだコミット（マージ後のタスクブランチの先頭）。 */
+        commit: z.string().optional(),
+        sacty: z.string().optional(),
+        final: z.string().optional(),
+        fallback: z.enum(["deleted", "unreadable"]).optional(),
+        /** 読めなかった理由。 */
+        reason: DaemonText.optional(),
+      })
+      .optional(),
   }),
 });
 const PullRequestClosed = z.object({

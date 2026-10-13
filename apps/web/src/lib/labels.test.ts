@@ -339,7 +339,9 @@ describe("PR で判断する成果物チェック（PBI-14a）", () => {
   it("PR の状態に合わせて、状態を表示する", () => {
     expect(statusText(atPrGate("open"))).toBe("PR のマージ待ち");
     expect(statusText(atPrGate("closed"))).toBe("PR が閉じられた（判断待ち）");
-    expect(statusText(atPrGate("merged_outdated"))).toBe("古い提出がマージされた（判断待ち）");
+    expect(statusText(atPrGate("merged_outdated"))).toBe(
+      "違う内容でマージされた（承認として進めます）",
+    );
     // PR を作っていなければ、これまでどおり画面で承認する
     expect(statusText(atPrGate(undefined))).toBe("成果物チェック待ち");
     expect(statusTextIn(atPrGate("open"), labels.en)).toBe("Awaiting PR merge");
@@ -359,6 +361,35 @@ describe("PR で判断する成果物チェック（PBI-14a）", () => {
     expect(
       describeEvent(event({ type: "PullRequestMerged", payload: { number: 7, by: "reviewer" } })),
     ).toBe("PR #7 がマージされた（reviewer）→ 承認");
+    // 前の版の作業履歴（古い内容でのマージ）も読める
+    expect(
+      describeEvent(event({ type: "PullRequestMerged", payload: { number: 7, outdated: true } })),
+    ).toBe("PR #7 が最新の提出より前の内容でマージされた→ 人間の判断待ち");
+    // 人が直してからのマージは、両方のコミットと、成果のファイルを読めなかったことを出す（PBI-63）
+    const edited = (document?: { path: string; fallback?: "deleted" | "unreadable" }) =>
+      event({
+        type: "PullRequestMerged",
+        payload: {
+          number: 7,
+          by: "reviewer",
+          commit: "e".repeat(40),
+          submitted: "a".repeat(40),
+          edited: true,
+          ...(document ? { document } : {}),
+        },
+      });
+    expect(describeEvent(edited())).toBe(
+      "PR #7 が人の直した内容でマージされた（reviewer）→ 承認（sacty の提出 aaaaaaa → 人が直した最終 eeeeeee）",
+    );
+    expect(describeEvent(edited({ path: "d.md", fallback: "deleted" }))).toContain(
+      "成果のファイルが消されていたため、sacty の版を承認済みにした",
+    );
+    expect(describeEvent(edited({ path: "d.md", fallback: "unreadable" }))).toContain(
+      "成果のファイルを読めなかったため",
+    );
+    expect(describeIn(edited(), labels.en)).toBe(
+      "PR #7 was merged with a person's edits (reviewer) → approved (sacty's submission aaaaaaa → final eeeeeee)",
+    );
     expect(describeEvent(event({ type: "PullRequestClosed", payload: { number: 7 } }))).toBe(
       "PR #7 がマージされずに閉じられた → 人間の判断待ち",
     );
@@ -389,7 +420,7 @@ describe("要求要件・設計の PR（PBI-57）", () => {
     expect(statusText(pr("open"))).toBe("設計の PR のマージ待ち");
     expect(statusText(pr("open", 2))).toBe("設計の PR のマージ待ち（2回目）");
     expect(statusText(pr("closed"))).toBe("PR が閉じられた（判断待ち）");
-    expect(statusText(pr("merged_outdated"))).toBe("古い提出がマージされた（判断待ち）");
+    expect(statusText(pr("merged_outdated"))).toBe("違う内容でマージされた（承認として進めます）");
     expect(statusTextIn(pr("open"), labels.en)).toBe("Design PR awaiting merge");
     expect(
       statusText(task({ status: "awaiting_approval", gate: { step: "design", submission: 1 } })),

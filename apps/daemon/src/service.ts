@@ -43,6 +43,7 @@ import {
   type Project,
   ProjectDefinition,
   ProjectExport,
+  type PullRequestMerge,
   parseOrgUrl,
   parseRepoUrl,
   pendingQuestion,
@@ -376,21 +377,26 @@ export class TaskService {
         continue;
       }
       // 確かめている間に、人間が差し戻した・中止したなどで変わっていれば、記録しない
-      const latest = this.tasks.get(task.id);
-      if (!latest) continue;
-      const watched = gatePullRequest(latest);
-      if (
-        watched?.step !== pr.step ||
-        (latest.status !== "awaiting_approval" && latest.status !== "escalated") ||
-        watched.number !== pr.number
-      ) {
-        continue;
-      }
-      const current = watched.state;
-      if (
-        status.state === current ||
-        (status.state === "merged" && current === "merged_outdated")
-      ) {
+      const stillWatched = () => {
+        const latest = this.tasks.get(task.id);
+        if (!latest || this.cancelling.has(task.id)) return undefined;
+        const watched = gatePullRequest(latest);
+        if (
+          watched?.step !== pr.step ||
+          (latest.status !== "awaiting_approval" && latest.status !== "escalated") ||
+          watched.number !== pr.number ||
+          watched.commit !== pr.commit
+        ) {
+          return undefined;
+        }
+        return { latest, watched };
+      };
+      const found = stillWatched();
+      if (!found) continue;
+      let latest = found.latest;
+      const current = found.watched.state;
+      // 前の版で、違う内容でのマージとして止めた（merged_outdated）タスクも、承認として進める（PBI-63）
+      if (status.state === current) {
         // 開いたままの PR は、レビュー・コメントを指摘として取り込む（PBI-14b・PBI-57）
         if (status.state === "open" && latest.status === "awaiting_approval") {
           try {
@@ -403,27 +409,31 @@ export class TaskService {
         }
         continue;
       }
-      // 承認にするのは、最新の提出（記録したコミット）がマージされたときだけ
-      if (status.state === "merged" && status.headSha !== pr.commit) {
-        this.append(latest, [
-          {
-            actor: "sacty",
-            event: {
-              type: "PullRequestMerged",
-              payload: {
-                number: pr.number,
-                ...(status.mergedBy ? { by: status.mergedBy } : {}),
-                ...(status.headSha ? { commit: status.headSha } : {}),
-                outdated: true,
-              },
-            },
-          },
-        ]);
-        continue;
-      }
       if (status.state === "merged") {
+        // sacty が出したコミットと違う内容でマージされた（人が PR の中で直した・提案のコミットを積んだ）も、人がマージした
+        // ＝人が承認したので、承認として進める（最終レビューはやり直さない。PBI-63）。監査のため、sacty が出したコミットと
+        // 人が直した最終のコミットを両方残す。要求要件・設計は、人が直したファイルを承認済みの成果にする
+        const edited = status.headSha !== pr.commit;
+        let document: PullRequestMerge["document"];
+        if (edited && pr.step !== "pr") {
+          // 読むのは、マージの時点を特定できるコミット（マージのコミット、取れなければ PR の先頭）。タスクブランチの
+          // 先端は、マージの後に積まれた未レビューの変更を含みうるので使わない
+          const read = await this.readMergedDocument(
+            latest,
+            pr.number,
+            status.mergeCommit ?? status.headSha,
+            usedSecrets,
+          );
+          // タスクブランチを取得できなければ、何も記録せずに次の確認でやり直す
+          if (read === "retry") continue;
+          document = read;
+          const again = stillWatched();
+          if (!again) continue;
+          latest = again.latest;
+        }
         // マージは人間の承認なので、承認者は人間として記録する。要求要件・設計の PR（PBI-57）は、その工程の承認として
         // 次の工程に進める（承認した成果の書き出し（PBI-56）は、この承認の後に行う）
+        const head = edited ? status.headSha : pr.commit;
         this.append(latest, [
           {
             actor: "person",
@@ -432,8 +442,12 @@ export class TaskService {
               payload: {
                 number: pr.number,
                 ...(status.mergedBy ? { by: status.mergedBy } : {}),
-                commit: pr.commit,
+                ...(head ? { commit: head } : {}),
                 outdated: false,
+                submitted: pr.commit,
+                ...(status.mergeCommit ? { mergeCommit: status.mergeCommit } : {}),
+                edited,
+                ...(document ? { document } : {}),
               },
             },
           },
@@ -462,6 +476,79 @@ export class TaskService {
       }
     }
     await this.checkReviewPullRequests();
+  }
+
+  /**
+   * 人が PR の中で直してからマージした、要求要件・設計の成果のファイルを、マージ後のタスクブランチから読む（PBI-63）。
+   * 退避した git のメタデータで読み、作業領域・利用者の git の設定は使わない。読むのは、その PR に出した成果のファイルの
+   * パスだけ。読むコミットは、マージの時点を特定できるコミット（マージのコミット、取れなければ PR の先頭のコミット）で、
+   * 退避したメタデータに無ければ取得する（タスクブランチの先端は、マージの後に積まれた未レビューの変更を含みうるので
+   * 読まない）。sacty の版と違えば両方の本文を、同じなら本文を残さない。取得はできたが、ファイルが消された・中身を読めない
+   * （大きすぎる・UTF-8 でない・NUL を含む・通常のファイルでない）なら、sacty の版を承認済みにするよう、そのことを残す。
+   * タスクブランチを取得できない（ネットワーク・認証・GitHub の一時的なエラーなど）なら retry を返し、何も記録せずに
+   * 次の確認でやり直す（理由はデーモンのログに出す。秘密情報は伏せる）。
+   */
+  private async readMergedDocument(
+    task: Task,
+    number: number,
+    merged: string | undefined,
+    usedSecrets: string[],
+  ): Promise<PullRequestMerge["document"] | "retry"> {
+    const entry = task.stepPullRequests.find((p) => p.number === number);
+    if (!entry) return undefined;
+    const { step, path } = entry;
+    const retry = (reason: DaemonText): "retry" => {
+      console.warn(
+        `[daemon] PR #${number} でマージされた ${path} を取得できませんでした。次の確認でやり直します：${renderMessage(redactText(reason, usedSecrets), "ja")}`,
+      );
+      return "retry";
+    };
+    const loaded = this.deps.config();
+    if (!loaded.ok) return retry(loaded.problem);
+    // 退避した git のメタデータが無ければ、同じ起点で用意し直す
+    const ready = await this.prepareRepository(task, loaded.config);
+    if (!ready.ok) return retry(ready.message);
+    const current = this.mustGet(task.id);
+    const taskBranch = current.taskBranch;
+    if (!current.repository || !taskBranch) return retry(message("pr.workspaceMissing"));
+    // マージの時点を特定できるコミットが GitHub から取れなければ、次の確認でやり直す
+    if (!merged) return retry(message("git.invalidBaseCommit"));
+    const commit = merged;
+    const gitDir = this.trustedGitDir(current);
+    try {
+      const authEnv = await this.gitAuth(current, current.repository.url, usedSecrets);
+      // タスクブランチを取得すれば、マージのコミットは通常それに含まれる。含まれなければ（PR の先頭のコミットなど）、
+      // そのコミットを取得する（すでにあれば取得しない）
+      await this.deps.repos.fetchBranch(gitDir, taskBranch.branch, authEnv);
+      await this.deps.repos.fetchCommits(gitDir, [commit], authEnv);
+    } catch (error) {
+      return retry(errorText(error));
+    }
+    let content: string | undefined;
+    try {
+      content = await this.deps.repos.readFile(gitDir, commit, path);
+    } catch (error) {
+      const reason = redactText(errorText(error), usedSecrets);
+      // 中身を読めない（ファイルの問題）ときだけ、sacty の版で承認する。git を実行できないなどは、やり直す
+      if (
+        typeof reason === "string" ||
+        !["git.fileNotRegular", "git.fileTooLarge", "git.fileNotText"].includes(reason.code)
+      ) {
+        return retry(reason);
+      }
+      console.warn(
+        `[daemon] PR #${number} でマージされた ${path} を読めませんでした。sacty の版を承認済みにします：${renderMessage(reason, "ja")}`,
+      );
+      return { path, commit, fallback: "unreadable", reason };
+    }
+    if (content === undefined) {
+      console.warn(
+        `[daemon] PR #${number} のマージで ${path} が消されました。sacty の版を承認済みにします`,
+      );
+      return { path, commit, fallback: "deleted" };
+    }
+    const sacty = buildStepDocument(task, step);
+    return content === sacty ? { path, commit } : { path, commit, sacty, final: content };
   }
 
   /**

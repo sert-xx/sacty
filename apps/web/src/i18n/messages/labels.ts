@@ -102,7 +102,7 @@ const ja = {
     stepPrAwaitingMerge: (step: string, n: number) =>
       `${step}の PR のマージ待ち${n > 1 ? `（${n}回目）` : ""}`,
     prClosed: "PR が閉じられた（判断待ち）",
-    prMergedOutdated: "古い提出がマージされた（判断待ち）",
+    prMergedOutdated: "違う内容でマージされた（承認として進めます）",
     notReproduced: "再現できなかった（判断待ち）",
     integrationFailed: "統合レビューに通らない（判断待ち）",
     stepApproval: (step: string, n: number) => `${step}の承認待ち${n > 1 ? `（${n}回目）` : ""}`,
@@ -195,6 +195,14 @@ const ja = {
       `PR #${number} がマージされた${by ? `（${by}）` : ""}→ 承認`,
     PullRequestMergedOutdated: (number: number, by?: string) =>
       `PR #${number} が最新の提出より前の内容でマージされた${by ? `（${by}）` : ""}→ 人間の判断待ち`,
+    PullRequestMergedEdited: (
+      number: number,
+      by: string | undefined,
+      submitted: string,
+      final: string,
+      fallback?: "deleted" | "unreadable",
+    ) =>
+      `PR #${number} が人の直した内容でマージされた${by ? `（${by}）` : ""}→ 承認（sacty の提出 ${submitted} → 人が直した最終 ${final}）${fallback === "deleted" ? "。成果のファイルが消されていたため、sacty の版を承認済みにした" : fallback === "unreadable" ? "。成果のファイルを読めなかったため、sacty の版を承認済みにした" : ""}`,
     PullRequestClosed: (number: number) =>
       `PR #${number} がマージされずに閉じられた → 人間の判断待ち`,
     PullRequestReopened: (number: number) => `PR #${number} が開き直された → マージ待ち`,
@@ -353,7 +361,7 @@ const en: LabelMessages = {
     stepPrAwaitingMerge: (step, n) =>
       `${step} PR awaiting merge${n > 1 ? ` (submission ${n})` : ""}`,
     prClosed: "PR closed (needs you)",
-    prMergedOutdated: "An older submission was merged (needs you)",
+    prMergedOutdated: "Merged with different content (moving on as approved)",
     notReproduced: "Not reproduced (needs your decision)",
     integrationFailed: "Integration review failed (needs your decision)",
     stepApproval: (step, n) => `${step} awaiting approval${n > 1 ? ` (submission ${n})` : ""}`,
@@ -429,6 +437,8 @@ const en: LabelMessages = {
     PullRequestMerged: (number, by) => `PR #${number} merged${by ? ` (${by})` : ""} → approved`,
     PullRequestMergedOutdated: (number, by) =>
       `PR #${number} was merged with content older than the latest submission${by ? ` (${by})` : ""} → needs you`,
+    PullRequestMergedEdited: (number, by, submitted, final, fallback) =>
+      `PR #${number} was merged with a person's edits${by ? ` (${by})` : ""} → approved (sacty's submission ${submitted} → final ${final})${fallback === "deleted" ? ". The file was deleted, so sacty's version was approved" : fallback === "unreadable" ? ". The file could not be read, so sacty's version was approved" : ""}`,
     PullRequestClosed: (number) => `PR #${number} closed without merging → needs you`,
     PullRequestReopened: (number) => `PR #${number} reopened → awaiting merge`,
     IssueCommented: (url) => `Posted the investigation result to the issue (${url})`,
