@@ -820,6 +820,33 @@ ${extra}`,
       image(`    maven_mirror: ${url}\n`);
       expect(loadConfig(dir).ok).toBe(false);
     }
+    // イメージを作るときのパッケージとコマンド（PBI-50）
+    image(
+      "    packages: [nss, nspr, libstdc++, 'python3.12-pip', 'curl=8.5.0-2']\n    run:\n      - dnf config-manager --add-repo https://rpm.example.com/repo\n      - npx -y playwright@1.56.0 install-deps chromium\n",
+    );
+    expect(loadConfig(dir)).toMatchObject({
+      ok: true,
+      config: {
+        images: {
+          java: {
+            packages: ["nss", "nspr", "libstdc++", "python3.12-pip", "curl=8.5.0-2"],
+            run: [
+              "dnf config-manager --add-repo https://rpm.example.com/repo",
+              "npx -y playwright@1.56.0 install-deps chromium",
+            ],
+          },
+        },
+      },
+    });
+    // シェルの特別な文字を含むパッケージの名前・複数行のコマンドは書けない
+    for (const name of ["'nss; rm -rf /'", "'$(id)'", "'-y'", "'a b'"]) {
+      image(`    packages: [${name}]\n`);
+      expect(problem()).toContain("パッケージの名前");
+    }
+    image('    run: ["a\\nb"]\n');
+    expect(problem()).toContain("1行のコマンド");
+    image("    run: ['']\n");
+    expect(loadConfig(dir).ok).toBe(false);
     // default は既定のイメージの名前なので使えない。名前の形も決まっている
     for (const name of ["default", "Java", "a b"]) {
       write(`images:\n  "${name}":\n    description: d\n    base_image: b\n`);

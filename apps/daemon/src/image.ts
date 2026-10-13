@@ -111,6 +111,11 @@ export function imageBuildArgs(input: {
    * mavenMirror があれば Maven・Gradle の取得先をそこに向ける。
    */
   language?: { nodeImage?: string; mavenMirror?: string };
+  /**
+   * イメージを作るときに入れる OS のパッケージと、実行するコマンド（PBI-50）。コマンドは、ファイル（setupPath）に
+   * 書いて secret の仕組みで渡し、中身のハッシュ（パッケージを含む）で作り直させる。
+   */
+  setup: { packages: readonly string[]; path: string; hash: string };
 }): string[] {
   return [
     "build",
@@ -137,6 +142,13 @@ export function imageBuildArgs(input: {
     // --build-context は Docker の構成によっては使えないので、認証の .npmrc と同じ secret の仕組みで渡す
     "--secret",
     `id=npmconfig,src=${input.npmConfigPath}`,
+    ...(input.setup.packages.length > 0
+      ? ["--build-arg", `SACTY_PACKAGES=${input.setup.packages.join(" ")}`]
+      : []),
+    "--build-arg",
+    `SACTY_SETUP_HASH=${input.setup.hash}`,
+    "--secret",
+    `id=setup,src=${input.setup.path}`,
     input.dockerDir,
   ];
 }
@@ -184,6 +196,15 @@ export async function buildImage(deps: {
     const npmConfig = npmGlobalConfigContent(deps.build);
     writeFileSync(npmConfigPath, npmConfig);
     const language = deps.language;
+    // イメージを作るときに実行するコマンド（PBI-50）。上から順に実行し、失敗したら止める（sh -e）
+    const setupPath = join(dir, "setup.sh");
+    const setupScript = (language?.run ?? []).map((line) => `${line}\n`).join("");
+    writeFileSync(setupPath, setupScript);
+    const packages = language?.packages ?? [];
+    const setupHash = createHash("sha256")
+      .update(JSON.stringify({ packages, setupScript }))
+      .digest("hex")
+      .slice(0, 16);
     const baseImage = language ? language.baseImage : deps.build.baseImage;
     // Node.js を写す元は、指定が無ければ既定のイメージの元（プライベートのレジストリの node のイメージなど）
     const nodeImage = language?.nodeImage ?? deps.build.baseImage;
@@ -204,6 +225,7 @@ export async function buildImage(deps: {
         npmrcPath,
         npmConfigPath,
         npmConfigHash: createHash("sha256").update(npmConfig).digest("hex").slice(0, 16),
+        setup: { packages, path: setupPath, hash: setupHash },
       }),
     );
     return code === 0 ? undefined : imageBuildFailure(deps.build, language);

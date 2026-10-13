@@ -333,6 +333,27 @@ const ConfigFile = z
            * Maven・Gradle の取得先にするリポジトリ（組織のミラー）。Maven は settings.xml の mirror、Gradle は
            * init スクリプトで、すべての Maven のリポジトリをこの URL に向ける。認証の情報は書けない。
            */
+          /**
+           * イメージを作るときに root で入れる OS のパッケージ（PBI-50）。dnf・microdnf・yum・apt-get のうち、元のイメージに
+           * あるもので入れる（社内の rpm リポジトリなど、パッケージのリポジトリの設定は元のイメージか run で行う）。
+           */
+          packages: z
+            .array(
+              z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._+:@~=-]*$/, code("config.imagePackage")),
+            )
+            .default([]),
+          /**
+           * イメージを作るときに root で実行するシェルのコマンド（PBI-50。CLI の導入、Playwright の OS のライブラリなど）。
+           * 上から順に実行し、失敗したら止める。イメージに残るので、秘密情報は書かない。
+           */
+          run: z
+            .array(
+              z
+                .string()
+                .min(1)
+                .regex(/^[^\r\n]*$/, code("config.imageRun")),
+            )
+            .default([]),
           maven_mirror: z
             .url({ protocol: /^https?$/ })
             // XML（settings.xml）と Gradle の文字列に埋め込むので、引用符などの記号を含む URL は受け付けない
@@ -522,6 +543,9 @@ export type LanguageImage = {
   /** コンテナの中の環境変数（エージェントの実行とテストの実行の両方に渡す）。 */
   env: Record<string, string>;
   mavenMirror?: string;
+  /** イメージを作るときに入れる OS のパッケージと、実行するコマンド（PBI-50）。 */
+  packages?: string[];
+  run?: string[];
 };
 
 /** 既定のイメージの名前（オーケストレーター・プロジェクトの対象で、既定のイメージを指すときに使う。PBI-41）。 */
@@ -641,6 +665,8 @@ export function loadConfig(home: string): ConfigResult {
             ...(image.node_image ? { nodeImage: image.node_image } : {}),
             env: image.env,
             ...(image.maven_mirror ? { mavenMirror: image.maven_mirror } : {}),
+            packages: image.packages,
+            run: image.run,
           },
         ]),
       ),

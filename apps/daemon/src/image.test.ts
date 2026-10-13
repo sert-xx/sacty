@@ -48,6 +48,7 @@ describe("イメージの作成（PBI-33）", () => {
         npmVersion: "11",
         npmConfigPath: "/tmp/x/npmconfig",
         npmConfigHash: "abc123",
+        setup: { packages: [], path: "/tmp/x/setup.sh", hash: "def456" },
       }),
     ).toEqual([
       "build",
@@ -66,6 +67,11 @@ describe("イメージの作成（PBI-33）", () => {
       // --build-context は Docker の構成によっては使えないので、使わない
       "--secret",
       "id=npmconfig,src=/tmp/x/npmconfig",
+      // イメージを作るときに実行するコマンド（PBI-50）。言語ごとのイメージで書いたときだけ中身がある
+      "--build-arg",
+      "SACTY_SETUP_HASH=def456",
+      "--secret",
+      "id=setup,src=/tmp/x/setup.sh",
       "/pkg/docker",
     ]);
     // 書かなければ、Dockerfile の既定（Docker Hub の node・その npm）のまま
@@ -76,6 +82,7 @@ describe("イメージの作成（PBI-33）", () => {
         npmrcPath: "/n",
         npmConfigPath: "/c",
         npmConfigHash: "h",
+        setup: { packages: [], path: "/s", hash: "h" },
       }),
     ).not.toContain("BASE_IMAGE=");
   });
@@ -298,5 +305,60 @@ describe("イメージの作成（PBI-33）", () => {
       unknown: ["go", "rust"],
     });
     expect(imageBuildTargets({}, [])).toEqual({ ok: true, targets: [undefined] });
+  });
+
+  it("言語ごとのイメージの packages と run を渡し、変えたら作り直させる（PBI-50）", async () => {
+    const base = {
+      name: "rocky",
+      image: "sacty-agent-rocky:0.1.0",
+      description: "Rocky",
+      baseImage: "rockylinux:9",
+      env: {},
+    };
+    const build = async (language: typeof base & { packages?: string[]; run?: string[] }) => {
+      let args: string[] = [];
+      let script = "";
+      await buildImage({
+        image: "x",
+        build: {},
+        dockerDir: "/d",
+        secrets: new MemorySecretStore({}),
+        language,
+        run: async (a) => {
+          args = a;
+          const path = (a.find((v) => v.startsWith("id=setup,src=")) ?? "").slice(13);
+          script = readFileSync(path, "utf8");
+          return 0;
+        },
+      });
+      return { args, script, hash: args.find((v) => v.startsWith("SACTY_SETUP_HASH=")) };
+    };
+    const withSetup = await build({
+      ...base,
+      packages: ["nss", "nspr", "libdrm"],
+      run: ["curl -fsSL https://artifacts.example.com/pf-cli/install.sh | sh", "pf --version"],
+    });
+    expect(withSetup.args).toContain("SACTY_PACKAGES=nss nspr libdrm");
+    // コマンドは上から順に1行ずつ（ファイルで渡し、引数には出さない）
+    expect(withSetup.script).toBe(
+      "curl -fsSL https://artifacts.example.com/pf-cli/install.sh | sh\npf --version\n",
+    );
+    expect(withSetup.args.join(" ")).not.toContain("install.sh");
+    // パッケージやコマンドを変えると、ハッシュが変わる（作り直させる）
+    const changedRun = await build({
+      ...base,
+      packages: ["nss", "nspr", "libdrm"],
+      run: ["pf --version"],
+    });
+    const changedPackages = await build({
+      ...base,
+      packages: ["nss"],
+      run: withSetup.script.trim().split("\n"),
+    });
+    expect(new Set([withSetup.hash, changedRun.hash, changedPackages.hash]).size).toBe(3);
+    // 書かなければ、パッケージを渡さず、コマンドのファイルは空
+    const none = await build(base);
+    expect(none.args.some((v) => v.startsWith("SACTY_PACKAGES="))).toBe(false);
+    expect(none.script).toBe("");
   });
 });
