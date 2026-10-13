@@ -3,11 +3,12 @@ import { type ChildProcess, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { dirname } from "node:path";
+import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { renderMessage } from "@sacty/core";
 import { CONFIG_TEMPLATE, configPath, loadConfig, resolveHome } from "@sacty/daemon/config";
+import { initContextRepo } from "@sacty/daemon/context-template";
 import { buildImage, imageBuildSettings } from "@sacty/daemon/image";
 import {
   isOnePasswordRef,
@@ -25,6 +26,8 @@ const USAGE = `Usage:
       デーモンと画面（Next.js）を起動します。Ctrl+C で両方を終了します。
   sacty config init [--force]
       設定ファイル（~/.sacty/config.yaml）の雛形を作ります。
+  sacty context init [<dir>] [--force]
+      コンテキストリポジトリ（規則・スキル・MCP・エージェントの設定）の雛形を作ります。<dir> の既定は今のディレクトリです。
   sacty secret set <name>
       秘密情報（トークンやAPIキー）をmacOSのキーチェーンに保存します。値は入力を求められます。
   sacty image build
@@ -50,6 +53,16 @@ function configInit(force: boolean): void {
   console.log(`[sacty] 設定ファイルを作成しました：${path}`);
   console.log(
     "[sacty] 単価と認証方式を確認し、必要な秘密情報を `sacty secret set <名前>` で保存してください。",
+  );
+}
+
+function contextInit(dir: string | undefined, force: boolean): void {
+  const root = resolve(dir ?? ".");
+  const files = initContextRepo(root, force);
+  console.log(`[sacty] コンテキストリポジトリの雛形を作成しました：${root}`);
+  for (const file of files) console.log(`  ${file}`);
+  console.log(
+    "[sacty] 各ファイルの説明に沿って書いたら、git で管理して push し、画面のプロジェクトの設定の「コンテキストリポジトリ」にそのリポジトリを指定してください。",
   );
 }
 
@@ -242,6 +255,7 @@ async function main() {
     return;
   }
   if (command === "config" && sub === "init") return configInit(values.force);
+  if (command === "context" && sub === "init") return contextInit(arg, values.force);
   if (command === "secret" && sub === "set") return secretSet(arg);
   if (command === "image" && sub === "build") return imageBuild();
   if (command !== "up") {
