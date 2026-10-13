@@ -171,4 +171,37 @@ describe("コンテキストリポジトリの雛形（PBI-45）", () => {
     expect(readFileSync(join(repo, "rules.md"), "utf8")).toBe(CONTEXT_TEMPLATE_FILES["rules.md"]);
     expect(existsSync(join(dir, "missing"))).toBe(false);
   });
+
+  it.each([
+    ["skills", "skills"],
+    ["agents", "agents"],
+    ["agents/codex", "agents/codex"],
+  ])(
+    "途中のディレクトリ（%s）がリンクなら、--force でもリンク先に書かずに止まる",
+    (link, shown) => {
+      const outside = join(dir, "outside");
+      mkdirSync(outside);
+      writeFileSync(join(outside, "README.md"), "外の README");
+      writeFileSync(join(outside, "config.toml"), "外の設定");
+      const repo = join(dir, "context");
+      mkdirSync(join(repo, link, ".."), { recursive: true });
+      symlinkSync(outside, join(repo, link));
+      for (const force of [false, true]) {
+        expect(() => initContextRepo(repo, force)).toThrow(
+          new RegExp(`${shown.replace("/", "\\/")} がディレクトリではありません`),
+        );
+      }
+      expect(readFileSync(join(outside, "README.md"), "utf8")).toBe("外の README");
+      expect(readFileSync(join(outside, "config.toml"), "utf8")).toBe("外の設定");
+      expect(existsSync(join(outside, "codex"))).toBe(false);
+      // 止まったときは、ほかの雛形も書かない
+      expect(existsSync(join(repo, "rules.md"))).toBe(false);
+    },
+  );
+
+  it("途中のディレクトリの場所がファイルでも、止まる", () => {
+    writeFileSync(join(dir, "skills"), "ファイル");
+    expect(() => initContextRepo(dir, true)).toThrow(/skills がディレクトリではありません/);
+    expect(readFileSync(join(dir, "skills"), "utf8")).toBe("ファイル");
+  });
 });
