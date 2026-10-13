@@ -10,6 +10,10 @@
       "types": "./dist/config.d.ts",
       "default": "./dist/config.js"
     },
+    "./context-template": {
+      "types": "./dist/context-template.d.ts",
+      "default": "./dist/context-template.js"
+    },
     "./image": {
       "types": "./dist/image.d.ts",
       "default": "./dist/image.js"
