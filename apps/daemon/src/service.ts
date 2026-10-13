@@ -1435,11 +1435,9 @@ export class TaskService {
     if (outcome.kind === "failed") return fail(outcome.reason, outcome.message);
     const triage = extractTicketTriage(outcome.output);
     if (!triage) return fail("error", message("ticket.triageUnreadable"));
-    // 固定したリポジトリなら、出力のリポジトリは使わない。題か概要が無ければ、要件を書けていない
-    if (fixed && !triage.title && !triage.summary) {
-      return fail("error", triage.reason || message("ticket.triageUnreadable"));
-    }
-    if (!fixed && !triage.repo) {
+    // 後の工程は概要を読んで作業するので、概要が無ければ要件を書けていない（どちらの経路でも止める）。
+    // 固定したリポジトリなら、出力のリポジトリは使わない
+    if (!triage.summary || (!fixed && !triage.repo)) {
       return fail("error", triage.reason || message("ticket.triageUnreadable"));
     }
     const repo = fixed ?? candidates.find((c) => sameGitHubUrl(c, triage.repo));

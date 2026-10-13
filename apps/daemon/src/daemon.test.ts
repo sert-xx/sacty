@@ -7780,6 +7780,8 @@ describe("JIRA のチケットの取り込みとトリアージ（PBI-52）", ()
     for (const bad of [
       triageOut({ repo: "", summary: "読んだ要件", reason: "どのリポジトリか分からない" }),
       triageOut({ repo: "https://github.com/evil/other", reason: "x" }),
+      // 候補のリポジトリを選んでも、概要が無ければ止まる（通常の経路）
+      triageOut({ repo: "https://github.com/acme/api", title: "PAY-1 題だけ", reason: "x" }),
       { kind: "completed", output: "JSON なし" } as AgentOutcome,
     ]) {
       const { activity, service, executor } = setup([bad, rewrite, completed(20_000)]);
@@ -7826,7 +7828,13 @@ describe("JIRA のチケットの取り込みとトリアージ（PBI-52）", ()
   it("人が選んだリポジトリで読み直しても要件を書けなければ、工程を選ばずに止まり、選び直せる", async () => {
     const { activity, service, executor } = setup([
       triageOut({ repo: "", reason: "分からない" }),
-      triageOut({ repo: "https://github.com/acme/app", reason: "要件が読めない" }),
+      // 題だけで概要が無い
+      triageOut({
+        repo: "https://github.com/acme/app",
+        title: "PAY-1 題のみ取得",
+        summary: "",
+        reason: "要件が読めない",
+      }),
       triageOut({
         repo: "",
         title: "PAY-1 API の再送の判定",
@@ -7842,6 +7850,9 @@ describe("JIRA のチケットの取り込みとトリアージ（PBI-52）", ()
     await service.runNext(id);
     expect(service.get(id)?.task).toMatchObject({ status: "paused", steps: [] });
     expect(service.get(id)?.task.repository).toBeUndefined();
+    // 題も本文も、取り込んだときのまま（読めなかった題を使わない）
+    expect(service.get(id)?.task.title).toBe("PAY-1 PAY-1 の要約");
+    expect(service.get(id)?.task.ticketTriage?.by).toBe("person");
     // 選び直して再開すると、そのリポジトリで読み直す
     await service.chooseTicketRepository(id, "https://github.com/acme/api");
     service.resume(id, {});
