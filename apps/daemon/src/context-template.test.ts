@@ -3,6 +3,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   symlinkSync,
@@ -78,8 +79,8 @@ describe("コンテキストリポジトリの雛形（PBI-45）", () => {
           "https://example.com/context.git",
         ]);
         expect(prepared.placed.mcpServers).toEqual([]);
-        // スキルの説明（skills/README.md）はスキルにならない
-        expect(existsSync(join(prepared.dir, "skills"))).toBe(false);
+        // 雛形のスキルの説明（skills/README.md）はスキルにならず、既定のスキル（review）だけが置かれる
+        expect(readdirSync(join(prepared.dir, "skills"))).toEqual(["review"]);
       } finally {
         prepared.dispose();
       }
@@ -93,7 +94,8 @@ describe("コンテキストリポジトリの雛形（PBI-45）", () => {
       const defaultOnly = composeContext([loadDefaultContext(DEFAULT_CONTEXT_DIR)]);
       expect(withTemplate.agents).toEqual(defaultOnly.agents);
       expect(withTemplate.agentFiles).toEqual(defaultOnly.agentFiles);
-      expect(withTemplate.skills).toEqual([]);
+      expect(withTemplate.skills).toEqual(defaultOnly.skills);
+      expect(defaultOnly.skills.map((s) => s.name)).toEqual(["review"]);
     },
   );
 
