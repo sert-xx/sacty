@@ -1,18 +1,55 @@
 # sacty のエージェント実行用イメージ。タスクごとにこのイメージからコンテナを作る。
-# 元のイメージは、config.yaml の image_build.base_image で変えられる（プライベートのレジストリなど。PBI-33）。
-# 元のイメージは Node.js 18 以上で、node ユーザーがあること（公式の node のイメージを写したものなど）。
+# 既定のイメージ：元のイメージは config.yaml の image_build.base_image で変えられる（プライベートのレジストリなど。PBI-33）。
+#   Node.js 18 以上で、node ユーザーがあること（公式の node のイメージを写したものなど）。
+# 言語ごとのイメージ（config.yaml の images。PBI-41）：BASE_KIND=lang で、Node.js の入っていない元のイメージ
+#   （Debian・Ubuntu 系か、Rocky Linux などの RHEL 系。glibc のもの）に、NODE_IMAGE から Node.js を写して作る。
 ARG BASE_IMAGE=node:22-bookworm-slim
-FROM ${BASE_IMAGE}
+ARG NODE_IMAGE=node:22-bookworm-slim
+# node：元のイメージをそのまま使う。lang：Node.js を写し、node ユーザーを作る
+ARG BASE_KIND=node
+
+FROM ${NODE_IMAGE} AS sacty-node
+
+FROM ${BASE_IMAGE} AS base-node
+
+FROM ${BASE_IMAGE} AS base-lang
+USER root
+# Node.js（と npm）を、ほかのツールとぶつからない場所に写す。グローバルに入れる CLI もここに入る
+COPY --from=sacty-node /usr/local/bin/node /opt/sacty-node/bin/node
+COPY --from=sacty-node /usr/local/lib/node_modules/npm /opt/sacty-node/lib/node_modules/npm
+RUN ln -s ../lib/node_modules/npm/bin/npm-cli.js /opt/sacty-node/bin/npm \
+  && ln -s ../lib/node_modules/npm/bin/npx-cli.js /opt/sacty-node/bin/npx
+ENV PATH=/opt/sacty-node/bin:$PATH
+# root では動かさない。元のイメージに node ユーザーが無ければ作る（UID 1000 が使われていれば、空いている番号）
+RUN if ! id node >/dev/null 2>&1; then \
+    if command -v useradd >/dev/null 2>&1; then \
+      if getent passwd 1000 >/dev/null 2>&1; then useradd -m -s /bin/sh node; \
+      else useradd -m -u 1000 -s /bin/sh node; fi; \
+    else \
+      adduser -D -s /bin/sh node; \
+    fi; \
+  fi
+
+FROM base-${BASE_KIND}
 # イメージに入れる npm の版（config.yaml の image_build.npm_version。空なら元のイメージの npm。PBI-40）
 ARG NPM_VERSION=
+# Maven・Gradle の取得先にする組織のミラー（言語ごとのイメージの maven_mirror。空なら設定しない。PBI-41）
+ARG MAVEN_MIRROR=
 
 USER root
 
-# git が無ければ入れる（元のイメージに入っていれば、Debian のミラーに届かない環境でも作れる）
+# git が無ければ入れる（元のイメージに入っていれば、パッケージのミラーに届かない環境でも作れる）。
+# Debian・Ubuntu 系は apt-get、RHEL 系は dnf・microdnf・yum
 RUN if ! command -v git >/dev/null 2>&1; then \
-    apt-get update \
-    && apt-get install -y --no-install-recommends git ca-certificates \
-    && rm -rf /var/lib/apt/lists/*; \
+    if command -v apt-get >/dev/null 2>&1; then \
+      apt-get update \
+      && apt-get install -y --no-install-recommends git ca-certificates \
+      && rm -rf /var/lib/apt/lists/*; \
+    elif command -v dnf >/dev/null 2>&1; then dnf install -y git-core && dnf clean all; \
+    elif command -v microdnf >/dev/null 2>&1; then microdnf install -y git-core && microdnf clean all; \
+    elif command -v yum >/dev/null 2>&1; then yum install -y git && yum clean all; \
+    else echo "sacty: git が無く、パッケージの管理のコマンドも見つかりません。git の入った元のイメージを使ってください。" >&2; exit 1; \
+    fi; \
   fi
 
 # エージェントのCLI。版を固定し、上げるときはこのファイルを変える。
@@ -37,6 +74,33 @@ RUN --mount=type=secret,id=npmconfig,target=/run/secrets/npmconfig \
   && g="$(npm config get globalconfig)" && mkdir -p "$(dirname "$g")" \
   && { [ ! -s "$g" ] || [ -z "$(tail -c 1 "$g")" ] || echo; cat /run/secrets/npmconfig; } >> "$g"
 
-# root では動かさない（node イメージの node ユーザー）
+# root では動かさない（node ユーザー）
 USER node
 WORKDIR /workspace
+
+# Maven・Gradle の取得先を、組織のミラーに向ける（PBI-41）。Maven は settings.xml の mirror、Gradle は init スクリプトで、
+# プロジェクトに書かれたすべての Maven のリポジトリ（プラグインの取得先も含む）の URL をミラーに置き換える
+RUN if [ -n "$MAVEN_MIRROR" ]; then \
+    mkdir -p "$HOME/.m2" "${GRADLE_USER_HOME:-$HOME/.gradle}/init.d" \
+    && printf '%s\n' \
+      '<settings>' \
+      '  <mirrors>' \
+      '    <mirror>' \
+      '      <id>sacty-mirror</id>' \
+      '      <mirrorOf>*</mirrorOf>' \
+      "      <url>$MAVEN_MIRROR</url>" \
+      '    </mirror>' \
+      '  </mirrors>' \
+      '</settings>' > "$HOME/.m2/settings.xml" \
+    && printf '%s\n' \
+      "def sactyMirror = '$MAVEN_MIRROR'" \
+      'def sactyUseMirror = { repos -> repos.withType(MavenArtifactRepository).configureEach { it.url = sactyMirror } }' \
+      'beforeSettings { settings ->' \
+      '  sactyUseMirror(settings.pluginManagement.repositories)' \
+      '  try { sactyUseMirror(settings.dependencyResolutionManagement.repositories) } catch (ignored) {}' \
+      '}' \
+      'allprojects {' \
+      '  sactyUseMirror(buildscript.repositories)' \
+      '  sactyUseMirror(repositories)' \
+      '}' > "${GRADLE_USER_HOME:-$HOME/.gradle}/init.d/sacty-mirror.gradle"; \
+  fi

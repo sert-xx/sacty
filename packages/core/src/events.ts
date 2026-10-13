@@ -306,6 +306,15 @@ const StepsChosen = z.object({
     testCommand: z.string().trim().min(1).max(1000).optional(),
     /** 調査の工程の性質（PBI-43）。無ければ内容の調査として扱う（セットアップをしない側）。 */
     investigation: InvestigationKind.optional(),
+    /**
+     * 工程ごとに使うイメージの名前（config.yaml の images の名前か default。PBI-41）。書いていない工程は
+     * 既定のイメージ。テストの実行は、確かめる工程（実装・再現）のイメージで行う。
+     */
+    images: z.partialRecord(StepKey, z.string().min(1)).optional(),
+    /** イメージを決めたのが、プロジェクトの対象の指定か、オーケストレーターか。 */
+    imageSource: z.enum(["project", "orchestrator"]).optional(),
+    /** オーケストレーターがイメージを選んだ理由。 */
+    imageReason: z.string().max(1000).optional(),
     agentId: z.string().optional(),
     ...AgentSetting,
     usage: TokenUsage.optional(),

@@ -121,6 +121,10 @@ const ja = {
     StepsChosen: (steps: string, reason?: string) =>
       `工程を決定：${steps}${reason ? `（${reason}）` : ""}`,
     stepsJoin: " → ",
+    stepsImages: (images: string, source: "project" | "orchestrator", reason?: string) =>
+      ` / イメージ：${images}（${source === "project" ? "プロジェクトの対象の指定" : reason ? `オーケストレーター：${reason}` : "オーケストレーター"}）`,
+    stepImage: (step: string, image: string) => `${step}＝${image}`,
+    imagesJoin: "、",
     AgentRunStarted: (step: string, agent: string, auth: string) =>
       `${step}の実行を開始（${agent}・${auth}）`,
     AgentRunCompleted: (step: string, cost: string, viewpoints?: number) =>
@@ -309,6 +313,10 @@ const en: LabelMessages = {
     withCost: (actor, cost) => `${actor} · ${cost}`,
     TaskCreated: (actor) => `Task created (${actor})`,
     StepsChosen: (steps, reason) => `Steps chosen: ${steps}${reason ? ` (${reason})` : ""}`,
+    stepsImages: (images, source, reason) =>
+      ` / images: ${images} (${source === "project" ? "set on the project target" : reason ? `Orchestrator: ${reason}` : "Orchestrator"})`,
+    stepImage: (step, image) => `${step}=${image}`,
+    imagesJoin: ", ",
     stepsJoin: " → ",
     AgentRunStarted: (step, agent, auth) => `${step} started (${agent} · ${auth})`,
     AgentRunCompleted: (step, cost, viewpoints) =>

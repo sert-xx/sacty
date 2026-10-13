@@ -27,7 +27,7 @@ export default async function ProjectsPage() {
         <h2 id="new-project" className="text-[15px] font-semibold">
           {t.newTitle}
         </h2>
-        <ProjectEditor />
+        <ProjectEditor images={(await getStatus().catch(() => undefined))?.images ?? []} />
       </section>
     </>
   );

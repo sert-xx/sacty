@@ -5,6 +5,7 @@ import {
   buildImage,
   imageBuildArgs,
   imageBuildSettings,
+  imageBuildTargets,
   npmGlobalConfigContent,
   npmrcContent,
 } from "./image.js";
@@ -14,7 +15,7 @@ describe("イメージの作成（PBI-33）", () => {
   it("設定ファイルが無ければ既定で作り、設定ファイルに誤りがあれば既定に戻さずに止める（レビュー指摘）", () => {
     expect(
       imageBuildSettings({ ok: false, problem: message("config.missing", { path: "/x" }) }),
-    ).toEqual({ ok: true, image: "sacty-agent:0.1.0", build: {} });
+    ).toEqual({ ok: true, image: "sacty-agent:0.1.0", build: {}, images: {} });
     const invalid = message("config.invalid", { path: "image_build.npm_registry", detail: "URL" });
     expect(imageBuildSettings({ ok: false, problem: invalid })).toEqual({
       ok: false,
@@ -191,5 +192,111 @@ describe("イメージの作成（PBI-33）", () => {
       }),
     ).rejects.toBeInstanceOf(SecretNotFoundError);
     expect(ran).toBe(false);
+  });
+
+  it("言語ごとのイメージは、元のイメージに Node.js を写す指定（BASE_KIND=lang）と Maven のミラーを渡す（PBI-41）", async () => {
+    const java = {
+      name: "java",
+      image: "sacty-agent-java:0.1.0",
+      description: "Java 17",
+      baseImage: "registry.example.com/ci/java:17",
+      env: { GOPROXY: "https://proxy.example.com" },
+      mavenMirror: "https://maven.example.com/repository/maven-public/",
+    };
+    let args: string[] = [];
+    const failure = await buildImage({
+      image: "sacty-agent:0.1.0",
+      // Node.js を写す元は、指定が無ければ既定のイメージの元（プライベートのレジストリの node）
+      build: { baseImage: "registry.example.com/library/node:22" },
+      dockerDir: "/d",
+      secrets: new MemorySecretStore({}),
+      language: java,
+      run: async (a) => {
+        args = a;
+        return 0;
+      },
+    });
+    expect(failure).toBeUndefined();
+    expect(args.slice(0, 11)).toEqual([
+      "build",
+      "-t",
+      "sacty-agent-java:0.1.0",
+      "--build-arg",
+      "BASE_IMAGE=registry.example.com/ci/java:17",
+      "--build-arg",
+      "BASE_KIND=lang",
+      "--build-arg",
+      "NODE_IMAGE=registry.example.com/library/node:22",
+      "--build-arg",
+      "MAVEN_MIRROR=https://maven.example.com/repository/maven-public/",
+    ]);
+    // 環境変数はイメージに焼き込まない（実行のときに渡す）
+    expect(args.join(" ")).not.toContain("GOPROXY");
+
+    // node_image を書けばそちら。既定のイメージの元も無ければ、Dockerfile の既定（node:22-bookworm-slim）
+    await buildImage({
+      image: "x",
+      build: {},
+      dockerDir: "/d",
+      secrets: new MemorySecretStore({}),
+      language: { ...java, mavenMirror: undefined },
+      run: async (a) => {
+        args = a;
+        return 1;
+      },
+    }).then((message) => {
+      expect(message).toContain("Node.js を写すイメージ（Docker Hub の node:22-bookworm-slim）");
+      expect(message).toContain("registry.example.com/ci/java:17");
+    });
+    expect(args.some((a) => a.startsWith("NODE_IMAGE="))).toBe(false);
+    expect(args.some((a) => a.startsWith("MAVEN_MIRROR="))).toBe(false);
+    await buildImage({
+      image: "x",
+      build: { baseImage: "registry.example.com/library/node:22" },
+      dockerDir: "/d",
+      secrets: new MemorySecretStore({}),
+      language: { ...java, nodeImage: "registry.example.com/node:22-slim" },
+      run: async (a) => {
+        args = a;
+        return 0;
+      },
+    });
+    expect(args).toContain("NODE_IMAGE=registry.example.com/node:22-slim");
+    // 既定のイメージは BASE_KIND を渡さない（元のイメージをそのまま使う）
+    await buildImage({
+      image: "sacty-agent:0.1.0",
+      build: {},
+      dockerDir: "/d",
+      secrets: new MemorySecretStore({}),
+      run: async (a) => {
+        args = a;
+        return 0;
+      },
+    });
+    expect(args.join(" ")).not.toMatch(/BASE_KIND|NODE_IMAGE|MAVEN_MIRROR/);
+  });
+
+  it("名前を指定しなければ、既定と images のすべてを作る。default は既定、無い名前は作らずに返す（PBI-41）", () => {
+    const image = (name: string) => ({
+      name,
+      image: `sacty-agent-${name}:0.1.0`,
+      description: name,
+      baseImage: name,
+      env: {},
+    });
+    const images = { java: image("java"), py: image("py") };
+    expect(imageBuildTargets(images, [])).toEqual({
+      ok: true,
+      targets: [undefined, images.java, images.py],
+    });
+    expect(imageBuildTargets(images, ["py", "default", "py"])).toEqual({
+      ok: true,
+      targets: [images.py, undefined],
+    });
+    expect(imageBuildTargets(images, ["go", "py", "rust"])).toEqual({
+      ok: false,
+      unknown: ["go", "rust"],
+    });
+    expect(imageBuildTargets({}, [])).toEqual({ ok: true, targets: [undefined] });
   });
 });

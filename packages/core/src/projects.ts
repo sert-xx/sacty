@@ -14,9 +14,22 @@ import type { DaemonMessage } from "./messages.js";
  * プロジェクトの対象（PBI-25）。Org かリポジトリを、ホストを含めた URL で書く（GitHub Enterprise Server も同じ。PBI-40）。
  * 対象のリポジトリには画面からタスクを作れ、対象の Issue・PR は取り込んでタスクにする。
  */
+/**
+ * 対象で使うイメージの名前（config.yaml の images の名前か default。PBI-41）。指定すると、オーケストレーターに
+ * 選ばせず、すべての工程でこのイメージを使う。名前があるかは、タスクを始めるときに確かめる（設定は変わるため）。
+ */
+export const TargetImageName = z.preprocess(
+  (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+  z
+    .string()
+    .trim()
+    .regex(/^[a-z0-9][a-z0-9_-]{0,39}$/, code("input.imageName"))
+    .optional(),
+);
+
 export const ProjectTarget = z.discriminatedUnion("scope", [
-  z.object({ scope: z.literal("org"), target: OrgUrl }),
-  z.object({ scope: z.literal("repo"), target: RepoUrl }),
+  z.object({ scope: z.literal("org"), target: OrgUrl, image: TargetImageName }),
+  z.object({ scope: z.literal("repo"), target: RepoUrl, image: TargetImageName }),
 ]);
 export type ProjectTarget = z.infer<typeof ProjectTarget>;
 
@@ -195,6 +208,18 @@ export function responsibleProject(
     if (target) return { project, target };
   }
   return undefined;
+}
+
+/**
+ * そのリポジトリについて、プロジェクトの対象で指定したイメージの名前（PBI-41）。リポジトリの対象の指定が、
+ * Org の対象の指定より優先する（リポジトリの対象にイメージの指定が無ければ、Org の対象の指定）。
+ */
+export function targetImageOf(project: Project, repo: string): string | undefined {
+  const byRepo = project.targets.find((t) => t.scope === "repo" && sameGitHubUrl(t.target, repo));
+  const byOrg = project.targets.find(
+    (t) => t.scope === "org" && sameGitHubUrl(t.target, orgUrlOf(repo)),
+  );
+  return byRepo?.image ?? byOrg?.image;
 }
 
 /** Org の対象から除かれる、ほかのプロジェクトがリポジトリ単位で担当しているリポジトリ。 */

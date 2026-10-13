@@ -28,11 +28,14 @@ export function ProjectEditor({
   project,
   exclusions = [],
   github,
+  images = [],
 }: {
   project?: Project;
   exclusions?: Exclusion[];
   /** gh にログイン済みのアカウント（PBI-13）。分からなければ、その理由。 */
   github?: GitHubAccounts;
+  /** 対象で選べる、言語ごとのイメージ（config.yaml の images。PBI-41）。 */
+  images?: { name: string; description: string }[];
 }) {
   const [state, formAction, pending] = useActionState(saveProjectAction, initial);
   // 前の画面が隠れて残ることがあるので、id は固定にせず画面ごとに作る
@@ -198,6 +201,32 @@ export function ProjectEditor({
                           onChange={(e) => updateTarget(i, { target: e.target.value })}
                         />
                       </label>
+                      {/* イメージ（PBI-41）。images を書いていて、選べるときだけ出す */}
+                      {(images.length > 0 || target.image) && (
+                        <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+                          {t.image}
+                          <select
+                            className={SELECT}
+                            value={target.image ?? ""}
+                            onChange={(e) =>
+                              updateTarget(i, { image: e.target.value || undefined })
+                            }
+                          >
+                            <option value="">{t.imageAuto}</option>
+                            <option value="default">{t.imageDefault}</option>
+                            {images.map((image) => (
+                              <option key={image.name} value={image.name}>
+                                {image.name}（{image.description}）
+                              </option>
+                            ))}
+                            {target.image &&
+                              target.image !== "default" &&
+                              !images.some((image) => image.name === target.image) && (
+                                <option value={target.image}>{t.imageMissing(target.image)}</option>
+                              )}
+                          </select>
+                        </label>
+                      )}
                       <Button
                         type="button"
                         variant="ghost"

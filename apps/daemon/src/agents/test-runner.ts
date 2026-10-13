@@ -28,6 +28,8 @@ export interface TestRunner {
     image: string;
     workspaceDir: string;
     command: string;
+    /** イメージの環境変数（言語ごとのイメージの env。PBI-41）。 */
+    env?: Record<string, string>;
   }): Promise<TestRunResult>;
   /** 実行中のコンテナを止める（人間が一時停止・中止したとき）。無ければ何もしない。 */
   kill(runId: string): void;
@@ -65,13 +67,13 @@ export class DockerTestRunner implements TestRunner {
     this.containers.stopAll();
   }
 
-  async run({ runId, image, workspaceDir, command }: Parameters<TestRunner["run"]>[0]) {
+  async run({ runId, image, workspaceDir, command, env = {} }: Parameters<TestRunner["run"]>[0]) {
     const name = `sacty-run-${runId}`;
     const args = dockerRunArgs({
       runId,
       image,
       workspaceDir,
-      envNames: [],
+      envNames: Object.keys(env),
       mounts: [],
       command: ["sh", "-c", command],
     });
@@ -81,7 +83,7 @@ export class DockerTestRunner implements TestRunner {
     try {
       result = await new Promise<TestRunResult>((resolve) => {
         const child = this.spawnImpl("docker", args, {
-          env: dockerClientEnv(),
+          env: { ...dockerClientEnv(), ...env },
           stdio: ["ignore", "pipe", "pipe"],
         });
         this.containers.attach(name, child);

@@ -82,11 +82,19 @@ const PARAMS = {
   "input.invalidUrl": null,
   "input.reasoningEffort": null,
   "input.providerName": null,
+  "input.imageName": null,
   "config.providerMissing": z.object({ id: z.string() }),
   "config.hostAddress": null,
   "config.npmVersion": null,
   "config.npmConfigKey": null,
   "config.npmConfigSecret": null,
+  // 言語ごとのイメージ（PBI-41）
+  "config.imageName": null,
+  "config.imageEnvName": null,
+  "config.imageEnvSecret": null,
+  "config.imageEnvReserved": null,
+  "config.mavenMirror": null,
+  "image.unknown": z.object({ name: z.string() }),
   "input.channelRequired": null,
   // Slack の通知（PBI-38）
   "notify.failed": z.object({ project: z.string(), detail: TextParam }),
@@ -373,6 +381,8 @@ const ja: MessageDictionary = {
   "input.reasoningEffort":
     "リーズニングエフォートは、英小文字で書いてください（例：low・medium・high・xhigh）。",
   "input.providerName": "接続先の名前は、英数字・_・- で書いてください。",
+  "input.imageName":
+    "イメージの名前は、英小文字・数字・_・- で書いてください（config.yaml の images の名前か default）。",
   "config.providerMissing": ({ id }) => `providers に "${id}" がありません。`,
   "config.hostAddress":
     "gateway.host_address は、ホスト名か IP アドレス（または host-gateway）で書いてください。",
@@ -382,6 +392,17 @@ const ja: MessageDictionary = {
     "image_build.npm_config の項目は、npm の設定の名前と、1行の値で書いてください。",
   "config.npmConfigSecret":
     "image_build.npm_config には、認証の項目（_authToken など）は書けません（イメージに残るため）。認証は image_build.npm_token か、対象リポジトリの設定で行ってください。",
+  "config.imageName":
+    "images の名前は、英小文字・数字・_・- で書いてください（default は既定のイメージの名前なので使えません）。",
+  "config.imageEnvName": "images の env の名前は、英大文字・数字・_ で書いてください（値は1行）。",
+  "config.imageEnvSecret":
+    "images の env には、認証の値（TOKEN・PASSWORD などを含む名前や、ユーザー名・パスワードを含む URL）は書けません（コンテナの中のすべてのコマンドに見えるため）。",
+  "config.imageEnvReserved":
+    "images の env には、PATH・HOME や、DOCKER_・SACTY_・CODEX_・CLAUDE_・ANTHROPIC_・OPENAI_・NPM_CONFIG_ で始まる名前は書けません（sacty と docker の設定とぶつかるため）。",
+  "config.mavenMirror":
+    "images の maven_mirror は、ユーザー名・パスワードを含まない URL（http または https）で書いてください。",
+  "image.unknown": ({ name }) =>
+    `イメージ「${name}」は config.yaml の images にありません。images に書くか、プロジェクトの対象のイメージの指定を直してから、再開してください。`,
   "input.channelRequired": "チャンネルを書いてください。",
   "notify.failed": ({ project, detail }, text) =>
     `プロジェクト「${project}」の Slack の通知を送れませんでした：${text(detail)}（タスクは止めていません）`,
@@ -618,6 +639,8 @@ const en: MessageDictionary = {
   "input.reasoningEffort":
     "Write the reasoning effort in lowercase letters (e.g. low, medium, high, xhigh).",
   "input.providerName": "Use only letters, digits, _ and - in provider names.",
+  "input.imageName":
+    "Use only lowercase letters, digits, _ and - in image names (a name in images in config.yaml, or default).",
   "config.providerMissing": ({ id }) => `"${id}" is not in providers.`,
   "config.hostAddress":
     "Write gateway.host_address as a host name or IP address (or host-gateway).",
@@ -626,6 +649,18 @@ const en: MessageDictionary = {
     "Write each image_build.npm_config item as an npm config name and a one-line value.",
   "config.npmConfigSecret":
     "image_build.npm_config can't contain authentication items (such as _authToken), because they would stay in the image. Use image_build.npm_token or the target repository's settings.",
+  "config.imageName":
+    "Use only lowercase letters, digits, _ and - in image names (default is reserved for the default image).",
+  "config.imageEnvName":
+    "Write images env names in uppercase letters, digits and _ (values on one line).",
+  "config.imageEnvSecret":
+    "images env can't contain credentials (names with TOKEN, PASSWORD and so on, or URLs with a user name or password), because every command in the container can read them.",
+  "config.imageEnvReserved":
+    "images env can't use PATH, HOME, or names starting with DOCKER_, SACTY_, CODEX_, CLAUDE_, ANTHROPIC_, OPENAI_ or NPM_CONFIG_ (they would clash with sacty and docker settings).",
+  "config.mavenMirror":
+    "Write images maven_mirror as a URL (http or https) without a user name or password.",
+  "image.unknown": ({ name }) =>
+    `The image "${name}" is not in images in config.yaml. Add it to images, or fix the image of the project target, then resume.`,
   "input.channelRequired": "Write a channel.",
   "notify.failed": ({ project, detail }, text) =>
     `Could not send the Slack notification for the project "${project}": ${text(detail)} (tasks keep running)`,

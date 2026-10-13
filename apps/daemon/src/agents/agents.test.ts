@@ -726,6 +726,107 @@ ${extra}`,
     expect(version.ok ? "" : ja(version.problem)).toContain("image_build.npm_version");
   });
 
+  it("言語ごとのイメージ（images）を読み、認証の値・予約された名前・危ない URL は拒否する（PBI-41）", () => {
+    dir = mkdtempSync(join(tmpdir(), "sacty-config-"));
+    const write = (extra: string) =>
+      writeFileSync(
+        join(dir, "config.yaml"),
+        `default_agent: x
+agents:
+  x:
+    runtime: stub
+    auth: { mode: stub }
+    price_per_mtok_usd: { input: 1, cached_input: 0.1, output: 2 }
+${extra}`,
+      );
+    const problem = () => {
+      const result = loadConfig(dir);
+      return result.ok ? "" : ja(result.problem);
+    };
+    write("");
+    expect(loadConfig(dir)).toMatchObject({ ok: true, config: { images: {} } });
+    write(`images:
+  java17:
+    description: Java 17・Maven・Gradle
+    base_image: registry.example.com/ci/java:17
+    env:
+      GOPROXY: https://proxy.example.com,direct
+      PIP_INDEX_URL: https://pypi.example.com/simple
+    maven_mirror: https://maven.example.com/repository/maven-public/
+  py:
+    description: Python 3.12
+    base_image: python:3.12-slim
+    image: registry.example.com/sacty/py:1
+    node_image: registry.example.com/library/node:22
+`);
+    expect(loadConfig(dir)).toMatchObject({
+      ok: true,
+      config: {
+        images: {
+          java17: {
+            name: "java17",
+            // 書かなければ sacty-agent-<名前>:<既定のイメージの版>
+            image: "sacty-agent-java17:0.1.0",
+            description: "Java 17・Maven・Gradle",
+            baseImage: "registry.example.com/ci/java:17",
+            env: {
+              GOPROXY: "https://proxy.example.com,direct",
+              PIP_INDEX_URL: "https://pypi.example.com/simple",
+            },
+            mavenMirror: "https://maven.example.com/repository/maven-public/",
+          },
+          py: {
+            image: "registry.example.com/sacty/py:1",
+            nodeImage: "registry.example.com/library/node:22",
+            env: {},
+          },
+        },
+      },
+    });
+    const image = (body: string) =>
+      write(`images:\n  java:\n    description: d\n    base_image: b\n${body}`);
+    // 認証の値（名前・URL のユーザー名とパスワード）は、コンテナの中のすべてのコマンドに見えるので書けない
+    for (const env of [
+      "NPM_TOKEN: x",
+      "MAVEN_PASSWORD: x",
+      "PIP_INDEX_URL: https://user:pass@pypi.example.com/simple",
+      "GITHUB_API_KEY: x",
+    ]) {
+      image(`    env:\n      ${env}\n`);
+      expect(problem()).toContain("認証の値");
+    }
+    // sacty・docker の設定とぶつかる名前
+    for (const env of [
+      "PATH: /x",
+      "HOME: /x",
+      "CODEX_HOME: /x",
+      "DOCKER_HOST: x",
+      "NPM_CONFIG_REGISTRY: x",
+    ]) {
+      image(`    env:\n      ${env}\n`);
+      expect(problem()).toContain("PATH・HOME");
+    }
+    image("    env:\n      lower: x\n");
+    expect(problem()).toContain("英大文字・数字・_");
+    image('    env:\n      GOPROXY: "a\\nb"\n');
+    expect(loadConfig(dir).ok).toBe(false);
+    // Maven・Gradle の設定に埋め込むので、ユーザー名・パスワードや記号を含む URL は書けない
+    for (const url of [
+      "https://user:pass@maven.example.com/",
+      '"https://maven.example.com/\'x"',
+      '"https://maven.example.com/<x>"',
+      "ftp://maven.example.com/",
+    ]) {
+      image(`    maven_mirror: ${url}\n`);
+      expect(loadConfig(dir).ok).toBe(false);
+    }
+    // default は既定のイメージの名前なので使えない。名前の形も決まっている
+    for (const name of ["default", "Java", "a b"]) {
+      write(`images:\n  "${name}":\n    description: d\n    base_image: b\n`);
+      expect(problem()).toContain("images の名前");
+    }
+  });
+
   it("ゲートウェイ経由は Codex × Bedrock だけ。リトライの上限を読み、書かなければ既定にする（PBI-37）", () => {
     dir = mkdtempSync(join(tmpdir(), "sacty-config-"));
     const write = (yaml: string) => writeFileSync(join(dir, "config.yaml"), yaml);
@@ -825,6 +926,22 @@ agents:
       endpoint: { name: "corp-gw", viaGateway: true },
     });
     expect(result.config.stepAgents?.design?.id).toBe("sol-high");
+  });
+
+  it("雛形の images の例は、コメントを外せばそのまま読める（PBI-41）", () => {
+    dir = mkdtempSync(join(tmpdir(), "sacty-config-"));
+    const lines = CONFIG_TEMPLATE.split("\n");
+    const start = lines.indexOf("# images:");
+    const end = lines.findIndex((l, i) => i > start && !l.startsWith("#"));
+    const images = lines.slice(start, end).map((l) => l.replace(/^# ?/, ""));
+    writeFileSync(join(dir, "config.yaml"), `${CONFIG_TEMPLATE}\n${images.join("\n")}\n`);
+    const result = loadConfig(dir);
+    if (!result.ok) throw new Error(ja(result.problem));
+    expect(Object.keys(result.config.images ?? {})).toEqual(["java17", "python", "go"]);
+    expect(result.config.images?.go?.env).toEqual({
+      GOPROXY: "https://goproxy.example.com",
+      GONOSUMDB: "git.example.com",
+    });
   });
 
   it("使えない認証方式の組み合わせや、存在しない既定のAIは理由つきで拒否する", () => {

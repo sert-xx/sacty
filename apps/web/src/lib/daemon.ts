@@ -91,6 +91,8 @@ export type DaemonStatus = {
   warnings?: DaemonText[];
   /** GitHub Issue の取り込み（設定が無ければ null）。 */
   intake: IntakeStatus | null;
+  /** プロジェクトの対象で選べる、言語ごとのイメージ（PBI-41）。古いデーモンには無い。 */
+  images?: { name: string; description: string }[];
 };
 
 export type ProjectView = {

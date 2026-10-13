@@ -4,7 +4,7 @@ import { Suspense } from "react";
 import { DaemonError } from "@/components/daemon-error";
 import { ProjectEditor } from "@/components/project-editor";
 import { getMessages } from "@/i18n/server";
-import { DaemonUnavailableError, getGitHubAccounts, getProject } from "@/lib/daemon";
+import { DaemonUnavailableError, getGitHubAccounts, getProject, getStatus } from "@/lib/daemon";
 
 export default async function ProjectPage({ params }: { params: Promise<{ id: string }> }) {
   const t = (await getMessages()).projects;
@@ -52,6 +52,8 @@ async function ProjectSettings({ params }: { params: Promise<{ id: string }> }) 
         project={view.project}
         exclusions={view.exclusions}
         github={await getGitHubAccounts()}
+        // 選べるイメージ（PBI-41）。状態を取れなければ、選ぶ欄を出さない（指定済みのイメージは出す）
+        images={(await getStatus().catch(() => undefined))?.images ?? []}
       />
     </>
   );

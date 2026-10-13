@@ -4,6 +4,7 @@ import {
   GATED_STEPS,
   isCompleted,
   openProposal,
+  type StepKey,
   type Task,
 } from "@sacty/core";
 import type { LabelMessages } from "@/i18n/messages/labels";
@@ -128,11 +129,25 @@ export function describeEvent(event: ActivityEvent, l: LabelMessages): string {
   switch (event.type) {
     case "TaskCreated":
       return e.TaskCreated(actor);
-    case "StepsChosen":
-      return e.StepsChosen(
+    case "StepsChosen": {
+      const chosen = e.StepsChosen(
         event.payload.steps.map((s) => l.step[s]).join(e.stepsJoin),
         event.payload.reason === undefined ? undefined : l.text(event.payload.reason),
       );
+      // 工程ごとのイメージ（PBI-41）。書いていない工程は既定のイメージ
+      const images = Object.entries(event.payload.images ?? {});
+      if (images.length === 0) return chosen;
+      return (
+        chosen +
+        e.stepsImages(
+          images
+            .map(([step, image]) => e.stepImage(l.step[step as StepKey], image))
+            .join(e.imagesJoin),
+          event.payload.imageSource ?? "orchestrator",
+          event.payload.imageReason,
+        )
+      );
+    }
     case "AgentRunStarted":
       return e.AgentRunStarted(
         l.step[event.payload.step],

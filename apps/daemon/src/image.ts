@@ -3,7 +3,13 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { DaemonText } from "@sacty/core";
-import { type ConfigResult, DEFAULT_IMAGE, type SactyConfig } from "./config.js";
+import {
+  type ConfigResult,
+  DEFAULT_IMAGE,
+  DEFAULT_IMAGE_NAME,
+  type LanguageImage,
+  type SactyConfig,
+} from "./config.js";
 import type { SecretStore } from "./secrets.js";
 
 /**
@@ -16,14 +22,44 @@ import type { SecretStore } from "./secrets.js";
  * 設定から、作るイメージの名前と元を決める（PBI-33）。設定ファイルがまだ無ければ既定で作る。設定ファイルに
  * 誤りがあれば作らない（プライベートのレジストリの指定を捨てて、公開のレジストリ・既定の名前で作らないため）。
  */
-export function imageBuildSettings(
-  config: ConfigResult,
-):
-  | { ok: true; image: string; build: SactyConfig["imageBuild"] }
+export function imageBuildSettings(config: ConfigResult):
+  | {
+      ok: true;
+      image: string;
+      build: SactyConfig["imageBuild"];
+      /** 言語ごとのイメージ（PBI-41）。 */
+      images: Record<string, LanguageImage>;
+    }
   | { ok: false; problem: DaemonText } {
-  if (config.ok) return { ok: true, image: config.config.image, build: config.config.imageBuild };
+  if (config.ok) {
+    return {
+      ok: true,
+      image: config.config.image,
+      build: config.config.imageBuild,
+      images: config.config.images ?? {},
+    };
+  }
   const missing = typeof config.problem !== "string" && config.problem.code === "config.missing";
-  return missing ? { ok: true, image: DEFAULT_IMAGE, build: {} } : config;
+  return missing ? { ok: true, image: DEFAULT_IMAGE, build: {}, images: {} } : config;
+}
+
+/**
+ * `sacty image build [名前...]` で作るイメージ（PBI-41）。名前を指定しなければ、既定のイメージと、images に書いた
+ * すべての言語ごとのイメージ。default は既定のイメージ。images に無い名前があれば、作らずにその名前を返す。
+ */
+export function imageBuildTargets(
+  images: Record<string, LanguageImage>,
+  names: readonly string[],
+): { ok: true; targets: (LanguageImage | undefined)[] } | { ok: false; unknown: string[] } {
+  if (names.length === 0) return { ok: true, targets: [undefined, ...Object.values(images)] };
+  const unknown = names.filter((name) => name !== DEFAULT_IMAGE_NAME && !images[name]);
+  if (unknown.length > 0) return { ok: false, unknown };
+  return {
+    ok: true,
+    targets: [...new Set(names)].map((name) =>
+      name === DEFAULT_IMAGE_NAME ? undefined : images[name],
+    ),
+  };
 }
 
 /** npm の設定（.npmrc）。レジストリと、そのレジストリへの認証トークン。 */
@@ -70,12 +106,29 @@ export function imageBuildArgs(input: {
    * 設定を変えたら作り直させる（PBI-40）。
    */
   npmConfigHash: string;
+  /**
+   * 言語ごとのイメージ（PBI-41）。Node.js の入っていない元のイメージに、nodeImage から Node.js を写し、
+   * mavenMirror があれば Maven・Gradle の取得先をそこに向ける。
+   */
+  language?: { nodeImage?: string; mavenMirror?: string };
 }): string[] {
   return [
     "build",
     "-t",
     input.image,
     ...(input.baseImage ? ["--build-arg", `BASE_IMAGE=${input.baseImage}`] : []),
+    ...(input.language
+      ? [
+          "--build-arg",
+          "BASE_KIND=lang",
+          ...(input.language.nodeImage
+            ? ["--build-arg", `NODE_IMAGE=${input.language.nodeImage}`]
+            : []),
+          ...(input.language.mavenMirror
+            ? ["--build-arg", `MAVEN_MIRROR=${input.language.mavenMirror}`]
+            : []),
+        ]
+      : []),
     ...(input.npmVersion ? ["--build-arg", `NPM_VERSION=${input.npmVersion}`] : []),
     "--build-arg",
     `NPM_CONFIG_HASH=${input.npmConfigHash}`,
@@ -89,10 +142,19 @@ export function imageBuildArgs(input: {
 }
 
 /** 失敗したときに、確かめることを示す文。 */
-export function imageBuildFailure(build: SactyConfig["imageBuild"]): string {
+export function imageBuildFailure(
+  build: SactyConfig["imageBuild"],
+  language?: LanguageImage,
+): string {
+  const node = build.baseImage ?? "Docker Hub の node:22-bookworm-slim";
   const hints = [
     "Docker が起動しているか",
-    `元のイメージ（${build.baseImage ?? "Docker Hub の node:22-bookworm-slim"}）を取得できるか`,
+    ...(language
+      ? [
+          `元のイメージ（${language.baseImage}）と、Node.js を写すイメージ（${language.nodeImage ?? node}）を取得できるか`,
+          "元のイメージが Debian・Ubuntu 系か RHEL 系（glibc）で、git が入っているか、パッケージのミラーに届くか",
+        ]
+      : [`元のイメージ（${node}）を取得できるか`]),
     `npm のレジストリ（${build.npmRegistry ?? "https://registry.npmjs.org/"}）に届くか${build.npmToken ? "・認証トークンが正しいか" : ""}`,
     "元のイメージに git が無い場合は、Debian のミラーに届くか",
   ];
@@ -109,6 +171,8 @@ export async function buildImage(deps: {
   dockerDir: string;
   secrets: SecretStore;
   run: (args: string[]) => Promise<number>;
+  /** 言語ごとのイメージを作るとき（PBI-41）。npm の設定は image_build のものを使う。 */
+  language?: LanguageImage;
 }): Promise<string | undefined> {
   const token = deps.build.npmToken ? await deps.secrets.get(deps.build.npmToken) : undefined;
   const dir = mkdtempSync(join(tmpdir(), "sacty-image-"));
@@ -119,18 +183,30 @@ export async function buildImage(deps: {
     const npmConfigPath = join(dir, "npmconfig");
     const npmConfig = npmGlobalConfigContent(deps.build);
     writeFileSync(npmConfigPath, npmConfig);
+    const language = deps.language;
+    const baseImage = language ? language.baseImage : deps.build.baseImage;
+    // Node.js を写す元は、指定が無ければ既定のイメージの元（プライベートのレジストリの node のイメージなど）
+    const nodeImage = language?.nodeImage ?? deps.build.baseImage;
     const code = await deps.run(
       imageBuildArgs({
-        image: deps.image,
+        image: language ? language.image : deps.image,
         dockerDir: deps.dockerDir,
-        ...(deps.build.baseImage ? { baseImage: deps.build.baseImage } : {}),
+        ...(baseImage ? { baseImage } : {}),
+        ...(language
+          ? {
+              language: {
+                ...(nodeImage ? { nodeImage } : {}),
+                ...(language.mavenMirror ? { mavenMirror: language.mavenMirror } : {}),
+              },
+            }
+          : {}),
         ...(deps.build.npmVersion ? { npmVersion: deps.build.npmVersion } : {}),
         npmrcPath,
         npmConfigPath,
         npmConfigHash: createHash("sha256").update(npmConfig).digest("hex").slice(0, 16),
       }),
     );
-    return code === 0 ? undefined : imageBuildFailure(deps.build);
+    return code === 0 ? undefined : imageBuildFailure(deps.build, language);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

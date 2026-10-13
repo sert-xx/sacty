@@ -9,7 +9,7 @@ import { parseArgs } from "node:util";
 import { renderMessage } from "@sacty/core";
 import { CONFIG_TEMPLATE, configPath, loadConfig, resolveHome } from "@sacty/daemon/config";
 import { initContextRepo } from "@sacty/daemon/context-template";
-import { buildImage, imageBuildSettings } from "@sacty/daemon/image";
+import { buildImage, imageBuildSettings, imageBuildTargets } from "@sacty/daemon/image";
 import {
   isOnePasswordRef,
   KEYCHAIN_SERVICE,
@@ -30,8 +30,9 @@ const USAGE = `Usage:
       コンテキストリポジトリ（規則・スキル・MCP・エージェントの設定）の雛形を作ります。<dir> の既定は今のディレクトリです。
   sacty secret set <name>
       秘密情報（トークンやAPIキー）をmacOSのキーチェーンに保存します。値は入力を求められます。
-  sacty image build
-      エージェント実行用のコンテナイメージを作ります。`;
+  sacty image build [<名前>...]
+      エージェント実行用のコンテナイメージを作ります。名前を省くと、既定のイメージと config.yaml の images に
+      書いたすべての言語ごとのイメージを作ります（default は既定のイメージ）。`;
 
 /** 終了コードを返して終わる子プロセスを、入出力をつないだまま実行する。 */
 function runInherit(command: string, args: string[], cwd?: string): Promise<number> {
@@ -90,7 +91,7 @@ async function secretSet(name: string | undefined): Promise<void> {
   console.log(`[sacty] 「${name}」をキーチェーンに保存しました。`);
 }
 
-async function imageBuild(): Promise<void> {
+async function imageBuild(names: string[]): Promise<void> {
   // 元のイメージと npm のレジストリは config.yaml の image_build に従う（PBI-33）。設定ファイルに誤りがあれば、
   // 既定に戻して作らずに止める（プライベートのレジストリの指定を捨てないため）
   const config = loadConfig(resolveHome());
@@ -100,39 +101,57 @@ async function imageBuild(): Promise<void> {
       `${renderMessage(settings.problem, "ja")}設定ファイルを直してから、もう一度実行してください。`,
     );
   }
-  const { image, build } = settings;
-  const dockerDir = fileURLToPath(new URL("../docker", import.meta.url));
-  console.log(
-    `[sacty] イメージ ${image} を作成します（元のイメージ：${build.baseImage ?? "node:22-bookworm-slim"}・npm のレジストリ：${build.npmRegistry ?? "https://registry.npmjs.org/"}）。`,
-  );
-  let failure: string | undefined;
-  try {
-    failure = await buildImage({
-      image,
-      build,
-      dockerDir,
-      // npm のトークンは、キーチェーンの名前か 1Password の参照（PBI-34）
-      secrets: new ResolvingSecretStore(
-        new KeychainSecretStore(),
-        new OnePasswordSecretStore({
-          account: () => (config.ok ? config.config.onePasswordAccount : undefined),
-        }),
-      ),
-      run: (args) => runInherit("docker", args),
-    });
-  } catch (error) {
-    if (error instanceof SecretNotFoundError && isOnePasswordRef(error.secretName)) {
-      throw new Error(error.message);
-    }
-    if (error instanceof SecretNotFoundError) {
-      throw new Error(
-        `npm の認証トークン「${error.secretName}」がキーチェーンにありません。sacty secret set ${error.secretName} で保存してください。`,
-      );
-    }
-    throw error;
+  const { image, build, images } = settings;
+  // 名前を指定すれば、そのイメージだけ作る（default は既定のイメージ。PBI-41）
+  const selected = imageBuildTargets(images, names);
+  if (!selected.ok) {
+    throw new Error(
+      `config.yaml の images に ${selected.unknown.join("・")} がありません（作れるのは default${Object.keys(
+        images,
+      )
+        .map((n) => `・${n}`)
+        .join("")}）。`,
+    );
   }
-  if (failure) throw new Error(failure);
-  console.log(`[sacty] イメージ ${image} を作成しました。`);
+  const dockerDir = fileURLToPath(new URL("../docker", import.meta.url));
+  // npm のトークンは、キーチェーンの名前か 1Password の参照（PBI-34）
+  const secrets = new ResolvingSecretStore(
+    new KeychainSecretStore(),
+    new OnePasswordSecretStore({
+      account: () => (config.ok ? config.config.onePasswordAccount : undefined),
+    }),
+  );
+  for (const language of selected.targets) {
+    const tag = language?.image ?? image;
+    console.log(
+      language
+        ? `[sacty] イメージ ${tag}（${language.name}）を作成します（元のイメージ：${language.baseImage}・npm のレジストリ：${build.npmRegistry ?? "https://registry.npmjs.org/"}）。`
+        : `[sacty] イメージ ${tag} を作成します（元のイメージ：${build.baseImage ?? "node:22-bookworm-slim"}・npm のレジストリ：${build.npmRegistry ?? "https://registry.npmjs.org/"}）。`,
+    );
+    let failure: string | undefined;
+    try {
+      failure = await buildImage({
+        image,
+        build,
+        dockerDir,
+        secrets,
+        run: (args) => runInherit("docker", args),
+        ...(language ? { language } : {}),
+      });
+    } catch (error) {
+      if (error instanceof SecretNotFoundError && isOnePasswordRef(error.secretName)) {
+        throw new Error(error.message);
+      }
+      if (error instanceof SecretNotFoundError) {
+        throw new Error(
+          `npm の認証トークン「${error.secretName}」がキーチェーンにありません。sacty secret set ${error.secretName} で保存してください。`,
+        );
+      }
+      throw error;
+    }
+    if (failure) throw new Error(failure);
+    console.log(`[sacty] イメージ ${tag} を作成しました。`);
+  }
 }
 
 async function waitForDaemon(url: string, token: string, timeoutMs: number): Promise<void> {
@@ -257,7 +276,7 @@ async function main() {
   if (command === "config" && sub === "init") return configInit(values.force);
   if (command === "context" && sub === "init") return contextInit(arg, values.force);
   if (command === "secret" && sub === "set") return secretSet(arg);
-  if (command === "image" && sub === "build") return imageBuild();
+  if (command === "image" && sub === "build") return imageBuild(positionals.slice(2));
   if (command !== "up") {
     console.log(USAGE);
     process.exit(1);

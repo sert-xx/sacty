@@ -410,6 +410,41 @@ describe("オーケストレーターが選んだ工程（PBI-17）", () => {
     } as ActivityEvent;
     expect(describeEvent(event)).toBe("工程を決定：要求要件 → 実装 → PR作成（小さな変更）");
   });
+
+  it("工程ごとのイメージと、決めたのが誰か（理由）も表示する（PBI-41）", () => {
+    const chosen = (payload: Record<string, unknown>) =>
+      ({
+        type: "StepsChosen",
+        payload: {
+          steps: ["requirements", "implement", "pr"],
+          reason: "小さな変更",
+          fallback: false,
+          costUsd: 0,
+          estimated: false,
+          ...payload,
+        },
+        seq: 1,
+        id: "e1",
+        taskId: "t1",
+        projectId: "default",
+        at: "2026-10-11T00:00:00.000Z",
+        actor: "orchestrator",
+      }) as ActivityEvent;
+    expect(
+      describeEvent(
+        chosen({
+          images: { implement: "java17", pr: "java17" },
+          imageSource: "orchestrator",
+          imageReason: "pom.xml が Java 17",
+        }),
+      ),
+    ).toBe(
+      "工程を決定：要求要件 → 実装 → PR作成（小さな変更） / イメージ：実装＝java17、PR作成＝java17（オーケストレーター：pom.xml が Java 17）",
+    );
+    expect(
+      describeIn(chosen({ images: { implement: "py" }, imageSource: "project" }), labels.en),
+    ).toContain("images: Implement=py (set on the project target)");
+  });
 });
 
 describe("調査の工程（PBI-18）", () => {
