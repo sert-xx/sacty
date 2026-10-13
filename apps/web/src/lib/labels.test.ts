@@ -553,6 +553,23 @@ describe("オーケストレーターが選んだ工程（PBI-17）", () => {
     expect(describeEvent(started(false, [8080, 9000]))).toBe(
       "実装のためにサービスを起動：db、mock（compose.yaml。実行の後に消す） / 複数のサービスが使うため localhost に転送しないポート：8080、9000",
     );
+    // ホストに出すポートからの転送（PBI-60）
+    const withHostPorts = {
+      ...started(),
+      payload: {
+        runId: "r",
+        step: "implement",
+        file: "compose.yaml",
+        services: [
+          { name: "db", ports: [5432], hostPorts: [{ port: 15432, target: 5432 }] },
+          { name: "mock", ports: [] },
+        ],
+      },
+    } as ActivityEvent;
+    expect(describeEvent(withHostPorts)).toBe(
+      "実装のためにサービスを起動：db（localhost:15432 → db:5432）、mock（compose.yaml。実行の後に消す）",
+    );
+    expect(describeIn(withHostPorts, labels.en)).toContain("db (localhost:15432 → db:5432)");
     expect(describeIn(started(false, [8080]), labels.en)).toContain(
       "not forwarded to localhost because several services use them: 8080",
     );

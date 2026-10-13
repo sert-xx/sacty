@@ -26,30 +26,95 @@ export type ServicesSpec = {
 export type StartedServices = {
   /** エージェント・テストのコンテナをつなぐネットワーク。 */
   network: string;
-  services: { name: string; ports: number[] }[];
+  services: StartedService[];
 };
 
 /**
- * コンテナの中で localhost に転送するポート（PBI-60）。`127.0.0.1:<ポート>` → `<サービス名>:<ポート>`。
- * 複数のサービスが使うポートは、どれにつなぐか決められないので転送しない（shared。サービス名で接続してもらう）。
+ * 起動したサービス。ports はコンテナのポート。hostPorts は、compose の ports でホストに出すポート（published）が
+ * コンテナのポートと違うもの（"15432:5432" など。PBI-60）。sacty はホストに出さないが、localhost の転送に使う。
  */
-export function localForwards(services: StartedServices["services"]): {
+export type StartedService = {
+  name: string;
+  ports: number[];
+  hostPorts?: { port: number; target: number }[];
+};
+
+/**
+ * コンテナの中で localhost に転送するポート（PBI-60）。`127.0.0.1:<ポート>` → `<サービス名>:<ポート>` と、
+ * ホストに出すポートが違えば `127.0.0.1:<ホストのポート>` → `<サービス名>:<コンテナのポート>`。
+ * 複数のサービスが localhost の同じ番号を使うときは、どれにつなぐか決められないので転送しない
+ * （shared。サービス名で接続してもらう）。
+ */
+export function localForwards(services: readonly StartedService[]): {
   forwards: LocalForward[];
   shared: number[];
 } {
-  const users = new Map<number, string[]>();
+  // localhost の番号ごとの、転送先の候補（サービスごとに1つ。コンテナのポートと同じ番号を先にする）
+  const users = new Map<number, LocalForward[]>();
   for (const service of services) {
-    for (const port of new Set(service.ports)) {
-      users.set(port, [...(users.get(port) ?? []), service.name]);
+    const mine = new Map<number, LocalForward>();
+    for (const port of service.ports) mine.set(port, { port, host: service.name });
+    for (const { port, target } of service.hostPorts ?? []) {
+      if (!mine.has(port)) mine.set(port, { port, host: service.name, target });
     }
+    for (const [port, forward] of mine) users.set(port, [...(users.get(port) ?? []), forward]);
   }
   const forwards: LocalForward[] = [];
   const shared: number[] = [];
-  for (const [port, names] of [...users].sort(([a], [b]) => a - b)) {
-    if (names.length > 1) shared.push(port);
-    else forwards.push({ port, host: names[0] as string });
+  for (const [port, candidates] of [...users].sort(([a], [b]) => a - b)) {
+    if (candidates.length > 1) shared.push(port);
+    else forwards.push(candidates[0] as LocalForward);
   }
   return { forwards, shared };
+}
+
+/** 範囲（"8000-8001"）か1つの番号を、番号の並びにする。読めなければ undefined。 */
+function portRange(text: string): number[] | undefined {
+  const match = /^(\d+)(?:-(\d+))?$/.exec(text.trim());
+  if (!match) return undefined;
+  const start = Number(match[1]);
+  const end = match[2] === undefined ? start : Number(match[2]);
+  if (start < 1 || end > 65535 || end < start || end - start > 1000) return undefined;
+  return Array.from({ length: end - start + 1 }, (_, i) => start + i);
+}
+
+/**
+ * compose の ports の1つから、コンテナのポートと、ホストに出すポート（published）の組を取る（PBI-60）。
+ * 長い書き方（target・published。正規化した設定はこちら）と、短い書き方（"5432"・"15432:5432"・
+ * "127.0.0.1:15432:5432"・"8000-8001:8000-8001"・"5432/tcp"）の両方を読む。published が無い・範囲が
+ * 合わない・UDP のものは、コンテナのポートだけ。
+ */
+export function composePorts(entry: unknown): { target: number; published?: number }[] {
+  let targetText: string;
+  let publishedText: string | undefined;
+  let protocol = "tcp";
+  if (isObject(entry)) {
+    targetText = String(entry.target ?? "");
+    publishedText =
+      entry.published === undefined || entry.published === null || entry.published === ""
+        ? undefined
+        : String(entry.published);
+    if (typeof entry.protocol === "string") protocol = entry.protocol.toLowerCase();
+  } else if (typeof entry === "number" || typeof entry === "string") {
+    const [spec = "", proto] = String(entry).split("/");
+    if (proto) protocol = proto.toLowerCase();
+    // コンテナのポートは最後の「:」の後ろ。前はホストのアドレスとポート（[::1]:15432・127.0.0.1:15432・15432）
+    const last = spec.lastIndexOf(":");
+    targetText = spec.slice(last + 1);
+    if (last >= 0) {
+      const host = spec.slice(0, last);
+      const published = host.slice(host.lastIndexOf(":") + 1);
+      publishedText = published === "" || published.endsWith("]") ? undefined : published;
+    }
+  } else {
+    return [];
+  }
+  const targets = portRange(targetText) ?? [];
+  const published = publishedText === undefined ? undefined : portRange(publishedText);
+  if (protocol !== "tcp" || !published || published.length !== targets.length) {
+    return targets.map((target) => ({ target }));
+  }
+  return targets.map((target, i) => ({ target, published: published[i] as number }));
 }
 
 /** エージェント・テストのコンテナをつなぐ、sacty が足すネットワークの名前（compose の中の名前）。 */
@@ -193,14 +258,21 @@ export function sanitizeCompose(
       }
     }
     // ホストのポートに出さない・固定の名前を使わない（ほかのタスクとぶつかるため）。つなぐ先はネットワークの中
+    const published = (Array.isArray(service.ports) ? (service.ports as unknown[]) : []).flatMap(
+      composePorts,
+    );
     const ports = [
-      ...(Array.isArray(service.ports) ? (service.ports as Json[]) : []).map((p) =>
-        Number(p.target),
-      ),
+      ...published.map((p) => p.target),
       ...(Array.isArray(service.expose) ? (service.expose as unknown[]) : []).map((p) =>
         Number(String(p).split("/")[0]),
       ),
     ].filter((p) => Number.isInteger(p) && p > 0);
+    // ホストに出すポートがコンテナのポートと違うもの（localhost の転送に使う。PBI-60）
+    const hostPorts = new Map<number, number>();
+    for (const { target, published: port } of published) {
+      if (port !== undefined && port !== target && !hostPorts.has(port))
+        hostPorts.set(port, target);
+    }
     delete service.ports;
     delete service.container_name;
     if (mode === undefined) {
@@ -208,7 +280,13 @@ export function sanitizeCompose(
       for (const network of Object.keys(networks)) usedNetworks.add(network);
       service.networks = { ...networks, [SACTY_NETWORK]: null };
     }
-    services[name] = { ...service, _ports: [...new Set(ports)].sort((a, b) => a - b) };
+    services[name] = {
+      ...service,
+      _ports: [...new Set(ports)].sort((a, b) => a - b),
+      _hostPorts: [...hostPorts]
+        .sort(([a], [b]) => a - b)
+        .map(([port, target]) => ({ port, target })),
+    };
   }
 
   // ネットワーク・ボリューム：外部のもの・ホストに届くドライバーは使えない。固定の名前は外す（プロジェクトごとにする）
@@ -254,8 +332,10 @@ export function sanitizeCompose(
 
   const started = Object.entries(services).map(([name, service]) => {
     const ports = service._ports as number[];
+    const hostPorts = service._hostPorts as { port: number; target: number }[];
     delete service._ports;
-    return { name, ports };
+    delete service._hostPorts;
+    return { name, ports, ...(hostPorts.length > 0 ? { hostPorts } : {}) };
   });
   return {
     ok: true,

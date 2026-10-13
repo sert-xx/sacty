@@ -6,6 +6,7 @@ import { message } from "@sacty/core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   checkComposeSources,
+  composePorts,
   composeProject,
   DockerComposeServices,
   localForwards,
@@ -421,6 +422,138 @@ describe("localhost に転送するポート（PBI-60）", () => {
   it("1つのサービスに同じポートが重なっていても、複数のサービスとは数えない", () => {
     expect(localForwards([{ name: "db", ports: [5432, 5432] }])).toEqual({
       forwards: [{ port: 5432, host: "db" }],
+      shared: [],
+    });
+  });
+});
+
+describe("compose の ports から、ホストに出すポートとコンテナのポートの組を取る（PBI-60）", () => {
+  it("短い書き方", () => {
+    expect(composePorts("5432")).toEqual([{ target: 5432 }]);
+    expect(composePorts(5432)).toEqual([{ target: 5432 }]);
+    expect(composePorts("15432:5432")).toEqual([{ target: 5432, published: 15432 }]);
+    expect(composePorts("127.0.0.1:15432:5432")).toEqual([{ target: 5432, published: 15432 }]);
+    expect(composePorts("[::1]:15432:5432")).toEqual([{ target: 5432, published: 15432 }]);
+    expect(composePorts("15432:5432/tcp")).toEqual([{ target: 5432, published: 15432 }]);
+    expect(composePorts("8000-8001:8000-8001")).toEqual([
+      { target: 8000, published: 8000 },
+      { target: 8001, published: 8001 },
+    ]);
+    expect(composePorts("9000-9001:8000-8001")).toEqual([
+      { target: 8000, published: 9000 },
+      { target: 8001, published: 9001 },
+    ]);
+    expect(composePorts("8000-8001")).toEqual([{ target: 8000 }, { target: 8001 }]);
+  });
+
+  it("長い書き方（正規化した設定）", () => {
+    expect(composePorts({ target: 5432, published: "15432", protocol: "tcp" })).toEqual([
+      { target: 5432, published: 15432 },
+    ]);
+    expect(composePorts({ target: 5432, published: 15432 })).toEqual([
+      { target: 5432, published: 15432 },
+    ]);
+    expect(composePorts({ target: 5432, host_ip: "127.0.0.1", protocol: "tcp" })).toEqual([
+      { target: 5432 },
+    ]);
+  });
+
+  it("published が無い・範囲が合わない・読めない・UDP なら、コンテナのポートだけ", () => {
+    expect(composePorts("127.0.0.1::7000")).toEqual([{ target: 7000 }]);
+    expect(composePorts("[::1]::7000")).toEqual([{ target: 7000 }]);
+    expect(composePorts({ target: 9000, published: "9000-9001" })).toEqual([{ target: 9000 }]);
+    expect(composePorts("9000-9002:8000-8001")).toEqual([{ target: 8000 }, { target: 8001 }]);
+    expect(composePorts("abc:5432")).toEqual([{ target: 5432 }]);
+    expect(composePorts("70000:5432")).toEqual([{ target: 5432 }]);
+    expect(composePorts("15353:53/udp")).toEqual([{ target: 53 }]);
+    expect(composePorts({ target: 53, published: "15353", protocol: "udp" })).toEqual([
+      { target: 53 },
+    ]);
+    expect(composePorts("x")).toEqual([]);
+    expect(composePorts(null)).toEqual([]);
+    expect(composePorts({ target: "x" })).toEqual([]);
+  });
+
+  it("正規化した設定から、ホストに出すポートが違うものだけを返す（同じなら1つ）", () => {
+    const result = sanitizeCompose(
+      {
+        services: {
+          db: {
+            image: "postgres",
+            ports: [
+              { target: 5432, published: "15432", protocol: "tcp" },
+              { target: 5432, published: "25432", protocol: "tcp" },
+              { target: 6379, published: "6379", protocol: "tcp" },
+              { target: 7000, protocol: "tcp" },
+            ],
+          },
+          worker: { image: "w" },
+        },
+      },
+      ws,
+      [],
+    );
+    if (!result.ok) throw new Error(result.problems.join());
+    expect(result.services).toEqual([
+      {
+        name: "db",
+        ports: [5432, 6379, 7000],
+        hostPorts: [
+          { port: 15432, target: 5432 },
+          { port: 25432, target: 5432 },
+        ],
+      },
+      { name: "worker", ports: [] },
+    ]);
+    // ホストのポートには出さない（これまでどおり）
+    expect(
+      (result.config.services as Record<string, Record<string, unknown>>).db,
+    ).not.toHaveProperty("ports");
+  });
+});
+
+describe("ホストに出すポートからも localhost に転送する（PBI-60）", () => {
+  it("ホストのポート → コンテナのポートと、コンテナのポートの両方を転送する", () => {
+    expect(
+      localForwards([{ name: "db", ports: [5432], hostPorts: [{ port: 15432, target: 5432 }] }]),
+    ).toEqual({
+      forwards: [
+        { port: 5432, host: "db" },
+        { port: 15432, host: "db", target: 5432 },
+      ],
+      shared: [],
+    });
+  });
+
+  it("ホストのポートが、ほかのサービスのコンテナのポート・ホストのポートとぶつかれば、その番号は転送しない", () => {
+    expect(
+      localForwards([
+        { name: "db", ports: [5432], hostPorts: [{ port: 8080, target: 5432 }] },
+        { name: "mock", ports: [8080] },
+      ]),
+    ).toEqual({ forwards: [{ port: 5432, host: "db" }], shared: [8080] });
+    expect(
+      localForwards([
+        { name: "db", ports: [5432], hostPorts: [{ port: 15432, target: 5432 }] },
+        { name: "db2", ports: [5433], hostPorts: [{ port: 15432, target: 5433 }] },
+      ]),
+    ).toEqual({
+      forwards: [
+        { port: 5432, host: "db" },
+        { port: 5433, host: "db2" },
+      ],
+      shared: [15432],
+    });
+  });
+
+  it("同じサービスの中で、ホストのポートがコンテナのポートと同じ番号なら、コンテナのポートを優先する", () => {
+    expect(
+      localForwards([{ name: "app", ports: [80, 8080], hostPorts: [{ port: 8080, target: 80 }] }]),
+    ).toEqual({
+      forwards: [
+        { port: 80, host: "app" },
+        { port: 8080, host: "app" },
+      ],
       shared: [],
     });
   });

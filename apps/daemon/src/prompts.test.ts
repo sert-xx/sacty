@@ -366,9 +366,27 @@ describe("工程の選択と内容の調査では、開発のセットアップ�
         { name: "b", ports: [8080] },
       ]).slice(4),
     ).toEqual([
-      "- a：a:8080（複数のサービスが使うポートのため、localhost には転送していません）、a:9000 または localhost:9000",
-      "- b：b:8080（複数のサービスが使うポートのため、localhost には転送していません）",
+      "- a：a:8080（localhost:8080 は、複数のサービスが使う番号のため、転送していません）、a:9000 または localhost:9000",
+      "- b：b:8080（localhost:8080 は、複数のサービスが使う番号のため、転送していません）",
     ]);
+    // ホストに出すポートが違えば、そのポートでも届くと伝える。ぶつかる番号は転送していないと伝える
+    expect(
+      servicePromptLines([
+        { name: "db", ports: [5432], hostPorts: [{ port: 15432, target: 5432 }] },
+        { name: "cache", ports: [6379], hostPorts: [{ port: 15432, target: 6379 }] },
+      ]).slice(4),
+    ).toEqual([
+      "- db：db:5432 または localhost:5432（localhost:15432 は、複数のサービスが使う番号のため、転送していません）",
+      "- cache：cache:6379 または localhost:6379（localhost:15432 は、複数のサービスが使う番号のため、転送していません）",
+    ]);
+    expect(
+      servicePromptLines([
+        { name: "db", ports: [5432], hostPorts: [{ port: 15432, target: 5432 }] },
+      ]),
+    ).toContain("- db：db:5432 または localhost:5432・localhost:15432");
+    expect(servicePromptLines([{ name: "db", ports: [5432] }])[2]).toContain(
+      "そのポート（localhost:15432）でも届きます",
+    );
     expect(servicePromptLines([])).toEqual([]);
   });
 });

@@ -151,6 +151,8 @@ const ja = {
       sharedPorts: string,
     ) =>
       `${forTests ? `${step}のテスト` : step}のためにサービスを起動：${services}（${file}。実行の後に消す）${sharedPorts ? ` / 複数のサービスが使うため localhost に転送しないポート：${sharedPorts}` : ""}`,
+    /** ホストに出すポートからも localhost に転送するサービス（PBI-60）。 */
+    serviceHostPorts: (name: string, ports: string) => `${name}（${ports}）`,
     AgentRunStarted: (step: string, agent: string, auth: string) =>
       `${step}の実行を開始（${agent}・${auth}）`,
     AgentRunCompleted: (step: string, cost: string, viewpoints?: number) =>
@@ -387,6 +389,7 @@ const en: LabelMessages = {
         : "Could not comment the PR URL on the ticket",
     ServicesStarted: (step, file, services, forTests, sharedPorts) =>
       `Started services for ${forTests ? `the ${step} tests` : step}: ${services} (${file}; removed after the run)${sharedPorts ? ` / not forwarded to localhost because several services use them: ${sharedPorts}` : ""}`,
+    serviceHostPorts: (name, ports) => `${name} (${ports})`,
     stepsJoin: " → ",
     AgentRunStarted: (step, agent, auth) => `${step} started (${agent} · ${auth})`,
     AgentRunCompleted: (step, cost, viewpoints) =>

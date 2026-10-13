@@ -183,6 +183,12 @@ describe("localhost の転送（PBI-60）", () => {
 });
 
 describe("コマンドの組み立て（PBI-60）", () => {
+  it("転送先のポートが違えば（ホストに出すポート）、そのポートにつなぐ", () => {
+    expect(withLocalForwards(["sh"], [{ port: 15432, host: "db", target: 5432 }]).slice(4)).toEqual(
+      ['[[15432,"db",5432]]', "sh"],
+    );
+  });
+
   it("転送するものが無ければ、コマンドはそのまま", () => {
     const command = ["sh", "-c", "npm test"];
     expect(withLocalForwards(command, [])).toBe(command);

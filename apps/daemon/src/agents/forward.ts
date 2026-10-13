@@ -6,8 +6,11 @@
  * 同じ終了コードで終わる（転送も止まる）。
  */
 
-/** localhost に転送するポートと、転送先のサービス。 */
-export type LocalForward = { port: number; host: string };
+/**
+ * localhost に転送するポートと、転送先のサービス。target は転送先のポート（無ければ port と同じ。
+ * ホストに出すポートが違うとき（"15432:5432"）に使う）。
+ */
+export type LocalForward = { port: number; host: string; target?: number };
 
 /** 転送しなかったポートの知らせの先頭（標準エラー出力に出す。デーモンのログに写すときの目印）。 */
 export const FORWARD_NOTICE_PREFIX = "[sacty] localhost の転送：";
@@ -67,7 +70,7 @@ const listen = (address, listenPort, host, port) =>
 /** コンテナで実行するコマンドを、転送を起動してから動かすコマンドにする。転送するものが無ければ、そのまま。 */
 export function withLocalForwards(command: string[], forwards: readonly LocalForward[]): string[] {
   if (forwards.length === 0) return command;
-  const spec = JSON.stringify(forwards.map((f) => [f.port, f.host, f.port]));
+  const spec = JSON.stringify(forwards.map((f) => [f.port, f.host, f.target ?? f.port]));
   return ["node", "-e", FORWARD_SCRIPT, "--", spec, ...command];
 }
 

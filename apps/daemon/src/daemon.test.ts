@@ -2799,7 +2799,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         [8080],
       ]);
       expect(promptOf(executor, 3)).toContain(
-        "- mock：mock:8080（複数のサービスが使うポートのため、localhost には転送していません）",
+        "- mock：mock:8080（localhost:8080 は、複数のサービスが使う番号のため、転送していません）",
       );
       activity.close();
 
