@@ -222,6 +222,15 @@ export function createApp(
     }
   });
 
+  // 再レビュー（PBI-44）
+  app.post("/api/tasks/:id/rereview", (c) => {
+    try {
+      return c.json({ task: service.rereview(c.req.param("id")) });
+    } catch (error) {
+      return handleError(c, error);
+    }
+  });
+
   app.post("/api/tasks/:id/resume", async (c) => {
     const json = await readJson(c);
     if (!json.ok) return c.json({ error: "invalid_json" }, 400);

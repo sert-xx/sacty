@@ -20,6 +20,7 @@ import {
   importProject,
   pauseTask,
   requestChanges,
+  rereviewTask,
   resumeTask,
   runIntake,
   saveProject,
@@ -224,6 +225,9 @@ export async function saveSettingsAction(
   try {
     result = await saveSettings({
       intakeLabel: String(formData.get("intakeLabel") ?? ""),
+      // PR のレビューの取り込み（PBI-44）
+      reviewLabel: String(formData.get("reviewLabel") ?? ""),
+      reviewRequested: formData.get("reviewRequested") === "on",
       maxParallelTasks: String(formData.get("maxParallelTasks") ?? ""),
     });
   } catch {
@@ -321,6 +325,23 @@ export async function pauseTaskAction(
   let result: Awaited<ReturnType<typeof pauseTask>>;
   try {
     result = await pauseTask(String(formData.get("taskId") ?? ""));
+  } catch {
+    return { message: a.daemonDown };
+  }
+  if (!result.ok) return { message: result.message };
+  refresh();
+  return {};
+}
+
+/** 再レビュー（PBI-44）。PR の最新のコミットでもう一度レビューして投稿する。 */
+export async function rereviewTaskAction(
+  _prev: TaskControlState,
+  formData: FormData,
+): Promise<TaskControlState> {
+  const a = (await getMessages()).common.action;
+  let result: Awaited<ReturnType<typeof rereviewTask>>;
+  try {
+    result = await rereviewTask(String(formData.get("taskId") ?? ""));
   } catch {
     return { message: a.daemonDown };
   }

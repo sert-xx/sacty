@@ -12,6 +12,7 @@ import {
   budgetState,
   type CleanupTarget,
   CreateTaskInput,
+  canRereview,
   changeRounds,
   computeCostUsd,
   type DaemonMessage,
@@ -211,11 +212,26 @@ export type DaemonStatus = {
 export type IntakeStatus = {
   /** 取り込むラベル（sacty の設定。PBI-26）。設定していなければ無い（取り込まない）。 */
   label?: string;
+  /** PR のレビュー用のラベルと、自分にレビューが依頼された PR を取り込むか（sacty の設定。PBI-44）。 */
+  reviewLabel?: string;
+  reviewRequested?: boolean;
   lastRunAt?: string;
   /** 直近の取り込みで作ったタスクの数。 */
   imported?: number;
   /** 取り込めなかった取り込み元（検索の条件）と理由。 */
   errors?: { query?: string; message: DaemonText }[];
+};
+
+/**
+ * 取り込みの検索の条件（取り込み元）。account は検索に使う gh のアカウント、project はプロジェクトの名前。
+ * review は、PR のレビューの取り込みの検索（PBI-44）。
+ */
+export type IntakeSource = {
+  host: string;
+  query: string;
+  account?: string;
+  project: string;
+  review?: "requested" | "label";
 };
 
 /** プロジェクトと、Org の取り込み元ごとの除外リポジトリ（ほかのプロジェクトが担当）。 */
@@ -364,6 +380,48 @@ export class TaskService {
           },
         ]);
       }
+    }
+    await this.checkReviewPullRequests();
+  }
+
+  /**
+   * PR のレビューの取り込みのタスク（PBI-44）のうち、終わっていないものの PR の状態を確かめ、マージされた・
+   * マージせずに閉じられたら中止する（もうレビューする必要が無いため）。PR は、プロジェクトの gh のアカウントで
+   * 確かめる。確かめられないタスクは、次の確認でやり直す。
+   */
+  private async checkReviewPullRequests(): Promise<void> {
+    const open = [...this.tasks.values()].filter(
+      (t) =>
+        t.source?.review !== undefined &&
+        t.source.kind === "github_pull_request" &&
+        t.status !== "cancelled" &&
+        !isCompleted(t),
+    );
+    for (const task of open) {
+      const source = task.source;
+      if (!source) continue;
+      const usedSecrets: string[] = [];
+      let status: PullRequestStatus;
+      try {
+        const token = await this.githubToken(task, source.repo, usedSecrets);
+        status = await this.deps.pulls.status({ repo: source.repo, token, number: source.number });
+      } catch (error) {
+        console.warn(
+          `[daemon] PR #${source.number}（${source.repo}）の状態を確認できませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
+        );
+        continue;
+      }
+      if (status.state === "open") continue;
+      // 確かめている間に、中止された・完了した（レビューを投稿した）なら、中止しない
+      const latest = this.tasks.get(task.id);
+      if (!latest || latest.status === "cancelled" || isCompleted(latest)) continue;
+      if (this.cancelling.has(task.id)) continue;
+      await this.cancel(
+        task.id,
+        status.state === "merged" ? "pull_request_merged" : "pull_request_closed",
+      ).catch((error: unknown) => {
+        console.warn(`[daemon] レビューのタスク ${task.id} を中止できませんでした：`, error);
+      });
     }
   }
 
@@ -928,8 +986,14 @@ export class TaskService {
     return this.deps.settings.put(SactySettings.parse(raw));
   }
 
-  private labelOf(settings: SactySettings): { label?: string } {
-    return settings.intakeLabel ? { label: settings.intakeLabel } : {};
+  private labelOf(
+    settings: SactySettings,
+  ): Pick<IntakeStatus, "label" | "reviewLabel" | "reviewRequested"> {
+    return {
+      ...(settings.intakeLabel ? { label: settings.intakeLabel } : {}),
+      ...(settings.reviewLabel ? { reviewLabel: settings.reviewLabel } : {}),
+      ...(settings.reviewRequested ? { reviewRequested: true } : {}),
+    };
   }
 
   getProject(id: string): ProjectView | undefined {
@@ -1014,14 +1078,12 @@ export class TaskService {
    * 対象ごとの取り込みの検索の条件と、検索に使う gh のアカウント（プロジェクトの設定。PBI-13）。
    * アカウントを選んでいないプロジェクトは、プロジェクトの名前を返す（取り込みで理由を示す）。
    * ラベルは sacty 全体の設定（PBI-26）。設定していなければ取り込まない。Issue と PR の両方を探す。
+   * PR のレビューの取り込み（PBI-44）は、自分（そのホストのアカウント）に個人としてレビューが依頼された PR と、
+   * レビュー用のラベルの付いた PR を探す（review にどちらの検索かを添える）。
    */
-  intakeSources(): { host: string; query: string; account?: string; project: string }[] {
-    const label = this.deps.settings.get().intakeLabel;
-    if (!label) return [];
-    const sources = new Map<
-      string,
-      { host: string; query: string; account?: string; project: string }
-    >();
+  intakeSources(): IntakeSource[] {
+    const settings = this.deps.settings.get();
+    const sources = new Map<string, IntakeSource>();
     for (const project of this.deps.projects.all()) {
       for (const target of project.targets) {
         // 検索は、対象のホストの GitHub で、そのホストのアカウントで行う（PBI-40）
@@ -1030,14 +1092,24 @@ export class TaskService {
           target.scope === "org"
             ? `org:${parseOrgUrl(target.target)?.owner}`
             : `repo:${parseRepoUrl(target.target)?.path}`;
-        const query = `is:open ${where} label:"${label}"`;
         const account = project.githubAccounts?.[host];
-        sources.set(`${host}\n${account ?? ""}\n${query}`, {
-          host,
-          query,
-          ...(account ? { account } : {}),
-          project: project.name,
-        });
+        const add = (query: string, review?: IntakeSource["review"]) =>
+          sources.set(`${host}\n${account ?? ""}\n${query}`, {
+            host,
+            query,
+            ...(account ? { account } : {}),
+            project: project.name,
+            ...(review ? { review } : {}),
+          });
+        if (settings.intakeLabel) add(`is:open ${where} label:"${settings.intakeLabel}"`);
+        if (settings.reviewLabel) {
+          add(`is:open is:pr ${where} label:"${settings.reviewLabel}"`, "label");
+        }
+        // チームへの依頼は含めない（user-review-requested は、個人として依頼されたものだけ）。
+        // アカウントを選んでいなければ検索しない（理由を示すため、条件だけ返す）
+        if (settings.reviewRequested) {
+          add(`is:open is:pr ${where} user-review-requested:${account ?? "@me"}`, "requested");
+        }
       }
     }
     return [...sources.values()];
@@ -1047,8 +1119,10 @@ export class TaskService {
    * プロジェクトの設定と取り込むラベルの版。変わったら、取り込みは読んだ位置を忘れて先頭から読み直す。
    */
   projectsRevision(): string {
+    const settings = this.deps.settings.get();
     return [
-      `label:${this.deps.settings.get().intakeLabel ?? ""}`,
+      `label:${settings.intakeLabel ?? ""}`,
+      `review:${settings.reviewLabel ?? ""}:${settings.reviewRequested ? "requested" : ""}`,
       ...this.deps.projects.all().map((p) => `${p.id}@${p.updatedAt}`),
     ].join(",");
   }
@@ -1060,10 +1134,22 @@ export class TaskService {
   /**
    * 見つかった Issue・PR をタスクにする。担当するプロジェクトは取り込むたびに判定し（範囲が狭い
    * 指定が優先）、取り込むラベル（sacty の設定）が付いたものだけを取り込む。同じものは二重に取り込まない。
+   * PR のレビューの取り込み（PBI-44）は、自分にレビューが依頼された（切り替えが入っている）か、レビュー用の
+   * ラベルが付いた PR だけを取り込み、レビューだけを行うタスクにする。両方に当てはまっても1つ。取り込むラベルも
+   * 付いた PR も、レビューだけにする（レビューの取り込みを先に見る）。
    */
   importIssues(found: readonly FoundIssue[]): Task[] {
-    const label = this.deps.settings.get().intakeLabel?.toLowerCase();
-    if (!label) return [];
+    const settings = this.deps.settings.get();
+    const label = settings.intakeLabel?.toLowerCase();
+    const reviewLabel = settings.reviewLabel?.toLowerCase();
+    if (!label && !reviewLabel && !settings.reviewRequested) return [];
+    const has = (issue: FoundIssue, name: string | undefined) =>
+      name !== undefined && issue.labels.some((l) => l.toLowerCase() === name);
+    const reviewOf = (issue: FoundIssue): "requested" | "label" | undefined => {
+      if (!issue.pullRequest) return undefined;
+      if (issue.review === "requested" && settings.reviewRequested) return "requested";
+      return has(issue, reviewLabel) ? "label" : undefined;
+    };
     const projects = this.deps.projects.all();
     const key = (repo: string, number: number) => `${repo.toLowerCase()}#${number}`;
     const known = new Set(
@@ -1074,11 +1160,14 @@ export class TaskService {
     const config = this.deps.config();
     const budgetCapUsd = config.ok ? config.config.budgetPerTaskUsd : DEFAULT_BUDGET_USD;
     const created: Task[] = [];
-    for (const issue of found) {
+    // レビューの取り込みのものを先に（同じ PR が取り込むラベルの検索でも見つかったとき、レビューだけにする）
+    const ordered = [...found.filter((i) => reviewOf(i)), ...found.filter((i) => !reviewOf(i))];
+    for (const issue of ordered) {
       if (known.has(key(issue.repo, issue.number))) continue;
       const responsible = responsibleProject(projects, issue.repo);
       if (!responsible) continue;
-      if (!issue.labels.some((l) => l.toLowerCase() === label)) continue;
+      const review = reviewOf(issue);
+      if (!review && !has(issue, label)) continue;
       // PR（PBI-26）は、Issue と同じ番号の空間なので、二重の判定はそのまま使える
       const kind = issue.pullRequest ? "github_pull_request" : "github_issue";
       known.add(key(issue.repo, issue.number));
@@ -1100,6 +1189,7 @@ export class TaskService {
                   repo: issue.repo,
                   number: issue.number,
                   url: issue.url,
+                  ...(review ? { review } : {}),
                 },
               },
             },
@@ -1559,7 +1649,11 @@ export class TaskService {
         ]);
         return;
       }
-      const choice = await this.chooseSteps(this.mustGet(taskId), config.config);
+      // PR のレビューの取り込みのタスクは、工程をレビューだけにする（オーケストレーターに選ばせない。PBI-44）
+      const review = this.mustGet(taskId).source?.review;
+      const choice = review
+        ? reviewOnlySteps(review)
+        : await this.chooseSteps(this.mustGet(taskId), config.config);
       if ("failure" in choice) {
         // 選んでいる間に人間が止めた・中止したなら、記録しない（止めた記録は runNext の後始末で行う）
         const latest = this.mustGet(taskId);
@@ -1611,7 +1705,10 @@ export class TaskService {
           detail: rebased.message,
         });
       }
-      events.push({ actor: "orchestrator", event: { type: "StepsChosen", payload: chosen } });
+      events.push({
+        actor: review ? "sacty" : "orchestrator",
+        event: { type: "StepsChosen", payload: chosen },
+      });
       // 実装を含むのにテストのコマンドが分からなければ、検証できないので費用をかける前に止める（PBI-25）
       if (chosen.steps.includes("implement") && !chosen.testCommand) {
         events.push({
@@ -2441,7 +2538,11 @@ export class TaskService {
    * （PRを閉じる → sacty のブランチを消す → 作業領域を消す）。人間が作ったブランチやPRには触れない。
    * 片付けの結果を作業履歴に記録し、作業履歴は残す。
    */
-  async cancel(id: string): Promise<Task> {
+  async cancel(
+    id: string,
+    /** sacty が中止する理由（レビューの PR がマージされた・閉じられた。PBI-44）。人間の中止では無い。 */
+    reason?: "pull_request_merged" | "pull_request_closed",
+  ): Promise<Task> {
     const task = this.tasks.get(id);
     if (!task) throw new InvalidOperationError(message("task.notFound"));
     if (task.status === "cancelled")
@@ -2556,7 +2657,10 @@ export class TaskService {
         }
       }
       const cancelled = this.append(this.mustGet(id), [
-        { actor: "person", event: { type: "TaskCancelled", payload: { cleanup } } },
+        {
+          actor: reason ? "sacty" : "person",
+          event: { type: "TaskCancelled", payload: { ...(reason ? { reason } : {}), cleanup } },
+        },
       ]);
       // 分割したタスクを中止したら、終わっていない子タスクも中止する（PBI-27）
       for (const child of cancelled.split?.children ?? []) {
@@ -3241,6 +3345,19 @@ export class TaskService {
     }
   }
 
+  /**
+   * 「再レビュー」（PBI-44）。レビューを PR に投稿して完了したタスクのレビューの工程をやり直し、PR の最新の
+   * コミットに対してもう一度レビューして投稿する（対象の PR は実行の前に確かめ直す）。
+   */
+  rereview(id: string): Task {
+    const task = this.tasks.get(id);
+    if (!task) throw new InvalidOperationError(message("task.notFound"));
+    if (!canRereview(task)) throw new InvalidOperationError(message("review.notRereviewable"));
+    return this.append(task, [
+      { actor: "person", event: { type: "ReviewRestarted", payload: {} } },
+    ]);
+  }
+
   /** 一時停止中のタスクを再開する。予算で止まった場合は、累計の新しい上限が必要。 */
   resume(id: string, raw: unknown, options: { containersConfirmed?: boolean } = {}): Task {
     const input = ResumeTaskInput.parse(raw);
@@ -3458,6 +3575,18 @@ function feedbackRemarks(items: PullRequestFeedback[]): string[] {
 type ChosenSteps = Extract<EventInput, { type: "StepsChosen" }>["payload"] & {
   baseBranch?: string;
 };
+
+/** PR のレビューの取り込みのタスクの工程（レビューだけ。オーケストレーターは使わないので費用は無い。PBI-44）。 */
+function reviewOnlySteps(via: "requested" | "label"): ChosenSteps {
+  return {
+    steps: [...STEP_PLANS.review],
+    plan: "review",
+    reason: message("review.reviewOnly", { via }),
+    fallback: false,
+    costUsd: 0,
+    estimated: false,
+  };
+}
 
 /** タスクの対象リポジトリ。 */
 type TargetRepository = {

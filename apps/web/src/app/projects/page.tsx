@@ -57,7 +57,7 @@ async function Projects() {
           </h2>
           {!intake ? (
             <p className="text-muted-foreground">{t.intake.stopped}</p>
-          ) : !intake.label ? (
+          ) : !intake.label && !intake.reviewLabel && !intake.reviewRequested ? (
             // 取り込むラベルは sacty 全体の設定（PBI-26）
             <p className="text-warn">
               {t.intake.noLabel}{" "}
@@ -68,7 +68,14 @@ async function Projects() {
           ) : (
             <>
               <p className="text-muted-foreground">
-                {t.intake.label(intake.label)}{" "}
+                {[
+                  intake.label ? t.intake.label(intake.label) : "",
+                  intake.reviewRequested || intake.reviewLabel
+                    ? t.intake.review(intake.reviewRequested === true, intake.reviewLabel ?? "")
+                    : "",
+                ]
+                  .filter(Boolean)
+                  .join(" / ")}{" "}
                 <Link href="/settings" className="underline">
                   {t.intake.settings}
                 </Link>

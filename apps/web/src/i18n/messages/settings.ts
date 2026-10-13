@@ -10,6 +10,16 @@ const ja = {
   intakeHelp: "すべてのプロジェクトの対象で取り込みます。",
   intakeOff: "ラベルを設定していないので、取り込みは止まっています。",
   intakeOn: (label: string) => `ラベル「${label}」の付いた Issue と PR を取り込みます。`,
+  reviewTitle: "PR のレビューの取り込み",
+  reviewNote: "取り込んだ PR は、レビューだけを行って PR に投稿します",
+  reviewHelp:
+    "実装や PR の作成はしません。\nレビューの依頼は、プロジェクトで選んだ GitHub のアカウントへの個人の依頼だけです（チームへの依頼は除く）。",
+  reviewRequested: "自分にレビューが依頼された PR を取り込む",
+  reviewLabel: "PR のレビュー用のラベル",
+  reviewPlaceholder: "例：sacty-review",
+  reviewOff: "PR のレビューの取り込みは止まっています。",
+  reviewOn: (requested: boolean, label: string) =>
+    `${[requested ? "自分にレビューが依頼された PR" : "", label ? `ラベル「${label}」の付いた PR` : ""].filter(Boolean).join("と、")}を取り込み、レビューだけを行います。`,
   parallelTitle: "タスクの並行実行",
   parallelNote: "実行待ちのタスクを、古い順にこの数まで同時に実行します",
   parallelLabel: "同時に実行するタスクの数",
@@ -34,6 +44,16 @@ const en: SettingsMessages = {
   intakeHelp: "Applies to the targets of every project.",
   intakeOff: "No label is set, so intake is stopped.",
   intakeOn: (label) => `Issues and PRs labeled "${label}" are imported.`,
+  reviewTitle: "PR review intake",
+  reviewNote: "Imported PRs are only reviewed, and the review is posted to the PR",
+  reviewHelp:
+    "No implementation and no PR.\nOnly reviews requested from you personally (the GitHub account chosen in the project) count, not team requests.",
+  reviewRequested: "Import PRs that request my review",
+  reviewLabel: "Label for PR reviews",
+  reviewPlaceholder: "e.g. sacty-review",
+  reviewOff: "PR review intake is stopped.",
+  reviewOn: (requested, label) =>
+    `${[requested ? "PRs that request your review" : "", label ? `PRs labeled "${label}"` : ""].filter(Boolean).join(" and ")} are imported and only reviewed.`,
   parallelTitle: "Running tasks in parallel",
   parallelNote: "Queued tasks run at the same time, oldest first, up to this number",
   parallelLabel: "Tasks to run at the same time",

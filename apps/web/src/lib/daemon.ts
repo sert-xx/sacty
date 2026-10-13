@@ -78,6 +78,9 @@ export async function createTask(
 export type IntakeStatus = {
   /** 取り込むラベル（sacty の設定。PBI-26）。設定していなければ無い（取り込まない）。 */
   label?: string;
+  /** PR のレビューの取り込み（sacty の設定。PBI-44）。 */
+  reviewLabel?: string;
+  reviewRequested?: boolean;
   lastRunAt?: string;
   imported?: number;
   /** 取り込めなかった対象（検索の条件）と理由。 */
@@ -213,6 +216,11 @@ export function pauseTask(id: string): Promise<OpResult> {
 /** 中止して、sacty が作ったものを片付ける。 */
 export function cancelTask(id: string): Promise<OpResult> {
   return postOp(`/api/tasks/${encodeURIComponent(id)}/cancel`, {});
+}
+
+/** レビューを投稿して完了したタスクを、PR の最新のコミットでもう一度レビューする（PBI-44）。 */
+export function rereviewTask(id: string): Promise<OpResult> {
+  return postOp(`/api/tasks/${encodeURIComponent(id)}/rereview`, {});
 }
 
 /** GitHub Issue の取り込みを、間隔を待たずに実行する。 */

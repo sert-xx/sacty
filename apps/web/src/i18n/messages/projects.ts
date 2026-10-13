@@ -15,8 +15,11 @@ const ja = {
       "取り込みは止まっています。config.yaml に github: を設定すると、定期的に取り込みます。",
     lastRun: (at: string, n: number) => `最後の取り込み：${at}（${n}件のタスクを作成）`,
     never: "まだ取り込んでいません。",
-    noLabel: "取り込むラベルを設定していないので、取り込みは止まっています。",
+    noLabel:
+      "取り込むラベルも PR のレビューの取り込みも設定していないので、取り込みは止まっています。",
     label: (label: string) => `取り込むラベル：${label}`,
+    review: (requested: boolean, label: string) =>
+      `PR のレビュー：${[requested ? "自分への依頼" : "", label ? `ラベル ${label}` : ""].filter(Boolean).join("・")}`,
     settings: "sacty の設定を開く",
     errors: "取り込めなかった対象があります（ほかの対象は取り込みました）：",
     runNow: "今すぐ取り込む",
@@ -108,8 +111,10 @@ const en: ProjectsMessages = {
     stopped: "Intake is stopped. Add github: to config.yaml to import issues periodically.",
     lastRun: (at, n) => `Last intake: ${at} (${n} task${n === 1 ? "" : "s"} created)`,
     never: "Nothing imported yet.",
-    noLabel: "No intake label is set, so intake is stopped.",
+    noLabel: "Neither an intake label nor PR review intake is set, so intake is stopped.",
     label: (label) => `Intake label: ${label}`,
+    review: (requested, label) =>
+      `PR reviews: ${[requested ? "requested from me" : "", label ? `label ${label}` : ""].filter(Boolean).join(", ")}`,
     settings: "Open sacty settings",
     errors: "Some targets could not be imported (the others were imported):",
     runNow: "Import now",

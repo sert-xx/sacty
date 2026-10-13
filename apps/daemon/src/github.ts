@@ -508,6 +508,11 @@ export type FoundIssue = {
   labels: string[];
   /** PR か（PBI-26）。 */
   pullRequest?: boolean;
+  /**
+   * PR のレビューの取り込みの検索で見つかったか（PBI-44）。requested：自分へのレビューの依頼、label：レビュー用の
+   * ラベル。検索の結果には依頼されたレビュアーが無いので、どの検索で見つかったかで判断する。
+   */
+  review?: "requested" | "label";
 };
 
 /**

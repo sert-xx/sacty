@@ -5005,6 +5005,233 @@ describe("sacty の設定と、Issue・PR の取り込み（PBI-26）", () => {
   });
 });
 
+describe("PR のレビューだけを行う取り込み（PBI-44）", () => {
+  const out = (text: string): AgentOutcome => ({
+    kind: "completed",
+    output: text,
+    usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 1 },
+  });
+  const pr = (number: number, labels: string[], extra: Record<string, unknown> = {}) => ({
+    repo: "https://github.com/acme/app",
+    number,
+    title: `PR ${number}`,
+    body: "本文",
+    url: `https://github.com/acme/app/pull/${number}`,
+    labels,
+    pullRequest: true,
+    ...extra,
+  });
+
+  it("自分へのレビューの依頼とレビュー用のラベルで、ホストのアカウントごとに PR を探す（チームへの依頼は含めない）", () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const settings = new MemorySettingsStore();
+    const projects = new MemoryProjectStore();
+    projects.put("default", {
+      name: "デフォルト",
+      targets: [
+        { scope: "repo", target: "https://github.com/acme/app" },
+        { scope: "org", target: "https://ghe.example.com/corp" },
+      ],
+      githubAccounts: { "github.com": "me", "ghe.example.com": "me-corp" },
+    });
+    const { service } = makeService(activity, [], { settings, projects });
+    expect(service.intakeSources()).toEqual([]);
+    expect(service.saveSettings({ reviewRequested: "on", reviewLabel: " sacty-review " })).toEqual({
+      reviewRequested: true,
+      reviewLabel: "sacty-review",
+    });
+    expect(service.intakeSources()).toEqual([
+      {
+        host: "github.com",
+        query: 'is:open is:pr repo:acme/app label:"sacty-review"',
+        account: "me",
+        project: "デフォルト",
+        review: "label",
+      },
+      {
+        host: "github.com",
+        query: "is:open is:pr repo:acme/app user-review-requested:me",
+        account: "me",
+        project: "デフォルト",
+        review: "requested",
+      },
+      {
+        host: "ghe.example.com",
+        query: 'is:open is:pr org:corp label:"sacty-review"',
+        account: "me-corp",
+        project: "デフォルト",
+        review: "label",
+      },
+      {
+        host: "ghe.example.com",
+        query: "is:open is:pr org:corp user-review-requested:me-corp",
+        account: "me-corp",
+        project: "デフォルト",
+        review: "requested",
+      },
+    ]);
+    // 切り替えを切ると、依頼の検索はしない。取り込むラベル（Issue と PR）は別の設定
+    service.saveSettings({ reviewLabel: "sacty-review", intakeLabel: "sacty" });
+    expect(service.intakeSources().map((s) => s.review ?? "intake")).toEqual([
+      "intake",
+      "label",
+      "intake",
+      "label",
+    ]);
+    activity.close();
+  });
+
+  it("依頼された PR とレビュー用のラベルの PR を取り込み、レビュー用のラベルの Issue は取り込まない。同じ PR は1つ", () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const settings = new MemorySettingsStore({
+      reviewRequested: true,
+      reviewLabel: "sacty-review",
+    });
+    const { service } = makeService(activity, [], { settings });
+    const created = service.importIssues([
+      pr(1, [], { review: "requested" }),
+      pr(2, ["Sacty-Review"]),
+      // 依頼とラベルの両方に当てはまる
+      pr(3, ["sacty-review"], { review: "requested" }),
+      pr(3, ["sacty-review"], { review: "label" }),
+      // レビュー用のラベルの Issue は取り込まない
+      {
+        ...pr(4, ["sacty-review"]),
+        pullRequest: undefined,
+        url: "https://github.com/acme/app/issues/4",
+      },
+      // 依頼の検索で見つかっても、切り替えを切っていれば取り込まない（後で確かめる）
+    ]);
+    expect(created.map((t) => [t.source?.number, t.source?.review])).toEqual([
+      [1, "requested"],
+      [2, "label"],
+      [3, "requested"],
+    ]);
+    // 二度は取り込まない
+    expect(
+      service.importIssues([pr(1, [], { review: "requested" }), pr(2, ["sacty-review"])]),
+    ).toEqual([]);
+    service.saveSettings({ reviewLabel: "sacty-review" });
+    expect(service.importIssues([pr(5, [], { review: "requested" })])).toEqual([]);
+    activity.close();
+  });
+
+  it("取り込むラベルとレビュー用のラベルの両方が付いた PR は、レビューだけのタスクにする。Issue の取り込みはこれまでどおり", () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const settings = new MemorySettingsStore({ intakeLabel: "sacty", reviewLabel: "sacty-review" });
+    const { service } = makeService(activity, [], { settings });
+    const created = service.importIssues([
+      pr(6, ["sacty"]),
+      pr(6, ["sacty", "sacty-review"], { review: "label" }),
+      { ...pr(7, ["sacty"]), pullRequest: undefined, url: "https://github.com/acme/app/issues/7" },
+    ]);
+    expect(created.map((t) => [t.source?.number, t.source?.kind, t.source?.review])).toEqual([
+      [6, "github_pull_request", "label"],
+      [7, "github_issue", undefined],
+    ]);
+    activity.close();
+  });
+
+  it("レビューの取り込みのタスクは、オーケストレーターを使わずにレビューだけを行い、PR に投稿する", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const pulls = new FakePulls();
+    pulls.prInfo = { ...pulls.prInfo, number: 8, url: "https://github.com/acme/app/pull/8" };
+    const settings = new MemorySettingsStore({ reviewRequested: true });
+    const { service, executor } = makeService(activity, [out("# 評価")], {
+      pulls,
+      settings,
+      realPlanner: true,
+    });
+    const [task] = service.importIssues([pr(8, [], { review: "requested" })]);
+    const id = task?.id ?? "";
+    await service.runNext(id);
+    const chosen = service.get(id)?.activity.find((e) => e.type === "StepsChosen");
+    expect(chosen?.actor).toBe("sacty");
+    expect(chosen?.type === "StepsChosen" && chosen.payload.steps).toEqual(["review"]);
+    expect(ja(chosen?.type === "StepsChosen" ? chosen.payload.reason : undefined)).toBe(
+      "自分にレビューが依頼された PR なので、レビューだけを行います（オーケストレーターは使いません）。",
+    );
+    // エージェントの実行はレビューの1回だけ（オーケストレーターは動かさない）
+    expect(executor.calls).toHaveLength(1);
+    expect(executor.calls[0]?.command.join(" ")).toContain("レビューエージェント");
+    await service.runNext(id);
+    expect(pulls.reviews).toHaveLength(1);
+    expect(service.get(id)?.task.reviewPost).toBeDefined();
+    activity.close();
+  });
+
+  it("PR がマージ・クローズされたら、終わっていないレビューのタスクを中止する。完了したタスクと開いている PR はそのまま", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const pulls = new FakePulls();
+    const settings = new MemorySettingsStore({ reviewLabel: "sacty-review", intakeLabel: "sacty" });
+    const { service } = makeService(activity, [], { pulls, settings });
+    const [merged, closed, issueTask] = service.importIssues([
+      pr(10, ["sacty-review"]),
+      pr(11, ["sacty-review"]),
+      // 取り込むラベルの PR（レビューの取り込みではない）は、ここでは中止しない
+      pr(12, ["sacty"]),
+    ]);
+    pulls.state = { state: "open" };
+    await service.checkPullRequests();
+    expect(service.get(merged?.id ?? "")?.task.status).not.toBe("cancelled");
+
+    pulls.state = { state: "merged" };
+    await service.checkPullRequests();
+    const cancelled = service.get(merged?.id ?? "");
+    expect(cancelled?.task.status).toBe("cancelled");
+    const event = cancelled?.activity.find((e) => e.type === "TaskCancelled");
+    expect(event?.actor).toBe("sacty");
+    expect(event?.type === "TaskCancelled" && event.payload.reason).toBe("pull_request_merged");
+    expect(service.get(closed?.id ?? "")?.task.status).toBe("cancelled");
+    expect(service.get(issueTask?.id ?? "")?.task.status).not.toBe("cancelled");
+
+    pulls.state = { state: "closed" };
+    const [another] = service.importIssues([pr(13, ["sacty-review"])]);
+    await service.checkPullRequests();
+    const closedEvent = service
+      .get(another?.id ?? "")
+      ?.activity.find((e) => e.type === "TaskCancelled");
+    expect(closedEvent?.type === "TaskCancelled" && closedEvent.payload.reason).toBe(
+      "pull_request_closed",
+    );
+    activity.close();
+  });
+
+  it("再レビューで、PR の最新のコミットをもう一度レビューして投稿する。投稿して完了したタスクだけ", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const pulls = new FakePulls();
+    pulls.prInfo = { ...pulls.prInfo, number: 9, url: "https://github.com/acme/app/pull/9" };
+    const settings = new MemorySettingsStore({ reviewLabel: "sacty-review" });
+    const { service } = makeService(activity, [out("# 1回目"), out("# 2回目")], {
+      pulls,
+      settings,
+    });
+    const [task] = service.importIssues([pr(9, ["sacty-review"])]);
+    const id = task?.id ?? "";
+    // 投稿する前は、再レビューできない
+    expect(() => service.rereview(id)).toThrow(/再レビューできるのは/);
+    await service.runNext(id);
+    await service.runNext(id);
+    expect(pulls.reviews).toHaveLength(1);
+
+    // PR に新しいコミットが積まれた
+    pulls.prInfo = { ...pulls.prInfo, headSha: "n".repeat(40) };
+    const restarted = service.rereview(id);
+    expect(restarted.status).toBe("queued");
+    expect(restarted.reviewRound).toBe(2);
+    expect(restarted.reviewPost).toBeUndefined();
+    await service.runNext(id);
+    await service.runNext(id);
+    expect(pulls.reviews).toHaveLength(2);
+    expect(pulls.reviews[1]?.commit).toBe("n".repeat(40));
+    expect(pulls.reviews[1]?.body).toContain("# 2回目");
+    // 回ごとに別の目印（前回のレビューを、今回の投稿済みと見なさない）
+    expect(pulls.reviews[1]?.body).toContain(`<!-- sacty-review:${id}:2 -->`);
+    expect(service.get(id)?.activity.some((e) => e.type === "ReviewRestarted")).toBe(true);
+    activity.close();
+  });
+});
+
 describe("プロジェクトと GitHub Issue の取り込み（PBI-5a）", () => {
   const issue = (repo: string, number: number, labels: string[], title = `Issue ${number}`) => ({
     repo,

@@ -37,21 +37,32 @@ export type ProjectTarget = z.infer<typeof ProjectTarget>;
 export const DEFAULT_MAX_PARALLEL_TASKS = 3;
 export const MAX_PARALLEL_TASKS_LIMIT = 10;
 
+/** 取り込みのラベル。空の入力は「設定しない」として扱う。検索の条件を壊す文字は受け付けない。 */
+const IntakeLabelInput = z.preprocess(
+  (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+  z
+    .string()
+    .trim()
+    .max(50)
+    .regex(/^[^"\\]*$/, code("input.invalidLabel"))
+    .optional(),
+);
+
 /**
  * sacty 全体の設定（プロジェクトとは別。PBI-26）。intakeLabel は、すべてのプロジェクトの対象で取り込む
  * Issue・PR のラベル。設定していなければ取り込まない。maxParallelTasks は、同時に実行するタスクの数
  * （設定していなければ DEFAULT_MAX_PARALLEL_TASKS。PBI-30）。
+ * reviewRequested と reviewLabel は、PR のレビューだけを行う取り込み（PBI-44）。reviewRequested は、自分
+ * （そのホストでプロジェクトに選んだ gh のアカウント）にレビューが依頼された PR を取り込むか、reviewLabel は
+ * PR のレビュー用のラベル（Issue は取り込まない）。
  */
 export const SactySettings = z.object({
-  // 空の入力は「設定しない」として扱う
-  intakeLabel: z.preprocess(
-    (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
-    z
-      .string()
-      .trim()
-      .max(50)
-      .regex(/^[^"\\]*$/, code("input.invalidLabel"))
-      .optional(),
+  intakeLabel: IntakeLabelInput,
+  reviewLabel: IntakeLabelInput,
+  // 画面のチェックボックス（on）も受け付ける。切っているときは持たない
+  reviewRequested: z.preprocess(
+    (v) => (v === true || v === "on" || v === "true" ? true : undefined),
+    z.literal(true).optional(),
   ),
   // 画面の入力（文字列）も受け付ける。空は「設定しない」
   maxParallelTasks: z.preprocess(
