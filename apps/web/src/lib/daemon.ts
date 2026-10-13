@@ -378,3 +378,45 @@ async function inputMessage(res: Response, options: { file?: boolean } = {}): Pr
       : m.common.daemon.checkInput;
   return issue?.path?.length ? m.common.daemon.atPath(text, issue.path.join(".")) : text;
 }
+
+/** エージェントの実行のセッションログの記録（デーモンの SessionLogMeta。PBI-62）。 */
+export type RunLogMeta = {
+  runId: string;
+  taskId: string;
+  role: string;
+  agentId: string;
+  runtime: string;
+  authMode: string;
+  model?: string;
+  startedAt: string;
+  /** 無ければ、終わりを記録できなかった（デーモンが落ちたなど）か、実行中。 */
+  finishedAt?: string;
+  outcome?: { kind: "completed" } | { kind: "failed"; reason: string; message: DaemonText };
+  /** 上限で切り詰めたファイルと、捨てた大きさ（バイト）。 */
+  truncated?: { events?: number; stderr?: number };
+  limits: { events: number; stderr: number };
+};
+
+export type RunLog = { meta: RunLogMeta; events: string; stderr: string };
+
+const runPath = (taskId: string, runId: string) =>
+  `/api/tasks/${encodeURIComponent(taskId)}/runs/${encodeURIComponent(runId)}`;
+
+/** 実行のセッションログ（PBI-62）。タスク・ログが無い（ID の形が違うことも含む）なら null。 */
+export async function getRunLog(taskId: string, runId: string): Promise<RunLog | null> {
+  const res = await daemonFetch(`${runPath(taskId, runId)}/log`);
+  if (res.status === 404 || res.status === 400) return null;
+  await ensureOk(res);
+  return (await res.json()) as RunLog;
+}
+
+/** セッションログの生のファイル（ダウンロード用。PBI-62）。無ければ null。 */
+export async function getRunLogFile(
+  taskId: string,
+  runId: string,
+  file: "events" | "stderr",
+): Promise<Response | null> {
+  const res = await daemonFetch(`${runPath(taskId, runId)}/files/${file}`);
+  if (res.status === 404 || res.status === 400) return null;
+  return ensureOk(res);
+}

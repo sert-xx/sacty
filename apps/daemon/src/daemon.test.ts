@@ -54,6 +54,7 @@ import {
   TaskService,
 } from "./service.js";
 import type { ServiceRunner, ServicesSpec } from "./services.js";
+import { type SessionLogSink, SessionLogStore } from "./session-logs.js";
 import { MemorySettingsStore } from "./settings.js";
 import type { FoundTicket, TicketClient } from "./tickets.js";
 
@@ -608,6 +609,7 @@ class FakeExecutor implements AgentExecutor {
     imageEnv,
     network,
     forwards,
+    log,
   }: {
     runId: string;
     image: string;
@@ -616,8 +618,12 @@ class FakeExecutor implements AgentExecutor {
     imageEnv?: Record<string, string>;
     network?: string;
     forwards?: readonly LocalForward[];
+    log?: SessionLogSink;
   }): Promise<AgentOutcome> {
     this.calls.push(invocation);
+    // セッションログ（PBI-62）には、渡された環境変数の値（秘密情報を含む）を出してみる（伏せられることを確かめる）
+    log?.stdout(`${JSON.stringify({ type: "fake", env: Object.values(invocation.env) })}\n`);
+    log?.stderr(`env ${Object.values(invocation.env).join(" ")}\n`);
     this.networks.push(network);
     this.forwards.push(forwards);
     this.images.push({ image, ...(imageEnv ? { env: imageEnv } : {}) });
@@ -693,6 +699,8 @@ function makeService(
     tickets?: ServiceDeps["tickets"];
     /** 要求要件・設計を PR のマージで承認する（PBI-57）。既定は、画面で承認する流れを確かめるので切る。 */
     stepPullRequests?: boolean;
+    /** セッションログの置き場所（PBI-62）。 */
+    sessionLogs?: SessionLogStore;
   } = {},
 ) {
   const executor = new FakeExecutor(outcomes);
@@ -740,6 +748,7 @@ function makeService(
     ...(options.services ? { services: options.services } : {}),
     ...(options.tickets ? { tickets: options.tickets } : {}),
     stepPullRequests: options.stepPullRequests ?? false,
+    ...(options.sessionLogs ? { sessionLogs: options.sessionLogs } : {}),
   });
   return { service, executor, repos, tests, pulls };
 }
@@ -10761,5 +10770,167 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       expect(types(service, id)).not.toContain("PullRequestMerged");
       activity.close();
     });
+  });
+});
+
+describe("エージェントの実行のセッションログ（PBI-62）", () => {
+  const token = "test-token";
+  const auth = { authorization: `Bearer ${token}` };
+  const runIdOf = (events: { type: string; payload: unknown }[] | undefined, type: string) =>
+    (events?.find((e) => e.type === type)?.payload as { runId?: string } | undefined)?.runId;
+
+  it("工程の実行ごとにログを残し、秘密情報は伏せ、失敗した実行も結果と一緒に残す", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const sessionLogs = new SessionLogStore(join(dir, "runs"));
+    const { service } = makeService(
+      activity,
+      [{ kind: "failed", reason: "usage_limit", message: "limit oauth-secret" }, completed(1_000)],
+      { sessionLogs },
+    );
+    const task = service.createTask({ projectId: "default", title: "A" });
+    await service.runNext(task.id);
+    const failedRun = runIdOf(service.get(task.id)?.activity, "AgentRunFailed");
+    expect(failedRun).toBeTruthy();
+    const failed = sessionLogs.read(task.id, failedRun ?? "");
+    expect(failed?.meta).toMatchObject({
+      taskId: task.id,
+      runId: failedRun,
+      role: "requirements",
+      agentId: "claude-subscription",
+      runtime: "claude-code",
+      outcome: { kind: "failed", reason: "usage_limit", message: "limit [REDACTED]" },
+    });
+    expect(failed?.events).toContain("[REDACTED]");
+    expect(failed?.events).not.toContain("oauth-secret");
+    expect(failed?.stderr).not.toContain("oauth-secret");
+
+    service.resume(task.id, {});
+    await service.runNext(task.id);
+    const events = service.get(task.id)?.activity;
+    const completedRun = runIdOf(events, "AgentRunCompleted");
+    expect(completedRun).not.toBe(failedRun);
+    // 開始の行と完了の行は、同じ実行のログを指す
+    const started = events
+      ?.filter((e) => e.type === "AgentRunStarted")
+      .map((e) => runIdOf([e], e.type));
+    expect(started).toEqual([failedRun, completedRun]);
+    expect(sessionLogs.read(task.id, completedRun ?? "")?.meta.outcome).toEqual({
+      kind: "completed",
+    });
+    activity.close();
+  });
+
+  it("コンテナを起動する前に止まった実行（秘密情報が無い）も、理由を残す", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const sessionLogs = new SessionLogStore(join(dir, "runs"));
+    const { service } = makeService(activity, [], { secrets: {}, sessionLogs });
+    const task = service.createTask({ projectId: "default", title: "A" });
+    await service.runNext(task.id);
+    const runId = runIdOf(service.get(task.id)?.activity, "AgentRunFailed") ?? "";
+    const log = sessionLogs.read(task.id, runId);
+    expect(log?.meta.outcome).toMatchObject({ kind: "failed", reason: "auth" });
+    expect(log?.events).toBe("");
+    activity.close();
+  });
+
+  it("オーケストレーターの実行も、工程の選択の記録から実行の ID で辿れる", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const sessionLogs = new SessionLogStore(join(dir, "runs"));
+    const { service } = makeService(
+      activity,
+      [
+        {
+          kind: "completed",
+          output:
+            '```json\n{"sacty-steps": {"plan": "skip-design", "reason": "小さい", "testCommand": "npm test"}}\n```',
+          usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 10 },
+        },
+        completed(1_000),
+      ],
+      { realPlanner: true, sessionLogs },
+    );
+    const task = service.createTask({ projectId: "default", title: "A" });
+    await service.runNext(task.id);
+    const runId = runIdOf(service.get(task.id)?.activity, "StepsChosen");
+    expect(runId).toBeTruthy();
+    expect(sessionLogs.read(task.id, runId ?? "")?.meta).toMatchObject({
+      role: "orchestrator",
+      outcome: { kind: "completed" },
+    });
+    activity.close();
+  });
+
+  it("API：タスクの実行のログと生のファイルを返し、ほかのタスクの実行・不正な ID・無いログは返さない", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const sessionLogs = new SessionLogStore(join(dir, "runs"));
+    const { service } = makeService(activity, [completed(1_000)], { sessionLogs });
+    const app = createApp(service, token);
+    const task = service.createTask({ projectId: "default", title: "A" });
+    const other = service.createTask({ projectId: "default", title: "B" });
+    await service.runNext(task.id);
+    const runId = runIdOf(service.get(task.id)?.activity, "AgentRunCompleted") ?? "";
+
+    const res = await app.request(`/api/tasks/${task.id}/runs/${runId}/log`, { headers: auth });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { meta: { runId: string }; events: string; stderr: string };
+    expect(body.meta.runId).toBe(runId);
+    expect(body.events).toContain('"type":"fake"');
+    expect(JSON.stringify(body)).not.toContain("oauth-secret");
+
+    const raw = await app.request(`/api/tasks/${task.id}/runs/${runId}/files/events`, {
+      headers: auth,
+    });
+    expect(raw.status).toBe(200);
+    expect(raw.headers.get("content-type")).toContain("ndjson");
+    expect(await raw.text()).toBe(body.events);
+    const stderr = await app.request(`/api/tasks/${task.id}/runs/${runId}/files/stderr`, {
+      headers: auth,
+    });
+    expect(await stderr.text()).toBe(body.stderr);
+
+    // ほかのタスクの ID で、この実行のログは読めない
+    expect(
+      (await app.request(`/api/tasks/${other.id}/runs/${runId}/log`, { headers: auth })).status,
+    ).toBe(404);
+    expect(
+      (await app.request(`/api/tasks/${other.id}/runs/${runId}/files/events`, { headers: auth }))
+        .status,
+    ).toBe(404);
+    // 無いタスク・無い実行
+    expect((await app.request(`/api/tasks/nope/runs/${runId}/log`, { headers: auth })).status).toBe(
+      404,
+    );
+    expect(
+      (await app.request(`/api/tasks/${task.id}/runs/missing/log`, { headers: auth })).status,
+    ).toBe(404);
+    // パスの不正
+    expect(
+      (await app.request(`/api/tasks/${task.id}/runs/a.b/log`, { headers: auth })).status,
+    ).toBe(400);
+    // 区切りを含む値は、経路にも合わないか ID の形で断る（どちらでもログの外は読ませない）
+    for (const bad of ["..%2F..%2Fsacty", "%2E%2E", "..", `${runId}%2F..`]) {
+      const res = await app.request(`/api/tasks/${task.id}/runs/${bad}/log`, { headers: auth });
+      expect([400, 404]).toContain(res.status);
+    }
+    expect(
+      (await app.request(`/api/tasks/${task.id}/runs/${runId}/files/meta`, { headers: auth }))
+        .status,
+    ).toBe(400);
+    // トークンが無ければ読めない
+    expect((await app.request(`/api/tasks/${task.id}/runs/${runId}/log`)).status).toBe(401);
+    activity.close();
+  });
+
+  it("中止しても、セッションログは消さない（監査に使うため）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const sessionLogs = new SessionLogStore(join(dir, "runs"));
+    const { service } = makeService(activity, [completed(1_000)], { sessionLogs });
+    const task = service.createTask({ projectId: "default", title: "A" });
+    await service.runNext(task.id);
+    const runId = runIdOf(service.get(task.id)?.activity, "AgentRunCompleted") ?? "";
+    await service.cancel(task.id);
+    expect(service.get(task.id)?.task.status).toBe("cancelled");
+    expect(sessionLogs.read(task.id, runId)).toBeTruthy();
+    activity.close();
   });
 });

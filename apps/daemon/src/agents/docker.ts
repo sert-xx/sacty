@@ -12,9 +12,11 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
+import { StringDecoder } from "node:string_decoder";
 import { message } from "@sacty/core";
 import { MessageError } from "../errors.js";
 import { DEFAULT_HOST_ADDRESS } from "../gateway.js";
+import type { SessionLogSink } from "../session-logs.js";
 import { forwardNotices, type LocalForward, withLocalForwards } from "./forward.js";
 import type { Invocation } from "./invocation.js";
 import { type AgentOutcome, parseClaudeResult, parseCodexEvents } from "./parse.js";
@@ -147,6 +149,8 @@ export interface AgentExecutor {
     network?: string;
     /** コンテナの中で localhost に転送するサービスのポート（PBI-60）。無ければ、コマンドはそのまま。 */
     forwards?: readonly LocalForward[];
+    /** 標準出力・標準エラー出力を、届くたびに渡す先（セッションログ。PBI-62）。 */
+    log?: SessionLogSink;
   }): Promise<AgentOutcome>;
   /** 実行中のコンテナを止める（人間が一時停止・中止したとき）。無ければ何もしない。 */
   kill(runId: string): void;
@@ -248,6 +252,7 @@ export class DockerExecutor implements AgentExecutor {
     imageEnv = {},
     network,
     forwards = [],
+    log,
   }: Parameters<AgentExecutor["run"]>[0]): Promise<AgentOutcome> {
     const env = { ...imageEnv, ...invocation.env };
     // コピーして渡すファイル（Codexの認証ファイルなど）は、実行ごとの一時ディレクトリに置き、
@@ -266,6 +271,8 @@ export class DockerExecutor implements AgentExecutor {
           // 消えていれば何もしない
         }
       }
+      // セッションログからも伏せる（PBI-62）
+      log?.addSecrets(stagedSecrets);
     };
     if (invocation.stage && staging) {
       // 合成したコンテキストなどを先に写す（認証ファイルは、そのあとに置く）
@@ -328,11 +335,20 @@ export class DockerExecutor implements AgentExecutor {
         this.containers.attach(containerName, child);
         let out = "";
         let err = "";
-        child.stdout.on("data", (chunk) => {
-          out += chunk;
+        // 届いた分の境目で、複数バイトの文字が壊れないようにつなげて読む
+        const outText = new StringDecoder("utf8");
+        const errText = new StringDecoder("utf8");
+        const text = (decoder: StringDecoder, chunk: Buffer | string) =>
+          typeof chunk === "string" ? chunk : decoder.write(chunk);
+        child.stdout.on("data", (chunk: Buffer | string) => {
+          const piece = text(outText, chunk);
+          out += piece;
+          log?.stdout(piece);
         });
-        child.stderr.on("data", (chunk) => {
-          err += chunk;
+        child.stderr.on("data", (chunk: Buffer | string) => {
+          const piece = text(errText, chunk);
+          err += piece;
+          log?.stderr(piece);
         });
         const timer = setTimeout(() => {
           this.containers.stop(containerName);
@@ -344,7 +360,11 @@ export class DockerExecutor implements AgentExecutor {
         });
         child.on("close", (code) => {
           clearTimeout(timer);
-          resolve({ exitCode: code ?? 1, stdout: out, stderr: err });
+          const outRest = outText.end();
+          const errRest = errText.end();
+          log?.stdout(outRest);
+          log?.stderr(errRest);
+          resolve({ exitCode: code ?? 1, stdout: out + outRest, stderr: err + errRest });
         });
       });
 

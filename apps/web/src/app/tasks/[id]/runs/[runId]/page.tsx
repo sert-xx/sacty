@@ -1,0 +1,368 @@
+import { renderMessage, type StepKey } from "@sacty/core";
+import { cn } from "cn";
+import Link from "next/link";
+import { notFound } from "next/navigation";
+import { Suspense } from "react";
+import { DaemonError } from "@/components/daemon-error";
+import type { Messages } from "@/i18n";
+import { getMessages } from "@/i18n/server";
+import { DaemonUnavailableError, getRunLog, getTask, type RunLogMeta } from "@/lib/daemon";
+import { describeEvent, formatStamp } from "@/lib/labels";
+import { type LogEntry, parseSessionLog, runLogId } from "@/lib/session-log";
+
+/** 画面に並べる出来事の上限（多すぎるとページが重くなるため。残りは生のファイルで見る）。 */
+const MAX_ENTRIES = 2_000;
+/** 1つの出来事の文の、画面に出す上限の文字数。 */
+const MAX_TEXT = 20_000;
+
+type Params = { params: Promise<{ id: string; runId: string }> };
+
+/** エージェントの実行のセッションログ（PBI-62）。作業履歴の実行の行の「ログを見る」から開く。 */
+export default async function RunLogPage({ params }: Params) {
+  const m = (await getMessages()).runLog;
+  return (
+    <Suspense fallback={<p className="text-sm text-muted-foreground">{m.loading}</p>}>
+      <RunLogView params={params} />
+    </Suspense>
+  );
+}
+
+function bytes(n: number): string {
+  if (n >= 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)}MB`;
+  if (n >= 1024) return `${(n / 1024).toFixed(1)}KB`;
+  return `${n}B`;
+}
+
+function clip(text: string, m: Messages["runLog"]): { text: string; clipped: boolean } {
+  return text.length > MAX_TEXT
+    ? { text: `${text.slice(0, MAX_TEXT)}\n${m.clipped}`, clipped: true }
+    : { text, clipped: false };
+}
+
+async function RunLogView({ params }: Params) {
+  const { id, runId } = await params;
+  const messages = await getMessages();
+  const m = messages.runLog;
+  let found: Awaited<ReturnType<typeof getTask>>;
+  let log: Awaited<ReturnType<typeof getRunLog>>;
+  try {
+    found = await getTask(id);
+    log = found ? await getRunLog(id, runId) : null;
+  } catch (error) {
+    if (error instanceof DaemonUnavailableError) return <DaemonError message={error.message} />;
+    throw error;
+  }
+  if (!found) notFound();
+  const { task, activity } = found;
+  // この実行の作業履歴の行（開始・完了・失敗など。ログが無い実行でも、理由はここで分かる）
+  const rows = activity.filter((e) => runLogId(e) === runId);
+  const back = `/tasks/${encodeURIComponent(task.id)}`;
+  const raw = (file: "events" | "stderr") =>
+    `${back}/runs/${encodeURIComponent(runId)}/raw/${file}`;
+
+  return (
+    <div className="flex flex-col gap-4">
+      <nav className="text-sm text-muted-foreground">
+        <Link href={back} className="text-accent-foreground underline">
+          {m.back}
+        </Link>
+        <span>{` ・ ${task.title}`}</span>
+      </nav>
+      <header className="flex flex-col gap-1">
+        <h1 className="text-2xl font-bold">{m.title}</h1>
+        <p className="font-mono text-xs break-all text-muted-foreground">{m.run(runId)}</p>
+      </header>
+
+      {rows.length > 0 && (
+        <section
+          aria-labelledby="run-history"
+          className="rounded-xl border border-border bg-card p-5"
+        >
+          <h2 id="run-history" className="pb-2 text-[15px] font-semibold">
+            {m.history}
+          </h2>
+          <ol className="flex flex-col">
+            {rows.map((event) => (
+              <li
+                key={event.id}
+                className="grid grid-cols-[96px_minmax(0,1fr)] gap-3 border-t border-border py-2 text-[13px]"
+              >
+                <time
+                  dateTime={event.at}
+                  className="font-mono text-xs text-muted-foreground tabular-nums"
+                >
+                  {formatStamp(event.at, messages.locale)}
+                </time>
+                <span className="[overflow-wrap:anywhere]">
+                  {describeEvent(event, messages.labels)}
+                </span>
+              </li>
+            ))}
+          </ol>
+        </section>
+      )}
+
+      {!log ? (
+        <section className="rounded-xl border border-border bg-card p-5 text-sm">
+          <p className="font-semibold">{m.notFound}</p>
+          <p className="pt-1 text-muted-foreground">{m.notFoundHelp}</p>
+        </section>
+      ) : (
+        <>
+          <Summary meta={log.meta} messages={messages} />
+          <section
+            aria-labelledby="run-download"
+            className="flex flex-wrap items-center gap-3 rounded-xl border border-border bg-card p-5 text-sm"
+          >
+            <h2 id="run-download" className="text-[15px] font-semibold">
+              {m.download}
+            </h2>
+            <a href={raw("events")} download className="text-accent-foreground underline">
+              {m.downloadEvents}
+            </a>
+            <a href={raw("stderr")} download className="text-accent-foreground underline">
+              {m.downloadStderr}
+            </a>
+          </section>
+          <Events text={log.events} messages={messages} />
+          <section
+            aria-labelledby="run-stderr"
+            className="flex flex-col gap-2 rounded-xl border border-border bg-card p-5"
+          >
+            <h2 id="run-stderr" className="text-[15px] font-semibold">
+              {m.stderr}
+            </h2>
+            {log.stderr ? (
+              <pre className="max-h-96 overflow-auto rounded-lg bg-muted p-3 font-mono text-xs whitespace-pre-wrap [overflow-wrap:anywhere]">
+                {clip(log.stderr, m).text}
+              </pre>
+            ) : (
+              <p className="text-sm text-muted-foreground">{m.stderrEmpty}</p>
+            )}
+          </section>
+        </>
+      )}
+    </div>
+  );
+}
+
+function Summary({ meta, messages }: { meta: RunLogMeta; messages: Messages }) {
+  const m = messages.runLog;
+  const role =
+    messages.labels.step[meta.role as StepKey] ??
+    (m.roles as Record<string, string>)[meta.role] ??
+    meta.role;
+  const outcome = meta.outcome;
+  const files = { events: m.events, stderr: m.stderr } as const;
+  return (
+    <section
+      aria-labelledby="run-summary"
+      className="flex flex-col gap-2 rounded-xl border border-border bg-card p-5 text-sm"
+    >
+      <h2 id="run-summary" className="sr-only">
+        {m.title}
+      </h2>
+      <dl className="grid grid-cols-[max-content_minmax(0,1fr)] gap-x-4 gap-y-1">
+        <dt className="text-muted-foreground">{m.role}</dt>
+        <dd>{role}</dd>
+        <dt className="text-muted-foreground">{m.agent}</dt>
+        <dd className="[overflow-wrap:anywhere]">
+          {[meta.agentId, meta.runtime, meta.authMode, meta.model].filter(Boolean).join("・")}
+        </dd>
+        <dt className="text-muted-foreground">{m.started}</dt>
+        <dd>{formatStamp(meta.startedAt, messages.locale)}</dd>
+        <dt className="text-muted-foreground">{m.finished}</dt>
+        <dd>{meta.finishedAt ? formatStamp(meta.finishedAt, messages.locale) : m.unfinished}</dd>
+        {outcome && (
+          <>
+            <dt className="text-muted-foreground">{m.outcome}</dt>
+            <dd
+              className={cn("[overflow-wrap:anywhere]", outcome.kind === "failed" && "text-warn")}
+            >
+              {outcome.kind === "completed"
+                ? m.completed
+                : `${m.failed(outcome.reason)}：${renderMessage(outcome.message, messages.locale)}`}
+            </dd>
+          </>
+        )}
+      </dl>
+      {(["events", "stderr"] as const).map((file) => {
+        const dropped = meta.truncated?.[file];
+        return dropped ? (
+          <p
+            key={file}
+            role="note"
+            className="rounded-lg border border-warn-line bg-warn-soft px-3 py-2 text-warn"
+          >
+            {m.truncated(files[file], bytes(meta.limits[file]), bytes(dropped))}
+          </p>
+        ) : null;
+      })}
+    </section>
+  );
+}
+
+function Events({ text, messages }: { text: string; messages: Messages }) {
+  const m = messages.runLog;
+  const entries = parseSessionLog(text);
+  const shown = entries.slice(0, MAX_ENTRIES);
+  return (
+    <section
+      aria-labelledby="run-events"
+      className="flex flex-col gap-2 rounded-xl border border-border bg-card p-5"
+    >
+      <h2 id="run-events" className="text-[15px] font-semibold">
+        {m.events}
+      </h2>
+      {entries.length > MAX_ENTRIES && (
+        <p role="note" className="text-sm text-warn">
+          {m.shown(MAX_ENTRIES, entries.length)}
+        </p>
+      )}
+      {entries.length === 0 ? (
+        <p className="text-sm text-muted-foreground">{m.eventsEmpty}</p>
+      ) : (
+        <ol className="flex flex-col gap-2">
+          {shown.map((entry, i) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: 1行から複数の出来事を作るので、並びの位置で区別する
+            <li key={`${entry.line}-${i}`}>
+              <Entry entry={entry} m={m} />
+            </li>
+          ))}
+        </ol>
+      )}
+    </section>
+  );
+}
+
+const PRE =
+  "mt-2 max-h-96 overflow-auto rounded-lg bg-muted p-3 font-mono text-xs whitespace-pre-wrap [overflow-wrap:anywhere]";
+
+function Label({ children, tone }: { children: React.ReactNode; tone?: "warn" | "muted" }) {
+  return (
+    <span
+      className={cn(
+        "text-xs font-semibold",
+        tone === "warn" ? "text-warn" : tone === "muted" ? "text-muted-foreground" : "",
+      )}
+    >
+      {children}
+    </span>
+  );
+}
+
+function Entry({ entry, m }: { entry: LogEntry; m: Messages["runLog"] }) {
+  const box = "rounded-lg border border-border px-3 py-2 text-sm";
+  const line = <span className="ml-2 text-xs text-muted-foreground">{m.line(entry.line)}</span>;
+  switch (entry.kind) {
+    case "session":
+    case "turn":
+      return (
+        <div className={cn(box, "text-muted-foreground")}>
+          <Label tone="muted">{m.kind[entry.kind]}</Label>
+          {line}
+          {entry.text && <span className="ml-2 font-mono text-xs break-all">{entry.text}</span>}
+        </div>
+      );
+    case "thinking":
+      return (
+        <div className={cn(box, "text-muted-foreground")}>
+          <Label tone="muted">{m.kind.thinking}</Label>
+          {line}
+          <p className="pt-1 whitespace-pre-wrap [overflow-wrap:anywhere]">
+            {entry.text ? clip(entry.text, m).text : m.hiddenThinking}
+          </p>
+        </div>
+      );
+    case "message":
+      return (
+        <div className={box}>
+          <Label>{m.kind.message}</Label>
+          {line}
+          <p className="pt-1 whitespace-pre-wrap [overflow-wrap:anywhere]">
+            {clip(entry.text, m).text}
+          </p>
+        </div>
+      );
+    case "toolCall":
+    case "toolResult": {
+      // ツールの呼び出し・結果は畳む
+      const title =
+        entry.kind === "toolCall"
+          ? entry.unfinished
+            ? m.kind.toolCallUnfinished
+            : m.kind.toolCall
+          : entry.isError
+            ? m.kind.toolError
+            : m.kind.toolResult;
+      const body = entry.kind === "toolCall" ? entry.input : entry.text;
+      const warn =
+        (entry.kind === "toolResult" && entry.isError) ||
+        (entry.kind === "toolCall" && entry.unfinished);
+      return (
+        <details className={box}>
+          <summary className="cursor-pointer [overflow-wrap:anywhere]">
+            <Label tone={warn ? "warn" : undefined}>{title}</Label>
+            {entry.kind === "toolCall" && (
+              <span className="ml-2 font-mono text-xs">{entry.name}</span>
+            )}
+            {line}
+            <span className="ml-2 font-mono text-xs text-muted-foreground">
+              {body.replace(/\s+/g, " ").slice(0, 120)}
+            </span>
+          </summary>
+          <pre className={PRE}>{clip(body, m).text}</pre>
+        </details>
+      );
+    }
+    case "result":
+      return (
+        <div
+          className={cn(
+            box,
+            entry.isError ? "border-warn-line bg-warn-soft" : "border-accent-line bg-accent",
+          )}
+        >
+          <Label tone={entry.isError ? "warn" : undefined}>
+            {entry.isError ? m.kind.resultError : m.kind.result}
+          </Label>
+          {line}
+          {entry.detail && (
+            <span className="ml-2 font-mono text-xs text-muted-foreground">{entry.detail}</span>
+          )}
+          {entry.text && (
+            <p className="pt-1 whitespace-pre-wrap [overflow-wrap:anywhere]">
+              {clip(entry.text, m).text}
+            </p>
+          )}
+        </div>
+      );
+    case "error":
+      return (
+        <div className={cn(box, "border-warn-line bg-warn-soft text-warn")}>
+          <Label tone="warn">{m.kind.error}</Label>
+          {line}
+          <p className="pt-1 whitespace-pre-wrap [overflow-wrap:anywhere]">{entry.text}</p>
+        </div>
+      );
+    case "truncated":
+      return (
+        <div role="note" className={cn(box, "border-warn-line bg-warn-soft text-warn")}>
+          <Label tone="warn">{m.kind.truncated}</Label>
+          {line}
+          <span className="ml-2 text-xs">
+            {m.truncated(m.events, bytes(entry.limitBytes), bytes(entry.droppedBytes))}
+          </span>
+        </div>
+      );
+    case "raw":
+      // 知らない形の行は、生の行のまま出す
+      return (
+        <div className={box}>
+          <Label tone="muted">{m.kind.raw}</Label>
+          {line}
+          <pre className={PRE}>{clip(entry.text, m).text}</pre>
+        </div>
+      );
+  }
+}

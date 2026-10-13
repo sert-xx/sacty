@@ -103,7 +103,7 @@ describe("認証方式ごとの環境変数", () => {
     expect(claude.env.SACTY_MCP_SECRET_0).toBe("Bearer ghp-value");
     // 出力から取り除けるように、取り出した値を知らせる
     expect(used).toContain("ghp-value");
-    expect(claude.command.slice(5)).toEqual([
+    expect(claude.command.slice(6)).toEqual([
       "--mcp-config",
       "/tmp/sacty-claude-config/mcp.json",
       "--strict-mcp-config",
@@ -165,7 +165,8 @@ describe("認証方式ごとの環境変数", () => {
       CLAUDE_CODE_OAUTH_TOKEN: "oauth-value",
     });
     expect(inv.command.slice(0, 2)).toEqual(["claude", "-p"]);
-    expect(inv.command).toContain("--output-format");
+    // 途中の出来事も出させる（セッションログ。PBI-62）。-p で stream-json を使うには --verbose が要る
+    expect(inv.command.slice(3, 6)).toEqual(["--output-format", "stream-json", "--verbose"]);
   });
 
   it("APIキーではANTHROPIC_API_KEYだけを渡し、モデルは引数で指定する", async () => {

@@ -21,6 +21,7 @@ import { KeychainSecretStore, OnePasswordSecretStore, ResolvingSecretStore } fro
 import { createApp } from "./server.js";
 import { TaskService } from "./service.js";
 import { DockerComposeServices } from "./services.js";
+import { SessionLogStore } from "./session-logs.js";
 import { SqliteSettingsStore } from "./settings.js";
 import { JiraTickets } from "./tickets.js";
 import { Worker } from "./worker.js";
@@ -100,6 +101,8 @@ const service = new TaskService({
   services: composeServices,
   tickets,
   workspaceRoot: join(home, "workspaces"),
+  // エージェントの実行ごとのセッションログ（PBI-62）。中止の掃除では消さない（監査に使うため）
+  sessionLogs: new SessionLogStore(join(home, "runs")),
   gateway,
   platformProblems: (names) => credentials.unavailable(names),
   hostMcpProblems: () => hostMcp.problems(),

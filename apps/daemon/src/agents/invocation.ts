@@ -111,7 +111,9 @@ export async function buildInvocation(
         CLAUDE_CONFIG_DIR: CONTAINER_CLAUDE_CONFIG_DIR,
         CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1",
       };
-      const command = ["claude", "-p", prompt, "--output-format", "json"];
+      // 途中の出来事（考えたこと・ツールの呼び出しと結果）も出させ、セッションログに残す（PBI-62）。-p で stream-json を
+      // 使うには --verbose が要る。最終結果は、最後の result の出来事から読む
+      const command = ["claude", "-p", prompt, "--output-format", "stream-json", "--verbose"];
       if (context && context.mcpServers.length > 0) {
         // コンテキストの MCP サーバーだけを使い、そのツールの使用を許可する
         command.push(

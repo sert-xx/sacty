@@ -39,30 +39,70 @@ function nonNegInt(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
 }
 
-/** 出力の末尾にある最後のJSONオブジェクトを取り出す（前に警告などが出ていても読めるように）。 */
-function lastJsonObject(stdout: string): Record<string, unknown> | undefined {
-  const lines = stdout.trim().split("\n").reverse();
-  for (const line of lines) {
+/** 1行ずつ読んだ JSON オブジェクト（JSON でない行・壊れた行は飛ばす）。 */
+function jsonLines(stdout: string): Record<string, unknown>[] {
+  const objects: Record<string, unknown>[] = [];
+  for (const line of stdout.split("\n")) {
     const text = line.trim();
     if (!text.startsWith("{")) continue;
     try {
-      return JSON.parse(text) as Record<string, unknown>;
+      const value: unknown = JSON.parse(text);
+      if (value && typeof value === "object" && !Array.isArray(value)) {
+        objects.push(value as Record<string, unknown>);
+      }
     } catch {
       // 次の行を試す
     }
   }
+  return objects;
+}
+
+/**
+ * Claude Code の最終結果を取り出す。stream-json（PBI-62）では途中の出来事の後の、最後の result の出来事。
+ * json の形（type の無い1つのオブジェクト・整形された複数行）も読む（前に警告などが出ていても読めるように）。
+ * 途中の出来事だけで result が無ければ（途中で落ちた）、無いものとして扱う。
+ */
+function claudeResult(stdout: string): Record<string, unknown> | undefined {
+  const objects = jsonLines(stdout);
+  const result = objects.findLast((o) => o.type === "result");
+  if (result) return result;
+  const last = objects.at(-1);
+  if (last && last.type === undefined) return last;
+  if (objects.length > 0) return undefined;
   try {
-    return JSON.parse(stdout) as Record<string, unknown>;
+    const value: unknown = JSON.parse(stdout);
+    return value && typeof value === "object" && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : undefined;
   } catch {
     return undefined;
   }
 }
 
-/** `claude -p --output-format json` の結果を読む。 */
+/** result が無いときに、途中の出来事から分かる最後のエージェントの発言（認証の失敗の文など）。 */
+function lastAssistantText(stdout: string): string {
+  for (const event of jsonLines(stdout).reverse()) {
+    if (event.type !== "assistant") continue;
+    const content = (event.message as { content?: unknown } | undefined)?.content;
+    if (!Array.isArray(content)) continue;
+    const text = content
+      .map((c) => (c && typeof c === "object" && c.type === "text" ? String(c.text ?? "") : ""))
+      .join("")
+      .trim();
+    if (text) return text;
+  }
+  return "";
+}
+
+/** `claude -p --output-format stream-json --verbose`（PBI-62）か `--output-format json` の結果を読む。 */
 export function parseClaudeResult(stdout: string, exitCode: number, stderr = ""): AgentOutcome {
-  const json = lastJsonObject(stdout);
+  const json = claudeResult(stdout);
   if (!json) {
-    const message = (stderr || stdout || `exit code ${exitCode}`).trim().slice(0, 2000);
+    // 途中の出来事の JSON の行そのものは、理由にしない（長く、読みにくいため。全文はセッションログにある）
+    const raw = jsonLines(stdout).length > 0 ? "" : stdout;
+    const message = (stderr || lastAssistantText(stdout) || raw || `exit code ${exitCode}`)
+      .trim()
+      .slice(0, 2000);
     return { kind: "failed", reason: classifyFailure(message), message };
   }
   const u = (json.usage ?? {}) as Record<string, unknown>;
@@ -74,7 +114,15 @@ export function parseClaudeResult(stdout: string, exitCode: number, stderr = "")
   };
   const result = typeof json.result === "string" ? json.result : "";
   if (json.is_error === true || exitCode !== 0) {
-    const message = (result || stderr || `exit code ${exitCode}`).trim().slice(0, 2000);
+    // stream-json の失敗の result には、result の文が無く、種類（error_max_turns など）と errors だけのことがある
+    const errors = Array.isArray(json.errors)
+      ? json.errors.filter((e): e is string => typeof e === "string").join("\n")
+      : "";
+    const subtype =
+      typeof json.subtype === "string" && json.subtype !== "success" ? json.subtype : "";
+    const message = (result || errors || stderr || subtype || `exit code ${exitCode}`)
+      .trim()
+      .slice(0, 2000);
     return { kind: "failed", reason: classifyFailure(message), message, usage };
   }
   return { kind: "completed", output: result, usage };

@@ -50,6 +50,7 @@ import {
   usd,
   usesTestCommand,
 } from "@/lib/labels";
+import { runLogId } from "@/lib/session-log";
 import { subtaskSummary } from "@/lib/subtasks";
 
 export default async function TaskPage({ params }: { params: Promise<{ id: string }> }) {
@@ -428,7 +429,18 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
                   {formatStamp(event.at, messages.locale)}
                 </time>
                 {/* パスやブランチ名など、区切りの無い長い文字列でも幅からはみ出さないようにする */}
-                <span className="[overflow-wrap:anywhere]">{describeEvent(event, labels)}</span>
+                <span className="[overflow-wrap:anywhere]">
+                  {describeEvent(event, labels)}
+                  {/* エージェントの実行の行から、その実行のセッションログを開く（PBI-62） */}
+                  {runLogId(event) && (
+                    <Link
+                      href={`/tasks/${encodeURIComponent(task.id)}/runs/${encodeURIComponent(runLogId(event) ?? "")}`}
+                      className="ml-2 text-xs whitespace-nowrap text-accent-foreground underline"
+                    >
+                      {messages.runLog.open}
+                    </Link>
+                  )}
+                </span>
               </li>
             ))}
           </ol>
