@@ -220,6 +220,8 @@ export type Task = {
   testCommand?: string;
   /** オーケストレーターが判断した、調査の工程の性質（PBI-43）。無ければ内容の調査として扱う。 */
   investigation?: InvestigationKind;
+  /** 工程ごとに使うイメージの名前（PBI-41）。書いていない工程は既定のイメージ。 */
+  images?: Partial<Record<StepKey, string>>;
   /** オーケストレーターが工程を選んだ理由（PBI-17。固定の工程だった作業履歴には無い）。 */
   stepsChoice?: { plan?: StepPlan; reason: DaemonText; fallback: boolean };
   /** 取り込んだ PR へのフィードバック（種類と ID。二重に取り込まないため。PBI-14b）。 */
@@ -348,6 +350,7 @@ export function applyEvent(
       };
       if (event.payload.testCommand) task.testCommand = event.payload.testCommand;
       if (event.payload.investigation) task.investigation = event.payload.investigation;
+      if (event.payload.images) task.images = event.payload.images;
       if (event.payload.reason !== undefined) {
         task.stepsChoice = {
           ...(event.payload.plan ? { plan: event.payload.plan } : {}),

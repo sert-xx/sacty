@@ -10,6 +10,7 @@ import {
   ProjectExport,
   projectConflicts,
   responsibleProject,
+  targetImageOf,
 } from "./projects.js";
 
 const make = (id: string, def: ProjectDefinitionInput): Project => ({
@@ -275,5 +276,33 @@ describe("通知先（PBI-38）", () => {
     const exported = exportProject({ ...api, targets: [], id: "p", createdAt: "", updatedAt: "" });
     expect(exported.project.notification).toEqual(api.notification);
     expect(ProjectExport.parse(exported).project.notification).toEqual(api.notification);
+  });
+
+  it("対象で指定したイメージは、リポジトリの対象の指定が Org の対象の指定より優先する（PBI-41）", () => {
+    const project = (targets: unknown[]) =>
+      ({ id: "p", ...ProjectDefinition.parse({ name: "x", targets }) }) as Project;
+    const both = project([
+      { scope: "org", target: "https://github.com/acme", image: "java" },
+      { scope: "repo", target: "https://github.com/acme/web", image: "default" },
+      { scope: "repo", target: "https://github.com/acme/api" },
+    ]);
+    expect(targetImageOf(both, "https://github.com/acme/web")).toBe("default");
+    // リポジトリの対象に指定が無ければ、Org の対象の指定
+    expect(targetImageOf(both, "https://github.com/ACME/api")).toBe("java");
+    expect(targetImageOf(both, "https://github.com/acme/other")).toBe("java");
+    expect(targetImageOf(both, "https://github.com/else/x")).toBeUndefined();
+    // 空の指定は「指定しない」
+    expect(
+      targetImageOf(
+        project([{ scope: "repo", target: "https://github.com/a/b", image: "" }]),
+        "https://github.com/a/b",
+      ),
+    ).toBeUndefined();
+    expect(() =>
+      ProjectDefinition.parse({
+        name: "x",
+        targets: [{ scope: "repo", target: "https://github.com/a/b", image: "Java 17" }],
+      }),
+    ).toThrow();
   });
 });

@@ -2,7 +2,7 @@ import { ImportProjectForm } from "@/components/import-project-form";
 import { ProjectEditor } from "@/components/project-editor";
 import { AppRail } from "@/components/shell/rail";
 import { getMessages } from "@/i18n/server";
-import { listProjects } from "@/lib/daemon";
+import { getStatus, listProjects } from "@/lib/daemon";
 
 /** プロジェクトが1つ以上あるか。デーモンにつながらなければ undefined（各画面がつながらないことを出す）。 */
 export async function hasProjects(): Promise<boolean | undefined> {
@@ -30,7 +30,7 @@ export async function ProjectGate({ children }: { children: React.ReactNode }) {
         <h2 id="new-project" className="text-[15px] font-semibold">
           {t.newTitle}
         </h2>
-        <ProjectEditor />
+        <ProjectEditor images={(await getStatus().catch(() => undefined))?.images ?? []} />
       </section>
       <section aria-labelledby="import-project" className="flex flex-col gap-3">
         <h2 id="import-project" className="text-[15px] font-semibold">

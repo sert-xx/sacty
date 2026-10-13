@@ -194,6 +194,20 @@ export function githubRepoOf(url: string): string | undefined {
 const NPM_SECRET_KEY =
   /(?:^|:)(?:_auth|_authToken|_password|username|email|certfile|keyfile)$|^(?:cert|key)$/i;
 
+/** 認証の値と思われる環境変数の名前（images の env には書けない。PBI-41）。 */
+const IMAGE_ENV_SECRET_NAME = /TOKEN|PASSWORD|PASSWD|SECRET|CREDENTIAL|AUTH|API_?KEY|PRIVATE_KEY/i;
+
+/**
+ * images の env に書けない名前（PBI-41）。docker のコマンド自体や、sacty がエージェントに渡す設定とぶつかるため。
+ */
+const IMAGE_ENV_RESERVED =
+  /^(?:PATH|HOME|USER|SHELL|TMPDIR|NODE_OPTIONS|(?:DOCKER|SACTY|CODEX|CLAUDE|ANTHROPIC|OPENAI|NPM_CONFIG)_\w*)$/;
+
+/** ユーザー名・パスワードを含む URL か（https://user:pass@host のような値）。 */
+function hasUserInfo(value: string): boolean {
+  return /^[a-z][a-z0-9+.-]*:\/\/[^/@\s]+@/i.test(value);
+}
+
 const ConfigFile = z
   .object({
     image: z.string().default(DEFAULT_IMAGE),
@@ -264,6 +278,80 @@ const ConfigFile = z
         npm_token: SecretName.optional(),
       })
       .optional(),
+    /**
+     * 言語ごとのイメージ（PBI-41）。名前ごとに、元のイメージ（言語のツールの入った CI のイメージなど）と、
+     * オーケストレーターに見せる説明を書く。sacty が Node.js とエージェントの CLI を足して作る（npm の設定は
+     * image_build のものを使う）。工程ごとに、オーケストレーターが説明を見て選ぶ（プロジェクトの対象で指定もできる）。
+     */
+    images: z
+      .record(
+        z.string(),
+        z.object({
+          /** オーケストレーターに見せる説明（例 Java 17・Maven・Gradle）。 */
+          description: z.string().trim().min(1).max(200),
+          /** 元のイメージ（FROM）。Debian・Ubuntu 系か RHEL 系（Rocky Linux など）。 */
+          base_image: z.string().trim().min(1),
+          /** 作るイメージの名前。書かなければ sacty-agent-<名前>:<版>。 */
+          image: z.string().trim().min(1).optional(),
+          /**
+           * Node.js を写す元のイメージ（元のイメージに Node.js が無いとき）。書かなければ image_build.base_image、
+           * それも無ければ node:22-bookworm-slim。
+           */
+          node_image: z.string().trim().min(1).optional(),
+          /**
+           * コンテナの中の環境変数（言語ごとのレジストリなど。例 PIP_INDEX_URL・GOPROXY・GONOSUMDB）。
+           * エージェントの実行とテストの実行の両方に渡す。認証の値は書けない（コンテナの中のすべてのコマンドに見えるため）。
+           */
+          env: z
+            .record(z.string(), z.string().regex(/^[^\r\n]*$/, code("config.imageEnvName")))
+            // 名前の形も、record 全体で確かめる（名前の検査は、項目ごとの文言にならないため）
+            .superRefine((env, ctx) => {
+              for (const [key, value] of Object.entries(env)) {
+                if (!/^[A-Z_][A-Z0-9_]*$/.test(key)) {
+                  ctx.addIssue({
+                    code: "custom",
+                    path: [key],
+                    message: code("config.imageEnvName"),
+                  });
+                } else if (IMAGE_ENV_SECRET_NAME.test(key) || hasUserInfo(value)) {
+                  ctx.addIssue({
+                    code: "custom",
+                    path: [key],
+                    message: code("config.imageEnvSecret"),
+                  });
+                } else if (IMAGE_ENV_RESERVED.test(key)) {
+                  ctx.addIssue({
+                    code: "custom",
+                    path: [key],
+                    message: code("config.imageEnvReserved"),
+                  });
+                }
+              }
+            })
+            .default({}),
+          /**
+           * Maven・Gradle の取得先にするリポジトリ（組織のミラー）。Maven は settings.xml の mirror、Gradle は
+           * init スクリプトで、すべての Maven のリポジトリをこの URL に向ける。認証の情報は書けない。
+           */
+          maven_mirror: z
+            .url({ protocol: /^https?$/ })
+            // XML（settings.xml）と Gradle の文字列に埋め込むので、引用符などの記号を含む URL は受け付けない
+            .refine(
+              (url) => !hasUserInfo(url) && /^[^\s'"<>&\\$`]+$/.test(url),
+              code("config.mavenMirror"),
+            )
+            .optional(),
+        }),
+      )
+      // 名前の形は record 全体で確かめる（名前の検査は、項目ごとの文言にならないため）
+      .superRefine((images, ctx) => {
+        for (const name of Object.keys(images)) {
+          if (!/^(?!default$)[a-z0-9][a-z0-9_-]{0,39}$/.test(name)) {
+            ctx.addIssue({ code: "custom", path: [name], message: code("config.imageName") });
+          }
+        }
+      })
+      .default({}),
     /** 1Password（PBI-34）。複数のアカウントにサインインしているときは、使うアカウントを書く。 */
     onepassword: z.object({ account: z.string().trim().min(1).optional() }).optional(),
     /** ホストのゲートウェイ（PBI-37）。 */
@@ -417,9 +505,46 @@ export type SactyConfig = {
     /** イメージの中の npm 全体の設定（PBI-40）。 */
     npmConfig?: Record<string, string>;
   };
+  /** 言語ごとのイメージ（PBI-41）。名前ごと。無ければ既定のイメージだけ。 */
+  images?: Record<string, LanguageImage>;
   /** GitHub Issue の取り込み。認証はプロジェクトの gh のアカウント（PBI-13）。 */
   github?: { pollIntervalSec: number };
 };
+
+/** 言語ごとのイメージ（PBI-41）。 */
+export type LanguageImage = {
+  name: string;
+  /** 作るイメージの名前（タグ）。 */
+  image: string;
+  description: string;
+  baseImage: string;
+  nodeImage?: string;
+  /** コンテナの中の環境変数（エージェントの実行とテストの実行の両方に渡す）。 */
+  env: Record<string, string>;
+  mavenMirror?: string;
+};
+
+/** 既定のイメージの名前（オーケストレーター・プロジェクトの対象で、既定のイメージを指すときに使う。PBI-41）。 */
+export const DEFAULT_IMAGE_NAME = "default";
+
+/**
+ * イメージの名前（images の名前か default。無ければ既定のイメージ）から、使うイメージと環境変数を決める（PBI-41）。
+ * images に無い名前なら、理由を返す（設定から消した・書き間違えたなど）。
+ */
+export function resolveImage(
+  config: SactyConfig,
+  name: string | undefined,
+): { ok: true; image: string; env: Record<string, string> } | { ok: false; message: DaemonText } {
+  if (!name || name === DEFAULT_IMAGE_NAME) return { ok: true, image: config.image, env: {} };
+  const image = config.images?.[name];
+  if (!image) return { ok: false, message: message("image.unknown", { name }) };
+  return { ok: true, image: image.image, env: image.env };
+}
+
+/** 言語ごとのイメージの、既定の名前（タグ）。既定のイメージと同じ版にする。 */
+export function languageImageTag(name: string): string {
+  return `sacty-agent-${name}:${DEFAULT_IMAGE.split(":")[1] ?? "latest"}`;
+}
 
 /** 設定。読めなければ、その理由（文言のコードと引数。PBI-11）。 */
 export type ConfigResult = { ok: true; config: SactyConfig } | { ok: false; problem: DaemonText };
@@ -505,6 +630,20 @@ export function loadConfig(home: string): ConfigResult {
         ...(file.image_build?.npm_version ? { npmVersion: file.image_build.npm_version } : {}),
         ...(file.image_build?.npm_config ? { npmConfig: file.image_build.npm_config } : {}),
       },
+      images: Object.fromEntries(
+        Object.entries(file.images).map(([name, image]) => [
+          name,
+          {
+            name,
+            image: image.image ?? languageImageTag(name),
+            description: image.description,
+            baseImage: image.base_image,
+            ...(image.node_image ? { nodeImage: image.node_image } : {}),
+            env: image.env,
+            ...(image.maven_mirror ? { mavenMirror: image.maven_mirror } : {}),
+          },
+        ]),
+      ),
       platforms: Object.entries(file.gateway.platforms).map(([name, p]) => toPlatform(name, p)),
       hostMcp: Object.entries(file.gateway.mcp_servers).map(([name, m]) => toHostMcp(name, m)),
       hostAddress: file.gateway.host_address,
@@ -549,6 +688,27 @@ image: ${DEFAULT_IMAGE}
 #     replace-registry-host: always   # package-lock.json の古い取得元の URL を、いまの registry に置き換える
 #     audit: false
 #     min-release-age: 7              # 公開から7日たっていない版は入れない
+# 言語ごとのイメージ。工程ごとに、オーケストレーターが説明を見て選ぶ（プロジェクトの対象で指定もできる）。
+# 元のイメージは、言語のツールが入った Debian・Ubuntu 系か RHEL 系（Rocky Linux など）のイメージ（CI のイメージなど）。
+# sacty が Node.js（image_build.base_image か node_image から写す）とエージェントの CLI を足して作る。
+# env はエージェントとテストのコンテナに渡す（認証の値は書けない）。maven_mirror は Maven・Gradle の取得先を向ける
+# images:
+#   java17:
+#     description: Java 17・Maven・Gradle
+#     base_image: registry.example.com/ci/java:17
+#     maven_mirror: https://maven.example.com/repository/maven-public/
+#   python:
+#     description: Python 3.12・pip・uv
+#     base_image: registry.example.com/ci/python:3.12
+#     env:
+#       PIP_INDEX_URL: https://pypi.example.com/simple
+#       UV_DEFAULT_INDEX: https://pypi.example.com/simple
+#   go:
+#     description: Go 1.23
+#     base_image: registry.example.com/ci/go:1.23
+#     env:
+#       GOPROXY: https://goproxy.example.com
+#       GONOSUMDB: git.example.com
 default_agent: claude-subscription
 # ゴールガーディアン（変更の申し出の判定）に使うAI。省略すると default_agent
 # guardian_agent: claude-subscription

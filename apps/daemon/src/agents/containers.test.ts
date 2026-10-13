@@ -184,3 +184,60 @@ describe("テストの実行の注記（PBI-11b）", () => {
     expect(result.output).not.toContain("[sacty]");
   });
 });
+
+describe("イメージの環境変数（PBI-41）", () => {
+  /** docker run の引数と、docker コマンドに渡した環境変数を記録し、すぐ終わる偽物。 */
+  function recordingDocker() {
+    const runs: { args: string[]; env: Record<string, string> }[] = [];
+    const spawnImpl = ((_cmd: string, args: string[], options: { env: Record<string, string> }) => {
+      const child = Object.assign(new EventEmitter(), {
+        stdout: new EventEmitter(),
+        stderr: new EventEmitter(),
+        kill: () => true,
+      });
+      if (args[0] === "run") runs.push({ args, env: options.env });
+      setTimeout(() => child.emit("close", 0), 0);
+      return child;
+    }) as never;
+    return { spawnImpl, runs };
+  }
+
+  it("テストの実行に、イメージの環境変数を名前だけ渡す（値はコマンドラインに出さない）", async () => {
+    const docker = recordingDocker();
+    const runner = new DockerTestRunner(60_000, docker.spawnImpl);
+    await runner.run({
+      runId: "r1",
+      image: "sacty-agent-java:test",
+      workspaceDir: "/tmp",
+      command: "mvn test",
+      env: { GOPROXY: "https://proxy.example.com" },
+    });
+    const run = docker.runs[0];
+    expect(run?.args).toContain("GOPROXY");
+    expect(run?.args.join(" ")).not.toContain("proxy.example.com");
+    expect(run?.env.GOPROXY).toBe("https://proxy.example.com");
+    expect(run?.args).toContain("sacty-agent-java:test");
+  });
+
+  it("エージェントの実行では、実行の環境変数がイメージの環境変数より優先する", async () => {
+    const { DockerExecutor } = await import("./docker.js");
+    const docker = recordingDocker();
+    const executor = new DockerExecutor(60_000, docker.spawnImpl);
+    await executor.run({
+      runId: "r2",
+      image: "sacty-agent-java:test",
+      workspaceDir: "/tmp",
+      invocation: {
+        command: ["codex"],
+        env: { SHARED: "from-run", CODEX_HOME: "/.codex" },
+        parser: "codex-jsonl",
+      },
+      imageEnv: { SHARED: "from-image", PIP_INDEX_URL: "https://pypi.example.com/simple" },
+    });
+    const run = docker.runs[0];
+    expect(run?.env.SHARED).toBe("from-run");
+    expect(run?.env.PIP_INDEX_URL).toBe("https://pypi.example.com/simple");
+    const names = run?.args.filter((_, i, a) => a[i - 1] === "-e") ?? [];
+    expect(names.sort()).toEqual(["CODEX_HOME", "PIP_INDEX_URL", "SHARED"]);
+  });
+});

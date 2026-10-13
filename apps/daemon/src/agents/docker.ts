@@ -140,6 +140,8 @@ export interface AgentExecutor {
     image: string;
     workspaceDir: string;
     invocation: Invocation;
+    /** イメージの環境変数（言語ごとのイメージの env。PBI-41）。実行の環境変数が同じ名前なら、そちらを使う。 */
+    imageEnv?: Record<string, string>;
   }): Promise<AgentOutcome>;
   /** 実行中のコンテナを止める（人間が一時停止・中止したとき）。無ければ何もしない。 */
   kill(runId: string): void;
@@ -235,7 +237,9 @@ export class DockerExecutor implements AgentExecutor {
     image,
     workspaceDir,
     invocation,
+    imageEnv = {},
   }: Parameters<AgentExecutor["run"]>[0]): Promise<AgentOutcome> {
+    const env = { ...imageEnv, ...invocation.env };
     // コピーして渡すファイル（Codexの認証ファイルなど）は、実行ごとの一時ディレクトリに置き、
     // ディレクトリごとマウントする（ファイル単体だと親ディレクトリがroot所有になり書き込めないため）
     const staging = invocation.stage ? mkdtempSync(join(tmpdir(), "sacty-run-")) : null;
@@ -289,7 +293,7 @@ export class DockerExecutor implements AgentExecutor {
       runId,
       image,
       workspaceDir,
-      envNames: Object.keys(invocation.env),
+      envNames: Object.keys(env),
       mounts,
       command: invocation.command,
       ...(invocation.hostGateway
@@ -307,7 +311,7 @@ export class DockerExecutor implements AgentExecutor {
         stderr: string;
       }>((resolve, reject) => {
         const child = this.spawnImpl("docker", args, {
-          env: { ...dockerClientEnv(), ...invocation.env },
+          env: { ...dockerClientEnv(), ...env },
           stdio: ["ignore", "pipe", "pipe"],
         });
         this.containers.attach(containerName, child);

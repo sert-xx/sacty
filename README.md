@@ -116,6 +116,41 @@ image_build:
 - `npm_config` はイメージに残り、コンテナの中のすべての npm（対象リポジトリの `npm ci` など）に効く。対象リポジトリの `.npmrc` に同じ項目があれば、そちらが優先する。認証の項目（`_authToken` など）はイメージに残るので書けない
 - 作ったイメージ（`image`）は、エージェントの実行とテストの実行の両方で使う
 
+### 言語ごとのイメージ
+
+Python・Go・Java などのリポジトリは、言語のツールが入ったイメージ（CI のイメージなど）を元にして、言語ごとのイメージを作る。
+
+```yaml
+images:
+  java17:
+    description: Java 17・Maven・Gradle          # オーケストレーターが選ぶときに見る説明
+    base_image: registry.example.com/ci/java:17   # Debian・Ubuntu 系か RHEL 系（Rocky Linux など）
+    maven_mirror: https://maven.example.com/repository/maven-public/
+  python:
+    description: Python 3.12・pip・uv
+    base_image: registry.example.com/ci/python:3.12
+    env:                                          # エージェントとテストのコンテナに渡す
+      PIP_INDEX_URL: https://pypi.example.com/simple
+  go:
+    description: Go 1.23
+    base_image: registry.example.com/ci/go:1.23
+    env:
+      GOPROXY: https://goproxy.example.com
+```
+
+```bash
+npx sacty image build            # 既定のイメージと images のすべて
+npx sacty image build java17     # 名前を指定して作る（default は既定のイメージ）
+```
+
+- sacty が、元のイメージに Node.js（`node_image`、無ければ `image_build.base_image` か `node:22-bookworm-slim` から写す）・git・Claude Code・Codex を足し、`node` ユーザーで動かす。npm の設定は `image_build` のものを使う
+- イメージの名前は、書かなければ `sacty-agent-<名前>:0.1.0`（`image` で変えられる）
+- `env` は、組織のレジストリなど（`PIP_INDEX_URL`・`UV_DEFAULT_INDEX`・`GOPROXY`・`GONOSUMDB` など）。コンテナの中のすべてのコマンドに見えるので、認証の値（`TOKEN`・`PASSWORD` などを含む名前、ユーザー名・パスワードを含む URL）は書けない
+- `maven_mirror` は、Maven（`settings.xml` の mirror）と Gradle（init スクリプト）の取得先を、すべてその URL に向ける
+- 工程ごとのイメージは、オーケストレーターが工程を選ぶときに、リポジトリ（`pom.xml`・`go.mod`・`pyproject.toml`・`package.json` など。モノレポなら工程で触るディレクトリ）を読んで選ぶ。テストは、実装（不具合の修正では再現）の工程のイメージで実行する。オーケストレーター自身は既定のイメージで動く
+- プロジェクトの対象（リポジトリ・Org）ごとにイメージを指定すると、オーケストレーターに選ばせず、すべての工程でそれを使う（リポジトリの指定が Org の指定より優先）
+- 選んだイメージと理由は作業履歴に残る。`images` に無い名前を選んだ・指定したときは、理由を示して止まる
+
 ### 組織の AI gateway と、工程ごとのモデル
 
 OpenAI 互換（Responses API）の接続先（組織の AI gateway など）は `providers` に書き、Codex のエージェントから `provider` で使う。エージェントは「接続先・モデル・リーズニングエフォート・単価」の組で書き、`step_agents` で工程とオーケストレーターごとに選ぶ。

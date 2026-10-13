@@ -50,6 +50,7 @@ import {
   type Task,
   type TaskProposal,
   targetHost,
+  targetImageOf,
   exportProject as toProjectExport,
 } from "@sacty/core";
 import { ZodError } from "zod";
@@ -70,6 +71,7 @@ import {
   agentSetting,
   type ConfigResult,
   githubRepoOf,
+  resolveImage,
   type SactyConfig,
 } from "./config.js";
 import { type ContextFetcher, GATEWAY_TOKEN_SECRET, prepareContext } from "./context.js";
@@ -198,6 +200,8 @@ export type DaemonStatus = {
   warnings: DaemonText[];
   /** GitHub Issue の取り込みの状況（設定が無ければ null）。 */
   intake: IntakeStatus | null;
+  /** プロジェクトの対象で選べる、言語ごとのイメージ（名前と説明。PBI-41）。 */
+  images: { name: string; description: string }[];
 };
 
 export type IntakeStatus = {
@@ -632,12 +636,89 @@ export class TaskService {
   ): Promise<
     ChosenSteps | { failure: Extract<EventInput, { type: "OrchestratorFailed" }>["payload"] }
   > {
-    if (this.deps.planner) return this.deps.planner(task);
-    // オーケストレーターに使う AI（step_agents.orchestrator か default_agent。PBI-40）
+    // プロジェクトの対象でイメージを指定していれば、オーケストレーターに選ばせない（PBI-41）
+    const pinned = this.pinnedImage(task);
+    const candidates = pinned
+      ? []
+      : Object.values(config.images ?? {}).map(({ name, description }) => ({ name, description }));
+    const choice = this.deps.planner
+      ? await this.deps.planner(task)
+      : await this.askOrchestrator(task, config, candidates);
+    if ("failure" in choice) return choice;
+    return this.withImages(choice, config, pinned);
+  }
+
+  /** プロジェクトの対象で指定したイメージの名前（PBI-41）。 */
+  private pinnedImage(task: Task): string | undefined {
+    const repo = task.source
+      ? task.source.repo
+      : (task.repo ?? (task.repository && githubRepoOf(task.repository.url)));
+    const project = this.deps.projects.get(task.projectId);
+    return repo && project ? targetImageOf(project, repo) : undefined;
+  }
+
+  /**
+   * 工程ごとのイメージを決める（PBI-41）。対象の指定があれば、すべての工程でそれを使う。無ければオーケストレーターの
+   * 選択（選んだ工程の分だけ）。images に無い名前なら、理由を示して止める（再開すると選び直す）。
+   */
+  private withImages(
+    choice: ChosenSteps,
+    config: SactyConfig,
+    pinned: string | undefined,
+  ): ChosenSteps | { failure: Extract<EventInput, { type: "OrchestratorFailed" }>["payload"] } {
+    const { images: picked, imageReason, ...rest } = choice;
+    const images = pinned
+      ? Object.fromEntries(choice.steps.map((step) => [step, pinned]))
+      : Object.fromEntries(
+          Object.entries(picked ?? {}).filter(([step]) => choice.steps.includes(step as StepKey)),
+        );
+    const unknown = Object.values(images).find((name) => !resolveImage(config, name).ok);
+    if (unknown) {
+      return {
+        failure: {
+          reason: "error",
+          message: pinned
+            ? message("image.unknown", { name: unknown })
+            : message("orchestrator.failed", {
+                detail: message("image.unknown", { name: unknown }),
+              }),
+          agentId: choice.agentId ?? "unknown",
+          ...(choice.authMode ? { authMode: choice.authMode } : {}),
+          ...(choice.model ? { model: choice.model } : {}),
+          ...(choice.reasoningEffort ? { reasoningEffort: choice.reasoningEffort } : {}),
+          ...(choice.usage ? { usage: choice.usage } : {}),
+          costUsd: choice.costUsd,
+          estimated: choice.estimated,
+        },
+      };
+    }
+    if (Object.keys(images).length === 0) return rest;
+    return {
+      ...rest,
+      images,
+      imageSource: pinned ? "project" : "orchestrator",
+      ...(!pinned && imageReason ? { imageReason } : {}),
+    };
+  }
+
+  /** オーケストレーターに工程を選ばせる（PBI-17）。 */
+  private async askOrchestrator(
+    task: Task,
+    config: SactyConfig,
+    images: { name: string; description: string }[],
+  ): Promise<
+    ChosenSteps | { failure: Extract<EventInput, { type: "OrchestratorFailed" }>["payload"] }
+  > {
+    // オーケストレーターに使う AI（step_agents.orchestrator か default_agent。PBI-40）。既定のイメージで動く
     const agent = agentFor(config, "orchestrator");
     const { outcome, costUsd, estimated } = await this.runGuardian(
       task,
-      { agent, image: config.image, prompt: buildOrchestratorPrompt(task), role: "orchestrator" },
+      {
+        agent,
+        image: config.image,
+        prompt: buildOrchestratorPrompt(task, { images }),
+        role: "orchestrator",
+      },
       "base",
     );
     // 実行に失敗した・選んだ工程を読み取れなかったときは、理由を記録して止める（PBI-32・PBI-40）。
@@ -668,6 +749,8 @@ export class TaskService {
         fallback: false,
         ...(chosen.testCommand ? { testCommand: chosen.testCommand } : {}),
         ...(chosen.investigation ? { investigation: chosen.investigation } : {}),
+        ...(chosen.images ? { images: chosen.images } : {}),
+        ...(chosen.imageReason ? { imageReason: chosen.imageReason } : {}),
         ...(chosen.baseBranch ? { baseBranch: chosen.baseBranch } : {}),
         ...cost,
       };
@@ -727,7 +810,7 @@ export class TaskService {
   status(): DaemonStatus {
     const config = this.deps.config();
     if (!config.ok) {
-      return { agent: null, problems: [config.problem], warnings: [], intake: null };
+      return { agent: null, problems: [config.problem], warnings: [], intake: null, images: [] };
     }
     const agent = config.config.defaultAgent;
     return {
@@ -741,6 +824,10 @@ export class TaskService {
       intake: config.config.github
         ? { ...this.intakeStatus, ...this.labelOf(this.deps.settings.get()) }
         : null,
+      images: Object.values(config.config.images ?? {}).map(({ name, description }) => ({
+        name,
+        description,
+      })),
     };
   }
 
@@ -1156,7 +1243,9 @@ export class TaskService {
         url: `${repo}.git`,
         ...(task.repository ? { baseBranch: task.repository.baseBranch } : {}),
         ...(task.testCommand ? { testCommand: task.testCommand } : {}),
-        testImage: config.image,
+        // テストは、確かめる工程のイメージで実行する（PBI-41）。実装のイメージ（無ければ再現のイメージ）。
+        // images から消した名前なら既定のイメージにしておき、テストを実行するところで理由を示して止める
+        ...testImageOf(config, task.images?.implement ?? task.images?.reproduce),
         pullRequest: { provider: "github" as const, repo },
       },
     };
@@ -1629,9 +1718,19 @@ export class TaskService {
           };
         }
       }
+      // 工程のイメージ（PBI-41）。images から消した名前なら、実行せずに理由を示して止める
+      const stepImage = resolveImage(config.config, this.mustGet(task.id).images?.[step]);
+      if (!stepImage.ok) {
+        executed ??= {
+          outcome: { kind: "failed", reason: "error", message: stepImage.message },
+          costUsd: 0,
+          estimated: false,
+        };
+      }
       executed ??= await this.execute({
         agent,
-        image: config.config.image,
+        image: stepImage.ok ? stepImage.image : config.config.image,
+        ...(stepImage.ok ? { imageEnv: stepImage.env } : {}),
         runId,
         prompt: [
           buildPrompt(this.mustGet(task.id), step, {
@@ -1853,6 +1952,23 @@ export class TaskService {
     }
     const repo = target.repo;
     const testCommand = repo.testCommand;
+    // テストのイメージが images から消えていれば、テストを実行せずに理由を示して止める（PBI-41）
+    const testImage = resolveImage(config.config, task.images?.implement ?? task.images?.reproduce);
+    if (!testImage.ok) {
+      this.append(task, [
+        {
+          actor: "sacty",
+          event: {
+            type: "TaskPaused",
+            payload: {
+              reason: "error",
+              message: message("verify.testsUnavailable", { detail: testImage.message }),
+            },
+          },
+        },
+      ]);
+      return;
+    }
     // テストのコマンドはオーケストレーターが決める（PBI-25）。分からなければ検証できないので止める
     if (!testCommand) {
       this.append(task, [
@@ -1888,6 +2004,7 @@ export class TaskService {
       const result = await this.deps.tests.run({
         runId: testRunId,
         image: repo.testImage,
+        ...(Object.keys(repo.testEnv).length > 0 ? { env: repo.testEnv } : {}),
         workspaceDir: dir,
         command: testCommand,
       });
@@ -2357,7 +2474,20 @@ export class TaskService {
       record({ reproduced: false, tests, note: message("reproduce.noTests") });
       return;
     }
-    const target = this.targetRepository(task, config.config);
+    const found = this.targetRepository(task, config.config);
+    // 再現の確かめは、再現の工程のイメージで実行する（PBI-41）
+    const reproduceImage = resolveImage(
+      config.config,
+      task.images?.reproduce ?? task.images?.implement,
+    );
+    const target: typeof found = !found.ok
+      ? found
+      : !reproduceImage.ok
+        ? reproduceImage
+        : {
+            ok: true,
+            repo: { ...found.repo, testImage: reproduceImage.image, testEnv: reproduceImage.env },
+          };
     const dir = this.repoDir(task);
     const testCommand = target.ok ? target.repo.testCommand : undefined;
     if (!target.ok || !testCommand || !existsSync(dir)) {
@@ -2386,6 +2516,7 @@ export class TaskService {
     const result = await this.deps.tests.run({
       runId,
       image: target.repo.testImage,
+      ...(Object.keys(target.repo.testEnv).length > 0 ? { env: target.repo.testEnv } : {}),
       workspaceDir: dir,
       command: testCommand,
     });
@@ -2477,9 +2608,13 @@ export class TaskService {
           );
         }
       }
+      // 統合レビューのイメージ（PBI-41）。images から消した名前なら、実行せずに理由を示して止める
+      const stepImage = resolveImage(config, latest.images?.[step]);
+      if (!stepImage.ok) executed ??= failed(stepImage.message);
       executed ??= await this.execute({
         agent,
-        image: config.image,
+        image: stepImage.ok ? stepImage.image : config.image,
+        ...(stepImage.ok ? { imageEnv: stepImage.env } : {}),
         runId,
         prompt: buildIntegrationReviewPrompt(latest, subtasks, { baseBranch, commit }),
         role: step,
@@ -2677,6 +2812,8 @@ export class TaskService {
     context?: Parameters<typeof buildInvocation>[5];
     /** 使わせる組織内 PF の API（工程エージェントだけ。PBI-35）。 */
     platforms?: readonly Platform[];
+    /** イメージの環境変数（言語ごとのイメージの env。PBI-41）。 */
+    imageEnv?: Record<string, string>;
   }): Promise<{ outcome: AgentOutcome; costUsd: number; estimated: boolean }> {
     // 実行に渡した秘密情報。作業履歴に書く前に、出力やエラー文から取り除く。
     const usedSecrets: string[] = [];
@@ -2755,6 +2892,7 @@ export class TaskService {
         image: run.image,
         workspaceDir: run.workspaceDir,
         invocation,
+        ...(run.imageEnv && Object.keys(run.imageEnv).length > 0 ? { imageEnv: run.imageEnv } : {}),
       });
     } catch (error) {
       outcome = {
@@ -3209,8 +3347,21 @@ type TargetRepository = {
   /** オーケストレーターが決めたテストのコマンド（PBI-25）。 */
   testCommand?: string;
   testImage: string;
+  /** テストのイメージの環境変数（言語ごとのイメージの env。PBI-41）。 */
+  testEnv: Record<string, string>;
   pullRequest: { provider: "github"; repo: string };
 };
+
+/** テストのイメージと環境変数（PBI-41）。名前が images に無ければ既定のイメージ（使う前に確かめる）。 */
+function testImageOf(
+  config: SactyConfig,
+  name: string | undefined,
+): { testImage: string; testEnv: Record<string, string> } {
+  const resolved = resolveImage(config, name);
+  return resolved.ok
+    ? { testImage: resolved.image, testEnv: resolved.env }
+    : { testImage: config.image, testEnv: {} };
+}
 
 /** 再現の工程が終わり、テストでの再現の確かめを待っている（PBI-29）。 */
 function awaitingReproductionCheck(task: Task): boolean {

@@ -10,7 +10,7 @@ import {
   type RemarkResponse,
   type ReviewComment,
   renderMessage,
-  type StepKey,
+  StepKey,
   StepPlan,
   sameGitHubUrl,
   type Task,
@@ -1288,7 +1288,17 @@ export function extractRework(
  * オーケストレーターへの指示（PBI-17）。タスクの内容と対象リポジトリのコードを読んで、決めた候補から
  * 工程の組み合わせを選ばせる。判断ごとに新しいセッションで実行する。
  */
-export function buildOrchestratorPrompt(task: Task): string {
+export function buildOrchestratorPrompt(
+  task: Task,
+  options: {
+    /**
+     * 選べる言語ごとのイメージ（名前と説明。PBI-41）。プロジェクトの対象でイメージを指定しているとき・
+     * images を書いていないときは渡さない（イメージを選ばせない）。
+     */
+    images?: readonly { name: string; description: string }[];
+  } = {},
+): string {
+  const images = options.images ?? [];
   const all: Record<StepPlan, string> = {
     standard:
       "調査 → 要求要件 → 設計（テスト観点）→ 実装 → PR作成。既定。振る舞いが複数ある・影響範囲が広い・テスト観点を人間と合意したい変更",
@@ -1319,6 +1329,14 @@ export function buildOrchestratorPrompt(task: Task): string {
     `- baseBranch：変更の起点にするブランチ。ふつうは既定のブランチ（${task.repository?.baseBranch ?? "既定のブランチ"}）。CONTRIBUTING などで別のブランチ（例：develop）に向けると決まっているときだけ、そのブランチ名を書く`,
     "- testCommand：このリポジトリのテストを実行するコマンド（例：npm ci && npm test）。package.json・Makefile・CI の設定などから判断する（ここでは実行しない）。sh -c で実行し、終了コード0で合格とみなす。依存関係の取得も含める。分からなければ空にする（推測で書かない）",
     "- investigation：調査の工程の性質（PBI-43）。content（内容の調査：コードや仕組みを読んで説明する。開発のセットアップをしない）か、bug（不具合の調査：不具合の再現や原因の特定のために、動かして確かめる。セットアップをする）。不具合の修正（bugfix）や、不具合の原因を調べる調査は bug。迷う場合は content にする",
+    ...(images.length > 0
+      ? [
+          "- images：工程ごとに使う実行のイメージ（PBI-41）。工程の作業とテストは、そのイメージのコンテナで行う。各工程で扱うコード（モノレポなら、その工程で触るディレクトリ）の言語・版を、pom.xml・build.gradle・go.mod・pyproject.toml・package.json・.tool-versions などから判断し、次の候補の名前を工程（investigate・requirements・design・implement・reproduce など）ごとに書く。書かない工程は default。テストのコマンドは、実装（不具合の修正では再現）の工程のイメージで実行するので、そのイメージで動くコマンドにする。1つの工程で複数の言語が要るときは、工程を分けるか、両方を含むイメージを選ぶ",
+          `  - default：既定のイメージ（Node.js・Claude Code・Codex）`,
+          ...images.map((image) => `  - ${image.name}：${image.description}`),
+          "- imageReason：イメージをそう選んだ理由（根拠にしたファイル）",
+        ]
+      : []),
     "",
     "選べる工程の組み合わせ：",
     ...Object.entries(plans).map(([key, text]) => `- ${key}：${text}`),
@@ -1332,7 +1350,7 @@ export function buildOrchestratorPrompt(task: Task): string {
     "",
     "選んだ工程を、次の形式で必ず出してください。",
     "```json",
-    `{"${PLAN_HEADING}": {"plan": "${Object.keys(plans).join(" または ")}", "reason": "選んだ理由", "baseBranch": "ベースブランチ", "testCommand": "テストのコマンド（分からなければ空）", "investigation": "content または bug"}}`,
+    `{"${PLAN_HEADING}": {"plan": "${Object.keys(plans).join(" または ")}", "reason": "選んだ理由", "baseBranch": "ベースブランチ", "testCommand": "テストのコマンド（分からなければ空）", "investigation": "content または bug"${images.length > 0 ? ', "images": {"implement": "イメージの名前"}, "imageReason": "イメージを選んだ理由"' : ""}}}`,
     "```",
   ].join("\n");
 }
@@ -1474,6 +1492,9 @@ export function extractStepPlan(
       baseBranch?: string;
       testCommand?: string;
       investigation?: InvestigationKind;
+      /** 工程ごとのイメージの名前（PBI-41）。名前が images にあるかは、呼び出し側が確かめる。 */
+      images?: Partial<Record<StepKey, string>>;
+      imageReason?: string;
     }
   | undefined {
   const blocks = [...output.matchAll(/```json\s*\n([\s\S]*?)\n```/g)].reverse();
@@ -1489,12 +1510,27 @@ export function extractStepPlan(
         const testCommand = text(v.testCommand).slice(0, 1000);
         // 調査の性質は、決めた値のときだけ使う（無ければ内容の調査として扱う。PBI-43）
         const investigation = InvestigationKind.safeParse(v.investigation);
+        // イメージは、工程の名前とイメージの名前の形が正しいものだけを使う（PBI-41）
+        const images = Object.fromEntries(
+          Object.entries(
+            v.images && typeof v.images === "object" ? (v.images as Record<string, unknown>) : {},
+          ).flatMap(([step, name]) => {
+            const key = StepKey.safeParse(step);
+            const value = text(name);
+            return key.success && /^[a-z0-9][a-z0-9_-]{0,39}$/.test(value)
+              ? [[key.data, value]]
+              : [];
+          }),
+        ) as Partial<Record<StepKey, string>>;
+        const imageReason = text(v.imageReason).slice(0, 1000);
         return {
           plan: plan.data,
           reason,
           ...(/^[\w./-]+$/.test(baseBranch) && !baseBranch.startsWith("-") ? { baseBranch } : {}),
           ...(testCommand ? { testCommand } : {}),
           ...(investigation.success ? { investigation: investigation.data } : {}),
+          ...(Object.keys(images).length > 0 ? { images } : {}),
+          ...(imageReason ? { imageReason } : {}),
         };
       }
     } catch {

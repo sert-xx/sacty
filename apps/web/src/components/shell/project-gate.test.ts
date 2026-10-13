@@ -2,7 +2,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const listProjects = vi.fn();
 const listTasks = vi.fn();
-vi.mock("@/lib/daemon", () => ({ listProjects, listTasks }));
+vi.mock("@/lib/daemon", () => ({
+  listProjects,
+  listTasks,
+  getStatus: async () => ({ images: [] }),
+}));
 vi.mock("@/i18n/server", async () => {
   const { messagesFor } = await import("@/i18n");
   return {

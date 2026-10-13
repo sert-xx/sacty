@@ -246,4 +246,38 @@ describe("工程の選択と内容の調査では、開発のセットアップ�
     expect(extractStepPlan(output("other"))).not.toHaveProperty("investigation");
     expect(extractStepPlan(output(undefined))).not.toHaveProperty("investigation");
   });
+
+  it("イメージの候補は渡したときだけ見せ、出力からは工程とイメージの名前の形が正しいものだけを読む（PBI-41）", () => {
+    const repoTask = { title: "x", body: "", steps: [] } as unknown as Task;
+    const none = buildOrchestratorPrompt(repoTask);
+    expect(none).not.toContain("images：");
+    expect(none).not.toContain('"images"');
+    const prompt = buildOrchestratorPrompt(repoTask, {
+      images: [{ name: "java17", description: "Java 17・Maven" }],
+    });
+    expect(prompt).toContain("- images：工程ごとに使う実行のイメージ");
+    expect(prompt).toContain("  - default：既定のイメージ");
+    expect(prompt).toContain("  - java17：Java 17・Maven");
+    expect(prompt).toContain('"images": {"implement": "イメージの名前"}');
+
+    const output = (images: unknown, imageReason?: unknown) =>
+      `\`\`\`json\n${JSON.stringify({ "sacty-steps": { plan: "standard", reason: "r", images, imageReason } })}\n\`\`\``;
+    expect(
+      extractStepPlan(
+        output(
+          {
+            implement: "java17",
+            design: "default",
+            nope: "java17",
+            requirements: "Bad Name",
+            pr: 3,
+          },
+          "pom.xml",
+        ),
+      ),
+    ).toMatchObject({ images: { implement: "java17", design: "default" }, imageReason: "pom.xml" });
+    expect(extractStepPlan(output("java17"))).not.toHaveProperty("images");
+    expect(extractStepPlan(output({}))).not.toHaveProperty("images");
+    expect(extractStepPlan(output(undefined))).not.toHaveProperty("imageReason");
+  });
 });
