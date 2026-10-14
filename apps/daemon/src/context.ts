@@ -20,6 +20,7 @@ import { parse as parseToml, stringify as stringifyToml } from "smol-toml";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 import { errorText, MessageError } from "./errors.js";
+import { type Platform, PlatformFile, toPlatform } from "./platforms.js";
 import { SecretRef } from "./secrets.js";
 
 /**
@@ -30,12 +31,15 @@ import { SecretRef } from "./secrets.js";
  * - `skills/<名前>/SKILL.md`：スキル（名前ごとに、下位が上書きする）。SKILL.md の無いディレクトリはグループで、
  *   `skills/<グループ>/<名前>/SKILL.md` も名前 `<名前>` のスキルになる（PBI-65）
  * - `mcp.yaml`：MCP サーバー（名前ごとに、下位が上書きする）。秘密情報は値を書かず、名前で参照する
+ * - `platforms.yaml`：ゲートウェイの外部 PF（名前ごとに、下位が上書きする。書き方は config.yaml の gateway.platforms と
+ *   同じ。PBI-74）。認証は秘密情報の名前で参照し、値はホストのゲートウェイだけが取り出して付ける
  * - `agents/codex/config.toml`・`agents/claude/settings.json`：エージェントの設定（キーごとに、下位が上書きする。PBI-24）
  */
 const NamedItems = z
   .object({
     skills: z.array(z.string()).default([]),
     mcp: z.array(z.string()).default([]),
+    platforms: z.array(z.string()).default([]),
   })
   .prefault({});
 const ContextManifest = z
@@ -114,6 +118,22 @@ const McpFile = z
   .strict()
   .prefault({});
 
+/**
+ * 層の外部 PF（`platforms.yaml`。PBI-74）。名前と項目は config.yaml の gateway.platforms と同じ
+ * （名前は $SACTY_PF_URL/<名前> の URL の一部になる）。
+ */
+const PlatformsFile = z
+  .object({
+    platforms: z
+      .record(z.string().regex(/^[a-z0-9][a-z0-9-]*$/, code("input.platformName")), PlatformFile)
+      .default({}),
+  })
+  .strict()
+  .prefault({});
+
+/** 層の外部 PF のファイル名（PBI-74）。 */
+export const PLATFORMS_FILE = "platforms.yaml";
+
 export type ContextRef = { repo: string; ref?: string };
 
 /** 取得したコンテキストリポジトリの1層。 */
@@ -123,6 +143,8 @@ export type ContextLayer = ContextRef & {
   manifest: z.infer<typeof ContextManifest>;
   /** この層の MCP サーバー（`mcp.yaml`）。 */
   mcp: Record<string, McpServer>;
+  /** この層の外部 PF（`platforms.yaml`。PBI-74）。無ければ空。 */
+  platforms: Record<string, z.output<typeof PlatformFile>>;
   /** この層のエージェントの設定（`agents/` の下。無ければ空）。 */
   agents: AgentSettings;
 };
@@ -205,12 +227,16 @@ export async function resolveContext(
   return chain.reverse();
 }
 
-/** 層のディレクトリから、設定（sacty-context.yaml・mcp.yaml・エージェントの設定）を読む。 */
-function readLayer(dir: string, key: string): Pick<ContextLayer, "manifest" | "mcp" | "agents"> {
+/** 層のディレクトリから、設定（sacty-context.yaml・mcp.yaml・platforms.yaml・エージェントの設定）を読む。 */
+function readLayer(
+  dir: string,
+  key: string,
+): Pick<ContextLayer, "manifest" | "mcp" | "platforms" | "agents"> {
   assertPlainEntries(dir, key);
   return {
     manifest: readManifest(dir, key),
     mcp: readYaml(dir, "mcp.yaml", key, McpFile).servers,
+    platforms: readYaml(dir, PLATFORMS_FILE, key, PlatformsFile).platforms,
     agents: {
       codex: readAgentSettings(dir, key, AGENT_SETTINGS_FILES.codex, parseToml),
       claude: readAgentSettings(dir, key, AGENT_SETTINGS_FILES.claude, JSON.parse),
@@ -256,7 +282,15 @@ function hashEntries(dir: string): string {
 }
 
 /** sacty が読む・写す項目（設定・規約・スキル・エージェントの設定）。 */
-const CONTEXT_ENTRIES = ["sacty-context.yaml", "mcp.yaml", "rules.md", "rules", "skills", "agents"];
+const CONTEXT_ENTRIES = [
+  "sacty-context.yaml",
+  "mcp.yaml",
+  PLATFORMS_FILE,
+  "rules.md",
+  "rules",
+  "skills",
+  "agents",
+];
 
 /**
  * sacty が読む・写す項目に、通常のファイルとディレクトリ以外（シンボリックリンクなど）が無いことを確かめる。
@@ -534,6 +568,11 @@ export type ComposedContext = {
   skills: { name: string; dir: string; from: string }[];
   /** MCP サーバー（名前ごと。どの層のものか）。 */
   mcp: { name: string; server: McpServer; from: string }[];
+  /**
+   * ゲートウェイの外部 PF（名前ごと。PBI-74）。from に、どの層のものかを持つ。認証は秘密情報の名前のまま
+   * （値はホストのゲートウェイだけが取り出す）。
+   */
+  platforms: Platform[];
   /** エージェントの設定（上位から重ねたもの。sacty が決める項目は除いてある）。 */
   agents: AgentSettings;
   /**
@@ -610,7 +649,7 @@ function layerSkills(
  */
 function mergeNamed<T>(
   layers: ContextLayer[],
-  kind: "skills" | "mcp",
+  kind: "skills" | "mcp" | "platforms",
   itemsOf: (layer: ContextLayer) => { name: string; value: T }[],
   warnings: DaemonText[],
 ): { name: string; value: T; from: string }[] {
@@ -674,6 +713,13 @@ export function composeContext(
     (layer) => Object.entries(layer.mcp).map(([name, value]) => ({ name, value })),
     warnings,
   );
+  // 外部 PF も、MCP サーバーと同じ規則で合わせる（PBI-74）
+  const platforms = mergeNamed(
+    layers,
+    "platforms",
+    (layer) => Object.entries(layer.platforms).map(([name, value]) => ({ name, value })),
+    warnings,
+  );
   const agents: AgentSettings = { codex: {}, claude: {} };
   const files = { codex: new Map(), claude: new Map() } as Record<
     keyof AgentSettings,
@@ -705,6 +751,7 @@ export function composeContext(
     rules: rules.join("\n\n"),
     skills: skills.map((s) => ({ name: s.name, dir: s.value, from: s.from })),
     mcp: mcp.map((m) => ({ name: m.name, server: m.value, from: m.from })),
+    platforms: platforms.map((p) => ({ ...toPlatform(p.name, p.value), from: p.from })),
     agents,
     agentFiles: {
       codex: [...files.codex.entries()].map(([path, f]) => ({ path, ...f })),
@@ -1058,6 +1105,8 @@ export async function prepareContext(
   placed: PlacedContext;
   /** ゲートウェイ経由にした、層の HTTP の MCP サーバーの中継先（PBI-49）。ヘッダーの秘密情報は参照のまま。 */
   gatewayMcp: GatewayMcpServer[];
+  /** 層で定義した外部 PF（PBI-74。from にどの層のものか）。認証は秘密情報の名前のまま。 */
+  platforms: Platform[];
   dispose: () => void;
 }> {
   const work = mkdtempSync(join(tmpdir(), "sacty-context-"));
@@ -1125,6 +1174,7 @@ export async function prepareContext(
       gatewayMcp: gatewayMcp.filter((m) =>
         composed.mcp.some((c) => c.name === m.name && c.from !== "sacty-gateway"),
       ),
+      platforms: composed.platforms,
       dispose,
     };
   } catch (error) {
@@ -1142,17 +1192,50 @@ export async function contextExportInfo(
   root: ContextRef | undefined,
   auth?: ContextAuth,
   defaultDir?: string,
-): Promise<{ mcp: string[]; rules: string }> {
-  if (!root && !defaultDir) return { mcp: [], rules: "" };
+): Promise<{ mcp: string[]; rules: string; platforms: Platform[] }> {
+  if (!root && !defaultDir) return { mcp: [], rules: "", platforms: [] };
   const work = mkdtempSync(join(tmpdir(), "sacty-context-"));
   try {
     const own = root ? await resolveContext(fetcher, root, join(work, "repos"), auth) : [];
     const layers = [...(defaultDir ? [loadDefaultContext(defaultDir)] : []), ...own];
     // 規約は、プロジェクトのコンテキストのものだけ（sacty の既定の規約は、書き出し先の手がかりではないため）
+    const composed = composeContext(layers);
     return {
-      mcp: composeContext(layers).mcp.map((m) => m.name),
+      mcp: composed.mcp.map((m) => m.name),
       rules: own.length > 0 ? composeContext(own).rules : "",
+      platforms: composed.platforms,
     };
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+}
+
+/**
+ * プロジェクトのコンテキストで合成した外部 PF と、合成の警告（PBI-74）。チケットの取り込み・プロジェクトの設定の画面
+ * など、工程の実行の外で PF の名前を引くために読む（取得したリポジトリは、読んだら消す）。
+ */
+export async function contextPlatforms(
+  fetcher: ContextFetcher,
+  root: ContextRef | undefined,
+  auth?: ContextAuth,
+  defaultDir?: string,
+): Promise<{ platforms: Platform[]; warnings: DaemonText[] }> {
+  if (!root && !defaultDir) return { platforms: [], warnings: [] };
+  const work = mkdtempSync(join(tmpdir(), "sacty-context-"));
+  try {
+    const layers = [
+      ...(defaultDir ? [loadDefaultContext(defaultDir)] : []),
+      ...(root ? await resolveContext(fetcher, root, join(work, "repos"), auth) : []),
+    ];
+    const composed = composeContext(layers);
+    // PF に関わる警告だけを返す（スキル・エージェントの設定の警告は、工程の実行で出す）
+    const warnings = composed.warnings.filter(
+      (w) =>
+        typeof w !== "string" &&
+        (w.code === "context.lockedOverride" || w.code === "context.lockedRemove") &&
+        w.params?.kind === "platforms",
+    );
+    return { platforms: composed.platforms, warnings };
   } finally {
     rmSync(work, { recursive: true, force: true });
   }

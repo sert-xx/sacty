@@ -294,6 +294,12 @@ const TaskCreated = z.object({
         service: z.enum(["jira-cloud", "jira-server"]),
         key: z.string(),
         url: z.string(),
+        /**
+         * プロジェクトのコンテキストの PF（platforms.yaml）から取り込んだなら "project"（PBI-74）。同じ名前の PF が
+         * プロジェクトごとに別の接続先なので、チケットはプロジェクトとあわせて識別する。無ければホストの PF
+         * （プロジェクトをまたいで、名前とキーで識別する。PBI-74 より前の作業履歴も）。
+         */
+        scope: z.literal("project").optional(),
       })
       .optional(),
     // PBI-1の作業履歴には無いので既定値で補う
@@ -1308,6 +1314,20 @@ const ContextResolved = z.object({
     runId: z.string(),
     layers: z.array(z.object({ repo: z.string(), ref: z.string().optional(), commit: z.string() })),
     warnings: z.array(DaemonText).default([]),
+    /**
+     * 使えるようにした外部 PF（PBI-74）。ホストの config.yaml の gateway.platforms と、プロジェクトのコンテキストで
+     * 合成したもの（from にどの層のものか。ホストのものは無い）。秘密情報の名前・値は含めない。
+     */
+    platforms: z
+      .array(
+        z.object({
+          name: z.string(),
+          from: z.string().optional(),
+          description: z.string(),
+          allow: z.array(z.string()),
+        }),
+      )
+      .optional(),
   }),
 });
 

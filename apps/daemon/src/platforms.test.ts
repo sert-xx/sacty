@@ -3,10 +3,12 @@ import { describe, expect, it } from "vitest";
 import {
   hideSecret,
   isAllowed,
+  mergePlatforms,
   type Platform,
   PlatformCredentials,
   PlatformFile,
   platformPromptLines,
+  platformSummary,
   toPlatform,
 } from "./platforms.js";
 import { MemorySecretStore } from "./secrets.js";
@@ -250,5 +252,54 @@ describe("組織内 PF の API（PBI-35）", () => {
     expect(lines).toContain("- ticket：チケット管理（$SACTY_PF_URL/ticket）");
     expect(lines).toContain("  - POST /api/v1/tickets/*/comments");
     expect(lines).toContain("認証のヘッダーやキーは付けないでください");
+  });
+});
+
+describe("ホストの PF とコンテキストの PF を合わせる（PBI-74）", () => {
+  const pf = (name: string, from?: string) => ({
+    ...toPlatform(
+      name,
+      PlatformFile.parse({
+        upstream: `https://${name}.example.com`,
+        description: `${name} の説明`,
+        auth: { secret: `${name}-token` },
+        allow: ["GET /api/**"],
+      }),
+    ),
+    ...(from ? { from } : {}),
+  });
+
+  it("同じ名前ならホストのものを使い、どちらを使ったかの警告を残す。ほかはコンテキストのものを足す", () => {
+    const merged = mergePlatforms(
+      [pf("jira")],
+      [pf("jira", "acme/ctx@c0ffee0"), pf("docs", "acme/ctx@c0ffee0")],
+    );
+    expect(merged.platforms.map((p) => [p.name, p.from])).toEqual([
+      ["jira", undefined],
+      ["docs", "acme/ctx@c0ffee0"],
+    ]);
+    expect(merged.warnings).toEqual([
+      { code: "context.hostPlatform", params: { from: "acme/ctx@c0ffee0", name: "jira" } },
+    ]);
+    expect(renderMessage(merged.warnings[0], "ja")).toBe(
+      "acme/ctx@c0ffee0 の platforms.yaml の外部 PF「jira」は、config.yaml の gateway.platforms に同じ名前があるため、config.yaml のものを使いました。",
+    );
+  });
+
+  it("どちらも無い・コンテキストだけでも合わせられる", () => {
+    expect(mergePlatforms([], [])).toEqual({ platforms: [], warnings: [] });
+    expect(mergePlatforms([], [pf("docs", "x")]).platforms.map((p) => p.name)).toEqual(["docs"]);
+  });
+
+  it("画面・作業履歴に出す要約は、名前・層・説明・allow だけで、秘密情報の名前も含めない", () => {
+    const summary = platformSummary(pf("docs", "acme/ctx@c0ffee0"));
+    expect(summary).toEqual({
+      name: "docs",
+      from: "acme/ctx@c0ffee0",
+      description: "docs の説明",
+      allow: ["GET /api/**"],
+    });
+    expect(JSON.stringify(summary)).not.toContain("docs-token");
+    expect(platformSummary(pf("jira"))).not.toHaveProperty("from");
   });
 });

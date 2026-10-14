@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { message, parseRepoUrl, renderMessage } from "@sacty/core";
@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { SqliteActivityStore } from "./activity.js";
 import type { AgentExecutor } from "./agents/docker.js";
 import type { ConfigResult } from "./config.js";
+import type { ContextFetcher, ContextRef } from "./context.js";
 import { MessageError } from "./errors.js";
 import type { GitHubAuth } from "./gh.js";
 import type { FoundIssue, IssueSearch } from "./github.js";
@@ -472,6 +473,122 @@ describe("JIRA のチケットの取り込み（PBI-52）", () => {
       undefined,
       "500",
       undefined,
+    ]);
+    activity.close();
+  });
+
+  it("ホストに無い接続先は、プロジェクトのコンテキストの platforms.yaml の PF で、プロジェクトごとに探す（PBI-74）", async () => {
+    const activity = new SqliteActivityStore(join(dir, "sacty.db"));
+    const withPlatforms = (): ConfigResult => {
+      const base = config(true)();
+      return base.ok ? { ok: true, config: { ...base.config, platforms: [jira] } } : base;
+    };
+    const pfYaml = (upstream: string) =>
+      [
+        "platforms:",
+        "  team-jira:",
+        `    upstream: ${upstream}`,
+        "    auth:",
+        "      secret: team-jira-token",
+        "    allow: [GET /rest/api/**]",
+      ].join("\n");
+    const files: Record<string, Record<string, string>> = {
+      "https://example.com/a-ctx.git": { "platforms.yaml": pfYaml("https://a-jira.example.com") },
+      "https://example.com/b-ctx.git": { "platforms.yaml": pfYaml("https://b-jira.example.com") },
+      "https://example.com/broken.git": { "platforms.yaml": "platforms: [" },
+    };
+    const fetched: string[] = [];
+    const contexts: ContextFetcher = {
+      async fetch(ref: ContextRef, out: string) {
+        fetched.push(ref.repo);
+        for (const [path, content] of Object.entries(files[ref.repo] ?? {})) {
+          mkdirSync(out, { recursive: true });
+          writeFileSync(join(out, path), content);
+        }
+        return { commit: "c0ffee".padEnd(40, "0") };
+      },
+    };
+    const service = new TaskService({
+      activity,
+      config: withPlatforms,
+      secrets: new MemorySecretStore({}),
+      executor: unused as AgentExecutor,
+      repos: unused as never,
+      tests: unused as never,
+      pulls: unused as never,
+      projects: new MemoryProjectStore(),
+      settings: new MemorySettingsStore({ ticketLabel: "sacty" }),
+      github: unused as never,
+      contexts,
+      workspaceRoot: join(dir, "workspaces"),
+    });
+    const project = (name: string, repo: string, context: string, keys: string[]) =>
+      service.saveProject(undefined, {
+        name,
+        targets: [{ scope: "repo", target: `https://github.com/acme/${repo}` }],
+        context: { repo: context },
+        tickets: [
+          { platform: "team-jira", service: "jira-server", keys },
+          // ホストの PF の名前は、これまでどおりプロジェクトをまたいでまとめる（コンテキストは取得しない）
+          { platform: "jira", service: "jira-server", keys: [`${keys[0]}X`] },
+          // どの層にも無い名前は、理由を記録する（コンテキストの取得はプロジェクトごとに1度だけ）
+          { platform: "nowhere", service: "jira-server", keys: [`${keys[0]}N`] },
+        ],
+      });
+    const a = project("A", "a", "https://example.com/a-ctx.git", ["PAY"]);
+    const b = project("B", "b", "https://example.com/b-ctx.git", ["OPS"]);
+    project("C", "c", "https://example.com/broken.git", ["BRK"]);
+    class Recording extends FakeTicketSearch {
+      upstreams: string[] = [];
+      override async search(input: Parameters<TicketClient["search"]>[0]) {
+        this.upstreams.push(`${input.platform.name} ${input.platform.upstream}`);
+        return super.search(input);
+      }
+    }
+    const tickets = new Recording();
+    const intake = new IssueIntake(
+      service,
+      new FakeSearch([]),
+      new FakeGh(),
+      withPlatforms,
+      () => 1_000_000,
+      tickets,
+    );
+    await intake.tick(true);
+    // 同じ名前でも、プロジェクトごとに、そのプロジェクトのコンテキストの PF で探す
+    expect(tickets.upstreams).toEqual([
+      "team-jira https://a-jira.example.com",
+      "jira https://jira.example.com",
+      "team-jira https://b-jira.example.com",
+    ]);
+    expect(tickets.searched.find((t) => t.platform === "jira")?.keys).toEqual([
+      "BRKX",
+      "OPSX",
+      "PAYX",
+    ]);
+    // 見つかったチケットは、そのキーを書いたプロジェクトのタスクになる
+    // ほかのプロジェクト（B）の PF で見つけた PAY-1 は、B のキーではないので取り込まない
+    expect(service.list().map((t) => [t.title, t.projectId, t.ticket?.scope])).toEqual([
+      ["PAY-1 決済の再送", a.id, "project"],
+    ]);
+    expect(b.id).not.toBe(a.id);
+    // コンテキストの誤りは、どの層のどのファイルかを、取り込み先ごとに記録する（ほかの取り込み先は続ける）
+    expect(service.status().intake?.errors?.map((e) => [e.query, ja(e.message)])).toEqual([
+      [expect.stringContaining('nowhere: project in ("PAYN")'), expect.stringContaining("nowhere")],
+      [expect.stringContaining('nowhere: project in ("OPSN")'), expect.stringContaining("nowhere")],
+      [
+        expect.stringContaining('team-jira: project in ("BRK")'),
+        expect.stringContaining("https://example.com/broken.git# の platforms.yaml を読めません"),
+      ],
+      [
+        expect.stringContaining('nowhere: project in ("BRKN")'),
+        expect.stringContaining("https://example.com/broken.git# の platforms.yaml を読めません"),
+      ],
+    ]);
+    expect(fetched.sort()).toEqual([
+      "https://example.com/a-ctx.git",
+      "https://example.com/b-ctx.git",
+      "https://example.com/broken.git",
     ]);
     activity.close();
   });

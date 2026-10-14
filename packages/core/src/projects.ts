@@ -324,6 +324,14 @@ export function projectConflicts(
   projects: readonly Project[],
   id: string | undefined,
   definition: ProjectDefinition,
+  options: {
+    /**
+     * チケットの取り込み先の接続先が、プロジェクトをまたいで共有する PF（ホストの gateway.platforms）か（PBI-74）。
+     * 共有しない PF（プロジェクトのコンテキストの platforms.yaml）は、同じ名前でもプロジェクトごとに別の接続先なので、
+     * ほかのプロジェクトとの重複を調べない。無ければ、すべて共有する PF として調べる。
+     */
+    sharedPlatform?: (name: string) => boolean;
+  } = {},
 ): DaemonMessage[] {
   const problems: DaemonMessage[] = [];
   const others = projects.filter((p) => p.id !== id);
@@ -360,6 +368,7 @@ export function projectConflicts(
         continue;
       }
       seenKeys.add(id);
+      if (options.sharedPlatform && !options.sharedPlatform(source.platform)) continue;
       const owner = others.find((p) =>
         (p.tickets ?? []).some((t) => t.platform === source.platform && t.keys.includes(key)),
       );
@@ -425,9 +434,12 @@ export function responsibleTicketProject(
   projects: readonly Project[],
   platform: string,
   ticketKey: string,
+  /** プロジェクトのコンテキストの PF で見つけたチケットなら、そのプロジェクト（PBI-74）。ほかのプロジェクトは見ない。 */
+  projectId?: string,
 ): { project: Project; source: TicketSourceConfig } | undefined {
   const key = ticketKey.split("-")[0] ?? "";
   for (const project of projects) {
+    if (projectId !== undefined && project.id !== projectId) continue;
     const source = (project.tickets ?? []).find(
       (t) => t.platform === platform && t.keys.includes(key),
     );

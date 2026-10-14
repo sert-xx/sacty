@@ -288,17 +288,18 @@ const PARAMS = {
   "context.notPlainFile": z.object({ key: z.string(), path: z.string(), symlink: z.boolean() }),
   "context.lockedOverride": z.object({
     from: z.string(),
-    kind: z.enum(["skills", "mcp"]),
+    kind: z.enum(["skills", "mcp", "platforms"]),
     name: z.string(),
     lockedBy: z.string(),
   }),
   "context.lockedRemove": z.object({
     from: z.string(),
-    kind: z.enum(["skills", "mcp"]),
+    kind: z.enum(["skills", "mcp", "platforms"]),
     name: z.string(),
     lockedBy: z.string(),
   }),
   "context.reservedSetting": z.object({ from: z.string(), file: z.string(), key: z.string() }),
+  "context.hostPlatform": z.object({ from: z.string(), name: z.string() }),
   "context.duplicateSkill": z.object({
     from: z.string(),
     name: z.string(),
@@ -391,8 +392,12 @@ const githubHintEn = {
   token: " (the token is invalid)",
   permission: " (check the token's permissions or the repository name)",
 } as const;
-const contextKindJa = { skills: "スキル", mcp: "MCP サーバー" } as const;
-const contextKindEn = { skills: "skill", mcp: "MCP server" } as const;
+const contextKindJa = { skills: "スキル", mcp: "MCP サーバー", platforms: "外部 PF" } as const;
+const contextKindEn = {
+  skills: "skill",
+  mcp: "MCP server",
+  platforms: "external platform",
+} as const;
 
 const ja: MessageDictionary = {
   "task.notFound": "タスクが見つかりません。",
@@ -513,9 +518,9 @@ const ja: MessageDictionary = {
   "input.ticketKey":
     "JIRA のプロジェクトのキーは、英大文字で始まる英大文字・数字・_ で書いてください（例 PAY）。1つ以上書きます。",
   "ticket.platformMissing": ({ platform }) =>
-    `チケットの取り込み先の接続先「${platform}」が、config.yaml の gateway.platforms にありません。`,
+    `チケットの取り込み先の接続先「${platform}」が、config.yaml の gateway.platforms にも、プロジェクトのコンテキストの platforms.yaml にもありません。`,
   "ticket.notAllowed": ({ platform, method, path }) =>
-    `接続先「${platform}」の allow に「${method} ${path}」がありません。config.yaml の gateway.platforms.${platform}.allow に足してください。`,
+    `接続先「${platform}」の allow に「${method} ${path}」がありません。config.yaml の gateway.platforms.${platform}.allow（プロジェクトのコンテキストの PF なら、platforms.yaml の platforms.${platform}.allow）に足してください。`,
   "ticket.requestFailed": ({ platform, status, detail }) =>
     `接続先「${platform}」の API が失敗しました（${status}）：${detail}`,
   "ticket.triageFailed": ({ detail }, text) =>
@@ -737,6 +742,8 @@ const ja: MessageDictionary = {
     `${from} は${contextKindJa[kind]}「${name}」を取り除こうとしましたが、${lockedBy} で上書き禁止のため残しました。`,
   "context.reservedSetting": ({ from, file, key }) =>
     `${from} の ${file} の「${key}」は sacty が決める項目のため、使いませんでした。`,
+  "context.hostPlatform": ({ from, name }) =>
+    `${from} の platforms.yaml の外部 PF「${name}」は、config.yaml の gateway.platforms に同じ名前があるため、config.yaml のものを使いました。`,
   "context.duplicateSkill": ({ from, name, path, usedPath }) =>
     `${from} のスキル「${name}」が skills/${usedPath} と skills/${path} の両方にあるため、skills/${usedPath} を使いました。`,
   "context.mcpTimeoutOverRun": ({ name, key, seconds, minutes }) =>
@@ -885,9 +892,9 @@ const en: MessageDictionary = {
   "input.ticketKey":
     "Write JIRA project keys in uppercase letters, digits and _, starting with a letter (e.g. PAY). Write at least one.",
   "ticket.platformMissing": ({ platform }) =>
-    `The ticket source "${platform}" is not in gateway.platforms in config.yaml.`,
+    `The ticket source "${platform}" is neither in gateway.platforms in config.yaml nor in platforms.yaml of the project's context.`,
   "ticket.notAllowed": ({ platform, method, path }) =>
-    `"${method} ${path}" is not in the allow list of "${platform}". Add it to gateway.platforms.${platform}.allow in config.yaml.`,
+    `"${method} ${path}" is not in the allow list of "${platform}". Add it to gateway.platforms.${platform}.allow in config.yaml (for a platform of the project's context, platforms.${platform}.allow in platforms.yaml).`,
   "ticket.requestFailed": ({ platform, status, detail }) =>
     `The API of "${platform}" failed (${status}): ${detail}`,
   "ticket.triageFailed": ({ detail }, text) =>
@@ -1111,6 +1118,8 @@ const en: MessageDictionary = {
     `${from} tried to remove the ${contextKindEn[kind]} "${name}", but ${lockedBy} locks it, so it was kept.`,
   "context.reservedSetting": ({ from, file, key }) =>
     `"${key}" in ${file} of ${from} is set by sacty, so it was not used.`,
+  "context.hostPlatform": ({ from, name }) =>
+    `The external platform "${name}" in platforms.yaml of ${from} has the same name as one in gateway.platforms of config.yaml, so the one in config.yaml was used.`,
   "context.duplicateSkill": ({ from, name, path, usedPath }) =>
     `${from} has the skill "${name}" in both skills/${usedPath} and skills/${path}, so skills/${usedPath} was used.`,
   "context.mcpTimeoutOverRun": ({ name, key, seconds, minutes }) =>

@@ -142,15 +142,31 @@ export class IssueIntake {
       }
     }
     const created = this.service.importIssues(found);
-    // チケット（JIRA など。PBI-52）。接続先は gateway.platforms の組織内 PF（認証もその設定）
+    // チケット（JIRA など。PBI-52）。接続先は gateway.platforms の組織内 PF（認証もその設定）か、ホストに無ければ
+    // そのプロジェクトのコンテキストの platforms.yaml の PF（PBI-74）
     const tickets: FoundTicket[] = [];
     const config = this.config();
     const platforms = (config.ok ? config.config.platforms : undefined) ?? [];
     const client = this.tickets;
+    // プロジェクトのコンテキストは、1回の取り込みでプロジェクトごとに1度だけ取得する
+    const contextPlatforms = new Map<string, ReturnType<TaskService["projectContextPlatforms"]>>();
     if (client) {
       for (const source of this.service.ticketSources()) {
         const query = `${source.platform}: ${ticketJql(source.keys, source.label)}`;
-        const platform = platforms.find((p) => p.name === source.platform);
+        let platform = platforms.find((p) => p.name === source.platform);
+        if (!platform && source.projectId) {
+          let pending = contextPlatforms.get(source.projectId);
+          if (!pending) {
+            pending = this.service.projectContextPlatforms(source.projectId);
+            contextPlatforms.set(source.projectId, pending);
+          }
+          const found = await pending;
+          if ("error" in found) {
+            errors.push({ query, message: found.error });
+            continue;
+          }
+          platform = found.platforms.find((p) => p.name === source.platform);
+        }
         if (!platform) {
           errors.push({
             query,
@@ -159,14 +175,19 @@ export class IssueIntake {
           continue;
         }
         // 読む上限を超える数のチケットがあれば、次の回は続きから読む（最後まで読んだら先頭に戻る）
-        const cursorKey = `ticket ${source.service} ${query}`;
+        const cursorKey = `ticket ${source.service} ${source.projectId ? `${source.projectId} ` : ""}${query}`;
         try {
           const result = await client.search({
             ...source,
             platform,
             ...(this.cursors.has(cursorKey) ? { cursor: this.cursors.get(cursorKey) } : {}),
           });
-          tickets.push(...result.tickets);
+          // プロジェクトのコンテキストの PF で見つけたチケットは、そのプロジェクトのもの（PBI-74）
+          tickets.push(
+            ...(source.projectId
+              ? result.tickets.map((t) => ({ ...t, projectId: source.projectId }))
+              : result.tickets),
+          );
           if (result.cursor) this.cursors.set(cursorKey, result.cursor);
           else this.cursors.delete(cursorKey);
         } catch (error) {

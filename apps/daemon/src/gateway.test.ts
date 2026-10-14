@@ -481,6 +481,100 @@ describe("組織内 PF の API の中継（PBI-35）", () => {
   });
 });
 
+describe("プロジェクトのコンテキストの外部 PF の中継（PBI-74）", () => {
+  const pf = (name: string, upstream: string, secret: string, from?: string) => ({
+    ...toPlatform(
+      name,
+      PlatformFile.parse({
+        upstream,
+        auth: { prefix: "Bearer ", secret },
+        allow: ["GET /api/**"],
+      }),
+    ),
+    ...(from ? { from } : {}),
+  });
+  const host = pf("shared", "https://host.example.com", "host-token");
+
+  async function startCtx(responses: Parameters<typeof upstream>[0], secrets = {}) {
+    const up = upstream(responses);
+    const credentials = new PlatformCredentials({
+      secrets: new MemorySecretStore({
+        "host-token": "host-secret-value",
+        "a-token": "a-secret-value",
+        "b-token": "b-secret-value",
+        ...secrets,
+      }),
+      fetchImpl: up.fetchImpl,
+    });
+    gateway = new AiGateway({ fetchImpl: up.fetchImpl, platforms: () => [host], credentials });
+    const port = await gateway.listen();
+    const url = (token: string, path: string) => `http://127.0.0.1:${port}/r/${token}/pf${path}`;
+    return { ...up, port, url, credentials };
+  }
+
+  it("実行に登録したコンテキストの PF だけを、その実行のトークンで使える（ほかのプロジェクトの実行のトークンでは使えない）", async () => {
+    const g = await startCtx([json(200, { from: "a" }), json(200, { from: "host" })]);
+    const a = gateway?.register(undefined, undefined, [
+      pf("a-pf", "https://a.example.com", "a-token", "acme/a-ctx@c0ffee0"),
+    ]);
+    const b = gateway?.register(undefined, undefined, [
+      pf("b-pf", "https://b.example.com", "b-token", "acme/b-ctx@c0ffee0"),
+    ]);
+    const none = gateway?.register();
+    if (!a || !b || !none) throw new Error("not registered");
+    // 自分のプロジェクトの PF は、秘密情報の名前をホストで値にして付ける
+    const ok = await fetch(g.url(a.token, "/a-pf/api/items"));
+    expect(ok.status).toBe(200);
+    expect(g.calls[0]?.url).toBe("https://a.example.com/api/items");
+    expect(g.calls[0]?.headers.get("authorization")).toBe("Bearer a-secret-value");
+    // ほかのプロジェクトの PF は、名前を知っていても使えない（上流に送らない）
+    const other = await fetch(g.url(b.token, "/a-pf/api/items"));
+    expect(other.status).toBe(404);
+    expect(await other.text()).not.toContain("a.example.com");
+    expect((await fetch(g.url(none.token, "/a-pf/api/items"))).status).toBe(404);
+    expect((await fetch(g.url(a.token, "/b-pf/api/items"))).status).toBe(404);
+    // ホストの PF は、どの実行でも使える
+    expect((await fetch(g.url(none.token, "/shared/api/x"))).status).toBe(200);
+    expect(g.calls.map((c) => c.url)).toEqual([
+      "https://a.example.com/api/items",
+      "https://host.example.com/api/x",
+    ]);
+    // 実行が終われば、そのトークンでは使えない
+    a.close();
+    expect((await fetch(g.url(a.token, "/a-pf/api/items"))).status).toBe(401);
+    expect(g.calls).toHaveLength(2);
+  });
+
+  it("ホストの PF と同じ名前なら、実行に登録したものよりホストのものを使う", async () => {
+    const g = await startCtx([json(200, {})]);
+    const run = gateway?.register(undefined, undefined, [
+      pf("shared", "https://evil.example.com", "a-token", "acme/a-ctx@c0ffee0"),
+    ]);
+    if (!run) throw new Error("not registered");
+    expect((await fetch(g.url(run.token, "/shared/api/x"))).status).toBe(200);
+    expect(g.calls[0]?.url).toBe("https://host.example.com/api/x");
+    expect(g.calls[0]?.headers.get("authorization")).toBe("Bearer host-secret-value");
+  });
+
+  it("秘密情報が見つからなければ、どの層のどの PF かを添えて理由を返し、上流に送らない（画面の状態には出さない）", async () => {
+    const g = await startCtx([]);
+    const run = gateway?.register(undefined, undefined, [
+      pf("a-pf", "https://a.example.com", "missing-token", "acme/a-ctx@c0ffee0"),
+    ]);
+    if (!run) throw new Error("not registered");
+    const res = await fetch(g.url(run.token, "/a-pf/api/items"));
+    expect(res.status).toBe(502);
+    const text = await res.text();
+    expect(text).toContain(
+      'cannot prepare the credentials for \\"a-pf\\" (platforms.yaml of acme/a-ctx@c0ffee0)',
+    );
+    expect(text).toContain("missing-token");
+    expect(g.calls).toHaveLength(0);
+    // プロジェクトごとに同じ名前がありうるので、ホストの PF の状態（画面）には出さない
+    expect(g.credentials.unavailable(["a-pf"])).toEqual([]);
+  });
+});
+
 describe("コンテキストの HTTP の MCP サーバーの中継（PBI-49）", () => {
   /** MCP サーバーの偽物（本物の HTTP）。受けたリクエストを記録し、POST は SSE、GET は SSE、DELETE は 204 を返す。 */
   async function mcpServer() {
