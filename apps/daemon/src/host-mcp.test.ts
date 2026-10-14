@@ -771,3 +771,124 @@ describe("実行の前に、ホストの MCP サーバーの準備を待つ（PB
     run.close();
   });
 });
+
+describe("設定を変えた MCP サーバーの準備を待つ（PBI-77 レビュー指摘）", () => {
+  /** 2回目以降の起動（接続）を、release を呼ぶまで止める。failNext の後は、止めた後に失敗する。 */
+  function laterGated() {
+    const fake = fakeServers();
+    let gate: (() => void) | undefined;
+    let calls = 0;
+    let completed = 0;
+    let failNext = false;
+    const connect: HostMcpConnector = async (s, env) => {
+      calls += 1;
+      if (calls > 1) {
+        await new Promise<void>((resolve) => {
+          gate = resolve;
+        });
+        if (failNext) throw new Error("the new command could not start");
+      }
+      const connection = await fake.connect(s, env);
+      completed += 1;
+      return connection;
+    };
+    return {
+      connect,
+      release: () => gate?.(),
+      gated: () => gate !== undefined,
+      calls: () => calls,
+      completed: () => completed,
+      failNext: () => {
+        failNext = true;
+      },
+    };
+  }
+
+  for (const [what, changed] of [
+    ["command", { command: "cloud-mcp-v2" }],
+    ["args", { args: ["--v2"] }],
+    ["env", { env: { REGION: "us-east-1" } }],
+  ] as const) {
+    it(`${what} を変えたら、古い接続では先に進まず、新しいプロセスの準備まで待つ`, async () => {
+      const fake = laterGated();
+      let specs = [spec()];
+      host = new HostMcpServers({
+        specs: () => specs,
+        secrets: new MemorySecretStore({}),
+        connect: fake.connect,
+      });
+      expect(await host.ready(["cloud"])).toEqual([]);
+      specs = [spec(changed)];
+      let settled = false;
+      const waiting = host.ready(["cloud"]).then((p) => {
+        settled = true;
+        return p;
+      });
+      await until(() => fake.gated());
+      await new Promise((r) => setTimeout(r, 20));
+      // 起動の開始は2件・完了は1件。古い接続で準備ができたとはみなさない
+      expect(fake.calls()).toBe(2);
+      expect(fake.completed()).toBe(1);
+      expect(settled).toBe(false);
+      fake.release();
+      expect(await waiting).toEqual([]);
+      expect(fake.completed()).toBe(2);
+    });
+  }
+
+  it("設定を変えた後の起動に失敗したら、古い接続が残っていても、どの MCP サーバーかと理由を返す", async () => {
+    const fake = laterGated();
+    let specs = [spec()];
+    host = new HostMcpServers({
+      specs: () => specs,
+      secrets: new MemorySecretStore({}),
+      connect: fake.connect,
+      retryMs: 60_000,
+    });
+    expect(await host.ready(["cloud"])).toEqual([]);
+    specs = [spec({ command: "cloud-mcp-v2" })];
+    fake.failNext();
+    const waiting = host.ready(["cloud"]);
+    await until(() => fake.gated());
+    fake.release();
+    const [problem] = await waiting;
+    expect(problem).toMatchObject({ code: "gateway.mcpUnavailable", params: { name: "cloud" } });
+    expect(renderMessage(problem as never, "ja")).toContain("the new command could not start");
+    // 起動し直すのを待っている間も、待たずに理由を返す（起動し直さない）
+    expect(await host.ready(["cloud"])).toEqual([problem]);
+    expect(fake.calls()).toBe(2);
+  });
+
+  it("設定を変えた後の起動が上限までに終わらなければ、時間切れを返す", async () => {
+    const fake = laterGated();
+    let specs = [spec()];
+    host = new HostMcpServers({
+      specs: () => specs,
+      secrets: new MemorySecretStore({}),
+      connect: fake.connect,
+      readyWaitMs: 50,
+    });
+    expect(await host.ready(["cloud"])).toEqual([]);
+    specs = [spec({ args: ["--v2"] })];
+    expect(await host.ready(["cloud"])).toEqual([
+      { code: "gateway.mcpReadyTimeout", params: { name: "cloud", seconds: 0 } },
+    ]);
+    fake.release();
+  });
+
+  it("時間切れの値だけを変えたときは、起動し直さず、待たずに使う（PBI-75）", async () => {
+    const fake = laterGated();
+    let specs = [spec()];
+    host = new HostMcpServers({
+      specs: () => specs,
+      secrets: new MemorySecretStore({}),
+      connect: fake.connect,
+    });
+    expect(await host.ready(["cloud"])).toEqual([]);
+    specs = [spec({ tool_timeout_sec: 1800, startup_timeout_sec: 120 })];
+    const started = Date.now();
+    expect(await host.ready(["cloud"])).toEqual([]);
+    expect(Date.now() - started).toBeLessThan(500);
+    expect(fake.calls()).toBe(1);
+  });
+});

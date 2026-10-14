@@ -194,6 +194,8 @@ type State = {
   spec: HostMcpSpec;
   key: string;
   current?: HostMcpConnection;
+  /** いまの接続を起動したときの設定（設定を変えて起動し直している途中は、key と違う。PBI-77 レビュー指摘）。 */
+  currentKey?: string;
   starting?: Promise<void>;
   /** 起動中のプロセスの設定（起動の途中で設定が変わったら、終わった後に起動し直す）。 */
   startingKey?: string;
@@ -287,14 +289,22 @@ export class HostMcpServers {
     if (!first) return message("gateway.mcpUnavailable", { name, detail: "not configured" });
     const limitMs = this.deps.readyWaitMs ?? first.spec.readyTimeoutSec * 1000;
     const deadline = Date.now() + limitMs;
-    const usable = (s: State | undefined) => !!s?.current && !s.expired;
+    // いまの設定で起動した接続だけを、準備ができたとみなす（command・args・env などを変えて起動し直している途中の、
+    // 古い設定の接続では先に進まない。時間切れの値だけの変更では key は変わらない。PBI-75）
+    const usable = (s: State) => !!s.current && !s.expired && s.currentKey === s.key;
     for (;;) {
       const state = this.states.get(name);
       if (!state) return message("gateway.mcpUnavailable", { name, detail: "not configured" });
       if (usable(state)) return undefined;
       // 起動の途中でなければ（起動に失敗して、起動し直すのを待っている）、待たずに理由を返す
       if (!state.starting) {
-        return state.problem ?? message("gateway.mcpUnavailable", { name, detail: "not started" });
+        return (
+          state.problem ??
+          message("gateway.mcpUnavailable", {
+            name,
+            detail: state.current ? "not restarted with the changed settings" : "not started",
+          })
+        );
       }
       const left = deadline - Date.now();
       if (left <= 0) {
@@ -342,7 +352,8 @@ export class HostMcpServers {
     if (state.timer) clearTimeout(state.timer);
     this.deps.log?.(`[gateway] host MCP ${name}: starting (${reason})`);
     const spec = state.spec;
-    state.startingKey = state.key;
+    const startingKey = state.key;
+    state.startingKey = startingKey;
     state.starting = (async () => {
       let next: HostMcpConnection | undefined;
       const secrets: string[] = [];
@@ -378,6 +389,7 @@ export class HostMcpServers {
       }
       const old = state.current;
       state.current = connection;
+      state.currentKey = startingKey;
       state.expired = false;
       state.problem = undefined;
       state.restarts += reason === "start" ? 0 : 1;
