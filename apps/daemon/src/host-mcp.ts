@@ -1,6 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import {
@@ -18,6 +17,7 @@ import { code, type DaemonMessage, type DaemonText, message, renderMessage } fro
 import { z } from "zod";
 import { McpTimeouts } from "./context.js";
 import { errorText } from "./errors.js";
+import { GroupStdioTransport, HostMcpProcesses } from "./host-mcp-processes.js";
 import { hideSecret } from "./platforms.js";
 import { SecretRef, type SecretStore } from "./secrets.js";
 
@@ -158,37 +158,47 @@ const withTimeout = <T>(promise: Promise<T>, ms: number, what: string): Promise<
     );
   });
 
-/** 手元のコマンドを起動し（ブラウザを開けるよう、ホストの環境変数を引き継ぐ）、MCP の初期化を待つ。 */
-const stdioConnector: HostMcpConnector = async (spec, env) => {
-  const transport = new StdioClientTransport({
-    command: spec.command,
-    args: spec.args,
-    env: { ...(process.env as Record<string, string>), ...env },
-    stderr: "pipe",
-  });
-  // 標準エラーは読み捨てる（詰まらせない）。末尾は、準備ができなかった理由に添える。秘密情報を伏せる前に短く
-  // 切ると一部が残るので、十分な長さを持っておき、伏せるのは理由を作るとき（呼び出し元）にする
-  let tail = "";
-  transport.stderr?.on("data", (chunk: Buffer) => {
-    tail = `${tail}${chunk.toString()}`.slice(-STDERR_KEEP);
-  });
-  const client = new Client({ name: "sacty-gateway", version: "0.1.0" });
-  try {
-    await withTimeout(client.connect(transport), spec.readyTimeoutSec * 1000, "initialize");
-  } catch (error) {
-    await client.close().catch(() => {});
-    const detail = error instanceof Error ? error.message : String(error);
-    throw new StartError(detail, tail.trim());
-  }
-  return {
-    client,
-    close: () => client.close(),
-    // プロセスが終わると、クライアントが閉じる（transport.onclose はクライアントが使うので、上書きしない）
-    onClose: (callback) => {
-      client.onclose = callback;
-    },
+/**
+ * 手元のコマンドを起動し（ブラウザを開けるよう、ホストの環境変数を引き継ぐ）、MCP の初期化を待つ。プロセスは自分の
+ * グループで起動し、止めるときは子孫ごと止める（PBI-78）。
+ */
+const stdioConnector =
+  (processes: HostMcpProcesses): HostMcpConnector =>
+  async (spec, env) => {
+    const transport = new GroupStdioTransport(
+      {
+        name: spec.name,
+        command: spec.command,
+        args: spec.args,
+        env: { ...(process.env as Record<string, string>), ...env },
+      },
+      processes,
+    );
+    // 標準エラーは読み捨てる（詰まらせない）。末尾は、準備ができなかった理由に添える。秘密情報を伏せる前に短く
+    // 切ると一部が残るので、十分な長さを持っておき、伏せるのは理由を作るとき（呼び出し元）にする
+    let tail = "";
+    transport.stderr?.on("data", (chunk: Buffer) => {
+      tail = `${tail}${chunk.toString()}`.slice(-STDERR_KEEP);
+    });
+    const client = new Client({ name: "sacty-gateway", version: "0.1.0" });
+    try {
+      await withTimeout(client.connect(transport), spec.readyTimeoutSec * 1000, "initialize");
+    } catch (error) {
+      await client.close().catch(() => {});
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new StartError(detail, tail.trim());
+    }
+    // ラッパーのコマンドが起動した子孫も記録する（デーモンが突然落ちても、次の起動で片付けられるように）
+    void processes.refresh();
+    return {
+      client,
+      close: () => client.close(),
+      // プロセスが終わると、クライアントが閉じる（transport.onclose はクライアントが使うので、上書きしない）
+      onClose: (callback) => {
+        client.onclose = callback;
+      },
+    };
   };
-};
 
 type State = {
   spec: HostMcpSpec;
@@ -216,6 +226,7 @@ export class HostMcpServers {
   private readonly inFlight = new Map<HostMcpConnection, number>();
   private reconcileTimer: NodeJS.Timeout | undefined;
   private stopped = false;
+  private readonly processes: HostMcpProcesses;
 
   constructor(
     private readonly deps: {
@@ -230,9 +241,13 @@ export class HostMcpServers {
       drainMs?: number;
       /** 実行の前に、準備を待つ上限（テストでは短くする。既定は MCP サーバーごとの ready_timeout_sec。PBI-77）。 */
       readyWaitMs?: number;
+      /** 起動したプロセスの記録と後始末（PBI-78）。書かなければ、記録せずに止めるだけ。 */
+      processes?: HostMcpProcesses;
       log?: (line: string) => void;
     },
-  ) {}
+  ) {
+    this.processes = deps.processes ?? new HostMcpProcesses();
+  }
 
   /** 設定の MCP サーバーを起動する。設定が変わったら（30秒ごとに確かめる）、足す・止める・起動し直す。 */
   start(): void {
@@ -245,6 +260,8 @@ export class HostMcpServers {
     this.stopped = true;
     if (this.reconcileTimer) clearInterval(this.reconcileTimer);
     await Promise.all([...this.states.keys()].map((name) => this.remove(name)));
+    // 起動の途中のもの・切り替えた古いもの（途中の呼び出しを待っているもの）も含めて、起動したプロセスを子孫ごと止める
+    await this.processes.endAll();
   }
 
   /** 設定と、動かしている MCP サーバーを合わせる。 */
@@ -368,7 +385,7 @@ export class HostMcpServers {
           secrets.push(secret, `${value.prefix}${secret}`);
           env[key] = `${value.prefix}${secret}`;
         }
-        next = await (this.deps.connect ?? stdioConnector)(spec, env);
+        next = await (this.deps.connect ?? stdioConnector(this.processes))(spec, env);
       } catch (error) {
         // 理由（画面・ログ・エージェントへの 503）には、秘密情報を伏せてから切り詰めたものだけを出す
         // （MCP サーバーが認証の失敗で秘密情報を標準エラーに出すこともある。PBI-36 レビュー指摘）
