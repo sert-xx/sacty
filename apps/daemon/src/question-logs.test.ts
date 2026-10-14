@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -189,6 +190,35 @@ describe("質問への答えに読ませるセッションログ（PBI-91）", (
     expect(byId["r-chat-self"]).toBeUndefined();
     expect(tree(dest).filter((p) => p.startsWith("r-running") || p.includes("agent/"))).toEqual([]);
     expect(readFileSync(join(dest, "r-long", "events.jsonl"), "utf8")).toContain("sacty.truncated");
+  });
+
+  it("タスクのログの場所を開けない（ディレクトリでない・権限が無い）なら、ログの無い実行として記録せず、例外を投げる", () => {
+    run("t1", "r1", "requirements", { stdout: "{}\n" });
+    const activity = [ev("t1", "AgentRunCompleted", { runId: "r1", step: "requirements" })];
+    const taskDir = join(dir, "runs", "t1");
+    rmSync(taskDir, { recursive: true, force: true });
+    writeFileSync(taskDir, "ディレクトリではない");
+    expect(() => stageQuestionLogs({ store, taskId: "t1", activity, dest })).toThrow(
+      expect.objectContaining({ code: "ENOTDIR" }),
+    );
+    expect(existsSync(join(dest, QUESTION_LOG_INDEX))).toBe(false);
+    if (process.getuid?.() !== 0) {
+      rmSync(taskDir, { force: true });
+      mkdirSync(taskDir);
+      chmodSync(taskDir, 0o000);
+      try {
+        expect(() => stageQuestionLogs({ store, taskId: "t1", activity, dest })).toThrow(
+          expect.objectContaining({ code: "EACCES" }),
+        );
+      } finally {
+        chmodSync(taskDir, 0o700);
+      }
+    }
+    // 場所が無い（まだ実行が無い）ときだけ、ログの無い実行として一覧に出す
+    rmSync(taskDir, { recursive: true, force: true });
+    expect(stageQuestionLogs({ store, taskId: "t1", activity, dest }).runs).toMatchObject([
+      { runId: "r1", status: "missing" },
+    ]);
   });
 
   it("まだ実行の無いタスクでも一覧を作り、ID の形が違うタスクのログは探さない", () => {

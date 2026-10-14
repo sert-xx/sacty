@@ -5859,7 +5859,11 @@ export class TaskService {
         `[daemon] 質問への答えに、セッションログを用意できませんでした（${taskId}）：`,
         error instanceof Error ? error.message : error,
       );
-      return { unavailable: "セッションログを用意できなかった" };
+      // 理由は、エラーの種類（EACCES・ENOTDIR など）だけを伝える（ホストのパスは指示に入れない）
+      const code = (error as NodeJS.ErrnoException | undefined)?.code;
+      return {
+        unavailable: `セッションログを用意できなかった${typeof code === "string" ? `：${code}` : ""}`,
+      };
     }
   }
 

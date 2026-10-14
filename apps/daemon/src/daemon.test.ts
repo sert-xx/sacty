@@ -10275,6 +10275,41 @@ describe("質問への答えで、各実行のセッションログを調べる�
     activity.close();
   });
 
+  it("タスクのログの場所を開けないときは、ログの無い実行とせず、マウントせずに理由を伝えて台帳から答える", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const sessionLogs = new SessionLogStore(join(dir, "runs"));
+    const { service, executor } = makeService(
+      activity,
+      [out("# 要求要件"), out("台帳から答えました")],
+      {
+        sessionLogs,
+      },
+    );
+    const { id } = service.createTask({ projectId: "default", title: "決済API", body: "" });
+    await service.runNext(id);
+    const reqRun = runIdOf(service, id, "requirements")?.runId ?? "";
+    expect(reqRun).not.toBe("");
+    // タスクのログの場所が、ディレクトリでなくなった
+    const taskDir = join(dir, "runs", id);
+    rmSync(taskDir, { recursive: true, force: true });
+    writeFileSync(taskDir, "ディレクトリではない");
+    await service.askQuestion(id, { text: "何をした？" }).answered;
+    expect(service.get(id)?.task.questions[0]?.answer?.text).toBe("台帳から答えました");
+    expect(executor.logMounts.at(-1)).toBeUndefined();
+    const prompt = executor.calls.at(-1)?.command[2] ?? "";
+    expect(prompt).toContain(
+      "各実行のセッションログは、この質問では読めません（セッションログを用意できなかった：ENOTDIR）",
+    );
+    expect(prompt).not.toContain("/sacty-logs に読み取り専用で置きました");
+    expect(prompt).not.toContain(`実行 ${reqRun}：ログが無い`);
+    expect(executor.calls.at(-1)?.command).not.toContain("--add-dir");
+    // 並べかけた場所は残さない
+    expect(readdirSync(join(dir, "workspaces", "_question-logs"), { withFileTypes: true })).toEqual(
+      [],
+    );
+    activity.close();
+  });
+
   it("ログを用意できない・残していないときも、台帳から答え、ログを読めないことを伝える", async () => {
     class BrokenLogs extends SessionLogStore {
       override taskDir(): string | undefined {

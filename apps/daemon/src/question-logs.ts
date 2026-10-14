@@ -1,6 +1,5 @@
 import {
   copyFileSync,
-  existsSync,
   linkSync,
   lstatSync,
   mkdirSync,
@@ -27,6 +26,8 @@ import {
  * - 終わっていない実行（実行中・デーモンが止まって終わりを記録できなかった）は並べない。書き始めた後に分かった秘密情報は
  *   閉じるときに伏せ直すので、閉じる前のファイルには残っていることがあるため。
  * - 元のファイルは同じ場所の中ならハードリンクにし（写さない）、できなければ写す。
+ * - タスクのログの場所が無ければ（まだ実行が無い）実行の無いタスクとし、開けなければ（権限が無い・ディレクトリでないなど）
+ *   例外を投げる（呼ぶ側が、ログを読めないことを伝えて台帳から答えさせる）。
  */
 
 /** コンテナの中で、セッションログを置く場所（作業領域の外）。 */
@@ -101,6 +102,10 @@ function place(source: string, dest: string): number | undefined {
   }
 }
 
+function isNotFound(error: unknown): boolean {
+  return (error as NodeJS.ErrnoException | undefined)?.code === "ENOENT";
+}
+
 function readMeta(path: string): SessionLogMeta | undefined {
   try {
     const meta = JSON.parse(readFileSync(path, "utf8")) as SessionLogMeta;
@@ -163,8 +168,10 @@ export function stageQuestionLogs(input: {
     let names: string[] = [];
     try {
       names = readdirSync(dir);
-    } catch {
-      // まだ実行が無い
+    } catch (error) {
+      // まだ実行が無い（場所が無い）ときだけ、実行の無いタスクとして扱う。開けない（権限が無い・ディレクトリでないなど）なら、
+      // ログが無いのではなく読めないので、呼ぶ側に伝える（ログの無い実行として記録しない）
+      if (!isNotFound(error)) throw error;
     }
     for (const name of names) {
       const match = /^(.+)\.meta\.json$/.exec(name);
@@ -173,7 +180,10 @@ export function stageQuestionLogs(input: {
       const path = join(dir, name);
       try {
         if (!lstatSync(path).isFile()) continue;
-      } catch {
+      } catch (error) {
+        // 一覧を読んだ後に消えたなら無いものとし、ほかの失敗は読めない記録にする
+        if (isNotFound(error)) continue;
+        metas.set(runId, undefined);
         continue;
       }
       metas.set(runId, readMeta(path));
@@ -271,8 +281,14 @@ function stageRun(
   put(store.metaPath(taskId, runId), QUESTION_LOG_FILES.meta, false);
   for (const file of ["events", "stderr"] as const) {
     const source = store.path(taskId, runId, file);
-    // 出力の無かった実行は、ファイルが無い（読めないのではない）
-    if (source && existsSync(source)) put(source, QUESTION_LOG_FILES[file], false);
+    // 出力の無かった実行は、ファイルが無い（読めないのではない）。ほかの失敗で確かめられなければ、読めないファイルにする
+    if (!source) continue;
+    try {
+      lstatSync(source);
+    } catch (error) {
+      if (isNotFound(error)) continue;
+    }
+    put(source, QUESTION_LOG_FILES[file], false);
   }
   const root = store.agentFilesDir(taskId, runId);
   if (!root) return;
