@@ -2,7 +2,7 @@
 
 - 日付: 2026-10-14（UTC）
 - タスク: PBI-92
-- PR: なし
+- PR: #98
 - ブランチ: feat/issue-92-mcp-log-names
 - 関係する ADR: なし
 
