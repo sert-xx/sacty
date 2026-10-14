@@ -34,7 +34,7 @@ import {
   withoutCandidates,
 } from "./agent-json.js";
 import { githubRepoOf } from "./config.js";
-import { REVIEW_MARKER_PREFIX } from "./github.js";
+import { REVIEW_MARKER_PREFIX, sactyReviewKey } from "./github.js";
 import { localForwards, type StartedService } from "./services.js";
 
 /** 記録した文（コードと引数の文言を含む）を、指示や PR の本文に入れる日本語の文にする。 */
@@ -118,6 +118,9 @@ export function extractReproduction(output: string): { output: string; tests: st
 }
 const TEST_MAP_HEADING = "sacty-test-map";
 const REVIEW_COMMENTS_HEADING = "sacty-review-comments";
+
+/** レビューの評価（直すべき指摘があるか）のブロックの見出し（PBI-88）。 */
+const REVIEW_VERDICT_HEADING = "sacty-review-verdict";
 const FINAL_REVIEW_HEADING = "sacty-final-review";
 const SPLIT_HEADING = "sacty-split";
 const INTEGRATION_HEADING = "sacty-integration-review";
@@ -469,6 +472,11 @@ export function buildPrompt(
         "line は、PR の差分に含まれる行（追加した行か、差分の前後に表示される行）にしてください。差分の外の行へのコメントは、本文に回します。",
         "```json",
         `{"${REVIEW_COMMENTS_HEADING}": [{"path": "src/pay.ts", "line": 12, "body": "この行の問題と直し方"}]}`,
+        "```",
+        "",
+        "最後に、マージの前に直すべき指摘があるかの評価を、次の形式で必ず付けてください（投稿する本文からは取り除きます）。直すべき指摘があれば true、そのままマージしてよい（指摘が無い・好みの問題だけ）なら false にします。",
+        "```json",
+        `{"${REVIEW_VERDICT_HEADING}": {"changesRequested": true}}`,
         "```",
         "",
         ...(target
@@ -2457,8 +2465,7 @@ const REVIEW_COMMENT_MAX = 8_000;
  */
 export function reviewMarker(task: Task): string {
   // 再レビュー（PBI-44）は回ごとに別の目印にする（前回のレビューを、今回の投稿済みと見なさないため）
-  const round = task.reviewRound && task.reviewRound > 1 ? `:${task.reviewRound}` : "";
-  return `${REVIEW_MARKER_PREFIX}${task.id}${round} -->`;
+  return `${REVIEW_MARKER_PREFIX}${sactyReviewKey(task.id, task.reviewRound ?? 1)} -->`;
 }
 
 /**
@@ -2505,13 +2512,27 @@ export function commentableLines(diff: string): Map<string, Set<number>> {
 export function extractReviewComments(
   output: string,
   diff: string,
-): { output: string; comments: ReviewComment[] } {
+): { output: string; comments: ReviewComment[]; changesRequested?: boolean } {
   const commentable = commentableLines(diff);
   let found: ReviewComment[] | undefined;
+  // 評価（PBI-88）。最後のブロックを使い、どのブロックも本文から取り除く。真偽値で無ければ、評価は無いものとする
+  let verdict: boolean | undefined;
+  let verdictSeen = false;
   const used: JsonCandidate[] = [];
   for (const candidate of jsonCandidates(output).reverse()) {
+    const judged = candidate.value[REVIEW_VERDICT_HEADING];
+    if (judged !== undefined) {
+      if (!verdictSeen) {
+        verdictSeen = true;
+        const value = (judged ?? {}) as Record<string, unknown>;
+        if (typeof value.changesRequested === "boolean") verdict = value.changesRequested;
+      }
+    }
     const list = candidate.value[REVIEW_COMMENTS_HEADING];
-    if (!Array.isArray(list)) continue;
+    if (!Array.isArray(list)) {
+      if (judged !== undefined) used.push(candidate);
+      continue;
+    }
     // 最後のブロックを使う。どのブロックも本文からは取り除く
     found ??= list.flatMap((item) => {
       const r = (item ?? {}) as Record<string, unknown>;
@@ -2535,6 +2556,10 @@ export function extractReviewComments(
         ? [body, "", "### 行についての指摘", "", ...commentLines(outside)].join("\n")
         : body,
     comments: inline,
+    // 行についての指摘（行へのコメントと、本文に回したもの）があれば、直すべき指摘があるとする
+    ...(verdict !== undefined || (found ?? []).length > 0
+      ? { changesRequested: verdict === true || (found ?? []).length > 0 }
+      : {}),
   };
 }
 

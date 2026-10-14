@@ -355,6 +355,11 @@ export type Task = {
   reproduction?: PayloadOf<"ReproductionChecked"> & { at: string };
   /** レビューの結果を投稿した、PR のレビューの URL（PBI-19）。 */
   reviewPost?: { url: string };
+  /**
+   * レビューの工程の、回ごとの評価（PBI-88）。changesRequested が true：直すべき指摘がある（評価か、行についての指摘）、
+   * false：そのままマージしてよい、無い：評価を読めなかった。
+   */
+  reviewVerdicts?: { round: number; changesRequested?: boolean }[];
   /** 何回目のレビューか（「再レビュー」で2回目から。最初のレビューでは無い。PBI-44）。 */
   reviewRound?: number;
   /** オーケストレーターが決めた、テストのコマンド（PBI-25）。 */
@@ -545,7 +550,20 @@ export function applyEvent(
           throw new ActivityIntegrityError(event, "the step is already approved (frozen)");
         }
         if (event.payload.step === "design") task.testViewpoints = event.payload.testViewpoints;
-        if (event.payload.step === "review") task.reviewComments = event.payload.reviewComments;
+        if (event.payload.step === "review") {
+          task.reviewComments = event.payload.reviewComments;
+          // 回ごとの評価（PBI-88）。同じ回をやり直したら置き換える
+          const round = task.reviewRound ?? 1;
+          task.reviewVerdicts = [
+            ...(task.reviewVerdicts ?? []).filter((v) => v.round !== round),
+            {
+              round,
+              ...(event.payload.reviewChangesRequested !== undefined
+                ? { changesRequested: event.payload.reviewChangesRequested }
+                : {}),
+            },
+          ];
+        }
         if (event.payload.step === "reproduce") {
           task.reproductionTests = event.payload.reproductionTests;
           task.reproductionPending = true;

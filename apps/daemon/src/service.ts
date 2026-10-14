@@ -128,6 +128,7 @@ import {
   type PullRequestFeedback,
   type PullRequestStatus,
   type PullRequests,
+  sactyReviewKey,
 } from "./github.js";
 import { notificationFor, type SlackNotifier } from "./notifier.js";
 import type { OrchestratorSessionStore } from "./orchestrator-sessions.js";
@@ -884,7 +885,7 @@ export class TaskService {
    * レビューは、元のタスクへの PR の指摘として取り込む（ほかの sacty のレビューは、これまでどおり取り込まない）。
    */
   private sactyReviewTasksOf(repo: string, number: number): { sactyReviewTasks?: string[] } {
-    const ids = [...this.tasks.values()]
+    const markers = [...this.tasks.values()]
       .filter(
         (t) =>
           t.source?.kind === "github_pull_request" &&
@@ -892,8 +893,14 @@ export class TaskService {
           t.source.number === number &&
           sameRepo(t.source.repo, repo),
       )
-      .map((t) => t.id);
-    return ids.length > 0 ? { sactyReviewTasks: ids } : {};
+      .flatMap((t) =>
+        (t.reviewVerdicts ?? [])
+          // 直すべき指摘の無い（そのままマージしてよい）回のレビューは、差し戻さないので取り込まない。評価を読めなければ、
+          // 指摘を落とさないように取り込む（PBI-88）
+          .filter((v) => v.changesRequested !== false)
+          .map((v) => sactyReviewKey(t.id, v.round)),
+      );
+    return markers.length > 0 ? { sactyReviewTasks: markers } : {};
   }
 
   /**
@@ -3463,6 +3470,9 @@ export class TaskService {
             ...(step === "design" ? { testViewpoints } : {}),
             ...(step === "implement" ? { testMap } : {}),
             ...(review ? { reviewComments: review.comments } : {}),
+            ...(review?.changesRequested !== undefined
+              ? { reviewChangesRequested: review.changesRequested }
+              : {}),
             ...(reproduction ? { reproductionTests: reproduction.tests } : {}),
           },
         },

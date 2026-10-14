@@ -894,13 +894,20 @@ describe("sacty が作る PR の取り込むラベル（PBI-88）", () => {
             body: "<!-- sacty-review:r1 -->\n## sacty のレビュー\n\n- 上限が無い",
             submitted_at: at(1),
           },
-          // 再レビュー（回の番号つき）も、同じタスクのもの
+          // 再レビューは回ごと（含める回だけ）
           {
             id: 2,
             user: me,
             state: "COMMENTED",
             body: "<!-- sacty-review:r1:2 -->\n## sacty のレビュー",
             submitted_at: at(2),
+          },
+          {
+            id: 5,
+            user: me,
+            state: "COMMENTED",
+            body: "<!-- sacty-review:r1:3 -->\n直す点なし",
+            submitted_at: at(5),
           },
           // ほかのタスク（ID が前方一致するものも）のレビューは除く
           {
@@ -930,7 +937,7 @@ describe("sacty が作る PR の取り込むラベル（PBI-88）", () => {
     const feedback = await new GitHubPullRequests(impl).feedback({
       ...pr,
       account: "sacty-bot",
-      sactyReviewTasks: ["r1"],
+      sactyReviewTasks: ["r1", "r1:2"],
     });
     expect(feedback.map((f) => f.key)).toEqual(["review:1", "review:2", "review_comment:4"]);
   });

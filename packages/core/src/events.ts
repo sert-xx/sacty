@@ -502,6 +502,11 @@ const AgentRunCompleted = z.object({
     testMap: z.array(TestMapping).default([]),
     /** レビューの工程の、PR の行へのコメント（PBI-19）。 */
     reviewComments: z.array(ReviewComment).default([]),
+    /**
+     * レビューの工程の評価（PBI-88）。true：マージの前に直すべき指摘がある（エージェントの評価か、行についての指摘がある）、
+     * false：そのままマージしてよい。評価を読めなければ無い。
+     */
+    reviewChangesRequested: z.boolean().optional(),
     /** 再現の工程が申告した、不具合を再現するテスト（PBI-29）。 */
     reproductionTests: z.array(z.string()).default([]),
   }),

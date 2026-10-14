@@ -39,7 +39,12 @@ import { type ContextFetcher, type ContextRef, DEFAULT_CONTEXT_DIR } from "./con
 import { ContextMcpServers } from "./context-mcp.js";
 import { MessageError } from "./errors.js";
 import type { GitHubAuth } from "./gh.js";
-import type { PullRequestFeedback, PullRequestStatus, PullRequests } from "./github.js";
+import {
+  type PullRequestFeedback,
+  type PullRequestStatus,
+  type PullRequests,
+  sactyReviewTask,
+} from "./github.js";
 import { type HostMcpConnection, HostMcpFile, type HostMcpSpec, toHostMcp } from "./host-mcp.js";
 import { OrchestratorSessionStore } from "./orchestrator-sessions.js";
 import { type Platform, PlatformFile, toPlatform } from "./platforms.js";
@@ -607,7 +612,11 @@ class FakePulls implements PullRequests {
     this.feedbackSactyReviews.push(input.sactyReviewTasks);
     this.feedbackAccounts.push(input.account);
     this.feedbackNumbers.push(input.number);
-    return this.feedbackBy[input.number] ?? this.feedbackList;
+    // 本物と同じく、プロジェクトのアカウントの sacty のレビューは、含めるタスクのものだけを返す（PBI-88）
+    return (this.feedbackBy[input.number] ?? this.feedbackList).filter((item) => {
+      const task = item.author === input.account ? sactyReviewTask(item.body) : undefined;
+      return task === undefined || (input.sactyReviewTasks ?? []).includes(task);
+    });
   }
 }
 
@@ -12294,7 +12303,12 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       const made = await start(
         [
           out("# 要求要件 v1"),
-          out("# 評価\n\n受け入れ条件が足りない"),
+          out(
+            [
+              "# 評価\n\n受け入れ条件が足りない",
+              block({ "sacty-review-verdict": { changesRequested: true } }),
+            ].join("\n\n"),
+          ),
           rework("requirements", "要求要件で直せる"),
           out("# 要求要件 v2"),
         ],
@@ -12322,6 +12336,11 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       await service.runNext(reviewId);
       expect(pulls.reviews.map((r) => r.number)).toEqual([7]);
       expect(pulls.reviews[0]?.body).toContain(`<!-- sacty-review:${reviewId} -->`);
+      // 評価のブロックは、投稿する本文に入れない
+      expect(pulls.reviews[0]?.body).not.toContain("sacty-review-verdict");
+      expect(taskOf(service, reviewId).reviewVerdicts).toEqual([
+        { round: 1, changesRequested: true },
+      ]);
 
       // 元のタスクの PR の指摘の取り込みに、このレビューのタスクの投稿を含めるよう渡す
       pulls.feedbackBy[7] = [
@@ -12345,6 +12364,115 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       expect(service.importIssues([labeledPr(7)])).toEqual([]);
       // レビューのタスクは、PR の指摘を取り込まない（自分の PR を持たない）
       expect(taskOf(service, reviewId).pullRequest).toBeUndefined();
+      activity.close();
+    });
+
+    it("直すべき指摘の無い（そのままマージしてよい）レビューは、元のタスクに取り込まず差し戻さない。評価を読めなければ取り込む（PO の指摘）", async () => {
+      const cases: { name: string; review: string; imported: boolean }[] = [
+        {
+          name: "指摘なし",
+          review: [
+            "# 評価\n\nマージしてよい",
+            block({ "sacty-review-verdict": { changesRequested: false } }),
+          ].join("\n\n"),
+          imported: false,
+        },
+        { name: "評価なし", review: "# 評価\n\n直す点がある", imported: true },
+      ];
+      for (const c of cases) {
+        rmSync(dbPath, { force: true });
+        const pulls = new FakePulls();
+        pulls.prInfo = { ...pulls.prInfo, number: 7, url: "https://github.com/acme/app/pull/7" };
+        const made = await start(
+          [
+            out("# 要求要件 v1"),
+            out(c.review),
+            rework("requirements", "要求要件で直せる"),
+            out("# 要求要件 v2"),
+          ],
+          { pulls },
+        );
+        const { activity, service, executor, id } = made;
+        const [review] = service.importIssues([labeledPr(7)]);
+        const reviewId = review?.id ?? "";
+        await service.runNext(reviewId);
+        await service.runNext(reviewId);
+        expect(
+          pulls.reviews.map((r) => r.number),
+          c.name,
+        ).toEqual([7]);
+        pulls.feedbackBy[7] = [
+          item("review:50", { kind: "review", author: "me", body: pulls.reviews[0]?.body ?? "" }),
+        ];
+        const before = executor.calls.length;
+        await service.checkPullRequests();
+        const task = taskOf(service, id);
+        if (c.imported) {
+          expect(pulls.feedbackSactyReviews.at(-1), c.name).toEqual([reviewId]);
+          expect(task.importedFeedback, c.name).toEqual(["review:50"]);
+          expect(task.status, c.name).toBe("queued");
+        } else {
+          // 取り込まず、ゴールガーディアンも動かさず（費用がかからない）、承認待ちのまま
+          expect(taskOf(service, reviewId).reviewVerdicts, c.name).toEqual([
+            { round: 1, changesRequested: false },
+          ]);
+          expect(pulls.feedbackSactyReviews.at(-1), c.name).toBeUndefined();
+          expect(task.importedFeedback, c.name).toEqual([]);
+          expect(types(service, id), c.name).not.toContain("PullRequestReviewImported");
+          expect(executor.calls.length, c.name).toBe(before);
+          expect(task.status, c.name).toBe("awaiting_approval");
+          // 人の指摘は、これまでどおり取り込む
+          pulls.feedbackBy[7] = [...(pulls.feedbackBy[7] ?? []), item("comment:60")];
+          await service.checkPullRequests();
+          expect(taskOf(service, id).importedFeedback, c.name).toEqual(["comment:60"]);
+        }
+        activity.close();
+      }
+    });
+
+    it("再レビューは回ごとに判定し、直すべき指摘のある回のレビューだけを取り込む（PO の指摘）", async () => {
+      const pulls = new FakePulls();
+      pulls.prInfo = { ...pulls.prInfo, number: 7, url: "https://github.com/acme/app/pull/7" };
+      const verdict = (changesRequested: boolean) =>
+        block({ "sacty-review-verdict": { changesRequested } });
+      const made = await start(
+        [
+          out("# 要求要件 v1"),
+          out(`# 評価\n\nマージしてよい\n\n${verdict(false)}`),
+          out(`# 評価\n\n受け入れ条件が足りない\n\n${verdict(true)}`),
+          rework("requirements", "要求要件で直せる"),
+          out("# 要求要件 v2"),
+        ],
+        { pulls },
+      );
+      const { activity, service, id } = made;
+      const [review] = service.importIssues([labeledPr(7)]);
+      const reviewId = review?.id ?? "";
+      await service.runNext(reviewId);
+      await service.runNext(reviewId);
+      const first = (n: number) =>
+        item(`review:${50 + n}`, {
+          kind: "review",
+          author: "me",
+          body: pulls.reviews[n]?.body ?? "",
+        });
+      pulls.feedbackBy[7] = [first(0)];
+      await service.checkPullRequests();
+      expect(taskOf(service, id).importedFeedback).toEqual([]);
+      // 再レビュー（2回目）は直すべき指摘あり。1回目（指摘なし）のレビューは取り込まない
+      service.rereview(reviewId);
+      await service.runNext(reviewId);
+      await service.runNext(reviewId);
+      expect(pulls.reviews).toHaveLength(2);
+      expect(taskOf(service, reviewId).reviewVerdicts).toEqual([
+        { round: 1, changesRequested: false },
+        { round: 2, changesRequested: true },
+      ]);
+      pulls.feedbackBy[7] = [first(0), first(1)];
+      await service.checkPullRequests();
+      expect(pulls.feedbackSactyReviews.at(-1)).toEqual([`${reviewId}:2`]);
+      expect(taskOf(service, id).importedFeedback).toEqual(["review:51"]);
+      expect(taskOf(service, id).status).toBe("queued");
       activity.close();
     });
 

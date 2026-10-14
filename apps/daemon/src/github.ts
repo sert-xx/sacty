@@ -28,8 +28,9 @@ export interface PullRequests {
     /** プロジェクトの gh のアカウント。このアカウントが投稿した sacty のレビュー（PBI-19）は含めない。 */
     account?: string;
     /**
-     * それでも含める sacty のレビューのタスク（ID）。sacty が作った PR に取り込むラベルを付けて取り込んだ、レビューだけの
-     * タスク（PBI-88）。そのタスクの目印で始まるレビュー・行へのコメントは、PR の指摘として含める。
+     * それでも含める sacty のレビュー（目印の中身。`sactyReviewKey` の形で、タスクと再レビューの回）。sacty が作った PR に
+     * 取り込むラベルを付けて取り込んだ、レビューだけのタスクの、直すべき指摘のある回（PBI-88）。その目印で始まるレビュー・
+     * 行へのコメントは、PR の指摘として含める。
      */
     sactyReviewTasks?: readonly string[];
   }): Promise<PullRequestFeedback[]>;
@@ -109,11 +110,16 @@ function isSactyReview(body: unknown): boolean {
   return typeof body === "string" && body.trimStart().startsWith(REVIEW_MARKER_PREFIX);
 }
 
-/** sacty のレビューの目印の、タスクの ID（目印で始まらなければ undefined。再レビューの回の番号は除く）。 */
+/** sacty のレビューの目印の中身（タスクの ID。再レビューの回は `<ID>:<回>`。PBI-44・PBI-88）。 */
+export function sactyReviewKey(taskId: string, round = 1): string {
+  return round > 1 ? `${taskId}:${round}` : taskId;
+}
+
+/** sacty のレビューの目印の中身（`sactyReviewKey` の形。目印で始まらなければ undefined）。 */
 export function sactyReviewTask(body: unknown): string | undefined {
   if (!isSactyReview(body)) return undefined;
   const rest = String(body).trimStart().slice(REVIEW_MARKER_PREFIX.length);
-  return rest.match(/^([^\s:>]+)(?::\d+)? -->/)?.[1];
+  return rest.match(/^([^\s:>]+(?::\d+)?) -->/)?.[1];
 }
 
 /**

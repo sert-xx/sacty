@@ -84,6 +84,46 @@ describe("レビューの出力から行へのコメントを取り出す（PBI-
     expect(extractReviewComments(output, diff)).toEqual({
       output: "# 評価",
       comments: [{ path: "src/new.ts", line: 2, body: "文字列の行番号も読む" }],
+      // 行についての指摘があるので、直すべき指摘がある（PBI-88）
+      changesRequested: true,
+    });
+  });
+
+  it("評価（直すべき指摘があるか）を読み、ブロックは本文から取り除く。行についての指摘があれば、評価に関わらず直すべき指摘とする（PBI-88）", () => {
+    const verdict = (changesRequested: unknown) =>
+      block({ "sacty-review-verdict": { changesRequested } });
+    expect(extractReviewComments(`# 評価\n\nマージしてよい\n\n${verdict(false)}`, diff)).toEqual({
+      output: "# 評価\n\nマージしてよい",
+      comments: [],
+      changesRequested: false,
+    });
+    expect(extractReviewComments(`# 評価\n\n${verdict(true)}`, diff).changesRequested).toBe(true);
+    // 最後のブロックを使う
+    expect(extractReviewComments(`${verdict(true)}\n\n${verdict(false)}`, diff)).toEqual({
+      output: "",
+      comments: [],
+      changesRequested: false,
+    });
+    // 評価が無い・真偽値でないなら、評価は無い（読めない）
+    expect(extractReviewComments("# 評価", diff)).toEqual({ output: "# 評価", comments: [] });
+    expect(extractReviewComments(verdict("no"), diff)).toEqual({ output: "", comments: [] });
+    // 行へのコメント（差分の外で本文に回したものも）があれば、false でも直すべき指摘とする
+    const outside = block({
+      "sacty-review-comments": [{ path: "src/other.ts", line: 99, body: "差分の外" }],
+    });
+    const result = extractReviewComments(`# 評価\n\n${outside}\n\n${verdict(false)}`, diff);
+    expect(result.comments).toEqual([]);
+    expect(result.output).toContain("`src/other.ts:99` 差分の外");
+    expect(result.changesRequested).toBe(true);
+    // 1つのブロックに両方あっても読む
+    const both = block({
+      "sacty-review-comments": [{ path: "src/new.ts", line: 1, body: "行の指摘" }],
+      "sacty-review-verdict": { changesRequested: false },
+    });
+    expect(extractReviewComments(both, diff)).toEqual({
+      output: "",
+      comments: [{ path: "src/new.ts", line: 1, body: "行の指摘" }],
+      changesRequested: true,
     });
   });
 
