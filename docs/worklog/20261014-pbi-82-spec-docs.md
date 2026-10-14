@@ -2,7 +2,7 @@
 
 - 日付: 2026-10-14（UTC）
 - タスク: PBI-82
-- PR: なし
+- PR: #91
 - ブランチ: feat/issue-82-spec-docs
 - 関係する ADR: [docs を4種類に分け、実装の変更で直すのは仕様書とユーザードキュメントだけにする](../adr/20261014-0816-docs-structure-and-policy.md)
 
