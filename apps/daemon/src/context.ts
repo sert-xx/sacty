@@ -711,13 +711,14 @@ function mergeNamed<T>(
     for (const name of layer.manifest.locked[kind]) {
       if (!locked.has(name)) {
         locked.set(name, from);
+        // 上位の層の項目を上書き禁止にしたときだけ、どの層のものかを添える
         const item = merged.get(name);
         effects.push({
           kind,
           name,
           effect: "locked",
           by: from,
-          ...(item ? { of: item.from } : {}),
+          ...(item && item.from !== from ? { of: item.from } : {}),
         });
       }
     }

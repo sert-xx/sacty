@@ -1445,7 +1445,7 @@ describe("コンテキストのプレビュー（PBI-76）", () => {
     },
     "https://example.com/team.git": {
       "sacty-context.yaml":
-        "extends: https://example.com/company.git#main\nremove:\n  skills: [old]\n  mcp: [github]\n",
+        "extends: https://example.com/company.git#main\nremove:\n  skills: [old]\n  mcp: [github]\nlocked:\n  skills: [review]\n",
       "rules/01.md": "# チームの規約",
       "skills/grp/local/SKILL.md": "---\ndescription: チームだけ\n---\nチーム版",
       "mcp.yaml": [
@@ -1566,11 +1566,14 @@ describe("コンテキストのプレビュー（PBI-76）", () => {
       expect.objectContaining({
         repo: "https://example.com/team.git",
         remove: { skills: ["old"], mcp: ["github"], platforms: [] },
+        locked: { skills: ["review"], mcp: [], platforms: [] },
       }),
     ]);
     expect(preview.effects).toEqual([
       { kind: "skills", name: "old", effect: "removed", by: team, of: company },
-      { kind: "mcp", name: "github", effect: "locked", by: company, of: company },
+      // 上位の層の項目を上書き禁止にしたときは、どの層のものかも
+      { kind: "skills", name: "review", effect: "locked", by: team, of: company },
+      { kind: "mcp", name: "github", effect: "locked", by: company },
     ]);
     expect(preview.rules).toEqual([company, team]);
     expect(preview.agentSettings).toEqual([company, team]);
