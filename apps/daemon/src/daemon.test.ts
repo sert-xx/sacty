@@ -59,6 +59,7 @@ import {
 import type { ServiceRunner, ServicesSpec } from "./services.js";
 import { type SessionLogSink, SessionLogStore } from "./session-logs.js";
 import { MemorySettingsStore } from "./settings.js";
+import type { SharedComposeFetcher } from "./shared-compose.js";
 import type { FoundTicket, TicketClient } from "./tickets.js";
 
 /** 記録した文言（コードと引数）を、日本語の文にする（PBI-11）。 */
@@ -143,7 +144,12 @@ function projectsWithAccount(): MemoryProjectStore {
 
 /** docker compose のサービスの偽物（PBI-47）。起動と停止を記録する。 */
 class FakeServices implements ServiceRunner {
-  started: { runId: string; workspaceDir: string; spec: ServicesSpec }[] = [];
+  started: {
+    runId: string;
+    workspaceDir: string;
+    spec: ServicesSpec;
+    secrets?: readonly string[];
+  }[] = [];
   stopped: string[] = [];
   constructor(
     private readonly fail?: DaemonText,
@@ -151,7 +157,12 @@ class FakeServices implements ServiceRunner {
       { name: "db", ports: [5432] },
     ],
   ) {}
-  async start(input: { runId: string; workspaceDir: string; spec: ServicesSpec }) {
+  async start(input: {
+    runId: string;
+    workspaceDir: string;
+    spec: ServicesSpec;
+    secrets?: readonly string[];
+  }) {
     this.started.push(input);
     if (this.fail) return { ok: false as const, message: this.fail };
     return {
@@ -161,6 +172,26 @@ class FakeServices implements ServiceRunner {
   }
   async stop(runId: string) {
     this.stopped.push(runId);
+  }
+}
+
+/** 共用の compose のリポジトリの取得の偽物（PBI-70）。取得の呼び出しを記録し、compose ファイルを置く。 */
+class FakeSharedComposes implements SharedComposeFetcher {
+  calls: { repo: string; ref?: string; dest: string; authEnv?: Record<string, string> }[] = [];
+  constructor(public fail?: Error) {}
+  async checkout(input: Parameters<SharedComposeFetcher["checkout"]>[0]) {
+    this.calls.push(input);
+    if (this.fail) {
+      // 途中まで書いたディレクトリが残っても、sacty が消す
+      mkdirSync(input.dest, { recursive: true });
+      throw this.fail;
+    }
+    mkdirSync(join(input.dest, "compose"), { recursive: true });
+    writeFileSync(
+      join(input.dest, "compose", "redis.yml"),
+      "services:\n  redis:\n    image: redis\n",
+    );
+    return { commit: "abc1234def5678" };
   }
 }
 
@@ -741,6 +772,7 @@ function makeService(
     hostMcpProblems?: ServiceDeps["hostMcpProblems"];
     notifier?: ServiceDeps["notifier"];
     services?: ServiceRunner;
+    sharedComposes?: SharedComposeFetcher;
     tickets?: ServiceDeps["tickets"];
     /** 要求要件・設計を PR のマージで承認する（PBI-57）。既定は、画面で承認する流れを確かめるので切る。 */
     stepPullRequests?: boolean;
@@ -791,6 +823,7 @@ function makeService(
     ...(options.hostMcpProblems ? { hostMcpProblems: options.hostMcpProblems } : {}),
     ...(options.notifier ? { notifier: options.notifier } : {}),
     ...(options.services ? { services: options.services } : {}),
+    ...(options.sharedComposes ? { sharedComposes: options.sharedComposes } : {}),
     ...(options.tickets ? { tickets: options.tickets } : {}),
     stepPullRequests: options.stepPullRequests ?? false,
     ...(options.sessionLogs ? { sessionLogs: options.sessionLogs } : {}),
@@ -2571,6 +2604,8 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       now?: () => number;
       planner?: ServiceDeps["planner"];
       services?: ServiceRunner;
+      sharedComposes?: SharedComposeFetcher;
+      projects?: MemoryProjectStore;
     } = {},
   ) {
     const activity = new SqliteActivityStore(dbPath);
@@ -2952,6 +2987,277 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         await service.runNext(task.id);
         expect(services.started).toHaveLength(expected);
         expect(services.stopped).toHaveLength(expected);
+        activity.close();
+      }
+    });
+  });
+
+  describe("共用の docker compose（PBI-70）", () => {
+    /** 共用の compose を2つ持つプロジェクト（infra は github.com の HTTPS、kafka はローカルのパス）。 */
+    const projectsWithShared = () => {
+      const projects = projectsWithAccount();
+      const project = projects.get("default");
+      if (!project) throw new Error("no project");
+      projects.put("default", {
+        name: project.name,
+        targets: project.targets,
+        ...(project.githubAccounts ? { githubAccounts: project.githubAccounts } : {}),
+        sharedComposes: [
+          {
+            name: "infra",
+            repo: "https://github.com/acme/test-infra",
+            ref: "main",
+            file: "compose/redis.yml",
+            description: "Redis。結合テストに要る",
+          },
+          { name: "kafka", repo: "/srv/kafka-compose", file: "compose.yaml" },
+        ],
+      });
+      return projects;
+    };
+    const plan =
+      (extra: Record<string, unknown> = {}) =>
+      async () => ({
+        steps: [...MVP_STEPS],
+        fallback: false,
+        testCommand: "npm test",
+        costUsd: 0,
+        estimated: false,
+        ...extra,
+      });
+
+    it("設定しただけでは取得も起動もしない。使わないと判断した理由と、選ばせた共用の compose を残す", async () => {
+      const services = new FakeServices();
+      const shared = new FakeSharedComposes();
+      const tests = new FakeTests([{ exitCode: 0, output: "ok", durationMs: 1 }]);
+      const { activity, service, id } = await toImplement([implement("# 実装"), review()], {
+        tests,
+        services,
+        sharedComposes: shared,
+        projects: projectsWithShared(),
+        planner: plan({ servicesReason: "単体テストだけで、外部のサービスを使わない" }),
+      });
+      await drain(service);
+      expect(shared.calls).toHaveLength(0);
+      expect(services.started).toHaveLength(0);
+      expect(services.stopped).toHaveLength(0);
+      expect(tests.calls).toHaveLength(1);
+      const chosen = service.get(id)?.activity.find((e) => e.type === "StepsChosen");
+      expect(chosen?.type === "StepsChosen" && chosen.payload.sharedComposes).toEqual([
+        "infra",
+        "kafka",
+      ]);
+      expect(chosen?.type === "StepsChosen" && chosen.payload.services).toBeUndefined();
+      expect(service.get(id)?.task.servicesReason).toBe(
+        "単体テストだけで、外部のサービスを使わない",
+      );
+      activity.close();
+    });
+
+    it("共用の compose を選ぶと、工程・テストの実行ごとに、実行専用のディレクトリに取得して起動し、終わったら消す", async () => {
+      const services = new FakeServices(undefined, [{ name: "redis", ports: [6379] }]);
+      const shared = new FakeSharedComposes();
+      const tests = new FakeTests([{ exitCode: 0, output: "ok", durationMs: 1 }]);
+      const { activity, service, executor, id } = await toImplement(
+        [implement("# 実装"), review()],
+        {
+          tests,
+          services,
+          sharedComposes: shared,
+          projects: projectsWithShared(),
+          planner: plan({
+            services: { compose: "infra", names: ["redis"], steps: ["implement"] },
+            servicesReason: "結合テストが Redis を使う（README）",
+          }),
+        },
+      );
+      // 要求要件・設計では取得しない
+      expect(shared.calls).toHaveLength(0);
+      const chosen = service.get(id)?.activity.find((e) => e.type === "StepsChosen");
+      // どの共用の compose を使うかを、作業履歴に残す
+      expect(chosen?.type === "StepsChosen" && chosen.payload.services).toEqual({
+        file: "compose/redis.yml",
+        names: ["redis"],
+        steps: ["implement"],
+        compose: { name: "infra", repo: "https://github.com/acme/test-infra", ref: "main" },
+      });
+      expect(chosen?.type === "StepsChosen" && chosen.payload.servicesReason).toBe(
+        "結合テストが Redis を使う（README）",
+      );
+      await drain(service);
+      // 実装の実行と、そのテストの実行で、それぞれ取得する（実行ごとに別のディレクトリ）
+      expect(shared.calls).toHaveLength(2);
+      const [agentRun, testRun] = services.started;
+      expect(agentRun?.runId).not.toBe(testRun?.runId);
+      expect(shared.calls.map((c) => c.dest)).toEqual([
+        join(dir, "workspaces", "_shared-compose", agentRun?.runId ?? ""),
+        join(dir, "workspaces", "_shared-compose", testRun?.runId ?? ""),
+      ]);
+      expect(shared.calls[0]?.repo).toBe("https://github.com/acme/test-infra");
+      expect(shared.calls[0]?.ref).toBe("main");
+      // HTTPS の GitHub は、プロジェクトの gh のアカウントで取得する（環境変数でだけ渡す）
+      expect(shared.calls[0]?.authEnv?.GIT_CONFIG_KEY_0).toBe(
+        "http.https://github.com/.extraheader",
+      );
+      // 取得したディレクトリを作業領域として起動する。失敗の理由から取り除く値も渡す
+      expect(services.started.map((s) => s.spec)).toEqual([
+        { file: "compose/redis.yml", names: ["redis"], shared: "infra" },
+        { file: "compose/redis.yml", names: ["redis"], shared: "infra" },
+      ]);
+      expect(agentRun?.workspaceDir).toBe(shared.calls[0]?.dest);
+      expect(agentRun?.secrets).toContain("ghp_secret");
+      expect(services.stopped).toEqual([agentRun?.runId, testRun?.runId]);
+      // 終わったら、取得したディレクトリも消す
+      for (const call of shared.calls) expect(existsSync(call.dest)).toBe(false);
+      // サービス名でも localhost でも接続できる（PBI-60 と同じ）
+      expect(executor.forwards[3]).toEqual([{ port: 6379, host: "redis" }]);
+      expect(tests.calls[0]?.forwards).toEqual([{ port: 6379, host: "redis" }]);
+      expect(promptOf(executor, 3)).toContain("- redis：redis:6379 または localhost:6379");
+      const started = service.get(id)?.activity.filter((e) => e.type === "ServicesStarted") ?? [];
+      expect(started.map((e) => e.type === "ServicesStarted" && e.payload.compose)).toEqual([
+        { name: "infra", commit: "abc1234def5678" },
+        { name: "infra", commit: "abc1234def5678" },
+      ]);
+      // 認証の値は、作業履歴に残さない
+      expect(JSON.stringify(service.get(id)?.activity)).not.toContain("ghp_secret");
+      activity.close();
+    });
+
+    it("ローカルのパスの共用の compose は、ホストの認証で取得する（トークンを取り出さない）", async () => {
+      const services = new FakeServices();
+      const shared = new FakeSharedComposes();
+      const activity = new SqliteActivityStore(dbPath);
+      const { service } = makeService(activity, [out("# 調査")], {
+        services,
+        sharedComposes: shared,
+        projects: projectsWithShared(),
+        planner: async () => ({
+          steps: [...STEP_PLANS.investigate],
+          plan: "investigate" as const,
+          reason: "調査",
+          fallback: false,
+          costUsd: 0,
+          estimated: false,
+          investigation: "bug" as const,
+          services: { compose: "kafka", names: [], steps: ["investigate"] as StepKey[] },
+        }),
+      });
+      const task = service.createTask({ projectId: "default", title: "落ちるテストを調べて" });
+      await service.runNext(task.id);
+      expect(shared.calls).toHaveLength(1);
+      expect(shared.calls[0]?.repo).toBe("/srv/kafka-compose");
+      expect(shared.calls[0]).not.toHaveProperty("ref");
+      expect(shared.calls[0]).not.toHaveProperty("authEnv");
+      expect(services.started[0]?.spec).toEqual({
+        file: "compose.yaml",
+        names: [],
+        shared: "kafka",
+      });
+      expect(services.started[0]).not.toHaveProperty("secrets");
+      activity.close();
+    });
+
+    it("取得に失敗したら、起動せずに、どの共用の compose の何が原因かを示して止まる。認証の値は伏せてから切り詰める", async () => {
+      const services = new FakeServices();
+      // git のエラーに認証の値が混ざっても、伏せてから切り詰める（切り詰めの境界をまたぐ位置）
+      const shared = new FakeSharedComposes(
+        new Error(`ghp_secret ${"x".repeat(1954)}ghp_secret fatal: repository not found`),
+      );
+      const { activity, service, executor, id } = await toImplement([], {
+        services,
+        sharedComposes: shared,
+        projects: projectsWithShared(),
+        planner: plan({ services: { compose: "infra", names: [], steps: ["implement"] } }),
+      });
+      const before = executor.calls.length;
+      await drain(service);
+      expect(executor.calls).toHaveLength(before);
+      expect(services.started).toHaveLength(0);
+      expect(service.get(id)?.task.status).toBe("paused");
+      const failed = service.get(id)?.activity.find((e) => e.type === "AgentRunFailed");
+      const raw = failed?.type === "AgentRunFailed" ? failed.payload.message : "";
+      const text = ja(raw);
+      expect(text).toContain(
+        "共用の compose「infra」のリポジトリ（https://github.com/acme/test-infra）を取得できませんでした",
+      );
+      expect(text).toContain("repository not found");
+      expect(text).toContain("[REDACTED]");
+      // 伏せる前に切り詰めると、先頭の値の一部（"secret" など）が残る
+      expect(JSON.stringify(service.get(id)?.activity)).not.toMatch(/ghp_|_secret|secret /);
+      expect(renderMessage(raw, "en")).toContain('of the shared compose "infra"');
+      // 取得に失敗したディレクトリも残さない
+      expect(existsSync(shared.calls[0]?.dest ?? "")).toBe(false);
+      activity.close();
+    });
+
+    it("設定に無い名前を選んだら、理由を示して止まる（取得しない）", async () => {
+      const services = new FakeServices();
+      const shared = new FakeSharedComposes();
+      const activity = new SqliteActivityStore(dbPath);
+      const { service } = makeService(activity, [], {
+        services,
+        sharedComposes: shared,
+        projects: projectsWithShared(),
+        planner: plan({ services: { compose: "cassandra", names: [], steps: ["implement"] } }),
+      });
+      const task = service.createTask({ projectId: "default", title: "決済API" });
+      await service.runNext(task.id);
+      const failed = service.get(task.id)?.activity.find((e) => e.type === "OrchestratorFailed");
+      expect(ja(failed?.type === "OrchestratorFailed" ? failed.payload.message : "")).toContain(
+        "共用の compose「cassandra」は、プロジェクトの設定にありません",
+      );
+      expect(service.get(task.id)?.task.status).toBe("paused");
+      expect(shared.calls).toHaveLength(0);
+      activity.close();
+    });
+
+    it("共用の compose を設定していないプロジェクトでは、選ばせず、これまでどおり動く", async () => {
+      const services = new FakeServices();
+      const shared = new FakeSharedComposes();
+      const tests = new FakeTests([{ exitCode: 0, output: "ok", durationMs: 1 }]);
+      const { activity, service, id } = await toImplement([implement("# 実装"), review()], {
+        tests,
+        services,
+        sharedComposes: shared,
+        planner: plan({ services: { file: "compose.yaml", names: ["db"], steps: ["implement"] } }),
+      });
+      await drain(service);
+      expect(shared.calls).toHaveLength(0);
+      expect(services.started.map((s) => s.spec)).toEqual([
+        { file: "compose.yaml", names: ["db"] },
+        { file: "compose.yaml", names: ["db"] },
+      ]);
+      expect(services.started[0]?.workspaceDir).toBe(join(dir, "workspaces", id, "repo"));
+      expect(services.started[0]).not.toHaveProperty("secrets");
+      const chosen = service.get(id)?.activity.find((e) => e.type === "StepsChosen");
+      expect(chosen?.type === "StepsChosen" && chosen.payload).not.toHaveProperty("sharedComposes");
+      activity.close();
+    });
+
+    it("オーケストレーターに、共用の compose を名前・ファイル・説明で選ばせる（設定が無ければ出さない）", async () => {
+      for (const [projects, expected] of [
+        [projectsWithShared(), true],
+        [projectsWithAccount(), false],
+      ] as const) {
+        const activity = new SqliteActivityStore(join(dir, `orch-${expected}.db`));
+        const { service, executor } = makeService(
+          activity,
+          [
+            out(
+              '```json\n{"sacty-steps": {"plan": "standard", "reason": "変更", "testCommand": "npm test", "servicesReason": "Redis は使わない"}}\n```',
+            ),
+          ],
+          { projects, realPlanner: true },
+        );
+        const task = service.createTask({ projectId: "default", title: "決済API" });
+        await service.runNext(task.id);
+        const prompt = promptOf(executor, 0);
+        expect(
+          prompt.includes("- infra：compose ファイル compose/redis.yml。Redis。結合テストに要る"),
+        ).toBe(expected);
+        expect(prompt.includes("- kafka：compose ファイル compose.yaml")).toBe(expected);
+        expect(prompt.includes("servicesReason")).toBe(expected);
+        expect(service.get(task.id)?.task.servicesReason).toBe("Redis は使わない");
         activity.close();
       }
     });

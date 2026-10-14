@@ -343,6 +343,77 @@ describe("工程の選択と内容の調査では、開発のセットアップ�
     expect(extractStepPlan(output(undefined))).not.toHaveProperty("imageReason");
   });
 
+  it("共用の compose は名前で選ばせ、使う・使わない理由を書かせる。設定が無い・対象リポジトリが無いなら聞かない（PBI-70）", () => {
+    const output = (v: Record<string, unknown>) =>
+      `\`\`\`json\n${JSON.stringify({ "sacty-steps": { plan: "standard", reason: "r", ...v } })}\n\`\`\``;
+    // 名前で選ぶ（ファイルは設定のものを使うので読まない。両方あれば共用の compose）
+    expect(
+      extractStepPlan(
+        output({
+          services: { compose: "infra", file: "x.yml", names: ["redis"], steps: ["implement"] },
+          servicesReason: "結合テストが Redis を使う",
+        }),
+      ),
+    ).toMatchObject({
+      services: { compose: "infra", names: ["redis"], steps: ["implement"] },
+      servicesReason: "結合テストが Redis を使う",
+    });
+    expect(
+      extractStepPlan(output({ services: { compose: "infra", names: [], steps: ["implement"] } }))
+        ?.services,
+    ).not.toHaveProperty("file");
+    // 名前の形でなければ、対象リポジトリの compose ファイルとして読む（無ければ指定しなかったことにする）
+    expect(
+      extractStepPlan(
+        output({ services: { compose: "Bad Name", file: "compose.yaml", steps: ["implement"] } }),
+      )?.services,
+    ).toEqual({ file: "compose.yaml", names: [], steps: ["implement"] });
+    expect(
+      extractStepPlan(output({ services: { compose: "../x", steps: ["implement"] } })),
+    ).not.toHaveProperty("services");
+    // 使わない理由だけでも残す。長すぎる理由は切り詰める
+    expect(extractStepPlan(output({ servicesReason: "使わない" }))).toMatchObject({
+      servicesReason: "使わない",
+    });
+    expect(
+      extractStepPlan(output({ servicesReason: "x".repeat(2000) }))?.servicesReason,
+    ).toHaveLength(1000);
+    expect(extractStepPlan(output({}))).not.toHaveProperty("servicesReason");
+
+    const withRepo = {
+      title: "x",
+      body: "",
+      steps: [],
+      repository: { url: "https://github.com/a/b.git", baseBranch: "main", baseCommit: "abc1234" },
+    } as unknown as Task;
+    const shared = [
+      { name: "infra", file: "compose/redis.yml", description: "Redis。結合テストに要る" },
+      { name: "kafka", file: "compose.yaml" },
+    ];
+    const prompt = buildOrchestratorPrompt(withRepo, { sharedComposes: shared });
+    expect(prompt).toContain("設定してあるだけでは起動しません");
+    expect(prompt).toContain(
+      "- infra：compose ファイル compose/redis.yml。Redis。結合テストに要る",
+    );
+    expect(prompt).toContain("- kafka：compose ファイル compose.yaml\n");
+    expect(prompt).toContain("- servicesReason：");
+    expect(prompt).toContain('"compose": "または共用の compose の名前"');
+    // 1つだけでも聞く
+    expect(buildOrchestratorPrompt(withRepo, { sharedComposes: [shared[1] as never] })).toContain(
+      "- kafka：compose ファイル compose.yaml",
+    );
+    for (const without of [
+      buildOrchestratorPrompt(withRepo),
+      buildOrchestratorPrompt(withRepo, { sharedComposes: [] }),
+      buildOrchestratorPrompt({ title: "x", body: "", steps: [] } as unknown as Task, {
+        sharedComposes: shared,
+      }),
+    ]) {
+      expect(without).not.toContain("共用の compose");
+      expect(without).not.toContain("servicesReason");
+    }
+  });
+
   it("サービスの指定は、リポジトリの中の相対パスと、コードを動かす工程だけを読む（PBI-47）", () => {
     const output = (services: unknown) =>
       `\`\`\`json\n${JSON.stringify({ "sacty-steps": { plan: "standard", reason: "r", services } })}\n\`\`\``;

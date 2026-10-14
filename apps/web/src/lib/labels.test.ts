@@ -552,6 +552,88 @@ describe("オーケストレーターが選んだ工程（PBI-17）", () => {
     ).toContain("images: Implement=py (set on the project target)");
   });
 
+  it("サービスを使う・使わない判断と理由、どの共用の compose を使うかを表示する（PBI-70）", () => {
+    const chosen = (payload: Record<string, unknown>) =>
+      ({
+        type: "StepsChosen",
+        payload: {
+          steps: ["implement", "pr"],
+          reason: "小さな変更",
+          fallback: false,
+          costUsd: 0,
+          estimated: false,
+          ...payload,
+        },
+        seq: 1,
+        id: "e1",
+        taskId: "t1",
+        projectId: "default",
+        at: "2026-10-11T00:00:00.000Z",
+        actor: "orchestrator",
+      }) as ActivityEvent;
+    // 共用の compose を設定していない・判断の理由も無いなら、これまでどおり
+    expect(describeEvent(chosen({}))).toBe("工程を決定：実装 → PR作成（小さな変更）");
+    // 共用の compose を使う
+    const shared = chosen({
+      sharedComposes: ["infra", "kafka"],
+      services: {
+        file: "compose/redis.yml",
+        names: ["redis"],
+        steps: ["implement"],
+        compose: { name: "infra", repo: "https://github.com/acme/test-infra", ref: "main" },
+      },
+      servicesReason: "結合テストが Redis を使う",
+    });
+    expect(describeEvent(shared)).toBe(
+      "工程を決定：実装 → PR作成（小さな変更） / サービス：redis（共用の compose「infra」の compose/redis.yml（https://github.com/acme/test-infra#main）。実装で使う）：結合テストが Redis を使う",
+    );
+    expect(describeIn(shared, labels.en)).toContain(
+      'Services: redis (compose/redis.yml of the shared compose "infra" (https://github.com/acme/test-infra#main); used in Implement): 結合テストが Redis を使う',
+    );
+    // 対象リポジトリの compose（names が空ならすべて）
+    expect(
+      describeEvent(
+        chosen({ services: { file: "compose.yaml", names: [], steps: ["implement"] } }),
+      ),
+    ).toBe(
+      "工程を決定：実装 → PR作成（小さな変更） / サービス：すべて（compose.yaml。実装で使う）",
+    );
+    // 共用の compose を使わない（理由あり・なし）
+    expect(
+      describeEvent(chosen({ sharedComposes: ["infra"], servicesReason: "単体テストだけ" })),
+    ).toBe(
+      "工程を決定：実装 → PR作成（小さな変更） / 共用の compose（infra）：使わない（単体テストだけ）",
+    );
+    expect(describeEvent(chosen({ sharedComposes: ["infra", "kafka"] }))).toBe(
+      "工程を決定：実装 → PR作成（小さな変更） / 共用の compose（infra、kafka）：使わない（理由の記載なし）",
+    );
+    expect(describeIn(chosen({ sharedComposes: ["infra"] }), labels.en)).toContain(
+      "Shared compose (infra): not used (no reason given)",
+    );
+  });
+
+  it("共用の compose から起動したサービスは、どの共用の compose のどのコミットかを表示する（PBI-70）", () => {
+    const event = {
+      type: "ServicesStarted",
+      payload: {
+        runId: "r",
+        step: "implement",
+        file: "compose/redis.yml",
+        services: [{ name: "redis", ports: [6379] }],
+        compose: { name: "infra", commit: "abc1234def5678" },
+      },
+      seq: 1,
+      id: "e1",
+      taskId: "t1",
+      projectId: "default",
+      at: "2026-10-11T00:00:00.000Z",
+      actor: "sacty",
+    } as ActivityEvent;
+    expect(describeEvent(event)).toBe(
+      "実装のためにサービスを起動：redis（共用の compose「infra」の compose/redis.yml（abc1234）。実行の後に消す）",
+    );
+  });
+
   it("サービスの起動を表示する（PBI-47）", () => {
     const started = (forTests?: boolean, sharedPorts?: number[]) =>
       ({

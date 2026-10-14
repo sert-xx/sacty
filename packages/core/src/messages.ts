@@ -31,6 +31,7 @@ const PARAMS = {
     key: z.string(),
     project: z.string(),
   }),
+  "project.sharedComposeDuplicated": z.object({ name: z.string() }),
   "pause.alreadyPaused": null,
   "pause.awaitingPerson": null,
   "pause.waitingTasks": null,
@@ -87,6 +88,12 @@ const PARAMS = {
   "input.invalidOrg": null,
   "input.invalidHost": null,
   "input.contextRepoRequired": null,
+  // 共用の compose（PBI-70）
+  "input.sharedComposeName": null,
+  "input.sharedComposeRepoRequired": null,
+  "input.sharedComposeRepoCredential": null,
+  "input.sharedComposeRepoForm": null,
+  "input.sharedComposeFile": null,
   "input.invalidRef": null,
   "input.invalidLabel": null,
   "input.notExportFile": null,
@@ -129,6 +136,12 @@ const PARAMS = {
   // docker compose のサービス（PBI-47）
   "services.unsafe": z.object({ file: z.string(), detail: z.string() }),
   "services.failed": z.object({ file: z.string(), detail: z.string() }),
+  // 共用の compose（PBI-70）
+  "services.sharedUnknown": z.object({ name: z.string() }),
+  "services.sharedFetchFailed": z.object({ name: z.string(), repo: z.string(), detail: TextParam }),
+  "services.sharedMissing": z.object({ name: z.string(), file: z.string() }),
+  "services.sharedUnsafe": z.object({ name: z.string(), file: z.string(), detail: z.string() }),
+  "services.sharedFailed": z.object({ name: z.string(), file: z.string(), detail: z.string() }),
   "input.channelRequired": null,
   // Slack の通知のメンション（PBI-69）
   "input.slackMention": null,
@@ -379,6 +392,8 @@ const ja: MessageDictionary = {
     `チケットの取り込み先（${platform}）のキー「${key}」が重複しています。`,
   "project.ticketKeyTaken": ({ platform, key, project }) =>
     `チケットの取り込み先（${platform}）のキー「${key}」は、プロジェクト「${project}」が取り込んでいます。`,
+  "project.sharedComposeDuplicated": ({ name }) =>
+    `共用の compose の名前「${name}」が重複しています。`,
   "project.targetTaken": ({ scope, target, project }) =>
     `${scopeJa[scope]}「${target}」は、プロジェクト「${project}」に登録されています。`,
   "pause.alreadyPaused": "すでに一時停止しています。",
@@ -449,6 +464,15 @@ const ja: MessageDictionary = {
   "input.invalidOrg": "Org は URL（例 https://github.com/acme）で入力してください。",
   "input.invalidHost": "ホスト名として正しくありません。",
   "input.contextRepoRequired": "コンテキストリポジトリを入力してください。",
+  "input.sharedComposeName":
+    "共用の compose の名前は、英小文字・数字で始まり、英小文字・数字・_・- だけ（40文字まで）で入力してください。",
+  "input.sharedComposeRepoRequired": "共用の compose のリポジトリを入力してください。",
+  "input.sharedComposeRepoCredential":
+    "共用の compose のリポジトリの URL には、ユーザー名・パスワード・トークンを書かないでください（HTTPS の GitHub は、プロジェクトの GitHub のアカウントで取得します）。",
+  "input.sharedComposeRepoForm":
+    "共用の compose のリポジトリは、git の URL（https://…・ssh://…・git@host:…）か、ローカルの絶対パスで入力してください。",
+  "input.sharedComposeFile":
+    "共用の compose の compose ファイルは、リポジトリの根からの相対パス（.. や $ を含まない）で入力してください。",
   "input.invalidRef": "ref はブランチ名かタグ名で入力してください。",
   "input.invalidLabel": 'ラベルに " と \\ は使えません。',
   "input.notExportFile": "sacty のプロジェクト定義のファイルではありません。",
@@ -528,6 +552,16 @@ const ja: MessageDictionary = {
     `compose ファイル（${file}）に、sacty が起動できない設定があります：${detail}。エージェントにホストの権限を渡さないため、privileged・ホストのネットワーク・作業領域の外のマウントなどは使えません。`,
   "services.failed": ({ file, detail }) =>
     `compose ファイル（${file}）のサービスを起動できませんでした。出力の末尾：${detail}`,
+  "services.sharedUnknown": ({ name }) =>
+    `共用の compose「${name}」は、プロジェクトの設定にありません。プロジェクトの設定に書くか、再開して選び直してください。`,
+  "services.sharedFetchFailed": ({ name, repo, detail }, text) =>
+    `共用の compose「${name}」のリポジトリ（${repo}）を取得できませんでした：${text(detail)}`,
+  "services.sharedMissing": ({ name, file }) =>
+    `共用の compose「${name}」のリポジトリに、compose ファイル（${file}）がありません。プロジェクトの設定の compose ファイルのパスを確かめてください。`,
+  "services.sharedUnsafe": ({ name, file, detail }) =>
+    `共用の compose「${name}」の compose ファイル（${file}）に、sacty が起動できない設定があります：${detail}。エージェントにホストの権限を渡さないため、privileged・ホストのネットワーク・取得したリポジトリの外のマウントなどは使えません。`,
+  "services.sharedFailed": ({ name, file, detail }) =>
+    `共用の compose「${name}」の compose ファイル（${file}）のサービスを起動できませんでした。出力の末尾：${detail}`,
   "image.unknown": ({ name }) =>
     `イメージ「${name}」は config.yaml の images にありません。images に書くか、プロジェクトの対象のイメージの指定を直してから、再開してください。`,
   "input.channelRequired": "チャンネルを書いてください。",
@@ -713,6 +747,8 @@ const en: MessageDictionary = {
     `The key "${key}" of the ticket source (${platform}) is duplicated.`,
   "project.ticketKeyTaken": ({ platform, key, project }) =>
     `The key "${key}" of the ticket source (${platform}) is already imported by the project "${project}".`,
+  "project.sharedComposeDuplicated": ({ name }) =>
+    `The shared compose name "${name}" is duplicated.`,
   "project.targetTaken": ({ scope, target, project }) =>
     `The ${scopeEn[scope]} "${target}" is already registered in the project "${project}".`,
   "pause.alreadyPaused": "The task is already paused.",
@@ -784,6 +820,15 @@ const en: MessageDictionary = {
   "input.invalidOrg": "Enter the org as a URL (e.g. https://github.com/acme).",
   "input.invalidHost": "This is not a valid host name.",
   "input.contextRepoRequired": "Enter the context repository.",
+  "input.sharedComposeName":
+    "Enter the shared compose name with lowercase letters, digits, _ and - only, starting with a letter or digit (up to 40 characters).",
+  "input.sharedComposeRepoRequired": "Enter the repository of the shared compose.",
+  "input.sharedComposeRepoCredential":
+    "Don't put a user name, password or token in the repository URL of the shared compose (HTTPS GitHub is fetched with the project's GitHub account).",
+  "input.sharedComposeRepoForm":
+    "Enter the repository of the shared compose as a git URL (https://…, ssh://…, git@host:…) or an absolute local path.",
+  "input.sharedComposeFile":
+    "Enter the compose file of the shared compose as a path relative to the repository root (without .. or $).",
   "input.invalidRef": "Enter a branch or tag name as the ref.",
   "input.invalidLabel": "A label can't contain \" or \\.",
   "input.notExportFile": "This is not a sacty project definition file.",
@@ -862,6 +907,16 @@ const en: MessageDictionary = {
     `The compose file (${file}) has settings sacty can't start: ${detail}. To keep host privileges away from agents, privileged, host networking, mounts outside the workspace and so on are not allowed.`,
   "services.failed": ({ file, detail }) =>
     `Could not start the services in the compose file (${file}). End of the output: ${detail}`,
+  "services.sharedUnknown": ({ name }) =>
+    `The shared compose "${name}" is not in the project settings. Add it to the project settings, or resume to choose again.`,
+  "services.sharedFetchFailed": ({ name, repo, detail }, text) =>
+    `Could not fetch the repository (${repo}) of the shared compose "${name}": ${text(detail)}`,
+  "services.sharedMissing": ({ name, file }) =>
+    `The repository of the shared compose "${name}" has no compose file (${file}). Check the compose file path in the project settings.`,
+  "services.sharedUnsafe": ({ name, file, detail }) =>
+    `The compose file (${file}) of the shared compose "${name}" has settings sacty can't start: ${detail}. To keep host privileges away from agents, privileged, host networking, mounts outside the fetched repository and so on are not allowed.`,
+  "services.sharedFailed": ({ name, file, detail }) =>
+    `Could not start the services in the compose file (${file}) of the shared compose "${name}". End of the output: ${detail}`,
   "image.unknown": ({ name }) =>
     `The image "${name}" is not in images in config.yaml. Add it to images, or fix the image of the project target, then resume.`,
   "input.channelRequired": "Write a channel.",

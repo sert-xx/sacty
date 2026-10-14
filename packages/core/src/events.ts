@@ -403,8 +403,26 @@ const StepsChosen = z.object({
         file: z.string().min(1).max(300),
         names: z.array(z.string().min(1).max(100)).max(20),
         steps: z.array(StepKey).min(1),
+        /**
+         * 共用の compose（プロジェクトの設定の sharedComposes。PBI-70）を使うとき、その名前・リポジトリ・ref。file は
+         * そのリポジトリの中の compose ファイル。無ければ、file は対象リポジトリの compose ファイル。
+         */
+        compose: z
+          .object({
+            name: z.string().min(1).max(40),
+            repo: z.string().min(1).max(500),
+            ref: z.string().max(200).optional(),
+          })
+          .optional(),
       })
       .optional(),
+    /**
+     * サービスを使う・使わないと判断した理由（オーケストレーター。PBI-70）。共用の compose を使わないと判断した理由も
+     * ここに残す。
+     */
+    servicesReason: z.string().max(1000).optional(),
+    /** オーケストレーターに選ばせた共用の compose の名前（PBI-70。設定していなければ無い）。 */
+    sharedComposes: z.array(z.string().min(1).max(40)).max(20).optional(),
     /**
      * 工程ごとの書き出し先（書き出さないことも含む）と理由（PBI-56）。書き出せる工程（exportSteps）だけ。使える
      * 接続先が1つも無いときは持たない（オーケストレーターに決めさせない）。
@@ -868,6 +886,8 @@ const ServicesStarted = z.object({
         otherPorts: z.array(z.object({ port: z.number().int(), protocol: z.string() })).optional(),
       }),
     ),
+    /** 共用の compose（PBI-70）から起動したとき、その名前と、取得したコミット。 */
+    compose: z.object({ name: z.string(), commit: z.string() }).optional(),
     /** テストの実行のための起動か（無ければ工程のエージェントの実行）。 */
     forTests: z.boolean().optional(),
     /** 複数のサービスが使うため、localhost に転送しなかった番号（ホスト・コンテナのポート。PBI-60）。 */

@@ -26,6 +26,9 @@ const initial: SaveProjectState = {};
 /** 画面で編集する、チケットの取り込み先の1行（PBI-52）。 */
 type TicketRow = { platform: string; service: "jira-cloud" | "jira-server"; keys: string };
 
+/** 画面で編集する、共用の compose の1行（PBI-70）。空の ref・説明は保存しない。 */
+type SharedRow = { name: string; repo: string; ref: string; file: string; description: string };
+
 type Exclusion = { org: string; repos: { repo: string; projectName: string }[] };
 
 const SELECT =
@@ -63,6 +66,18 @@ export function ProjectEditor({
   const updateTicket = (i: number, patch: Partial<TicketRow>) =>
     setTickets((list) => list.map((t, j) => (j === i ? { ...t, ...patch } : t)));
   const [contextRepo, setContextRepo] = useState(project?.context?.repo ?? "");
+  // 共用の compose（PBI-70）
+  const [shared, setShared] = useState<SharedRow[]>(
+    (project?.sharedComposes ?? []).map((s) => ({
+      name: s.name,
+      repo: s.repo,
+      ref: s.ref ?? "",
+      file: s.file,
+      description: s.description ?? "",
+    })),
+  );
+  const updateShared = (i: number, patch: Partial<SharedRow>) =>
+    setShared((list) => list.map((s, j) => (j === i ? { ...s, ...patch } : s)));
   // GitHub のアカウントは、ホストごとに選ぶ（PBI-40）。対象のホストは必ず選び、コンテキストリポジトリのホストと
   // 保存済みのホストも選べる。空は「選ばない」（そのホストは、ホストの git の認証を使う）
   const [chosenAccounts, setChosenAccounts] = useState<Record<string, string>>(
@@ -71,6 +86,7 @@ export function ProjectEditor({
   const { hosts, githubAccounts, missing } = githubAccountChoices({
     targets,
     contextRepo,
+    sharedRepos: shared.map((s) => s.repo),
     chosen: chosenAccounts,
     accounts,
   });
@@ -159,6 +175,18 @@ export function ProjectEditor({
               .split(/[\s,、]+/)
               .map((k) => k.trim())
               .filter(Boolean),
+          })),
+        }
+      : {}),
+    // 共用の compose（PBI-70）
+    ...(shared.length > 0
+      ? {
+          sharedComposes: shared.map((s) => ({
+            name: s.name.trim(),
+            repo: s.repo.trim(),
+            ...(s.ref.trim() ? { ref: s.ref.trim() } : {}),
+            file: s.file.trim(),
+            ...(s.description.trim() ? { description: s.description.trim() } : {}),
           })),
         }
       : {}),
@@ -362,6 +390,123 @@ export function ProjectEditor({
           </section>
 
           <section
+            aria-labelledby="shared-compose"
+            className="flex flex-col gap-3 rounded-xl border border-border bg-card p-5"
+          >
+            <h2 id="shared-compose" className="text-[15px] font-semibold">
+              {t.sharedTitle}{" "}
+              <span className="text-[13px] font-normal text-muted-foreground">{t.sharedNote}</span>
+            </h2>
+            <p className="text-sm leading-6 whitespace-pre-line text-muted-foreground">
+              {t.sharedHelp}
+            </p>
+            <ul className="flex flex-col gap-2.5">
+              {shared.map((row, i) => (
+                <li
+                  // biome-ignore lint/suspicious/noArrayIndexKey: 行は位置で編集する
+                  key={i}
+                  className="flex flex-col gap-2 rounded-lg border border-border p-3"
+                >
+                  <div className="flex flex-wrap items-end gap-2">
+                    <label
+                      htmlFor={`${uid}-shared-${i}-name`}
+                      className="flex w-36 flex-col gap-1 text-xs text-muted-foreground"
+                    >
+                      {t.sharedName}
+                      <Input
+                        id={`${uid}-shared-${i}-name`}
+                        value={row.name}
+                        maxLength={40}
+                        placeholder={t.sharedNamePlaceholder}
+                        onChange={(e) => updateShared(i, { name: e.target.value })}
+                        className="font-mono"
+                      />
+                    </label>
+                    <label
+                      htmlFor={`${uid}-shared-${i}-repo`}
+                      className="flex min-w-64 flex-[2] flex-col gap-1 text-xs text-muted-foreground"
+                    >
+                      {t.sharedRepo}
+                      <Input
+                        id={`${uid}-shared-${i}-repo`}
+                        value={row.repo}
+                        placeholder={t.sharedRepoPlaceholder}
+                        onChange={(e) => updateShared(i, { repo: e.target.value })}
+                        className="font-mono"
+                      />
+                    </label>
+                    <label
+                      htmlFor={`${uid}-shared-${i}-ref`}
+                      className="flex min-w-32 flex-1 flex-col gap-1 text-xs text-muted-foreground"
+                    >
+                      {t.sharedRef}
+                      <Input
+                        id={`${uid}-shared-${i}-ref`}
+                        value={row.ref}
+                        placeholder={t.sharedRefPlaceholder}
+                        onChange={(e) => updateShared(i, { ref: e.target.value })}
+                        className="font-mono"
+                      />
+                    </label>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-lg"
+                      aria-label={t.removeShared(row.name)}
+                      title={t.remove}
+                      onClick={() => setShared((list) => list.filter((_, j) => j !== i))}
+                    >
+                      <XIcon aria-hidden="true" />
+                    </Button>
+                  </div>
+                  <div className="flex flex-wrap items-end gap-2">
+                    <label
+                      htmlFor={`${uid}-shared-${i}-file`}
+                      className="flex min-w-56 flex-1 flex-col gap-1 text-xs text-muted-foreground"
+                    >
+                      {t.sharedFile}
+                      <Input
+                        id={`${uid}-shared-${i}-file`}
+                        value={row.file}
+                        placeholder={t.sharedFilePlaceholder}
+                        onChange={(e) => updateShared(i, { file: e.target.value })}
+                        className="font-mono"
+                      />
+                    </label>
+                    <label
+                      htmlFor={`${uid}-shared-${i}-description`}
+                      className="flex min-w-64 flex-[2] flex-col gap-1 text-xs text-muted-foreground"
+                    >
+                      {t.sharedDescription}
+                      <Input
+                        id={`${uid}-shared-${i}-description`}
+                        value={row.description}
+                        maxLength={1000}
+                        placeholder={t.sharedDescriptionPlaceholder}
+                        onChange={(e) => updateShared(i, { description: e.target.value })}
+                      />
+                    </label>
+                  </div>
+                </li>
+              ))}
+            </ul>
+            <Button
+              type="button"
+              variant="outline"
+              className="w-fit"
+              disabled={shared.length >= 20}
+              onClick={() =>
+                setShared((list) => [
+                  ...list,
+                  { name: "", repo: "", ref: "", file: "", description: "" },
+                ])
+              }
+            >
+              {t.addShared}
+            </Button>
+          </section>
+
+          <section
             aria-labelledby="github"
             className="flex flex-col gap-3 rounded-xl border border-border bg-card p-5"
           >
@@ -375,7 +520,7 @@ export function ProjectEditor({
             {!hosts.some((h) => h.required) && (
               <p className="text-sm text-muted-foreground">{t.githubNoTargets}</p>
             )}
-            {hosts.map(({ host, required, forContext }) => {
+            {hosts.map(({ host, required, forContext, forShared }) => {
               const current = githubAccounts[host] ?? "";
               const onHost = accounts.filter((a) => a.host === host);
               return (
@@ -384,7 +529,11 @@ export function ProjectEditor({
                     {t.githubAccount(host)}
                     {!required && (
                       <span className="font-normal text-muted-foreground">
-                        {forContext ? t.githubForContext : t.githubOptional}
+                        {forContext
+                          ? t.githubForContext
+                          : forShared
+                            ? t.githubForShared
+                            : t.githubOptional}
                       </span>
                     )}
                   </Label>

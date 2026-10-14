@@ -126,6 +126,36 @@ export function needsPerson(task: Task): boolean {
   );
 }
 
+/**
+ * オーケストレーターが決めたサービス（PBI-47）と、その理由（PBI-70）。共用の compose を選ばせたのに使わないときも、
+ * そのことと理由を出す。
+ */
+function servicesChoice(
+  payload: Extract<ActivityEvent, { type: "StepsChosen" }>["payload"],
+  l: LabelMessages,
+): string {
+  const e = l.event;
+  const services = payload.services;
+  if (services) {
+    const source = services.compose
+      ? e.sharedComposeFile(
+          services.compose.name,
+          services.file,
+          `${services.compose.repo}${services.compose.ref ? `#${services.compose.ref}` : ""}`,
+        )
+      : services.file;
+    return e.stepsServices(
+      services.names.join(e.imagesJoin),
+      source,
+      services.steps.map((s) => l.step[s]).join(e.imagesJoin),
+      payload.servicesReason,
+    );
+  }
+  const shared = payload.sharedComposes ?? [];
+  if (shared.length === 0 && !payload.servicesReason) return "";
+  return e.stepsNoServices(shared.join(e.imagesJoin), payload.servicesReason);
+}
+
 /** 作業履歴の1行を、人が読める文にする。 */
 export function describeEvent(event: ActivityEvent, l: LabelMessages): string {
   const e = l.event;
@@ -165,7 +195,8 @@ export function describeEvent(event: ActivityEvent, l: LabelMessages): string {
                 )
                 .join(e.imagesJoin),
             )
-          : "")
+          : "") +
+        servicesChoice(event.payload, l)
       );
     }
     case "TicketTriaged":
@@ -179,7 +210,13 @@ export function describeEvent(event: ActivityEvent, l: LabelMessages): string {
     case "ServicesStarted":
       return e.ServicesStarted(
         l.step[event.payload.step],
-        event.payload.file,
+        event.payload.compose
+          ? e.sharedComposeFile(
+              event.payload.compose.name,
+              event.payload.file,
+              event.payload.compose.commit.slice(0, 7),
+            )
+          : event.payload.file,
         event.payload.services
           .map((s) =>
             s.hostPorts && s.hostPorts.length > 0
