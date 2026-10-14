@@ -1,7 +1,16 @@
 import { createHash, randomUUID } from "node:crypto";
-import { cpSync, existsSync, mkdirSync, renameSync, rmSync } from "node:fs";
+import {
+  chmodSync,
+  cpSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+} from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { join } from "node:path";
+import { isAbsolute, join, relative } from "node:path";
 import type { DaemonMessage } from "@sacty/core";
 import type { HostedContextMcp, HostedMcpRelay } from "./context.js";
 import { type HostMcpConnector, HostMcpServers, type HostMcpSpec } from "./host-mcp.js";
@@ -40,6 +49,8 @@ type Entry = {
   /** 同じプロジェクト・同じ名前（新しい中身が使われたら、古いものは止める）。 */
   group: string;
   spec: HostMcpSpec;
+  /** 層の写しの識別（プロジェクトと層の commit）と、そのディレクトリ。 */
+  layerId: string;
   layerDir: string;
   /** 使っている実行の数。 */
   leases: number;
@@ -59,6 +70,42 @@ export type ContextMcpLease = {
 };
 
 const sha = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
+
+/**
+ * ディレクトリを消す。消せなければ、中のディレクトリを書き込めるようにしてから消し直す（MCP サーバーが作業ディレクトリの
+ * 中の権限を変えることがあるため）。シンボリックリンクはたどらない（リンクそのものを消す）。それでも消せなければ例外。
+ */
+export function forceRemove(dir: string): void {
+  try {
+    rmSync(dir, { recursive: true, force: true });
+    return;
+  } catch {
+    // 権限を直してから、もう一度消す
+  }
+  const writable = (path: string) => {
+    let stat: ReturnType<typeof lstatSync>;
+    try {
+      stat = lstatSync(path);
+    } catch {
+      return;
+    }
+    if (stat.isSymbolicLink() || !stat.isDirectory()) return;
+    try {
+      chmodSync(path, 0o700);
+    } catch {
+      // 直せないものは、そのまま（消すときに失敗を知らせる）
+    }
+    let names: string[] = [];
+    try {
+      names = readdirSync(path);
+    } catch {
+      return;
+    }
+    for (const name of names) writable(join(path, name));
+  };
+  writable(dir);
+  rmSync(dir, { recursive: true, force: true });
+}
 
 export class ContextMcpServers {
   private readonly entries = new Map<string, Entry>();
@@ -80,6 +127,8 @@ export class ContextMcpServers {
       retryMs?: number;
       readyWaitMs?: number;
       now?: () => number;
+      /** ディレクトリを消す（テストでは失敗させる）。既定は forceRemove。 */
+      remove?: (dir: string) => void;
       log?: (line: string) => void;
     },
   ) {
@@ -104,7 +153,8 @@ export class ContextMcpServers {
    * なったものを止める確かめを始める。
    */
   start(): void {
-    rmSync(this.layersRoot, { recursive: true, force: true });
+    // 消せなかったもの（消せない権限のもの）は、ログに残して進める（新しい写しは、毎回違う名前で作るので混ざらない）
+    this.tryRemove(this.layersRoot);
     this.servers.start();
     this.sweepTimer = setInterval(() => this.sweep(), SWEEP_MS);
     this.sweepTimer.unref();
@@ -115,8 +165,12 @@ export class ContextMcpServers {
     this.stopped = true;
     if (this.sweepTimer) clearInterval(this.sweepTimer);
     this.entries.clear();
-    await this.servers.stop();
-    rmSync(this.layersRoot, { recursive: true, force: true });
+    try {
+      await this.servers.stop();
+    } finally {
+      // 消せなかったものは、次の起動の片付けで消す
+      this.tryRemove(this.layersRoot);
+    }
   }
 
   /**
@@ -133,17 +187,19 @@ export class ContextMcpServers {
     try {
       planned = this.prepare(projectId, servers, copied);
     } catch (error) {
-      for (const dir of copied) rmSync(dir, { recursive: true, force: true });
+      for (const dir of copied) this.discard(dir);
       throw error;
     }
     // 確定する
     for (const entry of planned) {
       if (!this.entries.has(entry.key)) this.entries.set(entry.key, entry);
       this.layerDirs.add(entry.layerDir);
+      this.copies.set(entry.layerId, entry.layerDir);
       entry.leases += 1;
       entry.seq = ++this.seq;
     }
-    // 新しい中身が使われたので、古くなった（使っている実行が無い）ものを止める
+    // 新しい中身が使われたので、古くなった（使っている実行が無い）ものを止める。後片付けの失敗は、確保の失敗にしない
+    // （sweep は例外にならない。PR #89 再レビュー指摘）
     this.sweep();
     let released = false;
     return {
@@ -171,6 +227,7 @@ export class ContextMcpServers {
     copied: string[],
   ): Entry[] {
     const fresh = new Map<string, Entry>();
+    const freshCopies = new Map<string, string>();
     return servers.map((server) => {
       const layer = {
         repo: server.layer.repo,
@@ -190,7 +247,8 @@ export class ContextMcpServers {
       const key = `ctx-${sha(content).slice(0, 24)}`;
       const existing = this.entries.get(key) ?? fresh.get(key);
       if (existing) return existing;
-      const layerDir = this.copyLayer(projectId, layer, server.layer.dir, copied);
+      const layerId = sha({ projectId, ...layer }).slice(0, 24);
+      const layerDir = this.copyLayer(layerId, server.layer.dir, freshCopies, copied);
       const entry: Entry = {
         key,
         group: sha({ projectId, name: server.name }),
@@ -210,6 +268,7 @@ export class ContextMcpServers {
           cwd: layerDir,
           context: { name: server.name, from: server.from },
         },
+        layerId,
         layerDir,
         leases: 0,
         lastUsed: this.now(),
@@ -247,6 +306,21 @@ export class ContextMcpServers {
   /** 使っている実行が無く、古くなった・しばらく使われていないものを止め、使うものの無い層の写しを消す。 */
   sweep(): void {
     if (this.stopped) return;
+    // 確保・解放・定期の確かめから呼ぶので、例外にしない（後片付けの失敗は、ログに残して次の sweep でやり直す）
+    try {
+      this.stopUnused();
+    } catch (error) {
+      this.deps.log?.(
+        `[gateway] context MCP: cleanup failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    // 止める途中で失敗しても、使うものの無い写しは消す（消せなかったものは、やり直す）
+    this.removeUnusedLayers();
+    this.retryDiscarded();
+  }
+
+  /** 使っている実行が無く、古くなった・しばらく使われていないものを止め、使うものの無い層の写しを消す。 */
+  private stopUnused(): void {
     const now = this.now();
     const idle = this.deps.idleMs ?? IDLE_MS;
     const newest = new Map<string, number>();
@@ -271,47 +345,88 @@ export class ContextMcpServers {
     this.removeUnusedLayers();
   }
 
-  /** 使うものの無い層の写しを消す。 */
+  /** 使うものの無い層の写しを消す（消せなければ、後でやり直す）。 */
   private removeUnusedLayers(): void {
     const usedDirs = new Set([...this.entries.values()].map((e) => e.layerDir));
-    for (const dir of this.layerDirs) {
-      if (!usedDirs.has(dir)) {
-        rmSync(dir, { recursive: true, force: true });
-        this.layerDirs.delete(dir);
-      }
+    for (const dir of [...this.layerDirs]) {
+      if (usedDirs.has(dir)) continue;
+      this.layerDirs.delete(dir);
+      for (const [id, copy] of this.copies) if (copy === dir) this.copies.delete(id);
+      this.discard(dir);
     }
   }
 
+  /** 持っている層の写し（使っているものと、まだ消していないもの）。 */
   private readonly layerDirs = new Set<string>();
+  /** 層の写しの識別ごとの、使い回すディレクトリ。 */
+  private readonly copies = new Map<string, string>();
+  /** 消せなかった写し（次の sweep・終了・次の起動の片付けで消す）。 */
+  private readonly discarded = new Set<string>();
+
+  /** もう使わない写しを消す。消せなければ、後でやり直すよう覚えておく（使い回さない）。 */
+  private discard(dir: string): void {
+    if (this.tryRemove(dir)) return;
+    if (!this.discarded.has(dir)) {
+      this.discarded.add(dir);
+      this.deps.log?.(`[gateway] context MCP: could not remove ${dir}; retrying later`);
+    }
+  }
+
+  /** 消せなかった写しを、もう一度消す。 */
+  private retryDiscarded(): void {
+    for (const dir of [...this.discarded]) {
+      if (this.tryRemove(dir)) this.discarded.delete(dir);
+    }
+  }
+
+  /** 消せなかったまま残っている写し（テスト用）。 */
+  pendingRemovals(): string[] {
+    return [...this.discarded];
+  }
+
+  /**
+   * 層の写しの置き場（SACTY_HOME/context-mcp/layers）の中のものだけを消す（外は消さない）。例外にせず、消せたかを返す。
+   */
+  private tryRemove(dir: string): boolean {
+    const rel = relative(this.layersRoot, dir);
+    if (rel.startsWith("..") || isAbsolute(rel)) return false;
+    try {
+      (this.deps.remove ?? forceRemove)(dir);
+      return true;
+    } catch {
+      return false;
+    }
+  }
 
   /**
    * 層のリポジトリを、プロジェクトと commit ごとに写す（あれば使い回す。.git は写さない）。新しく写したら copied に入れる。
    * 持っている状態（写しの一覧）は変えない（確保を確定するときに足す）。
    */
   private copyLayer(
-    projectId: string,
-    layer: { repo: string; ref?: string; commit: string },
+    layerId: string,
     from: string,
+    freshCopies: Map<string, string>,
     copied: string[],
   ): string {
-    const dir = join(this.layersRoot, sha({ projectId, ...layer }).slice(0, 24));
-    if (!existsSync(dir)) {
-      mkdirSync(this.layersRoot, { recursive: true });
-      const tmp = `${dir}.tmp-${process.pid}-${randomUUID()}`;
-      rmSync(tmp, { recursive: true, force: true });
-      try {
-        cpSync(from, tmp, {
-          recursive: true,
-          filter: (src) => !/(^|[/\\])\.git$/.test(src),
-        });
-        renameSync(tmp, dir);
-      } catch (error) {
-        // 途中まで写したものを残さない
-        rmSync(tmp, { recursive: true, force: true });
-        throw error;
-      }
-      copied.push(dir);
+    const existing = this.copies.get(layerId) ?? freshCopies.get(layerId);
+    if (existing && existsSync(existing)) return existing;
+    // 写しは毎回違う名前にする（消しきれなかった古い写しを、使い回さない）
+    const dir = join(this.layersRoot, `${layerId}-${randomUUID().slice(0, 8)}`);
+    mkdirSync(this.layersRoot, { recursive: true });
+    const tmp = `${dir}.tmp`;
+    try {
+      cpSync(from, tmp, {
+        recursive: true,
+        filter: (src) => !/(^|[/\\])\.git$/.test(src),
+      });
+      renameSync(tmp, dir);
+    } catch (error) {
+      // 途中まで写したものを残さない
+      this.discard(tmp);
+      throw error;
     }
+    freshCopies.set(layerId, dir);
+    copied.push(dir);
     return dir;
   }
 }

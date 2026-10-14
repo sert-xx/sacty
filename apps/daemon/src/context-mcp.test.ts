@@ -6,6 +6,8 @@ import {
   readdirSync,
   readFileSync,
   rmSync,
+  statSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { createRequire } from "node:module";
@@ -337,6 +339,81 @@ describe("コンテキストの command の MCP サーバーをホストで動�
     expect(fake.started).toHaveLength(2);
     again.release();
     a.release();
+  });
+
+  it("古いものの層の写しに書き込めないディレクトリがあっても、新しい確保は返り、解放でき、写しは権限を直して消す（リンクはたどらない。PR #89 再レビュー指摘）", async () => {
+    const fake = fakeConnect();
+    manager = new ContextMcpServers({
+      root: join(dir, "home"),
+      secrets: new MemorySecretStore({}),
+      connect: fake.connect,
+    });
+    manager.start();
+    const a = manager.lease("p1", [server({ layer: layer("ctx", "A") })]);
+    await manager.ready(a.keys);
+    a.release();
+    // MCP サーバーが作業ディレクトリの中に、書き込めないディレクトリと、外を指すリンクを作った
+    const aDir = fake.started[0]?.spec.cwd ?? "";
+    const outside = join(dir, "outside");
+    mkdirSync(outside);
+    writeFileSync(join(outside, "keep"), "外のファイル");
+    chmodSync(outside, 0o500);
+    mkdirSync(join(aDir, "locked"));
+    writeFileSync(join(aDir, "locked", "cache"), "x");
+    // 書き込めないディレクトリの中のリンク（権限を直すときにも、たどらない）
+    symlinkSync(outside, join(aDir, "locked", "link"));
+    chmodSync(join(aDir, "locked"), 0o500);
+    try {
+      const b = manager.lease("p1", [server({ layer: layer("ctx", "B", "c2".padEnd(40, "0")) })]);
+      expect(manager.running().map((r) => [r.key, r.leases])).toEqual([[b.keys[0], 1]]);
+      expect(existsSync(aDir)).toBe(false);
+      b.release();
+      expect(manager.running().map((r) => [r.key, r.leases])).toEqual([[b.keys[0], 0]]);
+      // リンクの先（層の写しの外）は、消さず、権限も変えない
+      expect(readFileSync(join(outside, "keep"), "utf8")).toBe("外のファイル");
+      expect(statSync(outside).mode & 0o777).toBe(0o500);
+    } finally {
+      chmodSync(outside, 0o700);
+    }
+  });
+
+  it("後片付け（層の写しの削除）に失敗しても、確保・解放・終了は例外にならず、後の sweep でやり直す（PR #89 再レビュー指摘）", async () => {
+    const fake = fakeConnect();
+    let failing = true;
+    const logs: string[] = [];
+    manager = new ContextMcpServers({
+      root: join(dir, "home"),
+      secrets: new MemorySecretStore({}),
+      connect: fake.connect,
+      remove: (target) => {
+        if (failing && target.includes("layers")) throw new Error("EPERM: operation not permitted");
+        rmSync(target, { recursive: true, force: true });
+      },
+      log: (line) => logs.push(line),
+    });
+    manager.start();
+    const a = manager.lease("p1", [server({ layer: layer("ctx", "A") })]);
+    await manager.ready(a.keys);
+    a.release();
+    const aDir = fake.started[0]?.spec.cwd ?? "";
+    const b = manager.lease("p1", [server({ layer: layer("ctx", "B", "c2".padEnd(40, "0")) })]);
+    expect(b.keys).toHaveLength(1);
+    expect(() => b.release()).not.toThrow();
+    expect(manager.running().map((r) => r.leases)).toEqual([0]);
+    expect(manager.pendingRemovals()).toEqual([aDir]);
+    expect(existsSync(aDir)).toBe(true);
+    // ログには1回だけ残す
+    manager.sweep();
+    expect(logs.filter((l) => l.includes("could not remove"))).toHaveLength(1);
+    // 消せるようになったら、次の sweep で消す
+    failing = false;
+    manager.sweep();
+    expect(manager.pendingRemovals()).toEqual([]);
+    expect(existsSync(aDir)).toBe(false);
+    // 終了で消せなくても、例外にしない（次の起動の片付けで消す）
+    failing = true;
+    await expect(manager.stop()).resolves.toBeUndefined();
+    manager = undefined;
   });
 
   it("前回の残りの層の写しは、起動のときに消す", () => {
