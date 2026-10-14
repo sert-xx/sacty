@@ -114,6 +114,8 @@ const service = new TaskService({
   gateway,
   platformProblems: (names) => credentials.unavailable(names),
   hostMcpProblems: () => hostMcp.problems(),
+  // 実行の前に、使うホストの MCP サーバーを設定と突き合わせ、足したものは起動を待つ（PBI-77）
+  hostMcpReady: (names) => hostMcp.ready(names),
   // 人間の出番を Slack に通知する（PBI-38）。リンクは、起動した画面の URL
   notifier: new SlackNotifier({
     project: (id) => projects.get(id),

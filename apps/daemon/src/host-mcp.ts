@@ -14,7 +14,7 @@ import {
   McpError,
   ReadResourceRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import { code, type DaemonText, message, renderMessage } from "@sacty/core";
+import { code, type DaemonMessage, type DaemonText, message, renderMessage } from "@sacty/core";
 import { z } from "zod";
 import { McpTimeouts } from "./context.js";
 import { errorText } from "./errors.js";
@@ -194,10 +194,12 @@ type State = {
   spec: HostMcpSpec;
   key: string;
   current?: HostMcpConnection;
+  /** いまの接続を起動したときの設定（設定を変えて起動し直している途中は、key と違う。PBI-77 レビュー指摘）。 */
+  currentKey?: string;
   starting?: Promise<void>;
   /** 起動中のプロセスの設定（起動の途中で設定が変わったら、終わった後に起動し直す）。 */
   startingKey?: string;
-  problem?: DaemonText;
+  problem?: DaemonMessage;
   /**
    * いまの接続の認証が切れたらしい（ツールが認証エラーを返した）。起動し直して準備ができるまで、新しい呼び出しには
    * 使わない（準備ができていないと返す）。
@@ -226,6 +228,8 @@ export class HostMcpServers {
       minuteMs?: number;
       /** 切り替えた古いプロセスで、途中の呼び出しを待つ上限（テストでは短くする）。 */
       drainMs?: number;
+      /** 実行の前に、準備を待つ上限（テストでは短くする。既定は MCP サーバーごとの ready_timeout_sec。PBI-77）。 */
+      readyWaitMs?: number;
       log?: (line: string) => void;
     },
   ) {}
@@ -268,6 +272,57 @@ export class HostMcpServers {
     }
   }
 
+  /**
+   * 実行の前に、その実行が使う MCP サーバーの準備を待つ（PBI-77）。先に設定と突き合わせ（足したものを起動し、消したものを
+   * 止める。30秒ごとの突き合わせを待たない）、起動・再認証の途中のものは準備ができるまで待つ。待つのは MCP サーバーごとに
+   * 準備を待つ上限（ready_timeout_sec）まで。同じ MCP サーバーの起動は、並行する実行で共有する（起動し直さない）。
+   * 準備ができないものの理由（どの MCP サーバーか）を返す。起動に失敗して、起動し直すのを待っているものは待たない。
+   */
+  async ready(names: readonly string[]): Promise<DaemonMessage[]> {
+    this.reconcile();
+    const problems = await Promise.all(names.map((name) => this.readyOne(name)));
+    return problems.flatMap((p) => (p ? [p] : []));
+  }
+
+  private async readyOne(name: string): Promise<DaemonMessage | undefined> {
+    const first = this.states.get(name);
+    if (!first) return message("gateway.mcpUnavailable", { name, detail: "not configured" });
+    const limitMs = this.deps.readyWaitMs ?? first.spec.readyTimeoutSec * 1000;
+    const deadline = Date.now() + limitMs;
+    // いまの設定で起動した接続だけを、準備ができたとみなす（command・args・env などを変えて起動し直している途中の、
+    // 古い設定の接続では先に進まない。時間切れの値だけの変更では key は変わらない。PBI-75）
+    const usable = (s: State) => !!s.current && !s.expired && s.currentKey === s.key;
+    for (;;) {
+      const state = this.states.get(name);
+      if (!state) return message("gateway.mcpUnavailable", { name, detail: "not configured" });
+      if (usable(state)) return undefined;
+      // 起動の途中でなければ（起動に失敗して、起動し直すのを待っている）、待たずに理由を返す
+      if (!state.starting) {
+        return (
+          state.problem ??
+          message("gateway.mcpUnavailable", {
+            name,
+            detail: state.current ? "not restarted with the changed settings" : "not started",
+          })
+        );
+      }
+      const left = deadline - Date.now();
+      if (left <= 0) {
+        return message("gateway.mcpReadyTimeout", { name, seconds: Math.round(limitMs / 1000) });
+      }
+      // 起動が終わる（終わった後に設定の変更で起動し直すなら、それも待つ）か、上限の時間が経つまで待つ
+      let timer: NodeJS.Timeout | undefined;
+      await Promise.race([
+        state.starting.catch(() => {}),
+        new Promise<void>((resolve) => {
+          timer = setTimeout(resolve, left);
+          timer.unref?.();
+        }),
+      ]);
+      clearTimeout(timer);
+    }
+  }
+
   /** 動かしている MCP サーバーの名前と説明。 */
   servers(): { name: string; description: string }[] {
     return [...this.states.values()].map((s) => ({
@@ -297,7 +352,8 @@ export class HostMcpServers {
     if (state.timer) clearTimeout(state.timer);
     this.deps.log?.(`[gateway] host MCP ${name}: starting (${reason})`);
     const spec = state.spec;
-    state.startingKey = state.key;
+    const startingKey = state.key;
+    state.startingKey = startingKey;
     state.starting = (async () => {
       let next: HostMcpConnection | undefined;
       const secrets: string[] = [];
@@ -333,6 +389,7 @@ export class HostMcpServers {
       }
       const old = state.current;
       state.current = connection;
+      state.currentKey = startingKey;
       state.expired = false;
       state.problem = undefined;
       state.restarts += reason === "start" ? 0 : 1;

@@ -4,7 +4,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
 import { renderMessage } from "@sacty/core";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { AiGateway } from "./gateway.js";
 import {
   type HostMcpConnection,
@@ -571,5 +571,324 @@ describe("ホストの MCP サーバーの時間切れ（PBI-75）", () => {
     expect(toHostMcp("a", HostMcpFile.parse({ command: "x" }))).not.toHaveProperty(
       "toolTimeoutSec",
     );
+  });
+});
+
+describe("実行の前に、ホストの MCP サーバーの準備を待つ（PBI-77）", () => {
+  /** 起動（接続）を、release を呼ぶまで止める偽物。 */
+  function gatedServers(options: { fail?: () => boolean } = {}) {
+    const fake = fakeServers(options);
+    let gates: (() => void)[] = [];
+    let calls = 0;
+    const connect: HostMcpConnector = async (s, env) => {
+      calls += 1;
+      await new Promise<void>((resolve) => gates.push(resolve));
+      return fake.connect(s, env);
+    };
+    const release = () => {
+      const pending = gates;
+      gates = [];
+      for (const g of pending) g();
+    };
+    return { ...fake, connect, release, calls: () => calls, waiting: () => gates.length };
+  }
+
+  it("設定に足した直後の実行でも、起動を待ってから使える（30秒ごとの突き合わせを待たない）", async () => {
+    const fake = gatedServers();
+    let specs: HostMcpSpec[] = [];
+    host = new HostMcpServers({
+      specs: () => specs,
+      secrets: new MemorySecretStore({}),
+      connect: fake.connect,
+    });
+    host.start();
+    gateway = new AiGateway({ hostMcp: host });
+    const port = await gateway.listen();
+    const run = gateway.register();
+    // 設定に足した。まだ突き合わせていないので、ゲートウェイは知らない
+    specs = [spec()];
+    const before = await fetch(`http://127.0.0.1:${port}/mcp/cloud`, {
+      method: "POST",
+      headers: { "content-type": "application/json", Authorization: `Bearer ${run.token}` },
+      body: "{}",
+    });
+    expect(before.status).toBe(404);
+    let settled = false;
+    const waiting = host.ready(["cloud"]).then((problems) => {
+      settled = true;
+      return problems;
+    });
+    await until(() => fake.waiting() === 1);
+    await new Promise((r) => setTimeout(r, 20));
+    // 起動の途中は、待ったまま
+    expect(settled).toBe(false);
+    fake.release();
+    expect(await waiting).toEqual([]);
+    const agent = await agentClient(port, run.token);
+    expect(text(await agent.callTool({ name: "whoami", arguments: {} }))).toBe("generation 1");
+    await agent.close();
+    run.close();
+  });
+
+  it("起動に失敗したら、どの MCP サーバーかと理由を返す。起動し直すのを待っているものは、待たずに理由を返す", async () => {
+    const fake = fakeServers({ fail: () => true });
+    host = new HostMcpServers({
+      specs: () => [spec()],
+      secrets: new MemorySecretStore({}),
+      connect: fake.connect,
+      retryMs: 60_000,
+    });
+    const [problem] = await host.ready(["cloud"]);
+    expect(problem).toMatchObject({ code: "gateway.mcpUnavailable", params: { name: "cloud" } });
+    expect(renderMessage(problem as never, "ja")).toContain("「cloud」");
+    expect(renderMessage(problem as never, "ja")).toContain("Okta login did not complete");
+    // 次の実行では起動し直さない（1分ごとに起動し直すのを待つ。ブラウザでの再認証を増やさない）
+    const started = Date.now();
+    expect(await host.ready(["cloud"])).toEqual([problem]);
+    expect(Date.now() - started).toBeLessThan(500);
+    expect(fake.envs).toHaveLength(1);
+  });
+
+  it("並行する実行は、同じ MCP サーバーの起動の待ちを共有する（起動は1度だけ）", async () => {
+    const fake = gatedServers();
+    host = new HostMcpServers({
+      specs: () => [spec()],
+      secrets: new MemorySecretStore({}),
+      connect: fake.connect,
+    });
+    const first = host.ready(["cloud"]);
+    const second = host.ready(["cloud"]);
+    await until(() => fake.waiting() === 1);
+    const third = host.ready(["cloud"]);
+    fake.release();
+    expect(await Promise.all([first, second, third])).toEqual([[], [], []]);
+    expect(fake.calls()).toBe(1);
+    // 準備ができた後は、待たずに使う
+    expect(await host.ready(["cloud"])).toEqual([]);
+    expect(fake.calls()).toBe(1);
+  });
+
+  it("準備を待つ上限を過ぎたら、どの MCP サーバーかを返して先に進む（起動はそのまま続け、終われば使える）", async () => {
+    const fake = gatedServers();
+    host = new HostMcpServers({
+      specs: () => [spec()],
+      secrets: new MemorySecretStore({}),
+      connect: fake.connect,
+      readyWaitMs: 50,
+    });
+    const started = Date.now();
+    expect(await host.ready(["cloud"])).toEqual([
+      { code: "gateway.mcpReadyTimeout", params: { name: "cloud", seconds: 0 } },
+    ]);
+    expect(Date.now() - started).toBeGreaterThanOrEqual(45);
+    fake.release();
+    await until(() => fake.generation() === 1);
+    expect(await host.ready(["cloud"])).toEqual([]);
+    expect(fake.calls()).toBe(1);
+  });
+
+  it("上限の既定は ready_timeout_sec（秒）", async () => {
+    const fake = gatedServers();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    try {
+      host = new HostMcpServers({
+        specs: () => [spec({ ready_timeout_sec: 5 })],
+        secrets: new MemorySecretStore({}),
+        connect: fake.connect,
+      });
+      let settled = false;
+      const waiting = host.ready(["cloud"]).then((p) => {
+        settled = true;
+        return p;
+      });
+      await vi.advanceTimersByTimeAsync(4_900);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(200);
+      expect(await waiting).toEqual([
+        { code: "gateway.mcpReadyTimeout", params: { name: "cloud", seconds: 5 } },
+      ]);
+    } finally {
+      vi.useRealTimers();
+      fake.release();
+    }
+  });
+
+  it("時間切れの値だけの変更では起動し直さない（PBI-75）。消したものは止め、使えなくする", async () => {
+    const fake = fakeServers();
+    let specs = [spec({ tool_timeout_sec: 900 })];
+    host = new HostMcpServers({
+      specs: () => specs,
+      secrets: new MemorySecretStore({}),
+      connect: fake.connect,
+    });
+    expect(await host.ready(["cloud"])).toEqual([]);
+    specs = [spec({ tool_timeout_sec: 1800, startup_timeout_sec: 120 })];
+    expect(await host.ready(["cloud"])).toEqual([]);
+    expect(fake.envs).toHaveLength(1);
+    expect(host.restarts("cloud")).toBe(0);
+    // 設定から消した
+    specs = [];
+    const [gone] = await host.ready(["cloud"]);
+    expect(gone).toMatchObject({ code: "gateway.mcpUnavailable", params: { name: "cloud" } });
+    expect(host.servers()).toEqual([]);
+  });
+
+  it("再認証のために起動し直している（期限切れの接続は使わない）間は、起動し直した後の準備まで待つ", async () => {
+    let expiredGeneration = 1;
+    const fake = fakeServers({ expired: (g) => g <= expiredGeneration });
+    let gate: (() => void) | undefined;
+    let calls = 0;
+    const connect: HostMcpConnector = async (s, env) => {
+      calls += 1;
+      if (calls > 1) await new Promise<void>((resolve) => (gate = resolve));
+      return fake.connect(s, env);
+    };
+    host = new HostMcpServers({
+      specs: () => [spec()],
+      secrets: new MemorySecretStore({}),
+      connect,
+    });
+    host.start();
+    await until(() => fake.generation() === 1);
+    gateway = new AiGateway({ hostMcp: host });
+    const port = await gateway.listen();
+    const run = gateway.register();
+    const agent = await agentClient(port, run.token);
+    // 認証エラーで、起動し直し始める
+    await agent.callTool({ name: "whoami", arguments: {} });
+    await agent.close();
+    await until(() => gate !== undefined);
+    expiredGeneration = 0;
+    let settled = false;
+    const waiting = host.ready(["cloud"]).then((p) => {
+      settled = true;
+      return p;
+    });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(settled).toBe(false);
+    gate?.();
+    expect(await waiting).toEqual([]);
+    run.close();
+  });
+});
+
+describe("設定を変えた MCP サーバーの準備を待つ（PBI-77 レビュー指摘）", () => {
+  /** 2回目以降の起動（接続）を、release を呼ぶまで止める。failNext の後は、止めた後に失敗する。 */
+  function laterGated() {
+    const fake = fakeServers();
+    let gate: (() => void) | undefined;
+    let calls = 0;
+    let completed = 0;
+    let failNext = false;
+    const connect: HostMcpConnector = async (s, env) => {
+      calls += 1;
+      if (calls > 1) {
+        await new Promise<void>((resolve) => {
+          gate = resolve;
+        });
+        if (failNext) throw new Error("the new command could not start");
+      }
+      const connection = await fake.connect(s, env);
+      completed += 1;
+      return connection;
+    };
+    return {
+      connect,
+      release: () => gate?.(),
+      gated: () => gate !== undefined,
+      calls: () => calls,
+      completed: () => completed,
+      failNext: () => {
+        failNext = true;
+      },
+    };
+  }
+
+  for (const [what, changed] of [
+    ["command", { command: "cloud-mcp-v2" }],
+    ["args", { args: ["--v2"] }],
+    ["env", { env: { REGION: "us-east-1" } }],
+  ] as const) {
+    it(`${what} を変えたら、古い接続では先に進まず、新しいプロセスの準備まで待つ`, async () => {
+      const fake = laterGated();
+      let specs = [spec()];
+      host = new HostMcpServers({
+        specs: () => specs,
+        secrets: new MemorySecretStore({}),
+        connect: fake.connect,
+      });
+      expect(await host.ready(["cloud"])).toEqual([]);
+      specs = [spec(changed)];
+      let settled = false;
+      const waiting = host.ready(["cloud"]).then((p) => {
+        settled = true;
+        return p;
+      });
+      await until(() => fake.gated());
+      await new Promise((r) => setTimeout(r, 20));
+      // 起動の開始は2件・完了は1件。古い接続で準備ができたとはみなさない
+      expect(fake.calls()).toBe(2);
+      expect(fake.completed()).toBe(1);
+      expect(settled).toBe(false);
+      fake.release();
+      expect(await waiting).toEqual([]);
+      expect(fake.completed()).toBe(2);
+    });
+  }
+
+  it("設定を変えた後の起動に失敗したら、古い接続が残っていても、どの MCP サーバーかと理由を返す", async () => {
+    const fake = laterGated();
+    let specs = [spec()];
+    host = new HostMcpServers({
+      specs: () => specs,
+      secrets: new MemorySecretStore({}),
+      connect: fake.connect,
+      retryMs: 60_000,
+    });
+    expect(await host.ready(["cloud"])).toEqual([]);
+    specs = [spec({ command: "cloud-mcp-v2" })];
+    fake.failNext();
+    const waiting = host.ready(["cloud"]);
+    await until(() => fake.gated());
+    fake.release();
+    const [problem] = await waiting;
+    expect(problem).toMatchObject({ code: "gateway.mcpUnavailable", params: { name: "cloud" } });
+    expect(renderMessage(problem as never, "ja")).toContain("the new command could not start");
+    // 起動し直すのを待っている間も、待たずに理由を返す（起動し直さない）
+    expect(await host.ready(["cloud"])).toEqual([problem]);
+    expect(fake.calls()).toBe(2);
+  });
+
+  it("設定を変えた後の起動が上限までに終わらなければ、時間切れを返す", async () => {
+    const fake = laterGated();
+    let specs = [spec()];
+    host = new HostMcpServers({
+      specs: () => specs,
+      secrets: new MemorySecretStore({}),
+      connect: fake.connect,
+      readyWaitMs: 50,
+    });
+    expect(await host.ready(["cloud"])).toEqual([]);
+    specs = [spec({ args: ["--v2"] })];
+    expect(await host.ready(["cloud"])).toEqual([
+      { code: "gateway.mcpReadyTimeout", params: { name: "cloud", seconds: 0 } },
+    ]);
+    fake.release();
+  });
+
+  it("時間切れの値だけを変えたときは、起動し直さず、待たずに使う（PBI-75）", async () => {
+    const fake = laterGated();
+    let specs = [spec()];
+    host = new HostMcpServers({
+      specs: () => specs,
+      secrets: new MemorySecretStore({}),
+      connect: fake.connect,
+    });
+    expect(await host.ready(["cloud"])).toEqual([]);
+    specs = [spec({ tool_timeout_sec: 1800, startup_timeout_sec: 120 })];
+    const started = Date.now();
+    expect(await host.ready(["cloud"])).toEqual([]);
+    expect(Date.now() - started).toBeLessThan(500);
+    expect(fake.calls()).toBe(1);
   });
 });
