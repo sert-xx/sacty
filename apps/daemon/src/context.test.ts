@@ -1513,7 +1513,13 @@ describe("git でのコンテキストの取得（PBI-6）", { timeout: 30_000 }
   const git = (cwd: string, ...args: string[]) =>
     execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
 
-  function makeRepo(name: string, files: Record<string, string>, branch = "main") {
+  /** setup は、最初のコミットの前に、ファイルを足す（シンボリックリンクなど）。 */
+  function makeRepo(
+    name: string,
+    files: Record<string, string>,
+    branch = "main",
+    setup?: (repo: string) => void,
+  ) {
     const repo = join(dir, name);
     mkdirSync(repo);
     git(repo, "init", `--initial-branch=${branch}`);
@@ -1523,6 +1529,7 @@ describe("git でのコンテキストの取得（PBI-6）", { timeout: 30_000 }
       mkdirSync(dirname(join(repo, path)), { recursive: true });
       writeFileSync(join(repo, path), content);
     }
+    setup?.(repo);
     git(repo, "add", "--all");
     git(repo, "commit", "-m", "init");
     return repo;
@@ -1581,15 +1588,19 @@ describe("git でのコンテキストの取得（PBI-6）", { timeout: 30_000 }
         },
       ],
     ];
-    for (const [i, [path, setup]] of cases.entries()) {
-      const repo = makeRepo(`linked-${i}`, { "README.md": "x" });
-      setup(repo);
-      git(repo, "add", "--all");
-      git(repo, "commit", "-m", "link");
-      await expect(
-        prepareContext(new GitContextFetcher(), { repo }, "claude-code", "/tmp/x"),
-      ).rejects.toThrow(`${path} はシンボリックリンクです`);
-    }
+    // git を動かす回数を減らすため、シンボリックリンクは最初のコミットに含める
+    const repos = cases.map(([path, setup], i) => ({
+      path,
+      repo: makeRepo(`linked-${i}`, { "README.md": "x" }, "main", setup),
+    }));
+    // 取得（git の clone）は、ケースごとに別の場所に取るので、並べて待つ（1つずつ待つと、負荷が高いときに積み上がる）
+    await Promise.all(
+      repos.map(({ path, repo }) =>
+        expect(
+          prepareContext(new GitContextFetcher(), { repo }, "claude-code", "/tmp/x"),
+        ).rejects.toThrow(`${path} はシンボリックリンクです`),
+      ),
+    );
   });
 
   it("sacty が読まない場所のシンボリックリンクは、取得を妨げない", async () => {

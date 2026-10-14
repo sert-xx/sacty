@@ -334,13 +334,9 @@ describe("上限（PBI-66）", () => {
 
   it("秘密情報が、残す先頭の終わり・末尾の始まりをまたいでいても、切れ端を残さない", async () => {
     const secret = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123";
-    // 残す先頭の終わり（上限から目印の分を除いた大きさの8割）・末尾の始まりがどこにあっても、秘密情報がかかるよう、
-    // 秘密情報の位置をずらしながら確かめる
-    for (const at of [
-      ...Array.from({ length: 140 }, (_, i) => 600 + i),
-      ...Array.from({ length: 60 }, (_, i) => 2640 + i),
-    ]) {
-      const content = `${"a".repeat(at)}${secret}${"b".repeat(2800 - at)}`;
+    const size = 2800;
+    const copy = async (at: number) => {
+      const content = `${"a".repeat(at)}${secret}${"b".repeat(size - at)}`;
       const root = join(dir, `c${at}`);
       mkdirSync(join(root, "projects/p"), { recursive: true });
       writeFileSync(join(root, "projects/p/t.txt"), content);
@@ -352,7 +348,30 @@ describe("上限（PBI-66）", () => {
         secrets: [secret],
         limit: 1000,
       });
-      const out = readFileSync(join(dest, "projects/p/t.txt"), "utf8");
+      return { archive, out: readFileSync(join(dest, "projects/p/t.txt"), "utf8") };
+    };
+    // 残す先頭・末尾の大きさを、目印から読む（秘密情報は必ず1つあるので、伏せた後の全体の大きさ、つまり先頭・末尾の
+    // 大きさは、秘密情報の位置によらない）。境目から離れた位置で測る
+    const probe = await copy(size / 2);
+    const [, head = 0, tail = 0] =
+      /between the first (\d+) bytes and the last (\d+) bytes/.exec(probe.out)?.map(Number) ?? [];
+    expect(head).toBeGreaterThan(secret.length);
+    expect(tail).toBeGreaterThan(secret.length);
+    const redactedSize = size + "[REDACTED]".length;
+    const sourceSize = size + secret.length;
+    // 秘密情報が境目にかかる位置をすべて（と前後の1つ）確かめる。境目は、残す先頭の終わりと、末尾の始まり。
+    // 末尾の始まりは、伏せた後の位置（今の実装）と、伏せる前の位置（切り詰めてから伏せると、ここで切れ端が残る）の両方
+    const boundaries = [head, redactedSize - tail, sourceSize - tail];
+    const positions = [
+      ...new Set(
+        boundaries.flatMap((b) =>
+          Array.from({ length: secret.length + 1 }, (_, i) => b - secret.length + i),
+        ),
+      ),
+    ];
+    // 写すのはファイルの読み書きを待つ処理なので、並べて待つ（1つずつ待つと、負荷が高いときに待ちが積み上がる）
+    const results = await Promise.all(positions.map(async (at) => ({ at, ...(await copy(at)) })));
+    for (const { at, archive, out } of results) {
       for (let n = 4; n <= secret.length; n++) {
         expect(out, `at ${at}`).not.toContain(secret.slice(0, n));
         expect(out, `at ${at}`).not.toContain(secret.slice(-n));
