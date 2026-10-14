@@ -108,7 +108,10 @@ async function agentCall(port: number, token: string, name: string) {
   }
 }
 
-describe("コンテキストの command の MCP サーバーをホストで動かす（PBI-84）", () => {
+// ゲートウェイを通す HTTP の呼び出しがあるので、負荷の高いときに既定の5秒で切れないようにする
+describe("コンテキストの command の MCP サーバーをホストで動かす（PBI-84）", {
+  timeout: 20_000,
+}, () => {
   it("層を写した作業ディレクトリで起動し、秘密情報はホストで取り出して env に入れる（.git は写さない）", async () => {
     const fake = fakeConnect();
     manager = new ContextMcpServers({
@@ -123,12 +126,20 @@ describe("コンテキストの command の MCP サーバーをホストで動�
         layer: l,
         args: ["./bin/server"],
         env: { TOKEN: { secret: "tool-token", prefix: "t:" }, REGION: "jp" },
+        startup_timeout_sec: 200,
+        tool_timeout_sec: 900,
       }),
     ]);
     expect(await manager.ready(lease.keys)).toEqual([]);
     const { spec, env } = fake.started[0] ?? { spec: undefined, env: {} };
     expect(env).toEqual({ TOKEN: "t:host-only-secret", REGION: "jp" });
     expect(spec?.args).toEqual(["./bin/server"]);
+    // 時間切れ（PBI-75）：中継はこれより先に切らず、準備は startup_timeout_sec（既定の120秒より長ければ）まで待つ
+    expect(spec).toMatchObject({
+      startupTimeoutSec: 200,
+      toolTimeoutSec: 900,
+      readyTimeoutSec: 200,
+    });
     // 作業ディレクトリは、取得した層（実行の後に消える）ではなく、SACTY_HOME の下の写し
     expect(spec?.cwd?.startsWith(join(dir, "home", "layers"))).toBe(true);
     expect(readFileSync(join(spec?.cwd ?? "", "marker.txt"), "utf8")).toBe("company");
@@ -166,6 +177,8 @@ describe("コンテキストの command の MCP サーバーをホストで動�
     expect(c.keys).toEqual(a.keys);
     expect(fake.started).toHaveLength(1);
     expect(fake.closed).toEqual([]);
+    // 時間切れを書かなければ、準備は120秒まで待つ
+    expect(fake.started[0]?.spec.readyTimeoutSec).toBe(120);
     c.release();
   });
 
