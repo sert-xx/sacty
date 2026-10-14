@@ -2,7 +2,7 @@
 
 - 日付: 2026-10-14（UTC）
 - タスク: PBI-93
-- PR: なし
+- PR: #101
 - ブランチ: feat/issue-93-token-query
 - 関係する ADR: なし
 
