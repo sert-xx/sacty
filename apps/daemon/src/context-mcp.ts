@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, renameSync, rmSync } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { join } from "node:path";
@@ -125,30 +125,34 @@ export class ContextMcpServers {
    */
   lease(projectId: string, servers: readonly HostedContextMcp[]): ContextMcpLease {
     if (this.stopped) return { relays: [], keys: [], release: () => {} };
-    const used: Entry[] = [];
-    // 途中で失敗したら（層の写しの失敗など）、ここまでの確保を巻き戻す（使っている実行の数を戻し、この呼び出しで足した
-    // ものは消す。足したものは、まだ起動していない。PR #89 レビュー指摘）
-    const created: Entry[] = [];
+    // 先にすべてを確かめて用意し（層の写しを含む。ここでは、持っている状態を何も変えない）、すべて用意できてから、まとめて
+    // 確定する（確定は例外にならない）。途中で失敗したら、この呼び出しで写した層だけを消す。使っている実行の数・順序
+    // （seq）・最後に使った時刻・持っている層の写しの一覧は、失敗した確保では変わらない（PR #89 レビュー指摘）
+    const copied: string[] = [];
+    let planned: Entry[];
     try {
-      this.acquire(projectId, servers, used, created);
+      planned = this.prepare(projectId, servers, copied);
     } catch (error) {
-      for (const e of used) e.leases = Math.max(0, e.leases - 1);
-      for (const e of created) {
-        if (e.leases === 0 && this.entries.get(e.key) === e) this.entries.delete(e.key);
-      }
-      this.removeUnusedLayers();
+      for (const dir of copied) rmSync(dir, { recursive: true, force: true });
       throw error;
+    }
+    // 確定する
+    for (const entry of planned) {
+      if (!this.entries.has(entry.key)) this.entries.set(entry.key, entry);
+      this.layerDirs.add(entry.layerDir);
+      entry.leases += 1;
+      entry.seq = ++this.seq;
     }
     // 新しい中身が使われたので、古くなった（使っている実行が無い）ものを止める
     this.sweep();
     let released = false;
     return {
-      relays: used.map((e, i) => ({ name: servers[i]?.name ?? "", host: e.key })),
-      keys: used.map((e) => e.key),
+      relays: planned.map((e, i) => ({ name: servers[i]?.name ?? "", host: e.key })),
+      keys: planned.map((e) => e.key),
       release: () => {
         if (released) return;
         released = true;
-        for (const e of used) {
+        for (const e of planned) {
           e.leases = Math.max(0, e.leases - 1);
           e.lastUsed = this.now();
         }
@@ -157,14 +161,17 @@ export class ContextMcpServers {
     };
   }
 
-  /** サーバーごとに確保する（used に確保したもの、created にこの呼び出しで足したものを入れる）。 */
-  private acquire(
+  /**
+   * サーバーごとに、使う Entry を返す（あるものはそのまま、無いものは新しく作るが、まだ足さない）。持っている状態は変えない。
+   * 新しく写した層のディレクトリは copied に入れる（失敗したときに消すため）。
+   */
+  private prepare(
     projectId: string,
     servers: readonly HostedContextMcp[],
-    used: Entry[],
-    created: Entry[],
-  ): void {
-    for (const server of servers) {
+    copied: string[],
+  ): Entry[] {
+    const fresh = new Map<string, Entry>();
+    return servers.map((server) => {
       const layer = {
         repo: server.layer.repo,
         ...(server.layer.ref ? { ref: server.layer.ref } : {}),
@@ -181,40 +188,36 @@ export class ContextMcpServers {
         tool_timeout_sec: server.tool_timeout_sec,
       };
       const key = `ctx-${sha(content).slice(0, 24)}`;
-      let entry = this.entries.get(key);
-      if (!entry) {
-        const layerDir = this.copyLayer(projectId, layer, server.layer.dir);
-        entry = {
-          key,
-          group: sha({ projectId, name: server.name }),
-          spec: {
-            name: key,
-            command: server.command,
-            args: server.args,
-            env: server.env,
-            description: "",
-            readyTimeoutSec: Math.max(CONTEXT_MCP_READY_SEC, server.startup_timeout_sec ?? 0),
-            ...(server.startup_timeout_sec !== undefined
-              ? { startupTimeoutSec: server.startup_timeout_sec }
-              : {}),
-            ...(server.tool_timeout_sec !== undefined
-              ? { toolTimeoutSec: server.tool_timeout_sec }
-              : {}),
-            cwd: layerDir,
-            context: { name: server.name, from: server.from },
-          },
-          layerDir,
-          leases: 0,
-          lastUsed: this.now(),
-          seq: 0,
-        };
-        this.entries.set(key, entry);
-        created.push(entry);
-      }
-      entry.leases += 1;
-      entry.seq = ++this.seq;
-      used.push(entry);
-    }
+      const existing = this.entries.get(key) ?? fresh.get(key);
+      if (existing) return existing;
+      const layerDir = this.copyLayer(projectId, layer, server.layer.dir, copied);
+      const entry: Entry = {
+        key,
+        group: sha({ projectId, name: server.name }),
+        spec: {
+          name: key,
+          command: server.command,
+          args: server.args,
+          env: server.env,
+          description: "",
+          readyTimeoutSec: Math.max(CONTEXT_MCP_READY_SEC, server.startup_timeout_sec ?? 0),
+          ...(server.startup_timeout_sec !== undefined
+            ? { startupTimeoutSec: server.startup_timeout_sec }
+            : {}),
+          ...(server.tool_timeout_sec !== undefined
+            ? { toolTimeoutSec: server.tool_timeout_sec }
+            : {}),
+          cwd: layerDir,
+          context: { name: server.name, from: server.from },
+        },
+        layerDir,
+        leases: 0,
+        lastUsed: this.now(),
+        seq: 0,
+      };
+      fresh.set(key, entry);
+      return entry;
+    });
   }
 
   /** 確保したものの準備を待つ（PBI-77 と同じ。上限あり）。準備ができないものの理由（どの MCP サーバーか）を返す。 */
@@ -281,16 +284,20 @@ export class ContextMcpServers {
 
   private readonly layerDirs = new Set<string>();
 
-  /** 層のリポジトリを、プロジェクトと commit ごとに写す（あれば使い回す。.git は写さない）。 */
+  /**
+   * 層のリポジトリを、プロジェクトと commit ごとに写す（あれば使い回す。.git は写さない）。新しく写したら copied に入れる。
+   * 持っている状態（写しの一覧）は変えない（確保を確定するときに足す）。
+   */
   private copyLayer(
     projectId: string,
     layer: { repo: string; ref?: string; commit: string },
     from: string,
+    copied: string[],
   ): string {
     const dir = join(this.layersRoot, sha({ projectId, ...layer }).slice(0, 24));
     if (!existsSync(dir)) {
       mkdirSync(this.layersRoot, { recursive: true });
-      const tmp = `${dir}.tmp-${process.pid}-${this.seq}`;
+      const tmp = `${dir}.tmp-${process.pid}-${randomUUID()}`;
       rmSync(tmp, { recursive: true, force: true });
       try {
         cpSync(from, tmp, {
@@ -303,8 +310,8 @@ export class ContextMcpServers {
         rmSync(tmp, { recursive: true, force: true });
         throw error;
       }
+      copied.push(dir);
     }
-    this.layerDirs.add(dir);
     return dir;
   }
 }

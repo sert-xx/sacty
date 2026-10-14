@@ -296,6 +296,49 @@ describe("コンテキストの command の MCP サーバーをホストで動�
     other.release();
   });
 
+  it("確保に失敗した実行は、順序（新しい中身か）も変えない：使っている古い中身と一緒に失敗しても、新しい中身を止めない（PR #89 再レビュー指摘）", async () => {
+    const fake = fakeConnect();
+    manager = new ContextMcpServers({
+      root: join(dir, "home"),
+      secrets: new MemorySecretStore({}),
+      connect: fake.connect,
+    });
+    manager.start();
+    // 古い設定 A を使っている実行の途中に、新しい設定 B を確保して使い終える
+    const a = manager.lease("p1", [server({ layer: layer("ctx", "A") })]);
+    await manager.ready(a.keys);
+    const b = manager.lease("p1", [server({ layer: layer("ctx", "B", "c2".padEnd(40, "0")) })]);
+    await manager.ready(b.keys);
+    b.release();
+    // A と、存在しない層のサーバーを一緒に確保して失敗する
+    const missing = {
+      repo: "https://github.com/acme/broken.git",
+      commit: "c9".padEnd(40, "0"),
+      dir: join(dir, "fetched", "missing"),
+    };
+    expect(() =>
+      manager?.lease("p1", [
+        server({ layer: layer("ctx", "A") }),
+        server({ name: "other", layer: missing }),
+      ]),
+    ).toThrow();
+    // A の確保の数も、順序も変わらない。B は古くなったとみなさず、止めない
+    expect(manager.running().map((r) => [r.key, r.leases])).toEqual([
+      [a.keys[0], 1],
+      [b.keys[0], 0],
+    ]);
+    manager.sweep();
+    expect(manager.running().map((r) => r.key)).toContain(b.keys[0]);
+    expect(fake.closed).toEqual([]);
+    // 次の実行は B を使い回す（起動し直さない）
+    const again = manager.lease("p1", [server({ layer: layer("ctx", "B", "c2".padEnd(40, "0")) })]);
+    expect(again.keys).toEqual(b.keys);
+    expect(await manager.ready(again.keys)).toEqual([]);
+    expect(fake.started).toHaveLength(2);
+    again.release();
+    a.release();
+  });
+
   it("前回の残りの層の写しは、起動のときに消す", () => {
     mkdirSync(join(dir, "home", "layers", "left"), { recursive: true });
     manager = new ContextMcpServers({
