@@ -3,7 +3,7 @@
 デーモンの中で動く HTTP の中継。エージェントのコンテナから、AI の呼び出し・組織内 PF の API・MCP サーバーを使うときに、認証の値を
 コンテナに渡さず、ゲートウェイが付けて転送する。コンテナには実行ごとのトークンだけを渡す。
 
-関係する ADR: なし
+関係する ADR: [コンテキストの mcp.yaml の command の MCP サーバーを、既定でホストで起動してゲートウェイ経由にする](../adr/20261014-0927-context-command-mcp-on-host.md)
 
 ## 待ち受けとトークン
 
@@ -16,7 +16,7 @@
 | パス | 用途 | 認証 |
 | --- | --- | --- |
 | `/r/<トークン>/pf/<PF の名前>/<パス>` | 組織内 PF（エージェントには `SACTY_PF_URL` = `…/r/<トークン>/pf` を渡す） | URL の中のトークン |
-| `/ctx-mcp/<名前>` | コンテキストリポジトリの HTTP の MCP | `Authorization: Bearer <トークン>` |
+| `/ctx-mcp/<名前>` | コンテキストリポジトリの MCP（URL 型の中継と、ホストで起動したコマンド型） | `Authorization: Bearer <トークン>` |
 | `/mcp/<名前>` | ホストの MCP サーバー | `Authorization: Bearer <トークン>` |
 | `/openai/v1/…` | AI の呼び出し（Codex の Bedrock・providers） | `Authorization: Bearer <トークン>`（`AWS_BEARER_TOKEN_BEDROCK`・`SACTY_PROVIDER_API_KEY` に入れて渡す） |
 
@@ -67,17 +67,27 @@ PF は `config.yaml` の `gateway.platforms`（すべてのプロジェクト）
 
 ## コンテキストの MCP の中継
 
+`/ctx-mcp/<名前>` は、実行のトークンに結びつけた名前だけを引く（ほかの実行・ほかのプロジェクトのものは、名前を知っていても 404）。
+結びつけた先が、URL 型ならその上流に中継し、ホストで起動したコマンド型なら、ゲートウェイの中の名前（`ctx-…`）のホストの MCP サーバーに
+中継する（[コンテキストの合成](context.md)の「ホストで起動するコマンド型の MCP サーバー」）。ホストで起動したコマンド型は `/mcp/` からは
+使えない。
+
+URL 型の中継：
+
 - 上流には `content-type`・`accept`・`mcp-session-id`・`mcp-protocol-version`・`last-event-id` のヘッダーだけを送り、`mcp.yaml` に書いた
   ヘッダー（秘密情報はホストで取り出す）を付ける。エージェントが付けた認証などは送らない。
 - 応答（SSE を含む）はそのまま流す。リダイレクトはたどらない。上流に届かなければ 502。
 - 上流を待つ上限は既定5分（`FETCH_DEFAULT_TIMEOUT_MS`）。サーバーの `startup_timeout_sec`・`tool_timeout_sec` の大きい方がそれより長ければ、
   その値まで延ばす。
 
-コード: `apps/daemon/src/gateway.ts`（`handleContextMcp`・`CONTEXT_MCP_REQUEST`・`FETCH_DEFAULT_TIMEOUT_MS`・`contextMcpDispatcher`）
+コード: `apps/daemon/src/gateway.ts`（`handle`・`handleContextMcp`・`relayHostMcp`・`ContextMcpRoute`・`CONTEXT_MCP_REQUEST`・`FETCH_DEFAULT_TIMEOUT_MS`・`contextMcpDispatcher`）、`apps/daemon/src/service.ts`（`executeLogged`）
 
 ## ホストの MCP サーバー
 
 `gateway.mcp_servers.<名前>` のコマンドを、ゲートウェイがホストで起動して持ち続け、エージェントには HTTP の MCP（`/mcp/<名前>`）として渡す。
+コンテキストリポジトリのコマンド型の MCP サーバーも、同じ仕組み（別の集まり）でホストで起動する。違いは、起動するものを実行ごとの確保で
+決めること・作業ディレクトリが層の写しであること・準備を待つ上限（[コンテキストの合成](context.md)）。起動する前に、コマンドがホストに
+あるか（`/` を含むものは作業ディレクトリから、ほかは `PATH` から）を確かめる。
 
 | 項目 | 意味 |
 | --- | --- |
@@ -104,4 +114,4 @@ PF は `config.yaml` の `gateway.platforms`（すべてのプロジェクト）
   書き直す。デーモンの起動のとき、記録を書いたデーモンが動いていないものだけを、PID と開始時刻が一致するときに止める（PID が
   再利用されたほかのプロセスや、同じ `SACTY_HOME` で動いているほかの sacty のものは止めない）。`ps` を読めなければ何も止めない。
 
-コード: `apps/daemon/src/host-mcp.ts`（`HostMcpFile`・`HostMcpServers`・`reconcile`・`ready`・`restart`・`drain`・`AUTH_ERROR`・`RETRY_MS`・`CALL_TIMEOUT_MS`・`LIST_TIMEOUT_MS`）、`apps/daemon/src/host-mcp-processes.ts`（`HostMcpProcesses`・`GroupStdioTransport`・`cleanup`・`terminate`）、`apps/daemon/src/service.ts`（`mcpRouting`・`runContext`）
+コード: `apps/daemon/src/host-mcp.ts`（`HostMcpFile`・`HostMcpServers`・`reconcile`・`ready`・`restart`・`drain`・`assertCommand`・`AUTH_ERROR`・`RETRY_MS`・`CALL_TIMEOUT_MS`・`LIST_TIMEOUT_MS`）、`apps/daemon/src/context-mcp.ts`（`ContextMcpServers`）、`apps/daemon/src/host-mcp-processes.ts`（`HostMcpProcesses`・`GroupStdioTransport`・`cleanup`・`terminate`）、`apps/daemon/src/service.ts`（`mcpRouting`・`runContext`）

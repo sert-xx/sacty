@@ -59,7 +59,8 @@ sacty up（packages/cli）
 | `runs/` | エージェントの実行ごとのセッションログ |
 | `sessions/` | タスクごとのオーケストレーターのセッション（使い回しのためのキャッシュ） |
 | `cache/shared-compose/` | 共用の compose のリポジトリのキャッシュ |
-| `host-mcp/processes/` | ホストの MCP サーバーのプロセスの記録 |
+| `host-mcp/processes/` | ホストの MCP サーバー（コンテキストのコマンド型を含む）のプロセスの記録 |
+| `context-mcp/layers/` | ホストで起動するコンテキストのコマンド型の MCP サーバーの作業ディレクトリ（層のリポジトリの写し） |
 
 コード: `apps/daemon/src/config.ts`（`resolveHome`・`configPath`）、`apps/daemon/src/main.ts`、`apps/daemon/src/service.ts`（`repoDir`・`trustedGitDir`）、`apps/daemon/src/instance-lock.ts`、`packages/cli/src/context-preview.ts`（`DAEMON_FILE`）
 
