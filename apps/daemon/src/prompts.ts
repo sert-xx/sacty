@@ -25,6 +25,13 @@ import {
   type TestViewpoint,
   type Verdict,
 } from "@sacty/core";
+import {
+  headedObject,
+  type JsonCandidate,
+  jsonCandidates,
+  lastJsonAnswer,
+  withoutCandidates,
+} from "./agent-json.js";
 import { githubRepoOf } from "./config.js";
 import { REVIEW_MARKER_PREFIX } from "./github.js";
 import { localForwards, type StartedService } from "./services.js";
@@ -97,23 +104,16 @@ function reproductionLines(task: Task): string[] {
  * 読めなければテストは空。
  */
 export function extractReproduction(output: string): { output: string; tests: string[] } {
-  const blocks = [...output.matchAll(/```json\s*\n([\s\S]*?)\n```/g)].reverse();
-  for (const block of blocks) {
-    try {
-      const parsed = JSON.parse(block[1] ?? "") as Record<string, unknown>;
-      const v = parsed?.[REPRODUCTION_HEADING] as Record<string, unknown> | undefined;
-      if (v && Array.isArray(v.tests)) {
-        const tests = v.tests
-          .map((t) => (typeof t === "string" ? t.trim() : ""))
-          .filter(Boolean)
-          .slice(0, 20);
-        return { output: output.replace(block[0], "").trim(), tests };
-      }
-    } catch {
-      // 次のブロックを試す
-    }
-  }
-  return { output, tests: [] };
+  const found = lastJsonAnswer(output, (value) => {
+    const v = headedObject(value, REPRODUCTION_HEADING);
+    return v && Array.isArray(v.tests) ? v.tests : undefined;
+  });
+  if (!found) return { output, tests: [] };
+  const tests = found.value
+    .map((t) => (typeof t === "string" ? t.trim() : ""))
+    .filter(Boolean)
+    .slice(0, 20);
+  return { output: withoutCandidates(output, [found.candidate]).trim(), tests };
 }
 const TEST_MAP_HEADING = "sacty-test-map";
 const REVIEW_COMMENTS_HEADING = "sacty-review-comments";
@@ -764,23 +764,16 @@ export function extractBlocks(
   let proposal: ExtractedProposal | undefined;
   let proposalSeen = false;
   let testMap: TestMapping[] | undefined;
-  let cleaned = output;
-  const blocks = [...output.matchAll(/```json\s*\n([\s\S]*?)\n```/g)].reverse();
-  for (const block of blocks) {
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(block[1] ?? "");
-    } catch {
-      continue;
-    }
-    const record = (parsed ?? {}) as Record<string, unknown>;
+  const used: JsonCandidate[] = [];
+  for (const candidate of jsonCandidates(output).reverse()) {
+    const record = candidate.value;
     const list = record[RESPONSES_HEADING];
     const viewpoints = record[VIEWPOINTS_HEADING];
     const proposed = record[PROPOSAL_HEADING];
     const map = record[TEST_MAP_HEADING];
-    let used = false;
+    let read = false;
     if (Array.isArray(map)) {
-      used = true;
+      read = true;
       testMap ??= map
         .map((m) => {
           const r = (m ?? {}) as Record<string, unknown>;
@@ -790,30 +783,27 @@ export function extractBlocks(
         .filter((m) => m.viewpointId && m.tests.length > 0);
     }
     if (proposed && typeof proposed === "object" && !Array.isArray(proposed)) {
-      used = true;
+      read = true;
       if (!proposalSeen) {
         proposalSeen = true;
         proposal = toProposal(proposed as Record<string, unknown>, changeable);
       }
     }
     if (Array.isArray(list)) {
-      used = true;
+      read = true;
       responses ??= list
         .map((r) => ({ remarkId: text(r?.remarkId), text: text(r?.text) }))
         .filter((r) => r.text && validRemarkIds.has(r.remarkId));
     }
     if (Array.isArray(viewpoints)) {
-      used = true;
+      read = true;
       testViewpoints ??= toViewpoints(viewpoints);
     }
-    // 後ろから取り除くので、前のブロックの位置は変わらない
-    if (used) {
-      const start = block.index ?? 0;
-      cleaned = cleaned.slice(0, start) + cleaned.slice(start + block[0].length);
-    }
+    // 読んだ JSON は、表示用の本文から取り除く
+    if (read) used.push(candidate);
   }
   return {
-    output: cleaned.trim(),
+    output: withoutCandidates(output, used).trim(),
     responses: responses ?? [],
     testViewpoints: testViewpoints ?? [],
     proposal,
@@ -903,19 +893,13 @@ export function buildGuardianPrompt(task: Task, proposal: TaskProposal): string 
 
 /** ゴールガーディアンの出力から判定を読む。読めなければ判定できなかったものとして扱う。 */
 export function extractVerdict(output: string): { verdict: Verdict; reason: DaemonText } {
-  const blocks = [...output.matchAll(/```json\s*\n([\s\S]*?)\n```/g)].reverse();
-  for (const block of blocks) {
-    try {
-      const parsed = JSON.parse(block[1] ?? "") as Record<string, unknown>;
-      const v = (parsed?.[VERDICT_HEADING] ?? {}) as Record<string, unknown>;
-      const verdict = ["approved", "rejected", "undecidable"].find((x) => x === v.verdict);
-      const reason = text(v.reason);
-      if (verdict && reason) return { verdict: verdict as Verdict, reason };
-    } catch {
-      // 次のブロックを試す
-    }
-  }
-  return { verdict: "undecidable", reason: message("guardian.verdictUnreadable") };
+  const found = lastJsonAnswer(output, (value) => {
+    const v = headedObject(value, VERDICT_HEADING) ?? {};
+    const verdict = (["approved", "rejected", "undecidable"] as const).find((x) => x === v.verdict);
+    const reason = text(v.reason);
+    return verdict && reason ? { verdict: verdict as Verdict, reason } : undefined;
+  });
+  return found?.value ?? { verdict: "undecidable", reason: message("guardian.verdictUnreadable") };
 }
 
 /**
@@ -1002,23 +986,13 @@ export function extractFinalReview(
   return readVerdicts(found?.raw, viewpointIds, remarkIds, message("review.unreadable"));
 }
 
-/** 出力の json ブロックのうち、見出しのオブジェクトを持つ最後のもの。 */
+/** 出力の JSON のうち、見出しのオブジェクトを持つ最後のもの（囲み方は問わない。PBI-72）。 */
 function findBlock(
   output: string,
   heading: string,
-): { raw: Record<string, unknown>; block: string } | undefined {
-  for (const block of [...output.matchAll(/```json\s*\n([\s\S]*?)\n```/g)].reverse()) {
-    try {
-      const parsed = JSON.parse(block[1] ?? "") as Record<string, unknown>;
-      const value = parsed?.[heading];
-      if (value && typeof value === "object" && !Array.isArray(value)) {
-        return { raw: value as Record<string, unknown>, block: block[0] };
-      }
-    } catch {
-      // 次のブロックを試す
-    }
-  }
-  return undefined;
+): { raw: Record<string, unknown>; candidate: JsonCandidate } | undefined {
+  const found = lastJsonAnswer(output, (value) => headedObject(value, heading));
+  return found && { raw: found.value, candidate: found.candidate };
 }
 
 /**
@@ -1155,7 +1129,7 @@ export function extractIntegrationReview(
     ...verdicts,
     passed: verdicts.passed && findings.length === 0,
     findings,
-    output: found ? output.replace(found.block, "").trim() : output,
+    output: found ? withoutCandidates(output, [found.candidate]).trim() : output,
   };
 }
 
@@ -1425,21 +1399,18 @@ export function extractRework(
   output: string,
   targets: readonly StepKey[],
 ): { target?: StepKey; reason: DaemonText } {
-  const blocks = [...output.matchAll(/```json\s*\n([\s\S]*?)\n```/g)].reverse();
-  for (const block of blocks) {
-    try {
-      const parsed = JSON.parse(block[1] ?? "") as Record<string, unknown>;
-      const v = (parsed?.[REWORK_HEADING] ?? {}) as Record<string, unknown>;
+  const found = lastJsonAnswer(
+    output,
+    (value): { target?: StepKey; reason: string } | undefined => {
+      const v = headedObject(value, REWORK_HEADING) ?? {};
       const reason = text(v.reason);
-      if (!reason) continue;
+      if (!reason) return undefined;
       if (v.target === "undecidable") return { reason };
       const target = targets.find((t) => t === v.target);
-      if (target) return { target, reason };
-    } catch {
-      // 次のブロックを試す
-    }
-  }
-  return { reason: message("guardian.reworkUnreadable") };
+      return target ? { target, reason } : undefined;
+    },
+  );
+  return found?.value ?? { reason: message("guardian.reworkUnreadable") };
 }
 
 /**
@@ -1788,20 +1759,12 @@ export function extractSplitPlan(
   /** 子タスクの最小の数。修正の子タスクの追加（PBI-31）は1件から。 */
   min: number = MIN_SPLIT_CHILDREN,
 ): { ok: true; reason: string; children: SplitChild[] } | { ok: false; message: DaemonText } {
-  const blocks = [...output.matchAll(/```json\s*\n([\s\S]*?)\n```/g)].reverse();
-  let found: { reason: string; children: unknown[] } | undefined;
-  for (const block of blocks) {
-    try {
-      const parsed = JSON.parse(block[1] ?? "") as Record<string, unknown>;
-      const v = parsed?.[SPLIT_HEADING] as Record<string, unknown> | undefined;
-      if (v && Array.isArray(v.children)) {
-        found = { reason: text(v.reason), children: v.children };
-        break;
-      }
-    } catch {
-      // 次のブロックを試す
-    }
-  }
+  const found = lastJsonAnswer(output, (value) => {
+    const v = headedObject(value, SPLIT_HEADING);
+    return v && Array.isArray(v.children)
+      ? { reason: text(v.reason), children: v.children as unknown[] }
+      : undefined;
+  })?.value;
   if (!found) return { ok: false, message: message("split.unreadable") };
   const children: SplitChild[] = [];
   for (const raw of found.children) {
@@ -1917,56 +1880,48 @@ export function extractStepPlan(
       documentsDir?: string;
     }
   | undefined {
-  const blocks = [...output.matchAll(/```json\s*\n([\s\S]*?)\n```/g)].reverse();
-  for (const block of blocks) {
-    try {
-      const parsed = JSON.parse(block[1] ?? "") as Record<string, unknown>;
-      const v = (parsed?.[PLAN_HEADING] ?? {}) as Record<string, unknown>;
-      const plan = StepPlan.safeParse(v.plan);
-      const reason = text(v.reason);
-      if (plan.success && allowed.includes(plan.data) && reason) {
-        // ブランチ名とテストのコマンドは、形の正しいものだけを使う（PBI-25）
-        const baseBranch = text(v.baseBranch);
-        const testCommand = text(v.testCommand).slice(0, 1000);
-        // 調査の性質は、決めた値のときだけ使う（無ければ内容の調査として扱う。PBI-43）
-        const investigation = InvestigationKind.safeParse(v.investigation);
-        // イメージは、工程の名前とイメージの名前の形が正しいものだけを使う（PBI-41）
-        const images = Object.fromEntries(
-          Object.entries(
-            v.images && typeof v.images === "object" ? (v.images as Record<string, unknown>) : {},
-          ).flatMap(([step, name]) => {
-            const key = StepKey.safeParse(step);
-            const value = text(name);
-            return key.success && /^[a-z0-9][a-z0-9_-]{0,39}$/.test(value)
-              ? [[key.data, value]]
-              : [];
-          }),
-        ) as Partial<Record<StepKey, string>>;
-        const imageReason = text(v.imageReason).slice(0, 1000);
-        const services = composeServicesOf(v.services);
-        const servicesReason = text(v.servicesReason).slice(0, 1000);
-        const exports = exportPlansOf(v.exports);
-        // 置き場所は、リポジトリの中の相対パスの形のものだけを使う（末尾の / は除く。PBI-57）
-        const documentsDir = text(v.documentsDir).replace(/\/+$/, "");
-        return {
-          ...(isDocumentsDir(documentsDir) ? { documentsDir } : {}),
-          plan: plan.data,
-          reason,
-          ...(/^[\w./-]+$/.test(baseBranch) && !baseBranch.startsWith("-") ? { baseBranch } : {}),
-          ...(testCommand ? { testCommand } : {}),
-          ...(investigation.success ? { investigation: investigation.data } : {}),
-          ...(Object.keys(images).length > 0 ? { images } : {}),
-          ...(imageReason ? { imageReason } : {}),
-          ...(services ? { services } : {}),
-          ...(servicesReason ? { servicesReason } : {}),
-          ...(exports ? { exports } : {}),
-        };
-      }
-    } catch {
-      // 次のブロックを試す
+  return lastJsonAnswer(output, (answer) => {
+    const v = headedObject(answer, PLAN_HEADING) ?? {};
+    const plan = StepPlan.safeParse(v.plan);
+    const reason = text(v.reason);
+    if (plan.success && allowed.includes(plan.data) && reason) {
+      // ブランチ名とテストのコマンドは、形の正しいものだけを使う（PBI-25）
+      const baseBranch = text(v.baseBranch);
+      const testCommand = text(v.testCommand).slice(0, 1000);
+      // 調査の性質は、決めた値のときだけ使う（無ければ内容の調査として扱う。PBI-43）
+      const investigation = InvestigationKind.safeParse(v.investigation);
+      // イメージは、工程の名前とイメージの名前の形が正しいものだけを使う（PBI-41）
+      const images = Object.fromEntries(
+        Object.entries(
+          v.images && typeof v.images === "object" ? (v.images as Record<string, unknown>) : {},
+        ).flatMap(([step, name]) => {
+          const key = StepKey.safeParse(step);
+          const value = text(name);
+          return key.success && /^[a-z0-9][a-z0-9_-]{0,39}$/.test(value) ? [[key.data, value]] : [];
+        }),
+      ) as Partial<Record<StepKey, string>>;
+      const imageReason = text(v.imageReason).slice(0, 1000);
+      const services = composeServicesOf(v.services);
+      const servicesReason = text(v.servicesReason).slice(0, 1000);
+      const exports = exportPlansOf(v.exports);
+      // 置き場所は、リポジトリの中の相対パスの形のものだけを使う（末尾の / は除く。PBI-57）
+      const documentsDir = text(v.documentsDir).replace(/\/+$/, "");
+      return {
+        ...(isDocumentsDir(documentsDir) ? { documentsDir } : {}),
+        plan: plan.data,
+        reason,
+        ...(/^[\w./-]+$/.test(baseBranch) && !baseBranch.startsWith("-") ? { baseBranch } : {}),
+        ...(testCommand ? { testCommand } : {}),
+        ...(investigation.success ? { investigation: investigation.data } : {}),
+        ...(Object.keys(images).length > 0 ? { images } : {}),
+        ...(imageReason ? { imageReason } : {}),
+        ...(services ? { services } : {}),
+        ...(servicesReason ? { servicesReason } : {}),
+        ...(exports ? { exports } : {}),
+      };
     }
-  }
-  return undefined;
+    return undefined;
+  })?.value;
 }
 
 /** オーケストレーターが書いた書き出し先（PBI-56）。接続先の種類が無ければ、名前で探す。 */
@@ -2228,25 +2183,17 @@ const EXPORT_ERROR_MAX = 1_000;
  * 取り除いている（理由を切り詰めるのは、その後）。読めなければ undefined。
  */
 export function extractExport(output: string): { url: string } | { error: string } | undefined {
-  const blocks = [...output.matchAll(/```json\s*\n([\s\S]*?)\n```/g)].reverse();
-  for (const block of blocks) {
-    try {
-      const parsed = JSON.parse(block[1] ?? "") as Record<string, unknown>;
-      const v = parsed?.[EXPORT_HEADING] as Record<string, unknown> | undefined;
-      if (!v || typeof v !== "object") continue;
-      const url = text(v.url);
-      if (/^https?:\/\/\S+$/.test(url) && url.length <= 2000) return { url };
-      const error = text(v.error);
-      if (error) {
-        return {
-          error: error.length > EXPORT_ERROR_MAX ? `${error.slice(0, EXPORT_ERROR_MAX)}…` : error,
-        };
-      }
-    } catch {
-      // 次のブロックを試す
-    }
-  }
-  return undefined;
+  return lastJsonAnswer(output, (value): { url: string } | { error: string } | undefined => {
+    const v = headedObject(value, EXPORT_HEADING);
+    if (!v) return undefined;
+    const url = text(v.url);
+    if (/^https?:\/\/\S+$/.test(url) && url.length <= 2000) return { url };
+    const error = text(v.error);
+    if (!error) return undefined;
+    return {
+      error: error.length > EXPORT_ERROR_MAX ? `${error.slice(0, EXPORT_ERROR_MAX)}…` : error,
+    };
+  })?.value;
 }
 
 /** チケットの取り込みの1段目（PBI-52）の出力の見出し。 */
@@ -2300,26 +2247,19 @@ export function buildTicketTriagePrompt(
 export function extractTicketTriage(
   output: string,
 ): { repo: string; title: string; summary: string; reason: string } | undefined {
-  const blocks = [...output.matchAll(/```json\s*\n([\s\S]*?)\n```/g)].reverse();
-  for (const block of blocks) {
-    try {
-      const parsed = JSON.parse(block[1] ?? "") as Record<string, unknown>;
-      const v = parsed?.[TICKET_HEADING] as Record<string, unknown> | undefined;
-      if (!v || typeof v !== "object") continue;
-      const repo = text(v.repo);
-      const reason = text(v.reason);
-      if (!repo && !reason) continue;
-      return {
-        repo,
-        title: text(v.title).slice(0, 200),
-        summary: (typeof v.summary === "string" ? v.summary.trim() : "").slice(0, 20_000),
-        reason: reason.slice(0, 2000),
-      };
-    } catch {
-      // 次のブロックを試す
-    }
-  }
-  return undefined;
+  return lastJsonAnswer(output, (value) => {
+    const v = headedObject(value, TICKET_HEADING);
+    if (!v) return undefined;
+    const repo = text(v.repo);
+    const reason = text(v.reason);
+    if (!repo && !reason) return undefined;
+    return {
+      repo,
+      title: text(v.title).slice(0, 200),
+      summary: (typeof v.summary === "string" ? v.summary.trim() : "").slice(0, 20_000),
+      reason: reason.slice(0, 2000),
+    };
+  })?.value;
 }
 
 /** PR のレビューの上限（GitHub の上限より小さく）。 */
@@ -2388,17 +2328,10 @@ export function extractReviewComments(
   diff: string,
 ): { output: string; comments: ReviewComment[] } {
   const commentable = commentableLines(diff);
-  let cleaned = output;
   let found: ReviewComment[] | undefined;
-  const blocks = [...output.matchAll(/```json\s*\n([\s\S]*?)\n```/g)].reverse();
-  for (const block of blocks) {
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(block[1] ?? "");
-    } catch {
-      continue;
-    }
-    const list = ((parsed ?? {}) as Record<string, unknown>)[REVIEW_COMMENTS_HEADING];
+  const used: JsonCandidate[] = [];
+  for (const candidate of jsonCandidates(output).reverse()) {
+    const list = candidate.value[REVIEW_COMMENTS_HEADING];
     if (!Array.isArray(list)) continue;
     // 最後のブロックを使う。どのブロックも本文からは取り除く
     found ??= list.flatMap((item) => {
@@ -2408,8 +2341,7 @@ export function extractReviewComments(
       const body = text(r.body).slice(0, REVIEW_COMMENT_MAX);
       return path && Number.isInteger(line) && line > 0 && body ? [{ path, line, body }] : [];
     });
-    const start = block.index ?? 0;
-    cleaned = cleaned.slice(0, start) + cleaned.slice(start + block[0].length);
+    used.push(candidate);
   }
   const inline: ReviewComment[] = [];
   const outside: ReviewComment[] = [];
@@ -2417,7 +2349,7 @@ export function extractReviewComments(
     const ok = commentable.get(comment.path)?.has(comment.line);
     (ok && inline.length < REVIEW_COMMENTS_MAX ? inline : outside).push(comment);
   }
-  const body = cleaned.trim();
+  const body = withoutCandidates(output, used).trim();
   return {
     output:
       outside.length > 0
