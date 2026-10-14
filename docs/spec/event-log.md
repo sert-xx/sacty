@@ -42,7 +42,8 @@
 - 適用できないイベント（二重の作成・知らないタスク・中止したタスクへのイベント・状態や実行の ID の食い違いなど）は、投影が例外にする
   （中止したタスクでも、セッションの保存の記録 `AgentSessionArchived`・`OrchestratorSessionUsed` は受け付ける）。
 - 記録だけで状態を変えないイベントもある（`AiRequestsRetried`・`ServicesStarted`・`AgentSessionArchived`）。
-- 費用は、イベントの `costUsd` をタスクの `budget.usedUsd` に足す（小数第6位で丸める）。
+- 費用を持つイベント（[費用](#費用)の12種類）は、適用できたときに、その `costUsd` をタスクの `budget.usedUsd` に足す
+  （小数第6位で丸める）。`estimated` が1件でもあれば、`budget.estimated` を立てる。
 - `Task` の主な項目：`status`、`steps`（工程ごとの `todo`・`active`・`done`・`skip`）、工程の出力と承認した成果、承認の待ち（`gate`）、
   指摘（`remarks`）、変更の申し出（`proposals`）、予算（`budget`）、実行中の実行の ID、検証・テスト・最終レビュー・統合レビューの結果、
   PR とタスクブランチ、分割の親子、一時停止の理由、質問、書き出し、オーケストレーターのセッション。
@@ -61,7 +62,7 @@
 | `escalated` | エスカレーション（人間の判断待ち） |
 | `cancelled` | 中止 |
 
-コード: `packages/core/src/projection.ts`（`project`・`applyEvent`・`Task`・`TaskStatus`・`addUsd`）、`apps/daemon/src/service.ts`（`TaskService.append`）
+コード: `packages/core/src/projection.ts`（`project`・`applyEvent`・`Task`・`TaskStatus`）、`packages/core/src/cost.ts`（`chargeBudget`）、`apps/daemon/src/service.ts`（`TaskService.append`）
 
 ## 費用
 
@@ -69,10 +70,25 @@
 - 費用 = (`input`×`input` の単価 + `cacheRead`×`cachedInput` の単価 + `cacheWrite`×`cacheWrite` の単価 + `output`×`output` の単価) ÷ 10^6
   （分子を整数に丸めてから割る）。
 - サブスクリプションとスタブの実行は、同じ単価で換算した推定の費用（`estimated`）として扱い、予算の判定に使う。
+- タスクの予算に入れる費用を持つイベントは、次の12種類（`CHARGED_EVENT_TYPES`）。`costUsd` を持つイベントはこれですべて
+  （統合レビューの `IntegrationReviewed` は費用を持たず、続く `AgentRunCompleted` に記録する）。
+
+  | イベント | 工程ごとの費用の表の行 |
+  | --- | --- |
+  | `TicketTriaged` | チケットの読み取り（`triage`） |
+  | `RepositoryChosen` | リポジトリの選択（`repository`） |
+  | `StepsChosen`・`OrchestratorFailed` | オーケストレーター（`orchestrator`） |
+  | `AgentRunCompleted`・`AgentRunFailed` | その工程 |
+  | `OutputExported` | 書き出し（`export`） |
+  | `QuestionAnswered` | 質問への答え（`chat`） |
+  | `ChangeJudged`・`ReworkJudged`・`FinalReviewed`・`FinalReviewFailed` | ゴールガーディアン（`guardian`） |
+
+- 投影と工程ごとの費用の表は、どちらも同じ規則（`chargeBudget`）で費用を足す。一覧に無い種類が `costUsd` を持つと、型の検査で
+  typecheck が通らない。
 - 予算の状態（`budgetState`）：使った額が上限以上なら `exceeded`、まだ通知していなくて上限の `BUDGET_WARN_RATIO`（0.8）以上なら `warn`、
   それ以外は `ok`。
 
-コード: `packages/core/src/cost.ts`（`PricePerMTok`・`computeCostUsd`・`budgetState`）、`packages/core/src/events.ts`（`BUDGET_WARN_RATIO`）、`apps/daemon/src/service.ts`（`executeLogged`）
+コード: `packages/core/src/cost.ts`（`PricePerMTok`・`computeCostUsd`・`budgetState`・`CHARGED_EVENT_TYPES`・`isChargedEvent`・`addUsd`・`chargeBudget`）、`packages/core/src/events.ts`（`BUDGET_WARN_RATIO`）、`apps/daemon/src/service.ts`（`executeLogged`）
 
 ## セッションログ（実行ごとのファイル）
 
@@ -91,6 +107,12 @@
 ## 画面の表示
 
 - タスクの詳細は `GET /api/tasks/:id` の `{ task, activity }` を読み、作業履歴を新しい順に、イベントの種類ごとの文で並べる。
-- 工程ごとの費用の表は、イベントを役割（工程・`orchestrator`・`chat`・`export`・`guardian`）ごとに分けて集計する。
+- 工程ごとの費用の表は、費用を持つイベントを行（[費用](#費用)の表）ごとに分けて集計する。行の順は、チケットの読み取り・
+  リポジトリの選択・オーケストレーター（記録があるときだけ）、タスクの工程の順の工程（実行していない工程も0回で出す。工程の一覧に無い
+  工程の記録も出す）、書き出し・質問への答え・ゴールガーディアン（記録があるときだけ）。
+- 人が決めたチケットの読み取り・リポジトリの選択と、工程を固定していた頃の `StepsChosen`（エージェント・費用・使用量が無い）は、
+  実行に数えない。
+- 表の合計の費用と推定かどうかは、作業履歴の順に `chargeBudget` で足すので、タスクの費用（`budget.usedUsd`・`budget.estimated`）と
+  一致する。
 
-コード: `apps/web/src/lib/labels.ts`（`describeEvent`）、`apps/web/src/lib/step-costs.ts`（`stepCosts`）
+コード: `apps/web/src/lib/labels.ts`（`describeEvent`）、`apps/web/src/lib/step-costs.ts`（`stepCosts`）、`apps/web/src/components/step-costs.tsx`（`StepCosts`）

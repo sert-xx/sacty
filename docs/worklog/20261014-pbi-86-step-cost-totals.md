@@ -37,7 +37,8 @@
 - コメント：`apps/daemon/src/prompts.ts` の `extractStepPlan`、`apps/daemon/src/service.ts` の `chooseSteps`、
   `packages/core/src/events.ts` の `StepsChosen`・`fallback`・`MVP_STEPS` を、今の振る舞いに直した（判断できない・実行に
   失敗したときは、標準の工程で進めず `OrchestratorFailed` を記録して一時停止する。PBI-40 で変わった）。
-- 仕様書：費用の節を書く仕様書（PR #91）はまだ main に無いので、このタスクでは直していない。
+- 仕様書：はじめは費用の節を書く仕様書（PR #91）が main に無かったので直していなかった。#90・#91・#92 のマージの後に
+  rebase し、`docs/spec/event-log.md` を直した（下の「レビューの指摘と対応」）。
 
 ## 確かめたこと
 
@@ -62,7 +63,9 @@
 | 指摘 | 対応 |
 | --- | --- |
 | （セルフレビュー）`chooseSteps` のコメントに、リポジトリを選べなかったときの戻り値が書かれていない | 「選べなければ failure」を書き足した |
+| #89 のマージに追従する | rebase した（衝突なし）。#89 は費用を持つイベント・投影を変えていないので、一覧と表はそのまま |
+| #90・#91・#92 のマージの後、仕様書の費用の節を今回の実装に合わせる | rebase した（衝突なし）。`docs/spec/event-log.md` の投影の費用の説明・「費用」の節（12種類のイベントと表の行の対応、共通の規則 `chargeBudget`）・「画面の表示」の表の行の順と合計を直し、コードの参照を `packages/core/src/cost.ts` に移した（`addUsd` は projection から cost.ts に移ったため、参照の検査が落ちていた）。ユーザードキュメントは、表の行を説明している箇所が書き出しの1行だけで、変わらないので直していない |
 
 ## 残したこと
 
-- 仕様書の費用の節（PR #91 が main に入った後に直す）。
+なし
