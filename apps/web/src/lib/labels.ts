@@ -328,6 +328,7 @@ export function describeEvent(event: ActivityEvent, l: LabelMessages): string {
         event.payload.gaveUp,
       );
     case "AgentSessionArchived":
+      if (event.payload.notArchived) return e.AgentSessionNotArchived;
       return e.AgentSessionArchived(
         event.payload.files.length,
         event.payload.files.filter((f) => f.truncated).length,

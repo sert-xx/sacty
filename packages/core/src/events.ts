@@ -733,6 +733,11 @@ const AgentSessionArchived = z.object({
     limitBytes: z.number().int().positive(),
     /** 読めずに写せなかったファイル（相対パス）。 */
     skipped: z.array(z.string()).default([]),
+    /**
+     * 写さなかった理由（files は空）。container_not_confirmed：コンテナが止まったことを確かめられなかった
+     * （動いたままのコンテナが写す途中のファイルを差し替えられるため、写さない）。
+     */
+    notArchived: z.enum(["container_not_confirmed"]).optional(),
   }),
 });
 

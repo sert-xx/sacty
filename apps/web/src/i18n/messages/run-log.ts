@@ -79,6 +79,10 @@ const ja = {
     mismatchNote: (n: number) =>
       `${n}件のファイルが、作業履歴に記録した内容と一致しません。写した後に書き換えられたか、消されています。`,
     skipped: (paths: string) => `読めずに写せなかったファイル：${paths}`,
+    notArchived: {
+      container_not_confirmed:
+        "コンテナが止まったことを確かめられなかったため、この実行のファイルは写していません（動いたままのコンテナが、写す途中のファイルを差し替えられるため）。",
+    } as Record<string, string>,
     notFound: "このファイルはありません。",
   },
 };
@@ -161,6 +165,10 @@ const en: RunLogMessages = {
     mismatchNote: (n: number) =>
       `${n} file${n === 1 ? " does" : "s do"} not match the activity record. ${n === 1 ? "It was" : "They were"} modified or removed after copying.`,
     skipped: (paths: string) => `Files that could not be read and were not copied: ${paths}`,
+    notArchived: {
+      container_not_confirmed:
+        "The files of this run were not copied because the container could not be confirmed to have stopped (a running container could swap files while they are copied).",
+    },
     notFound: "This file does not exist.",
   },
 };

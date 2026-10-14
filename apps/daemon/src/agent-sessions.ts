@@ -1,6 +1,17 @@
 import { createHash } from "node:crypto";
-import { createReadStream, type Dirent, lstatSync, mkdirSync, readdirSync, rmSync } from "node:fs";
-import { open } from "node:fs/promises";
+import {
+  type BigIntStats,
+  createReadStream,
+  type Dirent,
+  constants as fsConstants,
+  lstatSync,
+  mkdirSync,
+  readdirSync,
+  rmSync,
+  truncateSync,
+  writeFileSync,
+} from "node:fs";
+import { type FileHandle, open } from "node:fs/promises";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import type { ArchivedAgentFile } from "@sacty/core";
 import { redact } from "./agents/redact.js";
@@ -39,11 +50,30 @@ const SOURCES: Record<AgentSessionRuntime, { dirs: string[]; files: string[] }> 
 /** 選んだ場所の下にあっても写さない、認証の情報のファイルの名前。 */
 const CREDENTIAL_NAME = /^(?:\.?credentials(?:\..*)?|auth\.json|\.claude\.json.*|config\.toml)$/i;
 
-export type AgentSourceFile = { path: string; size: number };
+export type AgentSourceFile = {
+  path: string;
+  size: number;
+  /** 選んだときのファイルの dev・ino（写すときに開いたファイルが、選んだものと同じかを確かめる）。 */
+  dev: bigint;
+  ino: bigint;
+};
 
 /** 相対パス（区切りは /）。 */
 function slash(path: string): string {
   return path.split(sep).join("/");
+}
+
+/**
+ * 設定の場所から rel の親までの途中のディレクトリが、どれも本物のディレクトリ（シンボリックリンクでない）ことを確かめる。
+ * 違えば例外（途中のディレクトリをホストのほかの場所へのリンクに差し替えられても、その先を読まないため）。
+ */
+function assertRealParents(configDir: string, rel: string): void {
+  const parts = rel.split("/");
+  let dir = configDir;
+  for (const part of parts.slice(0, -1)) {
+    dir = join(dir, part);
+    if (!lstatSync(dir).isDirectory()) throw new Error(`${rel}: a parent is not a directory`);
+  }
 }
 
 /**
@@ -56,16 +86,19 @@ export function selectAgentSessionFiles(
 ): AgentSourceFile[] {
   const found: AgentSourceFile[] = [];
   const add = (abs: string) => {
-    let stat: ReturnType<typeof lstatSync>;
+    const path = slash(relative(configDir, abs));
+    let stat: BigIntStats;
     try {
-      stat = lstatSync(abs);
+      stat = lstatSync(abs, { bigint: true });
+      // lstat は途中のディレクトリを辿るので、その後で途中がリンクでないことを確かめる
+      assertRealParents(configDir, path);
     } catch {
       return;
     }
     if (!stat.isFile()) return;
     const name = abs.slice(abs.lastIndexOf(sep) + 1);
     if (CREDENTIAL_NAME.test(name)) return;
-    found.push({ path: slash(relative(configDir, abs)), size: stat.size });
+    found.push({ path, size: Number(stat.size), dev: stat.dev, ino: stat.ino });
   };
   const walk = (dir: string) => {
     let entries: Dirent[];
@@ -93,6 +126,32 @@ export function selectAgentSessionFiles(
   }
   for (const file of source.files) add(join(configDir, file));
   return found.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+}
+
+/** リンクを辿らずに開く（最後の部分がリンクなら開けない）。FIFO などで止まらないよう、待たずに開く。 */
+const OPEN_FLAGS =
+  fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0) | (fsConstants.O_NONBLOCK ?? 0);
+
+/**
+ * 選んだ元のファイルを開く。リンクを辿らずに開き、開いたものが通常のファイルで、選んだときと同じファイル（dev・ino）
+ * であること、途中のディレクトリがリンクでないこと（開く前と後）を確かめる。違えば例外（選んだ後に、ホストのほかの
+ * ファイルへのリンクや別のファイルに差し替えられても、領域の外の中身を写さない）。
+ */
+async function openSource(configDir: string, source: AgentSourceFile): Promise<FileHandle> {
+  assertRealParents(configDir, source.path);
+  const handle = await open(join(configDir, ...source.path.split("/")), OPEN_FLAGS);
+  try {
+    const stat = await handle.stat({ bigint: true });
+    if (!stat.isFile()) throw new Error(`${source.path}: not a regular file`);
+    if (stat.dev !== source.dev || stat.ino !== source.ino) {
+      throw new Error(`${source.path}: replaced after it was selected`);
+    }
+    assertRealParents(configDir, source.path);
+    return handle;
+  } catch (error) {
+    await handle.close();
+    throw error;
+  }
 }
 
 /**
@@ -175,39 +234,91 @@ function marker(path: string, cap: number, head: number) {
       : `[sacty] truncated: ${droppedBytes} bytes (${droppedLines} lines) between the first ${head} bytes and the last ${cap - head} bytes were omitted.\n`;
 }
 
-/** 1つのファイルを、伏せてから（上限があれば先頭と末尾を残して）写す。 */
+/** 開いたファイルを、先頭から伏せながら読む。 */
+async function readRedacted(
+  handle: FileHandle,
+  secrets: readonly string[],
+  each: (chunk: Buffer) => void,
+): Promise<void> {
+  const redactor = new ByteRedactor(secrets);
+  let position = 0;
+  for (;;) {
+    const buf = Buffer.alloc(CHUNK);
+    const { bytesRead } = await handle.read(buf, 0, CHUNK, position);
+    if (bytesRead === 0) break;
+    position += bytesRead;
+    each(redactor.push(buf.subarray(0, bytesRead)));
+  }
+  each(redactor.flush());
+}
+
+/** 伏せた後の大きさと改行の数（上限の割り振りは、元の大きさではなく、伏せた後の大きさで決める）。 */
+async function measureRedacted(
+  handle: FileHandle,
+  secrets: readonly string[],
+): Promise<{ bytes: number; lines: number }> {
+  let bytes = 0;
+  let lines = 0;
+  await readRedacted(handle, secrets, (chunk) => {
+    bytes += chunk.length;
+    for (let i = chunk.indexOf(0x0a); i >= 0; i = chunk.indexOf(0x0a, i + 1)) lines++;
+  });
+  return { bytes, lines };
+}
+
+/**
+ * 1つのファイルを、伏せてから写す。写したファイルは max バイトを超えない（省いたことの目印も含めて）。
+ * whole なら丸ごと写す（伏せた後の大きさが max に収まると測ってある）。そうでなければ、目印の分を除いた大きさで、
+ * 先頭と末尾を残して間を省く。伏せるのは切り詰める前（秘密情報の途中で切れて、一部が残ることのないように）。
+ */
 async function copyRedacted(
-  source: string,
+  handle: FileHandle,
   dest: string,
   secrets: readonly string[],
-  cap: number,
+  plan: { max: number; whole: boolean; measured: { bytes: number; lines: number } },
 ): Promise<{ truncated?: { droppedBytes: number; droppedLines: number } }> {
   mkdirSync(dirname(dest), { recursive: true, mode: 0o700 });
   rmSync(dest, { force: true });
-  const limited = Number.isFinite(cap);
-  // 先頭を多めに残す（セッションの始まり・指示が先頭にあり、終わりの原因は末尾にある）
-  const head = limited ? Math.floor(cap * 0.8) : Number.MAX_SAFE_INTEGER;
-  const tail = limited ? cap - head : 0;
+  let head: number;
+  let tail: number;
+  let mark: (droppedBytes: number, droppedLines: number) => string;
+  if (plan.whole) {
+    head = plan.max;
+    tail = 0;
+    mark = marker(dest, plan.max, plan.max);
+  } else {
+    // 目印の大きさの上限（省く大きさ・行数は、伏せた後の全体を超えない。前に改行を足すことがある）
+    const reserve = (content: number, h: number) =>
+      Buffer.byteLength(marker(dest, content, h)(plan.measured.bytes, plan.measured.lines)) + 1;
+    // （目印に書く先頭・末尾の大きさは max 以下なので、max で測れば上限になる）
+    const content = Math.max(0, plan.max - reserve(plan.max, Math.floor(plan.max * 0.8)));
+    if (content === 0) {
+      // 目印も入らない：中身は残さず、省いたことは記録に残す
+      writeFileSync(dest, Buffer.alloc(0), { mode: 0o600 });
+      return plan.measured.bytes > 0
+        ? {
+            truncated: { droppedBytes: plan.measured.bytes, droppedLines: plan.measured.lines },
+          }
+        : {};
+    }
+    // 先頭を多めに残す（セッションの始まり・指示が先頭にあり、終わりの原因は末尾にある）
+    head = Math.floor(content * 0.8);
+    tail = content - head;
+    mark = marker(dest, content, head);
+  }
   let failure: unknown;
   const out = new HeadTailFile(dest, { head, tail }, dest.endsWith(".jsonl"), (error) => {
     failure ??= error;
   });
-  const redactor = new ByteRedactor(secrets);
-  const handle = await open(source, "r");
   try {
-    for (;;) {
-      const buf = Buffer.alloc(CHUNK);
-      const { bytesRead } = await handle.read(buf, 0, CHUNK, null);
-      if (bytesRead === 0) break;
-      out.write(redactor.push(buf.subarray(0, bytesRead)));
-    }
-    out.write(redactor.flush());
+    await readRedacted(handle, secrets, (chunk) => out.write(chunk));
   } finally {
-    await handle.close();
-    out.close(marker(dest, cap, head));
+    out.close(mark);
   }
   if (failure) throw failure;
   const { bytes, lines } = out.dropped;
+  // 測った後に中身が変わって、目印の分だけ max を超えたときも、上限は超えさせない（伏せた後なので、秘密情報は残らない）
+  if (lstatSync(dest).size > plan.max) truncateSync(dest, plan.max);
   return bytes > 0 ? { truncated: { droppedBytes: bytes, droppedLines: lines } } : {};
 }
 
@@ -229,24 +340,69 @@ export async function archiveAgentSessionFiles(input: {
   secrets: readonly string[];
   limit?: number;
 }): Promise<AgentArchive> {
+  return copyAgentSessionFiles({
+    ...input,
+    sources: selectAgentSessionFiles(input.runtime, input.configDir),
+  });
+}
+
+/**
+ * 選んだファイル（selectAgentSessionFiles）を dest に写す。伏せた後の大きさを先に測ってから上限を割り振り、
+ * 写したファイルの合計は、省いたことの目印も含めて上限を超えない。
+ */
+export async function copyAgentSessionFiles(input: {
+  configDir: string;
+  dest: string;
+  secrets: readonly string[];
+  sources: readonly AgentSourceFile[];
+  limit?: number;
+}): Promise<AgentArchive> {
   const limit = input.limit ?? AGENT_FILES_LIMIT;
-  const sources = selectAgentSessionFiles(input.runtime, input.configDir);
+  const skipped: string[] = [];
+  const warn = (path: string, error: unknown) => {
+    console.warn(
+      `[daemon] エージェントのファイルを写せませんでした（${path}）：`,
+      error instanceof Error ? error.message : error,
+    );
+    skipped.push(path);
+  };
+  // 1回目：伏せた後の大きさを測る
+  const measured: { source: AgentSourceFile; bytes: number; lines: number }[] = [];
+  for (const source of input.sources) {
+    try {
+      const handle = await openSource(input.configDir, source);
+      try {
+        measured.push({ source, ...(await measureRedacted(handle, input.secrets)) });
+      } finally {
+        await handle.close();
+      }
+    } catch (error) {
+      warn(source.path, error);
+    }
+  }
   const caps = fileCaps(
-    sources.map((s) => s.size),
+    measured.map((m) => m.bytes),
     limit,
   );
+  // 2回目：割り振った大きさで写す（選んだときと同じファイルであることを、もう一度確かめる）
   const files: ArchivedAgentFile[] = [];
-  const skipped: string[] = [];
-  if (sources.length > 0) mkdirSync(input.dest, { recursive: true, mode: 0o700 });
-  for (const [i, source] of sources.entries()) {
+  if (measured.length > 0) mkdirSync(input.dest, { recursive: true, mode: 0o700 });
+  for (const [i, { source, bytes, lines }] of measured.entries()) {
     const dest = join(input.dest, ...source.path.split("/"));
+    const cap = caps[i] ?? 0;
+    const whole = !Number.isFinite(cap);
     try {
-      const { truncated } = await copyRedacted(
-        join(input.configDir, ...source.path.split("/")),
-        dest,
-        input.secrets,
-        caps[i] ?? Number.POSITIVE_INFINITY,
-      );
+      const handle = await openSource(input.configDir, source);
+      let truncated: { droppedBytes: number; droppedLines: number } | undefined;
+      try {
+        ({ truncated } = await copyRedacted(handle, dest, input.secrets, {
+          max: whole ? bytes : cap,
+          whole,
+          measured: { bytes, lines },
+        }));
+      } finally {
+        await handle.close();
+      }
       const hashed = await hashFile(dest);
       if (!hashed) throw new Error(`cannot read ${dest}`);
       files.push({
@@ -257,14 +413,11 @@ export async function archiveAgentSessionFiles(input: {
         ...(truncated ? { truncated } : {}),
       });
     } catch (error) {
-      console.warn(
-        `[daemon] エージェントのファイルを写せませんでした（${source.path}）：`,
-        error instanceof Error ? error.message : error,
-      );
-      skipped.push(source.path);
+      warn(source.path, error);
       rmSync(dest, { force: true });
     }
   }
+  skipped.sort();
   return { files, skipped, limitBytes: limit };
 }
 

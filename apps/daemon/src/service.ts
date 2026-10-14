@@ -4291,6 +4291,7 @@ export class TaskService {
               files: archived.files,
               limitBytes: archived.limitBytes,
               skipped: archived.skipped,
+              ...(archived.notArchived ? { notArchived: archived.notArchived } : {}),
             },
           },
         },

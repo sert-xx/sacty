@@ -89,12 +89,23 @@ export interface SessionLogSink {
     /** 出力から読んだセッションの ID（無ければ、写したファイルの名前から推し量る）。 */
     sessionId?: string;
   }): Promise<void>;
+  /**
+   * コンテナが止まったことを確かめられず、エージェントのファイルを写さなかった（PBI-66）。写さなかったことと理由を、
+   * 作業履歴に記録する（監査で、残せなかった理由が分かるように）。
+   */
+  agentFilesNotArchived(input: {
+    runtime: AgentSessionRuntime;
+    reason: "container_not_confirmed";
+    sessionId?: string;
+  }): void;
 }
 
 /** 写したエージェントのファイル（PBI-66）。作業履歴に記録する。 */
 export type ArchivedAgentSession = AgentArchive & {
   runtime: AgentSessionRuntime;
   sessionId?: string;
+  /** 写さなかった理由（files は空）。 */
+  notArchived?: "container_not_confirmed";
 };
 
 /** 秘密情報と、JSON の文字列の中に書かれたときの形（エスケープされた形）。長い順。 */
@@ -385,6 +396,21 @@ export class SessionLog implements SessionLogSink {
     }
   }
 
+  agentFilesNotArchived(input: Parameters<SessionLogSink["agentFilesNotArchived"]>[0]): void {
+    if (this.archived) return;
+    console.warn(
+      `[daemon] コンテナが止まったことを確かめられなかったため、エージェントのセッションのファイルを写しませんでした（${this.meta.runId}）。`,
+    );
+    this.archived = {
+      files: [],
+      skipped: [],
+      limitBytes: this.agentLimit,
+      runtime: input.runtime,
+      ...(input.sessionId ? { sessionId: input.sessionId } : {}),
+      notArchived: input.reason,
+    };
+  }
+
   /** 実行の結果を残して閉じる（結果の文は、伏せた後のもの）。2回目以降は何もしない。 */
   close(outcome: AgentOutcome): void {
     if (this.closed) return;
@@ -474,6 +500,7 @@ const NOOP_LOG = {
   stderr() {},
   addSecrets() {},
   async archiveAgentFiles() {},
+  agentFilesNotArchived() {},
   close() {},
   archived: undefined,
 } satisfies SessionLogSink & Pick<SessionLog, "close" | "archived">;

@@ -266,8 +266,9 @@ export class DockerExecutor implements AgentExecutor {
   constructor(
     private readonly timeoutMs = 30 * 60_000,
     spawnImpl: typeof spawn = spawn,
+    containers?: RunningContainers,
   ) {
-    this.containers = new RunningContainers(spawnImpl);
+    this.containers = containers ?? new RunningContainers(spawnImpl);
     this.spawnImpl = spawnImpl;
   }
 
@@ -441,7 +442,8 @@ export class DockerExecutor implements AgentExecutor {
       }
     } finally {
       // 止める要求があったなら、コンテナが無くなったことを確かめるまで完了にしない
-      if (!(await this.containers.finish(containerName))) {
+      const stopped = await this.containers.finish(containerName);
+      if (!stopped) {
         outcome = {
           kind: "failed",
           reason: "error",
@@ -463,12 +465,15 @@ export class DockerExecutor implements AgentExecutor {
       }
       // エージェントの元のセッションのファイルを、一時的な場所を消す前に写す（失敗・止めた・中止した実行も。PBI-66）。
       // 認証ファイルの書き戻しの後（大きなファイルを写す間、更新されたトークンの書き戻しを待たせない）に写す
+      // コンテナが止まったことを確かめられなければ写さない（動いたままのコンテナは、写す途中のファイルをホストの
+      // ほかのファイルへのリンクに差し替えられる）。写さなかったことと理由は、作業履歴に記録する
       if (staging && invocation.sessionFiles && log) {
-        await log.archiveAgentFiles({
-          dir: staging,
+        const session = {
           runtime: invocation.sessionFiles,
           ...(reader.sessionId ? { sessionId: reader.sessionId } : {}),
-        });
+        };
+        if (stopped) await log.archiveAgentFiles({ dir: staging, ...session });
+        else log.agentFilesNotArchived({ ...session, reason: "container_not_confirmed" });
       }
       if (staging) rmSync(staging, { recursive: true, force: true });
     }

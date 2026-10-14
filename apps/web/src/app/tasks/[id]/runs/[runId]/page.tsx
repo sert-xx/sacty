@@ -257,6 +257,14 @@ function AgentFilesView({
           {[m.runtime[files.runtime] ?? files.runtime, files.sessionId].filter(Boolean).join("・")}
         </dd>
       </dl>
+      {files.notArchived && (
+        <p
+          role="alert"
+          className="rounded-lg border border-warn-line bg-warn-soft px-3 py-2 text-warn"
+        >
+          {m.notArchived[files.notArchived] ?? files.notArchived}
+        </p>
+      )}
       {unmatched > 0 && (
         <p
           role="alert"

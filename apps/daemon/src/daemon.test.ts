@@ -668,7 +668,14 @@ class FakeExecutor implements AgentExecutor {
           })
         : next;
     // エージェントが書いた元のファイル（PBI-66）を、実行ごとの設定の場所に置いて、実行器と同じように写させる
-    if (this.sessionFiles && invocation.sessionFiles && log) {
+    if (this.sessionFiles && invocation.sessionFiles && log && this.containerUnconfirmed) {
+      // 実行器と同じく、コンテナの停止を確かめられなければ写さず、その理由を残す
+      log.agentFilesNotArchived({
+        runtime: invocation.sessionFiles,
+        reason: "container_not_confirmed",
+        sessionId: `session-${runId}`,
+      });
+    } else if (this.sessionFiles && invocation.sessionFiles && log) {
       const config = mkdtempSync(join(tmpdir(), "sacty-fake-config-"));
       try {
         for (const [path, content] of Object.entries(this.sessionFiles(invocation))) {
@@ -688,6 +695,8 @@ class FakeExecutor implements AgentExecutor {
   }
   /** 実行ごとに、エージェントが設定の場所に書く元のファイル（相対パスと中身。PBI-66）。無ければ書かない。 */
   sessionFiles?: (invocation: Invocation) => Record<string, string>;
+  /** true にすると、実行の後にコンテナの停止を確かめられなかった（元のファイルを写さない）ことにする。 */
+  containerUnconfirmed = false;
   /** false にすると、コンテナの停止を確かめられない（止まらないコンテナがある）ことにする。 */
   stops = true;
   async ensureStopped() {
@@ -11102,6 +11111,30 @@ describe("エージェントの元のセッションのファイル（PBI-66）"
     expect(runId).toBeTruthy();
     expect(archivedOf(service, task.id)).toEqual([]);
     expect(existsSync(join(dir, "runs", task.id, runId))).toBe(false);
+    activity.close();
+  });
+
+  it("コンテナの停止を確かめられなかった実行は写さず、写さなかった理由を作業履歴と API に残す", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const sessionLogs = new SessionLogStore(join(dir, "runs"));
+    const { service, executor } = makeService(activity, [completed(1_000)], { sessionLogs });
+    executor.sessionFiles = claudeFiles("oauth-secret");
+    executor.containerUnconfirmed = true;
+    const task = service.createTask({ projectId: "default", title: "A" });
+    await service.runNext(task.id);
+    const runId = runIdOf(service.get(task.id)?.activity, "AgentRunCompleted") ?? "";
+    expect(archivedOf(service, task.id)).toEqual([
+      expect.objectContaining({
+        runId,
+        runtime: "claude-code",
+        files: [],
+        skipped: [],
+        notArchived: "container_not_confirmed",
+      }),
+    ]);
+    expect(existsSync(join(dir, "runs", task.id, runId, "agent"))).toBe(false);
+    const files = await service.agentSessionFiles(task.id, runId);
+    expect(files).toMatchObject({ notArchived: "container_not_confirmed", files: [] });
     activity.close();
   });
 

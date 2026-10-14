@@ -445,6 +445,8 @@ export type AgentFiles = {
   sessionId?: string;
   limitBytes: number;
   skipped: string[];
+  /** 写さなかった理由（files は空）。 */
+  notArchived?: "container_not_confirmed";
   archivedAt: string;
   files: AgentFile[];
 };

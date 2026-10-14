@@ -830,6 +830,29 @@ describe("エージェントの元のファイルを写した記録の表示（P
       "Copied 1 original file written by the agent and recorded its size and hash",
     );
   });
+
+  it("コンテナの停止を確かめられず写さなかったときは、その理由を出す", () => {
+    const event = {
+      type: "AgentSessionArchived",
+      payload: {
+        runId: "r",
+        role: "orchestrator",
+        agentId: "a",
+        runtime: "claude-code",
+        files: [],
+        limitBytes: 1,
+        skipped: [],
+        notArchived: "container_not_confirmed",
+      },
+      actor: "sacty",
+    } as unknown as ActivityEvent;
+    expect(describeEvent(event)).toBe(
+      "コンテナが止まったことを確かめられなかったため、エージェントの元のファイルを写さなかった",
+    );
+    expect(describeIn(event, labels.en)).toBe(
+      "Did not copy the agent's original files because the container could not be confirmed to have stopped",
+    );
+  });
 });
 
 describe("状態の表示の種類（PBI-42）", () => {

@@ -221,6 +221,8 @@ const ja = {
     OrchestratorFailed: (message: string, cost: string) => `${message}（${cost}）`,
     AgentSessionArchived: (files: number, truncated: number) =>
       `エージェントの元のファイル${files}件を写し、大きさとハッシュを記録${truncated > 0 ? `（うち${truncated}件は上限を超えたため、間を省いた）` : ""}`,
+    AgentSessionNotArchived:
+      "コンテナが止まったことを確かめられなかったため、エージェントの元のファイルを写さなかった",
     AiRequestsRetried: (retries: number, seconds: number, statuses: string, gaveUp: boolean) =>
       `ゲートウェイが AI の呼び出しを${retries}回リトライ（${statuses}・合計${seconds}秒待った）${gaveUp ? "→ 上限に達したため、あきらめた" : ""}`,
     StepQueued: (step: string) => `${step}を実行待ちにした（実行できるようになったため）`,
@@ -458,6 +460,8 @@ const en: LabelMessages = {
     OrchestratorFailed: (message, cost) => `${message} (${cost})`,
     AgentSessionArchived: (files, truncated) =>
       `Copied ${files} original file${files === 1 ? "" : "s"} written by the agent and recorded ${files === 1 ? "its size and hash" : "their sizes and hashes"}${truncated > 0 ? ` (${truncated} exceeded the limit, so the middle was omitted)` : ""}`,
+    AgentSessionNotArchived:
+      "Did not copy the agent's original files because the container could not be confirmed to have stopped",
     AiRequestsRetried: (retries, seconds, statuses, gaveUp) =>
       `The gateway retried the AI call ${retries} time${retries === 1 ? "" : "s"} (${statuses}; waited ${seconds}s in total)${gaveUp ? " → gave up at the limit" : ""}`,
     StepQueued: (step) => `${step} queued (it can run now)`,

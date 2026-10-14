@@ -1,10 +1,13 @@
+import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   chmodSync,
   existsSync,
+  linkSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  renameSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -18,12 +21,13 @@ import {
   archivedFilePath,
   ByteRedactor,
   checkArchivedFiles,
+  copyAgentSessionFiles,
   fileCaps,
   guessSessionId,
   safeRelativePath,
   selectAgentSessionFiles,
 } from "./agent-sessions.js";
-import { DockerExecutor } from "./agents/docker.js";
+import { DockerExecutor, RunningContainers } from "./agents/docker.js";
 import { buildInvocation } from "./agents/invocation.js";
 import { ClaudeOutcomeReader, CodexOutcomeReader } from "./agents/parse.js";
 import type { AgentConfig } from "./config.js";
@@ -109,7 +113,9 @@ describe("写すファイルの選び方（PBI-66）", () => {
 
   it("Codex：sessions の下だけを写し、auth.json・config.toml・データベース・スキル・シェルの写しは写さない", () => {
     const root = configDir(codexFiles);
-    expect(selectAgentSessionFiles("codex", root)).toEqual([
+    expect(
+      selectAgentSessionFiles("codex", root).map(({ path, size }) => ({ path, size })),
+    ).toEqual([
       {
         path: `sessions/2026/10/13/rollout-2026-10-13T23-07-05-${CODEX_THREAD}.jsonl`,
         size: Buffer.byteLength(Object.values(codexFiles)[0] as string),
@@ -326,25 +332,214 @@ describe("上限（PBI-66）", () => {
     expect(byPath["projects/p/big.jsonl"]?.bytes).toBe(Buffer.byteLength(big));
   });
 
-  it("秘密情報が、残す先頭の終わりをまたいでいても、切れ端を残さない", async () => {
+  it("秘密情報が、残す先頭の終わり・末尾の始まりをまたいでいても、切れ端を残さない", async () => {
     const secret = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123";
-    // 先頭の上限（上限の8割 = 800バイト）の位置に秘密情報がかかるようにする
-    const content = `${"a".repeat(790)}${secret}${"b".repeat(2000)}`;
-    const root = configDir({ "projects/p/t.txt": content });
+    // 残す先頭の終わり（上限から目印の分を除いた大きさの8割）・末尾の始まりがどこにあっても、秘密情報がかかるよう、
+    // 秘密情報の位置をずらしながら確かめる
+    for (const at of [
+      ...Array.from({ length: 140 }, (_, i) => 600 + i),
+      ...Array.from({ length: 60 }, (_, i) => 2640 + i),
+    ]) {
+      const content = `${"a".repeat(at)}${secret}${"b".repeat(2800 - at)}`;
+      const root = join(dir, `c${at}`);
+      mkdirSync(join(root, "projects/p"), { recursive: true });
+      writeFileSync(join(root, "projects/p/t.txt"), content);
+      const dest = join(dir, `d${at}`);
+      const archive = await archiveAgentSessionFiles({
+        runtime: "claude-code",
+        configDir: root,
+        dest,
+        secrets: [secret],
+        limit: 1000,
+      });
+      const out = readFileSync(join(dest, "projects/p/t.txt"), "utf8");
+      for (let n = 4; n <= secret.length; n++) {
+        expect(out, `at ${at}`).not.toContain(secret.slice(0, n));
+        expect(out, `at ${at}`).not.toContain(secret.slice(-n));
+      }
+      expect(out).toContain("[sacty] truncated:");
+      expect(Buffer.byteLength(out)).toBeLessThanOrEqual(1000);
+      expect(archive.files[0]?.truncated).toBeDefined();
+    }
+  });
+
+  /** 写した合計が上限に収まり、記録した大きさ・ハッシュが写したファイルのものであることを確かめる。 */
+  const expectWithinLimit = (
+    archive: Awaited<ReturnType<typeof archiveAgentSessionFiles>>,
+    dest: string,
+    limit: number,
+  ) => {
+    let total = 0;
+    for (const file of archive.files) {
+      const content = readFileSync(join(dest, file.path));
+      expect(file.bytes, file.path).toBe(content.length);
+      expect(file.sha256, file.path).toBe(sha(content));
+      total += content.length;
+    }
+    expect(total).toBeLessThanOrEqual(limit);
+    return total;
+  };
+
+  it("伏せ字で膨らんだ分も上限に入れる（元のファイルは上限以内でも、伏せた後に超えたら省いて記録する。回帰）", async () => {
+    // 900バイトの元のファイルに、3バイトの秘密情報が300個：伏せると [REDACTED]（10バイト）になり 3000 バイトに膨らむ
+    const root = configDir({ "projects/p/s.txt": "abc".repeat(300) });
     const dest = join(dir, "agent");
-    await archiveAgentSessionFiles({
+    const archive = await archiveAgentSessionFiles({
       runtime: "claude-code",
       configDir: root,
       dest,
-      secrets: [secret],
+      secrets: ["abc"],
       limit: 1000,
     });
-    const out = readFileSync(join(dest, "projects/p/t.txt"), "utf8");
-    for (let n = 6; n <= secret.length; n++) {
-      expect(out).not.toContain(secret.slice(0, n));
-      expect(out).not.toContain(secret.slice(-n));
-    }
+    const [file] = archive.files;
+    expect(file?.sourceBytes).toBe(900);
+    expect(file?.truncated).toBeDefined();
+    const total = expectWithinLimit(archive, dest, 1000);
+    const out = readFileSync(join(dest, "projects/p/s.txt"), "utf8");
+    expect(out).not.toContain("abc");
     expect(out).toContain("[sacty] truncated:");
+    // 省いた大きさ＋残した中身＝伏せた後の全体（3000バイト）。目印の前の改行は、目印の分
+    const marker = /\n?\[sacty\] truncated: [^\n]*\n/.exec(out)?.[0] ?? "";
+    expect(total - Buffer.byteLength(marker) + (file?.truncated?.droppedBytes ?? 0)).toBe(3000);
+  });
+
+  it("割り当てが目印より小さいときも上限を超えない（中身は残さず、省いた大きさを記録する）", async () => {
+    const root = configDir({
+      "projects/p/big.jsonl": `${'{"x":1}\n'.repeat(100)}`,
+      "projects/p/a.txt": "abc",
+    });
+    const dest = join(dir, "agent");
+    const archive = await archiveAgentSessionFiles({
+      runtime: "claude-code",
+      configDir: root,
+      dest,
+      secrets: [],
+      limit: 40,
+    });
+    expectWithinLimit(archive, dest, 40);
+    const big = archive.files.find((f) => f.path === "projects/p/big.jsonl");
+    expect(big).toMatchObject({ bytes: 0, truncated: { droppedBytes: 800, droppedLines: 100 } });
+    expect(archive.files.find((f) => f.path === "projects/p/a.txt")?.truncated).toBeUndefined();
+  });
+
+  it("伏せた後の大きさが、ちょうど上限なら省かない。1バイト超えたら省いて記録する（1つのファイル・複数のファイル）", async () => {
+    const secret = "s3cr3t-value";
+    // 伏せた後：[REDACTED]（10バイト）＋ 埋める分
+    const one = (n: number) => `${secret}${"x".repeat(n - 10)}`;
+    const cases: {
+      name: string;
+      files: Record<string, string>;
+      limit: number;
+      truncated: boolean;
+    }[] = [
+      { name: "ちょうど", files: { "projects/p/a.txt": one(1000) }, limit: 1000, truncated: false },
+      {
+        name: "1バイト超え",
+        files: { "projects/p/a.txt": one(1001) },
+        limit: 1000,
+        truncated: true,
+      },
+      {
+        name: "複数・ちょうど",
+        files: { "projects/p/a.txt": one(400), "projects/p/b.jsonl": `${one(599)}\n` },
+        limit: 1000,
+        truncated: false,
+      },
+      {
+        name: "複数・1バイト超え",
+        files: { "projects/p/a.txt": one(400), "projects/p/b.jsonl": `${one(600)}\n` },
+        limit: 1000,
+        truncated: true,
+      },
+      {
+        name: "複数・どれも伏せて膨らむ",
+        files: {
+          "projects/p/a.txt": `${secret} `.repeat(30),
+          "projects/p/b.jsonl": `${JSON.stringify({ t: secret.repeat(40) })}\n`.repeat(3),
+          "projects/p/c.txt": "small",
+        },
+        limit: 600,
+        truncated: true,
+      },
+    ];
+    for (const [k, c] of cases.entries()) {
+      const root = join(dir, `c${k}`);
+      for (const [path, content] of Object.entries(c.files)) {
+        mkdirSync(dirname(join(root, path)), { recursive: true });
+        writeFileSync(join(root, path), content);
+      }
+      const dest = join(dir, `d${k}`);
+      const archive = await archiveAgentSessionFiles({
+        runtime: "claude-code",
+        configDir: root,
+        dest,
+        secrets: [secret],
+        limit: c.limit,
+      });
+      expect(archive.files.length, c.name).toBe(Object.keys(c.files).length);
+      const total = expectWithinLimit(archive, dest, c.limit);
+      expect(
+        archive.files.some((f) => f.truncated),
+        c.name,
+      ).toBe(c.truncated);
+      if (!c.truncated) expect(total, c.name).toBe(c.limit);
+      for (const file of archive.files) {
+        expect(readFileSync(join(dest, file.path), "utf8"), c.name).not.toContain(
+          secret.slice(0, 4),
+        );
+      }
+      if (c.name === "複数・どれも伏せて膨らむ") {
+        expect(archive.files.find((f) => f.path === "projects/p/c.txt")?.truncated).toBeUndefined();
+      }
+    }
+  });
+});
+
+describe("選んだ後にリンクへ差し替えられても、領域の外を写さない（PBI-66）", () => {
+  const setup = () => {
+    const root = configDir({
+      "projects/p/s.jsonl": '{"in":"area"}\n',
+      "projects/p/keep.jsonl": '{"keep":true}\n',
+    });
+    mkdirSync(join(dir, "host/p"), { recursive: true });
+    writeFileSync(join(dir, "host/secret"), "HOST-SECRET-CONTENT\n");
+    writeFileSync(join(dir, "host/p/s.jsonl"), "HOST-SECRET-CONTENT\n");
+    const sources = selectAgentSessionFiles("claude-code", root);
+    expect(sources.map((s) => s.path)).toEqual(["projects/p/keep.jsonl", "projects/p/s.jsonl"]);
+    return { root, sources };
+  };
+  const copy = (root: string, sources: ReturnType<typeof selectAgentSessionFiles>) =>
+    copyAgentSessionFiles({ configDir: root, dest: join(dir, "agent"), secrets: [], sources });
+  const expectNoHostContent = (archive: Awaited<ReturnType<typeof copy>>) => {
+    expect(archive.skipped).toEqual(["projects/p/s.jsonl"]);
+    expect(archive.files.map((f) => f.path)).toEqual(["projects/p/keep.jsonl"]);
+    expect(existsSync(join(dir, "agent/projects/p/s.jsonl"))).toBe(false);
+    expect(readFileSync(join(dir, "agent/projects/p/keep.jsonl"), "utf8")).toBe('{"keep":true}\n');
+  };
+
+  it("ファイルを、ホストのファイルへのシンボリックリンクに差し替えた", async () => {
+    const { root, sources } = setup();
+    rmSync(join(root, "projects/p/s.jsonl"));
+    symlinkSync(join(dir, "host/secret"), join(root, "projects/p/s.jsonl"));
+    expectNoHostContent(await copy(root, sources));
+  });
+
+  it("途中のディレクトリを、ホストのディレクトリへのシンボリックリンクに差し替えた", async () => {
+    const { root, sources } = setup();
+    renameSync(join(root, "projects/p"), join(dir, "moved"));
+    symlinkSync(join(dir, "host/p"), join(root, "projects/p"));
+    // keep.jsonl も途中がリンクになるので写さない。どちらにもホストの中身は入らない
+    const archive = await copy(root, sources);
+    expect(archive.files).toEqual([]);
+    expect(archive.skipped).toEqual(["projects/p/keep.jsonl", "projects/p/s.jsonl"]);
+    expect(existsSync(join(dir, "agent/projects/p/s.jsonl"))).toBe(false);
+  });
+
+  it("ファイルを、別の通常のファイル（ハードリンクなど、選んだものと違うファイル）に差し替えた", async () => {
+    const { root, sources } = setup();
+    rmSync(join(root, "projects/p/s.jsonl"));
+    linkSync(join(dir, "host/secret"), join(root, "projects/p/s.jsonl"));
+    expectNoHostContent(await copy(root, sources));
   });
 });
 
@@ -563,6 +758,54 @@ while true; do sleep 0.05; done
       sessionId: "sid-9",
       files: [{ path: "projects/-workspace/sid-9.jsonl" }],
     });
+  });
+
+  it("コンテナが止まったことを確かめられなければ写さず、写さなかった理由を残す", async () => {
+    // docker ps は、いつまでもコンテナがあると答える（止まったことを確かめられない）
+    fakeDocker(`mkdir -p "$CONFIG/projects/-workspace"
+printf '{"type":"user"}\\n' > "$CONFIG/projects/-workspace/sid-7.jsonl"
+touch "${dir}/ready"
+trap 'exit 137' TERM
+while true; do sleep 0.05; done
+`);
+    writeFileSync(
+      join(dir, "bin/docker"),
+      readFileSync(join(dir, "bin/docker"), "utf8").replace(
+        'if [ "$1" != "run" ]',
+        'if [ "$1" = "ps" ]; then echo still-running; exit 0; fi\nif [ "$1" != "run" ]',
+      ),
+    );
+    const store = new SessionLogStore(join(dir, "runs"));
+    const log = store.open(info("claude-code"), () => []);
+    const executor = new DockerExecutor(undefined, undefined, new RunningContainers(spawn, 10, 1));
+    const running = executor.run({
+      runId: "run-1",
+      image: "img",
+      workspaceDir: dir,
+      invocation: {
+        command: ["claude"],
+        env: {},
+        parser: "claude-json",
+        stage: { containerDir: "/tmp/sacty-claude-config", files: [] },
+        sessionFiles: "claude-code",
+      },
+      log,
+    });
+    while (!existsSync(join(dir, "ready"))) await new Promise((r) => setTimeout(r, 20));
+    executor.abortAll();
+    const outcome = await running;
+    expect(outcome).toMatchObject({
+      kind: "failed",
+      message: { code: "run.containerNotConfirmed" },
+    });
+    expect(log.archived).toEqual({
+      files: [],
+      skipped: [],
+      limitBytes: 200 * 1024 * 1024,
+      runtime: "claude-code",
+      notArchived: "container_not_confirmed",
+    });
+    expect(existsSync(join(dir, "runs/task-1/run-1/agent"))).toBe(false);
   });
 
   it("スタブ（元のファイルが無い）では写さない", async () => {
