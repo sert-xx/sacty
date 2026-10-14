@@ -13,7 +13,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { isAbsolute, join, relative } from "node:path";
 import type { DaemonMessage } from "@sacty/core";
 import type { HostedContextMcp, HostedMcpRelay } from "./context.js";
-import { type HostMcpConnector, HostMcpServers, type HostMcpSpec } from "./host-mcp.js";
+import { type HostMcpConnector, HostMcpServers, type HostMcpSpec, mcpLogName } from "./host-mcp.js";
 import type { HostMcpProcesses } from "./host-mcp-processes.js";
 import type { SecretStore } from "./secrets.js";
 
@@ -70,6 +70,13 @@ export type ContextMcpLease = {
 };
 
 const sha = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
+
+/**
+ * 表示・ログに出す層（リポジトリ#ref@commit）。リポジトリの URL に認証情報（https://user:token@…）が書いてあっても出さない
+ * （PBI-92）。
+ */
+export const shownLayer = (from: string) =>
+  from.replace(/^([a-z][a-z0-9+.-]*:\/\/)[^/\s]*@(?=[^/\s]*\/)/i, "$1***@");
 
 /**
  * ディレクトリを消す。消せなければ、中のディレクトリを書き込めるようにしてから消し直す（MCP サーバーが作業ディレクトリの
@@ -177,7 +184,12 @@ export class ContextMcpServers {
    * 実行が使う MCP サーバーを確保する（まだ起動していなければ、次の ready で起動する）。層の写しは、ここで作る（取得した
    * 層は実行の後に消えるため）。
    */
-  lease(projectId: string, servers: readonly HostedContextMcp[]): ContextMcpLease {
+  lease(
+    projectId: string,
+    servers: readonly HostedContextMcp[],
+    /** ログ・理由に出すプロジェクトの名前（PBI-92。中の名前は ID から作るので、名前を変えても起動し直さない）。 */
+    projectName: string = projectId,
+  ): ContextMcpLease {
     if (this.stopped) return { relays: [], keys: [], release: () => {} };
     // 先にすべてを確かめて用意し（層の写しを含む。ここでは、持っている状態を何も変えない）、すべて用意できてから、まとめて
     // 確定する（確定は例外にならない）。途中で失敗したら、この呼び出しで写した層だけを消す。使っている実行の数・順序
@@ -193,6 +205,12 @@ export class ContextMcpServers {
     // 確定する
     for (const entry of planned) {
       if (!this.entries.has(entry.key)) this.entries.set(entry.key, entry);
+      // プロジェクトの名前は、いまのものを出す（名前を変えたら、次の確保から）
+      if (entry.spec.context) entry.spec.context.project = { id: projectId, name: projectName };
+      this.layerOwners.set(
+        entry.layerDir,
+        `project ${JSON.stringify(projectName)} [${projectId}], context ${JSON.stringify(entry.spec.context?.from ?? "")}`,
+      );
       this.layerDirs.add(entry.layerDir);
       this.copies.set(entry.layerId, entry.layerDir);
       entry.leases += 1;
@@ -266,7 +284,11 @@ export class ContextMcpServers {
             ? { toolTimeoutSec: server.tool_timeout_sec }
             : {}),
           cwd: layerDir,
-          context: { name: server.name, from: server.from },
+          context: {
+            name: server.name,
+            from: shownLayer(server.from),
+            project: { id: projectId, name: projectId },
+          },
         },
         layerId,
         layerDir,
@@ -335,7 +357,7 @@ export class ContextMcpServers {
         this.entries.delete(e.key);
         removed = true;
         this.deps.log?.(
-          `[gateway] context MCP ${e.spec.context?.name}: stopping (${superseded ? "the content changed" : "not used"})`,
+          `[gateway] ${mcpLogName(e.spec)}: stopping (${superseded ? "the content changed" : "not used"})`,
         );
       }
     }
@@ -351,24 +373,30 @@ export class ContextMcpServers {
     for (const dir of [...this.layerDirs]) {
       if (usedDirs.has(dir)) continue;
       this.layerDirs.delete(dir);
+      const owner = this.layerOwners.get(dir);
+      this.layerOwners.delete(dir);
       for (const [id, copy] of this.copies) if (copy === dir) this.copies.delete(id);
-      this.discard(dir);
+      this.discard(dir, owner);
     }
   }
 
   /** 持っている層の写し（使っているものと、まだ消していないもの）。 */
   private readonly layerDirs = new Set<string>();
+  /** 層の写しごとの、どのプロジェクト・層のものか（後片付けのログに出す。PBI-92）。 */
+  private readonly layerOwners = new Map<string, string>();
   /** 層の写しの識別ごとの、使い回すディレクトリ。 */
   private readonly copies = new Map<string, string>();
   /** 消せなかった写し（次の sweep・終了・次の起動の片付けで消す）。 */
   private readonly discarded = new Set<string>();
 
   /** もう使わない写しを消す。消せなければ、後でやり直すよう覚えておく（使い回さない）。 */
-  private discard(dir: string): void {
+  private discard(dir: string, owner?: string): void {
     if (this.tryRemove(dir)) return;
     if (!this.discarded.has(dir)) {
       this.discarded.add(dir);
-      this.deps.log?.(`[gateway] context MCP: could not remove ${dir}; retrying later`);
+      this.deps.log?.(
+        `[gateway] context MCP: could not remove ${dir}${owner ? ` (${owner})` : ""}; retrying later`,
+      );
     }
   }
 

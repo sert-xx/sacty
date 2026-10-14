@@ -18,12 +18,12 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { renderMessage } from "@sacty/core";
+import { message, renderMessage } from "@sacty/core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { HostedContextMcp } from "./context.js";
-import { ContextMcpServers } from "./context-mcp.js";
+import { ContextMcpServers, shownLayer } from "./context-mcp.js";
 import { AiGateway } from "./gateway.js";
-import type { HostMcpConnector, HostMcpSpec } from "./host-mcp.js";
+import { type HostMcpConnector, type HostMcpSpec, StartError } from "./host-mcp.js";
 import { collectTargets, HostMcpProcesses, psTable } from "./host-mcp-processes.js";
 import { MemorySecretStore } from "./secrets.js";
 
@@ -405,6 +405,10 @@ describe("コンテキストの command の MCP サーバーをホストで動�
     // ログには1回だけ残す
     manager.sweep();
     expect(logs.filter((l) => l.includes("could not remove"))).toHaveLength(1);
+    // どのプロジェクト・層の写しか（PBI-92）
+    expect(logs.find((l) => l.includes("could not remove"))).toContain(
+      `(project "p1" [p1], context "https://github.com/acme/ctx.git@c100000"); retrying later`,
+    );
     // 消せるようになったら、次の sweep で消す
     failing = false;
     manager.sweep();
@@ -493,6 +497,202 @@ describe("コンテキストの command の MCP サーバーをホストで動�
     expect(text).toContain("sacty-no-such-command-84");
     expect(text).toContain("via_gateway: false");
     expect(text).toContain("https://github.com/acme/ctx.git@c100000");
+    lease.release();
+  });
+});
+
+describe("ログ・理由で、どのコンテキストの MCP サーバーかわかる（PBI-92）", {
+  timeout: 20_000,
+}, () => {
+  /** 起動に失敗する MCP サーバー（失敗の文と標準エラーに、env の秘密情報の値を出してしまうもの）。 */
+  const failing: HostMcpConnector = async (_spec, env) => {
+    throw new StartError(`login failed with ${env.TOKEN}`, `auth error token=${env.TOKEN}`);
+  };
+  const secretValue = "jira-secret-value-92";
+
+  it("not ready・起動・停止のログに、mcp.yaml の名前・プロジェクト・層・中の名前を出し、同じ名前の別のプロジェクトのものと区別できる。秘密情報は出さない", async () => {
+    const logs: string[] = [];
+    let now = 0;
+    manager = new ContextMcpServers({
+      root: join(dir, "home"),
+      secrets: new MemorySecretStore({ "jira-token": secretValue }),
+      connect: failing,
+      retryMs: 60_000,
+      idleMs: 1_000,
+      now: () => now,
+      log: (line) => logs.push(line),
+    });
+    manager.start();
+    // 2つのプロジェクトで、同じ層・同じ mcp.yaml の名前
+    const shared = layer("ctx", "shared");
+    const jira = () =>
+      server({ name: "jira", env: { TOKEN: { secret: "jira-token", prefix: "" } }, layer: shared });
+    const web = manager.lease("p-web", [jira()], "Acme web");
+    const api = manager.lease("p-api", [jira()], "Acme api");
+    const problems = await manager.ready([...web.keys, ...api.keys]);
+    const from = "https://github.com/acme/ctx.git@c100000";
+    const notReady = (project: string, id: string, key: string) =>
+      logs.find(
+        (l) =>
+          l.includes(": not ready: ") &&
+          l.includes(`context MCP "jira" (project "${project}" [${id}], context "${from}"`) &&
+          l.includes(`internal ${key}`),
+      );
+    const webKey = web.keys[0] ?? "";
+    const apiKey = api.keys[0] ?? "";
+    expect(notReady("Acme web", "p-web", webKey)).toBeDefined();
+    expect(notReady("Acme api", "p-api", apiKey)).toBeDefined();
+    expect(notReady("Acme web", "p-web", webKey)).not.toBe(notReady("Acme api", "p-api", apiKey));
+    expect(
+      logs.some((l) => l.includes(": starting (start)") && l.includes(`project "Acme web"`)),
+    ).toBe(true);
+    // 理由（作業履歴・画面に出すもの）にも、プロジェクトの名前と層を出す
+    expect(problems).toEqual([
+      expect.objectContaining({
+        code: "context.mcpHostUnavailable",
+        params: expect.objectContaining({ name: "jira", from, project: "Acme web" }),
+      }),
+      expect.objectContaining({
+        code: "context.mcpHostUnavailable",
+        params: expect.objectContaining({ name: "jira", from, project: "Acme api" }),
+      }),
+    ]);
+    expect(renderMessage(problems[0], "ja")).toContain(
+      `プロジェクト「Acme web」の ${from} の mcp.yaml の MCP サーバー「jira」`,
+    );
+    expect(renderMessage(problems[1], "en")).toContain(
+      `"jira" in mcp.yaml of ${from} (project "Acme api")`,
+    );
+    // エージェントへの 503 にも、mcp.yaml の名前・層・プロジェクトを出す（中の名前は出さない）
+    gateway = new AiGateway({ contextHostMcp: manager });
+    const port = await gateway.listen();
+    const run = gateway.register(
+      undefined,
+      Object.fromEntries(web.relays.map((r) => [r.name, { host: r.host }])),
+    );
+    const res = await fetch(`http://127.0.0.1:${port}/ctx-mcp/jira`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${run.token}`,
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+      },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+    });
+    expect(res.status).toBe(503);
+    const body = await res.text();
+    expect(body).toContain(
+      `the MCP server \\"jira\\" (mcp.yaml of ${from}, project \\"Acme web\\")`,
+    );
+    expect(body).not.toContain(webKey);
+    run.close();
+    // 止めるログにも出す
+    web.release();
+    api.release();
+    now = 5_000;
+    manager.sweep();
+    expect(
+      logs.some(
+        (l) =>
+          l.includes(": stopping (not used)") &&
+          l.includes(`context MCP "jira" (project "Acme api" [p-api]`),
+      ),
+    ).toBe(true);
+    // 中の名前（ctx-…）を出す行には、必ず mcp.yaml の名前とプロジェクトもある
+    for (const line of logs.filter((l) => /ctx-[0-9a-f]{24}/.test(l))) {
+      expect(line).toMatch(/context MCP "jira" \(project "Acme (web|api)" \[p-(web|api)\]/);
+    }
+    // 秘密情報の値は、ログ・理由・503 のどこにも出さない
+    expect(logs.join("\n")).not.toContain(secretValue);
+    expect(JSON.stringify(problems)).not.toContain(secretValue);
+    expect(body).not.toContain(secretValue);
+  });
+
+  it("準備を待つ上限を過ぎた理由にも、プロジェクトを出す", async () => {
+    manager = new ContextMcpServers({
+      root: join(dir, "home"),
+      secrets: new MemorySecretStore({}),
+      connect: () => new Promise(() => {}),
+      readyWaitMs: 50,
+    });
+    manager.start();
+    const lease = manager.lease("p1", [server({ name: "slow", layer: layer("ctx", "x") })], "Acme");
+    const [problem] = await manager.ready(lease.keys);
+    expect(problem).toMatchObject({
+      code: "context.mcpHostReadyTimeout",
+      params: { name: "slow", project: "Acme" },
+    });
+    lease.release();
+  });
+
+  it("プロジェクトの名前を変えたら、起動し直さずに、次の確保からログ・理由に新しい名前を出す", async () => {
+    const logs: string[] = [];
+    const fake = fakeConnect();
+    manager = new ContextMcpServers({
+      root: join(dir, "home"),
+      secrets: new MemorySecretStore({}),
+      connect: fake.connect,
+      log: (line) => logs.push(line),
+    });
+    manager.start();
+    const l = layer("ctx", "x");
+    const before = manager.lease("p1", [server({ layer: l })], "Old name");
+    expect(await manager.ready(before.keys)).toEqual([]);
+    const after = manager.lease("p1", [server({ layer: l })], "New name");
+    expect(await manager.ready(after.keys)).toEqual([]);
+    expect(after.keys).toEqual(before.keys);
+    expect(fake.started).toHaveLength(1);
+    expect(fake.started[0]?.spec.context?.project).toEqual({ id: "p1", name: "New name" });
+    before.release();
+    after.release();
+  });
+
+  it("層の表示：URL の認証情報だけを伏せる（@ を含むパスワード・認証情報の無い URL・SSH の形）", () => {
+    expect(shownLayer("https://user:tok@example.com/acme/ctx.git#main@c100000")).toBe(
+      "https://***@example.com/acme/ctx.git#main@c100000",
+    );
+    expect(shownLayer("https://u:p@ss@example.com/acme/ctx.git@c100000")).toBe(
+      "https://***@example.com/acme/ctx.git@c100000",
+    );
+    expect(shownLayer("https://github.com/acme/ctx.git@c100000")).toBe(
+      "https://github.com/acme/ctx.git@c100000",
+    );
+    expect(shownLayer("https://example.com@c100000")).toBe("https://example.com@c100000");
+    const ssh = ["git", "example.com:acme/ctx.git@c100000"].join("@");
+    expect(shownLayer(ssh)).toBe(ssh);
+  });
+
+  it("プロジェクトの無い前の記録の理由は、プロジェクトを出さずに表示する", () => {
+    const old = message("context.mcpHostUnavailable", {
+      name: "jira",
+      from: "acme/ctx@c100000",
+      detail: "x",
+    });
+    expect(renderMessage(old, "ja")).toMatch(
+      /^acme\/ctx@c100000 の mcp.yaml の MCP サーバー「jira」/,
+    );
+    expect(renderMessage(old, "en")).toContain('"jira" in mcp.yaml of acme/ctx@c100000 could not');
+  });
+
+  it("層のリポジトリの URL の認証情報は、ログ・理由に出さない", async () => {
+    const logs: string[] = [];
+    manager = new ContextMcpServers({
+      root: join(dir, "home"),
+      secrets: new MemorySecretStore({}),
+      connect: failing,
+      retryMs: 60_000,
+      log: (line) => logs.push(line),
+    });
+    manager.start();
+    const l = { ...layer("ctx", "x"), repo: "https://user:url-token-92@example.com/acme/ctx.git" };
+    const lease = manager.lease("p1", [server({ name: "wiki", layer: l })], "Acme");
+    const problems = await manager.ready(lease.keys);
+    expect(problems[0]).toMatchObject({
+      params: { from: "https://***@example.com/acme/ctx.git@c100000" },
+    });
+    expect(logs.join("\n")).toContain("https://***@example.com/acme/ctx.git@c100000");
+    expect(logs.join("\n")).not.toContain("url-token-92");
+    expect(JSON.stringify(problems)).not.toContain("url-token-92");
     lease.release();
   });
 });
@@ -608,8 +808,12 @@ await server.connect(new StdioServerTransport());
       const pid = Number(readdirSync(records)[0]?.replace(".json", ""));
       const before = collectTargets(await psTable(), [], [pid]);
       expect(before.length).toBeGreaterThan(0);
-      // 次の起動の片付け
-      expect(await new HostMcpProcesses(records, { graceMs: 500 }).cleanup()).toBeGreaterThan(0);
+      // 次の起動の片付け。どの MCP サーバーのものか（mcp.yaml の名前・プロジェクト）をログに出す（PBI-92）
+      const logs: string[] = [];
+      expect(
+        await new HostMcpProcesses(records, { graceMs: 500, log: (l) => logs.push(l) }).cleanup(),
+      ).toBeGreaterThan(0);
+      expect(logs.join("\n")).toContain(`context MCP "real" (project "p1" [p1]`);
       const after = await psTable();
       expect(
         before.filter((p) => after.some((a) => a.pid === p.pid && a.started === p.started)),

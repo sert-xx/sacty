@@ -717,6 +717,23 @@ describe("コンテキストの HTTP の MCP サーバーの中継（PBI-49）",
     upstreamMcp.close();
   });
 
+  it("つなげなければ、どの MCP サーバー（mcp.yaml の名前）かを添えて 502 を返す（認証のヘッダーは出さない。PBI-92）", async () => {
+    gateway = new AiGateway();
+    const port = await gateway.listen();
+    const run = gateway.register(undefined, {
+      // 閉じたポート（つながらない）
+      wiki: { url: "http://127.0.0.1:1/mcp", headers: { Authorization: "Bearer wiki-secret-92" } },
+    });
+    const res = await send(port, "/ctx-mcp/wiki", {
+      headers: { authorization: `Bearer ${run.token}`, "content-type": "application/json" },
+      body: '{"jsonrpc":"2.0","id":1,"method":"tools/list"}',
+    });
+    expect(res.status).toBe(502);
+    expect(res.body).toContain('the MCP server \\"wiki\\" could not be reached');
+    expect(res.body).not.toContain("wiki-secret-92");
+    run.close();
+  });
+
   describe("時間切れ（PBI-75）", () => {
     const headers = (token: string) => ({
       authorization: `Bearer ${token}`,
