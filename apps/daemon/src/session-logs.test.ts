@@ -10,6 +10,7 @@ import {
   parseCodexEvents,
 } from "./agents/parse.js";
 import { SessionLogStore, StreamRedactor, TRUNCATED_EVENT, validLogId } from "./session-logs.js";
+import { waitFor } from "./testing/wait.js";
 
 let dir: string;
 beforeEach(() => {
@@ -478,13 +479,12 @@ echo '{"type":"result","is_error":false,"result":"done oauth-token-1234567890","
     expect(read?.stderr).toBe("stderr [REDACTED]\n");
   });
 
-  it("途中で止めた実行（デーモンの停止）も、それまでの出来事が残る", async () => {
-    fakeDocker(`echo '{"type":"system","subtype":"init"}'
-echo "starting" >&2
-trap 'exit 137' TERM
-touch "${dir}/ready"
-while true; do sleep 0.05; done
-`);
+  /**
+   * 偽の docker で実行し、出力を書き終えた合図（ready）を待ってから止める（決まった時間を待つと、負荷が高いときは書く前に
+   * 止めてしまう）。合図を出さないまま実行が終わったら、待ち続けずに、実行の結果を書いたエラーですぐ落ちる。
+   */
+  const stopAfterReady = async (script: string) => {
+    fakeDocker(script);
     const store = new SessionLogStore(join(dir, "runs"));
     const log = store.open(info, () => []);
     const executor = new DockerExecutor();
@@ -495,18 +495,54 @@ while true; do sleep 0.05; done
       invocation: { command: ["claude"], env: {}, parser: "claude-json" },
       log,
     });
-    // 出力を書き終えてから止める（決まった時間を待つと、負荷が高いときは書く前に止めてしまう）
-    while (!existsSync(join(dir, "ready"))) await new Promise((r) => setTimeout(r, 20));
-    executor.abortAll();
+    try {
+      await waitFor(() => existsSync(join(dir, "ready")), {
+        what: "偽の docker が出力を書き終えた合図（ready）",
+        source: {
+          name: "偽の docker の実行",
+          ended: running,
+          // 実行の結果と、それまでに残した標準エラー出力
+          describe: (outcome) =>
+            `${JSON.stringify(outcome)}・標準エラー出力 ${JSON.stringify(store.read("task-1", "run-1")?.stderr ?? "")}`,
+        },
+      });
+    } finally {
+      executor.abortAll();
+    }
     const outcome = await running;
     log.close(outcome);
-    const read = store.read("task-1", "run-1");
+    return store.read("task-1", "run-1");
+  };
+
+  it("途中で止めた実行（デーモンの停止）も、それまでの出来事が残る", async () => {
+    const read = await stopAfterReady(`echo '{"type":"system","subtype":"init"}'
+echo "starting" >&2
+trap 'exit 137' TERM
+touch "${dir}/ready"
+while true; do sleep 0.05; done
+`);
     expect(read?.events).toBe('{"type":"system","subtype":"init"}\n');
     expect(read?.stderr).toBe("starting\n");
     expect(read?.meta.outcome).toMatchObject({
       kind: "failed",
       message: { code: "run.daemonStopped" },
     });
+  });
+
+  it("合図の前に偽の docker が終わったら、待ち続けずに、実行の結果がわかるエラーですぐ落ちる（PR #94 レビュー指摘）", async () => {
+    const started = Date.now();
+    const error = await stopAfterReady(`echo "no such image: img" >&2
+exit 1
+`).then(
+      () => undefined,
+      (e: unknown) => e as Error,
+    );
+    expect(error?.message).toContain(
+      "合図（ready）を待っている間に、偽の docker の実行が、合図を出さないまま終わった",
+    );
+    expect(error?.message).toContain("no such image: img");
+    // 既定の時間切れ（5秒）や、待ちの期限（10秒）を待たない
+    expect(Date.now() - started).toBeLessThan(3_000);
   });
 });
 

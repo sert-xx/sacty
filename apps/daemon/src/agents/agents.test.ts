@@ -7,6 +7,7 @@ import { renderMessage } from "@sacty/core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { type AgentConfig, agentFor, CONFIG_TEMPLATE, loadConfig } from "../config.js";
 import { MemorySecretStore } from "../secrets.js";
+import { waitFor } from "../testing/wait.js";
 import { dockerRunArgs, syncBackIfChanged } from "./docker.js";
 import { buildInvocation, type Invocation } from "./invocation.js";
 import { classifyFailure, parseClaudeResult, parseCodexEvents } from "./parse.js";
@@ -1302,6 +1303,7 @@ done
 echo "$host" > "$here/staging.path"
 printf 'refreshed-token' > "$host/auth.json"
 trap 'exit 137' TERM
+touch "$here/ready"
 while true; do sleep 0.05; done
 `,
     );
@@ -1325,11 +1327,11 @@ while true; do sleep 0.05; done
         parser: "codex-jsonl",
       },
     });
-    // 偽dockerが認証ファイルを更新するまで待ってから止める
-    for (let i = 0; i < 100 && !existsSync(join(bin, "staging.path")); i++) {
-      await new Promise((r) => setTimeout(r, 20));
-    }
-    await new Promise((r) => setTimeout(r, 100));
+    // 偽dockerが認証ファイルを更新し、止められる用意をするまで待ってから止める（決まった時間は待たない）
+    await waitFor(() => existsSync(join(bin, "ready")), {
+      what: "偽の docker が認証ファイルを更新した合図（ready）",
+      source: { name: "偽の docker の実行", ended: running },
+    });
     executor.abortAll();
     const outcome = await running;
 
@@ -1410,7 +1412,10 @@ while true; do sleep 0.05; done`,
       workspaceDir: dir,
       invocation: invocation(hostAuth),
     });
-    while (!existsSync(join(bin, "ready"))) await new Promise((r) => setTimeout(r, 20));
+    await waitFor(() => existsSync(join(bin, "ready")), {
+      what: "偽の docker が認証ファイルを更新した合図（ready）",
+      source: { name: "偽の docker の実行", ended: running },
+    });
     executor.abortAll();
     const outcome = await running;
 

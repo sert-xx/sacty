@@ -33,6 +33,7 @@ import { ClaudeOutcomeReader, CodexOutcomeReader } from "./agents/parse.js";
 import type { AgentConfig } from "./config.js";
 import { MemorySecretStore } from "./secrets.js";
 import { SessionLogStore, TRUNCATED_EVENT } from "./session-logs.js";
+import { waitFor } from "./testing/wait.js";
 
 let dir: string;
 beforeEach(() => {
@@ -769,7 +770,10 @@ while true; do sleep 0.05; done
       log,
     });
     // コンテナがファイルを書いた後に止める（プロセスの起動が遅い環境でも、決まった時間を待たない）
-    while (!existsSync(join(dir, "ready"))) await new Promise((r) => setTimeout(r, 20));
+    await waitFor(() => existsSync(join(dir, "ready")), {
+      what: "偽の docker がファイルを書いた合図（ready）",
+      source: { name: "偽の docker の実行", ended: running },
+    });
     executor.abortAll();
     const outcome = await running;
     expect(outcome).toMatchObject({ kind: "failed", message: { code: "run.daemonStopped" } });
@@ -810,7 +814,10 @@ while true; do sleep 0.05; done
       },
       log,
     });
-    while (!existsSync(join(dir, "ready"))) await new Promise((r) => setTimeout(r, 20));
+    await waitFor(() => existsSync(join(dir, "ready")), {
+      what: "偽の docker がファイルを書いた合図（ready）",
+      source: { name: "偽の docker の実行", ended: running },
+    });
     executor.abortAll();
     const outcome = await running;
     expect(outcome).toMatchObject({
