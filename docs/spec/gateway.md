@@ -47,10 +47,25 @@ PF は `config.yaml` の `gateway.platforms`（すべてのプロジェクト）
 | `description` | エージェントへの説明（既定 空） |
 | `auth.header`・`auth.prefix` | 認証を付けるヘッダー（既定 `Authorization`）と値の前に付ける文字列（既定 空） |
 | `auth.secret` | 固定のキー（秘密情報の参照） |
-| `auth.token` | キーでトークンを取得する：`url`・`method`（既定 `POST`）・`headers`・`json`・`form`（`{{secret}}` をキーに置き換える）・`secret`・`token_path`・`expires_in_path`・`ttl_sec`（既定 300） |
+| `auth.token` | キーでトークンを取得する：`url`・`method`（既定 `POST`）・`headers`・`query`・`json`・`form`（`{{secret}}` をキーに置き換える）・`secret`・`token_path`・`expires_in_path`・`ttl_sec`（既定 300） |
 | `allow` | 使える API の一覧（`<メソッド> /<パス>`。1件以上） |
 
 `auth.secret` と `auth.token` はどちらか一方だけ書く。
+
+`auth.token` の検査（設定の読み込みのときに弾く）：
+
+- `url` は http・https。`{{secret}}` を含められない（キーをクエリで送るなら `query` に書く。`config.platformTokenUrlSecret`）。
+- `query` は「名前: 値」（名前は空でない文字列、値は文字列。`config.platformTokenQuery`）。
+- `method` が `GET`・`HEAD` のときは `json`・`form` を書けない（`config.platformTokenBody`）。
+
+トークンの窓口の URL（`tokenUrl`）：`query` の値の `{{secret}}` をキーに置き換え、名前と値を URL エンコードして（`encodeURIComponent`
+に加えて `!'()*` も変える。空白は `%20`）、`url` に元からあるクエリの後ろに `&` でつないで足す。元からあるクエリは書き換えない。
+`url` の `#` 以降は送らない。`query` を書かない（空も）ときは `url` をそのまま送る。`GET` で `json`・`form` が無ければ本文と
+`content-type` を付けない。
+
+トークンを取得できなかった理由（画面・ログ・作業履歴・ゲートウェイの応答に出す）は、キーを伏せてから600文字に切り詰める。伏せる形は、
+値そのもの・JSON の文字列にした形・URL エンコードした形（上のエンコード・`encodeURIComponent`・16進の小文字・フォームの形）・各行
+（4文字以上）（`hideSecret`・`urlForms`。URL エンコードできない値はフォームの形だけ）。送信の失敗の文（URL を含むもの）にも、窓口の HTTP のエラーの本文にも同じく伏せる。
 
 - 探す順は、ホストの PF、無ければその実行のトークンに結びつけたプロジェクトのコンテキストの PF。ほかのプロジェクトのタスクの
   トークンでは見つからない（404）。
@@ -63,7 +78,7 @@ PF は `config.yaml` の `gateway.platforms`（すべてのプロジェクト）
 - ホストの PF の認証は、デーモンの起動のときに用意する。用意できないホストの PF は、画面の警告に出す（ほかの PF は使える）。
 - エージェントの指示に、そのタスクで使える PF と API の一覧を入れる。
 
-コード: `apps/daemon/src/platforms.ts`（`PlatformFile`・`TokenRequest`・`pathPattern`・`isAllowed`・`PlatformCredentials`・`REFRESH_MARGIN_MS`・`platformPromptLines`）、`apps/daemon/src/gateway.ts`（`handlePlatform`・`sentUrl`）
+コード: `apps/daemon/src/platforms.ts`（`PlatformFile`・`TokenRequest`・`tokenUrl`・`hideSecret`・`pathPattern`・`isAllowed`・`PlatformCredentials`・`REASON_MAX`・`REFRESH_MARGIN_MS`・`platformPromptLines`）、`apps/daemon/src/gateway.ts`（`handlePlatform`・`sentUrl`）
 
 ## コンテキストの MCP の中継
 

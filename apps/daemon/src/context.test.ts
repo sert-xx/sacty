@@ -1106,6 +1106,33 @@ describe("外部 PF の合成（PBI-74）", () => {
     });
   });
 
+  it("platforms.yaml のトークンの取得に、キーを送るクエリを書ける（PBI-93）", async () => {
+    const result = await contextPlatforms(
+      new FakeFetcher({
+        "q.git": {
+          "platforms.yaml": [
+            "platforms:",
+            "  q:",
+            "    upstream: https://q.example.com",
+            "    auth:",
+            "      token:",
+            "        url: https://q.example.com/auth/token",
+            "        method: GET",
+            "        query: { api_token: '{{secret}}' }",
+            "        secret: q-key",
+            "        token_path: token",
+            "    allow: [GET /api/**]",
+          ].join("\n"),
+        },
+      }),
+      { repo: "q.git" },
+    );
+    expect(result.platforms[0]).toMatchObject({
+      name: "q",
+      auth: { token: { method: "GET", query: { api_token: "{{secret}}" }, tokenPath: "token" } },
+    });
+  });
+
   it("contextPlatforms は、PF に関わる警告だけを返す", async () => {
     const result = await contextPlatforms(
       new FakeFetcher({
@@ -1154,6 +1181,21 @@ describe("外部 PF の合成（PBI-74）", () => {
       [
         "platforms:\n  a:\n    upstream: file:///etc/passwd\n    auth:\n      secret: s\n    allow: [GET /a]\n",
         /platforms\.a\.upstream/,
+      ],
+      // トークンの取得の query の値が文字列でない（PBI-93）
+      [
+        "platforms:\n  a:\n    upstream: https://x.example.com\n    auth:\n      token: { url: https://t.example.com, method: GET, query: { api_token: [x] }, secret: t, token_path: x }\n    allow: [GET /a]\n",
+        /platforms\.a\.auth\.token\.query\.api_token）：トークンの取得の query は/,
+      ],
+      // トークンの取得の url に {{secret}}（PBI-93）
+      [
+        "platforms:\n  a:\n    upstream: https://x.example.com\n    auth:\n      token: { url: 'https://t.example.com/?k={{secret}}', method: GET, secret: t, token_path: x }\n    allow: [GET /a]\n",
+        /platforms\.a\.auth\.token\.url）：トークンの取得の url には/,
+      ],
+      // GET のトークンの取得に本文（PBI-93）
+      [
+        "platforms:\n  a:\n    upstream: https://x.example.com\n    auth:\n      token: { url: https://t.example.com, method: GET, json: { k: '{{secret}}' }, secret: t, token_path: x }\n    allow: [GET /a]\n",
+        /platforms\.a\.auth\.token\.method）：トークンの取得の method が GET・HEAD/,
       ],
       // 知らない項目（servers と書き間違えたなど）
       [`servers:\n  a:\n${ok}`, /platforms\.yaml に誤り/],

@@ -161,6 +161,18 @@ gateway:
           expires_in_path: data.expiresIn     # 期限（秒）の場所。無ければ ttl_sec
       allow:
         - GET /api/v1/deployments/**
+    status:
+      upstream: https://status.internal.example.com
+      auth:                                   # キーをクエリで送り（GET /auth/token?api_token=…）、JWT を受け取る
+        prefix: "Bearer "
+        token:
+          url: https://status.internal.example.com/auth/token?v=2   # 元からあるクエリも書ける
+          method: GET
+          query: { api_token: "{{secret}}" }  # url の後ろに足す（キーは URL エンコードする）
+          secret: op://Work/Status/api-key
+          token_path: token                   # 応答 {"token": "ey..."} の場所
+      allow:
+        - GET /api/v1/status/**
 ```
 
 | 項目 | 意味 | 既定値 |
@@ -171,9 +183,10 @@ gateway:
 | `auth.header` | 認証を付けるヘッダー | `Authorization` |
 | `auth.prefix` | 値の前置き（例 `"Bearer "`） | 空 |
 | `auth.secret` | 固定のキー（`auth.token` とどちらか一方だけ） | なし |
-| `auth.token.url` | トークンの窓口。必須 | なし |
+| `auth.token.url` | トークンの窓口（`http`・`https`）。必須。`{{secret}}` は書けない（`query` に書く） | なし |
 | `auth.token.method` | 窓口に送るメソッド | `POST` |
-| `auth.token.headers`・`json`・`form` | 窓口に送るヘッダー・JSON・フォーム（`{{secret}}` に秘密情報の値を入れる） | なし |
+| `auth.token.headers`・`json`・`form` | 窓口に送るヘッダー・JSON・フォーム（`{{secret}}` に秘密情報の値を入れる）。`method` が `GET`・`HEAD` なら `json`・`form` は書けない | なし |
+| `auth.token.query` | 窓口の URL に足すクエリのパラメーター（`名前: 値`。値は文字列で、`{{secret}}` に秘密情報の値を入れる）。URL エンコードして、`url` に元からあるクエリの後ろに足す | なし |
 | `auth.token.secret` | 窓口に送る秘密情報。必須 | なし |
 | `auth.token.token_path` | 応答の JSON の、トークンの場所。必須 | なし |
 | `auth.token.expires_in_path` | 応答の JSON の、期限（秒）の場所 | なし |
@@ -183,6 +196,8 @@ gateway:
 - 工程エージェントの指示に、使える PF と API の一覧を入れる。エージェントは認証を意識せずに呼べる。
 - ホワイトリストに無いリクエストは拒否する（403。何が使えるかを返す）。
 - トークンは期限の前に取り直し、拒否（401・403）されたら取り直して1回だけ送り直す。
+- キーをクエリで送るときも、キーの入った URL は、画面・ログ・作業履歴・エージェントへの応答（取得に失敗した理由を含む）に出さない
+  （`[secret]` に伏せる）。キーは窓口に送るだけで、PF への転送の URL には付けない。
 - 認証情報はデーモンの起動時に用意する。用意できない PF は、タスクの一覧の画面に出す（ほかの PF は使える）。
 - JIRA の取り込み（[取り込み](intake.md#jira-のチケット)）と成果の書き出し（[成果の書き出し](result-export.md)）の接続先にも使う。
 

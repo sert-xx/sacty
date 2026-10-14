@@ -1,5 +1,9 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { renderMessage } from "@sacty/core";
 import { describe, expect, it } from "vitest";
+import { loadConfig } from "./config.js";
 import {
   hideSecret,
   isAllowed,
@@ -9,6 +13,7 @@ import {
   PlatformFile,
   platformPromptLines,
   platformSummary,
+  tokenUrl,
   toPlatform,
 } from "./platforms.js";
 import { MemorySecretStore } from "./secrets.js";
@@ -243,6 +248,218 @@ describe("組織内 PF の API（PBI-35）", () => {
     expect(hideSecret('a "FAKE-SECRET\\nBAD" b FAKE-SECRET\nBAD', "FAKE-SECRET\nBAD")).toBe(
       'a "[secret]" b [secret]',
     );
+    // URL エンコードできない値（対になっていないサロゲート）でも、伏せる処理は失敗しない（PBI-93）
+    expect(hideSecret("x FAKE-\ud800-KEY y", "FAKE-\ud800-KEY")).toBe("x [secret] y");
+  });
+
+  describe("キーをクエリのパラメーターで送る窓口（PBI-93）", () => {
+    // URL エンコードで形が変わる文字（+ / = & ' # 空白 非 ASCII）を含めたキー
+    // encodeURIComponent が残す !'()* も変える
+    const key = "FAKE-KEY+a/b=c&d'e#f gé(1)*!";
+    const encodedKey = "FAKE-KEY%2Ba%2Fb%3Dc%26d%27e%23f%20g%C3%A9%281%29%2A%21";
+    const queryPf = (extra: Record<string, unknown> = {}) =>
+      platform(
+        {
+          upstream: "https://pf.example.com",
+          auth: {
+            prefix: "Bearer ",
+            token: {
+              url: "https://pf.example.com/auth/token",
+              method: "GET",
+              query: { api_token: "{{secret}}" },
+              secret: "pf-key",
+              token_path: "token",
+              ...extra,
+            },
+          },
+          allow: ["GET /**"],
+        },
+        "pf",
+      );
+
+    it("設定：query を書ける。名前・値の誤り・url の {{secret}}・GET の本文は、わかる文で弾く", () => {
+      const parse = (token: Record<string, unknown>, lang: "ja" | "en" = "ja") => {
+        const r = PlatformFile.safeParse({
+          upstream: "https://x.example.com",
+          auth: {
+            token: { url: "https://a.example.com/t", secret: "k", token_path: "t", ...token },
+          },
+          allow: ["GET /a"],
+        });
+        return r.success ? "" : renderMessage(r.error.issues[0]?.message, lang);
+      };
+      expect(parse({ method: "GET", query: { api_token: "{{secret}}", v: "2" } })).toBe("");
+      expect(queryPf().auth.token).toMatchObject({
+        method: "GET",
+        query: { api_token: "{{secret}}" },
+      });
+      expect(parse({ query: { api_token: 123 } })).toMatch(/query は「名前: 値」/);
+      expect(parse({ query: { "": "{{secret}}" } })).toMatch(/query は「名前: 値」/);
+      expect(parse({ query: ["{{secret}}"] })).toMatch(/query は「名前: 値」/);
+      expect(parse({ query: { api_token: 123 } }, "en")).toMatch(/Write the query for getting/);
+      expect(parse({ url: "https://a.example.com/t?api_token={{secret}}" })).toMatch(
+        /url には \{\{secret\}\} を書けません。.*query に書いて/,
+      );
+      expect(parse({ url: "https://a.example.com/t?api_token={{secret}}" }, "en")).toMatch(
+        /cannot contain \{\{secret\}\}/,
+      );
+      expect(parse({ method: "GET", json: { k: "{{secret}}" } })).toMatch(
+        /GET・HEAD のときは、json・form/,
+      );
+      expect(parse({ method: "HEAD", form: { k: "{{secret}}" } })).toMatch(
+        /GET・HEAD のときは、json・form/,
+      );
+      // 今の検査（url は http・https）は保つ
+      expect(parse({ url: "ftp://a.example.com/t", query: { k: "{{secret}}" } })).not.toBe("");
+      // POST のときは、クエリと本文を一緒に書ける
+      expect(parse({ query: { k: "{{secret}}" }, json: { a: 1 } })).toBe("");
+    });
+
+    it("config.yaml の gateway.platforms に書け、誤りはどの項目かを示して弾く", () => {
+      const dir = mkdtempSync(join(tmpdir(), "sacty-pbi93-config-"));
+      try {
+        const write = (token: string) =>
+          writeFileSync(
+            join(dir, "config.yaml"),
+            [
+              "default_agent: x",
+              "agents:",
+              "  x:",
+              "    runtime: codex",
+              "    auth: { mode: bedrock, secret: bedrock-key, region: us-east-2 }",
+              "    price_per_mtok_usd: { input: 1, cached_input: 0.1, output: 2 }",
+              "gateway:",
+              "  platforms:",
+              "    pf:",
+              "      upstream: https://pf.example.com",
+              "      auth:",
+              "        token:",
+              `          ${token}`,
+              "      allow: [GET /**]",
+            ].join("\n"),
+          );
+        write(
+          '{ url: "https://pf.example.com/auth/token?v=1", method: GET, query: { api_token: "{{secret}}" }, secret: pf-key, token_path: token }',
+        );
+        expect(loadConfig(dir)).toMatchObject({
+          ok: true,
+          config: {
+            platforms: [
+              {
+                name: "pf",
+                auth: {
+                  token: {
+                    url: "https://pf.example.com/auth/token?v=1",
+                    method: "GET",
+                    query: { api_token: "{{secret}}" },
+                  },
+                },
+              },
+            ],
+          },
+        });
+        write(
+          '{ url: "https://pf.example.com/auth/token", query: { api_token: 1 }, secret: pf-key, token_path: token }',
+        );
+        const bad = loadConfig(dir);
+        expect(bad.ok).toBe(false);
+        expect(!bad.ok && renderMessage(bad.problem, "ja")).toMatch(
+          /gateway\.platforms\.pf\.auth\.token\.query\.api_token.*query は「名前: 値」/,
+        );
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it("GET で、キーを URL エンコードしたクエリで送り、本文なしで応答の場所からトークンを読む。期限・取り直しは今と同じ", async () => {
+      let now = 0;
+      const endpoint = tokenEndpoint([
+        () => Response.json({ token: "ey-1" }),
+        () => Response.json({ token: "ey-2" }),
+        () => Response.json({ token: "ey-3" }),
+      ]);
+      const creds = new PlatformCredentials({
+        secrets: new MemorySecretStore({ "pf-key": key }),
+        fetchImpl: endpoint.fetchImpl,
+        now: () => now,
+      });
+      const p = queryPf({ ttl_sec: 60 });
+      expect(await creds.header(p)).toBe("Bearer ey-1");
+      expect(endpoint.calls[0]).toMatchObject({
+        url: `https://pf.example.com/auth/token?api_token=${encodedKey}`,
+        method: "GET",
+        body: "",
+      });
+      expect(endpoint.calls[0]?.headers.get("content-type")).toBeNull();
+      // 送った URL を読み直すと、元のキーに戻る
+      expect(new URL(endpoint.calls[0]?.url ?? "").searchParams.get("api_token")).toBe(key);
+      now = 29_000;
+      expect(await creds.header(p)).toBe("Bearer ey-1");
+      now = 31_000;
+      expect(await creds.header(p)).toBe("Bearer ey-2");
+      creds.invalidate(p);
+      expect(await creds.header(p)).toBe("Bearer ey-3");
+      expect(endpoint.calls).toHaveLength(3);
+    });
+
+    it("url に元からあるクエリは書き換えずに残し、その後ろに足す（# 以降は送らない）", () => {
+      expect(
+        tokenUrl("https://a.example.com/t?v=2&x=a%20b+c", { api_token: "{{secret}}" }, key),
+      ).toBe(`https://a.example.com/t?v=2&x=a%20b+c&api_token=${encodedKey}`);
+      expect(
+        tokenUrl("https://a.example.com/t?v=2#frag", { "my key": "pre-{{secret}}", n: "1" }, "k"),
+      ).toBe("https://a.example.com/t?v=2&my%20key=pre-k&n=1");
+      expect(tokenUrl("https://a.example.com/t?", { k: "{{secret}}" }, "s")).toBe(
+        "https://a.example.com/t?k=s",
+      );
+      // クエリを書かなければ、url はそのまま
+      expect(tokenUrl("https://a.example.com/t?v=2#frag", undefined, "s")).toBe(
+        "https://a.example.com/t?v=2#frag",
+      );
+      expect(tokenUrl("https://a.example.com/t", {}, "s")).toBe("https://a.example.com/t");
+    });
+
+    it("キーの入った URL が、送信の失敗・HTTP のエラー・切り詰めの境界のどこでも理由に出ない", async () => {
+      const lowerHex = encodedKey.replace(/%[0-9A-F]{2}/g, (e) => e.toLowerCase());
+      const leaks = (text: string) =>
+        [key, encodedKey, lowerHex, encodeURIComponent(key), "FAKE-KEY"].filter((f) =>
+          text.includes(f),
+        );
+      // fetch の失敗の文に、送った URL が入る（Node の fetch の「Failed to parse URL from …」など）
+      const throwing = (async (url: string) => {
+        throw new TypeError(`Failed to parse URL from ${url}`);
+      }) as unknown as typeof fetch;
+      const creds = new PlatformCredentials({
+        secrets: new MemorySecretStore({ "pf-key": key }),
+        fetchImpl: throwing,
+      });
+      const failed = String(await creds.header(queryPf()).catch((e: Error) => e));
+      expect(failed).toContain("Failed to parse URL from https://pf.example.com/auth/token");
+      expect(failed).toContain("[secret]");
+      expect(leaks(failed)).toEqual([]);
+      const [problem] = creds.unavailable(["pf"]);
+      expect(leaks(renderMessage(problem, "ja"))).toEqual([]);
+      expect(leaks(renderMessage(problem, "en"))).toEqual([]);
+      // HTTP のエラーの本文に、窓口が URL を写す（16進の小文字・フォームの形を含む）。切り詰めの境界もまたぐ
+      for (const echo of [
+        `GET /auth/token?api_token=${encodedKey}`,
+        `GET /auth/token?api_token=${lowerHex}`,
+        `GET /auth/token?api_token=${encodeURIComponent(key)}`,
+        `api_token=${new URLSearchParams({ s: key }).toString().slice(2)}`,
+      ]) {
+        for (const pad of [0, 560, 580, 595]) {
+          const boundary = new PlatformCredentials({
+            secrets: new MemorySecretStore({ "pf-key": key }),
+            fetchImpl: tokenEndpoint([new Response(`${"x".repeat(pad)}${echo}`, { status: 403 })])
+              .fetchImpl,
+          });
+          const reason = String(await boundary.header(queryPf()).catch((e: Error) => e));
+          expect(reason).toContain("token endpoint returned 403");
+          expect(leaks(reason)).toEqual([]);
+          expect(reason.length).toBeLessThan(700);
+        }
+      }
+    });
   });
 
   it("工程エージェントに、使える PF と API と、呼び方を伝える", () => {

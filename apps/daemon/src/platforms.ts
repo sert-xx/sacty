@@ -22,25 +22,44 @@ const AllowRule = z
   .trim()
   .regex(/^(GET|POST|PUT|PATCH|DELETE|HEAD) \/\S*$/, code("input.allowRule"));
 
-const TokenRequest = z.object({
-  /** トークンの窓口。 */
-  url: z.url({ protocol: /^https?$/ }),
-  method: Method.default("POST"),
-  /** 窓口に送るヘッダー（{{secret}} に秘密情報の値を入れる）。 */
-  headers: z.record(HeaderName, z.string()).default({}),
-  /** 窓口に送る JSON の本文（文字列の中の {{secret}} に秘密情報の値を入れる）。 */
-  json: z.unknown().optional(),
-  /** 窓口に送るフォームの本文（application/x-www-form-urlencoded）。 */
-  form: z.record(z.string(), z.string()).optional(),
-  /** 窓口に送る秘密情報（API キーなど）。 */
-  secret: SecretRef,
-  /** 応答の JSON の、トークンの場所（例 data.accessToken）。 */
-  token_path: z.string().trim().min(1),
-  /** 応答の JSON の、期限（秒）の場所（例 expires_in）。無ければ ttl_sec。 */
-  expires_in_path: z.string().trim().min(1).optional(),
-  /** 期限が分からないときに、トークンを持つ時間（秒）。 */
-  ttl_sec: z.number().int().positive().default(300),
-});
+const TokenRequest = z
+  .object({
+    /** トークンの窓口。キーは書けない（クエリで送るなら query に書く。PBI-93）。 */
+    url: z
+      .url({ protocol: /^https?$/ })
+      .refine((url) => !url.includes(SECRET_PLACEHOLDER), code("config.platformTokenUrlSecret")),
+    method: Method.default("POST"),
+    /** 窓口に送るヘッダー（{{secret}} に秘密情報の値を入れる）。 */
+    headers: z.record(HeaderName, z.string()).default({}),
+    /**
+     * 窓口の URL に足すクエリのパラメーター（{{secret}} に秘密情報の値を入れ、URL エンコードする。url に元からある
+     * クエリの後ろに足す。PBI-93）。
+     */
+    query: z
+      .record(
+        z.string().min(1, code("config.platformTokenQuery")),
+        z.string({ error: code("config.platformTokenQuery") }),
+        { error: code("config.platformTokenQuery") },
+      )
+      .optional(),
+    /** 窓口に送る JSON の本文（文字列の中の {{secret}} に秘密情報の値を入れる）。 */
+    json: z.unknown().optional(),
+    /** 窓口に送るフォームの本文（application/x-www-form-urlencoded）。 */
+    form: z.record(z.string(), z.string()).optional(),
+    /** 窓口に送る秘密情報（API キーなど）。 */
+    secret: SecretRef,
+    /** 応答の JSON の、トークンの場所（例 data.accessToken）。 */
+    token_path: z.string().trim().min(1),
+    /** 応答の JSON の、期限（秒）の場所（例 expires_in）。無ければ ttl_sec。 */
+    expires_in_path: z.string().trim().min(1).optional(),
+    /** 期限が分からないときに、トークンを持つ時間（秒）。 */
+    ttl_sec: z.number().int().positive().default(300),
+  })
+  // GET・HEAD は本文を送れない（送ると取得のたびに失敗するため、設定の検査で弾く。PBI-93）
+  .refine(
+    (t) => !((t.method === "GET" || t.method === "HEAD") && (t.json !== undefined || t.form)),
+    { error: code("config.platformTokenBody"), path: ["method"] },
+  );
 
 export const PlatformFile = z.object({
   /** 転送先（例 https://ticket.internal.example.com）。 */
@@ -78,6 +97,7 @@ export type Platform = {
       url: string;
       method: string;
       headers: Record<string, string>;
+      query?: Record<string, string>;
       json?: unknown;
       form?: Record<string, string>;
       secret: string;
@@ -143,6 +163,7 @@ export function toPlatform(name: string, file: z.infer<typeof PlatformFile>): Pl
               url: token.url,
               method: token.method,
               headers: token.headers,
+              ...(token.query ? { query: token.query } : {}),
               ...(token.json !== undefined ? { json: token.json } : {}),
               ...(token.form ? { form: token.form } : {}),
               secret: token.secret,
@@ -200,13 +221,73 @@ function fill(value: unknown, secret: string): unknown {
   return value;
 }
 
-/** 文から秘密情報を伏せる。値そのもの・JSON の文字列にした形・各行（短すぎる行は除く）を伏せる。 */
+/**
+ * 文から秘密情報を伏せる。値そのもの・JSON の文字列にした形・URL エンコードした形（クエリで送るため。PBI-93）・
+ * 各行（短すぎる行は除く）を伏せる。
+ */
 export function hideSecret(text: string, secret: string): string {
   if (!secret) return text;
-  const forms = [secret, JSON.stringify(secret).slice(1, -1), ...secret.split(/\r?\n/)]
+  const forms = [
+    secret,
+    JSON.stringify(secret).slice(1, -1),
+    ...urlForms(secret),
+    ...secret.split(/\r?\n/),
+  ]
     .filter((f) => f.length >= 4)
     .sort((a, b) => b.length - a.length);
   return forms.reduce((t, f) => t.split(f).join("[secret]"), text);
+}
+
+/**
+ * 秘密情報を URL エンコードした形。送る形（encodeQuery）に加えて、窓口がエラーの文に URL を写すときの書き方の違い
+ * （encodeURIComponent の形・16進の小文字の形・フォームの形（空白を + にする））。対になっていないサロゲートを含み
+ * エンコードできない値は、送れないので、フォームの形だけにする（伏せる処理を失敗させないため）。
+ */
+function urlForms(secret: string): string[] {
+  const form = new URLSearchParams({ s: secret }).toString().slice(2);
+  try {
+    const encoded = encodeQuery(secret);
+    return [
+      encoded,
+      encodeURIComponent(secret),
+      encoded.replace(/%[0-9A-F]{2}/g, (e) => e.toLowerCase()),
+      form,
+    ];
+  } catch {
+    return [form];
+  }
+}
+
+/**
+ * クエリの名前・値を URL エンコードする。encodeURIComponent が残す !'()* も変える（URL の組み立てで ' が %27 に
+ * 変わり、伏せる形と食い違わないようにするため）。
+ */
+function encodeQuery(value: string): string {
+  return encodeURIComponent(value).replace(
+    /[!'()*]/g,
+    (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`,
+  );
+}
+
+/**
+ * トークンの窓口の URL。query の値の {{secret}} を秘密情報の値にし、URL エンコードして、url に元からあるクエリの
+ * 後ろに足す（元のクエリは書き換えない。URL の # 以降は送らない。PBI-93）。
+ */
+export function tokenUrl(
+  url: string,
+  query: Record<string, string> | undefined,
+  secret: string,
+): string {
+  const entries = Object.entries(query ?? {});
+  if (entries.length === 0) return url;
+  const target = new URL(url);
+  const added = entries
+    .map(([k, v]) => `${encodeQuery(k)}=${encodeQuery(fill(v, secret) as string)}`)
+    .join("&");
+  const base = target.search.replace(/^\?/, "").replace(/&+$/, "");
+  target.hash = "";
+  target.search = base ? `${base}&${added}` : added;
+  return target.href;
 }
 
 /** トークンを取得できなかった理由の長さの上限（画面・ログ・ゲートウェイの応答に出す）。 */
@@ -317,7 +398,7 @@ export class PlatformCredentials {
         headers.set("content-type", "application/x-www-form-urlencoded");
       }
     }
-    const res = await (this.deps.fetchImpl ?? fetch)(spec.url, {
+    const res = await (this.deps.fetchImpl ?? fetch)(tokenUrl(spec.url, spec.query, secret), {
       method: spec.method,
       headers,
       ...(body !== undefined ? { body } : {}),
