@@ -95,6 +95,12 @@ const ja = {
       `sacty の提出 ${submitted} → 人が直した最終 ${final}`,
     compare: "差分を見る",
     mergeCommit: (commit: string) => `マージのコミット ${commit}`,
+    // 本文に使った PR テンプレート（PBI-87）
+    body: "本文",
+    templateUsed: (path: string, repo: string) => `PR テンプレート ${path}（${repo}）に沿って作成`,
+    templateNone: "sacty の決まった形（PR テンプレートが無い）",
+    templateUnusable: "sacty の決まった形（PR テンプレートを使えなかった）",
+    templateTruncated: "長さの上限を超えたので、後ろを省いた",
   },
   resume: {
     newCap: (used: string) => `新しい上限（累計・使用済み ${used} より大きい金額）`,
@@ -235,6 +241,11 @@ const en: PartsMessages = {
     editedCommits: (submitted, final) => `sacty's submission ${submitted} → final ${final}`,
     compare: "View the diff",
     mergeCommit: (commit) => `Merge commit ${commit}`,
+    body: "Body",
+    templateUsed: (path, repo) => `Written along the PR template ${path} (${repo})`,
+    templateNone: "sacty's own format (no PR template)",
+    templateUnusable: "sacty's own format (the PR template could not be used)",
+    templateTruncated: "Shortened at the end because it exceeded the length limit",
   },
   resume: {
     newCap: (used) => `New cap (total; more than the ${used} already used)`,

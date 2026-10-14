@@ -1216,10 +1216,24 @@ export function extractIntegrationReview(
 const cell = (value: string) => value.replace(/\r?\n/g, " ").replace(/\|/g, "\\|");
 
 /**
- * sacty が作るPRの本文。承認済みの要求要件、観点とテストの対応、テストの結果、
- * ゴールガーディアンの最終レビューを載せる（人間が成果物を確かめるための材料）。
+ * PR テンプレートに沿わせるときの、PR の本文に入れる sacty の内容（PBI-87）。テンプレートの見出しの種類ごとに入れる。
+ * - summary：目的・概要、changes：変更、tests：テスト、issue：関係する Issue
+ * - record：テンプレートのどこにも入れない sacty の記録（折りたたんで末尾に置く）
+ * - footer：必ず本文の最後に置く（タスクの ID・承認の仕方など。長さの上限でも省かない）
+ * 見出しに入らなかった summary・changes・tests は record の前に（どの見出しにも入らなければ畳まずに）、issue（Closes を
+ * 含む）は footer の前に置く（`fillTemplate`）。
  */
-export function buildPullRequestBody(task: Task): string {
+export type BodyParts = {
+  summary?: string;
+  changes?: string;
+  tests?: string;
+  issue?: string;
+  record?: string;
+  footer: string;
+};
+
+/** PR の本文の、観点 → テスト → 実行結果の表とテストの結果（PBI-10b）。 */
+function resultTableLines(task: Task): string[] {
   const basis = verificationBasis(task);
   // 設計を省いたタスクは、要求要件の受け入れ条件（REQ）・再現のテスト（REPRO。PBI-29）を観点として並べる
   const viewpoints: TestViewpoint[] =
@@ -1246,26 +1260,6 @@ export function buildPullRequestBody(task: Task): string {
   const tests = task.lastTests;
   const mapped = new Map(task.testMap.map((m) => [m.viewpointId, m.tests]));
   return [
-    `sacty のタスク「${task.title}」の成果物です（sacty task ${task.id}）。`,
-    "",
-    // 取り込んだ Issue と同じリポジトリの PR なら、マージで Issue を閉じる
-    ...(task.source?.kind === "github_issue" ? [`Closes #${task.source.number}`, ""] : []),
-    ...(basis === "reproduce"
-      ? [
-          "## 不具合の再現（失敗するテストで再現し、sacty が失敗を確かめた）",
-          "",
-          task.approved.reproduce?.output ?? "（なし）",
-        ]
-      : ["## 要求要件（人間が承認済み）", "", task.approved.requirements?.output ?? "（なし）"]),
-    "",
-    // 書き出した成果（要求要件・設計など）の URL（PBI-56）
-    ...(exportedUrls(task).length > 0 ? ["## 書き出した成果", "", ...exportedUrls(task), ""] : []),
-    // 要求要件・設計の PR（マージで承認済み。成果のファイルは、この PR にも含まれる。PBI-57）
-    ...(mergedStepPullRequests(task).length > 0
-      ? ["## 要求要件・設計の PR（マージで承認済み）", "", ...mergedStepPullRequests(task), ""]
-      : []),
-    "## 観点 → テスト → 実行結果",
-    "",
     "| 観点 | 入力 | 期待結果 | テスト | 最終レビュー |",
     "| --- | --- | --- | --- | --- |",
     ...viewpoints.map((v) => {
@@ -1276,9 +1270,13 @@ export function buildPullRequestBody(task: Task): string {
     tests
       ? `テスト：\`${cell(tests.command)}\` → ${tests.passed ? "合格" : "不合格"}（終了コード ${tests.exitCode}）`
       : "テスト：（未実行）",
-    "",
-    "## ゴールガーディアンの最終レビュー",
-    "",
+  ];
+}
+
+/** PR の本文の、ゴールガーディアンの最終レビュー（見出しの下の行）。 */
+function finalReviewLines(task: Task): string[] {
+  const review = task.lastReview;
+  return [
     review ? `${review.passed ? "合格" : "不合格"}。${ja(review.summary)}` : "（なし）",
     ...(review && review.remarks.length > 0
       ? [
@@ -1289,10 +1287,111 @@ export function buildPullRequestBody(task: Task): string {
           ),
         ]
       : []),
+  ];
+}
+
+/** 承認済みの要求要件（再現の工程のタスクは、不具合の再現）の見出しと中身。 */
+function approvedBasisLines(task: Task, level: "##" | "bold"): string[] {
+  const heading = (text: string) => (level === "##" ? `## ${text}` : `**${text}**`);
+  return verificationBasis(task) === "reproduce"
+    ? [
+        heading("不具合の再現（失敗するテストで再現し、sacty が失敗を確かめた）"),
+        "",
+        task.approved.reproduce?.output ?? "（なし）",
+      ]
+    : [heading("要求要件（人間が承認済み）"), "", task.approved.requirements?.output ?? "（なし）"];
+}
+
+/** 取り込んだ Issue を、マージで閉じる行（取り込んだ Issue と同じリポジトリの PR なら閉じる）。 */
+function closesLines(task: Task): string[] {
+  return task.source?.kind === "github_issue" ? [`Closes #${task.source.number}`] : [];
+}
+
+/** sacty が作った PR であることと、タスクの ID（本文の最後に必ず置く。PBI-87）。 */
+function sactyFooter(task: Task, what: string): string {
+  return `---\nこの PR は sacty が作成しました（sacty のタスク「${task.title}」の${what}。sacty task ${task.id}）。`;
+}
+
+/**
+ * sacty が作るPRの本文。承認済みの要求要件、観点とテストの対応、テストの結果、
+ * ゴールガーディアンの最終レビューを載せる（人間が成果物を確かめるための材料）。
+ * PR テンプレートが無いとき・使えないときの本文（PBI-87）。
+ */
+export function buildPullRequestBody(task: Task): string {
+  return joinBodyText(buildPullRequestBodyText(task));
+}
+
+/**
+ * テンプレートを使わない本文を、長さの上限で省くときのために分けたもの（PBI-87、PR #99 レビュー指摘）。main は省いてよい
+ * 部分、footer は必ず最後に置く部分、keep は main にあっても省けない行（省いて消えたら footer の前に出し直す）。
+ */
+export type BodyText = { main: string; footer: string; keep: string[] };
+
+/** BodyText を、省かずにつないだ本文。 */
+export function joinBodyText(text: BodyText): string {
+  return text.footer ? `${text.main}\n\n${text.footer}` : text.main;
+}
+
+/** テンプレートを使わない実装の PR の本文（PBI-87。つなぐと `buildPullRequestBody` と同じ）。 */
+export function buildPullRequestBodyText(task: Task): BodyText {
+  const intro = `sacty のタスク「${task.title}」の成果物です（sacty task ${task.id}）。`;
+  const main = [
+    intro,
     "",
-    "---",
-    "この PR は sacty が作成しました。sacty の成果物チェックで承認・差し戻しをしてください。",
+    ...(closesLines(task).length > 0 ? [...closesLines(task), ""] : []),
+    ...approvedBasisLines(task, "##"),
+    "",
+    // 書き出した成果（要求要件・設計など）の URL（PBI-56）
+    ...(exportedUrls(task).length > 0 ? ["## 書き出した成果", "", ...exportedUrls(task), ""] : []),
+    // 要求要件・設計の PR（マージで承認済み。成果のファイルは、この PR にも含まれる。PBI-57）
+    ...(mergedStepPullRequests(task).length > 0
+      ? ["## 要求要件・設計の PR（マージで承認済み）", "", ...mergedStepPullRequests(task), ""]
+      : []),
+    "## 観点 → テスト → 実行結果",
+    "",
+    ...resultTableLines(task),
+    "",
+    "## ゴールガーディアンの最終レビュー",
+    "",
+    ...finalReviewLines(task),
   ].join("\n");
+  return {
+    main,
+    footer:
+      "---\nこの PR は sacty が作成しました。sacty の成果物チェックで承認・差し戻しをしてください。",
+    // タスクの ID と、マージで Issue を閉じる行は、省いても残す
+    keep: [intro, ...closesLines(task)],
+  };
+}
+
+/**
+ * PR テンプレートに沿わせるときの、実装の PR の本文の中身（PBI-87）。目的（承認済みの要求要件）・変更（実装の
+ * エージェントの報告）・テスト（観点とテストの対応と結果）・関係する Issue（Closes）に分け、最終レビューなどは
+ * sacty の記録にする。タスクの ID は footer に必ず入れる。
+ */
+export function buildPullRequestBodyParts(task: Task): BodyParts {
+  const implement = (task.outputs.implement ?? "").trim();
+  const record = [
+    ...(exportedUrls(task).length > 0 ? ["**書き出した成果**", "", ...exportedUrls(task), ""] : []),
+    ...(mergedStepPullRequests(task).length > 0
+      ? ["**要求要件・設計の PR（マージで承認済み）**", "", ...mergedStepPullRequests(task), ""]
+      : []),
+    "**ゴールガーディアンの最終レビュー**",
+    "",
+    ...finalReviewLines(task),
+  ];
+  return {
+    summary: [
+      `sacty のタスク「${task.title}」の成果物です。`,
+      "",
+      ...approvedBasisLines(task, "bold"),
+    ].join("\n"),
+    ...(implement ? { changes: implement } : {}),
+    tests: resultTableLines(task).join("\n"),
+    ...(closesLines(task).length > 0 ? { issue: closesLines(task).join("\n") } : {}),
+    record: record.join("\n"),
+    footer: `${sactyFooter(task, "成果物")}sacty の成果物チェックで承認・差し戻しをしてください。`,
+  };
 }
 
 /** マージで承認した、要求要件・設計の PR の一覧（工程ごとに1行。PBI-57）。 */
@@ -1333,32 +1432,87 @@ export function buildStepPullRequestBody(
   step: StepPullRequestKey,
   path: string,
 ): string {
+  return joinBodyText(buildStepPullRequestBodyText(task, step, path));
+}
+
+/** テンプレートを使わない要求要件・設計の PR の本文（PBI-87。つなぐと `buildStepPullRequestBody` と同じ）。 */
+export function buildStepPullRequestBodyText(
+  task: Task,
+  step: StepPullRequestKey,
+  path: string,
+): BodyText {
   const name = STEP_NAME[step];
-  const responded = task.remarks.filter((r) => r.step === step && !r.voided && r.response);
-  const earlier = task.stepPullRequests.filter((p) => p.step !== step && p.state === "merged");
+  const responded = respondedLines(task, step);
+  const earlier = earlierStepLines(task, step);
+  const intro = `sacty のタスク「${task.title}」の${name}です（sacty task ${task.id}）。`;
+  const approval = stepApprovalLines(step).join("\n");
+  return {
+    main: [
+      intro,
+      "",
+      `成果のファイル：\`${path}\``,
+      "",
+      approval,
+      ...(earlier.length > 0 ? ["", "承認済みの前の工程：", ...earlier] : []),
+      ...(responded.length > 0 ? ["", "## 指摘への対応", "", ...responded] : []),
+    ].join("\n"),
+    footer: "---\nこの PR は sacty が作成しました。",
+    // タスクの ID と、マージが承認になることの案内は、省いても残す
+    keep: [intro, approval],
+  };
+}
+
+/** 要求要件・設計の PR の、承認の仕方と指摘の伝え方（PBI-57・PBI-63）。 */
+function stepApprovalLines(step: StepPullRequestKey): string[] {
+  const name = STEP_NAME[step];
   return [
-    `sacty のタスク「${task.title}」の${name}です（sacty task ${task.id}）。`,
-    "",
-    `成果のファイル：\`${path}\``,
-    "",
     `- この PR をマージすると、${name}を承認したことになり、sacty は次の工程に進みます（sacty の画面からは承認しません）。`,
     "- 直してほしいことは、この PR のレビュー・行へのコメント・コメントで伝えてください。sacty が取り込み、ゴールガーディアンが、この工程のやり直し（この PR を更新します）か、前の工程への差し戻しかを判断します。",
     "- ファイルを直接直してからマージしても、承認として扱います。直したファイルの内容を承認済みの成果として、次の工程に進みます（sacty が出した版も記録に残します）。",
-    ...(earlier.length > 0
-      ? ["", "承認済みの前の工程：", ...earlier.map((p) => `- ${STEP_NAME[p.step]}：${p.url}`)]
-      : []),
-    ...(responded.length > 0
-      ? [
-          "",
-          "## 指摘への対応",
-          "",
-          ...responded.map((r) => `- [${r.id}] ${r.text}\n  - 対応：${r.response}`),
-        ]
-      : []),
-    "",
-    "---",
-    "この PR は sacty が作成しました。",
-  ].join("\n");
+  ];
+}
+
+/** その工程の指摘への対応（差し戻しの後の再提出）。 */
+function respondedLines(task: Task, step: StepPullRequestKey): string[] {
+  return task.remarks
+    .filter((r) => r.step === step && !r.voided && r.response)
+    .map((r) => `- [${r.id}] ${r.text}\n  - 対応：${r.response}`);
+}
+
+/** 承認済みの前の工程の PR。 */
+function earlierStepLines(task: Task, step: StepPullRequestKey): string[] {
+  return task.stepPullRequests
+    .filter((p) => p.step !== step && p.state === "merged")
+    .map((p) => `- ${STEP_NAME[p.step]}：${p.url}`);
+}
+
+/**
+ * PR テンプレートに沿わせるときの、要求要件・設計の PR の本文の中身（PBI-87）。目的（何の工程の成果か）・変更
+ * （成果のファイルと指摘への対応）・関係する Issue に分ける。テストは無い（該当なし）。承認の仕方とタスクの ID は
+ * footer に必ず入れる（マージが承認になることを、テンプレートに従っても見落とさないため）。
+ */
+export function buildStepPullRequestBodyParts(
+  task: Task,
+  step: StepPullRequestKey,
+  path: string,
+): BodyParts {
+  const name = STEP_NAME[step];
+  const responded = respondedLines(task, step);
+  const earlier = earlierStepLines(task, step);
+  return {
+    summary: [
+      `sacty のタスク「${task.title}」の${name}です。マージすると${name}の承認になります。`,
+      ...(earlier.length > 0 ? ["", "承認済みの前の工程：", ...earlier] : []),
+    ].join("\n"),
+    changes: [
+      `成果のファイル：\`${path}\``,
+      ...(responded.length > 0 ? ["", "**指摘への対応**", "", ...responded] : []),
+    ].join("\n"),
+    ...(task.source?.kind === "github_issue"
+      ? { issue: `#${task.source.number}（このタスクの取り込み元。実装の PR のマージで閉じます）` }
+      : {}),
+    footer: [sactyFooter(task, name), "", ...stepApprovalLines(step)].join("\n"),
+  };
 }
 
 /**

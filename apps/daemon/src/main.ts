@@ -20,6 +20,7 @@ import { IssueIntake } from "./intake.js";
 import { SlackNotifier } from "./notifier.js";
 import { OrchestratorSessionStore } from "./orchestrator-sessions.js";
 import { PlatformCredentials } from "./platforms.js";
+import { GitHubPullRequestTemplates } from "./pr-template.js";
 import { PullRequestWatcher } from "./pr-watcher.js";
 import { SqliteProjectStore } from "./projects.js";
 import { GitRepositoryWorkspace } from "./repository.js";
@@ -133,6 +134,7 @@ const service = new TaskService({
   executor,
   repos: new GitRepositoryWorkspace(),
   pulls: new GitHubPullRequests(),
+  templates: new GitHubPullRequestTemplates(),
   // マージの後の CI/CD の状態（PBI-89）
   ci: new GitHubCiStatus(),
   github,
