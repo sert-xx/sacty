@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { Readable } from "node:stream";
+import { Agent, fetch as undiciFetch } from "undici";
 import type { HostMcpServers } from "./host-mcp.js";
 import { isAllowed, type Platform, type PlatformCredentials } from "./platforms.js";
 
@@ -67,7 +68,18 @@ export type GatewayRoute = {
 };
 
 /** コンテキストリポジトリの HTTP の MCP サーバーの中継先（PBI-49）。 */
-export type ContextMcpRoute = { url: string; headers: Record<string, string> };
+export type ContextMcpRoute = {
+  url: string;
+  headers: Record<string, string>;
+  /**
+   * 上流の応答を待つ上限（ミリ秒。mcp.yaml の時間切れの大きい方。PBI-75）。fetch の既定（応答のヘッダーと、本文の
+   * 途切れをそれぞれ5分）より長いときだけ、それに合わせて延ばす（エージェントより先に、ゲートウェイで切らない）。
+   */
+  timeoutMs?: number;
+};
+
+/** fetch（undici）が、上流の応答のヘッダーと本文の途切れを待つ既定の上限（ミリ秒）。 */
+export const FETCH_DEFAULT_TIMEOUT_MS = 300_000;
 
 /**
  * コンテキストの MCP の中継で、エージェントから上流へ送るヘッダー（MCP の Streamable HTTP に要るものだけ）。
@@ -119,6 +131,11 @@ export type GatewayDeps = {
   credentials?: Pick<PlatformCredentials, "header" | "invalidate">;
   /** ホストで動かす MCP サーバー（PBI-36）。 */
   hostMcp?: Pick<HostMcpServers, "handle">;
+  /**
+   * 待つ上限を延ばした中継で使う fetch（PBI-75。既定は undici の fetch。待つ上限は dispatcher で渡す）。テストでは
+   * 差し替える。
+   */
+  longFetchImpl?: (url: URL, init: Record<string, unknown>) => Promise<Response>;
 };
 
 const abortableSleep = (ms: number, signal: AbortSignal) =>
@@ -146,6 +163,8 @@ export class AiGateway {
   private server: Server | undefined;
   private port = 0;
   private readonly runs = new Map<string, RunState>();
+  /** 待つ上限ごとの接続（PBI-75。使い回す）。 */
+  private readonly dispatchers = new Map<number, Agent>();
 
   constructor(private readonly deps: GatewayDeps = {}) {}
 
@@ -175,6 +194,8 @@ export class AiGateway {
     const server = this.server;
     if (!server) return;
     this.server = undefined;
+    for (const dispatcher of this.dispatchers.values()) void dispatcher.close().catch(() => {});
+    this.dispatchers.clear();
     server.closeAllConnections();
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
@@ -351,17 +372,36 @@ export class AiGateway {
     try {
       const url = new URL(target.url);
       if (query) url.search = query.slice(1);
-      upstream = await (this.deps.fetchImpl ?? fetch)(url, {
+      const init = {
         method,
         headers,
         ...(body ? { body: new Uint8Array(body) } : {}),
-        redirect: "manual",
+        redirect: "manual" as const,
         signal: aborter.signal,
-      });
+      };
+      // mcp.yaml の時間切れが fetch の既定より長いなら、ゲートウェイで先に切らないよう待つ上限を延ばす（PBI-75）
+      const timeoutMs = target.timeoutMs ?? 0;
+      upstream =
+        timeoutMs > FETCH_DEFAULT_TIMEOUT_MS
+          ? await (this.deps.longFetchImpl ?? longFetch)(url, {
+              ...init,
+              dispatcher: this.dispatcher(timeoutMs),
+            })
+          : await (this.deps.fetchImpl ?? fetch)(url, init);
     } catch {
       return fail(res, 502, "sacty gateway: the MCP server could not be reached");
     }
     return pipe(upstream, res);
+  }
+
+  /** 待つ上限（応答のヘッダーと、本文の途切れ）を延ばした接続。 */
+  private dispatcher(timeoutMs: number): Agent {
+    let dispatcher = this.dispatchers.get(timeoutMs);
+    if (!dispatcher) {
+      dispatcher = contextMcpDispatcher(timeoutMs);
+      this.dispatchers.set(timeoutMs, dispatcher);
+    }
+    return dispatcher;
   }
 
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -488,6 +528,15 @@ export class AiGateway {
     }
   }
 }
+
+/** 応答のヘッダーと、本文の途切れを、それぞれ timeoutMs まで待つ接続（PBI-75）。 */
+export function contextMcpDispatcher(timeoutMs: number): Agent {
+  return new Agent({ headersTimeout: timeoutMs, bodyTimeout: timeoutMs });
+}
+
+/** undici の fetch（dispatcher を渡すため。応答は標準の Response と同じように使える）。 */
+const longFetch = (url: URL, init: Record<string, unknown>) =>
+  undiciFetch(url, init as Parameters<typeof undiciFetch>[1]) as unknown as Promise<Response>;
 
 /**
  * 転送する URL。パス・クエリを URL として解釈しても変わらないときだけ返す（# のフラグメント・. や .. の

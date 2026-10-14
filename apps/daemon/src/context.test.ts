@@ -530,6 +530,200 @@ describe("MCP サーバーの合成と変換（PBI-6b）", () => {
   });
 });
 
+describe("MCP サーバーの時間切れ（PBI-75）", () => {
+  const withTimeouts = {
+    "t.git": {
+      "mcp.yaml": [
+        "servers:",
+        "  build:",
+        "    command: build-mcp",
+        "    startup_timeout_sec: 45",
+        "    tool_timeout_sec: 1800",
+        "  docs:",
+        "    url: https://docs.example.com/mcp",
+        "    tool_timeout_sec: 900",
+        "  direct:",
+        "    url: https://direct.example.com/mcp",
+        "    via_gateway: false",
+        "    startup_timeout_sec: 20",
+        "  plain:",
+        "    command: plain-mcp",
+      ].join("\n"),
+    },
+  };
+  const prepare = (
+    runtime: "claude-code" | "codex",
+    files: Record<string, Record<string, string>> = withTimeouts,
+    hostMcp: Parameters<typeof prepareContext>[6] = [],
+    origin?: string,
+  ) =>
+    prepareContext(
+      new FakeFetcher(files),
+      { repo: Object.keys(files)[0] ?? "" },
+      runtime,
+      runtime === "codex" ? "/.codex" : "/c",
+      undefined,
+      undefined,
+      hostMcp,
+      origin,
+    );
+
+  it("Codex には、書いたサーバーにだけ startup_timeout_sec・tool_timeout_sec を渡す", async () => {
+    const codex = await prepare("codex");
+    const config = parseToml(readFileSync(join(codex.dir, "config.toml"), "utf8")) as {
+      mcp_servers: Record<string, Record<string, unknown>>;
+    };
+    expect(config.mcp_servers.build).toMatchObject({
+      command: "build-mcp",
+      startup_timeout_sec: 45,
+      tool_timeout_sec: 1800,
+    });
+    expect(config.mcp_servers.docs).toMatchObject({ tool_timeout_sec: 900 });
+    expect(config.mcp_servers.docs).not.toHaveProperty("startup_timeout_sec");
+    expect(config.mcp_servers.direct).toMatchObject({ startup_timeout_sec: 20 });
+    expect(config.mcp_servers.direct).not.toHaveProperty("tool_timeout_sec");
+    // 書いていないサーバーは、これまでと同じ（時間切れを書かない）
+    expect(config.mcp_servers.plain).toEqual({ command: "plain-mcp", args: [] });
+    // Codex は全体の環境変数を使わない
+    expect(codex.placed).not.toHaveProperty("env");
+    codex.dispose();
+  });
+
+  it("Claude Code には、ツールの時間切れをサーバーごとの timeout（ミリ秒）で、起動の時間切れを全体の MCP_TIMEOUT で渡す", async () => {
+    const claude = await prepare("claude-code");
+    const json = JSON.parse(readFileSync(join(claude.dir, "mcp.json"), "utf8"));
+    expect(json.mcpServers.build).toEqual({
+      command: "build-mcp",
+      args: [],
+      env: {},
+      timeout: 1_800_000,
+    });
+    expect(json.mcpServers.docs).toEqual({
+      type: "http",
+      url: "https://docs.example.com/mcp",
+      headers: {},
+      timeout: 900_000,
+    });
+    // サーバーごとの起動の時間切れは Claude Code に無いので、mcp.json には書かない
+    expect(json.mcpServers.direct).not.toHaveProperty("timeout");
+    expect(JSON.stringify(json)).not.toContain("startup_timeout");
+    expect(json.mcpServers.plain).toEqual({ command: "plain-mcp", args: [], env: {} });
+    // 書いた値（45・20）と、書いていないサーバーの既定（30）の大きい方
+    expect(claude.placed.env).toEqual({ MCP_TIMEOUT: "45000" });
+    claude.dispose();
+  });
+
+  it("Claude Code の MCP_TIMEOUT は、書いていないサーバーがあれば既定（30秒）より短くせず、全部に書けばその最大にする", async () => {
+    const short = await prepare("claude-code", {
+      "s.git": {
+        "mcp.yaml":
+          "servers:\n  a:\n    command: a\n    startup_timeout_sec: 5\n  b:\n    command: b\n",
+      },
+    });
+    expect(short.placed.env).toEqual({ MCP_TIMEOUT: "30000" });
+    short.dispose();
+    const all = await prepare("claude-code", {
+      "s.git": {
+        "mcp.yaml":
+          "servers:\n  a:\n    command: a\n    startup_timeout_sec: 5\n  b:\n    command: b\n    startup_timeout_sec: 12\n",
+      },
+    });
+    expect(all.placed.env).toEqual({ MCP_TIMEOUT: "12000" });
+    all.dispose();
+  });
+
+  it("書いていなければ、これまでと同じ（mcp.json・config.toml に時間切れを書かず、MCP_TIMEOUT も渡さない）", async () => {
+    const files = { "n.git": { "mcp.yaml": "servers:\n  a:\n    command: a\n" } };
+    const claude = await prepare("claude-code", files);
+    expect(JSON.parse(readFileSync(join(claude.dir, "mcp.json"), "utf8"))).toEqual({
+      mcpServers: { a: { command: "a", args: [], env: {} } },
+    });
+    expect(claude.placed).toEqual({ mcpServers: ["a"], secrets: [] });
+    claude.dispose();
+    const codex = await prepare("codex", files);
+    expect(readFileSync(join(codex.dir, "config.toml"), "utf8")).toBe(
+      '[mcp_servers."a"]\ncommand = "a"\nargs = []\n',
+    );
+    codex.dispose();
+  });
+
+  it("ゲートウェイ経由にしたサーバー・ホストの MCP サーバーにも、時間切れを渡し、中継先にも持たせる", async () => {
+    const origin = "http://host.docker.internal:5001";
+    const hostMcp = [
+      {
+        name: "cloud",
+        url: `${origin}/mcp/cloud`,
+        startup_timeout_sec: 60,
+        tool_timeout_sec: 7200,
+      },
+      { name: "bare", url: `${origin}/mcp/bare` },
+    ];
+    const codex = await prepare("codex", withTimeouts, hostMcp, origin);
+    const config = parseToml(readFileSync(join(codex.dir, "config.toml"), "utf8")) as {
+      mcp_servers: Record<string, Record<string, unknown>>;
+    };
+    expect(config.mcp_servers.docs).toMatchObject({
+      url: `${origin}/ctx-mcp/docs`,
+      tool_timeout_sec: 900,
+    });
+    expect(config.mcp_servers.cloud).toMatchObject({
+      url: `${origin}/mcp/cloud`,
+      startup_timeout_sec: 60,
+      tool_timeout_sec: 7200,
+    });
+    expect(config.mcp_servers.bare).not.toHaveProperty("tool_timeout_sec");
+    expect(config.mcp_servers.bare).not.toHaveProperty("startup_timeout_sec");
+    expect(codex.gatewayMcp).toEqual([
+      { name: "docs", url: "https://docs.example.com/mcp", headers: {}, tool_timeout_sec: 900 },
+    ]);
+    codex.dispose();
+    const claude = await prepare("claude-code", withTimeouts, hostMcp, origin);
+    const json = JSON.parse(readFileSync(join(claude.dir, "mcp.json"), "utf8"));
+    expect(json.mcpServers.docs.timeout).toBe(900_000);
+    expect(json.mcpServers.cloud.timeout).toBe(7_200_000);
+    expect(json.mcpServers.bare).not.toHaveProperty("timeout");
+    // ホストの MCP サーバーの起動の時間切れ（60）も MCP_TIMEOUT に入る
+    expect(claude.placed.env).toEqual({ MCP_TIMEOUT: "60000" });
+    claude.dispose();
+  });
+
+  it("範囲の外の値・整数でない値・数でない値は、理由つきで止める", async () => {
+    const cases: [string, RegExp][] = [
+      ["command: x\n    startup_timeout_sec: 0", /servers\.a\.startup_timeout_sec/],
+      ["command: x\n    startup_timeout_sec: 3601", /servers\.a\.startup_timeout_sec/],
+      ["command: x\n    tool_timeout_sec: 0", /servers\.a\.tool_timeout_sec/],
+      ["command: x\n    tool_timeout_sec: -5", /servers\.a\.tool_timeout_sec/],
+      ["command: x\n    tool_timeout_sec: 86401", /servers\.a\.tool_timeout_sec/],
+      ["command: x\n    tool_timeout_sec: 1.5", /servers\.a\.tool_timeout_sec/],
+      ["command: x\n    tool_timeout_sec: '60'", /servers\.a\.tool_timeout_sec/],
+      ["url: https://x.example.com\n    tool_timeout_sec: 0", /mcp.yaml に誤り/],
+      // 名前の誤り（単数形など）は、これまでどおり知らない項目として止める
+      ["command: x\n    tool_timeout: 60", /mcp.yaml に誤り/],
+    ];
+    for (const [i, [server, error]] of cases.entries()) {
+      await expect(
+        resolveContext(
+          new FakeFetcher({ "x.git": { "mcp.yaml": `servers:\n  a:\n    ${server}\n` } }),
+          { repo: "x.git" },
+          join(dir, `t${i}`),
+        ),
+        server,
+      ).rejects.toThrow(error);
+    }
+    // 境界の値は書ける
+    const edge = await prepare("codex", {
+      "e.git": {
+        "mcp.yaml":
+          "servers:\n  a:\n    command: a\n    startup_timeout_sec: 1\n    tool_timeout_sec: 1\n  b:\n    command: b\n    startup_timeout_sec: 3600\n    tool_timeout_sec: 86400\n",
+      },
+    });
+    expect(readFileSync(join(edge.dir, "config.toml"), "utf8")).toContain(
+      "startup_timeout_sec = 3600\ntool_timeout_sec = 86400\n",
+    );
+    edge.dispose();
+  });
+});
+
 /** ディレクトリに、決めたファイルを置く。 */
 const place = (root: string, files: Record<string, string>) => {
   for (const [path, content] of Object.entries(files)) {

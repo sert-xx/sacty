@@ -56,6 +56,8 @@ description: リリースの手順
 #   local-tool:
 #     command: npx
 #     args: ["-y", "example-mcp-server"]
+#     startup_timeout_sec: 60   # 起動を待つ上限（秒。任意）
+#     tool_timeout_sec: 1800    # ツールの呼び出しを待つ上限（秒。任意）
 `,
   "sacty-context.yaml": `# extends：このリポジトリの親（上位の層）のコンテキストリポジトリ。URL#ref で ref を指定できる
 # extends: git@github.com:acme/sacty-context.git#main

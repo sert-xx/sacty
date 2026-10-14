@@ -1,7 +1,16 @@
 import { request } from "node:http";
 import { connect } from "node:net";
+import { Agent, fetch as undiciFetch } from "undici";
 import { afterEach, describe, expect, it } from "vitest";
-import { AiGateway, type GatewayDeps, type RetryPolicy, retryAfterMs, sentUrl } from "./gateway.js";
+import {
+  AiGateway,
+  contextMcpDispatcher,
+  FETCH_DEFAULT_TIMEOUT_MS,
+  type GatewayDeps,
+  type RetryPolicy,
+  retryAfterMs,
+  sentUrl,
+} from "./gateway.js";
 import { PlatformCredentials, PlatformFile, toPlatform } from "./platforms.js";
 import { MemorySecretStore } from "./secrets.js";
 
@@ -612,5 +621,113 @@ describe("コンテキストの HTTP の MCP サーバーの中継（PBI-49）",
     // 上流に届いたのは、リダイレクトを返したものだけ
     expect(upstreamMcp.seen.map((s) => s.url)).toEqual(["/redirect"]);
     upstreamMcp.close();
+  });
+
+  describe("時間切れ（PBI-75）", () => {
+    const headers = (token: string) => ({
+      authorization: `Bearer ${token}`,
+      "content-type": "application/json",
+      accept: "application/json, text/event-stream",
+    });
+
+    it("mcp.yaml の時間切れが fetch の既定（5分）より長ければ、待つ上限を延ばした接続で中継する。短い・無ければこれまでどおり", async () => {
+      const long: { url: string; dispatcher: unknown }[] = [];
+      const plain: string[] = [];
+      gateway = new AiGateway({
+        fetchImpl: (async (url: URL) => {
+          plain.push(String(url));
+          return json(200, { ok: "plain" });
+        }) as unknown as typeof fetch,
+        longFetchImpl: async (url, init) => {
+          long.push({ url: String(url), dispatcher: init.dispatcher });
+          return json(200, { ok: "long" });
+        },
+      });
+      const port = await gateway.listen();
+      const run = gateway.register(undefined, {
+        slow: { url: "https://slow.example.com/mcp", headers: {}, timeoutMs: 1_800_000 },
+        edge: { url: "https://edge.example.com/mcp", headers: {}, timeoutMs: 300_000 },
+        quick: { url: "https://quick.example.com/mcp", headers: {}, timeoutMs: 60_000 },
+        bare: { url: "https://bare.example.com/mcp", headers: {} },
+      });
+      for (const name of ["slow", "edge", "quick", "bare", "slow"]) {
+        const res = await send(port, `/ctx-mcp/${name}`, {
+          headers: headers(run.token),
+          body: "{}",
+        });
+        expect(res.status).toBe(200);
+      }
+      expect(long.map((l) => l.url)).toEqual([
+        "https://slow.example.com/mcp",
+        "https://slow.example.com/mcp",
+      ]);
+      // 待つ上限ごとの接続を使い回す
+      expect(long[0]?.dispatcher).toBeInstanceOf(Agent);
+      expect(long[1]?.dispatcher).toBe(long[0]?.dispatcher);
+      expect(plain).toEqual([
+        "https://edge.example.com/mcp",
+        "https://quick.example.com/mcp",
+        "https://bare.example.com/mcp",
+      ]);
+    });
+
+    it("延ばした接続でも、本物の上流の SSE をそのまま中継する", async () => {
+      const upstreamMcp = await mcpServer();
+      gateway = new AiGateway();
+      const port = await gateway.listen();
+      const run = gateway.register(undefined, {
+        docs: {
+          url: upstreamMcp.url,
+          headers: { Authorization: "Bearer s" },
+          timeoutMs: 3_600_000,
+        },
+      });
+      const res = await send(port, "/ctx-mcp/docs", {
+        headers: headers(run.token),
+        body: '{"jsonrpc":"2.0","id":1,"method":"tools/list"}',
+      });
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-type")).toBe("text/event-stream");
+      expect(res.body).toContain('"result":{"ok":2}');
+      expect(upstreamMcp.seen[0]?.headers.authorization).toBe("Bearer s");
+      // リダイレクトは、延ばした接続でもたどらない（認証のヘッダーをほかの宛先に送らない）
+      const moved = gateway.register(undefined, {
+        moved: {
+          url: upstreamMcp.url.replace("/mcp", "/redirect"),
+          headers: { "X-Api-Key": "k" },
+          timeoutMs: 3_600_000,
+        },
+      });
+      const redirected = await send(port, "/ctx-mcp/moved", { headers: headers(moved.token) });
+      expect(redirected.status).toBe(302);
+      expect(upstreamMcp.seen.map((s) => s.url)).toEqual(["/mcp", "/redirect"]);
+      upstreamMcp.close();
+    });
+
+    it("延ばした接続は、決めた上限まで応答を待ち、それを過ぎたら切る", {
+      timeout: 10_000,
+    }, async () => {
+      const { createServer } = await import("node:http");
+      const server = createServer((_req, res) => {
+        // undici の待つ上限は、おおよそ1秒の刻みで効く
+        setTimeout(() => {
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end("{}");
+        }, 1_500);
+      });
+      await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
+      const address = server.address();
+      const url = `http://127.0.0.1:${typeof address === "object" && address ? address.port : 0}/`;
+      const short = contextMcpDispatcher(50);
+      const enough = contextMcpDispatcher(5_000);
+      await expect(undiciFetch(url, { dispatcher: short })).rejects.toMatchObject({
+        cause: { code: "UND_ERR_HEADERS_TIMEOUT" },
+      });
+      expect((await undiciFetch(url, { dispatcher: enough })).status).toBe(200);
+      await short.close();
+      await enough.close();
+      server.close();
+      expect(FETCH_DEFAULT_TIMEOUT_MS).toBe(300_000);
+    });
   });
 });

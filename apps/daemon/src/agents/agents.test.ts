@@ -141,6 +141,29 @@ describe("認証方式ごとの環境変数", () => {
       { dir: "/host/ctx", mcpServers: [], secrets: [] },
     );
     expect(plain.command).not.toContain("--mcp-config");
+    expect(plain.env).not.toHaveProperty("MCP_TIMEOUT");
+
+    // MCP サーバーの起動の時間切れ（PBI-75）は、Claude Code に環境変数で渡す（sacty が決める変数は上書きさせない）
+    const timed = await buildInvocation(
+      {
+        ...base,
+        id: "c",
+        runtime: "claude-code",
+        auth: { mode: "subscription", secret: "claude-oauth-token" },
+      },
+      "prompt",
+      store,
+      () => {},
+      "design",
+      {
+        dir: "/host/ctx",
+        mcpServers: ["docs"],
+        secrets: [],
+        env: { MCP_TIMEOUT: "45000", CLAUDE_CONFIG_DIR: "/elsewhere" },
+      },
+    );
+    expect(timed.env.MCP_TIMEOUT).toBe("45000");
+    expect(timed.env.CLAUDE_CONFIG_DIR).toBe("/tmp/sacty-claude-config");
 
     // 秘密情報が無ければ、名前を示して止める
     await expect(

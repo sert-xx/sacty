@@ -3234,6 +3234,11 @@ export class TaskService {
         ? config.hostMcp.map((m) => ({
             name: m.name,
             url: `${gatewayForMcp.containerOrigin()}/mcp/${m.name}`,
+            // エージェントに渡す時間切れ（PBI-75）
+            ...(m.startupTimeoutSec !== undefined
+              ? { startup_timeout_sec: m.startupTimeoutSec }
+              : {}),
+            ...(m.toolTimeoutSec !== undefined ? { tool_timeout_sec: m.toolTimeoutSec } : {}),
           }))
         : [];
     if (!contextSource && !defaultContext && hostMcp.length === 0) return undefined;
@@ -5015,7 +5020,16 @@ export class TaskService {
             usedSecrets.push(secret);
             headers[name] = `${value.prefix}${secret}`;
           }
-          contextMcp[server.name] = { url: server.url, headers };
+          // 時間切れを書いたなら、ゲートウェイの中継がそれより先に切れないようにする（PBI-75）
+          const timeoutSec = Math.max(
+            server.startup_timeout_sec ?? 0,
+            server.tool_timeout_sec ?? 0,
+          );
+          contextMcp[server.name] = {
+            url: server.url,
+            headers,
+            ...(timeoutSec > 0 ? { timeoutMs: timeoutSec * 1000 } : {}),
+          };
         }
         gatewayRun = this.deps.gateway.register(route, contextMcp);
         usedSecrets.push(gatewayRun.token);

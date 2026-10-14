@@ -16,6 +16,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { code, type DaemonText, message, renderMessage } from "@sacty/core";
 import { z } from "zod";
+import { McpTimeouts } from "./context.js";
 import { errorText } from "./errors.js";
 import { hideSecret } from "./platforms.js";
 import { SecretRef, type SecretStore } from "./secrets.js";
@@ -50,6 +51,11 @@ export const HostMcpFile = z.object({
   restart_every_min: z.number().int().min(1).max(10_080).optional(),
   /** 起動してから準備ができる（認証が済む）まで待つ上限（秒）。 */
   ready_timeout_sec: z.number().int().min(5).max(3_600).default(300),
+  /**
+   * エージェントが、ゲートウェイ経由のこの MCP サーバーの起動（初期化とツールの一覧）・ツールの呼び出しを待つ上限（秒。
+   * PBI-75）。コンテキストの mcp.yaml と同じ意味で、ゲートウェイの中継もこれより先に切らない。
+   */
+  ...McpTimeouts,
 });
 
 export type HostMcpSpec = {
@@ -60,6 +66,9 @@ export type HostMcpSpec = {
   description: string;
   restartEveryMin?: number;
   readyTimeoutSec: number;
+  /** エージェントに渡す時間切れ（秒。PBI-75）。変えても MCP サーバーは起動し直さない。 */
+  startupTimeoutSec?: number;
+  toolTimeoutSec?: number;
 };
 
 export function toHostMcp(name: string, file: z.infer<typeof HostMcpFile>): HostMcpSpec {
@@ -71,8 +80,16 @@ export function toHostMcp(name: string, file: z.infer<typeof HostMcpFile>): Host
     description: file.description,
     ...(file.restart_every_min ? { restartEveryMin: file.restart_every_min } : {}),
     readyTimeoutSec: file.ready_timeout_sec,
+    ...(file.startup_timeout_sec !== undefined
+      ? { startupTimeoutSec: file.startup_timeout_sec }
+      : {}),
+    ...(file.tool_timeout_sec !== undefined ? { toolTimeoutSec: file.tool_timeout_sec } : {}),
   };
 }
+
+/** MCP サーバーを起動し直すかを決める設定（エージェントに渡す時間切れは、起動し直さずに変える。PBI-75）。 */
+const processKey = ({ startupTimeoutSec, toolTimeoutSec, ...spec }: HostMcpSpec) =>
+  JSON.stringify(spec);
 
 /** 起動した MCP サーバーへの接続。 */
 export type HostMcpConnection = {
@@ -105,7 +122,9 @@ const AUTH_ERROR =
 /** 準備ができないときに、起動し直すまでの間。 */
 const RETRY_MS = 60_000;
 /** ツールの呼び出しを待つ上限（SDK の既定の60秒では、時間のかかるツールが切れるため）。 */
-const CALL_TIMEOUT_MS = 10 * 60_000;
+export const CALL_TIMEOUT_MS = 10 * 60_000;
+/** 一覧（ツール・リソース・プロンプト）を待つ上限の既定（SDK の既定）。 */
+export const LIST_TIMEOUT_MS = 60_000;
 /** 切り替えた古いプロセスで、途中の呼び出しが終わるのを待つ上限。 */
 const DRAIN_MS = 5 * 60_000;
 /** 標準エラーを持っておく長さ（理由には、秘密情報を伏せた後の末尾だけを添える）。 */
@@ -232,9 +251,13 @@ export class HostMcpServers {
       if (!specs.some((s) => s.name === name)) void this.remove(name);
     }
     for (const spec of specs) {
-      const key = JSON.stringify(spec);
+      const key = processKey(spec);
       const state = this.states.get(spec.name);
-      if (state && state.key === key) continue;
+      if (state && state.key === key) {
+        // エージェントに渡す時間切れだけが変わったなら、起動し直さずに使う
+        state.spec = spec;
+        continue;
+      }
       if (state) {
         state.spec = spec;
         state.key = key;
@@ -404,6 +427,11 @@ export class HostMcpServers {
   /** ホストの MCP サーバーの機能を、そのまま見せる中継のサーバー。 */
   private proxy(name: string, connection: HostMcpConnection): Server {
     const client = connection.client;
+    // エージェントに渡した時間切れより、ゲートウェイの中継が先に切れないようにする（PBI-75）
+    const spec = this.states.get(name)?.spec;
+    const callTimeout = Math.max(CALL_TIMEOUT_MS, (spec?.toolTimeoutSec ?? 0) * 1000);
+    const listTimeout = Math.max(LIST_TIMEOUT_MS, (spec?.startupTimeoutSec ?? 0) * 1000);
+    const list = { timeout: listTimeout };
     const capabilities = client.getServerCapabilities() ?? {};
     const server = new Server(
       { name: `sacty-gateway/${name}`, version: "0.1.0" },
@@ -416,12 +444,12 @@ export class HostMcpServers {
       },
     );
     if (capabilities.tools) {
-      server.setRequestHandler(ListToolsRequestSchema, (req) => client.listTools(req.params));
+      server.setRequestHandler(ListToolsRequestSchema, (req) => client.listTools(req.params, list));
       server.setRequestHandler(CallToolRequestSchema, async (req) => {
         this.inFlight.set(connection, (this.inFlight.get(connection) ?? 0) + 1);
         try {
           const result = await client.callTool(req.params, undefined, {
-            timeout: CALL_TIMEOUT_MS,
+            timeout: callTimeout,
             resetTimeoutOnProgress: true,
           });
           if (result.isError && AUTH_ERROR.test(JSON.stringify(result.content ?? ""))) {
@@ -471,15 +499,17 @@ export class HostMcpServers {
     }
     if (capabilities.resources) {
       server.setRequestHandler(ListResourcesRequestSchema, (req) =>
-        client.listResources(req.params),
+        client.listResources(req.params, list),
       );
       server.setRequestHandler(ListResourceTemplatesRequestSchema, (req) =>
-        client.listResourceTemplates(req.params),
+        client.listResourceTemplates(req.params, list),
       );
       server.setRequestHandler(ReadResourceRequestSchema, (req) => client.readResource(req.params));
     }
     if (capabilities.prompts) {
-      server.setRequestHandler(ListPromptsRequestSchema, (req) => client.listPrompts(req.params));
+      server.setRequestHandler(ListPromptsRequestSchema, (req) =>
+        client.listPrompts(req.params, list),
+      );
       server.setRequestHandler(GetPromptRequestSchema, (req) => client.getPrompt(req.params));
     }
     return server;

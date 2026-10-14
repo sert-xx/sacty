@@ -448,3 +448,128 @@ describe("ホストで動かす MCP サーバー（PBI-36）", () => {
     await agent.close();
   });
 });
+
+describe("ホストの MCP サーバーの時間切れ（PBI-75）", () => {
+  /** 呼び出しのときに渡した待つ上限を記録する、ホストの MCP サーバーの偽物。 */
+  function recordingConnector() {
+    const calls: { method: string; timeout?: number }[] = [];
+    let connects = 0;
+    const connect: HostMcpConnector = async () => {
+      connects += 1;
+      const record =
+        (method: string, result: unknown) =>
+        async (...args: unknown[]) => {
+          const options = args.find(
+            (a): a is { timeout?: number } => typeof a === "object" && a !== null && "timeout" in a,
+          );
+          calls.push({ method, ...(options ? { timeout: options.timeout } : {}) });
+          return result;
+        };
+      return {
+        client: {
+          getServerCapabilities: () => ({ tools: {}, resources: {}, prompts: {} }),
+          listTools: record("tools/list", {
+            tools: [{ name: "x", inputSchema: { type: "object" } }],
+          }),
+          callTool: record("tools/call", { content: [{ type: "text", text: "ok" }] }),
+          listResources: record("resources/list", { resources: [] }),
+          listResourceTemplates: record("resources/templates/list", { resourceTemplates: [] }),
+          listPrompts: record("prompts/list", { prompts: [] }),
+        } as unknown as HostMcpConnection["client"],
+        close: async () => {},
+        onClose: () => {},
+      };
+    };
+    return { connect, calls, connects: () => connects };
+  }
+
+  async function run(specs: () => HostMcpSpec[]) {
+    const fake = recordingConnector();
+    host = new HostMcpServers({ specs, secrets: new MemorySecretStore({}), connect: fake.connect });
+    host.start();
+    await until(() => fake.connects() === 1);
+    gateway = new AiGateway({ hostMcp: host });
+    const port = await gateway.listen();
+    const agent = await agentClient(port, gateway.register().token);
+    await agent.listTools();
+    await agent.listResources();
+    await agent.listResourceTemplates();
+    await agent.listPrompts();
+    await agent.callTool({ name: "x", arguments: {} });
+    await agent.close();
+    return fake;
+  }
+
+  it("書けば、ツールの呼び出しと一覧を、その値より先に切らない（既定より短ければ既定のまま）", async () => {
+    const long = await run(() => [spec({ startup_timeout_sec: 120, tool_timeout_sec: 3_600 })]);
+    expect(long.calls).toEqual([
+      { method: "tools/list", timeout: 120_000 },
+      { method: "resources/list", timeout: 120_000 },
+      { method: "resources/templates/list", timeout: 120_000 },
+      { method: "prompts/list", timeout: 120_000 },
+      { method: "tools/call", timeout: 3_600_000 },
+    ]);
+    await gateway?.close();
+    await host?.stop();
+    // 既定（ツールの呼び出しは10分、一覧は60秒）より短い値では、ゲートウェイの上限は縮めない
+    const short = await run(() => [spec({ startup_timeout_sec: 5, tool_timeout_sec: 30 })]);
+    expect(short.calls.find((c) => c.method === "tools/call")?.timeout).toBe(600_000);
+    expect(short.calls.find((c) => c.method === "tools/list")?.timeout).toBe(60_000);
+  });
+
+  it("書いていなければ、これまでどおり（ツールの呼び出しは10分、一覧は60秒）", async () => {
+    const fake = await run(() => [spec()]);
+    expect(fake.calls.find((c) => c.method === "tools/call")?.timeout).toBe(600_000);
+    expect(fake.calls.find((c) => c.method === "tools/list")?.timeout).toBe(60_000);
+  });
+
+  it("時間切れだけを変えても MCP サーバーを起動し直さず、新しい値を使う。ほかの設定が変われば起動し直す", async () => {
+    let current = spec({ tool_timeout_sec: 900 });
+    const fake = recordingConnector();
+    host = new HostMcpServers({
+      specs: () => [current],
+      secrets: new MemorySecretStore({}),
+      connect: fake.connect,
+    });
+    host.start();
+    await until(() => fake.connects() === 1);
+    current = spec({ tool_timeout_sec: 1_800, startup_timeout_sec: 90 });
+    host.reconcile();
+    gateway = new AiGateway({ hostMcp: host });
+    const port = await gateway.listen();
+    const agent = await agentClient(port, gateway.register().token);
+    await agent.callTool({ name: "x", arguments: {} });
+    expect(fake.calls.at(-1)).toEqual({ method: "tools/call", timeout: 1_800_000 });
+    expect(fake.connects()).toBe(1);
+    expect(host.restarts("cloud")).toBe(0);
+    await agent.close();
+    current = spec({ tool_timeout_sec: 1_800, startup_timeout_sec: 90, args: ["--v2"] });
+    host.reconcile();
+    await until(() => fake.connects() === 2);
+  });
+
+  it("範囲の外の値・整数でない値は、設定の誤りにする", () => {
+    for (const extra of [
+      { startup_timeout_sec: 0 },
+      { startup_timeout_sec: 3_601 },
+      { tool_timeout_sec: 0 },
+      { tool_timeout_sec: -1 },
+      { tool_timeout_sec: 86_401 },
+      { tool_timeout_sec: 1.5 },
+      { tool_timeout_sec: "60" },
+    ]) {
+      expect(HostMcpFile.safeParse({ command: "x", ...extra }).success, JSON.stringify(extra)).toBe(
+        false,
+      );
+    }
+    expect(
+      toHostMcp(
+        "a",
+        HostMcpFile.parse({ command: "x", startup_timeout_sec: 1, tool_timeout_sec: 86_400 }),
+      ),
+    ).toMatchObject({ startupTimeoutSec: 1, toolTimeoutSec: 86_400 });
+    expect(toHostMcp("a", HostMcpFile.parse({ command: "x" }))).not.toHaveProperty(
+      "toolTimeoutSec",
+    );
+  });
+});
