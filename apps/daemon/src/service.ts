@@ -128,6 +128,8 @@ import {
   type PullRequestFeedback,
   type PullRequestStatus,
   type PullRequests,
+  type SactyReviewRound,
+  sactyReviewKey,
 } from "./github.js";
 import { notificationFor, type SlackNotifier } from "./notifier.js";
 import type { OrchestratorSessionStore } from "./orchestrator-sessions.js";
@@ -491,6 +493,8 @@ export class TaskService {
   private defaultSharedComposes: SharedComposeFetcher | undefined;
   /** 中止の後片付けをしているタスク（その間に実行を始めないため）。 */
   private readonly cancelling = new Set<string>();
+  /** 取り込むラベルを付けている途中の PR（タスクと PR。重ねて付けないため。PBI-88）。 */
+  private readonly labeling = new Set<string>();
   /**
    * 質問に答えているタスクと、その実行（PBI-54）。工程の実行とは別に持つ（一時停止では止めず、中止では止める）。
    */
@@ -696,6 +700,8 @@ export class TaskService {
       }
     }
     await this.checkReviewPullRequests();
+    // 公開の後、ラベルを付ける前に止まった PR に付ける（PBI-88 レビュー指摘）
+    await this.resumePullRequestLabels();
   }
 
   /**
@@ -830,6 +836,7 @@ export class TaskService {
           token,
           number: pr.number,
           ...this.githubAccountOf(current, pr.repo),
+          ...this.sactyReviewsOf(pr.repo, pr.number),
         })
       ).filter((item) => !current.importedFeedback.includes(item.key));
       if (fresh.length === 0) return;
@@ -880,6 +887,37 @@ export class TaskService {
       ]);
     }
     this.settleReview(current);
+  }
+
+  /**
+   * この PR をレビューした sacty のタスクの回と、そのタスクが投稿に使うアカウント（PBI-88）。取り込むラベルを付けて取り込んだ
+   * レビューだけのタスク（`source.review: sacty`）の、直すべき指摘のある回（評価を読めなかった回も）は、元のタスクへの PR の
+   * 指摘として取り込む（allowed）。ほかの回・ほかのレビューのタスクの投稿は、アカウントが元のタスクと違っても除く。
+   */
+  private sactyReviewsOf(repo: string, number: number): { sactyReviews?: SactyReviewRound[] } {
+    const rounds = [...this.tasks.values()].flatMap((t) => {
+      const ref = referencedPullRequest(t);
+      if (!ref || ref.number !== number || !sameRepo(ref.repo, repo)) return [];
+      const account = this.githubAccountOf(t, repo).account;
+      if (!account) return [];
+      const verdicts = t.reviewVerdicts ?? [];
+      const last = Math.max(t.reviewRound ?? 1, ...verdicts.map((v) => v.round));
+      return Array.from({ length: last }, (_, i) => {
+        const round = i + 1;
+        const verdict = verdicts.find((v) => v.round === round);
+        return {
+          key: sactyReviewKey(t.id, round),
+          account,
+          // 直すべき指摘の無い（そのままマージしてよい）回は、差し戻さないので取り込まない。評価を読めなければ、指摘を
+          // 落とさないように取り込む
+          allowed:
+            t.source?.review === "sacty" &&
+            verdict !== undefined &&
+            verdict.changesRequested !== false,
+        };
+      });
+    });
+    return rounds.length > 0 ? { sactyReviews: rounds } : {};
   }
 
   /**
@@ -2069,8 +2107,26 @@ export class TaskService {
     const has = (issue: FoundIssue, name: string | undefined) =>
       name !== undefined && issue.labels.some((l) => l.toLowerCase() === name);
     const projects = this.deps.projects.all();
-    const reviewOf = (issue: FoundIssue): "requested" | "label" | undefined => {
+    // リポジトリの URL は、書き方の揺れ（.git・末尾の / など）をそろえて比べる（PBI-88）
+    const key = (repo: string, number: number) => `${repoKey(repo)}#${number}`;
+    // sacty がタスクのために作った PR（実装の PR と、要求要件・設計の PR。ラベルを付けた記録も。PBI-88）
+    const sactyMade = new Set(
+      [...this.tasks.values()].flatMap((t) => [
+        ...(t.pullRequest?.repo && t.pullRequest.number
+          ? [key(t.pullRequest.repo, t.pullRequest.number)]
+          : []),
+        ...t.stepPullRequests.map((p) => key(p.repo, p.number)),
+        ...(t.pullRequestLabels ?? []).map((p) => key(p.repo, p.number)),
+      ]),
+    );
+    const reviewOf = (issue: FoundIssue): "requested" | "label" | "sacty" | undefined => {
       if (!issue.pullRequest) return undefined;
+      // sacty が作り、取り込むラベルを付けた PR は、元のタスクとは別の、レビューだけのタスクにする（オーケストレーターに
+      // 工程を選ばせない。同じ PR をもう一度実装させて、PR とレビューを繰り返し作らないため）。レビュー用のラベル・依頼にも
+      // 当たっても、こちらにする（そのレビューを、元のタスクに PR の指摘として届けるため。PBI-88）
+      if (has(issue, label) && intakeOn(issue) && sactyMade.has(key(issue.repo, issue.number))) {
+        return "sacty";
+      }
       // 依頼は、担当のプロジェクトでそのホストに選んだ本人への依頼だけ（ほかのプロジェクトのアカウントへの依頼を、
       // 担当のプロジェクトのアカウントで取り込んで投稿しない。PBI-44 レビュー指摘）
       if (issue.review === "requested" && settings.reviewRequested && issue.requestedFor) {
@@ -2082,7 +2138,6 @@ export class TaskService {
       }
       return has(issue, reviewLabel) ? "label" : undefined;
     };
-    const key = (repo: string, number: number) => `${repo.toLowerCase()}#${number}`;
     const known = new Set(
       [...this.tasks.values()].flatMap((t) =>
         t.source ? [key(t.source.repo, t.source.number)] : [],
@@ -3435,6 +3490,9 @@ export class TaskService {
             ...(step === "design" ? { testViewpoints } : {}),
             ...(step === "implement" ? { testMap } : {}),
             ...(review ? { reviewComments: review.comments } : {}),
+            ...(review?.changesRequested !== undefined
+              ? { reviewChangesRequested: review.changesRequested }
+              : {}),
             ...(reproduction ? { reproductionTests: reproduction.tests } : {}),
           },
         },
@@ -4212,6 +4270,8 @@ export class TaskService {
               number: pr.number,
               repo,
               ...(superseded !== undefined ? { supersedes: superseded } : {}),
+              // 取り込むラベルを付ける予定（公開と同じ記録に残し、止まっても再開で付ける。PBI-88）
+              ...this.labelDue(latest, repo, pr.number),
             },
           },
         },
@@ -4224,6 +4284,8 @@ export class TaskService {
         },
       ]);
       this.warnIfNeeded(submitted);
+      // 取り込むラベルを付ける（同じ PR を更新したときは、もう付けない。PBI-88）
+      await this.labelPullRequest(task.id, repo, pr.number, token, usedSecrets);
     } catch (error) {
       fail(message("pr.failed", { detail: errorText(error) }));
     }
@@ -4343,14 +4405,142 @@ export class TaskService {
               url: pr.url,
               number: pr.number,
               repo: prRepo,
+              // 取り込むラベルを付ける予定（公開と同じ記録に残し、止まっても再開で付ける。PBI-88）
+              ...this.labelDue(task, prRepo, pr.number),
             },
           },
         },
         ...this.submitEvents(task, "pr"),
       ]);
       this.checkBudget(submitted);
+      // 取り込むラベルを付ける（失敗しても PR の作成は失敗にしない。PBI-88）
+      await this.labelPullRequest(task.id, prRepo, pr.number, token, usedSecrets);
     } catch (error) {
       fail(message("pr.failed", { detail: errorText(error) }));
+    }
+  }
+
+  /**
+   * いま sacty の PR に付ける取り込むラベル（PBI-88）。取り込むラベルを設定していない、または PR のトリアージを Off にしている
+   * （付けても取り込まれない）なら無い。
+   */
+  private intakeLabelForPullRequests(): string | undefined {
+    const settings = this.deps.settings.get();
+    return settings.intakeLabel && !settings.triageOff?.includes("pullRequests")
+      ? settings.intakeLabel
+      : undefined;
+  }
+
+  /**
+   * PR の公開の記録に入れる、取り込むラベルを付ける予定（PBI-88）。付けた・付けられなかった記録のある PR には付けない
+   * （1つの PR に1回。人が外したラベルを付け直さないため）。
+   */
+  private labelDue(task: Task, repo: string, number: number): { intakeLabel?: string } {
+    const label = this.intakeLabelForPullRequests();
+    if (!label) return {};
+    const done = (task.pullRequestLabels ?? []).some(
+      (x) => x.number === number && sameRepo(x.repo, repo),
+    );
+    return done ? {} : { intakeLabel: label };
+  }
+
+  /**
+   * 公開の記録に付ける予定があり、付けた・付けられなかった記録の無い、開いている sacty の PR（PBI-88）。公開を記録した後、
+   * ラベルを付ける前に止まった（停止・クラッシュ）ものを、再開で付けるため。
+   */
+  private pendingPullRequestLabels(task: Task): { repo: string; number: number }[] {
+    const prs = [
+      ...(task.pullRequest?.intakeLabel &&
+      task.pullRequest.repo &&
+      task.pullRequest.number &&
+      task.pullRequestState === "open"
+        ? [{ repo: task.pullRequest.repo, number: task.pullRequest.number }]
+        : []),
+      ...task.stepPullRequests
+        .filter((p) => p.intakeLabel && p.state === "open" && !p.superseded)
+        .map((p) => ({ repo: p.repo, number: p.number })),
+    ];
+    return prs.filter(
+      (p) =>
+        !(task.pullRequestLabels ?? []).some(
+          (x) => x.number === p.number && sameRepo(x.repo, p.repo),
+        ),
+    );
+  }
+
+  /**
+   * 付ける予定のまま記録の無い PR に、取り込むラベルを付ける（PBI-88）。PR の確認（60秒ごと）のたびに行う。中止したタスク・
+   * いまは付けない設定（取り込むラベルが無い・PR のトリアージが Off）なら付けない（記録もしない）。
+   */
+  private async resumePullRequestLabels(): Promise<void> {
+    if (!this.intakeLabelForPullRequests()) return;
+    for (const task of [...this.tasks.values()]) {
+      if (task.status === "cancelled" || this.cancelling.has(task.id)) continue;
+      for (const pr of this.pendingPullRequestLabels(task)) {
+        const usedSecrets: string[] = [];
+        let token: string;
+        try {
+          token = await this.githubToken(task, pr.repo, usedSecrets);
+        } catch (error) {
+          console.warn(
+            `[daemon] PR #${pr.number}（${pr.repo}）にラベルを付けるためのトークンを取り出せませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
+          );
+          continue;
+        }
+        await this.labelPullRequest(task.id, pr.repo, pr.number, token, usedSecrets);
+      }
+    }
+  }
+
+  /**
+   * sacty が作った PR（実装の PR と、要求要件・設計の PR）に、取り込むラベル（sacty の設定）を付ける（PBI-88）。
+   * 別のタスクとして取り込ませ、レビューだけを行わせるため。
+   * - 取り込むラベルを設定していない、または PR のトリアージを Off にしている（取り込まれない）なら、付けない
+   * - 1つの PR につき1回だけ付ける（付けた・付けられなかった記録があれば、PR を更新しても付けない。人が外したラベルを
+   *   付け直さないため）。同じ PR を付けている途中なら、重ねて付けない
+   * - 付けられなければ、理由を台帳に残す（秘密の値は伏せる）。PR の作成は失敗にしない
+   */
+  private async labelPullRequest(
+    taskId: string,
+    repo: string,
+    number: number,
+    token: string,
+    usedSecrets: readonly string[],
+  ): Promise<void> {
+    const label = this.intakeLabelForPullRequests();
+    if (!label) return;
+    const same = (x: { repo: string; number: number }) =>
+      x.number === number && sameRepo(x.repo, repo);
+    if ((this.tasks.get(taskId)?.pullRequestLabels ?? []).some(same)) return;
+    const key = `${taskId} ${repoKey(repo)}#${number}`;
+    if (this.labeling.has(key)) return;
+    this.labeling.add(key);
+    try {
+      let event: EventInput;
+      try {
+        const { created } = await this.deps.pulls.addLabel({ repo, token, number, label });
+        event = {
+          type: "PullRequestLabeled",
+          payload: { repo, number, label, ...(created ? { created } : {}) },
+        };
+      } catch (error) {
+        event = {
+          type: "PullRequestLabelFailed",
+          payload: { repo, number, label, message: redactText(errorText(error), usedSecrets) },
+        };
+      }
+      // 付けている間に、ほかで記録された（同じ PR）なら、記録しない
+      const latest = this.tasks.get(taskId);
+      if (!latest || (latest.pullRequestLabels ?? []).some(same)) return;
+      try {
+        this.append(latest, [{ actor: "sacty", event }]);
+      } catch (error) {
+        console.warn(
+          `[daemon] PR #${number}（${repo}）のラベルの記録に失敗しました：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
+        );
+      }
+    } finally {
+      this.labeling.delete(key);
     }
   }
 
@@ -6181,8 +6371,17 @@ function splitWithRepositories(
   return { ...plan, children };
 }
 
+/** リポジトリの URL の、比べるためのキー（書き方の揺れをそろえ、大文字・小文字を区別しない。PBI-88）。 */
+function repoKey(repo: string): string {
+  return (parseRepoUrl(repo)?.url ?? repo).toLowerCase();
+}
+
+function sameRepo(a: string, b: string): boolean {
+  return repoKey(a) === repoKey(b);
+}
+
 /** PR のレビューの取り込みのタスクの工程（レビューだけ。オーケストレーターは使わないので費用は無い。PBI-44）。 */
-function reviewOnlySteps(via: "requested" | "label"): ChosenSteps {
+function reviewOnlySteps(via: "requested" | "label" | "sacty"): ChosenSteps {
   return {
     steps: [...STEP_PLANS.review],
     plan: "review",
