@@ -7,7 +7,8 @@ const ja = {
   intakeNote: "ラベルの付いた、開いている Issue と PR をタスクにします",
   intakeLabel: "取り込むラベル",
   intakePlaceholder: "例：sacty",
-  intakeHelp: "すべてのプロジェクトの対象で取り込みます。",
+  intakeHelp:
+    "すべてのプロジェクトの対象で取り込みます。\nsacty が作る PR にもこのラベルを付け、別のタスクでレビューします（PR を取り込むときだけ）。",
   intakeOff:
     "ラベルを設定していないか、Issue と PR の両方を Off にしているので、取り込みは止まっています。",
   intakeOn: (label: string, issues: boolean, pullRequests: boolean) =>
@@ -62,7 +63,8 @@ const en: SettingsMessages = {
   intakeNote: "Open issues and PRs with the label become tasks",
   intakeLabel: "Label to import",
   intakePlaceholder: "e.g. sacty",
-  intakeHelp: "Applies to the targets of every project.",
+  intakeHelp:
+    "Applies to the targets of every project.\nsacty also adds this label to the PRs it creates, so another task reviews them (only when PRs are imported).",
   intakeOff: "No label is set, or both issues and PRs are off, so intake is stopped.",
   intakeOn: (label, issues, pullRequests) =>
     `${[issues ? "Issues" : "", pullRequests ? "PRs" : ""].filter(Boolean).join(" and ")} labeled "${label}" are imported.`,

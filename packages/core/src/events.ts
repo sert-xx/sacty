@@ -227,8 +227,9 @@ export const TaskSource = z.object({
   /**
    * PR のレビューだけを行う取り込み（PBI-44）。requested：自分にレビューが依頼された、label：PR のレビュー用の
    * ラベルが付いていた。この取り込みのタスクは、工程をレビューだけにする（オーケストレーターに選ばせない）。
+   * sacty：sacty がほかのタスクで作り、取り込むラベルを付けた PR（実装の PR と、要求要件・設計の PR。PBI-88）。
    */
-  review: z.enum(["requested", "label"]).optional(),
+  review: z.enum(["requested", "label", "sacty"]).optional(),
 });
 export type TaskSource = z.infer<typeof TaskSource>;
 
@@ -501,6 +502,11 @@ const AgentRunCompleted = z.object({
     testMap: z.array(TestMapping).default([]),
     /** レビューの工程の、PR の行へのコメント（PBI-19）。 */
     reviewComments: z.array(ReviewComment).default([]),
+    /**
+     * レビューの工程の評価（PBI-88）。true：マージの前に直すべき指摘がある（エージェントの評価か、行についての指摘がある）、
+     * false：そのままマージしてよい。評価を読めなければ無い。
+     */
+    reviewChangesRequested: z.boolean().optional(),
     /** 再現の工程が申告した、不具合を再現するテスト（PBI-29）。 */
     reproductionTests: z.array(z.string()).default([]),
   }),
@@ -1071,6 +1077,37 @@ const PullRequestPublished = z.object({
     number: z.number().int().positive().optional(),
     /** PRを作ったリポジトリ（リポジトリの URL）。PRの番号はリポジトリの中でしか一意でないため記録する。 */
     repo: z.string().optional(),
+    /** 取り込むラベルを付ける予定（PBI-88）。付けた・付けられなかった記録が無ければ、再開で付ける。 */
+    intakeLabel: z.string().min(1).optional(),
+  }),
+});
+
+/**
+ * sacty が作った PR（実装の PR と、要求要件・設計の PR）に、取り込むラベル（sacty の設定）を付けた（PBI-88）。
+ * 別のタスクとして取り込ませ、レビューだけを行わせるため。created は、リポジトリにラベルが無かったので作った。
+ * 1つの PR につき1回だけ付ける（記録のある PR には、更新しても付け直さない）。
+ */
+const PullRequestLabeled = z.object({
+  type: z.literal("PullRequestLabeled"),
+  payload: z.object({
+    repo: z.string(),
+    number: z.number().int().positive(),
+    label: z.string().min(1),
+    created: z.boolean().default(false),
+  }),
+});
+
+/**
+ * 取り込むラベルを、sacty が作った PR に付けられなかった（権限など。PBI-88）。PR の作成は失敗にしない。
+ * 付け直しはしない（1つの PR につき1回）。
+ */
+const PullRequestLabelFailed = z.object({
+  type: z.literal("PullRequestLabelFailed"),
+  payload: z.object({
+    repo: z.string(),
+    number: z.number().int().positive(),
+    label: z.string().min(1),
+    message: DaemonText,
   }),
 });
 
@@ -1117,6 +1154,8 @@ const StepPullRequestPublished = z.object({
     number: z.number().int().positive(),
     repo: z.string(),
     supersedes: z.number().int().positive().optional(),
+    /** 取り込むラベルを付ける予定（PBI-88）。付けた・付けられなかった記録が無ければ、再開で付ける。 */
+    intakeLabel: z.string().min(1).optional(),
   }),
 });
 
@@ -1438,6 +1477,8 @@ export const EventInput = z.discriminatedUnion("type", [
   OrchestratorSessionUsed,
   IntegrationReviewed,
   PullRequestPublished,
+  PullRequestLabeled,
+  PullRequestLabelFailed,
   TaskBranchCreated,
   StepBranchPushed,
   StepPullRequestPublished,
