@@ -3,9 +3,9 @@ import { join } from "node:path";
 import { renderMessage } from "@sacty/core";
 
 /**
- * 起動中のデーモンの接続先とトークンを置くファイル（SACTY_HOME の下。PBI-76）。`sacty up` が起動のたびに書き、終わるときに
- * 消す。CLI のコマンド（`sacty context preview`）が、画面と同じ API を呼ぶために読む。トークンを含むので、本人だけが
- * 読める権限で置く。
+ * 起動中のデーモンの接続先とトークンを置くファイル（SACTY_HOME の下。PBI-76）。`sacty up` が、デーモンが起動できた
+ * （応答した）ときに書き（claimDaemonFile）、終わるときに自分の書いたものだけを消す。CLI のコマンド
+ * （`sacty context preview`）が、画面と同じ API を呼ぶために読む。トークンを含むので、本人だけが読める権限で置く。
  */
 export const DAEMON_FILE = "daemon.json";
 
@@ -18,15 +18,53 @@ export function writeDaemonFile(home: string, endpoint: DaemonEndpoint): void {
   writeFileSync(path, `${JSON.stringify(endpoint)}\n`, { mode: 0o600 });
 }
 
-/** 書いたのが自分（同じトークン）のときだけ消す（あとから起動した別の sacty のものは消さない）。 */
-export function removeDaemonFile(home: string, token: string): void {
+/** 書いたのが自分（接続先とトークンが同じ）のときだけ消す（ほかの sacty のものは消さない）。 */
+export function removeDaemonFile(home: string, endpoint: DaemonEndpoint): void {
   const path = join(home, DAEMON_FILE);
   try {
     const current = JSON.parse(readFileSync(path, "utf8")) as Partial<DaemonEndpoint>;
-    if (current.token === token) rmSync(path, { force: true });
+    if (current.token === endpoint.token && current.url === endpoint.url) {
+      rmSync(path, { force: true });
+    }
   } catch {
     // 無い・読めないなら何もしない
   }
+}
+
+/** 接続先のデーモンが、そのトークンで応答するか。 */
+export async function isDaemonAlive(
+  endpoint: DaemonEndpoint,
+  fetcher: Fetch = fetch,
+): Promise<boolean> {
+  try {
+    const res = await fetcher(`${endpoint.url}/api/health`, {
+      headers: { authorization: `Bearer ${endpoint.token}` },
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 起動できたデーモンの接続先を書く。既に書かれたほかの sacty が応答するなら、上書きしない（false を返す。その sacty の
+ * プレビューを使えなくしないため）。応答しない（止まった後に残ったもの）なら、上書きする。
+ */
+export async function claimDaemonFile(
+  home: string,
+  endpoint: DaemonEndpoint,
+  alive: (endpoint: DaemonEndpoint) => Promise<boolean> = isDaemonAlive,
+): Promise<boolean> {
+  const current = readDaemonFile(home);
+  if (
+    current &&
+    !(current.token === endpoint.token && current.url === endpoint.url) &&
+    (await alive(current))
+  ) {
+    return false;
+  }
+  writeDaemonFile(home, endpoint);
+  return true;
 }
 
 export function readDaemonFile(home: string): DaemonEndpoint | undefined {
@@ -85,6 +123,17 @@ export type PreviewView = {
 
 export type PreviewResult = { preview: PreviewView } | { error: unknown };
 
+/** ファイルの中身を除いた結果（--no-content。JSON でも人が読む形でも、中身を出さない）。 */
+export function withoutContent(result: PreviewResult): PreviewResult {
+  if (!("preview" in result)) return result;
+  return {
+    preview: {
+      ...result.preview,
+      files: result.preview.files.map(({ content: _, ...file }) => file),
+    },
+  };
+}
+
 type Fetch = (url: string, init: { headers: Record<string, string> }) => Promise<Response>;
 
 /**
@@ -134,6 +183,20 @@ export async function fetchContextPreview(
   );
   if (!res.ok) throw new Error(`デーモンが ${res.status} を返しました。`);
   return (await res.json()) as PreviewResult;
+}
+
+/**
+ * `sacty context preview` の出力。--json は API の結果の形、そうでなければ人が読む形。--no-content（content: false）は、
+ * どちらの形でもファイルの中身を出さない。
+ */
+export function previewOutput(
+  result: PreviewResult,
+  options: { json: boolean; content: boolean },
+): string {
+  const shown = options.content ? result : withoutContent(result);
+  return options.json
+    ? JSON.stringify(shown, null, 2)
+    : formatContextPreview(shown, options.content);
 }
 
 /** プレビューを、人が読む文にする（ファイルの中身も出す。秘密情報は参照の名前だけ）。 */

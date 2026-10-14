@@ -19,11 +19,11 @@ import {
   SecretNotFoundError,
 } from "@sacty/daemon/secrets";
 import {
+  claimDaemonFile,
   fetchContextPreview,
-  formatContextPreview,
+  previewOutput,
   readDaemonFile,
   removeDaemonFile,
-  writeDaemonFile,
 } from "./context-preview.js";
 
 const require = createRequire(import.meta.url);
@@ -179,7 +179,7 @@ async function contextPreview(
     throw new Error("起動中の sacty が見つかりません。`sacty up` で起動してから実行してください。");
   }
   const result = await fetchContextPreview(endpoint, project, runtime);
-  console.log(json ? JSON.stringify(result, null, 2) : formatContextPreview(result, content));
+  console.log(previewOutput(result, { json, content }));
   // 誤りがあれば、終了コードで知らせる
   if ("error" in result) process.exitCode = 1;
 }
@@ -244,11 +244,6 @@ async function up(webPort: number, daemonPort: number) {
 
   process.on("SIGINT", () => stop(0));
   process.on("SIGTERM", () => stop(0));
-  // CLI のコマンド（sacty context preview）が、起動中のデーモンに問い合わせるための接続先とトークン（PBI-76）
-  const home = resolveHome();
-  mkdirSync(home, { recursive: true });
-  writeDaemonFile(home, { url: daemonUrl, token });
-  process.on("exit", () => removeDaemonFile(home, token));
 
   const daemonMain = require.resolve("@sacty/daemon");
   watch(
@@ -271,6 +266,19 @@ async function up(webPort: number, daemonPort: number) {
     console.error("[sacty]", error instanceof Error ? error.message : error);
     stop(1);
     return;
+  }
+  if (stopping) return;
+
+  // CLI のコマンド（sacty context preview）が、起動中のデーモンに問い合わせるための接続先とトークン（PBI-76）。デーモンが
+  // 応答してから書き（起動に失敗した sacty は書かない）、ほかの sacty が動いていれば上書きしない
+  const home = resolveHome();
+  const endpoint = { url: daemonUrl, token };
+  if (await claimDaemonFile(home, endpoint)) {
+    process.on("exit", () => removeDaemonFile(home, endpoint));
+  } else {
+    console.warn(
+      "[sacty] 同じ SACTY_HOME で、ほかの sacty が動いています。sacty context preview は、そちらに問い合わせます。",
+    );
   }
   if (stopping) return;
 

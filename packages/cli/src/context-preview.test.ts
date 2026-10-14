@@ -3,10 +3,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  claimDaemonFile,
   DAEMON_FILE,
   fetchContextPreview,
   formatContextPreview,
   type PreviewView,
+  previewOutput,
   readDaemonFile,
   removeDaemonFile,
   writeDaemonFile,
@@ -67,15 +69,43 @@ describe("sacty context preview（PBI-76）", () => {
     writeDaemonFile(home, { url: "http://127.0.0.1:4890", token: "t1" });
     expect(statSync(join(home, DAEMON_FILE)).mode & 0o777).toBe(0o600);
     expect(readDaemonFile(home)).toEqual({ url: "http://127.0.0.1:4890", token: "t1" });
-    // ほかの sacty が書いたもの（トークンが違う）は消さない
-    removeDaemonFile(home, "other");
+    // ほかの sacty が書いたもの（トークン・接続先が違う）は消さない
+    removeDaemonFile(home, { url: "http://127.0.0.1:4890", token: "other" });
+    removeDaemonFile(home, { url: "http://127.0.0.1:4999", token: "t1" });
     expect(readDaemonFile(home)).toBeDefined();
-    removeDaemonFile(home, "t1");
+    removeDaemonFile(home, { url: "http://127.0.0.1:4890", token: "t1" });
     expect(readDaemonFile(home)).toBeUndefined();
     writeFileSync(join(home, DAEMON_FILE), "not json");
     expect(readDaemonFile(home)).toBeUndefined();
     writeFileSync(join(home, DAEMON_FILE), JSON.stringify({ url: 1 }));
     expect(readDaemonFile(home)).toBeUndefined();
+  });
+
+  it("二重に起動しても、動いている sacty の接続の情報を上書きせず、後の起動の終わりで消さない（PR #85 レビュー指摘）", async () => {
+    const first = { url: "http://127.0.0.1:4890", token: "first" };
+    const second = { url: "http://127.0.0.1:4890", token: "second" };
+    const asked: string[] = [];
+    const alive = (running: string[]) => async (e: { token: string }) => {
+      asked.push(e.token);
+      return running.includes(e.token);
+    };
+    expect(await claimDaemonFile(home, first, alive(["first"]))).toBe(true);
+    // 最初の sacty が動いているあいだは、後から起動したものは書かない
+    expect(await claimDaemonFile(home, second, alive(["first"]))).toBe(false);
+    expect(readDaemonFile(home)).toEqual(first);
+    // 後の起動が終わっても（書いていないので）、最初の sacty のものは残る
+    removeDaemonFile(home, second);
+    expect(readDaemonFile(home)).toEqual(first);
+    // 最初の sacty が止まった後に残ったもの（応答しない）は、上書きする
+    expect(await claimDaemonFile(home, second, alive([]))).toBe(true);
+    expect(readDaemonFile(home)).toEqual(second);
+    // 自分のものなら、問い合わせずに書き直す
+    asked.length = 0;
+    expect(await claimDaemonFile(home, second, alive([]))).toBe(true);
+    expect(asked).toEqual([]);
+    // 最初の sacty の終わりでは、後の sacty のものを消さない
+    removeDaemonFile(home, first);
+    expect(readDaemonFile(home)).toEqual(second);
   });
 
   const endpoint = { url: "http://127.0.0.1:4890", token: "daemon-token" };
@@ -141,6 +171,28 @@ describe("sacty context preview（PBI-76）", () => {
     expect(text).toContain("literal の値は、書かれたまま出ます");
     // 中身を省けば、ファイルの一覧だけ
     expect(formatContextPreview({ preview: view }, false)).not.toContain("=====");
+  });
+
+  it("--no-content は、JSON でも人が読む形でも、ファイルの中身を出さない（PR #85 レビュー指摘）", () => {
+    const secretish = "literal-header-value";
+    const withLiteral: PreviewView = {
+      ...view,
+      files: [
+        { path: "mcp.json", generated: true, size: 30, content: `{"X-Key": "${secretish}"}` },
+      ],
+    };
+    const result = { preview: withLiteral };
+    const json = JSON.parse(previewOutput(result, { json: true, content: false }));
+    expect(json.preview.files).toEqual([{ path: "mcp.json", generated: true, size: 30 }]);
+    expect(previewOutput(result, { json: true, content: false })).not.toContain(secretish);
+    expect(previewOutput(result, { json: false, content: false })).not.toContain(secretish);
+    // 中身を出すときは、どちらの形でも出す
+    expect(previewOutput(result, { json: true, content: true })).toContain(secretish);
+    expect(previewOutput(result, { json: false, content: true })).toContain(secretish);
+    // 誤りは、どの組み合わせでもそのまま
+    const error = { error: "壊れています" };
+    expect(JSON.parse(previewOutput(error, { json: true, content: false }))).toEqual(error);
+    expect(previewOutput(error, { json: false, content: false })).toContain("壊れています");
   });
 
   it("誤りは、その理由を出す", () => {

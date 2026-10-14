@@ -5,14 +5,22 @@ import { DaemonError } from "@/components/daemon-error";
 import { ProjectEditor } from "@/components/project-editor";
 import { getMessages } from "@/i18n/server";
 import {
+  CONTEXT_CHECK_PARAM,
   DaemonUnavailableError,
   getGitHubAccounts,
   getProject,
+  getProjectContextError,
   getProjectPlatforms,
   getStatus,
 } from "@/lib/daemon";
 
-export default async function ProjectPage({ params }: { params: Promise<{ id: string }> }) {
+export default async function ProjectPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
   const t = (await getMessages()).projects;
   return (
     <>
@@ -22,15 +30,22 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
         </Link>
       </nav>
       <Suspense fallback={<p className="text-sm text-muted-foreground">{t.loading}</p>}>
-        <ProjectSettings params={params} />
+        <ProjectSettings params={params} searchParams={searchParams} />
       </Suspense>
     </>
   );
 }
 
-async function ProjectSettings({ params }: { params: Promise<{ id: string }> }) {
+async function ProjectSettings({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
   const { id } = await params;
-  const t = (await getMessages()).projects;
+  const messages = await getMessages();
+  const t = messages.projects;
   let view: Awaited<ReturnType<typeof getProject>>;
   try {
     view = await getProject(id);
@@ -39,6 +54,10 @@ async function ProjectSettings({ params }: { params: Promise<{ id: string }> }) 
     throw error;
   }
   if (!view) notFound();
+  // 作成・インポートの後は、コンテキストの誤りをここで確かめて知らせる（保存の結果は画面を移ると届かないため。PBI-76）
+  const contextError = (await searchParams)[CONTEXT_CHECK_PARAM]
+    ? await getProjectContextError(view.project.id).catch(() => undefined)
+    : undefined;
   return (
     <>
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -53,6 +72,11 @@ async function ProjectSettings({ params }: { params: Promise<{ id: string }> }) 
         </a>
       </div>
       <p className="text-sm text-muted-foreground">{t.exportNote}</p>
+      {contextError !== undefined && (
+        <p role="alert" className="text-sm leading-6 whitespace-pre-line text-warn">
+          {t.editor.createdContextError(messages.labels.text(contextError))}
+        </p>
+      )}
       {/* 除外リポジトリはサーバーで決まるので props で受け取る（保存後の refresh で反映される） */}
       <ProjectEditor
         project={view.project}

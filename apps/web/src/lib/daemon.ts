@@ -158,6 +158,22 @@ export async function getProjectPlatforms(id: string): Promise<ProjectPlatforms 
   return (await res.json()) as ProjectPlatforms;
 }
 
+/** 設定の画面の URL の印。あれば、画面でコンテキストの誤りを確かめて知らせる（作成・インポートの後。PBI-76）。 */
+export const CONTEXT_CHECK_PARAM = "contextCheck";
+
+/**
+ * 保存したプロジェクトのコンテキストの誤り（PBI-76。プレビューと同じ検査）。誤りが無い・確かめられない（古いデーモン・
+ * プロジェクトが無い）なら undefined。
+ */
+export async function getProjectContextError(id: string): Promise<DaemonText | undefined> {
+  const res = await daemonFetch(
+    `/api/projects/${encodeURIComponent(id)}/context-preview?runtime=claude-code`,
+  );
+  if (!res.ok) return undefined;
+  const json = (await res.json()) as { preview?: unknown; error?: DaemonText };
+  return json.error;
+}
+
 /** コンテキストのプレビューの AI の種類（PBI-76）。 */
 export type PreviewRuntime = "claude-code" | "codex";
 

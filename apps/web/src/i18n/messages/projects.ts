@@ -203,6 +203,8 @@ const ja = {
       completed: "完了",
     },
     saved: "保存しました。",
+    createdContextError: (detail: string) =>
+      `作成しましたが、コンテキストに誤りがあります（このままでは工程の実行で止まります）：${detail}`,
     savedContextError: (detail: string) =>
       `保存しました。ただし、コンテキストに誤りがあります（このままでは工程の実行で止まります）：${detail}`,
     save: "保存する",
@@ -388,6 +390,8 @@ const en: ProjectsMessages = {
     githubHelp:
       "Choose from the accounts signed in with gh auth login.\nThe account chosen here is used even if you switch accounts in gh.",
     saved: "Saved.",
+    createdContextError: (detail) =>
+      `Created, but the context has an error (steps will stop until it is fixed): ${detail}`,
     savedContextError: (detail) =>
       `Saved, but the context has an error (steps will stop until it is fixed): ${detail}`,
     save: "Save",

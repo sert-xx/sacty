@@ -16,6 +16,7 @@ import { getMessages } from "@/i18n/server";
 import {
   approveStep,
   askQuestion,
+  CONTEXT_CHECK_PARAM,
   type ContextPreviewResult,
   cancelTask,
   chooseTicketRepository,
@@ -225,15 +226,16 @@ export async function saveProjectAction(
   }
   if (!result.ok) return { message: result.message };
   // 保存したコンテキストの誤り（PBI-76）。保存はしたので、知らせるだけにする
+  if (!id) {
+    // 最初のプロジェクトなら、作成画面だけを出していた画面の枠（ヘッダー・サイドメニュー）も作り直す（PBI-22）
+    revalidatePath("/", "layout");
+    // コンテキストに誤りがあれば、移った先の設定の画面で確かめ直して知らせる（PBI-76）
+    redirect(projectSettingsPath(result.project.id, result.contextError !== undefined));
+  }
   const contextError =
     result.contextError !== undefined
       ? renderMessage(result.contextError, (await getMessages()).locale)
       : undefined;
-  if (!id) {
-    // 最初のプロジェクトなら、作成画面だけを出していた画面の枠（ヘッダー・サイドメニュー）も作り直す（PBI-22）
-    revalidatePath("/", "layout");
-    redirect(`/projects/${result.project.id}`);
-  }
   refresh();
   return { saved: true, ...(contextError ? { contextError } : {}) };
 }
@@ -365,7 +367,16 @@ export async function importProjectAction(
   // 最初のプロジェクトなら、作成画面だけを出していた画面の枠も作り直す（PBI-22）。
   // redirect は例外で画面を移すので、try の外で呼ぶ
   revalidatePath("/", "layout");
-  redirect(`/projects/${result.project.id}`);
+  // コンテキストリポジトリを持つ定義なら、移った先の設定の画面で誤りを確かめて知らせる（PBI-76）
+  redirect(projectSettingsPath(result.project.id, result.project.context !== undefined));
+}
+
+/**
+ * プロジェクトの設定の画面の URL。contextCheck なら、画面でコンテキストの誤りを確かめて知らせる（PBI-76。作成・インポート
+ * の後は画面を移るので、保存の結果の誤りをその場では出せないため）。
+ */
+function projectSettingsPath(id: string, contextCheck: boolean): string {
+  return `/projects/${encodeURIComponent(id)}${contextCheck ? `?${CONTEXT_CHECK_PARAM}=1` : ""}`;
 }
 
 /** 画面の言語を選ぶ（system はブラウザの言語に従う）。 */
