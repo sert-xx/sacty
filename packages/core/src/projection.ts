@@ -196,6 +196,13 @@ export type Task = {
   ticketPrComment?: { url: string } | { failed: DaemonText };
   /** 画面で作ったタスクの対象リポジトリ（リポジトリの URL。PBI-21・PBI-40）。Issue から取り込んだタスクは source.repo。 */
   repo?: string;
+  /** 対象リポジトリを指定せずに作った（PBI-73）。リポジトリを決めた後も残る（作ったときの指定）。 */
+  noRepo?: true;
+  /**
+   * 対象リポジトリを決めた理由（PBI-73）。リポジトリを指定せずに作ったタスクで、オーケストレーター・人が選んだとき、
+   * 分割の子タスクに分割のエージェントが付けたとき。
+   */
+  repoChoice?: { reason: DaemonText; by: "orchestrator" | "person" };
   status: TaskStatus;
   /** 分割で作った子タスクの親と、依存先の子タスク（PBI-27）。 */
   parent?: { taskId: string; dependsOn: string[] };
@@ -205,7 +212,16 @@ export type Task = {
      * 子タスク（内容は、デーモンが止まって作れなかった子タスクを作り直すために持つ）。round は何回目の
      * 分割で作ったか（1 が最初の分割、2 以降は統合レビューの後に追加した修正の子タスク。PBI-31）。
      */
-    children: { taskId: string; title: string; body: string; dependsOn: string[]; round: number }[];
+    children: {
+      taskId: string;
+      title: string;
+      body: string;
+      dependsOn: string[];
+      round: number;
+      /** 子タスクに付けたリポジトリと理由（リポジトリの無い親を分けたとき。PBI-73）。 */
+      repo?: string;
+      repoReason?: string;
+    }[];
     /** 分割した回数（最初の分割と、修正の子タスクの追加。PBI-31）。 */
     rounds: number;
     reason: string;
@@ -424,6 +440,10 @@ export function applyEvent(
       ...(event.payload.source ? { source: event.payload.source } : {}),
       ...(event.payload.ticket ? { ticket: event.payload.ticket } : {}),
       ...(event.payload.repo ? { repo: event.payload.repo } : {}),
+      ...(event.payload.noRepo ? { noRepo: true as const } : {}),
+      ...(event.payload.repo && event.payload.repoReason
+        ? { repoChoice: { reason: event.payload.repoReason, by: "orchestrator" as const } }
+        : {}),
       ...(event.payload.parent ? { parent: event.payload.parent } : {}),
       // 依存先の子タスクがあれば、それが完了するまで待つ（PBI-27）
       status: event.payload.parent?.dependsOn.length ? "blocked" : "queued",
@@ -1087,6 +1107,23 @@ export function applyEvent(
       };
       break;
 
+    // リポジトリを指定せずに作ったタスクの、作業するリポジトリを決めた（PBI-73）。工程を選ぶ前だけ
+    case "RepositoryChosen":
+      if (!awaitingRepository(task)) {
+        throw new ActivityIntegrityError(event, "not a task without a repository before planning");
+      }
+      task.repo = event.payload.repo;
+      task.repoChoice = {
+        reason: event.payload.reason,
+        by: event.actor === "person" ? "person" : "orchestrator",
+      };
+      task.budget = {
+        ...task.budget,
+        usedUsd: addUsd(task.budget.usedUsd, event.payload.costUsd),
+        estimated: task.budget.estimated || event.payload.estimated,
+      };
+      break;
+
     case "TicketPullRequestCommented":
       if (!task.ticket || task.ticketPrComment) {
         throw new ActivityIntegrityError(event, "already commented or not a ticket task");
@@ -1606,6 +1643,35 @@ export function canRereview(task: Task): boolean {
 
 export function isCompleted(task: Task): boolean {
   return task.steps.length > 0 && task.steps.every((s) => s.state === "done" || s.state === "skip");
+}
+
+/**
+ * 対象リポジトリの無いタスクか（PBI-73）。リポジトリを指定せずに作り、まだリポジトリを決めていない（決めたら、ふつうの
+ * リポジトリのあるタスクとして進む）。対象リポジトリを選ぶ前の版（PBI-21 より前）のタスクは含めない（理由を示して止める）。
+ */
+export function isRepoless(task: Task): boolean {
+  return (
+    task.noRepo === true &&
+    !task.repo &&
+    !task.source &&
+    !task.ticket &&
+    task.repository === undefined
+  );
+}
+
+/**
+ * リポジトリを指定せずに作ったタスクで、作業するリポジトリを決められるか（PBI-73）。工程を決める前・リポジトリを用意する前
+ * だけ。決めたリポジトリを用意できなかった（clone に失敗したなど）ときも、選び直せる。中止したタスクは含めない。
+ */
+export function awaitingRepository(task: Task): boolean {
+  return (
+    task.noRepo === true &&
+    !task.source &&
+    !task.ticket &&
+    task.steps.length === 0 &&
+    task.repository === undefined &&
+    task.status !== "cancelled"
+  );
 }
 
 /**

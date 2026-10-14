@@ -101,6 +101,8 @@ const ja = {
     resuming: "再開中…",
     resumeWithCap: "上限を変えて再開",
     ticketRepo: "作業するリポジトリ（チケット）",
+    chooseRepo: "作業するリポジトリ",
+    repoKeep: "選ばずに再開する（オーケストレーターに任せる）",
     ticketNoRepo:
       "プロジェクトの対象に、選べるリポジトリがありません。プロジェクトの設定を見直してください。",
     resume: "再開する",
@@ -239,6 +241,8 @@ const en: PartsMessages = {
     resuming: "Resuming…",
     resumeWithCap: "Change cap and resume",
     ticketRepo: "Repository to work in (ticket)",
+    chooseRepo: "Repository to work in",
+    repoKeep: "Resume without choosing (leave it to the Orchestrator)",
     ticketNoRepo: "The project has no repositories to choose from. Check the project settings.",
     resume: "Resume",
     capNote: "When the new cap is reached, you will decide here again.",

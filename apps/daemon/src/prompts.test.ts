@@ -824,3 +824,113 @@ describe("要求要件・設計の PR（PBI-57）", () => {
     expect(step).toContain("（設計をやり直します）");
   });
 });
+
+describe("リポジトリを指定しないタスク（PBI-73）", () => {
+  const repoless = {
+    title: "全体の設計",
+    body: "",
+    noRepo: true,
+    steps: [],
+    remarks: [],
+    outputs: {},
+  } as unknown as Task;
+  const withRepo = {
+    title: "直す",
+    body: "https://github.com/acme/app/pull/3 を見て",
+    repo: "https://github.com/acme/app",
+    remarks: [],
+    outputs: {},
+    steps: [],
+    repository: {
+      url: "https://github.com/acme/app.git",
+      baseBranch: "main",
+      baseCommit: "abc1234",
+    },
+  } as unknown as Task;
+
+  it("設計だけはリポジトリの無いタスクだけが選べ、リポジトリの無いタスクはレビューを選べない", () => {
+    expect(allowedPlans(repoless)).toEqual([
+      "standard",
+      "skip-design",
+      "investigate",
+      "design-only",
+      "split",
+      "bugfix",
+    ]);
+    expect(allowedPlans(withRepo)).not.toContain("design-only");
+    expect(allowedPlans(withRepo)).toContain("review");
+    // 対象リポジトリを選ぶ前の版のタスク（noRepo が無い）は、今と同じ
+    expect(allowedPlans({ title: "古い", body: "", steps: [] } as unknown as Task)).not.toContain(
+      "design-only",
+    );
+  });
+
+  it("リポジトリの無いタスクの指示は、対象とコンテキストを渡し、コードを変えるならリポジトリを書かせる", () => {
+    const prompt = buildOrchestratorPrompt(repoless, {
+      repoless: {
+        repositories: ["https://github.com/acme/api"],
+        context: "https://github.com/acme/ctx",
+        rules: "# 規約",
+      },
+    });
+    expect(prompt).toContain("このタスクには対象リポジトリがありません");
+    expect(prompt).toContain("- https://github.com/acme/api");
+    expect(prompt).toContain("プロジェクトのコンテキストリポジトリ：https://github.com/acme/ctx");
+    expect(prompt).toContain("# 規約");
+    expect(prompt).toContain('"repo": "作業するリポジトリの URL');
+    // テストのコマンド・サービスは決めさせない（コードが無い）
+    expect(prompt).not.toContain("testCommand");
+    expect(prompt).not.toContain("services");
+    // リポジトリのあるタスクは今の指示のまま
+    expect(buildOrchestratorPrompt(withRepo)).not.toContain(
+      "このタスクには対象リポジトリがありません",
+    );
+  });
+
+  it("選んだリポジトリと理由を読む（無ければ持たない）", () => {
+    const out = (v: Record<string, unknown>) =>
+      `\`\`\`json\n${JSON.stringify({ "sacty-steps": { plan: "standard", reason: "r", ...v } })}\n\`\`\``;
+    expect(
+      extractStepPlan(out({ repo: " https://github.com/acme/api ", repoReason: "API" })),
+    ).toMatchObject({ repo: "https://github.com/acme/api", repoReason: "API" });
+    const none = extractStepPlan(out({ repo: "", repoReason: 3 }));
+    expect(none?.repo).toBeUndefined();
+    expect(none?.repoReason).toBeUndefined();
+  });
+
+  it("分割案の子タスクのリポジトリと理由を読み、分割の指示ではリポジトリの無いタスクだけ候補を渡す", () => {
+    const plan = extractSplitPlan(
+      `\`\`\`json\n${JSON.stringify({
+        "sacty-split": {
+          reason: "r",
+          children: [
+            { key: "A", title: "a", repo: "https://github.com/acme/api", repoReason: "API" },
+            { key: "B", title: "b" },
+          ],
+        },
+      })}\n\`\`\``,
+    );
+    expect(plan.ok && plan.children).toEqual([
+      {
+        key: "A",
+        title: "a",
+        body: "",
+        dependsOn: [],
+        repo: "https://github.com/acme/api",
+        repoReason: "API",
+      },
+      { key: "B", title: "b", body: "", dependsOn: [] },
+    ]);
+    const approved = { requirements: { output: "# 要求要件" }, design: { output: "# 設計" } };
+    const prompt = buildPrompt({ ...repoless, approved } as unknown as Task, "split", {
+      repositories: ["https://github.com/acme/api", "https://github.com/acme/web"],
+    });
+    expect(prompt).toContain("    - https://github.com/acme/web");
+    expect(prompt).toContain("作業領域（カレントディレクトリ）は空で、コードはありません");
+    const withRepoPrompt = buildPrompt({ ...withRepo, approved } as unknown as Task, "split", {
+      repositories: ["https://github.com/acme/web"],
+    });
+    expect(withRepoPrompt).not.toContain("acme/web");
+    expect(withRepoPrompt).not.toContain('"repo"');
+  });
+});

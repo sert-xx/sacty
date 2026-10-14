@@ -10,6 +10,7 @@ import {
   AskQuestionInput,
   activeStep,
   applyEvent,
+  awaitingRepository,
   awaitingTicketTriage,
   BUDGET_WARN_RATIO,
   budgetState,
@@ -33,6 +34,7 @@ import {
   gatePullRequest,
   investigationIsGoal,
   isCompleted,
+  isRepoless,
   latestStepPullRequest,
   MAX_CHANGE_REQUESTS,
   MAX_INTEGRATION_ATTEMPTS,
@@ -170,6 +172,7 @@ import {
   REQUIREMENTS_VIEWPOINT,
   referencedPullRequest,
   reviewMarker,
+  type SplitChild,
   type SubtaskSummary,
   servicePromptLines,
   verificationBasis,
@@ -1040,7 +1043,9 @@ export class TaskService {
     task: Task,
     config: SactyConfig,
   ): Promise<
-    ChosenSteps | { failure: Extract<EventInput, { type: "OrchestratorFailed" }>["payload"] }
+    | ChosenSteps
+    | { failure: Extract<EventInput, { type: "OrchestratorFailed" }>["payload"] }
+    | { repository: Extract<EventInput, { type: "RepositoryChosen" }>["payload"] }
   > {
     // プロジェクトの対象でイメージを指定していれば、オーケストレーターに選ばせない（PBI-41）
     const pinned = this.pinnedImage(task);
@@ -1053,13 +1058,117 @@ export class TaskService {
     const shared = task.repository
       ? (this.deps.projects.get(task.projectId)?.sharedComposes ?? [])
       : [];
-    const choice = this.deps.planner
+    // 対象リポジトリの無いタスク（PBI-73）は、プロジェクトの対象（作業するリポジトリの候補）とコンテキストを渡して選ばせる
+    const contextSource = this.deps.projects.get(task.projectId)?.context;
+    const repoless = isRepoless(task)
+      ? {
+          repositories: (await this.projectRepositories(task.projectId))?.repositories ?? [],
+          ...(contextSource
+            ? {
+                context: `${contextSource.repo}${contextSource.ref ? `（${contextSource.ref}）` : ""}`,
+              }
+            : {}),
+          rules: exports.rules,
+        }
+      : undefined;
+    const planned = this.deps.planner
       ? await this.deps.planner(task)
-      : await this.askOrchestrator(task, config, candidates, exports, shared);
-    if ("failure" in choice) return choice;
+      : await this.askOrchestrator(task, config, candidates, exports, shared, repoless);
+    if ("failure" in planned) return planned;
+    const { repo: chosenRepo, repoReason, ...rest } = planned;
+    let choice: PlannedSteps = rest;
+    if (repoless) {
+      // コードの変更が要る（分けない）なら、作業するリポジトリを対象から選ぶ。選べなければ、理由を示して止める
+      // （人がリポジトリを選んで再開できる）
+      if (choice.steps.some((step) => REPO_STEPS.includes(step))) {
+        return this.repositoryFromPlan(choice, chosenRepo, repoReason, repoless.repositories);
+      }
+      // リポジトリの無いまま進めるので、リポジトリのコードに関わる決めごとは使わない
+      const {
+        testCommand: _testCommand,
+        baseBranch: _baseBranch,
+        services: _services,
+        servicesReason: _servicesReason,
+        documentsDir: _documentsDir,
+        ...noCode
+      } = choice;
+      choice = noCode;
+    }
     const withShared = this.withSharedCompose(choice, shared);
     if ("failure" in withShared) return withShared;
     return this.withImages(this.withExports(withShared, exports.destinations), config, pinned);
+  }
+
+  /**
+   * 対象リポジトリの無いタスクで、コードの変更が要る組み合わせを選んだときの、作業するリポジトリ（PBI-73）。プロジェクトの
+   * 対象にあるものだけを使う（登録した名前にそろえる）。書いていない・対象に無いなら、理由を示して止める（人が選べる）。
+   */
+  private repositoryFromPlan(
+    choice: PlannedSteps,
+    repo: string | undefined,
+    reason: string | undefined,
+    candidates: readonly string[],
+  ):
+    | { repository: Extract<EventInput, { type: "RepositoryChosen" }>["payload"] }
+    | { failure: Extract<EventInput, { type: "OrchestratorFailed" }>["payload"] } {
+    const cost = {
+      ...(choice.agentId ? { agentId: choice.agentId } : {}),
+      ...(choice.authMode ? { authMode: choice.authMode } : {}),
+      ...(choice.model ? { model: choice.model } : {}),
+      ...(choice.reasoningEffort ? { reasoningEffort: choice.reasoningEffort } : {}),
+      ...(choice.runId ? { runId: choice.runId } : {}),
+      ...(choice.usage ? { usage: choice.usage } : {}),
+      costUsd: choice.costUsd,
+      estimated: choice.estimated,
+    };
+    const found = repo ? candidates.find((c) => sameGitHubUrl(c, repo)) : undefined;
+    if (found) {
+      return { repository: { repo: found, reason: reason || choice.reason || "", ...cost } };
+    }
+    const detail = repo
+      ? message("repo.notCandidate", { repo })
+      : reason
+        ? reason
+        : message("repo.notChosen");
+    return {
+      failure: {
+        reason: "error",
+        message: message("repo.chooseFailed", { detail }),
+        agentId: choice.agentId ?? "unknown",
+        ...cost,
+      },
+    };
+  }
+
+  /**
+   * リポジトリを指定せずに作ったタスクの、作業するリポジトリを人が選ぶ（PBI-73。オーケストレーターが選べなかったとき）。
+   * まだ工程を決めていないタスクだけ。選んだ後に再開すると、そのリポジトリを用意して工程を選ぶ。チケットから取り込んだ
+   * タスクは、チケットのリポジトリの選び方（PBI-52）にする。
+   */
+  async chooseRepository(id: string, repo: string): Promise<Task> {
+    const task = this.tasks.get(id);
+    if (!task) throw new InvalidOperationError(message("task.notFound"));
+    if (task.ticket) return this.chooseTicketRepository(id, repo);
+    // 止まっているタスクだけ（オーケストレーターが選んでいる間に選ぶと、どちらを使うかがぶれるため）
+    if (!awaitingRepository(task) || task.status !== "paused") {
+      throw new InvalidOperationError(message("repo.notChoosable"));
+    }
+    const candidates = (await this.projectRepositories(task.projectId))?.repositories ?? [];
+    const chosen = candidates.find((c) => sameGitHubUrl(c, repo));
+    if (!chosen) throw new InvalidOperationError(message("repo.notCandidate", { repo }));
+    const latest = this.mustGet(id);
+    if (!awaitingRepository(latest) || latest.status !== "paused") {
+      throw new InvalidOperationError(message("repo.notChoosable"));
+    }
+    return this.append(latest, [
+      {
+        actor: "person",
+        event: {
+          type: "RepositoryChosen",
+          payload: { repo: chosen, reason: message("repo.chosenByPerson") },
+        },
+      },
+    ]);
   }
 
   /**
@@ -1390,6 +1499,8 @@ export class TaskService {
     images: { name: string; description: string }[],
     exports: { destinations: ExportDestination[]; rules: string },
     sharedComposes: readonly SharedCompose[] = [],
+    /** 対象リポジトリの無いタスク（PBI-73）の、作業するリポジトリの候補・コンテキスト。 */
+    repoless?: { repositories: readonly string[]; context?: string; rules?: string },
   ): Promise<
     PlannedSteps | { failure: Extract<EventInput, { type: "OrchestratorFailed" }>["payload"] }
   > {
@@ -1417,6 +1528,7 @@ export class TaskService {
                 })),
               }
             : {}),
+          ...(repoless ? { repoless } : {}),
         }),
         role: "orchestrator",
       },
@@ -1458,6 +1570,8 @@ export class TaskService {
         ...(chosen.baseBranch ? { baseBranch: chosen.baseBranch } : {}),
         ...(chosen.exports ? { exports: chosen.exports } : {}),
         ...(chosen.documentsDir ? { documentsDir: chosen.documentsDir } : {}),
+        ...(chosen.repo ? { repo: chosen.repo } : {}),
+        ...(chosen.repoReason ? { repoReason: chosen.repoReason } : {}),
         ...cost,
       };
     }
@@ -2128,26 +2242,40 @@ export class TaskService {
       throw new InvalidOperationError(message("project.notFound"));
     }
     // 対象リポジトリは、プロジェクトの対象（Org・リポジトリ）の中から選ぶ（PBI-25）。
-    // 対象がリポジトリ1つだけなら、選ばなくてよい
+    // 対象がリポジトリ1つだけなら、選ばなくてよい。null は、リポジトリを指定しない（PBI-73）
     const [only, ...others] = project.targets;
     const wanted =
-      input.repo ?? (only?.scope === "repo" && others.length === 0 ? only.target : undefined);
+      input.repo === null
+        ? undefined
+        : (input.repo ?? (only?.scope === "repo" && others.length === 0 ? only.target : undefined));
     if (project.targets.length === 0) {
       throw new InvalidOperationError(message("task.repositoryMissing", { project: project.name }));
+    }
+    const config = this.deps.config();
+    const budgetCapUsd = config.ok ? config.config.budgetPerTaskUsd : DEFAULT_BUDGET_USD;
+    const { title, body } = input;
+    // リポジトリを指定しないタスク（PBI-73）。オーケストレーターが、プロジェクトのコンテキストと対象から進め方を決める
+    if (!wanted) {
+      return this.append({ id: randomUUID(), projectId }, [
+        {
+          actor: "person",
+          event: {
+            type: "TaskCreated",
+            payload: { title, body, start: "sacty", noRepo: true, budgetCapUsd },
+          },
+        },
+      ]);
     }
     const responsible =
       wanted && RepoUrl.safeParse(wanted).success
         ? responsibleProject(this.deps.projects.all(), wanted)
         : undefined;
-    if (!wanted || responsible?.project.id !== projectId) {
+    if (responsible?.project.id !== projectId) {
       throw new InvalidOperationError(message("task.repositoryUnknown", { project: project.name }));
     }
     // リポジトリの対象なら、登録した名前にそろえる（大文字・小文字の違い）
     const repo =
       responsible.target.scope === "repo" ? responsible.target.target : RepoUrl.parse(wanted);
-    const config = this.deps.config();
-    const budgetCapUsd = config.ok ? config.config.budgetPerTaskUsd : DEFAULT_BUDGET_USD;
-    const { title, body } = input;
     return this.append({ id: randomUUID(), projectId }, [
       {
         actor: "person",
@@ -2544,7 +2672,8 @@ export class TaskService {
     // 対象リポジトリは、タスクの開始時（最初の実行）に、ベースブランチの最新を用意する（PBI-15）。
     // どの工程から始まるタスクでも同じ。以後はその起点のコミットを最後まで使う（途中で取り込み直さない）。
     // 用意できなければ、エージェントを実行する（費用をかける）前に、理由を記録して止める
-    if (!initial.repository) {
+    // 対象リポジトリの無いタスク（PBI-73）は、用意しない（工程を選んでリポジトリを決めたら、次の実行で用意する）
+    if (!initial.repository && !isRepoless(initial)) {
       const ready = await this.prepareRepository(initial, config.config);
       if (!ready.ok) {
         this.append(initial, [
@@ -2575,6 +2704,24 @@ export class TaskService {
             this.pinnedImage(this.mustGet(taskId)),
           )
         : await this.chooseSteps(this.mustGet(taskId), config.config);
+      // 対象リポジトリの無いタスクで、コードの変更が要り、分けないなら、選んだリポジトリを記録する（PBI-73）。
+      // 次の実行でそのリポジトリを用意して、いつもどおり工程を選ぶ
+      if ("repository" in choice) {
+        const latest = this.mustGet(taskId);
+        if (this.pauseRequested.has(taskId) || this.cancelling.has(taskId)) return;
+        // 選んでいる間に、人がリポジトリを選んだなら、記録しない
+        if (latest.status !== "queued" || !awaitingRepository(latest) || !isRepoless(latest)) {
+          return;
+        }
+        this.append(latest, [
+          {
+            actor: "orchestrator",
+            event: { type: "RepositoryChosen", payload: choice.repository },
+          },
+        ]);
+        this.warnIfNeeded(this.mustGet(taskId));
+        return;
+      }
       if ("failure" in choice) {
         // 選んでいる間に人間が止めた・中止したなら、記録しない（止めた記録は runNext の後始末で行う）
         const latest = this.mustGet(taskId);
@@ -2697,7 +2844,13 @@ export class TaskService {
 
     // 実装の工程は clone を作業領域にし、それ以外の工程は、起点のコミットのコードを使い捨ての写しで渡す
     // （clone はタスクの開始時に済んでいる。作業領域が消えていれば、同じ起点で用意し直す）
-    const ready = await this.prepareRepository(this.mustGet(task.id), config.config);
+    // 対象リポジトリの無いタスク（PBI-73）は、空の作業領域で実行する。コードが要る工程は選ばせないが、選ばれていたら止める
+    const repoless = isRepoless(this.mustGet(task.id));
+    const ready: Awaited<ReturnType<TaskService["prepareRepository"]>> = repoless
+      ? REPO_STEPS.includes(step)
+        ? { ok: false, message: message("repo.stepNeedsRepository", { step }) }
+        : { ok: true, dir: join(this.deps.workspaceRoot, task.id, "empty") }
+      : await this.prepareRepository(this.mustGet(task.id), config.config);
     if (!ready.ok) {
       this.append(task, [
         {
@@ -2754,6 +2907,11 @@ export class TaskService {
       }
     }
 
+    // 対象リポジトリの無いタスクを分けるときの、子タスクのリポジトリの候補（プロジェクトの対象。PBI-73）
+    const splitCandidates =
+      step === "split" && repoless
+        ? ((await this.projectRepositories(task.projectId))?.repositories ?? [])
+        : undefined;
     let executed: Executed | undefined;
     // レビューの工程は、起点ではなく PR の先頭のコミットのコードを読ませ、PR の差分を渡す（PBI-19）
     const reviewTarget = step === "review" ? this.mustGet(task.id).reviewTarget : undefined;
@@ -2765,7 +2923,8 @@ export class TaskService {
     const reviewDiffDir =
       reviewTarget && snapshotDir ? join(this.deps.workspaceRoot, "_review", runId) : undefined;
     try {
-      if (snapshotDir) {
+      // 対象リポジトリの無いタスク（PBI-73）は、コードを書き出さない（空の作業領域）
+      if (snapshotDir && !repoless) {
         const latest = this.mustGet(task.id);
         const usedSecrets: string[] = [];
         try {
@@ -2846,6 +3005,8 @@ export class TaskService {
               : {}),
             // 修正の子タスクを追加するときは、これまでの子タスクを渡す（PBI-31）
             ...(step === "split" ? { subtasks: this.subtaskSummaries(task) } : {}),
+            // 対象リポジトリの無いタスクを分けるときは、子タスクに付けられるリポジトリを渡す（PBI-73）
+            ...(step === "split" && repoless ? { repositories: splitCandidates ?? [] } : {}),
           }),
           // 使える組織内 PF の API（PBI-35）
           ...platformPromptLines(config.config.platforms),
@@ -2914,7 +3075,13 @@ export class TaskService {
     // タスク分割は、子タスクの一覧を確かめて記録し、子タスクを作る（PBI-27）
     if (step === "split") {
       // 統合レビューの後に追加する修正の子タスクは、1件から作れる（PBI-31）
-      const plan = extractSplitPlan(outcome.output, latest.split ? 1 : undefined);
+      const extractedPlan = extractSplitPlan(outcome.output, latest.split ? 1 : undefined);
+      // 対象リポジトリの無いタスクは、子タスクごとのリポジトリがプロジェクトの対象にあるかを確かめる（PBI-73）。
+      // 無い・対象に無いなら使わない（再開すると分割をやり直して、選び直す）
+      const plan =
+        extractedPlan.ok && repoless
+          ? splitWithRepositories(extractedPlan, splitCandidates ?? [])
+          : extractedPlan;
       const run = { runId, step, agentId: agent.id, costUsd, estimated, usage: outcome.usage };
       // 人間の差し戻しの指摘（統合レビューの承認待ちから。PBI-31）への対応
       const { responses } = extractBlocks(
@@ -2957,6 +3124,8 @@ export class TaskService {
                 title: c.title,
                 body: buildChildBody(latest, c, titles),
                 dependsOn: c.dependsOn.map((d) => ids.get(d) ?? ""),
+                ...(repoless && c.repo ? { repo: c.repo } : {}),
+                ...(repoless && c.repo && c.repoReason ? { repoReason: c.repoReason } : {}),
               })),
             },
           },
@@ -4258,12 +4427,23 @@ export class TaskService {
       costUsd: 0,
       estimated: false,
     });
+    // 対象リポジトリの無い親（PBI-73）は、子タスクのリポジトリごとにベースブランチの最新を用意する
+    const repoless = isRepoless(task);
+    let repositories:
+      | { repo: string; baseBranch: string; commit: string; dir: string }[]
+      | undefined;
     try {
       // 起点の clone（退避したメタデータ）が無ければ用意し直してから、ベースブランチの最新を取得する
-      const ready = await this.prepareRepository(this.mustGet(task.id), config);
+      const ready = repoless
+        ? ({ ok: true, dir: workspaceDir } as const)
+        : await this.prepareRepository(this.mustGet(task.id), config);
       const latest = this.mustGet(task.id);
       baseBranch = latest.repository?.baseBranch ?? baseBranch;
-      if (!ready.ok) {
+      if (repoless) {
+        const prepared = await this.childRepositories(latest, config, workspaceDir);
+        if (prepared.ok) repositories = prepared.repositories;
+        else executed = failed(prepared.message);
+      } else if (!ready.ok) {
         executed = failed(
           message("integrate.baseUnavailable", { branch: baseBranch, detail: ready.message }),
         );
@@ -4295,7 +4475,11 @@ export class TaskService {
         image: stepImage.ok ? stepImage.image : config.image,
         ...(stepImage.ok ? { imageEnv: stepImage.env } : {}),
         runId,
-        prompt: buildIntegrationReviewPrompt(latest, subtasks, { baseBranch, commit }),
+        prompt: buildIntegrationReviewPrompt(latest, subtasks, {
+          baseBranch,
+          commit,
+          ...(repositories ? { repositories } : {}),
+        }),
         role: step,
         workspaceDir,
       });
@@ -4358,7 +4542,23 @@ export class TaskService {
       },
       {
         actor: "guardian",
-        event: { type: "IntegrationReviewed", payload: { ...review, baseBranch, commit } },
+        event: {
+          type: "IntegrationReviewed",
+          payload: {
+            ...review,
+            baseBranch,
+            commit,
+            ...(repositories
+              ? {
+                  repositories: repositories.map(({ repo, baseBranch, commit }) => ({
+                    repo,
+                    baseBranch,
+                    commit,
+                  })),
+                }
+              : {}),
+          },
+        },
       },
     ];
     // 合格、または続けて通らない上限に達したら、人間の承認待ちにする（不合格のまま判断してもらう）
@@ -4366,6 +4566,56 @@ export class TaskService {
       events.push(...this.submitEvents(latest, step));
     }
     this.checkBudget(this.append(latest, events));
+  }
+
+  /**
+   * 対象リポジトリの無い親の統合レビュー（PBI-73）のために、子タスクのリポジトリ（ベースブランチごと）の最新を、作業領域の下の
+   * ディレクトリに書き出す。子タスクの clone（退避したメタデータ）が無ければ、その子タスクの起点で用意し直す。中止した・
+   * リポジトリを用意する前の子タスクは読まない。用意できなければ理由を返す（再開すると、統合レビューをやり直す）。
+   */
+  private async childRepositories(
+    parent: Task,
+    config: SactyConfig,
+    workspaceDir: string,
+  ): Promise<
+    | {
+        ok: true;
+        repositories: { repo: string; baseBranch: string; commit: string; dir: string }[];
+      }
+    | { ok: false; message: DaemonText }
+  > {
+    const repositories: { repo: string; baseBranch: string; commit: string; dir: string }[] = [];
+    const seen = new Set<string>();
+    for (const c of parent.split?.children ?? []) {
+      const child = this.tasks.get(c.taskId);
+      if (!child?.repository || child.status === "cancelled") continue;
+      const repo = this.taskRepo(child) ?? child.repository.url;
+      const branch = child.repository.baseBranch;
+      const key = `${repo.toLowerCase()} ${branch}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const unavailable = (detail: DaemonText) => ({
+        ok: false as const,
+        message: message("integrate.baseUnavailable", { branch: `${repo} ${branch}`, detail }),
+      });
+      const ready = await this.prepareRepository(child, config);
+      if (!ready.ok) return unavailable(ready.message);
+      const usedSecrets: string[] = [];
+      try {
+        const gitDir = this.trustedGitDir(child);
+        const commit = await this.deps.repos.fetchBranch(
+          gitDir,
+          branch,
+          await this.gitAuth(child, child.repository.url, usedSecrets),
+        );
+        const dir = repositoryDirName(repo, repositories.length);
+        await this.deps.repos.snapshot(gitDir, commit, join(workspaceDir, dir));
+        repositories.push({ repo, baseBranch: branch, commit, dir });
+      } catch (error) {
+        return unavailable(redactText(errorText(error), usedSecrets));
+      }
+    }
+    return { ok: true, repositories };
   }
 
   /** 分割で作った子タスクの要約（統合レビュー・修正の子タスクの追加に渡す。PBI-31）。 */
@@ -4378,6 +4628,7 @@ export class TaskService {
         state: child && isCompleted(child) ? ("completed" as const) : ("cancelled" as const),
         ...(url ? { pullRequestUrl: url } : {}),
         round: c.round,
+        ...(c.repo ? { repo: c.repo } : {}),
       };
     });
   }
@@ -4440,7 +4691,9 @@ export class TaskService {
               body: child.body,
               start: "split",
               budgetCapUsd,
-              ...(repo ? { repo } : {}),
+              // リポジトリの無い親を分けたときは、子タスクごとに付けたリポジトリ（PBI-73）
+              ...((child.repo ?? repo) ? { repo: child.repo ?? repo } : {}),
+              ...(child.repo && child.repoReason ? { repoReason: child.repoReason } : {}),
               parent: { taskId: parent.id, dependsOn: child.dependsOn },
             },
           },
@@ -5462,9 +5715,56 @@ type ChosenSteps = Extract<EventInput, { type: "StepsChosen" }>["payload"] & {
  */
 export type PlannedSteps = Omit<ChosenSteps, "exports" | "services" | "sharedComposes"> & {
   exports?: Partial<Record<StepKey, RawExportPlan>>;
+  /** 作業するリポジトリと理由（対象リポジトリの無いタスクで、コードの変更が要るとき。PBI-73）。 */
+  repo?: string;
+  repoReason?: string;
   /** サービス（PBI-47）。共用の compose（PBI-70）は名前だけで、プロジェクトの設定と照らす前の形。 */
   services?: RawServices;
 };
+
+/**
+ * 統合レビューで、子タスクのリポジトリを書き出すディレクトリの名前（PBI-73）。リポジトリの URL の末尾（owner と名前）から作り、
+ * 同じ名前にならないように順番を前に付ける。
+ */
+function repositoryDirName(repo: string, index: number): string {
+  const name = repo
+    .replace(/\.git$/, "")
+    .split("/")
+    .filter(Boolean)
+    .slice(-2)
+    .join("__")
+    .replace(/[^\w.-]/g, "_");
+  return `${index + 1}-${name || "repo"}`;
+}
+
+/**
+ * 対象リポジトリが要る工程（PBI-73）。対象リポジトリの無いタスクでは実行しない（コードを変える・PR を読む・PR を作る）。
+ */
+const REPO_STEPS: readonly StepKey[] = ["implement", "reproduce", "review", "pr"];
+
+/**
+ * 対象リポジトリの無いタスクの分割案で、子タスクごとのリポジトリを、プロジェクトの対象と照らす（PBI-73）。無い・対象に
+ * 無いなら理由を返す（使わない）。登録した名前にそろえる。
+ */
+function splitWithRepositories(
+  plan: { ok: true; reason: string; children: SplitChild[] },
+  candidates: readonly string[],
+): { ok: true; reason: string; children: SplitChild[] } | { ok: false; message: DaemonText } {
+  const children: SplitChild[] = [];
+  for (const child of plan.children) {
+    if (!child.repo)
+      return { ok: false, message: message("split.repoMissing", { key: child.key }) };
+    const found = candidates.find((c) => sameGitHubUrl(c, child.repo ?? ""));
+    if (!found) {
+      return {
+        ok: false,
+        message: message("split.repoNotCandidate", { key: child.key, repo: child.repo }),
+      };
+    }
+    children.push({ ...child, repo: found });
+  }
+  return { ...plan, children };
+}
 
 /** PR のレビューの取り込みのタスクの工程（レビューだけ。オーケストレーターは使わないので費用は無い。PBI-44）。 */
 function reviewOnlySteps(via: "requested" | "label"): ChosenSteps {

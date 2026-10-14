@@ -32,7 +32,13 @@ describe("タスクの作成先（PBI-4a レビュー指摘）", () => {
     await expect(
       createTaskAction({}, form({ title: "決済", body: "", projectId: "project-a" })),
     ).rejects.toThrow("redirect:/tasks/t1");
-    expect(createTask).toHaveBeenCalledWith({ title: "決済", body: "", projectId: "project-a" });
+    // 対象リポジトリを空欄にしたら、リポジトリを指定しない（PBI-73）
+    expect(createTask).toHaveBeenCalledWith({
+      title: "決済",
+      body: "",
+      repo: null,
+      projectId: "project-a",
+    });
   });
 
   it("作成先が無い・見つからなければ、理由を返して作らない", async () => {

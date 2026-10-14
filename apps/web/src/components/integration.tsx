@@ -39,7 +39,15 @@ export async function IntegrationResult({ task }: { task: Task }) {
         <span className="text-xs text-muted-foreground">{formatStamp(review.at, locale)}</span>
       </p>
       <p className="text-xs text-muted-foreground [overflow-wrap:anywhere]">
-        {m.target(review.baseBranch, review.commit.slice(0, 7))}
+        {/* リポジトリの無い親（PBI-73）は、子タスクのリポジトリごとに読んだブランチ */}
+        {review.repositories
+          ? m.target(
+              review.repositories
+                .map((r) => `${r.repo} ${r.baseBranch}@${r.commit.slice(0, 7)}`)
+                .join("・"),
+              "",
+            )
+          : m.target(review.baseBranch, review.commit.slice(0, 7))}
       </p>
       {review.summary && (
         <p className="text-sm leading-6 break-words">{labels.text(review.summary)}</p>

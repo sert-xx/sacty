@@ -166,6 +166,13 @@ const PARAMS = {
   "ticket.noCandidates": null,
   "ticket.repoChosenByPerson": null,
   "ticket.notTriageable": null,
+  // リポジトリを指定せずに作ったタスク（PBI-73）
+  "repo.chooseFailed": z.object({ detail: TextParam }),
+  "repo.notChosen": null,
+  "repo.notCandidate": z.object({ repo: z.string() }),
+  "repo.chosenByPerson": null,
+  "repo.notChoosable": null,
+  "repo.stepNeedsRepository": z.object({ step: z.string() }),
   "input.envName": null,
   "input.headerName": null,
   "input.mcpName": null,
@@ -205,6 +212,8 @@ const PARAMS = {
   "split.unknownDependency": z.object({ key: z.string(), dependsOn: z.string() }),
   "split.cycle": z.object({ keys: z.string() }),
   "split.childCancelled": z.object({ titles: z.string() }),
+  "split.repoMissing": z.object({ key: z.string() }),
+  "split.repoNotCandidate": z.object({ key: z.string(), repo: z.string() }),
   // 統合レビュー（PBI-31）
   "integrate.baseUnavailable": z.object({ branch: z.string(), detail: TextParam }),
   "integrate.unreadable": null,
@@ -514,6 +523,15 @@ const ja: MessageDictionary = {
   "ticket.repoChosenByPerson": "人がリポジトリを選びました。",
   "ticket.notTriageable":
     "リポジトリを選べるのは、チケットから取り込み、まだリポジトリが決まっていないタスクだけです。",
+  "repo.chooseFailed": ({ detail }, text) =>
+    `オーケストレーターが、作業するリポジトリを決められませんでした：${text(detail)} プロジェクトの対象からリポジトリを選んで再開してください。`,
+  "repo.notChosen": "コードの変更が要る進め方を選びましたが、作業するリポジトリを書いていません。",
+  "repo.notCandidate": ({ repo }) => `リポジトリ（${repo}）は、プロジェクトの対象にありません。`,
+  "repo.chosenByPerson": "人がリポジトリを選びました。",
+  "repo.notChoosable":
+    "リポジトリを選べるのは、リポジトリを指定せずに作り、まだ工程が決まっていない、止まっているタスクだけです。",
+  "repo.stepNeedsRepository": ({ step }) =>
+    `工程（${step}）には対象リポジトリが要りますが、このタスクにはリポジトリがありません。`,
   "input.platformName":
     "組織内 PF の名前は、英小文字・数字・ハイフンで書いてください（先頭は英小文字か数字）。",
   "input.allowRule":
@@ -624,6 +642,10 @@ const ja: MessageDictionary = {
     `分割案の子タスク「${key}」が、存在しない子タスク「${dependsOn}」に依存しています。再開すると、分割をやり直します。`,
   "split.cycle": ({ keys }) =>
     `分割案の子タスクの依存が循環しています（${keys}）。再開すると、分割をやり直します。`,
+  "split.repoMissing": ({ key }) =>
+    `リポジトリの無いタスクを分けるときは、子タスクごとにプロジェクトの対象からリポジトリを付けてください（子タスク「${key}」にありません）。再開すると、分割をやり直します。`,
+  "split.repoNotCandidate": ({ key, repo }) =>
+    `子タスク「${key}」に付けたリポジトリ（${repo}）は、プロジェクトの対象にありません。再開すると、分割をやり直します（対象のリポジトリから選び直します）。`,
   "split.childCancelled": ({ titles }) =>
     `子タスク（${titles}）が中止されました。再開すると、中止した子タスクを除いて進めます（中止した子タスクに依存する子タスクも始めます）。中止すると、終わっていない子タスクも中止します。`,
   "integrate.baseUnavailable": ({ branch, detail }, text) =>
@@ -871,6 +893,16 @@ const en: MessageDictionary = {
   "ticket.repoChosenByPerson": "A person chose the repository.",
   "ticket.notTriageable":
     "A repository can be chosen only for a task imported from a ticket whose repository is not decided yet.",
+  "repo.chooseFailed": ({ detail }, text) =>
+    `The Orchestrator could not decide the repository to work in: ${text(detail)} Choose a repository from the project's targets and resume.`,
+  "repo.notChosen":
+    "The Orchestrator chose a plan that changes code but did not name the repository to work in.",
+  "repo.notCandidate": ({ repo }) => `The repository (${repo}) is not a target of the project.`,
+  "repo.chosenByPerson": "A person chose the repository.",
+  "repo.notChoosable":
+    "A repository can be chosen only for a paused task created without a repository whose steps are not decided yet.",
+  "repo.stepNeedsRepository": ({ step }) =>
+    `The step (${step}) needs a target repository, but this task has none.`,
   "input.platformName":
     "Write an internal platform name in lowercase letters, digits, and hyphens (starting with a letter or digit).",
   "input.allowRule":
@@ -983,6 +1015,10 @@ const en: MessageDictionary = {
     `Subtask "${key}" depends on "${dependsOn}", which is not in the split. Resume to split again.`,
   "split.cycle": ({ keys }) =>
     `The subtask dependencies form a cycle (${keys}). Resume to split again.`,
+  "split.repoMissing": ({ key }) =>
+    `When splitting a task without a repository, give each subtask a repository from the project's targets (subtask "${key}" has none). Resume to redo the split.`,
+  "split.repoNotCandidate": ({ key, repo }) =>
+    `The repository given to subtask "${key}" (${repo}) is not a target of the project. Resume to redo the split (choosing from the target repositories).`,
   "split.childCancelled": ({ titles }) =>
     `Subtasks were cancelled (${titles}). Resume to continue without them (subtasks that depend on them also start). Cancel to also cancel the unfinished subtasks.`,
   "integrate.baseUnavailable": ({ branch, detail }, text) =>

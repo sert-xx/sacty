@@ -7,8 +7,10 @@ const ja = {
     title: "タイトル",
     body: "内容",
     bodyPlaceholder: "背景や、満たしてほしい条件",
-    repository: "対象リポジトリ",
+    repository: "対象リポジトリ（任意）",
     repositoryPlaceholder: "リポジトリの URL（入力すると絞り込めます）",
+    repositoryHint:
+      "空欄にすると、リポジトリを指定せずに作ります。調べもの・全体の設計はリポジトリ無しで進め、コードの変更が要るときは、オーケストレーターがプロジェクトの対象からリポジトリを選びます（分割するタスクは、子タスクごとに選びます）。",
     listFailed: (owner: string, reason: string) =>
       `${owner} のリポジトリを読めませんでした：${reason}`,
     noRepository:
@@ -35,8 +37,10 @@ const en: FormsMessages = {
     title: "Title",
     body: "Description",
     bodyPlaceholder: "Background and the conditions it should meet",
-    repository: "Target repository",
+    repository: "Target repository (optional)",
     repositoryPlaceholder: "Repository URL (type to filter)",
+    repositoryHint:
+      "Leave it empty to create the task without a repository. Research and overall design proceed without one; when code must change, the Orchestrator chooses a repository from the project's targets (for a split task, one per subtask).",
     listFailed: (owner: string, reason: string) =>
       `Could not list the repositories of ${owner}: ${reason}`,
     noRepository:

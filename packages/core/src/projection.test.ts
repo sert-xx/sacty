@@ -3,9 +3,11 @@ import { budgetState, computeCostUsd } from "./cost.js";
 import type { ActivityEvent, EventInput } from "./events.js";
 import { EventInput as EventSchema, exportSteps, MVP_STEPS } from "./events.js";
 import {
+  awaitingRepository,
   canRetryExport,
   documentOutput,
   exportDue,
+  isRepoless,
   pendingQuestion,
   project,
   questionBlocked,
@@ -899,5 +901,63 @@ describe("成果の書き出し（PBI-56）", () => {
       ev("t1", { type: "TaskCancelled", payload: { cleanup: [] } }, "person"),
     ]).get("t1");
     expect(cancelled && exportDue(cancelled)).toBeUndefined();
+  });
+});
+
+describe("リポジトリを指定しないタスク（PBI-73）", () => {
+  const noRepo = (taskId: string) =>
+    ev(
+      taskId,
+      {
+        type: "TaskCreated",
+        payload: { title: "t", body: "", start: "sacty", noRepo: true, budgetCapUsd: 1 },
+      },
+      "person",
+    );
+  const chosen = (taskId: string, actor: ActivityEvent["actor"] = "orchestrator") =>
+    ev(
+      taskId,
+      {
+        type: "RepositoryChosen",
+        payload: { repo: "https://github.com/acme/api", reason: "API", costUsd: 0.5 },
+      },
+      actor,
+    );
+
+  it("リポジトリを決めるまではリポジトリの無いタスク。決めたら、費用と理由を残してふつうのタスクになる", () => {
+    seq = 0;
+    const before = project([noRepo("a")]).get("a");
+    expect(before && isRepoless(before)).toBe(true);
+    expect(before && awaitingRepository(before)).toBe(true);
+    const after = project([noRepo("a"), chosen("a")]).get("a");
+    expect(after).toMatchObject({
+      repo: "https://github.com/acme/api",
+      noRepo: true,
+      repoChoice: { reason: "API", by: "orchestrator" },
+      budget: { usedUsd: 0.5 },
+    });
+    expect(after && isRepoless(after)).toBe(false);
+    expect(project([noRepo("b"), chosen("b", "person")]).get("b")?.repoChoice?.by).toBe("person");
+  });
+
+  it("対象リポジトリを選ぶ前の版のタスク・リポジトリのあるタスク・工程を決めた後は、リポジトリを決められない", () => {
+    seq = 0;
+    // noRepo の無い、対象リポジトリを選ぶ前の版のタスクは、リポジトリの無いタスクとして扱わない
+    const old = project([created("old")]).get("old");
+    expect(old && isRepoless(old)).toBe(false);
+    expect(() => project([created("old"), chosen("old")])).toThrow(/before planning/);
+    // 用意する前なら選び直せる（用意できなかったとき）。用意した後は選べない
+    expect(
+      project([noRepo("c"), chosen("c"), chosen("c", "person")]).get("c")?.repoChoice?.by,
+    ).toBe("person");
+    const prepared = () =>
+      ev("e", {
+        type: "RepositoryPrepared",
+        payload: { url: "https://github.com/acme/api.git", baseBranch: "main", baseCommit: "abc" },
+      });
+    expect(() => project([noRepo("e"), chosen("e"), prepared(), chosen("e")])).toThrow(
+      /before planning/,
+    );
+    expect(() => project([noRepo("d"), steps("d"), chosen("d")])).toThrow(/before planning/);
   });
 });

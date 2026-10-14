@@ -6,6 +6,9 @@ const ja = {
   start: "開始地点：",
   project: " ・ プロジェクト：",
   repository: " ・ 対象リポジトリ：",
+  noRepository: " ・ リポジトリ無し",
+  repoChoice: (reason: string, byPerson: boolean) =>
+    byPerson ? "（人間が選んだ）" : `（オーケストレーターが選んだ：${reason}）`,
   parent: " ・ 親タスク：",
   sourceOpen: "（",
   sourceClose: "）",
@@ -102,7 +105,8 @@ const ja = {
     passed: "合格",
     failed: "不合格",
     failures: (count: number, max: number) => `続けて${count}回不合格（${max}回で人間の判断待ち）`,
-    target: (branch: string, commit: string) => `読んだコード：${branch} の ${commit}`,
+    target: (branch: string, commit: string) =>
+      commit ? `読んだコード：${branch} の ${commit}` : `読んだコード：${branch}`,
     findings: "足りないこと",
     viewpoints: "観点ごとの判定",
     recurrence: "過去の指摘の再発",
@@ -187,6 +191,9 @@ const en: TaskMessages = {
   start: "Started from: ",
   project: " · Project: ",
   repository: " · Repository: ",
+  noRepository: " · No repository",
+  repoChoice: (reason, byPerson) =>
+    byPerson ? " (chosen by a person)" : ` (chosen by the Orchestrator: ${reason})`,
   parent: " · Parent task: ",
   sourceOpen: " (",
   sourceClose: ")",
@@ -284,7 +291,8 @@ const en: TaskMessages = {
     failed: "Failed",
     failures: (count, max) =>
       `Failed ${count} time${count === 1 ? "" : "s"} in a row (needs you at ${max})`,
-    target: (branch, commit) => `Code read: ${commit} on ${branch}`,
+    target: (branch, commit) =>
+      commit ? `Code read: ${commit} on ${branch}` : `Code read: ${branch}`,
     findings: "Missing",
     viewpoints: "Verdict per viewpoint",
     recurrence: "Recurrence of past comments",

@@ -8,6 +8,7 @@ import {
   InvestigationKind,
   investigationIsGoal,
   isDocumentsDir,
+  isRepoless,
   MAX_SPLIT_CHILDREN,
   MIN_SPLIT_CHILDREN,
   message,
@@ -241,6 +242,7 @@ function remarkLines(task: Task, step: StepKey, label: string): string[] {
  * 起点のコミットのコードを使い捨ての写しで渡す（セットアップなどのコマンドは実行できるが、変更は残らない）。
  */
 function codeLines(task: Task, options: { setup: boolean } = { setup: true }): string[] {
+  if (isRepoless(task)) return REPOLESS_LINES;
   if (!task.repository) return [];
   return [
     "",
@@ -250,6 +252,16 @@ function codeLines(task: Task, options: { setup: boolean } = { setup: true }): s
       : "作業領域は、この実行のための使い捨ての写しです。変更は残りません。この工程では、コードの変更（実装）はしないでください。",
   ];
 }
+
+/**
+ * 対象リポジトリの無いタスク（PBI-73）の工程で、作業領域にコードが無いことを伝える。調べもの・全体の設計は、タスクの内容と
+ * プロジェクトのコンテキストをもとに書かせる（コードを推測で書かせない）。
+ */
+const REPOLESS_LINES = [
+  "",
+  "このタスクには対象リポジトリがありません（リポジトリを指定せずに作ったタスクです）。作業領域（カレントディレクトリ）は空で、コードはありません。",
+  "タスクの内容と、プロジェクトのコンテキスト（規約・接続先など）をもとに書いてください。コードを読まないと判断できないことは、推測で書かずに「確認したいこと」に挙げてください。",
+];
 
 /**
  * 開発のためのセットアップをしない指示（PBI-43）。コードを読めば足りる場面（工程の選択・内容の調査）で、
@@ -324,6 +336,8 @@ export type SubtaskSummary = {
   pullRequestUrl?: string;
   /** 何回目の分割で作ったか（2 以降は修正の子タスク）。 */
   round: number;
+  /** 子タスクのリポジトリ（リポジトリの無い親を分けたとき。PBI-73）。 */
+  repo?: string;
 };
 
 function subtaskLines(children: readonly SubtaskSummary[]): string[] {
@@ -333,7 +347,7 @@ function subtaskLines(children: readonly SubtaskSummary[]): string[] {
       c.state === "completed"
         ? `完了${c.pullRequestUrl ? `（PR：${c.pullRequestUrl}）` : ""}`
         : "中止（人間が中止を認めた。実装されていない）";
-    return `- ${c.title}：${state}${c.round > 1 ? "［修正の子タスク］" : ""}`;
+    return `- ${c.title}${c.repo ? `（${c.repo}）` : ""}：${state}${c.round > 1 ? "［修正の子タスク］" : ""}`;
   });
 }
 
@@ -351,10 +365,38 @@ function integrationFindingLines(review: IntegrationReview): string[] {
   ];
 }
 
+/**
+ * リポジトリの無いタスクを分けるときに、子タスクごとにリポジトリを選ばせる指示（PBI-73）。候補はプロジェクトの対象。
+ * リポジトリのあるタスクでは何も足さない（子タスクは親のリポジトリで進む）。
+ */
+function splitRepositoryLines(task: Task, repositories: readonly string[] | undefined): string[] {
+  if (!isRepoless(task)) return [];
+  return [
+    "- このタスクには対象リポジトリがありません。子タスクごとに、作業するリポジトリ（repo）を次の候補から1つ選び、選んだ理由（repoReason）を書く。子タスクごとに違うリポジトリでよい。1つの子タスクは1つのリポジトリの中で完結させる（複数のリポジトリにまたがる変更は、リポジトリごとの子タスクに分け、必要なら dependsOn でつなぐ）",
+    "  - リポジトリの候補（プロジェクトの対象。これ以外は使えない）：",
+    ...((repositories ?? []).length > 0
+      ? (repositories ?? []).map((r) => `    - ${r}`)
+      : ["    - （候補を読めませんでした）"]),
+  ];
+}
+
+/** 分割の出力の形式に足す、子タスクのリポジトリ（PBI-73）。 */
+function splitRepositoryFields(task: Task): string {
+  return isRepoless(task)
+    ? ', "repo": "リポジトリの URL", "repoReason": "そのリポジトリを選んだ理由"'
+    : "";
+}
+
 export function buildPrompt(
   task: Task,
   step: StepKey,
-  extra: { diff?: string; diffFile?: string; subtasks?: readonly SubtaskSummary[] } = {},
+  extra: {
+    diff?: string;
+    diffFile?: string;
+    subtasks?: readonly SubtaskSummary[];
+    /** 子タスクに付けられるリポジトリ（プロジェクトの対象。リポジトリの無いタスクの分割だけ。PBI-73）。 */
+    repositories?: readonly string[];
+  } = {},
 ): string {
   const content = [`# ${task.title}`, "", task.body || "（内容なし）"].join("\n");
   const hasRemarks = task.remarks.some((r) => r.step === step && !r.voided);
@@ -370,7 +412,7 @@ export function buildPrompt(
           .join(" → ");
         return [
           "あなたはソフトウェア開発の調査エージェントです。",
-          `このタスクは、このあと ${next} の工程で進めます。後の工程のエージェントが正しく判断できるように、対象リポジトリのコードを読んで、タスクに関係する事実を調べてMarkdownで書いてください。`,
+          `このタスクは、このあと ${next} の工程で進めます。後の工程のエージェントが正しく判断できるように、${isRepoless(task) ? "プロジェクトのコンテキストをもとに" : "対象リポジトリのコードを読んで、"}タスクに関係する事実を調べてMarkdownで書いてください。`,
           "",
           "- タスクに関係するコードの場所（例：src/pay.ts:12）と、いまの振る舞い・データの流れ",
           "- 変更の影響範囲（呼び出し元・関係するテスト・設定）と、既存の規約や似た実装",
@@ -388,7 +430,7 @@ export function buildPrompt(
       // 調査は、コードを読んで報告するだけの工程（PBI-18）。人間が承認すると完了
       const lines = [
         "あなたはソフトウェア開発の調査エージェントです。",
-        "次のタスクが求めていることを、対象リポジトリのコードを読んで調べ、調査の結果をMarkdownで書いてください。",
+        `次のタスクが求めていることを、${isRepoless(task) ? "プロジェクトのコンテキストをもとに" : "対象リポジトリのコードを読んで"}調べ、調査の結果をMarkdownで書いてください。`,
         "",
         "- 最初に、タスクへの答え（結論）を短く書く",
         "- 根拠を、ファイルと行（例：src/pay.ts:12）を添えて書く。推測と、コードで確かめた事実を区別する",
@@ -543,10 +585,11 @@ export function buildPrompt(
           `- 子タスクは 1〜${MAX_SPLIT_CHILDREN} 件。子タスクをさらに分割することはできない`,
           "- コードは変更しない（作業領域は使い捨ての写しで、変更は残らない）",
           ...codeLines(task),
+          ...splitRepositoryLines(task, extra.repositories),
           "",
           "最初に直し方の考え方を短く書き、そのあとに追加する子タスクの一覧を次の形式で必ず付けてください。",
           "```json",
-          `{"${SPLIT_HEADING}": {"reason": "追加する理由", "children": [{"key": "A", "title": "子タスクのタイトル", "body": "内容と受け入れ条件（Markdown）", "dependsOn": []}]}}`,
+          `{"${SPLIT_HEADING}": {"reason": "追加する理由", "children": [{"key": "A", "title": "子タスクのタイトル", "body": "内容と受け入れ条件（Markdown）", "dependsOn": []${splitRepositoryFields(task)}}]}}`,
           "```",
           ...remarkLines(task, step, "子タスクの一覧"),
           "",
@@ -578,10 +621,11 @@ export function buildPrompt(
         `- 子タスクは ${MIN_SPLIT_CHILDREN}〜${MAX_SPLIT_CHILDREN} 件。子タスクをさらに分割することはできない`,
         "- コードは変更しない（作業領域は使い捨ての写しで、変更は残らない）",
         ...codeLines(task),
+        ...splitRepositoryLines(task, extra.repositories),
         "",
         "最初に分け方の考え方を短く書き、そのあとに子タスクの一覧を次の形式で必ず付けてください。",
         "```json",
-        `{"${SPLIT_HEADING}": {"reason": "分け方の理由", "children": [{"key": "A", "title": "子タスクのタイトル", "body": "内容と受け入れ条件（Markdown）", "dependsOn": []}, {"key": "B", "title": "…", "body": "…", "dependsOn": ["A"]}]}}`,
+        `{"${SPLIT_HEADING}": {"reason": "分け方の理由", "children": [{"key": "A", "title": "子タスクのタイトル", "body": "内容と受け入れ条件（Markdown）", "dependsOn": []${splitRepositoryFields(task)}}, {"key": "B", "title": "…", "body": "…", "dependsOn": ["A"]${splitRepositoryFields(task)}}]}}`,
         "```",
         "",
         "--- 承認済みの要求要件 ---",
@@ -1057,14 +1101,35 @@ export function integrationViewpointIds(task: Task): string[] {
 export function buildIntegrationReviewPrompt(
   task: Task,
   subtasks: readonly SubtaskSummary[],
-  target: { baseBranch: string; commit: string },
+  target: {
+    baseBranch: string;
+    commit: string;
+    /**
+     * リポジトリの無い親（PBI-73）で、子タスクのリポジトリごとに用意したコード。dir は作業領域からの相対パス。
+     * 渡したときは、baseBranch・commit は使わない。
+     */
+    repositories?: readonly { repo: string; baseBranch: string; commit: string; dir: string }[];
+  },
 ): string {
   const viewpoints = task.approved.design?.testViewpoints ?? [];
   const remarks = humanRemarks(task);
+  const repositories = target.repositories;
   return [
     "あなたはゴールガーディアンです。人間が承認した成果物（ゴール）を守る立場で、子タスクに分けて進めたタスクを、統合の観点で最終レビューしてください。",
     "",
-    `作業領域（カレントディレクトリ）に、対象リポジトリ${task.repository ? `（${task.repository.url}）` : ""}のベースブランチ（${target.baseBranch}）の最新のコミット（${target.commit.slice(0, 7)}）のコードがあります。子タスクの PR は、このブランチにマージされています。`,
+    ...(repositories
+      ? [
+          "このタスクには対象リポジトリがありません（子タスクごとにリポジトリを付けて進めました）。作業領域（カレントディレクトリ）の下に、子タスクのリポジトリごとに、ベースブランチの最新のコミットのコードがあります。子タスクの PR は、それぞれのリポジトリのベースブランチにマージされています。",
+          ...(repositories.length > 0
+            ? repositories.map(
+                (r) =>
+                  `- ${r.dir}/：${r.repo} のベースブランチ（${r.baseBranch}）の ${r.commit.slice(0, 7)}`,
+              )
+            : ["- （用意できたリポジトリはありません）"]),
+        ]
+      : [
+          `作業領域（カレントディレクトリ）に、対象リポジトリ${task.repository ? `（${task.repository.url}）` : ""}のベースブランチ（${target.baseBranch}）の最新のコミット（${target.commit.slice(0, 7)}）のコードがあります。子タスクの PR は、このブランチにマージされています。`,
+        ]),
     "作業領域は、この実行のための使い捨ての写しです。リポジトリの手順にあるセットアップ（依存関係の取得など）や、調べるためのコマンド・テストは実行してかまいませんが、変更は残りません。コードの変更はしないでください。",
     "",
     "- 子タスクの成果を組み合わせた状態で、承認済みの要求要件を満たすかを、実際のコードを読んで判定する（子タスクが個別に完了していることは前提にしない）",
@@ -1626,6 +1691,24 @@ function documentsChoiceLines(rules: string | undefined): string[] {
   ];
 }
 
+/** オーケストレーターに渡す、工程の組み合わせの説明（PBI-17）。 */
+const planDescriptions: Record<StepPlan, string> = {
+  standard:
+    "調査 → 要求要件 → 設計（テスト観点）→ 実装 → PR作成。既定。振る舞いが複数ある・影響範囲が広い・テスト観点を人間と合意したい変更",
+  "skip-design":
+    "調査 → 要求要件 → 実装 → PR作成。設計を省く。変更が小さく局所的で、要求要件の受け入れ条件だけで十分にテストできる変更（例：文言の修正、小さな関数の追加）",
+  investigate:
+    "調査だけ。コードを調べて結果を報告する（実装や PR は作らない）。タスクが質問・原因の調査・影響範囲の確認・見積もりなど、変更ではなく情報を求めているとき",
+  review:
+    "レビューだけ。タスクにある PR をレビューして、PR にレビューを投稿する（実装や PR は作らない）。タスクが PR のレビューを求めているとき",
+  bugfix:
+    "調査 → 再現 → 実装 → PR作成。不具合の修正で、テストで再現できるもの（期待する振る舞いがタスクから分かる）。不具合を再現する失敗するテストを書き、それを通すように直す。直すのに設計の判断が要る大きな不具合は standard を選ぶ",
+  split:
+    "調査 → 要求要件 → 設計 → タスク分割 → 統合レビュー。変更が大きく、1つの PR では人間がレビューしきれないとき。設計の承認の後に、独立して進められる子タスクに分け、子タスクごとに実装と PR を作る。子タスクがすべて終わったら、組み合わせた結果が要求要件を満たすかをレビューする",
+  "design-only":
+    "要求要件 → 設計（テスト観点）。コードを変えない全体の設計（システムの全体像・方針・分け方を決めて、人間と合意したい）。成果は sacty の画面で承認する（PR は作らない）",
+};
+
 /**
  * オーケストレーターへの指示（PBI-17）。タスクの内容と対象リポジトリのコードを読んで、決めた候補から
  * 工程の組み合わせを選ばせる。タスクのオーケストレーターのセッションを再開して実行する（PBI-67。指示は毎回台帳から作る）。
@@ -1653,27 +1736,19 @@ export function buildOrchestratorPrompt(
      * 設定しただけでは起動しないので、要るかをタスクごとに判断させる（取得はしないので、中身は説明から判断する）。
      */
     sharedComposes?: readonly { name: string; file: string; description?: string }[];
+    /**
+     * 対象リポジトリの無いタスク（PBI-73）。プロジェクトの対象のリポジトリ（コードの変更が要るときに選ぶ候補）・
+     * コンテキストリポジトリ・プロジェクトのコンテキストの規約。リポジトリの無いタスクでだけ渡す。
+     */
+    repoless?: { repositories: readonly string[]; context?: string; rules?: string };
   } = {},
 ): string {
+  if (isRepoless(task) && options.repoless) return buildRepolessOrchestratorPrompt(task, options);
   const images = options.images ?? [];
   const shared = task.repository ? (options.sharedComposes ?? []) : [];
   const destinations = options.exports?.destinations ?? [];
-  const all: Record<StepPlan, string> = {
-    standard:
-      "調査 → 要求要件 → 設計（テスト観点）→ 実装 → PR作成。既定。振る舞いが複数ある・影響範囲が広い・テスト観点を人間と合意したい変更",
-    "skip-design":
-      "調査 → 要求要件 → 実装 → PR作成。設計を省く。変更が小さく局所的で、要求要件の受け入れ条件だけで十分にテストできる変更（例：文言の修正、小さな関数の追加）",
-    investigate:
-      "調査だけ。コードを調べて結果を報告する（実装や PR は作らない）。タスクが質問・原因の調査・影響範囲の確認・見積もりなど、変更ではなく情報を求めているとき",
-    review:
-      "レビューだけ。タスクにある PR をレビューして、PR にレビューを投稿する（実装や PR は作らない）。タスクが PR のレビューを求めているとき",
-    bugfix:
-      "調査 → 再現 → 実装 → PR作成。不具合の修正で、テストで再現できるもの（期待する振る舞いがタスクから分かる）。不具合を再現する失敗するテストを書き、それを通すように直す。直すのに設計の判断が要る大きな不具合は standard を選ぶ",
-    split:
-      "調査 → 要求要件 → 設計 → タスク分割 → 統合レビュー。変更が大きく、1つの PR では人間がレビューしきれないとき。設計の承認の後に、独立して進められる子タスクに分け、子タスクごとに実装と PR を作る。子タスクがすべて終わったら、組み合わせた結果が要求要件を満たすかをレビューする",
-  };
   const allowed = allowedPlans(task);
-  const plans = Object.fromEntries(allowed.map((plan) => [plan, all[plan]]));
+  const plans = Object.fromEntries(allowed.map((plan) => [plan, planDescriptions[plan]]));
   return [
     "あなたはオーケストレーターです。タスクの内容と対象リポジトリのコードを読んで、このタスクの工程を選んでください。",
     ...(task.repository
@@ -1736,19 +1811,103 @@ export function buildOrchestratorPrompt(
 }
 
 /**
+ * 対象リポジトリの無いタスク（PBI-73）で、コードを変える（作業するリポジトリが要る）工程の組み合わせ。これを選ぶときは、
+ * オーケストレーターがプロジェクトの対象からリポジトリを選ぶ（リポジトリを用意してから、もう一度工程を選ぶ）。
+ */
+export const REPO_PLANS: readonly StepPlan[] = ["standard", "skip-design", "bugfix"];
+
+/**
  * オーケストレーターが選べる工程の組み合わせ。レビューは、タスクに対象リポジトリの PR があるときだけ（PBI-19）。
+ * 設計だけは、対象リポジトリの無いタスクだけ（PBI-73）。対象リポジトリの無いタスクはレビューを選べない（PR を読めない）。
  */
 export function allowedPlans(task: Task): StepPlan[] {
+  const repoless = isRepoless(task);
   return StepPlan.options.filter(
     (plan) =>
-      (plan !== "review" || referencedPullRequest(task)) &&
+      (plan !== "review" || (!repoless && referencedPullRequest(task))) &&
+      (plan !== "design-only" || repoless) &&
       // 分割は1段だけ。子タスクは分割できない（PBI-27）
       (plan !== "split" || !task.parent),
   );
 }
 
+/**
+ * 対象リポジトリの無いタスクの、オーケストレーターへの指示（PBI-73）。作業領域にコードは無いので、タスクの内容・プロジェクトの
+ * コンテキスト（コンテキストリポジトリ・規約・接続先）・プロジェクトの対象（リポジトリの一覧）から進め方を選ばせる。
+ * コードを変える組み合わせを選ぶなら、作業するリポジトリを対象から選ばせる（テストのコマンドなどは、リポジトリを用意した後に、
+ * もう一度選ぶときに決める）。
+ */
+function buildRepolessOrchestratorPrompt(
+  task: Task,
+  options: NonNullable<Parameters<typeof buildOrchestratorPrompt>[1]>,
+): string {
+  const repoless = options.repoless ?? { repositories: [] };
+  const images = options.images ?? [];
+  const destinations = options.exports?.destinations ?? [];
+  const rules = repoless.rules ?? options.exports?.rules;
+  const plans = Object.fromEntries(
+    allowedPlans(task).map((plan) => [plan, planDescriptions[plan]]),
+  );
+  return [
+    "あなたはオーケストレーターです。このタスクには対象リポジトリがありません（リポジトリを指定せずに作ったタスクです）。タスクの内容と、プロジェクトのコンテキスト・プロジェクトの対象をもとに、このタスクの進め方（工程の組み合わせ）を選んでください。",
+    "作業領域（カレントディレクトリ）は空で、コードはありません。",
+    "",
+    "進め方は、次のどれかです。",
+    "- コードを変えない仕事（調べもの・全体の設計など）：investigate か design-only を選ぶ。リポジトリ無しのまま進め、成果は sacty の画面で人間が承認する（PR やブランチは作らない）",
+    "- 分ける必要がある大きなタスク：split を選ぶ。設計の承認の後に、タスク分割のエージェントが子タスクに分け、子タスクごとにプロジェクトの対象からリポジトリを選んで付ける（子タスクごとに違うリポジトリでよい）。ここではリポジトリを書かない",
+    `- コードの変更が要り、分けないタスク：${REPO_PLANS.join("・")} のどれかを選び、作業するリポジトリ（repo）をプロジェクトの対象から1つ選んで、選んだ理由（repoReason）を書く。sacty がそのリポジトリを用意した後に、もう一度あなたに工程を選んでもらう（テストのコマンドなどは、そのときにコードを読んで決める）。どのリポジトリか決められなければ repo を空にして、repoReason に理由を書く（人間がリポジトリを選ぶ）`,
+    "",
+    "--- プロジェクトの対象（作業するリポジトリの候補。これ以外は使えない） ---",
+    ...(repoless.repositories.length > 0
+      ? repoless.repositories.map((r) => `- ${r}`)
+      : ["（候補を読めませんでした）"]),
+    ...(repoless.context ? ["", `プロジェクトのコンテキストリポジトリ：${repoless.context}`] : []),
+    ...(rules?.trim()
+      ? [
+          "",
+          "--- プロジェクトのコンテキストの規約 ---",
+          "",
+          clip(rules.trim(), EXPORT_RULES_IN_PROMPT),
+        ]
+      : []),
+    "",
+    "あわせて、次のことを決めてください。",
+    "- investigation：調査の工程の性質（PBI-43）。リポジトリの無いタスクでは content にする",
+    ...(images.length > 0
+      ? [
+          "- images：工程ごとに使う実行のイメージ（PBI-41）。コードは無いので、ふつうは書かない（default）",
+          "  - default：既定のイメージ（Node.js・Claude Code・Codex）",
+          ...images.map((image) => `  - ${image.name}：${image.description}`),
+        ]
+      : []),
+    // 規約は上で渡したので、書き出し先の指示では繰り返さない
+    ...(destinations.length > 0 ? exportChoiceLines(task, destinations, undefined) : []),
+    "",
+    "選べる工程の組み合わせ：",
+    ...Object.entries(plans).map(([key, text]) => `- ${key}：${text}`),
+    "",
+    "--- タスク ---",
+    `# ${task.title}`,
+    "",
+    task.body || "（内容なし）",
+    "",
+    "選んだ進め方を、次の形式で必ず出してください。",
+    "```json",
+    `{"${PLAN_HEADING}": {"plan": "${Object.keys(plans).join(" または ")}", "reason": "選んだ理由", "repo": "作業するリポジトリの URL（${REPO_PLANS.join("・")} のときだけ。決められなければ空）", "repoReason": "そのリポジトリを選んだ理由（決められなければ、その理由）", "investigation": "content"${images.length > 0 ? ', "images": {"requirements": "イメージの名前"}' : ""}${destinations.length > 0 ? ', "exports": {"requirements": {"to": "接続先の名前", "via": "platform または mcp", "location": "置き場所の手がかり", "reason": "そこに書き出す理由"}, "design": {"to": "", "reason": "書き出さない理由"}}' : ""}}}`,
+    "```",
+  ].join("\n");
+}
+
 /** 分割案の子タスク（key は分割案の中だけの名前）。 */
-export type SplitChild = { key: string; title: string; body: string; dependsOn: string[] };
+export type SplitChild = {
+  key: string;
+  title: string;
+  body: string;
+  dependsOn: string[];
+  /** 子タスクのリポジトリと選んだ理由（リポジトリの無いタスクの分割。PBI-73）。プロジェクトの対象かは、呼び出し側が確かめる。 */
+  repo?: string;
+  repoReason?: string;
+};
 
 /**
  * タスク分割の出力から、子タスクの一覧を読んで確かめる（PBI-27）。数・key の重複・存在しない依存・
@@ -1773,7 +1932,16 @@ export function extractSplitPlan(
     const title = text(c.title);
     if (!key || !title) return { ok: false, message: message("split.unreadable") };
     const dependsOn = Array.isArray(c.dependsOn) ? c.dependsOn.map(text).filter(Boolean) : [];
-    children.push({ key, title: title.slice(0, 200), body: text(c.body), dependsOn });
+    const repo = text(c.repo).slice(0, 500);
+    const repoReason = text(c.repoReason).slice(0, 2000);
+    children.push({
+      key,
+      title: title.slice(0, 200),
+      body: text(c.body),
+      dependsOn,
+      ...(repo ? { repo } : {}),
+      ...(repoReason ? { repoReason } : {}),
+    });
   }
   const count = children.length;
   if (count < min || count > MAX_SPLIT_CHILDREN) {
@@ -1878,6 +2046,12 @@ export function extractStepPlan(
       exports?: Partial<Record<StepKey, RawExportPlan>>;
       /** 要求要件・設計のファイルを置くディレクトリ（PBI-57）。使える形のものだけ。 */
       documentsDir?: string;
+      /**
+       * 作業するリポジトリと理由（対象リポジトリの無いタスクで、コードを変える組み合わせを選んだとき。PBI-73）。プロジェクトの
+       * 対象かは、呼び出し側が確かめる。
+       */
+      repo?: string;
+      repoReason?: string;
     }
   | undefined {
   return lastJsonAnswer(output, (answer) => {
@@ -1906,7 +2080,11 @@ export function extractStepPlan(
       const exports = exportPlansOf(v.exports);
       // 置き場所は、リポジトリの中の相対パスの形のものだけを使う（末尾の / は除く。PBI-57）
       const documentsDir = text(v.documentsDir).replace(/\/+$/, "");
+      const repo = text(v.repo).slice(0, 500);
+      const repoReason = text(v.repoReason).slice(0, 2000);
       return {
+        ...(repo ? { repo } : {}),
+        ...(repoReason ? { repoReason } : {}),
         ...(isDocumentsDir(documentsDir) ? { documentsDir } : {}),
         plan: plan.data,
         reason,
