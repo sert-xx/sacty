@@ -1857,7 +1857,18 @@ export class TaskService {
     if (id && !this.deps.projects.get(id)) {
       throw new InvalidOperationError(message("project.notFound"));
     }
-    const problems = projectConflicts(this.deps.projects.all(), id, definition);
+    // チケットの取り込み先の重複は、ホストの PF だけプロジェクトをまたいで調べる（コンテキストの PF はプロジェクトごと。
+    // PBI-74）。設定を読めなければ、これまでどおりすべてを調べる
+    const config = this.deps.config();
+    const host = config.ok
+      ? new Set((config.config.platforms ?? []).map((p) => p.name))
+      : undefined;
+    const problems = projectConflicts(
+      this.deps.projects.all(),
+      id,
+      definition,
+      host ? { sharedPlatform: (name) => host.has(name) } : {},
+    );
     const [first, ...rest] = problems;
     if (first) throw new InvalidOperationError(first, ...rest);
     return this.deps.projects.put(id ?? randomUUID(), definition);
@@ -2084,20 +2095,36 @@ export class TaskService {
     const settings = this.deps.settings.get();
     if (!settings.ticketLabel || settings.triageOff?.includes("tickets")) return [];
     const projects = this.deps.projects.all();
-    const id = (platform: string, key: string) => `${platform}\u0000${key}`;
+    // チケットの識別：ホストの PF は名前とキー、プロジェクトのコンテキストの PF はプロジェクトもあわせる（PBI-74）
+    const id = (platform: string, key: string, projectId?: string) =>
+      `${platform}\u0000${key}${projectId !== undefined ? `\u0000${projectId}` : ""}`;
     const known = new Set(
       [...this.tasks.values()].flatMap((t) =>
-        t.ticket ? [id(t.ticket.platform, t.ticket.key)] : [],
+        t.ticket
+          ? [
+              id(
+                t.ticket.platform,
+                t.ticket.key,
+                t.ticket.scope === "project" ? t.projectId : undefined,
+              ),
+            ]
+          : [],
       ),
     );
     const config = this.deps.config();
     const budgetCapUsd = config.ok ? config.config.budgetPerTaskUsd : DEFAULT_BUDGET_USD;
     const created: Task[] = [];
     for (const ticket of found) {
-      if (known.has(id(ticket.platform, ticket.key))) continue;
-      const responsible = responsibleTicketProject(projects, ticket.platform, ticket.key);
+      const ticketId = id(ticket.platform, ticket.key, ticket.projectId);
+      if (known.has(ticketId)) continue;
+      const responsible = responsibleTicketProject(
+        projects,
+        ticket.platform,
+        ticket.key,
+        ticket.projectId,
+      );
       if (!responsible) continue;
-      known.add(id(ticket.platform, ticket.key));
+      known.add(ticketId);
       created.push(
         this.append({ id: randomUUID(), projectId: responsible.project.id }, [
           {
@@ -2114,6 +2141,7 @@ export class TaskService {
                   service: ticket.service,
                   key: ticket.key,
                   url: ticket.url,
+                  ...(ticket.projectId !== undefined ? { scope: "project" as const } : {}),
                 },
               },
             },

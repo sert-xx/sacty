@@ -182,7 +182,12 @@ export class IssueIntake {
             platform,
             ...(this.cursors.has(cursorKey) ? { cursor: this.cursors.get(cursorKey) } : {}),
           });
-          tickets.push(...result.tickets);
+          // プロジェクトのコンテキストの PF で見つけたチケットは、そのプロジェクトのもの（PBI-74）
+          tickets.push(
+            ...(source.projectId
+              ? result.tickets.map((t) => ({ ...t, projectId: source.projectId }))
+              : result.tickets),
+          );
           if (result.cursor) this.cursors.set(cursorKey, result.cursor);
           else this.cursors.delete(cursorKey);
         } catch (error) {

@@ -175,7 +175,14 @@ export type Task = {
   /** 取り込み元（GitHub Issue）。 */
   source?: TaskSource;
   /** 取り込み元のチケット（JIRA など。PBI-52）。 */
-  ticket?: { platform: string; service: "jira-cloud" | "jira-server"; key: string; url: string };
+  ticket?: {
+    platform: string;
+    service: "jira-cloud" | "jira-server";
+    key: string;
+    url: string;
+    /** プロジェクトのコンテキストの PF から取り込んだ（PBI-74）。 */
+    scope?: "project";
+  };
   /** チケットから作業するリポジトリ・題・概要を決めた理由（PBI-52）。人が選んだら by は person。 */
   ticketTriage?: { reason: DaemonText; by: "orchestrator" | "person" };
   /**

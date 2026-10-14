@@ -294,6 +294,12 @@ const TaskCreated = z.object({
         service: z.enum(["jira-cloud", "jira-server"]),
         key: z.string(),
         url: z.string(),
+        /**
+         * プロジェクトのコンテキストの PF（platforms.yaml）から取り込んだなら "project"（PBI-74）。同じ名前の PF が
+         * プロジェクトごとに別の接続先なので、チケットはプロジェクトとあわせて識別する。無ければホストの PF
+         * （プロジェクトをまたいで、名前とキーで識別する。PBI-74 より前の作業履歴も）。
+         */
+        scope: z.literal("project").optional(),
       })
       .optional(),
     // PBI-1の作業履歴には無いので既定値で補う

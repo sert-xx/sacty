@@ -15,6 +15,11 @@ export type FoundTicket = {
   key: string;
   summary: string;
   url: string;
+  /**
+   * プロジェクトのコンテキストの PF（platforms.yaml）で見つけたなら、そのプロジェクト（PBI-74）。同じ名前の PF が
+   * プロジェクトごとに別の接続先なので、取り込み・重複の排除はプロジェクトとあわせて行う。
+   */
+  projectId?: string;
 };
 
 export interface TicketClient {

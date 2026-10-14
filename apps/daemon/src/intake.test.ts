@@ -567,7 +567,10 @@ describe("JIRA のチケットの取り込み（PBI-52）", () => {
       "PAYX",
     ]);
     // 見つかったチケットは、そのキーを書いたプロジェクトのタスクになる
-    expect(service.list().map((t) => [t.title, t.projectId])).toEqual([["PAY-1 決済の再送", a.id]]);
+    // ほかのプロジェクト（B）の PF で見つけた PAY-1 は、B のキーではないので取り込まない
+    expect(service.list().map((t) => [t.title, t.projectId, t.ticket?.scope])).toEqual([
+      ["PAY-1 決済の再送", a.id, "project"],
+    ]);
     expect(b.id).not.toBe(a.id);
     // コンテキストの誤りは、どの層のどのファイルかを、取り込み先ごとに記録する（ほかの取り込み先は続ける）
     expect(service.status().intake?.errors?.map((e) => [e.query, ja(e.message)])).toEqual([

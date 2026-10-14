@@ -7620,6 +7620,102 @@ describe("コンテキストの外部 PF（PBI-74）", () => {
     activity.close();
   });
 
+  it("同じ名前・同じキーで接続先の違うコンテキストの PF は、プロジェクトごとに保存・取り込み・コメントでき、ホストの PF の重複は今までどおり拒否する", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const pf = (upstream: string) => ({
+      "platforms.yaml": [
+        "platforms:",
+        "  team-jira:",
+        `    upstream: ${upstream}`,
+        "    auth:",
+        "      secret: team-token",
+        "    allow: [GET /rest/api/**, POST /rest/api/2/issue/*/comment]",
+      ].join("\n"),
+    });
+    const fetcher = new FakeContexts({
+      "https://example.com/x-ctx.git": pf("https://x-jira.example.com"),
+      "https://example.com/y-ctx.git": pf("https://y-jira.example.com"),
+    });
+    const tickets = new FakeTickets();
+    const investigateOnly: ServiceDeps["planner"] = async () => ({
+      steps: ["investigate" as const],
+      plan: "investigate" as const,
+      reason: "調査だけ",
+      fallback: false,
+      costUsd: 0,
+      estimated: false,
+    });
+    const choose = (repo: string) =>
+      triageOut({ repo, title: "PAY-1 調べる", summary: "調べる", reason: "対象" });
+    const { service } = makeService(
+      activity,
+      [
+        choose("https://github.com/acme/x"),
+        completed(20_000),
+        choose("https://github.com/acme/y"),
+        completed(20_000),
+      ],
+      {
+        config: configOf(agent(), 1, [jiraPlatform()]),
+        secrets: { "claude-oauth-token": "oauth-secret", "team-token": "team-secret" },
+        gateway: fakeGateway(),
+        projects: new MemoryProjectStore(),
+        contexts: fetcher,
+        settings: new MemorySettingsStore({ ticketLabel: "sacty" }),
+        tickets,
+        planner: investigateOnly,
+      },
+    );
+    const save = (name: string, repo: string, context: string | undefined, platform: string) =>
+      service.saveProject(undefined, {
+        name,
+        targets: [{ scope: "repo", target: `https://github.com/acme/${repo}` }],
+        githubAccounts: { "github.com": "me" },
+        ...(context ? { context: { repo: context } } : {}),
+        tickets: [{ platform, service: "jira-server", keys: ["PAY"] }],
+      });
+    // 同じ名前・同じキーでも、コンテキストの PF なら両方保存できる
+    const x = save("X", "x", "https://example.com/x-ctx.git", "team-jira");
+    const y = save("Y", "y", "https://example.com/y-ctx.git", "team-jira");
+    // ホストの PF の同じキーは、今までどおり1つのプロジェクトだけ
+    save("H1", "h1", undefined, "jira");
+    expect(() => save("H2", "h2", undefined, "jira")).toThrow(/PAY/);
+    // それぞれの Jira の PAY-1 を、別のタスクとして取り込む（二度は取り込まない）
+    const found = (projectId: string, host: string) => ({
+      ...foundTicket("PAY-1"),
+      platform: "team-jira",
+      url: `https://${host}/browse/PAY-1`,
+      projectId,
+    });
+    const created = service.importTickets([
+      found(x.id, "x-jira.example.com"),
+      found(y.id, "y-jira.example.com"),
+    ]);
+    expect(created.map((t) => [t.projectId, t.ticket?.url, t.ticket?.scope])).toEqual([
+      [x.id, "https://x-jira.example.com/browse/PAY-1", "project"],
+      [y.id, "https://y-jira.example.com/browse/PAY-1", "project"],
+    ]);
+    expect(
+      service.importTickets([found(x.id, "x-jira.example.com"), found(y.id, "y-jira.example.com")]),
+    ).toEqual([]);
+    // ホストの PF のチケットは、今までどおりプロジェクトを持たずに取り込む
+    const [hostTask] = service.importTickets([foundTicket("PAY-1")]);
+    expect(hostTask?.ticket?.scope).toBeUndefined();
+    expect(service.importTickets([foundTicket("PAY-1")])).toEqual([]);
+    // 結果のコメントは、それぞれのプロジェクトの接続先に返す
+    for (const task of created) {
+      await service.runNext(task.id); // チケットを読む
+      await service.runNext(task.id); // 調査
+      service.approve(task.id, { step: "investigate", submission: 1 });
+      await service.runNext(task.id);
+    }
+    expect(created.map((t) => service.get(t.id)?.task.issueComment)).toEqual([
+      { url: "https://x-jira.example.com/browse/PAY-1?focusedCommentId=1" },
+      { url: "https://y-jira.example.com/browse/PAY-1?focusedCommentId=2" },
+    ]);
+    activity.close();
+  });
+
   it("成果の書き出し先にも、プロジェクトのコンテキストの PF を選べ、書き出す実行にだけ登録する", async () => {
     const registered: Registered[] = [];
     const activity = new SqliteActivityStore(dbPath);
