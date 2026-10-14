@@ -161,6 +161,7 @@ import {
   buildTicketInvestigationComment,
   buildTicketPullRequestComment,
   buildTicketTriagePrompt,
+  type ChatLogs,
   changeableSteps,
   EXECUTABLE_STEPS,
   EXPORT_FILE,
@@ -189,6 +190,7 @@ import {
   servicePromptLines,
   verificationBasis,
 } from "./prompts.js";
+import { CONTAINER_LOGS_DIR, stageQuestionLogs } from "./question-logs.js";
 import type { RepositoryWorkspace } from "./repository.js";
 import { secretUses } from "./secret-uses.js";
 import { type PrefetchingSecretStore, SecretNotFoundError, type SecretStore } from "./secrets.js";
@@ -426,6 +428,8 @@ type ExecuteRun = {
   contextMcp?: readonly (GatewayMcpServer | HostedMcpRelay)[];
   /** 追加でマウントする、sacty が管理するディレクトリ（レビューの差分の全体。PBI-65）。 */
   mounts?: readonly { hostPath: string; containerPath: string; readOnly: boolean }[];
+  /** 作業領域の外で読ませるディレクトリ（コンテナの中のパス。質問への答えの各実行のセッションログ。PBI-91）。 */
+  readDirs?: readonly string[];
   /** true を返すと、コンテナを起動しない（質問への答えの実行が中止されたなど。PBI-54）。 */
   stopped?: () => boolean;
   /** 実行の ID が変わったら知らせる（セッションを新しく始め直したとき。止めるため。PBI-67）。 */
@@ -923,6 +927,9 @@ export class TaskService {
       stopped?: () => boolean;
       /** 実行の ID が変わったら知らせる（セッションを新しく始め直したとき。止めるため。PBI-67）。 */
       onRunId?: (runId: string) => void;
+      /** 追加でマウントする、sacty が管理するディレクトリ（質問への答えの各実行のセッションログ。PBI-91）。 */
+      mounts?: ExecuteRun["mounts"];
+      readDirs?: ExecuteRun["readDirs"];
     },
     code: "base" | "implemented",
   ): Promise<Awaited<ReturnType<TaskService["execute"]>>> {
@@ -5395,6 +5402,7 @@ export class TaskService {
         run.context,
         gateway,
         run.session,
+        run.readDirs,
       );
       if (gatewayRun && platforms.length > 0 && this.deps.gateway) {
         invocation.env.SACTY_PF_URL = this.deps.gateway.platformsUrl(gatewayRun.token);
@@ -5731,15 +5739,25 @@ export class TaskService {
     const agent = agentFor(config, "orchestrator");
     const setting = { agentId: agent.id, ...agentSetting(agent), runId: chat.runId };
     let payload: Extract<EventInput, { type: "QuestionAnswered" }>["payload"];
+    // 各実行のセッションログを、答えの実行ごとの場所に並べて、読み取り専用でマウントする（PBI-91）
+    const logsDir = join(this.deps.workspaceRoot, "_question-logs", chat.runId);
     try {
+      const activity = this.deps.activity.forTask(task.id);
+      const logs = this.stageQuestionLogs(task.id, activity, logsDir, chat.runId);
       // オーケストレーターのセッションを複製して答える（作業中のセッションには話しかけない。PBI-67）
       const { outcome, costUsd, estimated, runId } = await this.runGuardian(
         task,
         {
           agent,
           image: config.image,
-          prompt: buildChatPrompt(task, this.deps.activity.forTask(task.id), question),
+          prompt: buildChatPrompt(task, activity, question, logs),
           role: "chat",
+          ...("runs" in logs
+            ? {
+                mounts: [{ hostPath: logsDir, containerPath: CONTAINER_LOGS_DIR, readOnly: true }],
+                readDirs: [CONTAINER_LOGS_DIR],
+              }
+            : {}),
           runId: chat.runId,
           // 準備の間（コードの書き出しなど）に中止されたなら、コンテナを起動しない
           stopped: () => this.cancelling.has(task.id),
@@ -5789,6 +5807,8 @@ export class TaskService {
         runResult: "failed",
         ...setting,
       };
+    } finally {
+      rmSync(logsDir, { recursive: true, force: true });
     }
     const latest = this.tasks.get(task.id);
     if (!latest || latest.status === "cancelled" || pendingQuestion(latest)?.id !== questionId) {
@@ -5818,6 +5838,29 @@ export class TaskService {
     }
     // 予算の通知は記録するが、タスクは止めない（次の工程の実行の前に、予算で止まる）
     this.warnIfNeeded(this.mustGet(task.id));
+  }
+
+  /**
+   * 質問への答えに読ませる、タスクの各実行のセッションログを dest に並べる（PBI-91）。ログの置き場所が無い・並べられない
+   * ときは、理由を返す（答えは台帳だけで作る）。並べるのは、このタスクの終わった実行の分だけ。
+   */
+  private stageQuestionLogs(
+    taskId: string,
+    activity: readonly ActivityEvent[],
+    dest: string,
+    chatRunId: string,
+  ): ChatLogs {
+    const store = this.deps.sessionLogs;
+    if (!store) return { unavailable: "セッションログを残していない" };
+    try {
+      return stageQuestionLogs({ store, taskId, activity, dest, exclude: [chatRunId] });
+    } catch (error) {
+      console.warn(
+        `[daemon] 質問への答えに、セッションログを用意できませんでした（${taskId}）：`,
+        error instanceof Error ? error.message : error,
+      );
+      return { unavailable: "セッションログを用意できなかった" };
+    }
   }
 
   /** 起動のときに取り出せなかった秘密情報（PBI-48）。取り出し直すと置き換える。 */
