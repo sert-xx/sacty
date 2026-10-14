@@ -128,6 +128,7 @@ import {
   type PullRequestFeedback,
   type PullRequestStatus,
   type PullRequests,
+  type SactyReviewRound,
   sactyReviewKey,
 } from "./github.js";
 import { notificationFor, type SlackNotifier } from "./notifier.js";
@@ -831,7 +832,7 @@ export class TaskService {
           token,
           number: pr.number,
           ...this.githubAccountOf(current, pr.repo),
-          ...this.sactyReviewTasksOf(pr.repo, pr.number),
+          ...this.sactyReviewsOf(pr.repo, pr.number),
         })
       ).filter((item) => !current.importedFeedback.includes(item.key));
       if (fresh.length === 0) return;
@@ -885,26 +886,34 @@ export class TaskService {
   }
 
   /**
-   * sacty が作った PR に取り込むラベルを付けて取り込んだ、レビューだけのタスク（PBI-88）。そのタスクが PR に投稿した
-   * レビューは、元のタスクへの PR の指摘として取り込む（ほかの sacty のレビューは、これまでどおり取り込まない）。
+   * この PR をレビューした sacty のタスクの回と、そのタスクが投稿に使うアカウント（PBI-88）。取り込むラベルを付けて取り込んだ
+   * レビューだけのタスク（`source.review: sacty`）の、直すべき指摘のある回（評価を読めなかった回も）は、元のタスクへの PR の
+   * 指摘として取り込む（allowed）。ほかの回・ほかのレビューのタスクの投稿は、アカウントが元のタスクと違っても除く。
    */
-  private sactyReviewTasksOf(repo: string, number: number): { sactyReviewTasks?: string[] } {
-    const markers = [...this.tasks.values()]
-      .filter(
-        (t) =>
-          t.source?.kind === "github_pull_request" &&
-          t.source.review === "sacty" &&
-          t.source.number === number &&
-          sameRepo(t.source.repo, repo),
-      )
-      .flatMap((t) =>
-        (t.reviewVerdicts ?? [])
-          // 直すべき指摘の無い（そのままマージしてよい）回のレビューは、差し戻さないので取り込まない。評価を読めなければ、
-          // 指摘を落とさないように取り込む（PBI-88）
-          .filter((v) => v.changesRequested !== false)
-          .map((v) => sactyReviewKey(t.id, v.round)),
-      );
-    return markers.length > 0 ? { sactyReviewTasks: markers } : {};
+  private sactyReviewsOf(repo: string, number: number): { sactyReviews?: SactyReviewRound[] } {
+    const rounds = [...this.tasks.values()].flatMap((t) => {
+      const ref = referencedPullRequest(t);
+      if (!ref || ref.number !== number || !sameRepo(ref.repo, repo)) return [];
+      const account = this.githubAccountOf(t, repo).account;
+      if (!account) return [];
+      const verdicts = t.reviewVerdicts ?? [];
+      const last = Math.max(t.reviewRound ?? 1, ...verdicts.map((v) => v.round));
+      return Array.from({ length: last }, (_, i) => {
+        const round = i + 1;
+        const verdict = verdicts.find((v) => v.round === round);
+        return {
+          key: sactyReviewKey(t.id, round),
+          account,
+          // 直すべき指摘の無い（そのままマージしてよい）回は、差し戻さないので取り込まない。評価を読めなければ、指摘を
+          // 落とさないように取り込む
+          allowed:
+            t.source?.review === "sacty" &&
+            verdict !== undefined &&
+            verdict.changesRequested !== false,
+        };
+      });
+    });
+    return rounds.length > 0 ? { sactyReviews: rounds } : {};
   }
 
   /**

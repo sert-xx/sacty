@@ -43,6 +43,7 @@ import {
   type PullRequestFeedback,
   type PullRequestStatus,
   type PullRequests,
+  type SactyReviewRound,
   sactyReviewTask,
 } from "./github.js";
 import { type HostMcpConnection, HostMcpFile, type HostMcpSpec, toHostMcp } from "./host-mcp.js";
@@ -604,18 +605,25 @@ class FakePulls implements PullRequests {
   feedbackNumbers: number[] = [];
   /** フィードバックを読んだときの、含める sacty のレビューのタスク（PBI-88）。 */
   feedbackSactyReviews: (readonly string[] | undefined)[] = [];
+  /** 渡された、この PR をレビューした sacty のタスクの回（PBI-88）。 */
+  feedbackSactyRounds: (readonly SactyReviewRound[] | undefined)[] = [];
   async feedback(input: {
     account?: string;
     number: number;
-    sactyReviewTasks?: readonly string[];
+    sactyReviews?: readonly SactyReviewRound[];
   }) {
-    this.feedbackSactyReviews.push(input.sactyReviewTasks);
+    const allowed = (input.sactyReviews ?? []).filter((r) => r.allowed).map((r) => r.key);
+    this.feedbackSactyReviews.push(allowed.length > 0 ? allowed : undefined);
+    this.feedbackSactyRounds.push(input.sactyReviews);
     this.feedbackAccounts.push(input.account);
     this.feedbackNumbers.push(input.number);
-    // 本物と同じく、プロジェクトのアカウントの sacty のレビューは、含めるタスクのものだけを返す（PBI-88）
+    // 本物と同じく、sacty のレビューのタスクの投稿は、そのアカウントと回で判定し、ほかのプロジェクトのアカウントの
+    // sacty のレビューは除く（PBI-88）
     return (this.feedbackBy[input.number] ?? this.feedbackList).filter((item) => {
-      const task = item.author === input.account ? sactyReviewTask(item.body) : undefined;
-      return task === undefined || (input.sactyReviewTasks ?? []).includes(task);
+      const key = sactyReviewTask(item.body);
+      const round = input.sactyReviews?.find((r) => r.key === key && r.account === item.author);
+      if (round) return round.allowed;
+      return !(key !== undefined && item.author === input.account);
     });
   }
 }
@@ -10995,6 +11003,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       gateway?: ServiceDeps["gateway"];
       db?: string;
       settings?: MemorySettingsStore;
+      github?: FakeGitHub;
     } = {},
   ) {
     const activity = new SqliteActivityStore(options.db ?? dbPath);
@@ -11002,6 +11011,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
     const repos = options.repos ?? new FakeRepos();
     const made = makeService(activity, outcomes, {
       ...(options.settings ? { settings: options.settings } : {}),
+      ...(options.github ? { github: options.github } : {}),
       stepPullRequests: true,
       now: later,
       pulls,
@@ -12473,6 +12483,77 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       expect(pulls.feedbackSactyReviews.at(-1)).toEqual([`${reviewId}:2`]);
       expect(taskOf(service, id).importedFeedback).toEqual(["review:51"]);
       expect(taskOf(service, id).status).toBe("queued");
+      activity.close();
+    });
+
+    it("レビューのタスクが元のタスクと違うアカウントで投稿しても、そのアカウントと回で判定する（レビュー指摘）", async () => {
+      // 元のタスクのプロジェクト（parent）。PR を作った後に Org の担当に変え、リポジトリを担当するプロジェクト（reviewer）を足す
+      const projects = new MemoryProjectStore();
+      projects.put("default", {
+        name: "元",
+        targets: [{ scope: "repo", target: "https://github.com/acme/app" }],
+        githubAccounts: { "github.com": "parent" },
+      });
+      const pulls = new FakePulls();
+      pulls.prInfo = { ...pulls.prInfo, number: 7, url: "https://github.com/acme/app/pull/7" };
+      const verdict = (changesRequested: boolean) =>
+        block({ "sacty-review-verdict": { changesRequested } });
+      const made = await start(
+        [
+          out("# 要求要件 v1"),
+          out(`# 評価\n\nマージしてよい\n\n${verdict(false)}`),
+          out(`# 評価\n\n受け入れ条件が足りない\n\n${verdict(true)}`),
+          rework("requirements", "要求要件で直せる"),
+        ],
+        {
+          pulls,
+          projects,
+          github: new FakeGitHub({ parent: "ghp_parent", reviewer: "ghp_reviewer" }),
+        },
+      );
+      const { activity, service, id } = made;
+      expect(taskOf(service, id).stepPullRequests.map((p) => p.number)).toEqual([7]);
+      projects.put("default", {
+        name: "元",
+        targets: [{ scope: "org", target: "https://github.com/acme" }],
+        githubAccounts: { "github.com": "parent" },
+      });
+      projects.put("app", {
+        name: "リポジトリ",
+        targets: [{ scope: "repo", target: "https://github.com/acme/app" }],
+        githubAccounts: { "github.com": "reviewer" },
+      });
+      const [review] = service.importIssues([labeledPr(7)]);
+      expect(review?.projectId).toBe("app");
+      const reviewId = review?.id ?? "";
+      await service.runNext(reviewId);
+      await service.runNext(reviewId);
+      expect(pulls.reviews[0]?.token).toBe("ghp_reviewer");
+      const posted = (n: number) =>
+        item(`review:${50 + n}`, {
+          kind: "review",
+          author: "reviewer",
+          body: pulls.reviews[n]?.body ?? "",
+        });
+      // 1回目（指摘なし）は、元のタスクと違うアカウントでも、人の指摘として取り込まない
+      pulls.feedbackBy[7] = [posted(0)];
+      await service.checkPullRequests();
+      expect(pulls.feedbackAccounts.at(-1)).toBe("parent");
+      expect(pulls.feedbackSactyRounds.at(-1)).toEqual([
+        { key: reviewId, account: "reviewer", allowed: false },
+      ]);
+      expect(taskOf(service, id).importedFeedback).toEqual([]);
+      // 2回目（指摘あり）は取り込む
+      service.rereview(reviewId);
+      await service.runNext(reviewId);
+      await service.runNext(reviewId);
+      pulls.feedbackBy[7] = [posted(0), posted(1)];
+      await service.checkPullRequests();
+      expect(pulls.feedbackSactyRounds.at(-1)).toEqual([
+        { key: reviewId, account: "reviewer", allowed: false },
+        { key: `${reviewId}:2`, account: "reviewer", allowed: true },
+      ]);
+      expect(taskOf(service, id).importedFeedback).toEqual(["review:51"]);
       activity.close();
     });
 

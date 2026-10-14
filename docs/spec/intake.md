@@ -39,7 +39,7 @@ sacty の設定の項目ごとに、プロジェクトの対象（Org かリポ�
 - レート制限（403・429 で残りが 0 か `retry-after`）に当たったら、そのアカウントのほかの検索を飛ばす。
 - アカウントを選んでいない取り込み元は検索せず、`github.accountRequired` を記録する。
 
-コード: `apps/daemon/src/service.ts`（`intakeSources`・`importIssues`・`sactyReviewTasksOf`）、`apps/daemon/src/github.ts`（`GitHubIssueSearch`）、`packages/core/src/projects.ts`（`SactySettings`・`responsibleProject`）
+コード: `apps/daemon/src/service.ts`（`intakeSources`・`importIssues`・`sactyReviewsOf`）、`apps/daemon/src/github.ts`（`GitHubIssueSearch`）、`packages/core/src/projects.ts`（`SactySettings`・`responsibleProject`）
 
 ## JIRA のチケット
 

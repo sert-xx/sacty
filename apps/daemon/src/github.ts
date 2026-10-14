@@ -28,11 +28,12 @@ export interface PullRequests {
     /** プロジェクトの gh のアカウント。このアカウントが投稿した sacty のレビュー（PBI-19）は含めない。 */
     account?: string;
     /**
-     * それでも含める sacty のレビュー（目印の中身。`sactyReviewKey` の形で、タスクと再レビューの回）。sacty が作った PR に
-     * 取り込むラベルを付けて取り込んだ、レビューだけのタスクの、直すべき指摘のある回（PBI-88）。その目印で始まるレビュー・
-     * 行へのコメントは、PR の指摘として含める。
+     * この PR をレビューした sacty のタスクの回（PBI-88）。key は目印の中身（`sactyReviewKey` の形で、タスクと再レビューの回）、
+     * account はそのタスクが投稿に使うアカウント（元のタスクのアカウントと違うことがある）。その目印で始まり、そのアカウントが
+     * 投稿したレビュー・行へのコメントは、allowed（取り込むラベルを付けて取り込んだタスクの、直すべき指摘のある回）なら
+     * PR の指摘として含め、そうでなければ除く（Bot かどうか・元のタスクのアカウントかどうかに関わらない）。
      */
-    sactyReviewTasks?: readonly string[];
+    sactyReviews?: readonly SactyReviewRound[];
   }): Promise<PullRequestFeedback[]>;
   /**
    * PR にラベルを付ける（PBI-88）。リポジトリにそのラベルが無ければ作ってから付ける（created）。すでに付いていれば
@@ -101,6 +102,9 @@ export type PullRequestInfo = {
   headSha: string;
   baseSha: string;
 };
+
+/** PR をレビューした sacty のタスクの回（PBI-88）。`PullRequests.feedback` の sactyReviews を参照。 */
+export type SactyReviewRound = { key: string; account: string; allowed: boolean };
 
 /** sacty のレビューの工程が投稿したレビューの目印（PBI-19）。 */
 export const REVIEW_MARKER_PREFIX = "<!-- sacty-review:";
@@ -190,21 +194,31 @@ export class GitHubPullRequests implements PullRequests {
     // bot（CI など）のコメントは、人間の指摘ではないので含めない
     // sacty のレビューの工程が、プロジェクトのアカウントで投稿したレビューと行へのコメント（PBI-19）も、
     // 人間の指摘ではないので含めない（目印で始まるものだけ。人間が引用・転記した目印では除かない）
-    // ただし、取り込むラベルを付けて取り込んだ、レビューだけのタスク（PBI-88）が投稿したものは、指摘として含める。
-    // プロジェクトのアカウントが Bot（GitHub App など）でも含めるよう、Bot の判定より先に見る（PBI-88 レビュー指摘）
-    const included = new Set(input.sactyReviewTasks ?? []);
-    const allowedSacty = (item: Record<string, unknown>) =>
-      input.account !== undefined &&
-      user(item).login === input.account &&
-      included.has(sactyReviewTask(item.body) ?? "");
-    const human = (item: Record<string, unknown>) =>
-      allowedSacty(item) ||
-      (user(item).type !== "Bot" &&
+    // この PR をレビューした sacty のタスク（PBI-88）が投稿したものは、そのタスクのアカウントと目印の回で判定する
+    // （元のタスクとアカウントが違っても・Bot でも）。取り込むラベルを付けて取り込んだタスクの、直すべき指摘のある回だけを
+    // 指摘として含め、ほかの回は除く。Bot の判定より先に見る（PBI-88 レビュー指摘）
+    const rounds = new Map((input.sactyReviews ?? []).map((r) => [r.key, r]));
+    const sactyRound = (item: Record<string, unknown>) => {
+      const round = rounds.get(sactyReviewTask(item.body) ?? "");
+      const login = user(item).login;
+      return round &&
+        typeof login === "string" &&
+        login.toLowerCase() === round.account.toLowerCase()
+        ? round
+        : undefined;
+    };
+    const human = (item: Record<string, unknown>) => {
+      const round = sactyRound(item);
+      if (round) return round.allowed;
+      return (
+        user(item).type !== "Bot" &&
         !(
           input.account !== undefined &&
           user(item).login === input.account &&
           isSactyReview(item.body)
-        ));
+        )
+      );
+    };
     const author = (item: Record<string, unknown>) => String(user(item).login ?? "");
     const url = (item: Record<string, unknown>) =>
       typeof item.html_url === "string" ? { url: item.html_url } : {};

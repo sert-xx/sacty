@@ -937,7 +937,11 @@ describe("sacty が作る PR の取り込むラベル（PBI-88）", () => {
     const feedback = await new GitHubPullRequests(impl).feedback({
       ...pr,
       account: "sacty-bot",
-      sactyReviewTasks: ["r1", "r1:2"],
+      sactyReviews: [
+        { key: "r1", account: "sacty-bot", allowed: true },
+        { key: "r1:2", account: "sacty-bot", allowed: true },
+        { key: "r1:3", account: "sacty-bot", allowed: false },
+      ],
     });
     expect(feedback.map((f) => f.key)).toEqual(["review:1", "review:2", "review_comment:4"]);
   });
@@ -1083,8 +1087,85 @@ describe("Bot のアカウントの sacty のレビュー（PBI-88 レビュー�
       token: "ghp_secret",
       number: 7,
       account: "sacty[bot]",
-      sactyReviewTasks: ["r1"],
+      sactyReviews: [{ key: "r1", account: "sacty[bot]", allowed: true }],
     });
     expect(feedback.map((f) => f.key)).toEqual(["review:1", "review_comment:5"]);
   });
+});
+
+describe("元のタスクと違うアカウントの sacty のレビュー（PBI-88 再レビューの指摘）", () => {
+  const at = (n: number) => `2026-10-11T00:00:0${n}Z`;
+  const reviews = (user: { login: string; type: string }) => [
+    {
+      id: 1,
+      user,
+      state: "COMMENTED",
+      body: "<!-- sacty-review:r1 -->\n指摘なしの回",
+      submitted_at: at(1),
+    },
+    {
+      id: 2,
+      user,
+      state: "COMMENTED",
+      body: "<!-- sacty-review:r1:2 -->\n指摘ありの回",
+      submitted_at: at(2),
+    },
+    // 元のタスクのアカウントの、知らない sacty のレビューは除く
+    {
+      id: 3,
+      user: { login: "parent", type: "User" },
+      state: "COMMENTED",
+      body: "<!-- sacty-review:other -->\n別のタスク",
+      submitted_at: at(3),
+    },
+    // 回のアカウントと違う人が目印を写したものは、人の指摘として取り込む
+    {
+      id: 4,
+      user: { login: "someone", type: "User" },
+      state: "COMMENTED",
+      body: "<!-- sacty-review:r1 -->\n写して同意",
+      submitted_at: at(4),
+    },
+  ];
+  const lines = (user: { login: string; type: string }) => [
+    {
+      id: 5,
+      user,
+      body: "<!-- sacty-review:r1 -->\n指摘なしの回の行",
+      path: "a.ts",
+      line: 1,
+      created_at: at(5),
+    },
+    {
+      id: 6,
+      user,
+      body: "<!-- sacty-review:r1:2 -->\n指摘ありの回の行",
+      path: "a.ts",
+      line: 2,
+      created_at: at(6),
+    },
+  ];
+
+  for (const type of ["Bot", "User"]) {
+    it(`投稿者が ${type} でも、そのタスクのアカウントと回で判定し、許可した回だけを取り込む`, async () => {
+      const login = type === "Bot" ? "reviewer[bot]" : "reviewer";
+      const user = { login, type };
+      const { impl } = fakeFetch([
+        { status: 200, json: reviews(user) },
+        { status: 200, json: lines(user) },
+        { status: 200, json: [] },
+      ]);
+      const feedback = await new GitHubPullRequests(impl).feedback({
+        repo: "https://github.com/acme/app",
+        token: "ghp_secret",
+        number: 7,
+        account: "parent",
+        sactyReviews: [
+          { key: "r1", account: login, allowed: false },
+          { key: "r1:2", account: login, allowed: true },
+        ],
+      });
+      expect(feedback.map((f) => f.key)).toEqual(["review:2", "review:4", "review_comment:6"]);
+    });
+  }
 });
