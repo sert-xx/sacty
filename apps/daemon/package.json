@@ -14,6 +14,10 @@
       "types": "./dist/context-template.d.ts",
       "default": "./dist/context-template.js"
     },
+    "./exit-codes": {
+      "types": "./dist/exit-codes.d.ts",
+      "default": "./dist/exit-codes.js"
+    },
     "./image": {
       "types": "./dist/image.d.ts",
       "default": "./dist/image.js"

@@ -9,6 +9,7 @@ import { parseArgs } from "node:util";
 import { renderMessage } from "@sacty/core";
 import { CONFIG_TEMPLATE, configPath, loadConfig, resolveHome } from "@sacty/daemon/config";
 import { initContextRepo } from "@sacty/daemon/context-template";
+import { ALREADY_RUNNING_EXIT_CODE } from "@sacty/daemon/exit-codes";
 import { buildImage, imageBuildSettings, imageBuildTargets } from "@sacty/daemon/image";
 import {
   isOnePasswordRef,
@@ -233,6 +234,14 @@ async function up(webPort: number, daemonPort: number) {
     children.push(child);
     child.on("exit", (code, signal) => {
       if (!stopping) {
+        if (name === "daemon" && code === ALREADY_RUNNING_EXIT_CODE) {
+          // 同じ SACTY_HOME で、ほかの sacty が動いている（デーモンが接続先と PID を表示した。PBI-79）
+          console.error(
+            "[sacty] 同じ SACTY_HOME で、ほかの sacty が動いているため、起動しませんでした。",
+          );
+          stop(1);
+          return;
+        }
         console.error(
           `[sacty] ${name} exited unexpectedly (${signal ?? `code ${code}`}). Stopping.`,
         );
