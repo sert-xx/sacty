@@ -534,29 +534,67 @@ describe("組織内 PF の API（PBI-35）", () => {
         ["%70re-abc", ","],
         ["pre-abc", "-more"],
       ] as const) {
+        // 送信の失敗の文に、送った URL が（書き方を変えて）入る場合
         const creds = new PlatformCredentials({
           secrets: new MemorySecretStore({ "pf-key": "abc" }),
-          fetchImpl: tokenEndpoint([
-            new Response(`forbidden https://a.test/t?v=1&api_token=${echo}${end}`, { status: 403 }),
-          ]).fetchImpl,
+          fetchImpl: (async () => {
+            throw new TypeError(`connect failed https://a.test/t?v=1&api_token=${echo}${end}`);
+          }) as unknown as typeof fetch,
         });
         const p = queryPf({ query: { api_token: "pre-{{secret}}", v: "1" } });
         const reason = String(await creds.header(p).catch((e: Error) => e));
-        expect(reason, echo).toContain(`v=1&api_token=[secret]${end}`);
+        // 送る値はキーを入れたものだけを伏せる（キーの無い値 v=1 は残す）
+        expect(reason, echo).toContain(`?v=1&api_token=[secret]${end}`);
         expect(renderMessage(creds.unavailable(["pf"])[0], "ja"), echo).toContain(
           `api_token=[secret]${end}`,
         );
       }
-      // 送る値はキーを入れたものだけを伏せる（キーの無い値 v=1 は残す）
-      const plain = new PlatformCredentials({
+    });
+
+    it("キーをクエリで送る窓口の失敗は、本文を写さず状態コードだけにする（名前付き・JSON などどんな形の写しも出さない。再々レビュー指摘）", async () => {
+      for (const body of [
+        "invalid api_token=abc",
+        '{"error":"invalid","api_token":"abc"}',
+        "api_token: abc",
+        "key abc is not valid",
+        `${"x".repeat(595)}abc`,
+      ]) {
+        const creds = new PlatformCredentials({
+          secrets: new MemorySecretStore({ "pf-key": "abc" }),
+          fetchImpl: tokenEndpoint([new Response(body, { status: 403 })]).fetchImpl,
+        });
+        const reason = String(await creds.header(queryPf()).catch((e: Error) => e));
+        expect(reason).toBe(
+          "Error: token endpoint returned 403 (the response body is not shown because the key is sent in the query)",
+        );
+        const shown = renderMessage(creds.unavailable(["pf"])[0], "ja");
+        expect(shown).toContain("token endpoint returned 403");
+        expect(shown).not.toContain("abc");
+      }
+      // pre-{{secret}} のように値の一部に入れたときも同じ。キーをクエリに入れない窓口は、これまでどおり本文を（伏せて）写す
+      const pre = new PlatformCredentials({
         secrets: new MemorySecretStore({ "pf-key": "abc" }),
-        fetchImpl: tokenEndpoint([new Response("bad ?v=1&api_token=pre-abc", { status: 403 })])
+        fetchImpl: tokenEndpoint([new Response("bad api_token=pre-abc", { status: 401 })])
           .fetchImpl,
       });
-      const p = queryPf({ query: { api_token: "pre-{{secret}}", v: "1" } });
-      expect(String(await plain.header(p).catch((e: Error) => e))).toContain(
-        "?v=1&api_token=[secret]",
-      );
+      expect(
+        String(
+          await pre
+            .header(queryPf({ query: { api_token: "pre-{{secret}}" } }))
+            .catch((e: Error) => e),
+        ),
+      ).not.toContain("abc");
+      const notInQuery = new PlatformCredentials({
+        secrets: new MemorySecretStore({ "pf-key": "abcd" }),
+        fetchImpl: tokenEndpoint([new Response("bad key abcd (v=2)", { status: 401 })]).fetchImpl,
+      });
+      expect(
+        String(
+          await notInQuery
+            .header(queryPf({ query: { v: "2" }, headers: { "X-Key": "{{secret}}" } }))
+            .catch((e: Error) => e),
+        ),
+      ).toBe("Error: token endpoint returned 401: bad key [secret] (v=2)");
     });
 
     it("1〜3文字のキーも、クエリの値として現れたら伏せる（ほかの所の短い文字列は置き換えない。レビュー指摘）", async () => {
@@ -581,15 +619,14 @@ describe("組織内 PF の API（PBI-35）", () => {
       expect(hideSecret("?api_token=abcdef&n=xabc abc", "abc")).toBe(
         "?api_token=abcdef&n=xabc abc",
       );
-      // 窓口の 403 の本文に URL を写しても、理由に短いキーを出さない
+      // 送信の失敗の文に URL が入っても、理由に短いキーを出さない
       const creds = new PlatformCredentials({
         secrets: new MemorySecretStore({ "pf-key": "abc" }),
-        fetchImpl: tokenEndpoint([
-          new Response("forbidden: GET /auth/token?api_token=abc", { status: 403 }),
-        ]).fetchImpl,
+        fetchImpl: (async (url: string) => {
+          throw new TypeError(`Failed to parse URL from ${url}`);
+        }) as unknown as typeof fetch,
       });
-      const p = queryPf();
-      const reason = String(await creds.header(p).catch((e: Error) => e));
+      const reason = String(await creds.header(queryPf()).catch((e: Error) => e));
       expect(reason).toContain("api_token=[secret]");
       expect(reason).not.toContain("api_token=abc");
       expect(renderMessage(creds.unavailable(["pf"])[0], "ja")).not.toContain("api_token=abc");

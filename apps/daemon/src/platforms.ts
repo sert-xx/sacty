@@ -221,6 +221,11 @@ function fill(value: unknown, secret: string): unknown {
   return value;
 }
 
+/** トークンの窓口に、クエリで秘密情報を送るか。 */
+function sendsKeyInQuery(spec: NonNullable<Platform["auth"]["token"]>): boolean {
+  return Object.values(spec.query ?? {}).some((v) => v.includes(SECRET_PLACEHOLDER));
+}
+
 /** トークンの窓口に送ったクエリの値のうち、秘密情報を入れたもの（置き換えた後の値）。 */
 function sentQueryValues(spec: NonNullable<Platform["auth"]["token"]>, secret: string): string[] {
   if (!secret) return [];
@@ -436,6 +441,14 @@ export class PlatformCredentials {
     });
     const text = await res.text();
     if (!res.ok) {
+      // キーをクエリで送る窓口は、失敗の本文を写さず、状態コードだけにする。窓口は送った名前・値を、URL・
+      // `api_token=abc`・JSON など、どんな形でも本文に返しうり、短いキーは形を問わずには伏せられないため
+      // （PBI-93 再々レビュー指摘）
+      if (sendsKeyInQuery(spec)) {
+        throw new Error(
+          `token endpoint returned ${res.status} (the response body is not shown because the key is sent in the query)`,
+        );
+      }
       // 本文は切り詰めずに渡す（呼び出し元で、秘密情報を伏せてから切り詰める）
       throw new Error(`token endpoint returned ${res.status}: ${text}`);
     }
