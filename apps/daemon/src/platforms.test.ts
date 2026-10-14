@@ -481,6 +481,84 @@ describe("組織内 PF の API（PBI-35）", () => {
       );
     });
 
+    it("短いキーのクエリの値の終わりは、値を続けられない文字なら何でもよい（: ) ] , ; 改行など。大文字・小文字・二重のエンコードとの組み合わせも。再レビュー指摘）", () => {
+      const ends = [
+        ":",
+        ": forbidden",
+        ")",
+        "]",
+        ",",
+        ";",
+        "\n",
+        "\r\n",
+        "\t",
+        "'",
+        '"',
+        "/",
+        "|",
+        "!",
+        "}",
+        "*",
+        "&x=1",
+        "#f",
+        "",
+      ];
+      for (const [key, value] of [
+        ["abc", "abc"],
+        ["abc", "%61b%63"],
+        ["a+c", "a%2Bc"],
+        ["a+c", "a%2bc"],
+        ["a+c", "a%252bc"],
+        ["a c", "a+c"],
+        ["a c", "a%20c"],
+      ] as const) {
+        for (const end of ends) {
+          const text = `403 from https://a.test/t?api_token=${value}${end}`;
+          expect(hideSecret(text, key), JSON.stringify(text)).toBe(
+            `403 from https://a.test/t?api_token=[secret]${end}`,
+          );
+        }
+      }
+      // 値を続ける文字（英数字・-._~・% と +）が後ろにあれば、別の値なので伏せない
+      for (const more of ["d", "-", ".", "_", "~", "%41", "+"]) {
+        expect(hideSecret(`?api_token=abc${more}`, "abc")).toBe(`?api_token=abc${more}`);
+      }
+    });
+
+    it("送ったクエリの値（pre-{{secret}} など）は、短いキーでも値の丸ごとを伏せる（再レビュー指摘）", async () => {
+      for (const [echo, end] of [
+        ["pre-abc", ": forbidden"],
+        ["pre-abc", ""],
+        ["pre-abc", ")"],
+        ["pre%2Dabc", "\n"],
+        ["%70re-abc", ","],
+        ["pre-abc", "-more"],
+      ] as const) {
+        const creds = new PlatformCredentials({
+          secrets: new MemorySecretStore({ "pf-key": "abc" }),
+          fetchImpl: tokenEndpoint([
+            new Response(`forbidden https://a.test/t?v=1&api_token=${echo}${end}`, { status: 403 }),
+          ]).fetchImpl,
+        });
+        const p = queryPf({ query: { api_token: "pre-{{secret}}", v: "1" } });
+        const reason = String(await creds.header(p).catch((e: Error) => e));
+        expect(reason, echo).toContain(`v=1&api_token=[secret]${end}`);
+        expect(renderMessage(creds.unavailable(["pf"])[0], "ja"), echo).toContain(
+          `api_token=[secret]${end}`,
+        );
+      }
+      // 送る値はキーを入れたものだけを伏せる（キーの無い値 v=1 は残す）
+      const plain = new PlatformCredentials({
+        secrets: new MemorySecretStore({ "pf-key": "abc" }),
+        fetchImpl: tokenEndpoint([new Response("bad ?v=1&api_token=pre-abc", { status: 403 })])
+          .fetchImpl,
+      });
+      const p = queryPf({ query: { api_token: "pre-{{secret}}", v: "1" } });
+      expect(String(await plain.header(p).catch((e: Error) => e))).toContain(
+        "?v=1&api_token=[secret]",
+      );
+    });
+
     it("1〜3文字のキーも、クエリの値として現れたら伏せる（ほかの所の短い文字列は置き換えない。レビュー指摘）", async () => {
       expect(hideSecret("403: GET /auth/token?api_token=abc", "abc")).toBe(
         "403: GET /auth/token?api_token=[secret]",

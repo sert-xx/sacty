@@ -221,6 +221,15 @@ function fill(value: unknown, secret: string): unknown {
   return value;
 }
 
+/** トークンの窓口に送ったクエリの値のうち、秘密情報を入れたもの（置き換えた後の値）。 */
+function sentQueryValues(spec: NonNullable<Platform["auth"]["token"]>, secret: string): string[] {
+  if (!secret) return [];
+  return Object.values(spec.query ?? {})
+    .filter((v) => v.includes(SECRET_PLACEHOLDER))
+    .map((v) => fill(v, secret) as string)
+    .filter((v) => v !== secret);
+}
+
 /** 伏せる文字列の、短すぎるものの下限（短い文字列一般は置き換えない。クエリの値として現れたものは除く）。 */
 const HIDE_MIN_LENGTH = 4;
 
@@ -232,9 +241,10 @@ const HIDE_MIN_LENGTH = 4;
 export function hideSecret(text: string, secret: string): string {
   if (!secret) return text;
   const encoded = urlPattern(secret);
-  // クエリの値の全体が秘密情報のとき（短いキーも）
+  // クエリの値の全体が秘密情報のとき（短いキーも）。値の終わりは、値を続けられる文字（英数字・-._~・% と +）で
+  // ない文字なら何でも（文の終わり・& # : ) ] , ; 空白・改行・引用符など。列挙で漏らさないため。PBI-93 再レビュー指摘）
   let hidden = text.replace(
-    new RegExp(`([?&][^=&#?\\s]{0,256}=)(?:${encoded})(?=$|[&#\\s"'<>\\\\,;)\\]}])`, "gu"),
+    new RegExp(`([?&][^=&#?\\s]{0,256}=)(?:${encoded})(?![A-Za-z0-9\\-._~%+])`, "gu"),
     "$1[secret]",
   );
   // URL エンコードした形（文字ごとに、そのままか・エスケープか。16進の大文字・小文字・空白の + ・二重のエンコードの
@@ -391,7 +401,14 @@ export class PlatformCredentials {
       return await this.requestToken(spec, secret);
     } catch (error) {
       // 伏せてから切り詰める（先に切り詰めると、境界をまたぐ秘密情報の一部が残るため。PBI-35 レビュー指摘）
-      const reason = hideSecret(error instanceof Error ? error.message : String(error), secret);
+      // 送ったクエリの値のうち秘密情報を含むもの（例 pre-{{secret}}）は、値の丸ごとを、秘密情報と同じ形で伏せる
+      // （短いキーでも値の全体で伏せられるように。長いものから。PBI-93 再レビュー指摘）
+      const reason = [...sentQueryValues(spec, secret), secret]
+        .sort((a, b) => b.length - a.length)
+        .reduce(
+          (text, value) => hideSecret(text, value),
+          error instanceof Error ? error.message : String(error),
+        );
       throw new Error(reason.length > REASON_MAX ? `${reason.slice(0, REASON_MAX)}…` : reason);
     }
   }
