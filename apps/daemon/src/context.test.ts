@@ -933,9 +933,9 @@ describe("MCP サーバーの時間切れ（PBI-75）", () => {
       "MCP サーバー「at」の tool_timeout_sec（1800 秒）は、エージェントの実行全体の上限（30 分）以上です。実行全体が先に止まるため、上限より短くしないと意味がありません。",
     );
     ctx.dispose();
-    // README に書いた上限は、コードの定数と同じ
+    // ユーザードキュメントに書いた上限は、コードの定数と同じ
     const readme = readFileSync(
-      join(dirname(DEFAULT_CONTEXT_DIR), "..", "..", "README.md"),
+      join(dirname(DEFAULT_CONTEXT_DIR), "..", "..", "docs", "user", "context.md"),
       "utf8",
     );
     expect(readme).toContain(`開始から${AGENT_RUN_TIMEOUT_MS / 60_000}分の上限`);

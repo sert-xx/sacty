@@ -131,6 +131,44 @@ function relativeLinks(markdown: string): string[] {
   return out;
 }
 
+/** Markdown のリンクのうち、アンカー（#…）の付いたものの行き先を集める（同じファイルの #… を含む。外部の URL は除く）。 */
+function anchorLinks(markdown: string): string[] {
+  const out: string[] = [];
+  const pattern = /!?\[[^\]]*\]\(\s*(?:<([^>\n]+)>|([^)\s]+))(?:\s+"[^"]*")?\s*\)/g;
+  for (const m of stripCode(markdown).matchAll(pattern)) {
+    const target = m[1] ?? m[2] ?? "";
+    if (/^[a-z][a-z0-9+.-]*:/i.test(target) || !target.includes("#")) continue;
+    out.push(target);
+  }
+  return out;
+}
+
+/** 見出しの文から、GitHub と同じ規則でアンカーを作る（小文字にし、文字・数字・空白・-・_ 以外を除き、空白を - にする）。 */
+function headingSlug(heading: string): string {
+  return heading
+    .replace(/`([^`]*)`/g, "$1")
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .trim()
+    .toLowerCase()
+    .replace(/[^\p{L}\p{M}\p{N}\p{Pc} -]/gu, "")
+    .replace(/ /g, "-");
+}
+
+/** Markdown の見出しのアンカー（同じ見出しが重なれば -1・-2 を付ける。コードブロックの中は見ない）。 */
+function headingAnchors(markdown: string): Set<string> {
+  const anchors = new Set<string>();
+  const counts = new Map<string, number>();
+  for (const line of stripFences(markdown).split("\n")) {
+    const m = /^#{1,6}[ \t]+(.+?)[ \t]*#*[ \t]*$/.exec(line);
+    if (!m) continue;
+    const base = headingSlug(m[1] ?? "");
+    const n = counts.get(base) ?? 0;
+    counts.set(base, n + 1);
+    anchors.add(n === 0 ? base : `${base}-${n}`);
+  }
+  return anchors;
+}
+
 function escapeRegExp(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -427,6 +465,47 @@ describe("docs の構成", () => {
       }
     }
     expect(broken).toEqual([]);
+  });
+});
+
+describe("ユーザードキュメントと README", () => {
+  const USER_DIR = join(DOCS, "user");
+
+  it("Markdown へのリンクのアンカー（#…）が、行き先の見出しにある", () => {
+    const files = [...markdownFiles(DOCS), join(ROOT, "README.md"), ...SKILL_COPIES];
+    const broken: string[] = [];
+    for (const file of files) {
+      for (const link of anchorLinks(readFileSync(file, "utf8"))) {
+        const [pathPart = "", fragment = ""] = link.split("#");
+        const target =
+          pathPart === "" ? file : resolve(dirname(file), decodeURIComponent(pathPart));
+        if (!target.endsWith(".md") || !existsSync(target)) continue;
+        const anchor = decodeURIComponent(fragment);
+        if (!headingAnchors(readFileSync(target, "utf8")).has(anchor)) {
+          broken.push(`${relative(ROOT, file)}: ${link}`);
+        }
+      }
+    }
+    expect(broken).toEqual([]);
+  });
+
+  it("すべてのユーザードキュメントが、目次にあり、先頭に対応するコードを書いている", () => {
+    const readme = readFileSync(join(USER_DIR, "README.md"), "utf8");
+    const toc = readme.slice(readme.indexOf("## 目次"));
+    expect(toc.startsWith("## 目次")).toBe(true);
+    const listed = relativeLinks(toc);
+    for (const file of markdownFiles(USER_DIR)) {
+      const name = relative(USER_DIR, file);
+      if (name === "README.md") continue;
+      expect(listed, `目次に ${name} が無い`).toContain(name);
+      expect(readFileSync(file, "utf8"), name).toMatch(/^<!-- 対応するコード: \S[^\n]*-->\n/);
+    }
+  });
+
+  it("リポジトリの README から、ユーザードキュメントの目次へリンクしている", () => {
+    expect(relativeLinks(readFileSync(join(ROOT, "README.md"), "utf8"))).toContain(
+      "docs/user/README.md",
+    );
   });
 });
 
@@ -730,5 +809,31 @@ describe("検査の部品", () => {
       "[g](<g h.md>) [i](i.md#x)",
     ].join("\n");
     expect(relativeLinks(md)).toEqual(["a.md", "img/d.png", "g h.md", "i.md#x"]);
+  });
+
+  it("アンカーの付いたリンクを集める（同じファイルの #… を含み、外部とコードの中は除く）", () => {
+    const md = [
+      "[a](a.md) [b](https://example.com/#x) [c](#top) [d](d.md#sec)",
+      "`[e](e.md#y)`",
+      "```markdown",
+      "[f](f.md#z)",
+      "```",
+    ].join("\n");
+    expect(anchorLinks(md)).toEqual(["#top", "d.md#sec"]);
+  });
+
+  it("見出しのアンカーは GitHub と同じ規則で作る", () => {
+    expect(headingSlug("GitHub アカウント")).toBe("github-アカウント");
+    expect(headingSlug("OpenAI 互換の接続先（providers）")).toBe("openai-互換の接続先providers");
+    expect(headingSlug("`sacty up`")).toBe("sacty-up");
+    expect(headingSlug("mcp.yaml")).toBe("mcpyaml");
+    expect(headingSlug("PR での承認（要求要件・設計・成果物チェック）")).toBe(
+      "pr-での承認要求要件設計成果物チェック",
+    );
+    expect(headingSlug("step_agents と [リンク](x.md)")).toBe("step_agents-と-リンク");
+    const anchors = headingAnchors(
+      ["# 題", "## 手順", "### 手順", "```", "## コードの中", "```", "## 末尾 ##"].join("\n"),
+    );
+    expect([...anchors]).toEqual(["題", "手順", "手順-1", "末尾"]);
   });
 });
