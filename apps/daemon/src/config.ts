@@ -806,7 +806,7 @@ budget:
 #       env: { CLOUD_REGION: ap-northeast-1 }
 #       restart_every_min: 240
 #       ready_timeout_sec: 300   # 起動してから認証が済むまで待つ上限
-#       tool_timeout_sec: 1800   # エージェントがツールの呼び出しを待つ上限（任意。startup_timeout_sec も書ける）
+#       tool_timeout_sec: 900    # エージェントがツールの呼び出しを待つ上限（任意。実行全体の上限の30分より短くする）
 #   # 組織内 PF の API。エージェントは $SACTY_PF_URL/<名前>/… で呼び、ゲートウェイが認証を付けて転送する
 #   # （認証情報はエージェントに渡さない）。allow に無い API は拒否する（* は1階層、** はそれ以下すべて）
 #   platforms:

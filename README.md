@@ -329,8 +329,10 @@ servers:
     command: npx
     args: ["-y", "example-build-mcp"]
     startup_timeout_sec: 60     # 起動に時間がかかる
-    tool_timeout_sec: 1800      # 30分かかるツールがある
+    tool_timeout_sec: 900       # 15分かかるツールがある
 ```
+
+エージェントの実行全体には、開始から30分の上限がある（過ぎるとコンテナを止める）。MCP の時間切れをそれ以上にしても、実行全体が先に止まるので意味が無い。起動・ツールの呼び出しのどちらかを30分以上にしたときは、コンテキストを用意するときに警告を作業履歴に残す（設定の誤りにはしない）。
 
 - Codex：`config.toml` の `mcp_servers.<名前>` に、同じ名前（`startup_timeout_sec`・`tool_timeout_sec`）で渡す
 - Claude Code：ツールの呼び出しは、`mcp.json` のサーバーごとの `timeout`（ミリ秒。環境変数 `MCP_TOOL_TIMEOUT` より優先される）で渡す。起動を待つ上限はサーバーごとに渡す設定が無いため、全体の環境変数 `MCP_TIMEOUT` にする。値は、書いたサーバーの値と、書いていないサーバーの Claude Code の既定（30秒）の大きい方（書いていないサーバーの待ち時間を既定より短くしない。そのため、書いていないサーバーがあるときは、既定より短い値は効かない）。どれにも書かなければ `MCP_TIMEOUT` は渡さない
@@ -350,7 +352,7 @@ gateway:
       env: { CLOUD_REGION: ap-northeast-1, TOKEN: { secret: op://Work/Cloud/token } }
       restart_every_min: 240     # 認証の期限の前に、起動し直して再認証する（期限より短くする）
       ready_timeout_sec: 300     # 起動してから認証が済むまで待つ上限
-      tool_timeout_sec: 1800     # エージェントがツールの呼び出しを待つ上限（任意。上の「MCP サーバーの時間切れ」）
+      tool_timeout_sec: 900      # エージェントがツールの呼び出しを待つ上限（任意。上の「MCP サーバーの時間切れ」）
 ```
 
 - 認証の期限の前に、`restart_every_min` ごとに起動し直す。新しいプロセスの準備（認証）ができてから切り替え、古いプロセスを止める（使っている途中のエージェントを止めない）

@@ -14,6 +14,7 @@ import { renderMessage } from "@sacty/core";
 import { parse as parseToml } from "smol-toml";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  AGENT_RUN_TIMEOUT_MS,
   type ContextFetcher,
   type ContextRef,
   composeContext,
@@ -685,6 +686,64 @@ describe("MCP サーバーの時間切れ（PBI-75）", () => {
     // ホストの MCP サーバーの起動の時間切れ（60）も MCP_TIMEOUT に入る
     expect(claude.placed.env).toEqual({ MCP_TIMEOUT: "60000" });
     claude.dispose();
+  });
+
+  it("実行全体の上限（30分）以上の時間切れは、警告を残す（上限より短ければ警告しない。ホストの MCP サーバーも）", async () => {
+    expect(AGENT_RUN_TIMEOUT_MS).toBe(30 * 60_000);
+    const limit = AGENT_RUN_TIMEOUT_MS / 1000;
+    const origin = "http://host.docker.internal:5001";
+    const ctx = await prepare(
+      "codex",
+      {
+        "w.git": {
+          "mcp.yaml": [
+            "servers:",
+            "  under:",
+            "    command: a",
+            `    startup_timeout_sec: ${Math.min(limit - 1, 3600)}`,
+            `    tool_timeout_sec: ${limit - 1}`,
+            "  at:",
+            "    command: b",
+            `    tool_timeout_sec: ${limit}`,
+            "  startup:",
+            "    url: https://s.example.com/mcp",
+            "    startup_timeout_sec: 3600",
+            "  plain:",
+            "    command: c",
+          ].join("\n"),
+        },
+      },
+      [
+        { name: "cloud", url: `${origin}/mcp/cloud`, tool_timeout_sec: 7200 },
+        { name: "short", url: `${origin}/mcp/short`, tool_timeout_sec: 60 },
+      ],
+      origin,
+    );
+    expect(ctx.warnings).toEqual([
+      {
+        code: "context.mcpTimeoutOverRun",
+        params: { name: "at", key: "tool_timeout_sec", seconds: limit, minutes: 30 },
+      },
+      {
+        code: "context.mcpTimeoutOverRun",
+        params: { name: "startup", key: "startup_timeout_sec", seconds: 3600, minutes: 30 },
+      },
+      {
+        code: "context.mcpTimeoutOverRun",
+        params: { name: "cloud", key: "tool_timeout_sec", seconds: 7200, minutes: 30 },
+      },
+    ]);
+    expect(ja(ctx.warnings[0])).toBe(
+      "MCP サーバー「at」の tool_timeout_sec（1800 秒）は、エージェントの実行全体の上限（30 分）以上です。実行全体が先に止まるため、上限より短くしないと意味がありません。",
+    );
+    ctx.dispose();
+    // README に書いた上限は、コードの定数と同じ
+    const readme = readFileSync(
+      join(dirname(DEFAULT_CONTEXT_DIR), "..", "..", "README.md"),
+      "utf8",
+    );
+    expect(readme).toContain(`開始から${AGENT_RUN_TIMEOUT_MS / 60_000}分の上限`);
+    expect(readme).toContain(`どちらかを${AGENT_RUN_TIMEOUT_MS / 60_000}分以上にしたとき`);
   });
 
   it("範囲の外の値・整数でない値・数でない値は、理由つきで止める", async () => {

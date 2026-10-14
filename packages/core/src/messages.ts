@@ -305,6 +305,12 @@ const PARAMS = {
     path: z.string(),
     usedPath: z.string(),
   }),
+  "context.mcpTimeoutOverRun": z.object({
+    name: z.string(),
+    key: z.enum(["startup_timeout_sec", "tool_timeout_sec"]),
+    seconds: z.number(),
+    minutes: z.number(),
+  }),
   // 設定ファイル（config.yaml）
   "config.missing": z.object({ path: z.string() }),
   "config.unreadable": z.object({ detail: z.string() }),
@@ -733,6 +739,8 @@ const ja: MessageDictionary = {
     `${from} の ${file} の「${key}」は sacty が決める項目のため、使いませんでした。`,
   "context.duplicateSkill": ({ from, name, path, usedPath }) =>
     `${from} のスキル「${name}」が skills/${usedPath} と skills/${path} の両方にあるため、skills/${usedPath} を使いました。`,
+  "context.mcpTimeoutOverRun": ({ name, key, seconds, minutes }) =>
+    `MCP サーバー「${name}」の ${key}（${seconds} 秒）は、エージェントの実行全体の上限（${minutes} 分）以上です。実行全体が先に止まるため、上限より短くしないと意味がありません。`,
   "config.missing": ({ path }) =>
     `設定ファイルがありません（${path}）。\`sacty config init\` で作成してください。`,
   "config.unreadable": ({ detail }) => `設定ファイルのYAMLを読めません：${detail}`,
@@ -1105,6 +1113,8 @@ const en: MessageDictionary = {
     `"${key}" in ${file} of ${from} is set by sacty, so it was not used.`,
   "context.duplicateSkill": ({ from, name, path, usedPath }) =>
     `${from} has the skill "${name}" in both skills/${usedPath} and skills/${path}, so skills/${usedPath} was used.`,
+  "context.mcpTimeoutOverRun": ({ name, key, seconds, minutes }) =>
+    `${key} (${seconds}s) of the MCP server "${name}" is not shorter than the limit for a whole agent run (${minutes} minutes). The run stops first, so it has no effect unless it is shorter.`,
   "config.missing": ({ path }) =>
     `The config file is missing (${path}). Create it with \`sacty config init\`.`,
   "config.unreadable": ({ detail }) => `Cannot read the config file as YAML: ${detail}`,

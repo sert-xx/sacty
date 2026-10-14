@@ -744,6 +744,12 @@ export type PlacedContext = {
 };
 
 /**
+ * エージェントの実行全体の上限（ミリ秒）。コンテナは、開始からこの時間で止める（DockerExecutor の既定）。MCP の
+ * 時間切れをこれ以上にしても意味が無いので、コンテキストの用意で警告する（PBI-75）。
+ */
+export const AGENT_RUN_TIMEOUT_MS = 30 * 60_000;
+
+/**
  * Claude Code が MCP サーバーの起動を待つ既定の上限（秒）。Claude Code にはサーバーごとの起動の時間切れが無く、
  * 全体の環境変数 MCP_TIMEOUT（ミリ秒。書かなければ 30000）だけがある（2.1.299 の本体で確かめた。PBI-75）。
  */
@@ -990,6 +996,22 @@ export type HostMcpEntry = {
   tool_timeout_sec?: number;
 };
 
+/**
+ * 実行全体の上限（AGENT_RUN_TIMEOUT_MS）以上の時間切れの警告（PBI-75）。実行全体が先に止まるので効かない。
+ * ホストの MCP サーバーも含め、エージェントに渡すサーバーだけを見る。
+ */
+function timeoutWarnings(mcp: { name: string; server: McpServer }[]): DaemonText[] {
+  const limitSec = AGENT_RUN_TIMEOUT_MS / 1000;
+  return mcp.flatMap(({ name, server }) =>
+    (["startup_timeout_sec", "tool_timeout_sec"] as const).flatMap((key) => {
+      const seconds = server[key];
+      return seconds !== undefined && seconds >= limitSec
+        ? [message("context.mcpTimeoutOverRun", { name, key, seconds, minutes: limitSec / 60 })]
+        : [];
+    }),
+  );
+}
+
 /** 書いてある時間切れだけを取り出す（書いていない項目は足さない）。 */
 function pickTimeouts(from: { startup_timeout_sec?: number; tool_timeout_sec?: number }) {
   return {
@@ -1087,6 +1109,7 @@ export async function prepareContext(
       ];
     }
     if (onlyMcp !== undefined) composed.mcp = composed.mcp.filter((m) => m.name === onlyMcp);
+    composed.warnings.push(...timeoutWarnings(composed.mcp));
     const dir = join(work, "out");
     const placed = writeContext(composed, runtime, dir, containerDir);
     return {

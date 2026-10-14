@@ -57,7 +57,7 @@ description: リリースの手順
 #     command: npx
 #     args: ["-y", "example-mcp-server"]
 #     startup_timeout_sec: 60   # 起動を待つ上限（秒。任意）
-#     tool_timeout_sec: 1800    # ツールの呼び出しを待つ上限（秒。任意）
+#     tool_timeout_sec: 900     # ツールの呼び出しを待つ上限（秒。任意。実行全体の上限の30分より短くする）
 `,
   "sacty-context.yaml": `# extends：このリポジトリの親（上位の層）のコンテキストリポジトリ。URL#ref で ref を指定できる
 # extends: git@github.com:acme/sacty-context.git#main

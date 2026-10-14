@@ -1271,6 +1271,15 @@ describe("工程の実行と費用", () => {
     });
     // Claude Code の起動の時間切れは、全体の MCP_TIMEOUT（書いた値の最大）
     expect(executor.calls[0]?.env.MCP_TIMEOUT).toBe("400000");
+    // 実行全体の上限（30分）以上の時間切れは、作業履歴に警告を残す（docs の 1800 秒・ホストの MCP の 7200 秒）
+    const resolved = service.get(task.id)?.activity.find((e) => e.type === "ContextResolved");
+    expect(
+      resolved?.type === "ContextResolved" &&
+        resolved.payload.warnings.map((w) => (typeof w === "string" ? w : w.params)),
+    ).toEqual([
+      { name: "docs", key: "tool_timeout_sec", seconds: 1800, minutes: 30 },
+      { name: "private-cloud", key: "tool_timeout_sec", seconds: 7200, minutes: 30 },
+    ]);
     activity.close();
   });
 
