@@ -11,7 +11,8 @@ import {
 import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
+import { waitFor } from "../testing/wait.js";
 import { FORWARD_NOTICE_PREFIX, withLocalForwards } from "./forward.js";
 import {
   OUTPUT_RELAY_SCRIPT,
@@ -318,10 +319,16 @@ setInterval(() => process.stdout.write("x".repeat(1024)), 1);`),
     expect(pid).toBeGreaterThan(0);
     // 中継は SIGKILL を送ってすぐ終わる。コマンドが消える（親を失って引き取られる）のは、負荷が高いと少し遅れるので、
     // 消えるまで待つ（止めていなければ、コマンドは書き続けるので消えずに落ちる）
-    await vi.waitFor(() => expect(() => process.kill(pid, 0)).toThrow(), {
-      timeout: 3_000,
-      interval: 20,
-    });
+    // 期限は、テストの時間切れより前（理由を書いたエラーで落ちる）
+    const gone = () => {
+      try {
+        process.kill(pid, 0);
+        return false;
+      } catch {
+        return true;
+      }
+    };
+    await waitFor(gone, { what: `止めたコマンド（PID ${pid}）が消えること` });
   });
 
   it("localhost の転送（PBI-60）と組み合わせても、転送・出力・終了コードが変わらない", async () => {

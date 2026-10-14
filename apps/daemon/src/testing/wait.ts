@@ -3,6 +3,8 @@
  * 本体のコードからは使わない（ビルドの対象から外している）。
  */
 
+import { TestRunner } from "vitest";
+
 /** 待っている間に、合図を出すはずのもの（実行・プロセス）が終わったことを知らせるもの。 */
 export type WaitSource = {
   /** 何が終わったのか（エラーの文に入れる）。例：「偽の docker の実行」 */
@@ -18,11 +20,33 @@ export type WaitOptions = {
   what: string;
   /** 合図を出すはずのもの。これが先に終わったら、期限を待たずにすぐ失敗する。 */
   source?: WaitSource;
-  /** この時間を過ぎても合図が来なければ失敗する。既定は 10 秒。 */
+  /**
+   * この時間を過ぎても合図が来なければ失敗する。省いたとき・テストの残りの時間より長いときは、テストの残りの時間から余裕
+   * （TEST_TIMEOUT_MARGIN_MS）を引いた時間にする（テストの時間切れの汎用のエラーより先に、理由を書いたエラーで落とすため）。
+   */
   timeoutMs?: number;
   /** 確かめる間隔。既定は 20ms。 */
   intervalMs?: number;
 };
+
+/** テストの外（Vitest の現在のテストが無い）で、timeoutMs を省いたときの期限。 */
+export const FALLBACK_TIMEOUT_MS = 10_000;
+
+/**
+ * テストの時間切れより前に落とすための余裕（テストの時間切れの5分の1か、これの短いほう）。確かめる処理（ps など）が、
+ * 負荷が高いと数百ミリ秒かかっても、テストの時間切れより先に理由を書いたエラーにできる長さ。
+ */
+export const TEST_TIMEOUT_MARGIN_MS = 1_000;
+
+/** 今のテストの、時間切れまでの残りから余裕を引いた時間。テストの外・時間切れが無いテストでは undefined。 */
+export function testTimeLeftMs(now = Date.now()): number | undefined {
+  const test = TestRunner.getCurrentTest();
+  const timeout = test?.timeout;
+  if (!test || !timeout || !Number.isFinite(timeout) || timeout <= 0) return undefined;
+  const startedAt = test.result?.startTime ?? now;
+  const margin = Math.min(TEST_TIMEOUT_MARGIN_MS, timeout / 5);
+  return Math.max(0, startedAt + timeout - margin - now);
+}
 
 const describeValue = (value: unknown): string => {
   if (value instanceof Error) return value.message;
@@ -35,13 +59,21 @@ const describeValue = (value: unknown): string => {
 
 /**
  * check が真になるのを待つ。source が先に終わったら（合図を出さないまま終わった）、その原因を書いたエラーですぐ失敗する。
- * 期限を過ぎたら、何を待っていたかを書いたエラーで失敗する。
+ * 期限を過ぎたら、何を待っていたか・source の様子（まだ動いている）・待った時間を書いたエラーで失敗する。期限は、
+ * テストの時間切れより必ず前にする（timeoutMs の説明）。
  */
 export async function waitFor(
   check: () => boolean | Promise<boolean>,
   options: WaitOptions,
 ): Promise<void> {
-  const { what, source, timeoutMs = 10_000, intervalMs = 20 } = options;
+  const { what, source, intervalMs = 20 } = options;
+  const started = Date.now();
+  const left = testTimeLeftMs(started);
+  const limit =
+    options.timeoutMs === undefined
+      ? (left ?? FALLBACK_TIMEOUT_MS)
+      : Math.min(options.timeoutMs, left ?? options.timeoutMs);
+  const byTest = left !== undefined && limit === left && left !== options.timeoutMs;
   let ended: { value: unknown } | { error: unknown } | undefined;
   source?.ended.then(
     (value) => {
@@ -51,7 +83,7 @@ export async function waitFor(
       ended = { error };
     },
   );
-  const deadline = Date.now() + timeoutMs;
+  const deadline = started + limit;
   for (;;) {
     // 終わったのを知ってから確かめ直す（終わる直前に合図を出していれば、成功にする）
     const endedBefore = ended;
@@ -63,10 +95,15 @@ export async function waitFor(
           : `終わった：${(source.describe ?? describeValue)(endedBefore.value)}`;
       throw new Error(`${what}を待っている間に、${source.name}が、合図を出さないまま${detail}`);
     }
-    if (Date.now() > deadline) {
-      throw new Error(`${what}を ${timeoutMs}ms 待ったが、来なかった`);
+    const now = Date.now();
+    if (now >= deadline) {
+      const state = source ? `${source.name}はまだ動いている。` : "";
+      const reason = byTest ? "（テストの時間切れの前に止めた）" : "";
+      throw new Error(
+        `${what}が来なかった：${state}${now - started}ms 待った（期限 ${limit}ms${reason}）`,
+      );
     }
-    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    await new Promise((resolve) => setTimeout(resolve, Math.min(intervalMs, deadline - now)));
   }
 }
 
