@@ -7,6 +7,13 @@ import { parse as parseYaml } from "yaml";
 import { dockerClientEnv } from "./agents/docker.js";
 import type { LocalForward } from "./agents/forward.js";
 import { redact } from "./agents/redact.js";
+import {
+  isRunning,
+  type ProcessIdentity,
+  type ProcessInfo,
+  psTable,
+  selfIn,
+} from "./host-mcp-processes.js";
 
 /**
  * docker compose のサービス（DB・モック API など）を、工程の実行・テストの実行ごとに起動する（PBI-47）。
@@ -500,6 +507,35 @@ export interface ServiceRunner {
 /** 出力の末尾（失敗の理由に添える）。 */
 const LOG_TAIL = 2000;
 
+/** サービスを起動したデーモン（PID と開始時刻）を残す、コンテナのラベル。 */
+export const OWNER_LABEL = "io.sacty.owner";
+
+const ownerValue = (owner: ProcessIdentity) => `${owner.pid} ${owner.started}`;
+
+function parseOwner(value: string): ProcessIdentity | undefined {
+  const m = /^(\d+) (\S.*?)\s*$/.exec(value.trim());
+  return m ? { pid: Number(m[1]), started: m[2] as string } : undefined;
+}
+
+/** 起動するサービスに、所有元のラベルを付ける（compose の正規化した設定。ラベルは名前と値の組か、名前=値の並び）。 */
+export function labelOwner(config: Json, owner: ProcessIdentity): void {
+  const services = config.services;
+  if (!services || typeof services !== "object") return;
+  for (const service of Object.values(services as Record<string, unknown>)) {
+    if (!service || typeof service !== "object") continue;
+    const s = service as Json;
+    if (Array.isArray(s.labels)) {
+      s.labels = [
+        ...s.labels.filter((l) => !String(l).startsWith(`${OWNER_LABEL}=`)),
+        `${OWNER_LABEL}=${ownerValue(owner)}`,
+      ];
+    } else {
+      const labels = s.labels && typeof s.labels === "object" ? (s.labels as Json) : {};
+      s.labels = { ...labels, [OWNER_LABEL]: ownerValue(owner) };
+    }
+  }
+}
+
 export class DockerComposeServices implements ServiceRunner {
   /** 起動している最中の実行（打ち切るため）。 */
   private readonly starting = new Map<string, { aborted: boolean; child?: ChildProcess }>();
@@ -508,7 +544,30 @@ export class DockerComposeServices implements ServiceRunner {
     private readonly spawnImpl: typeof spawn = spawn,
     /** サービスの準備（healthcheck）を待つ上限（秒）。 */
     private readonly waitSec = 300,
+    private readonly deps: {
+      /** いま動いているプロセスの一覧（テストでは差し替える）。 */
+      table?: () => Promise<ProcessInfo[]>;
+      /** 起動したサービスの所有元（既定はこのプロセス。テストでは差し替える）。 */
+      owner?: ProcessIdentity;
+    } = {},
   ) {}
+
+  /** docker を実行する（compose 以外。stdout だけを返す）。 */
+  private docker(args: string[]): Promise<{ code: number; stdout: string }> {
+    return new Promise((done) => {
+      const child = this.spawnImpl("docker", args, {
+        env: dockerClientEnv(),
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      let stdout = "";
+      child.stdout?.on("data", (chunk) => {
+        stdout += chunk;
+      });
+      child.stderr?.on("data", () => {});
+      child.on("error", () => done({ code: 127, stdout }));
+      child.on("close", (code) => done({ code: code ?? 1, stdout }));
+    });
+  }
 
   /**
    * docker compose を実行する。stdout（JSON など）と stderr（警告・エラー）は分けて返す（警告が出ても
@@ -617,6 +676,9 @@ export class DockerComposeServices implements ServiceRunner {
     if (!safe.ok) {
       return { ok: false as const, message: unsafe(safe.problems.join("、")) };
     }
+    // 起動したデーモンを、コンテナのラベルに残す（ほかの sacty の起動時の片付けで止められないように。PBI-78 レビュー指摘）
+    const owner = this.deps.owner ?? selfIn(await (this.deps.table ?? psTable)());
+    if (owner) labelOwner(safe.config, owner);
     const project = composeProject(runId);
     const dir = mkdtempSync(join(tmpdir(), "sacty-compose-"));
     try {
@@ -656,7 +718,11 @@ export class DockerComposeServices implements ServiceRunner {
     }
   }
 
-  /** sacty が起動したサービス（プロジェクトの名前が sacty-svc-）をすべて止めて消す（デーモンの起動時）。 */
+  /**
+   * 前回の残り（sacty が起動したサービスで、プロジェクトの名前が sacty-svc-）を止めて消す（デーモンの起動時）。
+   * 起動したデーモン（コンテナのラベル）がいまも動いているもの（ほかの sacty が使っている）は止めない。
+   * ラベルの無いもの（所有元を残す前の sacty が起動したもの）は、これまでどおり止める。
+   */
   async cleanupAll(): Promise<void> {
     const listed = await this.compose(["ls", "--all", "--format", "json"]);
     if (listed.code !== 0) return;
@@ -666,9 +732,26 @@ export class DockerComposeServices implements ServiceRunner {
     } catch {
       return;
     }
-    for (const name of projects
-      .map((p) => p.Name ?? "")
-      .filter((n) => n.startsWith("sacty-svc-"))) {
+    const names = projects.map((p) => p.Name ?? "").filter((n) => n.startsWith("sacty-svc-"));
+    if (names.length === 0) return;
+    const table = await (this.deps.table ?? psTable)();
+    // 一覧が読めない（ps が使えない）ときは、所有元を確かめられないので止めない
+    if (table.length === 0) return;
+    for (const name of names) {
+      const owners = await this.docker([
+        "ps",
+        "--all",
+        "--filter",
+        `label=com.docker.compose.project=${name}`,
+        "--format",
+        `{{.Label "${OWNER_LABEL}"}}`,
+      ]);
+      if (owners.code !== 0) continue;
+      const alive = owners.stdout
+        .split("\n")
+        .map(parseOwner)
+        .some((owner) => owner && isRunning(owner, table));
+      if (alive) continue;
       await this.compose(["-p", name, "down", "-v", "--remove-orphans"]);
     }
   }

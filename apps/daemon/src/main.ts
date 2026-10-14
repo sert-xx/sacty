@@ -11,6 +11,7 @@ import { AiGateway } from "./gateway.js";
 import { GhCliAuth } from "./gh.js";
 import { GitHubIssueSearch, GitHubPullRequests } from "./github.js";
 import { HostMcpServers } from "./host-mcp.js";
+import { HostMcpProcesses } from "./host-mcp-processes.js";
 import { IssueIntake } from "./intake.js";
 import { SlackNotifier } from "./notifier.js";
 import { OrchestratorSessionStore } from "./orchestrator-sessions.js";
@@ -54,7 +55,8 @@ const secrets = new ResolvingSecretStore(
 );
 const executor = new DockerExecutor();
 const tests = new DockerTestRunner();
-// docker compose のサービス（PBI-47）。前回、止める前にデーモンが終わって残ったサービスを片付ける
+// docker compose のサービス（PBI-47）。前回、止める前にデーモンが終わって残ったサービスを片付ける（起動したデーモンが
+// 動いているもの、つまりほかの sacty が使っているものは止めない。PBI-78 レビュー指摘）
 const composeServices = new DockerComposeServices();
 void composeServices.cleanupAll();
 // 共用の compose（PBI-70）。リポジトリのキャッシュは残し、前回の実行ごとの取得は消す
@@ -71,6 +73,14 @@ const platforms = () => {
 const credentials = new PlatformCredentials({ secrets });
 // チケット（JIRA など）の検索とコメント。接続先と認証は gateway.platforms のもの（PBI-52）
 const tickets = new JiraTickets({ credentials });
+// ホストの MCP サーバーのプロセス（PBI-78）。前回、止める前にデーモンが落ちて残ったもの（記録と PID・開始時刻が
+// 一致するものだけ。記録を書いたデーモンが動いているもの＝同じ SACTY_HOME のほかの sacty のものは止めない）を、新しく
+// 起動する前に片付ける。デーモンが例外などで終わるときも、グループに SIGTERM を送る
+const hostMcpProcesses = new HostMcpProcesses(join(home, "host-mcp", "processes"), {
+  log: (line) => console.log(line),
+});
+await hostMcpProcesses.cleanup();
+process.on("exit", () => hostMcpProcesses.signalAllSync());
 // ホストで動かす MCP サーバー（PBI-36）。認証の期限の前に、起動し直して再認証する
 const hostMcp = new HostMcpServers({
   specs: () => {
@@ -78,6 +88,7 @@ const hostMcp = new HostMcpServers({
     return c.ok ? c.config.hostMcp : [];
   },
   secrets,
+  processes: hostMcpProcesses,
   log: (line) => console.log(line),
 });
 const gateway = new AiGateway({
@@ -179,6 +190,9 @@ const shutdown = async () => {
   // 実行中のコンテナを止め、実行の後処理（作業履歴への記録、認証ファイルの書き戻し、
   // 一時ファイルの削除）が終わるのを待ってから、作業履歴を閉じて終了する。
   const draining = Promise.all([worker.drain(), intake.stop(), prWatcher.stop()]);
+  // ホストの MCP サーバーは、実行中のコンテナを止めたら使わないので、後片付けを待たずに止め始める（後片付けが長引いて、
+  // CLI に強制終了されても残らないように。PBI-78）
+  const stoppingHostMcp = hostMcp.stop();
   executor.abortAll();
   tests.abortAll();
   const timedOut = await Promise.race([
@@ -189,7 +203,7 @@ const shutdown = async () => {
     console.warn("[daemon] 実行中の処理の後片付けが時間内に終わりませんでした。");
   }
   await gateway.close();
-  await hostMcp.stop();
+  await stoppingHostMcp;
   server.close(() => {
     activity.close();
     projects.close();
