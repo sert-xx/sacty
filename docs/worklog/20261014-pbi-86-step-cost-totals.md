@@ -2,7 +2,7 @@
 
 - 日付: 2026-10-14（UTC）
 - タスク: PBI-86
-- PR: なし
+- PR: #93
 - ブランチ: feat/issue-86-step-cost-totals
 - 関係する ADR: なし
 
