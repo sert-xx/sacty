@@ -80,6 +80,14 @@ const PARAMS = {
   "export.failed": z.object({ detail: TextParam }),
   "export.unreadable": null,
   "export.budgetExceeded": null,
+  "deploy.skillMissing": null,
+  "deploy.skillOutside": z.object({ path: z.string() }),
+  "deploy.skillUnreadable": z.object({ path: z.string(), detail: TextParam }),
+  "deploy.budgetExceeded": null,
+  "deploy.checkFailed": z.object({ detail: TextParam }),
+  "deploy.unreadable": null,
+  "deploy.undetermined": null,
+  "deploy.stopped": null,
   "export.stopped": null,
   "export.notRetryable": null,
   "input.tooManyRemarks": null,
@@ -220,7 +228,7 @@ const PARAMS = {
   "integrate.unreadable": null,
   "review.pullRequestMissing": z.object({ repo: z.string() }),
   // PR のレビューだけを行う取り込み（PBI-44）
-  "review.reviewOnly": z.object({ via: z.enum(["requested", "label"]) }),
+  "review.reviewOnly": z.object({ via: z.enum(["requested", "label", "sacty"]) }),
   "review.notRereviewable": null,
   "github.ghMissing": null,
   "github.accountRequired": z.object({ project: z.string(), host: z.string() }),
@@ -266,6 +274,10 @@ const PARAMS = {
       "listRepositories",
       "postReview",
       "searchIssues",
+      "getLabel",
+      "createLabel",
+      "addLabel",
+      "readChecks",
     ]),
     status: z.number(),
     detail: z.string(),
@@ -302,15 +314,23 @@ const PARAMS = {
   "context.reservedSetting": z.object({ from: z.string(), file: z.string(), key: z.string() }),
   "context.hostPlatform": z.object({ from: z.string(), name: z.string() }),
   "context.hostMcpOverride": z.object({ from: z.string(), name: z.string() }),
-  "context.mcpHostUnavailable": z.object({ name: z.string(), from: z.string(), detail: TextParam }),
+  // project はどのプロジェクトのものか（PBI-92。それより前の記録には無い）
+  "context.mcpHostUnavailable": z.object({
+    name: z.string(),
+    from: z.string(),
+    project: z.string().optional(),
+    detail: TextParam,
+  }),
   "context.mcpHostReadyTimeout": z.object({
     name: z.string(),
     from: z.string(),
+    project: z.string().optional(),
     seconds: z.number(),
   }),
   "context.mcpHostCommandMissing": z.object({
     name: z.string(),
     from: z.string(),
+    project: z.string().optional(),
     command: z.string(),
   }),
   "context.duplicateSkill": z.object({
@@ -383,6 +403,10 @@ const githubActionJa = {
   listRepositories: "リポジトリの一覧を読めませんでした",
   postReview: "PR にレビューを投稿できませんでした",
   searchIssues: "Issue を検索できませんでした",
+  getLabel: "リポジトリのラベルを確かめられませんでした",
+  createLabel: "リポジトリにラベルを作れませんでした",
+  addLabel: "PR にラベルを付けられませんでした",
+  readChecks: "CI/CD の状態を読めませんでした",
 } as const;
 const githubActionEn = {
   updatePr: "Could not update the PR",
@@ -395,6 +419,10 @@ const githubActionEn = {
   listRepositories: "Could not list the repositories",
   postReview: "Could not post the review to the PR",
   searchIssues: "Could not search issues",
+  getLabel: "Could not check the label of the repository",
+  createLabel: "Could not create the label in the repository",
+  addLabel: "Could not add the label to the PR",
+  readChecks: "Could not read the CI/CD status",
 } as const;
 const githubHintJa = {
   none: "",
@@ -407,6 +435,12 @@ const githubHintEn = {
   permission: " (check the token's permissions or the repository name)",
 } as const;
 const contextKindJa = { skills: "スキル", mcp: "MCP サーバー", platforms: "外部 PF" } as const;
+
+/** どのプロジェクトのコンテキストの MCP サーバーか（PBI-92。古い記録には無い）。 */
+const projectJa = (project: string | undefined) =>
+  project !== undefined ? `プロジェクト「${project}」の ` : "";
+const projectEn = (project: string | undefined) =>
+  project !== undefined ? ` (project "${project}")` : "";
 const contextKindEn = {
   skills: "skill",
   mcp: "MCP server",
@@ -491,6 +525,18 @@ const ja: MessageDictionary = {
     `書き出せませんでした：${text(detail).replace(/[。.]\s*$/, "")}。`,
   "export.unreadable":
     "書き出しのエージェントの出力から、書き出した先の URL を読み取れませんでした。",
+  "deploy.skillMissing":
+    "デプロイの確認のスキル（.agents/skills/deployment-observer/SKILL.md か .claude/skills/deployment-observer/SKILL.md）が無いため、デプロイの確認を飛ばしました。",
+  "deploy.skillOutside": ({ path }) =>
+    `デプロイの確認のスキル（${path}）のシンボリックリンクがリポジトリの外を指す（またはたどりすぎる）ため、使いませんでした。`,
+  "deploy.skillUnreadable": ({ path, detail }, text) =>
+    `デプロイの確認のスキル（${path}）を読めないため、使いませんでした：${text(detail)}`,
+  "deploy.budgetExceeded": "予算の上限に達しているため、デプロイの確認を実行しませんでした。",
+  "deploy.checkFailed": ({ detail }, text) =>
+    `デプロイの確認を実行できませんでした：${text(detail)}`,
+  "deploy.unreadable": "デプロイの確認の結果（sacty-deployment）を読み取れませんでした。",
+  "deploy.undetermined": "エージェントが、デプロイ後のアプリの状態を確かめられませんでした。",
+  "deploy.stopped": "デプロイの確認を中断しました（止めた・中止した）。",
   "export.budgetExceeded":
     "予算の上限に達しているため、書き出しませんでした。予算の上限を上げてから、書き出し直してください。",
   "export.stopped": "人間が止めたため、書き出しを中断しました。",
@@ -687,7 +733,7 @@ const ja: MessageDictionary = {
   "review.pullRequestMissing": ({ repo }) =>
     `タスクに、レビューする PR（${repo} の PR の URL）がありません。`,
   "review.reviewOnly": ({ via }) =>
-    `${via === "requested" ? "自分にレビューが依頼された" : "レビュー用のラベルの付いた"} PR なので、レビューだけを行います（オーケストレーターは使いません）。`,
+    `${via === "requested" ? "自分にレビューが依頼された" : via === "sacty" ? "sacty がほかのタスクで作り、取り込むラベルを付けた" : "レビュー用のラベルの付いた"} PR なので、レビューだけを行います（オーケストレーターは使いません）。`,
   "review.notRereviewable":
     "再レビューできるのは、レビューを PR に投稿して完了したタスクだけです。",
   "github.ghMissing":
@@ -762,12 +808,12 @@ const ja: MessageDictionary = {
     `${from} の platforms.yaml の外部 PF「${name}」は、config.yaml の gateway.platforms に同じ名前があるため、config.yaml のものを使いました。`,
   "context.hostMcpOverride": ({ from, name }) =>
     `${from} の mcp.yaml の MCP サーバー「${name}」は、config.yaml の gateway.mcp_servers に同じ名前があるため、config.yaml のもの（ホストの MCP サーバー）を使いました。`,
-  "context.mcpHostUnavailable": ({ name, from, detail }, text) =>
-    `${from} の mcp.yaml の MCP サーバー「${name}」をホストで起動できません：${text(detail)}。1分ごとに起動し直します（準備ができるまで、エージェントはこの MCP を使えません）。`,
-  "context.mcpHostReadyTimeout": ({ name, from, seconds }) =>
-    `${from} の mcp.yaml の MCP サーバー「${name}」の準備が、ホストで ${seconds} 秒待ってもできません（起動の途中）。準備ができるまで、エージェントはこの MCP を使えません。`,
-  "context.mcpHostCommandMissing": ({ name, from, command }) =>
-    `${from} の mcp.yaml の MCP サーバー「${name}」のコマンド「${command}」が、sacty を動かすホストに見つかりません。ホストに入れるか、コンテナの中で起動するなら、このサーバーに via_gateway: false を書いてください。`,
+  "context.mcpHostUnavailable": ({ name, from, project, detail }, text) =>
+    `${projectJa(project)}${from} の mcp.yaml の MCP サーバー「${name}」をホストで起動できません：${text(detail)}。1分ごとに起動し直します（準備ができるまで、エージェントはこの MCP を使えません）。`,
+  "context.mcpHostReadyTimeout": ({ name, from, project, seconds }) =>
+    `${projectJa(project)}${from} の mcp.yaml の MCP サーバー「${name}」の準備が、ホストで ${seconds} 秒待ってもできません（起動の途中）。準備ができるまで、エージェントはこの MCP を使えません。`,
+  "context.mcpHostCommandMissing": ({ name, from, project, command }) =>
+    `${projectJa(project)}${from} の mcp.yaml の MCP サーバー「${name}」のコマンド「${command}」が、sacty を動かすホストに見つかりません。ホストに入れるか、コンテナの中で起動するなら、このサーバーに via_gateway: false を書いてください。`,
   "context.duplicateSkill": ({ from, name, path, usedPath }) =>
     `${from} のスキル「${name}」が skills/${usedPath} と skills/${path} の両方にあるため、skills/${usedPath} を使いました。`,
   "context.mcpTimeoutOverRun": ({ name, key, seconds, minutes }) =>
@@ -878,6 +924,18 @@ const en: MessageDictionary = {
   "export.failed": ({ detail }, text) =>
     `Could not export: ${text(detail).replace(/[。.]\s*$/, "")}.`,
   "export.unreadable": "Could not read the exported URL from the export agent's output.",
+  "deploy.skillMissing":
+    "Skipped the deployment check because there is no deployment check skill (.agents/skills/deployment-observer/SKILL.md or .claude/skills/deployment-observer/SKILL.md).",
+  "deploy.skillOutside": ({ path }) =>
+    `Did not use the deployment check skill (${path}) because its symbolic link points outside the repository (or is followed too many times).`,
+  "deploy.skillUnreadable": ({ path, detail }, text) =>
+    `Did not use the deployment check skill (${path}) because it could not be read: ${text(detail)}`,
+  "deploy.budgetExceeded":
+    "Did not run the deployment check because the budget cap has been reached.",
+  "deploy.checkFailed": ({ detail }, text) => `Could not run the deployment check: ${text(detail)}`,
+  "deploy.unreadable": "Could not read the result of the deployment check (sacty-deployment).",
+  "deploy.undetermined": "The agent could not determine the state of the deployed app.",
+  "deploy.stopped": "Stopped the deployment check (paused or cancelled).",
   "export.budgetExceeded":
     "Not exported because the budget cap has been reached. Raise the cap, then export again.",
   "export.stopped": "The export was interrupted because a person stopped it.",
@@ -1076,7 +1134,7 @@ const en: MessageDictionary = {
   "review.pullRequestMissing": ({ repo }) =>
     `The task has no PR to review (a URL of a PR in ${repo}).`,
   "review.reviewOnly": ({ via }) =>
-    `The PR ${via === "requested" ? "requests your review" : "has the review label"}, so sacty only reviews it (the Orchestrator is not used).`,
+    `The PR ${via === "requested" ? "requests your review" : via === "sacty" ? "was created by sacty in another task and labeled for intake" : "has the review label"}, so sacty only reviews it (the Orchestrator is not used).`,
   "review.notRereviewable": "Only a task that posted its review to the PR can be reviewed again.",
   "github.ghMissing":
     "The gh command was not found. Install GitHub CLI and sign in with gh auth login.",
@@ -1150,12 +1208,12 @@ const en: MessageDictionary = {
     `The external platform "${name}" in platforms.yaml of ${from} has the same name as one in gateway.platforms of config.yaml, so the one in config.yaml was used.`,
   "context.hostMcpOverride": ({ from, name }) =>
     `The MCP server "${name}" in mcp.yaml of ${from} has the same name as one in gateway.mcp_servers of config.yaml, so the one in config.yaml (the host MCP server) was used.`,
-  "context.mcpHostUnavailable": ({ name, from, detail }, text) =>
-    `The MCP server "${name}" in mcp.yaml of ${from} could not be started on the host: ${text(detail)}. sacty restarts it every minute (the agent cannot use it until it is ready).`,
-  "context.mcpHostReadyTimeout": ({ name, from, seconds }) =>
-    `The MCP server "${name}" in mcp.yaml of ${from} is still not ready on the host after waiting ${seconds} seconds (it is starting). The agent cannot use it until it is ready.`,
-  "context.mcpHostCommandMissing": ({ name, from, command }) =>
-    `The command "${command}" of the MCP server "${name}" in mcp.yaml of ${from} was not found on the host running sacty. Install it on the host, or write via_gateway: false for this server to start it in the container.`,
+  "context.mcpHostUnavailable": ({ name, from, project, detail }, text) =>
+    `The MCP server "${name}" in mcp.yaml of ${from}${projectEn(project)} could not be started on the host: ${text(detail)}. sacty restarts it every minute (the agent cannot use it until it is ready).`,
+  "context.mcpHostReadyTimeout": ({ name, from, project, seconds }) =>
+    `The MCP server "${name}" in mcp.yaml of ${from}${projectEn(project)} is still not ready on the host after waiting ${seconds} seconds (it is starting). The agent cannot use it until it is ready.`,
+  "context.mcpHostCommandMissing": ({ name, from, project, command }) =>
+    `The command "${command}" of the MCP server "${name}" in mcp.yaml of ${from}${projectEn(project)} was not found on the host running sacty. Install it on the host, or write via_gateway: false for this server to start it in the container.`,
   "context.duplicateSkill": ({ from, name, path, usedPath }) =>
     `${from} has the skill "${name}" in both skills/${usedPath} and skills/${path}, so skills/${usedPath} was used.`,
   "context.mcpTimeoutOverRun": ({ name, key, seconds, minutes }) =>

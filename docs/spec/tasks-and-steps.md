@@ -17,9 +17,10 @@
 | `sacty` | 画面で作った（以前の `ticket` も `sacty` として読む） |
 | `github_issue`・`github_pull_request` | GitHub の Issue・PR の取り込み（[チケットの取り込み](intake.md)） |
 | `jira` | JIRA のチケットの取り込み |
+| `deployment` | マージの後の監視で見つけた失敗の修正のタスク（`fix` に元のタスク・種類・目印・段数を持つ。[マージの後の監視](deployment-watch.md)） |
 | `split` | タスク分割の子タスク（`parent` に親の ID と、先に終わるべき子タスク `dependsOn` を持つ） |
 
-- PR のレビューだけのタスクは、`source.review`（`requested` か `label`）を持つ。
+- PR のレビューだけのタスクは、`source.review`（`requested`・`label`、sacty が作り取り込むラベルを付けた PR なら `sacty`）を持つ。
 - 画面で作るとき、リポジトリを指定しない（`repo: null`）か、指定を省いてプロジェクトの対象がリポジトリ1つだけではないときは、
   リポジトリの無いタスク（`noRepo`）にする。対象が1つも無いプロジェクトでは作れない（`task.repositoryMissing`）。
 - 予算の上限の初期値は `budget.default_per_task_usd`（既定 1 米ドル）。
@@ -49,10 +50,12 @@
      `.agents/skills/deployment-observer/SKILL.md`、`.claude/skills/deployment-observer` を `../../.agents/skills/deployment-observer`
      への相対のシンボリックリンクにする。front matter（`name`・`description`）、デプロイの完了の見分け方・確かめ方・つなぎ方、
      変更しない・秘密情報を出さない・判断できなければ `unknown` の約束、見出し `sacty-deployment` の JSON の答えの形を書かせる。
+     置き場所・リンク先・見出しは、マージの後の監視の `DEPLOYMENT_SKILL_PATHS`・`DEPLOYMENT_HEADING` から作る
+     （[マージの後の監視](deployment-watch.md)）。
 - ゴールには、整っていて変更が要らなければ PR を作らずに調査だけで終え、項目ごとの検査の結果を残すことも書く（オーケストレーターが
   `investigate` を選べば、調査の結果を画面で承認して完了する）。
 
-コード: `packages/core/src/events.ts`（`TaskTemplate`・`CreateTemplateTaskInput`・`TaskCreated`）、`apps/daemon/src/service.ts`（`createTask`・`createTemplateTask`・`projectRepository`）、`apps/daemon/src/task-templates.ts`（`templateTask`）
+コード: `packages/core/src/events.ts`（`TaskTemplate`・`CreateTemplateTaskInput`・`TaskCreated`）、`apps/daemon/src/service.ts`（`createTask`・`createTemplateTask`・`projectRepository`）、`apps/daemon/src/task-templates.ts`（`templateTask`）、`apps/daemon/src/deployment.ts`（`DEPLOYMENT_SKILL_PATHS`・`DEPLOYMENT_HEADING`）
 
 ## 工程
 
@@ -184,17 +187,39 @@ AI は `guardian_agent`（無ければ `default_agent`）。実行ごとに `wor
 - AI はオーケストレーターと同じで、起点のコードの写しを読み、保存したオーケストレーターのセッションを複製して答える（元のセッションは
   変えない）。指示には、タスクの題・状態・工程・PR・費用と予算・本文・承認済みの成果と最新の出力・判定・指摘・直近の質問と答え・
   作業履歴（全体 40000 文字に入る分）を入れる。
+- 各実行のセッションログ：答えの実行の前に、このタスクの実行ごとのセッションログ（[エージェントの実行](agent-execution.md)の
+  `SACTY_HOME/runs/<タスク ID>/`）を、答えの実行ごとの場所（`<workspaces>/_question-logs/<実行 ID>/`）に並べ、コンテナの
+  `/sacty-logs` に読み取り専用でマウントする（Claude Code には `--add-dir /sacty-logs` も渡す）。答えの実行が終わったら消す。
+  - 並べるもの：`index.json`（実行の一覧）と、終わった実行ごとの `<実行 ID>/meta.json`・`events.jsonl`・`stderr.log`（あるものだけ）、
+    作業履歴の `AgentSessionArchived` に記録したエージェントの元のファイル（`<実行 ID>/agent/<相対パス>`。記録と大きさが違う・通常の
+    ファイルでないものは並べない）。工程・オーケストレーター・ゴールガーディアン・これまでの質問への答えなど、execute を通る実行すべてが対象。
+    同じファイルシステムならハードリンクにし、できなければ写す。
+  - 並べないもの：ほかのタスクのログ（タスクごとの場所だけを見る）、上のファイル以外、答えの実行そのもの、終わりが記録されていない
+    実行（`meta.json` に `finishedAt` が無い。実行中か、デーモンが止まった。書き始めた後に分かった秘密情報は閉じるときに伏せ直すので、
+    閉じる前のファイルには残っていることがあるため）。
+  - 一覧の状態：`available`（読める）・`unfinished`（終わりが記録されていない）・`missing`（作業履歴に実行の ID があるがログが無い）・
+    `unreadable`（`meta.json` を読めない）。上限で間を省いたログ・エージェントのファイルの件数・写さなかった理由・並べられなかったファイルも持つ。
+  - 指示には、置き場所と読み方（丸ごと読まずに探して読む・書き換えられない・どの工程のどの実行かを書く・ログの無い・省いた・読めない
+    実行があればそう書く）と、実行の一覧（工程か役割の名前と何回目か・実行 ID・エージェント・開始と終了・結果・ログの大きさ・切り詰め。
+    8000 文字まで。入りきらなければ古い実行を省き、`index.json` を読ませる）を、台帳の前に入れる。ログの中身は入れない。
+  - タスクのログの場所（`runs/<タスク ID>/`）が無いときは、まだ実行が無いものとする（作業履歴にある実行は `missing`）。場所を開けない
+    （権限が無い・ディレクトリでないなど、ENOENT 以外）・並べられない・ログを残していないときは、マウントせず、ログを読めないことと
+    理由（エラーの種類。例 `ENOTDIR`）を指示に書いて、台帳から答えさせる（デーモンのログに警告を出す）。
 - 質問しても、状態・工程・承認済みの内容は変えず、実行中でも止めない。答えの費用（答えられなかったときも）はタスクの予算に入る。
 
-コード: `apps/daemon/src/service.ts`（`askQuestion`・`answerQuestion`）、`apps/daemon/src/prompts.ts`（`buildChatPrompt`・`CHAT_PROMPT_MAX`）、`packages/core/src/events.ts`（`QUESTION_MAX`・`ANSWER_MAX`）、`packages/core/src/projection.ts`（`questionBlocked`）
+コード: `apps/daemon/src/service.ts`（`askQuestion`・`answerQuestion`・`stageQuestionLogs`）、`apps/daemon/src/question-logs.ts`（`stageQuestionLogs`・`CONTAINER_LOGS_DIR`）、`apps/daemon/src/prompts.ts`（`buildChatPrompt`・`CHAT_PROMPT_MAX`・`CHAT_LOGS_IN_PROMPT`）、`packages/core/src/events.ts`（`QUESTION_MAX`・`ANSWER_MAX`）、`packages/core/src/projection.ts`（`questionBlocked`）
 
 ## PR のレビューだけのタスク
 
 - 工程は `review` だけ。実行の前に、対象の PR の先頭と起点のコミットを記録する（`ReviewTargetResolved`）。PR の先頭のコミットのコードと、
   差分の全体（`/sacty-review` に読み取り専用でマウント。指示には先頭の 100000 文字）を渡す。
+- エージェントには、マージの前に直すべき指摘があるかの評価（`sacty-review-verdict` の `changesRequested`）を付けさせる。評価のブロックは
+  投稿する本文から取り除き、`AgentRunCompleted` の `reviewChangesRequested` に残す（回ごとに `reviewVerdicts`）。行についての指摘
+  （行へのコメントと、本文に回したもの）があれば、評価に関わらず `true` にする。評価が無い・真偽値でなければ残さない（読めない）。
+  使うのは、sacty が作った PR のレビューを元のタスクに届けるかの判断だけ（[承認と差し戻し](approval.md#pr-の指摘の取り込み)）。
 - 結果は、人の承認を待たずに PR にレビュー（`COMMENT`）として投稿する。行へのコメントが 422 で拒否されたら、本文に入れて投稿し直す。
   投稿できたら完了。
 - 再レビュー：投稿して完了したタスクは、`review` を実行待ちに戻して、最新のコミットをもう一度レビューできる（`ReviewRestarted`）。
 - PR の確認（60秒ごと）で、終わっていないレビューのタスクの PR がマージ・クローズされていたら、タスクを中止する。
 
-コード: `apps/daemon/src/service.ts`（`reviewOnlySteps`・`resolveReviewTarget`・`postReview`・`rereview`・`checkReviewPullRequests`）、`apps/daemon/src/prompts.ts`（`PR_DIFF_IN_PROMPT`）
+コード: `apps/daemon/src/service.ts`（`reviewOnlySteps`・`resolveReviewTarget`・`postReview`・`rereview`・`checkReviewPullRequests`）、`apps/daemon/src/prompts.ts`（`PR_DIFF_IN_PROMPT`・`extractReviewComments`）

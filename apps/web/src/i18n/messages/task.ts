@@ -1,3 +1,5 @@
+import type { DeploymentWatchReason, DeploymentWatchState } from "@sacty/core";
+
 /** 画面の文言：タスクの詳細（app/tasks/[id]/page.tsx）。英語の用語は labels.ts の用語集に合わせる。 */
 const ja = {
   breadcrumb: "パンくず",
@@ -177,11 +179,61 @@ const ja = {
     repository: "リポジトリの選択（オーケストレーター）",
     chat: "質問への答え（オーケストレーター）",
     export: "書き出し",
+    deployment: "デプロイの確認",
     total: "このタスクの合計",
     children: "子タスクの合計",
     breakdown: (n: number) => `各回の内訳（${n}回）`,
     nth: (n: number) => `${n}回目`,
     result: { completed: "完了", failed: "失敗", interrupted: "中断", running: "実行中" },
+  },
+  /** マージの後の監視（PBI-89）。 */
+  deployment: {
+    title: "マージの後の監視",
+    note: "（CI/CD とデプロイ後のアプリ。プロジェクトの設定で On のとき）",
+    state: {
+      waiting: "待っている",
+      passed: "通った",
+      failed: "失敗",
+      skipped: "飛ばした",
+      timed_out: "時間切れ",
+    } satisfies Record<DeploymentWatchState, string>,
+    phase: { ci: "CI/CD の結果を待っている", check: "デプロイの確認を待っている" },
+    checking: "デプロイの確認をしている",
+    reason: {
+      no_commit: "マージのコミットが分からないため、監視を飛ばしました。",
+      no_ci: "このコミットに CI/CD（ワークフロー・チェック）が無いため、監視を飛ばしました。",
+      no_skill:
+        "CI/CD は通りました。デプロイの確認のスキルが無いため、デプロイの確認は飛ばしました。",
+      budget:
+        "CI/CD は通りました。予算の上限に達しているため、デプロイの確認を実行しませんでした。",
+      check_unknown: "CI/CD は通りました。デプロイ後のアプリの状態を確かめられませんでした。",
+    } satisfies Record<DeploymentWatchReason, string>,
+    commit: "マージのコミット：",
+    branch: " ・ ベースブランチ：",
+    startedAt: (at: string) => `監視を始めた時刻：${at}`,
+    deadline: (at: string) => `CI/CD を待つ上限：${at}`,
+    checks: "CI/CD の実行・チェック",
+    checkKind: { workflow: "ワークフロー", check: "チェック", status: "コミットの状態" },
+    pending: "実行中",
+    failures: "失敗したワークフロー・ジョブ",
+    open: "開く",
+    log: "ログの末尾（秘密情報は伏せています）",
+    check: "デプロイの確認",
+    skill: "スキル：",
+    result: {
+      healthy: "正しく動いている",
+      unhealthy: "エラーになっている",
+      unknown: "判断できない",
+    },
+    evidence: "根拠",
+    fix: "修正のタスク：",
+    suppressed: {
+      duplicate: "同じ失敗の修正のタスクが終わっていないため、新しく作りませんでした：",
+      chain_limit: (max: number) =>
+        `修正のタスクの連鎖が上限（${max}段）に達したため、作りませんでした。人が確かめてください。`,
+    },
+    origin: " ・ 元のタスク：",
+    fixDepth: (depth: number) => `（${depth}段目の修正のタスク）`,
   },
 };
 
@@ -366,6 +418,7 @@ const en: TaskMessages = {
     repository: "Choosing the repository (Orchestrator)",
     chat: "Answers to questions (Orchestrator)",
     export: "Export",
+    deployment: "Deployment check",
     total: "Total for this task",
     children: "Total for subtasks",
     breakdown: (n) => `Breakdown per run (${n})`,
@@ -376,6 +429,50 @@ const en: TaskMessages = {
       interrupted: "Interrupted",
       running: "Running",
     },
+  },
+  deployment: {
+    title: "After-merge watch",
+    note: "(CI/CD and the deployed app, when enabled in the project settings)",
+    state: {
+      waiting: "Waiting",
+      passed: "Passed",
+      failed: "Failed",
+      skipped: "Skipped",
+      timed_out: "Timed out",
+    },
+    phase: { ci: "Waiting for CI/CD", check: "Waiting for the deployment check" },
+    checking: "Checking the deployment",
+    reason: {
+      no_commit: "Skipped the watch because the merge commit is unknown.",
+      no_ci: "Skipped the watch because this commit has no CI/CD (workflows or checks).",
+      no_skill:
+        "CI/CD passed. Skipped the deployment check because the repository has no deployment check skill.",
+      budget:
+        "CI/CD passed. Did not run the deployment check because the budget cap has been reached.",
+      check_unknown: "CI/CD passed. Could not determine the state of the deployed app.",
+    },
+    commit: "Merge commit: ",
+    branch: " · Base branch: ",
+    startedAt: (at) => `Watch started: ${at}`,
+    deadline: (at) => `Waits for CI/CD until: ${at}`,
+    checks: "CI/CD runs and checks",
+    checkKind: { workflow: "Workflow", check: "Check", status: "Commit status" },
+    pending: "Running",
+    failures: "Failed workflows and jobs",
+    open: "Open",
+    log: "End of the log (secrets are masked)",
+    check: "Deployment check",
+    skill: "Skill: ",
+    result: { healthy: "Working", unhealthy: "Erroring", unknown: "Could not determine" },
+    evidence: "Evidence",
+    fix: "Fix task: ",
+    suppressed: {
+      duplicate: "Did not create a fix task because one for the same failure is still open: ",
+      chain_limit: (max) =>
+        `Did not create a fix task because the chain of fix tasks reached the limit (${max}). Please check it yourself.`,
+    },
+    origin: " · Original task: ",
+    fixDepth: (depth) => `(fix task, level ${depth})`,
   },
 };
 

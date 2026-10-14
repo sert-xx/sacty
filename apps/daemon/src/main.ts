@@ -5,6 +5,7 @@ import { renderMessage } from "@sacty/core";
 import { SqliteActivityStore } from "./activity.js";
 import { DockerExecutor } from "./agents/docker.js";
 import { DockerTestRunner } from "./agents/test-runner.js";
+import { GitHubCiStatus } from "./ci.js";
 import { loadConfig, resolveHome } from "./config.js";
 import { DEFAULT_CONTEXT_DIR, GitContextFetcher } from "./context.js";
 import { ContextMcpServers } from "./context-mcp.js";
@@ -132,6 +133,8 @@ const service = new TaskService({
   executor,
   repos: new GitRepositoryWorkspace(),
   pulls: new GitHubPullRequests(),
+  // マージの後の CI/CD の状態（PBI-89）
+  ci: new GitHubCiStatus(),
   github,
   tests,
   services: composeServices,

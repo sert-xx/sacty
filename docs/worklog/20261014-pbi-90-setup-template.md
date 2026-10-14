@@ -49,9 +49,14 @@ PR を作らずに検査の結果を残して終えられる。テンプレー�
 
 | 指摘 | 対応 |
 | --- | --- |
-| （まだ無い） | — |
+| PR #96（PBI-88）・#97（PBI-89）のマージで main とぶつかった | main をマージし、`TaskCreated` の `template` と `fix`、投影、テストの describe を両方残した |
+| `DEPLOYMENT_ANSWER_HEADING` が #97 の `DEPLOYMENT_HEADING` と重複している | `deployment.ts` の `DEPLOYMENT_HEADING` を使い、スキルの名前・置き場所・リンク先も `DEPLOYMENT_SKILL_PATHS` から作るようにした（同じ値を2か所に持たない） |
+| ゴールの置き場所・答えの形が #97 の実装と一致しているか | `task-templates.test.ts` を足した。ゴールのとおりに置いたスキルを `resolveInRepository` が原本に解決すること、ゴールの答えの例を `extractDeploymentCheck` が読めることを確かめる（リンク先・答えの形を壊すと落ちることも確かめた） |
+
+マージの後に、`npm run lint`（終了コード 0）・`npm run typecheck`・`npx vitest run`・`npm run build`・`npx vitest run tests/docs` を
+通した：lint 0、typecheck 0、56 ファイル・1316 件が通過、build 0、docs 66 件が通過。ユーザードキュメントの
+`docs/user/deployment-watch.md` の「スキル」から、このテンプレートへ案内した。
 
 ## 残したこと
 
-- PR #97 がマージされたら、`task-templates.ts` の `DEPLOYMENT_ANSWER_HEADING` を `deployment.ts` の `DEPLOYMENT_HEADING` に
-  まとめる（後にマージする側が追従する）。
+- なし

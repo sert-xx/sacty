@@ -10,10 +10,13 @@ import {
   AskQuestionInput,
   activeStep,
   applyEvent,
+  awaitingDeploymentCheck,
+  awaitingDeploymentCi,
   awaitingRepository,
   awaitingTicketTriage,
   BUDGET_WARN_RATIO,
   budgetState,
+  type CiFailure,
   type CleanupTarget,
   CreateTaskInput,
   CreateTemplateTaskInput,
@@ -25,12 +28,17 @@ import {
   type DaemonText,
   DEFAULT_BUDGET_USD,
   DEFAULT_MAX_PARALLEL_TASKS,
+  DEPLOYMENT_CI_GRACE_MS,
+  DEPLOYMENT_CI_TIMEOUT_MS,
   DecideChangeInput,
+  deploymentCheckRunning,
   EventInput,
   type ExportPlan,
   excludedRepositories,
   exportDue,
   exportSteps,
+  fixDecisionPending,
+  fixTaskOpen,
   GATED_STEPS,
   gatePullRequest,
   investigationIsGoal,
@@ -38,6 +46,7 @@ import {
   isRepoless,
   latestStepPullRequest,
   MAX_CHANGE_REQUESTS,
+  MAX_FIX_CHAIN,
   MAX_INTEGRATION_ATTEMPTS,
   MAX_VERIFY_ATTEMPTS,
   mapFreeText,
@@ -92,6 +101,7 @@ import {
 import type { AgentOutcome } from "./agents/parse.js";
 import { redact, redactText } from "./agents/redact.js";
 import type { TestRunner, TestRunResult } from "./agents/test-runner.js";
+import { CI_FAILURES_MAX, type CiStatusReader, isFailedConclusion } from "./ci.js";
 import {
   type AgentConfig,
   agentFor,
@@ -114,6 +124,15 @@ import {
   previewContext,
 } from "./context.js";
 import type { ContextMcpServers } from "./context-mcp.js";
+import {
+  buildCiFixTask,
+  buildDeploymentFixTask,
+  buildDeploymentPrompt,
+  ciFingerprint,
+  deploymentFingerprint,
+  extractDeploymentCheck,
+  findDeploymentSkill,
+} from "./deployment.js";
 import { errorText, MessageError } from "./errors.js";
 import type { AiGateway, ContextMcpRoute, GatewayStats } from "./gateway.js";
 import {
@@ -129,6 +148,8 @@ import {
   type PullRequestFeedback,
   type PullRequestStatus,
   type PullRequests,
+  type SactyReviewRound,
+  sactyReviewKey,
 } from "./github.js";
 import { notificationFor, type SlackNotifier } from "./notifier.js";
 import type { OrchestratorSessionStore } from "./orchestrator-sessions.js";
@@ -162,6 +183,7 @@ import {
   buildTicketInvestigationComment,
   buildTicketPullRequestComment,
   buildTicketTriagePrompt,
+  type ChatLogs,
   changeableSteps,
   EXECUTABLE_STEPS,
   EXPORT_FILE,
@@ -190,6 +212,7 @@ import {
   servicePromptLines,
   verificationBasis,
 } from "./prompts.js";
+import { CONTAINER_LOGS_DIR, stageQuestionLogs } from "./question-logs.js";
 import type { RepositoryWorkspace } from "./repository.js";
 import { secretUses } from "./secret-uses.js";
 import { type PrefetchingSecretStore, SecretNotFoundError, type SecretStore } from "./secrets.js";
@@ -288,6 +311,8 @@ export type ServiceDeps = {
   repos: RepositoryWorkspace;
   /** PRの作成。 */
   pulls: PullRequests;
+  /** マージのコミットの CI/CD の状態（PBI-89）。無ければ、マージの後の CI/CD を確かめられない（時間切れで終わる）。 */
+  ci?: CiStatusReader;
   /** GitHub への認証（ホストの gh のアカウント。PBI-13）。 */
   github: GitHubAuth;
   /** 現在の時刻（テストで差し替える）。 */
@@ -428,6 +453,8 @@ type ExecuteRun = {
   contextMcp?: readonly (GatewayMcpServer | HostedMcpRelay)[];
   /** 追加でマウントする、sacty が管理するディレクトリ（レビューの差分の全体。PBI-65）。 */
   mounts?: readonly { hostPath: string; containerPath: string; readOnly: boolean }[];
+  /** 作業領域の外で読ませるディレクトリ（コンテナの中のパス。質問への答えの各実行のセッションログ。PBI-91）。 */
+  readDirs?: readonly string[];
   /** true を返すと、コンテナを起動しない（質問への答えの実行が中止されたなど。PBI-54）。 */
   stopped?: () => boolean;
   /** 実行の ID が変わったら知らせる（セッションを新しく始め直したとき。止めるため。PBI-67）。 */
@@ -489,10 +516,18 @@ export class TaskService {
   private defaultSharedComposes: SharedComposeFetcher | undefined;
   /** 中止の後片付けをしているタスク（その間に実行を始めないため）。 */
   private readonly cancelling = new Set<string>();
+  /** 取り込むラベルを付けている途中の PR（タスクと PR。重ねて付けないため。PBI-88）。 */
+  private readonly labeling = new Set<string>();
   /**
    * 質問に答えているタスクと、その実行（PBI-54）。工程の実行とは別に持つ（一時停止では止めず、中止では止める）。
    */
   private readonly chats = new Map<string, { runId: string; done: Promise<void> }>();
+  /**
+   * マージの後の監視で、前の確認ですべて終わっていた CI/CD の実行・チェックの並び（PBI-89）。続けて同じなら結果を決める
+   * （CI の後に別のワークフロー（workflow_run のデプロイなど）が現れるのを、1回の確認ぶん待つため）。メモリーだけに持ち、
+   * 再起動の後は1回ぶん余分に待つ。
+   */
+  private readonly ciSettled = new Map<string, string>();
 
   constructor(private readonly deps: ServiceDeps) {
     this.tasks = project(deps.activity.all());
@@ -679,6 +714,8 @@ export class TaskService {
               },
             },
           },
+          // 実装の PR のマージなら、マージのコミットの CI/CD とデプロイの監視を始める（PBI-89。プロジェクトで On のときだけ）
+          ...this.deploymentWatchEvents(latest, pr.step, pr.number, pr.repo, status.mergeCommit),
         ]);
       } else if (status.state === "closed") {
         this.append(latest, [
@@ -694,6 +731,10 @@ export class TaskService {
       }
     }
     await this.checkReviewPullRequests();
+    // 公開の後、ラベルを付ける前に止まった PR に付ける（PBI-88 レビュー指摘）
+    await this.resumePullRequestLabels();
+    // マージの後の CI/CD とデプロイの監視（PBI-89）
+    await this.checkDeployments();
   }
 
   /**
@@ -811,6 +852,422 @@ export class TaskService {
   }
 
   /**
+   * 実装の PR のマージで、マージのコミットの監視を始める記録（PBI-89）。プロジェクトの deploymentWatch が true で、
+   * 実装の PR（成果物チェック）のマージのときだけ。マージのコミットが取れなければ、監視を飛ばす記録になる。
+   */
+  private deploymentWatchEvents(
+    task: Task,
+    step: StepKey,
+    number: number,
+    repo: string,
+    mergeCommit: string | undefined,
+  ): { actor: Actor; event: EventInput }[] {
+    if (step !== "pr" || !task.repository) return [];
+    if (this.deps.projects.get(task.projectId)?.deploymentWatch !== true) return [];
+    return [
+      {
+        actor: "sacty",
+        event: {
+          type: "DeploymentWatchStarted",
+          payload: {
+            number,
+            repo,
+            branch: task.repository.baseBranch,
+            ...(mergeCommit ? { commit: mergeCommit } : {}),
+          },
+        },
+      },
+    ];
+  }
+
+  /**
+   * マージの後の監視（PBI-89）。PR の確認（60秒ごと）から呼ぶ。CI/CD の結果を待っているタスクの状態を読み、終わって
+   * いれば結果を記録する。失敗なら修正のタスクを登録する（二重の登録と、連鎖の上限を確かめる）。登録したのに作る前に
+   * 止まった修正のタスクも、ここで作る。1つのタスクの失敗は、ほかのタスクを止めない。
+   */
+  async checkDeployments(): Promise<void> {
+    for (const task of [...this.tasks.values()]) {
+      if (task.status === "cancelled" || !task.deployment || this.cancelling.has(task.id)) continue;
+      try {
+        if (awaitingDeploymentCi(task)) await this.pollDeploymentCi(task);
+        const latest = this.tasks.get(task.id);
+        if (latest && fixDecisionPending(latest)) this.registerFixTask(latest);
+        const again = this.tasks.get(task.id);
+        if (again) this.createRegisteredFixTask(again);
+      } catch (error) {
+        console.warn(
+          `[daemon] タスク ${task.id} のマージの後の監視に失敗しました：${renderMessage(errorText(error), "ja")}`,
+        );
+      }
+    }
+  }
+
+  /**
+   * マージのコミットの CI/CD の状態を読み、終わっていれば結果を記録する（PBI-89）。読めない（認証・ネットワーク）なら
+   * 記録せず、次の確認でやり直す（時間の上限を過ぎていれば時間切れ）。通ったら、デプロイの確認のスキルを探す。
+   */
+  private async pollDeploymentCi(task: Task): Promise<void> {
+    const watch = task.deployment;
+    if (!watch?.commit) return;
+    const commit = watch.commit;
+    const elapsed = this.now() - Date.parse(watch.startedAt);
+    const usedSecrets: string[] = [];
+    type Payload = Extract<EventInput, { type: "DeploymentCiFinished" }>["payload"];
+    const record = (payload: Payload) => {
+      const latest = this.tasks.get(task.id);
+      if (!latest || this.cancelling.has(task.id) || !awaitingDeploymentCi(latest)) return;
+      this.append(latest, [{ actor: "sacty", event: { type: "DeploymentCiFinished", payload } }]);
+    };
+    let token: string;
+    let snapshot: Awaited<ReturnType<CiStatusReader["snapshot"]>>;
+    try {
+      if (!this.deps.ci) throw new Error("CI/CD の状態を読む口がありません");
+      token = await this.githubToken(task, watch.repo, usedSecrets);
+      snapshot = await this.deps.ci.snapshot({ repo: watch.repo, token, commit });
+    } catch (error) {
+      console.warn(
+        `[daemon] ${watch.repo} のコミット ${commit} の CI/CD の状態を読めませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
+      );
+      if (elapsed >= DEPLOYMENT_CI_TIMEOUT_MS)
+        record({ result: "timed_out", checks: [], failures: [] });
+      return;
+    }
+    // 記録するのは、失敗・終わっていないものを先に 50 件まで（作業履歴を膨らませない）
+    const checks = [...snapshot.checks]
+      .sort(
+        (a, b) =>
+          Number(isFailedConclusion(b)) - Number(isFailedConclusion(a)) ||
+          Number(b.status === "pending") - Number(a.status === "pending"),
+      )
+      .slice(0, 50);
+    if (snapshot.checks.length === 0) {
+      // ワークフローの作成には少し時間がかかるので、しばらく待ってから CI/CD が無いと決める
+      if (elapsed >= DEPLOYMENT_CI_GRACE_MS) record({ result: "none", checks: [], failures: [] });
+      return;
+    }
+    if (snapshot.checks.some((c) => c.status === "pending")) {
+      this.ciSettled.delete(task.id);
+      if (elapsed >= DEPLOYMENT_CI_TIMEOUT_MS)
+        record({ result: "timed_out", checks, failures: [] });
+      return;
+    }
+    // すべて終わっていても、前の確認と同じになるまで（後から別のワークフローが現れないか）1回待つ
+    const signature = JSON.stringify(
+      snapshot.checks.map((c) => [c.kind, c.name, c.url ?? "", c.conclusion ?? ""]).sort(),
+    );
+    if (this.ciSettled.get(task.id) !== signature && elapsed < DEPLOYMENT_CI_TIMEOUT_MS) {
+      this.ciSettled.set(task.id, signature);
+      return;
+    }
+    this.ciSettled.delete(task.id);
+    const failedChecks = snapshot.checks.filter(isFailedConclusion);
+    if (failedChecks.length > 0) {
+      let failures: CiFailure[] = [];
+      try {
+        failures = await this.deps.ci.failures({
+          repo: watch.repo,
+          token,
+          runs: snapshot.failedRuns,
+          secrets: usedSecrets,
+        });
+      } catch (error) {
+        console.warn(
+          `[daemon] ${watch.repo} の失敗したジョブを読めませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
+        );
+      }
+      // ワークフローの実行の外のもの（ほかのアプリのチェック・コミットの状態）も、失敗として書く
+      for (const c of failedChecks) {
+        if (c.kind === "workflow" && failures.some((f) => f.workflow === c.name)) continue;
+        failures.push({
+          workflow: c.name,
+          conclusion: c.conclusion ?? "",
+          ...(c.url ? { url: c.url } : {}),
+        });
+      }
+      record({ result: "failed", checks, failures: failures.slice(0, CI_FAILURES_MAX) });
+      return;
+    }
+    // 通った。マージのコミットに、デプロイの確認のスキルがあるかを見る（読めなければ、次の確認でやり直す）
+    const skill = await this.deploymentSkill(task, commit, usedSecrets);
+    if (skill === "retry") {
+      if (elapsed >= DEPLOYMENT_CI_TIMEOUT_MS) {
+        record({
+          result: "passed",
+          checks,
+          failures: [],
+          skipCheck: message("deploy.skillMissing"),
+        });
+      }
+      return;
+    }
+    record(
+      "path" in skill
+        ? { result: "passed", checks, failures: [], skill: skill.path }
+        : { result: "passed", checks, failures: [], skipCheck: skill.problem },
+    );
+  }
+
+  /** マージのコミットの、デプロイの確認のスキル（PBI-89）。コミットを取得できなければ retry。 */
+  private async deploymentSkill(
+    task: Task,
+    commit: string,
+    usedSecrets: string[],
+  ): Promise<{ path: string } | { problem: DaemonText } | "retry"> {
+    const loaded = this.deps.config();
+    if (!loaded.ok) return "retry";
+    const ready = await this.prepareRepository(task, loaded.config);
+    if (!ready.ok) {
+      console.warn(
+        `[daemon] タスク ${task.id} のリポジトリを用意できず、デプロイの確認のスキルを探せませんでした：${renderMessage(ready.message, "ja")}`,
+      );
+      return "retry";
+    }
+    const current = this.mustGet(task.id);
+    const gitDir = this.trustedGitDir(current);
+    try {
+      const authEnv = await this.gitAuth(current, current.repository?.url ?? "", usedSecrets);
+      await this.deps.repos.fetchCommits(gitDir, [commit], authEnv);
+      return await findDeploymentSkill(this.deps.repos, gitDir, commit);
+    } catch (error) {
+      console.warn(
+        `[daemon] コミット ${commit} のデプロイの確認のスキルを探せませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
+      );
+      return "retry";
+    }
+  }
+
+  /**
+   * 監視で見つけた失敗の、修正のタスクを登録する（PBI-89）。同じプロジェクトに、同じ目印の終わっていない修正のタスクが
+   * あれば作らない（duplicate）。修正のタスクの連鎖が上限（MAX_FIX_CHAIN）を超えるなら作らない（chain_limit）。
+   * 作るなら、元のタスクに登録の記録（ID・題・本文）を書いてから、修正のタスクを作る。
+   */
+  private registerFixTask(task: Task): void {
+    const watch = task.deployment;
+    if (!watch || !fixDecisionPending(task)) return;
+    const kind = watch.check?.result === "unhealthy" ? "deployment" : "ci";
+    const fingerprint =
+      kind === "ci"
+        ? ciFingerprint(watch.repo, watch.ci?.failures ?? [])
+        : deploymentFingerprint(watch.repo);
+    const depth = (task.fix?.depth ?? 0) + 1;
+    const suppress = (reason: "duplicate" | "chain_limit", existing?: string) => {
+      this.append(task, [
+        {
+          actor: "sacty",
+          event: {
+            type: "DeploymentFixSuppressed",
+            payload: { kind, fingerprint, reason, ...(existing ? { existing } : {}) },
+          },
+        },
+      ]);
+    };
+    const open = [...this.tasks.values()].find(
+      (t) =>
+        t.projectId === task.projectId &&
+        // 登録して、まだ作っていないもの（デーモンが止まった）も含める
+        ((t.fix?.fingerprint === fingerprint && fixTaskOpen(t)) ||
+          (t.deployment?.fix?.fingerprint === fingerprint &&
+            !this.tasks.has(t.deployment.fix.taskId))),
+    );
+    if (open) {
+      suppress(
+        "duplicate",
+        open.fix?.fingerprint === fingerprint ? open.id : open.deployment?.fix?.taskId,
+      );
+      return;
+    }
+    if (depth > MAX_FIX_CHAIN) {
+      suppress("chain_limit");
+      return;
+    }
+    const { title, body } =
+      kind === "ci"
+        ? buildCiFixTask(task, watch, watch.ci?.failures ?? [])
+        : buildDeploymentFixTask(task, watch);
+    this.append(task, [
+      {
+        actor: "sacty",
+        event: {
+          type: "DeploymentFixRegistered",
+          payload: { taskId: randomUUID(), kind, fingerprint, depth, title, body },
+        },
+      },
+    ]);
+    this.createRegisteredFixTask(this.mustGet(task.id));
+  }
+
+  /** 登録した修正のタスクがまだ無ければ作る（PBI-89。登録の後、作る前にデーモンが止まったときも）。 */
+  private createRegisteredFixTask(task: Task): void {
+    const fix = task.deployment?.fix;
+    if (!fix || this.tasks.has(fix.taskId) || !task.deployment) return;
+    const config = this.deps.config();
+    const budgetCapUsd = config.ok ? config.config.budgetPerTaskUsd : DEFAULT_BUDGET_USD;
+    this.append({ id: fix.taskId, projectId: task.projectId }, [
+      {
+        actor: "sacty",
+        event: {
+          type: "TaskCreated",
+          payload: {
+            title: fix.title,
+            body: fix.body,
+            start: "deployment",
+            repo: task.deployment.repo,
+            budgetCapUsd,
+            fix: {
+              taskId: task.id,
+              kind: fix.kind,
+              fingerprint: fix.fingerprint,
+              depth: fix.depth,
+            },
+          },
+        },
+      },
+    ]);
+  }
+
+  /**
+   * デプロイの確認（PBI-89）。ワーカーが実行する。マージのコミットのコードの使い捨ての写しと、プロジェクトのコンテキスト
+   * （外部 PF・MCP サーバー）を渡し、スキルに従ってデプロイの完了とデプロイ後のアプリの状態を確かめさせる。予算の上限に
+   * 達していれば実行せずに飛ばす。費用は元のタスクの予算に入れる。エラーになっていたら、修正のタスクを登録する。
+   */
+  private async checkDeployment(task: Task): Promise<void> {
+    const watch = task.deployment;
+    const skill = watch?.ci?.skill;
+    if (!watch?.commit || !skill || !awaitingDeploymentCheck(task)) return;
+    const commit = watch.commit;
+    const loaded = this.deps.config();
+    // 設定の問題は status() で画面に出す。確認は待ったままにする
+    if (!loaded.ok) return;
+    const config = loaded.config;
+    if (budgetState(task.budget) === "exceeded") {
+      this.append(task, [
+        {
+          actor: "sacty",
+          event: {
+            type: "DeploymentWatchSkipped",
+            payload: { reason: "budget", detail: message("deploy.budgetExceeded") },
+          },
+        },
+      ]);
+      return;
+    }
+    const agent = agentFor(config, "deployment");
+    const runId = randomUUID();
+    const setting = { agentId: agent.id, ...agentSetting(agent), runId };
+    this.append(task, [
+      { actor: "sacty", event: { type: "DeploymentCheckStarted", payload: { runId, skill } } },
+    ]);
+    type Payload = Extract<EventInput, { type: "DeploymentChecked" }>["payload"];
+    const record = (actor: Actor, payload: Payload) => {
+      const latest = this.tasks.get(task.id);
+      if (!latest || latest.status === "cancelled" || !deploymentCheckRunning(latest)) return;
+      this.append(latest, [{ actor, event: { type: "DeploymentChecked", payload } }]);
+      // 予算の通知は記録する（完了したタスクなので、止めない）
+      const updated = this.warnIfNeeded(this.mustGet(task.id));
+      if (updated.deployment?.state === "failed") this.registerFixTask(updated);
+    };
+    const usedSecrets: string[] = [];
+    const fail = (failed: DaemonText, cost?: Partial<Payload>) =>
+      record("sacty", {
+        result: "unknown",
+        evidence: [],
+        failed: message("deploy.checkFailed", { detail: redactText(failed, usedSecrets) }),
+        runResult: "failed",
+        ...setting,
+        costUsd: 0,
+        estimated: false,
+        ...cost,
+      });
+    const stopped = () => this.pauseRequested.has(task.id) || this.cancelling.has(task.id);
+    const workspaceDir = join(this.deps.workspaceRoot, "_deployment", runId);
+    let context: Awaited<ReturnType<typeof prepareContext>> | undefined;
+    let executed: Executed;
+    try {
+      const ready = await this.prepareRepository(task, config);
+      if (!ready.ok) return fail(ready.message);
+      const current = this.mustGet(task.id);
+      const gitDir = this.trustedGitDir(current);
+      try {
+        const authEnv = await this.gitAuth(current, current.repository?.url ?? "", usedSecrets);
+        await this.deps.repos.fetchCommits(gitDir, [commit], authEnv);
+        await this.deps.repos.snapshot(gitDir, commit, workspaceDir);
+        context = await this.runContext(current, agent, config, usedSecrets);
+      } catch (error) {
+        return fail(errorText(error));
+      }
+      const platforms = mergePlatforms(config.platforms, context?.platforms ?? []);
+      // 実装の工程のイメージ（言語ごとのイメージ。PBI-41）があればそれ、無ければ既定のイメージ
+      const image = resolveImage(config, current.images?.implement);
+      if (stopped()) {
+        return record("sacty", {
+          result: "unknown",
+          evidence: [],
+          failed: message("deploy.stopped"),
+          runResult: "interrupted",
+          ...setting,
+          costUsd: 0,
+          estimated: false,
+        });
+      }
+      executed = await this.execute({
+        agent,
+        taskId: task.id,
+        image: image.ok ? image.image : config.image,
+        ...(image.ok ? { imageEnv: image.env } : {}),
+        runId,
+        prompt: [
+          buildDeploymentPrompt(current, watch, skill),
+          ...platformPromptLines(platforms.platforms),
+        ].join("\n"),
+        platforms: platforms.platforms,
+        role: "deployment",
+        workspaceDir,
+        ...(context ? { context: { dir: context.dir, ...context.placed } } : {}),
+        ...(context && context.gatewayMcp.length > 0 ? { contextMcp: context.gatewayMcp } : {}),
+      });
+    } finally {
+      context?.dispose();
+      rmSync(workspaceDir, { recursive: true, force: true });
+    }
+    const { outcome, costUsd, estimated } = executed;
+    const cost = {
+      ...setting,
+      ...(outcome.usage ? { usage: outcome.usage } : {}),
+      costUsd,
+      estimated,
+    };
+    if (stopped()) {
+      return record("sacty", {
+        result: "unknown",
+        evidence: [],
+        failed: message("deploy.stopped"),
+        runResult: "interrupted",
+        ...cost,
+      });
+    }
+    if (outcome.kind === "failed") return fail(outcome.message, cost);
+    // 秘密情報は、execute が出力の全文から取り除いている（切り詰めるのは、その後）
+    const answer = extractDeploymentCheck(outcome.output);
+    if (!answer) {
+      return record("agent", {
+        result: "unknown",
+        evidence: [],
+        failed: message("deploy.unreadable"),
+        runResult: "completed",
+        ...cost,
+      });
+    }
+    return record("agent", {
+      result: answer.result,
+      ...(answer.summary ? { summary: answer.summary } : {}),
+      evidence: answer.evidence,
+      ...(answer.result === "unknown" ? { failed: message("deploy.undetermined") } : {}),
+      runResult: "completed",
+      ...cost,
+    });
+  }
+
+  /**
    * PR へのフィードバック（レビュー・行ごとのコメント・通常のコメント）を指摘として取り込み、
    * ゴールガーディアンに戻し先を判断させて、その工程に差し戻す（PBI-14b・PBI-58）。
    * まだ取り込んでいないものを、最後のフィードバックから一定の時間（書き終わるのを待つ）たってから、
@@ -828,6 +1285,7 @@ export class TaskService {
           token,
           number: pr.number,
           ...this.githubAccountOf(current, pr.repo),
+          ...this.sactyReviewsOf(pr.repo, pr.number),
         })
       ).filter((item) => !current.importedFeedback.includes(item.key));
       if (fresh.length === 0) return;
@@ -881,6 +1339,37 @@ export class TaskService {
   }
 
   /**
+   * この PR をレビューした sacty のタスクの回と、そのタスクが投稿に使うアカウント（PBI-88）。取り込むラベルを付けて取り込んだ
+   * レビューだけのタスク（`source.review: sacty`）の、直すべき指摘のある回（評価を読めなかった回も）は、元のタスクへの PR の
+   * 指摘として取り込む（allowed）。ほかの回・ほかのレビューのタスクの投稿は、アカウントが元のタスクと違っても除く。
+   */
+  private sactyReviewsOf(repo: string, number: number): { sactyReviews?: SactyReviewRound[] } {
+    const rounds = [...this.tasks.values()].flatMap((t) => {
+      const ref = referencedPullRequest(t);
+      if (!ref || ref.number !== number || !sameRepo(ref.repo, repo)) return [];
+      const account = this.githubAccountOf(t, repo).account;
+      if (!account) return [];
+      const verdicts = t.reviewVerdicts ?? [];
+      const last = Math.max(t.reviewRound ?? 1, ...verdicts.map((v) => v.round));
+      return Array.from({ length: last }, (_, i) => {
+        const round = i + 1;
+        const verdict = verdicts.find((v) => v.round === round);
+        return {
+          key: sactyReviewKey(t.id, round),
+          account,
+          // 直すべき指摘の無い（そのままマージしてよい）回は、差し戻さないので取り込まない。評価を読めなければ、指摘を
+          // 落とさないように取り込む
+          allowed:
+            t.source?.review === "sacty" &&
+            verdict !== undefined &&
+            verdict.changesRequested !== false,
+        };
+      });
+    });
+    return rounds.length > 0 ? { sactyReviews: rounds } : {};
+  }
+
+  /**
    * ゴールガーディアンの判断に従って、取り込んだ PR の指摘を、判断した工程に差し戻す（人間の確認は待たない。
    * 設計・要求要件に戻したら、作り直した成果をいつもどおり人間が承認する）。判断できなければ実装をやり直す
    * （判断できなかったことと理由は ReworkJudged に残る）。上限を超えるならエスカレーションになる（PBI-58）。
@@ -925,6 +1414,9 @@ export class TaskService {
       stopped?: () => boolean;
       /** 実行の ID が変わったら知らせる（セッションを新しく始め直したとき。止めるため。PBI-67）。 */
       onRunId?: (runId: string) => void;
+      /** 追加でマウントする、sacty が管理するディレクトリ（質問への答えの各実行のセッションログ。PBI-91）。 */
+      mounts?: ExecuteRun["mounts"];
+      readDirs?: ExecuteRun["readDirs"];
     },
     code: "base" | "implemented",
   ): Promise<Awaited<ReturnType<TaskService["execute"]>>> {
@@ -2064,8 +2556,26 @@ export class TaskService {
     const has = (issue: FoundIssue, name: string | undefined) =>
       name !== undefined && issue.labels.some((l) => l.toLowerCase() === name);
     const projects = this.deps.projects.all();
-    const reviewOf = (issue: FoundIssue): "requested" | "label" | undefined => {
+    // リポジトリの URL は、書き方の揺れ（.git・末尾の / など）をそろえて比べる（PBI-88）
+    const key = (repo: string, number: number) => `${repoKey(repo)}#${number}`;
+    // sacty がタスクのために作った PR（実装の PR と、要求要件・設計の PR。ラベルを付けた記録も。PBI-88）
+    const sactyMade = new Set(
+      [...this.tasks.values()].flatMap((t) => [
+        ...(t.pullRequest?.repo && t.pullRequest.number
+          ? [key(t.pullRequest.repo, t.pullRequest.number)]
+          : []),
+        ...t.stepPullRequests.map((p) => key(p.repo, p.number)),
+        ...(t.pullRequestLabels ?? []).map((p) => key(p.repo, p.number)),
+      ]),
+    );
+    const reviewOf = (issue: FoundIssue): "requested" | "label" | "sacty" | undefined => {
       if (!issue.pullRequest) return undefined;
+      // sacty が作り、取り込むラベルを付けた PR は、元のタスクとは別の、レビューだけのタスクにする（オーケストレーターに
+      // 工程を選ばせない。同じ PR をもう一度実装させて、PR とレビューを繰り返し作らないため）。レビュー用のラベル・依頼にも
+      // 当たっても、こちらにする（そのレビューを、元のタスクに PR の指摘として届けるため。PBI-88）
+      if (has(issue, label) && intakeOn(issue) && sactyMade.has(key(issue.repo, issue.number))) {
+        return "sacty";
+      }
       // 依頼は、担当のプロジェクトでそのホストに選んだ本人への依頼だけ（ほかのプロジェクトのアカウントへの依頼を、
       // 担当のプロジェクトのアカウントで取り込んで投稿しない。PBI-44 レビュー指摘）
       if (issue.review === "requested" && settings.reviewRequested && issue.requestedFor) {
@@ -2077,7 +2587,6 @@ export class TaskService {
       }
       return has(issue, reviewLabel) ? "label" : undefined;
     };
-    const key = (repo: string, number: number) => `${repo.toLowerCase()}#${number}`;
     const known = new Set(
       [...this.tasks.values()].flatMap((t) =>
         t.source ? [key(t.source.repo, t.source.number)] : [],
@@ -2599,7 +3108,9 @@ export class TaskService {
             // 承認した成果を、決めた書き出し先に書き出す（PBI-56）
             awaitingExport(t) !== undefined ||
             // 要求要件・設計の成果を、タスクブランチへの PR にする（PBI-57）
-            this.awaitingStepPullRequest(t) !== undefined,
+            this.awaitingStepPullRequest(t) !== undefined ||
+            // マージの後のデプロイの確認（PBI-89）。一時停止中のタスクでは実行しない
+            (awaitingDeploymentCheck(t) && t.status !== "paused"),
       )
       .filter((t) => !this.cancelling.has(t.id) && !this.pauseRequested.has(t.id))
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
@@ -2625,6 +3136,26 @@ export class TaskService {
               failed: message("run.daemonStopped"),
               runResult: "interrupted",
               agentId: "unknown",
+            },
+          },
+        },
+      ]);
+    }
+    // デーモンが止まって途中になったデプロイの確認は、確かめられなかった（中断）として記録する（やり直さない。PBI-89）
+    for (const task of [...this.tasks.values()]) {
+      if (!deploymentCheckRunning(task)) continue;
+      this.append(task, [
+        {
+          actor: "sacty",
+          event: {
+            type: "DeploymentChecked",
+            payload: {
+              result: "unknown",
+              evidence: [],
+              failed: message("run.daemonStopped"),
+              runResult: "interrupted",
+              agentId: "unknown",
+              ...(task.deployment?.check ? { runId: task.deployment.check.runId } : {}),
             },
           },
         },
@@ -2948,6 +3479,10 @@ export class TaskService {
     if (initial && awaitingReproductionCheck(initial)) return this.checkReproduction(initial);
     // 作った PR の URL を、取り込み元のチケットにコメントする（PBI-52）
     if (initial && awaitingTicketPrComment(initial)) return this.commentTicketPullRequest(initial);
+    // マージの後のデプロイの確認（PBI-89）
+    if (initial && awaitingDeploymentCheck(initial) && initial.status !== "paused") {
+      return this.checkDeployment(initial);
+    }
     if (initial?.status !== "queued") return;
     const config = this.deps.config();
     if (!config.ok) return; // 設定の問題は status() で画面に出す。タスクは実行待ちのまま。
@@ -3469,6 +4004,9 @@ export class TaskService {
             ...(step === "design" ? { testViewpoints } : {}),
             ...(step === "implement" ? { testMap } : {}),
             ...(review ? { reviewComments: review.comments } : {}),
+            ...(review?.changesRequested !== undefined
+              ? { reviewChangesRequested: review.changesRequested }
+              : {}),
             ...(reproduction ? { reproductionTests: reproduction.tests } : {}),
           },
         },
@@ -3570,7 +4108,12 @@ export class TaskService {
       const contextMcp = this.deps.contextMcp;
       let lease: ReturnType<typeof contextMcp.lease>;
       try {
-        lease = contextMcp.lease(task.projectId, prepared.hostedMcp);
+        // ログ・理由に、どのプロジェクトのものかを出す（PBI-92）
+        lease = contextMcp.lease(
+          task.projectId,
+          prepared.hostedMcp,
+          this.deps.projects.get(task.projectId)?.name ?? task.projectId,
+        );
       } catch (error) {
         // 確保できなければ（層の写しの失敗など。確保の途中までは巻き戻してある）、用意したコンテキストも消す
         // （PR #89 レビュー指摘）
@@ -4241,6 +4784,8 @@ export class TaskService {
               number: pr.number,
               repo,
               ...(superseded !== undefined ? { supersedes: superseded } : {}),
+              // 取り込むラベルを付ける予定（公開と同じ記録に残し、止まっても再開で付ける。PBI-88）
+              ...this.labelDue(latest, repo, pr.number),
             },
           },
         },
@@ -4253,6 +4798,8 @@ export class TaskService {
         },
       ]);
       this.warnIfNeeded(submitted);
+      // 取り込むラベルを付ける（同じ PR を更新したときは、もう付けない。PBI-88）
+      await this.labelPullRequest(task.id, repo, pr.number, token, usedSecrets);
     } catch (error) {
       fail(message("pr.failed", { detail: errorText(error) }));
     }
@@ -4372,14 +4919,142 @@ export class TaskService {
               url: pr.url,
               number: pr.number,
               repo: prRepo,
+              // 取り込むラベルを付ける予定（公開と同じ記録に残し、止まっても再開で付ける。PBI-88）
+              ...this.labelDue(task, prRepo, pr.number),
             },
           },
         },
         ...this.submitEvents(task, "pr"),
       ]);
       this.checkBudget(submitted);
+      // 取り込むラベルを付ける（失敗しても PR の作成は失敗にしない。PBI-88）
+      await this.labelPullRequest(task.id, prRepo, pr.number, token, usedSecrets);
     } catch (error) {
       fail(message("pr.failed", { detail: errorText(error) }));
+    }
+  }
+
+  /**
+   * いま sacty の PR に付ける取り込むラベル（PBI-88）。取り込むラベルを設定していない、または PR のトリアージを Off にしている
+   * （付けても取り込まれない）なら無い。
+   */
+  private intakeLabelForPullRequests(): string | undefined {
+    const settings = this.deps.settings.get();
+    return settings.intakeLabel && !settings.triageOff?.includes("pullRequests")
+      ? settings.intakeLabel
+      : undefined;
+  }
+
+  /**
+   * PR の公開の記録に入れる、取り込むラベルを付ける予定（PBI-88）。付けた・付けられなかった記録のある PR には付けない
+   * （1つの PR に1回。人が外したラベルを付け直さないため）。
+   */
+  private labelDue(task: Task, repo: string, number: number): { intakeLabel?: string } {
+    const label = this.intakeLabelForPullRequests();
+    if (!label) return {};
+    const done = (task.pullRequestLabels ?? []).some(
+      (x) => x.number === number && sameRepo(x.repo, repo),
+    );
+    return done ? {} : { intakeLabel: label };
+  }
+
+  /**
+   * 公開の記録に付ける予定があり、付けた・付けられなかった記録の無い、開いている sacty の PR（PBI-88）。公開を記録した後、
+   * ラベルを付ける前に止まった（停止・クラッシュ）ものを、再開で付けるため。
+   */
+  private pendingPullRequestLabels(task: Task): { repo: string; number: number }[] {
+    const prs = [
+      ...(task.pullRequest?.intakeLabel &&
+      task.pullRequest.repo &&
+      task.pullRequest.number &&
+      task.pullRequestState === "open"
+        ? [{ repo: task.pullRequest.repo, number: task.pullRequest.number }]
+        : []),
+      ...task.stepPullRequests
+        .filter((p) => p.intakeLabel && p.state === "open" && !p.superseded)
+        .map((p) => ({ repo: p.repo, number: p.number })),
+    ];
+    return prs.filter(
+      (p) =>
+        !(task.pullRequestLabels ?? []).some(
+          (x) => x.number === p.number && sameRepo(x.repo, p.repo),
+        ),
+    );
+  }
+
+  /**
+   * 付ける予定のまま記録の無い PR に、取り込むラベルを付ける（PBI-88）。PR の確認（60秒ごと）のたびに行う。中止したタスク・
+   * いまは付けない設定（取り込むラベルが無い・PR のトリアージが Off）なら付けない（記録もしない）。
+   */
+  private async resumePullRequestLabels(): Promise<void> {
+    if (!this.intakeLabelForPullRequests()) return;
+    for (const task of [...this.tasks.values()]) {
+      if (task.status === "cancelled" || this.cancelling.has(task.id)) continue;
+      for (const pr of this.pendingPullRequestLabels(task)) {
+        const usedSecrets: string[] = [];
+        let token: string;
+        try {
+          token = await this.githubToken(task, pr.repo, usedSecrets);
+        } catch (error) {
+          console.warn(
+            `[daemon] PR #${pr.number}（${pr.repo}）にラベルを付けるためのトークンを取り出せませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
+          );
+          continue;
+        }
+        await this.labelPullRequest(task.id, pr.repo, pr.number, token, usedSecrets);
+      }
+    }
+  }
+
+  /**
+   * sacty が作った PR（実装の PR と、要求要件・設計の PR）に、取り込むラベル（sacty の設定）を付ける（PBI-88）。
+   * 別のタスクとして取り込ませ、レビューだけを行わせるため。
+   * - 取り込むラベルを設定していない、または PR のトリアージを Off にしている（取り込まれない）なら、付けない
+   * - 1つの PR につき1回だけ付ける（付けた・付けられなかった記録があれば、PR を更新しても付けない。人が外したラベルを
+   *   付け直さないため）。同じ PR を付けている途中なら、重ねて付けない
+   * - 付けられなければ、理由を台帳に残す（秘密の値は伏せる）。PR の作成は失敗にしない
+   */
+  private async labelPullRequest(
+    taskId: string,
+    repo: string,
+    number: number,
+    token: string,
+    usedSecrets: readonly string[],
+  ): Promise<void> {
+    const label = this.intakeLabelForPullRequests();
+    if (!label) return;
+    const same = (x: { repo: string; number: number }) =>
+      x.number === number && sameRepo(x.repo, repo);
+    if ((this.tasks.get(taskId)?.pullRequestLabels ?? []).some(same)) return;
+    const key = `${taskId} ${repoKey(repo)}#${number}`;
+    if (this.labeling.has(key)) return;
+    this.labeling.add(key);
+    try {
+      let event: EventInput;
+      try {
+        const { created } = await this.deps.pulls.addLabel({ repo, token, number, label });
+        event = {
+          type: "PullRequestLabeled",
+          payload: { repo, number, label, ...(created ? { created } : {}) },
+        };
+      } catch (error) {
+        event = {
+          type: "PullRequestLabelFailed",
+          payload: { repo, number, label, message: redactText(errorText(error), usedSecrets) },
+        };
+      }
+      // 付けている間に、ほかで記録された（同じ PR）なら、記録しない
+      const latest = this.tasks.get(taskId);
+      if (!latest || (latest.pullRequestLabels ?? []).some(same)) return;
+      try {
+        this.append(latest, [{ actor: "sacty", event }]);
+      } catch (error) {
+        console.warn(
+          `[daemon] PR #${number}（${repo}）のラベルの記録に失敗しました：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
+        );
+      }
+    } finally {
+      this.labeling.delete(key);
     }
   }
 
@@ -5436,6 +6111,7 @@ export class TaskService {
         run.context,
         gateway,
         run.session,
+        run.readDirs,
       );
       if (gatewayRun && platforms.length > 0 && this.deps.gateway) {
         invocation.env.SACTY_PF_URL = this.deps.gateway.platformsUrl(gatewayRun.token);
@@ -5772,15 +6448,25 @@ export class TaskService {
     const agent = agentFor(config, "orchestrator");
     const setting = { agentId: agent.id, ...agentSetting(agent), runId: chat.runId };
     let payload: Extract<EventInput, { type: "QuestionAnswered" }>["payload"];
+    // 各実行のセッションログを、答えの実行ごとの場所に並べて、読み取り専用でマウントする（PBI-91）
+    const logsDir = join(this.deps.workspaceRoot, "_question-logs", chat.runId);
     try {
+      const activity = this.deps.activity.forTask(task.id);
+      const logs = this.stageQuestionLogs(task.id, activity, logsDir, chat.runId);
       // オーケストレーターのセッションを複製して答える（作業中のセッションには話しかけない。PBI-67）
       const { outcome, costUsd, estimated, runId } = await this.runGuardian(
         task,
         {
           agent,
           image: config.image,
-          prompt: buildChatPrompt(task, this.deps.activity.forTask(task.id), question),
+          prompt: buildChatPrompt(task, activity, question, logs),
           role: "chat",
+          ...("runs" in logs
+            ? {
+                mounts: [{ hostPath: logsDir, containerPath: CONTAINER_LOGS_DIR, readOnly: true }],
+                readDirs: [CONTAINER_LOGS_DIR],
+              }
+            : {}),
           runId: chat.runId,
           // 準備の間（コードの書き出しなど）に中止されたなら、コンテナを起動しない
           stopped: () => this.cancelling.has(task.id),
@@ -5830,6 +6516,8 @@ export class TaskService {
         runResult: "failed",
         ...setting,
       };
+    } finally {
+      rmSync(logsDir, { recursive: true, force: true });
     }
     const latest = this.tasks.get(task.id);
     if (!latest || latest.status === "cancelled" || pendingQuestion(latest)?.id !== questionId) {
@@ -5859,6 +6547,33 @@ export class TaskService {
     }
     // 予算の通知は記録するが、タスクは止めない（次の工程の実行の前に、予算で止まる）
     this.warnIfNeeded(this.mustGet(task.id));
+  }
+
+  /**
+   * 質問への答えに読ませる、タスクの各実行のセッションログを dest に並べる（PBI-91）。ログの置き場所が無い・並べられない
+   * ときは、理由を返す（答えは台帳だけで作る）。並べるのは、このタスクの終わった実行の分だけ。
+   */
+  private stageQuestionLogs(
+    taskId: string,
+    activity: readonly ActivityEvent[],
+    dest: string,
+    chatRunId: string,
+  ): ChatLogs {
+    const store = this.deps.sessionLogs;
+    if (!store) return { unavailable: "セッションログを残していない" };
+    try {
+      return stageQuestionLogs({ store, taskId, activity, dest, exclude: [chatRunId] });
+    } catch (error) {
+      console.warn(
+        `[daemon] 質問への答えに、セッションログを用意できませんでした（${taskId}）：`,
+        error instanceof Error ? error.message : error,
+      );
+      // 理由は、エラーの種類（EACCES・ENOTDIR など）だけを伝える（ホストのパスは指示に入れない）
+      const code = (error as NodeJS.ErrnoException | undefined)?.code;
+      return {
+        unavailable: `セッションログを用意できなかった${typeof code === "string" ? `：${code}` : ""}`,
+      };
+    }
   }
 
   /** 起動のときに取り出せなかった秘密情報（PBI-48）。取り出し直すと置き換える。 */
@@ -6170,8 +6885,17 @@ function splitWithRepositories(
   return { ...plan, children };
 }
 
+/** リポジトリの URL の、比べるためのキー（書き方の揺れをそろえ、大文字・小文字を区別しない。PBI-88）。 */
+function repoKey(repo: string): string {
+  return (parseRepoUrl(repo)?.url ?? repo).toLowerCase();
+}
+
+function sameRepo(a: string, b: string): boolean {
+  return repoKey(a) === repoKey(b);
+}
+
 /** PR のレビューの取り込みのタスクの工程（レビューだけ。オーケストレーターは使わないので費用は無い。PBI-44）。 */
-function reviewOnlySteps(via: "requested" | "label"): ChosenSteps {
+function reviewOnlySteps(via: "requested" | "label" | "sacty"): ChosenSteps {
   return {
     steps: [...STEP_PLANS.review],
     plan: "review",

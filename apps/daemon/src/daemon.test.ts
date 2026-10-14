@@ -14,12 +14,15 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import type { DaemonText, EventInput, StepKey, Task } from "@sacty/core";
+import type { CiFailure, DaemonText, EventInput, StepKey, Task } from "@sacty/core";
 import {
   ANSWER_MAX,
+  DEPLOYMENT_CI_GRACE_MS,
+  DEPLOYMENT_CI_TIMEOUT_MS,
   exportDue,
   isCompleted,
   MAX_CHANGE_REQUESTS,
+  MAX_FIX_CHAIN,
   MVP_STEPS,
   message,
   QUESTION_MAX,
@@ -34,12 +37,19 @@ import type { LocalForward } from "./agents/forward.js";
 import type { Invocation } from "./agents/invocation.js";
 import type { AgentOutcome } from "./agents/parse.js";
 import { DockerTestRunner, type TestRunner, type TestRunResult } from "./agents/test-runner.js";
+import type { CiSnapshot, CiStatusReader } from "./ci.js";
 import { type AgentConfig, type ConfigResult, loadConfig, type SactyConfig } from "./config.js";
 import { type ContextFetcher, type ContextRef, DEFAULT_CONTEXT_DIR } from "./context.js";
 import { ContextMcpServers } from "./context-mcp.js";
 import { MessageError } from "./errors.js";
 import type { GitHubAuth } from "./gh.js";
-import type { PullRequestFeedback, PullRequestStatus, PullRequests } from "./github.js";
+import {
+  type PullRequestFeedback,
+  type PullRequestStatus,
+  type PullRequests,
+  type SactyReviewRound,
+  sactyReviewTask,
+} from "./github.js";
 import { type HostMcpConnection, HostMcpFile, type HostMcpSpec, toHostMcp } from "./host-mcp.js";
 import { OrchestratorSessionStore } from "./orchestrator-sessions.js";
 import { type Platform, PlatformFile, toPlatform } from "./platforms.js";
@@ -390,6 +400,11 @@ class FakeRepos implements RepositoryWorkspace {
     if (at && path in at) return at[path] ?? undefined;
     return this.committedFiles.findLast((c) => path in c.files)?.files[path];
   }
+  /** コミットにあるシンボリックリンク（commit → path → リンクの先。PBI-89）。 */
+  links: Record<string, Record<string, string>> = {};
+  async readLink(_gitDir: string, commit: string, path: string) {
+    return this.links[commit]?.[path];
+  }
   prDiff = [
     "diff --git a/src/retry.ts b/src/retry.ts",
     "--- a/src/retry.ts",
@@ -581,6 +596,15 @@ class FakePulls implements PullRequests {
           url: `${input.repo}/pull/${input.number}#pullrequestreview-${index + 1}`,
         };
   }
+  /** 付けたラベル（PBI-88）。labelFail があれば失敗させる。labelCreated なら、リポジトリに無かったので作ったことにする。 */
+  labels: { repo: string; token: string; number: number; label: string }[] = [];
+  labelFail?: string;
+  labelCreated = false;
+  async addLabel(input: { repo: string; token: string; number: number; label: string }) {
+    if (this.labelFail) throw new Error(this.labelFail);
+    this.labels.push(input);
+    return { created: this.labelCreated };
+  }
   /** 返す PR へのフィードバック（PBI-14b）。 */
   feedbackList: PullRequestFeedback[] = [];
   /** PR ごとのフィードバック（番号があれば、その PR はそちら。PBI-57）。 */
@@ -588,10 +612,28 @@ class FakePulls implements PullRequests {
   /** フィードバックを読んだときの、プロジェクトのアカウント（sacty のレビューを除くため。PBI-19）。 */
   feedbackAccounts: (string | undefined)[] = [];
   feedbackNumbers: number[] = [];
-  async feedback(input: { account?: string; number: number }) {
+  /** フィードバックを読んだときの、含める sacty のレビューのタスク（PBI-88）。 */
+  feedbackSactyReviews: (readonly string[] | undefined)[] = [];
+  /** 渡された、この PR をレビューした sacty のタスクの回（PBI-88）。 */
+  feedbackSactyRounds: (readonly SactyReviewRound[] | undefined)[] = [];
+  async feedback(input: {
+    account?: string;
+    number: number;
+    sactyReviews?: readonly SactyReviewRound[];
+  }) {
+    const allowed = (input.sactyReviews ?? []).filter((r) => r.allowed).map((r) => r.key);
+    this.feedbackSactyReviews.push(allowed.length > 0 ? allowed : undefined);
+    this.feedbackSactyRounds.push(input.sactyReviews);
     this.feedbackAccounts.push(input.account);
     this.feedbackNumbers.push(input.number);
-    return this.feedbackBy[input.number] ?? this.feedbackList;
+    // 本物と同じく、sacty のレビューのタスクの投稿は、そのアカウントと回で判定し、ほかのプロジェクトのアカウントの
+    // sacty のレビューは除く（PBI-88）
+    return (this.feedbackBy[input.number] ?? this.feedbackList).filter((item) => {
+      const key = sactyReviewTask(item.body);
+      const round = input.sactyReviews?.find((r) => r.key === key && r.account === item.author);
+      if (round) return round.allowed;
+      return !(key !== undefined && item.author === input.account);
+    });
   }
 }
 
@@ -669,6 +711,10 @@ class FakeExecutor implements AgentExecutor {
   networks: (string | undefined)[] = [];
   /** 実行ごとに渡された、localhost に転送するポート（PBI-60）。 */
   forwards: (readonly LocalForward[] | undefined)[] = [];
+  /** 実行ごとにマウントされた各実行のセッションログ（PBI-91）。無ければ undefined。 */
+  logMounts: ({ readOnly: boolean; files: Record<string, string>; dir: string } | undefined)[] = [];
+  /** 渡された実行から結果を作る（エージェントがマウントされたファイルを読んで答える代わり）。undefined なら outcomes の順。 */
+  respond?: (invocation: Invocation) => AgentOutcome | undefined;
   async run({
     runId,
     image,
@@ -719,7 +765,19 @@ class FakeExecutor implements AgentExecutor {
     // 戻すように渡された、保存したセッションのファイル（PBI-67。実行の間に読んでおく）
     const restoredDir = invocation.stage?.sessionDir;
     this.restored.push(restoredDir ? readTree(restoredDir) : undefined);
-    const next = this.outcomes.shift();
+    // 質問への答えで読み取り専用でマウントされる、各実行のセッションログ（PBI-91。実行の後に消される）
+    const logsMount = invocation.mounts?.find((m) => m.containerPath === "/sacty-logs");
+    this.logMounts.push(
+      logsMount
+        ? {
+            readOnly: logsMount.readOnly,
+            files: readTree(logsMount.hostPath),
+            dir: logsMount.hostPath,
+          }
+        : undefined,
+    );
+    const responded = this.respond?.(invocation);
+    const next = responded ?? this.outcomes.shift();
     if (!next) throw new Error("no more outcomes");
     const outcome =
       next.kind === "hold"
@@ -834,6 +892,8 @@ function makeService(
     sessionLogs?: SessionLogStore;
     /** オーケストレーターのセッションの置き場所（PBI-67）。 */
     orchestratorSessions?: OrchestratorSessionStore;
+    /** マージのコミットの CI/CD の状態（PBI-89）。 */
+    ci?: ServiceDeps["ci"];
   } = {},
 ) {
   const executor = new FakeExecutor(outcomes);
@@ -886,6 +946,7 @@ function makeService(
     stepPullRequests: options.stepPullRequests ?? false,
     ...(options.sessionLogs ? { sessionLogs: options.sessionLogs } : {}),
     ...(options.orchestratorSessions ? { orchestratorSessions: options.orchestratorSessions } : {}),
+    ...(options.ci ? { ci: options.ci } : {}),
   });
   return { service, executor, repos, tests, pulls };
 }
@@ -1521,6 +1582,13 @@ describe("工程の実行と費用", () => {
         "「sacty-no-such-command-84」が、sacty を動かすホストに見つかりません",
       ),
     ]);
+    // どのプロジェクトのものか（プロジェクトの名前）も残す（PBI-92）
+    expect(warnings).toEqual([
+      expect.objectContaining({
+        params: expect.objectContaining({ name: "tool", project: "デフォルト" }),
+      }),
+    ]);
+    expect(renderMessage(warnings[0], "ja")).toContain("プロジェクト「デフォルト」の ");
     await contextMcp.stop();
     activity.close();
   });
@@ -4623,13 +4691,15 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     expect(task?.gate?.step).toBe("pr");
     expect(task?.lastReview).toMatchObject({ passed: true, summary: "所見" });
     expect(task?.lastTests).toMatchObject({ passed: true, exitCode: 0, durationMs: 1200 });
-    expect(types(service, id).slice(-6)).toEqual([
+    expect(types(service, id).slice(-7)).toEqual([
       "AgentRunCompleted",
       "TestsRun",
       "FinalReviewed",
       "BranchPushed",
       "PullRequestPublished",
       "StepSubmitted",
+      // 取り込むラベル（PBI-88）
+      "PullRequestLabeled",
     ]);
     expect(service.get(id)?.activity.find((e) => e.type === "FinalReviewed")?.actor).toBe(
       "guardian",
@@ -4930,10 +5000,15 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       url: "https://github.com/acme/app/pull/7",
       number: 7,
     });
-    expect(types(service, id).slice(-3)).toEqual([
+    expect(types(service, id).slice(-4)).toEqual([
       "BranchPushed",
       "PullRequestPublished",
       "StepSubmitted",
+      "PullRequestLabeled",
+    ]);
+    // 実装の PR に、取り込むラベルを付ける（PBI-88）
+    expect(pulls.labels).toEqual([
+      { repo: "https://github.com/acme/app", token: "ghp_secret", number: 7, label: "sacty" },
     ]);
     // トークンは作業履歴に残さない
     expect(JSON.stringify(service.get(id)?.activity)).not.toContain("ghp_secret");
@@ -4961,12 +5036,12 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     expect(pulls.checked).toEqual([
       { repo: "https://github.com/acme/app", token: "ghp_secret", number: 7 },
     ]);
-    expect(types(service, id).at(-1)).toBe("StepSubmitted");
+    expect(types(service, id).at(-1)).toBe("PullRequestLabeled");
 
     // 確かめられなければ（ネットワークなど）、何も記録せずに次の確認でやり直す
     pulls.statusFail = "network";
     await service.checkPullRequests();
-    expect(types(service, id).at(-1)).toBe("StepSubmitted");
+    expect(types(service, id).at(-1)).toBe("PullRequestLabeled");
     pulls.statusFail = undefined;
 
     // マージせずに閉じられたら、記録して人間の判断を待つ
@@ -10124,6 +10199,202 @@ describe("タスクの詳細での、オーケストレーターへの質問（P
   });
 });
 
+describe("質問への答えで、各実行のセッションログを調べる（PBI-91）", () => {
+  const out = (text: string, usageOutput = 100): AgentOutcome => ({
+    kind: "completed",
+    output: text,
+    usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: usageOutput },
+  });
+  const isChat = (invocation: Invocation) => (invocation.command[2] ?? "").includes("--- 質問 ---");
+  const runIdOf = (service: TaskService, id: string, step: string) =>
+    service.get(id)?.activity.find((e) => e.type === "AgentRunCompleted" && e.payload.step === step)
+      ?.payload as { runId: string } | undefined;
+
+  it("このタスクの各実行のログ（エージェントの元のファイルも）を読み取り専用で渡し、ログの中身から答えられる。ほかのタスクのログ・秘密の値は渡さない", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const sessionLogs = new SessionLogStore(join(dir, "runs"));
+    const { service, executor } = makeService(
+      activity,
+      [out("# 要求要件 A"), out("# 要求要件 B")],
+      { sessionLogs },
+    );
+    // 工程のエージェントが実際にしたこと（台帳には出ない）を、元のセッションのファイルに書かせる
+    let did = "";
+    executor.sessionFiles = () => ({
+      "projects/w/session.jsonl": `${JSON.stringify({ type: "tool_use", name: "Bash", input: { command: did } })}\n`,
+    });
+    const a = service.createTask({ projectId: "default", title: "決済API", body: "冪等にする" });
+    did = "npm test -- --grep 冪等キー";
+    await service.runNext(a.id);
+    const b = service.createTask({ projectId: "default", title: "別のタスク", body: "" });
+    did = "cat 別のタスクの作業";
+    await service.runNext(b.id);
+    const reqRun = runIdOf(service, a.id, "requirements")?.runId ?? "";
+    const otherRun = runIdOf(service, b.id, "requirements")?.runId ?? "";
+    expect(reqRun).not.toBe("");
+
+    // 答えの代わりに、マウントされたログを探して、何をしたかを答える
+    executor.respond = (invocation) => {
+      if (!isChat(invocation)) return undefined;
+      const mount = invocation.mounts?.find((m) => m.containerPath === "/sacty-logs");
+      if (!mount) return out("ログが無い");
+      const files = readTree(mount.hostPath);
+      const found = Object.entries(files).find(([path]) => path.includes("/agent/projects/"));
+      const command = found ? /"command":"([^"]+)"/.exec(found[1])?.[1] : undefined;
+      return out(`実行 ${found?.[0].split("/")[0]} で \`${command}\` を実行しました`, 1000);
+    };
+    const usedBefore = service.get(a.id)?.task.budget.usedUsd ?? 0;
+    await service.askQuestion(a.id, { text: "要求要件でどんなコマンドを使った？" }).answered;
+
+    const task = service.get(a.id)?.task;
+    expect(task?.questions[0]?.answer?.text).toBe(
+      `実行 ${reqRun} で \`npm test -- --grep 冪等キー\` を実行しました`,
+    );
+    // 費用はこれまでどおりタスクの予算に入る（1000出力トークン = $0.015）
+    expect(task?.budget.usedUsd).toBeCloseTo(usedBefore + 0.015, 6);
+
+    const mounted = executor.logMounts.at(-1);
+    expect(mounted?.readOnly).toBe(true);
+    expect(Object.keys(mounted?.files ?? {}).sort()).toEqual(
+      [
+        "index.json",
+        `${reqRun}/agent/projects/w/session.jsonl`,
+        `${reqRun}/events.jsonl`,
+        `${reqRun}/meta.json`,
+        `${reqRun}/stderr.log`,
+      ].sort(),
+    );
+    const all = Object.values(mounted?.files ?? {}).join("\n");
+    // ほかのタスクのログは渡さない
+    expect(all).not.toContain(otherRun);
+    expect(all).not.toContain("別のタスクの作業");
+    // 実行に渡した秘密情報（偽の実行器がログに出している）は伏せてある
+    expect(all).not.toContain("oauth-secret");
+    expect(all).toContain("[REDACTED]");
+    // 答えの実行の後に、並べた場所を消す（元のログは残る）
+    expect(existsSync(mounted?.dir ?? "")).toBe(false);
+    expect(sessionLogs.read(a.id, reqRun)).toBeTruthy();
+
+    // Claude Code には、作業領域の外のログの場所を読める場所に足す（工程の実行には足さない）
+    expect(executor.calls.at(-1)?.command).toEqual(
+      expect.arrayContaining(["--add-dir", "/sacty-logs"]),
+    );
+    expect(executor.calls[0]?.command).not.toContain("--add-dir");
+    // 指示には、一覧（どの工程・どの実行か）と読み方を入れる（中身は丸ごと入れない）
+    const prompt = executor.calls.at(-1)?.command[2] ?? "";
+    expect(prompt).toContain("/sacty-logs に読み取り専用で置きました");
+    expect(prompt).toContain(
+      `- [要求要件・1回目] 実行 ${reqRun} claude-subscription（claude-code）`,
+    );
+    expect(prompt).not.toContain("npm test -- --grep 冪等キー");
+    expect(prompt).not.toContain(otherRun);
+    activity.close();
+  });
+
+  it("オーケストレーター自身の実行と、これまでの質問への答えの実行のログも、どの実行かが分かる形で渡す", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const sessionLogs = new SessionLogStore(join(dir, "runs"));
+    const { service, executor } = makeService(
+      activity,
+      [
+        out(
+          '```json\n{"sacty-steps": {"plan": "skip-design", "reason": "小さい", "testCommand": "npm test"}}\n```',
+        ),
+        out("# 調査"),
+        out("答え1"),
+        out("答え2"),
+      ],
+      { realPlanner: true, sessionLogs },
+    );
+    const { id } = service.createTask({ projectId: "default", title: "A" });
+    await service.runNext(id);
+    const orchestratorRun = (
+      service.get(id)?.activity.find((e) => e.type === "StepsChosen")?.payload as
+        | { runId?: string }
+        | undefined
+    )?.runId;
+    const reqRun = runIdOf(service, id, "investigate")?.runId;
+    await service.askQuestion(id, { text: "1つ目" }).answered;
+    const chatRun = (
+      service.get(id)?.activity.findLast((e) => e.type === "QuestionAnswered")?.payload as
+        | { runId?: string }
+        | undefined
+    )?.runId;
+    await service.askQuestion(id, { text: "2つ目" }).answered;
+    const prompt = executor.calls.at(-1)?.command[2] ?? "";
+    expect(prompt).toContain(`- [オーケストレーター・1回目] 実行 ${orchestratorRun} `);
+    expect(prompt).toContain(`- [調査・1回目] 実行 ${reqRun} `);
+    expect(prompt).toContain(`- [質問への答え（オーケストレーター）・1回目] 実行 ${chatRun} `);
+    // 一覧は始めた順
+    expect(prompt.indexOf(orchestratorRun ?? "")).toBeLessThan(prompt.indexOf(reqRun ?? ""));
+    expect(prompt.indexOf(reqRun ?? "")).toBeLessThan(prompt.indexOf(chatRun ?? ""));
+    const files = Object.keys(executor.logMounts.at(-1)?.files ?? {});
+    expect(files).toContain(`${orchestratorRun}/events.jsonl`);
+    expect(files).toContain(`${chatRun}/meta.json`);
+    activity.close();
+  });
+
+  it("タスクのログの場所を開けないときは、ログの無い実行とせず、マウントせずに理由を伝えて台帳から答える", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const sessionLogs = new SessionLogStore(join(dir, "runs"));
+    const { service, executor } = makeService(
+      activity,
+      [out("# 要求要件"), out("台帳から答えました")],
+      {
+        sessionLogs,
+      },
+    );
+    const { id } = service.createTask({ projectId: "default", title: "決済API", body: "" });
+    await service.runNext(id);
+    const reqRun = runIdOf(service, id, "requirements")?.runId ?? "";
+    expect(reqRun).not.toBe("");
+    // タスクのログの場所が、ディレクトリでなくなった
+    const taskDir = join(dir, "runs", id);
+    rmSync(taskDir, { recursive: true, force: true });
+    writeFileSync(taskDir, "ディレクトリではない");
+    await service.askQuestion(id, { text: "何をした？" }).answered;
+    expect(service.get(id)?.task.questions[0]?.answer?.text).toBe("台帳から答えました");
+    expect(executor.logMounts.at(-1)).toBeUndefined();
+    const prompt = executor.calls.at(-1)?.command[2] ?? "";
+    expect(prompt).toContain(
+      "各実行のセッションログは、この質問では読めません（セッションログを用意できなかった：ENOTDIR）",
+    );
+    expect(prompt).not.toContain("/sacty-logs に読み取り専用で置きました");
+    expect(prompt).not.toContain(`実行 ${reqRun}：ログが無い`);
+    expect(executor.calls.at(-1)?.command).not.toContain("--add-dir");
+    // 並べかけた場所は残さない
+    expect(readdirSync(join(dir, "workspaces", "_question-logs"), { withFileTypes: true })).toEqual(
+      [],
+    );
+    activity.close();
+  });
+
+  it("ログを用意できない・残していないときも、台帳から答え、ログを読めないことを伝える", async () => {
+    class BrokenLogs extends SessionLogStore {
+      override taskDir(): string | undefined {
+        throw new Error("EACCES");
+      }
+    }
+    for (const sessionLogs of [new BrokenLogs(join(dir, "runs")), undefined]) {
+      const activity = new SqliteActivityStore(dbPath);
+      const { service, executor } = makeService(activity, [out("工程はまだ決めていません。")], {
+        ...(sessionLogs ? { sessionLogs } : {}),
+      });
+      const { id } = service.createTask({ projectId: "default", title: "決済API", body: "" });
+      await service.askQuestion(id, { text: "工程は？" }).answered;
+      expect(service.get(id)?.task.questions[0]?.answer?.text).toBe("工程はまだ決めていません。");
+      expect(executor.logMounts.at(-1)).toBeUndefined();
+      expect(executor.calls.at(-1)?.command[2]).toContain(
+        sessionLogs
+          ? "各実行のセッションログは、この質問では読めません（セッションログを用意できなかった）"
+          : "各実行のセッションログは、この質問では読めません（セッションログを残していない）",
+      );
+      activity.close();
+      rmSync(dbPath, { force: true });
+    }
+  });
+});
+
 describe("成果の書き出し（PBI-56）", () => {
   const out = (text: string, output = 1): AgentOutcome => ({
     kind: "completed",
@@ -10962,12 +11233,16 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       config?: () => ConfigResult;
       gateway?: ServiceDeps["gateway"];
       db?: string;
+      settings?: MemorySettingsStore;
+      github?: FakeGitHub;
     } = {},
   ) {
     const activity = new SqliteActivityStore(options.db ?? dbPath);
     const pulls = options.pulls ?? new FakePulls();
     const repos = options.repos ?? new FakeRepos();
     const made = makeService(activity, outcomes, {
+      ...(options.settings ? { settings: options.settings } : {}),
+      ...(options.github ? { github: options.github } : {}),
       stepPullRequests: true,
       now: later,
       pulls,
@@ -11065,12 +11340,14 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
     const taskBranch = taskBranchOf(id);
     // 1. タスクブランチ（起点のコミットから）と、要求要件のブランチ・PR
     expect(repos.pushedCommits).toEqual([{ commit: "base123", branch: taskBranch }]);
-    expect(types(service, id).slice(-5)).toEqual([
+    expect(types(service, id).slice(-6)).toEqual([
       "AgentRunCompleted",
       "TaskBranchCreated",
       "StepBranchPushed",
       "StepPullRequestPublished",
       "StepSubmitted",
+      // 取り込むラベル（PBI-88）
+      "PullRequestLabeled",
     ]);
     const completedAt = service
       .get(id)
@@ -11106,7 +11383,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
     expect(() => service.approve(id, { step: "requirements", submission: 1 })).toThrow(/pull\/7/);
     // 開いたままなら何も記録しない
     await service.checkPullRequests();
-    expect(types(service, id).at(-1)).toBe("StepSubmitted");
+    expect(types(service, id).at(-1)).toBe("PullRequestLabeled");
 
     // マージで承認として記録し、次の工程（設計）に進む
     await merge(made, "requirements");
@@ -11166,6 +11443,12 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
     task = taskOf(service, id);
     expect(task.gate).toEqual({ step: "pr", submission: 1 });
     expect(task.pullRequest).toMatchObject({ number: 9, branch: taskBranch });
+    // 要求要件・設計・実装の PR のすべてに、取り込むラベルを付ける（PBI-88）
+    expect(pulls.labels.map((l) => [l.number, l.label])).toEqual([
+      [7, "sacty"],
+      [8, "sacty"],
+      [9, "sacty"],
+    ]);
     await merge(made, "pr");
     const done = taskOf(service, id);
     expect(isCompleted(done)).toBe(true);
@@ -11340,6 +11623,8 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
     expect(
       service.get(id)?.activity.findLast((e) => e.type === "StepPullRequestPublished")?.payload,
     ).toMatchObject({ number: 10, supersedes: 8 });
+    // 作り直した PR（新しい番号）には、取り込むラベルを付ける（1つの PR に1回。PBI-88）
+    expect(pulls.labels.map((l) => l.number)).toEqual([7, 8, 9, 10]);
     activity.close();
   });
 
@@ -12156,6 +12441,467 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       expect(task.approved.requirements).toBeUndefined();
       expect(types(service, id)).not.toContain("PullRequestMerged");
       activity.close();
+    });
+  });
+
+  describe("sacty が作る PR に取り込むラベルを付け、別のタスクでレビューさせる（PBI-88）", () => {
+    const labeledPr = (number: number, labels = ["sacty"]) => ({
+      repo: "https://github.com/acme/app",
+      number,
+      title: `PR ${number}`,
+      body: "本文",
+      url: `https://github.com/acme/app/pull/${number}`,
+      labels,
+      pullRequest: true,
+    });
+
+    it("要求要件の PR に取り込むラベルを付け（無ければ作り）、台帳に残す。PR を更新しても付け直さない（受け入れ条件 1・3・7）", async () => {
+      const pulls = new FakePulls();
+      pulls.labelCreated = true;
+      const made = await start(
+        [out("# 要求要件 v1"), rework("requirements", "要求要件で直せる"), out("# 要求要件 v2")],
+        { pulls },
+      );
+      const { activity, service, id } = made;
+      expect(pulls.labels).toEqual([
+        { repo: "https://github.com/acme/app", token: "ghp_secret", number: 7, label: "sacty" },
+      ]);
+      const labeled = service.get(id)?.activity.at(-1);
+      expect(labeled).toMatchObject({
+        type: "PullRequestLabeled",
+        actor: "sacty",
+        payload: { repo: "https://github.com/acme/app", number: 7, label: "sacty", created: true },
+      });
+      expect(taskOf(service, id).pullRequestLabels).toEqual([
+        { repo: "https://github.com/acme/app", number: 7, label: "sacty", created: true },
+      ]);
+      // 指摘で同じ PR を更新しても、ラベルは付け直さない（人が外していても）
+      pulls.feedbackBy[7] = [item("comment:1")];
+      await service.checkPullRequests();
+      await service.runNext(id);
+      expect(pulls.calls.map((c) => c.number)).toEqual([undefined, 7]);
+      expect(pulls.labels).toHaveLength(1);
+      expect(types(service, id).filter((t) => t === "PullRequestLabeled")).toHaveLength(1);
+      // 再起動しても、付けた記録を復元する
+      const done = taskOf(service, id);
+      activity.close();
+      const again = new SqliteActivityStore(dbPath);
+      expect(
+        makeService(again, [], { stepPullRequests: true }).service.get(id)?.task.pullRequestLabels,
+      ).toEqual(done.pullRequestLabels);
+      again.close();
+    });
+
+    it("取り込むラベルを設定していない・PR のトリアージを Off にしているなら、付けずに PR を作る（受け入れ条件 2・5）", async () => {
+      for (const settings of [
+        new MemorySettingsStore({}),
+        new MemorySettingsStore({ intakeLabel: "sacty", triageOff: ["pullRequests"] }),
+      ]) {
+        const pulls = new FakePulls();
+        const { activity, service, id } = await start([out("# 要求要件 v1")], { pulls, settings });
+        expect(pulls.labels).toEqual([]);
+        expect(types(service, id).at(-1)).toBe("StepSubmitted");
+        expect(taskOf(service, id).gate).toEqual({ step: "requirements", submission: 1 });
+        activity.close();
+        rmSync(dbPath, { force: true });
+      }
+    });
+
+    it("ラベルを付けられなくても PR の作成は失敗にせず、理由を秘密の値を伏せて台帳に残し、付け直さない（受け入れ条件 4・7）", async () => {
+      const pulls = new FakePulls();
+      pulls.labelFail = "403 Resource not accessible (token ghp_secret)";
+      const made = await start(
+        [out("# 要求要件 v1"), rework("requirements", "要求要件で直せる"), out("# 要求要件 v2")],
+        { pulls },
+      );
+      const { activity, service, id } = made;
+      const task = taskOf(service, id);
+      expect(task.status).toBe("awaiting_approval");
+      expect(task.gate).toEqual({ step: "requirements", submission: 1 });
+      const failed = service.get(id)?.activity.at(-1);
+      expect(failed?.type).toBe("PullRequestLabelFailed");
+      expect(failed?.payload).toMatchObject({ number: 7, label: "sacty" });
+      const text = ja(failed?.type === "PullRequestLabelFailed" ? failed.payload.message : "");
+      expect(text).toContain("403 Resource not accessible");
+      expect(JSON.stringify(service.get(id)?.activity)).not.toContain("ghp_secret");
+      expect(task.pullRequestLabels?.[0]?.failed).toBeDefined();
+      // PR を更新しても、もう一度は付けない（失敗も1回だけ記録する）
+      pulls.labelFail = undefined;
+      pulls.feedbackBy[7] = [item("comment:1")];
+      await service.checkPullRequests();
+      await service.runNext(id);
+      expect(pulls.calls.map((c) => c.number)).toEqual([undefined, 7]);
+      expect(pulls.labels).toEqual([]);
+      expect(types(service, id).filter((t) => t.startsWith("PullRequestLabel"))).toEqual([
+        "PullRequestLabelFailed",
+      ]);
+      activity.close();
+    });
+
+    it("ラベルを付けた PR は、別のレビューだけのタスクとして1度だけ取り込まれ、その指摘が元のタスクの PR の指摘として届く（受け入れ条件 5・6）", async () => {
+      const pulls = new FakePulls();
+      pulls.prInfo = { ...pulls.prInfo, number: 7, url: "https://github.com/acme/app/pull/7" };
+      const made = await start(
+        [
+          out("# 要求要件 v1"),
+          out(
+            [
+              "# 評価\n\n受け入れ条件が足りない",
+              block({ "sacty-review-verdict": { changesRequested: true } }),
+            ].join("\n\n"),
+          ),
+          rework("requirements", "要求要件で直せる"),
+          out("# 要求要件 v2"),
+        ],
+        { pulls },
+      );
+      const { activity, service, executor, id } = made;
+      // 取り込み：元のタスク（要求要件の PR の作り手）とは別の、レビューだけのタスクになる
+      const [review, ...rest] = service.importIssues([labeledPr(7)]);
+      expect(rest).toEqual([]);
+      expect(review?.id).not.toBe(id);
+      expect(review?.source).toMatchObject({
+        kind: "github_pull_request",
+        number: 7,
+        review: "sacty",
+      });
+      const reviewId = review?.id ?? "";
+      const before = executor.calls.length;
+      await service.runNext(reviewId);
+      const chosen = service.get(reviewId)?.activity.find((e) => e.type === "StepsChosen");
+      expect(chosen?.type === "StepsChosen" && chosen.payload.steps).toEqual(["review"]);
+      expect(ja(chosen?.type === "StepsChosen" ? chosen.payload.reason : undefined)).toContain(
+        "sacty がほかのタスクで作り、取り込むラベルを付けた PR",
+      );
+      expect(executor.calls[before]?.command.join(" ")).toContain("レビューエージェント");
+      await service.runNext(reviewId);
+      expect(pulls.reviews.map((r) => r.number)).toEqual([7]);
+      expect(pulls.reviews[0]?.body).toContain(`<!-- sacty-review:${reviewId} -->`);
+      // 評価のブロックは、投稿する本文に入れない
+      expect(pulls.reviews[0]?.body).not.toContain("sacty-review-verdict");
+      expect(taskOf(service, reviewId).reviewVerdicts).toEqual([
+        { round: 1, changesRequested: true },
+      ]);
+
+      // 元のタスクの PR の指摘の取り込みに、このレビューのタスクの投稿を含めるよう渡す
+      pulls.feedbackBy[7] = [
+        item("review:50", {
+          kind: "review",
+          author: "me",
+          body: pulls.reviews[0]?.body ?? "",
+        }),
+      ];
+      await service.checkPullRequests();
+      expect(pulls.feedbackSactyReviews.at(-1)).toEqual([reviewId]);
+      const imported = service
+        .get(id)
+        ?.activity.find((e) => e.type === "PullRequestReviewImported");
+      expect(imported?.payload).toMatchObject({ number: 7, items: [{ key: "review:50" }] });
+      expect(taskOf(service, id).remarks.at(-1)?.text).toContain("受け入れ条件が足りない");
+      // 直して同じ PR を更新しても、ラベルは付け直さず、同じ PR はもうレビューのタスクにしない（繰り返さない）
+      await service.runNext(id);
+      expect(pulls.calls.map((c) => c.number)).toEqual([undefined, 7]);
+      expect(pulls.labels).toHaveLength(1);
+      expect(service.importIssues([labeledPr(7)])).toEqual([]);
+      // レビューのタスクは、PR の指摘を取り込まない（自分の PR を持たない）
+      expect(taskOf(service, reviewId).pullRequest).toBeUndefined();
+      activity.close();
+    });
+
+    it("直すべき指摘の無い（そのままマージしてよい）レビューは、元のタスクに取り込まず差し戻さない。評価を読めなければ取り込む（PO の指摘）", async () => {
+      const cases: { name: string; review: string; imported: boolean }[] = [
+        {
+          name: "指摘なし",
+          review: [
+            "# 評価\n\nマージしてよい",
+            block({ "sacty-review-verdict": { changesRequested: false } }),
+          ].join("\n\n"),
+          imported: false,
+        },
+        { name: "評価なし", review: "# 評価\n\n直す点がある", imported: true },
+      ];
+      for (const c of cases) {
+        rmSync(dbPath, { force: true });
+        const pulls = new FakePulls();
+        pulls.prInfo = { ...pulls.prInfo, number: 7, url: "https://github.com/acme/app/pull/7" };
+        const made = await start(
+          [
+            out("# 要求要件 v1"),
+            out(c.review),
+            rework("requirements", "要求要件で直せる"),
+            out("# 要求要件 v2"),
+          ],
+          { pulls },
+        );
+        const { activity, service, executor, id } = made;
+        const [review] = service.importIssues([labeledPr(7)]);
+        const reviewId = review?.id ?? "";
+        await service.runNext(reviewId);
+        await service.runNext(reviewId);
+        expect(
+          pulls.reviews.map((r) => r.number),
+          c.name,
+        ).toEqual([7]);
+        pulls.feedbackBy[7] = [
+          item("review:50", { kind: "review", author: "me", body: pulls.reviews[0]?.body ?? "" }),
+        ];
+        const before = executor.calls.length;
+        await service.checkPullRequests();
+        const task = taskOf(service, id);
+        if (c.imported) {
+          expect(pulls.feedbackSactyReviews.at(-1), c.name).toEqual([reviewId]);
+          expect(task.importedFeedback, c.name).toEqual(["review:50"]);
+          expect(task.status, c.name).toBe("queued");
+        } else {
+          // 取り込まず、ゴールガーディアンも動かさず（費用がかからない）、承認待ちのまま
+          expect(taskOf(service, reviewId).reviewVerdicts, c.name).toEqual([
+            { round: 1, changesRequested: false },
+          ]);
+          expect(pulls.feedbackSactyReviews.at(-1), c.name).toBeUndefined();
+          expect(task.importedFeedback, c.name).toEqual([]);
+          expect(types(service, id), c.name).not.toContain("PullRequestReviewImported");
+          expect(executor.calls.length, c.name).toBe(before);
+          expect(task.status, c.name).toBe("awaiting_approval");
+          // 人の指摘は、これまでどおり取り込む
+          pulls.feedbackBy[7] = [...(pulls.feedbackBy[7] ?? []), item("comment:60")];
+          await service.checkPullRequests();
+          expect(taskOf(service, id).importedFeedback, c.name).toEqual(["comment:60"]);
+        }
+        activity.close();
+      }
+    });
+
+    it("再レビューは回ごとに判定し、直すべき指摘のある回のレビューだけを取り込む（PO の指摘）", async () => {
+      const pulls = new FakePulls();
+      pulls.prInfo = { ...pulls.prInfo, number: 7, url: "https://github.com/acme/app/pull/7" };
+      const verdict = (changesRequested: boolean) =>
+        block({ "sacty-review-verdict": { changesRequested } });
+      const made = await start(
+        [
+          out("# 要求要件 v1"),
+          out(`# 評価\n\nマージしてよい\n\n${verdict(false)}`),
+          out(`# 評価\n\n受け入れ条件が足りない\n\n${verdict(true)}`),
+          rework("requirements", "要求要件で直せる"),
+          out("# 要求要件 v2"),
+        ],
+        { pulls },
+      );
+      const { activity, service, id } = made;
+      const [review] = service.importIssues([labeledPr(7)]);
+      const reviewId = review?.id ?? "";
+      await service.runNext(reviewId);
+      await service.runNext(reviewId);
+      const first = (n: number) =>
+        item(`review:${50 + n}`, {
+          kind: "review",
+          author: "me",
+          body: pulls.reviews[n]?.body ?? "",
+        });
+      pulls.feedbackBy[7] = [first(0)];
+      await service.checkPullRequests();
+      expect(taskOf(service, id).importedFeedback).toEqual([]);
+      // 再レビュー（2回目）は直すべき指摘あり。1回目（指摘なし）のレビューは取り込まない
+      service.rereview(reviewId);
+      await service.runNext(reviewId);
+      await service.runNext(reviewId);
+      expect(pulls.reviews).toHaveLength(2);
+      expect(taskOf(service, reviewId).reviewVerdicts).toEqual([
+        { round: 1, changesRequested: false },
+        { round: 2, changesRequested: true },
+      ]);
+      pulls.feedbackBy[7] = [first(0), first(1)];
+      await service.checkPullRequests();
+      expect(pulls.feedbackSactyReviews.at(-1)).toEqual([`${reviewId}:2`]);
+      expect(taskOf(service, id).importedFeedback).toEqual(["review:51"]);
+      expect(taskOf(service, id).status).toBe("queued");
+      activity.close();
+    });
+
+    it("レビューのタスクが元のタスクと違うアカウントで投稿しても、そのアカウントと回で判定する（レビュー指摘）", async () => {
+      // 元のタスクのプロジェクト（parent）。PR を作った後に Org の担当に変え、リポジトリを担当するプロジェクト（reviewer）を足す
+      const projects = new MemoryProjectStore();
+      projects.put("default", {
+        name: "元",
+        targets: [{ scope: "repo", target: "https://github.com/acme/app" }],
+        githubAccounts: { "github.com": "parent" },
+      });
+      const pulls = new FakePulls();
+      pulls.prInfo = { ...pulls.prInfo, number: 7, url: "https://github.com/acme/app/pull/7" };
+      const verdict = (changesRequested: boolean) =>
+        block({ "sacty-review-verdict": { changesRequested } });
+      const made = await start(
+        [
+          out("# 要求要件 v1"),
+          out(`# 評価\n\nマージしてよい\n\n${verdict(false)}`),
+          out(`# 評価\n\n受け入れ条件が足りない\n\n${verdict(true)}`),
+          rework("requirements", "要求要件で直せる"),
+        ],
+        {
+          pulls,
+          projects,
+          github: new FakeGitHub({ parent: "ghp_parent", reviewer: "ghp_reviewer" }),
+        },
+      );
+      const { activity, service, id } = made;
+      expect(taskOf(service, id).stepPullRequests.map((p) => p.number)).toEqual([7]);
+      projects.put("default", {
+        name: "元",
+        targets: [{ scope: "org", target: "https://github.com/acme" }],
+        githubAccounts: { "github.com": "parent" },
+      });
+      projects.put("app", {
+        name: "リポジトリ",
+        targets: [{ scope: "repo", target: "https://github.com/acme/app" }],
+        githubAccounts: { "github.com": "reviewer" },
+      });
+      const [review] = service.importIssues([labeledPr(7)]);
+      expect(review?.projectId).toBe("app");
+      const reviewId = review?.id ?? "";
+      await service.runNext(reviewId);
+      await service.runNext(reviewId);
+      expect(pulls.reviews[0]?.token).toBe("ghp_reviewer");
+      const posted = (n: number) =>
+        item(`review:${50 + n}`, {
+          kind: "review",
+          author: "reviewer",
+          body: pulls.reviews[n]?.body ?? "",
+        });
+      // 1回目（指摘なし）は、元のタスクと違うアカウントでも、人の指摘として取り込まない
+      pulls.feedbackBy[7] = [posted(0)];
+      await service.checkPullRequests();
+      expect(pulls.feedbackAccounts.at(-1)).toBe("parent");
+      expect(pulls.feedbackSactyRounds.at(-1)).toEqual([
+        { key: reviewId, account: "reviewer", allowed: false },
+      ]);
+      expect(taskOf(service, id).importedFeedback).toEqual([]);
+      // 2回目（指摘あり）は取り込む
+      service.rereview(reviewId);
+      await service.runNext(reviewId);
+      await service.runNext(reviewId);
+      pulls.feedbackBy[7] = [posted(0), posted(1)];
+      await service.checkPullRequests();
+      expect(pulls.feedbackSactyRounds.at(-1)).toEqual([
+        { key: reviewId, account: "reviewer", allowed: false },
+        { key: `${reviewId}:2`, account: "reviewer", allowed: true },
+      ]);
+      expect(taskOf(service, id).importedFeedback).toEqual(["review:51"]);
+      activity.close();
+    });
+
+    it("公開を記録した後、ラベルを付ける前に止まっても、再起動後の PR の確認で付ける（要求要件・設計の PR と実装の PR。レビュー指摘）", async () => {
+      /** 指定した番号の PR では、ラベルを付ける途中で止まる（止まったことを知らせる）。 */
+      const stopAt = (pulls: FakePulls, number: number) => {
+        const reached = Promise.withResolvers<void>();
+        const original = pulls.addLabel.bind(pulls);
+        const stop = { reached: reached.promise, calls: 0 };
+        pulls.addLabel = (input) => {
+          if (input.number !== number) return original(input);
+          stop.calls += 1;
+          reached.resolve();
+          return new Promise(() => {});
+        };
+        return stop;
+      };
+      /** 同じ台帳でデーモンを起動し直し、PR の確認を行う。 */
+      const restart = async (settings?: MemorySettingsStore) => {
+        const activity = new SqliteActivityStore(dbPath);
+        const pulls = new FakePulls();
+        const { service } = makeService(activity, [], {
+          stepPullRequests: true,
+          pulls,
+          now: later,
+          ...(settings ? { settings } : {}),
+        });
+        await service.checkPullRequests();
+        return { activity, service, pulls };
+      };
+
+      // 要求要件の PR（7）：公開と承認待ちを記録した後、ラベルを付ける途中で止まる
+      const pulls = new FakePulls();
+      const stopped = stopAt(pulls, 7);
+      const activity = new SqliteActivityStore(dbPath);
+      const { service } = makeService(activity, [out("# 要求要件 v1")], {
+        stepPullRequests: true,
+        pulls,
+        now: later,
+      });
+      const { id } = service.createTask({ projectId: "default", title: "決済API", body: "本文" });
+      void service.runNext(id);
+      await stopped.reached;
+      // 付けている途中に PR の確認が来ても、重ねて付けない
+      await service.checkPullRequests();
+      expect(stopped.calls).toBe(1);
+      expect(types(service, id).slice(-2)).toEqual(["StepPullRequestPublished", "StepSubmitted"]);
+      expect(taskOf(service, id).stepPullRequests[0]?.intakeLabel).toBe("sacty");
+      // 起動し直しても、いまはラベルを付けない設定なら付けない（記録もしない）
+      const off = await restart(new MemorySettingsStore({}));
+      expect(off.pulls.labels).toEqual([]);
+      expect(types(off.service, id).at(-1)).toBe("StepSubmitted");
+      off.activity.close();
+      // 起動し直した後の PR の確認で付けて記録する。次の確認では重ねて付けない
+      const again = await restart();
+      expect(again.pulls.labels.map((l) => [l.number, l.label])).toEqual([[7, "sacty"]]);
+      expect(types(again.service, id).at(-1)).toBe("PullRequestLabeled");
+      await again.service.checkPullRequests();
+      expect(again.pulls.labels).toHaveLength(1);
+      again.activity.close();
+      activity.close();
+
+      // 実装の PR（9）も同じ
+      rmSync(dbPath, { force: true });
+      const implPulls = new FakePulls();
+      const made = await start([out("# 要求要件 v1"), design(), implement(), review()], {
+        pulls: implPulls,
+      });
+      await merge(made, "requirements");
+      await made.service.runNext(made.id);
+      await merge(made, "design");
+      const implStopped = stopAt(implPulls, 9);
+      void drain(made.service);
+      await implStopped.reached;
+      expect(taskOf(made.service, made.id).pullRequest).toMatchObject({
+        number: 9,
+        intakeLabel: "sacty",
+      });
+      expect(types(made.service, made.id).at(-1)).toBe("StepSubmitted");
+      const resumed = await restart();
+      expect(resumed.pulls.labels.map((l) => l.number)).toEqual([9]);
+      expect(taskOf(resumed.service, made.id).pullRequestLabels?.map((l) => l.number)).toEqual([
+        7, 8, 9,
+      ]);
+      resumed.activity.close();
+      made.activity.close();
+    });
+
+    it("sacty が作っていない PR に取り込むラベルが付いていても、これまでどおりの取り込み（工程はオーケストレーターが選ぶ）", async () => {
+      const { activity, service } = await start([out("# 要求要件 v1")]);
+      const [other] = service.importIssues([labeledPr(40)]);
+      expect(other?.source).toMatchObject({ number: 40 });
+      expect(other?.source?.review).toBeUndefined();
+      activity.close();
+      rmSync(dbPath, { force: true });
+      // 取り込むラベルとレビュー用のラベルが同じでも、sacty の PR は sacty のレビュー（元のタスクに指摘が届く）にする
+      const same = await start([out("# 要求要件 v1")], {
+        settings: new MemorySettingsStore({ intakeLabel: "sacty", reviewLabel: "Sacty" }),
+      });
+      expect(
+        same.service
+          .importIssues([labeledPr(41), labeledPr(7)])
+          .map((t) => [t.source?.number, t.source?.review]),
+      ).toEqual([
+        [41, "label"],
+        [7, "sacty"],
+      ]);
+      same.activity.close();
+      rmSync(dbPath, { force: true });
+      // PR のトリアージを Off にしていれば、sacty の PR も取り込まない
+      const settings = new MemorySettingsStore({
+        intakeLabel: "sacty",
+        triageOff: ["pullRequests"],
+      });
+      const off = await start([out("# 要求要件 v1")], { settings });
+      expect(off.service.importIssues([labeledPr(7)])).toEqual([]);
+      off.activity.close();
     });
   });
 });
@@ -14593,5 +15339,613 @@ describe("タスクのテンプレート「Sacty セットアップ」（PBI-90�
     const missing = await post({ template: "sacty-setup", projectId: "default" });
     expect(missing.status).toBe(409);
     activity.close();
+  });
+});
+
+describe("マージの後の CI/CD とデプロイの監視（PBI-89）", () => {
+  const MERGE = "a".repeat(40);
+  const SKILL = ".agents/skills/deployment-observer/SKILL.md";
+
+  /** CI/CD の状態の偽物。snap が Error なら読めない。 */
+  class FakeCi implements CiStatusReader {
+    snap: CiSnapshot | Error = { checks: [], failedRuns: [] };
+    failuresList: CiFailure[] = [];
+    calls: { repo: string; token: string; commit: string }[] = [];
+    failureCalls: { secrets: readonly string[] }[] = [];
+    async snapshot(input: { repo: string; token: string; commit: string }) {
+      this.calls.push(input);
+      if (this.snap instanceof Error) throw this.snap;
+      return this.snap;
+    }
+    async failures(input: { secrets: readonly string[] }) {
+      this.failureCalls.push({ secrets: [...input.secrets] });
+      return this.failuresList;
+    }
+  }
+  const success = (): CiSnapshot => ({
+    checks: [{ kind: "workflow", name: "CI", status: "completed", conclusion: "success" }],
+    failedRuns: [],
+  });
+  const failing = (): CiSnapshot => ({
+    checks: [
+      {
+        kind: "workflow",
+        name: "CI",
+        status: "completed",
+        conclusion: "failure",
+        url: "https://github.com/acme/app/actions/runs/1",
+      },
+    ],
+    failedRuns: [
+      {
+        id: 1,
+        name: "CI",
+        conclusion: "failure",
+        url: "https://github.com/acme/app/actions/runs/1",
+      },
+    ],
+  });
+  const testFailure: CiFailure = {
+    workflow: "CI",
+    job: "test",
+    conclusion: "failure",
+    url: "https://github.com/acme/app/actions/runs/1/job/7",
+    excerpt: "FAIL pay.test.ts\ntoken=[REDACTED]",
+  };
+  const watchedProjects = (on: boolean | null = true) => {
+    const projects = new MemoryProjectStore();
+    projects.put("default", {
+      name: "デフォルト",
+      targets: [{ scope: "repo", target: "https://github.com/acme/app" }],
+      githubAccounts: { "github.com": "me" },
+      ...(on === null ? {} : { deploymentWatch: on }),
+    });
+    return projects;
+  };
+  const types = (svc: TaskService, id: string) => svc.get(id)?.activity.map((e) => e.type) ?? [];
+  const deploymentTypes = (svc: TaskService, id: string) =>
+    types(svc, id).filter((t) => t.startsWith("Deployment"));
+  const checkOut = (v: Record<string, unknown>, output = 1000): AgentOutcome => ({
+    kind: "completed",
+    output: `確かめました\n\n\`\`\`json\n${JSON.stringify({ "sacty-deployment": v })}\n\`\`\``,
+    usage: { input: 0, cacheRead: 0, cacheWrite: 0, output },
+  });
+
+  function setup(
+    options: {
+      projects?: MemoryProjectStore;
+      outcomes?: (AgentOutcome | typeof HOLD)[];
+      ci?: FakeCi;
+      repos?: FakeRepos;
+      config?: () => ConfigResult;
+      activity?: SqliteActivityStore;
+      pulls?: FakePulls;
+      plannerCost?: number;
+    } = {},
+  ) {
+    const activity = options.activity ?? new SqliteActivityStore(dbPath);
+    const ci = options.ci ?? new FakeCi();
+    const clock = { offset: 0 };
+    const made = makeService(activity, options.outcomes as AgentOutcome[], {
+      projects: options.projects ?? watchedProjects(),
+      ci,
+      now: () => Date.now() + clock.offset,
+      ...(options.repos ? { repos: options.repos } : {}),
+      ...(options.config ? { config: options.config } : {}),
+      ...(options.pulls ? { pulls: options.pulls } : {}),
+      planner: async () => ({
+        steps: ["pr"],
+        fallback: false,
+        testCommand: "npm test",
+        costUsd: options.plannerCost ?? 0,
+        estimated: false,
+      }),
+    });
+    /** タスクを PR の承認待ちまで進め、PR をマージして確かめる。 */
+    const merge = async (id: string, mergeCommit: string | null = MERGE) => {
+      for (let i = 0; i < 5 && made.service.get(id)?.task.gate?.step !== "pr"; i++) {
+        await made.service.runNext(id);
+      }
+      const pr = made.service.get(id)?.task.pullRequest;
+      expect(pr?.number).toBeDefined();
+      made.pulls.states[pr?.number ?? 0] = {
+        state: "merged",
+        mergedBy: "reviewer",
+        ...(pr?.commit ? { headSha: pr.commit } : {}),
+        ...(mergeCommit ? { mergeCommit } : {}),
+      };
+      await made.service.checkPullRequests();
+      // すべて終わった CI/CD は、次の確認でも同じなら結果を決める
+      await made.service.checkPullRequests();
+    };
+    const create = (title = "決済API") =>
+      made.service.createTask({ projectId: "default", title, body: "本文" }).id;
+    return { ...made, activity, ci, clock, merge, create };
+  }
+
+  it("設定していない・Off のプロジェクトでは、マージの後に何も記録せず、CI/CD も読まない", async () => {
+    for (const on of [null, false]) {
+      rmSync(dbPath, { force: true });
+      const t = setup({ projects: watchedProjects(on) });
+      const id = t.create();
+      await t.merge(id);
+      expect(isCompleted(t.service.get(id)?.task as Task)).toBe(true);
+      expect(deploymentTypes(t.service, id)).toEqual([]);
+      expect(t.service.get(id)?.task.deployment).toBeUndefined();
+      expect(t.ci.calls).toEqual([]);
+      t.activity.close();
+    }
+  });
+
+  it("実装の PR のマージで、マージのコミットの CI/CD を待ち、通ってスキルが無ければ、デプロイの確認を飛ばして通ったにする", async () => {
+    const ci = new FakeCi();
+    ci.snap = {
+      checks: [{ kind: "workflow", name: "CI", status: "pending" }],
+      failedRuns: [],
+    };
+    const t = setup({ ci });
+    const id = t.create();
+    await t.merge(id);
+    const started = t.service.get(id)?.activity.find((e) => e.type === "DeploymentWatchStarted");
+    expect(started?.payload).toEqual({
+      number: 7,
+      repo: "https://github.com/acme/app",
+      branch: "main",
+      commit: MERGE,
+    });
+    // 監視の開始は、マージの記録と同じ追記（同じ時刻）
+    const mergedAt = t.service.get(id)?.activity.find((e) => e.type === "PullRequestMerged")?.at;
+    expect(started?.at).toBe(mergedAt);
+    expect(ci.calls[0]).toEqual({
+      repo: "https://github.com/acme/app",
+      token: "ghp_secret",
+      commit: MERGE,
+    });
+    expect(t.service.get(id)?.task.deployment).toMatchObject({ state: "waiting", phase: "ci" });
+
+    ci.snap = success();
+    await t.service.checkPullRequests();
+    await t.service.checkPullRequests();
+    expect(t.service.get(id)?.task.deployment).toMatchObject({
+      state: "passed",
+      reason: "no_skill",
+      detail: { code: "deploy.skillMissing" },
+    });
+    // スキルはマージのコミットから探す
+    expect(t.repos.fetchedCommits.at(-1)?.commits).toEqual([MERGE]);
+    expect(t.repos.readCalls.map((c) => [c.commit, c.path])).toEqual([
+      [MERGE, ".agents/skills/deployment-observer/SKILL.md"],
+      [MERGE, ".claude/skills/deployment-observer/SKILL.md"],
+    ]);
+    // 終わった監視は、もう確かめない。エージェントも実行しない
+    const calls = ci.calls.length;
+    await t.service.checkPullRequests();
+    expect(ci.calls).toHaveLength(calls);
+    expect(t.service.queuedTaskIds()).toEqual([]);
+    expect(t.executor.calls).toHaveLength(0);
+    t.activity.close();
+  });
+
+  it("すべて終わっても、次の確認で同じになるまで決めない（後から別のワークフローが現れるのを待つ）", async () => {
+    const ci = new FakeCi();
+    ci.snap = { checks: [{ kind: "workflow", name: "CI", status: "pending" }], failedRuns: [] };
+    const t = setup({ ci });
+    const id = t.create();
+    await t.merge(id);
+    ci.snap = success();
+    await t.service.checkPullRequests();
+    expect(t.service.get(id)?.task.deployment?.state).toBe("waiting");
+    // CI の後に、デプロイのワークフローが現れて失敗した
+    ci.snap = {
+      checks: [
+        ...success().checks,
+        { kind: "workflow", name: "Deploy", status: "completed", conclusion: "failure" },
+      ],
+      failedRuns: [{ id: 2, name: "Deploy", conclusion: "failure" }],
+    };
+    await t.service.checkPullRequests();
+    expect(t.service.get(id)?.task.deployment?.state).toBe("waiting");
+    await t.service.checkPullRequests();
+    expect(t.service.get(id)?.task.deployment).toMatchObject({
+      state: "failed",
+      ci: { failures: [{ workflow: "Deploy", conclusion: "failure" }] },
+    });
+    t.activity.close();
+  });
+
+  it("CI/CD が1つも無いまま5分たったら、CI/CD が無いとして飛ばす（それまでは待つ）", async () => {
+    const t = setup();
+    const id = t.create();
+    await t.merge(id);
+    t.clock.offset = DEPLOYMENT_CI_GRACE_MS - 10_000;
+    await t.service.checkPullRequests();
+    expect(t.service.get(id)?.task.deployment?.state).toBe("waiting");
+    t.clock.offset = DEPLOYMENT_CI_GRACE_MS + 1_000;
+    await t.service.checkPullRequests();
+    expect(t.service.get(id)?.task.deployment).toMatchObject({ state: "skipped", reason: "no_ci" });
+    expect(t.service.get(id)?.activity.at(-1)?.payload).toMatchObject({ result: "none" });
+    t.activity.close();
+  });
+
+  it("マージのコミットが取れなければ、監視を飛ばす（理由を残す）", async () => {
+    const t = setup();
+    const id = t.create();
+    await t.merge(id, null);
+    expect(t.service.get(id)?.task.deployment).toMatchObject({
+      state: "skipped",
+      reason: "no_commit",
+    });
+    expect(t.ci.calls).toEqual([]);
+    t.activity.close();
+  });
+
+  it("CI/CD が終わらなければ、監視を始めてから60分で時間切れ。デーモンを再起動しても待ちは続き、上限は延びない", async () => {
+    const ci = new FakeCi();
+    ci.snap = { checks: [{ kind: "workflow", name: "CI", status: "pending" }], failedRuns: [] };
+    const t = setup({ ci });
+    const id = t.create();
+    await t.merge(id);
+    // 再起動（作業履歴から作り直す）。待ちはそのまま
+    const again = setup({ ci, activity: t.activity });
+    again.service.recoverInterrupted();
+    expect(again.service.get(id)?.task.deployment).toMatchObject({ state: "waiting", phase: "ci" });
+    again.clock.offset = DEPLOYMENT_CI_TIMEOUT_MS - 60_000;
+    await again.service.checkPullRequests();
+    expect(again.service.get(id)?.task.deployment?.state).toBe("waiting");
+    // 読めない（ネットワークなど）ときも、上限を過ぎれば時間切れ
+    ci.snap = new Error("network");
+    again.clock.offset = DEPLOYMENT_CI_TIMEOUT_MS + 1_000;
+    await again.service.checkPullRequests();
+    expect(again.service.get(id)?.task.deployment).toMatchObject({ state: "timed_out" });
+    // 時間切れでは、修正のタスクを作らない
+    expect(again.service.list()).toHaveLength(1);
+    t.activity.close();
+  });
+
+  it("CI/CD が失敗したら、リンクとログの抜粋を入れた修正のタスクを登録し、元のタスクとたどれるようにする", async () => {
+    const ci = new FakeCi();
+    ci.snap = failing();
+    ci.failuresList = [testFailure];
+    const t = setup({ ci });
+    const id = t.create();
+    await t.merge(id);
+    const task = t.service.get(id)?.task;
+    expect(task?.deployment?.state).toBe("failed");
+    expect(task?.deployment?.ci?.failures).toEqual([testFailure]);
+    // ログの抜粋を伏せるため、使ったトークンを渡す
+    expect(ci.failureCalls[0]?.secrets).toContain("ghp_secret");
+    const fixId = task?.deployment?.fix?.taskId ?? "";
+    const fix = t.service.get(fixId)?.task;
+    expect(fix).toMatchObject({
+      start: "deployment",
+      repo: "https://github.com/acme/app",
+      status: "queued",
+      fix: { taskId: id, kind: "ci", depth: 1 },
+    });
+    expect(fix?.title).toBe(`CI/CD の失敗を直す：CI / test（${MERGE.slice(0, 7)}）`);
+    for (const part of [
+      `sacty のタスク ${id}`,
+      "https://github.com/acme/app/pull/7",
+      `https://github.com/acme/app/commit/${MERGE}`,
+      "### CI / test（failure）",
+      "https://github.com/acme/app/actions/runs/1/job/7",
+      "FAIL pay.test.ts",
+    ]) {
+      expect(fix?.body).toContain(part);
+    }
+    expect(JSON.stringify(t.service.get(fixId)?.activity)).not.toContain("ghp_secret");
+    expect(deploymentTypes(t.service, id)).toEqual([
+      "DeploymentWatchStarted",
+      "DeploymentCiFinished",
+      "DeploymentFixRegistered",
+    ]);
+    // 次の確認でも、二重に登録しない
+    await t.service.checkPullRequests();
+    expect(t.service.list()).toHaveLength(2);
+    t.activity.close();
+  });
+
+  it("同じ失敗の修正のタスクが終わっていなければ作らない。修正のタスクのマージでも監視し、連鎖は3段で止める", async () => {
+    const ci = new FakeCi();
+    ci.snap = failing();
+    ci.failuresList = [testFailure];
+    const t = setup({ ci });
+    const first = t.create("一つ目");
+    await t.merge(first);
+    const f1 = t.service.get(first)?.task.deployment?.fix?.taskId ?? "";
+    // 別のタスクが、同じ失敗のままマージされた
+    const second = t.create("二つ目");
+    await t.merge(second);
+    expect(t.service.get(second)?.task.deployment?.suppressed).toMatchObject({
+      reason: "duplicate",
+      existing: f1,
+    });
+    expect(t.service.list().filter((x) => x.fix)).toHaveLength(1);
+
+    // 修正のタスクをマージしても、同じ失敗が続く。修正のタスクから次の修正のタスク（段数 +1）を作る
+    let current = f1;
+    for (const depth of [2, 3]) {
+      await t.merge(current);
+      const next = t.service.get(current)?.task.deployment?.fix?.taskId ?? "";
+      expect(t.service.get(next)?.task.fix).toMatchObject({ taskId: current, depth });
+      current = next;
+    }
+    // 3段目の修正のタスクのマージでも失敗したら、もう作らない
+    await t.merge(current);
+    expect(t.service.get(current)?.task.deployment).toMatchObject({
+      state: "failed",
+      suppressed: { reason: "chain_limit" },
+    });
+    expect(t.service.get(current)?.task.deployment?.fix).toBeUndefined();
+    expect(t.service.list().filter((x) => x.fix)).toHaveLength(MAX_FIX_CHAIN);
+    t.activity.close();
+  });
+
+  it("修正のタスクを登録した後、作る前にデーモンが止まっても、次の確認で作る", async () => {
+    const ci = new FakeCi();
+    ci.snap = failing();
+    ci.failuresList = [testFailure];
+    const t = setup({ ci });
+    const id = t.create();
+    // 監視を始め、CI/CD の失敗の結果と登録だけを書いた（作る前に止まった）
+    await t.merge(id, MERGE);
+    const fixId = t.service.get(id)?.task.deployment?.fix?.taskId ?? "";
+    expect(fixId).not.toBe("");
+    // 作った記録を除いた作業履歴で作り直す
+    const kept = t.activity.all().filter((e) => e.taskId !== fixId);
+    rmSync(join(dir, "copy.db"), { force: true });
+    const copy = new SqliteActivityStore(join(dir, "copy.db"));
+    for (const e of kept) {
+      copy.append({
+        taskId: e.taskId,
+        projectId: e.projectId,
+        events: [{ actor: e.actor, event: { type: e.type, payload: e.payload } as EventInput }],
+      });
+    }
+    const again = setup({ ci, activity: copy });
+    expect(again.service.get(fixId)).toBeUndefined();
+    await again.service.checkPullRequests();
+    expect(again.service.get(fixId)?.task.fix).toMatchObject({ taskId: id, depth: 1 });
+    copy.close();
+    t.activity.close();
+  });
+
+  it("CI/CD が通り、スキルがあれば、マージのコミットの写しでエージェントに確かめさせ、費用をタスクの予算に入れる", async () => {
+    const repos = new FakeRepos();
+    repos.files[MERGE] = { [SKILL]: "# deployment-observer" };
+    const ci = new FakeCi();
+    ci.snap = success();
+    const t = setup({
+      ci,
+      repos,
+      outcomes: [
+        checkOut({ result: "healthy", summary: "200 を返す", evidence: ["GET /health → 200"] }),
+      ],
+    });
+    const id = t.create();
+    await t.merge(id);
+    expect(t.service.get(id)?.task.deployment).toMatchObject({
+      state: "waiting",
+      phase: "check",
+      ci: { result: "passed", skill: SKILL },
+    });
+    expect(t.service.queuedTaskIds()).toEqual([id]);
+    await t.service.runNext(id);
+    const task = t.service.get(id)?.task;
+    expect(task?.deployment).toMatchObject({
+      state: "passed",
+      check: { result: "healthy", summary: "200 を返す", evidence: ["GET /health → 200"] },
+    });
+    // マージのコミットのコードの写しを作業領域にし、スキルの場所を伝える
+    expect(repos.snapshots.at(-1)?.baseCommit).toBe(MERGE);
+    expect(t.executor.scratch.at(-1)).toBe(false);
+    expect(t.executor.dirs.at(-1)).toContain("_deployment");
+    const prompt = t.executor.calls.at(-1)?.command.join(" ") ?? "";
+    expect(prompt).toContain(SKILL);
+    expect(prompt).toContain(MERGE);
+    // 1000 出力トークン = $0.015 を予算に入れる
+    expect(task?.budget.usedUsd).toBeCloseTo(0.015, 6);
+    expect(t.service.get(id)?.activity.at(-1)).toMatchObject({
+      type: "DeploymentChecked",
+      actor: "agent",
+      payload: { costUsd: 0.015, runResult: "completed", agentId: "claude-subscription" },
+    });
+    expect(t.service.queuedTaskIds()).toEqual([]);
+    t.activity.close();
+  });
+
+  it("デプロイ後のアプリがエラーなら、結果と根拠を入れた修正のタスクを登録する。判断できなければ飛ばす（作らない）", async () => {
+    for (const [result, state] of [
+      ["unhealthy", "failed"],
+      ["unknown", "skipped"],
+    ] as const) {
+      rmSync(dbPath, { force: true });
+      const repos = new FakeRepos();
+      repos.files[MERGE] = { [SKILL]: "# skill" };
+      const ci = new FakeCi();
+      ci.snap = success();
+      const t = setup({
+        ci,
+        repos,
+        outcomes: [
+          checkOut({ result, summary: "500 を返す", evidence: ["GET /pay → 500", "ログに NPE"] }),
+        ],
+      });
+      const id = t.create();
+      await t.merge(id);
+      await t.service.runNext(id);
+      const watch = t.service.get(id)?.task.deployment;
+      expect(watch?.state).toBe(state);
+      if (result === "unhealthy") {
+        const fix = t.service.get(watch?.fix?.taskId ?? "")?.task;
+        expect(fix?.fix).toMatchObject({ taskId: id, kind: "deployment", depth: 1 });
+        expect(fix?.body).toContain("500 を返す");
+        expect(fix?.body).toContain("- GET /pay → 500");
+        expect(fix?.body).toContain(SKILL);
+      } else {
+        expect(watch).toMatchObject({ reason: "check_unknown" });
+        expect(watch?.fix).toBeUndefined();
+        expect(t.service.list()).toHaveLength(1);
+      }
+      t.activity.close();
+    }
+  });
+
+  it("答えを読めない・実行に失敗したら、確かめられなかったとして飛ばし、使った費用は記録する", async () => {
+    const repos = new FakeRepos();
+    repos.files[MERGE] = { [SKILL]: "# skill" };
+    const ci = new FakeCi();
+    ci.snap = success();
+    const t = setup({
+      ci,
+      repos,
+      outcomes: [
+        {
+          kind: "completed",
+          output: "結論を書き忘れた",
+          usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 2000 },
+        },
+      ],
+    });
+    const id = t.create();
+    await t.merge(id);
+    await t.service.runNext(id);
+    expect(t.service.get(id)?.task.deployment).toMatchObject({
+      state: "skipped",
+      reason: "check_unknown",
+      detail: { code: "deploy.unreadable" },
+    });
+    expect(t.service.get(id)?.task.budget.usedUsd).toBeCloseTo(0.03, 6);
+    t.activity.close();
+  });
+
+  it("予算の上限に達していたら、デプロイの確認を実行せずに飛ばす（タスクは止めない）", async () => {
+    const repos = new FakeRepos();
+    repos.files[MERGE] = { [SKILL]: "# skill" };
+    const ci = new FakeCi();
+    ci.snap = success();
+    const t = setup({ ci, repos, plannerCost: 2 });
+    const id = t.create();
+    await t.merge(id);
+    expect(t.service.get(id)?.task.budget.usedUsd).toBeGreaterThanOrEqual(1);
+    await t.service.runNext(id);
+    const task = t.service.get(id)?.task;
+    expect(task?.deployment).toMatchObject({
+      state: "skipped",
+      reason: "budget",
+      detail: { code: "deploy.budgetExceeded" },
+    });
+    expect(task?.status).toBe("idle");
+    expect(t.executor.calls).toHaveLength(0);
+    t.activity.close();
+  });
+
+  it("確認の途中でデーモンが止まったら、起動のときに中断として記録して飛ばす（やり直さない）", async () => {
+    const repos = new FakeRepos();
+    repos.files[MERGE] = { [SKILL]: "# skill" };
+    const ci = new FakeCi();
+    ci.snap = success();
+    const t = setup({ ci, repos, outcomes: [HOLD] });
+    const id = t.create();
+    await t.merge(id);
+    void t.service.runNext(id);
+    await t.executor.started.promise;
+    expect(t.service.get(id)?.task.deployment?.check?.result).toBeUndefined();
+    // 再起動
+    const again = setup({ ci, repos, activity: t.activity });
+    again.service.recoverInterrupted();
+    expect(again.service.get(id)?.task.deployment).toMatchObject({
+      state: "skipped",
+      reason: "check_unknown",
+      check: { result: "unknown", failed: { code: "run.daemonStopped" } },
+    });
+    expect(again.service.queuedTaskIds()).toEqual([]);
+    t.activity.close();
+  });
+
+  it("スキルのリンクがリポジトリの外を指せば使わず、理由を残す。中を指せばたどった先を使う", async () => {
+    for (const [target, expected] of [
+      ["../../../../etc", undefined],
+      ["../../.claude/skills/real", ".claude/skills/real/SKILL.md"],
+    ] as const) {
+      rmSync(dbPath, { force: true });
+      const repos = new FakeRepos();
+      repos.links[MERGE] = { ".agents/skills/deployment-observer": target };
+      repos.files[MERGE] = { ".claude/skills/real/SKILL.md": "# skill" };
+      const ci = new FakeCi();
+      ci.snap = success();
+      const t = setup({ ci, repos });
+      const id = t.create();
+      await t.merge(id);
+      const watch = t.service.get(id)?.task.deployment;
+      if (expected) {
+        expect(watch?.ci?.skill).toBe(expected);
+      } else {
+        expect(watch).toMatchObject({
+          state: "passed",
+          reason: "no_skill",
+          detail: {
+            code: "deploy.skillOutside",
+            params: { path: ".agents/skills/deployment-observer/SKILL.md" },
+          },
+        });
+      }
+      t.activity.close();
+    }
+  });
+
+  it("修正のタスクの PR にも取り込むラベルを付け、レビューだけのタスクとして取り込める。そのマージでも監視する（PBI-88 と両立）", async () => {
+    const ci = new FakeCi();
+    ci.snap = failing();
+    ci.failuresList = [testFailure];
+    const t = setup({ ci });
+    const id = t.create();
+    await t.merge(id);
+    // 元のタスクの実装の PR にもラベルを付けている
+    expect(t.pulls.labels.map((l) => l.number)).toEqual([7]);
+    const fixId = t.service.get(id)?.task.deployment?.fix?.taskId ?? "";
+    for (let i = 0; i < 5 && t.service.get(fixId)?.task.gate?.step !== "pr"; i++) {
+      await t.service.runNext(fixId);
+    }
+    const pr = t.service.get(fixId)?.task.pullRequest;
+    expect(pr).toMatchObject({ number: 8, intakeLabel: "sacty" });
+    expect(t.pulls.labels.map((l) => [l.number, l.label])).toEqual([
+      [7, "sacty"],
+      [8, "sacty"],
+    ]);
+    // ラベルの付いた修正のタスクの PR は、レビューだけのタスクとして取り込む
+    const [review] = t.service.importIssues([
+      {
+        repo: "https://github.com/acme/app",
+        number: 8,
+        title: "CI/CD の失敗を直す",
+        body: "",
+        url: "https://github.com/acme/app/pull/8",
+        labels: ["sacty"],
+        pullRequest: true,
+      },
+    ]);
+    expect(review?.source).toMatchObject({ kind: "github_pull_request", number: 8 });
+    expect(review?.source?.review).toBe("sacty");
+    // 修正のタスクの PR のマージでも監視を始める（レビューのタスクは監視しない）
+    await t.merge(fixId);
+    expect(t.service.get(fixId)?.task.deployment?.state).toBe("failed");
+    expect(t.service.get(review?.id ?? "")?.task.deployment).toBeUndefined();
+    t.activity.close();
+  });
+
+  it("元のタスクを中止したら、監視をやめる", async () => {
+    const ci = new FakeCi();
+    ci.snap = { checks: [{ kind: "workflow", name: "CI", status: "pending" }], failedRuns: [] };
+    const t = setup({ ci });
+    const id = t.create();
+    await t.merge(id);
+    await t.service.cancel(id);
+    const calls = ci.calls.length;
+    ci.snap = failing();
+    await t.service.checkPullRequests();
+    expect(ci.calls).toHaveLength(calls);
+    expect(t.service.list()).toHaveLength(1);
+    t.activity.close();
   });
 });

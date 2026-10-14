@@ -556,6 +556,18 @@ export class SessionLogStore {
     return join(this.root, taskId, runId, AGENT_FILES_DIR);
   }
 
+  /** タスクの実行のログを置く場所（runs/<タスク>。PBI-91）。ID の形が正しくなければ undefined（有無は見ない）。 */
+  taskDir(taskId: string): string | undefined {
+    if (!validLogId(taskId)) return undefined;
+    return join(this.root, taskId);
+  }
+
+  /** 実行の記録（meta.json）の場所（PBI-91）。ID の形が正しくなければ undefined（ファイルの有無は見ない）。 */
+  metaPath(taskId: string, runId: string): string | undefined {
+    if (!validLogId(taskId) || !validLogId(runId)) return undefined;
+    return join(this.root, taskId, `${runId}.meta.json`);
+  }
+
   /** 生のファイルの場所。ID の形が正しくなければ undefined（ファイルの有無は見ない）。 */
   path(taskId: string, runId: string, file: SessionLogFile): string | undefined {
     if (!validLogId(taskId) || !validLogId(runId)) return undefined;

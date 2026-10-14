@@ -39,6 +39,7 @@
 
 - テンプレートを足すときは、`TaskTemplate` に名前を足し、`templateTask` に題と説明、画面の文言に名前を足す。
 - ゴールの文は日本語の固定の文で、画面の言語に合わせて変えない（工程のエージェントへの指示と同じ）。
-- `deployment-observer` の置き場所・答えの形（PBI-89 の `DEPLOYMENT_SKILL_PATHS`・`DEPLOYMENT_HEADING`）を変えるときは、
-  `apps/daemon/src/task-templates.ts` のゴールも合わせて直す。
+- ゴールに書く `deployment-observer` の置き場所・リンク先・答えの見出しは、PBI-89 の `DEPLOYMENT_SKILL_PATHS`・`DEPLOYMENT_HEADING`
+  から作る（同じ値を2か所に持たない）。答えの形（`result`・`summary`・`evidence`）を変えるときは、ゴールの例も合わせて直す
+  （監視が読めることをテストで確かめる）。
 - 仕様は [タスクと工程](../spec/tasks-and-steps.md#タスクのテンプレート)。

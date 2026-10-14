@@ -81,6 +81,56 @@ describe("認証方式ごとの環境変数", () => {
     expect(codexInv.sessionFiles).toBe("codex");
   });
 
+  it("作業領域の外で読ませる場所は、Claude Code には --add-dir で渡し、Codex には足さない（PBI-91）", async () => {
+    const claude: AgentConfig = {
+      ...base,
+      id: "c",
+      runtime: "claude-code",
+      auth: { mode: "subscription", secret: "claude-oauth-token" },
+    };
+    const inv = await buildInvocation(
+      claude,
+      "prompt",
+      secrets,
+      () => {},
+      "chat",
+      undefined,
+      undefined,
+      undefined,
+      ["/sacty-logs"],
+    );
+    expect(inv.command).toEqual([
+      "claude",
+      "-p",
+      "prompt",
+      "--output-format",
+      "stream-json",
+      "--verbose",
+      "--add-dir",
+      "/sacty-logs",
+    ]);
+    expect((await buildInvocation(claude, "prompt", secrets)).command).not.toContain("--add-dir");
+    const codex: AgentConfig = {
+      ...base,
+      id: "x",
+      runtime: "codex",
+      auth: { mode: "api-key", secret: "openai-key" },
+    };
+    const codexInv = await buildInvocation(
+      codex,
+      "prompt",
+      new MemorySecretStore({ "openai-key": "sk-x" }),
+      () => {},
+      "chat",
+      undefined,
+      undefined,
+      undefined,
+      ["/sacty-logs"],
+    );
+    expect(codexInv.command).not.toContain("--add-dir");
+    expect(codexInv.command.at(-1)).toBe("prompt");
+  });
+
   it("コンテキストの MCP サーバーの秘密情報は、実行時に環境変数で渡し、Claude Code にはそのサーバーだけを使わせる（PBI-6）", async () => {
     const store = new MemorySecretStore({
       "claude-oauth-token": "oauth-value",

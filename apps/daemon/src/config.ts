@@ -88,6 +88,12 @@ const StubBehavior = z.object({
   export: z
     .string()
     .default('```json\n{"sacty-export": {"error": "スタブのため書き出しません"}}\n```'),
+  /** マージの後に、デプロイ後のアプリを確かめたときの出力（PBI-89）。 */
+  deployment: z
+    .string()
+    .default(
+      '```json\n{"sacty-deployment": {"result": "unknown", "summary": "スタブのため確かめません", "evidence": []}}\n```',
+    ),
   /** ゴールガーディアンとして、PR の指摘の戻し先を判断したときの出力（PBI-14b）。 */
   rework: z
     .string()
@@ -226,7 +232,7 @@ const ConfigFile = z
      * 工程とオーケストレーターごとに使う AI（PBI-40）。書かなければ default_agent（統合レビューは guardian_agent）。
      */
     step_agents: z
-      .partialRecord(z.enum([...StepKey.options, "orchestrator"]), z.string())
+      .partialRecord(z.enum([...StepKey.options, "orchestrator", "deployment"]), z.string())
       .default({}),
     /** ゴールガーディアンに使うAI。省略すると default_agent。 */
     guardian_agent: z.string().optional(),
@@ -498,7 +504,7 @@ export type AgentConfig = z.infer<typeof Agent> & {
 };
 
 /** 工程・オーケストレーターの役割（step_agents のキー。PBI-40）。 */
-export type AgentRoleKey = StepKey | "orchestrator";
+export type AgentRoleKey = StepKey | "orchestrator" | "deployment";
 
 /**
  * 役割に使う AI（PBI-40）。step_agents に書いてあればそれ、無ければ default_agent。統合レビューはゴールガーディアンが
@@ -770,6 +776,7 @@ default_agent: claude-subscription
 #   requirements: sol-high
 #   design: sol-high
 #   implement: sol-medium
+#   deployment: luna-low   # マージの後のデプロイの確認（deployment-observer のスキル）
 
 # OpenAI 互換（Responses API）の接続先。組織の AI gateway など（Codex の model_providers の base_url・env_key と同じ）。
 # Codex のエージェントは provider: <名前> で使う。via_gateway: true なら、sacty のゲートウェイが API キーを付けて中継し、

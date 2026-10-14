@@ -1,10 +1,17 @@
+import { posix } from "node:path";
 import { TASK_BODY_MAX, TASK_TITLE_MAX, type TaskTemplate } from "@sacty/core";
+import { DEPLOYMENT_HEADING, DEPLOYMENT_SKILL_PATHS } from "./deployment.js";
 
-/** デプロイの確認のスキルの名前（PBI-89 のマージの後の監視が探す。PBI-90）。 */
-export const DEPLOYMENT_SKILL_NAME = "deployment-observer";
-
-/** デプロイの確認のスキルの答えの見出し（PBI-89 の deployment.ts の DEPLOYMENT_HEADING と同じ。PBI-90）。 */
-export const DEPLOYMENT_ANSWER_HEADING = "sacty-deployment";
+/**
+ * デプロイの確認のスキル（PBI-89 のマージの後の監視が探すもの）。置き場所は DEPLOYMENT_SKILL_PATHS から作り、二か所に
+ * 持たない（PBI-90）。原本は .agents/skills/ の下、Claude Code 用は .claude/skills/ の下の、原本へのシンボリックリンク。
+ */
+const [SKILL_ORIGINAL, SKILL_FOR_CLAUDE] = DEPLOYMENT_SKILL_PATHS;
+const SKILL_DIR = posix.dirname(SKILL_ORIGINAL);
+const SKILL_LINK = posix.dirname(SKILL_FOR_CLAUDE);
+const SKILL_NAME = posix.basename(SKILL_DIR);
+/** Claude Code 用のリンクから見た、原本のディレクトリへの相対パス（例 ../../.agents/skills/deployment-observer）。 */
+const SKILL_LINK_TARGET = posix.relative(posix.dirname(SKILL_LINK), SKILL_DIR);
 
 /** リポジトリの URL から、題に出す短い名前（owner/name）を作る。形が違えば、そのまま。 */
 function shortName(repo: string): string {
@@ -17,7 +24,7 @@ function shortName(repo: string): string {
  * 足りないものを整える PR を作らせる。あらゆる言語・構成のリポジトリに通じるよう、特定の言語・ツールに寄せない。
  */
 function setupBody(repo: string): string {
-  const skill = DEPLOYMENT_SKILL_NAME;
+  const skill = SKILL_NAME;
   return [
     "対象のリポジトリを sacty で扱えるように、AI エージェント（Claude Code・Codex など）向けの設定を検査し、足りないものを整える PR を作ってください。",
     "このタスクは、sacty のタスクのテンプレート「Sacty セットアップ」で作ったものです。",
@@ -39,14 +46,14 @@ function setupBody(repo: string): string {
     `4. デプロイの確認のスキル \`${skill}\`（CI/CD でデプロイしているリポジトリだけ）`,
     `   - sacty は、タスクの PR のマージの後に CI/CD を見届け、通ったらこのスキルに従ってエージェントにデプロイの完了とデプロイ後のアプリの状態を確かめさせる。スキルが無ければ、デプロイの確認を飛ばす。`,
     "   - CI/CD の定義（ワークフローなど）を読み、マージでデプロイしているかを判断する。デプロイしていなければ作らず、その判断と根拠を報告する。",
-    `   - 置き場所：原本を \`.agents/skills/${skill}/SKILL.md\` に置き、Claude Code 用の \`.claude/skills/${skill}\` は、原本のディレクトリへの相対のシンボリックリンク（\`../../.agents/skills/${skill}\`）にする。二重に管理しない。ほかのスキルも、同じく \`.agents/skills/\` を原本にする。`,
+    `   - 置き場所：原本を \`${SKILL_ORIGINAL}\` に置き、Claude Code 用の \`${SKILL_LINK}\` は、原本のディレクトリへの相対のシンボリックリンク（\`${SKILL_LINK_TARGET}\`）にする。二重に管理しない。ほかのスキルも、同じく \`${posix.dirname(SKILL_DIR)}/\` を原本にする。`,
     `   - SKILL.md の先頭に、\`name: ${skill}\` と \`description\`（いつ使うスキルか）の front matter を書く。`,
     "   - 本文に書くこと：何をデプロイの完了とみなすか（どの仕組み・どの環境へ・何を見れば終わったとわかるか）、デプロイ後のアプリの確かめ方（ヘルスチェック・主な画面や API・ログ・監視など）、つなぎ方（使う接続先・MCP サーバー・コマンド。秘密情報は名前だけ）、エラーとみなす基準。",
     "   - 本文に必ず書く約束：確かめるだけにし、コード・アプリ・データ・設定を変更しない（デプロイのやり直し・ロールバックもしない）。秘密情報を出力に書かない。デプロイが終わらない・確かめる手段が無いなど判断できないときは unknown にする。",
     "   - 最後の答えの形（sacty が読む）：次の JSON を、```json の囲みで出す。result は healthy（正しく動いている）・unhealthy（エラーになっている）・unknown（判断できない）。",
     "",
     "     ```json",
-    `     {"${DEPLOYMENT_ANSWER_HEADING}": {"result": "healthy | unhealthy | unknown", "summary": "結果の要点", "evidence": ["根拠（確かめたこと・見たログやレスポンスの要点）"]}}`,
+    `     {"${DEPLOYMENT_HEADING}": {"result": "healthy | unhealthy | unknown", "summary": "結果の要点", "evidence": ["根拠（確かめたこと・見たログやレスポンスの要点）"]}}`,
     "     ```",
     "",
     "## 進め方",

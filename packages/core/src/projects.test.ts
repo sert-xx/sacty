@@ -219,6 +219,15 @@ describe("プロジェクト定義のエクスポート・インポート（PBI-
     ).toThrow();
   });
 
+  it("マージの後の監視（PBI-89）は、On のときだけ書き出し、読める", () => {
+    const on = exportProject({ ...full, deploymentWatch: true });
+    expect(on.project.deploymentWatch).toBe(true);
+    expect(ProjectExport.parse(JSON.parse(JSON.stringify(on)))).toEqual(on);
+    expect("deploymentWatch" in exportProject({ ...full, deploymentWatch: false }).project).toBe(
+      false,
+    );
+  });
+
   it("形式・版の違うファイルや、知らない項目（秘密情報など）は読まない", () => {
     const ok = exportProject(full);
     expect(() => ProjectExport.parse({ ...ok, sacty: "task" })).toThrow(/input\.notExportFile/);
