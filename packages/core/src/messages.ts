@@ -301,6 +301,17 @@ const PARAMS = {
   "context.reservedSetting": z.object({ from: z.string(), file: z.string(), key: z.string() }),
   "context.hostPlatform": z.object({ from: z.string(), name: z.string() }),
   "context.hostMcpOverride": z.object({ from: z.string(), name: z.string() }),
+  "context.mcpHostUnavailable": z.object({ name: z.string(), from: z.string(), detail: TextParam }),
+  "context.mcpHostReadyTimeout": z.object({
+    name: z.string(),
+    from: z.string(),
+    seconds: z.number(),
+  }),
+  "context.mcpHostCommandMissing": z.object({
+    name: z.string(),
+    from: z.string(),
+    command: z.string(),
+  }),
   "context.duplicateSkill": z.object({
     from: z.string(),
     name: z.string(),
@@ -748,6 +759,12 @@ const ja: MessageDictionary = {
     `${from} の platforms.yaml の外部 PF「${name}」は、config.yaml の gateway.platforms に同じ名前があるため、config.yaml のものを使いました。`,
   "context.hostMcpOverride": ({ from, name }) =>
     `${from} の mcp.yaml の MCP サーバー「${name}」は、config.yaml の gateway.mcp_servers に同じ名前があるため、config.yaml のもの（ホストの MCP サーバー）を使いました。`,
+  "context.mcpHostUnavailable": ({ name, from, detail }, text) =>
+    `${from} の mcp.yaml の MCP サーバー「${name}」をホストで起動できません：${text(detail)}。1分ごとに起動し直します（準備ができるまで、エージェントはこの MCP を使えません）。`,
+  "context.mcpHostReadyTimeout": ({ name, from, seconds }) =>
+    `${from} の mcp.yaml の MCP サーバー「${name}」の準備が、ホストで ${seconds} 秒待ってもできません（起動の途中）。準備ができるまで、エージェントはこの MCP を使えません。`,
+  "context.mcpHostCommandMissing": ({ name, from, command }) =>
+    `${from} の mcp.yaml の MCP サーバー「${name}」のコマンド「${command}」が、sacty を動かすホストに見つかりません。ホストに入れるか、コンテナの中で起動するなら、このサーバーに via_gateway: false を書いてください。`,
   "context.duplicateSkill": ({ from, name, path, usedPath }) =>
     `${from} のスキル「${name}」が skills/${usedPath} と skills/${path} の両方にあるため、skills/${usedPath} を使いました。`,
   "context.mcpTimeoutOverRun": ({ name, key, seconds, minutes }) =>
@@ -1128,6 +1145,12 @@ const en: MessageDictionary = {
     `The external platform "${name}" in platforms.yaml of ${from} has the same name as one in gateway.platforms of config.yaml, so the one in config.yaml was used.`,
   "context.hostMcpOverride": ({ from, name }) =>
     `The MCP server "${name}" in mcp.yaml of ${from} has the same name as one in gateway.mcp_servers of config.yaml, so the one in config.yaml (the host MCP server) was used.`,
+  "context.mcpHostUnavailable": ({ name, from, detail }, text) =>
+    `The MCP server "${name}" in mcp.yaml of ${from} could not be started on the host: ${text(detail)}. sacty restarts it every minute (the agent cannot use it until it is ready).`,
+  "context.mcpHostReadyTimeout": ({ name, from, seconds }) =>
+    `The MCP server "${name}" in mcp.yaml of ${from} is still not ready on the host after waiting ${seconds} seconds (it is starting). The agent cannot use it until it is ready.`,
+  "context.mcpHostCommandMissing": ({ name, from, command }) =>
+    `The command "${command}" of the MCP server "${name}" in mcp.yaml of ${from} was not found on the host running sacty. Install it on the host, or write via_gateway: false for this server to start it in the container.`,
   "context.duplicateSkill": ({ from, name, path, usedPath }) =>
     `${from} has the skill "${name}" in both skills/${usedPath} and skills/${path}, so skills/${usedPath} was used.`,
   "context.mcpTimeoutOverRun": ({ name, key, seconds, minutes }) =>

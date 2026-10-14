@@ -252,10 +252,27 @@ function PreviewBody({ preview }: { preview: ContextPreview }) {
                       t.mcpHost
                     ) : m.origin.kind === "gateway" ? (
                       <span className={mono}>{t.mcpGateway(m.origin.url)}</span>
+                    ) : m.origin.kind === "hostCommand" ? (
+                      <span className={mono}>
+                        {t.mcpHostCommand([m.origin.command, ...m.origin.args].join(" "))}
+                      </span>
                     ) : (
                       t.mcpDirect
                     )}
                   </div>
+                  {m.origin.kind === "hostCommand" && (
+                    <div className="text-muted-foreground">{t.mcpHostCwd(m.origin.cwd)}</div>
+                  )}
+                  {m.origin.kind === "hostCommand" && Object.keys(m.origin.env).length > 0 && (
+                    <div>
+                      <span className="text-muted-foreground">{t.mcpHostEnv}: </span>
+                      <span className={mono}>
+                        {Object.entries(m.origin.env)
+                          .map(([k, v]) => `${k}=${headerValue(v)}`)
+                          .join(" / ")}
+                      </span>
+                    </div>
+                  )}
                   {m.origin.kind === "gateway" && Object.keys(m.origin.headers).length > 0 && (
                     <div>
                       <span className="text-muted-foreground">{t.mcpHeaders}: </span>

@@ -1,4 +1,6 @@
+import { accessSync, constants, statSync } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { delimiter, isAbsolute, join, resolve } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
@@ -69,6 +71,13 @@ export type HostMcpSpec = {
   /** エージェントに渡す時間切れ（秒。PBI-75）。変えても MCP サーバーは起動し直さない。 */
   startupTimeoutSec?: number;
   toolTimeoutSec?: number;
+  /** 作業ディレクトリ（書かなければデーモンのもの。PBI-84）。相対パスのコマンドも、ここから探す。 */
+  cwd?: string;
+  /**
+   * コンテキストの mcp.yaml の MCP サーバー（PBI-84）。name はゲートウェイの中の名前（プロジェクトと中身ごと）なので、
+   * 理由（画面・作業履歴・エージェントへの 503）には、mcp.yaml の名前と層を出す。
+   */
+  context?: { name: string; from: string };
 };
 
 export function toHostMcp(name: string, file: z.infer<typeof HostMcpFile>): HostMcpSpec {
@@ -133,6 +142,42 @@ const STDERR_KEEP = 64 * 1024;
 const STDERR_IN_REASON = 300;
 const REASON_MAX = 600;
 
+/** 起動するコマンドがホストに無い（PBI-84）。 */
+export class CommandNotFoundError extends Error {
+  constructor(readonly command: string) {
+    super(`the command "${command}" was not found on the host`);
+  }
+}
+
+/**
+ * コマンドがホストにあるか（PBI-84）。/ を含むものは作業ディレクトリから、ほかは PATH から探す（spawn と同じ）。
+ * 実行できるファイルが無ければ CommandNotFoundError。
+ */
+export function assertCommand(command: string, cwd: string | undefined, path: string | undefined) {
+  const executable = (file: string) => {
+    try {
+      accessSync(file, constants.X_OK);
+      return statSync(file).isFile();
+    } catch {
+      return false;
+    }
+  };
+  if (command.includes("/")) {
+    const file = isAbsolute(command) ? command : resolve(cwd ?? process.cwd(), command);
+    if (executable(file)) return;
+  } else {
+    for (const dir of (path ?? "").split(delimiter)) {
+      if (
+        dir &&
+        executable(join(isAbsolute(dir) ? dir : resolve(cwd ?? process.cwd(), dir), command))
+      ) {
+        return;
+      }
+    }
+  }
+  throw new CommandNotFoundError(command);
+}
+
 /** 起動できなかった（標準エラーの末尾を、伏せる前の形で持つ）。 */
 export class StartError extends Error {
   constructor(
@@ -165,12 +210,16 @@ const withTimeout = <T>(promise: Promise<T>, ms: number, what: string): Promise<
 const stdioConnector =
   (processes: HostMcpProcesses): HostMcpConnector =>
   async (spec, env) => {
+    const merged = { ...(process.env as Record<string, string>), ...env };
+    // コマンドがホストに無い（npx・uvx などを入れていない）ときは、起動する前に、わかる理由にする（PBI-84）
+    assertCommand(spec.command, spec.cwd, merged.PATH);
     const transport = new GroupStdioTransport(
       {
         name: spec.name,
         command: spec.command,
         args: spec.args,
-        env: { ...(process.env as Record<string, string>), ...env },
+        env: merged,
+        ...(spec.cwd ? { cwd: spec.cwd } : {}),
       },
       processes,
     );
@@ -303,7 +352,7 @@ export class HostMcpServers {
 
   private async readyOne(name: string): Promise<DaemonMessage | undefined> {
     const first = this.states.get(name);
-    if (!first) return message("gateway.mcpUnavailable", { name, detail: "not configured" });
+    if (!first) return unavailable({ name }, "not configured");
     const limitMs = this.deps.readyWaitMs ?? first.spec.readyTimeoutSec * 1000;
     const deadline = Date.now() + limitMs;
     // いまの設定で起動した接続だけを、準備ができたとみなす（command・args・env などを変えて起動し直している途中の、
@@ -311,21 +360,24 @@ export class HostMcpServers {
     const usable = (s: State) => !!s.current && !s.expired && s.currentKey === s.key;
     for (;;) {
       const state = this.states.get(name);
-      if (!state) return message("gateway.mcpUnavailable", { name, detail: "not configured" });
+      if (!state) return unavailable(first.spec, "not configured");
       if (usable(state)) return undefined;
       // 起動の途中でなければ（起動に失敗して、起動し直すのを待っている）、待たずに理由を返す
       if (!state.starting) {
         return (
           state.problem ??
-          message("gateway.mcpUnavailable", {
-            name,
-            detail: state.current ? "not restarted with the changed settings" : "not started",
-          })
+          unavailable(
+            state.spec,
+            state.current ? "not restarted with the changed settings" : "not started",
+          )
         );
       }
       const left = deadline - Date.now();
       if (left <= 0) {
-        return message("gateway.mcpReadyTimeout", { name, seconds: Math.round(limitMs / 1000) });
+        const seconds = Math.round(limitMs / 1000);
+        return state.spec.context
+          ? message("context.mcpHostReadyTimeout", { ...state.spec.context, seconds })
+          : message("gateway.mcpReadyTimeout", { name, seconds });
       }
       // 起動が終わる（終わった後に設定の変更で起動し直すなら、それも待つ）か、上限の時間が経つまで待つ
       let timer: NodeJS.Timeout | undefined;
@@ -390,7 +442,13 @@ export class HostMcpServers {
         // 理由（画面・ログ・エージェントへの 503）には、秘密情報を伏せてから切り詰めたものだけを出す
         // （MCP サーバーが認証の失敗で秘密情報を標準エラーに出すこともある。PBI-36 レビュー指摘）
         const detail = startFailure(error, secrets);
-        state.problem = message("gateway.mcpUnavailable", { name, detail });
+        state.problem =
+          error instanceof CommandNotFoundError && spec.context
+            ? message("context.mcpHostCommandMissing", {
+                ...spec.context,
+                command: error.command,
+              })
+            : unavailable(spec, detail);
         this.deps.log?.(`[gateway] host MCP ${name}: not ready: ${detail}`);
         state.timer = setTimeout(
           () => void this.restart(name, "retry"),
@@ -477,7 +535,7 @@ export class HostMcpServers {
           error: {
             code: -32000,
             message: state
-              ? `sacty gateway: the MCP server "${name}" is not ready (it is starting or re-authenticating)${reason}. Try again later.`
+              ? `sacty gateway: the MCP server "${state.spec.context?.name ?? name}" is not ready (it is starting or re-authenticating)${reason}. Try again later.`
               : `sacty gateway: unknown MCP server "${name}"`,
           },
           id: null,
@@ -508,7 +566,7 @@ export class HostMcpServers {
     const list = { timeout: listTimeout };
     const capabilities = client.getServerCapabilities() ?? {};
     const server = new Server(
-      { name: `sacty-gateway/${name}`, version: "0.1.0" },
+      { name: `sacty-gateway/${spec?.context?.name ?? name}`, version: "0.1.0" },
       {
         capabilities: {
           ...(capabilities.tools ? { tools: {} } : {}),
@@ -590,6 +648,13 @@ export class HostMcpServers {
   }
 }
 
+/** 準備ができない理由（コンテキストの MCP サーバーは、mcp.yaml の名前と層で示す。PBI-84）。 */
+function unavailable(spec: Pick<HostMcpSpec, "name" | "context">, detail: string): DaemonMessage {
+  return spec.context
+    ? message("context.mcpHostUnavailable", { ...spec.context, detail })
+    : message("gateway.mcpUnavailable", { name: spec.name, detail });
+}
+
 /** 起動できなかった理由。秘密情報を伏せてから、標準エラーの末尾を添えて切り詰める。 */
 function startFailure(error: unknown, secrets: readonly string[]): string {
   const hide = (text: string) => secrets.reduce((t, secret) => hideSecret(t, secret), text);
@@ -606,5 +671,5 @@ function errorTextOf(text: DaemonText): string {
     ? text
     : typeof text.params?.detail === "string"
       ? text.params.detail
-      : text.code;
+      : renderMessage(text, "en");
 }

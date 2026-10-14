@@ -90,6 +90,13 @@ const McpServer = z.union([
       env: z
         .record(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/, code("input.envName")), McpValue)
         .default({}),
+      /**
+       * ホストで起動してゲートウェイ経由で使うか（PBI-84。既定はホスト）。ホストなら、コマンドはホストで起動し（作業
+       * ディレクトリは、このサーバーを書いた層のリポジトリの写し）、エージェントにはゲートウェイの URL と実行ごとの
+       * トークンだけを渡す。env の秘密情報はホストで取り出す（コンテナには渡さない）。false なら、これまでどおり
+       * コンテナの中で起動する（秘密情報の値は環境変数でコンテナに渡す）。
+       */
+      via_gateway: z.boolean().default(true),
       ...McpTimeouts,
     })
     .strict(),
@@ -151,6 +158,9 @@ export type ContextLayer = ContextRef & {
   /** この層のエージェントの設定（`agents/` の下。無ければ空）。 */
   agents: AgentSettings;
 };
+
+/** MCP サーバーを書いた層（PBI-84）。dir は取得した層のディレクトリ（実行の後に消える）。 */
+export type McpLayer = { repo: string; ref?: string; commit: string; dir: string };
 
 /** エージェントの設定（Codex は config.toml、Claude Code は settings.json の中身）。 */
 export type AgentSettings = { codex: Record<string, unknown>; claude: Record<string, unknown> };
@@ -584,8 +594,11 @@ export type ComposedContext = {
   rules: string;
   /** スキル（名前ごと。どの層のものか）。 */
   skills: { name: string; dir: string; from: string }[];
-  /** MCP サーバー（名前ごと。どの層のものか）。 */
-  mcp: { name: string; server: McpServer; from: string }[];
+  /**
+   * MCP サーバー（名前ごと。どの層のものか）。layer は、そのサーバーを書いた層（ホストで起動する command のサーバーの
+   * 作業ディレクトリと、使い回しの判断に使う。PBI-84）。ホストの MCP サーバー（config.yaml）には無い。
+   */
+  mcp: { name: string; server: McpServer; from: string; layer?: McpLayer }[];
   /**
    * ゲートウェイの外部 PF（名前ごと。PBI-74）。from に、どの層のものかを持つ。認証は秘密情報の名前のまま
    * （値はホストのゲートウェイだけが取り出す）。
@@ -755,7 +768,19 @@ export function composeContext(
   const mcp = mergeNamed(
     layers,
     "mcp",
-    (layer) => Object.entries(layer.mcp).map(([name, value]) => ({ name, value })),
+    (layer) =>
+      Object.entries(layer.mcp).map(([name, server]) => ({
+        name,
+        value: {
+          server,
+          layer: {
+            repo: layer.repo,
+            ...(layer.ref ? { ref: layer.ref } : {}),
+            commit: layer.commit,
+            dir: layer.dir,
+          },
+        },
+      })),
     warnings,
     effects,
   );
@@ -799,7 +824,12 @@ export function composeContext(
   return {
     rules: rules.join("\n\n"),
     skills: skills.map((s) => ({ name: s.name, dir: s.value, from: s.from })),
-    mcp: mcp.map((m) => ({ name: m.name, server: m.value, from: m.from })),
+    mcp: mcp.map((m) => ({
+      name: m.name,
+      server: m.value.server,
+      from: m.from,
+      layer: m.value.layer,
+    })),
     platforms: platforms.map((p) => ({ ...toPlatform(p.name, p.value), from: p.from })),
     agents,
     agentFiles: {
@@ -828,6 +858,24 @@ export type GatewayMcpServer = {
   startup_timeout_sec?: number;
   tool_timeout_sec?: number;
 };
+
+/**
+ * ホストで起動してゲートウェイ経由にした、コンテキストの command の MCP サーバー（PBI-84）。env の秘密情報は参照のまま
+ * （値はホストで起動するときにだけ取り出す）。layer の dir は取得した層（実行の後に消える）なので、起動する側で写す。
+ */
+export type HostedContextMcp = {
+  name: string;
+  from: string;
+  command: string;
+  args: string[];
+  env: Record<string, string | { secret: string; prefix: string }>;
+  layer: McpLayer;
+  startup_timeout_sec?: number;
+  tool_timeout_sec?: number;
+};
+
+/** ゲートウェイがホストで起動したコンテキストの MCP サーバーへ中継する（PBI-84）。host はゲートウェイの中の名前。 */
+export type HostedMcpRelay = { name: string; host: string };
 
 /** 実行時に、秘密情報の値をこの環境変数でコンテナに渡す（値は prefix + 秘密情報）。 */
 export type ContextSecret = { env: string; secret: string; prefix: string };
@@ -1190,6 +1238,12 @@ export type McpRouting = {
    */
   gatewayOrigin?: string;
   /**
+   * 層の command の MCP サーバー（via_gateway）をホストで起動するか（PBI-84。gatewayOrigin と一緒に使う）。true なら、
+   * ゲートウェイの URL（/ctx-mcp/<名前>）に置き換え、起動するコマンドは hostedMcp として返す（ゲートウェイがホストで
+   * 起動する）。
+   */
+  hostCommands?: boolean;
+  /**
    * 渡す MCP サーバーを、この名前の1つに絞る（成果の書き出し。PBI-56）。決めた接続先のほかは渡さない（使わせない。
    * ほかの MCP サーバーの認証も取り出さない）。
    */
@@ -1207,32 +1261,51 @@ export const HOST_MCP_FROM = "sacty-gateway";
 export function routeMcp(
   composed: ComposedContext,
   routing: McpRouting = {},
-): { composed: ComposedContext; gatewayMcp: GatewayMcpServer[] } {
-  const { hostMcp = [], gatewayOrigin, onlyMcp } = routing;
+): {
+  composed: ComposedContext;
+  gatewayMcp: GatewayMcpServer[];
+  /** ホストで起動する、層の command の MCP サーバー（PBI-84）。 */
+  hostedMcp: HostedContextMcp[];
+} {
+  const { hostMcp = [], gatewayOrigin, hostCommands = false, onlyMcp } = routing;
   const warnings = [...composed.warnings];
   let mcp = composed.mcp;
   // 層の HTTP の MCP サーバーは、ゲートウェイ経由にする（PBI-49）。ホストの MCP サーバーと同じく、認証のヘッダーには
   // 実行ごとのゲートウェイのトークンだけを入れる
   const gatewayMcp: GatewayMcpServer[] = [];
+  const hostedMcp: HostedContextMcp[] = [];
+  const viaGateway = (timeouts: ReturnType<typeof pickTimeouts>, name: string) => ({
+    url: `${gatewayOrigin}/ctx-mcp/${name}`,
+    headers: { Authorization: { secret: GATEWAY_TOKEN_SECRET, prefix: "Bearer " } },
+    via_gateway: true,
+    ...timeouts,
+  });
   if (gatewayOrigin) {
     mcp = mcp.map((m) => {
-      if ("command" in m.server || !m.server.via_gateway) return m;
+      if (!m.server.via_gateway) return m;
       const timeouts = pickTimeouts(m.server);
+      if ("command" in m.server) {
+        // 層の command の MCP サーバーは、ホストで起動してゲートウェイ経由にする（PBI-84）。層の分からないもの（作業
+        // ディレクトリを決められない）は、これまでどおりコンテナの中で起動する
+        if (!hostCommands || !m.layer) return m;
+        hostedMcp.push({
+          name: m.name,
+          from: m.from,
+          command: m.server.command,
+          args: m.server.args,
+          env: m.server.env,
+          layer: m.layer,
+          ...timeouts,
+        });
+        return { ...m, server: viaGateway(timeouts, m.name) };
+      }
       gatewayMcp.push({
         name: m.name,
         url: m.server.url,
         headers: m.server.headers,
         ...timeouts,
       });
-      return {
-        ...m,
-        server: {
-          url: `${gatewayOrigin}/ctx-mcp/${m.name}`,
-          headers: { Authorization: { secret: GATEWAY_TOKEN_SECRET, prefix: "Bearer " } },
-          via_gateway: true,
-          ...timeouts,
-        },
-      };
+      return { ...m, server: viaGateway(timeouts, m.name) };
     });
   }
   if (hostMcp.length > 0) {
@@ -1259,12 +1332,13 @@ export function routeMcp(
   }
   if (onlyMcp !== undefined) mcp = mcp.filter((m) => m.name === onlyMcp);
   warnings.push(...timeoutWarnings(mcp));
+  // ホストの MCP サーバーと同じ名前で置き換えられたもの・絞り込みで外したものは、中継しない（ホストで起動もしない）
+  const kept = (g: { name: string }) =>
+    mcp.some((c) => c.name === g.name && c.from !== HOST_MCP_FROM);
   return {
     composed: { ...composed, mcp, warnings },
-    // ホストの MCP サーバーと同じ名前で置き換えられたもの・絞り込みで外したものは、中継しない
-    gatewayMcp: gatewayMcp.filter((g) =>
-      mcp.some((c) => c.name === g.name && c.from !== HOST_MCP_FROM),
-    ),
+    gatewayMcp: gatewayMcp.filter(kept),
+    hostedMcp: hostedMcp.filter(kept),
   };
 }
 
@@ -1304,9 +1378,9 @@ async function buildContext(
   routing: McpRouting,
 ) {
   const layers = await loadLayers(fetcher, root, work, auth, defaultDir);
-  const { composed, gatewayMcp } = routeMcp(composeContext(layers, runtime), routing);
+  const { composed, gatewayMcp, hostedMcp } = routeMcp(composeContext(layers, runtime), routing);
   const { files, placed } = planContext(composed, runtime, containerDir);
-  return { layers, composed, gatewayMcp, files, placed };
+  return { layers, composed, gatewayMcp, hostedMcp, files, placed };
 }
 
 /**
@@ -1329,13 +1403,20 @@ export async function prepareContext(
   gatewayOrigin?: string,
   /** 渡す MCP サーバーを、この名前の1つに絞る（成果の書き出し。PBI-56。McpRouting の onlyMcp）。 */
   onlyMcp?: string,
+  /** 層の command の MCP サーバーをホストで起動するか（PBI-84。McpRouting の hostCommands）。 */
+  hostCommands?: boolean,
 ): Promise<{
   dir: string;
   layers: { repo: string; ref?: string; commit: string }[];
   warnings: DaemonText[];
   placed: PlacedContext;
-  /** ゲートウェイ経由にした、層の HTTP の MCP サーバーの中継先（PBI-49）。ヘッダーの秘密情報は参照のまま。 */
-  gatewayMcp: GatewayMcpServer[];
+  /**
+   * ゲートウェイ経由にした、層の HTTP の MCP サーバーの中継先（PBI-49）。ヘッダーの秘密情報は参照のまま。ホストで
+   * 起動した command の MCP サーバーの中継（PBI-84）は、呼び出し側が起動してから加える。
+   */
+  gatewayMcp: (GatewayMcpServer | HostedMcpRelay)[];
+  /** ホストで起動する、層の command の MCP サーバー（PBI-84）。層のディレクトリは dispose で消えるので、その前に写す。 */
+  hostedMcp: HostedContextMcp[];
   /** 層で定義した外部 PF（PBI-74。from にどの層のものか）。認証は秘密情報の名前のまま。 */
   platforms: Platform[];
   dispose: () => void;
@@ -1347,6 +1428,7 @@ export async function prepareContext(
       hostMcp,
       gatewayOrigin,
       onlyMcp,
+      hostCommands,
     });
     const dir = join(work, "out");
     writePlanned(built.files, dir);
@@ -1356,6 +1438,7 @@ export async function prepareContext(
       warnings: built.composed.warnings,
       placed: built.placed,
       gatewayMcp: built.gatewayMcp,
+      hostedMcp: built.hostedMcp,
       platforms: built.composed.platforms,
       dispose,
     };
@@ -1401,7 +1484,9 @@ export type ContextPreviewMcp = {
   agent: { command: string; args: string[] } | { url: string };
   /**
    * 元の接続先。direct は agent のまま（コンテナから直接）、gateway はゲートウェイが中継する先（ヘッダーの秘密情報は
-   * 参照の名前のまま）、host はホストで動かす MCP サーバー（config.yaml の gateway.mcp_servers）。
+   * 参照の名前のまま）、host はホストで動かす MCP サーバー（config.yaml の gateway.mcp_servers）、hostCommand は
+   * ゲートウェイがホストで起動する層の command の MCP サーバー（PBI-84。env の秘密情報は参照の名前のまま。作業
+   * ディレクトリは cwd の層のリポジトリの写し）。
    */
   origin:
     | { kind: "direct" }
@@ -1410,7 +1495,14 @@ export type ContextPreviewMcp = {
         url: string;
         headers: Record<string, string | { secret: string; prefix: string }>;
       }
-    | { kind: "host" };
+    | { kind: "host" }
+    | {
+        kind: "hostCommand";
+        command: string;
+        args: string[];
+        env: Record<string, string | { secret: string; prefix: string }>;
+        cwd: string;
+      };
   startup_timeout_sec?: number;
   tool_timeout_sec?: number;
 };
@@ -1534,7 +1626,7 @@ export async function previewContext(
 ): Promise<ContextPreview> {
   const work = mkdtempSync(join(tmpdir(), "sacty-context-"));
   try {
-    const { layers, composed, gatewayMcp, files, placed } = await buildContext(
+    const { layers, composed, gatewayMcp, hostedMcp, files, placed } = await buildContext(
       fetcher,
       root,
       runtime,
@@ -1554,6 +1646,7 @@ export async function previewContext(
       files: previewFiles(files),
       mcp: composed.mcp.map(({ name, from, server }): ContextPreviewMcp => {
         const relayed = gatewayMcp.find((g) => g.name === name);
+        const hosted = hostedMcp.find((h) => h.name === name);
         return {
           name,
           from,
@@ -1564,9 +1657,17 @@ export async function previewContext(
           origin:
             from === HOST_MCP_FROM
               ? { kind: "host" }
-              : relayed
-                ? { kind: "gateway", url: relayed.url, headers: relayed.headers }
-                : { kind: "direct" },
+              : hosted
+                ? {
+                    kind: "hostCommand",
+                    command: hosted.command,
+                    args: hosted.args,
+                    env: hosted.env,
+                    cwd: hosted.from,
+                  }
+                : relayed
+                  ? { kind: "gateway", url: relayed.url, headers: relayed.headers }
+                  : { kind: "direct" },
           ...pickTimeouts(server),
         };
       }),

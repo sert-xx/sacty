@@ -7,6 +7,7 @@ import { DockerExecutor } from "./agents/docker.js";
 import { DockerTestRunner } from "./agents/test-runner.js";
 import { loadConfig, resolveHome } from "./config.js";
 import { DEFAULT_CONTEXT_DIR, GitContextFetcher } from "./context.js";
+import { ContextMcpServers } from "./context-mcp.js";
 import { ALREADY_RUNNING_EXIT_CODE } from "./exit-codes.js";
 import { AiGateway } from "./gateway.js";
 import { GhCliAuth } from "./gh.js";
@@ -101,8 +102,17 @@ const hostMcp = new HostMcpServers({
   processes: hostMcpProcesses,
   log: (line) => console.log(line),
 });
+// コンテキストの mcp.yaml の command の MCP サーバーも、ホストで起動してゲートウェイ経由にする（PBI-84）。プロセスの
+// 記録・片付けは、ホストの MCP サーバーと同じもの（前回の残りは、上の片付けで止めてある。層の写しは start で消す）
+const contextMcp = new ContextMcpServers({
+  root: join(home, "context-mcp"),
+  secrets,
+  processes: hostMcpProcesses,
+  log: (line) => console.log(line),
+});
 const gateway = new AiGateway({
   hostMcp,
+  contextHostMcp: contextMcp,
   policy: () => {
     const c = config();
     return c.ok ? c.config.gatewayRetry : undefined;
@@ -137,6 +147,7 @@ const service = new TaskService({
   hostMcpProblems: () => hostMcp.problems(),
   // 実行の前に、使うホストの MCP サーバーを設定と突き合わせ、足したものは起動を待つ（PBI-77）
   hostMcpReady: (names) => hostMcp.ready(names),
+  contextMcp,
   // 人間の出番を Slack に通知する（PBI-38）。リンクは、起動した画面の URL
   notifier: new SlackNotifier({
     project: (id) => projects.get(id),
@@ -177,6 +188,7 @@ const server = serve({ fetch: app.fetch, hostname: "127.0.0.1", port }, (info) =
       // 秘密情報を使うホストの MCP サーバーの起動と、組織内 PF の認証の用意も、まとめて取り出した後にする
       // （先に始めると、それぞれが個別に 1Password に問い合わせるため。PBI-48 レビュー指摘）
       hostMcp.start();
+      contextMcp.start();
       for (const platform of platforms()) {
         credentials.header(platform).catch((error) => {
           console.warn(
@@ -202,7 +214,7 @@ const shutdown = async () => {
   const draining = Promise.all([worker.drain(), intake.stop(), prWatcher.stop()]);
   // ホストの MCP サーバーは、実行中のコンテナを止めたら使わないので、後片付けを待たずに止め始める（後片付けが長引いて、
   // CLI に強制終了されても残らないように。PBI-78）
-  const stoppingHostMcp = hostMcp.stop();
+  const stoppingHostMcp = Promise.all([hostMcp.stop(), contextMcp.stop()]);
   executor.abortAll();
   tests.abortAll();
   const timedOut = await Promise.race([

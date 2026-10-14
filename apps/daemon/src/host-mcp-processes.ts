@@ -387,6 +387,8 @@ type TransportParams = {
   command: string;
   args: string[];
   env: Record<string, string>;
+  /** 作業ディレクトリ（書かなければデーモンのもの。コンテキストの MCP サーバーは層の写し。PBI-84）。 */
+  cwd?: string;
 };
 
 /**
@@ -416,6 +418,7 @@ export class GroupStdioTransport implements Transport {
     if (this.processes.closed) throw new Error("sacty is stopping");
     const child = spawn(this.params.command, this.params.args, {
       env: this.params.env,
+      ...(this.params.cwd ? { cwd: this.params.cwd } : {}),
       stdio: ["pipe", "pipe", "pipe"],
       // 自分のグループで起動する（子孫をまとめて止められる。端末の Ctrl-C は、デーモンが受けて止める）
       detached: true,

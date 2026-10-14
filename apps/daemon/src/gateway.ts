@@ -67,8 +67,14 @@ export type GatewayRoute = {
   apiKey?: string;
 };
 
+/**
+ * コンテキストリポジトリの MCP サーバーの中継先。HTTP のサーバーは上流の URL（PBI-49）、ホストで起動した command の
+ * サーバーは、ゲートウェイの中の名前（host。プロジェクトと中身ごと。PBI-84）。
+ */
+export type ContextMcpRoute = HttpContextMcpRoute | { host: string };
+
 /** コンテキストリポジトリの HTTP の MCP サーバーの中継先（PBI-49）。 */
-export type ContextMcpRoute = {
+export type HttpContextMcpRoute = {
   url: string;
   headers: Record<string, string>;
   /**
@@ -136,6 +142,11 @@ export type GatewayDeps = {
   credentials?: Pick<PlatformCredentials, "header" | "invalidate">;
   /** ホストで動かす MCP サーバー（PBI-36）。 */
   hostMcp?: Pick<HostMcpServers, "handle">;
+  /**
+   * ホストで起動した、コンテキストの command の MCP サーバー（PBI-84）。実行の登録で結びつけた名前（host）でだけ
+   * 中継する（/mcp/ からは使えない）。
+   */
+  contextHostMcp?: Pick<HostMcpServers, "handle">;
   /**
    * 待つ上限を延ばした中継で使う fetch（PBI-75。既定は undici の fetch。待つ上限は dispatcher で渡す）。テストでは
    * 差し替える。
@@ -359,7 +370,7 @@ export class AiGateway {
   private async handleContextMcp(
     req: IncomingMessage,
     res: ServerResponse,
-    target: ContextMcpRoute,
+    target: HttpContextMcpRoute,
     query: string,
   ): Promise<void> {
     const aborter = new AbortController();
@@ -434,8 +445,15 @@ export class AiGateway {
     const contextMcp = /^\/ctx-mcp\/([A-Za-z0-9_-]+)\/?(\?.*)?$/.exec(req.url ?? "");
     if (contextMcp) {
       if (!run) return fail(res, 401, "sacty gateway: unknown or expired run token");
-      const target = run.mcp?.[contextMcp[1] ?? ""];
-      if (!target) return fail(res, 404, `sacty gateway: unknown MCP server "${contextMcp[1]}"`);
+      // 実行のトークンに結びつけたものだけを引く（ほかのプロジェクトの実行のものは、名前を知っていても使えない）
+      const name = contextMcp[1] ?? "";
+      const target = run.mcp && Object.hasOwn(run.mcp, name) ? run.mcp[name] : undefined;
+      if (!target) return fail(res, 404, `sacty gateway: unknown MCP server "${name}"`);
+      if ("host" in target) {
+        // ホストで起動したコンテキストの command の MCP サーバー（PBI-84）
+        if (!this.deps.contextHostMcp) return fail(res, 404, "sacty gateway: no host MCP servers");
+        return relayHostMcp(this.deps.contextHostMcp, target.host, req, res);
+      }
       return this.handleContextMcp(req, res, target, contextMcp[2] ?? "");
     }
     // ホストの MCP サーバー：/mcp/<名前>（実行のトークンを Bearer で付ける。PBI-36）
@@ -443,19 +461,7 @@ export class AiGateway {
     if (mcp) {
       if (!run) return fail(res, 401, "sacty gateway: unknown or expired run token");
       if (!this.deps.hostMcp) return fail(res, 404, "sacty gateway: no host MCP servers");
-      let raw: Buffer;
-      try {
-        raw = await readBody(req);
-      } catch {
-        return;
-      }
-      let body: unknown;
-      try {
-        body = raw.length > 0 ? JSON.parse(raw.toString("utf8")) : undefined;
-      } catch {
-        return fail(res, 400, "sacty gateway: the MCP request is not JSON");
-      }
-      return this.deps.hostMcp.handle(mcp[1] ?? "", req, res, body);
+      return relayHostMcp(this.deps.hostMcp, mcp[1] ?? "", req, res);
     }
     if (!run?.base) {
       return fail(res, 401, "sacty gateway: unknown or expired run token");
@@ -540,6 +546,28 @@ export class AiGateway {
       run.streakWaitedMs += waited;
     }
   }
+}
+
+/** ホストで動かす MCP サーバーへ、JSON の MCP のリクエストを中継する（PBI-36・84）。 */
+async function relayHostMcp(
+  servers: Pick<HostMcpServers, "handle">,
+  name: string,
+  req: IncomingMessage,
+  res: ServerResponse,
+): Promise<void> {
+  let raw: Buffer;
+  try {
+    raw = await readBody(req);
+  } catch {
+    return;
+  }
+  let body: unknown;
+  try {
+    body = raw.length > 0 ? JSON.parse(raw.toString("utf8")) : undefined;
+  } catch {
+    return fail(res, 400, "sacty gateway: the MCP request is not JSON");
+  }
+  return servers.handle(name, req, res, body);
 }
 
 /** 応答のヘッダーと、本文の途切れを、それぞれ timeoutMs まで待つ接続（PBI-75）。 */
