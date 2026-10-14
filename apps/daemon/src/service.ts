@@ -392,13 +392,41 @@ type ExecuteRun = {
 };
 
 /**
- * 再開したセッションを、AI が受け付けなかったか（PBI-67）。何も使わずに失敗した（セッションが見つからない・読めない）なら、
- * 新しいセッションで始め直す。利用上限・認証の失敗は、始め直しても同じなので、そのまま返す。
+ * エージェントが、再開するセッションを受け付けなかったときのエラーの文（PBI-67）。エージェントの本体にある文から選ぶ
+ * （推し量って広く取らない）。
+ * - Claude Code（2.1.296 の本体で確かめた）：セッションが見つからない `No conversation found with session ID: <ID>`、
+ *   読み込めない `--resume session load failed (…)`・`Failed to resume session <ID>`。どれも終了コード 1
+ * - Codex（codex-cli 0.160.0 の本体で確かめた）：`no rollout found for thread id <ID>`・
+ *   `no rollout found for conversation id <ID>`・`rollout path missing for thread <ID>`・`thread not found: <ID>`・
+ *   `error resuming thread: …`
  */
-function resumeRejected(outcome: AgentOutcome): boolean {
+const RESUME_REJECTED: Record<"claude-code" | "codex", RegExp[]> = {
+  "claude-code": [
+    /No conversation found with session ID: /,
+    /--resume session load failed \(/,
+    /Failed to resume session /,
+  ],
+  codex: [
+    /no rollout found for (?:thread|conversation) id /i,
+    /rollout path missing for thread /i,
+    /thread not found: /i,
+    /error resuming thread: /i,
+  ],
+};
+
+/**
+ * 再開したセッションを、エージェントが受け付けなかったか（PBI-67）。そうなら、新しいセッションで始め直す。
+ * 始め直すのは、保存したセッションを設定の場所に戻せなかったときと、エージェントが再開を拒んだと文から分かるときだけ。
+ * どちらも、何も使わずに失敗したとき（使ってから失敗したなら、再開はできている）。タイムアウト・コンテナの停止を
+ * 確かめられない・途中で落ちたなど、ほかのエラーはそのまま返す（始め直すと、残ったコンテナや失敗を隠すため）。
+ */
+export function resumeRejected(runtime: "claude-code" | "codex", outcome: AgentOutcome): boolean {
   if (outcome.kind !== "failed" || outcome.reason !== "error") return false;
   const u = outcome.usage;
-  return !u || u.input + u.cacheRead + u.cacheWrite + u.output === 0;
+  if (u && u.input + u.cacheRead + u.cacheWrite + u.output > 0) return false;
+  const text = outcome.message;
+  if (typeof text !== "string") return text.code === "run.sessionRestoreFailed";
+  return RESUME_REJECTED[runtime].some((pattern) => pattern.test(text));
 }
 
 export class TaskService {
@@ -4526,7 +4554,7 @@ export class TaskService {
     // 人間が止めた・中止したときは、始め直さない
     if (
       plan.mode === "resume" &&
-      resumeRejected(executed.outcome) &&
+      resumeRejected(runtime, executed.outcome) &&
       !this.stopRequested(run.taskId) &&
       !run.stopped?.()
     ) {
@@ -4538,8 +4566,19 @@ export class TaskService {
       executed = await this.executeOnce({ ...run, runId });
       executed = { ...executed, costUsd: executed.costUsd + first.costUsd };
     }
-    const resumed = plan.mode === "resume" && !failedRunId;
     const archived = executed.archived;
+    // 再開を指定したのに、エージェントが別のセッションの ID を出した（再開せずに新しく始めた）なら、新規として記録する。
+    // 複製（チャット）は、新しい ID になるのが正しい
+    if (
+      plan.mode === "resume" &&
+      !failedRunId &&
+      !chat &&
+      archived?.sessionId &&
+      archived.sessionId !== plan.sessionId
+    ) {
+      reason = "resume_failed";
+    }
+    const resumed = plan.mode === "resume" && !failedRunId && reason === undefined;
     let saved:
       | {
           saved: boolean;
@@ -4594,11 +4633,6 @@ export class TaskService {
     }
     const { archived: _archived, ...rest } = executed;
     return { ...rest, runId };
-  }
-
-  /** 人間が、タスクの一時停止・中止を求めているか。 */
-  private stopRequested(taskId: string): boolean {
-    return this.pauseRequested.has(taskId) || this.cancelling.has(taskId);
   }
 
   /** 1回の実行。写したエージェントのファイル（PBI-66）も返す。 */

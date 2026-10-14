@@ -730,7 +730,7 @@ class FakeExecutor implements AgentExecutor {
       log.agentFilesNotArchived({
         runtime: invocation.sessionFiles,
         reason: "container_not_confirmed",
-        sessionId: `session-${runId}`,
+        sessionId: this.sessionIdOf?.(invocation, runId) ?? `session-${runId}`,
       });
     } else if (this.sessionFiles && invocation.sessionFiles && log) {
       const config = mkdtempSync(join(tmpdir(), "sacty-fake-config-"));
@@ -12051,6 +12051,142 @@ describe("オーケストレーターのセッションの使い回し（PBI-67�
     }
   });
 
+  it("タイムアウト・コンテナの停止を確かめられない・途中で落ちたときは、始め直さずにそのまま返す（P1 レビュー指摘）", async () => {
+    const failures: AgentOutcome[] = [
+      { kind: "failed", reason: "error", message: message("run.timeout", { minutes: 30 }) },
+      {
+        kind: "failed",
+        reason: "error",
+        message: message("run.containerNotConfirmed", { name: "sacty-run-x" }),
+      },
+      { kind: "failed", reason: "error", message: "exit code 137" },
+      { kind: "failed", reason: "error", message: "Segmentation fault" },
+      // Codex の文は、Claude Code の再開の拒否ではない
+      { kind: "failed", reason: "error", message: "thread not found: x" },
+    ];
+    for (const failure of failures) {
+      rmSync(dbPath, { force: true });
+      const { activity, service, executor } = setup([unreadable, failure, plan]);
+      emulateClaude(executor);
+      const task = service.createTask({ projectId: "default", title: "A" });
+      await service.runNext(task.id);
+      await rerunOrchestrator(service, task.id);
+      expect(executor.calls, JSON.stringify(failure.message)).toHaveLength(2);
+      expect(usedOf(service, task.id)[1]).toMatchObject({ mode: "resumed" });
+      expect(usedOf(service, task.id)[1]?.reason).toBeUndefined();
+      // 失敗は隠さず、タスクは止まる（工程は決まらない）
+      expect(service.get(task.id)?.task.status).toBe("paused");
+      expect(service.get(task.id)?.task.steps).toEqual([]);
+      activity.close();
+    }
+  });
+
+  it("エージェントが再開を拒んだ文（Claude Code・Codex）と、セッションを戻せなかったときは始め直す", async () => {
+    const codex = agent({
+      id: "codex-key",
+      runtime: "codex",
+      auth: { mode: "api-key", secret: "openai-key" },
+    });
+    const cases: { runtime: "claude" | "codex"; message: AgentOutcome & { kind: "failed" } }[] = [
+      ...[
+        "No conversation found with session ID: abc",
+        "--resume session load failed (ENOENT): x",
+        "Failed to resume session abc: bad",
+      ].map((text) => ({
+        runtime: "claude" as const,
+        message: { kind: "failed" as const, reason: "error" as const, message: text },
+      })),
+      ...[
+        "Error: no rollout found for thread id abc",
+        "no rollout found for conversation id abc",
+        "rollout path missing for thread abc",
+        "thread not found: abc",
+        "error resuming thread: x",
+      ].map((text) => ({
+        runtime: "codex" as const,
+        message: {
+          kind: "failed" as const,
+          reason: "error" as const,
+          message: text,
+          usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 0 },
+        },
+      })),
+      {
+        runtime: "claude",
+        message: {
+          kind: "failed",
+          reason: "error",
+          message: message("run.sessionRestoreFailed", { detail: "ENOENT" }),
+        },
+      },
+    ];
+    for (const c of cases) {
+      rmSync(dbPath, { force: true });
+      const { activity, service, executor } = setup(
+        [unreadable, c.message, plan, completed(1)],
+        c.runtime === "codex"
+          ? { config: configOf(codex), secrets: { "openai-key": "sk-secret" } }
+          : {},
+      );
+      emulateClaude(executor);
+      if (c.runtime === "codex") {
+        const codexId = (inv: Invocation, runId: string) =>
+          argAfter(inv, "resume") ?? `thread-${runId}`;
+        executor.sessionIdOf = codexId;
+        executor.sessionFiles = (inv, runId) => ({
+          [`sessions/2026/10/14/rollout-2026-10-14T10-00-00-${codexId(inv, runId)}.jsonl`]: "{}\n",
+        });
+      }
+      const task = service.createTask({ projectId: "default", title: "A" });
+      await service.runNext(task.id);
+      await rerunOrchestrator(service, task.id);
+      expect(executor.calls[1]?.command).toContain(c.runtime === "codex" ? "resume" : "--resume");
+      // 始め直した実行は、再開しない
+      expect(executor.calls[2]?.command, JSON.stringify(c.message.message)).not.toContain(
+        c.runtime === "codex" ? "resume" : "--resume",
+      );
+      expect(usedOf(service, task.id)[1]).toMatchObject({ mode: "new", reason: "resume_failed" });
+      expect(service.get(task.id)?.task.steps.length).toBeGreaterThan(0);
+      activity.close();
+    }
+  });
+
+  it("再開を指定したのに別のセッションで始めた（黙って新しく始めた）なら、新規として記録する", async () => {
+    const codex = agent({
+      id: "codex-key",
+      runtime: "codex",
+      auth: { mode: "api-key", secret: "openai-key" },
+    });
+    const { activity, service, executor } = setup([unreadable, plan, completed(1)], {
+      config: configOf(codex),
+      secrets: { "openai-key": "sk-secret" },
+    });
+    // いつも新しいスレッドで始める Codex
+    const codexId = (_inv: Invocation, runId: string) => `thread-${runId}`;
+    executor.sessionIdOf = codexId;
+    executor.sessionFiles = (inv, runId) => ({
+      [`sessions/2026/10/14/rollout-2026-10-14T10-00-00-${codexId(inv, runId)}.jsonl`]: "{}\n",
+    });
+    const task = service.createTask({ projectId: "default", title: "A" });
+    await service.runNext(task.id);
+    const firstRun = usedOf(service, task.id)[0]?.runId ?? "";
+    await rerunOrchestrator(service, task.id);
+    expect(executor.calls).toHaveLength(3);
+    const second = usedOf(service, task.id)[1];
+    expect(second).toMatchObject({
+      mode: "new",
+      reason: "resume_failed",
+      resumedFrom: `thread-${firstRun}`,
+      saved: true,
+    });
+    expect(second?.failedRunId).toBeUndefined();
+    expect(service.get(task.id)?.task.orchestratorSession).toMatchObject({
+      uses: 1,
+      reason: "resume_failed",
+    });
+    activity.close();
+  });
+
   it("再開した実行を人間が一時停止したときは、始め直さない", async () => {
     const { activity, service, executor } = setup([unreadable, HOLD]);
     emulateClaude(executor);
@@ -12075,7 +12211,7 @@ describe("オーケストレーターのセッションの使い回し（PBI-67�
       {
         kind: "failed",
         reason: "error",
-        message: "途中で失敗",
+        message: "Failed to resume session abc（使ってから失敗）",
         usage: { input: 10, cacheRead: 0, cacheWrite: 0, output: 1 },
       },
     ]);
@@ -12176,7 +12312,7 @@ describe("オーケストレーターのセッションの使い回し（PBI-67�
   it("チャットで再開を受け付けなかったら、新しいセッションで答え直す（止める対象も、始め直した実行）", async () => {
     const { activity, service, executor } = setup([
       unreadable,
-      { kind: "failed", reason: "error", message: "No conversation found" },
+      { kind: "failed", reason: "error", message: "No conversation found with session ID: x" },
       answer,
     ]);
     emulateClaude(executor);
