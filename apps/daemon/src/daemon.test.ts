@@ -14341,3 +14341,257 @@ describe("コンテキストのプレビュー（PBI-76）", () => {
     activity.close();
   });
 });
+
+describe("タスクのテンプレート「Sacty セットアップ」（PBI-90）", () => {
+  const out = (text: string, output = 1): AgentOutcome => ({
+    kind: "completed",
+    output: text,
+    usage: { input: 0, cacheRead: 0, cacheWrite: 0, output },
+  });
+  const block = (b: Record<string, unknown>) => `\`\`\`json\n${JSON.stringify(b)}\n\`\`\``;
+  const promptOf = (executor: FakeExecutor, i: number) =>
+    executor.calls[i]?.command.join(" ") ?? "";
+  const API = "https://github.com/acme/api";
+  const WEB = "https://github.com/acme/web";
+  const twoRepos = () => {
+    const projects = projectsWithAccount();
+    projects.put("default", {
+      name: "デフォルト",
+      targets: [
+        { scope: "repo", target: API },
+        { scope: "repo", target: WEB },
+      ],
+      githubAccounts: { "github.com": "me" },
+    });
+    projects.put("other", {
+      name: "ほか",
+      targets: [{ scope: "repo", target: "https://github.com/tools/secret" }],
+      githubAccounts: { "github.com": "me" },
+    });
+    return projects;
+  };
+  const isZod = (fn: () => unknown) => {
+    try {
+      fn();
+    } catch (error) {
+      return error instanceof Error && error.name === "ZodError";
+    }
+    return false;
+  };
+
+  it("リポジトリだけで作り、題と説明（ゴール）は sacty が決め、テンプレートを記録する（再起動の後も残る）", () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service } = makeService(activity, [], { projects: twoRepos() });
+    const task = service.createTask({
+      template: "sacty-setup",
+      projectId: "default",
+      repo: API.toUpperCase(),
+    });
+    // 通常のタスクと同じく、画面で作ったタスクとして実行待ちになる。リポジトリは登録した名前にそろえる
+    expect(task).toMatchObject({
+      template: "sacty-setup",
+      start: "sacty",
+      repo: API,
+      status: "queued",
+      title: "Sacty セットアップ（acme/api）",
+    });
+    expect(task.noRepo).toBeUndefined();
+    // ゴール：エージェント向けの指示・テストの実行の仕方・テストに要るサービス・デプロイの確認のスキル
+    // URL は行の末尾に置く（画面の Markdown で、後ろの文字までリンクにしない）
+    expect(task.body).toContain(`- 対象のリポジトリ：${API}\n`);
+    expect(task.body).toContain("AGENTS.md・CLAUDE.md");
+    expect(task.body).toContain("テストの実行の仕方");
+    expect(task.body).toContain("テストに要るサービス");
+    // デプロイの確認のスキルは、マージの後の監視（PBI-89）が探す置き場所・名前・答えの形に合わせる
+    expect(task.body).toContain(".agents/skills/deployment-observer/SKILL.md");
+    expect(task.body).toContain(".claude/skills/deployment-observer");
+    expect(task.body).toContain("../../.agents/skills/deployment-observer");
+    expect(task.body).toContain("name: deployment-observer");
+    expect(task.body).toContain('{"sacty-deployment": {"result": "healthy | unhealthy | unknown"');
+    // 変更が要らなければ、PR を作らずに検査の結果を残して終える
+    expect(task.body).toContain("PR を作らずに");
+    const created = activity.forTask(task.id).find((e) => e.type === "TaskCreated");
+    expect(created?.payload).toMatchObject({ template: "sacty-setup", repo: API });
+    // 作業履歴から復元しても、テンプレートで作ったことが残る
+    const { service: restarted } = makeService(activity, [], { projects: twoRepos() });
+    expect(restarted.get(task.id)?.task.template).toBe("sacty-setup");
+    // 通常のタスクには、テンプレートは付かない
+    expect(
+      service.createTask({ projectId: "default", title: "A", repo: API }).template,
+    ).toBeUndefined();
+    activity.close();
+  });
+
+  it("ゴールは、特定の言語・ツール・sacty 自身に寄せない", () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service } = makeService(activity, []);
+    const { body } = service.createTask({ template: "sacty-setup", projectId: "default" });
+    for (const word of [
+      "npm",
+      "Node",
+      "node_modules",
+      "package.json",
+      "vitest",
+      "TypeScript",
+      "Python",
+      "pytest",
+      "Maven",
+      "Gradle",
+      "GitHub Actions",
+      "sacty リポジトリ",
+    ]) {
+      expect(body, word).not.toContain(word);
+    }
+    activity.close();
+  });
+
+  it("リポジトリは必須（対象がリポジトリ1つだけなら省略できる）。題・説明・null・対象の外・知らないテンプレートは受け付けない", () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service } = makeService(activity, [], { projects: twoRepos() });
+    // 対象が複数で省略したら、理由を返して作らない
+    expect(() => service.createTask({ template: "sacty-setup", projectId: "default" })).toThrow(
+      /このテンプレートでは、対象リポジトリを選んでください/,
+    );
+    expect(
+      isZod(() =>
+        service.createTask({ template: "sacty-setup", projectId: "default", repo: "  " }),
+      ),
+    ).toBe(true);
+    expect(
+      isZod(() =>
+        service.createTask({ template: "sacty-setup", projectId: "default", repo: null }),
+      ),
+    ).toBe(true);
+    // 題・説明は sacty が決めるので、渡せば誤り
+    expect(
+      isZod(() =>
+        service.createTask({
+          template: "sacty-setup",
+          projectId: "default",
+          repo: API,
+          title: "X",
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      isZod(() =>
+        service.createTask({ template: "sacty-setup", projectId: "default", repo: API, body: "" }),
+      ),
+    ).toBe(true);
+    expect(
+      isZod(() => service.createTask({ template: "unknown", projectId: "default", repo: API })),
+    ).toBe(true);
+    expect(
+      isZod(() =>
+        service.createTask({ template: "", projectId: "default", title: "A", repo: API }),
+      ),
+    ).toBe(true);
+    // 対象の外（ほかのプロジェクトのリポジトリ・URL でないもの）は作らない
+    expect(() =>
+      service.createTask({
+        template: "sacty-setup",
+        projectId: "default",
+        repo: "https://github.com/tools/secret",
+      }),
+    ).toThrow(/対象リポジトリを、プロジェクト/);
+    expect(() =>
+      service.createTask({ template: "sacty-setup", projectId: "default", repo: "acme/api" }),
+    ).toThrow(/対象リポジトリを、プロジェクト/);
+    expect(() =>
+      service.createTask({ template: "sacty-setup", projectId: "missing", repo: API }),
+    ).toThrow(/プロジェクトが見つかりません/);
+    expect(service.list()).toEqual([]);
+    activity.close();
+
+    // 対象がリポジトリ1つだけなら、省略するとそれにする
+    rmSync(dbPath);
+    const single = new SqliteActivityStore(dbPath);
+    const { service: one } = makeService(single, []);
+    expect(one.createTask({ template: "sacty-setup", projectId: "default" }).repo).toBe(
+      "https://github.com/acme/app",
+    );
+    single.close();
+
+    // 対象が Org なら、その Org のリポジトリを選べる（省略はできない）
+    rmSync(dbPath);
+    const org = new SqliteActivityStore(dbPath);
+    const orgProjects = projectsWithAccount();
+    orgProjects.put("default", {
+      name: "デフォルト",
+      targets: [{ scope: "org", target: "https://github.com/acme" }],
+      githubAccounts: { "github.com": "me" },
+    });
+    const { service: byOrg } = makeService(org, [], { projects: orgProjects });
+    expect(() => byOrg.createTask({ template: "sacty-setup", projectId: "default" })).toThrow(
+      /このテンプレートでは、対象リポジトリを選んでください/,
+    );
+    expect(
+      byOrg.createTask({ template: "sacty-setup", projectId: "default", repo: `${API}.git` }).repo,
+    ).toBe(API);
+    org.close();
+  });
+
+  it("通常のタスクと同じく、オーケストレーターがリポジトリを読んで工程を選ぶ。整っていれば調査だけで終え、PR を作らない", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service, executor, pulls } = makeService(
+      activity,
+      [
+        out(
+          block({
+            "sacty-steps": {
+              plan: "investigate",
+              reason: "設定は整っていて、変更は要らない",
+              testCommand: "make test",
+            },
+          }),
+        ),
+        out("# 検査の結果\n\n- AGENTS.md：ある"),
+      ],
+      { realPlanner: true },
+    );
+    const { id } = service.createTask({ template: "sacty-setup", projectId: "default" });
+    await service.runNext(id);
+    // オーケストレーターにも、調査のエージェントにも、ゴールが渡る
+    expect(promptOf(executor, 0)).toContain("あなたはオーケストレーターです");
+    expect(promptOf(executor, 0)).toContain(".agents/skills/deployment-observer/SKILL.md");
+    expect(promptOf(executor, 1)).toContain("あなたはソフトウェア開発の調査エージェントです");
+    expect(promptOf(executor, 1)).toContain(".agents/skills/deployment-observer/SKILL.md");
+    expect(service.get(id)?.task.gate).toEqual({ step: "investigate", submission: 1 });
+    const done = service.approve(id, { step: "investigate", submission: 1 });
+    expect(isCompleted(done)).toBe(true);
+    // 検査の結果が残り、PR は作らない
+    expect(done.approved.investigate?.output).toContain("# 検査の結果");
+    expect(done.template).toBe("sacty-setup");
+    expect(pulls.calls).toEqual([]);
+    activity.close();
+  });
+
+  it("API でも、テンプレートで作れる。題・説明・知らないテンプレートは400、リポジトリを選んでいなければ409", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const token = "test-token";
+    const app = createApp(makeService(activity, [], { projects: twoRepos() }).service, token);
+    const auth = { authorization: `Bearer ${token}` };
+    const post = (body: unknown) =>
+      app.request("/api/tasks", {
+        method: "POST",
+        headers: { ...auth, "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    const res = await post({ template: "sacty-setup", projectId: "default", repo: WEB });
+    expect(res.status).toBe(201);
+    const { task } = (await res.json()) as { task: Task };
+    expect(task).toMatchObject({ template: "sacty-setup", repo: WEB });
+    const detail = (await (
+      await app.request(`/api/tasks/${task.id}`, { headers: auth })
+    ).json()) as { task: Task; activity: { type: string; payload: { template?: string } }[] };
+    expect(detail.task.template).toBe("sacty-setup");
+    expect(detail.activity[0]?.payload.template).toBe("sacty-setup");
+    expect(
+      (await post({ template: "sacty-setup", projectId: "default", repo: WEB, title: "X" })).status,
+    ).toBe(400);
+    expect((await post({ template: "nope", projectId: "default", repo: WEB })).status).toBe(400);
+    const missing = await post({ template: "sacty-setup", projectId: "default" });
+    expect(missing.status).toBe(409);
+    activity.close();
+  });
+});

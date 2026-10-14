@@ -237,6 +237,12 @@ async function TaskTable() {
               </td>
               <td className="px-3 py-3.5 whitespace-nowrap text-muted-foreground">
                 {labels.start[task.start]}
+                {/* テンプレートで作ったタスク（PBI-90） */}
+                {task.template && (
+                  <span className="mt-0.5 block w-fit rounded border border-border px-1.5 text-xs">
+                    {labels.template[task.template]}
+                  </span>
+                )}
                 {task.source && (
                   <span className="block font-mono text-xs">
                     {task.source.repo}#{task.source.number}

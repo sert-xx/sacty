@@ -38,6 +38,11 @@ const ja = {
     split: "タスク分割",
     jira: "JIRA",
   } satisfies Record<Task["start"], string>,
+  /** タスクのテンプレート（PBI-90）。 */
+  template: { "sacty-setup": "Sacty セットアップ" } satisfies Record<
+    NonNullable<Task["template"]>,
+    string
+  >,
   status: {
     blocked: "依存待ち",
     waiting_children: "子タスクの完了待ち",
@@ -137,7 +142,8 @@ const ja = {
   event: {
     estimated: "・換算値",
     withCost: (actor: string, cost: string) => `${actor}・${cost}`,
-    TaskCreated: (actor: string) => `タスクを作成（${actor}）`,
+    TaskCreated: (actor: string, template?: string) =>
+      `タスクを作成（${actor}${template ? `・テンプレート：${template}` : ""}）`,
     StepsChosen: (steps: string, reason?: string) =>
       `工程を決定：${steps}${reason ? `（${reason}）` : ""}`,
     stepsJoin: " → ",
@@ -342,6 +348,7 @@ const en: LabelMessages = {
     split: "Task split",
     jira: "JIRA",
   },
+  template: { "sacty-setup": "Sacty setup" },
   status: {
     blocked: "Blocked",
     waiting_children: "Waiting for subtasks",
@@ -439,7 +446,8 @@ const en: LabelMessages = {
   event: {
     estimated: " · estimate",
     withCost: (actor, cost) => `${actor} · ${cost}`,
-    TaskCreated: (actor) => `Task created (${actor})`,
+    TaskCreated: (actor, template) =>
+      `Task created (${actor}${template ? ` · template: ${template}` : ""})`,
     StepsChosen: (steps, reason) => `Steps chosen: ${steps}${reason ? ` (${reason})` : ""}`,
     stepsImages: (images, source, reason) =>
       ` / images: ${images} (${source === "project" ? "set on the project target" : reason ? `Orchestrator: ${reason}` : "Orchestrator"})`,

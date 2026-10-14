@@ -7,6 +7,7 @@ const ja = {
   project: " ・ プロジェクト：",
   repository: " ・ 対象リポジトリ：",
   noRepository: " ・ リポジトリ無し",
+  template: " ・ テンプレート：",
   repoChoice: (reason: string, byPerson: boolean) =>
     byPerson ? "（人間が選んだ）" : `（オーケストレーターが選んだ：${reason}）`,
   parent: " ・ 親タスク：",
@@ -194,6 +195,7 @@ const en: TaskMessages = {
   project: " · Project: ",
   repository: " · Repository: ",
   noRepository: " · No repository",
+  template: " · Template: ",
   repoChoice: (reason, byPerson) =>
     byPerson ? " (chosen by a person)" : ` (chosen by the Orchestrator: ${reason})`,
   parent: " · Parent task: ",

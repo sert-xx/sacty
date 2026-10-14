@@ -166,7 +166,10 @@ export function describeEvent(event: ActivityEvent, l: LabelMessages): string {
     costUsd > 0 ? e.withCost(actor, cost(costUsd, estimated)) : actor;
   switch (event.type) {
     case "TaskCreated":
-      return e.TaskCreated(actor);
+      return e.TaskCreated(
+        actor,
+        event.payload.template ? l.template[event.payload.template] : undefined,
+      );
     case "StepsChosen": {
       const chosen = e.StepsChosen(
         event.payload.steps.map((s) => l.step[s]).join(e.stepsJoin),

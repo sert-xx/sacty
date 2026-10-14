@@ -7,6 +7,7 @@ import {
   StepKey,
   TASK_BODY_MAX,
   TASK_TITLE_MAX,
+  TaskTemplate,
 } from "@sacty/core";
 import { refresh, revalidatePath } from "next/cache";
 import { cookies } from "next/headers";
@@ -41,7 +42,7 @@ import {
 export type CreateTaskState = {
   fieldErrors?: { title?: string[]; body?: string[] };
   message?: string;
-  values?: { title: string; body: string; repo?: string };
+  values?: { title: string; body: string; repo?: string; template?: TaskTemplate };
 };
 
 /** タスクを作成し、作ったタスクの詳細へ移る。 */
@@ -50,6 +51,9 @@ export async function createTaskAction(
   formData: FormData,
 ): Promise<CreateTaskState> {
   const repo = String(formData.get("repo") ?? "").trim();
+  const template = TaskTemplate.safeParse(formData.get("template"));
+  // テンプレートで作る（PBI-90）。題と説明は sacty が決めるので、リポジトリだけを渡す
+  if (template.success) return createTemplateTask(template.data, repo, formData);
   const values = {
     title: String(formData.get("title") ?? ""),
     body: String(formData.get("body") ?? ""),
@@ -90,6 +94,29 @@ export async function createTaskAction(
   if (!result.ok) return { message: result.message, values: shown };
   const taskId = result.task.id;
   redirect(`/tasks/${taskId}`);
+}
+
+/**
+ * テンプレートからタスクを作る（PBI-90）。対象リポジトリを空欄にしたら省略し、プロジェクトの対象がリポジトリ1つだけなら
+ * デーモンがそれにする（そうでなければ、理由を返す）。
+ */
+async function createTemplateTask(
+  template: TaskTemplate,
+  repo: string,
+  formData: FormData,
+): Promise<CreateTaskState> {
+  const a = (await getMessages()).common.action;
+  const shown = { title: "", body: "", repo, template };
+  const projectId = String(formData.get("projectId") ?? "");
+  if (!projectId) return { message: a.createNoProject, values: shown };
+  let result: Awaited<ReturnType<typeof createTask>>;
+  try {
+    result = await createTask({ template, projectId, ...(repo ? { repo } : {}) });
+  } catch {
+    return { message: a.createFailed, values: shown };
+  }
+  if (!result.ok) return { message: result.message, values: shown };
+  redirect(`/tasks/${result.task.id}`);
 }
 
 export type ResumeState = { message?: string; capUsd?: string };

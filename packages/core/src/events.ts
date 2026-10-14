@@ -271,6 +271,13 @@ export const PauseReason = z.enum([
 ]);
 export type PauseReason = z.infer<typeof PauseReason>;
 
+/**
+ * タスクのテンプレート（PBI-90）。sacty-setup：対象のリポジトリを sacty で扱うためのエージェントの設定を検査し、
+ * 足りないものを整える（題と説明は sacty が決める）。
+ */
+export const TaskTemplate = z.enum(["sacty-setup"]);
+export type TaskTemplate = z.infer<typeof TaskTemplate>;
+
 const TaskCreated = z.object({
   type: z.literal("TaskCreated"),
   payload: z.object({
@@ -324,6 +331,8 @@ const TaskCreated = z.object({
      * 依存がある子タスクは、依存先がすべて完了するまで待つ（blocked）。
      */
     parent: z.object({ taskId: z.string(), dependsOn: z.array(z.string()) }).optional(),
+    /** テンプレートで作った（PBI-90）。題と説明は、テンプレートから sacty が決めたもの。 */
+    template: TaskTemplate.optional(),
   }),
 });
 
@@ -1474,6 +1483,19 @@ export const CreateTaskInput = z.object({
   repo: z.string().trim().min(1).nullable().optional(),
 });
 export type CreateTaskInput = z.infer<typeof CreateTaskInput>;
+
+/**
+ * テンプレートからタスクを作る入力（PBI-90）。題と説明はテンプレートから sacty が決めるので受け付けない（書けば誤り）。
+ * 対象リポジトリは必須（省略すると、プロジェクトの対象がリポジトリ1つだけならそれにする。null は受け付けない）。
+ */
+export const CreateTemplateTaskInput = z
+  .object({
+    template: TaskTemplate,
+    projectId: z.string().min(1),
+    repo: z.string().trim().min(1).optional(),
+  })
+  .strict();
+export type CreateTemplateTaskInput = z.infer<typeof CreateTemplateTaskInput>;
 
 /** 一時停止中のタスクを再開する入力。予算で止まった場合は新しい上限（累計）が必要。 */
 export const ResumeTaskInput = z.object({

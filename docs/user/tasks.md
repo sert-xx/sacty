@@ -1,4 +1,4 @@
-<!-- 対応するコード: apps/daemon/src/service.ts、apps/daemon/src/pr-watcher.ts、apps/daemon/src/prompts.ts、packages/core/src/events.ts（StepKey・DEFAULT_DOCUMENTS_DIR）、apps/web/src/i18n/messages/task.ts -->
+<!-- 対応するコード: apps/daemon/src/service.ts、apps/daemon/src/pr-watcher.ts、apps/daemon/src/prompts.ts、packages/core/src/events.ts（StepKey・DEFAULT_DOCUMENTS_DIR）、apps/web/src/i18n/messages/task.ts、apps/daemon/src/task-templates.ts、apps/web/src/components/new-task-dialog.tsx -->
 
 # タスクを進める
 
@@ -17,6 +17,29 @@
   - コードの変更が要り分けないタスクは、オーケストレーターが対象からリポジトリを選び、用意してから工程を選び直す。選べなければ止まり、
     タスクの詳細で人がリポジトリを選んで再開できる。
 - ベースブランチとテストのコマンドは、タスクの開始時にオーケストレーターがリポジトリを読んで決める。
+
+### テンプレート「Sacty セットアップ」
+
+リポジトリを sacty で扱えるように、AI エージェント向けの設定を整えるタスクを、リポジトリを選ぶだけで作る。
+
+1. 「タスクを作成」の画面で、テンプレートの「Sacty セットアップ」を選ぶ。
+2. 対象リポジトリを選んで「作成する」を押す（タイトル・内容は入力しない。sacty が決める）。
+
+作ったタスクは、通常のタスクと同じく、オーケストレーターが進め方を選び、承認・PR を経て進む。エージェントは次を検査し、足りないものを
+整える PR を作る。
+
+- エージェント向けの指示（AGENTS.md・CLAUDE.md など）
+- テストの実行の仕方
+- テストに要るサービス（DB・モックなど）
+- CI/CD でデプロイしているリポジトリでは、デプロイの確認のスキル `deployment-observer`（マージの後の監視で使う）。原本は
+  `.agents/skills/deployment-observer/SKILL.md`、Claude Code 用の `.claude/skills/deployment-observer` は原本への相対のシンボリック
+  リンクにする。
+
+すでに整っていて変更が要らなければ、PR を作らずに、検査の結果を調査の結果として残して終える（画面で承認して完了）。
+テンプレートで作ったタスクは、一覧の「開始地点」・詳細の先頭・作業履歴の「タスクを作成」にテンプレートの名前が出る。
+
+API からは、`POST /api/tasks` に `{"template": "sacty-setup", "projectId": "<プロジェクトの ID>", "repo": "<リポジトリの URL>"}` を
+送る（`title`・`body` は渡さない）。CLI にはタスクを作るコマンドが無い。
 - 工程の選択と、コードや仕組みを読んで説明する調査では、開発のセットアップ（依存のインストール・ビルドなど）を実行しない（リポジトリの
   AGENTS.md などにセットアップの手順があっても、こちらを優先する）。不具合の調査・再現・実装では、リポジトリの手順どおりセットアップする。
 

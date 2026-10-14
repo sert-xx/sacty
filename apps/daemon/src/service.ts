@@ -16,6 +16,7 @@ import {
   budgetState,
   type CleanupTarget,
   CreateTaskInput,
+  CreateTemplateTaskInput,
   canRereview,
   canRetryExport,
   changeRounds,
@@ -211,6 +212,7 @@ import {
   type SharedComposeFetcher,
   sharedComposeRunDir,
 } from "./shared-compose.js";
+import { templateTask } from "./task-templates.js";
 import { type FoundTicket, type TicketClient, ticketErrorText } from "./tickets.js";
 
 /**
@@ -2476,8 +2478,12 @@ export class TaskService {
     return updated;
   }
 
-  /** 画面からタスクを作る。作るプロジェクトは必ず指定する（既定のプロジェクトは無い。PBI-22）。 */
+  /**
+   * 画面からタスクを作る。作るプロジェクトは必ず指定する（既定のプロジェクトは無い。PBI-22）。
+   * template があれば、テンプレートから作る（題と説明は sacty が決める。PBI-90）。
+   */
   createTask(raw: unknown): Task {
+    if (raw && typeof raw === "object" && "template" in raw) return this.createTemplateTask(raw);
     const input = CreateTaskInput.parse(raw);
     const { projectId } = input;
     const project = this.deps.projects.get(projectId);
@@ -2509,22 +2515,57 @@ export class TaskService {
         },
       ]);
     }
-    const responsible =
-      wanted && RepoUrl.safeParse(wanted).success
-        ? responsibleProject(this.deps.projects.all(), wanted)
-        : undefined;
-    if (responsible?.project.id !== projectId) {
-      throw new InvalidOperationError(message("task.repositoryUnknown", { project: project.name }));
-    }
-    // リポジトリの対象なら、登録した名前にそろえる（大文字・小文字の違い）
-    const repo =
-      responsible.target.scope === "repo" ? responsible.target.target : RepoUrl.parse(wanted);
+    const repo = this.projectRepository(project, wanted);
     return this.append({ id: randomUUID(), projectId }, [
       {
         actor: "person",
         event: {
           type: "TaskCreated",
           payload: { title, body, start: "sacty", repo, budgetCapUsd },
+        },
+      },
+    ]);
+  }
+
+  /**
+   * 対象リポジトリが、プロジェクトの対象の中にあるかを確かめ、記録する名前を返す（リポジトリの対象なら、登録した
+   * 名前にそろえる：大文字・小文字の違い）。
+   */
+  private projectRepository(project: Project, wanted: string): string {
+    const responsible = RepoUrl.safeParse(wanted).success
+      ? responsibleProject(this.deps.projects.all(), wanted)
+      : undefined;
+    if (responsible?.project.id !== project.id) {
+      throw new InvalidOperationError(message("task.repositoryUnknown", { project: project.name }));
+    }
+    return responsible.target.scope === "repo" ? responsible.target.target : RepoUrl.parse(wanted);
+  }
+
+  /**
+   * テンプレートからタスクを作る（PBI-90）。題と説明はテンプレートから決め、対象リポジトリは必須（省略すると、
+   * プロジェクトの対象がリポジトリ1つだけならそれにする）。作った後は、通常のタスクと同じく進む。
+   */
+  private createTemplateTask(raw: unknown): Task {
+    const input = CreateTemplateTaskInput.parse(raw);
+    const project = this.deps.projects.get(input.projectId);
+    if (!project) throw new InvalidOperationError(message("project.notFound"));
+    if (project.targets.length === 0) {
+      throw new InvalidOperationError(message("task.repositoryMissing", { project: project.name }));
+    }
+    const [only, ...others] = project.targets;
+    const wanted =
+      input.repo ?? (only?.scope === "repo" && others.length === 0 ? only.target : undefined);
+    if (!wanted) throw new InvalidOperationError(message("task.templateRepositoryRequired"));
+    const repo = this.projectRepository(project, wanted);
+    const config = this.deps.config();
+    const budgetCapUsd = config.ok ? config.config.budgetPerTaskUsd : DEFAULT_BUDGET_USD;
+    const { title, body } = templateTask(input.template, repo);
+    return this.append({ id: randomUUID(), projectId: project.id }, [
+      {
+        actor: "person",
+        event: {
+          type: "TaskCreated",
+          payload: { title, body, start: "sacty", repo, budgetCapUsd, template: input.template },
         },
       },
     ]);

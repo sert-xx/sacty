@@ -130,6 +130,13 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
         <p className="text-sm text-muted-foreground">
           {m.start}
           {labels.start[task.start]}
+          {/* テンプレートで作ったタスク（PBI-90） */}
+          {task.template && (
+            <>
+              {m.template}
+              <span data-testid="task-template">{labels.template[task.template]}</span>
+            </>
+          )}
           {task.source && (
             <>
               {m.sourceOpen}

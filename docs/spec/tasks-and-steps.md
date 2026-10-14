@@ -6,7 +6,7 @@
 
 承認・差し戻しは [承認と差し戻し](approval.md)、タスク分割と統合レビューは [タスク分割と統合レビュー](split-and-integrate.md) にある。
 
-関係する ADR: なし
+関係する ADR: [タスクのテンプレート「Sacty セットアップ」で、リポジトリを sacty で扱うためのエージェントの設定を整える](../adr/20261014-1530-task-template-sacty-setup.md)
 
 ## タスクの作られ方
 
@@ -26,6 +26,33 @@
 - 状態の値は [作業履歴](event-log.md) の「投影」の表。完了という状態は無く、すべての工程が `done` か `skip` なら完了（`isCompleted`）とする。
 
 コード: `packages/core/src/events.ts`（`TaskCreated`・`TaskSource`）、`packages/core/src/projection.ts`（`isCompleted`・`isRepoless`）、`apps/daemon/src/service.ts`（`createTask`）
+
+### タスクのテンプレート
+
+`POST /api/tasks` の本文に `template` があれば、テンプレートからタスクを作る（`CreateTemplateTaskInput`）。テンプレートは
+`sacty-setup`（Sacty セットアップ）だけ。
+
+- 受け付けるのは `template`・`projectId`・`repo` だけ。`title`・`body` ほかの項目を渡すと 400（題と説明は sacty が決める）。
+  知らないテンプレート・空の `repo`・`repo: null` も 400。
+- 対象リポジトリは必須。省略したら、プロジェクトの対象がリポジトリ1つだけならそれにする。そうでなければ作らない
+  （`task.templateRepositoryRequired`。409）。対象の外のリポジトリは、通常のタスクと同じく作らない（`task.repositoryUnknown`）。
+- `TaskCreated` に `template` を記録する（`start` は `sacty`、`repo` は通常のタスクと同じく登録した名前にそろえる）。投影の
+  `Task.template` に残る。
+- 題は `Sacty セットアップ（<owner>/<name>）`、説明（ゴール）は `templateTask` が決めた文。作った後は通常のタスクと同じく、
+  オーケストレーターが進め方を選ぶ（テンプレートで工程を決めない）。
+- `sacty-setup` のゴールは、対象のリポジトリを sacty で扱うためのエージェントの設定を検査し、足りないものを整える PR を作ること。
+  特定の言語・ツールを前提にしない文にしている。検査して整えるもの：
+  1. エージェント向けの指示（AGENTS.md・CLAUDE.md など。二重に管理しない）
+  2. テストの実行の仕方（コマンドと前提。今の設定と合っているか）
+  3. テストに要るサービス（起動の仕方・つなぎ先。要らなければそう書く）
+  4. CI/CD でデプロイしているリポジトリでは、デプロイの確認のスキル `deployment-observer`。原本を
+     `.agents/skills/deployment-observer/SKILL.md`、`.claude/skills/deployment-observer` を `../../.agents/skills/deployment-observer`
+     への相対のシンボリックリンクにする。front matter（`name`・`description`）、デプロイの完了の見分け方・確かめ方・つなぎ方、
+     変更しない・秘密情報を出さない・判断できなければ `unknown` の約束、見出し `sacty-deployment` の JSON の答えの形を書かせる。
+- ゴールには、整っていて変更が要らなければ PR を作らずに調査だけで終え、項目ごとの検査の結果を残すことも書く（オーケストレーターが
+  `investigate` を選べば、調査の結果を画面で承認して完了する）。
+
+コード: `packages/core/src/events.ts`（`TaskTemplate`・`CreateTemplateTaskInput`・`TaskCreated`）、`apps/daemon/src/service.ts`（`createTask`・`createTemplateTask`・`projectRepository`）、`apps/daemon/src/task-templates.ts`（`templateTask`）
 
 ## 工程
 

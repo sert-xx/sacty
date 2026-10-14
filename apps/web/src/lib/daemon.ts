@@ -2,6 +2,7 @@ import {
   type ActivityEvent,
   type CleanupTarget,
   type CreateTaskInput,
+  type CreateTemplateTaskInput,
   type DaemonText,
   type Project,
   type ProjectDefinitionInput,
@@ -61,7 +62,7 @@ export async function getTask(
 
 /** タスクを作る。作成先のプロジェクトが無いなどは、画面に出せる理由を返す。 */
 export async function createTask(
-  input: CreateTaskInput,
+  input: CreateTaskInput | CreateTemplateTaskInput,
 ): Promise<{ ok: true; task: Task } | { ok: false; message: string }> {
   const res = await daemonFetch("/api/tasks", {
     method: "POST",

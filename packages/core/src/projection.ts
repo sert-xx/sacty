@@ -12,6 +12,7 @@ import type {
   StepPlan,
   StepPullRequestKey,
   TaskSource,
+  TaskTemplate,
   TestMapping,
   TestViewpoint,
   Verdict,
@@ -205,6 +206,8 @@ export type Task = {
   repo?: string;
   /** 対象リポジトリを指定せずに作った（PBI-73）。リポジトリを決めた後も残る（作ったときの指定）。 */
   noRepo?: true;
+  /** テンプレートで作った（PBI-90）。 */
+  template?: TaskTemplate;
   /**
    * 対象リポジトリを決めた理由（PBI-73）。リポジトリを指定せずに作ったタスクで、オーケストレーター・人が選んだとき、
    * 分割の子タスクに分割のエージェントが付けたとき。
@@ -447,6 +450,7 @@ export function applyEvent(
         ? { repoChoice: { reason: event.payload.repoReason, by: "orchestrator" as const } }
         : {}),
       ...(event.payload.parent ? { parent: event.payload.parent } : {}),
+      ...(event.payload.template ? { template: event.payload.template } : {}),
       // 依存先の子タスクがあれば、それが完了するまで待つ（PBI-27）
       status: event.payload.parent?.dependsOn.length ? "blocked" : "queued",
       steps: [],

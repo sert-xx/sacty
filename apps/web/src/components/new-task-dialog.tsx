@@ -1,5 +1,6 @@
 "use client";
 
+import type { TaskTemplate } from "@sacty/core";
 import Link from "next/link";
 import { useActionState, useState } from "react";
 import { type CreateTaskState, createTaskAction } from "@/app/actions";
@@ -55,11 +56,17 @@ export function NewTaskDialog({
     repositories,
     hasTargets,
   });
+  // タスクのテンプレート（PBI-90）。選ぶと、リポジトリを選ぶだけのフォームになる（題と説明は sacty が決める）
+  // 送信の後も選んだままにする（理由を返したときも、同じフォームのまま直せる）
+  const [template, setTemplate] = useState<TaskTemplate | "">("");
 
   return (
     <Dialog
       onOpenChange={(open) => {
-        if (open) setTarget({ id: projectId, name: projectName, repositories, hasTargets });
+        if (open) {
+          setTarget({ id: projectId, name: projectName, repositories, hasTargets });
+          setTemplate("");
+        }
       }}
     >
       <DialogTrigger render={<Button size="lg" />}>{t.create}</DialogTrigger>
@@ -77,6 +84,42 @@ export function NewTaskDialog({
               ))}
             </ul>
           )}
+          <fieldset className="flex flex-col gap-2">
+            <legend className="mb-2 text-sm font-medium">{t.template}</legend>
+            <div className="flex flex-wrap items-center gap-1 self-start rounded-md border border-input p-0.5">
+              {(
+                [
+                  ["", t.templateNone],
+                  ["sacty-setup", t.templateSetup],
+                ] as const
+              ).map(([value, label]) => (
+                <label
+                  key={value || "none"}
+                  className={`cursor-pointer rounded px-3 py-1 text-sm has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring ${
+                    template === value ? "bg-muted font-semibold" : "text-muted-foreground"
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="template"
+                    value={value}
+                    checked={template === value}
+                    className="sr-only"
+                    onChange={() => setTemplate(value)}
+                  />
+                  {label}
+                </label>
+              ))}
+            </div>
+            {template === "sacty-setup" && (
+              <p
+                data-testid="template-setup-hint"
+                className="text-xs leading-5 whitespace-pre-line text-muted-foreground"
+              >
+                {t.templateSetupHint}
+              </p>
+            )}
+          </fieldset>
           {!target.hasTargets ? (
             <p role="alert" className="text-sm text-warn">
               {t.noRepository}{" "}
@@ -86,7 +129,7 @@ export function NewTaskDialog({
             </p>
           ) : (
             <div className="flex flex-col gap-2">
-              <Label htmlFor="task-repo">{t.repository}</Label>
+              <Label htmlFor="task-repo">{template ? t.repositoryRequired : t.repository}</Label>
               {/* Org の対象ではリポジトリが多いので、入力して絞り込めるようにする */}
               {/* 空欄なら、リポジトリを指定せずに作る（PBI-73） */}
               <Input
@@ -95,6 +138,7 @@ export function NewTaskDialog({
                 list="task-repo-options"
                 autoComplete="off"
                 aria-describedby="task-repo-hint"
+                required={template !== ""}
                 defaultValue={
                   state.values?.repo ??
                   (target.repositories.length === 1 ? target.repositories[0] : "")
@@ -108,44 +152,49 @@ export function NewTaskDialog({
                 ))}
               </datalist>
               <p id="task-repo-hint" className="text-xs leading-5 text-muted-foreground">
-                {t.repositoryHint}
+                {template ? t.templateRepositoryHint : t.repositoryHint}
               </p>
             </div>
           )}
-          <div className="flex flex-col gap-2">
-            <Label htmlFor="task-title">{t.title}</Label>
-            <Input
-              id="task-title"
-              name="title"
-              defaultValue={state.values?.title}
-              aria-invalid={Boolean(state.fieldErrors?.title)}
-              aria-describedby={state.fieldErrors?.title ? "task-title-error" : undefined}
-              autoFocus
-            />
-            {state.fieldErrors?.title && (
-              <p id="task-title-error" className="text-sm text-warn">
-                {state.fieldErrors.title[0]}
-              </p>
-            )}
-          </div>
-          <div className="flex flex-col gap-2">
-            <Label htmlFor="task-body">{t.body}</Label>
-            <Textarea
-              id="task-body"
-              name="body"
-              rows={6}
-              className="max-h-72 overflow-y-auto"
-              defaultValue={state.values?.body}
-              placeholder={t.bodyPlaceholder}
-              aria-invalid={Boolean(state.fieldErrors?.body)}
-              aria-describedby={state.fieldErrors?.body ? "task-body-error" : undefined}
-            />
-            {state.fieldErrors?.body && (
-              <p id="task-body-error" className="text-sm text-warn">
-                {state.fieldErrors.body[0]}
-              </p>
-            )}
-          </div>
+          {/* テンプレートでは、題と説明を入力させない（PBI-90） */}
+          {!template && (
+            <>
+              <div className="flex flex-col gap-2">
+                <Label htmlFor="task-title">{t.title}</Label>
+                <Input
+                  id="task-title"
+                  name="title"
+                  defaultValue={state.values?.title}
+                  aria-invalid={Boolean(state.fieldErrors?.title)}
+                  aria-describedby={state.fieldErrors?.title ? "task-title-error" : undefined}
+                  autoFocus
+                />
+                {state.fieldErrors?.title && (
+                  <p id="task-title-error" className="text-sm text-warn">
+                    {state.fieldErrors.title[0]}
+                  </p>
+                )}
+              </div>
+              <div className="flex flex-col gap-2">
+                <Label htmlFor="task-body">{t.body}</Label>
+                <Textarea
+                  id="task-body"
+                  name="body"
+                  rows={6}
+                  className="max-h-72 overflow-y-auto"
+                  defaultValue={state.values?.body}
+                  placeholder={t.bodyPlaceholder}
+                  aria-invalid={Boolean(state.fieldErrors?.body)}
+                  aria-describedby={state.fieldErrors?.body ? "task-body-error" : undefined}
+                />
+                {state.fieldErrors?.body && (
+                  <p id="task-body-error" className="text-sm text-warn">
+                    {state.fieldErrors.body[0]}
+                  </p>
+                )}
+              </div>
+            </>
+          )}
           {state.message && (
             <p role="alert" className="text-sm text-warn">
               {state.message}

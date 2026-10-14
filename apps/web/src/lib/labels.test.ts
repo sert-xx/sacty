@@ -1180,3 +1180,33 @@ describe("成果の書き出しの作業履歴（PBI-56）", () => {
     );
   });
 });
+
+describe("テンプレートで作ったタスクの作業履歴（PBI-90）", () => {
+  const created = (template?: "sacty-setup"): ActivityEvent =>
+    ({
+      type: "TaskCreated",
+      payload: {
+        title: "t",
+        body: "",
+        start: "sacty",
+        budgetCapUsd: 5,
+        ...(template ? { template } : {}),
+      },
+      seq: 1,
+      id: "e1",
+      taskId: "t1",
+      projectId: "default",
+      at: "2026-10-15T00:00:00.000Z",
+      actor: "person",
+    }) as ActivityEvent;
+
+  it("作成の行に、テンプレートの名前を出す（無ければ今と同じ）", () => {
+    expect(describeEvent(created("sacty-setup"))).toBe(
+      "タスクを作成（人間・テンプレート：Sacty セットアップ）",
+    );
+    expect(describeIn(created("sacty-setup"), labels.en)).toBe(
+      "Task created (person · template: Sacty setup)",
+    );
+    expect(describeEvent(created())).toBe("タスクを作成（人間）");
+  });
+});
