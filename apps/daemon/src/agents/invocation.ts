@@ -111,6 +111,11 @@ export async function buildInvocation(
    * セッションを再開する。fork なら複製して（Claude Code の --fork-session）、元のセッションには書き足さない。
    */
   session?: OrchestratorSessionResume,
+  /**
+   * 作業領域の外で読ませるディレクトリ（コンテナの中のパス。質問への答えの各実行のセッションログ。PBI-91）。Claude Code は
+   * --add-dir で読める場所に足す（Codex はサンドボックスを使わないので、そのまま読める）。
+   */
+  readDirs: readonly string[] = [],
 ): Promise<Invocation> {
   const secrets = {
     get: async (name: string) => {
@@ -140,6 +145,7 @@ export async function buildInvocation(
       // 途中の出来事（考えたこと・ツールの呼び出しと結果）も出させ、セッションログに残す（PBI-62）。-p で stream-json を
       // 使うには --verbose が要る。最終結果は、最後の result の出来事から読む
       const command = ["claude", "-p", prompt, "--output-format", "stream-json", "--verbose"];
+      for (const dir of readDirs) command.push("--add-dir", dir);
       // 保存したセッションを再開する（PBI-67）。質問への答えは複製して、元のセッションに書き足さない
       if (session) {
         command.push("--resume", session.resume);

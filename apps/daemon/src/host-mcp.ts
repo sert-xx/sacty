@@ -75,10 +75,37 @@ export type HostMcpSpec = {
   cwd?: string;
   /**
    * コンテキストの mcp.yaml の MCP サーバー（PBI-84）。name はゲートウェイの中の名前（プロジェクトと中身ごと）なので、
-   * 理由（画面・作業履歴・エージェントへの 503）には、mcp.yaml の名前と層を出す。
+   * 理由（画面・作業履歴・エージェントへの 503）とログには、mcp.yaml の名前・層・プロジェクトを出す（PBI-92）。
    */
-  context?: { name: string; from: string };
+  context?: HostMcpContext;
 };
+
+/** コンテキストの MCP サーバーの出どころ（PBI-84・92）。設定で探せる名前と、どのプロジェクト・層のものか。 */
+export type HostMcpContext = {
+  /** mcp.yaml の名前。 */
+  name: string;
+  /** 層（リポジトリ#ref@commit）。 */
+  from: string;
+  /** どのプロジェクトのものか（同じ層・同じ名前のものが、プロジェクトごとにある）。 */
+  project: { id: string; name: string };
+};
+
+/**
+ * ログに出す MCP サーバーの名前（PBI-92）。ホストの MCP サーバーは config.yaml の名前。コンテキストの MCP サーバーは、
+ * ゲートウェイの中の名前（ctx-…）だけでは設定で探せないので、mcp.yaml の名前・プロジェクト・層を出し、中の名前を添える。
+ */
+export function mcpLogName(spec: Pick<HostMcpSpec, "name" | "context">): string {
+  const c = spec.context;
+  if (!c) return `host MCP ${spec.name}`;
+  return `context MCP ${JSON.stringify(c.name)} (project ${JSON.stringify(c.project.name)} [${c.project.id}], context ${JSON.stringify(c.from)}, internal ${spec.name})`;
+}
+
+/** 理由（DaemonMessage）の引数にする、コンテキストの MCP サーバーの出どころ。 */
+const contextParams = (c: HostMcpContext) => ({
+  name: c.name,
+  from: c.from,
+  project: c.project.name,
+});
 
 export function toHostMcp(name: string, file: z.infer<typeof HostMcpFile>): HostMcpSpec {
   return {
@@ -96,8 +123,11 @@ export function toHostMcp(name: string, file: z.infer<typeof HostMcpFile>): Host
   };
 }
 
-/** MCP サーバーを起動し直すかを決める設定（エージェントに渡す時間切れは、起動し直さずに変える。PBI-75）。 */
-const processKey = ({ startupTimeoutSec, toolTimeoutSec, ...spec }: HostMcpSpec) =>
+/**
+ * MCP サーバーを起動し直すかを決める設定（エージェントに渡す時間切れは、起動し直さずに変える。PBI-75）。出どころ（context）は
+ * 表示だけに使うので含めない（プロジェクトの名前を変えても起動し直さない。PBI-92）。
+ */
+const processKey = ({ startupTimeoutSec, toolTimeoutSec, context, ...spec }: HostMcpSpec) =>
   JSON.stringify(spec);
 
 /** 起動した MCP サーバーへの接続。 */
@@ -215,7 +245,8 @@ const stdioConnector =
     assertCommand(spec.command, spec.cwd, merged.PATH);
     const transport = new GroupStdioTransport(
       {
-        name: spec.name,
+        // 記録・後片付けのログで、どの MCP サーバーのものかわかる名前（PBI-92）
+        name: mcpLogName(spec),
         command: spec.command,
         args: spec.args,
         env: merged,
@@ -376,7 +407,10 @@ export class HostMcpServers {
       if (left <= 0) {
         const seconds = Math.round(limitMs / 1000);
         return state.spec.context
-          ? message("context.mcpHostReadyTimeout", { ...state.spec.context, seconds })
+          ? message("context.mcpHostReadyTimeout", {
+              ...contextParams(state.spec.context),
+              seconds,
+            })
           : message("gateway.mcpReadyTimeout", { name, seconds });
       }
       // 起動が終わる（終わった後に設定の変更で起動し直すなら、それも待つ）か、上限の時間が経つまで待つ
@@ -419,7 +453,7 @@ export class HostMcpServers {
     if (!state || this.stopped) return Promise.resolve();
     if (state.starting) return state.starting;
     if (state.timer) clearTimeout(state.timer);
-    this.deps.log?.(`[gateway] host MCP ${name}: starting (${reason})`);
+    this.deps.log?.(`[gateway] ${mcpLogName(state.spec)}: starting (${reason})`);
     const spec = state.spec;
     const startingKey = state.key;
     state.startingKey = startingKey;
@@ -445,11 +479,11 @@ export class HostMcpServers {
         state.problem =
           error instanceof CommandNotFoundError && spec.context
             ? message("context.mcpHostCommandMissing", {
-                ...spec.context,
+                ...contextParams(spec.context),
                 command: error.command,
               })
             : unavailable(spec, detail);
-        this.deps.log?.(`[gateway] host MCP ${name}: not ready: ${detail}`);
+        this.deps.log?.(`[gateway] ${mcpLogName(spec)}: not ready: ${detail}`);
         state.timer = setTimeout(
           () => void this.restart(name, "retry"),
           this.deps.retryMs ?? RETRY_MS,
@@ -528,6 +562,11 @@ export class HostMcpServers {
     const connection = state?.expired ? undefined : state?.current;
     if (!state || !connection) {
       const reason = state?.problem ? ` (${errorTextOf(state.problem)})` : "";
+      // コンテキストの MCP サーバーは、エージェントにも mcp.yaml の名前と出どころを返す（中の名前は返さない。PBI-92）
+      const context = state?.spec.context;
+      const which = context
+        ? `"${context.name}" (mcp.yaml of ${context.from}, project "${context.project.name}")`
+        : `"${name}"`;
       res.writeHead(state ? 503 : 404, { "content-type": "application/json" });
       res.end(
         JSON.stringify({
@@ -535,7 +574,7 @@ export class HostMcpServers {
           error: {
             code: -32000,
             message: state
-              ? `sacty gateway: the MCP server "${state.spec.context?.name ?? name}" is not ready (it is starting or re-authenticating)${reason}. Try again later.`
+              ? `sacty gateway: the MCP server ${which} is not ready (it is starting or re-authenticating)${reason}. Try again later.`
               : `sacty gateway: unknown MCP server "${name}"`,
           },
           id: null,
@@ -651,7 +690,7 @@ export class HostMcpServers {
 /** 準備ができない理由（コンテキストの MCP サーバーは、mcp.yaml の名前と層で示す。PBI-84）。 */
 function unavailable(spec: Pick<HostMcpSpec, "name" | "context">, detail: string): DaemonMessage {
   return spec.context
-    ? message("context.mcpHostUnavailable", { ...spec.context, detail })
+    ? message("context.mcpHostUnavailable", { ...contextParams(spec.context), detail })
     : message("gateway.mcpUnavailable", { name: spec.name, detail });
 }
 

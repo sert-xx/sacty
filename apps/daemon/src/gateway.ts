@@ -370,6 +370,7 @@ export class AiGateway {
   private async handleContextMcp(
     req: IncomingMessage,
     res: ServerResponse,
+    name: string,
     target: HttpContextMcpRoute,
     query: string,
   ): Promise<void> {
@@ -413,7 +414,8 @@ export class AiGateway {
             })
           : await (this.deps.fetchImpl ?? fetch)(url, init);
     } catch {
-      return fail(res, 502, "sacty gateway: the MCP server could not be reached");
+      // どの MCP サーバーか（mcp.yaml の名前）を返す（PBI-92）
+      return fail(res, 502, `sacty gateway: the MCP server "${name}" could not be reached`);
     }
     return pipe(upstream, res);
   }
@@ -454,7 +456,7 @@ export class AiGateway {
         if (!this.deps.contextHostMcp) return fail(res, 404, "sacty gateway: no host MCP servers");
         return relayHostMcp(this.deps.contextHostMcp, target.host, req, res);
       }
-      return this.handleContextMcp(req, res, target, contextMcp[2] ?? "");
+      return this.handleContextMcp(req, res, name, target, contextMcp[2] ?? "");
     }
     // ホストの MCP サーバー：/mcp/<名前>（実行のトークンを Bearer で付ける。PBI-36）
     const mcp = /^\/mcp\/([A-Za-z0-9_-]+)\/?(\?.*)?$/.exec(req.url ?? "");
