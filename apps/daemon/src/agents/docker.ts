@@ -2,9 +2,13 @@ import { type ChildProcess, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   chmodSync,
+  closeSync,
   copyFileSync,
   cpSync,
+  fstatSync,
+  lstatSync,
   mkdtempSync,
+  openSync,
   readFileSync,
   renameSync,
   rmSync,
@@ -14,6 +18,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { message } from "@sacty/core";
+import { assertRealParents, NOFOLLOW_READ_FLAGS } from "../agent-sessions.js";
 import { MessageError } from "../errors.js";
 import { DEFAULT_HOST_ADDRESS } from "../gateway.js";
 import type { SessionLogSink } from "../session-logs.js";
@@ -78,21 +83,62 @@ function hashOf(path: string): string | undefined {
   }
 }
 
+/** ステージしたファイル（実行ごとの一時ディレクトリ dir の中の、相対パス name。区切りは /）。 */
+export type StagedFile = { dir: string; name: string };
+
+/**
+ * ステージしたファイルを、リンクを辿らずに読む（PBI-71）。一時ディレクトリはコンテナにマウントするので、コンテナが
+ * 中のファイルや途中のディレクトリを、ホストのほかのファイルへのリンクや FIFO に差し替えられる。リンクを辿らずに
+ * 待たずに開き、開いたものが通常のファイルであること、一時ディレクトリと途中のディレクトリがリンクでないこと
+ * （開く前と後）を確かめる。違えば例外（ホストのほかのファイルの中身を読まない）。
+ */
+export function readStagedFile(staged: StagedFile): Buffer {
+  const assertRealDirs = () => {
+    if (!lstatSync(staged.dir).isDirectory()) throw new Error(`${staged.dir}: not a directory`);
+    assertRealParents(staged.dir, staged.name);
+  };
+  assertRealDirs();
+  const fd = openSync(join(staged.dir, ...staged.name.split("/")), NOFOLLOW_READ_FLAGS);
+  try {
+    if (!fstatSync(fd).isFile()) throw new Error(`${staged.name}: not a regular file`);
+    assertRealDirs();
+    return readFileSync(fd);
+  } finally {
+    closeSync(fd);
+  }
+}
+
+function hashOfStaged(staged: StagedFile): string | undefined {
+  try {
+    return createHash("sha256").update(readStagedFile(staged)).digest("hex");
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * コンテナの中で更新されたファイル（Codexの認証ファイルなど）を、ホストに書き戻す。
  * トークンの更新で古いトークンが無効になる方式だと、書き戻さないとホストのログインが壊れるため。
  * ただし実行中にホスト側のファイルが変わっていたら、利用者の操作を優先して書き戻さない。
+ * ステージしたファイルはリンクを辿らずに1度だけ読み、確かめた中身をそのまま書く（PBI-71）。リンク・通常のファイル
+ * 以外に差し替えられていれば読まず、書き戻さない（"not-regular"）。
  */
 export function syncBackIfChanged(
   hostPath: string,
-  stagedPath: string,
+  staged: StagedFile,
   hashAtCopy: string,
-): "written" | "unchanged" | "host-changed" {
-  const staged = hashOf(stagedPath);
-  if (!staged || staged === hashAtCopy) return "unchanged";
+): "written" | "unchanged" | "host-changed" | "not-regular" {
+  let content: Buffer;
+  try {
+    content = readStagedFile(staged);
+  } catch (error) {
+    // 消えていれば何もしない。リンクなどに差し替えられていれば書き戻さない
+    return (error as NodeJS.ErrnoException).code === "ENOENT" ? "unchanged" : "not-regular";
+  }
+  if (createHash("sha256").update(content).digest("hex") === hashAtCopy) return "unchanged";
   if (hashOf(hostPath) !== hashAtCopy) return "host-changed";
   const temp = join(dirname(hostPath), `.${basename(hostPath)}.sacty-${process.pid}`);
-  writeFileSync(temp, readFileSync(stagedPath), { mode: 0o600 });
+  writeFileSync(temp, content, { mode: 0o600 });
   renameSync(temp, hostPath);
   return "written";
 }
@@ -306,16 +352,17 @@ export class DockerExecutor implements AgentExecutor {
     // ディレクトリごとマウントする（ファイル単体だと親ディレクトリがroot所有になり書き込めないため）
     const staging = invocation.stage ? mkdtempSync(join(tmpdir(), "sacty-run-")) : null;
     const mounts: { hostPath: string; containerPath: string; readOnly: boolean }[] = [];
-    const syncBacks: { hostPath: string; stagedPath: string; hashAtCopy: string }[] = [];
+    const syncBacks: { hostPath: string; staged: StagedFile; hashAtCopy: string }[] = [];
     // ステージした認証ファイルの値（実行前と、コンテナで更新された後の両方）。出力から取り除く。
-    const stagedPaths: string[] = [];
+    const stagedFiles: StagedFile[] = [];
     const stagedSecrets: string[] = [];
     const collectSecrets = () => {
-      for (const path of stagedPaths) {
+      for (const staged of stagedFiles) {
         try {
-          stagedSecrets.push(...secretStringsInJson(readFileSync(path, "utf8")));
+          // リンクを辿らずに読む（コンテナが差し替えたリンクの先や FIFO を読まない。PBI-71）
+          stagedSecrets.push(...secretStringsInJson(readStagedFile(staged).toString("utf8")));
         } catch {
-          // 消えていれば何もしない
+          // 消えていれば・リンクなどに差し替えられていれば何もしない
         }
       }
       // セッションログからも伏せる（PBI-62）
@@ -327,13 +374,14 @@ export class DockerExecutor implements AgentExecutor {
         cpSync(invocation.stage.seedDir, staging, { recursive: true });
       }
       for (const file of invocation.stage.files) {
-        const copied = join(staging, basename(file.name));
+        const staged: StagedFile = { dir: staging, name: basename(file.name) };
+        const copied = join(staging, staged.name);
         try {
           copyFileSync(file.hostPath, copied);
-          stagedPaths.push(copied);
-          const hashAtCopy = hashOf(copied);
+          stagedFiles.push(staged);
+          const hashAtCopy = hashOfStaged(staged);
           if (file.syncBack && hashAtCopy) {
-            syncBacks.push({ hostPath: file.hostPath, stagedPath: copied, hashAtCopy });
+            syncBacks.push({ hostPath: file.hostPath, staged, hashAtCopy });
           }
         } catch {
           rmSync(staging, { recursive: true, force: true });
@@ -451,12 +499,25 @@ export class DockerExecutor implements AgentExecutor {
         };
       }
       collectSecrets(); // コンテナで更新された認証情報も、出力から取り除く対象にする
+      // コンテナが止まったことを確かめられなければ、認証ファイルを書き戻さない（動いたままのコンテナは、書き戻す途中の
+      // ファイルをホストのほかのファイルへのリンクに差し替えられる。PBI-71）。書き戻さなかったことと理由は、デーモンの
+      // ログに残す（値は出さない）
       for (const file of syncBacks) {
+        if (!stopped) {
+          console.warn(
+            `[daemon] ${containerName} が止まったことを確かめられないため、${file.hostPath} への書き戻しをしませんでした。`,
+          );
+          continue;
+        }
         try {
-          const result = syncBackIfChanged(file.hostPath, file.stagedPath, file.hashAtCopy);
+          const result = syncBackIfChanged(file.hostPath, file.staged, file.hashAtCopy);
           if (result === "host-changed") {
             console.warn(
               `[daemon] ${file.hostPath} が実行中に変更されたため、コンテナでの更新は書き戻しませんでした。`,
+            );
+          } else if (result === "not-regular") {
+            console.warn(
+              `[daemon] ${containerName} の中の ${file.staged.name} を通常のファイルとして読めない（リンクなどに差し替えられた）ため、${file.hostPath} へは書き戻しませんでした。`,
             );
           }
         } catch (error) {
