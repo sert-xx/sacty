@@ -2,7 +2,7 @@
 
 - 日付: 2026-10-14（UTC）
 - タスク: PBI-90
-- PR: なし
+- PR: #100
 - ブランチ: feat/issue-90-setup-template
 - 関係する ADR: [タスクのテンプレート「Sacty セットアップ」で、リポジトリを sacty で扱うためのエージェントの設定を整える](../adr/20261014-1530-task-template-sacty-setup.md)
 
