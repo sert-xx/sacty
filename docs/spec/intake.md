@@ -3,7 +3,7 @@
 GitHub の Issue・PR と JIRA のチケットを、定期的に探してタスクにする。取り込み元・使う GitHub のアカウントはプロジェクトに、取り込むラベルは
 sacty の設定（すべてのプロジェクトに共通）に書く。GitHub へのアクセスは、ホストの `gh` にログイン済みのアカウントで行う。
 
-関係する ADR: なし
+関係する ADR: [sacty が作る PR に取り込むラベルを付け、別のタスクのレビューを元のタスクの PR の指摘として取り込む](../adr/20261014-1445-label-sacty-pull-requests-for-review.md)
 
 ## 間隔
 
@@ -20,18 +20,26 @@ sacty の設定の項目ごとに、プロジェクトの対象（Org かリポ�
 
 | 設定 | 検索の条件 | タスク |
 | --- | --- | --- |
-| `intakeLabel` | `is:open label:"<ラベル>"`（`triageOff` で Issue か PR を外せる） | 通常のタスク |
+| `intakeLabel` | `is:open label:"<ラベル>"`（`triageOff` で Issue か PR を外せる） | 通常のタスク。sacty が作った PR は PR のレビューだけ（`source.review: sacty`） |
 | `reviewLabel` | `is:open is:pr label:"<ラベル>"` | PR のレビューだけ（`source.review: label`） |
 | `reviewRequested` | `is:open is:pr user-review-requested:<アカウント>` | PR のレビューだけ（`source.review: requested`） |
 
 - ラベルは 50 文字まで（`"`・`\` は使えない）。比べるときは大文字・小文字を区別しない。設定していなければ取り込まない。
 - レビューの依頼は、個人としての依頼だけ（チームへの依頼は含まない）。担当のプロジェクトでそのホストに選んだアカウントへの依頼だけを取り込む。
   レビューに当たる PR は、取り込むラベルが付いていてもレビューだけのタスクにする。
+- sacty が作った PR（台帳にある、タスクの実装の PR・要求要件・設計の PR・取り込むラベルを付けた PR。[PR の取り込むラベル](approval.md#pr-の取り込むラベル)）に
+  取り込むラベルが付いていれば、作ったタスクとは別の、PR のレビューだけのタスクにする（`source.review: sacty`。オーケストレーターに工程を
+  選ばせない。もう一度実装させて PR を増やさないため）。PR のトリアージを Off にしていれば取り込まない。レビュー用のラベル・レビューの依頼にも
+  当たっても `sacty` にする（そのレビューを作ったタスクに届けるため。取り込むラベルとレビュー用のラベルが同じときも）。
+  - 作ったタスクの取り込み元（Issue など）とは番号が違うので、作ったタスクがあることで取り込まれずに終わることはない。同じ PR は二度
+    取り込まないので、1つの PR のレビューのタスクは1つ（PR を更新しても、新しいレビューのタスクは作らない）。
+  - レビューのタスクが PR に投稿したレビューは、作ったタスクの PR の指摘として取り込む（[PR の指摘の取り込み](approval.md#pr-の指摘の取り込み)）。
+    レビューのタスクは PR を作らないので、それ自体はラベルの付く PR を増やさない。
 - 担当のプロジェクトは、リポジトリの指定が Org の指定より優先（`responsibleProject`）。同じ Issue・PR（`<リポジトリ>#<番号>`）は二度取り込まない。
 - レート制限（403・429 で残りが 0 か `retry-after`）に当たったら、そのアカウントのほかの検索を飛ばす。
 - アカウントを選んでいない取り込み元は検索せず、`github.accountRequired` を記録する。
 
-コード: `apps/daemon/src/service.ts`（`intakeSources`・`importIssues`）、`apps/daemon/src/github.ts`（`GitHubIssueSearch`）、`packages/core/src/projects.ts`（`SactySettings`・`responsibleProject`）
+コード: `apps/daemon/src/service.ts`（`intakeSources`・`importIssues`・`sactyReviewsOf`）、`apps/daemon/src/github.ts`（`GitHubIssueSearch`）、`packages/core/src/projects.ts`（`SactySettings`・`responsibleProject`）
 
 ## JIRA のチケット
 

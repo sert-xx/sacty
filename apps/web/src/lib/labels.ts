@@ -319,6 +319,14 @@ export function describeEvent(event: ActivityEvent, l: LabelMessages): string {
             event.payload.commit.slice(0, 7),
           )
         : e.branchPushed(event.payload.branch, event.payload.commit.slice(0, 7));
+    case "PullRequestLabeled":
+      return e.PullRequestLabeled(event.payload.number, event.payload.label, event.payload.created);
+    case "PullRequestLabelFailed":
+      return e.PullRequestLabelFailed(
+        event.payload.number,
+        event.payload.label,
+        l.text(event.payload.message),
+      );
     case "BranchPushed":
       return e.BranchPushed(event.payload.branch, event.payload.commit.slice(0, 7));
     case "TaskBranchCreated":

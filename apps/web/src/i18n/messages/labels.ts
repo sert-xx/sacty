@@ -220,6 +220,10 @@ const ja = {
       `タスクブランチを作成（${branch}・${commit}）`,
     StepBranchPushed: (step: string, branch: string, commit: string) =>
       `${step}のファイルをブランチにプッシュ（${branch}・${commit}）`,
+    PullRequestLabeled: (number: number, label: string, created: boolean) =>
+      `PR #${number} に取り込むラベル「${label}」を付けた${created ? "（リポジトリに無かったので作った）" : ""}。別のタスクでレビューする`,
+    PullRequestLabelFailed: (number: number, label: string, message: string) =>
+      `PR #${number} に取り込むラベル「${label}」を付けられなかった（PR はそのまま）：${message}`,
     StepPullRequestPublished: (step: string, number: number, path: string, supersedes?: number) =>
       `${step}の PR を作成・更新（#${number}・${path}）${supersedes ? `。作り直したので PR #${supersedes} を閉じた` : ""}`,
     PullRequestMerged: (number: number, by?: string) =>
@@ -538,6 +542,10 @@ const en: LabelMessages = {
     TaskBranchCreated: (branch, commit) => `Created the task branch (${branch} · ${commit})`,
     StepBranchPushed: (step, branch, commit) =>
       `Pushed the ${step} file to a branch (${branch} · ${commit})`,
+    PullRequestLabeled: (number, label, created) =>
+      `Added the intake label "${label}" to PR #${number}${created ? " (created it in the repository)" : ""}; another task will review it`,
+    PullRequestLabelFailed: (number, label, message) =>
+      `Could not add the intake label "${label}" to PR #${number} (the PR is kept): ${message}`,
     StepPullRequestPublished: (step, number, path, supersedes) =>
       `Opened or updated the ${step} PR (#${number} · ${path})${supersedes ? `; closed PR #${supersedes} because it was recreated` : ""}`,
     PullRequestMerged: (number, by) => `PR #${number} merged${by ? ` (${by})` : ""} → approved`,

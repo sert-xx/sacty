@@ -7,9 +7,9 @@
 
 ## イベントの形
 
-- 書くときの形は `{ type, payload }`。`type` で種類を分ける zod の判別共用体（`EventInput`）で検証する。種類は67（タスクの作成・分割、
+- 書くときの形は `{ type, payload }`。`type` で種類を分ける zod の判別共用体（`EventInput`）で検証する。種類は69（タスクの作成・分割、
   工程の進行、エージェントの実行、予算・一時停止・再開・中止、変更の申し出と判定、検証、git・PR、レビュー、取り込み元への返信、
-  質問、書き出し、マージの後の監視など）。
+  質問、書き出し、PR のラベル、マージの後の監視など）。
 - 記録した後の形（`ActivityEvent`）は、それに `seq`（作業履歴全体で単調に増える）・`id`（UUID）・`taskId`・`projectId`・`at`
   （同じ追記の中のイベントは同じ時刻）・`actor` を足したもの。
 - `actor` は `person`・`sacty`・`orchestrator`・`guardian`・`agent` のどれか。

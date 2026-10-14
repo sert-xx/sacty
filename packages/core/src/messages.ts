@@ -227,7 +227,7 @@ const PARAMS = {
   "integrate.unreadable": null,
   "review.pullRequestMissing": z.object({ repo: z.string() }),
   // PR のレビューだけを行う取り込み（PBI-44）
-  "review.reviewOnly": z.object({ via: z.enum(["requested", "label"]) }),
+  "review.reviewOnly": z.object({ via: z.enum(["requested", "label", "sacty"]) }),
   "review.notRereviewable": null,
   "github.ghMissing": null,
   "github.accountRequired": z.object({ project: z.string(), host: z.string() }),
@@ -273,6 +273,9 @@ const PARAMS = {
       "listRepositories",
       "postReview",
       "searchIssues",
+      "getLabel",
+      "createLabel",
+      "addLabel",
       "readChecks",
     ]),
     status: z.number(),
@@ -399,6 +402,9 @@ const githubActionJa = {
   listRepositories: "リポジトリの一覧を読めませんでした",
   postReview: "PR にレビューを投稿できませんでした",
   searchIssues: "Issue を検索できませんでした",
+  getLabel: "リポジトリのラベルを確かめられませんでした",
+  createLabel: "リポジトリにラベルを作れませんでした",
+  addLabel: "PR にラベルを付けられませんでした",
   readChecks: "CI/CD の状態を読めませんでした",
 } as const;
 const githubActionEn = {
@@ -412,6 +418,9 @@ const githubActionEn = {
   listRepositories: "Could not list the repositories",
   postReview: "Could not post the review to the PR",
   searchIssues: "Could not search issues",
+  getLabel: "Could not check the label of the repository",
+  createLabel: "Could not create the label in the repository",
+  addLabel: "Could not add the label to the PR",
   readChecks: "Could not read the CI/CD status",
 } as const;
 const githubHintJa = {
@@ -721,7 +730,7 @@ const ja: MessageDictionary = {
   "review.pullRequestMissing": ({ repo }) =>
     `タスクに、レビューする PR（${repo} の PR の URL）がありません。`,
   "review.reviewOnly": ({ via }) =>
-    `${via === "requested" ? "自分にレビューが依頼された" : "レビュー用のラベルの付いた"} PR なので、レビューだけを行います（オーケストレーターは使いません）。`,
+    `${via === "requested" ? "自分にレビューが依頼された" : via === "sacty" ? "sacty がほかのタスクで作り、取り込むラベルを付けた" : "レビュー用のラベルの付いた"} PR なので、レビューだけを行います（オーケストレーターは使いません）。`,
   "review.notRereviewable":
     "再レビューできるのは、レビューを PR に投稿して完了したタスクだけです。",
   "github.ghMissing":
@@ -1120,7 +1129,7 @@ const en: MessageDictionary = {
   "review.pullRequestMissing": ({ repo }) =>
     `The task has no PR to review (a URL of a PR in ${repo}).`,
   "review.reviewOnly": ({ via }) =>
-    `The PR ${via === "requested" ? "requests your review" : "has the review label"}, so sacty only reviews it (the Orchestrator is not used).`,
+    `The PR ${via === "requested" ? "requests your review" : via === "sacty" ? "was created by sacty in another task and labeled for intake" : "has the review label"}, so sacty only reviews it (the Orchestrator is not used).`,
   "review.notRereviewable": "Only a task that posted its review to the PR can be reviewed again.",
   "github.ghMissing":
     "The gh command was not found. Install GitHub CLI and sign in with gh auth login.",

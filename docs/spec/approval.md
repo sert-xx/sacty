@@ -3,7 +3,7 @@
 承認ゲートのある工程は、人間が承認すると次の工程へ進む。承認は、sacty の画面で行うか、対象のリポジトリへの PR のマージで行う
 （承認＝マージ）。差し戻すと、選んだ工程からやり直す。同じ工程への差し戻しが上限を超えると、エスカレーション（人間の判断待ち）になる。
 
-関係する ADR: なし
+関係する ADR: [sacty が作る PR に取り込むラベルを付け、別のタスクのレビューを元のタスクの PR の指摘として取り込む](../adr/20261014-1445-label-sacty-pull-requests-for-review.md)
 
 ## 画面での承認
 
@@ -35,6 +35,30 @@
 
 コード: `apps/daemon/src/service.ts`（`stepPullRequestsOn`・`taskBranchName`・`publishStepPullRequest`・`publish`）、`packages/core/src/events.ts`（`StepPullRequestKey`・`DEFAULT_DOCUMENTS_DIR`・`isDocumentsDir`）、`packages/core/src/projection.ts`（`stepDocumentPath`）、`apps/daemon/src/prompts.ts`（`buildStepDocument`）
 
+## PR の取り込むラベル
+
+sacty が作る PR すべて（実装の PR と、要求要件・設計の PR）に、作った直後に取り込むラベル（sacty の設定 `intakeLabel`）を付ける。
+別のタスク（PR のレビューだけのタスク）として取り込ませ、作ったタスクとは別のコンテキストでレビューさせるため
+（[チケットの取り込みと GitHub](intake.md)）。
+
+- 取り込むラベルを設定していない、または PR のトリアージを Off にしている（`triageOff` に `pullRequests`。付けても取り込まれない）なら、
+  付けない。何も記録しない。
+- リポジトリにラベルが無ければ（`GET /repos/<owner>/<name>/labels/<ラベル>` が 404）、作ってから（`POST .../labels`、色 `0e8a16`）
+  PR に付ける（`POST .../issues/<番号>/labels`）。作っている間にほかで作られた（422 の `already_exists`）ときは、そのまま付ける。
+- 付けたら `PullRequestLabeled`（`created`：ラベルを作った）、付けられなければ `PullRequestLabelFailed`（どの操作が失敗したか
+  `github.failed` の `getLabel`・`createLabel`・`addLabel` と、GitHub の答え。使った秘密の値は伏せる）を記録する。タスクの作業履歴の画面に出る。
+  付けられなくても、PR の作成は失敗にしない（タスクはそのまま承認待ちに進む）。
+- 1つの PR（リポジトリと番号）につき1回だけ。記録のある PR には、同じ PR を更新しても付けない（重ねて付けない・人が外したラベルを
+  付け直さない・失敗しても付け直さない）。記録の無い PR（設定する前に作った PR など）は、次に更新したときに付ける。
+  PR を作り直した（前の PR がマージ・クローズされて、新しい番号の PR を作った）ときは、新しい PR に付ける。
+- 中止・一時停止を求められて、要求要件・設計の PR を記録しなかったときは付けない。
+- 付ける予定を、PR の公開の記録（`PullRequestPublished`・`StepPullRequestPublished` の `intakeLabel`）に残してから付ける。公開を
+  記録した後、付ける前に止まった（停止・クラッシュ）PR は、PR の確認（60秒ごと。再起動の後も）で、予定があり、付けた・付けられなかった
+  記録が無く、開いている PR に付ける。中止したタスク、いまは付けない設定（取り込むラベルが無い・PR のトリアージが Off）なら付けない。
+  同じ PR を付けている途中なら、重ねて付けない。
+
+コード: `apps/daemon/src/service.ts`（`labelPullRequest`・`labelDue`・`resumePullRequestLabels`・`publishStepPullRequest`・`publish`）、`apps/daemon/src/github.ts`（`GitHubPullRequests.addLabel`）、`packages/core/src/projection.ts`（`pullRequestLabels`）
+
 ## PR の確認
 
 デーモンは60秒ごとに、承認待ちの PR を確かめる（前の確認が終わるまで次を始めない）。
@@ -56,10 +80,21 @@
 - PR が開いていて承認待ちのとき、PR のレビュー・行へのコメント・通常のコメントを指摘として取り込む。最後のフィードバックから2分
   （`FEEDBACK_QUIET_MS`）待ってから、古い順に最大50件（`REMARKS_MAX`）、1件 2000 文字（`REMARK_MAX`）で取り込む
   （`PullRequestReviewImported`、actor `person`）。同じものは二度取り込まない。
+- この PR をレビューした sacty のタスク（PR を指すタスク。取り込んだ PR か、本文の PR の URL）の投稿は、そのタスクのプロジェクトのアカウント
+  （元のタスクのアカウントと違うことがある）と、目印（`<!-- sacty-review:<タスク ID>[:<回>] -->`）の回で判定する。bot の判定より先に見るので、
+  そのアカウントが bot（GitHub App など）でも同じ。
+  - 取り込むラベルで取り込んだレビューだけのタスク（`source.review: sacty`）の、直すべき指摘のある回（`reviewVerdicts` の `changesRequested`
+    が `false` でない回。評価を読めなかった回も、指摘を落とさないように含める）は、指摘として取り込む（作ったタスクとは別のタスクのレビューを、
+    元のタスクに届けるため）。
+  - ほかの回（直すべき指摘の無い回・まだ実行していない回）と、ほかのレビューのタスクの投稿は、アカウントが元のタスクと違っても取り込まない
+    （差し戻さない。ゴールガーディアンも動かさない）。
+  - 再レビューは回ごとに判定する。そのタスクのアカウントと違う人が目印を写したものは、人の指摘として扱う。
+- それ以外では、bot の投稿と、元のタスクのプロジェクトのアカウントが投稿した、sacty のレビューの目印で始まるレビュー・行へのコメントは
+  取り込まない。
 - 取り込んだら、ゴールガーディアンが戻し先（その工程のやり直しか、前の工程への差し戻し）を判断し（`ReworkJudged`）、人の確認を挟まずに
   差し戻す。判断できなければ、戻せる工程の先頭（成果物チェックなら実装、要求要件・設計ならその工程）をやり直す。
 
-コード: `apps/daemon/src/service.ts`（`importFeedback`・`feedbackRemarks`・`FEEDBACK_QUIET_MS`・`settleReview`・`judgeRework`）
+コード: `apps/daemon/src/service.ts`（`importFeedback`・`sactyReviewsOf`・`feedbackRemarks`・`FEEDBACK_QUIET_MS`・`settleReview`・`judgeRework`）、`apps/daemon/src/github.ts`（`GitHubPullRequests.feedback`）
 
 ## 差し戻し
 

@@ -27,7 +27,24 @@ export interface PullRequests {
     number: number;
     /** プロジェクトの gh のアカウント。このアカウントが投稿した sacty のレビュー（PBI-19）は含めない。 */
     account?: string;
+    /**
+     * この PR をレビューした sacty のタスクの回（PBI-88）。key は目印の中身（`sactyReviewKey` の形で、タスクと再レビューの回）、
+     * account はそのタスクが投稿に使うアカウント（元のタスクのアカウントと違うことがある）。その目印で始まり、そのアカウントが
+     * 投稿したレビュー・行へのコメントは、allowed（取り込むラベルを付けて取り込んだタスクの、直すべき指摘のある回）なら
+     * PR の指摘として含め、そうでなければ除く（Bot かどうか・元のタスクのアカウントかどうかに関わらない）。
+     */
+    sactyReviews?: readonly SactyReviewRound[];
   }): Promise<PullRequestFeedback[]>;
+  /**
+   * PR にラベルを付ける（PBI-88）。リポジトリにそのラベルが無ければ作ってから付ける（created）。すでに付いていれば
+   * 何も変わらない。
+   */
+  addLabel(input: {
+    repo: string;
+    token: string;
+    number: number;
+    label: string;
+  }): Promise<{ created: boolean }>;
   /**
    * Issue のコメントのうち、marker を含むものを探す（同じ結果を二度コメントしないため。PBI-18）。
    */
@@ -86,12 +103,27 @@ export type PullRequestInfo = {
   baseSha: string;
 };
 
+/** PR をレビューした sacty のタスクの回（PBI-88）。`PullRequests.feedback` の sactyReviews を参照。 */
+export type SactyReviewRound = { key: string; account: string; allowed: boolean };
+
 /** sacty のレビューの工程が投稿したレビューの目印（PBI-19）。 */
 export const REVIEW_MARKER_PREFIX = "<!-- sacty-review:";
 
 /** 本文が、sacty のレビューの目印で始まるか。 */
 function isSactyReview(body: unknown): boolean {
   return typeof body === "string" && body.trimStart().startsWith(REVIEW_MARKER_PREFIX);
+}
+
+/** sacty のレビューの目印の中身（タスクの ID。再レビューの回は `<ID>:<回>`。PBI-44・PBI-88）。 */
+export function sactyReviewKey(taskId: string, round = 1): string {
+  return round > 1 ? `${taskId}:${round}` : taskId;
+}
+
+/** sacty のレビューの目印の中身（`sactyReviewKey` の形。目印で始まらなければ undefined）。 */
+export function sactyReviewTask(body: unknown): string | undefined {
+  if (!isSactyReview(body)) return undefined;
+  const rest = String(body).trimStart().slice(REVIEW_MARKER_PREFIX.length);
+  return rest.match(/^([^\s:>]+(?::\d+)?) -->/)?.[1];
 }
 
 /**
@@ -120,6 +152,9 @@ export type PullRequestStatus = { headSha?: string } & (
   | { state: "closed" }
   | { state: "merged"; mergedBy?: string; mergeCommit?: string }
 );
+
+/** sacty が作る取り込むラベルの色（GitHub の既定の色の1つ）。 */
+const LABEL_COLOR = "0e8a16";
 
 /** 一覧を読むページの上限（100件ずつ。誤った Link で延々と読まないように）。 */
 const MAX_PAGES = 50;
@@ -159,13 +194,31 @@ export class GitHubPullRequests implements PullRequests {
     // bot（CI など）のコメントは、人間の指摘ではないので含めない
     // sacty のレビューの工程が、プロジェクトのアカウントで投稿したレビューと行へのコメント（PBI-19）も、
     // 人間の指摘ではないので含めない（目印で始まるものだけ。人間が引用・転記した目印では除かない）
-    const human = (item: Record<string, unknown>) =>
-      user(item).type !== "Bot" &&
-      !(
-        input.account !== undefined &&
-        user(item).login === input.account &&
-        isSactyReview(item.body)
+    // この PR をレビューした sacty のタスク（PBI-88）が投稿したものは、そのタスクのアカウントと目印の回で判定する
+    // （元のタスクとアカウントが違っても・Bot でも）。取り込むラベルを付けて取り込んだタスクの、直すべき指摘のある回だけを
+    // 指摘として含め、ほかの回は除く。Bot の判定より先に見る（PBI-88 レビュー指摘）
+    const rounds = new Map((input.sactyReviews ?? []).map((r) => [r.key, r]));
+    const sactyRound = (item: Record<string, unknown>) => {
+      const round = rounds.get(sactyReviewTask(item.body) ?? "");
+      const login = user(item).login;
+      return round &&
+        typeof login === "string" &&
+        login.toLowerCase() === round.account.toLowerCase()
+        ? round
+        : undefined;
+    };
+    const human = (item: Record<string, unknown>) => {
+      const round = sactyRound(item);
+      if (round) return round.allowed;
+      return (
+        user(item).type !== "Bot" &&
+        !(
+          input.account !== undefined &&
+          user(item).login === input.account &&
+          isSactyReview(item.body)
+        )
       );
+    };
     const author = (item: Record<string, unknown>) => String(user(item).login ?? "");
     const url = (item: Record<string, unknown>) =>
       typeof item.html_url === "string" ? { url: item.html_url } : {};
@@ -408,6 +461,53 @@ export class GitHubPullRequests implements PullRequests {
     return { state: json.state === "closed" ? "closed" : "open", ...head };
   }
 
+  async addLabel(input: Parameters<PullRequests["addLabel"]>[0]): Promise<{ created: boolean }> {
+    const headers = {
+      accept: "application/vnd.github+json",
+      authorization: `Bearer ${input.token}`,
+      "x-github-api-version": "2022-11-28",
+      "content-type": "application/json",
+    };
+    const { base } = repoApi(input.repo);
+    const call = async (url: string, init: RequestInit) => {
+      const res = await this.fetchImpl(url, { ...init, headers });
+      const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+      return { res, json };
+    };
+    // リポジトリにラベルがあるか（名前の大文字・小文字は区別されない）。無ければ作る
+    let created = false;
+    const found = await call(`${base}/labels/${encodeURIComponent(input.label)}`, {
+      method: "GET",
+    });
+    if (found.res.status === 404) {
+      const made = await call(`${base}/labels`, {
+        method: "POST",
+        body: JSON.stringify({
+          name: input.label,
+          color: LABEL_COLOR,
+          description: "sacty が取り込む Issue・PR",
+        }),
+      });
+      // 作っている間に、ほかで作られた（422 の already_exists）なら、そのまま付ける
+      const exists =
+        made.res.status === 422 &&
+        Array.isArray(made.json.errors) &&
+        made.json.errors.some(
+          (e) => (e as Record<string, unknown> | null)?.code === "already_exists",
+        );
+      if (!made.res.ok && !exists) throw apiError("createLabel", made.res.status, made.json);
+      created = made.res.ok;
+    } else if (!found.res.ok) {
+      throw apiError("getLabel", found.res.status, found.json);
+    }
+    const added = await call(`${base}/issues/${input.number}/labels`, {
+      method: "POST",
+      body: JSON.stringify({ labels: [input.label] }),
+    });
+    if (!added.res.ok) throw apiError("addLabel", added.res.status, added.json);
+    return { created };
+  }
+
   async upsert(input: Parameters<PullRequests["upsert"]>[0]) {
     const headers = {
       accept: "application/vnd.github+json",
@@ -495,7 +595,10 @@ export function apiError(
     | "listRepositories"
     | "postReview"
     | "searchIssues"
-    | "readChecks",
+    | "readChecks"
+    | "getLabel"
+    | "createLabel"
+    | "addLabel",
   status: number,
   json: Record<string, unknown>,
 ): Error {
