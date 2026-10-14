@@ -2,7 +2,7 @@
 
 - 日付: 2026-10-14（UTC）
 - タスク: PBI-85
-- PR: なし
+- PR: #94
 - ブランチ: feat/issue-85-stable-tests
 - 関係する ADR: なし
 
