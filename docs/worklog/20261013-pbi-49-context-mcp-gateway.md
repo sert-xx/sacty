@@ -4,7 +4,7 @@
 - タスク: PBI-49
 - PR: #57
 - ブランチ: feat/issue-49-context-mcp-gateway
-- 関係する ADR: [コンテキストリポジトリの HTTP の MCP サーバーは、既定でゲートウェイ経由にし、認証のヘッダーはホストで付ける](../adr/20261013-0411-context-http-mcp-via-gateway.md)
+- 関係する ADR: [コンテキストリポジトリの HTTP の MCP サーバーは、既定でゲートウェイ経由にし、認証のヘッダーはホストで付ける](../adr/20261013-0411-superseded-context-http-mcp-via-gateway.md)
 
 ## 目的
 
