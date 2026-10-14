@@ -1,6 +1,11 @@
 "use client";
 
-import type { Project, ProjectTarget } from "@sacty/core";
+import {
+  DEFAULT_MENTION_KINDS,
+  NotificationKind,
+  type Project,
+  type ProjectTarget,
+} from "@sacty/core";
 import { XIcon } from "lucide-react";
 import { startTransition, useActionState, useId, useState } from "react";
 import {
@@ -88,6 +93,28 @@ export function ProjectEditor({
     saved?.kind === "slack-webhook" ? saved.webhook : "",
   );
   const [notifyLanguage, setNotifyLanguage] = useState<"ja" | "en">(saved?.language ?? "ja");
+  // メンション（PBI-69）。相手は編集しやすいよう、カンマか空白で区切った文字列で持つ
+  const [mentionTargets, setMentionTargets] = useState(saved?.mention?.targets.join(", ") ?? "");
+  const [mentionKinds, setMentionKinds] = useState<NotificationKind[]>(
+    saved?.mention?.kinds ?? [...DEFAULT_MENTION_KINDS],
+  );
+  const mentionList = [
+    ...new Set(
+      mentionTargets
+        .split(/[\s,、]+/)
+        .map((m) => m.trim())
+        .filter(Boolean),
+    ),
+  ];
+  const mention =
+    mentionList.length > 0
+      ? {
+          mention: {
+            targets: mentionList,
+            kinds: NotificationKind.options.filter((k) => mentionKinds.includes(k)),
+          },
+        }
+      : {};
   const notification =
     notifyKind === "slack-api"
       ? {
@@ -96,9 +123,10 @@ export function ProjectEditor({
           channel: notifyChannel.trim(),
           ...(notifyToken.trim() ? { token: notifyToken.trim() } : {}),
           language: notifyLanguage,
+          ...mention,
         }
       : notifyKind === "slack-webhook"
-        ? { kind: notifyKind, webhook: notifyWebhook.trim(), language: notifyLanguage }
+        ? { kind: notifyKind, webhook: notifyWebhook.trim(), language: notifyLanguage, ...mention }
         : undefined;
   const [testState, testAction, testing] = useActionState<TestNotificationState, FormData>(
     testNotificationAction,
@@ -577,6 +605,49 @@ export function ProjectEditor({
                   className="font-mono"
                 />
               </label>
+            )}
+            {notifyKind && (
+              <fieldset className="flex flex-col gap-2 rounded-lg border border-border p-3">
+                <legend className="px-1 text-xs text-muted-foreground">{t.mentionTitle}</legend>
+                <label
+                  htmlFor={`${uid}-mention-targets`}
+                  className="flex max-w-xl flex-col gap-1 text-xs text-muted-foreground"
+                >
+                  {t.mentionTargets}
+                  <Input
+                    id={`${uid}-mention-targets`}
+                    value={mentionTargets}
+                    placeholder="U0123ABCD, S0456EFGH, @here"
+                    onChange={(e) => setMentionTargets(e.target.value)}
+                    className="font-mono"
+                  />
+                </label>
+                <p className="text-xs leading-5 whitespace-pre-line text-muted-foreground">
+                  {t.mentionHelp}
+                </p>
+                <fieldset className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
+                  <legend className="float-left mr-1 text-xs text-muted-foreground">
+                    {t.mentionKinds}
+                  </legend>
+                  {NotificationKind.options.map((kind) => (
+                    <label key={kind} className="flex items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={mentionKinds.includes(kind)}
+                        onChange={(e) =>
+                          setMentionKinds((current) =>
+                            e.target.checked
+                              ? [...current, kind]
+                              : current.filter((k) => k !== kind),
+                          )
+                        }
+                        className="size-4"
+                      />
+                      {t.mentionKind[kind]}
+                    </label>
+                  ))}
+                </fieldset>
+              </fieldset>
             )}
             {saved && project && (
               <div className="flex flex-wrap items-center gap-3">

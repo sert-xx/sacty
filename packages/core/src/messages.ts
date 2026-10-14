@@ -130,6 +130,9 @@ const PARAMS = {
   "services.unsafe": z.object({ file: z.string(), detail: z.string() }),
   "services.failed": z.object({ file: z.string(), detail: z.string() }),
   "input.channelRequired": null,
+  // Slack の通知のメンション（PBI-69）
+  "input.slackMention": null,
+  "input.mentionKinds": null,
   // Slack の通知（PBI-38）
   "notify.failed": z.object({ project: z.string(), detail: TextParam }),
   "notify.notConfigured": null,
@@ -522,6 +525,9 @@ const ja: MessageDictionary = {
   "image.unknown": ({ name }) =>
     `イメージ「${name}」は config.yaml の images にありません。images に書くか、プロジェクトの対象のイメージの指定を直してから、再開してください。`,
   "input.channelRequired": "チャンネルを書いてください。",
+  "input.slackMention":
+    "メンションする相手は、Slack のメンバー ID（U… か W…）、ユーザーグループの ID（S…）、@here、@channel のどれかで書いてください（@表示名では届きません）。",
+  "input.mentionKinds": "メンションする通知の種類を、1つ以上選んでください。",
   "notify.failed": ({ project, detail }, text) =>
     `プロジェクト「${project}」の Slack の通知を送れませんでした：${text(detail)}（タスクは止めていません）`,
   "notify.notConfigured": "このプロジェクトには、通知先が設定されていません。",
@@ -851,6 +857,9 @@ const en: MessageDictionary = {
   "image.unknown": ({ name }) =>
     `The image "${name}" is not in images in config.yaml. Add it to images, or fix the image of the project target, then resume.`,
   "input.channelRequired": "Write a channel.",
+  "input.slackMention":
+    "Write each person to mention as a Slack member ID (U… or W…), a user group ID (S…), @here, or @channel (display names don't notify anyone).",
+  "input.mentionKinds": "Choose at least one kind of notification to mention in.",
   "notify.failed": ({ project, detail }, text) =>
     `Could not send the Slack notification for the project "${project}": ${text(detail)} (tasks keep running)`,
   "notify.notConfigured": "No notification destination is set for this project.",

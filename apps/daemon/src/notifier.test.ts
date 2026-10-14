@@ -1,6 +1,12 @@
 import { type Project, renderMessage, type Task } from "@sacty/core";
 import { describe, expect, it } from "vitest";
-import { notificationFor, notificationText, SlackNotifier } from "./notifier.js";
+import {
+  mentionText,
+  notificationFor,
+  notificationText,
+  SlackNotifier,
+  withMention,
+} from "./notifier.js";
 import { MemorySecretStore } from "./secrets.js";
 
 const task = (patch: Partial<Task> = {}): Task =>
@@ -274,5 +280,122 @@ describe("Slack の通知（PBI-38）", () => {
     await notifier.notify(task(), "completed");
     expect(api.calls).toHaveLength(0);
     await expect(notifier.test("p1")).rejects.toThrow(/通知先が設定されていません/);
+  });
+});
+
+describe("Slack の通知のメンション（PBI-69）", () => {
+  const all = ["U0123ABCD", "W0456", "S0789EFGH", "@here", "@channel"];
+  const gate = task({ status: "awaiting_approval", gate: { step: "requirements", submission: 1 } });
+  const byKind = {
+    approval: gate,
+    escalation: task({ status: "escalated", escalation: { step: "design" } } as Partial<Task>),
+    paused: task({ status: "paused", pausedReason: "budget" }),
+    completed: task(),
+  } as const;
+
+  it("相手ごとに Slack のメンションの書き方にし、選んだ種類の本文の先頭にだけ付ける", () => {
+    expect(mentionText({ targets: all, kinds: ["approval"] })).toBe(
+      "<@U0123ABCD> <@W0456> <!subteam^S0789EFGH> <!here> <!channel>",
+    );
+    expect(mentionText(undefined)).toBe("");
+    const mention = { targets: ["U0123ABCD", "@here"], kinds: ["approval", "paused"] } as const;
+    expect(withMention("本文", { ...mention, kinds: [...mention.kinds] }, "approval")).toBe(
+      "<@U0123ABCD> <!here> 本文",
+    );
+    expect(withMention("本文", { ...mention, kinds: [...mention.kinds] }, "completed")).toBe(
+      "本文",
+    );
+    expect(withMention("本文", undefined, "approval")).toBe("本文");
+    // テストの通知（種類なし）には、種類によらず付ける
+    expect(withMention("本文", { targets: ["S0789EFGH"], kinds: ["completed"] }, undefined)).toBe(
+      "<!subteam^S0789EFGH> 本文",
+    );
+  });
+
+  for (const destination of [
+    {
+      kind: "slack-api" as const,
+      url: "https://slack.com/api/chat.postMessage",
+      channel: "#sacty",
+      language: "ja" as const,
+    },
+    { kind: "slack-webhook" as const, webhook: "slack-webhook", language: "en" as const },
+  ]) {
+    it(`${destination.kind}：既定（人の出番だけ）では、承認待ち・エスカレーション・一時停止にメンションし、完了にはしない。テストの通知にも付ける`, async () => {
+      const api = slack(() =>
+        destination.kind === "slack-api" ? Response.json({ ok: true }) : new Response("ok"),
+      );
+      const notifier = new SlackNotifier({
+        project: () =>
+          project({
+            ...destination,
+            mention: {
+              targets: ["U0123ABCD", "@channel"],
+              kinds: ["approval", "escalation", "paused"],
+            },
+          }),
+        secrets: new MemorySecretStore({
+          "slack-webhook": "https://hooks.slack.com/services/T/B/X",
+        }),
+        webUrl: "http://x",
+        fetchImpl: api.fetchImpl,
+      });
+      for (const [kind, t] of Object.entries(byKind)) {
+        await notifier.notify(t, kind as keyof typeof byKind);
+      }
+      await notifier.test("p1");
+      const texts = api.calls.map((c) => String(c.body.text));
+      expect(texts).toHaveLength(5);
+      for (const text of texts.slice(0, 3))
+        expect(text.startsWith("<@U0123ABCD> <!channel> :")).toBe(true);
+      expect(texts[3]).toMatch(/^:white_check_mark: /);
+      expect(texts[3]).not.toContain("<@");
+      expect(texts[4]?.startsWith("<@U0123ABCD> <!channel> :wave: ")).toBe(true);
+      expect(notifier.problems()).toEqual([]);
+    });
+  }
+
+  it("完了だけを選べば完了にだけ付け、設定しなければ、これまでどおりメンションしない", async () => {
+    const only = slack();
+    const notifier = new SlackNotifier({
+      project: () =>
+        project({
+          kind: "slack-api",
+          url: "https://slack.com/api/chat.postMessage",
+          channel: "#sacty",
+          language: "ja",
+          mention: { targets: ["S0789EFGH"], kinds: ["completed"] },
+        }),
+      secrets: new MemorySecretStore({}),
+      webUrl: "http://x",
+      fetchImpl: only.fetchImpl,
+    });
+    for (const [kind, t] of Object.entries(byKind)) {
+      await notifier.notify(t, kind as keyof typeof byKind);
+    }
+    expect(only.calls.map((c) => String(c.body.text).startsWith("<!subteam^S0789EFGH> "))).toEqual([
+      false,
+      false,
+      false,
+      true,
+    ]);
+
+    const plain = slack();
+    const without = new SlackNotifier({
+      project: () =>
+        project({
+          kind: "slack-api",
+          url: "https://slack.com/api/chat.postMessage",
+          channel: "#a",
+          language: "ja",
+        }),
+      secrets: new MemorySecretStore({}),
+      webUrl: "http://x",
+      fetchImpl: plain.fetchImpl,
+    });
+    await without.notify(gate, "approval");
+    await without.test("p1");
+    expect(String(plain.calls[0]?.body.text)).toMatch(/^:raising_hand: /);
+    expect(String(plain.calls[1]?.body.text)).toMatch(/^:wave: /);
   });
 });
