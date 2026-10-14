@@ -227,8 +227,9 @@ export const TaskSource = z.object({
   /**
    * PR のレビューだけを行う取り込み（PBI-44）。requested：自分にレビューが依頼された、label：PR のレビュー用の
    * ラベルが付いていた。この取り込みのタスクは、工程をレビューだけにする（オーケストレーターに選ばせない）。
+   * sacty：sacty がほかのタスクで作り、取り込むラベルを付けた PR（実装の PR と、要求要件・設計の PR。PBI-88）。
    */
-  review: z.enum(["requested", "label"]).optional(),
+  review: z.enum(["requested", "label", "sacty"]).optional(),
 });
 export type TaskSource = z.infer<typeof TaskSource>;
 
@@ -1058,6 +1059,35 @@ const PullRequestPublished = z.object({
 });
 
 /**
+ * sacty が作った PR（実装の PR と、要求要件・設計の PR）に、取り込むラベル（sacty の設定）を付けた（PBI-88）。
+ * 別のタスクとして取り込ませ、レビューだけを行わせるため。created は、リポジトリにラベルが無かったので作った。
+ * 1つの PR につき1回だけ付ける（記録のある PR には、更新しても付け直さない）。
+ */
+const PullRequestLabeled = z.object({
+  type: z.literal("PullRequestLabeled"),
+  payload: z.object({
+    repo: z.string(),
+    number: z.number().int().positive(),
+    label: z.string().min(1),
+    created: z.boolean().default(false),
+  }),
+});
+
+/**
+ * 取り込むラベルを、sacty が作った PR に付けられなかった（権限など。PBI-88）。PR の作成は失敗にしない。
+ * 付け直しはしない（1つの PR につき1回）。
+ */
+const PullRequestLabelFailed = z.object({
+  type: z.literal("PullRequestLabelFailed"),
+  payload: z.object({
+    repo: z.string(),
+    number: z.number().int().positive(),
+    label: z.string().min(1),
+    message: DaemonText,
+  }),
+});
+
+/**
  * sacty が、ベースブランチの起点のコミットからタスクブランチを作った（PBI-57）。要求要件・設計の PR はタスクブランチ
  * に向けて作り、実装の PR はタスクブランチからベースブランチに向けて作る。これが記録されたタスクは、要求要件・設計を
  * PR のマージで承認する（それより前の作業履歴のタスクは、これまでどおり画面で承認する）。
@@ -1419,6 +1449,8 @@ export const EventInput = z.discriminatedUnion("type", [
   OrchestratorSessionUsed,
   IntegrationReviewed,
   PullRequestPublished,
+  PullRequestLabeled,
+  PullRequestLabelFailed,
   TaskBranchCreated,
   StepBranchPushed,
   StepPullRequestPublished,

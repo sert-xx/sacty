@@ -27,7 +27,22 @@ export interface PullRequests {
     number: number;
     /** プロジェクトの gh のアカウント。このアカウントが投稿した sacty のレビュー（PBI-19）は含めない。 */
     account?: string;
+    /**
+     * それでも含める sacty のレビューのタスク（ID）。sacty が作った PR に取り込むラベルを付けて取り込んだ、レビューだけの
+     * タスク（PBI-88）。そのタスクの目印で始まるレビュー・行へのコメントは、PR の指摘として含める。
+     */
+    sactyReviewTasks?: readonly string[];
   }): Promise<PullRequestFeedback[]>;
+  /**
+   * PR にラベルを付ける（PBI-88）。リポジトリにそのラベルが無ければ作ってから付ける（created）。すでに付いていれば
+   * 何も変わらない。
+   */
+  addLabel(input: {
+    repo: string;
+    token: string;
+    number: number;
+    label: string;
+  }): Promise<{ created: boolean }>;
   /**
    * Issue のコメントのうち、marker を含むものを探す（同じ結果を二度コメントしないため。PBI-18）。
    */
@@ -94,6 +109,13 @@ function isSactyReview(body: unknown): boolean {
   return typeof body === "string" && body.trimStart().startsWith(REVIEW_MARKER_PREFIX);
 }
 
+/** sacty のレビューの目印の、タスクの ID（目印で始まらなければ undefined。再レビューの回の番号は除く）。 */
+export function sactyReviewTask(body: unknown): string | undefined {
+  if (!isSactyReview(body)) return undefined;
+  const rest = String(body).trimStart().slice(REVIEW_MARKER_PREFIX.length);
+  return rest.match(/^([^\s:>]+)(?::\d+)? -->/)?.[1];
+}
+
 /**
  * PR へのフィードバックの1件。key は種類と ID（二重に取り込まないため）。requestChanges は
  * Request changes のレビュー（本文が無くても、変更を求められたこととして扱う）。
@@ -120,6 +142,9 @@ export type PullRequestStatus = { headSha?: string } & (
   | { state: "closed" }
   | { state: "merged"; mergedBy?: string; mergeCommit?: string }
 );
+
+/** sacty が作る取り込むラベルの色（GitHub の既定の色の1つ）。 */
+const LABEL_COLOR = "0e8a16";
 
 /** 一覧を読むページの上限（100件ずつ。誤った Link で延々と読まないように）。 */
 const MAX_PAGES = 50;
@@ -159,12 +184,15 @@ export class GitHubPullRequests implements PullRequests {
     // bot（CI など）のコメントは、人間の指摘ではないので含めない
     // sacty のレビューの工程が、プロジェクトのアカウントで投稿したレビューと行へのコメント（PBI-19）も、
     // 人間の指摘ではないので含めない（目印で始まるものだけ。人間が引用・転記した目印では除かない）
+    // ただし、取り込むラベルを付けて取り込んだ、レビューだけのタスク（PBI-88）が投稿したものは、指摘として含める
+    const included = new Set(input.sactyReviewTasks ?? []);
     const human = (item: Record<string, unknown>) =>
       user(item).type !== "Bot" &&
       !(
         input.account !== undefined &&
         user(item).login === input.account &&
-        isSactyReview(item.body)
+        isSactyReview(item.body) &&
+        !included.has(sactyReviewTask(item.body) ?? "")
       );
     const author = (item: Record<string, unknown>) => String(user(item).login ?? "");
     const url = (item: Record<string, unknown>) =>
@@ -408,6 +436,53 @@ export class GitHubPullRequests implements PullRequests {
     return { state: json.state === "closed" ? "closed" : "open", ...head };
   }
 
+  async addLabel(input: Parameters<PullRequests["addLabel"]>[0]): Promise<{ created: boolean }> {
+    const headers = {
+      accept: "application/vnd.github+json",
+      authorization: `Bearer ${input.token}`,
+      "x-github-api-version": "2022-11-28",
+      "content-type": "application/json",
+    };
+    const { base } = repoApi(input.repo);
+    const call = async (url: string, init: RequestInit) => {
+      const res = await this.fetchImpl(url, { ...init, headers });
+      const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+      return { res, json };
+    };
+    // リポジトリにラベルがあるか（名前の大文字・小文字は区別されない）。無ければ作る
+    let created = false;
+    const found = await call(`${base}/labels/${encodeURIComponent(input.label)}`, {
+      method: "GET",
+    });
+    if (found.res.status === 404) {
+      const made = await call(`${base}/labels`, {
+        method: "POST",
+        body: JSON.stringify({
+          name: input.label,
+          color: LABEL_COLOR,
+          description: "sacty が取り込む Issue・PR",
+        }),
+      });
+      // 作っている間に、ほかで作られた（422 の already_exists）なら、そのまま付ける
+      const exists =
+        made.res.status === 422 &&
+        Array.isArray(made.json.errors) &&
+        made.json.errors.some(
+          (e) => (e as Record<string, unknown> | null)?.code === "already_exists",
+        );
+      if (!made.res.ok && !exists) throw apiError("createLabel", made.res.status, made.json);
+      created = made.res.ok;
+    } else if (!found.res.ok) {
+      throw apiError("getLabel", found.res.status, found.json);
+    }
+    const added = await call(`${base}/issues/${input.number}/labels`, {
+      method: "POST",
+      body: JSON.stringify({ labels: [input.label] }),
+    });
+    if (!added.res.ok) throw apiError("addLabel", added.res.status, added.json);
+    return { created };
+  }
+
   async upsert(input: Parameters<PullRequests["upsert"]>[0]) {
     const headers = {
       accept: "application/vnd.github+json",
@@ -494,7 +569,10 @@ function apiError(
     | "listIssueComments"
     | "listRepositories"
     | "postReview"
-    | "searchIssues",
+    | "searchIssues"
+    | "getLabel"
+    | "createLabel"
+    | "addLabel",
   status: number,
   json: Record<string, unknown>,
 ): Error {

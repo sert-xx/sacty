@@ -150,6 +150,15 @@ export type TaskExport = {
  * 最新の内容より前のものがマージされた、closed：マージせずに閉じられた）。superseded は、作り直したので sacty が閉じた。
  * submission は、何回目の提出の PR か（同じ PR を更新すると、最新の提出回にする）。
  */
+/** sacty が作った PR に、取り込むラベルを付けた記録（PBI-88）。failed は付けられなかった理由。 */
+export type PullRequestLabel = {
+  repo: string;
+  number: number;
+  label: string;
+  created?: boolean;
+  failed?: DaemonText;
+};
+
 export type StepPullRequest = PayloadOf<"StepPullRequestPublished"> & {
   submission: number;
   state: "open" | "closed" | "merged" | "merged_outdated";
@@ -309,6 +318,11 @@ export type Task = {
   stepPullRequests: StepPullRequest[];
   /** sacty がプッシュした、要求要件・設計のブランチ（中止で消す。PBI-57）。 */
   stepBranches: string[];
+  /**
+   * sacty が作った PR に、取り込むラベルを付けた・付けられなかった記録（PR ごとに1件。PBI-88）。記録のある PR には、
+   * 更新しても付け直さない。
+   */
+  pullRequestLabels?: PullRequestLabel[];
   /** 要求要件・設計の成果のファイルを置くディレクトリ（オーケストレーターが決めた。無ければ既定。PBI-57）。 */
   documentsDir?: string;
   /** ゴールガーディアンの見逃し（最終レビューで合格にした成果物を、人間が差し戻した）。 */
@@ -844,6 +858,35 @@ export function applyEvent(
       task.pullRequestMerge = undefined;
       task.status = "idle";
       break;
+
+    case "PullRequestLabeled":
+    case "PullRequestLabelFailed": {
+      // sacty が作った PR（実装の PR と、要求要件・設計の PR）だけ（PBI-88）
+      const p = event.payload;
+      const same = (repo: string | undefined, number: number | undefined) =>
+        number === p.number && (repo ?? "").toLowerCase() === p.repo.toLowerCase();
+      if (
+        !same(task.pullRequest?.repo, task.pullRequest?.number) &&
+        !task.stepPullRequests.some((x) => same(x.repo, x.number))
+      ) {
+        throw new ActivityIntegrityError(event, "not a pull request sacty created for the task");
+      }
+      if ((task.pullRequestLabels ?? []).some((x) => same(x.repo, x.number))) {
+        throw new ActivityIntegrityError(event, "the pull request is already labeled");
+      }
+      task.pullRequestLabels = [
+        ...(task.pullRequestLabels ?? []),
+        event.type === "PullRequestLabeled"
+          ? {
+              repo: p.repo,
+              number: p.number,
+              label: p.label,
+              ...(event.payload.created ? { created: true } : {}),
+            }
+          : { repo: p.repo, number: p.number, label: p.label, failed: event.payload.message },
+      ];
+      break;
+    }
 
     case "PullRequestReviewImported": {
       // 成果物チェックの PR と、要求要件・設計の PR（PBI-57）の指摘

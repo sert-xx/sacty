@@ -19,7 +19,7 @@
 | `jira` | JIRA のチケットの取り込み |
 | `split` | タスク分割の子タスク（`parent` に親の ID と、先に終わるべき子タスク `dependsOn` を持つ） |
 
-- PR のレビューだけのタスクは、`source.review`（`requested` か `label`）を持つ。
+- PR のレビューだけのタスクは、`source.review`（`requested`・`label`、sacty が作り取り込むラベルを付けた PR なら `sacty`）を持つ。
 - 画面で作るとき、リポジトリを指定しない（`repo: null`）か、指定を省いてプロジェクトの対象がリポジトリ1つだけではないときは、
   リポジトリの無いタスク（`noRepo`）にする。対象が1つも無いプロジェクトでは作れない（`task.repositoryMissing`）。
 - 予算の上限の初期値は `budget.default_per_task_usd`（既定 1 米ドル）。
