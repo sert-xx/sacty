@@ -3,7 +3,7 @@
 承認ゲートのある工程は、人間が承認すると次の工程へ進む。承認は、sacty の画面で行うか、対象のリポジトリへの PR のマージで行う
 （承認＝マージ）。差し戻すと、選んだ工程からやり直す。同じ工程への差し戻しが上限を超えると、エスカレーション（人間の判断待ち）になる。
 
-関係する ADR: [sacty が作る PR に取り込むラベルを付け、別のタスクのレビューを元のタスクの PR の指摘として取り込む](../adr/20261014-1445-label-sacty-pull-requests-for-review.md)
+関係する ADR: [sacty が作る PR に取り込むラベルを付け、別のタスクのレビューを元のタスクの PR の指摘として取り込む](../adr/20261014-1445-label-sacty-pull-requests-for-review.md)、[sacty が作る PR の本文を、リポジトリ・Org の PR テンプレートの見出しに沿って決まった規則で埋める](../adr/20261014-1517-pr-body-follows-repository-template.md)
 
 ## 画面での承認
 
@@ -115,7 +115,8 @@ sacty が PR を作る・更新するとき（実装の PR と、要求要件・
   コードブロック・折りたたみは閉じる。テンプレートを使わない本文（`buildPullRequestBodyText`・`buildStepPullRequestBodyText`）にも
   同じ上限を使い、最後の部分（sacty が作った旨と成果物チェックの案内）は省かない。
   省けない部分（`keep`）：タスクの ID の行、`Closes #<番号>`（テンプレートの見出しに入れたものも）、要求要件・設計の PR のマージが
-  承認になることの案内。省いて消えたら、最後の部分の前に出し直す。
+  承認になることの案内。省いた後の本文に、行として丸ごと（前後が行の境目）・HTML のコメントとコードブロックの外に残っていなければ、
+  最後の部分の前に出し直す（`Closes #123` があっても `Closes #12` が残ったとは見なさない）。
 - 秘密の値：その PR の作成で使った秘密の値（GitHub のトークンなど）を、本文から伏せる（`[REDACTED]`）。台帳に残す理由の文も伏せる。
 - 台帳：`PullRequestPublished`・`StepPullRequestPublished` の `template` に、使ったテンプレート（`repo`：テンプレートのあった
   リポジトリの URL、`path`）か、決まった形にした理由（`fallback`：`none`・`unusable`、`message`：`pr.templateFailed`・

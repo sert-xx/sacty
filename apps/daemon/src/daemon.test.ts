@@ -15238,6 +15238,13 @@ describe("PR テンプレート（PBI-87）", () => {
     const task = taskOf(service, id);
     expect(task.stepPullRequests.map((p) => p.template)).toEqual([used, used]);
     expect(task.pullRequest?.template).toEqual(used);
+    // 取り込むラベル（PBI-88）も、テンプレートの本文と一緒に3つの PR に付く
+    expect(pulls.labels.map((l) => [l.number, l.label])).toEqual([
+      [7, "sacty"],
+      [8, "sacty"],
+      [9, "sacty"],
+    ]);
+    expect(task.pullRequest?.intakeLabel).toBe("sacty");
     activity.close();
   });
 

@@ -510,9 +510,45 @@ export function limitBody(
   const close = (head.match(/<\/details>/g) ?? []).length;
   head += `\n\n${TRUNCATED_NOTE}`;
   if (open > close) head += "\n\n</details>".repeat(open - close);
-  // 省いて消えた、省けない部分は footer の前に出し直す
-  const restored = kept.filter((k) => !head.includes(k));
+  // 省いて消えた、省けない部分は footer の前に出し直す。残っているかは、行として丸ごと（前後が行の境目）、HTML の
+  // コメントとコードブロックの外にあるかで確かめる（`Closes #123` を `Closes #12` と見なさない。PR #99 再レビュー指摘）
+  const visible = withoutHidden(head);
+  const restored = kept.filter((k) => !hasBlock(visible, k));
   const body = joinWith(head, [...restored, footer].filter(Boolean).join("\n\n"));
   // footer そのものが上限を超えるときは、最後の手段として切る
   return { body: body.length <= max ? body : body.slice(0, max), truncated: true };
+}
+
+/** HTML のコメントとコードブロックを除いた本文（GitHub が文として扱わない部分。行の数は変えない）。 */
+function withoutHidden(text: string): string {
+  const blank = (m: string) => m.replace(/[^\n]/g, "");
+  const noComments = text.replace(/<!--[\s\S]*?(?:-->|$)/g, blank);
+  const out: string[] = [];
+  let fence: string | undefined;
+  for (const line of noComments.split("\n")) {
+    if (fence) {
+      if (line.trim().startsWith(fence)) fence = undefined;
+      out.push("");
+      continue;
+    }
+    const opened = line.match(FENCE);
+    if (opened) {
+      fence = opened[1]?.[0]?.repeat(3);
+      out.push("");
+      continue;
+    }
+    out.push(line);
+  }
+  return out.join("\n");
+}
+
+/** block（1行以上）が、text の中に行として丸ごと（前後が行の境目で）あるか。 */
+function hasBlock(text: string, block: string): boolean {
+  for (let at = text.indexOf(block); at >= 0; at = text.indexOf(block, at + 1)) {
+    const before = at === 0 || text[at - 1] === "\n";
+    const end = at + block.length;
+    const after = end === text.length || text[end] === "\n";
+    if (before && after) return true;
+  }
+  return false;
 }

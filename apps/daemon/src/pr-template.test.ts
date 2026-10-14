@@ -252,6 +252,31 @@ describe("PR の本文の長さ（PBI-87）", () => {
     expect(fallback.body.endsWith("Closes #12")).toBe(true);
   });
 
+  it("省けない部分が残っているかは、行として丸ごと・コメントとコードブロックの外にあるかで確かめる（PR #99 再レビュー指摘）", () => {
+    const keep = ["Closes #12", "sacty task t-1"];
+    const cases = [
+      // 前に Closes #123 があり、後ろの Closes #12 だけが省かれる
+      `Closes #123\n\n${"a".repeat(PR_BODY_MAX)}\n\nCloses #12`,
+      // 同じ文字列が、行の一部・HTML のコメント・コードブロックの中にだけある
+      `See Closes #12 later\n<!-- Closes #12 -->\n\`\`\`\nCloses #12\n\`\`\`\n${"a".repeat(PR_BODY_MAX)}\n\nCloses #12`,
+      // タスクの ID も同じ（ほかの ID の一部として前にある）
+      `sacty task t-10\n\n${"a".repeat(PR_BODY_MAX)}\n\nsacty task t-1`,
+    ];
+    for (const main of cases) {
+      const { body } = limitBody(main, "FOOTER", PR_BODY_MAX, keep);
+      expect(body.length).toBeLessThanOrEqual(PR_BODY_MAX);
+      const tail = body.slice(body.indexOf(TRUNCATED_NOTE));
+      for (const k of keep) {
+        if (main.includes(`\n${k}`) && main.endsWith(k)) expect(tail).toContain(`\n${k}\n`);
+      }
+    }
+    // 行として丸ごと残っていれば、重ねない
+    const kept = limitBody(`Closes #12\n\n${"a".repeat(PR_BODY_MAX)}`, "FOOTER", PR_BODY_MAX, [
+      "Closes #12",
+    ]);
+    expect(kept.body.split("Closes #12")).toHaveLength(2);
+  });
+
   it("テンプレートの Issue の見出しが長い概要の後にあっても、省いたときに Closes を失わない（PR #99 レビュー指摘）", () => {
     const filled = fillTemplate("## 概要\n\n## Related Issue\n", {
       ...parts,
