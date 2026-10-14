@@ -51,6 +51,7 @@ function parseStatusTable(readme: string): StatusTable {
     const label = /^`([^`]+)`$/.exec(labelCell)?.[1];
     if (file === undefined || label === undefined) throw new Error(`表の行の形が違う: ${line}`);
     if (table.has(file)) throw new Error(`同じステータスが2行ある: ${line}`);
+    if ([...table.values()].includes(label)) throw new Error(`同じ表記が2行ある: ${line}`);
     table.set(file, label);
   }
   if (!table.has("")) throw new Error("採用中（無し）の行が無い");
@@ -309,6 +310,26 @@ function checkWorklogs(files: Record<string, string>): string[] {
       errors.push(`${name}: PR「${prValue}」がファイル名（#${pr}）と違う`);
     }
 
+    // 本文 → ファイル名の向き：本文に PBI があれば pbi-<番号>-、PBI が無く PR があれば pr-<番号>- で始まる
+    const bodyPbi = task === undefined ? undefined : /^PBI-(\d+)$/.exec(task)?.[1];
+    const bodyPr = prValue === undefined ? undefined : /^#(\d+)$/.exec(prValue)?.[1];
+    if (task !== undefined && prValue !== undefined) {
+      const prefix =
+        bodyPbi !== undefined
+          ? `pbi-${bodyPbi}-`
+          : bodyPr !== undefined
+            ? `pr-${bodyPr}-`
+            : undefined;
+      if (prefix !== undefined && !slug.startsWith(prefix)) {
+        errors.push(
+          `${name}: 本文の${bodyPbi !== undefined ? "タスク" : "PR"}に合わせ、スラッグを ${prefix} で始める`,
+        );
+      }
+      if (prefix === undefined && /^(?:pbi|pr)-/.test(slug)) {
+        errors.push(`${name}: タスクも PR も なし なのに、スラッグが pbi- か pr- で始まる`);
+      }
+    }
+
     fieldValue(body, "ブランチ", name, errors);
     fieldValue(body, "関係する ADR", name, errors);
   }
@@ -458,6 +479,16 @@ describe("検査の部品", () => {
       ["superseded", "置き換え済み（superseded）"],
     ]);
     expect(() => parseStatusTable("無し")).toThrow();
+    expect(() =>
+      parseStatusTable(
+        [
+          STATUS_TABLE_HEADER,
+          "| --- | --- |",
+          "| （無し） | `採用` |",
+          "| `rejected` | `採用` |",
+        ].join("\n"),
+      ),
+    ).toThrow();
     expect(() =>
       parseStatusTable([STATUS_TABLE_HEADER, "| --- | --- |", "| `x` | 採用 |"].join("\n")),
     ).toThrow();
@@ -647,6 +678,25 @@ describe("検査の部品", () => {
     ["pbi-<番号> の後にスラッグが無い", "20261014-pbi-80.md", {}],
   ])("作業履歴：%s は失敗する", (_, name, overrides) => {
     expect(checkWorklogs({ [name]: worklog(overrides) })).not.toEqual([]);
+  });
+
+  it.each([
+    ["PBI があるのに接頭辞を外した", "20261014-docs-structure.md", {}],
+    ["PBI があるのに pr- で始まる", "20261014-pr-88-docs-structure.md", {}],
+    ["PBI の番号がファイル名と違う（本文 → ファイル名）", "20261014-pbi-81-docs-structure.md", {}],
+    ["PBI の番号の前方一致", "20261014-pbi-8-docs-structure.md", {}],
+    ["PBI が無く PR があるのに接頭辞を外した", "20261014-docs-structure.md", { タスク: "なし" }],
+    ["PBI が無く PR があるのに番号が違う", "20261014-pr-8-docs-structure.md", { タスク: "なし" }],
+    ["PBI も PR も無いのに pbi- で始まる", "20261014-pbi-80-x.md", { タスク: "なし", PR: "なし" }],
+    ["PBI も PR も無いのに pr- で始まる", "20261014-pr-88-x.md", { タスク: "なし", PR: "なし" }],
+  ])("作業履歴の本文とファイル名：%s は失敗する", (_, name, overrides) => {
+    expect(checkWorklogs({ [name]: worklog(overrides) })).not.toEqual([]);
+  });
+
+  it("作業履歴の本文とファイル名：PBI と PR の両方があれば pbi- で始め、どちらも無ければ接頭辞を付けない", () => {
+    expect(checkWorklogs({ [WL]: worklog() })).toEqual([]);
+    expect(checkWorklogs({ "20261014-x.md": worklog({ タスク: "なし", PR: "なし" }) })).toEqual([]);
+    expect(checkWorklogs({ "20261014-pbi-80-x.md": worklog({ PR: "なし" }) })).toEqual([]);
   });
 
   it("作業履歴：日付の行が2行あると失敗する", () => {
