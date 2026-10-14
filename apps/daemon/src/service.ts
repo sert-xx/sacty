@@ -300,6 +300,11 @@ export type ServiceDeps = {
   platformProblems?: (names: readonly string[]) => DaemonText[];
   /** 準備ができないホストの MCP サーバーの理由（画面の状態に出す。PBI-36）。 */
   hostMcpProblems?: () => DaemonText[];
+  /**
+   * 実行の前に、その実行が使うホストの MCP サーバーの準備を待つ（PBI-77。設定に足した直後でも使えるよう、設定と突き合わせて
+   * 起動を待つ。上限あり）。準備ができないものの理由を返す。無ければ待たない。
+   */
+  hostMcpReady?: (names: readonly string[]) => Promise<DaemonMessage[]>;
   /** 人間の出番の通知（PBI-38）。送るのは待たない。 */
   notifier?: Pick<SlackNotifier, "notify" | "test" | "problems">;
   /**
@@ -3410,8 +3415,20 @@ export class TaskService {
           }))
         : [];
     if (!contextSource && !defaultContext && hostMcp.length === 0) return undefined;
+    // 使うホストの MCP サーバーの準備を待つ（PBI-77）。書き出しは、決めた接続先がそれなら、それだけを待つ
+    const waitFor = hostMcp
+      .map((m) => m.name)
+      .filter((name) => onlyMcp === undefined || name === onlyMcp);
+    // 待つ間に人間が止めたら、待たずに戻る（一時停止・中止を、準備の上限まで待たせない。コンテナは起動しない）
+    const hostProblems =
+      waitFor.length > 0 && this.deps.hostMcpReady
+        ? await untilStopped(this.deps.hostMcpReady(waitFor), () => this.stopRequested(task.id), [])
+        : [];
+    // 書き出しは、その MCP サーバーしか使わないので、準備ができなければ書き出さない（理由を記録する）
+    const [onlyProblem] = onlyMcp !== undefined ? hostProblems : [];
+    if (onlyProblem) throw new MessageError(onlyProblem);
     // コンテキストと継承の各リポジトリも、HTTPS の GitHub はプロジェクトの gh のアカウントで取得する
-    return prepareContext(
+    const prepared = await prepareContext(
       this.deps.contexts,
       contextSource,
       agent.runtime === "codex" ? "codex" : "claude-code",
@@ -3423,6 +3440,10 @@ export class TaskService {
       gatewayForMcp?.containerOrigin(),
       onlyMcp,
     );
+    // 準備ができないホストの MCP サーバーは、どれかがわかるよう、コンテキストの注意として記録する（実行は止めない。
+    // 起動し直して準備ができれば、実行の途中からでも使える）
+    prepared.warnings.push(...hostProblems);
+    return prepared;
   }
 
   /**
@@ -6020,6 +6041,30 @@ function sactyBranches(task: Task): string[] {
     ...task.stepBranches,
   ];
   return [...new Set(branches.filter((b): b is string => Boolean(b)))];
+}
+
+/** promise を待つ。その間に stopped が true になったら、待たずに whenStopped を返す（PBI-77）。 */
+async function untilStopped<T>(
+  promise: Promise<T>,
+  stopped: () => boolean,
+  whenStopped: T,
+  pollMs = 200,
+): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((resolve) => {
+        const check = () => {
+          if (stopped()) resolve(whenStopped);
+          else timer = setTimeout(check, pollMs);
+        };
+        check();
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /** sacty が作った、要求要件・設計の PR のうち、閉じていない（と記録している）もの（PBI-57）。 */

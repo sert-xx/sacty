@@ -818,6 +818,7 @@ function makeService(
     secretStore?: ServiceDeps["secrets"];
     platformProblems?: ServiceDeps["platformProblems"];
     hostMcpProblems?: ServiceDeps["hostMcpProblems"];
+    hostMcpReady?: ServiceDeps["hostMcpReady"];
     notifier?: ServiceDeps["notifier"];
     services?: ServiceRunner;
     sharedComposes?: SharedComposeFetcher;
@@ -871,6 +872,7 @@ function makeService(
     ...(options.gateway ? { gateway: options.gateway } : {}),
     ...(options.platformProblems ? { platformProblems: options.platformProblems } : {}),
     ...(options.hostMcpProblems ? { hostMcpProblems: options.hostMcpProblems } : {}),
+    ...(options.hostMcpReady ? { hostMcpReady: options.hostMcpReady } : {}),
     ...(options.notifier ? { notifier: options.notifier } : {}),
     ...(options.services ? { services: options.services } : {}),
     ...(options.sharedComposes ? { sharedComposes: options.sharedComposes } : {}),
@@ -1143,6 +1145,104 @@ describe("工程の実行と費用", () => {
     expect(service.status().warnings).toEqual([
       expect.objectContaining({ code: "gateway.mcpUnavailable" }),
     ]);
+    activity.close();
+  });
+
+  it("実行の前に、使うホストの MCP サーバーの準備を待ってからエージェントを動かし、準備ができないものは、どれかがわかる注意を記録する（PBI-77）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const cloud = toHostMcp("private-cloud", HostMcpFile.parse({ command: "cloud-mcp" }));
+    const wiki = toHostMcp("wiki", HostMcpFile.parse({ command: "wiki-mcp" }));
+    const waits: { names: readonly string[]; executed: number }[] = [];
+    let executed = () => 0;
+    let ready: () => void = () => {};
+    const { service, executor } = makeService(activity, [completed(20_000)], {
+      config: configOf(agent(), 1, [], [cloud, wiki]),
+      gateway: fakeGateway(),
+      hostMcpReady: async (names) => {
+        waits.push({ names, executed: executed() });
+        // 起動を待つ間は、エージェントを動かさない
+        await new Promise<void>((resolve) => {
+          ready = resolve;
+        });
+        return [
+          message("gateway.mcpUnavailable", {
+            name: "wiki",
+            detail: "Okta login did not complete",
+          }),
+        ];
+      },
+    });
+    executed = () => executor.calls.length;
+    const task = service.createTask({ projectId: "default", title: "クラウドを調べる" });
+    const running = service.runNext(task.id);
+    await vi.waitFor(() => expect(waits).toHaveLength(1));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(executor.calls).toHaveLength(0);
+    ready();
+    await running;
+    expect(waits).toEqual([{ names: ["private-cloud", "wiki"], executed: 0 }]);
+    expect(executor.calls).toHaveLength(1);
+    // 準備ができないものも渡す（起動し直して準備ができれば、実行の途中から使える）
+    const servers = JSON.parse(executor.mcpConfigs[0] ?? "{}").mcpServers;
+    expect(Object.keys(servers).sort()).toEqual(["private-cloud", "wiki"]);
+    const resolved = service.get(task.id)?.activity.find((e) => e.type === "ContextResolved");
+    expect(resolved?.type === "ContextResolved" && resolved.payload.warnings).toEqual([
+      message("gateway.mcpUnavailable", { name: "wiki", detail: "Okta login did not complete" }),
+    ]);
+    expect(
+      renderMessage(message("gateway.mcpUnavailable", { name: "wiki", detail: "x" }), "ja"),
+    ).toContain("「wiki」");
+    activity.close();
+  });
+
+  it("ホストの MCP サーバーの準備を待つ間に人間が止めたら、上限まで待たずに止め、エージェントは動かさない（PBI-77）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const cloud = toHostMcp("private-cloud", HostMcpFile.parse({ command: "cloud-mcp" }));
+    let waiting = false;
+    const { service, executor } = makeService(activity, [completed(20_000)], {
+      config: configOf(agent(), 1, [], [cloud]),
+      gateway: fakeGateway(),
+      // 起動がいつまでも終わらない
+      hostMcpReady: () => {
+        waiting = true;
+        return new Promise(() => {});
+      },
+    });
+    const task = service.createTask({ projectId: "default", title: "クラウドを調べる" });
+    const running = service.runNext(task.id);
+    await vi.waitFor(() => expect(waiting).toBe(true));
+    const started = Date.now();
+    await service.pause(task.id);
+    await running;
+    expect(Date.now() - started).toBeLessThan(2_000);
+    expect(executor.calls).toHaveLength(0);
+    expect(service.get(task.id)?.task.pausedReason).toBe("manual");
+    activity.close();
+  });
+
+  it("ホストの MCP サーバーが無い・ゲートウェイが無いときは、準備を待たない（PBI-77）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const cloud = toHostMcp("private-cloud", HostMcpFile.parse({ command: "cloud-mcp" }));
+    const waits: (readonly string[])[] = [];
+    const hostMcpReady: ServiceDeps["hostMcpReady"] = async (names) => {
+      waits.push(names);
+      return [];
+    };
+    const none = makeService(activity, [completed(20_000)], {
+      config: configOf(agent()),
+      gateway: fakeGateway(),
+      hostMcpReady,
+    });
+    await none.service.runNext(none.service.createTask({ projectId: "default", title: "A" }).id);
+    expect(none.executor.calls).toHaveLength(1);
+    const noGateway = makeService(activity, [completed(20_000)], {
+      config: configOf(agent(), 1, [], [cloud]),
+      hostMcpReady,
+    });
+    await noGateway.service.runNext(
+      noGateway.service.createTask({ projectId: "default", title: "B" }).id,
+    );
+    expect(waits).toEqual([]);
     activity.close();
   });
 
@@ -10038,6 +10138,50 @@ describe("成果の書き出し（PBI-56）", () => {
     });
     expect(promptOf(executor, 3)).toContain("MCP サーバー。そのツールで書く");
     expect(promptOf(executor, 3)).toContain("Notion（チームのワークスペース）");
+    expect(taskOf(service, id).exports.requirements?.url).toBe("https://notion.example.com/p/1");
+    activity.close();
+  });
+
+  it("ホストの MCP サーバーへの書き出しは、その MCP サーバーだけの準備を待ち、準備ができなければ、どれかがわかる理由を残して書き出さない（PBI-77）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const notion = toHostMcp("notion", HostMcpFile.parse({ command: "notion-mcp" }));
+    const cloud = toHostMcp("private-cloud", HostMcpFile.parse({ command: "cloud-mcp" }));
+    const waits: (readonly string[])[] = [];
+    let notionProblem: ReturnType<typeof message>[] = [
+      message("gateway.mcpReadyTimeout", { name: "notion", seconds: 300 }),
+    ];
+    const { service, executor } = makeService(
+      activity,
+      [out("# 要求要件"), exportOut({ url: "https://notion.example.com/p/1" }), out("# 設計")],
+      {
+        config: configOf(agent(), 1, [], [notion, cloud]),
+        gateway: fakeGateway(),
+        planner: plannerWith({
+          requirements: { to: { via: "mcp", name: "notion", location: "仕様" }, reason: "規約" },
+        }),
+        hostMcpReady: async (names) => {
+          waits.push(names);
+          return names.includes("notion") ? notionProblem : [];
+        },
+      },
+    );
+    const { id } = service.createTask({ projectId: "default", title: "A" });
+    await approveRequirements(service, id);
+    await service.runNext(id);
+    // 書き出しは、決めた接続先の MCP サーバーだけを待つ（エージェントは実行しない）
+    expect(waits.at(-1)).toEqual(["notion"]);
+    expect(executor.calls).toHaveLength(1);
+    expect(taskOf(service, id).exports.requirements?.last?.failed).toEqual(
+      message("export.failed", {
+        detail: message("gateway.mcpReadyTimeout", { name: "notion", seconds: 300 }),
+      }),
+    );
+    expect(taskOf(service, id).pausedReason).toBeUndefined();
+    // 準備ができれば、書き出し直せる
+    notionProblem = [];
+    service.retryExport(id, "requirements");
+    await service.runNext(id);
+    expect(waits.at(-1)).toEqual(["notion"]);
     expect(taskOf(service, id).exports.requirements?.url).toBe("https://notion.example.com/p/1");
     activity.close();
   });

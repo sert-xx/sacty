@@ -327,6 +327,7 @@ const PARAMS = {
   "config.platformAuth": null,
   "gateway.platformUnavailable": z.object({ name: z.string(), detail: TextParam }),
   "gateway.mcpUnavailable": z.object({ name: z.string(), detail: TextParam }),
+  "gateway.mcpReadyTimeout": z.object({ name: z.string(), seconds: z.number() }),
   "gateway.unavailable": null,
   "config.agentMissing": z.object({ key: z.string(), id: z.string() }),
 } as const satisfies Record<string, z.ZodType | null>;
@@ -763,6 +764,8 @@ const ja: MessageDictionary = {
     "組織内 PF の認証には、secret（固定のキー）か token（トークンの取得）のどちらか一方を書いてください。",
   "gateway.mcpUnavailable": ({ name, detail }, text) =>
     `ホストの MCP サーバー「${name}」の準備ができません（起動・認証に失敗）：${text(detail)}。1分ごとに起動し直します。`,
+  "gateway.mcpReadyTimeout": ({ name, seconds }) =>
+    `ホストの MCP サーバー「${name}」の準備が ${seconds} 秒待ってもできません（起動・認証の途中）。準備ができるまで、エージェントはこの MCP を使えません。`,
   "gateway.platformUnavailable": ({ name, detail }, text) =>
     `組織内 PF「${name}」の認証情報を用意できません：${text(detail)}（ほかの PF は使えます）`,
   "config.gatewayCodexBedrockOnly":
@@ -1139,6 +1142,8 @@ const en: MessageDictionary = {
     "For an internal platform, write either secret (a fixed key) or token (getting a token), not both.",
   "gateway.mcpUnavailable": ({ name, detail }, text) =>
     `The host MCP server "${name}" is not ready (failed to start or authenticate): ${text(detail)}. sacty restarts it every minute.`,
+  "gateway.mcpReadyTimeout": ({ name, seconds }) =>
+    `The host MCP server "${name}" is still not ready after waiting ${seconds} seconds (it is starting or authenticating). The agent cannot use it until it is ready.`,
   "gateway.platformUnavailable": ({ name, detail }, text) =>
     `Cannot prepare the credentials for the internal platform "${name}": ${text(detail)} (other platforms still work)`,
   "config.gatewayCodexBedrockOnly":
