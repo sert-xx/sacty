@@ -48,4 +48,17 @@ sacty を使う人が、設定やコマンドをどう使えばよいかを理�
 
 ## 目次
 
-（まだ無い）
+1. [はじめに](getting-started.md)：インストール・起動・最初のプロジェクトとタスク・データの置き場所
+2. [config.yaml の設定](config.md)：項目の一覧・エージェントと認証方式・工程ごとのモデル・予算
+3. [秘密情報](secrets.md)：キーチェーン・1Password・起動のときに取り出すもの
+4. [プロジェクトの設定](project-settings.md)：対象・GitHub アカウント・コンテキストリポジトリの指定・エクスポート
+5. [Issue・PR・チケットの取り込み](intake.md)：sacty の設定・PR のレビュー・JIRA・タスクの並行実行
+6. [タスクを進める](tasks.md)：タスクの作り方・PR での承認・オーケストレーターへの質問・一時停止と中止
+7. [コンテキストリポジトリ](context.md)：雛形・置くファイル・sacty-context.yaml・mcp.yaml・platforms.yaml・プレビュー
+8. [ゲートウェイ](gateway.md)：AI の呼び出しの中継・providers・ホストの MCP サーバー・組織内 PF の API
+9. [コンテナイメージ](images.md)：プライベートのレジストリ・言語ごとのイメージ
+10. [docker compose のサービス](compose.md)：DB・モック API・共用の compose
+11. [成果の書き出し](result-export.md)：Confluence・Notion などへの書き出し
+12. [Slack の通知](notifications.md)：送り方・メンション
+13. [CLI](cli.md)：sacty コマンドとオプション
+14. [困ったとき](troubleshooting.md)：よくある止まり方と確かめること

@@ -1,0 +1,72 @@
+<!-- 対応するコード: packages/core/src/projects.ts（ProjectDefinition・ProjectTarget・ProjectExport）、packages/core/src/github-url.ts、apps/daemon/src/gh.ts、apps/daemon/src/github.ts、apps/web/src/components/project-editor.tsx、apps/web/src/i18n/messages/projects.ts -->
+
+# プロジェクトの設定
+
+プロジェクトごとの設定は、画面のプロジェクトの設定で登録する（config.yaml には書かない）。
+
+| 欄 | 内容 | 詳しいページ |
+| --- | --- | --- |
+| 名前 | プロジェクトの名前（80文字まで） | |
+| 対象 | タスクを作り、Issue・PR を取り込む Org とリポジトリ | [対象](#対象) |
+| チケットの取り込み先（任意） | JIRA のチケットを取り込む接続先とキー | [取り込み](intake.md#jira-のチケット) |
+| コンテキストリポジトリ（任意） | 工程エージェントに渡す規約・スキル・MCP・外部 PF | [コンテキストリポジトリ](context.md) |
+| 使える外部 PF | 工程エージェントが `$SACTY_PF_URL` で呼べる API（表示だけ） | [ゲートウェイ](gateway.md#組織内-pf-の-api) |
+| GitHub アカウント | ホストごとに使う `gh` のアカウント | [GitHub アカウント](#github-アカウント) |
+| 共用の compose（任意） | テストに使う、チームで共用する docker compose | [docker compose のサービス](compose.md#共用の-compose) |
+| Slack の通知（任意） | 人の出番とタスクの完了を知らせる | [通知](notifications.md) |
+
+## 対象
+
+対象（GitHub の Org またはリポジトリ）は、ホストを含めた `https://` の URL で書く（例 `https://github.com/acme/app`、
+`https://ghe.example.com/acme`。github.com も GitHub Enterprise Server も同じ形）。末尾の `/`・`.git` は無視する。
+
+- 画面でタスクを作るときは、対象の中からリポジトリを選ぶ（Org の対象は、`gh` で読んだその Org のリポジトリから選ぶ）。
+- 対象の、取り込むラベルの付いた開いている Issue と PR は、タスクとして取り込む（[取り込み](intake.md)）。
+- 同じ Org・リポジトリは、ほかのプロジェクトに登録できない。Org とその中のリポジトリが別のプロジェクトにあれば、リポジトリが
+  優先する（Org のプロジェクトからは除かれる）。
+- 対象ごとに「イメージ」（`config.yaml` の `images` の名前か `default`）を選ぶと、オーケストレーターに選ばせず、すべての工程でそれを
+  使う（リポジトリの指定が Org の指定より優先。[コンテナイメージ](images.md#どのイメージで動くか)）。
+
+注意：対象に登録すると、タスクの内容によっては、sacty が対象のリポジトリにブランチをプッシュし、PR を作る。
+
+## GitHub アカウント
+
+GitHub へのアクセス（Issue の取り込み、clone、プッシュ、PR の作成、調査の結果の Issue へのコメント、レビューの PR への投稿）は、
+ホストの GitHub CLI（`gh`）にログイン済みのアカウントで行う。github.com と GitHub Enterprise Server（いくつでも）を同時に使える。
+
+```sh
+gh auth login                                 # github.com。使うアカウントごとにログインする
+gh auth login --hostname ghe.example.com      # GitHub Enterprise Server も、ホストごとにログインする
+```
+
+- 使うアカウントは、プロジェクトの設定で、対象のホストごとに必ず選ぶ（最初は、そのホストの `gh` のアクティブなアカウントが
+  選ばれている）。`gh` でアカウントを切り替えても、プロジェクトごとに選んだアカウントを使う。選んでいないあいだは、そのホストへの
+  アクセスを理由つきで止める。
+- コンテキストリポジトリ・共用の compose だけで使うホストのアカウントは任意。選ばなければ、ホストの git の認証を使う。
+- API は、github.com なら `https://api.github.com`、GitHub Enterprise Server なら `https://<ホスト>/api/v3` を使う。
+- HTTPS のリポジトリは、そのホストのアカウントのトークンで clone・プッシュする（ホストの git の認証の設定は要らない）。SSH の URL や
+  ローカルのパスは、ホストの認証（ssh-agent など）を使う。
+- トークンは使うたびに `gh` から取り出し、作業履歴・ログ・画面・コンテナには出さない。
+
+## コンテキストリポジトリ
+
+「コンテキストリポジトリ」の欄に、リポジトリ（git の URL かローカルのパス）と、ブランチ・タグ（任意。空なら既定のブランチ）を
+書く。書き方と中身は [コンテキストリポジトリ](context.md) を参照。外すときは、リポジトリを空にして保存する。
+
+保存するときに、コンテキストを読んで検査し、`mcp.yaml`・`platforms.yaml` などに誤りがあれば知らせる（保存はする。このままでは
+工程の実行で止まる）。
+
+## エクスポート・インポート
+
+プロジェクトの定義をエクスポートし、ほかの sacty でインポートできる。
+
+- 含めるもの：名前・対象（イメージの指定を含む）・コンテキストリポジトリ・通知先（秘密情報は名前か参照だけ。メンションの ID も含む）・
+  チケットの取り込み先・共用の compose。
+- 含めないもの：GitHub アカウント（個人の設定）とトークン。
+- インポートでは、知らない項目があるファイルを受け付けない。
+
+## 関係するページ
+
+- [Issue・PR・チケットの取り込み](intake.md)
+- [タスクを進める](tasks.md)
+- [コンテキストリポジトリ](context.md)
