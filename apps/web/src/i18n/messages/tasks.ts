@@ -9,6 +9,7 @@ const ja = {
   agentAuth: (auth: string) => `（${auth}）`,
   needsYou: "あなたの出番",
   empty: "タスクはまだありません。「タスクを作成」から最初のタスクを作ってください。",
+  noRepository: "リポジトリ無し",
   column: {
     task: "タスク",
     start: "開始地点",
@@ -29,6 +30,7 @@ const en: TasksMessages = {
   agentAuth: (auth) => ` (${auth})`,
   needsYou: "Needs you",
   empty: "No tasks yet. Use “Create task” to make the first one.",
+  noRepository: "No repository",
   column: {
     task: "Task",
     start: "Started from",

@@ -165,6 +165,10 @@ const ja = {
       byPerson
         ? `作業するリポジトリを選んだ：${repo}（人間）`
         : `チケットを読んで、作業するリポジトリを決めた：${repo}（${reason}）`,
+    RepositoryChosen: (repo: string, reason: string, byPerson: boolean) =>
+      byPerson
+        ? `作業するリポジトリを選んだ：${repo}（人間）`
+        : `プロジェクトの対象から、作業するリポジトリを選んだ：${repo}（${reason}）`,
     TicketPullRequestCommented: (url?: string) =>
       url
         ? `PR の URL をチケットにコメントした（${url}）`
@@ -260,8 +264,8 @@ const ja = {
     AiRequestsRetried: (retries: number, seconds: number, statuses: string, gaveUp: boolean) =>
       `ゲートウェイが AI の呼び出しを${retries}回リトライ（${statuses}・合計${seconds}秒待った）${gaveUp ? "→ 上限に達したため、あきらめた" : ""}`,
     StepQueued: (step: string) => `${step}を実行待ちにした（実行できるようになったため）`,
-    TaskSplit: (count: number, reason: string) =>
-      `子タスク${count}件に分割${reason ? `（${reason}）` : ""}`,
+    TaskSplit: (count: number, reason: string, repos: string[] = []) =>
+      `子タスク${count}件に分割${reason ? `（${reason}）` : ""}${repos.length > 0 ? `・リポジトリ：${repos.join("・")}` : ""}`,
     TaskUnblocked: "依存先の子タスクが完了したため、実行待ちにした",
     SplitCompleted: "子タスクがすべて完了したため、タスク分割を完了",
     IntegrationReviewed: (passed: boolean, branch: string, commit: string, findings: number) =>
@@ -450,6 +454,10 @@ const en: LabelMessages = {
       byPerson
         ? `Chose the repository: ${repo} (person)`
         : `Read the ticket and decided the repository: ${repo} (${reason})`,
+    RepositoryChosen: (repo, reason, byPerson) =>
+      byPerson
+        ? `Chose the repository: ${repo} (person)`
+        : `Chose the repository from the project's targets: ${repo} (${reason})`,
     TicketPullRequestCommented: (url) =>
       url
         ? `Commented the PR URL on the ticket (${url})`
@@ -527,8 +535,8 @@ const en: LabelMessages = {
     AiRequestsRetried: (retries, seconds, statuses, gaveUp) =>
       `The gateway retried the AI call ${retries} time${retries === 1 ? "" : "s"} (${statuses}; waited ${seconds}s in total)${gaveUp ? " → gave up at the limit" : ""}`,
     StepQueued: (step) => `${step} queued (it can run now)`,
-    TaskSplit: (count, reason) =>
-      `Split into ${count} subtask${count === 1 ? "" : "s"}${reason ? ` (${reason})` : ""}`,
+    TaskSplit: (count, reason, repos = []) =>
+      `Split into ${count} subtask${count === 1 ? "" : "s"}${reason ? ` (${reason})` : ""}${repos.length > 0 ? `; repositories: ${repos.join(", ")}` : ""}`,
     TaskUnblocked: "Queued because the subtasks it depends on are done",
     SplitCompleted: "All subtasks are done, so the task split is complete",
     IntegrationReviewed: (passed, branch, commit, findings) =>

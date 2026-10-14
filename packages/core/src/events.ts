@@ -40,6 +40,11 @@ export const STEP_PLANS = {
   "skip-design": ["investigate", "requirements", "implement", "pr"],
   /** 調査だけ：コードを調べて報告する。実装や PR は作らない（PBI-18） */
   investigate: ["investigate"],
+  /**
+   * 設計だけ：要求要件 → 設計。コードを変えない全体の設計（PBI-73）。対象リポジトリの無いタスクだけが選べる。
+   * 成果は sacty の画面で承認し、書き出し先があれば書き出す
+   */
+  "design-only": ["requirements", "design"],
   /** レビューだけ：タスクにある PR をレビューして、PR に投稿する（PBI-19） */
   review: ["review"],
   /**
@@ -301,6 +306,14 @@ const TaskCreated = z.object({
      */
     repo: z.string().optional(),
     /**
+     * 対象リポジトリを指定せずに作った（PBI-73）。オーケストレーターが、プロジェクトのコンテキストと対象から進め方を
+     * 決める（リポジトリ無しで進める・分割して子タスクにリポジトリを付ける・リポジトリを選ぶ）。対象リポジトリを
+     * 選ぶ前の版（PBI-21 より前）のタスクと区別するため、明示して持つ。
+     */
+    noRepo: z.literal(true).optional(),
+    /** 分割で作った子タスクに、オーケストレーター（分割のエージェント）がリポジトリを付けた理由（PBI-73）。 */
+    repoReason: z.string().max(2000).optional(),
+    /**
      * 分割で作った子タスクの親と、先に完了している必要がある子タスク（PBI-27）。
      * 依存がある子タスクは、依存先がすべて完了するまで待つ（blocked）。
      */
@@ -322,6 +335,12 @@ const TaskSplit = z.object({
           title: z.string().min(1),
           body: z.string(),
           dependsOn: z.array(z.string()),
+          /**
+           * 子タスクの対象リポジトリと、選んだ理由（PBI-73）。リポジトリの無い親を分けたときだけ、分割のエージェントが
+           * プロジェクトの対象から選ぶ。無ければ親のリポジトリ。
+           */
+          repo: z.string().min(1).optional(),
+          repoReason: z.string().max(2000).optional(),
         }),
       )
       .min(1),
@@ -831,6 +850,25 @@ const TicketTriaged = z.object({
   }),
 });
 
+/**
+ * リポジトリを指定せずに作ったタスク（PBI-73）の、作業するリポジトリを決めた。コードの変更が要り、分割しないタスクで、
+ * オーケストレーターがプロジェクトの対象から選ぶ（actor は orchestrator。費用を含む）。選べなかったときは、人が選ぶ
+ * （actor は person）。工程を選ぶ前だけ。決めた後は、そのリポジトリを用意して、いつもどおり工程を選ぶ。
+ */
+const RepositoryChosen = z.object({
+  type: z.literal("RepositoryChosen"),
+  payload: z.object({
+    repo: z.string().min(1),
+    reason: DaemonText,
+    agentId: z.string().optional(),
+    ...AgentSetting,
+    ...RunRef,
+    usage: TokenUsage.optional(),
+    costUsd: z.number().nonnegative().default(0),
+    estimated: z.boolean().default(false),
+  }),
+});
+
 /** チケットに PR の URL をコメントした・できなかった（PBI-52）。PR を作ったら1回だけ。 */
 const TicketPullRequestCommented = z.object({
   type: z.literal("TicketPullRequestCommented"),
@@ -983,6 +1021,13 @@ const IntegrationReviewed = z.object({
     /** 読んだベースブランチと、そのコミット。 */
     baseBranch: z.string(),
     commit: z.string(),
+    /**
+     * リポジトリの無い親（PBI-73）で、子タスクのリポジトリごとに読んだベースブランチとコミット。親のリポジトリが無いので、
+     * baseBranch・commit は空になる。
+     */
+    repositories: z
+      .array(z.object({ repo: z.string(), baseBranch: z.string(), commit: z.string() }))
+      .optional(),
     viewpoints: z.array(ViewpointReview),
     remarks: z.array(RemarkReview),
     /** 足りないこと（修正の子タスクで直すこと）。 */
@@ -1323,6 +1368,7 @@ export const EventInput = z.discriminatedUnion("type", [
   StepsChosen,
   ServicesStarted,
   TicketTriaged,
+  RepositoryChosen,
   TicketPullRequestCommented,
   QuestionAsked,
   QuestionAnswered,
@@ -1402,9 +1448,10 @@ export const CreateTaskInput = z.object({
   projectId: z.string().min(1),
   /**
    * 対象リポジトリ（リポジトリの URL。プロジェクトのリポジトリの設定から選ぶ。PBI-21）。
-   * 省略すると、プロジェクトのリポジトリの設定が1つだけならそれにする。
+   * 省略すると、プロジェクトの対象がリポジトリ1つだけならそれにし、そうでなければリポジトリを指定しない（PBI-73）。
+   * null は、リポジトリを指定しない（対象がリポジトリ1つだけでも）。
    */
-  repo: z.string().trim().min(1).optional(),
+  repo: z.string().trim().min(1).nullable().optional(),
 });
 export type CreateTaskInput = z.infer<typeof CreateTaskInput>;
 

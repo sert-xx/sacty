@@ -44,7 +44,7 @@ export async function createTaskAction(
   _prev: CreateTaskState,
   formData: FormData,
 ): Promise<CreateTaskState> {
-  const repo = String(formData.get("repo") ?? "");
+  const repo = String(formData.get("repo") ?? "").trim();
   const values = {
     title: String(formData.get("title") ?? ""),
     body: String(formData.get("body") ?? ""),
@@ -54,6 +54,8 @@ export async function createTaskAction(
   const a = (await getMessages()).common.action;
   // 作成先のプロジェクトは、下で別に確かめる（無ければ、入力の誤りではなく理由を返す）
   const parsed = CreateTaskInput.omit({ projectId: true }).safeParse(values);
+  // 空欄にした対象リポジトリも、空欄のまま入力に戻す（対象がリポジトリ1つだけのときの既定の値に戻さない。PBI-73）
+  const shown = { ...values, repo };
   if (!parsed.success) {
     // 検査の結果を、画面の言語の文言にする
     const fieldErrors: NonNullable<CreateTaskState["fieldErrors"]> = {};
@@ -65,21 +67,22 @@ export async function createTaskAction(
       }
       if (issue.path[0] === "body") fieldErrors.body = [a.bodyTooLong(TASK_BODY_MAX)];
     }
-    return { fieldErrors, values };
+    return { fieldErrors, values: shown };
   }
 
   // 作成先は、フォームを表示したときのプロジェクト（送信時の cookie ではない）。存在はデーモンが検査する
   const projectId = String(formData.get("projectId") ?? "");
   if (!projectId) {
-    return { message: a.createNoProject, values };
+    return { message: a.createNoProject, values: shown };
   }
   let result: Awaited<ReturnType<typeof createTask>>;
   try {
-    result = await createTask({ ...parsed.data, projectId });
+    // 空欄なら、リポジトリを指定しない（対象がリポジトリ1つだけでも。PBI-73）
+    result = await createTask({ ...parsed.data, repo: parsed.data.repo ?? null, projectId });
   } catch {
-    return { message: a.createFailed, values };
+    return { message: a.createFailed, values: shown };
   }
-  if (!result.ok) return { message: result.message, values };
+  if (!result.ok) return { message: result.message, values: shown };
   const taskId = result.task.id;
   redirect(`/tasks/${taskId}`);
 }

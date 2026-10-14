@@ -18,6 +18,8 @@ export function ResumeForm({
   capUsd,
   lastFailure,
   repositories,
+  repoLabel,
+  repoOptional = false,
   chosenRepo,
 }: {
   taskId: string;
@@ -29,6 +31,13 @@ export function ResumeForm({
   repositories?: string[];
   /** 前に人が選んだリポジトリ（選び直せる）。 */
   chosenRepo?: string;
+  /** リポジトリの選択の見出し（チケットのタスクか、リポジトリを指定せずに作ったタスクか。PBI-73）。 */
+  repoLabel?: string;
+  /**
+   * リポジトリを選ばずにも再開できる（PBI-73。リポジトリを指定せずに作ったタスク。選ばなければ、オーケストレーターが
+   * もう一度決める・決めたリポジトリのまま再開する）。
+   */
+  repoOptional?: boolean;
 }) {
   const m = useMessages();
   const [state, formAction, pending] = useActionState(resumeTaskAction, initial);
@@ -53,15 +62,16 @@ export function ResumeForm({
         <input type="hidden" name="taskId" value={taskId} />
         {repositories && (
           <div className="flex min-w-0 flex-col gap-1.5">
-            <Label htmlFor="ticket-repo">{m.parts.resume.ticketRepo}</Label>
+            <Label htmlFor="ticket-repo">{repoLabel ?? m.parts.resume.ticketRepo}</Label>
             {repositories.length > 0 ? (
               <select
                 id="ticket-repo"
                 name="repo"
-                required
-                defaultValue={chosenRepo}
+                required={!repoOptional}
+                defaultValue={chosenRepo ?? ""}
                 className="h-9 max-w-full rounded-md border border-border bg-card px-2 font-mono text-sm"
               >
+                {repoOptional && <option value="">{m.parts.resume.repoKeep}</option>}
                 {repositories.map((r) => (
                   <option key={r} value={r}>
                     {r}
@@ -93,7 +103,7 @@ export function ResumeForm({
             </div>
           </div>
         )}
-        <Button type="submit" disabled={pending || repositories?.length === 0}>
+        <Button type="submit" disabled={pending || (!repoOptional && repositories?.length === 0)}>
           {pending
             ? m.parts.resume.resuming
             : needsCap

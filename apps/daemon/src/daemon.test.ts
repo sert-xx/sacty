@@ -5941,11 +5941,11 @@ describe("プロジェクトの対象と、オーケストレーターが決め�
     activity.close();
   });
 
-  it("対象の外・ほかのプロジェクトが担当するリポジトリや、選んでいない（対象が複数）ときは作らない", () => {
+  // 選んでいない（対象が複数）ときは、リポジトリを指定しないタスクとして作る（PBI-73。別の describe で確かめる）
+  it("対象の外・ほかのプロジェクトが担当するリポジトリは作らない", () => {
     const activity = new SqliteActivityStore(dbPath);
     const { service } = makeService(activity, [], { projects: targets() });
     for (const repo of [
-      undefined,
       "https://github.com/tools/secret",
       "https://github.com/other/app",
       "not a repo",
@@ -12516,6 +12516,604 @@ describe("オーケストレーターのセッションの使い回し（PBI-67�
     expect(existsSync(join(dir, "sessions", task.id))).toBe(false);
     const { service: restarted } = makeService(activity, []);
     expect(restarted.get(task.id)?.task.status).toBe("cancelled");
+    activity.close();
+  });
+});
+
+describe("リポジトリを指定しないタスク（PBI-73）", () => {
+  const out = (text: string, output = 1): AgentOutcome => ({
+    kind: "completed",
+    output: text,
+    usage: { input: 0, cacheRead: 0, cacheWrite: 0, output },
+  });
+  const block = (b: Record<string, unknown>) => `\`\`\`json\n${JSON.stringify(b)}\n\`\`\``;
+  const plan = (v: Record<string, unknown>, output = 1) =>
+    out(block({ "sacty-steps": { reason: "理由", ...v } }), output);
+  const promptOf = (executor: FakeExecutor, i: number) =>
+    executor.calls[i]?.command.join(" ") ?? "";
+  const design = out(
+    `# 設計\n\n${block({ "sacty-test-viewpoints": [{ title: "t", input: "i", expected: "e" }] })}`,
+  );
+  const API = "https://github.com/acme/api";
+  const WEB = "https://github.com/acme/web";
+  /** 対象：リポジトリ acme/api と acme/web（tools/secret は、ほかのプロジェクトが担当）。 */
+  const twoRepos = (withContext = false) => {
+    const projects = projectsWithAccount();
+    projects.put("default", {
+      name: "デフォルト",
+      targets: [
+        { scope: "repo", target: API },
+        { scope: "repo", target: WEB },
+      ],
+      githubAccounts: { "github.com": "me" },
+      ...(withContext ? { context: { repo: "https://github.com/acme/context" } } : {}),
+    });
+    projects.put("other", {
+      name: "ほか",
+      targets: [{ scope: "repo", target: "https://github.com/tools/secret" }],
+      githubAccounts: { "github.com": "me" },
+    });
+    return projects;
+  };
+  const chosenOf = (activity: SqliteActivityStore, id: string) =>
+    activity.forTask(id).find((e) => e.type === "StepsChosen");
+  const textOf = (value: unknown) => renderMessage(value as DaemonText, "ja");
+
+  it("リポジトリを選ばずに作れる（null・対象が複数で省略）。選んだとき・対象がリポジトリ1つで省略したときは今と同じ", () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service } = makeService(activity, [], { projects: twoRepos() });
+    const omitted = service.createTask({ projectId: "default", title: "A" });
+    expect(omitted.repo).toBeUndefined();
+    expect(omitted.noRepo).toBe(true);
+    const none = service.createTask({ projectId: "default", title: "B", repo: null });
+    expect(none).toMatchObject({ noRepo: true, status: "queued" });
+    // 選んだときは今と同じ（登録した名前にそろえる・noRepo は付けない）
+    const chosen = service.createTask({
+      projectId: "default",
+      title: "C",
+      repo: API.toUpperCase(),
+    });
+    expect(chosen.repo).toBe(API);
+    expect(chosen.noRepo).toBeUndefined();
+    // 対象の外のリポジトリは、今と同じく作らない
+    expect(() =>
+      service.createTask({
+        projectId: "default",
+        title: "D",
+        repo: "https://github.com/tools/secret",
+      }),
+    ).toThrow(/対象リポジトリを、プロジェクト/);
+    activity.close();
+
+    // 対象がリポジトリ1つだけなら、省略するとそれにする（今と同じ）。null なら指定しない
+    rmSync(dbPath);
+    const single = new SqliteActivityStore(dbPath);
+    const { service: one } = makeService(single, []);
+    expect(one.createTask({ projectId: "default", title: "E" }).repo).toBe(
+      "https://github.com/acme/app",
+    );
+    expect(one.createTask({ projectId: "default", title: "F", repo: null })).toMatchObject({
+      noRepo: true,
+    });
+    single.close();
+  });
+
+  it("調べものは、オーケストレーターがプロジェクトのコンテキストと対象を読んで選び、リポジトリ無しのまま進めて完了する", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service, executor, repos } = makeService(
+      activity,
+      [
+        // リポジトリの無いタスクでは、テストのコマンド・サービス・ベースブランチは使わない
+        plan({
+          plan: "investigate",
+          testCommand: "npm test",
+          baseBranch: "develop",
+          services: { file: "compose.yml", names: ["db"], steps: ["investigate"] },
+          investigation: "content",
+        }),
+        out("# 調査の結果"),
+      ],
+      {
+        projects: twoRepos(true),
+        realPlanner: true,
+        contexts: new FakeContexts({
+          "https://github.com/acme/context": { "rules.md": "設計書は docs/ に置く" },
+        }),
+      },
+    );
+    const { id } = service.createTask({ projectId: "default", title: "認証の仕組みを調べる" });
+    await service.runNext(id);
+    // オーケストレーターには、コードの代わりにプロジェクトの対象・コンテキストを渡す
+    const prompt = promptOf(executor, 0);
+    expect(prompt).toContain("このタスクには対象リポジトリがありません");
+    expect(prompt).toContain(`- ${API}`);
+    expect(prompt).toContain(`- ${WEB}`);
+    expect(prompt).toContain(
+      "プロジェクトのコンテキストリポジトリ：https://github.com/acme/context",
+    );
+    expect(prompt).toContain("設計書は docs/ に置く");
+    expect(prompt).toContain("design-only");
+    expect(prompt).not.toContain("review：");
+    // リポジトリは用意しない。作業領域は空（コードの写しを作らない）
+    expect(repos.prepared).toEqual([]);
+    expect(repos.snapshots).toEqual([]);
+    expect(executor.workspaceFiles).toEqual([[], []]);
+    expect(promptOf(executor, 1)).toContain(
+      "作業領域（カレントディレクトリ）は空で、コードはありません",
+    );
+    const chosen = chosenOf(activity, id);
+    expect(chosen?.type === "StepsChosen" && chosen.payload).toMatchObject({
+      steps: ["investigate"],
+      plan: "investigate",
+    });
+    expect(chosen?.type === "StepsChosen" && chosen.payload.testCommand).toBeUndefined();
+    expect(chosen?.type === "StepsChosen" && chosen.payload.services).toBeUndefined();
+    const task = service.get(id)?.task;
+    expect(task?.gate).toEqual({ step: "investigate", submission: 1 });
+    service.approve(id, { step: "investigate", submission: 1 });
+    const done = service.get(id)?.task;
+    expect(done && isCompleted(done)).toBe(true);
+    expect(done?.repository).toBeUndefined();
+    activity.close();
+  });
+
+  it("全体の設計は、要求要件・設計を sacty の画面で承認して完了し（PR は作らない）、書き出し先があれば書き出す", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const confluence = toPlatform(
+      "confluence",
+      PlatformFile.parse({
+        upstream: "https://wiki.example.com",
+        description: "Confluence",
+        auth: { header: "Authorization", prefix: "Bearer ", secret: "wiki-token" },
+        allow: ["GET /rest/api/content/**", "POST /rest/api/content"],
+      }),
+    );
+    const URL1 = "https://wiki.example.com/pages/9";
+    const { service, executor, repos, pulls } = makeService(
+      activity,
+      [
+        plan({
+          plan: "design-only",
+          exports: {
+            requirements: { to: "", reason: "要件は書き出さない" },
+            design: { to: "confluence", via: "platform", location: "DEV", reason: "規約" },
+          },
+        }),
+        out("# 要求要件"),
+        design,
+        out(`書きました\n\n${block({ "sacty-export": { url: URL1 } })}`),
+      ],
+      {
+        projects: twoRepos(),
+        realPlanner: true,
+        config: configOf(agent(), 1, [confluence]),
+        gateway: fakeGateway(),
+        secrets: { "claude-oauth-token": "oauth-secret", "wiki-token": "wiki-secret" },
+        // PR でのレビュー（PBI-57）が使えるプロジェクトでも、リポジトリの無いタスクは画面で承認する
+        stepPullRequests: true,
+      },
+    );
+    const { id } = service.createTask({ projectId: "default", title: "全体の設計" });
+    await service.runNext(id);
+    expect(service.get(id)?.task.gate).toEqual({ step: "requirements", submission: 1 });
+    service.approve(id, { step: "requirements", submission: 1 });
+    await service.runNext(id);
+    expect(service.get(id)?.task.gate).toEqual({ step: "design", submission: 1 });
+    service.approve(id, { step: "design", submission: 1 });
+    await service.runNext(id);
+    const task = service.get(id)?.task;
+    expect(task?.exports.design).toMatchObject({ url: URL1 });
+    expect(task && isCompleted(task)).toBe(true);
+    expect(task?.stepPullRequests).toEqual([]);
+    expect(task?.taskBranch).toBeUndefined();
+    expect(pulls.calls).toEqual([]);
+    expect(repos.prepared).toEqual([]);
+    expect(executor.calls).toHaveLength(4);
+    activity.close();
+  });
+
+  it("コードの変更が要り分けないなら、オーケストレーターが対象からリポジトリを選び、用意してから工程を選び直す", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service, executor, repos } = makeService(
+      activity,
+      [
+        plan(
+          { plan: "standard", repo: "https://github.com/ACME/web", repoReason: "画面の変更" },
+          1000,
+        ),
+        plan({ plan: "investigate", testCommand: "npm test" }),
+        out("# 調査"),
+      ],
+      { projects: twoRepos(), realPlanner: true },
+    );
+    const { id } = service.createTask({ projectId: "default", title: "ボタンの文言を直す" });
+    await service.runNext(id);
+    const chosen = service.get(id)?.task;
+    // 登録した名前にそろえ、選んだ理由と費用を残す。まだ工程は決めない
+    expect(chosen?.repo).toBe(WEB);
+    expect(chosen?.repoChoice).toEqual({ reason: "画面の変更", by: "orchestrator" });
+    expect(chosen?.steps).toEqual([]);
+    expect(chosen?.budget.usedUsd).toBeCloseTo(0.015, 6);
+    expect(activity.forTask(id).find((e) => e.type === "RepositoryChosen")).toMatchObject({
+      actor: "orchestrator",
+      payload: { repo: WEB },
+    });
+    expect(service.queuedTaskIds()).toEqual([id]);
+    await service.runNext(id);
+    // 選んだリポジトリを用意して、そのコードを読んで工程を選ぶ（いつもの流れ）
+    expect(repos.prepared[0]?.url).toBe(`${WEB}.git`);
+    expect(promptOf(executor, 1)).toContain(`対象リポジトリ（${WEB}.git）`);
+    expect(service.get(id)?.task.gate).toEqual({ step: "investigate", submission: 1 });
+    activity.close();
+  });
+
+  it("リポジトリを選べなかった・対象に無いリポジトリなら止め、人が対象から選んで再開できる", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service, repos } = makeService(
+      activity,
+      [
+        plan({ plan: "skip-design", repo: "", repoReason: "api と web のどちらか分からない" }),
+        plan({ plan: "bugfix", repo: "https://github.com/tools/secret", repoReason: "推測" }),
+        plan({ plan: "investigate", testCommand: "npm test" }),
+        out("# 調査"),
+      ],
+      { projects: twoRepos(), realPlanner: true },
+    );
+    const { id } = service.createTask({ projectId: "default", title: "不具合を直す" });
+    await service.runNext(id);
+    let task = service.get(id)?.task;
+    expect(task?.status).toBe("paused");
+    expect(textOf(task?.pausedMessage)).toMatch(
+      /作業するリポジトリを決められませんでした：api と web のどちらか分からない/,
+    );
+    expect(task?.repo).toBeUndefined();
+    service.resume(id, {});
+    await service.runNext(id);
+    task = service.get(id)?.task;
+    expect(task?.status).toBe("paused");
+    // 対象に無い（ほかのプロジェクトが担当する）リポジトリは使わない
+    expect(textOf(task?.pausedMessage)).toMatch(
+      /リポジトリ（https:\/\/github.com\/tools\/secret）は、プロジェクトの対象にありません/,
+    );
+    expect(task?.repo).toBeUndefined();
+    expect(repos.prepared).toEqual([]);
+    // 人が選ぶ。対象に無いものは選べない
+    await expect(service.chooseRepository(id, "https://github.com/tools/secret")).rejects.toThrow(
+      /プロジェクトの対象にありません/,
+    );
+    const picked = await service.chooseRepository(id, API);
+    expect(picked.repo).toBe(API);
+    expect(picked.repoChoice?.by).toBe("person");
+    service.resume(id, {});
+    await service.runNext(id);
+    expect(repos.prepared[0]?.url).toBe(`${API}.git`);
+    expect(service.get(id)?.task.gate).toEqual({ step: "investigate", submission: 1 });
+    // 工程を決めた後は、選び直せない
+    await expect(service.chooseRepository(id, WEB)).rejects.toThrow(
+      /リポジトリを選べるのは、リポジトリを指定せずに作り/,
+    );
+    activity.close();
+  });
+
+  it("リポジトリを指定したタスクでは、リポジトリを選べない（今と同じ）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service } = makeService(activity, [], { projects: twoRepos() });
+    const { id } = service.createTask({ projectId: "default", title: "A", repo: API });
+    await expect(service.chooseRepository(id, WEB)).rejects.toThrow(/リポジトリを選べるのは/);
+    activity.close();
+  });
+
+  describe("分割する大きなタスク", () => {
+    const splitOutput = (children: unknown[]) =>
+      out(`分け方\n\n${block({ "sacty-split": { reason: "リポジトリごとに分ける", children } })}`);
+    const children = [
+      {
+        key: "A",
+        title: "API を作る",
+        body: "- API",
+        dependsOn: [],
+        repo: "https://github.com/ACME/API",
+        repoReason: "API はこちら",
+      },
+      {
+        key: "B",
+        title: "画面を作る",
+        body: "- 画面",
+        dependsOn: ["A"],
+        repo: WEB,
+        repoReason: "画面",
+      },
+    ];
+    /** 親は分割（統合レビューまで）、子は調査だけ（承認で完了する）を選ぶ。 */
+    const planner = async (task: Task) =>
+      task.parent
+        ? {
+            steps: ["investigate" as const],
+            plan: "investigate" as const,
+            reason: "子",
+            fallback: false,
+            costUsd: 0,
+            estimated: false,
+          }
+        : {
+            steps: [...STEP_PLANS.split].filter((s) => s !== "investigate"),
+            plan: "split" as const,
+            reason: "大きいので分ける",
+            fallback: false,
+            // リポジトリの無いタスクでは使わない
+            testCommand: "npm test",
+            costUsd: 0,
+            estimated: false,
+          };
+    const integration = out(
+      block({
+        "sacty-integration-review": {
+          viewpoints: [{ id: "TV-1", verified: true, reason: "満たす" }],
+          remarks: [],
+          findings: [],
+          summary: "要求要件を満たす",
+        },
+      }),
+    );
+
+    async function splitParent(outcomes: AgentOutcome[]) {
+      const activity = new SqliteActivityStore(dbPath);
+      const made = makeService(activity, [out("# 要求要件"), design, ...outcomes], {
+        projects: twoRepos(),
+        planner,
+      });
+      const { service } = made;
+      const { id } = service.createTask({ projectId: "default", title: "決済をまるごと作る" });
+      await service.runNext(id);
+      service.approve(id, { step: "requirements", submission: 1 });
+      await service.runNext(id);
+      service.approve(id, { step: "design", submission: 1 });
+      await service.runNext(id);
+      return { ...made, activity, id };
+    }
+
+    it("子タスクごとに対象からリポジトリを付け（理由を残す）、親は統合レビューまで今の流れで進む", async () => {
+      const { service, executor, repos, activity, id } = await splitParent([
+        splitOutput(children),
+        out("# A の調査"),
+        out("# B の調査"),
+        integration,
+      ]);
+      // 親はリポジトリを用意しない。分割のエージェントには、子に付けられるリポジトリを渡す
+      const splitPrompt = promptOf(executor, 2);
+      expect(splitPrompt).toContain(
+        "子タスクごとに、作業するリポジトリ（repo）を次の候補から1つ選び",
+      );
+      expect(splitPrompt).toContain(`- ${API}`);
+      expect(splitPrompt).toContain('"repoReason"');
+      const parent = service.get(id)?.task;
+      expect(parent?.status).toBe("waiting_children");
+      expect(parent?.repository).toBeUndefined();
+      expect(parent?.testCommand).toBeUndefined();
+      const [a, b] = (parent?.split?.children ?? []).map((c) => service.get(c.taskId)?.task);
+      // 登録した名前にそろえる。子タスクごとに違うリポジトリでよい
+      expect(a).toMatchObject({
+        repo: API,
+        repoChoice: { reason: "API はこちら", by: "orchestrator" },
+      });
+      expect(b).toMatchObject({ repo: WEB, repoChoice: { reason: "画面", by: "orchestrator" } });
+      expect(parent?.split?.children.map((c) => c.repo)).toEqual([API, WEB]);
+      expect(repos.prepared).toEqual([]);
+
+      await service.runNext(a?.id ?? "");
+      expect(repos.prepared.map((p) => p.url)).toEqual([`${API}.git`]);
+      service.approve(a?.id ?? "", { step: "investigate", submission: 1 });
+      await service.runNext(id);
+      await service.runNext(b?.id ?? "");
+      expect(repos.prepared.map((p) => p.url)).toEqual([`${API}.git`, `${WEB}.git`]);
+      service.approve(b?.id ?? "", { step: "investigate", submission: 1 });
+      await service.runNext(id);
+      expect(service.queuedTaskIds()).toEqual([id]);
+
+      // 統合レビューは、子タスクのリポジトリごとにベースブランチの最新を読む
+      await service.runNext(id);
+      const review = service.get(id)?.task.integration;
+      expect(review?.passed).toBe(true);
+      expect(review?.repositories).toEqual([
+        { repo: API, baseBranch: "main", commit: "c".repeat(40) },
+        { repo: WEB, baseBranch: "main", commit: "c".repeat(40) },
+      ]);
+      expect(repos.fetchedBranches.map((f) => f.gitDir)).toEqual([
+        expect.stringContaining(a?.id ?? "-"),
+        expect.stringContaining(b?.id ?? "-"),
+      ]);
+      expect(executor.workspaceFiles.at(-1)).toEqual(["1-acme__api", "2-acme__web"]);
+      const integrationPrompt = promptOf(executor, executor.calls.length - 1);
+      expect(integrationPrompt).toContain(`- 1-acme__api/：${API} のベースブランチ（main）`);
+      expect(integrationPrompt).toContain(`画面を作る（${WEB}）：完了`);
+      expect(service.get(id)?.task.gate?.step).toBe("integrate");
+      activity.close();
+    });
+
+    it("子タスクのリポジトリが無い・対象に無いなら使わず、再開すると分割をやり直して選び直す", async () => {
+      const { service, activity, id } = await splitParent([
+        splitOutput([{ ...children[0], repo: "" }, children[1]]),
+        splitOutput([children[0], { ...children[1], repo: "https://github.com/tools/secret" }]),
+        splitOutput(children),
+      ]);
+      const failed = () =>
+        activity
+          .forTask(id)
+          .filter((e) => e.type === "AgentRunFailed")
+          .map((e) => (e.type === "AgentRunFailed" ? textOf(e.payload.message) : ""));
+      expect(service.get(id)?.task.status).toBe("paused");
+      expect(failed()).toEqual([expect.stringMatching(/子タスク「A」にありません/)]);
+      expect(service.get(id)?.task.split).toBeUndefined();
+      service.resume(id, {});
+      await service.runNext(id);
+      expect(failed()[1]).toMatch(
+        /子タスク「B」に付けたリポジトリ（https:\/\/github.com\/tools\/secret）は、プロジェクトの対象にありません/,
+      );
+      expect(service.get(id)?.task.split).toBeUndefined();
+      service.resume(id, {});
+      await service.runNext(id);
+      expect(service.get(id)?.task.split?.children.map((c) => c.repo)).toEqual([API, WEB]);
+      activity.close();
+    });
+
+    it("リポジトリのある親の分割は今と同じ（子は親のリポジトリ。分割案のリポジトリは使わない）", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const { service, executor } = makeService(
+        activity,
+        [out("# 要求要件"), design, splitOutput(children)],
+        { projects: twoRepos(), planner },
+      );
+      const { id } = service.createTask({ projectId: "default", title: "大きい", repo: API });
+      await service.runNext(id);
+      service.approve(id, { step: "requirements", submission: 1 });
+      await service.runNext(id);
+      service.approve(id, { step: "design", submission: 1 });
+      await service.runNext(id);
+      expect(promptOf(executor, 2)).not.toContain("作業するリポジトリ（repo）");
+      const kids = (service.get(id)?.task.split?.children ?? []).map(
+        (c) => service.get(c.taskId)?.task,
+      );
+      expect(kids.map((k) => k?.repo)).toEqual([API, API]);
+      expect(kids.map((k) => k?.repoChoice)).toEqual([undefined, undefined]);
+      expect(service.get(id)?.task.split?.children.map((c) => c.repo)).toEqual([
+        undefined,
+        undefined,
+      ]);
+      activity.close();
+    });
+  });
+
+  it("コードが要る工程は、リポジトリの無いまま実行しない（工程の実行の前に止める）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    // 作業履歴を手で作る：リポジトリの無いタスクに、実装の工程が選ばれていた
+    activity.append({
+      taskId: "t-norepo",
+      projectId: "default",
+      events: [
+        {
+          actor: "person",
+          event: {
+            type: "TaskCreated",
+            payload: { title: "A", body: "", start: "sacty", noRepo: true, budgetCapUsd: 1 },
+          },
+        },
+        {
+          actor: "orchestrator",
+          event: {
+            type: "StepsChosen",
+            payload: { steps: ["implement", "pr"], testCommand: "npm test", costUsd: 0 },
+          },
+        },
+      ],
+    });
+    const { service, executor, repos } = makeService(activity, [out("# 実装")]);
+    await service.runNext("t-norepo");
+    const task = service.get("t-norepo")?.task;
+    expect(task?.status).toBe("paused");
+    const failed = activity.forTask("t-norepo").find((e) => e.type === "AgentRunFailed");
+    expect(failed?.type === "AgentRunFailed" && textOf(failed.payload.message)).toMatch(
+      /工程（implement）には対象リポジトリが要ります/,
+    );
+    expect(executor.calls).toHaveLength(0);
+    expect(repos.prepared).toEqual([]);
+    activity.close();
+  });
+
+  it("API でも、リポジトリを選ばずに作り、人がリポジトリを選べる", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service } = makeService(
+      activity,
+      [plan({ plan: "standard", repo: "", repoReason: "分からない" })],
+      { projects: twoRepos(), realPlanner: true },
+    );
+    const token = "test-token";
+    const json = { authorization: `Bearer ${token}`, "content-type": "application/json" };
+    const app = createApp(service, token);
+    const res = await app.request("/api/tasks", {
+      method: "POST",
+      headers: json,
+      body: JSON.stringify({ projectId: "default", title: "API から", repo: null }),
+    });
+    expect(res.status).toBe(201);
+    const { task } = (await res.json()) as { task: Task };
+    expect(task.noRepo).toBe(true);
+    await service.runNext(task.id);
+    const bad = await app.request(`/api/tasks/${task.id}/repository`, {
+      method: "POST",
+      headers: json,
+      body: JSON.stringify({ repo: "https://github.com/tools/secret" }),
+    });
+    expect(bad.status).toBe(409);
+    const ok = await app.request(`/api/tasks/${task.id}/repository`, {
+      method: "POST",
+      headers: json,
+      body: JSON.stringify({ repo: WEB }),
+    });
+    expect(ok.status).toBe(200);
+    expect(((await ok.json()) as { task: Task }).task.repo).toBe(WEB);
+    activity.close();
+  });
+});
+
+describe("リポジトリを指定しないタスクのリポジトリの選び直し（PBI-73 レビュー指摘）", () => {
+  const out = (text: string): AgentOutcome => ({
+    kind: "completed",
+    output: text,
+    usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 1 },
+  });
+  const plan = (v: Record<string, unknown>) =>
+    out(`\`\`\`json\n${JSON.stringify({ "sacty-steps": { reason: "理由", ...v } })}\n\`\`\``);
+  const API = "https://github.com/acme/api";
+  const WEB = "https://github.com/acme/web";
+  const twoRepos = () => {
+    const projects = projectsWithAccount();
+    projects.put("default", {
+      name: "デフォルト",
+      targets: [
+        { scope: "repo", target: API },
+        { scope: "repo", target: WEB },
+      ],
+      githubAccounts: { "github.com": "me" },
+    });
+    return projects;
+  };
+
+  it("オーケストレーターが選んだリポジトリを用意できなければ止まり、人が別のリポジトリを選び直して再開できる", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const repos = new FakeRepos();
+    const { service } = makeService(
+      activity,
+      [
+        plan({ plan: "standard", repo: API, repoReason: "API" }),
+        plan({ plan: "investigate", testCommand: "npm test" }),
+        out("# 調査"),
+      ],
+      { projects: twoRepos(), realPlanner: true, repos },
+    );
+    const { id } = service.createTask({ projectId: "default", title: "直す" });
+    await service.runNext(id);
+    expect(service.get(id)?.task.repo).toBe(API);
+    repos.fail = "Repository not found";
+    await service.runNext(id);
+    expect(service.get(id)?.task.status).toBe("paused");
+    expect(service.get(id)?.task.repository).toBeUndefined();
+    repos.fail = undefined;
+    const picked = await service.chooseRepository(id, WEB);
+    expect(picked).toMatchObject({ repo: WEB, repoChoice: { by: "person" } });
+    service.resume(id, {});
+    await service.runNext(id);
+    expect(repos.prepared.map((p) => p.url)).toEqual([`${WEB}.git`]);
+    expect(service.get(id)?.task.gate).toEqual({ step: "investigate", submission: 1 });
+    activity.close();
+  });
+
+  it("止まっていないタスクでは、人はリポジトリを選べない（オーケストレーターの選択とぶつけない）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service } = makeService(activity, [], { projects: twoRepos(), realPlanner: true });
+    const { id } = service.createTask({ projectId: "default", title: "直す" });
+    expect(service.get(id)?.task.status).toBe("queued");
+    await expect(service.chooseRepository(id, WEB)).rejects.toThrow(/止まっているタスクだけ/);
+    expect(service.get(id)?.task.repo).toBeUndefined();
     activity.close();
   });
 });

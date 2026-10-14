@@ -88,12 +88,13 @@ export function NewTaskDialog({
             <div className="flex flex-col gap-2">
               <Label htmlFor="task-repo">{t.repository}</Label>
               {/* Org の対象ではリポジトリが多いので、入力して絞り込めるようにする */}
+              {/* 空欄なら、リポジトリを指定せずに作る（PBI-73） */}
               <Input
                 id="task-repo"
                 name="repo"
                 list="task-repo-options"
-                required
                 autoComplete="off"
+                aria-describedby="task-repo-hint"
                 defaultValue={
                   state.values?.repo ??
                   (target.repositories.length === 1 ? target.repositories[0] : "")
@@ -106,6 +107,9 @@ export function NewTaskDialog({
                   <option key={repo} value={repo} />
                 ))}
               </datalist>
+              <p id="task-repo-hint" className="text-xs leading-5 text-muted-foreground">
+                {t.repositoryHint}
+              </p>
             </div>
           )}
           <div className="flex flex-col gap-2">

@@ -1,3 +1,4 @@
+import { isRepoless } from "@sacty/core";
 import Link from "next/link";
 import { Suspense } from "react";
 import { AutoRefresh } from "@/components/auto-refresh";
@@ -239,6 +240,17 @@ async function TaskTable() {
                 {task.source && (
                   <span className="block font-mono text-xs">
                     {task.source.repo}#{task.source.number}
+                  </span>
+                )}
+                {/* リポジトリを指定せずに作ったタスクと、分割の子タスクに付けたリポジトリ（PBI-73） */}
+                {isRepoless(task) && (
+                  <span className="mt-0.5 block w-fit rounded border border-border px-1.5 text-xs">
+                    {m.noRepository}
+                  </span>
+                )}
+                {child && task.repo && (
+                  <span className="block font-mono text-xs [overflow-wrap:anywhere] whitespace-normal">
+                    {task.repo}
                   </span>
                 )}
               </td>

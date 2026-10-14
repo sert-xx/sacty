@@ -205,6 +205,12 @@ export function describeEvent(event: ActivityEvent, l: LabelMessages): string {
         l.text(event.payload.reason),
         event.actor === "person",
       );
+    case "RepositoryChosen":
+      return e.RepositoryChosen(
+        event.payload.repo,
+        l.text(event.payload.reason),
+        event.actor === "person",
+      );
     case "TicketPullRequestCommented":
       return e.TicketPullRequestCommented(event.payload.url);
     case "ServicesStarted":
@@ -399,16 +405,23 @@ export function describeEvent(event: ActivityEvent, l: LabelMessages): string {
     case "StepQueued":
       return e.StepQueued(l.step[event.payload.step]);
     case "TaskSplit":
-      return e.TaskSplit(event.payload.children.length, event.payload.reason);
+      return e.TaskSplit(event.payload.children.length, event.payload.reason, [
+        ...new Set(event.payload.children.flatMap((c) => (c.repo ? [c.repo] : []))),
+      ]);
     case "TaskUnblocked":
       return e.TaskUnblocked;
     case "SplitCompleted":
       return e.SplitCompleted;
     case "IntegrationReviewed":
+      // リポジトリの無い親（PBI-73）は、子タスクのリポジトリごとに読んだブランチ
       return e.IntegrationReviewed(
         event.payload.passed,
-        event.payload.baseBranch,
-        event.payload.commit.slice(0, 7),
+        event.payload.repositories
+          ? event.payload.repositories
+              .map((r) => `${r.repo} ${r.baseBranch}@${r.commit.slice(0, 7)}`)
+              .join("・")
+          : event.payload.baseBranch,
+        event.payload.repositories ? "" : event.payload.commit.slice(0, 7),
         event.payload.findings.length,
       );
     case "StepCompleted":

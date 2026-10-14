@@ -1,11 +1,13 @@
 import {
   appliedProposalFor,
+  awaitingRepository,
   awaitingTicketTriage,
   canRereview,
   canRetryExport,
   exportDue,
   gatePullRequest,
   investigationIsGoal,
+  isRepoless,
   openProposal,
   pendingQuestion,
   type StepKey,
@@ -99,8 +101,9 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
   // 一時停止できるのは、sacty やエージェントが作業している（または作業を待っている）間。
   // ゴールガーディアンの変更の申し出の判定中は、すぐ終わるので止めない
   // チケットのタスクで、チケットを読む段階で止まったら、人がリポジトリを選ぶ（選び直せる。PBI-52）
+  // リポジトリを指定せずに作ったタスクで、オーケストレーターが選べずに止まったときも、人が選ぶ（PBI-73）
   const ticketRepositories =
-    awaitingTicketTriage(task) && task.status === "paused"
+    (awaitingTicketTriage(task) || awaitingRepository(task)) && task.status === "paused"
       ? ((await listProjectRepositories(task.projectId).catch(() => undefined))?.repositories ?? [])
       : undefined;
   const canPause =
@@ -160,13 +163,19 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
             {projectName}
           </Link>
           {/* 対象リポジトリを選ぶ前の版（PBI-21 より前）のタスクは、用意したリポジトリの URL を出す */}
-          {(task.source?.repo ?? task.repo ?? task.repository?.url) && (
+          {(task.source?.repo ?? task.repo ?? task.repository?.url) ? (
             <>
               {m.repository}
               <span className="font-mono [overflow-wrap:anywhere]">
                 {task.source?.repo ?? task.repo ?? task.repository?.url}
               </span>
+              {/* オーケストレーター・人が選んだリポジトリ（子タスクに付けたものを含む）は、選んだ理由を出す（PBI-73） */}
+              {task.repoChoice &&
+                m.repoChoice(labels.text(task.repoChoice.reason), task.repoChoice.by === "person")}
             </>
+          ) : (
+            // リポジトリを指定せずに作ったタスク（PBI-73）
+            isRepoless(task) && <span data-testid="no-repository">{m.noRepository}</span>
           )}
           {task.parent && (
             <>
@@ -278,6 +287,8 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
         <ResumeForm
           taskId={task.id}
           repositories={ticketRepositories}
+          repoLabel={task.ticket ? parts.resume.ticketRepo : parts.resume.chooseRepo}
+          repoOptional={!task.ticket}
           chosenRepo={task.repo}
           reason={task.pausedReason}
           usedUsd={task.budget.usedUsd}

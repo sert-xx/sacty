@@ -278,14 +278,14 @@ export function createApp(
     }
   });
 
-  // チケットから取り込んだタスクの、作業するリポジトリを人が選ぶ（PBI-52）
+  // チケットから取り込んだタスク（PBI-52）・リポジトリを指定せずに作ったタスク（PBI-73）の、作業するリポジトリを人が選ぶ
   app.post("/api/tasks/:id/repository", async (c) => {
     const json = await readJson(c);
     if (!json.ok) return c.json({ error: "invalid_json" }, 400);
     const repo = (json.body as { repo?: unknown } | undefined)?.repo;
     if (typeof repo !== "string") return c.json({ error: "invalid_repo" }, 400);
     try {
-      return c.json({ task: await service.chooseTicketRepository(c.req.param("id"), repo) });
+      return c.json({ task: await service.chooseRepository(c.req.param("id"), repo) });
     } catch (error) {
       return handleError(c, error);
     }
