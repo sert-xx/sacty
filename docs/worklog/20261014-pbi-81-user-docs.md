@@ -55,6 +55,18 @@ README（約560行）にあった設定・コマンド・使い方を、PBI-80 �
 | --- | --- |
 | （セルフレビュー）すぐ始める手順に、雛形の AI のトークンを保存する手順が無く、そのままでは工程が動かない | README の最小の手順に `npx sacty secret set claude-oauth-token` を足した |
 
+### PBI-84（#89）のマージへの追従
+
+- `origin/main` に rebase した。README は #89 で MCP の節に説明が足されて衝突したので、このタスクの README（概要・最小の手順・リンク）を
+  採り、#89 で足された説明は `docs/user/` に移した。
+- `docs/user/context.md`：`command` の MCP サーバーは既定でホストで起動してゲートウェイ経由になること、`via_gateway` が `command` にも
+  効くこと（既定 `true`。`false` でコンテナの中）、作業ディレクトリ（層のリポジトリの写し）・コマンドの探し方・プロジェクトごとの分離・
+  使い回し・止める規則（30分）・準備の上限（120秒）・プレビューの表示・信頼の前提を、`apps/daemon/src/context-mcp.ts`・`context.ts`・
+  `host-mcp.ts`・`packages/core/src/messages.ts` と照合して書いた。時間切れの節に、ホストで動かす `command` のサーバーの中継も足した。
+- `docs/user/gateway.md`・`troubleshooting.md`：コンテキストの `command` のサーバーもホストで動くことと、コマンドがホストに見つからない
+  ときの対処を足した。
+- `npm run lint`・`npm run typecheck`・`npm run build`・`npx vitest run tests/docs`・`npx vitest run --maxWorkers=2` を流し直した（結果は PR に書く）。
+
 ## 残したこと
 
 - 仕様書の本文は別のタスクで書く（ユーザードキュメントからは仕様書の目次へリンクするだけ）。

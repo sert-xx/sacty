@@ -1,4 +1,4 @@
-<!-- 対応するコード: apps/daemon/src/context.ts（ContextManifest・McpServer・McpTimeouts・PlatformsFile・composeContext・RESERVED_SETTINGS・RESERVED_FILES）、apps/daemon/src/context-template.ts、apps/daemon/src/platforms.ts、packages/cli/src/index.ts（contextInit・contextPreview）、packages/cli/src/context-preview.ts -->
+<!-- 対応するコード: apps/daemon/src/context-mcp.ts（ContextMcpServers）、apps/daemon/src/context.ts（ContextManifest・McpServer・McpTimeouts・PlatformsFile・composeContext・RESERVED_SETTINGS・RESERVED_FILES）、apps/daemon/src/context-template.ts、apps/daemon/src/platforms.ts、packages/cli/src/index.ts（contextInit・contextPreview）、packages/cli/src/context-preview.ts -->
 
 # コンテキストリポジトリ
 
@@ -72,27 +72,73 @@ servers:
       API_TOKEN: { secret: op://Work/Tool/token }
 ```
 
-- 名前は英数字・`_`・`-`。サーバーは、`url`（HTTP）か `command`（コマンド）のどちらかの形で書く。
+- 名前は英数字・`_`・`-`。サーバーは、`url`（HTTP）か `command`（コマンド。stdio）のどちらかの形で書く。
   - HTTP：`url`（必須）・`headers`・`via_gateway`（既定 `true`）・`startup_timeout_sec`・`tool_timeout_sec`
-  - コマンド：`command`（必須）・`args`・`env`・`startup_timeout_sec`・`tool_timeout_sec`
+  - コマンド：`command`（必須）・`args`・`env`・`via_gateway`（既定 `true`）・`startup_timeout_sec`・`tool_timeout_sec`
 - 秘密情報は値を書かず、`{ secret: 名前 }`（キーチェーンの名前か 1Password の参照。`prefix` は値の前につける）で書く。
   文字列に `${` は書けない（Claude Code が環境変数として展開するため）。
+- HTTP のものも `command` のものも、既定で sacty のゲートウェイ経由で使う。工程エージェントには、ゲートウェイの URL（`/ctx-mcp/<名前>`）と、
+  実行ごとのトークンだけを渡す（Claude Code の `mcp.json`・Codex の `config.toml` のどちらでも、HTTP の MCP になる）。
+- コンテナの中で動かす（HTTP はコンテナから直接つなぐ）ときは、そのサーバーに `via_gateway: false` と書く。書いたものはコンテナの中で
+  起動・接続し、秘密情報の値は環境変数でコンテナに渡す。
+- `config.yaml` の `gateway.mcp_servers` と同じ名前のサーバーは、`gateway.mcp_servers` のものを使い、作業履歴に警告を残す
+  （`mcp.yaml` のものは起動しない）。
 
-### HTTP の MCP サーバー（ゲートウェイ経由）
+### HTTP の MCP サーバー
 
-`mcp.yaml` に書いた HTTP の MCP サーバーは、sacty のゲートウェイ経由で使う。
-
-- 工程エージェントには、ゲートウェイの URL（`/ctx-mcp/<名前>`）と、実行ごとのトークンだけを渡す。認証のヘッダーの秘密情報は、ホストで
-  取り出してゲートウェイが上流に付ける（コンテナには渡さない）。
+- 認証のヘッダーの秘密情報は、ホストで取り出してゲートウェイが上流に付ける（コンテナには渡さない）。
 - エージェントが付けた認証などのヘッダーは上流に送らない（MCP の Streamable HTTP に要るヘッダーだけを送る）。応答（SSE）はそのまま
   返す。リダイレクトはたどらない。
-- コンテナから直接つなぐときは、サーバーに `via_gateway: false` と書く（秘密情報の値は、環境変数でコンテナに渡す）。
 
-### コマンドの MCP サーバー
+### コマンドの MCP サーバー（ホストで動かす）
 
-`command` のサーバーは、コンテナの中で起動する。秘密情報の値は、環境変数でコンテナに渡す。ブラウザで認証するものなど、ホストで
-動かしたいものは、`config.yaml` の `gateway.mcp_servers` に書く（[ゲートウェイ](gateway.md#ホストで動かす-mcp-サーバー)）。
-`config.yaml` に同じ名前があれば、そちらを使い、作業履歴に警告を残す。
+`command` のサーバーは、既定で、sacty を動かすホストでゲートウェイが起動する（`gateway.mcp_servers` と同じ仕組み）。`env` の秘密情報は
+ホストで取り出して起動するときにだけ入れ、コンテナには渡さない。
+
+```yaml
+servers:
+  issue-tracker:                 # ホストで起動する（既定）
+    command: npx
+    args: ["-y", "example-issue-mcp", "--config", "./mcp/issue.json"]
+    env:
+      API_TOKEN: { secret: op://Work/Issue/token }
+  browser:                       # コンテナの中で起動する
+    command: npx
+    args: ["-y", "@playwright/mcp"]
+    via_gateway: false
+```
+
+- 作業ディレクトリ：そのサーバーを書いた層のリポジトリの写し（`SACTY_HOME/context-mcp/layers` の下。`.git` は写さない）。`args` などの
+  相対パスは、そのリポジトリの直下から解決する（コンテナの作業領域ではない）。継承の親の層に書いたサーバーは、親のリポジトリの写しで動く。
+- コマンド：ホストの `PATH` から探す（`./bin/server` のように `/` を含むものは作業ディレクトリから）。見つからない（`npx`・`uvx` などを
+  ホストに入れていない）ときは、どの MCP サーバーのどのコマンドかと、ホストに入れるか `via_gateway: false` を書くよう、作業履歴
+  （コンテキストの注意）に残して実行する（1分ごとに起動し直すので、ホストに入れれば使えるようになる）。
+- 分離：プロジェクトごとに起動し、そのタスクのプロジェクトの実行のトークンでだけ使える（`platforms.yaml` の PF と同じ）。ほかの
+  プロジェクトの実行からは、名前を知っていても使えない。同じ中身でも、プロジェクトが違えば別のプロセスになる。
+- 使い回し：同じプロジェクトで中身（名前・`command`・`args`・`env`・時間切れ・層のリポジトリと commit）が同じなら、実行をまたいで
+  同じプロセスを使う（並行する実行も同じ）。中身が変われば（コンテキストリポジトリに push して commit が変わったときも）、次の実行で
+  新しく起動する。
+- 止める：使っている実行が無くなったものは、同じプロジェクト・同じ名前の新しい中身が使われたらすぐに、そうでなければ最後に使って
+  から30分で止める（層の写しも消す）。`sacty up` を止めるとすべて止め、デーモンが突然落ちて残ったものは、次の起動のときに片付ける
+  （`gateway.mcp_servers` と同じ記録 `SACTY_HOME/host-mcp/processes` を使う）。
+- 準備：実行の前に、その実行が使うサーバーの起動（MCP の初期化）を待つ。上限は120秒（`startup_timeout_sec` がそれより長ければ、
+  その値）。準備ができなければ、どの MCP サーバーかを作業履歴（コンテキストの注意）に残して実行する。そのサーバーへの成果の書き出しは、
+  理由を残して書き出さない。
+- プロジェクトの設定の「コンテキストのプレビュー」には、エージェントから見える URL（`/ctx-mcp/<名前>`）と、ホストで起動するコマンド・
+  `env`（秘密情報は参照の名前だけ）・作業ディレクトリの層が出る。
+- ブラウザで認証するものなど、すべてのプロジェクトで使うものは、`config.yaml` の `gateway.mcp_servers` に書ける
+  （[ゲートウェイ](gateway.md#ホストで動かす-mcp-サーバー)）。
+
+### 信頼の前提
+
+`command` のサーバーは、sacty を動かすホストで、デーモンと同じ利用者・同じ環境変数（`PATH`・`HOME` など）で動く。つまり、
+コンテキストリポジトリ（継承する親のリポジトリも含む）を編集できる人は、sacty を動かすホストで任意のコマンドを動かせる。sacty は、
+コンテキストリポジトリを `config.yaml` と同じくらい信頼する前提で動き、許可するコマンドの一覧や、人の承認は設けない。
+
+- コンテキストリポジトリ（と `extends` の親）は、`config.yaml` を編集してよい人だけが変更できるようにする（ブランチの保護・レビューの
+  必須など）。
+- ホストで動かしたくないサーバーは、`via_gateway: false` でコンテナの中で動かす。
+- MCP のツールの結果に秘密情報が含まれると、エージェントに渡る（sacty は伏せない）。
 
 ### MCP サーバーの時間切れ
 
@@ -118,6 +164,8 @@ servers:
   サーバーの Claude Code の既定（30秒）の大きい方（書いていないサーバーの待ち時間を既定より短くしない。そのため、書いていないサーバーが
   あるときは、既定より短い値は効かない）。どれにも書かなければ `MCP_TIMEOUT` は渡さない。
 - ゲートウェイ経由の HTTP のサーバーは、中継が先に切れないよう、ゲートウェイが上流を待つ上限（既定は5分）を、書いた値の大きい方まで延ばす。
+- ホストで動かす `command` のサーバーは、`gateway.mcp_servers` と同じく、ゲートウェイの中継（ツールの呼び出しは既定で10分、一覧は既定で60秒）を、
+  書いた値より先に切らない。
 - `gateway.mcp_servers` にも同じ2つを書ける（[ゲートウェイ](gateway.md#ホストで動かす-mcp-サーバー)）。
 
 ## platforms.yaml
@@ -155,7 +203,7 @@ platforms:
 - プロジェクトの設定の画面の「使える外部 PF」に、名前・どこで定義したか・説明・使える API を出す（秘密情報の名前・値は出さない）。
   作業履歴の「コンテキストを用意」にも出す。
 - コンテキストリポジトリに書いた PF は、書いた秘密情報を、書いた転送先・トークンの窓口に、ホストが付けて送る。`mcp.yaml` と同じく、
-  コンテキストリポジトリは信頼できる人だけが変えられるようにする。
+  コンテキストリポジトリは信頼できる人だけが変えられるようにする（[信頼の前提](#信頼の前提)）。
 
 ## 合成の結果を確かめる
 
