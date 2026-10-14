@@ -1,6 +1,6 @@
 import { renderMessage } from "@sacty/core";
 import { describe, expect, it } from "vitest";
-import { jsonCandidates, lastJsonAnswer } from "./agent-json.js";
+import { jsonCandidates, lastJsonAnswer, withoutCandidates } from "./agent-json.js";
 import {
   extractBlocks,
   extractExport,
@@ -267,14 +267,115 @@ describe("エージェントの JSON の答えを、囲み方が揺らいでも�
 
   it("閉じない括弧・入れ子の括弧が多い長い出力でも、すぐに読める", () => {
     const answer = '```json\n{"sacty-verdict": {"verdict": "approved", "reason": "ok"}}\n```';
+    const n = 32_000;
     for (const prose of [
       "if (x) { 続く説明 ".repeat(20_000),
       `${"{".repeat(20_000)}${"}".repeat(20_000)}`,
       "[{ 説明 ".repeat(20_000),
+      // 深い入れ子の末尾近くが壊れている（PBI-72 レビュー指摘。重なる範囲を読み直すと、出力の長さの2乗の時間）
+      `${'{"a":'.repeat(n)}INVALID${"}".repeat(n)}`,
+      `${'{"a":['.repeat(n)}INVALID${"]}".repeat(n)}`,
+      // 正しい深い入れ子
+      `${'{"a":'.repeat(n)}1${"}".repeat(n)}`,
+      // 候補が多い（1行に並ぶ・囲みの中・取り除く範囲が多い）
+      "{}".repeat(n),
+      '{"a":1} '.repeat(n),
+      "```\n{}\n```\n".repeat(n / 4),
+      // 文字列の中の括弧・読み始めの位置で文字列の内外が入れ替わる・閉じない長い文字列
+      `"${"{".repeat(n)}"`,
+      '{"a":"{"'.repeat(n),
+      `{"a":"${"x".repeat(n * 6)}`,
     ]) {
+      const output = `${prose}\n${answer}`;
       const started = performance.now();
-      expect(extractVerdict(`${prose}\n${answer}`)).toEqual({ verdict: "approved", reason: "ok" });
+      expect(extractVerdict(output)).toEqual({ verdict: "approved", reason: "ok" });
+      expect(withoutCandidates(output, jsonCandidates(output))).not.toContain("sacty-");
       expect(performance.now() - started).toBeLessThan(1_000);
     }
+  });
+
+  it("壊れた外側の JSON の中にある、正しい答えを読む", () => {
+    const inner = '{"sacty-verdict": {"verdict": "approved", "reason": "中"}}';
+    expect(extractVerdict(`{"x": ${inner}, INVALID}`)).toEqual({
+      verdict: "approved",
+      reason: "中",
+    });
+    expect(extractVerdict(`${'{"a":'.repeat(1000)}${inner} INVALID`)).toEqual({
+      verdict: "approved",
+      reason: "中",
+    });
+  });
+
+  it("JSON として読めるかの判断は、JSON.parse と同じ", () => {
+    // 決まった種から、JSON らしい断片を並べた文字列を作り、JSON.parse と比べる
+    let seed = 72;
+    const random = (max: number) => {
+      seed = (seed * 1_103_515_245 + 12_345) % 2_147_483_648;
+      return seed % max;
+    };
+    const pieces = [
+      "{",
+      "}",
+      "[",
+      "]",
+      ":",
+      ",",
+      " ",
+      "\n",
+      '"a"',
+      '"',
+      "\\",
+      '\\"',
+      "\\n",
+      "\\u00e9",
+      "\\u12",
+      "\\x",
+      "1",
+      "-",
+      "0",
+      "01",
+      "1.5",
+      "1.",
+      "1e3",
+      "-0.1E+2",
+      "true",
+      "fals",
+      "null",
+      "x",
+      "\t",
+      "\u0001",
+      "```",
+    ];
+    const valid = [
+      '{"a": [1, -0.5e+2, true, false, null, {"b": "\\u00e9\\n\\"x\\""}], "c": {}}',
+      '{"sacty-steps": {"plan": "bugfix", "reason": "```json {x} [y]"}, "d": [[], [{}]]}',
+    ];
+    let accepted = 0;
+    for (let n = 0; n < 20_000; n++) {
+      // ランダムな断片・正しい JSON・正しい JSON の1文字を入れ替えたり削ったりしたもの
+      const base = valid[random(valid.length)] ?? "{}";
+      const at = random(base.length);
+      const piece = random(2) === 0 ? (pieces[random(pieces.length)] ?? "") : "";
+      const text =
+        n % 2 === 0
+          ? `{${Array.from({ length: 1 + random(12) }, () => pieces[random(pieces.length)]).join("")}`
+          : n % 4 === 1
+            ? base
+            : `${base.slice(0, at)}${piece}${base.slice(at + 1)}`;
+      let parsed = false;
+      try {
+        const value: unknown = JSON.parse(text);
+        parsed = !!value && typeof value === "object" && !Array.isArray(value);
+      } catch {
+        parsed = false;
+      }
+      const length = text.replace(/[ \t\n\r]+$/, "").length;
+      const whole = jsonCandidates(text).some((c) => c.start === 0 && c.end === length);
+      expect({ text, whole }).toEqual({ text, whole: parsed });
+      if (parsed) accepted++;
+    }
+    // 読める・読めないの両方を試している
+    expect(accepted).toBeGreaterThan(5_000);
+    expect(accepted).toBeLessThan(15_000);
   });
 });

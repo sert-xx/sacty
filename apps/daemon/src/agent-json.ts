@@ -12,63 +12,166 @@ export type JsonCandidate = {
   end: number;
 };
 
+/** JSON の数（JSON.parse と同じ形）。 */
+const NUMBER = /-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?/y;
+const HEX4 = /^[0-9a-fA-F]{4}$/;
+
 /**
- * 「{」「[」の位置から、対応する「}」「]」の次の位置を求める。文字列の中の括弧・``` は数えない。閉じない・文字列の
- * 中に改行がある（JSON の文字列は改行を含めない）ときは null。1回の走査で、途中で開いたすべての括弧の結果も覚える
- * （同じ位置から走査し直すと、閉じない括弧の多い出力で、出力の長さの2乗の時間がかかるため）。開いた位置は文字列の
- * 外なので、そこから走査し直しても同じ結果になる。
+ * 「{」の位置から始まる JSON のオブジェクトを確かめ、その終わりの次の位置を返す（JSON でなければ null）。JSON.parse と
+ * 同じ文法を、入れ子を再帰せずに読む。途中で開いた「{」「[」の結果（閉じた位置、または壊れている）もすべて覚え、
+ * 後でその位置から確かめるときは読み直さない（PBI-72 レビュー指摘）。入れ子の値は、外側と同じ文字から同じように
+ * 読むので、外側が値の途中で壊れていれば、その値も同じ所で壊れている。これで、深い入れ子の末尾が壊れている・閉じない
+ * 括弧が多い出力でも、時間は出力の長さにほぼ比例する。
  */
-function bracketEnds(output: string): (start: number) => number | null {
+function objectValidator(output: string): (start: number) => number | null {
   const ends = new Map<number, number | null>();
-  const scan = (start: number) => {
-    const open: number[] = [];
-    let inString = false;
-    for (let i = start; i < output.length; i++) {
-      const c = output[i];
-      if (inString) {
-        if (c === "\\") i++;
-        else if (c === '"') inString = false;
-        else if (c === "\n") break;
-        continue;
-      }
-      if (c === '"') inString = true;
-      else if (c === "{" || c === "[") open.push(i);
-      else if (c === "}" || c === "]") {
-        const at = open.pop();
-        if (at !== undefined) ends.set(at, i + 1);
-        if (open.length === 0) return;
+  const length = output.length;
+  const skipSpace = (p: number) => {
+    let i = p;
+    while (i < length) {
+      const c = output.charCodeAt(i);
+      if (c !== 0x20 && c !== 0x09 && c !== 0x0a && c !== 0x0d) break;
+      i++;
+    }
+    return i;
+  };
+  /** p の「"」から始まる文字列の終わりの次の位置。JSON の文字列でなければ -1。 */
+  const stringEnd = (p: number) => {
+    for (let i = p + 1; i < length; i++) {
+      const c = output.charCodeAt(i);
+      if (c === 0x22) return i + 1;
+      if (c < 0x20) return -1;
+      if (c === 0x5c) {
+        const next = output[i + 1];
+        if (next === "u") {
+          if (!HEX4.test(output.slice(i + 2, i + 6))) return -1;
+          i += 5;
+        } else if (next !== undefined && '"\\/bfnrt'.includes(next)) {
+          i++;
+        } else {
+          return -1;
+        }
       }
     }
-    for (const at of open) ends.set(at, null);
+    return -1;
+  };
+  /** 文字列・数・true・false・null の終わりの次の位置。どれでもなければ -1。 */
+  const scalarEnd = (p: number) => {
+    const c = output[p];
+    if (c === '"') return stringEnd(p);
+    for (const word of ["true", "false", "null"]) {
+      if (output.startsWith(word, p)) return p + word.length;
+    }
+    NUMBER.lastIndex = p;
+    return NUMBER.test(output) ? NUMBER.lastIndex : -1;
+  };
+  const validate = (start: number): number | null => {
+    const open: { start: number; array: boolean }[] = [];
+    const fail = () => {
+      for (const frame of open) ends.set(frame.start, null);
+      return null;
+    };
+    let state: "value" | "valueOrClose" | "key" | "keyOrClose" | "colon" | "after" = "value";
+    let p = start;
+    for (;;) {
+      p = skipSpace(p);
+      const c = output[p];
+      const top = open.at(-1);
+      if ((state === "keyOrClose" && c === "}") || (state === "valueOrClose" && c === "]")) {
+        state = "after";
+      } else if (state === "value" || state === "valueOrClose") {
+        if (c === "{" || c === "[") {
+          const known = ends.get(p);
+          if (known === null) return fail();
+          if (known !== undefined && open.length > 0) {
+            p = known;
+            state = "after";
+            continue;
+          }
+          open.push({ start: p, array: c === "[" });
+          p++;
+          state = c === "{" ? "keyOrClose" : "valueOrClose";
+          continue;
+        }
+        const end = scalarEnd(p);
+        if (end < 0) return fail();
+        p = end;
+        state = "after";
+        continue;
+      } else if (state === "key" || state === "keyOrClose") {
+        const end = c === '"' ? stringEnd(p) : -1;
+        if (end < 0) return fail();
+        p = end;
+        state = "colon";
+        continue;
+      } else if (state === "colon") {
+        if (c !== ":") return fail();
+        p++;
+        state = "value";
+        continue;
+      } else {
+        if (!top) return fail();
+        if (c === ",") {
+          p++;
+          state = top.array ? "value" : "key";
+          continue;
+        }
+        if (c !== (top.array ? "]" : "}")) return fail();
+      }
+      // 閉じる
+      const frame = open.pop();
+      if (!frame) return fail();
+      p++;
+      ends.set(frame.start, p);
+      if (open.length === 0) return p;
+      state = "after";
+    }
   };
   return (start) => {
-    if (!ends.has(start)) scan(start);
-    return ends.get(start) ?? null;
+    const known = ends.get(start);
+    return known !== undefined ? known : validate(start);
   };
 }
 
 /** 囲みの開始の行（```、```json、```JSON、```jsonc など）。 */
-const FENCE_OPEN = /^[ \t]*```[\w.+-]*[ \t]*$/;
-
-/** 行の頭の ```（囲みの開始・終わりの行）。 */
-const FENCE_LINE = /^[ \t]*```/gm;
+const FENCE_OPEN = /^[ \t]*```[\w.+-]*$/;
 
 /**
- * JSON が囲みの中にあれば、囲みの行も含めた範囲にする。前の行の ``` が、前のコードの囲みの終わりの行（それまでの囲みの
- * 行の数が奇数）なら、囲みではない。
+ * 囲みの行を、出力の頭から1回で調べる。開始の行は、行の終わり（後ろの空白を除く）の位置から行の頭へ、終わりの行
+ * （``` だけの行）は、``` の位置から行の終わりへ引けるようにする。それまでの囲みの行の数が奇数の行は、前のコードの
+ * 囲みの終わりの行なので、開始の行にしない。
  */
-function withFence(output: string, start: number, end: number): { start: number; end: number } {
+function fenceLines(output: string) {
+  const opens = new Map<number, number>();
+  const closes = new Map<number, number>();
+  let count = 0;
+  for (const m of output.matchAll(/^[ \t]*```[^\n]*/gm)) {
+    const line = m[0];
+    const trimmed = line.trimEnd();
+    if (count % 2 === 0 && FENCE_OPEN.test(trimmed)) opens.set(m.index + trimmed.length, m.index);
+    if (trimmed.trim() === "```") {
+      closes.set(m.index + line.length - line.trimStart().length, m.index + line.length);
+    }
+    count++;
+  }
+  return { opens, closes };
+}
+
+/** JSON が囲みの中にあれば、囲みの行も含めた範囲にする。 */
+function withFence(
+  output: string,
+  fences: ReturnType<typeof fenceLines>,
+  start: number,
+  end: number,
+): { start: number; end: number } {
   let before = start;
   while (before > 0 && /\s/.test(output[before - 1] ?? "")) before--;
-  const lineStart = output.lastIndexOf("\n", before - 1) + 1;
-  if (!FENCE_OPEN.test(output.slice(lineStart, before))) return { start, end };
-  if ((output.slice(0, lineStart).match(FENCE_LINE)?.length ?? 0) % 2 === 1) return { start, end };
+  const lineStart = fences.opens.get(before);
+  if (lineStart === undefined) return { start, end };
   let after = end;
   while (after < output.length && /\s/.test(output[after] ?? "")) after++;
-  if (!output.startsWith("```", after)) return { start, end };
-  const newline = output.indexOf("\n", after);
-  const lineEnd = newline === -1 ? output.length : newline;
-  if (output.slice(after + 3, lineEnd).trim() !== "") return { start, end };
+  const lineEnd = fences.closes.get(after);
+  if (lineEnd === undefined) return { start, end };
   return { start: lineStart, end: lineEnd };
 }
 
@@ -79,7 +182,8 @@ function withFence(output: string, start: number, end: number): { start: number;
  */
 export function jsonCandidates(output: string): JsonCandidate[] {
   const found: JsonCandidate[] = [];
-  const endOf = bracketEnds(output);
+  const endOf = objectValidator(output);
+  let fences: ReturnType<typeof fenceLines> | undefined;
   let i = output.indexOf("{");
   while (i !== -1) {
     const end = endOf(i);
@@ -92,7 +196,8 @@ export function jsonCandidates(output: string): JsonCandidate[] {
       }
     }
     if (end !== null && value && typeof value === "object" && !Array.isArray(value)) {
-      found.push({ value: value as Record<string, unknown>, ...withFence(output, i, end) });
+      fences ??= fenceLines(output);
+      found.push({ value: value as Record<string, unknown>, ...withFence(output, fences, i, end) });
       i = output.indexOf("{", end);
     } else {
       i = output.indexOf("{", i + 1);
@@ -135,9 +240,12 @@ export function headedObject(
 
 /** 候補の範囲を、表示用の本文から取り除く（範囲は重ならない）。 */
 export function withoutCandidates(output: string, candidates: readonly JsonCandidate[]): string {
-  let cleaned = output;
-  for (const c of [...candidates].sort((a, b) => b.start - a.start)) {
-    cleaned = cleaned.slice(0, c.start) + cleaned.slice(c.end);
+  const parts: string[] = [];
+  let at = 0;
+  for (const c of [...candidates].sort((a, b) => a.start - b.start)) {
+    parts.push(output.slice(at, c.start));
+    at = c.end;
   }
-  return cleaned;
+  parts.push(output.slice(at));
+  return parts.join("");
 }
