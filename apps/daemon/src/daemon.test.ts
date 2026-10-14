@@ -669,6 +669,10 @@ class FakeExecutor implements AgentExecutor {
   networks: (string | undefined)[] = [];
   /** 実行ごとに渡された、localhost に転送するポート（PBI-60）。 */
   forwards: (readonly LocalForward[] | undefined)[] = [];
+  /** 実行ごとにマウントされた各実行のセッションログ（PBI-91）。無ければ undefined。 */
+  logMounts: ({ readOnly: boolean; files: Record<string, string>; dir: string } | undefined)[] = [];
+  /** 渡された実行から結果を作る（エージェントがマウントされたファイルを読んで答える代わり）。undefined なら outcomes の順。 */
+  respond?: (invocation: Invocation) => AgentOutcome | undefined;
   async run({
     runId,
     image,
@@ -719,7 +723,19 @@ class FakeExecutor implements AgentExecutor {
     // 戻すように渡された、保存したセッションのファイル（PBI-67。実行の間に読んでおく）
     const restoredDir = invocation.stage?.sessionDir;
     this.restored.push(restoredDir ? readTree(restoredDir) : undefined);
-    const next = this.outcomes.shift();
+    // 質問への答えで読み取り専用でマウントされる、各実行のセッションログ（PBI-91。実行の後に消される）
+    const logsMount = invocation.mounts?.find((m) => m.containerPath === "/sacty-logs");
+    this.logMounts.push(
+      logsMount
+        ? {
+            readOnly: logsMount.readOnly,
+            files: readTree(logsMount.hostPath),
+            dir: logsMount.hostPath,
+          }
+        : undefined,
+    );
+    const responded = this.respond?.(invocation);
+    const next = responded ?? this.outcomes.shift();
     if (!next) throw new Error("no more outcomes");
     const outcome =
       next.kind === "hold"
@@ -10121,6 +10137,202 @@ describe("タスクの詳細での、オーケストレーターへの質問（P
     );
     expect(service.get(id)?.task.questions).toEqual([]);
     activity.close();
+  });
+});
+
+describe("質問への答えで、各実行のセッションログを調べる（PBI-91）", () => {
+  const out = (text: string, usageOutput = 100): AgentOutcome => ({
+    kind: "completed",
+    output: text,
+    usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: usageOutput },
+  });
+  const isChat = (invocation: Invocation) => (invocation.command[2] ?? "").includes("--- 質問 ---");
+  const runIdOf = (service: TaskService, id: string, step: string) =>
+    service.get(id)?.activity.find((e) => e.type === "AgentRunCompleted" && e.payload.step === step)
+      ?.payload as { runId: string } | undefined;
+
+  it("このタスクの各実行のログ（エージェントの元のファイルも）を読み取り専用で渡し、ログの中身から答えられる。ほかのタスクのログ・秘密の値は渡さない", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const sessionLogs = new SessionLogStore(join(dir, "runs"));
+    const { service, executor } = makeService(
+      activity,
+      [out("# 要求要件 A"), out("# 要求要件 B")],
+      { sessionLogs },
+    );
+    // 工程のエージェントが実際にしたこと（台帳には出ない）を、元のセッションのファイルに書かせる
+    let did = "";
+    executor.sessionFiles = () => ({
+      "projects/w/session.jsonl": `${JSON.stringify({ type: "tool_use", name: "Bash", input: { command: did } })}\n`,
+    });
+    const a = service.createTask({ projectId: "default", title: "決済API", body: "冪等にする" });
+    did = "npm test -- --grep 冪等キー";
+    await service.runNext(a.id);
+    const b = service.createTask({ projectId: "default", title: "別のタスク", body: "" });
+    did = "cat 別のタスクの作業";
+    await service.runNext(b.id);
+    const reqRun = runIdOf(service, a.id, "requirements")?.runId ?? "";
+    const otherRun = runIdOf(service, b.id, "requirements")?.runId ?? "";
+    expect(reqRun).not.toBe("");
+
+    // 答えの代わりに、マウントされたログを探して、何をしたかを答える
+    executor.respond = (invocation) => {
+      if (!isChat(invocation)) return undefined;
+      const mount = invocation.mounts?.find((m) => m.containerPath === "/sacty-logs");
+      if (!mount) return out("ログが無い");
+      const files = readTree(mount.hostPath);
+      const found = Object.entries(files).find(([path]) => path.includes("/agent/projects/"));
+      const command = found ? /"command":"([^"]+)"/.exec(found[1])?.[1] : undefined;
+      return out(`実行 ${found?.[0].split("/")[0]} で \`${command}\` を実行しました`, 1000);
+    };
+    const usedBefore = service.get(a.id)?.task.budget.usedUsd ?? 0;
+    await service.askQuestion(a.id, { text: "要求要件でどんなコマンドを使った？" }).answered;
+
+    const task = service.get(a.id)?.task;
+    expect(task?.questions[0]?.answer?.text).toBe(
+      `実行 ${reqRun} で \`npm test -- --grep 冪等キー\` を実行しました`,
+    );
+    // 費用はこれまでどおりタスクの予算に入る（1000出力トークン = $0.015）
+    expect(task?.budget.usedUsd).toBeCloseTo(usedBefore + 0.015, 6);
+
+    const mounted = executor.logMounts.at(-1);
+    expect(mounted?.readOnly).toBe(true);
+    expect(Object.keys(mounted?.files ?? {}).sort()).toEqual(
+      [
+        "index.json",
+        `${reqRun}/agent/projects/w/session.jsonl`,
+        `${reqRun}/events.jsonl`,
+        `${reqRun}/meta.json`,
+        `${reqRun}/stderr.log`,
+      ].sort(),
+    );
+    const all = Object.values(mounted?.files ?? {}).join("\n");
+    // ほかのタスクのログは渡さない
+    expect(all).not.toContain(otherRun);
+    expect(all).not.toContain("別のタスクの作業");
+    // 実行に渡した秘密情報（偽の実行器がログに出している）は伏せてある
+    expect(all).not.toContain("oauth-secret");
+    expect(all).toContain("[REDACTED]");
+    // 答えの実行の後に、並べた場所を消す（元のログは残る）
+    expect(existsSync(mounted?.dir ?? "")).toBe(false);
+    expect(sessionLogs.read(a.id, reqRun)).toBeTruthy();
+
+    // Claude Code には、作業領域の外のログの場所を読める場所に足す（工程の実行には足さない）
+    expect(executor.calls.at(-1)?.command).toEqual(
+      expect.arrayContaining(["--add-dir", "/sacty-logs"]),
+    );
+    expect(executor.calls[0]?.command).not.toContain("--add-dir");
+    // 指示には、一覧（どの工程・どの実行か）と読み方を入れる（中身は丸ごと入れない）
+    const prompt = executor.calls.at(-1)?.command[2] ?? "";
+    expect(prompt).toContain("/sacty-logs に読み取り専用で置きました");
+    expect(prompt).toContain(
+      `- [要求要件・1回目] 実行 ${reqRun} claude-subscription（claude-code）`,
+    );
+    expect(prompt).not.toContain("npm test -- --grep 冪等キー");
+    expect(prompt).not.toContain(otherRun);
+    activity.close();
+  });
+
+  it("オーケストレーター自身の実行と、これまでの質問への答えの実行のログも、どの実行かが分かる形で渡す", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const sessionLogs = new SessionLogStore(join(dir, "runs"));
+    const { service, executor } = makeService(
+      activity,
+      [
+        out(
+          '```json\n{"sacty-steps": {"plan": "skip-design", "reason": "小さい", "testCommand": "npm test"}}\n```',
+        ),
+        out("# 調査"),
+        out("答え1"),
+        out("答え2"),
+      ],
+      { realPlanner: true, sessionLogs },
+    );
+    const { id } = service.createTask({ projectId: "default", title: "A" });
+    await service.runNext(id);
+    const orchestratorRun = (
+      service.get(id)?.activity.find((e) => e.type === "StepsChosen")?.payload as
+        | { runId?: string }
+        | undefined
+    )?.runId;
+    const reqRun = runIdOf(service, id, "investigate")?.runId;
+    await service.askQuestion(id, { text: "1つ目" }).answered;
+    const chatRun = (
+      service.get(id)?.activity.findLast((e) => e.type === "QuestionAnswered")?.payload as
+        | { runId?: string }
+        | undefined
+    )?.runId;
+    await service.askQuestion(id, { text: "2つ目" }).answered;
+    const prompt = executor.calls.at(-1)?.command[2] ?? "";
+    expect(prompt).toContain(`- [オーケストレーター・1回目] 実行 ${orchestratorRun} `);
+    expect(prompt).toContain(`- [調査・1回目] 実行 ${reqRun} `);
+    expect(prompt).toContain(`- [質問への答え（オーケストレーター）・1回目] 実行 ${chatRun} `);
+    // 一覧は始めた順
+    expect(prompt.indexOf(orchestratorRun ?? "")).toBeLessThan(prompt.indexOf(reqRun ?? ""));
+    expect(prompt.indexOf(reqRun ?? "")).toBeLessThan(prompt.indexOf(chatRun ?? ""));
+    const files = Object.keys(executor.logMounts.at(-1)?.files ?? {});
+    expect(files).toContain(`${orchestratorRun}/events.jsonl`);
+    expect(files).toContain(`${chatRun}/meta.json`);
+    activity.close();
+  });
+
+  it("タスクのログの場所を開けないときは、ログの無い実行とせず、マウントせずに理由を伝えて台帳から答える", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const sessionLogs = new SessionLogStore(join(dir, "runs"));
+    const { service, executor } = makeService(
+      activity,
+      [out("# 要求要件"), out("台帳から答えました")],
+      {
+        sessionLogs,
+      },
+    );
+    const { id } = service.createTask({ projectId: "default", title: "決済API", body: "" });
+    await service.runNext(id);
+    const reqRun = runIdOf(service, id, "requirements")?.runId ?? "";
+    expect(reqRun).not.toBe("");
+    // タスクのログの場所が、ディレクトリでなくなった
+    const taskDir = join(dir, "runs", id);
+    rmSync(taskDir, { recursive: true, force: true });
+    writeFileSync(taskDir, "ディレクトリではない");
+    await service.askQuestion(id, { text: "何をした？" }).answered;
+    expect(service.get(id)?.task.questions[0]?.answer?.text).toBe("台帳から答えました");
+    expect(executor.logMounts.at(-1)).toBeUndefined();
+    const prompt = executor.calls.at(-1)?.command[2] ?? "";
+    expect(prompt).toContain(
+      "各実行のセッションログは、この質問では読めません（セッションログを用意できなかった：ENOTDIR）",
+    );
+    expect(prompt).not.toContain("/sacty-logs に読み取り専用で置きました");
+    expect(prompt).not.toContain(`実行 ${reqRun}：ログが無い`);
+    expect(executor.calls.at(-1)?.command).not.toContain("--add-dir");
+    // 並べかけた場所は残さない
+    expect(readdirSync(join(dir, "workspaces", "_question-logs"), { withFileTypes: true })).toEqual(
+      [],
+    );
+    activity.close();
+  });
+
+  it("ログを用意できない・残していないときも、台帳から答え、ログを読めないことを伝える", async () => {
+    class BrokenLogs extends SessionLogStore {
+      override taskDir(): string | undefined {
+        throw new Error("EACCES");
+      }
+    }
+    for (const sessionLogs of [new BrokenLogs(join(dir, "runs")), undefined]) {
+      const activity = new SqliteActivityStore(dbPath);
+      const { service, executor } = makeService(activity, [out("工程はまだ決めていません。")], {
+        ...(sessionLogs ? { sessionLogs } : {}),
+      });
+      const { id } = service.createTask({ projectId: "default", title: "決済API", body: "" });
+      await service.askQuestion(id, { text: "工程は？" }).answered;
+      expect(service.get(id)?.task.questions[0]?.answer?.text).toBe("工程はまだ決めていません。");
+      expect(executor.logMounts.at(-1)).toBeUndefined();
+      expect(executor.calls.at(-1)?.command[2]).toContain(
+        sessionLogs
+          ? "各実行のセッションログは、この質問では読めません（セッションログを用意できなかった）"
+          : "各実行のセッションログは、この質問では読めません（セッションログを残していない）",
+      );
+      activity.close();
+      rmSync(dbPath, { force: true });
+    }
   });
 });
 
