@@ -2,7 +2,7 @@
 
 - 日付: 2026-10-14（UTC）
 - タスク: PBI-84
-- PR: なし
+- PR: #89
 - ブランチ: feat/issue-84-host-stdio-mcp
 - 関係する ADR: [コンテキストの mcp.yaml の command の MCP サーバーを、既定でホストで起動してゲートウェイ経由にし、コンテキストリポジトリを config.yaml と同じくらい信頼する](../adr/20261014-0927-context-command-mcp-on-host.md)
 
