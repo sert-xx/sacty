@@ -13,7 +13,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { GitRepositoryWorkspace, NothingToCommitError } from "./repository.js";
+import { DIFF_LIMIT, GitRepositoryWorkspace, NothingToCommitError } from "./repository.js";
 
 let dir: string;
 
@@ -139,6 +139,28 @@ describe("対象リポジトリの作業領域（git）", { timeout: 30_000 }, (
     expect(readdirSync(out).sort()).toEqual(["pay.ts", "retry.ts"]);
     await expect(workspace.fetchCommits(gitDir, ["--upload-pack=evil"])).rejects.toThrow();
     await expect(workspace.diffCommits(gitDir, "main", head)).rejects.toThrow();
+  });
+
+  it("PR の差分は既定で切り詰め、full なら切り詰めない（レビューの差分の全体をファイルで渡すため。PBI-65）", async () => {
+    const origin = makeOrigin();
+    const base = git(origin, "rev-parse", "HEAD");
+    // 先頭のファイルだけで上限を超え、後ろのファイルの差分が切り詰めで消える
+    writeFileSync(join(origin, "a.txt"), `${"x".repeat(100)}\n`.repeat(2_500));
+    writeFileSync(join(origin, "z.txt"), "last\n");
+    git(origin, "add", "--all");
+    git(origin, "commit", "-m", "big");
+    const head = git(origin, "rev-parse", "HEAD");
+    const workspace = new GitRepositoryWorkspace();
+    const gitDir = join(dir, "_git", "big.git");
+    await workspace.prepare(join(dir, "big"), gitDir, origin, "main");
+    const truncated = await workspace.diffCommits(gitDir, base, head);
+    expect(truncated.length).toBeLessThan(DIFF_LIMIT + 200);
+    expect(truncated).toContain("[sacty] 差分が大きいため");
+    expect(truncated).not.toContain("+last");
+    const full = await workspace.diffCommits(gitDir, base, head, { full: true });
+    expect(full).toContain("+last");
+    expect(full).not.toContain("[sacty] 差分が大きいため");
+    expect(full.length).toBeGreaterThan(DIFF_LIMIT);
   });
 
   it("ベースブランチの最新を取得し、そのコミットのコードを書き出す（統合レビュー。PBI-31）", async () => {

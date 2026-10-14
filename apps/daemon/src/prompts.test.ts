@@ -124,13 +124,13 @@ describe("レビューの工程の差分の渡し方（PBI-65）", () => {
   it("差分が大きいときは先頭だけを渡し、全体のファイルの場所を伝える（写しに .git は無い）", () => {
     const prompt = buildPrompt(reviewTask, "review", {
       diff: big,
-      diffFile: "/workspace/.sacty/pr.diff",
+      diffFile: "/sacty-review/pr.diff",
     });
     expect(prompt).toContain(
-      "PR の差分の全体は、ファイル /workspace/.sacty/pr.diff にもあります（sacty が置いたもので、PR の一部ではありません。レビューの対象にしないでください）",
+      "PR の差分の全体（切り詰めなし）は、作業領域の外のファイル /sacty-review/pr.diff にあります（sacty が置いた読み取り専用のファイルで、PR の一部ではありません。レビューの対象にしないでください）",
     );
     expect(prompt).toContain(
-      "残りは /workspace/.sacty/pr.diff の差分の全体と作業領域のコードを読んでください",
+      "残りは /sacty-review/pr.diff の差分の全体と作業領域のコードを読んでください",
     );
     expect(prompt).toContain(".git はありません");
     expect(prompt.length).toBeLessThan(big.length);
@@ -139,7 +139,7 @@ describe("レビューの工程の差分の渡し方（PBI-65）", () => {
   it("差分のファイルが無いときは、作業領域のコードを読むように伝える", () => {
     const prompt = buildPrompt(reviewTask, "review", { diff: big });
     expect(prompt).toContain("残りは作業領域のコードを読んでください");
-    expect(prompt).not.toContain(".sacty/pr.diff");
+    expect(prompt).not.toContain("/sacty-review/pr.diff");
   });
 });
 

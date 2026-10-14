@@ -43,6 +43,11 @@ export type Invocation = {
     /** この中身を、先に一時ディレクトリへ写す（合成したコンテキストなど。PBI-6）。 */
     seedDir?: string;
   };
+  /**
+   * 追加でマウントするディレクトリ（レビューの工程の PR の差分の全体など。PBI-65）。sacty が管理する場所だけを渡し、
+   * 作業領域（PR 由来のファイルやリンクを含む）の中には置かない。
+   */
+  mounts?: { hostPath: string; containerPath: string; readOnly: boolean }[];
   parser: "claude-json" | "codex-jsonl";
   /** コンテナから、ホストのゲートウェイ（host.docker.internal）に届くようにする（PBI-37）。 */
   hostGateway?: boolean;
