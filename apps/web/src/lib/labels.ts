@@ -4,6 +4,7 @@ import {
   GATED_STEPS,
   gatePullRequest,
   isCompleted,
+  MAX_FIX_CHAIN,
   openProposal,
   type StepKey,
   type Task,
@@ -522,6 +523,30 @@ export function describeEvent(event: ActivityEvent, l: LabelMessages): string {
         l.text(event.payload.reason),
         withCost(event.payload.costUsd, event.payload.estimated),
       );
+    // マージの後の監視（PBI-89）
+    case "DeploymentWatchStarted":
+      return e.DeploymentWatchStarted(event.payload.number, event.payload.commit);
+    case "DeploymentCiFinished":
+      return e.DeploymentCiFinished(
+        event.payload.result,
+        event.payload.failures.map((f) => (f.job ? `${f.workflow} / ${f.job}` : f.workflow)),
+        event.payload.skill,
+        event.payload.skipCheck === undefined ? undefined : l.text(event.payload.skipCheck),
+      );
+    case "DeploymentCheckStarted":
+      return e.DeploymentCheckStarted(event.payload.skill);
+    case "DeploymentChecked":
+      return e.DeploymentChecked(
+        event.payload.result,
+        event.payload.failed !== undefined ? l.text(event.payload.failed) : event.payload.summary,
+        cost(event.payload.costUsd, event.payload.estimated),
+      );
+    case "DeploymentWatchSkipped":
+      return e.DeploymentWatchSkipped(l.text(event.payload.detail ?? event.payload.reason));
+    case "DeploymentFixRegistered":
+      return e.DeploymentFixRegistered(event.payload.kind, event.payload.title);
+    case "DeploymentFixSuppressed":
+      return e.DeploymentFixSuppressed(event.payload.reason, MAX_FIX_CHAIN);
   }
 }
 

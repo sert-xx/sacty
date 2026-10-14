@@ -14,12 +14,15 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import type { DaemonText, EventInput, StepKey, Task } from "@sacty/core";
+import type { CiFailure, DaemonText, EventInput, StepKey, Task } from "@sacty/core";
 import {
   ANSWER_MAX,
+  DEPLOYMENT_CI_GRACE_MS,
+  DEPLOYMENT_CI_TIMEOUT_MS,
   exportDue,
   isCompleted,
   MAX_CHANGE_REQUESTS,
+  MAX_FIX_CHAIN,
   MVP_STEPS,
   message,
   QUESTION_MAX,
@@ -34,6 +37,7 @@ import type { LocalForward } from "./agents/forward.js";
 import type { Invocation } from "./agents/invocation.js";
 import type { AgentOutcome } from "./agents/parse.js";
 import { DockerTestRunner, type TestRunner, type TestRunResult } from "./agents/test-runner.js";
+import type { CiSnapshot, CiStatusReader } from "./ci.js";
 import { type AgentConfig, type ConfigResult, loadConfig, type SactyConfig } from "./config.js";
 import { type ContextFetcher, type ContextRef, DEFAULT_CONTEXT_DIR } from "./context.js";
 import { ContextMcpServers } from "./context-mcp.js";
@@ -395,6 +399,11 @@ class FakeRepos implements RepositoryWorkspace {
     const at = this.files[commit];
     if (at && path in at) return at[path] ?? undefined;
     return this.committedFiles.findLast((c) => path in c.files)?.files[path];
+  }
+  /** コミットにあるシンボリックリンク（commit → path → リンクの先。PBI-89）。 */
+  links: Record<string, Record<string, string>> = {};
+  async readLink(_gitDir: string, commit: string, path: string) {
+    return this.links[commit]?.[path];
   }
   prDiff = [
     "diff --git a/src/retry.ts b/src/retry.ts",
@@ -883,6 +892,8 @@ function makeService(
     sessionLogs?: SessionLogStore;
     /** オーケストレーターのセッションの置き場所（PBI-67）。 */
     orchestratorSessions?: OrchestratorSessionStore;
+    /** マージのコミットの CI/CD の状態（PBI-89）。 */
+    ci?: ServiceDeps["ci"];
   } = {},
 ) {
   const executor = new FakeExecutor(outcomes);
@@ -935,6 +946,7 @@ function makeService(
     stepPullRequests: options.stepPullRequests ?? false,
     ...(options.sessionLogs ? { sessionLogs: options.sessionLogs } : {}),
     ...(options.orchestratorSessions ? { orchestratorSessions: options.orchestratorSessions } : {}),
+    ...(options.ci ? { ci: options.ci } : {}),
   });
   return { service, executor, repos, tests, pulls };
 }
@@ -15073,5 +15085,613 @@ describe("コンテキストのプレビュー（PBI-76）", () => {
     // 認証が無ければ 401
     expect((await app.request("/api/projects/p/context-preview")).status).toBe(401);
     activity.close();
+  });
+});
+
+describe("マージの後の CI/CD とデプロイの監視（PBI-89）", () => {
+  const MERGE = "a".repeat(40);
+  const SKILL = ".agents/skills/deployment-observer/SKILL.md";
+
+  /** CI/CD の状態の偽物。snap が Error なら読めない。 */
+  class FakeCi implements CiStatusReader {
+    snap: CiSnapshot | Error = { checks: [], failedRuns: [] };
+    failuresList: CiFailure[] = [];
+    calls: { repo: string; token: string; commit: string }[] = [];
+    failureCalls: { secrets: readonly string[] }[] = [];
+    async snapshot(input: { repo: string; token: string; commit: string }) {
+      this.calls.push(input);
+      if (this.snap instanceof Error) throw this.snap;
+      return this.snap;
+    }
+    async failures(input: { secrets: readonly string[] }) {
+      this.failureCalls.push({ secrets: [...input.secrets] });
+      return this.failuresList;
+    }
+  }
+  const success = (): CiSnapshot => ({
+    checks: [{ kind: "workflow", name: "CI", status: "completed", conclusion: "success" }],
+    failedRuns: [],
+  });
+  const failing = (): CiSnapshot => ({
+    checks: [
+      {
+        kind: "workflow",
+        name: "CI",
+        status: "completed",
+        conclusion: "failure",
+        url: "https://github.com/acme/app/actions/runs/1",
+      },
+    ],
+    failedRuns: [
+      {
+        id: 1,
+        name: "CI",
+        conclusion: "failure",
+        url: "https://github.com/acme/app/actions/runs/1",
+      },
+    ],
+  });
+  const testFailure: CiFailure = {
+    workflow: "CI",
+    job: "test",
+    conclusion: "failure",
+    url: "https://github.com/acme/app/actions/runs/1/job/7",
+    excerpt: "FAIL pay.test.ts\ntoken=[REDACTED]",
+  };
+  const watchedProjects = (on: boolean | null = true) => {
+    const projects = new MemoryProjectStore();
+    projects.put("default", {
+      name: "デフォルト",
+      targets: [{ scope: "repo", target: "https://github.com/acme/app" }],
+      githubAccounts: { "github.com": "me" },
+      ...(on === null ? {} : { deploymentWatch: on }),
+    });
+    return projects;
+  };
+  const types = (svc: TaskService, id: string) => svc.get(id)?.activity.map((e) => e.type) ?? [];
+  const deploymentTypes = (svc: TaskService, id: string) =>
+    types(svc, id).filter((t) => t.startsWith("Deployment"));
+  const checkOut = (v: Record<string, unknown>, output = 1000): AgentOutcome => ({
+    kind: "completed",
+    output: `確かめました\n\n\`\`\`json\n${JSON.stringify({ "sacty-deployment": v })}\n\`\`\``,
+    usage: { input: 0, cacheRead: 0, cacheWrite: 0, output },
+  });
+
+  function setup(
+    options: {
+      projects?: MemoryProjectStore;
+      outcomes?: (AgentOutcome | typeof HOLD)[];
+      ci?: FakeCi;
+      repos?: FakeRepos;
+      config?: () => ConfigResult;
+      activity?: SqliteActivityStore;
+      pulls?: FakePulls;
+      plannerCost?: number;
+    } = {},
+  ) {
+    const activity = options.activity ?? new SqliteActivityStore(dbPath);
+    const ci = options.ci ?? new FakeCi();
+    const clock = { offset: 0 };
+    const made = makeService(activity, options.outcomes as AgentOutcome[], {
+      projects: options.projects ?? watchedProjects(),
+      ci,
+      now: () => Date.now() + clock.offset,
+      ...(options.repos ? { repos: options.repos } : {}),
+      ...(options.config ? { config: options.config } : {}),
+      ...(options.pulls ? { pulls: options.pulls } : {}),
+      planner: async () => ({
+        steps: ["pr"],
+        fallback: false,
+        testCommand: "npm test",
+        costUsd: options.plannerCost ?? 0,
+        estimated: false,
+      }),
+    });
+    /** タスクを PR の承認待ちまで進め、PR をマージして確かめる。 */
+    const merge = async (id: string, mergeCommit: string | null = MERGE) => {
+      for (let i = 0; i < 5 && made.service.get(id)?.task.gate?.step !== "pr"; i++) {
+        await made.service.runNext(id);
+      }
+      const pr = made.service.get(id)?.task.pullRequest;
+      expect(pr?.number).toBeDefined();
+      made.pulls.states[pr?.number ?? 0] = {
+        state: "merged",
+        mergedBy: "reviewer",
+        ...(pr?.commit ? { headSha: pr.commit } : {}),
+        ...(mergeCommit ? { mergeCommit } : {}),
+      };
+      await made.service.checkPullRequests();
+      // すべて終わった CI/CD は、次の確認でも同じなら結果を決める
+      await made.service.checkPullRequests();
+    };
+    const create = (title = "決済API") =>
+      made.service.createTask({ projectId: "default", title, body: "本文" }).id;
+    return { ...made, activity, ci, clock, merge, create };
+  }
+
+  it("設定していない・Off のプロジェクトでは、マージの後に何も記録せず、CI/CD も読まない", async () => {
+    for (const on of [null, false]) {
+      rmSync(dbPath, { force: true });
+      const t = setup({ projects: watchedProjects(on) });
+      const id = t.create();
+      await t.merge(id);
+      expect(isCompleted(t.service.get(id)?.task as Task)).toBe(true);
+      expect(deploymentTypes(t.service, id)).toEqual([]);
+      expect(t.service.get(id)?.task.deployment).toBeUndefined();
+      expect(t.ci.calls).toEqual([]);
+      t.activity.close();
+    }
+  });
+
+  it("実装の PR のマージで、マージのコミットの CI/CD を待ち、通ってスキルが無ければ、デプロイの確認を飛ばして通ったにする", async () => {
+    const ci = new FakeCi();
+    ci.snap = {
+      checks: [{ kind: "workflow", name: "CI", status: "pending" }],
+      failedRuns: [],
+    };
+    const t = setup({ ci });
+    const id = t.create();
+    await t.merge(id);
+    const started = t.service.get(id)?.activity.find((e) => e.type === "DeploymentWatchStarted");
+    expect(started?.payload).toEqual({
+      number: 7,
+      repo: "https://github.com/acme/app",
+      branch: "main",
+      commit: MERGE,
+    });
+    // 監視の開始は、マージの記録と同じ追記（同じ時刻）
+    const mergedAt = t.service.get(id)?.activity.find((e) => e.type === "PullRequestMerged")?.at;
+    expect(started?.at).toBe(mergedAt);
+    expect(ci.calls[0]).toEqual({
+      repo: "https://github.com/acme/app",
+      token: "ghp_secret",
+      commit: MERGE,
+    });
+    expect(t.service.get(id)?.task.deployment).toMatchObject({ state: "waiting", phase: "ci" });
+
+    ci.snap = success();
+    await t.service.checkPullRequests();
+    await t.service.checkPullRequests();
+    expect(t.service.get(id)?.task.deployment).toMatchObject({
+      state: "passed",
+      reason: "no_skill",
+      detail: { code: "deploy.skillMissing" },
+    });
+    // スキルはマージのコミットから探す
+    expect(t.repos.fetchedCommits.at(-1)?.commits).toEqual([MERGE]);
+    expect(t.repos.readCalls.map((c) => [c.commit, c.path])).toEqual([
+      [MERGE, ".agents/skills/deployment-observer/SKILL.md"],
+      [MERGE, ".claude/skills/deployment-observer/SKILL.md"],
+    ]);
+    // 終わった監視は、もう確かめない。エージェントも実行しない
+    const calls = ci.calls.length;
+    await t.service.checkPullRequests();
+    expect(ci.calls).toHaveLength(calls);
+    expect(t.service.queuedTaskIds()).toEqual([]);
+    expect(t.executor.calls).toHaveLength(0);
+    t.activity.close();
+  });
+
+  it("すべて終わっても、次の確認で同じになるまで決めない（後から別のワークフローが現れるのを待つ）", async () => {
+    const ci = new FakeCi();
+    ci.snap = { checks: [{ kind: "workflow", name: "CI", status: "pending" }], failedRuns: [] };
+    const t = setup({ ci });
+    const id = t.create();
+    await t.merge(id);
+    ci.snap = success();
+    await t.service.checkPullRequests();
+    expect(t.service.get(id)?.task.deployment?.state).toBe("waiting");
+    // CI の後に、デプロイのワークフローが現れて失敗した
+    ci.snap = {
+      checks: [
+        ...success().checks,
+        { kind: "workflow", name: "Deploy", status: "completed", conclusion: "failure" },
+      ],
+      failedRuns: [{ id: 2, name: "Deploy", conclusion: "failure" }],
+    };
+    await t.service.checkPullRequests();
+    expect(t.service.get(id)?.task.deployment?.state).toBe("waiting");
+    await t.service.checkPullRequests();
+    expect(t.service.get(id)?.task.deployment).toMatchObject({
+      state: "failed",
+      ci: { failures: [{ workflow: "Deploy", conclusion: "failure" }] },
+    });
+    t.activity.close();
+  });
+
+  it("CI/CD が1つも無いまま5分たったら、CI/CD が無いとして飛ばす（それまでは待つ）", async () => {
+    const t = setup();
+    const id = t.create();
+    await t.merge(id);
+    t.clock.offset = DEPLOYMENT_CI_GRACE_MS - 10_000;
+    await t.service.checkPullRequests();
+    expect(t.service.get(id)?.task.deployment?.state).toBe("waiting");
+    t.clock.offset = DEPLOYMENT_CI_GRACE_MS + 1_000;
+    await t.service.checkPullRequests();
+    expect(t.service.get(id)?.task.deployment).toMatchObject({ state: "skipped", reason: "no_ci" });
+    expect(t.service.get(id)?.activity.at(-1)?.payload).toMatchObject({ result: "none" });
+    t.activity.close();
+  });
+
+  it("マージのコミットが取れなければ、監視を飛ばす（理由を残す）", async () => {
+    const t = setup();
+    const id = t.create();
+    await t.merge(id, null);
+    expect(t.service.get(id)?.task.deployment).toMatchObject({
+      state: "skipped",
+      reason: "no_commit",
+    });
+    expect(t.ci.calls).toEqual([]);
+    t.activity.close();
+  });
+
+  it("CI/CD が終わらなければ、監視を始めてから60分で時間切れ。デーモンを再起動しても待ちは続き、上限は延びない", async () => {
+    const ci = new FakeCi();
+    ci.snap = { checks: [{ kind: "workflow", name: "CI", status: "pending" }], failedRuns: [] };
+    const t = setup({ ci });
+    const id = t.create();
+    await t.merge(id);
+    // 再起動（作業履歴から作り直す）。待ちはそのまま
+    const again = setup({ ci, activity: t.activity });
+    again.service.recoverInterrupted();
+    expect(again.service.get(id)?.task.deployment).toMatchObject({ state: "waiting", phase: "ci" });
+    again.clock.offset = DEPLOYMENT_CI_TIMEOUT_MS - 60_000;
+    await again.service.checkPullRequests();
+    expect(again.service.get(id)?.task.deployment?.state).toBe("waiting");
+    // 読めない（ネットワークなど）ときも、上限を過ぎれば時間切れ
+    ci.snap = new Error("network");
+    again.clock.offset = DEPLOYMENT_CI_TIMEOUT_MS + 1_000;
+    await again.service.checkPullRequests();
+    expect(again.service.get(id)?.task.deployment).toMatchObject({ state: "timed_out" });
+    // 時間切れでは、修正のタスクを作らない
+    expect(again.service.list()).toHaveLength(1);
+    t.activity.close();
+  });
+
+  it("CI/CD が失敗したら、リンクとログの抜粋を入れた修正のタスクを登録し、元のタスクとたどれるようにする", async () => {
+    const ci = new FakeCi();
+    ci.snap = failing();
+    ci.failuresList = [testFailure];
+    const t = setup({ ci });
+    const id = t.create();
+    await t.merge(id);
+    const task = t.service.get(id)?.task;
+    expect(task?.deployment?.state).toBe("failed");
+    expect(task?.deployment?.ci?.failures).toEqual([testFailure]);
+    // ログの抜粋を伏せるため、使ったトークンを渡す
+    expect(ci.failureCalls[0]?.secrets).toContain("ghp_secret");
+    const fixId = task?.deployment?.fix?.taskId ?? "";
+    const fix = t.service.get(fixId)?.task;
+    expect(fix).toMatchObject({
+      start: "deployment",
+      repo: "https://github.com/acme/app",
+      status: "queued",
+      fix: { taskId: id, kind: "ci", depth: 1 },
+    });
+    expect(fix?.title).toBe(`CI/CD の失敗を直す：CI / test（${MERGE.slice(0, 7)}）`);
+    for (const part of [
+      `sacty のタスク ${id}`,
+      "https://github.com/acme/app/pull/7",
+      `https://github.com/acme/app/commit/${MERGE}`,
+      "### CI / test（failure）",
+      "https://github.com/acme/app/actions/runs/1/job/7",
+      "FAIL pay.test.ts",
+    ]) {
+      expect(fix?.body).toContain(part);
+    }
+    expect(JSON.stringify(t.service.get(fixId)?.activity)).not.toContain("ghp_secret");
+    expect(deploymentTypes(t.service, id)).toEqual([
+      "DeploymentWatchStarted",
+      "DeploymentCiFinished",
+      "DeploymentFixRegistered",
+    ]);
+    // 次の確認でも、二重に登録しない
+    await t.service.checkPullRequests();
+    expect(t.service.list()).toHaveLength(2);
+    t.activity.close();
+  });
+
+  it("同じ失敗の修正のタスクが終わっていなければ作らない。修正のタスクのマージでも監視し、連鎖は3段で止める", async () => {
+    const ci = new FakeCi();
+    ci.snap = failing();
+    ci.failuresList = [testFailure];
+    const t = setup({ ci });
+    const first = t.create("一つ目");
+    await t.merge(first);
+    const f1 = t.service.get(first)?.task.deployment?.fix?.taskId ?? "";
+    // 別のタスクが、同じ失敗のままマージされた
+    const second = t.create("二つ目");
+    await t.merge(second);
+    expect(t.service.get(second)?.task.deployment?.suppressed).toMatchObject({
+      reason: "duplicate",
+      existing: f1,
+    });
+    expect(t.service.list().filter((x) => x.fix)).toHaveLength(1);
+
+    // 修正のタスクをマージしても、同じ失敗が続く。修正のタスクから次の修正のタスク（段数 +1）を作る
+    let current = f1;
+    for (const depth of [2, 3]) {
+      await t.merge(current);
+      const next = t.service.get(current)?.task.deployment?.fix?.taskId ?? "";
+      expect(t.service.get(next)?.task.fix).toMatchObject({ taskId: current, depth });
+      current = next;
+    }
+    // 3段目の修正のタスクのマージでも失敗したら、もう作らない
+    await t.merge(current);
+    expect(t.service.get(current)?.task.deployment).toMatchObject({
+      state: "failed",
+      suppressed: { reason: "chain_limit" },
+    });
+    expect(t.service.get(current)?.task.deployment?.fix).toBeUndefined();
+    expect(t.service.list().filter((x) => x.fix)).toHaveLength(MAX_FIX_CHAIN);
+    t.activity.close();
+  });
+
+  it("修正のタスクを登録した後、作る前にデーモンが止まっても、次の確認で作る", async () => {
+    const ci = new FakeCi();
+    ci.snap = failing();
+    ci.failuresList = [testFailure];
+    const t = setup({ ci });
+    const id = t.create();
+    // 監視を始め、CI/CD の失敗の結果と登録だけを書いた（作る前に止まった）
+    await t.merge(id, MERGE);
+    const fixId = t.service.get(id)?.task.deployment?.fix?.taskId ?? "";
+    expect(fixId).not.toBe("");
+    // 作った記録を除いた作業履歴で作り直す
+    const kept = t.activity.all().filter((e) => e.taskId !== fixId);
+    rmSync(join(dir, "copy.db"), { force: true });
+    const copy = new SqliteActivityStore(join(dir, "copy.db"));
+    for (const e of kept) {
+      copy.append({
+        taskId: e.taskId,
+        projectId: e.projectId,
+        events: [{ actor: e.actor, event: { type: e.type, payload: e.payload } as EventInput }],
+      });
+    }
+    const again = setup({ ci, activity: copy });
+    expect(again.service.get(fixId)).toBeUndefined();
+    await again.service.checkPullRequests();
+    expect(again.service.get(fixId)?.task.fix).toMatchObject({ taskId: id, depth: 1 });
+    copy.close();
+    t.activity.close();
+  });
+
+  it("CI/CD が通り、スキルがあれば、マージのコミットの写しでエージェントに確かめさせ、費用をタスクの予算に入れる", async () => {
+    const repos = new FakeRepos();
+    repos.files[MERGE] = { [SKILL]: "# deployment-observer" };
+    const ci = new FakeCi();
+    ci.snap = success();
+    const t = setup({
+      ci,
+      repos,
+      outcomes: [
+        checkOut({ result: "healthy", summary: "200 を返す", evidence: ["GET /health → 200"] }),
+      ],
+    });
+    const id = t.create();
+    await t.merge(id);
+    expect(t.service.get(id)?.task.deployment).toMatchObject({
+      state: "waiting",
+      phase: "check",
+      ci: { result: "passed", skill: SKILL },
+    });
+    expect(t.service.queuedTaskIds()).toEqual([id]);
+    await t.service.runNext(id);
+    const task = t.service.get(id)?.task;
+    expect(task?.deployment).toMatchObject({
+      state: "passed",
+      check: { result: "healthy", summary: "200 を返す", evidence: ["GET /health → 200"] },
+    });
+    // マージのコミットのコードの写しを作業領域にし、スキルの場所を伝える
+    expect(repos.snapshots.at(-1)?.baseCommit).toBe(MERGE);
+    expect(t.executor.scratch.at(-1)).toBe(false);
+    expect(t.executor.dirs.at(-1)).toContain("_deployment");
+    const prompt = t.executor.calls.at(-1)?.command.join(" ") ?? "";
+    expect(prompt).toContain(SKILL);
+    expect(prompt).toContain(MERGE);
+    // 1000 出力トークン = $0.015 を予算に入れる
+    expect(task?.budget.usedUsd).toBeCloseTo(0.015, 6);
+    expect(t.service.get(id)?.activity.at(-1)).toMatchObject({
+      type: "DeploymentChecked",
+      actor: "agent",
+      payload: { costUsd: 0.015, runResult: "completed", agentId: "claude-subscription" },
+    });
+    expect(t.service.queuedTaskIds()).toEqual([]);
+    t.activity.close();
+  });
+
+  it("デプロイ後のアプリがエラーなら、結果と根拠を入れた修正のタスクを登録する。判断できなければ飛ばす（作らない）", async () => {
+    for (const [result, state] of [
+      ["unhealthy", "failed"],
+      ["unknown", "skipped"],
+    ] as const) {
+      rmSync(dbPath, { force: true });
+      const repos = new FakeRepos();
+      repos.files[MERGE] = { [SKILL]: "# skill" };
+      const ci = new FakeCi();
+      ci.snap = success();
+      const t = setup({
+        ci,
+        repos,
+        outcomes: [
+          checkOut({ result, summary: "500 を返す", evidence: ["GET /pay → 500", "ログに NPE"] }),
+        ],
+      });
+      const id = t.create();
+      await t.merge(id);
+      await t.service.runNext(id);
+      const watch = t.service.get(id)?.task.deployment;
+      expect(watch?.state).toBe(state);
+      if (result === "unhealthy") {
+        const fix = t.service.get(watch?.fix?.taskId ?? "")?.task;
+        expect(fix?.fix).toMatchObject({ taskId: id, kind: "deployment", depth: 1 });
+        expect(fix?.body).toContain("500 を返す");
+        expect(fix?.body).toContain("- GET /pay → 500");
+        expect(fix?.body).toContain(SKILL);
+      } else {
+        expect(watch).toMatchObject({ reason: "check_unknown" });
+        expect(watch?.fix).toBeUndefined();
+        expect(t.service.list()).toHaveLength(1);
+      }
+      t.activity.close();
+    }
+  });
+
+  it("答えを読めない・実行に失敗したら、確かめられなかったとして飛ばし、使った費用は記録する", async () => {
+    const repos = new FakeRepos();
+    repos.files[MERGE] = { [SKILL]: "# skill" };
+    const ci = new FakeCi();
+    ci.snap = success();
+    const t = setup({
+      ci,
+      repos,
+      outcomes: [
+        {
+          kind: "completed",
+          output: "結論を書き忘れた",
+          usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 2000 },
+        },
+      ],
+    });
+    const id = t.create();
+    await t.merge(id);
+    await t.service.runNext(id);
+    expect(t.service.get(id)?.task.deployment).toMatchObject({
+      state: "skipped",
+      reason: "check_unknown",
+      detail: { code: "deploy.unreadable" },
+    });
+    expect(t.service.get(id)?.task.budget.usedUsd).toBeCloseTo(0.03, 6);
+    t.activity.close();
+  });
+
+  it("予算の上限に達していたら、デプロイの確認を実行せずに飛ばす（タスクは止めない）", async () => {
+    const repos = new FakeRepos();
+    repos.files[MERGE] = { [SKILL]: "# skill" };
+    const ci = new FakeCi();
+    ci.snap = success();
+    const t = setup({ ci, repos, plannerCost: 2 });
+    const id = t.create();
+    await t.merge(id);
+    expect(t.service.get(id)?.task.budget.usedUsd).toBeGreaterThanOrEqual(1);
+    await t.service.runNext(id);
+    const task = t.service.get(id)?.task;
+    expect(task?.deployment).toMatchObject({
+      state: "skipped",
+      reason: "budget",
+      detail: { code: "deploy.budgetExceeded" },
+    });
+    expect(task?.status).toBe("idle");
+    expect(t.executor.calls).toHaveLength(0);
+    t.activity.close();
+  });
+
+  it("確認の途中でデーモンが止まったら、起動のときに中断として記録して飛ばす（やり直さない）", async () => {
+    const repos = new FakeRepos();
+    repos.files[MERGE] = { [SKILL]: "# skill" };
+    const ci = new FakeCi();
+    ci.snap = success();
+    const t = setup({ ci, repos, outcomes: [HOLD] });
+    const id = t.create();
+    await t.merge(id);
+    void t.service.runNext(id);
+    await t.executor.started.promise;
+    expect(t.service.get(id)?.task.deployment?.check?.result).toBeUndefined();
+    // 再起動
+    const again = setup({ ci, repos, activity: t.activity });
+    again.service.recoverInterrupted();
+    expect(again.service.get(id)?.task.deployment).toMatchObject({
+      state: "skipped",
+      reason: "check_unknown",
+      check: { result: "unknown", failed: { code: "run.daemonStopped" } },
+    });
+    expect(again.service.queuedTaskIds()).toEqual([]);
+    t.activity.close();
+  });
+
+  it("スキルのリンクがリポジトリの外を指せば使わず、理由を残す。中を指せばたどった先を使う", async () => {
+    for (const [target, expected] of [
+      ["../../../../etc", undefined],
+      ["../../.claude/skills/real", ".claude/skills/real/SKILL.md"],
+    ] as const) {
+      rmSync(dbPath, { force: true });
+      const repos = new FakeRepos();
+      repos.links[MERGE] = { ".agents/skills/deployment-observer": target };
+      repos.files[MERGE] = { ".claude/skills/real/SKILL.md": "# skill" };
+      const ci = new FakeCi();
+      ci.snap = success();
+      const t = setup({ ci, repos });
+      const id = t.create();
+      await t.merge(id);
+      const watch = t.service.get(id)?.task.deployment;
+      if (expected) {
+        expect(watch?.ci?.skill).toBe(expected);
+      } else {
+        expect(watch).toMatchObject({
+          state: "passed",
+          reason: "no_skill",
+          detail: {
+            code: "deploy.skillOutside",
+            params: { path: ".agents/skills/deployment-observer/SKILL.md" },
+          },
+        });
+      }
+      t.activity.close();
+    }
+  });
+
+  it("修正のタスクの PR にも取り込むラベルを付け、レビューだけのタスクとして取り込める。そのマージでも監視する（PBI-88 と両立）", async () => {
+    const ci = new FakeCi();
+    ci.snap = failing();
+    ci.failuresList = [testFailure];
+    const t = setup({ ci });
+    const id = t.create();
+    await t.merge(id);
+    // 元のタスクの実装の PR にもラベルを付けている
+    expect(t.pulls.labels.map((l) => l.number)).toEqual([7]);
+    const fixId = t.service.get(id)?.task.deployment?.fix?.taskId ?? "";
+    for (let i = 0; i < 5 && t.service.get(fixId)?.task.gate?.step !== "pr"; i++) {
+      await t.service.runNext(fixId);
+    }
+    const pr = t.service.get(fixId)?.task.pullRequest;
+    expect(pr).toMatchObject({ number: 8, intakeLabel: "sacty" });
+    expect(t.pulls.labels.map((l) => [l.number, l.label])).toEqual([
+      [7, "sacty"],
+      [8, "sacty"],
+    ]);
+    // ラベルの付いた修正のタスクの PR は、レビューだけのタスクとして取り込む
+    const [review] = t.service.importIssues([
+      {
+        repo: "https://github.com/acme/app",
+        number: 8,
+        title: "CI/CD の失敗を直す",
+        body: "",
+        url: "https://github.com/acme/app/pull/8",
+        labels: ["sacty"],
+        pullRequest: true,
+      },
+    ]);
+    expect(review?.source).toMatchObject({ kind: "github_pull_request", number: 8 });
+    expect(review?.source?.review).toBe("sacty");
+    // 修正のタスクの PR のマージでも監視を始める（レビューのタスクは監視しない）
+    await t.merge(fixId);
+    expect(t.service.get(fixId)?.task.deployment?.state).toBe("failed");
+    expect(t.service.get(review?.id ?? "")?.task.deployment).toBeUndefined();
+    t.activity.close();
+  });
+
+  it("元のタスクを中止したら、監視をやめる", async () => {
+    const ci = new FakeCi();
+    ci.snap = { checks: [{ kind: "workflow", name: "CI", status: "pending" }], failedRuns: [] };
+    const t = setup({ ci });
+    const id = t.create();
+    await t.merge(id);
+    await t.service.cancel(id);
+    const calls = ci.calls.length;
+    ci.snap = failing();
+    await t.service.checkPullRequests();
+    expect(ci.calls).toHaveLength(calls);
+    expect(t.service.list()).toHaveLength(1);
+    t.activity.close();
   });
 });

@@ -172,7 +172,7 @@ export function nextPage(link: string | null): string | undefined {
 type Fetch = typeof fetch;
 
 /** リポジトリの URL の、REST API の URL（https://api.github.com/repos/<owner>/<name> など）と API の URL。 */
-function repoApi(repoUrl: string): { api: string; base: string } {
+export function repoApi(repoUrl: string): { api: string; base: string } {
   const repo = parseRepoUrl(repoUrl);
   if (!repo) throw new MessageError(message("input.invalidRepo"));
   const api = githubApiBase(repo.host);
@@ -583,7 +583,7 @@ async function closePullRequest(
   }
 }
 
-function apiError(
+export function apiError(
   action:
     | "updatePr"
     | "createPr"
@@ -595,6 +595,7 @@ function apiError(
     | "listRepositories"
     | "postReview"
     | "searchIssues"
+    | "readChecks"
     | "getLabel"
     | "createLabel"
     | "addLabel",
