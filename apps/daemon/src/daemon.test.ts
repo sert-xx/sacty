@@ -13838,12 +13838,18 @@ describe("コンテキストのプレビュー（PBI-76）", () => {
     const contexts = new RecordingContexts(repos);
     const gets: string[] = [];
     const registered: unknown[] = [];
+    /** ホストの MCP サーバーの準備を待った名前（PBI-77）。プレビューでは待たない。 */
+    const ready: string[][] = [];
     const cloud = toHostMcp("cloud", HostMcpFile.parse({ command: "cloud-mcp" }));
     const made = makeService(activity, [completed(20_000)], {
       config: configOf(a, 1, [jiraPlatform()], [cloud]),
       projects,
       contexts,
       defaultContext: DEFAULT_CONTEXT_DIR,
+      hostMcpReady: async (names) => {
+        ready.push([...names]);
+        return [message("gateway.mcpUnavailable", { name: "cloud", detail: "starting" })];
+      },
       secretStore: {
         get: async (name) => {
           gets.push(name);
@@ -13865,7 +13871,15 @@ describe("コンテキストのプレビュー（PBI-76）", () => {
         },
       },
     });
-    return { ...made, activity, contexts, gets, registered, app: createApp(made.service, token) };
+    return {
+      ...made,
+      activity,
+      contexts,
+      gets,
+      registered,
+      ready,
+      app: createApp(made.service, token),
+    };
   };
   const preview = async (
     app: ReturnType<typeof createApp>,
@@ -13910,15 +13924,16 @@ describe("コンテキストのプレビュー（PBI-76）", () => {
   }
 
   it("秘密情報の値・ゲートウェイの実行ごとのトークン・gh のトークンを出さず、秘密情報を取り出さない", async () => {
-    const { activity, app, gets, registered, contexts } = setup();
+    const { activity, app, gets, registered, contexts, ready } = setup();
     const res = await preview(app, "p");
     const text = await res.text();
     for (const value of [...Object.values(secretValues), "sacty-gw-run-token", "ghp_secret"]) {
       expect(text).not.toContain(value);
     }
     expect(gets).toEqual([]);
-    // ゲートウェイに実行を登録しない
+    // ゲートウェイに実行を登録せず、ホストの MCP サーバーの準備も待たない（起動の副作用を起こさない。PBI-77）
     expect(registered).toEqual([]);
+    expect(ready).toEqual([]);
     // コンテキストの取得には、プロジェクトの gh のアカウントを使う（実行と同じ）
     expect(contexts.fetched.at(-1)?.authEnv).toBeDefined();
     const view = JSON.parse(text).preview;
@@ -13965,15 +13980,29 @@ describe("コンテキストのプレビュー（PBI-76）", () => {
     activity.close();
   });
 
-  it("工程の実行の作業履歴にも、ホストの MCP と同じ名前の警告を残す（プレビューと同じ）", async () => {
-    const { activity, service } = setup();
+  it("工程の実行では、ホストの MCP の準備を待ち（PBI-77）、作業履歴にホストと同じ名前の警告と準備の警告を残す", async () => {
+    const { activity, service, ready, app } = setup();
+    // プレビュー・保存の検査は待たない
+    await preview(app, "p", undefined, "codex");
+    await app.request("/api/projects/p", {
+      method: "PUT",
+      headers: json,
+      body: JSON.stringify({
+        name: "決済",
+        targets: [{ scope: "repo", target: "https://github.com/acme/app" }],
+        githubAccounts: { "github.com": "me" },
+        context: { repo: ctxRepo },
+      }),
+    });
+    expect(ready).toEqual([]);
     const { id } = service.createTask({ projectId: "p", title: "調べる" });
     await service.runNext(id);
+    expect(ready).toEqual([["cloud"]]);
     const resolved = activity.forTask(id).find((e) => e.type === "ContextResolved");
     expect(
       resolved?.type === "ContextResolved" &&
         resolved.payload.warnings.map((w) => (typeof w === "string" ? w : w.code)),
-    ).toEqual(["context.hostMcpOverride"]);
+    ).toEqual(["context.hostMcpOverride", "gateway.mcpUnavailable"]);
     activity.close();
   });
 
