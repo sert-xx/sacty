@@ -73,6 +73,14 @@ const PAUSE: Record<Language, Record<PauseReason, string>> = {
   },
 };
 
+/**
+ * Slack の通知の送り手の名前とアイコン（PBI-68）。アイコンは、公開しているリポジトリの画像（assets/sacty-icon.png）。
+ * 取りに行くのは Slack のサーバーなので、誰でも開ける URL にする。
+ */
+export const SLACK_USERNAME = "Sacty";
+export const SLACK_ICON_URL =
+  "https://raw.githubusercontent.com/sert-xx/sacty/main/assets/sacty-icon.png";
+
 /** Slack の mrkdwn で特別な意味を持つ文字を逃がす。 */
 const escapeMrkdwn = (text: string) =>
   text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
@@ -241,6 +249,9 @@ export class SlackNotifier {
           },
           body: JSON.stringify({
             channel: destination.channel,
+            // 送り手の名前とアイコン（PBI-68）。ボットのトークンに chat:write.customize の権限が無いと、Slack は無視する
+            username: SLACK_USERNAME,
+            icon_url: SLACK_ICON_URL,
             text,
             unfurl_links: false,
             unfurl_media: false,

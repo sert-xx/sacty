@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <title>sacty</title>
+  <rect width="512" height="512" rx="116" fill="#111633"/>
+  <path d="M344 160 H208 A48 48 0 0 0 208 256 H304 A48 48 0 0 1 304 352 H168" fill="none" stroke="#7C86FF" stroke-width="44" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="344" cy="160" r="34" fill="#FFFFFF"/>
+  <circle cx="168" cy="352" r="34" fill="#FFD66B"/>
+</svg>
