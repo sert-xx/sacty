@@ -34,6 +34,7 @@
 6. ゲートウェイを待ち受ける。
 7. 中断された実行を回復する（`recoverInterrupted`）：
    - 答えの途中だった「オーケストレーターに質問」を、中断として記録する。
+   - 実行の途中だったデプロイの確認を、確かめられなかった（中断）として記録する（[マージの後の監視](deployment-watch.md)）。
    - 判定の途中だったゴールガーディアンの判定を、判定できなかった（`undecidable`）として記録する。
    - 実行中（`running`）だったタスクは、実行の失敗（`AgentRunFailed`）として記録し、一時停止（`TaskPaused`、理由 `error`）にする。
 8. 実行できずに待っていた工程を実行待ちにする（`queueWaitingSteps`）。
@@ -43,7 +44,7 @@
     を消し、使われなくなったものを止める確かめを始める）、組織内 PF の認証の用意、ワーカー・取り込み・PR の監視を始める。
 
 ワーカーは2秒ごとに、実行待ちのタスクを作成の古い順に、同時に実行する上限（sacty の設定の `maxParallelTasks`。既定
-`DEFAULT_MAX_PARALLEL_TASKS` = 3）まで実行する。同じタスクを同時に2つ実行しない。PR の監視は60秒ごとに、前の確認が終わってから確かめる。
+`DEFAULT_MAX_PARALLEL_TASKS` = 3）まで実行する。同じタスクを同時に2つ実行しない。PR の監視は60秒ごとに、前の確認が終わってから確かめる（マージの後の CI/CD の監視も、その終わりに行う）。
 
 コード: `apps/daemon/src/main.ts`、`apps/daemon/src/service.ts`（`recoverInterrupted`・`queueWaitingSteps`・`maxParallelTasks`）、
 `apps/daemon/src/worker.ts`（`Worker`）、`apps/daemon/src/pr-watcher.ts`（`PullRequestWatcher`）、`packages/core/src/projects.ts`（`DEFAULT_MAX_PARALLEL_TASKS`）

@@ -61,3 +61,4 @@
 - [通知](notifications.md)：Slack への通知の条件・送り先・本文
 - [チケットの取り込みと GitHub](intake.md)：GitHub の Issue・PR、JIRA、取り込み元へのコメント、GitHub のアカウント
 - [書き出し](export.md)：成果の書き出し、プロジェクトのエクスポート・インポート
+- [マージの後の監視（CI/CD とデプロイ）](deployment-watch.md)：CI/CD の監視、デプロイの確認のスキル、修正のタスクの登録と上限、再起動

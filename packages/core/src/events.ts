@@ -272,6 +272,20 @@ export const PauseReason = z.enum([
 ]);
 export type PauseReason = z.infer<typeof PauseReason>;
 
+/**
+ * マージの後の監視（PBI-89）。修正のタスクの元。kind は ci（CI/CD の失敗）か deployment（デプロイ後のアプリの確認の失敗）。
+ * fingerprint は、同じ失敗の修正のタスクを二重に作らないための目印。depth は、元のタスクを 0 として何段目の修正のタスクか。
+ */
+const DeploymentFixKind = z.enum(["ci", "deployment"]);
+
+/** 修正のタスクを作るときに付ける、元のタスクとのつながり（PBI-89）。 */
+const DeploymentFix = z.object({
+  taskId: z.string().min(1),
+  kind: DeploymentFixKind,
+  fingerprint: z.string().min(1),
+  depth: z.number().int().positive(),
+});
+
 const TaskCreated = z.object({
   type: z.literal("TaskCreated"),
   payload: z.object({
@@ -283,7 +297,15 @@ const TaskCreated = z.object({
      * PBI-20 より前の作業履歴は、画面で作ったタスクを ticket と記録しているので、sacty として読む。
      */
     start: z
-      .enum(["sacty", "github_issue", "github_pull_request", "split", "ticket", "jira"])
+      .enum([
+        "sacty",
+        "github_issue",
+        "github_pull_request",
+        "split",
+        "ticket",
+        "jira",
+        "deployment",
+      ])
       .transform((start) => (start === "ticket" ? "sacty" : start)),
     /**
      * 取り込んだチケット（JIRA など。PBI-52）。接続先（gateway.platforms の名前）・種類・キー・チケットの URL。
@@ -325,6 +347,11 @@ const TaskCreated = z.object({
      * 依存がある子タスクは、依存先がすべて完了するまで待つ（blocked）。
      */
     parent: z.object({ taskId: z.string(), dependsOn: z.array(z.string()) }).optional(),
+    /**
+     * マージの後の監視で見つけた失敗の、修正のタスク（start: deployment。PBI-89）。元のタスク・失敗の種類・二重に作らない
+     * ための目印・何段目の修正のタスクか（元のタスクが 0。MAX_FIX_CHAIN まで）。
+     */
+    fix: DeploymentFix.optional(),
   }),
 });
 
@@ -1435,6 +1462,145 @@ const TaskEscalated = z.object({
   }),
 });
 
+/** 修正のタスクの連鎖の上限（元のタスクから何段まで作るか。PBI-89）。 */
+export const MAX_FIX_CHAIN = 3;
+/** CI/CD の実行・チェックが1つも現れないまま、これだけたったら CI/CD が無いとみなす（PBI-89）。 */
+export const DEPLOYMENT_CI_GRACE_MS = 5 * 60_000;
+/** CI/CD が終わるのを待つ上限（監視を始めた時刻から。PBI-89）。 */
+export const DEPLOYMENT_CI_TIMEOUT_MS = 60 * 60_000;
+
+/** CI/CD の実行・チェック・コミットの状態の1件（PBI-89）。conclusion は終わったものだけ。 */
+export const CiCheck = z.object({
+  kind: z.enum(["workflow", "check", "status"]),
+  name: z.string(),
+  status: z.enum(["pending", "completed"]),
+  conclusion: z.string().optional(),
+  url: z.string().optional(),
+});
+export type CiCheck = z.infer<typeof CiCheck>;
+
+/** 失敗とみなす結論（PBI-89）。cancelled・skipped・neutral・stale は失敗とみなさない。 */
+const FAILED_CI_CONCLUSIONS = new Set([
+  "failure",
+  "timed_out",
+  "action_required",
+  "startup_failure",
+]);
+/** 失敗とみなすコミットの状態（PBI-89）。 */
+const FAILED_CI_STATES = new Set(["failure", "error"]);
+
+/** CI/CD の実行・チェック・コミットの状態が、終わっていて失敗か（PBI-89）。 */
+export function isFailedCiCheck(check: CiCheck): boolean {
+  if (check.status !== "completed" || !check.conclusion) return false;
+  return check.kind === "status"
+    ? FAILED_CI_STATES.has(check.conclusion)
+    : FAILED_CI_CONCLUSIONS.has(check.conclusion);
+}
+
+/** CI/CD の失敗の1件（PBI-89）。excerpt はログの抜粋（秘密情報を伏せてから切り詰めたもの）。 */
+export const CiFailure = z.object({
+  workflow: z.string(),
+  job: z.string().optional(),
+  conclusion: z.string(),
+  url: z.string().optional(),
+  excerpt: z.string().optional(),
+});
+export type CiFailure = z.infer<typeof CiFailure>;
+
+/**
+ * 実装の PR のマージで、マージのコミットの監視を始めた（PBI-89。プロジェクトの deploymentWatch が true のときだけ、
+ * PullRequestMerged と同じ追記で記録する）。commit が無い（マージのコミットが取れなかった）なら、監視を飛ばす。
+ */
+const DeploymentWatchStarted = z.object({
+  type: z.literal("DeploymentWatchStarted"),
+  payload: z.object({
+    number: z.number().int().positive(),
+    repo: z.string(),
+    branch: z.string(),
+    commit: z.string().optional(),
+  }),
+});
+
+/**
+ * CI/CD の結果（PBI-89）。passed：すべて通った、failed：失敗があった、none：CI/CD が無い、timed_out：終わらない。
+ * passed のとき、使うデプロイの確認のスキル（リポジトリの根からのパス）があれば skill に持ち、無ければ確かめない理由を
+ * skipCheck に持つ。
+ */
+const DeploymentCiFinished = z.object({
+  type: z.literal("DeploymentCiFinished"),
+  payload: z.object({
+    result: z.enum(["passed", "failed", "none", "timed_out"]),
+    checks: z.array(CiCheck).default([]),
+    failures: z.array(CiFailure).default([]),
+    skill: z.string().optional(),
+    skipCheck: DaemonText.optional(),
+  }),
+});
+
+/** デプロイの確認のエージェントの実行を始めた（PBI-89）。 */
+const DeploymentCheckStarted = z.object({
+  type: z.literal("DeploymentCheckStarted"),
+  payload: z.object({ runId: z.string(), skill: z.string() }),
+});
+
+/**
+ * デプロイの確認の結果（PBI-89）。healthy：アプリは動いている、unhealthy：エラーになっている（修正のタスクを作る）、
+ * unknown：確かめられなかった（理由は failed。デーモンが止まった・実行の失敗・答えを読めないなど）。費用は元のタスクの
+ * 予算に入れる。
+ */
+const DeploymentChecked = z.object({
+  type: z.literal("DeploymentChecked"),
+  payload: z.object({
+    result: z.enum(["healthy", "unhealthy", "unknown"]),
+    summary: z.string().max(4000).optional(),
+    evidence: z.array(z.string().max(2000)).max(20).default([]),
+    failed: DaemonText.optional(),
+    runResult: GuardianRunResult,
+    agentId: z.string(),
+    ...AgentSetting,
+    ...RunRef,
+    usage: TokenUsage.optional(),
+    costUsd: z.number().nonnegative().default(0),
+    estimated: z.boolean().default(false),
+  }),
+});
+
+/** デプロイの確認を実行せずに飛ばした（PBI-89。予算の上限に達していた）。 */
+const DeploymentWatchSkipped = z.object({
+  type: z.literal("DeploymentWatchSkipped"),
+  payload: z.object({ reason: z.enum(["budget"]), detail: DaemonText.optional() }),
+});
+
+/**
+ * 監視で見つけた失敗の、修正のタスクを登録した（PBI-89）。続けて、この ID・題・本文で修正のタスクを作る（作る前に
+ * デーモンが止まっても、次の確認で作り直す）。
+ */
+const DeploymentFixRegistered = z.object({
+  type: z.literal("DeploymentFixRegistered"),
+  payload: z.object({
+    taskId: z.string().min(1),
+    kind: DeploymentFixKind,
+    fingerprint: z.string().min(1),
+    depth: z.number().int().positive(),
+    title: z.string().min(1),
+    body: z.string(),
+  }),
+});
+
+/**
+ * 修正のタスクを作らなかった（PBI-89）。duplicate：同じ失敗の修正のタスクが終わっていない（existing）、chain_limit：
+ * 修正のタスクの連鎖が上限（MAX_FIX_CHAIN）に達した。
+ */
+const DeploymentFixSuppressed = z.object({
+  type: z.literal("DeploymentFixSuppressed"),
+  payload: z.object({
+    kind: DeploymentFixKind,
+    fingerprint: z.string().min(1),
+    reason: z.enum(["duplicate", "chain_limit"]),
+    existing: z.string().optional(),
+  }),
+});
+
 /** 作業履歴に書けるイベント（追加する前の形）。 */
 export const EventInput = z.discriminatedUnion("type", [
   TaskCreated,
@@ -1499,6 +1665,13 @@ export const EventInput = z.discriminatedUnion("type", [
   ChangesRequested,
   RemarkVoided,
   TaskEscalated,
+  DeploymentWatchStarted,
+  DeploymentCiFinished,
+  DeploymentCheckStarted,
+  DeploymentChecked,
+  DeploymentWatchSkipped,
+  DeploymentFixRegistered,
+  DeploymentFixSuppressed,
 ]);
 export type EventInput = z.input<typeof EventInput>;
 export type ParsedEventInput = z.infer<typeof EventInput>;

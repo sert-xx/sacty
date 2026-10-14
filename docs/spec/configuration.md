@@ -15,7 +15,7 @@
 | `image` | `sacty-agent:0.1.0`（`DEFAULT_IMAGE`） | 既定のイメージ。エージェントとテストの実行に使う |
 | `default_agent` | （必須） | 既定の AI。`agents` にある名前 |
 | `guardian_agent` | `default_agent` | ゴールガーディアンの AI |
-| `step_agents` | `{}` | 工程（`StepKey`）と `orchestrator` ごとの AI。書かなければ `default_agent`、統合レビュー（`integrate`）は `guardian_agent` |
+| `step_agents` | `{}` | 工程（`StepKey`）と `orchestrator`・`deployment`（マージの後のデプロイの確認）ごとの AI。書かなければ `default_agent`、統合レビュー（`integrate`）は `guardian_agent` |
 | `agents` | （必須） | エージェントの定義（下の「エージェント」） |
 | `providers` | `{}` | OpenAI 互換（Responses API）の接続先。名前は `^[A-Za-z0-9_-]+$`。`base_url`（http・https）・`secret`（任意）・`via_gateway`（既定 `false`） |
 | `budget.default_per_task_usd` | `1`（`DEFAULT_BUDGET_USD`） | 1タスクあたりの予算（米ドル。正の数） |

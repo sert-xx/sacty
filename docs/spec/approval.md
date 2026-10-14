@@ -70,6 +70,8 @@ sacty が作る PR すべて（実装の PR と、要求要件・設計の PR）
 - マージされずに閉じられた：`PullRequestClosed` を記録し、承認にせず人間の判断を待つ（画面から承認はできない。差し戻すか中止する）。
 - 開き直された：`PullRequestReopened` を記録して見守りを続ける。
 - 確認の途中で状態・PR・コミットが変わったときは記録しない。
+- 実装の PR のマージでは、プロジェクトの `deploymentWatch` が `true` なら、同じ追記でマージの後の監視を始める
+  （[マージの後の監視](deployment-watch.md)）。確認の終わりに、監視を待っているタスクの CI/CD を確かめる（`checkDeployments`）。
 
 コード: `apps/daemon/src/service.ts`（`checkPullRequests`・`readMergedDocument`）、`apps/daemon/src/pr-watcher.ts`（`PullRequestWatcher`）
 
@@ -77,7 +79,7 @@ sacty が作る PR すべて（実装の PR と、要求要件・設計の PR）
 
 関係する ADR: [sacty が作る PR の本文を、リポジトリ・Org の PR テンプレートの見出しに沿って決まった規則で埋める](../adr/20261014-1517-pr-body-follows-repository-template.md)
 
-sacty が PR を作る・更新するとき（実装の PR と、要求要件・設計の PR）は、そのたびに PR を作るリポジトリの PR テンプレートを探し、
+sacty が PR を作る・更新するとき（実装の PR と、要求要件・設計の PR。マージの後の監視で作る修正のタスクの PR も同じ）は、そのたびに PR を作るリポジトリの PR テンプレートを探し、
 あればその見出し・項目の形で本文を書く。無い・使えないときは、sacty の決まった形の本文（`buildPullRequestBody`・
 `buildStepPullRequestBody`）にする。どちらでも PR の作成は止めない。
 

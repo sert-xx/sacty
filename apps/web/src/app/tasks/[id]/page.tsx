@@ -19,6 +19,7 @@ import { Suspense } from "react";
 import { AutoRefresh } from "@/components/auto-refresh";
 import { CardSection } from "@/components/card-section";
 import { DaemonError } from "@/components/daemon-error";
+import { DeploymentWatchCard } from "@/components/deployment";
 import { ExportRetryButton } from "@/components/export-retry-button";
 import { Implementation } from "@/components/implementation";
 import { IntegrationResult } from "@/components/integration";
@@ -86,6 +87,10 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
   const projectName = (await getProject(task.projectId))?.project.name ?? task.projectId;
   // 分割で作った子タスクの親（PBI-27）
   const parent = task.parent ? (await getTask(task.parent.taskId))?.task : undefined;
+  // マージの後の監視で作った修正のタスクの、元のタスク（PBI-89）
+  const origin = task.fix
+    ? (await getTask(task.fix.taskId).catch(() => undefined))?.task
+    : undefined;
   const lastFailure = [...activity].reverse().find((e) => e.type === "AgentRunFailed");
   const proposal = openProposal(task);
   // 承認ゲートで見守っている、sacty が作った PR（成果物チェック・要求要件・設計。PBI-57）
@@ -119,7 +124,9 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
         active={
           isWorking(task) ||
           pendingQuestion(task) !== undefined ||
-          (task.status !== "paused" && exportDue(task) !== undefined)
+          (task.status !== "paused" && exportDue(task) !== undefined) ||
+          // マージの後の監視を待っている間も更新する（PBI-89）
+          task.deployment?.state === "waiting"
         }
       />
       <div className="flex flex-col gap-2">
@@ -176,6 +183,19 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
           ) : (
             // リポジトリを指定せずに作ったタスク（PBI-73）
             isRepoless(task) && <span data-testid="no-repository">{m.noRepository}</span>
+          )}
+          {task.fix && (
+            <>
+              {m.deployment.origin}
+              <Link
+                href={`/tasks/${encodeURIComponent(task.fix.taskId)}`}
+                className="text-accent-foreground underline"
+                data-testid="fix-origin"
+              >
+                {origin?.title ?? task.fix.taskId}
+              </Link>
+              {m.deployment.fixDepth(task.fix.depth)}
+            </>
           )}
           {task.parent && (
             <>
@@ -415,6 +435,8 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
             <Implementation task={task} />
           )}
           <PullRequestCard task={task} />
+          {/* マージの後の CI/CD とデプロイの監視（PBI-89） */}
+          <DeploymentWatchCard task={task} />
           {(task.approved.requirements || task.proposals.length > 0) && <Proposals task={task} />}
           {/* 工程ごとのエージェント・設定・費用（PBI-46） */}
           <StepCosts task={task} activity={activity} />

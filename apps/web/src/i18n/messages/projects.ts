@@ -177,6 +177,11 @@ const ja = {
     githubRequired: "対象のホストごとに、GitHub アカウントを選んでください。",
     githubHelp:
       "gh auth login でログインしたアカウントから選びます。\ngh でアカウントを切り替えても、ここで選んだものを使います。",
+    deployTitle: "マージの後の監視",
+    deployNote: "CI/CD とデプロイ後のアプリを確かめる",
+    deployLabel: "sacty のタスクの PR がマージされたら、CI/CD とデプロイ後のアプリを監視する",
+    deployHelp:
+      "マージのコミットの CI/CD（GitHub Actions のワークフロー・チェック）を待ち、失敗したら修正のタスクを自動で登録します。\nCI/CD が通り、リポジトリにデプロイの確認のスキル（.agents/skills/deployment-observer/SKILL.md）があれば、エージェントがデプロイ後のアプリを確かめます（費用はタスクの予算に入ります）。既定は Off です。",
     notifyTitle: "Slack の通知（任意）",
     notifyNote: "承認待ち・エスカレーション・一時停止・完了を知らせる",
     notifyKind: "送り方",
@@ -402,6 +407,11 @@ const en: ProjectsMessages = {
       `Saved, but the context has an error (steps will stop until it is fixed): ${detail}`,
     save: "Save",
     create: "Create",
+    deployTitle: "After-merge watch",
+    deployNote: "Check CI/CD and the deployed app",
+    deployLabel: "Watch CI/CD and the deployed app after a sacty task's pull request is merged",
+    deployHelp:
+      "Waits for CI/CD (GitHub Actions workflows and checks) on the merge commit and registers a fix task automatically if it fails.\nIf CI/CD passes and the repository has a deployment check skill (.agents/skills/deployment-observer/SKILL.md), an agent checks the deployed app (the cost counts toward the task budget). Off by default.",
     notifyTitle: "Slack notifications (optional)",
     notifyNote: "Tell you about approvals, escalations, pauses, and completions",
     notifyKind: "Send via",

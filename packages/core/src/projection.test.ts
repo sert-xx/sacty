@@ -961,3 +961,104 @@ describe("リポジトリを指定しないタスク（PBI-73）", () => {
     expect(() => project([noRepo("d"), steps("d"), chosen("d")])).toThrow(/before planning/);
   });
 });
+
+describe("マージの後の監視（PBI-89）", () => {
+  const prGate = (id: string) => [
+    created(id),
+    ev(id, { type: "StepsChosen", payload: { steps: ["pr"] } }),
+    ev(id, {
+      type: "RepositoryPrepared",
+      payload: { url: "https://github.com/acme/app", baseBranch: "main", baseCommit: "b1" },
+    }),
+    ev(id, {
+      type: "PullRequestPublished",
+      payload: {
+        branch: "sacty/t",
+        commit: "c1",
+        url: "https://github.com/acme/app/pull/7",
+        number: 7,
+      },
+    }),
+    ev(id, { type: "StepSubmitted", payload: { step: "pr", submission: 1 } }),
+  ];
+  const mergedPr = (id: string) => [
+    ev(id, { type: "PullRequestMerged", payload: { number: 7, commit: "c1" } }, "person"),
+    ev(id, { type: "StepApproved", payload: { step: "pr", next: "idle" } }, "person"),
+  ];
+  const started = (id: string) =>
+    ev(id, {
+      type: "DeploymentWatchStarted",
+      payload: { number: 7, repo: "https://github.com/acme/app", branch: "main", commit: "m1" },
+    });
+
+  it("マージの前・二度目の開始・待っていない段階の記録は受け付けない", () => {
+    seq = 0;
+    expect(() => project([...prGate("t"), started("t")])).toThrow(/not merged/);
+    seq = 0;
+    expect(() => project([...prGate("t"), ...mergedPr("t"), started("t"), started("t")])).toThrow(
+      /has started/,
+    );
+    seq = 0;
+    expect(() =>
+      project([
+        ...prGate("t"),
+        ...mergedPr("t"),
+        started("t"),
+        ev("t", { type: "DeploymentCheckStarted", payload: { runId: "r", skill: "s" } }),
+      ]),
+    ).toThrow(/not waiting for the check/);
+    seq = 0;
+    expect(() =>
+      project([
+        ...prGate("t"),
+        ...mergedPr("t"),
+        started("t"),
+        ev("t", {
+          type: "DeploymentFixSuppressed",
+          payload: { kind: "ci", fingerprint: "f", reason: "duplicate" },
+        }),
+      ]),
+    ).toThrow(/waiting for a fix task/);
+  });
+
+  it("CI/CD が通ってスキルがあれば確認を待ち、結果で状態を決める。実行の ID が違う結果は受け付けない", () => {
+    seq = 0;
+    const base = [
+      ...prGate("t"),
+      ...mergedPr("t"),
+      started("t"),
+      ev("t", { type: "DeploymentCiFinished", payload: { result: "passed", skill: "s" } }),
+    ];
+    const waiting = project(base).get("t");
+    expect(waiting?.deployment).toMatchObject({ state: "waiting", phase: "check" });
+    expect(waiting?.status).toBe("idle");
+    const checking = [
+      ...base,
+      ev("t", { type: "DeploymentCheckStarted", payload: { runId: "r1", skill: "s" } }),
+    ];
+    expect(() =>
+      project([
+        ...checking,
+        ev("t", {
+          type: "DeploymentChecked",
+          payload: { result: "healthy", runResult: "completed", agentId: "a", runId: "other" },
+        }),
+      ]),
+    ).toThrow(/not running/);
+    const done = project([
+      ...checking,
+      ev("t", {
+        type: "DeploymentChecked",
+        payload: {
+          result: "unhealthy",
+          runResult: "completed",
+          agentId: "a",
+          runId: "r1",
+          costUsd: 0.5,
+        },
+      }),
+    ]).get("t");
+    expect(done?.deployment).toMatchObject({ state: "failed", check: { result: "unhealthy" } });
+    expect(done?.budget.usedUsd).toBe(0.5);
+  });
+});

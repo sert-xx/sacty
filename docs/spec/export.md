@@ -33,7 +33,7 @@
 ## プロジェクトのエクスポート・インポート
 
 - `GET /api/projects/:id/export` は `{ sacty: "project", version: 3, project: { … } }`（`PROJECT_EXPORT_VERSION`）を返す。`project` には
-  `name`・`targets`・`context`・`notification`（秘密情報は参照だけ。メンションを含む）・`tickets`・`sharedComposes` を入れる。ID・日時・
+  `name`・`targets`・`context`・`notification`（秘密情報は参照だけ。メンションを含む）・`tickets`・`sharedComposes`・`deploymentWatch`（`true` のときだけ）を入れる。ID・日時・
   `githubAccounts`（個人の設定）は入れない。画面からは `sacty-project-<名前>.json` としてダウンロードする。
 - `POST /api/projects/import` は、同じ形を厳密に確かめ（知らない項目・`sacty` の違い・版の違いは誤り）、新しい ID のプロジェクトとして保存する
   （保存の前にほかのプロジェクトとの重複を確かめる）。画面からは 1,000,000 バイトまでのファイルを読む。
