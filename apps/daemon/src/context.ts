@@ -62,6 +62,19 @@ const McpValue = z.union([
     })
     .strict(),
 ]);
+/**
+ * MCP サーバーの時間切れ（秒。PBI-75）。書かなければエージェントの既定のまま。
+ * - startup_timeout_sec：起動（初期化とツールの一覧）を待つ上限
+ * - tool_timeout_sec：ツールの呼び出しを待つ上限
+ * Codex はそれぞれ同じ名前で、Claude Code はツールの呼び出しだけサーバーごとの timeout（ミリ秒）で受け取る。
+ * Claude Code は 1000 ミリ秒より短い値を使わないので、1秒から。
+ */
+const MCP_STARTUP_TIMEOUT_MAX_SEC = 3_600;
+const MCP_TOOL_TIMEOUT_MAX_SEC = 86_400;
+export const McpTimeouts = {
+  startup_timeout_sec: z.number().int().min(1).max(MCP_STARTUP_TIMEOUT_MAX_SEC).optional(),
+  tool_timeout_sec: z.number().int().min(1).max(MCP_TOOL_TIMEOUT_MAX_SEC).optional(),
+};
 const McpServer = z.union([
   z
     .object({
@@ -70,6 +83,7 @@ const McpServer = z.union([
       env: z
         .record(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/, code("input.envName")), McpValue)
         .default({}),
+      ...McpTimeouts,
     })
     .strict(),
   z
@@ -86,6 +100,7 @@ const McpServer = z.union([
        * 実行ごとのトークンだけを渡し、認証のヘッダー（秘密情報）はホストで付ける。false なら、コンテナから直接つなぐ。
        */
       via_gateway: z.boolean().default(true),
+      ...McpTimeouts,
     })
     .strict(),
 ]);
@@ -710,6 +725,9 @@ export type GatewayMcpServer = {
   name: string;
   url: string;
   headers: Record<string, string | { secret: string; prefix: string }>;
+  /** mcp.yaml に書いた時間切れ（秒。PBI-75）。ゲートウェイの中継が、これより先に切れないようにする。 */
+  startup_timeout_sec?: number;
+  tool_timeout_sec?: number;
 };
 
 /** 実行時に、秘密情報の値をこの環境変数でコンテナに渡す（値は prefix + 秘密情報）。 */
@@ -721,7 +739,21 @@ export type PlacedContext = {
   mcpServers: string[];
   /** 実行時に入れる秘密情報。 */
   secrets: ContextSecret[];
+  /** エージェントに渡す環境変数（秘密情報ではないもの。Claude Code の MCP_TIMEOUT など。PBI-75）。 */
+  env?: Record<string, string>;
 };
+
+/**
+ * エージェントの実行全体の上限（ミリ秒）。コンテナは、開始からこの時間で止める（DockerExecutor の既定）。MCP の
+ * 時間切れをこれ以上にしても意味が無いので、コンテキストの用意で警告する（PBI-75）。
+ */
+export const AGENT_RUN_TIMEOUT_MS = 30 * 60_000;
+
+/**
+ * Claude Code が MCP サーバーの起動を待つ既定の上限（秒）。Claude Code にはサーバーごとの起動の時間切れが無く、
+ * 全体の環境変数 MCP_TIMEOUT（ミリ秒。書かなければ 30000）だけがある（2.1.299 の本体で確かめた。PBI-75）。
+ */
+const CLAUDE_MCP_STARTUP_DEFAULT_SEC = 30;
 
 /**
  * 合成したコンテキストを、エージェントの形式で outDir に書く。outDir は実行ごとの空の設定の
@@ -746,7 +778,11 @@ export function writeContext(
     secrets.push({ env, secret: value.secret, prefix: value.prefix });
     return { env };
   };
-  const placed = () => ({ mcpServers: composed.mcp.map((m) => m.name), secrets });
+  const placed = (env?: Record<string, string>): PlacedContext => ({
+    mcpServers: composed.mcp.map((m) => m.name),
+    secrets,
+    ...(env ? { env } : {}),
+  });
   // 層のエージェントの設定のディレクトリのファイルを先に写す（sacty が作るファイルは除いてある）
   for (const file of composed.agentFiles[runtime === "codex" ? "codex" : "claude"]) {
     const to = join(outDir, file.path);
@@ -772,18 +808,41 @@ export function writeContext(
             return [k, "env" in r ? `\${${r.env}}` : r.literal];
           }),
         );
+      // ツールの呼び出しの時間切れは、サーバーごとの timeout（ミリ秒。MCP_TOOL_TIMEOUT より優先される）で渡す
+      const timeout = (server: McpServer) =>
+        server.tool_timeout_sec !== undefined ? { timeout: server.tool_timeout_sec * 1000 } : {};
       const servers = Object.fromEntries(
         composed.mcp.map(({ name, server }) => [
           name,
           "command" in server
-            ? { command: server.command, args: server.args, env: values(server.env) }
-            : { type: "http", url: server.url, headers: values(server.headers) },
+            ? {
+                command: server.command,
+                args: server.args,
+                env: values(server.env),
+                ...timeout(server),
+              }
+            : {
+                type: "http",
+                url: server.url,
+                headers: values(server.headers),
+                ...timeout(server),
+              },
         ]),
       );
       writeFileSync(
         join(outDir, CLAUDE_MCP_CONFIG),
         `${JSON.stringify({ mcpServers: servers }, null, 2)}\n`,
       );
+      // 起動の時間切れはサーバーごとに渡せないので、全体の MCP_TIMEOUT にする。書いたサーバーの値と、書いていない
+      // サーバーの既定（30秒）の大きい方（書いていないサーバーの待ち時間を、既定より短くしない）
+      if (composed.mcp.some((m) => m.server.startup_timeout_sec !== undefined)) {
+        const sec = Math.max(
+          ...composed.mcp.map(
+            (m) => m.server.startup_timeout_sec ?? CLAUDE_MCP_STARTUP_DEFAULT_SEC,
+          ),
+        );
+        return placed({ MCP_TIMEOUT: String(sec * 1000) });
+      }
     }
     return placed();
   }
@@ -865,6 +924,13 @@ function codexServer(
       lines.push(`env_http_headers = ${tomlTable(fromSecret)}`);
     }
   }
+  // 時間切れ（秒。PBI-75）。書かなければ Codex の既定のまま
+  if (server.startup_timeout_sec !== undefined) {
+    lines.push(`startup_timeout_sec = ${server.startup_timeout_sec}`);
+  }
+  if (server.tool_timeout_sec !== undefined) {
+    lines.push(`tool_timeout_sec = ${server.tool_timeout_sec}`);
+  }
   return `${lines.join("\n")}\n`;
 }
 
@@ -922,6 +988,40 @@ function run(args: string[], cwd?: string, authEnv: Record<string, string> = {})
   });
 }
 
+/** ホストの MCP サーバー（PBI-36）を、ゲートウェイの HTTP の MCP として渡すときの接続先と時間切れ（PBI-75）。 */
+export type HostMcpEntry = {
+  name: string;
+  url: string;
+  startup_timeout_sec?: number;
+  tool_timeout_sec?: number;
+};
+
+/**
+ * 実行全体の上限（AGENT_RUN_TIMEOUT_MS）以上の時間切れの警告（PBI-75）。実行全体が先に止まるので効かない。
+ * ホストの MCP サーバーも含め、エージェントに渡すサーバーだけを見る。
+ */
+function timeoutWarnings(mcp: { name: string; server: McpServer }[]): DaemonText[] {
+  const limitSec = AGENT_RUN_TIMEOUT_MS / 1000;
+  return mcp.flatMap(({ name, server }) =>
+    (["startup_timeout_sec", "tool_timeout_sec"] as const).flatMap((key) => {
+      const seconds = server[key];
+      return seconds !== undefined && seconds >= limitSec
+        ? [message("context.mcpTimeoutOverRun", { name, key, seconds, minutes: limitSec / 60 })]
+        : [];
+    }),
+  );
+}
+
+/** 書いてある時間切れだけを取り出す（書いていない項目は足さない）。 */
+function pickTimeouts(from: { startup_timeout_sec?: number; tool_timeout_sec?: number }) {
+  return {
+    ...(from.startup_timeout_sec !== undefined
+      ? { startup_timeout_sec: from.startup_timeout_sec }
+      : {}),
+    ...(from.tool_timeout_sec !== undefined ? { tool_timeout_sec: from.tool_timeout_sec } : {}),
+  };
+}
+
 /**
  * プロジェクトのコンテキストを取得・合成し、エージェントの形式で書いた一時ディレクトリを返す。
  * 呼び出し側は、使い終わったら dispose で消す。
@@ -940,7 +1040,7 @@ export async function prepareContext(
    * ホストの MCP サーバー（PBI-36）。ゲートウェイの HTTP の MCP として、層の MCP サーバーに加える（同じ名前なら、
    * こちらを使う）。認証のヘッダーには、実行ごとのゲートウェイのトークンを入れる。
    */
-  hostMcp: readonly { name: string; url: string }[] = [],
+  hostMcp: readonly HostMcpEntry[] = [],
   /**
    * コンテナから見たゲートウェイの起点（PBI-49）。あれば、層の HTTP の MCP サーバー（via_gateway）を、ゲートウェイの
    * URL（/ctx-mcp/<名前>）に置き換え、元の URL と認証のヘッダーは gatewayMcp として返す（ゲートウェイに持たせる）。
@@ -974,13 +1074,20 @@ export async function prepareContext(
     if (gatewayOrigin) {
       composed.mcp = composed.mcp.map((m) => {
         if ("command" in m.server || !m.server.via_gateway) return m;
-        gatewayMcp.push({ name: m.name, url: m.server.url, headers: m.server.headers });
+        const timeouts = pickTimeouts(m.server);
+        gatewayMcp.push({
+          name: m.name,
+          url: m.server.url,
+          headers: m.server.headers,
+          ...timeouts,
+        });
         return {
           ...m,
           server: {
             url: `${gatewayOrigin}/ctx-mcp/${m.name}`,
             headers: { Authorization: { secret: GATEWAY_TOKEN_SECRET, prefix: "Bearer " } },
             via_gateway: true,
+            ...timeouts,
           },
         };
       });
@@ -996,11 +1103,13 @@ export async function prepareContext(
             url: m.url,
             headers: { Authorization: { secret: GATEWAY_TOKEN_SECRET, prefix: "Bearer " } },
             via_gateway: true,
+            ...pickTimeouts(m),
           },
         })),
       ];
     }
     if (onlyMcp !== undefined) composed.mcp = composed.mcp.filter((m) => m.name === onlyMcp);
+    composed.warnings.push(...timeoutWarnings(composed.mcp));
     const dir = join(work, "out");
     const placed = writeContext(composed, runtime, dir, containerDir);
     return {

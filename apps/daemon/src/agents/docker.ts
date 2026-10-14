@@ -19,6 +19,7 @@ import { basename, dirname, join } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { message } from "@sacty/core";
 import { assertRealParents, NOFOLLOW_READ_FLAGS } from "../agent-sessions.js";
+import { AGENT_RUN_TIMEOUT_MS } from "../context.js";
 import { MessageError } from "../errors.js";
 import { DEFAULT_HOST_ADDRESS } from "../gateway.js";
 import type { SessionLogSink } from "../session-logs.js";
@@ -310,7 +311,7 @@ export class DockerExecutor implements AgentExecutor {
   private aborting = false;
 
   constructor(
-    private readonly timeoutMs = 30 * 60_000,
+    private readonly timeoutMs = AGENT_RUN_TIMEOUT_MS,
     spawnImpl: typeof spawn = spawn,
     containers?: RunningContainers,
   ) {

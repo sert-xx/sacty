@@ -1210,6 +1210,79 @@ describe("工程の実行と費用", () => {
     activity.close();
   });
 
+  it("mcp.yaml・gateway.mcp_servers の時間切れを、エージェントに渡し、ゲートウェイの中継もそれより先に切らない（PBI-75）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const registered: unknown[] = [];
+    const gateway: NonNullable<ServiceDeps["gateway"]> = {
+      containerOrigin: () => "http://host.docker.internal:5001",
+      platformsUrl: (token) => `http://host.docker.internal:5001/r/${token}/pf`,
+      register: (_route, mcp) => {
+        registered.push(mcp);
+        return {
+          token: "sacty-gw-run",
+          stats: () => ({ retries: 0, waitedMs: 0, statuses: [], gaveUp: false }),
+          close: () => {},
+        };
+      },
+    };
+    const contexts = new FakeContexts({
+      "https://github.com/acme/ctx.git": {
+        "mcp.yaml": [
+          "servers:",
+          "  docs:",
+          "    url: https://docs.example.com/mcp",
+          "    startup_timeout_sec: 400",
+          "    tool_timeout_sec: 1800",
+          "  wiki:",
+          "    url: https://wiki.example.com/mcp",
+        ].join("\n"),
+      },
+    });
+    const cloud = toHostMcp(
+      "private-cloud",
+      HostMcpFile.parse({ command: "cloud-mcp", startup_timeout_sec: 90, tool_timeout_sec: 7200 }),
+    );
+    const { service, executor } = makeService(activity, [completed(20_000)], {
+      config: configOf(agent(), 1, [], [cloud]),
+      gateway,
+      contexts,
+    });
+    const project = service.saveProject("default", {
+      name: "デフォルト",
+      targets: [{ scope: "repo", target: "https://github.com/acme/app" }],
+      githubAccounts: { "github.com": "me" },
+      context: { repo: "https://github.com/acme/ctx.git" },
+    });
+    const task = service.createTask({ projectId: project.id, title: "ドキュメントを調べる" });
+    await service.runNext(task.id);
+    // ゲートウェイの中継は、書いた値の大きい方まで待つ。書いていないサーバーは、これまでどおり
+    expect(registered).toEqual([
+      {
+        docs: { url: "https://docs.example.com/mcp", headers: {}, timeoutMs: 1_800_000 },
+        wiki: { url: "https://wiki.example.com/mcp", headers: {} },
+      },
+    ]);
+    const servers = JSON.parse(executor.mcpConfigs[0] ?? "{}").mcpServers;
+    expect(servers.docs.timeout).toBe(1_800_000);
+    expect(servers.wiki).not.toHaveProperty("timeout");
+    expect(servers["private-cloud"]).toMatchObject({
+      url: "http://host.docker.internal:5001/mcp/private-cloud",
+      timeout: 7_200_000,
+    });
+    // Claude Code の起動の時間切れは、全体の MCP_TIMEOUT（書いた値の最大）
+    expect(executor.calls[0]?.env.MCP_TIMEOUT).toBe("400000");
+    // 実行全体の上限（30分）以上の時間切れは、作業履歴に警告を残す（docs の 1800 秒・ホストの MCP の 7200 秒）
+    const resolved = service.get(task.id)?.activity.find((e) => e.type === "ContextResolved");
+    expect(
+      resolved?.type === "ContextResolved" &&
+        resolved.payload.warnings.map((w) => (typeof w === "string" ? w : w.params)),
+    ).toEqual([
+      { name: "docs", key: "tool_timeout_sec", seconds: 1800, minutes: 30 },
+      { name: "private-cloud", key: "tool_timeout_sec", seconds: 7200, minutes: 30 },
+    ]);
+    activity.close();
+  });
+
   it("組織内 PF があれば、工程エージェントに PF の URL（実行のトークンを含む）と使える API を渡し、認証情報は渡さない（PBI-35）", async () => {
     const activity = new SqliteActivityStore(dbPath);
     const ticket = toPlatform(

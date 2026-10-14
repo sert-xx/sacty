@@ -130,6 +130,8 @@ export async function buildInvocation(
   switch (agent.runtime) {
     case "claude-code": {
       const env: Record<string, string> = {
+        // MCP サーバーの起動の時間切れ（MCP_TIMEOUT。PBI-75）など、コンテキストから決めた環境変数
+        ...context?.env,
         ...contextEnv,
         CLAUDE_CONFIG_DIR: CONTAINER_CLAUDE_CONFIG_DIR,
         CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1",
