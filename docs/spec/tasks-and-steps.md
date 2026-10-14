@@ -1,0 +1,173 @@
+# タスクと工程
+
+タスクは、工程（調査・要求要件・設計・実装など）の並びとして進む。どの工程の組み合わせ（進め方）にするかは、タスクの開始時に
+オーケストレーターが選ぶ。工程はエージェントが実行し、人間は承認の工程（承認ゲート）でだけ判断する。ゴールガーディアンは、
+変更の申し出・最終レビュー・PR の指摘の戻し先・統合レビューを判定する。
+
+承認・差し戻しは [承認と差し戻し](approval.md)、タスク分割と統合レビューは [タスク分割と統合レビュー](split-and-integrate.md) にある。
+
+関係する ADR: なし
+
+## タスクの作られ方
+
+`TaskCreated` の `start` で、どこから作られたかを持つ。
+
+| `start` | 作られ方 |
+| --- | --- |
+| `sacty` | 画面で作った（以前の `ticket` も `sacty` として読む） |
+| `github_issue`・`github_pull_request` | GitHub の Issue・PR の取り込み（[チケットの取り込み](intake.md)） |
+| `jira` | JIRA のチケットの取り込み |
+| `split` | タスク分割の子タスク（`parent` に親の ID と、先に終わるべき子タスク `dependsOn` を持つ） |
+
+- PR のレビューだけのタスクは、`source.review`（`requested` か `label`）を持つ。
+- 画面で作るとき、リポジトリを指定しない（`repo: null`）か、指定を省いてプロジェクトの対象がリポジトリ1つだけではないときは、
+  リポジトリの無いタスク（`noRepo`）にする。対象が1つも無いプロジェクトでは作れない（`task.repositoryMissing`）。
+- 予算の上限の初期値は `budget.default_per_task_usd`（既定 1 米ドル）。
+- 状態の値は [作業履歴](event-log.md) の「投影」の表。完了という状態は無く、すべての工程が `done` か `skip` なら完了（`isCompleted`）とする。
+
+コード: `packages/core/src/events.ts`（`TaskCreated`・`TaskSource`）、`packages/core/src/projection.ts`（`isCompleted`・`isRepoless`）、`apps/daemon/src/service.ts`（`createTask`）
+
+## 工程
+
+| キー | 工程 | 内容 |
+| --- | --- | --- |
+| `investigate` | 調査 | コードを調べて報告する |
+| `review` | レビュー | 既存の PR をレビューして PR に投稿する |
+| `requirements` | 要求要件 | 要求要件を書く |
+| `design` | 設計 | 設計とテスト観点を書く |
+| `split` | タスク分割 | 子タスクを作り、終わるのを待つ |
+| `integrate` | 統合レビュー | 子タスクの成果が親の要求要件を満たすかを確かめる |
+| `reproduce` | 再現 | 不具合を再現する（失敗する）テストを書く |
+| `implement` | 実装 | 実装する |
+| `pr` | 成果物チェック | sacty が PR を作る（エージェントは使わない） |
+
+工程の分類：
+
+- 承認ゲートのある工程（`GATED_STEPS`）：`investigate`・`requirements`・`design`・`integrate`・`pr`。ただし、実装する組み合わせの先頭の
+  調査（前段の調査）は承認せずに次へ進む（`StepCompleted`）。調査が目的のタスク（最後の工程が `investigate`）の調査だけを承認する。
+- 差し戻しでやり直せる工程（`REWORK_STEPS`）：`investigate`・`reproduce`・`requirements`・`design`・`implement`。
+- リポジトリが要る工程（`REPO_STEPS`）：`implement`・`reproduce`・`review`・`pr`。
+- docker compose のサービスを使える工程（`SERVICE_STEPS`）：`investigate`（不具合の調査のときだけ）・`reproduce`・`implement`。
+- 書き出せる工程（`EXPORT_STEPS`）：`investigate`（最後の工程のときだけ）・`requirements`・`design`。
+
+コード: `packages/core/src/events.ts`（`StepKey`・`GATED_STEPS`・`REWORK_STEPS`・`EXPORT_STEPS`・`exportSteps`）、`packages/core/src/projection.ts`（`investigationIsGoal`）、`apps/daemon/src/service.ts`（`REPO_STEPS`・`submitEvents`）、`apps/daemon/src/prompts.ts`（`SERVICE_STEPS`）
+
+## 進め方の組み合わせ
+
+| `plan` | 工程 |
+| --- | --- |
+| `standard` | `investigate` → `requirements` → `design` → `implement` → `pr` |
+| `skip-design` | `investigate` → `requirements` → `implement` → `pr` |
+| `investigate` | `investigate`（調査だけ） |
+| `design-only` | `requirements` → `design`（設計だけ） |
+| `review` | `review`（レビューだけ） |
+| `split` | `investigate` → `requirements` → `design` → `split` → `integrate` |
+| `bugfix` | `investigate` → `reproduce` → `implement` → `pr` |
+
+選べる組み合わせの制限（`allowedPlans`）：`review` はリポジトリがあり、タスクが PR を指しているときだけ。`design-only` はリポジトリの
+無いタスクだけ。`split` は子タスクでは選べない（分割は1段だけ）。
+
+コード: `packages/core/src/events.ts`（`STEP_PLANS`）、`apps/daemon/src/prompts.ts`（`allowedPlans`・`REPO_PLANS`）
+
+## オーケストレーター
+
+工程を選ぶ前（タスクの開始時）に1回実行する。AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定のイメージを使い、
+起点のコミットのコードの使い捨ての写しを読む。費用はタスクの予算に入る。予算の上限に達していれば、実行せずに一時停止する。
+
+答え（見出し `sacty-steps` の JSON）から次を読み、`StepsChosen` に記録する。
+
+| 項目 | 意味と扱い |
+| --- | --- |
+| `plan`・`reason` | 組み合わせと理由 |
+| `baseBranch` | ベースブランチ。既定のブランチと違えば、そのブランチで用意し直す（用意できなければ既定のブランチのまま進め、理由を置き換える） |
+| `testCommand` | テストのコマンド（`sh -c` で実行し、終了コード 0 で合格。1〜1000 文字）。実装の工程があるのに無ければ一時停止する |
+| `investigation` | 調査の種類（`content`：内容の調査、`bug`：不具合の調査） |
+| `images`・`imageReason` | 工程ごとのイメージ。プロジェクトの対象でイメージを指定していれば、選ばせずに全工程でそれを使う。`images` に無い名前なら止める |
+| `services`・`servicesReason` | 起動する compose のファイル・サービス・工程（[サービス](services.md)）。共用の compose は名前で選ぶ（無い名前なら止める） |
+| `exports` | 工程ごとの書き出し先と理由（[書き出し](export.md)） |
+| `documentsDir` | 要求要件・設計のファイルを置くディレクトリ（[承認と差し戻し](approval.md)） |
+| `repo`・`repoReason` | リポジトリの無いタスクで、リポジトリが要る組み合わせを選んだときの作業するリポジトリ |
+
+- リポジトリの無いタスクで、リポジトリが要る工程を選んだら、`repo` をプロジェクトの対象と照らして `RepositoryChosen` を記録し、
+  リポジトリを用意してからもう一度選ばせる。対象に無い・空なら止まり、画面で人がリポジトリを選んで再開できる（一時停止中で
+  リポジトリを待っているときだけ）。リポジトリの要らない組み合わせなら、`testCommand`・`baseBranch`・`services`・`documentsDir` を捨てる。
+- 実行に失敗した・答えを読めないときは、`OrchestratorFailed` を記録して一時停止する（標準の組み合わせにはしない）。
+- チケットから取り込んだタスクは、工程を選ぶ前に、オーケストレーターがチケットを読んでリポジトリ・題・概要を決める（`TicketTriaged`）。
+- PR のレビューだけのタスクは、オーケストレーターを使わずに `review` の組み合わせにする（`reviewOnlySteps`）。
+- オーケストレーターのセッションの使い回しは [エージェントの実行](agent-execution.md) の「セッションの保存と使い回し」。
+
+コード: `apps/daemon/src/service.ts`（`askOrchestrator`・`runNextInner`・`withImages`・`withSharedCompose`・`withExports`・`repositoryFromPlan`・`chooseRepository`・`triageTicket`・`reviewOnlySteps`）、`apps/daemon/src/prompts.ts`（`extractStepPlan`）、`packages/core/src/events.ts`（`StepsChosen`）
+
+## 実装の検証
+
+- 実装の工程が終わると検証の待ち（`verification = "pending"`）になり、テストのコンテナでテストのコマンドを実行する。終了コード 0 で、
+  検証の観点がすべてテストに対応していれば合格。観点は、設計があれば設計のテスト観点、再現があれば `REPRO`、どちらも無ければ `REQ`。
+- テストに通ったら、ゴールガーディアンの最終レビューに進む。最終レビューは、実装後のコードと差分を読み、観点ごと・指摘ごとに判定し、
+  すべて満たすときだけ合格。合格なら次の工程（成果物チェック）へ進む。
+- テストか最終レビューに通らなければ、実装をやり直す。続けて `MAX_VERIFY_ATTEMPTS`（3）回通らなければ、一時停止（`verification`）にする。
+  再開すると数え直す。
+- 再現の工程の後は、再現のテストを実行し、終了コードが 0 でなければ再現できたとして実装へ進む。0 なら（または再現のテストの申告が
+  無ければ）、再現できなかったとして人間の判断を待つ（再現の工程は承認できない。差し戻すか中止する）。
+- テストのイメージは、検証は実装（無ければ再現）の工程のイメージ、再現の確かめは再現（無ければ実装）の工程のイメージ。
+
+コード: `apps/daemon/src/service.ts`（`verify`・`checkReproduction`・`pauseIfVerificationKeepsFailing`）、`apps/daemon/src/prompts.ts`（`verificationBasis`）、`packages/core/src/events.ts`（`MAX_VERIFY_ATTEMPTS`）
+
+## ゴールガーディアン
+
+AI は `guardian_agent`（無ければ `default_agent`）。実行ごとに `workspaces/_guardian/<実行 ID>` にコードの写しを作り、終わったら消す。
+
+| 役割 | 読むもの | 判定 |
+| --- | --- | --- |
+| 変更の申し出の判定 | 起点のコード | `approved`・`rejected`・`undecidable`。読めない・失敗なら `undecidable` で、人間の判断（エスカレーション）になる |
+| 最終レビュー | 実装後のコードと差分 | 合格・不合格（上の「実装の検証」） |
+| PR の指摘の戻し先の判断 | 成果物チェックなら実装後のコード、要求要件・設計なら起点のコード | 戻す工程か `undecidable`（[承認と差し戻し](approval.md)） |
+| 統合レビュー | ベースブランチの最新 | `step_agents.integrate` が無ければこの AI（[タスク分割と統合レビュー](split-and-integrate.md)） |
+
+変更の申し出：工程のエージェントは、承認済みの要求要件・設計の変更を申し出られる（ID は `CP-<番号>`）。承認されたら、要求要件は
+承認を取り消して承認し直しに回し、設計は承認済みの版を置き換える。却下されたら、申し出た工程の成果を提出する。
+
+コード: `apps/daemon/src/service.ts`（`judge`・`settleEvents`・`runGuardian`・`verify`・`judgeRework`）、`apps/daemon/src/prompts.ts`（`extractVerdict`・`extractFinalReview`・`extractRework`）
+
+## 予算・一時停止・再開・中止
+
+- 予算：使った額が上限の 80%（`BUDGET_WARN_RATIO`）に達したら `BudgetWarned` を記録する（1回）。上限に達したら、工程を選ぶ前・
+  工程を実行する前（成果物チェックを除く）・検証の前に一時停止（`budget`）にする。承認待ちのタスクは止めない。予算で止まったタスクの
+  再開には、使った額より大きい累計の新しい上限（10000 米ドルまで）が要る（`BudgetCapRaised`）。
+- 一時停止の理由（`PauseReason`）：`budget`・`usage_limit`（AI の利用上限）・`auth`（認証エラー・秘密情報が無い）・`error`・
+  `verification`・`manual`（人が止めた）・`child_cancelled`（子タスクの中止）。AI の実行の失敗は、その理由のまま一時停止にする
+  （人が止めていたら `manual`）。時間をおいて自動で再開する仕組みは無い。
+- 人の一時停止：承認待ち・エスカレーション・子タスク待ち・ゴールガーディアンの判定中は止められない。実行中なら、コンテナ・テスト・
+  サービスの起動を止めてから記録する。止まったことを確かめられないコンテナがあれば、そのことを確かめるまで再開しない。
+- 再開：止まる前の状態が実行待ちなら、止まった工程を実行し直す。
+- 中止：ゴールガーディアンの判定中は中止できない。次の順に片付け、対象（`container`・`workspace`・`session`・`branch`・
+  `pull_request`）ごとの結果（`done`・`skipped`・`failed`）を `TaskCancelled` に記録する。
+  1. 質問への答えの実行と、実行中のコンテナを止める。
+  2. オーケストレーターのセッションを消す。
+  3. sacty が作った実装の PR と、開いている要求要件・設計の PR を閉じる（マージはしない）。
+  4. sacty のブランチ（実装の PR のブランチ・タスクブランチ・工程のブランチ）を消す。
+  5. 作業領域を消す（コンテナが止まったことを確かめられなければ消さない）。
+  セッションログ（`runs/`）は消さない。親を中止すると、終わっていない子タスクも中止する。
+
+コード: `apps/daemon/src/service.ts`（`warnIfNeeded`・`checkBudget`・`pause`・`resume`・`cancel`・`cleanupPlan`・`sactyBranches`・`stopReason`）、`packages/core/src/events.ts`（`PauseReason`・`CleanupTarget`・`ResumeTaskInput`）、`packages/core/src/cost.ts`（`budgetState`）
+
+## オーケストレーターに質問
+
+- 質問は 2000 文字まで（`QUESTION_MAX`）、答えは 20000 文字まで（`ANSWER_MAX`。超えたら切り詰める）。答えを待つ質問は1件まで。
+  中止したタスク・予算の上限に達したタスクでは質問できない。ID は `Q-<番号>`。
+- AI はオーケストレーターと同じで、起点のコードの写しを読み、保存したオーケストレーターのセッションを複製して答える（元のセッションは
+  変えない）。指示には、タスクの題・状態・工程・PR・費用と予算・本文・承認済みの成果と最新の出力・判定・指摘・直近の質問と答え・
+  作業履歴（全体 40000 文字に入る分）を入れる。
+- 質問しても、状態・工程・承認済みの内容は変えず、実行中でも止めない。答えの費用（答えられなかったときも）はタスクの予算に入る。
+
+コード: `apps/daemon/src/service.ts`（`askQuestion`・`answerQuestion`）、`apps/daemon/src/prompts.ts`（`buildChatPrompt`・`CHAT_PROMPT_MAX`）、`packages/core/src/events.ts`（`QUESTION_MAX`・`ANSWER_MAX`）、`packages/core/src/projection.ts`（`questionBlocked`）
+
+## PR のレビューだけのタスク
+
+- 工程は `review` だけ。実行の前に、対象の PR の先頭と起点のコミットを記録する（`ReviewTargetResolved`）。PR の先頭のコミットのコードと、
+  差分の全体（`/sacty-review` に読み取り専用でマウント。指示には先頭の 100000 文字）を渡す。
+- 結果は、人の承認を待たずに PR にレビュー（`COMMENT`）として投稿する。行へのコメントが 422 で拒否されたら、本文に入れて投稿し直す。
+  投稿できたら完了。
+- 再レビュー：投稿して完了したタスクは、`review` を実行待ちに戻して、最新のコミットをもう一度レビューできる（`ReviewRestarted`）。
+- PR の確認（60秒ごと）で、終わっていないレビューのタスクの PR がマージ・クローズされていたら、タスクを中止する。
+
+コード: `apps/daemon/src/service.ts`（`reviewOnlySteps`・`resolveReviewTarget`・`postReview`・`rereview`・`checkReviewPullRequests`）、`apps/daemon/src/prompts.ts`（`PR_DIFF_IN_PROMPT`）

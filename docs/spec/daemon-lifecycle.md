@@ -1,0 +1,74 @@
+# デーモンの起動と終了
+
+`sacty up` が、デーモン（`apps/daemon`）と画面（`apps/web` の Next.js）を子プロセスとして起動し、どちらかが終われば両方を止める。
+デーモンは、同じ `SACTY_HOME` で1つしか動かない（OS のファイルロックで判定する）。
+
+関係する ADR: なし
+
+## sacty up
+
+- オプションは `--port`（画面のポート。既定 `4700`）と `--daemon-port`（デーモンのポート。既定 `4710`）。どちらも 1〜65535 の整数で、
+  同じ値は誤りにする。
+- 起動のたびに、デーモンと画面の間で使うトークン（32 バイトの乱数の16進）を作る。
+- デーモンを `SACTY_DAEMON_PORT`・`SACTY_DAEMON_TOKEN`・`SACTY_WEB_URL`（`http://127.0.0.1:<画面のポート>`。通知のリンクに使う）の
+  環境変数を付けて起動し、`GET /api/health` が応答するまで最大15秒待つ（200ミリ秒ごとに確かめる）。応答しなければ止める。
+- デーモンが応答したら、`SACTY_HOME/daemon.json`（権限 0600）に、デーモンの接続先とトークンを書く（`sacty context preview` が読む）。
+  すでにほかの sacty の接続先が書かれていて、それがトークン付きで応答するなら上書きせず、警告を出す。終わるときは、自分が書いたもの
+  （接続先とトークンが同じ）だけを消す。
+- 次に、画面を `next start -H 127.0.0.1 -p <画面のポート>` で、`SACTY_DAEMON_URL`・`SACTY_DAEMON_TOKEN` を付けて起動する。
+- SIGINT・SIGTERM を受けると、子プロセスに SIGTERM を送り、すべて終わってから終了する。30秒たっても残っている子には SIGKILL を送る
+  （デーモンの後片付けの上限 20 秒より長く待つ）。
+- 子プロセスが想定外に終わったときは、もう片方も止め、失敗の終了コードで終わる（子の終了コードが 0 でも 1 にする）。デーモンが
+  終了コード `3`（`ALREADY_RUNNING_EXIT_CODE`）で終わったときは、ほかの sacty が動いているため起動しなかったと表示する。
+
+コード: `packages/cli/src/index.ts`（`up`・`waitForDaemon`・`parsePort`）、`packages/cli/src/context-preview.ts`（`claimDaemonFile`・`removeDaemonFile`・`DAEMON_FILE`）
+
+## デーモンの起動の順序
+
+1. `SACTY_DAEMON_TOKEN` が無ければ、`sacty up` から起動するよう表示して終了コード 1 で終わる。ポートは `SACTY_DAEMON_PORT`（既定 4710）。
+2. `SACTY_HOME` のディレクトリを作り、インスタンスのロックを取る（下の「二重の起動」）。取れなければ、作業履歴などに触れる前に終わる。
+3. `SACTY_HOME/sacty.db` を開く（作業履歴・プロジェクト・sacty の設定）。設定（`config.yaml`）は使うたびに読み直す。
+4. 前回のデーモンが残した docker compose のサービスと、共用の compose の実行ごとの取得を片付ける。
+5. 前回のデーモンが残したホストの MCP サーバーのプロセスを片付ける（[ゲートウェイ](gateway.md)）。
+6. ゲートウェイを待ち受ける。
+7. 中断された実行を回復する（`recoverInterrupted`）：
+   - 答えの途中だった「オーケストレーターに質問」を、中断として記録する。
+   - 判定の途中だったゴールガーディアンの判定を、判定できなかった（`undecidable`）として記録する。
+   - 実行中（`running`）だったタスクは、実行の失敗（`AgentRunFailed`）として記録し、一時停止（`TaskPaused`、理由 `error`）にする。
+8. 実行できずに待っていた工程を実行待ちにする（`queueWaitingSteps`）。
+9. 起動時の問題（設定の誤りなど）を端末に出す。
+10. API を `127.0.0.1:<ポート>` で待ち受ける。待ち受けを始めたら、使う秘密情報をまとめて取り出し（[秘密情報](secrets.md)）、
+    その後で、ホストの MCP サーバーの起動、組織内 PF の認証の用意、ワーカー・取り込み・PR の監視を始める。
+
+ワーカーは2秒ごとに、実行待ちのタスクを作成の古い順に、同時に実行する上限（sacty の設定の `maxParallelTasks`。既定
+`DEFAULT_MAX_PARALLEL_TASKS` = 3）まで実行する。同じタスクを同時に2つ実行しない。PR の監視は60秒ごとに、前の確認が終わってから確かめる。
+
+コード: `apps/daemon/src/main.ts`、`apps/daemon/src/service.ts`（`recoverInterrupted`・`queueWaitingSteps`・`maxParallelTasks`）、
+`apps/daemon/src/worker.ts`（`Worker`）、`apps/daemon/src/pr-watcher.ts`（`PullRequestWatcher`）、`packages/core/src/projects.ts`（`DEFAULT_MAX_PARALLEL_TASKS`）
+
+## 二重の起動
+
+- ロックのファイルは `SACTY_HOME/daemon.lock`。SQLite の排他ロック（`PRAGMA locking_mode = EXCLUSIVE; BEGIN EXCLUSIVE;`）を取り、
+  コミットしないまま持ち続ける。ロックは OS がプロセスに対して持つので、デーモンがどう終わっても（SIGKILL を含む）外れる。
+  ロックのファイルは消さない。ファイル（inode）に掛かるので、同じディレクトリを別のパスで指しても二重に起動できない。
+- ロックを取ったデーモンは、表示用に `SACTY_HOME/daemon-owner.json`（PID・接続先・起動の時刻）を書く。判定には使わない。
+- 2つ目のデーモンは、ロックが取れない（`SQLITE_BUSY`）と、動いているデーモンの接続先・PID・起動の時刻（読めなければ、読めなかったこと）
+  を表示して、終了コード `3` で終わる。ロックの取得のほかの失敗（権限など）は、例外のまま起動しない。
+- ポートが違っても、同じ `SACTY_HOME` なら起動しない。違う `SACTY_HOME` なら、ポートを変えて並行して動かせる。
+
+コード: `apps/daemon/src/instance-lock.ts`（`acquireInstanceLock`・`alreadyRunningMessage`・`LOCK_FILE`・`OWNER_FILE`）、`apps/daemon/src/exit-codes.ts`（`ALREADY_RUNNING_EXIT_CODE`）
+
+## デーモンの終了
+
+SIGINT・SIGTERM を受けると、1回だけ次を行う。
+
+1. ワーカー（新しい実行を始めず、実行中の処理の後片付けを待つ）・取り込み・PR の監視を止め始める。
+2. ホストの MCP サーバーを止め始める（後片付けを待たない）。
+3. 実行中のエージェントとテストのコンテナを止める。
+4. 1 の後片付けを最大20秒（`DRAIN_TIMEOUT_MS`）待つ。過ぎたら警告を出して進む。
+5. ゲートウェイを閉じ、ホストの MCP サーバーが止まるのを待ち、API の待ち受けを閉じてから、DB を閉じ、ロックを外し（自分の書いた
+   `daemon-owner.json` も消す）、終了コード 0 で終わる。
+
+デーモンが例外などで終わるとき（`exit`）も、ホストの MCP サーバーのプロセスグループに SIGTERM を送る。
+
+コード: `apps/daemon/src/main.ts`（`shutdown`・`DRAIN_TIMEOUT_MS`）

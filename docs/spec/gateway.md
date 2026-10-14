@@ -1,0 +1,107 @@
+# ゲートウェイ
+
+デーモンの中で動く HTTP の中継。エージェントのコンテナから、AI の呼び出し・組織内 PF の API・MCP サーバーを使うときに、認証の値を
+コンテナに渡さず、ゲートウェイが付けて転送する。コンテナには実行ごとのトークンだけを渡す。
+
+関係する ADR: なし
+
+## 待ち受けとトークン
+
+- `127.0.0.1` の空いているポートで待ち受ける（ポートを決める設定は無い）。コンテナからは `http://host.docker.internal:<ポート>` で
+  つなぐ（`--add-host host.docker.internal:<gateway.host_address>`。既定 `host-gateway`）。
+- 実行ごとにトークン `sacty-gw-<48桁の16進>` を発行し、その実行が使う AI の接続先・MCP・プロジェクトのコンテキストの PF を結びつける。
+  実行が終わったら消す（以後は 401）。トークンは出力から伏せる対象に入れる。
+- 中継の途中の失敗は、そのリクエストだけを終わらせる（返し始める前なら 502）。誤りの応答は `{ error: { message, type: "sacty_gateway" } }`。
+
+| パス | 用途 | 認証 |
+| --- | --- | --- |
+| `/r/<トークン>/pf/<PF の名前>/<パス>` | 組織内 PF（エージェントには `SACTY_PF_URL` = `…/r/<トークン>/pf` を渡す） | URL の中のトークン |
+| `/ctx-mcp/<名前>` | コンテキストリポジトリの HTTP の MCP | `Authorization: Bearer <トークン>` |
+| `/mcp/<名前>` | ホストの MCP サーバー | `Authorization: Bearer <トークン>` |
+| `/openai/v1/…` | AI の呼び出し（Codex の Bedrock・providers） | `Authorization: Bearer <トークン>`（`AWS_BEARER_TOKEN_BEDROCK`・`SACTY_PROVIDER_API_KEY` に入れて渡す） |
+
+コード: `apps/daemon/src/gateway.ts`（`AiGateway.listen`・`register`・`handle`・`containerOrigin`・`platformsUrl`・`DEFAULT_HOST_ADDRESS`）、`apps/daemon/src/service.ts`（`executeLogged`）
+
+## AI の呼び出しの中継
+
+- 転送先は、Bedrock なら `https://bedrock-runtime.<region>.amazonaws.com/openai/v1`（`endpoint: runtime`。既定）か
+  `https://bedrock-mantle.<region>.api.aws/openai/v1`（`mantle`）、providers なら `base_url`。API キーはホストで取り出して `Authorization: Bearer`
+  で付ける。エージェントが付けた `authorization`・`host` などのヘッダーは送らない。
+- 429・500・502・503・504 と、上流に届かなかったときは、`Retry-After`（秒か日時）か、無ければ1秒から倍にしていく間隔（60秒で頭打ち。
+  揺らぎを加える）で待ってリトライする。それ以外の応答はそのまま流す。返し始めた後はリトライしない。
+- 上限は `gateway.retry.max_attempts`（1件のリクエストで送る回数。既定 8）と `max_wait_sec`（一続きの失敗で待つ合計。既定 600）。リクエスト
+  ごとに設定を読み直す。成功（2xx）で待った合計を戻す。上限に達したら、最後の上流の応答か、理由の文（502 など）を返し、その実行の後の
+  リクエストは待たずに1回だけ送る。その後のエージェントの失敗は、出力の文で理由を分ける（[エージェントの実行](agent-execution.md)の
+  「出力の扱い」）。
+- リトライした実行は、回数・待った時間・原因の状態・あきらめたかを `AiRequestsRetried` に記録する。
+
+コード: `apps/daemon/src/gateway.ts`（`RETRYABLE`・`BASE_DELAY_MS`・`MAX_DELAY_MS`・`DEFAULT_RETRY_POLICY`・`retryAfterMs`・`GatewayStats`）、`apps/daemon/src/service.ts`（`bedrockOrigin`・`recordRetries`）
+
+## 組織内 PF の中継
+
+PF は `config.yaml` の `gateway.platforms`（すべてのプロジェクト）か、コンテキストリポジトリの `platforms.yaml`（そのプロジェクト）に書く。
+
+| 項目 | 意味 |
+| --- | --- |
+| `upstream` | 転送先（http・https） |
+| `description` | エージェントへの説明（既定 空） |
+| `auth.header`・`auth.prefix` | 認証を付けるヘッダー（既定 `Authorization`）と値の前に付ける文字列（既定 空） |
+| `auth.secret` | 固定のキー（秘密情報の参照） |
+| `auth.token` | キーでトークンを取得する：`url`・`method`（既定 `POST`）・`headers`・`json`・`form`（`{{secret}}` をキーに置き換える）・`secret`・`token_path`・`expires_in_path`・`ttl_sec`（既定 300） |
+| `allow` | 使える API の一覧（`<メソッド> /<パス>`。1件以上） |
+
+`auth.secret` と `auth.token` はどちらか一方だけ書く。
+
+- 探す順は、ホストの PF、無ければその実行のトークンに結びつけたプロジェクトのコンテキストの PF。ほかのプロジェクトのタスクの
+  トークンでは見つからない（404）。
+- `allow` の `*` は1階層、`**` はそれより下のすべて（末尾の `/**` はその階層そのものにも合う）。クエリは見ない。`.`・`..` の階層・`%2e`・
+  `%2f`・`\` を含むパスは合わない。URL にすると変わるパス（`#` や空白を含むなど）は 400。合わなければ 403（使える API の一覧を返す）。
+- 送るヘッダーから、エージェントの認証・`cookie`・PF の認証のヘッダーを除き、認証の値を付ける。リダイレクトはたどらない。
+- トークンは期限（`expires_in_path`、無ければ `ttl_sec`）の30秒前から取り直す。`auth.token` の PF で 401・403 が返ったら、取り直して1回だけ
+  送り直す。
+- 認証の値を用意できなければ 502（どの PF か、コンテキストの PF ならどの層か）、上流に届かなければ 502。
+- ホストの PF の認証は、デーモンの起動のときに用意する。用意できないホストの PF は、画面の警告に出す（ほかの PF は使える）。
+- エージェントの指示に、そのタスクで使える PF と API の一覧を入れる。
+
+コード: `apps/daemon/src/platforms.ts`（`PlatformFile`・`TokenRequest`・`pathPattern`・`isAllowed`・`PlatformCredentials`・`REFRESH_MARGIN_MS`・`platformPromptLines`）、`apps/daemon/src/gateway.ts`（`handlePlatform`・`sentUrl`）
+
+## コンテキストの MCP の中継
+
+- 上流には `content-type`・`accept`・`mcp-session-id`・`mcp-protocol-version`・`last-event-id` のヘッダーだけを送り、`mcp.yaml` に書いた
+  ヘッダー（秘密情報はホストで取り出す）を付ける。エージェントが付けた認証などは送らない。
+- 応答（SSE を含む）はそのまま流す。リダイレクトはたどらない。上流に届かなければ 502。
+- 上流を待つ上限は既定5分（`FETCH_DEFAULT_TIMEOUT_MS`）。サーバーの `startup_timeout_sec`・`tool_timeout_sec` の大きい方がそれより長ければ、
+  その値まで延ばす。
+
+コード: `apps/daemon/src/gateway.ts`（`handleContextMcp`・`CONTEXT_MCP_REQUEST`・`FETCH_DEFAULT_TIMEOUT_MS`・`contextMcpDispatcher`）
+
+## ホストの MCP サーバー
+
+`gateway.mcp_servers.<名前>` のコマンドを、ゲートウェイがホストで起動して持ち続け、エージェントには HTTP の MCP（`/mcp/<名前>`）として渡す。
+
+| 項目 | 意味 |
+| --- | --- |
+| `command`・`args` | 起動するコマンド（シェルは使わない） |
+| `env` | 環境変数（ホストの環境変数に足す）。値は文字列か `{ secret, prefix }` |
+| `description` | 説明（既定 空） |
+| `restart_every_min` | 認証の期限の前に起動し直す間隔（1〜10080 分。任意） |
+| `ready_timeout_sec` | 起動から準備（初期化）ができるまで待つ上限（5〜3600 秒。既定 300） |
+| `startup_timeout_sec`・`tool_timeout_sec` | エージェントに渡す時間切れ（`mcp.yaml` と同じ） |
+
+- 設定は30秒ごとと、実行の前に突き合わせる（消えたものを止め、足したものを起動し、変わったものを起動し直す。時間切れだけを変えたときは
+  起動し直さない）。
+- 起動し直すとき（`restart_every_min`・プロセスの終了・ツールが認証エラーらしい結果を返した・接続が切れた）は、新しいプロセスの準備が
+  できてから切り替え、古い接続は途中の呼び出しが終わるまで（最大5分）待ってから閉じる。認証エラーのときは1回だけ起動し直し、結果に
+  しばらくしてからやり直すよう添える。
+- 起動に失敗したら理由（秘密情報を伏せる）を画面の警告に出し、1分ごとに起動し直す。準備ができていない間の呼び出しには 503 を返す。
+- 実行の前に、その実行が使う MCP サーバーの準備を `ready_timeout_sec` まで待つ。できなければ、どのサーバーかをコンテキストの警告に
+  残して実行する（書き出しでは、その接続先への書き出しを止める）。
+- 中継の時間切れは、ツールの呼び出しが10分（`CALL_TIMEOUT_MS`）か `tool_timeout_sec` の大きい方、一覧が60秒（`LIST_TIMEOUT_MS`）か
+  `startup_timeout_sec` の大きい方。
+- プロセスは、それぞれ自分のプロセスグループで起動する（`detached`）。閉じるときは標準入力を閉じて2秒待ち、プロセスグループと子孫に
+  SIGTERM を送り、3秒で終わらなければ SIGKILL を送る。
+- 記録：起動したプロセス（PID・開始時刻・子孫・起動したデーモン）を `SACTY_HOME/host-mcp/processes/<PID>.json` に書き、子孫は10秒ごとに
+  書き直す。デーモンの起動のとき、記録を書いたデーモンが動いていないものだけを、PID と開始時刻が一致するときに止める（PID が
+  再利用されたほかのプロセスや、同じ `SACTY_HOME` で動いているほかの sacty のものは止めない）。`ps` を読めなければ何も止めない。
+
+コード: `apps/daemon/src/host-mcp.ts`（`HostMcpFile`・`HostMcpServers`・`reconcile`・`ready`・`restart`・`drain`・`AUTH_ERROR`・`RETRY_MS`・`CALL_TIMEOUT_MS`・`LIST_TIMEOUT_MS`）、`apps/daemon/src/host-mcp-processes.ts`（`HostMcpProcesses`・`GroupStdioTransport`・`cleanup`・`terminate`）、`apps/daemon/src/service.ts`（`mcpRouting`・`runContext`）
