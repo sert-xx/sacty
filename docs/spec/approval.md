@@ -57,7 +57,8 @@ sacty が PR を作る・更新するとき（実装の PR と、要求要件・
 あればその見出し・項目の形で本文を書く。無い・使えないときは、sacty の決まった形の本文（`buildPullRequestBody`・
 `buildStepPullRequestBody`）にする。どちらでも PR の作成は止めない。
 
-- 探す場所と順番（既定のブランチのもの。ファイル名・ディレクトリ名の大文字・小文字は区別しない）：
+- 探す場所と順番（既定のブランチのもの。ファイル名・ディレクトリ名の大文字・小文字は区別しない）。前の順番で見つかったら、その時点で
+  読み、後の順番のディレクトリ（`docs/` など）の一覧は取りに行かない：
   1. 対象のリポジトリの `.github/pull_request_template.md` → ルートの `pull_request_template.md` → `docs/pull_request_template.md`
   2. 1つも無ければ、同じ順の `PULL_REQUEST_TEMPLATE/` ディレクトリ（`.github/`・ルート・`docs/`）の中の `.md` のうち、名前の順
      （大文字・小文字を区別しない）で最初のもの。GitHub はディレクトリの複数のテンプレートを既定には使わないが、sacty は1つを選ぶ。
@@ -87,14 +88,17 @@ sacty が PR を作る・更新するとき（実装の PR と、要求要件・
     なることと指摘の伝え方（要求要件・設計の PR）を必ず入れる。
 - 長さ（`limitBody`）：本文は 65,000 文字（`PR_BODY_MAX`。GitHub の上限 65,536 文字より少し短い。JavaScript の長さで測る）までにする。
   超えるときは、最後の部分の前の後ろを省き、省いた旨（`TRUNCATED_NOTE`）を書く。省いたところで閉じられていない HTML のコメント・
-  コードブロック・折りたたみは閉じる。テンプレートを使わない本文にも同じ上限を使う。
+  コードブロック・折りたたみは閉じる。テンプレートを使わない本文（`buildPullRequestBodyText`・`buildStepPullRequestBodyText`）にも
+  同じ上限を使い、最後の部分（sacty が作った旨と成果物チェックの案内）は省かない。
+  省けない部分（`keep`）：タスクの ID の行、`Closes #<番号>`（テンプレートの見出しに入れたものも）、要求要件・設計の PR のマージが
+  承認になることの案内。省いて消えたら、最後の部分の前に出し直す。
 - 秘密の値：その PR の作成で使った秘密の値（GitHub のトークンなど）を、本文から伏せる（`[REDACTED]`）。台帳に残す理由の文も伏せる。
 - 台帳：`PullRequestPublished`・`StepPullRequestPublished` の `template` に、使ったテンプレート（`repo`：テンプレートのあった
   リポジトリの URL、`path`）か、決まった形にした理由（`fallback`：`none`・`unusable`、`message`：`pr.templateFailed`・
   `pr.templateTooLarge`・`pr.templateInvalid`・`pr.templateEmpty`・`pr.templateOrgPrivate` など）を残し、省いたら `truncated` を残す。
   タスクの画面の PR の欄に「本文」として出す。この版より前の記録には無い（画面には出さない）。
 
-コード: `apps/daemon/src/pr-template.ts`（`GitHubPullRequestTemplates`・`fillTemplate`・`limitBody`・`CATEGORY_RULES`）、`apps/daemon/src/service.ts`（`pullRequestBody`・`publish`・`publishStepPullRequest`）、`apps/daemon/src/prompts.ts`（`buildPullRequestBodyParts`・`buildStepPullRequestBodyParts`）、`packages/core/src/events.ts`（`PullRequestTemplateUse`）、`apps/web/src/components/pull-request.tsx`（`TemplateUse`）
+コード: `apps/daemon/src/pr-template.ts`（`GitHubPullRequestTemplates`・`fillTemplate`・`limitBody`・`CATEGORY_RULES`）、`apps/daemon/src/service.ts`（`pullRequestBody`・`publish`・`publishStepPullRequest`）、`apps/daemon/src/prompts.ts`（`buildPullRequestBodyParts`・`buildStepPullRequestBodyParts`・`buildPullRequestBodyText`・`buildStepPullRequestBodyText`）、`packages/core/src/events.ts`（`PullRequestTemplateUse`）、`apps/web/src/components/pull-request.tsx`（`TemplateUse`）
 
 ## PR の指摘の取り込み
 

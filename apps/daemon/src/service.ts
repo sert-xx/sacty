@@ -142,6 +142,7 @@ import {
 import {
   fillTemplate,
   limitBody,
+  PR_BODY_MAX,
   type PullRequestTemplates,
   type TemplateLookup,
 } from "./pr-template.js";
@@ -149,6 +150,7 @@ import type { ProjectStore } from "./projects.js";
 import {
   allowedPlans,
   type BodyParts,
+  type BodyText,
   buildChatPrompt,
   buildChildBody,
   buildExportDocument,
@@ -159,14 +161,14 @@ import {
   buildInvestigationComment,
   buildOrchestratorPrompt,
   buildPrompt,
-  buildPullRequestBody,
   buildPullRequestBodyParts,
+  buildPullRequestBodyText,
   buildReviewBody,
   buildReviewComments,
   buildReworkPrompt,
   buildStepDocument,
-  buildStepPullRequestBody,
   buildStepPullRequestBodyParts,
+  buildStepPullRequestBodyText,
   buildStepPullRequestTitle,
   buildTicketInvestigationComment,
   buildTicketPullRequestComment,
@@ -4201,7 +4203,7 @@ export class TaskService {
         repo,
         token,
         usedSecrets,
-        buildStepPullRequestBody(current, step, path),
+        buildStepPullRequestBodyText(current, step, path),
         buildStepPullRequestBodyParts(current, step, path),
       );
       const pr = await this.deps.pulls.upsert({
@@ -4259,18 +4261,18 @@ export class TaskService {
     repo: string,
     token: string,
     usedSecrets: readonly string[],
-    fallbackBody: string,
+    fallback: BodyText,
     parts: BodyParts,
   ): Promise<{ body: string; template: PullRequestTemplateUse }> {
     let template: PullRequestTemplateUse;
-    let main = fallbackBody;
-    let footer = "";
+    // テンプレートが無い・使えないときも、省けない部分（タスクの ID・Closes・承認の案内）を分けて持つ（PR #99 レビュー指摘）
+    let text = fallback;
     try {
       const found: TemplateLookup = this.deps.templates
         ? await this.deps.templates.find({ repo, token })
         : { kind: "none" };
       if (found.kind === "found") {
-        ({ main, footer } = fillTemplate(found.template.text, parts));
+        text = fillTemplate(found.template.text, parts);
         template = { repo: found.template.repo, path: found.template.path };
       } else if (found.kind === "unusable") {
         template = {
@@ -4285,11 +4287,15 @@ export class TaskService {
       }
     } catch (error) {
       // テンプレートの処理の失敗でも、PR の作成は止めない（sacty の決まった形の本文にする）
-      main = fallbackBody;
-      footer = "";
+      text = fallback;
       template = { fallback: "unusable", message: redactText(errorText(error), usedSecrets) };
     }
-    const limited = limitBody(redact(main, usedSecrets), redact(footer, usedSecrets));
+    const limited = limitBody(
+      redact(text.main, usedSecrets),
+      redact(text.footer, usedSecrets),
+      PR_BODY_MAX,
+      text.keep.map((k) => redact(k, usedSecrets)),
+    );
     return {
       body: limited.body,
       template: { ...template, ...(limited.truncated ? { truncated: true } : {}) },
@@ -4394,7 +4400,7 @@ export class TaskService {
         prRepo,
         token,
         usedSecrets,
-        buildPullRequestBody(task),
+        buildPullRequestBodyText(task),
         buildPullRequestBodyParts(task),
       );
       const pr = await this.deps.pulls.upsert({

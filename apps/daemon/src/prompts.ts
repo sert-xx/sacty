@@ -1310,8 +1310,25 @@ function sactyFooter(task: Task, what: string): string {
  * PR テンプレートが無いとき・使えないときの本文（PBI-87）。
  */
 export function buildPullRequestBody(task: Task): string {
-  return [
-    `sacty のタスク「${task.title}」の成果物です（sacty task ${task.id}）。`,
+  return joinBodyText(buildPullRequestBodyText(task));
+}
+
+/**
+ * テンプレートを使わない本文を、長さの上限で省くときのために分けたもの（PBI-87、PR #99 レビュー指摘）。main は省いてよい
+ * 部分、footer は必ず最後に置く部分、keep は main にあっても省けない行（省いて消えたら footer の前に出し直す）。
+ */
+export type BodyText = { main: string; footer: string; keep: string[] };
+
+/** BodyText を、省かずにつないだ本文。 */
+export function joinBodyText(text: BodyText): string {
+  return text.footer ? `${text.main}\n\n${text.footer}` : text.main;
+}
+
+/** テンプレートを使わない実装の PR の本文（PBI-87。つなぐと `buildPullRequestBody` と同じ）。 */
+export function buildPullRequestBodyText(task: Task): BodyText {
+  const intro = `sacty のタスク「${task.title}」の成果物です（sacty task ${task.id}）。`;
+  const main = [
+    intro,
     "",
     ...(closesLines(task).length > 0 ? [...closesLines(task), ""] : []),
     ...approvedBasisLines(task, "##"),
@@ -1329,10 +1346,14 @@ export function buildPullRequestBody(task: Task): string {
     "## ゴールガーディアンの最終レビュー",
     "",
     ...finalReviewLines(task),
-    "",
-    "---",
-    "この PR は sacty が作成しました。sacty の成果物チェックで承認・差し戻しをしてください。",
   ].join("\n");
+  return {
+    main,
+    footer:
+      "---\nこの PR は sacty が作成しました。sacty の成果物チェックで承認・差し戻しをしてください。",
+    // タスクの ID と、マージで Issue を閉じる行は、省いても残す
+    keep: [intro, ...closesLines(task)],
+  };
 }
 
 /**
@@ -1403,21 +1424,34 @@ export function buildStepPullRequestBody(
   step: StepPullRequestKey,
   path: string,
 ): string {
+  return joinBodyText(buildStepPullRequestBodyText(task, step, path));
+}
+
+/** テンプレートを使わない要求要件・設計の PR の本文（PBI-87。つなぐと `buildStepPullRequestBody` と同じ）。 */
+export function buildStepPullRequestBodyText(
+  task: Task,
+  step: StepPullRequestKey,
+  path: string,
+): BodyText {
   const name = STEP_NAME[step];
   const responded = respondedLines(task, step);
   const earlier = earlierStepLines(task, step);
-  return [
-    `sacty のタスク「${task.title}」の${name}です（sacty task ${task.id}）。`,
-    "",
-    `成果のファイル：\`${path}\``,
-    "",
-    ...stepApprovalLines(step),
-    ...(earlier.length > 0 ? ["", "承認済みの前の工程：", ...earlier] : []),
-    ...(responded.length > 0 ? ["", "## 指摘への対応", "", ...responded] : []),
-    "",
-    "---",
-    "この PR は sacty が作成しました。",
-  ].join("\n");
+  const intro = `sacty のタスク「${task.title}」の${name}です（sacty task ${task.id}）。`;
+  const approval = stepApprovalLines(step).join("\n");
+  return {
+    main: [
+      intro,
+      "",
+      `成果のファイル：\`${path}\``,
+      "",
+      approval,
+      ...(earlier.length > 0 ? ["", "承認済みの前の工程：", ...earlier] : []),
+      ...(responded.length > 0 ? ["", "## 指摘への対応", "", ...responded] : []),
+    ].join("\n"),
+    footer: "---\nこの PR は sacty が作成しました。",
+    // タスクの ID と、マージが承認になることの案内は、省いても残す
+    keep: [intro, approval],
+  };
 }
 
 /** 要求要件・設計の PR の、承認の仕方と指摘の伝え方（PBI-57・PBI-63）。 */

@@ -1,6 +1,6 @@
 import { type DaemonText, githubApiBase, message, parseRepoUrl } from "@sacty/core";
 import { errorText } from "./errors.js";
-import type { BodyParts } from "./prompts.js";
+import type { BodyParts, BodyText } from "./prompts.js";
 
 /**
  * PR の本文を、対象のリポジトリ（無ければ Org の .github リポジトリ）の PR テンプレートに沿わせる（PBI-87）。
@@ -127,20 +127,28 @@ export class GitHubPullRequestTemplates implements PullRequestTemplates {
       sortByName(
         entries.filter((e) => e.type === "file" && e.name.toLowerCase() === TEMPLATE_FILE),
       )[0];
-    // .github と docs の中身（あれば）
+    // .github と docs の中身は、その順番になってから読む（前の順番で見つかったら、後の順番のディレクトリには触れない。
+    // 後のディレクトリの一覧の失敗で、見つかったテンプレートを使えなくしないため。PR #99 レビュー指摘）
     const githubDir = dirOf(root, ".github");
     const docsDir = dirOf(root, "docs");
-    const inGithub = githubDir ? ((await list(githubDir.path)) ?? []) : [];
-    const inDocs = docsDir ? ((await list(docsDir.path)) ?? []) : [];
-    // 1つのファイル：.github → ルート → docs
-    const single = fileOf(inGithub) ?? fileOf(root) ?? fileOf(inDocs);
-    if (single) return this.read(repo.url, base, single, get, reading);
+    let inGithub: Entry[] | undefined;
+    let inDocs: Entry[] | undefined;
+    const githubEntries = async () => {
+      inGithub ??= githubDir ? ((await list(githubDir.path)) ?? []) : [];
+      return inGithub;
+    };
+    const docsEntries = async () => {
+      inDocs ??= docsDir ? ((await list(docsDir.path)) ?? []) : [];
+      return inDocs;
+    };
+    // 1つのファイル：.github → ルート → docs（見つかった時点で読む）
+    for (const entries of [githubEntries, async () => root, docsEntries]) {
+      const single = fileOf(await entries());
+      if (single) return this.read(repo.url, base, single, get, reading);
+    }
     // 複数のテンプレートのディレクトリ：同じ順で、中の .md のうち名前の順で最初のもの
-    for (const dir of [
-      dirOf(inGithub, TEMPLATE_DIR),
-      dirOf(root, TEMPLATE_DIR),
-      dirOf(inDocs, TEMPLATE_DIR),
-    ]) {
+    for (const entries of [githubEntries, async () => root, docsEntries]) {
+      const dir = dirOf(await entries(), TEMPLATE_DIR);
       if (!dir) continue;
       const files = sortByName(
         ((await list(dir.path)) ?? []).filter(
@@ -406,7 +414,7 @@ function details(body: string): string {
  * - 内容の無い見出し・当てはまらない見出しは「該当なし」にする（チェックボックスのある見出しは、外したチェックボックスだけ）
  * - テンプレートのコメント・チェックボックスは残し、チェックボックスはすべて外す
  */
-export function fillTemplate(template: string, parts: BodyParts): { main: string; footer: string } {
+export function fillTemplate(template: string, parts: BodyParts): BodyText {
   const used = new Set<Category>();
   const out: string[] = [];
   for (const section of splitSections(template)) {
@@ -452,6 +460,8 @@ export function fillTemplate(template: string, parts: BodyParts): { main: string
       .replace(/\n{3,}/g, "\n\n")
       .trim(),
     footer: `${issue}${parts.footer.trim()}`,
+    // 見出しに入れた関係する Issue（Closes）は、長さの上限で省いても残す（PR #99 レビュー指摘）
+    keep: used.has("issue") && parts.issue?.trim() ? [parts.issue.trim()] : [],
   };
 }
 
@@ -471,17 +481,23 @@ export const TRUNCATED_NOTE =
 /**
  * main と footer をつないだ本文を、上限に収める。超えるときは main の後ろを省く（footer は省かない）。
  * 省いたところで閉じられていない HTML のコメント・コードブロック・折りたたみは閉じる（後ろの footer を隠さないため）。
+ * keep は main にあっても省けない部分（タスクの ID・Closes・承認の案内）。省いて main から消えたものは、footer の前に
+ * 出し直す（PR #99 レビュー指摘）。
  */
 export function limitBody(
   main: string,
   footer: string,
   max = PR_BODY_MAX,
+  keep: readonly string[] = [],
 ): { body: string; truncated: boolean } {
-  const join = (head: string) => (footer ? (head ? `${head}\n\n${footer}` : footer) : head);
-  const whole = join(main);
+  const joinWith = (head: string, tail: string) =>
+    tail ? (head ? `${head}\n\n${tail}` : tail) : head;
+  const whole = joinWith(main, footer);
   if (whole.length <= max) return { body: whole, truncated: false };
-  // 閉じる記号と省いた文の分を空けておく
-  const reserve = footer.length + TRUNCATED_NOTE.length + 64;
+  const kept = keep.filter((k) => k.length > 0);
+  // 閉じる記号・省いた文・出し直す部分の分を空けておく
+  const reserve =
+    footer.length + kept.reduce((sum, k) => sum + k.length + 2, 0) + TRUNCATED_NOTE.length + 64;
   let cut = Math.max(0, max - reserve);
   // サロゲートペアの途中で切らない
   const code = main.charCodeAt(cut - 1);
@@ -494,7 +510,9 @@ export function limitBody(
   const close = (head.match(/<\/details>/g) ?? []).length;
   head += `\n\n${TRUNCATED_NOTE}`;
   if (open > close) head += "\n\n</details>".repeat(open - close);
-  const body = join(head);
+  // 省いて消えた、省けない部分は footer の前に出し直す
+  const restored = kept.filter((k) => !head.includes(k));
+  const body = joinWith(head, [...restored, footer].filter(Boolean).join("\n\n"));
   // footer そのものが上限を超えるときは、最後の手段として切る
   return { body: body.length <= max ? body : body.slice(0, max), truncated: true };
 }

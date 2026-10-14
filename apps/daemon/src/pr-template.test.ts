@@ -239,6 +239,31 @@ describe("PR の本文の長さ（PBI-87）", () => {
     expect(body).toContain("</details>\n\nFOOTER");
   });
 
+  it("省けない部分（keep）は、省いて消えたら footer の前に出し直し、残っていれば重ねない（PR #99 レビュー指摘）", () => {
+    const main = `先頭\n\n${"a".repeat(PR_BODY_MAX)}\n\nCloses #12`;
+    const { body, truncated } = limitBody(main, "FOOTER", PR_BODY_MAX, ["先頭", "Closes #12"]);
+    expect(truncated).toBe(true);
+    expect(body.length).toBeLessThanOrEqual(PR_BODY_MAX);
+    expect(body.endsWith("Closes #12\n\nFOOTER")).toBe(true);
+    expect(body.split("先頭")).toHaveLength(2);
+    // footer が空でも、省けない部分は最後に残す
+    const fallback = limitBody(main, "", PR_BODY_MAX, ["Closes #12"]);
+    expect(fallback.body.length).toBeLessThanOrEqual(PR_BODY_MAX);
+    expect(fallback.body.endsWith("Closes #12")).toBe(true);
+  });
+
+  it("テンプレートの Issue の見出しが長い概要の後にあっても、省いたときに Closes を失わない（PR #99 レビュー指摘）", () => {
+    const filled = fillTemplate("## 概要\n\n## Related Issue\n", {
+      ...parts,
+      summary: "長い概要。".repeat(20_000),
+    });
+    expect(filled.keep).toEqual(["Closes #12"]);
+    const { body } = limitBody(filled.main, filled.footer, PR_BODY_MAX, filled.keep);
+    expect(body.length).toBeLessThanOrEqual(PR_BODY_MAX);
+    expect(body).toContain("Closes #12");
+    expect(body.endsWith(parts.footer)).toBe(true);
+  });
+
   it("サロゲートペアの途中で切らない", () => {
     const main = "😀".repeat(PR_BODY_MAX);
     const { body } = limitBody(main, "F");
@@ -303,6 +328,43 @@ describe("PR テンプレートを探す（PBI-87）", () => {
       },
     });
     expect(calls.every((c) => c.auth === "Bearer ghp_secret")).toBe(true);
+  });
+
+  it("前の順番で見つかったら、後の順番のディレクトリは読まない（その一覧の失敗で使えなくしない。PR #99 レビュー指摘）", async () => {
+    const broken = { status: 500, json: { message: "boom" } };
+    // ルートにあり、docs の一覧は失敗する
+    const root = routes({
+      [API]: {
+        status: 200,
+        json: [dir("docs", "docs"), file("pull_request_template.md", "pull_request_template.md")],
+      },
+      [`${API}/docs`]: broken,
+      [`${API}/pull_request_template.md`]: content("root"),
+    });
+    expect(await find(root.impl)).toMatchObject({ kind: "found", template: { text: "root" } });
+    expect(root.calls.map((c) => c.url)).not.toContain(`${API}/docs`);
+    // .github にあり、docs の一覧は失敗する
+    const github = routes({
+      [API]: { status: 200, json: [dir(".github", ".github"), dir("docs", "docs")] },
+      [`${API}/.github`]: {
+        status: 200,
+        json: [file("pull_request_template.md", ".github/pull_request_template.md")],
+      },
+      [`${API}/docs`]: broken,
+      [`${API}/.github/pull_request_template.md`]: content("github"),
+    });
+    expect(await find(github.impl)).toMatchObject({ kind: "found", template: { text: "github" } });
+    expect(github.calls.map((c) => c.url)).not.toContain(`${API}/docs`);
+    // .github のディレクトリのテンプレートがあり、docs の一覧は失敗する（docs の1つのファイルを探すときに初めて失敗する）
+    const multiple = routes({
+      [API]: { status: 200, json: [dir(".github", ".github"), dir("docs", "docs")] },
+      [`${API}/.github`]: {
+        status: 200,
+        json: [dir("PULL_REQUEST_TEMPLATE", ".github/PULL_REQUEST_TEMPLATE")],
+      },
+      [`${API}/docs`]: broken,
+    });
+    expect(await find(multiple.impl)).toMatchObject({ kind: "unusable" });
   });
 
   it(".github に無ければルート、ルートにも無ければ docs のものを使う", async () => {

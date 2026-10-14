@@ -14641,11 +14641,15 @@ describe("PR テンプレート（PBI-87）", () => {
   }
 
   /** 要求要件・設計を PR で承認する流れで、実装の PR まで進める。 */
-  async function toPullRequest(templates: FakeTemplates, implementation = implement()) {
+  async function toPullRequest(
+    templates: FakeTemplates,
+    implementation = implement(),
+    requirements = "# 要求要件 v1",
+  ) {
     const activity = new SqliteActivityStore(dbPath);
     const pulls = new FakePulls();
     const repos = new FakeRepos();
-    const made = makeService(activity, [out("# 要求要件 v1"), design, implementation, review], {
+    const made = makeService(activity, [out(requirements), design, implementation, review], {
       stepPullRequests: true,
       now: () => Date.parse("2026-10-11T00:03:00Z"),
       pulls,
@@ -14777,6 +14781,31 @@ describe("PR テンプレート（PBI-87）", () => {
       true,
     );
     withTemplate.activity.close();
+  });
+
+  it("テンプレートが無い・使えないときも、本文を省くときに成果物チェックの案内とタスクの ID を失わない（PR #99 レビュー指摘）", async () => {
+    for (const templates of [
+      new FakeTemplates(async () => ({ kind: "none" })),
+      new FakeTemplates(async () => {
+        throw new Error("boom");
+      }),
+    ]) {
+      const made = await toPullRequest(
+        templates,
+        implement(),
+        `# 要求要件 v1\n\n${"長い要求要件。".repeat(20_000)}`,
+      );
+      const body = made.pulls.calls[2]?.body ?? "";
+      expect(body.length).toBeLessThanOrEqual(PR_BODY_MAX);
+      expect(body).toContain(`sacty task ${made.id}`);
+      expect(
+        body.endsWith(
+          "この PR は sacty が作成しました。sacty の成果物チェックで承認・差し戻しをしてください。",
+        ),
+      ).toBe(true);
+      expect(taskOf(made.service, made.id).pullRequest?.template?.truncated).toBe(true);
+      made.activity.close();
+    }
   });
 
   it("本文に秘密の値を出さない（エージェントの出力に紛れても伏せる）", async () => {

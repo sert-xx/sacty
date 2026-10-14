@@ -17,7 +17,9 @@ import { MemoryProjectStore } from "./projects.js";
 import {
   buildPullRequestBody,
   buildPullRequestBodyParts,
+  buildPullRequestBodyText,
   buildStepPullRequestBodyParts,
+  buildStepPullRequestBodyText,
 } from "./prompts.js";
 import { MemorySecretStore } from "./secrets.js";
 import { TaskService } from "./service.js";
@@ -390,6 +392,11 @@ describe("GitHub Issue の定期的な取り込み（PBI-5a）", () => {
     expect(step.main).toContain("## Related\n\n#7（このタスクの取り込み元");
     expect(step.footer).toContain(`sacty task ${task.id}`);
     expect(step.footer).toContain("この PR をマージすると、要求要件を承認したことになり");
+    // テンプレートを使わない本文でも、省けない部分（タスクの ID・Closes・承認の案内）を分けて持つ（PR #99 レビュー指摘）
+    const fallback = buildPullRequestBodyText(task);
+    expect(fallback.keep).toEqual([expect.stringContaining(`sacty task ${task.id}`), "Closes #7"]);
+    const stepFallback = buildStepPullRequestBodyText(task, "design", "docs/x.md");
+    expect(stepFallback.keep[1]).toContain("この PR をマージすると、設計を承認したことになり");
     activity.close();
   });
 });
