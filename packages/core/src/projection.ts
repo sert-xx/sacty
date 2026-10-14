@@ -12,6 +12,7 @@ import type {
   StepPlan,
   StepPullRequestKey,
   TaskSource,
+  TaskTemplate,
   TestMapping,
   TestViewpoint,
   Verdict,
@@ -257,6 +258,13 @@ export type Task = {
   repo?: string;
   /** 対象リポジトリを指定せずに作った（PBI-73）。リポジトリを決めた後も残る（作ったときの指定）。 */
   noRepo?: true;
+  /** テンプレートで作った（PBI-90）。 */
+  template?: TaskTemplate;
+  /**
+   * PR作成の工程で、実装に変更が無かったので PR を作らなかった成果物チェックの提出回（PBI-90）。その提出回が承認待ち・承認済み
+   * なら、変更なしの成果物チェック（変更なしで完了）。
+   */
+  noChanges?: { submission: number };
   /**
    * 対象リポジトリを決めた理由（PBI-73）。リポジトリを指定せずに作ったタスクで、オーケストレーター・人が選んだとき、
    * 分割の子タスクに分割のエージェントが付けたとき。
@@ -509,6 +517,7 @@ export function applyEvent(
         ? { repoChoice: { reason: event.payload.repoReason, by: "orchestrator" as const } }
         : {}),
       ...(event.payload.parent ? { parent: event.payload.parent } : {}),
+      ...(event.payload.template ? { template: event.payload.template } : {}),
       ...(event.payload.fix ? { fix: event.payload.fix } : {}),
       // 依存先の子タスクがあれば、それが完了するまで待つ（PBI-27）
       status: event.payload.parent?.dependsOn.length ? "blocked" : "queued",
@@ -918,6 +927,18 @@ export function applyEvent(
       // 作り直した・更新した PR は、開いているものとして見守り直す
       task.pullRequestState = event.payload.number ? "open" : undefined;
       task.pullRequestMerge = undefined;
+      task.status = "idle";
+      break;
+
+    case "NoChangesFound":
+      // 実装に変更が無く、PR を作らなかった（PBI-90）。成果物チェックで人間が確かめる
+      if (task.status !== "queued" || activeStep(task) !== "pr") {
+        throw new ActivityIntegrityError(event, "the pr step is not running");
+      }
+      if (task.pullRequest) {
+        throw new ActivityIntegrityError(event, "a pull request is already published");
+      }
+      task.noChanges = { submission: event.payload.submission };
       task.status = "idle";
       break;
 
@@ -1908,4 +1929,14 @@ export function awaitingTicketTriage(task: Task): boolean {
     task.repository === undefined &&
     (!task.repo || task.ticketTriage?.by === "person")
   );
+}
+
+/**
+ * 成果物チェックが、実装に変更が無く PR を作らなかった提出回か（PBI-90）。承認待ちなら人間が変更なしで完了にするかを判断し、
+ * 完了していれば変更なしで完了した。
+ */
+export function deliveredWithoutChanges(task: Task): boolean {
+  const submission = task.noChanges?.submission;
+  if (submission === undefined || task.pullRequest) return false;
+  return task.submissions.pr === submission;
 }

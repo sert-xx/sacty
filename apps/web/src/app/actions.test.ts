@@ -92,6 +92,72 @@ describe("タスクの対象リポジトリ（PBI-21）", () => {
   });
 });
 
+describe("タスクのテンプレート（PBI-90）", () => {
+  beforeEach(() => createTask.mockReset());
+
+  it("テンプレートを選んだら、題・内容を渡さず、テンプレートとリポジトリだけで作る", async () => {
+    createTask.mockResolvedValue({ ok: true, task: { id: "t9" } });
+    await expect(
+      createTaskAction(
+        {},
+        form({
+          template: "sacty-setup",
+          projectId: "project-a",
+          repo: " https://github.com/acme/api ",
+          // 隠した欄の値が残っていても、渡さない
+          title: "残った題",
+          body: "残った内容",
+        }),
+      ),
+    ).rejects.toThrow("redirect:/tasks/t9");
+    expect(createTask).toHaveBeenCalledWith({
+      template: "sacty-setup",
+      projectId: "project-a",
+      repo: "https://github.com/acme/api",
+    });
+  });
+
+  it("リポジトリを空欄にしたら省いて渡し、作れなければテンプレートを選んだまま理由を返す", async () => {
+    createTask.mockResolvedValue({
+      ok: false,
+      message:
+        "このテンプレートでは、対象リポジトリを選んでください（リポジトリを指定せずには作れません）。",
+    });
+    expect(
+      await createTaskAction(
+        {},
+        form({ template: "sacty-setup", projectId: "project-a", repo: "" }),
+      ),
+    ).toMatchObject({
+      message: expect.stringMatching(/対象リポジトリを選んでください/),
+      values: { template: "sacty-setup", repo: "" },
+    });
+    expect(createTask).toHaveBeenCalledWith({ template: "sacty-setup", projectId: "project-a" });
+    // 作成先が無ければ、作らない
+    createTask.mockReset();
+    expect(await createTaskAction({}, form({ template: "sacty-setup" }))).toMatchObject({
+      message: expect.stringMatching(/作成先のプロジェクトが分かりません/),
+    });
+    expect(createTask).not.toHaveBeenCalled();
+  });
+
+  it("テンプレートが「なし」（空）・知らない値なら、通常のタスクとして作る", async () => {
+    createTask.mockResolvedValue({ ok: true, task: { id: "t1" } });
+    for (const template of ["", "unknown"]) {
+      createTask.mockClear();
+      await expect(
+        createTaskAction({}, form({ template, title: "決済", body: "", projectId: "project-a" })),
+      ).rejects.toThrow("redirect:/tasks/t1");
+      expect(createTask).toHaveBeenCalledWith({
+        title: "決済",
+        body: "",
+        repo: null,
+        projectId: "project-a",
+      });
+    }
+  });
+});
+
 describe("作成・インポートの後のコンテキストの誤り（PBI-76 レビュー指摘）", () => {
   beforeEach(() => {
     saveProject.mockReset();

@@ -4,6 +4,7 @@ import {
   awaitingTicketTriage,
   canRereview,
   canRetryExport,
+  deliveredWithoutChanges,
   exportDue,
   gatePullRequest,
   investigationIsGoal,
@@ -137,6 +138,13 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
         <p className="text-sm text-muted-foreground">
           {m.start}
           {labels.start[task.start]}
+          {/* テンプレートで作ったタスク（PBI-90） */}
+          {task.template && (
+            <>
+              {m.template}
+              <span data-testid="task-template">{labels.template[task.template]}</span>
+            </>
+          )}
           {task.source && (
             <>
               {m.sourceOpen}
@@ -256,9 +264,11 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
                             ? m.gate.prMergedOutdatedHelp
                             : watched?.step === "pr"
                               ? m.gate.prHelp
-                              : watched
-                                ? m.gate.stepPrHelp(labels.step[watched.step])
-                                : m.gate.reviewHelp}
+                              : task.gate?.step === "pr" && deliveredWithoutChanges(task)
+                                ? m.gate.noChangesHelp
+                                : watched
+                                  ? m.gate.stepPrHelp(labels.step[watched.step])
+                                  : m.gate.reviewHelp}
             </p>
           </div>
           <Link

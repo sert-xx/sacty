@@ -273,6 +273,13 @@ export const PauseReason = z.enum([
 export type PauseReason = z.infer<typeof PauseReason>;
 
 /**
+ * タスクのテンプレート（PBI-90）。sacty-setup：対象のリポジトリを sacty で扱うためのエージェントの設定を検査し、
+ * 足りないものを整える（題と説明は sacty が決める）。
+ */
+export const TaskTemplate = z.enum(["sacty-setup"]);
+export type TaskTemplate = z.infer<typeof TaskTemplate>;
+
+/**
  * マージの後の監視（PBI-89）。修正のタスクの元。kind は ci（CI/CD の失敗）か deployment（デプロイ後のアプリの確認の失敗）。
  * fingerprint は、同じ失敗の修正のタスクを二重に作らないための目印。depth は、元のタスクを 0 として何段目の修正のタスクか。
  */
@@ -347,6 +354,8 @@ const TaskCreated = z.object({
      * 依存がある子タスクは、依存先がすべて完了するまで待つ（blocked）。
      */
     parent: z.object({ taskId: z.string(), dependsOn: z.array(z.string()) }).optional(),
+    /** テンプレートで作った（PBI-90）。題と説明は、テンプレートから sacty が決めたもの。 */
+    template: TaskTemplate.optional(),
     /**
      * マージの後の監視で見つけた失敗の、修正のタスク（start: deployment。PBI-89）。元のタスク・失敗の種類・二重に作らない
      * ための目印・何段目の修正のタスクか（元のタスクが 0。MAX_FIX_CHAIN まで）。
@@ -1110,6 +1119,16 @@ const PullRequestPublished = z.object({
 });
 
 /**
+ * PR作成の工程で、実装が起点から何も変えていなかった（PBI-90）。PR を作らず、成果物チェックで人間が実装の説明（変更が
+ * 要らない理由）を確かめる。承認すると、変更なしで完了する（差し戻せば実装をやり直す）。submission は、この後に提出する
+ * 成果物チェックの提出回。まだ PR を作っていないタスクだけで記録する。
+ */
+const NoChangesFound = z.object({
+  type: z.literal("NoChangesFound"),
+  payload: z.object({ submission: z.number().int().positive() }),
+});
+
+/**
  * sacty が作った PR（実装の PR と、要求要件・設計の PR）に、取り込むラベル（sacty の設定）を付けた（PBI-88）。
  * 別のタスクとして取り込ませ、レビューだけを行わせるため。created は、リポジトリにラベルが無かったので作った。
  * 1つの PR につき1回だけ付ける（記録のある PR には、更新しても付け直さない）。
@@ -1643,6 +1662,7 @@ export const EventInput = z.discriminatedUnion("type", [
   OrchestratorSessionUsed,
   IntegrationReviewed,
   PullRequestPublished,
+  NoChangesFound,
   PullRequestLabeled,
   PullRequestLabelFailed,
   TaskBranchCreated,
@@ -1707,6 +1727,19 @@ export const CreateTaskInput = z.object({
   repo: z.string().trim().min(1).nullable().optional(),
 });
 export type CreateTaskInput = z.infer<typeof CreateTaskInput>;
+
+/**
+ * テンプレートからタスクを作る入力（PBI-90）。題と説明はテンプレートから sacty が決めるので受け付けない（書けば誤り）。
+ * 対象リポジトリは必須（省略すると、プロジェクトの対象がリポジトリ1つだけならそれにする。null は受け付けない）。
+ */
+export const CreateTemplateTaskInput = z
+  .object({
+    template: TaskTemplate,
+    projectId: z.string().min(1),
+    repo: z.string().trim().min(1).optional(),
+  })
+  .strict();
+export type CreateTemplateTaskInput = z.infer<typeof CreateTemplateTaskInput>;
 
 /** 一時停止中のタスクを再開する入力。予算で止まった場合は新しい上限（累計）が必要。 */
 export const ResumeTaskInput = z.object({

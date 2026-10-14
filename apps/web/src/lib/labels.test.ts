@@ -1180,3 +1180,94 @@ describe("成果の書き出しの作業履歴（PBI-56）", () => {
     );
   });
 });
+
+describe("テンプレートで作ったタスクの作業履歴（PBI-90）", () => {
+  const created = (template?: "sacty-setup"): ActivityEvent =>
+    ({
+      type: "TaskCreated",
+      payload: {
+        title: "t",
+        body: "",
+        start: "sacty",
+        budgetCapUsd: 5,
+        ...(template ? { template } : {}),
+      },
+      seq: 1,
+      id: "e1",
+      taskId: "t1",
+      projectId: "default",
+      at: "2026-10-15T00:00:00.000Z",
+      actor: "person",
+    }) as ActivityEvent;
+
+  it("作成の行に、テンプレートの名前を出す（無ければ今と同じ）", () => {
+    expect(describeEvent(created("sacty-setup"))).toBe(
+      "タスクを作成（人間・テンプレート：Sacty セットアップ）",
+    );
+    expect(describeIn(created("sacty-setup"), labels.en)).toBe(
+      "Task created (person · template: Sacty setup)",
+    );
+    expect(describeEvent(created())).toBe("タスクを作成（人間）");
+  });
+});
+
+describe("実装に変更が無い成果物チェック（PBI-90）", () => {
+  const prGate = (patch: Partial<Task> = {}) =>
+    task({
+      status: "awaiting_approval",
+      steps: [
+        { key: "implement", state: "done" },
+        { key: "pr", state: "active" },
+      ],
+      gate: { step: "pr", submission: 2 },
+      submissions: { pr: 2 },
+      noChanges: { submission: 2 },
+      ...patch,
+    });
+
+  it("PR を作らなかった提出回は、変更なしの成果物チェック待ちとし、承認すると「完了（変更なし）」と出す", () => {
+    expect(statusText(prGate())).toBe("変更なしの成果物チェック待ち（2回目）");
+    expect(statusTextIn(prGate(), labels.en)).toBe(
+      "Awaiting deliverable review with no changes (submission 2)",
+    );
+    const done = prGate({
+      status: "idle",
+      gate: undefined,
+      steps: [
+        { key: "implement", state: "done" },
+        { key: "pr", state: "done" },
+      ],
+    });
+    expect(statusText(done)).toBe("完了（変更なし）");
+    expect(statusTextIn(done, labels.en)).toBe("Done (no changes)");
+  });
+
+  it("前の提出回の変更なし・PR を作った提出回は、今までどおり", () => {
+    // 差し戻して作り直した提出回（3回目）には、2回目の変更なしを引き継がない
+    expect(
+      statusText(prGate({ gate: { step: "pr", submission: 3 }, submissions: { pr: 3 } })),
+    ).toBe("成果物チェック待ち（3回目）");
+    expect(
+      statusText(
+        prGate({
+          pullRequest: { branch: "b", commit: "c", url: "u", number: 7 },
+          pullRequestState: "open",
+        }),
+      ),
+    ).toBe("PR のマージ待ち（2回目）");
+  });
+
+  it("作業履歴の行", () => {
+    const event = {
+      type: "NoChangesFound",
+      payload: { submission: 1 },
+      seq: 1,
+      id: "e1",
+      taskId: "t1",
+      projectId: "default",
+      at: "2026-10-15T00:00:00.000Z",
+      actor: "sacty",
+    } as ActivityEvent;
+    expect(describeEvent(event)).toBe("実装に変更が無いため、PR を作らずに成果物チェックへ");
+  });
+});

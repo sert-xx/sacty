@@ -50,6 +50,9 @@ const ja = {
       "再現のテストが失敗しなかった（または、再現のテストが無かった）ので、先へは進めません。再現の手がかり（手順・入力・環境など）を指摘に書いて差し戻すと、再現をやり直します。不要なら、タスクを中止してください。",
     note: (max: number) =>
       `指摘はタスクに累積し、再提出のたびにすべてエージェントに渡されます。同じ工程への差し戻しが${max}回を超えるとエスカレーションになります。`,
+    noChangesTitle: "変更なし（PR は作っていません）",
+    noChangesHelp:
+      "実装は起点から何も変えていません。実装の説明・テストの結果・最終レビューで、変更が要らない理由が確かかを確かめてください。承認すると、PR を作らずに変更なしで完了します。変更が要るなら、指摘を書いて差し戻すと実装をやり直します。",
     prTitle: "GitHub の PR で判断します",
     prHelp:
       "PR をレビューしてマージすると、成果物チェックの承認になり、タスクが完了します。レビューやコメントで指摘すると、差し戻しとして取り込み、ゴールガーディアンが判断した工程（実装・設計・要求要件。判断できなければ実装）からやり直します（sacty が1分ごとに確かめ、最後のコメントから2分後に取り込みます）。設計・要求要件からやり直したときは、作り直した成果をもう一度承認してください。",
@@ -122,6 +125,9 @@ const en: ReviewMessages = {
     notReproducedTitle: "The bug was not reproduced",
     notReproducedHelp:
       "The reproduction test did not fail (or there was no reproduction test), so the task can't move on. Request changes with hints for reproducing it (steps, input, environment) to try again, or cancel the task.",
+    noChangesTitle: "No changes (no PR was opened)",
+    noChangesHelp:
+      "The implementation changed nothing from the base. Check in the implementation notes, test results, and final review that no change is really needed. Approving finishes the task without changes and without a PR. If a change is needed, write your comments and request changes to redo the implementation.",
     prTitle: "Decide on the GitHub PR",
     prHelp:
       "Review and merge the PR to approve the deliverable review and complete the task. Comments in reviews or on the PR are imported as change requests, and the work is redone from the step the Goal Guardian picks (implementation, design, or requirements; implementation if it can't decide). sacty checks every minute and imports two minutes after the last comment. When design or requirements are redone, approve the reworked deliverable again.",

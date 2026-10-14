@@ -19,6 +19,7 @@ import {
   type CiFailure,
   type CleanupTarget,
   CreateTaskInput,
+  CreateTemplateTaskInput,
   canRereview,
   canRetryExport,
   changeRounds,
@@ -224,7 +225,7 @@ import {
   verificationBasis,
 } from "./prompts.js";
 import { CONTAINER_LOGS_DIR, stageQuestionLogs } from "./question-logs.js";
-import type { RepositoryWorkspace } from "./repository.js";
+import { NothingToCommitError, type RepositoryWorkspace } from "./repository.js";
 import { secretUses } from "./secret-uses.js";
 import { type PrefetchingSecretStore, SecretNotFoundError, type SecretStore } from "./secrets.js";
 import {
@@ -246,6 +247,7 @@ import {
   type SharedComposeFetcher,
   sharedComposeRunDir,
 } from "./shared-compose.js";
+import { templateTask } from "./task-templates.js";
 import { type FoundTicket, type TicketClient, ticketErrorText } from "./tickets.js";
 
 /**
@@ -2999,8 +3001,12 @@ export class TaskService {
     return updated;
   }
 
-  /** 画面からタスクを作る。作るプロジェクトは必ず指定する（既定のプロジェクトは無い。PBI-22）。 */
+  /**
+   * 画面からタスクを作る。作るプロジェクトは必ず指定する（既定のプロジェクトは無い。PBI-22）。
+   * template があれば、テンプレートから作る（題と説明は sacty が決める。PBI-90）。
+   */
   createTask(raw: unknown): Task {
+    if (raw && typeof raw === "object" && "template" in raw) return this.createTemplateTask(raw);
     const input = CreateTaskInput.parse(raw);
     const { projectId } = input;
     const project = this.deps.projects.get(projectId);
@@ -3032,22 +3038,57 @@ export class TaskService {
         },
       ]);
     }
-    const responsible =
-      wanted && RepoUrl.safeParse(wanted).success
-        ? responsibleProject(this.deps.projects.all(), wanted)
-        : undefined;
-    if (responsible?.project.id !== projectId) {
-      throw new InvalidOperationError(message("task.repositoryUnknown", { project: project.name }));
-    }
-    // リポジトリの対象なら、登録した名前にそろえる（大文字・小文字の違い）
-    const repo =
-      responsible.target.scope === "repo" ? responsible.target.target : RepoUrl.parse(wanted);
+    const repo = this.projectRepository(project, wanted);
     return this.append({ id: randomUUID(), projectId }, [
       {
         actor: "person",
         event: {
           type: "TaskCreated",
           payload: { title, body, start: "sacty", repo, budgetCapUsd },
+        },
+      },
+    ]);
+  }
+
+  /**
+   * 対象リポジトリが、プロジェクトの対象の中にあるかを確かめ、記録する名前を返す（リポジトリの対象なら、登録した
+   * 名前にそろえる：大文字・小文字の違い）。
+   */
+  private projectRepository(project: Project, wanted: string): string {
+    const responsible = RepoUrl.safeParse(wanted).success
+      ? responsibleProject(this.deps.projects.all(), wanted)
+      : undefined;
+    if (responsible?.project.id !== project.id) {
+      throw new InvalidOperationError(message("task.repositoryUnknown", { project: project.name }));
+    }
+    return responsible.target.scope === "repo" ? responsible.target.target : RepoUrl.parse(wanted);
+  }
+
+  /**
+   * テンプレートからタスクを作る（PBI-90）。題と説明はテンプレートから決め、対象リポジトリは必須（省略すると、
+   * プロジェクトの対象がリポジトリ1つだけならそれにする）。作った後は、通常のタスクと同じく進む。
+   */
+  private createTemplateTask(raw: unknown): Task {
+    const input = CreateTemplateTaskInput.parse(raw);
+    const project = this.deps.projects.get(input.projectId);
+    if (!project) throw new InvalidOperationError(message("project.notFound"));
+    if (project.targets.length === 0) {
+      throw new InvalidOperationError(message("task.repositoryMissing", { project: project.name }));
+    }
+    const [only, ...others] = project.targets;
+    const wanted =
+      input.repo ?? (only?.scope === "repo" && others.length === 0 ? only.target : undefined);
+    if (!wanted) throw new InvalidOperationError(message("task.templateRepositoryRequired"));
+    const repo = this.projectRepository(project, wanted);
+    const config = this.deps.config();
+    const budgetCapUsd = config.ok ? config.config.budgetPerTaskUsd : DEFAULT_BUDGET_USD;
+    const { title, body } = templateTask(input.template, repo);
+    return this.append({ id: randomUUID(), projectId: project.id }, [
+      {
+        actor: "person",
+        event: {
+          type: "TaskCreated",
+          payload: { title, body, start: "sacty", repo, budgetCapUsd, template: input.template },
         },
       },
     ]);
@@ -4970,6 +5011,24 @@ export class TaskService {
       // 取り込むラベルを付ける（失敗しても PR の作成は失敗にしない。PBI-88）
       await this.labelPullRequest(task.id, prRepo, pr.number, token, usedSecrets);
     } catch (error) {
+      // 実装が起点から何も変えていなかった（PBI-90）。まだ PR を作っていなければ、PR を作らずに成果物チェックで人間に
+      // 確かめてもらう（実装の説明に、変更が要らない理由がある。承認すれば変更なしで完了、差し戻せば実装をやり直す）。
+      // タスクブランチ（PBI-57）は、ベースブランチへの PR を作らないまま残る。作った PR の作り直しで変更が無くなったときは、
+      // 今までどおり止める（開いている PR をどうするかは人が決める）
+      if (error instanceof NothingToCommitError && !task.pullRequest) {
+        const submitted = this.append(task, [
+          {
+            actor: "sacty",
+            event: {
+              type: "NoChangesFound",
+              payload: { submission: (task.submissions.pr ?? 0) + 1 },
+            },
+          },
+          ...this.submitEvents(task, "pr"),
+        ]);
+        this.checkBudget(submitted);
+        return;
+      }
       fail(message("pr.failed", { detail: errorText(error) }));
     }
   }
