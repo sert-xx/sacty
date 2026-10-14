@@ -2,7 +2,7 @@
 
 - 日付: 2026-10-14（UTC）
 - タスク: PBI-80
-- PR: なし（作成後に書き足す）
+- PR: #88
 - ブランチ: feat/issue-80-docs-structure
 - 関係する ADR: [docs を4種類に分け、実装の変更で直すのは仕様書とユーザードキュメントだけにする](../adr/20261014-0816-docs-structure-and-policy.md)
 
