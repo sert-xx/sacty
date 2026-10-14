@@ -3,6 +3,7 @@
 import {
   CreateTaskInput,
   type ProjectDefinitionInput,
+  renderMessage,
   StepKey,
   TASK_BODY_MAX,
   TASK_TITLE_MAX,
@@ -15,13 +16,17 @@ import { getMessages } from "@/i18n/server";
 import {
   approveStep,
   askQuestion,
+  CONTEXT_CHECK_PARAM,
+  type ContextPreviewResult,
   cancelTask,
   chooseTicketRepository,
   createTask,
   decideChange,
   importProject,
+  type PreviewRuntime,
   pauseTask,
   prefetchSecrets,
+  previewProjectContext,
   requestChanges,
   rereviewTask,
   resumeTask,
@@ -195,7 +200,10 @@ export async function decideChangeAction(
   return {};
 }
 
-export type SaveProjectState = { message?: string; saved?: boolean };
+/**
+ * message は保存できなかった理由。contextError は、保存したがコンテキストに誤りがあること（PBI-76。画面の言語の文）。
+ */
+export type SaveProjectState = { message?: string; saved?: boolean; contextError?: string };
 
 /** プロジェクトを作る・変える。定義は編集画面が JSON にまとめて送る。 */
 export async function saveProjectAction(
@@ -217,13 +225,44 @@ export async function saveProjectAction(
     return { message: a.daemonDown };
   }
   if (!result.ok) return { message: result.message };
+  // 保存したコンテキストの誤り（PBI-76）。保存はしたので、知らせるだけにする
   if (!id) {
     // 最初のプロジェクトなら、作成画面だけを出していた画面の枠（ヘッダー・サイドメニュー）も作り直す（PBI-22）
     revalidatePath("/", "layout");
-    redirect(`/projects/${result.project.id}`);
+    // コンテキストに誤りがあれば、移った先の設定の画面で確かめ直して知らせる（PBI-76）
+    redirect(projectSettingsPath(result.project.id, result.contextError !== undefined));
   }
+  const contextError =
+    result.contextError !== undefined
+      ? renderMessage(result.contextError, (await getMessages()).locale)
+      : undefined;
   refresh();
-  return { saved: true };
+  return { saved: true, ...(contextError ? { contextError } : {}) };
+}
+
+/**
+ * プロジェクトのコンテキストの合成の結果をプレビューする（PBI-76）。definition は編集画面が JSON にまとめた、保存して
+ * いない設定（空なら保存した設定）。
+ */
+export async function previewContextAction(
+  id: string,
+  runtime: PreviewRuntime,
+  definition: string,
+): Promise<ContextPreviewResult> {
+  const a = (await getMessages()).common.action;
+  let parsed: ProjectDefinitionInput | undefined;
+  if (definition) {
+    try {
+      parsed = JSON.parse(definition) as ProjectDefinitionInput;
+    } catch {
+      return { ok: false, message: a.unreadableInput };
+    }
+  }
+  try {
+    return await previewProjectContext(id, runtime, parsed);
+  } catch {
+    return { ok: false, message: a.daemonDown };
+  }
 }
 
 export type SaveSettingsState = { message?: string; saved?: boolean };
@@ -328,7 +367,16 @@ export async function importProjectAction(
   // 最初のプロジェクトなら、作成画面だけを出していた画面の枠も作り直す（PBI-22）。
   // redirect は例外で画面を移すので、try の外で呼ぶ
   revalidatePath("/", "layout");
-  redirect(`/projects/${result.project.id}`);
+  // コンテキストリポジトリを持つ定義なら、移った先の設定の画面で誤りを確かめて知らせる（PBI-76）
+  redirect(projectSettingsPath(result.project.id, result.project.context !== undefined));
+}
+
+/**
+ * プロジェクトの設定の画面の URL。contextCheck なら、画面でコンテキストの誤りを確かめて知らせる（PBI-76。作成・インポート
+ * の後は画面を移るので、保存の結果の誤りをその場では出せないため）。
+ */
+function projectSettingsPath(id: string, contextCheck: boolean): string {
+  return `/projects/${encodeURIComponent(id)}${contextCheck ? `?${CONTEXT_CHECK_PARAM}=1` : ""}`;
 }
 
 /** 画面の言語を選ぶ（system はブラウザの言語に従う）。 */

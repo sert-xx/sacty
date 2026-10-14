@@ -18,6 +18,13 @@ import {
   ResolvingSecretStore,
   SecretNotFoundError,
 } from "@sacty/daemon/secrets";
+import {
+  claimDaemonFile,
+  fetchContextPreview,
+  previewOutput,
+  readDaemonFile,
+  removeDaemonFile,
+} from "./context-preview.js";
 
 const require = createRequire(import.meta.url);
 
@@ -28,6 +35,9 @@ const USAGE = `Usage:
       設定ファイル（~/.sacty/config.yaml）の雛形を作ります。
   sacty context init [<dir>] [--force]
       コンテキストリポジトリ（規則・スキル・MCP・エージェントの設定）の雛形を作ります。<dir> の既定は今のディレクトリです。
+  sacty context preview <プロジェクト> [--runtime claude-code|codex] [--json] [--no-content]
+      プロジェクト（ID か名前）のコンテキストの合成の結果（実行のときに置くファイルと、層・警告など）を表示します。
+      起動中の sacty（sacty up）に問い合わせます。秘密情報は参照の名前だけを表示します。
   sacty secret set <name>
       秘密情報（トークンやAPIキー）をmacOSのキーチェーンに保存します。値は入力を求められます。
   sacty image build [<名前>...]
@@ -154,6 +164,26 @@ async function imageBuild(names: string[]): Promise<void> {
   }
 }
 
+async function contextPreview(
+  project: string | undefined,
+  runtime: string,
+  json: boolean,
+  content: boolean,
+): Promise<void> {
+  if (!project) throw new Error("プロジェクトの ID か名前を指定してください。");
+  if (runtime !== "claude-code" && runtime !== "codex") {
+    throw new Error(`--runtime は claude-code か codex で指定してください（指定：${runtime}）。`);
+  }
+  const endpoint = readDaemonFile(resolveHome());
+  if (!endpoint) {
+    throw new Error("起動中の sacty が見つかりません。`sacty up` で起動してから実行してください。");
+  }
+  const result = await fetchContextPreview(endpoint, project, runtime);
+  console.log(previewOutput(result, { json, content }));
+  // 誤りがあれば、終了コードで知らせる
+  if ("error" in result) process.exitCode = 1;
+}
+
 async function waitForDaemon(url: string, token: string, timeoutMs: number): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -239,6 +269,19 @@ async function up(webPort: number, daemonPort: number) {
   }
   if (stopping) return;
 
+  // CLI のコマンド（sacty context preview）が、起動中のデーモンに問い合わせるための接続先とトークン（PBI-76）。デーモンが
+  // 応答してから書き（起動に失敗した sacty は書かない）、ほかの sacty が動いていれば上書きしない
+  const home = resolveHome();
+  const endpoint = { url: daemonUrl, token };
+  if (await claimDaemonFile(home, endpoint)) {
+    process.on("exit", () => removeDaemonFile(home, endpoint));
+  } else {
+    console.warn(
+      "[sacty] 同じ SACTY_HOME で、ほかの sacty が動いています。sacty context preview は、そちらに問い合わせます。",
+    );
+  }
+  if (stopping) return;
+
   const webDir = dirname(require.resolve("@sacty/web/package.json"));
   const nextBin = require.resolve("next/dist/bin/next", { paths: [webDir] });
   watch(
@@ -265,6 +308,9 @@ async function main() {
       "daemon-port": { type: "string", default: "4710" },
       help: { type: "boolean", short: "h", default: false },
       force: { type: "boolean", default: false },
+      runtime: { type: "string", default: "claude-code" },
+      json: { type: "boolean", default: false },
+      "no-content": { type: "boolean", default: false },
     },
   });
 
@@ -275,6 +321,9 @@ async function main() {
   }
   if (command === "config" && sub === "init") return configInit(values.force);
   if (command === "context" && sub === "init") return contextInit(arg, values.force);
+  if (command === "context" && sub === "preview") {
+    return contextPreview(arg, values.runtime, values.json, !values["no-content"]);
+  }
   if (command === "secret" && sub === "set") return secretSet(arg);
   if (command === "image" && sub === "build") return imageBuild(positionals.slice(2));
   if (command !== "up") {

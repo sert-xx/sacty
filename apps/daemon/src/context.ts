@@ -1,13 +1,16 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
+  closeSync,
   cpSync,
   existsSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
+  openSync,
   readdirSync,
   readFileSync,
+  readSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -560,6 +563,21 @@ function layerAgentFiles(layer: ContextLayer, kind: keyof AgentSettings): string
   return files;
 }
 
+/** 名前のある項目の種類（スキル・MCP サーバー・外部 PF）。 */
+export type ContextItemKind = "skills" | "mcp" | "platforms";
+
+/**
+ * locked・remove の効果（PBI-76）。removed は by の層が取り除いた（of は取り除かれた項目の層）、locked は by の層で上書き
+ * 禁止にした（of はそのときの項目の層。まだ無ければ無い）。
+ */
+export type ContextEffect = {
+  kind: ContextItemKind;
+  name: string;
+  effect: "removed" | "locked";
+  by: string;
+  of?: string;
+};
+
 /** 合成したコンテキスト。 */
 export type ComposedContext = {
   /** 規約（上位から連結。どの層のものかの見出しつき）。 */
@@ -583,6 +601,12 @@ export type ComposedContext = {
   agentFiles: Record<keyof AgentSettings, { path: string; src: string; from: string }[]>;
   /** 上書き禁止に当たったなど、合成で気づいたこと。 */
   warnings: DaemonText[];
+  /** locked・remove の効果（PBI-76。プレビューに出す）。 */
+  effects: ContextEffect[];
+  /** 規約を持つ層（上位から。PBI-76）。 */
+  rulesFrom: string[];
+  /** エージェントの設定（settings.json・config.toml）を持つ層（上位から。PBI-76）。 */
+  agentsFrom: Record<keyof AgentSettings, string[]>;
 };
 
 const label = (layer: ContextLayer) =>
@@ -649,9 +673,10 @@ function layerSkills(
  */
 function mergeNamed<T>(
   layers: ContextLayer[],
-  kind: "skills" | "mcp" | "platforms",
+  kind: ContextItemKind,
   itemsOf: (layer: ContextLayer) => { name: string; value: T }[],
   warnings: DaemonText[],
+  effects: ContextEffect[] = [],
 ): { name: string; value: T; from: string }[] {
   const merged = new Map<string, { value: T; from: string }>();
   const locked = new Map<string, string>();
@@ -663,6 +688,9 @@ function mergeNamed<T>(
           message("context.lockedRemove", { from, kind, name, lockedBy: locked.get(name) ?? "" }),
         );
       } else {
+        // 取り除いた項目（上位に無ければ、何も取り除いていない）
+        const removed = merged.get(name);
+        if (removed) effects.push({ kind, name, effect: "removed", by: from, of: removed.from });
         merged.delete(name);
       }
     }
@@ -681,7 +709,18 @@ function mergeNamed<T>(
       merged.set(item.name, { value: item.value, from });
     }
     for (const name of layer.manifest.locked[kind]) {
-      if (!locked.has(name)) locked.set(name, from);
+      if (!locked.has(name)) {
+        locked.set(name, from);
+        // 上位の層の項目を上書き禁止にしたときだけ、どの層のものかを添える
+        const item = merged.get(name);
+        effects.push({
+          kind,
+          name,
+          effect: "locked",
+          by: from,
+          ...(item && item.from !== from ? { of: item.from } : {}),
+        });
+      }
     }
   }
   return [...merged.entries()].map(([name, m]) => ({ name, ...m }));
@@ -696,22 +735,29 @@ export function composeContext(
   runtime?: "claude-code" | "codex",
 ): ComposedContext {
   const rules: string[] = [];
+  const rulesFrom: string[] = [];
   for (const layer of layers) {
     const text = layerRules(layer);
-    if (text) rules.push(`<!-- sacty context: ${label(layer)} -->\n${text}`);
+    if (text) {
+      rules.push(`<!-- sacty context: ${label(layer)} -->\n${text}`);
+      rulesFrom.push(label(layer));
+    }
   }
   const warnings: DaemonText[] = [];
+  const effects: ContextEffect[] = [];
   const skills = mergeNamed(
     layers,
     "skills",
     (layer) => layerSkills(layer, warnings).map((s) => ({ name: s.name, value: s.dir })),
     warnings,
+    effects,
   );
   const mcp = mergeNamed(
     layers,
     "mcp",
     (layer) => Object.entries(layer.mcp).map(([name, value]) => ({ name, value })),
     warnings,
+    effects,
   );
   // 外部 PF も、MCP サーバーと同じ規則で合わせる（PBI-74）
   const platforms = mergeNamed(
@@ -719,7 +765,9 @@ export function composeContext(
     "platforms",
     (layer) => Object.entries(layer.platforms).map(([name, value]) => ({ name, value })),
     warnings,
+    effects,
   );
+  const agentsFrom: Record<keyof AgentSettings, string[]> = { codex: [], claude: [] };
   const agents: AgentSettings = { codex: {}, claude: {} };
   const files = { codex: new Map(), claude: new Map() } as Record<
     keyof AgentSettings,
@@ -732,6 +780,7 @@ export function composeContext(
     const from = label(layer);
     for (const kind of kinds) {
       const own = withoutReserved(kind, layer.agents[kind], from, warnings);
+      if (Object.keys(own).length > 0) agentsFrom[kind].push(from);
       agents[kind] = mergeSettings(agents[kind], own, UNION_SETTINGS[kind]);
       const settingsFile = AGENT_SETTINGS_FILES[kind].slice(AGENT_DIRS[kind].length + 1);
       for (const path of layerAgentFiles(layer, kind)) {
@@ -758,6 +807,9 @@ export function composeContext(
       claude: [...files.claude.entries()].map(([path, f]) => ({ path, ...f })),
     },
     warnings,
+    effects,
+    rulesFrom,
+    agentsFrom,
   };
 }
 
@@ -803,20 +855,45 @@ export const AGENT_RUN_TIMEOUT_MS = 30 * 60_000;
 const CLAUDE_MCP_STARTUP_DEFAULT_SEC = 30;
 
 /**
- * 合成したコンテキストを、エージェントの形式で outDir に書く。outDir は実行ごとの空の設定の
- * ディレクトリ（Claude Code は CLAUDE_CONFIG_DIR、Codex は CODEX_HOME）として渡す。
- * - Claude Code：`CLAUDE.md`（規約）と `skills/<名前>/`（スキル）
- * - Codex：`AGENTS.md`（規約と、スキルの一覧）と `skills/<名前>/`（Codex にはスキルの仕組みが無いので、
+ * エージェントの設定のディレクトリに置く1つのファイル（PBI-76）。content は sacty が作った中身、src は写す元のファイル
+ * （層のエージェントの設定のディレクトリのファイル・スキルのファイル）。from は、どの層のものか（sacty が作ったものは無い）。
+ */
+export type PlannedFile = { path: string; from?: string } & ({ content: string } | { src: string });
+
+/** ディレクトリの下のファイル（相対パス。名前の順）。 */
+function filesUnder(root: string): string[] {
+  const files: string[] = [];
+  const visit = (rel: string) => {
+    const path = rel ? join(root, rel) : root;
+    if (statSync(path).isDirectory()) {
+      for (const name of readdirSync(path).sort()) visit(rel ? `${rel}/${name}` : name);
+    } else {
+      files.push(rel);
+    }
+  };
+  visit("");
+  return files;
+}
+
+/**
+ * 合成したコンテキストから、エージェントの設定のディレクトリに置くファイルの一覧を作る（書かない。PBI-76）。実行
+ * （writeContext）もプレビューも、これで作る。同じパスは後のものが上書きする（書く順のまま並べ、重なりは除く）。
+ * - Claude Code：`CLAUDE.md`（規約）・`settings.json`・`mcp.json`・`skills/<名前>/`（スキル）
+ * - Codex：`AGENTS.md`（規約と、スキルの一覧）・`config.toml`・`skills/<名前>/`（Codex にはスキルの仕組みが無いので、
  *   AGENTS.md から場所を示して読ませる）
  */
-export function writeContext(
+export function planContext(
   composed: ComposedContext,
   runtime: "claude-code" | "codex",
-  outDir: string,
-  /** コンテナの中での outDir（Codex の AGENTS.md にスキルの場所を書くため）。 */
+  /** コンテナの中での設定のディレクトリ（Codex の AGENTS.md にスキルの場所を書くため）。 */
   containerDir: string,
-): PlacedContext {
-  mkdirSync(outDir, { recursive: true });
+): { files: PlannedFile[]; placed: PlacedContext } {
+  const files = new Map<string, PlannedFile>();
+  const put = (file: PlannedFile) => {
+    // 上書きしたものは、書いた順の位置に置き直す
+    files.delete(file.path);
+    files.set(file.path, file);
+  };
   const secrets: ContextSecret[] = [];
   // 秘密情報は設定のファイルに値を書かず、環境変数の名前で参照する（値は実行時に入れる）
   const resolve = (value: string | { secret: string; prefix: string }) => {
@@ -825,27 +902,30 @@ export function writeContext(
     secrets.push({ env, secret: value.secret, prefix: value.prefix });
     return { env };
   };
-  const placed = (env?: Record<string, string>): PlacedContext => ({
-    mcpServers: composed.mcp.map((m) => m.name),
-    secrets,
-    ...(env ? { env } : {}),
+  const done = (env?: Record<string, string>) => ({
+    files: [...files.values()],
+    placed: {
+      mcpServers: composed.mcp.map((m) => m.name),
+      secrets,
+      ...(env ? { env } : {}),
+    },
   });
   // 層のエージェントの設定のディレクトリのファイルを先に写す（sacty が作るファイルは除いてある）
   for (const file of composed.agentFiles[runtime === "codex" ? "codex" : "claude"]) {
-    const to = join(outDir, file.path);
-    mkdirSync(dirname(to), { recursive: true });
-    cpSync(file.src, to);
+    put({ path: file.path, src: file.src, from: file.from });
   }
   for (const skill of composed.skills) {
-    cpSync(skill.dir, join(outDir, "skills", skill.name), { recursive: true });
+    for (const rel of filesUnder(skill.dir)) {
+      put({ path: `skills/${skill.name}/${rel}`, src: join(skill.dir, rel), from: skill.from });
+    }
   }
   if (runtime === "claude-code") {
-    if (composed.rules) writeFileSync(join(outDir, "CLAUDE.md"), `${composed.rules}\n`);
+    if (composed.rules) put({ path: "CLAUDE.md", content: `${composed.rules}\n` });
     if (Object.keys(composed.agents.claude).length > 0) {
-      writeFileSync(
-        join(outDir, "settings.json"),
-        `${JSON.stringify(composed.agents.claude, null, 2)}\n`,
-      );
+      put({
+        path: "settings.json",
+        content: `${JSON.stringify(composed.agents.claude, null, 2)}\n`,
+      });
     }
     if (composed.mcp.length > 0) {
       const values = (record: Record<string, string | { secret: string; prefix: string }>) =>
@@ -876,10 +956,10 @@ export function writeContext(
               },
         ]),
       );
-      writeFileSync(
-        join(outDir, CLAUDE_MCP_CONFIG),
-        `${JSON.stringify({ mcpServers: servers }, null, 2)}\n`,
-      );
+      put({
+        path: CLAUDE_MCP_CONFIG,
+        content: `${JSON.stringify({ mcpServers: servers }, null, 2)}\n`,
+      });
       // 起動の時間切れはサーバーごとに渡せないので、全体の MCP_TIMEOUT にする。書いたサーバーの値と、書いていない
       // サーバーの既定（30秒）の大きい方（書いていないサーバーの待ち時間を、既定より短くしない）
       if (composed.mcp.some((m) => m.server.startup_timeout_sec !== undefined)) {
@@ -888,13 +968,14 @@ export function writeContext(
             (m) => m.server.startup_timeout_sec ?? CLAUDE_MCP_STARTUP_DEFAULT_SEC,
           ),
         );
-        return placed({ MCP_TIMEOUT: String(sec * 1000) });
+        return done({ MCP_TIMEOUT: String(sec * 1000) });
       }
     }
-    return placed();
+    return done();
   }
+  // スキルの一覧の説明は、写す SKILL.md（スキルのディレクトリのもの）から読む
   const index = composed.skills.map((s) => {
-    const description = readSkillDescription(join(outDir, "skills", s.name, "SKILL.md"));
+    const description = readSkillDescription(join(s.dir, "SKILL.md"));
     return `- ${s.name}${description ? `：${description}` : ""}（${containerDir}/skills/${s.name}/SKILL.md）`;
   });
   const parts = [
@@ -903,7 +984,7 @@ export function writeContext(
       ? `## スキル\n\n必要なときは、次のスキルの SKILL.md を読んで従ってください。\n\n${index.join("\n")}`
       : "",
   ].filter(Boolean);
-  if (parts.length > 0) writeFileSync(join(outDir, "AGENTS.md"), `${parts.join("\n\n")}\n`);
+  if (parts.length > 0) put({ path: "AGENTS.md", content: `${parts.join("\n\n")}\n` });
   // 層の設定を先に書き、mcp.yaml から作る MCP サーバーの表を後ろに続ける（設定の mcp_servers は除いてある）
   const toml = [
     ...(Object.keys(composed.agents.codex).length > 0
@@ -911,8 +992,35 @@ export function writeContext(
       : []),
     ...composed.mcp.map(({ name, server }) => codexServer(name, server, resolve)),
   ];
-  if (toml.length > 0) writeFileSync(join(outDir, "config.toml"), `${toml.join("\n")}`);
-  return placed();
+  if (toml.length > 0) put({ path: "config.toml", content: `${toml.join("\n")}` });
+  return done();
+}
+
+/** 置くファイルの一覧を outDir に書く（content は書き、src は写す）。 */
+export function writePlanned(files: readonly PlannedFile[], outDir: string): void {
+  mkdirSync(outDir, { recursive: true });
+  for (const file of files) {
+    const to = join(outDir, file.path);
+    mkdirSync(dirname(to), { recursive: true });
+    if ("content" in file) writeFileSync(to, file.content);
+    else cpSync(file.src, to);
+  }
+}
+
+/**
+ * 合成したコンテキストを、エージェントの形式で outDir に書く。outDir は実行ごとの空の設定の
+ * ディレクトリ（Claude Code は CLAUDE_CONFIG_DIR、Codex は CODEX_HOME）として渡す。置くファイルは planContext で作る。
+ */
+export function writeContext(
+  composed: ComposedContext,
+  runtime: "claude-code" | "codex",
+  outDir: string,
+  /** コンテナの中での outDir（Codex の AGENTS.md にスキルの場所を書くため）。 */
+  containerDir: string,
+): PlacedContext {
+  const { files, placed } = planContext(composed, runtime, containerDir);
+  writePlanned(files, outDir);
+  return placed;
 }
 
 /**
@@ -1069,6 +1177,138 @@ function pickTimeouts(from: { startup_timeout_sec?: number; tool_timeout_sec?: n
   };
 }
 
+/** 実行のときの、MCP サーバーの渡し方（PBI-36・49・56）。 */
+export type McpRouting = {
+  /**
+   * ホストの MCP サーバー（PBI-36）。ゲートウェイの HTTP の MCP として、層の MCP サーバーに加える（同じ名前なら、
+   * こちらを使い、警告を残す）。認証のヘッダーには、実行ごとのゲートウェイのトークンを入れる。
+   */
+  hostMcp?: readonly HostMcpEntry[];
+  /**
+   * コンテナから見たゲートウェイの起点（PBI-49）。あれば、層の HTTP の MCP サーバー（via_gateway）を、ゲートウェイの
+   * URL（/ctx-mcp/<名前>）に置き換え、元の URL と認証のヘッダーは gatewayMcp として返す（ゲートウェイに持たせる）。
+   */
+  gatewayOrigin?: string;
+  /**
+   * 渡す MCP サーバーを、この名前の1つに絞る（成果の書き出し。PBI-56）。決めた接続先のほかは渡さない（使わせない。
+   * ほかの MCP サーバーの認証も取り出さない）。
+   */
+  onlyMcp?: string;
+};
+
+/** ホストの MCP サーバー（PBI-36）を加えたものの from。 */
+export const HOST_MCP_FROM = "sacty-gateway";
+
+/**
+ * 合成した MCP サーバーを、実行のときの形にする（PBI-76 で prepareContext から分けた。プレビューも同じものを使う）。
+ * 層の HTTP の MCP サーバーのゲートウェイへの置き換え、ホストの MCP サーバーの追加、書き出しの絞り込み、時間切れの
+ * 警告。元の composed は変えない。
+ */
+export function routeMcp(
+  composed: ComposedContext,
+  routing: McpRouting = {},
+): { composed: ComposedContext; gatewayMcp: GatewayMcpServer[] } {
+  const { hostMcp = [], gatewayOrigin, onlyMcp } = routing;
+  const warnings = [...composed.warnings];
+  let mcp = composed.mcp;
+  // 層の HTTP の MCP サーバーは、ゲートウェイ経由にする（PBI-49）。ホストの MCP サーバーと同じく、認証のヘッダーには
+  // 実行ごとのゲートウェイのトークンだけを入れる
+  const gatewayMcp: GatewayMcpServer[] = [];
+  if (gatewayOrigin) {
+    mcp = mcp.map((m) => {
+      if ("command" in m.server || !m.server.via_gateway) return m;
+      const timeouts = pickTimeouts(m.server);
+      gatewayMcp.push({
+        name: m.name,
+        url: m.server.url,
+        headers: m.server.headers,
+        ...timeouts,
+      });
+      return {
+        ...m,
+        server: {
+          url: `${gatewayOrigin}/ctx-mcp/${m.name}`,
+          headers: { Authorization: { secret: GATEWAY_TOKEN_SECRET, prefix: "Bearer " } },
+          via_gateway: true,
+          ...timeouts,
+        },
+      };
+    });
+  }
+  if (hostMcp.length > 0) {
+    const names = new Set(hostMcp.map((m) => m.name));
+    // 層の MCP サーバーがホストのものと同じ名前なら、ホストのものを使う（層のものは渡さない。PBI-76 で警告にした）
+    for (const m of mcp) {
+      if (names.has(m.name)) {
+        warnings.push(message("context.hostMcpOverride", { from: m.from, name: m.name }));
+      }
+    }
+    mcp = [
+      ...mcp.filter((m) => !names.has(m.name)),
+      ...hostMcp.map((m) => ({
+        name: m.name,
+        from: HOST_MCP_FROM,
+        server: {
+          url: m.url,
+          headers: { Authorization: { secret: GATEWAY_TOKEN_SECRET, prefix: "Bearer " } },
+          via_gateway: true,
+          ...pickTimeouts(m),
+        },
+      })),
+    ];
+  }
+  if (onlyMcp !== undefined) mcp = mcp.filter((m) => m.name === onlyMcp);
+  warnings.push(...timeoutWarnings(mcp));
+  return {
+    composed: { ...composed, mcp, warnings },
+    // ホストの MCP サーバーと同じ名前で置き換えられたもの・絞り込みで外したものは、中継しない
+    gatewayMcp: gatewayMcp.filter((g) =>
+      mcp.some((c) => c.name === g.name && c.from !== HOST_MCP_FROM),
+    ),
+  };
+}
+
+/** 既定のコンテキストと、プロジェクトのコンテキストの層（上位から）。プロジェクトのものは work の下に取得する。 */
+async function loadLayers(
+  fetcher: ContextFetcher,
+  root: ContextRef | undefined,
+  work: string,
+  auth?: ContextAuth,
+  defaultDir?: string,
+): Promise<ContextLayer[]> {
+  return [
+    ...(defaultDir ? [loadDefaultContext(defaultDir)] : []),
+    ...(root ? await resolveContext(fetcher, root, join(work, "repos"), auth) : []),
+  ];
+}
+
+/** 層の、作業履歴に記録する形（repo・ref・commit）。 */
+const layerRecord = (l: ContextLayer) => ({
+  repo: l.repo,
+  ...(l.ref ? { ref: l.ref } : {}),
+  commit: l.commit,
+});
+
+/**
+ * 実行のときに置くコンテキストを、書く前の形で作る（PBI-76）。prepareContext（実行）とプレビューは、どちらもこれで作る
+ * （プレビューのために別の作り方をしない）。層は work の下に取得する（呼び出し側で消す）。
+ */
+async function buildContext(
+  fetcher: ContextFetcher,
+  root: ContextRef | undefined,
+  runtime: "claude-code" | "codex",
+  containerDir: string,
+  work: string,
+  auth: ContextAuth | undefined,
+  defaultDir: string | undefined,
+  routing: McpRouting,
+) {
+  const layers = await loadLayers(fetcher, root, work, auth, defaultDir);
+  const { composed, gatewayMcp } = routeMcp(composeContext(layers, runtime), routing);
+  const { files, placed } = planContext(composed, runtime, containerDir);
+  return { layers, composed, gatewayMcp, files, placed };
+}
+
 /**
  * プロジェクトのコンテキストを取得・合成し、エージェントの形式で書いた一時ディレクトリを返す。
  * 呼び出し側は、使い終わったら dispose で消す。
@@ -1083,20 +1323,11 @@ export async function prepareContext(
   auth?: ContextAuth,
   /** 既定のコンテキストのディレクトリ（PBI-24）。一番上位の層として重ねる。 */
   defaultDir?: string,
-  /**
-   * ホストの MCP サーバー（PBI-36）。ゲートウェイの HTTP の MCP として、層の MCP サーバーに加える（同じ名前なら、
-   * こちらを使う）。認証のヘッダーには、実行ごとのゲートウェイのトークンを入れる。
-   */
+  /** ホストの MCP サーバー（PBI-36。McpRouting の hostMcp）。 */
   hostMcp: readonly HostMcpEntry[] = [],
-  /**
-   * コンテナから見たゲートウェイの起点（PBI-49）。あれば、層の HTTP の MCP サーバー（via_gateway）を、ゲートウェイの
-   * URL（/ctx-mcp/<名前>）に置き換え、元の URL と認証のヘッダーは gatewayMcp として返す（ゲートウェイに持たせる）。
-   */
+  /** コンテナから見たゲートウェイの起点（PBI-49。McpRouting の gatewayOrigin）。 */
   gatewayOrigin?: string,
-  /**
-   * 渡す MCP サーバーを、この名前の1つに絞る（成果の書き出し。PBI-56）。決めた接続先のほかは渡さない（使わせない。
-   * ほかの MCP サーバーの認証も取り出さない）。
-   */
+  /** 渡す MCP サーバーを、この名前の1つに絞る（成果の書き出し。PBI-56。McpRouting の onlyMcp）。 */
   onlyMcp?: string,
 ): Promise<{
   dir: string;
@@ -1112,74 +1343,247 @@ export async function prepareContext(
   const work = mkdtempSync(join(tmpdir(), "sacty-context-"));
   const dispose = () => rmSync(work, { recursive: true, force: true });
   try {
-    const layers = [
-      ...(defaultDir ? [loadDefaultContext(defaultDir)] : []),
-      ...(root ? await resolveContext(fetcher, root, join(work, "repos"), auth) : []),
-    ];
-    const composed = composeContext(layers, runtime);
-    // 層の HTTP の MCP サーバーは、ゲートウェイ経由にする（PBI-49）。ホストの MCP サーバーと同じく、認証のヘッダーには
-    // 実行ごとのゲートウェイのトークンだけを入れる
-    const gatewayMcp: GatewayMcpServer[] = [];
-    if (gatewayOrigin) {
-      composed.mcp = composed.mcp.map((m) => {
-        if ("command" in m.server || !m.server.via_gateway) return m;
-        const timeouts = pickTimeouts(m.server);
-        gatewayMcp.push({
-          name: m.name,
-          url: m.server.url,
-          headers: m.server.headers,
-          ...timeouts,
-        });
-        return {
-          ...m,
-          server: {
-            url: `${gatewayOrigin}/ctx-mcp/${m.name}`,
-            headers: { Authorization: { secret: GATEWAY_TOKEN_SECRET, prefix: "Bearer " } },
-            via_gateway: true,
-            ...timeouts,
-          },
-        };
-      });
-    }
-    if (hostMcp.length > 0) {
-      const names = new Set(hostMcp.map((m) => m.name));
-      composed.mcp = [
-        ...composed.mcp.filter((m) => !names.has(m.name)),
-        ...hostMcp.map((m) => ({
-          name: m.name,
-          from: "sacty-gateway",
-          server: {
-            url: m.url,
-            headers: { Authorization: { secret: GATEWAY_TOKEN_SECRET, prefix: "Bearer " } },
-            via_gateway: true,
-            ...pickTimeouts(m),
-          },
-        })),
-      ];
-    }
-    if (onlyMcp !== undefined) composed.mcp = composed.mcp.filter((m) => m.name === onlyMcp);
-    composed.warnings.push(...timeoutWarnings(composed.mcp));
+    const built = await buildContext(fetcher, root, runtime, containerDir, work, auth, defaultDir, {
+      hostMcp,
+      gatewayOrigin,
+      onlyMcp,
+    });
     const dir = join(work, "out");
-    const placed = writeContext(composed, runtime, dir, containerDir);
+    writePlanned(built.files, dir);
     return {
       dir,
-      layers: layers.map((l) => ({
-        repo: l.repo,
-        ...(l.ref ? { ref: l.ref } : {}),
-        commit: l.commit,
-      })),
-      warnings: composed.warnings,
-      placed,
-      // ホストの MCP サーバーと同じ名前で置き換えられたものは、中継しない
-      gatewayMcp: gatewayMcp.filter((m) =>
-        composed.mcp.some((c) => c.name === m.name && c.from !== "sacty-gateway"),
-      ),
-      platforms: composed.platforms,
+      layers: built.layers.map(layerRecord),
+      warnings: built.composed.warnings,
+      placed: built.placed,
+      gatewayMcp: built.gatewayMcp,
+      platforms: built.composed.platforms,
       dispose,
     };
   } catch (error) {
     dispose();
     throw error;
+  }
+}
+
+/** プレビューに出すファイルの中身の上限（バイト。PBI-76）。超えた分は省く。 */
+export const PREVIEW_FILE_MAX_BYTES = 256 * 1024;
+/**
+ * プレビューに出す中身の合計の上限（バイト。PBI-76）。超えたら、それより後のファイルは中身を出さない（omitted）。
+ * sacty が作るファイル（規約・設定・MCP の設定）を先に数える。
+ */
+export const PREVIEW_TOTAL_MAX_BYTES = 8 * 1024 * 1024;
+
+/** プレビューの、置くファイル1つ（PBI-76）。 */
+export type ContextPreviewFile = {
+  /** 設定のディレクトリからの相対パス。 */
+  path: string;
+  /** どの層のものか（sacty が作ったファイルには無い）。 */
+  from?: string;
+  /** sacty が作ったファイルか（規約・設定・MCP の設定）。false なら層のファイルの写し。 */
+  generated: boolean;
+  /** 大きさ（バイト）。 */
+  size: number;
+  /** 中身（UTF-8 でないファイルには無い。上限を超えた分は省く）。 */
+  content?: string;
+  binary?: true;
+  /** ファイルの上限（PREVIEW_FILE_MAX_BYTES）を超えたので、途中までにした。 */
+  truncated?: true;
+  /** 合計の上限（PREVIEW_TOTAL_MAX_BYTES）を超えたので、中身を出さなかった。 */
+  omitted?: true;
+};
+
+/** プレビューの MCP サーバー1つ（PBI-76）。エージェントから見える形と、元の接続先。 */
+export type ContextPreviewMcp = {
+  name: string;
+  /** どの層のものか（ホストの MCP サーバーは HOST_MCP_FROM）。 */
+  from: string;
+  /** エージェントから見える形（stdio はコンテナの中で起動するコマンド、HTTP は URL）。 */
+  agent: { command: string; args: string[] } | { url: string };
+  /**
+   * 元の接続先。direct は agent のまま（コンテナから直接）、gateway はゲートウェイが中継する先（ヘッダーの秘密情報は
+   * 参照の名前のまま）、host はホストで動かす MCP サーバー（config.yaml の gateway.mcp_servers）。
+   */
+  origin:
+    | { kind: "direct" }
+    | {
+        kind: "gateway";
+        url: string;
+        headers: Record<string, string | { secret: string; prefix: string }>;
+      }
+    | { kind: "host" };
+  startup_timeout_sec?: number;
+  tool_timeout_sec?: number;
+};
+
+/** コンテキストの合成の結果のプレビュー（PBI-76）。秘密情報は参照の名前だけで、値は含まない。 */
+export type ContextPreview = {
+  runtime: "claude-code" | "codex";
+  /** 層（上位から）と、それぞれの locked・remove。 */
+  layers: {
+    repo: string;
+    ref?: string;
+    commit: string;
+    locked: z.infer<typeof NamedItems>;
+    remove: z.infer<typeof NamedItems>;
+  }[];
+  /** 実行のときに設定のディレクトリに置くファイル（置く順）。 */
+  files: ContextPreviewFile[];
+  mcp: ContextPreviewMcp[];
+  skills: { name: string; from: string }[];
+  /** 規約を持つ層（上位から連結する）。 */
+  rules: string[];
+  /** エージェントの設定（settings.json・config.toml）を持つ層（上位から重ねる）。 */
+  agentSettings: string[];
+  effects: ContextEffect[];
+  /**
+   * 実行のときに環境変数で入れる秘密情報（参照の名前だけ）。gatewayToken は、実行ごとのゲートウェイのトークン
+   * （秘密情報の取り出し口からは取り出さず、実行するときに sacty が入れる）。
+   */
+  secrets: { env: string; secret: string; prefix: string; gatewayToken: boolean }[];
+  /** エージェントに渡す、秘密情報ではない環境変数（MCP_TIMEOUT など）。 */
+  env: Record<string, string>;
+  /** 層で定義した外部 PF（認証は秘密情報の名前のまま。画面に出すときは要約にする）。 */
+  platforms: Platform[];
+  warnings: DaemonText[];
+};
+
+/** ファイルの大きさと、先頭の max バイト（大きいファイルを全部は読まない）。 */
+function readHead(path: string, max: number): { size: number; head: Buffer } {
+  const size = statSync(path).size;
+  const head = Buffer.alloc(Math.min(size, max));
+  const fd = openSync(path, "r");
+  try {
+    let read = 0;
+    while (read < head.length) {
+      const n = readSync(fd, head, read, head.length - read, read);
+      if (n === 0) break;
+      read += n;
+    }
+    return { size, head: head.subarray(0, read) };
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/** プレビューに出す中身（UTF-8 として読めなければ binary。上限を超えた分は省く）。 */
+function previewContent(
+  size: number,
+  head: Buffer,
+): Pick<ContextPreviewFile, "size" | "content" | "binary" | "truncated"> {
+  const truncated = size > head.length;
+  if (head.includes(0)) return { size, binary: true };
+  const decoder = new TextDecoder("utf-8", { fatal: true });
+  // 途中までにしたときは、末尾で切れた文字（最大3バイト）だけを落とす。ほかの不正なバイトは binary にする
+  for (let cut = 0; cut <= (truncated ? 3 : 0) && cut <= head.length; cut++) {
+    try {
+      const content = decoder.decode(head.subarray(0, head.length - cut));
+      return { size, content, ...(truncated ? { truncated: true as const } : {}) };
+    } catch {
+      // 次の切り方を試す
+    }
+  }
+  return { size, binary: true };
+}
+
+/**
+ * 置くファイルの一覧を、プレビューの形にする。中身はファイルごとの上限と合計の上限までにする（合計の上限に届いたファイルは
+ * 途中まで、それより後のファイルは中身を出さない）。
+ */
+function previewFiles(files: readonly PlannedFile[]): ContextPreviewFile[] {
+  let budget = PREVIEW_TOTAL_MAX_BYTES;
+  const shown = new Map<PlannedFile, ContextPreviewFile>();
+  // sacty が作るファイルを先に数える（規約・設定・MCP の設定は必ず見せたい）
+  const ordered = [
+    ...files.filter((f) => "content" in f),
+    ...files.filter((f) => !("content" in f)),
+  ];
+  for (const f of ordered) {
+    const base = { path: f.path, ...(f.from ? { from: f.from } : {}), generated: "content" in f };
+    const max = Math.min(PREVIEW_FILE_MAX_BYTES, budget);
+    let size: number;
+    let head: Buffer;
+    if ("content" in f) {
+      const bytes = Buffer.from(f.content);
+      size = bytes.length;
+      head = bytes.subarray(0, max);
+    } else {
+      ({ size, head } = readHead(f.src, max));
+    }
+    if (size > 0 && head.length === 0) {
+      shown.set(f, { ...base, size, omitted: true });
+      continue;
+    }
+    budget -= head.length;
+    shown.set(f, { ...base, ...previewContent(size, head) });
+  }
+  return files.map((f) => shown.get(f) as ContextPreviewFile);
+}
+
+/**
+ * プロジェクトのコンテキストの合成の結果を、実行のときと同じ処理（buildContext）で作り、書かずに返す（PBI-76）。取得した
+ * リポジトリは読んだら消す（実行の状態・作業履歴には触れない）。取得・設定の誤りは、prepareContext と同じく例外にする。
+ */
+export async function previewContext(
+  fetcher: ContextFetcher,
+  root: ContextRef | undefined,
+  runtime: "claude-code" | "codex",
+  containerDir: string,
+  auth?: ContextAuth,
+  defaultDir?: string,
+  routing: McpRouting = {},
+): Promise<ContextPreview> {
+  const work = mkdtempSync(join(tmpdir(), "sacty-context-"));
+  try {
+    const { layers, composed, gatewayMcp, files, placed } = await buildContext(
+      fetcher,
+      root,
+      runtime,
+      containerDir,
+      work,
+      auth,
+      defaultDir,
+      routing,
+    );
+    return {
+      runtime,
+      layers: layers.map((l) => ({
+        ...layerRecord(l),
+        locked: l.manifest.locked,
+        remove: l.manifest.remove,
+      })),
+      files: previewFiles(files),
+      mcp: composed.mcp.map(({ name, from, server }): ContextPreviewMcp => {
+        const relayed = gatewayMcp.find((g) => g.name === name);
+        return {
+          name,
+          from,
+          agent:
+            "command" in server
+              ? { command: server.command, args: server.args }
+              : { url: server.url },
+          origin:
+            from === HOST_MCP_FROM
+              ? { kind: "host" }
+              : relayed
+                ? { kind: "gateway", url: relayed.url, headers: relayed.headers }
+                : { kind: "direct" },
+          ...pickTimeouts(server),
+        };
+      }),
+      skills: composed.skills.map((s) => ({ name: s.name, from: s.from })),
+      rules: composed.rulesFrom,
+      agentSettings: composed.agentsFrom[runtime === "codex" ? "codex" : "claude"],
+      effects: composed.effects,
+      secrets: placed.secrets.map((s) => ({
+        ...s,
+        gatewayToken: s.secret === GATEWAY_TOKEN_SECRET,
+      })),
+      env: placed.env ?? {},
+      platforms: composed.platforms,
+      warnings: composed.warnings,
+    };
+  } finally {
+    rmSync(work, { recursive: true, force: true });
   }
 }
 
@@ -1223,10 +1627,7 @@ export async function contextPlatforms(
   if (!root && !defaultDir) return { platforms: [], warnings: [] };
   const work = mkdtempSync(join(tmpdir(), "sacty-context-"));
   try {
-    const layers = [
-      ...(defaultDir ? [loadDefaultContext(defaultDir)] : []),
-      ...(root ? await resolveContext(fetcher, root, join(work, "repos"), auth) : []),
-    ];
+    const layers = await loadLayers(fetcher, root, work, auth, defaultDir);
     const composed = composeContext(layers);
     // PF に関わる警告だけを返す（スキル・エージェントの設定の警告は、工程の実行で出す）
     const warnings = composed.warnings.filter(

@@ -158,11 +158,114 @@ export async function getProjectPlatforms(id: string): Promise<ProjectPlatforms 
   return (await res.json()) as ProjectPlatforms;
 }
 
-/** プロジェクトを作る（id なし）か変える。入力の誤りや重複は、画面に出せる理由を返す。 */
+/** 設定の画面の URL の印。あれば、画面でコンテキストの誤りを確かめて知らせる（作成・インポートの後。PBI-76）。 */
+export const CONTEXT_CHECK_PARAM = "contextCheck";
+
+/**
+ * 保存したプロジェクトのコンテキストの誤り（PBI-76。プレビューと同じ検査）。誤りが無い・確かめられない（古いデーモン・
+ * プロジェクトが無い）なら undefined。
+ */
+export async function getProjectContextError(id: string): Promise<DaemonText | undefined> {
+  const res = await daemonFetch(
+    `/api/projects/${encodeURIComponent(id)}/context-preview?runtime=claude-code`,
+  );
+  if (!res.ok) return undefined;
+  const json = (await res.json()) as { preview?: unknown; error?: DaemonText };
+  return json.error;
+}
+
+/** コンテキストのプレビューの AI の種類（PBI-76）。 */
+export type PreviewRuntime = "claude-code" | "codex";
+
+/** コンテキストの合成の結果のプレビュー（デーモンの ContextPreviewView。PBI-76）。秘密情報は参照の名前だけ。 */
+export type ContextPreview = {
+  runtime: PreviewRuntime;
+  layers: {
+    repo: string;
+    ref?: string;
+    commit: string;
+    locked: { skills: string[]; mcp: string[]; platforms: string[] };
+    remove: { skills: string[]; mcp: string[]; platforms: string[] };
+  }[];
+  files: {
+    path: string;
+    from?: string;
+    generated: boolean;
+    size: number;
+    content?: string;
+    binary?: boolean;
+    truncated?: boolean;
+    omitted?: boolean;
+  }[];
+  mcp: {
+    name: string;
+    from: string;
+    agent: { command: string; args: string[] } | { url: string };
+    origin:
+      | { kind: "direct" }
+      | {
+          kind: "gateway";
+          url: string;
+          headers: Record<string, string | { secret: string; prefix: string }>;
+        }
+      | { kind: "host" };
+    startup_timeout_sec?: number;
+    tool_timeout_sec?: number;
+  }[];
+  skills: { name: string; from: string }[];
+  rules: string[];
+  agentSettings: string[];
+  effects: {
+    kind: "skills" | "mcp" | "platforms";
+    name: string;
+    effect: "removed" | "locked";
+    by: string;
+    of?: string;
+  }[];
+  secrets: { env: string; secret: string; prefix: string; gatewayToken: boolean }[];
+  env: Record<string, string>;
+  platforms: PlatformSummary[];
+  warnings: DaemonText[];
+};
+
+export type ContextPreviewResult =
+  | { ok: true; preview: ContextPreview }
+  | { ok: true; error: DaemonText }
+  | { ok: false; message: string };
+
+/**
+ * プロジェクトのコンテキストのプレビュー（PBI-76）。definition を渡せば、保存していない設定で作る。取得・設定の誤りは
+ * error（文言のコード）で、入力の誤り・プロジェクトが無いことは message（画面の言語の文）で返す。
+ */
+export async function previewProjectContext(
+  id: string,
+  runtime: PreviewRuntime,
+  definition?: ProjectDefinitionInput,
+): Promise<ContextPreviewResult> {
+  const res = await daemonFetch(`/api/projects/${encodeURIComponent(id)}/context-preview`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ runtime, ...(definition ? { definition } : {}) }),
+  });
+  if (res.status === 400) return { ok: false, message: await inputMessage(res) };
+  if (res.status === 404) {
+    return { ok: false, message: (await getMessages()).projects.preview.unavailable };
+  }
+  await ensureOk(res);
+  const json = (await res.json()) as { preview: ContextPreview } | { error: DaemonText };
+  return "preview" in json ? { ok: true, preview: json.preview } : { ok: true, error: json.error };
+}
+
+/**
+ * プロジェクトを作る（id なし）か変える。入力の誤りや重複は、画面に出せる理由を返す。保存したコンテキストに誤りが
+ * あれば、contextError に理由を返す（保存はする。PBI-76）。
+ */
 export async function saveProject(
   id: string | undefined,
   definition: ProjectDefinitionInput,
-): Promise<{ ok: true; project: Project } | { ok: false; message: string }> {
+): Promise<
+  { ok: true; project: Project; contextError?: DaemonText } | { ok: false; message: string }
+> {
   const res = await daemonFetch(id ? `/api/projects/${encodeURIComponent(id)}` : "/api/projects", {
     method: id ? "PUT" : "POST",
     headers: { "content-type": "application/json" },
@@ -175,7 +278,12 @@ export async function saveProject(
     return { ok: false, message: await inputMessage(res) };
   }
   await ensureOk(res);
-  return { ok: true, project: ((await res.json()) as { project: Project }).project };
+  const json = (await res.json()) as { project: Project; contextError?: DaemonText };
+  return {
+    ok: true,
+    project: json.project,
+    ...(json.contextError !== undefined ? { contextError: json.contextError } : {}),
+  };
 }
 
 /** sacty 全体の設定（取り込むラベルなど。PBI-26）。 */

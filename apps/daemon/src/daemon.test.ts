@@ -35,7 +35,7 @@ import type { Invocation } from "./agents/invocation.js";
 import type { AgentOutcome } from "./agents/parse.js";
 import { DockerTestRunner, type TestRunner, type TestRunResult } from "./agents/test-runner.js";
 import { type AgentConfig, type ConfigResult, loadConfig, type SactyConfig } from "./config.js";
-import type { ContextFetcher, ContextRef } from "./context.js";
+import { type ContextFetcher, type ContextRef, DEFAULT_CONTEXT_DIR } from "./context.js";
 import { MessageError } from "./errors.js";
 import type { GitHubAuth } from "./gh.js";
 import type { PullRequestFeedback, PullRequestStatus, PullRequests } from "./github.js";
@@ -650,6 +650,8 @@ class FakeExecutor implements AgentExecutor {
   contexts: (string | undefined)[] = [];
   /** 実行ごとに渡された MCP の設定（mcp.json。無ければ undefined）。 */
   mcpConfigs: (string | undefined)[] = [];
+  /** 実行ごとに渡された、設定のディレクトリに置くファイルのすべて（相対パス → 中身。PBI-76）。 */
+  seeds: (Record<string, string> | undefined)[] = [];
   /** HOLD の実行が始まったら解決する。 */
   started = Promise.withResolvers<string>();
   private held = new Map<string, (outcome: AgentOutcome) => void>();
@@ -707,6 +709,7 @@ class FakeExecutor implements AgentExecutor {
         ? readFileSync(join(seed, "CLAUDE.md"), "utf8")
         : undefined,
     );
+    this.seeds.push(seed && existsSync(seed) ? readTree(seed) : undefined);
     this.mcpConfigs.push(
       seed && existsSync(join(seed, "mcp.json"))
         ? readFileSync(join(seed, "mcp.json"), "utf8")
@@ -13762,6 +13765,367 @@ describe("リポジトリを指定しないタスクのリポジトリの選び�
     expect(service.get(id)?.task.status).toBe("queued");
     await expect(service.chooseRepository(id, WEB)).rejects.toThrow(/止まっているタスクだけ/);
     expect(service.get(id)?.task.repo).toBeUndefined();
+    activity.close();
+  });
+});
+
+describe("コンテキストのプレビュー（PBI-76）", () => {
+  const token = "test-token";
+  const auth = { authorization: `Bearer ${token}` };
+  const json = { ...auth, "content-type": "application/json" };
+  const ctxRepo = "https://github.com/acme/ctx.git";
+  const files = {
+    "rules.md": "# チームの規約",
+    "skills/grp/deploy/SKILL.md": "---\ndescription: デプロイ手順\n---\n手順",
+    "mcp.yaml": [
+      "servers:",
+      "  github:",
+      "    command: server-github",
+      "    env:",
+      "      GITHUB_TOKEN: { secret: mcp-github }",
+      "  docs:",
+      "    url: https://docs.example.com/mcp",
+      "    headers:",
+      "      Authorization: { secret: docs-token, prefix: 'Bearer ' }",
+      "  cloud:",
+      "    command: shadowed",
+      "    tool_timeout_sec: 1800",
+    ].join("\n"),
+    "platforms.yaml": [
+      "platforms:",
+      "  wiki:",
+      "    upstream: https://wiki.example.com",
+      "    description: Wiki",
+      "    auth:",
+      "      secret: wiki-token",
+      "    allow: [GET /api/**]",
+    ].join("\n"),
+    "agents/claude/settings.json": JSON.stringify({ permissions: { allow: ["Bash(ls)"] } }),
+    "agents/codex/config.toml": 'model_reasoning_summary = "concise"\n',
+  };
+  /** 取得した場所も記録する（後片付けを確かめる）。 */
+  class RecordingContexts extends FakeContexts {
+    outs: string[] = [];
+    override async fetch(ref: ContextRef, out: string, authEnv?: Record<string, string>) {
+      this.outs.push(out);
+      return super.fetch(ref, out, authEnv);
+    }
+  }
+  const secretValues: Record<string, string> = {
+    "claude-oauth-token": "oauth-secret",
+    "openai-key": "openai-secret",
+    "mcp-github": "mcp-github-value",
+    "docs-token": "docs-secret-value",
+    "wiki-token": "wiki-secret-value",
+  };
+  const setup = (
+    a: AgentConfig = agent(),
+    repos: Record<string, Record<string, string>> = { [ctxRepo]: files },
+  ) => {
+    const activity = new SqliteActivityStore(dbPath);
+    const projects = new MemoryProjectStore();
+    projects.put("p", {
+      name: "決済",
+      targets: [{ scope: "repo", target: "https://github.com/acme/app" }],
+      githubAccounts: { "github.com": "me" },
+      context: { repo: ctxRepo },
+    });
+    projects.put("bare", {
+      name: "コンテキストなし",
+      targets: [{ scope: "repo", target: "https://github.com/acme/bare" }],
+      githubAccounts: { "github.com": "me" },
+    });
+    const contexts = new RecordingContexts(repos);
+    const gets: string[] = [];
+    const registered: unknown[] = [];
+    /** ホストの MCP サーバーの準備を待った名前（PBI-77）。プレビューでは待たない。 */
+    const ready: string[][] = [];
+    const cloud = toHostMcp("cloud", HostMcpFile.parse({ command: "cloud-mcp" }));
+    const made = makeService(activity, [completed(20_000)], {
+      config: configOf(a, 1, [jiraPlatform()], [cloud]),
+      projects,
+      contexts,
+      defaultContext: DEFAULT_CONTEXT_DIR,
+      hostMcpReady: async (names) => {
+        ready.push([...names]);
+        return [message("gateway.mcpUnavailable", { name: "cloud", detail: "starting" })];
+      },
+      secretStore: {
+        get: async (name) => {
+          gets.push(name);
+          const value = secretValues[name];
+          if (value === undefined) throw new SecretNotFoundError(name);
+          return value;
+        },
+      },
+      gateway: {
+        containerOrigin: () => "http://host.docker.internal:5001",
+        platformsUrl: (t) => `http://host.docker.internal:5001/r/${t}/pf`,
+        register: (_route, mcp) => {
+          registered.push(mcp);
+          return {
+            token: "sacty-gw-run-token",
+            stats: () => ({ retries: 0, waitedMs: 0, statuses: [], gaveUp: false }),
+            close: () => {},
+          };
+        },
+      },
+    });
+    return {
+      ...made,
+      activity,
+      contexts,
+      gets,
+      registered,
+      ready,
+      app: createApp(made.service, token),
+    };
+  };
+  const preview = async (
+    app: ReturnType<typeof createApp>,
+    id: string,
+    body?: unknown,
+    runtime = "claude-code",
+  ) =>
+    body === undefined
+      ? app.request(`/api/projects/${id}/context-preview?runtime=${runtime}`, { headers: auth })
+      : app.request(`/api/projects/${id}/context-preview`, {
+          method: "POST",
+          headers: json,
+          body: JSON.stringify(body),
+        });
+
+  for (const [runtime, a] of [
+    ["claude-code", agent()],
+    [
+      "codex",
+      agent({ id: "codex-key", runtime: "codex", auth: { mode: "api-key", secret: "openai-key" } }),
+    ],
+  ] as const) {
+    it(`${runtime}：API のプレビューのファイルは、工程の実行で実際に置いたファイルと一致する`, async () => {
+      const { activity, service, executor, app } = setup(a);
+      const res = await preview(app, "p", undefined, runtime);
+      expect(res.status).toBe(200);
+      const { preview: view } = (await res.json()) as {
+        preview: { files: { path: string; content: string }[]; runtime: string };
+      };
+      expect(view.runtime).toBe(runtime);
+      const { id } = service.createTask({ projectId: "p", title: "調べる" });
+      await service.runNext(id);
+      const placed = executor.seeds[0];
+      expect(placed && Object.keys(placed).length).toBeGreaterThan(5);
+      expect(Object.fromEntries(view.files.map((f) => [f.path, f.content]))).toEqual(placed);
+      // AI の種類ごとの設定のファイル
+      expect(Object.keys(placed ?? {})).toContain(
+        runtime === "codex" ? "config.toml" : "settings.json",
+      );
+      activity.close();
+    });
+  }
+
+  it("秘密情報の値・ゲートウェイの実行ごとのトークン・gh のトークンを出さず、秘密情報を取り出さない", async () => {
+    const { activity, app, gets, registered, contexts, ready } = setup();
+    const res = await preview(app, "p");
+    const text = await res.text();
+    for (const value of [...Object.values(secretValues), "sacty-gw-run-token", "ghp_secret"]) {
+      expect(text).not.toContain(value);
+    }
+    expect(gets).toEqual([]);
+    // ゲートウェイに実行を登録せず、ホストの MCP サーバーの準備も待たない（起動の副作用を起こさない。PBI-77）
+    expect(registered).toEqual([]);
+    expect(ready).toEqual([]);
+    // コンテキストの取得には、プロジェクトの gh のアカウントを使う（実行と同じ）
+    expect(contexts.fetched.at(-1)?.authEnv).toBeDefined();
+    const view = JSON.parse(text).preview;
+    expect(view.secrets).toEqual([
+      { env: "SACTY_MCP_SECRET_0", secret: "mcp-github", prefix: "", gatewayToken: false },
+      {
+        env: "SACTY_MCP_SECRET_1",
+        secret: "sacty:gateway-token",
+        prefix: "Bearer ",
+        gatewayToken: true,
+      },
+      {
+        env: "SACTY_MCP_SECRET_2",
+        secret: "sacty:gateway-token",
+        prefix: "Bearer ",
+        gatewayToken: true,
+      },
+    ]);
+    // MCP は、ゲートウェイ経由に置き換えた形と元の接続先の両方
+    expect(view.mcp).toEqual([
+      expect.objectContaining({ name: "github", origin: { kind: "direct" } }),
+      expect.objectContaining({
+        name: "docs",
+        agent: { url: "http://host.docker.internal:5001/ctx-mcp/docs" },
+        origin: {
+          kind: "gateway",
+          url: "https://docs.example.com/mcp",
+          headers: { Authorization: { secret: "docs-token", prefix: "Bearer " } },
+        },
+      }),
+      expect.objectContaining({
+        name: "cloud",
+        from: "sacty-gateway",
+        agent: { url: "http://host.docker.internal:5001/mcp/cloud" },
+        origin: { kind: "host" },
+      }),
+    ]);
+    // 使える外部 PF（ホストと層。秘密情報の名前も出さない）と、警告（ホストと同じ名前）
+    expect(view.platforms.map((p: { name: string }) => p.name)).toEqual(["jira", "wiki"]);
+    expect(text).not.toContain("wiki-token");
+    expect(view.warnings.map((w: unknown) => (w as { code: string }).code)).toEqual([
+      "context.hostMcpOverride",
+    ]);
+    activity.close();
+  });
+
+  it("工程の実行では、ホストの MCP の準備を待ち（PBI-77）、作業履歴にホストと同じ名前の警告と準備の警告を残す", async () => {
+    const { activity, service, ready, app } = setup();
+    // プレビュー・保存の検査は待たない
+    await preview(app, "p", undefined, "codex");
+    await app.request("/api/projects/p", {
+      method: "PUT",
+      headers: json,
+      body: JSON.stringify({
+        name: "決済",
+        targets: [{ scope: "repo", target: "https://github.com/acme/app" }],
+        githubAccounts: { "github.com": "me" },
+        context: { repo: ctxRepo },
+      }),
+    });
+    expect(ready).toEqual([]);
+    const { id } = service.createTask({ projectId: "p", title: "調べる" });
+    await service.runNext(id);
+    expect(ready).toEqual([["cloud"]]);
+    const resolved = activity.forTask(id).find((e) => e.type === "ContextResolved");
+    expect(
+      resolved?.type === "ContextResolved" &&
+        resolved.payload.warnings.map((w) => (typeof w === "string" ? w : w.code)),
+    ).toEqual(["context.hostMcpOverride", "gateway.mcpUnavailable"]);
+    activity.close();
+  });
+
+  it("編集中の（保存していない）設定でプレビューでき、保存した設定・作業履歴は変えない", async () => {
+    const { activity, service, app, contexts } = setup(agent(), {
+      [ctxRepo]: files,
+      "https://github.com/acme/other.git": { "rules.md": "# 別のコンテキスト" },
+    });
+    const before = service.getProject("bare");
+    const saved = (await (await preview(app, "bare")).json()).preview;
+    expect(saved.layers.map((l: { repo: string }) => l.repo)).toEqual(["sacty-default"]);
+    const editing = await preview(app, "bare", {
+      runtime: "codex",
+      definition: {
+        name: "コンテキストなし",
+        targets: [{ scope: "repo", target: "https://github.com/acme/bare" }],
+        githubAccounts: { "github.com": "me" },
+        context: { repo: "https://github.com/acme/other.git", ref: "dev" },
+      },
+    });
+    expect(editing.status).toBe(200);
+    const view = (await editing.json()).preview;
+    expect(view.runtime).toBe("codex");
+    expect(
+      view.layers.map((l: { repo: string; ref?: string }) => `${l.repo}#${l.ref ?? ""}`),
+    ).toEqual(["sacty-default#", "https://github.com/acme/other.git#dev"]);
+    const agents = view.files.find((f: { path: string }) => f.path === "AGENTS.md");
+    expect(agents.content).toContain("# 別のコンテキスト");
+    // 保存していない設定の gh のアカウントで取得する
+    expect(contexts.fetched.at(-1)).toMatchObject({ repo: "https://github.com/acme/other.git" });
+    expect(contexts.fetched.at(-1)?.authEnv).toBeDefined();
+    // 保存した設定は変わらず、作業履歴にも何も残さない。取得したものは消す
+    expect(service.getProject("bare")).toEqual(before);
+    expect(service.list()).toEqual([]);
+    for (const out of contexts.outs) expect(existsSync(out)).toBe(false);
+    activity.close();
+  });
+
+  it("誤りは、どの層のどのファイルのどの項目かがわかる理由で返し、トークンは伏せる", async () => {
+    const { activity, app } = setup(agent(), {
+      [ctxRepo]: { "mcp.yaml": "servers:\n  bad:\n    url: ftp://x\n" },
+    });
+    const res = await preview(app, "p");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { error: unknown };
+    expect(ja(body.error)).toContain(`${ctxRepo}# の mcp.yaml に誤りがあります（servers.bad.url）`);
+    activity.close();
+
+    const failing = setup();
+    failing.contexts.fail = true;
+    const failed = (await (await preview(failing.app, "p")).json()) as { error: unknown };
+    expect(ja(failed.error)).toContain("Authentication failed");
+    expect(JSON.stringify(failed)).not.toContain("ghp_secret");
+    expect(ja(failed.error)).toContain("[REDACTED]");
+    failing.activity.close();
+  });
+
+  it("保存するときも同じ検査をし、誤りがあれば保存したうえで知らせる（誤りが無ければ知らせない）", async () => {
+    const { activity, app, service } = setup(agent(), {
+      [ctxRepo]: files,
+      "https://github.com/acme/broken.git": {
+        "platforms.yaml": "platforms:\n  x: { upstream: 1 }\n",
+      },
+    });
+    const definition = {
+      name: "決済",
+      targets: [{ scope: "repo", target: "https://github.com/acme/app" }],
+      githubAccounts: { "github.com": "me" },
+    };
+    const put = (body: unknown) =>
+      app.request("/api/projects/p", { method: "PUT", headers: json, body: JSON.stringify(body) });
+    const broken = await put({
+      ...definition,
+      context: { repo: "https://github.com/acme/broken.git" },
+    });
+    expect(broken.status).toBe(200);
+    const saved = (await broken.json()) as { project: { context: unknown }; contextError: unknown };
+    expect(saved.project.context).toEqual({ repo: "https://github.com/acme/broken.git" });
+    expect(ja(saved.contextError)).toContain(
+      "https://github.com/acme/broken.git# の platforms.yaml に誤りがあります（platforms.x",
+    );
+    expect(service.getProject("p")?.project.context).toEqual({
+      repo: "https://github.com/acme/broken.git",
+    });
+    const fine = await put({ ...definition, context: { repo: ctxRepo } });
+    expect(await fine.json()).not.toHaveProperty("contextError");
+    // コンテキストリポジトリを外せば、確かめない
+    const none = await put(definition);
+    expect(await none.json()).not.toHaveProperty("contextError");
+    const created = await app.request("/api/projects", {
+      method: "POST",
+      headers: json,
+      body: JSON.stringify({
+        name: "新規",
+        context: { repo: "https://github.com/acme/broken.git" },
+      }),
+    });
+    expect(created.status).toBe(201);
+    expect(await created.json()).toHaveProperty("contextError");
+    activity.close();
+  });
+
+  it("無いプロジェクトは404、AI の種類・設定の誤りは400を返す", async () => {
+    const { activity, app } = setup();
+    expect((await preview(app, "missing")).status).toBe(404);
+    expect((await preview(app, "missing", { runtime: "codex" })).status).toBe(404);
+    expect((await preview(app, "p", undefined, "gpt")).status).toBe(400);
+    expect((await preview(app, "p", { runtime: "gpt" })).status).toBe(400);
+    const invalid = await preview(app, "p", { definition: { name: "" } });
+    expect(invalid.status).toBe(400);
+    expect(((await invalid.json()) as { issues: { path: unknown[] }[] }).issues[0]?.path).toEqual([
+      "definition",
+      "name",
+    ]);
+    expect((await preview(app, "p", { extra: 1 })).status).toBe(400);
+    const notJson = await app.request("/api/projects/p/context-preview", {
+      method: "POST",
+      headers: json,
+      body: "{",
+    });
+    expect(notJson.status).toBe(400);
+    // 認証が無ければ 401
+    expect((await app.request("/api/projects/p/context-preview")).status).toBe(401);
     activity.close();
   });
 });
