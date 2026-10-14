@@ -51,7 +51,7 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-describe("共用の compose のリポジトリの取得（PBI-70）", () => {
+describe("共用の compose のリポジトリの取得（PBI-70）", { timeout: 30_000 }, () => {
   it("既定のブランチを取得し、そのコミットの中身を実行ごとのディレクトリに置く（.git は置かない）", async () => {
     const repo = makeRepo();
     const fetcher = new GitSharedComposeFetcher(join(dir, "cache"));

@@ -824,6 +824,55 @@ describe("共用の compose の起動（PBI-70）", () => {
     expect(docker.calls.some((a) => a.includes("down"))).toBe(true);
   });
 
+  it("起動の待ち（up --wait）を打ち切ると、up を止め、起動したところまでを止めて消し、止めたこととして返す（レビュー指摘）", async () => {
+    const calls: string[][] = [];
+    const killed: string[] = [];
+    const upSpawned = Promise.withResolvers<void>();
+    const spawnImpl = ((_cmd: string, args: string[]) => {
+      calls.push(args);
+      const child = Object.assign(new EventEmitter(), {
+        stdout: new EventEmitter(),
+        stderr: new EventEmitter(),
+        kill: (signal: string) => {
+          killed.push(signal);
+          setTimeout(() => child.emit("close", 130), 0);
+          return true;
+        },
+      });
+      if (args.includes("up")) {
+        // 打ち切られるまで終わらない（healthcheck を待っている）
+        upSpawned.resolve();
+      } else {
+        setTimeout(() => {
+          if (args.includes("config")) {
+            child.stdout.emit("data", JSON.stringify(normalized({ redis: { image: "redis" } })));
+          }
+          child.emit("close", 0);
+        }, 0);
+      }
+      return child;
+    }) as never;
+    const runner = new DockerComposeServices(spawnImpl);
+    // 起動していない実行を打ち切っても、何もしない
+    runner.abort("other-run");
+    const starting = runner.start({ runId: "r1", workspaceDir: ws, spec });
+    await upSpawned.promise;
+    runner.abort("r1");
+    expect(await starting).toEqual({ ok: false, message: message("run.stoppedByPerson") });
+    expect(killed).toEqual(["SIGTERM"]);
+    expect(calls.at(-1)).toEqual([
+      "compose",
+      "-p",
+      "sacty-svc-r1",
+      "down",
+      "-v",
+      "--remove-orphans",
+    ]);
+    // 終わった後に打ち切っても、何もしない
+    runner.abort("r1");
+    expect(killed).toHaveLength(1);
+  });
+
   it("container_name は、共用の compose だけ sacty のネットワークの別名にする（サービスの名前とぶつかるものは付けない）", () => {
     const config = normalized({
       cassandra: { image: "cassandra", container_name: "cassandra-db" },

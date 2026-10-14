@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { type ChildProcess, spawn } from "node:child_process";
 import { mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
@@ -490,12 +490,20 @@ export interface ServiceRunner {
   }): Promise<{ ok: true; started: StartedServices } | { ok: false; message: DaemonText }>;
   /** 止めて消す（コンテナ・ネットワーク・ボリューム）。無ければ何もしない。 */
   stop(runId: string): Promise<void>;
+  /**
+   * 起動している最中（正規化・up --wait の待ち）なら、打ち切る（人間の一時停止・中止。PBI-70 レビュー指摘）。start は
+   * 起動したものを止めて消してから、失敗として返る。起動していなければ何もしない。
+   */
+  abort?(runId: string): void;
 }
 
 /** 出力の末尾（失敗の理由に添える）。 */
 const LOG_TAIL = 2000;
 
 export class DockerComposeServices implements ServiceRunner {
+  /** 起動している最中の実行（打ち切るため）。 */
+  private readonly starting = new Map<string, { aborted: boolean; child?: ChildProcess }>();
+
   constructor(
     private readonly spawnImpl: typeof spawn = spawn,
     /** サービスの準備（healthcheck）を待つ上限（秒）。 */
@@ -509,6 +517,8 @@ export class DockerComposeServices implements ServiceRunner {
   private compose(
     args: string[],
     cwd?: string,
+    /** 起動した子プロセス（打ち切るために覚える）。 */
+    onSpawn?: (child: ChildProcess) => void,
   ): Promise<{ code: number; stdout: string; out: string }> {
     return new Promise((done) => {
       const child = this.spawnImpl("docker", ["compose", ...args], {
@@ -516,6 +526,7 @@ export class DockerComposeServices implements ServiceRunner {
         ...(cwd ? { cwd } : {}),
         stdio: ["ignore", "pipe", "pipe"],
       });
+      onSpawn?.(child);
       let stdout = "";
       let stderr = "";
       child.stdout?.on("data", (chunk) => {
@@ -529,7 +540,31 @@ export class DockerComposeServices implements ServiceRunner {
     });
   }
 
-  async start({ runId, workspaceDir, spec, secrets = [] }: Parameters<ServiceRunner["start"]>[0]) {
+  abort(runId: string): void {
+    const state = this.starting.get(runId);
+    if (!state) return;
+    state.aborted = true;
+    state.child?.kill("SIGTERM");
+  }
+
+  async start(input: Parameters<ServiceRunner["start"]>[0]) {
+    const state: { aborted: boolean; child?: ChildProcess } = { aborted: false };
+    this.starting.set(input.runId, state);
+    try {
+      return await this.startOnce(input, state);
+    } finally {
+      this.starting.delete(input.runId);
+    }
+  }
+
+  private async startOnce(
+    { runId, workspaceDir, spec, secrets = [] }: Parameters<ServiceRunner["start"]>[0],
+    state: { aborted: boolean; child?: ChildProcess },
+  ) {
+    const stopped = { ok: false as const, message: message("run.stoppedByPerson") };
+    const track = (child: ChildProcess) => {
+      state.child = child;
+    };
     // 共用の compose（PBI-70）は、どの共用の compose の失敗かがわかる文言にする
     const shared = spec.shared;
     const unsafe = (detail: string) =>
@@ -564,7 +599,9 @@ export class DockerComposeServices implements ServiceRunner {
     const normalized = await this.compose(
       ["-f", file, "config", "--format", "json", "--no-env-resolution"],
       workspaceDir,
+      track,
     );
+    if (state.aborted) return stopped;
     if (normalized.code !== 0) {
       return { ok: false as const, message: failed(normalized.out) };
     }
@@ -599,7 +636,13 @@ export class DockerComposeServices implements ServiceRunner {
           ...safe.services.map((s) => s.name),
         ],
         workspaceDir,
+        track,
       );
+      // 打ち切られたら、起動したところまでを止めて消す
+      if (state.aborted) {
+        await this.stop(runId);
+        return stopped;
+      }
       if (up.code !== 0) {
         await this.stop(runId);
         return { ok: false as const, message: failed(up.out) };

@@ -1135,9 +1135,13 @@ export class TaskService {
     { ok: true; started: StartedServices } | { ok: false; message: DaemonText } | undefined
   > {
     const found = this.serviceSpec(task, step);
-    if (!found || !this.deps.services) return undefined;
-    // 人間が止めたなら、起動しない
-    if (this.pauseRequested.has(task.id)) return undefined;
+    const services = this.deps.services;
+    if (!found || !services) return undefined;
+    // 人間が止めた（一時停止・中止）なら、起動しない
+    const stopped = { ok: false as const, message: message("run.stoppedByPerson") };
+    if (this.stopRequested(task.id)) return stopped;
+    // 起動の待ち（up --wait）の間に止められたら、起動を打ち切れるように、実行として覚える
+    this.track(runId);
     const { compose, ...spec } = found;
     // 共用の compose（PBI-70）は、実行ごとのディレクトリに取得して、そこを作業領域として起動する（マウントできるのは、
     // 取得したリポジトリの中だけ）。HTTPS の GitHub は、コンテキストリポジトリと同じくプロジェクトの gh のアカウントで取得する
@@ -1156,6 +1160,7 @@ export class TaskService {
         }));
       } catch (error) {
         rmSync(dir, { recursive: true, force: true });
+        if (this.stopRequested(task.id)) return stopped;
         // 認証の値を伏せてから、切り詰める
         const detail = redactText(errorText(error), usedSecrets);
         return {
@@ -1168,12 +1173,23 @@ export class TaskService {
         };
       }
     }
-    const result = await this.deps.services.start({
+    // 取得（認証の用意・取得）を待つ間に止められたら、取得したものを片付けて起動しない
+    if (this.stopRequested(task.id)) {
+      if (compose) rmSync(dir, { recursive: true, force: true });
+      return stopped;
+    }
+    const result = await services.start({
       runId,
       workspaceDir: dir,
       spec,
       ...(usedSecrets.length > 0 ? { secrets: usedSecrets } : {}),
     });
+    // 起動を待つ間に止められたら、起動したものを止めて消し、使わない（打ち切って失敗したときも、止めたことにする）
+    if (this.stopRequested(task.id)) {
+      if (result.ok) await services.stop(runId).catch(() => undefined);
+      if (compose) rmSync(dir, { recursive: true, force: true });
+      return stopped;
+    }
     if (!result.ok && compose) rmSync(dir, { recursive: true, force: true });
     if (result.ok) {
       // 複数のサービスが使うポートは、localhost に転送しない（PBI-60）
@@ -3243,6 +3259,8 @@ export class TaskService {
         workspaceDir: dir,
         command: testCommand,
       });
+      // 人間が止めたなら、記録しない（止めた記録は runNext の後始末で行う。再開するとテストからやり直す）
+      if (this.pauseRequested.has(task.id)) return;
       // テストに使うサービスを起動できなければ、テストを実行せずに止める（再開するとテストからやり直す。PBI-47）
       if (!ran.ok) {
         this.append(this.mustGet(task.id), [
@@ -3260,8 +3278,6 @@ export class TaskService {
         return;
       }
       const result = ran.result;
-      // 人間が止めた（コンテナを止めた）テストの結果は記録しない。再開するとテストからやり直す
-      if (this.pauseRequested.has(task.id)) return;
       const passed = result.exitCode === 0 && unmappedViewpoints.length === 0;
       current = this.append(current, [
         {
@@ -3790,7 +3806,14 @@ export class TaskService {
     for (const runId of runIds) {
       this.deps.executor.kill(runId);
       this.deps.tests.kill(runId);
+      // サービスの起動の待ち（up --wait）も打ち切る（PBI-70 レビュー指摘）
+      this.deps.services?.abort?.(runId);
     }
+  }
+
+  /** 人間が一時停止・中止を求めたか。 */
+  private stopRequested(taskId: string): boolean {
+    return this.pauseRequested.has(taskId) || this.cancelling.has(taskId);
   }
 
   /**

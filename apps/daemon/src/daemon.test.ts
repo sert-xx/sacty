@@ -164,6 +164,13 @@ class FakeServices implements ServiceRunner {
     secrets?: readonly string[];
   }) {
     this.started.push(input);
+    // 起動の待ち（up --wait）を、打ち切られるまで終わらせない（一時停止・中止のテスト）
+    if (this.hold) {
+      this.entered.resolve();
+      await new Promise<void>((resolve) => {
+        this.release = resolve;
+      });
+    }
     if (this.fail) return { ok: false as const, message: this.fail };
     return {
       ok: true as const,
@@ -173,14 +180,28 @@ class FakeServices implements ServiceRunner {
   async stop(runId: string) {
     this.stopped.push(runId);
   }
+  /** true なら、起動を打ち切られるまで待つ。 */
+  hold = false;
+  entered = Promise.withResolvers<void>();
+  aborted: string[] = [];
+  private release?: () => void;
+  abort(runId: string) {
+    this.aborted.push(runId);
+    this.release?.();
+  }
 }
 
 /** 共用の compose のリポジトリの取得の偽物（PBI-70）。取得の呼び出しを記録し、compose ファイルを置く。 */
 class FakeSharedComposes implements SharedComposeFetcher {
   calls: { repo: string; ref?: string; dest: string; authEnv?: Record<string, string> }[] = [];
+  /** あれば、取得を、これが解決するまで終わらせない（一時停止・中止のテスト）。 */
+  gate?: Promise<void>;
+  entered = Promise.withResolvers<void>();
   constructor(public fail?: Error) {}
   async checkout(input: Parameters<SharedComposeFetcher["checkout"]>[0]) {
     this.calls.push(input);
+    this.entered.resolve();
+    if (this.gate) await this.gate;
     if (this.fail) {
       // 途中まで書いたディレクトリが残っても、sacty が消す
       mkdirSync(input.dest, { recursive: true });
@@ -3187,6 +3208,82 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       expect(renderMessage(raw, "en")).toContain('of the shared compose "infra"');
       // 取得に失敗したディレクトリも残さない
       expect(existsSync(shared.calls[0]?.dest ?? "")).toBe(false);
+      activity.close();
+    });
+
+    for (const mode of ["pause", "cancel"] as const) {
+      const label = mode === "pause" ? "一時停止" : "中止";
+      it(`取得の待ちの間に${label}されたら、取得したものを片付けて起動しない（レビュー指摘）`, async () => {
+        const services = new FakeServices();
+        const shared = new FakeSharedComposes();
+        const gate = Promise.withResolvers<void>();
+        shared.gate = gate.promise;
+        const { activity, service, executor, id } = await toImplement([implement("# 実装")], {
+          services,
+          sharedComposes: shared,
+          projects: projectsWithShared(),
+          planner: plan({ services: { compose: "infra", names: [], steps: ["implement"] } }),
+        });
+        const before = executor.calls.length;
+        const running = service.runNext(id);
+        await shared.entered.promise;
+        const stopping = mode === "pause" ? service.pause(id) : service.cancel(id);
+        gate.resolve();
+        await stopping;
+        await running;
+        expect(services.started).toHaveLength(0);
+        expect(executor.calls).toHaveLength(before);
+        expect(existsSync(shared.calls[0]?.dest ?? "")).toBe(false);
+        expect(service.get(id)?.task.status).toBe(mode === "pause" ? "paused" : "cancelled");
+        expect(service.get(id)?.activity.some((e) => e.type === "ServicesStarted")).toBe(false);
+        activity.close();
+      });
+
+      it(`起動の待ち（up --wait）の間に${label}されたら、起動を打ち切って止めて消す（レビュー指摘）`, async () => {
+        const services = new FakeServices();
+        services.hold = true;
+        const shared = new FakeSharedComposes();
+        const { activity, service, executor, id } = await toImplement([implement("# 実装")], {
+          services,
+          sharedComposes: shared,
+          projects: projectsWithShared(),
+          planner: plan({ services: { compose: "infra", names: [], steps: ["implement"] } }),
+        });
+        const before = executor.calls.length;
+        const running = service.runNext(id);
+        await services.entered.promise;
+        await (mode === "pause" ? service.pause(id) : service.cancel(id));
+        await running;
+        const runId = services.started[0]?.runId;
+        expect(services.aborted).toEqual([runId]);
+        expect(services.stopped).toContain(runId);
+        expect(executor.calls).toHaveLength(before);
+        expect(existsSync(shared.calls[0]?.dest ?? "")).toBe(false);
+        expect(service.get(id)?.task.status).toBe(mode === "pause" ? "paused" : "cancelled");
+        expect(service.get(id)?.activity.some((e) => e.type === "ServicesStarted")).toBe(false);
+        activity.close();
+      });
+    }
+
+    it("テストの前のサービスの起動の待ちの間に一時停止されたら、テストを実行せず、失敗として記録しない（レビュー指摘）", async () => {
+      const services = new FakeServices();
+      const tests = new FakeTests();
+      const { activity, service, id } = await toImplement([implement("# 実装")], {
+        tests,
+        services,
+        planner: plan({ services: { file: "compose.yaml", names: ["db"], steps: ["implement"] } }),
+      });
+      await service.runNext(id); // 実装（起動できる）
+      services.hold = true;
+      const running = service.runNext(id); // テスト
+      await services.entered.promise;
+      await service.pause(id);
+      await running;
+      expect(tests.calls).toHaveLength(0);
+      expect(services.aborted).toHaveLength(1);
+      const task = service.get(id)?.task;
+      expect(task?.status).toBe("paused");
+      expect(task?.pausedReason).toBe("manual");
       activity.close();
     });
 
