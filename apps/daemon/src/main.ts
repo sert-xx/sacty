@@ -55,7 +55,8 @@ const secrets = new ResolvingSecretStore(
 );
 const executor = new DockerExecutor();
 const tests = new DockerTestRunner();
-// docker compose のサービス（PBI-47）。前回、止める前にデーモンが終わって残ったサービスを片付ける
+// docker compose のサービス（PBI-47）。前回、止める前にデーモンが終わって残ったサービスを片付ける（起動したデーモンが
+// 動いているもの、つまりほかの sacty が使っているものは止めない。PBI-78 レビュー指摘）
 const composeServices = new DockerComposeServices();
 void composeServices.cleanupAll();
 // 共用の compose（PBI-70）。リポジトリのキャッシュは残し、前回の実行ごとの取得は消す
@@ -73,7 +74,8 @@ const credentials = new PlatformCredentials({ secrets });
 // チケット（JIRA など）の検索とコメント。接続先と認証は gateway.platforms のもの（PBI-52）
 const tickets = new JiraTickets({ credentials });
 // ホストの MCP サーバーのプロセス（PBI-78）。前回、止める前にデーモンが落ちて残ったもの（記録と PID・開始時刻が
-// 一致するものだけ）を、新しく起動する前に片付ける。デーモンが例外などで終わるときも、グループに SIGTERM を送る
+// 一致するものだけ。記録を書いたデーモンが動いているもの＝同じ SACTY_HOME のほかの sacty のものは止めない）を、新しく
+// 起動する前に片付ける。デーモンが例外などで終わるときも、グループに SIGTERM を送る
 const hostMcpProcesses = new HostMcpProcesses(join(home, "host-mcp", "processes"), {
   log: (line) => console.log(line),
 });

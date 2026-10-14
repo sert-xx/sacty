@@ -9,6 +9,7 @@ import {
   composePorts,
   composeProject,
   DockerComposeServices,
+  labelOwner,
   localForwards,
   sanitizeCompose,
 } from "./services.js";
@@ -899,5 +900,93 @@ describe("共用の compose の起動（PBI-70）", () => {
     if (!own.ok) throw new Error(own.problems.join());
     const ownServices = own.config.services as Record<string, Record<string, unknown>>;
     expect(ownServices.cassandra?.networks).toEqual({ default: null, sacty: null });
+  });
+});
+
+describe("前回の残りのサービスの片付け（PBI-78 レビュー指摘）", () => {
+  const T1 = "Wed Oct 14 01:00:00 2026";
+  const T2 = "Wed Oct 14 02:00:00 2026";
+  /** プロジェクトごとのコンテナの所有元のラベル（docker ps の出力）。 */
+  function fakeDocker(owners: Record<string, string>, options: { psFails?: boolean } = {}) {
+    const downs: string[] = [];
+    const ups: Record<string, unknown>[] = [];
+    const spawnImpl = ((_cmd: string, args: string[]) => {
+      const child = Object.assign(new EventEmitter(), {
+        stdout: new EventEmitter(),
+        stderr: new EventEmitter(),
+      });
+      setTimeout(() => {
+        let code = 0;
+        if (args[0] === "compose" && args.includes("ls")) {
+          child.stdout.emit(
+            "data",
+            JSON.stringify([...Object.keys(owners), "other-project"].map((Name) => ({ Name }))),
+          );
+        } else if (args[0] === "ps") {
+          const filter = args[args.indexOf("--filter") + 1] ?? "";
+          const name = filter.replace("label=com.docker.compose.project=", "");
+          if (options.psFails) code = 1;
+          else child.stdout.emit("data", owners[name] ?? "");
+        } else if (args.includes("down")) {
+          downs.push(args[args.indexOf("-p") + 1] ?? "");
+        } else if (args.includes("config")) {
+          child.stdout.emit("data", JSON.stringify({ services: { db: { image: "postgres" } } }));
+        } else if (args.includes("up")) {
+          ups.push(JSON.parse(readFileSync(args[args.indexOf("-f") + 1] ?? "", "utf8")));
+        }
+        child.emit("close", code);
+      }, 0);
+      return child;
+    }) as never;
+    return { spawnImpl, downs, ups };
+  }
+  const table = async () => [
+    { pid: 50, ppid: 1, pgid: 50, started: T1 },
+    { pid: 70, ppid: 1, pgid: 70, started: T2 },
+  ];
+
+  it("起動したデーモンが動いているもの（ほかの sacty が使っている）は止めず、終わったもの・PID が再利用されたもの・ラベルの無いものは止める", async () => {
+    const docker = fakeDocker({
+      "sacty-svc-alive": `50 ${T1}\n50 ${T1}\n`,
+      "sacty-svc-dead": `60 ${T1}\n`,
+      "sacty-svc-reused": `70 ${T1}\n`,
+      "sacty-svc-legacy": "\n",
+    });
+    await new DockerComposeServices(docker.spawnImpl, 300, { table }).cleanupAll();
+    expect(docker.downs.sort()).toEqual(["sacty-svc-dead", "sacty-svc-legacy", "sacty-svc-reused"]);
+  });
+
+  it("所有元を確かめられない（ps・docker ps が使えない）ときは止めない", async () => {
+    const docker = fakeDocker({ "sacty-svc-dead": `60 ${T1}\n` });
+    await new DockerComposeServices(docker.spawnImpl, 300, { table: async () => [] }).cleanupAll();
+    const failing = fakeDocker({ "sacty-svc-dead": `60 ${T1}\n` }, { psFails: true });
+    await new DockerComposeServices(failing.spawnImpl, 300, { table }).cleanupAll();
+    expect([...docker.downs, ...failing.downs]).toEqual([]);
+  });
+
+  it("起動するサービスに、起動したデーモンのラベルを付ける", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "sacty-svc-owner-"));
+    try {
+      writeFileSync(join(dir, "compose.yaml"), "services:\n  db:\n    image: postgres\n");
+      const docker = fakeDocker({});
+      const result = await new DockerComposeServices(docker.spawnImpl, 300, {
+        owner: { pid: 50, started: T1 },
+      }).start({ runId: "r1", workspaceDir: dir, spec: { file: "compose.yaml", names: [] } });
+      expect(result).toMatchObject({ ok: true });
+      expect(docker.ups[0]).toMatchObject({
+        services: { db: { labels: { "io.sacty.owner": `50 ${T1}` } } },
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("書いてあるラベル（名前と値の組・名前=値の並び）は残す", () => {
+    const config = {
+      services: { a: { labels: { team: "x" } }, b: { labels: ["team=y", "io.sacty.owner=1 old"] } },
+    };
+    labelOwner(config, { pid: 50, started: T1 });
+    expect(config.services.a.labels).toEqual({ team: "x", "io.sacty.owner": `50 ${T1}` });
+    expect(config.services.b.labels).toEqual(["team=y", `io.sacty.owner=50 ${T1}`]);
   });
 });

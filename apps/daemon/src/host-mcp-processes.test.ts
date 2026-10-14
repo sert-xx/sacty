@@ -31,8 +31,16 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-const record = (pid: number, started: string, members: { pid: number; started: string }[] = []) =>
-  writeFileSync(join(dir, `${pid}.json`), JSON.stringify({ name: "cloud", pid, started, members }));
+const record = (
+  pid: number,
+  started: string,
+  members: { pid: number; started: string }[] = [],
+  owner?: { pid: number; started: string },
+) =>
+  writeFileSync(
+    join(dir, `${pid}.json`),
+    JSON.stringify({ name: "cloud", pid, started, members, ...(owner ? { owner } : {}) }),
+  );
 
 const T1 = "Wed Oct 14 01:00:00 2026";
 const T2 = "Wed Oct 14 02:00:00 2026";
@@ -132,7 +140,31 @@ describe("前回の残りの片付け（PBI-78。偽の一覧）", () => {
     expect(fake.killed()).toEqual([101, 104]);
   });
 
-  it("壊れた記録は、止めずに消す。デーモン自身とその親は、記録にあっても止めない", async () => {
+  it("記録を書いたデーモンが動いていれば（同じ SACTY_HOME のほかの sacty）、止めず、記録も残す", async () => {
+    record(100, T1, [], { pid: 50, started: T1 });
+    const fake = fakeTable([
+      { pid: 50, ppid: 1, pgid: 50, started: T1 },
+      { pid: 100, ppid: 1, pgid: 100, started: T1 },
+    ]);
+    expect(await new HostMcpProcesses(dir, fake.deps).cleanup()).toBe(0);
+    expect(fake.signals).toEqual([]);
+    expect(readdirSync(dir)).toEqual(["100.json"]);
+  });
+
+  it("記録を書いたデーモンが終わっていれば（PID が再利用されて開始時刻が違うものを含む）、前回の残りとして止める", async () => {
+    record(100, T1, [], { pid: 50, started: T1 }); // 所有元の PID が再利用された
+    record(200, T1, [], { pid: 60, started: T1 }); // 所有元が終わった
+    const fake = fakeTable([
+      { pid: 50, ppid: 1, pgid: 50, started: T2 },
+      { pid: 100, ppid: 1, pgid: 100, started: T1 },
+      { pid: 200, ppid: 1, pgid: 200, started: T1 },
+    ]);
+    expect(await new HostMcpProcesses(dir, fake.deps).cleanup()).toBe(2);
+    expect(fake.killed()).toEqual([100, 200]);
+    expect(readdirSync(dir)).toEqual([]);
+  });
+
+  it("壊れた記録は、止めずに消す。書いている途中の記録は読まない。デーモン自身とその親は、記録にあっても止めない", async () => {
     writeFileSync(join(dir, "100.json"), "{broken");
     writeFileSync(join(dir, "101.json.tmp"), "{");
     record(process.pid, T1);
@@ -144,7 +176,7 @@ describe("前回の残りの片付け（PBI-78。偽の一覧）", () => {
     ]);
     expect(await new HostMcpProcesses(dir, fake.deps).cleanup()).toBe(0);
     expect(fake.signals).toEqual([]);
-    expect(readdirSync(dir)).toEqual([]);
+    expect(readdirSync(dir)).toEqual(["101.json.tmp"]);
   });
 
   it("SIGTERM で終わらなければ、猶予の後に SIGKILL する", async () => {
@@ -302,6 +334,56 @@ rl.on("close", () => process.exit(0));
     await until(async () => closed);
     await until(async () => (await alive(started)).length === 0);
     await until(async () => readdirSync(join(dir, "processes")).length === 0);
+  }, 20_000);
+
+  it("MCP サーバーが自分で終わっても、子孫が標準出力・標準エラーを開いたままなら、子孫を止め、1回だけ知らせる", async () => {
+    // Node のラッパーが、標準入出力を引き継いだ sleep を起動して終わる
+    const wrapper = join(dir, "wrapper.mjs");
+    writeFileSync(
+      wrapper,
+      `import { spawn } from "node:child_process";
+spawn("sleep", ["304"], { stdio: "inherit" });
+setTimeout(() => process.exit(0), 700);
+`,
+    );
+    const processes = new HostMcpProcesses(join(dir, "processes"), { graceMs: 500 });
+    const transport = new GroupStdioTransport(
+      {
+        name: "fake",
+        command: process.execPath,
+        args: [wrapper],
+        env: process.env as Record<string, string>,
+      },
+      processes,
+    );
+    let closed = 0;
+    transport.onclose = () => {
+      closed += 1;
+    };
+    await transport.start();
+    const started = await recorded(2);
+    await until(async () => closed > 0);
+    await until(async () => (await alive(started)).length === 0);
+    await until(async () => readdirSync(join(dir, "processes")).length === 0);
+    // 子孫が止まってパイプが閉じた後（close）も、知らせるのは1回だけ
+    await new Promise((r) => setTimeout(r, 300));
+    expect(closed).toBe(1);
+    await transport.close();
+    expect(closed).toBe(1);
+  }, 20_000);
+
+  it("同じ SACTY_HOME で2つ目のデーモンが起動しても、1つ目が動かしている MCP サーバーは止めない", async () => {
+    const first = servers();
+    first.start();
+    expect(await first.ready(["fake"])).toEqual([]);
+    const started = await recorded();
+    // 2つ目のデーモンの起動時の片付け（記録を書いたデーモン＝このプロセスは動いている）
+    const second = new HostMcpProcesses(join(dir, "processes"), { graceMs: 500 });
+    expect(await second.cleanup()).toBe(0);
+    expect(await alive(started)).toHaveLength(started.length);
+    expect(readdirSync(join(dir, "processes"))).toHaveLength(1);
+    await first.stop();
+    expect(await alive(started)).toEqual([]);
   }, 20_000);
 
   it("起動して記録している途中に止めても取りこぼさず、止めた後は起動しない", async () => {

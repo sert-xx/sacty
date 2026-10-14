@@ -15,7 +15,8 @@ import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js";
  * デーモンが突然落ちたときに残ったものは、次の起動のときに片付ける（compose のサービスの片付けと同じ流儀）。そのため、
  * 起動したプロセスを SACTY_HOME の下に記録しておく。記録は PID と開始時刻の組で、片付けでは、いま動いているプロセスの
  * PID と開始時刻が記録と一致するもの（と、その子孫・そのプロセスがリーダーのグループ）だけを止める。PID が再利用された
- * ほかのプロセスは、開始時刻が違うので止めない。
+ * ほかのプロセスは、開始時刻が違うので止めない。記録には、書いたデーモン（所有元）の PID と開始時刻も持たせ、所有元が
+ * いまも動いているもの（同じ SACTY_HOME で、ほかの sacty が動いている）は止めない（PBI-78 レビュー指摘）。
  */
 
 /** プロセスの一覧の1行。started は開始時刻（ps の lstart。UTC・C ロケールで読むので、同じプロセスなら同じ文字列）。 */
@@ -30,6 +31,8 @@ type ProcessRecord = {
   pid: number;
   started: string;
   members: ProcessIdentity[];
+  /** 記録を書いたデーモン。 */
+  owner?: ProcessIdentity;
 };
 
 export type ProcessDeps = {
@@ -41,6 +44,8 @@ export type ProcessDeps = {
   graceMs?: number;
   /** 子孫を記録し直す間隔。 */
   refreshMs?: number;
+  /** 記録の所有元（既定はこのプロセス。テストでは差し替える）。 */
+  owner?: ProcessIdentity;
   log?: (line: string) => void;
 };
 
@@ -70,6 +75,16 @@ export const psTable = (): Promise<ProcessInfo[]> =>
       (error, stdout) => resolve(error ? [] : parseProcessTable(stdout)),
     );
   });
+
+/** 一覧の中の、このプロセス（デーモン自身）。 */
+export function selfIn(table: readonly ProcessInfo[]): ProcessIdentity | undefined {
+  const me = table.find((p) => p.pid === process.pid);
+  return me ? { pid: me.pid, started: me.started } : undefined;
+}
+
+/** そのプロセスが、いまも動いているか（PID が再利用されたものは、開始時刻が違うので動いていないとみなす）。 */
+export const isRunning = (id: ProcessIdentity, table: readonly ProcessInfo[]) =>
+  table.some((p) => p.pid === id.pid && p.started === id.started);
 
 const defaultKill = (pid: number, signal: NodeJS.Signals) => {
   process.kill(pid, signal);
@@ -163,7 +178,9 @@ export class HostMcpProcesses {
       await this.end(pid);
       return;
     }
-    const started = (await this.table()).find((p) => p.pid === pid)?.started;
+    const table = await this.table();
+    const started = table.find((p) => p.pid === pid)?.started;
+    const owner = this.deps.owner ?? selfIn(table);
     // 止めている途中・止めた後なら、記録しない
     if (this.live.get(pid)?.record !== record || this.ending.has(pid)) return;
     if (child.exitCode !== null || child.signalCode !== null) {
@@ -172,8 +189,9 @@ export class HostMcpProcesses {
       return;
     }
     // 開始時刻が読めない（ps が使えない）ときは、記録しない（次の起動で、確かめずに止めることになるため）
-    if (!started) return;
+    if (!started || !owner) return;
     record.started = started;
+    record.owner = owner;
     this.write(record);
     if (!this.refreshTimer) {
       this.refreshTimer = setInterval(() => void this.refresh(), this.deps.refreshMs ?? REFRESH_MS);
@@ -241,29 +259,39 @@ export class HostMcpProcesses {
   }
 
   /**
-   * 前回の残り（デーモンが突然落ちて残ったもの）を止める（デーモンの起動時）。記録の PID と開始時刻が一致するもの
-   * だけを止める（PID が再利用されたものは止めない）。そのうちグループのリーダーなら、グループも止める。
+   * 前回の残り（デーモンが突然落ちて残ったもの）を止める（デーモンの起動時）。記録を書いたデーモンが終わっているものの
+   * うち、記録の PID と開始時刻が一致するものだけを止める（PID が再利用されたものは止めない）。そのうちグループの
+   * リーダーなら、グループも止める。記録を書いたデーモンが動いている（同じ SACTY_HOME で、ほかの sacty が動いている）
+   * ものは、止めず、記録も残す。
    */
   async cleanup(): Promise<number> {
     if (!this.dir) return 0;
     let files: string[];
     try {
-      files = readdirSync(this.dir).filter((f) => /^\d+\.json(\.tmp)?$/.test(f));
+      // 書いている途中のもの（.tmp）は読まない（動いているほかの sacty が書いているかもしれない）
+      files = readdirSync(this.dir).filter((f) => /^\d+\.json$/.test(f));
     } catch {
       return 0;
-    }
-    const records: ProcessRecord[] = [];
-    for (const f of files) {
-      const path = join(this.dir, f);
-      try {
-        if (f.endsWith(".json")) records.push(parseRecord(readFileSync(path, "utf8")));
-      } catch {
-        // 壊れた記録は、確かめられないので止めずに消す
-      }
     }
     const table = await this.table();
     // 一覧が読めない（ps が使えない）ときは、確かめられないので止めず、記録も消さない（次の起動で片付ける）
     if (table.length === 0) return 0;
+    const records: ProcessRecord[] = [];
+    const done: string[] = [];
+    for (const f of files) {
+      let r: ProcessRecord;
+      try {
+        r = parseRecord(readFileSync(join(this.dir, f), "utf8"));
+      } catch {
+        // 壊れた記録は（置き換えて書くので、書いている途中ではない）、確かめられないので止めずに消す
+        done.push(f);
+        continue;
+      }
+      // 記録を書いたデーモンが動いているものは、前回の残りではない
+      if (r.owner && isRunning(r.owner, table)) continue;
+      records.push(r);
+      done.push(f);
+    }
     const identities = records.flatMap((r) =>
       r.started ? [{ pid: r.pid, started: r.started }, ...r.members] : [],
     );
@@ -274,7 +302,7 @@ export class HostMcpProcesses {
       )
       .map((r) => r.pid);
     const stopped = await this.terminate(identities, groups, table);
-    for (const f of files) rmSync(join(this.dir, f), { force: true });
+    for (const f of done) rmSync(join(this.dir, f), { force: true });
     if (stopped > 0) {
       this.deps.log?.(`[gateway] host MCP: stopped ${stopped} process(es) left from the last run`);
     }
@@ -341,7 +369,17 @@ function parseRecord(text: string): ProcessRecord {
         (m): m is ProcessIdentity => typeof m?.pid === "number" && typeof m?.started === "string",
       )
     : [];
-  return { name: String(raw.name ?? ""), pid: raw.pid, started: raw.started, members };
+  const owner =
+    typeof raw.owner?.pid === "number" && typeof raw.owner?.started === "string"
+      ? { pid: raw.owner.pid, started: raw.owner.started }
+      : undefined;
+  return {
+    name: String(raw.name ?? ""),
+    pid: raw.pid,
+    started: raw.started,
+    members,
+    ...(owner ? { owner } : {}),
+  };
 }
 
 type TransportParams = {
@@ -394,12 +432,19 @@ export class GroupStdioTransport implements Transport {
       });
     });
     child.on("error", (error) => this.onerror?.(error));
-    child.on("close", () => {
+    // 終わったら（exit。子孫が標準出力・標準エラーを引き継いで開いたままだと close は来ないので、待たない）、残った
+    // 子孫を止め、クライアントに1回だけ知らせる（PBI-78 レビュー指摘）
+    let finished = false;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
       if (this.child === child) this.child = undefined;
-      // 自分で終わったときも、残った子孫を止める
       if (child.pid) void this.processes.end(child.pid);
       this.onclose?.();
-    });
+    };
+    // 終わる直前に書いた標準出力を読み終えられるよう、少しだけ待つ
+    child.on("exit", () => setTimeout(finish, 50).unref());
+    child.on("close", finish);
     child.stdin?.on("error", (error) => this.onerror?.(error));
     child.stdout?.on("data", (chunk: Buffer) => {
       try {
