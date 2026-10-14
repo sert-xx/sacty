@@ -37,7 +37,7 @@ export const CI_LOG_LINES = 80;
 /** 1件のログの抜粋の上限（文字数。伏せた後に切り詰める）。 */
 export const CI_EXCERPT_MAX = 3_000;
 /** 読むログの上限（バイト。大きなログを全部読まない）。 */
-const CI_LOG_BYTES = 2_000_000;
+export const CI_LOG_BYTES = 2_000_000;
 /** 一覧を読むページの上限。 */
 const MAX_PAGES = 10;
 
@@ -84,6 +84,65 @@ export function logExcerpt(log: string, secrets: readonly string[]): string {
     .filter((line, i, all) => line.trim() !== "" || i < all.length - 1);
   const tail = lines.slice(-CI_LOG_LINES).join("\n").trimEnd();
   return tail.length > CI_EXCERPT_MAX ? `…${tail.slice(-(CI_EXCERPT_MAX - 1))}` : tail;
+}
+
+/**
+ * 同じワークフローの実行のうち、a が b より新しいか（PBI-89）。別の実行（run）は、通番（run_number）・作成の時刻
+ * （created_at）・ID の順で比べ、同じ実行の中では再試行の回数（run_attempt）で比べる。run_attempt は1つの実行の中の
+ * 回数なので、別の実行どうしの比べには使わない。
+ */
+export function newerRun(a: Record<string, unknown>, b: Record<string, unknown>): boolean {
+  if (a.id !== undefined && a.id === b.id) {
+    return Number(a.run_attempt ?? 0) > Number(b.run_attempt ?? 0);
+  }
+  const number = Number(a.run_number ?? 0) - Number(b.run_number ?? 0);
+  if (number !== 0) return number > 0;
+  const created = String(a.created_at ?? "").localeCompare(String(b.created_at ?? ""));
+  if (created !== 0) return created > 0;
+  return Number(a.id ?? 0) > Number(b.id ?? 0);
+}
+
+/**
+ * 読みながら、末尾の max バイトだけを持つ（PBI-89。巨大なログを全部メモリーに読み込まない）。cut は、先頭を捨てたか。
+ */
+export async function readTail(
+  body: ReadableStream<Uint8Array> | null,
+  max: number,
+): Promise<{ bytes: Uint8Array; cut: boolean }> {
+  if (!body) return { bytes: new Uint8Array(0), cut: false };
+  const chunks: Uint8Array[] = [];
+  let held = 0;
+  let cut = false;
+  const reader = body.getReader();
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (!value || value.length === 0) continue;
+    // 1つの塊が上限より大きければ、その末尾だけを持つ
+    const chunk = value.length > max ? value.slice(value.length - max) : value;
+    if (chunk !== value) cut = true;
+    chunks.push(chunk);
+    held += chunk.length;
+    while (held > max) {
+      const first = chunks[0] as Uint8Array;
+      const over = held - max;
+      cut = true;
+      if (first.length <= over) {
+        chunks.shift();
+        held -= first.length;
+      } else {
+        chunks[0] = first.slice(over);
+        held -= over;
+      }
+    }
+  }
+  const bytes = new Uint8Array(held);
+  let at = 0;
+  for (const c of chunks) {
+    bytes.set(c, at);
+    at += c.length;
+  }
+  return { bytes, cut };
 }
 
 type Fetch = typeof fetch;
@@ -150,7 +209,7 @@ export class GitHubCiStatus implements CiStatusReader {
     for (const r of runs) {
       const key = String(r.workflow_id ?? r.name ?? r.id);
       const prev = latest.get(key);
-      if (!prev || Number(r.run_attempt ?? 0) >= Number(prev.run_attempt ?? 0)) latest.set(key, r);
+      if (!prev || newerRun(r, prev)) latest.set(key, r);
     }
     for (const r of latest.values()) {
       const name = str(r.name) ?? str(r.display_title) ?? String(r.id);
@@ -257,13 +316,9 @@ export class GitHubCiStatus implements CiStatusReader {
         redirect: "follow",
       });
       if (!res.ok) return undefined;
-      const buffer = await res.arrayBuffer();
-      const bytes = new Uint8Array(buffer);
-      // 末尾を残す（失敗の理由は末尾にあることが多いので）
-      const cut = bytes.length > CI_LOG_BYTES;
-      const decoded = new TextDecoder("utf-8").decode(
-        cut ? bytes.subarray(bytes.length - CI_LOG_BYTES) : bytes,
-      );
+      // 末尾の上限の分だけを、読みながら持つ（ログ全体をメモリーに読み込まない）
+      const { bytes, cut } = await readTail(res.body, CI_LOG_BYTES);
+      const decoded = new TextDecoder("utf-8").decode(bytes);
       // 切った先頭の行は、秘密情報の途中から始まりうる（伏せられない）ので捨てる
       const newline = decoded.indexOf("\n");
       const text = !cut ? decoded : newline < 0 ? "" : decoded.slice(newline + 1);
