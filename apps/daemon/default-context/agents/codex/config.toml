@@ -6,3 +6,15 @@
 
 # 承認が要る操作は、人を待たずに自動のレビューで判断する
 approvals_reviewer = "auto_review"
+
+# サブエージェント（既定のスキル review が、観点ごとの担当を並列に起動する）
+[features]
+multi_agent = true
+
+[agents]
+# 同時に開く担当の数。観点はこれを超えることがあり、超えた分は順に起動される
+max_threads = 8
+# 担当（深さ 1）はさらにサブエージェントを起動できない。親と担当の役割の混線を設定でも止める
+max_depth = 1
+# 担当 1 つの実行時間の上限（秒）
+job_max_runtime_seconds = 2700

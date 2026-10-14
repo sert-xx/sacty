@@ -74,7 +74,7 @@ import {
 } from "@sacty/core";
 import { ZodError } from "zod";
 import type { ActivityStore } from "./activity.js";
-import type { AgentExecutor } from "./agents/docker.js";
+import { type AgentExecutor, CONTAINER_REVIEW_DIR } from "./agents/docker.js";
 import type { LocalForward } from "./agents/forward.js";
 import {
   type AgentRole,
@@ -185,6 +185,12 @@ import type {
 } from "./session-logs.js";
 import type { SettingsStore } from "./settings.js";
 import { type FoundTicket, type TicketClient, ticketErrorText } from "./tickets.js";
+
+/**
+ * レビューの工程で、PR の差分の全体を置くファイルの名前（PBI-65）。sacty が管理する `_review/<runId>/` に置き、
+ * 読み取り専用で別にマウントする。作業領域の写しは PR 由来のリンクやファイルを含むので、その中には書かない。
+ */
+const REVIEW_DIFF_FILE = "pr.diff";
 
 type ActivityItem = { actor: Actor; event: EventInput };
 
@@ -2464,6 +2470,9 @@ export class TaskService {
     // 要求要件・設計の工程は、起点のコミットのコードを実行ごとのディレクトリに書き出して渡し、終わったら消す
     // （実装の作業領域は実装の変更を含むので使わない。差し戻しでやり直しても、同じ起点のコードを読む）
     const snapshotDir = scratch ? join(this.deps.workspaceRoot, "_snapshots", runId) : undefined;
+    // PR の差分の全体を置く、sacty が管理するディレクトリ（写しの外。PBI-65）
+    const reviewDiffDir =
+      reviewTarget && snapshotDir ? join(this.deps.workspaceRoot, "_review", runId) : undefined;
     try {
       if (snapshotDir) {
         const latest = this.mustGet(task.id);
@@ -2476,10 +2485,12 @@ export class TaskService {
               [reviewTarget.headCommit, reviewTarget.baseCommit],
               await this.gitAuth(latest, latest.repository?.url ?? "", usedSecrets),
             );
+            // 切り詰めずに取る（プロンプトでは切り詰めるが、ファイルには全体を置く）
             reviewDiff = await this.deps.repos.diffCommits(
               gitDir,
               reviewTarget.baseCommit,
               reviewTarget.headCommit,
+              { full: true },
             );
           }
           await this.deps.repos.snapshot(
@@ -2487,6 +2498,12 @@ export class TaskService {
             reviewTarget?.headCommit ?? latest.repository?.baseCommit ?? "",
             snapshotDir,
           );
+          // 差分の全体をファイルで置く。写しに .git は無いので、プロンプトで切り詰めた残りを worker が git で取れない。
+          // 写しの中には書かない（PR 由来のシンボリックリンクをたどってホストのファイルを書き換えないため。PBI-65）
+          if (reviewDiff !== undefined && reviewDiffDir) {
+            mkdirSync(reviewDiffDir, { recursive: true });
+            writeFileSync(join(reviewDiffDir, REVIEW_DIFF_FILE), reviewDiff);
+          }
         } catch (error) {
           executed = {
             outcome: {
@@ -2530,7 +2547,12 @@ export class TaskService {
         runId,
         prompt: [
           buildPrompt(this.mustGet(task.id), step, {
-            ...(reviewDiff !== undefined ? { diff: reviewDiff } : {}),
+            ...(reviewDiff !== undefined
+              ? {
+                  diff: reviewDiff,
+                  diffFile: `${CONTAINER_REVIEW_DIR}/${REVIEW_DIFF_FILE}`,
+                }
+              : {}),
             // 修正の子タスクを追加するときは、これまでの子タスクを渡す（PBI-31）
             ...(step === "split" ? { subtasks: this.subtaskSummaries(task) } : {}),
           }),
@@ -2542,6 +2564,14 @@ export class TaskService {
         platforms: config.config.platforms,
         role: step,
         workspaceDir,
+        // 差分の全体は、作業領域の外に読み取り専用でマウントする（PBI-65）
+        ...(reviewDiff !== undefined && reviewDiffDir
+          ? {
+              mounts: [
+                { hostPath: reviewDiffDir, containerPath: CONTAINER_REVIEW_DIR, readOnly: true },
+              ],
+            }
+          : {}),
         context: context && { dir: context.dir, ...context.placed },
         ...(context && context.gatewayMcp.length > 0 ? { contextMcp: context.gatewayMcp } : {}),
       });
@@ -2550,6 +2580,7 @@ export class TaskService {
       await this.stopServices(task, step, runId);
       context?.dispose();
       if (snapshotDir) rmSync(snapshotDir, { recursive: true, force: true });
+      if (reviewDiffDir) rmSync(reviewDiffDir, { recursive: true, force: true });
     }
     const { outcome, costUsd, estimated } = executed;
 
@@ -4157,6 +4188,8 @@ export class TaskService {
     forwards?: readonly LocalForward[];
     /** ゲートウェイ経由にした、コンテキストの HTTP の MCP サーバー（PBI-49）。 */
     contextMcp?: readonly GatewayMcpServer[];
+    /** 追加でマウントする、sacty が管理するディレクトリ（レビューの差分の全体。PBI-65）。 */
+    mounts?: readonly { hostPath: string; containerPath: string; readOnly: boolean }[];
     /** true を返すと、コンテナを起動しない（質問への答えの実行が中止されたなど。PBI-54）。 */
     stopped?: () => boolean;
   }): Promise<{ outcome: AgentOutcome; costUsd: number; estimated: boolean }> {
@@ -4259,6 +4292,7 @@ export class TaskService {
         for (const s of tokenEnvs) invocation.env[s.env] = `${s.prefix}${gatewayRun.token}`;
         invocation.hostGateway = true;
       }
+      if (run.mounts && run.mounts.length > 0) invocation.mounts = [...run.mounts];
       // コンテナから見たホストのアドレス（Rancher Desktop など。PBI-40）
       const config = this.deps.config();
       if (invocation.hostGateway && config.ok) invocation.hostAddress = config.config.hostAddress;

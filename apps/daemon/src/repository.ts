@@ -109,7 +109,13 @@ export interface RepositoryWorkspace {
    */
   readFile(gitDir: string, commit: string, path: string): Promise<string | undefined>;
   /** base と head の分岐点から head までの差分（PR の差分。PBI-19）。 */
-  diffCommits(gitDir: string, baseCommit: string, headCommit: string): Promise<string>;
+  diffCommits(
+    gitDir: string,
+    baseCommit: string,
+    headCommit: string,
+    /** full：切り詰めない（レビューの工程で差分の全体をファイルで渡すため。PBI-65）。 */
+    options?: { full?: boolean },
+  ): Promise<string>;
   /** sacty のブランチを、リモートから消す（中止したとき）。 */
   deleteBranch(gitDir: string, branch: string, authEnv?: Record<string, string>): Promise<void>;
 }
@@ -631,7 +637,12 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
     return commit;
   }
 
-  async diffCommits(gitDir: string, baseCommit: string, headCommit: string) {
+  async diffCommits(
+    gitDir: string,
+    baseCommit: string,
+    headCommit: string,
+    options?: { full?: boolean },
+  ) {
     if (!COMMIT_RE.test(baseCommit) || !COMMIT_RE.test(headCommit)) {
       throw new MessageError(message("git.invalidBaseCommit"));
     }
@@ -651,6 +662,7 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
       ],
       isolatedEnv("/dev/null"),
     );
+    if (options?.full) return diff;
     return diff.length > DIFF_LIMIT
       ? `${diff.slice(0, DIFF_LIMIT)}\n[sacty] 差分が大きいため、先頭の ${DIFF_LIMIT} バイトだけを渡しています。`
       : diff;

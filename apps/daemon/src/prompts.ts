@@ -354,7 +354,7 @@ function integrationFindingLines(review: IntegrationReview): string[] {
 export function buildPrompt(
   task: Task,
   step: StepKey,
-  extra: { diff?: string; subtasks?: readonly SubtaskSummary[] } = {},
+  extra: { diff?: string; diffFile?: string; subtasks?: readonly SubtaskSummary[] } = {},
 ): string {
   const content = [`# ${task.title}`, "", task.body || "（内容なし）"].join("\n");
   const hasRemarks = task.remarks.some((r) => r.step === step && !r.voided);
@@ -409,6 +409,8 @@ export function buildPrompt(
       // レビューは、既存の PR を読んで指摘を書くだけの工程（PBI-19）。書いたものはそのまま PR に投稿する
       const target = task.reviewTarget;
       const diff = extra.diff ?? "";
+      // 差分の全体を置いたファイル（作業領域は .git の無い写しなので、切り詰めた残りを git では取れない）
+      const diffFile = extra.diffFile;
       return [
         "あなたはソフトウェア開発のレビューエージェントです。",
         "次の PR をレビューし、レビューの本文をMarkdownで書いてください。書いた本文は、そのまま PR にレビューとして投稿されます。",
@@ -429,7 +431,12 @@ export function buildPrompt(
         "",
         ...(target
           ? [
-              `作業領域（カレントディレクトリ）に、PR（${target.url}）の先頭のコミット（${target.headCommit.slice(0, 7)}）のコードがあります。差分の周辺や呼び出し元も読んで確かめてください。`,
+              `作業領域（カレントディレクトリ）に、PR（${target.url}）の先頭のコミット（${target.headCommit.slice(0, 7)}）のコードがあります。差分の周辺や呼び出し元も読んで確かめてください。作業領域は使い捨ての写しで、.git はありません。`,
+              ...(diffFile
+                ? [
+                    `PR の差分の全体（切り詰めなし）は、作業領域の外のファイル ${diffFile} にあります（sacty が置いた読み取り専用のファイルで、PR の一部ではありません。レビューの対象にしないでください）。`,
+                  ]
+                : []),
               "",
               "--- PR ---",
               `# ${target.title}`,
@@ -440,7 +447,11 @@ export function buildPrompt(
         "",
         "--- PR の差分 ---",
         diff.length > PR_DIFF_IN_PROMPT
-          ? `${diff.slice(0, PR_DIFF_IN_PROMPT)}\n…（差分が大きいため、先頭だけを渡しています。残りは作業領域のコードを読んでください）`
+          ? `${diff.slice(0, PR_DIFF_IN_PROMPT)}\n…（差分が大きいため、先頭だけを渡しています。${
+              diffFile
+                ? `残りは ${diffFile} の差分の全体と作業領域のコードを読んでください`
+                : "残りは作業領域のコードを読んでください"
+            }）`
           : diff || "（差分なし）",
         "",
         "--- タスク（レビューの依頼） ---",

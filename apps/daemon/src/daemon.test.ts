@@ -342,8 +342,15 @@ class FakeRepos implements RepositoryWorkspace {
     " export const once = 1;",
   ].join("\n");
   diffedCommits: { baseCommit: string; headCommit: string }[] = [];
-  async diffCommits(_gitDir: string, baseCommit: string, headCommit: string) {
+  diffFull: boolean[] = [];
+  async diffCommits(
+    _gitDir: string,
+    baseCommit: string,
+    headCommit: string,
+    options?: { full?: boolean },
+  ) {
     this.diffedCommits.push({ baseCommit, headCommit });
+    this.diffFull.push(options?.full === true);
     return this.prDiff;
   }
   published: {
@@ -595,6 +602,7 @@ class FakeExecutor implements AgentExecutor {
   scratch: boolean[] = [];
   /** 実行ごとに、作業領域にあったファイル（実行の後に消されるので、実行の間に読んでおく）。 */
   workspaceFiles: string[][] = [];
+  reviewDiffFiles: (string | undefined)[] = [];
   /** 実行ごとのイメージと、イメージの環境変数（PBI-41）。 */
   images: { image: string; env?: Record<string, string> }[] = [];
   /** 実行ごとにつないだネットワーク（PBI-47）。 */
@@ -630,6 +638,11 @@ class FakeExecutor implements AgentExecutor {
     this.dirs.push(workspaceDir);
     this.scratch.push(/[\\/]_(?:snapshots|guardian)[\\/]/.test(workspaceDir));
     this.workspaceFiles.push(existsSync(workspaceDir) ? readdirSync(workspaceDir).sort() : []);
+    // レビューの工程で別にマウントされる、PR の差分の全体のファイル（PBI-65。実行の後に消される）
+    const reviewMount = invocation.mounts?.find((m) => m.containerPath === "/sacty-review");
+    this.reviewDiffFiles.push(
+      reviewMount ? readFileSync(join(reviewMount.hostPath, "pr.diff"), "utf8") : undefined,
+    );
     // 渡されたコンテキスト（実行の後に消されるので、実行の間に読んでおく）
     const seed = invocation.stage?.seedDir;
     this.contexts.push(
@@ -3153,6 +3166,17 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       expect(prompt).toContain("あなたはソフトウェア開発のレビューエージェントです");
       expect(prompt).toContain("+export const retry = 3;");
       expect(prompt).toContain("回数を環境変数で変えられるようにした");
+      // 写しに .git は無いので、差分の全体（切り詰めなし）をファイルで置き、プロンプトでその場所を伝える（PBI-65）。
+      // ファイルは PR 由来の写しの中ではなく、sacty が管理する場所に置いて読み取り専用でマウントする（PR のリンクをたどらない）
+      expect(repos.diffFull).toEqual([true]);
+      expect(prompt).toContain("/sacty-review/pr.diff");
+      expect(executor.reviewDiffFiles[0]).toContain("+export const retry = 3;");
+      const mount = executor.calls[0]?.mounts?.[0];
+      expect(mount).toMatchObject({ containerPath: "/sacty-review", readOnly: true });
+      expect(mount?.hostPath).toMatch(/[\\/]_review[\\/]/);
+      expect(executor.workspaceFiles[0]).not.toContain(".sacty");
+      // 実行の後は消す
+      expect(existsSync(mount?.hostPath ?? "")).toBe(false);
       // 承認ゲートは無い。書いたレビューは投稿待ち
       expect(task?.gate).toBeUndefined();
       expect(service.queuedTaskIds()).toEqual([id]);

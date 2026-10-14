@@ -23,6 +23,7 @@ import {
   loadDefaultContext,
   prepareContext,
   resolveContext,
+  writeContext,
 } from "./context.js";
 
 /** 記録した文言（コードと引数）を、日本語の文にする（PBI-11）。 */
@@ -112,6 +113,38 @@ describe("コンテキストリポジトリの合成（PBI-6）", () => {
     );
     expect(composed.skills).toEqual([]);
     expect(composed.warnings).toEqual([]);
+  });
+
+  it("SKILL.md の無いディレクトリはグループで、その下のスキルも名前ごとに扱い、同じ名前が重なれば先のものを使って警告する（PBI-65）", async () => {
+    const fetcher = new FakeFetcher({
+      "c.git": {
+        "skills/review/README.md": "グループの説明（スキルにならない）",
+        "skills/review/review-dispatch/SKILL.md": "---\ndescription: 親\n---\n親",
+        "skills/review/review-execution/SKILL.md": "担当",
+        "skills/review/review-execution/references/x.md": "資料",
+        "skills/other/review-execution/SKILL.md": "同じ名前が重なる",
+        "skills/plain/SKILL.md": "平",
+      },
+      "t.git": {
+        "skills/review-execution/SKILL.md": "チーム版",
+        "sacty-context.yaml": "extends: c.git\nremove:\n  skills: [plain]\n",
+      },
+    });
+    const composed = composeContext(
+      await resolveContext(fetcher, { repo: "t.git" }, join(dir, "w")),
+    );
+    expect(composed.skills.map((s) => s.name)).toEqual(["review-dispatch", "review-execution"]);
+    // 下位の層は、グループの外に置いても同じ名前のスキルを上書きする
+    expect(readFileSync(join(composed.skills[1]?.dir ?? "", "SKILL.md"), "utf8")).toBe("チーム版");
+    expect(composed.warnings.map((w) => w.code)).toEqual(["context.duplicateSkill"]);
+    // worker にはグループを外して skills/<名前>/ に置く
+    const out = join(dir, "out");
+    writeContext(composed, "codex", out, "/.codex");
+    expect(readFileSync(join(out, "AGENTS.md"), "utf8")).toContain(
+      "- review-dispatch：親（/.codex/skills/review-dispatch/SKILL.md）",
+    );
+    expect(existsSync(join(out, "skills", "review-execution", "SKILL.md"))).toBe(true);
+    expect(existsSync(join(out, "skills", "review"))).toBe(false);
   });
 
   it("継承の循環・深すぎる継承・取得の失敗・誤った設定は、理由つきで止める", async () => {
@@ -533,6 +566,9 @@ describe("sacty の既定のコンテキスト（PBI-24）", () => {
     // サンドボックスはコマンドの引数で決めるので、設定には書かない（PBI-40）
     expect(parseToml(readFileSync(join(codex.dir, "config.toml"), "utf8"))).toEqual({
       approvals_reviewer: "auto_review",
+      // 既定のスキル review が観点ごとの担当を並列に起動する。担当はさらに起動できない（PBI-65）
+      features: { multi_agent: true },
+      agents: { max_threads: 8, max_depth: 1, job_max_runtime_seconds: 2700 },
     });
     expect(codex.warnings).toEqual([]);
     codex.dispose();
