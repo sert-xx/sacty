@@ -60,5 +60,6 @@ sacty を使う人が、設定やコマンドをどう使えばよいかを理�
 10. [docker compose のサービス](compose.md)：DB・モック API・共用の compose
 11. [成果の書き出し](result-export.md)：Confluence・Notion などへの書き出し
 12. [Slack の通知](notifications.md)：送り方・メンション
-13. [CLI](cli.md)：sacty コマンドとオプション
-14. [困ったとき](troubleshooting.md)：よくある止まり方と確かめること
+13. [マージの後の監視](deployment-watch.md)：CI/CD とデプロイ後のアプリの確認・修正のタスクの自動の登録
+14. [CLI](cli.md)：sacty コマンドとオプション
+15. [困ったとき](troubleshooting.md)：よくある止まり方と確かめること

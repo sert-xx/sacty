@@ -288,6 +288,11 @@ export const ProjectDefinition = z.object({
   /** 共用の docker compose（PBI-70）。複数書ける。名前はプロジェクトの中で重ならない。 */
   sharedComposes: z.array(SharedCompose).max(20).optional(),
   /**
+   * 実装の PR のマージの後に、CI/CD とデプロイ後のアプリを監視し、失敗したら修正のタスクを登録するか（PBI-89）。
+   * 書かなければ（既定）行わない。
+   */
+  deploymentWatch: z.boolean().optional(),
+  /**
    * GitHub へのアクセスに使う、gh にログイン済みのアカウント（PBI-13）。ホストごとに選ぶ（PBI-40。例
    * { "github.com": "me", "ghe.example.co.jp": "me-corp" }）。GitHub にアクセスするには、そのホストのものを必ず選ぶ
    * （gh のアクティブなアカウントは切り替わるので使わない）。個人の設定なので、エクスポートには含めない。
@@ -491,6 +496,8 @@ export const ProjectExport = z
         tickets: z.array(TicketSourceConfig.strict()).max(20).optional(),
         // 共用の compose（PBI-70）。認証の値は含まない（URL に書かせない）
         sharedComposes: z.array(SharedCompose.strict()).max(20).optional(),
+        // マージの後の監視（PBI-89）
+        deploymentWatch: z.boolean().optional(),
       })
       .strict(),
   })
@@ -523,6 +530,7 @@ export function exportProject(project: Project): ProjectExport {
       ...(project.sharedComposes && project.sharedComposes.length > 0
         ? { sharedComposes: project.sharedComposes }
         : {}),
+      ...(project.deploymentWatch ? { deploymentWatch: true } : {}),
     },
   };
 }

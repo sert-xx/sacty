@@ -17,6 +17,7 @@
 | `sacty` | 画面で作った（以前の `ticket` も `sacty` として読む） |
 | `github_issue`・`github_pull_request` | GitHub の Issue・PR の取り込み（[チケットの取り込み](intake.md)） |
 | `jira` | JIRA のチケットの取り込み |
+| `deployment` | マージの後の監視で見つけた失敗の修正のタスク（`fix` に元のタスク・種類・目印・段数を持つ。[マージの後の監視](deployment-watch.md)） |
 | `split` | タスク分割の子タスク（`parent` に親の ID と、先に終わるべき子タスク `dependsOn` を持つ） |
 
 - PR のレビューだけのタスクは、`source.review`（`requested` か `label`）を持つ。

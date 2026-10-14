@@ -13,6 +13,7 @@
 | 使える外部 PF | 工程エージェントが `$SACTY_PF_URL` で呼べる API（表示だけ） | [ゲートウェイ](gateway.md#組織内-pf-の-api) |
 | GitHub アカウント | ホストごとに使う `gh` のアカウント | [GitHub アカウント](#github-アカウント) |
 | 共用の compose（任意） | テストに使う、チームで共用する docker compose | [docker compose のサービス](compose.md#共用の-compose) |
+| マージの後の監視 | 実装の PR のマージの後に、CI/CD とデプロイ後のアプリを確かめ、失敗したら修正のタスクを登録する（既定は Off） | [マージの後の監視](deployment-watch.md) |
 | Slack の通知（任意） | 人の出番とタスクの完了を知らせる | [通知](notifications.md) |
 
 ## 対象
@@ -61,7 +62,7 @@ gh auth login --hostname ghe.example.com      # GitHub Enterprise Server も、�
 プロジェクトの定義をエクスポートし、ほかの sacty でインポートできる。
 
 - 含めるもの：名前・対象（イメージの指定を含む）・コンテキストリポジトリ・通知先（秘密情報は名前か参照だけ。メンションの ID も含む）・
-  チケットの取り込み先・共用の compose。
+  チケットの取り込み先・共用の compose・マージの後の監視（On のときだけ）。
 - 含めないもの：GitHub アカウント（個人の設定）とトークン。
 - インポートでは、知らない項目があるファイルを受け付けない。
 

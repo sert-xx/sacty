@@ -297,6 +297,37 @@ function randomHistory(seed: number, taskId = "t1"): ActivityEvent[] {
     },
   });
   add({ type: "StepSubmitted", payload: { step: "pr", submission: 1 } });
+  // PR がマージされ、マージの後のデプロイの確認を実行した（PBI-89）
+  if (rand() < 0.5) {
+    add({ type: "PullRequestMerged", payload: { number: 7, commit: "c1" } }, "person");
+    add({ type: "StepApproved", payload: { step: "pr", next: "idle" } }, "person");
+    add({
+      type: "DeploymentWatchStarted",
+      payload: { number: 7, repo: "https://github.com/acme/app", branch: "main", commit: "m1" },
+    });
+    add({
+      type: "DeploymentCiFinished",
+      payload: { result: "passed", skill: ".agents/skills/deployment-observer/SKILL.md" },
+    });
+    add({
+      type: "DeploymentCheckStarted",
+      payload: { runId: "dc1", skill: ".agents/skills/deployment-observer/SKILL.md" },
+    });
+    const runResult = pick(["completed", "failed", "interrupted"] as const);
+    add(
+      {
+        type: "DeploymentChecked",
+        payload: {
+          result: runResult === "completed" ? pick(["healthy", "unhealthy"] as const) : "unknown",
+          runResult,
+          runId: "dc1",
+          ...charged(),
+        },
+      },
+      "agent",
+    );
+    return events;
+  }
   add({
     type: "PullRequestReviewImported",
     payload: {

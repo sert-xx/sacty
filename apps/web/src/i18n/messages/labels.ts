@@ -37,6 +37,7 @@ const ja = {
     github_pull_request: "GitHub PR",
     split: "タスク分割",
     jira: "JIRA",
+    deployment: "マージの後の監視",
   } satisfies Record<Task["start"], string>,
   status: {
     blocked: "依存待ち",
@@ -315,6 +316,39 @@ const ja = {
       failed === undefined
         ? `オーケストレーターが質問に答えた（${id}・${cost}）`
         : `オーケストレーターが質問に答えられなかった（${id}・${cost}）：${failed}`,
+    DeploymentWatchStarted: (number: number, commit: string | undefined) =>
+      commit
+        ? `PR #${number} のマージのコミット（${commit.slice(0, 7)}）の CI/CD とデプロイの監視を始めた`
+        : `PR #${number} のマージのコミットが分からないため、監視を飛ばした`,
+    DeploymentCiFinished: (
+      result: "passed" | "failed" | "none" | "timed_out",
+      failed: string[],
+      skill: string | undefined,
+      skipCheck: string | undefined,
+    ) =>
+      result === "passed"
+        ? skill
+          ? `CI/CD が通った。スキル ${skill} でデプロイを確かめる`
+          : `CI/CD が通った（デプロイの確認は飛ばした${skipCheck ? `：${skipCheck}` : ""}）`
+        : result === "failed"
+          ? `CI/CD が失敗した：${failed.join("、")}`
+          : result === "none"
+            ? "このコミットに CI/CD が無いため、監視を飛ばした"
+            : "CI/CD が時間内に終わらなかった（時間切れ）",
+    DeploymentCheckStarted: (skill: string) => `デプロイの確認を始めた（${skill}）`,
+    DeploymentChecked: (
+      result: "healthy" | "unhealthy" | "unknown",
+      detail: string | undefined,
+      cost: string,
+    ) =>
+      `デプロイの確認：${result === "healthy" ? "正しく動いている" : result === "unhealthy" ? "エラーになっている" : "判断できない"}（${cost}）${detail ? `：${detail}` : ""}`,
+    DeploymentWatchSkipped: (detail: string) => `デプロイの確認を飛ばした：${detail}`,
+    DeploymentFixRegistered: (kind: "ci" | "deployment", title: string) =>
+      `修正のタスクを登録した（${kind === "ci" ? "CI/CD" : "デプロイ後のアプリ"}）：${title}`,
+    DeploymentFixSuppressed: (reason: "duplicate" | "chain_limit", max: number) =>
+      reason === "duplicate"
+        ? "同じ失敗の修正のタスクが終わっていないため、修正のタスクを作らなかった"
+        : `修正のタスクの連鎖が上限（${max}段）に達したため、修正のタスクを作らなかった`,
     ReworkJudged: (target: string | undefined, reason: string, tail: string) =>
       `ゴールガーディアンが戻し先を判断：${target ?? "判断できない"}（${reason}）（${tail}）`,
   },
@@ -341,6 +375,7 @@ const en: LabelMessages = {
     github_pull_request: "GitHub PR",
     split: "Task split",
     jira: "JIRA",
+    deployment: "After-merge watch",
   },
   status: {
     blocked: "Blocked",
@@ -581,6 +616,30 @@ const en: LabelMessages = {
       failed === undefined
         ? `The Orchestrator answered the question (${id}, ${cost})`
         : `The Orchestrator could not answer the question (${id}, ${cost}): ${failed}`,
+    DeploymentWatchStarted: (number, commit) =>
+      commit
+        ? `Started watching CI/CD and the deployment for the merge commit of PR #${number} (${commit.slice(0, 7)})`
+        : `Skipped the watch because the merge commit of PR #${number} is unknown`,
+    DeploymentCiFinished: (result, failed, skill, skipCheck) =>
+      result === "passed"
+        ? skill
+          ? `CI/CD passed. Checking the deployment with the skill ${skill}`
+          : `CI/CD passed (skipped the deployment check${skipCheck ? `: ${skipCheck}` : ""})`
+        : result === "failed"
+          ? `CI/CD failed: ${failed.join(", ")}`
+          : result === "none"
+            ? "Skipped the watch because this commit has no CI/CD"
+            : "CI/CD did not finish in time (timed out)",
+    DeploymentCheckStarted: (skill) => `Started the deployment check (${skill})`,
+    DeploymentChecked: (result, detail, cost) =>
+      `Deployment check: ${result === "healthy" ? "working" : result === "unhealthy" ? "erroring" : "could not determine"} (${cost})${detail ? `: ${detail}` : ""}`,
+    DeploymentWatchSkipped: (detail) => `Skipped the deployment check: ${detail}`,
+    DeploymentFixRegistered: (kind, title) =>
+      `Registered a fix task (${kind === "ci" ? "CI/CD" : "deployed app"}): ${title}`,
+    DeploymentFixSuppressed: (reason, max) =>
+      reason === "duplicate"
+        ? "Did not create a fix task because one for the same failure is still open"
+        : `Did not create a fix task because the chain of fix tasks reached the limit (${max})`,
     ReworkJudged: (target, reason, tail) =>
       `Goal Guardian chose the step to redo: ${target ?? "undecided"} (${reason}) (${tail})`,
   },

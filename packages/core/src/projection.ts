@@ -36,6 +36,45 @@ export type TestsRunResult = PayloadOf<"TestsRun"> & { at: string };
 export type FinalReview = PayloadOf<"FinalReviewed"> & { at: string };
 export type IntegrationReview = PayloadOf<"IntegrationReviewed"> & { at: string };
 
+/**
+ * マージの後の監視の状態（PBI-89）。waiting：待っている（phase が ci なら CI/CD、check ならデプロイの確認）、passed：通った、
+ * failed：失敗した、skipped：飛ばした（理由は reason）、timed_out：CI/CD が時間内に終わらなかった。
+ */
+export type DeploymentWatchState = "waiting" | "passed" | "failed" | "skipped" | "timed_out";
+
+/**
+ * 監視を飛ばした・確かめなかった理由（PBI-89）。no_commit：マージのコミットが取れない、no_ci：CI/CD が無い、no_skill：
+ * デプロイの確認のスキルが無い（CI/CD は通った）、budget：予算の上限に達していた、check_unknown：デプロイの確認で
+ * 確かめられなかった。
+ */
+export type DeploymentWatchReason = "no_commit" | "no_ci" | "no_skill" | "budget" | "check_unknown";
+
+export type DeploymentWatch = PayloadOf<"DeploymentWatchStarted"> & {
+  startedAt: string;
+  state: DeploymentWatchState;
+  /** 待っている段階（state が waiting のときだけ）。 */
+  phase?: "ci" | "check";
+  reason?: DeploymentWatchReason;
+  /** 飛ばした理由の詳しい説明（スキルが外を指していた・予算など）。 */
+  detail?: DaemonText;
+  ci?: Omit<PayloadOf<"DeploymentCiFinished">, "skipCheck"> & { at: string };
+  check?: {
+    runId: string;
+    skill: string;
+    startedAt: string;
+    result?: PayloadOf<"DeploymentChecked">["result"];
+    summary?: string;
+    evidence?: string[];
+    failed?: DaemonText;
+    at?: string;
+  };
+  /** 登録した修正のタスク（1つの監視で1つまで）。 */
+  fix?: PayloadOf<"DeploymentFixRegistered"> & { at: string };
+  /** 修正のタスクを作らなかった理由。 */
+  suppressed?: PayloadOf<"DeploymentFixSuppressed"> & { at: string };
+  finishedAt?: string;
+};
+
 export type StepState = "todo" | "active" | "done" | "skip";
 
 /**
@@ -171,7 +210,11 @@ export type Task = {
   projectId: string;
   title: string;
   body: string;
-  start: "sacty" | "github_issue" | "github_pull_request" | "split" | "jira";
+  start: "sacty" | "github_issue" | "github_pull_request" | "split" | "jira" | "deployment";
+  /** マージの後の監視で見つけた失敗の、修正のタスク（PBI-89）。元のタスクと、何段目か。 */
+  fix?: PayloadOf<"TaskCreated">["fix"];
+  /** 実装の PR のマージの後の、CI/CD とデプロイの監視（PBI-89）。 */
+  deployment?: DeploymentWatch;
   /** 取り込み元（GitHub Issue）。 */
   source?: TaskSource;
   /** 取り込み元のチケット（JIRA など。PBI-52）。 */
@@ -447,6 +490,7 @@ export function applyEvent(
         ? { repoChoice: { reason: event.payload.repoReason, by: "orchestrator" as const } }
         : {}),
       ...(event.payload.parent ? { parent: event.payload.parent } : {}),
+      ...(event.payload.fix ? { fix: event.payload.fix } : {}),
       // 依存先の子タスクがあれば、それが完了するまで待つ（PBI-27）
       status: event.payload.parent?.dependsOn.length ? "blocked" : "queued",
       steps: [],
@@ -1349,6 +1393,125 @@ export function applyEvent(
       task.budget = { ...task.budget, capUsd: event.payload.capUsd };
       break;
 
+    // マージの後の監視（PBI-89）。タスクの状態・工程は変えない
+    case "DeploymentWatchStarted": {
+      if (task.deployment) throw new ActivityIntegrityError(event, "the watch has started");
+      if (task.pullRequestState !== "merged" || !isCompleted(task)) {
+        throw new ActivityIntegrityError(event, "the pull request is not merged");
+      }
+      task.deployment = event.payload.commit
+        ? { ...event.payload, startedAt: event.at, state: "waiting", phase: "ci" }
+        : {
+            ...event.payload,
+            startedAt: event.at,
+            state: "skipped",
+            reason: "no_commit",
+            finishedAt: event.at,
+          };
+      break;
+    }
+
+    case "DeploymentCiFinished": {
+      const watch = task.deployment;
+      if (watch?.state !== "waiting" || watch.phase !== "ci") {
+        throw new ActivityIntegrityError(event, "the watch is not waiting for CI");
+      }
+      const { skipCheck, ...ci } = event.payload;
+      const next: DeploymentWatch = { ...watch, ci: { ...ci, at: event.at } };
+      const finish = (state: DeploymentWatchState, reason?: DeploymentWatchReason) => {
+        next.state = state;
+        next.phase = undefined;
+        next.finishedAt = event.at;
+        if (reason) next.reason = reason;
+      };
+      if (ci.result === "passed") {
+        if (ci.skill) next.phase = "check";
+        else {
+          finish("passed", "no_skill");
+          if (skipCheck !== undefined) next.detail = skipCheck;
+        }
+      } else if (ci.result === "failed") finish("failed");
+      else if (ci.result === "none") finish("skipped", "no_ci");
+      else finish("timed_out");
+      task.deployment = next;
+      break;
+    }
+
+    case "DeploymentCheckStarted": {
+      const watch = task.deployment;
+      if (!awaitingDeploymentCheck(task) || !watch) {
+        throw new ActivityIntegrityError(event, "the watch is not waiting for the check");
+      }
+      task.deployment = {
+        ...watch,
+        check: { runId: event.payload.runId, skill: event.payload.skill, startedAt: event.at },
+      };
+      break;
+    }
+
+    case "DeploymentChecked": {
+      const watch = task.deployment;
+      const check = watch?.check;
+      if (
+        watch?.state !== "waiting" ||
+        watch.phase !== "check" ||
+        !check ||
+        check.result !== undefined ||
+        (event.payload.runId !== undefined && event.payload.runId !== check.runId)
+      ) {
+        throw new ActivityIntegrityError(event, "the check is not running");
+      }
+      const p = event.payload;
+      const state: DeploymentWatchState =
+        p.result === "healthy" ? "passed" : p.result === "unhealthy" ? "failed" : "skipped";
+      task.deployment = {
+        ...watch,
+        state,
+        phase: undefined,
+        finishedAt: event.at,
+        ...(p.result === "unknown" ? { reason: "check_unknown" as const } : {}),
+        ...(p.result === "unknown" && p.failed !== undefined ? { detail: p.failed } : {}),
+        check: {
+          ...check,
+          result: p.result,
+          ...(p.summary !== undefined ? { summary: p.summary } : {}),
+          evidence: p.evidence,
+          ...(p.failed !== undefined ? { failed: p.failed } : {}),
+          at: event.at,
+        },
+      };
+      break;
+    }
+
+    case "DeploymentWatchSkipped": {
+      const watch = task.deployment;
+      if (!awaitingDeploymentCheck(task) || !watch) {
+        throw new ActivityIntegrityError(event, "the watch is not waiting for the check");
+      }
+      task.deployment = {
+        ...watch,
+        state: "skipped",
+        phase: undefined,
+        reason: event.payload.reason,
+        ...(event.payload.detail !== undefined ? { detail: event.payload.detail } : {}),
+        finishedAt: event.at,
+      };
+      break;
+    }
+
+    case "DeploymentFixRegistered":
+    case "DeploymentFixSuppressed": {
+      const watch = task.deployment;
+      if (!watch || !fixDecisionPending(task)) {
+        throw new ActivityIntegrityError(event, "no failure is waiting for a fix task");
+      }
+      task.deployment =
+        event.type === "DeploymentFixRegistered"
+          ? { ...watch, fix: { ...event.payload, at: event.at } }
+          : { ...watch, suppressed: { ...event.payload, at: event.at } };
+      break;
+    }
+
     case "TaskResumed":
       if (task.status !== "paused")
         throw new ActivityIntegrityError(event, `status ${task.status}`);
@@ -1588,6 +1751,56 @@ export function canRereview(task: Task): boolean {
     task.steps.some((s) => s.key === "review") &&
     isCompleted(task)
   );
+}
+
+/** マージの後の監視で、CI/CD の結果を待っているか（PBI-89）。 */
+export function awaitingDeploymentCi(task: Task): boolean {
+  return (
+    task.status !== "cancelled" &&
+    task.deployment?.state === "waiting" &&
+    task.deployment.phase === "ci"
+  );
+}
+
+/** マージの後の監視で、デプロイの確認の実行を待っているか（まだ始めていない。PBI-89）。 */
+export function awaitingDeploymentCheck(task: Task): boolean {
+  return (
+    task.status !== "cancelled" &&
+    task.deployment?.state === "waiting" &&
+    task.deployment.phase === "check" &&
+    task.deployment.check === undefined
+  );
+}
+
+/** デプロイの確認を始めて、まだ結果を記録していないか（PBI-89）。 */
+export function deploymentCheckRunning(task: Task): boolean {
+  const watch = task.deployment;
+  return (
+    task.status !== "cancelled" &&
+    watch?.state === "waiting" &&
+    watch.phase === "check" &&
+    watch.check !== undefined &&
+    watch.check.result === undefined
+  );
+}
+
+/** 監視で失敗を見つけ、修正のタスクを登録するかをまだ決めていないか（PBI-89）。 */
+export function fixDecisionPending(task: Task): boolean {
+  return (
+    task.status !== "cancelled" &&
+    task.deployment?.state === "failed" &&
+    !task.deployment.fix &&
+    !task.deployment.suppressed
+  );
+}
+
+/**
+ * 修正のタスクが、まだ終わっていないか（PBI-89。同じ失敗の修正のタスクを二重に作らないため）。中止していなくて、完了して
+ * いないか、完了してもそのマージの監視を待っているもの。
+ */
+export function fixTaskOpen(task: Task): boolean {
+  if (!task.fix || task.status === "cancelled") return false;
+  return !isCompleted(task) || task.deployment?.state === "waiting";
 }
 
 export function isCompleted(task: Task): boolean {

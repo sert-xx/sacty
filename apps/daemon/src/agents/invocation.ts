@@ -17,7 +17,8 @@ export type AgentRole =
   | "rework"
   | "orchestrator"
   | "chat"
-  | "export";
+  | "export"
+  | "deployment";
 
 /** コンテナの中での設定ディレクトリ。毎回空の場所を使い、ホストの設定やメモリーを読ませない。 */
 export const CONTAINER_CLAUDE_CONFIG_DIR = "/tmp/sacty-claude-config";
@@ -295,6 +296,7 @@ export async function buildInvocation(
         orchestrator: "",
         chat: "",
         export: "",
+        deployment: "",
         usage: { input: 1000, cache_read: 0, cache_write: 0, output: 500 },
       };
       const result = stub.fail
@@ -322,7 +324,9 @@ export async function buildInvocation(
                         ? stub.chat
                         : role === "export"
                           ? stub.export
-                          : ((role && stub.outputs[role]) ?? stub.output),
+                          : role === "deployment"
+                            ? stub.deployment
+                            : ((role && stub.outputs[role]) ?? stub.output),
             usage: {
               input_tokens: stub.usage.input,
               cache_read_input_tokens: stub.usage.cache_read,

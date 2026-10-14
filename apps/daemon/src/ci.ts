@@ -1,0 +1,276 @@
+import { type CiCheck, type CiFailure, isFailedCiCheck } from "@sacty/core";
+import { redact } from "./agents/redact.js";
+import { apiError, nextPage, repoApi } from "./github.js";
+
+/**
+ * マージのコミットの CI/CD の状態（PBI-89）。checks は、GitHub Actions のワークフローの実行・チェック（GitHub Actions の
+ * ジョブは除く）・コミットの状態。failedRuns は、失敗したワークフローの実行の ID（ジョブとログを読むため）。
+ */
+export type CiSnapshot = {
+  checks: CiCheck[];
+  /** 失敗したワークフローの実行（ID と名前・URL）。 */
+  failedRuns: { id: number; name: string; url?: string; conclusion: string }[];
+};
+
+/** CI/CD の状態を読む口（PBI-89）。テストでは偽物に差し替える。repo はリポジトリの URL。 */
+export interface CiStatusReader {
+  snapshot(input: { repo: string; token: string; commit: string }): Promise<CiSnapshot>;
+  /**
+   * 失敗したワークフローの実行の、失敗したジョブとログの抜粋。抜粋は、秘密情報（secrets と、よくある秘密情報の形）を
+   * 伏せてから切り詰める。
+   */
+  failures(input: {
+    repo: string;
+    token: string;
+    runs: CiSnapshot["failedRuns"];
+    secrets: readonly string[];
+  }): Promise<CiFailure[]>;
+}
+
+/** 失敗とみなすジョブの結論（PBI-89。isFailedCiCheck と同じ）。 */
+const FAILED_CONCLUSIONS = new Set(["failure", "timed_out", "action_required", "startup_failure"]);
+
+/** 詳しく読む失敗の数（ジョブ）の上限。 */
+export const CI_FAILURES_MAX = 5;
+/** ログの末尾から取る行の数。 */
+export const CI_LOG_LINES = 80;
+/** 1件のログの抜粋の上限（文字数。伏せた後に切り詰める）。 */
+export const CI_EXCERPT_MAX = 3_000;
+/** 読むログの上限（バイト。大きなログを全部読まない）。 */
+const CI_LOG_BYTES = 2_000_000;
+/** 一覧を読むページの上限。 */
+const MAX_PAGES = 10;
+
+/** 結論が失敗か（PBI-89）。 */
+export const isFailedConclusion = isFailedCiCheck;
+
+/**
+ * よくある秘密情報の形（PBI-89。CI のログの抜粋に使う）。値の部分だけを伏せる（前の名前は残す）。
+ * GitHub Actions はログの secrets を *** にするが、secrets に入れていない値（コマンドが出力した一時トークンなど）もある。
+ */
+const SECRET_PATTERNS: RegExp[] = [
+  /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z0-9 ]*PRIVATE KEY-----|$)/g,
+  /\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}\b/g,
+  /\bgithub_pat_[A-Za-z0-9_]{20,}\b/g,
+  /\bxox[abposr]-[A-Za-z0-9-]{10,}\b/g,
+  /\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g,
+  /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g,
+];
+/** `Authorization: Bearer xxx`・`password=xxx` などの、値の部分（名前は残す）。 */
+const SECRET_ASSIGNMENTS =
+  /((?:authorization|proxy-authorization)\s*[:=]\s*(?:bearer|basic|token)?\s*|(?:password|passwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret)["']?\s*[:=]\s*["']?)([^\s"'&,;]{4,})/gi;
+
+/**
+ * CI のログから、秘密情報を伏せる（PBI-89）。渡した値（使ったトークンなど）と、よくある秘密情報の形を伏せる。
+ * 切り詰める前に呼ぶ（切り詰めで値の一部だけが残り、伏せられなくなるのを防ぐ）。
+ */
+export function redactLog(text: string, secrets: readonly string[]): string {
+  let result = redact(text, secrets);
+  for (const pattern of SECRET_PATTERNS) result = result.replace(pattern, "[REDACTED]");
+  return result.replace(SECRET_ASSIGNMENTS, (_all, name: string) => `${name}[REDACTED]`);
+}
+
+/** ログの行の先頭の時刻（GitHub Actions のログの形）。 */
+const LOG_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z ?/;
+
+/**
+ * ログの抜粋（PBI-89）。時刻を除き、秘密情報を伏せてから、末尾の CI_LOG_LINES 行を取り、CI_EXCERPT_MAX 文字に
+ * 切り詰める（長ければ末尾を残す。失敗の理由は末尾にあることが多いので）。
+ */
+export function logExcerpt(log: string, secrets: readonly string[]): string {
+  const lines = redactLog(log.replace(/\r\n?/g, "\n"), secrets)
+    .split("\n")
+    .map((line) => line.replace(LOG_TIMESTAMP, ""))
+    .filter((line, i, all) => line.trim() !== "" || i < all.length - 1);
+  const tail = lines.slice(-CI_LOG_LINES).join("\n").trimEnd();
+  return tail.length > CI_EXCERPT_MAX ? `…${tail.slice(-(CI_EXCERPT_MAX - 1))}` : tail;
+}
+
+type Fetch = typeof fetch;
+
+/** GitHub の REST API で CI/CD の状態を読む（PBI-89）。 */
+export class GitHubCiStatus implements CiStatusReader {
+  constructor(private readonly fetchImpl: Fetch = fetch) {}
+
+  private headers(token: string) {
+    return {
+      accept: "application/vnd.github+json",
+      authorization: `Bearer ${token}`,
+      "x-github-api-version": "2022-11-28",
+    };
+  }
+
+  /** 一覧（ページの続きも）を読み、key の配列をつなげて返す。 */
+  private async list(
+    api: string,
+    first: string,
+    token: string,
+    key: string,
+  ): Promise<Record<string, unknown>[]> {
+    const all: Record<string, unknown>[] = [];
+    let url: string | undefined = first;
+    for (let page = 0; url && page < MAX_PAGES; page++) {
+      const res = await this.fetchImpl(url, { headers: this.headers(token) });
+      const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+      if (!res.ok) throw apiError("readChecks", res.status, json);
+      const items = json[key];
+      if (Array.isArray(items)) all.push(...(items as Record<string, unknown>[]));
+      const next = nextPage(res.headers.get("link"));
+      url = next?.startsWith(`${api}/`) ? next : undefined;
+    }
+    return all;
+  }
+
+  async snapshot(input: Parameters<CiStatusReader["snapshot"]>[0]): Promise<CiSnapshot> {
+    const { api, base } = repoApi(input.repo);
+    const sha = encodeURIComponent(input.commit);
+    const runs = await this.list(
+      api,
+      `${base}/actions/runs?head_sha=${sha}&per_page=100`,
+      input.token,
+      "workflow_runs",
+    );
+    const checkRuns = await this.list(
+      api,
+      `${base}/commits/${sha}/check-runs?per_page=100`,
+      input.token,
+      "check_runs",
+    );
+    const statuses = await this.list(
+      api,
+      `${base}/commits/${sha}/status?per_page=100`,
+      input.token,
+      "statuses",
+    );
+    const str = (v: unknown) => (typeof v === "string" ? v : undefined);
+    const checks: CiCheck[] = [];
+    const failedRuns: CiSnapshot["failedRuns"] = [];
+    // 同じワークフローを再実行したら、最新の試行（run_attempt の大きいもの）だけを見る
+    const latest = new Map<string, Record<string, unknown>>();
+    for (const r of runs) {
+      const key = String(r.workflow_id ?? r.name ?? r.id);
+      const prev = latest.get(key);
+      if (!prev || Number(r.run_attempt ?? 0) >= Number(prev.run_attempt ?? 0)) latest.set(key, r);
+    }
+    for (const r of latest.values()) {
+      const name = str(r.name) ?? str(r.display_title) ?? String(r.id);
+      const completed = r.status === "completed";
+      const conclusion = completed ? (str(r.conclusion) ?? "") : undefined;
+      const url = str(r.html_url);
+      const check: CiCheck = {
+        kind: "workflow",
+        name,
+        status: completed ? "completed" : "pending",
+        ...(conclusion !== undefined ? { conclusion } : {}),
+        ...(url ? { url } : {}),
+      };
+      checks.push(check);
+      if (isFailedConclusion(check) && typeof r.id === "number") {
+        failedRuns.push({ id: r.id, name, conclusion: conclusion ?? "", ...(url ? { url } : {}) });
+      }
+    }
+    for (const c of checkRuns) {
+      // GitHub Actions のジョブは、ワークフローの実行で見る（二重に数えない）
+      const app = (c.app as { slug?: unknown } | null)?.slug;
+      if (app === "github-actions") continue;
+      const completed = c.status === "completed";
+      const url = str(c.html_url) ?? str(c.details_url);
+      checks.push({
+        kind: "check",
+        name: str(c.name) ?? String(c.id),
+        status: completed ? "completed" : "pending",
+        ...(completed ? { conclusion: str(c.conclusion) ?? "" } : {}),
+        ...(url ? { url } : {}),
+      });
+    }
+    for (const st of statuses) {
+      const state = str(st.state) ?? "pending";
+      const url = str(st.target_url);
+      checks.push({
+        kind: "status",
+        name: str(st.context) ?? "status",
+        status: state === "pending" ? "pending" : "completed",
+        ...(state === "pending" ? {} : { conclusion: state }),
+        ...(url ? { url } : {}),
+      });
+    }
+    return { checks, failedRuns };
+  }
+
+  async failures(input: Parameters<CiStatusReader["failures"]>[0]): Promise<CiFailure[]> {
+    const { api, base } = repoApi(input.repo);
+    const found: CiFailure[] = [];
+    for (const run of input.runs) {
+      if (found.length >= CI_FAILURES_MAX) break;
+      let jobs: Record<string, unknown>[] = [];
+      try {
+        jobs = await this.list(
+          api,
+          `${base}/actions/runs/${run.id}/jobs?filter=latest&per_page=100`,
+          input.token,
+          "jobs",
+        );
+      } catch {
+        // ジョブを読めなければ、ワークフローの実行だけを書く
+      }
+      const failedJobs = jobs.filter(
+        (j) =>
+          j.status === "completed" &&
+          typeof j.conclusion === "string" &&
+          FAILED_CONCLUSIONS.has(j.conclusion),
+      );
+      if (failedJobs.length === 0) {
+        found.push({
+          workflow: run.name,
+          conclusion: run.conclusion,
+          ...(run.url ? { url: run.url } : {}),
+        });
+        continue;
+      }
+      for (const job of failedJobs) {
+        if (found.length >= CI_FAILURES_MAX) break;
+        const url = typeof job.html_url === "string" ? job.html_url : run.url;
+        const excerpt =
+          typeof job.id === "number" ? await this.jobLog(base, job.id, input) : undefined;
+        found.push({
+          workflow: run.name,
+          job: typeof job.name === "string" ? job.name : String(job.id),
+          conclusion: String(job.conclusion),
+          ...(url ? { url } : {}),
+          ...(excerpt ? { excerpt } : {}),
+        });
+      }
+    }
+    return found;
+  }
+
+  /** ジョブのログの抜粋（読めなければ undefined）。伏せてから切り詰める。 */
+  private async jobLog(
+    base: string,
+    jobId: number,
+    input: { token: string; secrets: readonly string[] },
+  ): Promise<string | undefined> {
+    try {
+      // ログは別のホストへの転送で返る（fetch は、別のオリジンへの転送では Authorization を送らない）
+      const res = await this.fetchImpl(`${base}/actions/jobs/${jobId}/logs`, {
+        headers: this.headers(input.token),
+        redirect: "follow",
+      });
+      if (!res.ok) return undefined;
+      const buffer = await res.arrayBuffer();
+      const bytes = new Uint8Array(buffer);
+      // 末尾を残す（失敗の理由は末尾にあることが多いので）
+      const cut = bytes.length > CI_LOG_BYTES;
+      const decoded = new TextDecoder("utf-8").decode(
+        cut ? bytes.subarray(bytes.length - CI_LOG_BYTES) : bytes,
+      );
+      // 切った先頭の行は、秘密情報の途中から始まりうる（伏せられない）ので捨てる
+      const newline = decoded.indexOf("\n");
+      const text = !cut ? decoded : newline < 0 ? "" : decoded.slice(newline + 1);
+      const excerpt = logExcerpt(text, [...input.secrets, input.token]);
+      return excerpt || undefined;
+    } catch {
+      return undefined;
+    }
+  }
+}
