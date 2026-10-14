@@ -7,11 +7,13 @@ import { DockerExecutor } from "./agents/docker.js";
 import { DockerTestRunner } from "./agents/test-runner.js";
 import { loadConfig, resolveHome } from "./config.js";
 import { DEFAULT_CONTEXT_DIR, GitContextFetcher } from "./context.js";
+import { ALREADY_RUNNING_EXIT_CODE } from "./exit-codes.js";
 import { AiGateway } from "./gateway.js";
 import { GhCliAuth } from "./gh.js";
 import { GitHubIssueSearch, GitHubPullRequests } from "./github.js";
 import { HostMcpServers } from "./host-mcp.js";
 import { HostMcpProcesses } from "./host-mcp-processes.js";
+import { acquireInstanceLock, alreadyRunningMessage } from "./instance-lock.js";
 import { IssueIntake } from "./intake.js";
 import { SlackNotifier } from "./notifier.js";
 import { OrchestratorSessionStore } from "./orchestrator-sessions.js";
@@ -39,6 +41,14 @@ if (!token) {
 }
 
 mkdirSync(home, { recursive: true });
+// 同じ SACTY_HOME で、ほかのデーモンが動いていれば、データを触る起動の処理（作業履歴を開く・片付け・中断の回復・listen
+// など）に入る前に終わる（PBI-79）。ロックは OS が持つので、前のデーモンが突然落ちても、次の起動を妨げない
+const locked = acquireInstanceLock(home, `http://127.0.0.1:${port}`);
+if (!locked.ok) {
+  console.error(alreadyRunningMessage(home, locked.owner));
+  process.exit(ALREADY_RUNNING_EXIT_CODE);
+}
+const instanceLock = locked.lock;
 const activity = new SqliteActivityStore(join(home, "sacty.db"));
 const projects = new SqliteProjectStore(join(home, "sacty.db"));
 const settings = new SqliteSettingsStore(join(home, "sacty.db"));
@@ -208,6 +218,7 @@ const shutdown = async () => {
     activity.close();
     projects.close();
     settings.close();
+    instanceLock.release();
     process.exit(0);
   });
 };
