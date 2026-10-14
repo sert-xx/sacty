@@ -100,6 +100,49 @@ describe("レビューの出力から行へのコメントを取り出す（PBI-
   });
 });
 
+describe("レビューの工程の差分の渡し方（PBI-65）", () => {
+  const reviewTask = {
+    title: "レビュー",
+    body: "",
+    steps: [{ key: "review", state: "todo" }],
+    remarks: [],
+    outputs: {},
+    approved: {},
+    reproductionTests: [],
+    reviewTarget: {
+      repo: "https://github.com/acme/app",
+      number: 12,
+      url: "https://github.com/acme/app/pull/12",
+      title: "retry",
+      body: "",
+      headCommit: "h".repeat(40),
+      baseCommit: "b".repeat(40),
+    },
+  } as unknown as Task;
+  const big = `diff --git a/x b/x\n${"+".repeat(10)}\n`.repeat(20_000);
+
+  it("差分が大きいときは先頭だけを渡し、全体のファイルの場所を伝える（写しに .git は無い）", () => {
+    const prompt = buildPrompt(reviewTask, "review", {
+      diff: big,
+      diffFile: "/workspace/.sacty/pr.diff",
+    });
+    expect(prompt).toContain(
+      "PR の差分の全体は、ファイル /workspace/.sacty/pr.diff にもあります（sacty が置いたもので、PR の一部ではありません。レビューの対象にしないでください）",
+    );
+    expect(prompt).toContain(
+      "残りは /workspace/.sacty/pr.diff の差分の全体と作業領域のコードを読んでください",
+    );
+    expect(prompt).toContain(".git はありません");
+    expect(prompt.length).toBeLessThan(big.length);
+  });
+
+  it("差分のファイルが無いときは、作業領域のコードを読むように伝える", () => {
+    const prompt = buildPrompt(reviewTask, "review", { diff: big });
+    expect(prompt).toContain("残りは作業領域のコードを読んでください");
+    expect(prompt).not.toContain(".sacty/pr.diff");
+  });
+});
+
 describe("タスク分割（PBI-27）", () => {
   const task = (parent?: Task["parent"]) =>
     ({ title: "決済", body: "", ...(parent ? { parent } : {}) }) as Task;

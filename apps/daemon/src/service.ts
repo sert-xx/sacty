@@ -74,7 +74,7 @@ import {
 } from "@sacty/core";
 import { ZodError } from "zod";
 import type { ActivityStore } from "./activity.js";
-import type { AgentExecutor } from "./agents/docker.js";
+import { type AgentExecutor, CONTAINER_WORKSPACE } from "./agents/docker.js";
 import type { LocalForward } from "./agents/forward.js";
 import {
   type AgentRole,
@@ -185,6 +185,10 @@ import type {
 } from "./session-logs.js";
 import type { SettingsStore } from "./settings.js";
 import { type FoundTicket, type TicketClient, ticketErrorText } from "./tickets.js";
+
+/** レビューの工程で、PR の差分の全体を置くディレクトリとファイル（作業領域の写しの中。PR の一部ではない）。 */
+const REVIEW_DIFF_DIR = ".sacty";
+const REVIEW_DIFF_FILE = "pr.diff";
 
 type ActivityItem = { actor: Actor; event: EventInput };
 
@@ -2487,6 +2491,11 @@ export class TaskService {
             reviewTarget?.headCommit ?? latest.repository?.baseCommit ?? "",
             snapshotDir,
           );
+          // 差分の全体をファイルで置く。写しに .git は無いので、プロンプトで切り詰めた残りを worker が git で取れない（PBI-65）
+          if (reviewDiff !== undefined) {
+            mkdirSync(join(snapshotDir, REVIEW_DIFF_DIR), { recursive: true });
+            writeFileSync(join(snapshotDir, REVIEW_DIFF_DIR, REVIEW_DIFF_FILE), reviewDiff);
+          }
         } catch (error) {
           executed = {
             outcome: {
@@ -2530,7 +2539,12 @@ export class TaskService {
         runId,
         prompt: [
           buildPrompt(this.mustGet(task.id), step, {
-            ...(reviewDiff !== undefined ? { diff: reviewDiff } : {}),
+            ...(reviewDiff !== undefined
+              ? {
+                  diff: reviewDiff,
+                  diffFile: `${CONTAINER_WORKSPACE}/${REVIEW_DIFF_DIR}/${REVIEW_DIFF_FILE}`,
+                }
+              : {}),
             // 修正の子タスクを追加するときは、これまでの子タスクを渡す（PBI-31）
             ...(step === "split" ? { subtasks: this.subtaskSummaries(task) } : {}),
           }),

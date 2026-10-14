@@ -595,6 +595,7 @@ class FakeExecutor implements AgentExecutor {
   scratch: boolean[] = [];
   /** 実行ごとに、作業領域にあったファイル（実行の後に消されるので、実行の間に読んでおく）。 */
   workspaceFiles: string[][] = [];
+  reviewDiffFiles: (string | undefined)[] = [];
   /** 実行ごとのイメージと、イメージの環境変数（PBI-41）。 */
   images: { image: string; env?: Record<string, string> }[] = [];
   /** 実行ごとにつないだネットワーク（PBI-47）。 */
@@ -630,6 +631,9 @@ class FakeExecutor implements AgentExecutor {
     this.dirs.push(workspaceDir);
     this.scratch.push(/[\\/]_(?:snapshots|guardian)[\\/]/.test(workspaceDir));
     this.workspaceFiles.push(existsSync(workspaceDir) ? readdirSync(workspaceDir).sort() : []);
+    // レビューの工程で置かれる、PR の差分の全体のファイル（PBI-65。実行の後に写しごと消される）
+    const diffFile = join(workspaceDir, ".sacty", "pr.diff");
+    this.reviewDiffFiles.push(existsSync(diffFile) ? readFileSync(diffFile, "utf8") : undefined);
     // 渡されたコンテキスト（実行の後に消されるので、実行の間に読んでおく）
     const seed = invocation.stage?.seedDir;
     this.contexts.push(
@@ -3153,6 +3157,9 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       expect(prompt).toContain("あなたはソフトウェア開発のレビューエージェントです");
       expect(prompt).toContain("+export const retry = 3;");
       expect(prompt).toContain("回数を環境変数で変えられるようにした");
+      // 写しに .git は無いので、差分の全体をファイルで置き、プロンプトでその場所を伝える（PBI-65）
+      expect(prompt).toContain("/workspace/.sacty/pr.diff");
+      expect(executor.reviewDiffFiles[0]).toContain("+export const retry = 3;");
       // 承認ゲートは無い。書いたレビューは投稿待ち
       expect(task?.gate).toBeUndefined();
       expect(service.queuedTaskIds()).toEqual([id]);
