@@ -1,9 +1,10 @@
+import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { renderMessage } from "@sacty/core";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { type AgentConfig, agentFor, CONFIG_TEMPLATE, loadConfig } from "../config.js";
 import { MemorySecretStore } from "../secrets.js";
 import { dockerRunArgs, syncBackIfChanged } from "./docker.js";
@@ -1068,9 +1069,9 @@ describe("認証ファイルの書き戻し", () => {
   it("コンテナで更新され、ホストが変わっていなければ書き戻す", () => {
     dir = mkdtempSync(join(tmpdir(), "sacty-sync-"));
     const host = join(dir, "auth.json");
-    const staged = join(dir, "staged.json");
+    const staged = { dir, name: "staged.json" };
     writeFileSync(host, "old");
-    writeFileSync(staged, "refreshed");
+    writeFileSync(join(dir, "staged.json"), "refreshed");
     expect(syncBackIfChanged(host, staged, sha("old"))).toBe("written");
     expect(readFileSync(host, "utf8")).toBe("refreshed");
   });
@@ -1078,20 +1079,90 @@ describe("認証ファイルの書き戻し", () => {
   it("コンテナで変わっていなければ何もしない", () => {
     dir = mkdtempSync(join(tmpdir(), "sacty-sync-"));
     const host = join(dir, "auth.json");
-    const staged = join(dir, "staged.json");
+    const staged = { dir, name: "staged.json" };
     writeFileSync(host, "old");
-    writeFileSync(staged, "old");
+    writeFileSync(join(dir, "staged.json"), "old");
     expect(syncBackIfChanged(host, staged, sha("old"))).toBe("unchanged");
   });
 
   it("実行中にホスト側が変わっていたら、利用者の操作を優先して書き戻さない", () => {
     dir = mkdtempSync(join(tmpdir(), "sacty-sync-"));
     const host = join(dir, "auth.json");
-    const staged = join(dir, "staged.json");
+    const staged = { dir, name: "staged.json" };
     writeFileSync(host, "re-login by user");
-    writeFileSync(staged, "refreshed");
+    writeFileSync(join(dir, "staged.json"), "refreshed");
     expect(syncBackIfChanged(host, staged, sha("old"))).toBe("host-changed");
     expect(readFileSync(host, "utf8")).toBe("re-login by user");
+  });
+
+  // コンテナは一時ディレクトリの中を、ホストのほかのファイルへのリンクや FIFO に差し替えられる（PBI-71）
+  const setup = () => {
+    dir = mkdtempSync(join(tmpdir(), "sacty-sync-"));
+    const host = join(dir, "auth.json");
+    writeFileSync(host, "old");
+    const other = join(dir, "other-host-file");
+    writeFileSync(other, "contents of another host file");
+    const staging = join(dir, "staging");
+    mkdirSync(staging);
+    return { host, other, staging };
+  };
+
+  it("ステージしたファイルがホストのほかのファイルへのリンクなら、読まずに書き戻さない", () => {
+    const { host, other, staging } = setup();
+    symlinkSync(other, join(staging, "auth.json"));
+    expect(syncBackIfChanged(host, { dir: staging, name: "auth.json" }, sha("old"))).toBe(
+      "not-regular",
+    );
+    expect(readFileSync(host, "utf8")).toBe("old");
+  });
+
+  it("途中のディレクトリがリンクなら、その先を読まずに書き戻さない", () => {
+    const { host, other, staging } = setup();
+    // other-host-file のあるディレクトリ（dir）を、一時ディレクトリの中の sub に見せる
+    symlinkSync(dir, join(staging, "sub"));
+    expect(syncBackIfChanged(host, { dir: staging, name: "sub/other-host-file" }, sha("old"))).toBe(
+      "not-regular",
+    );
+    expect(readFileSync(host, "utf8")).toBe("old");
+    expect(readFileSync(other, "utf8")).toBe("contents of another host file");
+  });
+
+  it("一時ディレクトリそのものがリンクなら、読まずに書き戻さない", () => {
+    const { host } = setup();
+    const linked = join(dir, "linked-staging");
+    symlinkSync(dir, linked);
+    expect(syncBackIfChanged(host, { dir: linked, name: "other-host-file" }, sha("old"))).toBe(
+      "not-regular",
+    );
+    expect(readFileSync(host, "utf8")).toBe("old");
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "ステージしたファイルが FIFO なら、待たずに読まずに書き戻さない",
+    () => {
+      const { host, staging } = setup();
+      const fifo = join(staging, "auth.json");
+      execFileSync("mkfifo", [fifo]);
+      // 書き手を置く（リンクを辿って普通に読むと、待ったうえで書き手の中身を書き戻してしまう。テストが止まらず落ちるように）
+      const writer = spawn("sh", ["-c", 'printf "from fifo" > "$0"', fifo], { stdio: "ignore" });
+      try {
+        expect(syncBackIfChanged(host, { dir: staging, name: "auth.json" }, sha("old"))).toBe(
+          "not-regular",
+        );
+        expect(readFileSync(host, "utf8")).toBe("old");
+      } finally {
+        writer.kill();
+      }
+    },
+    5_000,
+  );
+
+  it("ステージしたファイルが消えていれば何もしない", () => {
+    const { host, staging } = setup();
+    expect(syncBackIfChanged(host, { dir: staging, name: "auth.json" }, sha("old"))).toBe(
+      "unchanged",
+    );
+    expect(readFileSync(host, "utf8")).toBe("old");
   });
 });
 
@@ -1244,6 +1315,117 @@ while true; do sleep 0.05; done
     expect(readFileSync(hostAuth, "utf8")).toBe("refreshed-token");
     const staging = readFileSync(join(bin, "staging.path"), "utf8").trim();
     expect(existsSync(staging)).toBe(false);
+  });
+});
+
+describe("認証ファイルの書き戻しでコンテナの中を信じない（偽のdockerコマンド。PBI-71）", () => {
+  let dir: string;
+  const originalPath = process.env.PATH;
+  afterEach(() => {
+    process.env.PATH = originalPath;
+    vi.restoreAllMocks();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  /** 偽の docker を置く。run の本体（$host がステージの一時ディレクトリ、$here が偽の docker の場所）と、ps の答えを渡す。 */
+  const fakeDocker = async (run: string, ps = "exit 0") => {
+    const { chmodSync } = await import("node:fs");
+    dir = mkdtempSync(join(tmpdir(), "sacty-fakedocker-"));
+    const bin = join(dir, "bin");
+    mkdirSync(bin);
+    writeFileSync(
+      join(bin, "docker"),
+      `#!/bin/sh
+here=$(dirname "$0")
+if [ "$1" = "kill" ]; then kill "$(cat "$here/run.pid")" 2>/dev/null; exit 0; fi
+if [ "$1" = "ps" ]; then ${ps}; fi
+echo $$ > "$here/run.pid"
+prev=""; host=""
+for a in "$@"; do
+  if [ "$prev" = "-v" ]; then
+    case "$a" in *:/.codex*) host="\${a%%:/.codex*}";; esac
+  fi
+  prev="$a"
+done
+${run}
+`,
+    );
+    chmodSync(join(bin, "docker"), 0o755);
+    process.env.PATH = `${bin}:${originalPath}`;
+    const hostAuth = join(dir, "auth.json");
+    writeFileSync(hostAuth, "old-token");
+    return { bin, hostAuth };
+  };
+  const invocation = (hostAuth: string): Invocation => ({
+    command: ["codex"],
+    env: { CODEX_HOME: "/.codex" },
+    stage: {
+      containerDir: "/.codex",
+      files: [{ hostPath: hostAuth, name: "auth.json", syncBack: true }],
+    },
+    parser: "codex-jsonl",
+  });
+  const warnings = (warn: { mock: { calls: unknown[][] } }) =>
+    warn.mock.calls.map((call) => call.map(String).join(" ")).join("\n");
+
+  it("コンテナが止まったことを確かめられなければ書き戻さず、理由をデーモンのログに残す", async () => {
+    const { existsSync } = await import("node:fs");
+    const { DockerExecutor, RunningContainers } = await import("./docker.js");
+    // ps は、いつまでもコンテナがあると答える（止まったことを確かめられない）
+    const { bin, hostAuth } = await fakeDocker(
+      `printf 'refreshed-token' > "$host/auth.json"
+touch "$here/ready"
+trap 'exit 137' TERM
+while true; do sleep 0.05; done`,
+      "echo still-running; exit 0",
+    );
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const executor = new DockerExecutor(undefined, undefined, new RunningContainers(spawn, 10, 1));
+    const running = executor.run({
+      runId: "r71a",
+      image: "img",
+      workspaceDir: dir,
+      invocation: invocation(hostAuth),
+    });
+    while (!existsSync(join(bin, "ready"))) await new Promise((r) => setTimeout(r, 20));
+    executor.abortAll();
+    const outcome = await running;
+
+    expect(outcome).toMatchObject({
+      kind: "failed",
+      message: { code: "run.containerNotConfirmed" },
+    });
+    expect(readFileSync(hostAuth, "utf8")).toBe("old-token");
+    const logged = warnings(warn);
+    expect(logged).toContain("止まったことを確かめられないため");
+    expect(logged).toContain(hostAuth);
+    // 認証の値はログに出さない
+    expect(logged).not.toContain("refreshed-token");
+    expect(logged).not.toContain("old-token");
+  });
+
+  it("コンテナが認証ファイルをホストのほかのファイルへのリンクに差し替えても、その中身を書き戻さない", async () => {
+    const { DockerExecutor } = await import("./docker.js");
+    const { hostAuth } = await fakeDocker(
+      `rm -f "$host/auth.json"
+ln -s "$here/../other-host-file" "$host/auth.json"
+echo '{"type":"turn.completed","usage":{"input_tokens":1,"cached_input_tokens":0,"output_tokens":1}}'`,
+    );
+    writeFileSync(join(dir, "other-host-file"), "contents of another host file");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const outcome = await new DockerExecutor().run({
+      runId: "r71b",
+      image: "img",
+      workspaceDir: dir,
+      invocation: invocation(hostAuth),
+    });
+
+    expect(outcome.kind).toBe("completed");
+    expect(readFileSync(hostAuth, "utf8")).toBe("old-token");
+    const logged = warnings(warn);
+    expect(logged).toContain("通常のファイルとして読めない");
+    expect(logged).not.toContain("contents of another host file");
+    expect(logged).not.toContain("old-token");
   });
 });
 

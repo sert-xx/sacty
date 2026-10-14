@@ -67,7 +67,7 @@ function slash(path: string): string {
  * 設定の場所から rel の親までの途中のディレクトリが、どれも本物のディレクトリ（シンボリックリンクでない）ことを確かめる。
  * 違えば例外（途中のディレクトリをホストのほかの場所へのリンクに差し替えられても、その先を読まないため）。
  */
-function assertRealParents(configDir: string, rel: string): void {
+export function assertRealParents(configDir: string, rel: string): void {
   const parts = rel.split("/");
   let dir = configDir;
   for (const part of parts.slice(0, -1)) {
@@ -129,7 +129,7 @@ export function selectAgentSessionFiles(
 }
 
 /** リンクを辿らずに開く（最後の部分がリンクなら開けない）。FIFO などで止まらないよう、待たずに開く。 */
-const OPEN_FLAGS =
+export const NOFOLLOW_READ_FLAGS =
   fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0) | (fsConstants.O_NONBLOCK ?? 0);
 
 /**
@@ -139,7 +139,7 @@ const OPEN_FLAGS =
  */
 async function openSource(configDir: string, source: AgentSourceFile): Promise<FileHandle> {
   assertRealParents(configDir, source.path);
-  const handle = await open(join(configDir, ...source.path.split("/")), OPEN_FLAGS);
+  const handle = await open(join(configDir, ...source.path.split("/")), NOFOLLOW_READ_FLAGS);
   try {
     const stat = await handle.stat({ bigint: true });
     if (!stat.isFile()) throw new Error(`${source.path}: not a regular file`);
