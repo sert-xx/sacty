@@ -1840,3 +1840,46 @@ echo '{"type":"result","is_error":false,"result":"ok","session_id":"abc-123","us
     });
   });
 });
+
+describe("再開の拒否の判定（PBI-67 レビュー指摘。本物の出力）", () => {
+  it("Claude Code 2.1.296・Codex 0.160.0 が、無いセッションの再開を断ったときの出力を、再開の拒否と読む", async () => {
+    const { resumeRejected } = await import("../service.js");
+    // sacty-agent のイメージで、認証なしに `claude -p hi --output-format stream-json --verbose --resume <無い ID>` を実行した出力
+    const id = "0b1c2d3e-0000-4000-8000-000000000000";
+    const claude = parseClaudeResult(
+      `${JSON.stringify({
+        type: "result",
+        subtype: "error_during_execution",
+        is_error: true,
+        num_turns: 0,
+        session_id: id,
+        usage: {
+          input_tokens: 0,
+          cache_creation_input_tokens: 0,
+          cache_read_input_tokens: 0,
+          output_tokens: 0,
+        },
+        errors: [`No conversation found with session ID: ${id}`],
+      })}\n`,
+      1,
+      `No conversation found with session ID: ${id}\n`,
+    );
+    expect(claude).toMatchObject({ kind: "failed", reason: "error" });
+    expect(resumeRejected("claude-code", claude)).toBe(true);
+    expect(resumeRejected("codex", claude)).toBe(false);
+    // `codex exec --json … resume <無い ID> hi` の出力（標準出力は空、標準エラー出力に理由。終了コード 1）
+    const codex = parseCodexEvents(
+      "",
+      1,
+      `Error: thread/resume: thread/resume failed: no rollout found for thread id ${id} (code -32600)\n`,
+    );
+    expect(codex).toMatchObject({ kind: "failed", reason: "error" });
+    expect(resumeRejected("codex", codex)).toBe(true);
+    expect(resumeRejected("claude-code", codex)).toBe(false);
+    // ほかの失敗は、再開の拒否ではない
+    expect(resumeRejected("claude-code", parseClaudeResult("", 137, "Killed\n"))).toBe(false);
+    expect(resumeRejected("codex", parseCodexEvents("", 1, "Error: stream disconnected\n"))).toBe(
+      false,
+    );
+  });
+});
