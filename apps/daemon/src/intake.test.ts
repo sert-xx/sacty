@@ -12,8 +12,15 @@ import type { GitHubAuth } from "./gh.js";
 import type { FoundIssue, IssueSearch } from "./github.js";
 import { IssueIntake } from "./intake.js";
 import { PlatformFile, toPlatform } from "./platforms.js";
+import { fillTemplate, limitBody } from "./pr-template.js";
 import { MemoryProjectStore } from "./projects.js";
-import { buildPullRequestBody } from "./prompts.js";
+import {
+  buildPullRequestBody,
+  buildPullRequestBodyParts,
+  buildPullRequestBodyText,
+  buildStepPullRequestBodyParts,
+  buildStepPullRequestBodyText,
+} from "./prompts.js";
 import { MemorySecretStore } from "./secrets.js";
 import { TaskService } from "./service.js";
 import { MemorySettingsStore } from "./settings.js";
@@ -357,6 +364,39 @@ describe("GitHub Issue の定期的な取り込み（PBI-5a）", () => {
     const task = service.list()[0];
     if (!task) throw new Error("no task");
     expect(buildPullRequestBody(task)).toContain("Closes #7");
+    activity.close();
+  });
+
+  it("PR テンプレートに沿わせても、Issue を閉じる行とタスクの ID は失わない（PBI-87）", async () => {
+    const { activity, service, intake } = setup();
+    await intake.tick();
+    const task = service.list()[0];
+    if (!task) throw new Error("no task");
+    // Issue の見出しのあるテンプレートは、その見出しに入れる
+    const withIssue = fillTemplate(
+      "## 概要\n\n## 関連 Issue\nFixes #\n",
+      buildPullRequestBodyParts(task),
+    );
+    const body = limitBody(withIssue.main, withIssue.footer).body;
+    expect(body).toContain("## 関連 Issue\n\nCloses #7");
+    expect(body).toContain(`sacty task ${task.id}`);
+    // Issue の見出しが無いテンプレートでも、本文の最後に入れる
+    const without = fillTemplate("## 概要\n", buildPullRequestBodyParts(task));
+    expect(without.footer).toMatch(/^Closes #7\n\n---\n/);
+    expect(without.footer).toContain(`sacty task ${task.id}`);
+    // 要求要件・設計の PR は、Issue を参照する（タスクブランチへのマージでは閉じない）
+    const step = fillTemplate(
+      "## Related\n",
+      buildStepPullRequestBodyParts(task, "requirements", "docs/x.md"),
+    );
+    expect(step.main).toContain("## Related\n\n#7（このタスクの取り込み元");
+    expect(step.footer).toContain(`sacty task ${task.id}`);
+    expect(step.footer).toContain("この PR をマージすると、要求要件を承認したことになり");
+    // テンプレートを使わない本文でも、省けない部分（タスクの ID・Closes・承認の案内）を分けて持つ（PR #99 レビュー指摘）
+    const fallback = buildPullRequestBodyText(task);
+    expect(fallback.keep).toEqual([expect.stringContaining(`sacty task ${task.id}`), "Closes #7"]);
+    const stepFallback = buildStepPullRequestBodyText(task, "design", "docs/x.md");
+    expect(stepFallback.keep[1]).toContain("この PR をマージすると、設計を承認したことになり");
     activity.close();
   });
 });
