@@ -472,6 +472,63 @@ describe("組織内 PF の API の中継（PBI-35）", () => {
     expect(up.calls).toHaveLength(0);
   });
 
+  it("キーをクエリで送る窓口（GET）のトークンを付けて転送し、401 で取り直す。失敗の応答にキーの入った URL を出さない（PBI-93）", async () => {
+    const key = "FAKE-QKEY+/=&'é";
+    const encoded = "FAKE-QKEY%2B%2F%3D%26%27%C3%A9";
+    const up = upstream([
+      json(200, { token: "ey-old" }),
+      json(401, { message: "expired" }),
+      json(200, { token: "ey-new" }),
+      json(200, { items: [] }),
+      new TypeError(`fetch failed: https://auth.example.com/auth/token?v=1&api_token=${encoded}`),
+    ]);
+    const q = toPlatform(
+      "q",
+      PlatformFile.parse({
+        upstream: "https://q.example.com",
+        auth: {
+          prefix: "Bearer ",
+          token: {
+            url: "https://auth.example.com/auth/token?v=1",
+            method: "GET",
+            query: { api_token: "{{secret}}" },
+            secret: "q-key",
+            token_path: "token",
+          },
+        },
+        allow: ["GET /api/**"],
+      }),
+    );
+    const credentials = new PlatformCredentials({
+      secrets: new MemorySecretStore({ "q-key": key }),
+      fetchImpl: up.fetchImpl,
+    });
+    gateway = new AiGateway({ fetchImpl: up.fetchImpl, platforms: () => [q], credentials });
+    const port = await gateway.listen();
+    const run = gateway.register();
+    const res = await fetch(`http://127.0.0.1:${port}/r/${run.token}/pf/q/api/items`);
+    expect(res.status).toBe(200);
+    const tokenUrl = `https://auth.example.com/auth/token?v=1&api_token=${encoded}`;
+    expect(up.calls.map((c) => c.url)).toEqual([
+      tokenUrl,
+      "https://q.example.com/api/items",
+      tokenUrl,
+      "https://q.example.com/api/items",
+    ]);
+    expect(up.calls[0]?.body).toBe("");
+    expect(up.calls[3]?.headers.get("authorization")).toBe("Bearer ey-new");
+    // 上流のキーやトークンの窓口の URL は、PF への転送に付けない
+    expect(up.calls[3]?.url).not.toContain("api_token");
+    // 取り直しの送信が失敗し、その文にキーの入った URL が入っても、エージェントへの応答には出さない
+    credentials.invalidate(q);
+    const failed = await fetch(`http://127.0.0.1:${port}/r/${run.token}/pf/q/api/items`);
+    expect(failed.status).toBe(502);
+    const text = await failed.text();
+    expect(text).toContain("api_token=[secret]");
+    expect(text).not.toContain("FAKE-QKEY");
+    expect(text).not.toContain(encoded);
+  });
+
   it("認証情報を用意できなければ、理由を返して上流に送らない", async () => {
     const g = await startPf([json(500, { message: "auth down" })]);
     const res = await fetch(`${g.base}/deploy/api/v1/deployments`);

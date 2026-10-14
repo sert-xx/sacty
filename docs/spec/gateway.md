@@ -47,10 +47,40 @@ PF は `config.yaml` の `gateway.platforms`（すべてのプロジェクト）
 | `description` | エージェントへの説明（既定 空） |
 | `auth.header`・`auth.prefix` | 認証を付けるヘッダー（既定 `Authorization`）と値の前に付ける文字列（既定 空） |
 | `auth.secret` | 固定のキー（秘密情報の参照） |
-| `auth.token` | キーでトークンを取得する：`url`・`method`（既定 `POST`）・`headers`・`json`・`form`（`{{secret}}` をキーに置き換える）・`secret`・`token_path`・`expires_in_path`・`ttl_sec`（既定 300） |
+| `auth.token` | キーでトークンを取得する：`url`・`method`（既定 `POST`）・`headers`・`query`・`json`・`form`（`{{secret}}` をキーに置き換える）・`secret`・`token_path`・`expires_in_path`・`ttl_sec`（既定 300） |
 | `allow` | 使える API の一覧（`<メソッド> /<パス>`。1件以上） |
 
 `auth.secret` と `auth.token` はどちらか一方だけ書く。
+
+`auth.token` の検査（設定の読み込みのときに弾く）：
+
+- `url` は http・https。`{{secret}}` を含められない（キーをクエリで送るなら `query` に書く。`config.platformTokenUrlSecret`）。
+- `query` は「名前: 値」（名前は空でない文字列、値は文字列。`config.platformTokenQuery`）。
+- `method` が `GET`・`HEAD` のときは `json`・`form` を書けない（`config.platformTokenBody`）。
+
+トークンの窓口の URL（`tokenUrl`）：`query` の値の `{{secret}}` をキーに置き換え、名前と値を URL エンコードして（`encodeURIComponent`
+に加えて `!'()*` も変える。空白は `%20`）、`url` に元からあるクエリの後ろに `&` でつないで足す。元からあるクエリは書き換えない。
+`url` の `#` 以降は送らない。`query` を書かない（空も）ときは `url` をそのまま送る。`GET` で `json`・`form` が無ければ本文と
+`content-type` を付けない。
+
+トークンを取得できなかった理由（画面・ログ・作業履歴・ゲートウェイの応答に出す）は、キーを伏せてから600文字に切り詰める。伏せる形は、
+値そのもの・JSON の文字列にした形・URL に現れうる形・各行（どれも4文字以上。`HIDE_MIN_LENGTH`）（`hideSecret`・`urlPattern`）。
+URL に現れうる形は、文字ごとに、そのままか UTF-8 のパーセントエスケープ（16進の大文字・小文字を問わず、`%25` の二重のエンコードも）で、
+空白は `+` も。エスケープの箇所ごとに違ってもよい。対になっていないサロゲートはそのままだけ。クエリの値の全体がキーのとき
+（`?名前=値`・`&名前=値` の値が上の形で、後ろが値を続けられる文字（英数字・`-._~`・`%`・`+`）でない、つまり文の終わり・`&`・`#`・`:`・
+`)`・`]`・`,`・`;`・空白・改行・引用符などのどれか）は、長さに関係なく伏せる（名前は256文字まで）。トークンの取得の理由では、キーに加えて、
+送ったクエリの値のうちキーを入れたもの（`pre-{{secret}}` を置き換えた `pre-<キー>` など）も、値の丸ごとを同じ規則で伏せる
+（長いものから。`sentQueryValues`）。
+送信の失敗の文（URL を含むもの）にも、窓口の HTTP のエラーの本文にも同じく伏せる。
+
+ただし、`query` の値にキー（`{{secret}}`）を入れた窓口が失敗の状態（2xx 以外）を返したときは、本文を理由に写さず、状態コードだけにする
+（`token endpoint returned <状態> (the response body is not shown because the key is sent in the query)`。`sendsKeyInQuery`）。
+窓口は送った名前・値を、URL・`api_token=abc`・JSON など、どんな形でも本文に返しうり、短いキーは形を問わずには伏せられないため。
+伏せる規則だけに頼って残る形は次のとおり。
+
+- 送信の失敗の文（fetch の例外の文）で、短いキー（4文字未満）・短い送った値が、クエリの値（`?`・`&` の後ろの `名前=値`）の全体
+  ではない形で現れたとき（Node の fetch の失敗の文は `fetch failed` で、URL を含まない。`cause` は理由に入れない）。
+- キーを本文・ヘッダーで送る窓口（`query` にキーを入れない）の失敗の本文に、短いキーが現れたとき（これまでどおり。4文字以上を伏せる）。
 
 - 探す順は、ホストの PF、無ければその実行のトークンに結びつけたプロジェクトのコンテキストの PF。ほかのプロジェクトのタスクの
   トークンでは見つからない（404）。
@@ -63,7 +93,7 @@ PF は `config.yaml` の `gateway.platforms`（すべてのプロジェクト）
 - ホストの PF の認証は、デーモンの起動のときに用意する。用意できないホストの PF は、画面の警告に出す（ほかの PF は使える）。
 - エージェントの指示に、そのタスクで使える PF と API の一覧を入れる。
 
-コード: `apps/daemon/src/platforms.ts`（`PlatformFile`・`TokenRequest`・`pathPattern`・`isAllowed`・`PlatformCredentials`・`REFRESH_MARGIN_MS`・`platformPromptLines`）、`apps/daemon/src/gateway.ts`（`handlePlatform`・`sentUrl`）
+コード: `apps/daemon/src/platforms.ts`（`PlatformFile`・`TokenRequest`・`tokenUrl`・`hideSecret`・`pathPattern`・`isAllowed`・`PlatformCredentials`・`REASON_MAX`・`REFRESH_MARGIN_MS`・`platformPromptLines`）、`apps/daemon/src/gateway.ts`（`handlePlatform`・`sentUrl`）
 
 ## コンテキストの MCP の中継
 

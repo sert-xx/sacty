@@ -22,25 +22,44 @@ const AllowRule = z
   .trim()
   .regex(/^(GET|POST|PUT|PATCH|DELETE|HEAD) \/\S*$/, code("input.allowRule"));
 
-const TokenRequest = z.object({
-  /** トークンの窓口。 */
-  url: z.url({ protocol: /^https?$/ }),
-  method: Method.default("POST"),
-  /** 窓口に送るヘッダー（{{secret}} に秘密情報の値を入れる）。 */
-  headers: z.record(HeaderName, z.string()).default({}),
-  /** 窓口に送る JSON の本文（文字列の中の {{secret}} に秘密情報の値を入れる）。 */
-  json: z.unknown().optional(),
-  /** 窓口に送るフォームの本文（application/x-www-form-urlencoded）。 */
-  form: z.record(z.string(), z.string()).optional(),
-  /** 窓口に送る秘密情報（API キーなど）。 */
-  secret: SecretRef,
-  /** 応答の JSON の、トークンの場所（例 data.accessToken）。 */
-  token_path: z.string().trim().min(1),
-  /** 応答の JSON の、期限（秒）の場所（例 expires_in）。無ければ ttl_sec。 */
-  expires_in_path: z.string().trim().min(1).optional(),
-  /** 期限が分からないときに、トークンを持つ時間（秒）。 */
-  ttl_sec: z.number().int().positive().default(300),
-});
+const TokenRequest = z
+  .object({
+    /** トークンの窓口。キーは書けない（クエリで送るなら query に書く。PBI-93）。 */
+    url: z
+      .url({ protocol: /^https?$/ })
+      .refine((url) => !url.includes(SECRET_PLACEHOLDER), code("config.platformTokenUrlSecret")),
+    method: Method.default("POST"),
+    /** 窓口に送るヘッダー（{{secret}} に秘密情報の値を入れる）。 */
+    headers: z.record(HeaderName, z.string()).default({}),
+    /**
+     * 窓口の URL に足すクエリのパラメーター（{{secret}} に秘密情報の値を入れ、URL エンコードする。url に元からある
+     * クエリの後ろに足す。PBI-93）。
+     */
+    query: z
+      .record(
+        z.string().min(1, code("config.platformTokenQuery")),
+        z.string({ error: code("config.platformTokenQuery") }),
+        { error: code("config.platformTokenQuery") },
+      )
+      .optional(),
+    /** 窓口に送る JSON の本文（文字列の中の {{secret}} に秘密情報の値を入れる）。 */
+    json: z.unknown().optional(),
+    /** 窓口に送るフォームの本文（application/x-www-form-urlencoded）。 */
+    form: z.record(z.string(), z.string()).optional(),
+    /** 窓口に送る秘密情報（API キーなど）。 */
+    secret: SecretRef,
+    /** 応答の JSON の、トークンの場所（例 data.accessToken）。 */
+    token_path: z.string().trim().min(1),
+    /** 応答の JSON の、期限（秒）の場所（例 expires_in）。無ければ ttl_sec。 */
+    expires_in_path: z.string().trim().min(1).optional(),
+    /** 期限が分からないときに、トークンを持つ時間（秒）。 */
+    ttl_sec: z.number().int().positive().default(300),
+  })
+  // GET・HEAD は本文を送れない（送ると取得のたびに失敗するため、設定の検査で弾く。PBI-93）
+  .refine(
+    (t) => !((t.method === "GET" || t.method === "HEAD") && (t.json !== undefined || t.form)),
+    { error: code("config.platformTokenBody"), path: ["method"] },
+  );
 
 export const PlatformFile = z.object({
   /** 転送先（例 https://ticket.internal.example.com）。 */
@@ -78,6 +97,7 @@ export type Platform = {
       url: string;
       method: string;
       headers: Record<string, string>;
+      query?: Record<string, string>;
       json?: unknown;
       form?: Record<string, string>;
       secret: string;
@@ -143,6 +163,7 @@ export function toPlatform(name: string, file: z.infer<typeof PlatformFile>): Pl
               url: token.url,
               method: token.method,
               headers: token.headers,
+              ...(token.query ? { query: token.query } : {}),
               ...(token.json !== undefined ? { json: token.json } : {}),
               ...(token.form ? { form: token.form } : {}),
               secret: token.secret,
@@ -200,13 +221,102 @@ function fill(value: unknown, secret: string): unknown {
   return value;
 }
 
-/** 文から秘密情報を伏せる。値そのもの・JSON の文字列にした形・各行（短すぎる行は除く）を伏せる。 */
+/** トークンの窓口に、クエリで秘密情報を送るか。 */
+function sendsKeyInQuery(spec: NonNullable<Platform["auth"]["token"]>): boolean {
+  return Object.values(spec.query ?? {}).some((v) => v.includes(SECRET_PLACEHOLDER));
+}
+
+/** トークンの窓口に送ったクエリの値のうち、秘密情報を入れたもの（置き換えた後の値）。 */
+function sentQueryValues(spec: NonNullable<Platform["auth"]["token"]>, secret: string): string[] {
+  if (!secret) return [];
+  return Object.values(spec.query ?? {})
+    .filter((v) => v.includes(SECRET_PLACEHOLDER))
+    .map((v) => fill(v, secret) as string)
+    .filter((v) => v !== secret);
+}
+
+/** 伏せる文字列の、短すぎるものの下限（短い文字列一般は置き換えない。クエリの値として現れたものは除く）。 */
+const HIDE_MIN_LENGTH = 4;
+
+/**
+ * 文から秘密情報を伏せる。値そのもの・JSON の文字列にした形・URL エンコードした形（クエリで送るため。PBI-93）・
+ * 各行（短すぎる行は除く）を伏せる。クエリの値として現れた秘密情報（`?名前=値`・`&名前=値`）は、長さに関係なく伏せる
+ * （PBI-93 レビュー指摘）。
+ */
 export function hideSecret(text: string, secret: string): string {
   if (!secret) return text;
+  const encoded = urlPattern(secret);
+  // クエリの値の全体が秘密情報のとき（短いキーも）。値の終わりは、値を続けられる文字（英数字・-._~・% と +）で
+  // ない文字なら何でも（文の終わり・& # : ) ] , ; 空白・改行・引用符など。列挙で漏らさないため。PBI-93 再レビュー指摘）
+  let hidden = text.replace(
+    new RegExp(`([?&][^=&#?\\s]{0,256}=)(?:${encoded})(?![A-Za-z0-9\\-._~%+])`, "gu"),
+    "$1[secret]",
+  );
+  // URL エンコードした形（文字ごとに、そのままか・エスケープか。16進の大文字・小文字・空白の + ・二重のエンコードの
+  // 混在も含む）。各行より先に置き換える（行を先に伏せると、エンコードした形の残りが出るため）
+  if (secret.length >= HIDE_MIN_LENGTH) {
+    hidden = hidden.replace(new RegExp(encoded, "gu"), "[secret]");
+  }
   const forms = [secret, JSON.stringify(secret).slice(1, -1), ...secret.split(/\r?\n/)]
-    .filter((f) => f.length >= 4)
+    .filter((f) => f.length >= HIDE_MIN_LENGTH)
     .sort((a, b) => b.length - a.length);
-  return forms.reduce((t, f) => t.split(f).join("[secret]"), text);
+  return forms.reduce((t, f) => t.split(f).join("[secret]"), hidden);
+}
+
+/**
+ * 秘密情報が URL に現れうる形の正規表現。文字ごとに、そのままか、UTF-8 のパーセントエスケープ（16進の大文字・小文字を
+ * 問わない。%25 で二重にエンコードしたものも）。空白は + も。窓口や中継のプロキシがエラーの文に URL を写すときの
+ * 書き方の違いを、エスケープの箇所ごとに受け付ける。対になっていないサロゲートは、エンコードできないのでそのままだけ。
+ */
+function urlPattern(secret: string): string {
+  const encoder = new TextEncoder();
+  const hex = (b: number) =>
+    b
+      .toString(16)
+      .toUpperCase()
+      .padStart(2, "0")
+      .replace(/[A-F]/g, (c) => `[${c}${c.toLowerCase()}]`);
+  return Array.from(secret, (ch) => {
+    const alts = [ch.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")];
+    if (ch === " ") alts.push("\\+");
+    const code = ch.codePointAt(0) ?? 0;
+    if (code < 0xd800 || code > 0xdfff) {
+      alts.push(Array.from(encoder.encode(ch), (b) => `%(?:25)?${hex(b)}`).join(""));
+    }
+    return `(?:${alts.join("|")})`;
+  }).join("");
+}
+
+/**
+ * クエリの名前・値を URL エンコードする。encodeURIComponent が残す !'()* も変える（URL の組み立てで ' が %27 に
+ * 変わり、伏せる形と食い違わないようにするため）。
+ */
+function encodeQuery(value: string): string {
+  return encodeURIComponent(value).replace(
+    /[!'()*]/g,
+    (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`,
+  );
+}
+
+/**
+ * トークンの窓口の URL。query の値の {{secret}} を秘密情報の値にし、URL エンコードして、url に元からあるクエリの
+ * 後ろに足す（元のクエリは書き換えない。URL の # 以降は送らない。PBI-93）。
+ */
+export function tokenUrl(
+  url: string,
+  query: Record<string, string> | undefined,
+  secret: string,
+): string {
+  const entries = Object.entries(query ?? {});
+  if (entries.length === 0) return url;
+  const target = new URL(url);
+  const added = entries
+    .map(([k, v]) => `${encodeQuery(k)}=${encodeQuery(fill(v, secret) as string)}`)
+    .join("&");
+  const base = target.search.replace(/^\?/, "").replace(/&+$/, "");
+  target.hash = "";
+  target.search = base ? `${base}&${added}` : added;
+  return target.href;
 }
 
 /** トークンを取得できなかった理由の長さの上限（画面・ログ・ゲートウェイの応答に出す）。 */
@@ -296,7 +406,14 @@ export class PlatformCredentials {
       return await this.requestToken(spec, secret);
     } catch (error) {
       // 伏せてから切り詰める（先に切り詰めると、境界をまたぐ秘密情報の一部が残るため。PBI-35 レビュー指摘）
-      const reason = hideSecret(error instanceof Error ? error.message : String(error), secret);
+      // 送ったクエリの値のうち秘密情報を含むもの（例 pre-{{secret}}）は、値の丸ごとを、秘密情報と同じ形で伏せる
+      // （短いキーでも値の全体で伏せられるように。長いものから。PBI-93 再レビュー指摘）
+      const reason = [...sentQueryValues(spec, secret), secret]
+        .sort((a, b) => b.length - a.length)
+        .reduce(
+          (text, value) => hideSecret(text, value),
+          error instanceof Error ? error.message : String(error),
+        );
       throw new Error(reason.length > REASON_MAX ? `${reason.slice(0, REASON_MAX)}…` : reason);
     }
   }
@@ -317,13 +434,21 @@ export class PlatformCredentials {
         headers.set("content-type", "application/x-www-form-urlencoded");
       }
     }
-    const res = await (this.deps.fetchImpl ?? fetch)(spec.url, {
+    const res = await (this.deps.fetchImpl ?? fetch)(tokenUrl(spec.url, spec.query, secret), {
       method: spec.method,
       headers,
       ...(body !== undefined ? { body } : {}),
     });
     const text = await res.text();
     if (!res.ok) {
+      // キーをクエリで送る窓口は、失敗の本文を写さず、状態コードだけにする。窓口は送った名前・値を、URL・
+      // `api_token=abc`・JSON など、どんな形でも本文に返しうり、短いキーは形を問わずには伏せられないため
+      // （PBI-93 再々レビュー指摘）
+      if (sendsKeyInQuery(spec)) {
+        throw new Error(
+          `token endpoint returned ${res.status} (the response body is not shown because the key is sent in the query)`,
+        );
+      }
       // 本文は切り詰めずに渡す（呼び出し元で、秘密情報を伏せてから切り詰める）
       throw new Error(`token endpoint returned ${res.status}: ${text}`);
     }

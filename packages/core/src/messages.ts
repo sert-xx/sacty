@@ -364,6 +364,10 @@ const PARAMS = {
   "config.bedrockEndpointCodexOnly": null,
   "config.gatewayCodexBedrockOnly": null,
   "config.platformAuth": null,
+  // トークンの取得のクエリ（PBI-93）
+  "config.platformTokenQuery": null,
+  "config.platformTokenUrlSecret": null,
+  "config.platformTokenBody": null,
   "gateway.platformUnavailable": z.object({ name: z.string(), detail: TextParam }),
   "gateway.mcpUnavailable": z.object({ name: z.string(), detail: TextParam }),
   "gateway.mcpReadyTimeout": z.object({ name: z.string(), seconds: z.number() }),
@@ -846,6 +850,12 @@ const ja: MessageDictionary = {
     "Bedrock の接続先（endpoint）は Codex だけで選べます。Claude Code では書かないでください。",
   "config.platformAuth":
     "組織内 PF の認証には、secret（固定のキー）か token（トークンの取得）のどちらか一方を書いてください。",
+  "config.platformTokenQuery":
+    'トークンの取得の query は「名前: 値」で書いてください（名前は空にできず、値は文字列。例 api_token: "{{secret}}"）。',
+  "config.platformTokenUrlSecret":
+    'トークンの取得の url には {{secret}} を書けません。キーをクエリで送るときは query に書いてください（例 query: { api_token: "{{secret}}" }）。',
+  "config.platformTokenBody":
+    "トークンの取得の method が GET・HEAD のときは、json・form（本文）を書けません。キーは query か headers で送ってください。",
   "gateway.mcpUnavailable": ({ name, detail }, text) =>
     `ホストの MCP サーバー「${name}」の準備ができません（起動・認証に失敗）：${text(detail)}。1分ごとに起動し直します。`,
   "gateway.mcpReadyTimeout": ({ name, seconds }) =>
@@ -1255,6 +1265,12 @@ const en: MessageDictionary = {
     "The Bedrock endpoint can only be chosen for Codex. Remove it for Claude Code.",
   "config.platformAuth":
     "For an internal platform, write either secret (a fixed key) or token (getting a token), not both.",
+  "config.platformTokenQuery":
+    'Write the query for getting a token as "name: value" (the name must not be empty and the value must be a string; e.g. api_token: "{{secret}}").',
+  "config.platformTokenUrlSecret":
+    'The url for getting a token cannot contain {{secret}}. To send the key as a query parameter, write it in query (e.g. query: { api_token: "{{secret}}" }).',
+  "config.platformTokenBody":
+    "When the method for getting a token is GET or HEAD, json and form (a body) cannot be written. Send the key in query or headers.",
   "gateway.mcpUnavailable": ({ name, detail }, text) =>
     `The host MCP server "${name}" is not ready (failed to start or authenticate): ${text(detail)}. sacty restarts it every minute.`,
   "gateway.mcpReadyTimeout": ({ name, seconds }) =>
