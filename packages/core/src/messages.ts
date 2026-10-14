@@ -79,6 +79,14 @@ const PARAMS = {
   "export.failed": z.object({ detail: TextParam }),
   "export.unreadable": null,
   "export.budgetExceeded": null,
+  "deploy.skillMissing": null,
+  "deploy.skillOutside": z.object({ path: z.string() }),
+  "deploy.skillUnreadable": z.object({ path: z.string(), detail: TextParam }),
+  "deploy.budgetExceeded": null,
+  "deploy.checkFailed": z.object({ detail: TextParam }),
+  "deploy.unreadable": null,
+  "deploy.undetermined": null,
+  "deploy.stopped": null,
   "export.stopped": null,
   "export.notRetryable": null,
   "input.tooManyRemarks": null,
@@ -268,6 +276,7 @@ const PARAMS = {
       "getLabel",
       "createLabel",
       "addLabel",
+      "readChecks",
     ]),
     status: z.number(),
     detail: z.string(),
@@ -400,6 +409,7 @@ const githubActionJa = {
   getLabel: "リポジトリのラベルを確かめられませんでした",
   createLabel: "リポジトリにラベルを作れませんでした",
   addLabel: "PR にラベルを付けられませんでした",
+  readChecks: "CI/CD の状態を読めませんでした",
 } as const;
 const githubActionEn = {
   updatePr: "Could not update the PR",
@@ -415,6 +425,7 @@ const githubActionEn = {
   getLabel: "Could not check the label of the repository",
   createLabel: "Could not create the label in the repository",
   addLabel: "Could not add the label to the PR",
+  readChecks: "Could not read the CI/CD status",
 } as const;
 const githubHintJa = {
   none: "",
@@ -515,6 +526,18 @@ const ja: MessageDictionary = {
     `書き出せませんでした：${text(detail).replace(/[。.]\s*$/, "")}。`,
   "export.unreadable":
     "書き出しのエージェントの出力から、書き出した先の URL を読み取れませんでした。",
+  "deploy.skillMissing":
+    "デプロイの確認のスキル（.agents/skills/deployment-observer/SKILL.md か .claude/skills/deployment-observer/SKILL.md）が無いため、デプロイの確認を飛ばしました。",
+  "deploy.skillOutside": ({ path }) =>
+    `デプロイの確認のスキル（${path}）のシンボリックリンクがリポジトリの外を指す（またはたどりすぎる）ため、使いませんでした。`,
+  "deploy.skillUnreadable": ({ path, detail }, text) =>
+    `デプロイの確認のスキル（${path}）を読めないため、使いませんでした：${text(detail)}`,
+  "deploy.budgetExceeded": "予算の上限に達しているため、デプロイの確認を実行しませんでした。",
+  "deploy.checkFailed": ({ detail }, text) =>
+    `デプロイの確認を実行できませんでした：${text(detail)}`,
+  "deploy.unreadable": "デプロイの確認の結果（sacty-deployment）を読み取れませんでした。",
+  "deploy.undetermined": "エージェントが、デプロイ後のアプリの状態を確かめられませんでした。",
+  "deploy.stopped": "デプロイの確認を中断しました（止めた・中止した）。",
   "export.budgetExceeded":
     "予算の上限に達しているため、書き出しませんでした。予算の上限を上げてから、書き出し直してください。",
   "export.stopped": "人間が止めたため、書き出しを中断しました。",
@@ -906,6 +929,18 @@ const en: MessageDictionary = {
   "export.failed": ({ detail }, text) =>
     `Could not export: ${text(detail).replace(/[。.]\s*$/, "")}.`,
   "export.unreadable": "Could not read the exported URL from the export agent's output.",
+  "deploy.skillMissing":
+    "Skipped the deployment check because there is no deployment check skill (.agents/skills/deployment-observer/SKILL.md or .claude/skills/deployment-observer/SKILL.md).",
+  "deploy.skillOutside": ({ path }) =>
+    `Did not use the deployment check skill (${path}) because its symbolic link points outside the repository (or is followed too many times).`,
+  "deploy.skillUnreadable": ({ path, detail }, text) =>
+    `Did not use the deployment check skill (${path}) because it could not be read: ${text(detail)}`,
+  "deploy.budgetExceeded":
+    "Did not run the deployment check because the budget cap has been reached.",
+  "deploy.checkFailed": ({ detail }, text) => `Could not run the deployment check: ${text(detail)}`,
+  "deploy.unreadable": "Could not read the result of the deployment check (sacty-deployment).",
+  "deploy.undetermined": "The agent could not determine the state of the deployed app.",
+  "deploy.stopped": "Stopped the deployment check (paused or cancelled).",
   "export.budgetExceeded":
     "Not exported because the budget cap has been reached. Raise the cap, then export again.",
   "export.stopped": "The export was interrupted because a person stopped it.",

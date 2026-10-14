@@ -108,6 +108,12 @@ export interface RepositoryWorkspace {
    * 大きすぎる・UTF-8 のテキストでなければエラー。コミットは取得済みであること。
    */
   readFile(gitDir: string, commit: string, path: string): Promise<string | undefined>;
+  /**
+   * コミットのそのパスがシンボリックリンクなら、リンクの先（書かれたままの文字列）を返す。そうでなければ（無い・通常の
+   * ファイル・ディレクトリ）undefined。デプロイの確認のスキル（PBI-89）のリンクを、リポジトリの中でたどるため。
+   * コミットは取得済みであること。
+   */
+  readLink(gitDir: string, commit: string, path: string): Promise<string | undefined>;
   /** base と head の分岐点から head までの差分（PR の差分。PBI-19）。 */
   diffCommits(
     gitDir: string,
@@ -604,6 +610,26 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
     }
     if (text.includes("\0")) throw new MessageError(message("git.fileNotText", { path }));
     return text;
+  }
+
+  async readLink(gitDir: string, commit: string, path: string) {
+    if (!COMMIT_RE.test(commit)) throw new MessageError(message("git.invalidBaseCommit"));
+    if (!validPath(path)) throw new MessageError(message("git.invalidPath"));
+    const env = isolatedEnv("/dev/null");
+    const run = (label: string, args: string[]) =>
+      git(label, ["--git-dir", gitDir, ...SAFE_CONFIG, ...args], env);
+    const listed = await run("ls-tree", ["ls-tree", "-z", "--full-tree", commit, "--", path]);
+    const entry = listed
+      .split("\0")
+      .filter(Boolean)
+      .map((line) => {
+        const tab = line.indexOf("\t");
+        const [mode = "", type = "", object = ""] = line.slice(0, tab).split(" ");
+        return { mode, type, object, name: line.slice(tab + 1) };
+      })
+      .find((e) => e.name === path);
+    if (entry?.mode !== "120000" || entry.type !== "blob") return undefined;
+    return run("cat-file", ["cat-file", "blob", entry.object]);
   }
 
   async fetchBranch(gitDir: string, branch: string, authEnv?: Record<string, string>) {

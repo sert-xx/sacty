@@ -104,6 +104,8 @@ export function ProjectEditor({
   // 設定画面（project あり）では、対象のホストのアカウントを選ぶまで保存させない
   const needsAccount = Boolean(project) && missing;
   const [contextRef, setContextRef] = useState(project?.context?.ref ?? "");
+  // マージの後の監視（PBI-89）。既定は Off
+  const [deploymentWatch, setDeploymentWatch] = useState(project?.deploymentWatch === true);
   // Slack の通知先（PBI-38）
   const saved = project?.notification;
   const [notifyKind, setNotifyKind] = useState<"" | "slack-api" | "slack-webhook">(
@@ -176,6 +178,7 @@ export function ProjectEditor({
       : {}),
     ...(hosts.length > 0 ? { githubAccounts } : {}),
     ...(notification ? { notification } : {}),
+    ...(deploymentWatch ? { deploymentWatch: true } : {}),
     // チケットの取り込み先（PBI-52）。キーは、カンマか空白で区切って書く
     ...(tickets.length > 0
       ? {
@@ -725,6 +728,29 @@ export function ProjectEditor({
             >
               {t.addTicket}
             </Button>
+          </section>
+
+          <section
+            aria-labelledby="deployment-watch"
+            className="flex flex-col gap-3 rounded-xl border border-border bg-card p-5"
+          >
+            <h2 id="deployment-watch" className="text-[15px] font-semibold">
+              {t.deployTitle}{" "}
+              <span className="text-[13px] font-normal text-muted-foreground">{t.deployNote}</span>
+            </h2>
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                name="deploymentWatch"
+                checked={deploymentWatch}
+                onChange={(e) => setDeploymentWatch(e.target.checked)}
+                className="size-4"
+              />
+              {t.deployLabel}
+            </label>
+            <p className="text-sm leading-6 whitespace-pre-line text-muted-foreground">
+              {t.deployHelp}
+            </p>
           </section>
 
           <section

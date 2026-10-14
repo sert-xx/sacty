@@ -13,6 +13,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { findDeploymentSkill } from "./deployment.js";
 import { DIFF_LIMIT, GitRepositoryWorkspace, NothingToCommitError } from "./repository.js";
 
 let dir: string;
@@ -607,5 +608,106 @@ describe("対象リポジトリの作業領域（git）", { timeout: 30_000 }, (
       /sacty のブランチではありません/,
     );
     expect(git(origin, "branch", "--list", "feature/human")).toContain("feature/human");
+  });
+});
+
+describe("デプロイの確認のスキルを、コミットから探す（PBI-89）", { timeout: 30_000 }, () => {
+  /** スキルを置いたコミットを作り、作業領域に取得して、そのコミットを返す。 */
+  async function commitWith(setup: (origin: string) => void) {
+    const origin = makeOrigin();
+    const workspace = new GitRepositoryWorkspace();
+    const gitDir = join(dir, "_git", "a.git");
+    const { baseCommit } = await workspace.prepare(join(dir, "a"), gitDir, origin, "main");
+    setup(origin);
+    git(origin, "add", "--all");
+    git(origin, "commit", "--quiet", "-m", "skill");
+    const commit = git(origin, "rev-parse", "HEAD");
+    await workspace.fetchCommits(gitDir, [commit]);
+    return { workspace, gitDir, commit, baseCommit };
+  }
+  const skill = (origin: string, at = ".agents/skills/deployment-observer") => {
+    mkdirSync(join(origin, at), { recursive: true });
+    writeFileSync(join(origin, at, "SKILL.md"), "# deployment-observer\n");
+  };
+
+  it("原本（.agents）があれば使う。.claude が原本へのリンクでも、原本を使う。リンクでないものは undefined", async () => {
+    const { workspace, gitDir, commit, baseCommit } = await commitWith((origin) => {
+      skill(origin);
+      mkdirSync(join(origin, ".claude/skills"), { recursive: true });
+      symlinkSync(
+        "../../.agents/skills/deployment-observer",
+        join(origin, ".claude/skills/deployment-observer"),
+      );
+    });
+    expect(await workspace.readLink(gitDir, commit, ".claude/skills/deployment-observer")).toBe(
+      "../../.agents/skills/deployment-observer",
+    );
+    expect(await workspace.readLink(gitDir, commit, ".agents/skills")).toBeUndefined();
+    expect(await workspace.readLink(gitDir, commit, "missing")).toBeUndefined();
+    expect(await findDeploymentSkill(workspace, gitDir, commit)).toEqual({
+      path: ".agents/skills/deployment-observer/SKILL.md",
+    });
+    // スキルの無いコミット
+    expect(await findDeploymentSkill(workspace, gitDir, baseCommit)).toEqual({
+      problem: { code: "deploy.skillMissing" },
+    });
+  });
+
+  it(".claude にだけあっても使う。.agents が .claude の中を指すリンクなら、たどった先を使う", async () => {
+    const only = await commitWith((origin) => skill(origin, ".claude/skills/deployment-observer"));
+    expect(await findDeploymentSkill(only.workspace, only.gitDir, only.commit)).toEqual({
+      path: ".claude/skills/deployment-observer/SKILL.md",
+    });
+    rmSync(join(dir, "origin"), { recursive: true, force: true });
+    rmSync(join(dir, "a"), { recursive: true, force: true });
+    rmSync(join(dir, "_git"), { recursive: true, force: true });
+    const linked = await commitWith((origin) => {
+      skill(origin, ".claude/skills/deployment-observer");
+      mkdirSync(join(origin, ".agents/skills"), { recursive: true });
+      symlinkSync(
+        "../../.claude/skills/deployment-observer",
+        join(origin, ".agents/skills/deployment-observer"),
+      );
+    });
+    expect(await findDeploymentSkill(linked.workspace, linked.gitDir, linked.commit)).toEqual({
+      path: ".claude/skills/deployment-observer/SKILL.md",
+    });
+  });
+
+  it("リポジトリの外を指すリンク（相対・絶対）は使わず、理由を返す", async () => {
+    const outside = join(dir, "outside-skill");
+    mkdirSync(outside, { recursive: true });
+    writeFileSync(join(outside, "SKILL.md"), "# outside\n");
+    const { workspace, gitDir, commit } = await commitWith((origin) => {
+      mkdirSync(join(origin, ".agents/skills"), { recursive: true });
+      symlinkSync(outside, join(origin, ".agents/skills/deployment-observer"));
+      mkdirSync(join(origin, ".claude/skills"), { recursive: true });
+      symlinkSync("../../../outside-skill", join(origin, ".claude/skills/deployment-observer"));
+    });
+    expect(await findDeploymentSkill(workspace, gitDir, commit)).toEqual({
+      problem: {
+        code: "deploy.skillOutside",
+        params: { path: ".agents/skills/deployment-observer/SKILL.md" },
+      },
+    });
+  });
+
+  it("SKILL.md 自体が外を指すリンク・リンクの循環も使わない", async () => {
+    const { workspace, gitDir, commit } = await commitWith((origin) => {
+      mkdirSync(join(origin, ".agents/skills/deployment-observer"), { recursive: true });
+      symlinkSync(
+        "../../../../x/SKILL.md",
+        join(origin, ".agents/skills/deployment-observer/SKILL.md"),
+      );
+      mkdirSync(join(origin, ".claude/skills"), { recursive: true });
+      symlinkSync("loop", join(origin, ".claude/skills/deployment-observer"));
+      symlinkSync("deployment-observer", join(origin, ".claude/skills/loop"));
+    });
+    expect(await findDeploymentSkill(workspace, gitDir, commit)).toEqual({
+      problem: {
+        code: "deploy.skillOutside",
+        params: { path: ".agents/skills/deployment-observer/SKILL.md" },
+      },
+    });
   });
 });
