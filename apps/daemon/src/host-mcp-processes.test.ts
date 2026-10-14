@@ -11,7 +11,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 import { HostMcpFile, HostMcpServers, toHostMcp } from "./host-mcp.js";
 import {
   collectTargets,
@@ -22,6 +22,7 @@ import {
   psTable,
 } from "./host-mcp-processes.js";
 import { MemorySecretStore } from "./secrets.js";
+import { killSpawned } from "./testing/processes.js";
 import { processSource, type WaitSource, waitFor } from "./testing/wait.js";
 
 let dir: string;
@@ -233,18 +234,26 @@ rl.on("close", () => process.exit(0));
 
   const spawned: ChildProcess[] = [];
   const groups = new Set<number>();
-  afterEach(async () => {
-    // 失敗しても残さない（このテストのプロセスのグループは止めない）
-    const own = (await psTable()).find((p) => p.pid === process.pid)?.pgid;
-    for (const pgid of groups) {
-      if (pgid === own || pgid <= 1) continue;
-      try {
-        process.kill(-pgid, "SIGKILL");
-      } catch {}
-    }
+  /** テストで作った記録の係（後始末で、動かしているものの記録を片付ける）。 */
+  const made: HostMcpProcesses[] = [];
+  const processesIn = (path: string) => {
+    const processes = new HostMcpProcesses(path, { graceMs: 500 });
+    made.push(processes);
+    return processes;
+  };
+  /**
+   * 失敗・時間切れでも残さない（PBI-94）。見つけたグループだけを止めると、見つける前（記録を待っている間など）に落ちた
+   * ときに、合図のファイルを待ち続けるプロセスが残る。このテストのプロセスの子孫とそのグループを、まとめて止める。
+   */
+  const cleanup = async () => {
+    await killSpawned(groups);
     groups.clear();
     for (const child of spawned.splice(0)) child.kill("SIGKILL");
-  });
+    await Promise.all(made.splice(0).map((p) => p.endAll()));
+  };
+  afterEach(cleanup);
+  // 時間切れの後も動き続けたテストが、afterEach の後に起動したもの
+  afterAll(cleanup);
 
   /** pid の子孫（自分は含めない）。 */
   const descendants = async (pid: number) => {
@@ -317,7 +326,7 @@ rl.on("close", () => process.exit(0));
         toHostMcp("fake", HostMcpFile.parse({ command: process.execPath, args: [fakeMcp()], env })),
       ],
       secrets: new MemorySecretStore({}),
-      processes: new HostMcpProcesses(join(dir, "processes"), { graceMs: 500 }),
+      processes: processesIn(join(dir, "processes")),
     });
 
   it("デーモンを止めたら、MCP サーバーとその子孫を止め、記録を消す", async () => {
@@ -340,7 +349,7 @@ rl.on("close", () => process.exit(0));
   }, 20_000);
 
   it("MCP サーバーが自分で終わったら、残った子孫を止める", async () => {
-    const processes = new HostMcpProcesses(join(dir, "processes"), { graceMs: 500 });
+    const processes = processesIn(join(dir, "processes"));
     const transport = new GroupStdioTransport(
       {
         name: "fake",
@@ -381,7 +390,7 @@ spawn("sleep", ["304"], { stdio: "inherit" });
 setInterval(() => { if (existsSync(${JSON.stringify(signalFile("exit"))})) process.exit(0); }, 20);
 `,
     );
-    const processes = new HostMcpProcesses(join(dir, "processes"), { graceMs: 500 });
+    const processes = processesIn(join(dir, "processes"));
     const transport = new GroupStdioTransport(
       {
         name: "fake",
@@ -417,7 +426,7 @@ setInterval(() => { if (existsSync(${JSON.stringify(signalFile("exit"))})) proce
     expect(await first.ready(["fake"])).toEqual([]);
     const started = await recorded();
     // 2つ目のデーモンの起動時の片付け（記録を書いたデーモン＝このプロセスは動いている）
-    const second = new HostMcpProcesses(join(dir, "processes"), { graceMs: 500 });
+    const second = processesIn(join(dir, "processes"));
     expect(await second.cleanup()).toBe(0);
     expect(await alive(started)).toHaveLength(started.length);
     expect(readdirSync(join(dir, "processes"))).toHaveLength(1);
@@ -426,7 +435,7 @@ setInterval(() => { if (existsSync(${JSON.stringify(signalFile("exit"))})) proce
   }, 20_000);
 
   it("起動して記録している途中に止めても取りこぼさず、止めた後は起動しない", async () => {
-    const processes = new HostMcpProcesses(join(dir, "processes"), { graceMs: 500 });
+    const processes = processesIn(join(dir, "processes"));
     const params = {
       name: "fake",
       command: process.execPath,
@@ -534,7 +543,7 @@ if (${JSON.stringify(mode)} === "throw") {
     await exited;
     // 落ちただけでは残る
     expect(await alive(started)).not.toEqual([]);
-    const stopped = await new HostMcpProcesses(join(dir, "processes"), { graceMs: 500 }).cleanup();
+    const stopped = await processesIn(join(dir, "processes")).cleanup();
     // MCP サーバーは標準入力が閉じて自分で終わり、子孫（sh と sleep）が残っていた
     expect(stopped).toBeGreaterThanOrEqual(2);
     expect(await alive(started)).toEqual([]);
