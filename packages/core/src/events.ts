@@ -1060,6 +1060,8 @@ const PullRequestPublished = z.object({
     number: z.number().int().positive().optional(),
     /** PRを作ったリポジトリ（リポジトリの URL）。PRの番号はリポジトリの中でしか一意でないため記録する。 */
     repo: z.string().optional(),
+    /** 取り込むラベルを付ける予定（PBI-88）。付けた・付けられなかった記録が無ければ、再開で付ける。 */
+    intakeLabel: z.string().min(1).optional(),
   }),
 });
 
@@ -1133,6 +1135,8 @@ const StepPullRequestPublished = z.object({
     number: z.number().int().positive(),
     repo: z.string(),
     supersedes: z.number().int().positive().optional(),
+    /** 取り込むラベルを付ける予定（PBI-88）。付けた・付けられなかった記録が無ければ、再開で付ける。 */
+    intakeLabel: z.string().min(1).optional(),
   }),
 });
 

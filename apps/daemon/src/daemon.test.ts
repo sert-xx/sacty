@@ -12476,6 +12476,91 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       activity.close();
     });
 
+    it("公開を記録した後、ラベルを付ける前に止まっても、再起動後の PR の確認で付ける（要求要件・設計の PR と実装の PR。レビュー指摘）", async () => {
+      /** 指定した番号の PR では、ラベルを付ける途中で止まる（止まったことを知らせる）。 */
+      const stopAt = (pulls: FakePulls, number: number) => {
+        const reached = Promise.withResolvers<void>();
+        const original = pulls.addLabel.bind(pulls);
+        const stop = { reached: reached.promise, calls: 0 };
+        pulls.addLabel = (input) => {
+          if (input.number !== number) return original(input);
+          stop.calls += 1;
+          reached.resolve();
+          return new Promise(() => {});
+        };
+        return stop;
+      };
+      /** 同じ台帳でデーモンを起動し直し、PR の確認を行う。 */
+      const restart = async (settings?: MemorySettingsStore) => {
+        const activity = new SqliteActivityStore(dbPath);
+        const pulls = new FakePulls();
+        const { service } = makeService(activity, [], {
+          stepPullRequests: true,
+          pulls,
+          now: later,
+          ...(settings ? { settings } : {}),
+        });
+        await service.checkPullRequests();
+        return { activity, service, pulls };
+      };
+
+      // 要求要件の PR（7）：公開と承認待ちを記録した後、ラベルを付ける途中で止まる
+      const pulls = new FakePulls();
+      const stopped = stopAt(pulls, 7);
+      const activity = new SqliteActivityStore(dbPath);
+      const { service } = makeService(activity, [out("# 要求要件 v1")], {
+        stepPullRequests: true,
+        pulls,
+        now: later,
+      });
+      const { id } = service.createTask({ projectId: "default", title: "決済API", body: "本文" });
+      void service.runNext(id);
+      await stopped.reached;
+      // 付けている途中に PR の確認が来ても、重ねて付けない
+      await service.checkPullRequests();
+      expect(stopped.calls).toBe(1);
+      expect(types(service, id).slice(-2)).toEqual(["StepPullRequestPublished", "StepSubmitted"]);
+      expect(taskOf(service, id).stepPullRequests[0]?.intakeLabel).toBe("sacty");
+      // 起動し直しても、いまはラベルを付けない設定なら付けない（記録もしない）
+      const off = await restart(new MemorySettingsStore({}));
+      expect(off.pulls.labels).toEqual([]);
+      expect(types(off.service, id).at(-1)).toBe("StepSubmitted");
+      off.activity.close();
+      // 起動し直した後の PR の確認で付けて記録する。次の確認では重ねて付けない
+      const again = await restart();
+      expect(again.pulls.labels.map((l) => [l.number, l.label])).toEqual([[7, "sacty"]]);
+      expect(types(again.service, id).at(-1)).toBe("PullRequestLabeled");
+      await again.service.checkPullRequests();
+      expect(again.pulls.labels).toHaveLength(1);
+      again.activity.close();
+      activity.close();
+
+      // 実装の PR（9）も同じ
+      rmSync(dbPath, { force: true });
+      const implPulls = new FakePulls();
+      const made = await start([out("# 要求要件 v1"), design(), implement(), review()], {
+        pulls: implPulls,
+      });
+      await merge(made, "requirements");
+      await made.service.runNext(made.id);
+      await merge(made, "design");
+      const implStopped = stopAt(implPulls, 9);
+      void drain(made.service);
+      await implStopped.reached;
+      expect(taskOf(made.service, made.id).pullRequest).toMatchObject({
+        number: 9,
+        intakeLabel: "sacty",
+      });
+      expect(types(made.service, made.id).at(-1)).toBe("StepSubmitted");
+      const resumed = await restart();
+      expect(resumed.pulls.labels.map((l) => l.number)).toEqual([9]);
+      expect(taskOf(resumed.service, made.id).pullRequestLabels?.map((l) => l.number)).toEqual([
+        7, 8, 9,
+      ]);
+      resumed.activity.close();
+      made.activity.close();
+    });
+
     it("sacty が作っていない PR に取り込むラベルが付いていても、これまでどおりの取り込み（工程はオーケストレーターが選ぶ）", async () => {
       const { activity, service } = await start([out("# 要求要件 v1")]);
       const [other] = service.importIssues([labeledPr(40)]);

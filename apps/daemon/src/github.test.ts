@@ -1027,3 +1027,64 @@ describe("sacty が作る PR の取り込むラベル（PBI-88）", () => {
     }
   });
 });
+
+describe("Bot のアカウントの sacty のレビュー（PBI-88 レビュー指摘）", () => {
+  it("プロジェクトのアカウントが Bot でも、含めるレビューのタスクの投稿は指摘として取り込み、ほかの Bot の投稿は除く", async () => {
+    const bot = { login: "sacty[bot]", type: "Bot" };
+    const ci = { login: "ci[bot]", type: "Bot" };
+    const at = (n: number) => `2026-10-11T00:00:0${n}Z`;
+    const { impl } = fakeFetch([
+      {
+        status: 200,
+        json: [
+          {
+            id: 1,
+            user: bot,
+            state: "COMMENTED",
+            body: "<!-- sacty-review:r1 -->\n## sacty のレビュー",
+            submitted_at: at(1),
+          },
+          // 含めないタスクの目印・目印の無い Bot の投稿は除く
+          {
+            id: 2,
+            user: bot,
+            state: "COMMENTED",
+            body: "<!-- sacty-review:r2 -->\n別のタスク",
+            submitted_at: at(2),
+          },
+          { id: 3, user: ci, state: "COMMENTED", body: "CI が通りました", submitted_at: at(3) },
+          // ほかの Bot が目印を写しても含めない
+          {
+            id: 4,
+            user: ci,
+            state: "COMMENTED",
+            body: "<!-- sacty-review:r1 -->\n写し",
+            submitted_at: at(4),
+          },
+        ],
+      },
+      {
+        status: 200,
+        json: [
+          {
+            id: 5,
+            user: bot,
+            body: "<!-- sacty-review:r1 -->\n上限が無い",
+            path: "src/retry.ts",
+            line: 3,
+            created_at: at(5),
+          },
+        ],
+      },
+      { status: 200, json: [] },
+    ]);
+    const feedback = await new GitHubPullRequests(impl).feedback({
+      repo: "https://github.com/acme/app",
+      token: "ghp_secret",
+      number: 7,
+      account: "sacty[bot]",
+      sactyReviewTasks: ["r1"],
+    });
+    expect(feedback.map((f) => f.key)).toEqual(["review:1", "review_comment:5"]);
+  });
+});

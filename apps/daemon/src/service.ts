@@ -488,6 +488,8 @@ export class TaskService {
   private defaultSharedComposes: SharedComposeFetcher | undefined;
   /** 中止の後片付けをしているタスク（その間に実行を始めないため）。 */
   private readonly cancelling = new Set<string>();
+  /** 取り込むラベルを付けている途中の PR（タスクと PR。重ねて付けないため。PBI-88）。 */
+  private readonly labeling = new Set<string>();
   /**
    * 質問に答えているタスクと、その実行（PBI-54）。工程の実行とは別に持つ（一時停止では止めず、中止では止める）。
    */
@@ -693,6 +695,8 @@ export class TaskService {
       }
     }
     await this.checkReviewPullRequests();
+    // 公開の後、ラベルを付ける前に止まった PR に付ける（PBI-88 レビュー指摘）
+    await this.resumePullRequestLabels();
   }
 
   /**
@@ -4245,6 +4249,8 @@ export class TaskService {
               number: pr.number,
               repo,
               ...(superseded !== undefined ? { supersedes: superseded } : {}),
+              // 取り込むラベルを付ける予定（公開と同じ記録に残し、止まっても再開で付ける。PBI-88）
+              ...this.labelDue(latest, repo, pr.number),
             },
           },
         },
@@ -4378,6 +4384,8 @@ export class TaskService {
               url: pr.url,
               number: pr.number,
               repo: prRepo,
+              // 取り込むラベルを付ける予定（公開と同じ記録に残し、止まっても再開で付ける。PBI-88）
+              ...this.labelDue(task, prRepo, pr.number),
             },
           },
         },
@@ -4392,11 +4400,83 @@ export class TaskService {
   }
 
   /**
+   * いま sacty の PR に付ける取り込むラベル（PBI-88）。取り込むラベルを設定していない、または PR のトリアージを Off にしている
+   * （付けても取り込まれない）なら無い。
+   */
+  private intakeLabelForPullRequests(): string | undefined {
+    const settings = this.deps.settings.get();
+    return settings.intakeLabel && !settings.triageOff?.includes("pullRequests")
+      ? settings.intakeLabel
+      : undefined;
+  }
+
+  /**
+   * PR の公開の記録に入れる、取り込むラベルを付ける予定（PBI-88）。付けた・付けられなかった記録のある PR には付けない
+   * （1つの PR に1回。人が外したラベルを付け直さないため）。
+   */
+  private labelDue(task: Task, repo: string, number: number): { intakeLabel?: string } {
+    const label = this.intakeLabelForPullRequests();
+    if (!label) return {};
+    const done = (task.pullRequestLabels ?? []).some(
+      (x) => x.number === number && sameRepo(x.repo, repo),
+    );
+    return done ? {} : { intakeLabel: label };
+  }
+
+  /**
+   * 公開の記録に付ける予定があり、付けた・付けられなかった記録の無い、開いている sacty の PR（PBI-88）。公開を記録した後、
+   * ラベルを付ける前に止まった（停止・クラッシュ）ものを、再開で付けるため。
+   */
+  private pendingPullRequestLabels(task: Task): { repo: string; number: number }[] {
+    const prs = [
+      ...(task.pullRequest?.intakeLabel &&
+      task.pullRequest.repo &&
+      task.pullRequest.number &&
+      task.pullRequestState === "open"
+        ? [{ repo: task.pullRequest.repo, number: task.pullRequest.number }]
+        : []),
+      ...task.stepPullRequests
+        .filter((p) => p.intakeLabel && p.state === "open" && !p.superseded)
+        .map((p) => ({ repo: p.repo, number: p.number })),
+    ];
+    return prs.filter(
+      (p) =>
+        !(task.pullRequestLabels ?? []).some(
+          (x) => x.number === p.number && sameRepo(x.repo, p.repo),
+        ),
+    );
+  }
+
+  /**
+   * 付ける予定のまま記録の無い PR に、取り込むラベルを付ける（PBI-88）。PR の確認（60秒ごと）のたびに行う。中止したタスク・
+   * いまは付けない設定（取り込むラベルが無い・PR のトリアージが Off）なら付けない（記録もしない）。
+   */
+  private async resumePullRequestLabels(): Promise<void> {
+    if (!this.intakeLabelForPullRequests()) return;
+    for (const task of [...this.tasks.values()]) {
+      if (task.status === "cancelled" || this.cancelling.has(task.id)) continue;
+      for (const pr of this.pendingPullRequestLabels(task)) {
+        const usedSecrets: string[] = [];
+        let token: string;
+        try {
+          token = await this.githubToken(task, pr.repo, usedSecrets);
+        } catch (error) {
+          console.warn(
+            `[daemon] PR #${pr.number}（${pr.repo}）にラベルを付けるためのトークンを取り出せませんでした：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
+          );
+          continue;
+        }
+        await this.labelPullRequest(task.id, pr.repo, pr.number, token, usedSecrets);
+      }
+    }
+  }
+
+  /**
    * sacty が作った PR（実装の PR と、要求要件・設計の PR）に、取り込むラベル（sacty の設定）を付ける（PBI-88）。
    * 別のタスクとして取り込ませ、レビューだけを行わせるため。
    * - 取り込むラベルを設定していない、または PR のトリアージを Off にしている（取り込まれない）なら、付けない
    * - 1つの PR につき1回だけ付ける（付けた・付けられなかった記録があれば、PR を更新しても付けない。人が外したラベルを
-   *   付け直さないため）
+   *   付け直さないため）。同じ PR を付けている途中なら、重ねて付けない
    * - 付けられなければ、理由を台帳に残す（秘密の値は伏せる）。PR の作成は失敗にしない
    */
   private async labelPullRequest(
@@ -4406,34 +4486,40 @@ export class TaskService {
     token: string,
     usedSecrets: readonly string[],
   ): Promise<void> {
-    const settings = this.deps.settings.get();
-    const label = settings.intakeLabel;
-    if (!label || settings.triageOff?.includes("pullRequests")) return;
+    const label = this.intakeLabelForPullRequests();
+    if (!label) return;
     const same = (x: { repo: string; number: number }) =>
       x.number === number && sameRepo(x.repo, repo);
     if ((this.tasks.get(taskId)?.pullRequestLabels ?? []).some(same)) return;
-    let event: EventInput;
+    const key = `${taskId} ${repoKey(repo)}#${number}`;
+    if (this.labeling.has(key)) return;
+    this.labeling.add(key);
     try {
-      const { created } = await this.deps.pulls.addLabel({ repo, token, number, label });
-      event = {
-        type: "PullRequestLabeled",
-        payload: { repo, number, label, ...(created ? { created } : {}) },
-      };
-    } catch (error) {
-      event = {
-        type: "PullRequestLabelFailed",
-        payload: { repo, number, label, message: redactText(errorText(error), usedSecrets) },
-      };
-    }
-    // 付けている間に、ほかで記録された（同じ PR）なら、記録しない
-    const latest = this.tasks.get(taskId);
-    if (!latest || (latest.pullRequestLabels ?? []).some(same)) return;
-    try {
-      this.append(latest, [{ actor: "sacty", event }]);
-    } catch (error) {
-      console.warn(
-        `[daemon] PR #${number}（${repo}）のラベルの記録に失敗しました：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
-      );
+      let event: EventInput;
+      try {
+        const { created } = await this.deps.pulls.addLabel({ repo, token, number, label });
+        event = {
+          type: "PullRequestLabeled",
+          payload: { repo, number, label, ...(created ? { created } : {}) },
+        };
+      } catch (error) {
+        event = {
+          type: "PullRequestLabelFailed",
+          payload: { repo, number, label, message: redactText(errorText(error), usedSecrets) },
+        };
+      }
+      // 付けている間に、ほかで記録された（同じ PR）なら、記録しない
+      const latest = this.tasks.get(taskId);
+      if (!latest || (latest.pullRequestLabels ?? []).some(same)) return;
+      try {
+        this.append(latest, [{ actor: "sacty", event }]);
+      } catch (error) {
+        console.warn(
+          `[daemon] PR #${number}（${repo}）のラベルの記録に失敗しました：${renderMessage(redactText(errorText(error), usedSecrets), "ja")}`,
+        );
+      }
+    } finally {
+      this.labeling.delete(key);
     }
   }
 

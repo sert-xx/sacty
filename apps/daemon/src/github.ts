@@ -190,16 +190,21 @@ export class GitHubPullRequests implements PullRequests {
     // bot（CI など）のコメントは、人間の指摘ではないので含めない
     // sacty のレビューの工程が、プロジェクトのアカウントで投稿したレビューと行へのコメント（PBI-19）も、
     // 人間の指摘ではないので含めない（目印で始まるものだけ。人間が引用・転記した目印では除かない）
-    // ただし、取り込むラベルを付けて取り込んだ、レビューだけのタスク（PBI-88）が投稿したものは、指摘として含める
+    // ただし、取り込むラベルを付けて取り込んだ、レビューだけのタスク（PBI-88）が投稿したものは、指摘として含める。
+    // プロジェクトのアカウントが Bot（GitHub App など）でも含めるよう、Bot の判定より先に見る（PBI-88 レビュー指摘）
     const included = new Set(input.sactyReviewTasks ?? []);
+    const allowedSacty = (item: Record<string, unknown>) =>
+      input.account !== undefined &&
+      user(item).login === input.account &&
+      included.has(sactyReviewTask(item.body) ?? "");
     const human = (item: Record<string, unknown>) =>
-      user(item).type !== "Bot" &&
-      !(
-        input.account !== undefined &&
-        user(item).login === input.account &&
-        isSactyReview(item.body) &&
-        !included.has(sactyReviewTask(item.body) ?? "")
-      );
+      allowedSacty(item) ||
+      (user(item).type !== "Bot" &&
+        !(
+          input.account !== undefined &&
+          user(item).login === input.account &&
+          isSactyReview(item.body)
+        ));
     const author = (item: Record<string, unknown>) => String(user(item).login ?? "");
     const url = (item: Record<string, unknown>) =>
       typeof item.html_url === "string" ? { url: item.html_url } : {};

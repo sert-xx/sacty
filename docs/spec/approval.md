@@ -52,8 +52,12 @@ sacty が作る PR すべて（実装の PR と、要求要件・設計の PR）
   付け直さない・失敗しても付け直さない）。記録の無い PR（設定する前に作った PR など）は、次に更新したときに付ける。
   PR を作り直した（前の PR がマージ・クローズされて、新しい番号の PR を作った）ときは、新しい PR に付ける。
 - 中止・一時停止を求められて、要求要件・設計の PR を記録しなかったときは付けない。
+- 付ける予定を、PR の公開の記録（`PullRequestPublished`・`StepPullRequestPublished` の `intakeLabel`）に残してから付ける。公開を
+  記録した後、付ける前に止まった（停止・クラッシュ）PR は、PR の確認（60秒ごと。再起動の後も）で、予定があり、付けた・付けられなかった
+  記録が無く、開いている PR に付ける。中止したタスク、いまは付けない設定（取り込むラベルが無い・PR のトリアージが Off）なら付けない。
+  同じ PR を付けている途中なら、重ねて付けない。
 
-コード: `apps/daemon/src/service.ts`（`labelPullRequest`・`publishStepPullRequest`・`publish`）、`apps/daemon/src/github.ts`（`GitHubPullRequests.addLabel`）、`packages/core/src/projection.ts`（`pullRequestLabels`）
+コード: `apps/daemon/src/service.ts`（`labelPullRequest`・`labelDue`・`resumePullRequestLabels`・`publishStepPullRequest`・`publish`）、`apps/daemon/src/github.ts`（`GitHubPullRequests.addLabel`）、`packages/core/src/projection.ts`（`pullRequestLabels`）
 
 ## PR の確認
 
@@ -79,7 +83,8 @@ sacty が作る PR すべて（実装の PR と、要求要件・設計の PR）
   の目印のもので、その回のレビューに直すべき指摘があるもの（`reviewVerdicts` の `changesRequested` が `false` でない回）は、指摘として
   取り込む（作ったタスクとは別のタスクのレビューを、元のタスクに届けるため）。直すべき指摘の無い回（そのままマージしてよい）のレビューは
   取り込まず、差し戻さない（ゴールガーディアンも動かさない）。評価を読めなかった回は、指摘を落とさないように取り込む。再レビューは回ごとに
-  判定する（目印の `<タスク ID>:<回>` で見分ける）。
+  判定する（目印の `<タスク ID>:<回>` で見分ける）。取り込むのは、プロジェクトのアカウントが投稿したものだけで、そのアカウントが bot
+  （GitHub App など）でも取り込む（bot の除外より先に見る）。
 - 取り込んだら、ゴールガーディアンが戻し先（その工程のやり直しか、前の工程への差し戻し）を判断し（`ReworkJudged`）、人の確認を挟まずに
   差し戻す。判断できなければ、戻せる工程の先頭（成果物チェックなら実装、要求要件・設計ならその工程）をやり直す。
 
