@@ -36,10 +36,11 @@ import type { AgentOutcome } from "./agents/parse.js";
 import { DockerTestRunner, type TestRunner, type TestRunResult } from "./agents/test-runner.js";
 import { type AgentConfig, type ConfigResult, loadConfig, type SactyConfig } from "./config.js";
 import { type ContextFetcher, type ContextRef, DEFAULT_CONTEXT_DIR } from "./context.js";
+import { ContextMcpServers } from "./context-mcp.js";
 import { MessageError } from "./errors.js";
 import type { GitHubAuth } from "./gh.js";
 import type { PullRequestFeedback, PullRequestStatus, PullRequests } from "./github.js";
-import { HostMcpFile, type HostMcpSpec, toHostMcp } from "./host-mcp.js";
+import { type HostMcpConnection, HostMcpFile, type HostMcpSpec, toHostMcp } from "./host-mcp.js";
 import { OrchestratorSessionStore } from "./orchestrator-sessions.js";
 import { type Platform, PlatformFile, toPlatform } from "./platforms.js";
 import { MemoryProjectStore } from "./projects.js";
@@ -822,6 +823,7 @@ function makeService(
     platformProblems?: ServiceDeps["platformProblems"];
     hostMcpProblems?: ServiceDeps["hostMcpProblems"];
     hostMcpReady?: ServiceDeps["hostMcpReady"];
+    contextMcp?: ServiceDeps["contextMcp"];
     notifier?: ServiceDeps["notifier"];
     services?: ServiceRunner;
     sharedComposes?: SharedComposeFetcher;
@@ -876,6 +878,7 @@ function makeService(
     ...(options.platformProblems ? { platformProblems: options.platformProblems } : {}),
     ...(options.hostMcpProblems ? { hostMcpProblems: options.hostMcpProblems } : {}),
     ...(options.hostMcpReady ? { hostMcpReady: options.hostMcpReady } : {}),
+    ...(options.contextMcp ? { contextMcp: options.contextMcp } : {}),
     ...(options.notifier ? { notifier: options.notifier } : {}),
     ...(options.services ? { services: options.services } : {}),
     ...(options.sharedComposes ? { sharedComposes: options.sharedComposes } : {}),
@@ -1310,6 +1313,155 @@ describe("工程の実行と費用", () => {
     const mcp = JSON.parse(executor.mcpConfigs[0] ?? "{}").mcpServers.docs;
     expect(mcp.url).toBe("http://host.docker.internal:5001/ctx-mcp/docs");
     expect(JSON.stringify(executor.mcpConfigs[0])).not.toContain("docs.example.com");
+    activity.close();
+  });
+
+  it("コンテキストの command の MCP サーバーは、ホストで起動してゲートウェイ経由にし、プロジェクトごとに分けて使い回す（PBI-84）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const registered: Record<string, unknown>[] = [];
+    const gateway: NonNullable<ServiceDeps["gateway"]> = {
+      containerOrigin: () => "http://host.docker.internal:5001",
+      platformsUrl: (token) => `http://host.docker.internal:5001/r/${token}/pf`,
+      register: (_route, mcp) => {
+        registered.push(mcp ?? {});
+        return {
+          token: "sacty-gw-run",
+          stats: () => ({ retries: 0, waitedMs: 0, statuses: [], gaveUp: false }),
+          close: () => {},
+        };
+      },
+    };
+    const mcpYaml = (args: string) =>
+      [
+        "servers:",
+        "  tool:",
+        "    command: tool-mcp",
+        `    args: [${args}]`,
+        "    env:",
+        "      TOKEN: { secret: tool-token }",
+        "  boxed:",
+        "    command: boxed-mcp",
+        "    via_gateway: false",
+      ].join("\n");
+    const contexts = new FakeContexts({
+      "https://github.com/acme/ctx-a.git": { "mcp.yaml": mcpYaml("a"), "marker.txt": "A" },
+      "https://github.com/acme/ctx-b.git": { "mcp.yaml": mcpYaml("b"), "marker.txt": "B" },
+    });
+    // 起動はホストで（偽物の起動で、渡された env と作業ディレクトリを記録する）
+    const started: { name: string; env: Record<string, string>; marker: string }[] = [];
+    const contextMcp = new ContextMcpServers({
+      root: join(dir, "context-mcp"),
+      secrets: new MemorySecretStore({ "tool-token": "tool-secret-value" }),
+      connect: async (spec, env) => {
+        started.push({
+          name: spec.name,
+          env,
+          marker: readFileSync(join(spec.cwd ?? "", "marker.txt"), "utf8"),
+        });
+        const client = {
+          getServerCapabilities: () => ({}),
+        } as unknown as HostMcpConnection["client"];
+        return { client, close: async () => {}, onClose: () => {} };
+      },
+    });
+    contextMcp.start();
+    const { service, executor } = makeService(
+      activity,
+      [completed(20_000), completed(20_000), completed(20_000)],
+      {
+        gateway,
+        contexts,
+        contextMcp,
+        secrets: {
+          "claude-oauth-token": "oauth-secret",
+          "github-token": "ghp_secret",
+          "tool-token": "tool-secret-value",
+        },
+      },
+    );
+    const save = (id: string | undefined, repo: string) =>
+      service.saveProject(id, {
+        name: repo,
+        targets: [{ scope: "repo", target: `https://github.com/acme/app-${repo}` }],
+        githubAccounts: { "github.com": "me" },
+        context: { repo: `https://github.com/acme/${repo}.git` },
+      });
+    const a = save("default", "ctx-a");
+    const b = save(undefined, "ctx-b");
+    await service.runNext(service.createTask({ projectId: a.id, title: "A の1回目" }).id);
+    await service.runNext(service.createTask({ projectId: a.id, title: "A の2回目" }).id);
+    await service.runNext(service.createTask({ projectId: b.id, title: "B" }).id);
+
+    // ホストで起動し、秘密情報はホストで取り出す。同じプロジェクト・同じ中身は使い回す（起動は1度）
+    expect(started.map((s) => [s.marker, s.env])).toEqual([
+      ["A", { TOKEN: "tool-secret-value" }],
+      ["B", { TOKEN: "tool-secret-value" }],
+    ]);
+    // ゲートウェイには、実行ごとに、そのプロジェクトのもの（中の名前）だけを結びつける
+    const hosts = registered.map((r) => (r.tool as { host: string }).host);
+    expect(hosts[0]).toBe(hosts[1]);
+    expect(hosts[2]).not.toBe(hosts[0]);
+    expect(registered.every((r) => Object.keys(r).join() === "tool")).toBe(true);
+    expect(hosts).toEqual([started[0]?.name, started[0]?.name, started[1]?.name]);
+    // コンテナには、ゲートウェイの URL と実行ごとのトークンだけ（ホストで起動したものの秘密情報は渡さない）
+    for (const call of executor.calls) {
+      expect(JSON.stringify(call.env)).not.toContain("tool-secret-value");
+      expect(call.hostGateway).toBe(true);
+    }
+    const servers = JSON.parse(executor.mcpConfigs[0] ?? "{}").mcpServers;
+    expect(servers.tool.url).toBe("http://host.docker.internal:5001/ctx-mcp/tool");
+    expect(JSON.stringify(servers.tool)).not.toContain("tool-mcp");
+    // via_gateway: false は、コンテナの中で起動する
+    expect(servers.boxed.command).toBe("boxed-mcp");
+    // 実行が終われば、使っている実行は無くなる（止めるのは、古くなったか、しばらく使われなかったとき）
+    expect(contextMcp.running().map((r) => r.leases)).toEqual([0, 0]);
+    await contextMcp.stop();
+    activity.close();
+  });
+
+  it("ホストで起動できなかったコンテキストの MCP サーバーは、どれかを作業履歴に残して実行する（PBI-84）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const gateway: NonNullable<ServiceDeps["gateway"]> = {
+      containerOrigin: () => "http://host.docker.internal:5001",
+      platformsUrl: (token) => `http://host.docker.internal:5001/r/${token}/pf`,
+      register: () => ({
+        token: "sacty-gw-run",
+        stats: () => ({ retries: 0, waitedMs: 0, statuses: [], gaveUp: false }),
+        close: () => {},
+      }),
+    };
+    const contexts = new FakeContexts({
+      "https://github.com/acme/ctx.git": {
+        "mcp.yaml": "servers:\n  tool:\n    command: sacty-no-such-command-84\n",
+      },
+    });
+    const contextMcp = new ContextMcpServers({
+      root: join(dir, "context-mcp"),
+      secrets: new MemorySecretStore({}),
+    });
+    contextMcp.start();
+    const { service, executor } = makeService(activity, [completed(20_000)], {
+      gateway,
+      contexts,
+      contextMcp,
+    });
+    const project = service.saveProject("default", {
+      name: "デフォルト",
+      targets: [{ scope: "repo", target: "https://github.com/acme/app" }],
+      githubAccounts: { "github.com": "me" },
+      context: { repo: "https://github.com/acme/ctx.git" },
+    });
+    const task = service.createTask({ projectId: project.id, title: "調べる" });
+    await service.runNext(task.id);
+    expect(executor.calls).toHaveLength(1);
+    const resolved = service.get(task.id)?.activity.find((e) => e.type === "ContextResolved");
+    const warnings = resolved?.type === "ContextResolved" ? resolved.payload.warnings : [];
+    expect(warnings.map((w) => renderMessage(w, "ja"))).toEqual([
+      expect.stringContaining(
+        "「sacty-no-such-command-84」が、sacty を動かすホストに見つかりません",
+      ),
+    ]);
+    await contextMcp.stop();
     activity.close();
   });
 

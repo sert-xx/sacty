@@ -136,7 +136,11 @@ describe("コンテキストリポジトリの雛形（PBI-45）", () => {
       "https://example.com/context.git#",
     ]);
     const composed = composeContext(layers);
-    expect(composed.mcp.map((m) => m.name)).toEqual(["docs", "local-tool"]);
+    expect(composed.mcp.map((m) => m.name)).toEqual(["docs", "local-tool", "container-tool"]);
+    // command のサーバーは既定でホスト、via_gateway: false はコンテナの中（PBI-84）
+    expect(
+      composed.mcp.map((m) => ("command" in m.server ? m.server.via_gateway : undefined)),
+    ).toEqual([undefined, true, false]);
     // 外部 PF の例も読める（PBI-74）
     expect(composed.platforms.map((p) => [p.name, p.allow])).toEqual([
       ["ticket", ["GET /api/v1/tickets/**"]],

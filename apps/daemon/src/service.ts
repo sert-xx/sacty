@@ -107,10 +107,12 @@ import {
   contextPlatforms,
   GATEWAY_TOKEN_SECRET,
   type GatewayMcpServer,
+  type HostedMcpRelay,
   type McpRouting,
   prepareContext,
   previewContext,
 } from "./context.js";
+import type { ContextMcpServers } from "./context-mcp.js";
 import { errorText, MessageError } from "./errors.js";
 import type { AiGateway, ContextMcpRoute, GatewayStats } from "./gateway.js";
 import {
@@ -321,6 +323,11 @@ export type ServiceDeps = {
    * 起動を待つ。上限あり）。準備ができないものの理由を返す。無ければ待たない。
    */
   hostMcpReady?: (names: readonly string[]) => Promise<DaemonMessage[]>;
+  /**
+   * コンテキストの command の MCP サーバーをホストで動かす（PBI-84）。ゲートウェイと一緒に渡す。無ければ、これまでどおり
+   * コンテナの中で起動する。
+   */
+  contextMcp?: Pick<ContextMcpServers, "lease" | "ready">;
   /** 人間の出番の通知（PBI-38）。送るのは待たない。 */
   notifier?: Pick<SlackNotifier, "notify" | "test" | "problems">;
   /**
@@ -412,8 +419,11 @@ type ExecuteRun = {
   network?: string;
   /** コンテナの中で localhost に転送するサービスのポート（PBI-60）。 */
   forwards?: readonly LocalForward[];
-  /** ゲートウェイ経由にした、コンテキストの HTTP の MCP サーバー（PBI-49）。 */
-  contextMcp?: readonly GatewayMcpServer[];
+  /**
+   * ゲートウェイ経由にした、コンテキストの HTTP の MCP サーバー（PBI-49）と、ホストで起動した command の MCP サーバー
+   * （PBI-84）。
+   */
+  contextMcp?: readonly (GatewayMcpServer | HostedMcpRelay)[];
   /** 追加でマウントする、sacty が管理するディレクトリ（レビューの差分の全体。PBI-65）。 */
   mounts?: readonly { hostPath: string; containerPath: string; readOnly: boolean }[];
   /** true を返すと、コンテナを起動しない（質問への答えの実行が中止されたなど。PBI-54）。 */
@@ -3472,7 +3482,7 @@ export class TaskService {
   ): Promise<Awaited<ReturnType<typeof prepareContext>> | undefined> {
     const contextSource = this.deps.projects.get(task.projectId)?.context;
     const defaultContext = this.deps.defaultContext;
-    const { hostMcp = [], gatewayOrigin } = this.mcpRouting(config);
+    const { hostMcp = [], gatewayOrigin, hostCommands } = this.mcpRouting(config);
     if (!contextSource && !defaultContext && hostMcp.length === 0) return undefined;
     // 使うホストの MCP サーバーの準備を待つ（PBI-77）。書き出しは、決めた接続先がそれなら、それだけを待つ
     const waitFor = hostMcp
@@ -3498,10 +3508,34 @@ export class TaskService {
       hostMcp,
       gatewayOrigin,
       onlyMcp,
+      hostCommands,
     );
     // 準備ができないホストの MCP サーバーは、どれかがわかるよう、コンテキストの注意として記録する（実行は止めない。
     // 起動し直して準備ができれば、実行の途中からでも使える）
     prepared.warnings.push(...hostProblems);
+    // 層の command の MCP サーバーは、ホストで起動する（PBI-84）。このタスクのプロジェクトのものとして確保し（同じ
+    // 中身なら、実行をまたいで使い回す）、層を写してから（取得した層は dispose で消える）、準備を待つ
+    if (prepared.hostedMcp.length > 0 && this.deps.contextMcp) {
+      const contextMcp = this.deps.contextMcp;
+      const lease = contextMcp.lease(task.projectId, prepared.hostedMcp);
+      const dispose = prepared.dispose;
+      prepared.dispose = () => {
+        lease.release();
+        dispose();
+      };
+      prepared.gatewayMcp.push(...lease.relays);
+      const problems = await untilStopped(
+        contextMcp.ready(lease.keys),
+        () => this.stopRequested(task.id),
+        [],
+      );
+      const [problem] = onlyMcp !== undefined ? problems : [];
+      if (problem) {
+        prepared.dispose();
+        throw new MessageError(problem);
+      }
+      prepared.warnings.push(...problems);
+    }
     return prepared;
   }
 
@@ -3524,6 +3558,8 @@ export class TaskService {
       })),
       // 層の HTTP の MCP サーバーは、ゲートウェイ経由にする（PBI-49）
       gatewayOrigin: origin,
+      // 層の command の MCP サーバーは、ホストで起動してゲートウェイ経由にする（PBI-84）
+      hostCommands: Boolean(this.deps.contextMcp),
     };
   }
 
@@ -5287,6 +5323,12 @@ export class TaskService {
         // 持たせる（コンテナには渡さない）
         const contextMcp: Record<string, ContextMcpRoute> = {};
         for (const server of run.contextMcp ?? []) {
+          // ホストで起動した command の MCP サーバー（PBI-84）。env の秘密情報はホストで起動するときに取り出してあり、
+          // ゲートウェイには中の名前だけを渡す
+          if ("host" in server) {
+            contextMcp[server.name] = { host: server.host };
+            continue;
+          }
           const headers: Record<string, string> = {};
           for (const [name, value] of Object.entries(server.headers)) {
             if (typeof value === "string") {

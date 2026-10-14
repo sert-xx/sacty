@@ -15,7 +15,7 @@ sacty の工程エージェントに渡す規則・スキル・MCP・外部 PF�
 
 - \`rules.md\`（または \`rules/*.md\`）：規則。Claude Code には CLAUDE.md、Codex には AGENTS.md として渡す
 - \`skills/<名前>/SKILL.md\`：スキル。上位の層の同じ名前のスキルは上書きする。SKILL.md の無いディレクトリはグループ（\`skills/<グループ>/<名前>/SKILL.md\` も名前 \`<名前>\` のスキル）
-- \`mcp.yaml\`：MCP サーバー。秘密情報は値を書かず、名前か 1Password の参照で書く
+- \`mcp.yaml\`：MCP サーバー。秘密情報は値を書かず、名前か 1Password の参照で書く。command のサーバーは、既定で sacty を動かすホストで起動する（このリポジトリを編集できる人は、そのホストでコマンドを動かせる。config.yaml と同じくらい信頼できる人だけが編集できるようにする）
 - \`platforms.yaml\`：ゲートウェイの外部 PF（書き方は config.yaml の gateway.platforms と同じ）。このプロジェクトのタスクだけが使える。秘密情報は名前か 1Password の参照で書き、値はホストのゲートウェイだけが付ける
 - \`agents/codex/\`・\`agents/claude/\`：worker の CODEX_HOME・CLAUDE_CONFIG_DIR に写すファイル（同じパスは下位が上書き）
   - \`config.toml\`・\`settings.json\` はキーごとに重ね、下位が上書きする
@@ -48,7 +48,10 @@ description: リリースの手順
   "mcp.yaml": `# 工程エージェントに渡す MCP サーバー。名前ごとに、上位の層の同じ名前のサーバーを上書きする。
 # 秘密情報は値を書かず、{ secret: 名前 } でキーチェーンの名前か 1Password の参照を書く（prefix は値の前につける）。
 # HTTP のサーバーは、sacty のゲートウェイ経由で使う（認証のヘッダーはホストで付け、コンテナには渡さない）。
-# コンテナから直接つなぐときは via_gateway: false と書く。command のサーバーは、コンテナの中で起動する。
+# command のサーバーは、sacty を動かすホストで起動し、ゲートウェイ経由で使う（env の秘密情報はホストで入れ、コンテナには
+# 渡さない）。作業ディレクトリは、このリポジトリの写し（相対パスは、このリポジトリの直下から）。npx・uvx などのコマンドは、
+# ホストに入れておく。このリポジトリを編集できる人は、ホストでコマンドを動かせるので、編集できる人を絞る。
+# コンテナの中で起動する（HTTP はコンテナから直接つなぐ）ときは、そのサーバーに via_gateway: false と書く。
 # servers:
 #   docs:
 #     url: https://mcp.example.com/mcp
@@ -59,6 +62,11 @@ description: リリースの手順
 #     args: ["-y", "example-mcp-server"]
 #     startup_timeout_sec: 60   # 起動を待つ上限（秒。任意）
 #     tool_timeout_sec: 900     # ツールの呼び出しを待つ上限（秒。任意。実行全体の上限の30分より短くする）
+#   （次はコンテナの中で起動する例）
+#   container-tool:
+#     command: npx
+#     args: ["-y", "example-container-mcp"]
+#     via_gateway: false
 `,
   "platforms.yaml": `# 工程エージェントが $SACTY_PF_URL/<名前>/… で呼べる外部 PF（書き方は config.yaml の gateway.platforms と同じ）。
 # 名前ごとに、上位の層の同じ名前の PF を上書きする。config.yaml の gateway.platforms に同じ名前があれば、そちらを使う。

@@ -208,7 +208,14 @@ export type ContextPreview = {
           url: string;
           headers: Record<string, string | { secret: string; prefix: string }>;
         }
-      | { kind: "host" };
+      | { kind: "host" }
+      | {
+          kind: "hostCommand";
+          command: string;
+          args: string[];
+          env: Record<string, string | { secret: string; prefix: string }>;
+          cwd: string;
+        };
     startup_timeout_sec?: number;
     tool_timeout_sec?: number;
   }[];

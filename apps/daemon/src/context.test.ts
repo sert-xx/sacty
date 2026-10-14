@@ -444,6 +444,195 @@ describe("MCP サーバーの合成と変換（PBI-6b）", () => {
     direct.dispose();
   });
 
+  it("command の MCP サーバーは、既定でホストで起動してゲートウェイの URL にし、env の秘密情報はコンテナに渡さない（PBI-84）", async () => {
+    const files = {
+      "ctx.git": {
+        "mcp.yaml": [
+          "servers:",
+          "  local:",
+          "    command: npx",
+          "    args: ['-y', 'example-mcp', './data']",
+          "    env:",
+          "      TOKEN: { secret: local-token, prefix: 't:' }",
+          "      REGION: jp",
+          "    tool_timeout_sec: 900",
+          "  in-container:",
+          "    command: container-server",
+          "    via_gateway: false",
+          "    env:",
+          "      KEY: { secret: container-key }",
+          "  private-cloud:",
+          "    command: shadowed-by-host",
+        ].join("\n"),
+        "data/readme.md": "相対パスで読むファイル",
+      },
+    };
+    const origin = "http://host.docker.internal:5001";
+    const hostMcp = [{ name: "private-cloud", url: `${origin}/mcp/private-cloud` }];
+    const claude = await prepareContext(
+      new FakeFetcher(files),
+      { repo: "ctx.git" },
+      "claude-code",
+      "/tmp/sacty-claude-config",
+      undefined,
+      undefined,
+      hostMcp,
+      origin,
+      undefined,
+      true,
+    );
+    const json = JSON.parse(readFileSync(join(claude.dir, "mcp.json"), "utf8"));
+    expect(json.mcpServers.local).toEqual({
+      type: "http",
+      url: `${origin}/ctx-mcp/local`,
+      headers: { Authorization: expect.stringMatching(/^\$\{SACTY_MCP_SECRET_\d+\}$/) },
+      timeout: 900_000,
+    });
+    // via_gateway: false は、これまでどおりコンテナの中で起動する（秘密情報は環境変数でコンテナに渡す）
+    expect(json.mcpServers["in-container"]).toEqual({
+      command: "container-server",
+      args: [],
+      env: { KEY: expect.stringMatching(/^\$\{SACTY_MCP_SECRET_\d+\}$/) },
+    });
+    // ホストの MCP サーバー（config.yaml）と同じ名前なら、ホストのものを使い、警告する（ホストで起動もしない）
+    expect(json.mcpServers["private-cloud"].url).toBe(`${origin}/mcp/private-cloud`);
+    expect(claude.warnings.map((w) => (w as { code: string }).code)).toEqual([
+      "context.hostMcpOverride",
+    ]);
+    // ホストで起動するもの（秘密情報は参照のまま。層のディレクトリを作業ディレクトリにする）
+    expect(claude.hostedMcp).toEqual([
+      {
+        name: "local",
+        from: "ctx.git@ctxgit0",
+        command: "npx",
+        args: ["-y", "example-mcp", "./data"],
+        env: { TOKEN: { secret: "local-token", prefix: "t:" }, REGION: "jp" },
+        layer: { repo: "ctx.git", commit: "ctxgit".padEnd(40, "0"), dir: expect.any(String) },
+        tool_timeout_sec: 900,
+      },
+    ]);
+    expect(readFileSync(join(claude.hostedMcp[0]?.layer.dir ?? "", "data/readme.md"), "utf8")).toBe(
+      "相対パスで読むファイル",
+    );
+    expect(claude.gatewayMcp).toEqual([]);
+    // コンテナに渡す秘密情報は、実行ごとのトークンと、コンテナで動かすものだけ（local-token は渡さない）
+    expect(claude.placed.secrets.map((s) => s.secret).sort()).toEqual(
+      [GATEWAY_TOKEN_SECRET, GATEWAY_TOKEN_SECRET, "container-key"].sort(),
+    );
+    expect(JSON.stringify(json)).not.toContain("npx");
+    claude.dispose();
+
+    const codex = await prepareContext(
+      new FakeFetcher(files),
+      { repo: "ctx.git" },
+      "codex",
+      "/.codex",
+      undefined,
+      undefined,
+      [],
+      origin,
+      undefined,
+      true,
+    );
+    const toml = parseToml(readFileSync(join(codex.dir, "config.toml"), "utf8")) as {
+      mcp_servers: Record<string, Record<string, unknown>>;
+    };
+    expect(toml.mcp_servers.local).toEqual({
+      url: `${origin}/ctx-mcp/local`,
+      env_http_headers: { Authorization: expect.stringMatching(/^SACTY_MCP_SECRET_\d+$/) },
+      tool_timeout_sec: 900,
+    });
+    expect(toml.mcp_servers["in-container"]?.command).toBe("/bin/sh");
+    // ホストの MCP サーバーが無ければ、同じ名前のものもホストで起動する
+    expect(codex.hostedMcp.map((h) => h.name)).toEqual(["local", "private-cloud"]);
+    codex.dispose();
+
+    // 書き出し（PBI-56）で1つに絞ったら、ほかのものはホストで起動しない
+    const only = await prepareContext(
+      new FakeFetcher(files),
+      { repo: "ctx.git" },
+      "codex",
+      "/.codex",
+      undefined,
+      undefined,
+      [],
+      origin,
+      "in-container",
+      true,
+    );
+    expect(only.hostedMcp).toEqual([]);
+    only.dispose();
+
+    // ホストで起動できない（ゲートウェイが無い・起動する仕組みが無い）ときは、これまでどおりコンテナの中で起動する
+    for (const [gateway, hostCommands] of [
+      [undefined, true],
+      [origin, false],
+    ] as const) {
+      const container = await prepareContext(
+        new FakeFetcher(files),
+        { repo: "ctx.git" },
+        "claude-code",
+        "/c",
+        undefined,
+        undefined,
+        [],
+        gateway,
+        undefined,
+        hostCommands,
+      );
+      const servers = JSON.parse(readFileSync(join(container.dir, "mcp.json"), "utf8")).mcpServers;
+      expect(servers.local.command).toBe("npx");
+      expect(container.hostedMcp).toEqual([]);
+      container.dispose();
+    }
+  });
+
+  it("プレビューに、ホストで起動するコマンド・env の秘密情報の参照・作業ディレクトリの層を出す（PBI-84）", async () => {
+    const preview = await previewContext(
+      new FakeFetcher({
+        "ctx.git": {
+          "mcp.yaml":
+            "servers:\n  local:\n    command: uvx\n    args: [example-mcp]\n    env:\n      TOKEN: { secret: local-token }\n  boxed:\n    command: boxed\n    via_gateway: false\n",
+        },
+      }),
+      { repo: "ctx.git" },
+      "claude-code",
+      "/c",
+      undefined,
+      undefined,
+      { gatewayOrigin: "http://host.docker.internal:5001", hostCommands: true },
+    );
+    expect(preview.mcp).toEqual([
+      {
+        name: "local",
+        from: "ctx.git@ctxgit0",
+        agent: { url: "http://host.docker.internal:5001/ctx-mcp/local" },
+        origin: {
+          kind: "hostCommand",
+          command: "uvx",
+          args: ["example-mcp"],
+          env: { TOKEN: { secret: "local-token", prefix: "" } },
+          cwd: "ctx.git@ctxgit0",
+        },
+      },
+      {
+        name: "boxed",
+        from: "ctx.git@ctxgit0",
+        agent: { command: "boxed", args: [] },
+        origin: { kind: "direct" },
+      },
+    ]);
+    // コンテナに入れるのは、実行ごとのトークンだけ
+    expect(preview.secrets).toEqual([
+      {
+        env: "SACTY_MCP_SECRET_0",
+        secret: GATEWAY_TOKEN_SECRET,
+        prefix: "Bearer ",
+        gatewayToken: true,
+      },
+    ]);
+  });
+
   it("MCP の秘密情報には、1Password の参照（op://…）も書ける（PBI-34）", async () => {
     const op = await prepareContext(
       new FakeFetcher({
