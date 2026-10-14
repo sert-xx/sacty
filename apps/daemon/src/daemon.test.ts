@@ -43,8 +43,9 @@ import type { PullRequestFeedback, PullRequestStatus, PullRequests } from "./git
 import { type HostMcpConnection, HostMcpFile, type HostMcpSpec, toHostMcp } from "./host-mcp.js";
 import { OrchestratorSessionStore } from "./orchestrator-sessions.js";
 import { type Platform, PlatformFile, toPlatform } from "./platforms.js";
+import { NOT_APPLICABLE, PR_BODY_MAX, type TemplateLookup } from "./pr-template.js";
 import { MemoryProjectStore } from "./projects.js";
-import { buildOrchestratorPrompt, changeableSteps } from "./prompts.js";
+import { buildOrchestratorPrompt, buildPullRequestBody, changeableSteps } from "./prompts.js";
 import type { RepositoryWorkspace } from "./repository.js";
 import {
   MemorySecretStore,
@@ -834,6 +835,8 @@ function makeService(
     sessionLogs?: SessionLogStore;
     /** オーケストレーターのセッションの置き場所（PBI-67）。 */
     orchestratorSessions?: OrchestratorSessionStore;
+    /** PR テンプレートを探す口（PBI-87）。 */
+    templates?: ServiceDeps["templates"];
   } = {},
 ) {
   const executor = new FakeExecutor(outcomes);
@@ -886,6 +889,7 @@ function makeService(
     stepPullRequests: options.stepPullRequests ?? false,
     ...(options.sessionLogs ? { sessionLogs: options.sessionLogs } : {}),
     ...(options.orchestratorSessions ? { orchestratorSessions: options.orchestratorSessions } : {}),
+    ...(options.templates ? { templates: options.templates } : {}),
   });
   return { service, executor, repos, tests, pulls };
 }
@@ -14339,5 +14343,229 @@ describe("コンテキストのプレビュー（PBI-76）", () => {
     // 認証が無ければ 401
     expect((await app.request("/api/projects/p/context-preview")).status).toBe(401);
     activity.close();
+  });
+});
+
+describe("PR テンプレート（PBI-87）", () => {
+  const out = (text: string): AgentOutcome => ({
+    kind: "completed",
+    output: text,
+    usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 100 },
+  });
+  const block = (b: Record<string, unknown>) => `\`\`\`json\n${JSON.stringify(b)}\n\`\`\``;
+  const design = out(
+    [
+      "# 設計",
+      block({
+        "sacty-test-viewpoints": [
+          { title: "同じキーの再送", input: "同じキーで2回送る", expected: "決済は1回" },
+        ],
+      }),
+    ].join("\n\n"),
+  );
+  const implement = (text = "# 実装の説明") =>
+    out(
+      [
+        text,
+        block({
+          "sacty-test-map": [{ viewpointId: "TV-1", tests: ["pay.test.ts › 同じキーの再送"] }],
+        }),
+      ].join("\n\n"),
+    );
+  const review = out(
+    block({
+      "sacty-final-review": {
+        viewpoints: [{ id: "TV-1", verified: true, reason: "TV-1の判定理由" }],
+        remarks: [],
+        summary: "所見",
+      },
+    }),
+  );
+  const template = [
+    "## 概要",
+    "<!-- 何のための PR か -->",
+    "",
+    "## 変更内容",
+    "",
+    "## テスト",
+    "- [x] 単体テストを足した",
+    "",
+    "## スクリーンショット",
+    "",
+  ].join("\n");
+  const taskOf = (svc: TaskService, id: string) => svc.get(id)?.task as Task;
+
+  class FakeTemplates {
+    calls: { repo: string; token: string }[] = [];
+    constructor(private readonly result: () => Promise<TemplateLookup>) {}
+    async find(input: { repo: string; token: string }) {
+      this.calls.push(input);
+      return this.result();
+    }
+  }
+  const found = (text = template) =>
+    new FakeTemplates(async () => ({
+      kind: "found",
+      template: {
+        repo: "https://github.com/acme/.github",
+        path: ".github/pull_request_template.md",
+        text,
+      },
+    }));
+
+  async function drain(service: TaskService, max = 12) {
+    for (let i = 0; i < max; i++) {
+      const ids = service.queuedTaskIds();
+      if (ids.length === 0) return;
+      for (const id of ids) await service.runNext(id);
+    }
+  }
+
+  /** 要求要件・設計を PR で承認する流れで、実装の PR まで進める。 */
+  async function toPullRequest(templates: FakeTemplates, implementation = implement()) {
+    const activity = new SqliteActivityStore(dbPath);
+    const pulls = new FakePulls();
+    const repos = new FakeRepos();
+    const made = makeService(activity, [out("# 要求要件 v1"), design, implementation, review], {
+      stepPullRequests: true,
+      now: () => Date.parse("2026-10-11T00:03:00Z"),
+      pulls,
+      repos,
+      templates,
+    });
+    const { service } = made;
+    const { id } = service.createTask({ projectId: "default", title: "決済API", body: "本文" });
+    const merge = async (step: "requirements" | "design") => {
+      const pr = taskOf(service, id).stepPullRequests.findLast((p) => p.step === step);
+      if (!pr) throw new Error(`no pull request for ${step}`);
+      pulls.states[pr.number] = { state: "merged", mergedBy: "reviewer", headSha: pr.commit };
+      repos.remote[`sacty/task-${id.slice(0, 8)}`] = `m${pr.number}`.padEnd(40, "0");
+      await service.checkPullRequests();
+    };
+    await service.runNext(id); // 要求要件 → PR
+    await merge("requirements");
+    await service.runNext(id); // 設計 → PR
+    await merge("design");
+    await drain(service); // 実装・検証 → 実装の PR
+    return { activity, service, pulls, id };
+  }
+
+  it("要求要件・設計の PR と実装の PR の本文を、テンプレートの見出しの形で埋め、使ったテンプレートを台帳に残す（受け入れ条件 1〜4）", async () => {
+    const templates = found();
+    const { activity, service, pulls, id } = await toPullRequest(templates);
+    expect(pulls.calls).toHaveLength(3);
+    // PR を作るたびに、PR を作るリポジトリでテンプレートを探す
+    expect(templates.calls).toEqual(
+      Array.from({ length: 3 }, () => ({
+        repo: "https://github.com/acme/app",
+        token: "ghp_secret",
+      })),
+    );
+    const [requirements, designPr, impl] = pulls.calls.map((c) => c.body);
+    // 要求要件の PR：テンプレートの見出しに沿い、承認の仕方とタスクの ID は最後に必ず入る
+    expect(requirements).toMatch(
+      /^## 概要\n\n<!-- 何のための PR か -->\n\nsacty のタスク「決済API」の要求要件です。/,
+    );
+    expect(requirements).toContain(
+      `## 変更内容\n\n成果のファイル：\`docs/sacty/${id.slice(0, 8)}/requirements.md\``,
+    );
+    expect(requirements).toContain(`## テスト\n\n- [ ] 単体テストを足した`);
+    expect(requirements).toContain(`## スクリーンショット\n\n${NOT_APPLICABLE}`);
+    expect(requirements).toContain(`sacty task ${id}`);
+    expect(requirements).toContain("この PR をマージすると、要求要件を承認したことになり");
+    expect(designPr).toContain(
+      "承認済みの前の工程：\n- 要求要件：https://github.com/acme/app/pull/7",
+    );
+    // 実装の PR：目的・変更・テストをそれぞれの見出しに入れ、最終レビューは sacty の記録にする
+    expect(impl).toContain(
+      "## 概要\n\n<!-- 何のための PR か -->\n\nsacty のタスク「決済API」の成果物です。",
+    );
+    expect(impl).toContain("**要求要件（人間が承認済み）**\n\n# 要求要件 v1");
+    expect(impl).toContain("## 変更内容\n\n# 実装の説明");
+    expect(impl).toContain("## テスト\n\n| 観点 | 入力 | 期待結果 | テスト | 最終レビュー |");
+    expect(impl).toContain("テスト：`npm test` → 合格（終了コード 0）\n\n- [ ] 単体テストを足した");
+    expect(impl).toContain("<summary>sacty の記録</summary>");
+    expect(impl).toContain("**ゴールガーディアンの最終レビュー**\n\n合格。所見");
+    expect(impl).not.toMatch(/\[[xX]\]/);
+    expect(
+      impl
+        ?.trimEnd()
+        .endsWith(`sacty task ${id}）。sacty の成果物チェックで承認・差し戻しをしてください。`),
+    ).toBe(true);
+    // 台帳と画面に、使ったテンプレートを残す
+    const used = {
+      repo: "https://github.com/acme/.github",
+      path: ".github/pull_request_template.md",
+    };
+    const task = taskOf(service, id);
+    expect(task.stepPullRequests.map((p) => p.template)).toEqual([used, used]);
+    expect(task.pullRequest?.template).toEqual(used);
+    activity.close();
+  });
+
+  it("テンプレートが無ければ今の本文で作り、無かったことを台帳に残す", async () => {
+    const { activity, service, pulls, id } = await toPullRequest(
+      new FakeTemplates(async () => ({ kind: "none" })),
+    );
+    const task = taskOf(service, id);
+    expect(pulls.calls[2]?.body).toBe(buildPullRequestBody(task));
+    expect(task.pullRequest?.template).toEqual({ fallback: "none" });
+    expect(task.stepPullRequests[0]?.template).toEqual({ fallback: "none" });
+    activity.close();
+  });
+
+  it("テンプレートを読めない・探す処理が失敗しても、PR の作成を止めずに今の本文で作り、理由を伏せて残す（受け入れ条件 4・5）", async () => {
+    const unusable = await toPullRequest(
+      new FakeTemplates(async () => ({
+        kind: "unusable",
+        repo: "https://github.com/acme/app",
+        message: message("pr.templateFailed", {
+          path: "/",
+          status: 403,
+          detail: "bad credentials ghp_secret",
+        }),
+      })),
+    );
+    let task = taskOf(unusable.service, unusable.id);
+    expect(unusable.pulls.calls).toHaveLength(3);
+    expect(unusable.pulls.calls[2]?.body).toBe(buildPullRequestBody(task));
+    expect(task.pullRequest?.template?.fallback).toBe("unusable");
+    expect(renderMessage(task.pullRequest?.template?.message, "ja")).toContain("HTTP 403");
+    expect(JSON.stringify(unusable.service.get(unusable.id)?.activity)).not.toContain("ghp_secret");
+    unusable.activity.close();
+
+    const thrown = await toPullRequest(
+      new FakeTemplates(async () => {
+        throw new Error("boom ghp_secret");
+      }),
+    );
+    task = taskOf(thrown.service, thrown.id);
+    expect(thrown.pulls.calls).toHaveLength(3);
+    expect(task.pullRequest?.template).toEqual({
+      fallback: "unusable",
+      message: "boom [REDACTED]",
+    });
+    thrown.activity.close();
+  });
+
+  it("本文が長さの上限を超えるなら、後ろを省いてタスクの ID を残し、省いたことを台帳に残す（受け入れ条件 5）", async () => {
+    const long = implement(`# 実装の説明\n\n${"長い説明。".repeat(20_000)}`);
+    const withTemplate = await toPullRequest(found(), long);
+    const body = withTemplate.pulls.calls[2]?.body ?? "";
+    expect(body.length).toBeLessThanOrEqual(PR_BODY_MAX);
+    expect(body).toContain(`sacty task ${withTemplate.id}`);
+    expect(taskOf(withTemplate.service, withTemplate.id).pullRequest?.template?.truncated).toBe(
+      true,
+    );
+    withTemplate.activity.close();
+  });
+
+  it("本文に秘密の値を出さない（エージェントの出力に紛れても伏せる）", async () => {
+    const leaked = await toPullRequest(
+      found(),
+      implement("# 実装の説明\n\nトークン ghp_secret を使った"),
+    );
+    expect(leaked.pulls.calls[2]?.body).not.toContain("ghp_secret");
+    leaked.activity.close();
   });
 });

@@ -47,6 +47,7 @@ import {
   ProjectDefinition,
   ProjectExport,
   type PullRequestMerge,
+  type PullRequestTemplateUse,
   parseOrgUrl,
   parseRepoUrl,
   pendingQuestion,
@@ -138,9 +139,16 @@ import {
   platformPromptLines,
   platformSummary,
 } from "./platforms.js";
+import {
+  fillTemplate,
+  limitBody,
+  type PullRequestTemplates,
+  type TemplateLookup,
+} from "./pr-template.js";
 import type { ProjectStore } from "./projects.js";
 import {
   allowedPlans,
+  type BodyParts,
   buildChatPrompt,
   buildChildBody,
   buildExportDocument,
@@ -152,11 +160,13 @@ import {
   buildOrchestratorPrompt,
   buildPrompt,
   buildPullRequestBody,
+  buildPullRequestBodyParts,
   buildReviewBody,
   buildReviewComments,
   buildReworkPrompt,
   buildStepDocument,
   buildStepPullRequestBody,
+  buildStepPullRequestBodyParts,
   buildStepPullRequestTitle,
   buildTicketInvestigationComment,
   buildTicketPullRequestComment,
@@ -286,6 +296,8 @@ export type ServiceDeps = {
   repos: RepositoryWorkspace;
   /** PRの作成。 */
   pulls: PullRequests;
+  /** PR テンプレートを探す口（PBI-87）。無ければ、テンプレートを使わない（sacty の決まった形の本文にする）。 */
+  templates?: PullRequestTemplates;
   /** GitHub への認証（ホストの gh のアカウント。PBI-13）。 */
   github: GitHubAuth;
   /** 現在の時刻（テストで差し替える）。 */
@@ -4173,13 +4185,20 @@ export class TaskService {
           );
         }
       }
+      const { body, template } = await this.pullRequestBody(
+        repo,
+        token,
+        usedSecrets,
+        buildStepPullRequestBody(current, step, path),
+        buildStepPullRequestBodyParts(current, step, path),
+      );
       const pr = await this.deps.pulls.upsert({
         repo,
         token,
         branch,
         baseBranch: taskBranch.branch,
         title: buildStepPullRequestTitle(current, step),
-        body: buildStepPullRequestBody(current, step, path),
+        body,
         ...(reuse ? { number: reuse.number } : {}),
       });
       // 作った PR は、中止・一時停止を求められていても記録する（中止の後片付けで閉じるため）
@@ -4194,6 +4213,7 @@ export class TaskService {
               step,
               branch,
               commit,
+              template,
               base: reuse?.base ?? head,
               path,
               url: pr.url,
@@ -4215,6 +4235,53 @@ export class TaskService {
     } catch (error) {
       fail(message("pr.failed", { detail: errorText(error) }));
     }
+  }
+
+  /**
+   * PR の本文（PBI-87）。PR を作るリポジトリ（無ければ Org の .github リポジトリ）に PR テンプレートがあれば、その
+   * 見出し・項目の形に沿って sacty の内容で埋める。無い・読めない・使えないときは、sacty の決まった形の本文にする
+   * （PR の作成は止めない）。どちらにしたかを template として返す（台帳に残す）。本文は長さの上限に収め、
+   * 使った秘密の値を伏せる。
+   */
+  private async pullRequestBody(
+    repo: string,
+    token: string,
+    usedSecrets: readonly string[],
+    fallbackBody: string,
+    parts: BodyParts,
+  ): Promise<{ body: string; template: PullRequestTemplateUse }> {
+    let template: PullRequestTemplateUse;
+    let main = fallbackBody;
+    let footer = "";
+    try {
+      const found: TemplateLookup = this.deps.templates
+        ? await this.deps.templates.find({ repo, token })
+        : { kind: "none" };
+      if (found.kind === "found") {
+        ({ main, footer } = fillTemplate(found.template.text, parts));
+        template = { repo: found.template.repo, path: found.template.path };
+      } else if (found.kind === "unusable") {
+        template = {
+          fallback: "unusable",
+          message: redactText(found.message, usedSecrets),
+        };
+      } else {
+        template = {
+          fallback: "none",
+          ...(found.message ? { message: redactText(found.message, usedSecrets) } : {}),
+        };
+      }
+    } catch (error) {
+      // テンプレートの処理の失敗でも、PR の作成は止めない（sacty の決まった形の本文にする）
+      main = fallbackBody;
+      footer = "";
+      template = { fallback: "unusable", message: redactText(errorText(error), usedSecrets) };
+    }
+    const limited = limitBody(redact(main, usedSecrets), redact(footer, usedSecrets));
+    return {
+      body: limited.body,
+      template: { ...template, ...(limited.truncated ? { truncated: true } : {}) },
+    };
   }
 
   /**
@@ -4311,13 +4378,20 @@ export class TaskService {
         const previous = await this.deps.pulls.status({ repo: prRepo, token, number });
         if (previous.state === "merged") number = undefined;
       }
+      const { body, template } = await this.pullRequestBody(
+        prRepo,
+        token,
+        usedSecrets,
+        buildPullRequestBody(task),
+        buildPullRequestBodyParts(task),
+      );
       const pr = await this.deps.pulls.upsert({
         repo: prRepo,
         token,
         branch,
         baseBranch: task.repository.baseBranch,
         title: task.title,
-        body: buildPullRequestBody(task),
+        body,
         number,
       });
       const submitted = this.append(task, [
@@ -4328,6 +4402,7 @@ export class TaskService {
             payload: {
               branch,
               commit,
+              template,
               url: pr.url,
               number: pr.number,
               repo: prRepo,

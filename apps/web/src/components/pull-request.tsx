@@ -1,4 +1,10 @@
-import { type PullRequestMerge, parseRepoUrl, type Task } from "@sacty/core";
+import {
+  type DaemonText,
+  type PullRequestMerge,
+  type PullRequestTemplateUse,
+  parseRepoUrl,
+  type Task,
+} from "@sacty/core";
 import { getMessages } from "@/i18n/server";
 
 type PullRequestMessages = Awaited<ReturnType<typeof getMessages>>["parts"]["pullRequest"];
@@ -51,6 +57,36 @@ function EditedMerge({
 }
 
 /**
+ * PR の本文に使った PR テンプレート（PBI-87）。使ったテンプレートの場所か、sacty の決まった形にした理由。
+ * それより前の記録（template が無い）では何も出さない。
+ */
+function TemplateUse({
+  template,
+  m,
+  text,
+}: {
+  template: PullRequestTemplateUse | undefined;
+  m: PullRequestMessages;
+  text: (value: DaemonText) => string;
+}) {
+  if (!template) return null;
+  const github = template.repo ? parseRepoUrl(template.repo) : undefined;
+  return (
+    <span className="block text-xs text-muted-foreground [overflow-wrap:anywhere]">
+      {template.path
+        ? m.templateUsed(template.path, github?.path ?? template.repo ?? "")
+        : template.fallback === "unusable"
+          ? m.templateUnusable
+          : m.templateNone}
+      {template.message !== undefined && (
+        <span className="block text-warn">{text(template.message)}</span>
+      )}
+      {template.truncated && <span className="block text-warn">{m.templateTruncated}</span>}
+    </span>
+  );
+}
+
+/**
  * sacty が作ったPR（またはブランチ）と、ゴールガーディアンの見逃しの記録。要求要件・設計の PR とタスクブランチ
  * （PBI-57）も並べる。
  */
@@ -97,6 +133,14 @@ export async function PullRequestCard({ task }: { task: Task }) {
                 {pr.commit.slice(0, 12)}
                 <EditedMerge merge={task.pullRequestMerge} repo={pr.repo} m={m} />
               </dd>
+              {pr.template && (
+                <>
+                  <dt className="pt-0.5 text-xs text-muted-foreground">{m.body}</dt>
+                  <dd className="leading-6">
+                    <TemplateUse template={pr.template} m={m} text={text} />
+                  </dd>
+                </>
+              )}
             </>
           )}
           {task.taskBranch && !pr && (
@@ -127,6 +171,7 @@ export async function PullRequestCard({ task }: { task: Task }) {
                       <span className="block font-mono text-xs text-muted-foreground">
                         {p.path}
                       </span>
+                      <TemplateUse template={p.template} m={m} text={text} />
                       <EditedMerge merge={p.merge} repo={p.repo} m={m} />
                     </li>
                   ))}

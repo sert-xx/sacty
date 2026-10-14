@@ -1044,11 +1044,28 @@ const IntegrationReviewed = z.object({
 });
 
 /** sacty が作業をコミットしてブランチにプッシュし、PRを作った（または更新した）。 */
+/**
+ * PR の本文に使った PR テンプレート（PBI-87）。repo・path は使ったテンプレート（repo はテンプレートのあった
+ * リポジトリの URL。対象のリポジトリか、Org の .github リポジトリ）。fallback は、テンプレートを使わずに sacty の
+ * 決まった形の本文にした理由（none：無かった、unusable：読めなかった・使えなかった）。message はその補足
+ * （秘密の値は伏せる）。truncated は、本文が長さの上限を超えたので後ろを省いた。
+ */
+export const PullRequestTemplateUse = z.object({
+  repo: z.string().optional(),
+  path: z.string().optional(),
+  fallback: z.enum(["none", "unusable"]).optional(),
+  message: DaemonText.optional(),
+  truncated: z.boolean().optional(),
+});
+export type PullRequestTemplateUse = z.infer<typeof PullRequestTemplateUse>;
+
 const PullRequestPublished = z.object({
   type: z.literal("PullRequestPublished"),
   payload: z.object({
     branch: z.string().min(1),
     commit: z.string().min(1),
+    /** 本文に使った PR テンプレート（PBI-87。それより前の記録には無い）。 */
+    template: PullRequestTemplateUse.optional(),
     /** PRを作らない設定（ブランチのプッシュまで）なら無い。 */
     url: z.string().optional(),
     number: z.number().int().positive().optional(),
@@ -1091,6 +1108,8 @@ const StepPullRequestPublished = z.object({
     step: StepPullRequestKey,
     branch: z.string().min(1),
     commit: z.string().min(1),
+    /** 本文に使った PR テンプレート（PBI-87。それより前の記録には無い）。 */
+    template: PullRequestTemplateUse.optional(),
     base: z.string().min(1),
     /** 成果のファイル（リポジトリの根からの相対パス）。 */
     path: z.string().min(1),

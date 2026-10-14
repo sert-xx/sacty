@@ -237,6 +237,12 @@ const PARAMS = {
   "pr.workspaceMissing": null,
   "pr.taskBranchChanged": z.object({ branch: TextParam, paths: TextParam, count: z.number() }),
   "pr.failed": z.object({ detail: TextParam }),
+  // PR テンプレート（PBI-87）。status が 0 なら、HTTP の応答が無かった（通信の失敗・時間切れ）
+  "pr.templateFailed": z.object({ path: z.string(), status: z.number(), detail: TextParam }),
+  "pr.templateTooLarge": z.object({ path: z.string(), size: Count, limit: Count }),
+  "pr.templateInvalid": z.object({ path: z.string() }),
+  "pr.templateEmpty": z.object({ path: z.string() }),
+  "pr.templateOrgPrivate": z.object({ repo: z.string() }),
   "cleanup.prRepoUnknown": null,
   "cleanup.noWorkspace": null,
   "cleanup.containerUnconfirmed": null,
@@ -711,6 +717,15 @@ const ja: MessageDictionary = {
   "pr.taskBranchChanged": ({ branch, paths, count }, text) =>
     `タスクブランチ ${text(branch)} に、sacty が積んでいない変更があります（${text(paths)}${count > 10 ? ` ほか、全${count}件` : ""}）。実装の作業領域には含まれていないので、このまま実装を積むと消えてしまうため、PR を出すのを止めました。タスクブランチからその変更を取り除いてから再開してください（変更が必要なら、PR の指摘として書くと、sacty が実装に反映します）。`,
   "pr.failed": ({ detail }, text) => `PRを作れませんでした：${text(detail)}`,
+  "pr.templateFailed": ({ path, status, detail }, text) =>
+    `PR テンプレート${path ? `（${path}）` : ""}を確かめられませんでした${status ? `（HTTP ${status}）` : ""}${text(detail) ? `：${text(detail)}` : ""}`,
+  "pr.templateTooLarge": ({ path, size, limit }) =>
+    `PR テンプレート（${path}）が大きすぎるので使いませんでした（${size} バイト。上限 ${limit} バイト）。`,
+  "pr.templateInvalid": ({ path }) =>
+    `PR テンプレート（${path}）の中身を読めなかったので使いませんでした（UTF-8 のテキストではない）。`,
+  "pr.templateEmpty": ({ path }) => `PR テンプレート（${path}）が空なので使いませんでした。`,
+  "pr.templateOrgPrivate": ({ repo }) =>
+    `Org の .github リポジトリ（${repo}）は非公開なので、そのテンプレートは使いません（GitHub と同じく、公開のものだけを使います）。`,
   "cleanup.prRepoUnknown": "PRを作ったリポジトリの記録が無いため、閉じませんでした。",
   "cleanup.noWorkspace": "作業領域が無いため、ブランチを消せません。",
   "cleanup.containerUnconfirmed":
@@ -1097,6 +1112,15 @@ const en: MessageDictionary = {
   "pr.taskBranchChanged": ({ branch, paths, count }, text) =>
     `The task branch ${text(branch)} has changes that sacty did not push (${text(paths)}${count > 10 ? ` and more, ${count} in total` : ""}). They are not in the implementation workspace and would be removed by the implementation commit, so the PR was not published. Remove those changes from the task branch, then resume (if the change is needed, write it as a PR comment and sacty will apply it in the implementation).`,
   "pr.failed": ({ detail }, text) => `Could not open the PR: ${text(detail)}`,
+  "pr.templateFailed": ({ path, status, detail }, text) =>
+    `Could not check the PR template${path ? ` (${path})` : ""}${status ? ` (HTTP ${status})` : ""}${text(detail) ? `: ${text(detail)}` : ""}`,
+  "pr.templateTooLarge": ({ path, size, limit }) =>
+    `The PR template (${path}) was not used because it is too large (${size} bytes; the limit is ${limit} bytes).`,
+  "pr.templateInvalid": ({ path }) =>
+    `The PR template (${path}) was not used because its content could not be read (not UTF-8 text).`,
+  "pr.templateEmpty": ({ path }) => `The PR template (${path}) was not used because it is empty.`,
+  "pr.templateOrgPrivate": ({ repo }) =>
+    `The .github repository of the Org (${repo}) is private, so its template is not used (like GitHub, only a public one is used).`,
   "cleanup.prRepoUnknown": "Not closed because the PR's repository was not recorded.",
   "cleanup.noWorkspace": "Cannot delete the branch because there is no workspace.",
   "cleanup.containerUnconfirmed":

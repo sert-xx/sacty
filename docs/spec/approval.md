@@ -49,6 +49,53 @@
 
 コード: `apps/daemon/src/service.ts`（`checkPullRequests`・`readMergedDocument`）、`apps/daemon/src/pr-watcher.ts`（`PullRequestWatcher`）
 
+## PR の本文と PR テンプレート
+
+関係する ADR: [sacty が作る PR の本文を、リポジトリ・Org の PR テンプレートの見出しに沿って決まった規則で埋める](../adr/20261014-1517-pr-body-follows-repository-template.md)
+
+sacty が PR を作る・更新するとき（実装の PR と、要求要件・設計の PR）は、そのたびに PR を作るリポジトリの PR テンプレートを探し、
+あればその見出し・項目の形で本文を書く。無い・使えないときは、sacty の決まった形の本文（`buildPullRequestBody`・
+`buildStepPullRequestBody`）にする。どちらでも PR の作成は止めない。
+
+- 探す場所と順番（既定のブランチのもの。ファイル名・ディレクトリ名の大文字・小文字は区別しない）：
+  1. 対象のリポジトリの `.github/pull_request_template.md` → ルートの `pull_request_template.md` → `docs/pull_request_template.md`
+  2. 1つも無ければ、同じ順の `PULL_REQUEST_TEMPLATE/` ディレクトリ（`.github/`・ルート・`docs/`）の中の `.md` のうち、名前の順
+     （大文字・小文字を区別しない）で最初のもの。GitHub はディレクトリの複数のテンプレートを既定には使わないが、sacty は1つを選ぶ。
+  3. 対象のリポジトリに無ければ、Org（またはユーザー）の `.github` リポジトリ（`https://<ホスト>/<owner>/.github`）の同じ場所。
+     GitHub と同じく、公開（`private: false`）のものだけを使う。非公開なら使わず、その旨を残す。対象が `.github` リポジトリそのものなら探さない。
+- 無いものとする：リポジトリ・ディレクトリの一覧が 404（空のリポジトリ・見えないリポジトリを含む）。
+- 使えない（`unusable`）：一覧・ファイルの取得が 404 以外の失敗・通信の失敗・時間切れ（探す処理全体で30秒）、32 KiB
+  （`TEMPLATE_MAX_BYTES`）より大きい（大きさは一覧の値で判断し、中身は読まない）、UTF-8 として読めない、空白だけ。対象のリポジトリで
+  使えないときは、Org の `.github` は探さない。
+- 埋め方（`fillTemplate`。エージェントは使わない）：
+  - 見出し（`#`〜`######` の行と、行全体が太字の行 `**概要**`。コードブロック・HTML のコメントの中のものは除く）で分け、見出しの文から
+    種類を決める（`CATEGORY_RULES`、上から順に当てる）：書けない見出し（チェックリスト・スクリーンショット・破壊的変更・その他など）、
+    関係する Issue、テスト、変更、目的・概要。種類ごとに、最初に当たった見出しにだけ sacty の内容を入れる。
+  - 見出しの中の説明・例の文とコードブロックは消し、HTML のコメントとチェックボックスは残す。チェックボックスは、テンプレートで
+    チェックされていても、すべて外す（sacty は確かめていないので）。
+  - 内容の無い見出し・当てはまらない見出しには「該当なし（sacty は記入していません）」（`NOT_APPLICABLE`）と書く。チェックボックスの
+    ある見出しには書かない（外したチェックボックスだけを残す）。最初の見出しより前は、コメントとチェックボックスだけを残す。
+  - 実装の PR の内容（`buildPullRequestBodyParts`）：目的は承認済みの要求要件（再現のタスクは不具合の再現）、変更は実装の工程の出力、
+    テストは観点 → テスト → 実行結果の表とテストの結果、関係する Issue は `Closes #<番号>`（Issue から取り込んだタスク）。
+    書き出した成果・要求要件・設計の PR・ゴールガーディアンの最終レビューは「sacty の記録」にする。
+  - 要求要件・設計の PR の内容（`buildStepPullRequestBodyParts`）：目的は何の工程の成果か（と承認済みの前の工程）、変更は成果の
+    ファイルと指摘への対応、関係する Issue は `#<番号>`（参照だけ。タスクブランチへのマージでは閉じない）。テストは無い。
+  - 見出しに入らなかった内容と「sacty の記録」は、本文の末尾に折りたたみ（`<details>`）で置く。どの見出しにも内容を入れられなかった
+    （見出しの無いテンプレートなど）ときは、目的・変更・テストは折りたたまずに置く。関係する Issue が見出しに入らなければ、
+    最後の部分の前に置く。
+  - 最後の部分（footer）には、sacty が作った旨とタスクの ID（`sacty task <ID>`）、成果物チェックの案内（実装の PR）・マージが承認に
+    なることと指摘の伝え方（要求要件・設計の PR）を必ず入れる。
+- 長さ（`limitBody`）：本文は 65,000 文字（`PR_BODY_MAX`。GitHub の上限 65,536 文字より少し短い。JavaScript の長さで測る）までにする。
+  超えるときは、最後の部分の前の後ろを省き、省いた旨（`TRUNCATED_NOTE`）を書く。省いたところで閉じられていない HTML のコメント・
+  コードブロック・折りたたみは閉じる。テンプレートを使わない本文にも同じ上限を使う。
+- 秘密の値：その PR の作成で使った秘密の値（GitHub のトークンなど）を、本文から伏せる（`[REDACTED]`）。台帳に残す理由の文も伏せる。
+- 台帳：`PullRequestPublished`・`StepPullRequestPublished` の `template` に、使ったテンプレート（`repo`：テンプレートのあった
+  リポジトリの URL、`path`）か、決まった形にした理由（`fallback`：`none`・`unusable`、`message`：`pr.templateFailed`・
+  `pr.templateTooLarge`・`pr.templateInvalid`・`pr.templateEmpty`・`pr.templateOrgPrivate` など）を残し、省いたら `truncated` を残す。
+  タスクの画面の PR の欄に「本文」として出す。この版より前の記録には無い（画面には出さない）。
+
+コード: `apps/daemon/src/pr-template.ts`（`GitHubPullRequestTemplates`・`fillTemplate`・`limitBody`・`CATEGORY_RULES`）、`apps/daemon/src/service.ts`（`pullRequestBody`・`publish`・`publishStepPullRequest`）、`apps/daemon/src/prompts.ts`（`buildPullRequestBodyParts`・`buildStepPullRequestBodyParts`）、`packages/core/src/events.ts`（`PullRequestTemplateUse`）、`apps/web/src/components/pull-request.tsx`（`TemplateUse`）
+
 ## PR の指摘の取り込み
 
 - PR が開いていて承認待ちのとき、PR のレビュー・行へのコメント・通常のコメントを指摘として取り込む。最後のフィードバックから2分
