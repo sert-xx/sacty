@@ -506,3 +506,116 @@ describe("チケットの取り込み先（PBI-52）", () => {
     expect(ProjectExport.parse(JSON.parse(JSON.stringify(exported)))).toEqual(exported);
   });
 });
+
+describe("共用の compose（PBI-70）", () => {
+  const base = { name: "決済", targets: [] };
+  const infra = {
+    name: "infra",
+    repo: "https://github.com/acme/test-infra",
+    file: "compose/redis.yml",
+  };
+  const codeOf = (input: unknown) => {
+    const parsed = ProjectDefinition.safeParse({ ...base, sharedComposes: [input] });
+    return parsed.success ? undefined : renderMessage(parsed.error.issues[0]?.message, "ja");
+  };
+
+  it("無い・1つ・複数を持てる。空の ref・説明は持たない", () => {
+    expect(ProjectDefinition.parse(base).sharedComposes).toBeUndefined();
+    expect(ProjectDefinition.parse({ ...base, sharedComposes: [] }).sharedComposes).toEqual([]);
+    const parsed = ProjectDefinition.parse({
+      ...base,
+      sharedComposes: [
+        { ...infra, ref: " main ", description: "  Redis。結合テストに要る " },
+        { name: "kafka", repo: "/srv/kafka", file: "compose.yaml", ref: "", description: " " },
+        { name: "ssh", repo: "git@github.com:acme/infra.git", file: "a/b.yml" },
+      ],
+    });
+    expect(parsed.sharedComposes).toEqual([
+      { ...infra, ref: "main", description: "Redis。結合テストに要る" },
+      { name: "kafka", repo: "/srv/kafka", file: "compose.yaml", ref: "" },
+      { name: "ssh", repo: "git@github.com:acme/infra.git", file: "a/b.yml" },
+    ]);
+  });
+
+  it("名前・リポジトリ・ファイル・ref の形を確かめる", () => {
+    expect(codeOf({ ...infra, name: "Infra" })).toContain("共用の compose の名前");
+    expect(codeOf({ ...infra, name: "" })).toContain("共用の compose の名前");
+    expect(codeOf({ ...infra, name: "a".repeat(41) })).toContain("共用の compose の名前");
+    expect(codeOf({ ...infra, repo: " " })).toContain("リポジトリを入力");
+    expect(codeOf({ ...infra, file: "" })).toContain("相対パス");
+    expect(codeOf({ ...infra, file: "/etc/compose.yml" })).toContain("相対パス");
+    expect(codeOf({ ...infra, file: "../other/compose.yml" })).toContain("相対パス");
+    expect(codeOf({ ...infra, file: "compose/../../x.yml" })).toContain("相対パス");
+    expect(codeOf({ ...infra, file: "$HOME/x.yml" })).toContain("相対パス");
+    expect(codeOf({ ...infra, file: "-f.yml" })).toContain("相対パス");
+    expect(codeOf({ ...infra, ref: "main; rm -rf /" })).toContain("ref");
+    expect(codeOf({ ...infra, description: "x".repeat(1001) })).toBeDefined();
+    expect(codeOf(infra)).toBeUndefined();
+  });
+
+  it("リポジトリは git の URL かローカルの絶対パス（相対パスは取得先が定まらないので使えない）", () => {
+    for (const repo of [
+      "https://github.com/acme/infra",
+      "ssh://git@example.com/infra.git",
+      "git@github.com:acme/infra.git",
+      "file:///srv/infra",
+      "/srv/infra",
+    ]) {
+      expect(codeOf({ ...infra, repo })).toBeUndefined();
+    }
+    for (const repo of ["infra", "./infra", "../infra", "~/infra"]) {
+      expect(codeOf({ ...infra, repo })).toContain("ローカルの絶対パス");
+    }
+  });
+
+  it("リポジトリの URL に認証の値を書かせない", () => {
+    for (const repo of [
+      "https://x-access-token:ghp_abc@github.com/acme/infra",
+      "https://ghp_abc@github.com/acme/infra",
+      "http://user@example.com/infra.git",
+      "ssh://git:password@example.com/infra.git",
+    ]) {
+      expect(codeOf({ ...infra, repo })).toContain("トークンを書かないでください");
+    }
+    // ユーザー名だけの SSH は、パスワードを含まないので使える
+    expect(codeOf({ ...infra, repo: "ssh://git@example.com/infra.git" })).toBeUndefined();
+  });
+
+  it("名前の重複は保存できない（オーケストレーターが名前で選ぶため）", () => {
+    const definition = ProjectDefinition.parse({
+      ...base,
+      sharedComposes: [infra, { ...infra, repo: "/srv/other" }, { ...infra, name: "kafka" }],
+    });
+    const problems = projectConflicts([], undefined, definition);
+    expect(problems.map((p) => renderMessage(p, "ja"))).toEqual([
+      "共用の compose の名前「infra」が重複しています。",
+    ]);
+    expect(
+      projectConflicts(
+        [],
+        undefined,
+        ProjectDefinition.parse({ ...base, sharedComposes: [infra] }),
+      ),
+    ).toEqual([]);
+  });
+
+  it("エクスポートに含め、インポートで読める（無ければ含めない）", () => {
+    const project = make("p1", {
+      ...base,
+      sharedComposes: [{ ...infra, ref: "main", description: "Redis" }],
+    });
+    const exported = exportProject(project);
+    expect(exported.project.sharedComposes).toEqual([
+      { ...infra, ref: "main", description: "Redis" },
+    ]);
+    expect(ProjectExport.parse(JSON.parse(JSON.stringify(exported)))).toEqual(exported);
+    expect(exportProject(make("p2", base)).project).not.toHaveProperty("sharedComposes");
+    // 知らない項目（認証の値など）は拒否する
+    expect(
+      ProjectExport.safeParse({
+        ...exported,
+        project: { ...exported.project, sharedComposes: [{ ...infra, token: "ghp_abc" }] },
+      }).success,
+    ).toBe(false);
+  });
+});

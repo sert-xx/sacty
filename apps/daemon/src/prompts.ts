@@ -1677,9 +1677,15 @@ export function buildOrchestratorPrompt(
      * プロジェクトのコンテキストの規約（置き場所の手がかり）。
      */
     documents?: { rules?: string };
+    /**
+     * プロジェクトの共用の compose（名前・compose ファイル・説明。PBI-70）。対象リポジトリがあるタスクだけで渡す。
+     * 設定しただけでは起動しないので、要るかをタスクごとに判断させる（取得はしないので、中身は説明から判断する）。
+     */
+    sharedComposes?: readonly { name: string; file: string; description?: string }[];
   } = {},
 ): string {
   const images = options.images ?? [];
+  const shared = task.repository ? (options.sharedComposes ?? []) : [];
   const destinations = options.exports?.destinations ?? [];
   const all: Record<StepPlan, string> = {
     standard:
@@ -1722,6 +1728,16 @@ export function buildOrchestratorPrompt(
     ...(task.repository
       ? [
           "- services：テストや動作確認に、docker compose で起動するサービス（DB・モック API など）が要るとき（PBI-47）。compose ファイル（docker-compose.yml・compose.yaml など）・README・AGENTS.md・テストの設定から判断する。file は compose ファイルの、リポジトリの根からの相対パス、names は起動するサービスの名前（依存するサービスも起動する。テストを動かすアプリ本体など、要らないサービスは含めない）、steps はサービスを使う工程（コードを動かす reproduce・implement と、不具合の調査の investigate）。sacty が工程とテストの実行ごとに起動し、終わったら消す。サービスにはサービス名とコンテナのポートで接続する（例 db:5432。localhost ではない）。要らなければ書かない",
+          ...(shared.length > 0
+            ? [
+                "  - 共用の compose：このプロジェクトには、チームで共用するリポジトリの compose（対象リポジトリの外。PBI-70）があります。設定してあるだけでは起動しません。このタスク・このリポジトリのテストや動作確認に要るか（テストの設定・README・AGENTS.md・CI の設定が、そのサービスを前提にしているか）を、説明と照らして判断してください。使うときは、file の代わりに compose に共用の compose の名前を書く（対象リポジトリの compose と共用の compose は、どちらか一方）。names は説明から分かるサービスの名前（分からなければ空にすると、すべて起動する）。要らないタスクでは書かない（取得も起動もしない）",
+                ...shared.map(
+                  (s) =>
+                    `    - ${s.name}：compose ファイル ${s.file}${s.description ? `。${clip(s.description, 1000)}` : ""}`,
+                ),
+                "- servicesReason：サービスを使う・使わないと判断した理由（共用の compose を使わないときも、その理由。根拠にしたファイル）。必ず書く",
+              ]
+            : []),
         ]
       : []),
     ...(destinations.length > 0
@@ -1743,7 +1759,7 @@ export function buildOrchestratorPrompt(
     "",
     "選んだ工程を、次の形式で必ず出してください。",
     "```json",
-    `{"${PLAN_HEADING}": {"plan": "${Object.keys(plans).join(" または ")}", "reason": "選んだ理由", "baseBranch": "ベースブランチ", "testCommand": "テストのコマンド（分からなければ空）", "investigation": "content または bug"${images.length > 0 ? ', "images": {"implement": "イメージの名前"}, "imageReason": "イメージを選んだ理由"' : ""}${task.repository ? ', "services": {"file": "compose ファイル", "names": ["db"], "steps": ["implement"]}（要らなければ書かない）' : ""}${destinations.length > 0 ? ', "exports": {"requirements": {"to": "接続先の名前", "via": "platform または mcp", "location": "置き場所の手がかり", "reason": "そこに書き出す理由"}, "design": {"to": "", "reason": "書き出さない理由"}}' : ""}${options.documents ? ', "documentsDir": "要求要件・設計のファイルを置くディレクトリ（決まっていなければ書かない）"' : ""}}}`,
+    `{"${PLAN_HEADING}": {"plan": "${Object.keys(plans).join(" または ")}", "reason": "選んだ理由", "baseBranch": "ベースブランチ", "testCommand": "テストのコマンド（分からなければ空）", "investigation": "content または bug"${images.length > 0 ? ', "images": {"implement": "イメージの名前"}, "imageReason": "イメージを選んだ理由"' : ""}${task.repository ? (shared.length > 0 ? ', "services": {"file": "対象リポジトリの compose ファイル", "compose": "または共用の compose の名前", "names": ["db"], "steps": ["implement"]}（要らなければ書かない）, "servicesReason": "サービスを使う・使わない理由"' : ', "services": {"file": "compose ファイル", "names": ["db"], "steps": ["implement"]}（要らなければ書かない）') : ""}${destinations.length > 0 ? ', "exports": {"requirements": {"to": "接続先の名前", "via": "platform または mcp", "location": "置き場所の手がかり", "reason": "そこに書き出す理由"}, "design": {"to": "", "reason": "書き出さない理由"}}' : ""}${options.documents ? ', "documentsDir": "要求要件・設計のファイルを置くディレクトリ（決まっていなければ書かない）"' : ""}}}`,
     "```",
   ].join("\n");
 }
@@ -1888,8 +1904,13 @@ export function extractStepPlan(
       /** 工程ごとのイメージの名前（PBI-41）。名前が images にあるかは、呼び出し側が確かめる。 */
       images?: Partial<Record<StepKey, string>>;
       imageReason?: string;
-      /** 起動する docker compose のサービス（PBI-47）。ファイルがあるかは、起動するときに確かめる。 */
-      services?: { file: string; names: string[]; steps: StepKey[] };
+      /**
+       * 起動する docker compose のサービス（PBI-47）。ファイルがあるかは、起動するときに確かめる。compose は共用の
+       * compose の名前（PBI-70。あるかは、呼び出し側が確かめる）。
+       */
+      services?: RawServices;
+      /** サービスを使う・使わないと判断した理由（PBI-70）。 */
+      servicesReason?: string;
       /** 工程ごとの書き出し先（PBI-56）。接続先があるかは、呼び出し側が確かめる（via が無ければ名前で探す）。 */
       exports?: Partial<Record<StepKey, RawExportPlan>>;
       /** 要求要件・設計のファイルを置くディレクトリ（PBI-57）。使える形のものだけ。 */
@@ -1923,6 +1944,7 @@ export function extractStepPlan(
         ) as Partial<Record<StepKey, string>>;
         const imageReason = text(v.imageReason).slice(0, 1000);
         const services = composeServicesOf(v.services);
+        const servicesReason = text(v.servicesReason).slice(0, 1000);
         const exports = exportPlansOf(v.exports);
         // 置き場所は、リポジトリの中の相対パスの形のものだけを使う（末尾の / は除く。PBI-57）
         const documentsDir = text(v.documentsDir).replace(/\/+$/, "");
@@ -1936,6 +1958,7 @@ export function extractStepPlan(
           ...(Object.keys(images).length > 0 ? { images } : {}),
           ...(imageReason ? { imageReason } : {}),
           ...(services ? { services } : {}),
+          ...(servicesReason ? { servicesReason } : {}),
           ...(exports ? { exports } : {}),
         };
       }
@@ -1981,16 +2004,28 @@ function exportPlansOf(value: unknown): Partial<Record<StepKey, RawExportPlan>> 
 }
 
 /**
+ * オーケストレーターが書いたサービスの指定（PBI-47）。file は対象リポジトリの compose ファイル、compose は共用の compose の
+ * 名前（PBI-70。どちらか一方。両方あれば共用の compose）。
+ */
+export type RawServices =
+  | { file: string; compose?: undefined; names: string[]; steps: StepKey[] }
+  | { compose: string; file?: undefined; names: string[]; steps: StepKey[] };
+
+/**
  * オーケストレーターが書いたサービスの指定（PBI-47）。ファイルはリポジトリの中の相対パス、サービスの名前は compose の
  * 名前の形、工程はサービスを使える工程（コードを動かす工程）だけを使う。使える工程が無ければ、指定しなかったことにする。
+ * 共用の compose（PBI-70）は、名前の形のものだけを使う（ファイルは、プロジェクトの設定のもの）。
  */
-function composeServicesOf(
-  value: unknown,
-): { file: string; names: string[]; steps: StepKey[] } | undefined {
+function composeServicesOf(value: unknown): RawServices | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   const v = value as Record<string, unknown>;
+  const compose = text(v.compose);
   const file = text(v.file);
-  if (!file || file.length > 300 || file.startsWith("/") || file.split(/[\\/]/).includes("..")) {
+  const sharedName = /^[a-z0-9][a-z0-9_-]{0,39}$/.test(compose) ? compose : undefined;
+  if (
+    !sharedName &&
+    (!file || file.length > 300 || file.startsWith("/") || file.split(/[\\/]/).includes(".."))
+  ) {
     return undefined;
   }
   const names = (Array.isArray(v.names) ? v.names : [])
@@ -2001,9 +2036,9 @@ function composeServicesOf(
     const key = StepKey.safeParse(step);
     return key.success && SERVICE_STEPS.includes(key.data) ? [key.data] : [];
   });
-  return steps.length > 0
-    ? { file, names: [...new Set(names)], steps: [...new Set(steps)] }
-    : undefined;
+  if (steps.length === 0) return undefined;
+  const picked = { names: [...new Set(names)], steps: [...new Set(steps)] };
+  return sharedName ? { compose: sharedName, ...picked } : { file, ...picked };
 }
 
 /** docker compose のサービスを使える工程（コードを動かす工程。PBI-47）。 */

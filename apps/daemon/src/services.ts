@@ -1,11 +1,12 @@
-import { spawn } from "node:child_process";
-import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { type ChildProcess, spawn } from "node:child_process";
+import { mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { type DaemonText, message } from "@sacty/core";
 import { parse as parseYaml } from "yaml";
 import { dockerClientEnv } from "./agents/docker.js";
 import type { LocalForward } from "./agents/forward.js";
+import { redact } from "./agents/redact.js";
 
 /**
  * docker compose のサービス（DB・モック API など）を、工程の実行・テストの実行ごとに起動する（PBI-47）。
@@ -20,6 +21,11 @@ export type ServicesSpec = {
   file: string;
   /** 起動するサービス（依存するサービスも起動する）。空なら compose ファイルのすべて。 */
   names: string[];
+  /**
+   * 共用の compose（PBI-70）の名前。あれば、作業領域は取得した共用の compose のリポジトリで、失敗の理由に名前を添える。
+   * compose ファイルの container_name は、外したうえで、sacty のネットワークの別名にする（その名前でも届くように）。
+   */
+  shared?: string;
 };
 
 /** 起動したサービス。エージェントに伝える接続先。 */
@@ -159,6 +165,11 @@ export function sanitizeCompose(
   config: unknown,
   workspaceDir: string,
   names: readonly string[],
+  /**
+   * container_name を、sacty のネットワークの別名にするか（共用の compose。PBI-70）。固定の名前はほかのタスクと
+   * ぶつかるので外すが、別名はネットワークごとなので、ぶつからずにその名前で届く。
+   */
+  options: { aliasContainerNames?: boolean } = {},
 ):
   | { ok: true; config: Json; services: StartedServices["services"] }
   | { ok: false; problems: string[] } {
@@ -287,12 +298,26 @@ export function sanitizeCompose(
       if (port !== undefined && port !== target && !hostPorts.has(port))
         hostPorts.set(port, target);
     }
+    const containerName =
+      typeof service.container_name === "string" ? service.container_name : undefined;
     delete service.ports;
     delete service.container_name;
     if (mode === undefined) {
       const networks = isObject(service.networks) ? { ...service.networks } : { default: null };
       for (const network of Object.keys(networks)) usedNetworks.add(network);
-      service.networks = { ...networks, [SACTY_NETWORK]: null };
+      // container_name は、サービスの名前と違い、ほかのサービスの名前とぶつからない形なら別名にする（PBI-70）
+      const alias =
+        options.aliasContainerNames &&
+        containerName !== undefined &&
+        containerName !== name &&
+        /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,62}$/.test(containerName) &&
+        !Object.hasOwn(all, containerName)
+          ? containerName
+          : undefined;
+      service.networks = {
+        ...networks,
+        [SACTY_NETWORK]: alias ? { aliases: [alias] } : null,
+      };
     }
     services[name] = {
       ...service,
@@ -460,15 +485,25 @@ export interface ServiceRunner {
     runId: string;
     workspaceDir: string;
     spec: ServicesSpec;
+    /** 失敗の理由（compose の出力）から、切り詰める前に取り除く値（共用の compose の取得の認証など。PBI-70）。 */
+    secrets?: readonly string[];
   }): Promise<{ ok: true; started: StartedServices } | { ok: false; message: DaemonText }>;
   /** 止めて消す（コンテナ・ネットワーク・ボリューム）。無ければ何もしない。 */
   stop(runId: string): Promise<void>;
+  /**
+   * 起動している最中（正規化・up --wait の待ち）なら、打ち切る（人間の一時停止・中止。PBI-70 レビュー指摘）。start は
+   * 起動したものを止めて消してから、失敗として返る。起動していなければ何もしない。
+   */
+  abort?(runId: string): void;
 }
 
 /** 出力の末尾（失敗の理由に添える）。 */
 const LOG_TAIL = 2000;
 
 export class DockerComposeServices implements ServiceRunner {
+  /** 起動している最中の実行（打ち切るため）。 */
+  private readonly starting = new Map<string, { aborted: boolean; child?: ChildProcess }>();
+
   constructor(
     private readonly spawnImpl: typeof spawn = spawn,
     /** サービスの準備（healthcheck）を待つ上限（秒）。 */
@@ -482,6 +517,8 @@ export class DockerComposeServices implements ServiceRunner {
   private compose(
     args: string[],
     cwd?: string,
+    /** 起動した子プロセス（打ち切るために覚える）。 */
+    onSpawn?: (child: ChildProcess) => void,
   ): Promise<{ code: number; stdout: string; out: string }> {
     return new Promise((done) => {
       const child = this.spawnImpl("docker", ["compose", ...args], {
@@ -489,6 +526,7 @@ export class DockerComposeServices implements ServiceRunner {
         ...(cwd ? { cwd } : {}),
         stdio: ["ignore", "pipe", "pipe"],
       });
+      onSpawn?.(child);
       let stdout = "";
       let stderr = "";
       child.stdout?.on("data", (chunk) => {
@@ -502,15 +540,52 @@ export class DockerComposeServices implements ServiceRunner {
     });
   }
 
-  async start({ runId, workspaceDir, spec }: Parameters<ServiceRunner["start"]>[0]) {
+  abort(runId: string): void {
+    const state = this.starting.get(runId);
+    if (!state) return;
+    state.aborted = true;
+    state.child?.kill("SIGTERM");
+  }
+
+  async start(input: Parameters<ServiceRunner["start"]>[0]) {
+    const state: { aborted: boolean; child?: ChildProcess } = { aborted: false };
+    this.starting.set(input.runId, state);
+    try {
+      return await this.startOnce(input, state);
+    } finally {
+      this.starting.delete(input.runId);
+    }
+  }
+
+  private async startOnce(
+    { runId, workspaceDir, spec, secrets = [] }: Parameters<ServiceRunner["start"]>[0],
+    state: { aborted: boolean; child?: ChildProcess },
+  ) {
+    const stopped = { ok: false as const, message: message("run.stoppedByPerson") };
+    const track = (child: ChildProcess) => {
+      state.child = child;
+    };
+    // 共用の compose（PBI-70）は、どの共用の compose の失敗かがわかる文言にする
+    const shared = spec.shared;
+    const unsafe = (detail: string) =>
+      shared === undefined
+        ? message("services.unsafe", { file: spec.file, detail })
+        : message("services.sharedUnsafe", { name: shared, file: spec.file, detail });
+    // 出力は、秘密情報を伏せてから切り詰める（切り詰めで秘密情報の一部だけが残らないように）
+    const failed = (out: string) => {
+      const detail = redact(out, secrets).slice(-LOG_TAIL);
+      return shared === undefined
+        ? message("services.failed", { file: spec.file, detail })
+        : message("services.sharedFailed", { name: shared, file: spec.file, detail });
+    };
     const file = resolve(workspaceDir, spec.file);
     if (!inside(workspaceDir, file)) {
+      return { ok: false as const, message: unsafe("作業領域の外のファイルです") };
+    }
+    if (shared !== undefined && !statSync(file, { throwIfNoEntry: false })?.isFile()) {
       return {
         ok: false as const,
-        message: message("services.unsafe", {
-          file: spec.file,
-          detail: "作業領域の外のファイルです",
-        }),
+        message: message("services.sharedMissing", { name: shared, file: spec.file }),
       };
     }
     // 正規化の前に、正規化で元の参照が消える指定（include・extends のファイル、label_file）を確かめる。
@@ -518,43 +593,29 @@ export class DockerComposeServices implements ServiceRunner {
     // compose が読む（PBI-47 レビュー指摘）
     const sources = checkComposeSources(workspaceDir, file);
     if (sources.length > 0) {
-      return {
-        ok: false as const,
-        message: message("services.unsafe", { file: spec.file, detail: sources.join("、") }),
-      };
+      return { ok: false as const, message: unsafe(sources.join("、")) };
     }
     // 正規化（include・extends・変数の展開・相対パスの解決）してから確かめる
     const normalized = await this.compose(
       ["-f", file, "config", "--format", "json", "--no-env-resolution"],
       workspaceDir,
+      track,
     );
+    if (state.aborted) return stopped;
     if (normalized.code !== 0) {
-      return {
-        ok: false as const,
-        message: message("services.failed", {
-          file: spec.file,
-          detail: normalized.out.slice(-LOG_TAIL),
-        }),
-      };
+      return { ok: false as const, message: failed(normalized.out) };
     }
     let parsed: unknown;
     try {
       parsed = JSON.parse(normalized.stdout);
     } catch {
-      return {
-        ok: false as const,
-        message: message("services.failed", {
-          file: spec.file,
-          detail: normalized.out.slice(-LOG_TAIL),
-        }),
-      };
+      return { ok: false as const, message: failed(normalized.out) };
     }
-    const safe = sanitizeCompose(parsed, workspaceDir, spec.names);
+    const safe = sanitizeCompose(parsed, workspaceDir, spec.names, {
+      aliasContainerNames: shared !== undefined,
+    });
     if (!safe.ok) {
-      return {
-        ok: false as const,
-        message: message("services.unsafe", { file: spec.file, detail: safe.problems.join("、") }),
-      };
+      return { ok: false as const, message: unsafe(safe.problems.join("、")) };
     }
     const project = composeProject(runId);
     const dir = mkdtempSync(join(tmpdir(), "sacty-compose-"));
@@ -575,13 +636,16 @@ export class DockerComposeServices implements ServiceRunner {
           ...safe.services.map((s) => s.name),
         ],
         workspaceDir,
+        track,
       );
+      // 打ち切られたら、起動したところまでを止めて消す
+      if (state.aborted) {
+        await this.stop(runId);
+        return stopped;
+      }
       if (up.code !== 0) {
         await this.stop(runId);
-        return {
-          ok: false as const,
-          message: message("services.failed", { file: spec.file, detail: up.out.slice(-LOG_TAIL) }),
-        };
+        return { ok: false as const, message: failed(up.out) };
       }
       return {
         ok: true as const,

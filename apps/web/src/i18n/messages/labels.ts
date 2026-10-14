@@ -129,6 +129,15 @@ const ja = {
     stepImage: (step: string, image: string) => `${step}＝${image}`,
     imagesJoin: "、",
     stepsExports: (exports: string) => ` / 書き出し：${exports}`,
+    /** オーケストレーターが決めたサービス（PBI-47・PBI-70）。 */
+    stepsServices: (names: string, source: string, steps: string, reason?: string) =>
+      ` / サービス：${names || "すべて"}（${source}。${steps}で使う）${reason ? `：${reason}` : ""}`,
+    /** サービスを使わないと判断した（PBI-70）。shared は選ばせた共用の compose の名前。 */
+    stepsNoServices: (shared: string, reason?: string) =>
+      ` / ${shared ? `共用の compose（${shared}）` : "サービス"}：使わない${reason ? `（${reason}）` : "（理由の記載なし）"}`,
+    /** 共用の compose の compose ファイル（PBI-70）。 */
+    sharedComposeFile: (name: string, file: string, where?: string) =>
+      `共用の compose「${name}」の ${file}${where ? `（${where}）` : ""}`,
     stepExport: (
       step: string,
       to: { name: string; location: string } | undefined,
@@ -389,6 +398,12 @@ const en: LabelMessages = {
     stepImage: (step, image) => `${step}=${image}`,
     imagesJoin: ", ",
     stepsExports: (exports) => ` / Export: ${exports}`,
+    stepsServices: (names, source, steps, reason) =>
+      ` / Services: ${names || "all"} (${source}; used in ${steps})${reason ? `: ${reason}` : ""}`,
+    stepsNoServices: (shared, reason) =>
+      ` / ${shared ? `Shared compose (${shared})` : "Services"}: not used${reason ? ` (${reason})` : " (no reason given)"}`,
+    sharedComposeFile: (name, file, where) =>
+      `${file} of the shared compose "${name}"${where ? ` (${where})` : ""}`,
     stepExport: (step, to, reason) =>
       `${step}=${to ? `${to.name}${to.location ? `: ${to.location}` : ""}` : "not exported"}${reason ? ` (${reason})` : ""}`,
     TicketTriaged: (repo, reason, byPerson) =>

@@ -114,6 +114,65 @@ export const ContextSource = z.object({
 });
 export type ContextSource = z.infer<typeof ContextSource>;
 
+/** 共用の compose の名前（オーケストレーターが選ぶときの名前。PBI-70）。 */
+export const SharedComposeName = z
+  .string()
+  .trim()
+  .regex(/^[a-z0-9][a-z0-9_-]{0,39}$/, code("input.sharedComposeName"));
+
+/**
+ * プロジェクトで共用する docker compose（PBI-70）。チームで共用するリポジトリ（git の URL かローカルのパス）の
+ * compose ファイルを、タスクの工程・テストの実行ごとに、そのタスク専用に起動する。設定しただけでは起動せず、
+ * オーケストレーターがタスクごとに要るかを判断する。description は、その判断の手がかり（起動するサービスなど）。
+ * 認証は対象のリポジトリ・コンテキストリポジトリと同じ（HTTPS の GitHub はプロジェクトの gh のアカウント）なので、
+ * URL にユーザー名・パスワードは書かない。
+ */
+export const SharedCompose = z.object({
+  name: SharedComposeName,
+  repo: z
+    .string()
+    .trim()
+    .min(1, code("input.sharedComposeRepoRequired"))
+    .max(500)
+    // URL に認証の値を書かせない（画面・台帳・ログに出るため）
+    .refine((repo) => !/^[a-z][a-z0-9+.-]*:\/\/[^/]*:[^/]*@/i.test(repo), {
+      message: code("input.sharedComposeRepoCredential"),
+    })
+    .refine((repo) => !/^https?:\/\/[^/]*@/i.test(repo), {
+      message: code("input.sharedComposeRepoCredential"),
+    })
+    // git の URL（https://・ssh://・git@host:path）か、ローカルの絶対パス。相対パスは、デーモンのカレントディレクトリ
+    // 次第で取得先が変わるので使えない
+    .refine(
+      (repo) =>
+        repo === "" ||
+        /^[a-z][a-z0-9+.-]*:\/\//i.test(repo) ||
+        /^[^/\s:]+:/.test(repo) ||
+        repo.startsWith("/"),
+      { message: code("input.sharedComposeRepoForm") },
+    ),
+  ref: ContextSource.shape.ref,
+  /** compose ファイルの、リポジトリの根からの相対パス。 */
+  file: z
+    .string()
+    .trim()
+    .min(1, code("input.sharedComposeFile"))
+    .max(300)
+    .refine(
+      (file) =>
+        !file.startsWith("/") &&
+        !file.startsWith("-") &&
+        !file.split(/[\\/]/).includes("..") &&
+        !file.includes("$"),
+      { message: code("input.sharedComposeFile") },
+    ),
+  description: z.preprocess(
+    (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+    z.string().trim().max(1000).optional(),
+  ),
+});
+export type SharedCompose = z.infer<typeof SharedCompose>;
+
 /** 秘密情報：キーチェーンの名前か、1Password の参照（op://…。PBI-34）。値は書かない。 */
 const SecretRefInput = z
   .string()
@@ -226,6 +285,8 @@ export const ProjectDefinition = z.object({
   notification: ProjectNotification.optional(),
   /** チケットの取り込み先（JIRA など。PBI-52）。複数書ける。 */
   tickets: z.array(TicketSourceConfig).max(20).optional(),
+  /** 共用の docker compose（PBI-70）。複数書ける。名前はプロジェクトの中で重ならない。 */
+  sharedComposes: z.array(SharedCompose).max(20).optional(),
   /**
    * GitHub へのアクセスに使う、gh にログイン済みのアカウント（PBI-13）。ホストごとに選ぶ（PBI-40。例
    * { "github.com": "me", "ghe.example.co.jp": "me-corp" }）。GitHub にアクセスするには、そのホストのものを必ず選ぶ
@@ -312,6 +373,14 @@ export function projectConflicts(
         );
       }
     }
+  }
+  // 共用の compose：名前は、オーケストレーターが選ぶ名前なので重ならない（PBI-70）
+  const composeNames = new Set<string>();
+  for (const shared of definition.sharedComposes ?? []) {
+    if (composeNames.has(shared.name)) {
+      problems.push(message("project.sharedComposeDuplicated", { name: shared.name }));
+    }
+    composeNames.add(shared.name);
   }
   return problems;
 }
@@ -408,6 +477,8 @@ export const ProjectExport = z
         notification: ProjectNotification.optional(),
         // チケットの取り込み先（PBI-52）。秘密情報は含まない（接続先の名前だけ）
         tickets: z.array(TicketSourceConfig.strict()).max(20).optional(),
+        // 共用の compose（PBI-70）。認証の値は含まない（URL に書かせない）
+        sharedComposes: z.array(SharedCompose.strict()).max(20).optional(),
       })
       .strict(),
   })
@@ -437,6 +508,9 @@ export function exportProject(project: Project): ProjectExport {
         : {}),
       ...(project.notification ? { notification: project.notification } : {}),
       ...(project.tickets && project.tickets.length > 0 ? { tickets: project.tickets } : {}),
+      ...(project.sharedComposes && project.sharedComposes.length > 0
+        ? { sharedComposes: project.sharedComposes }
+        : {}),
     },
   };
 }

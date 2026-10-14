@@ -254,7 +254,10 @@ head -c ${size} /dev/zero | tr '\\0' x >&2; printf end; exit 3`,
     expect(existsSync(missing)).toBe(false);
   });
 
-  it("流した分は、穴を開けて捨てる（fallocate）。捨てられなくても、出力は変えない", async () => {
+  // 2回に分けて大きな出力（約25MB）を流して確かめるので、ほかのテストと並ぶと既定の5秒を超えることがある
+  it("流した分は、穴を開けて捨てる（fallocate）。捨てられなくても、出力は変えない", {
+    timeout: 30_000,
+  }, async () => {
     const dir = tempDir();
     const log = join(dir, "calls");
     const size = 3 * RELAY_DISCARD_BYTES + 12345;

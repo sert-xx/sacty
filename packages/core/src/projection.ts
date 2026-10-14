@@ -312,7 +312,9 @@ export type Task = {
   /** 工程ごとに使うイメージの名前（PBI-41）。書いていない工程は既定のイメージ。 */
   images?: Partial<Record<StepKey, string>>;
   /** 工程・テストの実行の前に起動する docker compose のサービス（PBI-47）。 */
-  services?: { file: string; names: string[]; steps: StepKey[] };
+  services?: PayloadOf<"StepsChosen">["services"];
+  /** サービスを使う・使わないと判断した理由（PBI-70）。 */
+  servicesReason?: string;
   /** オーケストレーターが決めた、工程ごとの書き出し先と理由（PBI-56。使える接続先が無かったときは無い）。 */
   exportPlans?: Partial<Record<StepKey, ExportPlan>>;
   /** 工程ごとの成果の書き出し（PBI-56）。 */
@@ -460,6 +462,7 @@ export function applyEvent(
       if (event.payload.investigation) task.investigation = event.payload.investigation;
       if (event.payload.images) task.images = event.payload.images;
       if (event.payload.services) task.services = event.payload.services;
+      if (event.payload.servicesReason) task.servicesReason = event.payload.servicesReason;
       if (event.payload.exports) task.exportPlans = event.payload.exports;
       if (event.payload.documentsDir) task.documentsDir = event.payload.documentsDir;
       if (event.payload.reason !== undefined) {

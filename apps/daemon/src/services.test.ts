@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { message } from "@sacty/core";
@@ -649,5 +649,255 @@ describe("正規化した compose の設定から、localhost に転送するポ
       ],
       shared: [8080],
     });
+  });
+});
+
+describe("共用の compose の起動（PBI-70）", () => {
+  /** docker compose の偽物。config は決めた設定を返し、up は決めた終了コードと出力を返す。 */
+  function fakeCompose(config: unknown, up: { code: number; out: string } = { code: 0, out: "" }) {
+    const calls: string[][] = [];
+    const spawnImpl = ((_cmd: string, args: string[]) => {
+      calls.push(args);
+      const child = Object.assign(new EventEmitter(), {
+        stdout: new EventEmitter(),
+        stderr: new EventEmitter(),
+      });
+      setTimeout(() => {
+        if (args.includes("config")) {
+          child.stdout.emit("data", JSON.stringify(config));
+          child.emit("close", 0);
+        } else if (args.includes("up")) {
+          child.stderr.emit("data", up.out);
+          child.emit("close", up.code);
+        } else {
+          child.emit("close", 0);
+        }
+      }, 0);
+      return child;
+    }) as never;
+    return { spawnImpl, calls };
+  }
+  const spec = { file: "compose/redis.yml", names: [], shared: "infra" };
+  beforeEach(() => {
+    mkdirSync(join(ws, "compose", "init"), { recursive: true });
+    writeFileSync(join(ws, "compose", "redis.yml"), "services:\n  redis:\n    image: redis\n");
+  });
+
+  it("compose ファイルが無ければ、どの共用の compose かを示して、docker compose を実行せずに止まる", async () => {
+    const docker = fakeCompose({});
+    const result = await new DockerComposeServices(docker.spawnImpl).start({
+      runId: "r1",
+      workspaceDir: ws,
+      spec: { ...spec, file: "compose/missing.yml" },
+    });
+    expect(result).toEqual({
+      ok: false,
+      message: message("services.sharedMissing", { name: "infra", file: "compose/missing.yml" }),
+    });
+    // ディレクトリはファイルではない
+    const dirAsFile = await new DockerComposeServices(docker.spawnImpl).start({
+      runId: "r1",
+      workspaceDir: ws,
+      spec: { ...spec, file: "compose" },
+    });
+    expect(dirAsFile).toMatchObject({ ok: false, message: { code: "services.sharedMissing" } });
+    expect(docker.calls).toEqual([]);
+  });
+
+  it("取得したリポジトリの中の相対のマウント（初期化スクリプト）は使える。実行ごとのプロジェクトの名前で起動する", async () => {
+    const docker = fakeCompose(
+      normalized({
+        redis: {
+          image: "redis",
+          container_name: "shared-redis",
+          volumes: [{ type: "bind", source: join(ws, "compose", "init"), target: "/init" }],
+        },
+      }),
+    );
+    const result = await new DockerComposeServices(docker.spawnImpl).start({
+      runId: "r1",
+      workspaceDir: ws,
+      spec,
+    });
+    expect(result).toMatchObject({ ok: true, started: { network: "sacty-svc-r1_sacty" } });
+    const up = docker.calls.find((a) => a.includes("up"));
+    expect(up?.slice(0, 3)).toEqual(["compose", "-p", "sacty-svc-r1"]);
+    expect(up).toContain("--wait");
+  });
+
+  it("並行する2つのタスクが同じ共用の compose を起動しても、名前・ネットワーク・ボリュームがぶつからない", async () => {
+    const config = normalized(
+      {
+        redis: {
+          image: "redis",
+          container_name: "shared-redis",
+          ports: [{ target: 6379, published: "6379", protocol: "tcp" }],
+          networks: { default: null },
+          volumes: [{ type: "volume", source: "data", target: "/data" }],
+        },
+      },
+      { volumes: { data: { name: "shared-redis-data" } } },
+    );
+    // up のときに、sacty が書いた設定（-f のファイル）を読んでおく
+    const ups: { project: string; config: Record<string, unknown> }[] = [];
+    const spawnImpl = ((_cmd: string, args: string[]) => {
+      const child = Object.assign(new EventEmitter(), {
+        stdout: new EventEmitter(),
+        stderr: new EventEmitter(),
+      });
+      if (args.includes("up")) {
+        ups.push({
+          project: args[args.indexOf("-p") + 1] ?? "",
+          config: JSON.parse(readFileSync(args[args.indexOf("-f") + 1] ?? "", "utf8")),
+        });
+      }
+      setTimeout(() => {
+        if (args.includes("config")) child.stdout.emit("data", JSON.stringify(config));
+        child.emit("close", 0);
+      }, 0);
+      return child;
+    }) as never;
+    const runner = new DockerComposeServices(spawnImpl);
+    const results = await Promise.all(
+      ["task-a-run", "task-b-run"].map((runId) => runner.start({ runId, workspaceDir: ws, spec })),
+    );
+    expect(results.map((r) => r.ok && r.started.network)).toEqual([
+      "sacty-svc-taskarun_sacty",
+      "sacty-svc-taskbrun_sacty",
+    ]);
+    expect(ups.map((u) => u.project).sort()).toEqual(["sacty-svc-taskarun", "sacty-svc-taskbrun"]);
+    for (const { config: written } of ups) {
+      const redis = (written.services as Record<string, Record<string, unknown>>).redis;
+      // 固定の名前・ホストのポート・ボリュームとネットワークの固定の名前を外す（プロジェクトごとの名前になる）
+      expect(redis).not.toHaveProperty("container_name");
+      expect(redis).not.toHaveProperty("ports");
+      expect(written.volumes).toEqual({ data: {} });
+      expect(written.networks).toEqual({ sacty: {}, default: { ipam: {} } });
+    }
+  });
+
+  it("取得したリポジトリの外のマウント・privileged は、どの共用の compose かを示して止める", async () => {
+    const docker = fakeCompose(
+      normalized({
+        redis: {
+          image: "redis",
+          privileged: true,
+          volumes: [{ type: "bind", source: "/etc", target: "/host-etc" }],
+        },
+      }),
+    );
+    const result = await new DockerComposeServices(docker.spawnImpl).start({
+      runId: "r1",
+      workspaceDir: ws,
+      spec,
+    });
+    expect(result).toEqual({
+      ok: false,
+      message: message("services.sharedUnsafe", {
+        name: "infra",
+        file: "compose/redis.yml",
+        detail:
+          "redis：privileged は使えません、redis：作業領域の外のパス（/etc）はマウントできません",
+      }),
+    });
+    expect(docker.calls.some((a) => a.includes("up"))).toBe(false);
+  });
+
+  it("起動に失敗したら、どの共用の compose かを示す。出力の秘密情報は、伏せてから切り詰める", async () => {
+    // 切り詰めの境界（末尾 2000 文字）が、秘密情報の途中に来る長さにする（伏せる前に切り詰めると、一部が残る）
+    const out = `${"y".repeat(100)}topsecret-value${"z".repeat(1974)}pull access denied`;
+    const docker = fakeCompose(normalized({ redis: { image: "redis" } }), { code: 1, out });
+    const result = await new DockerComposeServices(docker.spawnImpl).start({
+      runId: "r1",
+      workspaceDir: ws,
+      spec,
+      secrets: ["topsecret-value"],
+    });
+    if (result.ok) throw new Error("started");
+    const params = (result.message as { params: { name: string; detail: string } }).params;
+    expect(result.message).toMatchObject({ code: "services.sharedFailed" });
+    expect(params.name).toBe("infra");
+    expect(params.detail).toContain("pull access denied");
+    expect(params.detail).not.toMatch(/secret|value|topsec/);
+    expect(params.detail.length).toBeLessThanOrEqual(2000);
+    // 起動に失敗したら、止めて消す
+    expect(docker.calls.some((a) => a.includes("down"))).toBe(true);
+  });
+
+  it("起動の待ち（up --wait）を打ち切ると、up を止め、起動したところまでを止めて消し、止めたこととして返す（レビュー指摘）", async () => {
+    const calls: string[][] = [];
+    const killed: string[] = [];
+    const upSpawned = Promise.withResolvers<void>();
+    const spawnImpl = ((_cmd: string, args: string[]) => {
+      calls.push(args);
+      const child = Object.assign(new EventEmitter(), {
+        stdout: new EventEmitter(),
+        stderr: new EventEmitter(),
+        kill: (signal: string) => {
+          killed.push(signal);
+          setTimeout(() => child.emit("close", 130), 0);
+          return true;
+        },
+      });
+      if (args.includes("up")) {
+        // 打ち切られるまで終わらない（healthcheck を待っている）
+        upSpawned.resolve();
+      } else {
+        setTimeout(() => {
+          if (args.includes("config")) {
+            child.stdout.emit("data", JSON.stringify(normalized({ redis: { image: "redis" } })));
+          }
+          child.emit("close", 0);
+        }, 0);
+      }
+      return child;
+    }) as never;
+    const runner = new DockerComposeServices(spawnImpl);
+    // 起動していない実行を打ち切っても、何もしない
+    runner.abort("other-run");
+    const starting = runner.start({ runId: "r1", workspaceDir: ws, spec });
+    await upSpawned.promise;
+    runner.abort("r1");
+    expect(await starting).toEqual({ ok: false, message: message("run.stoppedByPerson") });
+    expect(killed).toEqual(["SIGTERM"]);
+    expect(calls.at(-1)).toEqual([
+      "compose",
+      "-p",
+      "sacty-svc-r1",
+      "down",
+      "-v",
+      "--remove-orphans",
+    ]);
+    // 終わった後に打ち切っても、何もしない
+    runner.abort("r1");
+    expect(killed).toHaveLength(1);
+  });
+
+  it("container_name は、共用の compose だけ sacty のネットワークの別名にする（サービスの名前とぶつかるものは付けない）", () => {
+    const config = normalized({
+      cassandra: { image: "cassandra", container_name: "cassandra-db" },
+      redis: { image: "redis", container_name: "redis" },
+      cache: { image: "redis", container_name: "cassandra" },
+      bad: { image: "redis", container_name: "has space" },
+    });
+    const shared = sanitizeCompose(config, ws, [], { aliasContainerNames: true });
+    if (!shared.ok) throw new Error(shared.problems.join());
+    const services = shared.config.services as Record<string, Record<string, unknown>>;
+    expect(services.cassandra?.networks).toEqual({
+      default: null,
+      sacty: { aliases: ["cassandra-db"] },
+    });
+    // サービスの名前と同じ・ほかのサービスの名前・名前の形でないものは、別名にしない
+    expect(services.redis?.networks).toEqual({ default: null, sacty: null });
+    expect(services.cache?.networks).toEqual({ default: null, sacty: null });
+    expect(services.bad?.networks).toEqual({ default: null, sacty: null });
+    for (const service of Object.values(services)) {
+      expect(service).not.toHaveProperty("container_name");
+    }
+    // 対象リポジトリの compose は、これまでどおり外すだけ
+    const own = sanitizeCompose(config, ws, []);
+    if (!own.ok) throw new Error(own.problems.join());
+    const ownServices = own.config.services as Record<string, Record<string, unknown>>;
+    expect(ownServices.cassandra?.networks).toEqual({ default: null, sacty: null });
   });
 });

@@ -37,6 +37,7 @@ import {
   MAX_CHANGE_REQUESTS,
   MAX_INTEGRATION_ATTEMPTS,
   MAX_VERIFY_ATTEMPTS,
+  mapFreeText,
   message,
   openProposal,
   type PauseReason,
@@ -59,6 +60,7 @@ import {
   responsibleTicketProject,
   reworkTargets,
   SactySettings,
+  type SharedCompose,
   STEP_PLANS,
   StepKey,
   StepPullRequestKey,
@@ -161,6 +163,7 @@ import {
   integrationViewpointIds,
   investigationMarker,
   type RawExportPlan,
+  type RawServices,
   REPRODUCTION_VIEWPOINT,
   REQUIREMENTS_VIEWPOINT,
   referencedPullRequest,
@@ -185,6 +188,11 @@ import type {
   StoredSessionLog,
 } from "./session-logs.js";
 import type { SettingsStore } from "./settings.js";
+import {
+  GitSharedComposeFetcher,
+  type SharedComposeFetcher,
+  sharedComposeRunDir,
+} from "./shared-compose.js";
 import { type FoundTicket, type TicketClient, ticketErrorText } from "./tickets.js";
 
 /**
@@ -192,6 +200,14 @@ import { type FoundTicket, type TicketClient, ticketErrorText } from "./tickets.
  * 読み取り専用で別にマウントする。作業領域の写しは PR 由来のリンクやファイルを含むので、その中には書かない。
  */
 const REVIEW_DIFF_FILE = "pr.diff";
+
+/** 共用の compose の取得の失敗の理由（git の出力）の上限（PBI-70）。 */
+const SHARED_FETCH_DETAIL_MAX = 2000;
+
+/** 文の、外から来た文の部分を、末尾の max 文字に切り詰める（秘密情報を伏せた後に使う）。 */
+function clipText(text: DaemonText, max: number): DaemonText {
+  return mapFreeText(text, (value) => (value.length > max ? `…${value.slice(-max)}` : value));
+}
 
 type ActivityItem = { actor: Actor; event: EventInput };
 
@@ -249,6 +265,10 @@ export type ServiceDeps = {
   tickets?: TicketClient;
   /** docker compose のサービスを起動する口（PBI-47）。無ければ、サービスを使わない。 */
   services?: ServiceRunner;
+  /**
+   * 共用の compose のリポジトリの取得（PBI-70）。無ければ、作業領域の根の下にキャッシュを置いて git で取得する。
+   */
+  sharedComposes?: SharedComposeFetcher;
   /** プロジェクトの設定。 */
   projects: ProjectStore;
   /** sacty 全体の設定（取り込むラベルなど。PBI-26）。 */
@@ -343,6 +363,8 @@ export class TaskService {
   private readonly runningTask = new AsyncLocalStorage<string>();
   /** 人間が一時停止・中止を求めたタスク。実行中の処理は、終わったら一時停止として記録する。 */
   private readonly pauseRequested = new Set<string>();
+  /** 共用の compose の取得（deps に無いときの既定。PBI-70）。 */
+  private defaultSharedComposes: SharedComposeFetcher | undefined;
   /** 中止の後片付けをしているタスク（その間に実行を始めないため）。 */
   private readonly cancelling = new Set<string>();
   /**
@@ -945,11 +967,69 @@ export class TaskService {
       : Object.values(config.images ?? {}).map(({ name, description }) => ({ name, description }));
     // 成果の書き出し先に使える接続先と、プロジェクトのコンテキストの規約（PBI-56）
     const exports = await this.exportDestinations(task, config);
+    // プロジェクトの共用の compose（PBI-70）。要るかはオーケストレーターが決める（ここでは取得しない）
+    const shared = task.repository
+      ? (this.deps.projects.get(task.projectId)?.sharedComposes ?? [])
+      : [];
     const choice = this.deps.planner
       ? await this.deps.planner(task)
-      : await this.askOrchestrator(task, config, candidates, exports);
+      : await this.askOrchestrator(task, config, candidates, exports, shared);
     if ("failure" in choice) return choice;
-    return this.withImages(this.withExports(choice, exports.destinations), config, pinned);
+    const withShared = this.withSharedCompose(choice, shared);
+    if ("failure" in withShared) return withShared;
+    return this.withImages(this.withExports(withShared, exports.destinations), config, pinned);
+  }
+
+  /**
+   * オーケストレーターが選んだサービスを、記録する形にする（PBI-70）。共用の compose を名前で選んだなら、プロジェクトの
+   * 設定と照らし、compose ファイル・リポジトリ・ref を記録する（どれを使ったかを残す）。設定に無い名前なら、理由を示して
+   * 止める（再開すると選び直す）。選ばせた共用の compose の名前も残す（使わなかったことがわかるように）。
+   */
+  private withSharedCompose(
+    choice: PlannedSteps,
+    shared: readonly SharedCompose[],
+  ):
+    | (Omit<ChosenSteps, "exports"> & { exports?: PlannedSteps["exports"] })
+    | { failure: Extract<EventInput, { type: "OrchestratorFailed" }>["payload"] } {
+    const { services: raw, ...rest } = choice;
+    const offered = shared.length > 0 ? { sharedComposes: shared.map((s) => s.name) } : {};
+    if (!raw) return { ...rest, ...offered };
+    if (raw.compose === undefined) {
+      return {
+        ...rest,
+        ...offered,
+        services: { file: raw.file, names: raw.names, steps: raw.steps },
+      };
+    }
+    const found = shared.find((s) => s.name === raw.compose);
+    if (!found) {
+      return {
+        failure: {
+          reason: "error",
+          message: message("orchestrator.failed", {
+            detail: message("services.sharedUnknown", { name: raw.compose }),
+          }),
+          agentId: choice.agentId ?? "unknown",
+          ...(choice.authMode ? { authMode: choice.authMode } : {}),
+          ...(choice.model ? { model: choice.model } : {}),
+          ...(choice.reasoningEffort ? { reasoningEffort: choice.reasoningEffort } : {}),
+          ...(choice.runId ? { runId: choice.runId } : {}),
+          ...(choice.usage ? { usage: choice.usage } : {}),
+          costUsd: choice.costUsd,
+          estimated: choice.estimated,
+        },
+      };
+    }
+    return {
+      ...rest,
+      ...offered,
+      services: {
+        file: found.file,
+        names: raw.names,
+        steps: raw.steps,
+        compose: { name: found.name, repo: found.repo, ...(found.ref ? { ref: found.ref } : {}) },
+      },
+    };
   }
 
   /**
@@ -996,7 +1076,7 @@ export class TaskService {
    * 書き出し先（無ければ書き出さない）と理由を必ず持たせる。使える接続先が無い・書き出せる工程が無いなら、持たない。
    */
   private withExports(
-    choice: PlannedSteps,
+    choice: Omit<ChosenSteps, "exports"> & { exports?: PlannedSteps["exports"] },
     destinations: readonly ExportDestination[],
   ): ChosenSteps {
     const { exports: raw, ...rest } = choice;
@@ -1022,11 +1102,26 @@ export class TaskService {
   /**
    * 工程で使う docker compose のサービス（PBI-47）。オーケストレーターが決めた工程だけ。内容の調査では起動しない。
    */
-  private serviceSpec(task: Task, step: StepKey): ServicesSpec | undefined {
+  private serviceSpec(
+    task: Task,
+    step: StepKey,
+  ): (ServicesSpec & { compose?: { name: string; repo: string; ref?: string } }) | undefined {
     const services = task.services;
     if (!this.deps.services || !services?.steps.includes(step)) return undefined;
     if (step === "investigate" && task.investigation !== "bug") return undefined;
-    return { file: services.file, names: services.names };
+    return {
+      file: services.file,
+      names: services.names,
+      ...(services.compose ? { shared: services.compose.name, compose: services.compose } : {}),
+    };
+  }
+
+  /** 共用の compose の取得（PBI-70）。無ければ、作業領域の根の下にキャッシュを置いて git で取得する。 */
+  private get sharedComposeFetcher(): SharedComposeFetcher {
+    this.defaultSharedComposes ??= new GitSharedComposeFetcher(
+      join(this.deps.workspaceRoot, "_cache", "shared-compose"),
+    );
+    return this.deps.sharedComposes ?? this.defaultSharedComposes;
   }
 
   /** 工程・テストの実行の前に、サービスを起動する（PBI-47）。使わない工程なら undefined。 */
@@ -1039,11 +1134,63 @@ export class TaskService {
   ): Promise<
     { ok: true; started: StartedServices } | { ok: false; message: DaemonText } | undefined
   > {
-    const spec = this.serviceSpec(task, step);
-    if (!spec || !this.deps.services) return undefined;
-    // 人間が止めたなら、起動しない
-    if (this.pauseRequested.has(task.id)) return undefined;
-    const result = await this.deps.services.start({ runId, workspaceDir, spec });
+    const found = this.serviceSpec(task, step);
+    const services = this.deps.services;
+    if (!found || !services) return undefined;
+    // 人間が止めた（一時停止・中止）なら、起動しない
+    const stopped = { ok: false as const, message: message("run.stoppedByPerson") };
+    if (this.stopRequested(task.id)) return stopped;
+    // 起動の待ち（up --wait）の間に止められたら、起動を打ち切れるように、実行として覚える
+    this.track(runId);
+    const { compose, ...spec } = found;
+    // 共用の compose（PBI-70）は、実行ごとのディレクトリに取得して、そこを作業領域として起動する（マウントできるのは、
+    // 取得したリポジトリの中だけ）。HTTPS の GitHub は、コンテキストリポジトリと同じくプロジェクトの gh のアカウントで取得する
+    const usedSecrets: string[] = [];
+    let commit: string | undefined;
+    let dir = workspaceDir;
+    if (compose) {
+      dir = sharedComposeRunDir(this.deps.workspaceRoot, runId);
+      try {
+        const authEnv = await this.gitAuth(task, compose.repo, usedSecrets);
+        ({ commit } = await this.sharedComposeFetcher.checkout({
+          repo: compose.repo,
+          ...(compose.ref ? { ref: compose.ref } : {}),
+          dest: dir,
+          ...(authEnv ? { authEnv } : {}),
+        }));
+      } catch (error) {
+        rmSync(dir, { recursive: true, force: true });
+        if (this.stopRequested(task.id)) return stopped;
+        // 認証の値を伏せてから、切り詰める
+        const detail = redactText(errorText(error), usedSecrets);
+        return {
+          ok: false,
+          message: message("services.sharedFetchFailed", {
+            name: compose.name,
+            repo: compose.repo,
+            detail: clipText(detail, SHARED_FETCH_DETAIL_MAX),
+          }),
+        };
+      }
+    }
+    // 取得（認証の用意・取得）を待つ間に止められたら、取得したものを片付けて起動しない
+    if (this.stopRequested(task.id)) {
+      if (compose) rmSync(dir, { recursive: true, force: true });
+      return stopped;
+    }
+    const result = await services.start({
+      runId,
+      workspaceDir: dir,
+      spec,
+      ...(usedSecrets.length > 0 ? { secrets: usedSecrets } : {}),
+    });
+    // 起動を待つ間に止められたら、起動したものを止めて消し、使わない（打ち切って失敗したときも、止めたことにする）
+    if (this.stopRequested(task.id)) {
+      if (result.ok) await services.stop(runId).catch(() => undefined);
+      if (compose) rmSync(dir, { recursive: true, force: true });
+      return stopped;
+    }
+    if (!result.ok && compose) rmSync(dir, { recursive: true, force: true });
     if (result.ok) {
       // 複数のサービスが使うポートは、localhost に転送しない（PBI-60）
       const { shared } = localForwards(result.started.services);
@@ -1057,6 +1204,7 @@ export class TaskService {
               step,
               file: spec.file,
               services: result.started.services,
+              ...(compose && commit ? { compose: { name: compose.name, commit } } : {}),
               ...(forTests ? { forTests } : {}),
               ...(shared.length > 0 ? { sharedPorts: shared } : {}),
             },
@@ -1091,8 +1239,13 @@ export class TaskService {
 
   /** サービスを止めて消す（PBI-47）。使わない工程なら何もしない。止められなくても、工程の結果は変えない。 */
   private async stopServices(task: Task, step: StepKey, runId: string): Promise<void> {
-    if (!this.serviceSpec(this.tasks.get(task.id) ?? task, step) || !this.deps.services) return;
+    const spec = this.serviceSpec(this.tasks.get(task.id) ?? task, step);
+    if (!spec || !this.deps.services) return;
     await this.deps.services.stop(runId).catch(() => undefined);
+    // 共用の compose を取得したディレクトリも消す（PBI-70）
+    if (spec.compose) {
+      rmSync(sharedComposeRunDir(this.deps.workspaceRoot, runId), { recursive: true, force: true });
+    }
   }
 
   /** プロジェクトの対象で指定したイメージの名前（PBI-41）。 */
@@ -1154,6 +1307,7 @@ export class TaskService {
     config: SactyConfig,
     images: { name: string; description: string }[],
     exports: { destinations: ExportDestination[]; rules: string },
+    sharedComposes: readonly SharedCompose[] = [],
   ): Promise<
     PlannedSteps | { failure: Extract<EventInput, { type: "OrchestratorFailed" }>["payload"] }
   > {
@@ -1170,6 +1324,16 @@ export class TaskService {
           // 要求要件・設計を PR でレビューするなら、成果のファイルの置き場所を決めさせる（PBI-57）
           ...(task.repository && this.deps.stepPullRequests !== false
             ? { documents: { rules: exports.rules } }
+            : {}),
+          // 共用の compose（PBI-70）。要るかをタスクごとに判断させる
+          ...(sharedComposes.length > 0
+            ? {
+                sharedComposes: sharedComposes.map((s) => ({
+                  name: s.name,
+                  file: s.file,
+                  ...(s.description ? { description: s.description } : {}),
+                })),
+              }
             : {}),
         }),
         role: "orchestrator",
@@ -1208,6 +1372,7 @@ export class TaskService {
         ...(chosen.images ? { images: chosen.images } : {}),
         ...(chosen.imageReason ? { imageReason: chosen.imageReason } : {}),
         ...(chosen.services ? { services: chosen.services } : {}),
+        ...(chosen.servicesReason ? { servicesReason: chosen.servicesReason } : {}),
         ...(chosen.baseBranch ? { baseBranch: chosen.baseBranch } : {}),
         ...(chosen.exports ? { exports: chosen.exports } : {}),
         ...(chosen.documentsDir ? { documentsDir: chosen.documentsDir } : {}),
@@ -3094,6 +3259,8 @@ export class TaskService {
         workspaceDir: dir,
         command: testCommand,
       });
+      // 人間が止めたなら、記録しない（止めた記録は runNext の後始末で行う。再開するとテストからやり直す）
+      if (this.pauseRequested.has(task.id)) return;
       // テストに使うサービスを起動できなければ、テストを実行せずに止める（再開するとテストからやり直す。PBI-47）
       if (!ran.ok) {
         this.append(this.mustGet(task.id), [
@@ -3111,8 +3278,6 @@ export class TaskService {
         return;
       }
       const result = ran.result;
-      // 人間が止めた（コンテナを止めた）テストの結果は記録しない。再開するとテストからやり直す
-      if (this.pauseRequested.has(task.id)) return;
       const passed = result.exitCode === 0 && unmappedViewpoints.length === 0;
       current = this.append(current, [
         {
@@ -3641,7 +3806,14 @@ export class TaskService {
     for (const runId of runIds) {
       this.deps.executor.kill(runId);
       this.deps.tests.kill(runId);
+      // サービスの起動の待ち（up --wait）も打ち切る（PBI-70 レビュー指摘）
+      this.deps.services?.abort?.(runId);
     }
+  }
+
+  /** 人間が一時停止・中止を求めたか。 */
+  private stopRequested(taskId: string): boolean {
+    return this.pauseRequested.has(taskId) || this.cancelling.has(taskId);
   }
 
   /**
@@ -5038,8 +5210,10 @@ type ChosenSteps = Extract<EventInput, { type: "StepsChosen" }>["payload"] & {
  * オーケストレーター（テストでは planner）が選んだ工程。書き出し先（PBI-56）は、使える接続先と照らす前の形
  * （接続先の種類が無ければ名前で探す）。
  */
-export type PlannedSteps = Omit<ChosenSteps, "exports"> & {
+export type PlannedSteps = Omit<ChosenSteps, "exports" | "services" | "sharedComposes"> & {
   exports?: Partial<Record<StepKey, RawExportPlan>>;
+  /** サービス（PBI-47）。共用の compose（PBI-70）は名前だけで、プロジェクトの設定と照らす前の形。 */
+  services?: RawServices;
 };
 
 /** PR のレビューの取り込みのタスクの工程（レビューだけ。オーケストレーターは使わないので費用は無い。PBI-44）。 */

@@ -23,6 +23,7 @@ import { TaskService } from "./service.js";
 import { DockerComposeServices } from "./services.js";
 import { SessionLogStore } from "./session-logs.js";
 import { SqliteSettingsStore } from "./settings.js";
+import { cleanupSharedComposeRuns, GitSharedComposeFetcher } from "./shared-compose.js";
 import { JiraTickets } from "./tickets.js";
 import { Worker } from "./worker.js";
 
@@ -55,6 +56,9 @@ const tests = new DockerTestRunner();
 // docker compose のサービス（PBI-47）。前回、止める前にデーモンが終わって残ったサービスを片付ける
 const composeServices = new DockerComposeServices();
 void composeServices.cleanupAll();
+// 共用の compose（PBI-70）。リポジトリのキャッシュは残し、前回の実行ごとの取得は消す
+const workspaceRoot = join(home, "workspaces");
+cleanupSharedComposeRuns(workspaceRoot);
 // GitHub へのアクセスは、ホストの gh のアカウントで行う（PBI-13）
 const github = new GhCliAuth();
 // ホストのゲートウェイ（PBI-37）。リトライの上限は、リクエストごとに設定から読み直す
@@ -99,8 +103,9 @@ const service = new TaskService({
   github,
   tests,
   services: composeServices,
+  sharedComposes: new GitSharedComposeFetcher(join(home, "cache", "shared-compose")),
   tickets,
-  workspaceRoot: join(home, "workspaces"),
+  workspaceRoot,
   // エージェントの実行ごとのセッションログ（PBI-62）。中止の掃除では消さない（監査に使うため）
   sessionLogs: new SessionLogStore(join(home, "runs")),
   gateway,
