@@ -2,7 +2,7 @@
 
 - 日付: 2026-10-14（UTC）
 - タスク: PBI-88
-- PR: #PR_NUMBER
+- PR: #96
 - ブランチ: feat/issue-88-pr-intake-label
 - 関係する ADR: [sacty が作る PR に取り込むラベルを付け、別のタスクのレビューを元のタスクの PR の指摘として取り込む](../adr/20261014-1445-label-sacty-pull-requests-for-review.md)
 
@@ -32,7 +32,7 @@ sacty が作った PR を、作ったタスクとは別のコンテキストの�
 
 ## 確かめたこと
 
-- `npm run lint`（終了コード 0）、`npm run typecheck`、`npx vitest run`（53 ファイル・1251 件）、`npm run build`、`npx vitest run tests/docs`。
+- `npm run lint`（終了コード 0）、`npm run typecheck`、`npx vitest run`、`npm run build`、`npx vitest run tests/docs`。
 - テストで確かめたこと：要求要件・設計・実装の PR すべてにラベルを付ける。作り直した PR（新しい番号）には付け、同じ PR の更新では付け直さない。
   設定が無い・PR のトリアージが Off なら付けない。失敗しても承認待ちに進み、理由が残り、トークンが台帳に出ない。ラベルを付けた PR が
   別のレビューだけのタスクになり、レビューを投稿し、元のタスクの指摘の取り込みにそのタスクが渡され、指摘が取り込まれて差し戻しになり、
