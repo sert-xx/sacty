@@ -1,5 +1,6 @@
 import {
   type ActivityEvent,
+  deliveredWithoutChanges,
   formatUsd,
   GATED_STEPS,
   gatePullRequest,
@@ -18,7 +19,10 @@ export function statusText(task: Task, l: LabelMessages): string {
   if (task.status === "paused" && task.pausedReason) return l.pause[task.pausedReason];
   const proposal = openProposal(task);
   if (proposal && !proposal.judgement) return l.state.guardianJudging;
-  if (task.status === "idle" && isCompleted(task)) return l.state.completed;
+  if (task.status === "idle" && isCompleted(task)) {
+    // 実装に変更が無く、PR を作らずに完了した（PBI-90）
+    return deliveredWithoutChanges(task) ? l.state.completedNoChanges : l.state.completed;
+  }
   if (task.status === "idle" && task.verification === "pending") return l.state.testsRunning;
   if (task.status === "idle" && task.reproductionPending) return l.state.testsRunning;
   if (task.status === "idle" && task.verification === "tests_passed") {
@@ -30,6 +34,8 @@ export function statusText(task: Task, l: LabelMessages): string {
   }
   if (task.status === "awaiting_approval" && task.pendingReview) return l.state.reworkJudging;
   if (task.status === "awaiting_approval" && task.gate?.step === "pr") {
+    // 実装に変更が無く、PR を作らなかった（PBI-90）。画面で、変更なしで完了にするかを判断する
+    if (deliveredWithoutChanges(task)) return l.state.noChangesReview(task.gate.submission);
     // PR を作ったタスクは、PR のマージで承認する（PBI-14a）
     if (task.pullRequestState === "closed") return l.state.prClosed;
     if (task.pullRequestState === "merged_outdated") return l.state.prMergedOutdated;
@@ -322,6 +328,8 @@ export function describeEvent(event: ActivityEvent, l: LabelMessages): string {
             event.payload.commit.slice(0, 7),
           )
         : e.branchPushed(event.payload.branch, event.payload.commit.slice(0, 7));
+    case "NoChangesFound":
+      return e.NoChangesFound;
     case "PullRequestLabeled":
       return e.PullRequestLabeled(event.payload.number, event.payload.label, event.payload.created);
     case "PullRequestLabelFailed":

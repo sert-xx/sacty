@@ -4,6 +4,7 @@ import {
   awaitingTicketTriage,
   canRereview,
   canRetryExport,
+  deliveredWithoutChanges,
   exportDue,
   gatePullRequest,
   investigationIsGoal,
@@ -263,9 +264,11 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
                             ? m.gate.prMergedOutdatedHelp
                             : watched?.step === "pr"
                               ? m.gate.prHelp
-                              : watched
-                                ? m.gate.stepPrHelp(labels.step[watched.step])
-                                : m.gate.reviewHelp}
+                              : task.gate?.step === "pr" && deliveredWithoutChanges(task)
+                                ? m.gate.noChangesHelp
+                                : watched
+                                  ? m.gate.stepPrHelp(labels.step[watched.step])
+                                  : m.gate.reviewHelp}
             </p>
           </div>
           <Link

@@ -1,6 +1,7 @@
 import {
   appliedProposalFor,
   changeRounds,
+  deliveredWithoutChanges,
   gatePullRequest,
   MAX_CHANGE_REQUESTS,
   reworkTargets,
@@ -231,6 +232,7 @@ async function Review({ params }: { params: Promise<{ id: string }> }) {
             maxChanges={MAX_CHANGE_REQUESTS}
             pendingComments={task.escalation?.pendingRemarks.map((r) => r.text) ?? []}
             notReproduced={step === "reproduce"}
+            noChanges={step === "pr" && deliveredWithoutChanges(task)}
             pullRequest={
               // 成果物チェックの PR と、要求要件・設計の PR（PBI-57）。PR のマージで承認する
               watched?.step === step

@@ -53,7 +53,8 @@
      置き場所・リンク先・見出しは、マージの後の監視の `DEPLOYMENT_SKILL_PATHS`・`DEPLOYMENT_HEADING` から作る
      （[マージの後の監視](deployment-watch.md)）。
 - ゴールには、整っていて変更が要らなければ PR を作らずに調査だけで終え、項目ごとの検査の結果を残すことも書く（オーケストレーターが
-  `investigate` を選べば、調査の結果を画面で承認して完了する）。
+  `investigate` を選べば、調査の結果を画面で承認して完了する）。工程を進めた後に変更が要らないとわかったときは、ファイルを変えずに
+  検査の結果と理由を実装の説明に書くよう求める（PR を作らず、人間が確かめて変更なしで完了する。[承認と差し戻し](approval.md#実装に変更が無いとき)）。
 
 コード: `packages/core/src/events.ts`（`TaskTemplate`・`CreateTemplateTaskInput`・`TaskCreated`）、`apps/daemon/src/service.ts`（`createTask`・`createTemplateTask`・`projectRepository`）、`apps/daemon/src/task-templates.ts`（`templateTask`）、`apps/daemon/src/deployment.ts`（`DEPLOYMENT_SKILL_PATHS`・`DEPLOYMENT_HEADING`）
 

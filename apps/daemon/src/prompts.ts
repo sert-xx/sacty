@@ -711,6 +711,7 @@ export function buildPrompt(
           "- 再現のテストは、不具合を直すために変えない（テストの誤りを直す場合は、その理由を説明に書く）",
           "- ほかのテストも通るようにする。必要なら、直した振る舞いを確かめるテストを足す",
           "- コミットやプッシュはしない（sacty が行います）",
+          NO_CHANGE_LINE,
           `- 修正の説明をMarkdownで書き、そのあとに、観点 ${REPRODUCTION_VIEWPOINT}（再現のテストが通る）とテストの対応を次の形式で必ず付ける`,
           "```json",
           `{"${TEST_MAP_HEADING}": [{"viewpointId": "${REPRODUCTION_VIEWPOINT}", "tests": ["テストのファイル › テストの名前"]}]}`,
@@ -750,6 +751,7 @@ export function buildPrompt(
         "- テストは、観点の入力を与え、期待結果を確かめるものにする（観点を検証しない形だけのテストにしない）",
         "- 書いたテストは、リポジトリのテストのコマンドで実行されるようにする",
         "- コミットやプッシュはしない（sacty が行います）",
+        NO_CHANGE_LINE,
         "- 実装の説明をMarkdownで書き、そのあとに、観点ごとのテストの対応を次の形式で必ず付ける",
         "```json",
         `{"${TEST_MAP_HEADING}": [{"viewpointId": "TV-1", "tests": ["テストのファイル › テストの名前"]}]}`,
@@ -1973,6 +1975,13 @@ function documentsChoiceLines(rules: string | undefined): string[] {
       : []),
   ];
 }
+
+/**
+ * 実装の工程で、変更が要らないとわかったときの指示（PBI-90）。何も変えなければ、sacty は PR を作らず、成果物チェックで
+ * 人間が変更なしで完了にするかを判断する。
+ */
+const NO_CHANGE_LINE =
+  "- すでに満たしていて変更が要らないとわかったら、ファイルを変えずに、変更が要らない理由と根拠（満たしている箇所・それを確かめているテスト）を説明に書く（何も変えなければ、sacty は PR を作らず、人間が確かめて変更なしで完了にする）";
 
 /** オーケストレーターに渡す、工程の組み合わせの説明（PBI-17）。 */
 const planDescriptions: Record<StepPlan, string> = {

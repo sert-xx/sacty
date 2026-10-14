@@ -225,7 +225,7 @@ import {
   verificationBasis,
 } from "./prompts.js";
 import { CONTAINER_LOGS_DIR, stageQuestionLogs } from "./question-logs.js";
-import type { RepositoryWorkspace } from "./repository.js";
+import { NothingToCommitError, type RepositoryWorkspace } from "./repository.js";
 import { secretUses } from "./secret-uses.js";
 import { type PrefetchingSecretStore, SecretNotFoundError, type SecretStore } from "./secrets.js";
 import {
@@ -5011,6 +5011,24 @@ export class TaskService {
       // 取り込むラベルを付ける（失敗しても PR の作成は失敗にしない。PBI-88）
       await this.labelPullRequest(task.id, prRepo, pr.number, token, usedSecrets);
     } catch (error) {
+      // 実装が起点から何も変えていなかった（PBI-90）。まだ PR を作っていなければ、PR を作らずに成果物チェックで人間に
+      // 確かめてもらう（実装の説明に、変更が要らない理由がある。承認すれば変更なしで完了、差し戻せば実装をやり直す）。
+      // タスクブランチ（PBI-57）は、ベースブランチへの PR を作らないまま残る。作った PR の作り直しで変更が無くなったときは、
+      // 今までどおり止める（開いている PR をどうするかは人が決める）
+      if (error instanceof NothingToCommitError && !task.pullRequest) {
+        const submitted = this.append(task, [
+          {
+            actor: "sacty",
+            event: {
+              type: "NoChangesFound",
+              payload: { submission: (task.submissions.pr ?? 0) + 1 },
+            },
+          },
+          ...this.submitEvents(task, "pr"),
+        ]);
+        this.checkBudget(submitted);
+        return;
+      }
       fail(message("pr.failed", { detail: errorText(error) }));
     }
   }

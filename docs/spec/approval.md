@@ -3,14 +3,15 @@
 承認ゲートのある工程は、人間が承認すると次の工程へ進む。承認は、sacty の画面で行うか、対象のリポジトリへの PR のマージで行う
 （承認＝マージ）。差し戻すと、選んだ工程からやり直す。同じ工程への差し戻しが上限を超えると、エスカレーション（人間の判断待ち）になる。
 
-関係する ADR: [sacty が作る PR に取り込むラベルを付け、別のタスクのレビューを元のタスクの PR の指摘として取り込む](../adr/20261014-1445-label-sacty-pull-requests-for-review.md)、[sacty が作る PR の本文を、リポジトリ・Org の PR テンプレートの見出しに沿って決まった規則で埋める](../adr/20261014-1517-pr-body-follows-repository-template.md)
+関係する ADR: [sacty が作る PR に取り込むラベルを付け、別のタスクのレビューを元のタスクの PR の指摘として取り込む](../adr/20261014-1445-label-sacty-pull-requests-for-review.md)、[sacty が作る PR の本文を、リポジトリ・Org の PR テンプレートの見出しに沿って決まった規則で埋める](../adr/20261014-1517-pr-body-follows-repository-template.md)、[実装に変更が無ければ PR を作らず、人間が確かめて変更なしで完了にする](../adr/20261014-2216-complete-without-changes.md)
 
 ## 画面での承認
 
 - 承認できるのは、状態が `awaiting_approval` か `escalated` で、工程が承認待ちの工程（`gate.step`）と同じで、画面が見ていた提出の回
   （`submission`）がいまの回と同じとき（違えば `gate.staleSubmission`）。
 - 再現（`reproduce`）の承認待ち（再現できなかった）は承認できない。
-- PR を作った工程（成果物チェック、PR のある要求要件・設計）は、画面からは承認できない（`gate.approveOnPullRequest`）。
+- PR を作った工程（成果物チェック、PR のある要求要件・設計）は、画面からは承認できない（`gate.approveOnPullRequest`）。実装に変更が
+  無く PR を作らなかった成果物チェックは、画面で承認する（下の「実装に変更が無いとき」）。
 - 承認した成果は固定される（承認した工程の出力は、後から変わらない）。承認の後、次の工程が実行できる工程なら実行待ちに、
   そうでなければ `idle` にする。
 
@@ -32,6 +33,23 @@
 - 実装は、タスクブランチがあればタスクブランチの最新に積み、タスクブランチからベースブランチへの PR（成果物チェック）にする。
   タスクブランチに、要求要件・設計のファイル以外の変更が積まれていれば、公開を止める（`pr.taskBranchChanged`）。
 - タスク分割の子タスクは、それぞれ自分のタスクブランチを持つ。
+
+## 実装に変更が無いとき
+
+PR作成の工程で、実装の作業領域が起点のコミットから何も変わっていなければ（`NothingToCommitError`）、PR を作らない。
+
+- まだ実装の PR を作っていなければ、`NoChangesFound`（この後に提出する成果物チェックの回）を記録し、成果物チェックを提出する
+  （`StepSubmitted`）。PR が無いので、画面で承認できる。すべてのタスクで同じ（テンプレートのタスクに限らない）。
+- 成果物チェックの前に、ふつうと同じくテストと最終レビュー（観点ごとの検証）を通っている。画面は、承認待ちを「変更なしの成果物チェック
+  待ち」とし、承認の画面に、実装は何も変えていないこと・実装の説明で変更が要らない理由を確かめることを出す。
+- 承認すると、PR を作らずに完了する（「完了（変更なし）」）。差し戻すと、ふつうと同じく実装からやり直し、変更があれば PR を作る。
+  変更なしの扱いは、その提出回だけ（`deliveredWithoutChanges`：`noChanges.submission` が成果物チェックのいまの回で、PR が無い）。
+- タスクブランチ（要求要件・設計の PR をマージしたもの）があっても同じ。ベースブランチへの PR は作らず、タスクブランチは残る。
+- すでに実装の PR を作ったタスクで、作り直した実装に変更が無くなったときは、今までどおり理由（`pr.failed`・`git.nothingToCommit`）を
+  記録して止める（開いている PR をどうするかは人が決める）。
+- 実装の工程の指示に、変更が要らないとわかったらファイルを変えずに、理由と根拠を説明に書くよう入れている。
+
+コード: `apps/daemon/src/service.ts`（`publish`）、`packages/core/src/events.ts`（`NoChangesFound`）、`packages/core/src/projection.ts`（`noChanges`・`deliveredWithoutChanges`）、`apps/daemon/src/prompts.ts`（`NO_CHANGE_LINE`）、`apps/web/src/lib/labels.ts`（`statusText`）
 
 コード: `apps/daemon/src/service.ts`（`stepPullRequestsOn`・`taskBranchName`・`publishStepPullRequest`・`publish`）、`packages/core/src/events.ts`（`StepPullRequestKey`・`DEFAULT_DOCUMENTS_DIR`・`isDocumentsDir`）、`packages/core/src/projection.ts`（`stepDocumentPath`）、`apps/daemon/src/prompts.ts`（`buildStepDocument`）
 

@@ -19,6 +19,7 @@ import {
   ANSWER_MAX,
   DEPLOYMENT_CI_GRACE_MS,
   DEPLOYMENT_CI_TIMEOUT_MS,
+  deliveredWithoutChanges,
   exportDue,
   isCompleted,
   MAX_CHANGE_REQUESTS,
@@ -56,7 +57,7 @@ import { type Platform, PlatformFile, toPlatform } from "./platforms.js";
 import { NOT_APPLICABLE, PR_BODY_MAX, type TemplateLookup } from "./pr-template.js";
 import { MemoryProjectStore } from "./projects.js";
 import { buildOrchestratorPrompt, buildPullRequestBody, changeableSteps } from "./prompts.js";
-import type { RepositoryWorkspace } from "./repository.js";
+import { NothingToCommitError, type RepositoryWorkspace } from "./repository.js";
 import {
   MemorySecretStore,
   OnePasswordSecretStore,
@@ -435,6 +436,8 @@ class FakeRepos implements RepositoryWorkspace {
     keep?: { commit: string; paths: string[] };
   }[] = [];
   publishFail?: string;
+  /** true なら、作業領域が起点から何も変わっていない（PBI-90）。 */
+  unchanged = false;
   async publish(input: {
     parent: string;
     branch: string;
@@ -443,6 +446,7 @@ class FakeRepos implements RepositoryWorkspace {
     keep?: { commit: string; paths: string[] };
   }) {
     if (this.publishFail) throw new Error(this.publishFail);
+    if (this.unchanged) throw new NothingToCommitError(message("git.nothingToCommit"));
     this.published.push({
       parent: input.parent,
       branch: input.branch,
@@ -3152,6 +3156,102 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       for (const id of ids) await service.runNext(id);
     }
   }
+
+  describe("実装に変更が無い（PBI-90）", () => {
+    const unchanged = () => {
+      const repos = new FakeRepos();
+      repos.unchanged = true;
+      return repos;
+    };
+
+    it("工程を進めた後に変更が要らないとわかったら、PR を作らずに成果物チェックで止め、承認すると変更なしで完了する", async () => {
+      const repos = unchanged();
+      const { activity, service, executor, pulls, id } = await toImplement(
+        [implement("# 変更は要らない\n\nすでに満たしている（src/pay.ts:3）"), review()],
+        { repos },
+      );
+      await drain(service);
+      // 実装の工程には、変更が要らないときの書き方を指示する
+      expect(
+        executor.calls.some((c) => c.command.join(" ").includes("変更が要らない理由と根拠")),
+      ).toBe(true);
+      const task = service.get(id)?.task;
+      expect(task?.status).toBe("awaiting_approval");
+      expect(task?.gate).toEqual({ step: "pr", submission: 1 });
+      expect(task?.noChanges).toEqual({ submission: 1 });
+      expect(task?.pullRequest).toBeUndefined();
+      expect(task && deliveredWithoutChanges(task)).toBe(true);
+      expect(types(service, id)).toContain("NoChangesFound");
+      expect(types(service, id)).not.toContain("TaskPaused");
+      expect(pulls.calls).toEqual([]);
+      expect(repos.published).toEqual([]);
+      // 人が確かめて承認すると、変更なしで完了する（実装の説明は残る）
+      const done = service.approve(id, { step: "pr", submission: 1 });
+      expect(isCompleted(done)).toBe(true);
+      expect(deliveredWithoutChanges(done)).toBe(true);
+      expect(done.outputs.implement).toContain("すでに満たしている");
+      expect(service.queuedTaskIds()).toEqual([]);
+      // 作業履歴から作り直しても同じ
+      const { service: restarted } = makeService(activity, []);
+      expect(deliveredWithoutChanges(restarted.get(id)?.task as Task)).toBe(true);
+      activity.close();
+    });
+
+    it("差し戻すと実装をやり直し、変更があれば今までどおり PR を作る（変更なしの扱いは引き継がない）", async () => {
+      const repos = unchanged();
+      const { activity, service, pulls, id } = await toImplement(
+        [
+          implement("# 変更は要らない"),
+          review(),
+          implement("# 実装 v2"),
+          review(undefined, [
+            ["requirements-1-1", true],
+            ["implement-1-1", true],
+          ]),
+        ],
+        { repos },
+      );
+      await drain(service);
+      service.requestChanges(id, {
+        step: "pr",
+        submission: 1,
+        comments: ["キーなしのとき 400 を返していない"],
+      });
+      repos.unchanged = false;
+      await drain(service);
+      const task = service.get(id)?.task as Task;
+      expect(task.gate).toEqual({ step: "pr", submission: 2 });
+      expect(task.pullRequest?.number).toBe(7);
+      expect(pulls.calls).toHaveLength(1);
+      expect(deliveredWithoutChanges(task)).toBe(false);
+      expect(() => service.approve(id, { step: "pr", submission: 2 })).toThrow(/PR/);
+      activity.close();
+    });
+
+    it("作った PR の作り直しで変更が無くなったときは、今までどおり理由を残して止める", async () => {
+      const { activity, service, repos, id } = await toImplement([
+        implement("# 実装"),
+        review(),
+        implement("# 実装 v2（戻した）"),
+        review(undefined, [
+          ["requirements-1-1", true],
+          ["implement-1-1", true],
+        ]),
+      ]);
+      await drain(service);
+      expect(service.get(id)?.task.pullRequest?.number).toBe(7);
+      service.requestChanges(id, { step: "pr", submission: 1, comments: ["やはり要らない"] });
+      repos.unchanged = true;
+      await drain(service);
+      const task = service.get(id)?.task as Task;
+      expect(task.status).toBe("paused");
+      expect(task.pausedReason).toBe("error");
+      expect(JSON.stringify(task.pausedMessage)).toContain("git.nothingToCommit");
+      expect(types(service, id)).not.toContain("NoChangesFound");
+      expect(deliveredWithoutChanges(task)).toBe(false);
+      activity.close();
+    });
+  });
 
   describe("言語ごとのイメージ（PBI-41）", () => {
     const java = {

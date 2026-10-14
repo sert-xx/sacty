@@ -1119,6 +1119,16 @@ const PullRequestPublished = z.object({
 });
 
 /**
+ * PR作成の工程で、実装が起点から何も変えていなかった（PBI-90）。PR を作らず、成果物チェックで人間が実装の説明（変更が
+ * 要らない理由）を確かめる。承認すると、変更なしで完了する（差し戻せば実装をやり直す）。submission は、この後に提出する
+ * 成果物チェックの提出回。まだ PR を作っていないタスクだけで記録する。
+ */
+const NoChangesFound = z.object({
+  type: z.literal("NoChangesFound"),
+  payload: z.object({ submission: z.number().int().positive() }),
+});
+
+/**
  * sacty が作った PR（実装の PR と、要求要件・設計の PR）に、取り込むラベル（sacty の設定）を付けた（PBI-88）。
  * 別のタスクとして取り込ませ、レビューだけを行わせるため。created は、リポジトリにラベルが無かったので作った。
  * 1つの PR につき1回だけ付ける（記録のある PR には、更新しても付け直さない）。
@@ -1652,6 +1662,7 @@ export const EventInput = z.discriminatedUnion("type", [
   OrchestratorSessionUsed,
   IntegrationReviewed,
   PullRequestPublished,
+  NoChangesFound,
   PullRequestLabeled,
   PullRequestLabelFailed,
   TaskBranchCreated,

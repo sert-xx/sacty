@@ -21,6 +21,8 @@ const ja = {
     undecidableHelp: "申し出の理由と根拠を確認し、変更を認めるかどうかを判断してください。",
     tooManyHelp: "このまま承認するか、上限を超えて差し戻すかを判断してください。",
     reviewHelp: "成果物を確認し、承認するか差し戻してください。",
+    noChangesHelp:
+      "実装は何も変えていないため、PR を作っていません。実装の説明で変更が要らない理由を確かめ、変更なしで完了にするなら承認、変更が要るなら差し戻してください。",
     prHelp:
       "GitHub で PR をレビューしてください。マージすると承認になり、タスクが完了します。レビューやコメントで指摘すると、差し戻しとして取り込みます。",
     stepPrHelp: (step: string) =>
@@ -260,6 +262,8 @@ const en: TaskMessages = {
       "Check the reason and supporting facts of the request, then decide whether to accept the change.",
     tooManyHelp: "Decide whether to approve as is or request changes beyond the limit.",
     reviewHelp: "Check the deliverable, then approve it or request changes.",
+    noChangesHelp:
+      "The implementation changed nothing, so no PR was opened. Check why no change is needed in the implementation notes, then approve to finish without changes, or request changes if a change is needed.",
     prHelp:
       "Review the PR on GitHub. Merging it approves the deliverable and completes the task. Comments in reviews or on the PR are imported as change requests.",
     stepPrHelp: (step) =>

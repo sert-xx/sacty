@@ -99,12 +99,14 @@ const ja = {
   state: {
     guardianJudging: "ゴールガーディアンが判定中",
     completed: "完了",
+    completedNoChanges: "完了（変更なし）",
     testsRunning: "テストを実行中",
     finalReviewing: "ゴールガーディアンが最終レビュー中",
     changeUndecided: "変更の申し出の判断待ち",
     reworkConfirmation: "PR の指摘の戻し先の確認待ち",
     reworkJudging: "ゴールガーディアンが PR の指摘を判断中",
     deliverableReview: (n: number) => `成果物チェック待ち${n > 1 ? `（${n}回目）` : ""}`,
+    noChangesReview: (n: number) => `変更なしの成果物チェック待ち${n > 1 ? `（${n}回目）` : ""}`,
     prAwaitingMerge: (n: number) => `PR のマージ待ち${n > 1 ? `（${n}回目）` : ""}`,
     stepPrAwaitingMerge: (step: string, n: number) =>
       `${step}の PR のマージ待ち${n > 1 ? `（${n}回目）` : ""}`,
@@ -220,6 +222,7 @@ const ja = {
       `PRを作成・更新（#${number}・${branch}・${commit}）`,
     branchPushed: (branch: string, commit: string) =>
       `PRは作らない設定のため、ブランチまで（${branch}・${commit}）`,
+    NoChangesFound: "実装に変更が無いため、PR を作らずに成果物チェックへ",
     BranchPushed: (branch: string, commit: string) =>
       `sacty のブランチにプッシュ（${branch}・${commit}）`,
     TaskBranchCreated: (branch: string, commit: string) =>
@@ -443,12 +446,15 @@ const en: LabelMessages = {
   state: {
     guardianJudging: "Goal Guardian is judging",
     completed: "Done",
+    completedNoChanges: "Done (no changes)",
     testsRunning: "Running tests",
     finalReviewing: "Goal Guardian is doing the final review",
     changeUndecided: "Change request needs you",
     reworkConfirmation: "Step to redo for PR comments needs you",
     reworkJudging: "Goal Guardian is judging PR comments",
     deliverableReview: (n) => `Awaiting deliverable review${n > 1 ? ` (submission ${n})` : ""}`,
+    noChangesReview: (n) =>
+      `Awaiting deliverable review with no changes${n > 1 ? ` (submission ${n})` : ""}`,
     prAwaitingMerge: (n) => `Awaiting PR merge${n > 1 ? ` (submission ${n})` : ""}`,
     stepPrAwaitingMerge: (step, n) =>
       `${step} PR awaiting merge${n > 1 ? ` (submission ${n})` : ""}`,
@@ -546,6 +552,8 @@ const en: LabelMessages = {
     prPublished: (number, branch, commit) =>
       `PR opened or updated (#${number} · ${branch} · ${commit})`,
     branchPushed: (branch, commit) => `No PR configured; branch only (${branch} · ${commit})`,
+    NoChangesFound:
+      "The implementation changed nothing, so no PR was opened; sent to deliverable review",
     BranchPushed: (branch, commit) => `Pushed to sacty branch (${branch} · ${commit})`,
     TaskBranchCreated: (branch, commit) => `Created the task branch (${branch} · ${commit})`,
     StepBranchPushed: (step, branch, commit) =>

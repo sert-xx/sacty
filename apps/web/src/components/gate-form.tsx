@@ -22,6 +22,7 @@ export function GateForm({
   pullRequest,
   rework,
   notReproduced = false,
+  noChanges = false,
 }: {
   taskId: string;
   step: StepKey;
@@ -39,6 +40,8 @@ export function GateForm({
   rework?: { target: StepKey; note: string };
   /** 再現できなかった（PBI-29）。承認では先へ進めないので、承認のボタンは出さない。 */
   notReproduced?: boolean;
+  /** 実装に変更が無く、PR を作らなかった成果物チェック（PBI-90）。承認すると変更なしで完了する。 */
+  noChanges?: boolean;
 }) {
   const [state, formAction, pending] = useActionState(gateAction, initial);
   const m = useMessages();
@@ -74,6 +77,15 @@ export function GateForm({
           <p className="font-semibold">{t.reworkTitle}</p>
           <p>{t.reworkSuggestion(stepLabel[rework.target], rework.note)}</p>
           <p>{t.reworkHelp}</p>
+        </div>
+      )}
+      {noChanges && (
+        <div
+          data-testid="no-changes"
+          className="flex flex-col gap-1.5 rounded-md border border-warn-line bg-warn-soft p-3 text-sm leading-6 text-warn"
+        >
+          <p className="font-semibold">{t.noChangesTitle}</p>
+          <p>{t.noChangesHelp}</p>
         </div>
       )}
       {notReproduced && (
