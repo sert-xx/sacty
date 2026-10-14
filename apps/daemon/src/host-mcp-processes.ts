@@ -27,6 +27,7 @@ export type ProcessIdentity = { pid: number; started: string };
 
 /** 起動したときの記録（ファイルの中身）。members は、そのとき見えていた子孫。 */
 type ProcessRecord = {
+  /** どの MCP サーバーのものか（ログに出す名前。PBI-92）。 */
   name: string;
   pid: number;
   started: string;
@@ -158,7 +159,9 @@ export class HostMcpProcesses {
       writeFileSync(`${file}.tmp`, JSON.stringify(record));
       renameSync(`${file}.tmp`, file);
     } catch (error) {
-      this.deps.log?.(`[gateway] host MCP processes: could not record ${record.pid}: ${error}`);
+      this.deps.log?.(
+        `[gateway] host MCP processes: could not record ${record.pid} (${record.name}): ${error}`,
+      );
     }
   }
 
@@ -304,7 +307,11 @@ export class HostMcpProcesses {
     const stopped = await this.terminate(identities, groups, table);
     for (const f of done) rmSync(join(this.dir, f), { force: true });
     if (stopped > 0) {
-      this.deps.log?.(`[gateway] host MCP: stopped ${stopped} process(es) left from the last run`);
+      // どの MCP サーバーのものか（記録の名前。ログに出す名前で記録している。PBI-92）
+      const names = [...new Set(records.map((r) => r.name).filter(Boolean))].join("; ");
+      this.deps.log?.(
+        `[gateway] host MCP: stopped ${stopped} process(es) left from the last run${names ? ` (${names})` : ""}`,
+      );
     }
     return stopped;
   }

@@ -76,7 +76,7 @@ URL 型の中継：
 
 - 上流には `content-type`・`accept`・`mcp-session-id`・`mcp-protocol-version`・`last-event-id` のヘッダーだけを送り、`mcp.yaml` に書いた
   ヘッダー（秘密情報はホストで取り出す）を付ける。エージェントが付けた認証などは送らない。
-- 応答（SSE を含む）はそのまま流す。リダイレクトはたどらない。上流に届かなければ 502。
+- 応答（SSE を含む）はそのまま流す。リダイレクトはたどらない。上流に届かなければ 502（どの MCP サーバーか、`mcp.yaml` の名前を添える）。
 - 上流を待つ上限は既定5分（`FETCH_DEFAULT_TIMEOUT_MS`）。サーバーの `startup_timeout_sec`・`tool_timeout_sec` の大きい方がそれより長ければ、
   その値まで延ばす。
 
@@ -103,7 +103,13 @@ URL 型の中継：
 - 起動し直すとき（`restart_every_min`・プロセスの終了・ツールが認証エラーらしい結果を返した・接続が切れた）は、新しいプロセスの準備が
   できてから切り替え、古い接続は途中の呼び出しが終わるまで（最大5分）待ってから閉じる。認証エラーのときは1回だけ起動し直し、結果に
   しばらくしてからやり直すよう添える。
-- 起動に失敗したら理由（秘密情報を伏せる）を画面の警告に出し、1分ごとに起動し直す。準備ができていない間の呼び出しには 503 を返す。
+- 起動に失敗したら理由（秘密情報を伏せる）を画面の警告に出し、1分ごとに起動し直す。準備ができていない間の呼び出しには 503 を返す
+  （コンテキストのものは、`mcp.yaml` の名前・層・プロジェクトの名前を添え、ゲートウェイの中の名前は返さない）。
+- ログ（起動・起動し直し・準備できない・止める・プロセスの記録の失敗・前回の残りの片付け）には、どの MCP サーバーかを出す（`mcpLogName`）。
+  ホストの MCP サーバーは `host MCP <名前>`、コンテキストのものは
+  `context MCP "<mcp.yaml の名前>" (project "<プロジェクトの名前>" [<プロジェクトの ID>], context "<層>", internal ctx-…)`。プロセスの記録
+  （下の「記録」）にも、この名前を書き、前回の残りを止めたログに出す。標準エラー・環境変数の秘密情報は、理由と同じく伏せる（ログに出すのは
+  伏せた後の理由だけ）。
 - 実行の前に、その実行が使う MCP サーバーの準備を `ready_timeout_sec` まで待つ。できなければ、どのサーバーかをコンテキストの警告に
   残して実行する（書き出しでは、その接続先への書き出しを止める）。
 - 中継の時間切れは、ツールの呼び出しが10分（`CALL_TIMEOUT_MS`）か `tool_timeout_sec` の大きい方、一覧が60秒（`LIST_TIMEOUT_MS`）か
@@ -114,4 +120,4 @@ URL 型の中継：
   書き直す。デーモンの起動のとき、記録を書いたデーモンが動いていないものだけを、PID と開始時刻が一致するときに止める（PID が
   再利用されたほかのプロセスや、同じ `SACTY_HOME` で動いているほかの sacty のものは止めない）。`ps` を読めなければ何も止めない。
 
-コード: `apps/daemon/src/host-mcp.ts`（`HostMcpFile`・`HostMcpServers`・`reconcile`・`ready`・`restart`・`drain`・`assertCommand`・`AUTH_ERROR`・`RETRY_MS`・`CALL_TIMEOUT_MS`・`LIST_TIMEOUT_MS`）、`apps/daemon/src/context-mcp.ts`（`ContextMcpServers`）、`apps/daemon/src/host-mcp-processes.ts`（`HostMcpProcesses`・`GroupStdioTransport`・`cleanup`・`terminate`）、`apps/daemon/src/service.ts`（`mcpRouting`・`runContext`）
+コード: `apps/daemon/src/host-mcp.ts`（`HostMcpFile`・`HostMcpServers`・`reconcile`・`ready`・`restart`・`drain`・`assertCommand`・`mcpLogName`・`AUTH_ERROR`・`RETRY_MS`・`CALL_TIMEOUT_MS`・`LIST_TIMEOUT_MS`）、`apps/daemon/src/context-mcp.ts`（`ContextMcpServers`）、`apps/daemon/src/host-mcp-processes.ts`（`HostMcpProcesses`・`GroupStdioTransport`・`cleanup`・`terminate`）、`apps/daemon/src/service.ts`（`mcpRouting`・`runContext`）

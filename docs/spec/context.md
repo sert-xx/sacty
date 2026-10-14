@@ -101,10 +101,15 @@ sacty が作るファイルの順に置く（同じパスは後のものが上�
   最後に使ってから30分で止める（60秒ごとに確かめる）。止める・写しを消す途中の失敗は、確保・解放の失敗にせず、ログに残して後で
   やり直す。デーモンの終了ですべて止めて写しを消し、デーモンの起動のときに前回の写し（`context-mcp/layers`）を消す（残ったプロセスは、
   ホストの MCP サーバーと同じ片付けで止める）。
-- 理由（画面・作業履歴・エージェントへの 503）には、ゲートウェイの中の名前ではなく `mcp.yaml` の名前と層を出す
-  （`context.mcpHostUnavailable`・`context.mcpHostReadyTimeout`）。
+- 理由（画面・作業履歴・エージェントへの 503）には、ゲートウェイの中の名前ではなく `mcp.yaml` の名前・層・プロジェクトの名前を出す
+  （`context.mcpHostUnavailable`・`context.mcpHostReadyTimeout`・`context.mcpHostCommandMissing` の `name`・`from`・`project`。`project` の無い
+  前の記録は、プロジェクトを出さずに表示する）。同じ層・同じ名前のサーバーが複数のプロジェクトにあっても、どれかわかる。
+- ログ（起動・準備できない・止める・後片付け）にも、`mcp.yaml` の名前・プロジェクトの名前と ID・層を出し、ゲートウェイの中の名前を添える
+  （[ゲートウェイ](gateway.md)の「ホストの MCP サーバー」）。
+- 理由・ログに出す層は、リポジトリの URL に認証情報（`https://<ユーザー>:<トークン>@…`）があれば `***` に伏せる（`shownLayer`）。
+- プロジェクトの名前は、確保のときのものを出す。ゲートウェイの中の名前はプロジェクトの ID から作るので、名前を変えても起動し直さない。
 
-コード: `apps/daemon/src/context-mcp.ts`（`ContextMcpServers`・`lease`・`prepare`・`sweep`・`copyLayer`・`forceRemove`・`CONTEXT_MCP_READY_SEC`）、`apps/daemon/src/context.ts`（`routeMcp`・`HostedContextMcp`）、`apps/daemon/src/host-mcp.ts`（`assertCommand`・`CommandNotFoundError`）、`apps/daemon/src/service.ts`（`runContext`・`mcpRouting`）、`apps/daemon/src/main.ts`
+コード: `apps/daemon/src/context-mcp.ts`（`ContextMcpServers`・`lease`・`prepare`・`sweep`・`copyLayer`・`forceRemove`・`shownLayer`・`CONTEXT_MCP_READY_SEC`）、`apps/daemon/src/context.ts`（`routeMcp`・`HostedContextMcp`）、`apps/daemon/src/host-mcp.ts`（`assertCommand`・`CommandNotFoundError`・`HostMcpContext`・`mcpLogName`）、`apps/daemon/src/service.ts`（`runContext`・`mcpRouting`）、`apps/daemon/src/main.ts`
 
 ## 雛形（sacty context init）
 
