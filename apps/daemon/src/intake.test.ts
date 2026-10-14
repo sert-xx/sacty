@@ -531,6 +531,8 @@ describe("JIRA のチケットの取り込み（PBI-52）", () => {
           { platform: "team-jira", service: "jira-server", keys },
           // ホストの PF の名前は、これまでどおりプロジェクトをまたいでまとめる（コンテキストは取得しない）
           { platform: "jira", service: "jira-server", keys: [`${keys[0]}X`] },
+          // どの層にも無い名前は、理由を記録する（コンテキストの取得はプロジェクトごとに1度だけ）
+          { platform: "nowhere", service: "jira-server", keys: [`${keys[0]}N`] },
         ],
       });
     const a = project("A", "a", "https://example.com/a-ctx.git", ["PAY"]);
@@ -569,8 +571,14 @@ describe("JIRA のチケットの取り込み（PBI-52）", () => {
     expect(b.id).not.toBe(a.id);
     // コンテキストの誤りは、どの層のどのファイルかを、取り込み先ごとに記録する（ほかの取り込み先は続ける）
     expect(service.status().intake?.errors?.map((e) => [e.query, ja(e.message)])).toEqual([
+      [expect.stringContaining('nowhere: project in ("PAYN")'), expect.stringContaining("nowhere")],
+      [expect.stringContaining('nowhere: project in ("OPSN")'), expect.stringContaining("nowhere")],
       [
         expect.stringContaining('team-jira: project in ("BRK")'),
+        expect.stringContaining("https://example.com/broken.git# の platforms.yaml を読めません"),
+      ],
+      [
+        expect.stringContaining('nowhere: project in ("BRKN")'),
         expect.stringContaining("https://example.com/broken.git# の platforms.yaml を読めません"),
       ],
     ]);

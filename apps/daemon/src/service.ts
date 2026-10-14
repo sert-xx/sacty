@@ -1265,19 +1265,20 @@ export class TaskService {
   }
 
   /**
-   * チケットの取り込み（PBI-52）の接続先を、プロジェクトのコンテキストの PF から引く（PBI-74）。取得できなければ、
-   * 秘密情報を伏せた理由を返す。
+   * チケットの取り込み（PBI-52）の接続先にする、プロジェクトのコンテキストで合成した PF（PBI-74。ホストと同じ名前の
+   * ものは除く）。取得できなければ、秘密情報を伏せた理由を返す。
    */
-  async projectPlatform(
+  async projectContextPlatforms(
     projectId: string,
-    name: string,
-  ): Promise<{ platform?: Platform } | { error: DaemonText }> {
+  ): Promise<{ platforms: Platform[] } | { error: DaemonText }> {
     const config = this.deps.config();
-    if (!config.ok) return {};
+    const host = config.ok ? config.config.platforms : [];
     const usedSecrets: string[] = [];
     try {
-      const platform = await this.findPlatform({ projectId }, config.config, name, usedSecrets);
-      return platform ? { platform } : {};
+      const own = await this.contextPlatformsOf(projectId, usedSecrets);
+      return {
+        platforms: mergePlatforms(host, own.platforms).platforms.filter((p) => p.from),
+      };
     } catch (error) {
       return { error: redactText(errorText(error), usedSecrets) };
     }

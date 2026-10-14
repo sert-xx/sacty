@@ -148,17 +148,24 @@ export class IssueIntake {
     const config = this.config();
     const platforms = (config.ok ? config.config.platforms : undefined) ?? [];
     const client = this.tickets;
+    // プロジェクトのコンテキストは、1回の取り込みでプロジェクトごとに1度だけ取得する
+    const contextPlatforms = new Map<string, ReturnType<TaskService["projectContextPlatforms"]>>();
     if (client) {
       for (const source of this.service.ticketSources()) {
         const query = `${source.platform}: ${ticketJql(source.keys, source.label)}`;
         let platform = platforms.find((p) => p.name === source.platform);
         if (!platform && source.projectId) {
-          const found = await this.service.projectPlatform(source.projectId, source.platform);
+          let pending = contextPlatforms.get(source.projectId);
+          if (!pending) {
+            pending = this.service.projectContextPlatforms(source.projectId);
+            contextPlatforms.set(source.projectId, pending);
+          }
+          const found = await pending;
           if ("error" in found) {
             errors.push({ query, message: found.error });
             continue;
           }
-          platform = found.platform;
+          platform = found.platforms.find((p) => p.name === source.platform);
         }
         if (!platform) {
           errors.push({

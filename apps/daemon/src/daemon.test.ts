@@ -7567,6 +7567,120 @@ describe("コンテキストの外部 PF（PBI-74）", () => {
     activity.close();
   });
 
+  it("調査の結果のコメントも、プロジェクトのコンテキストの PF のチケットに返す", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const projects = new MemoryProjectStore();
+    projects.put("a", {
+      name: "A",
+      targets: [{ scope: "repo", target: "https://github.com/acme/a" }],
+      githubAccounts: { "github.com": "me" },
+      context: { repo: ctxRepo },
+      tickets: [{ platform: "docs", service: "jira-server", keys: ["DOC"] }],
+    });
+    const tickets = new FakeTickets();
+    const { service } = makeService(
+      activity,
+      [
+        triageOut({
+          repo: "https://github.com/acme/a",
+          title: "DOC-1 調べる",
+          summary: "調べる",
+          reason: "a だけ",
+        }),
+        completed(20_000),
+      ],
+      {
+        config: configOf(agent(), 1, [jiraPlatform()]),
+        secrets: { "claude-oauth-token": "oauth-secret", "docs-token": "docs-secret" },
+        gateway: fakeGateway(),
+        projects,
+        contexts: contexts(),
+        settings: new MemorySettingsStore({ ticketLabel: "sacty" }),
+        tickets,
+        planner: async () => ({
+          steps: ["investigate" as const],
+          plan: "investigate" as const,
+          reason: "調査だけ",
+          fallback: false,
+          costUsd: 0,
+          estimated: false,
+        }),
+      },
+    );
+    const [task] = service.importTickets([{ ...foundTicket("DOC-1"), platform: "docs" }]);
+    const id = task?.id ?? "";
+    await service.runNext(id); // チケットを読む
+    await service.runNext(id); // 調査
+    service.approve(id, { step: "investigate", submission: 1 });
+    await service.runNext(id);
+    expect(tickets.comments.map((c) => [c.platform, c.key])).toEqual([["docs", "DOC-1"]]);
+    expect(service.get(id)?.task.issueComment).toEqual({
+      url: "https://docs.internal.example.com/browse/DOC-1?focusedCommentId=1",
+    });
+    activity.close();
+  });
+
+  it("成果の書き出し先にも、プロジェクトのコンテキストの PF を選べ、書き出す実行にだけ登録する", async () => {
+    const registered: Registered[] = [];
+    const activity = new SqliteActivityStore(dbPath);
+    const projects = new MemoryProjectStore();
+    projects.put("a", {
+      name: "A",
+      targets: [{ scope: "repo", target: "https://github.com/acme/a" }],
+      githubAccounts: { "github.com": "me" },
+      context: { repo: ctxRepo },
+    });
+    const done = (text: string, output = 1): AgentOutcome => ({
+      kind: "completed",
+      output: text,
+      usage: { input: 0, cacheRead: 0, cacheWrite: 0, output },
+    });
+    const url = "https://docs.internal.example.com/pages/1";
+    const { service, executor } = makeService(
+      activity,
+      [
+        done("# 要求要件"),
+        done(`書きました\n\n\`\`\`json\n${JSON.stringify({ "sacty-export": { url } })}\n\`\`\``),
+      ],
+      {
+        config: configOf(agent(), 1, []),
+        secrets: { "claude-oauth-token": "oauth-secret", "docs-token": "docs-secret" },
+        gateway: recordingGateway(registered),
+        projects,
+        contexts: contexts(),
+        planner: async () => ({
+          steps: [...MVP_STEPS],
+          fallback: false,
+          testCommand: "npm test",
+          costUsd: 0,
+          estimated: false,
+          exports: {
+            requirements: {
+              to: { via: "platform", name: "docs", location: "要件" },
+              reason: "規約",
+            },
+          } as never,
+        }),
+      },
+    );
+    const { id } = service.createTask({ projectId: "a", title: "要件を書く" });
+    await service.runNext(id);
+    // 使える書き出し先として、コンテキストの PF を受け付ける
+    const chosen = activity.forTask(id).find((e) => e.type === "StepsChosen");
+    expect(chosen?.type === "StepsChosen" && chosen.payload.exports?.requirements).toEqual({
+      to: { via: "platform", name: "docs", location: "要件" },
+      reason: "規約",
+    });
+    service.approve(id, { step: "requirements", submission: current(service, id) });
+    await service.runNext(id);
+    expect(service.get(id)?.task.exports.requirements).toMatchObject({ url });
+    // 書き出しの実行には、決めた接続先（コンテキストの PF）だけを登録する
+    expect(registered.at(-1)?.platforms?.map((p) => p.name)).toEqual(["docs"]);
+    expect(executor.calls.at(-1)?.command.join(" ")).toContain("$SACTY_PF_URL/docs");
+    expect(JSON.stringify(activity.forTask(id))).not.toContain("docs-secret");
+    activity.close();
+  });
+
   it("プロジェクトの設定の画面には、合成した PF（名前・層・説明・allow）を出し、秘密情報は出さない", async () => {
     const { activity, service } = setup([]);
     const result = await service.projectPlatforms("a");
