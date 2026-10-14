@@ -181,6 +181,8 @@ const PARAMS = {
   "run.imageMissing": z.object({ image: z.string() }),
   "run.authFileUnreadable": z.object({ path: z.string() }),
   "run.containerNotConfirmed": z.object({ name: z.string() }),
+  // オーケストレーターのセッションを、実行の設定の場所に戻せなかった（PBI-67）
+  "run.sessionRestoreFailed": z.object({ detail: TextParam }),
   "run.secretNotFound": z.object({ name: z.string() }),
   // 1Password（PBI-34）
   "secret.opMissing": null,
@@ -593,6 +595,8 @@ const ja: MessageDictionary = {
     `認証ファイル（${path}）を読めません。ログインしているか確認してください。`,
   "run.containerNotConfirmed": ({ name }) =>
     `コンテナ（${name}）の停止を確認できませんでした。docker ps で確認してください。`,
+  "run.sessionRestoreFailed": ({ detail }) =>
+    `保存したオーケストレーターのセッションを、実行の設定の場所に戻せませんでした：${detail}`,
   "run.secretNotFound": ({ name }) =>
     `秘密情報「${name}」が見つかりません。\`sacty secret set ${name}\` で保存してください。`,
   "secret.opMissing":
@@ -950,6 +954,8 @@ const en: MessageDictionary = {
     `Cannot read the auth file (${path}). Check that you are signed in.`,
   "run.containerNotConfirmed": ({ name }) =>
     `Could not confirm that the container (${name}) stopped. Check with docker ps.`,
+  "run.sessionRestoreFailed": ({ detail }) =>
+    `Could not restore the saved orchestrator session into the run's config directory: ${detail}`,
   "run.secretNotFound": ({ name }) =>
     `Secret "${name}" not found. Save it with \`sacty secret set ${name}\`.`,
   "secret.opMissing":

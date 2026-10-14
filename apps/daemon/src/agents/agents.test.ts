@@ -1643,3 +1643,200 @@ describe("オーケストレーターの出力（PBI-17）", () => {
     expect(extractStepPlan("出力なし")).toBeUndefined();
   });
 });
+
+describe("オーケストレーターのセッションの再開（PBI-67）", () => {
+  const claude: AgentConfig = {
+    ...base,
+    id: "c",
+    runtime: "claude-code",
+    auth: { mode: "subscription", secret: "claude-oauth-token" },
+  };
+  const codex: AgentConfig = {
+    ...base,
+    id: "x",
+    runtime: "codex",
+    auth: { mode: "api-key", secret: "openai-key" },
+    model: "gpt-x",
+  };
+  const session = { resume: "abc-123", filesDir: "/host/sessions/t/orchestrator/files" };
+
+  it("Claude Code：--resume で再開し、複製なら --fork-session を足す。戻すファイルの場所を渡す", async () => {
+    const plain = await buildInvocation(claude, "prompt", secrets, () => {}, "orchestrator");
+    expect(plain.command).not.toContain("--resume");
+    expect(plain.stage?.sessionDir).toBeUndefined();
+
+    const resumed = await buildInvocation(
+      claude,
+      "prompt",
+      secrets,
+      () => {},
+      "orchestrator",
+      undefined,
+      undefined,
+      session,
+    );
+    const i = resumed.command.indexOf("--resume");
+    expect(resumed.command[i + 1]).toBe("abc-123");
+    expect(resumed.command).not.toContain("--fork-session");
+    // 指示は、これまでどおり -p で渡す
+    expect(resumed.command.slice(0, 3)).toEqual(["claude", "-p", "prompt"]);
+    expect(resumed.stage).toEqual({
+      containerDir: "/tmp/sacty-claude-config",
+      files: [],
+      sessionDir: session.filesDir,
+    });
+
+    const forked = await buildInvocation(
+      claude,
+      "prompt",
+      secrets,
+      () => {},
+      "chat",
+      undefined,
+      undefined,
+      { ...session, fork: true },
+    );
+    expect(forked.command).toContain("--fork-session");
+    expect(forked.command[forked.command.indexOf("--resume") + 1]).toBe("abc-123");
+  });
+
+  it("Codex：`codex exec <オプション> resume <ID> <指示>` で再開する（複製の引数は無い）", async () => {
+    const plain = await buildInvocation(codex, "prompt", secrets, () => {}, "orchestrator");
+    expect(plain.command).not.toContain("resume");
+    const resumed = await buildInvocation(
+      codex,
+      "prompt",
+      secrets,
+      () => {},
+      "chat",
+      undefined,
+      undefined,
+      { ...session, fork: true },
+    );
+    expect(resumed.command.slice(0, 2)).toEqual(["codex", "exec"]);
+    expect(resumed.command.slice(-3)).toEqual(["resume", "abc-123", "prompt"]);
+    // オプションは resume より前（exec のオプションとして読ませる）
+    const at = resumed.command.indexOf("resume");
+    for (const option of ["--json", "--skip-git-repo-check", "--sandbox", "--model"]) {
+      expect(resumed.command.indexOf(option)).toBeGreaterThan(0);
+      expect(resumed.command.indexOf(option)).toBeLessThan(at);
+    }
+    expect(resumed.stage).toMatchObject({ containerDir: "/.codex", sessionDir: session.filesDir });
+  });
+
+  it("スタブは再開しない", async () => {
+    const stub: AgentConfig = { ...base, id: "s", runtime: "stub", auth: { mode: "stub" } };
+    const inv = await buildInvocation(
+      stub,
+      "prompt",
+      secrets,
+      () => {},
+      "orchestrator",
+      undefined,
+      undefined,
+      session,
+    );
+    expect(inv.stage).toBeUndefined();
+    expect(inv.command).not.toContain("--resume");
+  });
+
+  describe("偽の docker コマンド", () => {
+    let dir: string;
+    const originalPath = process.env.PATH;
+    afterEach(() => {
+      process.env.PATH = originalPath;
+      rmSync(dir, { recursive: true, force: true });
+    });
+
+    const fakeDocker = async () => {
+      const { chmodSync, mkdirSync } = await import("node:fs");
+      dir = mkdtempSync(join(tmpdir(), "sacty-fakedocker-"));
+      const bin = join(dir, "bin");
+      mkdirSync(bin);
+      // run：設定の場所に置かれたファイルの一覧を残し、セッションに書き足して（再開と同じ）、結果を返す
+      writeFileSync(
+        join(bin, "docker"),
+        `#!/bin/sh
+here=$(dirname "$0")
+if [ "$1" != "run" ]; then exit 0; fi
+echo ran >> "$here/runs.txt"
+prev=""
+for a in "$@"; do
+  if [ "$prev" = "-v" ]; then
+    case "$a" in *:/tmp/sacty-claude-config) host="\${a%%:/tmp/sacty-claude-config}"; (cd "$host" && find . -type f | sort) > "$here/seen.txt"; echo '{"added":true}' >> "$host/projects/-workspace/abc-123.jsonl";; esac
+  fi
+  prev="$a"
+done
+echo '{"type":"result","is_error":false,"result":"ok","session_id":"abc-123","usage":{"input_tokens":1,"output_tokens":1}}'
+`,
+      );
+      chmodSync(join(bin, "docker"), 0o755);
+      process.env.PATH = `${bin}:${originalPath}`;
+      return bin;
+    };
+
+    it("保存したセッションを、コンテキストの後に設定の場所へ写して実行する。保存した元のファイルは書き換えない", async () => {
+      const { mkdirSync } = await import("node:fs");
+      const { DockerExecutor } = await import("./docker.js");
+      const bin = await fakeDocker();
+      const ctx = join(dir, "ctx");
+      mkdirSync(ctx, { recursive: true });
+      writeFileSync(join(ctx, "CLAUDE.md"), "# 規約");
+      const files = join(dir, "store");
+      mkdirSync(join(files, "projects", "-workspace"), { recursive: true });
+      writeFileSync(join(files, "projects", "-workspace", "abc-123.jsonl"), '{"turn":1}\n');
+      const outcome = await new DockerExecutor().run({
+        runId: "r67",
+        image: "img",
+        workspaceDir: dir,
+        invocation: {
+          command: ["claude"],
+          env: {},
+          stage: {
+            containerDir: "/tmp/sacty-claude-config",
+            files: [],
+            seedDir: ctx,
+            sessionDir: files,
+          },
+          parser: "claude-json",
+        },
+      });
+      expect(outcome.kind).toBe("completed");
+      expect(readFileSync(join(bin, "seen.txt"), "utf8").trim().split("\n")).toEqual([
+        "./CLAUDE.md",
+        "./projects/-workspace/abc-123.jsonl",
+      ]);
+      // コンテナが書き足したのは、実行ごとの写し（保存した元は変わらない）
+      expect(readFileSync(join(files, "projects", "-workspace", "abc-123.jsonl"), "utf8")).toBe(
+        '{"turn":1}\n',
+      );
+    });
+
+    it("保存したセッションを戻せなければ、コンテナを起動せずに失敗にする", async () => {
+      const { existsSync } = await import("node:fs");
+      const { DockerExecutor } = await import("./docker.js");
+      const bin = await fakeDocker();
+      const outcome = await new DockerExecutor().run({
+        runId: "r68",
+        image: "img",
+        workspaceDir: dir,
+        invocation: {
+          command: ["claude"],
+          env: {},
+          stage: {
+            containerDir: "/tmp/sacty-claude-config",
+            files: [],
+            sessionDir: join(dir, "missing"),
+          },
+          parser: "claude-json",
+        },
+      });
+      expect(outcome).toMatchObject({ kind: "failed", reason: "error" });
+      expect(outcome.kind === "failed" && ja(outcome.message)).toContain(
+        "オーケストレーターのセッションを、実行の設定の場所に戻せませんでした",
+      );
+      expect(outcome.usage).toBeUndefined();
+      expect(existsSync(join(bin, "runs.txt"))).toBe(false);
+    });
+  });
+});

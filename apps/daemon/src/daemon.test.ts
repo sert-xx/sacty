@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
 import {
+  cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -39,6 +40,7 @@ import { MessageError } from "./errors.js";
 import type { GitHubAuth } from "./gh.js";
 import type { PullRequestFeedback, PullRequestStatus, PullRequests } from "./github.js";
 import { HostMcpFile, type HostMcpSpec, toHostMcp } from "./host-mcp.js";
+import { OrchestratorSessionStore } from "./orchestrator-sessions.js";
 import { type Platform, PlatformFile, toPlatform } from "./platforms.js";
 import { MemoryProjectStore } from "./projects.js";
 import { buildOrchestratorPrompt, changeableSteps } from "./prompts.js";
@@ -710,6 +712,9 @@ class FakeExecutor implements AgentExecutor {
         ? readFileSync(join(seed, "mcp.json"), "utf8")
         : undefined,
     );
+    // 戻すように渡された、保存したセッションのファイル（PBI-67。実行の間に読んでおく）
+    const restoredDir = invocation.stage?.sessionDir;
+    this.restored.push(restoredDir ? readTree(restoredDir) : undefined);
     const next = this.outcomes.shift();
     if (!next) throw new Error("no more outcomes");
     const outcome =
@@ -730,14 +735,16 @@ class FakeExecutor implements AgentExecutor {
     } else if (this.sessionFiles && invocation.sessionFiles && log) {
       const config = mkdtempSync(join(tmpdir(), "sacty-fake-config-"));
       try {
-        for (const [path, content] of Object.entries(this.sessionFiles(invocation))) {
+        // 実行器と同じく、保存したセッション（PBI-67）を設定の場所に戻してから、エージェントが書き足す
+        if (restoredDir) cpSync(restoredDir, config, { recursive: true });
+        for (const [path, content] of Object.entries(this.sessionFiles(invocation, runId))) {
           mkdirSync(dirname(join(config, path)), { recursive: true });
-          writeFileSync(join(config, path), content);
+          writeFileSync(join(config, path), content, { flag: this.appendSessionFiles ? "a" : "w" });
         }
         await log.archiveAgentFiles({
           dir: config,
           runtime: invocation.sessionFiles,
-          sessionId: `session-${runId}`,
+          sessionId: this.sessionIdOf?.(invocation, runId) ?? `session-${runId}`,
         });
       } finally {
         rmSync(config, { recursive: true, force: true });
@@ -746,7 +753,13 @@ class FakeExecutor implements AgentExecutor {
     return outcome;
   }
   /** 実行ごとに、エージェントが設定の場所に書く元のファイル（相対パスと中身。PBI-66）。無ければ書かない。 */
-  sessionFiles?: (invocation: Invocation) => Record<string, string>;
+  sessionFiles?: (invocation: Invocation, runId: string) => Record<string, string>;
+  /** true なら、戻したセッションのファイルに書き足す（エージェントの再開と同じ。PBI-67）。 */
+  appendSessionFiles = false;
+  /** 出力から読むセッションの ID（PBI-67）。無ければ session-<実行>。 */
+  sessionIdOf?: (invocation: Invocation, runId: string) => string;
+  /** 実行ごとに、戻すように渡された保存したセッションのファイル（PBI-67）。無ければ undefined。 */
+  restored: (Record<string, string> | undefined)[] = [];
   /** true にすると、実行の後にコンテナの停止を確かめられなかった（元のファイルを写さない）ことにする。 */
   containerUnconfirmed = false;
   /** false にすると、コンテナの停止を確かめられない（止まらないコンテナがある）ことにする。 */
@@ -759,6 +772,20 @@ class FakeExecutor implements AgentExecutor {
     this.held.get(runId)?.({ kind: "failed", reason: "error", message: "container killed" });
     this.held.delete(runId);
   }
+}
+
+/** ディレクトリの下のファイル（相対パスと中身）。 */
+function readTree(root: string): Record<string, string> {
+  const files: Record<string, string> = {};
+  const walk = (rel: string) => {
+    for (const entry of readdirSync(join(root, rel), { withFileTypes: true })) {
+      const path = rel ? `${rel}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) walk(path);
+      else files[path] = readFileSync(join(root, path), "utf8");
+    }
+  };
+  walk("");
+  return files;
 }
 
 /** 100万出力トークン = $15 になる単価なので、output で費用を作る。 */
@@ -799,6 +826,8 @@ function makeService(
     stepPullRequests?: boolean;
     /** セッションログの置き場所（PBI-62）。 */
     sessionLogs?: SessionLogStore;
+    /** オーケストレーターのセッションの置き場所（PBI-67）。 */
+    orchestratorSessions?: OrchestratorSessionStore;
   } = {},
 ) {
   const executor = new FakeExecutor(outcomes);
@@ -848,6 +877,7 @@ function makeService(
     ...(options.tickets ? { tickets: options.tickets } : {}),
     stepPullRequests: options.stepPullRequests ?? false,
     ...(options.sessionLogs ? { sessionLogs: options.sessionLogs } : {}),
+    ...(options.orchestratorSessions ? { orchestratorSessions: options.orchestratorSessions } : {}),
   });
   return { service, executor, repos, tests, pulls };
 }
@@ -11659,6 +11689,697 @@ describe("エージェントの元のセッションのファイル（PBI-66）"
       (await app.request(`/api/tasks/${task.id}/runs/a.b/agent-files`, { headers: auth })).status,
     ).toBe(400);
     expect((await app.request(base)).status).toBe(401);
+    activity.close();
+  });
+});
+
+describe("オーケストレーターのセッションの使い回し（PBI-67）", () => {
+  const unreadable: AgentOutcome = {
+    kind: "completed",
+    output: "工程を決められませんでした",
+    usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 10 },
+  };
+  const plan: AgentOutcome = {
+    kind: "completed",
+    output:
+      '```json\n{"sacty-steps": {"plan": "skip-design", "reason": "小さい", "testCommand": "npm test"}}\n```',
+    usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 100 },
+  };
+  const answer: AgentOutcome = {
+    kind: "completed",
+    output: "答えです",
+    usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 10 },
+  };
+  type Used = Extract<EventInput, { type: "OrchestratorSessionUsed" }>["payload"];
+  const usedOf = (service: TaskService, id: string): Used[] =>
+    (service.get(id)?.activity ?? []).flatMap((e) =>
+      e.type === "OrchestratorSessionUsed" ? [e.payload] : [],
+    );
+  /** コマンドの引数のうち、name の次のもの。 */
+  const argAfter = (inv: Invocation | undefined, name: string) => {
+    const i = inv?.command.indexOf(name) ?? -1;
+    return i >= 0 ? inv?.command[i + 1] : undefined;
+  };
+  /**
+   * Claude Code の振る舞いをまねる：--resume なら同じ ID のセッションに書き足し、--fork-session なら新しい ID の
+   * セッションに複製する。どちらでもなければ新しいセッション。
+   */
+  const claudeId = (inv: Invocation, runId: string) => {
+    const resumed = argAfter(inv, "--resume");
+    if (resumed && inv.command.includes("--fork-session")) return `fork-${runId}`;
+    return resumed ?? `session-${runId}`;
+  };
+  const emulateClaude = (executor: FakeExecutor) => {
+    executor.appendSessionFiles = true;
+    executor.sessionIdOf = claudeId;
+    executor.sessionFiles = (inv, runId) => ({
+      [`projects/-workspace/${claudeId(inv, runId)}.jsonl`]: `${JSON.stringify({ type: "user", run: runId })}\n`,
+    });
+  };
+  const setup = (
+    outcomes: (AgentOutcome | typeof HOLD)[],
+    options: Parameters<typeof makeService>[2] = {},
+  ) => {
+    const activity = new SqliteActivityStore(dbPath);
+    const sessionLogs = new SessionLogStore(join(dir, "runs"));
+    const orchestratorSessions = new OrchestratorSessionStore(join(dir, "sessions"));
+    const made = makeService(activity, [], {
+      realPlanner: true,
+      sessionLogs,
+      orchestratorSessions,
+      ...options,
+    });
+    (made.executor as unknown as { outcomes: (AgentOutcome | typeof HOLD)[] }).outcomes.push(
+      ...outcomes,
+    );
+    return { activity, orchestratorSessions, ...made };
+  };
+  const storedPath = (taskId: string) =>
+    join(dir, "sessions", taskId, "orchestrator", "session.json");
+  const stored = (taskId: string) =>
+    JSON.parse(readFileSync(storedPath(taskId), "utf8")) as {
+      agentId: string;
+      runtime: string;
+      sessionId: string;
+      runId: string;
+      files: { path: string; sha256: string }[];
+    };
+  const storedFile = (taskId: string, path: string) => {
+    const s = stored(taskId);
+    return readFileSync(
+      join(dir, "sessions", taskId, "orchestrator", "generations", s.runId, "files", path),
+      "utf8",
+    );
+  };
+  /** 工程を決められずに止まった後、再開して、もう一度オーケストレーターに工程を選ばせる。 */
+  const rerunOrchestrator = async (service: TaskService, id: string) => {
+    expect(service.get(id)?.task.status).toBe("paused");
+    service.resume(id, {});
+    await service.runNext(id);
+  };
+
+  it("Claude Code：初回は新しく始めて保存し、2回目は前のセッションを再開する。工程のエージェントは毎回新しい", async () => {
+    const { activity, service, executor } = setup([unreadable, plan, completed(1_000)]);
+    emulateClaude(executor);
+    const task = service.createTask({ projectId: "default", title: "A" });
+    await service.runNext(task.id);
+    const [first] = usedOf(service, task.id);
+    const firstRun = first?.runId ?? "";
+    expect(first).toEqual({
+      runId: firstRun,
+      role: "orchestrator",
+      agentId: "claude-subscription",
+      runtime: "claude-code",
+      mode: "new",
+      sessionId: `session-${firstRun}`,
+      reason: "first",
+      saved: true,
+    });
+    // 初回は再開しない（戻すファイルも無い）
+    expect(argAfter(executor.calls[0], "--resume")).toBeUndefined();
+    expect(executor.restored[0]).toBeUndefined();
+    expect(stored(task.id)).toMatchObject({
+      agentId: "claude-subscription",
+      runtime: "claude-code",
+      sessionId: `session-${firstRun}`,
+      runId: firstRun,
+    });
+    expect(statSync(join(dir, "sessions", task.id, "orchestrator")).mode & 0o777).toBe(0o700);
+
+    await rerunOrchestrator(service, task.id);
+    const second = usedOf(service, task.id)[1];
+    // 2回目は、前のセッションを再開する（ファイルを設定の場所に戻し、--resume で ID を渡す）
+    expect(argAfter(executor.calls[1], "--resume")).toBe(`session-${firstRun}`);
+    expect(executor.calls[1]?.command).not.toContain("--fork-session");
+    expect(executor.restored[1]).toEqual({
+      [`projects/-workspace/session-${firstRun}.jsonl`]: `${JSON.stringify({ type: "user", run: firstRun })}\n`,
+    });
+    expect(second).toMatchObject({
+      role: "orchestrator",
+      mode: "resumed",
+      sessionId: `session-${firstRun}`,
+      resumedFrom: `session-${firstRun}`,
+      saved: true,
+    });
+    expect(second?.reason).toBeUndefined();
+    // 指示は、これまでどおり台帳から作る
+    expect(executor.calls[1]?.command[2]).toContain("工程");
+    // 保存したセッションに、2回目の実行の分が書き足されている
+    const main = storedFile(task.id, `projects/-workspace/session-${firstRun}.jsonl`);
+    expect(main.trim().split("\n")).toHaveLength(2);
+    expect(service.get(task.id)?.task.orchestratorSession).toMatchObject({
+      agentId: "claude-subscription",
+      runtime: "claude-code",
+      sessionId: `session-${firstRun}`,
+      uses: 2,
+      reason: "first",
+      saved: true,
+    });
+    // 工程のエージェント（調査）は、新しいセッションのまま
+    expect(service.get(task.id)?.task.steps.some((s) => s.state !== "todo")).toBe(true);
+    expect(executor.calls[2]?.command).not.toContain("--resume");
+    expect(executor.calls[2]?.stage?.sessionDir).toBeUndefined();
+    expect(usedOf(service, task.id)).toHaveLength(2);
+    // 作業履歴から復元できる
+    const { service: restarted } = makeService(activity, []);
+    expect(restarted.get(task.id)?.task.orchestratorSession?.uses).toBe(2);
+    activity.close();
+  });
+
+  it("Codex：2回目は `codex exec … resume <ID> <指示>` で再開する", async () => {
+    const codex = agent({
+      id: "codex-key",
+      runtime: "codex",
+      auth: { mode: "api-key", secret: "openai-key" },
+    });
+    const { activity, service, executor } = setup([unreadable, plan, completed(1_000)], {
+      config: configOf(codex),
+      secrets: { "openai-key": "sk-secret" },
+    });
+    const codexId = (inv: Invocation, runId: string) =>
+      argAfter(inv, "resume") ?? `thread-${runId}`;
+    executor.appendSessionFiles = true;
+    executor.sessionIdOf = codexId;
+    executor.sessionFiles = (inv, runId) => ({
+      [`sessions/2026/10/14/rollout-2026-10-14T10-00-00-${codexId(inv, runId)}.jsonl`]: `{"run":"${runId}"}\n`,
+    });
+    const task = service.createTask({ projectId: "default", title: "A" });
+    await service.runNext(task.id);
+    const firstRun = usedOf(service, task.id)[0]?.runId ?? "";
+    expect(usedOf(service, task.id)[0]).toMatchObject({
+      runtime: "codex",
+      mode: "new",
+      reason: "first",
+      sessionId: `thread-${firstRun}`,
+      saved: true,
+    });
+    expect(executor.calls[0]?.command).not.toContain("resume");
+    await rerunOrchestrator(service, task.id);
+    const command = executor.calls[1]?.command ?? [];
+    // 指示（最後の引数）の直前に resume と ID
+    expect(command.slice(-3, -1)).toEqual(["resume", `thread-${firstRun}`]);
+    expect(command.slice(0, 2)).toEqual(["codex", "exec"]);
+    expect(Object.keys(executor.restored[1] ?? {})).toEqual([
+      `sessions/2026/10/14/rollout-2026-10-14T10-00-00-thread-${firstRun}.jsonl`,
+    ]);
+    expect(usedOf(service, task.id)[1]).toMatchObject({
+      runtime: "codex",
+      mode: "resumed",
+      resumedFrom: `thread-${firstRun}`,
+      sessionId: `thread-${firstRun}`,
+      saved: true,
+    });
+    activity.close();
+  });
+
+  it("エージェントを変えたら、新しいセッションで始めて理由を残す（タスクは止まらない）", async () => {
+    let current = agent();
+    const { activity, service, executor } = setup([unreadable, plan, completed(1_000)], {
+      config: () => configOf(current)(),
+    });
+    emulateClaude(executor);
+    const task = service.createTask({ projectId: "default", title: "A" });
+    await service.runNext(task.id);
+    current = agent({ id: "claude-other" });
+    await rerunOrchestrator(service, task.id);
+    expect(executor.calls[1]?.command).not.toContain("--resume");
+    expect(executor.restored[1]).toBeUndefined();
+    const second = usedOf(service, task.id)[1];
+    expect(second).toMatchObject({
+      agentId: "claude-other",
+      mode: "new",
+      reason: "agent_changed",
+      saved: true,
+    });
+    expect(second?.resumedFrom).toBeUndefined();
+    expect(service.get(task.id)?.task.steps.length).toBeGreaterThan(0);
+    expect(stored(task.id).agentId).toBe("claude-other");
+    expect(service.get(task.id)?.task.orchestratorSession).toMatchObject({
+      agentId: "claude-other",
+      uses: 1,
+      reason: "agent_changed",
+    });
+    activity.close();
+  });
+
+  it("AI の種類を変えたら（同じ ID でも）新しく始める", async () => {
+    let current = agent({ id: "same" });
+    const { activity, service, executor } = setup([unreadable, plan, completed(1_000)], {
+      config: () => configOf(current)(),
+      secrets: { "claude-oauth-token": "oauth-secret", "openai-key": "sk-secret" },
+    });
+    emulateClaude(executor);
+    const task = service.createTask({ projectId: "default", title: "A" });
+    await service.runNext(task.id);
+    current = agent({
+      id: "same",
+      runtime: "codex",
+      auth: { mode: "api-key", secret: "openai-key" },
+    });
+    await rerunOrchestrator(service, task.id);
+    expect(executor.calls[1]?.command).not.toContain("resume");
+    expect(usedOf(service, task.id)[1]).toMatchObject({
+      runtime: "codex",
+      mode: "new",
+      reason: "agent_changed",
+    });
+    activity.close();
+  });
+
+  it("保存したファイルが壊れた（書き換えた・消した）・記録が読めないときは、新しく始めて理由を残す", async () => {
+    for (const breakIt of [
+      (taskId: string) => {
+        const s = stored(taskId);
+        const file = s.files[0]?.path ?? "";
+        writeFileSync(
+          join(dir, "sessions", taskId, "orchestrator", "generations", s.runId, "files", file),
+          "edited\n",
+        );
+      },
+      (taskId: string) => {
+        const s = stored(taskId);
+        rmSync(join(dir, "sessions", taskId, "orchestrator", "generations", s.runId), {
+          recursive: true,
+        });
+      },
+      (taskId: string) => writeFileSync(storedPath(taskId), "{not json"),
+    ]) {
+      rmSync(dbPath, { force: true });
+      const { activity, service, executor } = setup([unreadable, plan, completed(1_000)]);
+      emulateClaude(executor);
+      const task = service.createTask({ projectId: "default", title: "A" });
+      await service.runNext(task.id);
+      breakIt(task.id);
+      await rerunOrchestrator(service, task.id);
+      expect(executor.calls[1]?.command).not.toContain("--resume");
+      expect(usedOf(service, task.id)[1]).toMatchObject({
+        mode: "new",
+        reason: "files_broken",
+        saved: true,
+      });
+      expect(service.get(task.id)?.task.steps.length).toBeGreaterThan(0);
+      activity.close();
+    }
+  });
+
+  it("保存したセッションが上限で省かれていたら、新しく始める", async () => {
+    const { activity, service, executor } = setup([unreadable, plan, completed(1_000)], {
+      sessionLogs: new SessionLogStore(join(dir, "runs"), undefined, 300),
+    });
+    emulateClaude(executor);
+    executor.sessionFiles = (inv, runId) => ({
+      [`projects/-workspace/${claudeId(inv, runId)}.jsonl`]: `${JSON.stringify({ pad: "x".repeat(1_000) })}\n`,
+    });
+    const task = service.createTask({ projectId: "default", title: "A" });
+    await service.runNext(task.id);
+    expect(stored(task.id).files[0]).toHaveProperty("truncated");
+    await rerunOrchestrator(service, task.id);
+    expect(executor.calls[1]?.command).not.toContain("--resume");
+    expect(usedOf(service, task.id)[1]).toMatchObject({ mode: "new", reason: "truncated" });
+    activity.close();
+  });
+
+  it("AI が再開を受け付けなかったら、新しいセッションで始め直し、理由と受け付けなかった実行を残す", async () => {
+    const rejected: AgentOutcome = {
+      kind: "failed",
+      reason: "error",
+      message: "No conversation found with session ID: x",
+    };
+    const { activity, service, executor } = setup([unreadable, rejected, plan, completed(1_000)]);
+    emulateClaude(executor);
+    const task = service.createTask({ projectId: "default", title: "A" });
+    await service.runNext(task.id);
+    const firstRun = usedOf(service, task.id)[0]?.runId ?? "";
+    await rerunOrchestrator(service, task.id);
+    expect(argAfter(executor.calls[1], "--resume")).toBe(`session-${firstRun}`);
+    // 始め直した実行は、再開しない
+    expect(executor.calls[2]?.command).not.toContain("--resume");
+    expect(executor.restored[2]).toBeUndefined();
+    const used = usedOf(service, task.id);
+    expect(used).toHaveLength(2);
+    const retried = used[1];
+    expect(retried).toMatchObject({
+      mode: "new",
+      reason: "resume_failed",
+      resumedFrom: `session-${firstRun}`,
+      saved: true,
+    });
+    expect(retried?.failedRunId).toBeTruthy();
+    expect(retried?.runId).not.toBe(retried?.failedRunId);
+    // タスクは止まらず、工程を決めた（記録の実行の ID は、始め直した実行）
+    const chosen = service.get(task.id)?.activity.find((e) => e.type === "StepsChosen");
+    expect(chosen?.type === "StepsChosen" && chosen.payload.runId).toBe(retried?.runId);
+    expect(stored(task.id).sessionId).toBe(`session-${retried?.runId}`);
+    activity.close();
+  });
+
+  it("再開した実行が利用上限・認証で失敗したときは、始め直さない（同じ失敗になるため）", async () => {
+    for (const reason of ["usage_limit", "auth"] as const) {
+      rmSync(dbPath, { force: true });
+      const { activity, service, executor } = setup([
+        unreadable,
+        { kind: "failed", reason, message: "x" },
+      ]);
+      emulateClaude(executor);
+      const task = service.createTask({ projectId: "default", title: "A" });
+      await service.runNext(task.id);
+      await rerunOrchestrator(service, task.id);
+      expect(executor.calls).toHaveLength(2);
+      expect(usedOf(service, task.id)[1]).toMatchObject({ mode: "resumed" });
+      expect(service.get(task.id)?.task.pausedReason).toBe(reason);
+      activity.close();
+    }
+  });
+
+  it("再開した実行を人間が一時停止したときは、始め直さない", async () => {
+    const { activity, service, executor } = setup([unreadable, HOLD]);
+    emulateClaude(executor);
+    const task = service.createTask({ projectId: "default", title: "A" });
+    await service.runNext(task.id);
+    service.resume(task.id, {});
+    executor.started = Promise.withResolvers<string>();
+    const running = service.runNext(task.id);
+    await executor.started.promise;
+    await service.pause(task.id);
+    await running;
+    expect(executor.calls).toHaveLength(2);
+    expect(usedOf(service, task.id)[1]).toMatchObject({ mode: "resumed" });
+    expect(usedOf(service, task.id)[1]?.reason).toBeUndefined();
+    expect(service.get(task.id)?.task.status).toBe("paused");
+    activity.close();
+  });
+
+  it("再開した実行が使用量を使ってから失敗したときは、始め直さない", async () => {
+    const { activity, service, executor } = setup([
+      unreadable,
+      {
+        kind: "failed",
+        reason: "error",
+        message: "途中で失敗",
+        usage: { input: 10, cacheRead: 0, cacheWrite: 0, output: 1 },
+      },
+    ]);
+    emulateClaude(executor);
+    const task = service.createTask({ projectId: "default", title: "A" });
+    await service.runNext(task.id);
+    await rerunOrchestrator(service, task.id);
+    expect(executor.calls).toHaveLength(2);
+    expect(usedOf(service, task.id)[1]?.mode).toBe("resumed");
+    activity.close();
+  });
+
+  it("チャットは、保存したセッションを複製して答え、元のセッションに質問と答えが混ざらない", async () => {
+    const { activity, service, executor } = setup([unreadable, answer, answer]);
+    emulateClaude(executor);
+    const task = service.createTask({ projectId: "default", title: "A" });
+    await service.runNext(task.id);
+    const firstRun = usedOf(service, task.id)[0]?.runId ?? "";
+    const before = readFileSync(storedPath(task.id), "utf8");
+    const beforeMain = storedFile(task.id, `projects/-workspace/session-${firstRun}.jsonl`);
+    await service.askQuestion(task.id, { text: "いまどうなっている？" }).answered;
+    const chat = executor.calls[1];
+    expect(argAfter(chat, "--resume")).toBe(`session-${firstRun}`);
+    expect(chat?.command).toContain("--fork-session");
+    expect(executor.restored[1]).toEqual({
+      [`projects/-workspace/session-${firstRun}.jsonl`]: beforeMain,
+    });
+    const chatUsed = usedOf(service, task.id)[1];
+    expect(chatUsed).toMatchObject({
+      role: "chat",
+      mode: "forked",
+      resumedFrom: `session-${firstRun}`,
+    });
+    expect(chatUsed?.sessionId).toMatch(/^fork-/);
+    expect(chatUsed?.saved).toBeUndefined();
+    // 保存したセッションは変わらない（チャットの実行は保存しない）
+    expect(readFileSync(storedPath(task.id), "utf8")).toBe(before);
+    expect(storedFile(task.id, `projects/-workspace/session-${firstRun}.jsonl`)).toBe(beforeMain);
+    // 使った回数にも数えない
+    expect(service.get(task.id)?.task.orchestratorSession?.uses).toBe(1);
+    // 答えは記録される
+    expect(service.get(task.id)?.task.questions[0]?.answer?.text).toBe("答えです");
+    activity.close();
+  });
+
+  it("Codex のチャットは、使い捨ての場所で再開して答え（複製の引数は無い）、元のセッションは変わらない", async () => {
+    const codex = agent({
+      id: "codex-key",
+      runtime: "codex",
+      auth: { mode: "api-key", secret: "openai-key" },
+    });
+    const { activity, service, executor } = setup([unreadable, answer], {
+      config: configOf(codex),
+      secrets: { "openai-key": "sk-secret" },
+    });
+    const codexId = (inv: Invocation, runId: string) =>
+      argAfter(inv, "resume") ?? `thread-${runId}`;
+    executor.appendSessionFiles = true;
+    executor.sessionIdOf = codexId;
+    executor.sessionFiles = (inv, runId) => ({
+      [`sessions/2026/10/14/rollout-2026-10-14T10-00-00-${codexId(inv, runId)}.jsonl`]: `{"run":"${runId}"}\n`,
+    });
+    const task = service.createTask({ projectId: "default", title: "A" });
+    await service.runNext(task.id);
+    const before = readFileSync(storedPath(task.id), "utf8");
+    const firstRun = usedOf(service, task.id)[0]?.runId ?? "";
+    await service.askQuestion(task.id, { text: "質問" }).answered;
+    expect(executor.calls[1]?.command.slice(-3, -1)).toEqual(["resume", `thread-${firstRun}`]);
+    expect(usedOf(service, task.id)[1]).toMatchObject({
+      role: "chat",
+      mode: "forked",
+      runtime: "codex",
+    });
+    expect(readFileSync(storedPath(task.id), "utf8")).toBe(before);
+    expect(
+      storedFile(
+        task.id,
+        `sessions/2026/10/14/rollout-2026-10-14T10-00-00-thread-${firstRun}.jsonl`,
+      ),
+    ).toBe(`{"run":"${firstRun}"}\n`);
+    activity.close();
+  });
+
+  it("セッションが無いタスクのチャットは新しいセッションで答え、保存しない", async () => {
+    const { activity, service, executor } = setup([answer]);
+    emulateClaude(executor);
+    const task = service.createTask({ projectId: "default", title: "A" });
+    await service.askQuestion(task.id, { text: "質問" }).answered;
+    expect(executor.calls[0]?.command).not.toContain("--resume");
+    expect(usedOf(service, task.id)).toMatchObject([
+      { role: "chat", mode: "new", reason: "first" },
+    ]);
+    expect(existsSync(storedPath(task.id))).toBe(false);
+    expect(service.get(task.id)?.task.orchestratorSession).toBeUndefined();
+    activity.close();
+  });
+
+  it("チャットで再開を受け付けなかったら、新しいセッションで答え直す（止める対象も、始め直した実行）", async () => {
+    const { activity, service, executor } = setup([
+      unreadable,
+      { kind: "failed", reason: "error", message: "No conversation found" },
+      answer,
+    ]);
+    emulateClaude(executor);
+    const task = service.createTask({ projectId: "default", title: "A" });
+    await service.runNext(task.id);
+    await service.askQuestion(task.id, { text: "質問" }).answered;
+    expect(executor.calls[2]?.command).not.toContain("--resume");
+    const used = usedOf(service, task.id)[1];
+    expect(used).toMatchObject({ role: "chat", mode: "new", reason: "resume_failed" });
+    const answered = service.get(task.id)?.activity.find((e) => e.type === "QuestionAnswered");
+    expect(answered?.type === "QuestionAnswered" && answered.payload.runId).toBe(used?.runId);
+    expect(service.get(task.id)?.task.questions[0]?.answer?.text).toBe("答えです");
+    activity.close();
+  });
+
+  it("ほかのタスクのセッションとは混ざらない", async () => {
+    const { activity, service, executor } = setup([unreadable, unreadable, plan, completed(1_000)]);
+    emulateClaude(executor);
+    const a = service.createTask({ projectId: "default", title: "A" });
+    const b = service.createTask({ projectId: "default", title: "B" });
+    await service.runNext(a.id);
+    // B は A のセッションを使わない
+    await service.runNext(b.id);
+    expect(executor.calls[1]?.command).not.toContain("--resume");
+    expect(usedOf(service, b.id)[0]).toMatchObject({ mode: "new", reason: "first" });
+    const bRun = usedOf(service, b.id)[0]?.runId ?? "";
+    // B の2回目は、B のセッションを再開する
+    await rerunOrchestrator(service, b.id);
+    expect(argAfter(executor.calls[2], "--resume")).toBe(`session-${bRun}`);
+    expect(Object.keys(executor.restored[2] ?? {})).toEqual([
+      `projects/-workspace/session-${bRun}.jsonl`,
+    ]);
+    expect(stored(a.id).sessionId).not.toBe(stored(b.id).sessionId);
+    activity.close();
+  });
+
+  it("同じタスクのオーケストレーターの実行は同時に1つだけ（並ぶ）。ほかのタスク・工程のエージェントは並べない", async () => {
+    const { activity, service, executor } = setup([HOLD, completed(1), completed(1), completed(1)]);
+    const a = service.createTask({ projectId: "default", title: "A" });
+    const b = service.createTask({ projectId: "default", title: "B" });
+    type Run = {
+      agent: AgentConfig;
+      image: string;
+      taskId: string;
+      runId: string;
+      prompt: string;
+      role: string;
+      workspaceDir: string;
+    };
+    const execute = (run: Run) =>
+      (service as unknown as { execute(run: Run): Promise<{ outcome: AgentOutcome }> }).execute(
+        run,
+      );
+    const runOf = (taskId: string, runId: string, role = "orchestrator"): Run => ({
+      agent: agent(),
+      image: "sacty-agent:test",
+      taskId,
+      runId,
+      prompt: "p",
+      role,
+      workspaceDir: join(dir, "ws", runId),
+    });
+    const first = execute(runOf(a.id, "a1"));
+    await executor.started.promise;
+    const second = execute(runOf(a.id, "a2"));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    // 同じタスクの2つ目は、1つ目が終わるまで始まらない
+    expect(executor.calls).toHaveLength(1);
+    // ほかのタスクのオーケストレーター・同じタスクの工程のエージェントは待たない
+    await execute(runOf(b.id, "b1"));
+    await execute(runOf(a.id, "s1", "requirements"));
+    expect(executor.calls).toHaveLength(3);
+    executor.kill("a1");
+    await first;
+    await second;
+    expect(executor.calls).toHaveLength(4);
+    activity.close();
+  });
+
+  it("ゴールガーディアン（判定・最終レビュー・PR の指摘の判断）は、保存したセッションがあっても毎回新しい", async () => {
+    const { activity, service, executor } = setup([
+      unreadable,
+      completed(1),
+      completed(1),
+      completed(1),
+    ]);
+    emulateClaude(executor);
+    const task = service.createTask({ projectId: "default", title: "A" });
+    await service.runNext(task.id);
+    expect(existsSync(storedPath(task.id))).toBe(true);
+    const execute = (role: string, runId: string) =>
+      (service as unknown as { execute(run: unknown): Promise<unknown> }).execute({
+        agent: agent(),
+        image: "sacty-agent:test",
+        taskId: task.id,
+        runId,
+        prompt: "p",
+        role,
+        workspaceDir: join(dir, "ws", runId),
+      });
+    await execute("guardian", "g1");
+    await execute("final-review", "g2");
+    await execute("rework", "g3");
+    for (const call of executor.calls.slice(1)) {
+      expect(call.command).not.toContain("--resume");
+      expect(call.stage?.sessionDir).toBeUndefined();
+    }
+    expect(usedOf(service, task.id)).toHaveLength(1);
+    activity.close();
+  });
+
+  it("スタブ・セッションの置き場所が無いときは、これまでどおり毎回新しく、記録もしない", async () => {
+    const { activity, service, executor } = setup([unreadable], {
+      config: configOf(agent({ id: "stub", runtime: "stub", auth: { mode: "stub" } })),
+    });
+    emulateClaude(executor);
+    const task = service.createTask({ projectId: "default", title: "A" });
+    await service.runNext(task.id);
+    expect(usedOf(service, task.id)).toEqual([]);
+    activity.close();
+
+    rmSync(dbPath, { force: true });
+    const second = new SqliteActivityStore(dbPath);
+    const made = makeService(second, [unreadable], {
+      realPlanner: true,
+      sessionLogs: new SessionLogStore(join(dir, "runs2")),
+    });
+    emulateClaude(made.executor);
+    const t = made.service.createTask({ projectId: "default", title: "A" });
+    await made.service.runNext(t.id);
+    expect(usedOf(made.service, t.id)).toEqual([]);
+    expect(made.executor.calls[0]?.command).not.toContain("--resume");
+    second.close();
+  });
+
+  it("元のファイルを写せなかった・セッションの ID が分からないときは保存せず、前に保存したものを再開する", async () => {
+    const { activity, service, executor } = setup([unreadable, unreadable, plan, completed(1)]);
+    emulateClaude(executor);
+    const task = service.createTask({ projectId: "default", title: "A" });
+    await service.runNext(task.id);
+    const firstRun = usedOf(service, task.id)[0]?.runId ?? "";
+    // 2回目：コンテナの停止を確かめられず、写せなかった
+    executor.containerUnconfirmed = true;
+    await rerunOrchestrator(service, task.id);
+    expect(usedOf(service, task.id)[1]).toMatchObject({
+      mode: "resumed",
+      saved: false,
+      notSaved: "not_archived",
+    });
+    expect(service.get(task.id)?.task.orchestratorSession?.saved).toBe(false);
+    expect(stored(task.id).runId).toBe(firstRun);
+    // 3回目：前に保存したもの（1回目）を再開する
+    executor.containerUnconfirmed = false;
+    await rerunOrchestrator(service, task.id);
+    expect(argAfter(executor.calls[2], "--resume")).toBe(`session-${firstRun}`);
+    expect(usedOf(service, task.id)[2]).toMatchObject({ mode: "resumed", saved: true });
+    activity.close();
+  });
+
+  it("出力から読んだセッションの ID が、引数に使えない形なら保存しない", async () => {
+    const { activity, service, executor } = setup([unreadable]);
+    emulateClaude(executor);
+    executor.sessionIdOf = () => "--dangerous";
+    executor.sessionFiles = () => ({ "projects/-workspace/--dangerous.jsonl": "{}\n" });
+    const task = service.createTask({ projectId: "default", title: "A" });
+    await service.runNext(task.id);
+    expect(usedOf(service, task.id)[0]).toMatchObject({ saved: false, notSaved: "no_session" });
+    expect(existsSync(storedPath(task.id))).toBe(false);
+    activity.close();
+  });
+
+  it("中止すると、オーケストレーターのセッションを片付ける（実行ごとに写した元のファイルは残す）", async () => {
+    const { activity, service, executor } = setup([unreadable]);
+    emulateClaude(executor);
+    const task = service.createTask({ projectId: "default", title: "A" });
+    await service.runNext(task.id);
+    const runId = usedOf(service, task.id)[0]?.runId ?? "";
+    expect(service.cleanupPlan(task.id)?.find((c) => c.target === "session")?.present).toBe(true);
+    await service.cancel(task.id);
+    expect(existsSync(join(dir, "sessions", task.id))).toBe(false);
+    expect(existsSync(join(dir, "runs", task.id, runId, "agent"))).toBe(true);
+    const cancelled = service.get(task.id)?.activity.find((e) => e.type === "TaskCancelled");
+    expect(
+      cancelled?.type === "TaskCancelled" &&
+        cancelled.payload.cleanup.find((c) => c.target === "session")?.result,
+    ).toBe("done");
+    activity.close();
+  });
+
+  it("中止で止めたオーケストレーターの実行も、中止の後に記録する（状態は変えない）", async () => {
+    const { activity, service, executor } = setup([HOLD]);
+    emulateClaude(executor);
+    const task = service.createTask({ projectId: "default", title: "A" });
+    const running = service.runNext(task.id);
+    await executor.started.promise;
+    await service.cancel(task.id);
+    await running;
+    expect(service.get(task.id)?.task.status).toBe("cancelled");
+    expect(usedOf(service, task.id)).toHaveLength(1);
+    // 片付けの後に保存し直さない
+    expect(existsSync(join(dir, "sessions", task.id))).toBe(false);
+    const { service: restarted } = makeService(activity, []);
+    expect(restarted.get(task.id)?.task.status).toBe("cancelled");
     activity.close();
   });
 });

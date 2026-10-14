@@ -13,6 +13,7 @@ import { GitHubIssueSearch, GitHubPullRequests } from "./github.js";
 import { HostMcpServers } from "./host-mcp.js";
 import { IssueIntake } from "./intake.js";
 import { SlackNotifier } from "./notifier.js";
+import { OrchestratorSessionStore } from "./orchestrator-sessions.js";
 import { PlatformCredentials } from "./platforms.js";
 import { PullRequestWatcher } from "./pr-watcher.js";
 import { SqliteProjectStore } from "./projects.js";
@@ -108,6 +109,8 @@ const service = new TaskService({
   workspaceRoot,
   // エージェントの実行ごとのセッションログ（PBI-62）。中止の掃除では消さない（監査に使うため）
   sessionLogs: new SessionLogStore(join(home, "runs")),
+  // タスクごとのオーケストレーターのセッション（PBI-67）。台帳が正本で、これは使い回すためのキャッシュ
+  orchestratorSessions: new OrchestratorSessionStore(join(home, "sessions")),
   gateway,
   platformProblems: (names) => credentials.unavailable(names),
   hostMcpProblems: () => hostMcp.problems(),

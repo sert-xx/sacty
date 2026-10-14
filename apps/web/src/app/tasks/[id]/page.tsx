@@ -21,6 +21,7 @@ import { ExportRetryButton } from "@/components/export-retry-button";
 import { Implementation } from "@/components/implementation";
 import { IntegrationResult } from "@/components/integration";
 import { Markdown } from "@/components/markdown";
+import { OrchestratorSession } from "@/components/orchestrator-session";
 import { Proposals } from "@/components/proposals";
 import { PullRequestCard } from "@/components/pull-request";
 import { ReproductionResult } from "@/components/reproduction";
@@ -406,6 +407,8 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
           {(task.approved.requirements || task.proposals.length > 0) && <Proposals task={task} />}
           {/* 工程ごとのエージェント・設定・費用（PBI-46） */}
           <StepCosts task={task} activity={activity} />
+          {/* オーケストレーターのセッション（PBI-67） */}
+          <OrchestratorSession task={task} />
         </div>
 
         <section

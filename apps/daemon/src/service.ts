@@ -84,6 +84,7 @@ import {
   buildInvocation,
   CONTAINER_CLAUDE_CONFIG_DIR,
   CONTAINER_CODEX_HOME,
+  type OrchestratorSessionResume,
 } from "./agents/invocation.js";
 import type { AgentOutcome } from "./agents/parse.js";
 import { redact, redactText } from "./agents/redact.js";
@@ -121,6 +122,7 @@ import {
   type PullRequests,
 } from "./github.js";
 import { notificationFor, type SlackNotifier } from "./notifier.js";
+import type { OrchestratorSessionStore } from "./orchestrator-sessions.js";
 import { type Platform, platformPromptLines } from "./platforms.js";
 import type { ProjectStore } from "./projects.js";
 import {
@@ -182,6 +184,7 @@ import {
   type StartedServices,
 } from "./services.js";
 import type {
+  ArchivedAgentSession,
   SessionLogFile,
   SessionLogHandle,
   SessionLogStore,
@@ -296,6 +299,11 @@ export type ServiceDeps = {
   stepPullRequests?: boolean;
   /** エージェントの実行ごとのセッションログの置き場所（PBI-62）。無ければ、残さない。 */
   sessionLogs?: SessionLogStore;
+  /**
+   * タスクごとのオーケストレーターのセッションの置き場所（PBI-67）。無ければ（セッションログも要る）、オーケストレーターも
+   * 毎回新しいセッションで実行する。
+   */
+  orchestratorSessions?: OrchestratorSessionStore;
 };
 
 export type DaemonStatus = {
@@ -350,6 +358,49 @@ export type ProjectView = {
  * タスクの読み書きの窓口。書き込みは必ず作業履歴への追記を通り、
  * 読み取り用の状態は作業履歴から復元したものを保持する。
  */
+/** エージェントの実行の結果（費用を含む）。 */
+type Executed = { outcome: AgentOutcome; costUsd: number; estimated: boolean };
+
+/** エージェントの1回の実行（TaskService.execute）に渡すもの。 */
+type ExecuteRun = {
+  agent: AgentConfig;
+  image: string;
+  /** 実行するタスク（セッションログの置き場所。PBI-62）。 */
+  taskId: string;
+  runId: string;
+  prompt: string;
+  role: AgentRole;
+  workspaceDir: string;
+  /** エージェントの形式に変換したコンテキスト（工程エージェントだけ。PBI-6）。 */
+  context?: Parameters<typeof buildInvocation>[5];
+  /** 使わせる組織内 PF の API（工程エージェントだけ。PBI-35）。 */
+  platforms?: readonly Platform[];
+  /** イメージの環境変数（言語ごとのイメージの env。PBI-41）。 */
+  imageEnv?: Record<string, string>;
+  /** つなぐネットワーク（docker compose のサービス。PBI-47）。 */
+  network?: string;
+  /** コンテナの中で localhost に転送するサービスのポート（PBI-60）。 */
+  forwards?: readonly LocalForward[];
+  /** ゲートウェイ経由にした、コンテキストの HTTP の MCP サーバー（PBI-49）。 */
+  contextMcp?: readonly GatewayMcpServer[];
+  /** 追加でマウントする、sacty が管理するディレクトリ（レビューの差分の全体。PBI-65）。 */
+  mounts?: readonly { hostPath: string; containerPath: string; readOnly: boolean }[];
+  /** true を返すと、コンテナを起動しない（質問への答えの実行が中止されたなど。PBI-54）。 */
+  stopped?: () => boolean;
+  /** 実行の ID が変わったら知らせる（セッションを新しく始め直したとき。止めるため。PBI-67）。 */
+  onRunId?: (runId: string) => void;
+};
+
+/**
+ * 再開したセッションを、AI が受け付けなかったか（PBI-67）。何も使わずに失敗した（セッションが見つからない・読めない）なら、
+ * 新しいセッションで始め直す。利用上限・認証の失敗は、始め直しても同じなので、そのまま返す。
+ */
+function resumeRejected(outcome: AgentOutcome): boolean {
+  if (outcome.kind !== "failed" || outcome.reason !== "error") return false;
+  const u = outcome.usage;
+  return !u || u.input + u.cacheRead + u.cacheWrite + u.output === 0;
+}
+
 export class TaskService {
   private tasks: Map<string, Task>;
 
@@ -801,9 +852,11 @@ export class TaskService {
       runId?: string;
       /** true を返すと、コンテナを起動しない（準備の間に中止されたなど。PBI-54）。 */
       stopped?: () => boolean;
+      /** 実行の ID が変わったら知らせる（セッションを新しく始め直したとき。止めるため。PBI-67）。 */
+      onRunId?: (runId: string) => void;
     },
     code: "base" | "implemented",
-  ): Promise<Awaited<ReturnType<TaskService["execute"]>> & { runId: string }> {
+  ): Promise<Awaited<ReturnType<TaskService["execute"]>>> {
     const runId = run.runId ?? randomUUID();
     const workspaceDir = join(this.deps.workspaceRoot, "_guardian", runId);
     try {
@@ -827,7 +880,8 @@ export class TaskService {
           };
         }
       }
-      return { ...(await this.execute({ ...run, taskId: task.id, runId, workspaceDir })), runId };
+      // 再開できなかったセッションを新しく始め直したら、その実行の ID になる（PBI-67）
+      return await this.execute({ ...run, taskId: task.id, runId, workspaceDir });
     } finally {
       rmSync(workspaceDir, { recursive: true, force: true });
     }
@@ -2672,7 +2726,7 @@ export class TaskService {
       }
     }
 
-    let executed: Awaited<ReturnType<TaskService["execute"]>> | undefined;
+    let executed: Executed | undefined;
     // レビューの工程は、起点ではなく PR の先頭のコミットのコードを読ませ、PR の差分を渡す（PBI-19）
     const reviewTarget = step === "review" ? this.mustGet(task.id).reviewTarget : undefined;
     let reviewDiff: string | undefined;
@@ -3062,7 +3116,7 @@ export class TaskService {
       }
     }
     const workspaceDir = join(this.deps.workspaceRoot, "_export", runId);
-    let executed: Awaited<ReturnType<TaskService["execute"]>>;
+    let executed: Executed;
     try {
       // 書き出す内容は、作業領域のファイルで渡す（指示の長さの上限に関わらず、全文を渡すため）
       try {
@@ -3847,8 +3901,12 @@ export class TaskService {
         present: existsSync(workspace) || existsSync(this.trustedGitDir(task)),
         detail: workspace,
       },
-      // sacty はエージェントのセッションを保存しない（実行ごとに空の設定で起動する）
-      { target: "session", present: false },
+      // オーケストレーターのセッション（PBI-67）。工程のエージェントは実行ごとに空の設定で起動するので、保存しない
+      // （実行ごとに写した元のファイルは、監査のために消さない）
+      {
+        target: "session",
+        present: this.deps.orchestratorSessions?.has(task.id) ?? false,
+      },
       {
         target: "branch",
         present: sactyBranches(task).length > 0,
@@ -3923,7 +3981,18 @@ export class TaskService {
       } else {
         cleanup.push({ target: "container", result: "skipped" });
       }
-      cleanup.push({ target: "session", result: "skipped" });
+      // オーケストレーターのセッション（PBI-67）。実行と質問への答えが終わった後に消す
+      const sessions = this.deps.orchestratorSessions;
+      if (sessions?.has(id)) {
+        try {
+          sessions.remove(id);
+          cleanup.push({ target: "session", result: "done" });
+        } catch (error) {
+          cleanup.push({ target: "session", result: "failed", detail: errorText(error) });
+        }
+      } else {
+        cleanup.push({ target: "session", result: "skipped" });
+      }
 
       const latest = this.mustGet(id);
       const pr = latest.pullRequest;
@@ -4155,7 +4224,7 @@ export class TaskService {
     const subtasks = this.subtaskSummaries(task);
     let baseBranch = task.repository?.baseBranch ?? "";
     let commit = "";
-    let executed: Awaited<ReturnType<TaskService["execute"]>> | undefined;
+    let executed: Executed | undefined;
     const failed = (detail: DaemonText) => ({
       outcome: { kind: "failed" as const, reason: "error" as const, message: detail },
       costUsd: 0,
@@ -4382,33 +4451,168 @@ export class TaskService {
     }
   }
 
-  /** 秘密情報を取り出してエージェントを実行し、出力やエラー文から秘密情報を取り除いて返す。 */
-  private async execute(run: {
-    agent: AgentConfig;
-    image: string;
-    /** 実行するタスク（セッションログの置き場所。PBI-62）。 */
-    taskId: string;
-    runId: string;
-    prompt: string;
-    role: AgentRole;
-    workspaceDir: string;
-    /** エージェントの形式に変換したコンテキスト（工程エージェントだけ。PBI-6）。 */
-    context?: Parameters<typeof buildInvocation>[5];
-    /** 使わせる組織内 PF の API（工程エージェントだけ。PBI-35）。 */
-    platforms?: readonly Platform[];
-    /** イメージの環境変数（言語ごとのイメージの env。PBI-41）。 */
-    imageEnv?: Record<string, string>;
-    /** つなぐネットワーク（docker compose のサービス。PBI-47）。 */
-    network?: string;
-    /** コンテナの中で localhost に転送するサービスのポート（PBI-60）。 */
-    forwards?: readonly LocalForward[];
-    /** ゲートウェイ経由にした、コンテキストの HTTP の MCP サーバー（PBI-49）。 */
-    contextMcp?: readonly GatewayMcpServer[];
-    /** 追加でマウントする、sacty が管理するディレクトリ（レビューの差分の全体。PBI-65）。 */
-    mounts?: readonly { hostPath: string; containerPath: string; readOnly: boolean }[];
-    /** true を返すと、コンテナを起動しない（質問への答えの実行が中止されたなど。PBI-54）。 */
-    stopped?: () => boolean;
-  }): Promise<{ outcome: AgentOutcome; costUsd: number; estimated: boolean }> {
+  /**
+   * 秘密情報を取り出してエージェントを実行し、出力やエラー文から秘密情報を取り除いて返す。オーケストレーター（質問への答えも）
+   * は、タスクのセッションを使い回す（PBI-67）。返す runId は、最後に実行したもの（再開できずに新しく始め直したら変わる）。
+   */
+  private async execute(
+    run: ExecuteRun,
+  ): Promise<{ outcome: AgentOutcome; costUsd: number; estimated: boolean; runId: string }> {
+    if (run.role === "orchestrator") {
+      // 同じタスクで、オーケストレーターの実行は同時に1つだけ（並ぶ）
+      return this.withOrchestratorLock(run.taskId, () => this.executeWithSession(run));
+    }
+    if (run.role === "chat") return this.executeWithSession(run);
+    const { archived: _archived, ...executed } = await this.executeOnce(run);
+    return { ...executed, runId: run.runId };
+  }
+
+  /** タスクごとの、オーケストレーターの実行の順番（PBI-67）。 */
+  private readonly orchestratorQueue = new Map<string, Promise<void>>();
+
+  private async withOrchestratorLock<T>(taskId: string, fn: () => Promise<T>): Promise<T> {
+    const previous = this.orchestratorQueue.get(taskId) ?? Promise.resolve();
+    let release = () => {};
+    const mine = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const tail = previous.then(() => mine);
+    this.orchestratorQueue.set(taskId, tail);
+    await previous;
+    try {
+      return await fn();
+    } finally {
+      release();
+      if (this.orchestratorQueue.get(taskId) === tail) this.orchestratorQueue.delete(taskId);
+    }
+  }
+
+  /**
+   * オーケストレーターのセッションを使って実行する（PBI-67）。オーケストレーターは、同じタスク・同じエージェントの保存した
+   * セッションを再開し、無ければ・再開できなければ新しく始め、終わったらセッションを保存する。質問への答え（chat）は、
+   * 保存したセッションを複製して答え、保存しない（元のセッションに、質問と答えが混ざらない）。指示はこれまでどおり台帳から
+   * 作る（セッションは経緯の補い）。どちらも、使ったセッションを作業履歴に残す。
+   */
+  private async executeWithSession(
+    run: ExecuteRun,
+  ): Promise<{ outcome: AgentOutcome; costUsd: number; estimated: boolean; runId: string }> {
+    const store = this.deps.orchestratorSessions;
+    const runtime = run.agent.runtime;
+    if (!store || !this.deps.sessionLogs || (runtime !== "claude-code" && runtime !== "codex")) {
+      const { archived: _archived, ...executed } = await this.executeOnce(run);
+      return { ...executed, runId: run.runId };
+    }
+    const chat = run.role === "chat";
+    const agent = { agentId: run.agent.id, runtime };
+    let plan: Awaited<ReturnType<OrchestratorSessionStore["plan"]>>;
+    try {
+      plan = await store.plan(run.taskId, agent);
+    } catch (error) {
+      console.warn(
+        `[daemon] オーケストレーターのセッションを確かめられませんでした（${run.taskId}）：`,
+        error instanceof Error ? error.message : error,
+      );
+      plan = { mode: "new", reason: "files_broken" };
+    }
+    let runId = run.runId;
+    let executed = await this.executeOnce(
+      plan.mode === "resume"
+        ? { ...run, session: { resume: plan.sessionId, filesDir: plan.filesDir, fork: chat } }
+        : run,
+    );
+    let reason = plan.mode === "new" ? plan.reason : undefined;
+    let failedRunId: string | undefined;
+    // AI が再開を受け付けなかった（何も使わずに失敗した）なら、新しいセッションで始め直す（タスクは止めない）。
+    // 人間が止めた・中止したときは、始め直さない
+    if (
+      plan.mode === "resume" &&
+      resumeRejected(executed.outcome) &&
+      !this.stopRequested(run.taskId) &&
+      !run.stopped?.()
+    ) {
+      failedRunId = runId;
+      reason = "resume_failed";
+      runId = randomUUID();
+      run.onRunId?.(runId);
+      const first = executed;
+      executed = await this.executeOnce({ ...run, runId });
+      executed = { ...executed, costUsd: executed.costUsd + first.costUsd };
+    }
+    const resumed = plan.mode === "resume" && !failedRunId;
+    const archived = executed.archived;
+    let saved:
+      | {
+          saved: boolean;
+          notSaved?: "not_archived" | "no_session" | "session_missing" | "copy_failed";
+        }
+      | undefined;
+    // 中止したタスクのセッションは保存しない（中止の片付けで消す）
+    if (!chat && this.tasks.get(run.taskId)?.status !== "cancelled") {
+      const sourceDir = this.deps.sessionLogs.agentFilesDir(run.taskId, runId);
+      saved =
+        !archived || archived.notArchived || archived.files.length === 0 || !sourceDir
+          ? { saved: false, notSaved: "not_archived" }
+          : await store
+              .save(run.taskId, {
+                ...agent,
+                sessionId: archived.sessionId,
+                runId,
+                sourceDir,
+                files: archived.files,
+              })
+              .catch(() => ({ saved: false, notSaved: "copy_failed" as const }));
+    }
+    const task = this.tasks.get(run.taskId);
+    if (task) {
+      try {
+        this.append(task, [
+          {
+            actor: "sacty",
+            event: {
+              type: "OrchestratorSessionUsed",
+              payload: {
+                runId,
+                role: chat ? "chat" : "orchestrator",
+                ...agent,
+                mode: resumed ? (chat ? "forked" : "resumed") : "new",
+                ...(archived?.sessionId ? { sessionId: archived.sessionId } : {}),
+                ...(plan.mode === "resume" ? { resumedFrom: plan.sessionId } : {}),
+                ...(reason ? { reason } : {}),
+                ...(failedRunId ? { failedRunId } : {}),
+                ...(saved ? { saved: saved.saved } : {}),
+                ...(saved?.notSaved ? { notSaved: saved.notSaved } : {}),
+              },
+            },
+          },
+        ]);
+      } catch (error) {
+        console.warn(
+          `[daemon] オーケストレーターのセッションを作業履歴に記録できませんでした（${runId}）：`,
+          error instanceof Error ? error.message : error,
+        );
+      }
+    }
+    const { archived: _archived, ...rest } = executed;
+    return { ...rest, runId };
+  }
+
+  /** 人間が、タスクの一時停止・中止を求めているか。 */
+  private stopRequested(taskId: string): boolean {
+    return this.pauseRequested.has(taskId) || this.cancelling.has(taskId);
+  }
+
+  /** 1回の実行。写したエージェントのファイル（PBI-66）も返す。 */
+  private async executeOnce(
+    run: ExecuteRun & {
+      /** 再開するセッション（PBI-67）。 */
+      session?: OrchestratorSessionResume;
+    },
+  ): Promise<{
+    outcome: AgentOutcome;
+    costUsd: number;
+    estimated: boolean;
+    archived: ArchivedAgentSession | undefined;
+  }> {
     // 実行に渡した秘密情報。作業履歴に書く前に、出力やエラー文から取り除く。
     const usedSecrets: string[] = [];
     // セッションログ（PBI-62）。実行に渡した秘密情報は、書く前に伏せる（準備の間に増えた分も）
@@ -4428,7 +4632,7 @@ export class TaskService {
       const executed = await this.executeLogged(run, usedSecrets, log);
       // 失敗した実行・止めた実行も、結果を残して閉じる（結果の文は、伏せた後のもの）
       log?.close(executed.outcome);
-      return executed;
+      return { ...executed, archived: log?.archived };
     } catch (error) {
       log?.close({ kind: "failed", reason: "error", message: errorText(error) });
       throw error;
@@ -4442,7 +4646,7 @@ export class TaskService {
    * 中止したタスクにも記録する。記録できなくても、実行の結果は変えない。
    */
   private recordAgentSession(
-    run: Parameters<TaskService["execute"]>[0],
+    run: ExecuteRun & { session?: OrchestratorSessionResume },
     log: SessionLogHandle | undefined,
   ): void {
     const archived = log?.archived;
@@ -4477,7 +4681,7 @@ export class TaskService {
   }
 
   private async executeLogged(
-    run: Parameters<TaskService["execute"]>[0],
+    run: ExecuteRun & { session?: OrchestratorSessionResume },
     usedSecrets: string[],
     log: SessionLogHandle | undefined,
   ): Promise<{ outcome: AgentOutcome; costUsd: number; estimated: boolean }> {
@@ -4540,6 +4744,7 @@ export class TaskService {
         run.role,
         run.context,
         gateway,
+        run.session,
       );
       if (gatewayRun && platforms.length > 0 && this.deps.gateway) {
         invocation.env.SACTY_PF_URL = this.deps.gateway.platformsUrl(gatewayRun.token);
@@ -4840,16 +5045,21 @@ export class TaskService {
     const asked = this.append(task, [
       { actor: "person", event: { type: "QuestionAsked", payload: { questionId, text } } },
     ]);
-    const runId = randomUUID();
-    const answered = this.answerQuestion(asked, questionId, runId, config.config)
+    // 実行の ID は、セッションを新しく始め直すと変わる（止める対象を、いまの実行にする。PBI-67）
+    const entry: { runId: string; done: Promise<void> } = {
+      runId: randomUUID(),
+      done: Promise.resolve(),
+    };
+    const answered = this.answerQuestion(asked, questionId, entry, config.config)
       .catch((error) => {
         console.error(`[daemon] could not record the answer for task ${id}:`, error);
       })
       .finally(() => {
         // 次の質問の実行を消さないよう、この実行の分だけを消す
-        if (this.chats.get(id)?.runId === runId) this.chats.delete(id);
+        if (this.chats.get(id) === entry) this.chats.delete(id);
       });
-    this.chats.set(id, { runId, done: answered });
+    entry.done = answered;
+    this.chats.set(id, entry);
     return { task: asked, answered };
   }
 
@@ -4861,31 +5071,37 @@ export class TaskService {
   private async answerQuestion(
     task: Task,
     questionId: string,
-    runId: string,
+    /** 実行（止めるために、いまの実行の ID を書き換える）。 */
+    chat: { runId: string },
     config: SactyConfig,
   ): Promise<void> {
     const question = task.questions.find((q) => q.id === questionId);
     if (!question) return;
     // オーケストレーターに使う AI（step_agents.orchestrator か default_agent。PBI-40）
     const agent = agentFor(config, "orchestrator");
-    const setting = { agentId: agent.id, ...agentSetting(agent), runId };
+    const setting = { agentId: agent.id, ...agentSetting(agent), runId: chat.runId };
     let payload: Extract<EventInput, { type: "QuestionAnswered" }>["payload"];
     try {
-      const { outcome, costUsd, estimated } = await this.runGuardian(
+      // オーケストレーターのセッションを複製して答える（作業中のセッションには話しかけない。PBI-67）
+      const { outcome, costUsd, estimated, runId } = await this.runGuardian(
         task,
         {
           agent,
           image: config.image,
           prompt: buildChatPrompt(task, this.deps.activity.forTask(task.id), question),
           role: "chat",
-          runId,
+          runId: chat.runId,
           // 準備の間（コードの書き出しなど）に中止されたなら、コンテナを起動しない
           stopped: () => this.cancelling.has(task.id),
+          onRunId: (next) => {
+            chat.runId = next;
+          },
         },
         "base",
       );
       const cost = {
         ...setting,
+        runId,
         ...(outcome.usage ? { usage: outcome.usage } : {}),
         costUsd,
         estimated,
