@@ -1,4 +1,4 @@
-import { budgetState } from "./cost.js";
+import { budgetState, chargeBudget } from "./cost.js";
 import type {
   ActivityEvent,
   ExportPlan,
@@ -420,11 +420,6 @@ function updateProposal(task: Task, id: string, patch: Partial<TaskProposal>) {
   task.proposals = task.proposals.map((p) => (p.id === id ? { ...p, ...patch } : p));
 }
 
-/** 浮動小数の誤差を、費用の表示や比較に影響しない桁で丸める。 */
-function addUsd(a: number, b: number): number {
-  return Math.round((a + b) * 1e6) / 1e6;
-}
-
 /**
  * 1件のイベントをタスクの状態に適用する。作業履歴を先頭から順に適用すれば、
  * いつでも同じ状態を復元できる（デーモンの再起動後も含む）。
@@ -499,12 +494,6 @@ export function applyEvent(
         key,
         state: i === 0 ? ("active" as const) : ("todo" as const),
       }));
-      // オーケストレーターの判断の費用は、タスクの予算に入れる（PBI-17）
-      task.budget = {
-        ...task.budget,
-        usedUsd: addUsd(task.budget.usedUsd, event.payload.costUsd),
-        estimated: task.budget.estimated || event.payload.estimated,
-      };
       if (event.payload.testCommand) task.testCommand = event.payload.testCommand;
       if (event.payload.investigation) task.investigation = event.payload.investigation;
       if (event.payload.images) task.images = event.payload.images;
@@ -536,11 +525,6 @@ export function applyEvent(
       // 失敗した実行は、再開したときにやり直すので実行待ちに戻す
       task.status = event.type === "AgentRunCompleted" ? "idle" : "queued";
       task.currentRunId = undefined;
-      task.budget = {
-        ...task.budget,
-        usedUsd: addUsd(task.budget.usedUsd, event.payload.costUsd),
-        estimated: task.budget.estimated || event.payload.estimated,
-      };
       if (event.type === "AgentRunCompleted") {
         // 承認済みの成果物は凍結されている。変えるには、人間が差し戻して承認を取り消す必要がある
         if (task.approved[event.payload.step]) {
@@ -739,11 +723,6 @@ export function applyEvent(
     case "ChangeJudged": {
       const proposal = findProposal(task, event, event.payload.proposalId);
       if (proposal.judgement) throw new ActivityIntegrityError(event, "already judged");
-      task.budget = {
-        ...task.budget,
-        usedUsd: addUsd(task.budget.usedUsd, event.payload.costUsd),
-        estimated: task.budget.estimated || event.payload.estimated,
-      };
       updateProposal(task, proposal.id, {
         judgement: { verdict: event.payload.verdict, reason: event.payload.reason, at: event.at },
       });
@@ -814,11 +793,6 @@ export function applyEvent(
       if (task.status !== "idle" || task.verification !== "tests_passed") {
         throw new ActivityIntegrityError(event, "final review is not pending");
       }
-      task.budget = {
-        ...task.budget,
-        usedUsd: addUsd(task.budget.usedUsd, event.payload.costUsd),
-        estimated: task.budget.estimated || event.payload.estimated,
-      };
       const review = { ...event.payload, at: event.at };
       task.lastReview = review;
       if (!event.payload.passed) {
@@ -894,11 +868,6 @@ export function applyEvent(
       if (!task.pendingReview || task.pendingReview.judgement) {
         throw new ActivityIntegrityError(event, "no review is waiting for a judgement");
       }
-      task.budget = {
-        ...task.budget,
-        usedUsd: addUsd(task.budget.usedUsd, event.payload.costUsd),
-        estimated: task.budget.estimated || event.payload.estimated,
-      };
       task.pendingReview = {
         ...task.pendingReview,
         judgement: {
@@ -1107,11 +1076,6 @@ export function applyEvent(
         reason: event.payload.reason,
         by: event.actor === "person" ? "person" : "orchestrator",
       };
-      task.budget = {
-        ...task.budget,
-        usedUsd: addUsd(task.budget.usedUsd, event.payload.costUsd),
-        estimated: task.budget.estimated || event.payload.estimated,
-      };
       break;
 
     // リポジトリを指定せずに作ったタスクの、作業するリポジトリを決めた（PBI-73）。工程を選ぶ前だけ
@@ -1123,11 +1087,6 @@ export function applyEvent(
       task.repoChoice = {
         reason: event.payload.reason,
         by: event.actor === "person" ? "person" : "orchestrator",
-      };
-      task.budget = {
-        ...task.budget,
-        usedUsd: addUsd(task.budget.usedUsd, event.payload.costUsd),
-        estimated: task.budget.estimated || event.payload.estimated,
       };
       break;
 
@@ -1165,11 +1124,6 @@ export function applyEvent(
       task.questions = task.questions.map((q) =>
         q.id === event.payload.questionId ? { ...q, answer } : q,
       );
-      task.budget = {
-        ...task.budget,
-        usedUsd: addUsd(task.budget.usedUsd, event.payload.costUsd),
-        estimated: task.budget.estimated || event.payload.estimated,
-      };
       break;
     }
 
@@ -1194,11 +1148,6 @@ export function applyEvent(
       if (!EXPORT_STEPS.includes(p.step)) {
         throw new ActivityIntegrityError(event, "the step is not exported");
       }
-      task.budget = {
-        ...task.budget,
-        usedUsd: addUsd(task.budget.usedUsd, p.costUsd),
-        estimated: task.budget.estimated || p.estimated,
-      };
       const previous = task.exports[p.step] ?? {};
       // 人間が止めた・中止したので結果が分からない。始めた記録を残して、次の書き出しで目印を探させる
       if (p.runResult === "interrupted") break;
@@ -1240,22 +1189,12 @@ export function applyEvent(
       if (task.status !== "queued" || task.steps.length > 0) {
         throw new ActivityIntegrityError(event, "the steps are not being chosen");
       }
-      task.budget = {
-        ...task.budget,
-        usedUsd: addUsd(task.budget.usedUsd, event.payload.costUsd),
-        estimated: task.budget.estimated || event.payload.estimated,
-      };
       break;
 
     case "FinalReviewFailed":
       if (task.status !== "idle" || task.verification !== "tests_passed") {
         throw new ActivityIntegrityError(event, "final review is not pending");
       }
-      task.budget = {
-        ...task.budget,
-        usedUsd: addUsd(task.budget.usedUsd, event.payload.costUsd),
-        estimated: task.budget.estimated || event.payload.estimated,
-      };
       break;
 
     case "TaskEscalated":
@@ -1439,6 +1378,9 @@ export function applyEvent(
       break;
   }
 
+  // 費用を持つイベント（CHARGED_EVENT_TYPES）の費用を、タスクの予算に入れる（PBI-86。画面の工程ごとの費用の表と同じ規則）。
+  // 受け付けない並び（上の検査で投げる）の費用は入れない
+  task.budget = chargeBudget(task.budget, event);
   next.set(event.taskId, task);
   return next;
 }

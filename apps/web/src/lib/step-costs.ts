@@ -1,18 +1,35 @@
-import type {
-  ActivityEvent,
-  AuthMode,
-  DaemonText,
-  GuardianRunResult,
-  StepKey,
-  Task,
-  TokenUsage,
+import {
+  type ActivityEvent,
+  type AuthMode,
+  addUsd,
+  type ChargedEvent,
+  chargeBudget,
+  type DaemonText,
+  type GuardianRunResult,
+  isChargedEvent,
+  type StepKey,
+  type Task,
+  type TokenUsage,
 } from "@sacty/core";
 
 /**
- * 費用の表の行。工程と、オーケストレーター（工程の選択）・質問への答え（オーケストレーター。PBI-54）・
+ * 費用の表の行。工程と、工程の外の費用：チケットの読み取り（オーケストレーター。PBI-52）・作業するリポジトリの選択
+ * （オーケストレーター。PBI-73）・オーケストレーター（工程の選択）・質問への答え（オーケストレーター。PBI-54）・
  * 承認した成果の書き出し（PBI-56）・ゴールガーディアン（判定・最終レビュー）。
  */
-export type CostRole = StepKey | "orchestrator" | "chat" | "export" | "guardian";
+export type CostRole =
+  | StepKey
+  | "triage"
+  | "repository"
+  | "orchestrator"
+  | "chat"
+  | "export"
+  | "guardian";
+
+/** 工程の外の行（表に出す順）。 */
+const OUTSIDE_BEFORE = ["triage", "repository", "orchestrator"] as const;
+const OUTSIDE_AFTER = ["export", "chat", "guardian"] as const;
+const OUTSIDE: readonly CostRole[] = [...OUTSIDE_BEFORE, ...OUTSIDE_AFTER];
 
 /** 1回の実行。作業履歴に記録が無い項目（PBI-46 より前のモデル・エフォートなど）は持たない。 */
 export type CostRun = {
@@ -39,11 +56,6 @@ export type CostRow = {
   costUsd: number;
   estimated: boolean;
 };
-
-/** 浮動小数の誤差を、タスクの予算（projection の addUsd）と同じ桁で丸める。 */
-function addUsd(a: number, b: number): number {
-  return Math.round((a + b) * 1e6) / 1e6;
-}
 
 function addUsage(a: TokenUsage | undefined, b: TokenUsage | undefined): TokenUsage | undefined {
   if (!a) return b;
@@ -93,11 +105,17 @@ function runOf(
   };
 }
 
+/** オーケストレーターなどを動かさず、人や sacty が決めた記録（費用・使用量・エージェントが無い）。実行に数えない。 */
+function notRun(payload: { agentId?: string; costUsd: number; usage?: TokenUsage }): boolean {
+  return payload.agentId === undefined && payload.costUsd === 0 && !payload.usage;
+}
+
 /**
- * 工程ごとの、エージェント・設定・使用量・費用（PBI-46）。作業履歴から、タスクの予算に入れた費用の記録
- * （projection で usedUsd に足すイベント）をすべて行に振り分けるので、行の費用の合計はタスクの費用と一致する。
- * 工程の行はタスクの工程の順にすべて出し（まだ動かしていない工程は実行0回）、オーケストレーター・
- * ゴールガーディアンの行は記録があるときだけ出す。
+ * 工程ごとの、エージェント・設定・使用量・費用（PBI-46）。作業履歴から、タスクの予算に入れる費用を持つイベント
+ * （@sacty/core の CHARGED_EVENT_TYPES）をすべて行に振り分ける。工程に属さない費用（チケットの読み取り・
+ * リポジトリの選択・工程の選択・質問への答え・書き出し・ゴールガーディアン）は、それぞれの行に出す。
+ * 合計の費用は、projection と同じ規則（chargeBudget）で作業履歴の順に足すので、タスクの費用（task.budget）と一致する（PBI-86）。
+ * 工程の行はタスクの工程の順にすべて出し（まだ動かしていない工程は実行0回）、工程の外の行は記録があるときだけ出す。
  */
 export function stepCosts(task: Task, activity: readonly ActivityEvent[]) {
   const runs = new Map<CostRole, CostRun[]>();
@@ -108,26 +126,27 @@ export function stepCosts(task: Task, activity: readonly ActivityEvent[]) {
   };
   // 開始した実行（終わりの記録で、使用量と費用を埋める）
   const started = new Map<string, CostRun>();
+  // タスクの費用と同じ規則で足した合計
+  let budget = { usedUsd: 0, estimated: false };
 
-  for (const event of activity) {
-    if (event.taskId !== task.id) continue;
+  /** 費用を持つイベントを、行に振り分ける。費用を持つ種類を足したら、ここで行を決めないと typecheck で落ちる。 */
+  const place = (event: ChargedEvent) => {
     switch (event.type) {
-      case "StepsChosen": {
-        const p = event.payload;
+      // チケットから作業するリポジトリ・題・概要を決めた（PBI-52）
+      case "TicketTriaged":
+        if (!notRun(event.payload)) push("triage", runOf(event, event.payload, "completed"));
+        return;
+      // リポジトリの無いタスクの、作業するリポジトリを選んだ（PBI-73）
+      case "RepositoryChosen":
+        if (!notRun(event.payload)) push("repository", runOf(event, event.payload, "completed"));
+        return;
+      case "StepsChosen":
         // 固定の工程だった作業履歴（PBI-17 より前）は、オーケストレーターを動かしていない
-        if (p.agentId === undefined && p.costUsd === 0 && !p.usage) break;
-        push("orchestrator", runOf(event, p, "completed"));
-        break;
-      }
+        if (!notRun(event.payload)) push("orchestrator", runOf(event, event.payload, "completed"));
+        return;
       case "OrchestratorFailed":
         push("orchestrator", runOf(event, event.payload, "failed"));
-        break;
-      case "AgentRunStarted": {
-        const run = runOf(event, { ...event.payload, costUsd: 0, estimated: false }, "running");
-        started.set(event.payload.runId, run);
-        push(event.payload.step, run);
-        break;
-      }
+        return;
       case "AgentRunCompleted":
       case "AgentRunFailed": {
         const p = event.payload;
@@ -139,7 +158,7 @@ export function stepCosts(task: Task, activity: readonly ActivityEvent[]) {
             p.step,
             runOf(event, { ...p, authMode: "authMode" in p ? p.authMode : undefined }, result),
           );
-          break;
+          return;
         }
         started.delete(p.runId);
         Object.assign(run, {
@@ -149,52 +168,60 @@ export function stepCosts(task: Task, activity: readonly ActivityEvent[]) {
           estimated: p.estimated,
           result,
         });
-        break;
+        return;
       }
       case "ChangeJudged":
       case "ReworkJudged":
         // 実行に失敗・中断したときも、判定の記録として残る。実行の結果で分ける
         push("guardian", runOf(event, event.payload, guardianRunResult(event.payload)));
-        break;
+        return;
       case "FinalReviewed":
         push("guardian", runOf(event, event.payload, "completed"));
-        break;
+        return;
       case "FinalReviewFailed":
         push("guardian", runOf(event, event.payload, "failed"));
-        break;
+        return;
       // タスクの詳細での質問への答え（PBI-54）
       case "QuestionAnswered":
         push("chat", runOf(event, event.payload, event.payload.runResult));
-        break;
+        return;
       // 承認した成果の書き出し（PBI-56）
       case "OutputExported":
         push("export", runOf(event, event.payload, event.payload.runResult));
-        break;
+        return;
+      default:
+        return event satisfies never;
     }
+  };
+
+  for (const event of activity) {
+    if (event.taskId !== task.id) continue;
+    if (event.type === "AgentRunStarted") {
+      const run = runOf(event, { ...event.payload, costUsd: 0, estimated: false }, "running");
+      started.set(event.payload.runId, run);
+      push(event.payload.step, run);
+      continue;
+    }
+    if (!isChargedEvent(event)) continue;
+    budget = chargeBudget(budget, event);
+    place(event);
   }
 
   const stepKeys = task.steps.map((s) => s.key);
   const roles: CostRole[] = [
-    ...(runs.has("orchestrator") ? ["orchestrator" as const] : []),
+    ...OUTSIDE_BEFORE.filter((role) => runs.has(role)),
     ...stepKeys,
     // 工程の一覧に無い工程の記録（作業履歴の不整合）も、費用を落とさない
     ...[...runs.keys()].filter(
-      (role): role is StepKey =>
-        role !== "orchestrator" &&
-        role !== "chat" &&
-        role !== "export" &&
-        role !== "guardian" &&
-        !stepKeys.includes(role),
+      (role): role is StepKey => !OUTSIDE.includes(role) && !stepKeys.includes(role as StepKey),
     ),
-    ...(runs.has("export") ? ["export" as const] : []),
-    ...(runs.has("chat") ? ["chat" as const] : []),
-    ...(runs.has("guardian") ? ["guardian" as const] : []),
+    ...OUTSIDE_AFTER.filter((role) => runs.has(role)),
   ];
   const rows: CostRow[] = roles.map((role) => summarize({ role, runs: runs.get(role) ?? [] }));
   const total = summarize({ runs: rows.flatMap((r) => r.runs) });
   return {
     rows,
-    total: { usage: total.usage, costUsd: total.costUsd, estimated: total.estimated },
+    total: { usage: total.usage, costUsd: budget.usedUsd, estimated: budget.estimated },
   };
 }
 

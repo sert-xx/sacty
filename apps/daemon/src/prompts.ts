@@ -2019,8 +2019,9 @@ export function buildChildBody(
 }
 
 /**
- * オーケストレーターの出力から、選んだ工程の組み合わせを読む。読めない・選べない組み合わせなら
- * undefined（標準の工程にする）。
+ * オーケストレーターの出力から、選んだ工程の組み合わせを読む。読めない・選べない組み合わせなら undefined。
+ * 呼び出し側（service の askOrchestrator）は、標準の工程で代わりに進めず、OrchestratorFailed を記録して一時停止する
+ * （PBI-40。再開すると工程の選択からやり直す）。
  */
 export function extractStepPlan(
   output: string,
