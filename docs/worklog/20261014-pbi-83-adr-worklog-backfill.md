@@ -2,7 +2,7 @@
 
 - 日付: 2026-10-14（UTC）
 - タスク: PBI-83
-- PR: なし
+- PR: #92
 - ブランチ: feat/issue-83-adr-worklog-backfill
 - 関係する ADR: なし
 
