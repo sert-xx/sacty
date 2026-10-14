@@ -3536,7 +3536,12 @@ export class TaskService {
       const contextMcp = this.deps.contextMcp;
       let lease: ReturnType<typeof contextMcp.lease>;
       try {
-        lease = contextMcp.lease(task.projectId, prepared.hostedMcp);
+        // ログ・理由に、どのプロジェクトのものかを出す（PBI-92）
+        lease = contextMcp.lease(
+          task.projectId,
+          prepared.hostedMcp,
+          this.deps.projects.get(task.projectId)?.name ?? task.projectId,
+        );
       } catch (error) {
         // 確保できなければ（層の写しの失敗など。確保の途中までは巻き戻してある）、用意したコンテキストも消す
         // （PR #89 レビュー指摘）

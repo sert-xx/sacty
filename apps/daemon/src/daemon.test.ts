@@ -1537,6 +1537,13 @@ describe("工程の実行と費用", () => {
         "「sacty-no-such-command-84」が、sacty を動かすホストに見つかりません",
       ),
     ]);
+    // どのプロジェクトのものか（プロジェクトの名前）も残す（PBI-92）
+    expect(warnings).toEqual([
+      expect.objectContaining({
+        params: expect.objectContaining({ name: "tool", project: "デフォルト" }),
+      }),
+    ]);
+    expect(renderMessage(warnings[0], "ja")).toContain("プロジェクト「デフォルト」の ");
     await contextMcp.stop();
     activity.close();
   });
