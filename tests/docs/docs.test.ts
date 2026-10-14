@@ -374,6 +374,61 @@ function checkWorklogs(files: Record<string, string>): string[] {
   return errors;
 }
 
+// ---- 仕様書のコードの参照 ----
+
+/** 「コード:」の行から、空行か見出しの前までをひとまとまりとして集める（コードブロックの中は除く）。 */
+function codeRefBlocks(markdown: string): string[] {
+  const blocks: string[] = [];
+  let current: string[] | undefined;
+  for (const line of stripFences(markdown).split("\n")) {
+    if (line.startsWith("コード:")) {
+      if (current) blocks.push(current.join(" "));
+      current = [line];
+    } else if (current && line.trim() !== "" && !line.startsWith("#")) {
+      current.push(line);
+    } else if (current) {
+      blocks.push(current.join(" "));
+      current = undefined;
+    }
+  }
+  if (current) blocks.push(current.join(" "));
+  return blocks;
+}
+
+/**
+ * 仕様書の「コード:」の参照を確かめ、問題の一覧を返す。`<パス>`（リポジトリのルートからの相対パス）が存在し、その後の
+ * 括弧の中の `<名前>`（`A.b` は A と b の両方）が、そのファイルの中に語として現れること。read はファイルの中身
+ * （無ければ undefined）。参照が1つも無ければ問題にする。
+ */
+function checkCodeRefs(
+  name: string,
+  markdown: string,
+  read: (path: string) => string | undefined,
+): string[] {
+  const errors: string[] = [];
+  const blocks = codeRefBlocks(markdown);
+  if (blocks.length === 0) errors.push(`${name}: 「コード:」の参照が無い`);
+  const ref = /`((?:apps|packages|tests)\/[^`\s]+)`(?:（([^）]*)）)?/g;
+  for (const block of blocks) {
+    const refs = [...block.matchAll(ref)];
+    if (refs.length === 0) errors.push(`${name}: ファイルの無い参照: ${block}`);
+    for (const [, path = "", names = ""] of refs) {
+      const source = read(path);
+      if (source === undefined) {
+        errors.push(`${name}: ${path} が無い`);
+        continue;
+      }
+      for (const [, symbol = ""] of names.matchAll(/`([^`]+)`/g)) {
+        const missing = symbol
+          .split(".")
+          .filter((part) => !new RegExp(`(?<![\\w$])${escapeRegExp(part)}(?![\\w$])`).test(source));
+        if (missing.length > 0) errors.push(`${name}: ${path} に ${symbol} が無い`);
+      }
+    }
+  }
+  return errors;
+}
+
 // ---- スキル ----
 
 /** スキルの front matter（name がディレクトリ名と同じ・description がある）を確かめ、問題の一覧を返す。 */
@@ -448,6 +503,19 @@ describe("docs の構成", () => {
       expect(entry.isDirectory(), entry.name).toBe(false);
     }
     expect(checkWorklogs(readDir(WORKLOG_DIR))).toEqual([]);
+  });
+
+  it("仕様書の「コード:」の参照のファイルと名前が、リポジトリにある", () => {
+    const read = (path: string) => {
+      const full = join(ROOT, path);
+      return existsSync(full) && statSync(full).isFile() ? readFileSync(full, "utf8") : undefined;
+    };
+    const errors: string[] = [];
+    for (const file of markdownFiles(join(DOCS, "spec"))) {
+      if (file.endsWith("README.md")) continue;
+      errors.push(...checkCodeRefs(relative(ROOT, file), readFileSync(file, "utf8"), read));
+    }
+    expect(errors).toEqual([]);
   });
 
   it("docs・README・スキルの相対リンクが切れておらず、docs/pbi へリンクしない", () => {
@@ -797,6 +865,38 @@ describe("検査の部品", () => {
     ]) {
       expect(checkSkillFrontMatter(bad, SKILL_NAME), bad).not.toEqual([]);
     }
+  });
+
+  it("仕様書のコードの参照：ファイル・名前が無ければ失敗し、あれば通る", () => {
+    const sources: Record<string, string> = {
+      "apps/daemon/src/a.ts": "export class Foo { bar() {} }\nconst $baz = 1;\n",
+    };
+    const read = (path: string) => sources[path];
+    const ok = [
+      "# x",
+      "",
+      "本文",
+      "",
+      "コード: `apps/daemon/src/a.ts`（`Foo`・`Foo.bar`・`$baz`）、",
+      "`apps/daemon/src/a.ts`",
+      "",
+    ].join("\n");
+    expect(checkCodeRefs("ok.md", ok, read)).toEqual([]);
+    for (const bad of [
+      "本文だけ\n", // 参照が無い
+      "コード: `apps/daemon/src/b.ts`\n", // ファイルが無い
+      "コード: `apps/daemon/src/a.ts`（`Qux`）\n", // 名前が無い
+      "コード: `apps/daemon/src/a.ts`（`Foo.qux`）\n", // 2つ目の部分が無い
+      "コード: `apps/daemon/src/a.ts`（`Fo`）\n", // 語の一部だけ
+      "コード: `apps/daemon/src/a.ts`（`Foo`）\n`apps/daemon/src/a.ts`（`Nope`）\n", // 続きの行
+      "コード: なし\n", // ファイルの無い参照
+    ]) {
+      expect(checkCodeRefs("bad.md", bad, read), bad).not.toEqual([]);
+    }
+    // コードブロックの中の「コード:」は数えない
+    expect(checkCodeRefs("fence.md", "```markdown\nコード: `apps/x.ts`\n```\n", read)).toEqual([
+      "fence.md: 「コード:」の参照が無い",
+    ]);
   });
 
   it("コードの中のリンクと外部のリンクは検査しない", () => {
