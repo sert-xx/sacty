@@ -172,6 +172,8 @@ const ja = {
     none: "—",
     setting: (agent: string, auth: string, model: string, effort: string) =>
       `${agent}・${auth}・${model}・${effort}`,
+    triage: "チケットの読み取り（オーケストレーター）",
+    repository: "リポジトリの選択（オーケストレーター）",
     chat: "質問への答え（オーケストレーター）",
     export: "書き出し",
     total: "このタスクの合計",
@@ -358,6 +360,8 @@ const en: TaskMessages = {
     estimatedNote: "Converted value (such as a subscription), not an actual charge",
     none: "—",
     setting: (agent, auth, model, effort) => `${agent} · ${auth} · ${model} · ${effort}`,
+    triage: "Reading the ticket (Orchestrator)",
+    repository: "Choosing the repository (Orchestrator)",
     chat: "Answers to questions (Orchestrator)",
     export: "Export",
     total: "Total for this task",

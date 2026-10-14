@@ -23,7 +23,7 @@ export const StepKey = z.enum([
 ]);
 export type StepKey = z.infer<typeof StepKey>;
 
-/** 標準の工程（オーケストレーターが判断できないときも、これで進める）。 */
+/** 標準の工程（requirements → design → implement → pr）。 */
 export const MVP_STEPS: readonly StepKey[] = ["requirements", "design", "implement", "pr"];
 
 /**
@@ -391,8 +391,8 @@ const SplitCompleted = z.object({
 
 /**
  * タスクの工程を決めた。PBI-17 からは、オーケストレーター（AI）がタスクの内容と対象リポジトリを読んで、
- * 候補（STEP_PLANS）から選び、理由とともに記録する（人間の承認は無い）。判断できなければ標準の工程にする。
- * それより前の作業履歴は、固定の工程（steps だけ）。
+ * 候補（STEP_PLANS）から選び、理由とともに記録する（人間の承認は無い）。判断できなければ、この記録の代わりに
+ * OrchestratorFailed を記録して一時停止する（PBI-40）。PBI-17 より前の作業履歴は、固定の工程（steps だけ）。
  */
 const StepsChosen = z.object({
   type: z.literal("StepsChosen"),
@@ -401,7 +401,7 @@ const StepsChosen = z.object({
     plan: StepPlan.optional(),
     /** オーケストレーターが書いた理由。判断できなかったときは sacty の文言。 */
     reason: DaemonText.optional(),
-    /** 判断できず、標準の工程にした。 */
+    /** 判断できず、標準の工程にした（PBI-40 より前の作業履歴。いまは判断できなければ OrchestratorFailed で止める）。 */
     fallback: z.boolean().default(false),
     /**
      * オーケストレーターが対象リポジトリを読んで決めた、テストのコマンド（PBI-25）。sh -c で実行し、

@@ -11,8 +11,9 @@ type Messages = Awaited<ReturnType<typeof getMessages>>;
 const NUMBER_LOCALE = { ja: "ja-JP", en: "en-US" } as const;
 
 /**
- * 工程ごとの、エージェント・設定・トークンの使用量・費用（PBI-46）。オーケストレーター・ゴールガーディアンの
- * 費用も1行ずつ出し、行の合計はタスクの費用（CostMeter）と一致する。各回の内訳は折りたたんで出す。
+ * 工程ごとの、エージェント・設定・トークンの使用量・費用（PBI-46）。工程の外の費用（チケットの読み取り・リポジトリの
+ * 選択・オーケストレーター・質問への答え・書き出し・ゴールガーディアン）も1行ずつ出し、合計はタスクの費用（CostMeter）と
+ * 一致する（PBI-86）。各回の内訳は折りたたんで出す。
  */
 export async function StepCosts({ task, activity }: { task: Task; activity: ActivityEvent[] }) {
   const messages = await getMessages();
@@ -25,13 +26,11 @@ export async function StepCosts({ task, activity }: { task: Task; activity: Acti
     : undefined;
   const count = new Intl.NumberFormat(NUMBER_LOCALE[locale]);
   const roleLabel = (role: CostRole) =>
-    role === "chat"
-      ? m.chat
-      : role === "export"
-        ? m.export
-        : role === "orchestrator" || role === "guardian"
-          ? labels.actor[role]
-          : labels.step[role];
+    role === "chat" || role === "export" || role === "triage" || role === "repository"
+      ? m[role]
+      : role === "orchestrator" || role === "guardian"
+        ? labels.actor[role]
+        : labels.step[role];
   const ran = rows.filter((r) => r.runs.length > 0);
 
   return (
