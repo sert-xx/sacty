@@ -11,7 +11,8 @@ docker のコンテナの中で1回実行して行う。テストの実行も、
   で起動する。必要なら次を足す。
   - `--network <ネットワーク>`：docker compose のサービスを起動した実行（[サービス](services.md)）。
   - `--add-host host.docker.internal:<ホストのアドレス>`：ゲートウェイを使う実行。アドレスは `gateway.host_address`（既定 `host-gateway`）。
-  - 追加のマウント（sacty が用意する場所だけ。設定の場所・レビューの差分 `/sacty-review` の読み取り専用など）。
+  - 追加のマウント（sacty が用意する場所だけ。設定の場所・レビューの差分 `/sacty-review` の読み取り専用・質問への答えの各実行のセッションログ
+    `/sacty-logs` の読み取り専用など）。
 - 動かすユーザーは、イメージの `USER node`（`--user` は付けない）。
 - 環境変数は、引数には名前だけ（`-e NAME`）を書き、値は docker コマンドのプロセスの環境から渡す（`ps` に値を出さない）。
   docker コマンドのプロセスに残すホストの環境変数は `PATH`・`HOME`・`DOCKER_HOST`・`DOCKER_CONTEXT`・`DOCKER_CONFIG`・`TMPDIR` だけで、
@@ -28,7 +29,7 @@ docker のコンテナの中で1回実行して行う。テストの実行も、
 
 | runtime | コマンド | 設定の場所 |
 | --- | --- | --- |
-| `claude-code` | `claude -p <指示> --output-format stream-json --verbose`（再開は `--resume <ID>`、複製は `--fork-session`。MCP があれば `--mcp-config …/mcp.json --strict-mcp-config --allowedTools mcp__<名前>,…`。`--model`（Bedrock では環境変数 `ANTHROPIC_MODEL`）・`--effort`） | `CLAUDE_CONFIG_DIR=/tmp/sacty-claude-config`、`CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` |
+| `claude-code` | `claude -p <指示> --output-format stream-json --verbose`（作業領域の外で読ませる場所があれば `--add-dir <場所>`。質問への答えの `/sacty-logs` だけ。再開は `--resume <ID>`、複製は `--fork-session`。MCP があれば `--mcp-config …/mcp.json --strict-mcp-config --allowedTools mcp__<名前>,…`。`--model`（Bedrock では環境変数 `ANTHROPIC_MODEL`）・`--effort`） | `CLAUDE_CONFIG_DIR=/tmp/sacty-claude-config`、`CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` |
 | `codex` | `codex exec --json --skip-git-repo-check --sandbox danger-full-access`（接続先は `-c model_provider=…` などで指定。`--model`・`-c model_reasoning_effort=…`。再開は `resume <ID>`。最後に指示） | `CODEX_HOME=/.codex` |
 | `stub` | `sh -c 'printf "%s" "$SACTY_STUB_RESULT"'`（設定の `stub` の出力を返す。AI は呼ばない） | なし |
 

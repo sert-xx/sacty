@@ -35,6 +35,12 @@ import {
 } from "./agent-json.js";
 import { githubRepoOf } from "./config.js";
 import { REVIEW_MARKER_PREFIX, sactyReviewKey } from "./github.js";
+import {
+  CONTAINER_LOGS_DIR,
+  QUESTION_LOG_FILES,
+  QUESTION_LOG_INDEX,
+  type QuestionLogRun,
+} from "./question-logs.js";
 import { localForwards, type StartedService } from "./services.js";
 
 /** 記録した文（コードと引数の文言を含む）を、指示や PR の本文に入れる日本語の文にする。 */
@@ -1499,6 +1505,116 @@ const CHAT_ANSWER_IN_PROMPT = 1_500;
 /** 作業履歴の1件の内容は、先頭のこの文字数だけ入れる。 */
 const CHAT_EVENT_IN_PROMPT = 300;
 
+/** 質問への答えの指示に入れる、各実行のセッションログの一覧の上限（文字数。PBI-91）。超えた分は一覧のファイルで読ませる。 */
+export const CHAT_LOGS_IN_PROMPT = 8_000;
+
+/** 質問への答えに読ませる、各実行のセッションログ（PBI-91）。用意できなければ、その理由。 */
+export type ChatLogs = { runs: readonly QuestionLogRun[] } | { unavailable: string };
+
+/** 工程以外の実行の名前（PBI-91）。 */
+const RUN_ROLE_NAME: Record<string, string> = {
+  orchestrator: "オーケストレーター",
+  guardian: "ゴールガーディアン",
+  "final-review": "最終レビュー",
+  rework: "差し戻し先の判断（ゴールガーディアン）",
+  chat: "質問への答え（オーケストレーター）",
+  export: "成果の書き出し",
+};
+
+function runRoleName(role: string | undefined): string {
+  if (!role) return "（何の実行か不明）";
+  const step = StepKey.safeParse(role);
+  return step.success ? STEP_NAME[step.data] : (RUN_ROLE_NAME[role] ?? role);
+}
+
+function kib(bytes: number): string {
+  return bytes < 1024 ? `${bytes}B` : `${Math.round(bytes / 1024)}KB`;
+}
+
+/** 実行1つを、一覧の1行にする（PBI-91）。 */
+function chatLogRunLine(run: QuestionLogRun): string {
+  const name = `${runRoleName(run.role)}${run.attempt ? `・${run.attempt}回目` : ""}`;
+  const agent = run.agentId
+    ? `${run.agentId}（${run.runtime ?? "?"}${run.model ? `・${run.model}` : ""}）`
+    : "";
+  const when = run.startedAt ? `${run.startedAt}〜${run.finishedAt ?? ""}` : "";
+  const notes: string[] = [];
+  if (run.status === "unfinished") {
+    notes.push("終わりが記録されていない（実行中か、デーモンが止まった）ため、ログは読めない");
+  } else if (run.status === "missing") {
+    notes.push("ログが無い（ログを残す前の実行か、エージェントを起動する前に止まった実行）");
+  } else if (run.status === "unreadable") {
+    notes.push("ログの記録を読めない");
+  } else {
+    const shown = run.files
+      .filter((f) => !f.path.includes(`/agent/`))
+      .map((f) => `${f.path.slice(run.runId.length + 1)} ${kib(f.bytes)}`);
+    notes.push(`ログ：${shown.join("・")}`);
+    if (run.truncated.length > 0) {
+      notes.push(`上限で間を省いた：${run.truncated.map((f) => QUESTION_LOG_FILES[f]).join("・")}`);
+    }
+  }
+  const a = run.agentFiles;
+  if (run.status === "available" && a) {
+    if (a.notArchived) {
+      notes.push("エージェントの元のファイルは残していない（コンテナの停止を確かめられなかった）");
+    } else {
+      notes.push(
+        `エージェントの元のファイル ${a.count}件${a.truncated > 0 ? `（${a.truncated}件は上限で間を省いた）` : ""}${a.skipped > 0 ? `・写せなかったもの ${a.skipped}件` : ""}`,
+      );
+    }
+  }
+  if (run.unreadable.length > 0) notes.push(`読めないファイル：${run.unreadable.join("・")}`);
+  return `- [${name}] 実行 ${run.runId}${agent ? ` ${agent}` : ""}${when ? ` ${when}` : ""}${run.result ? ` 結果：${run.result}` : ""}：${notes.join("。")}`;
+}
+
+/** 質問への答えの指示に入れる、各実行のセッションログの節（PBI-91）。 */
+function chatLogLines(logs: ChatLogs | undefined): string[] {
+  const heading = "--- 各実行のセッションログ（読み取り専用） ---";
+  if (!logs || "unavailable" in logs) {
+    return [
+      heading,
+      `各実行のセッションログは、この質問では読めません${logs ? `（${logs.unavailable}）` : ""}。台帳から答え、ログを確かめられなかったことを答えに書いてください。`,
+    ];
+  }
+  const lines = [
+    heading,
+    `このタスクの各実行（工程のエージェント・オーケストレーター・ゴールガーディアンなど）のセッションログの原本を、${CONTAINER_LOGS_DIR} に読み取り専用で置きました（秘密情報は伏せてあります）。台帳で分からないこと（エージェントが実際に何をしたか・どのコマンドやツールを使ったか・なぜ失敗したかなど）は、ここを調べてください。`,
+    `- ${CONTAINER_LOGS_DIR}/${QUESTION_LOG_INDEX}：実行の一覧（下と同じ内容の全体）`,
+    `- ${CONTAINER_LOGS_DIR}/<実行の ID>/${QUESTION_LOG_FILES.events}：途中の出来事（エージェントの標準出力の JSONL。考えたこと・ツールの呼び出しと結果・最後の結果）`,
+    `- ${CONTAINER_LOGS_DIR}/<実行の ID>/${QUESTION_LOG_FILES.stderr}：標準エラー出力。${QUESTION_LOG_FILES.meta}：実行の種類・エージェント・開始と終了・結果・切り詰め`,
+    `- ${CONTAINER_LOGS_DIR}/<実行の ID>/agent/：エージェント（Claude Code・Codex）が自分で書いた元のセッションのファイル（Claude Code は projects/ の下の .jsonl、Codex は sessions/ の下の rollout の .jsonl）`,
+    "- ログは大きいので、丸ごと読まないでください。grep などで探して、必要な部分だけを読んでください。書き換えはできません",
+    "- 上限で間を省いたログには、省いたところに目印（sacty.truncated の行など）があります。省かれた部分は分からないと書いてください",
+    "- ログを使って答えたら、どの工程・どの実行（実行の ID）のログかを書いてください。ログの無い・間を省いた・読めない実行があって答えに関わるなら、そのことも書いてください",
+    "",
+    "実行の一覧（始めた順）：",
+  ];
+  if (logs.runs.length === 0) return [...lines, "（まだ実行がありません）"];
+  const runLines: string[] = [];
+  let room = CHAT_LOGS_IN_PROMPT;
+  let omitted = 0;
+  // 入りきらなければ、新しい実行を優先する
+  for (const run of [...logs.runs].reverse()) {
+    const line = chatLogRunLine(run);
+    if (line.length + 1 > room) {
+      omitted++;
+      continue;
+    }
+    runLines.unshift(line);
+    room -= line.length + 1;
+  }
+  return [
+    ...lines,
+    ...(omitted > 0
+      ? [
+          `（古い ${omitted} 件は省きました。${CONTAINER_LOGS_DIR}/${QUESTION_LOG_INDEX} で読めます）`,
+        ]
+      : []),
+    ...runLines,
+  ];
+}
+
 /** 長い文を先頭だけにする。 */
 function clip(text: string, max: number): string {
   return text.length > max ? `${text.slice(0, max)}\n…（長いため、先頭だけ）` : text;
@@ -1560,6 +1676,8 @@ export function buildChatPrompt(
   task: Task,
   activity: readonly ActivityEvent[],
   question: TaskQuestion,
+  /** 各実行のセッションログ（PBI-91）。無ければ、読めないことを伝える。 */
+  logs?: ChatLogs,
 ): string {
   const approved = task.steps
     .filter((s) => task.approved[s.key])
@@ -1588,7 +1706,7 @@ export function buildChatPrompt(
   const repository = task.repository;
   const head = [
     "あなたはオーケストレーターです。人間から、このタスクの状況について質問を受けました。",
-    "下のタスクの台帳（作業履歴・承認済みの成果物・工程の出力・判定・費用）を読んで、事実に基づいて答えてください。",
+    "下のタスクの台帳（作業履歴・承認済みの成果物・工程の出力・判定・費用）と、各実行のセッションログを読んで、事実に基づいて答えてください。",
     "",
     "- 答えるだけです。タスクの計画（工程・承認済みの成果物・タスクの状態）は変えられません。変更を勧めるときは、人が行う通常の操作（差し戻し・変更の申し出への判断・一時停止・中止など）として書いてください",
     "- 作業中の工程エージェントには話しかけられません。台帳とコードから分からないことは、分からないと書いてください",
@@ -1599,6 +1717,9 @@ export function buildChatPrompt(
     repository
       ? `作業領域（カレントディレクトリ）に、対象リポジトリ（${repository.url}）の起点のコミット（${repository.baseCommit.slice(0, 7)}）のコードがあります。この実行のための使い捨ての写しで、変更は残りません。コードを読む必要がある質問なら、読んで確かめてください。コードの変更はしないでください。`
       : "対象リポジトリはまだ用意されていないため、コードは読めません。台帳から答えてください。",
+    "",
+    // 台帳が長くて切り詰めても残るよう、台帳の前に置く（一覧の長さには上限がある）
+    ...chatLogLines(logs),
     "",
     "--- タスク ---",
     `タイトル：${task.title}`,
