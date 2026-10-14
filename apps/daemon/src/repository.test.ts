@@ -374,7 +374,11 @@ describe("対象リポジトリの作業領域（git）", { timeout: 30_000 }, (
     expect(git(origin, "rev-parse", input.branch)).toBe(first.commit);
   });
 
-  it("タスクブランチを作り、成果のファイルを工程のブランチにコミットし、実装はタスクブランチのファイルを引き継いで積む（PBI-57）", async () => {
+  /**
+   * タスクの作業領域を用意する（PBI-57 の確かめの共通の準備）。1つのテストで全部を確かめると、git を数十回動かすので、
+   * 負荷が高いと時間切れ（30秒）を超える。マージの前と後で2つのテストに分け、準備はここでそろえる。
+   */
+  const prepareTask = async () => {
     const origin = makeOrigin();
     git(origin, "config", "receive.denyCurrentBranch", "ignore");
     const workspace = new GitRepositoryWorkspace();
@@ -384,6 +388,21 @@ describe("対象リポジトリの作業領域（git）", { timeout: 30_000 }, (
     const taskBranch = "sacty/task-1234abcd";
     const stepBranch = `${taskBranch}-requirements-1`;
     const path = "docs/sacty/1234abcd/requirements.md";
+    const input = {
+      gitDir,
+      parent: baseCommit,
+      files: { [path]: "# 要求要件\n" },
+      branch: stepBranch,
+      message: "[要求要件] 決済API\n\nsacty task t1",
+      date: "2026-10-10T01:00:00.000Z",
+      allowEmpty: true,
+    };
+    return { origin, workspace, clone, gitDir, baseCommit, taskBranch, stepBranch, path, input };
+  };
+
+  it("タスクブランチを作り、成果のファイルを工程のブランチにコミットし、実装はタスクブランチのファイルを引き継いで積む（PBI-57）：タスクブランチと、工程のブランチへの成果のファイルのコミット・受け付けないパス・ブランチの削除", async () => {
+    const { origin, workspace, clone, gitDir, baseCommit, taskBranch, stepBranch, path, input } =
+      await prepareTask();
 
     // タスクブランチは、起点のコミットから作る
     await workspace.pushCommit(gitDir, baseCommit, taskBranch);
@@ -395,15 +414,6 @@ describe("対象リポジトリの作業領域（git）", { timeout: 30_000 }, (
     const marker = join(dir, "pwned");
     git(clone, "config", "filter.evil.clean", `touch ${marker}; cat`);
     writeFileSync(join(clone, ".gitattributes"), "* filter=evil\n");
-    const input = {
-      gitDir,
-      parent: baseCommit,
-      files: { [path]: "# 要求要件\n" },
-      branch: stepBranch,
-      message: "[要求要件] 決済API\n\nsacty task t1",
-      date: "2026-10-10T01:00:00.000Z",
-      allowEmpty: true,
-    };
     const first = await workspace.commitFiles(input);
     expect(existsSync(marker)).toBe(false);
     expect(git(origin, "rev-parse", `${stepBranch}^`)).toBe(baseCommit);
@@ -426,6 +436,23 @@ describe("対象リポジトリの作業領域（git）", { timeout: 30_000 }, (
     });
     expect(empty.commit).not.toBe(first.commit);
 
+    // リポジトリの外・.git を指すパスは受け付けない
+    for (const bad of ["../x.md", ".git/config", "/abs.md", "a//b.md"]) {
+      await expect(workspace.commitFiles({ ...input, files: { [bad]: "x" } })).rejects.toThrow(
+        /パスが不正/,
+      );
+    }
+    // すでに無い sacty のブランチ（マージの後に GitHub が消した）を消しても、失敗にしない
+    await workspace.deleteBranch(gitDir, `${taskBranch}-design-9`);
+    await workspace.deleteBranch(gitDir, stepBranch);
+    expect(git(origin, "branch", "--list", stepBranch)).toBe("");
+  });
+
+  it("タスクブランチを作り、成果のファイルを工程のブランチにコミットし、実装はタスクブランチのファイルを引き継いで積む（PBI-57）：マージ後のタスクブランチに、成果のファイルを引き継いで実装を積む", async () => {
+    const { origin, workspace, clone, gitDir, baseCommit, taskBranch, stepBranch, path, input } =
+      await prepareTask();
+    await workspace.pushCommit(gitDir, baseCommit, taskBranch);
+    await workspace.commitFiles(input);
     // GitHub で、要求要件の PR がタスクブランチにマージされた
     git(origin, "checkout", "--quiet", taskBranch);
     git(origin, "merge", "--quiet", "--no-ff", stepBranch, "-m", "merge requirements");
@@ -435,7 +462,6 @@ describe("対象リポジトリの作業領域（git）", { timeout: 30_000 }, (
 
     // 実装は、タスクブランチの最新に積む。成果のファイルは作業領域に無いが、タスクブランチのものを引き継ぐ
     writeFileSync(join(clone, "pay.ts"), "export const pay = () => 1;\n");
-    rmSync(join(clone, ".gitattributes"));
     const implemented = await workspace.publish({
       dir: clone,
       gitDir,
@@ -479,17 +505,6 @@ describe("対象リポジトリの作業領域（git）", { timeout: 30_000 }, (
         keep: { commit: head, paths: [path] },
       }),
     ).rejects.toBeInstanceOf(NothingToCommitError);
-
-    // リポジトリの外・.git を指すパスは受け付けない
-    for (const bad of ["../x.md", ".git/config", "/abs.md", "a//b.md"]) {
-      await expect(workspace.commitFiles({ ...input, files: { [bad]: "x" } })).rejects.toThrow(
-        /パスが不正/,
-      );
-    }
-    // すでに無い sacty のブランチ（マージの後に GitHub が消した）を消しても、失敗にしない
-    await workspace.deleteBranch(gitDir, `${taskBranch}-design-9`);
-    await workspace.deleteBranch(gitDir, stepBranch);
-    expect(git(origin, "branch", "--list", stepBranch)).toBe("");
   });
 
   it("人が PR の中で直してマージした成果のファイルを、マージ後のタスクブランチから、退避したメタデータで読む（PBI-63）", async () => {

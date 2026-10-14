@@ -22,6 +22,7 @@ import {
   psTable,
 } from "./host-mcp-processes.js";
 import { MemorySecretStore } from "./secrets.js";
+import { processSource, type WaitSource, waitFor } from "./testing/wait.js";
 
 let dir: string;
 beforeEach(() => {
@@ -256,32 +257,56 @@ rl.on("close", () => process.exit(0));
     const table = await psTable();
     return targets.filter((t) => table.some((p) => p.pid === t.pid && p.started === t.started));
   };
-  const until = async (check: () => Promise<boolean>, ms = 10_000) => {
-    const deadline = Date.now() + ms;
-    while (!(await check())) {
-      if (Date.now() > deadline) throw new Error("timed out");
-      await new Promise((r) => setTimeout(r, 50));
-    }
-  };
-  /** 起動した MCP サーバーとその子孫（sh と sleep まで起動するのを待つ）。 */
-  const tree = async (parent: number) => {
+  /** 記録のファイル。記録の場所は、最初の記録を書くときに作られるので、それまでは空とする。 */
+  const recordFiles = () =>
+    existsSync(join(dir, "processes")) ? readdirSync(join(dir, "processes")) : [];
+  /** 合図のファイルを置く（テストの側から、偽のプロセスに次へ進ませる。固定の時間で進めると、負荷が高いと間に合わない）。 */
+  const signalFile = (name: string) => join(dir, `go-${name}`);
+  /**
+   * check が真になるのを待つ（10 秒まで）。source（合図を出すはずのプロセス）が先に終わったら、待ち続けずに、終了コード・
+   * 標準エラー出力の末尾を書いたエラーですぐ落ちる。
+   */
+  const until = (check: () => Promise<boolean>, what = "条件", source?: WaitSource) =>
+    waitFor(check, { what, source, intervalMs: 50 });
+  /**
+   * 起動した MCP サーバーとその子孫（sh と sleep まで起動するのを待つ）。親の子・孫・ひ孫の3代がそろうのを待ち、その3つを
+   * 返す（子孫の数で待つと、親が記録の更新のために動かす ps などの一時的な子も数えてしまい、sh と sleep の起動の前に
+   * 進むことがある）。
+   */
+  const tree = async (parent: number, source?: WaitSource) => {
     let found: ProcessInfo[] = [];
-    await until(async () => {
-      found = await descendants(parent);
-      return found.length >= 3;
-    });
+    await until(
+      async () => {
+        const all = await descendants(parent);
+        const childrenOf = (pid: number) => all.filter((p) => p.ppid === pid);
+        found = [];
+        for (const mcp of childrenOf(parent)) {
+          for (const sh of childrenOf(mcp.pid)) {
+            const sleep = childrenOf(sh.pid)[0];
+            if (sleep) found = [mcp, sh, sleep];
+          }
+        }
+        return found.length === 3;
+      },
+      "MCP サーバー・sh・sleep の起動",
+      source,
+    );
     for (const p of found) groups.add(p.pgid);
     return found;
   };
   /** 記録から、デーモン（このテストのプロセス）が起動した MCP サーバーとその子孫を見つける。 */
-  const recorded = async (count = 3) => {
+  const recorded = async (count = 3, source?: WaitSource) => {
     let found: ProcessInfo[] = [];
-    await until(async () => {
-      const files = existsSync(join(dir, "processes")) ? readdirSync(join(dir, "processes")) : [];
-      const pid = Number(files[0]?.replace(".json", ""));
-      found = pid ? collectTargets(await psTable(), [], [pid]) : [];
-      return found.length >= count;
-    });
+    await until(
+      async () => {
+        const files = recordFiles();
+        const pid = Number(files[0]?.replace(".json", ""));
+        found = pid ? collectTargets(await psTable(), [], [pid]) : [];
+        return found.length >= count;
+      },
+      `記録と、記録した MCP サーバーとその子孫（${count} つ）`,
+      source,
+    );
     for (const p of found) groups.add(p.pgid);
     return found;
   };
@@ -320,20 +345,29 @@ rl.on("close", () => process.exit(0));
       {
         name: "fake",
         command: "sh",
-        args: ["-c", "sleep 302 </dev/null >/dev/null 2>&1 & sleep 1"],
+        // 合図が来たら自分だけ終わる（子孫の sleep 302 は残る）
+        args: [
+          "-c",
+          `sleep 302 </dev/null >/dev/null 2>&1 & while [ ! -e ${signalFile("exit")} ]; do sleep 0.02; done`,
+        ],
         env: process.env as Record<string, string>,
       },
       processes,
     );
     let closed = false;
-    transport.onclose = () => {
-      closed = true;
-    };
+    const ended = new Promise((resolve) => {
+      transport.onclose = () => {
+        closed = true;
+        resolve("closed");
+      };
+    });
     await transport.start();
-    const started = await recorded(2);
-    await until(async () => closed);
+    // 合図の前に MCP サーバーが終わったら、すぐ落ちる
+    const started = await recorded(2, { name: "MCP サーバー（sh）", ended });
+    writeFileSync(signalFile("exit"), "");
+    await until(async () => closed, "MCP サーバーが終わったことの知らせ");
     await until(async () => (await alive(started)).length === 0);
-    await until(async () => readdirSync(join(dir, "processes")).length === 0);
+    await until(async () => recordFiles().length === 0);
   }, 20_000);
 
   it("MCP サーバーが自分で終わっても、子孫が標準出力・標準エラーを開いたままなら、子孫を止め、1回だけ知らせる", async () => {
@@ -342,8 +376,9 @@ rl.on("close", () => process.exit(0));
     writeFileSync(
       wrapper,
       `import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 spawn("sleep", ["304"], { stdio: "inherit" });
-setTimeout(() => process.exit(0), 700);
+setInterval(() => { if (existsSync(${JSON.stringify(signalFile("exit"))})) process.exit(0); }, 20);
 `,
     );
     const processes = new HostMcpProcesses(join(dir, "processes"), { graceMs: 500 });
@@ -357,14 +392,18 @@ setTimeout(() => process.exit(0), 700);
       processes,
     );
     let closed = 0;
-    transport.onclose = () => {
-      closed += 1;
-    };
+    const ended = new Promise((resolve) => {
+      transport.onclose = () => {
+        closed += 1;
+        resolve("closed");
+      };
+    });
     await transport.start();
-    const started = await recorded(2);
-    await until(async () => closed > 0);
+    const started = await recorded(2, { name: "MCP サーバー（Node のラッパー）", ended });
+    writeFileSync(signalFile("exit"), "");
+    await until(async () => closed > 0, "MCP サーバーが終わったことの知らせ");
     await until(async () => (await alive(started)).length === 0);
-    await until(async () => readdirSync(join(dir, "processes")).length === 0);
+    await until(async () => recordFiles().length === 0);
     // 子孫が止まってパイプが閉じた後（close）も、知らせるのは1回だけ
     await new Promise((r) => setTimeout(r, 300));
     expect(closed).toBe(1);
@@ -398,8 +437,7 @@ setTimeout(() => process.exit(0), 700);
     await processes.endAll();
     await starting.catch(() => {});
     // 記録も、動いているもの（この MCP サーバーのグループ）も残らない
-    const left = existsSync(join(dir, "processes")) ? readdirSync(join(dir, "processes")) : [];
-    expect(left).toEqual([]);
+    expect(recordFiles()).toEqual([]);
     const table = await psTable();
     expect(table.filter((p) => p.ppid === process.pid && p.pgid === p.pid)).toEqual([]);
     await expect(new GroupStdioTransport(params, processes).start()).rejects.toThrow(/stopping/);
@@ -423,26 +461,30 @@ const transport = new GroupStdioTransport(
 );
 await transport.start();
 setInterval(() => {}, 1000);
-if (${JSON.stringify(mode)} === "throw") setTimeout(() => { throw new Error("boom"); }, 1500);
+if (${JSON.stringify(mode)} === "throw") {
+  const { existsSync } = await import("node:fs");
+  setInterval(() => { if (existsSync(${JSON.stringify(signalFile("throw"))})) throw new Error("boom"); }, 20);
+}
 `,
     );
     // Node 22 では、型を消して読むのに、フラグが要る
     const flags = ["--experimental-strip-types", "--disable-warning=ExperimentalWarning"];
     const child = spawn(process.execPath, [...flags, file], {
       cwd: fileURLToPath(new URL("..", import.meta.url)),
-      stdio: "ignore",
+      // 標準エラー出力は、合図の前に終わったときの原因に使う
+      stdio: ["ignore", "ignore", "pipe"],
     });
     spawned.push(child);
     const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
-    return { child, exited };
+    return { child, exited, source: processSource("デーモンの代わり（harness.mjs）", child) };
   };
 
   for (const signal of ["SIGTERM", "SIGINT"] as const) {
     it(`デーモンが ${signal} で止まったら、MCP サーバーとその子孫を止める`, async () => {
-      const { child, exited } = harness("wait");
-      const started = await tree(child.pid as number);
-      // 記録が書かれるまで待つ
-      await until(async () => readdirSync(join(dir, "processes")).length === 1);
+      const { child, exited, source } = harness("wait");
+      const started = await tree(child.pid as number, source);
+      // 記録が書かれるまで待つ（子孫が見えても、記録はまだ書かれていないことがある）
+      await until(async () => recordFiles().length === 1, "記録", source);
       child.kill(signal);
       await exited;
       expect(await alive(started)).toEqual([]);
@@ -451,22 +493,28 @@ if (${JSON.stringify(mode)} === "throw") setTimeout(() => { throw new Error("boo
   }
 
   it("デーモンが例外で終わったら、MCP サーバーのグループに SIGTERM を送る", async () => {
-    const { child, exited } = harness("throw");
-    const started = await tree(child.pid as number);
+    const { child, exited, source } = harness("throw");
+    const started = await tree(child.pid as number, source);
+    // 子孫まで起動したのを見てから、例外で終わらせる
+    writeFileSync(signalFile("throw"), "");
     await exited;
     await until(async () => (await alive(started)).length === 0);
   }, 20_000);
 
   it("デーモンが突然落ちて残ったものは、次の起動で片付け、PID が再利用されたものは止めない", async () => {
-    const { child, exited } = harness("wait");
-    const started = await tree(child.pid as number);
+    const { child, exited, source } = harness("wait");
+    const started = await tree(child.pid as number, source);
     // 子孫まで記録されるのを待つ（MCP サーバーは、デーモンが落ちて標準入力が閉じたら自分だけ終わり、子孫が残る）
-    await until(async () => {
-      const files = readdirSync(join(dir, "processes"));
-      if (files.length !== 1) return false;
-      const saved = JSON.parse(readFileSync(join(dir, "processes", files[0] as string), "utf8"));
-      return saved.members.length >= 2;
-    });
+    await until(
+      async () => {
+        const files = recordFiles();
+        if (files.length !== 1) return false;
+        const saved = JSON.parse(readFileSync(join(dir, "processes", files[0] as string), "utf8"));
+        return saved.members.length >= 2;
+      },
+      "子孫まで書いた記録",
+      source,
+    );
     // ほかのプロセス（記録の PID は同じだが、開始時刻が違う。PID が再利用されたのと同じ）
     const other = spawn("sleep", ["303"], { detached: true, stdio: "ignore" });
     spawned.push(other);

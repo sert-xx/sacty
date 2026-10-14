@@ -12,6 +12,7 @@ import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { waitFor } from "../testing/wait.js";
 import { FORWARD_NOTICE_PREFIX, withLocalForwards } from "./forward.js";
 import {
   OUTPUT_RELAY_SCRIPT,
@@ -78,8 +79,14 @@ const relay = (command: string[], options?: Parameters<typeof run>[1]) =>
 
 const node = (script: string) => [process.execPath, "-e", script];
 
-/** 決まった中身の大きな出力（0〜250 のバイトの繰り返し。改行を含む・UTF-8 として正しくないバイトも含む）。 */
-const pattern = (size: number) => Buffer.from(Array.from({ length: size }, (_, i) => i % 251));
+/**
+ * 決まった中身の大きな出力（0〜250 のバイトの繰り返し。改行を含む・UTF-8 として正しくないバイトも含む）。
+ * 251 バイトの並びを Buffer.alloc で繰り返して埋める（数千万の要素の配列を作ると、それだけで負荷が高いと数秒かかる）。
+ */
+const patternSource = (size: number) =>
+  `Buffer.alloc(${size}, Buffer.from(Array.from({ length: 251 }, (_, i) => i)))`;
+const pattern = (size: number): Buffer =>
+  Buffer.alloc(size, Buffer.from(Array.from({ length: 251 }, (_, i) => i)));
 
 /**
  * 大きな出力を1回の write で書き、書けたバイト数か、失敗の理由（EAGAIN など）を標準エラー出力に出すコマンド。
@@ -87,7 +94,7 @@ const pattern = (size: number) => Buffer.from(Array.from({ length: size }, (_, i
  */
 const bigWrite = (size: number) =>
   node(`const fs = require("fs");
-const data = Buffer.from(Array.from({ length: ${size} }, (_, i) => i % 251));
+const data = ${patternSource(size)};
 const kind = fs.fstatSync(1).isFile() ? "file" : "other";
 try { process.stderr.write(kind + " wrote " + fs.writeSync(1, data) + "\\n"); }
 catch (e) { process.stderr.write(kind + " " + e.code + "\\n"); process.exit(3); }`);
@@ -205,23 +212,29 @@ setInterval(() => {}, 1000);`),
   it("コマンドが終わったら、後ろで書き続けるプロセスがあっても待ち続けず、終わった時点までを流して終わる", async () => {
     const dir = tempDir();
     const pidFile = join(dir, "bg");
+    const exiting = join(dir, "exiting");
     try {
-      const started = Date.now();
-      // 読み手が遅く、中継がまだ流しきれていないうちに、コマンドが終わる。後ろのプロセスは、その後も書き続ける
+      // 読み手が遅く、中継がまだ流しきれていないうちに、コマンドが終わる。後ろのプロセスは、コマンドが終わってから
+      // 書き始め、止められるまで書き続ける（中継が後ろのプロセスを待つなら、このテストは終わらずに時間切れで落ちる）。
+      // 書き始めを、コマンドを始めてからの固定の sleep にすると、負荷が高いときはコマンドの出力（1MB）を書き終える前に
+      // 書き始めて混ざるので、コマンドが終わる合図を待つ。その後の 1 秒は、中継がコマンドの終わりに気づく
+      // （終了のイベントを受け取る）までの猶予。読み手はそれより長く（2 秒）止めておくので、中継が追いつくまで流し続ける
+      // 不具合なら、猶予の後に書いた分が混ざって落ちる
       const size = 1024 * 1024;
       const result = await relay(
         [
           "sh",
           "-c",
-          `(sleep 0.3; while :; do echo late >&2; sleep 0.01; done) & echo $! > ${pidFile}
-head -c ${size} /dev/zero | tr '\\0' x >&2; printf end; exit 3`,
+          `(while [ ! -e ${exiting} ]; do sleep 0.01; done; sleep 1; while :; do echo late >&2; sleep 0.01; done) & echo $! > ${pidFile}
+head -c ${size} /dev/zero | tr '\\0' x >&2; printf end; : > ${exiting}; exit 3`,
         ],
-        { pauseMs: 1_000 },
+        { pauseMs: 2_000 },
       );
       expect(result.code).toBe(3);
       expect(result.stdout.toString()).toBe("end");
       expect(result.stderr.toString()).toBe("x".repeat(size));
-      expect(Date.now() - started).toBeLessThan(5_000);
+      // 中継が終わったとき、後ろのプロセスはまだ書き続けている（待たずに終わった）
+      expect(() => process.kill(Number(readFileSync(pidFile, "utf8")), 0)).not.toThrow();
     } finally {
       process.kill(Number(readFileSync(pidFile, "utf8")), "SIGKILL");
     }
@@ -304,7 +317,18 @@ setInterval(() => process.stdout.write("x".repeat(1024)), 1);`),
     );
     expect(result.code).toBe(1);
     expect(pid).toBeGreaterThan(0);
-    expect(() => process.kill(pid, 0)).toThrow();
+    // 中継は SIGKILL を送ってすぐ終わる。コマンドが消える（親を失って引き取られる）のは、負荷が高いと少し遅れるので、
+    // 消えるまで待つ（止めていなければ、コマンドは書き続けるので消えずに落ちる）
+    // 期限は、テストの時間切れより前（理由を書いたエラーで落ちる）
+    const gone = () => {
+      try {
+        process.kill(pid, 0);
+        return false;
+      } catch {
+        return true;
+      }
+    };
+    await waitFor(gone, { what: `止めたコマンド（PID ${pid}）が消えること` });
   });
 
   it("localhost の転送（PBI-60）と組み合わせても、転送・出力・終了コードが変わらない", async () => {

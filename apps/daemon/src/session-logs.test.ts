@@ -10,6 +10,7 @@ import {
   parseCodexEvents,
 } from "./agents/parse.js";
 import { SessionLogStore, StreamRedactor, TRUNCATED_EVENT, validLogId } from "./session-logs.js";
+import { waitFor } from "./testing/wait.js";
 
 let dir: string;
 beforeEach(() => {
@@ -334,29 +335,31 @@ describe("セッションログの保存（PBI-62）", () => {
     }
   });
 
-  it("伏せてから切り詰める（先頭・末尾の切れ目にまたがる秘密情報の、一部も残さない）", () => {
-    const secret = "S3CR3T-0123456789abcdef";
-    const text = `ab${secret}cd${"x".repeat(30)}ef${secret}gh`;
-    for (let head = 1; head < 40; head += 2) {
+  // 先頭の上限ごとに分ける（1つのテストで全部を回すと、負荷が高いときに既定の時間切れを超える）
+  it.each(Array.from({ length: 20 }, (_, i) => 1 + i * 2))(
+    "伏せてから切り詰める（先頭・末尾の切れ目にまたがる秘密情報の、一部も残さない。先頭 %i）",
+    (head) => {
+      const secret = "S3CR3T-0123456789abcdef";
+      const text = `ab${secret}cd${"x".repeat(30)}ef${secret}gh`;
       for (let tail = 1; tail < 40; tail += 3) {
-        const root = join(dir, `runs-${head}-${tail}`);
-        const store = new SessionLogStore(root, {
+        const store = new SessionLogStore(join(dir, "runs"), {
           events: { head, tail },
           stderr: { head, tail },
         });
-        const log = store.open(info, () => [secret]);
+        const runId = `run-${tail}`;
+        const log = store.open({ ...info, runId }, () => [secret]);
         // 届いた分の境目でも切れる
         log.stderr(text.slice(0, 7));
         log.stderr(text.slice(7, 40));
         log.stderr(text.slice(40));
         log.close({ kind: "failed", reason: "error", message: "x" });
-        const stderr = store.read("task-1", "run-1")?.stderr ?? "";
+        const stderr = store.read("task-1", runId)?.stderr ?? "";
         for (let i = 0; i + 6 <= secret.length; i++) {
-          expect(stderr).not.toContain(secret.slice(i, i + 6));
+          expect(stderr, `tail ${tail}`).not.toContain(secret.slice(i, i + 6));
         }
       }
-    }
-  });
+    },
+  );
 
   it("先頭に収まる、改行で終わらない最後の行（スタブの出力など）も残す", () => {
     const store = new SessionLogStore(join(dir, "runs"), {
@@ -476,12 +479,12 @@ echo '{"type":"result","is_error":false,"result":"done oauth-token-1234567890","
     expect(read?.stderr).toBe("stderr [REDACTED]\n");
   });
 
-  it("途中で止めた実行（デーモンの停止）も、それまでの出来事が残る", async () => {
-    fakeDocker(`echo '{"type":"system","subtype":"init"}'
-echo "starting" >&2
-trap 'exit 137' TERM
-while true; do sleep 0.05; done
-`);
+  /**
+   * 偽の docker で実行し、出力を書き終えた合図（ready）を待ってから止める（決まった時間を待つと、負荷が高いときは書く前に
+   * 止めてしまう）。合図を出さないまま実行が終わったら、待ち続けずに、実行の結果を書いたエラーですぐ落ちる。
+   */
+  const stopAfterReady = async (script: string) => {
+    fakeDocker(script);
     const store = new SessionLogStore(join(dir, "runs"));
     const log = store.open(info, () => []);
     const executor = new DockerExecutor();
@@ -492,17 +495,54 @@ while true; do sleep 0.05; done
       invocation: { command: ["claude"], env: {}, parser: "claude-json" },
       log,
     });
-    await new Promise((r) => setTimeout(r, 300));
-    executor.abortAll();
+    try {
+      await waitFor(() => existsSync(join(dir, "ready")), {
+        what: "偽の docker が出力を書き終えた合図（ready）",
+        source: {
+          name: "偽の docker の実行",
+          ended: running,
+          // 実行の結果と、それまでに残した標準エラー出力
+          describe: (outcome) =>
+            `${JSON.stringify(outcome)}・標準エラー出力 ${JSON.stringify(store.read("task-1", "run-1")?.stderr ?? "")}`,
+        },
+      });
+    } finally {
+      executor.abortAll();
+    }
     const outcome = await running;
     log.close(outcome);
-    const read = store.read("task-1", "run-1");
+    return store.read("task-1", "run-1");
+  };
+
+  it("途中で止めた実行（デーモンの停止）も、それまでの出来事が残る", async () => {
+    const read = await stopAfterReady(`echo '{"type":"system","subtype":"init"}'
+echo "starting" >&2
+trap 'exit 137' TERM
+touch "${dir}/ready"
+while true; do sleep 0.05; done
+`);
     expect(read?.events).toBe('{"type":"system","subtype":"init"}\n');
     expect(read?.stderr).toBe("starting\n");
     expect(read?.meta.outcome).toMatchObject({
       kind: "failed",
       message: { code: "run.daemonStopped" },
     });
+  });
+
+  it("合図の前に偽の docker が終わったら、待ち続けずに、実行の結果がわかるエラーですぐ落ちる（PR #94 レビュー指摘）", async () => {
+    const started = Date.now();
+    const error = await stopAfterReady(`echo "no such image: img" >&2
+exit 1
+`).then(
+      () => undefined,
+      (e: unknown) => e as Error,
+    );
+    expect(error?.message).toContain(
+      "合図（ready）を待っている間に、偽の docker の実行が、合図を出さないまま終わった",
+    );
+    expect(error?.message).toContain("no such image: img");
+    // 既定の時間切れ（5秒）や、待ちの期限（10秒）を待たない
+    expect(Date.now() - started).toBeLessThan(3_000);
   });
 });
 
@@ -528,7 +568,7 @@ describe("絵文字・補助漢字（サロゲートペア）を壊さない（P
     expect(read?.events).toBe('{"text":"😀1234"}\n');
   });
 
-  it("届いた分の境目・持っておく分の切れ目・先頭と末尾の切れ目がどこでも、文字を壊さない（総当たり）", () => {
+  describe("届いた分の境目・持っておく分の切れ目・先頭と末尾の切れ目がどこでも、文字を壊さない（総当たり）", () => {
     const secret = "S3CRET-𠮷-value";
     const lines = [
       `{"text":"😀${secret}𠮷"}\n`,
@@ -540,49 +580,57 @@ describe("絵文字・補助漢字（サロゲートペア）を壊さない（P
     const expected = text.split(secret).join("[REDACTED]");
     const markerLine = new RegExp(`^.*${TRUNCATED_EVENT}.*\n`, "m");
     const stderrMarker = /\n?\[sacty\] truncated: [^\n]*omitted\.\n/;
-    let n = 0;
-    for (const secrets of [[secret], ["xyz"], []]) {
-      const want = secrets.includes(secret) ? expected : text;
-      for (let cut = 1; cut < text.length; cut += 2) {
-        for (const [head, tail] of [
+    // 秘密情報・上限の組み合わせごとに分ける（1つのテストで全部を回すと、負荷が高いときに既定の時間切れを超える）。
+    // 組み合わせの中では、届いた分の境目をすべて確かめる
+    const cases = [
+      { name: "伏せる値あり", secrets: [secret] },
+      { name: "伏せる値が出力に無い", secrets: ["xyz"] },
+      { name: "伏せる値なし", secrets: [] as string[] },
+    ].flatMap((c) =>
+      (
+        [
           [1000, 1000],
           [40, 30],
           [33, 61],
           [7, 9],
           [50, 5],
-        ] as const) {
-          n++;
-          const root = join(dir, `runs-${n}`);
-          const store = new SessionLogStore(root, {
-            events: { head, tail },
-            stderr: { head, tail },
-          });
-          const log = store.open(info, () => secrets);
-          // サロゲートペアの途中で分かれて届くこともある
-          log.stdout(text.slice(0, cut));
-          log.stdout(text.slice(cut));
-          log.stderr(text.slice(0, cut));
-          log.stderr(text.slice(cut));
-          log.close(failed);
-          const read = store.read("task-1", "run-1");
-          for (const out of [read?.events ?? "", read?.stderr ?? ""]) {
-            expect(out).not.toContain("�");
-            if (secrets.includes(secret)) expect(out).not.toContain(secret.slice(0, 6));
-          }
-          // 間を省いても、残った先頭と末尾は元の内容の先頭と末尾のまま
-          const [eventsHead = "", eventsTail = ""] = (read?.events ?? "").split(markerLine);
-          expect(want.startsWith(eventsHead)).toBe(true);
-          expect(want.endsWith(eventsTail)).toBe(true);
-          const [errHead = "", errTail = ""] = (read?.stderr ?? "").split(stderrMarker);
-          expect(want.startsWith(errHead)).toBe(true);
-          expect(want.endsWith(errTail)).toBe(true);
-          if (head === 1000) {
-            expect(read?.events).toBe(want);
-            expect(read?.stderr).toBe(want);
-          }
+        ] as const
+      ).map(([head, tail]) => ({ ...c, head, tail })),
+    );
+    it.each(cases)("$name / 先頭 $head / 末尾 $tail", ({ secrets, head, tail }) => {
+      const want = secrets.includes(secret) ? expected : text;
+      // 1つの場所に、境目ごとに別の実行として残す（実行ごとに場所を作り直さない）
+      const store = new SessionLogStore(join(dir, "runs"), {
+        events: { head, tail },
+        stderr: { head, tail },
+      });
+      for (let cut = 1; cut < text.length; cut += 2) {
+        const runId = `run-${cut}`;
+        const log = store.open({ ...info, runId }, () => secrets);
+        // サロゲートペアの途中で分かれて届くこともある
+        log.stdout(text.slice(0, cut));
+        log.stdout(text.slice(cut));
+        log.stderr(text.slice(0, cut));
+        log.stderr(text.slice(cut));
+        log.close(failed);
+        const read = store.read("task-1", runId);
+        for (const out of [read?.events ?? "", read?.stderr ?? ""]) {
+          expect(out, `cut ${cut}`).not.toContain("\uFFFD");
+          if (secrets.includes(secret)) expect(out, `cut ${cut}`).not.toContain(secret.slice(0, 6));
+        }
+        // 間を省いても、残った先頭と末尾は元の内容の先頭と末尾のまま
+        const [eventsHead = "", eventsTail = ""] = (read?.events ?? "").split(markerLine);
+        expect(want.startsWith(eventsHead), `cut ${cut}`).toBe(true);
+        expect(want.endsWith(eventsTail), `cut ${cut}`).toBe(true);
+        const [errHead = "", errTail = ""] = (read?.stderr ?? "").split(stderrMarker);
+        expect(want.startsWith(errHead), `cut ${cut}`).toBe(true);
+        expect(want.endsWith(errTail), `cut ${cut}`).toBe(true);
+        if (head === 1000) {
+          expect(read?.events, `cut ${cut}`).toBe(want);
+          expect(read?.stderr, `cut ${cut}`).toBe(want);
         }
       }
-    }
+    });
   });
 
   it("持っておく分の切れ目は、秘密情報が届いた分の境目をまたいでも伏せられる長さのまま", () => {
