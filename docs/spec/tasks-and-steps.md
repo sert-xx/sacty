@@ -19,7 +19,7 @@
 | `jira` | JIRA のチケットの取り込み |
 | `split` | タスク分割の子タスク（`parent` に親の ID と、先に終わるべき子タスク `dependsOn` を持つ） |
 
-- PR のレビューだけのタスクは、`source.review`（`requested` か `label`）を持つ。
+- PR のレビューだけのタスクは、`source.review`（`requested`・`label`、sacty が作り取り込むラベルを付けた PR なら `sacty`）を持つ。
 - 画面で作るとき、リポジトリを指定しない（`repo: null`）か、指定を省いてプロジェクトの対象がリポジトリ1つだけではないときは、
   リポジトリの無いタスク（`noRepo`）にする。対象が1つも無いプロジェクトでは作れない（`task.repositoryMissing`）。
 - 予算の上限の初期値は `budget.default_per_task_usd`（既定 1 米ドル）。
@@ -183,9 +183,13 @@ AI は `guardian_agent`（無ければ `default_agent`）。実行ごとに `wor
 
 - 工程は `review` だけ。実行の前に、対象の PR の先頭と起点のコミットを記録する（`ReviewTargetResolved`）。PR の先頭のコミットのコードと、
   差分の全体（`/sacty-review` に読み取り専用でマウント。指示には先頭の 100000 文字）を渡す。
+- エージェントには、マージの前に直すべき指摘があるかの評価（`sacty-review-verdict` の `changesRequested`）を付けさせる。評価のブロックは
+  投稿する本文から取り除き、`AgentRunCompleted` の `reviewChangesRequested` に残す（回ごとに `reviewVerdicts`）。行についての指摘
+  （行へのコメントと、本文に回したもの）があれば、評価に関わらず `true` にする。評価が無い・真偽値でなければ残さない（読めない）。
+  使うのは、sacty が作った PR のレビューを元のタスクに届けるかの判断だけ（[承認と差し戻し](approval.md#pr-の指摘の取り込み)）。
 - 結果は、人の承認を待たずに PR にレビュー（`COMMENT`）として投稿する。行へのコメントが 422 で拒否されたら、本文に入れて投稿し直す。
   投稿できたら完了。
 - 再レビュー：投稿して完了したタスクは、`review` を実行待ちに戻して、最新のコミットをもう一度レビューできる（`ReviewRestarted`）。
 - PR の確認（60秒ごと）で、終わっていないレビューのタスクの PR がマージ・クローズされていたら、タスクを中止する。
 
-コード: `apps/daemon/src/service.ts`（`reviewOnlySteps`・`resolveReviewTarget`・`postReview`・`rereview`・`checkReviewPullRequests`）、`apps/daemon/src/prompts.ts`（`PR_DIFF_IN_PROMPT`）
+コード: `apps/daemon/src/service.ts`（`reviewOnlySteps`・`resolveReviewTarget`・`postReview`・`rereview`・`checkReviewPullRequests`）、`apps/daemon/src/prompts.ts`（`PR_DIFF_IN_PROMPT`・`extractReviewComments`）
