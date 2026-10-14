@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
 import {
   existsSync,
@@ -6,10 +7,12 @@ import {
   readdirSync,
   readFileSync,
   rmSync,
+  statSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { DaemonText, EventInput, StepKey, Task } from "@sacty/core";
 import {
   ANSWER_MAX,
@@ -657,14 +660,43 @@ class FakeExecutor implements AgentExecutor {
     );
     const next = this.outcomes.shift();
     if (!next) throw new Error("no more outcomes");
-    if (next.kind === "hold") {
-      return new Promise((resolve) => {
-        this.held.set(runId, resolve);
-        this.started.resolve(runId);
+    const outcome =
+      next.kind === "hold"
+        ? await new Promise<AgentOutcome>((resolve) => {
+            this.held.set(runId, resolve);
+            this.started.resolve(runId);
+          })
+        : next;
+    // エージェントが書いた元のファイル（PBI-66）を、実行ごとの設定の場所に置いて、実行器と同じように写させる
+    if (this.sessionFiles && invocation.sessionFiles && log && this.containerUnconfirmed) {
+      // 実行器と同じく、コンテナの停止を確かめられなければ写さず、その理由を残す
+      log.agentFilesNotArchived({
+        runtime: invocation.sessionFiles,
+        reason: "container_not_confirmed",
+        sessionId: `session-${runId}`,
       });
+    } else if (this.sessionFiles && invocation.sessionFiles && log) {
+      const config = mkdtempSync(join(tmpdir(), "sacty-fake-config-"));
+      try {
+        for (const [path, content] of Object.entries(this.sessionFiles(invocation))) {
+          mkdirSync(dirname(join(config, path)), { recursive: true });
+          writeFileSync(join(config, path), content);
+        }
+        await log.archiveAgentFiles({
+          dir: config,
+          runtime: invocation.sessionFiles,
+          sessionId: `session-${runId}`,
+        });
+      } finally {
+        rmSync(config, { recursive: true, force: true });
+      }
     }
-    return next;
+    return outcome;
   }
+  /** 実行ごとに、エージェントが設定の場所に書く元のファイル（相対パスと中身。PBI-66）。無ければ書かない。 */
+  sessionFiles?: (invocation: Invocation) => Record<string, string>;
+  /** true にすると、実行の後にコンテナの停止を確かめられなかった（元のファイルを写さない）ことにする。 */
+  containerUnconfirmed = false;
   /** false にすると、コンテナの停止を確かめられない（止まらないコンテナがある）ことにする。 */
   stops = true;
   async ensureStopped() {
@@ -10990,6 +11022,240 @@ describe("エージェントの実行のセッションログ（PBI-62）", () =
     await service.cancel(task.id);
     expect(service.get(task.id)?.task.status).toBe("cancelled");
     expect(sessionLogs.read(task.id, runId)).toBeTruthy();
+    activity.close();
+  });
+});
+
+describe("エージェントの元のセッションのファイル（PBI-66）", () => {
+  const token = "test-token";
+  const auth = { authorization: `Bearer ${token}` };
+  const runIdOf = (events: { type: string; payload: unknown }[] | undefined, type: string) =>
+    (events?.find((e) => e.type === type)?.payload as { runId?: string } | undefined)?.runId;
+  const archivedOf = (service: TaskService, id: string) =>
+    (service.get(id)?.activity ?? []).flatMap((e) =>
+      e.type === "AgentSessionArchived" ? [e.payload] : [],
+    );
+  // Claude Code が CLAUDE_CONFIG_DIR に書く形（認証なしの起動で確かめた形と、公開されている形）
+  const claudeFiles = (secret: string) => () => ({
+    "projects/-workspace/main-session.jsonl": `${JSON.stringify({ type: "user", message: { content: `token ${secret}` } })}\n`,
+    "projects/-workspace/main-session/subagents/agent-a1.jsonl": '{"type":"assistant"}\n',
+    ".claude.json": `{"userID":"${secret}"}`,
+    ".credentials.json": `{"claudeAiOauth":{"accessToken":"${secret}"}}`,
+    "backups/.claude.json.backup.1": "{}",
+  });
+
+  it("実行ごとに元のファイルを写し、認証の情報は写さず、秘密情報を伏せ、大きさとハッシュを作業履歴に残す", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const sessionLogs = new SessionLogStore(join(dir, "runs"));
+    const { service, executor } = makeService(
+      activity,
+      [{ kind: "failed", reason: "usage_limit", message: "limit" }, completed(1_000)],
+      { sessionLogs },
+    );
+    executor.sessionFiles = claudeFiles("oauth-secret");
+    const task = service.createTask({ projectId: "default", title: "A" });
+    await service.runNext(task.id);
+    // 失敗した実行も写す
+    const failedRun = runIdOf(service.get(task.id)?.activity, "AgentRunFailed") ?? "";
+    const [archived] = archivedOf(service, task.id);
+    expect(archived).toMatchObject({
+      runId: failedRun,
+      role: "requirements",
+      agentId: "claude-subscription",
+      runtime: "claude-code",
+      sessionId: `session-${failedRun}`,
+      limitBytes: 200 * 1024 * 1024,
+      skipped: [],
+    });
+    expect(archived?.files.map((f) => f.path)).toEqual([
+      "projects/-workspace/main-session.jsonl",
+      "projects/-workspace/main-session/subagents/agent-a1.jsonl",
+    ]);
+    const agentDir = join(dir, "runs", task.id, failedRun, "agent");
+    const main = readFileSync(join(agentDir, "projects/-workspace/main-session.jsonl"), "utf8");
+    expect(main).toContain("token [REDACTED]");
+    expect(main).not.toContain("oauth-secret");
+    expect(existsSync(join(agentDir, ".credentials.json"))).toBe(false);
+    expect(existsSync(join(agentDir, ".claude.json"))).toBe(false);
+    expect(existsSync(join(agentDir, "backups"))).toBe(false);
+    const file = archived?.files[0];
+    expect(file?.bytes).toBe(Buffer.byteLength(main));
+    expect(file?.sha256).toBe(createHash("sha256").update(main).digest("hex"));
+    // 利用者だけが読める
+    expect(statSync(agentDir).mode & 0o777).toBe(0o700);
+    expect(statSync(join(agentDir, "projects/-workspace/main-session.jsonl")).mode & 0o777).toBe(
+      0o600,
+    );
+
+    service.resume(task.id, {});
+    await service.runNext(task.id);
+    // 実行ごとに別の場所
+    expect(archivedOf(service, task.id).map((e) => e.runId)).toEqual([
+      failedRun,
+      runIdOf(service.get(task.id)?.activity, "AgentRunCompleted"),
+    ]);
+    activity.close();
+  });
+
+  it("スタブ（元のファイルが無い）では、何も写さず記録もしない", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const sessionLogs = new SessionLogStore(join(dir, "runs"));
+    const { service, executor } = makeService(activity, [completed(1_000)], {
+      sessionLogs,
+      config: configOf(agent({ id: "stub", runtime: "stub", auth: { mode: "stub" } })),
+    });
+    executor.sessionFiles = claudeFiles("x");
+    const task = service.createTask({ projectId: "default", title: "A" });
+    await service.runNext(task.id);
+    const runId = runIdOf(service.get(task.id)?.activity, "AgentRunCompleted") ?? "";
+    expect(runId).toBeTruthy();
+    expect(archivedOf(service, task.id)).toEqual([]);
+    expect(existsSync(join(dir, "runs", task.id, runId))).toBe(false);
+    activity.close();
+  });
+
+  it("コンテナの停止を確かめられなかった実行は写さず、写さなかった理由を作業履歴と API に残す", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const sessionLogs = new SessionLogStore(join(dir, "runs"));
+    const { service, executor } = makeService(activity, [completed(1_000)], { sessionLogs });
+    executor.sessionFiles = claudeFiles("oauth-secret");
+    executor.containerUnconfirmed = true;
+    const task = service.createTask({ projectId: "default", title: "A" });
+    await service.runNext(task.id);
+    const runId = runIdOf(service.get(task.id)?.activity, "AgentRunCompleted") ?? "";
+    expect(archivedOf(service, task.id)).toEqual([
+      expect.objectContaining({
+        runId,
+        runtime: "claude-code",
+        files: [],
+        skipped: [],
+        notArchived: "container_not_confirmed",
+      }),
+    ]);
+    expect(existsSync(join(dir, "runs", task.id, runId, "agent"))).toBe(false);
+    const files = await service.agentSessionFiles(task.id, runId);
+    expect(files).toMatchObject({ notArchived: "container_not_confirmed", files: [] });
+    activity.close();
+  });
+
+  it("中止で止めた実行も写し、中止の後でも記録する（中止の掃除でも消さない）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const sessionLogs = new SessionLogStore(join(dir, "runs"));
+    const { service, executor } = makeService(activity, [HOLD], { sessionLogs });
+    executor.sessionFiles = claudeFiles("oauth-secret");
+    const task = service.createTask({ projectId: "default", title: "A" });
+    const running = service.runNext(task.id);
+    const runId = await executor.started.promise;
+    await service.cancel(task.id);
+    await running;
+    const types = service.get(task.id)?.activity.map((e) => e.type) ?? [];
+    expect(types).toContain("TaskCancelled");
+    expect(types).toContain("AgentSessionArchived");
+    expect(service.get(task.id)?.task.status).toBe("cancelled");
+    expect(archivedOf(service, task.id)[0]?.runId).toBe(runId);
+    expect(
+      existsSync(join(dir, "runs", task.id, runId, "agent/projects/-workspace/main-session.jsonl")),
+    ).toBe(true);
+    // 作業履歴から状態を復元できる
+    const { service: restarted } = makeService(activity, [], { sessionLogs });
+    expect(restarted.get(task.id)?.task.status).toBe("cancelled");
+    activity.close();
+  });
+
+  it("中止で止めた質問への答えの実行（チャット）も写す", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const sessionLogs = new SessionLogStore(join(dir, "runs"));
+    const { service, executor } = makeService(activity, [HOLD], { sessionLogs });
+    executor.sessionFiles = claudeFiles("oauth-secret");
+    const task = service.createTask({ projectId: "default", title: "A" });
+    const { answered } = service.askQuestion(task.id, { text: "質問" });
+    const chatRun = await executor.started.promise;
+    await service.cancel(task.id);
+    await answered;
+    expect(archivedOf(service, task.id)).toMatchObject([{ runId: chatRun, role: "chat" }]);
+    expect(service.get(task.id)?.task.status).toBe("cancelled");
+    activity.close();
+  });
+
+  it("API：一覧とハッシュの一致・書き換えると不一致・消すと無い。ほかのタスク・パスの不正・記録の無いファイルは返さない", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const sessionLogs = new SessionLogStore(join(dir, "runs"));
+    const { service, executor } = makeService(activity, [completed(1_000)], { sessionLogs });
+    executor.sessionFiles = claudeFiles("oauth-secret");
+    const app = createApp(service, token);
+    const task = service.createTask({ projectId: "default", title: "A" });
+    const other = service.createTask({ projectId: "default", title: "B" });
+    await service.runNext(task.id);
+    const runId = runIdOf(service.get(task.id)?.activity, "AgentRunCompleted") ?? "";
+    const base = `/api/tasks/${task.id}/runs/${runId}/agent-files`;
+    type Listed = {
+      runtime: string;
+      sessionId: string;
+      files: { path: string; status: string; sha256: string; current?: { sha256: string } }[];
+    };
+    const list = async () => (await (await app.request(base, { headers: auth })).json()) as Listed;
+    const first = await list();
+    expect(first).toMatchObject({ runtime: "claude-code", sessionId: `session-${runId}` });
+    expect(first.files.map((f) => f.status)).toEqual(["match", "match"]);
+
+    const mainPath = "projects/-workspace/main-session.jsonl";
+    const raw = await app.request(`${base}/raw?path=${encodeURIComponent(mainPath)}`, {
+      headers: auth,
+    });
+    expect(raw.status).toBe(200);
+    expect(raw.headers.get("content-type")).toContain("ndjson");
+    expect(await raw.text()).toContain("token [REDACTED]");
+
+    // 書き換えると不一致、消すと無い
+    const agentDir = join(dir, "runs", task.id, runId, "agent");
+    writeFileSync(join(agentDir, mainPath), '{"type":"user","message":{"content":"edited"}}\n');
+    rmSync(join(agentDir, "projects/-workspace/main-session/subagents/agent-a1.jsonl"));
+    const second = await list();
+    expect(second.files.map((f) => f.status)).toEqual(["mismatch", "missing"]);
+    expect(second.files[0]?.current?.sha256).not.toBe(second.files[0]?.sha256);
+
+    // ほかのタスクの ID では読めない
+    expect(
+      (await app.request(`/api/tasks/${other.id}/runs/${runId}/agent-files`, { headers: auth }))
+        .status,
+    ).toBe(404);
+    expect(
+      (
+        await app.request(
+          `/api/tasks/${other.id}/runs/${runId}/agent-files/raw?path=${encodeURIComponent(mainPath)}`,
+          { headers: auth },
+        )
+      ).status,
+    ).toBe(404);
+    // パスの不正（場所の外・絶対パス・空）は断る
+    for (const bad of ["../../sacty.db", "/etc/passwd", "", "projects/../../x", "a//b", "a\\b"]) {
+      const res = await app.request(`${base}/raw?path=${encodeURIComponent(bad)}`, {
+        headers: auth,
+      });
+      expect(res.status, bad).toBe(400);
+    }
+    // 記録の無いファイルは、置かれていても返さない（後から置かれた .credentials.json など）
+    writeFileSync(join(agentDir, ".credentials.json"), "{}");
+    expect(
+      (await app.request(`${base}/raw?path=.credentials.json`, { headers: auth })).status,
+    ).toBe(404);
+    // 記録したファイルがリンクに置き換えられたら返さない
+    rmSync(join(agentDir, mainPath));
+    symlinkSync(dbPath, join(agentDir, mainPath));
+    expect(
+      (await app.request(`${base}/raw?path=${encodeURIComponent(mainPath)}`, { headers: auth }))
+        .status,
+    ).toBe(404);
+    expect((await list()).files[0]?.status).toBe("missing");
+    // 写していない実行・不正な ID・トークンが無い
+    expect(
+      (await app.request(`/api/tasks/${task.id}/runs/missing/agent-files`, { headers: auth }))
+        .status,
+    ).toBe(404);
+    expect(
+      (await app.request(`/api/tasks/${task.id}/runs/a.b/agent-files`, { headers: auth })).status,
+    ).toBe(400);
+    expect((await app.request(base)).status).toBe(401);
     activity.close();
   });
 });

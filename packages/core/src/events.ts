@@ -695,6 +695,52 @@ const AiRequestsRetried = z.object({
   }),
 });
 
+/** 写したエージェントの元のファイル1つ（PBI-66）。path は、実行の agent/ の場所からの相対パス（区切りは /）。 */
+export const ArchivedAgentFile = z.object({
+  path: z.string().min(1),
+  /** 写した（伏せた・間を省いた後の）大きさと SHA-256（16進）。いまのファイルと比べて、書き換えを見つける。 */
+  bytes: z.number().int().nonnegative(),
+  sha256: z.string().regex(/^[0-9a-f]{64}$/),
+  /** 元の（コンテナが書いた）大きさ。 */
+  sourceBytes: z.number().int().nonnegative(),
+  /** 上限で、先頭と末尾を残して間を省いた大きさ・行数。 */
+  truncated: z
+    .object({
+      droppedBytes: z.number().int().nonnegative(),
+      droppedLines: z.number().int().nonnegative(),
+    })
+    .optional(),
+});
+export type ArchivedAgentFile = z.infer<typeof ArchivedAgentFile>;
+
+/**
+ * エージェント（Claude Code・Codex）が自分で書いた元のセッションのファイルを、実行の後に写した（PBI-66）。
+ * 監査のため、写した各ファイルの大きさと SHA-256 を残す（追記専用の作業履歴に置き、ファイルの書き換えを見つける）。
+ * 失敗・止めた・中止した実行でも、コンテナが残したところまでを写す（中止の後にも記録する）。
+ */
+const AgentSessionArchived = z.object({
+  type: z.literal("AgentSessionArchived"),
+  payload: z.object({
+    runId: z.string().min(1),
+    /** 何として実行したか（工程・orchestrator・guardian・chat など）。 */
+    role: z.string(),
+    agentId: z.string(),
+    runtime: z.enum(["claude-code", "codex"]),
+    /** エージェントのセッションの ID（Claude Code の session_id・Codex の thread_id。再開に使う）。 */
+    sessionId: z.string().optional(),
+    files: z.array(ArchivedAgentFile),
+    /** 1実行あたりの上限（バイト）。超えた分は、ファイルごとに先頭と末尾を残して間を省く。 */
+    limitBytes: z.number().int().positive(),
+    /** 読めずに写せなかったファイル（相対パス）。 */
+    skipped: z.array(z.string()).default([]),
+    /**
+     * 写さなかった理由（files は空）。container_not_confirmed：コンテナが止まったことを確かめられなかった
+     * （動いたままのコンテナが写す途中のファイルを差し替えられるため、写さない）。
+     */
+    notArchived: z.enum(["container_not_confirmed"]).optional(),
+  }),
+});
+
 /**
  * オーケストレーターが、認証の失敗・利用上限で工程を選べなかった（PBI-32）。標準の工程では進めず、続く
  * TaskPaused で止める（再開すると工程の選択からやり直す）。使った分の費用は予算に入れる。
@@ -1237,6 +1283,7 @@ export const EventInput = z.discriminatedUnion("type", [
   FinalReviewFailed,
   OrchestratorFailed,
   AiRequestsRetried,
+  AgentSessionArchived,
   IntegrationReviewed,
   PullRequestPublished,
   TaskBranchCreated,

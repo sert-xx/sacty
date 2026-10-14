@@ -39,7 +39,10 @@ describe("認証方式ごとの環境変数", () => {
       runtime: "claude-code",
       auth: { mode: "subscription", secret: "claude-oauth-token" },
     };
-    expect((await buildInvocation(claude, "prompt", secrets)).stage).toBeUndefined();
+    // コンテキストが無くても、実行ごとの空の場所をマウントする（元のセッションのファイルを写すため。PBI-66）
+    const plain = await buildInvocation(claude, "prompt", secrets);
+    expect(plain.stage).toEqual({ containerDir: "/tmp/sacty-claude-config", files: [] });
+    expect(plain.sessionFiles).toBe("claude-code");
     const withContext = await buildInvocation(claude, "prompt", secrets, () => {}, "design", {
       dir: "/host/ctx",
       mcpServers: [],
@@ -73,6 +76,7 @@ describe("認証方式ごとの環境変数", () => {
       seedDir: "/host/ctx",
     });
     expect(codexInv.env.CODEX_HOME).toBe("/.codex");
+    expect(codexInv.sessionFiles).toBe("codex");
   });
 
   it("コンテキストの MCP サーバーの秘密情報は、実行時に環境変数で渡し、Claude Code にはそのサーバーだけを使わせる（PBI-6）", async () => {

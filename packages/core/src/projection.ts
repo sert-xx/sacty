@@ -436,7 +436,8 @@ export function applyEvent(
   }
 
   if (!current) throw new ActivityIntegrityError(event, "unknown task");
-  if (current.status === "cancelled") {
+  // 写したエージェントのファイルの記録（PBI-66）は、中止の後にも受け付ける（中止で止めた実行の後に写すため）
+  if (current.status === "cancelled" && event.type !== "AgentSessionArchived") {
     throw new ActivityIntegrityError(event, "the task is cancelled");
   }
   const task: Task = { ...current, updatedAt: event.at };
@@ -1005,6 +1006,11 @@ export function applyEvent(
 
     case "AiRequestsRetried":
       // 記録だけ（作業履歴で確かめる。PBI-37）
+      break;
+
+    case "AgentSessionArchived":
+      // 記録だけ（写したファイルのハッシュを、画面と API で確かめる。PBI-66）。中止したタスクの状態は変えない
+      if (current.status === "cancelled") return next;
       break;
 
     case "GuardianMissed":

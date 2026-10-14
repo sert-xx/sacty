@@ -69,6 +69,11 @@ export abstract class OutcomeReader {
   protected rawHead = "";
   protected rawOverflow = false;
   protected objects = 0;
+  /**
+   * エージェントのセッションの ID（Claude Code の session_id・Codex の thread_id。PBI-66）。最初に出たものを持つ
+   * （サブエージェントの ID ではなく、再開に使う ID）。
+   */
+  sessionId: string | undefined;
 
   constructor(private readonly maxLine = MAX_LINE) {}
 
@@ -141,6 +146,9 @@ export class ClaudeOutcomeReader extends OutcomeReader {
 
   protected event(event: Record<string, unknown>): void {
     this.untyped = event.type === undefined ? event : undefined;
+    if (!this.sessionId && typeof event.session_id === "string" && event.session_id) {
+      this.sessionId = event.session_id;
+    }
     if (event.type === "result") {
       this.result = event;
     } else if (event.type === "assistant") {
@@ -206,7 +214,11 @@ export class CodexOutcomeReader extends OutcomeReader {
   private errorMessage = "";
 
   protected event(event: Record<string, unknown>): void {
-    if (event.type === "turn.completed") {
+    if (event.type === "thread.started") {
+      if (!this.sessionId && typeof event.thread_id === "string" && event.thread_id) {
+        this.sessionId = event.thread_id;
+      }
+    } else if (event.type === "turn.completed") {
       const u = (event.usage ?? {}) as Record<string, unknown>;
       const input = nonNegInt(u.input_tokens);
       const cached = Math.min(nonNegInt(u.cached_input_tokens), input);

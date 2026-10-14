@@ -797,6 +797,64 @@ describe("ゲートウェイのリトライの表示（PBI-37）", () => {
   });
 });
 
+describe("エージェントの元のファイルを写した記録の表示（PBI-66）", () => {
+  it("写したファイルの数と、上限で間を省いたファイルの数を出す", () => {
+    const file = (truncated: boolean) => ({
+      path: "projects/-workspace/s.jsonl",
+      bytes: 1,
+      sha256: "a".repeat(64),
+      sourceBytes: 1,
+      ...(truncated ? { truncated: { droppedBytes: 1, droppedLines: 1 } } : {}),
+    });
+    const event = (files: unknown[]) =>
+      ({
+        type: "AgentSessionArchived",
+        payload: {
+          runId: "r",
+          role: "orchestrator",
+          agentId: "a",
+          runtime: "codex",
+          files,
+          limitBytes: 1,
+          skipped: [],
+        },
+        actor: "sacty",
+      }) as unknown as ActivityEvent;
+    expect(describeEvent(event([file(false), file(false)]))).toBe(
+      "エージェントの元のファイル2件を写し、大きさとハッシュを記録",
+    );
+    expect(describeEvent(event([file(true), file(false)]))).toBe(
+      "エージェントの元のファイル2件を写し、大きさとハッシュを記録（うち1件は上限を超えたため、間を省いた）",
+    );
+    expect(describeIn(event([file(false)]), labels.en)).toBe(
+      "Copied 1 original file written by the agent and recorded its size and hash",
+    );
+  });
+
+  it("コンテナの停止を確かめられず写さなかったときは、その理由を出す", () => {
+    const event = {
+      type: "AgentSessionArchived",
+      payload: {
+        runId: "r",
+        role: "orchestrator",
+        agentId: "a",
+        runtime: "claude-code",
+        files: [],
+        limitBytes: 1,
+        skipped: [],
+        notArchived: "container_not_confirmed",
+      },
+      actor: "sacty",
+    } as unknown as ActivityEvent;
+    expect(describeEvent(event)).toBe(
+      "コンテナが止まったことを確かめられなかったため、エージェントの元のファイルを写さなかった",
+    );
+    expect(describeIn(event, labels.en)).toBe(
+      "Did not copy the agent's original files because the container could not be confirmed to have stopped",
+    );
+  });
+});
+
 describe("状態の表示の種類（PBI-42）", () => {
   it("完了と中止を、ほかの状態とも別の種類にする", () => {
     const done = task({ steps: [{ key: "investigate", state: "done" }] });

@@ -283,6 +283,55 @@ describe("project", () => {
     );
   });
 
+  it("写したエージェントのファイルの記録は、中止の後にも受け付け、状態は変えない（PBI-66）", () => {
+    const cancel = () => ev("t1", { type: "TaskCancelled", payload: { cleanup: [] } }, "person");
+    const archived = () =>
+      ev("t1", {
+        type: "AgentSessionArchived",
+        payload: {
+          runId: "r1",
+          role: "requirements",
+          agentId: "a",
+          runtime: "claude-code",
+          sessionId: "s1",
+          files: [
+            {
+              path: "projects/-workspace/s1.jsonl",
+              bytes: 3,
+              sha256: "a".repeat(64),
+              sourceBytes: 3,
+            },
+          ],
+          limitBytes: 1024,
+        },
+      });
+    seq = 0;
+    const before = project([created("t1"), steps("t1"), cancel()]).get("t1");
+    seq = 0;
+    const after = project([created("t1"), steps("t1"), cancel(), archived()]).get("t1");
+    expect(after).toEqual(before);
+    expect(after?.status).toBe("cancelled");
+    // 中止の後は、ほかのイベントはこれまでどおり受け付けない
+    seq = 0;
+    expect(() =>
+      project([created("t1"), steps("t1"), cancel(), archived(), started("t1", "r2")]),
+    ).toThrow(/cancelled/);
+    // 中止していないタスクでも、記録だけ（工程の状態は変えない）
+    seq = 0;
+    const running = project([created("t1"), steps("t1"), archived()]).get("t1");
+    expect(running?.steps.map((s) => s.state)).toEqual(["active", "todo", "todo", "todo"]);
+    // ハッシュの形でない値は受け付けない
+    expect(() =>
+      EventSchema.parse({
+        type: "AgentSessionArchived",
+        payload: {
+          ...archived().payload,
+          files: [{ path: "x", bytes: 1, sha256: "zz", sourceBytes: 1 }],
+        },
+      }),
+    ).toThrow();
+  });
+
   it("同じ作業履歴から何度復元しても同じ状態になる", () => {
     seq = 0;
     const events = [created("t1"), steps("t1"), started("t1", "r1"), completed("t1", "r1", 0.2)];
