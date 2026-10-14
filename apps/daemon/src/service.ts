@@ -3142,30 +3142,38 @@ export class TaskService {
     }
     // 使える外部 PF：ホストの PF と、プロジェクトのコンテキストで合成した PF（同じ名前ならホストのもの。PBI-74）
     const runPlatforms = mergePlatforms(config.config.platforms, context?.platforms ?? []);
-    if (context) {
-      this.append(task, [
-        {
-          actor: "sacty",
-          event: {
-            type: "ContextResolved",
-            payload: {
-              runId,
-              layers: context.layers,
-              warnings: [...context.warnings, ...runPlatforms.warnings],
-              ...(runPlatforms.platforms.length > 0
-                ? { platforms: runPlatforms.platforms.map(platformSummary) }
-                : {}),
+    // ここから実行の try（finally で消す）までに例外になっても、用意したコンテキスト（一時のディレクトリ・ホストで起動する
+    // MCP サーバーの確保）を残さない（PR #89 レビュー指摘）
+    let splitCandidates: string[] | undefined;
+    try {
+      if (context) {
+        this.append(task, [
+          {
+            actor: "sacty",
+            event: {
+              type: "ContextResolved",
+              payload: {
+                runId,
+                layers: context.layers,
+                warnings: [...context.warnings, ...runPlatforms.warnings],
+                ...(runPlatforms.platforms.length > 0
+                  ? { platforms: runPlatforms.platforms.map(platformSummary) }
+                  : {}),
+              },
             },
           },
-        },
-      ]);
-    }
+        ]);
+      }
 
-    // 対象リポジトリの無いタスクを分けるときの、子タスクのリポジトリの候補（プロジェクトの対象。PBI-73）
-    const splitCandidates =
-      step === "split" && repoless
-        ? ((await this.projectRepositories(task.projectId))?.repositories ?? [])
-        : undefined;
+      // 対象リポジトリの無いタスクを分けるときの、子タスクのリポジトリの候補（プロジェクトの対象。PBI-73）
+      splitCandidates =
+        step === "split" && repoless
+          ? ((await this.projectRepositories(task.projectId))?.repositories ?? [])
+          : undefined;
+    } catch (error) {
+      context?.dispose();
+      throw error;
+    }
     let executed: Executed | undefined;
     // レビューの工程は、起点ではなく PR の先頭のコミットのコードを読ませ、PR の差分を渡す（PBI-19）
     const reviewTarget = step === "review" ? this.mustGet(task.id).reviewTarget : undefined;
@@ -3517,18 +3525,33 @@ export class TaskService {
     // 中身なら、実行をまたいで使い回す）、層を写してから（取得した層は dispose で消える）、準備を待つ
     if (prepared.hostedMcp.length > 0 && this.deps.contextMcp) {
       const contextMcp = this.deps.contextMcp;
-      const lease = contextMcp.lease(task.projectId, prepared.hostedMcp);
+      let lease: ReturnType<typeof contextMcp.lease>;
+      try {
+        lease = contextMcp.lease(task.projectId, prepared.hostedMcp);
+      } catch (error) {
+        // 確保できなければ（層の写しの失敗など。確保の途中までは巻き戻してある）、用意したコンテキストも消す
+        // （PR #89 レビュー指摘）
+        prepared.dispose();
+        throw error;
+      }
       const dispose = prepared.dispose;
+      const leased = lease;
       prepared.dispose = () => {
-        lease.release();
+        leased.release();
         dispose();
       };
       prepared.gatewayMcp.push(...lease.relays);
-      const problems = await untilStopped(
-        contextMcp.ready(lease.keys),
-        () => this.stopRequested(task.id),
-        [],
-      );
+      let problems: DaemonMessage[];
+      try {
+        problems = await untilStopped(
+          contextMcp.ready(lease.keys),
+          () => this.stopRequested(task.id),
+          [],
+        );
+      } catch (error) {
+        prepared.dispose();
+        throw error;
+      }
       const [problem] = onlyMcp !== undefined ? problems : [];
       if (problem) {
         prepared.dispose();

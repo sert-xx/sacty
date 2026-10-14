@@ -1419,6 +1419,66 @@ describe("工程の実行と費用", () => {
     activity.close();
   });
 
+  it.each(["lease", "ready"] as const)(
+    "ホストで起動するコンテキストの MCP の確保・準備（%s）で失敗したら、用意したコンテキストと確保を残さない（PR #89 レビュー指摘）",
+    async (failAt) => {
+      const activity = new SqliteActivityStore(dbPath);
+      const gateway: NonNullable<ServiceDeps["gateway"]> = {
+        containerOrigin: () => "http://host.docker.internal:5001",
+        platformsUrl: (token) => `http://host.docker.internal:5001/r/${token}/pf`,
+        register: () => ({
+          token: "sacty-gw-run",
+          stats: () => ({ retries: 0, waitedMs: 0, statuses: [], gaveUp: false }),
+          close: () => {},
+        }),
+      };
+      const contexts = new FakeContexts({
+        "https://github.com/acme/ctx.git": {
+          "mcp.yaml": "servers:\n  tool:\n    command: tool-mcp\n",
+        },
+      });
+      const layerDirs: string[] = [];
+      let released = 0;
+      const contextMcp: NonNullable<ServiceDeps["contextMcp"]> = {
+        lease: (_projectId, servers) => {
+          layerDirs.push(...servers.map((s) => s.layer.dir));
+          if (failAt === "lease") throw new Error("no space left on device");
+          return {
+            relays: servers.map((s) => ({ name: s.name, host: "ctx-x" })),
+            keys: ["ctx-x"],
+            release: () => {
+              released += 1;
+            },
+          };
+        },
+        ready: async () => {
+          throw new Error("ready failed");
+        },
+      };
+      const { service, executor } = makeService(activity, [completed(20_000)], {
+        gateway,
+        contexts,
+        contextMcp,
+      });
+      const project = service.saveProject("default", {
+        name: "デフォルト",
+        targets: [{ scope: "repo", target: "https://github.com/acme/app" }],
+        githubAccounts: { "github.com": "me" },
+        context: { repo: "https://github.com/acme/ctx.git" },
+      });
+      const task = service.createTask({ projectId: project.id, title: "調べる" });
+      await service.runNext(task.id);
+      // 実行せず、理由を残して止める
+      expect(executor.calls).toHaveLength(0);
+      expect(service.get(task.id)?.task.status).toBe("paused");
+      // 取得した一時のコンテキストは消し、確保したものは返す
+      expect(layerDirs).toHaveLength(1);
+      expect(existsSync(layerDirs[0] ?? "")).toBe(false);
+      expect(released).toBe(failAt === "ready" ? 1 : 0);
+      activity.close();
+    },
+  );
+
   it("ホストで起動できなかったコンテキストの MCP サーバーは、どれかを作業履歴に残して実行する（PBI-84）", async () => {
     const activity = new SqliteActivityStore(dbPath);
     const gateway: NonNullable<ServiceDeps["gateway"]> = {

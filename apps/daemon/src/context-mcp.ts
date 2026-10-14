@@ -126,6 +126,44 @@ export class ContextMcpServers {
   lease(projectId: string, servers: readonly HostedContextMcp[]): ContextMcpLease {
     if (this.stopped) return { relays: [], keys: [], release: () => {} };
     const used: Entry[] = [];
+    // 途中で失敗したら（層の写しの失敗など）、ここまでの確保を巻き戻す（使っている実行の数を戻し、この呼び出しで足した
+    // ものは消す。足したものは、まだ起動していない。PR #89 レビュー指摘）
+    const created: Entry[] = [];
+    try {
+      this.acquire(projectId, servers, used, created);
+    } catch (error) {
+      for (const e of used) e.leases = Math.max(0, e.leases - 1);
+      for (const e of created) {
+        if (e.leases === 0 && this.entries.get(e.key) === e) this.entries.delete(e.key);
+      }
+      this.removeUnusedLayers();
+      throw error;
+    }
+    // 新しい中身が使われたので、古くなった（使っている実行が無い）ものを止める
+    this.sweep();
+    let released = false;
+    return {
+      relays: used.map((e, i) => ({ name: servers[i]?.name ?? "", host: e.key })),
+      keys: used.map((e) => e.key),
+      release: () => {
+        if (released) return;
+        released = true;
+        for (const e of used) {
+          e.leases = Math.max(0, e.leases - 1);
+          e.lastUsed = this.now();
+        }
+        this.sweep();
+      },
+    };
+  }
+
+  /** サーバーごとに確保する（used に確保したもの、created にこの呼び出しで足したものを入れる）。 */
+  private acquire(
+    projectId: string,
+    servers: readonly HostedContextMcp[],
+    used: Entry[],
+    created: Entry[],
+  ): void {
     for (const server of servers) {
       const layer = {
         repo: server.layer.repo,
@@ -171,27 +209,12 @@ export class ContextMcpServers {
           seq: 0,
         };
         this.entries.set(key, entry);
+        created.push(entry);
       }
       entry.leases += 1;
       entry.seq = ++this.seq;
       used.push(entry);
     }
-    // 新しい中身が使われたので、古くなった（使っている実行が無い）ものを止める
-    this.sweep();
-    let released = false;
-    return {
-      relays: used.map((e, i) => ({ name: servers[i]?.name ?? "", host: e.key })),
-      keys: used.map((e) => e.key),
-      release: () => {
-        if (released) return;
-        released = true;
-        for (const e of used) {
-          e.leases = Math.max(0, e.leases - 1);
-          e.lastUsed = this.now();
-        }
-        this.sweep();
-      },
-    };
   }
 
   /** 確保したものの準備を待つ（PBI-77 と同じ。上限あり）。準備ができないものの理由（どの MCP サーバーか）を返す。 */
@@ -242,11 +265,16 @@ export class ContextMcpServers {
     if (!removed) return;
     // 設定と合わせる（消したものを止める）
     this.servers.reconcile();
+    this.removeUnusedLayers();
+  }
+
+  /** 使うものの無い層の写しを消す。 */
+  private removeUnusedLayers(): void {
     const usedDirs = new Set([...this.entries.values()].map((e) => e.layerDir));
-    for (const e of this.layerDirs) {
-      if (!usedDirs.has(e)) {
-        rmSync(e, { recursive: true, force: true });
-        this.layerDirs.delete(e);
+    for (const dir of this.layerDirs) {
+      if (!usedDirs.has(dir)) {
+        rmSync(dir, { recursive: true, force: true });
+        this.layerDirs.delete(dir);
       }
     }
   }
@@ -264,11 +292,17 @@ export class ContextMcpServers {
       mkdirSync(this.layersRoot, { recursive: true });
       const tmp = `${dir}.tmp-${process.pid}-${this.seq}`;
       rmSync(tmp, { recursive: true, force: true });
-      cpSync(from, tmp, {
-        recursive: true,
-        filter: (src) => !/(^|[/\\])\.git$/.test(src),
-      });
-      renameSync(tmp, dir);
+      try {
+        cpSync(from, tmp, {
+          recursive: true,
+          filter: (src) => !/(^|[/\\])\.git$/.test(src),
+        });
+        renameSync(tmp, dir);
+      } catch (error) {
+        // 途中まで写したものを残さない
+        rmSync(tmp, { recursive: true, force: true });
+        throw error;
+      }
     }
     this.layerDirs.add(dir);
     return dir;

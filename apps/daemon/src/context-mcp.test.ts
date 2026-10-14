@@ -1,4 +1,5 @@
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -251,6 +252,48 @@ describe("コンテキストの command の MCP サーバーをホストで動�
     expect(fake.closed).toHaveLength(2);
     expect(existsSync(join(dir, "home", "layers"))).toBe(false);
     manager = undefined;
+  });
+
+  it("確保の途中で失敗したら（層の写しの失敗）、そこまでの確保を巻き戻し、起動もしない（PR #89 レビュー指摘）", async () => {
+    const fake = fakeConnect();
+    manager = new ContextMcpServers({
+      root: join(dir, "home"),
+      secrets: new MemorySecretStore({}),
+      connect: fake.connect,
+    });
+    manager.start();
+    // ほかの実行が使っているもの（巻き戻しで、その実行の分まで減らさない）
+    const other = manager.lease("p1", [server({ name: "shared", layer: layer("ctx", "v1") })]);
+    const broken = {
+      repo: "https://github.com/acme/broken.git",
+      commit: "c9".padEnd(40, "0"),
+      dir: join(dir, "fetched", "missing"),
+    };
+    expect(() =>
+      manager?.lease("p1", [
+        server({ name: "shared", layer: layer("ctx", "v1") }),
+        server({ name: "first", layer: layer("first", "first") }),
+        server({ name: "second", layer: broken }),
+      ]),
+    ).toThrow();
+    expect(manager.running().map((r) => [r.name, r.leases])).toEqual([["shared", 1]]);
+    // 突き合わせても（30秒ごとの突き合わせ・次の実行の準備）、巻き戻したものは起動しない
+    expect(await manager.ready(other.keys)).toEqual([]);
+    expect(fake.started.map((s) => s.spec.context?.name)).toEqual(["shared"]);
+    // 巻き戻したものの層の写しは残さない
+    expect(readdirSync(join(dir, "home", "layers"))).toHaveLength(1);
+    // 写す途中で失敗した（読めないファイルがある）ときも、途中まで写したものを残さない
+    const unreadable = layer("unreadable", "x");
+    writeFileSync(join(unreadable.dir, "secret.txt"), "x");
+    chmodSync(join(unreadable.dir, "secret.txt"), 0o000);
+    try {
+      expect(() => manager?.lease("p1", [server({ name: "third", layer: unreadable })])).toThrow();
+    } finally {
+      chmodSync(join(unreadable.dir, "secret.txt"), 0o600);
+    }
+    expect(readdirSync(join(dir, "home", "layers"))).toHaveLength(1);
+    expect(manager.running().map((r) => [r.name, r.leases])).toEqual([["shared", 1]]);
+    other.release();
   });
 
   it("前回の残りの層の写しは、起動のときに消す", () => {
