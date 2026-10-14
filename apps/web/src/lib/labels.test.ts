@@ -11,6 +11,7 @@ import {
   statusTone,
   usesTestCommand,
 } from "./labels";
+import { runLogId } from "./session-log";
 
 // 既存のテストは日本語の文言で確かめる
 const ja = labels.ja;
@@ -876,6 +877,50 @@ describe("ゲートウェイのリトライの表示（PBI-37）", () => {
     expect(describeIn(event(true), labels.en)).toBe(
       "The gateway retried the AI call 3 times (429, connection; waited 21s in total) → gave up at the limit",
     );
+  });
+});
+
+describe("オーケストレーターのセッションの記録の表示（PBI-67）", () => {
+  const event = (payload: Record<string, unknown>) =>
+    ({
+      type: "OrchestratorSessionUsed",
+      payload: {
+        runId: "r",
+        role: "orchestrator",
+        agentId: "a",
+        runtime: "claude-code",
+        ...payload,
+      },
+      actor: "sacty",
+    }) as unknown as ActivityEvent;
+  it("再開・新しく始めた理由・複製・保存できなかった理由を出す", () => {
+    expect(describeEvent(event({ mode: "resumed", sessionId: "s1", saved: true }))).toBe(
+      "オーケストレーターのセッション（s1）を再開した",
+    );
+    expect(
+      describeEvent(event({ mode: "new", reason: "agent_changed", sessionId: "s2", saved: true })),
+    ).toBe("オーケストレーターのセッションを新しく始めた（エージェントを変えたため）：s2");
+    expect(
+      describeEvent(
+        event({ mode: "new", reason: "resume_failed", saved: false, notSaved: "no_session" }),
+      ),
+    ).toBe(
+      "オーケストレーターのセッションを新しく始めた（AI が再開を受け付けなかったため）。セッションは保存できなかった（セッションの ID が分からない）",
+    );
+    expect(
+      describeEvent(event({ role: "chat", mode: "forked", resumedFrom: "s1", sessionId: "f1" })),
+    ).toBe(
+      "質問に答えるため、オーケストレーターのセッション（s1）を複製した：f1（元のセッションには書き戻さない）",
+    );
+    expect(describeEvent(event({ role: "chat", mode: "new", reason: "first" }))).toBe(
+      "質問に答えるため、新しいセッションで始めた（このタスクで初めて）",
+    );
+    expect(
+      describeIn(event({ mode: "new", reason: "truncated", sessionId: "s3" }), labels.en),
+    ).toBe("Started a new orchestrator session (the saved session was cut at the size limit): s3");
+  });
+  it("セッションログを開ける行にする", () => {
+    expect(runLogId(event({ mode: "new", reason: "first" }))).toBe("r");
   });
 });
 

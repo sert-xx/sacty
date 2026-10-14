@@ -332,6 +332,99 @@ describe("project", () => {
     ).toThrow();
   });
 
+  it("オーケストレーターのセッションの記録から、使った回数・新しく始めた理由を作る（PBI-67）", () => {
+    const used = (payload: Record<string, unknown>) =>
+      ev("t1", {
+        type: "OrchestratorSessionUsed",
+        payload: {
+          runId: `r${seq}`,
+          role: "orchestrator",
+          agentId: "a",
+          runtime: "claude-code",
+          ...payload,
+        } as never,
+      });
+    seq = 0;
+    const tasks = project([
+      created("t1"),
+      used({ mode: "new", reason: "first", sessionId: "s1", saved: true }),
+      used({ mode: "resumed", resumedFrom: "s1", sessionId: "s1", saved: true }),
+      // 質問への答え（複製）は、元のセッションを変えない
+      used({ role: "chat", mode: "forked", resumedFrom: "s1", sessionId: "f1" }),
+      used({
+        mode: "resumed",
+        resumedFrom: "s1",
+        sessionId: "s1",
+        saved: false,
+        notSaved: "not_archived",
+      }),
+    ]);
+    expect(tasks.get("t1")?.orchestratorSession).toMatchObject({
+      agentId: "a",
+      runtime: "claude-code",
+      sessionId: "s1",
+      uses: 3,
+      reason: "first",
+      saved: false,
+    });
+    // 新しく始めたら、回数と理由を改める
+    seq = 0;
+    const changed = project([
+      created("t1"),
+      used({ mode: "new", reason: "first", sessionId: "s1", saved: true }),
+      used({
+        agentId: "b",
+        runtime: "codex",
+        mode: "new",
+        reason: "agent_changed",
+        sessionId: "s2",
+        saved: true,
+      }),
+    ]).get("t1")?.orchestratorSession;
+    expect(changed).toMatchObject({
+      agentId: "b",
+      runtime: "codex",
+      sessionId: "s2",
+      uses: 1,
+      reason: "agent_changed",
+    });
+    // 中止の後にも受け付け、状態は変えない
+    const cancel = () => ev("t1", { type: "TaskCancelled", payload: { cleanup: [] } }, "person");
+    seq = 0;
+    const before = project([created("t1"), cancel()]).get("t1");
+    seq = 0;
+    const after = project([created("t1"), cancel(), used({ mode: "new", reason: "first" })]).get(
+      "t1",
+    );
+    expect(after).toEqual(before);
+    // 知らない理由・形は受け付けない
+    expect(() =>
+      EventSchema.parse({
+        type: "OrchestratorSessionUsed",
+        payload: {
+          runId: "r",
+          role: "orchestrator",
+          agentId: "a",
+          runtime: "claude-code",
+          mode: "new",
+          reason: "x",
+        },
+      }),
+    ).toThrow();
+    expect(() =>
+      EventSchema.parse({
+        type: "OrchestratorSessionUsed",
+        payload: {
+          runId: "r",
+          role: "guardian",
+          agentId: "a",
+          runtime: "claude-code",
+          mode: "new",
+        },
+      }),
+    ).toThrow();
+  });
+
   it("同じ作業履歴から何度復元しても同じ状態になる", () => {
     seq = 0;
     const events = [created("t1"), steps("t1"), started("t1", "r1"), completed("t1", "r1", 0.2)];

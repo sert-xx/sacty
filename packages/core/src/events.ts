@@ -760,6 +760,52 @@ const AgentSessionArchived = z.object({
 });
 
 /**
+ * オーケストレーターのセッションを新しく始めた理由（PBI-67）。first：このタスクで初めて、agent_changed：エージェント
+ * （AI の種類か ID）を変えた、truncated：保存したセッションのファイルが上限で間を省かれている、files_broken：保存した
+ * ファイルが無い・壊れた（記録したハッシュと違う・セッションの本体が無い）、resume_failed：AI が再開を受け付けなかった。
+ */
+export const OrchestratorSessionReason = z.enum([
+  "first",
+  "agent_changed",
+  "truncated",
+  "files_broken",
+  "resume_failed",
+]);
+export type OrchestratorSessionReason = z.infer<typeof OrchestratorSessionReason>;
+
+/**
+ * オーケストレーターのセッションを使った（PBI-67）。オーケストレーターの実行（role は orchestrator）は、同じタスク・同じ
+ * エージェントのセッションを再開し（resumed）、無ければ・再開できなければ新しく始める（new。理由を残す）。終わったら
+ * セッションを保存する（saved。保存できなかった理由は notSaved）。質問への答え（role は chat）は、保存したセッションを
+ * 複製して答え（forked）、元のセッションには書き戻さない。
+ */
+const OrchestratorSessionUsed = z.object({
+  type: z.literal("OrchestratorSessionUsed"),
+  payload: z.object({
+    runId: z.string().min(1),
+    role: z.enum(["orchestrator", "chat"]),
+    agentId: z.string(),
+    runtime: z.enum(["claude-code", "codex"]),
+    mode: z.enum(["resumed", "new", "forked"]),
+    /** 実行が使ったセッションの ID（出力から読んだもの。複製なら、複製したセッション）。 */
+    sessionId: z.string().optional(),
+    /** 再開・複製した、保存してあったセッションの ID。 */
+    resumedFrom: z.string().optional(),
+    /** 新しく始めた理由（mode が new のとき）。 */
+    reason: OrchestratorSessionReason.optional(),
+    /** 再開を受け付けられなかった実行（reason が resume_failed のとき）。 */
+    failedRunId: z.string().optional(),
+    /** セッションを保存したか（role が orchestrator のとき）。 */
+    saved: z.boolean().optional(),
+    /**
+     * 保存できなかった理由。not_archived：元のファイルを写せなかった、no_session：セッションの ID が分からない、
+     * session_missing：セッションの本体のファイルが無い、copy_failed：保存の場所に書けなかった。
+     */
+    notSaved: z.enum(["not_archived", "no_session", "session_missing", "copy_failed"]).optional(),
+  }),
+});
+
+/**
  * オーケストレーターが、認証の失敗・利用上限で工程を選べなかった（PBI-32）。標準の工程では進めず、続く
  * TaskPaused で止める（再開すると工程の選択からやり直す）。使った分の費用は予算に入れる。
  */
@@ -1304,6 +1350,7 @@ export const EventInput = z.discriminatedUnion("type", [
   OrchestratorFailed,
   AiRequestsRetried,
   AgentSessionArchived,
+  OrchestratorSessionUsed,
   IntegrationReviewed,
   PullRequestPublished,
   TaskBranchCreated,

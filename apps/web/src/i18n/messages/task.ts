@@ -71,6 +71,19 @@ const ja = {
     tests: "再現のテスト",
     output: "出力の末尾",
   },
+  orchestratorSession: {
+    title: "オーケストレーターのセッション",
+    note: "タスクごとに使い回す（正本は作業履歴）。質問には複製して答える",
+    agent: "AI",
+    agentValue: (id: string, runtime: string) => `${id}（${runtime}）`,
+    sessionId: "セッション ID",
+    uses: "使った回数",
+    usesValue: (n: number) => `${n}回`,
+    reason: "新しく始めた理由",
+    lastUsed: "最後に使った",
+    notSaved:
+      "最後の実行のセッションは保存できませんでした。次は、その前に保存したセッションを再開します。",
+  },
   subtasks: {
     title: "子タスク",
     note: "タスク分割で作ったタスク。依存先の PR がマージされてから始めます",
@@ -238,6 +251,19 @@ const en: TaskMessages = {
       `Command: ${command}${exitCode === undefined ? "" : ` (exit code ${exitCode})`}`,
     tests: "Reproduction tests",
     output: "End of output",
+  },
+  orchestratorSession: {
+    title: "Orchestrator session",
+    note: "Reused for this task (the activity is the source of truth). Questions are answered from a fork",
+    agent: "AI",
+    agentValue: (id, runtime) => `${id} (${runtime})`,
+    sessionId: "Session ID",
+    uses: "Uses",
+    usesValue: (n) => `${n} time${n === 1 ? "" : "s"}`,
+    reason: "Why it was started",
+    lastUsed: "Last used",
+    notSaved:
+      "The session of the last run could not be saved. The next run resumes the session saved before it.",
   },
   subtasks: {
     title: "Subtasks",

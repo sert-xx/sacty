@@ -3,6 +3,7 @@ import type {
   ActivityEvent,
   ExportPlan,
   InvestigationKind,
+  OrchestratorSessionReason,
   ParsedEventInput,
   PauseReason,
   Remark,
@@ -177,6 +178,20 @@ export type Task = {
   ticket?: { platform: string; service: "jira-cloud" | "jira-server"; key: string; url: string };
   /** チケットから作業するリポジトリ・題・概要を決めた理由（PBI-52）。人が選んだら by は person。 */
   ticketTriage?: { reason: DaemonText; by: "orchestrator" | "person" };
+  /**
+   * オーケストレーターのセッション（PBI-67）。AI・セッションの ID・このセッションを使った回数・新しく始めた理由。
+   * saved が false なら、最後の実行のセッションを保存できなかった（次は、その前に保存したものを再開する）。
+   */
+  orchestratorSession?: {
+    agentId: string;
+    runtime: "claude-code" | "codex";
+    sessionId?: string;
+    uses: number;
+    reason?: OrchestratorSessionReason;
+    saved: boolean;
+    startedAt: string;
+    lastUsedAt: string;
+  };
   /** チケットに PR の URL をコメントした結果（PBI-52）。 */
   ticketPrComment?: { url: string } | { failed: DaemonText };
   /** 画面で作ったタスクの対象リポジトリ（リポジトリの URL。PBI-21・PBI-40）。Issue から取り込んだタスクは source.repo。 */
@@ -439,7 +454,12 @@ export function applyEvent(
 
   if (!current) throw new ActivityIntegrityError(event, "unknown task");
   // 写したエージェントのファイルの記録（PBI-66）は、中止の後にも受け付ける（中止で止めた実行の後に写すため）
-  if (current.status === "cancelled" && event.type !== "AgentSessionArchived") {
+  // オーケストレーターのセッションの記録（PBI-67）も同じ（中止で止めた実行の後に記録する）
+  if (
+    current.status === "cancelled" &&
+    event.type !== "AgentSessionArchived" &&
+    event.type !== "OrchestratorSessionUsed"
+  ) {
     throw new ActivityIntegrityError(event, "the task is cancelled");
   }
   const task: Task = { ...current, updatedAt: event.at };
@@ -1015,6 +1035,34 @@ export function applyEvent(
       // 記録だけ（写したファイルのハッシュを、画面と API で確かめる。PBI-66）。中止したタスクの状態は変えない
       if (current.status === "cancelled") return next;
       break;
+
+    case "OrchestratorSessionUsed": {
+      // 中止したタスクの状態は変えない（記録だけ）。質問への答え（複製）は、元のセッションを変えない
+      if (current.status === "cancelled") return next;
+      const p = event.payload;
+      if (p.role !== "orchestrator") break;
+      const prev = task.orchestratorSession;
+      task.orchestratorSession =
+        p.mode === "resumed" && prev
+          ? {
+              ...prev,
+              ...(p.sessionId ? { sessionId: p.sessionId } : {}),
+              uses: prev.uses + 1,
+              saved: p.saved ?? false,
+              lastUsedAt: event.at,
+            }
+          : {
+              agentId: p.agentId,
+              runtime: p.runtime,
+              ...(p.sessionId ? { sessionId: p.sessionId } : {}),
+              uses: 1,
+              ...(p.reason ? { reason: p.reason } : {}),
+              saved: p.saved ?? false,
+              startedAt: event.at,
+              lastUsedAt: event.at,
+            };
+      break;
+    }
 
     case "GuardianMissed":
       task.misses = [...task.misses, { ...event.payload, at: event.at }];

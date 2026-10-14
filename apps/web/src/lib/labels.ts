@@ -370,6 +370,22 @@ export function describeEvent(event: ActivityEvent, l: LabelMessages): string {
         event.payload.files.length,
         event.payload.files.filter((f) => f.truncated).length,
       );
+    case "OrchestratorSessionUsed": {
+      const p = event.payload;
+      const os = l.orchestratorSession;
+      const reason = os.reason[p.reason ?? "first"];
+      const text =
+        p.role === "chat"
+          ? p.mode === "forked" && p.resumedFrom
+            ? e.ChatSessionForked(p.resumedFrom, p.sessionId)
+            : e.ChatSessionStarted(reason)
+          : p.mode === "resumed"
+            ? e.OrchestratorSessionResumed(p.sessionId ?? p.resumedFrom ?? "")
+            : e.OrchestratorSessionStarted(reason, p.sessionId);
+      return p.saved === false && p.notSaved
+        ? text + e.sessionNotSaved(os.notSaved[p.notSaved])
+        : text;
+    }
     case "OrchestratorFailed":
       return e.OrchestratorFailed(
         l.text(event.payload.message),

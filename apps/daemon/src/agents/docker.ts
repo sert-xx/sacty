@@ -373,6 +373,22 @@ export class DockerExecutor implements AgentExecutor {
       if (invocation.stage.seedDir) {
         cpSync(invocation.stage.seedDir, staging, { recursive: true });
       }
+      // 保存したオーケストレーターのセッションを、設定の場所に戻す（PBI-67）。戻せなければ、起動せずに失敗にする
+      // （呼ぶ側が、新しいセッションで始め直す）
+      if (invocation.stage.sessionDir) {
+        try {
+          cpSync(invocation.stage.sessionDir, staging, { recursive: true });
+        } catch (error) {
+          rmSync(staging, { recursive: true, force: true });
+          return {
+            kind: "failed",
+            reason: "error",
+            message: message("run.sessionRestoreFailed", {
+              detail: error instanceof Error ? error.message : String(error),
+            }),
+          };
+        }
+      }
       for (const file of invocation.stage.files) {
         const staged: StagedFile = { dir: staging, name: basename(file.name) };
         const copied = join(staging, staged.name);

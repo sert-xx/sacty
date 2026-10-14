@@ -3,6 +3,7 @@ import {
   type AuthMode,
   type CleanupTarget,
   type DaemonText,
+  type OrchestratorSessionReason,
   type PauseReason,
   renderMessage,
   type StepKey,
@@ -115,6 +116,22 @@ const ja = {
     branch: "sacty が作ったブランチ",
     pull_request: "sacty が作ったPR（閉じる）",
   } satisfies Record<CleanupTarget, string>,
+  /** オーケストレーターのセッション（PBI-67）。 */
+  orchestratorSession: {
+    reason: {
+      first: "このタスクで初めて",
+      agent_changed: "エージェントを変えたため",
+      truncated: "保存したセッションが上限を超えて省かれていたため",
+      files_broken: "保存したセッションのファイルが無い・壊れていたため",
+      resume_failed: "AI が再開を受け付けなかったため",
+    } satisfies Record<OrchestratorSessionReason, string>,
+    notSaved: {
+      not_archived: "元のファイルを写せなかった",
+      no_session: "セッションの ID が分からない",
+      session_missing: "セッションの本体のファイルが無い",
+      copy_failed: "保存の場所に書けなかった",
+    },
+  },
   cleanupResult: { done: "片付けた", skipped: "対象なし", failed: "失敗" },
   /** 作業履歴の1行。 */
   event: {
@@ -232,6 +249,14 @@ const ja = {
       `エージェントの元のファイル${files}件を写し、大きさとハッシュを記録${truncated > 0 ? `（うち${truncated}件は上限を超えたため、間を省いた）` : ""}`,
     AgentSessionNotArchived:
       "コンテナが止まったことを確かめられなかったため、エージェントの元のファイルを写さなかった",
+    OrchestratorSessionResumed: (id: string) => `オーケストレーターのセッション（${id}）を再開した`,
+    OrchestratorSessionStarted: (reason: string, id?: string) =>
+      `オーケストレーターのセッションを新しく始めた（${reason}）${id ? `：${id}` : ""}`,
+    ChatSessionForked: (from: string, id?: string) =>
+      `質問に答えるため、オーケストレーターのセッション（${from}）を複製した${id ? `：${id}` : ""}（元のセッションには書き戻さない）`,
+    ChatSessionStarted: (reason: string) =>
+      `質問に答えるため、新しいセッションで始めた（${reason}）`,
+    sessionNotSaved: (why: string) => `。セッションは保存できなかった（${why}）`,
     AiRequestsRetried: (retries: number, seconds: number, statuses: string, gaveUp: boolean) =>
       `ゲートウェイが AI の呼び出しを${retries}回リトライ（${statuses}・合計${seconds}秒待った）${gaveUp ? "→ 上限に達したため、あきらめた" : ""}`,
     StepQueued: (step: string) => `${step}を実行待ちにした（実行できるようになったため）`,
@@ -387,6 +412,21 @@ const en: LabelMessages = {
     branch: "Branch created by sacty",
     pull_request: "PR opened by sacty (closed)",
   },
+  orchestratorSession: {
+    reason: {
+      first: "first run in this task",
+      agent_changed: "the agent was changed",
+      truncated: "the saved session was cut at the size limit",
+      files_broken: "the saved session files were missing or broken",
+      resume_failed: "the AI did not accept the resume",
+    },
+    notSaved: {
+      not_archived: "the original files could not be copied",
+      no_session: "the session ID is unknown",
+      session_missing: "the session file is missing",
+      copy_failed: "could not write to the session store",
+    },
+  },
   cleanupResult: { done: "Cleaned up", skipped: "Nothing to clean", failed: "Failed" },
   event: {
     estimated: " · estimate",
@@ -477,6 +517,13 @@ const en: LabelMessages = {
       `Copied ${files} original file${files === 1 ? "" : "s"} written by the agent and recorded ${files === 1 ? "its size and hash" : "their sizes and hashes"}${truncated > 0 ? ` (${truncated} exceeded the limit, so the middle was omitted)` : ""}`,
     AgentSessionNotArchived:
       "Did not copy the agent's original files because the container could not be confirmed to have stopped",
+    OrchestratorSessionResumed: (id) => `Resumed the orchestrator session (${id})`,
+    OrchestratorSessionStarted: (reason, id) =>
+      `Started a new orchestrator session (${reason})${id ? `: ${id}` : ""}`,
+    ChatSessionForked: (from, id) =>
+      `Forked the orchestrator session (${from}) to answer the question${id ? `: ${id}` : ""} (not written back to the original session)`,
+    ChatSessionStarted: (reason) => `Started a new session to answer the question (${reason})`,
+    sessionNotSaved: (why) => `. The session could not be saved (${why})`,
     AiRequestsRetried: (retries, seconds, statuses, gaveUp) =>
       `The gateway retried the AI call ${retries} time${retries === 1 ? "" : "s"} (${statuses}; waited ${seconds}s in total)${gaveUp ? " → gave up at the limit" : ""}`,
     StepQueued: (step) => `${step} queued (it can run now)`,

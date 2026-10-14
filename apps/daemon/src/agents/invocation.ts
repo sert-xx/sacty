@@ -42,6 +42,11 @@ export type Invocation = {
     files: { hostPath: string; name: string; syncBack: boolean }[];
     /** この中身を、先に一時ディレクトリへ写す（合成したコンテキストなど。PBI-6）。 */
     seedDir?: string;
+    /**
+     * この中身を、コンテキストの後に一時ディレクトリへ写す（保存したオーケストレーターのセッションのファイル。PBI-67）。
+     * 設定の場所からの相対パスのまま置いてあるので、そのまま戻せば再開できる。
+     */
+    sessionDir?: string;
   };
   /**
    * 追加でマウントするディレクトリ（レビューの工程の PR の差分の全体など。PBI-65）。sacty が管理する場所だけを渡し、
@@ -62,6 +67,9 @@ export type Invocation = {
    */
   hostAddress?: string;
 };
+
+/** 再開するセッション（PBI-67）。 */
+export type OrchestratorSessionResume = { resume: string; fork?: boolean; filesDir: string };
 
 /** providers の接続先を、Codex の自前のプロバイダーとして渡すときの名前と、API キーの環境変数（PBI-40）。 */
 const PROVIDER_ID = "sacty-provider";
@@ -97,6 +105,11 @@ export async function buildInvocation(
    * 実行ごとのトークンを渡す（API キーはゲートウェイだけが持つ）。
    */
   gateway?: { origin: string; token: string },
+  /**
+   * 再開するセッション（オーケストレーター。PBI-67）。filesDir のファイルを実行ごとの設定の場所に戻し、resume の ID の
+   * セッションを再開する。fork なら複製して（Claude Code の --fork-session）、元のセッションには書き足さない。
+   */
+  session?: OrchestratorSessionResume,
 ): Promise<Invocation> {
   const secrets = {
     get: async (name: string) => {
@@ -124,6 +137,11 @@ export async function buildInvocation(
       // 途中の出来事（考えたこと・ツールの呼び出しと結果）も出させ、セッションログに残す（PBI-62）。-p で stream-json を
       // 使うには --verbose が要る。最終結果は、最後の result の出来事から読む
       const command = ["claude", "-p", prompt, "--output-format", "stream-json", "--verbose"];
+      // 保存したセッションを再開する（PBI-67）。質問への答えは複製して、元のセッションに書き足さない
+      if (session) {
+        command.push("--resume", session.resume);
+        if (session.fork) command.push("--fork-session");
+      }
       if (context && context.mcpServers.length > 0) {
         // コンテキストの MCP サーバーだけを使い、そのツールの使用を許可する
         command.push(
@@ -162,6 +180,7 @@ export async function buildInvocation(
           containerDir: CONTAINER_CLAUDE_CONFIG_DIR,
           files: [],
           ...(context ? { seedDir: context.dir } : {}),
+          ...(session ? { sessionDir: session.filesDir } : {}),
         },
         parser: "claude-json",
         sessionFiles: "claude-code",
@@ -245,6 +264,9 @@ export async function buildInvocation(
       if (agent.reasoning_effort) {
         command.push("-c", `model_reasoning_effort=${tomlString(agent.reasoning_effort)}`);
       }
+      // 保存したセッションを再開する（PBI-67。`codex exec [オプション] resume <ID> <指示>`）。Codex には複製が無いので、
+      // 質問への答えも再開する（実行ごとの使い捨ての場所で再開し、元のセッションには書き戻さない）
+      if (session) command.push("resume", session.resume);
       command.push(prompt);
       return {
         command,
@@ -253,6 +275,7 @@ export async function buildInvocation(
           containerDir: CONTAINER_CODEX_HOME,
           files,
           ...(context ? { seedDir: context.dir } : {}),
+          ...(session ? { sessionDir: session.filesDir } : {}),
         },
         parser: "codex-jsonl",
         sessionFiles: "codex",
