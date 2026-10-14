@@ -142,7 +142,8 @@ export class IssueIntake {
       }
     }
     const created = this.service.importIssues(found);
-    // チケット（JIRA など。PBI-52）。接続先は gateway.platforms の組織内 PF（認証もその設定）
+    // チケット（JIRA など。PBI-52）。接続先は gateway.platforms の組織内 PF（認証もその設定）か、ホストに無ければ
+    // そのプロジェクトのコンテキストの platforms.yaml の PF（PBI-74）
     const tickets: FoundTicket[] = [];
     const config = this.config();
     const platforms = (config.ok ? config.config.platforms : undefined) ?? [];
@@ -150,7 +151,15 @@ export class IssueIntake {
     if (client) {
       for (const source of this.service.ticketSources()) {
         const query = `${source.platform}: ${ticketJql(source.keys, source.label)}`;
-        const platform = platforms.find((p) => p.name === source.platform);
+        let platform = platforms.find((p) => p.name === source.platform);
+        if (!platform && source.projectId) {
+          const found = await this.service.projectPlatform(source.projectId, source.platform);
+          if ("error" in found) {
+            errors.push({ query, message: found.error });
+            continue;
+          }
+          platform = found.platform;
+        }
         if (!platform) {
           errors.push({
             query,
@@ -159,7 +168,7 @@ export class IssueIntake {
           continue;
         }
         // 読む上限を超える数のチケットがあれば、次の回は続きから読む（最後まで読んだら先頭に戻る）
-        const cursorKey = `ticket ${source.service} ${query}`;
+        const cursorKey = `ticket ${source.service} ${source.projectId ? `${source.projectId} ` : ""}${query}`;
         try {
           const result = await client.search({
             ...source,

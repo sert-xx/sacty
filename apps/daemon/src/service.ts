@@ -103,6 +103,7 @@ import {
 import {
   type ContextFetcher,
   contextExportInfo,
+  contextPlatforms,
   GATEWAY_TOKEN_SECRET,
   type GatewayMcpServer,
   prepareContext,
@@ -125,7 +126,13 @@ import {
 } from "./github.js";
 import { notificationFor, type SlackNotifier } from "./notifier.js";
 import type { OrchestratorSessionStore } from "./orchestrator-sessions.js";
-import { type Platform, platformPromptLines } from "./platforms.js";
+import {
+  mergePlatforms,
+  type Platform,
+  type PlatformSummary,
+  platformPromptLines,
+  platformSummary,
+} from "./platforms.js";
 import type { ProjectStore } from "./projects.js";
 import {
   allowedPlans,
@@ -1224,6 +1231,92 @@ export class TaskService {
   }
 
   /**
+   * プロジェクトのコンテキストで合成した外部 PF と、合成の警告（PBI-74）。プロジェクトのコンテキストも既定のコンテキストも
+   * 無ければ空。取得できなければ例外にする（呼ぶ側で、usedSecrets を取り除いてから理由を出す）。
+   */
+  private async contextPlatformsOf(
+    projectId: string,
+    usedSecrets: string[],
+  ): Promise<{ platforms: Platform[]; warnings: DaemonText[] }> {
+    const root = this.deps.projects.get(projectId)?.context;
+    if (!root && !this.deps.defaultContext) return { platforms: [], warnings: [] };
+    return contextPlatforms(
+      this.deps.contexts,
+      root,
+      (repo) => this.gitAuth({ projectId }, repo, usedSecrets),
+      this.deps.defaultContext,
+    );
+  }
+
+  /**
+   * 名前の外部 PF（PBI-74）。ホストの PF（config.yaml）を先に引き、無ければプロジェクトのコンテキストを取得して引く
+   * （ホストの PF で足りるなら、コンテキストは取得しない）。どちらにも無ければ undefined。
+   */
+  private async findPlatform(
+    task: Pick<Task, "projectId">,
+    config: SactyConfig,
+    name: string,
+    usedSecrets: string[],
+  ): Promise<Platform | undefined> {
+    const host = config.platforms.find((p) => p.name === name);
+    if (host) return host;
+    const own = await this.contextPlatformsOf(task.projectId, usedSecrets);
+    return mergePlatforms(config.platforms, own.platforms).platforms.find((p) => p.name === name);
+  }
+
+  /**
+   * チケットの取り込み（PBI-52）の接続先を、プロジェクトのコンテキストの PF から引く（PBI-74）。取得できなければ、
+   * 秘密情報を伏せた理由を返す。
+   */
+  async projectPlatform(
+    projectId: string,
+    name: string,
+  ): Promise<{ platform?: Platform } | { error: DaemonText }> {
+    const config = this.deps.config();
+    if (!config.ok) return {};
+    const usedSecrets: string[] = [];
+    try {
+      const platform = await this.findPlatform({ projectId }, config.config, name, usedSecrets);
+      return platform ? { platform } : {};
+    } catch (error) {
+      return { error: redactText(errorText(error), usedSecrets) };
+    }
+  }
+
+  /**
+   * プロジェクトで使える外部 PF（PBI-74。プロジェクトの設定の画面に出す）。ホストの PF と、プロジェクトのコンテキストで
+   * 合成した PF（from にどの層のものか）。名前・説明・allow だけを返し、秘密情報の名前・値は返さない。コンテキストを
+   * 読めなければ、ホストの PF と、秘密情報を伏せた理由を返す。
+   */
+  async projectPlatforms(id: string): Promise<
+    | {
+        platforms: PlatformSummary[];
+        warnings: DaemonText[];
+        error?: DaemonText;
+      }
+    | undefined
+  > {
+    if (!this.deps.projects.get(id)) return undefined;
+    const config = this.deps.config();
+    const host = config.ok ? config.config.platforms : [];
+    const usedSecrets: string[] = [];
+    try {
+      const own = await this.contextPlatformsOf(id, usedSecrets);
+      const merged = mergePlatforms(host, own.platforms);
+      return {
+        platforms: merged.platforms.map(platformSummary),
+        warnings: [...own.warnings, ...merged.warnings],
+      };
+    } catch (error) {
+      return {
+        platforms: host.map(platformSummary),
+        warnings: [],
+        error: redactText(errorText(error), usedSecrets),
+      };
+    }
+  }
+
+  /**
    * 成果の書き出し先に使える接続先（PBI-56）。ゲートウェイの接続先（gateway.platforms）と、MCP サーバー（ホストの MCP・
    * プロジェクトのコンテキストの MCP）。あわせて、プロジェクトのコンテキストの規約（どこに何を書くか）を読む。
    * コンテキストを読めなければ、コンテキストの MCP サーバーは候補にしない（工程の実行で、いつもどおり理由を出す）。
@@ -1232,7 +1325,7 @@ export class TaskService {
     task: Task,
     config: SactyConfig,
   ): Promise<{ destinations: ExportDestination[]; rules: string }> {
-    const platforms = config.platforms.map(
+    const hostPlatforms = config.platforms.map(
       (p): ExportDestination => ({ via: "platform", name: p.name, description: p.description }),
     );
     // ホストの MCP サーバーは、ゲートウェイがあるときだけ渡せる（PBI-36）
@@ -1242,7 +1335,7 @@ export class TaskService {
         )
       : [];
     const root = this.deps.projects.get(task.projectId)?.context;
-    let info = { mcp: [] as string[], rules: "" };
+    let info = { mcp: [] as string[], rules: "", platforms: [] as Platform[] };
     if (root || this.deps.defaultContext) {
       try {
         info = await contextExportInfo(
@@ -1259,7 +1352,16 @@ export class TaskService {
     const contextMcp = info.mcp
       .filter((name) => !hostNames.has(name))
       .map((name): ExportDestination => ({ via: "mcp", name, description: "" }));
-    return { destinations: [...platforms, ...host, ...contextMcp], rules: info.rules };
+    // プロジェクトのコンテキストで定義した PF も、書き出し先にできる（同じ名前ならホストのもの。PBI-74）
+    const contextPlatforms = mergePlatforms(config.platforms, info.platforms)
+      .platforms.filter((p) => p.from !== undefined)
+      .map(
+        (p): ExportDestination => ({ via: "platform", name: p.name, description: p.description }),
+      );
+    return {
+      destinations: [...hostPlatforms, ...contextPlatforms, ...host, ...contextMcp],
+      rules: info.rules,
+    };
   }
 
   /**
@@ -1935,21 +2037,30 @@ export class TaskService {
     service: TicketService;
     keys: string[];
     label: string;
+    /**
+     * 接続先がホストの PF（config.yaml）に無いとき、そのプロジェクト（PBI-74）。プロジェクトのコンテキストの PF は
+     * プロジェクトごとに別のものなので、ほかのプロジェクトと合わせずに、そのプロジェクトの PF で検索する。
+     */
+    projectId?: string;
   }[] {
     const settings = this.deps.settings.get();
     const label = settings.ticketLabel;
     if (!label || settings.triageOff?.includes("tickets")) return [];
+    const config = this.deps.config();
+    const host = new Set(config.ok ? config.config.platforms.map((p) => p.name) : []);
     const groups = new Map<
       string,
-      { platform: string; service: TicketService; keys: Set<string> }
+      { platform: string; service: TicketService; keys: Set<string>; projectId?: string }
     >();
     for (const project of this.deps.projects.all()) {
       for (const source of project.tickets ?? []) {
-        const id = `${source.platform}\u0000${source.service}`;
+        const own = !host.has(source.platform);
+        const id = `${source.platform}\u0000${source.service}${own ? `\u0000${project.id}` : ""}`;
         const group = groups.get(id) ?? {
           platform: source.platform,
           service: source.service,
           keys: new Set<string>(),
+          ...(own ? { projectId: project.id } : {}),
         };
         for (const key of source.keys) group.keys.add(key);
         groups.set(id, group);
@@ -1960,6 +2071,7 @@ export class TaskService {
       service: g.service,
       keys: [...g.keys].sort(),
       label,
+      ...(g.projectId ? { projectId: g.projectId } : {}),
     }));
   }
 
@@ -2029,7 +2141,18 @@ export class TaskService {
       ]);
       return;
     }
-    const platform = config.platforms.find((p) => p.name === ticket.platform);
+    // 接続先は、ホストの PF か、プロジェクトのコンテキストの PF（PBI-74）
+    let platform: Platform | undefined;
+    const usedSecrets: string[] = [];
+    try {
+      platform = await this.findPlatform(task, config, ticket.platform, usedSecrets);
+    } catch (error) {
+      pause(
+        "error",
+        message("ticket.triageFailed", { detail: redactText(errorText(error), usedSecrets) }),
+      );
+      return;
+    }
     if (!platform) {
       pause(
         "error",
@@ -2172,11 +2295,18 @@ export class TaskService {
   ): Promise<{ url: string } | { failed: DaemonText }> {
     const ticket = task.ticket;
     const config = this.deps.config();
-    const platform = config.ok
-      ? config.config.platforms.find((p) => p.name === ticket?.platform)
-      : undefined;
     if (!ticket || !this.deps.tickets) {
       return { failed: message("ticket.platformMissing", { platform: ticket?.platform ?? "" }) };
+    }
+    // 接続先は、ホストの PF か、プロジェクトのコンテキストの PF（PBI-74）
+    let platform: Platform | undefined;
+    const usedSecrets: string[] = [];
+    try {
+      platform = config.ok
+        ? await this.findPlatform(task, config.config, ticket.platform, usedSecrets)
+        : undefined;
+    } catch (error) {
+      return { failed: redactText(errorText(error), usedSecrets) };
     }
     if (!platform)
       return { failed: message("ticket.platformMissing", { platform: ticket.platform }) };
@@ -2541,7 +2671,7 @@ export class TaskService {
    * 認証する環境変数。それ以外（SSH・ローカルのパス・ほかの git のサーバー）はホストの認証を使う。
    */
   private async gitAuth(
-    task: Task,
+    task: Pick<Task, "projectId">,
     url: string,
     usedSecrets: string[],
   ): Promise<Record<string, string> | undefined> {
@@ -2894,17 +3024,26 @@ export class TaskService {
         ]);
         return;
       }
-      if (context) {
-        this.append(task, [
-          {
-            actor: "sacty",
-            event: {
-              type: "ContextResolved",
-              payload: { runId, layers: context.layers, warnings: context.warnings },
+    }
+    // 使える外部 PF：ホストの PF と、プロジェクトのコンテキストで合成した PF（同じ名前ならホストのもの。PBI-74）
+    const runPlatforms = mergePlatforms(config.config.platforms, context?.platforms ?? []);
+    if (context) {
+      this.append(task, [
+        {
+          actor: "sacty",
+          event: {
+            type: "ContextResolved",
+            payload: {
+              runId,
+              layers: context.layers,
+              warnings: [...context.warnings, ...runPlatforms.warnings],
+              ...(runPlatforms.platforms.length > 0
+                ? { platforms: runPlatforms.platforms.map(platformSummary) }
+                : {}),
             },
           },
-        ]);
-      }
+        },
+      ]);
     }
 
     // 対象リポジトリの無いタスクを分けるときの、子タスクのリポジトリの候補（プロジェクトの対象。PBI-73）
@@ -3008,12 +3147,12 @@ export class TaskService {
             // 対象リポジトリの無いタスクを分けるときは、子タスクに付けられるリポジトリを渡す（PBI-73）
             ...(step === "split" && repoless ? { repositories: splitCandidates ?? [] } : {}),
           }),
-          // 使える組織内 PF の API（PBI-35）
-          ...platformPromptLines(config.config.platforms),
+          // 使える組織内 PF の API（PBI-35。プロジェクトのコンテキストの PF も。PBI-74）
+          ...platformPromptLines(runPlatforms.platforms),
           // 起動したサービスの接続先（PBI-47）
           ...servicePromptLines(started?.services ?? []),
         ].join("\n"),
-        platforms: config.config.platforms,
+        platforms: runPlatforms.platforms,
         role: step,
         workspaceDir,
         // 差分の全体は、作業領域の外に読み取り専用でマウントする（PBI-65）
@@ -3296,12 +3435,19 @@ export class TaskService {
     const fail = (failed: DaemonText) =>
       record("sacty", { ...base, failed, runResult: "failed", costUsd: 0, estimated: false });
     if (budgetState(task.budget) === "exceeded") return fail(message("export.budgetExceeded"));
-    const platform =
-      to.via === "platform" ? config.platforms.find((p) => p.name === to.name) : undefined;
-    if (to.via === "platform" && !platform) {
-      return fail(message("export.destinationMissing", { name: to.name }));
-    }
     const usedSecrets: string[] = [];
+    let platform: Platform | undefined;
+    if (to.via === "platform") {
+      // ホストの PF か、プロジェクトのコンテキストの PF（PBI-74）
+      try {
+        platform = await this.findPlatform(task, config, to.name, usedSecrets);
+      } catch (error) {
+        return fail(
+          message("export.failed", { detail: redactText(errorText(error), usedSecrets) }),
+        );
+      }
+      if (!platform) return fail(message("export.destinationMissing", { name: to.name }));
+    }
     let context: Awaited<ReturnType<typeof prepareContext>> | undefined;
     if (to.via === "mcp") {
       try {
@@ -5031,7 +5177,12 @@ export class TaskService {
             ...(timeoutSec > 0 ? { timeoutMs: timeoutSec * 1000 } : {}),
           };
         }
-        gatewayRun = this.deps.gateway.register(route, contextMcp);
+        // プロジェクトのコンテキストで定義した PF は、この実行のトークンでだけ使えるようにする（PBI-74）
+        gatewayRun = this.deps.gateway.register(
+          route,
+          contextMcp,
+          platforms.filter((p) => p.from !== undefined),
+        );
         usedSecrets.push(gatewayRun.token);
         if (viaGateway) {
           gateway = { origin: this.deps.gateway.containerOrigin(), token: gatewayRun.token };

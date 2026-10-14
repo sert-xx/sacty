@@ -87,7 +87,45 @@ export type Platform = {
     };
   };
   allow: string[];
+  /**
+   * プロジェクトのコンテキストの層で定義した PF なら、その層（PBI-74）。config.yaml の gateway.platforms のものは無い。
+   */
+  from?: string;
 };
+
+/**
+ * ホストの PF（config.yaml の gateway.platforms）と、プロジェクトのコンテキストで合成した PF を合わせる（PBI-74）。
+ * ホストの PF はすべてのプロジェクトで使え、同じ名前ならホストのものを使う（ホストの MCP とコンテキストの MCP の関係と
+ * 同じ）。どちらを使ったかがわかるよう、警告を残す。
+ */
+export function mergePlatforms(
+  host: readonly Platform[],
+  context: readonly Platform[],
+): { platforms: Platform[]; warnings: DaemonText[] } {
+  const names = new Set(host.map((p) => p.name));
+  const warnings: DaemonText[] = [];
+  const own: Platform[] = [];
+  for (const p of context) {
+    if (names.has(p.name)) {
+      warnings.push(message("context.hostPlatform", { from: p.from ?? "", name: p.name }));
+    } else {
+      own.push(p);
+    }
+  }
+  return { platforms: [...host, ...own], warnings };
+}
+
+/** 画面・作業履歴に出す PF の要約（秘密情報の名前も値も含めない。PBI-74）。 */
+export type PlatformSummary = { name: string; from?: string; description: string; allow: string[] };
+
+export function platformSummary(p: Platform): PlatformSummary {
+  return {
+    name: p.name,
+    ...(p.from ? { from: p.from } : {}),
+    description: p.description,
+    allow: [...p.allow],
+  };
+}
 
 export function toPlatform(name: string, file: z.infer<typeof PlatformFile>): Platform {
   const token = file.auth.token;
@@ -199,13 +237,17 @@ export class PlatformCredentials {
       const value = platform.auth.secret
         ? await this.deps.secrets.get(platform.auth.secret)
         : await this.token(platform);
-      this.problems.delete(platform.name);
+      if (!platform.from) this.problems.delete(platform.name);
       return `${platform.auth.prefix}${value}`;
     } catch (error) {
-      this.problems.set(
-        platform.name,
-        message("gateway.platformUnavailable", { name: platform.name, detail: errorText(error) }),
-      );
+      // 画面の状態に出すのは、ホストの PF だけ（コンテキストの PF は、プロジェクトごとに同じ名前がありうるため、
+      // 使ったエージェントへの応答に理由を返す。PBI-74）
+      if (!platform.from) {
+        this.problems.set(
+          platform.name,
+          message("gateway.platformUnavailable", { name: platform.name, detail: errorText(error) }),
+        );
+      }
       throw error;
     }
   }

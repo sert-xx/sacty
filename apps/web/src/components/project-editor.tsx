@@ -18,7 +18,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useMessages } from "@/i18n/client";
-import type { GitHubAccounts } from "@/lib/daemon";
+import type { GitHubAccounts, ProjectPlatforms } from "@/lib/daemon";
 import { githubAccountChoices } from "@/lib/github-accounts";
 
 const initial: SaveProjectState = {};
@@ -40,7 +40,8 @@ export function ProjectEditor({
   exclusions = [],
   github,
   images = [],
-  platforms = [],
+  platforms: hostPlatforms = [],
+  projectPlatforms,
 }: {
   project?: Project;
   exclusions?: Exclusion[];
@@ -50,7 +51,16 @@ export function ProjectEditor({
   images?: { name: string; description: string }[];
   /** チケットの取り込み先に選べる接続先（gateway.platforms の名前。PBI-52）。 */
   platforms?: string[];
+  /**
+   * プロジェクトで使える外部 PF（ホストの PF と、保存したコンテキストの platforms.yaml の PF。PBI-74）。設定画面で
+   * だけ渡す。あれば、一覧を出し、チケットの取り込み先にも選べるようにする。
+   */
+  projectPlatforms?: ProjectPlatforms;
 }) {
+  // チケットの取り込み先に選べる接続先は、プロジェクトで使える PF（分からなければ、ホストの PF）
+  const platforms = projectPlatforms
+    ? [...new Set([...hostPlatforms, ...projectPlatforms.platforms.map((p) => p.name)])]
+    : hostPlatforms;
   const [state, formAction, pending] = useActionState(saveProjectAction, initial);
   // 前の画面が隠れて残ることがあるので、id は固定にせず画面ごとに作る
   const uid = useId();
@@ -388,6 +398,60 @@ export function ProjectEditor({
               </label>
             </div>
           </section>
+
+          {projectPlatforms && (
+            <section
+              aria-labelledby="platforms"
+              className="flex flex-col gap-3 rounded-xl border border-border bg-card p-5"
+            >
+              <h2 id="platforms" className="text-[15px] font-semibold">
+                {t.platformsTitle}{" "}
+                <span className="text-[13px] font-normal text-muted-foreground">
+                  {t.platformsNote}
+                </span>
+              </h2>
+              <p className="text-sm leading-6 whitespace-pre-line text-muted-foreground">
+                {t.platformsHelp}
+              </p>
+              {projectPlatforms.error !== undefined && (
+                <p role="alert" className="text-sm text-warn">
+                  {t.platformsError} {messages.labels.text(projectPlatforms.error)}
+                </p>
+              )}
+              {projectPlatforms.warnings.map((w, i) => (
+                // biome-ignore lint/suspicious/noArrayIndexKey: 警告は並びのまま出す
+                <p key={i} className="text-sm text-warn">
+                  {messages.labels.text(w)}
+                </p>
+              ))}
+              {projectPlatforms.platforms.length === 0 ? (
+                <p className="text-sm text-muted-foreground">{t.platformsNone}</p>
+              ) : (
+                <ul className="flex flex-col gap-2.5">
+                  {projectPlatforms.platforms.map((p) => (
+                    <li
+                      key={p.name}
+                      className="flex flex-col gap-1 rounded-lg border border-border p-3 text-sm"
+                    >
+                      <div className="flex flex-wrap items-baseline gap-x-2">
+                        <span className="font-mono font-semibold">{p.name}</span>
+                        <span className="text-xs text-muted-foreground">
+                          {p.from ? t.platformFrom(p.from) : t.platformFromHost}
+                        </span>
+                      </div>
+                      {p.description && <p>{p.description}</p>}
+                      <div className="text-xs text-muted-foreground">{t.platformAllow}</div>
+                      <ul className="flex flex-col gap-0.5 font-mono text-xs break-all">
+                        {p.allow.map((rule) => (
+                          <li key={rule}>{rule}</li>
+                        ))}
+                      </ul>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+          )}
 
           <section
             aria-labelledby="shared-compose"

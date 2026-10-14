@@ -109,7 +109,12 @@ describe("コンテキストリポジトリの雛形（PBI-45）", () => {
     const repo = join(dir, "context");
     initContextRepo(repo, false);
     // 例は ASCII の行、説明は日本語の行。例の行だけをコメントから外す
-    for (const path of ["mcp.yaml", "sacty-context.yaml", "agents/codex/config.toml"]) {
+    for (const path of [
+      "mcp.yaml",
+      "platforms.yaml",
+      "sacty-context.yaml",
+      "agents/codex/config.toml",
+    ]) {
       const lines = readFileSync(join(repo, path), "utf8").split("\n");
       const examples = lines.filter((l) => /^[\x20-\x7e]*$/.test(l)).map((l) => l.slice(2));
       writeFileSync(join(repo, path), examples.join("\n"));
@@ -132,6 +137,10 @@ describe("コンテキストリポジトリの雛形（PBI-45）", () => {
     ]);
     const composed = composeContext(layers);
     expect(composed.mcp.map((m) => m.name)).toEqual(["docs", "local-tool"]);
+    // 外部 PF の例も読める（PBI-74）
+    expect(composed.platforms.map((p) => [p.name, p.allow])).toEqual([
+      ["ticket", ["GET /api/v1/tickets/**"]],
+    ]);
     expect(composed.agents.codex).toEqual({ model_reasoning_effort: "high" });
     expect(composed.warnings).toEqual([]);
   });

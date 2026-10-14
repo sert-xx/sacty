@@ -466,6 +466,8 @@ export function describeEvent(event: ActivityEvent, l: LabelMessages): string {
           (layer) => `${layer.repo}${layer.ref ? `#${layer.ref}` : ""}@${layer.commit.slice(0, 7)}`,
         ),
         event.payload.warnings.map(l.text),
+        // 使えるようにした外部 PF（PBI-74）。どの層のものか（ホストは config.yaml）と、使える API
+        event.payload.platforms ?? [],
       );
     case "RemarkVoided":
       return e.RemarkVoided(event.payload.remarkId, actor);

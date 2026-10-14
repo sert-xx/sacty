@@ -137,6 +137,27 @@ export async function listProjectRepositories(
   };
 }
 
+/** 画面に出す外部 PF の要約（PBI-74）。from はコンテキストの層（ホストの config.yaml のものは無い）。 */
+export type PlatformSummary = { name: string; from?: string; description: string; allow: string[] };
+
+export type ProjectPlatforms = {
+  platforms: PlatformSummary[];
+  warnings: DaemonText[];
+  /** コンテキストを読めなかった理由（秘密情報は伏せてある）。 */
+  error?: DaemonText;
+};
+
+/**
+ * プロジェクトで使える外部 PF（PBI-74）。ホストの config.yaml の gateway.platforms と、プロジェクトのコンテキストで
+ * 合成したもの。古いデーモン（この API が無い）なら undefined。
+ */
+export async function getProjectPlatforms(id: string): Promise<ProjectPlatforms | undefined> {
+  const res = await daemonFetch(`/api/projects/${encodeURIComponent(id)}/platforms`);
+  if (res.status === 404) return undefined;
+  await ensureOk(res);
+  return (await res.json()) as ProjectPlatforms;
+}
+
 /** プロジェクトを作る（id なし）か変える。入力の誤りや重複は、画面に出せる理由を返す。 */
 export async function saveProject(
   id: string | undefined,

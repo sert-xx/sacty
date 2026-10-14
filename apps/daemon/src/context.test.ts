@@ -3,8 +3,10 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -18,6 +20,7 @@ import {
   type ContextFetcher,
   type ContextRef,
   composeContext,
+  contextPlatforms,
   DEFAULT_CONTEXT_DIR,
   GATEWAY_TOKEN_SECRET,
   GitContextFetcher,
@@ -780,6 +783,199 @@ describe("MCP サーバーの時間切れ（PBI-75）", () => {
       "startup_timeout_sec = 3600\ntool_timeout_sec = 86400\n",
     );
     edge.dispose();
+  });
+});
+
+describe("外部 PF の合成（PBI-74）", () => {
+  const pfYaml = (entries: Record<string, { upstream: string; secret: string; allow?: string }>) =>
+    [
+      "platforms:",
+      ...Object.entries(entries).flatMap(([name, p]) => [
+        `  ${name}:`,
+        `    upstream: ${p.upstream}`,
+        `    description: ${name} の説明`,
+        "    auth:",
+        "      prefix: 'Bearer '",
+        `      secret: ${p.secret}`,
+        "    allow:",
+        `      - ${p.allow ?? "GET /api/**"}`,
+      ]),
+    ].join("\n");
+  const companyPf = {
+    "platforms.yaml": pfYaml({
+      ticket: { upstream: "https://ticket.company.example.com", secret: "company-ticket" },
+      deploy: { upstream: "https://deploy.company.example.com", secret: "op://Work/Deploy/key" },
+      old: { upstream: "https://old.example.com", secret: "old-token" },
+    }),
+    "sacty-context.yaml": "locked:\n  platforms: [deploy]\n",
+  };
+  const teamPf = {
+    "platforms.yaml": pfYaml({
+      ticket: {
+        upstream: "https://ticket.team.example.com",
+        secret: "team-ticket",
+        allow: "POST /api/comments",
+      },
+      deploy: { upstream: "https://evil.example.com", secret: "team-deploy" },
+      local: { upstream: "https://local.example.com", secret: "local-token" },
+    }),
+    "sacty-context.yaml": "extends: company.git\nremove:\n  platforms: [old]\n  mcp: []\n",
+  };
+  const fetcher = () => new FakeFetcher({ "company.git": companyPf, "team.git": teamPf });
+
+  it("名前ごとに下位が上書きし、上書き禁止は守り、取り除ける。どの層のものかを持ち、秘密情報は名前のまま", async () => {
+    const composed = composeContext(
+      await resolveContext(fetcher(), { repo: "team.git" }, join(dir, "w")),
+    );
+    const byName = Object.fromEntries(composed.platforms.map((p) => [p.name, p]));
+    expect(Object.keys(byName).sort()).toEqual(["deploy", "local", "ticket"]);
+    // 下位が上書き
+    expect(byName.ticket).toMatchObject({
+      upstream: "https://ticket.team.example.com",
+      description: "ticket の説明",
+      auth: { header: "Authorization", prefix: "Bearer ", secret: "team-ticket" },
+      allow: ["POST /api/comments"],
+      from: "team.git@teamgit",
+    });
+    // 上書き禁止は上位のもの（1Password の参照も書ける）
+    expect(byName.deploy).toMatchObject({
+      upstream: "https://deploy.company.example.com",
+      auth: { secret: "op://Work/Deploy/key" },
+      from: "company.git@company",
+    });
+    expect(byName.local?.from).toBe("team.git@teamgit");
+    expect(composed.warnings).toEqual([
+      expect.objectContaining({
+        code: "context.lockedOverride",
+        params: expect.objectContaining({ kind: "platforms", name: "deploy" }),
+      }),
+    ]);
+    expect(composed.warnings.map(ja)).toEqual([
+      expect.stringContaining("外部 PF「deploy」を上書き"),
+    ]);
+  });
+
+  it("上書き禁止の PF は、下位で取り除けない", async () => {
+    const composed = composeContext(
+      await resolveContext(
+        new FakeFetcher({
+          "company.git": companyPf,
+          "team.git": {
+            "sacty-context.yaml": "extends: company.git\nremove:\n  platforms: [deploy]\n",
+          },
+        }),
+        { repo: "team.git" },
+        join(dir, "w"),
+      ),
+    );
+    expect(composed.platforms.map((p) => p.name).sort()).toEqual(["deploy", "old", "ticket"]);
+    expect(composed.warnings.map(ja)).toEqual([
+      expect.stringContaining("外部 PF「deploy」を取り除こうとしました"),
+    ]);
+  });
+
+  it("prepareContext は合成した PF を返し、エージェントに渡すファイルには PF の設定も秘密情報の名前も書かない", async () => {
+    const prepared = await prepareContext(
+      fetcher(),
+      { repo: "team.git" },
+      "claude-code",
+      "/home/sacty/.claude",
+    );
+    try {
+      expect(prepared.platforms.map((p) => p.name).sort()).toEqual(["deploy", "local", "ticket"]);
+      const files = readdirSync(prepared.dir, { recursive: true, encoding: "utf8" });
+      for (const file of files) {
+        const path = join(prepared.dir, file);
+        if (!statSync(path).isFile()) continue;
+        const text = readFileSync(path, "utf8");
+        for (const leak of ["team-ticket", "company-ticket", "ticket.team.example.com"]) {
+          expect(text, file).not.toContain(leak);
+        }
+      }
+    } finally {
+      prepared.dispose();
+    }
+  });
+
+  it("platforms.yaml の無いコンテキストでは、PF は空で、ほかの合成も変わらない", async () => {
+    const composed = composeContext(
+      await resolveContext(
+        new FakeFetcher({ "x.git": { "rules.md": "規約" } }),
+        { repo: "x.git" },
+        join(dir, "w"),
+      ),
+    );
+    expect(composed.platforms).toEqual([]);
+    expect(composed.warnings).toEqual([]);
+    expect(await contextPlatforms(new FakeFetcher({}), undefined)).toEqual({
+      platforms: [],
+      warnings: [],
+    });
+  });
+
+  it("contextPlatforms は、PF に関わる警告だけを返す", async () => {
+    const result = await contextPlatforms(
+      new FakeFetcher({
+        "company.git": {
+          ...companyPf,
+          "sacty-context.yaml": "locked:\n  platforms: [deploy]\n  skills: [r]\n",
+          "skills/r/SKILL.md": "r",
+        },
+        "team.git": { ...teamPf, "skills/r/SKILL.md": "上書き" },
+      }),
+      { repo: "team.git" },
+    );
+    expect(result.platforms.map((p) => p.name).sort()).toEqual(["deploy", "local", "ticket"]);
+    expect(result.warnings).toEqual([
+      expect.objectContaining({ params: expect.objectContaining({ kind: "platforms" }) }),
+    ]);
+  });
+
+  it("誤った PF の設定は、どの層の platforms.yaml のどの項目かを示して止める", async () => {
+    const ok =
+      "    upstream: https://x.example.com\n    auth:\n      secret: s\n    allow: [GET /a]\n";
+    const cases: [string, RegExp][] = [
+      // allow が無い
+      [
+        "platforms:\n  a:\n    upstream: https://x.example.com\n    auth:\n      secret: s\n",
+        /x\.git# の platforms\.yaml に誤りがあります（platforms\.a\.allow）/,
+      ],
+      // secret と token の両方
+      [
+        "platforms:\n  a:\n    upstream: https://x.example.com\n    auth:\n      secret: s\n      token: { url: https://t.example.com, secret: t, token_path: x }\n    allow: [GET /a]\n",
+        /platforms\.a\.auth）：組織内 PF の認証には/,
+      ],
+      // 秘密情報の名前の形の誤り
+      [
+        "platforms:\n  a:\n    upstream: https://x.example.com\n    auth:\n      secret: 'a b'\n    allow: [GET /a]\n",
+        /platforms\.a\.auth\.secret/,
+      ],
+      // 名前の誤り（URL の一部にならない）
+      [`platforms:\n  A_B:\n${ok}`, /platforms\.A_B）/],
+      // allow の形の誤り
+      [
+        "platforms:\n  a:\n    upstream: https://x.example.com\n    auth:\n      secret: s\n    allow: [FETCH /a]\n",
+        /platforms\.a\.allow\.0/,
+      ],
+      // 転送先が http(s) でない
+      [
+        "platforms:\n  a:\n    upstream: file:///etc/passwd\n    auth:\n      secret: s\n    allow: [GET /a]\n",
+        /platforms\.a\.upstream/,
+      ],
+      // 知らない項目（servers と書き間違えたなど）
+      [`servers:\n  a:\n${ok}`, /platforms\.yaml に誤り/],
+      // YAML として読めない
+      ["platforms: [", /platforms\.yaml を読めません/],
+    ];
+    for (const [i, [yaml, error]] of cases.entries()) {
+      const run = resolveContext(
+        new FakeFetcher({ "x.git": { "platforms.yaml": yaml } }),
+        { repo: "x.git" },
+        join(dir, String(i)),
+      );
+      // 理由は、日本語の文（MessageError の message）で確かめる
+      await expect(run).rejects.toThrow(error);
+    }
   });
 });
 

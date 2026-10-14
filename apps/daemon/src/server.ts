@@ -153,6 +153,13 @@ export function createApp(
     return c.json(result);
   });
 
+  // プロジェクトで使える外部 PF（ホストの PF と、プロジェクトのコンテキストの PF。秘密情報は含めない。PBI-74）
+  app.get("/api/projects/:id/platforms", async (c) => {
+    const result = await service.projectPlatforms(c.req.param("id"));
+    if (!result) return c.json({ error: "not_found" }, 404);
+    return c.json(result);
+  });
+
   app.post("/api/projects", async (c) => {
     const json = await readJson(c);
     if (!json.ok) return c.json({ error: "invalid_json" }, 400);

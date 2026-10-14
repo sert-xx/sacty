@@ -1308,6 +1308,20 @@ const ContextResolved = z.object({
     runId: z.string(),
     layers: z.array(z.object({ repo: z.string(), ref: z.string().optional(), commit: z.string() })),
     warnings: z.array(DaemonText).default([]),
+    /**
+     * 使えるようにした外部 PF（PBI-74）。ホストの config.yaml の gateway.platforms と、プロジェクトのコンテキストで
+     * 合成したもの（from にどの層のものか。ホストのものは無い）。秘密情報の名前・値は含めない。
+     */
+    platforms: z
+      .array(
+        z.object({
+          name: z.string(),
+          from: z.string().optional(),
+          description: z.string(),
+          allow: z.array(z.string()),
+        }),
+      )
+      .optional(),
   }),
 });
 

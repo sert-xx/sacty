@@ -111,6 +111,11 @@ type RunState = Partial<GatewayRoute> & {
    * （秘密情報の値を入れたもの。ホストだけに持ち、コンテナには渡さない）。
    */
   mcp?: Record<string, ContextMcpRoute>;
+  /**
+   * プロジェクトのコンテキストで定義した外部 PF（PBI-74）。この実行のトークンでだけ使える（ほかのプロジェクトの実行の
+   * トークンでは、名前を知っていても使えない）。認証は秘密情報の名前のまま持ち、使うときにホストで取り出す。
+   */
+  platforms?: readonly Platform[];
   stats: GatewayStats;
   /** いまの一続きの失敗で待った合計。成功すると0に戻る。 */
   streakWaitedMs: number;
@@ -214,11 +219,14 @@ export class AiGateway {
     route?: GatewayRoute,
     /** コンテキストリポジトリの HTTP の MCP サーバー（PBI-49）。 */
     mcp?: Record<string, ContextMcpRoute>,
+    /** プロジェクトのコンテキストで定義した外部 PF（PBI-74）。この実行だけが使える。 */
+    platforms?: readonly Platform[],
   ): { token: string; stats: () => GatewayStats; close: () => void } {
     const token = `sacty-gw-${randomBytes(24).toString("hex")}`;
     const state: RunState = {
       ...route,
       ...(mcp && Object.keys(mcp).length > 0 ? { mcp } : {}),
+      ...(platforms && platforms.length > 0 ? { platforms: [...platforms] } : {}),
       stats: { retries: 0, waitedMs: 0, statuses: [], gaveUp: false },
       streakWaitedMs: 0,
     };
@@ -245,10 +253,15 @@ export class AiGateway {
     res: ServerResponse,
     target: { token: string; name: string; path: string; query: string },
   ): Promise<void> {
-    if (!this.runs.has(target.token)) {
+    const run = this.runs.get(target.token);
+    if (!run) {
       return fail(res, 401, "sacty gateway: unknown or expired run token");
     }
-    const platform = (this.deps.platforms?.() ?? []).find((p) => p.name === target.name);
+    // ホストの PF（config.yaml）を先に引き、無ければこの実行のプロジェクトのコンテキストの PF（PBI-74）。同じ名前なら
+    // ホストのものを使う（合成と同じ規則。設定を読み直したときも、ホストのものが優先される）
+    const platform =
+      (this.deps.platforms?.() ?? []).find((p) => p.name === target.name) ??
+      run.platforms?.find((p) => p.name === target.name);
     if (!platform || !this.deps.credentials) {
       return fail(res, 404, `sacty gateway: unknown internal platform "${target.name}"`);
     }
@@ -304,7 +317,7 @@ export class AiGateway {
         return fail(
           res,
           502,
-          `sacty gateway: cannot prepare the credentials for "${platform.name}": ${error instanceof Error ? error.message : String(error)}`,
+          `sacty gateway: cannot prepare the credentials for "${platform.name}"${platform.from ? ` (platforms.yaml of ${platform.from})` : ""}: ${error instanceof Error ? error.message : String(error)}`,
         );
       }
       headers.set(platform.auth.header, value);

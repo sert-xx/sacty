@@ -9,7 +9,7 @@ export type SecretUse = { ref: string; where: string };
  * sacty の実行で使う秘密情報の参照を、設定とプロジェクトから集める（sacty up の起動時にまとめて取り出すため。
  * PBI-48）。使うエージェント（既定・ゴールガーディアン・工程ごと）の認証と接続先の API キー、組織内 PF の認証、
  * ホストで動かす MCP サーバーの環境変数、プロジェクトの通知先。イメージの作成だけで使う npm のトークンと、
- * gh から取る GitHub のトークン、コンテキストリポジトリの mcp.yaml（取得しないと分からない）は含めない。
+ * gh から取る GitHub のトークン、コンテキストリポジトリの mcp.yaml・platforms.yaml（取得しないと分からない）は含めない。
  */
 export function secretUses(config: SactyConfig, projects: readonly Project[]): SecretUse[] {
   const uses: SecretUse[] = [];
