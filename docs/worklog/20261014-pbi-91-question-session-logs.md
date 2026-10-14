@@ -2,7 +2,7 @@
 
 - 日付: 2026-10-14（UTC）
 - タスク: PBI-91
-- PR: #PR_NUMBER
+- PR: #95
 - ブランチ: feat/issue-91-question-session-logs
 - 関係する ADR: [質問の答えでセッションログを読み取り専用で読ませる](../adr/20261014-1445-question-reads-session-logs.md)
 
