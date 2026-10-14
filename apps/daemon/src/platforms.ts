@@ -221,41 +221,55 @@ function fill(value: unknown, secret: string): unknown {
   return value;
 }
 
+/** 伏せる文字列の、短すぎるものの下限（短い文字列一般は置き換えない。クエリの値として現れたものは除く）。 */
+const HIDE_MIN_LENGTH = 4;
+
 /**
  * 文から秘密情報を伏せる。値そのもの・JSON の文字列にした形・URL エンコードした形（クエリで送るため。PBI-93）・
- * 各行（短すぎる行は除く）を伏せる。
+ * 各行（短すぎる行は除く）を伏せる。クエリの値として現れた秘密情報（`?名前=値`・`&名前=値`）は、長さに関係なく伏せる
+ * （PBI-93 レビュー指摘）。
  */
 export function hideSecret(text: string, secret: string): string {
   if (!secret) return text;
-  const forms = [
-    secret,
-    JSON.stringify(secret).slice(1, -1),
-    ...urlForms(secret),
-    ...secret.split(/\r?\n/),
-  ]
-    .filter((f) => f.length >= 4)
+  const encoded = urlPattern(secret);
+  // クエリの値の全体が秘密情報のとき（短いキーも）
+  let hidden = text.replace(
+    new RegExp(`([?&][^=&#?\\s]{0,256}=)(?:${encoded})(?=$|[&#\\s"'<>\\\\,;)\\]}])`, "gu"),
+    "$1[secret]",
+  );
+  // URL エンコードした形（文字ごとに、そのままか・エスケープか。16進の大文字・小文字・空白の + ・二重のエンコードの
+  // 混在も含む）。各行より先に置き換える（行を先に伏せると、エンコードした形の残りが出るため）
+  if (secret.length >= HIDE_MIN_LENGTH) {
+    hidden = hidden.replace(new RegExp(encoded, "gu"), "[secret]");
+  }
+  const forms = [secret, JSON.stringify(secret).slice(1, -1), ...secret.split(/\r?\n/)]
+    .filter((f) => f.length >= HIDE_MIN_LENGTH)
     .sort((a, b) => b.length - a.length);
-  return forms.reduce((t, f) => t.split(f).join("[secret]"), text);
+  return forms.reduce((t, f) => t.split(f).join("[secret]"), hidden);
 }
 
 /**
- * 秘密情報を URL エンコードした形。送る形（encodeQuery）に加えて、窓口がエラーの文に URL を写すときの書き方の違い
- * （encodeURIComponent の形・16進の小文字の形・フォームの形（空白を + にする））。対になっていないサロゲートを含み
- * エンコードできない値は、送れないので、フォームの形だけにする（伏せる処理を失敗させないため）。
+ * 秘密情報が URL に現れうる形の正規表現。文字ごとに、そのままか、UTF-8 のパーセントエスケープ（16進の大文字・小文字を
+ * 問わない。%25 で二重にエンコードしたものも）。空白は + も。窓口や中継のプロキシがエラーの文に URL を写すときの
+ * 書き方の違いを、エスケープの箇所ごとに受け付ける。対になっていないサロゲートは、エンコードできないのでそのままだけ。
  */
-function urlForms(secret: string): string[] {
-  const form = new URLSearchParams({ s: secret }).toString().slice(2);
-  try {
-    const encoded = encodeQuery(secret);
-    return [
-      encoded,
-      encodeURIComponent(secret),
-      encoded.replace(/%[0-9A-F]{2}/g, (e) => e.toLowerCase()),
-      form,
-    ];
-  } catch {
-    return [form];
-  }
+function urlPattern(secret: string): string {
+  const encoder = new TextEncoder();
+  const hex = (b: number) =>
+    b
+      .toString(16)
+      .toUpperCase()
+      .padStart(2, "0")
+      .replace(/[A-F]/g, (c) => `[${c}${c.toLowerCase()}]`);
+  return Array.from(secret, (ch) => {
+    const alts = [ch.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")];
+    if (ch === " ") alts.push("\\+");
+    const code = ch.codePointAt(0) ?? 0;
+    if (code < 0xd800 || code > 0xdfff) {
+      alts.push(Array.from(encoder.encode(ch), (b) => `%(?:25)?${hex(b)}`).join(""));
+    }
+    return `(?:${alts.join("|")})`;
+  }).join("");
 }
 
 /**

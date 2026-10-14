@@ -460,6 +460,62 @@ describe("組織内 PF の API（PBI-35）", () => {
         }
       }
     });
+
+    it("エスケープの箇所ごとの16進の大文字・小文字の混在・空白の + と %20 の混在・二重のエンコードも伏せる（レビュー指摘）", () => {
+      const k = "FAKE+a/b c d";
+      for (const echo of [
+        "FAKE%2ba%2Fb%20c%20d",
+        "FAKE%2Ba%2fb+c%20d",
+        "FAKE+a%2Fb c+d",
+        "FAKE%252Ba%252fb%2520c+d",
+        "%46AKE%2Ba%2Fb%20c%20d",
+      ]) {
+        const out = hideSecret(`token endpoint returned 403: GET /t?api_token=${echo}&v=1`, k);
+        expect(out, echo).toBe("token endpoint returned 403: GET /t?api_token=[secret]&v=1");
+      }
+      // 非 ASCII の UTF-8 のバイトごとの混在
+      expect(hideSecret("x=KéY-%c3%A9-z", "KéY-é-z")).toBe("x=[secret]");
+      // キーと違う値は伏せない
+      expect(hideSecret("?api_token=FAKE%2Ba%2Fb%20c%20e", k)).toBe(
+        "?api_token=FAKE%2Ba%2Fb%20c%20e",
+      );
+    });
+
+    it("1〜3文字のキーも、クエリの値として現れたら伏せる（ほかの所の短い文字列は置き換えない。レビュー指摘）", async () => {
+      expect(hideSecret("403: GET /auth/token?api_token=abc", "abc")).toBe(
+        "403: GET /auth/token?api_token=[secret]",
+      );
+      expect(hideSecret("?v=1&api_token=abc&x=abc#f", "abc")).toBe(
+        "?v=1&api_token=[secret]&x=[secret]#f",
+      );
+      expect(hideSecret('"url":"https://a/t?k=a%20b"', "a b")).toBe(
+        '"url":"https://a/t?k=[secret]"',
+      );
+      expect(hideSecret("?k=a+b ok", "a b")).toBe("?k=[secret] ok");
+      expect(hideSecret("?k=%2b", "+")).toBe("?k=[secret]");
+      // 長い文（ログなど）でも、? や & が並ぶ形で遅くならない
+      const started = Date.now();
+      for (const big of ["?".repeat(200_000), "&a".repeat(100_000), "?a=".repeat(70_000)]) {
+        expect(hideSecret(big, "abc")).toBe(big);
+      }
+      expect(Date.now() - started).toBeLessThan(2_000);
+      // 値の一部・クエリの外は、短いので置き換えない
+      expect(hideSecret("?api_token=abcdef&n=xabc abc", "abc")).toBe(
+        "?api_token=abcdef&n=xabc abc",
+      );
+      // 窓口の 403 の本文に URL を写しても、理由に短いキーを出さない
+      const creds = new PlatformCredentials({
+        secrets: new MemorySecretStore({ "pf-key": "abc" }),
+        fetchImpl: tokenEndpoint([
+          new Response("forbidden: GET /auth/token?api_token=abc", { status: 403 }),
+        ]).fetchImpl,
+      });
+      const p = queryPf();
+      const reason = String(await creds.header(p).catch((e: Error) => e));
+      expect(reason).toContain("api_token=[secret]");
+      expect(reason).not.toContain("api_token=abc");
+      expect(renderMessage(creds.unavailable(["pf"])[0], "ja")).not.toContain("api_token=abc");
+    });
   });
 
   it("工程エージェントに、使える PF と API と、呼び方を伝える", () => {
