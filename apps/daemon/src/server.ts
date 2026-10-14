@@ -1,9 +1,9 @@
 import { timingSafeEqual } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { Readable } from "node:stream";
-import { issueMessage } from "@sacty/core";
+import { issueMessage, ProjectDefinition } from "@sacty/core";
 import { type Context, Hono } from "hono";
-import { ZodError } from "zod";
+import { ZodError, z } from "zod";
 import { safeRelativePath } from "./agent-sessions.js";
 import { InvalidOperationError, type TaskService } from "./service.js";
 import { validLogId } from "./session-logs.js";
@@ -21,6 +21,13 @@ async function readJson(c: Context): Promise<{ ok: true; body: unknown } | { ok:
     return { ok: false };
   }
 }
+
+/** コンテキストのプレビューの AI の種類（PBI-76）。省けば Claude Code。 */
+const PreviewRuntime = z.enum(["claude-code", "codex"]).default("claude-code");
+/** 保存していない設定でのプレビュー（PBI-76）。definition を省けば、保存した設定で作る。 */
+const PreviewRequest = z
+  .object({ runtime: PreviewRuntime, definition: ProjectDefinition.optional() })
+  .strict();
 
 function handleError(c: Context, error: unknown) {
   if (error instanceof ZodError) {
@@ -160,11 +167,39 @@ export function createApp(
     return c.json(result);
   });
 
+  // コンテキストの合成の結果のプレビュー（PBI-76）。GET は保存した設定で、POST は送った（保存していない）設定で作る。
+  // 取得・設定の誤りは、200 で error（秘密情報を伏せた理由）を返す
+  app.get("/api/projects/:id/context-preview", async (c) => {
+    try {
+      const runtime = PreviewRuntime.parse(c.req.query("runtime"));
+      const result = await service.projectContextPreview(c.req.param("id"), runtime);
+      if (!result) return c.json({ error: "not_found" }, 404);
+      return c.json(result);
+    } catch (error) {
+      return handleError(c, error);
+    }
+  });
+  app.post("/api/projects/:id/context-preview", async (c) => {
+    const json = await readJson(c);
+    if (!json.ok) return c.json({ error: "invalid_json" }, 400);
+    try {
+      const { runtime, definition } = PreviewRequest.parse(json.body);
+      const result = await service.projectContextPreview(c.req.param("id"), runtime, definition);
+      if (!result) return c.json({ error: "not_found" }, 404);
+      return c.json(result);
+    } catch (error) {
+      return handleError(c, error);
+    }
+  });
+
   app.post("/api/projects", async (c) => {
     const json = await readJson(c);
     if (!json.ok) return c.json({ error: "invalid_json" }, 400);
     try {
-      return c.json({ project: service.saveProject(undefined, json.body) }, 201);
+      const project = service.saveProject(undefined, json.body);
+      // 保存したコンテキストを、プレビューと同じ検査で確かめる（誤りは保存を止めず、知らせる。PBI-76）
+      const contextError = await service.checkProjectContext(project.id);
+      return c.json({ project, ...(contextError ? { contextError } : {}) }, 201);
     } catch (error) {
       return handleError(c, error);
     }
@@ -190,7 +225,10 @@ export function createApp(
     const json = await readJson(c);
     if (!json.ok) return c.json({ error: "invalid_json" }, 400);
     try {
-      return c.json({ project: service.saveProject(c.req.param("id"), json.body) });
+      const project = service.saveProject(c.req.param("id"), json.body);
+      // 保存したコンテキストを、プレビューと同じ検査で確かめる（誤りは保存を止めず、知らせる。PBI-76）
+      const contextError = await service.checkProjectContext(project.id);
+      return c.json({ project, ...(contextError ? { contextError } : {}) });
     } catch (error) {
       return handleError(c, error);
     }

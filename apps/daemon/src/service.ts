@@ -102,11 +102,14 @@ import {
 } from "./config.js";
 import {
   type ContextFetcher,
+  type ContextPreview,
   contextExportInfo,
   contextPlatforms,
   GATEWAY_TOKEN_SECRET,
   type GatewayMcpServer,
+  type McpRouting,
   prepareContext,
+  previewContext,
 } from "./context.js";
 import { errorText, MessageError } from "./errors.js";
 import type { AiGateway, ContextMcpRoute, GatewayStats } from "./gateway.js";
@@ -218,6 +221,19 @@ const REVIEW_DIFF_FILE = "pr.diff";
 const SHARED_FETCH_DETAIL_MAX = 2000;
 
 /** 文の、外から来た文の部分を、末尾の max 文字に切り詰める（秘密情報を伏せた後に使う）。 */
+/** コンテナの中での、エージェントの設定のディレクトリ（コンテキストを置く場所）。 */
+function contextContainerDir(runtime: "claude-code" | "codex"): string {
+  return runtime === "codex" ? CONTAINER_CODEX_HOME : CONTAINER_CLAUDE_CONFIG_DIR;
+}
+
+/**
+ * プロジェクトのコンテキストのプレビュー（PBI-76）。platforms は、ホストの PF とあわせた使える外部 PF の要約（秘密情報の
+ * 名前・値は含めない）。
+ */
+export type ContextPreviewView = Omit<ContextPreview, "platforms"> & {
+  platforms: PlatformSummary[];
+};
+
 function clipText(text: DaemonText, max: number): DaemonText {
   return mapFreeText(text, (value) => (value.length > max ? `…${value.slice(-max)}` : value));
 }
@@ -1320,6 +1336,57 @@ export class TaskService {
         error: redactText(errorText(error), usedSecrets),
       };
     }
+  }
+
+  /**
+   * プロジェクトのコンテキストの合成の結果のプレビュー（PBI-76）。実行のときと同じ処理で、AI の種類（runtime）ごとに
+   * 置くファイル・合成の情報・警告を作る（ファイルは書かず、取得したリポジトリは消す。作業履歴にも残さない）。
+   * definition を渡せば、保存していない設定（コンテキストリポジトリ・GitHub アカウント）で作る。プロジェクトが無ければ
+   * undefined。取得・設定の誤りは、秘密情報を伏せた理由（error）で返す。
+   */
+  async projectContextPreview(
+    id: string,
+    runtime: "claude-code" | "codex",
+    definition?: ProjectDefinition,
+  ): Promise<{ preview: ContextPreviewView } | { error: DaemonText } | undefined> {
+    const saved = this.deps.projects.get(id);
+    if (!saved) return undefined;
+    const project = definition ?? saved;
+    const loaded = this.deps.config();
+    const config = loaded.ok ? loaded.config : undefined;
+    const usedSecrets: string[] = [];
+    try {
+      const preview = await previewContext(
+        this.deps.contexts,
+        project.context,
+        runtime,
+        contextContainerDir(runtime),
+        (repo) => this.gitAuth({ projectId: id }, repo, usedSecrets, definition),
+        this.deps.defaultContext,
+        this.mcpRouting(config),
+      );
+      // 使える外部 PF：ホストの PF と、合成した PF（同じ名前ならホストのもの。実行と同じ。PBI-74）
+      const merged = mergePlatforms(config?.platforms ?? [], preview.platforms);
+      return {
+        preview: {
+          ...preview,
+          platforms: merged.platforms.map(platformSummary),
+          warnings: [...preview.warnings, ...merged.warnings],
+        },
+      };
+    } catch (error) {
+      return { error: redactText(errorText(error), usedSecrets) };
+    }
+  }
+
+  /**
+   * 保存したプロジェクトのコンテキストを、プレビューと同じ検査で確かめる（PBI-76）。誤り（取得の失敗・設定の形の誤り）が
+   * あれば、その理由を返す。コンテキストリポジトリを設定していなければ確かめない（既定のコンテキストは同梱のもの）。
+   */
+  async checkProjectContext(id: string): Promise<DaemonText | undefined> {
+    if (!this.deps.projects.get(id)?.context) return undefined;
+    const result = await this.projectContextPreview(id, "claude-code");
+    return result && "error" in result ? result.error : undefined;
   }
 
   /**
@@ -2679,8 +2746,10 @@ export class TaskService {
     task: Pick<Task, "projectId">,
     url: string,
     usedSecrets: string[],
+    /** 保存していない設定で確かめるときの、プロジェクトの定義（PBI-76）。無ければ保存したもの。 */
+    unsaved?: ProjectDefinition,
   ): Promise<string> {
-    const project = this.deps.projects.get(task.projectId);
+    const project = unsaved ?? this.deps.projects.get(task.projectId);
     const host = httpsHost(`${url}/`) ?? "";
     const account = project?.githubAccounts?.[host];
     if (!account) {
@@ -2708,15 +2777,17 @@ export class TaskService {
     task: Pick<Task, "projectId">,
     url: string,
     usedSecrets: string[],
+    /** 保存していない設定で確かめるときの、プロジェクトの定義（PBI-76）。無ければ保存したもの。 */
+    unsaved?: ProjectDefinition,
   ): Promise<Record<string, string> | undefined> {
     const host = httpsHost(url);
-    const project = this.deps.projects.get(task.projectId);
+    const project = unsaved ?? this.deps.projects.get(task.projectId);
     const github =
       host !== undefined &&
       (project?.githubAccounts?.[host] !== undefined ||
         (project?.targets.some((t) => targetHost(t) === host) ?? false));
     return host && github
-      ? gitAuthEnv(host, await this.githubToken(task, url, usedSecrets))
+      ? gitAuthEnv(host, await this.githubToken(task, url, usedSecrets, unsaved))
       : undefined;
   }
 
@@ -3401,19 +3472,7 @@ export class TaskService {
   ): Promise<Awaited<ReturnType<typeof prepareContext>> | undefined> {
     const contextSource = this.deps.projects.get(task.projectId)?.context;
     const defaultContext = this.deps.defaultContext;
-    const gatewayForMcp = this.deps.gateway;
-    const hostMcp =
-      gatewayForMcp && config.hostMcp.length > 0
-        ? config.hostMcp.map((m) => ({
-            name: m.name,
-            url: `${gatewayForMcp.containerOrigin()}/mcp/${m.name}`,
-            // エージェントに渡す時間切れ（PBI-75）
-            ...(m.startupTimeoutSec !== undefined
-              ? { startup_timeout_sec: m.startupTimeoutSec }
-              : {}),
-            ...(m.toolTimeoutSec !== undefined ? { tool_timeout_sec: m.toolTimeoutSec } : {}),
-          }))
-        : [];
+    const { hostMcp = [], gatewayOrigin } = this.mcpRouting(config);
     if (!contextSource && !defaultContext && hostMcp.length === 0) return undefined;
     // 使うホストの MCP サーバーの準備を待つ（PBI-77）。書き出しは、決めた接続先がそれなら、それだけを待つ
     const waitFor = hostMcp
@@ -3428,22 +3487,44 @@ export class TaskService {
     const [onlyProblem] = onlyMcp !== undefined ? hostProblems : [];
     if (onlyProblem) throw new MessageError(onlyProblem);
     // コンテキストと継承の各リポジトリも、HTTPS の GitHub はプロジェクトの gh のアカウントで取得する
+    const runtime = agent.runtime === "codex" ? "codex" : "claude-code";
     const prepared = await prepareContext(
       this.deps.contexts,
       contextSource,
-      agent.runtime === "codex" ? "codex" : "claude-code",
-      agent.runtime === "codex" ? CONTAINER_CODEX_HOME : CONTAINER_CLAUDE_CONFIG_DIR,
+      runtime,
+      contextContainerDir(runtime),
       (repo) => this.gitAuth(task, repo, usedSecrets),
       defaultContext,
       hostMcp,
-      // 層の HTTP の MCP サーバーは、ゲートウェイ経由にする（PBI-49）
-      gatewayForMcp?.containerOrigin(),
+      gatewayOrigin,
       onlyMcp,
     );
     // 準備ができないホストの MCP サーバーは、どれかがわかるよう、コンテキストの注意として記録する（実行は止めない。
     // 起動し直して準備ができれば、実行の途中からでも使える）
     prepared.warnings.push(...hostProblems);
     return prepared;
+  }
+
+  /**
+   * 実行のときの MCP サーバーの渡し方（ホストの MCP サーバーと、ゲートウェイの起点）。ゲートウェイが無ければ、ホストの
+   * MCP サーバーは渡せず、層の HTTP の MCP サーバーはコンテナから直接つなぐ。実行（runContext）とプレビュー（PBI-76）で
+   * 同じものを使う。
+   */
+  private mcpRouting(config: Pick<SactyConfig, "hostMcp"> | undefined): McpRouting {
+    const gatewayForMcp = this.deps.gateway;
+    if (!gatewayForMcp) return {};
+    const origin = gatewayForMcp.containerOrigin();
+    return {
+      hostMcp: (config?.hostMcp ?? []).map((m) => ({
+        name: m.name,
+        url: `${origin}/mcp/${m.name}`,
+        // エージェントに渡す時間切れ（PBI-75）
+        ...(m.startupTimeoutSec !== undefined ? { startup_timeout_sec: m.startupTimeoutSec } : {}),
+        ...(m.toolTimeoutSec !== undefined ? { tool_timeout_sec: m.toolTimeoutSec } : {}),
+      })),
+      // 層の HTTP の MCP サーバーは、ゲートウェイ経由にする（PBI-49）
+      gatewayOrigin: origin,
+    };
   }
 
   /**

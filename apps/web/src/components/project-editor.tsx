@@ -14,6 +14,7 @@ import {
   type TestNotificationState,
   testNotificationAction,
 } from "@/app/actions";
+import { ContextPreviewPanel } from "@/components/context-preview";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -398,6 +399,9 @@ export function ProjectEditor({
               </label>
             </div>
           </section>
+
+          {/* コンテキストの合成の結果のプレビュー（PBI-76）。保存した設定でも、編集中の設定でも作れる */}
+          <ContextPreviewPanel projectId={project.id} definition={definition} />
 
           {projectPlatforms && (
             <section
@@ -901,9 +905,15 @@ export function ProjectEditor({
           {state.message}
         </p>
       )}
-      {state.saved && !state.message && (
+      {state.saved && !state.message && !state.contextError && (
         <p role="status" className="text-sm text-accent-foreground">
           {t.saved}
+        </p>
+      )}
+      {/* 保存したが、コンテキストに誤りがある（PBI-76） */}
+      {state.saved && state.contextError && (
+        <p role="alert" className="text-sm leading-6 whitespace-pre-line text-warn">
+          {t.savedContextError(state.contextError)}
         </p>
       )}
       {needsAccount && (

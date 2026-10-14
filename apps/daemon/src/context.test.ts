@@ -17,6 +17,7 @@ import { parse as parseToml } from "smol-toml";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   AGENT_RUN_TIMEOUT_MS,
+  ContextError,
   type ContextFetcher,
   type ContextRef,
   composeContext,
@@ -25,7 +26,10 @@ import {
   GATEWAY_TOKEN_SECRET,
   GitContextFetcher,
   loadDefaultContext,
+  PREVIEW_FILE_MAX_BYTES,
+  PREVIEW_TOTAL_MAX_BYTES,
   prepareContext,
+  previewContext,
   resolveContext,
   writeContext,
 } from "./context.js";
@@ -1412,5 +1416,421 @@ describe("git でのコンテキストの取得（PBI-6）", { timeout: 30_000 }
     );
     expect(readFileSync(join(prepared.dir, "CLAUDE.md"), "utf8")).toContain("規約");
     prepared.dispose();
+  });
+});
+
+describe("コンテキストのプレビュー（PBI-76）", () => {
+  /** 継承する2層と、MCP（stdio・ゲートウェイ経由・直接）・スキル（グループ・参照のファイル）・エージェントの設定。 */
+  const repos = (): Record<string, Record<string, string>> => ({
+    "https://example.com/company.git": {
+      "rules.md": "# 会社の規約",
+      "sacty-context.yaml": "locked:\n  mcp: [github]\n",
+      "skills/review/SKILL.md": "---\ndescription: 会社のレビュー観点\n---\n会社版",
+      "skills/review/references/a.md": "参照のファイル",
+      "skills/old/SKILL.md": "取り除かれる",
+      "mcp.yaml": [
+        "servers:",
+        "  github:",
+        "    command: server-github",
+        "    args: [--read-only]",
+        "    env:",
+        "      GITHUB_TOKEN: { secret: mcp-github }",
+        "      MODE: company",
+        "    tool_timeout_sec: 120",
+      ].join("\n"),
+      "agents/claude/settings.json": JSON.stringify({ permissions: { allow: ["Bash(ls)"] } }),
+      "agents/codex/config.toml": 'model_reasoning_summary = "concise"\n',
+      "agents/codex/rules/team.rules": 'prefix_rule(pattern=["ls"], decision="allow")\n',
+      "agents/claude/agents/reviewer.md": "---\nname: reviewer\n---\nレビューする",
+    },
+    "https://example.com/team.git": {
+      "sacty-context.yaml":
+        "extends: https://example.com/company.git#main\nremove:\n  skills: [old]\n  mcp: [github]\n",
+      "rules/01.md": "# チームの規約",
+      "skills/grp/local/SKILL.md": "---\ndescription: チームだけ\n---\nチーム版",
+      "mcp.yaml": [
+        "servers:",
+        "  docs:",
+        "    url: https://docs.example.com/mcp",
+        "    headers:",
+        "      Authorization: { secret: docs-token, prefix: 'Bearer ' }",
+        "      X-Team: team-a",
+        "    startup_timeout_sec: 45",
+        "  public:",
+        "    url: https://public.example.com/mcp",
+        "    via_gateway: false",
+        "    headers:",
+        "      X-Key: literal-value",
+        "  cloud:",
+        "    command: shadowed",
+      ].join("\n"),
+      "agents/claude/settings.json": JSON.stringify({ permissions: { allow: ["Bash(pwd)"] } }),
+    },
+  });
+  const root = { repo: "https://example.com/team.git" };
+  const routing = {
+    hostMcp: [{ name: "cloud", url: "http://host.docker.internal:5001/mcp/cloud" }],
+    gatewayOrigin: "http://host.docker.internal:5001",
+  };
+  /** ディレクトリの下のファイル（相対パス → 中身）。 */
+  const tree = (base: string): Record<string, string> => {
+    const out: Record<string, string> = {};
+    const walk = (rel: string) => {
+      for (const name of readdirSync(join(base, rel)).sort()) {
+        const path = rel ? `${rel}/${name}` : name;
+        if (statSync(join(base, path)).isDirectory()) walk(path);
+        else out[path] = readFileSync(join(base, path), "utf8");
+      }
+    };
+    walk("");
+    return out;
+  };
+  const containerDirOf = (runtime: "claude-code" | "codex") =>
+    runtime === "codex" ? "/home/agent/.codex" : "/home/agent/.claude";
+  /** 取得した場所を記録する（後片付けを確かめる）。 */
+  const recording = (files: Record<string, Record<string, string>>, outs: string[]) => {
+    const inner = new FakeFetcher(files);
+    return {
+      fetch: (ref: ContextRef, out: string) => {
+        outs.push(out);
+        return inner.fetch(ref, out);
+      },
+    } satisfies ContextFetcher;
+  };
+
+  for (const runtime of ["claude-code", "codex"] as const) {
+    it(`${runtime}：実行で置くファイル（パスと中身）と、プレビューのファイルが一致する（既定のコンテキストも含めて）`, async () => {
+      const prepared = await prepareContext(
+        new FakeFetcher(repos()),
+        root,
+        runtime,
+        containerDirOf(runtime),
+        undefined,
+        DEFAULT_CONTEXT_DIR,
+        routing.hostMcp,
+        routing.gatewayOrigin,
+      );
+      const placed = tree(prepared.dir);
+      const preview = await previewContext(
+        new FakeFetcher(repos()),
+        root,
+        runtime,
+        containerDirOf(runtime),
+        undefined,
+        DEFAULT_CONTEXT_DIR,
+        routing,
+      );
+      expect(Object.keys(placed).length).toBeGreaterThan(10);
+      expect(Object.fromEntries(preview.files.map((f) => [f.path, f.content]))).toEqual(placed);
+      expect(preview.files.every((f) => !f.binary && !f.truncated)).toBe(true);
+      // 秘密情報の参照・環境変数・警告・層も、実行と同じ
+      expect(preview.secrets.map(({ gatewayToken: _, ...s }) => s)).toEqual(
+        prepared.placed.secrets,
+      );
+      expect(preview.env).toEqual(prepared.placed.env ?? {});
+      expect(preview.warnings).toEqual(prepared.warnings);
+      expect(preview.mcp.map((m) => m.name)).toEqual(prepared.placed.mcpServers);
+      expect(preview.layers.map(({ locked: _l, remove: _r, ...l }) => l)).toEqual(prepared.layers);
+      prepared.dispose();
+    });
+  }
+
+  it("Claude Code：置くファイルと、どの層から来たか・locked・remove の効果・MCP の元の接続先を出す", async () => {
+    const preview = await previewContext(
+      new FakeFetcher(repos()),
+      root,
+      "claude-code",
+      "/home/agent/.claude",
+      undefined,
+      undefined,
+      routing,
+    );
+    // 偽物のコミットは URL から作る（先頭の7文字が、層の名前に付く）
+    const company = "https://example.com/company.git#main@httpsex";
+    const team = "https://example.com/team.git@httpsex";
+    expect(preview.files.map((f) => [f.path, f.from ?? "sacty", f.generated])).toEqual([
+      ["agents/reviewer.md", company, false],
+      ["skills/review/SKILL.md", company, false],
+      ["skills/review/references/a.md", company, false],
+      ["skills/local/SKILL.md", team, false],
+      ["CLAUDE.md", "sacty", true],
+      ["settings.json", "sacty", true],
+      ["mcp.json", "sacty", true],
+    ]);
+    expect(preview.layers).toEqual([
+      expect.objectContaining({
+        repo: "https://example.com/company.git",
+        ref: "main",
+        locked: { skills: [], mcp: ["github"], platforms: [] },
+      }),
+      expect.objectContaining({
+        repo: "https://example.com/team.git",
+        remove: { skills: ["old"], mcp: ["github"], platforms: [] },
+      }),
+    ]);
+    expect(preview.effects).toEqual([
+      { kind: "skills", name: "old", effect: "removed", by: team, of: company },
+      { kind: "mcp", name: "github", effect: "locked", by: company, of: company },
+    ]);
+    expect(preview.rules).toEqual([company, team]);
+    expect(preview.agentSettings).toEqual([company, team]);
+    expect(preview.skills).toEqual([
+      { name: "review", from: company },
+      { name: "local", from: team },
+    ]);
+    expect(preview.mcp).toEqual([
+      {
+        name: "github",
+        from: company,
+        agent: { command: "server-github", args: ["--read-only"] },
+        origin: { kind: "direct" },
+        tool_timeout_sec: 120,
+      },
+      {
+        name: "docs",
+        from: team,
+        agent: { url: "http://host.docker.internal:5001/ctx-mcp/docs" },
+        origin: {
+          kind: "gateway",
+          url: "https://docs.example.com/mcp",
+          headers: {
+            Authorization: { secret: "docs-token", prefix: "Bearer " },
+            "X-Team": "team-a",
+          },
+        },
+        startup_timeout_sec: 45,
+      },
+      {
+        name: "public",
+        from: team,
+        agent: { url: "https://public.example.com/mcp" },
+        origin: { kind: "direct" },
+      },
+      {
+        name: "cloud",
+        from: "sacty-gateway",
+        agent: { url: "http://host.docker.internal:5001/mcp/cloud" },
+        origin: { kind: "host" },
+      },
+    ]);
+    // 秘密情報は参照の名前だけ。ゲートウェイのトークンは、置き換えた形の見本（値は無い）
+    expect(preview.secrets).toEqual([
+      { env: "SACTY_MCP_SECRET_0", secret: "mcp-github", prefix: "", gatewayToken: false },
+      {
+        env: "SACTY_MCP_SECRET_1",
+        secret: GATEWAY_TOKEN_SECRET,
+        prefix: "Bearer ",
+        gatewayToken: true,
+      },
+      {
+        env: "SACTY_MCP_SECRET_2",
+        secret: GATEWAY_TOKEN_SECRET,
+        prefix: "Bearer ",
+        gatewayToken: true,
+      },
+    ]);
+    expect(preview.env).toEqual({ MCP_TIMEOUT: "45000" });
+    const mcp = preview.files.find((f) => f.path === "mcp.json")?.content ?? "";
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: 設定に書く参照の文字列そのもの
+    expect(mcp).toContain('"GITHUB_TOKEN": "${SACTY_MCP_SECRET_0}"');
+    // ゲートウェイ経由の元の接続先は、エージェントに置くファイルには書かない
+    expect(mcp).not.toContain("docs.example.com");
+    // ほかの人が書いた literal の値は、そのまま出る（画面で注記する）
+    expect(mcp).toContain("literal-value");
+    // ホストの MCP サーバーと同じ名前の層の MCP は、ホストのものを使い、警告を残す
+    expect(preview.warnings.map(ja)).toEqual([
+      expect.stringContaining(`${team} はMCP サーバー「github」を取り除こうとしましたが`),
+      `${team} の mcp.yaml の MCP サーバー「cloud」は、config.yaml の gateway.mcp_servers に同じ名前があるため、config.yaml のもの（ホストの MCP サーバー）を使いました。`,
+    ]);
+  });
+
+  it("Codex：AGENTS.md（スキルの一覧）・config.toml・skills・ルールのファイルを出す", async () => {
+    const preview = await previewContext(
+      new FakeFetcher(repos()),
+      root,
+      "codex",
+      "/home/agent/.codex",
+      undefined,
+      undefined,
+      routing,
+    );
+    expect(preview.runtime).toBe("codex");
+    expect(preview.files.map((f) => f.path)).toEqual([
+      "rules/team.rules",
+      "skills/review/SKILL.md",
+      "skills/review/references/a.md",
+      "skills/local/SKILL.md",
+      "AGENTS.md",
+      "config.toml",
+    ]);
+    const agents = preview.files.find((f) => f.path === "AGENTS.md")?.content ?? "";
+    expect(agents).toContain(
+      "- review：会社のレビュー観点（/home/agent/.codex/skills/review/SKILL.md）",
+    );
+    const toml = preview.files.find((f) => f.path === "config.toml")?.content ?? "";
+    expect(toml).toContain('model_reasoning_summary = "concise"');
+    expect(toml).toContain('url = "http://host.docker.internal:5001/ctx-mcp/docs"');
+    expect(toml).not.toContain("docs.example.com");
+    // Codex のプレビューには、Claude Code の設定を混ぜない
+    expect(preview.agentSettings).toEqual([expect.stringContaining("company.git")]);
+    expect(preview.env).toEqual({});
+  });
+
+  it("UTF-8 でないファイルは中身を出さず、大きいファイルは上限までにする（ちょうど上限なら省かない）", async () => {
+    const big = "あ".repeat(PREVIEW_FILE_MAX_BYTES); // 3 倍のバイト数
+    const inner = new FakeFetcher({
+      "https://example.com/ctx.git": {
+        "skills/big/SKILL.md": big,
+        "skills/big/exact.md": "a".repeat(PREVIEW_FILE_MAX_BYTES),
+      },
+    });
+    // バイナリ（NUL を含む・UTF-8 として不正）は、取得の後に置く
+    const fetcher: ContextFetcher = {
+      async fetch(ref, out) {
+        const result = await inner.fetch(ref, out);
+        writeFileSync(join(out, "skills/big/image.png"), Buffer.from([0x89, 0x50, 0x00, 0x01]));
+        writeFileSync(join(out, "skills/big/latin1.txt"), Buffer.from([0x63, 0x61, 0x66, 0xe9]));
+        return result;
+      },
+    };
+    const preview = await previewContext(
+      fetcher,
+      { repo: "https://example.com/ctx.git" },
+      "claude-code",
+      "/c",
+    );
+    const file = (path: string) => preview.files.find((f) => f.path === path);
+    expect(file("skills/big/image.png")).toEqual({
+      path: "skills/big/image.png",
+      from: expect.any(String),
+      generated: false,
+      size: 4,
+      binary: true,
+    });
+    expect(file("skills/big/latin1.txt")).toMatchObject({ size: 4, binary: true });
+    expect(file("skills/big/latin1.txt")?.content).toBeUndefined();
+    const skill = file("skills/big/SKILL.md");
+    expect(skill?.size).toBe(Buffer.byteLength(big));
+    expect(skill?.truncated).toBe(true);
+    expect(Buffer.byteLength(skill?.content ?? "")).toBeLessThanOrEqual(PREVIEW_FILE_MAX_BYTES + 3);
+    expect(skill?.content?.startsWith("あああ")).toBe(true);
+    const exact = file("skills/big/exact.md");
+    expect(exact?.truncated).toBeUndefined();
+    expect(exact?.content?.length).toBe(PREVIEW_FILE_MAX_BYTES);
+  });
+
+  it("中身の合計が上限を超えたら、それより後のファイルは中身を出さず、sacty が作るファイルは先に出す", async () => {
+    const chunk = "a".repeat(PREVIEW_FILE_MAX_BYTES);
+    const count = PREVIEW_TOTAL_MAX_BYTES / PREVIEW_FILE_MAX_BYTES + 2;
+    const skill: Record<string, string> = { "rules.md": "# 規約", "skills/big/SKILL.md": "x" };
+    for (let i = 0; i < count; i++) skill[`skills/big/f${String(i).padStart(2, "0")}.md`] = chunk;
+    const preview = await previewContext(
+      new FakeFetcher({ "https://example.com/ctx.git": skill }),
+      { repo: "https://example.com/ctx.git" },
+      "claude-code",
+      "/c",
+    );
+    const shown = preview.files.reduce((n, f) => n + Buffer.byteLength(f.content ?? ""), 0);
+    expect(shown).toBeLessThanOrEqual(PREVIEW_TOTAL_MAX_BYTES);
+    expect(preview.files.find((f) => f.path === "CLAUDE.md")?.content).toContain("# 規約");
+    const omitted = preview.files.filter((f) => f.omitted);
+    expect(omitted.length).toBeGreaterThanOrEqual(2);
+    for (const f of omitted) {
+      expect(f.content).toBeUndefined();
+      expect(f.size).toBe(PREVIEW_FILE_MAX_BYTES);
+    }
+    // 一覧には、すべてのファイルを出す（中身を省いても）
+    expect(preview.files).toHaveLength(count + 2);
+  });
+
+  it("途中までにしたファイルは、末尾で切れた文字だけを落とし、途中の不正なバイトは binary にする", async () => {
+    const inner = new FakeFetcher({ "https://example.com/ctx.git": { "skills/s/SKILL.md": "x" } });
+    const fetcher: ContextFetcher = {
+      async fetch(ref, out) {
+        const result = await inner.fetch(ref, out);
+        // 上限の直前から3バイトの文字が始まる（上限で切れる）
+        const cut = Buffer.concat([
+          Buffer.from("a".repeat(PREVIEW_FILE_MAX_BYTES - 1)),
+          Buffer.from("あいう"),
+        ]);
+        writeFileSync(join(out, "skills/s/cut.md"), cut);
+        // 先頭に不正なバイトがある大きいファイル
+        const broken = Buffer.concat([
+          Buffer.from([0xff]),
+          Buffer.from("a".repeat(PREVIEW_FILE_MAX_BYTES)),
+        ]);
+        writeFileSync(join(out, "skills/s/broken.md"), broken);
+        return result;
+      },
+    };
+    const preview = await previewContext(
+      fetcher,
+      { repo: "https://example.com/ctx.git" },
+      "claude-code",
+      "/c",
+    );
+    const cut = preview.files.find((f) => f.path === "skills/s/cut.md");
+    expect(cut).toMatchObject({ truncated: true });
+    expect(cut?.content).toBe("a".repeat(PREVIEW_FILE_MAX_BYTES - 1));
+    expect(preview.files.find((f) => f.path === "skills/s/broken.md")).toMatchObject({
+      binary: true,
+    });
+  });
+
+  it("誤り（形の誤り・取得の失敗）は、どの層のどのファイルのどの項目かを示して例外にし、取得したものは消す", async () => {
+    const outs: string[] = [];
+    const error = await previewContext(
+      recording(
+        {
+          "https://example.com/ctx.git": {
+            "mcp.yaml": "servers:\n  bad:\n    command: x\n    tool_timeout_sec: 0\n",
+          },
+        },
+        outs,
+      ),
+      { repo: "https://example.com/ctx.git", ref: "dev" },
+      "claude-code",
+      "/c",
+    ).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ContextError);
+    expect(ja((error as ContextError).text)).toContain(
+      "https://example.com/ctx.git#dev の mcp.yaml に誤りがあります（servers.bad.tool_timeout_sec）",
+    );
+    const pfError = await previewContext(
+      recording(
+        { "https://example.com/ctx.git": { "platforms.yaml": "platforms:\n  Bad_Name: {}\n" } },
+        outs,
+      ),
+      { repo: "https://example.com/ctx.git" },
+      "codex",
+      "/c",
+    ).catch((e: unknown) => e);
+    expect(ja((pfError as ContextError).text)).toContain(
+      "https://example.com/ctx.git# の platforms.yaml に誤りがあります（platforms.Bad_Name）",
+    );
+    const missing = await previewContext(
+      recording({}, outs),
+      { repo: "https://example.com/none.git" },
+      "codex",
+      "/c",
+    ).catch((e: unknown) => e);
+    expect(ja((missing as ContextError).text)).toContain(
+      "コンテキストリポジトリ（https://example.com/none.git#）を取得できません",
+    );
+    // 取得したリポジトリは、誤りのときも消す
+    expect(outs).toHaveLength(3);
+    for (const out of outs) expect(existsSync(out)).toBe(false);
+  });
+
+  it("成功したときも、取得したリポジトリは消す", async () => {
+    const outs: string[] = [];
+    await previewContext(recording(repos(), outs), root, "claude-code", "/c");
+    expect(outs).toHaveLength(2);
+    for (const out of outs) expect(existsSync(out)).toBe(false);
+  });
+
+  it("コンテキストが無く、ホストの MCP も無ければ、置くファイルは無い", async () => {
+    const preview = await previewContext(new FakeFetcher({}), undefined, "claude-code", "/c");
+    expect(preview).toMatchObject({ layers: [], files: [], mcp: [], secrets: [], warnings: [] });
   });
 });

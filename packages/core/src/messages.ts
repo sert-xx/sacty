@@ -300,6 +300,7 @@ const PARAMS = {
   }),
   "context.reservedSetting": z.object({ from: z.string(), file: z.string(), key: z.string() }),
   "context.hostPlatform": z.object({ from: z.string(), name: z.string() }),
+  "context.hostMcpOverride": z.object({ from: z.string(), name: z.string() }),
   "context.duplicateSkill": z.object({
     from: z.string(),
     name: z.string(),
@@ -745,6 +746,8 @@ const ja: MessageDictionary = {
     `${from} の ${file} の「${key}」は sacty が決める項目のため、使いませんでした。`,
   "context.hostPlatform": ({ from, name }) =>
     `${from} の platforms.yaml の外部 PF「${name}」は、config.yaml の gateway.platforms に同じ名前があるため、config.yaml のものを使いました。`,
+  "context.hostMcpOverride": ({ from, name }) =>
+    `${from} の mcp.yaml の MCP サーバー「${name}」は、config.yaml の gateway.mcp_servers に同じ名前があるため、config.yaml のもの（ホストの MCP サーバー）を使いました。`,
   "context.duplicateSkill": ({ from, name, path, usedPath }) =>
     `${from} のスキル「${name}」が skills/${usedPath} と skills/${path} の両方にあるため、skills/${usedPath} を使いました。`,
   "context.mcpTimeoutOverRun": ({ name, key, seconds, minutes }) =>
@@ -1123,6 +1126,8 @@ const en: MessageDictionary = {
     `"${key}" in ${file} of ${from} is set by sacty, so it was not used.`,
   "context.hostPlatform": ({ from, name }) =>
     `The external platform "${name}" in platforms.yaml of ${from} has the same name as one in gateway.platforms of config.yaml, so the one in config.yaml was used.`,
+  "context.hostMcpOverride": ({ from, name }) =>
+    `The MCP server "${name}" in mcp.yaml of ${from} has the same name as one in gateway.mcp_servers of config.yaml, so the one in config.yaml (the host MCP server) was used.`,
   "context.duplicateSkill": ({ from, name, path, usedPath }) =>
     `${from} has the skill "${name}" in both skills/${usedPath} and skills/${path}, so skills/${usedPath} was used.`,
   "context.mcpTimeoutOverRun": ({ name, key, seconds, minutes }) =>
