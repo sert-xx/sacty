@@ -20,6 +20,7 @@ import {
   buildStepPullRequestBody,
   buildStepPullRequestTitle,
   buildTicketPullRequestComment,
+  CHAT_LOGS_IN_PROMPT,
   CHAT_PROMPT_MAX,
   commentableLines,
   extractExport,
@@ -571,6 +572,112 @@ describe("オーケストレーターへの質問の指示（PBI-54）", () => {
       expect(prompt.endsWith("--- 質問 ---\nいまどこ？")).toBe(true);
       expect(prompt).toContain("run-1999");
       expect(prompt).not.toContain('run-0"');
+    }
+  });
+
+  it("各実行のセッションログの一覧に、どの工程・どの実行か、ログの無い・間を省いた・読めない実行を出す（PBI-91）", () => {
+    const { task, events, question } = ledger("本文", []);
+    const prompt = buildChatPrompt(task, events, question, {
+      runs: [
+        {
+          runId: "r1",
+          status: "available",
+          role: "orchestrator",
+          attempt: 1,
+          agentId: "claude",
+          runtime: "claude-code",
+          startedAt: "2026-10-14T00:00:00.000Z",
+          finishedAt: "2026-10-14T00:01:00.000Z",
+          result: "completed",
+          files: [
+            { path: "r1/meta.json", bytes: 300 },
+            { path: "r1/events.jsonl", bytes: 4096 },
+            { path: "r1/agent/projects/w/s.jsonl", bytes: 10 },
+          ],
+          truncated: ["events"],
+          agentFiles: { count: 1, truncated: 1, skipped: 0 },
+          unreadable: [],
+        },
+        {
+          runId: "r2",
+          status: "available",
+          role: "design",
+          attempt: 2,
+          agentId: "codex",
+          runtime: "codex",
+          startedAt: "2026-10-14T00:02:00.000Z",
+          finishedAt: "2026-10-14T00:03:00.000Z",
+          result: "failed（error）",
+          files: [{ path: "r2/meta.json", bytes: 300 }],
+          truncated: [],
+          agentFiles: {
+            count: 0,
+            truncated: 0,
+            skipped: 0,
+            notArchived: "container_not_confirmed",
+          },
+          unreadable: ["agent/sessions/x.jsonl"],
+        },
+        {
+          runId: "r3",
+          status: "unfinished",
+          role: "implement",
+          attempt: 1,
+          files: [],
+          truncated: [],
+          unreadable: [],
+        },
+        { runId: "r4", status: "missing", files: [], truncated: [], unreadable: [] },
+        { runId: "r5", status: "unreadable", files: [], truncated: [], unreadable: ["meta.json"] },
+      ],
+    });
+    expect(prompt).toContain("/sacty-logs に読み取り専用で置きました");
+    expect(prompt).toContain("丸ごと読まないでください");
+    expect(prompt).toContain(
+      "- [オーケストレーター・1回目] 実行 r1 claude（claude-code） 2026-10-14T00:00:00.000Z〜2026-10-14T00:01:00.000Z 結果：completed：ログ：meta.json 300B・events.jsonl 4KB。上限で間を省いた：events.jsonl。エージェントの元のファイル 1件（1件は上限で間を省いた）",
+    );
+    expect(prompt).toContain("- [設計・2回目] 実行 r2 codex（codex）");
+    expect(prompt).toContain(
+      "エージェントの元のファイルは残していない（コンテナの停止を確かめられなかった）",
+    );
+    expect(prompt).toContain("読めないファイル：agent/sessions/x.jsonl");
+    expect(prompt).toContain("- [実装・1回目] 実行 r3：終わりが記録されていない");
+    expect(prompt).toContain("- [（何の実行か不明）] 実行 r4：ログが無い");
+    expect(prompt).toContain("実行 r5：ログの記録を読めない");
+    // 台帳の前に置く（台帳が長くて切り詰められても残る）
+    expect(prompt.indexOf("--- 各実行のセッションログ")).toBeLessThan(
+      prompt.indexOf("--- タスク ---"),
+    );
+  });
+
+  it("実行がとても多くても、一覧は上限の長さに収め、新しい実行を残して、指示全体も上限に収める（PBI-91）", () => {
+    const runs = Array.from({ length: 1000 }, (_, i) => ({
+      runId: `run-${String(i).padStart(4, "0")}-${"x".repeat(36)}`,
+      status: "available" as const,
+      role: "implement",
+      attempt: i + 1,
+      agentId: "claude",
+      runtime: "claude-code",
+      startedAt: "2026-10-14T00:00:00.000Z",
+      finishedAt: "2026-10-14T00:01:00.000Z",
+      result: "completed",
+      files: [{ path: `run-${i}/meta.json`, bytes: 300 }],
+      truncated: [],
+      unreadable: [],
+    }));
+    for (const body of ["い".repeat(200_000), "短い本文"]) {
+      const { task, events, question } = ledger(body, []);
+      const prompt = buildChatPrompt(task, events, question, { runs });
+      expect(prompt.length).toBeLessThanOrEqual(CHAT_PROMPT_MAX);
+      expect(prompt).toContain("run-0999-");
+      expect(prompt).not.toContain("run-0000-");
+      expect(prompt).toMatch(/古い \d+ 件は省きました。\/sacty-logs\/index\.json で読めます/);
+      const section = prompt.slice(
+        prompt.indexOf("実行の一覧（始めた順）"),
+        prompt.indexOf("--- タスク ---"),
+      );
+      expect(section.length).toBeLessThan(CHAT_LOGS_IN_PROMPT + 200);
+      expect(prompt.endsWith("--- 質問 ---\nいまどこ？")).toBe(true);
     }
   });
 
