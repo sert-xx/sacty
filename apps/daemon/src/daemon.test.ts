@@ -6489,6 +6489,41 @@ describe("プロジェクト定義のエクスポート・インポート（PBI-
   });
 });
 
+describe("通知のメンションのエクスポート・インポート（PBI-69）", () => {
+  it("保存したメンションの設定は、エクスポートして別の sacty にインポートしても引き継がれ、形が違えば保存できない", () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service } = makeService(activity, [], { projects: new MemoryProjectStore() });
+    const notification = {
+      kind: "slack-api" as const,
+      url: "https://slack.com/api/chat.postMessage",
+      channel: "#sacty",
+      token: "slack-bot",
+      language: "en" as const,
+      mention: {
+        targets: ["U0123ABCD", "S0789EFGH", "@here"],
+        kinds: ["approval" as const, "completed" as const],
+      },
+    };
+    const pay = service.saveProject(undefined, { name: "決済", notification });
+    expect(pay.notification).toEqual(notification);
+    const exported = service.exportProject(pay.id);
+    expect(exported?.project.notification).toEqual(notification);
+    const other = makeService(new SqliteActivityStore(join(dir, "other.db")), [], {
+      projects: new MemoryProjectStore(),
+    });
+    const imported = other.service.importProject(JSON.parse(JSON.stringify(exported)));
+    expect(imported.notification).toEqual(notification);
+    expect(() =>
+      service.saveProject(pay.id, {
+        name: "決済",
+        notification: { ...notification, mention: { targets: ["@daiki"] } },
+      }),
+    ).toThrow();
+    expect(service.listProjects()[0]?.notification).toEqual(notification);
+    activity.close();
+  });
+});
+
 describe("コンテキストリポジトリ（PBI-6a）", () => {
   const out = (text: string): AgentOutcome => ({
     kind: "completed",

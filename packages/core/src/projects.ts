@@ -120,6 +120,43 @@ const SecretRefInput = z
   .trim()
   .regex(/^(?:[A-Za-z0-9._-]+|op:\/\/\S.*)$/, code("input.secretRef"));
 
+/** 通知の種類（PBI-38）。承認待ち・エスカレーション・一時停止・完了。 */
+export const NotificationKind = z.enum(["approval", "escalation", "paused", "completed"]);
+export type NotificationKind = z.infer<typeof NotificationKind>;
+
+/** メンションする通知の種類の既定（PBI-69）。人の出番の通知だけで、完了はメンションしない。 */
+export const DEFAULT_MENTION_KINDS: readonly NotificationKind[] = [
+  "approval",
+  "escalation",
+  "paused",
+];
+
+/**
+ * メンションする相手（PBI-69）。Slack では名前（@表示名）では届かないので、ID で書く。ユーザーはメンバー ID
+ * （U…・W…）、ユーザーグループは ID（S…）、ほかに @here・@channel。本文に埋め込むので、この形のほかは受け付けない。
+ */
+export const SlackMentionTarget = z
+  .string()
+  .trim()
+  .regex(/^(?:[UWS][A-Z0-9]{2,30}|@here|@channel)$/, code("input.slackMention"));
+export type SlackMentionTarget = z.infer<typeof SlackMentionTarget>;
+
+/** 通知のメンション（PBI-69）。相手と、メンションする通知の種類（書かなければ人の出番の通知だけ）。 */
+export const SlackMention = z.object({
+  targets: z
+    .array(SlackMentionTarget)
+    .min(1, code("input.slackMention"))
+    .max(20)
+    .transform((targets) => [...new Set(targets)]),
+  kinds: z
+    .array(NotificationKind)
+    .min(1, code("input.mentionKinds"))
+    .default([...DEFAULT_MENTION_KINDS])
+    // 並びを決めておく（保存した設定と画面の入力を比べるため）
+    .transform((kinds) => NotificationKind.options.filter((k) => kinds.includes(k))),
+});
+export type SlackMention = z.infer<typeof SlackMention>;
+
 /**
  * プロジェクトの通知先（PBI-38）。Slack API の形（chat.postMessage。Slack Proxy でも使える）か、Incoming Webhook。
  * 秘密情報（トークン・Webhook の URL）は名前か 1Password の参照で書き、値は書かない。
@@ -133,12 +170,15 @@ export const ProjectNotification = z.discriminatedUnion("kind", [
     /** Slack のトークン（Proxy では書かない）。 */
     token: SecretRefInput.optional(),
     language: z.enum(["ja", "en"]).default("ja"),
+    /** メンション（PBI-69）。無ければメンションしない。 */
+    mention: SlackMention.optional(),
   }),
   z.object({
     kind: z.literal("slack-webhook"),
     /** Incoming Webhook の URL（URL そのものが秘密なので、秘密情報として書く）。 */
     webhook: SecretRefInput,
     language: z.enum(["ja", "en"]).default("ja"),
+    mention: SlackMention.optional(),
   }),
 ]);
 export type ProjectNotification = z.infer<typeof ProjectNotification>;
@@ -364,7 +404,7 @@ export const ProjectExport = z
         name: ProjectDefinition.shape.name,
         targets: z.array(StrictProjectTarget).max(50).default([]),
         context: ContextSource.strict().optional(),
-        // 通知先（PBI-38）。秘密情報は名前か参照だけなので、エクスポートに含める
+        // 通知先（PBI-38）。秘密情報は名前か参照だけなので、エクスポートに含める（メンションの ID も。PBI-69）
         notification: ProjectNotification.optional(),
         // チケットの取り込み先（PBI-52）。秘密情報は含まない（接続先の名前だけ）
         tickets: z.array(TicketSourceConfig.strict()).max(20).optional(),

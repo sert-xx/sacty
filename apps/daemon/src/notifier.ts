@@ -3,10 +3,12 @@ import {
   gatePullRequest,
   isCompleted,
   message,
+  type NotificationKind,
   type PauseReason,
   type Project,
   type ProjectNotification,
   renderMessage,
+  type SlackMention,
   type StepKey,
   type Task,
 } from "@sacty/core";
@@ -23,7 +25,7 @@ import type { SecretStore } from "./secrets.js";
 /** 送れなかった理由の長さの上限（画面・ログに出す。秘密情報を伏せてから切り詰める）。 */
 const REASON_MAX = 400;
 
-export type NotificationKind = "approval" | "escalation" | "paused" | "completed";
+export type { NotificationKind };
 
 type Language = "ja" | "en";
 
@@ -160,6 +162,35 @@ export function notificationText(
   return [`:white_check_mark: ${title}`, ja ? "完了しました" : "Done"].join("\n");
 }
 
+/**
+ * メンションの書き方（PBI-69）。ユーザーは <@U…>、ユーザーグループは <!subteam^S…>、@here・@channel は
+ * <!here>・<!channel>。ID の形は設定の読み込みで確かめている（<>|& などは入らない）。
+ */
+export function mentionText(mention: SlackMention | undefined): string {
+  return (mention?.targets ?? [])
+    .map((target) =>
+      target === "@here"
+        ? "<!here>"
+        : target === "@channel"
+          ? "<!channel>"
+          : target.startsWith("S")
+            ? `<!subteam^${target}>`
+            : `<@${target}>`,
+    )
+    .join(" ");
+}
+
+/** 本文の先頭にメンションを付ける。kind が undefined（テストの通知）なら、種類によらず付ける（見え方を確かめるため）。 */
+export function withMention(
+  text: string,
+  mention: SlackMention | undefined,
+  kind: NotificationKind | undefined,
+): string {
+  if (!mention || (kind && !mention.kinds.includes(kind))) return text;
+  const mentions = mentionText(mention);
+  return mentions ? `${mentions} ${text}` : text;
+}
+
 /** 状態の変わり方から、通知することを決める（無ければ undefined）。 */
 export function notificationFor(
   before: Task | undefined,
@@ -205,7 +236,11 @@ export class SlackNotifier {
     return this.send(
       project,
       destination,
-      notificationText(task, kind, destination.language, this.deps.webUrl),
+      withMention(
+        notificationText(task, kind, destination.language, this.deps.webUrl),
+        destination.mention,
+        kind,
+      ),
     ).catch(() => {});
   }
 
@@ -219,7 +254,7 @@ export class SlackNotifier {
       destination.language === "ja"
         ? `:wave: sacty からのテストの通知です（プロジェクト「${escapeMrkdwn(project.name)}」）。人間の出番になると、ここに通知します。`
         : `:wave: Test notification from sacty (project "${escapeMrkdwn(project.name)}"). sacty will notify you here when it needs you.`;
-    await this.send(project, destination, text);
+    await this.send(project, destination, withMention(text, destination.mention, undefined));
   }
 
   /** 送れなかったプロジェクトの理由。 */

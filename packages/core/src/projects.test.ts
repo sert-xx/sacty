@@ -279,6 +279,120 @@ describe("通知先（PBI-38）", () => {
     expect(ProjectExport.parse(exported).project.notification).toEqual(api.notification);
   });
 
+  it("メンション（PBI-69）：ユーザー・ユーザーグループ・@here・@channel を複数書け、種類の既定は人の出番だけ", () => {
+    const parse = (mention: unknown, kind: "slack-api" | "slack-webhook" = "slack-api") =>
+      ProjectDefinition.safeParse({
+        name: "x",
+        notification:
+          kind === "slack-api"
+            ? {
+                kind,
+                url: "https://slack.com/api/chat.postMessage",
+                channel: "#a",
+                ...(mention === undefined ? {} : { mention }),
+              }
+            : { kind, webhook: "slack-webhook", ...(mention === undefined ? {} : { mention }) },
+      });
+    const both = parse({
+      targets: [" U0123ABCD ", "W0456", "S0789EFGH", "@here", "@channel", "U0123ABCD"],
+    });
+    expect(both.success && both.data.notification?.mention).toEqual({
+      // 前後の空白は落とし、重複は1つにする
+      targets: ["U0123ABCD", "W0456", "S0789EFGH", "@here", "@channel"],
+      kinds: ["approval", "escalation", "paused"],
+    });
+    // 1件だけでも、Webhook でも書ける。種類は決まった並びにそろえ、重複は1つにする
+    const one = parse(
+      { targets: ["@here"], kinds: ["completed", "approval", "completed"] },
+      "slack-webhook",
+    );
+    expect(one.success && one.data.notification?.mention).toEqual({
+      targets: ["@here"],
+      kinds: ["approval", "completed"],
+    });
+    // 書かなければ、これまでどおりメンションしない
+    const none = parse(undefined);
+    expect(none.success && none.data.notification).not.toHaveProperty("mention");
+
+    const reason = (mention: unknown) => {
+      const result = parse(mention);
+      expect(result.success).toBe(false);
+      return result.error?.issues.map((i) => i.message);
+    };
+    // 名前・小文字・本文を壊す文字・Slack の書き方そのもの・here（@ なし）は受け付けず、理由を示す
+    for (const bad of [
+      "@daiki",
+      "u0123abcd",
+      "U0123>",
+      "U01<!channel>",
+      "U01|x",
+      "U01&x",
+      "<@U0123ABCD>",
+      "here",
+      "C0123ABCD",
+      "U",
+      "",
+    ]) {
+      expect(reason({ targets: [bad] }), bad).toContain("input.slackMention");
+    }
+    // 相手が空・種類が空・知らない種類も、理由を示す
+    expect(reason({ targets: [] })).toContain("input.slackMention");
+    expect(reason({ targets: ["@here"], kinds: [] })).toContain("input.mentionKinds");
+    expect(parse({ targets: ["@here"], kinds: ["merged"] }).success).toBe(false);
+    expect(renderMessage({ code: "input.slackMention" }, "ja")).toContain("メンバー ID");
+    expect(renderMessage({ code: "input.mentionKinds" }, "en")).toContain("at least one");
+  });
+
+  it("メンションはエクスポート・インポートで引き継ぎ、メンションの無い過去の設定・エクスポートもそのまま読める（PBI-69）", () => {
+    const def = ProjectDefinition.parse({
+      name: "決済",
+      notification: {
+        kind: "slack-webhook",
+        webhook: "op://Work/Slack/webhook",
+        mention: { targets: ["S0789EFGH", "U0123ABCD"], kinds: ["completed"] },
+      },
+    });
+    const exported = exportProject({ ...def, id: "p", createdAt: "", updatedAt: "" });
+    const imported = ProjectExport.parse(JSON.parse(JSON.stringify(exported))).project;
+    expect(imported.notification).toEqual(def.notification);
+    expect(ProjectDefinition.parse(imported).notification?.mention).toEqual({
+      targets: ["S0789EFGH", "U0123ABCD"],
+      kinds: ["completed"],
+    });
+    // 保存した設定を読み直しても変わらない
+    expect(ProjectDefinition.parse(JSON.parse(JSON.stringify(def)))).toEqual(def);
+
+    // 過去の版のエクスポート（メンションの無い通知先）は、そのまま読める
+    const old = ProjectExport.parse({
+      sacty: "project",
+      version: 3,
+      project: {
+        name: "古い",
+        notification: {
+          kind: "slack-api",
+          url: "https://slack.com/api/chat.postMessage",
+          channel: "#a",
+        },
+      },
+    });
+    expect(old.project.notification).toEqual({
+      kind: "slack-api",
+      url: "https://slack.com/api/chat.postMessage",
+      channel: "#a",
+      language: "ja",
+    });
+    // インポートでも、メンションの形が違えば受け付けない
+    expect(
+      ProjectExport.safeParse({
+        ...exported,
+        project: {
+          ...exported.project,
+          notification: { ...exported.project.notification, mention: { targets: ["<!everyone>"] } },
+        },
+      }).success,
+    ).toBe(false);
+  });
+
   it("対象で指定したイメージは、リポジトリの対象の指定が Org の対象の指定より優先する（PBI-41）", () => {
     const project = (targets: unknown[]) =>
       ({ id: "p", ...ProjectDefinition.parse({ name: "x", targets }) }) as Project;

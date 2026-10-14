@@ -111,6 +111,17 @@ const ja = {
     notifyTest: "テストの通知を送る",
     notifySaveFirst: "保存してから送れます",
     notifySent: "送りました。Slack を確かめてください。",
+    mentionTitle: "メンション（任意）",
+    mentionTargets: "メンションする相手",
+    mentionHelp:
+      "Slack のメンバー ID（U…）、ユーザーグループの ID（S…）、@here、@channel を、カンマか空白で区切って書きます。@表示名では届きません。\nメンバー ID は、Slack のプロフィールの「その他」→「メンバー ID をコピー」で、ユーザーグループの ID は、グループのページの URL の末尾（S…）で調べられます。\nメンションは本文の先頭に付けます（テストの通知にも付けます）。",
+    mentionKinds: "メンションする通知",
+    mentionKind: {
+      approval: "承認待ち",
+      escalation: "エスカレーション",
+      paused: "一時停止",
+      completed: "完了",
+    },
     saved: "保存しました。",
     save: "保存する",
     create: "作成する",
@@ -233,6 +244,17 @@ const en: ProjectsMessages = {
     notifyTest: "Send a test notification",
     notifySaveFirst: "Save first to send",
     notifySent: "Sent. Check Slack.",
+    mentionTitle: "Mentions (optional)",
+    mentionTargets: "Who to mention",
+    mentionHelp:
+      "Write Slack member IDs (U…), user group IDs (S…), @here, or @channel, separated by commas or spaces. Display names don't notify anyone.\nCopy a member ID from the person's Slack profile (More → Copy member ID). A user group ID is at the end of the group page's URL (S…).\nMentions go at the start of the message (test notifications include them too).",
+    mentionKinds: "Mention in",
+    mentionKind: {
+      approval: "Approvals",
+      escalation: "Escalations",
+      paused: "Pauses",
+      completed: "Completions",
+    },
   },
 };
 
