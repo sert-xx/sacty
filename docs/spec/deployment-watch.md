@@ -40,7 +40,7 @@ PR の確認（60秒ごと）の終わりに、CI/CD を待っているタスク
 
 | 種類（`kind`） | API | 扱い |
 | --- | --- | --- |
-| `workflow` | `/repos/<owner>/<name>/actions/runs?head_sha=<コミット>` | 同じワークフロー（`workflow_id`）は、最新の試行（`run_attempt` の大きいもの）だけ |
+| `workflow` | `/repos/<owner>/<name>/actions/runs?head_sha=<コミット>` | 同じワークフロー（`workflow_id`）は、いちばん新しい実行だけ（`newerRun`：別の実行は `run_number`・`created_at`・ID の順で比べ、同じ実行の中では `run_attempt` で比べる） |
 | `check` | `/repos/<owner>/<name>/commits/<コミット>/check-runs` | GitHub Actions のもの（`app.slug` が `github-actions`）は除く（ワークフローの実行で見る） |
 | `status` | `/repos/<owner>/<name>/commits/<コミット>/status` の `statuses` | `pending` 以外は終わったものとする |
 
@@ -62,12 +62,13 @@ PR の確認（60秒ごと）の終わりに、CI/CD を待っているタスク
 
 `DeploymentCiFinished` に記録する実行・チェックは、失敗・終わっていないものを先に 50 件まで。
 
-ログの抜粋（`logExcerpt`）：ログの末尾 2,000,000 バイトまでを読み（切ったときは、先頭の切れた行を捨てる）、秘密情報を伏せてから、行の先頭の時刻を
+ログの抜粋（`logExcerpt`）：ログを読みながら末尾の `CI_LOG_BYTES`（2,000,000 バイト）だけを持ち（`readTail`。全体をメモリーに読み込まない。
+切ったときは、先頭の切れた行を捨てる）、秘密情報を伏せてから、行の先頭の時刻を
 除き、末尾の `CI_LOG_LINES`（80）行を取り、`CI_EXCERPT_MAX`（3000）文字に切り詰める（長ければ末尾を残す）。伏せるのは、使った GitHub の
 トークンと、よくある秘密情報の形（`redactLog`：GitHub・Slack・AWS のトークン、JWT、秘密鍵、`Authorization` の値、`password`・`token`・`api_key`
 などの値）。
 
-コード: `apps/daemon/src/service.ts`（`checkDeployments`・`pollDeploymentCi`・`deploymentSkill`）、`apps/daemon/src/ci.ts`（`GitHubCiStatus`・`redactLog`・`logExcerpt`・`CI_FAILURES_MAX`・`CI_LOG_LINES`・`CI_EXCERPT_MAX`）、`packages/core/src/events.ts`（`DeploymentCiFinished`・`isFailedCiCheck`・`DEPLOYMENT_CI_GRACE_MS`・`DEPLOYMENT_CI_TIMEOUT_MS`）
+コード: `apps/daemon/src/service.ts`（`checkDeployments`・`pollDeploymentCi`・`deploymentSkill`）、`apps/daemon/src/ci.ts`（`GitHubCiStatus`・`newerRun`・`readTail`・`redactLog`・`logExcerpt`・`CI_FAILURES_MAX`・`CI_LOG_LINES`・`CI_EXCERPT_MAX`）、`packages/core/src/events.ts`（`DeploymentCiFinished`・`isFailedCiCheck`・`DEPLOYMENT_CI_GRACE_MS`・`DEPLOYMENT_CI_TIMEOUT_MS`）
 
 ## スキルの探し方
 
