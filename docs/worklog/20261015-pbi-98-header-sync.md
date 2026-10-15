@@ -101,6 +101,7 @@ B の設定の画面なのにヘッダーが A のまま、の2つ。ほかに�
 | （PR のレビュー）デーモンにつながらず仮のヘッダー（`HeaderFallback`）を出したときは、タブに戻っても描き直さない | `HeaderFallback` にも `RefreshOnVisible` を置いた |
 | （PR のレビュー）`RefreshOnVisible` のテストが、要素があることしか確かめていない | `visibilitychange` の処理を `watchVisible` に分け、見える状態に戻ったときに1回だけ・隠れるほうでは呼ばない・止めた後は呼ばないことを確かめた |
 | （PR のレビュー）仕様書の3秒ごとの更新の対象が「実行中・実行待ち」だけになっていて、`isWorking` と合わない | `docs/spec/architecture.md` に `isWorking` の対象（待機のうち検証中・再現の確かめ中、判定がまだの変更の申し出）を書いた |
+| （PR の再レビュー）`watchVisible` を直接呼ぶテストと、`RefreshOnVisible` の要素があるかのテストに分かれていて、`useEffect` を消しても通る | `apps/web/src/components/auto-refresh.test.ts` を足した。テストは DOM の無い環境で動くので、新しい道具（jsdom など）は足さず、コンポーネントを呼んでから useEffect を実行し（マウントと同じ順）、偽の document で隠れた状態から見える状態に戻すと `router.refresh()` が1回呼ばれること・隠れるほうとアンマウントの後は呼ばれないことを確かめる。`useEffect` を消すと落ちることを確かめた |
 
 ### レビュー対応で確かめたこと
 
@@ -109,3 +110,5 @@ B の設定の画面なのにヘッダーが A のまま、の2つ。ほかに�
 - `npm run lint`（終了コード0）・`npm run typecheck`・`npx vitest run`（59ファイル・1386件が通過）・`npm run build`・
   `npx vitest run tests/docs`。
 - レビュー対応の変更は、ブラウザでは確かめていない（単体のテストで確かめた）。
+- 再レビューの対応の後：main（PR 103）を取り込み、`npm run lint`（終了コード0）・`npm run typecheck`・`npx vitest run`・`npm run build`・
+  `npx vitest run tests/docs` が通過（60ファイル・1390件、docs は69件）。
