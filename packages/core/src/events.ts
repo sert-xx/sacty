@@ -248,6 +248,13 @@ export const ReviewComment = z.object({
 });
 export type ReviewComment = z.infer<typeof ReviewComment>;
 
+/**
+ * PR のレビューの判定（PBI-111）。changes_required：修正が必要（`[要修正]` の指摘がある）、suggestions：提案あり（マージは可。
+ * `[提案]` の指摘だけ）、no_findings：指摘なし。差し戻しとして元のタスクに届けるのは changes_required だけ。
+ */
+export const ReviewVerdict = z.enum(["changes_required", "suggestions", "no_findings"]);
+export type ReviewVerdict = z.infer<typeof ReviewVerdict>;
+
 /** 変更の申し出に対する、ゴールガーディアンの判定。 */
 export const Verdict = z.enum(["approved", "rejected", "undecidable"]);
 export type Verdict = z.infer<typeof Verdict>;
@@ -570,10 +577,10 @@ const AgentRunCompleted = z.object({
     /** レビューの工程の、PR の行へのコメント（PBI-19）。 */
     reviewComments: z.array(ReviewComment).default([]),
     /**
-     * レビューの工程の評価（PBI-88）。true：マージの前に直すべき指摘がある（エージェントの評価か、行についての指摘がある）、
-     * false：そのままマージしてよい。評価を読めなければ無い。
+     * レビューの工程の判定（PBI-88・PBI-111）。エージェントの判定と、行についての指摘の重さ（`[要修正]` があれば修正が必要）から
+     * 決める。判定を読めず、`[要修正]` の指摘も無ければ無い。
      */
-    reviewChangesRequested: z.boolean().optional(),
+    reviewVerdict: ReviewVerdict.optional(),
     /** 再現の工程が申告した、不具合を再現するテスト（PBI-29）。 */
     reproductionTests: z.array(z.string()).default([]),
     /**
@@ -1372,13 +1379,19 @@ const ReviewTargetResolved = z.object({
     body: z.string().default(""),
     headCommit: z.string(),
     baseCommit: z.string(),
+    /** PR の作者の login（総評で @ を付けて知らせる。PBI-111）。読めなければ空。 */
+    author: z.string().default(""),
   }),
 });
 
-/** レビューの結果を、対象の PR にレビュー（COMMENT）として投稿した。これでタスクは完了する（PBI-19）。 */
+/**
+ * レビューの結果を、対象の PR にレビュー（COMMENT）として投稿した。これでタスクは完了する（PBI-19）。
+ * latestCommit は、投稿の直前に確かめた PR の先頭が、レビューしたコミットと違ったときの、その先頭（PBI-111。レビューは、
+ * レビューしたコミットに対して投稿し、その旨を本文に書く）。
+ */
 const PullRequestReviewPosted = z.object({
   type: z.literal("PullRequestReviewPosted"),
-  payload: z.object({ url: z.string() }),
+  payload: z.object({ url: z.string(), latestCommit: z.string().optional() }),
 });
 
 /**

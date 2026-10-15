@@ -360,15 +360,36 @@ AI は `guardian_agent`（無ければ `default_agent`）。実行ごとに `wor
 
 ## PR のレビューだけのタスク
 
-- 工程は `review` だけ。実行の前に、対象の PR の先頭と起点のコミットを記録する（`ReviewTargetResolved`）。PR の先頭のコミットのコードと、
-  差分の全体（`/sacty-review` に読み取り専用でマウント。指示には先頭の 100000 文字）を渡す。
-- エージェントには、マージの前に直すべき指摘があるかの評価（`sacty-review-verdict` の `changesRequested`）を付けさせる。評価のブロックは
-  投稿する本文から取り除き、`AgentRunCompleted` の `reviewChangesRequested` に残す（回ごとに `reviewVerdicts`）。行についての指摘
-  （行へのコメントと、本文に回したもの）があれば、評価に関わらず `true` にする。評価が無い・真偽値でなければ残さない（読めない）。
-  使うのは、sacty が作った PR のレビューを元のタスクに届けるかの判断だけ（[承認と差し戻し](approval.md#pr-の指摘の取り込み)）。
+- 工程は `review` だけ。実行の前に、対象の PR の先頭と起点のコミット、PR の作者の login を記録する（`ReviewTargetResolved`。作者を読めなければ空）。
+  PR の先頭のコミットのコードと、差分の全体（`/sacty-review` に読み取り専用でマウント。指示には先頭の 100000 文字）を渡す。
+- 投稿は sacty がする。指示には、既定のスキル `review-dispatch`（流れは `pr-review`）と `writing` を使うこと、エージェントは自分で投稿しない
+  （gh・GitHub の API で PR に書かない）こと、スキルと食い違えば指示の出力の形を優先することを書く。判定・作者への @ メンション・AI による
+  投稿である旨は sacty が付けるので、エージェントには書かせない。
+- 指摘の頭：マージの前に直すべきものは `[要修正]`、直すとよいものは `[提案]`。本文の指摘にはエージェントが付ける。行へのコメント
+  （`sacty-review-comments`）には重さ（`severity`：`must`・`should`。`nit` は `should` と同じ）を書かせ、sacty が本文の先頭に付ける
+  （本文の先頭に頭があれば付け直す。重さも頭も無ければ付けない）。差分の中に付けられる行が無い指摘は、人に確かめずに本文に書かせる。
+- 判定：エージェントに `sacty-review-verdict` の `verdict`（`changes_required`：修正が必要、`suggestions`：提案あり（マージは可）、
+  `no_findings`：指摘なし）を付けさせる。sacty は、行についての指摘に `[要修正]` があれば `changes_required`、指摘があるのに `no_findings`
+  なら `suggestions` に直す。行についての指摘があるだけでは `changes_required` にしない。判定が無い・決めた値でなく、`[要修正]` の指摘も無ければ
+  残さない（読めない）。レビューを完了できなかったときは、判定を付けさせない。判定のブロックは投稿する本文から取り除き、
+  `AgentRunCompleted` の `reviewVerdict` に残す（回ごとに `reviewVerdicts`）。sacty が作った PR のレビューを元のタスクに届けるのは、
+  `changes_required` と読めない回だけ（[承認と差し戻し](approval.md#pr-の指摘の取り込み)）。
+- 投稿する本文：目印、見出し「sacty のレビュー」、作者への @ メンションと判定の1行（作者が login の形でなければ @ を付けない。判定を読めなければ
+  そう書く）、エージェントの本文、AI がレビューした旨の固定の文の順。
+- 投稿の直前に、PR の先頭のコミットを確かめる（すでに投稿したレビューが目印で見つかったときは確かめない）。レビューしたコミットと違えば
+  （途中で push された）、レビューしたコミットに対して投稿し、どのコミットのレビューかと、「再レビュー」で最新をレビューできることを本文に書く。
+  そのときの先頭を `PullRequestReviewPosted` の `latestCommit` に残し、本文にも表示されない目印で残す。確かめられなければ（応答に先頭の
+  コミットが無い・空のときも）、投稿せずに一時停止する（`review.headUnknown`。再開すると確かめ直す）。投稿の後・記録の前に止まっていたら、
+  投稿したレビューの本文の目印から先頭を記録し直す。
 - 結果は、人の承認を待たずに PR にレビュー（`COMMENT`）として投稿する。行へのコメントが 422 で拒否されたら、本文に入れて投稿し直す。
   投稿できたら完了。
 - 再レビュー：投稿して完了したタスクは、`review` を実行待ちに戻して、最新のコミットをもう一度レビューできる（`ReviewRestarted`）。
+  前回の本文・行へのコメント・レビューしたコミット・投稿の時刻を `previousReview` に残す。指示には、前回の指摘と、前回の投稿の後の PR の作者の
+  返答（PR のレビュー・行へのコメント・通常のコメントのうち、作者の login のもの。sacty のレビューの目印で始まるものを除く。新しい 30 件、1件
+  2000 文字まで）を、指示とは分けた JSON のデータとして入れ、前回の指摘ごとに対応を確かめたか・未対応かを書かせる。返答を読めなければ（作者が
+  分からないときも）、そう書いて続け、理由をタスクと PR を添えてデーモンのログに出す（秘密の値は伏せる）。
+- 言語：sacty が付ける見出し・判定・注記・固定の文と、指摘の頭は日本語で固定する。エージェントの本文と指摘の文は、対象のリポジトリの文章の
+  決まり（スキル `writing` の順）に従わせ、決まりが無ければ日本語にする。
 - PR の確認（60秒ごと）で、終わっていないレビューのタスクの PR がマージ・クローズされていたら、タスクを中止する。
 
-コード: `apps/daemon/src/service.ts`（`reviewOnlySteps`・`resolveReviewTarget`・`postReview`・`rereview`・`checkReviewPullRequests`）、`apps/daemon/src/prompts.ts`（`PR_DIFF_IN_PROMPT`・`extractReviewComments`）
+コード: `apps/daemon/src/service.ts`（`reviewOnlySteps`・`resolveReviewTarget`・`reviewReplies`・`postReview`・`rereview`・`checkReviewPullRequests`）、`apps/daemon/src/prompts.ts`（`PR_DIFF_IN_PROMPT`・`extractReviewComments`・`buildReviewBody`・`MUST_TAG`・`SUGGESTION_TAG`）、`packages/core/src/events.ts`（`ReviewVerdict`）

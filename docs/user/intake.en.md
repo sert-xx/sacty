@@ -46,7 +46,13 @@ PRs are imported so that only their review is handed over ("PR review intake" in
   never as an ordinary task.
 - Imported PRs are only reviewed, without the Orchestrator, and the review is posted to the PR (as comments). No implementation or PR creation is done.
 - When the PR is merged or closed, review tasks that have not finished are cancelled.
+- The posted review starts with an @ mention of the PR author and the verdict ("修正が必要" (changes required), "提案あり（マージは可）" (suggestions only, OK to merge), or "指摘なし" (no findings)).
+  When the PR author is a bot (such as `dependabot[bot]`), there is no @ mention, only the verdict.
+  Findings start with `[要修正]` for those to fix before merging, and `[提案]` for those worth fixing.
+  The heading, verdict, and prefixes added by sacty are in Japanese. The findings follow the writing rules of the repository (Japanese when there are none).
+- If the PR is pushed to while it is being reviewed, the review is posted against the reviewed commit, and the body says which commit was reviewed.
 - When new commits are pushed, use "Review again" in the task details to review the latest commit again and post it.
+  A re-review says, for each previous finding, whether it is fixed or still open (it also reads the PR author's replies since the previous review).
 - Only open PRs are imported for review.
 - The same PR is never imported twice. A PR that already has a task (a task in any project, even a cancelled one) does not become a new task even if you add the label
   to it.
@@ -58,9 +64,9 @@ If the "Label for PR reviews" is set, sacty adds that label to every PR it creat
 (it does not add the label to import).
 
 - If the repository does not have the label, sacty creates it first. If the label cannot be added (permissions and so on), the PR is left as it is, and the reason appears in the task's Activity.
-- A labeled PR becomes, at the next intake, a separate "PR review only" task apart from the task that created it. The review is posted to the PR, and if it has findings that
-  should be fixed, they reach the creating task as PR findings, and the Goal Guardian decides where to go back to and fixes them. A review with nothing to fix (the PR can be merged
-  as is) is not delivered and does not request changes (the task waits for the PR to be merged).
+- A labeled PR becomes, at the next intake, a separate "PR review only" task apart from the task that created it. The review is posted to the PR, and if its verdict is changes
+  required, it reaches the creating task as PR findings, and the Goal Guardian decides where to go back to and fixes them. A review with suggestions only (OK to merge)
+  or no findings is not delivered and does not request changes (the task waits for the PR to be merged).
 - Even if the review label has the same name as the label to import, a labeled PR becomes a "PR review only" task only once, and never an
   implementation task. Its findings reach the creating task in the same way.
 - The label is added once per PR. Updating the PR with fixes does not add it again or create a new review task (to have it reviewed again,

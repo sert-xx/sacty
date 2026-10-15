@@ -78,7 +78,7 @@ export interface PullRequests {
     number: number;
     account: string;
     marker: string;
-  }): Promise<{ url: string } | undefined>;
+  }): Promise<{ url: string; body: string } | undefined>;
   /**
    * PR にレビュー（COMMENT。承認も変更の要求もしない）を、行へのコメントとあわせて投稿する（PBI-19）。
    * 行へのコメントの line は、commit のファイルの行番号（差分の右側）。
@@ -101,6 +101,8 @@ export type PullRequestInfo = {
   body: string;
   headSha: string;
   baseSha: string;
+  /** PR の作者の login（PBI-111）。読めなければ空。 */
+  author: string;
 };
 
 /** PR をレビューした sacty のタスクの回（PBI-88）。`PullRequests.feedback` の sactyReviews を参照。 */
@@ -395,6 +397,7 @@ export class GitHubPullRequests implements PullRequests {
       body: typeof json.body === "string" ? json.body : "",
       headSha: sha("head"),
       baseSha: sha("base"),
+      author: String((json.user as { login?: unknown } | null)?.login ?? ""),
     };
   }
 
@@ -412,7 +415,12 @@ export class GitHubPullRequests implements PullRequests {
         typeof r.body === "string" &&
         r.body.trimStart().startsWith(input.marker),
     );
-    return found ? { url: String(found.html_url ?? "") } : undefined;
+    return found
+      ? {
+          url: String(found.html_url ?? ""),
+          body: typeof found.body === "string" ? found.body : "",
+        }
+      : undefined;
   }
 
   async postReview(input: Parameters<PullRequests["postReview"]>[0]) {

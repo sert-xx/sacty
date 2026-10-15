@@ -29,7 +29,9 @@ Claude Code・Codex の設定の場所に置く。層は、sacty の既定のコ
 
 既定の Codex 設定では、同時に開く担当の上限は `max_threads = 16`、担当からの追加起動を防ぐ深さは `max_depth = 1` とする。
 
-コード: `apps/daemon/default-context/skills/review/review-dispatch/SKILL.md`、`apps/daemon/default-context/skills/review/review-dispatch/references/verification-run.md`、`apps/daemon/default-context/skills/review/review-execution/references/X-2.md`、`apps/daemon/default-context/agents/codex/config.toml`
+PR のレビュー（流れ `pr-review`）と、既定の `git` の PR への投稿は、依頼した側（呼び出したツールやプロンプト）が出力の形と投稿のしかたを決めていればそれに従い、エージェントは自分で投稿しない。決めていない（人が対話で投稿を頼んだ）ときだけ、`git` の手順で 1 件の `COMMENT` のレビューとして投稿する。指摘の頭は `[要修正]`・`[提案]`、判定は「修正が必要」「提案あり（マージは可）」「指摘なし」の3つ。差分の中に付けられる行が無い指摘は、確かめる相手（対話で依頼した人）がいれば投稿の前に扱いを確かめ、いなければ止まらずに総評に書く。sacty の PR のレビューのタスクは、指示で出力の形を決め、投稿は sacty がする（[タスクと工程](tasks-and-steps.md#pr-のレビューだけのタスク)）。既定のスキルは、あらゆる言語・分野のリポジトリと sacty の外の使い方に渡るので、sacty に限った書き方をしない。
+
+コード: `apps/daemon/default-context/skills/review/review-dispatch/SKILL.md`、`apps/daemon/default-context/skills/review/review-dispatch/references/pr-review.md`、`apps/daemon/default-context/skills/git/references/pr-review-posting.md`、`apps/daemon/default-context/skills/review/review-dispatch/references/verification-run.md`、`apps/daemon/default-context/skills/review/review-execution/references/X-2.md`、`apps/daemon/default-context/agents/codex/config.toml`
 
 ## 既定の文章用スキル
 

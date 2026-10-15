@@ -29,7 +29,9 @@ The default context has `review-dispatch` and `review-execution`, which split a 
 
 In the default Codex settings, the limit on reviewers open at the same time is `max_threads = 16`, and the depth that keeps reviewers from starting more agents is `max_depth = 1`.
 
-Code: `apps/daemon/default-context/skills/review/review-dispatch/SKILL.md`, `apps/daemon/default-context/skills/review/review-dispatch/references/verification-run.md`, `apps/daemon/default-context/skills/review/review-execution/references/X-2.md`, `apps/daemon/default-context/agents/codex/config.toml`
+For a PR review (the `pr-review` flow) and posting to a PR with the default `git` skill, if the requester (the calling tool or prompt) decides the output format and how to post, the agent follows it and does not post by itself. Only when it does not (a person asked in a conversation to post) does the agent post one `COMMENT` review following the `git` procedure. Findings start with `[要修正]` or `[提案]`, and there are three verdicts: changes required, suggestions only (OK to merge), and no findings. For a finding with no line in the diff to attach to, the agent asks how to handle it before posting if there is someone to ask (a person who asked in a conversation), and otherwise writes it in the summary without stopping. sacty's PR review tasks decide the output format in the instructions, and sacty does the posting ([Tasks and steps](tasks-and-steps.en.md#pr-review-only-tasks)). The default skills apply to repositories of any language or field and to use outside sacty, so they are not written for sacty only.
+
+Code: `apps/daemon/default-context/skills/review/review-dispatch/SKILL.md`, `apps/daemon/default-context/skills/review/review-dispatch/references/pr-review.md`, `apps/daemon/default-context/skills/git/references/pr-review-posting.md`, `apps/daemon/default-context/skills/review/review-dispatch/references/verification-run.md`, `apps/daemon/default-context/skills/review/review-execution/references/X-2.md`, `apps/daemon/default-context/agents/codex/config.toml`
 
 ## Default writing skill
 

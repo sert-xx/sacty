@@ -253,6 +253,8 @@ const PARAMS = {
   // PR のレビューだけを行う取り込み（PBI-44）
   "review.reviewOnly": z.object({ via: z.enum(["requested", "label", "sacty"]) }),
   "review.notRereviewable": null,
+  // 投稿の直前に PR の先頭を確かめられなかった（PBI-111）
+  "review.headUnknown": null,
   "github.ghMissing": null,
   "github.accountRequired": z.object({ project: z.string(), host: z.string() }),
   "github.accountUnavailable": z.object({ account: z.string(), host: z.string() }),
@@ -803,6 +805,8 @@ const ja: MessageDictionary = {
     `${via === "requested" ? "自分にレビューが依頼された" : via === "sacty" ? "sacty がほかのタスクで作った" : "レビュー用のラベルの付いた"} PR なので、レビューだけを行います（オーケストレーターは使いません）。`,
   "review.notRereviewable":
     "再レビューできるのは、レビューを PR に投稿して完了したタスクだけです。",
+  "review.headUnknown":
+    "投稿の前に、PR の先頭のコミットを確かめられませんでした（GitHub の応答にコミットがありません）。再開すると確かめ直します。",
   "github.ghMissing":
     "gh コマンドが見つかりません。GitHub CLI をインストールし、gh auth login でログインしてください。",
   "github.accountRequired": ({ project, host }) =>
@@ -1251,6 +1255,8 @@ const en: MessageDictionary = {
   "review.reviewOnly": ({ via }) =>
     `The PR ${via === "requested" ? "requests your review" : via === "sacty" ? "was created by sacty in another task" : "has the review label"}, so sacty only reviews it (the Orchestrator is not used).`,
   "review.notRereviewable": "Only a task that posted its review to the PR can be reviewed again.",
+  "review.headUnknown":
+    "Could not check the PR's head commit before posting (the GitHub response has no commit). Resuming checks again.",
   "github.ghMissing":
     "The gh command was not found. Install GitHub CLI and sign in with gh auth login.",
   "github.accountRequired": ({ project, host }) =>

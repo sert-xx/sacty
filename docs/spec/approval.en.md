@@ -158,10 +158,10 @@ Code: `apps/daemon/src/pr-template.ts` (`GitHubPullRequestTemplates`, `fillTempl
 - Posts by a sacty task that reviewed this PR (a task pointing to the PR: the PR it took in, or the PR URL in its body) are identified by that task's project account
   (which may differ from the original task's account) and the round in the marker (`<!-- sacty-review:<task ID>[:<round>] -->`). This is checked before the bot check, so
   the same applies even if that account is a bot (such as a GitHub App).
-  - For a review-only task of a PR sacty opened, taken in by the review label (`source.review: sacty`), rounds with comments to fix (rounds where `changesRequested` in `reviewVerdicts`
-    is not `false`; rounds whose assessment could not be read are also included so as not to drop comments) are imported as comments (to deliver a review by a task separate from the one that opened the PR
-    to the original task).
-  - Other rounds (rounds with no comments to fix, rounds not yet run) and posts by other review tasks are not imported, even if the account differs from the original task's
+  - For a review-only task of a PR sacty opened, taken in by the review label (`source.review: sacty`), rounds that require changes (rounds where `verdict` in `reviewVerdicts`
+    is `changes_required`; rounds whose verdict could not be read are also included so as not to drop comments) are imported as comments (to deliver a review by a task separate from the one that opened the PR
+    to the original task). How the verdict is decided is in [Tasks and steps](tasks-and-steps.en.md#pr-review-only-tasks).
+  - Other rounds (rounds with suggestions only, rounds with no findings, rounds not yet run) and posts by other review tasks are not imported, even if the account differs from the original task's
     (no Request changes; the Goal Guardian does not run either).
   - Re-reviews are judged per round. A marker copied by someone other than that task's account is treated as a person's comment.
 - Otherwise, posts by bots, and reviews and line comments posted by the original task's project account that start with sacty's review marker,

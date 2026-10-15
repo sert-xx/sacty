@@ -643,11 +643,46 @@ describe("レビューの工程（PBI-19）", () => {
       ...run("t1"),
       ev("t1", { type: "PullRequestReviewPosted", payload: { url: "https://x/pull/12#r" } }),
     ]).get("t1");
-    expect(task?.reviewTarget).toMatchObject({ number: 12, body: "" });
+    // 作者を読めなかった前の記録は空（PBI-111）
+    expect(task?.reviewTarget).toMatchObject({ number: 12, body: "", author: "" });
     expect(task?.steps).toEqual([{ key: "review", state: "done" }]);
-    expect(task?.reviewPost).toEqual({ url: "https://x/pull/12#r" });
+    expect(task?.reviewPost).toEqual({ url: "https://x/pull/12#r", at: task?.updatedAt });
     expect(task?.gate).toBeUndefined();
     expect(task?.approved.review).toBeUndefined();
+  });
+
+  it("判定を回ごとに残し、再レビューでは前回の指摘と投稿を前回のレビューとして残す（PBI-111）", () => {
+    const events = run("t7");
+    const completed = events[4] as Extract<ActivityEvent, { type: "AgentRunCompleted" }>;
+    completed.payload = {
+      ...completed.payload,
+      reviewComments: [{ path: "src/retry.ts", line: 2, body: "[要修正] 上限が無い" }],
+      reviewVerdict: "changes_required",
+    };
+    const posted = ev("t7", {
+      type: "PullRequestReviewPosted",
+      payload: { url: "https://x/pull/12#r1", latestCommit: "n".repeat(40) },
+    });
+    const first = project([...events, posted]).get("t7");
+    expect(first?.reviewVerdicts).toEqual([{ round: 1, verdict: "changes_required" }]);
+    expect(first?.reviewPost).toMatchObject({ latestCommit: "n".repeat(40) });
+    const restarted = project([
+      ...events,
+      posted,
+      ev("t7", { type: "ReviewRestarted", payload: {} }, "person"),
+    ]).get("t7");
+    expect(restarted?.previousReview).toEqual({
+      round: 1,
+      url: "https://x/pull/12#r1",
+      at: first?.reviewPost?.at,
+      headCommit: "h".repeat(40),
+      body: "# 評価",
+      comments: [{ path: "src/retry.ts", line: 2, body: "[要修正] 上限が無い" }],
+    });
+    expect(restarted?.reviewRound).toBe(2);
+    expect(restarted?.reviewPost).toBeUndefined();
+    expect(restarted?.reviewComments).toEqual([]);
+    expect(restarted?.reviewVerdicts).toEqual([{ round: 1, verdict: "changes_required" }]);
   });
 
   it("本文が空のレビュー（行へのコメントだけ）も、投稿すると完了する（レビュー指摘）", () => {
