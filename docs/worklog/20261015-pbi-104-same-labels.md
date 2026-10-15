@@ -2,7 +2,7 @@
 
 - 日付: 2026-10-15（UTC）
 - タスク: PBI-104
-- PR: なし
+- PR: #113
 - ブランチ: feat/issue-104-same-labels
 - 関係する ADR: [取り込むラベルとレビュー用のラベルに同じ名前を許す](../adr/20261015-0850-allow-same-intake-and-review-label.md)
 
