@@ -79,8 +79,9 @@ describe("コンテキストリポジトリの雛形（PBI-45）", () => {
           "https://example.com/context.git",
         ]);
         expect(prepared.placed.mcpServers).toEqual([]);
-        // 雛形のスキルの説明（skills/README.md）はスキルにならず、既定のスキル（review）だけが置かれる
+        // 雛形のスキルの説明（skills/README.md）はスキルにならず、既定のスキルだけが置かれる
         expect(readdirSync(join(prepared.dir, "skills"))).toEqual([
+          "git",
           "review-dispatch",
           "review-execution",
         ]);
@@ -99,6 +100,7 @@ describe("コンテキストリポジトリの雛形（PBI-45）", () => {
       expect(withTemplate.agentFiles).toEqual(defaultOnly.agentFiles);
       expect(withTemplate.skills).toEqual(defaultOnly.skills);
       expect(defaultOnly.skills.map((s) => s.name)).toEqual([
+        "git",
         "review-dispatch",
         "review-execution",
       ]);
