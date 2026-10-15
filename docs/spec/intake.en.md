@@ -70,7 +70,8 @@ takes in PRs.
   there is a request to the account chosen in the responsible project itself, even a sacty PR is taken in as `requested` (it does not reach the original task).
   - The number differs from the intake source (an Issue and so on) of the task that created the PR, so the PR is never skipped just because that task exists. The same PR is never
     taken in twice, so there is one review task per PR (updating the PR does not create a new review task).
-  - Reviews that the review task posts on the PR are taken in as comments on the PR of the task that created it ([Importing PR comments](approval.en.md#importing-pr-comments)).
+  - Reviews that the review task posts on the PR, in rounds that require changes (and rounds whose verdict could not be read), are taken in as comments on the PR of the task that created it
+    ([Importing PR comments](approval.en.md#importing-pr-comments)). Rounds with suggestions only or no findings are not taken in.
     The review task does not create PRs, so it does not itself add PRs that get the label.
 - For the responsible project, a repository target takes precedence over an org target (`responsibleProject`). The same Issue or PR (`<repository>#<number>`) is never taken in twice.
 - When a rate limit is hit (403 or 429 with 0 remaining, or `retry-after`), the other searches for that account are skipped.

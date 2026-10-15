@@ -8,6 +8,7 @@ import type {
   PauseReason,
   Remark,
   ReviewComment,
+  ReviewVerdict,
   StepKey,
   StepPlan,
   StepPullRequestKey,
@@ -34,6 +35,16 @@ type PayloadOf<T extends ParsedEventInput["type"]> = Extract<
 >["payload"];
 
 export type TestsRunResult = PayloadOf<"TestsRun"> & { at: string };
+
+/** 前回投稿したレビュー（PBI-111）。round は前回の回、headCommit は前回レビューしたコミット、at は投稿を記録した時刻。 */
+export type PreviousReview = {
+  round: number;
+  url: string;
+  at: string;
+  headCommit: string;
+  body: string;
+  comments: ReviewComment[];
+};
 export type FinalReview = PayloadOf<"FinalReviewed"> & { at: string };
 export type IntegrationReview = PayloadOf<"IntegrationReviewed"> & { at: string };
 
@@ -404,13 +415,20 @@ export type Task = {
   reproductionPending?: boolean;
   /** 最新の、再現の確かめの結果（PBI-29）。 */
   reproduction?: PayloadOf<"ReproductionChecked"> & { at: string };
-  /** レビューの結果を投稿した、PR のレビューの URL（PBI-19）。 */
-  reviewPost?: { url: string };
   /**
-   * レビューの工程の、回ごとの評価（PBI-88）。changesRequested が true：直すべき指摘がある（評価か、行についての指摘）、
-   * false：そのままマージしてよい、無い：評価を読めなかった。
+   * レビューの結果を投稿した、PR のレビューの URL と時刻（PBI-19）。latestCommit は、投稿の直前の PR の先頭が、レビューした
+   * コミットと違ったときの先頭（PBI-111）。
    */
-  reviewVerdicts?: { round: number; changesRequested?: boolean }[];
+  reviewPost?: { url: string; at: string; latestCommit?: string };
+  /**
+   * レビューの工程の、回ごとの判定（PBI-88・PBI-111）。verdict が無い回は、判定を読めなかった。
+   */
+  reviewVerdicts?: { round: number; verdict?: ReviewVerdict }[];
+  /**
+   * 前回投稿したレビュー（再レビューのとき。PBI-111）。前回の指摘（本文と行へのコメント）と、投稿の後の作者の返答を
+   * 再レビューのプロンプトに渡すため。
+   */
+  previousReview?: PreviousReview;
   /** 何回目のレビューか（「再レビュー」で2回目から。最初のレビューでは無い。PBI-44）。 */
   reviewRound?: number;
   /** オーケストレーターが決めた、テストのコマンド（PBI-25）。 */
@@ -632,15 +650,13 @@ export function applyEvent(
         if (event.payload.step === "design") task.testViewpoints = event.payload.testViewpoints;
         if (event.payload.step === "review") {
           task.reviewComments = event.payload.reviewComments;
-          // 回ごとの評価（PBI-88）。同じ回をやり直したら置き換える
+          // 回ごとの判定（PBI-88・PBI-111）。同じ回をやり直したら置き換える
           const round = task.reviewRound ?? 1;
           task.reviewVerdicts = [
             ...(task.reviewVerdicts ?? []).filter((v) => v.round !== round),
             {
               round,
-              ...(event.payload.reviewChangesRequested !== undefined
-                ? { changesRequested: event.payload.reviewChangesRequested }
-                : {}),
+              ...(event.payload.reviewVerdict ? { verdict: event.payload.reviewVerdict } : {}),
             },
           ];
         }
@@ -1066,13 +1082,28 @@ export function applyEvent(
       task.steps = task.steps.map((s) =>
         s.key === "review" ? { ...s, state: "done" as const } : s,
       );
-      task.reviewPost = { url: event.payload.url };
+      task.reviewPost = {
+        url: event.payload.url,
+        at: event.at,
+        ...(event.payload.latestCommit ? { latestCommit: event.payload.latestCommit } : {}),
+      };
       break;
     }
 
     case "ReviewRestarted":
-      // レビューを投稿して完了したタスクだけ。前回の対象・行へのコメント・投稿は持ち越さない（PBI-44）
+      // レビューを投稿して完了したタスクだけ。前回の対象・行へのコメント・投稿は持ち越さない（PBI-44）。前回の指摘は、
+      // 再レビューで対応を確かめるために残す（PBI-111）
       if (!canRereview(task)) throw new ActivityIntegrityError(event, "no posted review to redo");
+      if (task.reviewPost && task.reviewTarget) {
+        task.previousReview = {
+          round: task.reviewRound ?? 1,
+          url: task.reviewPost.url,
+          at: task.reviewPost.at,
+          headCommit: task.reviewTarget.headCommit,
+          body: task.outputs.review ?? "",
+          comments: task.reviewComments,
+        };
+      }
       task.steps = task.steps.map((s) =>
         s.key === "review" ? { ...s, state: "active" as const } : s,
       );

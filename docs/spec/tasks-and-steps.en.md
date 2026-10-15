@@ -322,15 +322,34 @@ Code: `apps/daemon/src/service.ts` (`askQuestion`, `answerQuestion`, `stageQuest
 
 ## PR-review-only tasks
 
-- The only step is `review`. Before running, the head of the target PR and the base commit are recorded (`ReviewTargetResolved`). The code at the PR's head commit and
-  the whole diff (mounted read-only at `/sacty-review`; the first 100000 characters in the instructions) are passed.
-- The agent is asked to add an assessment of whether there are comments to fix before merging (`changesRequested` in `sacty-review-verdict`). The assessment block is
-  removed from the posted body and kept in `reviewChangesRequested` of `AgentRunCompleted` (per round in `reviewVerdicts`). If there are line comments
-  (line comments and those moved into the body), it is set to `true` regardless of the assessment. If there is no assessment or it is not a boolean, nothing is kept (unreadable).
-  It is used only to decide whether to deliver a review of a PR sacty opened to the original task ([Approval and request changes](approval.en.md#importing-pr-comments)).
+- The only step is `review`. Before running, the head of the target PR, the base commit, and the PR author's login are recorded (`ReviewTargetResolved`; empty if the author cannot be read).
+  The code at the PR's head commit and the whole diff (mounted read-only at `/sacty-review`; the first 100000 characters in the instructions) are passed.
+- sacty does the posting. The instructions tell the agent to use the default skills `review-dispatch` (with the `pr-review` flow) and `writing`, not to post by itself
+  (not to write on the PR with gh or the GitHub API), and to give priority to the output format of the instructions when they conflict with the skills. sacty adds the verdict, the @ mention of the author,
+  and the statement that AI posted the review, so the agent does not write them.
+- Finding prefixes: `[要修正]` (must fix before merging) and `[提案]` (worth fixing). The agent adds them to findings in the body. For line comments
+  (`sacty-review-comments`), the agent writes the severity (`severity`: `must` or `should`; `nit` is treated as `should`) and sacty adds the prefix at the start of the comment body
+  (a prefix already at the start is replaced; with neither severity nor prefix, nothing is added). Findings with no line in the diff to attach to are written in the body without asking a person.
+- Verdict: the agent adds `verdict` in `sacty-review-verdict` (`changes_required`: changes required, `suggestions`: suggestions only (OK to merge),
+  `no_findings`: no findings). sacty raises it to `changes_required` if a line comment has `[要修正]`, and to `suggestions` if there are findings but the verdict is `no_findings`.
+  Line comments alone do not make it `changes_required`. If there is no verdict or it is not one of the values, and there is no `[要修正]` finding,
+  nothing is kept (unreadable). When the review could not be completed, the agent is told not to add a verdict. The verdict block is removed from the posted body and kept in
+  `reviewVerdict` of `AgentRunCompleted` (per round in `reviewVerdicts`). A review of a PR sacty opened is delivered to the original task only for rounds with
+  `changes_required` or an unreadable verdict ([Approval and request changes](approval.en.md#importing-pr-comments)).
+- Posted body: the marker, the heading "sacty のレビュー", one line with the @ mention of the author and the verdict (no @ if the author is not in the form of a login; says so if the verdict is unreadable),
+  the agent's body, and the fixed sentence saying that AI reviewed it, in this order.
+- Right before posting, the PR's head commit is checked (not when an already posted review is found by the marker). If it differs from the reviewed commit
+  (pushed in the meantime), the review is posted against the reviewed commit, and the body says which commit was reviewed and that "Re-review" reviews the latest one.
+  That head is kept in `latestCommit` of `PullRequestReviewPosted`. If it cannot be checked, the task pauses without posting (resuming checks again).
 - The result is posted to the PR as a review (`COMMENT`) without waiting for a person's approval. If line comments are rejected with 422, they are put into the body and posted again.
   The task completes once posted.
 - Re-review: a task that completed after posting can put `review` back to waiting to run and review the latest commit again (`ReviewRestarted`).
+  The previous body, line comments, reviewed commit, and posting time are kept in `previousReview`. The instructions include the previous findings and the PR author's
+  replies since the previous post (PR reviews, line comments, and regular comments by the author's login, excluding those starting with sacty's review marker; the newest 30, up to
+  2000 characters each) as JSON data separate from the instructions, and the agent writes, for each previous finding, whether it confirmed the fix or it is still open. If the replies cannot be read
+  (including when the author is unknown), the instructions say so and the review continues.
+- Language: the heading, verdict, note, and fixed sentence added by sacty, and the finding prefixes, are fixed in Japanese. The agent's body and findings follow the writing rules
+  of the target repository (in the order of the skill `writing`), and Japanese when there are none.
 - In the PR check (every 60 seconds), if the PR of an unfinished review task has been merged or closed, the task is canceled.
 
-Code: `apps/daemon/src/service.ts` (`reviewOnlySteps`, `resolveReviewTarget`, `postReview`, `rereview`, `checkReviewPullRequests`), `apps/daemon/src/prompts.ts` (`PR_DIFF_IN_PROMPT`, `extractReviewComments`)
+Code: `apps/daemon/src/service.ts` (`reviewOnlySteps`, `resolveReviewTarget`, `reviewReplies`, `postReview`, `rereview`, `checkReviewPullRequests`), `apps/daemon/src/prompts.ts` (`PR_DIFF_IN_PROMPT`, `extractReviewComments`, `buildReviewBody`, `MUST_TAG`, `SUGGESTION_TAG`), `packages/core/src/events.ts` (`ReviewVerdict`)

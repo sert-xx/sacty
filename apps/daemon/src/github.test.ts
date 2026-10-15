@@ -633,7 +633,7 @@ describe("PR のレビュー（PBI-19）", () => {
   const api = "https://api.github.com/repos/acme/app";
   const target = { repo: "https://github.com/acme/app", token: "ghp_secret", number: 12 };
 
-  it("PR の先頭・向き先のコミットと説明を読み、失敗は理由つきのエラーにする", async () => {
+  it("PR の先頭・向き先のコミットと説明・作者を読み、失敗は理由つきのエラーにする", async () => {
     const { impl, calls } = fakeFetch([
       {
         status: 200,
@@ -642,11 +642,14 @@ describe("PR のレビュー（PBI-19）", () => {
           html_url: "https://github.com/acme/app/pull/12",
           title: "再試行",
           body: null,
+          user: { login: "alice" },
           head: { sha: "h".repeat(40) },
           base: { sha: "b".repeat(40) },
         },
       },
       { status: 404, json: { message: "Not Found" } },
+      // 作者が読めない（削除されたアカウントなど）ときは空
+      { status: 200, json: { number: 12, user: null, head: {}, base: {} } },
     ]);
     const client = new GitHubPullRequests(impl);
     expect(await client.pullRequest(target)).toEqual({
@@ -656,12 +659,14 @@ describe("PR のレビュー（PBI-19）", () => {
       body: "",
       headSha: "h".repeat(40),
       baseSha: "b".repeat(40),
+      author: "alice",
     });
     expect(calls[0]).toMatchObject({ url: `${api}/pulls/12`, auth: "Bearer ghp_secret" });
     expect(errorText(await client.pullRequest(target).catch((e: unknown) => e))).toMatchObject({
       code: "github.failed",
       params: { action: "getPr", status: 404 },
     });
+    expect((await client.pullRequest(target)).author).toBe("");
   });
 
   it("コメントのレビュー（承認も変更の要求もしない）を、読んだコミットに投稿する", async () => {

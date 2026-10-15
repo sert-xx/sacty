@@ -556,6 +556,7 @@ class FakePulls implements PullRequests {
     body: "回数を環境変数で変えられるようにした",
     headSha: "h".repeat(40),
     baseSha: "b".repeat(40),
+    author: "alice",
   };
   prInfoFail?: string;
   prInfoRequests: { repo: string; token: string; number: number }[] = [];
@@ -4645,9 +4646,12 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       expect(pulls.reviews[0]?.body).toContain("src/retry.ts:1 上限が無い");
       const done = service.get(id)?.task;
       expect(done && isCompleted(done)).toBe(true);
-      expect(done?.reviewPost).toEqual({
+      expect(done?.reviewPost).toMatchObject({
         url: "https://github.com/acme/app/pull/12#pullrequestreview-1",
       });
+      // PR の先頭は変わっていない（投稿の直前に確かめる。PBI-111）
+      expect(done?.reviewPost?.latestCommit).toBeUndefined();
+      expect(pulls.reviews[0]?.body).not.toContain("このレビューは");
       // 調査ではないので Issue にはコメントしない。二度は投稿しない
       expect(service.queuedTaskIds()).toEqual([]);
       await service.runNext(id);
@@ -4776,9 +4780,59 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       expect(pulls.reviews).toHaveLength(2);
       await service.runNext(id);
       expect(pulls.reviews).toHaveLength(2);
-      expect(service.get(id)?.task.reviewPost).toEqual({
+      expect(service.get(id)?.task.reviewPost).toMatchObject({
         url: "https://github.com/acme/app/pull/12#pullrequestreview-2",
       });
+      activity.close();
+    });
+
+    it("投稿する本文の先頭に、PR の作者への @ メンションと判定を書く（PBI-111）", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const pulls = new FakePulls();
+      const { service } = makeService(
+        activity,
+        [out(`# 総評\n\n${block({ "sacty-review-verdict": { verdict: "suggestions" } })}`)],
+        { pulls, planner: reviewPlanner },
+      );
+      const id = importReviewIssue(service, "https://github.com/acme/app/pull/12");
+      await service.runNext(id);
+      expect(service.get(id)?.task.reviewTarget?.author).toBe("alice");
+      await service.runNext(id);
+      const body = pulls.reviews[0]?.body ?? "";
+      expect(body.split("\n").slice(0, 6)).toEqual([
+        `<!-- sacty-review:${id} -->`,
+        "## sacty のレビュー",
+        "",
+        "@alice 判定：提案あり（マージは可）",
+        "",
+        "# 総評",
+      ]);
+      activity.close();
+    });
+
+    it("投稿の直前に PR の先頭が変わっていたら、レビューしたコミットに投稿し、その旨を本文と作業履歴に残す（PBI-111）", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const pulls = new FakePulls();
+      const { service } = makeService(activity, [out("# 評価")], { pulls, planner: reviewPlanner });
+      const id = importReviewIssue(service, "https://github.com/acme/app/pull/12");
+      await service.runNext(id);
+      // レビューの間に push された。確かめられなければ、投稿せずに止まる（再開すると確かめ直す）
+      pulls.statusFail = "502 Bad Gateway";
+      await service.runNext(id);
+      expect(pulls.reviews).toHaveLength(0);
+      expect(service.get(id)?.task.status).toBe("paused");
+      pulls.statusFail = undefined;
+      pulls.states[12] = { state: "open", headSha: "n".repeat(40) };
+      service.resume(id, {});
+      await service.runNext(id);
+      expect(pulls.reviews).toHaveLength(1);
+      expect(pulls.reviews[0]?.commit).toBe("h".repeat(40));
+      expect(pulls.reviews[0]?.body).toContain(
+        "> このレビューは hhhhhhh のコードに対するものです。レビューの間に、PR の先頭が nnnnnnn に変わりました。",
+      );
+      const task = service.get(id)?.task;
+      expect(task && isCompleted(task)).toBe(true);
+      expect(task?.reviewPost?.latestCommit).toBe("n".repeat(40));
       activity.close();
     });
 
@@ -8370,6 +8424,98 @@ describe("PR のレビューだけを行う取り込み（PBI-44）", () => {
     // 回ごとに別の目印（前回のレビューを、今回の投稿済みと見なさない）
     expect(pulls.reviews[1]?.body).toContain(`<!-- sacty-review:${id}:2 -->`);
     expect(service.get(id)?.activity.some((e) => e.type === "ReviewRestarted")).toBe(true);
+    activity.close();
+  });
+
+  it("再レビューでは、前回の指摘と、前回の投稿の後の PR の作者の返答だけをプロンプトに渡す（PBI-111）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const pulls = new FakePulls();
+    pulls.prInfo = { ...pulls.prInfo, number: 9, url: "https://github.com/acme/app/pull/9" };
+    const settings = new MemorySettingsStore({ reviewLabel: "sacty-review" });
+    const first = [
+      "# 1回目",
+      `\`\`\`json\n${JSON.stringify({
+        "sacty-review-comments": [
+          { path: "src/retry.ts", line: 2, severity: "must", body: "上限が無い" },
+        ],
+        "sacty-review-verdict": { verdict: "changes_required" },
+      })}\n\`\`\``,
+    ].join("\n\n");
+    const { service, executor } = makeService(
+      activity,
+      [out(first), out("# 2回目"), out("# 3回目"), out("# 4回目")],
+      { pulls, settings },
+    );
+    const promptOf = (_: unknown, i: number) =>
+      executor.calls
+        .map((c) => c.command.join(" "))
+        .filter((c) => c.includes("レビューエージェント"))[i] ?? "";
+    const [task] = service.importIssues([pr(9, ["sacty-review"])]);
+    const id = task?.id ?? "";
+    await service.runNext(id);
+    await service.runNext(id);
+    // 最初のレビューには、再レビューの指示も返答の読み出しも無い
+    expect(promptOf(executor, 0)).not.toContain("--- 再レビュー ---");
+    expect(pulls.feedbackNumbers).toEqual([]);
+    const postedAt = Date.parse(service.get(id)?.task.reviewPost?.at ?? "");
+    const at = (offset: number) => new Date(postedAt + offset).toISOString();
+    const reply = (key: string, patch: Partial<PullRequestFeedback>): PullRequestFeedback => ({
+      key,
+      kind: "comment",
+      author: "alice",
+      at: at(60_000),
+      body: key,
+      ...patch,
+    });
+    pulls.feedbackBy[9] = [
+      reply("前回より前の作者のコメント", { at: at(-60_000) }),
+      reply("直しました", { kind: "review_comment", path: "src/retry.ts", line: 2 }),
+      reply("ほかの人のコメント", { author: "bob" }),
+      reply("目印", { body: `<!-- sacty-review:${id} -->\n写し` }),
+      // login の大文字・小文字は区別しない
+      reply("後続で対応します", { author: "Alice" }),
+    ];
+    service.rereview(id);
+    await service.runNext(id);
+    const prompt = promptOf(executor, 1);
+    expect(prompt).toContain("--- 再レビュー ---");
+    const json = JSON.parse(
+      prompt.split("\n").find((l) => l.startsWith('{"previousReview"')) ?? "{}",
+    );
+    expect(json.previousReview).toMatchObject({
+      body: "# 1回目",
+      commit: "h".repeat(40),
+      comments: [{ path: "src/retry.ts", line: 2, body: "[要修正] 上限が無い" }],
+    });
+    expect(json.authorReplies.map((r: { body: string }) => r.body)).toEqual([
+      "直しました",
+      "後続で対応します",
+    ]);
+    expect(json.authorReplies[0]).toMatchObject({ kind: "review_comment", path: "src/retry.ts" });
+    await service.runNext(id);
+    expect(pulls.reviews).toHaveLength(2);
+
+    // 返答を読めなくても、再レビューは止めずに、読めなかったことを伝える
+    pulls.feedback = async () => {
+      throw new Error("502 Bad Gateway");
+    };
+    service.rereview(id);
+    await service.runNext(id);
+    const unreadable = promptOf(executor, 2);
+    expect(unreadable).toContain("PR の作者の返答は読めませんでした");
+    // 前回（2回目）の本文を、前回の指摘として渡す
+    expect(unreadable).toContain('"body":"# 2回目"');
+    await service.runNext(id);
+    expect(pulls.reviews).toHaveLength(3);
+
+    // 作者が分からなければ、返答を選べないので読めなかったものとする
+    const before = pulls.feedbackNumbers.length;
+    pulls.feedback = FakePulls.prototype.feedback;
+    pulls.prInfo = { ...pulls.prInfo, author: "" };
+    service.rereview(id);
+    await service.runNext(id);
+    expect(promptOf(executor, 3)).toContain("PR の作者の返答は読めませんでした");
+    expect(pulls.feedbackNumbers.length).toBe(before);
     activity.close();
   });
 });
@@ -13981,7 +14127,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
           out(
             [
               "# 評価\n\n受け入れ条件が足りない",
-              block({ "sacty-review-verdict": { changesRequested: true } }),
+              block({ "sacty-review-verdict": { verdict: "changes_required" } }),
             ].join("\n\n"),
           ),
           rework("requirements", "要求要件で直せる"),
@@ -14014,7 +14160,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       // 評価のブロックは、投稿する本文に入れない
       expect(pulls.reviews[0]?.body).not.toContain("sacty-review-verdict");
       expect(taskOf(service, reviewId).reviewVerdicts).toEqual([
-        { round: 1, changesRequested: true },
+        { round: 1, verdict: "changes_required" },
       ]);
 
       // 元のタスクの PR の指摘の取り込みに、このレビューのタスクの投稿を含めるよう渡す
@@ -14048,9 +14194,37 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
           name: "指摘なし",
           review: [
             "# 評価\n\nマージしてよい",
-            block({ "sacty-review-verdict": { changesRequested: false } }),
+            block({ "sacty-review-verdict": { verdict: "no_findings" } }),
           ].join("\n\n"),
           imported: false,
+        },
+        {
+          // 提案だけなら、行へのコメントがあっても差し戻さない（PBI-111）
+          name: "提案あり",
+          review: [
+            "# 評価\n\nマージしてよい",
+            block({
+              "sacty-review-comments": [
+                { path: "src/retry.ts", line: 2, severity: "should", body: "名前を変える" },
+              ],
+            }),
+            block({ "sacty-review-verdict": { verdict: "suggestions" } }),
+          ].join("\n\n"),
+          imported: false,
+        },
+        {
+          // 判定が軽くても、[要修正] の指摘があれば差し戻す（PBI-111）
+          name: "要修正の指摘",
+          review: [
+            "# 評価",
+            block({
+              "sacty-review-comments": [
+                { path: "src/retry.ts", line: 2, severity: "must", body: "上限が無い" },
+              ],
+            }),
+            block({ "sacty-review-verdict": { verdict: "suggestions" } }),
+          ].join("\n\n"),
+          imported: true,
         },
         { name: "評価なし", review: "# 評価\n\n直す点がある", imported: true },
       ];
@@ -14085,11 +14259,14 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         if (c.imported) {
           expect(pulls.feedbackSactyReviews.at(-1), c.name).toEqual([reviewId]);
           expect(task.importedFeedback, c.name).toEqual(["review:50"]);
+          expect(taskOf(service, reviewId).reviewVerdicts, c.name).toEqual([
+            { round: 1, ...(c.name === "要修正の指摘" ? { verdict: "changes_required" } : {}) },
+          ]);
           expect(task.status, c.name).toBe("queued");
         } else {
           // 取り込まず、ゴールガーディアンも動かさず（費用がかからない）、承認待ちのまま
           expect(taskOf(service, reviewId).reviewVerdicts, c.name).toEqual([
-            { round: 1, changesRequested: false },
+            { round: 1, verdict: c.name === "提案あり" ? "suggestions" : "no_findings" },
           ]);
           expect(pulls.feedbackSactyReviews.at(-1), c.name).toBeUndefined();
           expect(task.importedFeedback, c.name).toEqual([]);
@@ -14109,7 +14286,11 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       const pulls = new FakePulls();
       pulls.prInfo = { ...pulls.prInfo, number: 7, url: "https://github.com/acme/app/pull/7" };
       const verdict = (changesRequested: boolean) =>
-        block({ "sacty-review-verdict": { changesRequested } });
+        block({
+          "sacty-review-verdict": {
+            verdict: changesRequested ? "changes_required" : "no_findings",
+          },
+        });
       const made = await start(
         [
           out("# 要求要件 v1"),
@@ -14140,8 +14321,8 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       await service.runNext(reviewId);
       expect(pulls.reviews).toHaveLength(2);
       expect(taskOf(service, reviewId).reviewVerdicts).toEqual([
-        { round: 1, changesRequested: false },
-        { round: 2, changesRequested: true },
+        { round: 1, verdict: "no_findings" },
+        { round: 2, verdict: "changes_required" },
       ]);
       pulls.feedbackBy[7] = [first(0), first(1)];
       await service.checkPullRequests();
@@ -14162,7 +14343,11 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       const pulls = new FakePulls();
       pulls.prInfo = { ...pulls.prInfo, number: 7, url: "https://github.com/acme/app/pull/7" };
       const verdict = (changesRequested: boolean) =>
-        block({ "sacty-review-verdict": { changesRequested } });
+        block({
+          "sacty-review-verdict": {
+            verdict: changesRequested ? "changes_required" : "no_findings",
+          },
+        });
       const made = await start(
         [
           out("# 要求要件 v1"),
@@ -14404,7 +14589,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
           out(
             [
               "# 評価\n\n受け入れ条件が足りない",
-              block({ "sacty-review-verdict": { changesRequested: true } }),
+              block({ "sacty-review-verdict": { verdict: "changes_required" } }),
             ].join("\n\n"),
           ),
           rework("requirements", "要求要件で直せる"),

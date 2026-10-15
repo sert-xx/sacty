@@ -101,6 +101,8 @@ export type PullRequestInfo = {
   body: string;
   headSha: string;
   baseSha: string;
+  /** PR の作者の login（PBI-111）。読めなければ空。 */
+  author: string;
 };
 
 /** PR をレビューした sacty のタスクの回（PBI-88）。`PullRequests.feedback` の sactyReviews を参照。 */
@@ -395,6 +397,7 @@ export class GitHubPullRequests implements PullRequests {
       body: typeof json.body === "string" ? json.body : "",
       headSha: sha("head"),
       baseSha: sha("base"),
+      author: String((json.user as { login?: unknown } | null)?.login ?? ""),
     };
   }
 
