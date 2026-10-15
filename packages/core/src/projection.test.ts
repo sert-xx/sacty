@@ -1062,3 +1062,54 @@ describe("マージの後の監視（PBI-89）", () => {
     expect(done?.budget.usedUsd).toBe(0.5);
   });
 });
+
+describe("テストの仕組みが無いタスクの検証（PBI-94）", () => {
+  const implemented = (taskId: string, noTestsReason?: string, testCommand?: string) => [
+    created(taskId),
+    ev(taskId, {
+      type: "StepsChosen",
+      payload: {
+        steps: ["implement", "pr"],
+        ...(noTestsReason ? { noTestsReason } : {}),
+        ...(testCommand ? { testCommand } : {}),
+      },
+    }),
+    ev(taskId, {
+      type: "AgentRunStarted",
+      payload: { runId: "r1", step: "implement", agentId: "a", authMode: "subscription" },
+    }),
+    ev(taskId, {
+      type: "AgentRunCompleted",
+      payload: {
+        runId: "r1",
+        step: "implement",
+        agentId: "a",
+        authMode: "subscription",
+        usage,
+        costUsd: 0,
+        estimated: true,
+        output: "# 実装",
+        testCommand: "make test",
+      },
+    }),
+  ];
+  const skipped = (taskId: string) => ev(taskId, { type: "TestsSkipped", payload: {} });
+
+  it("テストの無い根拠を持つタスクだけが、テストを飛ばして最終レビューへ進める", () => {
+    seq = 0;
+    const task = project([...implemented("t1", "テストが無い"), skipped("t1")]).get("t1");
+    expect(task?.noTestsReason).toBe("テストが無い");
+    expect(task?.addedTestCommand).toBe("make test");
+    expect(task?.verification).toBe("tests_passed");
+    expect(task?.testsSkippedAt).toBe("2026-10-10T00:00:00.000Z");
+    expect(task?.lastTests).toBeUndefined();
+    expect(() => project([...implemented("t2"), skipped("t2")])).toThrow(/cannot be skipped/);
+  });
+
+  it("テストのコマンドがあれば、テストの無い根拠は持たない", () => {
+    seq = 0;
+    const task = project(implemented("t1", "テストが無い", "npm test")).get("t1");
+    expect(task?.testCommand).toBe("npm test");
+    expect(task?.noTestsReason).toBeUndefined();
+  });
+});

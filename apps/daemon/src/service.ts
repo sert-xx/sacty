@@ -248,6 +248,7 @@ import {
   sharedComposeRunDir,
 } from "./shared-compose.js";
 import { templateTask } from "./task-templates.js";
+import { findTestFiles, noTestsStop } from "./test-files.js";
 import { type FoundTicket, type TicketClient, ticketErrorText } from "./tickets.js";
 
 /**
@@ -1634,6 +1635,7 @@ export class TaskService {
       // リポジトリの無いまま進めるので、リポジトリのコードに関わる決めごとは使わない
       const {
         testCommand: _testCommand,
+        noTestsReason: _noTestsReason,
         baseBranch: _baseBranch,
         services: _services,
         servicesReason: _servicesReason,
@@ -2257,6 +2259,7 @@ export class TaskService {
         reason: chosen.reason,
         fallback: false,
         ...(chosen.testCommand ? { testCommand: chosen.testCommand } : {}),
+        ...(chosen.noTests ? { noTestsReason: chosen.noTests } : {}),
         ...(chosen.investigation ? { investigation: chosen.investigation } : {}),
         ...(chosen.images ? { images: chosen.images } : {}),
         ...(chosen.imageReason ? { imageReason: chosen.imageReason } : {}),
@@ -3610,17 +3613,25 @@ export class TaskService {
           detail: rebased.message,
         });
       }
+      // テストの仕組みが無いという判断（PBI-94）を確かめる。使えなければ、テストのコマンドを決められなかったものとして
+      // 記録せずに止める（再開しても、テストを飛ばして通らないように）
+      const noTests = this.checkNoTests(latest, chosen);
+      if (noTests.stop) delete chosen.noTestsReason;
       events.push({
         actor: review ? "sacty" : "orchestrator",
         event: { type: "StepsChosen", payload: chosen },
       });
-      // 実装を含むのにテストのコマンドが分からなければ、検証できないので費用をかける前に止める（PBI-25）
-      if (chosen.steps.includes("implement") && !chosen.testCommand) {
+      // 実装を含むのにテストのコマンドが分からなければ、検証できないので費用をかける前に止める（PBI-25）。
+      // テストの仕組みが無いと判断し、それを確かめられたなら止めない（PBI-94）
+      if (chosen.steps.includes("implement") && !chosen.testCommand && !chosen.noTestsReason) {
         events.push({
           actor: "sacty",
           event: {
             type: "TaskPaused",
-            payload: { reason: "error", message: message("orchestrator.testCommandUnknown") },
+            payload: {
+              reason: "error",
+              message: noTests.stop ?? message("orchestrator.testCommandUnknown"),
+            },
           },
         });
       }
@@ -3992,8 +4003,39 @@ export class TaskService {
       outcome.output,
       new Set(latest.remarks.filter((r) => r.step === step && !r.voided).map((r) => r.id)),
       changeableSteps(latest, step),
+      // テストのコマンドの申告を読むのは、テストの仕組みが無いタスクの実装の工程だけ（PR #105 再レビュー指摘）
+      { testCommand: step === "implement" && Boolean(latest.noTestsReason) },
     );
-    const { responses, testViewpoints, proposal, testMap } = extracted;
+    const { responses, testViewpoints, proposal, testMap, testCommand } = extracted;
+    // テストの仕組みが無いタスクで、テストのコマンドの申告の形が正しくなければ、申告が無いものとして進めない
+    // （用意したテストを飛ばして通らないように）。止めて、再開すると実装をやり直す（PR #105 レビュー指摘）
+    if (step === "implement" && latest.noTestsReason && extracted.testCommandInvalid) {
+      const failure = message("implement.testCommandInvalid");
+      this.append(latest, [
+        {
+          actor: "sacty",
+          event: {
+            type: "AgentRunFailed",
+            payload: {
+              runId,
+              step,
+              agentId: agent.id,
+              costUsd,
+              estimated,
+              usage: outcome.usage,
+              reason: "error",
+              message: failure,
+            },
+          },
+        },
+        {
+          actor: "sacty",
+          event: { type: "TaskPaused", payload: { reason: "error", message: failure } },
+        },
+      ]);
+      this.warnIfNeeded(this.mustGet(task.id));
+      return;
+    }
     // レビューの工程は、PR の差分に含まれる行へのコメントを取り出す（差分の外のものは本文に入れる）
     const review =
       step === "review" ? extractReviewComments(extracted.output, reviewDiff ?? "") : undefined;
@@ -4017,6 +4059,8 @@ export class TaskService {
             responses,
             ...(step === "design" ? { testViewpoints } : {}),
             ...(step === "implement" ? { testMap } : {}),
+            // テストの仕組みが無いタスクで、実装がテストの仕組みを用意したときだけ、そのコマンドを使う（PBI-94）
+            ...(step === "implement" && latest.noTestsReason && testCommand ? { testCommand } : {}),
             ...(review ? { reviewComments: review.comments } : {}),
             ...(review?.changesRequested !== undefined
               ? { reviewChangesRequested: review.changesRequested }
@@ -4394,10 +4438,13 @@ export class TaskService {
       return;
     }
     const repo = target.repo;
-    const testCommand = repo.testCommand;
+    // テストの仕組みが無いタスク（PBI-94）は、実装が用意して申告したテストのコマンドがあれば、それで検証する
+    const testCommand =
+      repo.testCommand ?? (task.noTestsReason ? task.addedTestCommand : undefined);
     // テストのイメージが images から消えていれば、テストを実行せずに理由を示して止める（PBI-41）
     const testImage = resolveImage(config.config, task.images?.implement ?? task.images?.reproduce);
-    if (!testImage.ok) {
+    // テストを飛ばすタスク（PBI-94）は、テストのイメージを使わない
+    if (!testImage.ok && (testCommand || !task.noTestsReason)) {
       this.append(task, [
         {
           actor: "sacty",
@@ -4412,8 +4459,9 @@ export class TaskService {
       ]);
       return;
     }
-    // テストのコマンドはオーケストレーターが決める（PBI-25）。分からなければ検証できないので止める
-    if (!testCommand) {
+    // テストのコマンドはオーケストレーターが決める（PBI-25）。分からなければ検証できないので止める。
+    // テストの仕組みが無いタスク（PBI-94）は、止めずにテストを飛ばし、最終レビューで目的から判定する
+    if (!testCommand && !task.noTestsReason) {
       this.append(task, [
         {
           actor: "sacty",
@@ -4437,7 +4485,12 @@ export class TaskService {
           : [REQUIREMENTS_VIEWPOINT];
 
     let current = task;
-    if (current.verification === "pending") {
+    if (current.verification === "pending" && !testCommand) {
+      current = this.append(current, [
+        { actor: "sacty", event: { type: "TestsSkipped", payload: {} } },
+      ]);
+    }
+    if (current.verification === "pending" && testCommand) {
       const mapped = new Set(current.testMap.map((m) => m.viewpointId));
       const unmappedViewpoints = viewpointIds.filter((id) => !mapped.has(id));
       // 人間が止めたなら、テストのコンテナを起動しない（再開するとテストからやり直す）
@@ -4470,7 +4523,9 @@ export class TaskService {
         return;
       }
       const result = ran.result;
-      const passed = result.exitCode === 0 && unmappedViewpoints.length === 0;
+      // テストの仕組みが無いタスク（PBI-94）は、観点にテストが対応していないことでは不合格にしない
+      const passed =
+        result.exitCode === 0 && (unmappedViewpoints.length === 0 || Boolean(task.noTestsReason));
       current = this.append(current, [
         {
           actor: "sacty",
@@ -4586,6 +4641,22 @@ export class TaskService {
     ]);
     if (review.passed) this.checkBudget(reviewed);
     else this.pauseIfVerificationKeepsFailing(reviewed);
+  }
+
+  /**
+   * オーケストレーターの「テストの仕組みが無い」という判断（PBI-94）を確かめる。判断が無い・テストのコマンドがある・
+   * 実装を含まない組み合わせなら確かめない。不具合の修正を選んだ（再現はテストで確かめる）・起点のコードにテストのファイルが
+   * 見つかった・確かめきれなかったなら、止める理由を返す（黙ってテストなしで通さないための歯止め）。
+   */
+  private checkNoTests(task: Task, chosen: ChosenSteps): { stop?: DaemonText } {
+    const reason = chosen.noTestsReason;
+    if (!reason || chosen.testCommand || !chosen.steps.includes("implement")) return {};
+    if (chosen.steps.includes("reproduce")) {
+      return { stop: message("orchestrator.bugfixNeedsTests", { reason }) };
+    }
+    // 工程を選ぶ前なので、作業領域は起点のコードのまま
+    const stop = noTestsStop(reason, findTestFiles(this.repoDir(task)));
+    return stop ? { stop } : {};
   }
 
   /** タスクの対象リポジトリ（リポジトリの URL）。PR を作るリポジトリ。 */
