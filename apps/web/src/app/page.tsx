@@ -3,22 +3,16 @@ import Link from "next/link";
 import { Suspense } from "react";
 import { AutoRefresh } from "@/components/auto-refresh";
 import { DaemonError } from "@/components/daemon-error";
-import { NewTaskDialog } from "@/components/new-task-dialog";
+import { NewTask, NewTaskPlaceholder } from "@/components/new-task";
 import { StatusLabel, StepChips } from "@/components/task-bits";
 import { getMessages } from "@/i18n/server";
 import { currentProjectId, resolveProject } from "@/lib/current-project";
-import {
-  DaemonUnavailableError,
-  getStatus,
-  listProjectRepositories,
-  listProjects,
-  listTasks,
-} from "@/lib/daemon";
+import { DaemonUnavailableError, getStatus, listProjects, listTasks } from "@/lib/daemon";
 import { isWorking, needsPerson, personAction, statusText } from "@/lib/labels";
 import { withSubtasks } from "@/lib/subtasks";
 
 export default async function TasksPage() {
-  const m = (await getMessages()).tasks;
+  const { tasks: m, forms } = await getMessages();
   return (
     <>
       <div className="flex flex-wrap items-end justify-between gap-4">
@@ -28,7 +22,9 @@ export default async function TasksPage() {
           </Suspense>
           <h1 className="text-2xl font-bold">{m.title}</h1>
         </div>
-        <Suspense fallback={null}>
+        {/* 表示しているプロジェクトを読むまでは、同じ大きさの押せないボタンを出す（ボタンを最初の表示から出し、
+            位置をずらさない。PBI-109） */}
+        <Suspense fallback={<NewTaskPlaceholder label={forms.task.create} />}>
           <NewTask />
         </Suspense>
       </div>
@@ -60,30 +56,6 @@ async function projectTasks() {
   ]);
   const project = resolveProject(projects, id);
   return tasks.filter((t) => t.projectId === project?.id);
-}
-
-/** タスクの作成。表示しているプロジェクトを、作成先としてフォームに固定する。 */
-async function NewTask() {
-  try {
-    const project = resolveProject(await listProjects(), await currentProjectId());
-    if (!project) return null;
-    // 対象リポジトリの候補（Org の対象は gh で読む。PBI-25）。読めなかった Org は理由を出す
-    const [{ repositories, errors }, m] = await Promise.all([
-      listProjectRepositories(project.id),
-      getMessages(),
-    ]);
-    return (
-      <NewTaskDialog
-        projectId={project.id}
-        projectName={project.name}
-        repositories={repositories}
-        hasTargets={project.targets.length > 0}
-        problems={errors.map((e) => m.forms.task.listFailed(e.org, m.labels.text(e.message)))}
-      />
-    );
-  } catch {
-    return null;
-  }
 }
 
 async function ProjectName() {

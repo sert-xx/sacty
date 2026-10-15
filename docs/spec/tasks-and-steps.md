@@ -25,10 +25,15 @@
 - PR のレビューだけのタスクは、`source.review`（`requested`・`label`、sacty が作りレビュー用のラベルを付けた PR なら `sacty`）を持つ。
 - 画面で作るとき、リポジトリを指定しない（`repo: null`）か、指定を省いてプロジェクトの対象がリポジトリ1つだけではないときは、
   リポジトリの無いタスク（`noRepo`）にする。対象が1つも無いプロジェクトでは作れない（`task.repositoryMissing`）。
+- 画面の「タスクを作成」のボタンは、表示しているプロジェクトだけを読んで出す。対象リポジトリの候補（デーモンの
+  `GET /api/projects/:id/repositories`。Org の対象は `gh` で読む）は、作成のダイアログを開いたときに、画面のルート
+  `GET /projects/:id/repositories` を通して読む（開くたびに読み直し、前に開いたときの遅れて届いた結果は捨てる）。タスクの一覧の描画と
+  自動の更新では読まない。読んでいる途中・読めなかった・候補が無いことをダイアログの中に出し、どの状態でもリポジトリを入力して作れる。
+  読めなかった Org は、その理由を出す。対象の無いプロジェクトでは読まない。
 - 予算の上限の初期値は `budget.default_per_task_usd`（既定 1 米ドル）。
 - 状態の値は [作業履歴](event-log.md) の「投影」の表。完了という状態は無く、すべての工程が `done` か `skip` なら完了（`isCompleted`）とする。
 
-コード: `packages/core/src/events.ts`（`TaskCreated`・`TaskSource`）、`packages/core/src/projection.ts`（`isCompleted`・`isRepoless`）、`apps/daemon/src/service.ts`（`createTask`）
+コード: `packages/core/src/events.ts`（`TaskCreated`・`TaskSource`）、`packages/core/src/projection.ts`（`isCompleted`・`isRepoless`）、`apps/daemon/src/service.ts`（`createTask`）、`apps/web/src/components/new-task.tsx`（`NewTask`・`NewTaskPlaceholder`）、`apps/web/src/components/new-task-dialog.tsx`（`NewTaskDialog`・`CandidatesStatus`）、`apps/web/src/lib/repository-candidates.ts`（`candidatesLoader`・`fetchRepositoryCandidates`）、`apps/web/src/app/projects/[id]/repositories/route.ts`（`GET`）
 
 ### タスクのテンプレート
 

@@ -20,6 +20,12 @@ const ja = {
       "空欄にすると、リポジトリを指定せずに作ります。調べもの・全体の設計はリポジトリ無しで進め、コードの変更が要るときは、オーケストレーターがプロジェクトの対象からリポジトリを選びます（分割するタスクは、子タスクごとに選びます）。",
     listFailed: (owner: string, reason: string) =>
       `${owner} のリポジトリを読めませんでした：${reason}`,
+    // リポジトリの候補は、ダイアログを開いたときに読む（PBI-109）。待たずに URL を入力して作成できる
+    repositoriesLoading: "リポジトリの候補を読んでいます…（待たずに、URL を入力して作成できます）",
+    repositoriesFailed: (reason: string) =>
+      `リポジトリの候補を読めませんでした：${reason}（URL を入力すれば作成できます）`,
+    repositoriesEmpty: "候補にできるリポジトリがありません（URL を入力すれば作成できます）。",
+    repositoriesNoAnswer: "応答を受け取れませんでした",
     noRepository:
       "タスクの対象にできるリポジトリがありません。プロジェクトの設定で、対象（Org・リポジトリ）を追加してください。",
     projectSettings: "プロジェクトの設定を開く",
@@ -57,6 +63,12 @@ const en: FormsMessages = {
       "Leave it empty to create the task without a repository. Research and overall design proceed without one; when code must change, the Orchestrator chooses a repository from the project's targets (for a split task, one per subtask).",
     listFailed: (owner: string, reason: string) =>
       `Could not list the repositories of ${owner}: ${reason}`,
+    repositoriesLoading:
+      "Loading the repository suggestions… (you can type a URL and create the task without waiting)",
+    repositoriesFailed: (reason: string) =>
+      `Could not load the repository suggestions: ${reason} (you can still type a URL and create the task)`,
+    repositoriesEmpty: "No repository to suggest (you can still type a URL and create the task).",
+    repositoriesNoAnswer: "no answer was received",
     noRepository:
       "No repository can be a task target. Add targets (orgs or repositories) in the project settings.",
     projectSettings: "Open project settings",
