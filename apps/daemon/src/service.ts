@@ -120,6 +120,7 @@ import {
   type ContextPreview,
   contextExportInfo,
   contextPlatforms,
+  contextSecretSources,
   GATEWAY_TOKEN_SECRET,
   type GatewayMcpServer,
   type HostedMcpRelay,
@@ -229,7 +230,13 @@ import {
 } from "./prompts.js";
 import { CONTAINER_LOGS_DIR, stageQuestionLogs } from "./question-logs.js";
 import { NothingToCommitError, type RepositoryWorkspace } from "./repository.js";
-import { secretUses } from "./secret-uses.js";
+import {
+  contextSecretUses,
+  projectSecretUses,
+  type SecretUse,
+  secretUses,
+  uniqueUses,
+} from "./secret-uses.js";
 import { type PrefetchingSecretStore, SecretNotFoundError, type SecretStore } from "./secrets.js";
 import {
   localForwards,
@@ -353,6 +360,11 @@ export type ServiceDeps = {
   contexts: ContextFetcher;
   /** sacty に同梱する既定のコンテキストのディレクトリ（PBI-24）。無ければ、プロジェクトのコンテキストだけを渡す。 */
   defaultContext?: string;
+  /**
+   * 秘密情報をまとめて取り出すときに、プロジェクトのコンテキストを読むのを待つ上限（ミリ秒。PBI-107）。既定は
+   * CONTEXT_SECRETS_TIMEOUT_MS。超えたプロジェクトのコンテキストの秘密情報は、使うときに取り出す。
+   */
+  contextSecretsTimeoutMs?: number;
   /** テストの実行。 */
   tests: TestRunner;
   /** タスクごとの作業領域を作る場所。 */
@@ -526,6 +538,15 @@ export function resumeRejected(runtime: "claude-code" | "codex", outcome: AgentO
   if (typeof text !== "string") return text.code === "run.sessionRestoreFailed";
   return RESUME_REJECTED[runtime].some((pattern) => pattern.test(text));
 }
+
+/**
+ * 秘密情報をまとめて取り出すときに、プロジェクトのコンテキストを読むのを待つ上限（PBI-107）。起動のときは、取り出し終える
+ * までタスクの実行と取り込みを始めないので、プロジェクトが多くても、これより長くは止めない。
+ */
+export const CONTEXT_SECRETS_TIMEOUT_MS = 30_000;
+
+/** 秘密情報をまとめて取り出すときに、同時に読むプロジェクトのコンテキストの数（PBI-107）。 */
+export const CONTEXT_SECRETS_CONCURRENCY = 4;
 
 export class TaskService {
   private tasks: Map<string, Task>;
@@ -2379,7 +2400,7 @@ export class TaskService {
       problems: [],
       warnings: [
         // 起動のときに取り出せなかった秘密情報（PBI-48）
-        ...this.secretProblems,
+        ...this.secretProblems.map((p) => p.text),
         ...(this.deps.platformProblems?.(config.config.platforms.map((p) => p.name)) ?? []),
         ...(this.deps.hostMcpProblems?.() ?? []),
         ...(this.deps.notifier?.problems() ?? []),
@@ -6845,33 +6866,166 @@ export class TaskService {
     }
   }
 
-  /** 起動のときに取り出せなかった秘密情報（PBI-48）。取り出し直すと置き換える。 */
-  private secretProblems: DaemonText[] = [];
+  /**
+   * 取り出せなかった秘密情報（起動のとき・取り出し直したとき。PBI-48）と、読めなかったプロジェクトのコンテキスト
+   * （PBI-107）。取り出し直すと置き換える。projectId のあるものは、そのプロジェクトを保存し直すと置き換える。
+   */
+  private secretProblems: { text: DaemonText; projectId?: string }[] = [];
 
   /**
    * 設定とプロジェクトで使う秘密情報を、まとめて取り出す（sacty up の起動時。PBI-48）。1Password の認証を1回にし、
-   * タスクの実行中に認証を求めないため。取り出せなかったものは、画面の警告に出す（値は出さない）。fresh なら、
+   * タスクの実行中に認証を求めないため。プロジェクトのコンテキスト（mcp.yaml・platforms.yaml）の秘密情報も、取得して
+   * から一緒に取り出す（PBI-107）。取り出せなかったものは、画面の警告に出す（値は出さない）。fresh なら、
    * 持っている値を捨てて取り出し直す（画面の「取り出し直す」）。
    */
   async prefetchSecrets(options: { fresh?: boolean } = {}): Promise<{
     total: number;
+    /** 取り出せた参照の数（PBI-107。problems には、コンテキストを読めなかった理由も入るため、別に数える）。 */
+    fetched: number;
     problems: DaemonText[];
   }> {
     const config = this.deps.config();
     const secrets = this.deps.secrets as SecretStore & Partial<PrefetchingSecretStore>;
-    if (!config.ok || !secrets.prefetch) return { total: 0, problems: [] };
-    const uses = secretUses(config.config, this.deps.projects.all());
+    if (!config.ok || !secrets.prefetch) return { total: 0, fetched: 0, problems: [] };
+    const projects = this.deps.projects.all();
+    // コンテキストを読み終えてから、ほかの秘密情報と一緒に1回で取り出す（1Password の承認を1回にする。PBI-107）
+    const context = await this.contextSecretUsesOf(projects, config.config);
+    const uses = uniqueUses([...secretUses(config.config, projects), ...context.uses]);
     const failures = await secrets.prefetch(
       uses.map((u) => u.ref),
       options,
     );
-    this.secretProblems = failures.map(({ ref, error }) =>
-      message("secret.prefetchFailed", {
-        where: uses.find((u) => u.ref === ref)?.where ?? ref,
-        detail: error.text,
+    this.secretProblems = [
+      ...context.problems,
+      ...failures.map(({ ref, error }) => {
+        const use = uses.find((u) => u.ref === ref);
+        return {
+          text: message("secret.prefetchFailed", { where: use?.where ?? ref, detail: error.text }),
+          ...(use?.projectId ? { projectId: use.projectId } : {}),
+        };
       }),
+    ];
+    return {
+      total: uses.length,
+      fetched: uses.length - failures.length,
+      problems: this.secretProblems.map((p) => p.text),
+    };
+  }
+
+  /**
+   * プロジェクトを保存したときに、そのプロジェクトの秘密情報（コンテキスト・通知先）をまとめて取り出す（PBI-107）。
+   * すでに持っている参照は取り出さない（1Password に問い合わせない）。取り出せなかったものと、コンテキストを読めなかった
+   * 理由は、画面の警告に出す（そのプロジェクトの前の警告は置き換える）。保存は止めないので、呼ぶ側は待たない。
+   */
+  async prefetchProjectSecrets(id: string): Promise<DaemonText[]> {
+    const config = this.deps.config();
+    const secrets = this.deps.secrets as SecretStore & Partial<PrefetchingSecretStore>;
+    const project = this.deps.projects.get(id);
+    if (!config.ok || !secrets.prefetch || !project) return [];
+    // 続けて保存したときは、最後の保存の結果だけを警告にする（先の取り出しが後から終わっても、上書きしない）
+    const seq = (this.projectPrefetchSeq.get(id) ?? 0) + 1;
+    this.projectPrefetchSeq.set(id, seq);
+    const context = await this.contextSecretUsesOf([project], config.config);
+    const uses = uniqueUses([...projectSecretUses(project), ...context.uses]);
+    const failures = await secrets.prefetch(uses.map((u) => u.ref));
+    const problems = [
+      ...context.problems,
+      ...failures.map(({ ref, error }) => ({
+        text: message("secret.savePrefetchFailed", {
+          where: uses.find((u) => u.ref === ref)?.where ?? ref,
+          detail: error.text,
+        }),
+        projectId: id,
+      })),
+    ];
+    if (this.projectPrefetchSeq.get(id) === seq) {
+      this.secretProblems = [...this.secretProblems.filter((p) => p.projectId !== id), ...problems];
+    }
+    return problems.map((p) => p.text);
+  }
+
+  /** プロジェクトごとの、保存のときの取り出しの番号（最後のものだけを警告にする。PBI-107）。 */
+  private readonly projectPrefetchSeq = new Map<string, number>();
+
+  /**
+   * プロジェクトのコンテキスト（継承の鎖の上の層も含めて合成したもの）で使う秘密情報の参照を、コンテキストを取得して
+   * 集める（PBI-107）。プロジェクトが多くても待ちすぎないよう、同時に CONTEXT_SECRETS_CONCURRENCY 件ずつ読み、全体で
+   * 上限の時間だけ待つ。読めなかった・時間内に読めなかったプロジェクトは、その理由を返す（その秘密情報は、使うときに
+   * 取り出す）。
+   */
+  private async contextSecretUsesOf(
+    projects: readonly Project[],
+    config: SactyConfig,
+  ): Promise<{ uses: SecretUse[]; problems: { text: DaemonText; projectId: string }[] }> {
+    const targets = projects.filter((p) => p.context);
+    if (targets.length === 0) return { uses: [], problems: [] };
+    const uses: SecretUse[][] = targets.map(() => []);
+    const problems: ({ text: DaemonText; projectId: string } | undefined)[] = targets.map(
+      () => undefined,
     );
-    return { total: uses.length, problems: this.secretProblems };
+    const limitMs = this.deps.contextSecretsTimeoutMs ?? CONTEXT_SECRETS_TIMEOUT_MS;
+    let expired = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<"expired">((resolve) => {
+      timer = setTimeout(() => {
+        expired = true;
+        resolve("expired");
+      }, limitMs);
+      timer.unref?.();
+    });
+    const host = {
+      platforms: config.platforms.map((p) => p.name),
+      // 層の MCP サーバーをホストの同じ名前のものが置き換えるのは、ゲートウェイがあるときだけ（mcpRouting と同じ）
+      mcp: this.deps.gateway ? config.hostMcp.map((m) => m.name) : [],
+    };
+    let next = 0;
+    const work = async () => {
+      while (next < targets.length) {
+        const i = next++;
+        const project = targets[i] as Project;
+        const root = project.context as NonNullable<Project["context"]>;
+        const fail = (detail: DaemonText) => {
+          problems[i] = {
+            text: message("secret.contextUnavailable", { project: project.name, detail }),
+            projectId: project.id,
+          };
+        };
+        const timedOut = () =>
+          fail(message("secret.contextTimedOut", { seconds: Math.ceil(limitMs / 1000) }));
+        if (expired) {
+          timedOut();
+          continue;
+        }
+        const usedSecrets: string[] = [];
+        const reading = contextSecretSources(
+          this.deps.contexts,
+          root,
+          (repo) => this.gitAuth({ projectId: project.id }, repo, usedSecrets),
+          this.deps.defaultContext,
+        );
+        // 時間切れの後に失敗しても、知らせない（結果は使わない。取得したリポジトリは、読み終えたら消える）
+        reading.catch(() => {});
+        try {
+          const sources = await Promise.race([reading, deadline]);
+          if (sources === "expired") timedOut();
+          else uses[i] = contextSecretUses(project, sources, host);
+        } catch (error) {
+          // 取得のエラー文には、認証のトークンが入りうるので伏せる
+          fail(redactText(errorText(error), usedSecrets));
+        }
+      }
+    };
+    try {
+      await Promise.all(
+        Array.from({ length: Math.min(CONTEXT_SECRETS_CONCURRENCY, targets.length) }, work),
+      );
+    } finally {
+      clearTimeout(timer);
+    }
+    return {
+      uses: uses.flat(),
+      problems: problems.filter((p): p is { text: DaemonText; projectId: string } => !!p),
+    };
   }
 
   /** 一時停止中のタスクを再開する。予算で止まった場合は、累計の新しい上限が必要。 */

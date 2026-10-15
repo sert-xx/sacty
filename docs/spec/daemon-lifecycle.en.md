@@ -41,7 +41,8 @@ Code: `packages/cli/src/index.ts` (`up`, `waitForDaemon`, `parsePort`), `package
    - Tasks that were running (`running`) are recorded as a run failure (`AgentRunFailed`) and paused (`TaskPaused`, reason `error`).
 8. Steps that were waiting because they could not run are queued (`queueWaitingSteps`).
 9. Startup problems (such as configuration errors) are printed to the terminal.
-10. It listens for the API on `127.0.0.1:<port>`. Once listening, it retrieves the secrets it uses all at once ([Secrets](secrets.en.md)),
+10. It listens for the API on `127.0.0.1:<port>`. Once listening, it retrieves the secrets it uses all at once (including the secrets in project contexts;
+    fetching the contexts waits at most 30 seconds; [Secrets](secrets.en.md)),
     and then starts the host MCP servers, prepares the context's command MCP servers (removes the previous layer copies in `SACTY_HOME/context-mcp/layers`
     and starts the check that stops ones no longer used), prepares authentication for organization platforms (PF), and starts the worker, intake, and PR watching.
 

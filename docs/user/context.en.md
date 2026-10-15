@@ -83,6 +83,8 @@ servers:
   - Command: `command` (required), `args`, `env`, `via_gateway` (default `true`), `startup_timeout_sec`, `tool_timeout_sec`
 - Do not write secret values. Write `{ secret: name }` instead (a Keychain name or a 1Password reference; `prefix` is put before the value).
   You cannot write `${` in strings (Claude Code expands it as an environment variable).
+- Secrets in `mcp.yaml` and `platforms.yaml` are fetched together with the other secrets when `sacty up` starts and when you save project settings.
+  Ones added later are fetched when used ([Secrets](secrets.en.md#secrets-added-to-a-context-later)).
 - Both HTTP servers and `command` servers are used through sacty's gateway by default. Step agents receive only the gateway URL (`/ctx-mcp/<name>`) and
   a per-run token (it becomes an HTTP MCP server in both Claude Code's `mcp.json` and Codex's `config.toml`).
 - To run a server inside the container (for HTTP, connect directly from the container), write `via_gateway: false` for that server. Such servers are

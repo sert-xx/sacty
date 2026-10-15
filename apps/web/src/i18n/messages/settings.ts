@@ -49,7 +49,7 @@ const ja = {
   secretsTitle: "秘密情報",
   secretsNote: "sacty up の起動のときに、使う秘密情報をまとめて取り出します",
   secretsHelp:
-    "1Password の認証は、起動のときの1回だけです。\n1Password にサインインし直したときや、参照を直したときは、取り出し直してください。",
+    "1Password の認証は、起動のときと、プロジェクトの設定を保存したとき（まだ取り出していない秘密情報があるとき）だけです。プロジェクトのコンテキストの秘密情報も含みます。\n1Password にサインインし直したときや、参照を直したときは、取り出し直してください。\nコンテキストリポジトリに後から足した秘密情報は、使うときに取り出します（そのときに認証を求めます）。前もって取り出すには、取り出し直すか、プロジェクトの設定を保存し直してください。",
   secretsFetch: "秘密情報を取り出し直す",
   secretsFetching: "取り出しています…",
   secretsResult: (ok: number, total: number) =>
@@ -108,7 +108,7 @@ const en: SettingsMessages = {
   secretsTitle: "Secrets",
   secretsNote: "sacty up gets the secrets it uses all at once at startup",
   secretsHelp:
-    "1Password asks for authentication only once, at startup.\nGet the secrets again after you sign in to 1Password again or fix a reference.",
+    "1Password asks for authentication only at startup and when you save project settings (if there are secrets not fetched yet). This includes the secrets in project contexts.\nGet the secrets again after you sign in to 1Password again or fix a reference.\nSecrets added to a context repository later are fetched when they are used (1Password asks for authentication then). To fetch them in advance, get the secrets again or save the project settings again.",
   secretsFetch: "Get secrets again",
   secretsFetching: "Getting…",
   secretsResult: (ok, total) =>

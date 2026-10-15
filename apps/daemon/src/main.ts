@@ -175,14 +175,13 @@ const app = createApp(service, token, { intake });
 
 const server = serve({ fetch: app.fetch, hostname: "127.0.0.1", port }, (info) => {
   console.log(`[daemon] listening on http://127.0.0.1:${info.port} (data: ${home})`);
-  // 使う秘密情報をまとめて取り出してから（1Password の認証は起動のときの1回。PBI-48）、タスクの実行と取り込みを始める
+  // 使う秘密情報をまとめて取り出してから（1Password の認証は起動のときの1回。PBI-48）、タスクの実行と取り込みを始める。
+  // プロジェクトのコンテキストの秘密情報も含める（コンテキストを読むのは、上限の時間まで待つ。PBI-107）
   void service
     .prefetchSecrets()
-    .then(({ total, problems }) => {
+    .then(({ total, fetched, problems }) => {
       if (total > 0) {
-        console.log(
-          `[daemon] 秘密情報を取り出しました（${total - problems.length}/${total} 件）。`,
-        );
+        console.log(`[daemon] 秘密情報を取り出しました（${fetched}/${total} 件）。`);
       }
       for (const problem of problems) console.warn(`[daemon] ${renderMessage(problem, "ja")}`);
     })

@@ -1716,6 +1716,28 @@ export async function contextExportInfo(
 }
 
 /**
+ * プロジェクトのコンテキストで合成した MCP サーバーと外部 PF（PBI-107）。使う秘密情報の参照を、起動時と保存時に
+ * まとめて取り出すために読む（継承の鎖の上の層も含めて合成したもの。取得したリポジトリは、読んだら消す）。
+ */
+export async function contextSecretSources(
+  fetcher: ContextFetcher,
+  root: ContextRef,
+  auth?: ContextAuth,
+  defaultDir?: string,
+): Promise<{ mcp: { name: string; server: McpServer; from: string }[]; platforms: Platform[] }> {
+  const work = mkdtempSync(join(tmpdir(), "sacty-context-"));
+  try {
+    const composed = composeContext(await loadLayers(fetcher, root, work, auth, defaultDir));
+    return {
+      mcp: composed.mcp.map(({ name, server, from }) => ({ name, server, from })),
+      platforms: composed.platforms,
+    };
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+}
+
+/**
  * プロジェクトのコンテキストで合成した外部 PF と、合成の警告（PBI-74）。チケットの取り込み・プロジェクトの設定の画面
  * など、工程の実行の外で PF の名前を引くために読む（取得したリポジトリは、読んだら消す）。
  */
