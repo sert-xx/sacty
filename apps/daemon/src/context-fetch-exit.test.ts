@@ -111,7 +111,11 @@ const timer = setInterval(() => {
 }, 20);
 `,
     );
-    const child = spawn(process.execPath, ["--no-warnings", script], {
+    // 型の取り除きが既定で切れている版（Node 22.13〜22.17。engines は 22.13 以上）では、フラグで有効にする
+    const strip = (process.features as { typescript?: unknown }).typescript
+      ? []
+      : ["--experimental-strip-types"];
+    const child = spawn(process.execPath, ["--no-warnings", ...strip, script], {
       cwd: work,
       env: { ...process.env, PATH: `${bin}:${process.env.PATH}` },
       stdio: ["ignore", "ignore", "ignore"],
