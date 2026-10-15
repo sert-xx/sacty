@@ -92,7 +92,9 @@ sacty up（packages/cli）
 - 画面は、前に受け取ったデータの版（中身のハッシュ）をヘッダー `x-sacty-live-version` で送る。同じなら、画面のサーバーは中身を
   送らない（`{ unchanged: true }`）。
 - 1回の取り直しの期限は10秒（`LIVE_TIMEOUT_MS`）。応答の本文を読む間も含め、期限で中断し、次の取り直しを予約する（応答しない
-  画面のサーバーやデーモンで、取り直しが止まったままにならない）。
+  画面のサーバーやデーモンで、取り直しが止まったままにならない）。画面のサーバーからデーモンへの問い合わせにも、ブラウザの中断
+  （リクエストの中断）と8秒の期限（`LIVE_SERVER_TIMEOUT_MS`）を渡し、本文を読む間も含めて止める（`withDaemonSignal`。応答しない
+  デーモンへの問い合わせを、取り直しのたびに溜めない）。取っている間にサーバーが画面を描き直したときは、その取り直しの結果（失敗も）を捨てる。
 - デーモンに届かない・読めないときは、200 で `{ unavailable: true }` を返す（エラーを出し続けない）。画面は、表示を最後に取れた
   データのまま残し、更新できないこと（表示が今の値でないかもしれないこと）を出す（ヘッダーは「更新が止まっています」）。
   期限切れ・画面のサーバーに届かないときも同じ。届くようになったら、次の間隔でまた反映し、その表示を消す。
@@ -111,7 +113,7 @@ sacty up（packages/cli）
   `offsets`（`from`・`next`）で返し、書いている途中の文字（UTF-8 の複数バイトの途中）は次に回す。実行が終わった後（閉じるときに伏せ直しや
   上限で書き直されうる）と、位置がファイルより後ろのときは、全体を返し、画面は置き換える。読んでいる途中のスクロールの位置は動かさず、
   一番下を見ているときだけ、新しい行についていく。エージェントの元のファイルの一覧（ハッシュを計算する）は、実行が終わってから取る。
-  一覧だけを読めないときは、ログと終わったことは返し（`agentFilesFailed`）、画面は一覧だけを取り直す。実行が終わり、一覧も取れたら、
+  一覧だけを読めないときは、ログと終わったことは返し（`agentFilesFailed`）、画面は一覧を読めず取り直していることを出して、一覧だけを取り直す。実行が終わり、一覧も取れたら、
   取り直しを止める。
 - sacty の設定・プロジェクトの設定の画面は、自動で描き直さない（ヘッダーのお知らせだけを取り直す）。中身は人が編集する設定で、
   タスクの状態では変わらないため。最新にするには、開き直すか、画面を読み直す。
@@ -121,7 +123,7 @@ sacty up（packages/cli）
 `apps/web/src/lib/task-detail-data.ts`（`loadTaskDetail`）、`apps/web/src/components/task-list.tsx`（`LiveTaskList`）、
 `apps/web/src/components/task-detail.tsx`（`LiveTaskDetail`）、`apps/web/src/components/review.tsx`（`LiveReview`）、
 `apps/web/src/components/run-log.tsx`（`LiveRunLog`・`applyChunk`）、`apps/web/src/lib/run-log-data.ts`（`loadAgentFiles`）、
-`apps/web/src/components/live-status.tsx`（`StaleNotice`・`FollowProjectAfterRecovery`）、`apps/daemon/src/session-logs.ts`（`completeUtf8Length`）、
+`apps/web/src/components/live-status.tsx`（`StaleNotice`・`FollowProjectAfterRecovery`）、`apps/daemon/src/session-logs.ts`（`completeUtf8Length`）、`apps/web/src/lib/daemon-signal.ts`（`withDaemonSignal`・`LIVE_SERVER_TIMEOUT_MS`）、
 `apps/web/src/components/project-list.tsx`（`LiveProjectList`）、`apps/web/src/lib/project-list-data.ts`（`loadProjectList`）
 
 ## データの置き場所（SACTY_HOME）

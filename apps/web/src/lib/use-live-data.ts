@@ -17,7 +17,9 @@ export function useLiveData<T>(
   intervalMs: number = LIVE_INTERVAL_MS,
 ): { data: T; stale: boolean } {
   const [polled, setPolled] = useState<{ base: T; data: T; version: string }>();
-  const [stale, setStale] = useState(false);
+  // 更新できなかったときの元のデータ（サーバーが描き直して initial が変われば、更新できない表示も消える）
+  const [staleFor, setStaleFor] = useState<{ base: T } | undefined>();
+  const stale = staleFor !== undefined && staleFor.base === initial;
   const current = polled && polled.base === initial ? polled : undefined;
   const data = current ? current.data : initial;
   // 取り直しの処理（effect の中）から、いまの元のデータ・データ・版・取り直す先を読む
@@ -31,11 +33,10 @@ export function useLiveData<T>(
         load: async () => {
           const { initial: base, data: now, version, url: target } = latest.current;
           const next = await fetchLive<T>(target(now), version);
-          setStale(next === "failed");
-          // 取っている間に、サーバーが描き直した（initial が変わった）なら捨てる
-          if (typeof next === "object" && latest.current.initial === base) {
-            setPolled({ base, data: next.data, version: next.version });
-          }
+          // 取っている間に、サーバーが描き直した（initial が変わった）なら、結果（失敗も）を捨てる（PR #119 再レビュー指摘）
+          if (latest.current.initial !== base) return;
+          setStaleFor(next === "failed" ? { base } : undefined);
+          if (typeof next === "object") setPolled({ base, data: next.data, version: next.version });
         },
       }),
     [intervalMs],

@@ -129,6 +129,11 @@ function stubServer() {
       requests.push(url);
       const headers = (init?.headers ?? {}) as Record<string, string>;
       if (server === "down") return Response.json({ unavailable: true });
+      // 遅れて失敗する（取っている間に画面が描き直される場合を試す）
+      if (server === "slow-down") {
+        await new Promise((resolve) => setTimeout(resolve, 5_000));
+        return Response.json({ unavailable: true });
+      }
       if (server === "missing") return Response.json({ missing: true });
       const version = liveVersion(server);
       return Response.json(
@@ -674,5 +679,40 @@ describe("更新できない間・描いたときに届かなかったとき・�
     server = quiet;
     await wait();
     expect(document.querySelector('[data-testid="live-stale-header"]')).toBeNull();
+  });
+});
+
+describe("取っている間にサーバーが描き直したとき（PR #119 再レビュー指摘）", () => {
+  it("古い取得の失敗で、新しい画面に「更新できない」を出さない", async () => {
+    server = detail(awaiting);
+    render(
+      h(LiveTaskDetail, {
+        id: "t1",
+        initial: detail(awaiting),
+        initialVersion: liveVersion(server),
+      }),
+    );
+    server = "slow-down";
+    await wait(3_000); // 取り直しが始まる
+    // 操作の後に、サーバーが画面を描き直した（新しい initial）
+    const fresh = detail(task({ ...awaiting, title: "描き直した題" }));
+    render(h(LiveTaskDetail, { id: "t1", initial: fresh, initialVersion: liveVersion(fresh) }));
+    await wait(5_000); // 古い取得が失敗で終わる
+    expect(text()).toContain("描き直した題");
+    expect(container.querySelector('[data-testid="live-stale"]')).toBeNull();
+  });
+
+  it("描き直していなければ、遅れた失敗でも「更新できない」を出す", async () => {
+    server = detail(awaiting);
+    render(
+      h(LiveTaskDetail, {
+        id: "t1",
+        initial: detail(awaiting),
+        initialVersion: liveVersion(server),
+      }),
+    );
+    server = "slow-down";
+    await wait(8_000);
+    expect(container.querySelector('[data-testid="live-stale"]')).not.toBeNull();
   });
 });

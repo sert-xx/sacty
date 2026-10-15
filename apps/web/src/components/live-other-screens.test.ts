@@ -33,6 +33,9 @@ const daemon = vi.hoisted(() => ({
   finishedAt: undefined as string | undefined,
   filesFail: false,
   down: false,
+  /** 応答しない（中断されるまで終わらない）。中断されたら aborted に数える。 */
+  hang: false,
+  aborted: 0,
   /** 1回の読み出しで返したバイト数（全体を読み直していないかを確かめる）。 */
   reads: [] as number[],
 }));
@@ -43,6 +46,16 @@ vi.mock("@/lib/daemon", () => ({
   },
   getRunLog: async (_id: string, _run: string, from: { events?: number } = {}) => {
     if (daemon.down) throw new Error("unreachable");
+    if (daemon.hang) {
+      const { currentDaemonSignal } = await import("@/lib/daemon-signal");
+      const signal = currentDaemonSignal();
+      await new Promise((_, reject) =>
+        signal?.addEventListener("abort", () => {
+          daemon.aborted += 1;
+          reject(new Error("aborted"));
+        }),
+      );
+    }
     const buf = Buffer.from(daemon.events, "utf8");
     const start = from.events ?? 0;
     const begin = !daemon.finishedAt && start > 0 && start <= buf.length ? start : 0;
@@ -181,6 +194,8 @@ describe("実行のログ：実行中は、足された行だけを取って後�
     daemon.finishedAt = undefined;
     daemon.filesFail = false;
     daemon.down = false;
+    daemon.hang = false;
+    daemon.aborted = 0;
     daemon.reads.length = 0;
     scrollY = 0;
     scrollTo = vi.fn();
@@ -269,6 +284,33 @@ describe("実行のログ：実行中は、足された行だけを取って後�
     await wait();
     expect(text()).toContain("戻りました");
     expect(container.querySelector('[data-testid="live-stale"]')).toBeNull();
+  });
+
+  it("デーモンが応答しないと、画面のサーバーの期限でデーモンへの問い合わせも止め、問い合わせを溜めない（PR #119 再レビュー指摘）", async () => {
+    render(h(LiveRunLog, { taskId: "t1", runId: "r1", initial: initial() }));
+    daemon.hang = true;
+    await wait(3_000);
+    expect(daemon.aborted).toBe(0);
+    await wait(8_000);
+    expect(daemon.aborted).toBe(1);
+    expect(container.querySelector('[data-testid="live-stale"]')).not.toBeNull();
+    // 次の取り直しも同じく止める（終わらない問い合わせが増え続けない）
+    await wait(11_000);
+    expect(daemon.aborted).toBe(2);
+  });
+
+  it("ファイルの一覧を読めない間は、そのことと取り直していることを出す（無いことと見分けられる）", async () => {
+    render(h(LiveRunLog, { taskId: "t1", runId: "r1", initial: initial() }));
+    daemon.finishedAt = "2026-10-15T00:01:00.000Z";
+    daemon.filesFail = true;
+    await wait();
+    expect(container.querySelector('[data-testid="agent-files-failed"]')?.textContent).toContain(
+      "一覧を読めませんでした。取り直しています",
+    );
+    daemon.filesFail = false;
+    await wait();
+    expect(container.querySelector('[data-testid="agent-files-failed"]')).toBeNull();
+    expect(container.querySelector("#run-agent-files")).not.toBeNull();
   });
 
   it("描いたときに届かず、後から出たログのプロジェクトを、表示しているプロジェクトにする", async () => {

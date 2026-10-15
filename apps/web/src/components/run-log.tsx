@@ -154,6 +154,10 @@ export function LiveRunLog({
                 meta: reply.meta,
                 events: events ?? base.log?.events ?? "",
                 stderr: stderr ?? base.log?.stderr ?? "",
+                offsets: {
+                  events: { from: 0, next: have.current.events },
+                  stderr: { from: 0, next: have.current.stderr },
+                },
               }
             : null,
           ...(reply.agentFiles !== undefined
@@ -234,6 +238,7 @@ function RunLogView({ runId, data }: { runId: string; data: RunLogData }) {
           {data.agentFiles && (
             <AgentFilesView files={data.agentFiles} href={agentFile} messages={messages} />
           )}
+          {data.agentFilesFailed && <AgentFilesFailed messages={messages} />}
         </>
       ) : (
         <>
@@ -255,6 +260,7 @@ function RunLogView({ runId, data }: { runId: string; data: RunLogData }) {
           {data.agentFiles && (
             <AgentFilesView files={data.agentFiles} href={agentFile} messages={messages} />
           )}
+          {data.agentFilesFailed && <AgentFilesFailed messages={messages} />}
           <Events text={data.log.events} messages={messages} />
           <section
             aria-labelledby="run-stderr"
@@ -336,6 +342,27 @@ function Summary({ meta, messages }: { meta: RunLogMeta; messages: Messages }) {
           </p>
         ) : null;
       })}
+    </section>
+  );
+}
+
+/**
+ * エージェントの元のファイルの一覧を読めず、取り直していること（PR #119 再レビュー指摘）。「ファイルが無い」と見分けられる
+ * ようにする。
+ */
+function AgentFilesFailed({ messages }: { messages: Messages }) {
+  const m = messages.runLog.agentFiles;
+  return (
+    <section
+      aria-labelledby="run-agent-files-failed"
+      className="flex flex-col gap-2 rounded-xl border border-warn-line bg-warn-soft p-5 text-sm"
+    >
+      <h2 id="run-agent-files-failed" className="text-[15px] font-semibold">
+        {m.title}
+      </h2>
+      <p role="status" data-testid="agent-files-failed" className="text-warn">
+        {m.failed}
+      </p>
     </section>
   );
 }

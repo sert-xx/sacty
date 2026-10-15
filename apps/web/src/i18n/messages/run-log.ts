@@ -58,6 +58,8 @@ const ja = {
   line: (n: number) => `${n}行目`,
   agentFiles: {
     title: "エージェントの元のファイル",
+    /** 一覧を読めず、取り直している（PR #119 再レビュー指摘）。 */
+    failed: "一覧を読めませんでした。取り直しています（読めたら、ここに出します）。",
     help: "AI エージェントが自分で書いたセッションのファイルの写しです（秘密情報は伏せています）。大きさとハッシュは作業履歴に記録しており、いまのファイルと一致するかを確かめています。",
     session: "セッション",
     runtime: { "claude-code": "Claude Code", codex: "Codex" } as Record<string, string>,
@@ -148,6 +150,7 @@ const en: RunLogMessages = {
   line: (n: number) => `Line ${n}`,
   agentFiles: {
     title: "Agent's original files",
+    failed: "Could not read the list. Retrying (it appears here once it can be read).",
     help: "Copies of the session files the AI agent wrote itself (secrets are redacted). Their sizes and hashes are recorded in the activity log, and the current files are checked against them.",
     session: "Session",
     runtime: { "claude-code": "Claude Code", codex: "Codex" },

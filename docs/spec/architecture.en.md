@@ -93,7 +93,10 @@ only the data at a fixed interval, and only the parts that changed are reflected
 - The screen sends the version of the data it last received (a hash of the contents) in the header `x-sacty-live-version`. If it is the same, the web UI's
   server does not send the contents (`{ unchanged: true }`).
 - Each refetch has a 10-second deadline (`LIVE_TIMEOUT_MS`), including reading the response body. At the deadline it is aborted and the next refetch is
-  scheduled (so that refetching does not stay stuck on a web UI server or daemon that does not respond).
+  scheduled (so that refetching does not stay stuck on a web UI server or daemon that does not respond). The web UI's server also passes the browser's abort
+  (the request being aborted) and an 8-second deadline (`LIVE_SERVER_TIMEOUT_MS`) to its requests to the daemon, and stops them including reading the body
+  (`withDaemonSignal`, so that requests to a daemon that does not respond do not pile up with each refetch). If the server redraws the screen while a refetch is
+  in progress, the result of that refetch (including a failure) is discarded.
 - When the daemon cannot be reached or read, the route returns `{ unavailable: true }` with 200 (it does not keep showing errors). The screen keeps showing the
   data it last fetched and shows that it cannot update (that what is shown may not be current; the header shows "Updates paused"). The same applies when the
   deadline passes or the web UI's server cannot be reached. When the daemon can be reached again, the next interval reflects the changes and removes that notice.
@@ -114,7 +117,7 @@ only the data at a fixed interval, and only the parts that changed are reflected
   limits) and when the position is past the end of the file, the whole file is returned and the screen replaces what it has. The scroll position is not moved
   while you are reading in the middle; the screen follows new lines only while you are looking at the bottom. The list of the agent's original files (which
   computes hashes) is fetched after the run has finished. If only the list cannot be read, the log and the fact that the run finished are still returned
-  (`agentFilesFailed`), and the screen refetches only the list. Refetching stops when the run has finished and the list has been fetched.
+  (`agentFilesFailed`), and the screen shows that the list could not be read and is being retried, and refetches only the list. Refetching stops when the run has finished and the list has been fetched.
 - The sacty settings and project settings screens are not redrawn automatically (only the header's notices are refetched). Their contents are settings
   that people edit, and they do not change with the state of tasks. To see the latest, open the screen again or reload it.
 
@@ -123,7 +126,7 @@ Code: `apps/web/src/lib/live.ts` (`pollWhileVisible`, `fetchLive`, `LIVE_INTERVA
 `apps/web/src/lib/task-detail-data.ts` (`loadTaskDetail`), `apps/web/src/components/task-list.tsx` (`LiveTaskList`),
 `apps/web/src/components/task-detail.tsx` (`LiveTaskDetail`), `apps/web/src/components/review.tsx` (`LiveReview`),
 `apps/web/src/components/run-log.tsx` (`LiveRunLog`, `applyChunk`), `apps/web/src/lib/run-log-data.ts` (`loadAgentFiles`),
-`apps/web/src/components/live-status.tsx` (`StaleNotice`, `FollowProjectAfterRecovery`), `apps/daemon/src/session-logs.ts` (`completeUtf8Length`),
+`apps/web/src/components/live-status.tsx` (`StaleNotice`, `FollowProjectAfterRecovery`), `apps/daemon/src/session-logs.ts` (`completeUtf8Length`), `apps/web/src/lib/daemon-signal.ts` (`withDaemonSignal`, `LIVE_SERVER_TIMEOUT_MS`),
 `apps/web/src/components/project-list.tsx` (`LiveProjectList`), `apps/web/src/lib/project-list-data.ts` (`loadProjectList`)
 
 ## Data location (SACTY_HOME)

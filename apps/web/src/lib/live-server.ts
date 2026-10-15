@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { withDaemonSignal } from "@/lib/daemon-signal";
 import { LIVE_VERSION_HEADER, type LiveReply } from "@/lib/live";
 
 /** データの版（中身が同じなら同じ）。画面が前に受け取った版と同じなら、中身を送らない（PBI-108）。 */
@@ -16,7 +17,8 @@ export async function liveResponse<T>(
 ): Promise<Response> {
   let reply: LiveReply<T>;
   try {
-    const data = await load();
+    // ブラウザの中断と期限を、デーモンへの問い合わせまで渡す（PR #119 再レビュー指摘）
+    const data = await withDaemonSignal(request, load);
     if (data === null) {
       reply = { missing: true };
     } else {
