@@ -144,6 +144,33 @@
 
 コード: `apps/daemon/src/service.ts`（`askOrchestrator`・`runNextInner`・`withImages`・`defaultImagesOf`・`withSharedCompose`・`withExports`・`repositoryFromPlan`・`chooseRepository`・`triageTicket`・`reviewOnlySteps`）、`apps/daemon/src/prompts.ts`（`extractStepPlan`）、`packages/core/src/events.ts`（`StepsChosen`）
 
+## 工程のイメージを人が変える
+
+- タスクの詳細で、工程ごとのイメージを人が変えられる（`POST /api/tasks/:id/images`、入力は `ChangeStepImageInput` の `step`・`image`）。
+  工程の状態は問わない（これから実行する・実行中・失敗や一時停止・承認待ち・終わった工程のどれでも）。中止したタスクは変えられない。
+- 選べるのは `images` の名前と `default`（既定のイメージ）。画面は、それぞれの説明（`images` の `description`）を出す。次は、理由を示して
+  断る（409）：`images` に無い名前（config.yaml から消した名前を含む。`image.notInImages`）、今と同じ名前（`image.unchanged`）、タスクの工程に
+  無い工程（`image.stepMissing`）、PR作成（コンテナで実行しないのでイメージが無い。`image.noImageStep`）。config.yaml を読めない・
+  解析できないときは、名前を確かめられないので、設定の問題として理由を示して断る（`image.configUnavailable`。`default` も）。
+  画面は、デーモンの状態を取得できない・設定を読めないとき、候補を確かめられないことを出し、`images` に無い名前の警告と変える操作は
+  出さない（`stepImageOptions`。一時的な失敗を、設定から消したことと取り違えない）。
+- 変えたら `StepImageChanged`（`step`・`from`・`to`。actor は `person`）を足す。`from` は変える前の名前（指定が無ければ `default`）。
+  投影はその工程の `images` を `to` にし、`imageChanges` に工程ごとの最後の変更（`from`・`to`・時刻）を持つ。`StepsChosen` は書き換えない。
+- 変えたイメージは、その工程を次に実行するときから使う（まだ始まっていない工程の開始、やり直し、手戻りでの再実行）。今の実行は止めない。
+  工程の実行は、`AgentRunStarted` を足したときのイメージに決める（実行の準備の間に変えても、その実行は変えない）。統合レビューも同じ。
+- テストの実行も、テストを始めるときのイメージで行う（上の「実装の検証」のテストのイメージ）。実装の工程の実行中に実装のイメージを
+  変えたら、その実行の後のテストから変えたイメージを使う。
+- プロジェクトの対象でイメージを指定しているタスクも変えられる。人の変更を、その工程だけ優先する（ほかの工程は対象の指定のまま）。
+  対象の指定を変えても、工程を決めたタスクのイメージは変わらない。
+- 画面は、工程ごとにイメージ・選んだ元（人が変えた時刻と変える前の名前、プロジェクトの対象の指定、オーケストレーター、指定なし）・
+  変えたらいつから使うか（実行中なら次の実行から、終わった工程ならやり直し・手戻りから）を出す（`stepImageRows`）。
+  実行中は、エージェントの実行中・実装の検証の間・再現の確かめの間（`stepRunning`）。作業履歴は、誰が・いつ・どの工程を・何から何に変えたかを出す。
+- オーケストレーターが既定のイメージにした工程は、人が変えるまで、選んだ元に既定のイメージにした理由（`defaultImageReasons`）か、理由の記載が
+  無いこと（`imagesUnexplained`）を出す。人が変えたら、人の変更を出す。作業履歴の「工程を決定」の行は、工程を決めたときの記録のまま残る
+  （その後の `StepImageChanged` の行で、変えたことがわかる）。
+
+コード: `apps/daemon/src/service.ts`（`changeStepImage`・`runNextInner`・`integrate`）、`apps/daemon/src/server.ts`、`packages/core/src/events.ts`（`StepImageChanged`・`ChangeStepImageInput`）、`packages/core/src/projection.ts`（`stepRunning`）、`apps/web/src/lib/labels.ts`（`stepImageRows`・`stepImageOptions`）
+
 ## 実装の検証
 
 - 実装の工程が終わると検証の待ち（`verification = "pending"`）になり、テストのコンテナでテストのコマンドを実行する。終了コード 0 で、

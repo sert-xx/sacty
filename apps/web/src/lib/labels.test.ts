@@ -12,6 +12,8 @@ import {
   personAction as personActionIn,
   statusText as statusTextIn,
   statusTone,
+  stepImageOptions,
+  stepImageRows,
   testCommandOfNoTests,
   usesTestCommand,
   verificationResults,
@@ -572,6 +574,25 @@ describe("オーケストレーターが選んだ工程（PBI-17）", () => {
     // イメージを1つも書かなかったときも出す
     expect(describeEvent(chosen({ imagesUnexplained: ["implement"] }))).toBe(
       "工程を決定：要求要件 → 実装 → PR作成（小さな変更） / 理由が無いまま既定のイメージで動かす：実装（オーケストレーターが images から選ばず、合わない理由も書かなかった）",
+    );
+  });
+
+  it("人が工程のイメージを変えた記録を、誰が・どの工程を・何から何にで表示する（PBI-106）", () => {
+    const changed = {
+      type: "StepImageChanged",
+      payload: { step: "implement", from: "default", to: "playwright" },
+      seq: 2,
+      id: "e2",
+      taskId: "t1",
+      projectId: "default",
+      at: "2026-10-15T00:00:00.000Z",
+      actor: "person",
+    } as ActivityEvent;
+    expect(describeEvent(changed)).toBe(
+      "実装のイメージを default から playwright に変更（人間。次にその工程を実行するときから使う）",
+    );
+    expect(describeIn(changed, labels.en)).toBe(
+      "Implement image changed from default to playwright (person; used from the next run of the step)",
     );
   });
 
@@ -1454,5 +1475,107 @@ describe("テストの無い観点を、今の提出について目的から判�
     expect(judgedByGoalForCurrent(task({ testsSkippedAt: T1, lastReview: review(T2) }))).toBe(
       false,
     );
+  });
+});
+
+describe("工程のイメージの表示（PBI-106）", () => {
+  it("工程ごとのイメージ・選んだ元・いつから使うかを出す。PR作成は出さない", () => {
+    const rows = stepImageRows(
+      task({
+        status: "running",
+        steps: [
+          { key: "requirements", state: "done" },
+          { key: "design", state: "active" },
+          { key: "implement", state: "todo" },
+          { key: "pr", state: "todo" },
+        ],
+        images: { design: "java", implement: "playwright", pr: "java" },
+        imageSource: "orchestrator",
+        imageChanges: {
+          implement: { from: "java", to: "playwright", at: "2026-10-15T01:02:00.000Z" },
+        },
+      }),
+    );
+    expect(rows).toEqual([
+      { step: "requirements", image: "default", source: { by: "none" }, when: "done" },
+      { step: "design", image: "java", source: { by: "orchestrator" }, when: "running" },
+      {
+        step: "implement",
+        image: "playwright",
+        source: { by: "person", at: "2026-10-15T01:02:00.000Z", from: "java" },
+        when: "next",
+      },
+    ]);
+  });
+
+  it("既定のイメージにした理由（PBI-105）は人が変えるまで出し、人が変えたら人の変更を出す", () => {
+    const steps = [
+      { key: "investigate" as const, state: "done" as const },
+      { key: "requirements" as const, state: "active" as const },
+      { key: "design" as const, state: "todo" as const },
+    ];
+    const chosen = {
+      status: "awaiting_approval" as const,
+      steps,
+      images: { requirements: "default" },
+      imageSource: "orchestrator" as const,
+      defaultImageReasons: { requirements: "文書だけを書く" },
+      imagesUnexplained: ["investigate" as const, "design" as const],
+    };
+    expect(stepImageRows(task(chosen)).map((r) => r.source)).toEqual([
+      { by: "orchestrator", unexplained: true },
+      { by: "orchestrator", default: "文書だけを書く" },
+      { by: "orchestrator", unexplained: true },
+    ]);
+    const changed = stepImageRows(
+      task({
+        ...chosen,
+        images: { requirements: "playwright", design: "java" },
+        imageChanges: {
+          requirements: { from: "default", to: "playwright", at: "2026-10-15T01:00:00.000Z" },
+          design: { from: "default", to: "java", at: "2026-10-15T01:01:00.000Z" },
+        },
+      }),
+    );
+    expect(changed.map((r) => [r.image, r.source.by])).toEqual([
+      ["default", "orchestrator"],
+      ["playwright", "person"],
+      ["java", "person"],
+    ]);
+  });
+
+  it("実装の検証（テスト）の間は実行中、止まっている工程は次の実行から。プロジェクトの指定はその旨を出す", () => {
+    const steps = [{ key: "implement" as const, state: "active" as const }];
+    const testing = task({ status: "idle", verification: "pending", steps });
+    expect(stepImageRows(testing)[0]?.when).toBe("running");
+    const paused = task({
+      status: "paused",
+      steps,
+      images: { implement: "java" },
+      imageSource: "project",
+    });
+    expect(stepImageRows(paused)[0]).toMatchObject({ when: "next", source: { by: "project" } });
+  });
+});
+
+describe("工程のイメージの選択肢（PBI-106・PR #116 レビュー指摘）", () => {
+  const java = { name: "java", description: "Java 17" };
+  it("既定のイメージと images の名前を、説明つきで出す", () => {
+    expect(stepImageOptions({ problems: [], images: [java] }, "既定")).toEqual([
+      { name: "default", description: "既定" },
+      java,
+    ]);
+    // images を書いていなければ、既定のイメージだけ
+    expect(stepImageOptions({ problems: [], images: [] }, "既定")).toEqual([
+      { name: "default", description: "既定" },
+    ]);
+  });
+
+  it("状態を取得できない・設定を読めない・古いデーモンなら、候補を確かめられない（消した名前と取り違えない）", () => {
+    expect(stepImageOptions(undefined, "既定")).toBeUndefined();
+    expect(
+      stepImageOptions({ problems: [{ code: "config.missing" }], images: [] }, "既定"),
+    ).toBeUndefined();
+    expect(stepImageOptions({ problems: [] }, "既定")).toBeUndefined();
   });
 });

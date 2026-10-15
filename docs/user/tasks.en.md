@@ -140,6 +140,12 @@ Use "Ask the Orchestrator" in the task details to ask about the status of the ta
 - Asking does not change the steps or approved contents, and does not stop work, even on a task in progress.
 - The cost of the answer is added to the task's cost. You cannot ask on a task that has reached its budget limit.
 
+## Changing a step's image
+
+The "Steps" section of the task detail shows the image of each step and where it came from (the Orchestrator, the project target, or a person).
+If an image doesn't fit a step, you can choose again there. The changed image is used from the next run of the step (for a running step, from the next run).
+See [Container images](images.en.md#changing-a-steps-image) for details.
+
 ## Pause, resume, and cancel
 
 - For a task stopped by the budget limit, an AI usage limit, an authentication error, an error, and so on, check the cause and then resume it in the web UI (for the budget, see

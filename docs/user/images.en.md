@@ -1,4 +1,4 @@
-<!-- Code: apps/daemon/src/config.ts (image_build, images, languageImageTag), apps/daemon/src/image.ts, packages/cli/docker/Dockerfile, packages/cli/src/index.ts (imageBuild) -->
+<!-- Code: apps/daemon/src/config.ts (image_build, images, languageImageTag), apps/daemon/src/image.ts, packages/cli/docker/Dockerfile, packages/cli/src/index.ts (imageBuild), apps/daemon/src/service.ts (changeStepImage), apps/web/src/components/step-image-form.tsx -->
 
 [日本語](images.md) | **English**
 
@@ -146,6 +146,24 @@ npx sacty image build java17     # build by name (default is the default image)
 - If you specify an image for a project target (a repository or an Org), the orchestrator does not choose and that image is used for every step
   (a repository's setting takes precedence over an Org's; see [Project settings](project-settings.en.md#targets)).
 - The chosen image and the reason are recorded in the Activity. If a name not in `images` is chosen or specified, sacty stops and shows the reason.
+
+### Changing a step's image
+
+If the orchestrator chooses an image that doesn't fit a step (for example, the default image for a repository that needs Playwright), you can choose again
+for each step in "Step images" in the "Steps" section of the task detail.
+
+- You can choose a name in `images` or `default` (the default image). Each description is shown. A name not in `images` (such as a name removed from config.yaml)
+  is refused with the reason. When config.yaml can't be read, the change is refused with the settings problem as the reason. When sacty's status can't be
+  fetched, the screen says the choices can't be checked and doesn't offer the change (wait a moment and reopen the page).
+- You can change a step in any state (yet to run, running, failed or paused, awaiting approval, or done). The changed image is used from the next
+  run of the step. For a running step, the current run keeps its image and the next run uses the new one. Each step on the screen shows when a change takes effect.
+- Tests run in the image of the Implementation step (Reproduce for bug fixes). If you change the Implementation image, the next test run uses it.
+- For a step that stopped with a failure or a pause, change the image and then retry with "Resume"; the step runs with the changed image.
+- Tasks whose project target specifies an image can be changed too. Only the steps a person changed take precedence over the target's image.
+- The PR step doesn't run in a container, so it has no image.
+- A change is recorded in the Activity as who changed which step from what to what. The step images list shows when a person changed it and the previous name.
+  Why the Orchestrator left a step on the default image (or that no reason was given) is shown in the step images list until a person changes it. The "Steps chosen"
+  line in the Activity stays as it was recorded.
 
 ## Related pages
 

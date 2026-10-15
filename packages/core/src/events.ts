@@ -522,6 +522,16 @@ const StepsChosen = z.object({
   }),
 });
 
+/**
+ * 人が、タスクの詳細で工程のイメージを変えた（PBI-106）。from は変える前の名前（指定が無ければ default）、to は
+ * config.yaml の images の名前か default。その工程の次の実行から使う（テストのイメージも）。終わった工程・実行中の
+ * 工程は変えない。actor は person。
+ */
+const StepImageChanged = z.object({
+  type: z.literal("StepImageChanged"),
+  payload: z.object({ step: StepKey, from: z.string().min(1), to: z.string().min(1) }),
+});
+
 const AgentRunStarted = z.object({
   type: z.literal("AgentRunStarted"),
   payload: z.object({
@@ -1666,6 +1676,7 @@ export const EventInput = z.discriminatedUnion("type", [
   ReproductionChecked,
   StepCompleted,
   StepsChosen,
+  StepImageChanged,
   ServicesStarted,
   TicketTriaged,
   RepositoryChosen,
@@ -1816,6 +1827,13 @@ export const AskQuestionInput = z.object({
     .max(QUESTION_MAX, code("input.questionTooLong")),
 });
 export type AskQuestionInput = z.infer<typeof AskQuestionInput>;
+
+/** タスクの詳細で、工程のイメージを変える入力（PBI-106）。image は config.yaml の images の名前か default。 */
+export const ChangeStepImageInput = z.object({
+  step: StepKey,
+  image: z.string().trim().min(1).max(100),
+});
+export type ChangeStepImageInput = z.infer<typeof ChangeStepImageInput>;
 
 /** ゴールガーディアンが判定できなかった変更の申し出を、人間が判断する入力。 */
 export const DecideChangeInput = z.object({ accept: z.boolean() });

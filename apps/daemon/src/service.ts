@@ -16,6 +16,7 @@ import {
   awaitingTicketTriage,
   BUDGET_WARN_RATIO,
   budgetState,
+  ChangeStepImageInput,
   type CiFailure,
   type CleanupTarget,
   CreateTaskInput,
@@ -3746,6 +3747,8 @@ export class TaskService {
         },
       },
     ]);
+    // 工程のイメージは、実行を始めたときのものに決める。実行の間に人が変えても、この実行は変えない（次の実行から。PBI-106）
+    const runImageName = this.mustGet(task.id).images?.[step];
 
     // 実装の工程は clone を作業領域にし、それ以外の工程は、起点のコミットのコードを使い捨ての写しで渡す
     // （clone はタスクの開始時に済んでいる。作業領域が消えていれば、同じ起点で用意し直す）
@@ -3889,7 +3892,7 @@ export class TaskService {
         }
       }
       // 工程のイメージ（PBI-41）。images から消した名前なら、実行せずに理由を示して止める
-      const stepImage = resolveImage(config.config, this.mustGet(task.id).images?.[step]);
+      const stepImage = resolveImage(config.config, runImageName);
       if (!stepImage.ok) {
         executed ??= {
           outcome: { kind: "failed", reason: "error", message: stepImage.message },
@@ -5703,6 +5706,8 @@ export class TaskService {
         },
       },
     ]);
+    // 統合レビューのイメージは、実行を始めたときのものに決める（実行の間に変えても、次の実行から。PBI-106）
+    const runImageName = this.mustGet(task.id).images?.[step];
     const workspaceDir = join(this.deps.workspaceRoot, "_guardian", runId);
     const subtasks = this.subtaskSummaries(task);
     let baseBranch = task.repository?.baseBranch ?? "";
@@ -5753,7 +5758,7 @@ export class TaskService {
         }
       }
       // 統合レビューのイメージ（PBI-41）。images から消した名前なら、実行せずに理由を示して止める
-      const stepImage = resolveImage(config, latest.images?.[step]);
+      const stepImage = resolveImage(config, runImageName);
       if (!stepImage.ok) executed ??= failed(stepImage.message);
       executed ??= await this.execute({
         agent,
@@ -6542,6 +6547,43 @@ export class TaskService {
   }
 
   /** ゴールガーディアンが判定できなかった変更の申し出を、人間が判断する。 */
+  /**
+   * 人が、タスクの詳細で工程のイメージを変える（PBI-106）。工程の状態は問わない（実行中・終わった工程も変えられる）。
+   * 今の実行は止めず、その工程を次に実行するときから使う（実行の開始で、そのときのイメージを決める）。テストの実行も、
+   * 実行を始めるときの実装（再現）の工程のイメージを使う。プロジェクトの対象の指定より、人の変更を優先する。
+   * images に無い名前（config.yaml から消した名前など）は、理由を示して断る。
+   */
+  changeStepImage(id: string, raw: unknown): Task {
+    const { step, image } = ChangeStepImageInput.parse(raw);
+    const task = this.tasks.get(id);
+    if (!task) throw new InvalidOperationError(message("task.notFound"));
+    if (task.status === "cancelled") throw new InvalidOperationError(message("task.cancelled"));
+    if (!task.steps.some((s) => s.key === step)) {
+      throw new InvalidOperationError(message("image.stepMissing"));
+    }
+    // PR作成はコンテナで実行しない（イメージが無い）
+    if (step === "pr") throw new InvalidOperationError(message("image.noImageStep"));
+    const config = this.deps.config();
+    // 設定を読めない・解析できなければ、名前を確かめられないので、その理由を示して断る（名前の誤りと取り違えないため）
+    if (!config.ok) {
+      throw new InvalidOperationError(
+        message("image.configUnavailable", { detail: config.problem }),
+      );
+    }
+    if (!resolveImage(config.config, image).ok) {
+      throw new InvalidOperationError(message("image.notInImages", { name: image }));
+    }
+    const from = task.images?.[step] ?? DEFAULT_IMAGE_NAME;
+    if (from === image)
+      throw new InvalidOperationError(message("image.unchanged", { name: image }));
+    return this.append(task, [
+      {
+        actor: "person",
+        event: { type: "StepImageChanged", payload: { step, from, to: image } },
+      },
+    ]);
+  }
+
   decideChange(id: string, proposalId: string, raw: unknown): Task {
     const { accept } = DecideChangeInput.parse(raw);
     const task = this.tasks.get(id);

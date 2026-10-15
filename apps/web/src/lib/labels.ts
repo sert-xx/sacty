@@ -8,6 +8,7 @@ import {
   MAX_FIX_CHAIN,
   openProposal,
   type StepKey,
+  stepRunning,
   type Task,
 } from "@sacty/core";
 import type { LabelMessages } from "@/i18n/messages/labels";
@@ -347,6 +348,14 @@ export function describeEvent(event: ActivityEvent, l: LabelMessages): string {
         : l.pause[event.payload.reason];
     case "BudgetCapRaised":
       return e.BudgetCapRaised(usd(event.payload.capUsd), actor);
+    // 人が工程のイメージを変えた（PBI-106）
+    case "StepImageChanged":
+      return e.StepImageChanged(
+        l.step[event.payload.step],
+        event.payload.from,
+        event.payload.to,
+        actor,
+      );
     case "TaskResumed":
       return e.TaskResumed(actor);
     case "StepSubmitted":
@@ -680,4 +689,63 @@ export function testCommandOfNoTests(
   }
   if (added === "pending") return m.testCommandAddedPending(task.addedTestCommand ?? "", reason);
   return m.testCommandNone(reason);
+}
+
+/** タスクの詳細の「工程のイメージ」の1行（PBI-106）。 */
+export type StepImageRow = {
+  step: StepKey;
+  /** 使うイメージの名前（指定が無ければ default）。 */
+  image: string;
+  /** 選んだ元。人が変えたら、いつ・何から変えたか。 */
+  source:
+    | { by: "person"; at: string; from: string }
+    | { by: "project" }
+    /** default は、既定のイメージにした理由（PBI-105）。unexplained は、理由が無いまま既定のイメージにした。 */
+    | { by: "orchestrator"; default?: string; unexplained?: true }
+    | { by: "none" };
+  /** 変えたイメージをいつから使うか。running：次の実行から（今の実行はそのまま）、done：やり直し・手戻りから、next：次の実行から。 */
+  when: "running" | "done" | "next";
+};
+
+/**
+ * 工程ごとのイメージと、選んだ元・変えたらいつから使うか（PBI-106）。工程の状態を問わず、すべての工程を変えられる。
+ * PR作成はコンテナで実行しない（イメージが無い）ので出さない。
+ */
+export function stepImageRows(task: Task): StepImageRow[] {
+  return task.steps
+    .filter((s) => s.key !== "pr")
+    .map((s) => {
+      const image = task.images?.[s.key] ?? "default";
+      const change = task.imageChanges?.[s.key];
+      // 既定のイメージにした理由（PBI-105）は、人が変えるまで出す（人が変えたら、人の変更を出す）
+      const defaultReason = task.defaultImageReasons?.[s.key];
+      const unexplained = task.imagesUnexplained?.includes(s.key) ?? false;
+      const source: StepImageRow["source"] = change
+        ? { by: "person", at: change.at, from: change.from }
+        : defaultReason
+          ? { by: "orchestrator", default: defaultReason }
+          : unexplained
+            ? { by: "orchestrator", unexplained: true }
+            : task.images?.[s.key]
+              ? { by: task.imageSource ?? "orchestrator" }
+              : { by: "none" };
+      const when: StepImageRow["when"] = stepRunning(task, s.key)
+        ? "running"
+        : s.state === "done" || s.state === "skip"
+          ? "done"
+          : "next";
+      return { step: s.key, image, source, when };
+    });
+}
+
+/**
+ * 工程のイメージの選択肢（PBI-106）。既定のイメージと images の名前（説明つき）。デーモンの状態を取得できない・設定を
+ * 読めないときは undefined（候補を確かめられない。images から消した名前と取り違えないため。PR #116 レビュー指摘）。
+ */
+export function stepImageOptions(
+  status: { problems: unknown[]; images?: { name: string; description: string }[] } | undefined,
+  defaultDescription: string,
+): { name: string; description: string }[] | undefined {
+  if (!status || status.problems.length > 0 || !status.images) return undefined;
+  return [{ name: "default", description: defaultDescription }, ...status.images];
 }

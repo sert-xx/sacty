@@ -33,6 +33,7 @@ import { RereviewButton } from "@/components/rereview-button";
 import { ResumeForm } from "@/components/resume-form";
 import { FollowProject } from "@/components/shell/follow-project";
 import { StepCosts } from "@/components/step-costs";
+import { StepImageForm } from "@/components/step-image-form";
 import { CostMeter, StatusLabel, StepChips } from "@/components/task-bits";
 import { TaskChat } from "@/components/task-chat";
 import { TaskControls } from "@/components/task-controls";
@@ -42,6 +43,7 @@ import {
   DaemonUnavailableError,
   getCleanupPlan,
   getProject,
+  getStatus,
   getTask,
   listProjectRepositories,
   listTasks,
@@ -53,6 +55,8 @@ import {
   isWorking,
   personAction,
   statusText,
+  stepImageOptions,
+  stepImageRows,
   testCommandOfNoTests,
   usd,
   usesTestCommand,
@@ -410,6 +414,8 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
                 </ul>
               </div>
             )}
+            {/* 工程のイメージと、選んだ元。いつでも変えられ、その工程を次に実行するときから使う（PBI-106） */}
+            {task.steps.length > 0 && <StepImages task={task} />}
           </section>
           <section
             aria-labelledby="content"
@@ -502,6 +508,79 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
       {/* オーケストレーターへの質問と答え（PBI-54）。画面の右の AI のアイコンから開くサイドパネル（PBI-61） */}
       <TaskChat task={task} />
     </>
+  );
+}
+
+/** 工程のイメージ（PBI-41）と、選んだ元・いつから使うか。中止していなければ、どの工程も変えられる（PBI-106）。 */
+async function StepImages({ task }: { task: Task }) {
+  const { task: t, labels, locale } = await getMessages();
+  const m = t.images;
+  const rows = stepImageRows(task);
+  if (rows.length === 0) return null;
+  // 選べるのは、既定のイメージと images の名前（説明も出す）。取得できない・設定を読めないときは、候補を確かめられない
+  // ことを出し、消した名前の警告と変更の操作は出さない（一時的な失敗を、設定から消したことと取り違えない）
+  const options = stepImageOptions(await getStatus().catch(() => undefined), m.defaultDescription);
+  return (
+    <div className="flex flex-col gap-1 text-sm leading-6" data-testid="step-images">
+      <h3 className="font-semibold">
+        {m.title} <span className="text-[13px] font-normal text-muted-foreground">{m.note}</span>
+      </h3>
+      {!options && (
+        <p role="status" className="text-warn" data-testid="step-images-unavailable">
+          {m.unavailable}
+        </p>
+      )}
+      <ul className="flex flex-col gap-2">
+        {rows.map((row) => (
+          <li
+            key={row.step}
+            className="flex flex-col gap-1 [overflow-wrap:anywhere]"
+            data-testid={`step-image-row-${row.step}`}
+          >
+            <span>
+              <span className="font-medium">{labels.step[row.step]}</span>
+              {m.sep}
+              <span className="font-mono">{row.image}</span>
+              {options && !options.some((o) => o.name === row.image) && (
+                <span className="text-warn">{m.missing}</span>
+              )}
+              <span className="text-muted-foreground">
+                {" ・ "}
+                {row.source.by === "person"
+                  ? m.byPerson(formatStamp(row.source.at, locale), row.source.from)
+                  : row.source.by === "project"
+                    ? m.byProject
+                    : row.source.by === "orchestrator"
+                      ? row.source.default
+                        ? m.byOrchestratorDefault(row.source.default)
+                        : row.source.unexplained
+                          ? m.byOrchestratorUnexplained
+                          : m.byOrchestrator
+                      : m.none}
+              </span>
+            </span>
+            <span className="text-xs text-muted-foreground">
+              {row.when === "running"
+                ? m.whenRunning
+                : row.when === "done"
+                  ? m.whenDone
+                  : m.whenNext}
+              {(row.step === "implement" || row.step === "reproduce") && <> ・ {m.testNote}</>}
+            </span>
+            {options && task.status !== "cancelled" && (
+              // 変えた後に、選択を今のイメージに合わせる（フォームのリセットが前のイメージに戻すため、作り直す）
+              <StepImageForm
+                key={`${row.step}:${row.image}`}
+                taskId={task.id}
+                step={row.step}
+                current={row.image}
+                options={options}
+              />
+            )}
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 

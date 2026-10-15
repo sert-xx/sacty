@@ -105,6 +105,7 @@ docker のコンテナの中で1回実行して行う。テストの実行も、
 
 - 既定のイメージは `image`（既定 `sacty-agent:0.1.0`）。言語ごとのイメージは `images.<名前>`（タグの既定は `sacty-agent-<名前>:0.1.0`）。
   使うイメージは、名前が無いか `default` なら既定、`images` にあればそれ、無い名前なら止める（`image.unknown`）。
+  工程のイメージは人がタスクの詳細で変えられ、その工程を次に実行するときから使う（[工程とタスク](tasks-and-steps.md)の「工程のイメージを人が変える」）。
 - `sacty image build [<名前>...]` は `packages/cli/docker/Dockerfile` を `docker build` する。名前を省くと既定と `images` のすべてを作る。
   設定ファイルが無ければ既定で作り、ほかの誤りがあれば作らない。
   - 元のイメージ（`BASE_IMAGE`）の既定は `node:22-bookworm-slim`。Claude Code（`@anthropic-ai/claude-code@2.1.296`）と Codex

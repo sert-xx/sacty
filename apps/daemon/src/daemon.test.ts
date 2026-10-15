@@ -32,6 +32,7 @@ import {
   renderMessage,
   reworkTargets,
   STEP_PLANS,
+  stepRunning,
 } from "@sacty/core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SqliteActivityStore } from "./activity.js";
@@ -3544,6 +3545,318 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       expect(ja(failed?.type === "AgentRunFailed" ? failed.payload.message : undefined)).toContain(
         "イメージ「java」",
       );
+      activity.close();
+    });
+  });
+
+  describe("工程のイメージを人が変える（PBI-106）", () => {
+    const image = (name: string, description: string) => ({
+      name,
+      image: `sacty-agent-${name}:test`,
+      description,
+      env: { IMAGE_NAME: name },
+    });
+    const java = image("java", "Java 17・Maven");
+    const playwright = image("playwright", "Node.js・Playwright");
+    const withImages = (): (() => ConfigResult) => () => ({
+      ok: true,
+      config: {
+        ...(configOf(agent())() as { ok: true; config: SactyConfig }).config,
+        images: { java, playwright },
+      },
+    });
+    const DEFAULT = { image: "sacty-agent:test" };
+    const used = (i: { image: string; env: Record<string, string> }) => ({
+      image: i.image,
+      env: i.env,
+    });
+    const plan =
+      (images: Partial<Record<StepKey, string>> = { design: "java" }) =>
+      async () => ({
+        steps: [...MVP_STEPS],
+        fallback: false,
+        testCommand: "npm test",
+        costUsd: 0,
+        estimated: false,
+        images,
+      });
+    const changes = (service: TaskService, id: string) =>
+      service
+        .get(id)
+        ?.activity.filter((e) => e.type === "StepImageChanged")
+        .map((e) => ({ actor: e.actor, ...(e.type === "StepImageChanged" ? e.payload : {}) }));
+
+    it("これから実行する工程・承認待ちの工程・終わった工程を変え、次の実行（手戻りを含む）から使う", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const { service, executor } = makeService(
+        activity,
+        [out("# 要求要件 v1"), out("# 要求要件 v2"), design],
+        { config: withImages(), planner: plan() },
+      );
+      const { id } = service.createTask({ projectId: "default", title: "決済API" });
+      await service.runNext(id);
+      expect(service.get(id)?.task.status).toBe("awaiting_approval");
+      // これから実行する工程（設計）と、承認待ちの工程（要求要件）を変える
+      service.changeStepImage(id, { step: "design", image: "playwright" });
+      service.changeStepImage(id, { step: "requirements", image: "java" });
+      // 手戻り（差し戻し）でやり直す要求要件は、変えたイメージで実行する
+      service.requestChanges(id, { step: "requirements", submission: 1, comments: ["足りない"] });
+      await service.runNext(id);
+      service.approve(id, { step: "requirements", submission: 2 });
+      // 終わった工程も変えられる
+      service.changeStepImage(id, { step: "requirements", image: "default" });
+      await service.runNext(id);
+      expect(executor.images).toEqual([DEFAULT, used(java), used(playwright)]);
+      // 台帳に、人が・どの工程を・何から何に変えたかを、新しいイベントで足す（工程を決めた記録は変えない）
+      expect(changes(service, id)).toEqual([
+        { actor: "person", step: "design", from: "java", to: "playwright" },
+        { actor: "person", step: "requirements", from: "default", to: "java" },
+        { actor: "person", step: "requirements", from: "java", to: "default" },
+      ]);
+      const chosen = service.get(id)?.activity.find((e) => e.type === "StepsChosen");
+      expect(chosen?.type === "StepsChosen" && chosen.payload.images).toEqual({ design: "java" });
+      const task = service.get(id)?.task;
+      expect(task?.images).toEqual({ design: "playwright", requirements: "default" });
+      expect(task?.imageSource).toBe("orchestrator");
+      expect(task?.imageChanges?.design).toMatchObject({ from: "java", to: "playwright" });
+      expect(task?.imageChanges?.requirements).toMatchObject({ from: "java", to: "default" });
+      activity.close();
+    });
+
+    it("実行中の工程を変えても今の実行は変えず、次の実行から使う", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const repos = new FakeRepos();
+      const { service, executor } = makeService(
+        activity,
+        [out("# 要求要件 v1"), out("# 要求要件 v2"), out("# 要求要件 v3")],
+        { config: withImages(), planner: plan(), repos },
+      );
+      const { id } = service.createTask({ projectId: "default", title: "決済API" });
+      await service.runNext(id);
+      service.requestChanges(id, { step: "requirements", submission: 1, comments: ["足りない"] });
+      // 作業領域を消して、実行を始めた後の準備（用意し直し）で待たせる
+      rmSync(join(dir, "workspaces", id), { recursive: true, force: true });
+      const gate = Promise.withResolvers<void>();
+      repos.prepareGate = gate.promise;
+      repos.prepareStarted = Promise.withResolvers<void>();
+      const running = service.runNext(id);
+      await repos.prepareStarted.promise;
+      const during = service.get(id)?.task;
+      expect(during?.status).toBe("running");
+      expect(during && stepRunning(during, "requirements")).toBe(true);
+      // 実行中の工程も変えられる
+      service.changeStepImage(id, { step: "requirements", image: "java" });
+      gate.resolve();
+      await running;
+      // 今の実行は、始めたときのイメージ（既定）のまま
+      expect(executor.images).toEqual([DEFAULT, DEFAULT]);
+      repos.prepareGate = undefined;
+      service.requestChanges(id, { step: "requirements", submission: 2, comments: ["まだ"] });
+      await service.runNext(id);
+      expect(executor.images).toEqual([DEFAULT, DEFAULT, used(java)]);
+      activity.close();
+    });
+
+    it("失敗して一時停止した工程を変えて、やり直しで変えたイメージで実行する", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const { service, executor } = makeService(
+        activity,
+        [{ kind: "failed", reason: "error", message: "Playwright が無い" }, out("# 要求要件")],
+        { config: withImages(), planner: plan() },
+      );
+      const { id } = service.createTask({ projectId: "default", title: "決済API" });
+      await service.runNext(id);
+      expect(service.get(id)?.task.status).toBe("paused");
+      service.changeStepImage(id, { step: "requirements", image: "playwright" });
+      service.resume(id, {});
+      await service.runNext(id);
+      expect(executor.images).toEqual([DEFAULT, used(playwright)]);
+      expect(service.get(id)?.task.status).toBe("awaiting_approval");
+      activity.close();
+    });
+
+    it("実装の工程を変えたら、実装とそのテストを変えたイメージで実行する", async () => {
+      const tests = new FakeTests([{ exitCode: 0, output: "ok", durationMs: 1 }]);
+      const { activity, service, executor, id } = await toImplement(
+        [implement("# 実装"), review()],
+        {
+          tests,
+          config: withImages(),
+          planner: plan({ implement: "java" }),
+        },
+      );
+      service.changeStepImage(id, { step: "implement", image: "playwright" });
+      await drain(service);
+      // 要求要件（2回）・設計は既定、実装は変えたイメージ、最終レビュー（ゴールガーディアン）は既定
+      expect(executor.images.slice(0, 5)).toEqual([
+        DEFAULT,
+        DEFAULT,
+        DEFAULT,
+        used(playwright),
+        DEFAULT,
+      ]);
+      expect(tests.calls).toEqual([
+        expect.objectContaining({ image: playwright.image, env: playwright.env }),
+      ]);
+      activity.close();
+    });
+
+    it("実装の実行中に変えたら、今の実装は始めたときのイメージで動き、その後のテストは変えたイメージで動く（PR #116 レビュー指摘）", async () => {
+      const tests = new FakeTests([{ exitCode: 0, output: "ok", durationMs: 1 }]);
+      const { activity, service, executor, id } = await toImplement(
+        [implement("# 実装"), review()],
+        {
+          tests,
+          config: withImages(),
+          planner: plan({ implement: "java" }),
+        },
+      );
+      // 実装のコンテナを起動した（イメージを決めた）後、実行の最中に変える
+      let during: Task | undefined;
+      executor.respond = () => {
+        if (executor.calls.length === 4) {
+          during = service.changeStepImage(id, { step: "implement", image: "playwright" });
+        }
+        return undefined;
+      };
+      await drain(service);
+      expect(during && stepRunning(during, "implement")).toBe(true);
+      // 今の実装は始めたときのイメージ（java）、その後のテストは変えたイメージ（playwright）
+      expect(executor.images[3]).toEqual(used(java));
+      expect(tests.calls).toEqual([
+        expect.objectContaining({ image: playwright.image, env: playwright.env }),
+      ]);
+      expect(changes(service, id)).toEqual([
+        { actor: "person", step: "implement", from: "java", to: "playwright" },
+      ]);
+      activity.close();
+    });
+
+    it("プロジェクトの対象の指定より、人の変更を優先する（ほかの工程は指定のまま）", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const projects = new MemoryProjectStore();
+      projects.put("default", {
+        name: "デフォルト",
+        targets: [{ scope: "repo", target: "https://github.com/acme/app", image: "java" }],
+        githubAccounts: { "github.com": "me" },
+      });
+      const { service, executor } = makeService(activity, [out("# 要求要件"), design], {
+        config: withImages(),
+        projects,
+      });
+      const { id } = service.createTask({
+        projectId: "default",
+        title: "決済API",
+        repo: "https://github.com/acme/app",
+      });
+      await service.runNext(id);
+      service.changeStepImage(id, { step: "design", image: "playwright" });
+      service.approve(id, { step: "requirements", submission: 1 });
+      await service.runNext(id);
+      expect(executor.images).toEqual([used(java), used(playwright)]);
+      const task = service.get(id)?.task;
+      expect(task?.imageSource).toBe("project");
+      expect(task?.images?.implement).toBe("java");
+      expect(task?.images?.design).toBe("playwright");
+      activity.close();
+    });
+
+    it("images に無い名前・同じ名前・PR作成・工程に無い工程・中止したタスクは、理由を示して断る（日本語・英語）", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      let config = withImages();
+      const { service } = makeService(activity, [out("# 要求要件")], {
+        config: () => config(),
+        planner: plan(),
+      });
+      const { id } = service.createTask({ projectId: "default", title: "決済API" });
+      // 工程を決める前は、工程が無い
+      expect(() => service.changeStepImage(id, { step: "design", image: "java" })).toThrow(
+        "その工程は、このタスクの工程にありません。",
+      );
+      await service.runNext(id);
+      const reject = (input: unknown) => {
+        try {
+          service.changeStepImage(id, input);
+        } catch (error) {
+          if (!(error instanceof InvalidOperationError)) throw error;
+          return error.messages.map((m) => [ja(m), renderMessage(m, "en")]);
+        }
+        throw new Error("not rejected");
+      };
+      expect(reject({ step: "design", image: "python" })).toEqual([
+        [
+          "イメージ「python」は config.yaml の images にありません。images の名前か default を選んでください。",
+          'The image "python" is not in images in config.yaml. Choose a name in images, or default.',
+        ],
+      ]);
+      expect(reject({ step: "design", image: "java" })).toEqual([
+        ["工程のイメージは、すでに「java」です。", 'The step already uses the image "java".'],
+      ]);
+      expect(reject({ step: "pr", image: "java" })[0]?.[0]).toContain("PR作成の工程");
+      expect(reject({ step: "reproduce", image: "java" })[0]?.[1]).toBe(
+        "This task does not have that step.",
+      );
+      // config.yaml の images から消した名前も断る（既定のイメージには戻せる）
+      config = configOf(agent());
+      expect(reject({ step: "requirements", image: "java" })[0]?.[0]).toContain(
+        "イメージ「java」は config.yaml の images にありません",
+      );
+      expect(service.changeStepImage(id, { step: "design", image: "default" }).images?.design).toBe(
+        "default",
+      );
+      // config.yaml を読めない・解析できないときは、名前の誤りではなく、設定の問題として断る（PR #116 レビュー指摘）
+      config = () => ({
+        ok: false,
+        problem: message("config.missing", { path: "/x/config.yaml" }),
+      });
+      for (const name of ["playwright", "default"]) {
+        const [[jaText, enText] = []] = reject({ step: "design", image: name });
+        expect(jaText).toMatch(/^config\.yaml を読めないため、工程のイメージを変えられません/);
+        expect(jaText).toContain("/x/config.yaml");
+        expect(jaText).not.toContain("images にありません");
+        expect(enText).toMatch(
+          /^The step image can't be changed because config\.yaml can't be read/,
+        );
+      }
+      config = withImages();
+      // 入力の形が違えば、入力の誤り
+      expect(() => service.changeStepImage(id, { step: "deploy", image: "java" })).toThrow();
+      expect(() => service.changeStepImage(id, { step: "design", image: " " })).toThrow();
+      await service.cancel(id);
+      expect(reject({ step: "design", image: "default" })[0]?.[0]).toBe(
+        ja(message("task.cancelled")),
+      );
+      expect(changes(service, id)).toEqual([
+        { actor: "person", step: "design", from: "java", to: "default" },
+      ]);
+      activity.close();
+    });
+
+    it("API で変えられ、images に無い名前は 409 で理由を返す", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const { service } = makeService(activity, [out("# 要求要件")], {
+        config: withImages(),
+        planner: plan(),
+      });
+      const { id } = service.createTask({ projectId: "default", title: "決済API" });
+      await service.runNext(id);
+      const app = createApp(service, "tok");
+      const post = (body: unknown) =>
+        app.request(`/api/tasks/${id}/images`, {
+          method: "POST",
+          headers: { authorization: "Bearer tok", "content-type": "application/json" },
+          body: JSON.stringify(body),
+        });
+      const ok = await post({ step: "design", image: "playwright" });
+      expect(ok.status).toBe(200);
+      expect(((await ok.json()) as { task: Task }).task.images?.design).toBe("playwright");
+      const ng = await post({ step: "design", image: "python" });
+      expect(ng.status).toBe(409);
+      expect(await ng.json()).toEqual({
+        error: "invalid_operation",
+        messages: [message("image.notInImages", { name: "python" })],
+      });
+      expect((await post({ step: "nope", image: "java" })).status).toBe(400);
       activity.close();
     });
   });
@@ -9349,6 +9662,63 @@ describe("統合レビュー（PBI-31）", () => {
     expect(service.get(id)?.task.misses).toEqual([
       expect.objectContaining({ reviewAt: at, remarkIds: ["split-1-1"] }),
     ]);
+    activity.close();
+  });
+
+  it("統合レビューの実行中にイメージを変えても今のレビューは変えず、次の統合レビューから使う（PBI-106・PR #116 レビュー指摘）", async () => {
+    const image = (name: string) => ({
+      name,
+      image: `sacty-agent-${name}:test`,
+      description: name,
+      env: { IMAGE_NAME: name },
+    });
+    const java = image("java");
+    const playwright = image("playwright");
+    const config = () => ({
+      ok: true as const,
+      config: {
+        ...(configOf(agent())() as { ok: true; config: SactyConfig }).config,
+        images: { java, playwright },
+      },
+    });
+    const fixChild = splitOutput([{ key: "F1", title: "修正 F1", body: "-", dependsOn: [] }]);
+    // 統合レビューを始めた後、ベースブランチの最新を取得している間（コンテナの起動の前）に、1回だけ変える
+    let change: (() => void) | undefined;
+    class ChangingRepos extends FakeRepos {
+      override async fetchBranch(gitDir: string, branch: string, authEnv?: Record<string, string>) {
+        const run = change;
+        change = undefined;
+        run?.();
+        return super.fetchBranch(gitDir, branch, authEnv);
+      }
+    }
+    const { service, executor, activity, id } = await splitParent(
+      [
+        splitOutput(twoChildren),
+        out("# A の調査"),
+        out("# B の調査"),
+        integration(false, ["足りない 1"]),
+        fixChild,
+        out("# F1 の調査"),
+        integration(true),
+      ],
+      new ChangingRepos(),
+      { config, images: { integrate: "java" } },
+    );
+    let during: Task | undefined;
+    change = () => {
+      during = service.changeStepImage(id, { step: "integrate", image: "playwright" });
+    };
+    await drain(service, id);
+    const parent = service.get(id)?.task;
+    expect(parent?.gate).toEqual({ step: "integrate", submission: 1 });
+    expect(parent?.integration?.passed).toBe(true);
+    // 変えたのは、1回目の統合レビューの実行中
+    expect(during && stepRunning(during, "integrate")).toBe(true);
+    // 今の統合レビューは始めたときのイメージ（java）、修正の後の統合レビュー（9回目の実行）は変えたイメージ
+    expect(executor.images[5]).toEqual({ image: java.image, env: java.env });
+    expect(executor.images[8]).toEqual({ image: playwright.image, env: playwright.env });
+    expect(executor.images).toHaveLength(9);
     activity.close();
   });
 

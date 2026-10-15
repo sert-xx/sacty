@@ -146,6 +146,12 @@ const PARAMS = {
   "config.imageRepo": null,
   "config.imageRepoPackages": null,
   "image.unknown": z.object({ name: z.string() }),
+  // 工程のイメージを人が変える（PBI-106）
+  "image.notInImages": z.object({ name: z.string() }),
+  "image.unchanged": z.object({ name: z.string() }),
+  "image.configUnavailable": z.object({ detail: TextParam }),
+  "image.stepMissing": null,
+  "image.noImageStep": null,
   // docker compose のサービス（PBI-47）
   "services.unsafe": z.object({ file: z.string(), detail: z.string() }),
   "services.failed": z.object({ file: z.string(), detail: z.string() }),
@@ -686,6 +692,13 @@ const ja: MessageDictionary = {
     `共用の compose「${name}」の compose ファイル（${file}）に、sacty が起動できない設定があります：${detail}。エージェントにホストの権限を渡さないため、privileged・ホストのネットワーク・取得したリポジトリの外のマウントなどは使えません。`,
   "services.sharedFailed": ({ name, file, detail }) =>
     `共用の compose「${name}」の compose ファイル（${file}）のサービスを起動できませんでした。出力の末尾：${detail}`,
+  "image.notInImages": ({ name }) =>
+    `イメージ「${name}」は config.yaml の images にありません。images の名前か default を選んでください。`,
+  "image.unchanged": ({ name }) => `工程のイメージは、すでに「${name}」です。`,
+  "image.configUnavailable": ({ detail }, text) =>
+    `config.yaml を読めないため、工程のイメージを変えられません（images の名前を確かめられません）。設定を直してから、もう一度変えてください：${text(detail)}`,
+  "image.stepMissing": "その工程は、このタスクの工程にありません。",
+  "image.noImageStep": "PR作成の工程はコンテナで実行しないため、イメージを使いません。",
   "image.unknown": ({ name }) =>
     `イメージ「${name}」は config.yaml の images にありません。images に書くか、プロジェクトの対象のイメージの指定を直してから、再開してください。`,
   "input.channelRequired": "チャンネルを書いてください。",
@@ -1117,6 +1130,13 @@ const en: MessageDictionary = {
     `The compose file (${file}) of the shared compose "${name}" has settings sacty can't start: ${detail}. To keep host privileges away from agents, privileged, host networking, mounts outside the fetched repository and so on are not allowed.`,
   "services.sharedFailed": ({ name, file, detail }) =>
     `Could not start the services in the compose file (${file}) of the shared compose "${name}". End of the output: ${detail}`,
+  "image.notInImages": ({ name }) =>
+    `The image "${name}" is not in images in config.yaml. Choose a name in images, or default.`,
+  "image.unchanged": ({ name }) => `The step already uses the image "${name}".`,
+  "image.configUnavailable": ({ detail }, text) =>
+    `The step image can't be changed because config.yaml can't be read (the names in images can't be checked). Fix the settings, then change it again: ${text(detail)}`,
+  "image.stepMissing": "This task does not have that step.",
+  "image.noImageStep": "The PR step doesn't run in a container, so it uses no image.",
   "image.unknown": ({ name }) =>
     `The image "${name}" is not in images in config.yaml. Add it to images, or fix the image of the project target, then resume.`,
   "input.channelRequired": "Write a channel.",
