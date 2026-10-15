@@ -2,7 +2,7 @@
 
 - 日付: 2026-10-15（UTC）
 - タスク: PBI-97
-- PR: なし
+- PR: #107
 - ブランチ: feat/issue-97-english-docs
 - 関係する ADR: [README・仕様書・ユーザードキュメントに、同じディレクトリの `*.en.md` で英語の版を置き、2つの版の形をテストで突き合わせる](../adr/20261015-0048-english-docs-side-by-side.md)
 
