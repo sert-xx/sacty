@@ -323,6 +323,10 @@ export async function saveSettingsAction(
         (kind) => formData.get(`triage-${kind}`) !== "on",
       ),
       maxParallelTasks: String(formData.get("maxParallelTasks") ?? ""),
+      // 取り込みの種類ごとの間隔（PBI-100）
+      issueIntervalSec: String(formData.get("issueIntervalSec") ?? ""),
+      reviewIntervalSec: String(formData.get("reviewIntervalSec") ?? ""),
+      ticketIntervalSec: String(formData.get("ticketIntervalSec") ?? ""),
     });
   } catch {
     return { message: a.daemonDown };

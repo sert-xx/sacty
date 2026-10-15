@@ -56,3 +56,51 @@ describe("sacty の設定の画面の取り込み（PBI-99）", () => {
     expect(render({ triageOff: ["issues"] })).not.toContain('name="triage-issues" checked=""');
   });
 });
+
+describe("取り込みの種類ごとの間隔（PBI-100）", () => {
+  it("Issue・PR のレビュー・チケットの区画に、それぞれの間隔の欄を出す（下限 60・空なら既定の 300）", () => {
+    for (const lang of ["ja", "en"] as const) {
+      locale = lang;
+      const t = messagesFor(lang).settings;
+      const html = render({ reviewIntervalSec: 900 });
+      const sections = html.split("<section").slice(1, 4);
+      expect(
+        sections.map((section) => section.match(/name="([a-zA-Z]+IntervalSec)"/)?.[1]),
+        lang,
+      ).toEqual(["issueIntervalSec", "reviewIntervalSec", "ticketIntervalSec"]);
+      for (const section of sections) {
+        expect(section, lang).toContain('min="60"');
+        expect(section, lang).toContain('placeholder="300"');
+        expect(section, lang).toContain(t.intervalLabel);
+      }
+      // 保存した値と、いまの間隔（設定していなければ既定）
+      expect(sections[1], lang).toContain('value="900"');
+      expect(sections[1], lang).toContain(t.intervalCurrent(900, false));
+      expect(sections[0], lang).toContain('value=""');
+      expect(sections[0], lang).toContain(t.intervalCurrent(300, true));
+    }
+    // 取り込みが止まっている種類（Off・ラベルが無い）は「始めると」の文にする（レビュー指摘）
+    for (const lang of ["ja", "en"] as const) {
+      locale = lang;
+      const t = messagesFor(lang).settings;
+      const off = render({ triageOff: ["issues"], ticketLabel: "", ticketIntervalSec: 120 }).split(
+        "<section",
+      );
+      expect(off[1], lang).toContain(t.intervalWhenOn(300, true));
+      expect(off[1], lang).not.toContain(t.intervalCurrent(300, true));
+      expect(off[1], lang).toContain(t.intakeOff);
+      expect(off[3], lang).toContain(t.intervalWhenOn(120, false));
+      expect(off[2], lang).toContain(t.intervalCurrent(300, true));
+    }
+    locale = "ja";
+    expect(messagesFor("ja").settings.intervalWhenOn(300, true)).toBe(
+      "取り込みを始めると、300 秒ごとに取り込みます（既定）。",
+    );
+    // ブラウザの検査（ブラウザの言語）に任せず、デーモンの文言（画面の言語）で誤りを出す
+    expect(render()).toMatch(/<form[^>]*novalidate=""/i);
+    locale = "ja";
+    expect(messagesFor("ja").settings.intervalCurrent(300, true)).toBe(
+      "いまは 300 秒ごとに取り込みます（既定）。",
+    );
+  });
+});

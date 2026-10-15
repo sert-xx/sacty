@@ -1,6 +1,11 @@
 "use client";
 
-import { DEFAULT_MAX_PARALLEL_TASKS, MAX_PARALLEL_TASKS_LIMIT } from "@sacty/core";
+import {
+  DEFAULT_INTAKE_INTERVAL_SEC,
+  DEFAULT_MAX_PARALLEL_TASKS,
+  MAX_PARALLEL_TASKS_LIMIT,
+  MIN_INTAKE_INTERVAL_SEC,
+} from "@sacty/core";
 import { startTransition, useActionState, useId, useState } from "react";
 import { type SaveSettingsState, saveSettingsAction } from "@/app/actions";
 import { Button } from "@/components/ui/button";
@@ -12,7 +17,7 @@ const initial: SaveSettingsState = {};
 
 /**
  * sacty 全体の設定の編集（取り込むラベル。PBI-26。同時に実行するタスクの数。PBI-30）。取り込みは「Issue の取り込み」と
- * 「PR のレビューの取り込み」に分ける（PR を取り込むのはレビューだけ。PBI-99）。
+ * 「PR のレビューの取り込み」に分ける（PR を取り込むのはレビューだけ。PBI-99）。取り込みの間隔は種類ごと（PBI-100）。
  */
 export function SettingsForm({
   intakeLabel,
@@ -21,6 +26,9 @@ export function SettingsForm({
   triageOff = [],
   ticketLabel: savedTicketLabel = "",
   maxParallelTasks,
+  issueIntervalSec,
+  reviewIntervalSec,
+  ticketIntervalSec,
 }: {
   intakeLabel: string;
   /** PR のレビューの取り込み（PBI-44）。 */
@@ -32,6 +40,10 @@ export function SettingsForm({
   ticketLabel?: string;
   /** 設定していなければ undefined（既定の数で実行する）。 */
   maxParallelTasks?: number;
+  /** 取り込みの種類ごとの間隔（秒。PBI-100）。設定していなければ undefined（既定の間隔）。 */
+  issueIntervalSec?: number;
+  reviewIntervalSec?: number;
+  ticketIntervalSec?: number;
 }) {
   const [state, formAction, pending] = useActionState(saveSettingsAction, initial);
   const t = useMessages().settings;
@@ -59,6 +71,37 @@ export function SettingsForm({
       {label}
     </label>
   );
+  const [intervals, setIntervals] = useState({
+    issueIntervalSec: issueIntervalSec === undefined ? "" : String(issueIntervalSec),
+    reviewIntervalSec: reviewIntervalSec === undefined ? "" : String(reviewIntervalSec),
+    ticketIntervalSec: ticketIntervalSec === undefined ? "" : String(ticketIntervalSec),
+  });
+  // 取り込みの間隔（PBI-100）。空なら既定の間隔
+  // 取り込みが止まっている（ラベルが無いか Off）種類は、「始めると」の文にする（止まっている表示と食い違わないように）
+  const interval = (name: keyof typeof intervals, saved: number | undefined, running: boolean) => (
+    <div className="flex flex-col gap-1.5">
+      <Label htmlFor={`${uid}-${name}`}>{t.intervalLabel}</Label>
+      <Input
+        id={`${uid}-${name}`}
+        name={name}
+        type="number"
+        inputMode="numeric"
+        min={MIN_INTAKE_INTERVAL_SEC}
+        step={1}
+        value={intervals[name]}
+        placeholder={String(DEFAULT_INTAKE_INTERVAL_SEC)}
+        onChange={(e) => setIntervals((current) => ({ ...current, [name]: e.target.value }))}
+        className="max-w-32"
+      />
+      <p className="text-sm text-muted-foreground">
+        {t.intervalHelp(MIN_INTAKE_INTERVAL_SEC, DEFAULT_INTAKE_INTERVAL_SEC)}{" "}
+        {(running ? t.intervalCurrent : t.intervalWhenOn)(
+          saved ?? DEFAULT_INTAKE_INTERVAL_SEC,
+          saved === undefined,
+        )}
+      </p>
+    </div>
+  );
   const [parallel, setParallel] = useState(
     maxParallelTasks === undefined ? "" : String(maxParallelTasks),
   );
@@ -70,6 +113,8 @@ export function SettingsForm({
         const data = new FormData(e.currentTarget);
         startTransition(() => formAction(data));
       }}
+      // 入力の誤りは、ブラウザの言語ではなく画面の言語の文で出す（デーモンが検査する。PBI-100）
+      noValidate
       className="flex flex-col gap-6"
     >
       <section
@@ -96,6 +141,7 @@ export function SettingsForm({
             className="max-w-xs"
           />
         </div>
+        {interval("issueIntervalSec", issueIntervalSec, Boolean(intakeLabel) && savedOn.issues)}
         <p className={intakeLabel && savedOn.issues ? "text-sm" : "text-sm text-warn"}>
           {intakeLabel && savedOn.issues ? t.intakeOn(intakeLabel) : t.intakeOff}
         </p>
@@ -134,6 +180,11 @@ export function SettingsForm({
             className="max-w-xs"
           />
         </div>
+        {interval(
+          "reviewIntervalSec",
+          reviewIntervalSec,
+          savedReviewRequested || (Boolean(savedReviewLabel) && savedOn.reviewLabel),
+        )}
         <p
           className={
             savedReviewRequested || (savedReviewLabel && savedOn.reviewLabel)
@@ -170,6 +221,11 @@ export function SettingsForm({
             className="max-w-xs"
           />
         </div>
+        {interval(
+          "ticketIntervalSec",
+          ticketIntervalSec,
+          Boolean(savedTicketLabel) && savedOn.tickets,
+        )}
         <p
           className={
             savedTicketLabel && savedOn.tickets ? "text-sm" : "text-sm text-muted-foreground"

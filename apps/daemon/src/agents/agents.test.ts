@@ -611,6 +611,19 @@ describe("設定ファイル", () => {
     expect(result.ok && "repository" in result.config).toBe(false);
   });
 
+  it("config.yaml の github（poll_interval_sec）は読まず、雛形にも書かない。書いてあっても読める（PBI-100）", () => {
+    dir = mkdtempSync(join(tmpdir(), "sacty-config-"));
+    expect(CONFIG_TEMPLATE).not.toMatch(/^#?\s*github:/m);
+    expect(CONFIG_TEMPLATE).not.toContain("poll_interval_sec");
+    writeFileSync(
+      join(dir, "config.yaml"),
+      `${CONFIG_TEMPLATE}\ngithub:\n  poll_interval_sec: 10\n`,
+    );
+    const result = loadConfig(dir);
+    expect(result.ok).toBe(true);
+    expect(result.ok && "github" in result.config).toBe(false);
+  });
+
   it("`sacty config init` の雛形はそのまま読める", () => {
     dir = mkdtempSync(join(tmpdir(), "sacty-config-"));
     writeFileSync(join(dir, "config.yaml"), CONFIG_TEMPLATE);

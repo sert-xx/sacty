@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { parseRepoUrl, RepoUrl } from "./github-url.js";
-import { renderMessage } from "./messages.js";
+import { issueMessage, renderMessage } from "./messages.js";
 import {
+  DEFAULT_INTAKE_INTERVAL_SEC,
   excludedRepositories,
   exportProject,
+  intakeIntervalSec,
+  MIN_INTAKE_INTERVAL_SEC,
   type Project,
   ProjectDefinition,
   type ProjectDefinitionInput,
@@ -11,6 +14,8 @@ import {
   projectConflicts,
   responsibleProject,
   responsibleTicketProject,
+  SactySettings,
+  SactySettingsUpdate,
   targetImageOf,
 } from "./projects.js";
 
@@ -626,5 +631,49 @@ describe("共用の compose（PBI-70）", () => {
         project: { ...exported.project, sharedComposes: [{ ...infra, token: "ghp_abc" }] },
       }).success,
     ).toBe(false);
+  });
+});
+
+describe("取り込みの種類ごとの間隔（PBI-100）", () => {
+  it("種類ごとに間隔を持ち、設定していなければ既定の 300 秒。画面の入力（文字列）と空も受け付ける", () => {
+    expect(DEFAULT_INTAKE_INTERVAL_SEC).toBe(300);
+    const settings = SactySettings.parse({
+      issueIntervalSec: "60",
+      reviewIntervalSec: 900,
+      ticketIntervalSec: " ",
+    });
+    expect(settings).toEqual({ issueIntervalSec: 60, reviewIntervalSec: 900 });
+    expect(intakeIntervalSec(settings, "issues")).toBe(60);
+    expect(intakeIntervalSec(settings, "reviews")).toBe(900);
+    expect(intakeIntervalSec(settings, "tickets")).toBe(300);
+    expect(intakeIntervalSec({}, "issues")).toBe(300);
+  });
+
+  it("60 秒より短い間隔・整数でない値・数でない値は、どの種類の間隔かがわかる日本語と英語の文で弾く", () => {
+    const cases = [
+      ["issueIntervalSec", "input.issueIntervalInvalid", "Issue", "issue"],
+      ["reviewIntervalSec", "input.reviewIntervalInvalid", "PR のレビュー", "PR review"],
+      ["ticketIntervalSec", "input.ticketIntervalInvalid", "チケット", "ticket"],
+    ] as const;
+    for (const [key, code, ja, en] of cases) {
+      for (const bad of [59, "59", 0, -60, 60.5, "abc", "1e400", true]) {
+        const result = SactySettingsUpdate.safeParse({ [key]: bad });
+        expect(result.success, `${key} ${String(bad)}`).toBe(false);
+        const issue = result.error?.issues[0];
+        expect(issue?.path, key).toEqual([key]);
+        expect(issueMessage(issue as never), `${key} ${String(bad)}`).toEqual({ code });
+      }
+      expect(SactySettingsUpdate.parse({ [key]: 60 })).toEqual({ [key]: 60 });
+      // 文言の下限と既定値は、定数と一致する
+      for (const [lang, kind] of [
+        ["ja", ja],
+        ["en", en],
+      ] as const) {
+        const text = renderMessage({ code }, lang);
+        expect(text, lang).toContain(kind);
+        expect(text, lang).toContain(String(MIN_INTAKE_INTERVAL_SEC));
+        expect(text, lang).toContain(String(DEFAULT_INTAKE_INTERVAL_SEC));
+      }
+    }
   });
 });

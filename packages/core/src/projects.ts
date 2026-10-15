@@ -37,6 +37,43 @@ export type ProjectTarget = z.infer<typeof ProjectTarget>;
 export const DEFAULT_MAX_PARALLEL_TASKS = 3;
 export const MAX_PARALLEL_TASKS_LIMIT = 10;
 
+/**
+ * 取り込みの種類（PBI-100）。issues：Issue の取り込み、reviews：PR のレビューの取り込み（レビュー用のラベルと自分への
+ * レビューの依頼）、tickets：チケット（JIRA など）の取り込み。種類ごとに、別の間隔で取り込む。
+ */
+export const IntakeKind = z.enum(["issues", "reviews", "tickets"]);
+export type IntakeKind = z.infer<typeof IntakeKind>;
+
+/** 取り込みの間隔（秒）の既定値と下限（PBI-100）。 */
+export const DEFAULT_INTAKE_INTERVAL_SEC = 300;
+export const MIN_INTAKE_INTERVAL_SEC = 60;
+
+/** 画面の入力（文字列）も受け付ける数。空は「設定しない」。 */
+const numberInput = (schema: z.ZodNumber) =>
+  z.preprocess(
+    (v) =>
+      v === undefined || v === null || (typeof v === "string" && v.trim() === "")
+        ? undefined
+        : typeof v === "string"
+          ? Number(v)
+          : v,
+    schema.optional(),
+  );
+
+/**
+ * 取り込みの間隔（秒）。設定していなければ DEFAULT_INTAKE_INTERVAL_SEC（PBI-100）。誤りは、どの種類の間隔かがわかる文言にする
+ * （画面の3つの欄が同じ名前なので）。
+ */
+const IntakeIntervalInput = (
+  invalid:
+    | "input.issueIntervalInvalid"
+    | "input.reviewIntervalInvalid"
+    | "input.ticketIntervalInvalid",
+) =>
+  numberInput(
+    z.number(code(invalid)).int(code(invalid)).min(MIN_INTAKE_INTERVAL_SEC, code(invalid)),
+  );
+
 /** 取り込みのラベル。空の入力は「設定しない」として扱う。検索の条件を壊す文字は受け付けない。 */
 const IntakeLabelInput = z.preprocess(
   (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
@@ -85,18 +122,26 @@ export const SactySettings = z.object({
     z.literal(true).optional(),
   ),
   // 画面の入力（文字列）も受け付ける。空は「設定しない」
-  maxParallelTasks: z.preprocess(
-    (v) =>
-      v === undefined || v === null || (typeof v === "string" && v.trim() === "")
-        ? undefined
-        : typeof v === "string"
-          ? Number(v)
-          : v,
-    z.number().int().min(1).max(MAX_PARALLEL_TASKS_LIMIT).optional(),
-  ),
+  maxParallelTasks: numberInput(z.number().int().min(1).max(MAX_PARALLEL_TASKS_LIMIT)),
+  /** 取り込みの種類ごとの間隔（秒。PBI-100）。空は「設定しない」（既定の間隔）。 */
+  issueIntervalSec: IntakeIntervalInput("input.issueIntervalInvalid"),
+  reviewIntervalSec: IntakeIntervalInput("input.reviewIntervalInvalid"),
+  ticketIntervalSec: IntakeIntervalInput("input.ticketIntervalInvalid"),
 });
 export type SactySettings = z.infer<typeof SactySettings>;
 export type SactySettingsInput = z.input<typeof SactySettings>;
+
+/** 取り込みの種類ごとの間隔の、設定の項目（PBI-100）。 */
+const INTERVAL_KEYS = {
+  issues: "issueIntervalSec",
+  reviews: "reviewIntervalSec",
+  tickets: "ticketIntervalSec",
+} as const satisfies Record<IntakeKind, keyof SactySettings>;
+
+/** その種類の取り込みの間隔（秒）。設定していなければ既定値（PBI-100）。 */
+export function intakeIntervalSec(settings: SactySettings, kind: IntakeKind): number {
+  return settings[INTERVAL_KEYS[kind]] ?? DEFAULT_INTAKE_INTERVAL_SEC;
+}
 
 /**
  * 保存するときの sacty 全体の設定（PBI-99）。取り込むラベルとレビュー用のラベルに同じ名前（大文字・小文字は区別しない）は

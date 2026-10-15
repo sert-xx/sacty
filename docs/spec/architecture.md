@@ -90,12 +90,13 @@ sacty up（packages/cli）
 
 ## 設定の2つの置き場所
 
-- `config.yaml`（ファイル）：AI のエージェント・認証・イメージ・ゲートウェイ・取り込みの間隔など、マシンの設定。項目は
+- `config.yaml`（ファイル）：AI のエージェント・認証・イメージ・ゲートウェイなど、マシンの設定。項目は
   [設定（config.yaml）](configuration.md)。
 - sacty の設定（`sacty.db` の `settings` テーブルの1行）：画面の「sacty の設定」で変える、すべてのプロジェクトに共通の設定。
   取り込むラベル（`intakeLabel`。Issue だけ）・チケットの取り込むラベル（`ticketLabel`）・PR のレビュー用のラベル（`reviewLabel`）・
   自分へのレビュー依頼の取り込み（`reviewRequested`）・Off にしたトリアージの種類（`triageOff`。`issues`・`reviewLabel`・`tickets`）・
-  同時に実行するタスクの数（`maxParallelTasks`。既定 3）。
+  同時に実行するタスクの数（`maxParallelTasks`。既定 3）・取り込みの種類ごとの間隔（`issueIntervalSec`・`reviewIntervalSec`・
+  `ticketIntervalSec`。秒。60 以上。既定 300。[取り込み](intake.md#間隔)）。
   - 設定の保存先を開くとき（デーモンの起動のとき）、消した項目（`triageOff` の `pullRequests`）が保存されていれば消して書き直す
     （消すものが無ければ書かない）。
 - プロジェクト（`sacty.db`）：対象・GitHub のアカウント・コンテキストリポジトリ・通知・共用の compose・チケットの取り込みなど。

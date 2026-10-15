@@ -1,4 +1,10 @@
-import { type DaemonText, message } from "@sacty/core";
+import {
+  type DaemonText,
+  IntakeKind,
+  intakeIntervalSec,
+  message,
+  type SactySettings,
+} from "@sacty/core";
 import { redactText } from "./agents/redact.js";
 import type { ConfigResult } from "./config.js";
 import { errorText } from "./errors.js";
@@ -7,21 +13,38 @@ import type { IssueSearch } from "./github.js";
 import type { TaskService } from "./service.js";
 import { type FoundTicket, type TicketClient, ticketErrorText, ticketJql } from "./tickets.js";
 
+/** 1つの種類の取り込みの状態（PBI-100）。 */
+type KindState = {
+  /**
+   * 最後に取り込みを始めた時刻。無ければ、まだ取り込んでいない（すぐに取り込む）。取り込み元が無かった回は起点にしない
+   * （ラベルを設定して On にしたら、次の確認ですぐに取り込むため）。
+   */
+  lastRun?: number;
+  current?: Promise<void>;
+  /**
+   * 取り込み元（検索の条件）ごとの、どこまで読んだか。次の取り込みはここから続ける。
+   * デーモンを再起動すると先頭から読み直す（取り込み済みのものは二重に取り込まない）。
+   */
+  cursors: Map<string, string>;
+  revision?: string;
+  /** 見た、sacty の設定を保存した回数（TaskService.settingsSaveCount）。変わったら間隔の起点を戻す。 */
+  saves?: number;
+};
+
 /**
- * GitHub Issue を定期的に探して、タスクに取り込む（PR のレビューの取り込みの PR も。PBI-44）。検索はプロジェクトの取り込み元ごとに行い、
- * 担当の判定と重複の判定は TaskService が取り込むたびに行う。
+ * GitHub の Issue・PR（PR のレビューの取り込み。PBI-44）と、チケット（JIRA など。PBI-52）を定期的に探して、タスクに取り込む。
+ * 取り込みの種類（Issue・PR のレビュー・チケット）ごとに、sacty の設定の間隔で、別々に取り込む（PBI-100。1つの種類の失敗や
+ * 遅れが、ほかの種類を止めない）。検索はプロジェクトの取り込み元ごとに行い、担当の判定と重複の判定は TaskService が
+ * 取り込むたびに行う。
  */
 export class IssueIntake {
   private timer: NodeJS.Timeout | undefined;
-  private current: Promise<void> | undefined;
   private stopped = false;
-  private lastRun = 0;
-  /**
-   * 取り込み元（検索の条件）ごとの、どこまで読んだか（更新日時）。次の取り込みはここから続ける。
-   * デーモンを再起動すると先頭から読み直す（取り込み済みの Issue は二重に取り込まない）。
-   */
-  private readonly cursors = new Map<string, string>();
-  private revision: string | undefined;
+  private readonly kinds: Record<IntakeKind, KindState> = {
+    issues: { cursors: new Map() },
+    reviews: { cursors: new Map() },
+    tickets: { cursors: new Map() },
+  };
 
   constructor(
     private readonly service: TaskService,
@@ -33,7 +56,7 @@ export class IssueIntake {
     private readonly tickets?: TicketClient,
   ) {}
 
-  /** 設定の間隔は毎回読み直す（デーモンを止めずに変えられるように）。確認は30秒ごと。 */
+  /** 間隔（sacty の設定）は毎回読み直す（デーモンを止めずに変えられるように）。確認は30秒ごと。 */
   start(checkMs = 30_000): void {
     this.timer = setInterval(() => void this.tick(), checkMs);
     void this.tick();
@@ -42,43 +65,129 @@ export class IssueIntake {
   async stop(): Promise<void> {
     this.stopped = true;
     if (this.timer) clearInterval(this.timer);
-    await this.current;
+    await Promise.all(Object.values(this.kinds).map((k) => k.current));
   }
 
-  /** 間隔が来ていれば取り込む。force なら間隔を待たない。 */
-  tick(force = false): Promise<void> {
-    if (this.current || this.stopped) return this.current ?? Promise.resolve();
-    const config = this.config();
-    if (!config.ok || !config.config.github) return Promise.resolve();
-    const github = config.config.github;
-    if (!force && this.now() - this.lastRun < github.pollIntervalSec * 1000) {
+  /**
+   * 間隔が来た種類を取り込む。force なら、すべての種類を間隔を待たずに取り込む。取り込み中の種類は、その取り込みを待つ
+   * （二重に始めない）。設定ファイルを読めなければ取り込まない。失敗しても reject しない（定期実行を止めないため）。
+   * sacty の設定を読めなければ、その理由を取り込み中でない種類の失敗として記録し、次の確認でやり直す（間隔の起点にしない）。
+   */
+  async tick(force = false): Promise<void> {
+    let settings: SactySettings;
+    try {
+      const config = this.config();
+      if (this.stopped || !config.ok) {
+        await Promise.all(Object.values(this.kinds).map((k) => k.current));
+        return;
+      }
+      settings = this.service.getSettings();
+    } catch (error) {
+      const at = new Date(this.now()).toISOString();
+      for (const kind of IntakeKind.options) {
+        if (this.kinds[kind].current) continue;
+        // 直ったら次の確認ですぐに取り込む（前の取り込みからの間隔を待たない）
+        this.kinds[kind].lastRun = undefined;
+        this.service.recordIntake(kind, {
+          lastRunAt: at,
+          imported: 0,
+          errors: [{ message: errorText(error) }],
+        });
+      }
+      return;
+    }
+    await Promise.all(IntakeKind.options.map((kind) => this.tickKind(kind, settings, force)));
+  }
+
+  private tickKind(kind: IntakeKind, settings: SactySettings, force: boolean): Promise<void> {
+    const state = this.kinds[kind];
+    if (state.current) return state.current;
+    // sacty の設定を保存していたら（何を変えたかによらず）、間隔を待たずに取り込む
+    const saves = this.service.settingsSaveCount();
+    if (saves !== state.saves) {
+      state.saves = saves;
+      state.lastRun = undefined;
+    }
+    if (
+      !force &&
+      state.lastRun !== undefined &&
+      this.now() - state.lastRun < intakeIntervalSec(settings, kind) * 1000
+    ) {
       return Promise.resolve();
     }
-    this.lastRun = this.now();
-    const run = this.runOnce();
-    this.current = run;
+    state.lastRun = this.now();
+    const run = this.runKind(kind, state);
+    state.current = run;
     void run.finally(() => {
-      if (this.current === run) this.current = undefined;
+      if (state.current === run) state.current = undefined;
     });
     return run;
   }
 
+  /** 1つの種類を取り込み、その結果を記録する。思わぬ失敗も、その種類の失敗として記録する（ほかの種類は続ける）。 */
+  private async runKind(kind: IntakeKind, state: KindState): Promise<void> {
+    const at = new Date(this.now()).toISOString();
+    const errors: { query?: string; message: DaemonText }[] = [];
+    let imported = 0;
+    let sources = 0;
+    try {
+      // 始めたときの設定（sacty の設定の保存の回数と、プロジェクトの設定の版）。終わったときに変わっていたら、読んだ位置を確定しない
+      const saves = this.service.settingsSaveCount();
+      // 担当の判定が変わりうるので、プロジェクトの設定が変わったら先頭から読み直す
+      // （以前はほかのプロジェクトの担当で取り込まなかったものを、取りこぼさないため）
+      const revision = this.service.projectsRevision();
+      if (revision !== state.revision) {
+        state.cursors.clear();
+        state.revision = revision;
+      }
+      const result =
+        kind === "tickets"
+          ? await this.runTickets(state.cursors, errors)
+          : await this.runGitHub(kind, state.cursors, errors);
+      imported = result.imported;
+      sources = result.sources;
+      // 読んだ位置は、取り込みの途中で設定が変わらなかったときだけ進める（途中で Off にして On に戻したなどで、取り込まれなかった
+      // 項目を読み飛ばさないため。何が変わったかは見分けない）
+      if (
+        this.service.settingsSaveCount() === saves &&
+        this.service.projectsRevision() === revision
+      ) {
+        for (const [key, cursor] of result.advanced) {
+          if (cursor) state.cursors.set(key, cursor);
+          else state.cursors.delete(key);
+        }
+      }
+    } catch (error) {
+      errors.push({ message: errorText(error) });
+      // 思わぬ失敗（途中で sacty の設定を読めなくなったなど）は、次の確認でやり直す（間隔を待たない）
+      state.lastRun = undefined;
+    }
+    // 取り込み元が無かった（ラベルが無い・Off・対象が無い）回は、間隔の起点にせず、記録も残さない（取り込んだように見せない）
+    if (sources === 0 && errors.length === 0) {
+      state.lastRun = undefined;
+      this.service.clearIntake(kind);
+      return;
+    }
+    this.service.recordIntake(kind, {
+      lastRunAt: at,
+      imported,
+      ...(errors.length > 0 ? { errors } : {}),
+    });
+  }
+
   /**
-   * 取り込み元ごとに検索し、失敗は取り込み元ごとに記録する（1つの取り込み元の失敗で、
-   * ほかの取り込み元やプロジェクトの取り込みを止めない）。取れた結果は取り込む。
+   * GitHub の取り込み（Issue か、PR のレビュー）。取り込み元ごとに検索し、失敗は取り込み元ごとに記録する（1つの取り込み元の
+   * 失敗で、ほかの取り込み元やプロジェクトの取り込みを止めない）。取れた結果は取り込み、作ったタスクの数を返す。
    * 検索は、その取り込み元のプロジェクトに設定した gh のアカウントで行う（PBI-13）。
    */
-  private async runOnce(): Promise<void> {
-    const at = new Date(this.now()).toISOString();
-    // 担当の判定が変わりうるので、プロジェクトの設定が変わったら先頭から読み直す
-    // （以前はほかのプロジェクトの担当で取り込まなかった Issue を、取りこぼさないため）
-    const revision = this.service.projectsRevision();
-    if (revision !== this.revision) {
-      this.cursors.clear();
-      this.revision = revision;
-    }
+  private async runGitHub(
+    kind: "issues" | "reviews",
+    cursors: Map<string, string>,
+    errors: { query?: string; message: DaemonText }[],
+  ): Promise<{ imported: number; sources: number; advanced: Map<string, string | undefined> }> {
     const found = [];
-    const errors: { query?: string; message: DaemonText }[] = [];
+    // 読んだ位置は、ここでは進めない（取り込み（タスクの保存）に成功し、途中で設定が変わらなかったら、runKind が進める）
+    const advanced = new Map<string, string | undefined>();
     // アカウントごとのトークン（取り出せなければ、その理由）と、レート制限に達したか。
     // レート制限はトークン（アカウント）ごとなので、ほかのアカウントの検索は続ける
     const tokens = new Map<string, { token: string } | { error: DaemonText }>();
@@ -97,7 +206,11 @@ export class IssueIntake {
       }
       return entry;
     };
-    for (const { host, query, account, project, review } of this.service.intakeSources()) {
+    // PR のレビューの取り込みの検索（review のあるもの）と、Issue の取り込みの検索を分ける（PBI-100）
+    const sources = this.service
+      .intakeSources()
+      .filter((source) => (kind === "reviews") === (source.review !== undefined));
+    for (const { host, query, account, project, review } of sources) {
       // アカウントを選んでいないプロジェクトの取り込み元は、理由を示して検索しない
       if (!account) {
         errors.push({ query, message: message("github.accountRequired", { project, host }) });
@@ -115,12 +228,7 @@ export class IssueIntake {
         continue;
       }
       try {
-        const result = await this.search.search(
-          host,
-          query,
-          auth.token,
-          this.cursors.get(cursorKey),
-        );
+        const result = await this.search.search(host, query, auth.token, cursors.get(cursorKey));
         // PR のレビューの取り込みの検索（PBI-44）で見つかったものは、そのことを添える
         found.push(
           ...(review
@@ -132,7 +240,7 @@ export class IssueIntake {
               }))
             : result.issues),
         );
-        if (result.cursor) this.cursors.set(cursorKey, result.cursor);
+        if (result.cursor) advanced.set(cursorKey, result.cursor);
         if (result.incomplete) {
           errors.push({ query, message: redactText(result.incomplete, [auth.token]) });
         }
@@ -141,7 +249,16 @@ export class IssueIntake {
         errors.push({ query, message: redactText(errorText(error), [auth.token]) });
       }
     }
-    const created = this.service.importIssues(found);
+    // 見つからなければ、取り込みの処理（すべてのタスクを調べる）を省く
+    const imported = found.length > 0 ? this.service.importIssues(found).length : 0;
+    return { imported, sources: sources.length, advanced };
+  }
+
+  /** チケットの取り込み（PBI-52）。作ったタスクの数を返す。 */
+  private async runTickets(
+    cursors: Map<string, string>,
+    errors: { query?: string; message: DaemonText }[],
+  ): Promise<{ imported: number; sources: number; advanced: Map<string, string | undefined> }> {
     // チケット（JIRA など。PBI-52）。接続先は gateway.platforms の組織内 PF（認証もその設定）か、ホストに無ければ
     // そのプロジェクトのコンテキストの platforms.yaml の PF（PBI-74）
     const tickets: FoundTicket[] = [];
@@ -150,8 +267,12 @@ export class IssueIntake {
     const client = this.tickets;
     // プロジェクトのコンテキストは、1回の取り込みでプロジェクトごとに1度だけ取得する
     const contextPlatforms = new Map<string, ReturnType<TaskService["projectContextPlatforms"]>>();
+    const sources = client ? this.service.ticketSources() : [];
+    // 続きの位置は、ここでは進めない（取り込みに成功し、途中で設定が変わらなかったら、runKind が進める。undefined は先頭に戻す）
+    const advanced = new Map<string, string | undefined>();
+    const count = sources.length;
     if (client) {
-      for (const source of this.service.ticketSources()) {
+      for (const source of sources) {
         const query = `${source.platform}: ${ticketJql(source.keys, source.label)}`;
         let platform = platforms.find((p) => p.name === source.platform);
         if (!platform && source.projectId) {
@@ -180,7 +301,7 @@ export class IssueIntake {
           const result = await client.search({
             ...source,
             platform,
-            ...(this.cursors.has(cursorKey) ? { cursor: this.cursors.get(cursorKey) } : {}),
+            ...(cursors.has(cursorKey) ? { cursor: cursors.get(cursorKey) } : {}),
           });
           // プロジェクトのコンテキストの PF で見つけたチケットは、そのプロジェクトのもの（PBI-74）
           tickets.push(
@@ -188,20 +309,15 @@ export class IssueIntake {
               ? result.tickets.map((t) => ({ ...t, projectId: source.projectId }))
               : result.tickets),
           );
-          if (result.cursor) this.cursors.set(cursorKey, result.cursor);
-          else this.cursors.delete(cursorKey);
+          advanced.set(cursorKey, result.cursor);
         } catch (error) {
           // 続きの位置が使えなくなった（期限切れなど）かもしれないので、次の回は先頭から読む
-          this.cursors.delete(cursorKey);
+          cursors.delete(cursorKey);
           errors.push({ query, message: ticketErrorText(error) });
         }
       }
     }
-    const createdTickets = this.service.importTickets(tickets);
-    this.service.recordIntake({
-      lastRunAt: at,
-      imported: created.length + createdTickets.length,
-      ...(errors.length > 0 ? { errors } : {}),
-    });
+    const imported = tickets.length > 0 ? this.service.importTickets(tickets).length : 0;
+    return { imported, sources: count, advanced };
   }
 }
