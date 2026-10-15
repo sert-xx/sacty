@@ -279,6 +279,58 @@ exit 1
       expect(calls).toEqual(["read", "run"]);
     });
 
+    it("まとめて取り出している間に使われた参照は、別に問い合わせず、その結果を待つ。取り出し直しは順に1件ずつ（PBI-107）", async () => {
+      let release: (() => void) | undefined;
+      let reading = 0;
+      let overlapped = false;
+      const calls: string[] = [];
+      let batchOk = true;
+      const store = new OnePasswordSecretStore({
+        run: async (args) => {
+          calls.push(args[0] ?? "");
+          if (args[0] === "run") {
+            await new Promise<void>((r) => {
+              release = r;
+            });
+            return batchOk
+              ? { code: 0, stdout: JSON.stringify(["v-a", "v-b"]), stderr: "" }
+              : { code: 1, stdout: "", stderr: "[ERROR] could not resolve" };
+          }
+          reading++;
+          if (reading > 1) overlapped = true;
+          await new Promise((r) => setTimeout(r, 5));
+          reading--;
+          return args.at(-1) === "op://Work/A/f"
+            ? { code: 0, stdout: "v-a", stderr: "" }
+            : { code: 1, stdout: "", stderr: "[ERROR] 2026/10/15 00:00:00 item not found" };
+        },
+      });
+      // プロジェクトの保存で取り出している間に、タスクの実行が同じ参照を使う
+      const prefetching = store.prefetch(["op://Work/A/f", "op://Work/B/f"]);
+      const used = store.get("op://Work/B/f");
+      await new Promise((r) => setTimeout(r, 10));
+      release?.();
+      expect(await prefetching).toEqual([]);
+      expect(await used).toBe("v-b");
+      expect(calls).toEqual(["run"]);
+      // まとめて取り出せなければ、参照ごとに順に取り出し直す（同時に op を呼ばない）
+      store.clear();
+      batchOk = false;
+      calls.length = 0;
+      const again = store.prefetch(["op://Work/A/f", "op://Work/B/f"]);
+      const usedAgain = store.get("op://Work/B/f").catch((e: unknown) => e);
+      await new Promise((r) => setTimeout(r, 10));
+      release?.();
+      expect((await again).map((f) => f.ref)).toEqual(["op://Work/B/f"]);
+      expect(await usedAgain).toBeInstanceOf(SecretNotFoundError);
+      expect(calls).toEqual(["run", "read", "read"]);
+      expect(overlapped).toBe(false);
+      // 取り出せなかった参照は持たない（次に使うときに、もう一度取り出す）
+      expect(await store.get("op://Work/A/f")).toBe("v-a");
+      await store.get("op://Work/B/f").catch(() => undefined);
+      expect(calls).toEqual(["run", "read", "read", "read"]);
+    });
+
     it("取り出し直し（fresh）は、持っている値を捨ててから取り出す。キーチェーンは取り出せるかを確かめる", async () => {
       const op = installOp({ "op://Work/A/f": "v1" });
       const resolving = new ResolvingSecretStore(

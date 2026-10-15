@@ -87,6 +87,8 @@ sacty が作るファイルの順に置く（同じパスは後のものが上�
 | Codex | `AGENTS.md`（規則と、スキルの一覧 `- <名前>：<description>（<場所>）`）、`config.toml`（合成した設定と `[mcp_servers."<名前>"]`。URL 型は `url`・`http_headers`・`env_http_headers`） |
 
 - MCP の秘密情報は、ファイルには `SACTY_MCP_SECRET_<番号>` の環境変数として書き、値はコンテナの環境変数で渡す（ホストで取り出す）。
+- 層の `mcp.yaml`・`platforms.yaml` の秘密情報は、デーモンの起動のとき・取り出し直したとき・プロジェクトを保存したときに、ほかの秘密情報と
+  まとめて取り出してある（[秘密情報](secrets.md#起動のときのまとめての取り出し)）。取り出していないもの（その後に層に足されたものなど）は、使うときに取り出す。
 - 層の MCP サーバーは、`via_gateway` が `true`（既定）なら、ゲートウェイ経由に置き換える：エージェントには
   `http://host.docker.internal:<ポート>/ctx-mcp/<名前>` と、実行ごとのトークンの `Authorization` だけを渡す（`routeMcp`）。
   - URL 型：元の URL とヘッダーはゲートウェイが持つ（ヘッダーの秘密情報はホストで取り出す）。
