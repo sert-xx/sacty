@@ -744,6 +744,59 @@ describe("取り込みの種類ごとの間隔（PBI-100）", () => {
     activity.close();
   });
 
+  it("検索を待っている間に Off にして、次の確認の前に On に戻しても、取り込まれなかった項目を読み飛ばさない（レビュー指摘）", async () => {
+    const { activity, service, search, intake, tickets } = kindsSetup();
+    // GitHub は、続きの位置を渡すと、その前の項目を返さない。チケットも同じにする
+    search.cursor = "2026-10-15T00:00:00Z";
+    tickets.next = ["page-2", "page-2"];
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    let started = 0;
+    let bothStarted: () => void = () => {};
+    const waiting = new Promise<void>((resolve) => (bothStarted = resolve));
+    const block = async () => {
+      started += 1;
+      if (started === 2) bothStarted();
+      await gate;
+    };
+    const original = search.search.bind(search);
+    search.search = async (host, query, token, since) => {
+      const result = await original(host, query, token, since);
+      if (query.includes("is:issue") && !since) await block();
+      return since ? { ...result, issues: [] } : result;
+    };
+    const ticketSearch = tickets.search.bind(tickets);
+    tickets.search = async (input) => {
+      const result = await ticketSearch(input);
+      if (!input.cursor) await block();
+      return input.cursor ? { ...result, tickets: [] } : result;
+    };
+    const settings = service.getSettings();
+    const first = intake.tick();
+    await waiting;
+    // 検索を待っている間に Off にする（見つかった項目は、Off なので取り込まれない）
+    service.saveSettings({ ...settings, triageOff: ["issues", "tickets"] });
+    release();
+    await first;
+    expect(service.list()).toEqual([]);
+    // 次の確認の前に On に戻す
+    service.saveSettings(settings);
+    await intake.tick();
+    // 前の位置（先頭）から読み直して取り込む
+    expect(search.sinces.filter((_, i) => search.queries[i]?.includes("is:issue"))).toEqual([
+      undefined,
+      undefined,
+    ]);
+    expect(tickets.searched.map((t) => t.cursor)).toEqual([undefined, undefined]);
+    expect(
+      service
+        .list()
+        .map((t) => t.title)
+        .sort(),
+    ).toEqual(["PAY-1 決済の再送", "冪等性キー"]);
+    activity.close();
+  });
+
   it("タスクの保存に失敗したら、読んだ位置を進めず、直った後にすべての項目を取り込む（レビュー指摘）", async () => {
     const { activity, service, search, intake, tickets, advance } = kindsSetup();
     // GitHub は、続きの位置を渡すと、その前の項目を返さない

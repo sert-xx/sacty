@@ -131,6 +131,8 @@ export class IssueIntake {
     let imported = 0;
     let sources = 0;
     try {
+      // 始めたときの設定（sacty の設定の保存の回数と、プロジェクトの設定の版）。終わったときに変わっていたら、読んだ位置を確定しない
+      const saves = this.service.settingsSaveCount();
       // 担当の判定が変わりうるので、プロジェクトの設定が変わったら先頭から読み直す
       // （以前はほかのプロジェクトの担当で取り込まなかったものを、取りこぼさないため）
       const revision = this.service.projectsRevision();
@@ -144,6 +146,17 @@ export class IssueIntake {
           : await this.runGitHub(kind, state.cursors, errors);
       imported = result.imported;
       sources = result.sources;
+      // 読んだ位置は、取り込みの途中で設定が変わらなかったときだけ進める（途中で Off にして On に戻したなどで、取り込まれなかった
+      // 項目を読み飛ばさないため。何が変わったかは見分けない）
+      if (
+        this.service.settingsSaveCount() === saves &&
+        this.service.projectsRevision() === revision
+      ) {
+        for (const [key, cursor] of result.advanced) {
+          if (cursor) state.cursors.set(key, cursor);
+          else state.cursors.delete(key);
+        }
+      }
     } catch (error) {
       errors.push({ message: errorText(error) });
       // 思わぬ失敗（途中で sacty の設定を読めなくなったなど）は、次の確認でやり直す（間隔を待たない）
@@ -171,10 +184,10 @@ export class IssueIntake {
     kind: "issues" | "reviews",
     cursors: Map<string, string>,
     errors: { query?: string; message: DaemonText }[],
-  ): Promise<{ imported: number; sources: number }> {
+  ): Promise<{ imported: number; sources: number; advanced: Map<string, string | undefined> }> {
     const found = [];
-    // 読んだ位置は、取り込み（タスクの保存）に成功してから進める（失敗したら、次の回は前の位置から読み直す）
-    const advanced = new Map<string, string>();
+    // 読んだ位置は、ここでは進めない（取り込み（タスクの保存）に成功し、途中で設定が変わらなかったら、runKind が進める）
+    const advanced = new Map<string, string | undefined>();
     // アカウントごとのトークン（取り出せなければ、その理由）と、レート制限に達したか。
     // レート制限はトークン（アカウント）ごとなので、ほかのアカウントの検索は続ける
     const tokens = new Map<string, { token: string } | { error: DaemonText }>();
@@ -238,15 +251,14 @@ export class IssueIntake {
     }
     // 見つからなければ、取り込みの処理（すべてのタスクを調べる）を省く
     const imported = found.length > 0 ? this.service.importIssues(found).length : 0;
-    for (const [key, cursor] of advanced) cursors.set(key, cursor);
-    return { imported, sources: sources.length };
+    return { imported, sources: sources.length, advanced };
   }
 
   /** チケットの取り込み（PBI-52）。作ったタスクの数を返す。 */
   private async runTickets(
     cursors: Map<string, string>,
     errors: { query?: string; message: DaemonText }[],
-  ): Promise<{ imported: number; sources: number }> {
+  ): Promise<{ imported: number; sources: number; advanced: Map<string, string | undefined> }> {
     // チケット（JIRA など。PBI-52）。接続先は gateway.platforms の組織内 PF（認証もその設定）か、ホストに無ければ
     // そのプロジェクトのコンテキストの platforms.yaml の PF（PBI-74）
     const tickets: FoundTicket[] = [];
@@ -256,7 +268,7 @@ export class IssueIntake {
     // プロジェクトのコンテキストは、1回の取り込みでプロジェクトごとに1度だけ取得する
     const contextPlatforms = new Map<string, ReturnType<TaskService["projectContextPlatforms"]>>();
     const sources = client ? this.service.ticketSources() : [];
-    // 続きの位置は、取り込み（タスクの保存）に成功してから進める（undefined は先頭に戻す）
+    // 続きの位置は、ここでは進めない（取り込みに成功し、途中で設定が変わらなかったら、runKind が進める。undefined は先頭に戻す）
     const advanced = new Map<string, string | undefined>();
     const count = sources.length;
     if (client) {
@@ -306,10 +318,6 @@ export class IssueIntake {
       }
     }
     const imported = tickets.length > 0 ? this.service.importTickets(tickets).length : 0;
-    for (const [key, cursor] of advanced) {
-      if (cursor) cursors.set(key, cursor);
-      else cursors.delete(key);
-    }
-    return { imported, sources: count };
+    return { imported, sources: count, advanced };
   }
 }
