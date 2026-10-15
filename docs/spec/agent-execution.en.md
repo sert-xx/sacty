@@ -105,6 +105,7 @@ Code: `apps/daemon/src/agent-sessions.ts` (`SOURCES`, `selectAgentSessionFiles`,
 
 - The default image is `image` (default `sacty-agent:0.1.0`). Per-language images are `images.<name>` (the tag defaults to `sacty-agent-<name>:0.1.0`).
   The image used is the default when there is no name or the name is `default`, the entry in `images` if it exists, and for an unknown name the run stops (`image.unknown`).
+  A person can change a step's image on the task detail; it is used from the next run of the step ("Changing a step's image" in [Tasks and steps](tasks-and-steps.en.md)).
 - `sacty image build [<name>...]` runs `docker build` on `packages/cli/docker/Dockerfile`. Without names it builds the default and everything in `images`.
   If there is no config file it builds with the defaults; if there is any other error it builds nothing.
   - The base image (`BASE_IMAGE`) defaults to `node:22-bookworm-slim`. Claude Code (`@anthropic-ai/claude-code@2.1.296`) and Codex

@@ -21,6 +21,7 @@ import {
   CONTEXT_CHECK_PARAM,
   type ContextPreviewResult,
   cancelTask,
+  changeStepImage,
   chooseTicketRepository,
   createTask,
   decideChange,
@@ -210,6 +211,29 @@ export async function voidRemarkAction(formData: FormData): Promise<void> {
   const remarkId = String(formData.get("remarkId") ?? "");
   await voidRemark(taskId, remarkId);
   refresh();
+}
+
+export type ChangeStepImageState = { message?: string };
+
+/** タスクの詳細で、工程のイメージを変える（PBI-106）。images に無い名前は、デーモンが理由を示して断る。 */
+export async function changeStepImageAction(
+  _prev: ChangeStepImageState,
+  formData: FormData,
+): Promise<ChangeStepImageState> {
+  const a = (await getMessages()).common.action;
+  const taskId = String(formData.get("taskId") ?? "");
+  const step = StepKey.safeParse(formData.get("step"));
+  const image = String(formData.get("image") ?? "");
+  if (!step.success) return { message: a.invalidStep };
+  let result: Awaited<ReturnType<typeof changeStepImage>>;
+  try {
+    result = await changeStepImage(taskId, step.data, image);
+  } catch {
+    return { message: a.daemonDown };
+  }
+  if (!result.ok) return { message: result.message };
+  refresh();
+  return {};
 }
 
 export type DecideChangeState = { message?: string };

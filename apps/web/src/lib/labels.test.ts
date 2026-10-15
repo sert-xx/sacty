@@ -12,6 +12,7 @@ import {
   personAction as personActionIn,
   statusText as statusTextIn,
   statusTone,
+  stepImageRows,
   testCommandOfNoTests,
   usesTestCommand,
   verificationResults,
@@ -556,6 +557,25 @@ describe("オーケストレーターが選んだ工程（PBI-17）", () => {
     expect(
       describeIn(chosen({ images: { implement: "py" }, imageSource: "project" }), labels.en),
     ).toContain("images: Implement=py (set on the project target)");
+  });
+
+  it("人が工程のイメージを変えた記録を、誰が・どの工程を・何から何にで表示する（PBI-106）", () => {
+    const changed = {
+      type: "StepImageChanged",
+      payload: { step: "implement", from: "default", to: "playwright" },
+      seq: 2,
+      id: "e2",
+      taskId: "t1",
+      projectId: "default",
+      at: "2026-10-15T00:00:00.000Z",
+      actor: "person",
+    } as ActivityEvent;
+    expect(describeEvent(changed)).toBe(
+      "実装のイメージを default から playwright に変更（人間。次にその工程を実行するときから使う）",
+    );
+    expect(describeIn(changed, labels.en)).toBe(
+      "Implement image changed from default to playwright (person; used from the next run of the step)",
+    );
   });
 
   it("サービスを使う・使わない判断と理由、どの共用の compose を使うかを表示する（PBI-70）", () => {
@@ -1437,5 +1457,49 @@ describe("テストの無い観点を、今の提出について目的から判�
     expect(judgedByGoalForCurrent(task({ testsSkippedAt: T1, lastReview: review(T2) }))).toBe(
       false,
     );
+  });
+});
+
+describe("工程のイメージの表示（PBI-106）", () => {
+  it("工程ごとのイメージ・選んだ元・いつから使うかを出す。PR作成は出さない", () => {
+    const rows = stepImageRows(
+      task({
+        status: "running",
+        steps: [
+          { key: "requirements", state: "done" },
+          { key: "design", state: "active" },
+          { key: "implement", state: "todo" },
+          { key: "pr", state: "todo" },
+        ],
+        images: { design: "java", implement: "playwright", pr: "java" },
+        imageSource: "orchestrator",
+        imageChanges: {
+          implement: { from: "java", to: "playwright", at: "2026-10-15T01:02:00.000Z" },
+        },
+      }),
+    );
+    expect(rows).toEqual([
+      { step: "requirements", image: "default", source: { by: "none" }, when: "done" },
+      { step: "design", image: "java", source: { by: "orchestrator" }, when: "running" },
+      {
+        step: "implement",
+        image: "playwright",
+        source: { by: "person", at: "2026-10-15T01:02:00.000Z", from: "java" },
+        when: "next",
+      },
+    ]);
+  });
+
+  it("実装の検証（テスト）の間は実行中、止まっている工程は次の実行から。プロジェクトの指定はその旨を出す", () => {
+    const steps = [{ key: "implement" as const, state: "active" as const }];
+    const testing = task({ status: "idle", verification: "pending", steps });
+    expect(stepImageRows(testing)[0]?.when).toBe("running");
+    const paused = task({
+      status: "paused",
+      steps,
+      images: { implement: "java" },
+      imageSource: "project",
+    });
+    expect(stepImageRows(paused)[0]).toMatchObject({ when: "next", source: { by: "project" } });
   });
 });

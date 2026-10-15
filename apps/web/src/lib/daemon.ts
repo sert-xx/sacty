@@ -454,6 +454,11 @@ export async function chooseTicketRepository(id: string, repo: string): Promise<
   return postOp(`/api/tasks/${encodeURIComponent(id)}/repository`, { repo });
 }
 
+/** タスクの詳細で、工程のイメージを変える（PBI-106）。image は images の名前か default。 */
+export async function changeStepImage(id: string, step: StepKey, image: string): Promise<OpResult> {
+  return postOp(`/api/tasks/${encodeURIComponent(id)}/images`, { step, image });
+}
+
 async function postOp(path: string, body: unknown): Promise<OpResult> {
   const res = await daemonFetch(path, {
     method: "POST",

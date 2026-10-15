@@ -1,4 +1,4 @@
-<!-- 対応するコード: apps/daemon/src/config.ts（image_build・images・languageImageTag）、apps/daemon/src/image.ts、packages/cli/docker/Dockerfile、packages/cli/src/index.ts（imageBuild） -->
+<!-- 対応するコード: apps/daemon/src/config.ts（image_build・images・languageImageTag）、apps/daemon/src/image.ts、packages/cli/docker/Dockerfile、packages/cli/src/index.ts（imageBuild）、apps/daemon/src/service.ts（changeStepImage）、apps/web/src/components/step-image-form.tsx -->
 
 **日本語** | [English](images.en.md)
 
@@ -140,6 +140,21 @@ npx sacty image build java17     # 名前を指定して作る（default は既�
 - プロジェクトの対象（リポジトリ・Org）ごとにイメージを指定すると、オーケストレーターに選ばせず、すべての工程でそれを使います
   （リポジトリの指定が Org の指定より優先します。[プロジェクトの設定](project-settings.md#対象)）。
 - 選んだイメージと理由は作業履歴に残ります。`images` に無い名前を選んだ・指定したときは、理由を示して止まります。
+
+### 工程のイメージを変える
+
+オーケストレーターが工程に合わないイメージを選んだとき（Playwright の要るリポジトリで既定のイメージを選んだなど）は、タスクの詳細の
+「工程」の欄の「工程のイメージ」で、工程ごとに選び直せます。
+
+- 選べるのは、`images` の名前と `default`（既定のイメージ）です。それぞれの説明も出ます。`images` に無い名前（config.yaml から消した名前など）は、
+  理由を示して断ります。
+- どの状態の工程も変えられます（これから実行する・実行中・失敗や一時停止・承認待ち・終わった工程）。変えたイメージは、その工程を次に
+  実行するときから使います。実行中の工程は、今の実行はそのままで、次の実行から使います。画面の各工程に、いつから使うかが出ます。
+- テストは、実装（不具合の修正では再現）の工程のイメージで実行します。実装の工程のイメージを変えると、次のテストの実行から使います。
+- 失敗や一時停止で止まった工程は、イメージを変えてから「再開する」でやり直すと、変えたイメージで実行します。
+- プロジェクトの対象でイメージを指定しているタスクも変えられます。人が変えた工程だけ、その指定より優先します。
+- PR作成の工程はコンテナで実行しないので、イメージはありません。
+- 変えたことは、作業履歴に「誰が・どの工程を・何から何に変えたか」で残ります。工程のイメージの欄には、人が変えた時刻と変える前の名前が出ます。
 
 ## 関係するページ
 

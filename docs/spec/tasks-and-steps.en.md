@@ -133,6 +133,28 @@ The following are read from the answer (JSON under the heading `sacty-steps`) an
 
 Code: `apps/daemon/src/service.ts` (`askOrchestrator`, `runNextInner`, `withImages`, `withSharedCompose`, `withExports`, `repositoryFromPlan`, `chooseRepository`, `triageTicket`, `reviewOnlySteps`), `apps/daemon/src/prompts.ts` (`extractStepPlan`), `packages/core/src/events.ts` (`StepsChosen`)
 
+## Changing a step's image
+
+- On the task detail, a person can change the image of each step (`POST /api/tasks/:id/images`, input `step` and `image` of `ChangeStepImageInput`).
+  The step's state does not matter (a step yet to run, running, failed or paused, awaiting approval, or done). A cancelled task cannot be changed.
+- The choices are the names in `images` and `default` (the default image). The screen shows each description (`description` in `images`). These are
+  refused with the reason (409): a name not in `images` (including a name removed from config.yaml; `image.notInImages`), the current name
+  (`image.unchanged`), a step the task doesn't have (`image.stepMissing`), and the PR step (it doesn't run in a container, so it has no image;
+  `image.noImageStep`). When the config can't be read, only `default` can be chosen.
+- A change appends `StepImageChanged` (`step`, `from`, `to`; the actor is `person`). `from` is the name before the change (`default` if none was set).
+  The projection sets the step's `images` to `to` and keeps the last change of each step in `imageChanges` (`from`, `to`, time). `StepsChosen` is not rewritten.
+- The changed image is used from the next run of the step (starting a step that hasn't started, a retry, or a rerun after rework). The current run is not stopped.
+  A step run fixes its image when `AgentRunStarted` is appended (a change while the run is being prepared does not change that run). The integration review works the same way.
+- Test runs also use the image at the time the tests start (the test image in "Verifying the implementation" below). If the Implementation image is
+  changed while the Implementation step runs, the tests after that run use the changed image.
+- Tasks whose project target specifies an image can be changed too. The person's change takes precedence for that step only (other steps keep the target's image).
+  Changing the target's image does not change the images of a task whose steps are already chosen.
+- The screen shows, for each step, the image, where it came from (the time a person changed it and the previous name, the project target, the Orchestrator,
+  or not set) and when a change takes effect (from the next run while running; from a retry or rework for a done step) (`stepImageRows`).
+  Running means the agent run, the implementation verification, and the reproduction check (`stepRunning`). The Activity shows who changed which step, when, and from what to what.
+
+Code: `apps/daemon/src/service.ts` (`changeStepImage`, `runNextInner`, `integrate`), `apps/daemon/src/server.ts`, `packages/core/src/events.ts` (`StepImageChanged`, `ChangeStepImageInput`), `packages/core/src/projection.ts` (`stepRunning`), `apps/web/src/lib/labels.ts` (`stepImageRows`)
+
 ## Verifying the implementation
 
 - When the Implementation step finishes, the task waits for verification (`verification = "pending"`), and the test command is run in a test container. It passes when the exit code is 0 and

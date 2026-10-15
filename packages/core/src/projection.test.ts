@@ -11,6 +11,7 @@ import {
   pendingQuestion,
   project,
   questionBlocked,
+  stepRunning,
 } from "./projection.js";
 
 let seq = 0;
@@ -1111,5 +1112,40 @@ describe("テストの仕組みが無いタスクの検証（PBI-94）", () => {
     const task = project(implemented("t1", "テストが無い", "npm test")).get("t1");
     expect(task?.testCommand).toBe("npm test");
     expect(task?.noTestsReason).toBeUndefined();
+  });
+});
+
+describe("工程のイメージを人が変える（PBI-106）", () => {
+  const change = (taskId: string, step: "requirements" | "design" | "reproduce", to: string) =>
+    ev(taskId, { type: "StepImageChanged", payload: { step, from: "default", to } }, "person");
+
+  it("実行中・終わった工程も変えられ、イメージと変えた記録（いつ・何から何に）を持つ。工程の状態は変えない", () => {
+    const events = [
+      created("i1"),
+      ev("i1", {
+        type: "StepsChosen",
+        payload: { steps: [...MVP_STEPS], images: { design: "java" }, imageSource: "project" },
+      }),
+      started("i1", "r1"),
+      change("i1", "requirements", "playwright"),
+    ];
+    const running = project(events).get("i1");
+    expect(running?.status).toBe("running");
+    expect(running && stepRunning(running, "requirements")).toBe(true);
+    expect(running && stepRunning(running, "design")).toBe(false);
+    expect(running?.images).toEqual({ design: "java", requirements: "playwright" });
+    expect(running?.imageSource).toBe("project");
+    expect(running?.imageChanges?.requirements).toEqual({
+      from: "default",
+      to: "playwright",
+      at: "2026-10-10T00:00:00.000Z",
+    });
+    expect(running?.steps.map((s) => s.state)).toEqual(["active", "todo", "todo", "todo"]);
+  });
+
+  it("タスクの工程に無い工程は、作業履歴の誤りにする", () => {
+    expect(() => project([created("i2"), steps("i2"), change("i2", "reproduce", "java")])).toThrow(
+      /not chosen/,
+    );
   });
 });

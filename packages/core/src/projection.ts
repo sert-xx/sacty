@@ -426,8 +426,12 @@ export type Task = {
   testsSkippedAt?: string;
   /** オーケストレーターが判断した、調査の工程の性質（PBI-43）。無ければ内容の調査として扱う。 */
   investigation?: InvestigationKind;
-  /** 工程ごとに使うイメージの名前（PBI-41）。書いていない工程は既定のイメージ。 */
+  /** 工程ごとに使うイメージの名前（PBI-41）。書いていない工程は既定のイメージ。人が変えたら、変えた名前（PBI-106）。 */
   images?: Partial<Record<StepKey, string>>;
+  /** 工程を選んだときにイメージを決めたのが、プロジェクトの対象の指定か、オーケストレーターか（PBI-41）。 */
+  imageSource?: "project" | "orchestrator";
+  /** 人がタスクの詳細で変えた、工程のイメージ（PBI-106）。工程ごとに最後の変更。 */
+  imageChanges?: Partial<Record<StepKey, { from: string; to: string; at: string }>>;
   /** 工程・テストの実行の前に起動する docker compose のサービス（PBI-47）。 */
   services?: PayloadOf<"StepsChosen">["services"];
   /** サービスを使う・使わないと判断した理由（PBI-70）。 */
@@ -581,6 +585,9 @@ export function applyEvent(
       }
       if (event.payload.investigation) task.investigation = event.payload.investigation;
       if (event.payload.images) task.images = event.payload.images;
+      if (event.payload.images && event.payload.imageSource) {
+        task.imageSource = event.payload.imageSource;
+      }
       if (event.payload.services) task.services = event.payload.services;
       if (event.payload.servicesReason) task.servicesReason = event.payload.servicesReason;
       if (event.payload.exports) task.exportPlans = event.payload.exports;
@@ -1493,6 +1500,17 @@ export function applyEvent(
       break;
     }
 
+    // 人が工程のイメージを変えた（PBI-106）。工程の状態は問わず、変えず、その工程を次に実行するときから使う
+    case "StepImageChanged": {
+      const { step, from, to } = event.payload;
+      if (!task.steps.some((s) => s.key === step)) {
+        throw new ActivityIntegrityError(event, `step ${step} is not chosen`);
+      }
+      task.images = { ...task.images, [step]: to };
+      task.imageChanges = { ...task.imageChanges, [step]: { from, to, at: event.at } };
+      break;
+    }
+
     case "BudgetCapRaised":
       if (event.payload.capUsd <= task.budget.usedUsd) {
         throw new ActivityIntegrityError(event, "new cap must exceed the amount spent");
@@ -1908,6 +1926,19 @@ export function fixDecisionPending(task: Task): boolean {
 export function fixTaskOpen(task: Task): boolean {
   if (!task.fix || task.status === "cancelled") return false;
   return !isCompleted(task) || task.deployment?.state === "waiting";
+}
+
+/**
+ * 工程が今実行中か（PBI-106。工程のイメージをいつから使うかの表示に使う）。エージェントの実行中、実装の検証（テスト・最終
+ * レビュー）の間、再現の確かめの間。
+ */
+export function stepRunning(task: Task, step: StepKey): boolean {
+  if (activeStep(task) !== step) return false;
+  return (
+    task.status === "running" ||
+    (task.status === "idle" &&
+      (task.verification !== undefined || task.reproductionPending === true))
+  );
 }
 
 export function isCompleted(task: Task): boolean {

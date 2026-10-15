@@ -336,6 +336,17 @@ export function createApp(
     }
   });
 
+  // タスクの詳細で、工程のイメージを変える（PBI-106）。その工程を次に実行するときから使う
+  app.post("/api/tasks/:id/images", async (c) => {
+    const json = await readJson(c);
+    if (!json.ok) return c.json({ error: "invalid_json" }, 400);
+    try {
+      return c.json({ task: service.changeStepImage(c.req.param("id"), json.body) });
+    } catch (error) {
+      return handleError(c, error);
+    }
+  });
+
   // タスクの詳細で、オーケストレーターに質問する（PBI-54）。答えは待たずに返す（画面は答えが出るまで更新する）
   app.post("/api/tasks/:id/questions", async (c) => {
     const json = await readJson(c);
