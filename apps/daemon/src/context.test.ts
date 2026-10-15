@@ -1252,7 +1252,7 @@ describe("sacty の既定のコンテキスト（PBI-24）", () => {
       approvals_reviewer: "auto_review",
       // 既定のスキル review が観点ごとの担当を並列に起動する。担当はさらに起動できない（PBI-65）
       features: { multi_agent: true },
-      agents: { max_threads: 8, max_depth: 1, job_max_runtime_seconds: 2700 },
+      agents: { max_threads: 16, max_depth: 1, job_max_runtime_seconds: 2700 },
     });
     expect(codex.warnings).toEqual([]);
     codex.dispose();
