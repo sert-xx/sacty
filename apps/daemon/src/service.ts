@@ -2561,6 +2561,12 @@ export class TaskService {
     this.intakeRuns = { ...this.intakeRuns, [kind]: run };
   }
 
+  /** その種類の取り込みの記録を消す（取り込み元が無くなった種類の、古い結果を残さない。PBI-100）。 */
+  clearIntake(kind: IntakeKind): void {
+    const { [kind]: _removed, ...rest } = this.intakeRuns;
+    this.intakeRuns = rest;
+  }
+
   /**
    * 見つかった Issue・PR をタスクにする。担当するプロジェクトは取り込むたびに判定し（範囲が狭い
    * 指定が優先）、取り込むラベル（sacty の設定）が付いた Issue だけを通常のタスクにする（PR は、取り込むラベルが付いていても

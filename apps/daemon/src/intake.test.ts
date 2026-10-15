@@ -573,11 +573,22 @@ describe("取り込みの種類ごとの間隔（PBI-100）", () => {
     });
     await intake.tick();
     expect(counts()).toEqual({ issues: 1, reviews: 0, tickets: 0 });
+    // 取り込み元の無い種類は、取り込んだように記録しない
+    expect(Object.keys(service.status().intake?.runs ?? {})).toEqual(["issues"]);
     // 時刻を進めずに、レビューの依頼とチケットを On にする
     service.saveSettings({ intakeLabel: "sacty", ticketLabel: "sacty", reviewRequested: true });
     await intake.tick();
     // 取り込み元のあった Issue は間隔を待つ。On にした種類は、すぐに検索する
     expect(counts()).toEqual({ issues: 1, reviews: 1, tickets: 1 });
+    expect(Object.keys(service.status().intake?.runs ?? {}).sort()).toEqual([
+      "issues",
+      "reviews",
+      "tickets",
+    ]);
+    // Off に戻すと、その種類の古い記録を消す
+    service.saveSettings({ intakeLabel: "sacty", ticketLabel: "sacty", triageOff: ["tickets"] });
+    await intake.tick(true);
+    expect(Object.keys(service.status().intake?.runs ?? {}).sort()).toEqual(["issues"]);
     activity.close();
   });
 

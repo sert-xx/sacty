@@ -137,8 +137,12 @@ export class IssueIntake {
     } catch (error) {
       errors.push({ message: errorText(error) });
     }
-    // 取り込み元が無かった（ラベルが無い・Off・対象が無い）回は、間隔の起点にしない
-    if (sources === 0 && errors.length === 0) state.lastRun = undefined;
+    // 取り込み元が無かった（ラベルが無い・Off・対象が無い）回は、間隔の起点にせず、記録も残さない（取り込んだように見せない）
+    if (sources === 0 && errors.length === 0) {
+      state.lastRun = undefined;
+      this.service.clearIntake(kind);
+      return;
+    }
     this.service.recordIntake(kind, {
       lastRunAt: at,
       imported,
