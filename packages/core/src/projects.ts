@@ -155,6 +155,14 @@ export function intakeKindEnabled(settings: SactySettings, kind: IntakeKind): bo
   return Boolean(settings.ticketLabel) && !off.includes("tickets");
 }
 
+/** その種類が何を取り込むか（ラベル・依頼。PBI-100）。変わったら、取り込みは間隔を待たずに始め直す。 */
+export function intakeKindKey(settings: SactySettings, kind: IntakeKind): string {
+  if (kind === "issues") return settings.intakeLabel ?? "";
+  if (kind === "reviews")
+    return `${settings.reviewLabel ?? ""}\n${settings.reviewRequested ? "requested" : ""}`;
+  return settings.ticketLabel ?? "";
+}
+
 export function intakeIntervalSec(settings: SactySettings, kind: IntakeKind): number {
   return settings[INTERVAL_KEYS[kind]] ?? DEFAULT_INTAKE_INTERVAL_SEC;
 }

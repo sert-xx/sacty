@@ -88,6 +88,8 @@ describe("取り込みの種類ごとの直近の取り込み（PBI-100）", () 
       "sacty の設定を読めない",
     );
     expect(messagesFor("en").projects.intake.settingsUnreadable).toContain("cannot be read");
+    // 理由はこの文の後に続ける（下の一覧には、定期の確認の前は出ないため）
+    expect(messagesFor("ja").projects.intake.settingsUnreadable).not.toContain("下に出ます");
   });
 
   it("種類の名前は日本語と英語で出す", () => {

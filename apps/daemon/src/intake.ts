@@ -27,8 +27,8 @@ type KindState = {
    */
   cursors: Map<string, string>;
   revision?: string;
-  /** 見た、止める設定を保存した回数（TaskService.intakeStopCount）。変わったら間隔の起点を戻す。 */
-  stops?: number;
+  /** 見た、始め直す設定を保存した回数（TaskService.intakeRestartCount）。変わったら間隔の起点を戻す。 */
+  restarts?: number;
 };
 
 /**
@@ -86,6 +86,8 @@ export class IssueIntake {
       const at = new Date(this.now()).toISOString();
       for (const kind of IntakeKind.options) {
         if (this.kinds[kind].current) continue;
+        // 直ったら次の確認ですぐに取り込む（前の取り込みからの間隔を待たない）
+        this.kinds[kind].lastRun = undefined;
         this.service.recordIntake(kind, {
           lastRunAt: at,
           imported: 0,
@@ -100,10 +102,10 @@ export class IssueIntake {
   private tickKind(kind: IntakeKind, settings: SactySettings, force: boolean): Promise<void> {
     const state = this.kinds[kind];
     if (state.current) return state.current;
-    // 止める設定を保存していたら（次の確認の前に On に戻していても）、間隔を待たずに取り込む
-    const stops = this.service.intakeStopCount(kind);
-    if (stops !== state.stops) {
-      state.stops = stops;
+    // 止める設定・取り込むものを変える設定を保存していたら（次の確認の前に On に戻していても）、間隔を待たずに取り込む
+    const restarts = this.service.intakeRestartCount(kind);
+    if (restarts !== state.restarts) {
+      state.restarts = restarts;
       state.lastRun = undefined;
     }
     if (
@@ -144,6 +146,8 @@ export class IssueIntake {
       sources = result.sources;
     } catch (error) {
       errors.push({ message: errorText(error) });
+      // 思わぬ失敗（途中で sacty の設定を読めなくなったなど）は、次の確認でやり直す（間隔を待たない）
+      state.lastRun = undefined;
     }
     // 取り込み元が無かった（ラベルが無い・Off・対象が無い）回は、間隔の起点にせず、記録も残さない（取り込んだように見せない）
     if (sources === 0 && errors.length === 0) {

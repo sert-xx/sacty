@@ -671,6 +671,85 @@ describe("取り込みの種類ごとの間隔（PBI-100）", () => {
     activity.close();
   });
 
+  it("取り込んだ後に sacty の設定を一度だけ読めず、次の確認までに直ったら、間隔を待たずに取り込む（レビュー指摘）", async () => {
+    const { activity, service, intake, advance, counts } = kindsSetup();
+    await intake.tick();
+    expect(counts()).toEqual({ issues: 1, reviews: 1, tickets: 1 });
+    const getSettings = service.getSettings.bind(service);
+    service.getSettings = () => {
+      throw new Error("設定を読めません");
+    };
+    advance(30_000);
+    await intake.tick();
+    service.getSettings = getSettings;
+    advance(30_000);
+    await intake.tick();
+    // 前の取り込みから 60 秒（間隔 300 秒の前）でも、すべての種類を取り込む
+    expect(counts()).toEqual({ issues: 2, reviews: 2, tickets: 2 });
+    expect(service.status().intake?.runs?.issues?.errors).toBeUndefined();
+    // その後は、また間隔ごと
+    advance(30_000);
+    await intake.tick();
+    expect(counts()).toEqual({ issues: 2, reviews: 2, tickets: 2 });
+    activity.close();
+  });
+
+  it("取り込みの途中の思わぬ失敗（途中で設定を読めないなど）も、直ったら次の確認で取り込む", async () => {
+    const { activity, service, intake, advance, counts } = kindsSetup();
+    await intake.tick();
+    const revision = service.projectsRevision.bind(service);
+    service.projectsRevision = () => {
+      throw new Error("途中で読めません");
+    };
+    advance(30_000);
+    await intake.tick(true);
+    expect(service.status().intake?.runs?.issues?.errors?.map((e) => ja(e.message))).toEqual([
+      expect.stringContaining("途中で読めません"),
+    ]);
+    service.projectsRevision = revision;
+    advance(30_000);
+    await intake.tick();
+    expect(counts()).toEqual({ issues: 2, reviews: 2, tickets: 2 });
+    activity.close();
+  });
+
+  it("何を取り込むか（ラベル・依頼）を変えたら、その種類は間隔を待たずに取り込む。間隔だけの変更は待つ", async () => {
+    const { activity, service, intake, advance, counts } = kindsSetup();
+    await intake.tick();
+    advance(10_000);
+    service.saveSettings({ ...service.getSettings(), intakeLabel: "sacty-next" });
+    await intake.tick();
+    expect(counts()).toEqual({ issues: 2, reviews: 1, tickets: 1 });
+    service.saveSettings({ ...service.getSettings(), reviewRequested: true });
+    await intake.tick();
+    // PR のレビューの種類は、ラベルと依頼の2つを検索する
+    expect(counts()).toEqual({ issues: 2, reviews: 3, tickets: 1 });
+    // 間隔だけを変えても、前の取り込みから測る
+    service.saveSettings({ ...service.getSettings(), ticketIntervalSec: 600 });
+    await intake.tick();
+    expect(counts()).toEqual({ issues: 2, reviews: 3, tickets: 1 });
+    activity.close();
+  });
+
+  it("定期の確認の前に状況を取っても、sacty の設定を読めない理由を返す（レビュー指摘）", async () => {
+    const { activity, service } = kindsSetup();
+    const store = (service as unknown as { deps: { settings: { get(): unknown } } }).deps.settings;
+    store.get = () => {
+      throw new Error("sacty.db を読めません");
+    };
+    const token = "test-token";
+    const app = createApp(service, token);
+    const res = await app.request("/api/status", { headers: { authorization: `Bearer ${token}` } });
+    expect(res.status).toBe(200);
+    const { intake } = (await res.json()) as {
+      intake: { settingsUnreadable?: boolean; settingsError?: unknown; runs?: unknown };
+    };
+    expect(intake.settingsUnreadable).toBe(true);
+    expect(intake.runs).toBeUndefined();
+    expect(ja(intake.settingsError)).toContain("sacty.db を読めません");
+    activity.close();
+  });
+
   it("sacty の設定の保存先が読めなくても、記録した理由を状況の API とすぐに取り込む API で返す（レビュー指摘）", async () => {
     const { activity, service, intake } = kindsSetup();
     const store = (service as unknown as { deps: { settings: { get(): unknown } } }).deps.settings;

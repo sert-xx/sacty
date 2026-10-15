@@ -90,8 +90,10 @@ export type IntakeStatus = {
   ticketLabel?: string;
   /** 取り込みの種類ごとの、直近の取り込み（PBI-100）。まだ取り込んでいない種類は無い。 */
   runs?: Partial<Record<IntakeKind, IntakeRun>>;
-  /** sacty の設定を読めなかった（runs に読めなかった理由がある。PBI-100）。 */
+  /** sacty の設定を読めなかった（PBI-100）。 */
   settingsUnreadable?: true;
+  /** sacty の設定を読めなかった理由（PBI-100）。 */
+  settingsError?: DaemonText;
 };
 
 /** 1つの種類の、直近の取り込み（PBI-100）。 */

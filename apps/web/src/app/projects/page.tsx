@@ -77,9 +77,12 @@ async function Projects() {
             </p>
           ) : (
             <>
-              {/* sacty の設定を読めなかった（PBI-100）。記録した理由は、下の取り込めなかった対象に出る */}
+              {/* sacty の設定を読めなかった（PBI-100）。理由は、定期の確認の前でも状況の API が返す */}
               {intake.settingsUnreadable && (
-                <p className="text-warn">{t.intake.settingsUnreadable}</p>
+                <p className="text-warn break-words">
+                  {t.intake.settingsUnreadable}
+                  {intake.settingsError && m.labels.text(intake.settingsError)}
+                </p>
               )}
               <p className="text-muted-foreground">
                 {[

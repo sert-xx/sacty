@@ -43,6 +43,7 @@ import {
   gatePullRequest,
   IntakeKind,
   intakeKindEnabled,
+  intakeKindKey,
   investigationIsGoal,
   isCompleted,
   isRepoless,
@@ -414,8 +415,10 @@ export type IntakeStatus = {
   ticketLabel?: string;
   /** 取り込みの種類ごとの、直近の取り込み（PBI-100。種類ごとに別の間隔で取り込む）。まだ取り込んでいない種類は無い。 */
   runs?: Partial<Record<IntakeKind, IntakeRun>>;
-  /** sacty の設定を読めなかった（ラベルなどは無い。runs に読めなかった理由がある。PBI-100）。 */
+  /** sacty の設定を読めなかった（ラベルなどは無い。PBI-100）。 */
   settingsUnreadable?: true;
+  /** sacty の設定を読めなかった理由（PBI-100）。 */
+  settingsError?: DaemonText;
 };
 
 /** 1つの種類の、直近の取り込み（PBI-100）。 */
@@ -529,7 +532,7 @@ export class TaskService {
   private tasks: Map<string, Task>;
 
   private intakeRuns: Partial<Record<IntakeKind, IntakeRun>> = {};
-  private intakeStops: Partial<Record<IntakeKind, number>> = {};
+  private intakeRestarts: Partial<Record<IntakeKind, number>> = {};
   /** 実行中のタスクと、そのタスクで動いているコンテナ（一時停止・中止で止めるため）。 */
   private readonly inflight = new Map<string, { runIds: Set<string>; done: Promise<void> }>();
   /**
@@ -2393,35 +2396,51 @@ export class TaskService {
    * 同じ名前は書けない（PBI-99）。
    */
   saveSettings(raw: unknown): SactySettings {
-    const saved = this.deps.settings.put(SactySettingsUpdate.parse(raw));
-    // 止めた種類を数える（Off にしてすぐ On に戻しても、取り込みが間隔の起点を戻せるように。PBI-100）
+    const update = SactySettingsUpdate.parse(raw);
+    let before: SactySettings | undefined;
+    try {
+      before = this.deps.settings.get();
+    } catch {
+      // 前の設定を読めなければ、どの種類も変わったとみなす
+    }
+    const saved = this.deps.settings.put(update);
+    // 止めた種類と、何を取り込むか（ラベル・依頼）を変えた種類を数える（Off にしてすぐ On に戻しても、ラベルを変えても、
+    // 取り込みが間隔の起点を戻せるように。PBI-100）
     for (const kind of IntakeKind.options) {
-      if (!intakeKindEnabled(saved, kind)) {
-        this.intakeStops = { ...this.intakeStops, [kind]: (this.intakeStops[kind] ?? 0) + 1 };
+      if (
+        !intakeKindEnabled(saved, kind) ||
+        !before ||
+        intakeKindKey(before, kind) !== intakeKindKey(saved, kind)
+      ) {
+        this.intakeRestarts = {
+          ...this.intakeRestarts,
+          [kind]: (this.intakeRestarts[kind] ?? 0) + 1,
+        };
       }
     }
     return saved;
   }
 
   /**
-   * その種類の取り込みを止める設定を保存した回数（デーモンの起動から。PBI-100）。取り込みは、これが変わったら、間隔を待たずに
-   * 次の確認で取り込む（Off にして、次の確認の前に On に戻したときも）。
+   * その種類の取り込みを、間隔を待たずに始め直す設定を保存した回数（デーモンの起動から。PBI-100）。止める設定（ラベルが無い・
+   * Off）か、何を取り込むか（ラベル・依頼）を変えた保存を数える。取り込みは、これが変わったら、間隔を待たずに次の確認で取り込む
+   * （Off にして、次の確認の前に On に戻したときも）。
    */
-  intakeStopCount(kind: IntakeKind): number {
-    return this.intakeStops[kind] ?? 0;
+  intakeRestartCount(kind: IntakeKind): number {
+    return this.intakeRestarts[kind] ?? 0;
   }
 
   /**
    * 取り込みの状況（PBI-100）。sacty の設定を読めなくても、記録した取り込み（読めなかった理由を含む）は返す
-   * （`settingsUnreadable` を付ける）。
+   * （`settingsUnreadable` と、いま読めなかった理由 `settingsError` を付ける。定期の確認の前でも理由がわかるように）。
    */
   private intakeStatusOf(): IntakeStatus {
     const runs = Object.keys(this.intakeRuns).length > 0 ? { runs: { ...this.intakeRuns } } : {};
     let settings: SactySettings;
     try {
       settings = this.deps.settings.get();
-    } catch {
-      return { settingsUnreadable: true, ...runs };
+    } catch (error) {
+      return { settingsUnreadable: true, settingsError: errorText(error), ...runs };
     }
     return { ...this.labelOf(settings), ...runs };
   }
