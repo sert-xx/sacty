@@ -1,8 +1,9 @@
+"use client";
+
 import { DEPLOYMENT_CI_TIMEOUT_MS, isFailedCiCheck, MAX_FIX_CHAIN, type Task } from "@sacty/core";
 import Link from "next/link";
 import { CardSection } from "@/components/card-section";
-import { getMessages } from "@/i18n/server";
-import { getTask } from "@/lib/daemon";
+import { useMessages } from "@/i18n/client";
 import { formatStamp } from "@/lib/labels";
 
 /** 画面に出す CI/CD の実行・チェックの数（失敗・実行中のものを先に）。 */
@@ -12,10 +13,11 @@ const CHECKS_SHOWN = 20;
  * マージの後の監視（PBI-89）。状態・CI/CD の実行とチェック・失敗したジョブとログの抜粋・デプロイの確認の結果・
  * 登録した修正のタスク（作らなかった理由）を出す。監視していないタスクでは出さない。
  */
-export async function DeploymentWatchCard({ task }: { task: Task }) {
+/** fixTask は、監視で作った修正のタスク（読めたとき。PBI-89）。 */
+export function DeploymentWatchCard({ task, fixTask }: { task: Task; fixTask?: Task }) {
+  const { task: messages, labels, locale } = useMessages();
   const watch = task.deployment;
   if (!watch) return null;
-  const { task: messages, labels, locale } = await getMessages();
   const m = messages.deployment;
   const commitUrl = watch.commit
     ? `${watch.repo.replace(/\/+$/, "")}/commit/${watch.commit}`
@@ -27,7 +29,6 @@ export async function DeploymentWatchCard({ task }: { task: Task }) {
         Number(b.status === "pending") - Number(a.status === "pending"),
     )
     .slice(0, CHECKS_SHOWN);
-  const fixTask = watch.fix ? (await getTask(watch.fix.taskId).catch(() => undefined))?.task : null;
   const tone =
     watch.state === "failed" || watch.state === "timed_out"
       ? "text-warn"

@@ -1,9 +1,11 @@
 import {
   closeSync,
   existsSync,
+  fstatSync,
   mkdirSync,
   openSync,
   readFileSync,
+  readSync,
   renameSync,
   writeFileSync,
   writeSync,
@@ -511,7 +513,29 @@ export type StoredSessionLog = {
   meta: SessionLogMeta;
   events: string;
   stderr: string;
+  /**
+   * 返した文の、ファイルの中の位置（バイト。PR #119 レビュー指摘）。from から next の手前までを返した。次は next から
+   * 求めれば、足された分だけを読める。
+   */
+  offsets: Record<SessionLogFile, { from: number; next: number }>;
 };
+
+/** 読み始める位置（バイト）。無ければ先頭から。 */
+export type SessionLogOffsets = Partial<Record<SessionLogFile, number>>;
+
+/**
+ * buf の、UTF-8 の文字として最後まで書き終えた所までの長さ。書いている途中の文字（複数バイトの途中）を、次の読み出しに
+ * 回す（文字を半分で切って化けさせない）。
+ */
+export function completeUtf8Length(buf: Uint8Array): number {
+  for (let j = buf.length - 1, back = 0; j >= 0 && back < 4; j--, back++) {
+    const b = buf[j] as number;
+    if ((b & 0xc0) === 0x80) continue;
+    const need = b >= 0xf0 ? 4 : b >= 0xe0 ? 3 : b >= 0xc0 ? 2 : 1;
+    return buf.length - j >= need ? buf.length : j;
+  }
+  return buf.length;
+}
 
 /** セッションログの置き場所（SACTY_HOME/runs）。 */
 export class SessionLogStore {
@@ -574,8 +598,13 @@ export class SessionLogStore {
     return join(this.root, taskId, `${runId}${EXTENSIONS[file]}`);
   }
 
-  /** 実行のログ。記録が無ければ undefined（ログを残す前の実行・エージェントを起動する前に止まった実行など）。 */
-  read(taskId: string, runId: string): StoredSessionLog | undefined {
+  /**
+   * 実行のログ。記録が無ければ undefined（ログを残す前の実行・エージェントを起動する前に止まった実行など）。
+   * from を渡すと、実行中は、その位置より後（足された分）だけを読む（画面が3秒ごとに取り直すときに、全体を読まない。
+   * PR #119 レビュー指摘）。実行が終わった後（閉じるときに、伏せ直しや上限で書き直されうる）と、位置がファイルより
+   * 後ろのときは、全体を読む。
+   */
+  read(taskId: string, runId: string, from: SessionLogOffsets = {}): StoredSessionLog | undefined {
     if (!validLogId(taskId) || !validLogId(runId)) return undefined;
     const base = join(this.root, taskId, runId);
     let meta: SessionLogMeta;
@@ -584,13 +613,38 @@ export class SessionLogStore {
     } catch {
       return undefined;
     }
-    const text = (file: SessionLogFile) => {
+    const read = (file: SessionLogFile): { text: string; from: number; next: number } => {
+      let fd: number | undefined;
       try {
-        return readFileSync(`${base}${EXTENSIONS[file]}`, "utf8");
+        fd = openSync(`${base}${EXTENSIONS[file]}`, "r");
+        const size = fstatSync(fd).size;
+        const start = from[file] ?? 0;
+        const begin = !meta.finishedAt && start > 0 && start <= size ? start : 0;
+        const buf = Buffer.alloc(size - begin);
+        let done = 0;
+        while (done < buf.length) {
+          const n = readSync(fd, buf, done, buf.length - done, begin + done);
+          if (n === 0) break;
+          done += n;
+        }
+        const cut = completeUtf8Length(buf.subarray(0, done));
+        return { text: buf.subarray(0, cut).toString("utf8"), from: begin, next: begin + cut };
       } catch {
-        return "";
+        return { text: "", from: 0, next: 0 };
+      } finally {
+        if (fd !== undefined) closeSync(fd);
       }
     };
-    return { meta, events: text("events"), stderr: text("stderr") };
+    const events = read("events");
+    const stderr = read("stderr");
+    return {
+      meta,
+      events: events.text,
+      stderr: stderr.text,
+      offsets: {
+        events: { from: events.from, next: events.next },
+        stderr: { from: stderr.from, next: stderr.next },
+      },
+    };
   }
 }

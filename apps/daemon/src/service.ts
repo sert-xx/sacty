@@ -248,6 +248,7 @@ import type {
   ArchivedAgentSession,
   SessionLogFile,
   SessionLogHandle,
+  SessionLogOffsets,
   SessionLogStore,
   StoredSessionLog,
 } from "./session-logs.js";
@@ -597,9 +598,13 @@ export class TaskService {
    * タスクのエージェントの実行のセッションログ（PBI-62）。タスクが無い・その実行のログが無ければ undefined。
    * ログはタスクごとの場所に置くので、ほかのタスクの実行の ID を渡しても読めない。
    */
-  sessionLog(taskId: string, runId: string): StoredSessionLog | undefined {
+  sessionLog(
+    taskId: string,
+    runId: string,
+    from?: SessionLogOffsets,
+  ): StoredSessionLog | undefined {
     if (!this.tasks.has(taskId)) return undefined;
-    return this.deps.sessionLogs?.read(taskId, runId);
+    return this.deps.sessionLogs?.read(taskId, runId, from);
   }
 
   /**

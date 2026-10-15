@@ -1,8 +1,10 @@
+"use client";
+
 import { isCompleted, type Task } from "@sacty/core";
 import { cn } from "cn";
 import { CardSection } from "@/components/card-section";
 import { Markdown } from "@/components/markdown";
-import { getMessages } from "@/i18n/server";
+import { useMessages } from "@/i18n/client";
 import {
   addedTestsResult,
   formatStamp,
@@ -26,8 +28,8 @@ function Pill({ tone, children }: { tone: string; children: React.ReactNode }) {
  * 実装の成果物。実装の説明と、「観点 → テスト → 実行結果」の対応、
  * sacty が実行したテストの結果、ゴールガーディアンの最終レビューを出す。
  */
-export async function Implementation({ task }: { task: Task }) {
-  const messages = await getMessages();
+export function Implementation({ task }: { task: Task }) {
+  const messages = useMessages();
   const m = messages.parts.implementation;
   const step = task.steps.find((s) => s.key === "implement");
   const viewpoints = task.approved.design?.testViewpoints ?? [];

@@ -1,11 +1,10 @@
 import Link from "next/link";
-import { AutoRefresh, RefreshOnVisible } from "@/components/auto-refresh";
 import type { LanguagePreference } from "@/i18n/locale";
-import { getMessages, languagePreference } from "@/i18n/server";
-import { currentProjectId, resolveProject } from "@/lib/current-project";
-import { listProjects, listTasks } from "@/lib/daemon";
-import { isWorking, needsPerson, personAction, statusText } from "@/lib/labels";
-import { type Notice, NotificationsMenu, ProjectMenu, UserMenu } from "./menus";
+import { languagePreference } from "@/i18n/server";
+import { type HeaderData, loadHeaderData } from "@/lib/header-data";
+import { liveVersion } from "@/lib/live-server";
+import { LiveHeaderMenus } from "./live-header";
+import { UserMenu } from "./menus";
 import { SactyMark } from "./sacty-mark";
 
 function Frame({ children }: { children?: React.ReactNode }) {
@@ -27,68 +26,51 @@ function Frame({ children }: { children?: React.ReactNode }) {
 /**
  * 読み込み中や、デーモンにつながらないときのヘッダー（テーマと言語は変えられる）。
  * 読み込み中の仮表示では言語の設定が分からないので「システムに従う」を選んだ表示にし、
- * つながらないときは保存済みの言語の設定を渡す。
+ * つながらないときは保存済みの言語の設定を渡す。live なら（デーモンにつながらなかったとき・プロジェクトが1つも無い
+ * とき）、取り直しで届いたら（プロジェクトができたら）、プロジェクトの切り替えとお知らせを出す（PBI-108）。
  */
-export function HeaderFallback({ language = "system" }: { language?: LanguagePreference }) {
+export function HeaderFallback({
+  language = "system",
+  live = false,
+}: {
+  language?: LanguagePreference;
+  live?: boolean;
+}) {
   return (
     <Frame>
-      {/* デーモンにつながらなかったときも、戻った後にタブに戻ってくれば、ヘッダーを描き直す（PBI-98 レビュー指摘） */}
-      <RefreshOnVisible />
-      <span className="flex-1" />
-      <UserMenu language={language} />
+      {live ? (
+        <LiveHeaderMenus initial={null} language={language} />
+      ) : (
+        <>
+          <span className="flex-1" />
+          <UserMenu language={language} />
+        </>
+      )}
     </Frame>
   );
 }
 
-/** ヘッダー：ロゴ、プロジェクトの切り替え（対応待ちの件数つき）、お知らせ、ユーザーメニュー。 */
+/**
+ * ヘッダー：ロゴ、プロジェクトの切り替え（対応待ちの件数つき）、お知らせ、ユーザーメニュー。切り替えとお知らせは、
+ * 画面をリロードせずに取り直す（PBI-108）。
+ */
 export async function AppHeader() {
-  let data: [Awaited<ReturnType<typeof listProjects>>, Awaited<ReturnType<typeof listTasks>>];
+  let data: HeaderData | null;
   try {
-    data = await Promise.all([listProjects(), listTasks()]);
+    data = await loadHeaderData();
   } catch {
-    return <HeaderFallback language={await languagePreference()} />;
+    return <HeaderFallback language={await languagePreference()} live />;
   }
-  const [projects, tasks] = data;
-  // プロジェクトが1つも無いときは、切り替えもお知らせも出さない（作成画面のほかへ移らせない。PBI-22）
-  if (projects.length === 0) return <HeaderFallback language={await languagePreference()} />;
-  const [m, language] = await Promise.all([getMessages(), languagePreference()]);
-  const current = resolveProject(projects, await currentProjectId());
-  const waiting = tasks.filter(needsPerson);
-  const options = projects.map((p) => ({
-    id: p.id,
-    name: p.name,
-    needsYou: waiting.filter((t) => t.projectId === p.id).length,
-  }));
-  const name = (id: string) => projects.find((p) => p.id === id)?.name ?? id;
-  const notices: Notice[] = [...waiting]
-    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
-    .map((t) => ({
-      taskId: t.id,
-      title: t.title,
-      projectId: t.projectId,
-      projectName: name(t.projectId),
-      status: statusText(t, m.labels),
-      href: personAction(t, m.labels).href,
-    }));
-  const currentOption = options.find((o) => o.id === current?.id) ?? {
-    id: "",
-    name: m.shell.project.fallbackName,
-    needsYou: 0,
-  };
+  // プロジェクトが1つも無いときは、切り替えもお知らせも出さない（作成画面のほかへ移らせない。PBI-22）。ただし取り直しは
+  // 始めておき、ほかのタブや CLI で最初のプロジェクトを作ったら、切り替えとお知らせを出す（PR #119 レビュー指摘）
+  if (data === null) return <HeaderFallback language={await languagePreference()} live />;
   return (
     <Frame>
-      {/* お知らせは全プロジェクトが対象なので、どのプロジェクトのタスクが動いていても最新にする */}
-      <AutoRefresh active={tasks.some(isWorking)} />
-      {/* ほかのタブ・CLI・デーモンでの変化は、このタブに戻ってきたときに反映する（PBI-98） */}
-      <RefreshOnVisible />
-      <ProjectMenu projects={options} current={currentOption} />
-      <span className="flex-1" />
-      <NotificationsMenu
-        others={notices.filter((n) => n.projectId !== currentOption.id)}
-        here={notices.filter((n) => n.projectId === currentOption.id)}
-        currentName={currentOption.name}
+      <LiveHeaderMenus
+        initial={data}
+        initialVersion={liveVersion(data)}
+        language={await languagePreference()}
       />
-      <UserMenu language={language} />
     </Frame>
   );
 }

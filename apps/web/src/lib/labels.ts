@@ -1,5 +1,7 @@
 import {
   type ActivityEvent,
+  awaitingRepository,
+  awaitingTicketTriage,
   deliveredWithoutChanges,
   formatUsd,
   GATED_STEPS,
@@ -142,19 +144,6 @@ export function addedTestsResult(task: Task): "pending" | "passed" | "failed" | 
   if (task.verification === "pending") return task.addedTestCommand ? "pending" : undefined;
   if (!task.lastTests || task.testsSkippedAt) return undefined;
   return task.lastTests.passed ? "passed" : "failed";
-}
-
-/**
- * sactyやエージェントが作業中か（実行待ち・実行中・ゴールガーディアンの判定中）。
- * 画面はこのあいだ自動で更新する。判定中のタスクは待機（idle）のままなので、状態だけでは分からない。
- */
-export function isWorking(task: Task): boolean {
-  if (task.status === "queued" || task.status === "running") return true;
-  if (task.status === "idle" && task.verification) return true;
-  // 再現のテストを実行して確かめている（PBI-29）
-  if (task.status === "idle" && task.reproductionPending) return true;
-  const proposal = openProposal(task);
-  return Boolean(proposal && !proposal.judgement);
 }
 
 /** 人間が判断する場所への導線。 */
@@ -740,4 +729,12 @@ export function stepImageOptions(
 ): { name: string; description: string }[] | undefined {
   if (!status || status.problems.length > 0 || !status.images) return undefined;
   return [{ name: "default", description: defaultDescription }, ...status.images];
+}
+
+/**
+ * 一時停止で、人がリポジトリを選ぶ（候補が要る）か。チケットのタスクでチケットを読む段階で止まったとき（選び直せる。
+ * PBI-52）と、リポジトリを指定せずに作ったタスクでオーケストレーターが選べずに止まったとき（PBI-73）。
+ */
+export function needsTicketRepositories(task: Task): boolean {
+  return (awaitingTicketTriage(task) || awaitingRepository(task)) && task.status === "paused";
 }

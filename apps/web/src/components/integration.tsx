@@ -1,8 +1,10 @@
+"use client";
+
 import { isCompleted, MAX_INTEGRATION_ATTEMPTS, type Task } from "@sacty/core";
 import { cn } from "cn";
 import { CardSection } from "@/components/card-section";
 import { Markdown } from "@/components/markdown";
-import { getMessages } from "@/i18n/server";
+import { useMessages } from "@/i18n/client";
 import { formatStamp } from "@/lib/labels";
 
 const OK = "border-accent-line bg-accent text-accent-foreground";
@@ -20,10 +22,10 @@ function Pill({ ok, children }: { ok: boolean; children: React.ReactNode }) {
  * 最新の統合レビュー（PBI-31）。合否と読んだコード、足りないこと、観点ごとの判定、過去の指摘の再発、
  * ゴールガーディアンの説明を出す。
  */
-export async function IntegrationResult({ task }: { task: Task }) {
+export function IntegrationResult({ task }: { task: Task }) {
+  const { task: messages, labels, locale } = useMessages();
   const review = task.integration;
   if (!review) return null;
-  const { task: messages, labels, locale } = await getMessages();
   const m = messages.integration;
   const titles = new Map((task.approved.design?.testViewpoints ?? []).map((v) => [v.id, v.title]));
   return (

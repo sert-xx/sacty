@@ -14692,6 +14692,45 @@ describe("エージェントの実行のセッションログ（PBI-62）", () =
     expect(body.events).toContain('"type":"fake"');
     expect(JSON.stringify(body)).not.toContain("oauth-secret");
 
+    // 実行中のログは、?eventsFrom= で足された分だけを返す（PR #119 レビュー指摘）
+    const live = sessionLogs.open(
+      {
+        taskId: task.id,
+        runId: "run-live",
+        role: "implement",
+        agentId: "claude",
+        runtime: "claude-code",
+        authMode: "subscription",
+      },
+      () => [],
+    );
+    live.stdout('{"type":"first"}\n');
+    const r1 = (await (
+      await app.request(`/api/tasks/${task.id}/runs/run-live/log`, { headers: auth })
+    ).json()) as { events: string; offsets: { events: { from: number; next: number } } };
+    expect(r1.events).toBe('{"type":"first"}\n');
+    live.stdout('{"type":"second"}\n');
+    const r2 = (await (
+      await app.request(
+        `/api/tasks/${task.id}/runs/run-live/log?eventsFrom=${r1.offsets.events.next}&stderrFrom=0`,
+        { headers: auth },
+      )
+    ).json()) as { events: string; offsets: { events: { from: number; next: number } } };
+    expect(r2.events).toBe('{"type":"second"}\n');
+    expect(r2.offsets.events.from).toBe(r1.offsets.events.next);
+    // 位置の形が違えば、全体を返す
+    const r3 = (await (
+      await app.request(`/api/tasks/${task.id}/runs/run-live/log?eventsFrom=abc`, {
+        headers: auth,
+      })
+    ).json()) as { events: string };
+    expect(r3.events).toBe('{"type":"first"}\n{"type":"second"}\n');
+    live.close({
+      kind: "completed",
+      output: "",
+      usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 0 },
+    });
+
     const raw = await app.request(`/api/tasks/${task.id}/runs/${runId}/files/events`, {
       headers: auth,
     });
