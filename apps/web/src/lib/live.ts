@@ -82,25 +82,55 @@ export function pollWhileVisible({
   };
 }
 
+/** 1回の取り直しの期限（PR #119 レビュー指摘）。応答が無くても、期限で打ち切って次の取り直しを予約する。 */
+export const LIVE_TIMEOUT_MS = 10_000;
+
 /**
- * url から最新のデータを取る。版が同じ・届かない・対象が無いときは undefined（いまのデータを使い続ける）。
- * 画面のサーバーに届かないときも、例外にせず undefined にする。
+ * 取り直しの結果。
+ * - `{ data, version }`：新しいデータ。
+ * - `"current"`：いまのデータのままでよい（版が同じ・対象が無い）。
+ * - `"failed"`：更新できなかった（デーモンや画面のサーバーに届かない・期限切れ・読めない応答）。画面は「更新が止まって
+ *   いる」ことを出す。
+ */
+export type LiveResult<T> = { data: T; version: string } | "current" | "failed";
+
+/**
+ * url から最新のデータを取る。例外にはしない。timeoutMs で打ち切る（応答の本文を読む間も含む）。
  */
 export async function fetchLive<T>(
   url: string,
   version: string | undefined,
   fetcher: typeof fetch = (input, init) => fetch(input, init),
-): Promise<{ data: T; version: string } | undefined> {
-  let reply: LiveReply<T>;
+  timeoutMs: number = LIVE_TIMEOUT_MS,
+): Promise<LiveResult<T>> {
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expired = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      reject(new Error("timeout"));
+    }, timeoutMs);
+  });
+  // 期限の前に終わったときに、期限の約束の拒否を未処理にしない
+  expired.catch(() => {});
   try {
-    const res = await fetcher(url, {
-      cache: "no-store",
-      headers: version ? { [LIVE_VERSION_HEADER]: version } : {},
-    });
-    if (!res.ok) return undefined;
-    reply = (await res.json()) as LiveReply<T>;
+    const reply = await Promise.race([
+      (async () => {
+        const res = await fetcher(url, {
+          cache: "no-store",
+          signal: controller.signal,
+          headers: version ? { [LIVE_VERSION_HEADER]: version } : {},
+        });
+        if (!res.ok) return undefined;
+        return (await res.json()) as LiveReply<T>;
+      })(),
+      expired,
+    ]);
+    if (!reply || "unavailable" in reply) return "failed";
+    return "data" in reply ? reply : "current";
   } catch {
-    return undefined;
+    return "failed";
+  } finally {
+    clearTimeout(timer);
   }
-  return "data" in reply ? reply : undefined;
 }

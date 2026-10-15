@@ -14,7 +14,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { isLocale, LANG_COOKIE, type LanguagePreference } from "@/i18n/locale";
 import { getMessages } from "@/i18n/server";
-import { selectProject } from "@/lib/current-project";
+import { currentProjectId, selectProject } from "@/lib/current-project";
 import {
   approveStep,
   askQuestion,
@@ -26,6 +26,7 @@ import {
   createTask,
   decideChange,
   importProject,
+  listProjects,
   type PreviewRuntime,
   pauseTask,
   prefetchSecrets,
@@ -40,6 +41,7 @@ import {
   testNotification,
   voidRemark,
 } from "@/lib/daemon";
+import { needsProjectSelect } from "@/lib/project-select";
 
 export type CreateTaskState = {
   fieldErrors?: { title?: string[]; body?: string[] };
@@ -461,6 +463,20 @@ function projectSettingsPath(id: string, contextCheck: boolean): string {
  * 描き直される。ID の形が違えば何もしない。
  */
 export async function selectProjectAction(id: string): Promise<void> {
+  await selectProject(id);
+}
+
+/**
+ * 描いたときにデーモンに届かなかった画面で、後から取り直した中身のプロジェクトに合わせる（PR #119 レビュー指摘）。
+ * FollowProject と同じく、表示しているプロジェクト（cookie）と違うときだけ、デーモンのプロジェクトの一覧にあれば合わせる
+ * （一覧を取れなければ、無いとは扱わずに合わせる）。同じなら何もしない（画面を描き直さない）。
+ */
+export async function followProjectAction(id: string): Promise<void> {
+  if (!needsProjectSelect(await currentProjectId(), id)) return;
+  const exists = await listProjects()
+    .then((projects) => projects.some((p) => p.id === id))
+    .catch(() => undefined);
+  if (exists === false) return;
   await selectProject(id);
 }
 

@@ -82,7 +82,7 @@ only the data at a fixed interval, and only the parts that changed are reflected
   | `GET /live/tasks/<ID>` | What the task details show (the task, the activity, the parent, the subtasks, what to clean up, the image choices, and so on. `loadTaskDetail`) |
   | `GET /live/header?current=<ID>` | The header's project switcher (the counts that need you) and notices (`loadHeaderData`) |
   | `GET /live/tasks/<ID>/review` | The task for the deliverable review screen |
-  | `GET /live/tasks/<ID>/runs/<run ID>?events=&eventsMark=&stderr=&stderrMark=` | What was added to the run log after what the screen has (see below) |
+  | `GET /live/tasks/<ID>/runs/<run ID>?events=&stderr=` | What was added to the run log after what the screen has (see below) |
   | `GET /live/projects` | The project list and the intake status (`loadProjectList`) |
 
 - The interval is 3 seconds (`LIVE_INTERVAL_MS`). The data is refetched whatever the state of the tasks, including when there are no tasks and when every task
@@ -92,26 +92,38 @@ only the data at a fixed interval, and only the parts that changed are reflected
   the contents of this screen). The project changes when the screen is opened again (`/switch` and so on).
 - The screen sends the version of the data it last received (a hash of the contents) in the header `x-sacty-live-version`. If it is the same, the web UI's
   server does not send the contents (`{ unchanged: true }`).
-- When the daemon cannot be reached or read, the route returns `{ unavailable: true }` with 200, and the screen stays as it is (it does not keep showing errors).
-  When the daemon can be reached again, the next interval reflects the changes. If the daemon could not be reached when the screen was drawn, the screen
-  shows that it cannot connect until the daemon is reached, and then shows the contents.
+- Each refetch has a 10-second deadline (`LIVE_TIMEOUT_MS`), including reading the response body. At the deadline it is aborted and the next refetch is
+  scheduled (so that refetching does not stay stuck on a web UI server or daemon that does not respond).
+- When the daemon cannot be reached or read, the route returns `{ unavailable: true }` with 200 (it does not keep showing errors). The screen keeps showing the
+  data it last fetched and shows that it cannot update (that what is shown may not be current; the header shows "Updates paused"). The same applies when the
+  deadline passes or the web UI's server cannot be reached. When the daemon can be reached again, the next interval reflects the changes and removes that notice.
+- If the daemon could not be reached when the screen was drawn, the screen shows that it cannot connect until the daemon is reached, and then shows the contents.
+  The task details, the deliverable review, and the run log then make the project of what they show the displayed project (`followProjectAction`; only when it
+  differs from the cookie. If the daemon was reached when the screen was drawn, the server's `FollowProject` does this).
+- The header refetches even when there are no projects (it does not show the switcher or notices). When the first project is created in another tab or the CLI,
+  it shows the switcher and notices.
 - Refetching does not fetch the target repository choices (for an Org target, `gh` queries GitHub). The choices in the create-task dialog are read once, when
-  the dialog is opened ([Tasks and steps](tasks-and-steps.en.md)). In the task details, the choices for a person to pick a repository for a paused task are requested once, only while the screen
-  does not have them yet (`?repositories=1`).
+  the dialog is opened ([Tasks and steps](tasks-and-steps.en.md)). In the task details, the choices for a person to pick a repository for a paused task are requested only while the screen
+  does not have them yet (`?repositories=1`). If they could not be fetched (`ticketRepositoriesFailed`, kept apart from fetching zero choices), they are requested
+  again after 30 seconds (`REPOSITORIES_RETRY_MS`).
 - When a server action for an operation (approve, pause, resume, and so on) redraws the screen with `refresh()`, the data from that redraw is used.
-- For the run log, the screen sends the length (in characters) and a mark (a hash of the contents) of what it has. If the start of the current file is the same,
-  it receives only what was added and appends it. If not (the file was rewritten, for example with the middle left out because it was too large), it receives
-  the whole file and replaces it. The scroll position is not moved while you are reading in the middle; the screen follows new lines only while you are
-  looking at the bottom. Refetching stops when the run has finished. The list of the agent's original files (which computes hashes) is fetched only once,
-  after the run has finished.
+- For the run log, the screen sends where what it has ends (a byte position in the file). While the run is in progress, the daemon
+  (`?eventsFrom=&stderrFrom=` on `GET /api/tasks/:id/runs/:runId/log`) also reads only what comes after that position, and only what was added is sent to the
+  web UI's server and the screen. The positions of what was returned are in `offsets` (`from`, `next`), and a character being written (in the middle of a
+  multi-byte UTF-8 sequence) is left for the next read. After the run has finished (the file may be rewritten when it is closed, by redacting again or by the
+  limits) and when the position is past the end of the file, the whole file is returned and the screen replaces what it has. The scroll position is not moved
+  while you are reading in the middle; the screen follows new lines only while you are looking at the bottom. The list of the agent's original files (which
+  computes hashes) is fetched after the run has finished. If only the list cannot be read, the log and the fact that the run finished are still returned
+  (`agentFilesFailed`), and the screen refetches only the list. Refetching stops when the run has finished and the list has been fetched.
 - The sacty settings and project settings screens are not redrawn automatically (only the header's notices are refetched). Their contents are settings
   that people edit, and they do not change with the state of tasks. To see the latest, open the screen again or reload it.
 
-Code: `apps/web/src/lib/live.ts` (`pollWhileVisible`, `fetchLive`, `LIVE_INTERVAL_MS`), `apps/web/src/lib/use-live-data.ts` (`useLiveData`),
+Code: `apps/web/src/lib/live.ts` (`pollWhileVisible`, `fetchLive`, `LIVE_INTERVAL_MS`, `LIVE_TIMEOUT_MS`), `apps/web/src/lib/use-live-data.ts` (`useLiveData`),
 `apps/web/src/lib/live-server.ts` (`liveResponse`, `liveVersion`), `apps/web/src/app/live/tasks/route.ts`, `apps/web/src/app/live/tasks/[id]/route.ts`, `apps/web/src/app/live/header/route.ts`, `apps/web/src/lib/task-list-data.ts` (`loadTaskList`),
 `apps/web/src/lib/task-detail-data.ts` (`loadTaskDetail`), `apps/web/src/components/task-list.tsx` (`LiveTaskList`),
 `apps/web/src/components/task-detail.tsx` (`LiveTaskDetail`), `apps/web/src/components/review.tsx` (`LiveReview`),
-`apps/web/src/components/run-log.tsx` (`LiveRunLog`, `applyChunk`), `apps/web/src/lib/run-log-data.ts` (`appendedText`),
+`apps/web/src/components/run-log.tsx` (`LiveRunLog`, `applyChunk`), `apps/web/src/lib/run-log-data.ts` (`loadAgentFiles`),
+`apps/web/src/components/live-status.tsx` (`StaleNotice`, `FollowProjectAfterRecovery`), `apps/daemon/src/session-logs.ts` (`completeUtf8Length`),
 `apps/web/src/components/project-list.tsx` (`LiveProjectList`), `apps/web/src/lib/project-list-data.ts` (`loadProjectList`)
 
 ## Data location (SACTY_HOME)

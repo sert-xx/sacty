@@ -26,8 +26,8 @@ function Frame({ children }: { children?: React.ReactNode }) {
 /**
  * 読み込み中や、デーモンにつながらないときのヘッダー（テーマと言語は変えられる）。
  * 読み込み中の仮表示では言語の設定が分からないので「システムに従う」を選んだ表示にし、
- * つながらないときは保存済みの言語の設定を渡す。live なら（デーモンにつながらなかったとき）、届くようになってから
- * プロジェクトの切り替えとお知らせを出す（PBI-108）。
+ * つながらないときは保存済みの言語の設定を渡す。live なら（デーモンにつながらなかったとき・プロジェクトが1つも無い
+ * とき）、取り直しで届いたら（プロジェクトができたら）、プロジェクトの切り替えとお知らせを出す（PBI-108）。
  */
 export function HeaderFallback({
   language = "system",
@@ -61,8 +61,9 @@ export async function AppHeader() {
   } catch {
     return <HeaderFallback language={await languagePreference()} live />;
   }
-  // プロジェクトが1つも無いときは、切り替えもお知らせも出さない（作成画面のほかへ移らせない。PBI-22）
-  if (data === null) return <HeaderFallback language={await languagePreference()} />;
+  // プロジェクトが1つも無いときは、切り替えもお知らせも出さない（作成画面のほかへ移らせない。PBI-22）。ただし取り直しは
+  // 始めておき、ほかのタブや CLI で最初のプロジェクトを作ったら、切り替えとお知らせを出す（PR #119 レビュー指摘）
+  if (data === null) return <HeaderFallback language={await languagePreference()} live />;
   return (
     <Frame>
       <LiveHeaderMenus

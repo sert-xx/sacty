@@ -5,6 +5,7 @@ import { cn } from "cn";
 import Link from "next/link";
 import { useLayoutEffect, useRef, useState } from "react";
 import { DaemonError } from "@/components/daemon-error";
+import { FollowProjectAfterRecovery, StaleNotice } from "@/components/live-status";
 import type { Messages } from "@/i18n";
 import { useMessages } from "@/i18n/client";
 import type { AgentFiles, RunLogMeta } from "@/lib/daemon";
@@ -34,36 +35,37 @@ function clip(text: string, m: Messages["runLog"]): { text: string; clipped: boo
     : { text, clipped: false };
 }
 
-/** 取り直しで受け取る、足された分（PBI-108）。from が 0 なら全体を置き換える。 */
-type Chunk = { from: number; text: string; mark: string };
+/** 取り直しで受け取る、足された分（バイトの位置。PBI-108）。from が 0 なら全体を置き換える。 */
+type Chunk = { from: number; text: string; next: number };
 type RunLogReply = {
   taskTitle: string;
+  projectId: string;
   rows: RunLogData["rows"];
   meta: RunLogMeta | null;
   events: Chunk;
   stderr: Chunk;
   finished: boolean;
   agentFiles?: AgentFiles | null;
+  agentFilesFailed?: boolean;
 };
 
-/** 持っている文に、足された分を足す（from が持っている長さと違えば、全体を置き換える）。 */
-export function applyChunk(current: string, chunk: Chunk): string {
-  return chunk.from === current.length && chunk.from > 0
-    ? current + chunk.text
-    : chunk.from === 0
-      ? chunk.text
-      : current;
+/**
+ * 持っている文（終わりの位置は have）に、足された分を足す。from が 0 なら全体を置き換える。from が have と違えば
+ * （取り違え）、いまの文のまま undefined を返す（次は全体を求める）。
+ */
+export function applyChunk(current: string, have: number, chunk: Chunk): string | undefined {
+  if (chunk.from === 0) return chunk.text;
+  if (chunk.from === have) return current + chunk.text;
+  return undefined;
 }
 
-/** 実行のログのデータを取り直す先。持っている分の長さと目印を伝える。 */
+/** 実行のログのデータを取り直す先。持っている分の終わりの位置（バイト）を伝える。 */
 export function runLogLiveUrl(
   taskId: string,
   runId: string,
-  have: { events: number; eventsMark?: string; stderr: number; stderrMark?: string },
+  have: { events: number; stderr: number },
 ): string {
   const q = new URLSearchParams({ events: String(have.events), stderr: String(have.stderr) });
-  if (have.eventsMark) q.set("eventsMark", have.eventsMark);
-  if (have.stderrMark) q.set("stderrMark", have.stderrMark);
   return `/live/tasks/${encodeURIComponent(taskId)}/runs/${encodeURIComponent(runId)}?${q}`;
 }
 
@@ -76,30 +78,32 @@ function atBottom(): boolean {
 /**
  * エージェントの実行のセッションログ（PBI-62）。実行中は、画面をリロードせず、一定の間隔で足された行だけを取って後ろに
  * 足す（PBI-108）。読んでいる途中のスクロールの位置は動かさず、一番下を見ているときだけ、新しい行についていく。
- * 実行が終わったら、取り直しを止める。initial が null（描いたときにデーモンに届かなかった）なら、届くまで error を出す。
+ * 実行が終わり、エージェントの元のファイルの一覧も取れたら、取り直しを止める。更新できない間は、そのことを出す。
+ * initial が null（描いたときにデーモンに届かなかった）なら、届くまで error を出す。
  */
 export function LiveRunLog({
   taskId,
   runId,
   initial,
-  initialMarks,
   error,
 }: {
   taskId: string;
   runId: string;
   initial: RunLogData | null;
-  /** 描いたときのログの目印（最初の取り直しから、足された分だけを受け取る）。 */
-  initialMarks?: { events: string; stderr: string };
   error?: string;
 }) {
   const [data, setData] = useState(initial);
-  const marks = useRef<{ events?: string; stderr?: string; version?: string }>({
-    ...initialMarks,
+  const [stale, setStale] = useState(false);
+  // 持っている分の終わりの位置（バイト）と、前に受け取った版
+  const have = useRef({
+    events: initial?.log?.offsets?.events.next ?? 0,
+    stderr: initial?.log?.offsets?.stderr.next ?? 0,
+    version: undefined as string | undefined,
   });
   const latest = useRef(data);
   latest.current = data;
   const follow = useRef(false);
-  const finished = Boolean(data?.log?.meta.finishedAt);
+  const done = Boolean(data?.log?.meta.finishedAt) && !data?.agentFilesFailed;
   useLayoutEffect(() => {
     if (follow.current) {
       follow.current = false;
@@ -107,52 +111,67 @@ export function LiveRunLog({
     }
   });
   useLayoutEffect(() => {
-    if (finished) return;
+    if (done) return;
     return pollWhileVisible({
       doc: document,
       intervalMs: LIVE_INTERVAL_MS,
       load: async () => {
-        const now = latest.current;
-        const url = runLogLiveUrl(taskId, runId, {
-          events: now?.log?.events.length ?? 0,
-          eventsMark: marks.current.events,
-          stderr: now?.log?.stderr.length ?? 0,
-          stderrMark: marks.current.stderr,
-        });
-        const next = await fetchLive<RunLogReply>(url, marks.current.version);
-        if (!next) return;
+        const at = { events: have.current.events, stderr: have.current.stderr };
+        const next = await fetchLive<RunLogReply>(
+          runLogLiveUrl(taskId, runId, at),
+          have.current.version,
+        );
+        setStale(next === "failed");
+        if (typeof next !== "object") return;
         const reply = next.data;
-        marks.current = {
-          events: reply.events.mark,
-          stderr: reply.stderr.mark,
-          version: next.version,
+        const now = latest.current;
+        const events = applyChunk(now?.log?.events ?? "", at.events, reply.events);
+        const stderr = applyChunk(now?.log?.stderr ?? "", at.stderr, reply.stderr);
+        // 取り違えたら、次は全体を求める（版も忘れる）
+        have.current = {
+          events: events === undefined ? 0 : reply.events.next,
+          stderr: stderr === undefined ? 0 : reply.stderr.next,
+          version: events === undefined || stderr === undefined ? undefined : next.version,
         };
-        const bottom = atBottom();
-        setData((current) => {
-          const base = current ?? {
-            taskId,
-            taskTitle: "",
-            projectId: "",
-            rows: [],
-            log: null,
-            agentFiles: null,
-          };
-          const events = applyChunk(base.log?.events ?? "", reply.events);
-          const stderr = applyChunk(base.log?.stderr ?? "", reply.stderr);
-          if (bottom && events !== (base.log?.events ?? "")) follow.current = true;
-          return {
-            ...base,
-            taskTitle: reply.taskTitle,
-            rows: reply.rows,
-            log: reply.meta ? { meta: reply.meta, events, stderr } : null,
-            ...(reply.agentFiles !== undefined ? { agentFiles: reply.agentFiles } : {}),
-          };
+        if (atBottom() && events !== undefined && events !== (now?.log?.events ?? "")) {
+          follow.current = true;
+        }
+        const base: RunLogData = now ?? {
+          taskId,
+          taskTitle: "",
+          projectId: "",
+          rows: [],
+          log: null,
+          agentFiles: null,
+        };
+        setData({
+          ...base,
+          taskTitle: reply.taskTitle,
+          projectId: reply.projectId,
+          rows: reply.rows,
+          log: reply.meta
+            ? {
+                meta: reply.meta,
+                events: events ?? base.log?.events ?? "",
+                stderr: stderr ?? base.log?.stderr ?? "",
+              }
+            : null,
+          ...(reply.agentFiles !== undefined
+            ? { agentFiles: reply.agentFiles, agentFilesFailed: false }
+            : {}),
+          ...(reply.agentFilesFailed ? { agentFilesFailed: true } : {}),
         });
       },
     });
-  }, [finished, taskId, runId]);
+  }, [done, taskId, runId]);
   if (!data) return <DaemonError message={error ?? ""} />;
-  return <RunLogView runId={runId} data={data} />;
+  return (
+    <>
+      <StaleNotice stale={stale} />
+      {initial === null && <FollowProjectAfterRecovery projectId={data.projectId || undefined} />}
+      <RunLogView runId={runId} data={data} />
+    </>
+  );
 }
 
 function RunLogView({ runId, data }: { runId: string; data: RunLogData }) {

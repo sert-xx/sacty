@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { DaemonError } from "@/components/daemon-error";
+import { StaleNotice } from "@/components/live-status";
 import { StatusLabelView, StepChipsView } from "@/components/task-bits";
 import { useMessages } from "@/i18n/client";
 import type { TaskListData } from "@/lib/task-list-data";
@@ -27,10 +28,11 @@ export function LiveTaskList({
   error?: string;
 }) {
   const url = taskListLiveUrl(initial?.projectId);
-  const data = useLiveData(() => url, initial, initialVersion);
+  const { data, stale } = useLiveData(() => url, initial, initialVersion);
   const { tasks: m, labels } = useMessages();
   return (
     <>
+      <StaleNotice stale={stale} />
       {data && data.needsYou.length > 0 && (
         <section aria-labelledby="needs-you" className="flex flex-col gap-3">
           <h2 id="needs-you" className="text-[15px] font-semibold">

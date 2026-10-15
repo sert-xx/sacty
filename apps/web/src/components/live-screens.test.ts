@@ -17,9 +17,11 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh, push: vi.fn(), replace: vi.fn() }),
   usePathname: () => "/",
 }));
+const followProjectAction = vi.fn(async (_id: string) => {});
 vi.mock("@/app/actions", () => {
   const action = vi.fn(async () => ({}));
   return {
+    followProjectAction,
     askQuestionAction: action,
     cancelTaskAction: action,
     changeStepImageAction: action,
@@ -127,6 +129,7 @@ function stubServer() {
       requests.push(url);
       const headers = (init?.headers ?? {}) as Record<string, string>;
       if (server === "down") return Response.json({ unavailable: true });
+      if (server === "missing") return Response.json({ missing: true });
       const version = liveVersion(server);
       return Response.json(
         headers["x-sacty-live-version"] === version
@@ -167,6 +170,7 @@ const text = () => document.body.textContent ?? "";
 beforeEach(() => {
   vi.useFakeTimers();
   requests.length = 0;
+  followProjectAction.mockClear();
   candidateRequests = 0;
   visibility = "visible";
   Object.defineProperty(document, "visibilityState", {
@@ -552,5 +556,123 @@ describe("ヘッダーのお知らせも、データだけを取り直す（PBI-
     await wait();
     expect(document.querySelector('[aria-label="お知らせ（人間の対応待ち 1件）"]')).not.toBeNull();
     expect(requests.every((u) => u === "/live/header?current=p1")).toBe(true);
+  });
+});
+
+describe("更新できない間・描いたときに届かなかったとき・候補の取り直し（PR #119 レビュー指摘）", () => {
+  it("詳細：更新できない間は、表示を残したまま更新が止まっていることを出し、つながったら消す", async () => {
+    server = detail(awaiting);
+    render(
+      h(LiveTaskDetail, {
+        id: "t1",
+        initial: detail(awaiting),
+        initialVersion: liveVersion(server),
+      }),
+    );
+    expect(container.querySelector('[data-testid="live-stale"]')).toBeNull();
+    server = "down";
+    await wait();
+    expect(container.querySelector('[data-testid="live-stale"]')?.textContent).toContain(
+      "いま更新できません",
+    );
+    expect(container.querySelector("#gate")).not.toBeNull();
+    server = detail(awaiting);
+    await wait();
+    expect(container.querySelector('[data-testid="live-stale"]')).toBeNull();
+  });
+
+  it("一覧：更新できない間は、それを出す", async () => {
+    const list: TaskListData = { projectId: "p1", needsYou: [], rows: [] };
+    server = list;
+    render(h(LiveTaskList, { initial: list, initialVersion: liveVersion(list) }));
+    server = "down";
+    await wait();
+    expect(container.querySelector('[data-testid="live-stale"]')).not.toBeNull();
+  });
+
+  it("詳細：描いたときに届かず後から出たタスクのプロジェクトを、表示しているプロジェクトにする", async () => {
+    server = "down";
+    render(h(LiveTaskDetail, { id: "t1", initial: null, error: "デーモンに届きません" }));
+    await wait();
+    expect(followProjectAction).not.toHaveBeenCalled();
+    server = detail(task({ ...awaiting, projectId: "p2" }));
+    await wait();
+    expect(container.querySelector("#gate")).not.toBeNull();
+    expect(followProjectAction).toHaveBeenCalledWith("p2");
+  });
+
+  it("詳細：描いたときに届いていれば、プロジェクトを合わせ直さない", async () => {
+    server = detail(awaiting);
+    render(
+      h(LiveTaskDetail, {
+        id: "t1",
+        initial: detail(awaiting),
+        initialVersion: liveVersion(server),
+      }),
+    );
+    await wait();
+    expect(followProjectAction).not.toHaveBeenCalled();
+  });
+
+  it("一時停止の候補を取れなかったときは、間を空けて求め直し、取れたら求めない（0件とは分ける）", async () => {
+    const triage = task({ status: "paused", pausedReason: "manual", noRepo: true });
+    const failed = { ...detail(triage), ticketRepositoriesFailed: true };
+    server = detail(triage);
+    render(h(LiveTaskDetail, { id: "t1", initial: failed, initialVersion: liveVersion(failed) }));
+    await wait(27_000);
+    // 30秒までは求めない（gh で GitHub に問い合わせ続けない）
+    expect(requests.every((u) => u === "/live/tasks/t1")).toBe(true);
+    server = { ...detail(triage), ticketRepositories: ["acme/api"] };
+    await wait(3_000);
+    expect(requests.at(-1)).toBe("/live/tasks/t1?repositories=1");
+    expect(container.querySelector('option[value="acme/api"]')).not.toBeNull();
+    const count = requests.length;
+    server = detail(triage);
+    await wait(60_000);
+    expect(requests.slice(count).every((u) => u === "/live/tasks/t1")).toBe(true);
+  });
+
+  it("取れた0件は、取得済みとして求め直さない", async () => {
+    const triage = task({ status: "paused", pausedReason: "manual", noRepo: true });
+    const none = { ...detail(triage), ticketRepositories: [] };
+    server = detail(triage);
+    render(h(LiveTaskDetail, { id: "t1", initial: none, initialVersion: liveVersion(none) }));
+    await wait(60_000);
+    expect(requests.every((u) => u === "/live/tasks/t1")).toBe(true);
+  });
+
+  it("ヘッダー：プロジェクトが無い（0件）ときも取り直し、最初のプロジェクトができたら切り替えとお知らせを出す", async () => {
+    server = "missing";
+    render(h(LiveHeaderMenus, { initial: null, language: "ja" }));
+    await wait();
+    expect(document.querySelector('[aria-label^="プロジェクト："]')).toBeNull();
+    server = {
+      projects: [{ id: "p1", name: "Acme", needsYou: 0 }],
+      current: { id: "p1", name: "Acme", needsYou: 0 },
+      notices: [],
+    } satisfies HeaderData;
+    await wait();
+    expect(document.querySelector('[aria-label^="プロジェクト：Acme"]')).not.toBeNull();
+    expect(document.querySelector('[aria-label="お知らせ"]')).not.toBeNull();
+  });
+
+  it("ヘッダー：更新できない間は、件数が今の値でないかもしれないことを出す", async () => {
+    const quiet: HeaderData = {
+      projects: [{ id: "p1", name: "Acme", needsYou: 0 }],
+      current: { id: "p1", name: "Acme", needsYou: 0 },
+      notices: [],
+    };
+    server = quiet;
+    render(
+      h(LiveHeaderMenus, { initial: quiet, initialVersion: liveVersion(quiet), language: "ja" }),
+    );
+    server = "down";
+    await wait();
+    expect(document.querySelector('[data-testid="live-stale-header"]')?.textContent).toBe(
+      "更新が止まっています",
+    );
+    server = quiet;
+    await wait();
+    expect(document.querySelector('[data-testid="live-stale-header"]')).toBeNull();
   });
 });

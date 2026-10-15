@@ -32,6 +32,8 @@ export type TaskDetailData = {
    * ので、求められたときだけ取る（取り直しのたびには取らない）。
    */
   ticketRepositories?: string[];
+  /** 候補を求めたが、取れなかった（画面は、間を空けて取り直す）。 */
+  ticketRepositoriesFailed?: boolean;
 };
 
 /**
@@ -69,8 +71,11 @@ export async function loadTaskDetail(
     children: (all ?? []).filter((t) => childIds.has(t.id)),
     ...(cleanupPlan !== undefined ? { cleanupPlan: cleanupPlan ?? [] } : {}),
     ...(status ? { imageStatus: { problems: status.problems, images: status.images } } : {}),
+    // 取れなかったときは候補を持たせず、画面が後で取り直す（取れた0件と分ける。PR #119 レビュー指摘）
     ...(repositories && needsTicketRepositories(task)
-      ? { ticketRepositories: candidates?.repositories ?? [] }
+      ? candidates
+        ? { ticketRepositories: candidates.repositories }
+        : { ticketRepositoriesFailed: true }
       : {}),
   };
 }

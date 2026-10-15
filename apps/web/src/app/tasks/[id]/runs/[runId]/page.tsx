@@ -4,7 +4,7 @@ import { LiveRunLog } from "@/components/run-log";
 import { FollowProject } from "@/components/shell/follow-project";
 import { getMessages } from "@/i18n/server";
 import { DaemonUnavailableError } from "@/lib/daemon";
-import { loadRunLog, textMark } from "@/lib/run-log-data";
+import { loadRunLog } from "@/lib/run-log-data";
 
 type Params = { params: Promise<{ id: string; runId: string }> };
 
@@ -38,20 +38,7 @@ async function RunLog({ params }: Params) {
       {/* 開いたタスクのプロジェクトを、表示しているプロジェクトにする（ヘッダーとずれないように。PBI-98） */}
       <FollowProject projectId={data.projectId} />
       {/* 実行中は、画面をリロードせず、足された行だけを取って後ろに足す（PBI-108） */}
-      <LiveRunLog
-        key={runId}
-        taskId={id}
-        runId={runId}
-        initial={data}
-        {...(data.log
-          ? {
-              initialMarks: {
-                events: textMark(data.log.events),
-                stderr: textMark(data.log.stderr),
-              },
-            }
-          : {})}
-      />
+      <LiveRunLog key={runId} taskId={id} runId={runId} initial={data} />
     </>
   );
 }

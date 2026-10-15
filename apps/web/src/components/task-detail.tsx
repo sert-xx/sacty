@@ -21,6 +21,7 @@ import { DeploymentWatchCard } from "@/components/deployment";
 import { ExportRetryButton } from "@/components/export-retry-button";
 import { Implementation } from "@/components/implementation";
 import { IntegrationResult } from "@/components/integration";
+import { FollowProjectAfterRecovery, StaleNotice } from "@/components/live-status";
 import { Markdown } from "@/components/markdown";
 import { OrchestratorSession } from "@/components/orchestrator-session";
 import { Proposals } from "@/components/proposals";
@@ -53,6 +54,9 @@ import { subtaskSummary } from "@/lib/subtasks";
 import type { TaskDetailData } from "@/lib/task-detail-data";
 import { useLiveData } from "@/lib/use-live-data";
 
+/** リポジトリの候補を取れなかったときに、求め直すまでの間（PR #119 レビュー指摘）。 */
+export const REPOSITORIES_RETRY_MS = 30_000;
+
 /**
  * タスクの詳細のデータを取り直す先。一時停止で人がリポジトリを選ぶのに、候補をまだ持っていないときだけ、候補も求める
  * （Org の対象は gh で GitHub に問い合わせるので、取り直しのたびには求めない。PBI-108）。
@@ -79,20 +83,30 @@ export function LiveTaskDetail({
 }) {
   // リポジトリの候補は、一度取ったら使い続ける（取り直しのデータには入れない）
   const repositories = useRef(initial?.ticketRepositories);
-  const data = useLiveData(
-    (current) =>
-      taskDetailLiveUrl(
-        id,
+  // 候補を最後に求めた時刻（取れなかったときは、間を空けて求め直す。gh で GitHub に問い合わせ続けない）
+  const askedAt = useRef(initial?.ticketRepositoriesFailed ? Date.now() : Number.NEGATIVE_INFINITY);
+  const { data, stale } = useLiveData(
+    (current) => {
+      const ask =
         current !== null &&
-          needsTicketRepositories(current.task) &&
-          repositories.current === undefined,
-      ),
+        needsTicketRepositories(current.task) &&
+        repositories.current === undefined &&
+        Date.now() - askedAt.current >= REPOSITORIES_RETRY_MS;
+      if (ask) askedAt.current = Date.now();
+      return taskDetailLiveUrl(id, ask);
+    },
     initial,
     initialVersion,
   );
   if (data?.ticketRepositories) repositories.current = data.ticketRepositories;
   if (!data) return <DaemonError message={error ?? ""} />;
-  return <TaskDetailView data={{ ...data, ticketRepositories: repositories.current }} />;
+  return (
+    <>
+      <StaleNotice stale={stale} />
+      {initial === null && <FollowProjectAfterRecovery projectId={data.task.projectId} />}
+      <TaskDetailView data={{ ...data, ticketRepositories: repositories.current }} />
+    </>
+  );
 }
 
 /** タスクの詳細の中身（取り直したデータから描く）。 */

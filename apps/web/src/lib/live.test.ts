@@ -109,21 +109,75 @@ describe("取り直しの返事（fetchLive・liveResponse。PBI-108）", () => 
       data: { n: 1 },
       version: "v2",
     });
-    expect(fetcher).toHaveBeenCalledWith("/live/x", {
-      cache: "no-store",
-      headers: { [LIVE_VERSION_HEADER]: "v1" },
-    });
+    expect(fetcher).toHaveBeenCalledWith(
+      "/live/x",
+      expect.objectContaining({ cache: "no-store", headers: { [LIVE_VERSION_HEADER]: "v1" } }),
+    );
   });
 
-  it("変わっていない・届かない・対象が無い・失敗の応答・通信の失敗では、いまのデータを使い続ける（undefined）", async () => {
-    for (const body of [{ unchanged: true }, { unavailable: true }, { missing: true }]) {
-      expect(await fetchLive("/x", "v", reply(body) as unknown as typeof fetch)).toBeUndefined();
+  it("変わっていない・対象が無いときは今のまま（current）。届かない・失敗の応答・通信の失敗は failed（更新が止まっていると出す）", async () => {
+    for (const body of [{ unchanged: true }, { missing: true }]) {
+      expect(await fetchLive("/x", "v", reply(body) as unknown as typeof fetch)).toBe("current");
     }
-    expect(await fetchLive("/x", "v", reply({}, false) as unknown as typeof fetch)).toBeUndefined();
+    expect(
+      await fetchLive("/x", "v", reply({ unavailable: true }) as unknown as typeof fetch),
+    ).toBe("failed");
+    expect(await fetchLive("/x", "v", reply({}, false) as unknown as typeof fetch)).toBe("failed");
     const broken = vi.fn(async () => {
       throw new TypeError("network");
     });
-    expect(await fetchLive("/x", "v", broken as unknown as typeof fetch)).toBeUndefined();
+    expect(await fetchLive("/x", "v", broken as unknown as typeof fetch)).toBe("failed");
+  });
+
+  it("応答が無くても期限で打ち切り（中断する）、次の取り直しを続ける（PR #119 レビュー指摘）", async () => {
+    vi.useFakeTimers();
+    try {
+      const signals: AbortSignal[] = [];
+      // 応答しない（中断されるまで終わらない）
+      const hanging = vi.fn(
+        (_url: string, init?: RequestInit) =>
+          new Promise<Response>((_, reject) => {
+            const signal = init?.signal as AbortSignal;
+            signals.push(signal);
+            signal.addEventListener("abort", () => reject(new Error("aborted")));
+          }),
+      );
+      const results: unknown[] = [];
+      const stop = pollWhileVisible({
+        doc: fakeDocument(),
+        intervalMs: 3_000,
+        load: async () => {
+          results.push(
+            await fetchLive("/x", undefined, hanging as unknown as typeof fetch, 10_000),
+          );
+        },
+      });
+      await vi.advanceTimersByTimeAsync(3_000);
+      expect(hanging).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(signals[0]?.aborted).toBe(true);
+      expect(results).toEqual(["failed"]);
+      // 期限の後に、次の取り直しを予約している
+      await vi.advanceTimersByTimeAsync(3_000);
+      expect(hanging).toHaveBeenCalledTimes(2);
+      stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("本文を読む間に止まっても、期限で打ち切る", async () => {
+    vi.useFakeTimers();
+    try {
+      const stuck = vi.fn(
+        async () => ({ ok: true, json: () => new Promise(() => {}) }) as Response,
+      );
+      const result = fetchLive("/x", undefined, stuck as unknown as typeof fetch, 10_000);
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(await result).toBe("failed");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("版が同じなら中身を送らない。デーモンに届かなくても 200 で unavailable を返す（コンソールにエラーを出し続けない）", async () => {

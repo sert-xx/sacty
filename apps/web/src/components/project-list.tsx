@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { runIntakeAction } from "@/app/actions";
 import { DaemonError } from "@/components/daemon-error";
+import { StaleNotice } from "@/components/live-status";
 import { Button } from "@/components/ui/button";
 import { useMessages } from "@/i18n/client";
 import { intakeRuns } from "@/lib/intake";
@@ -24,9 +25,14 @@ export function LiveProjectList({
   initialVersion?: string;
   error?: string;
 }) {
-  const data = useLiveData(() => "/live/projects", initial, initialVersion);
+  const { data, stale } = useLiveData(() => "/live/projects", initial, initialVersion);
   if (!data) return <DaemonError message={error ?? ""} />;
-  return <ProjectList data={data} />;
+  return (
+    <>
+      <StaleNotice stale={stale} />
+      <ProjectList data={data} />
+    </>
+  );
 }
 
 function ProjectList({ data }: { data: ProjectListData }) {
