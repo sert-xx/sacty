@@ -163,7 +163,11 @@ approvals and resumes in other tabs or the CLI, tasks the daemon picked up and s
   dialogs and sections, focus, and the scroll position stay as they are.
 - While the tab is hidden, nothing is fetched. When you come back to the tab, the screen is brought up to date right away.
 - While the daemon cannot be reached, the screen stays as it is. When it can be reached again, the screen is brought up to date again.
-- Other screens (review, run log, settings, and so on) are not updated automatically (only the header's notices are). To see the latest, open the screen
+- The deliverable review and the project list (the intake status) are also brought up to date in the same way, without reloading. Comments you are
+  writing are not lost.
+- While a run is in progress, the run log adds new lines at the end automatically. The scroll position does not move while you are reading in the middle;
+  the screen follows new lines only while you are looking at the bottom.
+- The sacty settings and project settings screens are not updated automatically (only the header's notices are). To see the latest, open the screen
   again or reload it in the browser.
 
 ## Related pages

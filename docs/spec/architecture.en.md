@@ -70,7 +70,7 @@ Code: `apps/web/src/components/shell/header.tsx` (`AppHeader`, `HeaderFallback`)
 
 ## Refetching screen data
 
-The task list, the task details, and the header's notices do not reload the screen (redraw the whole screen, including `router.refresh`). They refetch
+The task list, the task details, the deliverable review, the run log, the project list (the intake status), and the header's notices do not reload the screen (redraw the whole screen, including `router.refresh`). They refetch
 only the data at a fixed interval, and only the parts that changed are reflected on the screen. Text being typed, selections, open dialogs and sections
 (`details`), focus, and the scroll position are not lost, because the elements on the screen stay as they are.
 
@@ -81,6 +81,9 @@ only the data at a fixed interval, and only the parts that changed are reflected
   | `GET /live/tasks?project=<ID>` | The rows of the task list and the cards of tasks that need a person (only what is shown. `loadTaskList`) |
   | `GET /live/tasks/<ID>` | What the task details show (the task, the activity, the parent, the subtasks, what to clean up, the image choices, and so on. `loadTaskDetail`) |
   | `GET /live/header?current=<ID>` | The header's project switcher (the counts that need you) and notices (`loadHeaderData`) |
+  | `GET /live/tasks/<ID>/review` | The task for the deliverable review screen |
+  | `GET /live/tasks/<ID>/runs/<run ID>?events=&eventsMark=&stderr=&stderrMark=` | What was added to the run log after what the screen has (see below) |
+  | `GET /live/projects` | The project list and the intake status (`loadProjectList`) |
 
 - The interval is 3 seconds (`LIVE_INTERVAL_MS`). The data is refetched whatever the state of the tasks, including when there are no tasks and when every task
   is awaiting approval, paused, or completed. The next interval starts after the previous refetch has finished, so requests do not overlap.
@@ -96,13 +99,20 @@ only the data at a fixed interval, and only the parts that changed are reflected
   when the screen was drawn. In the task details, the choices for a person to pick a repository for a paused task are requested once, only while the screen
   does not have them yet (`?repositories=1`).
 - When a server action for an operation (approve, pause, resume, and so on) redraws the screen with `refresh()`, the data from that redraw is used.
-- Other screens (review, run log, settings, project settings, and so on) are not redrawn automatically (only the header's notices are refetched).
-  To see the latest, open the screen again or reload it.
+- For the run log, the screen sends the length (in characters) and a mark (a hash of the contents) of what it has. If the start of the current file is the same,
+  it receives only what was added and appends it. If not (the file was rewritten, for example with the middle left out because it was too large), it receives
+  the whole file and replaces it. The scroll position is not moved while you are reading in the middle; the screen follows new lines only while you are
+  looking at the bottom. Refetching stops when the run has finished. The list of the agent's original files (which computes hashes) is fetched only once,
+  after the run has finished.
+- The sacty settings and project settings screens are not redrawn automatically (only the header's notices are refetched). Their contents are settings
+  that people edit, and they do not change with the state of tasks. To see the latest, open the screen again or reload it.
 
 Code: `apps/web/src/lib/live.ts` (`pollWhileVisible`, `fetchLive`, `LIVE_INTERVAL_MS`), `apps/web/src/lib/use-live-data.ts` (`useLiveData`),
 `apps/web/src/lib/live-server.ts` (`liveResponse`, `liveVersion`), `apps/web/src/app/live/tasks/route.ts`, `apps/web/src/app/live/tasks/[id]/route.ts`, `apps/web/src/app/live/header/route.ts`, `apps/web/src/lib/task-list-data.ts` (`loadTaskList`),
 `apps/web/src/lib/task-detail-data.ts` (`loadTaskDetail`), `apps/web/src/components/task-list.tsx` (`LiveTaskList`),
-`apps/web/src/components/task-detail.tsx` (`LiveTaskDetail`)
+`apps/web/src/components/task-detail.tsx` (`LiveTaskDetail`), `apps/web/src/components/review.tsx` (`LiveReview`),
+`apps/web/src/components/run-log.tsx` (`LiveRunLog`, `applyChunk`), `apps/web/src/lib/run-log-data.ts` (`appendedText`),
+`apps/web/src/components/project-list.tsx` (`LiveProjectList`), `apps/web/src/lib/project-list-data.ts` (`loadProjectList`)
 
 ## Data location (SACTY_HOME)
 

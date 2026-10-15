@@ -69,7 +69,7 @@ sacty up（packages/cli）
 
 ## 画面のデータの取り直し
 
-タスクの一覧・タスクの詳細・ヘッダーのお知らせは、画面をリロード（`router.refresh` を含む、画面の全体の描き直し）せず、データだけを
+タスクの一覧・タスクの詳細・成果物のレビュー・実行のログ・プロジェクトの一覧（取り込みの状況）・ヘッダーのお知らせは、画面をリロード（`router.refresh` を含む、画面の全体の描き直し）せず、データだけを
 一定の間隔で取り直し、変わった所だけを画面に反映する。入力の途中の文字・選択・開いたダイアログや欄（`details`）・フォーカス・
 スクロールの位置は、画面の要素がそのまま残るので消えない。
 
@@ -80,6 +80,9 @@ sacty up（packages/cli）
   | `GET /live/tasks?project=<ID>` | タスクの一覧の行と、人間の判断が必要なタスクのカード（表示に要るものだけ。`loadTaskList`） |
   | `GET /live/tasks/<ID>` | タスクの詳細に出すもの（タスク・作業履歴・親・子タスク・片付けるもの・イメージの候補など。`loadTaskDetail`） |
   | `GET /live/header?current=<ID>` | ヘッダーのプロジェクトの切り替え（対応待ちの件数）とお知らせ（`loadHeaderData`） |
+  | `GET /live/tasks/<ID>/review` | 成果物のレビューの画面のタスク |
+  | `GET /live/tasks/<ID>/runs/<実行の ID>?events=&eventsMark=&stderr=&stderrMark=` | 実行のログの、画面が持っている分に足された分（下を参照） |
+  | `GET /live/projects` | プロジェクトの一覧と、取り込みの状況（`loadProjectList`） |
 
 - 間隔は3秒（`LIVE_INTERVAL_MS`）。タスクの状態によらず、タスクが無いとき・すべてが承認待ち・一時停止・完了のときも取り直す。
   前の取り直しが終わってから次の間隔を数えるので、問い合わせは重ならない。
@@ -94,13 +97,19 @@ sacty up（packages/cli）
   画面を描いたときのまま。タスクの詳細で一時停止して人がリポジトリを選ぶときの候補は、まだ持っていないときだけ一度求める
   （`?repositories=1`）。
 - 操作（承認・一時停止・再開など）のサーバーアクションが `refresh()` で画面を描き直したときは、そのときのデータを使う。
-- ほかの画面（レビュー・実行のログ・設定・プロジェクトの設定など）は、自動で描き直さない（ヘッダーのお知らせだけを取り直す）。
-  最新にするには、開き直すか、画面を読み直す。
+- 実行のログは、画面が持っている分の長さ（文字数）と目印（中身のハッシュ）を送り、いまのファイルの先頭が同じなら、足された分だけを
+  受け取って後ろに足す。違えば（大きすぎて途中を省いた形に書き直されたなど）、全体を受け取って置き換える。読んでいる途中の
+  スクロールの位置は動かさず、一番下を見ているときだけ、新しい行についていく。実行が終わったら取り直しを止める。エージェントの元の
+  ファイルの一覧（ハッシュを計算する）は、実行が終わってから一度だけ取る。
+- sacty の設定・プロジェクトの設定の画面は、自動で描き直さない（ヘッダーのお知らせだけを取り直す）。中身は人が編集する設定で、
+  タスクの状態では変わらないため。最新にするには、開き直すか、画面を読み直す。
 
 コード: `apps/web/src/lib/live.ts`（`pollWhileVisible`・`fetchLive`・`LIVE_INTERVAL_MS`）、`apps/web/src/lib/use-live-data.ts`（`useLiveData`）、
 `apps/web/src/lib/live-server.ts`（`liveResponse`・`liveVersion`）、`apps/web/src/app/live/tasks/route.ts`、`apps/web/src/app/live/tasks/[id]/route.ts`、`apps/web/src/app/live/header/route.ts`、`apps/web/src/lib/task-list-data.ts`（`loadTaskList`）、
 `apps/web/src/lib/task-detail-data.ts`（`loadTaskDetail`）、`apps/web/src/components/task-list.tsx`（`LiveTaskList`）、
-`apps/web/src/components/task-detail.tsx`（`LiveTaskDetail`）
+`apps/web/src/components/task-detail.tsx`（`LiveTaskDetail`）、`apps/web/src/components/review.tsx`（`LiveReview`）、
+`apps/web/src/components/run-log.tsx`（`LiveRunLog`・`applyChunk`）、`apps/web/src/lib/run-log-data.ts`（`appendedText`）、
+`apps/web/src/components/project-list.tsx`（`LiveProjectList`）、`apps/web/src/lib/project-list-data.ts`（`loadProjectList`）
 
 ## データの置き場所（SACTY_HOME）
 
