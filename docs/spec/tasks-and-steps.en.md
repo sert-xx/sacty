@@ -22,7 +22,7 @@ Related ADRs: [Set up the agent configuration for handling a repository with sac
 | `deployment` | A task to fix a failure found by the after-merge watch (`fix` holds the original task, the kind, the marker, and the level. [After-merge watch](deployment-watch.en.md)) |
 | `split` | A child task of Task split (`parent` holds the parent's ID and the child tasks that must finish first, `dependsOn`) |
 
-- A PR-review-only task has `source.review` (`requested` or `label`; `sacty` if it is a PR that has the intake label sacty creates and attaches).
+- A PR-review-only task has `source.review` (`requested` or `label`; `sacty` if it is a PR that sacty created and gave the review label).
 - When creating a task in the web UI, if no repository is specified (`repo: null`), or the repository is omitted and the project's targets are not exactly one repository,
   the task becomes a task without a repository (`noRepo`). It cannot be created in a project with no targets (`task.repositoryMissing`).
 - The initial budget cap is `budget.default_per_task_usd` (default 1 US dollar).

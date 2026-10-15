@@ -93,9 +93,11 @@ Code: `apps/daemon/src/config.ts` (`resolveHome`, `configPath`), `apps/daemon/sr
 - `config.yaml` (file): machine settings such as AI agents, authentication, images, gateway, and the intake interval. For the items, see
   [Configuration (config.yaml)](configuration.en.md).
 - sacty settings (one row of the `settings` table in `sacty.db`): settings common to all projects, changed in "sacty settings" on the web UI.
-  The intake label (`intakeLabel`), the ticket intake label (`ticketLabel`), the PR review label (`reviewLabel`),
-  intake of review requests to yourself (`reviewRequested`), the triage kinds turned Off (`triageOff`), and the number of tasks run at the same time
-  (`maxParallelTasks`; default 3).
+  The intake label (`intakeLabel`; issues only), the ticket intake label (`ticketLabel`), the PR review label (`reviewLabel`),
+  intake of review requests to yourself (`reviewRequested`), the triage kinds turned Off (`triageOff`; `issues`, `reviewLabel`, `tickets`), and
+  the number of tasks run at the same time (`maxParallelTasks`; default 3).
+  - When the settings store is opened (when the daemon starts), a removed item (`pullRequests` in `triageOff`) that is still saved is removed and the settings are rewritten
+    (nothing is written if there is nothing to remove).
 - Projects (`sacty.db`): targets, GitHub account, context repository, notifications, shared compose, ticket intake, and so on.
 
-Code: `apps/daemon/src/settings.ts` (`SqliteSettingsStore`), `packages/core/src/projects.ts` (`SactySettings`, `DEFAULT_MAX_PARALLEL_TASKS`), `apps/daemon/src/projects.ts`
+Code: `apps/daemon/src/settings.ts` (`SqliteSettingsStore`, `dropRemovedItems`), `packages/core/src/projects.ts` (`SactySettings`, `DEFAULT_MAX_PARALLEL_TASKS`), `apps/daemon/src/projects.ts`

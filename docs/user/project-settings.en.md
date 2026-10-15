@@ -27,7 +27,8 @@ Write each target (a GitHub org or repository) as an `https://` URL that include
 `https://ghe.example.com/acme`. github.com and GitHub Enterprise Server use the same form). A trailing `/` or `.git` is ignored.
 
 - When you create a task in the web UI, you choose a repository from the targets (for an org target, you choose from that org's repositories read with `gh`).
-- Open issues and PRs in the targets that have the intake label are imported as tasks ([Intake](intake.en.md)).
+- Open issues in the targets that have the label to import are imported as tasks, and open PRs that have the review label (or that request your review)
+  are imported as review-only tasks ([Intake](intake.en.md)).
 - The same org or repository cannot be registered in another project. If an org and a repository in it are in different projects, the repository
   takes precedence (it is excluded from the org's project).
 - If you choose an "Image" for a target (a name in `images` of `config.yaml`, or `default`), the Orchestrator does not choose one, and every step uses

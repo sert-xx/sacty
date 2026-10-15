@@ -5,7 +5,7 @@
 At a step with an approval gate, the task moves to the next step when a person approves it. Approval is done in sacty's web UI or by merging a PR to the target repository
 (approval = merge). Requesting changes redoes the work from the chosen step. When requests for changes to the same step exceed the limit, the task goes to Escalation (waiting for a person's decision).
 
-Related ADRs: [Label PRs sacty opens for intake, and import reviews from another task as comments on the original task's PR](../adr/20261014-1445-label-sacty-pull-requests-for-review.md), [Fill the body of PRs sacty opens with fixed rules following the headings of the repository's or Org's PR template](../adr/20261014-1517-pr-body-follows-repository-template.md), [If the implementation has no changes, open no PR and complete without changes after a person checks it](../adr/20261014-2216-complete-without-changes.md)
+Related ADRs: [Split intake into "Issue intake" and "PR review intake", and add the review label to sacty's PRs](../adr/20261015-0240-split-issue-and-pr-review-intake.md), [Label PRs sacty opens for intake, and import reviews from another task as comments on the original task's PR](../adr/20261014-1445-superseded-label-sacty-pull-requests-for-review.md), [Fill the body of PRs sacty opens with fixed rules following the headings of the repository's or Org's PR template](../adr/20261014-1517-pr-body-follows-repository-template.md), [If the implementation has no changes, open no PR and complete without changes after a person checks it](../adr/20261014-2216-complete-without-changes.md)
 
 ## Approval in the web UI
 
@@ -55,13 +55,13 @@ Code: `apps/daemon/src/service.ts` (`publish`), `packages/core/src/events.ts` (`
 
 Code: `apps/daemon/src/service.ts` (`stepPullRequestsOn`, `taskBranchName`, `publishStepPullRequest`, `publish`), `packages/core/src/events.ts` (`StepPullRequestKey`, `DEFAULT_DOCUMENTS_DIR`, `isDocumentsDir`), `packages/core/src/projection.ts` (`stepDocumentPath`), `apps/daemon/src/prompts.ts` (`buildStepDocument`)
 
-## The intake label on PRs
+## The review label on PRs
 
-Every PR sacty opens (the implementation PR and the requirements and design PRs) gets the intake label (sacty's setting `intakeLabel`) right after it is opened.
+Every PR sacty opens (the implementation PR and the requirements and design PRs) gets the review label (sacty's setting `reviewLabel`) right after it is opened.
 This is so that the PR is taken in as a separate task (a PR-review-only task) and reviewed in a context separate from the task that opened it
-([Ticket intake and GitHub](intake.en.md)).
+([Ticket intake and GitHub](intake.en.md)). The intake label (`intakeLabel`) is not attached.
 
-- If no intake label is configured, or PR triage is Off (`pullRequests` in `triageOff`; it would not be taken in even if labeled),
+- If no review label is configured, or its triage is Off (`reviewLabel` in `triageOff`; it would not be taken in even if labeled),
   the label is not attached. Nothing is recorded.
 - If the repository does not have the label (`GET /repos/<owner>/<name>/labels/<label>` returns 404), it is created (`POST .../labels`, color `0e8a16`) and then
   attached to the PR (`POST .../issues/<number>/labels`). If it was created elsewhere in the meantime (422 `already_exists`), it is attached as is.
@@ -72,10 +72,11 @@ This is so that the PR is taken in as a separate task (a PR-review-only task) an
   and no retry after failure). A PR without a record (for example, one opened before the setting was configured) gets the label the next time it is updated.
   When the PR is recreated (the earlier PR was merged or closed and a PR with a new number was opened), the new PR gets the label.
 - If cancel or pause was requested and the requirements or design PR was not recorded, the label is not attached.
-- The plan to attach is kept in the PR's publish record (`intakeLabel` in `PullRequestPublished` and `StepPullRequestPublished`) before attaching. For a PR that stopped (shutdown or crash) after the publish
+- The plan to attach is kept in the PR's publish record (`label` in `PullRequestPublished` and `StepPullRequestPublished`) before attaching. For a PR that stopped (shutdown or crash) after the publish
   was recorded but before the label was attached, the PR check (every 60 seconds, also after restart) attaches it if there is a plan, there is no record of attaching or failing,
-  and the PR is open. It is not attached for canceled tasks or if the current setting does not attach (no intake label, or PR triage Off).
-  If the same PR is in the middle of being labeled, it is not labeled again.
+  and the PR is open. The label attached is the review label in the settings at that time. It is not attached for canceled tasks or if the current setting does not attach (no review
+  label, or its triage Off). If the same PR is in the middle of being labeled, it is not labeled again.
+- `intakeLabel` in older records (a plan to attach the intake label) can still be read but is not treated as a plan to attach (the ledger is not rewritten).
 
 Code: `apps/daemon/src/service.ts` (`labelPullRequest`, `labelDue`, `resumePullRequestLabels`, `publishStepPullRequest`, `publish`), `apps/daemon/src/github.ts` (`GitHubPullRequests.addLabel`), `packages/core/src/projection.ts` (`pullRequestLabels`)
 
@@ -155,7 +156,7 @@ Code: `apps/daemon/src/pr-template.ts` (`GitHubPullRequestTemplates`, `fillTempl
 - Posts by a sacty task that reviewed this PR (a task pointing to the PR: the PR it took in, or the PR URL in its body) are identified by that task's project account
   (which may differ from the original task's account) and the round in the marker (`<!-- sacty-review:<task ID>[:<round>] -->`). This is checked before the bot check, so
   the same applies even if that account is a bot (such as a GitHub App).
-  - For a review-only task taken in by the intake label (`source.review: sacty`), rounds with comments to fix (rounds where `changesRequested` in `reviewVerdicts`
+  - For a review-only task of a PR sacty opened, taken in by the review label (`source.review: sacty`), rounds with comments to fix (rounds where `changesRequested` in `reviewVerdicts`
     is not `false`; rounds whose assessment could not be read are also included so as not to drop comments) are imported as comments (to deliver a review by a task separate from the one that opened the PR
     to the original task).
   - Other rounds (rounds with no comments to fix, rounds not yet run) and posts by other review tasks are not imported, even if the account differs from the original task's

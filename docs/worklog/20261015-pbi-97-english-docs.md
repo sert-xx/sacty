@@ -120,3 +120,13 @@ PR #107 のレビューの提案4件に、同じ PR で対応した。日本語�
 
 - PR #110・#111 が main に入ったので、main をこのブランチにマージした（ぶつかりは無し）。日本語の版に足された、既定のレビュー用スキルの検証の
   記述（`docs/spec/context.md` の「既定のレビュー用スキル」の節、`docs/user/context.md` の段落）を、英語の版に訳した。
+
+## main への追従（PR #108 の後）
+
+- PR #108（PBI-99：取り込みの設定の整理）が main に入ったので、main をこのブランチにマージした（ぶつかりは無し）。PR #108 が日本語の版を直した
+  `docs/spec/intake.md`・`approval.md`・`architecture.md`・`tasks-and-steps.md` と `docs/user/intake.md`・`project-settings.md`・`troubleshooting.md` を、
+  英語の版にそろえた（Issue の取り込みと PR のレビューの取り込みの分け方、sacty の PR に付けるのをレビュー用のラベルにしたこと、同じ名前のラベルの拒否、
+  `triageOff` の種類、消した設定の書き直し、止まったときの表の行など）。
+- 画面の文言は、PR #108 で変わった英語の文言（"Issue intake"・"Import PRs with the review label" など。"Import PRs" は無くなった）に合わせた。
+  見出しの名前が変わった節（`approval.md` の「PR のレビュー用のラベル」、`intake.md` の「Issue」）は、英語の版の見出しとアンカーも直し、
+  名前が変わった ADR（`20261014-1445-superseded-…`）へのリンクも直した。

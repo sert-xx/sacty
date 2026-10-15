@@ -19,27 +19,35 @@ github:
 
 You can change the interval without stopping the daemon. Use "Import now" on the project page to import without waiting for the interval.
 
-## Issues and PRs
+## Issues
 
-- Open issues and PRs in the project's targets that have the "Label to import" from "sacty settings" are imported as tasks.
+- Open issues in the project's targets that have the "Label to import" in "Issue intake" of "sacty settings" are imported as tasks.
   If no label is set, nothing is imported.
-- With "Import issues" and "Import PRs", you can turn them Off while keeping the label.
+- PRs are not imported even if they have the label to import. PRs are imported by "PR reviews" below (if you want sacty to implement a PR, turn it into an issue
+  and import that, or create a task from the web UI). Tasks of PRs that were already imported continue as they are.
+- With "Import issues", you can turn this Off while keeping the label.
 - The GitHub account used is the one chosen for that host in the project ([Project settings](project-settings.en.md#github-account)).
 
 ## PR reviews
 
-You can also hand over just the review of PRs ("PR review intake" in "sacty settings").
+PRs are imported so that only their review is handed over ("PR review intake" in "sacty settings").
 
 - If you turn on "Import PRs that request my review", PRs that request a review personally from the GitHub account chosen for that host in the project
   are imported (requests to teams are excluded).
-- PRs with the "Label for PR reviews" (separate from the label to import) are imported too. You can turn this Off with "Import PRs with the review label".
+- PRs with the "Label for PR reviews" are imported too. You can turn this Off with "Import PRs with the review label".
+- Use a different name for the review label than for the label to import (names that differ only in upper and lower case count as the same and cannot be saved).
 - Imported PRs are only reviewed, without the Orchestrator, and the review is posted to the PR (as comments). No implementation or PR creation is done.
 - When the PR is merged or closed, review tasks that have not finished are cancelled.
 - When new commits are pushed, use "Review again" in the task details to review the latest commit again and post it.
+- Only open PRs are imported for review.
+- The same PR is never imported twice. A PR that already has a task (a task in any project, even a cancelled one) does not become a new task even if you add the label
+  to it.
+- Tasks of PRs imported by earlier versions remain as they are.
 
 ## Reviewing PRs that sacty created
 
-If the "Label to import" is set, sacty adds that label to every PR it creates (implementation PRs, and Requirements and Design PRs).
+If the "Label for PR reviews" is set, sacty adds that label to every PR it creates (implementation PRs, and Requirements and Design PRs)
+(it does not add the label to import).
 
 - If the repository does not have the label, sacty creates it first. If the label cannot be added (permissions and so on), the PR is left as it is, and the reason appears in the task's Activity.
 - A labeled PR becomes, at the next intake, a separate "PR review only" task apart from the task that created it. The review is posted to the PR, and if it has findings that
@@ -47,7 +55,7 @@ If the "Label to import" is set, sacty adds that label to every PR it creates (i
   as is) is not delivered and does not request changes (the task waits for the PR to be merged).
 - The label is added once per PR. Updating the PR with fixes does not add it again or create a new review task (to have it reviewed again,
   use "Review again" on the review task). A label that someone removed is not added again either.
-- If "Import PRs" is Off, the label is not added (because the PR would not be imported).
+- If "Import PRs with the review label" is Off, the label is not added (because the PR would not be imported).
 
 ## JIRA tickets
 
