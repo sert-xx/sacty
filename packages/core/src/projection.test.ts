@@ -5,8 +5,11 @@ import { EventInput as EventSchema, exportSteps, MVP_STEPS } from "./events.js";
 import {
   awaitingRepository,
   canRetryExport,
+  deliveredWithoutChanges,
   documentOutput,
   exportDue,
+  gatePullRequest,
+  isCompleted,
   isRepoless,
   pendingQuestion,
   project,
@@ -43,6 +46,46 @@ const started = (taskId: string, runId: string) =>
     payload: { runId, step: "requirements", agentId: "a", authMode: "subscription" },
   });
 const usage = { input: 1000, cacheRead: 0, cacheWrite: 0, output: 500 };
+
+/** 実装を実行し、テストと最終レビューに通るまで（PBI-110。この後、実装の工程の中で PR を作る）。 */
+const verifiedImplementation = (taskId: string, runId = "impl-1") => [
+  ev(taskId, {
+    type: "AgentRunStarted",
+    payload: { runId, step: "implement", agentId: "a", authMode: "subscription" },
+  }),
+  ev(taskId, {
+    type: "AgentRunCompleted",
+    payload: {
+      runId,
+      step: "implement",
+      agentId: "a",
+      authMode: "subscription",
+      usage,
+      costUsd: 0,
+      estimated: true,
+      output: "# 実装",
+    },
+  }),
+  ev(taskId, {
+    type: "TestsRun",
+    payload: {
+      command: "npm test",
+      exitCode: 0,
+      unmappedViewpoints: [],
+      passed: true,
+      output: "",
+      durationMs: 1,
+    },
+  }),
+  ev(
+    taskId,
+    {
+      type: "FinalReviewed",
+      payload: { passed: true, viewpoints: [], remarks: [], summary: "ok", agentId: "g" },
+    },
+    "guardian",
+  ),
+];
 const completed = (taskId: string, runId: string, costUsd: number) =>
   ev(taskId, {
     type: "AgentRunCompleted",
@@ -67,7 +110,6 @@ describe("project", () => {
       ["requirements", "active"],
       ["design", "todo"],
       ["implement", "todo"],
-      ["pr", "todo"],
     ]);
     expect(task?.budget).toEqual({ usedUsd: 0, capUsd: 1, warned: false, estimated: false });
   });
@@ -265,7 +307,7 @@ describe("project", () => {
       testViewpoints: [{ title: "新" }],
     });
     expect(task?.approved.requirements?.output).toBe("# 要求要件");
-    expect(task?.steps.map((s) => s.state)).toEqual(["done", "done", "active", "todo"]);
+    expect(task?.steps.map((s) => s.state)).toEqual(["done", "done", "active"]);
     // 判定の前や、却下された申し出は反映できない
     expect(() => project([...base, applied])).toThrow(/not accepted/);
   });
@@ -322,7 +364,7 @@ describe("project", () => {
     // 中止していないタスクでも、記録だけ（工程の状態は変えない）
     seq = 0;
     const running = project([created("t1"), steps("t1"), archived()]).get("t1");
-    expect(running?.steps.map((s) => s.state)).toEqual(["active", "todo", "todo", "todo"]);
+    expect(running?.steps.map((s) => s.state)).toEqual(["active", "todo", "todo"]);
     // ハッシュの形でない値は受け付けない
     expect(() =>
       EventSchema.parse({
@@ -506,8 +548,8 @@ describe("作業履歴の文（PBI-11b）", () => {
   });
 });
 
-describe("成果物チェックの間の PR の状態（PBI-14a）", () => {
-  it("成果物チェックで待っている、そのタスクの PR の状態だけを記録する", () => {
+describe("実装の承認待ちの間の PR の状態（PBI-14a）", () => {
+  it("承認待ちで見守っている、そのタスクの PR の状態だけを記録する", () => {
     expect(() =>
       project([
         created("t9"),
@@ -546,7 +588,7 @@ describe("人が PR の中で直してからマージした（PBI-63）", () => 
 });
 
 describe("PR のレビューの取り込み（PBI-14b）", () => {
-  it("成果物チェックで待っていなければ取り込まない", () => {
+  it("承認待ちの PR が無ければ取り込まない", () => {
     expect(() =>
       project([
         created("t8"),
@@ -800,7 +842,7 @@ describe("成果の書き出し（PBI-56）", () => {
 
   it("書き出せる工程は、要求要件・設計と、調査だけのときの調査", () => {
     expect(exportSteps(MVP_STEPS)).toEqual(["requirements", "design"]);
-    expect(exportSteps(["investigate", "requirements", "design", "implement", "pr"])).toEqual([
+    expect(exportSteps(["investigate", "requirements", "design", "implement"])).toEqual([
       "requirements",
       "design",
     ]);
@@ -966,11 +1008,12 @@ describe("リポジトリを指定しないタスク（PBI-73）", () => {
 describe("マージの後の監視（PBI-89）", () => {
   const prGate = (id: string) => [
     created(id),
-    ev(id, { type: "StepsChosen", payload: { steps: ["pr"] } }),
+    ev(id, { type: "StepsChosen", payload: { steps: ["implement"], testCommand: "npm test" } }),
     ev(id, {
       type: "RepositoryPrepared",
       payload: { url: "https://github.com/acme/app", baseBranch: "main", baseCommit: "b1" },
     }),
+    ...verifiedImplementation(id),
     ev(id, {
       type: "PullRequestPublished",
       payload: {
@@ -980,11 +1023,11 @@ describe("マージの後の監視（PBI-89）", () => {
         number: 7,
       },
     }),
-    ev(id, { type: "StepSubmitted", payload: { step: "pr", submission: 1 } }),
+    ev(id, { type: "StepSubmitted", payload: { step: "implement", submission: 1 } }),
   ];
   const mergedPr = (id: string) => [
     ev(id, { type: "PullRequestMerged", payload: { number: 7, commit: "c1" } }, "person"),
-    ev(id, { type: "StepApproved", payload: { step: "pr", next: "idle" } }, "person"),
+    ev(id, { type: "StepApproved", payload: { step: "implement", next: "idle" } }, "person"),
   ];
   const started = (id: string) =>
     ev(id, {
@@ -1070,7 +1113,7 @@ describe("テストの仕組みが無いタスクの検証（PBI-94）", () => {
     ev(taskId, {
       type: "StepsChosen",
       payload: {
-        steps: ["implement", "pr"],
+        steps: ["implement"],
         ...(noTestsReason ? { noTestsReason } : {}),
         ...(testCommand ? { testCommand } : {}),
       },
@@ -1140,12 +1183,171 @@ describe("工程のイメージを人が変える（PBI-106）", () => {
       to: "playwright",
       at: "2026-10-10T00:00:00.000Z",
     });
-    expect(running?.steps.map((s) => s.state)).toEqual(["active", "todo", "todo", "todo"]);
+    expect(running?.steps.map((s) => s.state)).toEqual(["active", "todo", "todo"]);
   });
 
   it("タスクの工程に無い工程は、作業履歴の誤りにする", () => {
     expect(() => project([created("i2"), steps("i2"), change("i2", "reproduce", "java")])).toThrow(
       /not chosen/,
     );
+  });
+});
+
+describe("実装の工程の中で PR を作り、承認を待つ（PBI-110）", () => {
+  const prepared = (id: string) =>
+    ev(id, {
+      type: "RepositoryPrepared",
+      payload: { url: "https://github.com/acme/app", baseBranch: "main", baseCommit: "b1" },
+    });
+  const chosen = (id: string) =>
+    ev(id, { type: "StepsChosen", payload: { steps: ["implement"], testCommand: "npm test" } });
+  const published = (id: string) =>
+    ev(id, {
+      type: "PullRequestPublished",
+      payload: {
+        branch: "sacty/t",
+        commit: "c1",
+        url: "https://github.com/acme/app/pull/7",
+        repo: "https://github.com/acme/app",
+        number: 7,
+      },
+    });
+  const submitted = (id: string, submission = 1) =>
+    ev(id, { type: "StepSubmitted", payload: { step: "implement", submission } });
+
+  it("工程 pr は無い（古い記録の工程の組み合わせは読めない）", () => {
+    expect(() =>
+      EventSchema.parse({ type: "StepsChosen", payload: { steps: ["implement", "pr"] } }),
+    ).toThrow();
+    expect(() =>
+      EventSchema.parse({ type: "StepSubmitted", payload: { step: "pr", submission: 1 } }),
+    ).toThrow();
+  });
+
+  it("最終レビューに通っても実装の工程のまま PR の作成を待ち、PR を作ったら実装の承認待ちになり、マージで完了する", () => {
+    seq = 0;
+    const base = [created("t"), chosen("t"), prepared("t"), ...verifiedImplementation("t")];
+    const verified = project(base).get("t");
+    expect(verified?.status).toBe("queued");
+    expect(verified?.publishPending).toBe(true);
+    expect(verified?.steps).toEqual([{ key: "implement", state: "active" }]);
+    expect(verified && isCompleted(verified)).toBe(false);
+
+    const waiting = project([...base, published("t"), submitted("t")]).get("t");
+    expect(waiting?.status).toBe("awaiting_approval");
+    expect(waiting?.publishPending).toBeUndefined();
+    expect(waiting?.gate).toEqual({ step: "implement", submission: 1 });
+    expect(waiting && gatePullRequest(waiting)).toMatchObject({ step: "implement", number: 7 });
+
+    const done = project([
+      ...base,
+      published("t"),
+      submitted("t"),
+      ev("t", { type: "PullRequestMerged", payload: { number: 7, commit: "c1" } }, "person"),
+      ev("t", { type: "StepApproved", payload: { step: "implement", next: "idle" } }, "person"),
+    ]).get("t");
+    expect(done?.pullRequestState).toBe("merged");
+    expect(done?.approved.implement?.output).toBe("# 実装");
+    expect(done && isCompleted(done)).toBe(true);
+  });
+
+  it("PR を作るのは、検証に通った実装だけ（検証の前・承認待ちの後は作業履歴の誤り）", () => {
+    seq = 0;
+    const ran = [
+      created("t"),
+      chosen("t"),
+      prepared("t"),
+      ...verifiedImplementation("t").slice(0, 2),
+    ];
+    expect(() => project([...ran, published("t")])).toThrow(/not waiting for a pull request/);
+    seq = 0;
+    const verified = [created("u"), chosen("u"), prepared("u"), ...verifiedImplementation("u")];
+    expect(() => project([...verified, published("u"), submitted("u"), published("u")])).toThrow(
+      /not waiting for a pull request/,
+    );
+    expect(() =>
+      project([
+        ...verified,
+        ev("u", { type: "BranchPushed", payload: { branch: "b", commit: "c" } }),
+      ]),
+    ).not.toThrow();
+  });
+
+  it("一時停止して再開しても、PR の作成を待ったまま（実装をやり直さない）", () => {
+    seq = 0;
+    const task = project([
+      created("t"),
+      chosen("t"),
+      prepared("t"),
+      ...verifiedImplementation("t"),
+      ev("t", { type: "TaskPaused", payload: { reason: "error" } }),
+      ev("t", { type: "TaskResumed", payload: { retry: true } }, "person"),
+    ]).get("t");
+    expect(task?.status).toBe("queued");
+    expect(task?.publishPending).toBe(true);
+  });
+
+  it("変更が無くて PR を作らなかった提出回は、実装の提出回で変更なしと判断する", () => {
+    seq = 0;
+    const task = project([
+      created("t"),
+      chosen("t"),
+      prepared("t"),
+      ...verifiedImplementation("t"),
+      ev("t", { type: "NoChangesFound", payload: { submission: 1 } }),
+      submitted("t"),
+    ]).get("t");
+    expect(task?.gate).toEqual({ step: "implement", submission: 1 });
+    expect(task?.publishPending).toBeUndefined();
+    expect(task && deliveredWithoutChanges(task)).toBe(true);
+    expect(task && gatePullRequest(task)).toBeUndefined();
+  });
+
+  it("実装の承認待ちで差し戻した指摘には、実装の次の提出回で答える", () => {
+    seq = 0;
+    const task = project([
+      created("t"),
+      chosen("t"),
+      prepared("t"),
+      ...verifiedImplementation("t"),
+      published("t"),
+      submitted("t"),
+      ev(
+        "t",
+        {
+          type: "ChangesRequested",
+          payload: {
+            step: "implement",
+            target: "implement",
+            round: 1,
+            remarks: [{ id: "implement-1-1", text: "直して" }],
+          },
+        },
+        "person",
+      ),
+      ev("t", {
+        type: "AgentRunStarted",
+        payload: { runId: "impl-2", step: "implement", agentId: "a", authMode: "subscription" },
+      }),
+      ev("t", {
+        type: "AgentRunCompleted",
+        payload: {
+          runId: "impl-2",
+          step: "implement",
+          agentId: "a",
+          authMode: "subscription",
+          usage,
+          costUsd: 0,
+          estimated: true,
+          output: "# 実装2",
+          responses: [{ remarkId: "implement-1-1", text: "直した" }],
+        },
+      }),
+    ]).get("t");
+    expect(task?.remarks).toMatchObject([
+      { id: "implement-1-1", step: "implement", response: "直した", respondedIn: 2 },
+    ]);
+    expect(task?.verification).toBe("pending");
+    expect(task?.publishPending).toBeUndefined();
   });
 });

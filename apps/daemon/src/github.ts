@@ -15,7 +15,7 @@ export interface PullRequests {
   }): Promise<{ url: string; number: number }>;
   /** PRを閉じる（中止したとき。マージはしない）。 */
   close(input: { repo: string; token: string; number: number }): Promise<void>;
-  /** PR の状態（成果物チェックの間に見守る。PBI-14a）。 */
+  /** PR の状態（承認待ちの間に見守る。PBI-14a）。 */
   status(input: { repo: string; token: string; number: number }): Promise<PullRequestStatus>;
   /**
    * PR へのフィードバック（PBI-14b）。レビュー（Request changes・コメント）の本文、行ごとのコメント、

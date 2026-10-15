@@ -1,4 +1,4 @@
-<!-- Code: apps/daemon/src/service.ts, apps/daemon/src/pr-watcher.ts, apps/daemon/src/prompts.ts, packages/core/src/events.ts (StepKey, DEFAULT_DOCUMENTS_DIR), apps/web/src/i18n/messages/task.ts, apps/daemon/src/task-templates.ts, apps/daemon/src/test-files.ts, apps/web/src/components/new-task-dialog.tsx, apps/web/src/components/implementation.tsx -->
+<!-- Code: apps/daemon/src/service.ts, apps/daemon/src/activity.ts, apps/daemon/src/pr-watcher.ts, apps/daemon/src/prompts.ts, packages/core/src/events.ts (StepKey, DEFAULT_DOCUMENTS_DIR), apps/web/src/i18n/messages/task.ts, apps/daemon/src/task-templates.ts, apps/daemon/src/test-files.ts, apps/web/src/components/new-task-dialog.tsx, apps/web/src/components/implementation.tsx -->
 
 [日本語](tasks.md) | **English**
 
@@ -59,7 +59,7 @@ Even in a repository that has no tests at all, such as one with only a README, t
   (it also appears in "Steps chosen" in the Activity).
 - Verification of the implementation does not run tests. The Goal Guardian judges acceptance for each viewpoint from the task's goal, the requirements (and design), and the code after implementation, the diff, and the implementation's description.
   If it does not pass, the implementation is redone, as for a task with tests, and if it fails 3 times in a row, the task is paused.
-- The implementation deliverable (the task details and the Deliverable review approval screen) shows "Not verified by tests". The test line of the PR body also
+- The implementation deliverable (the task details and the Implement approval screen) shows "Not verified by tests". The test line of the PR body also
   includes the basis, with "テストのコマンドが無いため、テストでは検証していません。目的から判定しました。" (no test command, so it was not verified by tests; it was judged by the goal). Because nothing was checked by tests,
   check the content of the changes yourself before you approve.
 - When the task is one that sets up tests (such as setting up a language) and the implementation adds tests, those tests are run before the judgment by the goal
@@ -91,7 +91,7 @@ and so on) do not match (`tests/README.md` does not match).
 
 When the Implementation step changes nothing (it decided the requirements are already met and no change is needed), no PR is created. This is the same for every task.
 
-- The task becomes "Awaiting deliverable review with no changes". On the approval page, check the implementation notes (why no change is needed and the evidence), the test results, and the final
+- The task becomes "Implement awaiting approval with no changes". On the approval page, check the implementation notes (why no change is needed and the evidence), the test results, and the final
   review.
 - If no changes is fine, press "Approve". The task becomes "Done (no changes)" without a PR.
 - If changes are needed, write your feedback and request changes. Implementation starts over, and a PR is created if there are changes.
@@ -99,17 +99,18 @@ When the Implementation step changes nothing (it decided the requirements are al
 - If a PR was already created and the implementation redone after a request for changes no longer changes anything, the task stops with an error (decide what to do with the open PR, then
   cancel the task or request changes again).
 
-## Approval in PRs (Requirements, Design, Deliverable review)
+## Approval in PRs (Requirements, Design, Implement)
 
-Steps that need human approval (Requirements, Design, and the Deliverable review of the implementation) are decided in PRs to the target repository. Approval = merge, and steps that created a PR
+Steps that need human approval (Requirements, Design, and Implement) are decided in PRs to the target repository. Approval = merge, and steps that created a PR
 are not approved from the sacty web UI (the web UI guides you to the PR and shows the status).
 
 1. sacty creates a task branch (`sacty/task-<short task ID>`) from the starting commit of the base branch.
 2. The Requirements are written to a file (by default `docs/sacty/<short task ID>/requirements.md`) and opened as a PR to the task branch. When it is merged,
    it is recorded as approval of the Requirements and the task moves to the next step.
 3. The Design (including Test viewpoints. `design.md`) is likewise opened as a PR to the task branch.
-4. When the Design PR is merged, the implementation is committed to the task branch and opened as a PR from the task branch to the base branch (Deliverable review)
-   (CI runs). The implementation PR also contains the Requirements and Design files. If you turn it On in the project settings, sacty
+4. When the Design PR is merged, the task moves to the Implementation step. When the implementation passes the tests and the Goal Guardian's final review, within the Implementation step the
+   implementation is committed to the task branch and opened as a PR from the task branch to the base branch (CI runs). Implement waits for approval, and merging the PR approves the implementation and
+   completes the task. The implementation PR also contains the Requirements and Design files. If you turn it On in the project settings, sacty
    follows CI/CD and the deployment after the merge ([After-merge watch](deployment-watch.en.md)).
 
 - If the rules of the repository or the project's context decide where the files go, the Orchestrator follows them.
@@ -155,6 +156,8 @@ See [Container images](images.en.md#changing-a-steps-image) for details.
   [config.yaml settings](config.en.md#budget)).
 - Cancelling closes all open PRs that sacty created and deletes the task branch and the step branches (branches and PRs created by people are not touched).
   A cancelled task cannot be resumed.
+- If you pause while the implementation PR is being opened, the PR is finished and Implement waits for approval; the task is not paused (the screen says it was not paused).
+  Decide on the PR, or cancel the task to stop it.
 
 ## Automatic updates on the screen
 
@@ -167,13 +170,26 @@ approvals and resumes in other tabs or the CLI, tasks the daemon picked up and s
 - While the tab is hidden, nothing is fetched. When you come back to the tab, the screen is brought up to date right away.
 - While the daemon cannot be reached, the screen stays as it is and shows "Cannot update right now" (the header shows "Updates paused"). What is shown is what
   was last fetched. When the daemon can be reached again, the screen is brought up to date again and the notice goes away.
-- The deliverable review and the project list (the intake status) are also brought up to date in the same way, without reloading. Comments you are
+- The Approval screen and the project list (the intake status) are also brought up to date in the same way, without reloading. Comments you are
   writing are not lost.
 - While a run is in progress, the run log adds new lines at the end automatically. The scroll position does not move while you are reading in the middle;
   the screen follows new lines only while you are looking at the bottom. If the list of the agent's original files cannot be read after the run has finished,
   the screen shows that and that it is retrying, and shows the list once it can be read.
 - The sacty settings and project settings screens are not updated automatically (only the header's notices are). To see the latest, open the screen
   again or reload it in the browser.
+
+## Tasks from earlier versions (with the Open PR step)
+
+Earlier versions had an "Open PR" step (`pr`; "PR作成" on the Japanese screen) after Implementation, whose approval screen was titled "Deliverable review". The current version removes this step:
+the PR is opened inside the Implementation step, which then waits for the Implement approval (on the Approval screen). Tasks from earlier versions cannot be carried over as they are.
+
+- Tasks created in an earlier version that contain the Open PR step (`pr`) are deleted from the Activity when the daemon starts. **Tasks in progress (running, awaiting approval,
+  paused, and so on) are deleted too.** The parent and children of a task split, and a fix task from the after-merge watch and its original task, are deleted together when either is deleted.
+- The number and IDs of the deleted tasks are written to the daemon log.
+- GitHub branches and PRs are left as they are. If you won't use an open PR, close it on GitHub. Create the work you want to continue as a new
+  task.
+- If you wrote `pr` in `step_agents` in `config.yaml`, delete it. Leaving it is a settings error, and while there are old tasks, the daemon does not start
+  and does not delete them (the log shows the settings error and asks you to delete it). Delete it and start again.
 
 ## Related pages
 

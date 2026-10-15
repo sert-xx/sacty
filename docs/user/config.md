@@ -102,9 +102,10 @@ step_agents:          # 書かなければ default_agent（統合レビューは
 ```
 
 `step_agents` に書けるキーは、`orchestrator` と工程の `investigate`（調査）・`review`（レビュー）・`requirements`（要求要件）・
-`design`（設計）・`split`（タスク分割）・`integrate`（統合レビュー）・`reproduce`（再現）・`implement`（実装）・`pr`（PR）と、
+`design`（設計）・`split`（タスク分割）・`integrate`（統合レビュー）・`reproduce`（再現）・`implement`（実装）と、
 `deployment`（マージの後のデプロイの確認。[マージの後の監視](deployment-watch.md)）です。
 `default_agent`・`guardian_agent`・`step_agents` に、`agents` に無い名前を書くと誤りになります。
+以前の版の `pr`（PR作成）は、工程を無くしたので書けません（書くと誤りになります。消してください）。
 
 ## 予算
 

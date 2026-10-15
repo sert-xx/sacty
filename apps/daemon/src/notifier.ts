@@ -39,7 +39,6 @@ const STEP: Record<Language, Record<StepKey, string>> = {
     integrate: "統合レビュー",
     reproduce: "再現",
     implement: "実装",
-    pr: "成果物チェック",
   },
   en: {
     investigate: "Investigate",
@@ -50,7 +49,6 @@ const STEP: Record<Language, Record<StepKey, string>> = {
     integrate: "Integration review",
     reproduce: "Reproduce",
     implement: "Implement",
-    pr: "Deliverable review",
   },
 };
 
@@ -114,7 +112,7 @@ export function notificationText(
           : ja
             ? `${stepName}の承認を待っています`
             : `${stepName} is waiting for your approval`;
-    // 成果物チェックの PR と、要求要件・設計の PR（PBI-57）は、マージで承認する
+    // 実装の PR と、要求要件・設計の PR（PBI-57・PBI-110）は、マージで承認する
     const watched = gatePullRequest(task);
     const pr = watched?.url
       ? ja

@@ -82,7 +82,7 @@ export function ReviewView({ task }: { task: Task }) {
   const latestRound = rounds;
   // 差し戻し先：この工程か、それより前の工程エージェントが作る工程（ゲートに近い順）
   const targets = reworkTargets(task, step);
-  // 成果物チェック（PR作成）のゲートでは、実装への指摘を出す
+  // 統合レビューのゲートでは、タスク分割への指摘を出す（ほかの工程は、その工程への指摘）
   const remarkStep = targets[0] ?? step;
   const remarks = task.remarks
     .filter((r) => r.step === remarkStep)
@@ -99,15 +99,11 @@ export function ReviewView({ task }: { task: Task }) {
           <Link href={`/tasks/${task.id}`} className="text-accent-foreground underline">
             {task.title}
           </Link>{" "}
-          / {t.deliverableReview}
+          / {t.approval}
         </nav>
         <div className="flex flex-wrap items-center gap-3">
           <h1 className="text-2xl font-bold text-balance">
-            {step === "pr"
-              ? t.deliverableReview
-              : step === "reproduce"
-                ? t.notReproduced
-                : t.stepApproval(stepLabel[step])}
+            {step === "reproduce" ? t.notReproduced : t.stepApproval(stepLabel[step])}
           </h1>
           <span className="rounded-full border border-back-line bg-back-soft px-2.5 py-0.5 text-xs font-semibold text-back">
             {t.submission(submission)}
@@ -170,7 +166,7 @@ export function ReviewView({ task }: { task: Task }) {
               </ol>
             </section>
           )}
-          {step === "pr" ? (
+          {step === "implement" ? (
             <>
               <PullRequestCard task={task} />
               <Implementation task={task} />
@@ -249,9 +245,9 @@ export function ReviewView({ task }: { task: Task }) {
             maxChanges={MAX_CHANGE_REQUESTS}
             pendingComments={task.escalation?.pendingRemarks.map((r) => r.text) ?? []}
             notReproduced={step === "reproduce"}
-            noChanges={step === "pr" && deliveredWithoutChanges(task)}
+            noChanges={step === "implement" && deliveredWithoutChanges(task)}
             pullRequest={
-              // 成果物チェックの PR と、要求要件・設計の PR（PBI-57）。PR のマージで承認する
+              // 実装の PR と、要求要件・設計の PR（PBI-57・PBI-110）。PR のマージで承認する
               watched?.step === step
                 ? {
                     number: watched.number,

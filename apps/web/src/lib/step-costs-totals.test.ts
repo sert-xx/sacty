@@ -201,7 +201,7 @@ function randomHistory(seed: number, taskId = "t1"): ActivityEvent[] {
     {
       type: "StepsChosen",
       payload: {
-        steps: ["requirements", "design", "implement", "pr"],
+        steps: ["requirements", "design", "implement"],
         plan: "standard",
         reason: "理由",
         ...charged(),
@@ -296,11 +296,11 @@ function randomHistory(seed: number, taskId = "t1"): ActivityEvent[] {
       number: 7,
     },
   });
-  add({ type: "StepSubmitted", payload: { step: "pr", submission: 1 } });
+  add({ type: "StepSubmitted", payload: { step: "implement", submission: 1 } });
   // PR がマージされ、マージの後のデプロイの確認を実行した（PBI-89）
   if (rand() < 0.5) {
     add({ type: "PullRequestMerged", payload: { number: 7, commit: "c1" } }, "person");
-    add({ type: "StepApproved", payload: { step: "pr", next: "idle" } }, "person");
+    add({ type: "StepApproved", payload: { step: "implement", next: "idle" } }, "person");
     add({
       type: "DeploymentWatchStarted",
       payload: { number: 7, repo: "https://github.com/acme/app", branch: "main", commit: "m1" },

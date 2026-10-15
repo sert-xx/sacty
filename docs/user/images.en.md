@@ -135,7 +135,7 @@ npx sacty image build java17     # build by name (default is the default image)
 ## Which image a step runs in
 
 - The image for each step is chosen by the orchestrator when it chooses the steps, by reading the repository (`pom.xml`, `go.mod`, `pyproject.toml`, `package.json`,
-  and so on; in a monorepo, the directories the step touches), and it picks one from `images` for every step except PR creation. Tests run in the image of
+  and so on; in a monorepo, the directories the step touches), and it picks one from `images` for every step. Tests run in the image of
   the Implementation step (Reproduce for bug fixes), so the image that runs the tests is chosen from the test command and the repository's dependencies
   (browser tests such as Playwright, DB clients, and so on). The orchestrator itself runs in the default image.
 - The default image (`image`) is the last resort when none of `images` fits. It is a minimal image with only Node.js and git to run Claude Code and Codex;
@@ -160,7 +160,6 @@ for each step in "Step images" in the "Steps" section of the task detail.
 - Tests run in the image of the Implementation step (Reproduce for bug fixes). If you change the Implementation image, the next test run uses it.
 - For a step that stopped with a failure or a pause, change the image and then retry with "Resume"; the step runs with the changed image.
 - Tasks whose project target specifies an image can be changed too. Only the steps a person changed take precedence over the target's image.
-- The PR step doesn't run in a container, so it has no image.
 - A change is recorded in the Activity as who changed which step from what to what. The step images list shows when a person changed it and the previous name.
   Why the Orchestrator left a step on the default image (or that no reason was given) is shown in the step images list until a person changes it. The "Steps chosen"
   line in the Activity stays as it was recorded.

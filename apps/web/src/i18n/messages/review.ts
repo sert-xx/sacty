@@ -1,10 +1,10 @@
-/** 画面の文言：承認・成果物チェック（review・gate-form）。英語の用語は labels.ts の用語集に合わせる。 */
+/** 画面の文言：承認（review・gate-form）。英語の用語は labels.ts の用語集に合わせる。 */
 const ja = {
   loading: "読み込み中…",
   notAwaiting: "このタスクは承認待ちではありません。",
   backToTask: "タスクの詳細に戻る",
   breadcrumb: "パンくず",
-  deliverableReview: "成果物チェック",
+  approval: "承認",
   stepApproval: (step: string) => `${step}の承認`,
   notReproduced: "再現できなかった（判断待ち）",
   submission: (n: number) => `${n}回目の提出`,
@@ -55,7 +55,7 @@ const ja = {
       "実装は起点から何も変えていません。実装の説明・テストの結果・最終レビューで、変更が要らない理由が確かかを確かめてください。承認すると、PR を作らずに変更なしで完了します。変更が要るなら、指摘を書いて差し戻すと実装をやり直します。",
     prTitle: "GitHub の PR で判断します",
     prHelp:
-      "PR をレビューしてマージすると、成果物チェックの承認になり、タスクが完了します。レビューやコメントで指摘すると、差し戻しとして取り込み、ゴールガーディアンが判断した工程（実装・設計・要求要件。判断できなければ実装）からやり直します（sacty が1分ごとに確かめ、最後のコメントから2分後に取り込みます）。設計・要求要件からやり直したときは、作り直した成果をもう一度承認してください。",
+      "実装を、タスクブランチ（無ければ sacty のブランチ）からベースブランチへの PR にしました。PR をレビューしてマージすると、実装の承認になり、タスクが完了します（sacty の画面からは承認しません）。レビュー・行へのコメント・コメントで指摘すると、差し戻しとして取り込み、ゴールガーディアンが判断した工程（実装・設計・要求要件。判断できなければ実装）からやり直します（sacty が1分ごとに確かめ、最後のコメントから2分後に取り込みます）。設計・要求要件からやり直したときは、作り直した成果をもう一度承認してください。",
     stepPrHelp: (step: string) =>
       `${step}を、タスクブランチへの PR にしました。PR をレビューしてマージすると、${step}の承認になり、次の工程に進みます（sacty の画面からは承認しません）。レビュー・行へのコメント・コメントで指摘すると、差し戻しとして取り込み、ゴールガーディアンが、${step}のやり直し（同じ PR を更新）か前の工程への差し戻しかを判断します（sacty が1分ごとに確かめ、最後のコメントから2分後に取り込みます）。`,
     prOpen: (n: number) => `PR #${n} を GitHub で開く`,
@@ -79,7 +79,7 @@ const en: ReviewMessages = {
   notAwaiting: "This task is not awaiting approval.",
   backToTask: "Back to task details",
   breadcrumb: "Breadcrumb",
-  deliverableReview: "Deliverable review",
+  approval: "Approval",
   stepApproval: (step) => `${step} approval`,
   notReproduced: "Not reproduced (needs your decision)",
   submission: (n) => `Submission ${n}`,
@@ -130,7 +130,7 @@ const en: ReviewMessages = {
       "The implementation changed nothing from the base. Check in the implementation notes, test results, and final review that no change is really needed. Approving finishes the task without changes and without a PR. If a change is needed, write your comments and request changes to redo the implementation.",
     prTitle: "Decide on the GitHub PR",
     prHelp:
-      "Review and merge the PR to approve the deliverable review and complete the task. Comments in reviews or on the PR are imported as change requests, and the work is redone from the step the Goal Guardian picks (implementation, design, or requirements; implementation if it can't decide). sacty checks every minute and imports two minutes after the last comment. When design or requirements are redone, approve the reworked deliverable again.",
+      "The implementation was opened as a PR from the task branch (or a sacty branch) to the base branch. Review and merge the PR to approve the implementation and complete the task (it is not approved on the sacty screen). Comments in reviews, on lines, or on the PR are imported as change requests, and the work is redone from the step the Goal Guardian picks (implementation, design, or requirements; implementation if it can't decide). sacty checks every minute and imports two minutes after the last comment. When design or requirements are redone, approve the reworked deliverable again.",
     stepPrHelp: (step) =>
       `The ${step} was opened as a PR to the task branch. Review and merge the PR to approve the ${step} and move on to the next step (it is not approved on the sacty screen). Comments in reviews, on lines, or on the PR are imported as change requests, and the Goal Guardian decides whether to redo the ${step} (updating the same PR) or go back to an earlier step. sacty checks every minute and imports two minutes after the last comment.`,
     prOpen: (n) => `Open PR #${n} on GitHub`,

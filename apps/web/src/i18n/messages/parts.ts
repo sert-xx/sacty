@@ -91,7 +91,7 @@ const ja = {
     commit: "コミット",
     misses: (n: number) => `ゴールガーディアンの見逃し ${n}件`,
     missesHelp:
-      "最終レビューで合格にした成果物を、人間が成果物チェックで差し戻しました。ゴールガーディアンの精度の記録として残しています。",
+      "最終レビューで合格にした成果物を、人間が実装の承認で差し戻しました。ゴールガーディアンの精度の記録として残しています。",
     remarks: (ids: string) => `指摘：${ids}`,
     none: "（なし）",
     rework: "戻し先",
@@ -255,7 +255,7 @@ const en: PartsMessages = {
     commit: "Commit",
     misses: (n) => `${n} Goal Guardian miss${n === 1 ? "" : "es"}`,
     missesHelp:
-      "A person requested changes in the deliverable review on a deliverable that passed the final review. Kept as a record of the Goal Guardian's accuracy.",
+      "A person requested changes on the Implement approval for a deliverable that passed the final review. Kept as a record of the Goal Guardian's accuracy.",
     remarks: (ids) => `Comments: ${ids}`,
     none: "(none)",
     rework: "Redo from",

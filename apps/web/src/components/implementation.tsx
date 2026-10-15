@@ -57,7 +57,7 @@ export function Implementation({ task }: { task: Task }) {
       id="deliverable-implement"
       title={m.title}
       note={step?.state === "done" ? m.passed : m.working}
-      // 成果物チェックで承認された（タスクが完了した）実装は折りたたむ
+      // 承認された（タスクが完了した）実装は折りたたむ
       collapsed={isCompleted(task)}
     >
       {task.repository && (

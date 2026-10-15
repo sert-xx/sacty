@@ -658,13 +658,13 @@ export class TaskService {
   }
 
   /**
-   * 成果物チェックで待っているタスクの PR の状態を確かめ、変化を記録する（PBI-14a）。
-   * マージされたら成果物チェックを承認してタスクを完了にし、マージせずに閉じられたら記録して人間の判断を
+   * 承認待ちのタスクの PR の状態を確かめ、変化を記録する（PBI-14a）。
+   * 実装の PR がマージされたら実装を承認してタスクを完了にし（PBI-110）、マージせずに閉じられたら記録して人間の判断を
    * 待つ（開き直されたら見守りを続ける）。PR は、プロジェクトの gh のアカウントで確かめる。
    * 確かめられないタスク（ネットワークやアカウントの問題）は、次の確認でやり直す。
    */
   async checkPullRequests(): Promise<void> {
-    // 成果物チェックの PR と、要求要件・設計の PR（PBI-57）
+    // 実装の PR と、要求要件・設計の PR（PBI-57・PBI-110）
     const waiting = [...this.tasks.values()].filter(
       (t) =>
         (t.status === "awaiting_approval" || t.status === "escalated") && gatePullRequest(t)?.repo,
@@ -723,7 +723,7 @@ export class TaskService {
         // 人が直した最終のコミットを両方残す。要求要件・設計は、人が直したファイルを承認済みの成果にする
         const edited = status.headSha !== pr.commit;
         let document: PullRequestMerge["document"];
-        if (edited && pr.step !== "pr") {
+        if (edited && pr.step !== "implement") {
           // 読むのは、マージの時点を特定できるコミット（マージのコミット、取れなければ PR の先頭）。タスクブランチの
           // 先端は、マージの後に積まれた未レビューの変更を含みうるので使わない
           const read = await this.readMergedDocument(
@@ -765,7 +765,7 @@ export class TaskService {
               type: "StepApproved",
               payload: {
                 step: pr.step,
-                next: pr.step === "pr" ? "idle" : this.nextAfterApproval(latest, pr.step),
+                next: this.nextAfterApproval(latest, pr.step),
               },
             },
           },
@@ -908,7 +908,7 @@ export class TaskService {
 
   /**
    * 実装の PR のマージで、マージのコミットの監視を始める記録（PBI-89）。プロジェクトの deploymentWatch が true で、
-   * 実装の PR（成果物チェック）のマージのときだけ。マージのコミットが取れなければ、監視を飛ばす記録になる。
+   * 実装の PR のマージのときだけ。マージのコミットが取れなければ、監視を飛ばす記録になる。
    */
   private deploymentWatchEvents(
     task: Task,
@@ -917,7 +917,7 @@ export class TaskService {
     repo: string,
     mergeCommit: string | undefined,
   ): { actor: Actor; event: EventInput }[] {
-    if (step !== "pr" || !task.repository) return [];
+    if (step !== "implement" || !task.repository) return [];
     if (this.deps.projects.get(task.projectId)?.deploymentWatch !== true) return [];
     return [
       {
@@ -1329,7 +1329,7 @@ export class TaskService {
    * まとめて取り込む。途中で止まっても、次の確認で続きから進める（判断・反映）。
    */
   private async importFeedback(task: Task, token: string): Promise<void> {
-    // 成果物チェックの PR と、要求要件・設計の PR（PBI-57）の指摘
+    // 実装の PR と、要求要件・設計の PR（PBI-57）の指摘
     const pr = gatePullRequest(task);
     if (!pr?.number || !pr.repo) return;
     let current = task;
@@ -1435,7 +1435,7 @@ export class TaskService {
     const gate = task.gate;
     if (!pending || !judgement || !gate || !gatePullRequest(task)) return;
     if (task.status !== "awaiting_approval") return;
-    // 判断できなければ、その工程をやり直す（成果物チェックなら実装。要求要件・設計なら同じ PR を更新する。PBI-57）
+    // 判断できなければ、その工程をやり直す（実装なら実装。要求要件・設計なら同じ PR を更新する。PBI-57・PBI-110）
     const targets = reworkTargets(task, gate.step);
     const target =
       judgement.target && targets.includes(judgement.target)
@@ -2194,7 +2194,7 @@ export class TaskService {
   /**
    * 工程ごとのイメージを決める（PBI-41）。対象の指定があれば、すべての工程でそれを使う。無ければオーケストレーターの
    * 選択（選んだ工程の分だけ）。images に無い名前なら、理由を示して止める（再開すると選び直す）。
-   * offered（images の候補をオーケストレーターに見せた）なら、既定のイメージで動かす工程（PR 作成を除く）ごとに、
+   * offered（images の候補をオーケストレーターに見せた）なら、既定のイメージで動かす工程ごとに、
    * images のどれも合わない理由を記録し、理由が無い工程（書かなかった・default と書いて理由が無い）も記録する（PBI-105。
    * 既定のイメージに黙って倒さない）。
    */
@@ -2350,7 +2350,7 @@ export class TaskService {
   ): Promise<Extract<EventInput, { type: "ReworkJudged" }>["payload"]> {
     const agent = config.guardianAgent;
     const targets = reworkTargets(task, gateStep);
-    // 成果物チェックは、指摘が実装で直せるかを判断するので実装後のコードを、要求要件・設計の PR（PBI-57）は
+    // 実装の PR は、指摘が実装で直せるかを判断するので実装後のコードを、要求要件・設計の PR（PBI-57）は
     // 起点のコードを読ませる
     const { outcome, costUsd, estimated, runId } = await this.runGuardian(
       task,
@@ -2360,7 +2360,7 @@ export class TaskService {
         prompt: buildReworkPrompt(task, remarks, targets, gateStep),
         role: "rework",
       },
-      gateStep === "pr" ? "implemented" : "base",
+      gateStep === "implement" ? "implemented" : "base",
     );
     const judgement =
       outcome.kind === "completed"
@@ -3308,8 +3308,7 @@ export class TaskService {
   /**
    * 実行できなかったために待機している工程を、実行待ちにする（起動時に呼ぶ）。
    * まだ一度も出力が無い工程だけが対象（PBI-7で承認され設計の工程が無かった、
-   * PBI-8・9で設計が承認され実装の工程が無かった、PBI-10aで最終レビューに通り
-   * PR作成の工程が無かったため待機していたタスクなど）。
+   * PBI-8・9で設計が承認され実装の工程が無かったため待機していたタスクなど）。
    */
   queueWaitingSteps(): void {
     for (const task of this.tasks.values()) {
@@ -3317,7 +3316,6 @@ export class TaskService {
       if (task.status !== "idle" || !step || openProposal(task)) continue;
       if (!EXECUTABLE_STEPS.includes(step)) continue;
       if (task.outputs[step] !== undefined || task.verification) continue;
-      if (step === "pr" && task.pullRequest) continue;
       this.append(task, [{ actor: "sacty", event: { type: "StepQueued", payload: { step } } }]);
     }
   }
@@ -3351,7 +3349,7 @@ export class TaskService {
       : (task.repo ?? (task.repository && githubRepoOf(task.repository.url)));
     if (!repo) return { ok: false, message: message("run.repositoryNotConfigured") };
     // ベースブランチとテストのコマンドは、タスクの開始時にオーケストレーターが決める（PBI-25）。
-    // PR は常に作る（PR作成許可の設定は無い）
+    // PR は常に作る（PR を作るかの設定は無い）
     return {
       ok: true,
       repo: {
@@ -3726,8 +3724,11 @@ export class TaskService {
     const step = activeStep(task);
     if (!step) return;
 
-    // PR作成は、エージェントではなく sacty が行う
-    if (step === "pr") return this.publish(this.mustGet(task.id), config.config);
+    // 検証に通った実装の PR は、実装の工程の中で、エージェントではなく sacty が作る（PBI-110。予算の上限に達していても作る。
+    // 費用はかからず、人の承認を待つだけなので）
+    if (step === "implement" && task.publishPending) {
+      return this.publish(this.mustGet(task.id), config.config);
+    }
 
     if (budgetState(task.budget) === "exceeded") {
       this.append(task, [
@@ -5036,8 +5037,8 @@ export class TaskService {
   }
 
   /**
-   * 作業をコミットして sacty のブランチにプッシュし、PRを作って（設定があれば）、
-   * 成果物チェックのゲートで止める。コミットは、エージェントが触れない退避した git の
+   * 検証に通った実装を、実装の工程の中でコミットして sacty のブランチにプッシュし、PRを作って、
+   * 実装の承認待ちで止める（PBI-110）。コミットは、エージェントが触れない退避した git の
    * メタデータで作る。失敗したら理由を記録して止める（再開するとやり直す）。
    */
   private async publish(task: Task, config: SactyConfig): Promise<void> {
@@ -5067,6 +5068,8 @@ export class TaskService {
     // タスクブランチのあるタスク（PBI-57）は、タスクブランチに実装を積み、タスクブランチからベースブランチへの PR にする
     const taskBranch = task.taskBranch;
     const branch = taskBranch?.branch ?? task.pullRequest?.branch ?? taskBranchName(task);
+    // 一時停止・中止を求められていれば、プッシュも PR の作成もしない（一時停止は、PR の作成の待ちのまま止める。再開すると作る）
+    if (this.stopRequested(task.id)) return;
     try {
       const authEnv = await this.gitAuth(task, task.repository.url, usedSecrets);
       let parent = task.pullRequest?.commit ?? task.repository.baseCommit;
@@ -5108,7 +5111,7 @@ export class TaskService {
         branch,
         message: `${task.title}\n\nsacty task ${task.id}`,
         // 提出ごとに決まる日時にして、再開しても同じコミットを作る（プッシュ済みなら何も変わらない）
-        // （PR作成の工程は最終レビューに通った後なので、通常は最終レビューの日時になる）
+        // （PR は最終レビューに通った後に作るので、通常は最終レビューの日時になる）
         date: task.lastReview?.at ?? task.createdAt,
         authEnv,
         ...(keep ? { keep } : {}),
@@ -5119,7 +5122,7 @@ export class TaskService {
           { actor: "sacty", event: { type: "BranchPushed", payload: { branch, commit } } },
         ]);
       }
-      // PR は常に作る（PR作成許可の設定は無い。PBI-25）
+      // PR は常に作る（PR を作るかの設定は無い。PBI-25）
       const prRepo = repo.pullRequest.repo;
       const token = await this.githubToken(task, prRepo, usedSecrets);
       // 前の PR がすでにマージされていれば、作り直した内容は新しい PR で出す
@@ -5136,6 +5139,10 @@ export class TaskService {
         buildPullRequestBodyText(task),
         buildPullRequestBodyParts(task),
       );
+      // PR を作る直前にも確かめる（プッシュしたブランチは記録済みなので、中止で片付けられる）。PR を作り始めたら、作り終えて
+      // 実装の承認待ちにする（作った PR を記録しないまま止めると、再開で PR を二重に作りうるため）。そのときの一時停止は、
+      // 承認待ちになったので止めなかったと返す（pause の pause.reachedApproval）
+      if (this.stopRequested(task.id)) return;
       const pr = await this.deps.pulls.upsert({
         repo: prRepo,
         token,
@@ -5162,13 +5169,13 @@ export class TaskService {
             },
           },
         },
-        ...this.submitEvents(task, "pr"),
+        this.implementSubmitted(task),
       ]);
       this.checkBudget(submitted);
       // レビュー用のラベルを付ける（失敗しても PR の作成は失敗にしない。PBI-88・PBI-99）
       await this.labelPullRequest(task.id, prRepo, pr.number, token, usedSecrets);
     } catch (error) {
-      // 実装が起点から何も変えていなかった（PBI-90）。まだ PR を作っていなければ、PR を作らずに成果物チェックで人間に
+      // 実装が起点から何も変えていなかった（PBI-90）。まだ PR を作っていなければ、PR を作らずに実装の承認で人間に
       // 確かめてもらう（実装の説明に、変更が要らない理由がある。承認すれば変更なしで完了、差し戻せば実装をやり直す）。
       // タスクブランチ（PBI-57）は、ベースブランチへの PR を作らないまま残る。作った PR の作り直しで変更が無くなったときは、
       // 今までどおり止める（開いている PR をどうするかは人が決める）
@@ -5178,10 +5185,10 @@ export class TaskService {
             actor: "sacty",
             event: {
               type: "NoChangesFound",
-              payload: { submission: (task.submissions.pr ?? 0) + 1 },
+              payload: { submission: (task.submissions.implement ?? 0) + 1 },
             },
           },
-          ...this.submitEvents(task, "pr"),
+          this.implementSubmitted(task),
         ]);
         this.checkBudget(submitted);
         return;
@@ -5361,8 +5368,13 @@ export class TaskService {
     if (inflight) {
       this.stopRuns(inflight.runIds);
       await inflight.done.catch(() => {});
-      // 記録は runNext の後始末で行う
-      return this.mustGet(id);
+      // 記録は runNext の後始末で行う。止める前に作業が終わって承認待ちになった（PR を作り終えたなど）なら、一時停止は
+      // していないので、そうはっきり返す（PBI-110 レビュー指摘）
+      const after = this.mustGet(id);
+      if (after.status === "awaiting_approval" || after.status === "escalated") {
+        throw new InvalidOperationError(message("pause.reachedApproval"));
+      }
+      return after;
     }
     this.pauseIfRequested(id);
     return this.mustGet(id);
@@ -6445,6 +6457,19 @@ export class TaskService {
     ]);
   }
 
+  /**
+   * 実装の承認待ちにするイベント（PBI-110）。検証に通った実装の PR を作った（変更が無くて作らなかった）記録と、同じ追記で記録する。
+   */
+  private implementSubmitted(task: Task): ActivityItem {
+    return {
+      actor: "sacty",
+      event: {
+        type: "StepSubmitted",
+        payload: { step: "implement", submission: (task.submissions.implement ?? 0) + 1 },
+      },
+    };
+  }
+
   /** 承認ゲートのある工程なら、人間の承認待ちで止めるイベント。 */
   private submitEvents(task: Task, step: StepKey): ActivityItem[] {
     // 前段の調査（実装する組み合わせの先頭）は、人間の承認なしに次の工程へ進める（PBI-29）
@@ -6455,6 +6480,8 @@ export class TaskService {
       return [{ actor: "sacty", event: { type: "StepCompleted", payload: { step, next } } }];
     }
     if (!GATED_STEPS.includes(step)) return [];
+    // 実装は、検証（テストと最終レビュー）に通り、PR を作ってから承認待ちにする（PBI-110。publish の implementSubmitted）
+    if (step === "implement") return [];
     // PR で承認する工程（PBI-57）は、成果を PR にしてから承認待ちにする（PR の記録と一緒に提出する）
     if (isStepPullRequestKey(step) && this.stepPullRequestsOn(task)) return [];
     return [
@@ -6587,8 +6614,6 @@ export class TaskService {
     if (!task.steps.some((s) => s.key === step)) {
       throw new InvalidOperationError(message("image.stepMissing"));
     }
-    // PR作成はコンテナで実行しない（イメージが無い）
-    if (step === "pr") throw new InvalidOperationError(message("image.noImageStep"));
     const config = this.deps.config();
     // 設定を読めない・解析できなければ、名前を確かめられないので、その理由を示して断る（名前の誤りと取り違えないため）
     if (!config.ok) {
@@ -7128,13 +7153,7 @@ export class TaskService {
     if (step === "reproduce") {
       throw new InvalidOperationError(message("gate.reproduceNotApprovable"));
     }
-    // PR を作ったタスクの成果物チェックは、PR のマージで承認する（PBI-14a）
-    if (step === "pr" && task.pullRequest?.number) {
-      throw new InvalidOperationError(
-        message("gate.approveOnPullRequest", { url: task.pullRequest.url ?? "" }),
-      );
-    }
-    // 要求要件・設計の PR を作った工程も、PR のマージで承認する（PBI-57）
+    // PR を作った工程（実装の PR と、要求要件・設計の PR）は、PR のマージで承認する（PBI-14a・PBI-57・PBI-110）
     const watched = gatePullRequest(task);
     if (watched && watched.step === step) {
       throw new InvalidOperationError(
@@ -7157,7 +7176,7 @@ export class TaskService {
     const input = RequestChangesInput.parse(raw);
     const task = this.gateTask(id, input.step, input.submission);
     // やり直す工程は、ゲートの工程か、それより前の工程エージェントが作る工程。
-    // 成果物チェック（PR作成）のゲートでは、省略すると実装をやり直す
+    // 実装のゲートでは、省略すると実装をやり直す
     const targets = reworkTargets(task, input.step);
     const target = input.target ?? targets[0];
     if (!target || !targets.includes(target)) {
@@ -7213,7 +7232,7 @@ export class TaskService {
     // ゴールガーディアンが最終レビューで合格にした成果物を人間が差し戻したら、見逃しとして記録する
     // 統合レビュー（PBI-31）で合格にしたものを差し戻した場合も、見逃しとして記録する
     const review =
-      input.step === "pr"
+      input.step === "implement"
         ? task.lastReview
         : input.step === "integrate"
           ? task.integration
@@ -7317,17 +7336,15 @@ function repositoryDirName(repo: string, index: number): string {
 }
 
 /**
- * 既定のイメージで動かす工程の、images のどれも合わない理由と、理由が無い工程（PBI-105）。PR 作成は、コンテナを使わない（イメージを
- * 使わない）ので対象にしない。工程のイメージが無い・default なら既定のイメージで動く。理由は、既定のイメージで動く工程の分だけ残す。
+ * 既定のイメージで動かす工程の、images のどれも合わない理由と、理由が無い工程（PBI-105）。工程のイメージが無い・default なら
+ * 既定のイメージで動く。理由は、既定のイメージで動く工程の分だけ残す。
  */
 function defaultImagesOf(
   steps: readonly StepKey[],
   images: Partial<Record<StepKey, string>>,
   reasons: Partial<Record<StepKey, string>> | undefined,
 ): { defaultImageReasons?: Partial<Record<StepKey, string>>; imagesUnexplained?: StepKey[] } {
-  const onDefault = steps.filter(
-    (step) => step !== "pr" && (!images[step] || images[step] === DEFAULT_IMAGE_NAME),
-  );
+  const onDefault = steps.filter((step) => !images[step] || images[step] === DEFAULT_IMAGE_NAME);
   const explained = Object.fromEntries(
     onDefault.flatMap((step) => (reasons?.[step] ? [[step, reasons[step]]] : [])),
   ) as Partial<Record<StepKey, string>>;
@@ -7341,7 +7358,7 @@ function defaultImagesOf(
 /**
  * 対象リポジトリが要る工程（PBI-73）。対象リポジトリの無いタスクでは実行しない（コードを変える・PR を読む・PR を作る）。
  */
-const REPO_STEPS: readonly StepKey[] = ["implement", "reproduce", "review", "pr"];
+const REPO_STEPS: readonly StepKey[] = ["implement", "reproduce", "review"];
 
 /**
  * 対象リポジトリの無いタスクの分割案で、子タスクごとのリポジトリを、プロジェクトの対象と照らす（PBI-73）。無い・対象に
