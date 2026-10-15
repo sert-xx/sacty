@@ -7573,7 +7573,7 @@ describe("通知のメンションのエクスポート・インポート（PBI-
     expect(() =>
       service.saveProject(pay.id, {
         name: "決済",
-        notification: { ...notification, mention: { targets: ["@daiki"] } },
+        notification: { ...notification, mention: { targets: ["@alice"] } },
       }),
     ).toThrow();
     expect(service.listProjects()[0]?.notification).toEqual(notification);
@@ -7908,7 +7908,7 @@ describe("コンテキストの外部 PF（PBI-74）", () => {
           "platforms:",
           "  docs:",
           "    upstream: https://docs.internal.example.com",
-          "    description: 社内ドキュメント",
+          "    description: チームのドキュメント",
           "    auth:",
           "      prefix: 'Bearer '",
           "      secret: docs-token",
@@ -7986,7 +7986,7 @@ describe("コンテキストの外部 PF（PBI-74）", () => {
     expect(call?.env.SACTY_PF_URL).toBe("http://host.docker.internal:5001/r/sacty-gw-run/pf");
     const prompt = call?.command.join(" ") ?? "";
     expect(prompt).toContain("- jira：JIRA（$SACTY_PF_URL/jira）");
-    expect(prompt).toContain("- docs：社内ドキュメント（$SACTY_PF_URL/docs）");
+    expect(prompt).toContain("- docs：チームのドキュメント（$SACTY_PF_URL/docs）");
     expect(prompt).toContain("  - GET /api/pages/**");
     expect(prompt).not.toContain("evil.example.com");
     // コンテキストの確認（作業履歴）に、合成した PF とどちらを使ったかの警告を残す
@@ -7996,7 +7996,7 @@ describe("コンテキストの外部 PF（PBI-74）", () => {
       {
         name: "docs",
         from: `${ctxRepo}@c0ffee0`,
-        description: "社内ドキュメント",
+        description: "チームのドキュメント",
         allow: ["GET /api/pages/**"],
       },
     ]);
@@ -8281,7 +8281,7 @@ describe("コンテキストの外部 PF（PBI-74）", () => {
         {
           name: "docs",
           from: `${ctxRepo}@c0ffee0`,
-          description: "社内ドキュメント",
+          description: "チームのドキュメント",
           allow: ["GET /api/pages/**"],
         },
       ],

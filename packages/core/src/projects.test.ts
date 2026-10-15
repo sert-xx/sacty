@@ -330,7 +330,7 @@ describe("通知先（PBI-38）", () => {
     };
     // 名前・小文字・本文を壊す文字・Slack の書き方そのもの・here（@ なし）は受け付けず、理由を示す
     for (const bad of [
-      "@daiki",
+      "@alice",
       "u0123abcd",
       "U0123>",
       "U01<!channel>",
