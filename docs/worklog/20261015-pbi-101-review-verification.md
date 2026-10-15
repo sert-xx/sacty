@@ -2,7 +2,7 @@
 
 - 日付: 2026-10-15（UTC）
 - タスク: PBI-101
-- PR: なし
+- PR: #111
 - ブランチ: feat/issue-101-review-verification
 - 関係する ADR: [レビューの検証を親が共有し、結果の分析を独立した観点にする](../adr/20261015-0428-review-verification-results.md)
 
