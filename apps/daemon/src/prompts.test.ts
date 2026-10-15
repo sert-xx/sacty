@@ -1084,6 +1084,9 @@ describe("リポジトリを指定しないタスク（PBI-73）", () => {
   });
 });
 
+/** テストの仕組みが無いタスクの実装の工程として、テストのコマンドの申告を読む（PR #105 再レビュー指摘）。 */
+const DECLARE = { testCommand: true };
+
 describe("テストの仕組みが無いタスク（PBI-94）", () => {
   const NO_TESTS = "README.md だけで、テストのコードも設定も無い";
   const task = (extra: Partial<Task> = {}, steps: Task["steps"][number]["key"][] = []) =>
@@ -1135,12 +1138,12 @@ describe("テストの仕組みが無いタスク（PBI-94）", () => {
 
   it("実装の出力から、用意したテストのコマンドを読み、本文から取り除く", () => {
     const output = `# 説明\n\n\`\`\`sacty-test-command\n${JSON.stringify({ command: " make test " })}\n\`\`\``;
-    const read = extractBlocks(output, new Set());
+    const read = extractBlocks(output, new Set(), [], DECLARE);
     expect(read.testCommand).toBe("make test");
     expect(read.output).toBe("# 説明");
-    expect(extractBlocks("# 説明", new Set())).not.toHaveProperty("testCommand");
+    expect(extractBlocks("# 説明", new Set(), [], DECLARE)).not.toHaveProperty("testCommand");
     const empty = `\`\`\`sacty-test-command\n${JSON.stringify({ command: "" })}\n\`\`\``;
-    expect(extractBlocks(empty, new Set())).not.toHaveProperty("testCommand");
+    expect(extractBlocks(empty, new Set(), [], DECLARE)).not.toHaveProperty("testCommand");
   });
 
   it("設計のあるタスクの実装と最終レビューでも、テストではなく観点ごとに目的から判定させる", () => {
@@ -1212,15 +1215,17 @@ describe("テストの仕組みが無いタスクの指示と申告（PR #105 �
       null,
       { command: "x".repeat(1001) },
     ]) {
-      const read = extractBlocks(block(value), new Set());
+      const read = extractBlocks(block(value), new Set(), [], DECLARE);
       expect(read.testCommandInvalid, JSON.stringify(value)).toBe(true);
       expect(read).not.toHaveProperty("testCommand");
       expect(read.output).toBe("# 説明");
     }
-    const ok = extractBlocks(block({ command: "x".repeat(1000) }), new Set());
+    const ok = extractBlocks(block({ command: "x".repeat(1000) }), new Set(), [], DECLARE);
     expect(ok.testCommand).toHaveLength(1000);
     expect(ok).not.toHaveProperty("testCommandInvalid");
-    expect(extractBlocks("# 説明", new Set())).not.toHaveProperty("testCommandInvalid");
+    expect(extractBlocks("# 説明", new Set(), [], DECLARE)).not.toHaveProperty(
+      "testCommandInvalid",
+    );
   });
 
   it("申告のコードブロックの中身が JSON として読めない・閉じていなければ、正しくない申告として返す（PR #105 再々レビュー指摘）", () => {
@@ -1239,7 +1244,7 @@ describe("テストの仕組みが無いタスクの指示と申告（PR #105 �
       // 読める申告の後に、読めない申告がある
       '```sacty-test-command\n{"command":"make test"}\n```\n\n```sacty-test-command\n{"command":"make check",}\n```',
     ]) {
-      const read = extractBlocks(broken, new Set());
+      const read = extractBlocks(broken, new Set(), [], DECLARE);
       expect(read.testCommandInvalid, broken).toBe(true);
       expect(read).not.toHaveProperty("testCommand");
     }
@@ -1258,7 +1263,7 @@ describe("テストの仕組みが無いタスクの指示と申告（PR #105 �
       // 4つのバッククォートで、申告の書き方を例として引用した
       '# 説明\n\n````markdown\n```sacty-test-command\n{"command":"make test",}\n```\n````',
     ]) {
-      const read = extractBlocks(prose, new Set());
+      const read = extractBlocks(prose, new Set(), [], DECLARE);
       expect(read, prose).not.toHaveProperty("testCommandInvalid");
       expect(read, prose).not.toHaveProperty("testCommand");
     }
@@ -1266,6 +1271,8 @@ describe("テストの仕組みが無いタスクの指示と申告（PR #105 �
     const both = extractBlocks(
       '# 説明\n\n```sh\nmake test\n```\n\n```sacty-test-command\n{"command": "make test"}\n```\n\n以上',
       new Set(),
+      [],
+      DECLARE,
     );
     expect(both.testCommand).toBe("make test");
     expect(both.output).toBe("# 説明\n\n```sh\nmake test\n```\n\n\n以上");
@@ -1302,5 +1309,23 @@ describe("テストの仕組みが無いタスクの指示と申告（PR #105 �
     expect(withoutTests).not.toContain('"testCommand"');
     expect(withoutTests).not.toContain("bugfix");
     expect(prompt).toContain("testCommand と noTests を両方書かないでください");
+  });
+});
+
+describe("テストのコマンドの申告を読む工程（PR #105 再レビュー指摘）", () => {
+  it("申告を読まない工程・タスクでは、申告のコードブロックも本文のまま残し、申告として扱わない", () => {
+    const output =
+      '# 設計\n\n申告の例：\n\n```sacty-test-command\n{"command":"make test",}\n```\n\n```sacty-test-command\n{"command": "make test"}\n```';
+    for (const read of [
+      extractBlocks(output, new Set()),
+      extractBlocks(output, new Set(), [], { testCommand: false }),
+    ]) {
+      expect(read.output).toBe(output);
+      expect(read).not.toHaveProperty("testCommand");
+      expect(read).not.toHaveProperty("testCommandInvalid");
+    }
+    const declared = extractBlocks(output, new Set(), [], DECLARE);
+    expect(declared.testCommandInvalid).toBe(true);
+    expect(declared.output).not.toContain("sacty-test-command");
   });
 });

@@ -13,6 +13,7 @@ import {
   statusTone,
   testCommandOfNoTests,
   usesTestCommand,
+  verificationResults,
 } from "./labels";
 import { runLogId } from "./session-log";
 
@@ -1356,5 +1357,52 @@ describe("実装で用意したテストの結果（PBI-94・PR #105 レビュ�
       of({ lastTests: ran(false), verification: "pending", addedTestCommand: "make check" }),
     ).toBe(m.testCommandAddedPending("make check", "無い"));
     expect(of({})).toBe(m.testCommandNone("無い"));
+  });
+});
+
+describe("今の提出の検証の結果か（PR #105 再レビュー指摘）", () => {
+  const tests = (at: string, passed: boolean) => ({
+    command: "npm test",
+    exitCode: passed ? 0 : 1,
+    unmappedViewpoints: [],
+    passed,
+    output: "",
+    durationMs: 1,
+    at,
+  });
+  const review = (at: string) => ({
+    passed: false,
+    viewpoints: [],
+    remarks: [],
+    summary: "所見",
+    agentId: "a",
+    runId: "r",
+    costUsd: 0,
+    estimated: false,
+    at,
+  });
+  const T1 = "2026-10-15T00:00:00.000Z";
+  const T2 = "2026-10-15T00:01:00.000Z";
+  it("やり直した実装の検証が始まったら、テストも最終レビューも前の提出のものとして返す", () => {
+    const failed = { lastTests: tests(T1, false), lastReview: review(T1) } as Partial<Task>;
+    expect(verificationResults(task(failed))).toMatchObject({
+      testsCurrent: true,
+      reviewCurrent: true,
+    });
+    expect(verificationResults(task({ ...failed, verification: "pending" }))).toMatchObject({
+      testsCurrent: false,
+      reviewCurrent: false,
+    });
+    // 今の提出のテストに通り、最終レビューを待っている：前の最終レビューは前の提出のもの
+    expect(
+      verificationResults(
+        task({ lastTests: tests(T2, true), lastReview: review(T1), verification: "tests_passed" }),
+      ),
+    ).toMatchObject({ testsCurrent: true, reviewCurrent: false });
+    // テストを飛ばしたタスク：飛ばした時より前の最終レビューは前の提出のもの
+    expect(
+      verificationResults(task({ testsSkippedAt: T2, lastReview: review(T1) })).reviewCurrent,
+    ).toBe(false);
+    expect(verificationResults(task({})).testsCurrent).toBe(false);
   });
 });

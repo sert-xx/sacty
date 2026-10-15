@@ -95,6 +95,30 @@ export function usesTestCommand(task: Task): boolean {
 }
 
 /**
+ * 実装の成果物に出す、テストの結果と最終レビュー。それぞれ、今の提出の検証のものか（current）を返す（PR #105 再レビュー指摘）。
+ * - 今の提出の検証が始まった（verification が pending）なら、どちらも前の提出のもの
+ * - 最終レビューは、最新のテストの結果（テストを飛ばしたなら、飛ばした時）より後のものだけが今の検証のもの
+ * 前の提出のものは、隠さずに「前の提出の」と区別して出す。
+ */
+export function verificationResults(task: Task): {
+  tests?: NonNullable<Task["lastTests"]>;
+  testsCurrent: boolean;
+  review?: NonNullable<Task["lastReview"]>;
+  reviewCurrent: boolean;
+} {
+  const tests = task.lastTests;
+  const review = task.lastReview;
+  const started = task.verification === "pending";
+  const checkedAt = task.testsSkippedAt ?? tests?.at;
+  return {
+    ...(tests ? { tests } : {}),
+    testsCurrent: Boolean(tests) && !started,
+    ...(review ? { review } : {}),
+    reviewCurrent: Boolean(review && checkedAt && review.at >= checkedAt) && !started,
+  };
+}
+
+/**
  * テストの仕組みが無いタスク（PBI-94）の、今の実装の提出についての、実装で用意したテストの状態。画面の注記と工程の欄を、今の
  * 提出の検証の結果で切り替えるのに使う（PR #105 レビュー指摘・再レビュー指摘・再々レビュー指摘）。
  * - pending：今の提出がテストのコマンドを申告し、まだ実行していない（前の提出のテストの結果は、今の提出のものとして扱わない）

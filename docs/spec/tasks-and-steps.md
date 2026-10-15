@@ -142,8 +142,13 @@
 - 再現の工程の後は、再現のテストを実行し、終了コードが 0 でなければ再現できたとして実装へ進む。0 なら（または再現のテストの申告が
   無ければ）、再現できなかったとして人間の判断を待つ（再現の工程は承認できない。差し戻すか中止する）。
 - テストのイメージは、検証は実装（無ければ再現）の工程のイメージ、再現の確かめは再現（無ければ実装）の工程のイメージ。
+- 実装の成果物（タスクの画面と成果物チェックの承認の画面）は、テストの結果と最終レビューを、今の提出の検証のものだけ対応表に出す
+  （`verificationResults`）。やり直した実装の検証が始まった（`verification` が `pending`）後のテストの結果と最終レビュー、最新の
+  テストの結果（テストを飛ばしたなら、飛ばした時）より前の最終レビューは、前の提出のものとして、見出しを「前の提出のテストの実行
+  （今の提出では、まだ実行していません）」「前の提出の最終レビュー（今の提出では、まだ判定していません）」にして出し、対応表の
+  実行結果は「未実行」にする。
 
-コード: `apps/daemon/src/service.ts`（`verify`・`checkReproduction`・`pauseIfVerificationKeepsFailing`）、`apps/daemon/src/prompts.ts`（`verificationBasis`）、`packages/core/src/events.ts`（`MAX_VERIFY_ATTEMPTS`）
+コード: `apps/daemon/src/service.ts`（`verify`・`checkReproduction`・`pauseIfVerificationKeepsFailing`）、`apps/daemon/src/prompts.ts`（`verificationBasis`）、`packages/core/src/events.ts`（`MAX_VERIFY_ATTEMPTS`）、`apps/web/src/components/implementation.tsx`、`apps/web/src/lib/labels.ts`（`verificationResults`）
 
 ### テストの仕組みが無いタスク
 
@@ -170,6 +175,9 @@
   ことを求めていて、実装が用意したときだけ、そのコマンドを、言語の名前を `sacty-test-command`（`TEST_COMMAND_FENCE`）にした
   コードブロックの中に JSON（`{"command": "…"}`。1〜1000 文字）で申告させる。申告は実装の `AgentRunCompleted` の `testCommand` に
   記録し、提出ごとに読み直す（`Task.addedTestCommand`）。
+  - 申告を読むのは、テストの仕組みが無いタスクの実装の工程だけ（`extractBlocks` の `testCommand`）。ほかの工程（要求要件・設計・
+    レビューなど）と、テストの仕組みがある（`testCommand` を決めた）タスクの実装の工程では、このコードブロックも本文のまま残し
+    （成果・承認の画面・後の工程に渡る）、申告として扱わない（止めない。テストは決めたテストのコマンドで実行する）。
   - 申告として読むのは、このコードブロックの中だけ（`extractTestCommandFences`。CommonMark のフェンスの規則：行頭の空白は3つまで、
     `` ` `` か `~` を3つ以上、閉じるのは同じ文字で同じ数以上、言語の名前は情報文字列の最初の語）。コードブロックの外の文や、ほかの
     コードブロックの中（4つのバッククォートで例を引用したものなど）は、申告として扱わない。申告のコードブロックは本文から取り除く。

@@ -33,6 +33,8 @@ const ja = {
     verified: "観点を検証している",
     notVerified: "観点を検証していない",
     testRun: "テストの実行",
+    previousTestRun: "前の提出のテストの実行（今の提出では、まだ実行していません）",
+    previousFinalReview: "前の提出の最終レビュー（今の提出では、まだ判定していません）",
     pass: "合格",
     fail: "不合格",
     runMeta: (exitCode: number, seconds: string) => `終了コード ${exitCode}・${seconds}秒・`,
@@ -196,6 +198,9 @@ const en: PartsMessages = {
     verified: "Verifies the viewpoint",
     notVerified: "Does not verify the viewpoint",
     testRun: "Test run",
+    previousTestRun: "Test run for the previous submission (not yet run for the current one)",
+    previousFinalReview:
+      "Final review of the previous submission (not yet judged for the current one)",
     pass: "Passed",
     fail: "Failed",
     runMeta: (exitCode, seconds) => `Exit code ${exitCode} · ${seconds}s · `,

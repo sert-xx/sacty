@@ -878,6 +878,12 @@ export function extractBlocks(
   validRemarkIds: ReadonlySet<string>,
   /** 変更を申し出られる工程。ここに無い工程への申し出は無視する。 */
   changeable: readonly StepKey[] = [],
+  /**
+   * テストのコマンドの申告（sacty-test-command のコードブロック）を読み、本文から取り除くか（PBI-94）。テストの仕組みが無いタスクの
+   * 実装の工程だけ true にする。それ以外（ほかの工程・テストの仕組みがあるタスクの実装）では、そのコードブロックも本文のまま残し、
+   * 申告として扱わない（PR #105 再レビュー指摘）。
+   */
+  options: { testCommand?: boolean } = {},
 ): Extracted {
   let responses: RemarkResponse[] | undefined;
   let testViewpoints: TestViewpoint[] | undefined;
@@ -885,7 +891,7 @@ export function extractBlocks(
   let proposalSeen = false;
   let testMap: TestMapping[] | undefined;
   // テストのコマンドの申告は、専用のコードブロックだけから読み、本文（とほかの JSON の読み取り）からは取り除く（PR #105 再々レビュー指摘）
-  const declared = extractTestCommandFences(output);
+  const declared = options.testCommand ? extractTestCommandFences(output) : { output };
   const body = declared.output;
   const used: JsonCandidate[] = [];
   for (const candidate of jsonCandidates(body).reverse()) {
@@ -925,7 +931,8 @@ export function extractBlocks(
     // 読んだ JSON は、表示用の本文から取り除く
     if (read) used.push(candidate);
   }
-  const { testCommand, invalid: testCommandInvalid } = declared;
+  const testCommand = "testCommand" in declared ? declared.testCommand : undefined;
+  const testCommandInvalid = "invalid" in declared ? declared.invalid : undefined;
   return {
     output: withoutCandidates(body, used).trim(),
     responses: responses ?? [],

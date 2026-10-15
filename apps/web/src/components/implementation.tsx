@@ -3,7 +3,7 @@ import { cn } from "cn";
 import { CardSection } from "@/components/card-section";
 import { Markdown } from "@/components/markdown";
 import { getMessages } from "@/i18n/server";
-import { addedTestsResult, formatStamp } from "@/lib/labels";
+import { addedTestsResult, formatStamp, verificationResults } from "@/lib/labels";
 
 const OK = "border-accent-line bg-accent text-accent-foreground";
 const NG = "border-warn-line bg-warn-soft text-warn";
@@ -26,11 +26,8 @@ export async function Implementation({ task }: { task: Task }) {
   const m = messages.parts.implementation;
   const step = task.steps.find((s) => s.key === "implement");
   const viewpoints = task.approved.design?.testViewpoints ?? [];
-  const tests = task.lastTests;
-  const review = task.lastReview;
-  // 最終レビューは、最新のテストの結果（テストを飛ばしたタスクは、飛ばした時。PBI-94）のあとに行われたものだけを対応表に出す
-  const checkedAt = task.testsSkippedAt ?? tests?.at;
-  const reviewIsCurrent = Boolean(review && checkedAt && review.at >= checkedAt);
+  // 今の提出の検証のものだけを対応表に出し、前の提出のものは「前の提出の」と区別して出す（PR #105 再レビュー指摘）
+  const { tests, testsCurrent, review, reviewCurrent: reviewIsCurrent } = verificationResults(task);
   const mapped = new Map(task.testMap.map((entry) => [entry.viewpointId, entry.tests]));
   const running = task.status === "running" && step?.state === "active";
   // テストの仕組みが無いタスク（PBI-94）は、テストではなく目的から判定することを出す
@@ -144,7 +141,7 @@ export async function Implementation({ task }: { task: Task }) {
                       <span className="flex flex-wrap gap-1.5">
                         {noTests && list.length === 0 ? (
                           <Pill tone={NONE}>{m.judgedByGoal}</Pill>
-                        ) : !tests ? (
+                        ) : !tests || !testsCurrent ? (
                           <Pill tone={NONE}>{m.notRun}</Pill>
                         ) : tests.exitCode === 0 && list.length > 0 ? (
                           <Pill tone={OK}>{m.testsPassed}</Pill>
@@ -172,7 +169,7 @@ export async function Implementation({ task }: { task: Task }) {
       {tests && (
         <details className="rounded-lg border border-border p-3.5 text-sm">
           <summary className="cursor-pointer">
-            <span className="font-semibold">{m.testRun}</span>{" "}
+            <span className="font-semibold">{testsCurrent ? m.testRun : m.previousTestRun}</span>{" "}
             <Pill tone={tests.passed ? OK : NG}>{tests.passed ? m.pass : m.fail}</Pill>{" "}
             <span className="text-xs text-muted-foreground">
               {m.runMeta(tests.exitCode, (tests.durationMs / 1000).toFixed(1))}
@@ -191,11 +188,17 @@ export async function Implementation({ task }: { task: Task }) {
         <div
           className={cn(
             "flex flex-col gap-2 rounded-lg border p-3.5 text-sm leading-6",
-            review.passed ? "border-accent-line" : "border-warn-line",
+            !reviewIsCurrent
+              ? "border-border text-muted-foreground"
+              : review.passed
+                ? "border-accent-line"
+                : "border-warn-line",
           )}
         >
           <p className="flex flex-wrap items-center gap-2">
-            <span className="font-semibold">{m.finalReview}</span>
+            <span className="font-semibold">
+              {reviewIsCurrent ? m.finalReview : m.previousFinalReview}
+            </span>
             <Pill tone={review.passed ? OK : NG}>{review.passed ? m.pass : m.fail}</Pill>
             <span className="text-xs text-muted-foreground">
               {m.reviewer}

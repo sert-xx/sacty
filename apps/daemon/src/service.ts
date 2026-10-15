@@ -4003,6 +4003,8 @@ export class TaskService {
       outcome.output,
       new Set(latest.remarks.filter((r) => r.step === step && !r.voided).map((r) => r.id)),
       changeableSteps(latest, step),
+      // テストのコマンドの申告を読むのは、テストの仕組みが無いタスクの実装の工程だけ（PR #105 再レビュー指摘）
+      { testCommand: step === "implement" && Boolean(latest.noTestsReason) },
     );
     const { responses, testViewpoints, proposal, testMap, testCommand } = extracted;
     // テストの仕組みが無いタスクで、テストのコマンドの申告の形が正しくなければ、申告が無いものとして進めない

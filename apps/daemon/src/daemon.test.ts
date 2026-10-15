@@ -16504,6 +16504,44 @@ describe("テストの仕組みが無いリポジトリ（PBI-94）", () => {
     activity.close();
   });
 
+  it("申告を読むのはテストの仕組みが無いタスクの実装だけ。ほかの工程やテストのあるタスクでは、コードブロックを本文に残す（PR #105 再レビュー指摘）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const example = '```sacty-test-command\n{"command":"make test",}\n```';
+    const { service, tests } = makeService(
+      activity,
+      [
+        out(`# 要求要件\n\n申告の例：\n\n${example}`),
+        out(
+          `# 実装の説明\n\n${example}\n\n${block({ "sacty-test-map": [{ viewpointId: "REQ", tests: ["a.test › a"] }] })}`,
+        ),
+        review(),
+      ],
+      {
+        planner: async () => ({
+          steps: ["requirements", "implement", "pr"],
+          fallback: false,
+          testCommand: "npm test",
+          costUsd: 0,
+          estimated: false,
+        }),
+      },
+    );
+    const { id } = service.createTask({ projectId: "default", title: "テストのあるタスク" });
+    await drain(service);
+    // 要求要件の本文から、例が消えない
+    expect(taskOf(service, id).outputs.requirements).toContain(example);
+    service.approve(id, { step: "requirements", submission: 1 });
+    await drain(service);
+    const task = taskOf(service, id);
+    // テストのあるタスクの実装では、申告として扱わない（止めず、本文にも残し、決めたテストのコマンドで検証する）
+    expect(task.pausedMessage).toBeUndefined();
+    expect(task.outputs.implement).toContain(example);
+    expect(task.addedTestCommand).toBeUndefined();
+    expect(tests.calls.map((c) => c.command)).toEqual(["npm test"]);
+    expect(task.gate).toEqual({ step: "pr", submission: 1 });
+    activity.close();
+  });
+
   it("テストの仕組みが無いと答えなければ今どおり止め、テストのコマンドがあればテストの無い判断は捨てる", async () => {
     const activity = new SqliteActivityStore(dbPath);
     const { service } = makeService(
