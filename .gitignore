@@ -11,3 +11,4 @@ coverage/
 docs/pbi/
 # ローカル実行データ
 .sacty/
+output/
