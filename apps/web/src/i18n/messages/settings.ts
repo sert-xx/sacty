@@ -31,6 +31,12 @@ const ja = {
   reviewOff: "PR のレビューの取り込みは止まっています。",
   reviewOn: (requested: boolean, label: string) =>
     `${[requested ? "自分にレビューが依頼された PR" : "", label ? `ラベル「${label}」の付いた PR` : ""].filter(Boolean).join("と、")}を取り込み、レビューだけを行います。`,
+  intervalLabel: "取り込みの間隔（秒）",
+  intervalHelp: (min: number, fallback: number) => `${min} 以上。空なら ${fallback}。`,
+  intervalCurrent: (sec: number, byDefault: boolean) =>
+    `いまは ${sec} 秒ごとに取り込みます${byDefault ? "（既定）" : ""}。`,
+  intervalWhenOn: (sec: number, byDefault: boolean) =>
+    `取り込みを始めると、${sec} 秒ごとに取り込みます${byDefault ? "（既定）" : ""}。`,
   parallelTitle: "タスクの並行実行",
   parallelNote: "実行待ちのタスクを、古い順にこの数まで同時に実行します",
   parallelLabel: "同時に実行するタスクの数",
@@ -84,6 +90,12 @@ const en: SettingsMessages = {
   reviewOff: "PR review intake is stopped.",
   reviewOn: (requested, label) =>
     `${[requested ? "PRs that request your review" : "", label ? `PRs labeled "${label}"` : ""].filter(Boolean).join(" and ")} are imported and only reviewed.`,
+  intervalLabel: "Intake interval (seconds)",
+  intervalHelp: (min, fallback) => `${min} or more. ${fallback} if empty.`,
+  intervalCurrent: (sec, byDefault) =>
+    `Imports every ${sec} seconds now${byDefault ? " (default)" : ""}.`,
+  intervalWhenOn: (sec, byDefault) =>
+    `Once intake starts, imports every ${sec} seconds${byDefault ? " (default)" : ""}.`,
   parallelTitle: "Running tasks in parallel",
   parallelNote: "Queued tasks run at the same time, oldest first, up to this number",
   parallelLabel: "Tasks to run at the same time",

@@ -39,6 +39,9 @@ async function Settings() {
       triageOff={settings.triageOff ?? []}
       ticketLabel={settings.ticketLabel ?? ""}
       maxParallelTasks={settings.maxParallelTasks}
+      issueIntervalSec={settings.issueIntervalSec}
+      reviewIntervalSec={settings.reviewIntervalSec}
+      ticketIntervalSec={settings.ticketIntervalSec}
     />
   );
 }

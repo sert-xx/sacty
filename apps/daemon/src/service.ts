@@ -41,6 +41,7 @@ import {
   fixTaskOpen,
   GATED_STEPS,
   gatePullRequest,
+  type IntakeKind,
   investigationIsGoal,
   isCompleted,
   isRepoless,
@@ -392,7 +393,7 @@ export type DaemonStatus = {
   problems: DaemonText[];
   /** 動くが、知らせたいこと（認証情報を用意できない組織内 PF など。PBI-35）。 */
   warnings: DaemonText[];
-  /** GitHub Issue の取り込みの状況（設定が無ければ null）。 */
+  /** 取り込みの状況（設定ファイルを読めなければ null）。 */
   intake: IntakeStatus | null;
   /** プロジェクトの対象で選べる、言語ごとのイメージ（名前と説明。PBI-41）。 */
   images: { name: string; description: string }[];
@@ -410,9 +411,19 @@ export type IntakeStatus = {
   triageOff?: TriageKind[];
   /** チケットの取り込むラベル（sacty の設定。PBI-52）。 */
   ticketLabel?: string;
-  lastRunAt?: string;
+  /** 取り込みの種類ごとの、直近の取り込み（PBI-100。種類ごとに別の間隔で取り込む）。まだ取り込んでいない種類は無い。 */
+  runs?: Partial<Record<IntakeKind, IntakeRun>>;
+  /** sacty の設定を読めなかった（ラベルなどは無い。PBI-100）。 */
+  settingsUnreadable?: true;
+  /** sacty の設定を読めなかった理由（PBI-100）。 */
+  settingsError?: DaemonText;
+};
+
+/** 1つの種類の、直近の取り込み（PBI-100）。 */
+export type IntakeRun = {
+  lastRunAt: string;
   /** 直近の取り込みで作ったタスクの数。 */
-  imported?: number;
+  imported: number;
   /** 取り込めなかった取り込み元（検索の条件）と理由。 */
   errors?: { query?: string; message: DaemonText }[];
 };
@@ -518,7 +529,8 @@ export function resumeRejected(runtime: "claude-code" | "codex", outcome: AgentO
 export class TaskService {
   private tasks: Map<string, Task>;
 
-  private intakeStatus: IntakeStatus = {};
+  private intakeRuns: Partial<Record<IntakeKind, IntakeRun>> = {};
+  private settingsSaves = 0;
   /** 実行中のタスクと、そのタスクで動いているコンテナ（一時停止・中止で止めるため）。 */
   private readonly inflight = new Map<string, { runIds: Set<string>; done: Promise<void> }>();
   /**
@@ -2352,9 +2364,8 @@ export class TaskService {
         ...(this.deps.hostMcpProblems?.() ?? []),
         ...(this.deps.notifier?.problems() ?? []),
       ],
-      intake: config.config.github
-        ? { ...this.intakeStatus, ...this.labelOf(this.deps.settings.get()) }
-        : null,
+      // 取り込みは、設定ファイルを読めれば動く（PBI-100。以前は github: が要った）
+      intake: this.intakeStatusOf(),
       images: Object.values(config.config.images ?? {}).map(({ name, description }) => ({
         name,
         description,
@@ -2383,7 +2394,33 @@ export class TaskService {
    * 同じ名前は書けない（PBI-99）。
    */
   saveSettings(raw: unknown): SactySettings {
-    return this.deps.settings.put(SactySettingsUpdate.parse(raw));
+    const saved = this.deps.settings.put(SactySettingsUpdate.parse(raw));
+    // 保存したら、取り込みはすべての種類を次の確認ですぐに取り込む（何が変わったかは見分けない。PBI-100）
+    this.settingsSaves += 1;
+    return saved;
+  }
+
+  /**
+   * sacty の設定を保存した回数（デーモンの起動から。PBI-100）。取り込みは、これが変わったら、すべての種類の間隔の起点を戻す
+   * （On にした・ラベルを変えた・Off にしてすぐ On に戻した、などを見分けずに、次の確認ですぐに取り込む）。
+   */
+  settingsSaveCount(): number {
+    return this.settingsSaves;
+  }
+
+  /**
+   * 取り込みの状況（PBI-100）。sacty の設定を読めなくても、記録した取り込み（読めなかった理由を含む）は返す
+   * （`settingsUnreadable` と、いま読めなかった理由 `settingsError` を付ける。定期の確認の前でも理由がわかるように）。
+   */
+  private intakeStatusOf(): IntakeStatus {
+    const runs = Object.keys(this.intakeRuns).length > 0 ? { runs: { ...this.intakeRuns } } : {};
+    let settings: SactySettings;
+    try {
+      settings = this.deps.settings.get();
+    } catch (error) {
+      return { settingsUnreadable: true, settingsError: errorText(error), ...runs };
+    }
+    return { ...this.labelOf(settings), ...runs };
   }
 
   private labelOf(
@@ -2547,8 +2584,15 @@ export class TaskService {
     ].join(",");
   }
 
-  recordIntake(status: IntakeStatus): void {
-    this.intakeStatus = status;
+  /** その種類の取り込みの結果を記録する（ほかの種類の記録は残す。PBI-100）。 */
+  recordIntake(kind: IntakeKind, run: IntakeRun): void {
+    this.intakeRuns = { ...this.intakeRuns, [kind]: run };
+  }
+
+  /** その種類の取り込みの記録を消す（取り込み元が無くなった種類の、古い結果を残さない。PBI-100）。 */
+  clearIntake(kind: IntakeKind): void {
+    const { [kind]: _removed, ...rest } = this.intakeRuns;
+    this.intakeRuns = rest;
   }
 
   /**

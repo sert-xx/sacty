@@ -11,9 +11,12 @@ const ja = {
   },
   intake: {
     title: "Issue・PR・チケットの取り込み",
-    stopped:
-      "取り込みは止まっています。config.yaml に github: を設定すると、定期的に取り込みます。",
-    lastRun: (at: string, n: number) => `最後の取り込み：${at}（${n}件のタスクを作成）`,
+    stopped: "設定ファイル（config.yaml）を読めないので、取り込みは止まっています。",
+    lastRun: (kind: string, at: string, n: number) =>
+      `最後の取り込み（${kind}）：${at}（${n}件のタスクを作成）`,
+    runKinds: { issues: "Issue", reviews: "PR のレビュー", tickets: "チケット" },
+    errorKind: (kind: string) => `【${kind}】`,
+    settingsUnreadable: "sacty の設定を読めないので、取り込みは止まっています：",
     never: "まだ取り込んでいません。",
     noLabel:
       "取り込むラベルも、PR のレビューとチケットの取り込みも設定していないので、取り込みは止まっています。",
@@ -233,8 +236,11 @@ const en: ProjectsMessages = {
   },
   intake: {
     title: "Issue, PR, and ticket intake",
-    stopped: "Intake is stopped. Add github: to config.yaml to import issues periodically.",
-    lastRun: (at, n) => `Last intake: ${at} (${n} task${n === 1 ? "" : "s"} created)`,
+    stopped: "Intake is stopped because the settings file (config.yaml) cannot be read.",
+    lastRun: (kind, at, n) => `Last ${kind} intake: ${at} (${n} task${n === 1 ? "" : "s"} created)`,
+    runKinds: { issues: "issue", reviews: "PR review", tickets: "ticket" },
+    errorKind: (kind) => `[${kind}] `,
+    settingsUnreadable: "Intake is stopped because the sacty settings cannot be read: ",
     never: "Nothing imported yet.",
     noLabel: "No intake label, PR review intake, or ticket intake is set, so intake is stopped.",
     label: (label) => `Issues: label ${label}`,

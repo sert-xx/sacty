@@ -4,6 +4,7 @@ import {
   type CreateTaskInput,
   type CreateTemplateTaskInput,
   type DaemonText,
+  type IntakeKind,
   type Project,
   type ProjectDefinitionInput,
   renderMessage,
@@ -87,8 +88,18 @@ export type IntakeStatus = {
   triageOff?: TriageKind[];
   /** チケットの取り込むラベル（sacty の設定。PBI-52）。 */
   ticketLabel?: string;
-  lastRunAt?: string;
-  imported?: number;
+  /** 取り込みの種類ごとの、直近の取り込み（PBI-100）。まだ取り込んでいない種類は無い。 */
+  runs?: Partial<Record<IntakeKind, IntakeRun>>;
+  /** sacty の設定を読めなかった（PBI-100）。 */
+  settingsUnreadable?: true;
+  /** sacty の設定を読めなかった理由（PBI-100）。 */
+  settingsError?: DaemonText;
+};
+
+/** 1つの種類の、直近の取り込み（PBI-100）。 */
+export type IntakeRun = {
+  lastRunAt: string;
+  imported: number;
   /** 取り込めなかった対象（検索の条件）と理由。 */
   errors?: { query?: string; message: DaemonText }[];
 };
@@ -98,7 +109,7 @@ export type DaemonStatus = {
   problems: DaemonText[];
   /** 動くが、知らせたいこと（認証情報を用意できない組織内 PF など。PBI-35）。古いデーモンには無い。 */
   warnings?: DaemonText[];
-  /** GitHub Issue の取り込み（設定が無ければ null）。 */
+  /** 取り込みの状況（設定ファイルを読めなければ null）。 */
   intake: IntakeStatus | null;
   /** プロジェクトの対象で選べる、言語ごとのイメージ（PBI-41）。古いデーモンには無い。 */
   images?: { name: string; description: string }[];

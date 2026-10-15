@@ -335,6 +335,20 @@ describe("sacty の設定の保存（PBI-99）", () => {
     });
   });
 
+  it("取り込みの種類ごとの間隔を送る（空はそのまま送り、デーモンが「設定しない」にする。PBI-100）", async () => {
+    saveSettings.mockReset();
+    saveSettings.mockResolvedValue({ ok: true, settings: {} });
+    await saveSettingsAction(
+      {},
+      form({ intakeLabel: "sacty", issueIntervalSec: "60", reviewIntervalSec: "900" }),
+    );
+    expect(saveSettings.mock.calls[0]?.[0]).toMatchObject({
+      issueIntervalSec: "60",
+      reviewIntervalSec: "900",
+      ticketIntervalSec: "",
+    });
+  });
+
   it("デーモンが拒否した理由（同じ名前のラベルなど）を、そのまま返す", async () => {
     saveSettings.mockReset();
     saveSettings.mockResolvedValue({ ok: false, message: "別の名前を書いてください。" });

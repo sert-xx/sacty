@@ -1,21 +1,27 @@
-<!-- 対応するコード: packages/core/src/projects.ts（SactySettings・TicketSourceConfig）、apps/daemon/src/intake.ts、apps/daemon/src/tickets.ts、apps/daemon/src/config.ts（github）、apps/web/src/i18n/messages/settings.ts -->
+<!-- 対応するコード: packages/core/src/projects.ts（SactySettings・TicketSourceConfig）、apps/daemon/src/intake.ts、apps/daemon/src/tickets.ts、apps/web/src/i18n/messages/settings.ts、apps/web/src/i18n/messages/projects.ts -->
 
 # Issue・PR・チケットの取り込み
 
 GitHub の Issue・PR や JIRA のチケットを、定期的に取り込んでタスクにします。取り込みの設定は、すべてのプロジェクトに共通の設定として、
 画面の「sacty の設定」（ユーザーメニュー）で決めます。
 
-## 取り込みを動かす
+## 取り込みの間隔
 
-取り込みは、`config.yaml` に `github:` を書いたときだけ動きます（書かなければ、Issue・PR・チケットのどれも取り込みません。
-画面の「今すぐ取り込む」でも取り込みません）。
+取り込みは、「Issue の取り込み」「PR のレビューの取り込み」「チケットの取り込み」の種類ごとに、別々の間隔で動きます。
+間隔は「sacty の設定」の、それぞれの区画の「取り込みの間隔（秒）」で決めます。
 
-```yaml
-github:
-  poll_interval_sec: 300   # 取り込む間隔（秒。60 以上。既定 300）
-```
-
-間隔はデーモンを止めずに変えられます。プロジェクトの画面の「今すぐ取り込む」で、間隔を待たずに取り込めます。
+- 60 以上の整数（秒）を書きます。空にすると 300 秒です。60 より短い値や整数でない値は保存できず、理由が画面に出ます。
+- 変えた間隔は、デーモンを止めずに次の取り込みから効きます。デーモンを起動したときは、すべての種類をすぐに取り込みます。
+- 「sacty の設定」を保存すると、On でラベルなどを設定している種類は、30 秒以内に取り込みます（間隔が過ぎるのを待ちません）。
+  その後は、新しい間隔ごとに取り込みます。Off の種類や、ラベルなどを設定していない種類は、保存しても取り込みません。
+  保存したときにその種類を取り込んでいる途中なら、新しい取り込みは、いまの取り込みが終わった後の確認（30 秒ごと）で始まります
+  （取り込みが長引くと、30 秒より遅れます）。取り込みが止まっている種類の欄には、
+  取り込みを始めたときの間隔が出ます。
+- 1つの種類が失敗したり、GitHub のレート制限に当たったりしても、ほかの種類の取り込みは続きます。
+- プロジェクトの画面の「今すぐ取り込む」で、すべての種類を間隔を待たずに取り込めます。プロジェクトの画面には、種類ごとの最後の取り込みと、
+  取り込めなかった対象が、どの種類のものかとあわせて出ます（On にしていない種類は出ません）。
+- `config.yaml` に取り込みの設定は要りません。JIRA のチケットも、`github:` を書かなくても取り込みます。以前の版の `github:`
+  （`poll_interval_sec`）は、書いてあっても読みません。
 
 ## Issue
 
