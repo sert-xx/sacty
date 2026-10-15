@@ -70,7 +70,8 @@ You can export a project definition and import it into another sacty.
 - Included: the name, targets (including image choices), the context repository, notification destinations (destination, channel, and language; secrets only as names or references),
   ticket sources, shared composes, and the after-merge watch (only when On).
 - Not included: GitHub accounts (personal settings), tokens, and Slack mentions (targets and kinds). Mention targets differ per person and
-  environment. After importing, add the targets on the project settings page.
+  environment. After importing, set both the targets and the kinds again on the project settings page as needed
+  (the kinds return to the default, only when a person is needed).
 - On import, files with unknown fields are rejected.
 - Files exported with an earlier version (version 3) cannot be imported, whether or not they include mentions. The web UI shows the reason;
   export the project again with the current sacty.

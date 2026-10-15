@@ -40,7 +40,8 @@ const ja = {
   targetScope: (scope: string) => `${scope}：`,
   settingsTitle: (name: string) => `${name} の設定`,
   export: "エクスポート",
-  exportNote: "アカウント・トークン・Slack のメンションの相手は、エクスポートに含めません。",
+  exportNote:
+    "アカウント・トークン・Slack のメンション（相手と種類）は、エクスポートに含めません。インポートした先で、相手と種類の両方を必要に応じて設定し直してください。",
   exportNotFound: "プロジェクトが見つかりません。",
   preview: {
     title: "コンテキストのプレビュー",
@@ -263,7 +264,8 @@ const en: ProjectsMessages = {
   targetScope: (scope) => `${scope}: `,
   settingsTitle: (name) => `${name} settings`,
   export: "Export",
-  exportNote: "Accounts, tokens, and Slack mention targets are not exported.",
+  exportNote:
+    "Accounts, tokens, and Slack mentions (targets and kinds) are not exported. Where the project is imported, set both the targets and the kinds again as needed.",
   exportNotFound: "Project not found.",
   preview: {
     title: "Context preview",

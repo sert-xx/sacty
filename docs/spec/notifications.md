@@ -39,7 +39,7 @@
 - メンションの相手（`targets`、1〜20件）は `U…`・`W…`（ユーザー）・`S…`（ユーザーグループ）・`@here`・`@channel`。本文の先頭に、
   それぞれ `<@U…>`・`<!subteam^S…>`・`<!here>`・`<!channel>` で付ける。メンションする種類（`kinds`）の既定は `approval`・`escalation`・
   `paused`（完了はしない）。
-- メンション（`targets`・`kinds`）は、プロジェクトのエクスポートに含めない（[書き出し](export.md)）。インポートしたプロジェクトでは、設定し直す。
+- メンション（`targets`・`kinds`）は、プロジェクトのエクスポートに含めない（[書き出し](export.md)）。インポートしたプロジェクトでは、相手と種類の両方を設定し直す。
 
 コード: `apps/daemon/src/notifier.ts`（`notificationText`・`mentionText`・`withMention`）、`packages/core/src/projects.ts`（`SlackMention`・`SlackMentionTarget`・`DEFAULT_MENTION_KINDS`）
 

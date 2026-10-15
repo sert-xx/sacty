@@ -41,8 +41,8 @@ Code: `apps/daemon/src/service.ts` (`awaitingExport`, `exportOutput`, `retryExpo
   mean nothing, so neither is included. The destination, channel, language, and secret references are included.
 - `POST /api/projects/import` strictly checks the same shape (unknown fields, a different `sacty`, or a different version are errors) and saves it as a project with a new ID
   (checking for conflicts with other projects before saving). From the web UI, it reads files up to 1,000,000 bytes.
-  - A `mention` in the notification destination is an unknown-field error (`input.unknownKeys`). The imported project has no mentions; add them in
-    the project settings.
+  - A `mention` in the notification destination is an unknown-field error (`input.unknownKeys`). The imported project has no mentions; set both the targets and the kinds again in
+    the project settings (when added, the kinds default to `approval`, `escalation`, and `paused`).
   - Version 3 files (the version that included mentions) are rejected with or without mentions, with a message asking to export again (`input.exportVersionWithMentions`).
     Other version differences are `input.unsupportedVersion`. Either way, the version error is returned as the first error (the web UI shows the first error).
 
