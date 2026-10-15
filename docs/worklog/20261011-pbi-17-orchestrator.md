@@ -4,7 +4,7 @@
 - タスク: PBI-17
 - PR: #23
 - ブランチ: feat/issue-17-orchestrator
-- 関係する ADR: [タスクの開始時に、オーケストレーター（AI）がタスクと対象リポジトリのコードを読んで、決まった候補から工程を選ぶ](../adr/20261011-0139-orchestrator-chooses-step-plan.md)
+- 関係する ADR: [タスクの開始時に、オーケストレーター（AI）がタスクと対象リポジトリのコードを読んで、決まった候補から工程を選ぶ](../adr/20261011-0139-superseded-orchestrator-chooses-step-plan.md)
 
 ## 目的
 

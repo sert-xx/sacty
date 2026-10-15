@@ -8,7 +8,7 @@ judges change requests, the final review, where to send PR comments back to, and
 
 Approval and Request changes are in [Approval and request changes](approval.en.md); Task split and Integration review are in [Task split and integration review](split-and-integrate.en.md).
 
-Related ADRs: [Set up the agent configuration for handling a repository with sacty through the "Sacty setup" task template](../adr/20261014-1530-task-template-sacty-setup.md), [In a repository without tests, skip the tests and let the Goal Guardian judge acceptance from the task's goal](../adr/20261015-0000-verify-without-test-command.md)
+Related ADRs: [Remove the "PR作成" step and open the PR and wait for approval inside the Implementation step](../adr/20261015-1430-implement-step-opens-pull-request.md), [Set up the agent configuration for handling a repository with sacty through the "Sacty setup" task template](../adr/20261014-1530-task-template-sacty-setup.md), [In a repository without tests, skip the tests and let the Goal Guardian judge acceptance from the task's goal](../adr/20261015-0000-verify-without-test-command.md)
 
 ## How tasks are created
 
@@ -72,15 +72,15 @@ Code: `packages/core/src/events.ts` (`TaskTemplate`, `CreateTemplateTaskInput`, 
 | `split` | Task split | Creates child tasks and waits for them to finish |
 | `integrate` | Integration review | Checks whether the child tasks' results meet the parent's requirements |
 | `reproduce` | Reproduce | Writes a test that reproduces the bug (fails) |
-| `implement` | Implementation | Implements |
-| `pr` | Deliverable review | sacty opens the PR (no agent is used) |
+| `implement` | Implementation | Implements. After it passes verification, sacty opens the implementation PR and waits for a person's approval (merging the PR) |
 
 Step categories:
 
-- Steps with an approval gate (`GATED_STEPS`): `investigate`, `requirements`, `design`, `integrate`, `pr`. However, Investigation at the start of a plan that implements
+- Steps with an approval gate (`GATED_STEPS`): `investigate`, `requirements`, `design`, `integrate`, `implement`. However, Investigation at the start of a plan that implements
   (preliminary investigation) moves on to the next step without approval (`StepCompleted`). Only Investigation in a task whose purpose is investigation (the last step is `investigate`) is approved.
+  Implementation does not wait for approval as soon as the agent's run ends; it waits for approval only after it passes verification ("Verifying the implementation" below) and the implementation PR is opened.
 - Steps that can be redone through Request changes (`REWORK_STEPS`): `investigate`, `reproduce`, `requirements`, `design`, `implement`.
-- Steps that need a repository (`REPO_STEPS`): `implement`, `reproduce`, `review`, `pr`.
+- Steps that need a repository (`REPO_STEPS`): `implement`, `reproduce`, `review`.
 - Steps that can use docker compose services (`SERVICE_STEPS`): `investigate` (only for bug investigation), `reproduce`, `implement`.
 - Steps that can be exported (`EXPORT_STEPS`): `investigate` (only when it is the last step), `requirements`, `design`.
 
@@ -90,13 +90,13 @@ Code: `packages/core/src/events.ts` (`StepKey`, `GATED_STEPS`, `REWORK_STEPS`, `
 
 | `plan` | Steps |
 | --- | --- |
-| `standard` | `investigate` → `requirements` → `design` → `implement` → `pr` |
-| `skip-design` | `investigate` → `requirements` → `implement` → `pr` |
+| `standard` | `investigate` → `requirements` → `design` → `implement` |
+| `skip-design` | `investigate` → `requirements` → `implement` |
 | `investigate` | `investigate` (investigation only) |
 | `design-only` | `requirements` → `design` (design only) |
 | `review` | `review` (review only) |
 | `split` | `investigate` → `requirements` → `design` → `split` → `integrate` |
-| `bugfix` | `investigate` → `reproduce` → `implement` → `pr` |
+| `bugfix` | `investigate` → `reproduce` → `implement` |
 
 Restrictions on which plans can be chosen (`allowedPlans`): `review` only when there is a repository and the task points to a PR. `design-only` only for tasks
 without a repository. `split` cannot be chosen by child tasks (splitting is one level only).
@@ -125,11 +125,11 @@ The following are read from the answer (JSON under the heading `sacty-steps`) an
 | `repo`, `repoReason` | For a task without a repository that chose a plan needing one, the repository to work in |
 
 - Step images (when `images` is configured and the project's target does not specify an image):
-  - The prompt asks for an image from `images` for every step except PR creation (which does not use a container). The default image is not listed as a candidate; it is described as
+  - The prompt asks for an image from `images` for every step in the chosen plan. The default image is not listed as a candidate; it is described as
     the last resort when none of `images` fits (only Node.js and git to run Claude Code and Codex, with no test browsers, DB clients, or tools for other languages),
     and for a step that uses it, the reason goes in `defaultReasons`. The image that runs the tests (Implementation, and Reproduce for bug fixes) is to be chosen from
     `testCommand` and the repository's dependencies (browser tests, DB clients, and so on).
-  - For each step that runs in the default image (a chosen step other than PR creation whose image is absent or `default`), the reason is recorded in
+  - For each step that runs in the default image (a chosen step whose image is absent or `default`), the reason is recorded in
     `defaultImageReasons` of `StepsChosen`; a step without a reason (no image written, or `default` without a reason) is recorded in `imagesUnexplained`.
     The task does not stop; it proceeds in the default image, and the Activity (the task page) shows that there is no reason.
   - Neither is recorded when `images` is not configured, when the project's target specifies an image, for a task that proceeds without a repository, or for a PR-review-only task.
@@ -149,8 +149,7 @@ Code: `apps/daemon/src/service.ts` (`askOrchestrator`, `runNextInner`, `withImag
   The step's state does not matter (a step yet to run, running, failed or paused, awaiting approval, or done). A cancelled task cannot be changed.
 - The choices are the names in `images` and `default` (the default image). The screen shows each description (`description` in `images`). These are
   refused with the reason (409): a name not in `images` (including a name removed from config.yaml; `image.notInImages`), the current name
-  (`image.unchanged`), a step the task doesn't have (`image.stepMissing`), and the PR step (it doesn't run in a container, so it has no image;
-  `image.noImageStep`). When config.yaml can't be read or parsed, the names can't be checked, so the change is refused with the settings problem as the
+  (`image.unchanged`), and a step the task doesn't have (`image.stepMissing`). Every step can be changed. When config.yaml can't be read or parsed, the names can't be checked, so the change is refused with the settings problem as the
   reason (`image.configUnavailable`; `default` too). When the daemon's status can't be fetched or the settings can't be read, the screen says the choices
   can't be checked and shows neither the warning that a name is not in `images` nor the change form (`stepImageOptions`; a temporary failure is not mistaken for a removed name).
 - A change appends `StepImageChanged` (`step`, `from`, `to`; the actor is `person`). `from` is the name before the change (`default` if none was set).
@@ -170,23 +169,53 @@ Code: `apps/daemon/src/service.ts` (`askOrchestrator`, `runNextInner`, `withImag
 
 Code: `apps/daemon/src/service.ts` (`changeStepImage`, `runNextInner`, `integrate`), `apps/daemon/src/server.ts`, `packages/core/src/events.ts` (`StepImageChanged`, `ChangeStepImageInput`), `packages/core/src/projection.ts` (`stepRunning`), `apps/web/src/lib/labels.ts` (`stepImageRows`, `stepImageOptions`)
 
+## Tasks from the version with the "PR作成" step
+
+Earlier versions had a "PR作成" (open PR) step (`pr`) after Implementation. That step was removed, with no compatibility layer. Its records can't be read as a step name,
+so at daemon startup, before the Activity is read, tasks with those records are deleted from the Activity (`purgeLegacyPrStepTasks`).
+
+- Deleted tasks: tasks whose plan (`steps` in `StepsChosen`) contains `pr`, and tasks with a record that points to the `pr` step (`step` or `target` is `pr`).
+  Tasks in progress (queued, waiting for approval, paused, and so on) are deleted too.
+- Tasks deleted together: the parent and children of a task split (if either is deleted, the parent and all children), and a fix task from the watch after merge and its original task (if either
+  is deleted, both). The links are followed through `parent` and `fix` of each `TaskCreated` (in both directions, repeatedly).
+- The number of deleted tasks and their IDs are written to the daemon log. If there is nothing to delete, nothing is done.
+- The Activity is append-only (a trigger rejects deletes), so the trigger is dropped only while deleting, inside the same transaction, and recreated afterwards.
+- Not deleted: workspaces, session logs, Orchestrator sessions, and GitHub branches and PRs (open PRs stay open).
+- `step_agents.pr` in `config.yaml` is an unknown step, so it is a settings error.
+
+Code: `apps/daemon/src/activity.ts` (`purgeLegacyPrStepTasks`), `apps/daemon/src/main.ts`, `apps/daemon/src/config.ts` (`step_agents`)
+
 ## Verifying the implementation
 
 - When the Implementation step finishes, the task waits for verification (`verification = "pending"`), and the test command is run in a test container. It passes when the exit code is 0 and
   every verification viewpoint corresponds to a test. The viewpoints are the design's test viewpoints if there is a design, `REPRO` if there is a reproduction, and otherwise `REQ`.
 - After the tests pass, the task moves to the Goal Guardian's final review. The final review reads the code after implementation and the diff, judges each viewpoint and each comment,
-  and passes only when all are met. If it passes, the task moves to the next step (Deliverable review).
+  and passes only when all are met. If it passes, the task stays in the Implementation step, and sacty opens the implementation PR and the task waits for the Implement approval ("The PR for a verified implementation" below).
 - If the tests or the final review do not pass, the implementation is redone. If they fail `MAX_VERIFY_ATTEMPTS` (3) times in a row, the task is paused (`verification`).
   Resuming resets the count.
 - After the Reproduce step, the reproduction test is run; if the exit code is not 0, the bug is treated as reproduced and the task moves to Implementation. If it is 0 (or no reproduction test
   was declared), the bug is treated as not reproduced and the task waits for a person's decision (the Reproduce step cannot be approved; request changes or cancel).
 - The test image is the Implementation step's image (or Reproduce's if absent) for verification, and the Reproduce step's image (or Implementation's if absent) for checking reproduction.
-- The implementation deliverable (the task screen and the Deliverable review approval screen) shows the test results and the final review in the correspondence table only for the
+- The implementation deliverable (the task screen and the Implement approval screen) shows the test results and the final review in the correspondence table only for the
   current submission's verification (`verificationResults`). Test results and final reviews after the verification of a redone implementation has started (`verification` is `pending`), and final
   reviews older than the latest test result (or, if tests were skipped, the time they were skipped), are treated as the previous submission's: they are shown under the headings "Test run for the
   previous submission (not yet run for the current one)" and "Final review of the previous submission (not yet judged for the current one)", and the result in the correspondence table is
   "Not run". For a task without tests, a viewpoint without tests is shown as "No tests (judged by the goal)" only when there is a final review of the current submission; while waiting for
   verification (before the judgment by the goal), it is "Not run" (`judgedByGoalForCurrent`).
+
+### The PR for a verified implementation
+
+- When the final review passes, the Implementation step is not finished; the task waits to open the PR (`Task.publishPending`; the status is queued). sacty then
+  commits and pushes the implementation workspace and opens the PR ([Approval and request changes](approval.en.md#approval-through-prs)). No agent is used.
+- After opening the PR, sacty records `PullRequestPublished` and the implementation submission (`StepSubmitted`, with `step` set to `implement`) in the same append, and the task waits for the Implement approval.
+  If the implementation changed nothing, sacty records `NoChangesFound` and the implementation submission without opening a PR ([Approval and request changes](approval.en.md#when-the-implementation-has-no-changes)).
+- If opening the PR fails, the reason is recorded and the task stops (`pr.failed` and so on). Resuming opens the PR again without redoing the implementation (waiting to open the PR
+  survives a pause and a restart).
+- The PR is opened even when the budget cap has been reached (it costs nothing and only waits for a person's approval; see "Budget, pause, resume, and cancel" below).
+- Waiting for approval (approval by merging the PR, Request changes, and importing PR comments) works the same as for Requirements and Design ([Approval and request changes](approval.en.md)).
+  Approving the implementation by merging the PR completes the task.
+
+Code: `apps/daemon/src/service.ts` (`runNextInner`, `publish`, `implementSubmitted`, `submitEvents`), `packages/core/src/projection.ts` (`publishPending`, `gatePullRequest`)
 
 Code: `apps/daemon/src/service.ts` (`verify`, `checkReproduction`, `pauseIfVerificationKeepsFailing`), `apps/daemon/src/prompts.ts` (`verificationBasis`), `packages/core/src/events.ts` (`MAX_VERIFY_ATTEMPTS`), `apps/web/src/components/implementation.tsx`, `apps/web/src/lib/labels.ts` (`verificationResults`, `judgedByGoalForCurrent`)
 
@@ -239,12 +268,12 @@ test command, and acceptance is judged from the task's goal instead of by tests.
     description is backed by the code and the diff. The viewpoints (the design's test viewpoints or `REQ`), pass or fail, and
     the redo limit of `MAX_VERIFY_ATTEMPTS` are the same as for a task with tests.
 - Display: the step field of the task screen (test command: none, with the basis; for tests set up in the implementation, "verified and judged by the goal" if they passed,
-  "failed, so the implementation is redone" if they failed, and "will run next" while waiting. `testCommandOfNoTests`), the notice on the implementation deliverable (the task screen and the Deliverable review approval screen)
+  "failed, so the implementation is redone" if they failed, and "will run next" while waiting. `testCommandOfNoTests`), the notice on the implementation deliverable (the task screen and the Implement approval screen)
   ("Not verified by tests" if the latest verification skipped the tests, "Verified by the tests added in the implementation" (success color) if the tests set up in the implementation ran and passed,
   "The tests added in the implementation failed" with the exit code (failure color) if they failed, and "Waiting to run the tests added in the implementation" if the current submission's tests have not run yet
   (`verification` is `pending` and there is a report; the previous submission's result is not shown). `addedTestsResult`), the test line of the PR body (`テスト：テストのコマンドが無いため、テストでは検証していません。
   目的から判定しました。`, with `（実装で用意したテスト）` for tests set up in the implementation) and the basis line, and the Activity (`StepsChosen`, `TestsSkipped`).
-  A person's approval in Deliverable review is still required, as for a task with tests.
+  A person's Implement approval is still required, as for a task with tests.
 
 Code: `apps/daemon/src/service.ts` (`checkNoTests`, `runNextInner`, `verify`), `apps/daemon/src/test-files.ts` (`findTestFiles`, `looksLikeTestFile`, `noTestsStop`, `TEST_FILE_SCAN_LIMIT`), `apps/daemon/src/prompts.ts` (`buildOrchestratorPrompt`, `extractStepPlan`, `buildPrompt`, `extractBlocks`, `extractTestCommandFences`, `buildFinalReviewPrompt`, `noTestsReasonLines`, `resultTableLines`), `packages/core/src/events.ts` (`StepsChosen`, `AgentRunCompleted`, `TestsSkipped`), `packages/core/src/projection.ts` (`noTestsReason`, `addedTestCommand`, `testsSkippedAt`), `apps/web/src/components/implementation.tsx`, `apps/web/src/lib/labels.ts` (`addedTestsResult`, `testCommandOfNoTests`)
 
@@ -256,7 +285,7 @@ The AI is `guardian_agent` (or `default_agent` if absent). For each run it makes
 | --- | --- | --- |
 | Judging change requests | The code at the base | `approved`, `rejected`, `undecidable`. If it cannot read or fails, `undecidable`, which goes to a person's decision (Escalation) |
 | Final review | The code after implementation and the diff (for a task without tests, also the task's goal and the implementation's description) | Pass or fail ("Verifying the implementation" above) |
-| Deciding where to send PR comments back to | The code after implementation for Deliverable review; the code at the base for Requirements and Design | The step to go back to, or `undecidable` ([Approval and request changes](approval.en.md)) |
+| Deciding where to send PR comments back to | The code after implementation for the implementation PR; the code at the base for the Requirements and Design PRs | The step to go back to, or `undecidable` ([Approval and request changes](approval.en.md)) |
 | Integration review | The latest base branch | This AI if `step_agents.integrate` is absent ([Task split and integration review](split-and-integrate.en.md)) |
 
 Change requests: a step's agent can request a change to approved requirements or design (IDs are `CP-<number>`). If approved, the requirements
@@ -267,7 +296,7 @@ Code: `apps/daemon/src/service.ts` (`judge`, `settleEvents`, `runGuardian`, `ver
 ## Budget, pause, resume, and cancel
 
 - Budget: when spending reaches 80% of the cap (`BUDGET_WARN_RATIO`), `BudgetWarned` is recorded (once). When the cap is reached, the task is paused (`budget`) before choosing steps,
-  before running a step (except Deliverable review), and before verification. Tasks waiting for approval are not stopped. Resuming a task stopped by the budget
+  before running a step (except opening the PR for a verified implementation), and before verification. Tasks waiting for approval are not stopped. Resuming a task stopped by the budget
   requires a new cumulative cap larger than the amount spent (up to 10000 US dollars) (`BudgetCapRaised`).
 - Pause reasons (`PauseReason`): `budget`, `usage_limit` (the AI's usage limit), `auth` (an authentication error or missing secret), `error`,
   `verification`, `manual` (a person paused it), `child_cancelled` (a child task was canceled). A failed AI run pauses the task with that reason

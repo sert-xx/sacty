@@ -11,7 +11,7 @@ Related ADR: [When the implementation PR of a sacty task is merged, watch CI/CD 
 ## Scope and start
 
 - Only when the project's `deploymentWatch` is `true`. If it is not set or is `false`, nothing happens (no records are added).
-- Only merges of implementation PRs (Deliverable review, step `pr`) are watched. PRs for Requirements and Design are not. Merges of fix tasks are watched in the same way.
+- Only merges of implementation PRs (the approval of the step `implement`) are watched. PRs for Requirements and Design are not. Merges of fix tasks are watched in the same way.
 - When the PR check (see "The PR check" in [Approval and request changes](approval.en.md)) records the merge, the same append records `DeploymentWatchStarted` (PR number,
   repository, base branch, and merge commit). The merge commit is GitHub's `merge_commit_sha`. If it cannot be obtained, the event has
   no commit and the watch is skipped (reason `no_commit`).

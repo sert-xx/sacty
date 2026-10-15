@@ -5,14 +5,14 @@
 At a step with an approval gate, the task moves to the next step when a person approves it. Approval is done in sacty's web UI or by merging a PR to the target repository
 (approval = merge). Requesting changes redoes the work from the chosen step. When requests for changes to the same step exceed the limit, the task goes to Escalation (waiting for a person's decision).
 
-Related ADRs: [Split intake into "Issue intake" and "PR review intake", and add the review label to sacty's PRs](../adr/20261015-0240-superseded-split-issue-and-pr-review-intake.md), [Label PRs sacty opens for intake, and import reviews from another task as comments on the original task's PR](../adr/20261014-1445-superseded-label-sacty-pull-requests-for-review.md), [Fill the body of PRs sacty opens with fixed rules following the headings of the repository's or Org's PR template](../adr/20261014-1517-pr-body-follows-repository-template.md), [If the implementation has no changes, open no PR and complete without changes after a person checks it](../adr/20261014-2216-complete-without-changes.md)
+Related ADRs: [Remove the "PR作成" step and open the PR and wait for approval inside the Implementation step](../adr/20261015-1430-implement-step-opens-pull-request.md), [Split intake into "Issue intake" and "PR review intake", and add the review label to sacty's PRs](../adr/20261015-0240-superseded-split-issue-and-pr-review-intake.md), [Label PRs sacty opens for intake, and import reviews from another task as comments on the original task's PR](../adr/20261014-1445-superseded-label-sacty-pull-requests-for-review.md), [Fill the body of PRs sacty opens with fixed rules following the headings of the repository's or Org's PR template](../adr/20261014-1517-pr-body-follows-repository-template.md), [If the implementation has no changes, open no PR and complete without changes after a person checks it](../adr/20261014-2216-superseded-complete-without-changes.md)
 
 ## Approval in the web UI
 
 - Approval is possible when the status is `awaiting_approval` or `escalated`, the step is the step waiting for approval (`gate.step`), and the submission round the web UI was showing
   (`submission`) is the current round (otherwise `gate.staleSubmission`).
 - A Reproduce (`reproduce`) awaiting approval (the bug was not reproduced) cannot be approved.
-- Steps that opened a PR (Deliverable review, and Requirements or Design with a PR) cannot be approved from the web UI (`gate.approveOnPullRequest`). A Deliverable review
+- Steps that opened a PR (Implementation, and Requirements or Design with a PR) cannot be approved from the web UI (`gate.approveOnPullRequest`). An implementation
   for which no PR was opened because the implementation had no changes is approved in the web UI ("When the implementation has no changes" below).
 - Approved results are fixed (an approved step's output does not change later). After approval, the next step becomes waiting to run if it can run,
   and otherwise the task becomes `idle`.
@@ -21,7 +21,8 @@ Code: `apps/daemon/src/service.ts` (`approve`, `gateTask`, `nextAfterApproval`),
 
 ## Approval through PRs
 
-Requirements and Design (`StepPullRequestKey`) and Deliverable review are approved through PRs.
+Requirements and Design (`StepPullRequestKey`) and Implementation are approved through PRs. The implementation PR is opened inside the Implementation step after it passes verification
+([Tasks and steps](tasks-and-steps.en.md#the-pr-for-a-verified-implementation)). Approval, Request changes, approval by merging the PR, and importing PR comments work the same for the three steps.
 
 - Whether a task is approved through PRs (`stepPullRequestsOn`): always if it has a task branch. Otherwise, when there is a target repository, the requirements and design have
   not yet been submitted in the web UI, and the project has a GitHub account for that host.
@@ -32,20 +33,21 @@ Requirements and Design (`StepPullRequestKey`) and Deliverable review are approv
 - If that step's PR is open and the head of the task branch has not changed, the same PR is updated (redoing that step). If the PR has been merged or
   closed, or the task branch moved because a fix to an earlier step was merged, a new branch and PR are created from the latest task branch, and
   the earlier open PR is closed. If a PR cannot be opened, the reason is recorded and the task stops.
-- If there is a task branch, the implementation is stacked on the latest task branch and opened as a PR from the task branch to the base branch (Deliverable review).
+- If there is a task branch, the implementation is stacked on the latest task branch and opened as a PR from the task branch to the base branch (the implementation PR).
+  If there is no task branch, it is opened as a PR from a sacty branch (`sacty/task-<first 8 characters of the task ID>`) to the base branch.
   If changes other than the requirements and design files have been stacked on the task branch, publishing stops (`pr.taskBranchChanged`).
 - Each child task of Task split has its own task branch.
 
 ## When the implementation has no changes
 
-In the PR-opening step, if the implementation workspace has not changed at all from the base commit (`NothingToCommitError`), no PR is opened.
+When opening the PR for a verified implementation, if the implementation workspace has not changed at all from the base commit (`NothingToCommitError`), no PR is opened.
 
-- If no implementation PR has been opened yet, `NoChangesFound` (the Deliverable review round to be submitted next) is recorded, and Deliverable review is submitted
+- If no implementation PR has been opened yet, `NoChangesFound` (the Implementation round to be submitted next) is recorded, and the implementation is submitted
   (`StepSubmitted`). Since there is no PR, it can be approved in the web UI. This applies to every task (not only template tasks).
-- Before Deliverable review, the tests and the final review (verification per viewpoint) have passed as usual. The web UI shows the approval wait as "Awaiting deliverable review
+- Before the submission, the tests and the final review (verification per viewpoint) have passed as usual. The web UI shows the approval wait as "Implement awaiting approval
   with no changes", and the approval screen says the implementation changed nothing and asks you to check the reason no change is needed in the implementation notes.
 - Approving completes the task without opening a PR ("Done (no changes)"). Requesting changes redoes the work from Implementation as usual, and a PR is opened if there are changes.
-  The no-changes handling applies only to that submission round (`deliveredWithoutChanges`: `noChanges.submission` is the current Deliverable review round and there is no PR).
+  The no-changes handling applies only to that submission round (`deliveredWithoutChanges`: `noChanges.submission` is the current Implementation round and there is no PR).
 - The same applies when there is a task branch (with the requirements and design PRs merged). No PR to the base branch is opened, and the task branch remains.
 - In a task that already opened an implementation PR, if the redone implementation ends up with no changes, the reason (`pr.failed`, `git.nothingToCommit`) is
   recorded and the task stops, as before (a person decides what to do with the open PR).
@@ -131,12 +133,12 @@ and if there is one, writes the body in the shape of its headings and items. If 
   - Content that did not fit into a heading and "the sacty record" are placed at the end of the body in a collapsible section (`<details>`). If no heading could take any content
     (such as a template without headings), the purpose, changes, and tests are placed without collapsing. If the related Issue does not fit into a heading, it is
     placed before the last part.
-  - The last part (footer) always contains a note that sacty created the PR and the task's ID (`sacty task <ID>`), plus guidance on Deliverable review (implementation PR) or that merging means approval
-    and how to give comments (requirements and design PRs).
+  - The last part (footer) always contains a note that sacty created the PR and the task's ID (`sacty task <ID>`), plus guidance that merging means approval of that step
+    and how to give comments (the implementation PR, and the requirements and design PRs).
 - Length (`limitBody`): the body is kept to 65,000 characters (`PR_BODY_MAX`; a bit shorter than GitHub's limit of 65,536 characters; measured by JavaScript length).
   If it is longer, the end of the part before the last part is cut, and a note that it was cut (`TRUNCATED_NOTE`) is written. HTML comments,
   code blocks, and collapsible sections left open at the cut are closed. The same limit applies to bodies that do not use a template (`buildPullRequestBodyText`, `buildStepPullRequestBodyText`),
-  and the last part (the note that sacty created the PR and the Deliverable review guidance) is not cut.
+  and the last part (the note that sacty created the PR and the guidance that merging means approval of the implementation) is not cut.
   Parts that cannot be cut (`keep`): the task ID line, `Closes #<number>` (including one placed in a template heading), and the guidance that merging the requirements and design PRs
   means approval. If, after cutting, one of them does not remain in the body as a whole line (with line boundaries before and after) outside HTML comments and code blocks, it is
   put back before the last part (`Closes #12` is not considered to remain just because `Closes #123` is present).
@@ -165,14 +167,14 @@ Code: `apps/daemon/src/pr-template.ts` (`GitHubPullRequestTemplates`, `fillTempl
 - Otherwise, posts by bots, and reviews and line comments posted by the original task's project account that start with sacty's review marker,
   are not imported.
 - Once imported, the Goal Guardian decides where to send them back to (redoing that step, or requesting changes to an earlier step) (`ReworkJudged`), and changes are requested without
-  a person's confirmation. If it cannot decide, the first step that can be redone (Implementation for Deliverable review, that step for Requirements or Design) is redone.
+  a person's confirmation. If it cannot decide, the first step that can be redone (Implementation for the implementation PR, that step for Requirements or Design) is redone.
 
 Code: `apps/daemon/src/service.ts` (`importFeedback`, `sactyReviewsOf`, `feedbackRemarks`, `FEEDBACK_QUIET_MS`, `settleReview`, `judgeRework`), `apps/daemon/src/github.ts` (`GitHubPullRequests.feedback`)
 
 ## Request changes
 
 - Steps that can be gone back to (`reworkTargets`): the `REWORK_STEPS` before the step waiting for approval, nearest first. `reproduce` and `investigate` only when they
-  themselves are waiting for approval. When Integration review is waiting for approval, only `split`. If the target is omitted, the first one (`implement` for Deliverable review).
+  themselves are waiting for approval. When Integration review is waiting for approval, only `split`. If the target is omitted, the first one (`implement` when Implementation is waiting for approval).
 - Requesting changes while waiting for approval needs at least one comment (`gate.remarksRequired`). A person can void comments, and voided comments are not passed to the agent.
 - Going back to an earlier step revokes the approvals from that step onward and resets the verification result and failure count. In a task approved through PRs, merged PRs are not reverted.
 - When a person requests changes to something that passed the final review or Integration review, a miss (`GuardianMissed`) is recorded.

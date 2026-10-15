@@ -14,7 +14,7 @@ and registers a fix task automatically if something failed.
    Without it, only CI/CD is watched.
 
 - The project's GitHub account needs permission to read Actions and checks in the target repository.
-- Only merges of a sacty task's Implementation PR (Deliverable review) are watched (Requirements and Design PRs, and PRs made by people, are not).
+- Only merges of a sacty task's Implementation PR are watched (Requirements and Design PRs, and PRs made by people, are not).
 
 ## What it does
 

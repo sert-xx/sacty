@@ -102,9 +102,10 @@ step_agents:          # default_agent if omitted (guardian_agent for Integration
 ```
 
 The keys you can write in `step_agents` are `orchestrator`, the steps `investigate` (Investigation), `review` (Review), `requirements` (Requirements),
-`design` (Design), `split` (Task split), `integrate` (Integration review), `reproduce` (Reproduce), `implement` (Implementation), and `pr` (PR), and
+`design` (Design), `split` (Task split), `integrate` (Integration review), `reproduce` (Reproduce), and `implement` (Implementation), and
 `deployment` (the deployment check after a merge. [After-merge watch](deployment-watch.en.md)).
 Writing a name that is not in `agents` in `default_agent`, `guardian_agent`, or `step_agents` is an error.
+The `pr` key (PR作成) of earlier versions can no longer be written because the step was removed (it is an error; delete it).
 
 ## Budget
 
