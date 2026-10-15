@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { type SpawnOptions, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   closeSync,
@@ -23,6 +23,7 @@ import { parse as parseToml, stringify as stringifyToml } from "smol-toml";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 import { errorText, MessageError } from "./errors.js";
+import { spawnStoppable } from "./fetch-processes.js";
 import { type Platform, PlatformFile, toPlatform } from "./platforms.js";
 import { SecretRef } from "./secrets.js";
 
@@ -1175,25 +1176,6 @@ export class GitContextFetcher implements ContextFetcher {
   }
 }
 
-/**
- * 止められる取得の git のプロセスグループ（PBI-107）。別のグループで動くので、端末の Ctrl+C も、デーモンと一緒に消える
- * 期限のタイマーも届かない。デーモンが終わるとき（通常の終了・process.exit・SIGINT/SIGTERM からの終了）に、すべて止める。
- */
-const fetchGroups = new Set<number>();
-let fetchGroupsExitHook = false;
-
-/** 取得中の git のプロセスグループを、すべて止める（デーモンが終わるとき。同期で行う。PBI-107）。 */
-export function stopContextFetchesSync(): void {
-  for (const pid of fetchGroups) {
-    try {
-      process.kill(-pid, "SIGKILL");
-    } catch {
-      // もう終わっている
-    }
-  }
-  fetchGroups.clear();
-}
-
 function run(
   args: string[],
   cwd?: string,
@@ -1210,38 +1192,24 @@ function run(
   Object.assign(env, authEnv);
   return new Promise((resolve, reject) => {
     if (signal?.aborted) return reject(new MessageError(message("git.aborted")));
-    // 止められる取得は、プロセスグループごと止める（git clone が起動する git-remote-https などの子プロセスも残さない）
-    const child = spawn("git", args, {
-      cwd,
-      env,
-      stdio: ["ignore", "pipe", "pipe"],
-      detached: signal !== undefined,
-    });
+    // 止められる取得は、自分のプロセスグループで起動し、グループごと止める（git clone が起動する git-remote-https などの
+    // 子プロセスも残さない）。デーモンが終わるときにも止める（fetch-processes.ts）
+    const options = { cwd, env, stdio: ["ignore", "pipe", "pipe"] } satisfies SpawnOptions;
+    const stoppable = signal ? spawnStoppable("git", args, options) : undefined;
+    const child = stoppable?.child ?? spawn("git", args, options);
     // 止めたら、終わるのを待ってから失敗にする（呼ぶ側が、取得したディレクトリを消せるように）
     let aborted = false;
     const abort = () => {
       aborted = true;
-      try {
-        if (child.pid !== undefined) process.kill(-child.pid, "SIGKILL");
-      } catch {
-        child.kill("SIGKILL");
-      }
+      stoppable?.stop();
     };
     signal?.addEventListener("abort", abort, { once: true });
-    const group = signal !== undefined ? child.pid : undefined;
-    if (group !== undefined) {
-      fetchGroups.add(group);
-      if (!fetchGroupsExitHook) {
-        fetchGroupsExitHook = true;
-        process.on("exit", stopContextFetchesSync);
-      }
-    }
     let out = "";
     let err = "";
-    child.stdout.on("data", (chunk) => {
+    child.stdout?.on("data", (chunk) => {
       out += chunk;
     });
-    child.stderr.on("data", (chunk) => {
+    child.stderr?.on("data", (chunk) => {
       err += chunk;
     });
     child.on("error", (error) =>
@@ -1249,7 +1217,6 @@ function run(
     );
     child.on("close", (code) => {
       signal?.removeEventListener("abort", abort);
-      if (group !== undefined) fetchGroups.delete(group);
       if (aborted) reject(new MessageError(message("git.aborted")));
       else if (code === 0) resolve(out);
       // git のエラー文は外から来た文なので、そのまま渡す
