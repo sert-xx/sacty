@@ -41,12 +41,27 @@ onepassword:
 ## What is fetched at startup
 
 - When `sacty up` starts, it fetches the secrets in use all at once (authentication of the agents in use, `providers`, the environment variables of `gateway.platforms` and `gateway.mcp_servers`,
-  and project notification destinations). 1Password references are fetched with a single `op run`, so you authenticate only once, at startup.
+  project notification destinations, and `mcp.yaml` and `platforms.yaml` in the projects' context repositories).
+  1Password references are fetched with a single `op run`, so you authenticate only once, at startup.
   For Keychain secrets, it checks that they can be fetched (they are fetched each time they are used).
+- Secrets in context repositories are collected by fetching each project's context (including the upper layers inherited with `extends`).
+  Fetching waits at most 30 seconds. For projects whose context could not be fetched, the web UI shows a warning with the reason (those secrets are fetched when used).
 - For anything that could not be fetched at startup, the web UI shows a warning and the terminal shows which setting failed and why (startup does not stop). Once it is ready, press
-  "Get secrets again" in "sacty settings" in the web UI.
-- npm tokens used only for building images, and secrets in `mcp.yaml` and `platforms.yaml` of the context repository, are not fetched at
-  startup (they are fetched when used). GitHub tokens are fetched from `gh` each time they are used.
+  "Get secrets again" in "sacty settings" in the web UI. Getting the secrets again also fetches the contexts again. If some contexts could not be read,
+  the result says that the secrets in them were not checked.
+- npm tokens used only for building images are not fetched at startup (they are fetched when used). GitHub tokens are fetched from `gh` each time they are used.
+
+## What is fetched when you save a project
+
+- When you save project settings (including when you create or import a project), sacty fetches that project's notification destination and context secrets
+  all at once. 1Password asks for authentication only when there are references not fetched yet.
+- Saving does not stop (it finishes without waiting for the fetch). Anything that could not be fetched is shown as a warning in the web UI.
+
+## Secrets added to a context later
+
+- The context repository is fetched at its latest state each time it is used. So secrets you add to the context repository after startup have not been fetched in advance.
+- They are fetched when used (running a step, ticket triage, calling an external platform, and so on). 1Password asks for authentication then.
+- To fetch them in advance, press "Get secrets again" after changing the context repository, or save the project settings again.
 
 ## Related pages
 

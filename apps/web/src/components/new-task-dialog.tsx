@@ -19,6 +19,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useMessages } from "@/i18n/client";
+import { candidatesLoader, type RepositoryCandidates } from "@/lib/repository-candidates";
 
 const initial: CreateTaskState = {};
 
@@ -29,33 +30,27 @@ const initial: CreateTaskState = {};
 export function NewTaskDialog({
   projectId,
   projectName,
-  repositories,
   hasTargets,
-  problems = [],
 }: {
   projectId: string;
   projectName: string;
-  /** 対象リポジトリの候補（プロジェクトの対象から。Org の対象は gh で読んだもの。PBI-25）。 */
-  repositories: string[];
   /**
    * プロジェクトに対象があるか。候補が無くても（読めなかったなど）、対象があれば名前を入力できる
    * （対象の範囲かどうかはデーモンが確かめる）。
    */
   hasTargets: boolean;
-  /** 候補を読めなかった Org と、その理由。 */
-  problems?: string[];
 }) {
   const [state, formAction, pending] = useActionState(createTaskAction, initial);
   const t = useMessages().forms.task;
   // 作成先は、ダイアログを開いたときのプロジェクトに固定し、閉じるまで変えない
   // （入力中に画面が自動で更新され、別のタブで切り替えたプロジェクトが props で渡されても、
   // 書いている途中のタスクの作成先は変えないため）
-  const [target, setTarget] = useState({
-    id: projectId,
-    name: projectName,
-    repositories,
-    hasTargets,
-  });
+  const [target, setTarget] = useState({ id: projectId, name: projectName, hasTargets });
+  // 対象リポジトリの候補（プロジェクトの対象から。Org の対象は gh で読む。PBI-25）。画面の描画では読まず、
+  // ダイアログを開いたときに読む（ボタンを候補を待たずに出し、画面の自動の更新のたびに GitHub に問い合わせないため。PBI-109）
+  const [candidates, setCandidates] = useState<RepositoryCandidates>({ status: "loading" });
+  const [loadCandidates] = useState(() => candidatesLoader());
+  const repositories = candidates.status === "loaded" ? candidates.repositories : [];
   // タスクのテンプレート（PBI-90）。選ぶと、リポジトリを選ぶだけのフォームになる（題と説明は sacty が決める）
   // 送信の後も選んだままにする（理由を返したときも、同じフォームのまま直せる）
   const [template, setTemplate] = useState<TaskTemplate | "">("");
@@ -63,10 +58,11 @@ export function NewTaskDialog({
   return (
     <Dialog
       onOpenChange={(open) => {
-        if (open) {
-          setTarget({ id: projectId, name: projectName, repositories, hasTargets });
-          setTemplate("");
-        }
+        if (!open) return;
+        setTarget({ id: projectId, name: projectName, hasTargets });
+        setTemplate("");
+        // 対象が無ければ読まない（候補は無く、プロジェクトの設定を案内する）
+        loadCandidates(projectId, hasTargets, t.repositoriesNoAnswer, setCandidates);
       }}
     >
       <DialogTrigger render={<Button size="lg" />}>{t.create}</DialogTrigger>
@@ -77,13 +73,7 @@ export function NewTaskDialog({
             <DialogTitle>{t.create}</DialogTitle>
             <DialogDescription>{t.description(target.name)}</DialogDescription>
           </DialogHeader>
-          {problems.length > 0 && (
-            <ul role="alert" className="flex flex-col gap-1 text-sm text-warn">
-              {problems.map((p) => (
-                <li key={p}>{p}</li>
-              ))}
-            </ul>
-          )}
+          {target.hasTargets && <CandidatesProblems candidates={candidates} />}
           <fieldset className="flex flex-col gap-2">
             <legend className="mb-2 text-sm font-medium">{t.template}</legend>
             <div className="flex flex-wrap items-center gap-1 self-start rounded-md border border-input p-0.5">
@@ -139,18 +129,20 @@ export function NewTaskDialog({
                 autoComplete="off"
                 aria-describedby="task-repo-hint"
                 required={template !== ""}
+                // 候補が1つなら入れておく。候補が届く前に入力していれば、入力を残す（React は、入力していない
+                // ときだけ defaultValue の変化を表示に反映する）
                 defaultValue={
-                  state.values?.repo ??
-                  (target.repositories.length === 1 ? target.repositories[0] : "")
+                  state.values?.repo ?? (repositories.length === 1 ? repositories[0] : "")
                 }
                 placeholder={t.repositoryPlaceholder}
                 className="font-mono"
               />
               <datalist id="task-repo-options">
-                {target.repositories.map((repo) => (
+                {repositories.map((repo) => (
                   <option key={repo} value={repo} />
                 ))}
               </datalist>
+              <CandidatesStatus candidates={candidates} />
               <p id="task-repo-hint" className="text-xs leading-5 text-muted-foreground">
                 {template ? t.templateRepositoryHint : t.repositoryHint}
               </p>
@@ -210,4 +202,44 @@ export function NewTaskDialog({
       </DialogContent>
     </Dialog>
   );
+}
+
+/** 候補を読めなかった Org と、その理由（ダイアログの上に出す。PBI-25）。 */
+export function CandidatesProblems({ candidates }: { candidates: RepositoryCandidates }) {
+  if (candidates.status !== "loaded" || candidates.problems.length === 0) return null;
+  return (
+    <ul role="alert" className="flex flex-col gap-1 text-sm text-warn">
+      {candidates.problems.map((p) => (
+        <li key={p}>{p}</li>
+      ))}
+    </ul>
+  );
+}
+
+/** 候補の読み込みの途中・失敗・空（PBI-109）。どの状態でも、URL を入力して作成できる。 */
+export function CandidatesStatus({ candidates }: { candidates: RepositoryCandidates }) {
+  const t = useMessages().forms.task;
+  if (candidates.status === "loading") {
+    return (
+      <p role="status" className="text-xs leading-5 text-muted-foreground">
+        {t.repositoriesLoading}
+      </p>
+    );
+  }
+  if (candidates.status === "failed") {
+    return (
+      <p role="alert" className="text-xs leading-5 text-warn">
+        {t.repositoriesFailed(candidates.message)}
+      </p>
+    );
+  }
+  // 読めなかった Org があれば、その理由（上に出す）で足りる
+  if (candidates.repositories.length === 0 && candidates.problems.length === 0) {
+    return (
+      <p role="status" className="text-xs leading-5 text-muted-foreground">
+        {t.repositoriesEmpty}
+      </p>
+    );
+  }
+  return null;
 }

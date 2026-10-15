@@ -85,6 +85,8 @@ servers:
   - コマンド：`command`（必須）・`args`・`env`・`via_gateway`（既定 `true`）・`startup_timeout_sec`・`tool_timeout_sec`
 - 秘密情報は値を書かず、`{ secret: 名前 }`（キーチェーンの名前か 1Password の参照。`prefix` は値の前につける）で書きます。
   文字列に `${` は書けません（Claude Code が環境変数として展開するため）。
+- `mcp.yaml`・`platforms.yaml` の秘密情報は、`sacty up` の起動のときとプロジェクトの設定を保存したときに、ほかの秘密情報とまとめて取り出します。
+  後から足したものは、使うときに取り出します（[秘密情報](secrets.md#後からコンテキストに足した秘密情報)）。
 - HTTP のものも `command` のものも、既定で sacty のゲートウェイ経由で使います。工程エージェントには、ゲートウェイの URL（`/ctx-mcp/<名前>`）と、
   実行ごとのトークンだけを渡します（Claude Code の `mcp.json`・Codex の `config.toml` のどちらでも、HTTP の MCP になります）。
 - コンテナの中で動かす（HTTP はコンテナから直接つなぐ）ときは、そのサーバーに `via_gateway: false` と書きます。書いたものはコンテナの中で

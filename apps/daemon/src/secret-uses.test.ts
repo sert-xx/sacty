@@ -1,8 +1,9 @@
 import type { Project } from "@sacty/core";
 import { describe, expect, it } from "vitest";
 import type { AgentConfig, SactyConfig } from "./config.js";
-import { GATEWAY_TOKEN_SECRET } from "./context.js";
-import { secretUses } from "./secret-uses.js";
+import { GATEWAY_TOKEN_SECRET, type McpServer } from "./context.js";
+import type { Platform } from "./platforms.js";
+import { contextSecretUses, secretUses } from "./secret-uses.js";
 
 const agent = (id: string, auth: AgentConfig["auth"], extra: Partial<AgentConfig> = {}) =>
   ({ id, runtime: "codex", auth, ...extra }) as AgentConfig;
@@ -102,8 +103,16 @@ describe("起動時に取り出す秘密情報の参照（PBI-48）", () => {
       { ref: "op://Work/GW/key", where: "providers.corp.secret" },
       { ref: "op://Work/Ticket/client", where: "gateway.platforms.ticket.auth.token.secret" },
       { ref: "op://Work/Docs/token", where: "gateway.mcp_servers.docs.env.TOKEN" },
-      { ref: "op://Work/Slack/webhook", where: "プロジェクト「決済」の通知先（Webhook の URL）" },
-      { ref: "slack-token", where: "プロジェクト「認証」の通知先（Slack のトークン）" },
+      {
+        ref: "op://Work/Slack/webhook",
+        where: "プロジェクト「決済」の通知先（Webhook の URL）",
+        projectId: "p",
+      },
+      {
+        ref: "slack-token",
+        where: "プロジェクト「認証」の通知先（Slack のトークン）",
+        projectId: "q",
+      },
     ]);
     // イメージの作成だけで使う npm のトークンは含めない
     expect(uses.some((u) => u.ref === "npm-token")).toBe(false);
@@ -129,5 +138,93 @@ describe("起動時に取り出す秘密情報の参照（PBI-48）", () => {
         [],
       ),
     ).toEqual([]);
+  });
+});
+
+describe("プロジェクトのコンテキストの秘密情報の参照（PBI-107）", () => {
+  const platform = (name: string, auth: Platform["auth"], from = "ctx@c0ffee0"): Platform =>
+    ({ name, upstream: "https://pf", description: "", auth, allow: [], from }) as Platform;
+  const server = (value: unknown) => value as McpServer;
+
+  it("platforms.yaml の認証と、mcp.yaml の env・headers の参照を、書いた層とともに集める（ホストと同じ名前・ゲートウェイのトークンは除く）", () => {
+    const uses = contextSecretUses(
+      { id: "p", name: "決済" },
+      {
+        platforms: [
+          platform(
+            "docs",
+            { header: "Authorization", prefix: "", secret: "op://Work/Docs/key" },
+            "base@1111111",
+          ),
+          platform("sso", {
+            header: "Authorization",
+            prefix: "",
+            token: {
+              url: "https://t",
+              method: "POST",
+              headers: {},
+              secret: "op://Work/SSO/client",
+              tokenPath: "t",
+              ttlSec: 60,
+            },
+          } as Platform["auth"]),
+          platform("jira", { header: "Authorization", prefix: "", secret: "op://Work/Stolen/key" }),
+        ],
+        mcp: [
+          {
+            name: "wiki",
+            from: "ctx@c0ffee0",
+            server: server({
+              command: "wiki-mcp",
+              args: [],
+              env: { TOKEN: { secret: "op://Work/Wiki/token", prefix: "" }, MODE: "ro" },
+              via_gateway: true,
+            }),
+          },
+          {
+            name: "search",
+            from: "base@1111111",
+            server: server({
+              url: "https://search",
+              headers: {
+                Authorization: { secret: "op://Work/Docs/key", prefix: "Bearer " },
+                "X-Run": { secret: GATEWAY_TOKEN_SECRET, prefix: "" },
+              },
+              via_gateway: true,
+            }),
+          },
+          {
+            name: "private-cloud",
+            from: "ctx@c0ffee0",
+            server: server({
+              url: "https://x",
+              headers: { Authorization: { secret: "op://Work/Hidden/key", prefix: "" } },
+              via_gateway: true,
+            }),
+          },
+        ],
+      },
+      { platforms: ["jira"], mcp: ["private-cloud"] },
+    );
+    expect(uses).toEqual([
+      {
+        ref: "op://Work/Docs/key",
+        where:
+          "プロジェクト「決済」のコンテキスト（base@1111111）の platforms.yaml の docs.auth.secret",
+        projectId: "p",
+      },
+      {
+        ref: "op://Work/SSO/client",
+        where:
+          "プロジェクト「決済」のコンテキスト（ctx@c0ffee0）の platforms.yaml の sso.auth.token.secret",
+        projectId: "p",
+      },
+      {
+        ref: "op://Work/Wiki/token",
+        where:
+          "プロジェクト「決済」のコンテキスト（ctx@c0ffee0）の mcp.yaml の servers.wiki.env.TOKEN",
+        projectId: "p",
+      },
+    ]);
   });
 });

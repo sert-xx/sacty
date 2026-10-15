@@ -95,8 +95,8 @@ only the data at a fixed interval, and only the parts that changed are reflected
 - When the daemon cannot be reached or read, the route returns `{ unavailable: true }` with 200, and the screen stays as it is (it does not keep showing errors).
   When the daemon can be reached again, the next interval reflects the changes. If the daemon could not be reached when the screen was drawn, the screen
   shows that it cannot connect until the daemon is reached, and then shows the contents.
-- Refetching does not fetch the target repository choices (for an Org target, `gh` queries GitHub). The choices in the create-task dialog stay as they were
-  when the screen was drawn. In the task details, the choices for a person to pick a repository for a paused task are requested once, only while the screen
+- Refetching does not fetch the target repository choices (for an Org target, `gh` queries GitHub). The choices in the create-task dialog are read once, when
+  the dialog is opened ([Tasks and steps](tasks-and-steps.en.md)). In the task details, the choices for a person to pick a repository for a paused task are requested once, only while the screen
   does not have them yet (`?repositories=1`).
 - When a server action for an operation (approve, pause, resume, and so on) redraws the screen with `refresh()`, the data from that redraw is used.
 - For the run log, the screen sends the length (in characters) and a mark (a hash of the contents) of what it has. If the start of the current file is the same,

@@ -113,11 +113,17 @@ const awaiting = task({
 
 // 画面のサーバーの代わり。取り直しの問い合わせに、server の今のデータを返す（版が同じなら中身を送らない）
 let server: unknown;
+let candidateRequests = 0;
 const requests: string[] = [];
 function stubServer() {
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string, init?: RequestInit) => {
+      // 作成のダイアログを開いたときの、リポジトリの候補（PBI-109）
+      if (url.endsWith("/repositories")) {
+        candidateRequests += 1;
+        return Response.json({ repositories: ["acme/web"], problems: [] });
+      }
       requests.push(url);
       const headers = (init?.headers ?? {}) as Record<string, string>;
       if (server === "down") return Response.json({ unavailable: true });
@@ -161,6 +167,7 @@ const text = () => document.body.textContent ?? "";
 beforeEach(() => {
   vi.useFakeTimers();
   requests.length = 0;
+  candidateRequests = 0;
   visibility = "visible";
   Object.defineProperty(document, "visibilityState", {
     configurable: true,
@@ -440,7 +447,6 @@ describe("タスクの一覧：新しいタスク・状態の変化が、操作�
         key: "new",
         projectId: "p1",
         projectName: "Acme",
-        repositories: [],
         hasTargets: true,
       }),
       h(LiveTaskList, { key: "list", initial: empty, initialVersion: liveVersion(empty) }),
@@ -467,6 +473,9 @@ describe("タスクの一覧：新しいタスク・状態の変化が、操作�
     expect(document.querySelector('input[name="title"]')).toBe(title);
     expect(title.value).toBe("書きかけの題");
     expect(document.activeElement).toBe(title);
+    // 取り直しのたびに、リポジトリの候補（gh で GitHub に問い合わせる）を読み直さない（開いたときの1回だけ）
+    await wait(9_000);
+    expect(candidateRequests).toBe(1);
     expect(refresh).not.toHaveBeenCalled();
   });
 

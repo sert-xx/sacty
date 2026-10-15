@@ -9,6 +9,9 @@ When you create a task, the Orchestrator and the Goal Guardian move it through t
 ## Create a task
 
 - When you create a task in the web UI, you choose a repository from the project's targets ([Project settings](project-settings.en.md#targets)).
+  - The repository suggestions are read when you press "Create task" and the dialog opens (for an org target, `gh` asks GitHub, which can
+    take a few seconds). While they load, when they cannot be read, or when there are none, the dialog says so. In every case, you can type
+    the repository URL and create the task.
   You can also import tasks from issues, PRs, and tickets ([Intake](intake.en.md)).
 - You can also create a task without choosing a repository (research, overall design, or a large task to split). The Orchestrator chooses how to proceed from the project's
   context (the rules in the context repository and the export destinations) and its targets (the list of repositories).

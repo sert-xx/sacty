@@ -1,19 +1,14 @@
 import { Suspense } from "react";
-import { NewTaskDialog } from "@/components/new-task-dialog";
+import { NewTask, NewTaskPlaceholder } from "@/components/new-task";
 import { LiveTaskList, TasksSection } from "@/components/task-list";
 import { getMessages } from "@/i18n/server";
 import { currentProjectId, resolveProject } from "@/lib/current-project";
-import {
-  DaemonUnavailableError,
-  getStatus,
-  listProjectRepositories,
-  listProjects,
-} from "@/lib/daemon";
+import { DaemonUnavailableError, getStatus, listProjects } from "@/lib/daemon";
 import { liveVersion } from "@/lib/live-server";
 import { loadTaskList } from "@/lib/task-list-data";
 
 export default async function TasksPage() {
-  const m = (await getMessages()).tasks;
+  const { tasks: m, forms } = await getMessages();
   return (
     <>
       <div className="flex flex-wrap items-end justify-between gap-4">
@@ -23,7 +18,9 @@ export default async function TasksPage() {
           </Suspense>
           <h1 className="text-2xl font-bold">{m.title}</h1>
         </div>
-        <Suspense fallback={null}>
+        {/* 表示しているプロジェクトを読むまでは、同じ大きさの押せないボタンを出す（ボタンを最初の表示から出し、
+            位置をずらさない。PBI-109） */}
+        <Suspense fallback={<NewTaskPlaceholder label={forms.task.create} />}>
           <NewTask />
         </Suspense>
       </div>
@@ -44,31 +41,6 @@ export default async function TasksPage() {
   );
 }
 
-/** 工程を実行するAIの設定状況。問題があれば理由を出す。 */
-/** タスクの作成。表示しているプロジェクトを、作成先としてフォームに固定する。 */
-async function NewTask() {
-  try {
-    const project = resolveProject(await listProjects(), await currentProjectId());
-    if (!project) return null;
-    // 対象リポジトリの候補（Org の対象は gh で読む。PBI-25）。読めなかった Org は理由を出す
-    const [{ repositories, errors }, m] = await Promise.all([
-      listProjectRepositories(project.id),
-      getMessages(),
-    ]);
-    return (
-      <NewTaskDialog
-        projectId={project.id}
-        projectName={project.name}
-        repositories={repositories}
-        hasTargets={project.targets.length > 0}
-        problems={errors.map((e) => m.forms.task.listFailed(e.org, m.labels.text(e.message)))}
-      />
-    );
-  } catch {
-    return null;
-  }
-}
-
 async function ProjectName() {
   try {
     const project = resolveProject(await listProjects(), await currentProjectId());
@@ -79,6 +51,7 @@ async function ProjectName() {
   }
 }
 
+/** 工程を実行するAIの設定状況。問題があれば理由を出す。 */
 async function AgentStatus() {
   let status: Awaited<ReturnType<typeof getStatus>>;
   try {
