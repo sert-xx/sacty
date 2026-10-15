@@ -68,7 +68,7 @@ describe("デーモンの文言（PBI-11）", () => {
     expect(renderMessage(longRef, "en")).toBe("Keep it within 200 characters.");
 
     const unknown = first(
-      ProjectExport.safeParse({ sacty: "project", version: 3, project: { name: "x" }, token: "t" }),
+      ProjectExport.safeParse({ sacty: "project", version: 4, project: { name: "x" }, token: "t" }),
     );
     expect(unknown).toEqual({ code: "input.unknownKeys", params: { keys: "token" } });
     expect(renderMessage(unknown, "ja")).toBe("知らない項目があります（token）。");

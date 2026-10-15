@@ -29,7 +29,7 @@ const ja = {
   },
   import: {
     label:
-      "sacty からエクスポートしたプロジェクトの定義（JSON）を選んでください。新しいプロジェクトとして作ります。対象がほかのプロジェクトと重複していれば、インポートしません。",
+      "sacty からエクスポートしたプロジェクトの定義（JSON）を選んでください。新しいプロジェクトとして作ります。対象がほかのプロジェクトと重複していれば、インポートしません。Slack のメンションの相手は含まないので、インポートの後にプロジェクトの設定で足してください。",
     submit: "インポートする",
   },
 };
@@ -66,7 +66,7 @@ const en: FormsMessages = {
   },
   import: {
     label:
-      "Choose a project definition (JSON) exported from sacty. It is created as a new project. If a target overlaps with another project, nothing is imported.",
+      "Choose a project definition (JSON) exported from sacty. It is created as a new project. If a target overlaps with another project, nothing is imported. Slack mention targets are not included, so add them in the project settings after importing.",
     submit: "Import",
   },
 };
