@@ -153,7 +153,8 @@ If the orchestrator chooses an image that doesn't fit a step (for example, the d
 for each step in "Step images" in the "Steps" section of the task detail.
 
 - You can choose a name in `images` or `default` (the default image). Each description is shown. A name not in `images` (such as a name removed from config.yaml)
-  is refused with the reason.
+  is refused with the reason. When config.yaml can't be read, the change is refused with the settings problem as the reason. When sacty's status can't be
+  fetched, the screen says the choices can't be checked and doesn't offer the change (wait a moment and reopen the page).
 - You can change a step in any state (yet to run, running, failed or paused, awaiting approval, or done). The changed image is used from the next
   run of the step. For a running step, the current run keeps its image and the next run uses the new one. Each step on the screen shows when a change takes effect.
 - Tests run in the image of the Implementation step (Reproduce for bug fixes). If you change the Implementation image, the next test run uses it.

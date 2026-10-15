@@ -71,6 +71,8 @@ const ja = {
     defaultDescription: "既定のイメージ（Node.js・Claude Code・Codex）",
     option: (name: string, description: string) => `${name} — ${description}`,
     missing: "（config.yaml の images にありません。次の実行の前に変えてください）",
+    unavailable:
+      "選べるイメージの候補を確かめられないため、変える操作を出していません（sacty の状態を取得できないか、config.yaml を読めません）。少し待ってから開き直すか、設定を確かめてください。",
     byPerson: (at: string, from: string) => `人間が変更（${at}・${from} から）`,
     byProject: "プロジェクトの対象の指定",
     byOrchestrator: "オーケストレーターが選択",
@@ -345,6 +347,8 @@ const en: TaskMessages = {
     defaultDescription: "Default image (Node.js, Claude Code, Codex)",
     option: (name, description) => `${name} — ${description}`,
     missing: " (not in images in config.yaml. Change it before the next run)",
+    unavailable:
+      "The image choices can't be checked, so changing is not offered (sacty's status couldn't be read, or config.yaml can't be read). Wait a moment and reopen, or check the settings.",
     byPerson: (at, from) => `changed by a person (${at}, from ${from})`,
     byProject: "set on the project target",
     byOrchestrator: "chosen by the Orchestrator",

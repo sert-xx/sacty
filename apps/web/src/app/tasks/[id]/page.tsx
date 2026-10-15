@@ -55,6 +55,7 @@ import {
   isWorking,
   personAction,
   statusText,
+  stepImageOptions,
   stepImageRows,
   testCommandOfNoTests,
   usd,
@@ -516,14 +517,19 @@ async function StepImages({ task }: { task: Task }) {
   const m = t.images;
   const rows = stepImageRows(task);
   if (rows.length === 0) return null;
-  // 選べるのは、既定のイメージと images の名前（説明も出す）
-  const images = (await getStatus().catch(() => undefined))?.images ?? [];
-  const options = [{ name: "default", description: m.defaultDescription }, ...images];
+  // 選べるのは、既定のイメージと images の名前（説明も出す）。取得できない・設定を読めないときは、候補を確かめられない
+  // ことを出し、消した名前の警告と変更の操作は出さない（一時的な失敗を、設定から消したことと取り違えない）
+  const options = stepImageOptions(await getStatus().catch(() => undefined), m.defaultDescription);
   return (
     <div className="flex flex-col gap-1 text-sm leading-6" data-testid="step-images">
       <h3 className="font-semibold">
         {m.title} <span className="text-[13px] font-normal text-muted-foreground">{m.note}</span>
       </h3>
+      {!options && (
+        <p role="status" className="text-warn" data-testid="step-images-unavailable">
+          {m.unavailable}
+        </p>
+      )}
       <ul className="flex flex-col gap-2">
         {rows.map((row) => (
           <li
@@ -535,7 +541,7 @@ async function StepImages({ task }: { task: Task }) {
               <span className="font-medium">{labels.step[row.step]}</span>
               {m.sep}
               <span className="font-mono">{row.image}</span>
-              {!options.some((o) => o.name === row.image) && (
+              {options && !options.some((o) => o.name === row.image) && (
                 <span className="text-warn">{m.missing}</span>
               )}
               <span className="text-muted-foreground">
@@ -561,7 +567,7 @@ async function StepImages({ task }: { task: Task }) {
                   : m.whenNext}
               {(row.step === "implement" || row.step === "reproduce") && <> ・ {m.testNote}</>}
             </span>
-            {task.status !== "cancelled" && (
+            {options && task.status !== "cancelled" && (
               // 変えた後に、選択を今のイメージに合わせる（フォームのリセットが前のイメージに戻すため、作り直す）
               <StepImageForm
                 key={`${row.step}:${row.image}`}

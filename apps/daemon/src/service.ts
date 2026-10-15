@@ -6564,10 +6564,13 @@ export class TaskService {
     // PR作成はコンテナで実行しない（イメージが無い）
     if (step === "pr") throw new InvalidOperationError(message("image.noImageStep"));
     const config = this.deps.config();
-    // 設定を読めなければ、既定のイメージだけを選べる
-    const known =
-      image === DEFAULT_IMAGE_NAME || (config.ok && resolveImage(config.config, image).ok);
-    if (!known) {
+    // 設定を読めない・解析できなければ、名前を確かめられないので、その理由を示して断る（名前の誤りと取り違えないため）
+    if (!config.ok) {
+      throw new InvalidOperationError(
+        message("image.configUnavailable", { detail: config.problem }),
+      );
+    }
+    if (!resolveImage(config.config, image).ok) {
       throw new InvalidOperationError(message("image.notInImages", { name: image }));
     }
     const from = task.images?.[step] ?? DEFAULT_IMAGE_NAME;

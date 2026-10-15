@@ -3701,6 +3701,37 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       activity.close();
     });
 
+    it("実装の実行中に変えたら、今の実装は始めたときのイメージで動き、その後のテストは変えたイメージで動く（PR #116 レビュー指摘）", async () => {
+      const tests = new FakeTests([{ exitCode: 0, output: "ok", durationMs: 1 }]);
+      const { activity, service, executor, id } = await toImplement(
+        [implement("# 実装"), review()],
+        {
+          tests,
+          config: withImages(),
+          planner: plan({ implement: "java" }),
+        },
+      );
+      // 実装のコンテナを起動した（イメージを決めた）後、実行の最中に変える
+      let during: Task | undefined;
+      executor.respond = () => {
+        if (executor.calls.length === 4) {
+          during = service.changeStepImage(id, { step: "implement", image: "playwright" });
+        }
+        return undefined;
+      };
+      await drain(service);
+      expect(during && stepRunning(during, "implement")).toBe(true);
+      // 今の実装は始めたときのイメージ（java）、その後のテストは変えたイメージ（playwright）
+      expect(executor.images[3]).toEqual(used(java));
+      expect(tests.calls).toEqual([
+        expect.objectContaining({ image: playwright.image, env: playwright.env }),
+      ]);
+      expect(changes(service, id)).toEqual([
+        { actor: "person", step: "implement", from: "java", to: "playwright" },
+      ]);
+      activity.close();
+    });
+
     it("プロジェクトの対象の指定より、人の変更を優先する（ほかの工程は指定のまま）", async () => {
       const activity = new SqliteActivityStore(dbPath);
       const projects = new MemoryProjectStore();
@@ -3773,6 +3804,21 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       expect(service.changeStepImage(id, { step: "design", image: "default" }).images?.design).toBe(
         "default",
       );
+      // config.yaml を読めない・解析できないときは、名前の誤りではなく、設定の問題として断る（PR #116 レビュー指摘）
+      config = () => ({
+        ok: false,
+        problem: message("config.missing", { path: "/x/config.yaml" }),
+      });
+      for (const name of ["playwright", "default"]) {
+        const [[jaText, enText] = []] = reject({ step: "design", image: name });
+        expect(jaText).toMatch(/^config\.yaml を読めないため、工程のイメージを変えられません/);
+        expect(jaText).toContain("/x/config.yaml");
+        expect(jaText).not.toContain("images にありません");
+        expect(enText).toMatch(
+          /^The step image can't be changed because config\.yaml can't be read/,
+        );
+      }
+      config = withImages();
       // 入力の形が違えば、入力の誤り
       expect(() => service.changeStepImage(id, { step: "deploy", image: "java" })).toThrow();
       expect(() => service.changeStepImage(id, { step: "design", image: " " })).toThrow();
@@ -9616,6 +9662,63 @@ describe("統合レビュー（PBI-31）", () => {
     expect(service.get(id)?.task.misses).toEqual([
       expect.objectContaining({ reviewAt: at, remarkIds: ["split-1-1"] }),
     ]);
+    activity.close();
+  });
+
+  it("統合レビューの実行中にイメージを変えても今のレビューは変えず、次の統合レビューから使う（PBI-106・PR #116 レビュー指摘）", async () => {
+    const image = (name: string) => ({
+      name,
+      image: `sacty-agent-${name}:test`,
+      description: name,
+      env: { IMAGE_NAME: name },
+    });
+    const java = image("java");
+    const playwright = image("playwright");
+    const config = () => ({
+      ok: true as const,
+      config: {
+        ...(configOf(agent())() as { ok: true; config: SactyConfig }).config,
+        images: { java, playwright },
+      },
+    });
+    const fixChild = splitOutput([{ key: "F1", title: "修正 F1", body: "-", dependsOn: [] }]);
+    // 統合レビューを始めた後、ベースブランチの最新を取得している間（コンテナの起動の前）に、1回だけ変える
+    let change: (() => void) | undefined;
+    class ChangingRepos extends FakeRepos {
+      override async fetchBranch(gitDir: string, branch: string, authEnv?: Record<string, string>) {
+        const run = change;
+        change = undefined;
+        run?.();
+        return super.fetchBranch(gitDir, branch, authEnv);
+      }
+    }
+    const { service, executor, activity, id } = await splitParent(
+      [
+        splitOutput(twoChildren),
+        out("# A の調査"),
+        out("# B の調査"),
+        integration(false, ["足りない 1"]),
+        fixChild,
+        out("# F1 の調査"),
+        integration(true),
+      ],
+      new ChangingRepos(),
+      { config, images: { integrate: "java" } },
+    );
+    let during: Task | undefined;
+    change = () => {
+      during = service.changeStepImage(id, { step: "integrate", image: "playwright" });
+    };
+    await drain(service, id);
+    const parent = service.get(id)?.task;
+    expect(parent?.gate).toEqual({ step: "integrate", submission: 1 });
+    expect(parent?.integration?.passed).toBe(true);
+    // 変えたのは、1回目の統合レビューの実行中
+    expect(during && stepRunning(during, "integrate")).toBe(true);
+    // 今の統合レビューは始めたときのイメージ（java）、修正の後の統合レビュー（9回目の実行）は変えたイメージ
+    expect(executor.images[5]).toEqual({ image: java.image, env: java.env });
+    expect(executor.images[8]).toEqual({ image: playwright.image, env: playwright.env });
+    expect(executor.images).toHaveLength(9);
     activity.close();
   });
 

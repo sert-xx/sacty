@@ -12,6 +12,7 @@ import {
   personAction as personActionIn,
   statusText as statusTextIn,
   statusTone,
+  stepImageOptions,
   stepImageRows,
   testCommandOfNoTests,
   usesTestCommand,
@@ -1554,5 +1555,27 @@ describe("工程のイメージの表示（PBI-106）", () => {
       imageSource: "project",
     });
     expect(stepImageRows(paused)[0]).toMatchObject({ when: "next", source: { by: "project" } });
+  });
+});
+
+describe("工程のイメージの選択肢（PBI-106・PR #116 レビュー指摘）", () => {
+  const java = { name: "java", description: "Java 17" };
+  it("既定のイメージと images の名前を、説明つきで出す", () => {
+    expect(stepImageOptions({ problems: [], images: [java] }, "既定")).toEqual([
+      { name: "default", description: "既定" },
+      java,
+    ]);
+    // images を書いていなければ、既定のイメージだけ
+    expect(stepImageOptions({ problems: [], images: [] }, "既定")).toEqual([
+      { name: "default", description: "既定" },
+    ]);
+  });
+
+  it("状態を取得できない・設定を読めない・古いデーモンなら、候補を確かめられない（消した名前と取り違えない）", () => {
+    expect(stepImageOptions(undefined, "既定")).toBeUndefined();
+    expect(
+      stepImageOptions({ problems: [{ code: "config.missing" }], images: [] }, "既定"),
+    ).toBeUndefined();
+    expect(stepImageOptions({ problems: [] }, "既定")).toBeUndefined();
   });
 });

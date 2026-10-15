@@ -150,7 +150,9 @@ Code: `apps/daemon/src/service.ts` (`askOrchestrator`, `runNextInner`, `withImag
 - The choices are the names in `images` and `default` (the default image). The screen shows each description (`description` in `images`). These are
   refused with the reason (409): a name not in `images` (including a name removed from config.yaml; `image.notInImages`), the current name
   (`image.unchanged`), a step the task doesn't have (`image.stepMissing`), and the PR step (it doesn't run in a container, so it has no image;
-  `image.noImageStep`). When the config can't be read, only `default` can be chosen.
+  `image.noImageStep`). When config.yaml can't be read or parsed, the names can't be checked, so the change is refused with the settings problem as the
+  reason (`image.configUnavailable`; `default` too). When the daemon's status can't be fetched or the settings can't be read, the screen says the choices
+  can't be checked and shows neither the warning that a name is not in `images` nor the change form (`stepImageOptions`; a temporary failure is not mistaken for a removed name).
 - A change appends `StepImageChanged` (`step`, `from`, `to`; the actor is `person`). `from` is the name before the change (`default` if none was set).
   The projection sets the step's `images` to `to` and keeps the last change of each step in `imageChanges` (`from`, `to`, time). `StepsChosen` is not rewritten.
 - The changed image is used from the next run of the step (starting a step that hasn't started, a retry, or a rerun after rework). The current run is not stopped.
@@ -166,7 +168,7 @@ Code: `apps/daemon/src/service.ts` (`askOrchestrator`, `runNextInner`, `withImag
   given (`imagesUnexplained`) until a person changes it. After a person changes it, the person's change is shown. The "Steps chosen" line in the Activity stays as recorded
   when the steps were chosen (the later `StepImageChanged` line shows the change).
 
-Code: `apps/daemon/src/service.ts` (`changeStepImage`, `runNextInner`, `integrate`), `apps/daemon/src/server.ts`, `packages/core/src/events.ts` (`StepImageChanged`, `ChangeStepImageInput`), `packages/core/src/projection.ts` (`stepRunning`), `apps/web/src/lib/labels.ts` (`stepImageRows`)
+Code: `apps/daemon/src/service.ts` (`changeStepImage`, `runNextInner`, `integrate`), `apps/daemon/src/server.ts`, `packages/core/src/events.ts` (`StepImageChanged`, `ChangeStepImageInput`), `packages/core/src/projection.ts` (`stepRunning`), `apps/web/src/lib/labels.ts` (`stepImageRows`, `stepImageOptions`)
 
 ## Verifying the implementation
 

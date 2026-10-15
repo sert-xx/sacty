@@ -737,3 +737,15 @@ export function stepImageRows(task: Task): StepImageRow[] {
       return { step: s.key, image, source, when };
     });
 }
+
+/**
+ * 工程のイメージの選択肢（PBI-106）。既定のイメージと images の名前（説明つき）。デーモンの状態を取得できない・設定を
+ * 読めないときは undefined（候補を確かめられない。images から消した名前と取り違えないため。PR #116 レビュー指摘）。
+ */
+export function stepImageOptions(
+  status: { problems: unknown[]; images?: { name: string; description: string }[] } | undefined,
+  defaultDescription: string,
+): { name: string; description: string }[] | undefined {
+  if (!status || status.problems.length > 0 || !status.images) return undefined;
+  return [{ name: "default", description: defaultDescription }, ...status.images];
+}

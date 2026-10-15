@@ -150,8 +150,10 @@
   工程の状態は問わない（これから実行する・実行中・失敗や一時停止・承認待ち・終わった工程のどれでも）。中止したタスクは変えられない。
 - 選べるのは `images` の名前と `default`（既定のイメージ）。画面は、それぞれの説明（`images` の `description`）を出す。次は、理由を示して
   断る（409）：`images` に無い名前（config.yaml から消した名前を含む。`image.notInImages`）、今と同じ名前（`image.unchanged`）、タスクの工程に
-  無い工程（`image.stepMissing`）、PR作成（コンテナで実行しないのでイメージが無い。`image.noImageStep`）。設定を読めないときは `default` だけを
-  選べる。
+  無い工程（`image.stepMissing`）、PR作成（コンテナで実行しないのでイメージが無い。`image.noImageStep`）。config.yaml を読めない・
+  解析できないときは、名前を確かめられないので、設定の問題として理由を示して断る（`image.configUnavailable`。`default` も）。
+  画面は、デーモンの状態を取得できない・設定を読めないとき、候補を確かめられないことを出し、`images` に無い名前の警告と変える操作は
+  出さない（`stepImageOptions`。一時的な失敗を、設定から消したことと取り違えない）。
 - 変えたら `StepImageChanged`（`step`・`from`・`to`。actor は `person`）を足す。`from` は変える前の名前（指定が無ければ `default`）。
   投影はその工程の `images` を `to` にし、`imageChanges` に工程ごとの最後の変更（`from`・`to`・時刻）を持つ。`StepsChosen` は書き換えない。
 - 変えたイメージは、その工程を次に実行するときから使う（まだ始まっていない工程の開始、やり直し、手戻りでの再実行）。今の実行は止めない。
@@ -167,7 +169,7 @@
   無いこと（`imagesUnexplained`）を出す。人が変えたら、人の変更を出す。作業履歴の「工程を決定」の行は、工程を決めたときの記録のまま残る
   （その後の `StepImageChanged` の行で、変えたことがわかる）。
 
-コード: `apps/daemon/src/service.ts`（`changeStepImage`・`runNextInner`・`integrate`）、`apps/daemon/src/server.ts`、`packages/core/src/events.ts`（`StepImageChanged`・`ChangeStepImageInput`）、`packages/core/src/projection.ts`（`stepRunning`）、`apps/web/src/lib/labels.ts`（`stepImageRows`）
+コード: `apps/daemon/src/service.ts`（`changeStepImage`・`runNextInner`・`integrate`）、`apps/daemon/src/server.ts`、`packages/core/src/events.ts`（`StepImageChanged`・`ChangeStepImageInput`）、`packages/core/src/projection.ts`（`stepRunning`）、`apps/web/src/lib/labels.ts`（`stepImageRows`・`stepImageOptions`）
 
 ## 実装の検証
 

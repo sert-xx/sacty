@@ -149,6 +149,7 @@ const PARAMS = {
   // 工程のイメージを人が変える（PBI-106）
   "image.notInImages": z.object({ name: z.string() }),
   "image.unchanged": z.object({ name: z.string() }),
+  "image.configUnavailable": z.object({ detail: TextParam }),
   "image.stepMissing": null,
   "image.noImageStep": null,
   // docker compose のサービス（PBI-47）
@@ -694,6 +695,8 @@ const ja: MessageDictionary = {
   "image.notInImages": ({ name }) =>
     `イメージ「${name}」は config.yaml の images にありません。images の名前か default を選んでください。`,
   "image.unchanged": ({ name }) => `工程のイメージは、すでに「${name}」です。`,
+  "image.configUnavailable": ({ detail }, text) =>
+    `config.yaml を読めないため、工程のイメージを変えられません（images の名前を確かめられません）。設定を直してから、もう一度変えてください：${text(detail)}`,
   "image.stepMissing": "その工程は、このタスクの工程にありません。",
   "image.noImageStep": "PR作成の工程はコンテナで実行しないため、イメージを使いません。",
   "image.unknown": ({ name }) =>
@@ -1130,6 +1133,8 @@ const en: MessageDictionary = {
   "image.notInImages": ({ name }) =>
     `The image "${name}" is not in images in config.yaml. Choose a name in images, or default.`,
   "image.unchanged": ({ name }) => `The step already uses the image "${name}".`,
+  "image.configUnavailable": ({ detail }, text) =>
+    `The step image can't be changed because config.yaml can't be read (the names in images can't be checked). Fix the settings, then change it again: ${text(detail)}`,
   "image.stepMissing": "This task does not have that step.",
   "image.noImageStep": "The PR step doesn't run in a container, so it uses no image.",
   "image.unknown": ({ name }) =>
