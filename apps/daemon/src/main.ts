@@ -7,7 +7,7 @@ import { DockerExecutor } from "./agents/docker.js";
 import { DockerTestRunner } from "./agents/test-runner.js";
 import { GitHubCiStatus } from "./ci.js";
 import { loadConfig, resolveHome } from "./config.js";
-import { DEFAULT_CONTEXT_DIR, GitContextFetcher } from "./context.js";
+import { DEFAULT_CONTEXT_DIR, GitContextFetcher, stopContextFetchesSync } from "./context.js";
 import { ContextMcpServers } from "./context-mcp.js";
 import { ALREADY_RUNNING_EXIT_CODE } from "./exit-codes.js";
 import { AiGateway } from "./gateway.js";
@@ -213,6 +213,9 @@ let shuttingDown = false;
 const shutdown = async () => {
   if (shuttingDown) return;
   shuttingDown = true;
+  // 秘密情報の取り出しのための、コンテキストの取得の git を止める（別のプロセスグループで動くので、Ctrl+C が届かない。
+  // process.exit でも止めるが、後処理を待つ前に止める。PBI-107）
+  stopContextFetchesSync();
   // 実行中のコンテナを止め、実行の後処理（作業履歴への記録、認証ファイルの書き戻し、
   // 一時ファイルの削除）が終わるのを待ってから、作業履歴を閉じて終了する。
   const draining = Promise.all([worker.drain(), intake.stop(), prWatcher.stop()]);

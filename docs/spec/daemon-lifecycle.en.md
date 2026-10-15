@@ -68,13 +68,15 @@ Code: `apps/daemon/src/instance-lock.ts` (`acquireInstanceLock`, `alreadyRunning
 
 On SIGINT or SIGTERM, the daemon does the following, only once.
 
-1. It starts stopping the worker (no new runs start, and it waits for in-progress work to clean up), intake, and PR watching.
-2. It starts stopping the host MCP servers and the context's command MCP servers (without waiting for cleanup; for the context's servers, the layer copies are also removed).
-3. It stops the running agent and test containers.
-4. It waits up to 20 seconds (`DRAIN_TIMEOUT_MS`) for the cleanup in step 1. After that, it shows a warning and continues.
-5. It closes the gateway, waits for the host MCP servers to stop, closes the API listener, then closes the DB, releases the lock (also removing the
+1. It stops the git processes fetching contexts for retrieving secrets (they run in their own process groups) together with their groups (`stopContextFetchesSync`).
+2. It starts stopping the worker (no new runs start, and it waits for in-progress work to clean up), intake, and PR watching.
+3. It starts stopping the host MCP servers and the context's command MCP servers (without waiting for cleanup; for the context's servers, the layer copies are also removed).
+4. It stops the running agent and test containers.
+5. It waits up to 20 seconds (`DRAIN_TIMEOUT_MS`) for the cleanup in step 2. After that, it shows a warning and continues.
+6. It closes the gateway, waits for the host MCP servers to stop, closes the API listener, then closes the DB, releases the lock (also removing the
    `daemon-owner.json` it wrote), and exits with exit code 0.
 
-When the daemon ends because of an exception or similar (`exit`), it also sends SIGTERM to the process groups of the host MCP servers.
+When the daemon ends because of an exception or similar (`exit`), it also sends SIGTERM to the process groups of the host MCP servers, and SIGKILL to the process groups
+of the git processes fetching contexts ([Secrets](secrets.en.md)).
 
-Code: `apps/daemon/src/main.ts` (`shutdown`, `DRAIN_TIMEOUT_MS`), `apps/daemon/src/context-mcp.ts` (`ContextMcpServers.start`, `ContextMcpServers.stop`)
+Code: `apps/daemon/src/main.ts` (`shutdown`, `DRAIN_TIMEOUT_MS`), `apps/daemon/src/context-mcp.ts` (`ContextMcpServers.start`, `ContextMcpServers.stop`), `apps/daemon/src/context.ts` (`stopContextFetchesSync`)

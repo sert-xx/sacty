@@ -68,13 +68,15 @@
 
 SIGINT・SIGTERM を受けると、1回だけ次を行う。
 
-1. ワーカー（新しい実行を始めず、実行中の処理の後片付けを待つ）・取り込み・PR の監視を止め始める。
-2. ホストの MCP サーバーと、コンテキストのコマンド型の MCP サーバーを止め始める（後片付けを待たない。コンテキストのものは層の写しも消す）。
-3. 実行中のエージェントとテストのコンテナを止める。
-4. 1 の後片付けを最大20秒（`DRAIN_TIMEOUT_MS`）待つ。過ぎたら警告を出して進む。
-5. ゲートウェイを閉じ、ホストの MCP サーバーが止まるのを待ち、API の待ち受けを閉じてから、DB を閉じ、ロックを外し（自分の書いた
+1. 秘密情報の取り出しのための、コンテキストの取得の git（別のプロセスグループで動く）を、グループごと止める（`stopContextFetchesSync`）。
+2. ワーカー（新しい実行を始めず、実行中の処理の後片付けを待つ）・取り込み・PR の監視を止め始める。
+3. ホストの MCP サーバーと、コンテキストのコマンド型の MCP サーバーを止め始める（後片付けを待たない。コンテキストのものは層の写しも消す）。
+4. 実行中のエージェントとテストのコンテナを止める。
+5. 2 の後片付けを最大20秒（`DRAIN_TIMEOUT_MS`）待つ。過ぎたら警告を出して進む。
+6. ゲートウェイを閉じ、ホストの MCP サーバーが止まるのを待ち、API の待ち受けを閉じてから、DB を閉じ、ロックを外し（自分の書いた
    `daemon-owner.json` も消す）、終了コード 0 で終わる。
 
-デーモンが例外などで終わるとき（`exit`）も、ホストの MCP サーバーのプロセスグループに SIGTERM を送る。
+デーモンが例外などで終わるとき（`exit`）も、ホストの MCP サーバーのプロセスグループに SIGTERM を送り、コンテキストの取得の git の
+プロセスグループに SIGKILL を送る（[秘密情報](secrets.md)）。
 
-コード: `apps/daemon/src/main.ts`（`shutdown`・`DRAIN_TIMEOUT_MS`）、`apps/daemon/src/context-mcp.ts`（`ContextMcpServers.start`・`ContextMcpServers.stop`）
+コード: `apps/daemon/src/main.ts`（`shutdown`・`DRAIN_TIMEOUT_MS`）、`apps/daemon/src/context-mcp.ts`（`ContextMcpServers.start`・`ContextMcpServers.stop`）、`apps/daemon/src/context.ts`（`stopContextFetchesSync`）

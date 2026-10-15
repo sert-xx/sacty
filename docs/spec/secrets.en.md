@@ -35,7 +35,8 @@ Code: `apps/daemon/src/secrets.ts` (`SecretRef`, `isOnePasswordRef`, `KeychainSe
 - Contexts are fetched `CONTEXT_SECRETS_CONCURRENCY` (4) at a time, waiting at most `CONTEXT_SECRETS_TIMEOUT_MS` (30 seconds) in total. For projects whose context could not be
   fetched, or not within the time, the reason (`secret.contextUnavailable`; `secret.contextTimedOut` for the time limit) is shown as a warning, and that project's
   context secrets are retrieved when used. Fetch error messages are shown after redacting the gh token. When the time limit passes, fetches in progress are stopped
-  (git is stopped together with its process group (`git.aborted`), and the temporary directory of the fetched repositories is removed).
+  (git is stopped together with its process group (`git.aborted`), and the temporary directory of the fetched repositories is removed). Because git runs in its own process group,
+  fetches in progress are also stopped with their groups when the daemon ends (SIGINT, SIGTERM, `exit`) ([Daemon shutdown](daemon-lifecycle.en.md#daemon-shutdown)).
 - Context secrets are retrieved in the same single retrieval as the other secrets (retrieval starts after the contexts are read).
 - 1Password references are passed to a child process as environment variables with a single `op run --no-masking --env-file <a file containing only the references (0600)>`, and received
   as JSON (so authentication happens once). If retrieving them all at once fails, each reference is retrieved again individually, and the ones that could not be retrieved are collected. For the keychain,

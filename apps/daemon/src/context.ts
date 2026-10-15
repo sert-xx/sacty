@@ -1175,6 +1175,25 @@ export class GitContextFetcher implements ContextFetcher {
   }
 }
 
+/**
+ * 止められる取得の git のプロセスグループ（PBI-107）。別のグループで動くので、端末の Ctrl+C も、デーモンと一緒に消える
+ * 期限のタイマーも届かない。デーモンが終わるとき（通常の終了・process.exit・SIGINT/SIGTERM からの終了）に、すべて止める。
+ */
+const fetchGroups = new Set<number>();
+let fetchGroupsExitHook = false;
+
+/** 取得中の git のプロセスグループを、すべて止める（デーモンが終わるとき。同期で行う。PBI-107）。 */
+export function stopContextFetchesSync(): void {
+  for (const pid of fetchGroups) {
+    try {
+      process.kill(-pid, "SIGKILL");
+    } catch {
+      // もう終わっている
+    }
+  }
+  fetchGroups.clear();
+}
+
 function run(
   args: string[],
   cwd?: string,
@@ -1209,6 +1228,14 @@ function run(
       }
     };
     signal?.addEventListener("abort", abort, { once: true });
+    const group = signal !== undefined ? child.pid : undefined;
+    if (group !== undefined) {
+      fetchGroups.add(group);
+      if (!fetchGroupsExitHook) {
+        fetchGroupsExitHook = true;
+        process.on("exit", stopContextFetchesSync);
+      }
+    }
     let out = "";
     let err = "";
     child.stdout.on("data", (chunk) => {
@@ -1222,6 +1249,7 @@ function run(
     );
     child.on("close", (code) => {
       signal?.removeEventListener("abort", abort);
+      if (group !== undefined) fetchGroups.delete(group);
       if (aborted) reject(new MessageError(message("git.aborted")));
       else if (code === 0) resolve(out);
       // git のエラー文は外から来た文なので、そのまま渡す
