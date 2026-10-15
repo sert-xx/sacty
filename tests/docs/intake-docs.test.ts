@@ -22,7 +22,9 @@ describe("取り込みの docs（PBI-100）", () => {
     ]) {
       expect(ticket).toContain(word);
     }
-    expect(ticket).not.toContain("GitHub アカウント");
+    // Issue の取り込むラベルと GitHub のアカウントは、チケットの取り込みに使わないと書く（PBI-99 の行と合わせる）
+    expect(ticket).toContain("チケットの取り込みには使いません");
+    expect(ticket).toContain("完了の状態でない");
     // Issue の行にチケットを混ぜない。取り込みに `github:` が要るとは書かない
     expect(rows.find((row) => row.startsWith("| Issue"))).not.toContain("チケット");
     expect(rows.join("\n")).not.toContain("`github:` があるか");
