@@ -2,7 +2,7 @@
 
 - 日付: 2026-10-15（UTC）
 - タスク: PBI-105
-- PR: なし
+- PR: #115
 - ブランチ: feat/issue-105-prefer-language-images
 - 関係する ADR: [工程のイメージは images から選ばせ、既定のイメージは最後の手段にして、使う理由（または理由が無いこと）を作業履歴に残す](../adr/20261015-1118-default-image-as-last-resort.md)
 
