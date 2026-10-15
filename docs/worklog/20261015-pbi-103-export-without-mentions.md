@@ -2,7 +2,7 @@
 
 - 日付: 2026-10-15（UTC）
 - タスク: PBI-103
-- PR: なし
+- PR: #114
 - ブランチ: feat/issue-103-export-without-mentions
 - 関係する ADR: [プロジェクトのエクスポートに Slack のメンション（相手と種類）を含めず、含んでいた版 3 のファイルは理由を示して断る](../adr/20261015-0850-export-without-mentions.md)
 
