@@ -27,6 +27,8 @@ type KindState = {
    */
   cursors: Map<string, string>;
   revision?: string;
+  /** 見た、止める設定を保存した回数（TaskService.intakeStopCount）。変わったら間隔の起点を戻す。 */
+  stops?: number;
 };
 
 /**
@@ -98,6 +100,12 @@ export class IssueIntake {
   private tickKind(kind: IntakeKind, settings: SactySettings, force: boolean): Promise<void> {
     const state = this.kinds[kind];
     if (state.current) return state.current;
+    // 止める設定を保存していたら（次の確認の前に On に戻していても）、間隔を待たずに取り込む
+    const stops = this.service.intakeStopCount(kind);
+    if (stops !== state.stops) {
+      state.stops = stops;
+      state.lastRun = undefined;
+    }
     if (
       !force &&
       state.lastRun !== undefined &&

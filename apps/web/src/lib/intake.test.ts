@@ -72,6 +72,24 @@ describe("取り込みの種類ごとの直近の取り込み（PBI-100）", () 
     expect(off.errors.map((e) => e.query)).toEqual(["jira"]);
   });
 
+  it("sacty の設定を読めなかったときは、記録をすべて出す（読めなかった理由を見せる。レビュー指摘）", () => {
+    const failed = {
+      lastRunAt: "2026-10-15T00:00:00Z",
+      imported: 0,
+      errors: [{ message: "読めません" }],
+    };
+    const { runs, errors } = intakeRuns({
+      settingsUnreadable: true,
+      runs: { issues: failed, reviews: failed, tickets: failed },
+    });
+    expect(runs.map((r) => r.kind)).toEqual(["issues", "reviews", "tickets"]);
+    expect(errors).toHaveLength(3);
+    expect(messagesFor("ja").projects.intake.settingsUnreadable).toContain(
+      "sacty の設定を読めない",
+    );
+    expect(messagesFor("en").projects.intake.settingsUnreadable).toContain("cannot be read");
+  });
+
   it("種類の名前は日本語と英語で出す", () => {
     for (const lang of ["ja", "en"] as const) {
       const t = messagesFor(lang).projects.intake;

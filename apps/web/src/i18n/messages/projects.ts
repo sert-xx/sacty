@@ -16,6 +16,8 @@ const ja = {
       `最後の取り込み（${kind}）：${at}（${n}件のタスクを作成）`,
     runKinds: { issues: "Issue", reviews: "PR のレビュー", tickets: "チケット" },
     errorKind: (kind: string) => `【${kind}】`,
+    settingsUnreadable:
+      "sacty の設定を読めないので、取り込みは止まっています（理由は下に出ます）。",
     never: "まだ取り込んでいません。",
     noLabel:
       "取り込むラベルも、PR のレビューとチケットの取り込みも設定していないので、取り込みは止まっています。",
@@ -239,6 +241,8 @@ const en: ProjectsMessages = {
     lastRun: (kind, at, n) => `Last ${kind} intake: ${at} (${n} task${n === 1 ? "" : "s"} created)`,
     runKinds: { issues: "issue", reviews: "PR review", tickets: "ticket" },
     errorKind: (kind) => `[${kind}] `,
+    settingsUnreadable:
+      "Intake is stopped because the sacty settings cannot be read (the reason is shown below).",
     never: "Nothing imported yet.",
     noLabel: "No intake label, PR review intake, or ticket intake is set, so intake is stopped.",
     label: (label) => `Issues: label ${label}`,

@@ -11,13 +11,17 @@ export function intakeRuns(intake: IntakeStatus): {
   errors: (NonNullable<IntakeRun["errors"]>[number] & { kind: IntakeKind })[];
 } {
   const off = intake.triageOff ?? [];
-  const enabled: Record<IntakeKind, boolean> = {
-    issues: Boolean(intake.label) && !off.includes("issues"),
-    reviews:
-      intake.reviewRequested === true ||
-      (Boolean(intake.reviewLabel) && !off.includes("reviewLabel")),
-    tickets: Boolean(intake.ticketLabel) && !off.includes("tickets"),
-  };
+  // 設定を読めなかったときは、どの種類が On かわからないので、記録をすべて出す（読めなかった理由を見せるため）
+  const all = intake.settingsUnreadable === true;
+  const enabled: Record<IntakeKind, boolean> = all
+    ? { issues: true, reviews: true, tickets: true }
+    : {
+        issues: Boolean(intake.label) && !off.includes("issues"),
+        reviews:
+          intake.reviewRequested === true ||
+          (Boolean(intake.reviewLabel) && !off.includes("reviewLabel")),
+        tickets: Boolean(intake.ticketLabel) && !off.includes("tickets"),
+      };
   const runs = (["issues", "reviews", "tickets"] as const).flatMap((kind) => {
     const run = intake.runs?.[kind];
     return run && enabled[kind] ? [{ ...run, kind }] : [];

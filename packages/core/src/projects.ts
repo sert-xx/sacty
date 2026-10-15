@@ -139,6 +139,22 @@ const INTERVAL_KEYS = {
 } as const satisfies Record<IntakeKind, keyof SactySettings>;
 
 /** その種類の取り込みの間隔（秒）。設定していなければ既定値（PBI-100）。 */
+/**
+ * その種類の取り込みを動かす設定か（ラベルなどを設定して On にしている。PBI-100）。issues：取り込むラベルがあり Off でない、
+ * reviews：レビューの依頼を取り込むか、レビュー用のラベルがあり Off でない、tickets：チケットのラベルがあり Off でない。
+ */
+export function intakeKindEnabled(settings: SactySettings, kind: IntakeKind): boolean {
+  const off = settings.triageOff ?? [];
+  if (kind === "issues") return Boolean(settings.intakeLabel) && !off.includes("issues");
+  if (kind === "reviews") {
+    return (
+      settings.reviewRequested === true ||
+      (Boolean(settings.reviewLabel) && !off.includes("reviewLabel"))
+    );
+  }
+  return Boolean(settings.ticketLabel) && !off.includes("tickets");
+}
+
 export function intakeIntervalSec(settings: SactySettings, kind: IntakeKind): number {
   return settings[INTERVAL_KEYS[kind]] ?? DEFAULT_INTAKE_INTERVAL_SEC;
 }

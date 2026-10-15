@@ -22,6 +22,7 @@ import {
   buildStepPullRequestBodyText,
 } from "./prompts.js";
 import { MemorySecretStore } from "./secrets.js";
+import { createApp } from "./server.js";
 import { TaskService } from "./service.js";
 import { MemorySettingsStore } from "./settings.js";
 import type { TicketClient } from "./tickets.js";
@@ -126,10 +127,13 @@ class FakeTicketSearch implements TicketClient {
     cursor?: string;
   }[] = [];
   fail?: string;
+  /** 見つからない（空の結果を返す）。 */
+  none = false;
   /** 返す続きの位置（順に）。 */
   next: (string | undefined)[] = [];
   async search(input: Parameters<TicketClient["search"]>[0]) {
     this.searched.push({ ...input, platform: input.platform.name });
+    if (this.none) return { tickets: [] };
     if (this.fail) throw new Error(this.fail);
     return {
       tickets: [
@@ -615,19 +619,90 @@ describe("取り込みの種類ごとの間隔（PBI-100）", () => {
     activity.close();
   });
 
-  it("見つからなければ、取り込みの処理（すべてのタスクを調べる）を呼ばない（レビュー指摘）", async () => {
-    const { activity, service, search, intake } = kindsSetup({ ticketLabel: "" });
+  it("見つからなければ、取り込みの処理（すべてのタスクを調べる）を呼ばない。チケットも同じ（レビュー指摘）", async () => {
+    const { activity, service, search, intake, tickets, counts } = kindsSetup();
     search.issues.length = 0;
-    let calls = 0;
+    tickets.none = true;
+    const calls = { issues: 0, tickets: 0 };
     const importIssues = service.importIssues.bind(service);
     service.importIssues = (found) => {
-      calls += 1;
+      calls.issues += 1;
       return importIssues(found);
     };
+    const importTickets = service.importTickets.bind(service);
+    service.importTickets = (found) => {
+      calls.tickets += 1;
+      return importTickets(found);
+    };
     await intake.tick();
-    expect(search.queries).toHaveLength(2);
-    expect(calls).toBe(0);
+    // 検索はする（Issue・PR のレビュー・チケット）が、見つからないので取り込みの処理は呼ばない
+    expect(counts()).toEqual({ issues: 1, reviews: 1, tickets: 1 });
+    expect(calls).toEqual({ issues: 0, tickets: 0 });
     expect(service.status().intake?.runs?.issues).toMatchObject({ imported: 0 });
+    expect(service.status().intake?.runs?.tickets).toMatchObject({ imported: 0 });
+    // 見つかれば呼ぶ
+    tickets.none = false;
+    await intake.tick(true);
+    expect(calls.tickets).toBe(1);
+    activity.close();
+  });
+
+  it("一度取り込んだ種類を、次の確認の前に Off にして On に戻しても、次の確認ですぐに取り込む（レビュー指摘）", async () => {
+    const { activity, service, intake, advance, counts } = kindsSetup();
+    await intake.tick();
+    expect(counts()).toEqual({ issues: 1, reviews: 1, tickets: 1 });
+    advance(10_000);
+    // 確認（tick）をはさまずに、チケットを Off にして On に戻す
+    const settings = service.getSettings();
+    service.saveSettings({ ...settings, triageOff: ["tickets"] });
+    service.saveSettings(settings);
+    await intake.tick();
+    // チケットは間隔（300 秒）を待たずに取り込む。触っていない種類は間隔を待つ
+    expect(counts()).toEqual({ issues: 1, reviews: 1, tickets: 2 });
+    // 戻した後は、また間隔ごと
+    advance(10_000);
+    await intake.tick();
+    expect(counts().tickets).toBe(2);
+    // ラベルを消して戻しても同じ（レビューの依頼もラベルも無い PR のレビューも）
+    service.saveSettings({ ...settings, reviewLabel: "" });
+    service.saveSettings(settings);
+    await intake.tick();
+    expect(counts()).toEqual({ issues: 1, reviews: 2, tickets: 2 });
+    activity.close();
+  });
+
+  it("sacty の設定の保存先が読めなくても、記録した理由を状況の API とすぐに取り込む API で返す（レビュー指摘）", async () => {
+    const { activity, service, intake } = kindsSetup();
+    const store = (service as unknown as { deps: { settings: { get(): unknown } } }).deps.settings;
+    const get = store.get.bind(store);
+    store.get = () => {
+      throw new Error("sacty.db を読めません");
+    };
+    const token = "test-token";
+    const app = createApp(service, token, { intake });
+    const auth = { authorization: `Bearer ${token}` };
+    const run = await app.request("/api/intake/run", { method: "POST", headers: auth });
+    expect(run.status).toBe(200);
+    const ran = (await run.json()) as {
+      status: { settingsUnreadable?: boolean; runs?: Record<string, { errors?: unknown[] }> };
+    };
+    expect(ran.status.settingsUnreadable).toBe(true);
+    for (const kind of ["issues", "reviews", "tickets"]) {
+      expect(
+        ran.status.runs?.[kind]?.errors?.map((e) => ja((e as { message: unknown }).message)),
+        kind,
+      ).toEqual([expect.stringContaining("sacty.db を読めません")]);
+    }
+    const status = await app.request("/api/status", { headers: auth });
+    expect(status.status).toBe(200);
+    expect(((await status.json()) as { intake: unknown }).intake).toEqual(ran.status);
+    // 読めるようになったら、ラベルも返す
+    store.get = get;
+    const recovered = (await (await app.request("/api/status", { headers: auth })).json()) as {
+      intake: { settingsUnreadable?: boolean; label?: string };
+    };
+    expect(recovered.intake.settingsUnreadable).toBeUndefined();
+    expect(recovered.intake.label).toBe("sacty");
     activity.close();
   });
 

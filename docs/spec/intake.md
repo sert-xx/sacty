@@ -13,6 +13,8 @@ sacty の設定（すべてのプロジェクトに共通）に書く。GitHub �
 - 間隔が来たかは30秒ごとに確かめ、sacty の設定は毎回読み直す（変えた間隔は、デーモンを再起動せずに次の確認から効く。最後に取り込みを
   始めた時刻から測る）。デーモンを起動したときは、すべての種類をすぐに取り込む。取り込み元が無かった回（ラベルが無い・Off・対象が無い）は
   間隔の起点にせず、その種類の記録も消す（次の確認でまた確かめるので、On にすると次の確認ですぐに取り込む）。
+  確認と確認の間に Off にして On に戻したときも同じにするため、sacty の設定を保存するたびに、止める設定（`intakeKindEnabled` が偽）に
+  なった種類を数え（`intakeStopCount`。メモリーだけ）、数が変わった種類は間隔の起点を戻す。
 - sacty の設定を読めなければ、その理由を取り込み中でない種類の失敗として記録し、間隔の起点にせずに次の確認でやり直す（定期実行は止めない）。
 - 検索で何も見つからなければ、取り込みの処理（`importIssues`・`importTickets`。すべてのタスクを調べる）を呼ばない。
 - 取り込みは、`config.yaml` を読めれば動く（`config.yaml` に取り込みの項目は無い。`github:` を書いても読まない）。読めなければ取り込まない。
@@ -20,12 +22,14 @@ sacty の設定（すべてのプロジェクトに共通）に書く。GitHub �
   ほかの種類を止めない（レート制限で検索を飛ばすのは、その回のその種類の中だけ）。思わぬ失敗も、その種類の失敗として記録する。
 - `POST /api/intake/run` は、すべての種類を間隔を待たずに取り込み、終わってから状況を返す（種類は選べない）。
 - 状況（`GET /api/status` の `intake.runs`）は種類ごとに、直近の取り込みの時刻・作ったタスクの数・取り込めなかった取り込み元と理由を持つ
-  （メモリーだけ。再起動で消える）。画面は、On で設定のある種類だけを出し、取り込めなかった対象には種類を添える。
+  （メモリーだけ。再起動で消える）。画面は、On で設定のある種類だけを出し、取り込めなかった対象には種類を添える。sacty の設定の保存先を
+  読めないときも、状況は記録した取り込み（読めなかった理由を含む）を返し、`settingsUnreadable: true` を付ける（ラベルなどは無い。画面は
+  すべての種類の記録を出す）。
 - 取り込み元ごとに、どこまで読んだか（更新日時）を種類ごとにメモリーに持ち、続きから読む。プロジェクトの設定・ラベル・On/Off が変わったとき
   （間隔は含まない）とデーモンの再起動のときは先頭から読み直す（取り込み済みのものは二重に取り込まない）。1つの取り込み元の失敗は、ほかの
   取り込み元を止めない。
 
-コード: `apps/daemon/src/intake.ts`（`IssueIntake`）、`packages/core/src/projects.ts`（`IntakeKind`・`intakeIntervalSec`・`SactySettings`）、`apps/daemon/src/service.ts`（`recordIntake`・`status`）
+コード: `apps/daemon/src/intake.ts`（`IssueIntake`）、`packages/core/src/projects.ts`（`IntakeKind`・`intakeIntervalSec`・`intakeKindEnabled`・`SactySettings`）、`apps/daemon/src/service.ts`（`recordIntake`・`intakeStopCount`・`status`）
 
 ## GitHub の Issue・PR
 

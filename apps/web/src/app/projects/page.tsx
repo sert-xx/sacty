@@ -63,7 +63,8 @@ async function Projects() {
           </h2>
           {!intake ? (
             <p className="text-muted-foreground">{t.intake.stopped}</p>
-          ) : !intake.label &&
+          ) : !intake.settingsUnreadable &&
+            !intake.label &&
             !intake.reviewLabel &&
             !intake.reviewRequested &&
             !intake.ticketLabel ? (
@@ -76,6 +77,10 @@ async function Projects() {
             </p>
           ) : (
             <>
+              {/* sacty の設定を読めなかった（PBI-100）。記録した理由は、下の取り込めなかった対象に出る */}
+              {intake.settingsUnreadable && (
+                <p className="text-warn">{t.intake.settingsUnreadable}</p>
+              )}
               <p className="text-muted-foreground">
                 {[
                   intake.label ? t.intake.label(intake.label) : "",
