@@ -1,3 +1,5 @@
+**日本語** | [English](architecture.en.md)
+
 # 全体の構成
 
 sacty は、npm workspaces の4つのパッケージでできている。`sacty` コマンド（cli）が、常駐するデーモン（daemon）と画面（web）を起動する。

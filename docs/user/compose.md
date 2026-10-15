@@ -1,5 +1,7 @@
 <!-- 対応するコード: apps/daemon/src/services.ts、apps/daemon/src/shared-compose.ts、packages/core/src/projects.ts（SharedCompose） -->
 
+**日本語** | [English](compose.en.md)
+
 # docker compose のサービス（DB・モック API など）
 
 テストや動作確認に、docker compose で起動する DB やモック API が要るリポジトリでは、sacty がホストでサービスを起動し、エージェントと

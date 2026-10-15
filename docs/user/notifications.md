@@ -1,5 +1,7 @@
 <!-- 対応するコード: packages/core/src/projects.ts（ProjectNotification・SlackMention・DEFAULT_MENTION_KINDS）、apps/daemon/src/notifier.ts、apps/web/src/i18n/messages/projects.ts -->
 
+**日本語** | [English](notifications.en.md)
+
 # Slack の通知
 
 人間の出番（承認待ち・エスカレーション・一時停止）とタスクの完了を、プロジェクトごとに Slack に通知します。画面のプロジェクトの設定の

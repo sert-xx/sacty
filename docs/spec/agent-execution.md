@@ -1,3 +1,5 @@
+**日本語** | [English](agent-execution.en.md)
+
 # エージェントの実行
 
 工程・オーケストレーター・ゴールガーディアン・質問への答え・書き出しは、どれも AI のエージェント（Claude Code か Codex）を

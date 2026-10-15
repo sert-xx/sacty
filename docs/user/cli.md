@@ -1,5 +1,7 @@
 <!-- 対応するコード: packages/cli/src/index.ts（USAGE・main・parsePort）、packages/cli/src/context-preview.ts、apps/daemon/src/context-template.ts、apps/daemon/src/config.ts（CONFIG_TEMPLATE） -->
 
+**日本語** | [English](cli.en.md)
+
 # CLI（sacty コマンド）
 
 `npx sacty <コマンド>` で使います。`npx sacty --help`（`-h`）で使い方を表示します。知らないコマンドを指定すると、使い方を表示して失敗で終わります。
@@ -10,7 +12,7 @@
 npx sacty up [--port <画面のポート>] [--daemon-port <デーモンのポート>]
 ```
 
-デーモンと画面（Next.js）を起動し、`http://127.0.0.1:4700` を表示します。Ctrl+C で両方が終了します。
+デーモンと画面（Next.js）を起動し、端末に `http://127.0.0.1:4700` を表示します（ブラウザーは自動では開きません）。Ctrl+C で両方が終了します。
 
 | オプション | 既定値 | 内容 |
 | --- | --- | --- |

@@ -1,5 +1,7 @@
 <!-- 対応するコード: packages/core/src/projects.ts（SactySettings・TicketSourceConfig）、apps/daemon/src/intake.ts、apps/daemon/src/tickets.ts、apps/web/src/i18n/messages/settings.ts、apps/web/src/i18n/messages/projects.ts -->
 
+**日本語** | [English](intake.en.md)
+
 # Issue・PR・チケットの取り込み
 
 GitHub の Issue・PR や JIRA のチケットを、定期的に取り込んでタスクにします。取り込みの設定は、すべてのプロジェクトに共通の設定として、
@@ -86,12 +88,23 @@ gateway:
       auth:
         header: Authorization
         prefix: "Basic "
-        secret: op://Work/JiraCloud/basic     # echo -n 'me@example.com:<API トークン>' | base64
+        secret: op://Work/JiraCloud/basic     # 値の作り方は下
       allow:
         - GET /rest/api/3/search/jql
         - GET /rest/api/2/issue/**
         - GET /rest/api/3/issue/**
         - POST /rest/api/2/issue/*/comment
+```
+
+Jira Cloud の値（`メールアドレス:API トークン` を base64 にしたもの）は、トークンをコマンドの引数や履歴に残さないよう、次のように作ります
+（bash・zsh）。トークンは表示しない入力で受け取り、標準入力で `base64` に渡し、結果をクリップボードに置きます。1Password の項目
+（上の例では `JiraCloud` の `basic`）に貼り付けたら、クリップボードを空にしてください。
+
+```sh
+printf 'API トークン: '; read -rs JIRA_TOKEN; echo
+printf '%s' "me@example.com:$JIRA_TOKEN" | base64 | tr -d '\n' | pbcopy; unset JIRA_TOKEN
+# 1Password に貼り付けた後
+pbcopy < /dev/null
 ```
 
 - プロジェクトの設定の「チケットの取り込み先」に、接続先（上の名前）・種類（Jira Cloud / Jira Server・Data Center）・JIRA のプロジェクトの

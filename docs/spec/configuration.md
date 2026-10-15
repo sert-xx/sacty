@@ -1,3 +1,5 @@
+**日本語** | [English](configuration.en.md)
+
 # 設定（config.yaml）
 
 `SACTY_HOME/config.yaml` は、マシンごとの設定（AI のエージェント・認証・イメージ・ゲートウェイ）を持つ。デーモンは

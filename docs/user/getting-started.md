@@ -1,5 +1,7 @@
 <!-- 対応するコード: package.json、packages/cli/src/index.ts、apps/daemon/src/config.ts（CONFIG_TEMPLATE・resolveHome）、apps/daemon/src/instance-lock.ts -->
 
+**日本語** | [English](getting-started.en.md)
+
 # はじめに
 
 sacty をインストールし、起動して、最初のタスクを動かすまでの手順を説明します。
@@ -17,15 +19,14 @@ sacty をインストールし、起動して、最初のタスクを動かす�
 npm install
 npm run build
 npx sacty config init   # ~/.sacty/config.yaml を作る
-npx sacty image build   # エージェント実行用のコンテナイメージを作る
 ```
 
 1. `npx sacty config init` で作った `~/.sacty/config.yaml` を開き、工程を実行する AI（`default_agent` と `agents`）・認証方式・単価を
    設定します（[config.yaml の設定](config.md)）。雛形の `default_agent` は、Claude Code のサブスクリプション（`claude-subscription`）です。
 2. 認証のトークンや API キーを、キーチェーンか 1Password に用意します（[秘密情報](secrets.md)）。雛形のままなら、
    `claude setup-token` で作ったトークンを `npx sacty secret set claude-oauth-token` で保存します。
-3. `npx sacty image build` でイメージを作ります。Docker Hub や npm の公開レジストリを使えない環境では、先に `image_build` を書いてください
-   （[コンテナイメージ](images.md)）。
+3. エージェント実行用のコンテナイメージを `npx sacty image build` で作ります。Docker Hub や npm の公開レジストリを使えない環境では、
+   作る前に `image_build` を書いてください（[コンテナイメージ](images.md)）。
 
 ## 起動する
 
@@ -33,7 +34,7 @@ npx sacty image build   # エージェント実行用のコンテナイメージ
 npx sacty up
 ```
 
-デーモンと画面を起動し、`http://127.0.0.1:4700` を表示します。Ctrl+C で両方が終了します。ポートは `--port`・`--daemon-port`
+デーモンと画面を起動し、端末に `http://127.0.0.1:4700` を表示します。ブラウザーで開いてください（自動では開きません）。Ctrl+C で両方が終了します。ポートは `--port`・`--daemon-port`
 で変えられます（[CLI](cli.md#sacty-up)）。
 
 ## 最初のプロジェクトとタスク

@@ -1,5 +1,7 @@
 <!-- 対応するコード: packages/cli/src/index.ts（secretSet）、apps/daemon/src/secrets.ts、apps/daemon/src/secret-uses.ts、apps/daemon/src/config.ts（onepassword） -->
 
+**日本語** | [English](secrets.en.md)
+
 # 秘密情報（キーチェーン・1Password）
 
 トークンや API キーは、設定ファイルには名前（または 1Password の参照）だけを書き、値はキーチェーンか 1Password に置きます。

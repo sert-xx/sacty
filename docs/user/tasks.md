@@ -1,5 +1,7 @@
 <!-- 対応するコード: apps/daemon/src/service.ts、apps/daemon/src/pr-watcher.ts、apps/daemon/src/prompts.ts、packages/core/src/events.ts（StepKey・DEFAULT_DOCUMENTS_DIR）、apps/web/src/i18n/messages/task.ts、apps/daemon/src/task-templates.ts、apps/daemon/src/test-files.ts、apps/web/src/components/new-task-dialog.tsx、apps/web/src/components/implementation.tsx -->
 
+**日本語** | [English](tasks.en.md)
+
 # タスクを進める
 
 タスクを作ると、オーケストレーターとゴールガーディアンが工程を進めます。人間は承認ゲートでだけ判断します。

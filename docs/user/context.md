@@ -1,5 +1,7 @@
 <!-- 対応するコード: apps/daemon/src/context-mcp.ts（ContextMcpServers）、apps/daemon/src/context.ts（ContextManifest・McpServer・McpTimeouts・PlatformsFile・composeContext・RESERVED_SETTINGS・RESERVED_FILES）、apps/daemon/src/context-template.ts、apps/daemon/src/platforms.ts、packages/cli/src/index.ts（contextInit・contextPreview）、packages/cli/src/context-preview.ts -->
 
+**日本語** | [English](context.en.md)
+
 # コンテキストリポジトリ
 
 工程エージェントに渡す規則・スキル・MCP・外部 PF・エージェントの設定は、コンテキストリポジトリにまとめて、プロジェクトの設定で
