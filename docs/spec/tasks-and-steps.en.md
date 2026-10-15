@@ -8,7 +8,7 @@ judges change requests, the final review, where to send PR comments back to, and
 
 Approval and Request changes are in [Approval and request changes](approval.en.md); Task split and Integration review are in [Task split and integration review](split-and-integrate.en.md).
 
-Related ADRs: [Set up the agent configuration for handling a repository with sacty through the "Sacty setup" task template](../adr/20261014-1530-task-template-sacty-setup.md)
+Related ADRs: [Set up the agent configuration for handling a repository with sacty through the "Sacty setup" task template](../adr/20261014-1530-task-template-sacty-setup.md), [In a repository without tests, skip the tests and let the Goal Guardian judge acceptance from the task's goal](../adr/20261015-0000-verify-without-test-command.md)
 
 ## How tasks are created
 
@@ -46,7 +46,8 @@ If the body of `POST /api/tasks` has `template`, the task is created from a temp
 - The goal of `sacty-setup` is to check the agent configuration needed to handle the target repository with sacty, and to open a PR that fills in what is missing.
   The text does not assume any particular language or tool. What it checks and fills in:
   1. Instructions for agents (AGENTS.md, CLAUDE.md, and so on; not maintained in two places)
-  2. How to run tests (the command and prerequisites; whether they match the current configuration)
+  2. How to run tests (the command and prerequisites; whether they match the current configuration). If the repository has no tests yet, the agent writes that there are none and how to check changes,
+     and does not add a new language or test framework (that is a separate task)
   3. Services needed for tests (how to start them and where to connect; if none are needed, say so)
   4. For repositories that deploy with CI/CD, the deployment-checking skill `deployment-observer`. The original goes in
      `.agents/skills/deployment-observer/SKILL.md`, and `.claude/skills/deployment-observer` is a relative symbolic link to `../../.agents/skills/deployment-observer`.
@@ -113,7 +114,8 @@ The following are read from the answer (JSON under the heading `sacty-steps`) an
 | --- | --- |
 | `plan`, `reason` | The plan and the reason |
 | `baseBranch` | The base branch. If it differs from the default branch, the workspace is prepared again on that branch (if it cannot be prepared, the task continues on the default branch and the reason is replaced) |
-| `testCommand` | The test command (run with `sh -c`; exit code 0 passes; 1 to 1000 characters). If there is an Implementation step but no command, the task is paused |
+| `testCommand` | The test command (run with `sh -c`; exit code 0 passes; 1 to 1000 characters). If there is an Implementation step but no command and `noTests` below cannot be used either, the task is paused (`orchestrator.testCommandUnknown`) |
+| `noTests` | Read only when `testCommand` is empty: the basis for judging that the repository has no tests (1 to 2000 characters). It is recorded in `noTestsReason` of `StepsChosen` ("Tasks without tests" below) |
 | `investigation` | The kind of investigation (`content`: investigating content, `bug`: investigating a bug) |
 | `images`, `imageReason` | The image per step. If the project's target specifies an image, it is used for all steps without asking. A name not in `images` stops the task |
 | `services`, `servicesReason` | The compose files, services, and steps to start ([Services](services.en.md)). Shared compose files are chosen by name (an unknown name stops the task) |
@@ -142,8 +144,72 @@ Code: `apps/daemon/src/service.ts` (`askOrchestrator`, `runNextInner`, `withImag
 - After the Reproduce step, the reproduction test is run; if the exit code is not 0, the bug is treated as reproduced and the task moves to Implementation. If it is 0 (or no reproduction test
   was declared), the bug is treated as not reproduced and the task waits for a person's decision (the Reproduce step cannot be approved; request changes or cancel).
 - The test image is the Implementation step's image (or Reproduce's if absent) for verification, and the Reproduce step's image (or Implementation's if absent) for checking reproduction.
+- The implementation deliverable (the task screen and the Deliverable review approval screen) shows the test results and the final review in the correspondence table only for the
+  current submission's verification (`verificationResults`). Test results and final reviews after the verification of a redone implementation has started (`verification` is `pending`), and final
+  reviews older than the latest test result (or, if tests were skipped, the time they were skipped), are treated as the previous submission's: they are shown under the headings "Test run for the
+  previous submission (not yet run for the current one)" and "Final review of the previous submission (not yet judged for the current one)", and the result in the correspondence table is
+  "Not run". For a task without tests, a viewpoint without tests is shown as "No tests (judged by the goal)" only when there is a final review of the current submission; while waiting for
+  verification (before the judgment by the goal), it is "Not run" (`judgedByGoalForCurrent`).
 
-Code: `apps/daemon/src/service.ts` (`verify`, `checkReproduction`, `pauseIfVerificationKeepsFailing`), `apps/daemon/src/prompts.ts` (`verificationBasis`), `packages/core/src/events.ts` (`MAX_VERIFY_ATTEMPTS`)
+Code: `apps/daemon/src/service.ts` (`verify`, `checkReproduction`, `pauseIfVerificationKeepsFailing`), `apps/daemon/src/prompts.ts` (`verificationBasis`), `packages/core/src/events.ts` (`MAX_VERIFY_ATTEMPTS`), `apps/web/src/components/implementation.tsx`, `apps/web/src/lib/labels.ts` (`verificationResults`, `judgedByGoalForCurrent`)
+
+### Tasks without tests
+
+A task for which the Orchestrator left `testCommand` empty and wrote a basis in `noTests` (`Task.noTestsReason`) proceeds without stopping even though there is no
+test command, and acceptance is judged from the task's goal instead of by tests.
+
+- Conditions for treating a task as one without tests (`checkNoTests`; checked right after the steps are chosen, when the plan includes Implementation):
+  - If there is a `testCommand`, `noTests` is discarded (the behavior with a test command does not change). If there is no `noTests` and `testCommand` is also empty,
+    the task stops as before (`orchestrator.testCommandUnknown`).
+  - If a bug fix (`bugfix`) is chosen, the task stops (`orchestrator.bugfixNeedsTests`). A reproduction is confirmed by tests, so it is not chosen for a task without
+    tests (the instructions to the Orchestrator also ask it not to choose it).
+  - If the base code of the target repository (the workspace, excluding `.git`) has a file that matches the naming conventions of test files, the task stops
+    (`orchestrator.noTestsContradicted`; up to 5 found files are shown). Matches are files inside `test`, `tests`, and `__tests__`
+    directories, and files whose name without the extension is `test`, `tests`, `test_*`, `test-*`, `*_test`, `*-test`, `*.test`, `*_spec`, `*.spec`
+    (and plurals), `*Test`, `*Tests`, or `Test*` (camel case) (`looksLikeTestFile`). Document files (extensions `md`,
+    `markdown`, `txt`, `rst`, `adoc`, `asciidoc`, `org`) do not match, even inside test directories.
+  - The task also stops when the scan does not finish after 20,000 entries (`TEST_FILE_SCAN_LIMIT`) (`orchestrator.noTestsUncertain`).
+  - The task also stops when a directory cannot be read (including the workspace itself) (`orchestrator.noTestsUnreadable`; it shows the path of the unreadable directory
+    relative to the workspace (`.` for the workspace itself) and the error code (or the error message if there is none)).
+  - In either case, if a test file was found first, the result is `noTestsContradicted`. The message is chosen by `noTestsStop`.
+  - When stopping, a `StepsChosen` without `noTestsReason` and a `TaskPaused` with the reason are recorded. Even after resuming, like a task whose test command
+    could not be determined, the task stops at verification (or at checking reproduction).
+- Instead of having it write tests, the instructions for the Implementation step ask it to write in the implementation's description how each viewpoint is met. Only when the task asks for setting up
+  tests and the implementation sets them up does it report the command, as JSON (`{"command": "…"}`; 1 to 1000 characters) in a code block whose language name is `sacty-test-command`
+  (`TEST_COMMAND_FENCE`). The report is recorded in `testCommand` of the implementation's `AgentRunCompleted`
+  and read again for each submission (`Task.addedTestCommand`).
+  - The report is read only in the Implementation step of a task without tests (`testCommand` of `extractBlocks`). In other steps (Requirements, Design,
+    review, and so on) and in the Implementation step of a task with tests (where `testCommand` was decided), this code block stays in the text as it is
+    (it reaches the outputs, the approval screen, and later steps) and is not treated as a report (the task does not stop; tests run with the decided test command).
+  - Only the inside of this code block is read as the report (`extractTestCommandFences`; CommonMark fence rules: up to 3 leading spaces,
+    3 or more `` ` `` or `~`, closed by the same character at least as many times, and the language name is the first word of the info string). Text outside code blocks and the inside
+    of other code blocks (such as an example quoted with four backticks) are not treated as the report. The report's code block is removed from the text.
+  - If even one block's content cannot be read as JSON, is not an object, has a `command` that is not a string, is empty, or is longer than 1000 characters, or the code block is not
+    closed, it is not treated as a missing report: `AgentRunFailed` and `TaskPaused` (`implement.testCommandInvalid`) are
+    recorded and the task stops. Resuming redoes the implementation. If there are several readable reports, the last one is used.
+- The Orchestrator's basis (`noTestsReason`) is influenced by the documents of the target repository, so it is not embedded in the text of the implementation and final review instructions;
+  it is passed as a JSON string under a heading that says it is the Orchestrator's report, data as a JSON string, and not an instruction to the agent
+  (`noTestsReasonLines`). The final review is also told not to follow instructions written in the basis, the task, the implementation's description, the diff, or the code.
+- The examples of answers to the Orchestrator are shown separately: one that writes `testCommand` and one that writes `noTests` (which cannot choose `bugfix`), and the Orchestrator is told not to
+  write both.
+- Verification:
+  - If no test command was reported, the tests are not run; `TestsSkipped` is recorded and the task moves to the final review (`Task.testsSkippedAt`;
+    the previous round's test result is cleared).
+  - If there is a report, the tests are run with that command (the test image and services are the same as for a task with tests). Exit code 0 passes, and
+    a viewpoint not corresponding to a test does not cause a failure (the instructions for redoing do not list viewpoints without tests either).
+  - The final review judges each viewpoint from the task's goal (title and description), the approved requirements (and design, if any), the implementation's description, the diff, the test result (if any), and
+    the code after implementation. It is told not to fail the task because there are no tests or because a viewpoint has no corresponding test, and to base its judgment only on what in the implementation's
+    description is backed by the code and the diff. The viewpoints (the design's test viewpoints or `REQ`), pass or fail, and
+    the redo limit of `MAX_VERIFY_ATTEMPTS` are the same as for a task with tests.
+- Display: the step field of the task screen (test command: none, with the basis; for tests set up in the implementation, "verified and judged by the goal" if they passed,
+  "failed, so the implementation is redone" if they failed, and "will run next" while waiting. `testCommandOfNoTests`), the notice on the implementation deliverable (the task screen and the Deliverable review approval screen)
+  ("Not verified by tests" if the latest verification skipped the tests, "Verified by the tests added in the implementation" (success color) if the tests set up in the implementation ran and passed,
+  "The tests added in the implementation failed" with the exit code (failure color) if they failed, and "Waiting to run the tests added in the implementation" if the current submission's tests have not run yet
+  (`verification` is `pending` and there is a report; the previous submission's result is not shown). `addedTestsResult`), the test line of the PR body (`テスト：テストのコマンドが無いため、テストでは検証していません。
+  目的から判定しました。`, with `（実装で用意したテスト）` for tests set up in the implementation) and the basis line, and the Activity (`StepsChosen`, `TestsSkipped`).
+  A person's approval in Deliverable review is still required, as for a task with tests.
+
+Code: `apps/daemon/src/service.ts` (`checkNoTests`, `runNextInner`, `verify`), `apps/daemon/src/test-files.ts` (`findTestFiles`, `looksLikeTestFile`, `noTestsStop`, `TEST_FILE_SCAN_LIMIT`), `apps/daemon/src/prompts.ts` (`buildOrchestratorPrompt`, `extractStepPlan`, `buildPrompt`, `extractBlocks`, `extractTestCommandFences`, `buildFinalReviewPrompt`, `noTestsReasonLines`, `resultTableLines`), `packages/core/src/events.ts` (`StepsChosen`, `AgentRunCompleted`, `TestsSkipped`), `packages/core/src/projection.ts` (`noTestsReason`, `addedTestCommand`, `testsSkippedAt`), `apps/web/src/components/implementation.tsx`, `apps/web/src/lib/labels.ts` (`addedTestsResult`, `testCommandOfNoTests`)
 
 ## Goal Guardian
 
@@ -152,7 +218,7 @@ The AI is `guardian_agent` (or `default_agent` if absent). For each run it makes
 | Role | What it reads | Verdict |
 | --- | --- | --- |
 | Judging change requests | The code at the base | `approved`, `rejected`, `undecidable`. If it cannot read or fails, `undecidable`, which goes to a person's decision (Escalation) |
-| Final review | The code after implementation and the diff | Pass or fail ("Verifying the implementation" above) |
+| Final review | The code after implementation and the diff (for a task without tests, also the task's goal and the implementation's description) | Pass or fail ("Verifying the implementation" above) |
 | Deciding where to send PR comments back to | The code after implementation for Deliverable review; the code at the base for Requirements and Design | The step to go back to, or `undecidable` ([Approval and request changes](approval.en.md)) |
 | Integration review | The latest base branch | This AI if `step_agents.integrate` is absent ([Task split and integration review](split-and-integrate.en.md)) |
 

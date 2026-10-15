@@ -1,4 +1,4 @@
-<!-- Code: apps/daemon/src/service.ts, apps/daemon/src/pr-watcher.ts, apps/daemon/src/prompts.ts, packages/core/src/events.ts (StepKey, DEFAULT_DOCUMENTS_DIR), apps/web/src/i18n/messages/task.ts, apps/daemon/src/task-templates.ts, apps/web/src/components/new-task-dialog.tsx -->
+<!-- Code: apps/daemon/src/service.ts, apps/daemon/src/pr-watcher.ts, apps/daemon/src/prompts.ts, packages/core/src/events.ts (StepKey, DEFAULT_DOCUMENTS_DIR), apps/web/src/i18n/messages/task.ts, apps/daemon/src/task-templates.ts, apps/daemon/src/test-files.ts, apps/web/src/components/new-task-dialog.tsx, apps/web/src/components/implementation.tsx -->
 
 [日本語](tasks.md) | **English**
 
@@ -18,7 +18,8 @@ When you create a task, the Orchestrator and the Goal Guardian move it through t
     of each child task's repository.
   - For a task that needs code changes and is not split, the Orchestrator chooses a repository from the targets, prepares it, and then chooses the steps again. If it cannot choose, the task stops,
     and you can choose the repository in the task details and resume.
-- The base branch and the test command are decided by the Orchestrator at the start of the task by reading the repository.
+- The base branch and the test command are decided by the Orchestrator at the start of the task by reading the repository. In a repository without tests,
+  the task proceeds without using tests ("Repositories without tests" below).
 - Choosing the steps, and investigations that read and explain code or how things work, do not run the development setup (installing dependencies, building, and so on) (this takes precedence even if the repository's
   AGENTS.md or similar has setup instructions). Bug investigation, Reproduce, and Implementation set up the repository as its instructions say.
 
@@ -33,7 +34,7 @@ Like a normal task, the Orchestrator chooses how to proceed, and the task goes t
 that fills in what is missing.
 
 - Instructions for agents (AGENTS.md, CLAUDE.md, and so on)
-- How to run the tests
+- How to run the tests (if the repository has no tests yet, that there are none and how to check changes; this task does not add a new language or test framework)
 - Services the tests need (databases, mocks, and so on)
 - For repositories deployed by CI/CD, the deployment check skill `deployment-observer` (used by the after-merge watch). The original is
   `.agents/skills/deployment-observer/SKILL.md`, and `.claude/skills/deployment-observer` for Claude Code is a relative symbolic
@@ -46,6 +47,42 @@ For tasks created from a template, the template name appears in "Started from" i
 
 From the API, send `{"template": "sacty-setup", "projectId": "<project ID>", "repo": "<repository URL>"}` to `POST /api/tasks`
 (do not pass `title` or `body`). The CLI has no command to create tasks.
+
+## Repositories without tests
+
+Even in a repository that has no tests at all, such as one with only a README, tasks proceed without stopping.
+
+- The Orchestrator leaves the basis for judging that the repository has no tests. The step field of the task details shows "Test command: none (… Basis: …)"
+  (it also appears in "Steps chosen" in the Activity).
+- Verification of the implementation does not run tests. The Goal Guardian judges acceptance for each viewpoint from the task's goal, the requirements (and design), and the code after implementation, the diff, and the implementation's description.
+  If it does not pass, the implementation is redone, as for a task with tests, and if it fails 3 times in a row, the task is paused.
+- The implementation deliverable (the task details and the Deliverable review approval screen) shows "Not verified by tests". The test line of the PR body also
+  includes the basis, with "テストのコマンドが無いため、テストでは検証していません。目的から判定しました。" (no test command, so it was not verified by tests; it was judged by the goal). Because nothing was checked by tests,
+  check the content of the changes yourself before you approve.
+- When the task is one that sets up tests (such as setting up a language) and the implementation adds tests, those tests are run before the judgment by the goal
+  (the web UI shows "Verified by the tests added in the implementation" if they pass, and "The tests added in the implementation failed" if they do not.
+  If they fail, the implementation is redone). If the implementation does not write the test command report (a code block whose language name is `sacty-test-command`) correctly (including when it cannot be read as JSON),
+  the task
+  is paused with an error (resuming redoes the implementation).
+- While the implementation is being redone after failing the tests, the previous implementation's test results and final review are shown under headings such as "… for the previous submission (not yet … for the current one)".
+  They are not results for the current implementation (this is the same for tasks with tests).
+- A bug fix (Reproduce → Implementation) confirms the reproduction with tests, so it is not chosen for a repository without tests. If it is chosen, the task stops.
+
+### When the task stopped instead of proceeding without tests
+
+In the following cases, the task does not proceed without tests and is paused (the reason appears in the task details).
+
+| Why it stopped | How to fix it |
+| --- | --- |
+| The repository has tests, but the Orchestrator could not determine the test command ("could not determine the test command") | Write how to run the tests (the command and prerequisites) in the task's description and create the task again. |
+| The Orchestrator judged that there are no tests, but some files look like tests ("some files look like tests (…)"; the files found are shown) | If the files found **really are tests**, write how to run the tests in the task's description and create the task again, as above. If a file that is **not a test** (such as a script that is not for testing) was matched by mistake, creating the task again stops for the same reason. Change that file's name or location in the repository (move it out of `tests/` and similar directories, or remove `test` or `spec` from its name), merge that change into the base branch, and then create the task again. |
+| There were too many files to confirm that there are no test files ("too many files to confirm …") | If there are tests, write how to run them in the task's description and create the task again. A large repository that really has no tests cannot proceed for now. |
+| A workspace directory could not be read, so it could not be confirmed ("the workspace directory (…) could not be read (…)"; the location that could not be read and an error such as `EACCES` (no permission) are shown) | The location shown is a path relative to the task's workspace `$SACTY_HOME/workspaces/<task ID>/repo/` (`~/.sacty/workspaces/<task ID>/repo/` if you have not changed `SACTY_HOME`) (`.` is the workspace itself). The task ID is the end of the URL of the task details screen (`/tasks/<task ID>`). Check that the user running sacty can read that location (file permissions, disk state), fix it, and then create the task again. Resuming does not proceed without tests. |
+| A bug fix was chosen ("a reproduction is confirmed by tests, so a test command is required") | Write how to run the tests and create the task again, or create it again as an ordinary task that describes what to fix instead of as a bug fix. |
+
+Files that look like tests are files inside `test`, `tests`, and `__tests__` directories, and files with names like `*.test.*`, `*.spec.*`,
+`*_test.*`, `*_spec.*`, `test_*`, `*Test.*`, or `Test*`. Document files (`.md`, `.txt`, `.rst`, `.adoc`,
+and so on) do not match (`tests/README.md` does not match).
 
 ## When the implementation has no changes
 
