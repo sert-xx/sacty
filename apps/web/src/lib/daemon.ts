@@ -11,6 +11,7 @@ import {
   type SactySettingsInput,
   type StepKey,
   type Task,
+  type TriageKind,
 } from "@sacty/core";
 import { connection } from "next/server";
 import { getMessages } from "@/i18n/server";
@@ -83,7 +84,7 @@ export type IntakeStatus = {
   reviewLabel?: string;
   reviewRequested?: boolean;
   /** Off にしたトリアージの種類（PBI-53）。 */
-  triageOff?: ("issues" | "pullRequests" | "reviewLabel" | "tickets")[];
+  triageOff?: TriageKind[];
   /** チケットの取り込むラベル（sacty の設定。PBI-52）。 */
   ticketLabel?: string;
   lastRunAt?: string;

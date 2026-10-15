@@ -27,6 +27,28 @@ export class SqliteSettingsStore implements SettingsStore {
     this.db = new DatabaseSync(path);
     this.db.exec("PRAGMA journal_mode = WAL;");
     this.db.exec(SCHEMA);
+    this.dropRemovedItems();
+  }
+
+  /**
+   * 消した設定の項目を、保存されている設定から消す（開くたびに。消すものが無ければ書かない）。
+   * - triageOff の pullRequests（取り込むラベルの PR の On/Off。取り込むラベルは Issue だけを取り込むようになった。PBI-99）
+   */
+  private dropRemovedItems(): void {
+    const row = this.db.prepare("SELECT value FROM settings WHERE id = 1").get() as
+      | { value: string }
+      | undefined;
+    if (!row) return;
+    const value = JSON.parse(row.value) as { triageOff?: unknown };
+    if (!Array.isArray(value.triageOff) || !value.triageOff.includes("pullRequests")) return;
+    const triageOff = value.triageOff.filter((kind) => kind !== "pullRequests");
+    const { triageOff: _removed, ...rest } = value;
+    this.db
+      .prepare("UPDATE settings SET value = ?, updated_at = ? WHERE id = 1")
+      .run(
+        JSON.stringify(triageOff.length > 0 ? { ...rest, triageOff } : rest),
+        this.now().toISOString(),
+      );
   }
 
   get(): SactySettings {

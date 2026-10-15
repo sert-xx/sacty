@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import {
   cpSync,
@@ -920,8 +920,10 @@ function makeService(
     tests,
     pulls,
     projects: options.projects ?? projectsWithAccount(),
-    // 取り込むラベル（sacty の設定。PBI-26）
-    settings: options.settings ?? new MemorySettingsStore({ intakeLabel: "sacty" }),
+    // 取り込むラベルとレビュー用のラベル（sacty の設定。PBI-26・PBI-44。sacty の PR にはレビュー用のラベルを付ける。PBI-99）
+    settings:
+      options.settings ??
+      new MemorySettingsStore({ intakeLabel: "sacty", reviewLabel: "sacty-review" }),
     contexts: options.contexts ?? new FakeContexts(),
     defaultContext: options.defaultContext,
     github: options.github ?? new FakeGitHub(),
@@ -5110,9 +5112,14 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       "StepSubmitted",
       "PullRequestLabeled",
     ]);
-    // 実装の PR に、取り込むラベルを付ける（PBI-88）
+    // 実装の PR に、レビュー用のラベルを付ける（PBI-88・PBI-99）
     expect(pulls.labels).toEqual([
-      { repo: "https://github.com/acme/app", token: "ghp_secret", number: 7, label: "sacty" },
+      {
+        repo: "https://github.com/acme/app",
+        token: "ghp_secret",
+        number: 7,
+        label: "sacty-review",
+      },
     ]);
     // トークンは作業履歴に残さない
     expect(JSON.stringify(service.get(id)?.activity)).not.toContain("ghp_secret");
@@ -6712,6 +6719,38 @@ describe("sacty の設定と、Issue・PR の取り込み（PBI-26）", () => {
     labels,
     ...(pullRequest ? { pullRequest: true } : {}),
   });
+  /**
+   * 取り込むラベルで PR を取り込んでいた（PBI-99 より前の）タスク。いまは取り込みでは作らないので、台帳に書いて作る。
+   * すでに取り込んだタスクは、これまでどおり進む。
+   */
+  const importedPullRequest = (activity: SqliteActivityStore, number: number) => {
+    const id = randomUUID();
+    activity.append({
+      taskId: id,
+      projectId: "default",
+      events: [
+        {
+          actor: "sacty",
+          event: {
+            type: "TaskCreated",
+            payload: {
+              title: `PR ${number}`,
+              body: "本文",
+              start: "github_pull_request",
+              budgetCapUsd: 5,
+              source: {
+                kind: "github_pull_request",
+                repo: "https://github.com/acme/app",
+                number,
+                url: `https://github.com/acme/app/pull/${number}`,
+              },
+            },
+          },
+        },
+      ],
+    });
+    return id;
+  };
 
   it("取り込むラベルは sacty 全体の設定で、設定していなければ取り込まない。変えると取り込みは読み直す", () => {
     const activity = new SqliteActivityStore(dbPath);
@@ -6728,7 +6767,7 @@ describe("sacty の設定と、Issue・PR の取り込み（PBI-26）", () => {
     expect(service.intakeSources()).toEqual([
       {
         host: "github.com",
-        query: 'is:open repo:acme/app label:"ai-task"',
+        query: 'is:open is:issue repo:acme/app label:"ai-task"',
         account: "me",
         project: "デフォルト",
       },
@@ -6746,24 +6785,20 @@ describe("sacty の設定と、Issue・PR の取り込み（PBI-26）", () => {
     activity.close();
   });
 
-  it("PR も取り込み、PR から作ったタスクは、その PR をレビューの対象として工程を選ばせる", async () => {
+  it("取り込むラベルの付いた PR は取り込まない（PBI-99）。すでに PR から作ったタスクは、その PR をレビューの対象として工程を選ばせる", async () => {
     const activity = new SqliteActivityStore(dbPath);
     const pulls = new FakePulls();
     pulls.prInfo = { ...pulls.prInfo, number: 8, url: "https://github.com/acme/app/pull/8" };
+    const settings = new MemorySettingsStore({ intakeLabel: "sacty" });
+    const first = makeService(activity, [], { pulls, settings });
+    expect(first.service.importIssues([found(8, ["sacty"], true)])).toEqual([]);
+    const id = importedPullRequest(activity, 8);
     const { service, executor } = makeService(
       activity,
       [out(block({ "sacty-steps": { plan: "review", reason: "PR のレビュー" } })), out("# 評価")],
-      { pulls, realPlanner: true },
+      { pulls, settings, realPlanner: true },
     );
-    const [task] = service.importIssues([found(8, ["sacty"], true)]);
-    expect(task?.start).toBe("github_pull_request");
-    expect(task?.source).toEqual({
-      kind: "github_pull_request",
-      repo: "https://github.com/acme/app",
-      number: 8,
-      url: "https://github.com/acme/app/pull/8",
-    });
-    const id = task?.id ?? "";
+    expect(service.get(id)?.task.start).toBe("github_pull_request");
     await service.runNext(id);
     // 本文に PR の URL が無くても、取り込んだ PR そのものをレビューの対象にする
     expect(promptOf(executor, 0)).toContain("- review：");
@@ -6775,9 +6810,10 @@ describe("sacty の設定と、Issue・PR の取り込み（PBI-26）", () => {
     activity.close();
   });
 
-  it("PR から作った調査のタスクは、結果を PR にコメントする", async () => {
+  it("すでに PR から作った調査のタスクは、結果を PR にコメントする", async () => {
     const activity = new SqliteActivityStore(dbPath);
     const pulls = new FakePulls();
+    const id = importedPullRequest(activity, 9);
     const { service } = makeService(activity, [out("# 調査の結果")], {
       pulls,
       planner: async () => ({
@@ -6789,8 +6825,6 @@ describe("sacty の設定と、Issue・PR の取り込み（PBI-26）", () => {
         estimated: false,
       }),
     });
-    const [task] = service.importIssues([found(9, ["sacty"], true)]);
-    const id = task?.id ?? "";
     await service.runNext(id);
     service.approve(id, { step: "investigate", submission: 1 });
     await service.runNext(id);
@@ -6828,7 +6862,7 @@ describe("自動のトリアージの種類ごとの On/Off（PBI-53）", () => 
     ...(pullRequest ? { pullRequest: true } : {}),
   });
 
-  it("Off にした種類は検索せず、取り込まない。ラベルなどの設定は残る。これまでの設定はすべて On", () => {
+  it("Off にした種類は検索せず、取り込まない。ラベルなどの設定は残る。項目の無い設定はすべて On", () => {
     const activity = new SqliteActivityStore(dbPath);
     const settings = new MemorySettingsStore({
       intakeLabel: "sacty",
@@ -6837,15 +6871,21 @@ describe("自動のトリアージの種類ごとの On/Off（PBI-53）", () => 
     });
     const { service } = makeService(activity, [], { settings });
     const queries = () => service.intakeSources().map((s) => s.query);
-    // これまでの設定（On/Off の項目が無い）は、すべて On
+    // On/Off の項目が無い設定は、すべて On。取り込むラベルは Issue だけを探す（PBI-99）
     expect(queries()).toEqual([
-      'is:open repo:acme/app label:"sacty"',
+      'is:open is:issue repo:acme/app label:"sacty"',
       'is:open is:pr repo:acme/app label:"sacty-review"',
       "is:open is:pr repo:acme/app user-review-requested:me",
     ]);
+    // 取り込むラベルの付いた PR は取り込まない（PBI-99）
+    expect(
+      service
+        .importIssues([found(1, ["sacty"]), found(2, ["sacty"], true)])
+        .map((t) => t.source?.number),
+    ).toEqual([1]);
     const before = service.projectsRevision();
 
-    // Issue を Off：取り込むラベルは PR だけを探す。重ねて書いても1つ、並びはそろえる
+    // Issue を Off：取り込むラベルの検索をしない。重ねて書いても1つ、並びはそろえる
     expect(
       service.saveSettings({
         intakeLabel: "sacty",
@@ -6855,38 +6895,24 @@ describe("自動のトリアージの種類ごとの On/Off（PBI-53）", () => 
       }),
     ).toMatchObject({ intakeLabel: "sacty", reviewLabel: "sacty-review", triageOff: ["issues"] });
     expect(service.projectsRevision()).not.toBe(before);
-    expect(queries()[0]).toBe('is:open is:pr repo:acme/app label:"sacty"');
-    expect(
-      service
-        .importIssues([found(1, ["sacty"]), found(2, ["sacty"], true)])
-        .map((t) => t.source?.number),
-    ).toEqual([2]);
+    expect(queries()).toEqual([
+      'is:open is:pr repo:acme/app label:"sacty-review"',
+      "is:open is:pr repo:acme/app user-review-requested:me",
+    ]);
+    expect(service.importIssues([found(3, ["sacty"]), found(4, ["sacty"], true)])).toEqual([]);
 
-    // PR を Off：取り込むラベルは Issue だけを探す
-    service.saveSettings({
-      intakeLabel: "sacty",
-      reviewLabel: "sacty-review",
-      triageOff: ["pullRequests"],
-    });
-    expect(queries()[0]).toBe('is:open is:issue repo:acme/app label:"sacty"');
-    expect(
-      service
-        .importIssues([found(3, ["sacty"]), found(4, ["sacty"], true)])
-        .map((t) => t.source?.number),
-    ).toEqual([3]);
-
-    // 両方 Off とレビュー用のラベルを Off：その検索をしない。ラベルは残る
+    // Issue とレビュー用のラベルを Off：その検索をしない。ラベルは残る
     service.saveSettings({
       intakeLabel: "sacty",
       reviewLabel: "sacty-review",
       reviewRequested: true,
-      triageOff: ["pullRequests", "issues", "reviewLabel"],
+      triageOff: ["reviewLabel", "issues"],
     });
     expect(queries()).toEqual(["is:open is:pr repo:acme/app user-review-requested:me"]);
     expect(service.getSettings()).toMatchObject({
       intakeLabel: "sacty",
       reviewLabel: "sacty-review",
-      triageOff: ["issues", "pullRequests", "reviewLabel"],
+      triageOff: ["issues", "reviewLabel"],
     });
     expect(service.importIssues([found(5, ["sacty"]), found(6, ["sacty-review"], true)])).toEqual(
       [],
@@ -6898,6 +6924,30 @@ describe("自動のトリアージの種類ごとの On/Off（PBI-53）", () => 
       intakeLabel: "sacty",
     });
     expect(() => service.saveSettings({ triageOff: ["jira-unknown"] })).toThrow();
+    // 消した種類（取り込むラベルの PR。PBI-99）は受け付けない
+    expect(() => service.saveSettings({ triageOff: ["pullRequests"] })).toThrow();
+    activity.close();
+  });
+
+  it("取り込むラベルとレビュー用のラベルに同じ名前（大文字・小文字は区別しない）は保存できない（PBI-99）", () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const settings = new MemorySettingsStore({ intakeLabel: "sacty", reviewLabel: "sacty-review" });
+    const { service } = makeService(activity, [], { settings });
+    for (const [intakeLabel, reviewLabel] of [
+      ["sacty", "sacty"],
+      ["sacty", " SACTY "],
+    ]) {
+      expect(() => service.saveSettings({ intakeLabel, reviewLabel }), reviewLabel).toThrow();
+    }
+    // 保存していた設定は変わらない
+    expect(service.getSettings()).toEqual({ intakeLabel: "sacty", reviewLabel: "sacty-review" });
+    // 片方だけ・別の名前なら保存できる
+    expect(service.saveSettings({ intakeLabel: "sacty" })).toEqual({ intakeLabel: "sacty" });
+    expect(service.saveSettings({ reviewLabel: "sacty" })).toEqual({ reviewLabel: "sacty" });
+    expect(service.saveSettings({ intakeLabel: "sacty", reviewLabel: "sacty-pr" })).toEqual({
+      intakeLabel: "sacty",
+      reviewLabel: "sacty-pr",
+    });
     activity.close();
   });
 });
@@ -7235,7 +7285,11 @@ describe("プロジェクトと GitHub Issue の取り込み（PBI-5a）", () =>
   ) {
     const activity = new SqliteActivityStore(dbPath);
     const projects = new MemoryProjectStore();
-    const made = makeService(activity, outcomes, { projects, ...options });
+    const made = makeService(activity, outcomes, {
+      projects,
+      settings: new MemorySettingsStore({ intakeLabel: "sacty" }),
+      ...options,
+    });
     const pay = made.service.saveProject(undefined, {
       name: "決済",
       githubAccounts: { "github.com": "me" },
@@ -7311,11 +7365,15 @@ describe("プロジェクトと GitHub Issue の取り込み（PBI-5a）", () =>
     expect(service.intakeSources()).toEqual([
       {
         host: "github.com",
-        query: 'is:open org:acme label:"sacty"',
+        query: 'is:open is:issue org:acme label:"sacty"',
         account: "me",
         project: "決済",
       },
-      { host: "github.com", query: 'is:open repo:acme/auth label:"sacty"', project: "認証" },
+      {
+        host: "github.com",
+        query: 'is:open is:issue repo:acme/auth label:"sacty"',
+        project: "認証",
+      },
     ]);
     const created = service.importIssues([
       issue("https://github.com/acme/payments", 1, ["sacty"], "冪等性キー"),
@@ -8345,6 +8403,12 @@ describe("API", () => {
     expect(bad.status).toBe(400);
     expect(((await bad.json()) as { issues: unknown[] }).issues).toEqual([
       { path: ["intakeLabel"], message: { code: "input.invalidLabel" } },
+    ]);
+    // 取り込むラベルとレビュー用のラベルに同じ名前は書けない（PBI-99）
+    const same = await put({ intakeLabel: "sacty", reviewLabel: "Sacty" });
+    expect(same.status).toBe(400);
+    expect(((await same.json()) as { issues: unknown[] }).issues).toEqual([
+      { path: ["reviewLabel"], message: { code: "input.sameIntakeAndReviewLabel" } },
     ]);
     expect(await (await app.request("/api/settings", { headers: auth })).json()).toEqual({
       settings: { intakeLabel: "sacty" },
@@ -11547,11 +11611,11 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
     task = taskOf(service, id);
     expect(task.gate).toEqual({ step: "pr", submission: 1 });
     expect(task.pullRequest).toMatchObject({ number: 9, branch: taskBranch });
-    // 要求要件・設計・実装の PR のすべてに、取り込むラベルを付ける（PBI-88）
+    // 要求要件・設計・実装の PR のすべてに、レビュー用のラベルを付ける（PBI-88・PBI-99）
     expect(pulls.labels.map((l) => [l.number, l.label])).toEqual([
-      [7, "sacty"],
-      [8, "sacty"],
-      [9, "sacty"],
+      [7, "sacty-review"],
+      [8, "sacty-review"],
+      [9, "sacty-review"],
     ]);
     await merge(made, "pr");
     const done = taskOf(service, id);
@@ -12548,8 +12612,8 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
     });
   });
 
-  describe("sacty が作る PR に取り込むラベルを付け、別のタスクでレビューさせる（PBI-88）", () => {
-    const labeledPr = (number: number, labels = ["sacty"]) => ({
+  describe("sacty が作る PR にレビュー用のラベルを付け、別のタスクでレビューさせる（PBI-88・PBI-99）", () => {
+    const labeledPr = (number: number, labels = ["sacty-review"]) => ({
       repo: "https://github.com/acme/app",
       number,
       title: `PR ${number}`,
@@ -12559,7 +12623,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       pullRequest: true,
     });
 
-    it("要求要件の PR に取り込むラベルを付け（無ければ作り）、台帳に残す。PR を更新しても付け直さない（受け入れ条件 1・3・7）", async () => {
+    it("要求要件の PR にレビュー用のラベルを付け（無ければ作り）、台帳に残す。PR を更新しても付け直さない（受け入れ条件 1・3・7）", async () => {
       const pulls = new FakePulls();
       pulls.labelCreated = true;
       const made = await start(
@@ -12568,16 +12632,26 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       );
       const { activity, service, id } = made;
       expect(pulls.labels).toEqual([
-        { repo: "https://github.com/acme/app", token: "ghp_secret", number: 7, label: "sacty" },
+        {
+          repo: "https://github.com/acme/app",
+          token: "ghp_secret",
+          number: 7,
+          label: "sacty-review",
+        },
       ]);
       const labeled = service.get(id)?.activity.at(-1);
       expect(labeled).toMatchObject({
         type: "PullRequestLabeled",
         actor: "sacty",
-        payload: { repo: "https://github.com/acme/app", number: 7, label: "sacty", created: true },
+        payload: {
+          repo: "https://github.com/acme/app",
+          number: 7,
+          label: "sacty-review",
+          created: true,
+        },
       });
       expect(taskOf(service, id).pullRequestLabels).toEqual([
-        { repo: "https://github.com/acme/app", number: 7, label: "sacty", created: true },
+        { repo: "https://github.com/acme/app", number: 7, label: "sacty-review", created: true },
       ]);
       // 指摘で同じ PR を更新しても、ラベルは付け直さない（人が外していても）
       pulls.feedbackBy[7] = [item("comment:1")];
@@ -12596,10 +12670,11 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       again.close();
     });
 
-    it("取り込むラベルを設定していない・PR のトリアージを Off にしているなら、付けずに PR を作る（受け入れ条件 2・5）", async () => {
+    it("レビュー用のラベルを設定していない・そのトリアージを Off にしているなら、付けずに PR を作る（取り込むラベルは付けない。PBI-99）", async () => {
       for (const settings of [
         new MemorySettingsStore({}),
-        new MemorySettingsStore({ intakeLabel: "sacty", triageOff: ["pullRequests"] }),
+        new MemorySettingsStore({ intakeLabel: "sacty" }),
+        new MemorySettingsStore({ reviewLabel: "sacty-review", triageOff: ["reviewLabel"] }),
       ]) {
         const pulls = new FakePulls();
         const { activity, service, id } = await start([out("# 要求要件 v1")], { pulls, settings });
@@ -12624,7 +12699,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       expect(task.gate).toEqual({ step: "requirements", submission: 1 });
       const failed = service.get(id)?.activity.at(-1);
       expect(failed?.type).toBe("PullRequestLabelFailed");
-      expect(failed?.payload).toMatchObject({ number: 7, label: "sacty" });
+      expect(failed?.payload).toMatchObject({ number: 7, label: "sacty-review" });
       const text = ja(failed?.type === "PullRequestLabelFailed" ? failed.payload.message : "");
       expect(text).toContain("403 Resource not accessible");
       expect(JSON.stringify(service.get(id)?.activity)).not.toContain("ghp_secret");
@@ -12675,7 +12750,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       const chosen = service.get(reviewId)?.activity.find((e) => e.type === "StepsChosen");
       expect(chosen?.type === "StepsChosen" && chosen.payload.steps).toEqual(["review"]);
       expect(ja(chosen?.type === "StepsChosen" ? chosen.payload.reason : undefined)).toContain(
-        "sacty がほかのタスクで作り、取り込むラベルを付けた PR",
+        "sacty がほかのタスクで作った PR",
       );
       expect(executor.calls[before]?.command.join(" ")).toContain("レビューエージェント");
       await service.runNext(reviewId);
@@ -12936,15 +13011,15 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       await service.checkPullRequests();
       expect(stopped.calls).toBe(1);
       expect(types(service, id).slice(-2)).toEqual(["StepPullRequestPublished", "StepSubmitted"]);
-      expect(taskOf(service, id).stepPullRequests[0]?.intakeLabel).toBe("sacty");
-      // 起動し直しても、いまはラベルを付けない設定なら付けない（記録もしない）
-      const off = await restart(new MemorySettingsStore({}));
+      expect(taskOf(service, id).stepPullRequests[0]?.label).toBe("sacty-review");
+      // 起動し直しても、いまはラベルを付けない設定（レビュー用のラベルが無い）なら付けない（記録もしない）
+      const off = await restart(new MemorySettingsStore({ intakeLabel: "sacty" }));
       expect(off.pulls.labels).toEqual([]);
       expect(types(off.service, id).at(-1)).toBe("StepSubmitted");
       off.activity.close();
       // 起動し直した後の PR の確認で付けて記録する。次の確認では重ねて付けない
       const again = await restart();
-      expect(again.pulls.labels.map((l) => [l.number, l.label])).toEqual([[7, "sacty"]]);
+      expect(again.pulls.labels.map((l) => [l.number, l.label])).toEqual([[7, "sacty-review"]]);
       expect(types(again.service, id).at(-1)).toBe("PullRequestLabeled");
       await again.service.checkPullRequests();
       expect(again.pulls.labels).toHaveLength(1);
@@ -12965,7 +13040,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       await implStopped.reached;
       expect(taskOf(made.service, made.id).pullRequest).toMatchObject({
         number: 9,
-        intakeLabel: "sacty",
+        label: "sacty-review",
       });
       expect(types(made.service, made.id).at(-1)).toBe("StepSubmitted");
       const resumed = await restart();
@@ -12977,31 +13052,26 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       made.activity.close();
     });
 
-    it("sacty が作っていない PR に取り込むラベルが付いていても、これまでどおりの取り込み（工程はオーケストレーターが選ぶ）", async () => {
+    it("取り込むラベルだけの PR は、sacty の PR でも取り込まない。sacty が作っていない PR のレビュー用のラベルは、ふつうのレビューのタスク（PBI-99）", async () => {
       const { activity, service } = await start([out("# 要求要件 v1")]);
-      const [other] = service.importIssues([labeledPr(40)]);
-      expect(other?.source).toMatchObject({ number: 40 });
-      expect(other?.source?.review).toBeUndefined();
+      // 取り込むラベル（Issue の取り込み）の付いた PR は、sacty が作った PR（7）でも、ほかの PR でも取り込まない
+      expect(service.importIssues([labeledPr(7, ["sacty"]), labeledPr(40, ["sacty"])])).toEqual([]);
+      // レビュー用のラベルの付いた、sacty が作っていない PR は、ふつうのレビューのタスク（元のタスクには届かない）
+      const [other] = service.importIssues([labeledPr(41)]);
+      expect(other?.source).toMatchObject({ number: 41, review: "label" });
+      // 2つのラベルが両方付いていても、sacty の PR は sacty のレビュー
+      expect(
+        service
+          .importIssues([labeledPr(7, ["sacty", "sacty-review"])])
+          .map((t) => t.source?.review),
+      ).toEqual(["sacty"]);
       activity.close();
       rmSync(dbPath, { force: true });
-      // 取り込むラベルとレビュー用のラベルが同じでも、sacty の PR は sacty のレビュー（元のタスクに指摘が届く）にする
-      const same = await start([out("# 要求要件 v1")], {
-        settings: new MemorySettingsStore({ intakeLabel: "sacty", reviewLabel: "Sacty" }),
-      });
-      expect(
-        same.service
-          .importIssues([labeledPr(41), labeledPr(7)])
-          .map((t) => [t.source?.number, t.source?.review]),
-      ).toEqual([
-        [41, "label"],
-        [7, "sacty"],
-      ]);
-      same.activity.close();
-      rmSync(dbPath, { force: true });
-      // PR のトリアージを Off にしていれば、sacty の PR も取り込まない
+      // レビュー用のラベルのトリアージを Off にしていれば、sacty の PR も取り込まない
       const settings = new MemorySettingsStore({
         intakeLabel: "sacty",
-        triageOff: ["pullRequests"],
+        reviewLabel: "sacty-review",
+        triageOff: ["reviewLabel"],
       });
       const off = await start([out("# 要求要件 v1")], { settings });
       expect(off.service.importIssues([labeledPr(7)])).toEqual([]);
@@ -15604,13 +15674,13 @@ describe("PR テンプレート（PBI-87）", () => {
     const task = taskOf(service, id);
     expect(task.stepPullRequests.map((p) => p.template)).toEqual([used, used]);
     expect(task.pullRequest?.template).toEqual(used);
-    // 取り込むラベル（PBI-88）も、テンプレートの本文と一緒に3つの PR に付く
+    // レビュー用のラベル（PBI-88・PBI-99）も、テンプレートの本文と一緒に3つの PR に付く
     expect(pulls.labels.map((l) => [l.number, l.label])).toEqual([
-      [7, "sacty"],
-      [8, "sacty"],
-      [9, "sacty"],
+      [7, "sacty-review"],
+      [8, "sacty-review"],
+      [9, "sacty-review"],
     ]);
-    expect(task.pullRequest?.intakeLabel).toBe("sacty");
+    expect(task.pullRequest?.label).toBe("sacty-review");
     activity.close();
   });
 
@@ -16260,7 +16330,7 @@ describe("マージの後の CI/CD とデプロイの監視（PBI-89）", () => 
     }
   });
 
-  it("修正のタスクの PR にも取り込むラベルを付け、レビューだけのタスクとして取り込める。そのマージでも監視する（PBI-88 と両立）", async () => {
+  it("修正のタスクの PR にもレビュー用のラベルを付け、レビューだけのタスクとして取り込める。そのマージでも監視する（PBI-88 と両立）", async () => {
     const ci = new FakeCi();
     ci.snap = failing();
     ci.failuresList = [testFailure];
@@ -16274,10 +16344,10 @@ describe("マージの後の CI/CD とデプロイの監視（PBI-89）", () => 
       await t.service.runNext(fixId);
     }
     const pr = t.service.get(fixId)?.task.pullRequest;
-    expect(pr).toMatchObject({ number: 8, intakeLabel: "sacty" });
+    expect(pr).toMatchObject({ number: 8, label: "sacty-review" });
     expect(t.pulls.labels.map((l) => [l.number, l.label])).toEqual([
-      [7, "sacty"],
-      [8, "sacty"],
+      [7, "sacty-review"],
+      [8, "sacty-review"],
     ]);
     // ラベルの付いた修正のタスクの PR は、レビューだけのタスクとして取り込む
     const [review] = t.service.importIssues([
@@ -16287,7 +16357,7 @@ describe("マージの後の CI/CD とデプロイの監視（PBI-89）", () => 
         title: "CI/CD の失敗を直す",
         body: "",
         url: "https://github.com/acme/app/pull/8",
-        labels: ["sacty"],
+        labels: ["sacty-review"],
         pullRequest: true,
       },
     ]);
@@ -16330,7 +16400,7 @@ describe("マージの後の CI/CD とデプロイの監視（PBI-89）", () => 
     const fix = t.service.get(fixId)?.task;
     expect(fix?.pullRequest).toMatchObject({
       number: 8,
-      intakeLabel: "sacty",
+      label: "sacty-review",
       template: { repo: "https://github.com/acme/app", path: ".github/pull_request_template.md" },
     });
     const body = t.pulls.calls.find((c) => c.title === fix?.title)?.body ?? "";

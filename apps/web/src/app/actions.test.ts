@@ -5,6 +5,7 @@ const saveProject = vi.fn();
 const importProject = vi.fn();
 const approveStep = vi.fn();
 const requestChanges = vi.fn();
+const saveSettings = vi.fn();
 const cookieSet = vi.fn();
 const refresh = vi.fn();
 const order: string[] = [];
@@ -14,6 +15,7 @@ vi.mock("@/lib/daemon", () => ({
   importProject,
   approveStep,
   requestChanges,
+  saveSettings,
   CONTEXT_CHECK_PARAM: "contextCheck",
 }));
 // 送信時の cookie は、別のタブで切り替えた「B」になっている
@@ -43,6 +45,7 @@ const {
   gateAction,
   importProjectAction,
   saveProjectAction,
+  saveSettingsAction,
   selectProjectAction,
 } = await import("./actions");
 
@@ -311,5 +314,32 @@ describe("ヘッダーの表示を今の状態に合わせる（PBI-98）", () =
     cookieSet.mockReset();
     for (const bad of ["", "a b", "a;b", "x".repeat(101)]) await selectProjectAction(bad);
     expect(cookieSet).not.toHaveBeenCalled();
+  });
+});
+
+describe("sacty の設定の保存（PBI-99）", () => {
+  it("チェックを外した種類だけを Off として送る。PR の取り込みの On/Off（pullRequests）は送らない", async () => {
+    saveSettings.mockReset();
+    saveSettings.mockResolvedValue({ ok: true, settings: {} });
+    const data = form({
+      intakeLabel: "sacty",
+      reviewLabel: "sacty-review",
+      "triage-reviewLabel": "on",
+    });
+    expect(await saveSettingsAction({}, data)).toEqual({ saved: true });
+    expect(saveSettings).toHaveBeenCalledTimes(1);
+    expect(saveSettings.mock.calls[0]?.[0]).toMatchObject({
+      intakeLabel: "sacty",
+      reviewLabel: "sacty-review",
+      triageOff: ["issues", "tickets"],
+    });
+  });
+
+  it("デーモンが拒否した理由（同じ名前のラベルなど）を、そのまま返す", async () => {
+    saveSettings.mockReset();
+    saveSettings.mockResolvedValue({ ok: false, message: "別の名前を書いてください。" });
+    expect(
+      await saveSettingsAction({}, form({ intakeLabel: "sacty", reviewLabel: "sacty" })),
+    ).toEqual({ message: "別の名前を書いてください。" });
   });
 });

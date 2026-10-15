@@ -17,11 +17,10 @@ const ja = {
     never: "まだ取り込んでいません。",
     noLabel:
       "取り込むラベルも、PR のレビューとチケットの取り込みも設定していないので、取り込みは止まっています。",
-    label: (label: string) => `取り込むラベル：${label}`,
+    label: (label: string) => `Issue：ラベル ${label}`,
     off: (kinds: string[]) => `（Off：${kinds.join("・")}）`,
     kinds: {
       issues: "Issue",
-      pullRequests: "PR",
       reviewLabel: "レビュー用のラベル",
       tickets: "チケット",
     },
@@ -238,11 +237,10 @@ const en: ProjectsMessages = {
     lastRun: (at, n) => `Last intake: ${at} (${n} task${n === 1 ? "" : "s"} created)`,
     never: "Nothing imported yet.",
     noLabel: "No intake label, PR review intake, or ticket intake is set, so intake is stopped.",
-    label: (label) => `Intake label: ${label}`,
+    label: (label) => `Issues: label ${label}`,
     off: (kinds) => ` (off: ${kinds.join(", ")})`,
     kinds: {
       issues: "issues",
-      pullRequests: "PRs",
       reviewLabel: "review label",
       tickets: "tickets",
     },

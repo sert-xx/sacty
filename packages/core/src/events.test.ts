@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CreateTaskInput, TASK_BODY_MAX, TASK_TITLE_MAX } from "./events.js";
+import { CreateTaskInput, EventInput, TASK_BODY_MAX, TASK_TITLE_MAX } from "./events.js";
 import { renderMessage } from "./messages.js";
 
 describe("CreateTaskInput", () => {
@@ -49,5 +49,27 @@ describe("CreateTaskInput", () => {
     expect(renderMessage(parsed.error?.issues[0]?.message, "ja")).toBe(
       "内容は10,000文字以内で入力してください。",
     );
+  });
+});
+
+describe("PR に付けるラベルの予定（PBI-88・PBI-99）", () => {
+  it("label に残す。これまでの記録（intakeLabel）も読めるが、付ける予定としては扱わない（台帳は書き換えない）", () => {
+    const base = {
+      branch: "sacty/task-1",
+      commit: "abc",
+      url: "https://github.com/acme/app/pull/7",
+      number: 7,
+      repo: "https://github.com/acme/app",
+    };
+    expect(
+      EventInput.parse({
+        type: "PullRequestPublished",
+        payload: { ...base, label: "sacty-review" },
+      }).payload,
+    ).toEqual({ ...base, label: "sacty-review" });
+    expect(
+      EventInput.parse({ type: "PullRequestPublished", payload: { ...base, intakeLabel: "sacty" } })
+        .payload,
+    ).toEqual(base);
   });
 });
