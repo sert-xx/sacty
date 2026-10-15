@@ -73,8 +73,7 @@ import {
   responsibleProject,
   responsibleTicketProject,
   reworkTargets,
-  type SactySettings,
-  SactySettingsUpdate,
+  SactySettings,
   type SharedCompose,
   STEP_PLANS,
   StepKey,
@@ -2390,11 +2389,11 @@ export class TaskService {
   }
 
   /**
-   * sacty 全体の設定を変える。取り込むラベルが変わると、取り込みは先頭から読み直す。取り込むラベルとレビュー用のラベルに
-   * 同じ名前は書けない（PBI-99）。
+   * sacty 全体の設定を変える。取り込むラベルが変わると、取り込みは先頭から読み直す。取り込むラベルとレビュー用のラベルは
+   * 同じ名前でもよい（Issue と PR は検索の条件で分かれる。PBI-104）。
    */
   saveSettings(raw: unknown): SactySettings {
-    const saved = this.deps.settings.put(SactySettingsUpdate.parse(raw));
+    const saved = this.deps.settings.put(SactySettings.parse(raw));
     // 保存したら、取り込みはすべての種類を次の確認ですぐに取り込む（何が変わったかは見分けない。PBI-100）
     this.settingsSaves += 1;
     return saved;

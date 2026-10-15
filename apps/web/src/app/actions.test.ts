@@ -349,11 +349,11 @@ describe("sacty の設定の保存（PBI-99）", () => {
     });
   });
 
-  it("デーモンが拒否した理由（同じ名前のラベルなど）を、そのまま返す", async () => {
+  it("デーモンが拒否した理由（使えない文字のラベルなど）を、そのまま返す", async () => {
     saveSettings.mockReset();
-    saveSettings.mockResolvedValue({ ok: false, message: "別の名前を書いてください。" });
-    expect(
-      await saveSettingsAction({}, form({ intakeLabel: "sacty", reviewLabel: "sacty" })),
-    ).toEqual({ message: "別の名前を書いてください。" });
+    saveSettings.mockResolvedValue({ ok: false, message: 'ラベルに " と \\ は使えません。' });
+    expect(await saveSettingsAction({}, form({ intakeLabel: 'a"b' }))).toEqual({
+      message: 'ラベルに " と \\ は使えません。',
+    });
   });
 });

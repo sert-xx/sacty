@@ -5,7 +5,7 @@
 GitHub の Issue・PR と JIRA のチケットを、定期的に探してタスクにする。取り込み元・使う GitHub のアカウントはプロジェクトに、取り込むラベルは
 sacty の設定（すべてのプロジェクトに共通）に書く。GitHub へのアクセスは、ホストの `gh` にログイン済みのアカウントで行う。
 
-関係する ADR: [取り込みの間隔を、取り込みの種類ごとに sacty の設定に持つ](../adr/20261015-0310-intake-intervals-per-kind.md)、[取り込みを「Issue の取り込み」と「PR のレビューの取り込み」に分け、sacty の PR にはレビュー用のラベルを付ける](../adr/20261015-0240-split-issue-and-pr-review-intake.md)、[sacty が作る PR に取り込むラベルを付け、別のタスクのレビューを元のタスクの PR の指摘として取り込む](../adr/20261014-1445-superseded-label-sacty-pull-requests-for-review.md)
+関係する ADR: [取り込むラベルとレビュー用のラベルに同じ名前を許す](../adr/20261015-0850-allow-same-intake-and-review-label.md)、[取り込みの間隔を、取り込みの種類ごとに sacty の設定に持つ](../adr/20261015-0310-intake-intervals-per-kind.md)、[取り込みを「Issue の取り込み」と「PR のレビューの取り込み」に分け、sacty の PR にはレビュー用のラベルを付ける](../adr/20261015-0240-superseded-split-issue-and-pr-review-intake.md)、[sacty が作る PR に取り込むラベルを付け、別のタスクのレビューを元のタスクの PR の指摘として取り込む](../adr/20261014-1445-superseded-label-sacty-pull-requests-for-review.md)
 
 ## 間隔
 
@@ -54,8 +54,9 @@ PR のレビューの取り込みだけ。
 | `reviewRequested` | `is:open is:pr user-review-requested:<アカウント>` | PR のレビューだけ（`source.review: requested`） |
 
 - ラベルは 50 文字まで（`"`・`\` は使えない）。比べるときは大文字・小文字を区別しない。設定していなければ取り込まない。
-- 取り込むラベルとレビュー用のラベルに同じ名前（大文字・小文字を区別しない）は、保存のときに拒否する（`input.sameIntakeAndReviewLabel`。
-  `reviewLabel` の誤り）。読み込みでは拒否しない。同じ名前で保存されている設定でも、Issue は取り込むラベル、PR はレビュー用のラベルとして動く。
+- 取り込むラベルとレビュー用のラベルは、同じ名前（大文字・小文字だけが違う名前も）にできる。同じ名前でも、Issue は取り込むラベルで
+  通常のタスクに、PR はレビュー用のラベルでレビューだけのタスクにする（検索の条件が `is:issue`・`is:pr` で分かれ、取り込みの判定でも
+  Issue をレビューのタスクに、PR を通常のタスクにしない）。sacty が作った PR も、`sacty` のレビューのタスクとして1回だけ取り込む。
 - 取り込むラベルの付いた PR は取り込まない（検索の後に見つかっても、通常のタスクにしない）。それより前に取り込んだ PR のタスク
   （`start: github_pull_request` で `source.review` の無いもの）は、そのまま進む（工程はオーケストレーターが選ぶ）。
 - `triageOff`（Off にした種類。`issues`・`reviewLabel`・`tickets`）に書いた種類は、ラベルを残したまま検索も取り込みもしない。知らない種類は
@@ -75,7 +76,7 @@ PR のレビューの取り込みだけ。
 - レート制限（403・429 で残りが 0 か `retry-after`）に当たったら、そのアカウントのほかの検索を飛ばす。
 - アカウントを選んでいない取り込み元は検索せず、`github.accountRequired` を記録する。
 
-コード: `apps/daemon/src/service.ts`（`intakeSources`・`importIssues`・`sactyReviewsOf`・`saveSettings`）、`apps/daemon/src/github.ts`（`GitHubIssueSearch`）、`packages/core/src/projects.ts`（`SactySettings`・`SactySettingsUpdate`・`TriageKind`・`responsibleProject`）
+コード: `apps/daemon/src/service.ts`（`intakeSources`・`importIssues`・`sactyReviewsOf`・`saveSettings`）、`apps/daemon/src/github.ts`（`GitHubIssueSearch`）、`packages/core/src/projects.ts`（`SactySettings`・`TriageKind`・`responsibleProject`）
 
 ## JIRA のチケット
 

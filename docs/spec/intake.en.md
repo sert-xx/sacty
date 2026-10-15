@@ -5,7 +5,7 @@
 Periodically searches GitHub Issues and PRs and JIRA tickets and turns them into tasks. The intake sources and the GitHub account to use are set in the project, and the intake labels
 in the sacty settings (shared by all projects). GitHub is accessed with the accounts logged in to `gh` on the host.
 
-Related ADRs: [Keep the intake interval in the sacty settings, per kind of intake](../adr/20261015-0310-intake-intervals-per-kind.md), [Split intake into "Issue intake" and "PR review intake", and add the review label to sacty's PRs](../adr/20261015-0240-split-issue-and-pr-review-intake.md), [Add the intake label to PRs created by sacty, and take in reviews from a separate task as comments on the original task's PR](../adr/20261014-1445-superseded-label-sacty-pull-requests-for-review.md)
+Related ADRs: [Allow the same name for the intake label and the review label](../adr/20261015-0850-allow-same-intake-and-review-label.md), [Keep the intake interval in the sacty settings, per kind of intake](../adr/20261015-0310-intake-intervals-per-kind.md), [Split intake into "Issue intake" and "PR review intake", and add the review label to sacty's PRs](../adr/20261015-0240-superseded-split-issue-and-pr-review-intake.md), [Add the intake label to PRs created by sacty, and take in reviews from a separate task as comments on the original task's PR](../adr/20261014-1445-superseded-label-sacty-pull-requests-for-review.md)
 
 ## Interval
 
@@ -54,8 +54,9 @@ takes in PRs.
 | `reviewRequested` | `is:open is:pr user-review-requested:<account>` | A PR review only (`source.review: requested`) |
 
 - Labels are up to 50 characters (`"` and `\` cannot be used). Comparison is case-insensitive. If not set, nothing is taken in.
-- The same name (case-insensitive) for the intake label and the review label is rejected when saving (`input.sameIntakeAndReviewLabel`;
-  an error on `reviewLabel`). It is not rejected when reading. Even with settings saved with the same name, issues work with the intake label and PRs with the review label.
+- The intake label and the review label can have the same name (including names that differ only in upper and lower case). Even then, issues become
+  ordinary tasks by the intake label, and PRs become review-only tasks by the review label (the searches are split by `is:issue` and `is:pr`, and the
+  intake decision also never makes an issue a review task or a PR an ordinary task). PRs created by sacty are also taken in once, as `sacty` review tasks.
 - PRs with the intake label are not taken in (even if found by the search, they are not made ordinary tasks). Tasks of PRs taken in before that
   (`start: github_pull_request` without `source.review`) continue as they are (the Orchestrator chooses the steps).
 - The kinds written in `triageOff` (the kinds turned Off: `issues`, `reviewLabel`, `tickets`) are neither searched nor taken in, while the label is kept. Unknown kinds
@@ -75,7 +76,7 @@ takes in PRs.
 - When a rate limit is hit (403 or 429 with 0 remaining, or `retry-after`), the other searches for that account are skipped.
 - Intake sources with no account chosen are not searched, and `github.accountRequired` is recorded.
 
-Code: `apps/daemon/src/service.ts` (`intakeSources`, `importIssues`, `sactyReviewsOf`, `saveSettings`), `apps/daemon/src/github.ts` (`GitHubIssueSearch`), `packages/core/src/projects.ts` (`SactySettings`, `SactySettingsUpdate`, `TriageKind`, `responsibleProject`)
+Code: `apps/daemon/src/service.ts` (`intakeSources`, `importIssues`, `sactyReviewsOf`, `saveSettings`), `apps/daemon/src/github.ts` (`GitHubIssueSearch`), `packages/core/src/projects.ts` (`SactySettings`, `TriageKind`, `responsibleProject`)
 
 ## JIRA tickets
 

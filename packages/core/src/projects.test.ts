@@ -15,7 +15,6 @@ import {
   responsibleProject,
   responsibleTicketProject,
   SactySettings,
-  SactySettingsUpdate,
   targetImageOf,
 } from "./projects.js";
 
@@ -657,13 +656,13 @@ describe("取り込みの種類ごとの間隔（PBI-100）", () => {
     ] as const;
     for (const [key, code, ja, en] of cases) {
       for (const bad of [59, "59", 0, -60, 60.5, "abc", "1e400", true]) {
-        const result = SactySettingsUpdate.safeParse({ [key]: bad });
+        const result = SactySettings.safeParse({ [key]: bad });
         expect(result.success, `${key} ${String(bad)}`).toBe(false);
         const issue = result.error?.issues[0];
         expect(issue?.path, key).toEqual([key]);
         expect(issueMessage(issue as never), `${key} ${String(bad)}`).toEqual({ code });
       }
-      expect(SactySettingsUpdate.parse({ [key]: 60 })).toEqual({ [key]: 60 });
+      expect(SactySettings.parse({ [key]: 60 })).toEqual({ [key]: 60 });
       // 文言の下限と既定値は、定数と一致する
       for (const [lang, kind] of [
         ["ja", ja],

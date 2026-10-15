@@ -105,7 +105,6 @@ const PARAMS = {
   "input.sharedComposeFile": null,
   "input.invalidRef": null,
   "input.invalidLabel": null,
-  "input.sameIntakeAndReviewLabel": null,
   "input.issueIntervalInvalid": null,
   "input.reviewIntervalInvalid": null,
   "input.ticketIntervalInvalid": null,
@@ -582,8 +581,6 @@ const ja: MessageDictionary = {
     "共用の compose の compose ファイルは、リポジトリの根からの相対パス（.. や $ を含まない）で入力してください。",
   "input.invalidRef": "ref はブランチ名かタグ名で入力してください。",
   "input.invalidLabel": 'ラベルに " と \\ は使えません。',
-  "input.sameIntakeAndReviewLabel":
-    "PR のレビュー用のラベルには、取り込むラベルとは別の名前を書いてください。",
   // 取り込みの間隔（PBI-100）。60 と 300 は MIN_INTAKE_INTERVAL_SEC・DEFAULT_INTAKE_INTERVAL_SEC（テストで一致を確かめる）
   "input.issueIntervalInvalid":
     "Issue の取り込みの間隔は、60 以上の整数（秒）を書いてください（空なら 300 秒）。",
@@ -1015,8 +1012,6 @@ const en: MessageDictionary = {
     "Enter the compose file of the shared compose as a path relative to the repository root (without .. or $).",
   "input.invalidRef": "Enter a branch or tag name as the ref.",
   "input.invalidLabel": "A label can't contain \" or \\.",
-  "input.sameIntakeAndReviewLabel":
-    "Use a different name for the PR review label than the label to import.",
   "input.issueIntervalInvalid":
     "Enter a whole number of 60 or more (seconds) for the issue intake interval (300 seconds if empty).",
   "input.reviewIntervalInvalid":

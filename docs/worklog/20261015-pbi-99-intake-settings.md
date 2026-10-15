@@ -4,7 +4,7 @@
 - タスク: PBI-99
 - PR: #108
 - ブランチ: feat/issue-99-intake-settings
-- 関係する ADR: [取り込みを「Issue の取り込み」と「PR のレビューの取り込み」に分け、sacty の PR にはレビュー用のラベルを付ける](../adr/20261015-0240-split-issue-and-pr-review-intake.md)
+- 関係する ADR: [取り込みを「Issue の取り込み」と「PR のレビューの取り込み」に分け、sacty の PR にはレビュー用のラベルを付ける](../adr/20261015-0240-superseded-split-issue-and-pr-review-intake.md)
 
 ## 目的
 
