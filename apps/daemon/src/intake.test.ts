@@ -394,6 +394,40 @@ describe("GitHub Issue の定期的な取り込み（PBI-5a）", () => {
     activity.close();
   });
 
+  it("取り込むラベルとレビュー用のラベルが同じでも、Issue は通常のタスク、PR はレビューだけのタスクにし、二度は取り込まない（PBI-104）", async () => {
+    const { activity, service, search, intake, advance } = setup();
+    service.saveSettings({ intakeLabel: "sacty", reviewLabel: "Sacty" });
+    // 偽の検索は is:issue・is:pr で絞らないので、どちらの検索でも Issue と PR の両方が見つかる
+    search.issues.push({
+      repo: "https://github.com/acme/payments",
+      number: 9,
+      title: "PR 9",
+      body: "",
+      url: "https://github.com/acme/payments/pull/9",
+      labels: ["SACTY"],
+      pullRequest: true,
+    });
+    await intake.tick(true);
+    expect(search.queries).toEqual([
+      'is:open is:issue repo:acme/payments label:"sacty"',
+      'is:open is:pr repo:acme/payments label:"Sacty"',
+    ]);
+    const sources = () =>
+      service
+        .list()
+        .map((t) => [t.source?.number, t.source?.kind, t.source?.review])
+        .sort();
+    expect(sources()).toEqual([
+      [7, "github_issue", undefined],
+      [9, "github_pull_request", "label"],
+    ]);
+    advance(300_000);
+    await intake.tick();
+    expect(search.queries).toHaveLength(4);
+    expect(sources()).toHaveLength(2);
+    activity.close();
+  });
+
   it("読んだところから次の取り込みを続け、レート制限ならその回のほかの検索をやめる（レビュー指摘）", async () => {
     const { activity, service, search, intake, advance } = setup();
     service.saveProject(undefined, {

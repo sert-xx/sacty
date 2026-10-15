@@ -41,7 +41,9 @@ PRs are imported so that only their review is handed over ("PR review intake" in
 - If you turn on "Import PRs that request my review", PRs that request a review personally from the GitHub account chosen for that host in the project
   are imported (requests to teams are excluded).
 - PRs with the "Label for PR reviews" are imported too. You can turn this Off with "Import PRs with the review label".
-- Use a different name for the review label than for the label to import (names that differ only in upper and lower case count as the same and cannot be saved).
+- The review label can have the same name as the label to import (for example, `sacty` for both; names that differ only in upper and lower case count as the same).
+  Even then, issues with that label are taken in as ordinary tasks and PRs as review-only tasks. An issue is never taken in as a review, and a PR
+  never as an ordinary task.
 - Imported PRs are only reviewed, without the Orchestrator, and the review is posted to the PR (as comments). No implementation or PR creation is done.
 - When the PR is merged or closed, review tasks that have not finished are cancelled.
 - When new commits are pushed, use "Review again" in the task details to review the latest commit again and post it.
@@ -59,6 +61,8 @@ If the "Label for PR reviews" is set, sacty adds that label to every PR it creat
 - A labeled PR becomes, at the next intake, a separate "PR review only" task apart from the task that created it. The review is posted to the PR, and if it has findings that
   should be fixed, they reach the creating task as PR findings, and the Goal Guardian decides where to go back to and fixes them. A review with nothing to fix (the PR can be merged
   as is) is not delivered and does not request changes (the task waits for the PR to be merged).
+- Even if the review label has the same name as the label to import, a labeled PR becomes a "PR review only" task only once, and never an
+  implementation task. Its findings reach the creating task in the same way.
 - The label is added once per PR. Updating the PR with fixes does not add it again or create a new review task (to have it reviewed again,
   use "Review again" on the review task). A label that someone removed is not added again either.
 - If "Import PRs with the review label" is Off, the label is not added (because the PR would not be imported).

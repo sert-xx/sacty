@@ -24,7 +24,7 @@ const ja = {
   reviewTitle: "PR のレビューの取り込み",
   reviewNote: "取り込んだ PR は、レビューだけを行って PR に投稿します",
   reviewHelp:
-    "実装や PR の作成はしません。\nレビューの依頼は、プロジェクトで選んだ GitHub のアカウントへの個人の依頼だけです（チームへの依頼は除く）。\nレビュー用のラベルを設定し、その PR の取り込みを On にしているときは、sacty が作る PR にもそのラベルを付け、別のタスクでレビューします。直す点があれば、PR を作ったタスクが直します。",
+    "実装や PR の作成はしません。\nレビューの依頼は、プロジェクトで選んだ GitHub のアカウントへの個人の依頼だけです（チームへの依頼は除く）。\nレビュー用のラベルを設定し、その PR の取り込みを On にしているときは、sacty が作る PR にもそのラベルを付け、別のタスクでレビューします。直す点があれば、PR を作ったタスクが直します。\nレビュー用のラベルは、取り込むラベルと同じ名前にもできます（Issue は「Issue の取り込み」で取り込み、PR はここでレビューだけのタスクとして取り込みます）。",
   reviewRequested: "自分にレビューが依頼された PR を取り込む",
   reviewLabel: "PR のレビュー用のラベル",
   reviewPlaceholder: "例：sacty-review",
@@ -83,7 +83,7 @@ const en: SettingsMessages = {
   reviewTitle: "PR review intake",
   reviewNote: "Imported PRs are only reviewed, and the review is posted to the PR",
   reviewHelp:
-    "No implementation and no PR.\nOnly reviews requested from you personally (the GitHub account chosen in the project) count, not team requests.\nWhen the review label is set and importing PRs with it is on, sacty also adds the label to the PRs it creates, so another task reviews them. If changes are needed, the task that created the PR makes them.",
+    'No implementation and no PR.\nOnly reviews requested from you personally (the GitHub account chosen in the project) count, not team requests.\nWhen the review label is set and importing PRs with it is on, sacty also adds the label to the PRs it creates, so another task reviews them. If changes are needed, the task that created the PR makes them.\nThe review label can be the same as the label to import (issues are imported by "Issue intake", and PRs here as review-only tasks).',
   reviewRequested: "Import PRs that request my review",
   reviewLabel: "Label for PR reviews",
   reviewPlaceholder: "e.g. sacty-review",

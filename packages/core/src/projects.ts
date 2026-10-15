@@ -144,24 +144,6 @@ export function intakeIntervalSec(settings: SactySettings, kind: IntakeKind): nu
 }
 
 /**
- * 保存するときの sacty 全体の設定（PBI-99）。取り込むラベルとレビュー用のラベルに同じ名前（大文字・小文字は区別しない）は
- * 書けない（Issue の取り込みと PR のレビューの取り込みを、ラベルで分けるため）。
- */
-export const SactySettingsUpdate = SactySettings.superRefine((settings, ctx) => {
-  if (
-    settings.intakeLabel &&
-    settings.reviewLabel &&
-    settings.intakeLabel.toLowerCase() === settings.reviewLabel.toLowerCase()
-  ) {
-    ctx.addIssue({
-      code: "custom",
-      path: ["reviewLabel"],
-      message: code("input.sameIntakeAndReviewLabel"),
-    });
-  }
-});
-
-/**
  * コンテキストリポジトリの指定。repo は git の URL かローカルのパス、ref はブランチやタグ
  * （省略すると既定のブランチ）。
  */

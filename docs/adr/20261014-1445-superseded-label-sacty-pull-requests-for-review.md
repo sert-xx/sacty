@@ -4,7 +4,7 @@
 - ステータス: 置き換え済み（superseded）
 - 関係する PR・タスク: #96、PBI-88
 - 置き換え元: [「レビュー」の工程を足し、タスクにある対象リポジトリの PR を AI がレビューして、人間の承認を待たずに PR に投稿する](20261011-0757-superseded-review-step-posts-to-pr.md)
-- 置き換え先: [取り込みを「Issue の取り込み」と「PR のレビューの取り込み」に分け、sacty の PR にはレビュー用のラベルを付ける](20261015-0240-split-issue-and-pr-review-intake.md)（PR に付けるラベルを取り込むラベルにした部分と、PR のトリアージの Off の扱い）
+- 置き換え先: [取り込みを「Issue の取り込み」と「PR のレビューの取り込み」に分け、sacty の PR にはレビュー用のラベルを付ける](20261015-0240-superseded-split-issue-and-pr-review-intake.md)（PR に付けるラベルを取り込むラベルにした部分と、PR のトリアージの Off の扱い）
 
 ## 背景
 

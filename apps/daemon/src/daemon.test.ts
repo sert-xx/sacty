@@ -6926,26 +6926,50 @@ describe("自動のトリアージの種類ごとの On/Off（PBI-53）", () => 
     activity.close();
   });
 
-  it("取り込むラベルとレビュー用のラベルに同じ名前（大文字・小文字は区別しない）は保存できない（PBI-99）", () => {
-    const activity = new SqliteActivityStore(dbPath);
-    const settings = new MemorySettingsStore({ intakeLabel: "sacty", reviewLabel: "sacty-review" });
-    const { service } = makeService(activity, [], { settings });
+  it("取り込むラベルとレビュー用のラベルに同じ名前（大文字・小文字だけ違う名前も）を保存でき、Issue は通常のタスク、PR はレビューだけのタスクにする（PBI-104）", () => {
     for (const [intakeLabel, reviewLabel] of [
       ["sacty", "sacty"],
       ["sacty", " SACTY "],
-    ]) {
-      expect(() => service.saveSettings({ intakeLabel, reviewLabel }), reviewLabel).toThrow();
+    ] as const) {
+      const activity = new SqliteActivityStore(dbPath);
+      const settings = new MemorySettingsStore({});
+      const { service } = makeService(activity, [], { settings });
+      expect(service.saveSettings({ intakeLabel, reviewLabel }), reviewLabel).toEqual({
+        intakeLabel: "sacty",
+        reviewLabel: reviewLabel.trim(),
+      });
+      // Issue と PR は検索の条件（is:issue・is:pr）で分かれる
+      expect(service.intakeSources().map((s) => [s.query, s.review])).toEqual([
+        ['is:open is:issue repo:acme/app label:"sacty"', undefined],
+        [`is:open is:pr repo:acme/app label:"${reviewLabel.trim()}"`, "label"],
+      ]);
+      // 同じラベルの Issue は通常のタスク、PR はレビューだけのタスク。どちらの検索で見つかっても入れ替わらない
+      const labeled = reviewLabel.trim();
+      const created = service.importIssues([
+        found(1, ["sacty"]),
+        found(2, [labeled], true),
+        { ...found(3, ["sacty"]), review: "label" },
+        found(4, [labeled], true),
+      ]);
+      expect(created.map((t) => [t.source?.number, t.source?.kind, t.source?.review])).toEqual([
+        [1, "github_issue", undefined],
+        [2, "github_pull_request", "label"],
+        [3, "github_issue", undefined],
+        [4, "github_pull_request", "label"],
+      ]);
+      // 2つの検索の両方で見つかっても、同じ Issue・PR は二度取り込まない
+      expect(
+        service.importIssues([
+          found(1, ["sacty"]),
+          { ...found(1, ["sacty"]), review: "label" },
+          found(2, [labeled], true),
+          { ...found(2, [labeled], true), review: "label" },
+        ]),
+      ).toEqual([]);
+      expect(service.list()).toHaveLength(4);
+      activity.close();
+      rmSync(dbPath, { force: true });
     }
-    // 保存していた設定は変わらない
-    expect(service.getSettings()).toEqual({ intakeLabel: "sacty", reviewLabel: "sacty-review" });
-    // 片方だけ・別の名前なら保存できる
-    expect(service.saveSettings({ intakeLabel: "sacty" })).toEqual({ intakeLabel: "sacty" });
-    expect(service.saveSettings({ reviewLabel: "sacty" })).toEqual({ reviewLabel: "sacty" });
-    expect(service.saveSettings({ intakeLabel: "sacty", reviewLabel: "sacty-pr" })).toEqual({
-      intakeLabel: "sacty",
-      reviewLabel: "sacty-pr",
-    });
-    activity.close();
   });
 
   it("同じ名前の2つのラベルをすでに保存してある設定（SQLite）でも開け、Issue と PR の取り込みが続く（PBI-99 レビュー指摘）", () => {
@@ -6978,8 +7002,11 @@ describe("自動のトリアージの種類ごとの On/Off（PBI-53）", () => 
       [1, undefined],
       [2, "label"],
     ]);
-    // 保存し直すときは、別の名前を求める
-    expect(() => service.saveSettings({ intakeLabel: "sacty", reviewLabel: "Sacty" })).toThrow();
+    // そのまま保存し直せる（PBI-104）
+    expect(service.saveSettings({ intakeLabel: "sacty", reviewLabel: "Sacty" })).toEqual({
+      intakeLabel: "sacty",
+      reviewLabel: "Sacty",
+    });
     activity.close();
     settings.close();
   });
@@ -8424,15 +8451,13 @@ describe("API", () => {
     expect(((await bad.json()) as { issues: unknown[] }).issues).toEqual([
       { path: ["intakeLabel"], message: { code: "input.invalidLabel" } },
     ]);
-    // 取り込むラベルとレビュー用のラベルに同じ名前は書けない（PBI-99）
+    // 取り込むラベルとレビュー用のラベルに同じ名前（大文字・小文字だけの違いも）を書ける（PBI-104）
     const same = await put({ intakeLabel: "sacty", reviewLabel: "Sacty" });
-    expect(same.status).toBe(400);
-    expect(((await same.json()) as { issues: unknown[] }).issues).toEqual([
-      { path: ["reviewLabel"], message: { code: "input.sameIntakeAndReviewLabel" } },
-    ]);
+    expect(same.status).toBe(200);
     expect(await (await app.request("/api/settings", { headers: auth })).json()).toEqual({
-      settings: { intakeLabel: "sacty" },
+      settings: { intakeLabel: "sacty", reviewLabel: "Sacty" },
     });
+    await put({ intakeLabel: "sacty" });
     // 取り込みの種類ごとの間隔（PBI-100）。60 秒より短いと、どの種類の間隔かがわかる文言で弾く
     const short = await put({ intakeLabel: "sacty", issueIntervalSec: 59 });
     expect(short.status).toBe(400);
@@ -13169,6 +13194,73 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       const off = await start([out("# 要求要件 v1")], { settings });
       expect(off.service.importIssues([labeledPr(7)])).toEqual([]);
       off.activity.close();
+    });
+
+    it("取り込むラベルとレビュー用のラベルが同じでも、sacty の PR はレビューだけのタスクとして1回だけ取り込まれ、実装のタスクにならず、指摘は元のタスクに届く（PBI-104）", async () => {
+      const pulls = new FakePulls();
+      pulls.prInfo = { ...pulls.prInfo, number: 7, url: "https://github.com/acme/app/pull/7" };
+      const { activity, service, executor, id } = await start(
+        [
+          out("# 要求要件 v1"),
+          out(
+            [
+              "# 評価\n\n受け入れ条件が足りない",
+              block({ "sacty-review-verdict": { changesRequested: true } }),
+            ].join("\n\n"),
+          ),
+          rework("requirements", "要求要件で直せる"),
+          out("# 要求要件 v2"),
+        ],
+        {
+          pulls,
+          settings: new MemorySettingsStore({ intakeLabel: "sacty", reviewLabel: "sacty" }),
+        },
+      );
+      // sacty の PR には、レビュー用のラベル（取り込むラベルと同じ名前）を1回だけ付ける
+      expect(pulls.labels.map((l) => [l.number, l.label])).toEqual([[7, "sacty"]]);
+      // 大文字・小文字だけが違う名前でも保存でき、比べるときは同じとみなす
+      expect(service.saveSettings({ intakeLabel: "sacty", reviewLabel: "SACTY" })).toEqual({
+        intakeLabel: "sacty",
+        reviewLabel: "SACTY",
+      });
+      // Issue の取り込みの検索（review なし）と PR のレビューの取り込みの検索の両方で見つかっても、レビューだけのタスク1つ
+      const created = service.importIssues([
+        labeledPr(7, ["sacty"]),
+        {
+          ...labeledPr(7, ["sacty"]),
+          review: "label" as const,
+        },
+      ]);
+      expect(created.map((t) => [t.source?.number, t.source?.review])).toEqual([[7, "sacty"]]);
+      const reviewId = created[0]?.id ?? "";
+      expect(reviewId).not.toBe(id);
+      // 実装のタスク（source.review の無い、PR のタスク）にはならない
+      expect(
+        service.list().filter((t) => t.source?.kind === "github_pull_request" && !t.source.review),
+      ).toEqual([]);
+      const before = executor.calls.length;
+      await service.runNext(reviewId);
+      const chosen = service.get(reviewId)?.activity.find((e) => e.type === "StepsChosen");
+      expect(chosen?.type === "StepsChosen" && chosen.payload.steps).toEqual(["review"]);
+      expect(executor.calls[before]?.command.join(" ")).toContain("レビューエージェント");
+      await service.runNext(reviewId);
+      expect(pulls.reviews.map((r) => r.number)).toEqual([7]);
+      // そのレビューは、元のタスクに PR の指摘として届く
+      pulls.feedbackBy[7] = [
+        item("review:50", { kind: "review", author: "me", body: pulls.reviews[0]?.body ?? "" }),
+      ];
+      await service.checkPullRequests();
+      expect(pulls.feedbackSactyReviews.at(-1)).toEqual([reviewId]);
+      expect(
+        service.get(id)?.activity.find((e) => e.type === "PullRequestReviewImported")?.payload,
+      ).toMatchObject({ number: 7, items: [{ key: "review:50" }] });
+      expect(taskOf(service, id).remarks.at(-1)?.text).toContain("受け入れ条件が足りない");
+      // 直して PR を更新しても、ラベルは付け直さず、同じ PR はもう取り込まない
+      await service.runNext(id);
+      expect(pulls.labels).toHaveLength(1);
+      expect(service.importIssues([labeledPr(7, ["sacty"])])).toEqual([]);
+      expect(service.list().filter((t) => t.source?.number === 7)).toHaveLength(1);
+      activity.close();
     });
   });
 });
