@@ -455,13 +455,24 @@ const StepsChosen = z.object({
     investigation: InvestigationKind.optional(),
     /**
      * 工程ごとに使うイメージの名前（config.yaml の images の名前か default。PBI-41）。書いていない工程は
-     * 既定のイメージ。テストの実行は、確かめる工程（実装・再現）のイメージで行う。
+     * 既定のイメージ（images の候補を見せたときは、理由か理由が無いことを defaultImageReasons・imagesUnexplained に残す。PBI-105）。
+     * テストの実行は、確かめる工程（実装・再現）のイメージで行う。
      */
     images: z.partialRecord(StepKey, z.string().min(1)).optional(),
     /** イメージを決めたのが、プロジェクトの対象の指定か、オーケストレーターか。 */
     imageSource: z.enum(["project", "orchestrator"]).optional(),
     /** オーケストレーターがイメージを選んだ理由。 */
     imageReason: z.string().max(1000).optional(),
+    /**
+     * 既定のイメージ（default）で動かす工程と、images のどれも合わない理由（PBI-105）。images の候補をオーケストレーターに
+     * 見せたときだけ持つ。理由が書かれなかった工程（イメージを書かなかった・default と書いて理由が無い）は、imagesUnexplained に入る。
+     */
+    defaultImageReasons: z.partialRecord(StepKey, z.string().min(1).max(1000)).optional(),
+    /**
+     * images の候補を見せたのに、理由が無いまま既定のイメージで動かす工程（PBI-105）。オーケストレーターが工程のイメージを
+     * 書かなかった・default と書いて理由を書かなかった。作業履歴とタスクの画面に、理由が無いことを出す。
+     */
+    imagesUnexplained: z.array(StepKey).optional(),
     /**
      * 工程・テストの実行の前に起動する docker compose のサービス（DB・モック API など。PBI-47）。file は作業領域からの
      * 相対パス、names は起動するサービス（空ならすべて）、steps はサービスを使う工程。

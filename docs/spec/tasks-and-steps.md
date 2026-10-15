@@ -118,11 +118,22 @@
 | `noTests` | `testCommand` が空のときだけ読む、リポジトリにテストの仕組みが無いと判断した根拠（1〜2000 文字）。`StepsChosen` の `noTestsReason` に記録する（下の「テストの仕組みが無いタスク」） |
 | `investigation` | 調査の種類（`content`：内容の調査、`bug`：不具合の調査） |
 | `images`・`imageReason` | 工程ごとのイメージ。プロジェクトの対象でイメージを指定していれば、選ばせずに全工程でそれを使う。`images` に無い名前なら止める |
+| `defaultReasons` | 既定のイメージ（`default`）を使う工程ごとの、`images` のどれも合わない理由（下の「工程のイメージ」） |
 | `services`・`servicesReason` | 起動する compose のファイル・サービス・工程（[サービス](services.md)）。共用の compose は名前で選ぶ（無い名前なら止める） |
 | `exports` | 工程ごとの書き出し先と理由（[書き出し](export.md)） |
 | `documentsDir` | 要求要件・設計のファイルを置くディレクトリ（[承認と差し戻し](approval.md)） |
 | `repo`・`repoReason` | リポジトリの無いタスクで、リポジトリが要る組み合わせを選んだときの作業するリポジトリ |
 
+- 工程のイメージ（`images` を設定していて、プロジェクトの対象でイメージを指定していないとき）：
+  - 指示では、PR 作成（コンテナを使わない）を除く工程それぞれに `images` から選ばせる。既定のイメージは候補に並べず、`images` のどれも合わないときの
+    最後の手段（Claude Code・Codex を動かす Node.js と git だけで、テストのブラウザ・DB のクライアント・ほかの言語のツールは無い）と説明し、
+    使う工程には `defaultReasons` に理由を書かせる。テストを実行するイメージ（実装、不具合の修正では再現も）は、`testCommand` と
+    リポジトリの依存（ブラウザのテスト・DB のクライアントなど）から選ばせる。
+  - 既定のイメージで動く工程（PR 作成を除く、選んだ工程のうち、イメージが無いか `default` のもの）は、理由があれば
+    `StepsChosen` の `defaultImageReasons` に、理由が無ければ（イメージを書かなかった・`default` と書いて理由が無い）`imagesUnexplained` に記録する。
+    理由が無くても止めずに既定のイメージで進め、作業履歴（タスクの画面）に理由が無いことを出す。
+  - `images` を設定していない・プロジェクトの対象で指定している・リポジトリの無いまま進めるタスク・PR のレビューだけのタスクでは、
+    どちらも記録しない。
 - リポジトリの無いタスクで、リポジトリが要る工程を選んだら、`repo` をプロジェクトの対象と照らして `RepositoryChosen` を記録し、
   リポジトリを用意してからもう一度選ばせる。対象に無い・空なら止まり、画面で人がリポジトリを選んで再開できる（一時停止中で
   リポジトリを待っているときだけ）。リポジトリの要らない組み合わせなら、`testCommand`・`baseBranch`・`services`・`documentsDir` を捨てる。
@@ -131,7 +142,7 @@
 - PR のレビューだけのタスクは、オーケストレーターを使わずに `review` の組み合わせにする（`reviewOnlySteps`）。
 - オーケストレーターのセッションの使い回しは [エージェントの実行](agent-execution.md) の「セッションの保存と使い回し」。
 
-コード: `apps/daemon/src/service.ts`（`askOrchestrator`・`runNextInner`・`withImages`・`withSharedCompose`・`withExports`・`repositoryFromPlan`・`chooseRepository`・`triageTicket`・`reviewOnlySteps`）、`apps/daemon/src/prompts.ts`（`extractStepPlan`）、`packages/core/src/events.ts`（`StepsChosen`）
+コード: `apps/daemon/src/service.ts`（`askOrchestrator`・`runNextInner`・`withImages`・`defaultImagesOf`・`withSharedCompose`・`withExports`・`repositoryFromPlan`・`chooseRepository`・`triageTicket`・`reviewOnlySteps`）、`apps/daemon/src/prompts.ts`（`extractStepPlan`）、`packages/core/src/events.ts`（`StepsChosen`）
 
 ## 実装の検証
 

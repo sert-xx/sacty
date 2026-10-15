@@ -556,6 +556,23 @@ describe("オーケストレーターが選んだ工程（PBI-17）", () => {
     expect(
       describeIn(chosen({ images: { implement: "py" }, imageSource: "project" }), labels.en),
     ).toContain("images: Implement=py (set on the project target)");
+    // 既定のイメージで動かす工程の、images のどれも合わない理由と、理由が無い工程（PBI-105）
+    const defaults = chosen({
+      images: { implement: "java17" },
+      imageSource: "orchestrator",
+      defaultImageReasons: { requirements: "文書だけ" },
+      imagesUnexplained: ["investigate"],
+    });
+    expect(describeEvent(defaults)).toContain(
+      " / 既定のイメージ（images のどれも合わない）：要求要件＝文書だけ / 理由が無いまま既定のイメージで動かす：調査（オーケストレーターが images から選ばず、合わない理由も書かなかった）",
+    );
+    expect(describeIn(defaults, labels.en)).toContain(
+      " / Default image (none of images fits): Requirements: 文書だけ / Runs on the default image with no reason: Investigate",
+    );
+    // イメージを1つも書かなかったときも出す
+    expect(describeEvent(chosen({ imagesUnexplained: ["implement"] }))).toBe(
+      "工程を決定：要求要件 → 実装 → PR作成（小さな変更） / 理由が無いまま既定のイメージで動かす：実装（オーケストレーターが images から選ばず、合わない理由も書かなかった）",
+    );
   });
 
   it("サービスを使う・使わない判断と理由、どの共用の compose を使うかを表示する（PBI-70）", () => {

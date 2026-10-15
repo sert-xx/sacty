@@ -135,8 +135,14 @@ npx sacty image build java17     # build by name (default is the default image)
 ## Which image a step runs in
 
 - The image for each step is chosen by the orchestrator when it chooses the steps, by reading the repository (`pom.xml`, `go.mod`, `pyproject.toml`, `package.json`,
-  and so on; in a monorepo, the directories the step touches). Tests run in the image of the Implementation step (Reproduce for bug fixes).
-  The orchestrator itself runs in the default image.
+  and so on; in a monorepo, the directories the step touches), and it picks one from `images` for every step except PR creation. Tests run in the image of
+  the Implementation step (Reproduce for bug fixes), so the image that runs the tests is chosen from the test command and the repository's dependencies
+  (browser tests such as Playwright, DB clients, and so on). The orchestrator itself runs in the default image.
+- The default image (`image`) is the last resort when none of `images` fits. It is a minimal image with only Node.js and git to run Claude Code and Codex;
+  it has no test browsers, DB clients, or tools for other languages. Even for a Node.js repository, a matching image in `images` is used instead.
+- For a step that runs in the default image, the reason why none of `images` fits is recorded in the Activity (the task page). If the orchestrator gave no reason
+  for a step, the task does not stop; the step runs in the default image and the Activity shows "Runs on the default image with no reason". When tests fail,
+  check this and add the tools each image includes (such as Playwright) to its `description` in `images`.
 - If you specify an image for a project target (a repository or an Org), the orchestrator does not choose and that image is used for every step
   (a repository's setting takes precedence over an Org's; see [Project settings](project-settings.en.md#targets)).
 - The chosen image and the reason are recorded in the Activity. If a name not in `images` is chosen or specified, sacty stops and shows the reason.
