@@ -2,7 +2,7 @@
 
 - 日時: 2026-10-15 03:10 UTC
 - ステータス: 採用
-- 関係する PR・タスク: PBI-100
+- 関係する PR・タスク: #109、PBI-100
 - 置き換え元: [GitHub へのアクセスは、ホストの gh にログイン済みのアカウントからプロジェクトごとに必ず選んだもので行い、config.yaml のトークンの設定は削除する](20261010-2314-superseded-github-access-via-gh-accounts.md)（config.yaml の `github:` があれば取り込む部分）
 - 置き換え先: なし
 
