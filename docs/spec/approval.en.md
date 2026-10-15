@@ -173,7 +173,7 @@ Code: `apps/daemon/src/service.ts` (`importFeedback`, `sactyReviewsOf`, `feedbac
 
 ## Request changes
 
-- Steps that can be gone back to (`reworkTargets`): the `REWORK_STEPS` before the step waiting for approval, nearest first. `reproduce` and `investigate` only when they
+- Steps that can be gone back to (`reworkTargets`): the `REWORK_STEPS` that are the step waiting for approval or before it, nearest first. `reproduce` and `investigate` only when they
   themselves are waiting for approval. When Integration review is waiting for approval, only `split`. If the target is omitted, the first one (`implement` when Implementation is waiting for approval).
 - Requesting changes while waiting for approval needs at least one comment (`gate.remarksRequired`). A person can void comments, and voided comments are not passed to the agent.
 - Going back to an earlier step revokes the approvals from that step onward and resets the verification result and failure count. In a task approved through PRs, merged PRs are not reverted.

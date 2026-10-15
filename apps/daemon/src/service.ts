@@ -5068,6 +5068,8 @@ export class TaskService {
     // タスクブランチのあるタスク（PBI-57）は、タスクブランチに実装を積み、タスクブランチからベースブランチへの PR にする
     const taskBranch = task.taskBranch;
     const branch = taskBranch?.branch ?? task.pullRequest?.branch ?? taskBranchName(task);
+    // 一時停止・中止を求められていれば、プッシュも PR の作成もしない（一時停止は、PR の作成の待ちのまま止める。再開すると作る）
+    if (this.stopRequested(task.id)) return;
     try {
       const authEnv = await this.gitAuth(task, task.repository.url, usedSecrets);
       let parent = task.pullRequest?.commit ?? task.repository.baseCommit;
@@ -5137,6 +5139,10 @@ export class TaskService {
         buildPullRequestBodyText(task),
         buildPullRequestBodyParts(task),
       );
+      // PR を作る直前にも確かめる（プッシュしたブランチは記録済みなので、中止で片付けられる）。PR を作り始めたら、作り終えて
+      // 実装の承認待ちにする（作った PR を記録しないまま止めると、再開で PR を二重に作りうるため）。そのときの一時停止は、
+      // 承認待ちになったので止めなかったと返す（pause の pause.reachedApproval）
+      if (this.stopRequested(task.id)) return;
       const pr = await this.deps.pulls.upsert({
         repo: prRepo,
         token,
@@ -5362,8 +5368,13 @@ export class TaskService {
     if (inflight) {
       this.stopRuns(inflight.runIds);
       await inflight.done.catch(() => {});
-      // 記録は runNext の後始末で行う
-      return this.mustGet(id);
+      // 記録は runNext の後始末で行う。止める前に作業が終わって承認待ちになった（PR を作り終えたなど）なら、一時停止は
+      // していないので、そうはっきり返す（PBI-110 レビュー指摘）
+      const after = this.mustGet(id);
+      if (after.status === "awaiting_approval" || after.status === "escalated") {
+        throw new InvalidOperationError(message("pause.reachedApproval"));
+      }
+      return after;
     }
     this.pauseIfRequested(id);
     return this.mustGet(id);

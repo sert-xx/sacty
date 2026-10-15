@@ -37,6 +37,7 @@ const PARAMS = {
   "pause.awaitingPerson": null,
   "pause.waitingTasks": null,
   "pause.guardianJudging": null,
+  "pause.reachedApproval": null,
   "cancel.alreadyCancelled": null,
   "cancel.cleaningUp": null,
   "cancel.guardianJudging": null,
@@ -378,6 +379,7 @@ const PARAMS = {
   // 設定ファイル（config.yaml）
   "config.missing": z.object({ path: z.string() }),
   "config.unreadable": z.object({ detail: z.string() }),
+  "config.stepAgentsPrRemoved": null,
   "config.invalid": z.object({ path: z.string(), detail: TextParam }),
   "config.authUnsupported": z.object({
     runtime: z.string(),
@@ -504,6 +506,8 @@ const ja: MessageDictionary = {
     `${scopeJa[scope]}「${target}」は、プロジェクト「${project}」に登録されています。`,
   "pause.alreadyPaused": "すでに一時停止しています。",
   "pause.awaitingPerson": "人間の判断待ちのため、一時停止する必要はありません。",
+  "pause.reachedApproval":
+    "止める前に作業が終わり、承認待ちになったため、一時停止しませんでした（PR を作った工程は、PR で判断してください。止めるなら中止してください）。",
   "pause.waitingTasks": "ほかのタスクの完了を待っているため、一時停止する必要はありません。",
   "pause.guardianJudging":
     "ゴールガーディアンが変更の申し出を判定しているため、終わるまで一時停止できません。",
@@ -894,6 +898,8 @@ const ja: MessageDictionary = {
   "config.missing": ({ path }) =>
     `設定ファイルがありません（${path}）。\`sacty config init\` で作成してください。`,
   "config.unreadable": ({ detail }) => `設定ファイルのYAMLを読めません：${detail}`,
+  "config.stepAgentsPrRemoved":
+    "設定ファイルの step_agents に pr があります。「PR作成」の工程は無くなりました（実装の工程の中で PR を作ります）。step_agents から pr を消してください。",
   "config.invalid": ({ path, detail }, text) =>
     `設定ファイルに誤りがあります（${path}）：${text(detail)}`,
   "config.authUnsupported": ({ runtime, mode, supported }) =>
@@ -947,6 +953,8 @@ const en: MessageDictionary = {
     `The ${scopeEn[scope]} "${target}" is already registered in the project "${project}".`,
   "pause.alreadyPaused": "The task is already paused.",
   "pause.awaitingPerson": "The task is waiting for your decision, so there is no need to pause it.",
+  "pause.reachedApproval":
+    "The work finished before it could stop and the task is now waiting for approval, so it was not paused (decide on the PR for a step that opened one, or cancel the task to stop it).",
   "pause.waitingTasks":
     "The task is waiting for other tasks to finish, so there is no need to pause it.",
   "pause.guardianJudging":
@@ -1338,6 +1346,8 @@ const en: MessageDictionary = {
   "config.missing": ({ path }) =>
     `The config file is missing (${path}). Create it with \`sacty config init\`.`,
   "config.unreadable": ({ detail }) => `Cannot read the config file as YAML: ${detail}`,
+  "config.stepAgentsPrRemoved":
+    'The config file has pr in step_agents. The "Open PR" step was removed (the PR is now opened inside the Implementation step). Delete pr from step_agents.',
   "config.invalid": ({ path, detail }, text) =>
     `The config file has an error (${path}): ${text(detail)}`,
   "config.authUnsupported": ({ runtime, mode, supported }) =>

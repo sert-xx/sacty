@@ -156,6 +156,8 @@ See [Container images](images.en.md#changing-a-steps-image) for details.
   [config.yaml settings](config.en.md#budget)).
 - Cancelling closes all open PRs that sacty created and deletes the task branch and the step branches (branches and PRs created by people are not touched).
   A cancelled task cannot be resumed.
+- If you pause while the implementation PR is being opened, the PR is finished and Implement waits for approval; the task is not paused (the screen says it was not paused).
+  Decide on the PR, or cancel the task to stop it.
 
 ## Automatic updates on the screen
 
@@ -176,17 +178,18 @@ approvals and resumes in other tabs or the CLI, tasks the daemon picked up and s
 - The sacty settings and project settings screens are not updated automatically (only the header's notices are). To see the latest, open the screen
   again or reload it in the browser.
 
-## Tasks from earlier versions (with the "PR作成" step)
+## Tasks from earlier versions (with the Open PR step)
 
-Earlier versions had a "PR作成" (open PR; shown as "Deliverable review" on some screens) step after Implementation. The current version removes this step, and the PR is opened
-and waits for approval inside the Implementation step. Tasks from earlier versions cannot be carried over as they are.
+Earlier versions had an "Open PR" step (`pr`; "PR作成" on the Japanese screen) after Implementation, whose approval screen was titled "Deliverable review". The current version removes this step:
+the PR is opened inside the Implementation step, which then waits for the Implement approval (on the Approval screen). Tasks from earlier versions cannot be carried over as they are.
 
-- Tasks created in an earlier version that contain the "PR作成" step are deleted from the Activity when the daemon starts. **Tasks in progress (running, awaiting approval,
+- Tasks created in an earlier version that contain the Open PR step (`pr`) are deleted from the Activity when the daemon starts. **Tasks in progress (running, awaiting approval,
   paused, and so on) are deleted too.** The parent and children of a task split, and a fix task from the after-merge watch and its original task, are deleted together when either is deleted.
 - The number and IDs of the deleted tasks are written to the daemon log.
 - GitHub branches and PRs are left as they are. If you won't use an open PR, close it on GitHub. Create the work you want to continue as a new
   task.
-- If you wrote `pr` in `step_agents` in `config.yaml`, delete it (leaving it is a settings error).
+- If you wrote `pr` in `step_agents` in `config.yaml`, delete it. Leaving it is a settings error, and while there are old tasks, the daemon does not start
+  and does not delete them (the log shows the settings error and asks you to delete it). Delete it and start again.
 
 ## Related pages
 

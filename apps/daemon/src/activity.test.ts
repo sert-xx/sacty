@@ -1,9 +1,11 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { renderMessage } from "@sacty/core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { SqliteActivityStore } from "./activity.js";
+import { purgeLegacyTasksAtStartup, SqliteActivityStore } from "./activity.js";
+import { loadConfig } from "./config.js";
 
 let dir: string;
 
@@ -166,6 +168,17 @@ describe("「PR作成」の工程を前提にした古いタスクを捨てる�
           fix: { taskId: "origin", kind: "ci", fingerprint: "f", depth: 1 },
         }),
       ],
+      // 工程の組み合わせに pr が無くても、pr の工程を指す記録（step・target）があれば消す
+      ["step-only", "TaskCreated", created()],
+      ["step-only", "StepsChosen", { steps: ["implement"] }],
+      ["step-only", "StepSubmitted", { step: "pr", submission: 1 }],
+      ["target-only", "TaskCreated", created()],
+      ["target-only", "StepsChosen", { steps: ["implement"] }],
+      [
+        "target-only",
+        "ChangesRequested",
+        { step: "implement", target: "pr", round: 1, remarks: [{ id: "r", text: "x" }] },
+      ],
       // 今の形のタスクと、工程を選ぶ前のタスクは残す
       ["current", "TaskCreated", created()],
       ["current", "StepsChosen", { steps: ["requirements", "design", "implement"] }],
@@ -180,6 +193,8 @@ describe("「PR作成」の工程を前提にした古いタスクを捨てる�
       "old",
       "origin",
       "parent",
+      "step-only",
+      "target-only",
     ]);
     expect([...new Set(store.all().map((e) => e.taskId))]).toEqual(["current", "fresh"]);
     // 2回目は何もしない。追記専用の保証は戻っている
@@ -190,7 +205,59 @@ describe("「PR作成」の工程を前提にした古いタスクを捨てる�
       projectId: "default",
       events: [{ actor: "person", event: { type: "TaskCancelled", payload: { cleanup: [] } } }],
     });
-    expect(added?.seq).toBeGreaterThan(14);
+    expect(added?.seq).toBeGreaterThan(20);
+    store.close();
+  });
+
+  it("起動時は、設定（config.yaml）に誤りがある間は消さずに止め、古い step_agents.pr には消すよう案内する（レビュー指摘）", () => {
+    const path = join(dir, "sacty.db");
+    seed(path, [
+      ["old", "TaskCreated", created()],
+      ["old", "StepsChosen", { steps: ["implement", "pr"] }],
+    ]);
+    const config = (stepAgents: string) =>
+      writeFileSync(
+        join(dir, "config.yaml"),
+        [
+          "default_agent: x",
+          ...(stepAgents ? ["step_agents:", stepAgents] : []),
+          "agents:",
+          "  x:",
+          "    runtime: claude-code",
+          "    auth: { mode: subscription, secret: claude-oauth-token }",
+          "    price_per_mtok_usd: { input: 1, cached_input: 0.1, output: 2 }",
+        ].join("\n"),
+      );
+    const store = new SqliteActivityStore(path);
+    config("  pr: x");
+    const blocked = purgeLegacyTasksAtStartup(store, () => loadConfig(dir));
+    expect("blocked" in blocked && blocked.blocked.tasks).toEqual(["old"]);
+    const problem = "blocked" in blocked ? blocked.blocked.problem : "";
+    expect(renderMessage(problem, "ja")).toBe(
+      "設定ファイルの step_agents に pr があります。「PR作成」の工程は無くなりました（実装の工程の中で PR を作ります）。step_agents から pr を消してください。",
+    );
+    expect(renderMessage(problem, "en")).toContain("Delete pr from step_agents.");
+    // 消していない
+    expect(store.legacyPrStepTasks()).toEqual(["old"]);
+    // 直したら消す
+    config("  implement: x");
+    expect(purgeLegacyTasksAtStartup(store, () => loadConfig(dir))).toEqual({ purged: ["old"] });
+    expect(store.all()).toEqual([]);
+    store.close();
+  });
+
+  it("捨てるものが無ければ、設定に誤りがあっても起動を止めない（設定を見ない）", () => {
+    const path = join(dir, "sacty.db");
+    seed(path, [["a", "TaskCreated", created()]]);
+    const store = new SqliteActivityStore(path);
+    let read = 0;
+    expect(
+      purgeLegacyTasksAtStartup(store, () => {
+        read += 1;
+        return { ok: false, problem: "x" };
+      }),
+    ).toEqual({ purged: [] });
+    expect(read).toBe(0);
     store.close();
   });
 

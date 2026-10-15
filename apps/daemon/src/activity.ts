@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
-import { type ActivityEvent, type Actor, EventInput } from "@sacty/core";
+import { type ActivityEvent, type Actor, type DaemonText, EventInput } from "@sacty/core";
 
 /**
  * 作業履歴の保存先。将来PostgreSQLに差し替えられるよう、デーモンはこの型だけに依存する。
@@ -151,6 +151,13 @@ export class SqliteActivityStore implements ActivityStore {
    * 捨てたタスクの ID を返す（無ければ空。何もしない）。作業領域・セッションログ・GitHub のブランチと PR は消さない。
    */
   purgeLegacyPrStepTasks(): string[] {
+    const ids = this.legacyPrStepTasks();
+    this.deleteTasks(ids);
+    return ids;
+  }
+
+  /** 捨てる古いタスク（purgeLegacyPrStepTasks が消すもの）の ID。作業履歴は変えない。 */
+  legacyPrStepTasks(): string[] {
     const marked = (
       this.db
         .prepare(
@@ -188,7 +195,12 @@ export class SqliteActivityStore implements ActivityStore {
       purged.add(id);
       for (const next of neighbors.get(id) ?? []) if (!purged.has(next)) queue.push(next);
     }
-    const ids = [...purged].sort();
+    return [...purged].sort();
+  }
+
+  /** タスクの記録を作業履歴から消す（古いタスクを捨てるときだけ使う。PBI-110）。 */
+  private deleteTasks(ids: readonly string[]): void {
+    if (ids.length === 0) return;
     const remove = this.db.prepare("DELETE FROM activity WHERE task_id = ?");
     this.db.exec("BEGIN IMMEDIATE");
     try {
@@ -200,7 +212,6 @@ export class SqliteActivityStore implements ActivityStore {
       this.db.exec("ROLLBACK");
       throw error;
     }
-    return ids;
   }
 
   /** テスト専用：生のSQLを実行する（追記専用の保証を確かめるため）。 */
@@ -211,4 +222,20 @@ export class SqliteActivityStore implements ActivityStore {
   close() {
     this.db.close();
   }
+}
+
+/**
+ * 起動時に、「PR作成」の工程を前提にした古いタスクを捨てる（PBI-110）。消す前に設定（config.yaml）を確かめ、誤りがある間は
+ * 消さない（古い設定の step_agents.pr などを直す前に、処理中のタスクを失わないように）。捨てるものが無ければ、設定は見ない。
+ * blocked なら、デーモンは起動しない（古い記録は読めないので）。
+ */
+export function purgeLegacyTasksAtStartup(
+  store: Pick<SqliteActivityStore, "legacyPrStepTasks" | "purgeLegacyPrStepTasks">,
+  config: () => { ok: true } | { ok: false; problem: DaemonText },
+): { purged: string[] } | { blocked: { tasks: string[]; problem: DaemonText } } {
+  const tasks = store.legacyPrStepTasks();
+  if (tasks.length === 0) return { purged: [] };
+  const checked = config();
+  if (!checked.ok) return { blocked: { tasks, problem: checked.problem } };
+  return { purged: store.purgeLegacyPrStepTasks() };
 }

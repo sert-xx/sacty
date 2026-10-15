@@ -449,6 +449,9 @@ class FakeRepos implements RepositoryWorkspace {
   publishFail?: string;
   /** true なら、作業領域が起点から何も変わっていない（PBI-90）。 */
   unchanged = false;
+  /** あれば、プッシュを、これが解決するまで終わらせない（PR の作成の前の一時停止のテスト。PBI-110）。 */
+  publishGate?: Promise<void>;
+  publishStarted = Promise.withResolvers<void>();
   async publish(input: {
     parent: string;
     branch: string;
@@ -456,6 +459,8 @@ class FakeRepos implements RepositoryWorkspace {
     date: string;
     keep?: { commit: string; paths: string[] };
   }) {
+    this.publishStarted.resolve();
+    if (this.publishGate) await this.publishGate;
     if (this.publishFail) throw new Error(this.publishFail);
     if (this.unchanged) throw new NothingToCommitError(message("git.nothingToCommit"));
     this.published.push({
@@ -497,7 +502,12 @@ class FakePulls implements PullRequests {
   fail?: string;
   /** 次に新しく作る PR の番号。 */
   nextNumber = 7;
+  /** あれば、PR の作成を、これが解決するまで終わらせない（PR の作成中の一時停止のテスト。PBI-110）。 */
+  upsertGate?: Promise<void>;
+  upsertStarted = Promise.withResolvers<void>();
   async upsert(input: Parameters<PullRequests["upsert"]>[0]) {
+    this.upsertStarted.resolve();
+    if (this.upsertGate) await this.upsertGate;
     if (this.fail) throw new Error(this.fail);
     this.calls.push(input);
     const number = input.number ?? this.nextNumber++;
@@ -5653,6 +5663,60 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       expect(task?.gate).toEqual({ step: "implement", submission: 1 });
       expect(pulls.calls).toHaveLength(1);
       expect(types(service, id)).not.toContain("TaskPaused");
+      activity.close();
+    });
+
+    it("PR を作っている途中に一時停止を求めたら、作り終えて承認待ちにし、一時停止しなかったとはっきり返す（レビュー指摘）", async () => {
+      const pulls = new FakePulls();
+      const gate = Promise.withResolvers<void>();
+      pulls.upsertGate = gate.promise;
+      const { activity, service, id } = await toImplement([implement("# 実装の説明"), review()], {
+        pulls,
+      });
+      await service.runNext(id); // 実装
+      await service.runNext(id); // テストと最終レビュー
+      const publishing = service.runNext(id);
+      await pulls.upsertStarted.promise;
+      const pausing = service.pause(id);
+      gate.resolve();
+      await expect(pausing).rejects.toThrow(
+        "止める前に作業が終わり、承認待ちになったため、一時停止しませんでした",
+      );
+      await publishing;
+      const task = service.get(id)?.task;
+      expect(task?.status).toBe("awaiting_approval");
+      expect(task?.gate).toEqual({ step: "implement", submission: 1 });
+      expect(task?.pullRequest?.number).toBe(7);
+      expect(types(service, id)).not.toContain("TaskPaused");
+      // 止める要求は残らない（後の確認・操作に影響しない）
+      expect(() => service.approve(id, { step: "implement", submission: 1 })).toThrow(/マージ/);
+      activity.close();
+    });
+
+    it("PR を作る前（プッシュの途中）に一時停止を求めたら、PR を作らずに一時停止し、再開すると PR を1つだけ作る（レビュー指摘）", async () => {
+      const repos = new FakeRepos();
+      const gate = Promise.withResolvers<void>();
+      repos.publishGate = gate.promise;
+      const { activity, service, pulls, id } = await toImplement(
+        [implement("# 実装の説明"), review()],
+        { repos },
+      );
+      await service.runNext(id);
+      await service.runNext(id);
+      const publishing = service.runNext(id);
+      await repos.publishStarted.promise;
+      const pausing = service.pause(id);
+      gate.resolve();
+      const paused = await pausing;
+      await publishing;
+      expect(paused.status).toBe("paused");
+      expect(paused.publishPending).toBe(true);
+      expect(pulls.calls).toHaveLength(0);
+      repos.publishGate = undefined;
+      service.resume(id, {});
+      await drain(service);
+      expect(pulls.calls).toHaveLength(1);
+      expect(service.get(id)?.task.gate).toEqual({ step: "implement", submission: 1 });
       activity.close();
     });
 

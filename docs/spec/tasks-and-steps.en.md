@@ -183,12 +183,14 @@ so at daemon startup, before the Activity is read, tasks with those records are 
   Tasks in progress (queued, waiting for approval, paused, and so on) are deleted too.
 - Tasks deleted together: the parent and children of a task split (if either is deleted, the parent and all children), and a fix task from the watch after merge and its original task (if either
   is deleted, both). The links are followed through `parent` and `fix` of each `TaskCreated` (in both directions, repeatedly).
+- Before deleting, the settings (`config.yaml`) are read and checked (`purgeLegacyTasksAtStartup`). If they have an error, nothing is deleted; the number of tasks and the settings error
+  are written to the log and the daemon stops starting up (the old records can't be read). Fix the settings and start again to delete them. If there is nothing to delete, the settings are not read.
 - The number of deleted tasks and their IDs are written to the daemon log. If there is nothing to delete, nothing is done.
 - The Activity is append-only (a trigger rejects deletes), so the trigger is dropped only while deleting, inside the same transaction, and recreated afterwards.
 - Not deleted: workspaces, session logs, Orchestrator sessions, and GitHub branches and PRs (open PRs stay open).
-- `step_agents.pr` in `config.yaml` is an unknown step, so it is a settings error.
+- `step_agents.pr` in `config.yaml` is a settings error. Instead of an unknown-step error, the message asks you to delete `pr` from `step_agents` (`config.stepAgentsPrRemoved`).
 
-Code: `apps/daemon/src/activity.ts` (`purgeLegacyPrStepTasks`), `apps/daemon/src/main.ts`, `apps/daemon/src/config.ts` (`step_agents`)
+Code: `apps/daemon/src/activity.ts` (`purgeLegacyPrStepTasks`, `purgeLegacyTasksAtStartup`), `apps/daemon/src/main.ts`, `apps/daemon/src/config.ts` (`loadConfig`)
 
 ## Verifying the implementation
 
@@ -217,10 +219,13 @@ Code: `apps/daemon/src/activity.ts` (`purgeLegacyPrStepTasks`), `apps/daemon/src
 - If opening the PR fails, the reason is recorded and the task stops (`pr.failed` and so on). Resuming opens the PR again without redoing the implementation (waiting to open the PR
   survives a pause and a restart).
 - The PR is opened even when the budget cap has been reached (it costs nothing and only waits for a person's approval; see "Budget, pause, resume, and cancel" below).
+- Pausing by a person: if a pause or cancel has been requested before the push or right before opening the PR, the task stops without opening the PR (for a pause, it keeps waiting to open the PR;
+  resuming opens it). If the request comes after opening the PR has started, the PR is finished and the task waits for the Implement approval; it is not paused (stopping without recording
+  the opened PR could open a second PR on resume). The pause operation then reports that the task was not paused because it is waiting for approval (`pause.reachedApproval`; 409).
 - Waiting for approval (approval by merging the PR, Request changes, and importing PR comments) works the same as for Requirements and Design ([Approval and request changes](approval.en.md)).
   Approving the implementation by merging the PR completes the task.
 
-Code: `apps/daemon/src/service.ts` (`runNextInner`, `publish`, `implementSubmitted`, `submitEvents`), `packages/core/src/projection.ts` (`publishPending`, `gatePullRequest`)
+Code: `apps/daemon/src/service.ts` (`runNextInner`, `publish`, `implementSubmitted`, `submitEvents`, `pause`), `packages/core/src/projection.ts` (`publishPending`, `gatePullRequest`)
 
 Code: `apps/daemon/src/service.ts` (`verify`, `checkReproduction`, `pauseIfVerificationKeepsFailing`), `apps/daemon/src/prompts.ts` (`verificationBasis`), `packages/core/src/events.ts` (`MAX_VERIFY_ATTEMPTS`), `apps/web/src/components/implementation.tsx`, `apps/web/src/lib/labels.ts` (`verificationResults`, `judgedByGoalForCurrent`)
 

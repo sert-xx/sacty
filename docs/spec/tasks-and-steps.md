@@ -185,12 +185,14 @@
   あるタスク。処理中のタスク（実行待ち・承認待ち・一時停止など）も消す。
 - 一緒に消すタスク：タスク分割の親と子（どちらかを消すなら、親とすべての子）、マージの後の監視の修正のタスクと元のタスク（どちらかを消すなら
   両方）。つながりは、それぞれの `TaskCreated` の `parent`・`fix` でたどる（どちら向きにも、続けてたどる）。
+- 消す前に、設定（`config.yaml`）を読んで確かめる（`purgeLegacyTasksAtStartup`）。誤りがあれば消さずに、件数と設定の誤りをログに出して
+  デーモンの起動をやめる（古い記録は読めないので）。設定を直して起動し直すと消す。消すものが無ければ、設定は見ない。
 - 消した件数と ID をデーモンのログに出す。消すものが無ければ、何もしない。
 - 作業履歴は追記専用（削除をトリガーで拒む）なので、消す間だけ、同じトランザクションの中でトリガーを外し、消した後に作り直す。
 - 消さないもの：作業領域・セッションログ・オーケストレーターのセッション・GitHub のブランチと PR（開いている PR は開いたまま残る）。
-- `config.yaml` の `step_agents.pr` は、知らない工程として設定の誤りになる。
+- `config.yaml` の `step_agents.pr` は、設定の誤りになる。知らない工程の誤りではなく、`step_agents` から `pr` を消すよう案内する（`config.stepAgentsPrRemoved`）。
 
-コード: `apps/daemon/src/activity.ts`（`purgeLegacyPrStepTasks`）、`apps/daemon/src/main.ts`、`apps/daemon/src/config.ts`（`step_agents`）
+コード: `apps/daemon/src/activity.ts`（`purgeLegacyPrStepTasks`・`purgeLegacyTasksAtStartup`）、`apps/daemon/src/main.ts`、`apps/daemon/src/config.ts`（`loadConfig`）
 
 ## 実装の検証
 
@@ -219,10 +221,13 @@
 - PR の作成に失敗したら、理由を記録して止める（`pr.failed` など）。再開すると、実装をやり直さずに PR の作成からやり直す（PR の作成の待ちは、
   一時停止・再起動の後も残る）。
 - 予算の上限に達していても、PR は作る（費用がかからず、人の承認を待つだけなので。下の「予算・一時停止・再開・中止」）。
+- 人の一時停止：プッシュの前・PR を作る直前に、一時停止・中止を求められていれば、PR を作らずに止める（一時停止なら PR の作成の待ちのまま。
+  再開すると作る）。PR を作り始めた後に求められたら、作り終えて実装の承認待ちにし、一時停止はしない（作った PR を記録しないまま止めると、
+  再開で PR を二重に作りうるため）。そのとき一時停止の操作には、承認待ちになったので止めなかったことを返す（`pause.reachedApproval`。409）。
 - 承認待ちの扱い（PR のマージでの承認・差し戻し・PR の指摘の取り込み）は、要求要件・設計と同じ（[承認と差し戻し](approval.md)）。
   PR のマージで実装を承認すると、タスクは完了する。
 
-コード: `apps/daemon/src/service.ts`（`runNextInner`・`publish`・`implementSubmitted`・`submitEvents`）、`packages/core/src/projection.ts`（`publishPending`・`gatePullRequest`）
+コード: `apps/daemon/src/service.ts`（`runNextInner`・`publish`・`implementSubmitted`・`submitEvents`・`pause`）、`packages/core/src/projection.ts`（`publishPending`・`gatePullRequest`）
 
 コード: `apps/daemon/src/service.ts`（`verify`・`checkReproduction`・`pauseIfVerificationKeepsFailing`）、`apps/daemon/src/prompts.ts`（`verificationBasis`）、`packages/core/src/events.ts`（`MAX_VERIFY_ATTEMPTS`）、`apps/web/src/components/implementation.tsx`、`apps/web/src/lib/labels.ts`（`verificationResults`・`judgedByGoalForCurrent`）
 
