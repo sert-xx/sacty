@@ -101,7 +101,7 @@ const ja = {
     targetsTitle: "対象",
     targetsNote: "タスクを作り、Issue・PR を取り込む Org とリポジトリ",
     targetsHelp:
-      "取り込むラベル（sacty の設定）の付いた、開いている Issue・PR をタスクにします。\n同じ Org・リポジトリは、ほかのプロジェクトに登録できません。\nOrg とその中のリポジトリが別のプロジェクトにあれば、リポジトリが優先します。",
+      "開いている Issue は、取り込むラベル（sacty の設定）が付いていればタスクにします。\n開いている PR は、レビュー用のラベル（sacty の設定）が付いているか、レビューを依頼されていれば、レビューだけのタスクにします。\n同じ Org・リポジトリは、ほかのプロジェクトに登録できません。\nOrg とその中のリポジトリが別のプロジェクトにあれば、リポジトリが優先します。",
     prNotice: "注意：タスクによっては、対象のリポジトリにブランチをプッシュし、PR を作ります。",
     noTargets: "対象はありません。",
     scope: "単位",
@@ -321,7 +321,7 @@ const en: ProjectsMessages = {
     targetsTitle: "Targets",
     targetsNote: "Orgs and repositories to create tasks for and import issues and PRs from",
     targetsHelp:
-      "Open issues and PRs with the intake label (sacty settings) become tasks.\nAn org or repository can be in only one project.\nIf an org and a repository in it are in different projects, the repository wins.",
+      "Open issues with the intake label (sacty settings) become tasks.\nOpen PRs with the review label (sacty settings), or that request your review, become review-only tasks.\nAn org or repository can be in only one project.\nIf an org and a repository in it are in different projects, the repository wins.",
     prNotice:
       "Note: depending on the task, sacty may push branches and open PRs in the target repositories.",
     noTargets: "No targets.",

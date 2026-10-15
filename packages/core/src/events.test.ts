@@ -72,4 +72,29 @@ describe("PR に付けるラベルの予定（PBI-88・PBI-99）", () => {
         .payload,
     ).toEqual(base);
   });
+
+  it("要求要件・設計の PR の記録（StepPullRequestPublished）も同じ（PBI-99 レビュー指摘）", () => {
+    const base = {
+      step: "requirements",
+      branch: "sacty/task-1-requirements",
+      commit: "abc",
+      base: "def",
+      path: "docs/sacty/requirements.md",
+      url: "https://github.com/acme/app/pull/7",
+      number: 7,
+      repo: "https://github.com/acme/app",
+    };
+    expect(
+      EventInput.parse({
+        type: "StepPullRequestPublished",
+        payload: { ...base, label: "sacty-review" },
+      }).payload,
+    ).toEqual({ ...base, label: "sacty-review" });
+    expect(
+      EventInput.parse({
+        type: "StepPullRequestPublished",
+        payload: { ...base, intakeLabel: "sacty" },
+      }).payload,
+    ).toEqual(base);
+  });
 });

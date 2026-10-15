@@ -14,6 +14,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import type { CiFailure, DaemonText, EventInput, StepKey, Task } from "@sacty/core";
 import {
   ANSWER_MAX,
@@ -74,7 +75,7 @@ import {
 } from "./service.js";
 import type { ServiceRunner, ServicesSpec } from "./services.js";
 import { type SessionLogSink, SessionLogStore } from "./session-logs.js";
-import { MemorySettingsStore } from "./settings.js";
+import { MemorySettingsStore, SqliteSettingsStore } from "./settings.js";
 import type { SharedComposeFetcher } from "./shared-compose.js";
 import type { FoundTicket, TicketClient } from "./tickets.js";
 
@@ -6951,6 +6952,42 @@ describe("自動のトリアージの種類ごとの On/Off（PBI-53）", () => 
     });
     activity.close();
   });
+
+  it("同じ名前の2つのラベルをすでに保存してある設定（SQLite）でも開け、Issue と PR の取り込みが続く（PBI-99 レビュー指摘）", () => {
+    // 以前の版で保存した設定を、そのまま書く
+    const raw = new DatabaseSync(dbPath);
+    raw.exec(
+      "CREATE TABLE IF NOT EXISTS settings (id INTEGER PRIMARY KEY CHECK (id = 1), value TEXT NOT NULL, updated_at TEXT NOT NULL)",
+    );
+    raw
+      .prepare("INSERT INTO settings (id, value, updated_at) VALUES (1, ?, ?)")
+      .run(
+        JSON.stringify({ intakeLabel: "sacty", reviewLabel: "Sacty", triageOff: ["pullRequests"] }),
+        "2026-10-14T00:00:00.000Z",
+      );
+    raw.close();
+    const settings = new SqliteSettingsStore(dbPath);
+    const activity = new SqliteActivityStore(dbPath);
+    const { service } = makeService(activity, [], { settings });
+    expect(service.getSettings()).toEqual({ intakeLabel: "sacty", reviewLabel: "Sacty" });
+    expect(service.intakeSources().map((s) => s.query)).toEqual([
+      'is:open is:issue repo:acme/app label:"sacty"',
+      'is:open is:pr repo:acme/app label:"Sacty"',
+    ]);
+    // Issue は通常のタスク、PR はレビューだけのタスク
+    expect(
+      service
+        .importIssues([found(1, ["sacty"]), found(2, ["sacty"], true)])
+        .map((t) => [t.source?.number, t.source?.review]),
+    ).toEqual([
+      [1, undefined],
+      [2, "label"],
+    ]);
+    // 保存し直すときは、別の名前を求める
+    expect(() => service.saveSettings({ intakeLabel: "sacty", reviewLabel: "Sacty" })).toThrow();
+    activity.close();
+    settings.close();
+  });
 });
 
 describe("PR のレビューだけを行う取り込み（PBI-44）", () => {
@@ -13051,6 +13088,68 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       ]);
       resumed.activity.close();
       made.activity.close();
+    });
+
+    it("以前の版の記録（StepPullRequestPublished の intakeLabel）は読めるが、再開でラベルを付ける予定として扱わない（PBI-99 レビュー指摘）", async () => {
+      // 要求要件の PR（7）：公開を記録した後、ラベルを付ける途中で止まる
+      const pulls = new FakePulls();
+      const reached = Promise.withResolvers<void>();
+      pulls.addLabel = () => {
+        reached.resolve();
+        return new Promise(() => {});
+      };
+      const activity = new SqliteActivityStore(dbPath);
+      const { service } = makeService(activity, [out("# 要求要件 v1")], {
+        stepPullRequests: true,
+        pulls,
+        now: later,
+      });
+      const { id } = service.createTask({ projectId: "default", title: "決済API", body: "本文" });
+      void service.runNext(id);
+      await reached.promise;
+      expect(taskOf(service, id).stepPullRequests[0]?.label).toBe("sacty-review");
+      // 同じ出来事を、以前の版の項目の名前（intakeLabel）で別の台帳に書き写す（以前の版が書いた台帳の代わり）
+      const oldPath = join(dir, "old.db");
+      new SqliteActivityStore(oldPath).close();
+      const old = new DatabaseSync(oldPath);
+      const insert = old.prepare(
+        "INSERT INTO activity (id, task_id, project_id, at, actor, type, payload) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      );
+      for (const e of activity.all()) {
+        const { label, ...rest } = e.payload as Record<string, unknown>;
+        const payload =
+          e.type === "StepPullRequestPublished" && label !== undefined
+            ? { ...rest, intakeLabel: "sacty" }
+            : e.payload;
+        insert.run(e.id, e.taskId, e.projectId, e.at, e.actor, e.type, JSON.stringify(payload));
+      }
+      old.close();
+      activity.close();
+      const written = new DatabaseSync(oldPath);
+      expect(
+        (
+          written
+            .prepare("SELECT payload FROM activity WHERE type = 'StepPullRequestPublished'")
+            .get() as { payload: string }
+        ).payload,
+      ).toContain('"intakeLabel":"sacty"');
+      written.close();
+      // 以前の記録で起動し直す：読めて、PR の確認でもラベルを付けない（記録もしない）
+      const again = new SqliteActivityStore(oldPath);
+      const restartedPulls = new FakePulls();
+      const restarted = makeService(again, [], {
+        stepPullRequests: true,
+        pulls: restartedPulls,
+        now: later,
+      }).service;
+      const task = taskOf(restarted, id);
+      expect(task.stepPullRequests.map((p) => p.number)).toEqual([7]);
+      expect(task.stepPullRequests[0]?.label).toBeUndefined();
+      expect(JSON.stringify(task.stepPullRequests[0])).not.toContain("intakeLabel");
+      await restarted.checkPullRequests();
+      expect(restartedPulls.labels).toEqual([]);
+      expect(types(restarted, id).at(-1)).toBe("StepSubmitted");
+      again.close();
     });
 
     it("取り込むラベルだけの PR は、sacty の PR でも取り込まない。sacty が作っていない PR のレビュー用のラベルは、ふつうのレビューのタスク（PBI-99）", async () => {
