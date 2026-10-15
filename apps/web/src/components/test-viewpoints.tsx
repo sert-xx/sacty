@@ -1,9 +1,11 @@
+"use client";
+
 import type { TestViewpoint } from "@sacty/core";
-import { getMessages } from "@/i18n/server";
+import { useMessages } from "@/i18n/client";
 
 /** テスト観点の一覧。狭い画面でも崩れないよう、表ではなく観点ごとのカードで出す。 */
-export async function TestViewpoints({ viewpoints }: { viewpoints: TestViewpoint[] }) {
-  const m = await getMessages();
+export function TestViewpoints({ viewpoints }: { viewpoints: TestViewpoint[] }) {
+  const m = useMessages();
   if (viewpoints.length === 0) {
     return (
       <p className="rounded-md border border-warn-line bg-warn-soft p-3 text-sm leading-6 text-warn">

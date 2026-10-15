@@ -1,8 +1,10 @@
+"use client";
+
 import { pendingQuestion, questionBlocked, type Task } from "@sacty/core";
 import { ChatPanel } from "@/components/chat-panel";
 import { Markdown } from "@/components/markdown";
 import { QuestionForm } from "@/components/question-form";
-import { getMessages } from "@/i18n/server";
+import { useMessages } from "@/i18n/client";
 import { formatStamp } from "@/lib/labels";
 
 /**
@@ -10,8 +12,8 @@ import { formatStamp } from "@/lib/labels";
  * 画面の右の AI のアイコンから開くサイドパネルに出す（PBI-61）。
  * 答えを待っている間は、画面の自動の更新で答えを出す。質問できないときは、理由を出す。
  */
-export async function TaskChat({ task }: { task: Task }) {
-  const messages = await getMessages();
+export function TaskChat({ task }: { task: Task }) {
+  const messages = useMessages();
   const { labels, locale } = messages;
   const m = messages.task.chat;
   const blocked = questionBlocked(task);

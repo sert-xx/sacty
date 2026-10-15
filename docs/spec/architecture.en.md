@@ -59,15 +59,50 @@ Code: `apps/daemon/src/server.ts` (`createApp`, `handleError`), `apps/web/src/li
 - The header is in the root layout, so it is not redrawn by navigation (links) within the web UI. Server actions for operations that change what the notices
   cover (approve, request changes, pause, resume, cancel, create task, and so on) call `refresh()` so that the header is redrawn too (they call it before
   moving with `redirect` as well).
-- Changes made in other tabs, the CLI, or the daemon are reflected at the following times. At other times the web UI does not poll.
-  - Every 3 seconds while there is a task that sacty or an agent is working on (`isWorking`) (`AutoRefresh`). A task is being worked on when it is waiting to run
-    (`queued`), running (`running`), or idle (`idle`) while the implementation is being verified (`verification` is `pending` = tests are running, or
-    `tests_passed` = in final review), while the reproduction test is being checked (`reproductionPending`), or while it has a change proposal the Goal Guardian has not judged yet.
-  - When you come back to the tab (a hidden screen becomes visible again) (`RefreshOnVisible`). This includes when the daemon could not be reached and a fallback header was shown.
+- Changes made in other tabs, the CLI, or the daemon (tasks added by intake, approvals, resumes, tasks the daemon picked up and started, and so on) are
+  reflected in the header's project switcher (the counts that need you) and notices by "Refetching screen data" below. This applies on every screen,
+  whatever the state of the tasks.
 
-Code: `apps/web/src/components/shell/header.tsx` (`AppHeader`, `HeaderFallback`), `apps/web/src/lib/labels.ts` (`isWorking`), `apps/web/src/components/shell/follow-project.tsx` (`FollowProject`),
-`apps/web/src/components/auto-refresh.tsx`, `apps/web/src/lib/project-select.ts`, `apps/web/src/lib/current-project.ts` (`selectProject`),
+Code: `apps/web/src/components/shell/header.tsx` (`AppHeader`, `HeaderFallback`), `apps/web/src/components/shell/live-header.tsx` (`LiveHeaderMenus`),
+`apps/web/src/lib/header-data.ts` (`loadHeaderData`), `apps/web/src/components/shell/follow-project.tsx` (`FollowProject`),
+`apps/web/src/lib/project-select.ts`, `apps/web/src/lib/current-project.ts` (`selectProject`),
 `apps/web/src/app/switch/route.ts`, `apps/web/src/app/actions.ts`
+
+## Refetching screen data
+
+The task list, the task details, and the header's notices do not reload the screen (redraw the whole screen, including `router.refresh`). They refetch
+only the data at a fixed interval, and only the parts that changed are reflected on the screen. Text being typed, selections, open dialogs and sections
+(`details`), focus, and the scroll position are not lost, because the elements on the screen stay as they are.
+
+- Where the data is refetched from (routes of the web UI's server), and what they return:
+
+  | Route | Returns |
+  | --- | --- |
+  | `GET /live/tasks?project=<ID>` | The rows of the task list and the cards of tasks that need a person (only what is shown. `loadTaskList`) |
+  | `GET /live/tasks/<ID>` | What the task details show (the task, the activity, the parent, the subtasks, what to clean up, the image choices, and so on. `loadTaskDetail`) |
+  | `GET /live/header?current=<ID>` | The header's project switcher (the counts that need you) and notices (`loadHeaderData`) |
+
+- The interval is 3 seconds (`LIVE_INTERVAL_MS`). The data is refetched whatever the state of the tasks, including when there are no tasks and when every task
+  is awaiting approval, paused, or completed. The next interval starts after the previous refetch has finished, so requests do not overlap.
+- While the screen is not visible (the tab is hidden), the web UI does not poll. When it becomes visible, the data is refetched once right away.
+- The list and the header are refetched for the project shown when the screen was drawn (so that switching the project in another tab does not change only
+  the contents of this screen). The project changes when the screen is opened again (`/switch` and so on).
+- The screen sends the version of the data it last received (a hash of the contents) in the header `x-sacty-live-version`. If it is the same, the web UI's
+  server does not send the contents (`{ unchanged: true }`).
+- When the daemon cannot be reached or read, the route returns `{ unavailable: true }` with 200, and the screen stays as it is (it does not keep showing errors).
+  When the daemon can be reached again, the next interval reflects the changes. If the daemon could not be reached when the screen was drawn, the screen
+  shows that it cannot connect until the daemon is reached, and then shows the contents.
+- Refetching does not fetch the target repository choices (for an Org target, `gh` queries GitHub). The choices in the create-task dialog stay as they were
+  when the screen was drawn. In the task details, the choices for a person to pick a repository for a paused task are requested once, only while the screen
+  does not have them yet (`?repositories=1`).
+- When a server action for an operation (approve, pause, resume, and so on) redraws the screen with `refresh()`, the data from that redraw is used.
+- Other screens (review, run log, settings, project settings, and so on) are not redrawn automatically (only the header's notices are refetched).
+  To see the latest, open the screen again or reload it.
+
+Code: `apps/web/src/lib/live.ts` (`pollWhileVisible`, `fetchLive`, `LIVE_INTERVAL_MS`), `apps/web/src/lib/use-live-data.ts` (`useLiveData`),
+`apps/web/src/lib/live-server.ts` (`liveResponse`, `liveVersion`), `apps/web/src/app/live/tasks/route.ts`, `apps/web/src/app/live/tasks/[id]/route.ts`, `apps/web/src/app/live/header/route.ts`, `apps/web/src/lib/task-list-data.ts` (`loadTaskList`),
+`apps/web/src/lib/task-detail-data.ts` (`loadTaskDetail`), `apps/web/src/components/task-list.tsx` (`LiveTaskList`),
+`apps/web/src/components/task-detail.tsx` (`LiveTaskDetail`)
 
 ## Data location (SACTY_HOME)
 

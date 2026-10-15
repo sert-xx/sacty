@@ -1,10 +1,6 @@
-import { isRepoless } from "@sacty/core";
-import Link from "next/link";
 import { Suspense } from "react";
-import { AutoRefresh } from "@/components/auto-refresh";
-import { DaemonError } from "@/components/daemon-error";
 import { NewTaskDialog } from "@/components/new-task-dialog";
-import { StatusLabel, StepChips } from "@/components/task-bits";
+import { LiveTaskList, TasksSection } from "@/components/task-list";
 import { getMessages } from "@/i18n/server";
 import { currentProjectId, resolveProject } from "@/lib/current-project";
 import {
@@ -12,10 +8,9 @@ import {
   getStatus,
   listProjectRepositories,
   listProjects,
-  listTasks,
 } from "@/lib/daemon";
-import { isWorking, needsPerson, personAction, statusText } from "@/lib/labels";
-import { withSubtasks } from "@/lib/subtasks";
+import { liveVersion } from "@/lib/live-server";
+import { loadTaskList } from "@/lib/task-list-data";
 
 export default async function TasksPage() {
   const m = (await getMessages()).tasks;
@@ -35,33 +30,21 @@ export default async function TasksPage() {
       <Suspense fallback={null}>
         <AgentStatus />
       </Suspense>
-      <Suspense fallback={null}>
-        <NeedsYou />
+      {/* 人間の判断が必要なタスクと、すべてのタスク。画面をリロードせず、データだけを取り直す（PBI-108） */}
+      <Suspense
+        fallback={
+          <TasksSection>
+            <p className="px-5 pb-5 text-sm text-muted-foreground">{m.loading}</p>
+          </TasksSection>
+        }
+      >
+        <Tasks />
       </Suspense>
-      <section aria-labelledby="all-tasks" className="rounded-xl border border-border bg-card">
-        <h2 id="all-tasks" className="px-5 pt-4 pb-3 text-[15px] font-semibold">
-          {m.allTasks}
-        </h2>
-        <Suspense fallback={<p className="px-5 pb-5 text-sm text-muted-foreground">{m.loading}</p>}>
-          <TaskTable />
-        </Suspense>
-      </section>
     </>
   );
 }
 
 /** 工程を実行するAIの設定状況。問題があれば理由を出す。 */
-/** 表示しているプロジェクト（cookie）のタスク。 */
-async function projectTasks() {
-  const [tasks, projects, id] = await Promise.all([
-    listTasks(),
-    listProjects(),
-    currentProjectId(),
-  ]);
-  const project = resolveProject(projects, id);
-  return tasks.filter((t) => t.projectId === project?.id);
-}
-
 /** タスクの作成。表示しているプロジェクトを、作成先としてフォームに固定する。 */
 async function NewTask() {
   try {
@@ -140,136 +123,15 @@ async function AgentStatus() {
   );
 }
 
-/** 人間の判断が必要なタスク（承認待ち・エスカレーション・一時停止）。 */
-async function NeedsYou() {
-  let tasks: Awaited<ReturnType<typeof listTasks>>;
+/** 表示しているプロジェクトのタスク（描いたときのデータ。画面が取り直す。PBI-108）。 */
+async function Tasks() {
   try {
-    tasks = (await projectTasks()).filter(needsPerson);
-  } catch {
-    return null;
-  }
-  if (tasks.length === 0) return null;
-  const { tasks: m, labels } = await getMessages();
-  return (
-    <section aria-labelledby="needs-you" className="flex flex-col gap-3">
-      <h2 id="needs-you" className="text-[15px] font-semibold">
-        {m.needsYou}
-      </h2>
-      <ul className="grid grid-cols-[repeat(auto-fit,minmax(280px,1fr))] gap-4">
-        {tasks.map((task) => {
-          const action = personAction(task, labels);
-          return (
-            <li
-              key={task.id}
-              className="flex flex-col gap-2.5 rounded-xl border border-warn-line bg-card p-5"
-            >
-              <span className="w-fit rounded-full border border-warn-line bg-warn-soft px-2.5 py-0.5 text-xs font-semibold text-warn">
-                {statusText(task, labels)}
-              </span>
-              <span className="text-[17px] font-semibold">{task.title}</span>
-              <Link href={action.href} className="text-sm font-semibold text-accent-foreground">
-                {action.label} →
-              </Link>
-            </li>
-          );
-        })}
-      </ul>
-    </section>
-  );
-}
-
-async function TaskTable() {
-  let tasks: Awaited<ReturnType<typeof listTasks>>;
-  try {
-    tasks = await projectTasks();
+    const data = await loadTaskList();
+    return <LiveTaskList initial={data} initialVersion={liveVersion(data)} />;
   } catch (error) {
     if (error instanceof DaemonUnavailableError) {
-      return (
-        <div className="px-5 pb-5">
-          <DaemonError message={error.message} />
-        </div>
-      );
+      return <LiveTaskList initial={null} error={error.message} />;
     }
     throw error;
   }
-  const { tasks: m, labels } = await getMessages();
-
-  if (tasks.length === 0) {
-    return <p className="px-5 pb-8 text-sm text-muted-foreground">{m.empty}</p>;
-  }
-
-  return (
-    <div className="overflow-x-auto">
-      <AutoRefresh active={tasks.some(isWorking)} />
-      <table className="w-full min-w-[760px] border-collapse text-sm">
-        <thead>
-          <tr className="text-left text-xs text-muted-foreground">
-            <th scope="col" className="px-5 py-2.5 font-medium">
-              {m.column.task}
-            </th>
-            <th scope="col" className="px-3 py-2.5 font-medium">
-              {m.column.start}
-            </th>
-            <th scope="col" className="px-3 py-2.5 font-medium">
-              {m.column.steps}
-            </th>
-            <th scope="col" className="px-5 py-2.5 font-medium">
-              {m.column.status}
-            </th>
-          </tr>
-        </thead>
-        <tbody>
-          {/* 分割で作った子タスクは、親のすぐ下に字下げして出す（PBI-27） */}
-          {withSubtasks(tasks).map(({ task, child }) => (
-            <tr key={task.id} className="border-t border-border hover:bg-muted">
-              <td className={child ? "py-3.5 pr-5 pl-10" : "px-5 py-3.5"}>
-                {child && (
-                  <span aria-hidden="true" className="mr-1.5 text-muted-foreground">
-                    ↳
-                  </span>
-                )}
-                <Link
-                  href={`/tasks/${task.id}`}
-                  className="font-medium text-foreground hover:underline"
-                >
-                  {task.title}
-                </Link>
-              </td>
-              <td className="px-3 py-3.5 whitespace-nowrap text-muted-foreground">
-                {labels.start[task.start]}
-                {/* テンプレートで作ったタスク（PBI-90） */}
-                {task.template && (
-                  <span className="mt-0.5 block w-fit rounded border border-border px-1.5 text-xs">
-                    {labels.template[task.template]}
-                  </span>
-                )}
-                {task.source && (
-                  <span className="block font-mono text-xs">
-                    {task.source.repo}#{task.source.number}
-                  </span>
-                )}
-                {/* リポジトリを指定せずに作ったタスクと、分割の子タスクに付けたリポジトリ（PBI-73） */}
-                {isRepoless(task) && (
-                  <span className="mt-0.5 block w-fit rounded border border-border px-1.5 text-xs">
-                    {m.noRepository}
-                  </span>
-                )}
-                {child && task.repo && (
-                  <span className="block font-mono text-xs [overflow-wrap:anywhere] whitespace-normal">
-                    {task.repo}
-                  </span>
-                )}
-              </td>
-              <td className="px-3 py-3.5">
-                <StepChips task={task} />
-              </td>
-              <td className="px-5 py-3.5">
-                <StatusLabel task={task} />
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
 }

@@ -1,16 +1,18 @@
+"use client";
+
 import type { Task } from "@sacty/core";
 import { CardSection } from "@/components/card-section";
-import { getMessages } from "@/i18n/server";
+import { useMessages } from "@/i18n/client";
 import { formatStamp } from "@/lib/labels";
 
 /**
  * タスクのオーケストレーターのセッション（PBI-67）。AI・セッションの ID・使った回数・新しく始めた理由。
  * セッションを使ったことのないタスクでは出さない。
  */
-export async function OrchestratorSession({ task }: { task: Task }) {
+export function OrchestratorSession({ task }: { task: Task }) {
+  const messages = useMessages();
   const session = task.orchestratorSession;
   if (!session) return null;
-  const messages = await getMessages();
   const { labels, locale } = messages;
   const m = messages.task.orchestratorSession;
   const rows: [string, string][] = [

@@ -1,10 +1,12 @@
+"use client";
+
 import { proposalAccepted, type Task, type TaskProposal } from "@sacty/core";
 import { cn } from "cn";
 import { ChangeDecisionForm } from "@/components/change-decision-form";
 import { Markdown } from "@/components/markdown";
 import { TestViewpoints } from "@/components/test-viewpoints";
 import type { Messages } from "@/i18n";
-import { getMessages } from "@/i18n/server";
+import { useMessages } from "@/i18n/client";
 import { formatStamp } from "@/lib/labels";
 
 function outcome(
@@ -28,8 +30,8 @@ const TONE = {
 } as const;
 
 /** タスク詳細の「変更の申し出と判定」。 */
-export async function Proposals({ task }: { task: Task }) {
-  const messages = await getMessages();
+export function Proposals({ task }: { task: Task }) {
+  const messages = useMessages();
   const m = messages.parts.proposals;
   return (
     <section

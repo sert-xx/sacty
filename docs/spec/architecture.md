@@ -59,15 +59,48 @@ sacty up（packages/cli）
 - ヘッダーは全体のレイアウトにあり、画面の中の移動（リンク）では描き直されない。お知らせの対象が変わる操作（承認・差し戻し・
   一時停止・再開・中止・タスクの作成など）のサーバーアクションは、`refresh()` を呼んでヘッダーも描き直させる（`redirect` で移る
   ときも、その前に呼ぶ）。
-- ほかのタブ・CLI・デーモンでの変化は、次のときに反映する。それ以外の間は問い合わせない。
-  - sacty やエージェントが作業しているタスク（`isWorking`）がある間は3秒ごと（`AutoRefresh`）。作業しているのは、実行待ち
-    （`queued`）・実行中（`running`）、待機（`idle`）のうち実装の検証中（`verification` が `pending`＝テストの実行中か
-    `tests_passed`＝最終レビュー中）・再現のテストの確かめ中（`reproductionPending`）、ゴールガーディアンの判定がまだの変更の申し出があるタスク。
-  - タブに戻ってきた（隠れていた画面がまた見えた）とき（`RefreshOnVisible`）。デーモンにつながらず、仮のヘッダーを出していたときも。
+- ほかのタブ・CLI・デーモンでの変化（取り込みで増えたタスク・承認・再開・デーモンが拾って動き出したタスクなど）は、下の
+  「画面のデータの取り直し」で、ヘッダーのプロジェクトの切り替え（対応待ちの件数）とお知らせに反映する。どの画面でも、タスクの状態によらない。
 
-コード: `apps/web/src/components/shell/header.tsx`（`AppHeader`・`HeaderFallback`）、`apps/web/src/lib/labels.ts`（`isWorking`）、`apps/web/src/components/shell/follow-project.tsx`（`FollowProject`）、
-`apps/web/src/components/auto-refresh.tsx`、`apps/web/src/lib/project-select.ts`、`apps/web/src/lib/current-project.ts`（`selectProject`）、
+コード: `apps/web/src/components/shell/header.tsx`（`AppHeader`・`HeaderFallback`）、`apps/web/src/components/shell/live-header.tsx`（`LiveHeaderMenus`）、
+`apps/web/src/lib/header-data.ts`（`loadHeaderData`）、`apps/web/src/components/shell/follow-project.tsx`（`FollowProject`）、
+`apps/web/src/lib/project-select.ts`、`apps/web/src/lib/current-project.ts`（`selectProject`）、
 `apps/web/src/app/switch/route.ts`、`apps/web/src/app/actions.ts`
+
+## 画面のデータの取り直し
+
+タスクの一覧・タスクの詳細・ヘッダーのお知らせは、画面をリロード（`router.refresh` を含む、画面の全体の描き直し）せず、データだけを
+一定の間隔で取り直し、変わった所だけを画面に反映する。入力の途中の文字・選択・開いたダイアログや欄（`details`）・フォーカス・
+スクロールの位置は、画面の要素がそのまま残るので消えない。
+
+- 取り直す先（画面のサーバーのルート）と、返すもの：
+
+  | 先 | 返すもの |
+  | --- | --- |
+  | `GET /live/tasks?project=<ID>` | タスクの一覧の行と、人間の判断が必要なタスクのカード（表示に要るものだけ。`loadTaskList`） |
+  | `GET /live/tasks/<ID>` | タスクの詳細に出すもの（タスク・作業履歴・親・子タスク・片付けるもの・イメージの候補など。`loadTaskDetail`） |
+  | `GET /live/header?current=<ID>` | ヘッダーのプロジェクトの切り替え（対応待ちの件数）とお知らせ（`loadHeaderData`） |
+
+- 間隔は3秒（`LIVE_INTERVAL_MS`）。タスクの状態によらず、タスクが無いとき・すべてが承認待ち・一時停止・完了のときも取り直す。
+  前の取り直しが終わってから次の間隔を数えるので、問い合わせは重ならない。
+- 画面が見えていない（タブが隠れている）間は問い合わせない。見えたら、すぐに一度取り直す。
+- 一覧とヘッダーは、画面を描いたときのプロジェクトのまま取り直す（ほかのタブでプロジェクトを切り替えても、この画面の中身だけが
+  変わらないように）。プロジェクトを変えるのは、画面を開き直したとき（`/switch` など）。
+- 画面は、前に受け取ったデータの版（中身のハッシュ）をヘッダー `x-sacty-live-version` で送る。同じなら、画面のサーバーは中身を
+  送らない（`{ unchanged: true }`）。
+- デーモンに届かない・読めないときは、200 で `{ unavailable: true }` を返し、画面はいまのまま残す（エラーを出し続けない）。
+  届くようになったら、次の間隔でまた反映する。画面を描いたときに届かなかったときは、届くまでつながらないことを出し、届いたら中身を出す。
+- 取り直しでは、対象リポジトリの候補（Org の対象は `gh` で GitHub に問い合わせる）を取らない。タスクの作成のダイアログの候補は、
+  画面を描いたときのまま。タスクの詳細で一時停止して人がリポジトリを選ぶときの候補は、まだ持っていないときだけ一度求める
+  （`?repositories=1`）。
+- 操作（承認・一時停止・再開など）のサーバーアクションが `refresh()` で画面を描き直したときは、そのときのデータを使う。
+- ほかの画面（レビュー・実行のログ・設定・プロジェクトの設定など）は、自動で描き直さない（ヘッダーのお知らせだけを取り直す）。
+  最新にするには、開き直すか、画面を読み直す。
+
+コード: `apps/web/src/lib/live.ts`（`pollWhileVisible`・`fetchLive`・`LIVE_INTERVAL_MS`）、`apps/web/src/lib/use-live-data.ts`（`useLiveData`）、
+`apps/web/src/lib/live-server.ts`（`liveResponse`・`liveVersion`）、`apps/web/src/app/live/tasks/route.ts`、`apps/web/src/app/live/tasks/[id]/route.ts`、`apps/web/src/app/live/header/route.ts`、`apps/web/src/lib/task-list-data.ts`（`loadTaskList`）、
+`apps/web/src/lib/task-detail-data.ts`（`loadTaskDetail`）、`apps/web/src/components/task-list.tsx`（`LiveTaskList`）、
+`apps/web/src/components/task-detail.tsx`（`LiveTaskDetail`）
 
 ## データの置き場所（SACTY_HOME）
 

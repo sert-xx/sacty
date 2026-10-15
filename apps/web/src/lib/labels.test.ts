@@ -6,7 +6,6 @@ import {
   addedTestsResult,
   canControl,
   describeEvent as describeIn,
-  isWorking,
   judgedByGoalForCurrent,
   needsPerson,
   personAction as personActionIn,
@@ -70,14 +69,9 @@ const task = (patch: Partial<Task> = {}): Task => ({
 });
 
 describe("一覧と詳細の導線（PBI-9 レビュー指摘）", () => {
-  it("ゴールガーディアンの判定中は、待機（idle）でも作業中として自動更新する", () => {
-    expect(isWorking(task({ proposals: [proposal()] }))).toBe(true);
+  it("ゴールガーディアンの判定中・最終レビュー中は、待機（idle）でもそれと分かるように出す", () => {
     expect(statusText(task({ proposals: [proposal()] }))).toBe("ゴールガーディアンが判定中");
-    const judged = proposal({ judgement: { verdict: "rejected", reason: "x", at: "" } });
-    expect(isWorking(task({ proposals: [judged] }))).toBe(false);
-    expect(isWorking(task({ status: "running" }))).toBe(true);
-    // 実装の検証中（テスト・最終レビュー）も、待機（idle）のまま作業中（PBI-10a）
-    expect(isWorking(task({ verification: "pending" }))).toBe(true);
+    // 実装の検証中（テスト・最終レビュー）は、待機（idle）のまま（PBI-10a）
     expect(statusText(task({ verification: "tests_passed" }))).toBe(
       "ゴールガーディアンが最終レビュー中",
     );
@@ -146,7 +140,6 @@ describe("成果物チェックの表示（PBI-10b）", () => {
       ],
     });
     expect(statusText(done)).toBe("完了");
-    expect(isWorking(done)).toBe(false);
   });
 });
 
@@ -243,7 +236,6 @@ describe("一時停止と中止の表示（PBI-3）", () => {
     );
     expect(statusText(task({ status: "cancelled" }))).toBe("中止");
     expect(needsPerson(task({ status: "cancelled" }))).toBe(false);
-    expect(isWorking(task({ status: "cancelled" }))).toBe(false);
   });
 });
 
@@ -808,9 +800,8 @@ describe("再現の表示（PBI-29）", () => {
     expect(
       statusText(task({ status: "awaiting_approval", gate: { step: "reproduce", submission: 1 } })),
     ).toBe("再現できなかった（判断待ち）");
-    // 再現のテストを実行している間は作業中（画面を自動で更新する）
+    // 再現のテストを実行している間（PBI-29）
     const checking = task({ status: "idle", reproductionPending: true });
-    expect(isWorking(checking)).toBe(true);
     expect(statusText(checking)).toBe("テストを実行中");
     const event = (payload: Record<string, unknown>) =>
       ({

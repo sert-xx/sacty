@@ -153,6 +153,19 @@ See [Container images](images.en.md#changing-a-steps-image) for details.
 - Cancelling closes all open PRs that sacty created and deletes the task branch and the step branches (branches and PRs created by people are not touched).
   A cancelled task cannot be resumed.
 
+## Automatic updates on the screen
+
+While they are open, the task list, the task details, and the header's notices fetch the latest state every 3 seconds and show it. They do this whatever
+the state of the tasks (including when there are no tasks and when every task is awaiting approval, paused, or completed), so tasks added by intake,
+approvals and resumes in other tabs or the CLI, tasks the daemon picked up and started, and tasks that became awaiting approval appear without any action.
+
+- The screen is not reloaded; only the parts that changed are shown again. Questions, comments, and form values you are writing, what you selected, open
+  dialogs and sections, focus, and the scroll position stay as they are.
+- While the tab is hidden, nothing is fetched. When you come back to the tab, the screen is brought up to date right away.
+- While the daemon cannot be reached, the screen stays as it is. When it can be reached again, the screen is brought up to date again.
+- Other screens (review, run log, settings, and so on) are not updated automatically (only the header's notices are). To see the latest, open the screen
+  again or reload it in the browser.
+
 ## Related pages
 
 - [Exporting results](result-export.en.md)

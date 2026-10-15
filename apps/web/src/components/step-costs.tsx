@@ -1,12 +1,13 @@
+"use client";
+
 import type { ActivityEvent, Task, TokenUsage } from "@sacty/core";
 import { CardSection } from "@/components/card-section";
-import { getMessages } from "@/i18n/server";
-import { listTasks } from "@/lib/daemon";
+import { useMessages } from "@/i18n/client";
 import { formatStamp, usd } from "@/lib/labels";
 import { type CostRole, type CostRun, stepCosts } from "@/lib/step-costs";
 import { subtaskSummary } from "@/lib/subtasks";
 
-type Messages = Awaited<ReturnType<typeof getMessages>>;
+type Messages = ReturnType<typeof useMessages>;
 
 const NUMBER_LOCALE = { ja: "ja-JP", en: "en-US" } as const;
 
@@ -15,14 +16,23 @@ const NUMBER_LOCALE = { ja: "ja-JP", en: "en-US" } as const;
  * 選択・オーケストレーター・質問への答え・書き出し・ゴールガーディアン）も1行ずつ出し、合計はタスクの費用（CostMeter）と
  * 一致する（PBI-86）。各回の内訳は折りたたんで出す。
  */
-export async function StepCosts({ task, activity }: { task: Task; activity: ActivityEvent[] }) {
-  const messages = await getMessages();
+/** subtasks は、分割で作った子タスク（PBI-27）。 */
+export function StepCosts({
+  task,
+  activity,
+  subtasks,
+}: {
+  task: Task;
+  activity: ActivityEvent[];
+  subtasks: Task[];
+}) {
+  const messages = useMessages();
   const { labels, locale } = messages;
   const m = messages.task.costs;
   const { rows, total } = stepCosts(task, activity);
   // 子タスクの費用の合計は、子タスクの一覧と同じ値を出す（PBI-27）
   const children = task.split
-    ? subtaskSummary(task, new Map((await listTasks()).map((t) => [t.id, t])))
+    ? subtaskSummary(task, new Map(subtasks.map((t) => [t.id, t])))
     : undefined;
   const count = new Intl.NumberFormat(NUMBER_LOCALE[locale]);
   const roleLabel = (role: CostRole) =>

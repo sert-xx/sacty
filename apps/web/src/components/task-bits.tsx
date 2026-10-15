@@ -1,7 +1,9 @@
+"use client";
+
 import type { Task } from "@sacty/core";
 import { cn } from "cn";
 import { Check } from "lucide-react";
-import { getMessages } from "@/i18n/server";
+import { useMessages } from "@/i18n/client";
 import { type StatusTone, statusText, statusTone, usd } from "@/lib/labels";
 
 const STEP_STYLE: Record<Task["steps"][number]["state"], string> = {
@@ -11,15 +13,24 @@ const STEP_STYLE: Record<Task["steps"][number]["state"], string> = {
   skip: "border-dashed border-input bg-transparent text-muted-foreground line-through",
 };
 
-export async function StepChips({ task }: { task: Task }) {
-  const m = await getMessages();
+export function StepChips({ task }: { task: Task }) {
+  return <StepChipsView steps={task.steps} />;
+}
+
+/** 工程の並び（工程と状態だけから描く。タスクの一覧は、これだけを取り直す。PBI-108）。 */
+export function StepChipsView({
+  steps,
+}: {
+  steps: Pick<Task["steps"][number], "key" | "state">[];
+}) {
+  const m = useMessages();
   // 工程は、タスクの開始時にオーケストレーターが選ぶ（PBI-17）
-  if (task.steps.length === 0) {
+  if (steps.length === 0) {
     return <p className="text-xs text-muted-foreground">{m.parts.bits.choosing}</p>;
   }
   return (
     <ul className="flex flex-wrap gap-1.5" aria-label={m.parts.bits.steps}>
-      {task.steps.map((step) => (
+      {steps.map((step) => (
         <li
           key={step.key}
           className={cn(
@@ -46,9 +57,13 @@ const STATUS_STYLE: Record<StatusTone, { text: string; mark: string }> = {
   },
 };
 
-export async function StatusLabel({ task }: { task: Task }) {
-  const m = await getMessages();
-  const tone = statusTone(task);
+export function StatusLabel({ task }: { task: Task }) {
+  const m = useMessages();
+  return <StatusLabelView text={statusText(task, m.labels)} tone={statusTone(task)} />;
+}
+
+/** タスクの状態の表示（文言と色だけから描く。タスクの一覧は、これだけを取り直す。PBI-108）。 */
+export function StatusLabelView({ text, tone }: { text: string; tone: StatusTone }) {
   const style = STATUS_STYLE[tone];
   return (
     <span
@@ -62,13 +77,13 @@ export async function StatusLabel({ task }: { task: Task }) {
       ) : (
         <span aria-hidden="true" className={style.mark} />
       )}
-      {statusText(task, m.labels)}
+      {text}
     </span>
   );
 }
 
-export async function CostMeter({ task }: { task: Task }) {
-  const m = await getMessages();
+export function CostMeter({ task }: { task: Task }) {
+  const m = useMessages();
   const { usedUsd, capUsd, estimated } = task.budget;
   const ratio = Math.min(1, usedUsd / capUsd);
   const over = usedUsd >= capUsd;
