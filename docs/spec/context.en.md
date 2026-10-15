@@ -23,6 +23,14 @@ Related ADRs: [Start command-type MCP servers in the context's mcp.yaml on the h
 
 Code: `apps/daemon/src/context.ts` (`loadLayers`, `loadDefaultContext`, `resolveContext`, `parseExtends`, `GitContextFetcher`, `MAX_CONTEXT_DEPTH`, `DEFAULT_CONTEXT_REPO`), `apps/daemon/src/service.ts` (`gitAuth`, `githubToken`), `apps/daemon/src/gh.ts` (`gitAuthEnv`), `packages/core/src/projects.ts` (`ContextSource`)
 
+## Default review skills
+
+The default context has `review-dispatch` and `review-execution`, which split a review by viewpoint. Before starting the reviewers, the parent runs, once and without changing the target, the verification defined by the target project: formatter, linter, type check, tests, and build. It saves the results outside the workspace as a summary and logs, and passes the same summary to each reviewer. The cross-cutting viewpoint X-1 is always started, and if there are verification or CI results, X-2 analyzes the failed, warned, and unrun checks. A re-review verifies the new target again.
+
+In the default Codex settings, the limit on reviewers open at the same time is `max_threads = 16`, and the depth that keeps reviewers from starting more agents is `max_depth = 1`.
+
+Code: `apps/daemon/default-context/skills/review/review-dispatch/SKILL.md`, `apps/daemon/default-context/skills/review/review-dispatch/references/verification-run.md`, `apps/daemon/default-context/skills/review/review-execution/references/X-2.md`, `apps/daemon/default-context/agents/codex/config.toml`
+
 ## Context repository files
 
 Only `sacty-context.yaml`, `mcp.yaml`, `platforms.yaml`, `rules.md`, `rules/`, `skills/`, and `agents/` are read (`README.md` is not).
