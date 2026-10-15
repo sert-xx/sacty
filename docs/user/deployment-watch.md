@@ -1,5 +1,7 @@
 <!-- 対応するコード: apps/daemon/src/service.ts（checkDeployments・checkDeployment・registerFixTask）、apps/daemon/src/ci.ts、apps/daemon/src/deployment.ts、packages/core/src/events.ts（MAX_FIX_CHAIN・DEPLOYMENT_CI_GRACE_MS・DEPLOYMENT_CI_TIMEOUT_MS）、packages/core/src/projects.ts（deploymentWatch）、apps/web/src/components/deployment.tsx、apps/web/src/components/project-editor.tsx、apps/web/src/i18n/messages/task.ts -->
 
+**日本語** | [English](deployment-watch.en.md)
+
 # マージの後の監視（CI/CD とデプロイ）
 
 sacty のタスクの実装の PR がマージされたら、マージでできたベースブランチのコミットの CI/CD が通ったか、デプロイされたアプリが動いているかを

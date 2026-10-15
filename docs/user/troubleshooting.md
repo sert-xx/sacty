@@ -1,5 +1,7 @@
 <!-- 対応するコード: packages/cli/src/index.ts、apps/daemon/src/config.ts（loadConfig）、apps/daemon/src/instance-lock.ts、apps/daemon/src/intake.ts、apps/daemon/src/secrets.ts、apps/daemon/src/host-mcp.ts、apps/daemon/src/services.ts、apps/daemon/src/notifier.ts -->
 
+**日本語** | [English](troubleshooting.en.md)
+
 # 困ったとき
 
 よくある止まり方と、確かめることをまとめています。

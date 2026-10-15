@@ -1,5 +1,7 @@
 <!-- 対応するコード: apps/daemon/src/config.ts（image_build・images・languageImageTag）、apps/daemon/src/image.ts、packages/cli/docker/Dockerfile、packages/cli/src/index.ts（imageBuild） -->
 
+**日本語** | [English](images.en.md)
+
 # コンテナイメージ
 
 エージェントの実行とテストの実行に使うコンテナイメージを作ります。イメージは `npx sacty image build` で作ります

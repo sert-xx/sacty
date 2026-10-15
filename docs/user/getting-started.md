@@ -1,5 +1,7 @@
 <!-- 対応するコード: package.json、packages/cli/src/index.ts、apps/daemon/src/config.ts（CONFIG_TEMPLATE・resolveHome）、apps/daemon/src/instance-lock.ts -->
 
+**日本語** | [English](getting-started.en.md)
+
 # はじめに
 
 sacty をインストールし、起動して、最初のタスクを動かすまでの手順を説明します。

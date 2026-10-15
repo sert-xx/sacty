@@ -1,3 +1,5 @@
+**日本語** | [English](intake.en.md)
+
 # チケットの取り込みと GitHub
 
 GitHub の Issue・PR と JIRA のチケットを、定期的に探してタスクにする。取り込み元・使う GitHub のアカウントはプロジェクトに、取り込むラベルは

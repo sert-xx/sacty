@@ -1,3 +1,5 @@
+**日本語** | [English](deployment-watch.en.md)
+
 # マージの後の監視（CI/CD とデプロイ）
 
 sacty のタスクの実装の PR がマージされたら、マージのコミットに対する CI/CD（GitHub Actions のワークフローの実行・チェック）を待ち、

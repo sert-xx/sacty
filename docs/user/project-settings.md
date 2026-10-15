@@ -1,5 +1,7 @@
 <!-- 対応するコード: packages/core/src/projects.ts（ProjectDefinition・ProjectTarget・ProjectExport）、packages/core/src/github-url.ts、apps/daemon/src/gh.ts、apps/daemon/src/github.ts、apps/web/src/components/project-editor.tsx、apps/web/src/i18n/messages/projects.ts -->
 
+**日本語** | [English](project-settings.en.md)
+
 # プロジェクトの設定
 
 プロジェクトごとの設定は、画面のプロジェクトの設定で登録します（config.yaml には書きません）。

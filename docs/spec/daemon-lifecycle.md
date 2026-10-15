@@ -1,3 +1,5 @@
+**日本語** | [English](daemon-lifecycle.en.md)
+
 # デーモンの起動と終了
 
 `sacty up` が、デーモン（`apps/daemon`）と画面（`apps/web` の Next.js）を子プロセスとして起動し、どちらかが終われば両方を止める。

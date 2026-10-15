@@ -1,5 +1,7 @@
 <!-- 対応するコード: apps/daemon/src/service.ts、apps/daemon/src/prompts.ts、apps/daemon/src/platforms.ts、apps/daemon/src/host-mcp.ts -->
 
+**日本語** | [English](result-export.en.md)
+
 # 成果の書き出し（Confluence・Notion など）
 
 人間が承認した調査の結果（調査だけのタスク）・要求要件・設計（テスト観点を含む）を、Confluence・Notion などに書き出せます。

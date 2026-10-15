@@ -4,6 +4,8 @@
 // - 作業履歴の先頭の項目（日付・タスク・PR）と、ファイル名との一致
 // - docs・README・スキルの中の相対リンクが切れていないこと、docs/pbi へリンクしないこと
 // - Claude Code 用と Codex 用のスキルが同じ内容であること
+// - README・ユーザードキュメント・仕様書の日本語の版と英語の版（`*.en.md`）がそろい、互いにリンクし、
+//   見出し・表・コードブロック・コードの名前・リンクの数がそろうこと
 //
 // ファイル名のステータスと本文の表記の対応は docs/adr/README.md の表を正本とし、ここではその表を読む。
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
@@ -21,9 +23,10 @@ const SKILL_COPIES = [
   join(ROOT, ".claude", "skills", SKILL_NAME, "SKILL.md"),
   join(ROOT, ".agents", "skills", SKILL_NAME, "SKILL.md"),
 ];
+const ROOT_READMES = [join(ROOT, "README.md"), join(ROOT, "README.en.md")];
 
 const SLUG = "[a-z0-9]+(?:-[a-z0-9]+)*";
-const PLAIN_NAME = new RegExp(`^${SLUG}\\.md$`);
+const PLAIN_NAME = new RegExp(`^${SLUG}(?:\\.en)?\\.md$`);
 const WORKLOG_NAME = new RegExp(`^(\\d{8})-(${SLUG})\\.md$`);
 
 // ---- ステータスの対応表（docs/adr/README.md） ----
@@ -376,12 +379,16 @@ function checkWorklogs(files: Record<string, string>): string[] {
 
 // ---- 仕様書のコードの参照 ----
 
-/** 「コード:」の行から、空行か見出しの前までをひとまとまりとして集める（コードブロックの中は除く）。 */
-function codeRefBlocks(markdown: string): string[] {
+/** 仕様書の「コード:」の行の書き出し（日本語の版・英語の版）。 */
+const CODE_REF_PREFIX = { ja: "コード:", en: "Code:" } as const;
+type Lang = keyof typeof CODE_REF_PREFIX;
+
+/** 「コード:」（英語の版は「Code:」）の行から、空行か見出しの前までをひとまとまりとして集める（コードブロックの中は除く）。 */
+function codeRefBlocks(markdown: string, prefix: string = CODE_REF_PREFIX.ja): string[] {
   const blocks: string[] = [];
   let current: string[] | undefined;
   for (const line of stripFences(markdown).split("\n")) {
-    if (line.startsWith("コード:")) {
+    if (line.startsWith(prefix)) {
       if (current) blocks.push(current.join(" "));
       current = [line];
     } else if (current && line.trim() !== "" && !line.startsWith("#")) {
@@ -397,18 +404,24 @@ function codeRefBlocks(markdown: string): string[] {
 
 /**
  * 仕様書の「コード:」の参照を確かめ、問題の一覧を返す。`<パス>`（リポジトリのルートからの相対パス）が存在し、その後の
- * 括弧の中の `<名前>`（`A.b` は A と b の両方）が、そのファイルの中に語として現れること。read はファイルの中身
- * （無ければ undefined）。参照が1つも無ければ問題にする。
+ * 括弧（英語の版は半角の括弧も）の中の `<名前>`（`A.b` は A と b の両方）が、そのファイルの中に語として現れること。
+ * read はファイルの中身（無ければ undefined）。参照が1つも無ければ問題にする。
  */
 function checkCodeRefs(
   name: string,
   markdown: string,
   read: (path: string) => string | undefined,
+  lang: Lang = "ja",
 ): string[] {
   const errors: string[] = [];
-  const blocks = codeRefBlocks(markdown);
-  if (blocks.length === 0) errors.push(`${name}: 「コード:」の参照が無い`);
-  const ref = /`((?:apps|packages|tests)\/[^`\s]+)`(?:（([^）]*)）)?/g;
+  const prefix = CODE_REF_PREFIX[lang];
+  const blocks = codeRefBlocks(markdown, prefix);
+  if (blocks.length === 0) errors.push(`${name}: 「${prefix}」の参照が無い`);
+  // 括弧の中のコードの名前に括弧は入らない（入れば参照を読み違えるので、その名前は無い扱いで失敗する）
+  const ref =
+    lang === "ja"
+      ? /`((?:apps|packages|tests)\/[^`\s]+)`(?:（([^）]*)）)?/g
+      : /`((?:apps|packages|tests)\/[^`\s]+)`(?: ?\(([^)]*)\))?/g;
   for (const block of blocks) {
     const refs = [...block.matchAll(ref)];
     if (refs.length === 0) errors.push(`${name}: ファイルの無い参照: ${block}`);
@@ -425,6 +438,163 @@ function checkCodeRefs(
         if (missing.length > 0) errors.push(`${name}: ${path} に ${symbol} が無い`);
       }
     }
+  }
+  return errors;
+}
+
+// ---- 日本語の版と英語の版 ----
+
+/** 日本語の版のパス → 英語の版のパス（`x.md` → `x.en.md`）。 */
+function englishPath(path: string): string {
+  return path.replace(/\.md$/, ".en.md");
+}
+
+/** 英語の版のパス → 日本語の版のパス（`x.en.md` → `x.md`）。 */
+function japanesePath(path: string): string {
+  return path.replace(/\.en\.md$/, ".md");
+}
+
+/** ページの一覧から、もう一方の言語の版が一覧に無いページを挙げる。 */
+function checkPairs(paths: string[]): string[] {
+  const all = new Set(paths);
+  const errors: string[] = [];
+  for (const path of paths) {
+    if (path.endsWith(".en.md")) {
+      if (!all.has(japanesePath(path)))
+        errors.push(`${path}: 日本語の版 ${japanesePath(path)} が無い`);
+    } else if (!all.has(englishPath(path))) {
+      errors.push(`${path}: 英語の版 ${englishPath(path)} が無い`);
+    }
+  }
+  return errors;
+}
+
+/** 最初に置く、もう一方の言語へのリンクの行。name は相手のファイル名。 */
+function languageLine(lang: Lang, name: string): string {
+  return lang === "ja" ? `**日本語** | [English](${name})` : `[日本語](${name}) | **English**`;
+}
+
+/** HTML コメントの行を飛ばした、最初の空でない行の番号（無ければ -1）。 */
+function firstLineIndex(lines: string[]): number {
+  return lines.findIndex((line) => line.trim() !== "" && !/^<!--.*-->$/.test(line.trim()));
+}
+
+interface Shape {
+  /** 見出しの深さの並び（例 1,2,2,3）。 */
+  headings: string;
+  /** 表の行の数（区切りの行を含む）。 */
+  tableRows: number;
+  /** コードブロックごとの行の数。 */
+  fences: number[];
+  /** インラインコードの中身ごとの数。 */
+  codes: Map<string, number>;
+  /** リンクの行き先（外部の URL はそのまま、相対リンクはアンカーを除いて解決したもの）。 */
+  links: string[];
+}
+
+/** 言語に関係なくそろうはずの形を取り出す。resolveLink は相対リンクの行き先を、比べられる形にする。 */
+function shapeOf(markdown: string, resolveLink: (target: string) => string): Shape {
+  const body = stripFences(markdown);
+  const lines = body.split("\n");
+  const codes = new Map<string, number>();
+  for (const [, code = ""] of body.matchAll(/`([^`\n]*)`/g))
+    codes.set(code, (codes.get(code) ?? 0) + 1);
+  const links: string[] = [];
+  const pattern = /!?\[[^\]]*\]\(\s*(?:<([^>\n]+)>|([^)\s]+))(?:\s+"[^"]*")?\s*\)/g;
+  for (const m of stripCode(markdown).matchAll(pattern)) {
+    const target = m[1] ?? m[2] ?? "";
+    if (target.startsWith("#")) continue;
+    if (/^[a-z][a-z0-9+.-]*:/i.test(target)) links.push(target);
+    else links.push(resolveLink(decodeURIComponent(target.split("#")[0] ?? "")));
+  }
+  return {
+    headings: lines
+      .map((line) => /^(#{1,6})[ \t]/.exec(line)?.[1]?.length)
+      .filter((depth) => depth !== undefined)
+      .join(","),
+    tableRows: lines.filter((line) => line.startsWith("|")).length,
+    fences: [...markdown.matchAll(/^(```|~~~)[^\n]*\n([\s\S]*?)^\1[^\n]*$/gm)].map(
+      (m) => (m[2] ?? "").split("\n").length,
+    ),
+    codes,
+    links: links.sort(),
+  };
+}
+
+/** インラインコードが ASCII だけか（日本語の版の名前・値・コマンド。日本語を含むのは訳してよい置き換えの例など）。 */
+function isAscii(text: string): boolean {
+  return /^[\x20-\x7e]*$/.test(text);
+}
+
+/**
+ * 日本語の版と英語の版を突き合わせ、問題の一覧を返す。
+ * - それぞれの最初の行（HTML コメントを除く）が、相手へのリンクの行（languageLine）であること
+ * - 見出しの深さの並び・表の行の数・コードブロックの数と行の数・リンクの行き先が同じであること
+ * - 日本語の版の ASCII だけのインラインコード（設定の名前・既定値・コマンド・コードの参照）と、両方にあるインラインコードが、
+ *   同じ数だけあること
+ * リンクの行き先は、日本語の版のリンクの相手に英語の版があれば（exists）、英語の版へのリンクと見なして比べる。
+ */
+function checkPair(
+  name: string,
+  ja: { path: string; text: string },
+  en: { path: string; text: string },
+  exists: (path: string) => boolean,
+): string[] {
+  const errors: string[] = [];
+  const strip = (lang: Lang, file: { path: string; text: string }, partner: string): string => {
+    const lines = file.text.split("\n");
+    const first = firstLineIndex(lines);
+    const expected = languageLine(lang, partner.split("/").pop() ?? "");
+    if (lines[first] !== expected) {
+      errors.push(
+        `${relative(ROOT, file.path)}: 最初の行が「${expected}」でない: ${lines[first] ?? "（無し）"}`,
+      );
+      return file.text;
+    }
+    lines.splice(first, 1);
+    return lines.join("\n");
+  };
+  const jaShape = shapeOf(strip("ja", ja, en.path), (target) => {
+    const path = resolve(dirname(ja.path), target);
+    return path.endsWith(".md") && exists(englishPath(path)) ? englishPath(path) : path;
+  });
+  const enShape = shapeOf(strip("en", en, ja.path), (target) => resolve(dirname(en.path), target));
+
+  if (jaShape.headings !== enShape.headings) {
+    errors.push(
+      `${name}: 見出しの深さの並びが違う（日本語 ${jaShape.headings}／英語 ${enShape.headings}）`,
+    );
+  }
+  if (jaShape.tableRows !== enShape.tableRows) {
+    errors.push(
+      `${name}: 表の行の数が違う（日本語 ${jaShape.tableRows}／英語 ${enShape.tableRows}）`,
+    );
+  }
+  if (jaShape.fences.join(",") !== enShape.fences.join(",")) {
+    errors.push(
+      `${name}: コードブロックの数か行の数が違う（日本語 ${jaShape.fences.join(",")}／英語 ${enShape.fences.join(",")}）`,
+    );
+  }
+  for (const [code, count] of jaShape.codes) {
+    const other = enShape.codes.get(code) ?? 0;
+    if ((isAscii(code) || other > 0) && other !== count) {
+      errors.push(`${name}: \`${code}\` の数が違う（日本語 ${count}／英語 ${other}）`);
+    }
+  }
+  const missing = (from: string[], to: string[]): string[] => {
+    const rest = [...to];
+    return from.filter((link) => {
+      const i = rest.indexOf(link);
+      if (i < 0) return true;
+      rest.splice(i, 1);
+      return false;
+    });
+  };
+  for (const link of missing(jaShape.links, enShape.links)) {
+    errors.push(`${name}: 英語の版にリンクが無い: ${link}`);
+  }
+  for (const link of missing(enShape.links, jaShape.links)) {
+    errors.push(`${name}: 日本語の版にリンクが無い: ${link}`);
   }
   return errors;
 }
@@ -481,7 +651,7 @@ describe("docs の構成", () => {
     for (const kind of ["spec", "user"] as const) {
       for (const file of markdownFiles(join(DOCS, kind))) {
         const name = relative(join(DOCS, kind), file).split("/").pop() ?? "";
-        if (name === "README.md") continue;
+        if (name === "README.md" || name === "README.en.md") continue;
         expect(name, file).toMatch(PLAIN_NAME);
         expect(name, file).not.toMatch(/^\d{8}/);
       }
@@ -512,14 +682,15 @@ describe("docs の構成", () => {
     };
     const errors: string[] = [];
     for (const file of markdownFiles(join(DOCS, "spec"))) {
-      if (file.endsWith("README.md")) continue;
-      errors.push(...checkCodeRefs(relative(ROOT, file), readFileSync(file, "utf8"), read));
+      if (file.endsWith("README.md") || file.endsWith("README.en.md")) continue;
+      const lang = file.endsWith(".en.md") ? "en" : "ja";
+      errors.push(...checkCodeRefs(relative(ROOT, file), readFileSync(file, "utf8"), read, lang));
     }
     expect(errors).toEqual([]);
   });
 
   it("docs・README・スキルの相対リンクが切れておらず、docs/pbi へリンクしない", () => {
-    const files = [...markdownFiles(DOCS), join(ROOT, "README.md"), ...SKILL_COPIES];
+    const files = [...markdownFiles(DOCS), ...ROOT_READMES, ...SKILL_COPIES];
     const broken: string[] = [];
     for (const file of files) {
       for (const link of relativeLinks(readFileSync(file, "utf8"))) {
@@ -540,7 +711,7 @@ describe("ユーザードキュメントと README", () => {
   const USER_DIR = join(DOCS, "user");
 
   it("Markdown へのリンクのアンカー（#…）が、行き先の見出しにある", () => {
-    const files = [...markdownFiles(DOCS), join(ROOT, "README.md"), ...SKILL_COPIES];
+    const files = [...markdownFiles(DOCS), ...ROOT_READMES, ...SKILL_COPIES];
     const broken: string[] = [];
     for (const file of files) {
       for (const link of anchorLinks(readFileSync(file, "utf8"))) {
@@ -557,18 +728,25 @@ describe("ユーザードキュメントと README", () => {
     expect(broken).toEqual([]);
   });
 
-  it("すべてのユーザードキュメントが、目次にあり、先頭に対応するコードを書いている", () => {
-    const readme = readFileSync(join(USER_DIR, "README.md"), "utf8");
-    const toc = readme.slice(readme.indexOf("## 目次"));
-    expect(toc.startsWith("## 目次")).toBe(true);
-    const listed = relativeLinks(toc);
-    for (const file of markdownFiles(USER_DIR)) {
-      const name = relative(USER_DIR, file);
-      if (name === "README.md") continue;
-      expect(listed, `目次に ${name} が無い`).toContain(name);
-      expect(readFileSync(file, "utf8"), name).toMatch(/^<!-- 対応するコード: \S[^\n]*-->\n/);
-    }
-  });
+  it.each([
+    ["日本語", "README.md", "## 目次", /^<!-- 対応するコード: \S[^\n]*-->\n/],
+    ["英語", "README.en.md", "## Contents", /^<!-- Code: \S[^\n]*-->\n/],
+  ] as const)(
+    "すべてのユーザードキュメント（%sの版）が、目次にあり、先頭に対応するコードを書いている",
+    (_, readmeName, heading, comment) => {
+      const readme = readFileSync(join(USER_DIR, readmeName), "utf8");
+      const toc = readme.slice(readme.indexOf(heading));
+      expect(toc.startsWith(heading)).toBe(true);
+      const listed = relativeLinks(toc);
+      const english = readmeName.endsWith(".en.md");
+      for (const file of markdownFiles(USER_DIR)) {
+        const name = relative(USER_DIR, file);
+        if (name.startsWith("README.") || name.endsWith(".en.md") !== english) continue;
+        expect(listed, `目次に ${name} が無い`).toContain(name);
+        expect(readFileSync(file, "utf8"), name).toMatch(comment);
+      }
+    },
+  );
 
   it("ユーザードキュメントの書き方の規則は docs/README.md にあり、利用者向けの目次には置かない", () => {
     const policy = readFileSync(join(DOCS, "README.md"), "utf8");
@@ -581,12 +759,49 @@ describe("ユーザードキュメントと README", () => {
     for (const rule of ["ファイルの分け方", "書き方の規則", "ひな形"]) {
       expect(headings, rule).not.toContain(rule);
     }
+    expect(headingAnchors(policy).has("英語の版")).toBe(true);
   });
 
   it("リポジトリの README から、ユーザードキュメントの目次へリンクしている", () => {
     expect(relativeLinks(readFileSync(join(ROOT, "README.md"), "utf8"))).toContain(
       "docs/user/README.md",
     );
+    expect(relativeLinks(readFileSync(join(ROOT, "README.en.md"), "utf8"))).toContain(
+      "docs/user/README.en.md",
+    );
+  });
+});
+
+describe("日本語の版と英語の版", () => {
+  /** 英語の版を用意するもの：リポジトリの README と、仕様書・ユーザードキュメントのすべてのページ。 */
+  const bilingual = [
+    ...ROOT_READMES,
+    ...markdownFiles(join(DOCS, "spec")),
+    ...markdownFiles(join(DOCS, "user")),
+  ];
+  const read = (path: string) => (existsSync(path) ? readFileSync(path, "utf8") : undefined);
+
+  it("どのページにも、もう一方の言語の版がある", () => {
+    expect(checkPairs(bilingual.map((file) => relative(ROOT, file)))).toEqual([]);
+  });
+
+  it("どの版も、最初にもう一方の言語へのリンクを置き、見出し・表・コード・リンクの数がそろう", () => {
+    const errors: string[] = [];
+    for (const file of bilingual) {
+      if (file.endsWith(".en.md")) continue;
+      const en = englishPath(file);
+      const [jaText, enText] = [read(file), read(en)];
+      if (jaText === undefined || enText === undefined) continue; // 欠けは上のテストで出す
+      errors.push(
+        ...checkPair(
+          relative(ROOT, file),
+          { path: file, text: jaText },
+          { path: en, text: enText },
+          existsSync,
+        ),
+      );
+    }
+    expect(errors).toEqual([]);
   });
 });
 
@@ -910,6 +1125,104 @@ describe("検査の部品", () => {
     expect(checkCodeRefs("fence.md", "```markdown\nコード: `apps/x.ts`\n```\n", read)).toEqual([
       "fence.md: 「コード:」の参照が無い",
     ]);
+  });
+
+  it("英語の版の仕様書のコードの参照：「Code:」と半角の括弧で確かめる", () => {
+    const read = (path: string) =>
+      path === "apps/daemon/src/a.ts" ? "export class Foo { bar() {} }\n" : undefined;
+    expect(
+      checkCodeRefs("ok.en.md", "Code: `apps/daemon/src/a.ts` (`Foo`, `Foo.bar`)\n", read, "en"),
+    ).toEqual([]);
+    for (const bad of [
+      "Code: `apps/daemon/src/a.ts` (`Qux`)\n", // 名前が無い
+      "Code: `apps/daemon/src/b.ts`\n", // ファイルが無い
+      "コード: `apps/daemon/src/a.ts`（`Foo`）\n", // 英語の版で日本語の書き出し（参照が無い扱い）
+      "Code: `apps/daemon/src/a.ts`\n`apps/daemon/src/a.ts` (`Nope`)\n", // 続きの行
+    ]) {
+      expect(checkCodeRefs("bad.en.md", bad, read, "en"), bad).not.toEqual([]);
+    }
+    // 日本語の版で「Code:」だけでは参照にならない
+    expect(checkCodeRefs("x.md", "Code: `apps/daemon/src/a.ts`\n", read)).not.toEqual([]);
+  });
+
+  it("もう一方の言語の版が無いページを挙げる", () => {
+    expect(
+      checkPairs(["README.md", "README.en.md", "docs/user/a.md", "docs/user/a.en.md"]),
+    ).toEqual([]);
+    expect(checkPairs(["docs/user/a.md", "docs/spec/b.en.md"])).toEqual([
+      "docs/user/a.md: 英語の版 docs/user/a.en.md が無い",
+      "docs/spec/b.en.md: 日本語の版 docs/spec/b.md が無い",
+    ]);
+  });
+
+  describe("日本語の版と英語の版の突き合わせ", () => {
+    const jaPath = join(DOCS, "user", "a.md");
+    const enPath = join(DOCS, "user", "a.en.md");
+    const exists = (path: string) =>
+      [join(DOCS, "user", "b.en.md"), join(DOCS, "user", "a.en.md")].includes(path);
+    const ja = [
+      "<!-- 対応するコード: x -->",
+      "",
+      "**日本語** | [English](a.en.md)",
+      "",
+      "# 題",
+      "",
+      "`max_parallel` の既定値は `4` です。`<名前>` を指定します。[b](b.md#手順)・[ADR](../adr/x.md)・[外](https://example.com)",
+      "",
+      "## 手順",
+      "",
+      "| 項目 | 既定値 |",
+      "| --- | --- |",
+      "| `max_parallel` | `4` |",
+      "",
+      "```sh",
+      "npx sacty up   # 起動する",
+      "```",
+      "",
+    ].join("\n");
+    const en = [
+      "<!-- Code: x -->",
+      "",
+      "[日本語](a.md) | **English**",
+      "",
+      "# Title",
+      "",
+      "The default of `max_parallel` is `4`. Specify `<name>`. [b](b.en.md#steps), [ADR](../adr/x.md), [ext](https://example.com)",
+      "",
+      "## Steps",
+      "",
+      "| Item | Default |",
+      "| --- | --- |",
+      "| `max_parallel` | `4` |",
+      "",
+      "```sh",
+      "npx sacty up   # starts",
+      "```",
+      "",
+    ].join("\n");
+    const check = (jaText: string, enText: string) =>
+      checkPair("a.md", { path: jaPath, text: jaText }, { path: enPath, text: enText }, exists);
+
+    it("そろっていれば通る", () => {
+      expect(check(ja, en)).toEqual([]);
+    });
+
+    it.each([
+      ["英語の版の言語の行が無い", ja, en.replace("[日本語](a.md) | **English**", "")],
+      ["日本語の版の言語の行の相手が違う", ja.replace("(a.en.md)", "(c.en.md)"), en],
+      ["見出しが1つ欠ける", ja, en.replace("## Steps", "Steps")],
+      ["見出しの深さが違う", ja, en.replace("## Steps", "### Steps")],
+      ["表の行が1行欠ける", ja, en.replace("| `max_parallel` | `4` |\n", "")],
+      ["コードブロックの行が増える", ja, en.replace("# starts", "# starts\n# more")],
+      ["既定値を片方だけ直す", ja.replace("は `4` です", "は `8` です"), en],
+      ["英語の版で名前を落とす", ja, en.replace("`max_parallel` is", "it is")],
+      ["英語の版で名前を足す（両方にある名前の数が違う）", ja, `${en}\n\`max_parallel\`\n`],
+      ["英語の版のリンクが日本語の版を向く", ja, en.replace("(b.en.md#steps)", "(b.md#steps)")],
+      ["英語の版でリンクを落とす", ja, en.replace("[ADR](../adr/x.md), ", "")],
+      ["外部のリンクが違う", ja, en.replace("https://example.com", "https://example.org")],
+    ])("%s と失敗する", (_, jaText, enText) => {
+      expect(check(jaText, enText)).not.toEqual([]);
+    });
   });
 
   it("コードの中のリンクと外部のリンクは検査しない", () => {

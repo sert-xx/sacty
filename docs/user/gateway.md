@@ -1,5 +1,7 @@
 <!-- 対応するコード: apps/daemon/src/config.ts（gateway・providers・Provider）、apps/daemon/src/gateway.ts（DEFAULT_RETRY_POLICY・DEFAULT_HOST_ADDRESS）、apps/daemon/src/host-mcp.ts（HostMcpFile）、apps/daemon/src/host-mcp-processes.ts、apps/daemon/src/platforms.ts（PlatformFile） -->
 
+**日本語** | [English](gateway.en.md)
+
 # ゲートウェイ
 
 sacty は、ホストでゲートウェイを動かし、工程エージェントのコンテナからの AI の呼び出し・MCP・外部 PF の API を中継します。

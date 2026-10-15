@@ -1,5 +1,7 @@
 <!-- 対応するコード: packages/core/src/projects.ts（SactySettings・TicketSourceConfig）、apps/daemon/src/intake.ts、apps/daemon/src/tickets.ts、apps/daemon/src/config.ts（github）、apps/web/src/i18n/messages/settings.ts -->
 
+**日本語** | [English](intake.en.md)
+
 # Issue・PR・チケットの取り込み
 
 GitHub の Issue・PR や JIRA のチケットを、定期的に取り込んでタスクにします。取り込みの設定は、すべてのプロジェクトに共通の設定として、

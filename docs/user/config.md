@@ -1,5 +1,7 @@
 <!-- 対応するコード: apps/daemon/src/config.ts（ConfigFile・Agent・Auth・Provider・CONFIG_TEMPLATE）、packages/core/src/events.ts（StepKey・DEFAULT_BUDGET_USD）、apps/daemon/src/intake.ts -->
 
+**日本語** | [English](config.en.md)
+
 # config.yaml の設定
 
 `~/.sacty/config.yaml`（`SACTY_HOME` を変えたら `$SACTY_HOME/config.yaml`）に書く、sacty 全体の設定です。
