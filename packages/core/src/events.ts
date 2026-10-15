@@ -445,6 +445,12 @@ const StepsChosen = z.object({
      * 終了コード0で合格。分からなければ持たない（実装の工程を含むタスクは止める）。
      */
     testCommand: z.string().trim().min(1).max(1000).optional(),
+    /**
+     * オーケストレーターが、対象リポジトリにテストの仕組みが無いと判断した根拠（PBI-94）。testCommand が無いときだけ持つ。
+     * これがあるタスクは、実装の検証でテストを飛ばし（TestsSkipped）、ゴールガーディアンがタスクの目的から判定する。
+     * sacty がテストのファイルを見つけた・不具合の修正を選んだときは、持たせずに止める。
+     */
+    noTestsReason: z.string().trim().min(1).max(2000).optional(),
     /** 調査の工程の性質（PBI-43）。無ければ内容の調査として扱う（セットアップをしない側）。 */
     investigation: InvestigationKind.optional(),
     /**
@@ -545,6 +551,11 @@ const AgentRunCompleted = z.object({
     reviewChangesRequested: z.boolean().optional(),
     /** 再現の工程が申告した、不具合を再現するテスト（PBI-29）。 */
     reproductionTests: z.array(z.string()).default([]),
+    /**
+     * テストの仕組みが無いタスク（PBI-94）で、実装の工程がテストの仕組みを用意したときに申告した、テストのコマンド。
+     * 実装の検証で、sacty がこのコマンドでテストを実行する。
+     */
+    testCommand: z.string().trim().min(1).max(1000).optional(),
   }),
 });
 
@@ -724,6 +735,15 @@ const TestsRun = z.object({
     note: DaemonText.optional(),
     durationMs: z.number().int().nonnegative(),
   }),
+});
+
+/**
+ * テストの仕組みが無いタスク（StepsChosen の noTestsReason。PBI-94）で、テストのコマンドが無いので、テストを実行せずに
+ * 最終レビューへ進めた。ゴールガーディアンが、タスクの目的から受け入れを判定する。
+ */
+const TestsSkipped = z.object({
+  type: z.literal("TestsSkipped"),
+  payload: z.object({}),
 });
 
 const ViewpointReview = z.object({
@@ -1660,6 +1680,7 @@ export const EventInput = z.discriminatedUnion("type", [
   ChangeApplied,
   RepositoryPrepared,
   TestsRun,
+  TestsSkipped,
   FinalReviewed,
   FinalReviewFailed,
   OrchestratorFailed,

@@ -3,7 +3,12 @@ import { cn } from "cn";
 import { CardSection } from "@/components/card-section";
 import { Markdown } from "@/components/markdown";
 import { getMessages } from "@/i18n/server";
-import { formatStamp } from "@/lib/labels";
+import {
+  addedTestsResult,
+  formatStamp,
+  judgedByGoalForCurrent,
+  verificationResults,
+} from "@/lib/labels";
 
 const OK = "border-accent-line bg-accent text-accent-foreground";
 const NG = "border-warn-line bg-warn-soft text-warn";
@@ -26,12 +31,24 @@ export async function Implementation({ task }: { task: Task }) {
   const m = messages.parts.implementation;
   const step = task.steps.find((s) => s.key === "implement");
   const viewpoints = task.approved.design?.testViewpoints ?? [];
-  const tests = task.lastTests;
-  const review = task.lastReview;
-  // 最終レビューは、最新のテストの結果のあとに行われたものだけを対応表に出す
-  const reviewIsCurrent = Boolean(review && tests && review.at >= tests.at);
+  // 今の提出の検証のものだけを対応表に出し、前の提出のものは「前の提出の」と区別して出す（PR #105 再レビュー指摘）
+  const { tests, testsCurrent, review, reviewCurrent: reviewIsCurrent } = verificationResults(task);
   const mapped = new Map(task.testMap.map((entry) => [entry.viewpointId, entry.tests]));
   const running = task.status === "running" && step?.state === "active";
+  // テストの仕組みが無いタスク（PBI-94）は、テストではなく目的から判定することを出す
+  const noTests = task.noTestsReason;
+  // 最新の検証で、実装が用意したテストを実行したか（飛ばしていなければ、テストの結果が最新の検証のもの）
+  // 合格のときだけ「検証しました」と成功の色、不合格なら失敗をはっきり示す（PR #105 再レビュー指摘）
+  const added = addedTestsResult(task);
+  // 今の提出のテストがまだなら「検証待ち」（前の提出の結果を出さない。PR #105 再々レビュー指摘）
+  const noTestsTitle =
+    added === "passed"
+      ? m.noTestsAddedTitle
+      : added === "failed"
+        ? m.noTestsAddedFailedTitle
+        : added === "pending"
+          ? m.noTestsAddedPendingTitle
+          : m.noTestsTitle;
 
   return (
     <CardSection
@@ -47,6 +64,41 @@ export async function Implementation({ task }: { task: Task }) {
           <span className="font-mono">{task.repository.baseCommit.slice(0, 7)}</span>
           {m.repositoryTail}
         </p>
+      )}
+      {noTests && (
+        <div
+          role="note"
+          aria-label={noTestsTitle}
+          className={cn(
+            "flex flex-col gap-1 rounded-lg border p-3.5 text-sm leading-6",
+            added === "passed"
+              ? "border-accent-line"
+              : added === "failed"
+                ? "border-destructive bg-destructive/10"
+                : added === "pending"
+                  ? "border-border"
+                  : "border-warn-line bg-warn-soft",
+          )}
+        >
+          <p
+            className={cn(
+              "font-semibold",
+              added === "failed" ? "text-destructive" : added === undefined && "text-warn",
+            )}
+          >
+            {noTestsTitle}
+          </p>
+          <p className="break-words">
+            {tests && added === "passed"
+              ? m.noTestsAdded(tests.command)
+              : tests && added === "failed"
+                ? m.noTestsAddedFailed(tests.command, tests.exitCode)
+                : added === "pending"
+                  ? m.noTestsAddedPending(task.addedTestCommand ?? "")
+                  : m.noTestsSkipped}
+          </p>
+          <p className="text-xs break-words text-muted-foreground">{m.noTestsReason(noTests)}</p>
+        </div>
       )}
       {task.outputs.implement ? (
         <Markdown>{task.outputs.implement}</Markdown>
@@ -83,6 +135,8 @@ export async function Implementation({ task }: { task: Task }) {
                             </li>
                           ))}
                         </ul>
+                      ) : noTests ? (
+                        <span className="text-muted-foreground">{m.judgedByGoal}</span>
                       ) : (
                         <span className="text-warn">{m.noTests}</span>
                       )}
@@ -90,7 +144,9 @@ export async function Implementation({ task }: { task: Task }) {
                     <dt className="pt-0.5 text-xs text-muted-foreground">{m.result}</dt>
                     <dd className="flex flex-col gap-1">
                       <span className="flex flex-wrap gap-1.5">
-                        {!tests ? (
+                        {noTests && list.length === 0 && judgedByGoalForCurrent(task) ? (
+                          <Pill tone={NONE}>{m.judgedByGoal}</Pill>
+                        ) : !tests || !testsCurrent || (noTests && list.length === 0) ? (
                           <Pill tone={NONE}>{m.notRun}</Pill>
                         ) : tests.exitCode === 0 && list.length > 0 ? (
                           <Pill tone={OK}>{m.testsPassed}</Pill>
@@ -118,7 +174,7 @@ export async function Implementation({ task }: { task: Task }) {
       {tests && (
         <details className="rounded-lg border border-border p-3.5 text-sm">
           <summary className="cursor-pointer">
-            <span className="font-semibold">{m.testRun}</span>{" "}
+            <span className="font-semibold">{testsCurrent ? m.testRun : m.previousTestRun}</span>{" "}
             <Pill tone={tests.passed ? OK : NG}>{tests.passed ? m.pass : m.fail}</Pill>{" "}
             <span className="text-xs text-muted-foreground">
               {m.runMeta(tests.exitCode, (tests.durationMs / 1000).toFixed(1))}
@@ -137,11 +193,17 @@ export async function Implementation({ task }: { task: Task }) {
         <div
           className={cn(
             "flex flex-col gap-2 rounded-lg border p-3.5 text-sm leading-6",
-            review.passed ? "border-accent-line" : "border-warn-line",
+            !reviewIsCurrent
+              ? "border-border text-muted-foreground"
+              : review.passed
+                ? "border-accent-line"
+                : "border-warn-line",
           )}
         >
           <p className="flex flex-wrap items-center gap-2">
-            <span className="font-semibold">{m.finalReview}</span>
+            <span className="font-semibold">
+              {reviewIsCurrent ? m.finalReview : m.previousFinalReview}
+            </span>
             <Pill tone={review.passed ? OK : NG}>{review.passed ? m.pass : m.fail}</Pill>
             <span className="text-xs text-muted-foreground">
               {m.reviewer}

@@ -67,6 +67,18 @@ const ja = {
   baseBranch: "ベースブランチ：",
   testCommand: " ・ テストのコマンド：",
   testCommandUnknown: "（決められませんでした）",
+  /** テストの仕組みが無いと判断したタスク（PBI-94）。 */
+  testCommandNone: (reason: string) =>
+    `なし（テストの仕組みが無いため、テストでは検証せず、目的から判定します。根拠：${reason}）`,
+  /** テストの仕組みが無いタスクで、実装が用意したテストで検証した（PBI-94・PR #105 レビュー指摘）。 */
+  testCommandAdded: (command: string, reason: string) =>
+    `なし → 実装で用意したテスト（${command}）で検証し、目的から判定します（テストの仕組みが無かった根拠：${reason}）`,
+  /** 実装で用意したテストが通らなかった（実装のやり直しを待っている。PR #105 再々レビュー指摘）。 */
+  testCommandAddedFailed: (command: string, reason: string) =>
+    `なし → 実装で用意したテスト（${command}）が通らなかったため、実装をやり直します（テストの仕組みが無かった根拠：${reason}）`,
+  /** 今の実装が用意したテストを、まだ実行していない。 */
+  testCommandAddedPending: (command: string, reason: string) =>
+    `なし → 実装で用意したテスト（${command}）を、これから実行します（テストの仕組みが無かった根拠：${reason}）`,
   activity: "作業履歴",
   activityNote: "追記専用",
   reproduction: {
@@ -307,6 +319,14 @@ const en: TaskMessages = {
   baseBranch: "Base branch: ",
   testCommand: " · Test command: ",
   testCommandUnknown: "(could not determine)",
+  testCommandAdded: (command, reason) =>
+    `none → verified by the tests added in the implementation (${command}) and judged by the goal (why the repository had no tests: ${reason})`,
+  testCommandAddedFailed: (command, reason) =>
+    `none → the tests added in the implementation (${command}) failed, so the implementation is redone (why the repository had no tests: ${reason})`,
+  testCommandAddedPending: (command, reason) =>
+    `none → the tests added in the implementation (${command}) will run next (why the repository had no tests: ${reason})`,
+  testCommandNone: (reason) =>
+    `none (the repository has no tests, so the task is judged by its goal, not by tests. Basis: ${reason})`,
   activity: "Activity",
   activityNote: "Append-only",
   reproduction: {

@@ -33,6 +33,8 @@ const ja = {
     verified: "観点を検証している",
     notVerified: "観点を検証していない",
     testRun: "テストの実行",
+    previousTestRun: "前の提出のテストの実行（今の提出では、まだ実行していません）",
+    previousFinalReview: "前の提出の最終レビュー（今の提出では、まだ判定していません）",
     pass: "合格",
     fail: "不合格",
     runMeta: (exitCode: number, seconds: string) => `終了コード ${exitCode}・${seconds}秒・`,
@@ -42,6 +44,22 @@ const ja = {
     recurrence: "過去の指摘の再発",
     notRecurred: "再発なし",
     recurred: "再発している",
+    /** テストの仕組みが無いタスク（PBI-94）。 */
+    noTestsTitle: "テストで検証していません",
+    noTestsAddedTitle: "実装で用意したテストで検証しました",
+    noTestsAddedFailedTitle: "実装で用意したテストが通りませんでした",
+    noTestsAddedPendingTitle: "実装で用意したテストの検証待ち",
+    noTestsAddedPending: (command: string) =>
+      `今の実装が用意したテスト（${command}）を、これから実行します。結果が出るまで、前の実装のテストの結果は今の実装のものではありません。`,
+    noTestsAddedFailed: (command: string, exitCode: number) =>
+      `実装で用意したテスト（${command}）が通りませんでした（終了コード ${exitCode}）。テストが通るまで実装をやり直し、続けて通らなければ一時停止します。`,
+    noTestsSkipped:
+      "テストのコマンドが無いため、テストでは検証していません。受け入れは、ゴールガーディアンがタスクの目的・要求要件と、実装後のコード・差分・実装の説明から判定します。",
+    noTestsAdded: (command: string) =>
+      `対象リポジトリにテストの仕組みが無かったため、実装で用意したテスト（${command}）を実行し、受け入れはゴールガーディアンがタスクの目的から判定します。`,
+    noTestsReason: (reason: string) =>
+      `テストの仕組みが無いと判断した根拠（オーケストレーター）：${reason}`,
+    judgedByGoal: "テストなし（目的から判定）",
   },
   proposals: {
     title: "変更の申し出と判定",
@@ -180,6 +198,9 @@ const en: PartsMessages = {
     verified: "Verifies the viewpoint",
     notVerified: "Does not verify the viewpoint",
     testRun: "Test run",
+    previousTestRun: "Test run for the previous submission (not yet run for the current one)",
+    previousFinalReview:
+      "Final review of the previous submission (not yet judged for the current one)",
     pass: "Passed",
     fail: "Failed",
     runMeta: (exitCode, seconds) => `Exit code ${exitCode} · ${seconds}s · `,
@@ -189,6 +210,20 @@ const en: PartsMessages = {
     recurrence: "Recurrence of past comments",
     notRecurred: "Not recurring",
     recurred: "Recurring",
+    noTestsTitle: "Not verified by tests",
+    noTestsAddedTitle: "Verified by the tests added in the implementation",
+    noTestsAddedFailedTitle: "The tests added in the implementation failed",
+    noTestsAddedPendingTitle: "Waiting to run the tests added in the implementation",
+    noTestsAddedPending: (command) =>
+      `The tests added in the current implementation (${command}) will run next. Until then, earlier test results do not apply to the current implementation.`,
+    noTestsAddedFailed: (command, exitCode) =>
+      `The tests added in the implementation (${command}) failed (exit code ${exitCode}). The implementation is redone until they pass, and the task pauses if they keep failing.`,
+    noTestsSkipped:
+      "There is no test command, so the implementation is not verified by tests. The Goal Guardian judges acceptance from the task's goal and requirements and the implemented code, diff, and description.",
+    noTestsAdded: (command) =>
+      `The repository had no tests, so the tests added by the implementation (${command}) were run, and the Goal Guardian judges acceptance from the task's goal.`,
+    noTestsReason: (reason) => `Why the repository has no tests (Orchestrator): ${reason}`,
+    judgedByGoal: "No tests (judged by the goal)",
   },
   proposals: {
     title: "Change requests and verdicts",
