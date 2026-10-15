@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server";
-import { PROJECT_COOKIE, safeLocalPath } from "@/lib/current-project";
+import { safeLocalPath } from "@/lib/current-project";
+import { isProjectId, PROJECT_COOKIE, PROJECT_COOKIE_OPTIONS } from "@/lib/project-select";
 
 /**
  * 表示するプロジェクトを切り替えて、指定の画面へ移る（お知らせから、ほかのプロジェクトの
@@ -14,13 +15,6 @@ export function GET(request: NextRequest) {
     status: 303,
     headers: { location: safeLocalPath(to) ?? "/" },
   });
-  if (/^[\w-]{1,100}$/.test(project)) {
-    res.cookies.set(PROJECT_COOKIE, project, {
-      path: "/",
-      sameSite: "lax",
-      httpOnly: true,
-      maxAge: 60 * 60 * 24 * 365,
-    });
-  }
+  if (isProjectId(project)) res.cookies.set(PROJECT_COOKIE, project, PROJECT_COOKIE_OPTIONS);
   return res;
 }

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Suspense } from "react";
 import { DaemonError } from "@/components/daemon-error";
+import { FollowProject } from "@/components/shell/follow-project";
 import type { Messages } from "@/i18n";
 import { getMessages } from "@/i18n/server";
 import {
@@ -78,6 +79,8 @@ async function RunLogView({ params }: Params) {
 
   return (
     <div className="flex flex-col gap-4">
+      {/* 開いたタスクのプロジェクトを、表示しているプロジェクトにする（ヘッダーとずれないように。PBI-98） */}
+      <FollowProject projectId={task.projectId} />
       <nav className="text-sm text-muted-foreground">
         <Link href={back} className="text-accent-foreground underline">
           {m.back}

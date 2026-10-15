@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { Suspense } from "react";
 import { DaemonError } from "@/components/daemon-error";
 import { ProjectEditor } from "@/components/project-editor";
+import { FollowProject } from "@/components/shell/follow-project";
 import { getMessages } from "@/i18n/server";
 import {
   CONTEXT_CHECK_PARAM,
@@ -60,6 +61,8 @@ async function ProjectSettings({
     : undefined;
   return (
     <>
+      {/* 開いたプロジェクトを、表示しているプロジェクトにする（一覧から開いたときなど。ヘッダーとずれないように。PBI-98） */}
+      <FollowProject projectId={view.project.id} />
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-2xl font-bold">{t.settingsTitle(view.project.name)}</h1>
         {/* ダウンロードなので、クライアントの画面遷移にしない */}
