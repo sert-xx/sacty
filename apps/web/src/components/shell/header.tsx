@@ -32,6 +32,8 @@ function Frame({ children }: { children?: React.ReactNode }) {
 export function HeaderFallback({ language = "system" }: { language?: LanguagePreference }) {
   return (
     <Frame>
+      {/* デーモンにつながらなかったときも、戻った後にタブに戻ってくれば、ヘッダーを描き直す（PBI-98 レビュー指摘） */}
+      <RefreshOnVisible />
       <span className="flex-1" />
       <UserMenu language={language} />
     </Frame>

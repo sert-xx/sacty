@@ -26,12 +26,18 @@ export function AutoRefresh({
  */
 export function RefreshOnVisible() {
   const router = useRouter();
-  useEffect(() => {
-    const onChange = () => {
-      if (document.visibilityState === "visible") router.refresh();
-    };
-    document.addEventListener("visibilitychange", onChange);
-    return () => document.removeEventListener("visibilitychange", onChange);
-  }, [router]);
+  useEffect(() => watchVisible(document, () => router.refresh()), [router]);
   return null;
+}
+
+/** 隠れていた画面が見えるようになるたびに onVisible を呼ぶ（隠れるほうの変化では呼ばない）。返り値で止める。 */
+export function watchVisible(
+  doc: Pick<Document, "visibilityState" | "addEventListener" | "removeEventListener">,
+  onVisible: () => void,
+): () => void {
+  const onChange = () => {
+    if (doc.visibilityState === "visible") onVisible();
+  };
+  doc.addEventListener("visibilitychange", onChange);
+  return () => doc.removeEventListener("visibilitychange", onChange);
 }

@@ -36,8 +36,16 @@ describe("開いた画面のプロジェクトに、ヘッダーを合わせる�
   it("画面のプロジェクトが無くなっていれば（削除したプロジェクトのタスク）、選んでいるプロジェクトを変えない", async () => {
     cookie = "p-a";
     expect(await FollowProject({ projectId: "deleted" })).toBeNull();
-    // デーモンにつながらなければ、変えない
+  });
+
+  it("一覧を取れなかったときは、無いとは扱わずに合わせる（ずれたまま残さない。レビュー指摘）", async () => {
+    cookie = "p-a";
     listProjects.mockRejectedValue(new Error("unreachable"));
-    expect(await FollowProject({ projectId: "p-b" })).toBeNull();
+    const element = (await FollowProject({ projectId: "p-b" })) as {
+      type: unknown;
+      props: { projectId: string };
+    } | null;
+    expect(element?.type).toBe(SelectProject);
+    expect(element?.props.projectId).toBe("p-b");
   });
 });

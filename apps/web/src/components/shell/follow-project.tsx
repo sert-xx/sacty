@@ -11,8 +11,20 @@ import { SelectProject } from "./select-project";
  */
 export async function FollowProject({ projectId }: { projectId: string }) {
   if (!needsProjectSelect(await currentProjectId(), projectId)) return null;
-  const exists = await listProjects()
-    .then((projects) => projects.some((p) => p.id === projectId))
-    .catch(() => false);
-  return exists ? <SelectProject projectId={projectId} /> : null;
+  return (await projectExists(projectId)) === false ? null : (
+    <SelectProject projectId={projectId} />
+  );
+}
+
+/**
+ * プロジェクトがあるか。一覧を取れなければ undefined（無いとは扱わない）。画面はこのプロジェクトをデーモンから読んで
+ * 表示した直後なので、一覧の取得だけが失敗したときは合わせる（合わせないと、定期の更新が無い間はずれたまま残る。
+ * PBI-98 レビュー指摘）。無いプロジェクトに合わせても、ヘッダーは最初のプロジェクトを出すだけで壊れない。
+ */
+async function projectExists(projectId: string): Promise<boolean | undefined> {
+  try {
+    return (await listProjects()).some((p) => p.id === projectId);
+  } catch {
+    return undefined;
+  }
 }
