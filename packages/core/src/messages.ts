@@ -212,6 +212,9 @@ const PARAMS = {
   "orchestrator.fallback": z.object({ detail: TextParam }),
   "orchestrator.unreadable": null,
   "orchestrator.testCommandUnknown": null,
+  "orchestrator.noTestsContradicted": z.object({ reason: z.string(), files: z.string() }),
+  "orchestrator.noTestsUncertain": z.object({ reason: z.string() }),
+  "orchestrator.bugfixNeedsTests": z.object({ reason: z.string() }),
   "orchestrator.failed": z.object({ detail: TextParam }),
   "orchestrator.baseBranchUnavailable": z.object({ branch: z.string(), detail: TextParam }),
   // タスク分割（PBI-27）
@@ -738,6 +741,12 @@ const ja: MessageDictionary = {
     `オーケストレーターを実行できませんでした：${text(detail).replace(/[。.]\s*$/, "")}。再開すると、工程の選択からやり直します。`,
   "orchestrator.testCommandUnknown":
     "オーケストレーターが、対象リポジトリのテストのコマンドを決められませんでした。実装を検証できないので止めます。タスクの内容にテストの実行方法を書いて、作り直してください。",
+  "orchestrator.noTestsContradicted": ({ reason, files }) =>
+    `オーケストレーターは、対象リポジトリにテストの仕組みが無いと判断しました（${reason}）が、テストのように見えるファイルがあります（${files}）。テストのコマンドを決められなかったものとして扱い、実装を検証できないので止めます。タスクの内容にテストの実行方法を書いて、作り直してください。`,
+  "orchestrator.noTestsUncertain": ({ reason }) =>
+    `オーケストレーターは、対象リポジトリにテストの仕組みが無いと判断しました（${reason}）が、ファイルが多く、テストのファイルが無いことを確かめきれませんでした。テストのコマンドを決められなかったものとして扱い、実装を検証できないので止めます。タスクの内容にテストの実行方法を書いて、作り直してください。`,
+  "orchestrator.bugfixNeedsTests": ({ reason }) =>
+    `オーケストレーターは、対象リポジトリにテストの仕組みが無いと判断しました（${reason}）が、不具合の修正（再現 → 実装）を選びました。再現はテストで確かめるので、テストのコマンドが要ります。実装を検証できないので止めます。タスクの内容にテストの実行方法を書いて、作り直してください。`,
   "orchestrator.baseBranchUnavailable": ({ branch, detail }, text) =>
     `オーケストレーターが選んだベースブランチ（${branch}）を用意できなかったため、既定のブランチで進めます（${text(detail)}）。`,
   "review.pullRequestMissing": ({ repo }) =>
@@ -1154,6 +1163,12 @@ const en: MessageDictionary = {
     `Could not run the Orchestrator: ${text(detail).replace(/[。.]\s*$/, "")}. Resume to choose the steps again.`,
   "orchestrator.testCommandUnknown":
     "The Orchestrator could not determine the test command of the target repository, so the implementation cannot be verified. Describe how to run the tests in the task and create it again.",
+  "orchestrator.noTestsContradicted": ({ reason, files }) =>
+    `The Orchestrator judged that the target repository has no tests (${reason}), but some files look like tests (${files}). This is treated as an undetermined test command, so the implementation cannot be verified. Describe how to run the tests in the task and create it again.`,
+  "orchestrator.noTestsUncertain": ({ reason }) =>
+    `The Orchestrator judged that the target repository has no tests (${reason}), but the repository has too many files to confirm that there are no test files. This is treated as an undetermined test command, so the implementation cannot be verified. Describe how to run the tests in the task and create it again.`,
+  "orchestrator.bugfixNeedsTests": ({ reason }) =>
+    `The Orchestrator judged that the target repository has no tests (${reason}), but chose a bug fix (reproduce → implement). A reproduction is confirmed by tests, so a test command is required. The implementation cannot be verified. Describe how to run the tests in the task and create it again.`,
   "orchestrator.baseBranchUnavailable": ({ branch, detail }, text) =>
     `Could not prepare the base branch the Orchestrator chose (${branch}), so the default branch is used (${text(detail)}).`,
   "review.pullRequestMissing": ({ repo }) =>

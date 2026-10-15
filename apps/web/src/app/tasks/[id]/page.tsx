@@ -360,6 +360,9 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
                     {m.testCommand}
                     {task.testCommand ? (
                       <span className="font-mono">{task.testCommand}</span>
+                    ) : task.noTestsReason ? (
+                      // テストの仕組みが無いと判断したタスク（PBI-94）
+                      m.testCommandNone(task.noTestsReason)
                     ) : (
                       m.testCommandUnknown
                     )}

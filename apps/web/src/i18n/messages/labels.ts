@@ -155,6 +155,8 @@ const ja = {
     stepImage: (step: string, image: string) => `${step}＝${image}`,
     imagesJoin: "、",
     stepsExports: (exports: string) => ` / 書き出し：${exports}`,
+    /** テストの仕組みが無いと判断した根拠（PBI-94）。 */
+    stepsNoTests: (reason: string) => ` / テストの仕組みが無い：${reason}`,
     /** オーケストレーターが決めたサービス（PBI-47・PBI-70）。 */
     stepsServices: (names: string, source: string, steps: string, reason?: string) =>
       ` / サービス：${names || "すべて"}（${source}。${steps}で使う）${reason ? `：${reason}` : ""}`,
@@ -216,6 +218,7 @@ const ja = {
       `対象リポジトリを用意（${url}・${branch}・${commit}）`,
     TestsRun: (passed: boolean, exitCode: number, unmapped: string[]) =>
       `テストを実行：${passed ? "合格" : "不合格"}（終了コード ${exitCode}${unmapped.length > 0 ? `・テストの無い観点 ${unmapped.join(", ")}` : ""}）`,
+    TestsSkipped: "テストのコマンドが無いため、テストを実行せずに最終レビューへ（目的から判定）",
     FinalReviewed: (passed: boolean, failures: number, tail: string) =>
       `最終レビュー：${passed ? "合格" : `不合格（${failures}件）`}（${tail}）`,
     prPublished: (number: number | undefined, branch: string, commit: string) =>
@@ -499,6 +502,7 @@ const en: LabelMessages = {
     stepImage: (step, image) => `${step}=${image}`,
     imagesJoin: ", ",
     stepsExports: (exports) => ` / Export: ${exports}`,
+    stepsNoTests: (reason) => ` / No tests in the repository: ${reason}`,
     stepsServices: (names, source, steps, reason) =>
       ` / Services: ${names || "all"} (${source}; used in ${steps})${reason ? `: ${reason}` : ""}`,
     stepsNoServices: (shared, reason) =>
@@ -547,6 +551,8 @@ const en: LabelMessages = {
       `Target repository prepared (${url} · ${branch} · ${commit})`,
     TestsRun: (passed, exitCode, unmapped) =>
       `Tests run: ${passed ? "passed" : "failed"} (exit code ${exitCode}${unmapped.length > 0 ? ` · viewpoints without tests: ${unmapped.join(", ")}` : ""})`,
+    TestsSkipped:
+      "No test command, so the tests were skipped and the final review judges by the task's goal",
     FinalReviewed: (passed, failures, tail) =>
       `Final review: ${passed ? "passed" : `failed (${failures})`} (${tail})`,
     prPublished: (number, branch, commit) =>

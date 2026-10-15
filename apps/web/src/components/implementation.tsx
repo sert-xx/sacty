@@ -28,10 +28,13 @@ export async function Implementation({ task }: { task: Task }) {
   const viewpoints = task.approved.design?.testViewpoints ?? [];
   const tests = task.lastTests;
   const review = task.lastReview;
-  // 最終レビューは、最新のテストの結果のあとに行われたものだけを対応表に出す
-  const reviewIsCurrent = Boolean(review && tests && review.at >= tests.at);
+  // 最終レビューは、最新のテストの結果（テストを飛ばしたタスクは、飛ばした時。PBI-94）のあとに行われたものだけを対応表に出す
+  const checkedAt = task.testsSkippedAt ?? tests?.at;
+  const reviewIsCurrent = Boolean(review && checkedAt && review.at >= checkedAt);
   const mapped = new Map(task.testMap.map((entry) => [entry.viewpointId, entry.tests]));
   const running = task.status === "running" && step?.state === "active";
+  // テストの仕組みが無いタスク（PBI-94）は、テストではなく目的から判定することを出す
+  const noTests = task.noTestsReason;
 
   return (
     <CardSection
@@ -47,6 +50,19 @@ export async function Implementation({ task }: { task: Task }) {
           <span className="font-mono">{task.repository.baseCommit.slice(0, 7)}</span>
           {m.repositoryTail}
         </p>
+      )}
+      {noTests && (
+        <div
+          role="note"
+          aria-label={m.noTestsTitle}
+          className="flex flex-col gap-1 rounded-lg border border-warn-line bg-warn-soft p-3.5 text-sm leading-6"
+        >
+          <p className="font-semibold text-warn">{m.noTestsTitle}</p>
+          <p className="break-words">
+            {tests && !task.testsSkippedAt ? m.noTestsAdded(tests.command) : m.noTestsSkipped}
+          </p>
+          <p className="text-xs break-words text-muted-foreground">{m.noTestsReason(noTests)}</p>
+        </div>
       )}
       {task.outputs.implement ? (
         <Markdown>{task.outputs.implement}</Markdown>
@@ -83,6 +99,8 @@ export async function Implementation({ task }: { task: Task }) {
                             </li>
                           ))}
                         </ul>
+                      ) : noTests ? (
+                        <span className="text-muted-foreground">{m.judgedByGoal}</span>
                       ) : (
                         <span className="text-warn">{m.noTests}</span>
                       )}
@@ -90,7 +108,9 @@ export async function Implementation({ task }: { task: Task }) {
                     <dt className="pt-0.5 text-xs text-muted-foreground">{m.result}</dt>
                     <dd className="flex flex-col gap-1">
                       <span className="flex flex-wrap gap-1.5">
-                        {!tests ? (
+                        {noTests && list.length === 0 ? (
+                          <Pill tone={NONE}>{m.judgedByGoal}</Pill>
+                        ) : !tests ? (
                           <Pill tone={NONE}>{m.notRun}</Pill>
                         ) : tests.exitCode === 0 && list.length > 0 ? (
                           <Pill tone={OK}>{m.testsPassed}</Pill>

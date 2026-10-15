@@ -206,7 +206,9 @@ export function describeEvent(event: ActivityEvent, l: LabelMessages): string {
                 .join(e.imagesJoin),
             )
           : "") +
-        servicesChoice(event.payload, l)
+        servicesChoice(event.payload, l) +
+        // テストの仕組みが無いと判断した根拠（PBI-94）
+        (event.payload.noTestsReason ? e.stepsNoTests(event.payload.noTestsReason) : "")
       );
     }
     case "TicketTriaged":
@@ -310,6 +312,8 @@ export function describeEvent(event: ActivityEvent, l: LabelMessages): string {
         event.payload.exitCode,
         event.payload.unmappedViewpoints,
       );
+    case "TestsSkipped":
+      return e.TestsSkipped;
     case "FinalReviewed": {
       const failures =
         event.payload.viewpoints.filter((v) => !v.verified).length +

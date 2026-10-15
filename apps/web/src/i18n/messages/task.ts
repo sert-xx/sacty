@@ -67,6 +67,9 @@ const ja = {
   baseBranch: "ベースブランチ：",
   testCommand: " ・ テストのコマンド：",
   testCommandUnknown: "（決められませんでした）",
+  /** テストの仕組みが無いと判断したタスク（PBI-94）。 */
+  testCommandNone: (reason: string) =>
+    `なし（テストの仕組みが無いため、テストでは検証せず、目的から判定します。根拠：${reason}）`,
   activity: "作業履歴",
   activityNote: "追記専用",
   reproduction: {
@@ -307,6 +310,8 @@ const en: TaskMessages = {
   baseBranch: "Base branch: ",
   testCommand: " · Test command: ",
   testCommandUnknown: "(could not determine)",
+  testCommandNone: (reason) =>
+    `none (the repository has no tests, so the task is judged by its goal, not by tests. Basis: ${reason})`,
   activity: "Activity",
   activityNote: "Append-only",
   reproduction: {

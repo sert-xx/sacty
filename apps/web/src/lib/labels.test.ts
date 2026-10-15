@@ -1271,3 +1271,36 @@ describe("実装に変更が無い成果物チェック（PBI-90）", () => {
     expect(describeEvent(event)).toBe("実装に変更が無いため、PR を作らずに成果物チェックへ");
   });
 });
+
+describe("テストの仕組みが無いタスクの作業履歴（PBI-94）", () => {
+  const at = {
+    seq: 1,
+    id: "e1",
+    taskId: "t1",
+    projectId: "default",
+    at: "2026-10-15T00:00:00.000Z",
+  };
+  it("工程の決定にテストの仕組みが無い根拠を、テストを飛ばしたことを、それぞれ表示する", () => {
+    const chosen = {
+      type: "StepsChosen",
+      payload: {
+        steps: ["implement", "pr"],
+        reason: "小さな変更",
+        fallback: false,
+        noTestsReason: "README だけ",
+        costUsd: 0,
+        estimated: false,
+      },
+      ...at,
+      actor: "orchestrator",
+    } as ActivityEvent;
+    expect(describeEvent(chosen)).toBe(
+      "工程を決定：実装 → PR作成（小さな変更） / テストの仕組みが無い：README だけ",
+    );
+    expect(describeIn(chosen, labels.en)).toContain(" / No tests in the repository: README だけ");
+    const skipped = { type: "TestsSkipped", payload: {}, ...at, actor: "sacty" } as ActivityEvent;
+    expect(describeEvent(skipped)).toBe(
+      "テストのコマンドが無いため、テストを実行せずに最終レビューへ（目的から判定）",
+    );
+  });
+});

@@ -12,6 +12,7 @@ import {
   buildChatPrompt,
   buildExportDocument,
   buildExportPrompt,
+  buildFinalReviewPrompt,
   buildOrchestratorPrompt,
   buildPrompt,
   buildPullRequestBody,
@@ -23,6 +24,7 @@ import {
   CHAT_LOGS_IN_PROMPT,
   CHAT_PROMPT_MAX,
   commentableLines,
+  extractBlocks,
   extractExport,
   extractIntegrationReview,
   extractReviewComments,
@@ -1079,5 +1081,92 @@ describe("リポジトリを指定しないタスク（PBI-73）", () => {
     });
     expect(withRepoPrompt).not.toContain("acme/web");
     expect(withRepoPrompt).not.toContain('"repo"');
+  });
+});
+
+describe("テストの仕組みが無いタスク（PBI-94）", () => {
+  const NO_TESTS = "README.md だけで、テストのコードも設定も無い";
+  const task = (extra: Partial<Task> = {}, steps: Task["steps"][number]["key"][] = []) =>
+    ({
+      id: "t-1",
+      title: "セットアップ",
+      body: "AGENTS.md を整える",
+      steps: steps.map((key) => ({ key, state: "todo" })),
+      remarks: [],
+      outputs: { implement: "# 実装の説明\n\n- AGENTS.md を足した" },
+      approved: {
+        requirements: { output: "# 要求要件", submission: 1 },
+        design: {
+          output: "# 設計",
+          submission: 1,
+          testViewpoints: [{ id: "TV-1", title: "指示がある", input: "読む", expected: "ある" }],
+        },
+      },
+      reproductionTests: [],
+      testMap: [],
+      repository: {
+        url: "https://github.com/acme/app",
+        baseBranch: "main",
+        baseCommit: "abcdef1234",
+      },
+      ...extra,
+    }) as unknown as Task;
+  const plan = (v: Record<string, unknown>) =>
+    `\`\`\`json\n${JSON.stringify({ "sacty-steps": { plan: "skip-design", reason: "r", ...v } })}\n\`\`\``;
+
+  it("オーケストレーターに、テストの仕組みが無いときだけ根拠を書かせ、不具合の修正を選ばせない", () => {
+    const prompt = buildOrchestratorPrompt(task());
+    expect(prompt).toContain("- noTests：testCommand を空にしたときだけ書く");
+    expect(prompt).toContain("テストの仕組みはあるのにコマンドが分からないときは書かない");
+    expect(prompt).toContain("テストの仕組みが無いなら、不具合の修正（bugfix）は選ばない");
+    expect(prompt).toContain('"noTests": ');
+  });
+
+  it("出力からは、テストのコマンドが無いときだけ、テストの無い根拠を読む", () => {
+    expect(extractStepPlan(plan({ noTests: ` ${NO_TESTS} ` }))).toMatchObject({
+      noTests: NO_TESTS,
+    });
+    const both = extractStepPlan(plan({ testCommand: "make test", noTests: NO_TESTS }));
+    expect(both).toMatchObject({ testCommand: "make test" });
+    expect(both).not.toHaveProperty("noTests");
+    expect(extractStepPlan(plan({ noTests: "  " }))).not.toHaveProperty("noTests");
+    expect(extractStepPlan(plan({ noTests: 1 }))).not.toHaveProperty("noTests");
+  });
+
+  it("実装の出力から、用意したテストのコマンドを読み、本文から取り除く", () => {
+    const output = `# 説明\n\n\`\`\`json\n${JSON.stringify({ "sacty-test-command": { command: " make test " } })}\n\`\`\``;
+    const read = extractBlocks(output, new Set());
+    expect(read.testCommand).toBe("make test");
+    expect(read.output).toBe("# 説明");
+    expect(extractBlocks("# 説明", new Set())).not.toHaveProperty("testCommand");
+    const empty = `\`\`\`json\n${JSON.stringify({ "sacty-test-command": { command: "" } })}\n\`\`\``;
+    expect(extractBlocks(empty, new Set())).not.toHaveProperty("testCommand");
+  });
+
+  it("設計のあるタスクの実装と最終レビューでも、テストではなく観点ごとに目的から判定させる", () => {
+    const t = task({ noTestsReason: NO_TESTS }, ["requirements", "design", "implement", "pr"]);
+    const implement = buildPrompt(t, "implement");
+    expect(implement).toContain(`オーケストレーターの判断：${NO_TESTS}`);
+    expect(implement).toContain("要求要件と設計に従って実装してください");
+    expect(implement).toContain("--- 観点（承認済み・すべてを満たす） ---");
+    expect(implement).toContain("[TV-1] 指示がある");
+    expect(implement).not.toContain("テスト観点ごとに、その観点を検証するテストを書いてください");
+    const review = buildFinalReviewPrompt(t, "diff");
+    expect(review).toContain("タスクの目的・承認済みの要求要件・設計を");
+    expect(review).toContain("sacty はテストを実行していません");
+    expect(review).toContain("# セットアップ\n\nAGENTS.md を整える");
+    expect(review).toContain("- AGENTS.md を足した");
+    expect(review).not.toContain("判断の根拠は、下の差分とテストの結果だけにする");
+  });
+
+  it("テストのコマンドがあるタスクの実装・最終レビューの指示は変わらない", () => {
+    const t = task({ testCommand: "npm test" }, ["requirements", "design", "implement", "pr"]);
+    const implement = buildPrompt(t, "implement");
+    expect(implement).toContain("テスト観点ごとに、その観点を検証するテストを書いてください");
+    expect(implement).not.toContain("sacty-test-command");
+    const review = buildFinalReviewPrompt(t, "diff");
+    expect(review).toContain("判断の根拠は、下の差分とテストの結果だけにする");
+    expect(review).not.toContain("--- 実装の説明");
+    expect(review).not.toContain("--- タスク（目的） ---");
   });
 });

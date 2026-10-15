@@ -42,6 +42,15 @@ const ja = {
     recurrence: "過去の指摘の再発",
     notRecurred: "再発なし",
     recurred: "再発している",
+    /** テストの仕組みが無いタスク（PBI-94）。 */
+    noTestsTitle: "テストで検証していません",
+    noTestsSkipped:
+      "テストのコマンドが無いため、テストでは検証していません。受け入れは、ゴールガーディアンがタスクの目的・要求要件と、実装後のコード・差分・実装の説明から判定します。",
+    noTestsAdded: (command: string) =>
+      `対象リポジトリにテストの仕組みが無かったため、実装で用意したテスト（${command}）を実行し、受け入れはゴールガーディアンがタスクの目的から判定します。`,
+    noTestsReason: (reason: string) =>
+      `テストの仕組みが無いと判断した根拠（オーケストレーター）：${reason}`,
+    judgedByGoal: "テストなし（目的から判定）",
   },
   proposals: {
     title: "変更の申し出と判定",
@@ -189,6 +198,13 @@ const en: PartsMessages = {
     recurrence: "Recurrence of past comments",
     notRecurred: "Not recurring",
     recurred: "Recurring",
+    noTestsTitle: "Not verified by tests",
+    noTestsSkipped:
+      "There is no test command, so the implementation is not verified by tests. The Goal Guardian judges acceptance from the task's goal and requirements and the implemented code, diff, and description.",
+    noTestsAdded: (command) =>
+      `The repository had no tests, so the tests added by the implementation (${command}) were run, and the Goal Guardian judges acceptance from the task's goal.`,
+    noTestsReason: (reason) => `Why the repository has no tests (Orchestrator): ${reason}`,
+    judgedByGoal: "No tests (judged by the goal)",
   },
   proposals: {
     title: "Change requests and verdicts",
