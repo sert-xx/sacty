@@ -170,7 +170,7 @@ approvals and resumes in other tabs or the CLI, tasks the daemon picked up and s
 - While the tab is hidden, nothing is fetched. When you come back to the tab, the screen is brought up to date right away.
 - While the daemon cannot be reached, the screen stays as it is and shows "Cannot update right now" (the header shows "Updates paused"). What is shown is what
   was last fetched. When the daemon can be reached again, the screen is brought up to date again and the notice goes away.
-- The deliverable review and the project list (the intake status) are also brought up to date in the same way, without reloading. Comments you are
+- The Approval screen and the project list (the intake status) are also brought up to date in the same way, without reloading. Comments you are
   writing are not lost.
 - While a run is in progress, the run log adds new lines at the end automatically. The scroll position does not move while you are reading in the middle;
   the screen follows new lines only while you are looking at the bottom. If the list of the agent's original files cannot be read after the run has finished,

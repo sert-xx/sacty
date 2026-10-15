@@ -220,8 +220,10 @@ Code: `apps/daemon/src/activity.ts` (`purgeLegacyPrStepTasks`, `purgeLegacyTasks
   survives a pause and a restart).
 - The PR is opened even when the budget cap has been reached (it costs nothing and only waits for a person's approval; see "Budget, pause, resume, and cancel" below).
 - Pausing by a person: if a pause or cancel has been requested before the push or right before opening the PR, the task stops without opening the PR (for a pause, it keeps waiting to open the PR;
-  resuming opens it). If the request comes after opening the PR has started, the PR is finished and the task waits for the Implement approval; it is not paused (stopping without recording
-  the opened PR could open a second PR on resume). The pause operation then reports that the task was not paused because it is waiting for approval (`pause.reachedApproval`; 409).
+  resuming opens it). If the request comes after opening the PR has started, the PR is finished and recorded first (stopping without recording the opened PR could open a second PR on resume,
+  or leave a PR that cancelling can't close), and then the final state depends on the request.
+  - Pause: the task stays waiting for the Implement approval and is not paused. The pause operation reports that the task was not paused because it is waiting for approval (`pause.reachedApproval`; 409).
+  - Cancel: after opening the PR finishes, the recorded PR is closed and the task is cancelled (the cleanup in "Budget, pause, resume, and cancel" below).
 - Waiting for approval (approval by merging the PR, Request changes, and importing PR comments) works the same as for Requirements and Design ([Approval and request changes](approval.en.md)).
   Approving the implementation by merging the PR completes the task.
 
