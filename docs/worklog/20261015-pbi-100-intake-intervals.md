@@ -67,9 +67,10 @@ Issue・チケット・PR（ラベル・依頼）に分けて解いた（`github
 | [提案] 古い版へのロールバックの案内 | 案内は作らない（破壊的に変えるとステークホルダーが決めたため。PR #108 と同じ方針）。ADR に、切り戻しは対象外で、古い版に戻すと取り込みが動かないことを書いた |
 
 確かめたこと：修正をそれぞれ戻すと、足したテストが落ちることを確かめた（設定の読み取り・起点・記録の消去・取り込みの省略・エラーの種類・
-Off の文）。lint・typecheck・build・`tests/docs`（71 件）は通る。`npx vitest run` は 1459 件中 2 件が落ちるが、main（PR #110 で足した
-スキル）でも同じく落ちる `context-template.test.ts` の2件で、この PR では変えていない。動画は撮り直した。
+Off の文）。PR #110 だけを取り込んだ時点では `context-template.test.ts` の2件が落ちたが、PR #111 の後の main（69a44a5）を取り込むと
+すべて通った（この PR の変更とは関係しない）。lint・typecheck・build・`npx vitest run`（1459 件）・`tests/docs`（71 件）が通る。
+動画は撮り直した。
 
 ## 残したこと
 
-- main の `apps/daemon/src/context-template.test.ts` の2件の失敗（PR #110 由来。この PR の範囲外）
+- なし
