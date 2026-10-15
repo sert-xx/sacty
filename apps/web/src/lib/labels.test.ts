@@ -10,6 +10,7 @@ import {
   statusText as statusTextIn,
   statusTone,
   usesTestCommand,
+  verifiedByAddedTests,
 } from "./labels";
 import { runLogId } from "./session-log";
 
@@ -1302,5 +1303,28 @@ describe("テストの仕組みが無いタスクの作業履歴（PBI-94）", (
     expect(describeEvent(skipped)).toBe(
       "テストのコマンドが無いため、テストを実行せずに最終レビューへ（目的から判定）",
     );
+  });
+});
+
+describe("実装で用意したテストで検証したか（PBI-94・PR #105 レビュー指摘）", () => {
+  const ran = {
+    command: "make test",
+    exitCode: 0,
+    unmappedViewpoints: [],
+    passed: true,
+    output: "ok",
+    durationMs: 1,
+    at: "2026-10-15T00:00:00.000Z",
+  };
+  it("最新の検証でテストを実行したときだけ true にする", () => {
+    expect(verifiedByAddedTests(task({ noTestsReason: "無い", lastTests: ran }))).toBe(true);
+    expect(
+      verifiedByAddedTests(
+        task({ noTestsReason: "無い", testsSkippedAt: "2026-10-15T00:00:00.000Z" }),
+      ),
+    ).toBe(false);
+    expect(verifiedByAddedTests(task({ noTestsReason: "無い" }))).toBe(false);
+    // テストのコマンドがあるタスクは対象外
+    expect(verifiedByAddedTests(task({ lastTests: ran }))).toBe(false);
   });
 });

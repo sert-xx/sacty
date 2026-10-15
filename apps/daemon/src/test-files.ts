@@ -4,6 +4,18 @@ import { join } from "node:path";
 /** テストのファイルを探すとき、見るファイル・ディレクトリの数の上限（大きなリポジトリで時間をかけないため）。 */
 export const TEST_FILE_SCAN_LIMIT = 20_000;
 
+/**
+ * 文書のファイルの拡張子（大文字・小文字は問わない）。テストのディレクトリの中の説明（tests/README.md など）やテストについての文書は、
+ * テストのコードではないので当てない（PR #105 レビュー指摘）。
+ */
+const DOCUMENT_EXTENSIONS = new Set(["md", "markdown", "txt", "rst", "adoc", "asciidoc", "org"]);
+
+/** 文書のファイルか（拡張子で見る）。 */
+function isDocument(name: string): boolean {
+  const dot = name.lastIndexOf(".");
+  return dot > 0 && DOCUMENT_EXTENSIONS.has(name.slice(dot + 1).toLowerCase());
+}
+
 /** テストのファイルを置くディレクトリの名前（大文字・小文字は問わない）。 */
 const TEST_DIRS = new Set(["test", "tests", "__tests__"]);
 
@@ -14,6 +26,7 @@ const TEST_DIRS = new Set(["test", "tests", "__tests__"]);
  * `latest`・`contest`・`attest`・`inspect` のように、単語の一部に含むだけのものは当たらない。
  */
 export function looksLikeTestFile(name: string): boolean {
+  if (isDocument(name)) return false;
   const dot = name.lastIndexOf(".");
   const stem = dot > 0 ? name.slice(0, dot) : name;
   if (/^(test|tests)$/i.test(stem)) return true;
@@ -28,7 +41,8 @@ export function looksLikeTestFile(name: string): boolean {
 /**
  * 作業領域（対象リポジトリの起点のコード）から、テストのファイルらしいものを探す（PBI-94）。オーケストレーターが
  * 「テストの仕組みが無い」と答えたときに、黙ってテストなしで進めないための歯止め。`.git` は見ない。
- * 見つけたもの（最大 max 件、作業領域からの相対パス）と、すべてを見たか（complete。上限に達した・作業領域を読めないと false）を返す。
+ * 見つけたもの（最大 max 件、作業領域からの相対パス）と、すべてを見たか（complete。上限に達した・読めないディレクトリが
+ * あると false。見つけたものがあれば、その時点で返す）を返す。
  */
 export function findTestFiles(
   dir: string,
@@ -49,9 +63,8 @@ export function findTestFiles(
     try {
       entries = readdirSync(current.abs, { withFileTypes: true });
     } catch {
-      // 作業領域そのものを読めなければ、確かめられなかったとする（中のディレクトリは読めなくても続ける）
-      if (current.rel === "") return { files, complete: false };
-      continue;
+      // 読めないディレクトリがあれば、その中にテストがあるかもしれないので、確かめられなかったとする（PR #105 レビュー指摘）
+      return { files, complete: false };
     }
     entries.sort((a, b) => a.name.localeCompare(b.name));
     for (const entry of entries) {
@@ -68,7 +81,7 @@ export function findTestFiles(
         continue;
       }
       // シンボリックリンクはたどらない（名前だけ見る）
-      if (current.inTestDir || looksLikeTestFile(entry.name)) {
+      if ((current.inTestDir && !isDocument(entry.name)) || looksLikeTestFile(entry.name)) {
         files.push(rel);
         if (files.length >= max) return { files, complete: true };
       }

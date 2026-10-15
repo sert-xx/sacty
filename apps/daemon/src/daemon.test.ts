@@ -16638,4 +16638,35 @@ describe("テストの仕組みが無いリポジトリ（PBI-94）", () => {
     expect(tests.calls).toEqual([]);
     activity.close();
   });
+
+  it("実装のテストのコマンドの申告の形が正しくなければ、テストを飛ばさずに止め、再開すると実装をやり直す（PR #105 レビュー指摘）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service, tests } = makeService(
+      activity,
+      [
+        plan(),
+        out("# 前段の調査"),
+        out("# 要求要件"),
+        out(`# 実装の説明\n\n${block({ "sacty-test-command": { command: "" } })}`),
+        out(`# 実装の説明\n\n${block({ "sacty-test-command": { command: "make test" } })}`),
+        review(),
+      ],
+      { realPlanner: true, repos: new FilesRepos({ "README.md": "# app" }) },
+    );
+    const { id } = service.createTask({ projectId: "default", title: "テストを用意する" });
+    await drain(service);
+    service.approve(id, { step: "requirements", submission: 1 });
+    await drain(service);
+    const paused = taskOf(service, id);
+    expect(paused.status).toBe("paused");
+    expect(paused.pausedMessage).toEqual({ code: "implement.testCommandInvalid" });
+    expect(typesOf(service, id)).not.toContain("TestsSkipped");
+    expect(tests.calls).toEqual([]);
+    // 再開すると実装をやり直し、正しい申告のコマンドで検証する
+    service.resume(id, {});
+    await drain(service);
+    expect(tests.calls.map((c) => c.command)).toEqual(["make test"]);
+    expect(taskOf(service, id).gate).toEqual({ step: "pr", submission: 1 });
+    activity.close();
+  });
 });

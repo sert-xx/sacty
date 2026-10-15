@@ -3,7 +3,7 @@ import { cn } from "cn";
 import { CardSection } from "@/components/card-section";
 import { Markdown } from "@/components/markdown";
 import { getMessages } from "@/i18n/server";
-import { formatStamp } from "@/lib/labels";
+import { formatStamp, verifiedByAddedTests } from "@/lib/labels";
 
 const OK = "border-accent-line bg-accent text-accent-foreground";
 const NG = "border-warn-line bg-warn-soft text-warn";
@@ -35,6 +35,9 @@ export async function Implementation({ task }: { task: Task }) {
   const running = task.status === "running" && step?.state === "active";
   // テストの仕組みが無いタスク（PBI-94）は、テストではなく目的から判定することを出す
   const noTests = task.noTestsReason;
+  // 最新の検証で、実装が用意したテストを実行したか（飛ばしていなければ、テストの結果が最新の検証のもの）
+  const ranAddedTests = verifiedByAddedTests(task);
+  const noTestsTitle = ranAddedTests ? m.noTestsAddedTitle : m.noTestsTitle;
 
   return (
     <CardSection
@@ -54,12 +57,15 @@ export async function Implementation({ task }: { task: Task }) {
       {noTests && (
         <div
           role="note"
-          aria-label={m.noTestsTitle}
-          className="flex flex-col gap-1 rounded-lg border border-warn-line bg-warn-soft p-3.5 text-sm leading-6"
+          aria-label={noTestsTitle}
+          className={cn(
+            "flex flex-col gap-1 rounded-lg border p-3.5 text-sm leading-6",
+            ranAddedTests ? "border-accent-line" : "border-warn-line bg-warn-soft",
+          )}
         >
-          <p className="font-semibold text-warn">{m.noTestsTitle}</p>
+          <p className={cn("font-semibold", !ranAddedTests && "text-warn")}>{noTestsTitle}</p>
           <p className="break-words">
-            {tests && !task.testsSkippedAt ? m.noTestsAdded(tests.command) : m.noTestsSkipped}
+            {tests && ranAddedTests ? m.noTestsAdded(tests.command) : m.noTestsSkipped}
           </p>
           <p className="text-xs break-words text-muted-foreground">{m.noTestsReason(noTests)}</p>
         </div>

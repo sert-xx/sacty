@@ -94,6 +94,14 @@ export function usesTestCommand(task: Task): boolean {
 }
 
 /**
+ * テストの仕組みが無いタスク（PBI-94）の最新の検証が、実装で用意したテストを実行したものか。テストを飛ばした（TestsSkipped）なら
+ * false。画面の注記の見出しを、最新の検証の結果で切り替えるのに使う（PR #105 レビュー指摘）。
+ */
+export function verifiedByAddedTests(task: Task): boolean {
+  return Boolean(task.noTestsReason && task.lastTests && !task.testsSkippedAt);
+}
+
+/**
  * sactyやエージェントが作業中か（実行待ち・実行中・ゴールガーディアンの判定中）。
  * 画面はこのあいだ自動で更新する。判定中のタスクは待機（idle）のままなので、状態だけでは分からない。
  */

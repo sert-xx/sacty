@@ -44,6 +44,7 @@ const ja = {
     recurred: "再発している",
     /** テストの仕組みが無いタスク（PBI-94）。 */
     noTestsTitle: "テストで検証していません",
+    noTestsAddedTitle: "実装で用意したテストで検証しました",
     noTestsSkipped:
       "テストのコマンドが無いため、テストでは検証していません。受け入れは、ゴールガーディアンがタスクの目的・要求要件と、実装後のコード・差分・実装の説明から判定します。",
     noTestsAdded: (command: string) =>
@@ -199,6 +200,7 @@ const en: PartsMessages = {
     notRecurred: "Not recurring",
     recurred: "Recurring",
     noTestsTitle: "Not verified by tests",
+    noTestsAddedTitle: "Verified by the tests added in the implementation",
     noTestsSkipped:
       "There is no test command, so the implementation is not verified by tests. The Goal Guardian judges acceptance from the task's goal and requirements and the implemented code, diff, and description.",
     noTestsAdded: (command) =>

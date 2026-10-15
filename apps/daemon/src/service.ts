@@ -4005,6 +4005,35 @@ export class TaskService {
       changeableSteps(latest, step),
     );
     const { responses, testViewpoints, proposal, testMap, testCommand } = extracted;
+    // テストの仕組みが無いタスクで、テストのコマンドの申告の形が正しくなければ、申告が無いものとして進めない
+    // （用意したテストを飛ばして通らないように）。止めて、再開すると実装をやり直す（PR #105 レビュー指摘）
+    if (step === "implement" && latest.noTestsReason && extracted.testCommandInvalid) {
+      const failure = message("implement.testCommandInvalid");
+      this.append(latest, [
+        {
+          actor: "sacty",
+          event: {
+            type: "AgentRunFailed",
+            payload: {
+              runId,
+              step,
+              agentId: agent.id,
+              costUsd,
+              estimated,
+              usage: outcome.usage,
+              reason: "error",
+              message: failure,
+            },
+          },
+        },
+        {
+          actor: "sacty",
+          event: { type: "TaskPaused", payload: { reason: "error", message: failure } },
+        },
+      ]);
+      this.warnIfNeeded(this.mustGet(task.id));
+      return;
+    }
     // レビューの工程は、PR の差分に含まれる行へのコメントを取り出す（差分の外のものは本文に入れる）
     const review =
       step === "review" ? extractReviewComments(extracted.output, reviewDiff ?? "") : undefined;

@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -72,5 +72,38 @@ describe("テストのファイルらしいものを探す（PBI-94）", () => {
     put(["a.md", "b.md", "c.md"]);
     expect(findTestFiles(dir, { limit: 2 })).toEqual({ files: [], complete: false });
     expect(findTestFiles(join(dir, "missing"))).toEqual({ files: [], complete: false });
+  });
+});
+
+describe("テストのファイル探しの抜け（PR #105 レビュー指摘）", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "sacty-test-files-"));
+  });
+  afterEach(() => {
+    try {
+      chmodSync(join(dir, "locked"), 0o755);
+    } catch {}
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("中のディレクトリを読めなければ、確かめきれなかったとする", () => {
+    mkdirSync(join(dir, "locked"));
+    writeFileSync(join(dir, "locked", "pay_test.go"), "");
+    writeFileSync(join(dir, "README.md"), "");
+    chmodSync(join(dir, "locked"), 0o000);
+    expect(findTestFiles(dir)).toEqual({ files: [], complete: false });
+  });
+
+  it("文書のファイルは、テストのディレクトリの中でも・テストの名前でも当てない", () => {
+    for (const name of ["test-plan.md", "pay.test.txt", "Test.rst", "tests.adoc"]) {
+      expect(looksLikeTestFile(name), name).toBe(false);
+    }
+    mkdirSync(join(dir, "tests"));
+    writeFileSync(join(dir, "tests", "README.md"), "");
+    writeFileSync(join(dir, "tests", "NOTES.TXT"), "");
+    expect(findTestFiles(dir)).toEqual({ files: [], complete: true });
+    writeFileSync(join(dir, "tests", "run.sh"), "");
+    expect(findTestFiles(dir).files).toEqual(["tests/run.sh"]);
   });
 });
