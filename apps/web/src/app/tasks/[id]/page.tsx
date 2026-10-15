@@ -46,6 +46,7 @@ import {
   listTasks,
 } from "@/lib/daemon";
 import {
+  addedTestsResult,
   canControl,
   describeEvent,
   formatStamp,
@@ -54,7 +55,6 @@ import {
   statusText,
   usd,
   usesTestCommand,
-  verifiedByAddedTests,
 } from "@/lib/labels";
 import { runLogId } from "@/lib/session-log";
 import { subtaskSummary } from "@/lib/subtasks";
@@ -363,7 +363,7 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
                       <span className="font-mono">{task.testCommand}</span>
                     ) : task.noTestsReason ? (
                       // テストの仕組みが無いと判断したタスク（PBI-94）
-                      verifiedByAddedTests(task) && task.lastTests ? (
+                      addedTestsResult(task) && task.lastTests ? (
                         m.testCommandAdded(task.lastTests.command, task.noTestsReason)
                       ) : (
                         m.testCommandNone(task.noTestsReason)

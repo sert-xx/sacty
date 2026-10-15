@@ -45,6 +45,9 @@ const ja = {
     /** テストの仕組みが無いタスク（PBI-94）。 */
     noTestsTitle: "テストで検証していません",
     noTestsAddedTitle: "実装で用意したテストで検証しました",
+    noTestsAddedFailedTitle: "実装で用意したテストが通りませんでした",
+    noTestsAddedFailed: (command: string, exitCode: number) =>
+      `実装で用意したテスト（${command}）が通りませんでした（終了コード ${exitCode}）。テストが通るまで実装をやり直し、続けて通らなければ一時停止します。`,
     noTestsSkipped:
       "テストのコマンドが無いため、テストでは検証していません。受け入れは、ゴールガーディアンがタスクの目的・要求要件と、実装後のコード・差分・実装の説明から判定します。",
     noTestsAdded: (command: string) =>
@@ -201,6 +204,9 @@ const en: PartsMessages = {
     recurred: "Recurring",
     noTestsTitle: "Not verified by tests",
     noTestsAddedTitle: "Verified by the tests added in the implementation",
+    noTestsAddedFailedTitle: "The tests added in the implementation failed",
+    noTestsAddedFailed: (command, exitCode) =>
+      `The tests added in the implementation (${command}) failed (exit code ${exitCode}). The implementation is redone until they pass, and the task pauses if they keep failing.`,
     noTestsSkipped:
       "There is no test command, so the implementation is not verified by tests. The Goal Guardian judges acceptance from the task's goal and requirements and the implemented code, diff, and description.",
     noTestsAdded: (command) =>

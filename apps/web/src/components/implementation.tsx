@@ -3,7 +3,7 @@ import { cn } from "cn";
 import { CardSection } from "@/components/card-section";
 import { Markdown } from "@/components/markdown";
 import { getMessages } from "@/i18n/server";
-import { formatStamp, verifiedByAddedTests } from "@/lib/labels";
+import { addedTestsResult, formatStamp } from "@/lib/labels";
 
 const OK = "border-accent-line bg-accent text-accent-foreground";
 const NG = "border-warn-line bg-warn-soft text-warn";
@@ -36,8 +36,14 @@ export async function Implementation({ task }: { task: Task }) {
   // テストの仕組みが無いタスク（PBI-94）は、テストではなく目的から判定することを出す
   const noTests = task.noTestsReason;
   // 最新の検証で、実装が用意したテストを実行したか（飛ばしていなければ、テストの結果が最新の検証のもの）
-  const ranAddedTests = verifiedByAddedTests(task);
-  const noTestsTitle = ranAddedTests ? m.noTestsAddedTitle : m.noTestsTitle;
+  // 合格のときだけ「検証しました」と成功の色、不合格なら失敗をはっきり示す（PR #105 再レビュー指摘）
+  const added = addedTestsResult(task);
+  const noTestsTitle =
+    added === "passed"
+      ? m.noTestsAddedTitle
+      : added === "failed"
+        ? m.noTestsAddedFailedTitle
+        : m.noTestsTitle;
 
   return (
     <CardSection
@@ -60,12 +66,27 @@ export async function Implementation({ task }: { task: Task }) {
           aria-label={noTestsTitle}
           className={cn(
             "flex flex-col gap-1 rounded-lg border p-3.5 text-sm leading-6",
-            ranAddedTests ? "border-accent-line" : "border-warn-line bg-warn-soft",
+            added === "passed"
+              ? "border-accent-line"
+              : added === "failed"
+                ? "border-destructive bg-destructive/10"
+                : "border-warn-line bg-warn-soft",
           )}
         >
-          <p className={cn("font-semibold", !ranAddedTests && "text-warn")}>{noTestsTitle}</p>
+          <p
+            className={cn(
+              "font-semibold",
+              added === "failed" ? "text-destructive" : added !== "passed" && "text-warn",
+            )}
+          >
+            {noTestsTitle}
+          </p>
           <p className="break-words">
-            {tests && ranAddedTests ? m.noTestsAdded(tests.command) : m.noTestsSkipped}
+            {tests && added === "passed"
+              ? m.noTestsAdded(tests.command)
+              : tests && added === "failed"
+                ? m.noTestsAddedFailed(tests.command, tests.exitCode)
+                : m.noTestsSkipped}
           </p>
           <p className="text-xs break-words text-muted-foreground">{m.noTestsReason(noTests)}</p>
         </div>

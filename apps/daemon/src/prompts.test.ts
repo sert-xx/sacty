@@ -1220,6 +1220,26 @@ describe("テストの仕組みが無いタスクの指示と申告（PR #105 �
     expect(extractBlocks("# 説明", new Set())).not.toHaveProperty("testCommandInvalid");
   });
 
+  it("申告のブロックが JSON として読めなければ、正しくない申告として返す（PR #105 再レビュー指摘）", () => {
+    for (const broken of [
+      '# 説明\n\n```json\n{"sacty-test-command":{"command":"make test",}}\n```',
+      '# 説明\n\n```json\n{"sacty-test-command": {"command": "make test"}\n```',
+      "# 説明\n\n{'sacty-test-command': {'command': 'make test'}}",
+      // 読める申告の後に、読めない申告がある
+      '```json\n{"sacty-test-command":{"command":"make test"}}\n```\n\n```json\n{"sacty-test-command":{"command":"make check",}}\n```',
+    ]) {
+      const read = extractBlocks(broken, new Set());
+      expect(read.testCommandInvalid, broken).toBe(true);
+      expect(read).not.toHaveProperty("testCommand");
+    }
+    // 説明の文で見出しの名前に触れるだけなら、申告とはみなさない
+    const prose = extractBlocks(
+      "# 説明\n\nテストの仕組みは用意していないので sacty-test-command は付けない",
+      new Set(),
+    );
+    expect(prose).not.toHaveProperty("testCommandInvalid");
+  });
+
   it("テストの無い根拠は、指示の文に埋め込まず、JSON の文字列のデータとして渡す", () => {
     const t = task({ noTestsReason: INJECTED });
     for (const prompt of [buildFinalReviewPrompt(t, "diff"), buildPrompt(t, "implement")]) {

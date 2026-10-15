@@ -1,8 +1,8 @@
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { findTestFiles, looksLikeTestFile } from "./test-files.js";
+import { findTestFiles, looksLikeTestFile, noTestsStop } from "./test-files.js";
 
 describe("テストのファイルらしいものを探す（PBI-94）", () => {
   let dir: string;
@@ -70,8 +70,16 @@ describe("テストのファイルらしいものを探す（PBI-94）", () => {
 
   it("上限まで見ても見つからない・作業領域を読めないなら、確かめきれなかったとする", () => {
     put(["a.md", "b.md", "c.md"]);
-    expect(findTestFiles(dir, { limit: 2 })).toEqual({ files: [], complete: false });
-    expect(findTestFiles(join(dir, "missing"))).toEqual({ files: [], complete: false });
+    expect(findTestFiles(dir, { limit: 2 })).toEqual({
+      files: [],
+      complete: false,
+      incomplete: { reason: "limit", limit: 2 },
+    });
+    expect(findTestFiles(join(dir, "missing"))).toEqual({
+      files: [],
+      complete: false,
+      incomplete: { reason: "unreadable", path: ".", detail: "ENOENT" },
+    });
   });
 });
 
@@ -81,18 +89,35 @@ describe("テストのファイル探しの抜け（PR #105 レビュー指摘�
     dir = mkdtempSync(join(tmpdir(), "sacty-test-files-"));
   });
   afterEach(() => {
-    try {
-      chmodSync(join(dir, "locked"), 0o755);
-    } catch {}
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it("中のディレクトリを読めなければ、確かめきれなかったとする", () => {
-    mkdirSync(join(dir, "locked"));
-    writeFileSync(join(dir, "locked", "pay_test.go"), "");
+  it("中のディレクトリを読めなければ、どこが・なぜ読めなかったかを返し、確かめきれなかったとする", () => {
+    mkdirSync(join(dir, "src", "locked"), { recursive: true });
+    writeFileSync(join(dir, "src", "locked", "pay_test.go"), "");
     writeFileSync(join(dir, "README.md"), "");
-    chmodSync(join(dir, "locked"), 0o000);
-    expect(findTestFiles(dir)).toEqual({ files: [], complete: false });
+    // 実行するユーザーの権限に左右されないよう、列挙の失敗を差し替えて作る（PR #105 再レビュー指摘）
+    const readDir = (path: string) => {
+      if (path === join(dir, "src", "locked")) {
+        throw Object.assign(new Error("permission denied"), { code: "EACCES" });
+      }
+      return readdirSync(path, { withFileTypes: true });
+    };
+    expect(findTestFiles(dir, { readDir })).toEqual({
+      files: [],
+      complete: false,
+      incomplete: { reason: "unreadable", path: "src/locked", detail: "EACCES" },
+    });
+    // コードの無いエラーは、エラーの文を理由にする
+    const noCode = (path: string) => {
+      if (path === join(dir, "src")) throw new Error("I/O error");
+      return readdirSync(path, { withFileTypes: true });
+    };
+    expect(findTestFiles(dir, { readDir: noCode }).incomplete).toEqual({
+      reason: "unreadable",
+      path: "src",
+      detail: "I/O error",
+    });
   });
 
   it("文書のファイルは、テストのディレクトリの中でも・テストの名前でも当てない", () => {
@@ -105,5 +130,32 @@ describe("テストのファイル探しの抜け（PR #105 レビュー指摘�
     expect(findTestFiles(dir)).toEqual({ files: [], complete: true });
     writeFileSync(join(dir, "tests", "run.sh"), "");
     expect(findTestFiles(dir).files).toEqual(["tests/run.sh"]);
+  });
+});
+
+describe("止める理由の文言（PR #105 再レビュー指摘）", () => {
+  it("見つかった・上限に達した・読めないディレクトリがあった、で文言を分け、問題が無ければ止めない", () => {
+    expect(noTestsStop("無い", { files: [], complete: true })).toBeUndefined();
+    expect(noTestsStop("無い", { files: ["tests/a.py"], complete: false })).toEqual({
+      code: "orchestrator.noTestsContradicted",
+      params: { reason: "無い", files: "tests/a.py" },
+    });
+    expect(
+      noTestsStop("無い", {
+        files: [],
+        complete: false,
+        incomplete: { reason: "limit", limit: 20000 },
+      }),
+    ).toEqual({ code: "orchestrator.noTestsUncertain", params: { reason: "無い" } });
+    expect(
+      noTestsStop("無い", {
+        files: [],
+        complete: false,
+        incomplete: { reason: "unreadable", path: "src/locked", detail: "EACCES" },
+      }),
+    ).toEqual({
+      code: "orchestrator.noTestsUnreadable",
+      params: { reason: "無い", path: "src/locked", detail: "EACCES" },
+    });
   });
 });

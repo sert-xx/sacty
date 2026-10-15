@@ -248,7 +248,7 @@ import {
   sharedComposeRunDir,
 } from "./shared-compose.js";
 import { templateTask } from "./task-templates.js";
-import { findTestFiles } from "./test-files.js";
+import { findTestFiles, noTestsStop } from "./test-files.js";
 import { type FoundTicket, type TicketClient, ticketErrorText } from "./tickets.js";
 
 /**
@@ -4653,17 +4653,8 @@ export class TaskService {
       return { stop: message("orchestrator.bugfixNeedsTests", { reason }) };
     }
     // 工程を選ぶ前なので、作業領域は起点のコードのまま
-    const found = findTestFiles(this.repoDir(task));
-    if (found.files.length > 0) {
-      return {
-        stop: message("orchestrator.noTestsContradicted", {
-          reason,
-          files: found.files.join(", "),
-        }),
-      };
-    }
-    if (!found.complete) return { stop: message("orchestrator.noTestsUncertain", { reason }) };
-    return {};
+    const stop = noTestsStop(reason, findTestFiles(this.repoDir(task)));
+    return stop ? { stop } : {};
   }
 
   /** タスクの対象リポジトリ（リポジトリの URL）。PR を作るリポジトリ。 */

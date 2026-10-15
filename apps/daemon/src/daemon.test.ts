@@ -16648,6 +16648,8 @@ describe("テストの仕組みが無いリポジトリ（PBI-94）", () => {
         out("# 前段の調査"),
         out("# 要求要件"),
         out(`# 実装の説明\n\n${block({ "sacty-test-command": { command: "" } })}`),
+        // JSON として読めない申告も、テストを飛ばさずに止める（PR #105 再レビュー指摘）
+        out('# 実装の説明\n\n```json\n{"sacty-test-command":{"command":"make test",}}\n```'),
         out(`# 実装の説明\n\n${block({ "sacty-test-command": { command: "make test" } })}`),
         review(),
       ],
@@ -16662,7 +16664,13 @@ describe("テストの仕組みが無いリポジトリ（PBI-94）", () => {
     expect(paused.pausedMessage).toEqual({ code: "implement.testCommandInvalid" });
     expect(typesOf(service, id)).not.toContain("TestsSkipped");
     expect(tests.calls).toEqual([]);
-    // 再開すると実装をやり直し、正しい申告のコマンドで検証する
+    // 再開すると実装をやり直す。読めない申告でも止まる
+    service.resume(id, {});
+    await drain(service);
+    expect(taskOf(service, id).pausedMessage).toEqual({ code: "implement.testCommandInvalid" });
+    expect(typesOf(service, id)).not.toContain("TestsSkipped");
+    expect(tests.calls).toEqual([]);
+    // もう一度再開すると、正しい申告のコマンドで検証する
     service.resume(id, {});
     await drain(service);
     expect(tests.calls.map((c) => c.command)).toEqual(["make test"]);

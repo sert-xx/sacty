@@ -160,14 +160,18 @@
     中のファイルと、拡張子を除いた名前が `test`・`tests`・`test_*`・`test-*`・`*_test`・`*-test`・`*.test`・`*_spec`・`*.spec`
     （と複数形）・`*Test`・`*Tests`・`Test*`（キャメルケース）のファイル（`looksLikeTestFile`）。文書のファイル（拡張子が `md`・
     `markdown`・`txt`・`rst`・`adoc`・`asciidoc`・`org`）は、テストのディレクトリの中でも当てない。
-  - 20,000 件（`TEST_FILE_SCAN_LIMIT`）まで見ても終わらない・読めないディレクトリがある（作業領域そのものを含む）ときも止める
-    （`orchestrator.noTestsUncertain`。テストのファイルを先に見つけていれば `noTestsContradicted`）。
+  - 20,000 件（`TEST_FILE_SCAN_LIMIT`）まで見ても終わらないときも止める（`orchestrator.noTestsUncertain`）。
+  - 読めないディレクトリがある（作業領域そのものを含む）ときも止める（`orchestrator.noTestsUnreadable`。読めなかったディレクトリの
+    作業領域からの相対パス（作業領域そのものなら `.`）と、エラーのコード（無ければエラーの文）を示す）。
+  - どちらも、テストのファイルを先に見つけていれば `noTestsContradicted` にする。文言は `noTestsStop` が選ぶ。
   - 止めるときは、`noTestsReason` を持たない `StepsChosen` と、理由の `TaskPaused` を記録する。再開しても、テストのコマンドを
     決められなかったタスクと同じく、検証（再現の確かめ）で止まる。
 - 実装の工程の指示は、テストを書かせる代わりに、観点ごとにどう満たしたかを実装の説明に書かせる。タスクがテストの仕組みを用意する
   ことを求めていて、実装が用意したときだけ、そのコマンドを見出し `sacty-test-command` で申告させる（`{"command": "…"}`。
   1〜1000 文字）。申告は実装の `AgentRunCompleted` の `testCommand` に記録し、提出ごとに読み直す（`Task.addedTestCommand`）。
-  見出しのブロックがあるのに形が正しくない（`command` が文字列でない・空・1000 文字を超える、ブロックがオブジェクトでない）ときは、
+  見出しのブロックがあるのに形が正しくない（`command` が文字列でない・空・1000 文字を超える、ブロックがオブジェクトでない）とき、
+  または JSON として読めない申告がある（読めた JSON を取り除いた本文に `"sacty-test-command":` のキーが残る。読める申告の後にあっても
+  同じ）ときは、
   申告が無いものとして扱わず、`AgentRunFailed` と `TaskPaused`（`implement.testCommandInvalid`）を記録して止める。再開すると実装を
   やり直す。
 - オーケストレーターの根拠（`noTestsReason`）は対象リポジトリの文書の影響を受けるので、実装・最終レビューの指示の文には埋め込まず、
@@ -185,12 +189,12 @@
     説明はコードと差分で裏付けられることだけを根拠にすることを指示する。観点（設計のテスト観点か `REQ`）、合格・不合格、
     `MAX_VERIFY_ATTEMPTS` のやり直しの上限は、テストのあるタスクと同じ。
 - 示し方：タスクの画面の工程の欄（テストのコマンド：なし・根拠。実装で用意したテストで検証したなら、そのコマンド）、実装の成果物（タスクの画面と成果物チェックの承認の画面）の
-  注記（最新の検証がテストを飛ばしたなら「テストで検証していません」、実装で用意したテストを実行したなら「実装で用意したテストで
-  検証しました」。`verifiedByAddedTests`）、PR の本文のテストの行（`テスト：テストのコマンドが無いため、テストでは検証していません。
+  注記（最新の検証がテストを飛ばしたなら「テストで検証していません」、実装で用意したテストを実行して合格なら「実装で用意したテストで
+  検証しました」（成功の色）、不合格なら「実装で用意したテストが通りませんでした」と終了コード（失敗の色）。`addedTestsResult`）、PR の本文のテストの行（`テスト：テストのコマンドが無いため、テストでは検証していません。
   目的から判定しました。`、実装で用意したテストなら `（実装で用意したテスト）`）と根拠の行、作業履歴（`StepsChosen`・`TestsSkipped`）。
   成果物チェックの人の承認は、テストのあるタスクと同じく要る。
 
-コード: `apps/daemon/src/service.ts`（`checkNoTests`・`runNextInner`・`verify`）、`apps/daemon/src/test-files.ts`（`findTestFiles`・`looksLikeTestFile`・`TEST_FILE_SCAN_LIMIT`）、`apps/daemon/src/prompts.ts`（`buildOrchestratorPrompt`・`extractStepPlan`・`buildPrompt`・`extractBlocks`・`buildFinalReviewPrompt`・`noTestsReasonLines`・`resultTableLines`）、`packages/core/src/events.ts`（`StepsChosen`・`AgentRunCompleted`・`TestsSkipped`）、`packages/core/src/projection.ts`（`noTestsReason`・`addedTestCommand`・`testsSkippedAt`）、`apps/web/src/components/implementation.tsx`、`apps/web/src/lib/labels.ts`（`verifiedByAddedTests`）
+コード: `apps/daemon/src/service.ts`（`checkNoTests`・`runNextInner`・`verify`）、`apps/daemon/src/test-files.ts`（`findTestFiles`・`looksLikeTestFile`・`noTestsStop`・`TEST_FILE_SCAN_LIMIT`）、`apps/daemon/src/prompts.ts`（`buildOrchestratorPrompt`・`extractStepPlan`・`buildPrompt`・`extractBlocks`・`buildFinalReviewPrompt`・`noTestsReasonLines`・`resultTableLines`）、`packages/core/src/events.ts`（`StepsChosen`・`AgentRunCompleted`・`TestsSkipped`）、`packages/core/src/projection.ts`（`noTestsReason`・`addedTestCommand`・`testsSkippedAt`）、`apps/web/src/components/implementation.tsx`、`apps/web/src/lib/labels.ts`（`addedTestsResult`）
 
 ## ゴールガーディアン
 

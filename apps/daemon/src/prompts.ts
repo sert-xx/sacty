@@ -125,6 +125,8 @@ export function extractReproduction(output: string): { output: string; tests: st
 const TEST_MAP_HEADING = "sacty-test-map";
 /** テストの仕組みが無いタスクで、実装がテストの仕組みを用意したときに申告するテストのコマンド（PBI-94）。 */
 const TEST_COMMAND_HEADING = "sacty-test-command";
+/** 本文に残った申告の見出しのキー（JSON として読めなかった申告を見分ける。PR #105 再レビュー指摘）。 */
+const TEST_COMMAND_KEY = /["']sacty-test-command["']\s*:/;
 const REVIEW_COMMENTS_HEADING = "sacty-review-comments";
 
 /** レビューの評価（直すべき指摘があるか）のブロックの見出し（PBI-88）。 */
@@ -849,7 +851,8 @@ export type Extracted = {
   /** 実装の工程が、テストの仕組みを用意して申告したテストのコマンド（PBI-94。1〜1000 文字）。 */
   testCommand?: string;
   /**
-   * 見出し sacty-test-command のブロックはあるが、command が文字列でない・空・1000 文字を超える（PR #105 レビュー指摘）。
+   * 見出し sacty-test-command のブロックはあるが、command が文字列でない・空・1000 文字を超える（PR #105 レビュー指摘）、
+   * または JSON として読めない（構文の誤り。本文に "sacty-test-command": が残る。PR #105 再レビュー指摘）。
    * 申告が無いものとして扱わず、呼び出し側が止める。
    */
   testCommandInvalid?: boolean;
@@ -934,13 +937,17 @@ export function extractBlocks(
     // 読んだ JSON は、表示用の本文から取り除く
     if (read) used.push(candidate);
   }
+  const rest = withoutCandidates(output, used).trim();
+  // 読めた JSON を取り除いた後の本文に、申告の見出しのキーが残っていれば、構文の誤りなどで読めなかった申告がある。
+  // 黙ってテストを飛ばさないよう、正しくない申告として扱う（PR #105 再レビュー指摘）
+  if (TEST_COMMAND_KEY.test(rest)) testCommandInvalid = true;
   return {
-    output: withoutCandidates(output, used).trim(),
+    output: rest,
     responses: responses ?? [],
     testViewpoints: testViewpoints ?? [],
     proposal,
     testMap: testMap ?? [],
-    ...(testCommand ? { testCommand } : {}),
+    ...(testCommand && !testCommandInvalid ? { testCommand } : {}),
     ...(testCommandInvalid ? { testCommandInvalid } : {}),
   };
 }

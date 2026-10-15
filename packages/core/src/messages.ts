@@ -214,6 +214,11 @@ const PARAMS = {
   "orchestrator.testCommandUnknown": null,
   "orchestrator.noTestsContradicted": z.object({ reason: z.string(), files: z.string() }),
   "orchestrator.noTestsUncertain": z.object({ reason: z.string() }),
+  "orchestrator.noTestsUnreadable": z.object({
+    reason: z.string(),
+    path: z.string(),
+    detail: z.string(),
+  }),
   "orchestrator.bugfixNeedsTests": z.object({ reason: z.string() }),
   "implement.testCommandInvalid": null,
   "orchestrator.failed": z.object({ detail: TextParam }),
@@ -746,10 +751,12 @@ const ja: MessageDictionary = {
     `オーケストレーターは、対象リポジトリにテストの仕組みが無いと判断しました（${reason}）が、テストのように見えるファイルがあります（${files}）。テストのコマンドを決められなかったものとして扱い、実装を検証できないので止めます。タスクの内容にテストの実行方法を書いて、作り直してください。`,
   "orchestrator.noTestsUncertain": ({ reason }) =>
     `オーケストレーターは、対象リポジトリにテストの仕組みが無いと判断しました（${reason}）が、ファイルが多く、テストのファイルが無いことを確かめきれませんでした。テストのコマンドを決められなかったものとして扱い、実装を検証できないので止めます。タスクの内容にテストの実行方法を書いて、作り直してください。`,
+  "orchestrator.noTestsUnreadable": ({ reason, path, detail }) =>
+    `オーケストレーターは、対象リポジトリにテストの仕組みが無いと判断しました（${reason}）が、作業領域のディレクトリ（${path}）を読めず（${detail}）、テストのファイルが無いことを確かめきれませんでした。テストのコマンドを決められなかったものとして扱い、止めます。sacty を動かしているユーザーがそのディレクトリを読めるか（権限・ディスクの状態）を確かめてから、タスクを作り直してください（再開しても、テストなしでは進めません）。`,
   "orchestrator.bugfixNeedsTests": ({ reason }) =>
     `オーケストレーターは、対象リポジトリにテストの仕組みが無いと判断しました（${reason}）が、不具合の修正（再現 → 実装）を選びました。再現はテストで確かめるので、テストのコマンドが要ります。実装を検証できないので止めます。タスクの内容にテストの実行方法を書いて、作り直してください。`,
   "implement.testCommandInvalid":
-    "実装の工程が申告したテストのコマンド（sacty-test-command）の形が正しくありません（command が空・文字列でない・1000 文字を超える）。用意したテストを飛ばさないように止めます。再開すると、実装をやり直します。",
+    "実装の工程が申告したテストのコマンド（sacty-test-command）の形が正しくありません（JSON として読めない、または command が空・文字列でない・1000 文字を超える）。用意したテストを飛ばさないように止めます。再開すると、実装をやり直します。",
   "orchestrator.baseBranchUnavailable": ({ branch, detail }, text) =>
     `オーケストレーターが選んだベースブランチ（${branch}）を用意できなかったため、既定のブランチで進めます（${text(detail)}）。`,
   "review.pullRequestMissing": ({ repo }) =>
@@ -1170,10 +1177,12 @@ const en: MessageDictionary = {
     `The Orchestrator judged that the target repository has no tests (${reason}), but some files look like tests (${files}). This is treated as an undetermined test command, so the implementation cannot be verified. Describe how to run the tests in the task and create it again.`,
   "orchestrator.noTestsUncertain": ({ reason }) =>
     `The Orchestrator judged that the target repository has no tests (${reason}), but the repository has too many files to confirm that there are no test files. This is treated as an undetermined test command, so the implementation cannot be verified. Describe how to run the tests in the task and create it again.`,
+  "orchestrator.noTestsUnreadable": ({ reason, path, detail }) =>
+    `The Orchestrator judged that the target repository has no tests (${reason}), but the workspace directory (${path}) could not be read (${detail}), so it could not be confirmed that there are no test files. This is treated as an undetermined test command. Check that the user running sacty can read that directory (permissions, disk state), then create the task again (resuming does not proceed without tests).`,
   "orchestrator.bugfixNeedsTests": ({ reason }) =>
     `The Orchestrator judged that the target repository has no tests (${reason}), but chose a bug fix (reproduce → implement). A reproduction is confirmed by tests, so a test command is required. The implementation cannot be verified. Describe how to run the tests in the task and create it again.`,
   "implement.testCommandInvalid":
-    "The test command the implementation reported (sacty-test-command) is malformed (command is empty, not a string, or longer than 1000 characters). Stopping so that the added tests are not skipped. Resume to run the implementation again.",
+    "The test command the implementation reported (sacty-test-command) is malformed (not readable as JSON, or command is empty, not a string, or longer than 1000 characters). Stopping so that the added tests are not skipped. Resume to run the implementation again.",
   "orchestrator.baseBranchUnavailable": ({ branch, detail }, text) =>
     `Could not prepare the base branch the Orchestrator chose (${branch}), so the default branch is used (${text(detail)}).`,
   "review.pullRequestMissing": ({ repo }) =>

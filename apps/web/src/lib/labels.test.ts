@@ -2,6 +2,7 @@ import type { ActivityEvent, Task, TaskProposal } from "@sacty/core";
 import { describe, expect, it } from "vitest";
 import { labels } from "@/i18n/messages/labels";
 import {
+  addedTestsResult,
   canControl,
   describeEvent as describeIn,
   isWorking,
@@ -10,7 +11,6 @@ import {
   statusText as statusTextIn,
   statusTone,
   usesTestCommand,
-  verifiedByAddedTests,
 } from "./labels";
 import { runLogId } from "./session-log";
 
@@ -1306,25 +1306,25 @@ describe("テストの仕組みが無いタスクの作業履歴（PBI-94）", (
   });
 });
 
-describe("実装で用意したテストで検証したか（PBI-94・PR #105 レビュー指摘）", () => {
-  const ran = {
+describe("実装で用意したテストの結果（PBI-94・PR #105 レビュー指摘）", () => {
+  const ran = (passed: boolean) => ({
     command: "make test",
-    exitCode: 0,
+    exitCode: passed ? 0 : 1,
     unmappedViewpoints: [],
-    passed: true,
-    output: "ok",
+    passed,
+    output: "",
     durationMs: 1,
     at: "2026-10-15T00:00:00.000Z",
-  };
-  it("最新の検証でテストを実行したときだけ true にする", () => {
-    expect(verifiedByAddedTests(task({ noTestsReason: "無い", lastTests: ran }))).toBe(true);
+  });
+  it("最新の検証でテストを実行したときだけ、合格・不合格を返す", () => {
+    expect(addedTestsResult(task({ noTestsReason: "無い", lastTests: ran(true) }))).toBe("passed");
+    // 不合格を「検証しました」と見せない（PR #105 再レビュー指摘）
+    expect(addedTestsResult(task({ noTestsReason: "無い", lastTests: ran(false) }))).toBe("failed");
     expect(
-      verifiedByAddedTests(
-        task({ noTestsReason: "無い", testsSkippedAt: "2026-10-15T00:00:00.000Z" }),
-      ),
-    ).toBe(false);
-    expect(verifiedByAddedTests(task({ noTestsReason: "無い" }))).toBe(false);
+      addedTestsResult(task({ noTestsReason: "無い", testsSkippedAt: "2026-10-15T00:00:00.000Z" })),
+    ).toBeUndefined();
+    expect(addedTestsResult(task({ noTestsReason: "無い" }))).toBeUndefined();
     // テストのコマンドがあるタスクは対象外
-    expect(verifiedByAddedTests(task({ lastTests: ran }))).toBe(false);
+    expect(addedTestsResult(task({ lastTests: ran(true) }))).toBeUndefined();
   });
 });

@@ -94,11 +94,13 @@ export function usesTestCommand(task: Task): boolean {
 }
 
 /**
- * テストの仕組みが無いタスク（PBI-94）の最新の検証が、実装で用意したテストを実行したものか。テストを飛ばした（TestsSkipped）なら
- * false。画面の注記の見出しを、最新の検証の結果で切り替えるのに使う（PR #105 レビュー指摘）。
+ * テストの仕組みが無いタスク（PBI-94）の最新の検証で、実装で用意したテストを実行した結果（passed・failed）。テストを飛ばした
+ * （TestsSkipped）・まだ検証していない・テストのコマンドがあるタスクなら undefined。画面の注記の見出しと色を、最新の検証の
+ * 結果で切り替えるのに使う（PR #105 レビュー指摘・再レビュー指摘）。
  */
-export function verifiedByAddedTests(task: Task): boolean {
-  return Boolean(task.noTestsReason && task.lastTests && !task.testsSkippedAt);
+export function addedTestsResult(task: Task): "passed" | "failed" | undefined {
+  if (!task.noTestsReason || !task.lastTests || task.testsSkippedAt) return undefined;
+  return task.lastTests.passed ? "passed" : "failed";
 }
 
 /**
