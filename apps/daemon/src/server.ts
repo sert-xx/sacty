@@ -395,8 +395,10 @@ export function createApp(
 
   // 秘密情報を取り出し直す（PBI-48）。値は返さない
   app.post("/api/secrets/prefetch", async (c) => {
-    const { total, fetched, problems } = await service.prefetchSecrets({ fresh: true });
-    return c.json({ total, fetched, problems });
+    const { total, fetched, unreadContexts, problems } = await service.prefetchSecrets({
+      fresh: true,
+    });
+    return c.json({ total, fetched, unreadContexts, problems });
   });
 
   app.post("/api/tasks/:id/resume", async (c) => {

@@ -402,6 +402,8 @@ export async function prefetchSecrets(): Promise<{
   total: number;
   /** 取り出せた数（PBI-107。problems には、コンテキストを読めなかった理由も入る）。 */
   fetched: number;
+  /** 読めなかったプロジェクトのコンテキストの数（PBI-107。その中の秘密情報は total に入らない）。 */
+  unreadContexts: number;
   problems: DaemonText[];
 }> {
   const res = await ensureOk(
@@ -411,7 +413,13 @@ export async function prefetchSecrets(): Promise<{
       body: "{}",
     }),
   );
-  return (await res.json()) as { total: number; fetched: number; problems: DaemonText[] };
+  const json = (await res.json()) as {
+    total: number;
+    fetched: number;
+    unreadContexts?: number;
+    problems: DaemonText[];
+  };
+  return { ...json, unreadContexts: json.unreadContexts ?? 0 };
 }
 
 export async function runIntake(): Promise<OpResult> {

@@ -382,6 +382,7 @@ export type PrefetchSecretsState = {
   message?: string;
   total?: number;
   fetched?: number;
+  unreadContexts?: number;
   problems?: string[];
 };
 
@@ -389,9 +390,14 @@ export type PrefetchSecretsState = {
 export async function prefetchSecretsAction(): Promise<PrefetchSecretsState> {
   const messages = await getMessages();
   try {
-    const { total, fetched, problems } = await prefetchSecrets();
+    const { total, fetched, unreadContexts, problems } = await prefetchSecrets();
     refresh();
-    return { total, fetched, problems: problems.map((p) => messages.labels.text(p)) };
+    return {
+      total,
+      fetched,
+      unreadContexts,
+      problems: problems.map((p) => messages.labels.text(p)),
+    };
   } catch {
     return { message: messages.common.action.daemonDown };
   }

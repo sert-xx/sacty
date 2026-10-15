@@ -6868,9 +6868,33 @@ export class TaskService {
 
   /**
    * 取り出せなかった秘密情報（起動のとき・取り出し直したとき。PBI-48）と、読めなかったプロジェクトのコンテキスト
-   * （PBI-107）。取り出し直すと置き換える。projectId のあるものは、そのプロジェクトを保存し直すと置き換える。
+   * （PBI-107）。projectId のあるものは、そのプロジェクトの警告（保存し直すと置き換える）。
    */
   private secretProblems: { text: DaemonText; projectId?: string }[] = [];
+
+  /**
+   * 秘密情報の取り出しの世代（PBI-107）。取り出しを始めるたびに1つ進め、全体（設定の秘密情報）とプロジェクトごとに、
+   * 最後に始めた取り出しの世代を持つ。起動・取り出し直し・保存のどの経路でも、終わったときに、自分より後に始まった
+   * 取り出しがある範囲の警告は書き換えない（古い結果で、新しい結果を上書きしない）。
+   */
+  private secretRound = 0;
+  private globalSecretRound = 0;
+  private readonly projectSecretRounds = new Map<string, number>();
+
+  /** 取り出しの結果の警告を、その世代が最新の範囲だけ置き換える（PBI-107）。 */
+  private applySecretProblems(
+    round: number,
+    problems: readonly { text: DaemonText; projectId?: string }[],
+  ): void {
+    const latest = (p: { projectId?: string }) =>
+      p.projectId === undefined
+        ? this.globalSecretRound === round
+        : this.projectSecretRounds.get(p.projectId) === round;
+    this.secretProblems = [
+      ...this.secretProblems.filter((p) => !latest(p)),
+      ...problems.filter(latest),
+    ];
+  }
 
   /**
    * 設定とプロジェクトで使う秘密情報を、まとめて取り出す（sacty up の起動時。PBI-48）。1Password の認証を1回にし、
@@ -6882,12 +6906,19 @@ export class TaskService {
     total: number;
     /** 取り出せた参照の数（PBI-107。problems には、コンテキストを読めなかった理由も入るため、別に数える）。 */
     fetched: number;
+    /** 読めなかったプロジェクトのコンテキストの数（PBI-107。その中の秘密情報は total に入らない）。 */
+    unreadContexts: number;
     problems: DaemonText[];
   }> {
     const config = this.deps.config();
     const secrets = this.deps.secrets as SecretStore & Partial<PrefetchingSecretStore>;
-    if (!config.ok || !secrets.prefetch) return { total: 0, fetched: 0, problems: [] };
+    if (!config.ok || !secrets.prefetch) {
+      return { total: 0, fetched: 0, unreadContexts: 0, problems: [] };
+    }
     const projects = this.deps.projects.all();
+    const round = ++this.secretRound;
+    this.globalSecretRound = round;
+    for (const project of projects) this.projectSecretRounds.set(project.id, round);
     // コンテキストを読み終えてから、ほかの秘密情報と一緒に1回で取り出す（1Password の承認を1回にする。PBI-107）
     const context = await this.contextSecretUsesOf(projects, config.config);
     const uses = uniqueUses([...secretUses(config.config, projects), ...context.uses]);
@@ -6895,7 +6926,7 @@ export class TaskService {
       uses.map((u) => u.ref),
       options,
     );
-    this.secretProblems = [
+    const problems = [
       ...context.problems,
       ...failures.map(({ ref, error }) => {
         const use = uses.find((u) => u.ref === ref);
@@ -6905,10 +6936,12 @@ export class TaskService {
         };
       }),
     ];
+    this.applySecretProblems(round, problems);
     return {
       total: uses.length,
       fetched: uses.length - failures.length,
-      problems: this.secretProblems.map((p) => p.text),
+      unreadContexts: context.problems.length,
+      problems: problems.map((p) => p.text),
     };
   }
 
@@ -6922,9 +6955,9 @@ export class TaskService {
     const secrets = this.deps.secrets as SecretStore & Partial<PrefetchingSecretStore>;
     const project = this.deps.projects.get(id);
     if (!config.ok || !secrets.prefetch || !project) return [];
-    // 続けて保存したときは、最後の保存の結果だけを警告にする（先の取り出しが後から終わっても、上書きしない）
-    const seq = (this.projectPrefetchSeq.get(id) ?? 0) + 1;
-    this.projectPrefetchSeq.set(id, seq);
+    // 起動・取り出し直し・ほかの保存と重なっても、最後に始めた取り出しの結果だけを、このプロジェクトの警告にする
+    const round = ++this.secretRound;
+    this.projectSecretRounds.set(id, round);
     const context = await this.contextSecretUsesOf([project], config.config);
     const uses = uniqueUses([...projectSecretUses(project), ...context.uses]);
     const failures = await secrets.prefetch(uses.map((u) => u.ref));
@@ -6938,14 +6971,9 @@ export class TaskService {
         projectId: id,
       })),
     ];
-    if (this.projectPrefetchSeq.get(id) === seq) {
-      this.secretProblems = [...this.secretProblems.filter((p) => p.projectId !== id), ...problems];
-    }
+    this.applySecretProblems(round, problems);
     return problems.map((p) => p.text);
   }
-
-  /** プロジェクトごとの、保存のときの取り出しの番号（最後のものだけを警告にする。PBI-107）。 */
-  private readonly projectPrefetchSeq = new Map<string, number>();
 
   /**
    * プロジェクトのコンテキスト（継承の鎖の上の層も含めて合成したもの）で使う秘密情報の参照を、コンテキストを取得して
@@ -6966,9 +6994,12 @@ export class TaskService {
     const limitMs = this.deps.contextSecretsTimeoutMs ?? CONTEXT_SECRETS_TIMEOUT_MS;
     let expired = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    // 上限を過ぎたら、進んでいる取得も止める（git の子プロセスを止め、取得したリポジトリを消す）
+    const stop = new AbortController();
     const deadline = new Promise<"expired">((resolve) => {
       timer = setTimeout(() => {
         expired = true;
+        stop.abort();
         resolve("expired");
       }, limitMs);
       timer.unref?.();
@@ -7002,8 +7033,9 @@ export class TaskService {
           root,
           (repo) => this.gitAuth({ projectId: project.id }, repo, usedSecrets),
           this.deps.defaultContext,
+          stop.signal,
         );
-        // 時間切れの後に失敗しても、知らせない（結果は使わない。取得したリポジトリは、読み終えたら消える）
+        // 時間切れで止めた取得の失敗は、知らせない（時間切れとして知らせる。取得したリポジトリは消える）
         reading.catch(() => {});
         try {
           const sources = await Promise.race([reading, deadline]);

@@ -281,6 +281,8 @@ const PARAMS = {
   "git.unavailable": z.object({ detail: z.string() }),
   "git.failed": z.object({ command: z.string(), detail: z.string() }),
   "git.exitCode": z.object({ command: z.string(), code: z.number().nullable() }),
+  // 上限の時間を過ぎて、git を止めた（PBI-107）
+  "git.aborted": null,
   "git.invalidBaseCommit": null,
   "git.baseCommitMissing": z.object({ commit: z.string() }),
   "git.invalidParentCommit": null,
@@ -839,6 +841,7 @@ const ja: MessageDictionary = {
   "git.unavailable": ({ detail }) => `gitを実行できません（${detail}）。`,
   "git.failed": ({ command, detail }) => `git ${command} に失敗しました：${detail}`,
   "git.exitCode": ({ command, code }) => `git ${command} に失敗しました：終了コード ${code}`,
+  "git.aborted": "上限の時間を過ぎたので、git を止めました。",
   "git.invalidBaseCommit": "起点のコミットが不正です。",
   "git.baseCommitMissing": ({ commit }) =>
     `作業領域を用意し直そうとしましたが、タスクの起点のコミット（${commit.slice(0, 7)}）を取得できません。起点を変えずに止めました。`,
@@ -1283,6 +1286,7 @@ const en: MessageDictionary = {
   "git.unavailable": ({ detail }) => `Cannot run git (${detail}).`,
   "git.failed": ({ command, detail }) => `git ${command} failed: ${detail}`,
   "git.exitCode": ({ command, code }) => `git ${command} failed: exit code ${code}`,
+  "git.aborted": "Stopped git because the time limit passed.",
   "git.invalidBaseCommit": "The base commit is not valid.",
   "git.baseCommitMissing": ({ commit }) =>
     `Tried to prepare the workspace again, but the task's base commit (${commit.slice(0, 7)}) could not be fetched. Stopped without changing the base.`,

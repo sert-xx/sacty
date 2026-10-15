@@ -52,8 +52,18 @@ const ja = {
     "1Password の認証は、起動のときと、プロジェクトの設定を保存したとき（まだ取り出していない秘密情報があるとき）だけです。プロジェクトのコンテキストの秘密情報も含みます。\n1Password にサインインし直したときや、参照を直したときは、取り出し直してください。\nコンテキストリポジトリに後から足した秘密情報は、使うときに取り出します（そのときに認証を求めます）。前もって取り出すには、取り出し直すか、プロジェクトの設定を保存し直してください。",
   secretsFetch: "秘密情報を取り出し直す",
   secretsFetching: "取り出しています…",
-  secretsResult: (ok: number, total: number) =>
-    total === 0 ? "使う秘密情報はありません。" : `${total} 件のうち ${ok} 件を取り出しました。`,
+  /** unread は、読めなかったプロジェクトのコンテキストの数（その中の秘密情報は数に入らず、確かめていない。PBI-107）。 */
+  secretsResult: (ok: number, total: number, unread = 0) => {
+    const unchecked =
+      unread > 0
+        ? `読めなかったコンテキストが ${unread} 件あり、その中の秘密情報は確かめていません（下の警告を見てください）。`
+        : "";
+    if (total === 0)
+      return unread > 0
+        ? `確かめられた秘密情報はありません。${unchecked}`
+        : "使う秘密情報はありません。";
+    return `${total} 件のうち ${ok} 件を取り出しました。${unchecked}`;
+  },
 };
 
 export type SettingsMessages = typeof ja;
@@ -111,8 +121,15 @@ const en: SettingsMessages = {
     "1Password asks for authentication only at startup and when you save project settings (if there are secrets not fetched yet). This includes the secrets in project contexts.\nGet the secrets again after you sign in to 1Password again or fix a reference.\nSecrets added to a context repository later are fetched when they are used (1Password asks for authentication then). To fetch them in advance, get the secrets again or save the project settings again.",
   secretsFetch: "Get secrets again",
   secretsFetching: "Getting…",
-  secretsResult: (ok, total) =>
-    total === 0 ? "No secrets are used." : `Got ${ok} of ${total} secrets.`,
+  secretsResult: (ok, total, unread = 0) => {
+    const unchecked =
+      unread > 0
+        ? ` ${unread} context${unread === 1 ? "" : "s"} could not be read, so the secrets in ${unread === 1 ? "it were" : "them were"} not checked (see the warnings below).`
+        : "";
+    if (total === 0)
+      return unread > 0 ? `No secrets could be checked.${unchecked}` : "No secrets are used.";
+    return `Got ${ok} of ${total} secrets.${unchecked}`;
+  },
 };
 
 export const settings = { ja, en };

@@ -184,6 +184,8 @@ export interface ContextFetcher {
     ref: ContextRef,
     dir: string,
     authEnv?: Record<string, string>,
+    /** 中止されたら、取得を止めて失敗にする（取得の子プロセスも止める。PBI-107）。 */
+    signal?: AbortSignal,
   ): Promise<{ commit: string }>;
 }
 
@@ -211,6 +213,7 @@ export async function resolveContext(
   root: ContextRef,
   workDir: string,
   auth?: ContextAuth,
+  signal?: AbortSignal,
 ): Promise<ContextLayer[]> {
   const chain: ContextLayer[] = [];
   const seen = new Set<string>();
@@ -229,7 +232,8 @@ export async function resolveContext(
     const authEnv = await auth?.(next.repo);
     let commit: string;
     try {
-      ({ commit } = await fetcher.fetch(next, dir, authEnv));
+      signal?.throwIfAborted();
+      ({ commit } = await fetcher.fetch(next, dir, authEnv, signal));
     } catch (error) {
       throw new ContextError(message("context.fetchFailed", { key, detail: errorText(error) }));
     }
@@ -1152,16 +1156,32 @@ function readSkillDescription(path: string): string {
 
 /** git で浅く clone してコンテキストリポジトリを取得する（ホストの認証を使う）。 */
 export class GitContextFetcher implements ContextFetcher {
-  async fetch(ref: ContextRef, dir: string, authEnv?: Record<string, string>) {
+  async fetch(
+    ref: ContextRef,
+    dir: string,
+    authEnv?: Record<string, string>,
+    signal?: AbortSignal,
+  ) {
     if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });
     const branch = ref.ref ? ["--branch", ref.ref] : [];
-    await run(["clone", "--depth", "1", ...branch, "--", ref.repo, dir], undefined, authEnv);
-    const commit = (await run(["rev-parse", "HEAD"], dir)).trim();
+    await run(
+      ["clone", "--depth", "1", ...branch, "--", ref.repo, dir],
+      undefined,
+      authEnv,
+      signal,
+    );
+    const commit = (await run(["rev-parse", "HEAD"], dir, {}, signal)).trim();
     return { commit };
   }
 }
 
-function run(args: string[], cwd?: string, authEnv: Record<string, string> = {}): Promise<string> {
+function run(
+  args: string[],
+  cwd?: string,
+  authEnv: Record<string, string> = {},
+  /** 中止されたら、git を止めて（SIGKILL）、止まってから失敗にする（PBI-107）。 */
+  signal?: AbortSignal,
+): Promise<string> {
   const env: Record<string, string> = { GIT_TERMINAL_PROMPT: "0" };
   for (const key of ["PATH", "HOME", "SSH_AUTH_SOCK", "TMPDIR", "LANG"]) {
     const value = process.env[key];
@@ -1170,7 +1190,25 @@ function run(args: string[], cwd?: string, authEnv: Record<string, string> = {})
   // HTTPS の GitHub は、プロジェクトの gh のアカウントのトークンで認証する（環境変数でだけ渡す）
   Object.assign(env, authEnv);
   return new Promise((resolve, reject) => {
-    const child = spawn("git", args, { cwd, env, stdio: ["ignore", "pipe", "pipe"] });
+    if (signal?.aborted) return reject(new MessageError(message("git.aborted")));
+    // 止められる取得は、プロセスグループごと止める（git clone が起動する git-remote-https などの子プロセスも残さない）
+    const child = spawn("git", args, {
+      cwd,
+      env,
+      stdio: ["ignore", "pipe", "pipe"],
+      detached: signal !== undefined,
+    });
+    // 止めたら、終わるのを待ってから失敗にする（呼ぶ側が、取得したディレクトリを消せるように）
+    let aborted = false;
+    const abort = () => {
+      aborted = true;
+      try {
+        if (child.pid !== undefined) process.kill(-child.pid, "SIGKILL");
+      } catch {
+        child.kill("SIGKILL");
+      }
+    };
+    signal?.addEventListener("abort", abort, { once: true });
     let out = "";
     let err = "";
     child.stdout.on("data", (chunk) => {
@@ -1183,7 +1221,9 @@ function run(args: string[], cwd?: string, authEnv: Record<string, string> = {})
       reject(new MessageError(message("git.unavailable", { detail: error.message }))),
     );
     child.on("close", (code) => {
-      if (code === 0) resolve(out);
+      signal?.removeEventListener("abort", abort);
+      if (aborted) reject(new MessageError(message("git.aborted")));
+      else if (code === 0) resolve(out);
       // git のエラー文は外から来た文なので、そのまま渡す
       else if (err.trim()) reject(new Error(err.trim()));
       else reject(new MessageError(message("git.exitCode", { command: args[0] ?? "", code })));
@@ -1349,10 +1389,11 @@ async function loadLayers(
   work: string,
   auth?: ContextAuth,
   defaultDir?: string,
+  signal?: AbortSignal,
 ): Promise<ContextLayer[]> {
   return [
     ...(defaultDir ? [loadDefaultContext(defaultDir)] : []),
-    ...(root ? await resolveContext(fetcher, root, join(work, "repos"), auth) : []),
+    ...(root ? await resolveContext(fetcher, root, join(work, "repos"), auth, signal) : []),
   ];
 }
 
@@ -1724,10 +1765,14 @@ export async function contextSecretSources(
   root: ContextRef,
   auth?: ContextAuth,
   defaultDir?: string,
+  /** 中止されたら、取得を止めて失敗にする（取得したリポジトリは消す）。 */
+  signal?: AbortSignal,
 ): Promise<{ mcp: { name: string; server: McpServer; from: string }[]; platforms: Platform[] }> {
   const work = mkdtempSync(join(tmpdir(), "sacty-context-"));
   try {
-    const composed = composeContext(await loadLayers(fetcher, root, work, auth, defaultDir));
+    const composed = composeContext(
+      await loadLayers(fetcher, root, work, auth, defaultDir, signal),
+    );
     return {
       mcp: composed.mcp.map(({ name, server, from }) => ({ name, server, from })),
       platforms: composed.platforms,

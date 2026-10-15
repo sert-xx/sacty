@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import {
+  chmodSync,
   cpSync,
   existsSync,
   mkdirSync,
@@ -43,7 +44,12 @@ import type { AgentOutcome } from "./agents/parse.js";
 import { DockerTestRunner, type TestRunner, type TestRunResult } from "./agents/test-runner.js";
 import type { CiSnapshot, CiStatusReader } from "./ci.js";
 import { type AgentConfig, type ConfigResult, loadConfig, type SactyConfig } from "./config.js";
-import { type ContextFetcher, type ContextRef, DEFAULT_CONTEXT_DIR } from "./context.js";
+import {
+  type ContextFetcher,
+  type ContextRef,
+  DEFAULT_CONTEXT_DIR,
+  GitContextFetcher,
+} from "./context.js";
 import { ContextMcpServers } from "./context-mcp.js";
 import { MessageError } from "./errors.js";
 import type { GitHubAuth } from "./gh.js";
@@ -7110,12 +7116,22 @@ describe("起動時に秘密情報をまとめて取り出す（PBI-48）", () =
   it("まとめて取り出せない取り出し口や、設定に誤りがあるときは、何もしない", async () => {
     const activity = new SqliteActivityStore(dbPath);
     const { service } = makeService(activity, []);
-    expect(await service.prefetchSecrets()).toEqual({ total: 0, fetched: 0, problems: [] });
+    expect(await service.prefetchSecrets()).toEqual({
+      total: 0,
+      fetched: 0,
+      unreadContexts: 0,
+      problems: [],
+    });
     const broken = makeService(activity, [], {
       secretStore: new PrefetchStore({}),
       config: () => ({ ok: false, problem: message("config.missing", { path: "x" }) }),
     });
-    expect(await broken.service.prefetchSecrets()).toEqual({ total: 0, fetched: 0, problems: [] });
+    expect(await broken.service.prefetchSecrets()).toEqual({
+      total: 0,
+      fetched: 0,
+      unreadContexts: 0,
+      problems: [],
+    });
     activity.close();
   });
 });
@@ -7210,13 +7226,18 @@ describe("プロジェクトのコンテキストの秘密情報も、まとめ�
   };
   const setup = (
     outcomes: AgentOutcome[] = [],
-    options: { contexts?: ContextFetcher; projects?: MemoryProjectStore; timeoutMs?: number } = {},
+    options: {
+      contexts?: ContextFetcher;
+      projects?: MemoryProjectStore;
+      timeoutMs?: number;
+      run?: OpRunner;
+    } = {},
   ) => {
     const activity = new SqliteActivityStore(dbPath);
     const op = fakeOp();
     const store = new ResolvingSecretStore(
       new MemorySecretStore({}),
-      new OnePasswordSecretStore({ run: op.run }),
+      new OnePasswordSecretStore({ run: options.run ?? op.run }),
     );
     const credentials = new PlatformCredentials({ secrets: store });
     const pf = gatewayOf(credentials);
@@ -7264,7 +7285,7 @@ describe("プロジェクトのコンテキストの秘密情報も、まとめ�
       completed(20_000),
     ]);
     const started = await service.prefetchSecrets();
-    expect(started).toEqual({ total: 4, fetched: 4, problems: [] });
+    expect(started).toEqual({ total: 4, fetched: 4, unreadContexts: 0, problems: [] });
     expect(op.calls).toEqual([{ command: "run", refs: allRefs }]);
     // チケットのトリアージ（コンテキストの PF を、ゲートウェイで呼ぶ）
     const [ticketTask] = service.importTickets([
@@ -7312,6 +7333,7 @@ describe("プロジェクトのコンテキストの秘密情報も、まとめ�
     const started = await service.prefetchSecrets();
     expect(started.total).toBe(1);
     expect(started.fetched).toBe(1);
+    expect(started.unreadContexts).toBe(1);
     expect(op.calls).toEqual([{ command: "run", refs: ["op://Work/Claude/token"] }]);
     expect(service.status().warnings.map((w) => ja(w))).toEqual([
       expect.stringMatching(
@@ -7562,6 +7584,141 @@ describe("プロジェクトのコンテキストの秘密情報も、まとめ�
     activity.close();
   });
 
+  describe("起動・取り出し直しと保存が重なったとき（PR #117 レビュー指摘）", () => {
+    /** op run を、1回ずつ止めておける偽の op（gates[i] で i 回目の op run を終える）。 */
+    const gatedOp = () => {
+      const gates: (() => void)[] = [];
+      const runs: string[][] = [];
+      const run: OpRunner = async (args) => {
+        if (args[0] === "run") {
+          const file = args[args.indexOf("--env-file") + 1] ?? "";
+          const refs = readFileSync(file, "utf8")
+            .trim()
+            .split("\n")
+            .map((line) => line.replace(/^[^=]+="(.*)"$/, "$1"));
+          runs.push(refs);
+          await new Promise<void>((resolve) => gates.push(resolve));
+          return refs.every((ref) => ref in values)
+            ? { code: 0, stdout: JSON.stringify(refs.map((ref) => values[ref])), stderr: "" }
+            : { code: 1, stdout: "", stderr: "[ERROR] could not resolve a reference" };
+        }
+        const ref = args.at(-1) ?? "";
+        const value = values[ref];
+        return value
+          ? { code: 0, stdout: value, stderr: "" }
+          : { code: 1, stdout: "", stderr: "[ERROR] 2026/10/15 00:00:00 item not found" };
+      };
+      return { gates, runs, run };
+    };
+    /** 取り出せない参照を書いた mcp.yaml（保存のときの警告になる）。 */
+    const brokenMcp = [
+      "servers:",
+      "  broken:",
+      "    url: https://broken.example.com/mcp",
+      "    headers:",
+      "      Authorization: { secret: op://Work/Missing/key }",
+    ].join("\n");
+    const plainFiles = () => ({ [teamRepo]: { "rules.md": "規約だけ" } });
+
+    it("起動側が先に始まり、保存側が先に終わっても、保存の後の警告を消さない", async () => {
+      const files: Record<string, Record<string, string>> = plainFiles();
+      const op = gatedOp();
+      const { activity, service } = setup([], { contexts: new FakeContexts(files), run: op.run });
+      const startup = service.prefetchSecrets();
+      await vi.waitFor(() => expect(op.runs).toHaveLength(1));
+      // 起動側が 1Password の承認を待っている間に、取り出せない参照を足して保存する
+      files[teamRepo] = { "mcp.yaml": brokenMcp };
+      const saving = service.prefetchProjectSecrets("a");
+      await vi.waitFor(() => expect(op.runs).toHaveLength(2));
+      op.gates[1]?.();
+      expect(await saving).toHaveLength(1);
+      expect(service.status().warnings).toHaveLength(1);
+      // 後から起動側が終わっても、保存の後の警告は残る
+      op.gates[0]?.();
+      expect((await startup).problems).toEqual([]);
+      expect(ja(service.status().warnings[0])).toContain("servers.broken.headers.Authorization");
+      activity.close();
+    });
+
+    it("保存側が先に始まり、起動側（取り出し直し）が先に終わったら、後から終わった保存の古い警告を出さない", async () => {
+      const files: Record<string, Record<string, string>> = {
+        [teamRepo]: { "mcp.yaml": brokenMcp },
+      };
+      const op = gatedOp();
+      const { activity, service } = setup([], { contexts: new FakeContexts(files), run: op.run });
+      const saving = service.prefetchProjectSecrets("a");
+      await vi.waitFor(() => expect(op.runs).toHaveLength(1));
+      // 保存側が承認を待っている間に参照を直し、取り出し直す（こちらの方が新しい）
+      files[teamRepo] = { "rules.md": "規約だけ" };
+      const again = service.prefetchSecrets({ fresh: true });
+      await vi.waitFor(() => expect(op.runs).toHaveLength(2));
+      op.gates[1]?.();
+      expect((await again).problems).toEqual([]);
+      op.gates[0]?.();
+      expect(await saving).toHaveLength(1);
+      expect(service.status().warnings).toEqual([]);
+      activity.close();
+    });
+  });
+
+  it("上限の時間を過ぎたら、取得の git の子プロセスを止め、一時ディレクトリも残さない（PR #117 レビュー指摘）", async () => {
+    const work = mkdtempSync(join(tmpdir(), "sacty-git-hang-"));
+    const bin = join(work, "bin");
+    const temp = join(work, "tmp");
+    mkdirSync(bin);
+    mkdirSync(temp);
+    const pidFile = join(work, "pids");
+    // 応答しない git（clone が止まったまま。子プロセスも作る）
+    writeFileSync(
+      join(bin, "git"),
+      `#!/bin/sh\necho $$ >> "${pidFile}"\nsleep 30 &\necho $! >> "${pidFile}"\nwait\n`,
+    );
+    chmodSync(join(bin, "git"), 0o755);
+    const path = process.env.PATH;
+    const tmp = process.env.TMPDIR;
+    process.env.PATH = `${bin}:${path}`;
+    process.env.TMPDIR = temp;
+    const pids = () =>
+      existsSync(pidFile) ? readFileSync(pidFile, "utf8").trim().split("\n").map(Number) : [];
+    const alive = (pid: number) => {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    try {
+      const { activity, service } = setup([], {
+        contexts: new GitContextFetcher(),
+        timeoutMs: 1000,
+      });
+      const started = await service.prefetchSecrets();
+      expect(ja(started.problems[0])).toContain("1 秒のうちに取得できませんでした。");
+      await vi.waitFor(() => expect(pids()).toHaveLength(2));
+      await vi.waitFor(
+        () => {
+          expect(pids().filter(alive)).toEqual([]);
+          expect(readdirSync(temp)).toEqual([]);
+        },
+        { timeout: 2_500 },
+      );
+      activity.close();
+    } finally {
+      process.env.PATH = path;
+      if (tmp === undefined) delete process.env.TMPDIR;
+      else process.env.TMPDIR = tmp;
+      for (const pid of pids()) {
+        try {
+          process.kill(pid, "SIGKILL");
+        } catch {
+          // 止まっている
+        }
+      }
+      rmSync(work, { recursive: true, force: true });
+    }
+  });
+
   it("「秘密情報を取り出し直す」は、持っている値を捨て、コンテキストの秘密情報も含めて取り出し直す", async () => {
     const { activity, op, service, executor } = setup([completed(20_000)]);
     await service.prefetchSecrets();
@@ -7571,7 +7728,12 @@ describe("プロジェクトのコンテキストの秘密情報も、まとめ�
       headers: { authorization: "Bearer tok", "content-type": "application/json" },
       body: "{}",
     });
-    expect(await res.json()).toEqual({ total: 4, fetched: 4, problems: [] });
+    expect(await res.json()).toEqual({
+      total: 4,
+      fetched: 4,
+      unreadContexts: 0,
+      problems: [],
+    });
     expect(op.calls).toEqual([
       { command: "run", refs: allRefs },
       { command: "run", refs: allRefs },

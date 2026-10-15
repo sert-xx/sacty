@@ -47,7 +47,8 @@ onepassword:
 - Secrets in context repositories are collected by fetching each project's context (including the upper layers inherited with `extends`).
   Fetching waits at most 30 seconds. For projects whose context could not be fetched, the web UI shows a warning with the reason (those secrets are fetched when used).
 - For anything that could not be fetched at startup, the web UI shows a warning and the terminal shows which setting failed and why (startup does not stop). Once it is ready, press
-  "Get secrets again" in "sacty settings" in the web UI. Getting the secrets again also fetches the contexts again.
+  "Get secrets again" in "sacty settings" in the web UI. Getting the secrets again also fetches the contexts again. If some contexts could not be read,
+  the result says that the secrets in them were not checked.
 - npm tokens used only for building images are not fetched at startup (they are fetched when used). GitHub tokens are fetched from `gh` each time they are used.
 
 ## What is fetched when you save a project

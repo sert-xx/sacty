@@ -34,17 +34,21 @@ Code: `apps/daemon/src/secrets.ts` (`SecretRef`, `isOnePasswordRef`, `KeychainSe
   `プロジェクト「<name>」のコンテキスト（<layer>）の platforms.yaml の <PF>.auth.secret`.
 - Contexts are fetched `CONTEXT_SECRETS_CONCURRENCY` (4) at a time, waiting at most `CONTEXT_SECRETS_TIMEOUT_MS` (30 seconds) in total. For projects whose context could not be
   fetched, or not within the time, the reason (`secret.contextUnavailable`; `secret.contextTimedOut` for the time limit) is shown as a warning, and that project's
-  context secrets are retrieved when used. Fetch error messages are shown after redacting the gh token. Results of fetches that finish after the time limit are not used.
+  context secrets are retrieved when used. Fetch error messages are shown after redacting the gh token. When the time limit passes, fetches in progress are stopped
+  (git is stopped together with its process group (`git.aborted`), and the temporary directory of the fetched repositories is removed).
 - Context secrets are retrieved in the same single retrieval as the other secrets (retrieval starts after the contexts are read).
 - 1Password references are passed to a child process as environment variables with a single `op run --no-masking --env-file <a file containing only the references (0600)>`, and received
   as JSON (so authentication happens once). If retrieving them all at once fails, each reference is retrieved again individually, and the ones that could not be retrieved are collected. For the keychain,
   sacty only checks that each value can be retrieved.
 - For values that could not be retrieved, the setting (such as `agents.<ID>.auth.secret`) and the reason are shown in the terminal and as a warning in the web UI (startup does not stop).
 - `POST /api/secrets/prefetch` ("Get secrets again" in the web UI) discards the values it holds, fetches the contexts again, and retrieves the same targets as at startup.
-  It returns the number retrieved (`fetched`), the number of targets (`total`), and the warnings (`problems`).
+  It returns the number retrieved (`fetched`), the number of targets (`total`), the number of contexts that could not be read (`unreadContexts`; the secrets in them are not counted in `total`),
+  and the warnings (`problems`). If some contexts could not be read, the web UI says that some secrets were not checked.
 - After a project is saved (`POST /api/projects`, `PUT /api/projects/:id`, `POST /api/projects/import`), sacty retrieves that project's secrets (the notification destination
   and the context secrets) all at once without holding up the response (`prefetchProjectSecrets`). References it already holds are not retrieved (1Password is not asked).
   Values that could not be retrieved (`secret.savePrefetchFailed`) and the reasons a context could not be fetched are shown as warnings in the web UI, replacing that project's previous warnings.
+- Replacing warnings: each retrieval advances a generation when it starts, and sacty keeps the generation of the last retrieval started for the whole (the settings' secrets) and for each project.
+  When startup, getting secrets again, or saving finishes, it does not rewrite the warnings of any scope for which a later retrieval has started (even if they overlap, older results never overwrite newer ones).
 - Secrets added to a context repository after startup (the context is fetched at the head of the ref each time) are not retrieved in advance at any other point; they are retrieved
   when used (1Password may ask for authentication then). To retrieve them in advance, get the secrets again or save the project again.
 - Starting the host's MCP servers and preparing authentication for organization platforms (PF) begin after the bulk retrieval.
