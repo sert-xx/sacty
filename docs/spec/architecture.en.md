@@ -47,6 +47,28 @@ Main APIs (`apps/daemon/src/server.ts`):
 
 Code: `apps/daemon/src/server.ts` (`createApp`, `handleError`), `apps/web/src/lib/daemon.ts` (`daemonFetch`), `packages/cli/src/index.ts` (`up`)
 
+## Web UI header (the displayed project and notices)
+
+- The displayed project is kept in the cookie `sacty-project` (httpOnly, `SameSite=Lax`, 1 year). The header's switcher, the task list, and
+  "Settings" in the side menu (`/projects/current`) show the cookie's project. If the cookie has no project or the project no longer exists,
+  the first project is used. Only IDs of the form `^[\w-]{1,100}$` are put in the cookie.
+- The cookie changes in these cases: switching in the header and notices (`/switch`), creating or importing a project (it becomes the created
+  project), and opening a project's screen (task details, review, run log, project settings). When a screen is opened, the cookie is changed only if it
+  differs from the screen's project, by a server action after rendering (the screen and the header are redrawn). If the project is not in the daemon's
+  project list (a task of a deleted project), it is not changed. If the list cannot be fetched, the project is not treated as missing and the cookie is changed.
+- The header is in the root layout, so it is not redrawn by navigation (links) within the web UI. Server actions for operations that change what the notices
+  cover (approve, request changes, pause, resume, cancel, create task, and so on) call `refresh()` so that the header is redrawn too (they call it before
+  moving with `redirect` as well).
+- Changes made in other tabs, the CLI, or the daemon are reflected at the following times. At other times the web UI does not poll.
+  - Every 3 seconds while there is a task that sacty or an agent is working on (`isWorking`) (`AutoRefresh`). A task is being worked on when it is waiting to run
+    (`queued`), running (`running`), or idle (`idle`) while the implementation is being verified (`verification` is `pending` = tests are running, or
+    `tests_passed` = in final review), while the reproduction test is being checked (`reproductionPending`), or while it has a change proposal the Goal Guardian has not judged yet.
+  - When you come back to the tab (a hidden screen becomes visible again) (`RefreshOnVisible`). This includes when the daemon could not be reached and a fallback header was shown.
+
+Code: `apps/web/src/components/shell/header.tsx` (`AppHeader`, `HeaderFallback`), `apps/web/src/lib/labels.ts` (`isWorking`), `apps/web/src/components/shell/follow-project.tsx` (`FollowProject`),
+`apps/web/src/components/auto-refresh.tsx`, `apps/web/src/lib/project-select.ts`, `apps/web/src/lib/current-project.ts` (`selectProject`),
+`apps/web/src/app/switch/route.ts`, `apps/web/src/app/actions.ts`
+
 ## Data location (SACTY_HOME)
 
 Data is stored under `SACTY_HOME` (default `~/.sacty`).

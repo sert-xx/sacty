@@ -1,10 +1,13 @@
-<!-- Code: packages/core/src/projects.ts (ProjectDefinition, ProjectTarget, ProjectExport), packages/core/src/github-url.ts, apps/daemon/src/gh.ts, apps/daemon/src/github.ts, apps/web/src/components/project-editor.tsx, apps/web/src/i18n/messages/projects.ts -->
+<!-- Code: packages/core/src/projects.ts (ProjectDefinition, ProjectTarget, ProjectExport), packages/core/src/github-url.ts, apps/daemon/src/gh.ts, apps/daemon/src/github.ts, apps/web/src/components/project-editor.tsx, apps/web/src/i18n/messages/projects.ts, apps/web/src/components/shell/follow-project.tsx -->
 
 [日本語](project-settings.md) | **English**
 
 # Project settings
 
 You register per-project settings in the project settings of the web UI (they do not go in config.yaml).
+
+You switch the displayed project in the header of the web UI. When you create or import a project, the web UI switches to that project.
+When you open a task or a project's settings (from a list, a notification link, or a URL), the header also switches to that project.
 
 | Field | Contents | Details |
 | --- | --- | --- |
