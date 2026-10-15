@@ -2,7 +2,7 @@
 
 - 日付: 2026-10-15（UTC）
 - タスク: PBI-96
-- PR: なし
+- PR: #103
 - ブランチ: feat/issue-96-oss-license
 - 関係する ADR: [sacty を MIT ライセンスの OSS として公開し、コントリビュートと脆弱性の報告の窓口を文書にする](../adr/20261015-0015-oss-license-mit.md)
 
