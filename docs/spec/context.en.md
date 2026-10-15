@@ -87,6 +87,8 @@ files sacty generates (for the same path, the later one overwrites).
 | Codex | `AGENTS.md` (rules and the skill list `- <name>：<description>（<location>）`), `config.toml` (composed settings and `[mcp_servers."<name>"]`; the URL type has `url`, `http_headers`, `env_http_headers`) |
 
 - MCP secrets are written in the files as environment variables `SACTY_MCP_SECRET_<number>`, and the values are passed as container environment variables (retrieved on the host).
+- Secrets in the layers' `mcp.yaml` and `platforms.yaml` have already been retrieved together with the other secrets at daemon startup, when secrets are retrieved again, and when the project is saved
+  ([Secrets](secrets.en.md#retrieving-everything-at-startup)). Ones not retrieved yet (such as ones added to a layer later) are retrieved when used.
 - A layer's MCP server with `via_gateway` set to `true` (the default) is replaced with a route through the gateway: the agent receives only
   `http://host.docker.internal:<port>/ctx-mcp/<name>` and an `Authorization` with the per-run token (`routeMcp`).
   - URL type: the gateway holds the original URL and headers (secrets in headers are retrieved on the host).

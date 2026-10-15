@@ -58,6 +58,19 @@ export function createApp(
 ) {
   const app = new Hono();
 
+  /**
+   * 保存したプロジェクトの秘密情報（コンテキスト・通知先）を、まとめて取り出す（PBI-107）。保存は止めないので待たない
+   * （1Password の承認を待つことがある）。取り出せなかったものは、画面の警告に出る。
+   */
+  const prefetchProjectSecrets = (id: string) => {
+    service.prefetchProjectSecrets(id).catch((error: unknown) => {
+      console.warn(
+        "[daemon] プロジェクトの秘密情報を取り出せませんでした：",
+        error instanceof Error ? error.message : error,
+      );
+    });
+  };
+
   app.use("/api/*", async (c, next) => {
     const header = c.req.header("authorization") ?? "";
     const given = header.startsWith("Bearer ") ? header.slice("Bearer ".length) : "";
@@ -197,6 +210,7 @@ export function createApp(
     if (!json.ok) return c.json({ error: "invalid_json" }, 400);
     try {
       const project = service.saveProject(undefined, json.body);
+      prefetchProjectSecrets(project.id);
       // 保存したコンテキストを、プレビューと同じ検査で確かめる（誤りは保存を止めず、知らせる。PBI-76）
       const contextError = await service.checkProjectContext(project.id);
       return c.json({ project, ...(contextError ? { contextError } : {}) }, 201);
@@ -215,7 +229,9 @@ export function createApp(
     const json = await readJson(c);
     if (!json.ok) return c.json({ error: "invalid_json" }, 400);
     try {
-      return c.json({ project: service.importProject(json.body) }, 201);
+      const project = service.importProject(json.body);
+      prefetchProjectSecrets(project.id);
+      return c.json({ project }, 201);
     } catch (error) {
       return handleError(c, error);
     }
@@ -226,6 +242,7 @@ export function createApp(
     if (!json.ok) return c.json({ error: "invalid_json" }, 400);
     try {
       const project = service.saveProject(c.req.param("id"), json.body);
+      prefetchProjectSecrets(project.id);
       // 保存したコンテキストを、プレビューと同じ検査で確かめる（誤りは保存を止めず、知らせる。PBI-76）
       const contextError = await service.checkProjectContext(project.id);
       return c.json({ project, ...(contextError ? { contextError } : {}) });
@@ -378,8 +395,10 @@ export function createApp(
 
   // 秘密情報を取り出し直す（PBI-48）。値は返さない
   app.post("/api/secrets/prefetch", async (c) => {
-    const { total, problems } = await service.prefetchSecrets({ fresh: true });
-    return c.json({ total, problems });
+    const { total, fetched, unreadContexts, problems } = await service.prefetchSecrets({
+      fresh: true,
+    });
+    return c.json({ total, fetched, unreadContexts, problems });
   });
 
   app.post("/api/tasks/:id/resume", async (c) => {

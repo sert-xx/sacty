@@ -41,7 +41,8 @@
    - 実行中（`running`）だったタスクは、実行の失敗（`AgentRunFailed`）として記録し、一時停止（`TaskPaused`、理由 `error`）にする。
 8. 実行できずに待っていた工程を実行待ちにする（`queueWaitingSteps`）。
 9. 起動時の問題（設定の誤りなど）を端末に出す。
-10. API を `127.0.0.1:<ポート>` で待ち受ける。待ち受けを始めたら、使う秘密情報をまとめて取り出し（[秘密情報](secrets.md)）、
+10. API を `127.0.0.1:<ポート>` で待ち受ける。待ち受けを始めたら、使う秘密情報をまとめて取り出し（プロジェクトのコンテキストの秘密情報を含む。
+    コンテキストの取得は最長 30 秒まで待つ。[秘密情報](secrets.md)）、
     その後で、ホストの MCP サーバーの起動、コンテキストのコマンド型の MCP サーバーの準備（前回の層の写し `SACTY_HOME/context-mcp/layers`
     を消し、使われなくなったものを止める確かめを始める）、組織内 PF の認証の用意、ワーカー・取り込み・PR の監視を始める。
 
@@ -67,13 +68,15 @@
 
 SIGINT・SIGTERM を受けると、1回だけ次を行う。
 
-1. ワーカー（新しい実行を始めず、実行中の処理の後片付けを待つ）・取り込み・PR の監視を止め始める。
-2. ホストの MCP サーバーと、コンテキストのコマンド型の MCP サーバーを止め始める（後片付けを待たない。コンテキストのものは層の写しも消す）。
-3. 実行中のエージェントとテストのコンテナを止める。
-4. 1 の後片付けを最大20秒（`DRAIN_TIMEOUT_MS`）待つ。過ぎたら警告を出して進む。
-5. ゲートウェイを閉じ、ホストの MCP サーバーが止まるのを待ち、API の待ち受けを閉じてから、DB を閉じ、ロックを外し（自分の書いた
+1. 秘密情報の取り出しのための、コンテキストの取得の git（別のプロセスグループで動く）を、グループごと止める（`stopFetchProcessesSync`）。
+2. ワーカー（新しい実行を始めず、実行中の処理の後片付けを待つ）・取り込み・PR の監視を止め始める。
+3. ホストの MCP サーバーと、コンテキストのコマンド型の MCP サーバーを止め始める（後片付けを待たない。コンテキストのものは層の写しも消す）。
+4. 実行中のエージェントとテストのコンテナを止める。
+5. 2 の後片付けを最大20秒（`DRAIN_TIMEOUT_MS`）待つ。過ぎたら警告を出して進む。
+6. ゲートウェイを閉じ、ホストの MCP サーバーが止まるのを待ち、API の待ち受けを閉じてから、DB を閉じ、ロックを外し（自分の書いた
    `daemon-owner.json` も消す）、終了コード 0 で終わる。
 
-デーモンが例外などで終わるとき（`exit`）も、ホストの MCP サーバーのプロセスグループに SIGTERM を送る。
+デーモンが例外などで終わるとき（`exit`）も、ホストの MCP サーバーのプロセスグループに SIGTERM を送り、コンテキストの取得の git の
+プロセスグループに SIGKILL を送る（[秘密情報](secrets.md)）。
 
-コード: `apps/daemon/src/main.ts`（`shutdown`・`DRAIN_TIMEOUT_MS`）、`apps/daemon/src/context-mcp.ts`（`ContextMcpServers.start`・`ContextMcpServers.stop`）
+コード: `apps/daemon/src/main.ts`（`shutdown`・`DRAIN_TIMEOUT_MS`）、`apps/daemon/src/context-mcp.ts`（`ContextMcpServers.start`・`ContextMcpServers.stop`）、`apps/daemon/src/fetch-processes.ts`（`spawnStoppable`・`stopFetchProcessesSync`）

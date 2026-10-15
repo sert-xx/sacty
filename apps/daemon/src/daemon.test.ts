@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import {
+  chmodSync,
   cpSync,
   existsSync,
   mkdirSync,
@@ -44,7 +45,12 @@ import type { AgentOutcome } from "./agents/parse.js";
 import { DockerTestRunner, type TestRunner, type TestRunResult } from "./agents/test-runner.js";
 import type { CiSnapshot, CiStatusReader } from "./ci.js";
 import { type AgentConfig, type ConfigResult, loadConfig, type SactyConfig } from "./config.js";
-import { type ContextFetcher, type ContextRef, DEFAULT_CONTEXT_DIR } from "./context.js";
+import {
+  type ContextFetcher,
+  type ContextRef,
+  DEFAULT_CONTEXT_DIR,
+  GitContextFetcher,
+} from "./context.js";
 import { ContextMcpServers } from "./context-mcp.js";
 import { MessageError } from "./errors.js";
 import type { GitHubAuth } from "./gh.js";
@@ -57,7 +63,7 @@ import {
 } from "./github.js";
 import { type HostMcpConnection, HostMcpFile, type HostMcpSpec, toHostMcp } from "./host-mcp.js";
 import { OrchestratorSessionStore } from "./orchestrator-sessions.js";
-import { type Platform, PlatformFile, toPlatform } from "./platforms.js";
+import { type Platform, PlatformCredentials, PlatformFile, toPlatform } from "./platforms.js";
 import { NOT_APPLICABLE, PR_BODY_MAX, type TemplateLookup } from "./pr-template.js";
 import { MemoryProjectStore } from "./projects.js";
 import { buildOrchestratorPrompt, buildPullRequestBody, changeableSteps } from "./prompts.js";
@@ -65,6 +71,7 @@ import { NothingToCommitError, type RepositoryWorkspace } from "./repository.js"
 import {
   MemorySecretStore,
   OnePasswordSecretStore,
+  type OpRunner,
   ResolvingSecretStore,
   SecretNotFoundError,
 } from "./secrets.js";
@@ -7243,12 +7250,634 @@ describe("起動時に秘密情報をまとめて取り出す（PBI-48）", () =
   it("まとめて取り出せない取り出し口や、設定に誤りがあるときは、何もしない", async () => {
     const activity = new SqliteActivityStore(dbPath);
     const { service } = makeService(activity, []);
-    expect(await service.prefetchSecrets()).toEqual({ total: 0, problems: [] });
+    expect(await service.prefetchSecrets()).toEqual({
+      total: 0,
+      fetched: 0,
+      unreadContexts: 0,
+      problems: [],
+    });
     const broken = makeService(activity, [], {
       secretStore: new PrefetchStore({}),
       config: () => ({ ok: false, problem: message("config.missing", { path: "x" }) }),
     });
-    expect(await broken.service.prefetchSecrets()).toEqual({ total: 0, problems: [] });
+    expect(await broken.service.prefetchSecrets()).toEqual({
+      total: 0,
+      fetched: 0,
+      unreadContexts: 0,
+      problems: [],
+    });
+    activity.close();
+  });
+});
+
+describe("プロジェクトのコンテキストの秘密情報も、まとめて取り出す（PBI-107）", () => {
+  const baseRepo = "https://git.example.com/base-ctx.git";
+  const teamRepo = "https://git.example.com/team-ctx.git";
+  /** 1Password にある値（偽物）。 */
+  const values: Record<string, string> = {
+    "op://Work/Claude/token": "oauth-from-op",
+    "op://Work/Docs/key": "docs-from-op",
+    "op://Work/Wiki/token": "wiki-from-op",
+    "op://Work/Search/key": "search-from-op",
+    "op://Work/New/key": "new-from-op",
+  };
+  /** 偽の op。呼ばれた子プロセスと、取り出した参照を記録する（承認の回数を数える）。 */
+  const fakeOp = () => {
+    const calls: { command: string; refs: string[] }[] = [];
+    /** これがあれば、op run は、これが終わるまで承認を待つ。 */
+    const approval: { wait?: Promise<void> } = {};
+    const run: OpRunner = async (args) => {
+      if (args[0] === "run") {
+        const file = args[args.indexOf("--env-file") + 1] ?? "";
+        const refs = readFileSync(file, "utf8")
+          .trim()
+          .split("\n")
+          .map((line) => line.replace(/^[^=]+="(.*)"$/, "$1"));
+        calls.push({ command: "run", refs });
+        await approval.wait;
+        if (refs.some((ref) => !(ref in values))) {
+          return { code: 1, stdout: "", stderr: "[ERROR] could not resolve a reference" };
+        }
+        return { code: 0, stdout: JSON.stringify(refs.map((ref) => values[ref])), stderr: "" };
+      }
+      const ref = args.at(-1) ?? "";
+      calls.push({ command: "read", refs: [ref] });
+      const value = values[ref];
+      return value
+        ? { code: 0, stdout: value, stderr: "" }
+        : { code: 1, stdout: "", stderr: "[ERROR] 2026/10/15 00:00:00 item not found" };
+    };
+    return { calls, run, approval };
+  };
+  /** 継承の鎖（team → base）。base に PF、team に MCP サーバーを書く。 */
+  const contextFiles = (): Record<string, Record<string, string>> => ({
+    [baseRepo]: {
+      "platforms.yaml": [
+        "platforms:",
+        "  docs:",
+        "    upstream: https://docs.internal.example.com",
+        "    description: チームのドキュメント",
+        "    auth:",
+        "      prefix: 'Bearer '",
+        "      secret: op://Work/Docs/key",
+        "    allow: [GET /api/pages/**]",
+      ].join("\n"),
+    },
+    [teamRepo]: {
+      "sacty-context.yaml": `extends: ${baseRepo}`,
+      "mcp.yaml": [
+        "servers:",
+        "  wiki:",
+        "    command: wiki-mcp",
+        "    via_gateway: false",
+        "    env:",
+        "      TOKEN: { secret: op://Work/Wiki/token }",
+        "  search:",
+        "    url: https://search.example.com/mcp",
+        "    headers:",
+        "      Authorization: { secret: op://Work/Search/key, prefix: 'Bearer ' }",
+      ].join("\n"),
+    },
+  });
+  /** ゲートウェイの偽物。登録された PF の認証の値を、ゲートウェイと同じ取り出し口で用意する（PF の呼び出し）。 */
+  const gatewayOf = (credentials: PlatformCredentials) => {
+    const calls: Promise<string>[] = [];
+    const mcp: Record<string, unknown>[] = [];
+    const gateway: NonNullable<ServiceDeps["gateway"]> = {
+      containerOrigin: () => "http://host.docker.internal:5001",
+      platformsUrl: (token) => `http://host.docker.internal:5001/r/${token}/pf`,
+      register: (_route, contextMcp, platforms) => {
+        mcp.push(contextMcp ?? {});
+        for (const platform of platforms ?? []) calls.push(credentials.header(platform));
+        return {
+          token: "sacty-gw-run",
+          stats: () => ({ retries: 0, waitedMs: 0, statuses: [], gaveUp: false }),
+          close: () => {},
+        };
+      },
+    };
+    return { gateway, calls, mcp };
+  };
+  const setup = (
+    outcomes: AgentOutcome[] = [],
+    options: {
+      contexts?: ContextFetcher;
+      projects?: MemoryProjectStore;
+      timeoutMs?: number;
+      run?: OpRunner;
+    } = {},
+  ) => {
+    const activity = new SqliteActivityStore(dbPath);
+    const op = fakeOp();
+    const store = new ResolvingSecretStore(
+      new MemorySecretStore({}),
+      new OnePasswordSecretStore({ run: options.run ?? op.run }),
+    );
+    const credentials = new PlatformCredentials({ secrets: store });
+    const pf = gatewayOf(credentials);
+    const contexts = options.contexts ?? new FakeContexts(contextFiles());
+    const projects = options.projects ?? new MemoryProjectStore();
+    if (!options.projects) {
+      projects.put("a", {
+        name: "A",
+        targets: [{ scope: "repo", target: "https://github.com/acme/a" }],
+        githubAccounts: { "github.com": "me" },
+        context: { repo: teamRepo },
+        tickets: [{ platform: "docs", service: "jira-server", keys: ["DOC"] }],
+      });
+    }
+    const made = makeService(activity, outcomes, {
+      config: configOf(agent({ auth: { mode: "subscription", secret: "op://Work/Claude/token" } })),
+      secretStore: store,
+      gateway: pf.gateway,
+      projects,
+      contexts,
+      settings: new MemorySettingsStore({ ticketLabel: "sacty" }),
+      tickets: new FakeTickets(),
+    });
+    if (options.timeoutMs !== undefined) {
+      (made.service as unknown as { deps: ServiceDeps }).deps.contextSecretsTimeoutMs =
+        options.timeoutMs;
+    }
+    return { activity, op, store, pf, contexts, projects, ...made };
+  };
+  const allRefs = [
+    "op://Work/Claude/token",
+    "op://Work/Docs/key",
+    "op://Work/Wiki/token",
+    "op://Work/Search/key",
+  ];
+
+  it("起動のときに、継承の鎖の上の層も含めたコンテキストの秘密情報を、ほかと一緒に1回の op run で取り出し、トリアージ・工程の実行・PF の呼び出しでは 1Password に問い合わせない", async () => {
+    const { activity, op, pf, service, executor } = setup([
+      triageOut({
+        repo: "https://github.com/acme/a",
+        title: "DOC-1 ページを直す",
+        summary: "## 目的\nページを直す",
+        reason: "対象は a だけ",
+      }),
+      completed(20_000),
+    ]);
+    const started = await service.prefetchSecrets();
+    expect(started).toEqual({ total: 4, fetched: 4, unreadContexts: 0, problems: [] });
+    expect(op.calls).toEqual([{ command: "run", refs: allRefs }]);
+    // チケットのトリアージ（コンテキストの PF を、ゲートウェイで呼ぶ）
+    const [ticketTask] = service.importTickets([
+      { ...foundTicket("DOC-1"), platform: "docs", url: "https://docs.internal.example.com/DOC-1" },
+    ]);
+    await service.runNext(ticketTask?.id ?? "");
+    expect(service.get(ticketTask?.id ?? "")?.task.repo).toBe("https://github.com/acme/a");
+    // タスクの作成と工程の実行（コンテナの中の MCP の env・ゲートウェイ経由の MCP のヘッダー・PF）
+    const task = service.createTask({ projectId: "a", title: "ドキュメントを直す" });
+    await service.runNext(task.id);
+    expect(executor.calls[1]?.env).toEqual(
+      expect.objectContaining({ SACTY_MCP_SECRET_0: "wiki-from-op" }),
+    );
+    expect(pf.mcp.at(-1)).toEqual({
+      search: {
+        url: "https://search.example.com/mcp",
+        headers: { Authorization: "Bearer search-from-op" },
+      },
+    });
+    expect(await Promise.all(pf.calls)).toEqual(["Bearer docs-from-op", "Bearer docs-from-op"]);
+    // 承認は起動のときの1回だけ（その後は op を呼ばない）
+    expect(op.calls).toHaveLength(1);
+    expect(service.status().warnings).toEqual([]);
+    // 秘密の値は、画面（状態）・台帳に出さない
+    const shown = JSON.stringify([
+      service.status(),
+      service.get(task.id)?.activity,
+      service.get(ticketTask?.id ?? "")?.activity,
+    ]);
+    for (const value of Object.values(values)) expect(shown).not.toContain(value);
+    activity.close();
+  });
+
+  it("コンテキストを取得できなくても止めずに理由を警告に出し、ほかの秘密情報は取り出す。使うときには、その場で取り出す（最後の手段）", async () => {
+    let failOnce = true;
+    const files = new FakeContexts(contextFiles());
+    const contexts: ContextFetcher = {
+      fetch: async (ref, out, authEnv) => {
+        if (failOnce)
+          throw new Error("fatal: unable to access 'https://git.example.com/': timeout");
+        return files.fetch(ref, out, authEnv);
+      },
+    };
+    const { activity, op, service, executor } = setup([completed(20_000)], { contexts });
+    const started = await service.prefetchSecrets();
+    expect(started.total).toBe(1);
+    expect(started.fetched).toBe(1);
+    expect(started.unreadContexts).toBe(1);
+    expect(op.calls).toEqual([{ command: "run", refs: ["op://Work/Claude/token"] }]);
+    expect(service.status().warnings.map((w) => ja(w))).toEqual([
+      expect.stringMatching(
+        /^プロジェクト「A」のコンテキストを読めず、その秘密情報を前もって取り出せませんでした（使うときに、その場で取り出します）：.*fatal: unable to access/,
+      ),
+    ]);
+    failOnce = false;
+    const task = service.createTask({ projectId: "a", title: "ドキュメントを直す" });
+    await service.runNext(task.id);
+    expect(executor.calls[0]?.env).toEqual(
+      expect.objectContaining({ SACTY_MCP_SECRET_0: "wiki-from-op" }),
+    );
+    // 前もって取り出せなかった参照は、使うときに1件ずつ取り出す（MCP の env・ヘッダーと、PF の認証）
+    expect(op.calls.slice(1).map((c) => c.command)).toEqual(["read", "read", "read"]);
+    expect(
+      op.calls
+        .slice(1)
+        .flatMap((c) => c.refs)
+        .sort(),
+    ).toEqual(allRefs.slice(1).sort());
+    activity.close();
+  });
+
+  it("取得のエラー文に入った認証のトークンは、警告に出さない", async () => {
+    const contexts = new FakeContexts({});
+    contexts.fail = true;
+    const projects = new MemoryProjectStore();
+    projects.put("gh", {
+      name: "GH",
+      targets: [{ scope: "repo", target: "https://github.com/acme/a" }],
+      githubAccounts: { "github.com": "me" },
+      context: { repo: "https://github.com/acme/ctx.git" },
+    });
+    const { activity, service } = setup([], { contexts, projects });
+    await service.prefetchSecrets();
+    const authValue = contexts.fetched[0]?.authEnv?.GIT_CONFIG_VALUE_0 ?? "";
+    expect(authValue).not.toBe("");
+    const shown = JSON.stringify(service.status().warnings);
+    expect(shown).toContain("Authentication failed");
+    expect(shown).not.toContain(authValue);
+    expect(shown).not.toContain("ghp_secret");
+    activity.close();
+  });
+
+  it("プロジェクトが多くても、コンテキストを同時に読みすぎず、上限の時間を過ぎたら待たずに取り出す", async () => {
+    let active = 0;
+    let most = 0;
+    const releases: (() => void)[] = [];
+    const files = new FakeContexts(contextFiles());
+    const contexts: ContextFetcher = {
+      fetch: async (ref, out, authEnv) => {
+        active++;
+        most = Math.max(most, active);
+        // 応答の無い git の取得（時間切れの後に返る）
+        await new Promise<void>((resolve) => releases.push(resolve));
+        active--;
+        return files.fetch(ref, out, authEnv);
+      },
+    };
+    const projects = new MemoryProjectStore();
+    for (let i = 0; i < 10; i++) {
+      projects.put(`p${i}`, {
+        name: `P${i}`,
+        targets: [{ scope: "repo", target: `https://github.com/acme/p${i}` }],
+        githubAccounts: { "github.com": "me" },
+        context: { repo: teamRepo },
+      });
+    }
+    const { activity, op, service } = setup([], { contexts, projects, timeoutMs: 50 });
+    const startedAt = Date.now();
+    const started = await service.prefetchSecrets();
+    expect(Date.now() - startedAt).toBeLessThan(2_000);
+    expect(most).toBeLessThanOrEqual(4);
+    expect(op.calls).toEqual([{ command: "run", refs: ["op://Work/Claude/token"] }]);
+    expect(started.problems).toHaveLength(10);
+    expect(ja(started.problems[0])).toContain("1 秒のうちに取得できませんでした。");
+    // 時間切れの後に返った取得は使わない（op を呼ばない）
+    for (const release of releases) release();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(op.calls).toHaveLength(1);
+    activity.close();
+  });
+
+  it("プロジェクトを保存・作成・取り込みしたら、保存を止めずに、そのコンテキストの秘密情報を取り出す。持っている参照は問い合わせ直さない", async () => {
+    const files = contextFiles();
+    const contexts = new FakeContexts(files);
+    const projects = new MemoryProjectStore();
+    projects.put("a", {
+      name: "A",
+      targets: [{ scope: "repo", target: "https://github.com/acme/a" }],
+      githubAccounts: { "github.com": "me" },
+    });
+    const { activity, op, service } = setup([], { contexts, projects });
+    await service.prefetchSecrets();
+    expect(op.calls).toEqual([{ command: "run", refs: ["op://Work/Claude/token"] }]);
+    const app = createApp(service, "tok");
+    const send = (method: string, path: string, body: unknown) =>
+      app.request(path, {
+        method,
+        headers: { authorization: "Bearer tok", "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    const definition = (name: string, repo: string, context?: string) => ({
+      name,
+      targets: [{ scope: "repo", target: `https://github.com/acme/${repo}` }],
+      githubAccounts: { "github.com": "me" },
+      ...(context ? { context: { repo: context } } : {}),
+    });
+    // コンテキストを変えて保存する
+    expect((await send("PUT", "/api/projects/a", definition("A", "a", teamRepo))).status).toBe(200);
+    await vi.waitFor(() => expect(op.calls).toHaveLength(2));
+    expect(op.calls[1]).toEqual({ command: "run", refs: allRefs.slice(1) });
+    // 同じ内容で保存し直しても、持っている参照は 1Password に問い合わせない
+    expect((await send("PUT", "/api/projects/a", definition("A", "a", teamRepo))).status).toBe(200);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(op.calls).toHaveLength(2);
+    // 起動の後に足された秘密情報は、保存し直すと、それだけを取り出す。取り出せないものは画面の警告に出す
+    files[baseRepo] = {
+      ...files[baseRepo],
+      "mcp.yaml": [
+        "servers:",
+        "  fresh:",
+        "    url: https://fresh.example.com/mcp",
+        "    headers:",
+        "      Authorization: { secret: op://Work/New/key }",
+        "  broken:",
+        "    url: https://broken.example.com/mcp",
+        "    headers:",
+        "      Authorization: { secret: op://Work/Missing/key }",
+      ].join("\n"),
+    };
+    expect((await send("PUT", "/api/projects/a", definition("A", "a", teamRepo))).status).toBe(200);
+    await vi.waitFor(() => expect(service.status().warnings).toHaveLength(1));
+    expect(op.calls.slice(2)).toEqual([
+      { command: "run", refs: ["op://Work/New/key", "op://Work/Missing/key"] },
+      { command: "read", refs: ["op://Work/New/key"] },
+      { command: "read", refs: ["op://Work/Missing/key"] },
+    ]);
+    expect(ja(service.status().warnings[0])).toMatch(
+      /^プロジェクトの設定を保存したときに、秘密情報（プロジェクト「A」のコンテキスト（https:\/\/git\.example\.com\/base-ctx\.git@c0ffee0）の mcp\.yaml の servers\.broken\.headers\.Authorization）を取り出せませんでした：/,
+    );
+    // 新しく作ったプロジェクトも同じ（警告は、プロジェクトごとに置き換える）
+    files[baseRepo] = contextFiles()[baseRepo] ?? {};
+    const created = await send("POST", "/api/projects", definition("B", "b", baseRepo));
+    expect(created.status).toBe(201);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(op.calls).toHaveLength(5);
+    expect(service.status().warnings).toHaveLength(1);
+    // 直してから保存し直すと、そのプロジェクトの警告は消える
+    expect((await send("PUT", "/api/projects/a", definition("A", "a", teamRepo))).status).toBe(200);
+    await vi.waitFor(() => expect(service.status().warnings).toEqual([]));
+    expect(op.calls).toHaveLength(5);
+    // インポートしたプロジェクトも、取り出す
+    const otherRepo = "https://git.example.com/other-ctx.git";
+    files[otherRepo] = {
+      "platforms.yaml": [
+        "platforms:",
+        "  other:",
+        "    upstream: https://other.example.com",
+        "    auth:",
+        "      secret: op://Work/Other/key",
+        "    allow: [GET /**]",
+      ].join("\n"),
+    };
+    values["op://Work/Other/key"] = "other-from-op";
+    const exported = service.exportProject("a");
+    const imported = await send("POST", "/api/projects/import", {
+      ...exported,
+      project: {
+        ...exported?.project,
+        name: "C",
+        targets: [{ scope: "repo", target: "https://github.com/acme/c" }],
+        context: { repo: otherRepo },
+      },
+    });
+    expect(imported.status).toBe(201);
+    await vi.waitFor(() => expect(op.calls).toHaveLength(6));
+    expect(op.calls[5]).toEqual({ command: "run", refs: ["op://Work/Other/key"] });
+    delete values["op://Work/Other/key"];
+    activity.close();
+  });
+
+  it("保存は 1Password の承認を待たずに終わり、承認を待つ間にタスクが同じ参照を使っても、別に問い合わせない。続けて保存したら、最後の結果を警告にする", async () => {
+    const projects = new MemoryProjectStore();
+    projects.put("a", {
+      name: "A",
+      targets: [{ scope: "repo", target: "https://github.com/acme/a" }],
+      githubAccounts: { "github.com": "me" },
+    });
+    const files = contextFiles();
+    const { activity, op, service, executor } = setup([completed(20_000)], {
+      contexts: new FakeContexts(files),
+      projects,
+    });
+    await service.prefetchSecrets();
+    let approve: (() => void) | undefined;
+    op.approval.wait = new Promise<void>((resolve) => {
+      approve = resolve;
+    });
+    const app = createApp(service, "tok");
+    const save = () =>
+      app.request("/api/projects/a", {
+        method: "PUT",
+        headers: { authorization: "Bearer tok", "content-type": "application/json" },
+        body: JSON.stringify({
+          name: "A",
+          targets: [{ scope: "repo", target: "https://github.com/acme/a" }],
+          githubAccounts: { "github.com": "me" },
+          context: { repo: teamRepo },
+        }),
+      });
+    expect((await save()).status).toBe(200);
+    await vi.waitFor(() => expect(op.calls).toHaveLength(2));
+    // 承認を待っている間に、タスクを作って実行する
+    const task = service.createTask({ projectId: "a", title: "ドキュメントを直す" });
+    const running = service.runNext(task.id);
+    await new Promise((r) => setTimeout(r, 30));
+    approve?.();
+    await running;
+    expect(executor.calls[0]?.env).toEqual(
+      expect.objectContaining({ SACTY_MCP_SECRET_0: "wiki-from-op" }),
+    );
+    expect(op.calls.map((c) => c.command)).toEqual(["run", "run"]);
+    // 先の保存の取り出しが後から終わっても、後の保存の警告を上書きしない
+    op.approval.wait = undefined;
+    files[teamRepo] = {
+      ...files[teamRepo],
+      "mcp.yaml": [
+        "servers:",
+        "  broken:",
+        "    url: https://broken.example.com/mcp",
+        "    headers:",
+        "      Authorization: { secret: op://Work/Missing/key }",
+      ].join("\n"),
+    };
+    let slow: (() => void) | undefined;
+    op.approval.wait = new Promise<void>((resolve) => {
+      slow = resolve;
+    });
+    const first = service.prefetchProjectSecrets("a");
+    await vi.waitFor(() => expect(op.calls).toHaveLength(3));
+    op.approval.wait = undefined;
+    delete files[teamRepo]?.["mcp.yaml"];
+    await service.prefetchProjectSecrets("a");
+    slow?.();
+    expect(await first).toHaveLength(1);
+    expect(service.status().warnings).toEqual([]);
+    activity.close();
+  });
+
+  describe("起動・取り出し直しと保存が重なったとき（PR #117 レビュー指摘）", () => {
+    /** op run を、1回ずつ止めておける偽の op（gates[i] で i 回目の op run を終える）。 */
+    const gatedOp = () => {
+      const gates: (() => void)[] = [];
+      const runs: string[][] = [];
+      const run: OpRunner = async (args) => {
+        if (args[0] === "run") {
+          const file = args[args.indexOf("--env-file") + 1] ?? "";
+          const refs = readFileSync(file, "utf8")
+            .trim()
+            .split("\n")
+            .map((line) => line.replace(/^[^=]+="(.*)"$/, "$1"));
+          runs.push(refs);
+          await new Promise<void>((resolve) => gates.push(resolve));
+          return refs.every((ref) => ref in values)
+            ? { code: 0, stdout: JSON.stringify(refs.map((ref) => values[ref])), stderr: "" }
+            : { code: 1, stdout: "", stderr: "[ERROR] could not resolve a reference" };
+        }
+        const ref = args.at(-1) ?? "";
+        const value = values[ref];
+        return value
+          ? { code: 0, stdout: value, stderr: "" }
+          : { code: 1, stdout: "", stderr: "[ERROR] 2026/10/15 00:00:00 item not found" };
+      };
+      return { gates, runs, run };
+    };
+    /** 取り出せない参照を書いた mcp.yaml（保存のときの警告になる）。 */
+    const brokenMcp = [
+      "servers:",
+      "  broken:",
+      "    url: https://broken.example.com/mcp",
+      "    headers:",
+      "      Authorization: { secret: op://Work/Missing/key }",
+    ].join("\n");
+    const plainFiles = () => ({ [teamRepo]: { "rules.md": "規約だけ" } });
+
+    it("起動側が先に始まり、保存側が先に終わっても、保存の後の警告を消さない", async () => {
+      const files: Record<string, Record<string, string>> = plainFiles();
+      const op = gatedOp();
+      const { activity, service } = setup([], { contexts: new FakeContexts(files), run: op.run });
+      const startup = service.prefetchSecrets();
+      await vi.waitFor(() => expect(op.runs).toHaveLength(1));
+      // 起動側が 1Password の承認を待っている間に、取り出せない参照を足して保存する
+      files[teamRepo] = { "mcp.yaml": brokenMcp };
+      const saving = service.prefetchProjectSecrets("a");
+      await vi.waitFor(() => expect(op.runs).toHaveLength(2));
+      op.gates[1]?.();
+      expect(await saving).toHaveLength(1);
+      expect(service.status().warnings).toHaveLength(1);
+      // 後から起動側が終わっても、保存の後の警告は残る
+      op.gates[0]?.();
+      expect((await startup).problems).toEqual([]);
+      expect(ja(service.status().warnings[0])).toContain("servers.broken.headers.Authorization");
+      activity.close();
+    });
+
+    it("保存側が先に始まり、起動側（取り出し直し）が先に終わったら、後から終わった保存の古い警告を出さない", async () => {
+      const files: Record<string, Record<string, string>> = {
+        [teamRepo]: { "mcp.yaml": brokenMcp },
+      };
+      const op = gatedOp();
+      const { activity, service } = setup([], { contexts: new FakeContexts(files), run: op.run });
+      const saving = service.prefetchProjectSecrets("a");
+      await vi.waitFor(() => expect(op.runs).toHaveLength(1));
+      // 保存側が承認を待っている間に参照を直し、取り出し直す（こちらの方が新しい）
+      files[teamRepo] = { "rules.md": "規約だけ" };
+      const again = service.prefetchSecrets({ fresh: true });
+      await vi.waitFor(() => expect(op.runs).toHaveLength(2));
+      op.gates[1]?.();
+      expect((await again).problems).toEqual([]);
+      op.gates[0]?.();
+      expect(await saving).toHaveLength(1);
+      expect(service.status().warnings).toEqual([]);
+      activity.close();
+    });
+  });
+
+  it("上限の時間を過ぎたら、取得の git の子プロセスを止め、一時ディレクトリも残さない（PR #117 レビュー指摘）", async () => {
+    const work = mkdtempSync(join(tmpdir(), "sacty-git-hang-"));
+    const bin = join(work, "bin");
+    const temp = join(work, "tmp");
+    mkdirSync(bin);
+    mkdirSync(temp);
+    const pidFile = join(work, "pids");
+    // 応答しない git（clone が止まったまま。子プロセスも作る）
+    writeFileSync(
+      join(bin, "git"),
+      `#!/bin/sh\necho $$ >> "${pidFile}"\nsleep 30 &\necho $! >> "${pidFile}"\nwait\n`,
+    );
+    chmodSync(join(bin, "git"), 0o755);
+    const path = process.env.PATH;
+    const tmp = process.env.TMPDIR;
+    process.env.PATH = `${bin}:${path}`;
+    process.env.TMPDIR = temp;
+    const pids = () =>
+      existsSync(pidFile) ? readFileSync(pidFile, "utf8").trim().split("\n").map(Number) : [];
+    const alive = (pid: number) => {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    try {
+      const { activity, service } = setup([], {
+        contexts: new GitContextFetcher(),
+        timeoutMs: 1000,
+      });
+      const started = await service.prefetchSecrets();
+      expect(ja(started.problems[0])).toContain("1 秒のうちに取得できませんでした。");
+      await vi.waitFor(() => expect(pids()).toHaveLength(2));
+      await vi.waitFor(
+        () => {
+          expect(pids().filter(alive)).toEqual([]);
+          expect(readdirSync(temp)).toEqual([]);
+        },
+        { timeout: 2_500 },
+      );
+      activity.close();
+    } finally {
+      process.env.PATH = path;
+      if (tmp === undefined) delete process.env.TMPDIR;
+      else process.env.TMPDIR = tmp;
+      for (const pid of pids()) {
+        try {
+          process.kill(pid, "SIGKILL");
+        } catch {
+          // 止まっている
+        }
+      }
+      rmSync(work, { recursive: true, force: true });
+    }
+  });
+
+  it("「秘密情報を取り出し直す」は、持っている値を捨て、コンテキストの秘密情報も含めて取り出し直す", async () => {
+    const { activity, op, service, executor } = setup([completed(20_000)]);
+    await service.prefetchSecrets();
+    const app = createApp(service, "tok");
+    const res = await app.request("/api/secrets/prefetch", {
+      method: "POST",
+      headers: { authorization: "Bearer tok", "content-type": "application/json" },
+      body: "{}",
+    });
+    expect(await res.json()).toEqual({
+      total: 4,
+      fetched: 4,
+      unreadContexts: 0,
+      problems: [],
+    });
+    expect(op.calls).toEqual([
+      { command: "run", refs: allRefs },
+      { command: "run", refs: allRefs },
+    ]);
+    const task = service.createTask({ projectId: "a", title: "ドキュメントを直す" });
+    await service.runNext(task.id);
+    expect(executor.calls[0]?.env).toEqual(
+      expect.objectContaining({ SACTY_MCP_SECRET_0: "wiki-from-op" }),
+    );
+    expect(op.calls).toHaveLength(2);
     activity.close();
   });
 });

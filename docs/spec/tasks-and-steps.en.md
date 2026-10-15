@@ -25,10 +25,15 @@ Related ADRs: [Remove the "PR作成" step and open the PR and wait for approval 
 - A PR-review-only task has `source.review` (`requested` or `label`; `sacty` if it is a PR that sacty created and gave the review label).
 - When creating a task in the web UI, if no repository is specified (`repo: null`), or the repository is omitted and the project's targets are not exactly one repository,
   the task becomes a task without a repository (`noRepo`). It cannot be created in a project with no targets (`task.repositoryMissing`).
+- The "Create task" button in the web UI reads only the current project before it appears. The repository suggestions (the daemon's
+  `GET /api/projects/:id/repositories`; org targets are read with `gh`) are read when the create dialog opens, through the web route
+  `GET /projects/:id/repositories` (read again on every open; a late result from an earlier open is dropped). Rendering the task list and its
+  automatic refresh do not read them. The dialog shows that the suggestions are loading, could not be read, or are empty, and in every state the
+  repository can be typed and the task created. For an org that could not be read, it shows the reason. Projects without targets do not read them.
 - The initial budget cap is `budget.default_per_task_usd` (default 1 US dollar).
 - The status values are in the "Projection" table of [Activity log](event-log.en.md). There is no "completed" status; a task is complete when every step is `done` or `skip` (`isCompleted`).
 
-Code: `packages/core/src/events.ts` (`TaskCreated`, `TaskSource`), `packages/core/src/projection.ts` (`isCompleted`, `isRepoless`), `apps/daemon/src/service.ts` (`createTask`)
+Code: `packages/core/src/events.ts` (`TaskCreated`, `TaskSource`), `packages/core/src/projection.ts` (`isCompleted`, `isRepoless`), `apps/daemon/src/service.ts` (`createTask`), `apps/web/src/components/new-task.tsx` (`NewTask`, `NewTaskPlaceholder`), `apps/web/src/components/new-task-dialog.tsx` (`NewTaskDialog`, `CandidatesStatus`), `apps/web/src/lib/repository-candidates.ts` (`candidatesLoader`, `fetchRepositoryCandidates`), `apps/web/src/app/projects/[id]/repositories/route.ts` (`GET`)
 
 ### Task templates
 

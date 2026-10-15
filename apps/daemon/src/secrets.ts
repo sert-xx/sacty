@@ -114,33 +114,70 @@ export class OnePasswordSecretStore implements SecretStore {
   /**
    * 参照をまとめて取り出し、メモリーに持つ（sacty up の起動時。PBI-48）。1回の op run ですべての参照を環境変数として
    * 子のプロセスに渡し、子が JSON で返す（認証を1回にする。値はコマンドラインにもファイルにも出さない）。
-   * まとめて取り出せなければ、参照ごとに取り出し直して、取り出せなかった参照と理由を返す。
+   * まとめて取り出せなければ、参照ごとに順に取り出し直して、取り出せなかった参照と理由を返す。
+   * 取り出している間に同じ参照が使われても、別には問い合わせず、この取り出しの結果を待たせる（プロジェクトの保存の
+   * ときは、タスクの実行と並んで取り出すため。PBI-107）。
    */
   async prefetch(refs: readonly string[]): Promise<{ ref: string; error: SecretNotFoundError }[]> {
     const account = this.options.account?.();
     const keyOf = (ref: string) => `${account ?? ""}\u0000${ref}`;
     const unique = [...new Set(refs)].filter(isOnePasswordRef);
     // すでに取り出し中・取り出し済みの参照は、その結果を待つ（戻ったときに、すべて取り出し終えているように）
+    const waiting: { ref: string; pending: Promise<string> }[] = [];
+    const wanted: string[] = [];
+    for (const ref of unique) {
+      const cached = this.cache.get(keyOf(ref));
+      if (cached) waiting.push({ ref, pending: cached });
+      else wanted.push(ref);
+    }
+    if (wanted.length > 0) {
+      const batch = this.readAll(wanted, account);
+      // まとめて取り出せなかったときの、参照ごとの取り出し（同時に問い合わせず、順に）
+      let previous: Promise<unknown> = batch;
+      for (const [i, ref] of wanted.entries()) {
+        const key = keyOf(ref);
+        const pending = batch.then((values) => {
+          if (values) return values[i] as string;
+          const reading = previous.then(
+            () => this.read(ref, account),
+            () => this.read(ref, account),
+          );
+          previous = reading.catch(() => {});
+          return reading;
+        });
+        this.cache.set(key, pending);
+        // 取り出せなかった参照は持たない（サインインし直せば、次は取り出せる）
+        pending.catch(() => {
+          if (this.cache.get(key) === pending) this.cache.delete(key);
+        });
+        waiting.push({ ref, pending });
+      }
+    }
     const failures: { ref: string; error: SecretNotFoundError }[] = [];
-    const known = unique.filter((ref) => this.cache.has(keyOf(ref)));
-    for (const ref of known) {
-      await this.cache.get(keyOf(ref))?.catch((error: unknown) => {
+    for (const { ref, pending } of waiting) {
+      await pending.catch((error: unknown) => {
         failures.push({
           ref,
           error: error instanceof SecretNotFoundError ? error : new SecretNotFoundError(ref),
         });
       });
     }
-    const wanted = unique.filter((ref) => !known.includes(ref));
-    if (wanted.length === 0) return failures;
+    return failures;
+  }
+
+  /** 1回の op run で、参照をまとめて取り出す（PBI-48）。取り出せなければ undefined（理由は参照ごとに確かめる）。 */
+  private async readAll(
+    refs: readonly string[],
+    account: string | undefined,
+  ): Promise<string[] | undefined> {
     const dir = mkdtempSync(join(tmpdir(), "sacty-op-"));
     try {
       // 参照だけを書いたファイル（値は書かない）。本人だけが読める
       const envFile = join(dir, "refs.env");
-      writeFileSync(envFile, wanted.map((ref, i) => `SACTY_OP_${i}="${ref}"\n`).join(""), {
+      writeFileSync(envFile, refs.map((ref, i) => `SACTY_OP_${i}="${ref}"\n`).join(""), {
         mode: 0o600,
       });
-      const names = wanted.map((_, i) => `SACTY_OP_${i}`);
+      const names = refs.map((_, i) => `SACTY_OP_${i}`);
       const script = `process.stdout.write(JSON.stringify(${JSON.stringify(names)}.map((n) => process.env[n] ?? null)))`;
       let result: Awaited<ReturnType<OpRunner>> | undefined;
       try {
@@ -164,29 +201,14 @@ export class OnePasswordSecretStore implements SecretStore {
       } catch {
         values = undefined;
       }
-      if (
-        Array.isArray(values) &&
-        values.length === wanted.length &&
+      return Array.isArray(values) &&
+        values.length === refs.length &&
         values.every((v) => typeof v === "string" && v !== "")
-      ) {
-        for (const [i, ref] of wanted.entries()) {
-          this.cache.set(keyOf(ref), Promise.resolve(values[i] as string));
-        }
-        return failures;
-      }
+        ? (values as string[])
+        : undefined;
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
-    // まとめて取り出せなかった（参照の誤り・サインインしていないなど）。どれが取り出せないかを参照ごとに確かめる
-    for (const ref of wanted) {
-      await this.get(ref).catch((error: unknown) => {
-        failures.push({
-          ref,
-          error: error instanceof SecretNotFoundError ? error : new SecretNotFoundError(ref),
-        });
-      });
-    }
-    return failures;
   }
 
   /** メモリーに持った値を捨てる（画面から取り出し直すとき。PBI-48）。 */

@@ -378,15 +378,26 @@ export async function testNotificationAction(
   return result.ok ? { sent: true } : { message: result.message };
 }
 
-export type PrefetchSecretsState = { message?: string; total?: number; problems?: string[] };
+export type PrefetchSecretsState = {
+  message?: string;
+  total?: number;
+  fetched?: number;
+  unreadContexts?: number;
+  problems?: string[];
+};
 
 /** 使う秘密情報を取り出し直す（PBI-48）。1Password はまとめて取り出すので、認証は1回。 */
 export async function prefetchSecretsAction(): Promise<PrefetchSecretsState> {
   const messages = await getMessages();
   try {
-    const { total, problems } = await prefetchSecrets();
+    const { total, fetched, unreadContexts, problems } = await prefetchSecrets();
     refresh();
-    return { total, problems: problems.map((p) => messages.labels.text(p)) };
+    return {
+      total,
+      fetched,
+      unreadContexts,
+      problems: problems.map((p) => messages.labels.text(p)),
+    };
   } catch {
     return { message: messages.common.action.daemonDown };
   }

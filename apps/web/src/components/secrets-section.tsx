@@ -36,7 +36,7 @@ export function SecretsSection() {
       )}
       {state.total !== undefined && (
         <div role="status" className="flex flex-col gap-1 text-sm">
-          <p>{t.secretsResult(state.total - (state.problems?.length ?? 0), state.total)}</p>
+          <p>{t.secretsResult(state.fetched ?? 0, state.total, state.unreadContexts ?? 0)}</p>
           {(state.problems ?? []).map((problem) => (
             <p key={problem} className="text-warn">
               {problem}

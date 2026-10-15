@@ -4,7 +4,7 @@
 - タスク: PBI-48
 - PR: #56
 - ブランチ: feat/issue-48-prefetch-secrets
-- 関係する ADR: [sacty up の起動時に、使う秘密情報をまとめて取り出してから、タスクの実行と取り込みを始める](../adr/20261013-0354-prefetch-secrets-at-startup.md)
+- 関係する ADR: [sacty up の起動時に、使う秘密情報をまとめて取り出してから、タスクの実行と取り込みを始める](../adr/20261013-0354-superseded-prefetch-secrets-at-startup.md)
 
 ## 目的
 
