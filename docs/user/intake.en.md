@@ -1,4 +1,4 @@
-<!-- Code: packages/core/src/projects.ts (SactySettings, TicketSourceConfig), apps/daemon/src/intake.ts, apps/daemon/src/tickets.ts, apps/daemon/src/config.ts (github), apps/web/src/i18n/messages/settings.ts -->
+<!-- Code: packages/core/src/projects.ts (SactySettings, TicketSourceConfig), apps/daemon/src/intake.ts, apps/daemon/src/tickets.ts, apps/web/src/i18n/messages/settings.ts, apps/web/src/i18n/messages/projects.ts -->
 
 [日本語](intake.md) | **English**
 
@@ -7,17 +7,23 @@
 sacty regularly imports GitHub issues and PRs and JIRA tickets and turns them into tasks. Intake settings are shared by all projects, and
 you set them in "sacty settings" (the user menu) in the web UI.
 
-## Turn on intake
+## Intake intervals
 
-Intake runs only when you write `github:` in `config.yaml` (if you omit it, no issues, PRs, or tickets are imported, not even with
-"Import now" in the web UI).
+Intake runs at a separate interval for each kind: "Issue intake", "PR review intake", and "Ticket intake".
+You set the interval in "Intake interval (seconds)" in each section of "sacty settings".
 
-```yaml
-github:
-  poll_interval_sec: 300   # how often to import (seconds. 60 or more. Default 300)
-```
-
-You can change the interval without stopping the daemon. Use "Import now" on the project page to import without waiting for the interval.
+- Enter an integer of 60 or more (seconds). If you leave it empty, it is 300 seconds. Values shorter than 60 or not integers cannot be saved, and the reason is shown in the web UI.
+- A changed interval takes effect from the next intake without stopping the daemon. When the daemon starts, every kind is imported right away.
+- When you save "sacty settings", the kinds that are On and have their labels and so on set are imported within 30 seconds (without waiting for the interval to pass).
+  After that, they are imported at the new interval. Kinds that are Off, or that do not have their labels and so on set, are not imported even when you save.
+  If a kind is being imported when you save, the new intake starts at the check (every 30 seconds) after the current intake ends
+  (if the intake takes long, it starts later than 30 seconds). For a kind whose intake is stopped, the field shows
+  the interval that will apply when intake starts.
+- Even if one kind fails or hits a GitHub rate limit, the other kinds keep being imported.
+- "Import now" on the project page imports every kind without waiting for the interval. The project page shows the last intake for each kind, and
+  the targets that could not be imported together with which kind they belong to (kinds that are not On are not shown).
+- You do not need any intake settings in `config.yaml`. JIRA tickets are imported without writing `github:` too. `github:`
+  (`poll_interval_sec`) from earlier versions is not read even if written.
 
 ## Issues
 

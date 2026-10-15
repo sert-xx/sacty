@@ -5,16 +5,41 @@
 Periodically searches GitHub Issues and PRs and JIRA tickets and turns them into tasks. The intake sources and the GitHub account to use are set in the project, and the intake labels
 in the sacty settings (shared by all projects). GitHub is accessed with the accounts logged in to `gh` on the host.
 
-Related ADRs: [Split intake into "Issue intake" and "PR review intake", and add the review label to sacty's PRs](../adr/20261015-0240-split-issue-and-pr-review-intake.md), [Add the intake label to PRs created by sacty, and take in reviews from a separate task as comments on the original task's PR](../adr/20261014-1445-superseded-label-sacty-pull-requests-for-review.md)
+Related ADRs: [Keep the intake interval in the sacty settings, per kind of intake](../adr/20261015-0310-intake-intervals-per-kind.md), [Split intake into "Issue intake" and "PR review intake", and add the review label to sacty's PRs](../adr/20261015-0240-split-issue-and-pr-review-intake.md), [Add the intake label to PRs created by sacty, and take in reviews from a separate task as comments on the original task's PR](../adr/20261014-1445-superseded-label-sacty-pull-requests-for-review.md)
 
 ## Interval
 
-- Intake runs every `github.poll_interval_sec` in `config.yaml` (60 or more, default 300). If `github` is not set, no intake happens. Whether the interval has come is checked every 30 seconds,
-  and the settings are reread each time. `POST /api/intake/run` runs intake without waiting for the interval.
-- For each intake source, how far it has read (the update time) is kept in memory, and reading continues from there. When the project settings change or the daemon restarts,
-  it reads again from the beginning (items already taken in are not taken in twice). A failure in one intake source does not stop the others.
+- There are three kinds of intake (`IntakeKind`): `issues` (Issue intake; `intakeLabel`), `reviews` (PR review intake; `reviewLabel`,
+  `reviewRequested`), and `tickets` (ticket intake; `ticketLabel`). Each kind is taken in separately, at its own interval in the sacty settings (`issueIntervalSec`, `reviewIntervalSec`,
+  `ticketIntervalSec`; seconds; an integer of 60 or more; 300 if not set).
+- Whether the interval has come is checked every 30 seconds, and the sacty settings are reread each time (a changed interval takes effect from the next check without restarting the daemon; it is measured from the time
+  the last intake started). When the daemon starts, every kind is taken in right away. A round with no intake sources (no label, Off, or no targets) does not
+  become the start of the interval, and that kind's record is cleared (the next check looks again, so turning it On takes it in at the next check).
+  When the sacty settings are saved (what changed is not distinguished), the start of the interval of every kind is reset, and intake runs at the next check (intake reads the save count
+  `settingsSaveCount`; in memory only). Turning it On, changing a label, and turning it Off and back On between checks all
+  lead to intake at the next check this way. After that, the new interval is measured from the intake right after the save.
+- If the sacty settings cannot be read, the reason is recorded as a failure of each kind that is not taking in, and the start of that kind's interval is reset (once fixed, intake runs at the next check;
+  the periodic run does not stop). An unexpected failure during intake also resets the start of that kind's interval. Search failures and rate limits per intake source
+  keep the start of the interval (intake runs at the next interval).
+- The position read for each intake source (the GitHub update time, or where to continue for tickets) is advanced only after the intake (saving the tasks) succeeds. If the intake
+  fails, the next round reads again from the previous position (items from the failed round are not skipped; items already taken in are not taken in twice).
+  If the save count of the sacty settings (`settingsSaveCount`) or the version of the project settings (`projectsRevision`) differs between the start and the end of an intake,
+  the position is not advanced (so that items not taken in, for example because intake was turned Off and back On midway, are not skipped; what changed is not distinguished).
+- For a kind that is taking in when the sacty settings are saved, a new intake starts at the check after that intake ends (an intake in progress is not started twice).
+- If the search finds nothing, the intake processing (`importIssues`, `importTickets`; they look through all tasks) is not called.
+- Intake runs as long as `config.yaml` can be read (`config.yaml` has no intake items; `github:` is not read even if written). If it cannot be read, nothing is taken in.
+- The kinds of intake run in parallel. A kind that is taking in is not started twice even when its interval comes (it waits for the intake to end). A failure, rate limit, or delay in one kind
+  does not stop the other kinds (skipping searches because of a rate limit applies only within that kind in that round). Unexpected failures are also recorded as failures of that kind.
+- `POST /api/intake/run` takes in every kind without waiting for the interval and returns the status after it ends (the kind cannot be chosen).
+- The status (`intake.runs` of `GET /api/status`) has, for each kind, the time of the latest intake, the number of tasks created, and the intake sources that could not be taken in with the reasons
+  (in memory only; cleared on restart). The web UI shows only the kinds that are On and configured, and adds the kind to targets that could not be taken in. Even when the sacty settings store
+  cannot be read, the status returns the recorded intakes with `settingsUnreadable: true` and the reason it could not be read now (`settingsError`)
+  (no labels and so on; the reason is known even before the periodic check. The web UI shows the reason and the records of every kind).
+- For each intake source, how far it has read (the update time) is kept in memory per kind, and reading continues from there. When the project settings, a label, or On/Off changes
+  (not including the interval) or the daemon restarts, it reads again from the beginning (items already taken in are not taken in twice). A failure in one intake source does not stop the other
+  intake sources.
 
-Code: `apps/daemon/src/intake.ts` (`IssueIntake`), `apps/daemon/src/config.ts` (`ConfigFile`)
+Code: `apps/daemon/src/intake.ts` (`IssueIntake`), `packages/core/src/projects.ts` (`IntakeKind`, `intakeIntervalSec`, `SactySettings`), `apps/daemon/src/service.ts` (`recordIntake`, `settingsSaveCount`, `status`)
 
 ## GitHub Issues and PRs
 

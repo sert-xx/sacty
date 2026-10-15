@@ -2,7 +2,7 @@
 
 # Configuration (config.yaml)
 
-`SACTY_HOME/config.yaml` holds the per-machine settings (AI agents, authentication, images, the gateway, and the intake interval). The daemon
+`SACTY_HOME/config.yaml` holds the per-machine settings (AI agents, authentication, images, and the gateway). The daemon
 reads it again on every use (you can change it without stopping the daemon). When it cannot be read or has the wrong shape, the location of the first error (`path`) and the reason become the message shown as a warning in the web UI.
 `sacty config init` writes the template (`CONFIG_TEMPLATE`) with permission 0600 (if the file exists, it stops unless `--force` is given).
 
@@ -29,11 +29,13 @@ Related ADRs: none
 | `gateway.retry.max_wait_sec` | `600` | The upper limit on total waiting during a run of failures (0 to 86400 seconds) |
 | `gateway.platforms` | `{}` | Organization platforms (PF). Names match `^[a-z0-9][a-z0-9-]*$` ([Gateway](gateway.en.md)) |
 | `gateway.mcp_servers` | `{}` | MCP servers run on the host. Names match `^[A-Za-z0-9_-]+$` (same as above) |
-| `github.poll_interval_sec` | `300` (60 or more) | The interval for intake of Issues, PRs, and tickets. **If `github` is not written, intake does not run** |
 
 Other checks: it is an error when a value of `default_agent`, `guardian_agent`, or `step_agents` is not in `agents`, or when a `provider` name is not in `providers`.
 
-Code: `apps/daemon/src/config.ts` (`ConfigFile`, `loadConfig`, `agentFor`, `CONFIG_TEMPLATE`), `apps/daemon/src/intake.ts` (`IssueIntake.tick`)
+Unknown items are not treated as errors and are not read. The intake interval is not in `config.yaml` but in the sacty settings ([Intake](intake.en.md#interval)).
+The former `github.poll_interval_sec` (`github:`) is not read either, even if written (no warning).
+
+Code: `apps/daemon/src/config.ts` (`ConfigFile`, `loadConfig`, `agentFor`, `CONFIG_TEMPLATE`)
 
 ## Agents (agents)
 

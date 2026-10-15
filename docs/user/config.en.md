@@ -1,4 +1,4 @@
-<!-- Code: apps/daemon/src/config.ts (ConfigFile, Agent, Auth, Provider, CONFIG_TEMPLATE), packages/core/src/events.ts (StepKey, DEFAULT_BUDGET_USD), apps/daemon/src/intake.ts -->
+<!-- Code: apps/daemon/src/config.ts (ConfigFile, Agent, Auth, Provider, CONFIG_TEMPLATE), packages/core/src/events.ts (StepKey, DEFAULT_BUDGET_USD) -->
 
 [日本語](config.md) | **English**
 
@@ -25,7 +25,9 @@ Per-project settings (targets, GitHub accounts, the context repository, notifica
 | `images` | Images per language ([Container images](images.en.md#per-language-images)) | None |
 | `onepassword.account` | The 1Password account to use ([Secrets](secrets.en.md#1password)) | None |
 | `gateway` | The gateway on the host ([Gateway](gateway.en.md)) | None |
-| `github.poll_interval_sec` | How often to import issues, PRs, and tickets (seconds. An integer of 60 or more). If you omit `github:`, nothing is imported ([Intake](intake.en.md)) | `300` |
+
+You set the intake interval for each kind of intake in "sacty settings" in the web UI, not in config.yaml ([Intake](intake.en.md#intake-intervals)).
+`github:` (`poll_interval_sec`) from earlier versions is not read even if written. You can delete it.
 
 If a setting is wrong, the web UI shows which setting (for example `agents.claude-subscription.auth.secret`) is wrong and why.
 

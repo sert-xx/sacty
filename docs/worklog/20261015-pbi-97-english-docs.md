@@ -130,3 +130,13 @@ PR #107 のレビューの提案4件に、同じ PR で対応した。日本語�
 - 画面の文言は、PR #108 で変わった英語の文言（"Issue intake"・"Import PRs with the review label" など。"Import PRs" は無くなった）に合わせた。
   見出しの名前が変わった節（`approval.md` の「PR のレビュー用のラベル」、`intake.md` の「Issue」）は、英語の版の見出しとアンカーも直し、
   名前が変わった ADR（`20261014-1445-superseded-…`）へのリンクも直した。
+
+## main への追従（PR #109 の後）
+
+- PR #109（PBI-100：取り込みの間隔を種類ごとに）が main に入ったので、main をこのブランチにマージした（ぶつかりは無し）。PR #109 が日本語の版を
+  直した `docs/spec/intake.md`（関係する ADR・「間隔」の節）・`configuration.md`（`github.poll_interval_sec` の行を消し、読まないことを足した）・
+  `architecture.md`（sacty の設定の間隔の項目）と、`docs/user/intake.md`（「取り込みの間隔」の節。YAML の例を消した）・`config.md`・
+  `troubleshooting.md`（`github:` の確認を外し、取り込めなかった対象と PF の確認を足した）を、英語の版にそろえた。
+- 画面の文言は、PR #109 で足された英語の文言（"Intake interval (seconds)"・"Some targets could not be imported" など）に合わせた。
+- PR #109 で名前が変わった ADR（`superseded-github-access-via-gh-accounts`）へのリンクは、README・docs/user・docs/spec の両方の版に無いことを確かめた。
+- PR #109 が docs/user に足した日本語の文が、です・ます調であることを確かめた。
