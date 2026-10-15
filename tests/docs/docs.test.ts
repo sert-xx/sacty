@@ -2,7 +2,8 @@
 // - ADR・作業履歴・仕様書・ユーザードキュメントのファイル名
 // - ADR の先頭の項目（日時・ステータス・置き換えの関係）と、ファイル名との一致
 // - 作業履歴の先頭の項目（日付・タスク・PR）と、ファイル名との一致
-// - docs・README・スキルの中の相対リンクが切れていないこと、docs/pbi へリンクしないこと
+// - docs・ルートの文書（README・CONTRIBUTING・SECURITY）・スキルの中の相対リンクが切れていないこと、docs/pbi へリンクしないこと
+// - ルートの LICENSE（MIT）と、README（両方の版）からライセンス・コントリビュート・セキュリティへのリンク、各 package.json の license
 // - Claude Code 用と Codex 用のスキルが同じ内容であること
 // - README・ユーザードキュメント・仕様書の日本語の版と英語の版（`*.en.md`）がそろい、互いにリンクし、
 //   見出し・表・コードブロック・コードの名前・リンクの数がそろうこと
@@ -23,7 +24,13 @@ const SKILL_COPIES = [
   join(ROOT, ".claude", "skills", SKILL_NAME, "SKILL.md"),
   join(ROOT, ".agents", "skills", SKILL_NAME, "SKILL.md"),
 ];
+/** リポジトリの README（日本語の版・英語の版） */
 const ROOT_READMES = [join(ROOT, "README.md"), join(ROOT, "README.en.md")];
+/** リポジトリのルートに置く文書（リンク切れを確かめる対象） */
+const ROOT_DOCS = [
+  ...ROOT_READMES,
+  ...["CONTRIBUTING.md", "SECURITY.md"].map((name) => join(ROOT, name)),
+];
 
 const SLUG = "[a-z0-9]+(?:-[a-z0-9]+)*";
 const PLAIN_NAME = new RegExp(`^${SLUG}(?:\\.en)?\\.md$`);
@@ -719,8 +726,8 @@ describe("docs の構成", () => {
     expect(errors).toEqual([]);
   });
 
-  it("docs・README・スキルの相対リンクが切れておらず、docs/pbi へリンクしない", () => {
-    const files = [...markdownFiles(DOCS), ...ROOT_READMES, ...SKILL_COPIES];
+  it("docs・ルートの文書（README など）・スキルの相対リンクが切れておらず、docs/pbi へリンクしない", () => {
+    const files = [...markdownFiles(DOCS), ...ROOT_DOCS, ...SKILL_COPIES];
     const broken: string[] = [];
     for (const file of files) {
       for (const link of relativeLinks(readFileSync(file, "utf8"))) {
@@ -741,7 +748,7 @@ describe("ユーザードキュメントと README", () => {
   const USER_DIR = join(DOCS, "user");
 
   it("Markdown へのリンクのアンカー（#…）が、行き先の見出しにある", () => {
-    const files = [...markdownFiles(DOCS), ...ROOT_READMES, ...SKILL_COPIES];
+    const files = [...markdownFiles(DOCS), ...ROOT_DOCS, ...SKILL_COPIES];
     const broken: string[] = [];
     for (const file of files) {
       for (const link of anchorLinks(readFileSync(file, "utf8"))) {
@@ -832,6 +839,33 @@ describe("日本語の版と英語の版", () => {
       );
     }
     expect(errors).toEqual([]);
+  });
+
+  it("ルートに MIT の LICENSE があり、README（両方の版）からライセンス・コントリビュート・セキュリティへリンクしている", () => {
+    expect(readFileSync(join(ROOT, "LICENSE"), "utf8")).toMatch(
+      /^MIT License\n\nCopyright \(c\) \d{4} \S/,
+    );
+    for (const readme of ROOT_READMES) {
+      const links = relativeLinks(readFileSync(readme, "utf8"));
+      for (const target of ["LICENSE", "CONTRIBUTING.md", "SECURITY.md"]) {
+        expect(links, `${relative(ROOT, readme)}: ${target}`).toContain(target);
+      }
+    }
+  });
+
+  it("ルート・apps・packages の package.json の license が MIT", () => {
+    const manifests = [
+      "package.json",
+      ...["apps", "packages"].flatMap((dir) =>
+        readdirSync(join(ROOT, dir))
+          .map((name) => join(dir, name, "package.json"))
+          .filter((path) => existsSync(join(ROOT, path))),
+      ),
+    ];
+    expect(manifests.length).toBeGreaterThan(1);
+    for (const path of manifests) {
+      expect(JSON.parse(readFileSync(join(ROOT, path), "utf8")).license, path).toBe("MIT");
+    }
   });
 });
 

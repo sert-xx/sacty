@@ -84,3 +84,14 @@ PR #107 のレビューの提案4件に、同じ PR で対応した。日本語�
    実際のページ（`docs/spec/gateway.en.md`）でも、全角の括弧で無い名前を書く・閉じ括弧を消すと落ち、戻すと通ることを確かめた。
 
 確かめたこと：`npm run lint`（終了コード0）・`npm run typecheck`・`npx vitest run`（57ファイル・1390件が通過）・`npm run build`・`npx vitest run tests/docs`（85件が通過）。
+
+## main への追従（PR #103 の後）
+
+- PR #103（PBI-96：LICENSE・CONTRIBUTING・SECURITY）が main に入ったので、main をこのブランチにマージした。`tests/docs/docs.test.ts` のぶつかりは、
+  両方の意図を保つように解消した：ルートの文書（`ROOT_DOCS`）に `README.en.md` を足してリンク切れ・アンカーの対象にし、日本語の版と英語の版の
+  突き合わせには README の2つの版（`ROOT_READMES`）を使う。ライセンス・コントリビュート・セキュリティへのリンクの検査は、README の両方の版に広げた。
+- README に足された「コントリビュート・セキュリティ」「ライセンス」の節を `README.en.md` に訳した。CONTRIBUTING・SECURITY の英語の版は
+  このタスクの範囲の外なので作らず、`README.en.md` からは日本語の版へリンクする（「(in Japanese)」と添えた）。突き合わせの検査は、相手の英語の版が
+  無いリンクを同じ行き先として比べるので、このままで通る。
+- CONTRIBUTING の「ドキュメント」に、README・仕様書・ユーザードキュメントは両方の言語を直すことを書き足した（冒頭の「日本語で書いています」にも、
+  英語の版があることを添えた）。
