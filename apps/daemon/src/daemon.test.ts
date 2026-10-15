@@ -24,6 +24,7 @@ import {
   isCompleted,
   MAX_CHANGE_REQUESTS,
   MAX_FIX_CHAIN,
+  MAX_VERIFY_ATTEMPTS,
   MVP_STEPS,
   message,
   QUESTION_MAX,
@@ -16426,5 +16427,393 @@ describe("マージの後の CI/CD とデプロイの監視（PBI-89）", () => 
     expect(ci.calls).toHaveLength(calls);
     expect(t.service.list()).toHaveLength(1);
     t.activity.close();
+  });
+});
+
+describe("テストの仕組みが無いリポジトリ（PBI-94）", () => {
+  const out = (text: string): AgentOutcome => ({
+    kind: "completed",
+    output: text,
+    usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 1 },
+  });
+  const block = (b: Record<string, unknown>) => `\`\`\`json\n${JSON.stringify(b)}\n\`\`\``;
+  const NO_TESTS = "README.md だけで、テストのコード・設定・CI が無い";
+  const plan = (extra: Record<string, unknown> = {}, value = "skip-design") =>
+    out(block({ "sacty-steps": { plan: value, reason: "小さい", noTests: NO_TESTS, ...extra } }));
+  const review = (verified = true) =>
+    out(
+      block({
+        "sacty-final-review": {
+          viewpoints: [{ id: "REQ", verified, reason: verified ? "目的を満たす" : "足りない" }],
+          remarks: [],
+          summary: verified ? "目的から見て受け入れられる" : "受け入れられない",
+        },
+      }),
+    );
+  const promptOf = (executor: FakeExecutor, i: number) =>
+    executor.calls[i]?.command.join(" ") ?? "";
+  const typesOf = (service: TaskService, id: string) =>
+    service.get(id)?.activity.map((e) => e.type) ?? [];
+  const taskOf = (service: TaskService, id: string) => service.get(id)?.task as Task;
+
+  /** clone した作業領域に、ファイルを置く偽のリポジトリ（起点のコード）。 */
+  class FilesRepos extends FakeRepos {
+    constructor(private readonly files: Record<string, string>) {
+      super();
+    }
+    override async prepare(...args: Parameters<FakeRepos["prepare"]>) {
+      const result = await super.prepare(...args);
+      for (const [path, content] of Object.entries(this.files)) {
+        mkdirSync(dirname(join(args[0], path)), { recursive: true });
+        writeFileSync(join(args[0], path), content);
+      }
+      return result;
+    }
+  }
+
+  async function drain(service: TaskService, max = 12) {
+    for (let i = 0; i < max; i++) {
+      const ids = service.queuedTaskIds();
+      if (ids.length === 0) return;
+      for (const id of ids) await service.runNext(id);
+    }
+  }
+
+  it("README だけのリポジトリで Sacty セットアップを実行すると、止まらずに成果物チェックまで進み、目的から判定したことがわかる", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service, executor, tests, pulls } = makeService(
+      activity,
+      [
+        plan(),
+        out("# 前段の調査"),
+        out("# 要求要件\n\n- AGENTS.md を足す"),
+        out("# 実装の説明\n\n- AGENTS.md を足した"),
+        review(),
+      ],
+      { realPlanner: true, repos: new FilesRepos({ "README.md": "# app" }) },
+    );
+    const { id } = service.createTask({ template: "sacty-setup", projectId: "default" });
+    await service.runNext(id);
+    // テストの仕組みが無いと判断した理由を台帳に残し、止めずに工程を進める
+    const chosen = service.get(id)?.activity.find((e) => e.type === "StepsChosen");
+    expect(chosen?.type === "StepsChosen" && chosen.payload.noTestsReason).toBe(NO_TESTS);
+    expect(chosen?.type === "StepsChosen" && chosen.payload.testCommand).toBeUndefined();
+    expect(taskOf(service, id).noTestsReason).toBe(NO_TESTS);
+    // オーケストレーターには、テストの仕組みが無いときの答え方を伝える
+    expect(promptOf(executor, 0)).toContain("noTests");
+    await drain(service);
+    expect(taskOf(service, id).gate).toEqual({ step: "requirements", submission: 1 });
+    service.approve(id, { step: "requirements", submission: 1 });
+    await drain(service);
+    const task = taskOf(service, id);
+    // テストは実行せず、最終レビューで目的から判定して、成果物チェックの承認待ちになる
+    expect(tests.calls).toEqual([]);
+    expect(typesOf(service, id)).toContain("TestsSkipped");
+    expect(task.testsSkippedAt).toBeDefined();
+    expect(task.lastReview?.passed).toBe(true);
+    expect(task.gate).toEqual({ step: "pr", submission: 1 });
+    expect(task.status).toBe("awaiting_approval");
+    // 実装の指示は、テストを書かせず、目的から判定されることを伝える
+    const implementPrompt = promptOf(executor, 3);
+    expect(implementPrompt).toContain("このリポジトリには、テストの仕組みがありません");
+    expect(implementPrompt).toContain("sacty-test-command");
+    // 最終レビューは、目的・実装の説明から判定させ、テストが無いことでは不合格にさせない
+    const guardian = promptOf(executor, 4);
+    expect(guardian).toContain("--- タスク（目的） ---");
+    expect(guardian).toContain("Sacty セットアップ");
+    expect(guardian).toContain("--- 実装の説明（工程エージェントの申告） ---");
+    expect(guardian).toContain("- AGENTS.md を足した");
+    expect(guardian).toContain(
+      "テストが無い・観点にテストが対応していないことを理由に不合格にしない",
+    );
+    expect(guardian).toContain("（テストのコマンドが無いため、実行していません）");
+    // PR の本文で、テストで検証していないことがわかる
+    expect(pulls.calls).toHaveLength(1);
+    const body = pulls.calls[0]?.body ?? "";
+    expect(body).toContain(
+      "テスト：テストのコマンドが無いため、テストでは検証していません。目的から判定しました。",
+    );
+    expect(body).toContain(`テストの仕組みが無いと判断した根拠（オーケストレーター）：${NO_TESTS}`);
+    expect(body).toContain("（テストなし。目的から判定）");
+    // 人の承認は今どおり要る
+    expect(isCompleted(task)).toBe(false);
+    activity.close();
+  });
+
+  it("テストのファイルがあるのにテストの仕組みが無いと答えたら、テストなしで進めずに止め、再開してもテストを飛ばさない", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service, executor, tests } = makeService(
+      activity,
+      [plan(), out("# 前段の調査"), out("# 要求要件"), out("# 実装の説明")],
+      {
+        realPlanner: true,
+        repos: new FilesRepos({ "README.md": "# app", "src/pay.test.js": "test()" }),
+      },
+    );
+    const { id } = service.createTask({ projectId: "default", title: "決済API" });
+    await service.runNext(id);
+    const task = taskOf(service, id);
+    expect(task.status).toBe("paused");
+    expect(task.pausedMessage).toEqual({
+      code: "orchestrator.noTestsContradicted",
+      params: { reason: NO_TESTS, files: "src/pay.test.js" },
+    });
+    // テストの無いタスクとして記録しない（費用をかける前に止める）
+    expect(task.noTestsReason).toBeUndefined();
+    const chosen = service.get(id)?.activity.find((e) => e.type === "StepsChosen");
+    expect(chosen?.type === "StepsChosen" && chosen.payload.noTestsReason).toBeUndefined();
+    expect(executor.calls).toHaveLength(1);
+    // 再開して実装まで進めても、検証でテストを飛ばさずに止まる
+    service.resume(id, {});
+    await drain(service);
+    service.approve(id, { step: "requirements", submission: 1 });
+    await drain(service);
+    expect(tests.calls).toEqual([]);
+    expect(typesOf(service, id)).not.toContain("TestsSkipped");
+    expect(taskOf(service, id).pausedMessage).toEqual({ code: "orchestrator.testCommandUnknown" });
+    activity.close();
+  });
+
+  it("申告を読むのはテストの仕組みが無いタスクの実装だけ。ほかの工程やテストのあるタスクでは、コードブロックを本文に残す（PR #105 再レビュー指摘）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const example = '```sacty-test-command\n{"command":"make test",}\n```';
+    const { service, tests } = makeService(
+      activity,
+      [
+        out(`# 要求要件\n\n申告の例：\n\n${example}`),
+        out(
+          `# 実装の説明\n\n${example}\n\n${block({ "sacty-test-map": [{ viewpointId: "REQ", tests: ["a.test › a"] }] })}`,
+        ),
+        review(),
+      ],
+      {
+        planner: async () => ({
+          steps: ["requirements", "implement", "pr"],
+          fallback: false,
+          testCommand: "npm test",
+          costUsd: 0,
+          estimated: false,
+        }),
+      },
+    );
+    const { id } = service.createTask({ projectId: "default", title: "テストのあるタスク" });
+    await drain(service);
+    // 要求要件の本文から、例が消えない
+    expect(taskOf(service, id).outputs.requirements).toContain(example);
+    service.approve(id, { step: "requirements", submission: 1 });
+    await drain(service);
+    const task = taskOf(service, id);
+    // テストのあるタスクの実装では、申告として扱わない（止めず、本文にも残し、決めたテストのコマンドで検証する）
+    expect(task.pausedMessage).toBeUndefined();
+    expect(task.outputs.implement).toContain(example);
+    expect(task.addedTestCommand).toBeUndefined();
+    expect(tests.calls.map((c) => c.command)).toEqual(["npm test"]);
+    expect(task.gate).toEqual({ step: "pr", submission: 1 });
+    activity.close();
+  });
+
+  it("テストの仕組みが無いタスクでも、要求要件・設計の本文の申告の例は取り除かず、申告として扱わない（PR #105 再レビュー指摘）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const example = '```sacty-test-command\n{"command":"make test",}\n```';
+    const { service } = makeService(
+      activity,
+      [
+        plan({}, "standard"),
+        out("# 前段の調査"),
+        out(`# 要求要件\n\n申告の例：\n\n${example}`),
+        out(
+          `# 設計\n\n申告の例：\n\n${example}\n\n${block({
+            "sacty-test-viewpoints": [{ title: "指示がある", input: "読む", expected: "ある" }],
+          })}`,
+        ),
+      ],
+      { realPlanner: true, repos: new FilesRepos({ "README.md": "# app" }) },
+    );
+    const { id } = service.createTask({ projectId: "default", title: "設計する" });
+    await drain(service);
+    expect(taskOf(service, id).noTestsReason).toBe(NO_TESTS);
+    expect(taskOf(service, id).outputs.requirements).toContain(example);
+    service.approve(id, { step: "requirements", submission: 1 });
+    await drain(service);
+    const task = taskOf(service, id);
+    // 設計の本文にも残り、止まらずに設計の承認待ちになる
+    expect(task.outputs.design).toContain(example);
+    expect(task.pausedMessage).toBeUndefined();
+    expect(task.gate).toEqual({ step: "design", submission: 1 });
+    activity.close();
+  });
+
+  it("テストの仕組みが無いと答えなければ今どおり止め、テストのコマンドがあればテストの無い判断は捨てる", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service } = makeService(
+      activity,
+      [
+        out(block({ "sacty-steps": { plan: "skip-design", reason: "小さい" } })),
+        plan({ testCommand: "make test" }),
+      ],
+      { realPlanner: true, repos: new FilesRepos({ "README.md": "# app" }) },
+    );
+    const a = service.createTask({ projectId: "default", title: "A" });
+    await service.runNext(a.id);
+    expect(taskOf(service, a.id).pausedMessage).toEqual({
+      code: "orchestrator.testCommandUnknown",
+    });
+    const b = service.createTask({ projectId: "default", title: "B" });
+    await service.runNext(b.id);
+    const task = taskOf(service, b.id);
+    expect(task.testCommand).toBe("make test");
+    expect(task.noTestsReason).toBeUndefined();
+    expect(task.pausedMessage).toBeUndefined();
+    activity.close();
+  });
+
+  it("テストの仕組みが無いのに不具合の修正を選んだら、テストの無いタスクとして扱わずに止める", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service, executor } = makeService(
+      activity,
+      [plan({ investigation: "bug" }, "bugfix")],
+      { realPlanner: true, repos: new FilesRepos({ "README.md": "# app" }) },
+    );
+    const { id } = service.createTask({ projectId: "default", title: "不具合" });
+    await service.runNext(id);
+    const task = taskOf(service, id);
+    expect(task.status).toBe("paused");
+    expect(task.pausedMessage).toEqual({
+      code: "orchestrator.bugfixNeedsTests",
+      params: { reason: NO_TESTS },
+    });
+    expect(task.noTestsReason).toBeUndefined();
+    expect(executor.calls).toHaveLength(1);
+    activity.close();
+  });
+
+  it("実装がテストの仕組みを用意して申告したら、そのコマンドで検証し、通らなければやり直す。観点の対応が無いことでは落とさない", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const implemented = (command: string) =>
+      out(`# 実装の説明\n\n\`\`\`sacty-test-command\n${JSON.stringify({ command })}\n\`\`\``);
+    const { service, executor, tests, pulls } = makeService(
+      activity,
+      [
+        plan(),
+        out("# 前段の調査"),
+        out("# 要求要件\n\n- テストの仕組みを用意する"),
+        implemented("make check"),
+        implemented("make test"),
+        review(),
+      ],
+      {
+        realPlanner: true,
+        repos: new FilesRepos({ "README.md": "# app" }),
+        tests: new FakeTests([
+          { exitCode: 1, output: "FAIL", durationMs: 5 },
+          { exitCode: 0, output: "ok", durationMs: 5 },
+        ]),
+      },
+    );
+    const { id } = service.createTask({ projectId: "default", title: "テストを用意する" });
+    await drain(service);
+    service.approve(id, { step: "requirements", submission: 1 });
+    await drain(service);
+    // 申告したコマンドで実行する。1回目は通らずにやり直し、2回目のコマンドで通る
+    expect(tests.calls.map((c) => c.command)).toEqual(["make check", "make test"]);
+    const runs = service
+      .get(id)
+      ?.activity.flatMap((e) => (e.type === "TestsRun" ? [e.payload] : []));
+    expect(runs?.map((r) => [r.passed, r.unmappedViewpoints])).toEqual([
+      [false, ["REQ"]],
+      [true, ["REQ"]],
+    ]);
+    // やり直しの指示に、テストの対応が無い観点を挙げない
+    expect(promptOf(executor, 4)).toContain("前回の検証：テストが通りませんでした");
+    expect(promptOf(executor, 4)).not.toContain("テストが対応していない観点");
+    const task = taskOf(service, id);
+    expect(task.addedTestCommand).toBe("make test");
+    expect(task.testsSkippedAt).toBeUndefined();
+    expect(task.gate).toEqual({ step: "pr", submission: 1 });
+    // 最終レビューと PR の本文で、実装で用意したテストを使ったことがわかる
+    expect(promptOf(executor, 5)).toContain("sacty は、実装が用意したテストを実行しました");
+    expect(pulls.calls[0]?.body).toContain(
+      "テスト：`make test` → 合格（終了コード 0）（実装で用意したテスト）",
+    );
+    activity.close();
+  });
+
+  it("目的からの判定に通らなければやり直し、続けて通らなければ上限で止める。再起動して再開しても、テストは実行しない", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const outcomes = [
+      plan(),
+      out("# 前段の調査"),
+      out("# 要求要件"),
+      ...Array.from({ length: MAX_VERIFY_ATTEMPTS }, () => [
+        out("# 実装の説明"),
+        review(false),
+      ]).flat(),
+    ];
+    const { service, tests } = makeService(activity, outcomes, {
+      realPlanner: true,
+      repos: new FilesRepos({ "README.md": "# app" }),
+    });
+    const { id } = service.createTask({ projectId: "default", title: "A" });
+    await drain(service);
+    service.approve(id, { step: "requirements", submission: 1 });
+    await drain(service, 20);
+    const task = taskOf(service, id);
+    expect(task.status).toBe("paused");
+    expect(task.pausedReason).toBe("verification");
+    expect(typesOf(service, id).filter((t) => t === "TestsSkipped")).toHaveLength(
+      MAX_VERIFY_ATTEMPTS,
+    );
+    expect(tests.calls).toEqual([]);
+    // 再起動（作業履歴から読み直す）して再開すると、テストを飛ばして目的から判定し直す
+    const restarted = makeService(activity, [out("# 実装の説明"), review()], {
+      realPlanner: true,
+      tests,
+    });
+    expect(taskOf(restarted.service, id).noTestsReason).toBe(NO_TESTS);
+    restarted.service.resume(id, {});
+    await drain(restarted.service);
+    const after = taskOf(restarted.service, id);
+    expect(after.gate).toEqual({ step: "pr", submission: 1 });
+    expect(tests.calls).toEqual([]);
+    activity.close();
+  });
+
+  it("実装のテストのコマンドの申告の形が正しくなければ、テストを飛ばさずに止め、再開すると実装をやり直す（PR #105 レビュー指摘）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service, tests } = makeService(
+      activity,
+      [
+        plan(),
+        out("# 前段の調査"),
+        out("# 要求要件"),
+        out('# 実装の説明\n\n```sacty-test-command\n{"command": ""}\n```'),
+        // JSON として読めない申告も、テストを飛ばさずに止める（PR #105 再レビュー指摘）
+        out('# 実装の説明\n\n```sacty-test-command\n{"command" "make test"}\n```'),
+        out('# 実装の説明\n\n```sacty-test-command\n{"command": "make test"}\n```'),
+        review(),
+      ],
+      { realPlanner: true, repos: new FilesRepos({ "README.md": "# app" }) },
+    );
+    const { id } = service.createTask({ projectId: "default", title: "テストを用意する" });
+    await drain(service);
+    service.approve(id, { step: "requirements", submission: 1 });
+    await drain(service);
+    const paused = taskOf(service, id);
+    expect(paused.status).toBe("paused");
+    expect(paused.pausedMessage).toEqual({ code: "implement.testCommandInvalid" });
+    expect(typesOf(service, id)).not.toContain("TestsSkipped");
+    expect(tests.calls).toEqual([]);
+    // 再開すると実装をやり直す。読めない申告でも止まる
+    service.resume(id, {});
+    await drain(service);
+    expect(taskOf(service, id).pausedMessage).toEqual({ code: "implement.testCommandInvalid" });
+    expect(typesOf(service, id)).not.toContain("TestsSkipped");
+    expect(tests.calls).toEqual([]);
+    // もう一度再開すると、正しい申告のコマンドで検証する
+    service.resume(id, {});
+    await drain(service);
+    expect(tests.calls.map((c) => c.command)).toEqual(["make test"]);
+    expect(taskOf(service, id).gate).toEqual({ step: "pr", submission: 1 });
+    activity.close();
   });
 });

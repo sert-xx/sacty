@@ -53,6 +53,7 @@ import {
   isWorking,
   personAction,
   statusText,
+  testCommandOfNoTests,
   usd,
   usesTestCommand,
 } from "@/lib/labels";
@@ -363,6 +364,9 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
                     {m.testCommand}
                     {task.testCommand ? (
                       <span className="font-mono">{task.testCommand}</span>
+                    ) : task.noTestsReason ? (
+                      // テストの仕組みが無いと判断したタスク（PBI-94）
+                      testCommandOfNoTests(task, task.noTestsReason, m)
                     ) : (
                       m.testCommandUnknown
                     )}
