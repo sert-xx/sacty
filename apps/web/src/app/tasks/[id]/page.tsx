@@ -100,7 +100,7 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
     : undefined;
   const lastFailure = [...activity].reverse().find((e) => e.type === "AgentRunFailed");
   const proposal = openProposal(task);
-  // 承認ゲートで見守っている、sacty が作った PR（成果物チェック・要求要件・設計。PBI-57）
+  // 承認ゲートで見守っている、sacty が作った PR（実装・要求要件・設計。PBI-57・PBI-110）
   const watched = gatePullRequest(task);
   const messages = await getMessages();
   const { task: m, labels, parts, locale } = messages;
@@ -265,14 +265,14 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
                         ? task.integration?.passed === false
                           ? m.gate.integrateFailedHelp(task.integrationFailures)
                           : m.gate.integrateHelp
-                        : // 成果物チェックの PR と、要求要件・設計の PR（PBI-57）
+                        : // 実装の PR と、要求要件・設計の PR（PBI-57・PBI-110）
                           watched?.state === "closed"
                           ? m.gate.prClosedHelp
                           : watched?.state === "merged_outdated"
                             ? m.gate.prMergedOutdatedHelp
-                            : watched?.step === "pr"
+                            : watched?.step === "implement"
                               ? m.gate.prHelp
-                              : task.gate?.step === "pr" && deliveredWithoutChanges(task)
+                              : task.gate?.step === "implement" && deliveredWithoutChanges(task)
                                 ? m.gate.noChangesHelp
                                 : watched
                                   ? m.gate.stepPrHelp(labels.step[watched.step])

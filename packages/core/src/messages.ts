@@ -151,7 +151,6 @@ const PARAMS = {
   "image.unchanged": z.object({ name: z.string() }),
   "image.configUnavailable": z.object({ detail: TextParam }),
   "image.stepMissing": null,
-  "image.noImageStep": null,
   // docker compose のサービス（PBI-47）
   "services.unsafe": z.object({ file: z.string(), detail: z.string() }),
   "services.failed": z.object({ file: z.string(), detail: z.string() }),
@@ -698,7 +697,6 @@ const ja: MessageDictionary = {
   "image.configUnavailable": ({ detail }, text) =>
     `config.yaml を読めないため、工程のイメージを変えられません（images の名前を確かめられません）。設定を直してから、もう一度変えてください：${text(detail)}`,
   "image.stepMissing": "その工程は、このタスクの工程にありません。",
-  "image.noImageStep": "PR作成の工程はコンテナで実行しないため、イメージを使いません。",
   "image.unknown": ({ name }) =>
     `イメージ「${name}」は config.yaml の images にありません。images に書くか、プロジェクトの対象のイメージの指定を直してから、再開してください。`,
   "input.channelRequired": "チャンネルを書いてください。",
@@ -1136,7 +1134,6 @@ const en: MessageDictionary = {
   "image.configUnavailable": ({ detail }, text) =>
     `The step image can't be changed because config.yaml can't be read (the names in images can't be checked). Fix the settings, then change it again: ${text(detail)}`,
   "image.stepMissing": "This task does not have that step.",
-  "image.noImageStep": "The PR step doesn't run in a container, so it uses no image.",
   "image.unknown": ({ name }) =>
     `The image "${name}" is not in images in config.yaml. Add it to images, or fix the image of the project target, then resume.`,
   "input.channelRequired": "Write a channel.",

@@ -63,10 +63,10 @@ describe("Slack の通知（PBI-38）", () => {
     expect(notificationFor(undefined, task({ status: "queued" }))).toBeUndefined();
   });
 
-  it("本文には、何の判断か・タスクと窓口へのリンク（成果物チェックは PR も）を、プロジェクトの言語で書く", () => {
+  it("本文には、何の判断か・タスクと窓口へのリンク（実装の承認は PR も）を、プロジェクトの言語で書く", () => {
     const pr = task({
       status: "awaiting_approval",
-      gate: { step: "pr", submission: 1 },
+      gate: { step: "implement", submission: 1 },
       pullRequest: {
         branch: "sacty/t1",
         commit: "abc",
@@ -76,11 +76,11 @@ describe("Slack の通知（PBI-38）", () => {
     });
     const ja = notificationText(pr, "approval", "ja", "http://127.0.0.1:4700/");
     expect(ja).toContain("<http://127.0.0.1:4700/tasks/t1|決済の &lt;API&gt; &amp; 画面>");
-    expect(ja).toContain("成果物チェックの承認を待っています");
+    expect(ja).toContain("実装の承認を待っています");
     expect(ja).toContain("<http://127.0.0.1:4700/tasks/t1/review|承認の画面>");
     expect(ja).toContain("<https://github.com/acme/app/pull/7|#7>（マージで承認）");
     const en = notificationText(pr, "approval", "en", "http://127.0.0.1:4700");
-    expect(en).toContain("Deliverable review is waiting for your approval");
+    expect(en).toContain("Implement is waiting for your approval");
     // 要求要件・設計の PR（PBI-57）も、マージで承認する PR を添える
     const step = notificationText(
       task({
@@ -125,7 +125,7 @@ describe("Slack の通知（PBI-38）", () => {
         task({
           status: "escalated",
           escalation: {
-            step: "pr",
+            step: "implement",
             target: "design",
             pendingRemarks: [],
             reason: "rework_confirmation",

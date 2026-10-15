@@ -100,3 +100,109 @@ describe("作業履歴の保存先（PBI-20）", () => {
     again.close();
   });
 });
+
+describe("「PR作成」の工程を前提にした古いタスクを捨てる（PBI-110）", () => {
+  /** 今の形では読めない記録を含む作業履歴を、直接書き込む（工程 pr は無くした）。 */
+  function seed(path: string, rows: [task: string, type: string, payload: unknown][]) {
+    new SqliteActivityStore(path).close();
+    const db = new DatabaseSync(path);
+    const insert = db.prepare(
+      "INSERT INTO activity (id, task_id, project_id, at, actor, type, payload) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    );
+    rows.forEach(([task, type, payload], i) => {
+      insert.run(
+        `e${i}`,
+        task,
+        "default",
+        "2026-10-15T00:00:00.000Z",
+        "sacty",
+        type,
+        JSON.stringify(payload),
+      );
+    });
+    db.close();
+  }
+  const created = (extra: Record<string, unknown> = {}) => ({
+    title: "t",
+    body: "",
+    start: "sacty",
+    budgetCapUsd: 1,
+    ...extra,
+  });
+
+  it("工程 pr を含むタスクと、つながったタスク（分割の親子・修正のタスクと元のタスク）を消し、残りは読める", () => {
+    const path = join(dir, "sacty.db");
+    seed(path, [
+      // 承認待ちの古いタスク（処理中のものも消す）
+      ["old", "TaskCreated", created()],
+      ["old", "StepsChosen", { steps: ["requirements", "design", "implement", "pr"] }],
+      ["old", "StepSubmitted", { step: "pr", submission: 1 }],
+      // 分割の親（工程 pr は無い）と、子（1つは pr を含み、1つはまだ工程を選んでいない）
+      ["parent", "TaskCreated", created()],
+      [
+        "parent",
+        "StepsChosen",
+        { steps: ["investigate", "requirements", "design", "split", "integrate"] },
+      ],
+      [
+        "child-1",
+        "TaskCreated",
+        created({ start: "split", parent: { taskId: "parent", dependsOn: [] } }),
+      ],
+      ["child-1", "StepsChosen", { steps: ["implement", "pr"] }],
+      [
+        "child-2",
+        "TaskCreated",
+        created({ start: "split", parent: { taskId: "parent", dependsOn: ["child-1"] } }),
+      ],
+      // マージの後の監視の、元のタスク（pr を含む）と修正のタスク（まだ工程を選んでいない）
+      ["origin", "TaskCreated", created()],
+      ["origin", "StepsChosen", { steps: ["implement", "pr"] }],
+      [
+        "fix",
+        "TaskCreated",
+        created({
+          start: "deployment",
+          fix: { taskId: "origin", kind: "ci", fingerprint: "f", depth: 1 },
+        }),
+      ],
+      // 今の形のタスクと、工程を選ぶ前のタスクは残す
+      ["current", "TaskCreated", created()],
+      ["current", "StepsChosen", { steps: ["requirements", "design", "implement"] }],
+      ["fresh", "TaskCreated", created()],
+    ]);
+    const store = new SqliteActivityStore(path);
+    expect(() => store.all()).toThrow();
+    expect(store.purgeLegacyPrStepTasks()).toEqual([
+      "child-1",
+      "child-2",
+      "fix",
+      "old",
+      "origin",
+      "parent",
+    ]);
+    expect([...new Set(store.all().map((e) => e.taskId))]).toEqual(["current", "fresh"]);
+    // 2回目は何もしない。追記専用の保証は戻っている
+    expect(store.purgeLegacyPrStepTasks()).toEqual([]);
+    expect(() => store.rawExecForTest("DELETE FROM activity")).toThrow(/append-only/);
+    const [added] = store.append({
+      taskId: "current",
+      projectId: "default",
+      events: [{ actor: "person", event: { type: "TaskCancelled", payload: { cleanup: [] } } }],
+    });
+    expect(added?.seq).toBeGreaterThan(14);
+    store.close();
+  });
+
+  it("工程 pr を含むタスクが無ければ、何も消さない", () => {
+    const path = join(dir, "sacty.db");
+    seed(path, [
+      ["a", "TaskCreated", created()],
+      ["a", "StepsChosen", { steps: ["investigate"] }],
+    ]);
+    const store = new SqliteActivityStore(path);
+    expect(store.purgeLegacyPrStepTasks()).toEqual([]);
+    expect(store.all()).toHaveLength(2);
+    store.close();
+  });
+});

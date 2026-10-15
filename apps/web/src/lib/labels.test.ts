@@ -90,7 +90,7 @@ describe("一覧と詳細の導線（PBI-9 レビュー指摘）", () => {
     });
     expect(needsPerson(undecided)).toBe(true);
     expect(personAction(undecided)).toEqual({ href: "/tasks/t1#proposals", label: "判断する" });
-    // 差し戻しの上限によるエスカレーションと承認待ちは、成果物チェックへ
+    // 差し戻しの上限によるエスカレーションと承認待ちは、承認の画面へ
     expect(personAction(task({ status: "escalated" })).href).toBe("/tasks/t1/review");
     expect(personAction(task({ status: "awaiting_approval" }))).toEqual({
       href: "/tasks/t1/review",
@@ -100,7 +100,7 @@ describe("一覧と詳細の導線（PBI-9 レビュー指摘）", () => {
   });
 });
 
-describe("成果物チェックの表示（PBI-10b）", () => {
+describe("実装の承認の表示（PBI-10b・PBI-110）", () => {
   const event = (e: Pick<ActivityEvent, "type" | "payload">): ActivityEvent =>
     ({
       ...e,
@@ -118,7 +118,7 @@ describe("成果物チェックの表示（PBI-10b）", () => {
         event({
           type: "ChangesRequested",
           payload: {
-            step: "pr",
+            step: "implement",
             target,
             round: 1,
             remarks: [{ id: "x", text: "y" }],
@@ -126,24 +126,26 @@ describe("成果物チェックの表示（PBI-10b）", () => {
           },
         }),
       );
-    expect(back("implement")).toBe("成果物チェックで差し戻し、実装からやり直し：指摘1件（人間）");
+    expect(back("implement")).toBe("実装を差し戻し：指摘1件（人間）");
     expect(back("design")).toBe(
-      "成果物チェックで差し戻し、設計からやり直し（設計の承認を取り消し）：指摘1件（人間）",
+      "実装を差し戻し、設計からやり直し（設計の承認を取り消し）：指摘1件（人間）",
     );
     expect(
-      describeEvent(event({ type: "StepSubmitted", payload: { step: "pr", submission: 2 } })),
-    ).toBe("成果物チェックに提出（2回目）→ 承認待ち");
+      describeEvent(
+        event({ type: "StepSubmitted", payload: { step: "implement", submission: 2 } }),
+      ),
+    ).toBe("実装を提出（2回目）→ 承認待ち");
+    expect(
+      describeEvent(event({ type: "StepApproved", payload: { step: "implement", next: "idle" } })),
+    ).toBe("実装を承認・凍結（人間）");
   });
 
-  it("成果物チェック待ちと完了を表示する", () => {
+  it("実装の承認待ちと完了を表示する", () => {
     expect(
-      statusText(task({ status: "awaiting_approval", gate: { step: "pr", submission: 1 } })),
-    ).toBe("成果物チェック待ち");
+      statusText(task({ status: "awaiting_approval", gate: { step: "implement", submission: 1 } })),
+    ).toBe("実装の承認待ち");
     const done = task({
-      steps: [
-        { key: "requirements", state: "done" },
-        { key: "pr", state: "done" },
-      ],
+      steps: [{ key: "requirements", state: "done" }],
     });
     expect(statusText(done)).toBe("完了");
     expect(isWorking(done)).toBe(false);
@@ -165,8 +167,11 @@ describe("英語の表示（PBI-4b）", () => {
 
   it("用語集の英語で、状態と作業履歴を表示する", () => {
     expect(
-      statusTextIn(task({ status: "awaiting_approval", gate: { step: "pr", submission: 2 } }), en),
-    ).toBe("Awaiting deliverable review (submission 2)");
+      statusTextIn(
+        task({ status: "awaiting_approval", gate: { step: "implement", submission: 2 } }),
+        en,
+      ),
+    ).toBe("Implement awaiting approval (submission 2)");
     expect(
       statusTextIn(
         task({ status: "awaiting_approval", gate: { step: "requirements", submission: 1 } }),
@@ -179,7 +184,7 @@ describe("英語の表示（PBI-4b）", () => {
         event({
           type: "ChangesRequested",
           payload: {
-            step: "pr",
+            step: "implement",
             target: "design",
             round: 1,
             remarks: [{ id: "x", text: "y" }],
@@ -189,7 +194,7 @@ describe("英語の表示（PBI-4b）", () => {
         en,
       ),
     ).toBe(
-      "Changes requested in deliverable review; redo from Design (Design approval revoked): 1 comment (person)",
+      "Changes requested on Implement; redo from Design (Design approval revoked): 1 comment (person)",
     );
     expect(
       describeIn(
@@ -327,7 +332,6 @@ describe("一時停止・中止の操作（PBI-12）", () => {
         { key: "requirements", state: "done" },
         { key: "design", state: "done" },
         { key: "implement", state: "done" },
-        { key: "pr", state: "done" },
       ],
     });
     expect(canControl(done)).toBe(false);
@@ -337,22 +341,22 @@ describe("一時停止・中止の操作（PBI-12）", () => {
   });
 });
 
-describe("PR で判断する成果物チェック（PBI-14a）", () => {
+describe("PR で判断する実装の承認（PBI-14a・PBI-110）", () => {
   const atPrGate = (state: Task["pullRequestState"]) =>
     task({
       status: "awaiting_approval",
-      gate: { step: "pr", submission: 1 },
+      gate: { step: "implement", submission: 1 },
       pullRequestState: state,
     });
   it("PR の状態に合わせて、状態を表示する", () => {
-    expect(statusText(atPrGate("open"))).toBe("PR のマージ待ち");
+    expect(statusText(atPrGate("open"))).toBe("実装の PR のマージ待ち");
     expect(statusText(atPrGate("closed"))).toBe("PR が閉じられた（判断待ち）");
     expect(statusText(atPrGate("merged_outdated"))).toBe(
       "違う内容でマージされた（承認として進めます）",
     );
     // PR を作っていなければ、これまでどおり画面で承認する
-    expect(statusText(atPrGate(undefined))).toBe("成果物チェック待ち");
-    expect(statusTextIn(atPrGate("open"), labels.en)).toBe("Awaiting PR merge");
+    expect(statusText(atPrGate(undefined))).toBe("実装の承認待ち");
+    expect(statusTextIn(atPrGate("open"), labels.en)).toBe("Implement PR awaiting merge");
   });
 
   it("作業履歴に、PR のマージ・クローズ・開き直しを表示する", () => {
@@ -481,7 +485,7 @@ describe("PR の指摘の取り込み（PBI-14b）", () => {
       statusText(
         task({
           status: "awaiting_approval",
-          gate: { step: "pr", submission: 1 },
+          gate: { step: "implement", submission: 1 },
           pendingReview: { keys: ["comment:1"], remarks: ["x"] },
         }),
       ),
@@ -490,9 +494,9 @@ describe("PR の指摘の取り込み（PBI-14b）", () => {
       statusText(
         task({
           status: "escalated",
-          gate: { step: "pr", submission: 1 },
+          gate: { step: "implement", submission: 1 },
           escalation: {
-            step: "pr",
+            step: "implement",
             target: "design",
             pendingRemarks: [],
             reason: "rework_confirmation",
@@ -508,7 +512,7 @@ describe("オーケストレーターが選んだ工程（PBI-17）", () => {
     const event = {
       type: "StepsChosen",
       payload: {
-        steps: ["requirements", "implement", "pr"],
+        steps: ["requirements", "implement"],
         plan: "skip-design",
         reason: "小さな変更",
         fallback: false,
@@ -522,7 +526,7 @@ describe("オーケストレーターが選んだ工程（PBI-17）", () => {
       at: "2026-10-11T00:00:00.000Z",
       actor: "orchestrator",
     } as ActivityEvent;
-    expect(describeEvent(event)).toBe("工程を決定：要求要件 → 実装 → PR作成（小さな変更）");
+    expect(describeEvent(event)).toBe("工程を決定：要求要件 → 実装（小さな変更）");
   });
 
   it("工程ごとのイメージと、決めたのが誰か（理由）も表示する（PBI-41）", () => {
@@ -530,7 +534,7 @@ describe("オーケストレーターが選んだ工程（PBI-17）", () => {
       ({
         type: "StepsChosen",
         payload: {
-          steps: ["requirements", "implement", "pr"],
+          steps: ["requirements", "implement"],
           reason: "小さな変更",
           fallback: false,
           costUsd: 0,
@@ -547,13 +551,13 @@ describe("オーケストレーターが選んだ工程（PBI-17）", () => {
     expect(
       describeEvent(
         chosen({
-          images: { implement: "java17", pr: "java17" },
+          images: { implement: "java17" },
           imageSource: "orchestrator",
           imageReason: "pom.xml が Java 17",
         }),
       ),
     ).toBe(
-      "工程を決定：要求要件 → 実装 → PR作成（小さな変更） / イメージ：実装＝java17、PR作成＝java17（オーケストレーター：pom.xml が Java 17）",
+      "工程を決定：要求要件 → 実装（小さな変更） / イメージ：実装＝java17（オーケストレーター：pom.xml が Java 17）",
     );
     expect(
       describeIn(chosen({ images: { implement: "py" }, imageSource: "project" }), labels.en),
@@ -573,7 +577,7 @@ describe("オーケストレーターが選んだ工程（PBI-17）", () => {
     );
     // イメージを1つも書かなかったときも出す
     expect(describeEvent(chosen({ imagesUnexplained: ["implement"] }))).toBe(
-      "工程を決定：要求要件 → 実装 → PR作成（小さな変更） / 理由が無いまま既定のイメージで動かす：実装（オーケストレーターが images から選ばず、合わない理由も書かなかった）",
+      "工程を決定：要求要件 → 実装（小さな変更） / 理由が無いまま既定のイメージで動かす：実装（オーケストレーターが images から選ばず、合わない理由も書かなかった）",
     );
   });
 
@@ -601,7 +605,7 @@ describe("オーケストレーターが選んだ工程（PBI-17）", () => {
       ({
         type: "StepsChosen",
         payload: {
-          steps: ["implement", "pr"],
+          steps: ["implement"],
           reason: "小さな変更",
           fallback: false,
           costUsd: 0,
@@ -616,7 +620,7 @@ describe("オーケストレーターが選んだ工程（PBI-17）", () => {
         actor: "orchestrator",
       }) as ActivityEvent;
     // 共用の compose を設定していない・判断の理由も無いなら、これまでどおり
-    expect(describeEvent(chosen({}))).toBe("工程を決定：実装 → PR作成（小さな変更）");
+    expect(describeEvent(chosen({}))).toBe("工程を決定：実装（小さな変更）");
     // 共用の compose を使う
     const shared = chosen({
       sharedComposes: ["infra", "kafka"],
@@ -629,7 +633,7 @@ describe("オーケストレーターが選んだ工程（PBI-17）", () => {
       servicesReason: "結合テストが Redis を使う",
     });
     expect(describeEvent(shared)).toBe(
-      "工程を決定：実装 → PR作成（小さな変更） / サービス：redis（共用の compose「infra」の compose/redis.yml（https://github.com/acme/test-infra#main）。実装で使う）：結合テストが Redis を使う",
+      "工程を決定：実装（小さな変更） / サービス：redis（共用の compose「infra」の compose/redis.yml（https://github.com/acme/test-infra#main）。実装で使う）：結合テストが Redis を使う",
     );
     expect(describeIn(shared, labels.en)).toContain(
       'Services: redis (compose/redis.yml of the shared compose "infra" (https://github.com/acme/test-infra#main); used in Implement): 結合テストが Redis を使う',
@@ -639,17 +643,13 @@ describe("オーケストレーターが選んだ工程（PBI-17）", () => {
       describeEvent(
         chosen({ services: { file: "compose.yaml", names: [], steps: ["implement"] } }),
       ),
-    ).toBe(
-      "工程を決定：実装 → PR作成（小さな変更） / サービス：すべて（compose.yaml。実装で使う）",
-    );
+    ).toBe("工程を決定：実装（小さな変更） / サービス：すべて（compose.yaml。実装で使う）");
     // 共用の compose を使わない（理由あり・なし）
     expect(
       describeEvent(chosen({ sharedComposes: ["infra"], servicesReason: "単体テストだけ" })),
-    ).toBe(
-      "工程を決定：実装 → PR作成（小さな変更） / 共用の compose（infra）：使わない（単体テストだけ）",
-    );
+    ).toBe("工程を決定：実装（小さな変更） / 共用の compose（infra）：使わない（単体テストだけ）");
     expect(describeEvent(chosen({ sharedComposes: ["infra", "kafka"] }))).toBe(
-      "工程を決定：実装 → PR作成（小さな変更） / 共用の compose（infra、kafka）：使わない（理由の記載なし）",
+      "工程を決定：実装（小さな変更） / 共用の compose（infra、kafka）：使わない（理由の記載なし）",
     );
     expect(describeIn(chosen({ sharedComposes: ["infra"] }), labels.en)).toContain(
       "Shared compose (infra): not used (no reason given)",
@@ -794,8 +794,8 @@ describe("テストのコマンドの表示（PBI-28）", () => {
     ({ steps: keys.map((key) => ({ key, state: "todo" })) }) as unknown as Task;
 
   it("工程に実装があるタスクだけに出す（調査・レビュー・分割の親・工程を選ぶ前には出さない）", () => {
-    expect(usesTestCommand(withSteps("requirements", "design", "implement", "pr"))).toBe(true);
-    expect(usesTestCommand(withSteps("requirements", "implement", "pr"))).toBe(true);
+    expect(usesTestCommand(withSteps("requirements", "design", "implement"))).toBe(true);
+    expect(usesTestCommand(withSteps("requirements", "implement"))).toBe(true);
     expect(usesTestCommand(withSteps("investigate"))).toBe(false);
     expect(usesTestCommand(withSteps("review"))).toBe(false);
     expect(usesTestCommand(withSteps("requirements", "design", "split"))).toBe(false);
@@ -1061,7 +1061,7 @@ describe("状態の表示の種類（PBI-42）", () => {
   it("ゴールガーディアンが PR の指摘を判断している間は、承認待ちでも working", () => {
     const judging = task({
       status: "awaiting_approval",
-      gate: { step: "pr", submission: 1 },
+      gate: { step: "implement", submission: 1 },
       pendingReview: { keys: ["comment:1"], remarks: ["x"] },
     });
     expect(statusText(judging)).toBe("ゴールガーディアンが PR の指摘を判断中");
@@ -1176,7 +1176,7 @@ describe("成果の書き出しの作業履歴（PBI-56）", () => {
       type: "StepsChosen",
       actor: "orchestrator",
       payload: {
-        steps: ["requirements", "design", "implement", "pr"],
+        steps: ["requirements", "design", "implement"],
         fallback: false,
         costUsd: 0,
         estimated: false,
@@ -1190,7 +1190,7 @@ describe("成果の書き出しの作業履歴（PBI-56）", () => {
       },
     } as Pick<ActivityEvent, "type" | "payload" | "actor">);
     expect(describeEvent(chosen)).toBe(
-      "工程を決定：要求要件 → 設計 → 実装 → PR作成 / 書き出し：要求要件＝confluence：DEV（規約）、設計＝書き出さない（オーケストレーターが書き出し先を決めなかったため、書き出しません。）",
+      "工程を決定：要求要件 → 設計 → 実装 / 書き出し：要求要件＝confluence：DEV（規約）、設計＝書き出さない（オーケストレーターが書き出し先を決めなかったため、書き出しません。）",
     );
   });
 
@@ -1254,32 +1254,26 @@ describe("テンプレートで作ったタスクの作業履歴（PBI-90）", (
   });
 });
 
-describe("実装に変更が無い成果物チェック（PBI-90）", () => {
+describe("実装に変更が無い実装の承認（PBI-90・PBI-110）", () => {
   const prGate = (patch: Partial<Task> = {}) =>
     task({
       status: "awaiting_approval",
-      steps: [
-        { key: "implement", state: "done" },
-        { key: "pr", state: "active" },
-      ],
-      gate: { step: "pr", submission: 2 },
-      submissions: { pr: 2 },
+      steps: [{ key: "implement", state: "active" }],
+      gate: { step: "implement", submission: 2 },
+      submissions: { implement: 2 },
       noChanges: { submission: 2 },
       ...patch,
     });
 
-  it("PR を作らなかった提出回は、変更なしの成果物チェック待ちとし、承認すると「完了（変更なし）」と出す", () => {
-    expect(statusText(prGate())).toBe("変更なしの成果物チェック待ち（2回目）");
+  it("PR を作らなかった提出回は、変更なしの実装の承認待ちとし、承認すると「完了（変更なし）」と出す", () => {
+    expect(statusText(prGate())).toBe("変更なしの実装の承認待ち（2回目）");
     expect(statusTextIn(prGate(), labels.en)).toBe(
-      "Awaiting deliverable review with no changes (submission 2)",
+      "Implement awaiting approval with no changes (submission 2)",
     );
     const done = prGate({
       status: "idle",
       gate: undefined,
-      steps: [
-        { key: "implement", state: "done" },
-        { key: "pr", state: "done" },
-      ],
+      steps: [{ key: "implement", state: "done" }],
     });
     expect(statusText(done)).toBe("完了（変更なし）");
     expect(statusTextIn(done, labels.en)).toBe("Done (no changes)");
@@ -1288,8 +1282,10 @@ describe("実装に変更が無い成果物チェック（PBI-90）", () => {
   it("前の提出回の変更なし・PR を作った提出回は、今までどおり", () => {
     // 差し戻して作り直した提出回（3回目）には、2回目の変更なしを引き継がない
     expect(
-      statusText(prGate({ gate: { step: "pr", submission: 3 }, submissions: { pr: 3 } })),
-    ).toBe("成果物チェック待ち（3回目）");
+      statusText(
+        prGate({ gate: { step: "implement", submission: 3 }, submissions: { implement: 3 } }),
+      ),
+    ).toBe("実装の承認待ち（3回目）");
     expect(
       statusText(
         prGate({
@@ -1297,7 +1293,7 @@ describe("実装に変更が無い成果物チェック（PBI-90）", () => {
           pullRequestState: "open",
         }),
       ),
-    ).toBe("PR のマージ待ち（2回目）");
+    ).toBe("実装の PR のマージ待ち（2回目）");
   });
 
   it("作業履歴の行", () => {
@@ -1311,7 +1307,7 @@ describe("実装に変更が無い成果物チェック（PBI-90）", () => {
       at: "2026-10-15T00:00:00.000Z",
       actor: "sacty",
     } as ActivityEvent;
-    expect(describeEvent(event)).toBe("実装に変更が無いため、PR を作らずに成果物チェックへ");
+    expect(describeEvent(event)).toBe("実装に変更が無いため、PR を作らずに実装の承認待ちへ");
   });
 });
 
@@ -1327,7 +1323,7 @@ describe("テストの仕組みが無いタスクの作業履歴（PBI-94）", (
     const chosen = {
       type: "StepsChosen",
       payload: {
-        steps: ["implement", "pr"],
+        steps: ["implement"],
         reason: "小さな変更",
         fallback: false,
         noTestsReason: "README だけ",
@@ -1338,7 +1334,7 @@ describe("テストの仕組みが無いタスクの作業履歴（PBI-94）", (
       actor: "orchestrator",
     } as ActivityEvent;
     expect(describeEvent(chosen)).toBe(
-      "工程を決定：実装 → PR作成（小さな変更） / テストの仕組みが無い：README だけ",
+      "工程を決定：実装（小さな変更） / テストの仕組みが無い：README だけ",
     );
     expect(describeIn(chosen, labels.en)).toContain(" / No tests in the repository: README だけ");
     const skipped = { type: "TestsSkipped", payload: {}, ...at, actor: "sacty" } as ActivityEvent;
@@ -1479,7 +1475,7 @@ describe("テストの無い観点を、今の提出について目的から判�
 });
 
 describe("工程のイメージの表示（PBI-106）", () => {
-  it("工程ごとのイメージ・選んだ元・いつから使うかを出す。PR作成は出さない", () => {
+  it("工程ごとのイメージ・選んだ元・いつから使うかを出す。すべての工程を出す", () => {
     const rows = stepImageRows(
       task({
         status: "running",
@@ -1487,9 +1483,8 @@ describe("工程のイメージの表示（PBI-106）", () => {
           { key: "requirements", state: "done" },
           { key: "design", state: "active" },
           { key: "implement", state: "todo" },
-          { key: "pr", state: "todo" },
         ],
-        images: { design: "java", implement: "playwright", pr: "java" },
+        images: { design: "java", implement: "playwright" },
         imageSource: "orchestrator",
         imageChanges: {
           implement: { from: "java", to: "playwright", at: "2026-10-15T01:02:00.000Z" },

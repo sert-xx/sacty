@@ -140,6 +140,69 @@ export class SqliteActivityStore implements ActivityStore {
     ).map(toEvent);
   }
 
+  /**
+   * 「PR作成」の工程（pr）を前提にした、古いタスクの記録を捨てる（PBI-110）。工程 pr は無くし、互換の層は作らないので、
+   * これらの記録は今の形として読めない（読むとデーモンが起動できない）。起動時に、作業履歴を読む前に呼ぶ。
+   * - 捨てるタスク：工程に pr を含むタスク（StepsChosen の steps）と、工程 pr を指す記録（step・target が pr）のあるタスク。
+   *   処理中のタスク（承認待ち・実行待ちなど）も捨てる。
+   * - 関係するタスクも一緒に捨てる：タスク分割の親と子（子の1つだけを捨てると、親が子の完了を待ち続けるため）、マージの後の
+   *   監視の修正のタスクと元のタスク（元のタスクの記録から、捨てた修正のタスクを作り直さないため）。
+   * - 作業履歴は追記専用なので、同じトランザクションの中で削除を拒むトリガーを外し、消してから作り直す。
+   * 捨てたタスクの ID を返す（無ければ空。何もしない）。作業領域・セッションログ・GitHub のブランチと PR は消さない。
+   */
+  purgeLegacyPrStepTasks(): string[] {
+    const marked = (
+      this.db
+        .prepare(
+          `SELECT DISTINCT task_id FROM activity WHERE json_valid(payload) AND (
+            (type = 'StepsChosen' AND EXISTS (SELECT 1 FROM json_each(payload, '$.steps') WHERE value = 'pr'))
+            OR json_extract(payload, '$.step') = 'pr'
+            OR json_extract(payload, '$.target') = 'pr'
+          )`,
+        )
+        .all() as { task_id: string }[]
+    ).map((r) => r.task_id);
+    if (marked.length === 0) return [];
+    // タスクのつながり（子 → 親、修正のタスク → 元のタスク）。どちら向きにもたどって、つながったタスクをまとめて捨てる
+    const links = this.db
+      .prepare(
+        `SELECT task_id, json_extract(payload, '$.parent.taskId') AS parent,
+            json_extract(payload, '$.fix.taskId') AS origin
+          FROM activity WHERE type = 'TaskCreated' AND json_valid(payload)`,
+      )
+      .all() as { task_id: string; parent: string | null; origin: string | null }[];
+    const neighbors = new Map<string, Set<string>>();
+    const connect = (a: string, b: string) => {
+      neighbors.set(a, (neighbors.get(a) ?? new Set()).add(b));
+      neighbors.set(b, (neighbors.get(b) ?? new Set()).add(a));
+    };
+    for (const link of links) {
+      if (link.parent) connect(link.task_id, link.parent);
+      if (link.origin) connect(link.task_id, link.origin);
+    }
+    const purged = new Set<string>();
+    const queue = [...marked];
+    while (queue.length > 0) {
+      const id = queue.pop() as string;
+      if (purged.has(id)) continue;
+      purged.add(id);
+      for (const next of neighbors.get(id) ?? []) if (!purged.has(next)) queue.push(next);
+    }
+    const ids = [...purged].sort();
+    const remove = this.db.prepare("DELETE FROM activity WHERE task_id = ?");
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      this.db.exec("DROP TRIGGER IF EXISTS activity_no_delete");
+      for (const id of ids) remove.run(id);
+      this.db.exec(SCHEMA);
+      this.db.exec("COMMIT");
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+    return ids;
+  }
+
   /** テスト専用：生のSQLを実行する（追記専用の保証を確かめるため）。 */
   rawExecForTest(sql: string) {
     this.db.exec(sql);

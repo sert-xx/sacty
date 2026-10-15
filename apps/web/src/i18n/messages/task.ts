@@ -24,7 +24,7 @@ const ja = {
     noChangesHelp:
       "実装は何も変えていないため、PR を作っていません。実装の説明で変更が要らない理由を確かめ、変更なしで完了にするなら承認、変更が要るなら差し戻してください。",
     prHelp:
-      "GitHub で PR をレビューしてください。マージすると承認になり、タスクが完了します。レビューやコメントで指摘すると、差し戻しとして取り込みます。",
+      "GitHub で実装の PR をレビューしてください。マージすると実装の承認になり、タスクが完了します。レビューやコメントで指摘すると、差し戻しとして取り込みます。",
     stepPrHelp: (step: string) =>
       `GitHub で${step}の PR をレビューしてください。マージすると${step}の承認になり、次の工程に進みます。レビューやコメントで指摘すると、差し戻しとして取り込みます。`,
     rework: "PR の指摘の戻し先を確かめてください（エスカレーション）",
@@ -66,7 +66,7 @@ const ja = {
   /** 工程のイメージ（PBI-41）と、人が変える操作（PBI-106）。 */
   images: {
     title: "工程のイメージ",
-    note: "工程とテストを実行するコンテナのイメージ。いつでも変えられ、その工程を次に実行するときから使います（PR作成はコンテナで実行しないため、ありません）",
+    note: "工程とテストを実行するコンテナのイメージ。いつでも変えられ、その工程を次に実行するときから使います",
     sep: "：",
     defaultDescription: "既定のイメージ（Node.js・Claude Code・Codex）",
     option: (name: string, description: string) => `${name} — ${description}`,
@@ -302,7 +302,7 @@ const en: TaskMessages = {
     noChangesHelp:
       "The implementation changed nothing, so no PR was opened. Check why no change is needed in the implementation notes, then approve to finish without changes, or request changes if a change is needed.",
     prHelp:
-      "Review the PR on GitHub. Merging it approves the deliverable and completes the task. Comments in reviews or on the PR are imported as change requests.",
+      "Review the implementation PR on GitHub. Merging it approves the implementation and completes the task. Comments in reviews or on the PR are imported as change requests.",
     stepPrHelp: (step) =>
       `Review the ${step} PR on GitHub. Merging it approves the ${step} and moves on to the next step. Comments in reviews or on the PR are imported as change requests.`,
     rework: "Confirm the step to redo for the PR comments (escalated)",
@@ -342,7 +342,7 @@ const en: TaskMessages = {
   },
   images: {
     title: "Step images",
-    note: "The container images for running steps and tests. You can change them at any time; a change is used from the next run of the step (the PR step doesn't run in a container, so it has none)",
+    note: "The container images for running steps and tests. You can change them at any time; a change is used from the next run of the step",
     sep: ": ",
     defaultDescription: "Default image (Node.js, Claude Code, Codex)",
     option: (name, description) => `${name} — ${description}`,

@@ -53,6 +53,13 @@ if (!locked.ok) {
 }
 const instanceLock = locked.lock;
 const activity = new SqliteActivityStore(join(home, "sacty.db"));
+// 「PR作成」の工程（pr）を前提にした古いタスクの記録は、読めないので捨てる（PBI-110。互換の層は作らない）
+const purged = activity.purgeLegacyPrStepTasks();
+if (purged.length > 0) {
+  console.log(
+    `[daemon] 「PR作成」の工程を含む古いタスク ${purged.length} 件を作業履歴から消しました（処理中のものを含む）：${purged.join(", ")}`,
+  );
+}
 const projects = new SqliteProjectStore(join(home, "sacty.db"));
 const settings = new SqliteSettingsStore(join(home, "sacty.db"));
 const config = () => loadConfig(home);
@@ -169,7 +176,7 @@ for (const problem of status.problems) console.warn(`[daemon] ${renderMessage(pr
 
 const worker = new Worker(service);
 const intake = new IssueIntake(service, new GitHubIssueSearch(), github, config, Date.now, tickets);
-// 成果物チェックで待っている PR を見守る（マージで承認。PBI-14a）
+// 承認待ちの PR（実装・要求要件・設計）を見守る（マージで承認。PBI-14a）
 const prWatcher = new PullRequestWatcher(service);
 const app = createApp(service, token, { intake });
 

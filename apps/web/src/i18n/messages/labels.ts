@@ -13,7 +13,7 @@ import {
 
 /**
  * 工程・状態・作業履歴などの用語。英語は構想ドキュメントの用語集に従う
- * （要求要件 Requirements、設計 Design、テスト観点 Test viewpoints、成果物チェック Deliverable review、
+ * （要求要件 Requirements、設計 Design、テスト観点 Test viewpoints、承認 Approval、
  * 差し戻し Request changes、一時停止 Pause、中止 Cancel、エスカレーション Escalation、
  * ゴールガーディアン Goal Guardian、オーケストレーター Orchestrator、作業履歴 Activity、人間の対応待ち Needs you）。
  */
@@ -29,7 +29,6 @@ const ja = {
     integrate: "統合レビュー",
     reproduce: "再現",
     implement: "実装",
-    pr: "PR作成",
   } satisfies Record<StepKey, string>,
   start: {
     sacty: "sacty",
@@ -105,9 +104,7 @@ const ja = {
     changeUndecided: "変更の申し出の判断待ち",
     reworkConfirmation: "PR の指摘の戻し先の確認待ち",
     reworkJudging: "ゴールガーディアンが PR の指摘を判断中",
-    deliverableReview: (n: number) => `成果物チェック待ち${n > 1 ? `（${n}回目）` : ""}`,
-    noChangesReview: (n: number) => `変更なしの成果物チェック待ち${n > 1 ? `（${n}回目）` : ""}`,
-    prAwaitingMerge: (n: number) => `PR のマージ待ち${n > 1 ? `（${n}回目）` : ""}`,
+    noChangesReview: (n: number) => `変更なしの実装の承認待ち${n > 1 ? `（${n}回目）` : ""}`,
     stepPrAwaitingMerge: (step: string, n: number) =>
       `${step}の PR のマージ待ち${n > 1 ? `（${n}回目）` : ""}`,
     prClosed: "PR が閉じられた（判断待ち）",
@@ -213,9 +210,7 @@ const ja = {
       `${step}のイメージを ${from} から ${to} に変更（${actor}。次にその工程を実行するときから使う）`,
     TaskResumed: (actor: string) => `再開（${actor}）`,
     TaskPausedManual: (actor: string) => `一時停止（${actor}）`,
-    submittedDeliverable: (n: number) => `成果物チェックに提出（${n}回目）→ 承認待ち`,
     submittedStep: (step: string, n: number) => `${step}を提出（${n}回目）→ 承認待ち`,
-    approvedDeliverable: (actor: string) => `成果物チェックで承認（${actor}）`,
     approvedStep: (step: string, actor: string) => `${step}を承認・凍結（${actor}）`,
     ChangeProposed: (from: string, target: string, id: string) =>
       `${from}の工程が、${target}の変更を申し出（${id}）`,
@@ -235,7 +230,7 @@ const ja = {
       `PRを作成・更新（#${number}・${branch}・${commit}）`,
     branchPushed: (branch: string, commit: string) =>
       `PRは作らない設定のため、ブランチまで（${branch}・${commit}）`,
-    NoChangesFound: "実装に変更が無いため、PR を作らずに成果物チェックへ",
+    NoChangesFound: "実装に変更が無いため、PR を作らずに実装の承認待ちへ",
     BranchPushed: (branch: string, commit: string) =>
       `sacty のブランチにプッシュ（${branch}・${commit}）`,
     TaskBranchCreated: (branch: string, commit: string) =>
@@ -302,7 +297,6 @@ const ja = {
       `再現を確認：再現のテストが失敗した（終了コード ${exitCode ?? "?"}）→ 実装へ`,
     notReproduced: (detail: string) => `再現できなかった（${detail}）→ 人間の判断待ち`,
     testsPassed: (exitCode: number | undefined) => `テストが通った・終了コード ${exitCode ?? "?"}`,
-    changesAtDeliverable: "成果物チェックで差し戻し",
     changesAtStep: (step: string) => `${step}を差し戻し`,
     changesTarget: (where: string, target: string, revoke: boolean) =>
       `${where}、${target}からやり直し${revoke ? `（${target}の承認を取り消し）` : ""}`,
@@ -393,7 +387,6 @@ const en: LabelMessages = {
     integrate: "Integration review",
     reproduce: "Reproduce",
     implement: "Implement",
-    pr: "Open PR",
   },
   start: {
     sacty: "sacty",
@@ -465,10 +458,8 @@ const en: LabelMessages = {
     changeUndecided: "Change request needs you",
     reworkConfirmation: "Step to redo for PR comments needs you",
     reworkJudging: "Goal Guardian is judging PR comments",
-    deliverableReview: (n) => `Awaiting deliverable review${n > 1 ? ` (submission ${n})` : ""}`,
     noChangesReview: (n) =>
-      `Awaiting deliverable review with no changes${n > 1 ? ` (submission ${n})` : ""}`,
-    prAwaitingMerge: (n) => `Awaiting PR merge${n > 1 ? ` (submission ${n})` : ""}`,
+      `Implement awaiting approval with no changes${n > 1 ? ` (submission ${n})` : ""}`,
     stepPrAwaitingMerge: (step, n) =>
       `${step} PR awaiting merge${n > 1 ? ` (submission ${n})` : ""}`,
     prClosed: "PR closed (needs you)",
@@ -551,10 +542,7 @@ const en: LabelMessages = {
       `${step} image changed from ${from} to ${to} (${actor}; used from the next run of the step)`,
     TaskResumed: (actor) => `Resumed (${actor})`,
     TaskPausedManual: (actor) => `Paused (${actor})`,
-    submittedDeliverable: (n) =>
-      `Submitted for deliverable review (submission ${n}) → awaiting approval`,
     submittedStep: (step, n) => `${step} submitted (submission ${n}) → awaiting approval`,
-    approvedDeliverable: (actor) => `Approved in deliverable review (${actor})`,
     approvedStep: (step, actor) => `${step} approved and frozen (${actor})`,
     ChangeProposed: (from, target, id) =>
       `The ${from} step requested a change to ${target} (${id})`,
@@ -575,7 +563,7 @@ const en: LabelMessages = {
       `PR opened or updated (#${number} · ${branch} · ${commit})`,
     branchPushed: (branch, commit) => `No PR configured; branch only (${branch} · ${commit})`,
     NoChangesFound:
-      "The implementation changed nothing, so no PR was opened; sent to deliverable review",
+      "The implementation changed nothing, so no PR was opened; Implement is awaiting approval",
     BranchPushed: (branch, commit) => `Pushed to sacty branch (${branch} · ${commit})`,
     TaskBranchCreated: (branch, commit) => `Created the task branch (${branch} · ${commit})`,
     StepBranchPushed: (step, branch, commit) =>
@@ -631,7 +619,6 @@ const en: LabelMessages = {
       `Reproduced: the reproduction test failed (exit code ${exitCode ?? "?"}) → implement`,
     notReproduced: (detail) => `Not reproduced (${detail}) → needs your decision`,
     testsPassed: (exitCode) => `the tests passed, exit code ${exitCode ?? "?"}`,
-    changesAtDeliverable: "Changes requested in deliverable review",
     changesAtStep: (step) => `Changes requested on ${step}`,
     changesTarget: (where, target, revoke) =>
       `${where}; redo from ${target}${revoke ? ` (${target} approval revoked)` : ""}`,

@@ -35,14 +35,16 @@ export function statusText(task: Task, l: LabelMessages): string {
     return l.state.reworkConfirmation;
   }
   if (task.status === "awaiting_approval" && task.pendingReview) return l.state.reworkJudging;
-  if (task.status === "awaiting_approval" && task.gate?.step === "pr") {
+  if (task.status === "awaiting_approval" && task.gate?.step === "implement") {
     // 実装に変更が無く、PR を作らなかった（PBI-90）。画面で、変更なしで完了にするかを判断する
     if (deliveredWithoutChanges(task)) return l.state.noChangesReview(task.gate.submission);
     // PR を作ったタスクは、PR のマージで承認する（PBI-14a）
     if (task.pullRequestState === "closed") return l.state.prClosed;
     if (task.pullRequestState === "merged_outdated") return l.state.prMergedOutdated;
-    if (task.pullRequestState === "open") return l.state.prAwaitingMerge(task.gate.submission);
-    return l.state.deliverableReview(task.gate.submission);
+    if (task.pullRequestState === "open") {
+      return l.state.stepPrAwaitingMerge(l.step.implement, task.gate.submission);
+    }
+    return l.state.stepApproval(l.step.implement, task.gate.submission);
   }
   // 要求要件・設計の PR を作った工程も、PR のマージで承認する（PBI-57）
   const stepPr = task.status === "awaiting_approval" ? gatePullRequest(task) : undefined;
@@ -359,13 +361,9 @@ export function describeEvent(event: ActivityEvent, l: LabelMessages): string {
     case "TaskResumed":
       return e.TaskResumed(actor);
     case "StepSubmitted":
-      return event.payload.step === "pr"
-        ? e.submittedDeliverable(event.payload.submission)
-        : e.submittedStep(l.step[event.payload.step], event.payload.submission);
+      return e.submittedStep(l.step[event.payload.step], event.payload.submission);
     case "StepApproved":
-      return event.payload.step === "pr"
-        ? e.approvedDeliverable(actor)
-        : e.approvedStep(l.step[event.payload.step], actor);
+      return e.approvedStep(l.step[event.payload.step], actor);
     case "ChangeProposed":
       return e.ChangeProposed(
         l.step[event.payload.fromStep],
@@ -540,10 +538,7 @@ export function describeEvent(event: ActivityEvent, l: LabelMessages): string {
             event.payload.note ? l.text(event.payload.note) : e.testsPassed(event.payload.exitCode),
           );
     case "ChangesRequested": {
-      const where =
-        event.payload.step === "pr"
-          ? e.changesAtDeliverable
-          : e.changesAtStep(l.step[event.payload.step]);
+      const where = e.changesAtStep(l.step[event.payload.step]);
       const tail = e.changesTail(event.payload.remarks.length, event.payload.overLimit, actor);
       const target = event.payload.target;
       if (target && target !== event.payload.step) {
@@ -709,33 +704,30 @@ export type StepImageRow = {
 
 /**
  * 工程ごとのイメージと、選んだ元・変えたらいつから使うか（PBI-106）。工程の状態を問わず、すべての工程を変えられる。
- * PR作成はコンテナで実行しない（イメージが無い）ので出さない。
  */
 export function stepImageRows(task: Task): StepImageRow[] {
-  return task.steps
-    .filter((s) => s.key !== "pr")
-    .map((s) => {
-      const image = task.images?.[s.key] ?? "default";
-      const change = task.imageChanges?.[s.key];
-      // 既定のイメージにした理由（PBI-105）は、人が変えるまで出す（人が変えたら、人の変更を出す）
-      const defaultReason = task.defaultImageReasons?.[s.key];
-      const unexplained = task.imagesUnexplained?.includes(s.key) ?? false;
-      const source: StepImageRow["source"] = change
-        ? { by: "person", at: change.at, from: change.from }
-        : defaultReason
-          ? { by: "orchestrator", default: defaultReason }
-          : unexplained
-            ? { by: "orchestrator", unexplained: true }
-            : task.images?.[s.key]
-              ? { by: task.imageSource ?? "orchestrator" }
-              : { by: "none" };
-      const when: StepImageRow["when"] = stepRunning(task, s.key)
-        ? "running"
-        : s.state === "done" || s.state === "skip"
-          ? "done"
-          : "next";
-      return { step: s.key, image, source, when };
-    });
+  return task.steps.map((s) => {
+    const image = task.images?.[s.key] ?? "default";
+    const change = task.imageChanges?.[s.key];
+    // 既定のイメージにした理由（PBI-105）は、人が変えるまで出す（人が変えたら、人の変更を出す）
+    const defaultReason = task.defaultImageReasons?.[s.key];
+    const unexplained = task.imagesUnexplained?.includes(s.key) ?? false;
+    const source: StepImageRow["source"] = change
+      ? { by: "person", at: change.at, from: change.from }
+      : defaultReason
+        ? { by: "orchestrator", default: defaultReason }
+        : unexplained
+          ? { by: "orchestrator", unexplained: true }
+          : task.images?.[s.key]
+            ? { by: task.imageSource ?? "orchestrator" }
+            : { by: "none" };
+    const when: StepImageRow["when"] = stepRunning(task, s.key)
+      ? "running"
+      : s.state === "done" || s.state === "skip"
+        ? "done"
+        : "next";
+    return { step: s.key, image, source, when };
+  });
 }
 
 /**
