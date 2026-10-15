@@ -4,7 +4,7 @@
 - ステータス: 置き換え済み（superseded）
 - 関係する PR・タスク: #13、PBI-6
 - 置き換え元: なし
-- 置き換え先: [GitHub へのアクセスは、ホストの gh にログイン済みのアカウントからプロジェクトごとに必ず選んだもので行い、config.yaml のトークンの設定は削除する](20261010-2314-github-access-via-gh-accounts.md)（継承先の clone にホストの git の認証を使う部分）
+- 置き換え先: [GitHub へのアクセスは、ホストの gh にログイン済みのアカウントからプロジェクトごとに必ず選んだもので行い、config.yaml のトークンの設定は削除する](20261010-2314-superseded-github-access-via-gh-accounts.md)（継承先の clone にホストの git の認証を使う部分）
 
 ## 背景
 

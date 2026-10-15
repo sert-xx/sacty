@@ -1,10 +1,10 @@
 # GitHub へのアクセスは、ホストの gh にログイン済みのアカウントからプロジェクトごとに必ず選んだもので行い、config.yaml のトークンの設定は削除する
 
 - 日時: 2026-10-10 23:14 UTC
-- ステータス: 採用
+- ステータス: 置き換え済み（superseded）
 - 関係する PR・タスク: #18、PBI-13
 - 置き換え元: [最終レビューに通ったら sacty が sacty のブランチにプッシュして PR を作り、成果物チェックのゲートで止める](20261010-0858-superseded-pull-request-and-deliverable-gate.md)（PR を token_secret の設定で作る部分）、[プロジェクトに GitHub Issue の取り込み元を Org 単位かリポジトリ単位でラベルを条件に登録し、ポーリングで取り込んでタスクにする](20261010-0931-superseded-projects-and-github-issue-intake.md)（github.token_secret で取り込む部分）、[コンテキストリポジトリを中立形式で書き、extends の継承を合成して、実行ごとに空の設定のディレクトリへ Claude Code・Codex の形式で置く](20261010-1203-superseded-context-repository-composition.md)（継承先の clone にホストの git の認証を使う部分）
-- 置き換え先: なし
+- 置き換え先: [取り込みの間隔を、取り込みの種類ごとに sacty の設定に持つ](20261015-0310-intake-intervals-per-kind.md)（config.yaml の `github:` があれば取り込む部分）
 
 ## 背景
 

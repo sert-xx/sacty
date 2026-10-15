@@ -39,18 +39,21 @@ afterEach(() => {
 
 const unused = new Proxy({}, { get: () => () => Promise.reject(new Error("unused")) });
 
+/** 設定ファイル。readable が false なら、読めない（取り込まない）。 */
 const config =
-  (github: boolean): (() => ConfigResult) =>
-  () => ({
-    ok: true,
-    config: {
-      image: "img",
-      budgetPerTaskUsd: 1,
-      defaultAgent: { id: "stub", runtime: "stub", auth: { mode: "stub" } } as never,
-      guardianAgent: { id: "stub", runtime: "stub", auth: { mode: "stub" } } as never,
-      ...(github ? { github: { pollIntervalSec: 300 } } : {}),
-    },
-  });
+  (readable: boolean): (() => ConfigResult) =>
+  () =>
+    readable
+      ? {
+          ok: true,
+          config: {
+            image: "img",
+            budgetPerTaskUsd: 1,
+            defaultAgent: { id: "stub", runtime: "stub", auth: { mode: "stub" } } as never,
+            guardianAgent: { id: "stub", runtime: "stub", auth: { mode: "stub" } } as never,
+          },
+        }
+      : { ok: false, problem: message("config.missing", { path: "config.yaml" }) };
 
 class FakeSearch implements IssueSearch {
   queries: string[] = [];
@@ -103,11 +106,11 @@ class FakeGh implements GitHubAuth {
   }
 }
 
-function setup(github = true, gh = new FakeGh()) {
+function setup(readable = true, gh = new FakeGh()) {
   const activity = new SqliteActivityStore(join(dir, "sacty.db"));
   const service = new TaskService({
     activity,
-    config: config(github),
+    config: config(readable),
     secrets: new MemorySecretStore({}),
     executor: unused as AgentExecutor,
     repos: unused as never,
@@ -135,7 +138,7 @@ function setup(github = true, gh = new FakeGh()) {
     },
   ]);
   let now = 1_000_000;
-  const intake = new IssueIntake(service, search, gh, config(github), () => now);
+  const intake = new IssueIntake(service, search, gh, config(readable), () => now);
   return { activity, service, search, intake, gh, advance: (ms: number) => (now += ms) };
 }
 
@@ -145,7 +148,7 @@ describe("GitHub Issue の定期的な取り込み（PBI-5a）", () => {
     await intake.tick();
     expect(search.queries).toEqual(['is:open is:issue repo:acme/payments label:"sacty"']);
     expect(service.list().map((t) => t.title)).toEqual(["冪等性キー"]);
-    expect(service.status().intake).toMatchObject({ imported: 1 });
+    expect(service.status().intake?.runs?.issues).toMatchObject({ imported: 1 });
 
     await intake.tick(); // 間隔が来ていない
     expect(search.queries).toHaveLength(1);
@@ -153,15 +156,15 @@ describe("GitHub Issue の定期的な取り込み（PBI-5a）", () => {
     await intake.tick();
     expect(search.queries).toHaveLength(2);
     expect(service.list()).toHaveLength(1); // 二重に取り込まない
-    expect(service.status().intake).toMatchObject({ imported: 0 });
+    expect(service.status().intake?.runs?.issues).toMatchObject({ imported: 0 });
     activity.close();
   });
 
-  it("失敗は理由を記録し、トークンは残さない。設定が無ければ取り込まない", async () => {
+  it("失敗は理由を記録し、トークンは残さない。設定ファイルを読めなければ取り込まない", async () => {
     const failing = setup();
     failing.search.fail = "Issue を検索できませんでした：GitHub API 401";
     await failing.intake.tick(true);
-    const error = failing.service.status().intake?.errors?.[0]?.message ?? "";
+    const error = failing.service.status().intake?.runs?.issues?.errors?.[0]?.message ?? "";
     expect(error).toContain("GitHub API 401");
     expect(error).not.toContain("ghp_secret");
     failing.activity.close();
@@ -184,7 +187,7 @@ describe("GitHub Issue の定期的な取り込み（PBI-5a）", () => {
     search.failQuery = 'is:open is:issue repo:acme/deleted label:"sacty"';
     await intake.tick(true);
     expect(service.list().map((t) => t.source?.repo)).toEqual(["https://github.com/acme/payments"]);
-    const status = service.status().intake;
+    const status = service.status().intake?.runs?.issues;
     expect(status?.imported).toBe(1);
     expect(status?.errors).toEqual([
       {
@@ -221,7 +224,7 @@ describe("GitHub Issue の定期的な取り込み（PBI-5a）", () => {
     ]);
     expect(search.tokens).toEqual(["ghp_active", "ghp_side"]);
     expect(gh.requested).toEqual(["me", "side-job", "logged-out"]);
-    expect(service.status().intake?.errors).toEqual([
+    expect(service.status().intake?.runs?.issues?.errors).toEqual([
       {
         query: 'is:open is:issue repo:old/app label:"sacty"',
         message: {
@@ -340,7 +343,7 @@ describe("GitHub Issue の定期的な取り込み（PBI-5a）", () => {
     search.rateLimited = true;
     await intake.tick(true);
     expect(search.queries).toHaveLength(1); // 1つ目でレート制限になり、2つ目は検索しない
-    expect(service.status().intake?.errors?.map((e) => ja(e.message))).toEqual([
+    expect(service.status().intake?.runs?.issues?.errors?.map((e) => ja(e.message))).toEqual([
       "レート制限",
       "レート制限のため、次の取り込みで検索します。",
     ]);
@@ -397,6 +400,160 @@ describe("GitHub Issue の定期的な取り込み（PBI-5a）", () => {
     expect(fallback.keep).toEqual([expect.stringContaining(`sacty task ${task.id}`), "Closes #7"]);
     const stepFallback = buildStepPullRequestBodyText(task, "design", "docs/x.md");
     expect(stepFallback.keep[1]).toContain("この PR をマージすると、設計を承認したことになり");
+    activity.close();
+  });
+});
+
+describe("取り込みの種類ごとの間隔（PBI-100）", () => {
+  /** Issue・PR のレビュー・チケットの取り込みをすべて設定した構成。 */
+  const kindsSetup = (settings: Record<string, unknown> = {}) => {
+    const made = setup();
+    made.service.saveSettings({
+      intakeLabel: "sacty",
+      reviewLabel: "sacty-review",
+      ticketLabel: "sacty",
+      ...settings,
+    });
+    const lastRun = () =>
+      Object.fromEntries(
+        Object.entries(made.service.status().intake?.runs ?? {}).map(([k, r]) => [k, r?.lastRunAt]),
+      );
+    /** 検索した種類（Issue か PR のレビューか）を、検索の順に。 */
+    const searched = () =>
+      made.search.queries.map((q) => (q.includes("is:issue") ? "issues" : "reviews"));
+    return { ...made, lastRun, searched };
+  };
+  const at = (ms: number) => new Date(1_000_000 + ms).toISOString();
+
+  it("種類ごとに、その種類の間隔で取り込む（設定していない種類は既定の 300 秒）。再起動したら、すべての種類をすぐに取り込む", async () => {
+    const { activity, service, search, intake, advance, lastRun, searched } = kindsSetup({
+      issueIntervalSec: 60,
+      reviewIntervalSec: 600,
+    });
+    await intake.tick();
+    expect(lastRun()).toEqual({ issues: at(0), reviews: at(0), tickets: at(0) });
+    expect(searched()).toEqual(["issues", "reviews"]);
+
+    advance(60_000);
+    await intake.tick();
+    expect(lastRun()).toEqual({ issues: at(60_000), reviews: at(0), tickets: at(0) });
+    advance(240_000); // 300 秒
+    await intake.tick();
+    expect(lastRun()).toEqual({ issues: at(300_000), reviews: at(0), tickets: at(300_000) });
+    advance(299_000); // 599 秒
+    await intake.tick();
+    expect(lastRun().reviews).toBe(at(0));
+    advance(1_000); // 600 秒
+    await intake.tick();
+    expect(lastRun()).toEqual({ issues: at(599_000), reviews: at(600_000), tickets: at(600_000) });
+    expect(searched().filter((k) => k === "reviews")).toHaveLength(2);
+
+    // 再起動（新しい取り込み）は、間隔を待たずにすべての種類を取り込む
+    search.queries.length = 0;
+    const restarted = new IssueIntake(service, search, new FakeGh(), config(true), () => 1_600_001);
+    await restarted.tick();
+    expect(searched().sort()).toEqual(["issues", "reviews"]);
+    expect(service.status().intake?.runs?.tickets?.lastRunAt).toBe(
+      new Date(1_600_001).toISOString(),
+    );
+    activity.close();
+  });
+
+  it("間隔を変えたら、デーモンを再起動せずに次の取り込みから効く", async () => {
+    const { activity, service, intake, advance, lastRun } = kindsSetup({ issueIntervalSec: 600 });
+    await intake.tick();
+    advance(120_000);
+    await intake.tick();
+    expect(lastRun().issues).toBe(at(0));
+    service.saveSettings({ ...service.getSettings(), issueIntervalSec: 60 });
+    await intake.tick();
+    expect(lastRun().issues).toBe(at(120_000));
+    // 長くすると、次の取り込みまで待つ
+    service.saveSettings({ ...service.getSettings(), issueIntervalSec: 900 });
+    advance(600_000);
+    await intake.tick();
+    expect(lastRun().issues).toBe(at(120_000));
+    advance(300_000);
+    await intake.tick();
+    expect(lastRun().issues).toBe(at(1_020_000));
+    activity.close();
+  });
+
+  it("すぐに取り込む（force）は、すべての種類を間隔を待たずに取り込む", async () => {
+    const { activity, intake, advance, lastRun } = kindsSetup();
+    await intake.tick();
+    advance(1_000);
+    await intake.tick(true);
+    expect(lastRun()).toEqual({ issues: at(1_000), reviews: at(1_000), tickets: at(1_000) });
+    activity.close();
+  });
+
+  it("1つの種類のレート制限は、同じアカウントでも、ほかの種類の検索を止めない", async () => {
+    const { activity, service, search, intake, searched } = kindsSetup();
+    const original = search.search.bind(search);
+    search.search = async (host, query, token, since) => {
+      const result = await original(host, query, token, since);
+      return query.includes("is:issue")
+        ? { ...result, rateLimited: true, incomplete: "レート制限" }
+        : result;
+    };
+    service.saveProject(undefined, {
+      name: "認証",
+      githubAccounts: { "github.com": "me" },
+      targets: [{ scope: "repo", target: "https://github.com/acme/auth" }],
+    });
+    await intake.tick(true);
+    // Issue は1つ目でレート制限になり2つ目は探さないが、PR のレビューは2つとも探す
+    expect(searched().filter((k) => k === "issues")).toHaveLength(1);
+    expect(searched().filter((k) => k === "reviews")).toHaveLength(2);
+    const runs = service.status().intake?.runs;
+    expect(runs?.issues?.errors?.map((e) => ja(e.message))).toEqual([
+      "レート制限",
+      "レート制限のため、次の取り込みで検索します。",
+    ]);
+    expect(runs?.reviews?.errors).toBeUndefined();
+    activity.close();
+  });
+
+  it("1つの種類の思わぬ失敗や遅れは、その種類の失敗として記録し、ほかの種類を止めない", async () => {
+    const { activity, service, search, intake, advance, lastRun } = kindsSetup({
+      issueIntervalSec: 60,
+      reviewIntervalSec: 60,
+      ticketIntervalSec: 60,
+    });
+    const importIssues = service.importIssues.bind(service);
+    service.importIssues = (found) => {
+      if (found.some((f) => !f.review)) throw new Error("取り込みの失敗");
+      return importIssues(found);
+    };
+    await intake.tick(true);
+    const runs = service.status().intake?.runs;
+    expect(runs?.issues?.errors?.map((e) => ja(e.message))).toEqual([
+      expect.stringContaining("取り込みの失敗"),
+    ]);
+    expect(runs?.reviews?.lastRunAt).toBe(at(0));
+    expect(runs?.reviews?.errors).toBeUndefined();
+    expect(runs?.tickets).toMatchObject({ lastRunAt: at(0) });
+
+    // Issue の検索が終わらなくても、ほかの種類は間隔ごとに取り込む
+    let release: () => void = () => {};
+    const original = search.search.bind(search);
+    search.search = async (host, query, token, since) => {
+      if (query.includes("is:issue")) await new Promise<void>((r) => (release = r));
+      return original(host, query, token, since);
+    };
+    advance(60_000);
+    const pending = intake.tick();
+    await new Promise((r) => setTimeout(r, 10));
+    expect(lastRun()).toMatchObject({ issues: at(0), reviews: at(60_000), tickets: at(60_000) });
+    advance(60_000);
+    await new Promise((r) => setTimeout(r, 10));
+    void intake.tick();
+    await new Promise((r) => setTimeout(r, 10));
+    expect(lastRun()).toMatchObject({ issues: at(0), reviews: at(120_000), tickets: at(120_000) });
+    release();
+    await pending;
+    expect(lastRun().issues).toBe(at(60_000));
     activity.close();
   });
 });
@@ -489,13 +646,13 @@ describe("JIRA のチケットの取り込み（PBI-52）", () => {
     ]);
     expect(service.list().map((t) => [t.title, t.start])).toEqual([["PAY-1 決済の再送", "jira"]]);
     const status = service.status().intake;
-    expect(status).toMatchObject({ imported: 1, ticketLabel: "sacty" });
-    expect(status?.errors?.map((e) => [e.query, ja(e.message)])).toEqual([
+    expect(status).toMatchObject({ ticketLabel: "sacty", runs: { tickets: { imported: 1 } } });
+    expect(status?.runs?.tickets?.errors?.map((e) => [e.query, ja(e.message)])).toEqual([
       [expect.stringContaining('gone: project in ("GONE")'), expect.stringContaining("gone")],
     ]);
     await intake.tick(true);
     expect(service.list()).toHaveLength(1);
-    expect(service.status().intake).toMatchObject({ imported: 0 });
+    expect(service.status().intake?.runs?.tickets).toMatchObject({ imported: 0 });
     activity.close();
   });
 
@@ -613,7 +770,9 @@ describe("JIRA のチケットの取り込み（PBI-52）", () => {
     ]);
     expect(b.id).not.toBe(a.id);
     // コンテキストの誤りは、どの層のどのファイルかを、取り込み先ごとに記録する（ほかの取り込み先は続ける）
-    expect(service.status().intake?.errors?.map((e) => [e.query, ja(e.message)])).toEqual([
+    expect(
+      service.status().intake?.runs?.tickets?.errors?.map((e) => [e.query, ja(e.message)]),
+    ).toEqual([
       [expect.stringContaining('nowhere: project in ("PAYN")'), expect.stringContaining("nowhere")],
       [expect.stringContaining('nowhere: project in ("OPSN")'), expect.stringContaining("nowhere")],
       [
@@ -637,9 +796,9 @@ describe("JIRA のチケットの取り込み（PBI-52）", () => {
     const failing = ticketSetup();
     failing.tickets.fail = "JIRA 500";
     await failing.intake.tick(true);
-    expect(failing.service.status().intake?.errors?.map((e) => ja(e.message))).toContainEqual(
-      expect.stringContaining("JIRA 500"),
-    );
+    expect(
+      failing.service.status().intake?.runs?.tickets?.errors?.map((e) => ja(e.message)),
+    ).toContainEqual(expect.stringContaining("JIRA 500"));
     failing.activity.close();
     rmSync(join(dir, "sacty.db"), { force: true });
 

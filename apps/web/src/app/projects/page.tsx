@@ -7,6 +7,7 @@ import { ProjectEditor } from "@/components/project-editor";
 import { Button } from "@/components/ui/button";
 import { getMessages } from "@/i18n/server";
 import { DaemonUnavailableError, getStatus, listProjects } from "@/lib/daemon";
+import { intakeRuns } from "@/lib/intake";
 import { formatStamp } from "@/lib/labels";
 
 export default async function ProjectsPage() {
@@ -48,6 +49,8 @@ async function Projects() {
   }
   const [projects, status] = data;
   const intake = status.intake;
+  // 取り込みの種類ごとの直近の取り込み（PBI-100）
+  const { runs, errors } = intake ? intakeRuns(intake) : { runs: [], errors: [] };
   return (
     <>
       <section
@@ -97,16 +100,26 @@ async function Projects() {
                   {t.intake.settings}
                 </Link>
               </p>
-              <p className="text-muted-foreground">
-                {intake.lastRunAt
-                  ? t.intake.lastRun(formatStamp(intake.lastRunAt, m.locale), intake.imported ?? 0)
-                  : t.intake.never}
-              </p>
-              {intake.errors && intake.errors.length > 0 && (
+              {runs.length > 0 ? (
+                <ul className="text-muted-foreground">
+                  {runs.map((run) => (
+                    <li key={run.kind}>
+                      {t.intake.lastRun(
+                        t.intake.runKinds[run.kind],
+                        formatStamp(run.lastRunAt, m.locale),
+                        run.imported,
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-muted-foreground">{t.intake.never}</p>
+              )}
+              {errors.length > 0 && (
                 <div role="alert" className="flex flex-col gap-1 text-warn">
                   <p>{t.intake.errors}</p>
                   <ul className="list-disc pl-5">
-                    {intake.errors.map((e) => (
+                    {errors.map((e) => (
                       <li
                         key={`${e.query ?? ""}:${JSON.stringify(e.message)}`}
                         className="break-words"

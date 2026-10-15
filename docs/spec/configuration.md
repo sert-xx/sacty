@@ -1,6 +1,6 @@
 # 設定（config.yaml）
 
-`SACTY_HOME/config.yaml` は、マシンごとの設定（AI のエージェント・認証・イメージ・ゲートウェイ・取り込みの間隔）を持つ。デーモンは
+`SACTY_HOME/config.yaml` は、マシンごとの設定（AI のエージェント・認証・イメージ・ゲートウェイ）を持つ。デーモンは
 使うたびに読み直す（止めずに変えられる）。読めない・形が違うときは、最初の誤りの場所（`path`）と理由を、画面の警告に出す文言にする。
 `sacty config init` は雛形（`CONFIG_TEMPLATE`）を権限 0600 で書く（あれば `--force` が無いと止まる）。
 
@@ -27,11 +27,13 @@
 | `gateway.retry.max_wait_sec` | `600` | 一続きの失敗で待つ合計の上限（0〜86400 秒） |
 | `gateway.platforms` | `{}` | 組織内 PF。名前は `^[a-z0-9][a-z0-9-]*$`（[ゲートウェイ](gateway.md)） |
 | `gateway.mcp_servers` | `{}` | ホストで動かす MCP サーバー。名前は `^[A-Za-z0-9_-]+$`（同上） |
-| `github.poll_interval_sec` | `300`（60 以上） | Issue・PR・チケットの取り込みの間隔。**`github` を書かなければ取り込みは動かない** |
 
 ほかの検査：`default_agent`・`guardian_agent`・`step_agents` の値が `agents` に無い、`provider` の名前が `providers` に無いときは誤り。
 
-コード: `apps/daemon/src/config.ts`（`ConfigFile`・`loadConfig`・`agentFor`・`CONFIG_TEMPLATE`）、`apps/daemon/src/intake.ts`（`IssueIntake.tick`）
+知らない項目は、誤りにせずに読まない。取り込みの間隔は `config.yaml` には無く、sacty の設定に持つ（[取り込み](intake.md#間隔)）。
+以前の `github.poll_interval_sec`（`github:`）も、書いてあれば読まない（警告もしない）。
+
+コード: `apps/daemon/src/config.ts`（`ConfigFile`・`loadConfig`・`agentFor`・`CONFIG_TEMPLATE`）
 
 ## エージェント（agents）
 

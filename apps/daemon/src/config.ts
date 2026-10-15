@@ -449,13 +449,6 @@ const ConfigFile = z
           .default({}),
       })
       .prefault({}),
-    /** GitHub Issue の取り込み（個人の設定。プロジェクトの定義には含めない）。 */
-    github: z
-      .object({
-        /** 取り込みの間隔（秒）。 */
-        poll_interval_sec: z.number().int().min(60).default(300),
-      })
-      .optional(),
   })
   .superRefine((config, ctx) => {
     if (!config.agents[config.default_agent]) {
@@ -557,8 +550,6 @@ export type SactyConfig = {
   };
   /** 言語ごとのイメージ（PBI-41）。名前ごと。無ければ既定のイメージだけ。 */
   images?: Record<string, LanguageImage>;
-  /** GitHub Issue の取り込み。認証はプロジェクトの gh のアカウント（PBI-13）。 */
-  github?: { pollIntervalSec: number };
 };
 
 /** 言語ごとのイメージ（PBI-41）。 */
@@ -714,11 +705,6 @@ export function loadConfig(home: string): ConfigResult {
       stepAgents: Object.fromEntries(
         Object.entries(file.step_agents).flatMap(([role, id]) => (id ? [[role, resolve(id)]] : [])),
       ),
-      ...(file.github
-        ? {
-            github: { pollIntervalSec: file.github.poll_interval_sec },
-          }
-        : {}),
     },
   };
 }
@@ -839,11 +825,6 @@ budget:
 #           expires_in_path: data.expiresIn
 #       allow:
 #         - GET /api/v1/deployments/**
-
-# GitHub Issue の取り込み（取り込み元と、使う gh のアカウントはプロジェクトの設定で登録する）。
-# Issue から作ったタスクは、その Issue のリポジトリに実装する（設定はプロジェクトのリポジトリの設定）
-# github:
-#   poll_interval_sec: 300
 
 agents:
   # サブスクリプション：\`claude setup-token\` で作ったトークンを

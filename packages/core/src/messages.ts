@@ -106,6 +106,9 @@ const PARAMS = {
   "input.invalidRef": null,
   "input.invalidLabel": null,
   "input.sameIntakeAndReviewLabel": null,
+  "input.issueIntervalInvalid": null,
+  "input.reviewIntervalInvalid": null,
+  "input.ticketIntervalInvalid": null,
   "input.notExportFile": null,
   "input.unsupportedVersion": null,
   // 入力の検査のうち、コードを指定していない検査（zod の標準の検査。issueMessage で変換する）
@@ -572,6 +575,13 @@ const ja: MessageDictionary = {
   "input.invalidLabel": 'ラベルに " と \\ は使えません。',
   "input.sameIntakeAndReviewLabel":
     "PR のレビュー用のラベルには、取り込むラベルとは別の名前を書いてください。",
+  // 取り込みの間隔（PBI-100）。60 と 300 は MIN_INTAKE_INTERVAL_SEC・DEFAULT_INTAKE_INTERVAL_SEC（テストで一致を確かめる）
+  "input.issueIntervalInvalid":
+    "Issue の取り込みの間隔は、60 以上の整数（秒）を書いてください（空なら 300 秒）。",
+  "input.reviewIntervalInvalid":
+    "PR のレビューの取り込みの間隔は、60 以上の整数（秒）を書いてください（空なら 300 秒）。",
+  "input.ticketIntervalInvalid":
+    "チケットの取り込みの間隔は、60 以上の整数（秒）を書いてください（空なら 300 秒）。",
   "input.notExportFile": "sacty のプロジェクト定義のファイルではありません。",
   "input.unsupportedVersion": `対応していない版です（対応している版：${PROJECT_EXPORT_VERSION}）。`,
   "input.required": "入力してください。",
@@ -988,6 +998,12 @@ const en: MessageDictionary = {
   "input.invalidLabel": "A label can't contain \" or \\.",
   "input.sameIntakeAndReviewLabel":
     "Use a different name for the PR review label than the label to import.",
+  "input.issueIntervalInvalid":
+    "Enter a whole number of 60 or more (seconds) for the issue intake interval (300 seconds if empty).",
+  "input.reviewIntervalInvalid":
+    "Enter a whole number of 60 or more (seconds) for the PR review intake interval (300 seconds if empty).",
+  "input.ticketIntervalInvalid":
+    "Enter a whole number of 60 or more (seconds) for the ticket intake interval (300 seconds if empty).",
   "input.notExportFile": "This is not a sacty project definition file.",
   "input.unsupportedVersion": `Unsupported version (supported: ${PROJECT_EXPORT_VERSION}).`,
   "input.required": "This field is required.",

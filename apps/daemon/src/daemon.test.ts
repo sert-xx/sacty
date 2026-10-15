@@ -6835,15 +6835,10 @@ describe("sacty の設定と、Issue・PR の取り込み（PBI-26）", () => {
     activity.close();
   });
 
-  it("状態には、取り込むラベルを含める（設定していなければ無い）", () => {
+  it("状態には、取り込むラベルを含める（設定していなければ無い）。取り込みに github: の設定は要らない（PBI-100）", () => {
     const activity = new SqliteActivityStore(dbPath);
     const settings = new MemorySettingsStore();
-    const config = (): ConfigResult => {
-      const base = configOf(agent())();
-      if (!base.ok) throw new Error("unreachable");
-      return { ok: true, config: { ...base.config, github: { pollIntervalSec: 300 } } };
-    };
-    const { service } = makeService(activity, [], { settings, config });
+    const { service } = makeService(activity, [], { settings });
     expect(service.status().intake).toEqual({});
     service.saveSettings({ intakeLabel: "sacty" });
     expect(service.status().intake).toEqual({ label: "sacty" });
@@ -6918,7 +6913,7 @@ describe("自動のトリアージの種類ごとの On/Off（PBI-53）", () => 
       [],
     );
     // 状況（画面）にも出す
-    expect(service.status().intake).toBeNull(); // github の設定が無い構成
+    expect(service.status().intake).toMatchObject({ triageOff: ["issues", "reviewLabel"] });
     // すべて On に戻すと、項目を持たない
     expect(service.saveSettings({ intakeLabel: "sacty", triageOff: [] })).toEqual({
       intakeLabel: "sacty",
@@ -7412,16 +7407,6 @@ describe("プロジェクトと GitHub Issue の取り込み（PBI-5a）", () =>
     activity.close();
   });
 
-  /** GitHub のトークンも設定した設定。 */
-  const withGitHub = (): ConfigResult => {
-    const base = configOf(agent())();
-    if (!base.ok) throw new Error("unreachable");
-    return {
-      ok: true,
-      config: { ...base.config, github: { pollIntervalSec: 300 } },
-    };
-  };
-
   it("長い Issue の本文やタイトルも切り詰めずに取り込む（レビュー指摘）", () => {
     const { activity, service } = setup();
     const body = `${"a".repeat(10_000)}\n\n## 必須条件\n- 二重に処理しない`;
@@ -7436,26 +7421,23 @@ describe("プロジェクトと GitHub Issue の取り込み（PBI-5a）", () =>
 
   it("Issue から作ったタスクは、その Issue のリポジトリの既定のブランチを clone し、オーケストレーターが決めたテストのコマンドで検証する", async () => {
     const { activity, service, repos, tests, id } = await (async () => {
-      const made = setup(
-        [
-          {
-            kind: "completed",
-            output: "# 要求要件",
-            usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 1 },
-          },
-          {
-            kind: "completed",
-            output: `# 設計\n\n\`\`\`json\n${JSON.stringify({ "sacty-test-viewpoints": [{ title: "a", input: "b", expected: "c" }] })}\n\`\`\``,
-            usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 1 },
-          },
-          {
-            kind: "completed",
-            output: `# 実装\n\n\`\`\`json\n${JSON.stringify({ "sacty-test-map": [{ viewpointId: "TV-1", tests: ["t"] }] })}\n\`\`\``,
-            usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 1 },
-          },
-        ],
-        { config: withGitHub },
-      );
+      const made = setup([
+        {
+          kind: "completed",
+          output: "# 要求要件",
+          usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 1 },
+        },
+        {
+          kind: "completed",
+          output: `# 設計\n\n\`\`\`json\n${JSON.stringify({ "sacty-test-viewpoints": [{ title: "a", input: "b", expected: "c" }] })}\n\`\`\``,
+          usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 1 },
+        },
+        {
+          kind: "completed",
+          output: `# 実装\n\n\`\`\`json\n${JSON.stringify({ "sacty-test-map": [{ viewpointId: "TV-1", tests: ["t"] }] })}\n\`\`\``,
+          usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 1 },
+        },
+      ]);
       const [task] = made.service.importIssues([
         issue("https://github.com/acme/payments", 9, ["sacty"]),
       ]);
@@ -8413,6 +8395,17 @@ describe("API", () => {
     expect(await (await app.request("/api/settings", { headers: auth })).json()).toEqual({
       settings: { intakeLabel: "sacty" },
     });
+    // 取り込みの種類ごとの間隔（PBI-100）。60 秒より短いと、どの種類の間隔かがわかる文言で弾く
+    const short = await put({ intakeLabel: "sacty", issueIntervalSec: 59 });
+    expect(short.status).toBe(400);
+    expect(((await short.json()) as { issues: unknown[] }).issues).toEqual([
+      { path: ["issueIntervalSec"], message: { code: "input.issueIntervalInvalid" } },
+    ]);
+    expect(
+      await (
+        await put({ intakeLabel: "sacty", issueIntervalSec: "120", ticketIntervalSec: "" })
+      ).json(),
+    ).toEqual({ settings: { intakeLabel: "sacty", issueIntervalSec: 120 } });
     activity.close();
   });
 

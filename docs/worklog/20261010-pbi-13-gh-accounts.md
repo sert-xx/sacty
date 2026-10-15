@@ -4,7 +4,7 @@
 - タスク: PBI-13
 - PR: #18
 - ブランチ: feat/issue-13-gh-accounts
-- 関係する ADR: [GitHub へのアクセスは、ホストの gh にログイン済みのアカウントからプロジェクトごとに必ず選んだもので行い、config.yaml のトークンの設定は削除する](../adr/20261010-2314-github-access-via-gh-accounts.md)
+- 関係する ADR: [GitHub へのアクセスは、ホストの gh にログイン済みのアカウントからプロジェクトごとに必ず選んだもので行い、config.yaml のトークンの設定は削除する](../adr/20261010-2314-superseded-github-access-via-gh-accounts.md)
 
 ## 目的
 

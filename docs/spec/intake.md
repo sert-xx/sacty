@@ -3,16 +3,26 @@
 GitHub の Issue・PR と JIRA のチケットを、定期的に探してタスクにする。取り込み元・使う GitHub のアカウントはプロジェクトに、取り込むラベルは
 sacty の設定（すべてのプロジェクトに共通）に書く。GitHub へのアクセスは、ホストの `gh` にログイン済みのアカウントで行う。
 
-関係する ADR: [取り込みを「Issue の取り込み」と「PR のレビューの取り込み」に分け、sacty の PR にはレビュー用のラベルを付ける](../adr/20261015-0240-split-issue-and-pr-review-intake.md)、[sacty が作る PR に取り込むラベルを付け、別のタスクのレビューを元のタスクの PR の指摘として取り込む](../adr/20261014-1445-superseded-label-sacty-pull-requests-for-review.md)
+関係する ADR: [取り込みの間隔を、取り込みの種類ごとに sacty の設定に持つ](../adr/20261015-0310-intake-intervals-per-kind.md)、[取り込みを「Issue の取り込み」と「PR のレビューの取り込み」に分け、sacty の PR にはレビュー用のラベルを付ける](../adr/20261015-0240-split-issue-and-pr-review-intake.md)、[sacty が作る PR に取り込むラベルを付け、別のタスクのレビューを元のタスクの PR の指摘として取り込む](../adr/20261014-1445-superseded-label-sacty-pull-requests-for-review.md)
 
 ## 間隔
 
-- `config.yaml` の `github.poll_interval_sec`（60 以上、既定 300）ごとに取り込む。`github` を書かなければ取り込まない。間隔が来たかは30秒ごとに
-  確かめ、設定は毎回読み直す。`POST /api/intake/run` は間隔を待たずに取り込む。
-- 取り込み元ごとに、どこまで読んだか（更新日時）をメモリーに持ち、続きから読む。プロジェクトの設定が変わったときとデーモンの再起動のときは
-  先頭から読み直す（取り込み済みのものは二重に取り込まない）。1つの取り込み元の失敗は、ほかの取り込み元を止めない。
+- 取り込みの種類（`IntakeKind`）は3つ：`issues`（Issue の取り込み。`intakeLabel`）・`reviews`（PR のレビューの取り込み。`reviewLabel`・
+  `reviewRequested`）・`tickets`（チケットの取り込み。`ticketLabel`）。種類ごとに、sacty の設定の間隔（`issueIntervalSec`・`reviewIntervalSec`・
+  `ticketIntervalSec`。秒。60 以上の整数。設定していなければ 300）ごとに、別々に取り込む。
+- 間隔が来たかは30秒ごとに確かめ、sacty の設定は毎回読み直す（変えた間隔は、デーモンを再起動せずに次の確認から効く。最後に取り込みを
+  始めた時刻から測る）。デーモンを起動したときは、すべての種類をすぐに取り込む。
+- 取り込みは、`config.yaml` を読めれば動く（`config.yaml` に取り込みの項目は無い。`github:` を書いても読まない）。読めなければ取り込まない。
+- 種類ごとの取り込みは並行に動く。取り込み中の種類は、間隔が来ても二重に始めない（終わるのを待つ）。1つの種類の失敗・レート制限・遅れは、
+  ほかの種類を止めない（レート制限で検索を飛ばすのは、その回のその種類の中だけ）。思わぬ失敗も、その種類の失敗として記録する。
+- `POST /api/intake/run` は、すべての種類を間隔を待たずに取り込み、終わってから状況を返す（種類は選べない）。
+- 状況（`GET /api/status` の `intake.runs`）は種類ごとに、直近の取り込みの時刻・作ったタスクの数・取り込めなかった取り込み元と理由を持つ
+  （メモリーだけ。再起動で消える）。画面は、On で設定のある種類だけを出す。
+- 取り込み元ごとに、どこまで読んだか（更新日時）を種類ごとにメモリーに持ち、続きから読む。プロジェクトの設定・ラベル・On/Off が変わったとき
+  （間隔は含まない）とデーモンの再起動のときは先頭から読み直す（取り込み済みのものは二重に取り込まない）。1つの取り込み元の失敗は、ほかの
+  取り込み元を止めない。
 
-コード: `apps/daemon/src/intake.ts`（`IssueIntake`）、`apps/daemon/src/config.ts`（`ConfigFile`）
+コード: `apps/daemon/src/intake.ts`（`IssueIntake`）、`packages/core/src/projects.ts`（`IntakeKind`・`intakeIntervalSec`・`SactySettings`）、`apps/daemon/src/service.ts`（`recordIntake`・`status`）
 
 ## GitHub の Issue・PR
 

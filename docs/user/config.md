@@ -1,4 +1,4 @@
-<!-- 対応するコード: apps/daemon/src/config.ts（ConfigFile・Agent・Auth・Provider・CONFIG_TEMPLATE）、packages/core/src/events.ts（StepKey・DEFAULT_BUDGET_USD）、apps/daemon/src/intake.ts -->
+<!-- 対応するコード: apps/daemon/src/config.ts（ConfigFile・Agent・Auth・Provider・CONFIG_TEMPLATE）、packages/core/src/events.ts（StepKey・DEFAULT_BUDGET_USD） -->
 
 # config.yaml の設定
 
@@ -23,7 +23,9 @@
 | `images` | 言語ごとのイメージ（[コンテナイメージ](images.md#言語ごとのイメージ)） | なし |
 | `onepassword.account` | 使う 1Password のアカウント（[秘密情報](secrets.md#1password)） | なし |
 | `gateway` | ホストのゲートウェイ（[ゲートウェイ](gateway.md)） | なし |
-| `github.poll_interval_sec` | Issue・PR・チケットを取り込む間隔（秒。60 以上の整数）。`github:` を書かなければ取り込まない（[取り込み](intake.md)） | `300` |
+
+取り込みの間隔は、config.yaml ではなく画面の「sacty の設定」で、取り込みの種類ごとに決めます（[取り込み](intake.md#取り込みの間隔)）。
+以前の版の `github:`（`poll_interval_sec`）は、書いてあっても読みません。消してかまいません。
 
 設定に誤りがあると、どの項目（例 `agents.claude-subscription.auth.secret`）の何が誤りかを画面に出します。
 

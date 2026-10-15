@@ -1,4 +1,10 @@
-import { type DaemonText, message } from "@sacty/core";
+import {
+  type DaemonText,
+  IntakeKind,
+  intakeIntervalSec,
+  message,
+  type SactySettings,
+} from "@sacty/core";
 import { redactText } from "./agents/redact.js";
 import type { ConfigResult } from "./config.js";
 import { errorText } from "./errors.js";
@@ -7,21 +13,33 @@ import type { IssueSearch } from "./github.js";
 import type { TaskService } from "./service.js";
 import { type FoundTicket, type TicketClient, ticketErrorText, ticketJql } from "./tickets.js";
 
+/** 1つの種類の取り込みの状態（PBI-100）。 */
+type KindState = {
+  /** 最後に取り込みを始めた時刻。無ければ、まだ取り込んでいない（すぐに取り込む）。 */
+  lastRun?: number;
+  current?: Promise<void>;
+  /**
+   * 取り込み元（検索の条件）ごとの、どこまで読んだか。次の取り込みはここから続ける。
+   * デーモンを再起動すると先頭から読み直す（取り込み済みのものは二重に取り込まない）。
+   */
+  cursors: Map<string, string>;
+  revision?: string;
+};
+
 /**
- * GitHub Issue を定期的に探して、タスクに取り込む（PR のレビューの取り込みの PR も。PBI-44）。検索はプロジェクトの取り込み元ごとに行い、
- * 担当の判定と重複の判定は TaskService が取り込むたびに行う。
+ * GitHub の Issue・PR（PR のレビューの取り込み。PBI-44）と、チケット（JIRA など。PBI-52）を定期的に探して、タスクに取り込む。
+ * 取り込みの種類（Issue・PR のレビュー・チケット）ごとに、sacty の設定の間隔で、別々に取り込む（PBI-100。1つの種類の失敗や
+ * 遅れが、ほかの種類を止めない）。検索はプロジェクトの取り込み元ごとに行い、担当の判定と重複の判定は TaskService が
+ * 取り込むたびに行う。
  */
 export class IssueIntake {
   private timer: NodeJS.Timeout | undefined;
-  private current: Promise<void> | undefined;
   private stopped = false;
-  private lastRun = 0;
-  /**
-   * 取り込み元（検索の条件）ごとの、どこまで読んだか（更新日時）。次の取り込みはここから続ける。
-   * デーモンを再起動すると先頭から読み直す（取り込み済みの Issue は二重に取り込まない）。
-   */
-  private readonly cursors = new Map<string, string>();
-  private revision: string | undefined;
+  private readonly kinds: Record<IntakeKind, KindState> = {
+    issues: { cursors: new Map() },
+    reviews: { cursors: new Map() },
+    tickets: { cursors: new Map() },
+  };
 
   constructor(
     private readonly service: TaskService,
@@ -33,7 +51,7 @@ export class IssueIntake {
     private readonly tickets?: TicketClient,
   ) {}
 
-  /** 設定の間隔は毎回読み直す（デーモンを止めずに変えられるように）。確認は30秒ごと。 */
+  /** 間隔（sacty の設定）は毎回読み直す（デーモンを止めずに変えられるように）。確認は30秒ごと。 */
   start(checkMs = 30_000): void {
     this.timer = setInterval(() => void this.tick(), checkMs);
     void this.tick();
@@ -42,43 +60,80 @@ export class IssueIntake {
   async stop(): Promise<void> {
     this.stopped = true;
     if (this.timer) clearInterval(this.timer);
-    await this.current;
+    await Promise.all(Object.values(this.kinds).map((k) => k.current));
   }
 
-  /** 間隔が来ていれば取り込む。force なら間隔を待たない。 */
-  tick(force = false): Promise<void> {
-    if (this.current || this.stopped) return this.current ?? Promise.resolve();
+  /**
+   * 間隔が来た種類を取り込む。force なら、すべての種類を間隔を待たずに取り込む。取り込み中の種類は、その取り込みを待つ
+   * （二重に始めない）。設定ファイルを読めなければ取り込まない。
+   */
+  async tick(force = false): Promise<void> {
     const config = this.config();
-    if (!config.ok || !config.config.github) return Promise.resolve();
-    const github = config.config.github;
-    if (!force && this.now() - this.lastRun < github.pollIntervalSec * 1000) {
+    if (this.stopped || !config.ok) {
+      await Promise.all(Object.values(this.kinds).map((k) => k.current));
+      return;
+    }
+    const settings = this.service.getSettings();
+    await Promise.all(IntakeKind.options.map((kind) => this.tickKind(kind, settings, force)));
+  }
+
+  private tickKind(kind: IntakeKind, settings: SactySettings, force: boolean): Promise<void> {
+    const state = this.kinds[kind];
+    if (state.current) return state.current;
+    if (
+      !force &&
+      state.lastRun !== undefined &&
+      this.now() - state.lastRun < intakeIntervalSec(settings, kind) * 1000
+    ) {
       return Promise.resolve();
     }
-    this.lastRun = this.now();
-    const run = this.runOnce();
-    this.current = run;
+    state.lastRun = this.now();
+    const run = this.runKind(kind, state);
+    state.current = run;
     void run.finally(() => {
-      if (this.current === run) this.current = undefined;
+      if (state.current === run) state.current = undefined;
     });
     return run;
   }
 
+  /** 1つの種類を取り込み、その結果を記録する。思わぬ失敗も、その種類の失敗として記録する（ほかの種類は続ける）。 */
+  private async runKind(kind: IntakeKind, state: KindState): Promise<void> {
+    const at = new Date(this.now()).toISOString();
+    const errors: { query?: string; message: DaemonText }[] = [];
+    let imported = 0;
+    try {
+      // 担当の判定が変わりうるので、プロジェクトの設定が変わったら先頭から読み直す
+      // （以前はほかのプロジェクトの担当で取り込まなかったものを、取りこぼさないため）
+      const revision = this.service.projectsRevision();
+      if (revision !== state.revision) {
+        state.cursors.clear();
+        state.revision = revision;
+      }
+      imported =
+        kind === "tickets"
+          ? await this.runTickets(state.cursors, errors)
+          : await this.runGitHub(kind, state.cursors, errors);
+    } catch (error) {
+      errors.push({ message: errorText(error) });
+    }
+    this.service.recordIntake(kind, {
+      lastRunAt: at,
+      imported,
+      ...(errors.length > 0 ? { errors } : {}),
+    });
+  }
+
   /**
-   * 取り込み元ごとに検索し、失敗は取り込み元ごとに記録する（1つの取り込み元の失敗で、
-   * ほかの取り込み元やプロジェクトの取り込みを止めない）。取れた結果は取り込む。
+   * GitHub の取り込み（Issue か、PR のレビュー）。取り込み元ごとに検索し、失敗は取り込み元ごとに記録する（1つの取り込み元の
+   * 失敗で、ほかの取り込み元やプロジェクトの取り込みを止めない）。取れた結果は取り込み、作ったタスクの数を返す。
    * 検索は、その取り込み元のプロジェクトに設定した gh のアカウントで行う（PBI-13）。
    */
-  private async runOnce(): Promise<void> {
-    const at = new Date(this.now()).toISOString();
-    // 担当の判定が変わりうるので、プロジェクトの設定が変わったら先頭から読み直す
-    // （以前はほかのプロジェクトの担当で取り込まなかった Issue を、取りこぼさないため）
-    const revision = this.service.projectsRevision();
-    if (revision !== this.revision) {
-      this.cursors.clear();
-      this.revision = revision;
-    }
+  private async runGitHub(
+    kind: "issues" | "reviews",
+    cursors: Map<string, string>,
+    errors: { query?: string; message: DaemonText }[],
+  ): Promise<number> {
     const found = [];
-    const errors: { query?: string; message: DaemonText }[] = [];
     // アカウントごとのトークン（取り出せなければ、その理由）と、レート制限に達したか。
     // レート制限はトークン（アカウント）ごとなので、ほかのアカウントの検索は続ける
     const tokens = new Map<string, { token: string } | { error: DaemonText }>();
@@ -97,7 +152,11 @@ export class IssueIntake {
       }
       return entry;
     };
-    for (const { host, query, account, project, review } of this.service.intakeSources()) {
+    // PR のレビューの取り込みの検索（review のあるもの）と、Issue の取り込みの検索を分ける（PBI-100）
+    const sources = this.service
+      .intakeSources()
+      .filter((source) => (kind === "reviews") === (source.review !== undefined));
+    for (const { host, query, account, project, review } of sources) {
       // アカウントを選んでいないプロジェクトの取り込み元は、理由を示して検索しない
       if (!account) {
         errors.push({ query, message: message("github.accountRequired", { project, host }) });
@@ -115,12 +174,7 @@ export class IssueIntake {
         continue;
       }
       try {
-        const result = await this.search.search(
-          host,
-          query,
-          auth.token,
-          this.cursors.get(cursorKey),
-        );
+        const result = await this.search.search(host, query, auth.token, cursors.get(cursorKey));
         // PR のレビューの取り込みの検索（PBI-44）で見つかったものは、そのことを添える
         found.push(
           ...(review
@@ -132,7 +186,7 @@ export class IssueIntake {
               }))
             : result.issues),
         );
-        if (result.cursor) this.cursors.set(cursorKey, result.cursor);
+        if (result.cursor) cursors.set(cursorKey, result.cursor);
         if (result.incomplete) {
           errors.push({ query, message: redactText(result.incomplete, [auth.token]) });
         }
@@ -141,7 +195,14 @@ export class IssueIntake {
         errors.push({ query, message: redactText(errorText(error), [auth.token]) });
       }
     }
-    const created = this.service.importIssues(found);
+    return this.service.importIssues(found).length;
+  }
+
+  /** チケットの取り込み（PBI-52）。作ったタスクの数を返す。 */
+  private async runTickets(
+    cursors: Map<string, string>,
+    errors: { query?: string; message: DaemonText }[],
+  ): Promise<number> {
     // チケット（JIRA など。PBI-52）。接続先は gateway.platforms の組織内 PF（認証もその設定）か、ホストに無ければ
     // そのプロジェクトのコンテキストの platforms.yaml の PF（PBI-74）
     const tickets: FoundTicket[] = [];
@@ -180,7 +241,7 @@ export class IssueIntake {
           const result = await client.search({
             ...source,
             platform,
-            ...(this.cursors.has(cursorKey) ? { cursor: this.cursors.get(cursorKey) } : {}),
+            ...(cursors.has(cursorKey) ? { cursor: cursors.get(cursorKey) } : {}),
           });
           // プロジェクトのコンテキストの PF で見つけたチケットは、そのプロジェクトのもの（PBI-74）
           tickets.push(
@@ -188,20 +249,15 @@ export class IssueIntake {
               ? result.tickets.map((t) => ({ ...t, projectId: source.projectId }))
               : result.tickets),
           );
-          if (result.cursor) this.cursors.set(cursorKey, result.cursor);
-          else this.cursors.delete(cursorKey);
+          if (result.cursor) cursors.set(cursorKey, result.cursor);
+          else cursors.delete(cursorKey);
         } catch (error) {
           // 続きの位置が使えなくなった（期限切れなど）かもしれないので、次の回は先頭から読む
-          this.cursors.delete(cursorKey);
+          cursors.delete(cursorKey);
           errors.push({ query, message: ticketErrorText(error) });
         }
       }
     }
-    const createdTickets = this.service.importTickets(tickets);
-    this.service.recordIntake({
-      lastRunAt: at,
-      imported: created.length + createdTickets.length,
-      ...(errors.length > 0 ? { errors } : {}),
-    });
+    return this.service.importTickets(tickets).length;
   }
 }

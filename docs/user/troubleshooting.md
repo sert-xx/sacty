@@ -25,7 +25,7 @@
 
 | 症状 | 確かめること |
 | --- | --- |
-| Issue・PR・チケットが取り込まれない | `config.yaml` に `github:` があるか、「sacty の設定」で取り込むラベル（Issue）・レビュー用のラベル（PR）を設定して On にしているか、プロジェクトの対象と GitHub アカウントを選んでいるかを確かめてください（[取り込み](intake.md)） |
+| Issue・PR・チケットが取り込まれない | 「sacty の設定」で取り込むラベル（Issue）・レビュー用のラベル（PR）を設定して On にしているか、プロジェクトの対象と GitHub アカウントを選んでいるかを確かめてください（[取り込み](intake.md)） |
 | 予算の上限で一時停止した | 画面で累計の新しい上限を入力して再開してください（[config.yaml の設定](config.md#予算)） |
 | AI の利用上限で一時停止した | サブスクリプションの上限やレート制限が戻ってから再開してください。ゲートウェイのリトライの上限に達したときも同じです（[ゲートウェイ](gateway.md#ai-の呼び出しを中継する)） |
 | Codex × Bedrock などで `Reconnecting... error sending request` のまま進まない | 仮想マシンの中の Docker（Rancher Desktop など）では、`gateway.host_address` にホストに届くアドレスを書いてください（[ゲートウェイ](gateway.md#ホストのアドレス)） |
