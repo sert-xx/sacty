@@ -15,6 +15,7 @@ const ja = {
     lastRun: (kind: string, at: string, n: number) =>
       `最後の取り込み（${kind}）：${at}（${n}件のタスクを作成）`,
     runKinds: { issues: "Issue", reviews: "PR のレビュー", tickets: "チケット" },
+    errorKind: (kind: string) => `【${kind}】`,
     never: "まだ取り込んでいません。",
     noLabel:
       "取り込むラベルも、PR のレビューとチケットの取り込みも設定していないので、取り込みは止まっています。",
@@ -237,6 +238,7 @@ const en: ProjectsMessages = {
     stopped: "Intake is stopped because the settings file (config.yaml) cannot be read.",
     lastRun: (kind, at, n) => `Last ${kind} intake: ${at} (${n} task${n === 1 ? "" : "s"} created)`,
     runKinds: { issues: "issue", reviews: "PR review", tickets: "ticket" },
+    errorKind: (kind) => `[${kind}] `,
     never: "Nothing imported yet.",
     noLabel: "No intake label, PR review intake, or ticket intake is set, so intake is stopped.",
     label: (label) => `Issues: label ${label}`,

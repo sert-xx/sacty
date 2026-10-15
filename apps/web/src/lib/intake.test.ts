@@ -25,7 +25,33 @@ describe("取り込みの種類ごとの直近の取り込み（PBI-100）", () 
       ["reviews", "2026-10-15T00:01:00Z"],
       ["tickets", "2026-10-15T00:02:00Z"],
     ]);
-    expect(errors.map((e) => e.query)).toEqual(["issue", "jira"]);
+    expect(errors.map((e) => [e.kind, e.query])).toEqual([
+      ["issues", "issue"],
+      ["tickets", "jira"],
+    ]);
+  });
+
+  it("検索の条件の無い同じ失敗が複数の種類で起きても、種類で見分けられる（レビュー指摘）", () => {
+    const failed = {
+      lastRunAt: "2026-10-15T00:00:00Z",
+      imported: 0,
+      errors: [{ message: "読めません" }],
+    };
+    const { errors } = intakeRuns({
+      label: "sacty",
+      reviewRequested: true,
+      runs: { issues: failed, reviews: failed },
+    });
+    expect(errors.map((e) => [e.kind, e.message])).toEqual([
+      ["issues", "読めません"],
+      ["reviews", "読めません"],
+    ]);
+    for (const lang of ["ja", "en"] as const) {
+      const t = messagesFor(lang).projects.intake;
+      const shown = errors.map((e) => t.errorKind(t.runKinds[e.kind]));
+      expect(new Set(shown).size, lang).toBe(2);
+    }
+    expect(messagesFor("ja").projects.intake.errorKind("Issue")).toBe("【Issue】");
   });
 
   it("Off や未設定の種類の結果は出さない", () => {

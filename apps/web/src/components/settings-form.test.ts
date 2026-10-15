@@ -79,6 +79,23 @@ describe("取り込みの種類ごとの間隔（PBI-100）", () => {
       expect(sections[0], lang).toContain('value=""');
       expect(sections[0], lang).toContain(t.intervalCurrent(300, true));
     }
+    // 取り込みが止まっている種類（Off・ラベルが無い）は「始めると」の文にする（レビュー指摘）
+    for (const lang of ["ja", "en"] as const) {
+      locale = lang;
+      const t = messagesFor(lang).settings;
+      const off = render({ triageOff: ["issues"], ticketLabel: "", ticketIntervalSec: 120 }).split(
+        "<section",
+      );
+      expect(off[1], lang).toContain(t.intervalWhenOn(300, true));
+      expect(off[1], lang).not.toContain(t.intervalCurrent(300, true));
+      expect(off[1], lang).toContain(t.intakeOff);
+      expect(off[3], lang).toContain(t.intervalWhenOn(120, false));
+      expect(off[2], lang).toContain(t.intervalCurrent(300, true));
+    }
+    locale = "ja";
+    expect(messagesFor("ja").settings.intervalWhenOn(300, true)).toBe(
+      "取り込みを始めると、300 秒ごとに取り込みます（既定）。",
+    );
     // ブラウザの検査（ブラウザの言語）に任せず、デーモンの文言（画面の言語）で誤りを出す
     expect(render()).toMatch(/<form[^>]*novalidate=""/i);
     locale = "ja";

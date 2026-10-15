@@ -15,7 +15,10 @@ import { type FoundTicket, type TicketClient, ticketErrorText, ticketJql } from 
 
 /** 1つの種類の取り込みの状態（PBI-100）。 */
 type KindState = {
-  /** 最後に取り込みを始めた時刻。無ければ、まだ取り込んでいない（すぐに取り込む）。 */
+  /**
+   * 最後に取り込みを始めた時刻。無ければ、まだ取り込んでいない（すぐに取り込む）。取り込み元が無かった回は起点にしない
+   * （ラベルを設定して On にしたら、次の確認ですぐに取り込むため）。
+   */
   lastRun?: number;
   current?: Promise<void>;
   /**
@@ -65,15 +68,30 @@ export class IssueIntake {
 
   /**
    * 間隔が来た種類を取り込む。force なら、すべての種類を間隔を待たずに取り込む。取り込み中の種類は、その取り込みを待つ
-   * （二重に始めない）。設定ファイルを読めなければ取り込まない。
+   * （二重に始めない）。設定ファイルを読めなければ取り込まない。失敗しても reject しない（定期実行を止めないため）。
+   * sacty の設定を読めなければ、その理由を取り込み中でない種類の失敗として記録し、次の確認でやり直す（間隔の起点にしない）。
    */
   async tick(force = false): Promise<void> {
-    const config = this.config();
-    if (this.stopped || !config.ok) {
-      await Promise.all(Object.values(this.kinds).map((k) => k.current));
+    let settings: SactySettings;
+    try {
+      const config = this.config();
+      if (this.stopped || !config.ok) {
+        await Promise.all(Object.values(this.kinds).map((k) => k.current));
+        return;
+      }
+      settings = this.service.getSettings();
+    } catch (error) {
+      const at = new Date(this.now()).toISOString();
+      for (const kind of IntakeKind.options) {
+        if (this.kinds[kind].current) continue;
+        this.service.recordIntake(kind, {
+          lastRunAt: at,
+          imported: 0,
+          errors: [{ message: errorText(error) }],
+        });
+      }
       return;
     }
-    const settings = this.service.getSettings();
     await Promise.all(IntakeKind.options.map((kind) => this.tickKind(kind, settings, force)));
   }
 
@@ -101,6 +119,7 @@ export class IssueIntake {
     const at = new Date(this.now()).toISOString();
     const errors: { query?: string; message: DaemonText }[] = [];
     let imported = 0;
+    let sources = 0;
     try {
       // 担当の判定が変わりうるので、プロジェクトの設定が変わったら先頭から読み直す
       // （以前はほかのプロジェクトの担当で取り込まなかったものを、取りこぼさないため）
@@ -109,13 +128,17 @@ export class IssueIntake {
         state.cursors.clear();
         state.revision = revision;
       }
-      imported =
+      const result =
         kind === "tickets"
           ? await this.runTickets(state.cursors, errors)
           : await this.runGitHub(kind, state.cursors, errors);
+      imported = result.imported;
+      sources = result.sources;
     } catch (error) {
       errors.push({ message: errorText(error) });
     }
+    // 取り込み元が無かった（ラベルが無い・Off・対象が無い）回は、間隔の起点にしない
+    if (sources === 0 && errors.length === 0) state.lastRun = undefined;
     this.service.recordIntake(kind, {
       lastRunAt: at,
       imported,
@@ -132,7 +155,7 @@ export class IssueIntake {
     kind: "issues" | "reviews",
     cursors: Map<string, string>,
     errors: { query?: string; message: DaemonText }[],
-  ): Promise<number> {
+  ): Promise<{ imported: number; sources: number }> {
     const found = [];
     // アカウントごとのトークン（取り出せなければ、その理由）と、レート制限に達したか。
     // レート制限はトークン（アカウント）ごとなので、ほかのアカウントの検索は続ける
@@ -195,14 +218,16 @@ export class IssueIntake {
         errors.push({ query, message: redactText(errorText(error), [auth.token]) });
       }
     }
-    return this.service.importIssues(found).length;
+    // 見つからなければ、取り込みの処理（すべてのタスクを調べる）を省く
+    const imported = found.length > 0 ? this.service.importIssues(found).length : 0;
+    return { imported, sources: sources.length };
   }
 
   /** チケットの取り込み（PBI-52）。作ったタスクの数を返す。 */
   private async runTickets(
     cursors: Map<string, string>,
     errors: { query?: string; message: DaemonText }[],
-  ): Promise<number> {
+  ): Promise<{ imported: number; sources: number }> {
     // チケット（JIRA など。PBI-52）。接続先は gateway.platforms の組織内 PF（認証もその設定）か、ホストに無ければ
     // そのプロジェクトのコンテキストの platforms.yaml の PF（PBI-74）
     const tickets: FoundTicket[] = [];
@@ -211,8 +236,10 @@ export class IssueIntake {
     const client = this.tickets;
     // プロジェクトのコンテキストは、1回の取り込みでプロジェクトごとに1度だけ取得する
     const contextPlatforms = new Map<string, ReturnType<TaskService["projectContextPlatforms"]>>();
+    const sources = client ? this.service.ticketSources() : [];
+    const count = sources.length;
     if (client) {
-      for (const source of this.service.ticketSources()) {
+      for (const source of sources) {
         const query = `${source.platform}: ${ticketJql(source.keys, source.label)}`;
         let platform = platforms.find((p) => p.name === source.platform);
         if (!platform && source.projectId) {
@@ -258,6 +285,7 @@ export class IssueIntake {
         }
       }
     }
-    return this.service.importTickets(tickets).length;
+    const imported = tickets.length > 0 ? this.service.importTickets(tickets).length : 0;
+    return { imported, sources: count };
   }
 }

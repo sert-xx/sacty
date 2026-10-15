@@ -106,11 +106,60 @@ class FakeGh implements GitHubAuth {
   }
 }
 
-function setup(readable = true, gh = new FakeGh()) {
+/** JIRA の接続先（PBI-52）。 */
+const jira = toPlatform(
+  "jira",
+  PlatformFile.parse({
+    upstream: "https://jira.example.com",
+    description: "JIRA",
+    auth: { header: "Authorization", prefix: "Bearer ", secret: "jira-token" },
+    allow: ["GET /rest/api/**"],
+  }),
+);
+/** チケットの検索の偽物。 */
+class FakeTicketSearch implements TicketClient {
+  searched: {
+    platform: string;
+    service: string;
+    keys: readonly string[];
+    label: string;
+    cursor?: string;
+  }[] = [];
+  fail?: string;
+  /** 返す続きの位置（順に）。 */
+  next: (string | undefined)[] = [];
+  async search(input: Parameters<TicketClient["search"]>[0]) {
+    this.searched.push({ ...input, platform: input.platform.name });
+    if (this.fail) throw new Error(this.fail);
+    return {
+      tickets: [
+        {
+          platform: input.platform.name,
+          service: input.service,
+          key: "PAY-1",
+          summary: "決済の再送",
+          url: "https://jira.example.com/browse/PAY-1",
+        },
+      ],
+      ...(this.next.length > 0 ? { cursor: this.next.shift() } : {}),
+    };
+  }
+  async comment(): Promise<{ url: string }> {
+    throw new Error("unused");
+  }
+}
+/**
+ * 取り込みの準備。tickets を渡すと、接続先（jira）とプロジェクトのチケットの取り込み元も設定する（PBI-100）。
+ */
+function setup(readable = true, gh = new FakeGh(), tickets?: TicketClient) {
+  const settingsConfig = (): ConfigResult => {
+    const base = config(readable)();
+    return base.ok && tickets ? { ok: true, config: { ...base.config, platforms: [jira] } } : base;
+  };
   const activity = new SqliteActivityStore(join(dir, "sacty.db"));
   const service = new TaskService({
     activity,
-    config: config(readable),
+    config: settingsConfig,
     secrets: new MemorySecretStore({}),
     executor: unused as AgentExecutor,
     repos: unused as never,
@@ -126,6 +175,7 @@ function setup(readable = true, gh = new FakeGh()) {
     name: "決済",
     githubAccounts: { "github.com": "me" },
     targets: [{ scope: "repo", target: "https://github.com/acme/payments" }],
+    ...(tickets ? { tickets: [{ platform: "jira", service: "jira-server", keys: ["PAY"] }] } : {}),
   });
   const search = new FakeSearch([
     {
@@ -138,8 +188,16 @@ function setup(readable = true, gh = new FakeGh()) {
     },
   ]);
   let now = 1_000_000;
-  const intake = new IssueIntake(service, search, gh, config(readable), () => now);
-  return { activity, service, search, intake, gh, advance: (ms: number) => (now += ms) };
+  const intake = new IssueIntake(service, search, gh, settingsConfig, () => now, tickets);
+  return {
+    activity,
+    service,
+    search,
+    intake,
+    gh,
+    config: settingsConfig,
+    advance: (ms: number) => (now += ms),
+  };
 }
 
 describe("GitHub Issue の定期的な取り込み（PBI-5a）", () => {
@@ -405,9 +463,10 @@ describe("GitHub Issue の定期的な取り込み（PBI-5a）", () => {
 });
 
 describe("取り込みの種類ごとの間隔（PBI-100）", () => {
-  /** Issue・PR のレビュー・チケットの取り込みをすべて設定した構成。 */
+  /** Issue・PR のレビュー・チケット（偽の JIRA と取り込み元つき）の取り込みをすべて設定した構成。 */
   const kindsSetup = (settings: Record<string, unknown> = {}) => {
-    const made = setup();
+    const tickets = new FakeTicketSearch();
+    const made = setup(true, new FakeGh(), tickets);
     made.service.saveSettings({
       intakeLabel: "sacty",
       reviewLabel: "sacty-review",
@@ -418,78 +477,151 @@ describe("取り込みの種類ごとの間隔（PBI-100）", () => {
       Object.fromEntries(
         Object.entries(made.service.status().intake?.runs ?? {}).map(([k, r]) => [k, r?.lastRunAt]),
       );
-    /** 検索した種類（Issue か PR のレビューか）を、検索の順に。 */
-    const searched = () =>
-      made.search.queries.map((q) => (q.includes("is:issue") ? "issues" : "reviews"));
-    return { ...made, lastRun, searched };
+    /** 種類ごとの、これまでの検索の回数（GitHub は検索の条件、チケットは JIRA の検索）。 */
+    const counts = () => ({
+      issues: made.search.queries.filter((q) => q.includes("is:issue")).length,
+      reviews: made.search.queries.filter((q) => q.includes("is:pr")).length,
+      tickets: tickets.searched.length,
+    });
+    /** その種類の、次の取り込みの記録（実時間を待たずに、終わったことを知るため）。 */
+    const record = made.service.recordIntake.bind(made.service);
+    const waiting: { kind: string; resolve: () => void }[] = [];
+    made.service.recordIntake = (kind, run) => {
+      record(kind, run);
+      for (const w of waiting.filter((w) => w.kind === kind)) {
+        waiting.splice(waiting.indexOf(w), 1);
+        w.resolve();
+      }
+    };
+    const recorded = (kind: string) =>
+      new Promise<void>((resolve) => waiting.push({ kind, resolve }));
+    return { ...made, tickets, lastRun, counts, recorded };
   };
   const at = (ms: number) => new Date(1_000_000 + ms).toISOString();
 
-  it("種類ごとに、その種類の間隔で取り込む（設定していない種類は既定の 300 秒）。再起動したら、すべての種類をすぐに取り込む", async () => {
-    const { activity, service, search, intake, advance, lastRun, searched } = kindsSetup({
-      issueIntervalSec: 60,
-      reviewIntervalSec: 600,
-    });
+  it("種類ごとに、その種類の間隔で検索する（設定していない種類は既定の 300 秒）。再起動したら、すべての種類をすぐに検索する", async () => {
+    const { activity, service, search, intake, advance, lastRun, counts, tickets, config } =
+      kindsSetup({ issueIntervalSec: 60, reviewIntervalSec: 600 });
     await intake.tick();
+    expect(counts()).toEqual({ issues: 1, reviews: 1, tickets: 1 });
     expect(lastRun()).toEqual({ issues: at(0), reviews: at(0), tickets: at(0) });
-    expect(searched()).toEqual(["issues", "reviews"]);
 
     advance(60_000);
     await intake.tick();
-    expect(lastRun()).toEqual({ issues: at(60_000), reviews: at(0), tickets: at(0) });
+    expect(counts()).toEqual({ issues: 2, reviews: 1, tickets: 1 });
     advance(240_000); // 300 秒
     await intake.tick();
-    expect(lastRun()).toEqual({ issues: at(300_000), reviews: at(0), tickets: at(300_000) });
+    expect(counts()).toEqual({ issues: 3, reviews: 1, tickets: 2 });
+    expect(lastRun().tickets).toBe(at(300_000));
     advance(299_000); // 599 秒
     await intake.tick();
-    expect(lastRun().reviews).toBe(at(0));
-    advance(1_000); // 600 秒
+    expect(counts()).toEqual({ issues: 4, reviews: 1, tickets: 2 });
+    advance(1_000); // 600 秒（Issue は前の検索から 1 秒）
     await intake.tick();
+    expect(counts()).toEqual({ issues: 4, reviews: 2, tickets: 3 });
     expect(lastRun()).toEqual({ issues: at(599_000), reviews: at(600_000), tickets: at(600_000) });
-    expect(searched().filter((k) => k === "reviews")).toHaveLength(2);
 
-    // 再起動（新しい取り込み）は、間隔を待たずにすべての種類を取り込む
-    search.queries.length = 0;
-    const restarted = new IssueIntake(service, search, new FakeGh(), config(true), () => 1_600_001);
-    await restarted.tick();
-    expect(searched().sort()).toEqual(["issues", "reviews"]);
-    expect(service.status().intake?.runs?.tickets?.lastRunAt).toBe(
-      new Date(1_600_001).toISOString(),
+    // 再起動（新しい取り込み）は、間隔を待たずにすべての種類を検索する
+    const restarted = new IssueIntake(
+      service,
+      search,
+      new FakeGh(),
+      config,
+      () => 1_000_000 + 600_001,
+      tickets,
     );
+    await restarted.tick();
+    expect(counts()).toEqual({ issues: 5, reviews: 3, tickets: 4 });
     activity.close();
   });
 
   it("間隔を変えたら、デーモンを再起動せずに次の取り込みから効く", async () => {
-    const { activity, service, intake, advance, lastRun } = kindsSetup({ issueIntervalSec: 600 });
+    const { activity, service, intake, advance, counts } = kindsSetup({ ticketIntervalSec: 600 });
     await intake.tick();
     advance(120_000);
     await intake.tick();
-    expect(lastRun().issues).toBe(at(0));
-    service.saveSettings({ ...service.getSettings(), issueIntervalSec: 60 });
+    expect(counts().tickets).toBe(1);
+    service.saveSettings({ ...service.getSettings(), ticketIntervalSec: 60 });
     await intake.tick();
-    expect(lastRun().issues).toBe(at(120_000));
+    expect(counts().tickets).toBe(2);
     // 長くすると、次の取り込みまで待つ
-    service.saveSettings({ ...service.getSettings(), issueIntervalSec: 900 });
+    service.saveSettings({ ...service.getSettings(), ticketIntervalSec: 900 });
     advance(600_000);
     await intake.tick();
-    expect(lastRun().issues).toBe(at(120_000));
+    expect(counts().tickets).toBe(2);
     advance(300_000);
     await intake.tick();
-    expect(lastRun().issues).toBe(at(1_020_000));
+    expect(counts().tickets).toBe(3);
     activity.close();
   });
 
-  it("すぐに取り込む（force）は、すべての種類を間隔を待たずに取り込む", async () => {
-    const { activity, intake, advance, lastRun } = kindsSetup();
+  it("すぐに取り込む（force）は、すべての種類を間隔を待たずに検索する", async () => {
+    const { activity, intake, advance, counts, lastRun } = kindsSetup();
     await intake.tick();
     advance(1_000);
     await intake.tick(true);
+    expect(counts()).toEqual({ issues: 2, reviews: 2, tickets: 2 });
     expect(lastRun()).toEqual({ issues: at(1_000), reviews: at(1_000), tickets: at(1_000) });
     activity.close();
   });
 
+  it("取り込み元が無い回（ラベルが無い・Off）は間隔の起点にせず、On にしたら次の確認ですぐに検索する（レビュー指摘）", async () => {
+    const { activity, service, intake, counts } = kindsSetup({
+      reviewLabel: "",
+      ticketLabel: "sacty",
+      triageOff: ["tickets"],
+    });
+    await intake.tick();
+    expect(counts()).toEqual({ issues: 1, reviews: 0, tickets: 0 });
+    // 時刻を進めずに、レビューの依頼とチケットを On にする
+    service.saveSettings({ intakeLabel: "sacty", ticketLabel: "sacty", reviewRequested: true });
+    await intake.tick();
+    // 取り込み元のあった Issue は間隔を待つ。On にした種類は、すぐに検索する
+    expect(counts()).toEqual({ issues: 1, reviews: 1, tickets: 1 });
+    activity.close();
+  });
+
+  it("sacty の設定を読めなくても reject せず、理由を記録して、次の確認でやり直す（レビュー指摘）", async () => {
+    const { activity, service, intake, counts } = kindsSetup();
+    const getSettings = service.getSettings.bind(service);
+    service.getSettings = () => {
+      throw new Error("設定を読めません");
+    };
+    await expect(intake.tick()).resolves.toBeUndefined();
+    const runs = service.status().intake?.runs;
+    for (const kind of ["issues", "reviews", "tickets"] as const) {
+      expect(
+        runs?.[kind]?.errors?.map((e) => ja(e.message)),
+        kind,
+      ).toEqual([expect.stringContaining("設定を読めません")]);
+    }
+    expect(counts()).toEqual({ issues: 0, reviews: 0, tickets: 0 });
+    // 読めるようになったら、間隔を待たずに取り込む
+    service.getSettings = getSettings;
+    await intake.tick();
+    expect(counts()).toEqual({ issues: 1, reviews: 1, tickets: 1 });
+    expect(service.status().intake?.runs?.issues?.errors).toBeUndefined();
+    activity.close();
+  });
+
+  it("見つからなければ、取り込みの処理（すべてのタスクを調べる）を呼ばない（レビュー指摘）", async () => {
+    const { activity, service, search, intake } = kindsSetup({ ticketLabel: "" });
+    search.issues.length = 0;
+    let calls = 0;
+    const importIssues = service.importIssues.bind(service);
+    service.importIssues = (found) => {
+      calls += 1;
+      return importIssues(found);
+    };
+    await intake.tick();
+    expect(search.queries).toHaveLength(2);
+    expect(calls).toBe(0);
+    expect(service.status().intake?.runs?.issues).toMatchObject({ imported: 0 });
+    activity.close();
+  });
+
   it("1つの種類のレート制限は、同じアカウントでも、ほかの種類の検索を止めない", async () => {
-    const { activity, service, search, intake, searched } = kindsSetup();
+    const { activity, service, search, intake, counts } = kindsSetup();
     const original = search.search.bind(search);
     search.search = async (host, query, token, since) => {
       const result = await original(host, query, token, since);
@@ -504,8 +636,7 @@ describe("取り込みの種類ごとの間隔（PBI-100）", () => {
     });
     await intake.tick(true);
     // Issue は1つ目でレート制限になり2つ目は探さないが、PR のレビューは2つとも探す
-    expect(searched().filter((k) => k === "issues")).toHaveLength(1);
-    expect(searched().filter((k) => k === "reviews")).toHaveLength(2);
+    expect(counts()).toMatchObject({ issues: 1, reviews: 2 });
     const runs = service.status().intake?.runs;
     expect(runs?.issues?.errors?.map((e) => ja(e.message))).toEqual([
       "レート制限",
@@ -516,7 +647,7 @@ describe("取り込みの種類ごとの間隔（PBI-100）", () => {
   });
 
   it("1つの種類の思わぬ失敗や遅れは、その種類の失敗として記録し、ほかの種類を止めない", async () => {
-    const { activity, service, search, intake, advance, lastRun } = kindsSetup({
+    const { activity, service, search, intake, advance, lastRun, counts, recorded } = kindsSetup({
       issueIntervalSec: 60,
       reviewIntervalSec: 60,
       ticketIntervalSec: 60,
@@ -533,72 +664,40 @@ describe("取り込みの種類ごとの間隔（PBI-100）", () => {
     ]);
     expect(runs?.reviews?.lastRunAt).toBe(at(0));
     expect(runs?.reviews?.errors).toBeUndefined();
-    expect(runs?.tickets).toMatchObject({ lastRunAt: at(0) });
+    expect(runs?.tickets?.lastRunAt).toBe(at(0));
 
-    // Issue の検索が終わらなくても、ほかの種類は間隔ごとに取り込む
+    // Issue の検索が終わらなくても、ほかの種類は間隔ごとに取り込む（実時間は待たず、記録と検索の始まりで同期する）
     let release: () => void = () => {};
+    let started: () => void = () => {};
+    const issueStarted = new Promise<void>((resolve) => (started = resolve));
     const original = search.search.bind(search);
     search.search = async (host, query, token, since) => {
-      if (query.includes("is:issue")) await new Promise<void>((r) => (release = r));
+      if (query.includes("is:issue")) {
+        started();
+        await new Promise<void>((resolve) => (release = resolve));
+      }
       return original(host, query, token, since);
     };
     advance(60_000);
-    const pending = intake.tick();
-    await new Promise((r) => setTimeout(r, 10));
-    expect(lastRun()).toMatchObject({ issues: at(0), reviews: at(60_000), tickets: at(60_000) });
+    let done = Promise.all([recorded("reviews"), recorded("tickets")]);
+    const first = intake.tick();
+    await Promise.all([done, issueStarted]);
+    expect(lastRun()).toEqual({ issues: at(0), reviews: at(60_000), tickets: at(60_000) });
     advance(60_000);
-    await new Promise((r) => setTimeout(r, 10));
-    void intake.tick();
-    await new Promise((r) => setTimeout(r, 10));
-    expect(lastRun()).toMatchObject({ issues: at(0), reviews: at(120_000), tickets: at(120_000) });
+    done = Promise.all([recorded("reviews"), recorded("tickets")]);
+    const second = intake.tick();
+    await done;
+    expect(lastRun()).toEqual({ issues: at(0), reviews: at(120_000), tickets: at(120_000) });
+    expect(counts()).toMatchObject({ reviews: 3, tickets: 3 });
+    // 止まっていた Issue の検索が終わると、その回の記録が残る（起動した取り込みは、すべて終わるまで待つ）
     release();
-    await pending;
+    await Promise.all([first, second]);
     expect(lastRun().issues).toBe(at(60_000));
     activity.close();
   });
 });
 
 describe("JIRA のチケットの取り込み（PBI-52）", () => {
-  const jira = toPlatform(
-    "jira",
-    PlatformFile.parse({
-      upstream: "https://jira.example.com",
-      description: "JIRA",
-      auth: { header: "Authorization", prefix: "Bearer ", secret: "jira-token" },
-      allow: ["GET /rest/api/**"],
-    }),
-  );
-  class FakeTicketSearch implements TicketClient {
-    searched: {
-      platform: string;
-      service: string;
-      keys: readonly string[];
-      label: string;
-      cursor?: string;
-    }[] = [];
-    fail?: string;
-    /** 返す続きの位置（順に）。 */
-    next: (string | undefined)[] = [];
-    async search(input: Parameters<TicketClient["search"]>[0]) {
-      this.searched.push({ ...input, platform: input.platform.name });
-      if (this.fail) throw new Error(this.fail);
-      return {
-        tickets: [
-          {
-            platform: input.platform.name,
-            service: input.service,
-            key: "PAY-1",
-            summary: "決済の再送",
-            url: "https://jira.example.com/browse/PAY-1",
-          },
-        ],
-        ...(this.next.length > 0 ? { cursor: this.next.shift() } : {}),
-      };
-    }
-    async comment(): Promise<{ url: string }> {
-      throw new Error("unused");
-    }
-  }
   const ticketSetup = (platforms = [jira], settings = { ticketLabel: "sacty" }) => {
     const activity = new SqliteActivityStore(join(dir, "sacty.db"));
     const withPlatforms = (): ConfigResult => {

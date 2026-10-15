@@ -121,9 +121,10 @@ async function Projects() {
                   <ul className="list-disc pl-5">
                     {errors.map((e) => (
                       <li
-                        key={`${e.query ?? ""}:${JSON.stringify(e.message)}`}
+                        key={`${e.kind}:${e.query ?? ""}:${JSON.stringify(e.message)}`}
                         className="break-words"
                       >
+                        {t.intake.errorKind(t.intake.runKinds[e.kind])}
                         {e.query && <span className="font-mono text-xs">{e.query}</span>}{" "}
                         {m.labels.text(e.message)}
                       </li>

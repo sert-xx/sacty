@@ -44,4 +44,6 @@ Issue の取り込み・PR のレビューの取り込み・チケットの取�
 - `github:` を書いていなかった利用者は、取り込むラベルなどを設定していれば、取り込みが動き始める。
 - 状況の API（`GET /api/status` の `intake`）の、直近の取り込み（`lastRunAt`・`imported`・`errors`）は、種類ごとの `runs` に変わる。
   `intake` が `null` になるのは、`config.yaml` を読めないときだけになる。
+- 古い版への切り戻しは対象外とする（互換を保たずに変えるとステークホルダーが決めたため。PBI-99 と同じ方針）。
+  `github.poll_interval_sec`（`github:`）を消した `config.yaml` のまま古い版に戻すと、古い版は取り込みを動かさない。
 - 仕様書：[チケットの取り込みと GitHub](../spec/intake.md)、[設定（config.yaml）](../spec/configuration.md)、[全体の構成](../spec/architecture.md)。

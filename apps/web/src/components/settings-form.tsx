@@ -77,7 +77,8 @@ export function SettingsForm({
     ticketIntervalSec: ticketIntervalSec === undefined ? "" : String(ticketIntervalSec),
   });
   // 取り込みの間隔（PBI-100）。空なら既定の間隔
-  const interval = (name: keyof typeof intervals, saved: number | undefined) => (
+  // 取り込みが止まっている（ラベルが無いか Off）種類は、「始めると」の文にする（止まっている表示と食い違わないように）
+  const interval = (name: keyof typeof intervals, saved: number | undefined, running: boolean) => (
     <div className="flex flex-col gap-1.5">
       <Label htmlFor={`${uid}-${name}`}>{t.intervalLabel}</Label>
       <Input
@@ -94,7 +95,10 @@ export function SettingsForm({
       />
       <p className="text-sm text-muted-foreground">
         {t.intervalHelp(MIN_INTAKE_INTERVAL_SEC, DEFAULT_INTAKE_INTERVAL_SEC)}{" "}
-        {t.intervalCurrent(saved ?? DEFAULT_INTAKE_INTERVAL_SEC, saved === undefined)}
+        {(running ? t.intervalCurrent : t.intervalWhenOn)(
+          saved ?? DEFAULT_INTAKE_INTERVAL_SEC,
+          saved === undefined,
+        )}
       </p>
     </div>
   );
@@ -137,7 +141,7 @@ export function SettingsForm({
             className="max-w-xs"
           />
         </div>
-        {interval("issueIntervalSec", issueIntervalSec)}
+        {interval("issueIntervalSec", issueIntervalSec, Boolean(intakeLabel) && savedOn.issues)}
         <p className={intakeLabel && savedOn.issues ? "text-sm" : "text-sm text-warn"}>
           {intakeLabel && savedOn.issues ? t.intakeOn(intakeLabel) : t.intakeOff}
         </p>
@@ -176,7 +180,11 @@ export function SettingsForm({
             className="max-w-xs"
           />
         </div>
-        {interval("reviewIntervalSec", reviewIntervalSec)}
+        {interval(
+          "reviewIntervalSec",
+          reviewIntervalSec,
+          savedReviewRequested || (Boolean(savedReviewLabel) && savedOn.reviewLabel),
+        )}
         <p
           className={
             savedReviewRequested || (savedReviewLabel && savedOn.reviewLabel)
@@ -213,7 +221,11 @@ export function SettingsForm({
             className="max-w-xs"
           />
         </div>
-        {interval("ticketIntervalSec", ticketIntervalSec)}
+        {interval(
+          "ticketIntervalSec",
+          ticketIntervalSec,
+          Boolean(savedTicketLabel) && savedOn.tickets,
+        )}
         <p
           className={
             savedTicketLabel && savedOn.tickets ? "text-sm" : "text-sm text-muted-foreground"
