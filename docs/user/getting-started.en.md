@@ -19,15 +19,14 @@ This page walks you through installing sacty, starting it, and running your firs
 npm install
 npm run build
 npx sacty config init   # creates ~/.sacty/config.yaml
-npx sacty image build   # builds the container image for running agents
 ```
 
 1. Open the `~/.sacty/config.yaml` created by `npx sacty config init`, and set the AI that runs the steps (`default_agent` and `agents`),
    the authentication method, and the unit prices ([config.yaml settings](config.en.md)). In the template, `default_agent` is a Claude Code subscription (`claude-subscription`).
 2. Put the authentication tokens and API keys in the Keychain or 1Password ([Secrets](secrets.en.md)). If you keep the template as is,
    save the token created with `claude setup-token` using `npx sacty secret set claude-oauth-token`.
-3. Build the image with `npx sacty image build`. If your environment cannot use Docker Hub or the public npm registry, write `image_build` first
-   ([Container images](images.en.md)).
+3. Build the container image for running agents with `npx sacty image build`. If your environment cannot use Docker Hub or the public npm registry,
+   write `image_build` before you build it ([Container images](images.en.md)).
 
 ## Start
 
@@ -35,7 +34,7 @@ npx sacty image build   # builds the container image for running agents
 npx sacty up
 ```
 
-This starts the daemon and the web UI and opens `http://127.0.0.1:4700`. Press Ctrl+C to stop both. You can change the ports with `--port` and `--daemon-port`
+This starts the daemon and the web UI and prints `http://127.0.0.1:4700` in the terminal. Open it in your browser (it does not open automatically). Press Ctrl+C to stop both. You can change the ports with `--port` and `--daemon-port`
 ([CLI](cli.en.md#sacty-up)).
 
 ## First project and task

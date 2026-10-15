@@ -14,8 +14,8 @@ npm install
 npm run build
 npx sacty config init   # creates ~/.sacty/config.yaml (set the AI, auth mode, and unit prices)
 npx sacty secret set claude-oauth-token   # stores the token for the template's AI (a Claude Code subscription), created with claude setup-token
-npx sacty image build   # builds the container image for running agents
-npx sacty up            # starts the daemon and the web UI, and opens http://127.0.0.1:4700
+npx sacty image build   # builds the container image for running agents (if you cannot use public registries, write image_build in config.yaml first)
+npx sacty up            # starts the daemon and the web UI, and prints http://127.0.0.1:4700 (open it in your browser)
 ```
 
 See [Getting started](docs/user/getting-started.en.md) for the detailed steps.

@@ -12,7 +12,7 @@ Run it as `npx sacty <command>`. `npx sacty --help` (`-h`) shows the usage. If y
 npx sacty up [--port <web-ui-port>] [--daemon-port <daemon-port>]
 ```
 
-Starts the daemon and the web UI (Next.js) and shows `http://127.0.0.1:4700`. Ctrl+C stops both.
+Starts the daemon and the web UI (Next.js) and prints `http://127.0.0.1:4700` in the terminal (it does not open a browser). Ctrl+C stops both.
 
 | Option | Default | Description |
 | --- | --- | --- |

@@ -74,12 +74,23 @@ gateway:
       auth:
         header: Authorization
         prefix: "Basic "
-        secret: op://Work/JiraCloud/basic     # echo -n 'me@example.com:<API token>' | base64
+        secret: op://Work/JiraCloud/basic     # see below for how to create the value
       allow:
         - GET /rest/api/3/search/jql
         - GET /rest/api/2/issue/**
         - GET /rest/api/3/issue/**
         - POST /rest/api/2/issue/*/comment
+```
+
+To keep the token out of command arguments and your shell history, create the Jira Cloud value (base64 of `email:API token`) as follows
+(bash or zsh). The token is read with hidden input, passed to `base64` on standard input, and the result is put on the clipboard. After you paste it into
+the 1Password item (`basic` of `JiraCloud` in the example above), clear the clipboard.
+
+```sh
+printf 'API token: '; read -rs JIRA_TOKEN; echo
+printf '%s' "me@example.com:$JIRA_TOKEN" | base64 | tr -d '\n' | pbcopy; unset JIRA_TOKEN
+# after pasting it into 1Password
+pbcopy < /dev/null
 ```
 
 - In "Ticket sources" in the project settings, write the connection (the name above), the kind (Jira Cloud / Jira Server, Data Center), and the JIRA project

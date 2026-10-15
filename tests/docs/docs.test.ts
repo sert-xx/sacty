@@ -402,10 +402,38 @@ function codeRefBlocks(markdown: string, prefix: string = CODE_REF_PREFIX.ja): s
   return blocks;
 }
 
+/** 「コード:」の参照の書き方（言語ごと）。参照は `<パス>` か `<パス>`（`<名前>`・`<名前>`）で、参照の間を区切りでつなぐ。 */
+const CODE_REF_SYNTAX = {
+  // 名前の区切りは「・」、参照の区切りは「、」（行の折り返しで後ろに空白が入ってよい）。名前は `A の B` も許す
+  ja: { open: "（", close: "）", names: "・", refs: "、\\s*", of: " の " },
+  // 名前は「 (」と「)」で囲み、名前・参照とも「, 」で区切る。名前は `A in B` も許す
+  en: { open: " \\(", close: "\\)", names: ", ", refs: ",\\s+", of: " in " },
+} as const;
+
 /**
- * 仕様書の「コード:」の参照を確かめ、問題の一覧を返す。`<パス>`（リポジトリのルートからの相対パス）が存在し、その後の
- * 括弧（英語の版は半角の括弧も）の中の `<名前>`（`A.b` は A と b の両方）が、そのファイルの中に語として現れること。
- * read はファイルの中身（無ければ undefined）。参照が1つも無ければ問題にする。
+ * 「コード:」の後ろを、参照の並びとして読む。書き方に合わなければ（括弧の種類の違い・閉じ括弧の欠け・区切りの違い・
+ * コードでない語など）undefined。合えば、参照ごとのパスと名前の一覧を返す。
+ */
+function parseCodeRefs(text: string, lang: Lang): { path: string; names: string[] }[] | undefined {
+  const syntax = CODE_REF_SYNTAX[lang];
+  const code = "`[^`\\n]+`";
+  const name = `${code}(?:${syntax.of}${code})?`;
+  const list = `${name}(?:${syntax.names}${name})*`;
+  const ref = (capture: boolean) => {
+    const group = capture ? "(" : "(?:";
+    return `${group}${code})(?:${syntax.open}${group}${list})${syntax.close})?`;
+  };
+  if (!new RegExp(`^${ref(false)}(?:${syntax.refs}${ref(false)})*$`).test(text)) return undefined;
+  return [...text.matchAll(new RegExp(ref(true), "g"))].map((m) => ({
+    path: (m[1] ?? "").slice(1, -1),
+    names: [...(m[2] ?? "").matchAll(/`([^`]+)`/g)].map((n) => n[1] ?? ""),
+  }));
+}
+
+/**
+ * 仕様書の「コード:」（英語の版は「Code:」）の参照を確かめ、問題の一覧を返す。参照の全体が書き方（CODE_REF_SYNTAX）に合い、
+ * `<パス>`（リポジトリのルートからの相対パス。apps・packages・tests の下）が存在し、括弧の中の `<名前>`（`A.b` は A と b の両方）が、
+ * そのファイルの中に語として現れること。read はファイルの中身（無ければ undefined）。参照が1つも無ければ問題にする。
  */
 function checkCodeRefs(
   name: string,
@@ -417,21 +445,23 @@ function checkCodeRefs(
   const prefix = CODE_REF_PREFIX[lang];
   const blocks = codeRefBlocks(markdown, prefix);
   if (blocks.length === 0) errors.push(`${name}: 「${prefix}」の参照が無い`);
-  // 括弧の中のコードの名前に括弧は入らない（入れば参照を読み違えるので、その名前は無い扱いで失敗する）
-  const ref =
-    lang === "ja"
-      ? /`((?:apps|packages|tests)\/[^`\s]+)`(?:（([^）]*)）)?/g
-      : /`((?:apps|packages|tests)\/[^`\s]+)`(?: ?\(([^)]*)\))?/g;
   for (const block of blocks) {
-    const refs = [...block.matchAll(ref)];
-    if (refs.length === 0) errors.push(`${name}: ファイルの無い参照: ${block}`);
-    for (const [, path = "", names = ""] of refs) {
+    const refs = parseCodeRefs(block.slice(prefix.length).trim(), lang);
+    if (refs === undefined) {
+      errors.push(`${name}: 参照の書き方が違う（括弧・区切り・閉じ括弧を確かめる）: ${block}`);
+      continue;
+    }
+    for (const { path, names } of refs) {
+      if (!/^(?:apps|packages|tests)\/\S+$/.test(path)) {
+        errors.push(`${name}: ファイルの無い参照: ${path}`);
+        continue;
+      }
       const source = read(path);
       if (source === undefined) {
         errors.push(`${name}: ${path} が無い`);
         continue;
       }
-      for (const [, symbol = ""] of names.matchAll(/`([^`]+)`/g)) {
+      for (const symbol of names) {
         const missing = symbol
           .split(".")
           .filter((part) => !new RegExp(`(?<![\\w$])${escapeRegExp(part)}(?![\\w$])`).test(source));
@@ -1110,6 +1140,14 @@ describe("検査の部品", () => {
       "",
     ].join("\n");
     expect(checkCodeRefs("ok.md", ok, read)).toEqual([]);
+    // 名前に「の」を挟む書き方と、折り返しで区切りの後ろに空白が入るものは通る
+    expect(
+      checkCodeRefs(
+        "of.md",
+        "コード: `apps/daemon/src/a.ts`（`Foo` の `bar`）、\n`apps/daemon/src/a.ts`\n",
+        read,
+      ),
+    ).toEqual([]);
     for (const bad of [
       "本文だけ\n", // 参照が無い
       "コード: `apps/daemon/src/b.ts`\n", // ファイルが無い
@@ -1118,6 +1156,10 @@ describe("検査の部品", () => {
       "コード: `apps/daemon/src/a.ts`（`Fo`）\n", // 語の一部だけ
       "コード: `apps/daemon/src/a.ts`（`Foo`）\n`apps/daemon/src/a.ts`（`Nope`）\n", // 続きの行
       "コード: なし\n", // ファイルの無い参照
+      "コード: `apps/daemon/src/a.ts`(`Qux`)\n", // 半角の括弧（名前を確かめずに通らない）
+      "コード: `apps/daemon/src/a.ts`（`Foo`\n", // 閉じ括弧の欠け
+      "コード: `apps/daemon/src/a.ts`（`Foo`, `Foo.bar`）\n", // 英語の区切り
+      "コード: `apps/daemon/src/a.ts`（`Foo`）。\n", // 余計な文字
     ]) {
       expect(checkCodeRefs("bad.md", bad, read), bad).not.toEqual([]);
     }
@@ -1133,11 +1175,29 @@ describe("検査の部品", () => {
     expect(
       checkCodeRefs("ok.en.md", "Code: `apps/daemon/src/a.ts` (`Foo`, `Foo.bar`)\n", read, "en"),
     ).toEqual([]);
+    expect(
+      checkCodeRefs(
+        "of.en.md",
+        "Code: `apps/daemon/src/a.ts` (`bar` in `Foo`),\n`apps/daemon/src/a.ts`\n",
+        read,
+        "en",
+      ),
+    ).toEqual([]);
     for (const bad of [
       "Code: `apps/daemon/src/a.ts` (`Qux`)\n", // 名前が無い
       "Code: `apps/daemon/src/b.ts`\n", // ファイルが無い
       "コード: `apps/daemon/src/a.ts`（`Foo`）\n", // 英語の版で日本語の書き出し（参照が無い扱い）
-      "Code: `apps/daemon/src/a.ts`\n`apps/daemon/src/a.ts` (`Nope`)\n", // 続きの行
+      "Code: `apps/daemon/src/a.ts`\n`apps/daemon/src/a.ts` (`Nope`)\n", // 続きの行（区切りが無い）
+      "Code: `apps/daemon/src/a.ts`,\n`apps/daemon/src/a.ts` (`Nope`)\n", // 続きの行の名前が無い
+      "Code: `apps/daemon/src/a.ts`（`Qux`）\n", // 全角の括弧（名前を確かめずに通らない）
+      "Code: `apps/daemon/src/a.ts`(`Foo`)\n", // 括弧の前に空白が無い
+      "Code: `apps/daemon/src/a.ts` (`Foo`\n", // 閉じ括弧の欠け
+      "Code: `apps/daemon/src/a.ts` (`Foo`, `Qux`\n", // 閉じ括弧の欠け（後ろの名前が無い）
+      "Code: `apps/daemon/src/a.ts` (`Foo`・`Foo.bar`)\n", // 日本語の区切り
+      "Code: `apps/daemon/src/a.ts` `apps/daemon/src/a.ts`\n", // 参照の区切りが無い
+      "Code: `apps/daemon/src/a.ts` (Foo)\n", // 名前がコードでない
+      "Code: `apps/daemon/src/a.ts` and more\n", // 余計な語
+      "Code: `docs/a.md`\n", // apps・packages・tests の下でない
     ]) {
       expect(checkCodeRefs("bad.en.md", bad, read, "en"), bad).not.toEqual([]);
     }
