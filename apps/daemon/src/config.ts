@@ -625,6 +625,11 @@ export function loadConfig(home: string): ConfigResult {
       problem: message("config.unreadable", { detail: (error as Error).message }),
     };
   }
+  // 「PR作成」の工程（pr）は無くした（PBI-110）。知らない工程の誤りではなく、消すよう案内する
+  const stepAgents = (raw as { step_agents?: unknown } | null)?.step_agents;
+  if (stepAgents && typeof stepAgents === "object" && Object.hasOwn(stepAgents, "pr")) {
+    return { ok: false, problem: message("config.stepAgentsPrRemoved") };
+  }
   const parsed = ConfigFile.safeParse(raw);
   if (!parsed.success) {
     const first = parsed.error.issues[0];

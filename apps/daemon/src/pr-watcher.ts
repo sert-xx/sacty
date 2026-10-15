@@ -1,7 +1,7 @@
 import type { TaskService } from "./service.js";
 
 /**
- * 成果物チェック・要求要件・設計（PBI-57）で待っているタスクの PR を、定期的に確かめる（PBI-14a）。PR のマージで承認し、
+ * 実装・要求要件・設計（PBI-57・PBI-110）の承認待ちのタスクの PR を、定期的に確かめる（PBI-14a）。PR のマージで承認し、
  * マージせずに閉じられたら記録して人間の判断を待つ。確認の重なりは避ける（前の確認が終わるまで待つ）。
  */
 export class PullRequestWatcher {

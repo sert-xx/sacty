@@ -2,7 +2,7 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { serve } from "@hono/node-server";
 import { renderMessage } from "@sacty/core";
-import { SqliteActivityStore } from "./activity.js";
+import { purgeLegacyTasksAtStartup, SqliteActivityStore } from "./activity.js";
 import { DockerExecutor } from "./agents/docker.js";
 import { DockerTestRunner } from "./agents/test-runner.js";
 import { GitHubCiStatus } from "./ci.js";
@@ -54,6 +54,23 @@ if (!locked.ok) {
 }
 const instanceLock = locked.lock;
 const activity = new SqliteActivityStore(join(home, "sacty.db"));
+// 「PR作成」の工程（pr）を前提にした古いタスクの記録は、読めないので捨てる（PBI-110。互換の層は作らない）。
+// 設定（config.yaml）に誤りがある間は消さずに、起動をやめる（古い step_agents.pr を直す前に、処理中のタスクを失わないように）
+const legacy = purgeLegacyTasksAtStartup(activity, () => loadConfig(home));
+if ("blocked" in legacy) {
+  const problem = legacy.blocked.problem;
+  console.error(
+    `[daemon] 「PR作成」の工程を含む古いタスクが ${legacy.blocked.tasks.length} 件あります。設定ファイルの誤りを直すまで、消さずに起動をやめます。\n` +
+      `[daemon] ${renderMessage(problem, "ja")}\n[daemon] ${renderMessage(problem, "en")}`,
+  );
+  activity.close();
+  process.exit(1);
+}
+if (legacy.purged.length > 0) {
+  console.log(
+    `[daemon] 「PR作成」の工程を含む古いタスク ${legacy.purged.length} 件を作業履歴から消しました（処理中のものを含む）：${legacy.purged.join(", ")}`,
+  );
+}
 const projects = new SqliteProjectStore(join(home, "sacty.db"));
 const settings = new SqliteSettingsStore(join(home, "sacty.db"));
 const config = () => loadConfig(home);
@@ -170,7 +187,7 @@ for (const problem of status.problems) console.warn(`[daemon] ${renderMessage(pr
 
 const worker = new Worker(service);
 const intake = new IssueIntake(service, new GitHubIssueSearch(), github, config, Date.now, tickets);
-// 成果物チェックで待っている PR を見守る（マージで承認。PBI-14a）
+// 承認待ちの PR（実装・要求要件・設計）を見守る（マージで承認。PBI-14a）
 const prWatcher = new PullRequestWatcher(service);
 const app = createApp(service, token, { intake });
 

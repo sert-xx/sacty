@@ -2,7 +2,8 @@ import { z } from "zod";
 import { code, DaemonText } from "./message-code.js";
 
 /**
- * 工程の種類。標準の工程は requirements → design → implement → pr。
+ * 工程の種類。標準の工程は requirements → design → implement。実装の工程の中で、検証に通ったら sacty が PR を作り、
+ * 人の承認（PR のマージ）を待つ（PBI-110。それまでの「PR作成」の工程 pr は無くした）。
  * investigate（調査）は、コードを調べて報告するだけの工程（PBI-18）。
  * review（レビュー）は、既存の PR をレビューして、PR に投稿するだけの工程（PBI-19）。
  * split（タスク分割）は、承認済みの設計から子タスクを作り、子タスクの完了を待つ工程（PBI-27）。
@@ -19,12 +20,11 @@ export const StepKey = z.enum([
   "integrate",
   "reproduce",
   "implement",
-  "pr",
 ]);
 export type StepKey = z.infer<typeof StepKey>;
 
-/** 標準の工程（requirements → design → implement → pr）。 */
-export const MVP_STEPS: readonly StepKey[] = ["requirements", "design", "implement", "pr"];
+/** 標準の工程（requirements → design → implement）。 */
+export const MVP_STEPS: readonly StepKey[] = ["requirements", "design", "implement"];
 
 /**
  * オーケストレーターが選べる工程の組み合わせ（PBI-17）。候補に無い組み合わせは選ばせない。
@@ -32,12 +32,13 @@ export const MVP_STEPS: readonly StepKey[] = ["requirements", "design", "impleme
  */
 export const STEP_PLANS = {
   /**
-   * 標準：調査 → 要求要件 → 設計（テスト観点）→ 実装 → PR作成。実装する組み合わせは、先頭に前段の調査を置き、
-   * その結果を後の工程に渡す。前段の調査は人間が承認しない（PBI-29）
+   * 標準：調査 → 要求要件 → 設計（テスト観点）→ 実装。実装する組み合わせは、先頭に前段の調査を置き、
+   * その結果を後の工程に渡す。前段の調査は人間が承認しない（PBI-29）。実装は、検証に通ったら PR を作り、そのマージで
+   * 承認する（PBI-110）
    */
-  standard: ["investigate", "requirements", "design", "implement", "pr"],
+  standard: ["investigate", "requirements", "design", "implement"],
   /** 小さな変更：設計を省く（要求要件の受け入れ条件をテストで確かめる） */
-  "skip-design": ["investigate", "requirements", "implement", "pr"],
+  "skip-design": ["investigate", "requirements", "implement"],
   /** 調査だけ：コードを調べて報告する。実装や PR は作らない（PBI-18） */
   investigate: ["investigate"],
   /**
@@ -54,9 +55,9 @@ export const STEP_PLANS = {
    */
   split: ["investigate", "requirements", "design", "split", "integrate"],
   /**
-   * 不具合の修正：再現 → 実装 → PR作成。不具合を再現する失敗するテストを書き、それを通すように直す（PBI-29）
+   * 不具合の修正：再現 → 実装。不具合を再現する失敗するテストを書き、それを通すように直す（PBI-29）
    */
-  bugfix: ["investigate", "reproduce", "implement", "pr"],
+  bugfix: ["investigate", "reproduce", "implement"],
 } as const satisfies Record<string, readonly StepKey[]>;
 export type StepPlan = keyof typeof STEP_PLANS;
 export const StepPlan = z.enum(Object.keys(STEP_PLANS) as [StepPlan, ...StepPlan[]]);
@@ -105,13 +106,16 @@ export const ExportPlan = z.object({
 });
 export type ExportPlan = z.infer<typeof ExportPlan>;
 
-/** 人間の承認ゲートがある工程。PR作成は、成果物チェックのゲート。統合レビューは、親タスクの最後の確認（PBI-31）。 */
+/**
+ * 人間の承認ゲートがある工程。実装は、検証に通って sacty が PR を作った後に承認待ちになる（PBI-110）。統合レビューは、
+ * 親タスクの最後の確認（PBI-31）。
+ */
 export const GATED_STEPS: readonly StepKey[] = [
   "investigate",
   "requirements",
   "design",
   "integrate",
-  "pr",
+  "implement",
 ];
 
 /** 差し戻しでやり直せる（工程エージェントが作る）工程。 */
@@ -125,7 +129,7 @@ export const REWORK_STEPS: readonly StepKey[] = [
 
 /**
  * 対象のリポジトリへの PR で人間が承認する工程（PBI-57）。成果をファイルでタスクブランチへの PR にし、PR のマージを
- * 承認とする。実装の成果物チェック（pr）は、タスクブランチからベースブランチへの PR。
+ * 承認とする。実装の PR（PBI-110）は、タスクブランチからベースブランチへの PR（StepPullRequestKey には含めない）。
  */
 export const StepPullRequestKey = z.enum(["requirements", "design"]);
 export type StepPullRequestKey = z.infer<typeof StepPullRequestKey>;
@@ -1170,9 +1174,9 @@ const PullRequestPublished = z.object({
 });
 
 /**
- * PR作成の工程で、実装が起点から何も変えていなかった（PBI-90）。PR を作らず、成果物チェックで人間が実装の説明（変更が
- * 要らない理由）を確かめる。承認すると、変更なしで完了する（差し戻せば実装をやり直す）。submission は、この後に提出する
- * 成果物チェックの提出回。まだ PR を作っていないタスクだけで記録する。
+ * 実装が検証に通った後、PR を作ろうとしたら、実装が起点から何も変えていなかった（PBI-90）。PR を作らず、実装の承認で
+ * 人間が実装の説明（変更が要らない理由）を確かめる。承認すると、変更なしで完了する（差し戻せば実装をやり直す）。
+ * submission は、この後に提出する実装の提出回（PBI-110）。まだ PR を作っていないタスクだけで記録する。
  */
 const NoChangesFound = z.object({
   type: z.literal("NoChangesFound"),
@@ -1260,8 +1264,8 @@ const StepPullRequestPublished = z.object({
 });
 
 /**
- * 成果物チェックの間に見守っている PR の状態の変化（PBI-14a）。PR のマージを承認とみなし、
- * マージされたら続けて成果物チェックの承認（StepApproved）を記録する。マージせずに閉じられたら
+ * 実装の承認待ちの間に見守っている PR の状態の変化（PBI-14a・PBI-110）。PR のマージを承認とみなし、
+ * マージされたら続けて実装の承認（StepApproved）を記録する。マージせずに閉じられたら
  * 記録して人間の判断を待ち、開き直されたら見守りを続ける。要求要件・設計の PR（PBI-57）も同じく見守り、マージされたら
  * その工程の承認（StepApproved）を記録する。
  */
@@ -1316,7 +1320,7 @@ const PullRequestReopened = z.object({
 });
 
 /**
- * PR へのフィードバックを、成果物チェックの指摘として取り込んだ（PBI-14b）。レビュー（Request changes・
+ * PR へのフィードバックを、実装の指摘として取り込んだ（PBI-14b・PBI-110）。レビュー（Request changes・
  * コメント）の本文、行ごとのコメント、PR への通常のコメントを、まだ取り込んでいないものだけ取り込む
  * （同じものは二重に取り込まない）。指摘は1件ずつ。要求要件・設計の PR（PBI-57）の指摘も、その工程の指摘として取り込む。
  */

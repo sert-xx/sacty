@@ -272,8 +272,8 @@ export type Task = {
   /** テンプレートで作った（PBI-90）。 */
   template?: TaskTemplate;
   /**
-   * PR作成の工程で、実装に変更が無かったので PR を作らなかった成果物チェックの提出回（PBI-90）。その提出回が承認待ち・承認済み
-   * なら、変更なしの成果物チェック（変更なしで完了）。
+   * 実装の検証に通った後、実装に変更が無かったので PR を作らなかった、実装の提出回（PBI-90・PBI-110）。その提出回が承認待ち・
+   * 承認済みなら、変更なしの実装の承認（変更なしで完了）。
    */
   noChanges?: { submission: number };
   /**
@@ -350,6 +350,11 @@ export type Task = {
    * 検証が終わる（合格・不合格）と undefined に戻る。
    */
   verification?: "pending" | "tests_passed";
+  /**
+   * 実装が検証（テストと最終レビュー）に通り、sacty が実装の PR を作るのを待っている（PBI-110）。実行待ちのまま、実装の工程の
+   * 中で PR を作り、実装の承認待ちにする。PR を作る（変更が無いと分かる）か、前の工程からやり直すと無くなる。
+   */
+  publishPending?: true;
   /** 検証が続けて通らなかった回数。人間が再開するか、検証に通ると0に戻る。 */
   verifyFailures: number;
   /** 最新のテストの実行結果と、最終レビュー。 */
@@ -367,7 +372,7 @@ export type Task = {
   pushedBranch?: PayloadOf<"BranchPushed">;
   /** sacty が作ったPR（またはブランチ）。 */
   pullRequest?: PayloadOf<"PullRequestPublished">;
-  /** 成果物チェックの間に見守っている PR の状態（PBI-14a）。PR を作っていなければ無い。 */
+  /** 実装の承認待ちの間に見守っている、実装の PR の状態（PBI-14a・PBI-110）。PR を作っていなければ無い。 */
   pullRequestState?: "open" | "closed" | "merged" | "merged_outdated";
   /** 実装の PR のマージの記録（PBI-63）。 */
   pullRequestMerge?: PullRequestMerge;
@@ -495,6 +500,7 @@ function reopen(task: Task, target: StepKey) {
   task.verification = undefined;
   task.verifyFeedback = undefined;
   task.verifyFailures = 0;
+  task.publishPending = undefined;
   const keep = new Set(task.steps.slice(0, to).map((s) => s.key));
   task.approved = Object.fromEntries(
     Object.entries(task.approved).filter(([key]) => keep.has(key as StepKey)),
@@ -673,9 +679,7 @@ export function applyEvent(
         // その工程の有効な指摘は、今回の提出で回答がなければ未回答に戻す
         // （前回の対応文が残ると、最新の成果物への対応だと誤認して承認してしまうため）
         const step = event.payload.step;
-        // 実装は、成果物チェック（PR作成のゲート）の提出として人間に示す
-        const shownAt = step === "implement" ? "pr" : step;
-        const submission = (task.submissions[shownAt] ?? 0) + 1;
+        const submission = (task.submissions[step] ?? 0) + 1;
         const responses = new Map(event.payload.responses.map((r) => [r.remarkId, r.text]));
         task.remarks = task.remarks.map((r) => {
           if (r.step !== step || r.voided) return r;
@@ -804,8 +808,8 @@ export function applyEvent(
       // PR の指摘は、この差し戻しに反映した。ゴールガーディアンの判断で戻したなら、戻し先と理由を残す（PBI-58）。
       // 判断の後に人間が別の差し戻しをした（再起動の前など）なら、ゴールガーディアンの判断としては残さない
       const judged = task.pendingReview?.judgement;
-      // 判断できなければ、その工程をやり直す（成果物チェックなら実装、要求要件・設計の PR ならその工程。PBI-57）
-      const undecided = event.payload.step === "pr" ? "implement" : event.payload.step;
+      // 判断できなければ、その工程をやり直す（実装の PR なら実装、要求要件・設計の PR ならその工程。PBI-57・PBI-110）
+      const undecided = event.payload.step;
       if (
         judged &&
         target === (judged.target ?? undecided) &&
@@ -940,18 +944,13 @@ export function applyEvent(
         failVerification(task, { kind: "review", review });
         break;
       }
-      // 検証に通った。実装の工程を完了にし、次の工程へ進む
-      const index = task.steps.findIndex((s) => s.key === "implement");
-      task.steps = task.steps.map((s, i) => {
-        if (i === index) return { ...s, state: "done" as const };
-        if (i === index + 1) return { ...s, state: "active" as const };
-        return s;
-      });
+      // 検証に通った。実装の工程の中で、sacty が実装の PR を作るので、実行待ちにする（PBI-110。工程は進めない。
+      // PR を作ったら実装の承認待ちになり、PR のマージで実装を承認する）
       task.verification = undefined;
       task.verifyFailures = 0;
       task.verifyFeedback = undefined;
-      // 次の工程（PR作成）は sacty が実行するので、実行待ちにする
-      if (task.steps[index + 1]) task.status = "queued";
+      task.publishPending = true;
+      task.status = "queued";
       break;
     }
 
@@ -968,6 +967,7 @@ export function applyEvent(
       task.gate = undefined;
       task.escalation = undefined;
       task.verification = undefined;
+      task.publishPending = undefined;
       task.pausedReason = undefined;
       task.pausedMessage = undefined;
       task.unstoppedRuns = undefined;
@@ -976,9 +976,14 @@ export function applyEvent(
       break;
 
     case "PullRequestPublished":
-      if (task.status !== "queued" || activeStep(task) !== "pr") {
-        throw new ActivityIntegrityError(event, "the pr step is not running");
+      // 実装の工程の中で、検証に通った実装の PR を作った（PBI-110）
+      if (task.status !== "queued" || activeStep(task) !== "implement" || !task.publishPending) {
+        throw new ActivityIntegrityError(
+          event,
+          "the implementation is not waiting for a pull request",
+        );
       }
+      task.publishPending = undefined;
       task.pullRequest = event.payload;
       // 作り直した・更新した PR は、開いているものとして見守り直す
       task.pullRequestState = event.payload.number ? "open" : undefined;
@@ -987,13 +992,17 @@ export function applyEvent(
       break;
 
     case "NoChangesFound":
-      // 実装に変更が無く、PR を作らなかった（PBI-90）。成果物チェックで人間が確かめる
-      if (task.status !== "queued" || activeStep(task) !== "pr") {
-        throw new ActivityIntegrityError(event, "the pr step is not running");
+      // 実装に変更が無く、PR を作らなかった（PBI-90）。実装の承認で人間が確かめる（PBI-110）
+      if (task.status !== "queued" || activeStep(task) !== "implement" || !task.publishPending) {
+        throw new ActivityIntegrityError(
+          event,
+          "the implementation is not waiting for a pull request",
+        );
       }
       if (task.pullRequest) {
         throw new ActivityIntegrityError(event, "a pull request is already published");
       }
+      task.publishPending = undefined;
       task.noChanges = { submission: event.payload.submission };
       task.status = "idle";
       break;
@@ -1028,7 +1037,7 @@ export function applyEvent(
     }
 
     case "PullRequestReviewImported": {
-      // 成果物チェックの PR と、要求要件・設計の PR（PBI-57）の指摘
+      // 実装の PR と、要求要件・設計の PR（PBI-57）の指摘
       const watched = gatePullRequest(task);
       if (!watched || task.status !== "awaiting_approval") {
         throw new ActivityIntegrityError(event, "the deliverable review is not open");
@@ -1134,7 +1143,7 @@ export function applyEvent(
     case "PullRequestMerged":
     case "PullRequestClosed":
     case "PullRequestReopened": {
-      // 見守るのは、承認ゲートで待っている、sacty が作った PR だけ（成果物チェックと、要求要件・設計。PBI-57）
+      // 見守るのは、承認ゲートで待っている、sacty が作った PR だけ（実装と、要求要件・設計。PBI-57・PBI-110）
       const watched = gatePullRequest(task);
       if (!watched || (task.status !== "awaiting_approval" && task.status !== "escalated")) {
         throw new ActivityIntegrityError(event, "the deliverable review is not open");
@@ -1156,7 +1165,7 @@ export function applyEvent(
         const { number: _number, outdated: _outdated, ...rest } = event.payload;
         merge = { ...rest, at: event.at };
       }
-      if (watched.step === "pr") {
+      if (watched.step === "implement") {
         task.pullRequestState = state;
         if (merge) task.pullRequestMerge = merge;
       } else {
@@ -1215,8 +1224,12 @@ export function applyEvent(
     }
 
     case "BranchPushed":
-      if (activeStep(task) !== "pr")
-        throw new ActivityIntegrityError(event, "the pr step is not active");
+      if (activeStep(task) !== "implement" || !task.publishPending) {
+        throw new ActivityIntegrityError(
+          event,
+          "the implementation is not waiting for a pull request",
+        );
+      }
       task.pushedBranch = event.payload;
       break;
 
@@ -1727,7 +1740,7 @@ export function project(events: Iterable<ActivityEvent>): Map<string, Task> {
 }
 
 /**
- * 承認ゲートで見守っている、sacty が作った PR（PBI-14a・PBI-57）。成果物チェックなら実装の PR、要求要件・設計なら
+ * 承認ゲートで見守っている、sacty が作った PR（PBI-14a・PBI-57）。実装なら実装の PR（PBI-110）、要求要件・設計なら
  * その提出の PR。PR を作っていないゲートなら undefined。
  */
 export function gatePullRequest(task: Task):
@@ -1742,11 +1755,11 @@ export function gatePullRequest(task: Task):
   | undefined {
   const gate = task.gate;
   if (!gate) return undefined;
-  if (gate.step === "pr") {
+  if (gate.step === "implement") {
     const pr = task.pullRequest;
     if (!pr?.number) return undefined;
     return {
-      step: "pr",
+      step: "implement",
       number: pr.number,
       ...(pr.url ? { url: pr.url } : {}),
       ...(pr.repo ? { repo: pr.repo } : {}),
@@ -1773,7 +1786,7 @@ export function gatePullRequest(task: Task):
 function gateMerge(task: Task): PullRequestMerge | undefined {
   const watched = gatePullRequest(task);
   if (!watched) return undefined;
-  if (watched.step === "pr") return task.pullRequestMerge;
+  if (watched.step === "implement") return task.pullRequestMerge;
   return task.stepPullRequests.find((p) => p.number === watched.number)?.merge;
 }
 
@@ -2027,11 +2040,11 @@ export function awaitingTicketTriage(task: Task): boolean {
 }
 
 /**
- * 成果物チェックが、実装に変更が無く PR を作らなかった提出回か（PBI-90）。承認待ちなら人間が変更なしで完了にするかを判断し、
- * 完了していれば変更なしで完了した。
+ * 実装の提出が、実装に変更が無く PR を作らなかった提出回か（PBI-90・PBI-110）。承認待ちなら人間が変更なしで完了にするかを
+ * 判断し、完了していれば変更なしで完了した。
  */
 export function deliveredWithoutChanges(task: Task): boolean {
   const submission = task.noChanges?.submission;
   if (submission === undefined || task.pullRequest) return false;
-  return task.submissions.pr === submission;
+  return task.submissions.implement === submission;
 }

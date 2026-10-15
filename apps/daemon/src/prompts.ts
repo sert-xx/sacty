@@ -49,7 +49,7 @@ import { localForwards, type StartedService } from "./services.js";
 const ja = (value: DaemonText) => renderMessage(value, "ja");
 
 /**
- * 実行できる工程（PR作成はエージェントではなく sacty が実行する）。
+ * 実行できる工程（実装の PR は、実装の工程の中で sacty が作る。PBI-110）。
  * ここに無い工程は、承認後も実行せずに待機する。
  */
 export const EXECUTABLE_STEPS: readonly StepKey[] = [
@@ -61,7 +61,6 @@ export const EXECUTABLE_STEPS: readonly StepKey[] = [
   "integrate",
   "reproduce",
   "implement",
-  "pr",
 ];
 
 const RESPONSES_HEADING = "sacty-responses";
@@ -275,7 +274,6 @@ const STEP_NAME: Record<StepKey, string> = {
   integrate: "統合レビュー",
   reproduce: "再現",
   implement: "実装",
-  pr: "PR作成",
 };
 
 /** その工程の実行中に変更を申し出られる、承認済みの工程（その工程より前のもの）。 */
@@ -1628,8 +1626,7 @@ export function buildPullRequestBodyText(task: Task): BodyText {
   ].join("\n");
   return {
     main,
-    footer:
-      "---\nこの PR は sacty が作成しました。sacty の成果物チェックで承認・差し戻しをしてください。",
+    footer: ["---\nこの PR は sacty が作成しました。", "", ...implementApprovalLines()].join("\n"),
     // タスクの ID と、マージで Issue を閉じる行は、省いても残す
     keep: [intro, ...closesLines(task)],
   };
@@ -1661,7 +1658,7 @@ export function buildPullRequestBodyParts(task: Task): BodyParts {
     tests: resultTableLines(task).join("\n"),
     ...(closesLines(task).length > 0 ? { issue: closesLines(task).join("\n") } : {}),
     record: record.join("\n"),
-    footer: `${sactyFooter(task, "成果物")}sacty の成果物チェックで承認・差し戻しをしてください。`,
+    footer: [sactyFooter(task, "成果物"), "", ...implementApprovalLines()].join("\n"),
   };
 }
 
@@ -1734,6 +1731,18 @@ export function buildStepPullRequestBodyText(
 }
 
 /** 要求要件・設計の PR の、承認の仕方と指摘の伝え方（PBI-57・PBI-63）。 */
+/**
+ * 実装の PR の、マージが実装の承認になることと、指摘の伝え方の案内（PBI-110。要求要件・設計の PR の stepApprovalLines と
+ * そろえる）。
+ */
+function implementApprovalLines(): string[] {
+  return [
+    "- この PR をマージすると、実装を承認したことになり、タスクが完了します（sacty の画面からは承認しません）。",
+    "- 直してほしいことは、この PR のレビュー・行へのコメント・コメントで伝えてください。sacty が取り込み、ゴールガーディアンが、実装のやり直し（この PR を更新します）か、設計・要求要件への差し戻しかを判断します。",
+    "- PR の中で直してからマージしても、承認として扱います（sacty が出したコミットと、人が直した最終のコミットの両方を記録に残します）。",
+  ];
+}
+
 function stepApprovalLines(step: StepPullRequestKey): string[] {
   const name = STEP_NAME[step];
   return [
@@ -1794,10 +1803,10 @@ export function buildReworkPrompt(
   task: Task,
   remarks: string[],
   targets: StepKey[],
-  /** 指摘が付いた PR の工程。成果物チェック（実装の PR）か、要求要件・設計の PR（PBI-57）。 */
-  gateStep: StepKey = "pr",
+  /** 指摘が付いた PR の工程。実装の PR（PBI-110）か、要求要件・設計の PR（PBI-57）。 */
+  gateStep: StepKey = "implement",
 ): string {
-  if (gateStep !== "pr") return buildStepReworkPrompt(task, remarks, targets, gateStep);
+  if (gateStep !== "implement") return buildStepReworkPrompt(task, remarks, targets, gateStep);
   const approved = (["requirements", "design"] as const)
     .filter((step) => task.approved[step])
     .flatMap((step) => [
@@ -2246,8 +2255,8 @@ function documentsChoiceLines(rules: string | undefined): string[] {
 }
 
 /**
- * 実装の工程で、変更が要らないとわかったときの指示（PBI-90）。何も変えなければ、sacty は PR を作らず、成果物チェックで
- * 人間が変更なしで完了にするかを判断する。
+ * 実装の工程で、変更が要らないとわかったときの指示（PBI-90）。何も変えなければ、sacty は PR を作らず、実装の承認で
+ * 人間が変更なしで完了にするかを判断する（PBI-110）。
  */
 const NO_CHANGE_LINE =
   "- すでに満たしていて変更が要らないとわかったら、ファイルを変えずに、変更が要らない理由と根拠（満たしている箇所・それを確かめているテスト）を説明に書く（何も変えなければ、sacty は PR を作らず、人間が確かめて変更なしで完了にする）";
@@ -2255,15 +2264,15 @@ const NO_CHANGE_LINE =
 /** オーケストレーターに渡す、工程の組み合わせの説明（PBI-17）。 */
 const planDescriptions: Record<StepPlan, string> = {
   standard:
-    "調査 → 要求要件 → 設計（テスト観点）→ 実装 → PR作成。既定。振る舞いが複数ある・影響範囲が広い・テスト観点を人間と合意したい変更",
+    "調査 → 要求要件 → 設計（テスト観点）→ 実装（PR を作り、マージで承認）。既定。振る舞いが複数ある・影響範囲が広い・テスト観点を人間と合意したい変更",
   "skip-design":
-    "調査 → 要求要件 → 実装 → PR作成。設計を省く。変更が小さく局所的で、要求要件の受け入れ条件だけで十分にテストできる変更（例：文言の修正、小さな関数の追加）",
+    "調査 → 要求要件 → 実装（PR を作り、マージで承認）。設計を省く。変更が小さく局所的で、要求要件の受け入れ条件だけで十分にテストできる変更（例：文言の修正、小さな関数の追加）",
   investigate:
     "調査だけ。コードを調べて結果を報告する（実装や PR は作らない）。タスクが質問・原因の調査・影響範囲の確認・見積もりなど、変更ではなく情報を求めているとき",
   review:
     "レビューだけ。タスクにある PR をレビューして、PR にレビューを投稿する（実装や PR は作らない）。タスクが PR のレビューを求めているとき",
   bugfix:
-    "調査 → 再現 → 実装 → PR作成。不具合の修正で、テストで再現できるもの（期待する振る舞いがタスクから分かる）。不具合を再現する失敗するテストを書き、それを通すように直す。直すのに設計の判断が要る大きな不具合は standard を選ぶ",
+    "調査 → 再現 → 実装（PR を作り、マージで承認）。不具合の修正で、テストで再現できるもの（期待する振る舞いがタスクから分かる）。不具合を再現する失敗するテストを書き、それを通すように直す。直すのに設計の判断が要る大きな不具合は standard を選ぶ",
   split:
     "調査 → 要求要件 → 設計 → タスク分割 → 統合レビュー。変更が大きく、1つの PR では人間がレビューしきれないとき。設計の承認の後に、独立して進められる子タスクに分け、子タスクごとに実装と PR を作る。子タスクがすべて終わったら、組み合わせた結果が要求要件を満たすかをレビューする",
   "design-only":
@@ -2327,7 +2336,7 @@ export function buildOrchestratorPrompt(
     "- investigation：調査の工程の性質（PBI-43）。content（内容の調査：コードや仕組みを読んで説明する。開発のセットアップをしない）か、bug（不具合の調査：不具合の再現や原因の特定のために、動かして確かめる。セットアップをする）。不具合の修正（bugfix）や、不具合の原因を調べる調査は bug。迷う場合は content にする",
     ...(images.length > 0
       ? [
-          "- images：工程ごとに使う実行のイメージ（PBI-41・PBI-105）。工程の作業とテストは、そのイメージのコンテナで行う。各工程で扱うコード（モノレポなら、その工程で触るディレクトリ）の言語・版を、pom.xml・build.gradle・go.mod・pyproject.toml・package.json・.tool-versions などから判断し、PR 作成（pr）を除く、選んだ組み合わせの工程（investigate・requirements・design・implement・reproduce・split・integrate など）それぞれに、次のイメージから合うものの名前を書く。工程を書き漏らさない。1つの工程で複数の言語が要るときは、工程を分けるか、両方を含むイメージを選ぶ",
+          "- images：工程ごとに使う実行のイメージ（PBI-41・PBI-105）。工程の作業とテストは、そのイメージのコンテナで行う。各工程で扱うコード（モノレポなら、その工程で触るディレクトリ）の言語・版を、pom.xml・build.gradle・go.mod・pyproject.toml・package.json・.tool-versions などから判断し、選んだ組み合わせの工程（investigate・requirements・design・implement・reproduce・split・integrate など）それぞれに、次のイメージから合うものの名前を書く。工程を書き漏らさない。1つの工程で複数の言語が要るときは、工程を分けるか、両方を含むイメージを選ぶ",
           ...images.map((image) => `  - ${image.name}：${image.description}`),
           "- テストを実行するイメージ（実装の工程。不具合の修正では再現の工程も）は、testCommand と、リポジトリの依存（package.json・requirements.txt・Gemfile などの開発用の依存も）から選ぶ。テストに要るもの（例：Playwright・Cypress などのブラウザのテスト、DB のクライアント、ネイティブのビルドツール）が入っているイメージにする。testCommand は、そのイメージで動くコマンドにする",
           `- 既定のイメージ（${DEFAULT_IMAGE_NAME}）は、images のどれも合わないときの最後の手段。オーケストレーター用の最低限のもの（Claude Code・Codex を動かす Node.js と git だけ）で、テストのブラウザ・DB のクライアント・ほかの言語のツールは入っていない。リポジトリが Node.js でも、images に合うものがあれば、そちらを選ぶ。使う工程には images に ${DEFAULT_IMAGE_NAME} と書き、defaultReasons に、その工程で images のどれも合わない理由を書く`,

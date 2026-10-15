@@ -31,7 +31,7 @@ If you do not set it up, nobody is mentioned.
 
 ## Notification content and failures
 
-- Notifications include links to the task and to the approval page (and to the PR for Deliverable review). Nothing is sent when you pause a task yourself.
+- Notifications include links to the task and to the approval page (and to the PR for steps approved on a PR). Nothing is sent when you pause a task yourself.
 - If a notification cannot be sent, the task is not stopped, and the reason is shown on the task list page.
 - Use "Send a test notification" in the project settings page to check that sending works (you can send after saving).
 

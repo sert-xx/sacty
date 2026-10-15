@@ -56,7 +56,7 @@ function history(): ActivityEvent[] {
       {
         type: "StepsChosen",
         payload: {
-          steps: ["requirements", "design", "implement", "pr"],
+          steps: ["requirements", "design", "implement"],
           plan: "skip-design",
           reason: "理由",
           agentId: "orc",
@@ -199,7 +199,6 @@ describe("工程ごとの費用（PBI-46）", () => {
       ["requirements", 3],
       ["design", 1],
       ["implement", 0],
-      ["pr", 0],
       ["guardian", 1],
     ]);
     const implement = rows.find((r) => r.role === "implement");
@@ -269,7 +268,7 @@ describe("工程ごとの費用（PBI-46）", () => {
       // PBI-17 より前：オーケストレーターを動かしていない
       ev({
         type: "StepsChosen",
-        payload: { steps: ["requirements", "design", "implement", "pr"] },
+        payload: { steps: ["requirements", "design", "implement"] },
       }),
       ev({
         type: "AgentRunStarted",
@@ -325,7 +324,7 @@ describe("工程ごとの費用（PBI-46）", () => {
     ];
     const task = taskOf(events.filter((e) => e.taskId === "t1"));
     const { rows, total } = stepCosts(task, events);
-    expect(rows.map((r) => r.role)).toEqual(["requirements", "design", "implement", "pr"]);
+    expect(rows.map((r) => r.role)).toEqual(["requirements", "design", "implement"]);
     const runs = rows[0]?.runs ?? [];
     expect(runs.map((r) => r.result)).toEqual(["completed", "running"]);
     expect(runs[0]).not.toHaveProperty("model");
@@ -488,7 +487,6 @@ describe("質問への答えの費用（PBI-54）", () => {
       "requirements",
       "design",
       "implement",
-      "pr",
       "chat",
       "guardian",
     ]);
@@ -544,7 +542,6 @@ describe("成果の書き出しの費用（PBI-56）", () => {
       "requirements",
       "design",
       "implement",
-      "pr",
       "export",
       "guardian",
     ]);

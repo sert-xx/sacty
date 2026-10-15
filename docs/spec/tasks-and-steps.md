@@ -8,7 +8,7 @@
 
 承認・差し戻しは [承認と差し戻し](approval.md)、タスク分割と統合レビューは [タスク分割と統合レビュー](split-and-integrate.md) にある。
 
-関係する ADR: [タスクのテンプレート「Sacty セットアップ」で、リポジトリを sacty で扱うためのエージェントの設定を整える](../adr/20261014-1530-task-template-sacty-setup.md)、[テストの仕組みが無いリポジトリでは、テストを飛ばし、ゴールガーディアンがタスクの目的から受け入れを判定する](../adr/20261015-0000-verify-without-test-command.md)
+関係する ADR: [「PR作成」の工程をなくし、実装の工程の中で PR を作って承認を待つ](../adr/20261015-1430-implement-step-opens-pull-request.md)、[タスクのテンプレート「Sacty セットアップ」で、リポジトリを sacty で扱うためのエージェントの設定を整える](../adr/20261014-1530-task-template-sacty-setup.md)、[テストの仕組みが無いリポジトリでは、テストを飛ばし、ゴールガーディアンがタスクの目的から受け入れを判定する](../adr/20261015-0000-verify-without-test-command.md)
 
 ## タスクの作られ方
 
@@ -77,15 +77,15 @@
 | `split` | タスク分割 | 子タスクを作り、終わるのを待つ |
 | `integrate` | 統合レビュー | 子タスクの成果が親の要求要件を満たすかを確かめる |
 | `reproduce` | 再現 | 不具合を再現する（失敗する）テストを書く |
-| `implement` | 実装 | 実装する |
-| `pr` | 成果物チェック | sacty が PR を作る（エージェントは使わない） |
+| `implement` | 実装 | 実装する。検証に通ったら、sacty が実装の PR を作り、人の承認（PR のマージ）を待つ |
 
 工程の分類：
 
-- 承認ゲートのある工程（`GATED_STEPS`）：`investigate`・`requirements`・`design`・`integrate`・`pr`。ただし、実装する組み合わせの先頭の
+- 承認ゲートのある工程（`GATED_STEPS`）：`investigate`・`requirements`・`design`・`integrate`・`implement`。ただし、実装する組み合わせの先頭の
   調査（前段の調査）は承認せずに次へ進む（`StepCompleted`）。調査が目的のタスク（最後の工程が `investigate`）の調査だけを承認する。
+  実装は、エージェントの実行が終わってもすぐには承認待ちにせず、検証（下の「実装の検証」）に通り、実装の PR を作ってから承認待ちにする。
 - 差し戻しでやり直せる工程（`REWORK_STEPS`）：`investigate`・`reproduce`・`requirements`・`design`・`implement`。
-- リポジトリが要る工程（`REPO_STEPS`）：`implement`・`reproduce`・`review`・`pr`。
+- リポジトリが要る工程（`REPO_STEPS`）：`implement`・`reproduce`・`review`。
 - docker compose のサービスを使える工程（`SERVICE_STEPS`）：`investigate`（不具合の調査のときだけ）・`reproduce`・`implement`。
 - 書き出せる工程（`EXPORT_STEPS`）：`investigate`（最後の工程のときだけ）・`requirements`・`design`。
 
@@ -95,13 +95,13 @@
 
 | `plan` | 工程 |
 | --- | --- |
-| `standard` | `investigate` → `requirements` → `design` → `implement` → `pr` |
-| `skip-design` | `investigate` → `requirements` → `implement` → `pr` |
+| `standard` | `investigate` → `requirements` → `design` → `implement` |
+| `skip-design` | `investigate` → `requirements` → `implement` |
 | `investigate` | `investigate`（調査だけ） |
 | `design-only` | `requirements` → `design`（設計だけ） |
 | `review` | `review`（レビューだけ） |
 | `split` | `investigate` → `requirements` → `design` → `split` → `integrate` |
-| `bugfix` | `investigate` → `reproduce` → `implement` → `pr` |
+| `bugfix` | `investigate` → `reproduce` → `implement` |
 
 選べる組み合わせの制限（`allowedPlans`）：`review` はリポジトリがあり、タスクが PR を指しているときだけ。`design-only` はリポジトリの
 無いタスクだけ。`split` は子タスクでは選べない（分割は1段だけ）。
@@ -130,11 +130,11 @@
 | `repo`・`repoReason` | リポジトリの無いタスクで、リポジトリが要る組み合わせを選んだときの作業するリポジトリ |
 
 - 工程のイメージ（`images` を設定していて、プロジェクトの対象でイメージを指定していないとき）：
-  - 指示では、PR 作成（コンテナを使わない）を除く工程それぞれに `images` から選ばせる。既定のイメージは候補に並べず、`images` のどれも合わないときの
+  - 指示では、選んだ組み合わせの工程それぞれに `images` から選ばせる。既定のイメージは候補に並べず、`images` のどれも合わないときの
     最後の手段（Claude Code・Codex を動かす Node.js と git だけで、テストのブラウザ・DB のクライアント・ほかの言語のツールは無い）と説明し、
     使う工程には `defaultReasons` に理由を書かせる。テストを実行するイメージ（実装、不具合の修正では再現も）は、`testCommand` と
     リポジトリの依存（ブラウザのテスト・DB のクライアントなど）から選ばせる。
-  - 既定のイメージで動く工程（PR 作成を除く、選んだ工程のうち、イメージが無いか `default` のもの）は、理由があれば
+  - 既定のイメージで動く工程（選んだ工程のうち、イメージが無いか `default` のもの）は、理由があれば
     `StepsChosen` の `defaultImageReasons` に、理由が無ければ（イメージを書かなかった・`default` と書いて理由が無い）`imagesUnexplained` に記録する。
     理由が無くても止めずに既定のイメージで進め、作業履歴（タスクの画面）に理由が無いことを出す。
   - `images` を設定していない・プロジェクトの対象で指定している・リポジトリの無いまま進めるタスク・PR のレビューだけのタスクでは、
@@ -155,7 +155,7 @@
   工程の状態は問わない（これから実行する・実行中・失敗や一時停止・承認待ち・終わった工程のどれでも）。中止したタスクは変えられない。
 - 選べるのは `images` の名前と `default`（既定のイメージ）。画面は、それぞれの説明（`images` の `description`）を出す。次は、理由を示して
   断る（409）：`images` に無い名前（config.yaml から消した名前を含む。`image.notInImages`）、今と同じ名前（`image.unchanged`）、タスクの工程に
-  無い工程（`image.stepMissing`）、PR作成（コンテナで実行しないのでイメージが無い。`image.noImageStep`）。config.yaml を読めない・
+  無い工程（`image.stepMissing`）。工程はすべて変えられる。config.yaml を読めない・
   解析できないときは、名前を確かめられないので、設定の問題として理由を示して断る（`image.configUnavailable`。`default` も）。
   画面は、デーモンの状態を取得できない・設定を読めないとき、候補を確かめられないことを出し、`images` に無い名前の警告と変える操作は
   出さない（`stepImageOptions`。一時的な失敗を、設定から消したことと取り違えない）。
@@ -176,23 +176,60 @@
 
 コード: `apps/daemon/src/service.ts`（`changeStepImage`・`runNextInner`・`integrate`）、`apps/daemon/src/server.ts`、`packages/core/src/events.ts`（`StepImageChanged`・`ChangeStepImageInput`）、`packages/core/src/projection.ts`（`stepRunning`）、`apps/web/src/lib/labels.ts`（`stepImageRows`・`stepImageOptions`）
 
+## 「PR作成」の工程があった版のタスク
+
+以前の版には、実装の後に「PR作成」の工程（`pr`）があった。この工程は無くし、互換の層は作らない。工程の名前として読めないので、
+その記録を持つタスクは、デーモンの起動時に、作業履歴を読む前に作業履歴から消す（`purgeLegacyPrStepTasks`）。
+
+- 消すタスク：工程の組み合わせ（`StepsChosen` の `steps`）に `pr` を含むタスクと、`pr` の工程を指す記録（`step`・`target` が `pr`）の
+  あるタスク。処理中のタスク（実行待ち・承認待ち・一時停止など）も消す。
+- 一緒に消すタスク：タスク分割の親と子（どちらかを消すなら、親とすべての子）、マージの後の監視の修正のタスクと元のタスク（どちらかを消すなら
+  両方）。つながりは、それぞれの `TaskCreated` の `parent`・`fix` でたどる（どちら向きにも、続けてたどる）。
+- 消す前に、設定（`config.yaml`）を読んで確かめる（`purgeLegacyTasksAtStartup`）。誤りがあれば消さずに、件数と設定の誤りをログに出して
+  デーモンの起動をやめる（古い記録は読めないので）。設定を直して起動し直すと消す。消すものが無ければ、設定は見ない。
+- 消した件数と ID をデーモンのログに出す。消すものが無ければ、何もしない。
+- 作業履歴は追記専用（削除をトリガーで拒む）なので、消す間だけ、同じトランザクションの中でトリガーを外し、消した後に作り直す。
+- 消さないもの：作業領域・セッションログ・オーケストレーターのセッション・GitHub のブランチと PR（開いている PR は開いたまま残る）。
+- `config.yaml` の `step_agents.pr` は、設定の誤りになる。知らない工程の誤りではなく、`step_agents` から `pr` を消すよう案内する（`config.stepAgentsPrRemoved`）。
+
+コード: `apps/daemon/src/activity.ts`（`purgeLegacyPrStepTasks`・`purgeLegacyTasksAtStartup`）、`apps/daemon/src/main.ts`、`apps/daemon/src/config.ts`（`loadConfig`）
+
 ## 実装の検証
 
 - 実装の工程が終わると検証の待ち（`verification = "pending"`）になり、テストのコンテナでテストのコマンドを実行する。終了コード 0 で、
   検証の観点がすべてテストに対応していれば合格。観点は、設計があれば設計のテスト観点、再現があれば `REPRO`、どちらも無ければ `REQ`。
 - テストに通ったら、ゴールガーディアンの最終レビューに進む。最終レビューは、実装後のコードと差分を読み、観点ごと・指摘ごとに判定し、
-  すべて満たすときだけ合格。合格なら次の工程（成果物チェック）へ進む。
+  すべて満たすときだけ合格。合格なら、実装の工程のまま、sacty が実装の PR を作り、実装の承認待ちにする（下の「検証に通った実装の PR」）。
 - テストか最終レビューに通らなければ、実装をやり直す。続けて `MAX_VERIFY_ATTEMPTS`（3）回通らなければ、一時停止（`verification`）にする。
   再開すると数え直す。
 - 再現の工程の後は、再現のテストを実行し、終了コードが 0 でなければ再現できたとして実装へ進む。0 なら（または再現のテストの申告が
   無ければ）、再現できなかったとして人間の判断を待つ（再現の工程は承認できない。差し戻すか中止する）。
 - テストのイメージは、検証は実装（無ければ再現）の工程のイメージ、再現の確かめは再現（無ければ実装）の工程のイメージ。
-- 実装の成果物（タスクの画面と成果物チェックの承認の画面）は、テストの結果と最終レビューを、今の提出の検証のものだけ対応表に出す
+- 実装の成果物（タスクの画面と実装の承認の画面）は、テストの結果と最終レビューを、今の提出の検証のものだけ対応表に出す
   （`verificationResults`）。やり直した実装の検証が始まった（`verification` が `pending`）後のテストの結果と最終レビュー、最新の
   テストの結果（テストを飛ばしたなら、飛ばした時）より前の最終レビューは、前の提出のものとして、見出しを「前の提出のテストの実行
   （今の提出では、まだ実行していません）」「前の提出の最終レビュー（今の提出では、まだ判定していません）」にして出し、対応表の
   実行結果は「未実行」にする。テストの仕組みが無いタスクのテストの無い観点も、今の提出の最終レビューがあるときだけ「テストなし
   （目的から判定）」にし、検証待ちの間（目的からの判定がまだ）は「未実行」にする（`judgedByGoalForCurrent`）。
+
+### 検証に通った実装の PR
+
+- 最終レビューに通ると、実装の工程を終えずに、PR の作成の待ち（`Task.publishPending`。状態は実行待ち）にする。続けて sacty が、
+  実装の作業領域をコミットしてプッシュし、PR を作る（[承認と差し戻し](approval.md#pr-での承認)）。エージェントは使わない。
+- PR を作ったら、同じ追記で `PullRequestPublished` と、実装の提出（`StepSubmitted`。`step` は `implement`）を記録し、実装の承認待ちにする。
+  実装に変更が無ければ、PR を作らずに `NoChangesFound` と実装の提出を記録する（[承認と差し戻し](approval.md#実装に変更が無いとき)）。
+- PR の作成に失敗したら、理由を記録して止める（`pr.failed` など）。再開すると、実装をやり直さずに PR の作成からやり直す（PR の作成の待ちは、
+  一時停止・再起動の後も残る）。
+- 予算の上限に達していても、PR は作る（費用がかからず、人の承認を待つだけなので。下の「予算・一時停止・再開・中止」）。
+- 人の一時停止：プッシュの前・PR を作る直前に、一時停止・中止を求められていれば、PR を作らずに止める（一時停止なら PR の作成の待ちのまま。
+  再開すると作る）。PR を作り始めた後に求められたら、PR を作り終えて記録してから（作った PR を記録しないまま止めると、再開で PR を二重に作りうる・
+  中止で閉じられないため）、求めたものによって次の状態になる。
+  - 一時停止：実装の承認待ちのまま、一時停止はしない。一時停止の操作には、承認待ちになったので止めなかったことを返す（`pause.reachedApproval`。409）。
+  - 中止：PR の作成が終わるのを待ってから、記録した PR を閉じ、タスクを中止する（下の「予算・一時停止・再開・中止」の片付け）。
+- 承認待ちの扱い（PR のマージでの承認・差し戻し・PR の指摘の取り込み）は、要求要件・設計と同じ（[承認と差し戻し](approval.md)）。
+  PR のマージで実装を承認すると、タスクは完了する。
+
+コード: `apps/daemon/src/service.ts`（`runNextInner`・`publish`・`implementSubmitted`・`submitEvents`・`pause`）、`packages/core/src/projection.ts`（`publishPending`・`gatePullRequest`）
 
 コード: `apps/daemon/src/service.ts`（`verify`・`checkReproduction`・`pauseIfVerificationKeepsFailing`）、`apps/daemon/src/prompts.ts`（`verificationBasis`）、`packages/core/src/events.ts`（`MAX_VERIFY_ATTEMPTS`）、`apps/web/src/components/implementation.tsx`、`apps/web/src/lib/labels.ts`（`verificationResults`・`judgedByGoalForCurrent`）
 
@@ -245,12 +282,12 @@
     説明はコードと差分で裏付けられることだけを根拠にすることを指示する。観点（設計のテスト観点か `REQ`）、合格・不合格、
     `MAX_VERIFY_ATTEMPTS` のやり直しの上限は、テストのあるタスクと同じ。
 - 示し方：タスクの画面の工程の欄（テストのコマンド：なし・根拠。実装で用意したテストの状態で、合格なら「検証し、目的から判定」、
-  不合格なら「通らなかったため、実装をやり直す」、実行待ちなら「これから実行」。`testCommandOfNoTests`）、実装の成果物（タスクの画面と成果物チェックの承認の画面）の
+  不合格なら「通らなかったため、実装をやり直す」、実行待ちなら「これから実行」。`testCommandOfNoTests`）、実装の成果物（タスクの画面と実装の承認の画面）の
   注記（最新の検証がテストを飛ばしたなら「テストで検証していません」、実装で用意したテストを実行して合格なら「実装で用意したテストで
   検証しました」（成功の色）、不合格なら「実装で用意したテストが通りませんでした」と終了コード（失敗の色）、今の提出のテストをまだ実行していない
   （`verification` が `pending` で申告がある）なら「実装で用意したテストの検証待ち」（前の提出の結果は出さない）。`addedTestsResult`）、PR の本文のテストの行（`テスト：テストのコマンドが無いため、テストでは検証していません。
   目的から判定しました。`、実装で用意したテストなら `（実装で用意したテスト）`）と根拠の行、作業履歴（`StepsChosen`・`TestsSkipped`）。
-  成果物チェックの人の承認は、テストのあるタスクと同じく要る。
+  実装の人の承認は、テストのあるタスクと同じく要る。
 
 コード: `apps/daemon/src/service.ts`（`checkNoTests`・`runNextInner`・`verify`）、`apps/daemon/src/test-files.ts`（`findTestFiles`・`looksLikeTestFile`・`noTestsStop`・`TEST_FILE_SCAN_LIMIT`）、`apps/daemon/src/prompts.ts`（`buildOrchestratorPrompt`・`extractStepPlan`・`buildPrompt`・`extractBlocks`・`extractTestCommandFences`・`buildFinalReviewPrompt`・`noTestsReasonLines`・`resultTableLines`）、`packages/core/src/events.ts`（`StepsChosen`・`AgentRunCompleted`・`TestsSkipped`）、`packages/core/src/projection.ts`（`noTestsReason`・`addedTestCommand`・`testsSkippedAt`）、`apps/web/src/components/implementation.tsx`、`apps/web/src/lib/labels.ts`（`addedTestsResult`・`testCommandOfNoTests`）
 
@@ -262,7 +299,7 @@ AI は `guardian_agent`（無ければ `default_agent`）。実行ごとに `wor
 | --- | --- | --- |
 | 変更の申し出の判定 | 起点のコード | `approved`・`rejected`・`undecidable`。読めない・失敗なら `undecidable` で、人間の判断（エスカレーション）になる |
 | 最終レビュー | 実装後のコードと差分（テストの仕組みが無いタスクは、タスクの目的と実装の説明も） | 合格・不合格（上の「実装の検証」） |
-| PR の指摘の戻し先の判断 | 成果物チェックなら実装後のコード、要求要件・設計なら起点のコード | 戻す工程か `undecidable`（[承認と差し戻し](approval.md)） |
+| PR の指摘の戻し先の判断 | 実装の PR なら実装後のコード、要求要件・設計の PR なら起点のコード | 戻す工程か `undecidable`（[承認と差し戻し](approval.md)） |
 | 統合レビュー | ベースブランチの最新 | `step_agents.integrate` が無ければこの AI（[タスク分割と統合レビュー](split-and-integrate.md)） |
 
 変更の申し出：工程のエージェントは、承認済みの要求要件・設計の変更を申し出られる（ID は `CP-<番号>`）。承認されたら、要求要件は
@@ -273,7 +310,7 @@ AI は `guardian_agent`（無ければ `default_agent`）。実行ごとに `wor
 ## 予算・一時停止・再開・中止
 
 - 予算：使った額が上限の 80%（`BUDGET_WARN_RATIO`）に達したら `BudgetWarned` を記録する（1回）。上限に達したら、工程を選ぶ前・
-  工程を実行する前（成果物チェックを除く）・検証の前に一時停止（`budget`）にする。承認待ちのタスクは止めない。予算で止まったタスクの
+  工程を実行する前（検証に通った実装の PR の作成を除く）・検証の前に一時停止（`budget`）にする。承認待ちのタスクは止めない。予算で止まったタスクの
   再開には、使った額より大きい累計の新しい上限（10000 米ドルまで）が要る（`BudgetCapRaised`）。
 - 一時停止の理由（`PauseReason`）：`budget`・`usage_limit`（AI の利用上限）・`auth`（認証エラー・秘密情報が無い）・`error`・
   `verification`・`manual`（人が止めた）・`child_cancelled`（子タスクの中止）。AI の実行の失敗は、その理由のまま一時停止にする

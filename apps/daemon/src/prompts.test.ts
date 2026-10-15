@@ -16,6 +16,7 @@ import {
   buildOrchestratorPrompt,
   buildPrompt,
   buildPullRequestBody,
+  buildPullRequestBodyParts,
   buildReviewBody,
   buildReworkPrompt,
   buildStepDocument,
@@ -512,10 +513,21 @@ describe("工程の選択と内容の調査では、開発のセットアップ�
     expect(prompt).toContain('"investigation": "content または bug"');
   });
 
+  it("工程の組み合わせの説明に「PR作成」の工程を書かない。実装の中で PR を作り、マージで承認すると書く（PBI-110）", () => {
+    const prompt = buildOrchestratorPrompt(task([]));
+    expect(prompt).not.toContain("PR作成");
+    expect(prompt).not.toContain("PR 作成");
+    expect(prompt).not.toMatch(/\bpr\b/);
+    expect(prompt).toContain(
+      "- standard：調査 → 要求要件 → 設計（テスト観点）→ 実装（PR を作り、マージで承認）。",
+    );
+    expect(prompt).toContain("- bugfix：調査 → 再現 → 実装（PR を作り、マージで承認）。");
+  });
+
   it("内容の調査（調査だけ・前段の調査）のプロンプトに、セットアップをしないこと・優先することを書く", () => {
     for (const t of [
       task(["investigate"], "content"),
-      task(["investigate", "requirements", "implement", "pr"], "content"),
+      task(["investigate", "requirements", "implement"], "content"),
       // オーケストレーターが判断しなかったときは、セットアップをしない側
       task(["investigate"]),
     ]) {
@@ -530,14 +542,14 @@ describe("工程の選択と内容の調査では、開発のセットアップ�
   });
 
   it("不具合の調査・再現・実装のプロンプトには、セットアップを省く指示を出さない", () => {
-    const bugfix = task(["investigate", "reproduce", "implement", "pr"], "bug");
+    const bugfix = task(["investigate", "reproduce", "implement"], "bug");
     const prompts = [
       buildPrompt(task(["investigate"], "bug"), "investigate"),
       buildPrompt(bugfix, "investigate"),
       buildPrompt(bugfix, "reproduce"),
       buildPrompt(bugfix, "implement"),
       // 内容の調査のあとの実装でも出さない
-      buildPrompt(task(["investigate", "requirements", "implement", "pr"], "content"), "implement"),
+      buildPrompt(task(["investigate", "requirements", "implement"], "content"), "implement"),
     ];
     for (const prompt of prompts) {
       expect(prompt).not.toContain(NO_SETUP);
@@ -1126,6 +1138,28 @@ describe("成果の書き出し（PBI-56）", () => {
     expect(buildPullRequestBody({ ...task, exports: {} })).not.toContain("書き出した成果");
   });
 
+  it("実装の PR の本文の最後に、マージが実装の承認になることと指摘の伝え方を書く（PBI-110。成果物チェックと書かない）", () => {
+    const task = {
+      ...base,
+      steps: [{ key: "implement", state: "active" }],
+      approved: {},
+      outputs: { implement: "# 実装" },
+      testMap: [],
+      reproductionTests: [],
+      exports: {},
+    } as unknown as Task;
+    const plain = buildPullRequestBody(task);
+    const parts = buildPullRequestBodyParts(task);
+    for (const footer of [plain, parts.footer]) {
+      expect(footer).toContain(
+        "- この PR をマージすると、実装を承認したことになり、タスクが完了します（sacty の画面からは承認しません）。",
+      );
+      expect(footer).toContain("ゴールガーディアンが、実装のやり直し（この PR を更新します）か");
+      expect(footer).not.toContain("成果物チェック");
+    }
+    expect(parts.footer).toContain(`sacty task ${task.id}`);
+  });
+
   it("チケットへの PR のコメントに、書き出した成果の URL を添える", () => {
     const task = {
       ...base,
@@ -1206,7 +1240,7 @@ describe("要求要件・設計の PR（PBI-57）", () => {
     expect(body).toContain("- [design-1-1] 観点が足りない\n  - 対応：足した");
   });
 
-  it("成果物チェックの PR の指摘の判断の指示は、これまでと同じ（実装・設計・要求要件から選ぶ）", () => {
+  it("実装の PR の指摘の判断の指示は、これまでと同じ（実装・設計・要求要件から選ぶ）", () => {
     const task = {
       id: "t1",
       approved: { requirements: { output: "# 承認済みの要求要件" } },
@@ -1396,7 +1430,7 @@ describe("テストの仕組みが無いタスク（PBI-94）", () => {
   });
 
   it("設計のあるタスクの実装と最終レビューでも、テストではなく観点ごとに目的から判定させる", () => {
-    const t = task({ noTestsReason: NO_TESTS }, ["requirements", "design", "implement", "pr"]);
+    const t = task({ noTestsReason: NO_TESTS }, ["requirements", "design", "implement"]);
     const implement = buildPrompt(t, "implement");
     expect(implement).toContain(JSON.stringify(NO_TESTS));
     // 申告は、言語の名前が sacty-test-command のコードブロックだけ（PR #105 再々レビュー指摘）
@@ -1415,7 +1449,7 @@ describe("テストの仕組みが無いタスク（PBI-94）", () => {
   });
 
   it("テストのコマンドがあるタスクの実装・最終レビューの指示は変わらない", () => {
-    const t = task({ testCommand: "npm test" }, ["requirements", "design", "implement", "pr"]);
+    const t = task({ testCommand: "npm test" }, ["requirements", "design", "implement"]);
     const implement = buildPrompt(t, "implement");
     expect(implement).toContain("テスト観点ごとに、その観点を検証するテストを書いてください");
     expect(implement).not.toContain("sacty-test-command");
@@ -1436,7 +1470,6 @@ describe("テストの仕組みが無いタスクの指示と申告（PR #105 �
       steps: [
         { key: "requirements", state: "done" },
         { key: "implement", state: "todo" },
-        { key: "pr", state: "todo" },
       ],
       remarks: [],
       outputs: { implement: "# 実装の説明" },

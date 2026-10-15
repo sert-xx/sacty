@@ -37,6 +37,7 @@ const PARAMS = {
   "pause.awaitingPerson": null,
   "pause.waitingTasks": null,
   "pause.guardianJudging": null,
+  "pause.reachedApproval": null,
   "cancel.alreadyCancelled": null,
   "cancel.cleaningUp": null,
   "cancel.guardianJudging": null,
@@ -151,7 +152,6 @@ const PARAMS = {
   "image.unchanged": z.object({ name: z.string() }),
   "image.configUnavailable": z.object({ detail: TextParam }),
   "image.stepMissing": null,
-  "image.noImageStep": null,
   // docker compose のサービス（PBI-47）
   "services.unsafe": z.object({ file: z.string(), detail: z.string() }),
   "services.failed": z.object({ file: z.string(), detail: z.string() }),
@@ -379,6 +379,7 @@ const PARAMS = {
   // 設定ファイル（config.yaml）
   "config.missing": z.object({ path: z.string() }),
   "config.unreadable": z.object({ detail: z.string() }),
+  "config.stepAgentsPrRemoved": null,
   "config.invalid": z.object({ path: z.string(), detail: TextParam }),
   "config.authUnsupported": z.object({
     runtime: z.string(),
@@ -505,6 +506,8 @@ const ja: MessageDictionary = {
     `${scopeJa[scope]}「${target}」は、プロジェクト「${project}」に登録されています。`,
   "pause.alreadyPaused": "すでに一時停止しています。",
   "pause.awaitingPerson": "人間の判断待ちのため、一時停止する必要はありません。",
+  "pause.reachedApproval":
+    "止める前に作業が終わり、承認待ちになったため、一時停止しませんでした（PR を作った工程は、PR で判断してください。止めるなら中止してください）。",
   "pause.waitingTasks": "ほかのタスクの完了を待っているため、一時停止する必要はありません。",
   "pause.guardianJudging":
     "ゴールガーディアンが変更の申し出を判定しているため、終わるまで一時停止できません。",
@@ -704,7 +707,6 @@ const ja: MessageDictionary = {
   "image.configUnavailable": ({ detail }, text) =>
     `config.yaml を読めないため、工程のイメージを変えられません（images の名前を確かめられません）。設定を直してから、もう一度変えてください：${text(detail)}`,
   "image.stepMissing": "その工程は、このタスクの工程にありません。",
-  "image.noImageStep": "PR作成の工程はコンテナで実行しないため、イメージを使いません。",
   "image.unknown": ({ name }) =>
     `イメージ「${name}」は config.yaml の images にありません。images に書くか、プロジェクトの対象のイメージの指定を直してから、再開してください。`,
   "input.channelRequired": "チャンネルを書いてください。",
@@ -896,6 +898,8 @@ const ja: MessageDictionary = {
   "config.missing": ({ path }) =>
     `設定ファイルがありません（${path}）。\`sacty config init\` で作成してください。`,
   "config.unreadable": ({ detail }) => `設定ファイルのYAMLを読めません：${detail}`,
+  "config.stepAgentsPrRemoved":
+    "設定ファイルの step_agents に pr があります。「PR作成」の工程は無くなりました（実装の工程の中で PR を作ります）。step_agents から pr を消してください。",
   "config.invalid": ({ path, detail }, text) =>
     `設定ファイルに誤りがあります（${path}）：${text(detail)}`,
   "config.authUnsupported": ({ runtime, mode, supported }) =>
@@ -949,6 +953,8 @@ const en: MessageDictionary = {
     `The ${scopeEn[scope]} "${target}" is already registered in the project "${project}".`,
   "pause.alreadyPaused": "The task is already paused.",
   "pause.awaitingPerson": "The task is waiting for your decision, so there is no need to pause it.",
+  "pause.reachedApproval":
+    "The work finished before it could stop and the task is now waiting for approval, so it was not paused (decide on the PR for a step that opened one, or cancel the task to stop it).",
   "pause.waitingTasks":
     "The task is waiting for other tasks to finish, so there is no need to pause it.",
   "pause.guardianJudging":
@@ -1148,7 +1154,6 @@ const en: MessageDictionary = {
   "image.configUnavailable": ({ detail }, text) =>
     `The step image can't be changed because config.yaml can't be read (the names in images can't be checked). Fix the settings, then change it again: ${text(detail)}`,
   "image.stepMissing": "This task does not have that step.",
-  "image.noImageStep": "The PR step doesn't run in a container, so it uses no image.",
   "image.unknown": ({ name }) =>
     `The image "${name}" is not in images in config.yaml. Add it to images, or fix the image of the project target, then resume.`,
   "input.channelRequired": "Write a channel.",
@@ -1341,6 +1346,8 @@ const en: MessageDictionary = {
   "config.missing": ({ path }) =>
     `The config file is missing (${path}). Create it with \`sacty config init\`.`,
   "config.unreadable": ({ detail }) => `Cannot read the config file as YAML: ${detail}`,
+  "config.stepAgentsPrRemoved":
+    'The config file has pr in step_agents. The "Open PR" step was removed (the PR is now opened inside the Implementation step). Delete pr from step_agents.',
   "config.invalid": ({ path, detail }, text) =>
     `The config file has an error (${path}): ${text(detail)}`,
   "config.authUnsupported": ({ runtime, mode, supported }) =>

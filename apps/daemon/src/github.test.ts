@@ -371,7 +371,7 @@ describe("中止したときに PR を閉じる（PBI-3）", () => {
   });
 });
 
-describe("成果物チェックの間の PR の状態（PBI-14a）", () => {
+describe("承認待ちの間の PR の状態（PBI-14a）", () => {
   it("マージ済み・閉じられた・開いているを読み分け、失敗は理由つきのエラーにする", async () => {
     const { impl, calls } = fakeFetch([
       {

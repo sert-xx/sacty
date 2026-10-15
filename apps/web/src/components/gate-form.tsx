@@ -34,13 +34,13 @@ export function GateForm({
   escalated: boolean;
   maxChanges: number;
   pendingComments: string[];
-  /** PR を作ったタスクの成果物チェック。PR のマージで承認するので、承認のボタンは出さない（PBI-14a）。 */
+  /** PR を作った工程（実装・要求要件・設計）。PR のマージで承認するので、承認のボタンは出さない（PBI-14a）。 */
   pullRequest?: { number: number; url?: string; closed: boolean; mergedOutdated: boolean };
   /** PR の指摘の戻し先の確認（PBI-14b）。ゴールガーディアンの提案と理由。 */
   rework?: { target: StepKey; note: string };
   /** 再現できなかった（PBI-29）。承認では先へ進めないので、承認のボタンは出さない。 */
   notReproduced?: boolean;
-  /** 実装に変更が無く、PR を作らなかった成果物チェック（PBI-90）。承認すると変更なしで完了する。 */
+  /** 実装に変更が無く、PR を作らなかった実装の承認（PBI-90・PBI-110）。承認すると変更なしで完了する。 */
   noChanges?: boolean;
 }) {
   const [state, formAction, pending] = useActionState(gateAction, initial);
@@ -56,7 +56,7 @@ export function GateForm({
       {pullRequest && (
         <div className="flex flex-col gap-2 rounded-md border border-border bg-muted p-3 text-sm leading-6">
           <p className="font-semibold">{t.prTitle}</p>
-          <p>{step === "pr" ? t.prHelp : t.stepPrHelp(stepLabel[step])}</p>
+          <p>{step === "implement" ? t.prHelp : t.stepPrHelp(stepLabel[step])}</p>
           {pullRequest.url && (
             <a
               href={pullRequest.url}
