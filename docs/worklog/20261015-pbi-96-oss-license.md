@@ -83,6 +83,8 @@
 - `npm run build`：終了コード 0。
 - `npx vitest run tests/docs`：68 件が通った。足したテストは、`apps/web/package.json` の `license` を消す・`CONTRIBUTING.md` のリンクを
   壊すと失敗することを確かめた。
+- レビューの対応と main（PR #104）の取り込みの後：lint・typecheck・build が終了コード 0、`npx vitest run` が 57 ファイル・1374 件、
+  `npx vitest run tests/docs` が 69 件通った。
 - 確かめていないこと：GitHub の非公開の報告の窓口は、リポジトリの設定で無効になっている（`gh api` で確かめた）。有効にするのは
   リポジトリの設定の変更なので、このタスクではしていない。依存のライセンスは package.json の欄で調べ、各パッケージの LICENSE の
   本文までは読んでいない。
@@ -91,7 +93,9 @@
 
 | 指摘 | 対応 |
 | --- | --- |
-| なし | — |
+| [提案] `CONTRIBUTING.md` の手順が、リポジトリを取る前の `npm ci` から始まっている。fork・clone・ルートへの移動・コミットと push・PR の作成を補う | 「開発の環境を用意する」に fork・clone・`cd`・`upstream` の登録を、「変更の流れ」に `upstream/main` からのブランチ・コミットと fork への push・PR の作成（画面と `gh pr create --repo sert-xx/sacty`）を足した |
+| [提案] コミットの作者のメールアドレスも公開の履歴に残る。初めてコミットする前に `user.email` を確かめ、公開したくなければ GitHub の noreply のアドレスを使う案内を足す | 「初めてコミットする前に：作者のメールアドレスを確かめる」を足した（確かめるコマンド・noreply のアドレスの形と表示される場所・このリポジトリだけに設定するコマンド） |
+| （追従）PR #104 で、利用者向けの文書をです・ます調にし、書き方の規則を `docs/README.md` に移した | main を取り込んだ（ぶつかりは無し）。外から読む `CONTRIBUTING.md`・`SECURITY.md` をです・ます調に直した |
 
 ## 残したこと
 
