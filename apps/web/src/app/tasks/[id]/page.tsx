@@ -54,6 +54,7 @@ import {
   statusText,
   usd,
   usesTestCommand,
+  verifiedByAddedTests,
 } from "@/lib/labels";
 import { runLogId } from "@/lib/session-log";
 import { subtaskSummary } from "@/lib/subtasks";
@@ -362,7 +363,11 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
                       <span className="font-mono">{task.testCommand}</span>
                     ) : task.noTestsReason ? (
                       // テストの仕組みが無いと判断したタスク（PBI-94）
-                      m.testCommandNone(task.noTestsReason)
+                      verifiedByAddedTests(task) && task.lastTests ? (
+                        m.testCommandAdded(task.lastTests.command, task.noTestsReason)
+                      ) : (
+                        m.testCommandNone(task.noTestsReason)
+                      )
                     ) : (
                       m.testCommandUnknown
                     )}
