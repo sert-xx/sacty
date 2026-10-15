@@ -10,6 +10,8 @@ PR の査読結果を GitHub に投稿するときの形式。レビュー自体
 - 指摘が 0 件なら、指摘なしの総評だけを 1 件の `COMMENT` レビューで投稿してよい。
 - 複数のインラインコメントを個別に投稿しない。通常の PR コメントで代用しない。インラインコメントを本文の JSON ブロックとして貼り付けない。
 
+総評とインラインコメントの文章は、スキル `writing` に従って書く。
+
 ## 投稿前の確認
 
 1. `gh pr view <番号> -R <owner>/<repo> --json author,headRefOid,files,reviews` と `gh pr diff <番号> -R <owner>/<repo>` で、PR 作者の `author.login`、現在の先頭コミット、差分を確認する。表示名ではなく `author.login` を本文のメンションに使う。

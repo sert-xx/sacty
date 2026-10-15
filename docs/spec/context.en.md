@@ -6,7 +6,7 @@ The rules, skills, MCP servers, external PFs, and agent settings (the context) g
 in the Claude Code or Codex config location. The layers are sacty's default context and the context repository specified for the project (along with its
 inheritance chain).
 
-Related ADRs: [Start command-type MCP servers in the context's mcp.yaml on the host by default and route them through the gateway](../adr/20261014-0927-context-command-mcp-on-host.md)
+Related ADRs: [Start command-type MCP servers in the context's mcp.yaml on the host by default and route them through the gateway](../adr/20261014-0927-context-command-mcp-on-host.md), [Bundle a skill for writing text in the default context, and add a line break after "。" only in Japanese](../adr/20261015-0844-default-writing-skill.md)
 
 ## Layers
 
@@ -30,6 +30,16 @@ The default context has `review-dispatch` and `review-execution`, which split a 
 In the default Codex settings, the limit on reviewers open at the same time is `max_threads = 16`, and the depth that keeps reviewers from starting more agents is `max_depth = 1`.
 
 Code: `apps/daemon/default-context/skills/review/review-dispatch/SKILL.md`, `apps/daemon/default-context/skills/review/review-dispatch/references/verification-run.md`, `apps/daemon/default-context/skills/review/review-execution/references/X-2.md`, `apps/daemon/default-context/agents/codex/config.toml`
+
+## Default writing skill
+
+The default context has `writing`, which sets how to write text that people read: PR descriptions, review comments, comments on Issues and PRs, requirements and designs, investigation results, and reports.
+The order of precedence is the requester's instructions, then the target repository's writing rules (AGENTS.md, CONTRIBUTING, the docs policy, and so on), then this skill.
+In Japanese, a line break follows each "。"; in English, no line break follows a period.
+Where a line break would break the rendering, such as code blocks, table cells, and the first line of a commit message, no line break is added.
+The default `git`, `review-dispatch`, and `review-execution` skills refer to this skill where they write text.
+
+Code: `apps/daemon/default-context/skills/writing/SKILL.md`, `apps/daemon/default-context/skills/writing/references/layout.md`, `apps/daemon/default-context/skills/writing/references/sentences.md`
 
 ## Context repository files
 

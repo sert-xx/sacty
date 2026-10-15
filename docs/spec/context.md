@@ -6,7 +6,7 @@
 Claude Code・Codex の設定の場所に置く。層は、sacty の既定のコンテキストと、プロジェクトに指定したコンテキストリポジトリ（と、その
 継承の鎖）。
 
-関係する ADR: [コンテキストの mcp.yaml の command の MCP サーバーを、既定でホストで起動してゲートウェイ経由にする](../adr/20261014-0927-context-command-mcp-on-host.md)
+関係する ADR: [コンテキストの mcp.yaml の command の MCP サーバーを、既定でホストで起動してゲートウェイ経由にする](../adr/20261014-0927-context-command-mcp-on-host.md)、[既定のコンテキストに文章を書くためのスキルを同梱し、「。」の後の改行は日本語だけにする](../adr/20261015-0844-default-writing-skill.md)
 
 ## 層
 
@@ -30,6 +30,16 @@ Claude Code・Codex の設定の場所に置く。層は、sacty の既定のコ
 既定の Codex 設定では、同時に開く担当の上限は `max_threads = 16`、担当からの追加起動を防ぐ深さは `max_depth = 1` とする。
 
 コード: `apps/daemon/default-context/skills/review/review-dispatch/SKILL.md`、`apps/daemon/default-context/skills/review/review-dispatch/references/verification-run.md`、`apps/daemon/default-context/skills/review/review-execution/references/X-2.md`、`apps/daemon/default-context/agents/codex/config.toml`
+
+## 既定の文章用スキル
+
+既定のコンテキストには、人が読む文章（PR の本文、レビューのコメント、Issue・PR へのコメント、要求要件・設計、調査の結果、報告）の書き方を決める `writing` がある。
+従う順は、依頼した人の指示、対象のリポジトリの文章の決まり（AGENTS.md・CONTRIBUTING・docs の方針など）、このスキルの順。
+日本語では「。」の後で改行し、英語ではピリオドの後で改行しない。
+コードブロック・表のセル・コミットメッセージの1行目など、改行で表示が崩れる所では改行しない。
+既定の `git`・`review-dispatch`・`review-execution` は、文章を書く所でこのスキルを参照する。
+
+コード: `apps/daemon/default-context/skills/writing/SKILL.md`、`apps/daemon/default-context/skills/writing/references/layout.md`、`apps/daemon/default-context/skills/writing/references/sentences.md`
 
 ## コンテキストリポジトリのファイル
 

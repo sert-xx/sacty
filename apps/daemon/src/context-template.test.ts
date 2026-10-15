@@ -84,6 +84,7 @@ describe("コンテキストリポジトリの雛形（PBI-45）", () => {
           "git",
           "review-dispatch",
           "review-execution",
+          "writing",
         ]);
       } finally {
         prepared.dispose();
@@ -103,6 +104,7 @@ describe("コンテキストリポジトリの雛形（PBI-45）", () => {
         "git",
         "review-dispatch",
         "review-execution",
+        "writing",
       ]);
     },
   );

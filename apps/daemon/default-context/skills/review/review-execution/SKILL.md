@@ -67,7 +67,7 @@ description: レビューの親（review-dispatch）から観点を1つ渡され
 
 ## 出力形式
 
-JSON だけを返す（前後に説明を付けない）。人向けの文章は日本語で書く。親は同じ形式を review-dispatch の references/finding-format.md で知る（変えるときは両方を変える）。
+JSON だけを返す（前後に説明を付けない）。人向けの文章は日本語で書き、書き方はスキル `writing` に従う。親は同じ形式を review-dispatch の references/finding-format.md で知る（変えるときは両方を変える）。
 
 ```json
 {

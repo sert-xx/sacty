@@ -43,6 +43,7 @@
 - `subject` は変更内容を簡潔に書き、末尾に句点を付けない。言語はリポジトリの既存コミット（`git log --oneline -20`）に合わせる。
 - 破壊的変更は `feat(api)!: ...` のように `!` を付け、本文末に `BREAKING CHANGE: <内容>` を書く。
 - リポジトリに `.cz.toml`・`.cz.json`・`.czrc`・`pyproject.toml` の `[tool.commitizen]`・commitlint 設定があれば、その規約を優先する。
+- 本文は、スキル `writing` に従って書く。1行目は1行のまま、改行しない。
 - `cz commit` は対話式なので使わず、メッセージを自分で組み立てる。
 
 ### Co-author トレーラー（必須）
