@@ -78,7 +78,7 @@ export interface PullRequests {
     number: number;
     account: string;
     marker: string;
-  }): Promise<{ url: string } | undefined>;
+  }): Promise<{ url: string; body: string } | undefined>;
   /**
    * PR にレビュー（COMMENT。承認も変更の要求もしない）を、行へのコメントとあわせて投稿する（PBI-19）。
    * 行へのコメントの line は、commit のファイルの行番号（差分の右側）。
@@ -415,7 +415,12 @@ export class GitHubPullRequests implements PullRequests {
         typeof r.body === "string" &&
         r.body.trimStart().startsWith(input.marker),
     );
-    return found ? { url: String(found.html_url ?? "") } : undefined;
+    return found
+      ? {
+          url: String(found.html_url ?? ""),
+          body: typeof found.body === "string" ? found.body : "",
+        }
+      : undefined;
   }
 
   async postReview(input: Parameters<PullRequests["postReview"]>[0]) {

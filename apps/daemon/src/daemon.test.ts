@@ -528,7 +528,8 @@ class FakePulls implements PullRequests {
   async status(input: { repo: string; token: string; number: number }) {
     this.checked.push(input);
     if (this.statusFail) throw new Error(this.statusFail);
-    return this.states[input.number] ?? this.state;
+    // 先頭のコミットを指定していなければ、レビューの対象の PR の先頭とする（投稿の直前の確認。PBI-111）
+    return { headSha: this.prInfo.headSha, ...(this.states[input.number] ?? this.state) };
   }
   /** Issue へのコメント（調査の結果。PBI-18）。 */
   issueComments: { repo: string; token: string; number: number; body: string }[] = [];
@@ -621,6 +622,7 @@ class FakePulls implements PullRequests {
       ? undefined
       : {
           url: `${input.repo}/pull/${input.number}#pullrequestreview-${index + 1}`,
+          body: this.reviews[index]?.body ?? "",
         };
   }
   /** 付けたラベル（PBI-88）。labelFail があれば失敗させる。labelCreated なら、リポジトリに無かったので作ったことにする。 */
@@ -4838,12 +4840,17 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         }
         return append(entry);
       };
+      // 投稿の直前に PR の先頭が変わっていた（PBI-111）
+      pulls.states[12] = { state: "open", headSha: "n".repeat(40) };
       await expect(service.runNext(id)).rejects.toThrow("disk full");
       expect(pulls.reviews).toHaveLength(2);
+      // やり直しの前に、さらに push されても、投稿したときの先頭を記録する
+      pulls.states[12] = { state: "open", headSha: "m".repeat(40) };
       await service.runNext(id);
       expect(pulls.reviews).toHaveLength(2);
       expect(service.get(id)?.task.reviewPost).toMatchObject({
         url: "https://github.com/acme/app/pull/12#pullrequestreview-2",
+        latestCommit: "n".repeat(40),
       });
       activity.close();
     });
@@ -4884,6 +4891,20 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       expect(pulls.reviews).toHaveLength(0);
       expect(service.get(id)?.task.status).toBe("paused");
       pulls.statusFail = undefined;
+      // 応答に先頭のコミットが無い・空でも、確かめられないので投稿しない（PR 121 レビュー指摘）
+      for (const headSha of [undefined, "", "  "]) {
+        service.resume(id, {});
+        pulls.states[12] = { state: "open", ...(headSha === undefined ? {} : { headSha }) };
+        if (headSha === undefined) pulls.prInfo = { ...pulls.prInfo, headSha: "" };
+        await service.runNext(id);
+        pulls.prInfo = { ...pulls.prInfo, headSha: "h".repeat(40) };
+        expect(pulls.reviews, String(headSha)).toHaveLength(0);
+        const paused = service.get(id)?.task;
+        expect(paused?.status, String(headSha)).toBe("paused");
+        expect(ja(paused?.pausedMessage), String(headSha)).toContain(
+          "PR の先頭のコミットを確かめられませんでした",
+        );
+      }
       pulls.states[12] = { state: "open", headSha: "n".repeat(40) };
       service.resume(id, {});
       await service.runNext(id);
@@ -8695,12 +8716,21 @@ describe("PR のレビューだけを行う取り込み（PBI-44）", () => {
 
     // 返答を読めなくても、再レビューは止めずに、読めなかったことを伝える
     pulls.feedback = async () => {
-      throw new Error("502 Bad Gateway");
+      throw new Error("401 Bad credentials (token ghp_secret)");
     };
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     service.rereview(id);
     await service.runNext(id);
     const unreadable = promptOf(executor, 2);
     expect(unreadable).toContain("PR の作者の返答は読めませんでした");
+    // 運用する人のために、タスクと PR と理由をデーモンのログに残す。秘密の値は伏せる（PR 121 レビュー指摘）
+    const logged = warn.mock.calls.map((c) => c.join(" ")).find((l) => l.includes("作者の返答"));
+    warn.mockRestore();
+    expect(logged).toContain(`レビューのタスク ${id}`);
+    expect(logged).toContain("PR #9（https://github.com/acme/app）");
+    expect(logged).toContain("401 Bad credentials");
+    expect(logged).not.toContain("ghp_secret");
+    expect(unreadable).not.toContain("401");
     // 前回（2回目）の本文を、前回の指摘として渡す
     expect(unreadable).toContain('"body":"# 2回目"');
     await service.runNext(id);

@@ -218,6 +218,7 @@ import {
   extractVerdict,
   integrationViewpointIds,
   investigationMarker,
+  postedLatestCommit,
   type RawExportPlan,
   type RawServices,
   REPRODUCTION_VIEWPOINT,
@@ -1586,12 +1587,13 @@ export class TaskService {
   private async reviewReplies(
     task: Task,
     target: NonNullable<Task["reviewTarget"]>,
+    usedSecrets: string[],
   ): Promise<PullRequestFeedback[]> {
     const previous = task.previousReview;
     const author = target.author.toLowerCase();
     if (!previous) return [];
     if (!author) throw new Error("the pull request author is unknown");
-    const token = await this.githubToken(task, target.repo, []);
+    const token = await this.githubToken(task, target.repo, usedSecrets);
     const account = this.githubAccountOf(task, target.repo).account;
     const items = await this.deps.pulls.feedback({
       repo: target.repo,
@@ -1629,10 +1631,17 @@ export class TaskService {
       });
       // 投稿の直前に、PR の先頭がレビューしたコミットのままかを確かめる（PBI-111）。途中で push されていても、レビューは
       // レビューしたコミットに対して投稿し、その旨を本文に書く（最新のコミットは「再レビュー」でレビューする）
-      const head = existing
-        ? undefined
-        : (await this.deps.pulls.status(pr)).headSha?.trim() || undefined;
-      const latestCommit = head && head !== target.headCommit ? head : undefined;
+      // 先頭を読めない応答なら、確かめられないので投稿しない（一時停止し、再開すると確かめ直す）。すでに投稿したレビューが
+      // あれば、その本文に残した先頭を記録し直す（投稿の後・記録の前に止まったとき）
+      let latestCommit: string | undefined;
+      if (existing) {
+        latestCommit = postedLatestCommit(existing.body);
+      } else {
+        const head = (await this.deps.pulls.status(pr)).headSha?.trim() ?? "";
+        if (!/^[0-9A-Za-z]{7,64}$/.test(head))
+          throw new MessageError(message("review.headUnknown"));
+        latestCommit = head !== target.headCommit ? head : undefined;
+      }
       const post = (foldComments: boolean) =>
         this.deps.pulls.postReview({
           ...pr,
@@ -3938,9 +3947,16 @@ export class TaskService {
               { full: true },
             );
             // 読めなくてもレビューは止めない（読めなかったことをプロンプトに書く）
+            // 運用する人のために、読めなかった理由はタスクと PR を添えてデーモンのログに残す（秘密の値は伏せる）
             if (latest.previousReview) {
-              reviewReplies = await this.reviewReplies(latest, reviewTarget).catch(
-                () => "unreadable" as const,
+              const replySecrets: string[] = [];
+              reviewReplies = await this.reviewReplies(latest, reviewTarget, replySecrets).catch(
+                (error: unknown) => {
+                  console.warn(
+                    `[daemon] レビューのタスク ${task.id} で、PR #${reviewTarget.number}（${reviewTarget.repo}）の作者の返答を読めませんでした。返答なしで再レビューします：${renderMessage(redactText(errorText(error), replySecrets), "ja")}`,
+                  );
+                  return "unreadable" as const;
+                },
               );
             }
           }

@@ -376,14 +376,16 @@ Code: `apps/daemon/src/service.ts` (`askQuestion`, `answerQuestion`, `stageQuest
   the agent's body, and the fixed sentence saying that AI reviewed it, in this order.
 - Right before posting, the PR's head commit is checked (not when an already posted review is found by the marker). If it differs from the reviewed commit
   (pushed in the meantime), the review is posted against the reviewed commit, and the body says which commit was reviewed and that "Re-review" reviews the latest one.
-  That head is kept in `latestCommit` of `PullRequestReviewPosted`. If it cannot be checked, the task pauses without posting (resuming checks again).
+  That head is kept in `latestCommit` of `PullRequestReviewPosted`, and also in the body as a hidden marker. If it cannot be checked (including when the response has
+  no head commit or an empty one), the task pauses without posting (`review.headUnknown`; resuming checks again). If sacty stopped after posting and before recording,
+  the head is recorded again from the marker in the body of the posted review.
 - The result is posted to the PR as a review (`COMMENT`) without waiting for a person's approval. If line comments are rejected with 422, they are put into the body and posted again.
   The task completes once posted.
 - Re-review: a task that completed after posting can put `review` back to waiting to run and review the latest commit again (`ReviewRestarted`).
   The previous body, line comments, reviewed commit, and posting time are kept in `previousReview`. The instructions include the previous findings and the PR author's
   replies since the previous post (PR reviews, line comments, and regular comments by the author's login, excluding those starting with sacty's review marker; the newest 30, up to
   2000 characters each) as JSON data separate from the instructions, and the agent writes, for each previous finding, whether it confirmed the fix or it is still open. If the replies cannot be read
-  (including when the author is unknown), the instructions say so and the review continues.
+  (including when the author is unknown), the instructions say so and the review continues, and the reason is written to the daemon log with the task and the PR (secret values are masked).
 - Language: the heading, verdict, note, and fixed sentence added by sacty, and the finding prefixes, are fixed in Japanese. The agent's body and findings follow the writing rules
   of the target repository (in the order of the skill `writing`), and Japanese when there are none.
 - In the PR check (every 60 seconds), if the PR of an unfinished review task has been merged or closed, the task is canceled.

@@ -47,6 +47,7 @@ PRs are imported so that only their review is handed over ("PR review intake" in
 - Imported PRs are only reviewed, without the Orchestrator, and the review is posted to the PR (as comments). No implementation or PR creation is done.
 - When the PR is merged or closed, review tasks that have not finished are cancelled.
 - The posted review starts with an @ mention of the PR author and the verdict ("修正が必要" (changes required), "提案あり（マージは可）" (suggestions only, OK to merge), or "指摘なし" (no findings)).
+  When the PR author is a bot (such as `dependabot[bot]`), there is no @ mention, only the verdict.
   Findings start with `[要修正]` for those to fix before merging, and `[提案]` for those worth fixing.
   The heading, verdict, and prefixes added by sacty are in Japanese. The findings follow the writing rules of the repository (Japanese when there are none).
 - If the PR is pushed to while it is being reviewed, the review is posted against the reviewed commit, and the body says which commit was reviewed.

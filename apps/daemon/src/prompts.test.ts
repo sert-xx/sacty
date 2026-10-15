@@ -32,6 +32,7 @@ import {
   extractReviewComments,
   extractSplitPlan,
   extractStepPlan,
+  postedLatestCommit,
   servicePromptLines,
 } from "./prompts.js";
 
@@ -387,6 +388,11 @@ describe("PR のレビューのプロンプトと、投稿する本文（PBI-111
     expect(buildReviewBody(task, { latestCommit: "n".repeat(40) })).toContain(
       "> このレビューは hhhhhhh のコードに対するものです。レビューの間に、PR の先頭が nnnnnnn に変わりました。",
     );
+    // 投稿の後・記録の前に止まっても、投稿した本文から先頭を読み直せる（PR 121 レビュー指摘）
+    expect(postedLatestCommit(buildReviewBody(task, { latestCommit: "n".repeat(40) }))).toBe(
+      "n".repeat(40),
+    );
+    expect(postedLatestCommit(buildReviewBody(task))).toBeUndefined();
     expect(buildReviewBody(task, { latestCommit: "h".repeat(40) })).not.toContain("このレビューは");
     expect(buildReviewBody(task)).not.toContain("このレビューは");
   });

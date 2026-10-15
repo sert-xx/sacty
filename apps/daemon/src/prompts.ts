@@ -3199,6 +3199,14 @@ function commentLines(comments: readonly ReviewComment[]): string[] {
   return comments.map((c) => `- \`${c.path}:${c.line}\` ${c.body.replace(/\n+/g, " ")}`);
 }
 
+/** 投稿の直前の PR の先頭（レビューしたコミットと違ったとき）を、本文に残す目印（表示されない。PBI-111）。 */
+const LATEST_COMMIT_PREFIX = "<!-- sacty-review-latest:";
+
+/** 投稿したレビューの本文に残した、投稿の直前の PR の先頭（無ければ undefined。PBI-111）。 */
+export function postedLatestCommit(body: string): string | undefined {
+  return body.match(/<!-- sacty-review-latest:([0-9A-Za-z]{7,64}) -->/)?.[1];
+}
+
 /**
  * 総評で @ を付けて知らせる、PR の作者の login（login の形のものだけ。GitHub Enterprise の `_` を含むものも。`[bot]` の付く bot は
  * 知らせない）。
@@ -3233,6 +3241,8 @@ export function buildReviewBody(
   const stale =
     options.latestCommit && reviewed && options.latestCommit !== reviewed
       ? [
+          // 投稿の後・記録の前に止まっても、投稿した本文からその先頭を記録し直せるように、全体を表示されない形で残す
+          `${LATEST_COMMIT_PREFIX}${options.latestCommit} -->`,
           `> このレビューは ${reviewed.slice(0, 7)} のコードに対するものです。レビューの間に、PR の先頭が ${options.latestCommit.slice(0, 7)} に変わりました。最新のコミットは、sacty の「再レビュー」でレビューできます。`,
           "",
         ]

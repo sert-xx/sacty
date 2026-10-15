@@ -748,7 +748,11 @@ describe("PR のレビュー（PBI-19）", () => {
         account: "sacty-bot",
         marker: "<!-- sacty-review:t1 -->",
       }),
-    ).toEqual({ url: "https://github.com/acme/app/pull/12#pullrequestreview-2" });
+    ).toEqual({
+      url: "https://github.com/acme/app/pull/12#pullrequestreview-2",
+      // 投稿した本文も返す（本文に残した、投稿の直前の PR の先頭を記録し直すため。PR 121 レビュー指摘）
+      body: "<!-- sacty-review:t1 -->\n## sacty のレビュー",
+    });
     expect(calls.map((c) => c.url)).toEqual([
       `${api}/pulls/12/reviews?per_page=100`,
       `${api}/pulls/12/reviews?per_page=100&page=2`,
