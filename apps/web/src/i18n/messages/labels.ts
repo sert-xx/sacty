@@ -153,6 +153,13 @@ const ja = {
     stepsImages: (images: string, source: "project" | "orchestrator", reason?: string) =>
       ` / イメージ：${images}（${source === "project" ? "プロジェクトの対象の指定" : reason ? `オーケストレーター：${reason}` : "オーケストレーター"}）`,
     stepImage: (step: string, image: string) => `${step}＝${image}`,
+    /** 既定のイメージで動かす工程と、images のどれも合わない理由（PBI-105）。 */
+    stepsDefaultImages: (reasons: string) =>
+      ` / 既定のイメージ（images のどれも合わない）：${reasons}`,
+    stepDefaultImage: (step: string, reason: string) => `${step}＝${reason}`,
+    /** images の候補があるのに、理由が無いまま既定のイメージで動かす工程（PBI-105）。 */
+    stepsImagesUnexplained: (steps: string) =>
+      ` / 理由が無いまま既定のイメージで動かす：${steps}（オーケストレーターが images から選ばず、合わない理由も書かなかった）`,
     imagesJoin: "、",
     stepsExports: (exports: string) => ` / 書き出し：${exports}`,
     /** テストの仕組みが無いと判断した根拠（PBI-94）。 */
@@ -500,6 +507,10 @@ const en: LabelMessages = {
     stepsImages: (images, source, reason) =>
       ` / images: ${images} (${source === "project" ? "set on the project target" : reason ? `Orchestrator: ${reason}` : "Orchestrator"})`,
     stepImage: (step, image) => `${step}=${image}`,
+    stepsDefaultImages: (reasons) => ` / Default image (none of images fits): ${reasons}`,
+    stepDefaultImage: (step, reason) => `${step}: ${reason}`,
+    stepsImagesUnexplained: (steps) =>
+      ` / Runs on the default image with no reason: ${steps} (the Orchestrator chose nothing from images and gave no reason why none fits)`,
     imagesJoin: ", ",
     stepsExports: (exports) => ` / Export: ${exports}`,
     stepsNoTests: (reason) => ` / No tests in the repository: ${reason}`,

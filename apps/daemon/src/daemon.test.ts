@@ -3294,7 +3294,8 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       await service.runNext(task.id);
       const prompt = executor.calls[0]?.command.join(" ") ?? "";
       expect(prompt).toContain("- java：Java 17・Maven");
-      expect(prompt).toContain("- default：既定のイメージ");
+      // 既定のイメージは候補に並べない（PBI-105）
+      expect(prompt).not.toContain("- default：既定のイメージ");
       const chosen = service.get(task.id)?.activity.find((e) => e.type === "StepsChosen");
       // 工程の名前でないもの（bogus）と、選んだ工程に無いもの（reproduce）は捨てる
       expect(chosen?.type === "StepsChosen" && chosen.payload.images).toEqual({
@@ -3306,6 +3307,8 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       expect(chosen?.type === "StepsChosen" && chosen.payload).toMatchObject({
         imageSource: "orchestrator",
         imageReason: "pom.xml が Java 17",
+        // 調査は default と書いて理由が無い、要求要件は書かなかった（PBI-105）
+        imagesUnexplained: ["investigate", "requirements"],
       });
       // オーケストレーターは既定のイメージ。調査は default を選んだので既定のイメージ（環境変数なし）
       expect(executor.images.slice(0, 2)).toEqual([
@@ -3313,6 +3316,106 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         { image: "sacty-agent:test" },
       ]);
       activity.close();
+    });
+
+    it("images の候補を見せたら、既定のイメージで動かす工程ごとに、合わない理由か、理由が無いことを記録する（PBI-105）", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const { service, executor } = makeService(
+        activity,
+        [
+          planOutput(
+            ', "images": {"requirements": "default", "design": "java", "implement": "java"}, "imageReason": "pom.xml", "defaultReasons": {"requirements": "文書だけで、Java のツールは要らない", "design": "java を選んだ工程の理由は捨てる", "pr": "PR 作成は対象外", "reproduce": "選んでいない工程"}',
+          ),
+          completed(10),
+        ],
+        { realPlanner: true, config: withImages() },
+      );
+      const task = service.createTask({ projectId: "default", title: "決済API" });
+      await service.runNext(task.id);
+      const chosen = service.get(task.id)?.activity.find((e) => e.type === "StepsChosen");
+      expect(chosen?.type === "StepsChosen" && chosen.payload.defaultImageReasons).toEqual({
+        requirements: "文書だけで、Java のツールは要らない",
+      });
+      // 調査はイメージを書かなかった。PR 作成は対象にしない
+      expect(chosen?.type === "StepsChosen" && chosen.payload.imagesUnexplained).toEqual([
+        "investigate",
+      ]);
+      // 理由が無くても止めずに、既定のイメージで進める（作業履歴と画面に出す）
+      expect(executor.images[1]).toEqual({ image: "sacty-agent:test" });
+      activity.close();
+    });
+
+    it("イメージを1つも書かなかったら、PR 作成を除く工程すべてを、理由が無いまま既定のイメージで動かすと記録する（PBI-105）", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const { service } = makeService(activity, [planOutput(""), completed(10)], {
+        realPlanner: true,
+        config: withImages(),
+      });
+      const task = service.createTask({ projectId: "default", title: "決済API" });
+      await service.runNext(task.id);
+      const chosen = service.get(task.id)?.activity.find((e) => e.type === "StepsChosen");
+      expect(chosen?.type === "StepsChosen" && chosen.payload).toMatchObject({
+        imagesUnexplained: ["investigate", "requirements", "design", "implement"],
+      });
+      expect(chosen?.type === "StepsChosen" && chosen.payload.images).toBeUndefined();
+      activity.close();
+    });
+
+    it("images が無い・プロジェクトの対象でイメージを指定しているときは、既定のイメージの理由を求めず、記録もしない（PBI-105）", async () => {
+      const output = planOutput(
+        ', "images": {"implement": "default"}, "defaultReasons": {"implement": "x"}',
+      );
+      // images が無い
+      const activity = new SqliteActivityStore(dbPath);
+      const { service, executor } = makeService(activity, [output, completed(10)], {
+        realPlanner: true,
+      });
+      const task = service.createTask({ projectId: "default", title: "決済API" });
+      await service.runNext(task.id);
+      const prompt = executor.calls[0]?.command.join(" ") ?? "";
+      expect(prompt).not.toContain("defaultReasons");
+      expect(prompt).not.toContain("最後の手段");
+      const chosen = service.get(task.id)?.activity.find((e) => e.type === "StepsChosen");
+      expect(chosen?.type === "StepsChosen" && chosen.payload).not.toHaveProperty(
+        "defaultImageReasons",
+      );
+      expect(chosen?.type === "StepsChosen" && chosen.payload).not.toHaveProperty(
+        "imagesUnexplained",
+      );
+      activity.close();
+
+      // プロジェクトの対象で指定している
+      const second = new SqliteActivityStore(join(dir, "second.db"));
+      const projects = new MemoryProjectStore();
+      projects.put("default", {
+        name: "デフォルト",
+        targets: [{ scope: "repo", target: "https://github.com/acme/app", image: "default" }],
+        githubAccounts: { "github.com": "me" },
+      });
+      const made = makeService(second, [output, completed(10)], {
+        realPlanner: true,
+        config: withImages(),
+        projects,
+      });
+      const pinned = made.service.createTask({
+        projectId: "default",
+        title: "決済API",
+        repo: "https://github.com/acme/app",
+      });
+      await made.service.runNext(pinned.id);
+      expect(made.executor.calls[0]?.command.join(" ") ?? "").not.toContain("defaultReasons");
+      const picked = made.service.get(pinned.id)?.activity.find((e) => e.type === "StepsChosen");
+      expect(picked?.type === "StepsChosen" && picked.payload).toMatchObject({
+        imageSource: "project",
+        images: { implement: "default" },
+      });
+      expect(picked?.type === "StepsChosen" && picked.payload).not.toHaveProperty(
+        "defaultImageReasons",
+      );
+      expect(picked?.type === "StepsChosen" && picked.payload).not.toHaveProperty(
+        "imagesUnexplained",
+      );
+      second.close();
     });
 
     it("実装の工程とテストは、選んだイメージとその環境変数で実行する", async () => {
@@ -14719,6 +14822,39 @@ describe("リポジトリを指定しないタスク（PBI-73）", () => {
     const done = service.get(id)?.task;
     expect(done && isCompleted(done)).toBe(true);
     expect(done?.repository).toBeUndefined();
+    activity.close();
+  });
+
+  it("images があっても、リポジトリの無いまま進める工程には、既定のイメージの理由を求めない（PBI-105）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service, executor } = makeService(
+      activity,
+      [plan({ plan: "investigate", investigation: "content" }), out("# 調査の結果")],
+      {
+        projects: twoRepos(),
+        realPlanner: true,
+        config: () => ({
+          ok: true,
+          config: {
+            ...(configOf(agent())() as { ok: true; config: SactyConfig }).config,
+            images: {
+              java: { name: "java", image: "sacty-agent-java:test", description: "Java", env: {} },
+            },
+          },
+        }),
+      },
+    );
+    const { id } = service.createTask({ projectId: "default", title: "認証の仕組みを調べる" });
+    await service.runNext(id);
+    expect(promptOf(executor, 0)).not.toContain("defaultReasons");
+    const chosen = chosenOf(activity, id);
+    expect(chosen?.type === "StepsChosen" && chosen.payload.steps).toEqual(["investigate"]);
+    expect(chosen?.type === "StepsChosen" && chosen.payload).not.toHaveProperty(
+      "imagesUnexplained",
+    );
+    expect(chosen?.type === "StepsChosen" && chosen.payload).not.toHaveProperty(
+      "defaultImageReasons",
+    );
     activity.close();
   });
 

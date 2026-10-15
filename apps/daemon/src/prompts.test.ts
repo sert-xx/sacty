@@ -361,9 +361,10 @@ describe("工程の選択と内容の調査では、開発のセットアップ�
       images: [{ name: "java17", description: "Java 17・Maven" }],
     });
     expect(prompt).toContain("- images：工程ごとに使う実行のイメージ");
-    expect(prompt).toContain("  - default：既定のイメージ");
     expect(prompt).toContain("  - java17：Java 17・Maven");
-    expect(prompt).toContain('"images": {"implement": "イメージの名前"}');
+    expect(prompt).toContain(
+      '"images": {"investigate": "イメージの名前", "implement": "イメージの名前"}',
+    );
 
     const output = (images: unknown, imageReason?: unknown) =>
       `\`\`\`json\n${JSON.stringify({ "sacty-steps": { plan: "standard", reason: "r", images, imageReason } })}\n\`\`\``;
@@ -384,6 +385,50 @@ describe("工程の選択と内容の調査では、開発のセットアップ�
     expect(extractStepPlan(output("java17"))).not.toHaveProperty("images");
     expect(extractStepPlan(output({}))).not.toHaveProperty("images");
     expect(extractStepPlan(output(undefined))).not.toHaveProperty("imageReason");
+  });
+
+  it("既定のイメージは候補に並べず、どれも合わないときの最後の手段として中身のとおりに説明し、理由を書かせる（PBI-105）", () => {
+    const repoTask = { title: "x", body: "", steps: [] } as unknown as Task;
+    const prompt = buildOrchestratorPrompt(repoTask, {
+      images: [{ name: "node-pw", description: "Node.js 22・Playwright" }],
+    });
+    // 候補の1つとして並べない・書かない工程を default にしない
+    expect(prompt).not.toMatch(/^\s*- default：/m);
+    expect(prompt).not.toContain("書かない工程は default");
+    // 最後の手段として、中身のとおりに説明する
+    expect(prompt).toContain(
+      "既定のイメージ（default）は、images のどれも合わないときの最後の手段。オーケストレーター用の最低限のもの",
+    );
+    expect(prompt).toContain(
+      "テストのブラウザ・DB のクライアント・ほかの言語のツールは入っていない",
+    );
+    expect(prompt).toContain("リポジトリが Node.js でも、images に合うものがあれば、そちらを選ぶ");
+    // 工程それぞれに images から選ばせ、default を使う工程には理由を書かせる
+    expect(prompt).toContain(
+      "それぞれに、次のイメージから合うものの名前を書く。工程を書き漏らさない",
+    );
+    expect(prompt).toContain("defaultReasons に、その工程で images のどれも合わない理由を書く");
+    expect(prompt).toContain('"defaultReasons": {"工程": "images のどれも合わない理由"}');
+    // テストを実行するイメージは、テストのコマンドとリポジトリの依存から選ばせる
+    expect(prompt).toContain(
+      "テストを実行するイメージ（実装の工程。不具合の修正では再現の工程も）は、testCommand と、リポジトリの依存",
+    );
+    expect(prompt).toContain("Playwright・Cypress などのブラウザのテスト、DB のクライアント");
+    // images が無いときは、既定のイメージの説明も出さない
+    const none = buildOrchestratorPrompt(repoTask);
+    expect(none).not.toContain("defaultReasons");
+    expect(none).not.toContain("最後の手段");
+
+    const output = (defaultReasons: unknown) =>
+      `\`\`\`json\n${JSON.stringify({ "sacty-steps": { plan: "standard", reason: "r", images: { design: "default" }, defaultReasons } })}\n\`\`\``;
+    expect(
+      extractStepPlan(
+        output({ design: " 設計は文書だけ ", nope: "x", implement: "", requirements: 3 }),
+      ),
+    ).toMatchObject({ defaultReasons: { design: "設計は文書だけ" } });
+    expect(extractStepPlan(output({ design: "" }))).not.toHaveProperty("defaultReasons");
+    expect(extractStepPlan(output("理由"))).not.toHaveProperty("defaultReasons");
+    expect(extractStepPlan(output(undefined))).not.toHaveProperty("defaultReasons");
   });
 
   it("共用の compose は名前で選ばせ、使う・使わない理由を書かせる。設定が無い・対象リポジトリが無いなら聞かない（PBI-70）", () => {
