@@ -11,6 +11,7 @@ import {
   type Task,
 } from "@sacty/core";
 import type { LabelMessages } from "@/i18n/messages/labels";
+import type { TaskMessages } from "@/i18n/messages/task";
 
 /** 画面の表示ラベル。文言は画面の言語の辞書（i18n/messages/labels）から取る。 */
 export const usd = formatUsd;
@@ -91,6 +92,53 @@ export function statusTone(task: Task): StatusTone {
  */
 export function usesTestCommand(task: Task): boolean {
   return task.steps.some((s) => s.key === "implement");
+}
+
+/**
+ * 実装の成果物に出す、テストの結果と最終レビュー。それぞれ、今の提出の検証のものか（current）を返す（PR #105 再レビュー指摘）。
+ * - 今の提出の検証が始まった（verification が pending）なら、どちらも前の提出のもの
+ * - 最終レビューは、最新のテストの結果（テストを飛ばしたなら、飛ばした時）より後のものだけが今の検証のもの
+ * 前の提出のものは、隠さずに「前の提出の」と区別して出す。
+ */
+export function verificationResults(task: Task): {
+  tests?: NonNullable<Task["lastTests"]>;
+  testsCurrent: boolean;
+  review?: NonNullable<Task["lastReview"]>;
+  reviewCurrent: boolean;
+} {
+  const tests = task.lastTests;
+  const review = task.lastReview;
+  const started = task.verification === "pending";
+  const checkedAt = task.testsSkippedAt ?? tests?.at;
+  return {
+    ...(tests ? { tests } : {}),
+    testsCurrent: Boolean(tests) && !started,
+    ...(review ? { review } : {}),
+    reviewCurrent: Boolean(review && checkedAt && review.at >= checkedAt) && !started,
+  };
+}
+
+/**
+ * テストの仕組みが無いタスク（PBI-94）で、テストの無い観点を、今の提出について目的から判定し終えたか（今の提出の最終レビューが
+ * ある）。まだなら、対応表の実行結果は「未実行」にする（検証待ちの間に「目的から判定」と出さない。PR #105 再レビュー指摘）。
+ */
+export function judgedByGoalForCurrent(task: Task): boolean {
+  return Boolean(task.noTestsReason) && verificationResults(task).reviewCurrent;
+}
+
+/**
+ * テストの仕組みが無いタスク（PBI-94）の、今の実装の提出についての、実装で用意したテストの状態。画面の注記と工程の欄を、今の
+ * 提出の検証の結果で切り替えるのに使う（PR #105 レビュー指摘・再レビュー指摘・再々レビュー指摘）。
+ * - pending：今の提出がテストのコマンドを申告し、まだ実行していない（前の提出のテストの結果は、今の提出のものとして扱わない）
+ * - passed・failed：最新の検証で、実装で用意したテストを実行した結果（failed のあとは、実装のやり直しを待っている）
+ * - undefined：テストを飛ばした・飛ばす（申告が無い）・まだ実装していない・テストのコマンドがあるタスク
+ */
+export function addedTestsResult(task: Task): "pending" | "passed" | "failed" | undefined {
+  if (!task.noTestsReason) return undefined;
+  // 今の提出の検証が始まった（テストの実行待ち）なら、前の提出の結果は使わない
+  if (task.verification === "pending") return task.addedTestCommand ? "pending" : undefined;
+  if (!task.lastTests || task.testsSkippedAt) return undefined;
+  return task.lastTests.passed ? "passed" : "failed";
 }
 
 /**
@@ -206,7 +254,9 @@ export function describeEvent(event: ActivityEvent, l: LabelMessages): string {
                 .join(e.imagesJoin),
             )
           : "") +
-        servicesChoice(event.payload, l)
+        servicesChoice(event.payload, l) +
+        // テストの仕組みが無いと判断した根拠（PBI-94）
+        (event.payload.noTestsReason ? e.stepsNoTests(event.payload.noTestsReason) : "")
       );
     }
     case "TicketTriaged":
@@ -310,6 +360,8 @@ export function describeEvent(event: ActivityEvent, l: LabelMessages): string {
         event.payload.exitCode,
         event.payload.unmappedViewpoints,
       );
+    case "TestsSkipped":
+      return e.TestsSkipped;
     case "FinalReviewed": {
       const failures =
         event.payload.viewpoints.filter((v) => !v.verified).length +
@@ -580,4 +632,26 @@ const stampFormats = {
 /** 作業履歴などの日時（月/日 時:分）。 */
 export function formatStamp(iso: string, locale: "ja" | "en" = "ja"): string {
   return stampFormats[locale].format(new Date(iso));
+}
+
+/**
+ * テストの仕組みが無いタスク（PBI-94）の、工程の欄のテストのコマンドの文。合格のときだけ「検証し、目的から判定します」とし、
+ * 不合格・実行待ちはそれぞれの文にする（PR #105 再々レビュー指摘）。
+ */
+export function testCommandOfNoTests(
+  task: Task,
+  reason: string,
+  m: Pick<
+    TaskMessages,
+    "testCommandAdded" | "testCommandAddedFailed" | "testCommandAddedPending" | "testCommandNone"
+  >,
+): string {
+  const added = addedTestsResult(task);
+  if (added === "passed" && task.lastTests)
+    return m.testCommandAdded(task.lastTests.command, reason);
+  if (added === "failed" && task.lastTests) {
+    return m.testCommandAddedFailed(task.lastTests.command, reason);
+  }
+  if (added === "pending") return m.testCommandAddedPending(task.addedTestCommand ?? "", reason);
+  return m.testCommandNone(reason);
 }

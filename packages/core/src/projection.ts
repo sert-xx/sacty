@@ -415,6 +415,15 @@ export type Task = {
   reviewRound?: number;
   /** オーケストレーターが決めた、テストのコマンド（PBI-25）。 */
   testCommand?: string;
+  /**
+   * オーケストレーターが、対象リポジトリにテストの仕組みが無いと判断した根拠（PBI-94）。これがあるタスクは、テストの
+   * コマンドが無くても進め、実装の検証でテストを飛ばして、ゴールガーディアンがタスクの目的から判定する。
+   */
+  noTestsReason?: string;
+  /** テストの仕組みが無いタスクで、実装の最新の提出が用意して申告した、テストのコマンド（PBI-94）。 */
+  addedTestCommand?: string;
+  /** 最新の検証で、テストのコマンドが無いのでテストを飛ばした時刻（PBI-94）。テストを実行すると無くなる。 */
+  testsSkippedAt?: string;
   /** オーケストレーターが判断した、調査の工程の性質（PBI-43）。無ければ内容の調査として扱う。 */
   investigation?: InvestigationKind;
   /** 工程ごとに使うイメージの名前（PBI-41）。書いていない工程は既定のイメージ。 */
@@ -567,6 +576,9 @@ export function applyEvent(
         state: i === 0 ? ("active" as const) : ("todo" as const),
       }));
       if (event.payload.testCommand) task.testCommand = event.payload.testCommand;
+      if (event.payload.noTestsReason && !event.payload.testCommand) {
+        task.noTestsReason = event.payload.noTestsReason;
+      }
       if (event.payload.investigation) task.investigation = event.payload.investigation;
       if (event.payload.images) task.images = event.payload.images;
       if (event.payload.services) task.services = event.payload.services;
@@ -623,6 +635,7 @@ export function applyEvent(
         }
         if (event.payload.step === "implement") {
           task.testMap = event.payload.testMap;
+          task.addedTestCommand = event.payload.testCommand;
           task.verification = "pending";
         }
         task.outputs = { ...task.outputs, [event.payload.step]: event.payload.output };
@@ -866,6 +879,7 @@ export function applyEvent(
       }
       const tests = { ...event.payload, at: event.at };
       task.lastTests = tests;
+      task.testsSkippedAt = undefined;
       if (event.payload.passed) {
         task.verification = "tests_passed";
       } else {
@@ -873,6 +887,17 @@ export function applyEvent(
       }
       break;
     }
+
+    case "TestsSkipped":
+      // テストの仕組みが無いタスクだけが、テストを飛ばせる（PBI-94）
+      if (task.status !== "idle" || task.verification !== "pending" || !task.noTestsReason) {
+        throw new ActivityIntegrityError(event, "tests cannot be skipped");
+      }
+      // 前の回のテストの結果（実装が用意したテスト）を、今回の結果に見せない
+      task.lastTests = undefined;
+      task.testsSkippedAt = event.at;
+      task.verification = "tests_passed";
+      break;
 
     case "FinalReviewed": {
       if (task.status !== "idle" || task.verification !== "tests_passed") {
