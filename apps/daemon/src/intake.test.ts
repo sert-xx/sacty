@@ -143,7 +143,7 @@ describe("GitHub Issue の定期的な取り込み（PBI-5a）", () => {
   it("間隔ごとに取り込み元を検索してタスクにし、状況を記録する", async () => {
     const { activity, service, search, intake, advance } = setup();
     await intake.tick();
-    expect(search.queries).toEqual(['is:open repo:acme/payments label:"sacty"']);
+    expect(search.queries).toEqual(['is:open is:issue repo:acme/payments label:"sacty"']);
     expect(service.list().map((t) => t.title)).toEqual(["冪等性キー"]);
     expect(service.status().intake).toMatchObject({ imported: 1 });
 
@@ -181,14 +181,14 @@ describe("GitHub Issue の定期的な取り込み（PBI-5a）", () => {
       githubAccounts: { "github.com": "me" },
       targets: [{ scope: "repo", target: "https://github.com/acme/deleted" }],
     });
-    search.failQuery = 'is:open repo:acme/deleted label:"sacty"';
+    search.failQuery = 'is:open is:issue repo:acme/deleted label:"sacty"';
     await intake.tick(true);
     expect(service.list().map((t) => t.source?.repo)).toEqual(["https://github.com/acme/payments"]);
     const status = service.status().intake;
     expect(status?.imported).toBe(1);
     expect(status?.errors).toEqual([
       {
-        query: 'is:open repo:acme/deleted label:"sacty"',
+        query: 'is:open is:issue repo:acme/deleted label:"sacty"',
         message: "Issue を検索できませんでした：GitHub API 422 [REDACTED]",
       },
     ]);
@@ -216,21 +216,21 @@ describe("GitHub Issue の定期的な取り込み（PBI-5a）", () => {
     await intake.tick(true);
     // 既定（アカウント未設定）はアクティブなアカウント、副業は選んだアカウントのトークン
     expect(search.queries).toEqual([
-      'is:open repo:acme/payments label:"sacty"',
-      'is:open repo:side/app label:"sacty"',
+      'is:open is:issue repo:acme/payments label:"sacty"',
+      'is:open is:issue repo:side/app label:"sacty"',
     ]);
     expect(search.tokens).toEqual(["ghp_active", "ghp_side"]);
     expect(gh.requested).toEqual(["me", "side-job", "logged-out"]);
     expect(service.status().intake?.errors).toEqual([
       {
-        query: 'is:open repo:old/app label:"sacty"',
+        query: 'is:open is:issue repo:old/app label:"sacty"',
         message: {
           code: "github.accountUnavailable",
           params: { account: "logged-out", host: "github.com" },
         },
       },
       {
-        query: 'is:open repo:imported/app label:"sacty"',
+        query: 'is:open is:issue repo:imported/app label:"sacty"',
         message: {
           code: "github.accountRequired",
           params: { project: "インポートしたもの", host: "github.com" },
@@ -288,9 +288,9 @@ describe("GitHub Issue の定期的な取り込み（PBI-5a）", () => {
     await intake.tick(true);
     expect(search.hosts).toEqual(["github.com", "ghe.example.co.jp", "ghe2.example.co.jp"]);
     expect(search.queries).toEqual([
-      'is:open repo:acme/payments label:"sacty"',
-      'is:open repo:acme/payments label:"sacty"',
-      'is:open org:acme label:"sacty"',
+      'is:open is:issue repo:acme/payments label:"sacty"',
+      'is:open is:issue repo:acme/payments label:"sacty"',
+      'is:open is:issue org:acme label:"sacty"',
     ]);
     expect(search.tokens).toEqual(["ghp_secret", "ghp_corp", "ghp_corp2"]);
     // 同じ owner/name・番号でも、ホストが違えば別の Issue として、それぞれのプロジェクトに取り込む
@@ -321,7 +321,7 @@ describe("GitHub Issue の定期的な取り込み（PBI-5a）", () => {
     });
     await intake.tick(true);
     expect(search.queries).toEqual([
-      'is:open repo:acme/payments label:"sacty"',
+      'is:open is:issue repo:acme/payments label:"sacty"',
       "is:open is:pr repo:acme/payments user-review-requested:me",
     ]);
     const pr = service.list().find((t) => t.source?.number === 9);

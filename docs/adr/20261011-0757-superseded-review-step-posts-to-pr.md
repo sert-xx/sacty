@@ -4,7 +4,7 @@
 - ステータス: 置き換え済み（superseded）
 - 関係する PR・タスク: #25、PBI-19
 - 置き換え元: なし
-- 置き換え先: [sacty が作る PR に取り込むラベルを付け、別のタスクのレビューを元のタスクの PR の指摘として取り込む](20261014-1445-label-sacty-pull-requests-for-review.md)（sacty が投稿したレビューを PR の指摘から除く部分）
+- 置き換え先: [sacty が作る PR に取り込むラベルを付け、別のタスクのレビューを元のタスクの PR の指摘として取り込む](20261014-1445-superseded-label-sacty-pull-requests-for-review.md)（sacty が投稿したレビューを PR の指摘から除く部分）
 
 ## 背景
 

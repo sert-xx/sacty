@@ -5,7 +5,7 @@
 承認ゲートのある工程は、人間が承認すると次の工程へ進む。承認は、sacty の画面で行うか、対象のリポジトリへの PR のマージで行う
 （承認＝マージ）。差し戻すと、選んだ工程からやり直す。同じ工程への差し戻しが上限を超えると、エスカレーション（人間の判断待ち）になる。
 
-関係する ADR: [sacty が作る PR に取り込むラベルを付け、別のタスクのレビューを元のタスクの PR の指摘として取り込む](../adr/20261014-1445-label-sacty-pull-requests-for-review.md)、[sacty が作る PR の本文を、リポジトリ・Org の PR テンプレートの見出しに沿って決まった規則で埋める](../adr/20261014-1517-pr-body-follows-repository-template.md)、[実装に変更が無ければ PR を作らず、人間が確かめて変更なしで完了にする](../adr/20261014-2216-complete-without-changes.md)
+関係する ADR: [取り込みを「Issue の取り込み」と「PR のレビューの取り込み」に分け、sacty の PR にはレビュー用のラベルを付ける](../adr/20261015-0240-split-issue-and-pr-review-intake.md)、[sacty が作る PR に取り込むラベルを付け、別のタスクのレビューを元のタスクの PR の指摘として取り込む](../adr/20261014-1445-superseded-label-sacty-pull-requests-for-review.md)、[sacty が作る PR の本文を、リポジトリ・Org の PR テンプレートの見出しに沿って決まった規則で埋める](../adr/20261014-1517-pr-body-follows-repository-template.md)、[実装に変更が無ければ PR を作らず、人間が確かめて変更なしで完了にする](../adr/20261014-2216-complete-without-changes.md)
 
 ## 画面での承認
 
@@ -55,13 +55,13 @@ PR作成の工程で、実装の作業領域が起点のコミットから何も
 
 コード: `apps/daemon/src/service.ts`（`stepPullRequestsOn`・`taskBranchName`・`publishStepPullRequest`・`publish`）、`packages/core/src/events.ts`（`StepPullRequestKey`・`DEFAULT_DOCUMENTS_DIR`・`isDocumentsDir`）、`packages/core/src/projection.ts`（`stepDocumentPath`）、`apps/daemon/src/prompts.ts`（`buildStepDocument`）
 
-## PR の取り込むラベル
+## PR のレビュー用のラベル
 
-sacty が作る PR すべて（実装の PR と、要求要件・設計の PR）に、作った直後に取り込むラベル（sacty の設定 `intakeLabel`）を付ける。
+sacty が作る PR すべて（実装の PR と、要求要件・設計の PR）に、作った直後にレビュー用のラベル（sacty の設定 `reviewLabel`）を付ける。
 別のタスク（PR のレビューだけのタスク）として取り込ませ、作ったタスクとは別のコンテキストでレビューさせるため
-（[チケットの取り込みと GitHub](intake.md)）。
+（[チケットの取り込みと GitHub](intake.md)）。取り込むラベル（`intakeLabel`）は付けない。
 
-- 取り込むラベルを設定していない、または PR のトリアージを Off にしている（`triageOff` に `pullRequests`。付けても取り込まれない）なら、
+- レビュー用のラベルを設定していない、またはそのトリアージを Off にしている（`triageOff` に `reviewLabel`。付けても取り込まれない）なら、
   付けない。何も記録しない。
 - リポジトリにラベルが無ければ（`GET /repos/<owner>/<name>/labels/<ラベル>` が 404）、作ってから（`POST .../labels`、色 `0e8a16`）
   PR に付ける（`POST .../issues/<番号>/labels`）。作っている間にほかで作られた（422 の `already_exists`）ときは、そのまま付ける。
@@ -72,10 +72,11 @@ sacty が作る PR すべて（実装の PR と、要求要件・設計の PR）
   付け直さない・失敗しても付け直さない）。記録の無い PR（設定する前に作った PR など）は、次に更新したときに付ける。
   PR を作り直した（前の PR がマージ・クローズされて、新しい番号の PR を作った）ときは、新しい PR に付ける。
 - 中止・一時停止を求められて、要求要件・設計の PR を記録しなかったときは付けない。
-- 付ける予定を、PR の公開の記録（`PullRequestPublished`・`StepPullRequestPublished` の `intakeLabel`）に残してから付ける。公開を
+- 付ける予定を、PR の公開の記録（`PullRequestPublished`・`StepPullRequestPublished` の `label`）に残してから付ける。公開を
   記録した後、付ける前に止まった（停止・クラッシュ）PR は、PR の確認（60秒ごと。再起動の後も）で、予定があり、付けた・付けられなかった
-  記録が無く、開いている PR に付ける。中止したタスク、いまは付けない設定（取り込むラベルが無い・PR のトリアージが Off）なら付けない。
-  同じ PR を付けている途中なら、重ねて付けない。
+  記録が無く、開いている PR に付ける。付けるのは、そのときの設定のレビュー用のラベル。中止したタスク、いまは付けない設定（レビュー用の
+  ラベルが無い・そのトリアージが Off）なら付けない。同じ PR を付けている途中なら、重ねて付けない。
+- それより前の記録の `intakeLabel`（取り込むラベルを付ける予定）は、読み込めるが、付ける予定としては扱わない（台帳は書き換えない）。
 
 コード: `apps/daemon/src/service.ts`（`labelPullRequest`・`labelDue`・`resumePullRequestLabels`・`publishStepPullRequest`・`publish`）、`apps/daemon/src/github.ts`（`GitHubPullRequests.addLabel`）、`packages/core/src/projection.ts`（`pullRequestLabels`）
 
@@ -155,7 +156,7 @@ sacty が PR を作る・更新するとき（実装の PR と、要求要件・
 - この PR をレビューした sacty のタスク（PR を指すタスク。取り込んだ PR か、本文の PR の URL）の投稿は、そのタスクのプロジェクトのアカウント
   （元のタスクのアカウントと違うことがある）と、目印（`<!-- sacty-review:<タスク ID>[:<回>] -->`）の回で判定する。bot の判定より先に見るので、
   そのアカウントが bot（GitHub App など）でも同じ。
-  - 取り込むラベルで取り込んだレビューだけのタスク（`source.review: sacty`）の、直すべき指摘のある回（`reviewVerdicts` の `changesRequested`
+  - レビュー用のラベルで取り込んだ、sacty が作った PR のレビューだけのタスク（`source.review: sacty`）の、直すべき指摘のある回（`reviewVerdicts` の `changesRequested`
     が `false` でない回。評価を読めなかった回も、指摘を落とさないように含める）は、指摘として取り込む（作ったタスクとは別のタスクのレビューを、
     元のタスクに届けるため）。
   - ほかの回（直すべき指摘の無い回・まだ実行していない回）と、ほかのレビューのタスクの投稿は、アカウントが元のタスクと違っても取り込まない

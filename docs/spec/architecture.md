@@ -93,9 +93,11 @@ sacty up（packages/cli）
 - `config.yaml`（ファイル）：AI のエージェント・認証・イメージ・ゲートウェイ・取り込みの間隔など、マシンの設定。項目は
   [設定（config.yaml）](configuration.md)。
 - sacty の設定（`sacty.db` の `settings` テーブルの1行）：画面の「sacty の設定」で変える、すべてのプロジェクトに共通の設定。
-  取り込むラベル（`intakeLabel`）・チケットの取り込むラベル（`ticketLabel`）・PR のレビュー用のラベル（`reviewLabel`）・
-  自分へのレビュー依頼の取り込み（`reviewRequested`）・Off にしたトリアージの種類（`triageOff`）・同時に実行するタスクの数
-  （`maxParallelTasks`。既定 3）。
+  取り込むラベル（`intakeLabel`。Issue だけ）・チケットの取り込むラベル（`ticketLabel`）・PR のレビュー用のラベル（`reviewLabel`）・
+  自分へのレビュー依頼の取り込み（`reviewRequested`）・Off にしたトリアージの種類（`triageOff`。`issues`・`reviewLabel`・`tickets`）・
+  同時に実行するタスクの数（`maxParallelTasks`。既定 3）。
+  - 設定の保存先を開くとき（デーモンの起動のとき）、消した項目（`triageOff` の `pullRequests`）が保存されていれば消して書き直す
+    （消すものが無ければ書かない）。
 - プロジェクト（`sacty.db`）：対象・GitHub のアカウント・コンテキストリポジトリ・通知・共用の compose・チケットの取り込みなど。
 
-コード: `apps/daemon/src/settings.ts`（`SqliteSettingsStore`）、`packages/core/src/projects.ts`（`SactySettings`・`DEFAULT_MAX_PARALLEL_TASKS`）、`apps/daemon/src/projects.ts`
+コード: `apps/daemon/src/settings.ts`（`SqliteSettingsStore`・`dropRemovedItems`）、`packages/core/src/projects.ts`（`SactySettings`・`DEFAULT_MAX_PARALLEL_TASKS`）、`apps/daemon/src/projects.ts`

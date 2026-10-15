@@ -4,7 +4,7 @@
 - タスク: PBI-88
 - PR: #96
 - ブランチ: feat/issue-88-pr-intake-label
-- 関係する ADR: [sacty が作る PR に取り込むラベルを付け、別のタスクのレビューを元のタスクの PR の指摘として取り込む](../adr/20261014-1445-label-sacty-pull-requests-for-review.md)
+- 関係する ADR: [sacty が作る PR に取り込むラベルを付け、別のタスクのレビューを元のタスクの PR の指摘として取り込む](../adr/20261014-1445-superseded-label-sacty-pull-requests-for-review.md)
 
 ## 目的
 

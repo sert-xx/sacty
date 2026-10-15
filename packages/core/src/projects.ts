@@ -50,18 +50,17 @@ const IntakeLabelInput = z.preprocess(
 
 /**
  * sacty 全体の設定（プロジェクトとは別。PBI-26）。intakeLabel は、すべてのプロジェクトの対象で取り込む
- * Issue・PR のラベル。設定していなければ取り込まない。maxParallelTasks は、同時に実行するタスクの数
+ * Issue のラベル（PR は取り込まない。PBI-99）。設定していなければ取り込まない。maxParallelTasks は、同時に実行するタスクの数
  * （設定していなければ DEFAULT_MAX_PARALLEL_TASKS。PBI-30）。
- * reviewRequested と reviewLabel は、PR のレビューだけを行う取り込み（PBI-44）。reviewRequested は、自分
- * （そのホストでプロジェクトに選んだ gh のアカウント）にレビューが依頼された PR を取り込むか、reviewLabel は
- * PR のレビュー用のラベル（Issue は取り込まない）。
+ * reviewRequested と reviewLabel は、PR のレビューだけを行う取り込み（PBI-44）。PR を取り込むのはこれだけ（PBI-99）。
+ * reviewRequested は、自分（そのホストでプロジェクトに選んだ gh のアカウント）にレビューが依頼された PR を取り込むか、
+ * reviewLabel は PR のレビュー用のラベル（Issue は取り込まない。sacty が作る PR にも付ける。PBI-88・PBI-99）。
  */
 /**
- * 自動のトリアージの種類（PBI-53）。issues：取り込むラベルの Issue、pullRequests：取り込むラベルの PR、
- * reviewLabel：レビュー用のラベルの PR、tickets：チケット（JIRA など。PBI-52）。自分へのレビューの依頼は、
- * reviewRequested の切り替えで決める。
+ * 自動のトリアージの種類（PBI-53）。issues：取り込むラベルの Issue、reviewLabel：レビュー用のラベルの PR、
+ * tickets：チケット（JIRA など。PBI-52）。自分へのレビューの依頼は、reviewRequested の切り替えで決める。
  */
-export const TriageKind = z.enum(["issues", "pullRequests", "reviewLabel", "tickets"]);
+export const TriageKind = z.enum(["issues", "reviewLabel", "tickets"]);
 export type TriageKind = z.infer<typeof TriageKind>;
 
 export const SactySettings = z.object({
@@ -98,6 +97,24 @@ export const SactySettings = z.object({
 });
 export type SactySettings = z.infer<typeof SactySettings>;
 export type SactySettingsInput = z.input<typeof SactySettings>;
+
+/**
+ * 保存するときの sacty 全体の設定（PBI-99）。取り込むラベルとレビュー用のラベルに同じ名前（大文字・小文字は区別しない）は
+ * 書けない（Issue の取り込みと PR のレビューの取り込みを、ラベルで分けるため）。
+ */
+export const SactySettingsUpdate = SactySettings.superRefine((settings, ctx) => {
+  if (
+    settings.intakeLabel &&
+    settings.reviewLabel &&
+    settings.intakeLabel.toLowerCase() === settings.reviewLabel.toLowerCase()
+  ) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["reviewLabel"],
+      message: code("input.sameIntakeAndReviewLabel"),
+    });
+  }
+});
 
 /**
  * コンテキストリポジトリの指定。repo は git の URL かローカルのパス、ref はブランチやタグ

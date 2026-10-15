@@ -22,7 +22,7 @@
 | `deployment` | マージの後の監視で見つけた失敗の修正のタスク（`fix` に元のタスク・種類・目印・段数を持つ。[マージの後の監視](deployment-watch.md)） |
 | `split` | タスク分割の子タスク（`parent` に親の ID と、先に終わるべき子タスク `dependsOn` を持つ） |
 
-- PR のレビューだけのタスクは、`source.review`（`requested`・`label`、sacty が作り取り込むラベルを付けた PR なら `sacty`）を持つ。
+- PR のレビューだけのタスクは、`source.review`（`requested`・`label`、sacty が作りレビュー用のラベルを付けた PR なら `sacty`）を持つ。
 - 画面で作るとき、リポジトリを指定しない（`repo: null`）か、指定を省いてプロジェクトの対象がリポジトリ1つだけではないときは、
   リポジトリの無いタスク（`noRepo`）にする。対象が1つも無いプロジェクトでは作れない（`task.repositoryMissing`）。
 - 予算の上限の初期値は `budget.default_per_task_usd`（既定 1 米ドル）。

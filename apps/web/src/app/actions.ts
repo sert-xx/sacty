@@ -319,7 +319,7 @@ export async function saveSettingsAction(
       // チェックを外した種類を Off にする（PBI-53）
       // チケット（PBI-52）
       ticketLabel: String(formData.get("ticketLabel") ?? ""),
-      triageOff: (["issues", "pullRequests", "reviewLabel", "tickets"] as const).filter(
+      triageOff: (["issues", "reviewLabel", "tickets"] as const).filter(
         (kind) => formData.get(`triage-${kind}`) !== "on",
       ),
       maxParallelTasks: String(formData.get("maxParallelTasks") ?? ""),
