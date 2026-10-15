@@ -105,6 +105,7 @@ const PARAMS = {
   "input.sharedComposeFile": null,
   "input.invalidRef": null,
   "input.invalidLabel": null,
+  "input.sameIntakeAndReviewLabel": null,
   "input.notExportFile": null,
   "input.unsupportedVersion": null,
   // 入力の検査のうち、コードを指定していない検査（zod の標準の検査。issueMessage で変換する）
@@ -578,6 +579,8 @@ const ja: MessageDictionary = {
     "共用の compose の compose ファイルは、リポジトリの根からの相対パス（.. や $ を含まない）で入力してください。",
   "input.invalidRef": "ref はブランチ名かタグ名で入力してください。",
   "input.invalidLabel": 'ラベルに " と \\ は使えません。',
+  "input.sameIntakeAndReviewLabel":
+    "PR のレビュー用のラベルには、取り込むラベルとは別の名前を書いてください。",
   "input.notExportFile": "sacty のプロジェクト定義のファイルではありません。",
   "input.unsupportedVersion": `対応していない版です（対応している版：${PROJECT_EXPORT_VERSION}）。`,
   "input.required": "入力してください。",
@@ -762,7 +765,7 @@ const ja: MessageDictionary = {
   "review.pullRequestMissing": ({ repo }) =>
     `タスクに、レビューする PR（${repo} の PR の URL）がありません。`,
   "review.reviewOnly": ({ via }) =>
-    `${via === "requested" ? "自分にレビューが依頼された" : via === "sacty" ? "sacty がほかのタスクで作り、取り込むラベルを付けた" : "レビュー用のラベルの付いた"} PR なので、レビューだけを行います（オーケストレーターは使いません）。`,
+    `${via === "requested" ? "自分にレビューが依頼された" : via === "sacty" ? "sacty がほかのタスクで作った" : "レビュー用のラベルの付いた"} PR なので、レビューだけを行います（オーケストレーターは使いません）。`,
   "review.notRereviewable":
     "再レビューできるのは、レビューを PR に投稿して完了したタスクだけです。",
   "github.ghMissing":
@@ -1002,6 +1005,8 @@ const en: MessageDictionary = {
     "Enter the compose file of the shared compose as a path relative to the repository root (without .. or $).",
   "input.invalidRef": "Enter a branch or tag name as the ref.",
   "input.invalidLabel": "A label can't contain \" or \\.",
+  "input.sameIntakeAndReviewLabel":
+    "Use a different name for the PR review label than the label to import.",
   "input.notExportFile": "This is not a sacty project definition file.",
   "input.unsupportedVersion": `Unsupported version (supported: ${PROJECT_EXPORT_VERSION}).`,
   "input.required": "This field is required.",
@@ -1188,7 +1193,7 @@ const en: MessageDictionary = {
   "review.pullRequestMissing": ({ repo }) =>
     `The task has no PR to review (a URL of a PR in ${repo}).`,
   "review.reviewOnly": ({ via }) =>
-    `The PR ${via === "requested" ? "requests your review" : via === "sacty" ? "was created by sacty in another task and labeled for intake" : "has the review label"}, so sacty only reviews it (the Orchestrator is not used).`,
+    `The PR ${via === "requested" ? "requests your review" : via === "sacty" ? "was created by sacty in another task" : "has the review label"}, so sacty only reviews it (the Orchestrator is not used).`,
   "review.notRereviewable": "Only a task that posted its review to the PR can be reviewed again.",
   "github.ghMissing":
     "The gh command was not found. Install GitHub CLI and sign in with gh auth login.",

@@ -10,7 +10,10 @@ import { useMessages } from "@/i18n/client";
 
 const initial: SaveSettingsState = {};
 
-/** sacty 全体の設定の編集（取り込むラベル。PBI-26。同時に実行するタスクの数。PBI-30）。 */
+/**
+ * sacty 全体の設定の編集（取り込むラベル。PBI-26。同時に実行するタスクの数。PBI-30）。取り込みは「Issue の取り込み」と
+ * 「PR のレビューの取り込み」に分ける（PR を取り込むのはレビューだけ。PBI-99）。
+ */
 export function SettingsForm({
   intakeLabel,
   reviewLabel: savedReviewLabel,
@@ -37,18 +40,12 @@ export function SettingsForm({
   const [reviewLabel, setReviewLabel] = useState(savedReviewLabel);
   const [reviewRequested, setReviewRequested] = useState(savedReviewRequested);
   // トリアージの種類ごとの On/Off（PBI-53）。ラベルは残したまま Off にできる
-  const [on, setOn] = useState({
-    issues: !triageOff.includes("issues"),
-    pullRequests: !triageOff.includes("pullRequests"),
-    reviewLabel: !triageOff.includes("reviewLabel"),
-    tickets: !triageOff.includes("tickets"),
-  });
   const savedOn = {
     issues: !triageOff.includes("issues"),
-    pullRequests: !triageOff.includes("pullRequests"),
     reviewLabel: !triageOff.includes("reviewLabel"),
     tickets: !triageOff.includes("tickets"),
   };
+  const [on, setOn] = useState(savedOn);
   const [ticketLabel, setTicketLabel] = useState(savedTicketLabel);
   const toggle = (kind: keyof typeof on, label: string) => (
     <label className="flex items-center gap-2 text-sm">
@@ -86,10 +83,7 @@ export function SettingsForm({
         <p className="text-sm leading-6 whitespace-pre-line text-muted-foreground">
           {t.intakeHelp}
         </p>
-        <div className="flex flex-wrap gap-x-6 gap-y-2">
-          {toggle("issues", t.triageIssues)}
-          {toggle("pullRequests", t.triagePullRequests)}
-        </div>
+        {toggle("issues", t.triageIssues)}
         <div className="flex flex-col gap-1.5">
           <Label htmlFor={`${uid}-label`}>{t.intakeLabel}</Label>
           <Input
@@ -102,16 +96,8 @@ export function SettingsForm({
             className="max-w-xs"
           />
         </div>
-        <p
-          className={
-            intakeLabel && (savedOn.issues || savedOn.pullRequests)
-              ? "text-sm"
-              : "text-sm text-warn"
-          }
-        >
-          {intakeLabel && (savedOn.issues || savedOn.pullRequests)
-            ? t.intakeOn(intakeLabel, savedOn.issues, savedOn.pullRequests)
-            : t.intakeOff}
+        <p className={intakeLabel && savedOn.issues ? "text-sm" : "text-sm text-warn"}>
+          {intakeLabel && savedOn.issues ? t.intakeOn(intakeLabel) : t.intakeOff}
         </p>
       </section>
       <section
