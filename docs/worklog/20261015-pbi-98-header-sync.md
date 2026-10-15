@@ -2,7 +2,7 @@
 
 - 日付: 2026-10-15（UTC）
 - タスク: PBI-98
-- PR: なし
+- PR: #106
 - ブランチ: feat/issue-98-header-sync
 - 関係する ADR: なし
 
