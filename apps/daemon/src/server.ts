@@ -98,7 +98,17 @@ export function createApp(
   app.get("/api/tasks/:id/runs/:runId/log", (c) => {
     const { id, runId } = c.req.param();
     if (!validLogId(id) || !validLogId(runId)) return c.json({ error: "invalid_id" }, 400);
-    const log = service.sessionLog(id, runId);
+    // ?eventsFrom=&stderrFrom=（バイト）で、実行中は足された分だけを返す（PR #119 レビュー指摘）
+    const offset = (name: string) => {
+      const value = Number(c.req.query(name));
+      return Number.isSafeInteger(value) && value > 0 ? value : undefined;
+    };
+    const eventsFrom = offset("eventsFrom");
+    const stderrFrom = offset("stderrFrom");
+    const log = service.sessionLog(id, runId, {
+      ...(eventsFrom !== undefined ? { events: eventsFrom } : {}),
+      ...(stderrFrom !== undefined ? { stderr: stderrFrom } : {}),
+    });
     return log ? c.json(log) : c.json({ error: "not_found" }, 404);
   });
 

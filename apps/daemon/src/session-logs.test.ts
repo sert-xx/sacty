@@ -9,7 +9,13 @@ import {
   parseClaudeResult,
   parseCodexEvents,
 } from "./agents/parse.js";
-import { SessionLogStore, StreamRedactor, TRUNCATED_EVENT, validLogId } from "./session-logs.js";
+import {
+  completeUtf8Length,
+  SessionLogStore,
+  StreamRedactor,
+  TRUNCATED_EVENT,
+  validLogId,
+} from "./session-logs.js";
 import { waitFor } from "./testing/wait.js";
 
 let dir: string;
@@ -223,6 +229,46 @@ describe("セッションログの保存（PBI-62）", () => {
     expect(read?.meta.truncated).toBeUndefined();
     expect(existsSync(join(dir, "runs", "task-1", "run-1.jsonl"))).toBe(true);
     expect(existsSync(join(dir, "runs", "task-1", "run-1.stderr.log"))).toBe(true);
+  });
+
+  it("実行中は、渡した位置より後（足された分）だけを読む。終わった後は全体を読む（PR #119 レビュー指摘）", () => {
+    const store = new SessionLogStore(join(dir, "runs"));
+    const log = store.open(info, () => []);
+    log.stdout('{"type":"system"}\n');
+    log.stderr("warn: x\n");
+    const first = store.read("task-1", "run-1");
+    expect(first?.events).toBe('{"type":"system"}\n');
+    expect(first?.offsets.events).toEqual({ from: 0, next: 18 });
+    log.stdout('{"type":"assistant","text":"日本語"}\n');
+    const next = store.read("task-1", "run-1", {
+      events: first?.offsets.events.next,
+      stderr: first?.offsets.stderr.next,
+    });
+    // 足された分だけ
+    expect(next?.events).toBe('{"type":"assistant","text":"日本語"}\n');
+    expect(next?.offsets.events.from).toBe(18);
+    expect(next?.stderr).toBe("");
+    expect(next?.offsets.stderr).toEqual({ from: 8, next: 8 });
+    // ファイルより後ろの位置（書き直された）なら全体
+    expect(store.read("task-1", "run-1", { events: 10_000 })?.offsets.events.from).toBe(0);
+    log.close({
+      kind: "completed",
+      output: "ok",
+      usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 0 },
+    });
+    // 終わった後は、閉じるときに書き直されうるので全体
+    const done = store.read("task-1", "run-1", { events: next?.offsets.events.next });
+    expect(done?.offsets.events.from).toBe(0);
+    expect(done?.events).toContain('{"type":"system"}');
+  });
+
+  it("書いている途中の文字（UTF-8 の複数バイトの途中）は、次の読み出しに回す", () => {
+    const bytes = Buffer.from("あい", "utf8");
+    expect(completeUtf8Length(bytes)).toBe(6);
+    expect(completeUtf8Length(bytes.subarray(0, 5))).toBe(3);
+    expect(completeUtf8Length(bytes.subarray(0, 4))).toBe(3);
+    expect(completeUtf8Length(Buffer.from("ab"))).toBe(2);
+    expect(completeUtf8Length(Buffer.alloc(0))).toBe(0);
   });
 
   it("失敗した実行も、伏せた理由と一緒に残す。開いた直後（終わりの前）も、始めたことは残る", () => {

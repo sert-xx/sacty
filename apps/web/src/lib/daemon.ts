@@ -16,6 +16,7 @@ import {
 } from "@sacty/core";
 import { connection } from "next/server";
 import { getMessages } from "@/i18n/server";
+import { currentDaemonSignal } from "@/lib/daemon-signal";
 
 /**
  * デーモンのAPIを呼ぶ。サーバー側でだけ使う（トークンをブラウザに渡さないため）。
@@ -30,9 +31,12 @@ async function daemonFetch(path: string, init: RequestInit = {}): Promise<Respon
   if (!url || !token) {
     throw new DaemonUnavailableError((await getMessages()).common.daemon.notConfigured);
   }
+  // 画面の取り直しの中なら、ブラウザの中断と期限を、デーモンへの問い合わせ（本文を読む間も）に渡す（PR #119 再レビュー指摘）
+  const signal = init.signal ?? currentDaemonSignal();
   try {
     return await fetch(`${url}${path}`, {
       ...init,
+      ...(signal ? { signal } : {}),
       cache: "no-store",
       headers: { ...init.headers, authorization: `Bearer ${token}` },
     });
@@ -568,14 +572,32 @@ export type RunLogMeta = {
   limits: { events: { head: number; tail: number }; stderr: { head: number; tail: number } };
 };
 
-export type RunLog = { meta: RunLogMeta; events: string; stderr: string };
+export type RunLog = {
+  meta: RunLogMeta;
+  events: string;
+  stderr: string;
+  /** 返した文の、ファイルの中の位置（バイト。PR #119 レビュー指摘）。 */
+  offsets: { events: { from: number; next: number }; stderr: { from: number; next: number } };
+};
 
 const runPath = (taskId: string, runId: string) =>
   `/api/tasks/${encodeURIComponent(taskId)}/runs/${encodeURIComponent(runId)}`;
 
-/** 実行のセッションログ（PBI-62）。タスク・ログが無い（ID の形が違うことも含む）なら null。 */
-export async function getRunLog(taskId: string, runId: string): Promise<RunLog | null> {
-  const res = await daemonFetch(`${runPath(taskId, runId)}/log`);
+/**
+ * 実行のセッションログ（PBI-62）。タスク・ログが無い（ID の形が違うことも含む）なら null。from（バイト）を渡すと、
+ * 実行中は、その位置より後（足された分）だけを返す（PR #119 レビュー指摘）。
+ */
+export async function getRunLog(
+  taskId: string,
+  runId: string,
+  from: { events?: number; stderr?: number } = {},
+): Promise<RunLog | null> {
+  const query = new URLSearchParams();
+  if (from.events) query.set("eventsFrom", String(from.events));
+  if (from.stderr) query.set("stderrFrom", String(from.stderr));
+  const res = await daemonFetch(
+    `${runPath(taskId, runId)}/log${query.size > 0 ? `?${query}` : ""}`,
+  );
   if (res.status === 404 || res.status === 400) return null;
   await ensureOk(res);
   return (await res.json()) as RunLog;

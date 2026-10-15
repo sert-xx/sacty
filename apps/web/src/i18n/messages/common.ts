@@ -1,6 +1,12 @@
 /** 画面の文言：共通（読み込み中・デーモンとの通信・actions の結果）。英語の用語は labels.ts の用語集に合わせる。 */
 const ja = {
   loading: "読み込み中…",
+  /** 取り直しで更新できない間に出す（PR #119 レビュー指摘）。 */
+  live: {
+    stale:
+      "いま更新できません（デーモンに届きません）。表示は最後に取得した内容です。届くようになったら、自動で更新します。",
+    staleShort: "更新が止まっています",
+  },
   daemon: {
     notConfigured: "デーモンの接続先が設定されていません。`sacty up` で起動してください。",
     unreachable: "デーモンに接続できません。`sacty up` が動いているか確認してください。",
@@ -33,6 +39,11 @@ export type CommonMessages = typeof ja;
 
 const en: CommonMessages = {
   loading: "Loading…",
+  live: {
+    stale:
+      "Cannot update right now (the daemon cannot be reached). This shows what was last fetched. It updates automatically when the daemon can be reached again.",
+    staleShort: "Updates paused",
+  },
   daemon: {
     notConfigured: "The daemon address is not set. Start sacty with `sacty up`.",
     unreachable: "Cannot reach the daemon. Check that `sacty up` is running.",

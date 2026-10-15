@@ -1,3 +1,5 @@
+"use client";
+
 import {
   type DaemonText,
   type PullRequestMerge,
@@ -5,9 +7,9 @@ import {
   parseRepoUrl,
   type Task,
 } from "@sacty/core";
-import { getMessages } from "@/i18n/server";
+import { useMessages } from "@/i18n/client";
 
-type PullRequestMessages = Awaited<ReturnType<typeof getMessages>>["parts"]["pullRequest"];
+type PullRequestMessages = ReturnType<typeof useMessages>["parts"]["pullRequest"];
 
 /**
  * 人が PR の中で直してからマージしたこと（PBI-63）。sacty が出したコミットと人が直した最終のコミット、GitHub の
@@ -90,11 +92,11 @@ function TemplateUse({
  * sacty が作ったPR（またはブランチ）と、ゴールガーディアンの見逃しの記録。要求要件・設計の PR とタスクブランチ
  * （PBI-57）も並べる。
  */
-export async function PullRequestCard({ task }: { task: Task }) {
+export function PullRequestCard({ task }: { task: Task }) {
+  const messages = useMessages();
   const pr = task.pullRequest;
   const steps = task.stepPullRequests;
   if (!pr && task.misses.length === 0 && steps.length === 0) return null;
-  const messages = await getMessages();
   const m = messages.parts.pullRequest;
   const { step, text } = messages.labels;
   // 最後に PR の指摘で差し戻した戻し先と、ゴールガーディアンの判断の理由（PBI-58・PBI-57）
