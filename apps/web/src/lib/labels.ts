@@ -212,6 +212,31 @@ function servicesChoice(
   return e.stepsNoServices(shared.join(e.imagesJoin), payload.servicesReason);
 }
 
+/**
+ * 既定のイメージで動かす工程と、images のどれも合わない理由（PBI-105）。理由が無いまま既定のイメージで動かす工程も、
+ * そのことを出す（黙って既定のイメージにしない）。
+ */
+function defaultImagesChoice(
+  payload: Extract<ActivityEvent, { type: "StepsChosen" }>["payload"],
+  l: LabelMessages,
+): string {
+  const e = l.event;
+  const reasons = Object.entries(payload.defaultImageReasons ?? {});
+  const unexplained = payload.imagesUnexplained ?? [];
+  return (
+    (reasons.length > 0
+      ? e.stepsDefaultImages(
+          reasons
+            .map(([step, reason]) => e.stepDefaultImage(l.step[step as StepKey], reason ?? ""))
+            .join(e.imagesJoin),
+        )
+      : "") +
+    (unexplained.length > 0
+      ? e.stepsImagesUnexplained(unexplained.map((s) => l.step[s]).join(e.imagesJoin))
+      : "")
+  );
+}
+
 /** 作業履歴の1行を、人が読める文にする。 */
 export function describeEvent(event: ActivityEvent, l: LabelMessages): string {
   const e = l.event;
@@ -246,6 +271,7 @@ export function describeEvent(event: ActivityEvent, l: LabelMessages): string {
               event.payload.imageReason,
             )
           : "") +
+        defaultImagesChoice(event.payload, l) +
         (exports.length > 0
           ? e.stepsExports(
               exports

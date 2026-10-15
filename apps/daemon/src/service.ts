@@ -1660,7 +1660,13 @@ export class TaskService {
     }
     const withShared = this.withSharedCompose(choice, shared);
     if ("failure" in withShared) return withShared;
-    return this.withImages(this.withExports(withShared, exports.destinations), config, pinned);
+    return this.withImages(
+      this.withExports(withShared, exports.destinations),
+      config,
+      pinned,
+      // images の候補を見せたら、既定のイメージで動かす工程の理由を確かめる（PBI-105）
+      candidates.length > 0 && !repoless,
+    );
   }
 
   /**
@@ -2162,13 +2168,23 @@ export class TaskService {
   /**
    * 工程ごとのイメージを決める（PBI-41）。対象の指定があれば、すべての工程でそれを使う。無ければオーケストレーターの
    * 選択（選んだ工程の分だけ）。images に無い名前なら、理由を示して止める（再開すると選び直す）。
+   * offered（images の候補をオーケストレーターに見せた）なら、既定のイメージで動かす工程（PR 作成を除く）ごとに、
+   * images のどれも合わない理由を記録し、理由が無い工程（書かなかった・default と書いて理由が無い）も記録する（PBI-105。
+   * 既定のイメージに黙って倒さない）。
    */
   private withImages(
     choice: ChosenSteps,
     config: SactyConfig,
     pinned: string | undefined,
+    offered = false,
   ): ChosenSteps | { failure: Extract<EventInput, { type: "OrchestratorFailed" }>["payload"] } {
-    const { images: picked, imageReason, ...rest } = choice;
+    const {
+      images: picked,
+      imageReason,
+      defaultImageReasons: reasons,
+      imagesUnexplained: _unexplained,
+      ...rest
+    } = choice;
     const images = pinned
       ? Object.fromEntries(choice.steps.map((step) => [step, pinned]))
       : Object.fromEntries(
@@ -2194,12 +2210,14 @@ export class TaskService {
         },
       };
     }
-    if (Object.keys(images).length === 0) return rest;
+    const defaults = offered && !pinned ? defaultImagesOf(choice.steps, images, reasons) : {};
+    if (Object.keys(images).length === 0) return { ...rest, ...defaults };
     return {
       ...rest,
       images,
       imageSource: pinned ? "project" : "orchestrator",
       ...(!pinned && imageReason ? { imageReason } : {}),
+      ...defaults,
     };
   }
 
@@ -2277,6 +2295,7 @@ export class TaskService {
         ...(chosen.investigation ? { investigation: chosen.investigation } : {}),
         ...(chosen.images ? { images: chosen.images } : {}),
         ...(chosen.imageReason ? { imageReason: chosen.imageReason } : {}),
+        ...(chosen.defaultReasons ? { defaultImageReasons: chosen.defaultReasons } : {}),
         ...(chosen.services ? { services: chosen.services } : {}),
         ...(chosen.servicesReason ? { servicesReason: chosen.servicesReason } : {}),
         ...(chosen.baseBranch ? { baseBranch: chosen.baseBranch } : {}),
@@ -7101,6 +7120,28 @@ function repositoryDirName(repo: string, index: number): string {
     .join("__")
     .replace(/[^\w.-]/g, "_");
   return `${index + 1}-${name || "repo"}`;
+}
+
+/**
+ * 既定のイメージで動かす工程の、images のどれも合わない理由と、理由が無い工程（PBI-105）。PR 作成は、コンテナを使わない（イメージを
+ * 使わない）ので対象にしない。工程のイメージが無い・default なら既定のイメージで動く。理由は、既定のイメージで動く工程の分だけ残す。
+ */
+function defaultImagesOf(
+  steps: readonly StepKey[],
+  images: Partial<Record<StepKey, string>>,
+  reasons: Partial<Record<StepKey, string>> | undefined,
+): { defaultImageReasons?: Partial<Record<StepKey, string>>; imagesUnexplained?: StepKey[] } {
+  const onDefault = steps.filter(
+    (step) => step !== "pr" && (!images[step] || images[step] === DEFAULT_IMAGE_NAME),
+  );
+  const explained = Object.fromEntries(
+    onDefault.flatMap((step) => (reasons?.[step] ? [[step, reasons[step]]] : [])),
+  ) as Partial<Record<StepKey, string>>;
+  const unexplained = onDefault.filter((step) => !reasons?.[step]);
+  return {
+    ...(Object.keys(explained).length > 0 ? { defaultImageReasons: explained } : {}),
+    ...(unexplained.length > 0 ? { imagesUnexplained: unexplained } : {}),
+  };
 }
 
 /**

@@ -33,7 +33,7 @@ import {
   lastJsonAnswer,
   withoutCandidates,
 } from "./agent-json.js";
-import { githubRepoOf } from "./config.js";
+import { DEFAULT_IMAGE_NAME, githubRepoOf } from "./config.js";
 import { REVIEW_MARKER_PREFIX, sactyReviewKey } from "./github.js";
 import {
   CONTAINER_LOGS_DIR,
@@ -2239,9 +2239,10 @@ export function buildOrchestratorPrompt(
     "- investigation：調査の工程の性質（PBI-43）。content（内容の調査：コードや仕組みを読んで説明する。開発のセットアップをしない）か、bug（不具合の調査：不具合の再現や原因の特定のために、動かして確かめる。セットアップをする）。不具合の修正（bugfix）や、不具合の原因を調べる調査は bug。迷う場合は content にする",
     ...(images.length > 0
       ? [
-          "- images：工程ごとに使う実行のイメージ（PBI-41）。工程の作業とテストは、そのイメージのコンテナで行う。各工程で扱うコード（モノレポなら、その工程で触るディレクトリ）の言語・版を、pom.xml・build.gradle・go.mod・pyproject.toml・package.json・.tool-versions などから判断し、次の候補の名前を工程（investigate・requirements・design・implement・reproduce など）ごとに書く。書かない工程は default。テストのコマンドは、実装（不具合の修正では再現）の工程のイメージで実行するので、そのイメージで動くコマンドにする。1つの工程で複数の言語が要るときは、工程を分けるか、両方を含むイメージを選ぶ",
-          `  - default：既定のイメージ（Node.js・Claude Code・Codex）`,
+          "- images：工程ごとに使う実行のイメージ（PBI-41・PBI-105）。工程の作業とテストは、そのイメージのコンテナで行う。各工程で扱うコード（モノレポなら、その工程で触るディレクトリ）の言語・版を、pom.xml・build.gradle・go.mod・pyproject.toml・package.json・.tool-versions などから判断し、PR 作成（pr）を除く、選んだ組み合わせの工程（investigate・requirements・design・implement・reproduce・split・integrate など）それぞれに、次のイメージから合うものの名前を書く。工程を書き漏らさない。1つの工程で複数の言語が要るときは、工程を分けるか、両方を含むイメージを選ぶ",
           ...images.map((image) => `  - ${image.name}：${image.description}`),
+          "- テストを実行するイメージ（実装の工程。不具合の修正では再現の工程も）は、testCommand と、リポジトリの依存（package.json・requirements.txt・Gemfile などの開発用の依存も）から選ぶ。テストに要るもの（例：Playwright・Cypress などのブラウザのテスト、DB のクライアント、ネイティブのビルドツール）が入っているイメージにする。testCommand は、そのイメージで動くコマンドにする",
+          `- 既定のイメージ（${DEFAULT_IMAGE_NAME}）は、images のどれも合わないときの最後の手段。オーケストレーター用の最低限のもの（Claude Code・Codex を動かす Node.js と git だけ）で、テストのブラウザ・DB のクライアント・ほかの言語のツールは入っていない。リポジトリが Node.js でも、images に合うものがあれば、そちらを選ぶ。使う工程には images に ${DEFAULT_IMAGE_NAME} と書き、defaultReasons に、その工程で images のどれも合わない理由を書く`,
           "- imageReason：イメージをそう選んだ理由（根拠にしたファイル）",
         ]
       : []),
@@ -2279,7 +2280,7 @@ export function buildOrchestratorPrompt(
     "",
     "選んだ工程を、次の形式で必ず出してください。",
     "```json",
-    `{"${PLAN_HEADING}": {"plan": "${Object.keys(plans).join(" または ")}", "reason": "選んだ理由", "baseBranch": "ベースブランチ", "testCommand": "テストのコマンド（分からなければ空）", "investigation": "content または bug"${images.length > 0 ? ', "images": {"implement": "イメージの名前"}, "imageReason": "イメージを選んだ理由"' : ""}${task.repository ? (shared.length > 0 ? ', "services": {"file": "対象リポジトリの compose ファイル", "compose": "または共用の compose の名前", "names": ["db"], "steps": ["implement"]}（要らなければ書かない）, "servicesReason": "サービスを使う・使わない理由"' : ', "services": {"file": "compose ファイル", "names": ["db"], "steps": ["implement"]}（要らなければ書かない）') : ""}${destinations.length > 0 ? ', "exports": {"requirements": {"to": "接続先の名前", "via": "platform または mcp", "location": "置き場所の手がかり", "reason": "そこに書き出す理由"}, "design": {"to": "", "reason": "書き出さない理由"}}' : ""}${options.documents ? ', "documentsDir": "要求要件・設計のファイルを置くディレクトリ（決まっていなければ書かない）"' : ""}}}`,
+    `{"${PLAN_HEADING}": {"plan": "${Object.keys(plans).join(" または ")}", "reason": "選んだ理由", "baseBranch": "ベースブランチ", "testCommand": "テストのコマンド（分からなければ空）", "investigation": "content または bug"${images.length > 0 ? ', "images": {"investigate": "イメージの名前", "implement": "イメージの名前"}（pr を除く工程それぞれ）, "imageReason": "イメージを選んだ理由", "defaultReasons": {"工程": "images のどれも合わない理由"}（default を使う工程だけ）' : ""}${task.repository ? (shared.length > 0 ? ', "services": {"file": "対象リポジトリの compose ファイル", "compose": "または共用の compose の名前", "names": ["db"], "steps": ["implement"]}（要らなければ書かない）, "servicesReason": "サービスを使う・使わない理由"' : ', "services": {"file": "compose ファイル", "names": ["db"], "steps": ["implement"]}（要らなければ書かない）') : ""}${destinations.length > 0 ? ', "exports": {"requirements": {"to": "接続先の名前", "via": "platform または mcp", "location": "置き場所の手がかり", "reason": "そこに書き出す理由"}, "design": {"to": "", "reason": "書き出さない理由"}}' : ""}${options.documents ? ', "documentsDir": "要求要件・設計のファイルを置くディレクトリ（決まっていなければ書かない）"' : ""}}}`,
     "```",
     "",
     "リポジトリにテストの仕組みがそもそも無いときだけ、testCommand を書かずに、代わりに noTests に根拠を書いてください（ほかの項目は上と同じ）。testCommand と noTests を両方書かないでください。",
@@ -2359,7 +2360,7 @@ function buildRepolessOrchestratorPrompt(
     ...(images.length > 0
       ? [
           "- images：工程ごとに使う実行のイメージ（PBI-41）。コードは無いので、ふつうは書かない（default）",
-          "  - default：既定のイメージ（Node.js・Claude Code・Codex）",
+          "  - default：既定のイメージ（Claude Code・Codex を動かす Node.js と git だけの最低限のもの。言語のツールは入っていない）",
           ...images.map((image) => `  - ${image.name}：${image.description}`),
         ]
       : []),
@@ -2521,6 +2522,8 @@ export function extractStepPlan(
       /** 工程ごとのイメージの名前（PBI-41）。名前が images にあるかは、呼び出し側が確かめる。 */
       images?: Partial<Record<StepKey, string>>;
       imageReason?: string;
+      /** 既定のイメージを使う工程ごとの、images のどれも合わない理由（PBI-105）。 */
+      defaultReasons?: Partial<Record<StepKey, string>>;
       /**
        * 起動する docker compose のサービス（PBI-47）。ファイルがあるかは、起動するときに確かめる。compose は共用の
        * compose の名前（PBI-70。あるかは、呼び出し側が確かめる）。
@@ -2563,6 +2566,18 @@ export function extractStepPlan(
         }),
       ) as Partial<Record<StepKey, string>>;
       const imageReason = text(v.imageReason).slice(0, 1000);
+      // 既定のイメージを使う理由（PBI-105）。工程の名前が正しく、理由が空でないものだけを使う
+      const defaultReasons = Object.fromEntries(
+        Object.entries(
+          v.defaultReasons && typeof v.defaultReasons === "object"
+            ? (v.defaultReasons as Record<string, unknown>)
+            : {},
+        ).flatMap(([step, why]) => {
+          const key = StepKey.safeParse(step);
+          const value = text(why).slice(0, 1000);
+          return key.success && value ? [[key.data, value]] : [];
+        }),
+      ) as Partial<Record<StepKey, string>>;
       const services = composeServicesOf(v.services);
       const servicesReason = text(v.servicesReason).slice(0, 1000);
       const exports = exportPlansOf(v.exports);
@@ -2582,6 +2597,7 @@ export function extractStepPlan(
         ...(investigation.success ? { investigation: investigation.data } : {}),
         ...(Object.keys(images).length > 0 ? { images } : {}),
         ...(imageReason ? { imageReason } : {}),
+        ...(Object.keys(defaultReasons).length > 0 ? { defaultReasons } : {}),
         ...(services ? { services } : {}),
         ...(servicesReason ? { servicesReason } : {}),
         ...(exports ? { exports } : {}),

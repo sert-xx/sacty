@@ -118,11 +118,21 @@ The following are read from the answer (JSON under the heading `sacty-steps`) an
 | `noTests` | Read only when `testCommand` is empty: the basis for judging that the repository has no tests (1 to 2000 characters). It is recorded in `noTestsReason` of `StepsChosen` ("Tasks without tests" below) |
 | `investigation` | The kind of investigation (`content`: investigating content, `bug`: investigating a bug) |
 | `images`, `imageReason` | The image per step. If the project's target specifies an image, it is used for all steps without asking. A name not in `images` stops the task |
+| `defaultReasons` | For each step that uses the default image (`default`), why none of `images` fits ("Step images" below) |
 | `services`, `servicesReason` | The compose files, services, and steps to start ([Services](services.en.md)). Shared compose files are chosen by name (an unknown name stops the task) |
 | `exports` | The export destination and reason per step ([Export](export.en.md)) |
 | `documentsDir` | The directory for the requirements and design files ([Approval and request changes](approval.en.md)) |
 | `repo`, `repoReason` | For a task without a repository that chose a plan needing one, the repository to work in |
 
+- Step images (when `images` is configured and the project's target does not specify an image):
+  - The prompt asks for an image from `images` for every step except PR creation (which does not use a container). The default image is not listed as a candidate; it is described as
+    the last resort when none of `images` fits (only Node.js and git to run Claude Code and Codex, with no test browsers, DB clients, or tools for other languages),
+    and for a step that uses it, the reason goes in `defaultReasons`. The image that runs the tests (Implementation, and Reproduce for bug fixes) is to be chosen from
+    `testCommand` and the repository's dependencies (browser tests, DB clients, and so on).
+  - For each step that runs in the default image (a chosen step other than PR creation whose image is absent or `default`), the reason is recorded in
+    `defaultImageReasons` of `StepsChosen`; a step without a reason (no image written, or `default` without a reason) is recorded in `imagesUnexplained`.
+    The task does not stop; it proceeds in the default image, and the Activity (the task page) shows that there is no reason.
+  - Neither is recorded when `images` is not configured, when the project's target specifies an image, for a task that proceeds without a repository, or for a PR-review-only task.
 - When a task without a repository chooses steps that need a repository, `repo` is checked against the project's targets, `RepositoryChosen` is recorded,
   and the repository is prepared before asking to choose again. If it is not in the targets or is empty, the task stops, and a person can pick a repository in the web UI to resume (only while paused and
   waiting for a repository). If the plan does not need a repository, `testCommand`, `baseBranch`, `services`, and `documentsDir` are discarded.
@@ -131,7 +141,7 @@ The following are read from the answer (JSON under the heading `sacty-steps`) an
 - A PR-review-only task uses the `review` plan without the Orchestrator (`reviewOnlySteps`).
 - Reuse of Orchestrator sessions is described in "Saving and reusing sessions" in [Agent execution](agent-execution.en.md).
 
-Code: `apps/daemon/src/service.ts` (`askOrchestrator`, `runNextInner`, `withImages`, `withSharedCompose`, `withExports`, `repositoryFromPlan`, `chooseRepository`, `triageTicket`, `reviewOnlySteps`), `apps/daemon/src/prompts.ts` (`extractStepPlan`), `packages/core/src/events.ts` (`StepsChosen`)
+Code: `apps/daemon/src/service.ts` (`askOrchestrator`, `runNextInner`, `withImages`, `defaultImagesOf`, `withSharedCompose`, `withExports`, `repositoryFromPlan`, `chooseRepository`, `triageTicket`, `reviewOnlySteps`), `apps/daemon/src/prompts.ts` (`extractStepPlan`), `packages/core/src/events.ts` (`StepsChosen`)
 
 ## Changing a step's image
 
