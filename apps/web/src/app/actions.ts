@@ -14,6 +14,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { isLocale, LANG_COOKIE, type LanguagePreference } from "@/i18n/locale";
 import { getMessages } from "@/i18n/server";
+import { selectProject } from "@/lib/current-project";
 import {
   approveStep,
   askQuestion,
@@ -93,6 +94,8 @@ export async function createTaskAction(
   }
   if (!result.ok) return { message: result.message, values: shown };
   const taskId = result.task.id;
+  // 移る先の画面だけでなく、ヘッダー（お知らせ・実行中の間の更新）も描き直す（PBI-98）
+  refresh();
   redirect(`/tasks/${taskId}`);
 }
 
@@ -116,6 +119,7 @@ async function createTemplateTask(
     return { message: a.createFailed, values: shown };
   }
   if (!result.ok) return { message: result.message, values: shown };
+  refresh();
   redirect(`/tasks/${result.task.id}`);
 }
 
@@ -194,6 +198,9 @@ export async function gateAction(_prev: GateState, formData: FormData): Promise<
     return { message: a.daemonDown, comments, target };
   }
   if (!result.ok) return { message: result.message, comments, target };
+  // 承認・差し戻しでお知らせの対象が変わるので、ヘッダーも描き直す（redirect だけでは、移る先の画面と共通のレイアウト
+  // ＝ヘッダーは描き直されず、古いお知らせが残る。PBI-98）
+  refresh();
   // redirect は例外で画面を移すので、try の外で呼ぶ
   redirect(`/tasks/${taskId}`);
 }
@@ -256,6 +263,8 @@ export async function saveProjectAction(
   if (!id) {
     // 最初のプロジェクトなら、作成画面だけを出していた画面の枠（ヘッダー・サイドメニュー）も作り直す（PBI-22）
     revalidatePath("/", "layout");
+    // 作ったプロジェクトを、表示しているプロジェクトにする（設定の画面に移るので、ヘッダーもそのプロジェクトにする。PBI-98）
+    await selectProject(result.project.id);
     // コンテキストに誤りがあれば、移った先の設定の画面で確かめ直して知らせる（PBI-76）
     redirect(projectSettingsPath(result.project.id, result.contextError !== undefined));
   }
@@ -394,6 +403,8 @@ export async function importProjectAction(
   // 最初のプロジェクトなら、作成画面だけを出していた画面の枠も作り直す（PBI-22）。
   // redirect は例外で画面を移すので、try の外で呼ぶ
   revalidatePath("/", "layout");
+  // インポートしたプロジェクトを、表示しているプロジェクトにする（PBI-98）
+  await selectProject(result.project.id);
   // コンテキストリポジトリを持つ定義なら、移った先の設定の画面で誤りを確かめて知らせる（PBI-76）
   redirect(projectSettingsPath(result.project.id, result.project.context !== undefined));
 }
@@ -404,6 +415,14 @@ export async function importProjectAction(
  */
 function projectSettingsPath(id: string, contextCheck: boolean): string {
   return `/projects/${encodeURIComponent(id)}${contextCheck ? `?${CONTEXT_CHECK_PARAM}=1` : ""}`;
+}
+
+/**
+ * 表示しているプロジェクトを、開いた画面のプロジェクトに合わせる（PBI-98）。cookie を変えると、画面とヘッダーが
+ * 描き直される。ID の形が違えば何もしない。
+ */
+export async function selectProjectAction(id: string): Promise<void> {
+  await selectProject(id);
 }
 
 /** 画面の言語を選ぶ（system はブラウザの言語に従う）。 */

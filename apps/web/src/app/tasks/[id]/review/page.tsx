@@ -19,6 +19,7 @@ import { IntegrationResult } from "@/components/integration";
 import { Markdown } from "@/components/markdown";
 import { PullRequestCard } from "@/components/pull-request";
 import { ReproductionResult } from "@/components/reproduction";
+import { FollowProject } from "@/components/shell/follow-project";
 import { TestViewpoints } from "@/components/test-viewpoints";
 import type { Messages } from "@/i18n";
 import { getMessages } from "@/i18n/server";
@@ -52,6 +53,8 @@ async function Review({ params }: { params: Promise<{ id: string }> }) {
   if (!step) {
     return (
       <div className="flex flex-col gap-3">
+        {/* 開いたタスクのプロジェクトを、表示しているプロジェクトにする（ヘッダーとずれないように。PBI-98） */}
+        <FollowProject projectId={task.projectId} />
         <h1 className="text-2xl font-bold">{task.title}</h1>
         <p className="text-sm text-muted-foreground">{t.notAwaiting}</p>
         <Link href={`/tasks/${task.id}`} className="text-sm text-accent-foreground underline">
@@ -77,6 +80,8 @@ async function Review({ params }: { params: Promise<{ id: string }> }) {
 
   return (
     <>
+      {/* 開いたタスクのプロジェクトを、表示しているプロジェクトにする（ヘッダーとずれないように。PBI-98） */}
+      <FollowProject projectId={task.projectId} />
       <div className="flex flex-col gap-2">
         <nav aria-label={t.breadcrumb} className="text-sm text-muted-foreground">
           <Link href={`/tasks/${task.id}`} className="text-accent-foreground underline">

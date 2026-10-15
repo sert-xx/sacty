@@ -31,6 +31,7 @@ import { PullRequestCard } from "@/components/pull-request";
 import { ReproductionResult } from "@/components/reproduction";
 import { RereviewButton } from "@/components/rereview-button";
 import { ResumeForm } from "@/components/resume-form";
+import { FollowProject } from "@/components/shell/follow-project";
 import { StepCosts } from "@/components/step-costs";
 import { CostMeter, StatusLabel, StepChips } from "@/components/task-bits";
 import { TaskChat } from "@/components/task-chat";
@@ -121,6 +122,8 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
 
   return (
     <>
+      {/* 開いたタスクのプロジェクトを、表示しているプロジェクトにする（ヘッダーとずれないように。PBI-98） */}
+      <FollowProject projectId={task.projectId} />
       {/* オーケストレーターが質問に答えている間・承認した成果を書き出している間も、終わるまで更新する（PBI-54・PBI-56） */}
       <AutoRefresh
         active={

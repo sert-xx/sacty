@@ -45,6 +45,28 @@ sacty up（packages/cli）
 
 コード: `apps/daemon/src/server.ts`（`createApp`・`handleError`）、`apps/web/src/lib/daemon.ts`（`daemonFetch`）、`packages/cli/src/index.ts`（`up`）
 
+## 画面のヘッダー（表示しているプロジェクト・お知らせ）
+
+- 表示しているプロジェクトは cookie `sacty-project` に持つ（httpOnly・`SameSite=Lax`・1年）。ヘッダーの切り替え・タスクの一覧・
+  サイドメニューの「設定」（`/projects/current`）は、cookie のプロジェクトを出す。cookie のプロジェクトが無い・無くなっていれば、
+  最初のプロジェクト。cookie に入れる ID は `^[\w-]{1,100}$` の形のものだけ。
+- cookie を変えるのは次のとき：ヘッダーの切り替えとお知らせ（`/switch`）、プロジェクトの作成・インポート（作ったプロジェクトに
+  する）、プロジェクトの画面（タスクの詳細・レビュー・実行のログ・プロジェクトの設定）を開いたとき。開いたときは、cookie と
+  画面のプロジェクトが違うときだけ、表示の後にサーバーアクションで変える（画面とヘッダーが描き直される）。デーモンのプロジェクトの
+  一覧にそのプロジェクトが無ければ（削除したプロジェクトのタスク）変えない。一覧を取れなければ、無いとは扱わずに変える。
+- ヘッダーは全体のレイアウトにあり、画面の中の移動（リンク）では描き直されない。お知らせの対象が変わる操作（承認・差し戻し・
+  一時停止・再開・中止・タスクの作成など）のサーバーアクションは、`refresh()` を呼んでヘッダーも描き直させる（`redirect` で移る
+  ときも、その前に呼ぶ）。
+- ほかのタブ・CLI・デーモンでの変化は、次のときに反映する。それ以外の間は問い合わせない。
+  - sacty やエージェントが作業しているタスク（`isWorking`）がある間は3秒ごと（`AutoRefresh`）。作業しているのは、実行待ち
+    （`queued`）・実行中（`running`）、待機（`idle`）のうち実装の検証中（`verification` が `pending`＝テストの実行中か
+    `tests_passed`＝最終レビュー中）・再現のテストの確かめ中（`reproductionPending`）、ゴールガーディアンの判定がまだの変更の申し出があるタスク。
+  - タブに戻ってきた（隠れていた画面がまた見えた）とき（`RefreshOnVisible`）。デーモンにつながらず、仮のヘッダーを出していたときも。
+
+コード: `apps/web/src/components/shell/header.tsx`（`AppHeader`・`HeaderFallback`）、`apps/web/src/lib/labels.ts`（`isWorking`）、`apps/web/src/components/shell/follow-project.tsx`（`FollowProject`）、
+`apps/web/src/components/auto-refresh.tsx`、`apps/web/src/lib/project-select.ts`、`apps/web/src/lib/current-project.ts`（`selectProject`）、
+`apps/web/src/app/switch/route.ts`、`apps/web/src/app/actions.ts`
+
 ## データの置き場所（SACTY_HOME）
 
 `SACTY_HOME`（既定 `~/.sacty`）の下に置く。

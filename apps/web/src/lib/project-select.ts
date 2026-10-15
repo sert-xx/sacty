@@ -3,6 +3,28 @@ import type { Project } from "@sacty/core";
 /** 表示しているプロジェクトを覚えておく cookie。 */
 export const PROJECT_COOKIE = "sacty-project";
 
+/** 表示しているプロジェクトの cookie の属性（切り替え・作成・表示したプロジェクトに合わせるときに共通）。 */
+export const PROJECT_COOKIE_OPTIONS = {
+  path: "/",
+  sameSite: "lax",
+  httpOnly: true,
+  maxAge: 60 * 60 * 24 * 365,
+} as const;
+
+/** cookie に入れてよいプロジェクトの ID か（デーモンが作る ID の形。存在はデーモンで確かめる）。 */
+export function isProjectId(id: string): boolean {
+  return /^[\w-]{1,100}$/.test(id);
+}
+
+/**
+ * プロジェクトの画面（タスク・プロジェクトの設定）を開いたとき、表示しているプロジェクトをそのプロジェクトに合わせる
+ * 必要があるか（ヘッダーは cookie のプロジェクトを出すので、合わせないと本文とずれる。PBI-98）。cookie のプロジェクトが
+ * 無くなっていて、たまたま最初のプロジェクトを開いたときも合わせる（cookie を今のプロジェクトにしておく）。
+ */
+export function needsProjectSelect(cookieId: string, pageProjectId: string): boolean {
+  return cookieId !== pageProjectId && isProjectId(pageProjectId);
+}
+
 /**
  * 表示しているプロジェクト。cookie のプロジェクトが無い・無くなっていれば、最初のプロジェクト
  * （既定のプロジェクトは無い。PBI-22）。プロジェクトが1つも無ければ undefined。

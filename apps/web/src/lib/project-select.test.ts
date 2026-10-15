@@ -1,6 +1,6 @@
 import type { Project } from "@sacty/core";
 import { describe, expect, it } from "vitest";
-import { resolveProject, safeLocalPath } from "./project-select";
+import { isProjectId, needsProjectSelect, resolveProject, safeLocalPath } from "./project-select";
 
 const project = (id: string): Project => ({
   id,
@@ -45,5 +45,24 @@ describe("表示するプロジェクトの切り替え（PBI-4a）", () => {
       "evil.example",
     );
     expect(safeLocalPath(decodeURIComponent("%2F%09%2Fevil.example%2F"))).toBeUndefined();
+  });
+});
+
+describe("開いた画面のプロジェクトに合わせる（PBI-98）", () => {
+  it("cookie のプロジェクトと画面のプロジェクトが違うときだけ合わせる", () => {
+    expect(needsProjectSelect("p-a", "p-a")).toBe(false);
+    expect(needsProjectSelect("p-a", "p-b")).toBe(true);
+    // cookie が無い・無くなったプロジェクトのときも、開いたプロジェクトにしておく
+    expect(needsProjectSelect("", "p-a")).toBe(true);
+    expect(needsProjectSelect("deleted", "p-a")).toBe(true);
+    // cookie に入れられない ID には合わせない（何度も合わせ直そうとしない）
+    expect(needsProjectSelect("p-a", "a b")).toBe(false);
+  });
+
+  it("cookie に入れてよい ID の形", () => {
+    expect(isProjectId("2941302e-4ea3-4045-8572-2df08da209f1")).toBe(true);
+    expect(isProjectId("default")).toBe(true);
+    for (const bad of ["", "a b", "a;b", "x".repeat(101), "../x"])
+      expect(isProjectId(bad)).toBe(false);
   });
 });
