@@ -2,6 +2,7 @@
   "name": "@sacty/cli",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "bin": {
     "sacty": "./bin/sacty.js"
