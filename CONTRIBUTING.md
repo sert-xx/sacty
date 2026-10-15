@@ -13,11 +13,14 @@ sacty への Issue・Pull Request（PR）を歓迎します。ドキュメント
 
 macOS・Node.js 22.13 以上・Docker・GitHub CLI（`gh`）が要ります（[はじめに](docs/user/getting-started.md)）。
 
+以下のコマンドの例では、GitHub のアカウントを `your-account`、Issue の番号を `12`、ブランチを `fix/issue-12-typo` としています。
+貼り付ける前に、`your-account` などの例の値を、ご自身の値に置き換えてください。
+
 1. GitHub で [sert-xx/sacty](https://github.com/sert-xx/sacty) を fork します。
-2. fork したリポジトリを clone し、そのルートに移ります。
+2. fork したリポジトリを clone し、そのルートに移ります（`your-account` を、ご自身の GitHub のアカウントに置き換えます）。
 
    ```sh
-   git clone https://github.com/<あなたのアカウント>/sacty.git
+   git clone https://github.com/your-account/sacty.git
    cd sacty
    git remote add upstream https://github.com/sert-xx/sacty.git   # 元のリポジトリの更新を取り込むため
    ```
@@ -29,41 +32,53 @@ macOS・Node.js 22.13 以上・Docker・GitHub CLI（`gh`）が要ります（[�
    npm run build
    ```
 
-### 初めてコミットする前に：作者のメールアドレスを確かめる
+### 初めてコミットする前に：作者の名前とメールアドレスを確かめる
 
 コミットには、Git の作者の名前とメールアドレスが入り、PR を通じて公開の履歴に残ります（後から消せません）。
-初めてコミットする前に、設定されている値を確かめてください。
+初めてコミットする前に、clone したリポジトリのルートで、設定されている値を確かめてください。
 
 ```sh
 git config user.name
 git config user.email
 ```
 
-メールアドレスを公開したくないときは、GitHub の非公開用のアドレス（`<ID>+<アカウント>@users.noreply.github.com`。GitHub の
-Settings → Emails に表示されます）を、このリポジトリだけに設定してください。
+次のときは、このリポジトリだけに値を設定してください（`--global` を付けないので、ほかのリポジトリの設定は変わりません）。
+
+- 何も表示されないとき：設定されていないと、`git commit` が作者の情報が無いというエラー（`Author identity unknown`）で
+  止まるか、コンピューターのユーザー名やホスト名から推測した値がそのまま公開の履歴に入ります。
+- 表示された名前を公開したくないとき（本名など）：公開してよい名前（GitHub のアカウントなど）にします。
+- 表示されたメールアドレスを公開したくないとき：GitHub の非公開用のアドレスにします。形は
+  `<数字の ID>+<アカウント>@users.noreply.github.com` で、GitHub の Settings → Emails に表示されます。
 
 ```sh
-git config user.email "<ID>+<アカウント>@users.noreply.github.com"
+git config user.name "your-account"
+git config user.email "12345678+your-account@users.noreply.github.com"
 ```
+
+例の `your-account` と `12345678+your-account@users.noreply.github.com` は、ご自身の公開してよい名前と、Settings → Emails に
+表示される非公開用のアドレスに置き換えてください。
 
 ## 変更の流れ
 
 1. 元のリポジトリの `main` を取り込み、作業用のブランチを切ります（例 `feat/issue-<番号>-<内容>`・`fix/<内容>`）。
    `main` には直接コミットしないでください。
 
+   例のブランチ名 `fix/issue-12-typo` は、ご自身の変更に合う名前に置き換えてください。
+
    ```sh
    git fetch upstream
-   git switch -c feat/issue-<番号>-<内容> upstream/main
+   git switch -c fix/issue-12-typo upstream/main
    ```
 
 2. 変更します。実装を変えたら、同じ PR で docs も直してください（下の「ドキュメント」）。
 3. 下の「PR を出す前に確かめること」をすべて通します。
-4. コミットして、fork したリポジトリに push します。
+4. コミットして、fork したリポジトリに push します。例の `docs/user/cli.md` は変えたファイルに、メッセージとブランチ名は
+   ご自身のものに置き換えてください。
 
    ```sh
-   git add <変えたファイル>
-   git commit -m "fix: 〜のときに〜する"
-   git push -u origin feat/issue-<番号>-<内容>
+   git add docs/user/cli.md
+   git commit -m "fix: コマンドの説明の誤字を直す"
+   git push -u origin fix/issue-12-typo
    ```
 
 5. PR を作ります。GitHub の fork したリポジトリの画面に出る「Compare & pull request」から作るか、`gh` で作ります。
