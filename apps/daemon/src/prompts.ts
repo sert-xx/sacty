@@ -124,9 +124,11 @@ export function extractReproduction(output: string): { output: string; tests: st
 }
 const TEST_MAP_HEADING = "sacty-test-map";
 /** テストの仕組みが無いタスクで、実装がテストの仕組みを用意したときに申告するテストのコマンド（PBI-94）。 */
-const TEST_COMMAND_HEADING = "sacty-test-command";
-/** 本文に残った申告の見出しのキー（JSON として読めなかった申告を見分ける。PR #105 再レビュー指摘）。 */
-const TEST_COMMAND_KEY = /["']sacty-test-command["']\s*:/;
+/**
+ * テストの仕組みが無いタスクで、実装がテストの仕組みを用意したときに申告するテストのコマンド（PBI-94）。この言語の名前を付けた
+ * コードブロック（フェンス）の中だけを申告として読む。フェンスの外の文は申告として扱わない（PR #105 再々レビュー指摘）。
+ */
+export const TEST_COMMAND_FENCE = "sacty-test-command";
 const REVIEW_COMMENTS_HEADING = "sacty-review-comments";
 
 /** レビューの評価（直すべき指摘があるか）のブロックの見出し（PBI-88）。 */
@@ -782,11 +784,12 @@ export function buildPrompt(
               "- 観点ごとに、どう満たしたか（変えたファイル・箇所、確かめた方法）を実装の説明に書く。ゴールガーディアンは、コードと差分で裏付けられることだけを根拠にする",
               "- 検証のためだけに、タスクが求めていないテストの仕組みを足さない",
               "- タスクがテストの仕組みを用意することを求めていて、用意したなら、そのテストを実行するコマンドを、下の形式で付ける。sacty がそのコマンドを sh -c で実行し、終了コード0で合格とみなす（依存関係の取得も含める）。用意していなければ付けない",
+              `- テストのコマンドの申告は、言語の名前を ${TEST_COMMAND_FENCE} にしたコードブロックの中にだけ、JSON で書く。sacty はこのコードブロックだけを申告として読み、中身を JSON として読めなければ止める。このコードブロックの外に書いたものは申告として扱わない。説明の中で書き方を例に挙げるときは、言語の名前を ${TEST_COMMAND_FENCE} にしない`,
               "- コミットやプッシュはしない（sacty が行います）",
               NO_CHANGE_LINE,
               "- 実装の説明をMarkdownで書く。テストの仕組みを用意したときだけ、そのあとに次の形式でテストのコマンドを付け、書いたテストがあれば観点との対応も付ける",
-              "```json",
-              `{"${TEST_COMMAND_HEADING}": {"command": "テストのコマンド"}}`,
+              `\`\`\`${TEST_COMMAND_FENCE}`,
+              '{"command": "テストのコマンド"}',
               "```",
               "```json",
               `{"${TEST_MAP_HEADING}": [{"viewpointId": "${designed ? "TV-1" : REQUIREMENTS_VIEWPOINT}", "tests": ["テストのファイル › テストの名前"]}]}`,
@@ -851,9 +854,9 @@ export type Extracted = {
   /** 実装の工程が、テストの仕組みを用意して申告したテストのコマンド（PBI-94。1〜1000 文字）。 */
   testCommand?: string;
   /**
-   * 見出し sacty-test-command のブロックはあるが、command が文字列でない・空・1000 文字を超える（PR #105 レビュー指摘）、
-   * または JSON として読めない（構文の誤り。本文に "sacty-test-command": が残る。PR #105 再レビュー指摘）。
-   * 申告が無いものとして扱わず、呼び出し側が止める。
+   * 言語の名前が sacty-test-command のコードブロックはあるが、中身が JSON として読めない・オブジェクトでない・command が文字列で
+   * ない・空・1000 文字を超える、またはコードブロックが閉じていない（PR #105 レビュー指摘・再々レビュー指摘）。申告が無いものとして
+   * 扱わず、呼び出し側が止める。
    */
   testCommandInvalid?: boolean;
 };
@@ -881,32 +884,17 @@ export function extractBlocks(
   let proposal: ExtractedProposal | undefined;
   let proposalSeen = false;
   let testMap: TestMapping[] | undefined;
-  let testCommand: string | undefined;
-  let testCommandSeen = false;
-  let testCommandInvalid = false;
+  // テストのコマンドの申告は、専用のコードブロックだけから読み、本文（とほかの JSON の読み取り）からは取り除く（PR #105 再々レビュー指摘）
+  const declared = extractTestCommandFences(output);
+  const body = declared.output;
   const used: JsonCandidate[] = [];
-  for (const candidate of jsonCandidates(output).reverse()) {
+  for (const candidate of jsonCandidates(body).reverse()) {
     const record = candidate.value;
     const list = record[RESPONSES_HEADING];
     const viewpoints = record[VIEWPOINTS_HEADING];
     const proposed = record[PROPOSAL_HEADING];
     const map = record[TEST_MAP_HEADING];
-    const command = record[TEST_COMMAND_HEADING];
     let read = false;
-    if (command !== undefined) {
-      read = true;
-      // 最後のブロックだけを使う。形が正しくなければ、切り詰めたり無視したりせず、正しくない申告として返す
-      if (!testCommandSeen) {
-        testCommandSeen = true;
-        const raw =
-          command && typeof command === "object" && !Array.isArray(command)
-            ? (command as Record<string, unknown>).command
-            : undefined;
-        const value = text(raw);
-        if (typeof raw === "string" && value && value.length <= 1000) testCommand = value;
-        else testCommandInvalid = true;
-      }
-    }
     if (Array.isArray(map)) {
       read = true;
       testMap ??= map
@@ -937,18 +925,82 @@ export function extractBlocks(
     // 読んだ JSON は、表示用の本文から取り除く
     if (read) used.push(candidate);
   }
-  const rest = withoutCandidates(output, used).trim();
-  // 読めた JSON を取り除いた後の本文に、申告の見出しのキーが残っていれば、構文の誤りなどで読めなかった申告がある。
-  // 黙ってテストを飛ばさないよう、正しくない申告として扱う（PR #105 再レビュー指摘）
-  if (TEST_COMMAND_KEY.test(rest)) testCommandInvalid = true;
+  const { testCommand, invalid: testCommandInvalid } = declared;
   return {
-    output: rest,
+    output: withoutCandidates(body, used).trim(),
     responses: responses ?? [],
     testViewpoints: testViewpoints ?? [],
     proposal,
     testMap: testMap ?? [],
     ...(testCommand && !testCommandInvalid ? { testCommand } : {}),
     ...(testCommandInvalid ? { testCommandInvalid } : {}),
+  };
+}
+
+/**
+ * 実装の出力から、言語の名前が sacty-test-command のコードブロック（フェンス）を読み、本文から取り除く（PBI-94・PR #105
+ * 再々レビュー指摘）。CommonMark のフェンスの規則で読む：行頭の空白は3つまで、``` か ~~~ を3つ以上、閉じるのは同じ文字で同じ数以上。
+ * ほかのコードブロックの中（例を引用した4つのバッククォートのフェンスなど）は申告として扱わない。
+ * - 中身が JSON のオブジェクトで、command が 1〜1000 文字の文字列なら、その command（複数あれば最後のもの）
+ * - 中身が読めない・形が違う・閉じていないフェンスが1つでもあれば invalid（申告が無いものとして扱わない）
+ */
+export function extractTestCommandFences(output: string): {
+  output: string;
+  testCommand?: string;
+  invalid?: true;
+} {
+  const lines = output.split("\n");
+  const kept: string[] = [];
+  let fence: { char: string; size: number; ours: boolean; body: string[] } | undefined;
+  let testCommand: string | undefined;
+  let invalid = false;
+  const read = (body: string[]) => {
+    let value: unknown;
+    try {
+      value = JSON.parse(body.join("\n"));
+    } catch {
+      invalid = true;
+      return;
+    }
+    const raw =
+      value && typeof value === "object" && !Array.isArray(value)
+        ? (value as Record<string, unknown>).command
+        : undefined;
+    const command = typeof raw === "string" ? raw.trim() : "";
+    if (command && command.length <= 1000) testCommand = command;
+    else invalid = true;
+  };
+  for (const line of lines) {
+    if (!fence) {
+      const open = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+      const marker = open?.[1];
+      const info = (open?.[2] ?? "").trim();
+      // バッククォートのフェンスの情報文字列には、バッククォートを書けない（CommonMark）
+      if (marker && !(marker.startsWith("`") && info.includes("`"))) {
+        const ours = info.split(/\s+/)[0] === TEST_COMMAND_FENCE;
+        fence = { char: marker.charAt(0), size: marker.length, ours, body: [] };
+        if (!ours) kept.push(line);
+        continue;
+      }
+      kept.push(line);
+      continue;
+    }
+    const close = /^ {0,3}(`{3,}|~{3,})\s*$/.exec(line)?.[1];
+    if (close && close.charAt(0) === fence.char && close.length >= fence.size) {
+      if (fence.ours) read(fence.body);
+      else kept.push(line);
+      fence = undefined;
+      continue;
+    }
+    if (fence.ours) fence.body.push(line);
+    else kept.push(line);
+  }
+  // 閉じていない申告のフェンスは、どこまでが申告か決められないので、正しくない申告とする
+  if (fence?.ours) invalid = true;
+  return {
+    output: kept.join("\n"),
+    ...(testCommand && !invalid ? { testCommand } : {}),
+    ...(invalid ? { invalid: true as const } : {}),
   };
 }
 

@@ -46,6 +46,9 @@ const ja = {
     noTestsTitle: "テストで検証していません",
     noTestsAddedTitle: "実装で用意したテストで検証しました",
     noTestsAddedFailedTitle: "実装で用意したテストが通りませんでした",
+    noTestsAddedPendingTitle: "実装で用意したテストの検証待ち",
+    noTestsAddedPending: (command: string) =>
+      `今の実装が用意したテスト（${command}）を、これから実行します。結果が出るまで、前の実装のテストの結果は今の実装のものではありません。`,
     noTestsAddedFailed: (command: string, exitCode: number) =>
       `実装で用意したテスト（${command}）が通りませんでした（終了コード ${exitCode}）。テストが通るまで実装をやり直し、続けて通らなければ一時停止します。`,
     noTestsSkipped:
@@ -205,6 +208,9 @@ const en: PartsMessages = {
     noTestsTitle: "Not verified by tests",
     noTestsAddedTitle: "Verified by the tests added in the implementation",
     noTestsAddedFailedTitle: "The tests added in the implementation failed",
+    noTestsAddedPendingTitle: "Waiting to run the tests added in the implementation",
+    noTestsAddedPending: (command) =>
+      `The tests added in the current implementation (${command}) will run next. Until then, earlier test results do not apply to the current implementation.`,
     noTestsAddedFailed: (command, exitCode) =>
       `The tests added in the implementation (${command}) failed (exit code ${exitCode}). The implementation is redone until they pass, and the task pauses if they keep failing.`,
     noTestsSkipped:

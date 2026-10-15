@@ -16551,7 +16551,7 @@ describe("テストの仕組みが無いリポジトリ（PBI-94）", () => {
   it("実装がテストの仕組みを用意して申告したら、そのコマンドで検証し、通らなければやり直す。観点の対応が無いことでは落とさない", async () => {
     const activity = new SqliteActivityStore(dbPath);
     const implemented = (command: string) =>
-      out(`# 実装の説明\n\n${block({ "sacty-test-command": { command } })}`);
+      out(`# 実装の説明\n\n\`\`\`sacty-test-command\n${JSON.stringify({ command })}\n\`\`\``);
     const { service, executor, tests, pulls } = makeService(
       activity,
       [
@@ -16647,10 +16647,10 @@ describe("テストの仕組みが無いリポジトリ（PBI-94）", () => {
         plan(),
         out("# 前段の調査"),
         out("# 要求要件"),
-        out(`# 実装の説明\n\n${block({ "sacty-test-command": { command: "" } })}`),
+        out('# 実装の説明\n\n```sacty-test-command\n{"command": ""}\n```'),
         // JSON として読めない申告も、テストを飛ばさずに止める（PR #105 再レビュー指摘）
-        out('# 実装の説明\n\n```json\n{"sacty-test-command":{"command":"make test",}}\n```'),
-        out(`# 実装の説明\n\n${block({ "sacty-test-command": { command: "make test" } })}`),
+        out('# 実装の説明\n\n```sacty-test-command\n{"command" "make test"}\n```'),
+        out('# 実装の説明\n\n```sacty-test-command\n{"command": "make test"}\n```'),
         review(),
       ],
       { realPlanner: true, repos: new FilesRepos({ "README.md": "# app" }) },

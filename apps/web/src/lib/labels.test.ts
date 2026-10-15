@@ -1,6 +1,7 @@
 import type { ActivityEvent, Task, TaskProposal } from "@sacty/core";
 import { describe, expect, it } from "vitest";
 import { labels } from "@/i18n/messages/labels";
+import { task as taskMessages } from "@/i18n/messages/task";
 import {
   addedTestsResult,
   canControl,
@@ -10,6 +11,7 @@ import {
   personAction as personActionIn,
   statusText as statusTextIn,
   statusTone,
+  testCommandOfNoTests,
   usesTestCommand,
 } from "./labels";
 import { runLogId } from "./session-log";
@@ -1326,5 +1328,33 @@ describe("実装で用意したテストの結果（PBI-94・PR #105 レビュ�
     expect(addedTestsResult(task({ noTestsReason: "無い" }))).toBeUndefined();
     // テストのコマンドがあるタスクは対象外
     expect(addedTestsResult(task({ lastTests: ran(true) }))).toBeUndefined();
+  });
+
+  it("やり直した実装の検証が始まったら、前の提出の結果を使わない（PR #105 再々レビュー指摘）", () => {
+    const redone = {
+      noTestsReason: "無い",
+      lastTests: ran(false),
+      verification: "pending" as const,
+    };
+    expect(addedTestsResult(task({ ...redone, addedTestCommand: "make test" }))).toBe("pending");
+    // 今の提出がテストを申告していなければ、テストを飛ばす（前の不合格を出さない）
+    expect(addedTestsResult(task(redone))).toBeUndefined();
+    // やり直しを待っている間（検証の前）は、前の不合格が最新の結果
+    expect(
+      addedTestsResult(task({ noTestsReason: "無い", lastTests: ran(false), status: "queued" })),
+    ).toBe("failed");
+  });
+
+  it("工程の欄は、合格のときだけ「検証し、目的から判定します」にする（PR #105 再々レビュー指摘）", () => {
+    const m = taskMessages.ja;
+    const of = (patch: Partial<Task>) =>
+      testCommandOfNoTests(task({ noTestsReason: "無い", ...patch }), "無い", m);
+    expect(of({ lastTests: ran(true) })).toBe(m.testCommandAdded("make test", "無い"));
+    expect(of({ lastTests: ran(false) })).toBe(m.testCommandAddedFailed("make test", "無い"));
+    expect(of({ lastTests: ran(false) })).not.toContain("目的から判定します");
+    expect(
+      of({ lastTests: ran(false), verification: "pending", addedTestCommand: "make check" }),
+    ).toBe(m.testCommandAddedPending("make check", "無い"));
+    expect(of({})).toBe(m.testCommandNone("無い"));
   });
 });

@@ -46,13 +46,13 @@ import {
   listTasks,
 } from "@/lib/daemon";
 import {
-  addedTestsResult,
   canControl,
   describeEvent,
   formatStamp,
   isWorking,
   personAction,
   statusText,
+  testCommandOfNoTests,
   usd,
   usesTestCommand,
 } from "@/lib/labels";
@@ -363,11 +363,7 @@ async function TaskDetail({ params }: { params: Promise<{ id: string }> }) {
                       <span className="font-mono">{task.testCommand}</span>
                     ) : task.noTestsReason ? (
                       // テストの仕組みが無いと判断したタスク（PBI-94）
-                      addedTestsResult(task) && task.lastTests ? (
-                        m.testCommandAdded(task.lastTests.command, task.noTestsReason)
-                      ) : (
-                        m.testCommandNone(task.noTestsReason)
-                      )
+                      testCommandOfNoTests(task, task.noTestsReason, m)
                     ) : (
                       m.testCommandUnknown
                     )}

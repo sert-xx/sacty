@@ -38,12 +38,15 @@ export async function Implementation({ task }: { task: Task }) {
   // 最新の検証で、実装が用意したテストを実行したか（飛ばしていなければ、テストの結果が最新の検証のもの）
   // 合格のときだけ「検証しました」と成功の色、不合格なら失敗をはっきり示す（PR #105 再レビュー指摘）
   const added = addedTestsResult(task);
+  // 今の提出のテストがまだなら「検証待ち」（前の提出の結果を出さない。PR #105 再々レビュー指摘）
   const noTestsTitle =
     added === "passed"
       ? m.noTestsAddedTitle
       : added === "failed"
         ? m.noTestsAddedFailedTitle
-        : m.noTestsTitle;
+        : added === "pending"
+          ? m.noTestsAddedPendingTitle
+          : m.noTestsTitle;
 
   return (
     <CardSection
@@ -70,13 +73,15 @@ export async function Implementation({ task }: { task: Task }) {
               ? "border-accent-line"
               : added === "failed"
                 ? "border-destructive bg-destructive/10"
-                : "border-warn-line bg-warn-soft",
+                : added === "pending"
+                  ? "border-border"
+                  : "border-warn-line bg-warn-soft",
           )}
         >
           <p
             className={cn(
               "font-semibold",
-              added === "failed" ? "text-destructive" : added !== "passed" && "text-warn",
+              added === "failed" ? "text-destructive" : added === undefined && "text-warn",
             )}
           >
             {noTestsTitle}
@@ -86,7 +91,9 @@ export async function Implementation({ task }: { task: Task }) {
               ? m.noTestsAdded(tests.command)
               : tests && added === "failed"
                 ? m.noTestsAddedFailed(tests.command, tests.exitCode)
-                : m.noTestsSkipped}
+                : added === "pending"
+                  ? m.noTestsAddedPending(task.addedTestCommand ?? "")
+                  : m.noTestsSkipped}
           </p>
           <p className="text-xs break-words text-muted-foreground">{m.noTestsReason(noTests)}</p>
         </div>

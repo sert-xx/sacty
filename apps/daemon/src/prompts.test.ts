@@ -1134,12 +1134,12 @@ describe("テストの仕組みが無いタスク（PBI-94）", () => {
   });
 
   it("実装の出力から、用意したテストのコマンドを読み、本文から取り除く", () => {
-    const output = `# 説明\n\n\`\`\`json\n${JSON.stringify({ "sacty-test-command": { command: " make test " } })}\n\`\`\``;
+    const output = `# 説明\n\n\`\`\`sacty-test-command\n${JSON.stringify({ command: " make test " })}\n\`\`\``;
     const read = extractBlocks(output, new Set());
     expect(read.testCommand).toBe("make test");
     expect(read.output).toBe("# 説明");
     expect(extractBlocks("# 説明", new Set())).not.toHaveProperty("testCommand");
-    const empty = `\`\`\`json\n${JSON.stringify({ "sacty-test-command": { command: "" } })}\n\`\`\``;
+    const empty = `\`\`\`sacty-test-command\n${JSON.stringify({ command: "" })}\n\`\`\``;
     expect(extractBlocks(empty, new Set())).not.toHaveProperty("testCommand");
   });
 
@@ -1147,6 +1147,9 @@ describe("テストの仕組みが無いタスク（PBI-94）", () => {
     const t = task({ noTestsReason: NO_TESTS }, ["requirements", "design", "implement", "pr"]);
     const implement = buildPrompt(t, "implement");
     expect(implement).toContain(JSON.stringify(NO_TESTS));
+    // 申告は、言語の名前が sacty-test-command のコードブロックだけ（PR #105 再々レビュー指摘）
+    expect(implement).toContain('```sacty-test-command\n{"command": "テストのコマンド"}\n```');
+    expect(implement).not.toContain('{"sacty-test-command"');
     expect(implement).toContain("要求要件と設計に従って実装してください");
     expect(implement).toContain("--- 観点（承認済み・すべてを満たす） ---");
     expect(implement).toContain("[TV-1] 指示がある");
@@ -1196,7 +1199,7 @@ describe("テストの仕組みが無いタスクの指示と申告（PR #105 �
       ...extra,
     }) as unknown as Task;
   const block = (value: unknown) =>
-    `# 説明\n\n\`\`\`json\n${JSON.stringify({ "sacty-test-command": value })}\n\`\`\``;
+    `# 説明\n\n\`\`\`sacty-test-command\n${JSON.stringify(value)}\n\`\`\``;
 
   it("テストのコマンドの申告の形が正しくなければ、無い扱いにせず正しくない申告として返す", () => {
     for (const value of [
@@ -1220,24 +1223,52 @@ describe("テストの仕組みが無いタスクの指示と申告（PR #105 �
     expect(extractBlocks("# 説明", new Set())).not.toHaveProperty("testCommandInvalid");
   });
 
-  it("申告のブロックが JSON として読めなければ、正しくない申告として返す（PR #105 再レビュー指摘）", () => {
+  it("申告のコードブロックの中身が JSON として読めない・閉じていなければ、正しくない申告として返す（PR #105 再々レビュー指摘）", () => {
     for (const broken of [
-      '# 説明\n\n```json\n{"sacty-test-command":{"command":"make test",}}\n```',
-      '# 説明\n\n```json\n{"sacty-test-command": {"command": "make test"}\n```',
-      "# 説明\n\n{'sacty-test-command': {'command': 'make test'}}",
+      // 末尾のカンマ・コロンの欠け・閉じていないオブジェクト・JSON でない
+      '# 説明\n\n```sacty-test-command\n{"command":"make test",}\n```',
+      '# 説明\n\n```sacty-test-command\n{"command" "make test"}\n```',
+      '# 説明\n\n```sacty-test-command\n{"command": "make test"\n```',
+      "# 説明\n\n```sacty-test-command\nmake test\n```",
+      "# 説明\n\n```sacty-test-command\n```",
+      // 閉じていないフェンス
+      '# 説明\n\n```sacty-test-command\n{"command": "make test"}',
+      // チルダのフェンス・情報文字列の続き・行頭の空白
+      '~~~sacty-test-command\n{"command":"make test",}\n~~~',
+      '   ```sacty-test-command extra\n{"command" "make test"}\n   ```',
       // 読める申告の後に、読めない申告がある
-      '```json\n{"sacty-test-command":{"command":"make test"}}\n```\n\n```json\n{"sacty-test-command":{"command":"make check",}}\n```',
+      '```sacty-test-command\n{"command":"make test"}\n```\n\n```sacty-test-command\n{"command":"make check",}\n```',
     ]) {
       const read = extractBlocks(broken, new Set());
       expect(read.testCommandInvalid, broken).toBe(true);
       expect(read).not.toHaveProperty("testCommand");
     }
-    // 説明の文で見出しの名前に触れるだけなら、申告とはみなさない
-    const prose = extractBlocks(
-      "# 説明\n\nテストの仕組みは用意していないので sacty-test-command は付けない",
+  });
+
+  it("申告のコードブロックの外の文や、ほかのコードブロックの中の例は、申告として扱わない（PR #105 再々レビュー指摘）", () => {
+    for (const prose of [
+      // 説明の文で書き方を引用しただけ（コロンあり・無し）
+      '# 説明\n\nテストは用意していないので、"sacty-test-command": {"command": "…"} は付けない',
+      '# 説明\n\n{"sacty-test-command" {"command":"make test"}}',
+      // ほかの言語のコードブロックに、見出しのキーの JSON を書いた
+      '# 説明\n\n```json\n{"sacty-test-command": {"command": "make test",}}\n```',
+      // 言語の名前が違う（最初の語でない・似た名前）
+      '# 説明\n\n```json sacty-test-command\n{"command":"make test",}\n```',
+      '# 説明\n\n```sacty-test-commands\n{"command":"make test",}\n```',
+      // 4つのバッククォートで、申告の書き方を例として引用した
+      '# 説明\n\n````markdown\n```sacty-test-command\n{"command":"make test",}\n```\n````',
+    ]) {
+      const read = extractBlocks(prose, new Set());
+      expect(read, prose).not.toHaveProperty("testCommandInvalid");
+      expect(read, prose).not.toHaveProperty("testCommand");
+    }
+    // 申告のコードブロックだけを本文から取り除き、ほかのコードブロックは残す
+    const both = extractBlocks(
+      '# 説明\n\n```sh\nmake test\n```\n\n```sacty-test-command\n{"command": "make test"}\n```\n\n以上',
       new Set(),
     );
-    expect(prose).not.toHaveProperty("testCommandInvalid");
+    expect(both.testCommand).toBe("make test");
+    expect(both.output).toBe("# 説明\n\n```sh\nmake test\n```\n\n\n以上");
   });
 
   it("テストの無い根拠は、指示の文に埋め込まず、JSON の文字列のデータとして渡す", () => {
