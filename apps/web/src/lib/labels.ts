@@ -700,7 +700,8 @@ export type StepImageRow = {
   source:
     | { by: "person"; at: string; from: string }
     | { by: "project" }
-    | { by: "orchestrator" }
+    /** default は、既定のイメージにした理由（PBI-105）。unexplained は、理由が無いまま既定のイメージにした。 */
+    | { by: "orchestrator"; default?: string; unexplained?: true }
     | { by: "none" };
   /** 変えたイメージをいつから使うか。running：次の実行から（今の実行はそのまま）、done：やり直し・手戻りから、next：次の実行から。 */
   when: "running" | "done" | "next";
@@ -716,11 +717,18 @@ export function stepImageRows(task: Task): StepImageRow[] {
     .map((s) => {
       const image = task.images?.[s.key] ?? "default";
       const change = task.imageChanges?.[s.key];
+      // 既定のイメージにした理由（PBI-105）は、人が変えるまで出す（人が変えたら、人の変更を出す）
+      const defaultReason = task.defaultImageReasons?.[s.key];
+      const unexplained = task.imagesUnexplained?.includes(s.key) ?? false;
       const source: StepImageRow["source"] = change
         ? { by: "person", at: change.at, from: change.from }
-        : task.images?.[s.key]
-          ? { by: task.imageSource ?? "orchestrator" }
-          : { by: "none" };
+        : defaultReason
+          ? { by: "orchestrator", default: defaultReason }
+          : unexplained
+            ? { by: "orchestrator", unexplained: true }
+            : task.images?.[s.key]
+              ? { by: task.imageSource ?? "orchestrator" }
+              : { by: "none" };
       const when: StepImageRow["when"] = stepRunning(task, s.key)
         ? "running"
         : s.state === "done" || s.state === "skip"

@@ -1507,6 +1507,42 @@ describe("工程のイメージの表示（PBI-106）", () => {
     ]);
   });
 
+  it("既定のイメージにした理由（PBI-105）は人が変えるまで出し、人が変えたら人の変更を出す", () => {
+    const steps = [
+      { key: "investigate" as const, state: "done" as const },
+      { key: "requirements" as const, state: "active" as const },
+      { key: "design" as const, state: "todo" as const },
+    ];
+    const chosen = {
+      status: "awaiting_approval" as const,
+      steps,
+      images: { requirements: "default" },
+      imageSource: "orchestrator" as const,
+      defaultImageReasons: { requirements: "文書だけを書く" },
+      imagesUnexplained: ["investigate" as const, "design" as const],
+    };
+    expect(stepImageRows(task(chosen)).map((r) => r.source)).toEqual([
+      { by: "orchestrator", unexplained: true },
+      { by: "orchestrator", default: "文書だけを書く" },
+      { by: "orchestrator", unexplained: true },
+    ]);
+    const changed = stepImageRows(
+      task({
+        ...chosen,
+        images: { requirements: "playwright", design: "java" },
+        imageChanges: {
+          requirements: { from: "default", to: "playwright", at: "2026-10-15T01:00:00.000Z" },
+          design: { from: "default", to: "java", at: "2026-10-15T01:01:00.000Z" },
+        },
+      }),
+    );
+    expect(changed.map((r) => [r.image, r.source.by])).toEqual([
+      ["default", "orchestrator"],
+      ["playwright", "person"],
+      ["java", "person"],
+    ]);
+  });
+
   it("実装の検証（テスト）の間は実行中、止まっている工程は次の実行から。プロジェクトの指定はその旨を出す", () => {
     const steps = [{ key: "implement" as const, state: "active" as const }];
     const testing = task({ status: "idle", verification: "pending", steps });

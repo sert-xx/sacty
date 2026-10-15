@@ -161,6 +161,8 @@ for each step in "Step images" in the "Steps" section of the task detail.
 - Tasks whose project target specifies an image can be changed too. Only the steps a person changed take precedence over the target's image.
 - The PR step doesn't run in a container, so it has no image.
 - A change is recorded in the Activity as who changed which step from what to what. The step images list shows when a person changed it and the previous name.
+  Why the Orchestrator left a step on the default image (or that no reason was given) is shown in the step images list until a person changes it. The "Steps chosen"
+  line in the Activity stays as it was recorded.
 
 ## Related pages
 

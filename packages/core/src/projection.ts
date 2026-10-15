@@ -430,6 +430,10 @@ export type Task = {
   images?: Partial<Record<StepKey, string>>;
   /** 工程を選んだときにイメージを決めたのが、プロジェクトの対象の指定か、オーケストレーターか（PBI-41）。 */
   imageSource?: "project" | "orchestrator";
+  /** オーケストレーターが既定のイメージにした工程と、images のどれも合わない理由（PBI-105）。 */
+  defaultImageReasons?: Partial<Record<StepKey, string>>;
+  /** images の候補を見せたのに、理由が無いまま既定のイメージにした工程（PBI-105）。 */
+  imagesUnexplained?: StepKey[];
   /** 人がタスクの詳細で変えた、工程のイメージ（PBI-106）。工程ごとに最後の変更。 */
   imageChanges?: Partial<Record<StepKey, { from: string; to: string; at: string }>>;
   /** 工程・テストの実行の前に起動する docker compose のサービス（PBI-47）。 */
@@ -588,6 +592,10 @@ export function applyEvent(
       if (event.payload.images && event.payload.imageSource) {
         task.imageSource = event.payload.imageSource;
       }
+      if (event.payload.defaultImageReasons) {
+        task.defaultImageReasons = event.payload.defaultImageReasons;
+      }
+      if (event.payload.imagesUnexplained) task.imagesUnexplained = event.payload.imagesUnexplained;
       if (event.payload.services) task.services = event.payload.services;
       if (event.payload.servicesReason) task.servicesReason = event.payload.servicesReason;
       if (event.payload.exports) task.exportPlans = event.payload.exports;

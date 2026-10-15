@@ -545,7 +545,11 @@ async function StepImages({ task }: { task: Task }) {
                   : row.source.by === "project"
                     ? m.byProject
                     : row.source.by === "orchestrator"
-                      ? m.byOrchestrator
+                      ? row.source.default
+                        ? m.byOrchestratorDefault(row.source.default)
+                        : row.source.unexplained
+                          ? m.byOrchestratorUnexplained
+                          : m.byOrchestrator
                       : m.none}
               </span>
             </span>

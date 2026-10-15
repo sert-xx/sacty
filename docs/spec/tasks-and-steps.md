@@ -163,6 +163,9 @@
 - 画面は、工程ごとにイメージ・選んだ元（人が変えた時刻と変える前の名前、プロジェクトの対象の指定、オーケストレーター、指定なし）・
   変えたらいつから使うか（実行中なら次の実行から、終わった工程ならやり直し・手戻りから）を出す（`stepImageRows`）。
   実行中は、エージェントの実行中・実装の検証の間・再現の確かめの間（`stepRunning`）。作業履歴は、誰が・いつ・どの工程を・何から何に変えたかを出す。
+- オーケストレーターが既定のイメージにした工程は、人が変えるまで、選んだ元に既定のイメージにした理由（`defaultImageReasons`）か、理由の記載が
+  無いこと（`imagesUnexplained`）を出す。人が変えたら、人の変更を出す。作業履歴の「工程を決定」の行は、工程を決めたときの記録のまま残る
+  （その後の `StepImageChanged` の行で、変えたことがわかる）。
 
 コード: `apps/daemon/src/service.ts`（`changeStepImage`・`runNextInner`・`integrate`）、`apps/daemon/src/server.ts`、`packages/core/src/events.ts`（`StepImageChanged`・`ChangeStepImageInput`）、`packages/core/src/projection.ts`（`stepRunning`）、`apps/web/src/lib/labels.ts`（`stepImageRows`）
 

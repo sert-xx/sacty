@@ -74,6 +74,9 @@ const ja = {
     byPerson: (at: string, from: string) => `人間が変更（${at}・${from} から）`,
     byProject: "プロジェクトの対象の指定",
     byOrchestrator: "オーケストレーターが選択",
+    byOrchestratorDefault: (reason: string) =>
+      `オーケストレーターが既定のイメージを選択（images のどれも合わない理由：${reason}）`,
+    byOrchestratorUnexplained: "オーケストレーターが既定のイメージにした（理由の記載なし）",
     none: "指定なし",
     whenRunning: "変えると、次の実行から使います（今の実行はそのまま）",
     whenDone: "変えると、やり直し・手戻りで実行するときから使います",
@@ -345,6 +348,9 @@ const en: TaskMessages = {
     byPerson: (at, from) => `changed by a person (${at}, from ${from})`,
     byProject: "set on the project target",
     byOrchestrator: "chosen by the Orchestrator",
+    byOrchestratorDefault: (reason) =>
+      `the Orchestrator chose the default image (why none of images fits: ${reason})`,
+    byOrchestratorUnexplained: "the Orchestrator left the default image (no reason given)",
     none: "not set",
     whenRunning: "A change is used from the next run (the current run keeps its image)",
     whenDone: "A change is used when the step runs again (retry or rework)",

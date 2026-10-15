@@ -162,6 +162,9 @@ Code: `apps/daemon/src/service.ts` (`askOrchestrator`, `runNextInner`, `withImag
 - The screen shows, for each step, the image, where it came from (the time a person changed it and the previous name, the project target, the Orchestrator,
   or not set) and when a change takes effect (from the next run while running; from a retry or rework for a done step) (`stepImageRows`).
   Running means the agent run, the implementation verification, and the reproduction check (`stepRunning`). The Activity shows who changed which step, when, and from what to what.
+- For a step the Orchestrator left on the default image, where it came from shows the reason for the default image (`defaultImageReasons`) or that no reason was
+  given (`imagesUnexplained`) until a person changes it. After a person changes it, the person's change is shown. The "Steps chosen" line in the Activity stays as recorded
+  when the steps were chosen (the later `StepImageChanged` line shows the change).
 
 Code: `apps/daemon/src/service.ts` (`changeStepImage`, `runNextInner`, `integrate`), `apps/daemon/src/server.ts`, `packages/core/src/events.ts` (`StepImageChanged`, `ChangeStepImageInput`), `packages/core/src/projection.ts` (`stepRunning`), `apps/web/src/lib/labels.ts` (`stepImageRows`)
 
