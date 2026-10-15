@@ -19,3 +19,19 @@ export function AutoRefresh({
   }, [active, intervalMs, router]);
   return null;
 }
+
+/**
+ * タブに戻ってきた（隠れていた画面がまた見えた）ときに、一度だけ画面を最新にする（PBI-98）。ほかのタブ・CLI・デーモンでの
+ * 変化（承認・工程の完了など）を、ヘッダーのお知らせに反映するため。見えている間は問い合わせない。
+ */
+export function RefreshOnVisible() {
+  const router = useRouter();
+  useEffect(() => {
+    const onChange = () => {
+      if (document.visibilityState === "visible") router.refresh();
+    };
+    document.addEventListener("visibilitychange", onChange);
+    return () => document.removeEventListener("visibilitychange", onChange);
+  }, [router]);
+  return null;
+}

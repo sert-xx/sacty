@@ -1,8 +1,11 @@
-<!-- 対応するコード: packages/core/src/projects.ts（ProjectDefinition・ProjectTarget・ProjectExport）、packages/core/src/github-url.ts、apps/daemon/src/gh.ts、apps/daemon/src/github.ts、apps/web/src/components/project-editor.tsx、apps/web/src/i18n/messages/projects.ts -->
+<!-- 対応するコード: packages/core/src/projects.ts（ProjectDefinition・ProjectTarget・ProjectExport）、packages/core/src/github-url.ts、apps/daemon/src/gh.ts、apps/daemon/src/github.ts、apps/web/src/components/project-editor.tsx、apps/web/src/i18n/messages/projects.ts、apps/web/src/components/shell/follow-project.tsx -->
 
 # プロジェクトの設定
 
 プロジェクトごとの設定は、画面のプロジェクトの設定で登録する（config.yaml には書かない）。
+
+表示するプロジェクトは、画面のヘッダーで切り替える。プロジェクトを作る・インポートすると、そのプロジェクトに切り替わる。
+タスクやプロジェクトの設定を（一覧・通知のリンク・URL から）開いたときも、ヘッダーはそのプロジェクトに切り替わる。
 
 | 欄 | 内容 | 詳しいページ |
 | --- | --- | --- |

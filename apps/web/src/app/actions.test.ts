@@ -3,27 +3,48 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const createTask = vi.fn();
 const saveProject = vi.fn();
 const importProject = vi.fn();
+const approveStep = vi.fn();
+const requestChanges = vi.fn();
+const cookieSet = vi.fn();
+const refresh = vi.fn();
+const order: string[] = [];
 vi.mock("@/lib/daemon", () => ({
   createTask,
   saveProject,
   importProject,
+  approveStep,
+  requestChanges,
   CONTEXT_CHECK_PARAM: "contextCheck",
 }));
 // 送信時の cookie は、別のタブで切り替えた「B」になっている
 vi.mock("next/headers", () => ({
   cookies: async () => ({
     get: (name: string) => (name === "sacty-project" ? { value: "project-b" } : undefined),
+    set: cookieSet,
   }),
   headers: async () => new Headers({ "accept-language": "ja" }),
 }));
 vi.mock("next/navigation", () => ({
   redirect: (to: string) => {
+    order.push("redirect");
     throw new Error(`redirect:${to}`);
   },
 }));
-vi.mock("next/cache", () => ({ refresh: () => {}, revalidatePath: () => {} }));
+vi.mock("next/cache", () => ({
+  refresh: () => {
+    order.push("refresh");
+    refresh();
+  },
+  revalidatePath: () => {},
+}));
 
-const { createTaskAction, importProjectAction, saveProjectAction } = await import("./actions");
+const {
+  createTaskAction,
+  gateAction,
+  importProjectAction,
+  saveProjectAction,
+  selectProjectAction,
+} = await import("./actions");
 
 const form = (values: Record<string, string>) => {
   const data = new FormData();
@@ -210,5 +231,85 @@ describe("作成・インポートの後のコンテキストの誤り（PBI-76 
     await expect(importProjectAction({}, file({ sacty: "project" }))).rejects.toThrow(
       /^redirect:\/projects\/p1$/,
     );
+  });
+});
+
+describe("ヘッダーの表示を今の状態に合わせる（PBI-98）", () => {
+  beforeEach(() => {
+    for (const f of [approveStep, requestChanges, createTask, saveProject, importProject]) {
+      f.mockReset();
+    }
+    cookieSet.mockReset();
+    refresh.mockReset();
+    order.length = 0;
+  });
+  const gate = (decision: string, comments = "") =>
+    form({ taskId: "t1", step: "requirements", decision, submission: "1", comments });
+
+  it("承認・差し戻しの後は、移る前にヘッダーも描き直させる（お知らせの印を残さない）", async () => {
+    approveStep.mockResolvedValue({ ok: true });
+    await expect(gateAction({}, gate("approve"))).rejects.toThrow("redirect:/tasks/t1");
+    expect(order).toEqual(["refresh", "redirect"]);
+
+    order.length = 0;
+    requestChanges.mockResolvedValue({ ok: true });
+    await expect(gateAction({}, gate("request", "直す"))).rejects.toThrow("redirect:/tasks/t1");
+    expect(order).toEqual(["refresh", "redirect"]);
+  });
+
+  it("承認できなければ、描き直さずに理由を返す", async () => {
+    approveStep.mockResolvedValue({ ok: false, message: "承認できません。" });
+    expect(await gateAction({}, gate("approve"))).toMatchObject({ message: "承認できません。" });
+    expect(refresh).not.toHaveBeenCalled();
+  });
+
+  it("タスクを作った後も、ヘッダーを描き直させる", async () => {
+    createTask.mockResolvedValue({ ok: true, task: { id: "t2" } });
+    await expect(
+      createTaskAction({}, form({ title: "決済", body: "", projectId: "project-a" })),
+    ).rejects.toThrow("redirect:/tasks/t2");
+    expect(order).toEqual(["refresh", "redirect"]);
+    order.length = 0;
+    await expect(
+      createTaskAction({}, form({ template: "sacty-setup", projectId: "project-a" })),
+    ).rejects.toThrow("redirect:/tasks/t2");
+    expect(order).toEqual(["refresh", "redirect"]);
+  });
+
+  it("作った・インポートしたプロジェクトを、表示しているプロジェクトにする（ヘッダーを設定の画面と合わせる）", async () => {
+    saveProject.mockResolvedValue({ ok: true, project: { id: "p-new", name: "B" } });
+    await expect(
+      saveProjectAction({}, form({ id: "", definition: JSON.stringify({ name: "B" }) })),
+    ).rejects.toThrow("redirect:/projects/p-new");
+    expect(cookieSet).toHaveBeenCalledWith(
+      "sacty-project",
+      "p-new",
+      expect.objectContaining({ path: "/", httpOnly: true }),
+    );
+
+    cookieSet.mockReset();
+    const data = new FormData();
+    data.set("file", new File([JSON.stringify({ sacty: "project" })], "p.json"));
+    importProject.mockResolvedValue({ ok: true, project: { id: "p-imported", name: "C" } });
+    await expect(importProjectAction({}, data)).rejects.toThrow("redirect:/projects/p-imported");
+    expect(cookieSet).toHaveBeenCalledWith("sacty-project", "p-imported", expect.anything());
+  });
+
+  it("設定の保存（作成でない）では、表示しているプロジェクトを変えない", async () => {
+    saveProject.mockResolvedValue({ ok: true, project: { id: "p-a", name: "A" } });
+    expect(
+      await saveProjectAction({}, form({ id: "p-a", definition: JSON.stringify({ name: "A" }) })),
+    ).toMatchObject({ saved: true });
+    expect(cookieSet).not.toHaveBeenCalled();
+    // 名前の変更は、描き直しでヘッダーにも出る
+    expect(refresh).toHaveBeenCalled();
+  });
+
+  it("開いた画面のプロジェクトに合わせる。ID の形が違えば変えない", async () => {
+    await selectProjectAction("p-a");
+    expect(cookieSet).toHaveBeenCalledWith("sacty-project", "p-a", expect.anything());
+    cookieSet.mockReset();
+    for (const bad of ["", "a b", "a;b", "x".repeat(101)]) await selectProjectAction(bad);
+    expect(cookieSet).not.toHaveBeenCalled();
   });
 });

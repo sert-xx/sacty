@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { AutoRefresh } from "@/components/auto-refresh";
+import { AutoRefresh, RefreshOnVisible } from "@/components/auto-refresh";
 import type { LanguagePreference } from "@/i18n/locale";
 import { getMessages, languagePreference } from "@/i18n/server";
 import { currentProjectId, resolveProject } from "@/lib/current-project";
@@ -77,6 +77,8 @@ export async function AppHeader() {
     <Frame>
       {/* お知らせは全プロジェクトが対象なので、どのプロジェクトのタスクが動いていても最新にする */}
       <AutoRefresh active={tasks.some(isWorking)} />
+      {/* ほかのタブ・CLI・デーモンでの変化は、このタブに戻ってきたときに反映する（PBI-98） */}
+      <RefreshOnVisible />
       <ProjectMenu projects={options} current={currentOption} />
       <span className="flex-1" />
       <NotificationsMenu
