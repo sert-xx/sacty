@@ -2,7 +2,7 @@
 
 - 日付: 2026-10-15（UTC）
 - タスク: PBI-95
-- PR: なし
+- PR: #104
 - ブランチ: feat/issue-95-user-docs-style
 - 関係する ADR: [ユーザードキュメントはです・ます調にし、その書き方の規則は docs/README.md に置く](../adr/20261015-0017-user-docs-polite-style-and-rules-location.md)
 
