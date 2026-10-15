@@ -2,13 +2,13 @@
 
 # コンテナイメージ
 
-エージェントの実行とテストの実行に使うコンテナイメージを作る。イメージは `npx sacty image build` で作る
-（[CLI](cli.md#sacty-image-build)）。作ったイメージ（`image`。既定 `sacty-agent:0.1.0`）は、エージェントの実行とテストの実行の両方で使う。
+エージェントの実行とテストの実行に使うコンテナイメージを作ります。イメージは `npx sacty image build` で作ります
+（[CLI](cli.md#sacty-image-build)）。作ったイメージ（`image`。既定 `sacty-agent:0.1.0`）は、エージェントの実行とテストの実行の両方で使います。
 
 ## プライベートのレジストリからイメージを作る
 
 Docker Hub や npm の公開レジストリを使えない環境では、`config.yaml` の `image_build` に元のイメージと npm のレジストリを書いてから
-`sacty image build` を実行する。書かなければ、Docker Hub の `node:22-bookworm-slim` と npm の公開レジストリから作る。
+`sacty image build` を実行してください。書かなければ、Docker Hub の `node:22-bookworm-slim` と npm の公開レジストリから作ります。
 
 ```yaml
 image: registry.example.com/sacty-agent:0.1.0
@@ -31,17 +31,17 @@ image_build:
 | `npm_version` | イメージに入れる npm の版（`latest` か、`11`・`11.4`・`11.4.2` の形） | 元のイメージの npm |
 | `npm_config` | コンテナの中の npm 全体の設定 | なし |
 
-- npm のトークンは、ビルドのときだけ読ませる（BuildKit の secret）。イメージの層・履歴・環境変数には残らない。
-- 元のイメージに git が入っていれば、Debian のミラーに届かなくても作れる。
-- `npm_registry` は、コンテナの中の npm の registry にもなる（`npm_config` の `registry` があれば、そちらが優先）。`npm_token` は
-  イメージを作るときだけ使い、コンテナの中では使わない。
-- `npm_config` はイメージに残り、コンテナの中のすべての npm（対象リポジトリの `npm ci` など）に効く。対象リポジトリの `.npmrc` に
-  同じ項目があれば、そちらが優先する。認証の項目（`_authToken`・`_auth`・`_password`・`username`・`email`・`certfile`・`keyfile`・
-  `cert`・`key`）はイメージに残るので書けない。
+- npm のトークンは、ビルドのときだけ読ませます（BuildKit の secret）。イメージの層・履歴・環境変数には残りません。
+- 元のイメージに git が入っていれば、Debian のミラーに届かなくても作れます。
+- `npm_registry` は、コンテナの中の npm の registry にもなります（`npm_config` の `registry` があれば、そちらが優先します）。`npm_token` は
+  イメージを作るときだけ使い、コンテナの中では使いません。
+- `npm_config` はイメージに残り、コンテナの中のすべての npm（対象リポジトリの `npm ci` など）に効きます。対象リポジトリの `.npmrc` に
+  同じ項目があれば、そちらが優先します。認証の項目（`_authToken`・`_auth`・`_password`・`username`・`email`・`certfile`・`keyfile`・
+  `cert`・`key`）はイメージに残るので書けません。
 
 ## 言語ごとのイメージ
 
-Python・Go・Java などのリポジトリは、言語のツールが入ったイメージ（CI のイメージなど）を元にして、言語ごとのイメージを作る。
+Python・Go・Java などのリポジトリは、言語のツールが入ったイメージ（CI のイメージなど）を元にして、言語ごとのイメージを作ります。
 
 ```yaml
 images:
@@ -79,21 +79,21 @@ npx sacty image build java17     # 名前を指定して作る（default は既�
 | `enable_repos` | `packages` を入れるときに有効にするパッケージのリポジトリの ID | なし |
 | `run` | イメージを作るときに root で実行するコマンド | なし |
 
-- sacty が、元のイメージに git・Claude Code・Codex を足し、`node` ユーザーで動かす。元のイメージに Node.js 18 以上と npm があれば
-  それを使い、無ければ `node_image` から写す（npm は `npm root -g`・`/usr/local/lib/node_modules`・`/usr/lib/node_modules` から探す）。
-  npm の設定は `image_build` のものを使う。エージェントは `node` ユーザーで動くので、`HOME` は `/home/node`、`GOPATH` は
-  `/home/node/go`（`/home/node/go/bin` を PATH に足す）にする（CI のイメージが root 向けの場所にしていても書けるように。`GOPATH` は
-  `env` で上書きできる）。
-- `env` は、組織のレジストリなど（`PIP_INDEX_URL`・`UV_DEFAULT_INDEX`・`GOPROXY`・`GONOSUMDB` など）。名前は英大文字・数字・`_`。
+- sacty が、元のイメージに git・Claude Code・Codex を足し、`node` ユーザーで動かします。元のイメージに Node.js 18 以上と npm があれば
+  それを使い、無ければ `node_image` から写します（npm は `npm root -g`・`/usr/local/lib/node_modules`・`/usr/lib/node_modules` から探します）。
+  npm の設定は `image_build` のものを使います。エージェントは `node` ユーザーで動くので、`HOME` は `/home/node`、`GOPATH` は
+  `/home/node/go`（`/home/node/go/bin` を PATH に足します）にします（CI のイメージが root 向けの場所にしていても書けるように。`GOPATH` は
+  `env` で上書きできます）。
+- `env` には、組織のレジストリなど（`PIP_INDEX_URL`・`UV_DEFAULT_INDEX`・`GOPROXY`・`GONOSUMDB` など）を書きます。名前は、英大文字か `_` で始まる、英大文字・数字・`_` です。
   コンテナの中のすべてのコマンドに見えるので、認証の値（`TOKEN`・`PASSWORD`・`SECRET`・`AUTH`・`API_KEY` などを含む名前、
-  ユーザー名・パスワードを含む URL）は書けない。`PATH`・`HOME`・`USER`・`SHELL`・`TMPDIR`・`NODE_OPTIONS` や、`SACTY_`・`DOCKER_`・`CODEX_`・`CLAUDE_`・
-  `ANTHROPIC_`・`OPENAI_`・`NPM_CONFIG_` で始まる名前も書けない。
-- `maven_mirror` は、Maven（`settings.xml` の mirror）と Gradle（init スクリプト）の取得先を、すべてその URL に向ける。
-  ユーザー名・パスワードを含む URL と、引用符などの記号を含む URL は書けない。
-- `packages` に書いた OS のパッケージを、イメージを作るときに root で入れる（dnf・microdnf・yum・apt-get のうち、元のイメージにある
-  もの）。`run` に書いたコマンドは、イメージを作るときに root で上から順に実行する（組織のパッケージのリポジトリの設定、CLI の導入
-  など。失敗したら止める）。`packages`・`run` を変えると、`sacty image build` で作り直される。イメージに残るので、`run` に秘密情報は
-  書かない。
+  ユーザー名・パスワードを含む URL）は書けません。`PATH`・`HOME`・`USER`・`SHELL`・`TMPDIR`・`NODE_OPTIONS` や、`SACTY_`・`DOCKER_`・`CODEX_`・`CLAUDE_`・
+  `ANTHROPIC_`・`OPENAI_`・`NPM_CONFIG_` で始まる名前も書けません。
+- `maven_mirror` は、Maven（`settings.xml` の mirror）と Gradle（init スクリプト）の取得先を、すべてその URL に向けます。
+  ユーザー名・パスワードを含む URL と、引用符などの記号を含む URL は書けません。
+- `packages` に書いた OS のパッケージを、イメージを作るときに root で入れます（dnf・microdnf・yum・apt-get のうち、元のイメージにある
+  もの）。`run` に書いたコマンドは、イメージを作るときに root で上から順に実行します（組織のパッケージのリポジトリの設定、CLI の導入
+  など。失敗したら止めます）。`packages`・`run` を変えると、`sacty image build` で作り直されます。イメージに残るので、`run` に秘密情報は
+  書かないでください。
 
   ```yaml
   images:
@@ -107,17 +107,17 @@ npx sacty image build java17     # 名前を指定して作る（default は既�
         - sh /tmp/pf-install.sh
   ```
 
-  `run` のコマンドは、終了コードが 0 でなければ止まる。元のイメージに bash があれば `pipefail` で実行するのでパイプの途中の失敗でも
-  止まるが、bash が無いイメージ（`sh` で実行）では、パイプの最後のコマンドの終了コードしか見ない。取得して実行するような処理は、
-  パイプでつながずに項目を分ける。
+  `run` のコマンドは、終了コードが 0 でなければ止まります。元のイメージに bash があれば `pipefail` で実行するのでパイプの途中の失敗でも
+  止まりますが、bash が無いイメージ（`sh` で実行）では、パイプの最後のコマンドの終了コードしか見ません。取得して実行するような処理は、
+  パイプでつながずに項目を分けてください。
 
-  エージェントは root ではないので、タスクの中では OS のパッケージを入れられない。Playwright のブラウザ本体は、リポジトリの版に
-  合わせてタスクの中で `npx playwright install chromium` で取る（OS のライブラリだけをイメージに入れる。Debian 系なら
-  `run: [npx -y playwright@<版> install-deps chromium]` でもよい）。
+  エージェントは root ではないので、タスクの中では OS のパッケージを入れられません。Playwright のブラウザ本体は、リポジトリの版に
+  合わせてタスクの中で `npx playwright install chromium` で取ります（OS のライブラリだけをイメージに入れます。Debian 系なら
+  `run: [npx -y playwright@<版> install-deps chromium]` でもかまいません）。
 - 元のイメージに設定があるが無効にしてあるパッケージのリポジトリ（組織の rpm リポジトリなど）は、`enable_repos` に repo の ID を
-  書くと、`packages` を入れるときに有効にする（dnf・microdnf・yum の `--enablerepo`）。apt-get のイメージでは使えない（理由を示して
-  止まる。リポジトリの設定は `run` で行う）。ID は英数字で始まり、英数字と `. _ : -` だけ。`packages` と一緒に書く（`packages` が
-  無いと誤りになる）。`enable_repos` を変えると、`sacty image build` で作り直される。
+  書くと、`packages` を入れるときに有効にします（dnf・microdnf・yum の `--enablerepo`）。apt-get のイメージでは使えません（理由を示して
+  止まります。リポジトリの設定は `run` で行ってください）。ID は英数字で始まり、英数字と `. _ : -` だけです。`packages` と一緒に書きます（`packages` が
+  無いと誤りになります）。`enable_repos` を変えると、`sacty image build` で作り直されます。
 
   ```yaml
   images:
@@ -128,16 +128,16 @@ npx sacty image build java17     # 名前を指定して作る（default は既�
       packages: [nss, nspr, atk, at-spi2-atk, cups-libs, libdrm, libxkbcommon, mesa-libgbm, pango, alsa-lib]
   ```
 
-  元のイメージにある repo の ID は `docker run --rm --user root --entrypoint dnf <元のイメージ> repolist --all` で確かめられる。
+  元のイメージにある repo の ID は `docker run --rm --user root --entrypoint dnf <元のイメージ> repolist --all` で確かめられます。
 
 ## どのイメージで動くか
 
 - 工程ごとのイメージは、オーケストレーターが工程を選ぶときに、リポジトリ（`pom.xml`・`go.mod`・`pyproject.toml`・`package.json`
-  など。モノレポなら工程で触るディレクトリ）を読んで選ぶ。テストは、実装（不具合の修正では再現）の工程のイメージで実行する。
-  オーケストレーター自身は既定のイメージで動く。
-- プロジェクトの対象（リポジトリ・Org）ごとにイメージを指定すると、オーケストレーターに選ばせず、すべての工程でそれを使う
-  （リポジトリの指定が Org の指定より優先。[プロジェクトの設定](project-settings.md#対象)）。
-- 選んだイメージと理由は作業履歴に残る。`images` に無い名前を選んだ・指定したときは、理由を示して止まる。
+  など。モノレポなら工程で触るディレクトリ）を読んで選びます。テストは、実装（不具合の修正では再現）の工程のイメージで実行します。
+  オーケストレーター自身は既定のイメージで動きます。
+- プロジェクトの対象（リポジトリ・Org）ごとにイメージを指定すると、オーケストレーターに選ばせず、すべての工程でそれを使います
+  （リポジトリの指定が Org の指定より優先します。[プロジェクトの設定](project-settings.md#対象)）。
+- 選んだイメージと理由は作業履歴に残ります。`images` に無い名前を選んだ・指定したときは、理由を示して止まります。
 
 ## 関係するページ
 

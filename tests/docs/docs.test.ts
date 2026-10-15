@@ -570,6 +570,19 @@ describe("ユーザードキュメントと README", () => {
     }
   });
 
+  it("ユーザードキュメントの書き方の規則は docs/README.md にあり、利用者向けの目次には置かない", () => {
+    const policy = readFileSync(join(DOCS, "README.md"), "utf8");
+    expect(headingAnchors(policy).has("ユーザードキュメントの書き方")).toBe(true);
+    expect(policy).toContain("です・ます調");
+    const headings = stripFences(readFileSync(join(USER_DIR, "README.md"), "utf8"))
+      .split("\n")
+      .filter((line) => /^#{1,6} /.test(line))
+      .map((line) => line.replace(/^#+ /, ""));
+    for (const rule of ["ファイルの分け方", "書き方の規則", "ひな形"]) {
+      expect(headings, rule).not.toContain(rule);
+    }
+  });
+
   it("リポジトリの README から、ユーザードキュメントの目次へリンクしている", () => {
     expect(relativeLinks(readFileSync(join(ROOT, "README.md"), "utf8"))).toContain(
       "docs/user/README.md",
