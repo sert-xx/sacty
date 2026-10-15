@@ -41,9 +41,7 @@ import {
   fixTaskOpen,
   GATED_STEPS,
   gatePullRequest,
-  IntakeKind,
-  intakeKindEnabled,
-  intakeKindKey,
+  type IntakeKind,
   investigationIsGoal,
   isCompleted,
   isRepoless,
@@ -532,7 +530,7 @@ export class TaskService {
   private tasks: Map<string, Task>;
 
   private intakeRuns: Partial<Record<IntakeKind, IntakeRun>> = {};
-  private intakeRestarts: Partial<Record<IntakeKind, number>> = {};
+  private settingsSaves = 0;
   /** 実行中のタスクと、そのタスクで動いているコンテナ（一時停止・中止で止めるため）。 */
   private readonly inflight = new Map<string, { runIds: Set<string>; done: Promise<void> }>();
   /**
@@ -2396,38 +2394,18 @@ export class TaskService {
    * 同じ名前は書けない（PBI-99）。
    */
   saveSettings(raw: unknown): SactySettings {
-    const update = SactySettingsUpdate.parse(raw);
-    let before: SactySettings | undefined;
-    try {
-      before = this.deps.settings.get();
-    } catch {
-      // 前の設定を読めなければ、どの種類も変わったとみなす
-    }
-    const saved = this.deps.settings.put(update);
-    // 止めた種類と、何を取り込むか（ラベル・依頼）を変えた種類を数える（Off にしてすぐ On に戻しても、ラベルを変えても、
-    // 取り込みが間隔の起点を戻せるように。PBI-100）
-    for (const kind of IntakeKind.options) {
-      if (
-        !intakeKindEnabled(saved, kind) ||
-        !before ||
-        intakeKindKey(before, kind) !== intakeKindKey(saved, kind)
-      ) {
-        this.intakeRestarts = {
-          ...this.intakeRestarts,
-          [kind]: (this.intakeRestarts[kind] ?? 0) + 1,
-        };
-      }
-    }
+    const saved = this.deps.settings.put(SactySettingsUpdate.parse(raw));
+    // 保存したら、取り込みはすべての種類を次の確認ですぐに取り込む（何が変わったかは見分けない。PBI-100）
+    this.settingsSaves += 1;
     return saved;
   }
 
   /**
-   * その種類の取り込みを、間隔を待たずに始め直す設定を保存した回数（デーモンの起動から。PBI-100）。止める設定（ラベルが無い・
-   * Off）か、何を取り込むか（ラベル・依頼）を変えた保存を数える。取り込みは、これが変わったら、間隔を待たずに次の確認で取り込む
-   * （Off にして、次の確認の前に On に戻したときも）。
+   * sacty の設定を保存した回数（デーモンの起動から。PBI-100）。取り込みは、これが変わったら、すべての種類の間隔の起点を戻す
+   * （On にした・ラベルを変えた・Off にしてすぐ On に戻した、などを見分けずに、次の確認ですぐに取り込む）。
    */
-  intakeRestartCount(kind: IntakeKind): number {
-    return this.intakeRestarts[kind] ?? 0;
+  settingsSaveCount(): number {
+    return this.settingsSaves;
   }
 
   /**

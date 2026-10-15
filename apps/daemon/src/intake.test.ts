@@ -539,7 +539,7 @@ describe("取り込みの種類ごとの間隔（PBI-100）", () => {
     activity.close();
   });
 
-  it("間隔を変えたら、デーモンを再起動せずに次の取り込みから効く", async () => {
+  it("間隔を変えたら、デーモンを再起動せずに効く（保存した直後の確認で取り込み、その後は新しい間隔ごと）", async () => {
     const { activity, service, intake, advance, counts } = kindsSetup({ ticketIntervalSec: 600 });
     await intake.tick();
     advance(120_000);
@@ -548,14 +548,19 @@ describe("取り込みの種類ごとの間隔（PBI-100）", () => {
     service.saveSettings({ ...service.getSettings(), ticketIntervalSec: 60 });
     await intake.tick();
     expect(counts().tickets).toBe(2);
-    // 長くすると、次の取り込みまで待つ
-    service.saveSettings({ ...service.getSettings(), ticketIntervalSec: 900 });
-    advance(600_000);
-    await intake.tick();
-    expect(counts().tickets).toBe(2);
-    advance(300_000);
+    advance(60_000);
     await intake.tick();
     expect(counts().tickets).toBe(3);
+    // 長くすると、保存した直後の確認の後は、新しい間隔を待つ
+    service.saveSettings({ ...service.getSettings(), ticketIntervalSec: 900 });
+    await intake.tick();
+    expect(counts().tickets).toBe(4);
+    advance(600_000);
+    await intake.tick();
+    expect(counts().tickets).toBe(4);
+    advance(300_000);
+    await intake.tick();
+    expect(counts().tickets).toBe(5);
     activity.close();
   });
 
@@ -569,7 +574,7 @@ describe("取り込みの種類ごとの間隔（PBI-100）", () => {
     activity.close();
   });
 
-  it("取り込み元が無い回（ラベルが無い・Off）は間隔の起点にせず、On にしたら次の確認ですぐに検索する（レビュー指摘）", async () => {
+  it("取り込み元が無い回（ラベルが無い・Off）は記録せず、On にして保存したら次の確認ですぐに検索する（レビュー指摘）", async () => {
     const { activity, service, intake, counts } = kindsSetup({
       reviewLabel: "",
       ticketLabel: "sacty",
@@ -579,11 +584,10 @@ describe("取り込みの種類ごとの間隔（PBI-100）", () => {
     expect(counts()).toEqual({ issues: 1, reviews: 0, tickets: 0 });
     // 取り込み元の無い種類は、取り込んだように記録しない
     expect(Object.keys(service.status().intake?.runs ?? {})).toEqual(["issues"]);
-    // 時刻を進めずに、レビューの依頼とチケットを On にする
+    // 時刻を進めずに、レビューの依頼とチケットを On にする（保存したので、すべての種類をすぐに検索する）
     service.saveSettings({ intakeLabel: "sacty", ticketLabel: "sacty", reviewRequested: true });
     await intake.tick();
-    // 取り込み元のあった Issue は間隔を待つ。On にした種類は、すぐに検索する
-    expect(counts()).toEqual({ issues: 1, reviews: 1, tickets: 1 });
+    expect(counts()).toEqual({ issues: 2, reviews: 1, tickets: 1 });
     expect(Object.keys(service.status().intake?.runs ?? {}).sort()).toEqual([
       "issues",
       "reviews",
@@ -657,17 +661,26 @@ describe("取り込みの種類ごとの間隔（PBI-100）", () => {
     service.saveSettings({ ...settings, triageOff: ["tickets"] });
     service.saveSettings(settings);
     await intake.tick();
-    // チケットは間隔（300 秒）を待たずに取り込む。触っていない種類は間隔を待つ
-    expect(counts()).toEqual({ issues: 1, reviews: 1, tickets: 2 });
-    // 戻した後は、また間隔ごと
+    expect(counts()).toEqual({ issues: 2, reviews: 2, tickets: 2 });
+    // 保存が無ければ、また間隔ごと
     advance(10_000);
     await intake.tick();
-    expect(counts().tickets).toBe(2);
-    // ラベルを消して戻しても同じ（レビューの依頼もラベルも無い PR のレビューも）
-    service.saveSettings({ ...settings, reviewLabel: "" });
+    expect(counts()).toEqual({ issues: 2, reviews: 2, tickets: 2 });
+    activity.close();
+  });
+
+  it("レビューの依頼を On にしたまま、レビュー用のラベルだけを Off → On にしても、次の確認でラベルの PR を検索する（レビュー指摘）", async () => {
+    const { activity, service, search, intake, advance } = kindsSetup({ reviewRequested: true });
+    const labelSearches = () =>
+      search.queries.filter((q) => q.includes('label:"sacty-review"')).length;
+    await intake.tick();
+    expect(labelSearches()).toBe(1);
+    advance(10_000);
+    const settings = service.getSettings();
+    service.saveSettings({ ...settings, triageOff: ["reviewLabel"] });
     service.saveSettings(settings);
     await intake.tick();
-    expect(counts()).toEqual({ issues: 1, reviews: 2, tickets: 2 });
+    expect(labelSearches()).toBe(2);
     activity.close();
   });
 
@@ -713,21 +726,66 @@ describe("取り込みの種類ごとの間隔（PBI-100）", () => {
     activity.close();
   });
 
-  it("何を取り込むか（ラベル・依頼）を変えたら、その種類は間隔を待たずに取り込む。間隔だけの変更は待つ", async () => {
+  it("sacty の設定を保存したら、何を変えたかによらず、すべての種類を次の確認ですぐに取り込む", async () => {
     const { activity, service, intake, advance, counts } = kindsSetup();
     await intake.tick();
     advance(10_000);
     service.saveSettings({ ...service.getSettings(), intakeLabel: "sacty-next" });
     await intake.tick();
-    expect(counts()).toEqual({ issues: 2, reviews: 1, tickets: 1 });
-    service.saveSettings({ ...service.getSettings(), reviewRequested: true });
+    expect(counts()).toEqual({ issues: 2, reviews: 2, tickets: 2 });
+    // 取り込みに関係の無い項目だけを保存しても同じ
+    service.saveSettings({ ...service.getSettings(), maxParallelTasks: 2 });
     await intake.tick();
-    // PR のレビューの種類は、ラベルと依頼の2つを検索する
-    expect(counts()).toEqual({ issues: 2, reviews: 3, tickets: 1 });
-    // 間隔だけを変えても、前の取り込みから測る
-    service.saveSettings({ ...service.getSettings(), ticketIntervalSec: 600 });
+    expect(counts()).toEqual({ issues: 3, reviews: 3, tickets: 3 });
+    // 保存が無ければ、間隔を待つ
+    advance(10_000);
     await intake.tick();
-    expect(counts()).toEqual({ issues: 2, reviews: 3, tickets: 1 });
+    expect(counts()).toEqual({ issues: 3, reviews: 3, tickets: 3 });
+    activity.close();
+  });
+
+  it("タスクの保存に失敗したら、読んだ位置を進めず、直った後にすべての項目を取り込む（レビュー指摘）", async () => {
+    const { activity, service, search, intake, tickets, advance } = kindsSetup();
+    // GitHub は、続きの位置を渡すと、その前の項目を返さない
+    search.cursor = "2026-10-15T00:00:00Z";
+    const original = search.search.bind(search);
+    search.search = async (host, query, token, since) => {
+      const result = await original(host, query, token, since);
+      return since ? { ...result, issues: [] } : result;
+    };
+    // チケットも、続きの位置を返す
+    tickets.next = ["page-2", "page-2"];
+    const importIssues = service.importIssues.bind(service);
+    const importTickets = service.importTickets.bind(service);
+    service.importIssues = () => {
+      throw new Error("タスクを保存できません");
+    };
+    service.importTickets = () => {
+      throw new Error("タスクを保存できません");
+    };
+    await intake.tick();
+    expect(service.list()).toEqual([]);
+    service.importIssues = importIssues;
+    service.importTickets = importTickets;
+    advance(30_000);
+    await intake.tick();
+    // 前の位置（先頭）から読み直すので、失敗した回の項目も取り込む
+    expect(search.sinces.filter((_, i) => search.queries[i]?.includes("is:issue"))).toEqual([
+      undefined,
+      undefined,
+    ]);
+    expect(tickets.searched.map((t) => t.cursor)).toEqual([undefined, undefined]);
+    expect(
+      service
+        .list()
+        .map((t) => t.title)
+        .sort(),
+    ).toEqual(["PAY-1 決済の再送", "冪等性キー"]);
+    // 取り込めたら、位置を進める
+    advance(300_000);
+    await intake.tick();
+    expect(search.sinces.at(-1)).toBe("2026-10-15T00:00:00Z");
+    expect(tickets.searched.at(-1)?.cursor).toBe("page-2");
     activity.close();
   });
 

@@ -13,12 +13,14 @@ sacty の設定（すべてのプロジェクトに共通）に書く。GitHub �
 - 間隔が来たかは30秒ごとに確かめ、sacty の設定は毎回読み直す（変えた間隔は、デーモンを再起動せずに次の確認から効く。最後に取り込みを
   始めた時刻から測る）。デーモンを起動したときは、すべての種類をすぐに取り込む。取り込み元が無かった回（ラベルが無い・Off・対象が無い）は
   間隔の起点にせず、その種類の記録も消す（次の確認でまた確かめるので、On にすると次の確認ですぐに取り込む）。
-  確認と確認の間に Off にして On に戻したときも同じにするため、sacty の設定を保存するたびに、止める設定（`intakeKindEnabled` が偽）に
-  なった種類と、何を取り込むか（`intakeKindKey`。ラベル・依頼）が変わった種類を数え（`intakeRestartCount`。メモリーだけ）、数が変わった
-  種類は間隔の起点を戻す（ラベルを変えたときも、次の確認ですぐに取り込む）。間隔だけの変更は数えない。
+  sacty の設定を保存したら（何を変えたかは見分けない）、すべての種類の間隔の起点を戻し、次の確認ですぐに取り込む（保存の回数
+  `settingsSaveCount` を取り込みが見る。メモリーだけ）。On にした・ラベルを変えた・確認と確認の間に Off にして On に戻した、のどれも
+  これで次の確認で取り込む。その後は、保存した直後の取り込みから、新しい間隔で測る。
 - sacty の設定を読めなければ、その理由を取り込み中でない種類の失敗として記録し、その種類の間隔の起点を戻す（直ったら次の確認ですぐに
   取り込む。定期実行は止めない）。取り込みの途中の思わぬ失敗も、その種類の間隔の起点を戻す。取り込み元ごとの検索の失敗・レート制限は、
   間隔の起点のまま（次の間隔で取り込む）。
+- 取り込み元ごとの読んだ位置（GitHub の更新日時・チケットの続きの位置）は、取り込み（タスクの保存）に成功してから進める。取り込みで
+  失敗したら、次の回は前の位置から読み直す（失敗した回の項目を飛ばさない。取り込み済みのものは二重に取り込まない）。
 - 検索で何も見つからなければ、取り込みの処理（`importIssues`・`importTickets`。すべてのタスクを調べる）を呼ばない。
 - 取り込みは、`config.yaml` を読めれば動く（`config.yaml` に取り込みの項目は無い。`github:` を書いても読まない）。読めなければ取り込まない。
 - 種類ごとの取り込みは並行に動く。取り込み中の種類は、間隔が来ても二重に始めない（終わるのを待つ）。1つの種類の失敗・レート制限・遅れは、
@@ -32,7 +34,7 @@ sacty の設定（すべてのプロジェクトに共通）に書く。GitHub �
   （間隔は含まない）とデーモンの再起動のときは先頭から読み直す（取り込み済みのものは二重に取り込まない）。1つの取り込み元の失敗は、ほかの
   取り込み元を止めない。
 
-コード: `apps/daemon/src/intake.ts`（`IssueIntake`）、`packages/core/src/projects.ts`（`IntakeKind`・`intakeIntervalSec`・`intakeKindEnabled`・`intakeKindKey`・`SactySettings`）、`apps/daemon/src/service.ts`（`recordIntake`・`intakeRestartCount`・`status`）
+コード: `apps/daemon/src/intake.ts`（`IssueIntake`）、`packages/core/src/projects.ts`（`IntakeKind`・`intakeIntervalSec`・`SactySettings`）、`apps/daemon/src/service.ts`（`recordIntake`・`settingsSaveCount`・`status`）
 
 ## GitHub の Issue・PR
 

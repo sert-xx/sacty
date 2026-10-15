@@ -27,8 +27,8 @@ type KindState = {
    */
   cursors: Map<string, string>;
   revision?: string;
-  /** 見た、始め直す設定を保存した回数（TaskService.intakeRestartCount）。変わったら間隔の起点を戻す。 */
-  restarts?: number;
+  /** 見た、sacty の設定を保存した回数（TaskService.settingsSaveCount）。変わったら間隔の起点を戻す。 */
+  saves?: number;
 };
 
 /**
@@ -102,10 +102,10 @@ export class IssueIntake {
   private tickKind(kind: IntakeKind, settings: SactySettings, force: boolean): Promise<void> {
     const state = this.kinds[kind];
     if (state.current) return state.current;
-    // 止める設定・取り込むものを変える設定を保存していたら（次の確認の前に On に戻していても）、間隔を待たずに取り込む
-    const restarts = this.service.intakeRestartCount(kind);
-    if (restarts !== state.restarts) {
-      state.restarts = restarts;
+    // sacty の設定を保存していたら（何を変えたかによらず）、間隔を待たずに取り込む
+    const saves = this.service.settingsSaveCount();
+    if (saves !== state.saves) {
+      state.saves = saves;
       state.lastRun = undefined;
     }
     if (
@@ -173,6 +173,8 @@ export class IssueIntake {
     errors: { query?: string; message: DaemonText }[],
   ): Promise<{ imported: number; sources: number }> {
     const found = [];
+    // 読んだ位置は、取り込み（タスクの保存）に成功してから進める（失敗したら、次の回は前の位置から読み直す）
+    const advanced = new Map<string, string>();
     // アカウントごとのトークン（取り出せなければ、その理由）と、レート制限に達したか。
     // レート制限はトークン（アカウント）ごとなので、ほかのアカウントの検索は続ける
     const tokens = new Map<string, { token: string } | { error: DaemonText }>();
@@ -225,7 +227,7 @@ export class IssueIntake {
               }))
             : result.issues),
         );
-        if (result.cursor) cursors.set(cursorKey, result.cursor);
+        if (result.cursor) advanced.set(cursorKey, result.cursor);
         if (result.incomplete) {
           errors.push({ query, message: redactText(result.incomplete, [auth.token]) });
         }
@@ -236,6 +238,7 @@ export class IssueIntake {
     }
     // 見つからなければ、取り込みの処理（すべてのタスクを調べる）を省く
     const imported = found.length > 0 ? this.service.importIssues(found).length : 0;
+    for (const [key, cursor] of advanced) cursors.set(key, cursor);
     return { imported, sources: sources.length };
   }
 
@@ -253,6 +256,8 @@ export class IssueIntake {
     // プロジェクトのコンテキストは、1回の取り込みでプロジェクトごとに1度だけ取得する
     const contextPlatforms = new Map<string, ReturnType<TaskService["projectContextPlatforms"]>>();
     const sources = client ? this.service.ticketSources() : [];
+    // 続きの位置は、取り込み（タスクの保存）に成功してから進める（undefined は先頭に戻す）
+    const advanced = new Map<string, string | undefined>();
     const count = sources.length;
     if (client) {
       for (const source of sources) {
@@ -292,8 +297,7 @@ export class IssueIntake {
               ? result.tickets.map((t) => ({ ...t, projectId: source.projectId }))
               : result.tickets),
           );
-          if (result.cursor) cursors.set(cursorKey, result.cursor);
-          else cursors.delete(cursorKey);
+          advanced.set(cursorKey, result.cursor);
         } catch (error) {
           // 続きの位置が使えなくなった（期限切れなど）かもしれないので、次の回は先頭から読む
           cursors.delete(cursorKey);
@@ -302,6 +306,10 @@ export class IssueIntake {
       }
     }
     const imported = tickets.length > 0 ? this.service.importTickets(tickets).length : 0;
+    for (const [key, cursor] of advanced) {
+      if (cursor) cursors.set(key, cursor);
+      else cursors.delete(key);
+    }
     return { imported, sources: count };
   }
 }
