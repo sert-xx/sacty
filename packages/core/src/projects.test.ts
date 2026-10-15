@@ -199,7 +199,7 @@ describe("プロジェクト定義のエクスポート・インポート（PBI-
     const exported = exportProject(full);
     expect(exported).toEqual({
       sacty: "project",
-      version: 3,
+      version: 4,
       project: {
         name: "決済",
         targets: [
@@ -356,54 +356,134 @@ describe("通知先（PBI-38）", () => {
     expect(renderMessage({ code: "input.mentionKinds" }, "en")).toContain("at least one");
   });
 
-  it("メンションはエクスポート・インポートで引き継ぎ、メンションの無い過去の設定・エクスポートもそのまま読める（PBI-69）", () => {
-    const def = ProjectDefinition.parse({
+  describe("メンションはエクスポートに含めない（PBI-103）", () => {
+    // ユーザー（U…・W…）・ユーザーグループ（S…）・@here・@channel をすべて書き、上限の20件まで並べる
+    const targets = [
+      "U0123ABCD",
+      "W0456XYZ",
+      "S0789EFGH",
+      "@here",
+      "@channel",
+      ...Array.from({ length: 15 }, (_, i) => `U9${String(i).padStart(4, "0")}`),
+    ];
+    const api = ProjectDefinition.parse({
+      name: "決済",
+      notification: {
+        kind: "slack-api",
+        url: "https://slack-proxy-b.example.com/api/chat.postMessage",
+        channel: "#sacty",
+        token: "op://Work/Slack/token",
+        language: "en",
+        mention: { targets, kinds: ["approval", "completed"] },
+      },
+    });
+    const webhook = ProjectDefinition.parse({
       name: "決済",
       notification: {
         kind: "slack-webhook",
         webhook: "op://Work/Slack/webhook",
-        mention: { targets: ["S0789EFGH", "U0123ABCD"], kinds: ["completed"] },
+        mention: { targets: ["S0789EFGH", "U0123ABCD"] },
       },
     });
-    const exported = exportProject({ ...def, id: "p", createdAt: "", updatedAt: "" });
-    const imported = ProjectExport.parse(JSON.parse(JSON.stringify(exported))).project;
-    expect(imported.notification).toEqual(def.notification);
-    expect(ProjectDefinition.parse(imported).notification?.mention).toEqual({
-      targets: ["S0789EFGH", "U0123ABCD"],
-      kinds: ["completed"],
-    });
-    // 保存した設定を読み直しても変わらない
-    expect(ProjectDefinition.parse(JSON.parse(JSON.stringify(def)))).toEqual(def);
+    const asProject = (def: ProjectDefinition) =>
+      ({ ...def, id: "p", createdAt: "", updatedAt: "" }) as Project;
+    const mentionLike = /\b[UWS][A-Z0-9]{2,30}\b|@here|@channel/;
 
-    // 過去の版のエクスポート（メンションの無い通知先）は、そのまま読める
-    const old = ProjectExport.parse({
-      sacty: "project",
-      version: 3,
-      project: {
-        name: "古い",
+    it("相手も種類も書き出さず、ID・@here・@channel はファイルのどこにも残らない。ほかの設定は書き出す", () => {
+      expect(api.notification?.mention?.targets).toHaveLength(20);
+      const fromApi = exportProject(asProject(api));
+      expect(fromApi.project.notification).toEqual({
+        kind: "slack-api",
+        url: "https://slack-proxy-b.example.com/api/chat.postMessage",
+        channel: "#sacty",
+        token: "op://Work/Slack/token",
+        language: "en",
+      });
+      const fromWebhook = exportProject(asProject(webhook));
+      expect(fromWebhook.project.notification).toEqual({
+        kind: "slack-webhook",
+        webhook: "op://Work/Slack/webhook",
+        language: "ja",
+      });
+      for (const exported of [fromApi, fromWebhook]) {
+        const text = JSON.stringify(exported);
+        expect(text).not.toMatch(mentionLike);
+        expect(text).not.toContain("mention");
+        // 書き出したものは、そのまま読め、読んだプロジェクトにはメンションが無い
+        const imported = ProjectExport.parse(JSON.parse(text)).project;
+        expect(imported.notification).not.toHaveProperty("mention");
+        expect(ProjectDefinition.parse(imported).notification).not.toHaveProperty("mention");
+      }
+      // 書き出しても、元のプロジェクトの設定は変えない
+      expect(api.notification?.mention?.targets).toHaveLength(20);
+    });
+
+    it("メンションの無い通知先は、これまでどおり書き出し、読める", () => {
+      const none = ProjectDefinition.parse({
+        name: "x",
         notification: {
           kind: "slack-api",
           url: "https://slack.com/api/chat.postMessage",
           channel: "#a",
         },
-      },
+      });
+      const exported = exportProject(asProject(none));
+      expect(exported.project.notification).toEqual(none.notification);
+      expect(
+        ProjectExport.parse(JSON.parse(JSON.stringify(exported))).project.notification,
+      ).toEqual(none.notification);
     });
-    expect(old.project.notification).toEqual({
-      kind: "slack-api",
-      url: "https://slack.com/api/chat.postMessage",
-      channel: "#a",
-      language: "ja",
+
+    it("メンションを足したファイルは、知らない項目として読まない（相手が空でも）", () => {
+      const exported = exportProject(asProject(api));
+      for (const mention of [
+        { targets: ["U0123ABCD"] },
+        { targets: [] },
+        { kinds: ["approval"] },
+        {},
+      ]) {
+        const result = ProjectExport.safeParse({
+          ...exported,
+          project: {
+            ...exported.project,
+            notification: { ...exported.project.notification, mention },
+          },
+        });
+        expect(result.success).toBe(false);
+        expect(result.error?.issues.map((i) => issueMessage(i))).toContainEqual({
+          code: "input.unknownKeys",
+          params: { keys: "mention" },
+        });
+      }
     });
-    // インポートでも、メンションの形が違えば受け付けない
-    expect(
-      ProjectExport.safeParse({
-        ...exported,
-        project: {
-          ...exported.project,
-          notification: { ...exported.project.notification, mention: { targets: ["<!everyone>"] } },
-        },
-      }).success,
-    ).toBe(false);
+
+    it("以前の版（3）のファイルは、メンションを含んでも含まなくても、理由を示して読まない", () => {
+      const exported = exportProject(asProject(webhook));
+      for (const project of [
+        { ...exported.project, notification: webhook.notification },
+        exported.project,
+        { name: "古い" },
+      ]) {
+        const result = ProjectExport.safeParse({ sacty: "project", version: 3, project });
+        expect(result.success).toBe(false);
+        // 画面が出すのは最初の誤りなので、版の誤りが最初に来る
+        expect(result.error?.issues[0]).toMatchObject({
+          path: ["version"],
+          message: "input.exportVersionWithMentions",
+        });
+      }
+      expect(renderMessage({ code: "input.exportVersionWithMentions" }, "ja")).toContain(
+        "メンションの相手",
+      );
+      expect(renderMessage({ code: "input.exportVersionWithMentions" }, "en")).toContain(
+        "mention targets",
+      );
+      // ほかの版は、これまでどおりの理由
+      for (const version of [1, 2, 5, "4", "3"]) {
+        const result = ProjectExport.safeParse({ ...exported, version });
+        expect(result.error?.issues[0]?.message, String(version)).toBe("input.unsupportedVersion");
+      }
+    });
   });
 
   it("対象で指定したイメージは、リポジトリの対象の指定が Org の対象の指定より優先する（PBI-41）", () => {

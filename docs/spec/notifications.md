@@ -5,7 +5,7 @@
 人間の出番（承認待ち・エスカレーション・一時停止）とタスクの完了を、プロジェクトごとの Slack の送り先に通知する。送れなくてもタスクは
 止めない。
 
-関係する ADR: なし
+関係する ADR: [プロジェクトのエクスポートに Slack のメンション（相手と種類）を含めず、含んでいた版 3 のファイルは理由を示して断る](../adr/20261015-0850-export-without-mentions.md)
 
 ## いつ通知するか
 
@@ -39,6 +39,7 @@
 - メンションの相手（`targets`、1〜20件）は `U…`・`W…`（ユーザー）・`S…`（ユーザーグループ）・`@here`・`@channel`。本文の先頭に、
   それぞれ `<@U…>`・`<!subteam^S…>`・`<!here>`・`<!channel>` で付ける。メンションする種類（`kinds`）の既定は `approval`・`escalation`・
   `paused`（完了はしない）。
+- メンション（`targets`・`kinds`）は、プロジェクトのエクスポートに含めない（[書き出し](export.md)）。インポートしたプロジェクトでは、相手と種類の両方を設定し直す。
 
 コード: `apps/daemon/src/notifier.ts`（`notificationText`・`mentionText`・`withMention`）、`packages/core/src/projects.ts`（`SlackMention`・`SlackMentionTarget`・`DEFAULT_MENTION_KINDS`）
 

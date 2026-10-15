@@ -7650,16 +7650,19 @@ describe("プロジェクト定義のエクスポート・インポート（PBI-
   });
 });
 
-describe("通知のメンションのエクスポート・インポート（PBI-69）", () => {
-  it("保存したメンションの設定は、エクスポートして別の sacty にインポートしても引き継がれ、形が違えば保存できない", () => {
+describe("通知のメンションのエクスポート・インポート（PBI-69・PBI-103）", () => {
+  it("保存したメンションの設定は、エクスポートして別の sacty にインポートすると相手も種類も無くなり、形が違えば保存できない", () => {
     const activity = new SqliteActivityStore(dbPath);
     const { service } = makeService(activity, [], { projects: new MemoryProjectStore() });
-    const notification = {
+    const destination = {
       kind: "slack-api" as const,
       url: "https://slack.com/api/chat.postMessage",
       channel: "#sacty",
       token: "slack-bot",
       language: "en" as const,
+    };
+    const notification = {
+      ...destination,
       mention: {
         targets: ["U0123ABCD", "S0789EFGH", "@here"],
         kinds: ["approval" as const, "completed" as const],
@@ -7668,19 +7671,21 @@ describe("通知のメンションのエクスポート・インポート（PBI-
     const pay = service.saveProject(undefined, { name: "決済", notification });
     expect(pay.notification).toEqual(notification);
     const exported = service.exportProject(pay.id);
-    expect(exported?.project.notification).toEqual(notification);
-    const other = makeService(new SqliteActivityStore(join(dir, "other.db")), [], {
-      projects: new MemoryProjectStore(),
-    });
+    // メンションは使う人や環境ごとに違うので、エクスポートに含めない（PBI-103）
+    expect(exported?.project.notification).toEqual(destination);
+    const otherActivity = new SqliteActivityStore(join(dir, "other.db"));
+    const other = makeService(otherActivity, [], { projects: new MemoryProjectStore() });
     const imported = other.service.importProject(JSON.parse(JSON.stringify(exported)));
-    expect(imported.notification).toEqual(notification);
+    expect(imported.notification).toEqual(destination);
     expect(() =>
       service.saveProject(pay.id, {
         name: "決済",
         notification: { ...notification, mention: { targets: ["@alice"] } },
       }),
     ).toThrow();
+    // エクスポートしても、元のプロジェクトのメンションは変えない
     expect(service.listProjects()[0]?.notification).toEqual(notification);
+    otherActivity.close();
     activity.close();
   });
 });
@@ -8610,7 +8615,7 @@ describe("API", () => {
     const exported = await res.json();
     expect(exported).toMatchObject({
       sacty: "project",
-      version: 3,
+      version: 4,
       project: {
         name: "決済",
         targets: [{ scope: "repo", target: "https://github.com/acme/payments" }],
@@ -8657,6 +8662,98 @@ describe("API", () => {
       project: { ...exported.project, name: "決済（コピー）", targets: [] },
     });
     expect(created.status).toBe(201);
+    activity.close();
+  });
+
+  it("プロジェクトのエクスポートはメンションの相手を含めず、インポートしたプロジェクトにも無い。後から足せる（PBI-103）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service } = makeService(activity, [], { projects: new MemoryProjectStore() });
+    const app = createApp(service, token);
+    const notification = {
+      kind: "slack-api",
+      url: "https://slack.com/api/chat.postMessage",
+      channel: "#sacty",
+      token: "op://Work/Slack/token",
+      language: "en",
+    } as const;
+    const pay = service.saveProject(undefined, {
+      name: "決済",
+      notification: {
+        ...notification,
+        mention: { targets: ["U0123ABCD", "W0456XYZ", "S0789EFGH", "@here", "@channel"] },
+      },
+    });
+    const res = await app.request(`/api/projects/${pay.id}/export`, { headers: auth });
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    expect(text).not.toMatch(/U0123ABCD|W0456XYZ|S0789EFGH|@here|@channel|mention/);
+    const exported = JSON.parse(text);
+    expect(exported).toMatchObject({ version: 4, project: { notification } });
+
+    const post = (body: unknown) =>
+      app.request("/api/projects/import", {
+        method: "POST",
+        headers: json,
+        body: JSON.stringify(body),
+      });
+    const created = await post({
+      ...exported,
+      project: { ...exported.project, name: "決済（コピー）" },
+    });
+    expect(created.status).toBe(201);
+    const { project } = (await created.json()) as { project: { id: string } };
+    expect(service.listProjects().find((p) => p.id === project.id)?.notification).toEqual(
+      notification,
+    );
+    // 元のプロジェクトのメンションは変えない
+    expect(
+      service.listProjects().find((p) => p.id === pay.id)?.notification?.mention?.targets,
+    ).toHaveLength(5);
+    // インポートの後に、設定の画面（保存の API）で相手を足せる
+    const save = await app.request(`/api/projects/${project.id}`, {
+      method: "PUT",
+      headers: json,
+      body: JSON.stringify({
+        name: "決済（コピー）",
+        notification: { ...notification, mention: { targets: ["U0999ZZZZ"] } },
+      }),
+    });
+    expect(save.status).toBe(200);
+    expect(service.listProjects().find((p) => p.id === project.id)?.notification?.mention).toEqual({
+      targets: ["U0999ZZZZ"],
+      kinds: ["approval", "escalation", "paused"],
+    });
+
+    // 以前の版（3）のファイルは、理由を示して断る（何も作らない）
+    const before = service.listProjects().length;
+    const old = await post({
+      sacty: "project",
+      version: 3,
+      project: {
+        name: "古い",
+        notification: { ...notification, mention: { targets: ["U0123ABCD"] } },
+      },
+    });
+    expect(old.status).toBe(400);
+    expect(((await old.json()) as { issues: unknown[] }).issues[0]).toEqual({
+      path: ["version"],
+      message: { code: "input.exportVersionWithMentions" },
+    });
+    // 今の版にメンションを足したファイルも、知らない項目として断る
+    const added = await post({
+      ...exported,
+      project: {
+        ...exported.project,
+        name: "足した",
+        notification: { ...notification, mention: { targets: ["U0123ABCD"] } },
+      },
+    });
+    expect(added.status).toBe(400);
+    expect(((await added.json()) as { issues: unknown[] }).issues[0]).toEqual({
+      path: ["project", "notification"],
+      message: { code: "input.unknownKeys", params: { keys: "mention" } },
+    });
+    expect(service.listProjects()).toHaveLength(before);
     activity.close();
   });
 

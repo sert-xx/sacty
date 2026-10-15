@@ -4,7 +4,7 @@
 - タスク: PBI-69
 - PR: #76
 - ブランチ: feat/issue-69-slack-mentions
-- 関係する ADR: [Slack の通知先に、メンションする相手と通知の種類の設定（mention）を足し、既定は人の出番の通知だけにする](../adr/20261014-0032-slack-mentions.md)
+- 関係する ADR: [Slack の通知先に、メンションする相手と通知の種類の設定（mention）を足し、既定は人の出番の通知だけにする](../adr/20261014-0032-superseded-slack-mentions.md)
 
 ## 目的
 

@@ -25,7 +25,9 @@ If you do not set it up, nobody is mentioned.
 - In the message they are written as `<@U…>`, `<!subteam^S…>`, `<!here>`, and `<!channel>`.
 - Choose the kinds from awaiting approval, Escalation, Pause, and completion. By default, only the ones where you are needed (awaiting approval, Escalation, Pause) mention; completion
   does not.
-- Mention settings are also included in project export and import (the IDs are not secrets).
+- Mention settings (targets and kinds) are not included in project exports, because the targets differ per person and environment. In an
+  imported project, set both the targets and the kinds again on the project settings page as needed
+  (the kinds return to the default; [Export and import](project-settings.en.md#export-and-import)).
 
 ## Notification content and failures
 

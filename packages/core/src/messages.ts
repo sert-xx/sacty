@@ -110,6 +110,7 @@ const PARAMS = {
   "input.ticketIntervalInvalid": null,
   "input.notExportFile": null,
   "input.unsupportedVersion": null,
+  "input.exportVersionWithMentions": null,
   // 入力の検査のうち、コードを指定していない検査（zod の標準の検査。issueMessage で変換する）
   "input.required": null,
   "input.tooShort": z.object({ minimum: Count }),
@@ -590,6 +591,7 @@ const ja: MessageDictionary = {
     "チケットの取り込みの間隔は、60 以上の整数（秒）を書いてください（空なら 300 秒）。",
   "input.notExportFile": "sacty のプロジェクト定義のファイルではありません。",
   "input.unsupportedVersion": `対応していない版です（対応している版：${PROJECT_EXPORT_VERSION}）。`,
+  "input.exportVersionWithMentions": `版 3 のファイルは読めません。版 ${PROJECT_EXPORT_VERSION} から、Slack のメンションの相手を含めなくなりました。今の sacty でエクスポートし直してください。`,
   "input.required": "入力してください。",
   "input.tooShort": ({ minimum }) => `${minimum}文字以上で入力してください。`,
   "input.tooLong": ({ maximum }) =>
@@ -1020,6 +1022,7 @@ const en: MessageDictionary = {
     "Enter a whole number of 60 or more (seconds) for the ticket intake interval (300 seconds if empty).",
   "input.notExportFile": "This is not a sacty project definition file.",
   "input.unsupportedVersion": `Unsupported version (supported: ${PROJECT_EXPORT_VERSION}).`,
+  "input.exportVersionWithMentions": `Version 3 files cannot be imported. Since version ${PROJECT_EXPORT_VERSION}, Slack mention targets are no longer exported. Export the project again with the current sacty.`,
   "input.required": "This field is required.",
   "input.tooShort": ({ minimum }) => `Enter at least ${minimum} characters.`,
   "input.tooLong": ({ maximum }) => `Keep it within ${maximum.toLocaleString("en-US")} characters.`,

@@ -5,7 +5,7 @@
 Notifies the project's Slack destination when a person is needed (awaiting approval, Escalation, Pause) and when a task is completed. If sending fails, the task does not
 stop.
 
-Related ADR: none
+Related ADR: [Do not include Slack mentions (targets and kinds) in project exports, and reject version 3 files, which included them, with the reason](../adr/20261015-0850-export-without-mentions.md)
 
 ## When to notify
 
@@ -39,6 +39,7 @@ Code: `apps/daemon/src/notifier.ts` (`SlackNotifier.send`, `SLACK_USERNAME`, `SL
 - Mention targets (`targets`, 1 to 20) are `U…` and `W…` (users), `S…` (user groups), `@here`, and `@channel`. They are added at the start of the body
   as `<@U…>`, `<!subteam^S…>`, `<!here>`, and `<!channel>` respectively. The default kinds to mention (`kinds`) are `approval`, `escalation`, and
   `paused` (not completion).
+- Mentions (`targets`, `kinds`) are not included in project exports ([Export](export.en.md)). In an imported project, set both the targets and the kinds again.
 
 Code: `apps/daemon/src/notifier.ts` (`notificationText`, `mentionText`, `withMention`), `packages/core/src/projects.ts` (`SlackMention`, `SlackMentionTarget`, `DEFAULT_MENTION_KINDS`)
 

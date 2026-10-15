@@ -512,8 +512,23 @@ export function excludedRepositories(
     );
 }
 
-/** エクスポートの形式の版。形を変えたら上げ、インポートで古い版を読めるようにする。 */
-export const PROJECT_EXPORT_VERSION = 3;
+/**
+ * エクスポートの形式の版。形を変えたら上げる。古い版は読まない（移行の手段は設けない）。
+ * 4 から、Slack のメンション（相手と種類）を含めない（PBI-103）。
+ */
+export const PROJECT_EXPORT_VERSION = 4;
+
+/** メンションを含んでいた版（PBI-69 の 3）。インポートでは、理由を示して断る（PBI-103）。 */
+const EXPORT_VERSION_WITH_MENTIONS = 3;
+
+/**
+ * エクスポートの通知先（PBI-103）。メンション（相手と種類）は使う人や環境ごとに違うので含めない。相手の無い種類は
+ * 意味が無いので、種類も含めない。知らない項目として拒否する（気づかずに取り込まないため）。
+ */
+const ExportNotification = z.discriminatedUnion("kind", [
+  ProjectNotification.options[0].omit({ mention: true }).strict(),
+  ProjectNotification.options[1].omit({ mention: true }).strict(),
+]);
 
 /** インポートでは知らない項目を拒否する（秘密情報などを、気づかずに取り込まないため）。 */
 const StrictProjectTarget = z.discriminatedUnion("scope", [
@@ -528,14 +543,21 @@ const StrictProjectTarget = z.discriminatedUnion("scope", [
 export const ProjectExport = z
   .object({
     sacty: z.literal("project", { error: code("input.notExportFile") }),
-    version: z.literal(PROJECT_EXPORT_VERSION, { error: code("input.unsupportedVersion") }),
+    version: z.literal(PROJECT_EXPORT_VERSION, {
+      error: (issue) =>
+        code(
+          issue.input === EXPORT_VERSION_WITH_MENTIONS
+            ? "input.exportVersionWithMentions"
+            : "input.unsupportedVersion",
+        ),
+    }),
     project: z
       .object({
         name: ProjectDefinition.shape.name,
         targets: z.array(StrictProjectTarget).max(50).default([]),
         context: ContextSource.strict().optional(),
-        // 通知先（PBI-38）。秘密情報は名前か参照だけなので、エクスポートに含める（メンションの ID も。PBI-69）
-        notification: ProjectNotification.optional(),
+        // 通知先（PBI-38）。秘密情報は名前か参照だけなので、エクスポートに含める。メンションは含めない（PBI-103）
+        notification: ExportNotification.optional(),
         // チケットの取り込み先（PBI-52）。秘密情報は含まない（接続先の名前だけ）
         tickets: z.array(TicketSourceConfig.strict()).max(20).optional(),
         // 共用の compose（PBI-70）。認証の値は含まない（URL に書かせない）
@@ -569,7 +591,7 @@ export function exportProject(project: Project): ProjectExport {
             },
           }
         : {}),
-      ...(project.notification ? { notification: project.notification } : {}),
+      ...(project.notification ? { notification: withoutMention(project.notification) } : {}),
       ...(project.tickets && project.tickets.length > 0 ? { tickets: project.tickets } : {}),
       ...(project.sharedComposes && project.sharedComposes.length > 0
         ? { sharedComposes: project.sharedComposes }
@@ -577,4 +599,10 @@ export function exportProject(project: Project): ProjectExport {
       ...(project.deploymentWatch ? { deploymentWatch: true } : {}),
     },
   };
+}
+
+/** 通知先から、メンション（相手と種類）を除く（PBI-103）。 */
+function withoutMention(notification: ProjectNotification): z.infer<typeof ExportNotification> {
+  const { mention: _mention, ...rest } = notification;
+  return rest;
 }
