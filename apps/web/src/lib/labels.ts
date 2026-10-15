@@ -119,6 +119,14 @@ export function verificationResults(task: Task): {
 }
 
 /**
+ * テストの仕組みが無いタスク（PBI-94）で、テストの無い観点を、今の提出について目的から判定し終えたか（今の提出の最終レビューが
+ * ある）。まだなら、対応表の実行結果は「未実行」にする（検証待ちの間に「目的から判定」と出さない。PR #105 再レビュー指摘）。
+ */
+export function judgedByGoalForCurrent(task: Task): boolean {
+  return Boolean(task.noTestsReason) && verificationResults(task).reviewCurrent;
+}
+
+/**
  * テストの仕組みが無いタスク（PBI-94）の、今の実装の提出についての、実装で用意したテストの状態。画面の注記と工程の欄を、今の
  * 提出の検証の結果で切り替えるのに使う（PR #105 レビュー指摘・再レビュー指摘・再々レビュー指摘）。
  * - pending：今の提出がテストのコマンドを申告し、まだ実行していない（前の提出のテストの結果は、今の提出のものとして扱わない）

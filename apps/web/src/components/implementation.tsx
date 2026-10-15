@@ -3,7 +3,12 @@ import { cn } from "cn";
 import { CardSection } from "@/components/card-section";
 import { Markdown } from "@/components/markdown";
 import { getMessages } from "@/i18n/server";
-import { addedTestsResult, formatStamp, verificationResults } from "@/lib/labels";
+import {
+  addedTestsResult,
+  formatStamp,
+  judgedByGoalForCurrent,
+  verificationResults,
+} from "@/lib/labels";
 
 const OK = "border-accent-line bg-accent text-accent-foreground";
 const NG = "border-warn-line bg-warn-soft text-warn";
@@ -139,9 +144,9 @@ export async function Implementation({ task }: { task: Task }) {
                     <dt className="pt-0.5 text-xs text-muted-foreground">{m.result}</dt>
                     <dd className="flex flex-col gap-1">
                       <span className="flex flex-wrap gap-1.5">
-                        {noTests && list.length === 0 ? (
+                        {noTests && list.length === 0 && judgedByGoalForCurrent(task) ? (
                           <Pill tone={NONE}>{m.judgedByGoal}</Pill>
-                        ) : !tests || !testsCurrent ? (
+                        ) : !tests || !testsCurrent || (noTests && list.length === 0) ? (
                           <Pill tone={NONE}>{m.notRun}</Pill>
                         ) : tests.exitCode === 0 && list.length > 0 ? (
                           <Pill tone={OK}>{m.testsPassed}</Pill>

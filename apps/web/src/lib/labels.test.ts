@@ -7,6 +7,7 @@ import {
   canControl,
   describeEvent as describeIn,
   isWorking,
+  judgedByGoalForCurrent,
   needsPerson,
   personAction as personActionIn,
   statusText as statusTextIn,
@@ -1404,5 +1405,37 @@ describe("今の提出の検証の結果か（PR #105 再レビュー指摘）",
       verificationResults(task({ testsSkippedAt: T2, lastReview: review(T1) })).reviewCurrent,
     ).toBe(false);
     expect(verificationResults(task({})).testsCurrent).toBe(false);
+  });
+});
+
+describe("テストの無い観点を、今の提出について目的から判定し終えたか（PR #105 再レビュー指摘）", () => {
+  const review = (at: string) => ({
+    passed: true,
+    viewpoints: [],
+    remarks: [],
+    summary: "所見",
+    agentId: "a",
+    runId: "r",
+    costUsd: 0,
+    estimated: false,
+    at,
+  });
+  const T1 = "2026-10-15T00:00:00.000Z";
+  const T2 = "2026-10-15T00:01:00.000Z";
+  it("今の提出の最終レビューがあるときだけ true にし、検証待ちの間は「未実行」にする", () => {
+    const judged = { noTestsReason: "無い", testsSkippedAt: T1, lastReview: review(T2) };
+    expect(judgedByGoalForCurrent(task(judged))).toBe(true);
+    // やり直した実装の検証待ち：前の提出の判定は使わない
+    expect(judgedByGoalForCurrent(task({ ...judged, verification: "pending" }))).toBe(false);
+    // テストを飛ばした後、最終レビューの前
+    expect(
+      judgedByGoalForCurrent(
+        task({ noTestsReason: "無い", testsSkippedAt: T2, lastReview: review(T1) }),
+      ),
+    ).toBe(false);
+    expect(judgedByGoalForCurrent(task({ noTestsReason: "無い" }))).toBe(false);
+    expect(judgedByGoalForCurrent(task({ testsSkippedAt: T1, lastReview: review(T2) }))).toBe(
+      false,
+    );
   });
 });

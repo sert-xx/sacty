@@ -146,9 +146,10 @@
   （`verificationResults`）。やり直した実装の検証が始まった（`verification` が `pending`）後のテストの結果と最終レビュー、最新の
   テストの結果（テストを飛ばしたなら、飛ばした時）より前の最終レビューは、前の提出のものとして、見出しを「前の提出のテストの実行
   （今の提出では、まだ実行していません）」「前の提出の最終レビュー（今の提出では、まだ判定していません）」にして出し、対応表の
-  実行結果は「未実行」にする。
+  実行結果は「未実行」にする。テストの仕組みが無いタスクのテストの無い観点も、今の提出の最終レビューがあるときだけ「テストなし
+  （目的から判定）」にし、検証待ちの間（目的からの判定がまだ）は「未実行」にする（`judgedByGoalForCurrent`）。
 
-コード: `apps/daemon/src/service.ts`（`verify`・`checkReproduction`・`pauseIfVerificationKeepsFailing`）、`apps/daemon/src/prompts.ts`（`verificationBasis`）、`packages/core/src/events.ts`（`MAX_VERIFY_ATTEMPTS`）、`apps/web/src/components/implementation.tsx`、`apps/web/src/lib/labels.ts`（`verificationResults`）
+コード: `apps/daemon/src/service.ts`（`verify`・`checkReproduction`・`pauseIfVerificationKeepsFailing`）、`apps/daemon/src/prompts.ts`（`verificationBasis`）、`packages/core/src/events.ts`（`MAX_VERIFY_ATTEMPTS`）、`apps/web/src/components/implementation.tsx`、`apps/web/src/lib/labels.ts`（`verificationResults`・`judgedByGoalForCurrent`）
 
 ### テストの仕組みが無いタスク
 

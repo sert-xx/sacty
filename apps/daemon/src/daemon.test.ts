@@ -16542,6 +16542,37 @@ describe("テストの仕組みが無いリポジトリ（PBI-94）", () => {
     activity.close();
   });
 
+  it("テストの仕組みが無いタスクでも、要求要件・設計の本文の申告の例は取り除かず、申告として扱わない（PR #105 再レビュー指摘）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const example = '```sacty-test-command\n{"command":"make test",}\n```';
+    const { service } = makeService(
+      activity,
+      [
+        plan({}, "standard"),
+        out("# 前段の調査"),
+        out(`# 要求要件\n\n申告の例：\n\n${example}`),
+        out(
+          `# 設計\n\n申告の例：\n\n${example}\n\n${block({
+            "sacty-test-viewpoints": [{ title: "指示がある", input: "読む", expected: "ある" }],
+          })}`,
+        ),
+      ],
+      { realPlanner: true, repos: new FilesRepos({ "README.md": "# app" }) },
+    );
+    const { id } = service.createTask({ projectId: "default", title: "設計する" });
+    await drain(service);
+    expect(taskOf(service, id).noTestsReason).toBe(NO_TESTS);
+    expect(taskOf(service, id).outputs.requirements).toContain(example);
+    service.approve(id, { step: "requirements", submission: 1 });
+    await drain(service);
+    const task = taskOf(service, id);
+    // 設計の本文にも残り、止まらずに設計の承認待ちになる
+    expect(task.outputs.design).toContain(example);
+    expect(task.pausedMessage).toBeUndefined();
+    expect(task.gate).toEqual({ step: "design", submission: 1 });
+    activity.close();
+  });
+
   it("テストの仕組みが無いと答えなければ今どおり止め、テストのコマンドがあればテストの無い判断は捨てる", async () => {
     const activity = new SqliteActivityStore(dbPath);
     const { service } = makeService(
