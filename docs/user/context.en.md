@@ -9,6 +9,8 @@ and specify it in the project settings (optional). It is layered on top of sacty
 
 Before starting the reviewers, the default review skills run the formatting, lint, type check, tests, and other checks defined by the target repository in check mode, and share the results with the reviewers. If verification or CI has results, they also start a reviewer that analyzes the failures and warnings. The verification logs are saved outside the review's workspace, and the PR quotes only the parts needed for the comments.
 
+The default writing skill `writing` sets how agents write PR descriptions, review comments, reports, and other text. In Japanese text, it adds a line break after each "。" and puts structured information in lists and tables. If the target repository has writing rules (AGENTS.md, CONTRIBUTING, and so on), those take precedence.
+
 ## Creating the template
 
 ```sh
