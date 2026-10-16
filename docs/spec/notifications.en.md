@@ -58,9 +58,9 @@ Code: `apps/daemon/src/notifier.ts` (`notificationText`, `mentionText`, `withMen
 ## When sending fails, and test notifications
 
 - The reason sending failed is truncated to 400 characters after redacting secrets (tokens and webhook URLs), and sacty keeps the last one for all of sacty and shows it
-  as a warning in the web UI (`notify.failed`; cleared the next time sending succeeds, and not shown after the destination is removed). It is also written to the daemon log
+  as a warning in the web UI (`notify.failed`; cleared the next time sending succeeds, and not shown after the destination is removed). The web UI shows it on the dashboard, in the notification section of the sacty settings, and on the task list (`notificationProblems`). It is also written to the daemon log
   with `[notify]`. It is not recorded in the Activity. If the sacty settings cannot be read, sacty does not send and shows that reason the same way.
 - `POST /api/settings/notification-test` sends a test notification to the destination in the saved sacty settings (mentions are added regardless of the kind).
   It returns 409 with `notify.notConfigured` when there is no destination, or with the reason (`notify.failed`) when it cannot be sent.
 
-Code: `apps/daemon/src/notifier.ts` (`SlackNotifier.notify`, `test`, `problems`, `fail`, `REASON_MAX`), `apps/daemon/src/service.ts` (`testNotification`), `apps/daemon/src/server.ts`
+Code: `apps/daemon/src/notifier.ts` (`SlackNotifier.notify`, `test`, `problems`, `fail`, `REASON_MAX`), `apps/daemon/src/service.ts` (`testNotification`), `apps/daemon/src/server.ts`, `apps/web/src/lib/notification-problems.ts` (`notificationProblems`)

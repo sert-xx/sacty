@@ -77,6 +77,8 @@ sacty up（packages/cli）
     全文はホバー（`title`）と、行にフォーカスがある間の折り返しで出す。件数の補足（「すべてのプロジェクト・N件」）は、言語ごとの文言で組み立てる。
   - プロジェクトが無いとき・終わっていないタスクが無いときは、そのことを出す。
   - 欄を足すときは、`DashboardData`（`loadDashboard`）に欄のデータを足し、`LiveDashboard` に `DashboardCard` を足す（取り直しは画面で1つ）。
+- 欄の上に、Slack の通知を送れなかった理由（デーモンの警告のうち `notify.failed`。`notificationProblems`）を、sacty の設定へのリンクつきで出す
+  （無ければ出さない）。欄と同じく取り直す。
 
 コード: `apps/web/src/lib/paths.ts`、`apps/web/src/app/page.tsx`、`apps/web/src/app/dashboard/page.tsx`、
 `apps/web/src/app/projects/[id]/page.tsx`、`apps/web/src/app/projects/[id]/tasks/page.tsx`、`apps/web/src/app/projects/[id]/settings/page.tsx`、
@@ -126,7 +128,7 @@ sacty up（packages/cli）
 
   | 先 | 返すもの |
   | --- | --- |
-  | `GET /live/dashboard` | ダッシュボードの欄のデータ（終わっていないタスク。`loadDashboard`） |
+  | `GET /live/dashboard` | ダッシュボードの欄のデータ（終わっていないタスク・通知を送れなかった理由。`loadDashboard`） |
   | `GET /live/tasks?project=<ID>` | URL のプロジェクトの、タスクの一覧の行と、人間の判断が必要なタスクのカード（表示に要るものだけ。`loadTaskList`）。プロジェクトが無い・ID の形が違えば `{ missing: true }` |
   | `GET /live/tasks/<ID>` | タスクの詳細に出すもの（タスク・作業履歴・親・子タスク・片付けるもの・イメージの候補など。`loadTaskDetail`） |
   | `GET /live/header?current=<ID>` | ヘッダーのプロジェクトの切り替え（対応待ちの件数）とお知らせ（`loadHeaderData`） |

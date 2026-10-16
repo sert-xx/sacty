@@ -14,7 +14,14 @@ const SELECT =
  * sacty の設定の、Slack の通知先（PBI-38。PBI-115 でプロジェクトの設定から移した）。入力は、sacty の設定のフォームに
  * JSON（name="notification"。空なら通知しない）で渡す。テストの通知は、保存した設定で送る。
  */
-export function NotificationSettings({ saved }: { saved?: SlackNotification }) {
+export function NotificationSettings({
+  saved,
+  problems = [],
+}: {
+  saved?: SlackNotification;
+  /** 送れなかった理由（画面の言語の文。PBI-115）。通知を直す場所なので、ここにも出す。 */
+  problems?: readonly string[];
+}) {
   const t = useMessages().settings;
   // 前の画面が隠れて残ることがあるので、id は固定にせず画面ごとに作る
   const uid = useId();
@@ -90,6 +97,17 @@ export function NotificationSettings({ saved }: { saved?: SlackNotification }) {
         <span className="text-[13px] font-normal text-muted-foreground">{t.notifyNote}</span>
       </h2>
       <p className="text-sm leading-6 whitespace-pre-line text-muted-foreground">{t.notifyHelp}</p>
+      {problems.length > 0 && (
+        <div
+          role="status"
+          data-testid="notification-problems"
+          className="flex flex-col gap-1 rounded-lg border border-warn-line bg-warn-soft p-3 text-sm text-warn"
+        >
+          {problems.map((p) => (
+            <p key={p}>{p}</p>
+          ))}
+        </div>
+      )}
       <div className="flex flex-wrap items-end gap-2">
         <label className="flex flex-col gap-1 text-xs text-muted-foreground">
           {t.notifyKind}

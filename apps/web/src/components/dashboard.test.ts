@@ -227,3 +227,24 @@ describe("ダッシュボードの終わっていないタスクの欄（PBI-114
     expect(item("a")).not.toBeNull();
   });
 });
+
+describe("ダッシュボードの Slack の通知を送れなかった理由（PBI-115）", () => {
+  const problem = "Slack の通知を送れませんでした：HTTP 500（タスクは止めていません）";
+  const box = () => container.querySelector('[data-testid="notification-problems"]');
+
+  it("送れなかった理由を、sacty の設定へのリンクつきで出す。無ければ出さない。取り直しで出る・消える", async () => {
+    const ok: DashboardData = { projects: 1, openTasks: [], notificationProblems: [] };
+    server = ok;
+    render(h(LiveDashboard, { initial: ok, initialVersion: liveVersion(ok) }));
+    expect(box()).toBeNull();
+    server = { ...ok, notificationProblems: [problem] } satisfies DashboardData;
+    await wait();
+    expect(box()?.textContent).toContain(problem);
+    expect(box()?.querySelector('a[href="/settings"]')?.textContent).toBe(
+      "sacty の設定で Slack の通知を確かめる",
+    );
+    server = ok;
+    await wait();
+    expect(box()).toBeNull();
+  });
+});

@@ -397,6 +397,8 @@ export async function testNotificationAction(
   } catch {
     return { message: a.daemonDown };
   }
+  // 送れなかった理由の警告（sacty の設定の画面に出す）を、今の状態に描き直す
+  refresh();
   return result.ok ? { sent: true } : { message: result.message };
 }
 

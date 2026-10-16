@@ -39,11 +39,37 @@ export function LiveDashboard({
       {!data ? (
         <DaemonError message={error ?? ""} />
       ) : (
-        <DashboardGrid>
-          <OpenTasksCard data={data} />
-        </DashboardGrid>
+        <>
+          <NotificationProblems problems={data.notificationProblems ?? []} />
+          <DashboardGrid>
+            <OpenTasksCard data={data} />
+          </DashboardGrid>
+        </>
       )}
     </>
+  );
+}
+
+/**
+ * Slack の通知を送れなかった理由（PBI-115）。通知は sacty 全体の設定なので、最初の画面のダッシュボードにも出し、直す場所
+ * （sacty の設定）へのリンクを添える。無ければ何も出さない。
+ */
+export function NotificationProblems({ problems }: { problems: readonly string[] }) {
+  const m = useMessages().dashboard.notification;
+  if (problems.length === 0) return null;
+  return (
+    <div
+      role="status"
+      data-testid="notification-problems"
+      className="flex flex-col gap-1 rounded-xl border border-warn-line bg-warn-soft p-4 text-sm text-warn"
+    >
+      {problems.map((p) => (
+        <p key={p}>{p}</p>
+      ))}
+      <Link href="/settings" className="w-fit underline">
+        {m.openSettings}
+      </Link>
+    </div>
   );
 }
 

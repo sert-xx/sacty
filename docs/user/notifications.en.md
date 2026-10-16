@@ -35,7 +35,8 @@ If you do not set it up, nobody is mentioned.
   "Escalated in Requirements; your decision is needed". Completion notifications and a Pause before the steps are decided ("Paused before the steps were decided") have
   no step name.
 - Notifications also include a link to the approval page (and to the PR for steps approved on a PR). Nothing is sent when you pause a task yourself.
-- If a notification cannot be sent, the task is not stopped, and the reason is shown as a warning on the task list page (it is a warning for all of sacty, so it appears in the list of every project; it disappears the next time sending succeeds).
+- If a notification cannot be sent, the task is not stopped, and the reason is shown as a warning. It appears on the dashboard (with a link to the "sacty settings"), in the
+  "Slack notifications" section of the "sacty settings", and on the task list page (it is a warning for all of sacty, so it appears in the list of every project). It disappears the next time sending succeeds.
 - Use "Send a test notification" in the "sacty settings" to check that sending works (you can send after saving).
 
 ## If you used an earlier sacty

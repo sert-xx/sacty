@@ -58,9 +58,10 @@ sacty の設定（`sacty.db` の `settings`）の `notification`。無ければ�
 ## 送れなかったとき・テストの通知
 
 - 送れなかった理由は、秘密情報（トークン・Webhook の URL）を伏せてから 400 文字に切り詰め、sacty 全体で最後の1つを持って画面の警告に出す
-  （`notify.failed`。次に送れたら消す。通知先を外したら出さない）。デーモンのログにも `[notify]` で出す。作業履歴には記録しない。
+  （`notify.failed`。次に送れたら消す。通知先を外したら出さない）。画面は、ダッシュボード・sacty の設定の通知の区画・タスクの一覧に出す
+  （`notificationProblems`）。デーモンのログにも `[notify]` で出す。作業履歴には記録しない。
   sacty の設定を読めなければ、送らずに、その理由を同じように出す。
 - `POST /api/settings/notification-test` で、保存した sacty の設定の送り先にテストの通知を送る（メンションは種類によらず付ける）。
   通知先が無ければ `notify.notConfigured`、送れなければ理由（`notify.failed`）を 409 で返す。
 
-コード: `apps/daemon/src/notifier.ts`（`SlackNotifier.notify`・`test`・`problems`・`fail`・`REASON_MAX`）、`apps/daemon/src/service.ts`（`testNotification`）、`apps/daemon/src/server.ts`
+コード: `apps/daemon/src/notifier.ts`（`SlackNotifier.notify`・`test`・`problems`・`fail`・`REASON_MAX`）、`apps/daemon/src/service.ts`（`testNotification`）、`apps/daemon/src/server.ts`、`apps/web/src/lib/notification-problems.ts`（`notificationProblems`）

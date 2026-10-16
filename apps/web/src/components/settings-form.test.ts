@@ -170,3 +170,15 @@ describe("sacty の設定の Slack の通知（PBI-115）", () => {
     expect(section).not.toContain(t.notifyChannel);
   });
 });
+
+describe("sacty の設定の、通知を送れなかった理由（PBI-115）", () => {
+  it("通知の区画に、送れなかった理由を出す。無ければ出さない", () => {
+    locale = "ja";
+    const problem = "Slack の通知を送れませんでした：HTTP 500（タスクは止めていません）";
+    const section = (html: string) => html.split("<section").at(-1) ?? "";
+    const shown = section(render({ notificationProblems: [problem] }));
+    expect(shown).toContain('data-testid="notification-problems"');
+    expect(shown).toContain(problem);
+    expect(section(render())).not.toContain("notification-problems");
+  });
+});

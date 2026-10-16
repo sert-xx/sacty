@@ -79,6 +79,8 @@ Code: `apps/daemon/src/server.ts` (`createApp`, `handleError`), `apps/web/src/li
     ("All projects · N tasks") is built from per-language wording.
   - When there are no projects or no open tasks, it says so.
   - To add a section, add its data to `DashboardData` (`loadDashboard`) and add a `DashboardCard` to `LiveDashboard` (one refetch per screen).
+- Above the sections, the reason Slack notifications could not be sent (the daemon warning `notify.failed`; `notificationProblems`) is shown with a link to the sacty settings
+  (nothing when there is none). It is fetched again together with the sections.
 
 Code: `apps/web/src/lib/paths.ts`, `apps/web/src/app/page.tsx`, `apps/web/src/app/dashboard/page.tsx`,
 `apps/web/src/app/projects/[id]/page.tsx`, `apps/web/src/app/projects/[id]/tasks/page.tsx`, `apps/web/src/app/projects/[id]/settings/page.tsx`,
@@ -128,7 +130,7 @@ only the data at a fixed interval, and only the parts that changed are reflected
 
   | Route | Returns |
   | --- | --- |
-  | `GET /live/dashboard` | The data of the dashboard's sections (open tasks. `loadDashboard`) |
+  | `GET /live/dashboard` | The data of the dashboard's sections (open tasks and the reason notifications could not be sent. `loadDashboard`) |
   | `GET /live/tasks?project=<ID>` | The rows of the task list of the URL's project and the cards of tasks that need a person (only what is shown. `loadTaskList`). `{ missing: true }` if the project does not exist or the ID has the wrong form |
   | `GET /live/tasks/<ID>` | What the task details show (the task, the activity, the parent, the subtasks, what to clean up, the image choices, and so on. `loadTaskDetail`) |
   | `GET /live/header?current=<ID>` | The header's project switcher (the counts that need you) and notices (`loadHeaderData`) |

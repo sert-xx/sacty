@@ -33,6 +33,7 @@ export function SettingsForm({
   reviewIntervalSec,
   ticketIntervalSec,
   notification,
+  notificationProblems = [],
 }: {
   intakeLabel: string;
   /** PR のレビューの取り込み（PBI-44）。 */
@@ -50,6 +51,8 @@ export function SettingsForm({
   ticketIntervalSec?: number;
   /** Slack の通知先（PBI-115）。設定していなければ undefined（通知しない）。 */
   notification?: SlackNotification;
+  /** Slack の通知を送れなかった理由（画面の言語の文。PBI-115）。 */
+  notificationProblems?: string[];
 }) {
   const [state, formAction, pending] = useActionState(saveSettingsAction, initial);
   const t = useMessages().settings;
@@ -274,7 +277,7 @@ export function SettingsForm({
           )}
         </p>
       </section>
-      <NotificationSettings saved={notification} />
+      <NotificationSettings saved={notification} problems={notificationProblems} />
       {state.message && (
         <p role="alert" className="text-sm text-warn">
           {state.message}
