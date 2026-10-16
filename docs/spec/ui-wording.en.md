@@ -38,7 +38,8 @@ Related ADR: [Split screen wording into body and hints, and show explanations of
   outside closes it.
 - A hint opened by hovering does not take focus. The hint text is also placed hidden inside the mark (`sr-only`) and linked
   from the mark by `aria-describedby`, so a screen reader reads the mark's name ("Details") and the text without opening it.
-- A long hint is limited to the screen height (20rem or the viewport) and scrolls inside. With the keyboard, the arrow keys and
+- A long hint is limited to 20rem or the free space on the side of the mark where it is placed (the Positioner's
+  `--available-height`) and scrolls inside. With the keyboard, the arrow keys and
   PageUp/PageDown scroll it while the mark keeps focus (the hint is in a portal, so Tab does not move into it). It closes when focus
   leaves the mark.
 - A long activity line (the list of available external platforms in the context preparation) shows only its first line, and

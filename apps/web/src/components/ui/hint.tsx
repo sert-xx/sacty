@@ -10,7 +10,7 @@ import { useMessages } from "@/i18n/client";
  * 補足（ツールチップ。PBI-117）。見出し・ラベル・値の横の小さな印に、マウスを乗せる・Tab で止まる・タップすると出す。
  * Esc と外側のクリック・タップで閉じる。補足の文は印の中にも隠して置き（sr-only）、aria-describedby で結び付けるので、
  * 開かなくてもスクリーンリーダーで読める（ポータルの補足は、初めて開くまで DOM に無いため）。
- * 長い補足は高さを画面に収め、中をスクロールする。印に止まったまま矢印キー・PageUp/PageDown でもスクロールできる
+ * 長い補足は高さを、配置した側の空き（Positioner の --available-height）に収め、中をスクロールする。印に止まったまま矢印キー・PageUp/PageDown でもスクロールできる
  * （補足はポータルに出るので、Tab では中に移れない。PR #127 レビュー指摘）。
  * 補足が無ければ何も出さない。本文に要る情報（操作・エラー・注意）は補足に入れない（docs/spec/ui-wording.md）。
  */
@@ -64,7 +64,7 @@ export function Hint({ text, className }: { text?: ReactNode; className?: string
             // 乗せただけで出た補足に、フォーカスを移さない
             initialFocus={false}
             finalFocus={false}
-            className="max-h-[min(20rem,calc(100dvh-4rem))] max-w-[min(20rem,calc(100vw-2rem))] overflow-y-auto rounded-lg border border-border bg-popover px-3 py-2 text-xs leading-5 font-normal text-popover-foreground shadow-lg outline-none data-closed:hidden"
+            className="max-h-[min(20rem,var(--available-height,calc(100dvh-4rem)))] max-w-[min(20rem,calc(100vw-2rem))] overflow-y-auto rounded-lg border border-border bg-popover px-3 py-2 text-xs leading-5 font-normal text-popover-foreground shadow-lg outline-none data-closed:hidden"
           >
             <Popover.Description className="whitespace-pre-line [overflow-wrap:anywhere]">
               {text}
