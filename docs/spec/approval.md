@@ -94,7 +94,7 @@ sacty が作る PR すべて（実装の PR と、要求要件・設計の PR）
 - マージされずに閉じられた：`PullRequestClosed` を記録し、承認にせず人間の判断を待つ（画面から承認はできない。差し戻すか中止する）。
 - 開き直された：`PullRequestReopened` を記録して見守りを続ける。
 - 確認の途中で状態・PR・コミットが変わったときは記録しない。
-- 実装の PR のマージでは、プロジェクトの `deploymentWatch` が `true` なら、同じ追記でマージの後の監視を始める
+- 実装の PR のマージでは、マージの後の監視の工程を飛ばしていなければ、同じ追記でマージの後の監視を始める
   （[マージの後の監視](deployment-watch.md)）。確認の終わりに、監視を待っているタスクの CI/CD を確かめる（`checkDeployments`）。
 
 コード: `apps/daemon/src/service.ts`（`checkPullRequests`・`readMergedDocument`）、`apps/daemon/src/pr-watcher.ts`（`PullRequestWatcher`）

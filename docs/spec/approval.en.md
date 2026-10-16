@@ -94,7 +94,7 @@ Every 60 seconds the daemon checks PRs waiting for approval (the next check does
 - Closed without merging: `PullRequestClosed` is recorded, and instead of approving, the task waits for a person's decision (it cannot be approved from the web UI; request changes or cancel).
 - Reopened: `PullRequestReopened` is recorded and watching continues.
 - If the status, PR, or commit changes during the check, nothing is recorded.
-- When an implementation PR is merged and the project's `deploymentWatch` is `true`, the after-merge watch starts in the same append
+- When an implementation PR is merged and the after-merge watch step is not skipped, the after-merge watch starts in the same append
   ([After-merge watch](deployment-watch.en.md)). At the end of the check, the CI/CD of tasks waiting for monitoring is checked (`checkDeployments`).
 
 Code: `apps/daemon/src/service.ts` (`checkPullRequests`, `readMergedDocument`), `apps/daemon/src/pr-watcher.ts` (`PullRequestWatcher`)

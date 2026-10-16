@@ -54,17 +54,19 @@ If the body of `POST /api/tasks` has `template`, the task is created from a temp
   2. How to run tests (the command and prerequisites; whether they match the current configuration). If the repository has no tests yet, the agent writes that there are none and how to check changes,
      and does not add a new language or test framework (that is a separate task)
   3. Services needed for tests (how to start them and where to connect; if none are needed, say so)
-  4. For repositories that deploy with CI/CD, the deployment-checking skill `deployment-observer`. The original goes in
-     `.agents/skills/deployment-observer/SKILL.md`, and `.claude/skills/deployment-observer` is a relative symbolic link to `../../.agents/skills/deployment-observer`.
-     It has the agent write the front matter (`name`, `description`), how to tell that a deployment finished, how to check it, and how to connect;
-     the promises not to change anything, not to reveal secrets, and to answer `unknown` when it cannot judge; and the shape of the JSON answer under the heading `sacty-deployment`.
-     The location, link target, and heading are built from the after-merge watch's `DEPLOYMENT_SKILL_PATHS` and `DEPLOYMENT_HEADING`
-     ([After-merge watch](deployment-watch.en.md)).
+  4. For repositories with CI/CD (even if they do not deploy), the after-merge watch skill `deployment-observer`. If there is no CI/CD, it is not created
+     (the after-merge watch step is skipped). The original goes in `.agents/skills/deployment-observer/SKILL.md`, and `.claude/skills/deployment-observer` is
+     a relative symbolic link to `../../.agents/skills/deployment-observer`. It has the agent write the front matter (`name`, `description`) and a reference on how to check
+     CI/CD (`references/ci.md`: which workflows and checks verify what, failures that can be ignored, and how to read results and logs).
+     If the repository deploys, the agent writes how to tell that a deployment finished, how to check it, how to connect, and what counts as an error; if it does not deploy, that the deployment check
+     is skipped (`skipped` with a reason). It also writes the promises not to change anything, not to reveal secrets, not to wait long, and to answer `unknown` when it cannot judge, and the shape of
+     the JSON answer under the heading `sacty-deployment` (the results of the CI/CD check and the deployment check). The location, link target, reference, and heading are built from
+     the after-merge watch's `DEPLOYMENT_SKILL_PATHS`, `CI_REFERENCE`, and `DEPLOYMENT_HEADING` ([After-merge watch](deployment-watch.en.md)).
 - The goal also says that if everything is in place and no change is needed, the task ends with Investigation only, without a PR, and leaves the check result for each item (if the Orchestrator
   chooses `investigate`, the task completes when the investigation result is approved in the web UI). If it turns out after the steps have run that no change is needed, the agent is asked to
   leave the files unchanged and write the check results and reasons in the implementation notes (no PR is opened; a person checks it and the task completes without changes. [Approval and request changes](approval.en.md#when-the-implementation-has-no-changes)).
 
-Code: `packages/core/src/events.ts` (`TaskTemplate`, `CreateTemplateTaskInput`, `TaskCreated`), `apps/daemon/src/service.ts` (`createTask`, `createTemplateTask`, `projectRepository`), `apps/daemon/src/task-templates.ts` (`templateTask`), `apps/daemon/src/deployment.ts` (`DEPLOYMENT_SKILL_PATHS`, `DEPLOYMENT_HEADING`)
+Code: `packages/core/src/events.ts` (`TaskTemplate`, `CreateTemplateTaskInput`, `TaskCreated`), `apps/daemon/src/service.ts` (`createTask`, `createTemplateTask`, `projectRepository`), `apps/daemon/src/task-templates.ts` (`templateTask`), `apps/daemon/src/deployment.ts` (`DEPLOYMENT_SKILL_PATHS`, `CI_REFERENCE`, `DEPLOYMENT_HEADING`)
 
 ## Steps
 
@@ -78,6 +80,7 @@ Code: `packages/core/src/events.ts` (`TaskTemplate`, `CreateTemplateTaskInput`, 
 | `integrate` | Integration review | Checks whether the child tasks' results meet the parent's requirements |
 | `reproduce` | Reproduce | Writes a test that reproduces the bug (fails) |
 | `implement` | Implementation | Implements. After it passes verification, sacty opens the implementation PR and waits for a person's approval (merging the PR) |
+| `deployment` | After-merge watch | After the implementation PR is merged, waits for CI/CD, checks as the skill says, and registers a fix task on failure (no human approval. [After-merge watch](deployment-watch.en.md)) |
 | `document` | Document | Creates or edits a Markdown draft and waits for approval in the web UI |
 | `operation` | Operation | Performs the requested external change once and submits evidence for result approval |
 
@@ -90,6 +93,8 @@ Step categories:
 - Steps that need a repository (`REPO_STEPS`): `implement`, `reproduce`, `review`.
 - Steps that can use docker compose services (`SERVICE_STEPS`): `investigate` (only for bug investigation), `reproduce`, `implement`.
 - Steps that can be exported (`EXPORT_STEPS`): `investigate` (only when it is the last step), `requirements`, `design`, `document`.
+- Steps that are not run (not in `EXECUTABLE_STEPS`): `deployment`. After the previous step is approved, the task becomes idle and sacty advances it in the PR check. If the target repository
+  has no skill, the step is skipped when the steps are chosen (`skip`. [After-merge watch](deployment-watch.en.md)). When moving to the next step, `skip` steps are passed over.
 
 Code: `packages/core/src/events.ts` (`StepKey`, `GATED_STEPS`, `REWORK_STEPS`, `EXPORT_STEPS`, `exportSteps`), `packages/core/src/projection.ts` (`investigationIsGoal`), `apps/daemon/src/service.ts` (`REPO_STEPS`, `submitEvents`), `apps/daemon/src/prompts.ts` (`SERVICE_STEPS`)
 
@@ -97,13 +102,13 @@ Code: `packages/core/src/events.ts` (`StepKey`, `GATED_STEPS`, `REWORK_STEPS`, `
 
 | `plan` | Steps |
 | --- | --- |
-| `standard` | `investigate` → `requirements` → `design` → `implement` |
-| `skip-design` | `investigate` → `requirements` → `implement` |
+| `standard` | `investigate` → `requirements` → `design` → `implement` → `deployment` |
+| `skip-design` | `investigate` → `requirements` → `implement` → `deployment` |
 | `investigate` | `investigate` (investigation only) |
 | `design-only` | `requirements` → `design` (design only) |
 | `review` | `review` (review only) |
 | `split` | `investigate` → `requirements` → `design` → `split` → `integrate` |
-| `bugfix` | `investigate` → `reproduce` → `implement` |
+| `bugfix` | `investigate` → `reproduce` → `implement` → `deployment` |
 | `document` | `document` |
 | `operation` | `operation` |
 
@@ -242,7 +247,7 @@ Code: `apps/daemon/src/activity.ts` (`purgeLegacyPrStepTasks`, `purgeLegacyTasks
   - Pause: the task stays waiting for the Implement approval and is not paused. The pause operation reports that the task was not paused because it is waiting for approval (`pause.reachedApproval`; 409).
   - Cancel: after opening the PR finishes, the recorded PR is closed and the task is cancelled (the cleanup in "Budget, pause, resume, and cancel" below).
 - Waiting for approval (approval by merging the PR, Request changes, and importing PR comments) works the same as for Requirements and Design ([Approval and request changes](approval.en.md)).
-  Approving the implementation by merging the PR completes the task.
+  Approving the implementation by merging the PR moves on to the after-merge watch step (if it is skipped, the task is completed).
 
 Code: `apps/daemon/src/service.ts` (`runNextInner`, `publish`, `implementSubmitted`, `submitEvents`, `pause`), `packages/core/src/projection.ts` (`publishPending`, `gatePullRequest`)
 

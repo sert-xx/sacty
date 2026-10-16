@@ -84,7 +84,7 @@ Code: `packages/core/src/projection.ts` (`project`, `applyEvent`, `Task`, `TaskS
   | `AgentRunCompleted`, `AgentRunFailed` | That step |
   | `OutputExported` | Export (`export`) |
   | `QuestionAnswered` | Answers to questions (`chat`) |
-  | `DeploymentChecked` | Deployment check (`deployment`; [After-merge watch](deployment-watch.en.md)) |
+  | `DeploymentChecked` | The after-merge watch step (`deployment`; [After-merge watch](deployment-watch.en.md)) |
   | `ChangeJudged`, `ReworkJudged`, `FinalReviewed`, `FinalReviewFailed` | Goal Guardian (`guardian`) |
 
 - The projection and the per-step cost table both add cost with the same rule (`chargeBudget`). If a kind not in the list carries `costUsd`, the type check
@@ -113,7 +113,7 @@ Code: `apps/daemon/src/session-logs.ts` (`SessionLogStore`, `SESSION_LOG_LIMITS`
 - Task details read `{ task, activity }` from `GET /api/tasks/:id` and list the activity log newest first, with text for each event kind.
 - The per-step cost table aggregates events that carry cost by row (the table in [Cost](#cost)). The rows are ordered: ticket reading,
   repository selection, and the Orchestrator (only when recorded); the steps in the task's step order (steps that have not run are shown with 0 runs; records for steps
-  not in the step list are also shown); then export, answers to questions, the Goal Guardian, and the deployment check (only when recorded).
+  not in the step list are also shown. The deployment check goes in the row of the after-merge watch step, including while running); then export, answers to questions, and the Goal Guardian (only when recorded).
 - Ticket reading and repository selection decided by a person, and `StepsChosen` from the era of fixed steps (no agent, cost, or usage), are
   not counted as runs.
 - The table's total cost and whether it is estimated are summed with `chargeBudget` in activity log order, so they

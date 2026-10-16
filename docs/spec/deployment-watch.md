@@ -2,43 +2,67 @@
 
 # マージの後の監視（CI/CD とデプロイ）
 
-sacty のタスクの実装の PR がマージされたら、マージのコミットに対する CI/CD（GitHub Actions のワークフローの実行・チェック）を待ち、
-通ったらデプロイの確認のスキルでデプロイ後のアプリをエージェントに確かめさせる。失敗していたら、修正のタスクを自動で登録する。
-プロジェクトの設定 `deploymentWatch` が `true` のときだけ行う。
+マージの後の監視は、実装の後に置く工程（`deployment`）。sacty のタスクの実装の PR がマージされたら、マージのコミットに対する
+CI/CD（GitHub Actions のワークフローの実行・チェック）を待ち、通ったら対象のリポジトリのスキル `deployment-observer` に従って
+エージェントに確かめさせる。失敗していたら、修正のタスクを自動で登録する。人の承認は無い。
+するかどうかは、工程を選ぶときに、対象のリポジトリにスキルがあるかで sacty がタスクごとに決める。どこまで見るかはスキルに任せる。
 
-関係する ADR: [sacty のタスクの実装の PR がマージされたら、CI/CD とデプロイ後のアプリを見届け、失敗したら修正のタスクを登録する](../adr/20261014-1439-deployment-watch-after-merge.md)
+関係する ADR: [マージの後の監視を工程にし、するかどうかを対象のリポジトリのスキルの有無でタスクごとに決め、どこまで見るかはスキルに任せる](../adr/20261016-0633-deployment-watch-step.md)、[sacty のタスクの実装の PR がマージされたら、CI/CD とデプロイ後のアプリを見届け、失敗したら修正のタスクを登録する（置き換え済み）](../adr/20261014-1439-superseded-deployment-watch-after-merge.md)
 
-## 対象と開始
+## 工程に入れるか
 
-- プロジェクトの `deploymentWatch` が `true` のときだけ。書いていない・`false` なら行わない（記録も増えない）。
-- 見るのは、実装の PR（工程 `implement` の承認）のマージだけ。要求要件・設計の PR は見ない。修正のタスクも、そのマージで同じく見る。
-- PR の確認（[承認と差し戻し](approval.md) の「PR の確認」）でマージを記録するとき、同じ追記で `DeploymentWatchStarted`（PR の番号・
-  リポジトリ・ベースブランチ・マージのコミット）を記録する。マージのコミットは GitHub の `merge_commit_sha`。取れなければ
-  コミットを持たず、監視を飛ばす（理由 `no_commit`）。
-- 1つのタスクの監視は1回だけ（二度目の開始は受け付けない）。
+- 実装を含む組み合わせ（`standard`・`skip-design`・`bugfix`）の最後（実装の後）に `deployment` がある（`STEP_PLANS`）。タスク分割の
+  親には無い（子タスクが、それぞれの組み合わせで持つ）。
+- 組み合わせを選んだ後、`StepsChosen` を記録する前に、起点のコミット（ベースブランチを選び直したら、そのコミット）でスキルを探す
+  （下の「スキルの探し方」）。あれば `StepsChosen` の `deployment` に `skill`（パス）を持ち、無い・使えない・探せないなら `skipped`
+  （`deploy.stepSkipped`。詳しい理由は `deploy.noSkill`・`deploy.skillOutside`・`deploy.skillUnreadable`・`deploy.skillLookupFailed`）
+  を持って、この工程を `skip` にする。飛ばしたら、CI/CD も見ない。
+- 飛ばすときは、この工程の既定のイメージの理由・理由が無いこと（`defaultImageReasons`・`imagesUnexplained`）を記録しない。
+- オーケストレーターへの指示では、組み合わせの説明に、スキルがあるときだけ sacty が決めることを書く（AI には決めさせない）。
+- 決めた後にスキルが増減したとき：
+  - 増えた（実装の PR がスキルを足した）：このタスクでは見ない（工程は飛ばしたまま）。次のタスクから見る。
+  - 消えた（実装の PR がスキルを消した）：工程は続ける。CI/CD を見て、通ったらマージのコミットでスキルを探し直し、無ければ
+    スキルに従った確認を飛ばして `passed`（`no_skill`）で終える。
+- 実装の PR をマージせずに実装を承認した（変更が無く PR を作らなかった）なら、見るマージが無いので、この工程を `skip` にする。
+- 工程を進めるとき、`skip` の工程には進まない（`advance`）。前の工程に戻しても、`skip` の工程は `skip` のまま（`reopen`）。
 
-コード: `apps/daemon/src/service.ts`（`checkPullRequests`・`deploymentWatchEvents`）、`packages/core/src/projects.ts`（`ProjectDefinition`）、`packages/core/src/events.ts`（`DeploymentWatchStarted`）
+コード: `packages/core/src/events.ts`（`STEP_PLANS`・`StepsChosen`）、`apps/daemon/src/service.ts`（`runNextInner`・`deploymentChoice`・`withDeploymentChoice`）、`apps/daemon/src/prompts.ts`（`planDescriptions`）、`packages/core/src/projection.ts`（`applyEvent`・`advance`・`reopen`）
+
+## 工程の進み方
+
+- 実行できる工程（`EXECUTABLE_STEPS`）ではないので、実装の承認（PR のマージ）の後は、待機（`idle`）でこの工程が active になる。
+- PR の確認（[承認と差し戻し](approval.md) の「PR の確認」）で実装の PR のマージを記録するとき、この工程が `todo` なら、同じ追記で
+  `DeploymentWatchStarted`（PR の番号・リポジトリ・ベースブランチ・マージのコミット）を記録する。マージのコミットは GitHub の
+  `merge_commit_sha`。取れなければコミットを持たず、監視を飛ばす（理由 `no_commit`）。
+- 1つのタスクの監視は1回だけ（二度目の開始は受け付けない）。修正のタスクも、そのマージで同じく見る。
+- 監視が終わったら（下の `state` が `waiting` でなくなり、`failed` なら修正のタスクを決めた後）、この工程を `done` にし、タスクは
+  完了する（`settleDeploymentStep`）。失敗しても、タスクは止めない。
+- 監視の間は、タスクは完了でない（`isCompleted`・`isFinished` が偽。ダッシュボードとタスクの一覧で、終わっていないタスクとして出る）。
+  画面の状態は「マージの後の監視中（CI/CD を待っている）」か「マージの後の監視中（スキルで確かめている）」。人の出番ではない。
+
+コード: `apps/daemon/src/service.ts`（`checkPullRequests`・`deploymentWatchEvents`・`nextAfterApproval`）、`packages/core/src/projection.ts`（`settleDeploymentStep`・`isCompleted`・`isFinished`）、`packages/core/src/events.ts`（`DeploymentWatchStarted`）、`apps/web/src/lib/labels.ts`（`statusText`）
 
 ## 状態
 
-タスクの `deployment`（`DeploymentWatch`）に持つ。タスクの `status` と工程は変えない（完了したタスクのまま）。
+タスクの `deployment`（`DeploymentWatch`）に持つ。
 
 | `state` | 意味 |
 | --- | --- |
-| `waiting` | 待っている。`phase` が `ci` なら CI/CD の結果、`check` ならデプロイの確認（`check` があれば確認の実行中） |
-| `passed` | 通った（CI/CD が通り、デプロイの確認で `healthy`。スキルが無ければ CI/CD が通っただけで、`reason` が `no_skill`） |
-| `failed` | 失敗した（CI/CD の失敗か、デプロイの確認で `unhealthy`） |
+| `waiting` | 待っている。`phase` が `ci` なら CI/CD の結果、`check` ならスキルに従った確認（`check` があれば確認の実行中） |
+| `passed` | 通った（CI/CD が通り、確認の全体の結果が `healthy`。マージのコミットにスキルが無ければ CI/CD が通っただけで、`reason` が `no_skill`） |
+| `failed` | 失敗した（CI/CD の失敗か、確認の全体の結果が `unhealthy`） |
 | `skipped` | 飛ばした（理由は `reason`） |
 | `timed_out` | CI/CD が時間内に終わらなかった |
 
-`reason`（`DeploymentWatchReason`）：`no_commit`（マージのコミットが分からない）・`no_ci`（CI/CD が無い）・`no_skill`（スキルが無い）・
-`budget`（予算の上限）・`check_unknown`（デプロイの確認で確かめられなかった）。詳しい理由は `detail`（文言のコード）に持つ。
+`reason`（`DeploymentWatchReason`）：`no_commit`（マージのコミットが分からない）・`no_ci`（CI/CD が無い）・`no_skill`（マージのコミットに
+スキルが無い）・`budget`（予算の上限）・`check_unknown`（確認で確かめられなかった）。詳しい理由は `detail`（文言のコード）に持つ。
 
 コード: `packages/core/src/projection.ts`（`DeploymentWatch`・`DeploymentWatchState`・`DeploymentWatchReason`・`applyEvent`・`awaitingDeploymentCi`・`awaitingDeploymentCheck`・`deploymentCheckRunning`）
 
 ## CI/CD の監視
 
-PR の確認（60秒ごと）の終わりに、CI/CD を待っているタスクについて、プロジェクトのそのホストの GitHub のアカウントで次を読む。
+待つのは sacty（エージェントには待たせない）。PR の確認（60秒ごと）の終わりに、CI/CD を待っているタスク（一時停止中のものを除く）に
+ついて、プロジェクトのそのホストの GitHub のアカウントで次を読む。
 
 | 種類（`kind`） | API | 扱い |
 | --- | --- | --- |
@@ -46,7 +70,7 @@ PR の確認（60秒ごと）の終わりに、CI/CD を待っているタスク
 | `check` | `/repos/<owner>/<name>/commits/<コミット>/check-runs` | GitHub Actions のもの（`app.slug` が `github-actions`）は除く（ワークフローの実行で見る） |
 | `status` | `/repos/<owner>/<name>/commits/<コミット>/status` の `statuses` | `pending` 以外は終わったものとする |
 
-判定は次の順。時間は `DeploymentWatchStarted` の時刻から数える（デーモンを再起動しても延びない）。
+判定は次の順。時間は `DeploymentWatchStarted` の時刻から数える（デーモンを再起動しても、一時停止しても延びない）。
 
 1. 読めない（認証・ネットワーク・CI/CD を読む口が無い）：記録しない（理由はデーモンのログ）。`DEPLOYMENT_CI_TIMEOUT_MS`（60分）を
    過ぎていれば `timed_out`。
@@ -59,6 +83,7 @@ PR の確認（60秒ごと）の終わりに、CI/CD を待っているタスク
    `cancelled`・`skipped`・`neutral`・`stale` は失敗ではない）：`failed`。失敗したワークフローの実行のジョブ（`/actions/runs/<ID>/jobs?filter=latest`）
    のうち失敗したものと、ジョブのログの末尾（`/actions/jobs/<ID>/logs`）を、合わせて `CI_FAILURES_MAX`（5）件まで読む。ジョブが読めなければ
    ワークフローの実行だけを書く。ワークフローの実行の外の失敗（ほかのアプリのチェック・コミットの状態）も、名前・結論・URL を書く。
+   エージェントは使わない。
 5. すべて通った：マージのコミットに、デプロイの確認のスキルがあるかを見て（下の「スキルの探し方」）、あれば `skill`、無ければ `skipCheck`
    （理由）を付けて `passed` を記録する。コミットを取得できなければ記録せず、次の確認でやり直す（60分を過ぎていれば、スキルが無いとして記録する）。
 
@@ -74,69 +99,117 @@ PR の確認（60秒ごと）の終わりに、CI/CD を待っているタスク
 
 ## スキルの探し方
 
-- `.agents/skills/deployment-observer/SKILL.md`、`.claude/skills/deployment-observer/SKILL.md` の順に、マージのコミットで探す
+- 工程を選ぶとき（起点のコミット）と、CI/CD が通ったとき（マージのコミット）に探す。
+- `.agents/skills/deployment-observer/SKILL.md`、`.claude/skills/deployment-observer/SKILL.md` の順に探す
   （`DEPLOYMENT_SKILL_PATHS`）。先に使えたものを使う。
 - パスの途中（`SKILL.md` 自身を含む）のシンボリックリンクは、リンクの先がリポジトリの中なら、たどった先で探す。絶対パス・リポジトリの根より上・
   根そのものを指すリンク、8回を超えてたどるリンク（循環など）は使わない（理由 `deploy.skillOutside`）。
 - 読めない（通常のファイルでない・大きすぎる・テキストでない）なら使わない（理由 `deploy.skillUnreadable`）。どれも無ければ `deploy.skillMissing`。
 - 記録するのは、たどった先のパス（リポジトリの根から）。
+- スキルが参照するファイル（CI/CD の確認の仕方の reference `references/ci.md` など）は、sacty は読まない（エージェントがスキルに従って読む）。
 
-コード: `apps/daemon/src/deployment.ts`（`findDeploymentSkill`・`resolveInRepository`・`DEPLOYMENT_SKILL_PATHS`）、`apps/daemon/src/repository.ts`（`readLink`・`readFile`）
+コード: `apps/daemon/src/deployment.ts`（`findDeploymentSkill`・`resolveInRepository`・`DEPLOYMENT_SKILL_PATHS`・`CI_REFERENCE`）、`apps/daemon/src/repository.ts`（`readLink`・`readFile`）
 
-## デプロイの確認
+## スキルに従った確認
 
 - スキルがあり、確認を待っている（`awaitingDeploymentCheck`）タスクは、ワーカーが実行待ちとして拾う（一時停止中のタスクは拾わない）。
-  同時に実行する数の上限・一時停止・中止は、ほかの実行と同じ。
+  同時に実行する数の上限は、ほかの実行と同じ。
 - 予算の上限に達していれば実行せず、`DeploymentWatchSkipped`（`budget`）を記録する（タスクは止めない）。
-- AI は `step_agents.deployment`（無ければ `default_agent`）。イメージは実装の工程のイメージ（無ければ既定のイメージ）。作業領域は
-  `workspaces/_deployment/<実行 ID>` に書き出したマージのコミットのコードの写し（終わったら消す）。プロジェクトのコンテキスト（外部 PF・
-  MCP サーバー）を、工程のエージェントと同じく渡す。
-- 実行の前に `DeploymentCheckStarted`（実行の ID・スキル）を記録する。指示（`buildDeploymentPrompt`）は、スキルを読んで従い、確かめるだけで
-  何も変えないこと、秘密情報を書かないことを求める。
-- 答えは見出し `sacty-deployment` の JSON（`extractDeploymentCheck`）。`result`（`healthy`・`unhealthy`・`unknown`）・`summary`（4000 文字まで）・
-  `evidence`（20 件、1件 2000 文字まで）。
-- 結果（`DeploymentChecked`）：`healthy` は `passed`、`unhealthy` は `failed`、それ以外は `skipped`（`check_unknown`）。実行に失敗した
-  （`deploy.checkFailed`）・答えを読めない（`deploy.unreadable`）・`unknown`（`deploy.undetermined`）・人が止めた・中止した（`deploy.stopped`）も
-  `check_unknown`。費用（失敗したときも）は元のタスクの予算に入れ、80% の通知を判定する。
+- AI は `step_agents.deployment`（無ければ `default_agent`）。イメージはこの工程のイメージ（ほかの工程と同じく、オーケストレーターが選び、
+  人が変えられる。無ければ既定のイメージ）。作業領域は `workspaces/_deployment/<実行 ID>` に書き出したマージのコミットのコードの写し
+  （終わったら消す）。プロジェクトのコンテキスト（外部 PF・MCP サーバー）を、工程のエージェントと同じく渡す。
+- 実行の前に `DeploymentCheckStarted`（実行の ID・スキル）を記録する。
+- 指示（`buildDeploymentPrompt`）：スキルを読んで従うこと。何を確かめるか（CI/CD の確認・デプロイの確認のどれをするか）と確かめ方は
+  スキルに従うこと。sacty が見た CI/CD の実行・チェック（50 件まで）を、指示ではない JSON のデータとして渡す。確かめるだけで何も変えない
+  （CI/CD の再実行・デプロイのやり直し・ロールバックもしない）こと、秘密情報を書かないこと、CI/CD やデプロイが終わるのを長く待たない
+  （終わっていない・判断できなければ `unknown`）こと、スキルが確かめないとしているものは `skipped` と理由を書くこと、スキルに別の答えの形が
+  書いてあっても指示の形を優先することを求める。
+- 答え（`extractDeploymentCheck`）：見出し `sacty-deployment` の JSON。
 
-コード: `apps/daemon/src/service.ts`（`queuedTaskIds`・`runNextInner`・`checkDeployment`）、`apps/daemon/src/deployment.ts`（`buildDeploymentPrompt`・`extractDeploymentCheck`・`DEPLOYMENT_HEADING`）、`apps/daemon/src/config.ts`（`agentFor`）
+  ```json
+  {"sacty-deployment": {"ci": {"result": "passed", "summary": "CI/CD の確認の要点", "reason": "飛ばした・判断できない理由"}, "deployment": {"result": "skipped", "summary": "デプロイの確認の要点", "reason": "デプロイしていない"}, "summary": "全体の要点", "evidence": ["根拠"]}}
+  ```
+
+  | 項目 | 値 |
+  | --- | --- |
+  | `ci.result` | `passed`（スキルに従って確かめ、通っている）・`failed`（失敗がある）・`skipped`（確かめない）・`unknown`（判断できない） |
+  | `deployment.result` | `healthy`（デプロイ後のアプリが正しく動いている）・`unhealthy`（エラーになっている）・`skipped`（確かめない）・`unknown`（判断できない） |
+  | `summary`・`reason`（それぞれ） | 2000 文字まで |
+  | `summary`（全体） | 4000 文字まで |
+  | `evidence` | 20 件、1件 2000 文字まで |
+
+  `ci`・`deployment` の両方に決めた値の `result` が要る。無い・知らない値・以前の形（`result` だけ）は読めない（`deploy.unreadable`）。
+- 全体の結果（`overallDeploymentResult`）：どちらかが `failed`・`unhealthy` なら `unhealthy`、そうでなく `unknown` があれば `unknown`、
+  ほかは（飛ばしたものだけでも）`healthy`。
+- 結果（`DeploymentChecked`。全体の結果と `ci`・`deployment` を持つ）：`healthy` は `passed`、`unhealthy` は `failed`、それ以外は `skipped`
+  （`check_unknown`）。実行に失敗した（`deploy.checkFailed`）・答えを読めない（`deploy.unreadable`）・`unknown`（`deploy.undetermined`）も
+  `check_unknown`。実行が上限（`AGENT_RUN_TIMEOUT_MS`、30分。[エージェントの実行](agent-execution.md)）を過ぎたら、ほかの実行と同じく止めて、
+  実行の失敗にする。費用（失敗したときも）はタスクの予算に入れ、80% の通知を判定する。
+- 人が止めた（一時停止・中止）ときは、結果にせず、`retry` を付けた `DeploymentChecked`（`unknown`、`interrupted`、`deploy.stopped`、費用）を
+  記録して、確認を待つ状態に戻す（再開で確かめ直す）。
+
+コード: `apps/daemon/src/service.ts`（`queuedTaskIds`・`runNextInner`・`checkDeployment`）、`apps/daemon/src/deployment.ts`（`buildDeploymentPrompt`・`extractDeploymentCheck`・`overallDeploymentResult`・`DEPLOYMENT_HEADING`）、`apps/daemon/src/config.ts`（`agentFor`）
 
 ## 修正のタスク
 
 失敗（`failed`）で、修正のタスクをまだ決めていない（`fixDecisionPending`）とき、1つの監視で1つだけ決める。
 
-- 目印（`fingerprint`）：CI/CD は `ci|<リポジトリ>|<失敗したワークフロー / ジョブの名前の並び>`（`ciFingerprint`）、デプロイの確認は
+- 種類：sacty の判定で CI/CD が失敗したら `ci`、スキルに従った確認で失敗を見つけた（`ci.result` が `failed` か `deployment.result` が
+  `unhealthy`）ら `deployment`。
+- 目印（`fingerprint`）：`ci` は `ci|<リポジトリ>|<失敗したワークフロー / ジョブの名前の並び>`（`ciFingerprint`）、`deployment` は
   `deployment|<リポジトリ>`（`deploymentFingerprint`）。リポジトリは小文字にし、末尾の `/`・`.git` を除く。
 - 二重の登録：同じプロジェクトに、同じ目印の終わっていない修正のタスク（`fixTaskOpen`：中止しておらず、完了していないか、完了してもその監視が
-  `waiting`）か、登録して作る前のものがあれば、作らずに `DeploymentFixSuppressed`（`duplicate`、そのタスクの ID）を記録する。
+  `waiting`）か、登録して作る前のものがあれば、作らずに `DeploymentFixSuppressed`（`duplicate`、そのタスクの ID）を記録する。監視している
+  タスク自身（修正のタスクのマージの監視）は除く。
 - 連鎖の上限：段数（元のタスクの `fix.depth`、無ければ 0）+ 1 が `MAX_FIX_CHAIN`（3）を超えるなら、作らずに `DeploymentFixSuppressed`
   （`chain_limit`）を記録する。
 - 作るときは、元のタスクに `DeploymentFixRegistered`（作るタスクの ID・種類・目印・段数・題・本文）を記録してから、その ID で `TaskCreated`
   （`start: deployment`、`repo` は監視したリポジトリ、`fix` に元のタスク・種類・目印・段数、予算は `budget.default_per_task_usd`）を記録する。
   作る前にデーモンが止まったら、次の確認で作る（`createRegisteredFixTask`）。
 - 本文（`buildCiFixTask`・`buildDeploymentFixTask`。`TASK_BODY_MAX` まで）：元のタスクの題と ID、マージした PR、リポジトリとベースブランチ、
-  マージのコミットとそのリンク。CI/CD なら、失敗したワークフロー・ジョブ・結論・実行へのリンクと、ログの抜粋（入りきらなければ、抜粋を
-  等しく末尾から切り詰める）。デプロイの確認なら、スキル・結果の要点・根拠。題は `TASK_TITLE_MAX` まで。
+  マージのコミットとそのリンク。`ci` なら、失敗したワークフロー・ジョブ・結論・実行へのリンクと、ログの抜粋（入りきらなければ、抜粋を
+  等しく末尾から切り詰める）。`deployment` なら、スキル・CI/CD の確認とデプロイの確認それぞれの結果と理由・全体の要点・根拠。題は、
+  デプロイの確認が `unhealthy` なら「デプロイ後のアプリのエラーを直す」、CI/CD の確認だけが `failed` なら「マージの後の確認で見つけた
+  CI/CD の失敗を直す」（`TASK_TITLE_MAX` まで）。
 - 修正のタスクは、ふつうのタスクとして実行待ちになる（オーケストレーターが進め方を選ぶ）。
 
 コード: `apps/daemon/src/service.ts`（`registerFixTask`・`createRegisteredFixTask`）、`apps/daemon/src/deployment.ts`（`ciFingerprint`・`deploymentFingerprint`・`buildCiFixTask`・`buildDeploymentFixTask`）、`packages/core/src/projection.ts`（`fixDecisionPending`・`fixTaskOpen`）、`packages/core/src/events.ts`（`MAX_FIX_CHAIN`・`DeploymentFixRegistered`・`DeploymentFixSuppressed`）
 
-## 再起動と中止
+## 一時停止・中止・再起動
 
-- CI/CD を待っている監視は、再起動の後も続く（時間の上限は監視を始めた時刻から）。
-- デプロイの確認の実行中に止まったら、起動のとき（`recoverInterrupted`）に `DeploymentChecked`（`unknown`、`interrupted`、`run.daemonStopped`）を
-  記録して `skipped` にする（やり直さない）。始める前の確認は、起動の後にワーカーが実行する。
-- 元のタスクを中止したら、監視は終わる（中止したタスクには記録しない）。確認の実行中なら、ほかの実行と同じく止める。
+- 一時停止：監視の間（待機）は、ほかの工程と同じく止められる。止めている間は CI/CD を見ず、確認も実行しない（修正のタスクの登録も
+  再開の後）。再開すると待機に戻り、続ける。確認の実行中なら、コンテナを止め、結果にせずに（`retry`）一時停止し、再開で確かめ直す。
+- 中止：監視は終わる（中止したタスクには記録しない）。確認の実行中なら、ほかの実行と同じく止める（`retry` を記録してから中止）。
+  マージした実装の PR は閉じない（片付けの PR は `skipped`）。ブランチ・作業領域は、ほかの工程と同じく片付ける。
+- 再起動：CI/CD を待っている監視は、再起動の後も続く（時間の上限は監視を始めた時刻から）。確認の実行中に止まったら、起動のとき
+  （`recoverInterrupted`）に、ほかの工程の実行と同じく、`DeploymentChecked`（`retry`、`unknown`、`interrupted`、`run.daemonStopped`）と
+  `TaskPaused`（`error`、`run.daemonStopped`）を記録する。再開で確かめ直す。始める前の確認は、起動の後にワーカーが実行する。
 
-コード: `apps/daemon/src/service.ts`（`recoverInterrupted`・`checkDeployments`）
+コード: `apps/daemon/src/service.ts`（`pause`・`resume`・`cancel`・`recoverInterrupted`・`checkDeployments`・`checkDeployment`）
+
+## 工程の無い以前のタスク
+
+- PBI-116 より前の作業履歴（工程に `deployment` が無く、完了したタスクに `DeploymentWatchStarted` がある）は、書き換えずにそのまま読む。
+- その監視は、これまでどおり完了したタスクのまま進める（工程・状態を変えない）。確認のイメージは実装の工程のイメージ。止めた・
+  デーモンが止まった確認は、確かめられなかった（`deploy.stopped`・`run.daemonStopped`。`check_unknown`）として終える（やり直さない）。
+  答えの形は今の形。
+- プロジェクトの設定の `deploymentWatch` は読まない（保存した定義からは捨て、以前の書き出しのファイルにあっても、読み込みを止めずに捨てる。
+  [書き出しと読み込み](export.md)）。
+
+コード: `packages/core/src/projection.ts`（`applyEvent`）、`apps/daemon/src/service.ts`（`checkDeployment`・`recoverInterrupted`）、`packages/core/src/projects.ts`（`ProjectDefinition`・`ProjectExport`）
 
 ## 画面
 
-- タスクの詳細の「マージの後の監視」に、状態・理由・マージのコミット（リンク）とベースブランチ・監視を始めた時刻と CI/CD を待つ上限・CI/CD の
-  実行とチェック（失敗・実行中のものを先に 20 件）・失敗したワークフローとジョブ（リンクとログの抜粋）・デプロイの確認（スキル・結果・要点・根拠）・
-  修正のタスク（リンク）か作らなかった理由を出す。待っている間は画面を自動で更新する。
+- タスクの工程の並びに「マージの後の監視」を出す（飛ばしたら飛ばしたこと）。工程のイメージは、ほかの工程と同じく変えられる。
+- タスクの詳細の「マージの後の監視」：監視を始める前は、マージを待っていることと使うスキル、飛ばしたなら理由（工程を決めたときの理由か、
+  変更なしで承認したこと）。始めた後は、状態・理由・マージのコミット（リンク）とベースブランチ・監視を始めた時刻と CI/CD を待つ上限・
+  CI/CD の実行とチェック（失敗・実行中のものを先に 20 件）・失敗したワークフローとジョブ（リンクとログの抜粋）・スキルに従った確認
+  （スキル・全体の結果・CI/CD の確認とデプロイの確認それぞれの結果と理由・要点・根拠）・修正のタスク（リンク）か作らなかった理由。
 - 修正のタスクの詳細の先頭に、元のタスクへのリンクと段数を出す。
-- 作業履歴には、7つのイベントを文で出す。工程ごとの費用の表に「デプロイの確認」の行（`deployment`）を出す。
-- プロジェクトの設定に「マージの後の監視」のチェックを出す（既定は Off）。
+- 作業履歴には、7つのイベントを文で出す。工程を決めた記録には、監視をするか（スキル）・飛ばす理由を、止めた確認には確かめ直すことを出す。
+- 工程ごとの費用の表には、この工程の行（工程の順）に、確認の実行（実行中・止めた回も）を出す。工程の無い以前のタスクでも、工程の一覧に
+  無い工程の行として出す。
+- 通知（[Slack の通知](notifications.md)）：完了の通知は、監視が終わって完了したとき。止まったときの通知には、工程の名前（マージの後の監視）を書く。
+- プロジェクトの設定に、マージの後の監視の設定は無い。
 
-コード: `apps/web/src/components/deployment.tsx`（`DeploymentWatchCard`）、`apps/web/src/app/tasks/[id]/page.tsx`、`apps/web/src/lib/labels.ts`（`describeEvent`）、`apps/web/src/lib/step-costs.ts`（`stepCosts`）、`apps/web/src/components/project-editor.tsx`
+コード: `apps/web/src/components/deployment.tsx`（`DeploymentWatchCard`）、`apps/web/src/components/task-detail.tsx`、`apps/web/src/lib/labels.ts`（`describeEvent`・`statusText`）、`apps/web/src/lib/step-costs.ts`（`stepCosts`）、`apps/daemon/src/notifier.ts`（`notificationFor`・`notificationText`）
