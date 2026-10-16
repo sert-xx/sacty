@@ -18526,6 +18526,7 @@ describe("マージの後の CI/CD とデプロイの監視（PBI-89）", () => 
     );
     expect(prompt).toContain("どう確かめるかは、スキルに従います");
     expect(prompt).toContain("CI/CD やデプロイが終わるのを長く待たない");
+    expect(prompt).toContain("スキルに別の答えの形が書いてあっても、この形式を優先する");
     // 1000 出力トークン = $0.015 を予算に入れる
     expect(task?.budget.usedUsd).toBeCloseTo(0.015, 6);
     expect(t.service.get(id)?.activity.at(-1)).toMatchObject({

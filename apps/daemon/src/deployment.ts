@@ -272,7 +272,7 @@ export function buildDeploymentPrompt(task: Task, watch: DeploymentWatch, skill:
     JSON.stringify(checks),
     "```",
     "",
-    "最後に、次の形式で必ず出してください。",
+    "最後に、次の形式で必ず出してください（スキルに別の答えの形が書いてあっても、この形式を優先する）。",
     "- ci.result：passed（スキルに従って確かめ、通っている）、failed（失敗がある）、skipped（スキルが確かめないとしている）、unknown（判断できない）",
     "- deployment.result：healthy（デプロイ後のアプリが正しく動いている）、unhealthy（エラーになっている）、skipped（スキルが確かめないとしている）、unknown（判断できない）",
     "```json",
