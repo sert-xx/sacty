@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { useMessages } from "@/i18n/client";
 import { intakeRuns } from "@/lib/intake";
 import { formatStamp } from "@/lib/labels";
+import { projectSettingsPath } from "@/lib/paths";
 import type { ProjectListData } from "@/lib/project-list-data";
 import { useLiveData } from "@/lib/use-live-data";
 
@@ -148,7 +149,10 @@ function ProjectList({ data }: { data: ProjectListData }) {
             key={p.id}
             className="flex flex-col gap-2 rounded-xl border border-border bg-card p-5"
           >
-            <Link href={`/projects/${p.id}`} className="text-[17px] font-semibold hover:underline">
+            <Link
+              href={projectSettingsPath(p.id)}
+              className="text-[17px] font-semibold hover:underline"
+            >
               {p.name}
             </Link>
             <p className="text-sm text-muted-foreground">{t.summary(p.targets.length)}</p>

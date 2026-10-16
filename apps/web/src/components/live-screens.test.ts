@@ -15,7 +15,8 @@ vi.mock("next/link", () => ({
 const refresh = vi.fn();
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh, push: vi.fn(), replace: vi.fn() }),
-  usePathname: () => "/",
+  // プロジェクトの画面（ヘッダーは URL のプロジェクトを選んだ表示にする。PBI-114）
+  usePathname: () => "/projects/p1/tasks",
 }));
 const followProjectAction = vi.fn(async (_id: string) => {});
 vi.mock("@/app/actions", () => {
@@ -458,7 +459,12 @@ describe("タスクの一覧：新しいタスク・状態の変化が、操作�
         projectName: "Acme",
         hasTargets: true,
       }),
-      h(LiveTaskList, { key: "list", initial: empty, initialVersion: liveVersion(empty) }),
+      h(LiveTaskList, {
+        key: "list",
+        projectId: "p1",
+        initial: empty,
+        initialVersion: liveVersion(empty),
+      }),
     ]);
     expect(text()).toContain("タスクはまだありません");
     // 作成のダイアログを開いて、題を書きかける
@@ -512,7 +518,9 @@ describe("タスクの一覧：新しいタスク・状態の変化が、操作�
       ],
     };
     server = still;
-    render(h(LiveTaskList, { initial: still, initialVersion: liveVersion(still) }));
+    render(
+      h(LiveTaskList, { projectId: "p1", initial: still, initialVersion: liveVersion(still) }),
+    );
     expect(text()).toContain("あなたの出番");
     server = {
       ...still,
@@ -589,7 +597,7 @@ describe("更新できない間・描いたときに届かなかったとき・�
   it("一覧：更新できない間は、それを出す", async () => {
     const list: TaskListData = { projectId: "p1", needsYou: [], rows: [] };
     server = list;
-    render(h(LiveTaskList, { initial: list, initialVersion: liveVersion(list) }));
+    render(h(LiveTaskList, { projectId: "p1", initial: list, initialVersion: liveVersion(list) }));
     server = "down";
     await wait();
     expect(container.querySelector('[data-testid="live-stale"]')).not.toBeNull();

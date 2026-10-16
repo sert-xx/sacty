@@ -1,5 +1,6 @@
 import type { Locale } from "./locale";
 import { common } from "./messages/common";
+import { dashboard } from "./messages/dashboard";
 import { forms } from "./messages/forms";
 import { labels } from "./messages/labels";
 import { parts } from "./messages/parts";
@@ -18,6 +19,7 @@ export function messagesFor(locale: Locale) {
     labels: labels[locale],
     common: common[locale],
     shell: shell[locale],
+    dashboard: dashboard[locale],
     tasks: tasks[locale],
     task: task[locale],
     parts: parts[locale],

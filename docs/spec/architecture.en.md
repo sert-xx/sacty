@@ -47,30 +47,75 @@ Main APIs (`apps/daemon/src/server.ts`):
 
 Code: `apps/daemon/src/server.ts` (`createApp`, `handleError`), `apps/web/src/lib/daemon.ts` (`daemonFetch`), `packages/cli/src/index.ts` (`up`)
 
-## Web UI header (the displayed project and notices)
+## Web UI structure (URLs)
 
-- The displayed project is kept in the cookie `sacty-project` (httpOnly, `SameSite=Lax`, 1 year). The header's switcher, the task list, and
-  "Settings" in the side menu (`/projects/current`) show the cookie's project. If the cookie has no project or the project no longer exists,
-  the first project is used. Only IDs of the form `^[\w-]{1,100}$` are put in the cookie.
-- The cookie changes in these cases: switching in the header and notices (`/switch`), creating or importing a project (it becomes the created
-  project), and opening a project's screen (task details, review, run log, project settings). When a screen is opened, the cookie is changed only if it
-  differs from the screen's project, by a server action after rendering (the screen and the header are redrawn). If the project is not in the daemon's
-  project list (a task of a deleted project), it is not changed. If the list cannot be fetched, the project is not treated as missing and the cookie is changed.
-- The header is in the root layout, so it is not redrawn by navigation (links) within the web UI. Server actions for operations that change what the notices
-  cover (approve, request changes, pause, resume, cancel, create task, and so on) call `refresh()` so that the header is redrawn too (they call it before
-  moving with `redirect` as well).
+| URL | Content |
+| --- | --- |
+| `/` | Moves to `/dashboard` |
+| `/dashboard` | The dashboard. Looks across all projects |
+| `/projects` | The project list (create, import) |
+| `/projects/<ID>` | Moves to `/projects/<ID>/tasks` |
+| `/projects/<ID>/tasks` | The project's task list (cards for tasks that need a human decision, "Create task") |
+| `/projects/<ID>/settings` | The project's settings |
+| `/projects/current`, `/projects/current/tasks` | Moves (303) to the settings or the task list of the displayed project (cookie). Any other `/projects/current/…` is 404 |
+| `/tasks/<ID>`, `/tasks/<ID>/review`, `/tasks/<ID>/runs/<run ID>` | The task details, the deliverable review, the run log |
+| `/settings` | The sacty settings |
+
+- Links and destinations in the web UI are built in `apps/web/src/lib/paths.ts` (project IDs are encoded). After creating or importing a
+  project, the UI moves to that project's settings (`/projects/<ID>/settings`). "Tasks" (the breadcrumb) on the task details goes back to the
+  task list of the task's project (`/projects/current/tasks` before the task is read and while the daemon is unreachable).
+- The project of a project screen is decided by the ID in the URL. An ID that is not in the daemon's project list is 404.
+- The dashboard lays out sections (cards). They sit side by side when there is room and stack otherwise (a single section takes the full
+  width). The only section for now is "Open tasks".
+  - It shows the tasks of all projects except completed and cancelled ones (including awaiting approval, paused, and escalated; those whose
+    `statusTone` is not `completed` or `cancelled`), most recently updated first (`updatedAt`, newest first). There is no limit on the count.
+    Tasks of deleted projects are not shown.
+  - Each row shows the title (a link to the task details), the project name, and the state. A row is 4rem high and the section is 5 rows high
+    (20rem); with more rows, the section scrolls inside (the section takes focus so it can also be scrolled with the keyboard).
+  - When there are no projects or no open tasks, it says so.
+  - To add a section, add its data to `DashboardData` (`loadDashboard`) and add a `DashboardCard` to `LiveDashboard` (one refetch per screen).
+
+Code: `apps/web/src/lib/paths.ts`, `apps/web/src/app/page.tsx`, `apps/web/src/app/dashboard/page.tsx`,
+`apps/web/src/app/projects/[id]/page.tsx`, `apps/web/src/app/projects/[id]/tasks/page.tsx`, `apps/web/src/app/projects/[id]/settings/page.tsx`,
+`apps/web/src/app/projects/current/[[...view]]/route.ts`, `apps/web/src/app/tasks/[id]/page.tsx` (`Breadcrumb`),
+`apps/web/src/lib/dashboard-data.ts` (`loadDashboard`, `isOpenTask`, `openTaskRows`), `apps/web/src/components/dashboard.tsx` (`LiveDashboard`, `DashboardGrid`, `DashboardCard`, `OpenTasksCard`)
+
+## Web UI header and side menu (the displayed project and notices)
+
+- Which project the open screen belongs to is decided by the URL (`pageScope`). Project screens are `/projects/<ID>/tasks` and
+  `/projects/<ID>/settings` (the URL's project) and `/tasks/…` (task details, review, run log; the displayed project). Everything else
+  (the dashboard, the project list, the sacty settings, and so on) is an "All projects" screen.
+- The header's project switcher shows "All projects" first (moves to `/dashboard`), followed by each project (changes the cookie with `/switch`,
+  then moves to `/projects/<ID>/tasks`). On a project screen, the switcher shows that project as selected ("All projects" if the URL's ID is
+  not in the project list); on an "All projects" screen, it shows "All projects" (the count is the total of tasks that need you in all projects).
+- The displayed project is kept in the cookie `sacty-project` (httpOnly, `SameSite=Lax`, 1 year). The header's selection on screens such as the
+  task details, and "Tasks" (`/projects/current/tasks`) and "Settings" (`/projects/current`) in the side menu, use the cookie's project. If the
+  cookie has no project or the project no longer exists, the first project is used. Only IDs of the form `^[\w-]{1,100}$` are put in the cookie.
+- The cookie changes in these cases: switching in the header and notices (`/switch`; without a destination, it moves to the switched project's
+  task list), creating or importing a project (it becomes the created project), and opening a project's screen (task list, project settings, task
+  details, review, run log). When a screen is opened, the cookie is changed only if it differs from the screen's project, by a server action after
+  rendering (the screen and the header are redrawn). If the project is not in the daemon's project list (a task of a deleted project), it is not
+  changed. If the list cannot be fetched, the project is not treated as missing and the cookie is changed.
+- On an "All projects" screen, the side menu shows only "Dashboard" and "Settings", and "Settings" moves to the project list (`/projects`), so it
+  never jumps to a project. The notices are not split by project and are listed newest first; opening one switches to the task's project and
+  opens the task. On a project screen, the side menu shows "Dashboard", "Tasks", and "Settings", and the notices are split into "Other projects"
+  and "This project".
+- The header is in the root layout, so it is not redrawn by navigation (links) within the web UI (the selection is decided in the browser from the
+  screen's URL). Server actions for operations that change what the notices cover (approve, request changes, pause, resume, cancel, create task,
+  and so on) call `refresh()` so that the header is redrawn too (they call it before moving with `redirect` as well).
 - Changes made in other tabs, the CLI, or the daemon (tasks added by intake, approvals, resumes, tasks the daemon picked up and started, and so on) are
   reflected in the header's project switcher (the counts that need you) and notices by "Refetching screen data" below. This applies on every screen,
   whatever the state of the tasks.
 
-Code: `apps/web/src/components/shell/header.tsx` (`AppHeader`, `HeaderFallback`), `apps/web/src/components/shell/live-header.tsx` (`LiveHeaderMenus`),
+Code: `apps/web/src/components/shell/header.tsx` (`AppHeader`, `HeaderFallback`), `apps/web/src/components/shell/live-header.tsx` (`LiveHeaderMenus`, `selectedProject`),
+`apps/web/src/components/shell/menus.tsx` (`ProjectMenu`, `NotificationsMenu`), `apps/web/src/components/shell/rail.tsx` (`railItems`), `apps/web/src/lib/page-scope.ts` (`pageScope`),
 `apps/web/src/lib/header-data.ts` (`loadHeaderData`), `apps/web/src/components/shell/follow-project.tsx` (`FollowProject`),
 `apps/web/src/lib/project-select.ts`, `apps/web/src/lib/current-project.ts` (`selectProject`),
 `apps/web/src/app/switch/route.ts`, `apps/web/src/app/actions.ts`
 
 ## Refetching screen data
 
-The task list, the task details, the deliverable review, the run log, the project list (the intake status), and the header's notices do not reload the screen (redraw the whole screen, including `router.refresh`). They refetch
+The dashboard, the task list, the task details, the deliverable review, the run log, the project list (the intake status), and the header's notices do not reload the screen (redraw the whole screen, including `router.refresh`). They refetch
 only the data at a fixed interval, and only the parts that changed are reflected on the screen. Text being typed, selections, open dialogs and sections
 (`details`), focus, and the scroll position are not lost, because the elements on the screen stay as they are.
 
@@ -78,7 +123,8 @@ only the data at a fixed interval, and only the parts that changed are reflected
 
   | Route | Returns |
   | --- | --- |
-  | `GET /live/tasks?project=<ID>` | The rows of the task list and the cards of tasks that need a person (only what is shown. `loadTaskList`) |
+  | `GET /live/dashboard` | The data of the dashboard's sections (open tasks. `loadDashboard`) |
+  | `GET /live/tasks?project=<ID>` | The rows of the task list of the URL's project and the cards of tasks that need a person (only what is shown. `loadTaskList`). `{ missing: true }` if the project does not exist or the ID has the wrong form |
   | `GET /live/tasks/<ID>` | What the task details show (the task, the activity, the parent, the subtasks, what to clean up, the image choices, and so on. `loadTaskDetail`) |
   | `GET /live/header?current=<ID>` | The header's project switcher (the counts that need you) and notices (`loadHeaderData`) |
   | `GET /live/tasks/<ID>/review` | The task for the deliverable review screen |
@@ -88,8 +134,8 @@ only the data at a fixed interval, and only the parts that changed are reflected
 - The interval is 3 seconds (`LIVE_INTERVAL_MS`). The data is refetched whatever the state of the tasks, including when there are no tasks and when every task
   is awaiting approval, paused, or completed. The next interval starts after the previous refetch has finished, so requests do not overlap.
 - While the screen is not visible (the tab is hidden), the web UI does not poll. When it becomes visible, the data is refetched once right away.
-- The list and the header are refetched for the project shown when the screen was drawn (so that switching the project in another tab does not change only
-  the contents of this screen). The project changes when the screen is opened again (`/switch` and so on).
+- The task list is refetched for the URL's project, and the header for the project shown when the screen was drawn (so that switching the project in another
+  tab does not change only the contents of this screen). The project changes when the screen is opened again (`/switch` and so on).
 - The screen sends the version of the data it last received (a hash of the contents) in the header `x-sacty-live-version`. If it is the same, the web UI's
   server does not send the contents (`{ unchanged: true }`).
 - Each refetch has a 10-second deadline (`LIVE_TIMEOUT_MS`), including reading the response body. At the deadline it is aborted and the next refetch is
@@ -101,7 +147,7 @@ only the data at a fixed interval, and only the parts that changed are reflected
   data it last fetched and shows that it cannot update (that what is shown may not be current; the header shows "Updates paused"). The same applies when the
   deadline passes or the web UI's server cannot be reached. When the daemon can be reached again, the next interval reflects the changes and removes that notice.
 - If the daemon could not be reached when the screen was drawn, the screen shows that it cannot connect until the daemon is reached, and then shows the contents.
-  The task details, the deliverable review, and the run log then make the project of what they show the displayed project (`followProjectAction`; only when it
+  The task list, the task details, the deliverable review, and the run log then make the project of what they show the displayed project (`followProjectAction`; only when it
   differs from the cookie. If the daemon was reached when the screen was drawn, the server's `FollowProject` does this).
 - The header refetches even when there are no projects (it does not show the switcher or notices). When the first project is created in another tab or the CLI,
   it shows the switcher and notices.
@@ -122,7 +168,7 @@ only the data at a fixed interval, and only the parts that changed are reflected
   that people edit, and they do not change with the state of tasks. To see the latest, open the screen again or reload it.
 
 Code: `apps/web/src/lib/live.ts` (`pollWhileVisible`, `fetchLive`, `LIVE_INTERVAL_MS`, `LIVE_TIMEOUT_MS`), `apps/web/src/lib/use-live-data.ts` (`useLiveData`),
-`apps/web/src/lib/live-server.ts` (`liveResponse`, `liveVersion`), `apps/web/src/app/live/tasks/route.ts`, `apps/web/src/app/live/tasks/[id]/route.ts`, `apps/web/src/app/live/header/route.ts`, `apps/web/src/lib/task-list-data.ts` (`loadTaskList`),
+`apps/web/src/lib/live-server.ts` (`liveResponse`, `liveVersion`), `apps/web/src/app/live/tasks/route.ts`, `apps/web/src/app/live/tasks/[id]/route.ts`, `apps/web/src/app/live/header/route.ts`, `apps/web/src/app/live/dashboard/route.ts`, `apps/web/src/lib/task-list-data.ts` (`loadTaskList`),
 `apps/web/src/lib/task-detail-data.ts` (`loadTaskDetail`), `apps/web/src/components/task-list.tsx` (`LiveTaskList`),
 `apps/web/src/components/task-detail.tsx` (`LiveTaskDetail`), `apps/web/src/components/review.tsx` (`LiveReview`),
 `apps/web/src/components/run-log.tsx` (`LiveRunLog`, `applyChunk`), `apps/web/src/lib/run-log-data.ts` (`loadAgentFiles`),

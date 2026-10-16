@@ -197,12 +197,12 @@ describe("作成・インポートの後のコンテキストの誤り（PBI-76 
     saveProject.mockResolvedValue(created({ code: "context.cycle", params: { key: "x" } }));
     await expect(
       saveProjectAction({}, form({ id: "", definition: JSON.stringify({ name: "決済" }) })),
-    ).rejects.toThrow("redirect:/projects/p%201?contextCheck=1");
+    ).rejects.toThrow("redirect:/projects/p%201/settings?contextCheck=1");
     // 誤りが無ければ、これまでどおり
     saveProject.mockResolvedValue(created());
     await expect(
       saveProjectAction({}, form({ id: "", definition: JSON.stringify({ name: "決済" }) })),
-    ).rejects.toThrow(/^redirect:\/projects\/p%201$/);
+    ).rejects.toThrow(/^redirect:\/projects\/p%201\/settings$/);
   });
 
   it("保存（作成でない）の誤りは、その場で返す", async () => {
@@ -228,11 +228,11 @@ describe("作成・インポートの後のコンテキストの誤り（PBI-76 
       project: { id: "p1", name: "決済", context: { repo: "https://example.com/ctx.git" } },
     });
     await expect(importProjectAction({}, file({ sacty: "project" }))).rejects.toThrow(
-      "redirect:/projects/p1?contextCheck=1",
+      "redirect:/projects/p1/settings?contextCheck=1",
     );
     importProject.mockResolvedValue({ ok: true, project: { id: "p1", name: "決済" } });
     await expect(importProjectAction({}, file({ sacty: "project" }))).rejects.toThrow(
-      /^redirect:\/projects\/p1$/,
+      /^redirect:\/projects\/p1\/settings$/,
     );
   });
 });
@@ -283,7 +283,7 @@ describe("ヘッダーの表示を今の状態に合わせる（PBI-98）", () =
     saveProject.mockResolvedValue({ ok: true, project: { id: "p-new", name: "B" } });
     await expect(
       saveProjectAction({}, form({ id: "", definition: JSON.stringify({ name: "B" }) })),
-    ).rejects.toThrow("redirect:/projects/p-new");
+    ).rejects.toThrow(/^redirect:\/projects\/p-new\/settings$/);
     expect(cookieSet).toHaveBeenCalledWith(
       "sacty-project",
       "p-new",
@@ -294,7 +294,9 @@ describe("ヘッダーの表示を今の状態に合わせる（PBI-98）", () =
     const data = new FormData();
     data.set("file", new File([JSON.stringify({ sacty: "project" })], "p.json"));
     importProject.mockResolvedValue({ ok: true, project: { id: "p-imported", name: "C" } });
-    await expect(importProjectAction({}, data)).rejects.toThrow("redirect:/projects/p-imported");
+    await expect(importProjectAction({}, data)).rejects.toThrow(
+      /^redirect:\/projects\/p-imported\/settings$/,
+    );
     expect(cookieSet).toHaveBeenCalledWith("sacty-project", "p-imported", expect.anything());
   });
 

@@ -1,4 +1,4 @@
-/** 画面の文言：タスクの一覧（app/page.tsx）。英語の用語は labels.ts の用語集に合わせる。 */
+/** 画面の文言：タスクの一覧（app/projects/[id]/tasks/page.tsx）。英語の用語は labels.ts の用語集に合わせる。 */
 const ja = {
   title: "タスク",
   allTasks: "すべてのタスク",

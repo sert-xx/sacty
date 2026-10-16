@@ -41,6 +41,7 @@ import {
   testNotification,
   voidRemark,
 } from "@/lib/daemon";
+import { projectSettingsPath } from "@/lib/paths";
 import { needsProjectSelect } from "@/lib/project-select";
 
 export type CreateTaskState = {
@@ -292,7 +293,7 @@ export async function saveProjectAction(
     // 作ったプロジェクトを、表示しているプロジェクトにする（設定の画面に移るので、ヘッダーもそのプロジェクトにする。PBI-98）
     await selectProject(result.project.id);
     // コンテキストに誤りがあれば、移った先の設定の画面で確かめ直して知らせる（PBI-76）
-    redirect(projectSettingsPath(result.project.id, result.contextError !== undefined));
+    redirect(projectSettingsPathAfterSave(result.project.id, result.contextError !== undefined));
   }
   const contextError =
     result.contextError !== undefined
@@ -447,15 +448,15 @@ export async function importProjectAction(
   // インポートしたプロジェクトを、表示しているプロジェクトにする（PBI-98）
   await selectProject(result.project.id);
   // コンテキストリポジトリを持つ定義なら、移った先の設定の画面で誤りを確かめて知らせる（PBI-76）
-  redirect(projectSettingsPath(result.project.id, result.project.context !== undefined));
+  redirect(projectSettingsPathAfterSave(result.project.id, result.project.context !== undefined));
 }
 
 /**
  * プロジェクトの設定の画面の URL。contextCheck なら、画面でコンテキストの誤りを確かめて知らせる（PBI-76。作成・インポート
  * の後は画面を移るので、保存の結果の誤りをその場では出せないため）。
  */
-function projectSettingsPath(id: string, contextCheck: boolean): string {
-  return `/projects/${encodeURIComponent(id)}${contextCheck ? `?${CONTEXT_CHECK_PARAM}=1` : ""}`;
+function projectSettingsPathAfterSave(id: string, contextCheck: boolean): string {
+  return `${projectSettingsPath(id)}${contextCheck ? `?${CONTEXT_CHECK_PARAM}=1` : ""}`;
 }
 
 /**

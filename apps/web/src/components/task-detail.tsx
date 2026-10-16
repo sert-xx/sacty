@@ -49,6 +49,7 @@ import {
   usd,
   usesTestCommand,
 } from "@/lib/labels";
+import { projectSettingsPath } from "@/lib/paths";
 import { runLogId } from "@/lib/session-log";
 import { subtaskSummary } from "@/lib/subtasks";
 import type { TaskDetailData } from "@/lib/task-detail-data";
@@ -183,7 +184,10 @@ export function TaskDetailView({ data }: { data: TaskDetailData }) {
             </>
           )}
           {m.project}
-          <Link href={`/projects/${task.projectId}`} className="text-accent-foreground underline">
+          <Link
+            href={projectSettingsPath(task.projectId)}
+            className="text-accent-foreground underline"
+          >
             {projectName}
           </Link>
           {/* 対象リポジトリを選ぶ前の版（PBI-21 より前）のタスクは、用意したリポジトリの URL を出す */}

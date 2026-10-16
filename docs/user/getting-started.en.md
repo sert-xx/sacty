@@ -1,4 +1,4 @@
-<!-- Code: package.json, packages/cli/src/index.ts, apps/daemon/src/config.ts (CONFIG_TEMPLATE, resolveHome), apps/daemon/src/instance-lock.ts -->
+<!-- Code: package.json, packages/cli/src/index.ts, apps/web/src/lib/paths.ts, apps/web/src/components/dashboard.tsx, apps/web/src/components/shell/rail.tsx, apps/daemon/src/config.ts (CONFIG_TEMPLATE, resolveHome), apps/daemon/src/instance-lock.ts -->
 
 [日本語](getting-started.md) | **English**
 
@@ -36,6 +36,24 @@ npx sacty up
 
 This starts the daemon and the web UI and prints `http://127.0.0.1:4700` in the terminal. Open it in your browser (it does not open automatically). Press Ctrl+C to stop both. You can change the ports with `--port` and `--daemon-port`
 ([CLI](cli.en.md#sacty-up)).
+
+## Web UI screens
+
+When you open the web UI, it shows the dashboard first.
+
+| Screen | URL | Contents |
+| --- | --- | --- |
+| Dashboard | `/dashboard` (also when you open `/`) | The open tasks of all projects (everything except completed and cancelled, including awaiting approval and paused). It shows the project name and the state, with a link to the task details. With more than 5 tasks, the section scrolls inside |
+| Task list | `/projects/<ID>/tasks` | The project's tasks. "Create task" is also here |
+| Project settings | `/projects/<ID>/settings` | The project's settings ([Project settings](project-settings.en.md)) |
+| Project list | `/projects` | Create and import projects |
+| Task details | `/tasks/<ID>` | The task's progress, approvals, and run logs |
+
+- In the header's project switcher, choosing "All projects" moves to the dashboard, and choosing a project moves to that project's task
+  list. The header shows the project of the open screen ("All projects" on the dashboard and similar screens).
+- "Tasks" and "Settings" in the side menu open the task list and settings of the project selected in the header. While "All projects" is
+  selected, "Tasks" is not shown and "Settings" opens the project list.
+- Opening `/projects/<ID>` moves to that project's task list. Opening the ID of a project that does not exist shows that the page was not found.
 
 ## First project and task
 

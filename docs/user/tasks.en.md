@@ -181,7 +181,7 @@ See [Container images](images.en.md#changing-a-steps-image) for details.
 
 ## Automatic updates on the screen
 
-While they are open, the task list, the task details, and the header's notices fetch the latest state every 3 seconds and show it. They do this whatever
+While they are open, the dashboard, the task list, the task details, and the header's notices fetch the latest state every 3 seconds and show it. They do this whatever
 the state of the tasks (including when there are no tasks and when every task is awaiting approval, paused, or completed), so tasks added by intake,
 approvals and resumes in other tabs or the CLI, tasks the daemon picked up and started, and tasks that became awaiting approval appear without any action.
 
