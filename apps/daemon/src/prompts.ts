@@ -1656,7 +1656,9 @@ export function buildPullRequestBodyText(task: Task): BodyText {
   ].join("\n");
   return {
     main,
-    footer: ["---\nこの PR は sacty が作成しました。", "", ...implementApprovalLines()].join("\n"),
+    footer: ["---\nこの PR は sacty が作成しました。", "", ...implementApprovalLines(task)].join(
+      "\n",
+    ),
     // タスクの ID と、マージで Issue を閉じる行は、省いても残す
     keep: [intro, ...closesLines(task)],
   };
@@ -1688,7 +1690,7 @@ export function buildPullRequestBodyParts(task: Task): BodyParts {
     tests: resultTableLines(task).join("\n"),
     ...(closesLines(task).length > 0 ? { issue: closesLines(task).join("\n") } : {}),
     record: record.join("\n"),
-    footer: [sactyFooter(task, "成果物"), "", ...implementApprovalLines()].join("\n"),
+    footer: [sactyFooter(task, "成果物"), "", ...implementApprovalLines(task)].join("\n"),
   };
 }
 
@@ -1765,9 +1767,13 @@ export function buildStepPullRequestBodyText(
  * 実装の PR の、マージが実装の承認になることと、指摘の伝え方の案内（PBI-110。要求要件・設計の PR の stepApprovalLines と
  * そろえる）。
  */
-function implementApprovalLines(): string[] {
+function implementApprovalLines(task: Task): string[] {
+  // マージの後の監視の工程（PBI-116）があれば、マージの後にそれを終えてから完了する
+  const watch = task.steps.some((s) => s.key === "deployment" && s.state !== "skip");
   return [
-    "- この PR をマージすると、実装を承認したことになり、タスクが完了します（sacty の画面からは承認しません）。",
+    watch
+      ? "- この PR をマージすると、実装を承認したことになり、マージの後の監視（CI/CD とスキルに従った確認）を終えるとタスクが完了します（sacty の画面からは承認しません）。"
+      : "- この PR をマージすると、実装を承認したことになり、タスクが完了します（sacty の画面からは承認しません）。",
     "- 直してほしいことは、この PR のレビュー・行へのコメント・コメントで伝えてください。sacty が取り込み、ゴールガーディアンが、実装のやり直し（この PR を更新します）か、設計・要求要件への差し戻しかを判断します。",
     "- PR の中で直してからマージしても、承認として扱います（sacty が出したコミットと、人が直した最終のコミットの両方を記録に残します）。",
   ];

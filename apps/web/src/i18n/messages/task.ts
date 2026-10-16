@@ -35,7 +35,7 @@ const ja = {
     noChangesHelp:
       "実装は何も変えていないため、PR を作っていません。実装の説明で変更が要らない理由を確かめ、変更なしで完了にするなら承認、変更が要るなら差し戻してください。",
     prHelp:
-      "GitHub で実装の PR をレビューしてください。マージすると実装の承認になり、タスクが完了します。レビューやコメントで指摘すると、差し戻しとして取り込みます。",
+      "GitHub で実装の PR をレビューしてください。マージすると実装の承認になり、タスクが完了します（マージの後の監視の工程があれば、それが終わってから）。レビューやコメントで指摘すると、差し戻しとして取り込みます。",
     stepPrHelp: (step: string) =>
       `GitHub で${step}の PR をレビューしてください。マージすると${step}の承認になり、次の工程に進みます。レビューやコメントで指摘すると、差し戻しとして取り込みます。`,
     rework: "PR の指摘の戻し先を確かめてください（エスカレーション）",
@@ -282,7 +282,7 @@ const ja = {
     failures: "失敗したワークフロー・ジョブ",
     open: "開く",
     log: "ログの末尾（秘密情報は伏せています）",
-    check: "デプロイの確認",
+    check: "スキルに従った確認",
     skill: "スキル：",
     result: {
       healthy: "正しく動いている",
@@ -339,7 +339,7 @@ const en: TaskMessages = {
     noChangesHelp:
       "The implementation changed nothing, so no PR was opened. Check why no change is needed in the implementation notes, then approve to finish without changes, or request changes if a change is needed.",
     prHelp:
-      "Review the implementation PR on GitHub. Merging it approves the implementation and completes the task. Comments in reviews or on the PR are imported as change requests.",
+      "Review the implementation PR on GitHub. Merging it approves the implementation and completes the task (after the after-merge watch step, if there is one). Comments in reviews or on the PR are imported as change requests.",
     stepPrHelp: (step) =>
       `Review the ${step} PR on GitHub. Merging it approves the ${step} and moves on to the next step. Comments in reviews or on the PR are imported as change requests.`,
     rework: "Confirm the step to redo for the PR comments (escalated)",
@@ -586,7 +586,7 @@ const en: TaskMessages = {
     failures: "Failed workflows and jobs",
     open: "Open",
     log: "End of the log (secrets are masked)",
-    check: "Deployment check",
+    check: "Check by the skill",
     skill: "Skill: ",
     result: { healthy: "Working", unhealthy: "Erroring", unknown: "Could not determine" },
     evidence: "Evidence",
