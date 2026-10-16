@@ -11,7 +11,8 @@ import {
 import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, describe, expect, it } from "vitest";
+import { killSpawned } from "../testing/processes.js";
 import { waitFor } from "../testing/wait.js";
 import { FORWARD_NOTICE_PREFIX, withLocalForwards } from "./forward.js";
 import {
@@ -25,10 +26,21 @@ type Result = { code: number | null; stdout: Buffer; stderr: Buffer };
 
 const dirs: string[] = [];
 const servers: Server[] = [];
+/** run で起動したプロセスのグループ（PBI-113）。 */
+const groups = new Set<number>();
+// テストが失敗・時間切れになっても、起動した中継・コマンド・その子孫を、グループごと必ず止める（PBI-113）。
+// 止めないと、親を失ったコマンドが動き続ける（消された一時ファイルに書き続けて、ディスクを使い切りかけた）
+const killRuns = async () => {
+  await killSpawned(groups);
+  groups.clear();
+};
 afterEach(async () => {
+  await killRuns();
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
   await Promise.all(servers.splice(0).map((s) => new Promise((done) => s.close(done))));
 });
+// 時間切れの後も動き続けたテストが、afterEach の後に起動したもの
+afterAll(killRuns);
 
 function tempDir(): string {
   const dir = mkdtempSync(join(tmpdir(), "sacty-relay-test-"));
@@ -39,6 +51,8 @@ function tempDir(): string {
 /**
  * コマンドを動かし、終了コード・標準出力・標準エラー出力を返す。pauseMs のあいだは読まない（読み手が遅い状態）。
  * onStart で、動いている子プロセスを受け取れる（シグナルを送るなど）。
+ * 自分のプロセスグループで起動し、後始末（afterEach）でグループごと止める。中継が先に終わって、親が付け替えられた
+ * コマンド・その子孫も、グループで見つけて止める。TMPDIR は、後始末で消す一時ディレクトリにする（env で変えられる）。
  */
 function run(
   command: string[],
@@ -52,8 +66,11 @@ function run(
     const [file = "", ...args] = command;
     const child = spawn(file, args, {
       stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, ...options.env },
+      // 中継の一時ファイル（sacty-output-*）は、後始末で中継を止めると中継が消せないので、後始末で消す場所に作らせる
+      env: { ...process.env, TMPDIR: tempDir(), ...options.env },
+      detached: true,
     });
+    if (child.pid !== undefined) groups.add(child.pid);
     const out: Buffer[] = [];
     const err: Buffer[] = [];
     child.stdout.on("data", (chunk: Buffer) => out.push(chunk));
@@ -78,6 +95,12 @@ const relay = (command: string[], options?: Parameters<typeof run>[1]) =>
   run([process.execPath, "-e", OUTPUT_RELAY_SCRIPT, "--", ...command], options);
 
 const node = (script: string) => [process.execPath, "-e", script];
+
+/**
+ * 止められるまで動き続けるコマンドが、止め忘れても自分で終わるまでの時間（PBI-113）。テストの時間切れより十分長く
+ * （止めたことを確かめるテストが、自分で終わったのを止めたと取り違えない）、残っても長くは動かない長さ。
+ */
+const SELF_EXIT_MS = 60_000;
 
 /**
  * 決まった中身の大きな出力（0〜250 のバイトの繰り返し。改行を含む・UTF-8 として正しくないバイトも含む）。
@@ -194,7 +217,7 @@ describe("出力の中継（PBI-64）", () => {
     const result = await relay(
       node(`process.on("SIGTERM", () => { process.stdout.write("stopped"); process.exit(5); });
 process.stdout.write("ready;");
-setInterval(() => {}, 1000);`),
+setTimeout(() => process.exit(9), ${SELF_EXIT_MS});`),
       {
         onStart: (child, stdout) => {
           const wait = setInterval(() => {
@@ -213,31 +236,29 @@ setInterval(() => {}, 1000);`),
     const dir = tempDir();
     const pidFile = join(dir, "bg");
     const exiting = join(dir, "exiting");
-    try {
-      // 読み手が遅く、中継がまだ流しきれていないうちに、コマンドが終わる。後ろのプロセスは、コマンドが終わってから
-      // 書き始め、止められるまで書き続ける（中継が後ろのプロセスを待つなら、このテストは終わらずに時間切れで落ちる）。
-      // 書き始めを、コマンドを始めてからの固定の sleep にすると、負荷が高いときはコマンドの出力（1MB）を書き終える前に
-      // 書き始めて混ざるので、コマンドが終わる合図を待つ。その後の 1 秒は、中継がコマンドの終わりに気づく
-      // （終了のイベントを受け取る）までの猶予。読み手はそれより長く（2 秒）止めておくので、中継が追いつくまで流し続ける
-      // 不具合なら、猶予の後に書いた分が混ざって落ちる
-      const size = 1024 * 1024;
-      const result = await relay(
-        [
-          "sh",
-          "-c",
-          `(while [ ! -e ${exiting} ]; do sleep 0.01; done; sleep 1; while :; do echo late >&2; sleep 0.01; done) & echo $! > ${pidFile}
+    // 読み手が遅く、中継がまだ流しきれていないうちに、コマンドが終わる。後ろのプロセスは、コマンドが終わってから
+    // 書き始め、止められるまで書き続ける（中継が後ろのプロセスを待つなら、このテストは終わらずに時間切れで落ちる）。
+    // 書き始めを、コマンドを始めてからの固定の sleep にすると、負荷が高いときはコマンドの出力（1MB）を書き終える前に
+    // 書き始めて混ざるので、コマンドが終わる合図を待つ。その後の 1 秒は、中継がコマンドの終わりに気づく
+    // （終了のイベントを受け取る）までの猶予。読み手はそれより長く（2 秒）止めておくので、中継が追いつくまで流し続ける
+    // 不具合なら、猶予の後に書いた分が混ざって落ちる。
+    // 後ろのプロセスの待ちと書き込みは、止め忘れても、どちらもおよそ SELF_EXIT_MS で終わる（回数で数える）
+    const size = 1024 * 1024;
+    const result = await relay(
+      [
+        "sh",
+        "-c",
+        `(i=0; while [ ! -e ${exiting} ] && [ $i -lt ${SELF_EXIT_MS / 10} ]; do sleep 0.01; i=$((i + 1)); done; sleep 1; i=0; while [ $i -lt ${SELF_EXIT_MS / 10} ]; do echo late >&2; sleep 0.01; i=$((i + 1)); done) & echo $! > ${pidFile}
 head -c ${size} /dev/zero | tr '\\0' x >&2; printf end; : > ${exiting}; exit 3`,
-        ],
-        { pauseMs: 2_000 },
-      );
-      expect(result.code).toBe(3);
-      expect(result.stdout.toString()).toBe("end");
-      expect(result.stderr.toString()).toBe("x".repeat(size));
-      // 中継が終わったとき、後ろのプロセスはまだ書き続けている（待たずに終わった）
-      expect(() => process.kill(Number(readFileSync(pidFile, "utf8")), 0)).not.toThrow();
-    } finally {
-      process.kill(Number(readFileSync(pidFile, "utf8")), "SIGKILL");
-    }
+      ],
+      { pauseMs: 2_000 },
+    );
+    expect(result.code).toBe(3);
+    expect(result.stdout.toString()).toBe("end");
+    expect(result.stderr.toString()).toBe("x".repeat(size));
+    // 中継が終わったとき、後ろのプロセスはまだ書き続けている（待たずに終わった）
+    expect(() => process.kill(Number(readFileSync(pidFile, "utf8")), 0)).not.toThrow();
+    // 後ろのプロセスは、中継と同じグループにいるので、後始末で止める
   });
 
   it("コマンドが見つからなければ、理由を標準エラー出力に出して 127 で終わる", async () => {
@@ -305,7 +326,8 @@ head -c ${size} /dev/zero | tr '\\0' x >&2; printf end; : > ${exiting}; exit 3`,
     let pid = 0;
     const result = await relay(
       node(`process.stderr.write(process.pid + "\\n");
-setInterval(() => process.stdout.write("x".repeat(1024)), 1);`),
+setInterval(() => process.stdout.write("x".repeat(1024)), 1);
+setTimeout(() => process.exit(9), ${SELF_EXIT_MS});`),
       {
         onStart: (child) => {
           child.stderr?.once("data", (chunk: Buffer) => {
