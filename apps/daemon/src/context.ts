@@ -22,6 +22,7 @@ import { code, type DaemonText, issueMessage, message } from "@sacty/core";
 import { parse as parseToml, stringify as stringifyToml } from "smol-toml";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
+import { AGENT_TIERS, tierFilePath } from "./agents/tier-names.js";
 import { errorText, MessageError } from "./errors.js";
 import { spawnStoppable } from "./fetch-processes.js";
 import { type Platform, PlatformFile, toPlatform } from "./platforms.js";
@@ -493,6 +494,20 @@ function withoutReserved(
   for (const [key, value] of Object.entries(settings)) {
     if (reserved.keys.includes(key)) {
       warnings.push(message("context.reservedSetting", { from, file, key }));
+      continue;
+    }
+    // Codex の [agents.<段階>]（カスタムエージェントの宣言）は sacty が段階の定義として作る。層に同じ名前の宣言があると、
+    // 自動で探す agents/<段階>.toml より先に登録されて sacty の定義が使われないので、使わずに警告する（PBI-119）
+    if (kind === "codex" && key === "agents" && isPlainObject(value)) {
+      const agents: Record<string, unknown> = {};
+      for (const [name, v] of Object.entries(value)) {
+        if ((AGENT_TIERS as readonly string[]).includes(name)) {
+          warnings.push(message("context.reservedSetting", { from, file, key: `agents.${name}` }));
+        } else {
+          agents[name] = v;
+        }
+      }
+      result[key] = agents;
       continue;
     }
     if (key === "env" && reserved.env && isPlainObject(value)) {
@@ -974,19 +989,23 @@ export function planContext(
   for (const file of composed.agentFiles[runtime === "codex" ? "codex" : "claude"]) {
     put({ path: file.path, src: file.src, from: file.from });
   }
-  // sacty が足すファイル（段階のサブエージェントの定義。PBI-119）。層に同じパスがあれば、sacty のものを使って警告する
-  for (const extra of extraFiles) {
-    const existing = files.get(extra.path);
+  // 段階のサブエージェントの定義のパス（agents/<段階>.md・.toml）は sacty が作る。層にあれば、段階を置くかどうかによらず
+  // 写さずに警告する（残すと、スキルが段階の名前で起動したときに層の定義を使ってしまう。PBI-119）
+  for (const tier of AGENT_TIERS) {
+    const path = tierFilePath(runtime, tier);
+    const existing = files.get(path);
     if (existing?.from) {
       warnings.push(
         message("context.reservedTierFile", {
           from: existing.from,
-          path: `${AGENT_DIRS[runtime === "codex" ? "codex" : "claude"]}/${extra.path}`,
+          path: `${AGENT_DIRS[runtime === "codex" ? "codex" : "claude"]}/${path}`,
         }),
       );
+      files.delete(path);
     }
-    put(extra);
   }
+  // sacty が足すファイル（段階のサブエージェントの定義。PBI-119）
+  for (const extra of extraFiles) put(extra);
   for (const skill of composed.skills) {
     for (const rel of filesUnder(skill.dir)) {
       put({ path: `skills/${skill.name}/${rel}`, src: join(skill.dir, rel), from: skill.from });

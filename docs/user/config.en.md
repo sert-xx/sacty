@@ -147,6 +147,10 @@ agents:
 - You can see the placed tiers in the details of "Context prepared" in the Activity and in the context preview of the project settings.
 - If you write no tiers, subagents run with the same model as the step agent.
 - A tier agent is an ordinary agent too, so you can write it in `step_agents` to use it for a step.
+- Costs are calculated from the step agent's usage and unit prices, not from each reviewer's model. The cost of a run that placed tiers is recorded as an estimate
+  and marked "Estimate" on the screen. A tier's `price_per_mtok_usd` is the unit price used when that tier runs a step through `step_agents`.
+- Definitions of the same name in the context repository (`agents/claude/agents/<tier>.md`, `agents/codex/agents/<tier>.toml`, and `[agents.<tier>]` in Codex's
+  `config.toml`) are not used (a warning is left).
 
 ## Budget
 

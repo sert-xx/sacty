@@ -61,7 +61,8 @@ docker のコンテナの中で1回実行して行う。テストの実行も、
   そのときは API キーをゲートウェイに渡し、コンテナには実行ごとのトークンとゲートウェイの URL（`http://host.docker.internal:<ポート>/openai/v1`）
   だけを渡す（[ゲートウェイ](gateway.md)）。
 - 秘密情報が見つからないときは、実行の失敗（理由 `auth`）にして、タスクを一時停止する。
-- サブスクリプションとスタブの実行の費用は推定（`estimated`）として記録する。
+- サブスクリプションとスタブの実行の費用は推定（`estimated`）として記録する。段階のサブエージェントの定義を置いた実行（`estimateCost`）も推定にする
+  （担当が親と違うモデルで動きうるが、費用は親の結果の使用量 × 親の単価でしか出せない。[コンテキストの合成](context.md#実行のときに置くファイル)）。
 
 コード: `apps/daemon/src/agents/invocation.ts`（`buildInvocation`）、`apps/daemon/src/agents/docker.ts`（`syncBackIfChanged`）、`apps/daemon/src/service.ts`（`executeLogged`・`bedrockOrigin`）
 

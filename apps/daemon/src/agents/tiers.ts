@@ -1,6 +1,9 @@
 import { type DaemonText, message } from "@sacty/core";
-import { AGENT_TIERS, type AgentConfig, type AgentTier, type TierRuntime } from "../config.js";
+import type { AgentConfig } from "../config.js";
 import type { PlannedFile } from "../context.js";
+import { AGENT_TIERS, type AgentTier, type TierRuntime, tierFilePath } from "./tier-names.js";
+
+export { tierFilePath };
 
 /**
  * エージェントの段階（PBI-119）。config.yaml の `claude_<段階>`・`codex_<段階>` を、工程を動かすツールのサブエージェントの
@@ -15,11 +18,6 @@ export type PlacedTier = {
   model?: string;
   reasoningEffort?: string;
 };
-
-/** 段階のサブエージェントの定義を置くパス（設定のディレクトリからの相対）。 */
-export function tierFilePath(runtime: TierRuntime, tier: AgentTier): string {
-  return runtime === "codex" ? `agents/${tier}.toml` : `agents/${tier}.md`;
-}
 
 /**
  * 認証・接続先が同じか。サブエージェントは親（工程のエージェント）と同じプロセスで動き、認証・接続先は親のものを使うので、

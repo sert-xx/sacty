@@ -13,6 +13,7 @@ import {
 } from "@sacty/core";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
+import { type AgentTier, parseTierId, type TierRuntime } from "./agents/tier-names.js";
 import { DEFAULT_HOST_ADDRESS, DEFAULT_RETRY_POLICY, type RetryPolicy } from "./gateway.js";
 import { HostMcpFile, type HostMcpSpec, toHostMcp } from "./host-mcp.js";
 import { type Platform, PlatformFile, toPlatform } from "./platforms.js";
@@ -499,31 +500,14 @@ const ConfigFile = z
     }
   });
 
-/**
- * エージェントの段階（PBI-119）。`agents` に `claude_<段階>`・`codex_<段階>` の名前で書くと、sacty がその runtime の
- * 工程の実行で、接頭辞を外した名前（`lite` など）のサブエージェントの定義を置く。スキルは段階の名前で担当を起動する。
- */
-export const AGENT_TIERS = ["lite", "entry", "standard", "advanced", "ultimate"] as const;
-export type AgentTier = (typeof AGENT_TIERS)[number];
-/** 段階のエージェントを置ける runtime（stub には置かない）。 */
-export type TierRuntime = "claude-code" | "codex";
-/** 段階のエージェントの名前の接頭辞（runtime ごと）。 */
-export const TIER_PREFIX: Record<TierRuntime, string> = {
-  "claude-code": "claude_",
-  codex: "codex_",
-};
-
-/** `agents` の名前が段階のエージェントなら、その runtime と段階。そうでなければ undefined。 */
-export function parseTierId(id: string): { runtime: TierRuntime; tier: AgentTier } | undefined {
-  for (const runtime of Object.keys(TIER_PREFIX) as TierRuntime[]) {
-    const prefix = TIER_PREFIX[runtime];
-    if (!id.startsWith(prefix)) continue;
-    const tier = id.slice(prefix.length);
-    if ((AGENT_TIERS as readonly string[]).includes(tier))
-      return { runtime, tier: tier as AgentTier };
-  }
-  return undefined;
-}
+export {
+  AGENT_TIERS,
+  type AgentTier,
+  parseTierId,
+  TIER_PREFIX,
+  type TierRuntime,
+  tierFilePath,
+} from "./agents/tier-names.js";
 
 export type AgentConfig = z.infer<typeof Agent> & {
   id: string;

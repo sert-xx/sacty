@@ -74,7 +74,10 @@ PR のレビュー（流れ `pr-review`）と、既定の `git` の PR への投
   （`context.reservedSetting`）。`agents/` の下の `auth.json`・`AGENTS.md`・`CLAUDE.md`・`.credentials.json`・`.claude.json`・`mcp.json`・
   `skills` も写さずに警告する。
 - 段階のサブエージェントの定義（`agents/claude/agents/<段階>.md`・`agents/codex/agents/<段階>.toml`。[設定](configuration.md#エージェントagents)の
-  `claude_<段階>`・`codex_<段階>`）は sacty が作るので、置く段階と同じパスが層にあれば写さずに警告する（`context.reservedTierFile`）。
+  `claude_<段階>`・`codex_<段階>`）は sacty が作るので、層にあれば、その段階を置くかどうかによらず写さずに警告する（`context.reservedTierFile`。
+  残すと、スキルが段階の名前で起動したときに層の定義が使われるため）。Codex の `config.toml` の `agents.<段階>`（カスタムエージェントの宣言。
+  自動で探す `agents/<段階>.toml` より先に登録される）も sacty が決める項目として使わずに警告する（`context.reservedSetting`。`agents` の
+  ほかの項目は残す）。
 - ホストの MCP サーバー（`gateway.mcp_servers`）を足す。層の MCP と同じ名前なら、ホストのものを使い警告する（`context.hostMcpOverride`）。
 - PF は、ホストの `gateway.platforms` と合わせる。同じ名前ならホストのものを使い警告する（`context.hostPlatform`）。
 - 警告は工程を止めない。合成の結果（層・警告・PF の要約）は、工程の実行ごとに `ContextResolved` に記録する。取得の失敗と形の誤りは、
@@ -97,7 +100,9 @@ sacty が作るファイルの順に置く（同じパスは後のものが上�
   `agents.tierConnectionDiffers` を注意に残す。stub の工程には置かない。`model`・`reasoning_effort` を書いていない段階は、それを書かない定義
   （親のモデルを引き継ぐ）になる。置いた段階（段階・エージェントの名前・モデル・リーズニングエフォート）は `ContextResolved` の `tiers` に
   記録し、プレビューにも同じファイルを出す（プレビューの親は、その runtime の `default_agent`、無ければ `step_agents`・`guardian_agent` の
-  うち最初のもの）。
+  うち最初のもの）。`ContextResolved` は、工程の実行だけでなく、マージの後の監視・外部作業・書き出しの実行でも、コンテキストを渡すたびに
+  その実行の `runId` で記録する（`contextResolved`）。段階を置いた実行の費用は推定（`estimated`）として記録する（担当が親と違うモデルで
+  動きうるが、費用は親の結果の使用量 × 親の単価でしか出せないため。[エージェントの実行](agent-execution.md#認証)）。
 
 - MCP の秘密情報は、ファイルには `SACTY_MCP_SECRET_<番号>` の環境変数として書き、値はコンテナの環境変数で渡す（ホストで取り出す）。
 - 層の `mcp.yaml`・`platforms.yaml` の秘密情報は、デーモンの起動のとき・取り出し直したとき・プロジェクトを保存したときに、ほかの秘密情報と

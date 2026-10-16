@@ -2113,3 +2113,81 @@ describe("段階のサブエージェントの定義（PBI-119）", () => {
     claude.dispose();
   });
 });
+
+describe("段階の固定名の層のファイルと、Codex の宣言（PR #129 レビュー指摘）", () => {
+  it("段階を置かない実行でも、層の agents/<段階>.toml は写さずに警告する（残すと段階の名前で起動したときに使われる）", async () => {
+    const defaultDir = place(join(dir, "default"), { "rules.md": "# 規則" });
+    const fetcher = new FakeFetcher({
+      "https://example.com/p.git": {
+        "agents/codex/agents/standard.toml": 'name = "standard"\nmodel = "layer-model"\n',
+        "agents/codex/agents/helper.toml": 'name = "helper"\n',
+      },
+    });
+    const codex = await prepareContext(
+      fetcher,
+      { repo: "https://example.com/p.git" },
+      "codex",
+      "/h",
+      undefined,
+      defaultDir,
+    );
+    expect(existsSync(join(codex.dir, "agents/standard.toml"))).toBe(false);
+    expect(existsSync(join(codex.dir, "agents/helper.toml"))).toBe(true);
+    expect(codex.warnings.map(ja)).toEqual([
+      expect.stringMatching(
+        /^https:\/\/example.com\/p.git@\w{7} の agents\/codex\/agents\/standard.toml は、sacty が段階のサブエージェントの定義として作るため、写しませんでした。$/,
+      ),
+    ]);
+    codex.dispose();
+  });
+
+  it("層の config.toml の [agents.<段階>] は、宣言だけでも config_file 付きでも使わずに警告し、ほかの agents の項目は残す", async () => {
+    const defaultDir = place(join(dir, "default"), { "rules.md": "# 規則" });
+    const fetcher = new FakeFetcher({
+      "https://example.com/p.git": {
+        "agents/codex/config.toml": [
+          "[agents]",
+          "max_threads = 4",
+          "",
+          "[agents.standard]",
+          'description = "層の standard"',
+          "",
+          "[agents.advanced]",
+          'description = "層の advanced"',
+          'config_file = "agents/advanced.toml"',
+          "",
+          "[agents.helper]",
+          'description = "段階でない宣言"',
+          "",
+        ].join("\n"),
+      },
+    });
+    const codex = await prepareContext(
+      fetcher,
+      { repo: "https://example.com/p.git" },
+      "codex",
+      "/h",
+      undefined,
+      defaultDir,
+      [],
+      undefined,
+      undefined,
+      undefined,
+      [{ path: "agents/standard.toml", content: 'name = "standard"\nmodel = "sacty-model"\n' }],
+    );
+    const config = parseToml(readFileSync(join(codex.dir, "config.toml"), "utf8")) as {
+      agents: Record<string, unknown>;
+    };
+    expect(config.agents).toEqual({ max_threads: 4, helper: { description: "段階でない宣言" } });
+    expect(readFileSync(join(codex.dir, "agents/standard.toml"), "utf8")).toContain("sacty-model");
+    expect(codex.warnings.map(ja)).toEqual([
+      expect.stringMatching(
+        /agents\/codex\/config.toml の「agents.standard」は sacty が決める項目/,
+      ),
+      expect.stringMatching(
+        /agents\/codex\/config.toml の「agents.advanced」は sacty が決める項目/,
+      ),
+    ]);
+    codex.dispose();
+  });
+});

@@ -13406,6 +13406,81 @@ describe("成果の書き出し（PBI-56）", () => {
     expect(taskOf(service, id).exports.requirements?.retry).toBe(true);
     activity.close();
   });
+
+  it("書き出しの実行でも、置いた段階のサブエージェントの定義と注意を、その実行の記録（ContextResolved）に残す（PBI-119）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const contexts = new FakeContexts({
+      "https://github.com/acme/ctx.git": {
+        "mcp.yaml": [
+          "servers:",
+          "  docs:",
+          "    url: https://docs.example.com/mcp",
+          "    headers:",
+          "      Authorization: { secret: docs-token, prefix: 'Bearer ' }",
+        ].join("\n"),
+      },
+    });
+    const base = (configOf(agent())() as { ok: true; config: SactyConfig }).config;
+    const { service, executor } = makeService(
+      activity,
+      [out("# 要求要件"), exportOut({ url: "https://docs.example.com/p/9" })],
+      {
+        config: () => ({
+          ok: true,
+          config: {
+            ...base,
+            tierAgents: {
+              "claude-code": {
+                standard: agent({ id: "claude_standard", model: "claude-sonnet-5-5" }),
+                lite: agent({
+                  id: "claude_lite",
+                  auth: { mode: "subscription", secret: "another-token" },
+                }),
+              },
+            },
+          },
+        }),
+        gateway: fakeGateway(),
+        contexts,
+        secrets,
+        planner: plannerWith({
+          requirements: { to: { via: "mcp", name: "docs", location: "" }, reason: "規約" },
+        }),
+      },
+    );
+    service.saveProject("default", {
+      name: "デフォルト",
+      targets: [{ scope: "repo", target: "https://github.com/acme/app" }],
+      githubAccounts: { "github.com": "me" },
+      context: { repo: "https://github.com/acme/ctx.git" },
+    });
+    const { id } = service.createTask({ projectId: "default", title: "A" });
+    await approveRequirements(service, id);
+    await service.runNext(id);
+    expect(taskOf(service, id).exports.requirements?.url).toBe("https://docs.example.com/p/9");
+    // 書き出しの実行にも段階を置く
+    expect(executor.seeds[1]?.["agents/standard.md"]).toContain('model: "claude-sonnet-5-5"');
+    // 工程の実行と書き出しの実行の、それぞれの記録
+    const resolved = activity
+      .forTask(id)
+      .filter((e) => e.type === "ContextResolved")
+      .map((e) => (e.type === "ContextResolved" ? e.payload : undefined));
+    expect(resolved).toHaveLength(2);
+    // 2 つ目が書き出しの実行（工程の実行の後）。実行の ID は、工程の実行のものと違う
+    const ofExport = resolved[1];
+    expect(ofExport?.runId).not.toBe(resolved[0]?.runId);
+    expect(ofExport?.tiers).toEqual([
+      { tier: "standard", agentId: "claude_standard", model: "claude-sonnet-5-5" },
+    ]);
+    expect(ofExport?.warnings).toContainEqual(
+      message("agents.tierConnectionDiffers", {
+        tier: "lite",
+        id: "claude_lite",
+        parent: "claude-subscription",
+      }),
+    );
+    activity.close();
+  });
 });
 
 describe("要求要件・設計の PR（タスクブランチへのフロー。PBI-57）", () => {
