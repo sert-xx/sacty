@@ -118,10 +118,11 @@ The Orchestrator compares the purpose, deliverable, change target, and scope rat
 
 - `document` produces a Markdown draft without enforcing the Requirements or Design format. A person can request changes and approve it in the web UI. Before approval, it receives no MCP/PF access or project context and does not read external drafts. Source text and rules must come from the task body or human feedback through Request changes. Optional export follows the existing export mechanism; an export failure does not stop task completion. Direct updates to existing external documents use `operation`.
 - `operation` is a single step. The existing Orchestrator selects one destination, a unique target ID or URL, the requested change and its preconditions, and how to verify it. This does not add a preparation agent, proposal deliverable, or pre-execution approval gate. If the target or connection is missing, the task stops before execution starts.
+- The task details display the selected operation settings (`name`, `via`, `target`, `change`, `verification`) as read-only information. They are execution settings selected by the Orchestrator, not a new deliverable or approval gate.
 - The operation receives only the selected destination and performs the request. Its prompt requires checking the target and preconditions, sending one write request without retrying, and reading back the result. A successful result with evidence waits for human approval. Failure, interruption, restart, or an unknown result stops execution; the persisted start record rejects Resume and keeps the task paused. After execution starts, Request changes is unavailable. A person checks external state, cancels the task, and creates a new task for any remaining work.
 - This is not an external exactly-once guarantee: one write and read-back verification are agent instructions. It does not add recurring work, monitoring, arbitrary integrations, or orchestration across several destinations. Separate mixed deliverables into tasks with explicit approval boundaries.
 
-Code: `apps/daemon/src/prompts.ts`, `apps/daemon/src/service.ts`, `packages/core/src/events.ts`, `packages/core/src/projection.ts`
+Code: `apps/daemon/src/prompts.ts`, `apps/daemon/src/service.ts`, `packages/core/src/events.ts`, `packages/core/src/projection.ts`, `apps/web/src/components/task-detail.tsx`
 
 ## Orchestrator
 

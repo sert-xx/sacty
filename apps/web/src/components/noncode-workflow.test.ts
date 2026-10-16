@@ -7,7 +7,12 @@ import type { Locale } from "@/i18n/locale";
 
 let locale: Locale = "ja";
 vi.mock("@/i18n/client", () => ({ useMessages: () => messagesFor(locale) }));
-vi.mock("@/app/actions", () => ({ gateAction: async () => ({}) }));
+vi.mock("@/app/actions", () => ({
+  gateAction: async () => ({}),
+  pauseTaskAction: async () => ({}),
+  cancelTaskAction: async () => ({}),
+  resumeTaskAction: async () => ({}),
+}));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh() {} }) }));
 const { TaskDetailView } = await import("./task-detail");
 const { GateForm } = await import("./gate-form");
@@ -98,6 +103,87 @@ describe("非コード工程の承認後の表示", () => {
       expect(html).not.toContain('value="request"');
       expect(html).not.toContain('name="comments"');
       expect(html).toContain(messagesFor(language).review.gate.operationExecutedHelp);
+    }
+  });
+  it("実行前・停止中・結果承認後に実行設定を日英の通常テキストで表示する", () => {
+    const task = completedTask();
+    task.steps = [{ key: "operation", state: "todo" }];
+    task.operation = {
+      via: "mcp",
+      name: "calendar-<team>",
+      target: "[meeting](https://example.com/meeting)",
+      change: "<script>alert(1)</script>\n**Move to Friday**",
+      verification: "Read back & compare",
+    };
+    for (const language of ["ja", "en"] as const) {
+      locale = language;
+      for (const status of ["queued", "paused", "idle"] as const) {
+        task.status = status;
+        task.steps = [{ key: "operation", state: status === "idle" ? "done" : "todo" }];
+        task.approved =
+          status === "idle"
+            ? {
+                operation: {
+                  output: "Updated meeting",
+                  submission: 1,
+                  testViewpoints: [],
+                  at: "2026-10-16T00:00:00.000Z",
+                },
+              }
+            : {};
+        const html = renderToStaticMarkup(
+          createElement(TaskDetailView, {
+            data: {
+              task,
+              activity: [],
+              projectName: "Project",
+              children: [],
+            },
+          }),
+        );
+        const m = messagesFor(language).task.operationSettings;
+        expect(html).toContain('id="operation-settings"');
+        for (const label of [m.title, m.connection, m.via, m.target, m.change, m.verification]) {
+          expect(html).toContain(label);
+        }
+        expect(html).toContain("calendar-&lt;team&gt;");
+        expect(html).toContain("[meeting](https://example.com/meeting)");
+        expect(html).not.toContain('href="https://example.com/meeting"');
+        expect(html).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
+        expect(html).toContain("**Move to Friday**");
+        expect(html).toContain("Read back &amp; compare");
+        expect(html).toContain(m.mcp);
+      }
+      task.operation.via = "platform";
+      const platformHtml = renderToStaticMarkup(
+        createElement(TaskDetailView, {
+          data: {
+            task,
+            activity: [],
+            projectName: "Project",
+            children: [],
+          },
+        }),
+      );
+      expect(platformHtml).toContain(messagesFor(language).task.operationSettings.platform);
+      task.operation.via = "mcp";
+    }
+  });
+
+  it("実行設定のないタスクには設定欄を表示しない", () => {
+    for (const language of ["ja", "en"] as const) {
+      locale = language;
+      const html = renderToStaticMarkup(
+        createElement(TaskDetailView, {
+          data: {
+            task: completedTask(),
+            activity: [],
+            projectName: "Project",
+            children: [],
+          },
+        }),
+      );
+      expect(html).not.toContain('id="operation-settings"');
     }
   });
 });

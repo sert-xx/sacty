@@ -1,4 +1,4 @@
-<!-- Code: apps/daemon/src/service.ts, apps/daemon/src/activity.ts, apps/daemon/src/pr-watcher.ts, apps/daemon/src/prompts.ts, packages/core/src/events.ts (StepKey, DEFAULT_DOCUMENTS_DIR), apps/web/src/i18n/messages/task.ts, apps/daemon/src/task-templates.ts, apps/daemon/src/test-files.ts, apps/web/src/components/new-task-dialog.tsx, apps/web/src/components/implementation.tsx -->
+<!-- Code: apps/daemon/src/config.ts, apps/web/src/components/task-detail.tsx, apps/daemon/src/service.ts, apps/daemon/src/activity.ts, apps/daemon/src/pr-watcher.ts, apps/daemon/src/prompts.ts, packages/core/src/events.ts (StepKey, DEFAULT_DOCUMENTS_DIR), apps/web/src/i18n/messages/task.ts, apps/daemon/src/task-templates.ts, apps/daemon/src/test-files.ts, apps/web/src/components/new-task-dialog.tsx, apps/web/src/components/implementation.tsx -->
 
 [日本語](tasks.md) | **English**
 
@@ -62,6 +62,8 @@ You can also request a calendar, register, or existing external page update with
 1. Include the specific target ID/URL, change and preconditions, and desired result in the request. The Orchestrator selects the destination, target, requested change, and verification method. Missing target or connection details stop the task before execution starts.
 2. The single Operation step performs the request once. There is no separate preparation step or pre-execution approval, so confirm the request is correct before starting the task.
 3. Check the evidence in the successful result and approve it to complete the task. Failure or an unknown result does not count as completion.
+
+After step selection, the task details show the selected destination and connection type, target, requested change, and verification method as read-only information. This view does not add a pre-execution approval gate or pause the task.
 
 If target details are missing, create a new task with the missing information included in the request. If the selected connection became unavailable before execution started, correct its configuration and resume the task.
 
@@ -198,7 +200,7 @@ approvals and resumes in other tabs or the CLI, tasks the daemon picked up and s
 
 ## Back up before updating and returning to an older version
 
-A database containing tasks with Document or Operation cannot be read by an older version that does not support these steps, and startup fails. Stop the daemon and back up the data directory before updating. To return to an older version, use the backup made before the update. If your settings include the new steps, also restore settings compatible with the older version.
+A database containing tasks with Document or Operation cannot be read by an older version that does not support these steps, and startup fails. Stop the daemon and back up the data directory specified by `SACTY_HOME` (default: `~/.sacty`) before updating. To return to an older version, use the backup made before the update. If your settings include the new steps, also restore settings compatible with the older version.
 
 Restoring the backup does not restore tasks or progress recorded after it was made. Keep a separate copy of the data before returning to the older version, and check which history will be lost. External changes, such as calendar updates, are not rolled back. External operation start records made after the backup are also lost, so check the actual external state and do not repeat changes already made.
 

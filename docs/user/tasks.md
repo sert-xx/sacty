@@ -1,4 +1,4 @@
-<!-- 対応するコード: apps/daemon/src/service.ts、apps/daemon/src/activity.ts、apps/daemon/src/pr-watcher.ts、apps/daemon/src/prompts.ts、packages/core/src/events.ts（StepKey・DEFAULT_DOCUMENTS_DIR）、apps/web/src/i18n/messages/task.ts、apps/daemon/src/task-templates.ts、apps/daemon/src/test-files.ts、apps/web/src/components/new-task-dialog.tsx、apps/web/src/components/implementation.tsx -->
+<!-- 対応するコード: apps/daemon/src/config.ts、apps/web/src/components/task-detail.tsx、apps/daemon/src/service.ts、apps/daemon/src/activity.ts、apps/daemon/src/pr-watcher.ts、apps/daemon/src/prompts.ts、packages/core/src/events.ts（StepKey・DEFAULT_DOCUMENTS_DIR）、apps/web/src/i18n/messages/task.ts、apps/daemon/src/task-templates.ts、apps/daemon/src/test-files.ts、apps/web/src/components/new-task-dialog.tsx、apps/web/src/components/implementation.tsx -->
 
 **日本語** | [English](tasks.en.md)
 
@@ -62,6 +62,8 @@ API からは、`POST /api/tasks` に `{"template": "sacty-setup", "projectId": 
 1. 対象の一意な ID/URL、変更内容・前提、期待する結果を依頼に書いてください。オーケストレーターが接続先・対象・依頼内容・確認方法を選定します。対象や接続先が不足しているときは実行開始前に停止します。
 2. 単一の「作業」工程で、依頼に従って1回実行します。別の準備工程や実行前の承認はありませんので、タスクを開始する前に依頼内容が正しいことを確認してください。
 3. 成功結果の根拠を確認し、結果を承認して完了します。失敗や結果不明は完了になりません。
+
+工程選択後は、タスクの詳細で選定された接続先と接続方式、対象、依頼内容、確認方法を読み取り専用で確認できます。この表示は実行前の承認ゲートではなく、タスクの進行を止めません。
 
 対象の情報が不足している場合は、依頼に情報を補って新しいタスクを作ってください。実行開始前に選定済みの接続先が使えなくなった場合は、接続の設定を修正してから再開できます。
 
@@ -197,7 +199,7 @@ README しかないリポジトリのように、テストの仕組みがそも�
 
 ## 更新前のバックアップと旧版への復帰
 
-文書作成・作業の工程を含むタスクを保存したデータベースは、これらの工程に対応していない旧版では読み込めず、起動に失敗します。更新前にデーモンを停止し、データディレクトリをバックアップしてください。旧版へ戻す場合は、更新前のバックアップを使ってください。新しい工程の設定がある場合は、設定も旧版に対応するものへ戻す必要があります。
+文書作成・作業の工程を含むタスクを保存したデータベースは、これらの工程に対応していない旧版では読み込めず、起動に失敗します。更新前にデーモンを停止し、データディレクトリ（環境変数 `SACTY_HOME` の指定先。未指定なら `~/.sacty`）をバックアップしてください。旧版へ戻す場合は、更新前のバックアップを使ってください。新しい工程の設定がある場合は、設定も旧版に対応するものへ戻す必要があります。
 
 バックアップを復元すると、それ以後に作ったタスクや進捗履歴は復元されません。復帰前のデータも別に保管し、失われる履歴を確認してください。予定表などに実施した外部変更は元に戻りません。外部作業の開始記録もバックアップ以後のものは失われるため、外部の実際の状態を確認し、実施済みの変更を再実行しないでください。
 

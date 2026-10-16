@@ -1800,3 +1800,40 @@ describe("リポジトリなしの工程選択のJSON例", () => {
     expect(prompt).toContain("operationの場合のみ。不足時は省略");
   });
 });
+
+describe("工程選択での説明のまとまり", () => {
+  const task = {
+    title: "予定更新",
+    body: "event-1を変更",
+    noRepo: true,
+    steps: [],
+    remarks: [],
+    outputs: {},
+  } as unknown as Task;
+  it("接続先一覧は決定項目の箇条書きを中断せず、一覧内へimagesやexportsが紛れない", () => {
+    const prompt = buildOrchestratorPrompt(task, {
+      repoless: { repositories: [] },
+      images: [{ name: "node", description: "Node.js" }],
+      exports: { destinations: [{ via: "mcp", name: "calendar", description: "予定表" }] },
+    });
+    const connectionsAt = prompt.indexOf("--- 単発作業に使える接続先 ---");
+    for (const choice of ["- investigation：", "- operation：", "- images：", "- exports："]) {
+      expect(prompt.indexOf(choice)).toBeGreaterThan(-1);
+      expect(prompt.indexOf(choice)).toBeLessThan(connectionsAt);
+    }
+    const connections = prompt.slice(
+      connectionsAt,
+      prompt.indexOf("選べる工程の組み合わせ：", connectionsAt),
+    );
+    expect(connections).toContain("- mcp/calendar：予定表");
+    expect(connections).not.toContain("- images：");
+    expect(connections).not.toContain("- exports：");
+  });
+  it("調査結果を後工程へ渡すことを両オーケストレーターへ説明する", () => {
+    for (const candidate of [task, { ...task, noRepo: false }]) {
+      const prompt = buildOrchestratorPrompt(candidate, { repoless: { repositories: [] } });
+      expect(prompt).toContain("先頭の調査（人間の承認なし）の結果を後の工程に渡します");
+      expect(prompt).not.toContain("迷う場合は standard");
+    }
+  });
+});

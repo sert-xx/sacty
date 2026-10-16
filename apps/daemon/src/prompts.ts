@@ -2488,10 +2488,6 @@ function buildRepolessOrchestratorPrompt(
     "あわせて、次のことを決めてください。",
     "- investigation：調査の工程の性質（PBI-43）。リポジトリの無いタスクでは content にする",
     "- operation：operationを選ぶ場合だけ、依頼に基づく実行設定を同じ回答に書く。via（platformまたはmcp）、name（下記の設定済み接続先）、target（一意な対象ID/URL）、change（依頼された変更内容と前提条件）、verification（結果の確認方法）。対象や変更内容を特定できなければ推測せずoperationを省略し、reasonに不足情報を書く。実行前の独立した準備や承認は設けない。",
-    "--- 単発作業に使える接続先 ---",
-    ...(destinations.length
-      ? destinations.map((d) => `- ${d.via}/${d.name}：${d.description}`)
-      : ["（設定済みの接続先がありません。外部操作は開始できません）"]),
     ...(images.length > 0
       ? [
           "- images：工程ごとに使う実行のイメージ（PBI-41）。コードは無いので、ふつうは書かない（default）",
@@ -2501,6 +2497,11 @@ function buildRepolessOrchestratorPrompt(
       : []),
     // 規約は上で渡したので、書き出し先の指示では繰り返さない
     ...(destinations.length > 0 ? exportChoiceLines(task, destinations, undefined) : []),
+    "",
+    "--- 単発作業に使える接続先 ---",
+    ...(destinations.length
+      ? destinations.map((d) => `- ${d.via}/${d.name}：${d.description}`)
+      : ["（設定済みの接続先がありません。外部操作は開始できません）"]),
     "",
     "選べる工程の組み合わせ：",
     ...Object.entries(plans).map(([key, text]) => `- ${key}：${text}`),
@@ -3319,6 +3320,7 @@ export function buildReviewComments(task: Task): ReviewComment[] {
 
 /** 候補の順序や無条件の既定値ではなく、利用者の求める成果から比較する。 */
 const PLAN_SELECTION_LINES = [
+  "実装する組み合わせは、先頭の調査（人間の承認なし）の結果を後の工程に渡します。",
   "目的・成果物・変更対象・規模の順に候補を比較してください。standardを無条件の既定や、不明な仕事の受け皿にしないでください。",
   "質問・原因調査・見積もりはinvestigate、PRレビューはreview、全体設計だけならdesign-only、原稿の作成はdocument、予定表更新など外部への単発変更はoperationです。選べない候補を選ばないでください。",
   "リポジトリ内の文書変更もファイル変更です。小さく局所的ならskip-design、設計判断や広い影響範囲があるならstandard。文書という語だけでdocumentにしないでください。",

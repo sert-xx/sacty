@@ -18930,55 +18930,75 @@ describe("非コードの成果と単発作業（PBI-112）", () => {
     activity.close();
   });
 
-  it("実行開始の記録後にデーモンが停止した場合も再起動後に再実行しない", async () => {
-    const activity = new SqliteActivityStore(dbPath);
-    const options = {
-      planner: planner("operation"),
-      config: configOf(agent(), 1, [calendar()]),
-      gateway: fakeGateway(),
-    };
-    const { service } = makeService(activity, [], options);
-    const { id } = service.createTask({ projectId: "default", title: "予定更新", repo: null });
-    activity.append({
-      taskId: id,
-      projectId: "default",
-      events: [
-        {
-          actor: "sacty",
-          event: {
-            type: "StepsChosen",
-            payload: {
-              steps: [...STEP_PLANS.operation],
-              plan: "operation",
-              reason: "予定更新",
-              operation,
+  it.each([false, true])(
+    "再起動した操作の元runを保存し中止で停止確認する（停止=%s）",
+    async (stops) => {
+      const activity = new SqliteActivityStore(dbPath);
+      const options = {
+        planner: planner("operation"),
+        config: configOf(agent(), 1, [calendar()]),
+        gateway: fakeGateway(),
+      };
+      const { service } = makeService(activity, [], options);
+      const { id } = service.createTask({ projectId: "default", title: "予定更新", repo: null });
+      activity.append({
+        taskId: id,
+        projectId: "default",
+        events: [
+          {
+            actor: "sacty",
+            event: {
+              type: "StepsChosen",
+              payload: {
+                steps: [...STEP_PLANS.operation],
+                plan: "operation",
+                reason: "予定更新",
+                operation,
+              },
             },
           },
-        },
-        {
-          actor: "sacty",
-          event: {
-            type: "AgentRunStarted",
-            payload: {
-              runId: "interrupted-operation",
-              step: "operation",
-              agentId: "claude-subscription",
-              authMode: "subscription",
+          {
+            actor: "sacty",
+            event: {
+              type: "AgentRunStarted",
+              payload: {
+                runId: "interrupted-operation",
+                step: "operation",
+                agentId: "claude-subscription",
+                authMode: "subscription",
+              },
             },
           },
-        },
-      ],
-    });
-    const restarted = makeService(activity, [success], options);
-    restarted.service.recoverInterrupted();
-    expect(restarted.service.get(id)?.task.operationAttempted).toBe(true);
-    expect(restarted.service.get(id)?.task.status).toBe("paused");
-    expect(() => restarted.service.resume(id, {})).toThrow();
-    await restarted.service.runNext(id);
-    expect(restarted.executor.calls).toEqual([]);
-    expect(restarted.service.get(id)?.task.status).toBe("paused");
-    activity.close();
-  });
+        ],
+      });
+      const workspace = join(dir, "workspaces", id, "operation", "interrupted-operation");
+      mkdirSync(workspace, { recursive: true });
+      writeFileSync(join(workspace, "state.txt"), "実行中の状態");
+      const restarted = makeService(activity, [success], options);
+      restarted.service.recoverInterrupted();
+      expect(restarted.service.get(id)?.task.unstoppedRuns).toEqual(["interrupted-operation"]);
+      expect(restarted.service.get(id)?.task.operationAttempted).toBe(true);
+      expect(restarted.service.get(id)?.task.status).toBe("paused");
+      expect(() => restarted.service.resume(id, {})).toThrow();
+      await restarted.service.runNext(id);
+      expect(restarted.executor.calls).toEqual([]);
+      expect(restarted.service.get(id)?.task.status).toBe("paused");
+      // recoverInterruptedが記録したrun IDは、さらに読み直しても中止の確認対象になる。
+      const restored = makeService(activity, [], options);
+      restored.executor.stops = stops;
+      const ensure = vi.spyOn(restored.executor, "ensureStopped");
+      expect(restored.service.get(id)?.task.unstoppedRuns).toEqual(["interrupted-operation"]);
+      const cancelled = await restored.service.cancel(id);
+      expect(restored.executor.killed).toContain("interrupted-operation");
+      expect(ensure).toHaveBeenCalledWith("interrupted-operation");
+      expect(cancelled.cancelled?.cleanup.find((c) => c.target === "container")?.result).toBe(
+        stops ? "done" : "failed",
+      );
+      expect(existsSync(workspace)).toBe(!stops);
+      expect(restored.executor.calls).toEqual([]);
+      activity.close();
+    },
+  );
 
   it("文書作成には登録済みPF・MCP・コンテキストを渡さず、承認前に外部更新できない", async () => {
     const activity = new SqliteActivityStore(dbPath);
@@ -19239,6 +19259,90 @@ describe("非コードの成果と単発作業（PBI-112）", () => {
     const cancelled = await service.cancel(id);
     expect(cancelled.cancelled?.cleanup.find((c) => c.target === "container")?.result).toBe("done");
     expect(existsSync(workspace)).toBe(false);
+    activity.close();
+  });
+
+  it("成功応答でもコンテナの停止未確認なら結果承認へ進めない", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service, executor } = makeService(activity, [success], {
+      planner: planner("operation"),
+      config: configOf(agent(), 1, [calendar()]),
+      gateway: fakeGateway(),
+    });
+    const { id } = service.createTask({ projectId: "default", title: "予定更新", repo: null });
+    executor.stops = false;
+    const ensure = vi.spyOn(executor, "ensureStopped");
+    await service.runNext(id);
+    const runId = activity.forTask(id).find((e) => e.type === "AgentRunStarted")?.payload.runId;
+    expect(ensure).toHaveBeenCalledWith(runId);
+    expect(service.get(id)?.task.status).toBe("paused");
+    expect(service.get(id)?.task.gate).toBeUndefined();
+    expect(service.get(id)?.task.unstoppedRuns).toEqual([runId]);
+    expect(service.get(id)?.task.outputs.operation).toContain("event-42");
+    expect(existsSync(executor.dirs[0] ?? "")).toBe(true);
+    expect(() => service.approve(id, { step: "operation", submission: 1 })).toThrow();
+    activity.close();
+  });
+
+  it("開始済みの操作が実行待ちに復元されてもserviceが明示理由で再開始を拒否する", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const options = {
+      planner: planner("operation"),
+      config: configOf(agent(), 1, [calendar()]),
+      gateway: fakeGateway(),
+    };
+    const { service } = makeService(activity, [], options);
+    const { id } = service.createTask({ projectId: "default", title: "予定更新", repo: null });
+    // 実行失敗を保存した直後、TaskPausedの記録より前にデーモンが停止した境界。
+    activity.append({
+      taskId: id,
+      projectId: "default",
+      events: [
+        {
+          actor: "orchestrator",
+          event: {
+            type: "StepsChosen",
+            payload: { steps: ["operation"], plan: "operation", operation },
+          },
+        },
+        {
+          actor: "sacty",
+          event: {
+            type: "AgentRunStarted",
+            payload: {
+              runId: "first-operation",
+              step: "operation",
+              agentId: "claude-subscription",
+              authMode: "subscription",
+            },
+          },
+        },
+        {
+          actor: "agent",
+          event: {
+            type: "AgentRunFailed",
+            payload: {
+              runId: "first-operation",
+              step: "operation",
+              agentId: "claude-subscription",
+              reason: "error",
+              message: "lost connection",
+            },
+          },
+        },
+      ],
+    });
+    const restored = makeService(activity, [success], options);
+    expect(restored.service.get(id)?.task).toMatchObject({
+      status: "queued",
+      operationAttempted: true,
+    });
+    await restored.service.runNext(id);
+    // 投影層の整合性エラーではなく、人に対処方法を示す通常の停止になる。
+    expect(restored.service.get(id)?.task.pausedMessage).toEqual(message("operation.attempted"));
+    expect(restored.service.get(id)?.task.status).toBe("paused");
+    expect(restored.executor.calls).toEqual([]);
+    expect(activity.forTask(id).filter((e) => e.type === "AgentRunStarted")).toHaveLength(1);
     activity.close();
   });
 });
