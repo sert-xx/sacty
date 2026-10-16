@@ -43,7 +43,7 @@ When you open the web UI, it shows the dashboard first.
 
 | Screen | URL | Contents |
 | --- | --- | --- |
-| Dashboard | `/dashboard` (also when you open `/`) | The open tasks of all projects (everything except completed and cancelled, including awaiting approval and paused). It shows the project name and the state, with a link to the task details. With more than 5 tasks, the section scrolls inside. When Slack notifications could not be sent, the reason is shown above the section |
+| Dashboard | `/dashboard` (also when you open `/`) | Across all projects: what needs you, why tasks are paused, open tasks, cost and budget, the step queue, intake, throughput, and quality signals ([Dashboard](dashboard.en.md)). When Slack notifications could not be sent, the reason is shown above the sections |
 | Task list | `/projects/<ID>/tasks` | The project's tasks. "Create task" is also here |
 | Project settings | `/projects/<ID>/settings` | The project's settings ([Project settings](project-settings.en.md)) |
 | Project list | `/projects` | Create and import projects |

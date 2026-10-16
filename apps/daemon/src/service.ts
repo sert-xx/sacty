@@ -27,6 +27,8 @@ import {
   computeCostUsd,
   type DaemonMessage,
   type DaemonText,
+  DashboardStats,
+  type DashboardSummary,
   DEFAULT_BUDGET_USD,
   DEFAULT_MAX_PARALLEL_TASKS,
   DEPLOYMENT_CI_GRACE_MS,
@@ -68,6 +70,7 @@ import {
   projectConflicts,
   proposalAccepted,
   questionBlocked,
+  queueOverSince,
   RepoUrl,
   RequestChangesInput,
   ResumeTaskInput,
@@ -597,8 +600,20 @@ export class TaskService {
    */
   private readonly ciSettled = new Map<string, string>();
 
+  /** ダッシュボードの集計の元（作業履歴を畳み込んで持つ。PBI-118）。 */
+  private readonly dashboardStats = new DashboardStats();
+  /**
+   * 実行待ちが上限より多い状態の始まり（ダッシュボードの待ち行列の欄。メモリーだけに持つ）。タスクの状態・実行の開始と終わり・
+   * 設定・プロジェクトが変わるたびに trackQueue で更新し、画面の取得に依らず追う（PR #128 レビュー指摘）。
+   */
+  private queueOverSince: number | undefined;
+
   constructor(private readonly deps: ServiceDeps) {
-    this.tasks = project(deps.activity.all());
+    // 作業履歴を読むのと同じ1回の走査で、ダッシュボードの集計も作る（PBI-118）
+    this.tasks = project(deps.activity.all(), (event, before, after) =>
+      this.dashboardStats.add(event, before, after),
+    );
+    this.trackQueue();
   }
 
   list(): Task[] {
@@ -2600,6 +2615,66 @@ export class TaskService {
   }
 
   /**
+   * ダッシュボードの集計（PBI-118）。畳み込んで持っている記録と今のタスクから作るので、作業履歴やタスクの全件を読み直さない。
+   * 消したプロジェクトのタスクは数えない。期間の境は、このマシンのローカルの日付。設定を読めなければ、上限は既定値。
+   */
+  dashboard(): DashboardSummary {
+    const queue = this.trackQueue();
+    return this.dashboardStats.summary({
+      now: this.now(),
+      timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      projects: new Set(this.deps.projects.all().map((p) => p.id)),
+      tasks: this.tasks.values(),
+      queue: {
+        ...queue,
+        ...(this.queueOverSince !== undefined ? { overSince: this.queueOverSince } : {}),
+      },
+    });
+  }
+
+  /**
+   * 工程の待ち行列（PBI-118）。実行中は、ワーカーが処理しているタスク（inflight。実装の後のテスト・最終レビュー・再現の確認など、
+   * status が idle の処理も含む）。実行待ちは、ワーカーが次に処理する対象（queuedTaskIds。ワーカーと同じ判定）のうち、まだ処理して
+   * いないもの。上限は sacty の設定（読めなければ既定値）。消したプロジェクトのタスクを除くのは、集計（summary）の側。
+   */
+  private queueState(): { running: string[]; waiting: string[]; max: number } {
+    let max = DEFAULT_MAX_PARALLEL_TASKS;
+    try {
+      max = this.maxParallelTasks();
+    } catch {
+      // 設定の問題は status() で画面に出す
+    }
+    const running = [...this.inflight.keys()];
+    let waiting: string[] = [];
+    try {
+      waiting = this.queuedTaskIds().filter((id) => !this.inflight.has(id));
+    } catch {
+      // 設定を読めないときは、ワーカーも実行対象を取れない（実行待ちは 0 として扱う）
+    }
+    return { running, waiting, max };
+  }
+
+  /**
+   * 実行待ちが上限より多い状態の始まりを更新する（PBI-118）。タスクの状態・実行の開始と終わり・設定・プロジェクトが変わるたびに
+   * 呼ぶので、画面を開いていない間に解消・再発しても、古い始まりが残らない。消したプロジェクトのタスクは数えない。
+   */
+  private trackQueue(): { running: string[]; waiting: string[]; max: number } {
+    const queue = this.queueState();
+    let waiting = queue.waiting.length;
+    try {
+      const projects = new Set(this.deps.projects.all().map((p) => p.id));
+      waiting = queue.waiting.filter((id) => {
+        const task = this.tasks.get(id);
+        return task !== undefined && projects.has(task.projectId);
+      }).length;
+    } catch {
+      // プロジェクトを読めなければ、実行待ちの全件で判断する
+    }
+    this.queueOverSince = queueOverSince(waiting, queue.max, this.now(), this.queueOverSince);
+    return queue;
+  }
+
+  /**
    * sacty 全体の設定を変える。取り込むラベルが変わると、取り込みは先頭から読み直す。取り込むラベルとレビュー用のラベルは
    * 同じ名前でもよい（Issue と PR は検索の条件で分かれる。PBI-104）。
    */
@@ -2617,6 +2692,8 @@ export class TaskService {
       this.deps.notifier?.settingsChanged?.();
     // 保存したら、取り込みはすべての種類を次の確認ですぐに取り込む（何が変わったかは見分けない。PBI-100）
     this.settingsSaves += 1;
+    // 同時に実行する数の上限が変わると、実行待ちが上限より多いかも変わる（PBI-118）
+    this.trackQueue();
     return saved;
   }
 
@@ -2727,7 +2804,10 @@ export class TaskService {
     );
     const [first, ...rest] = problems;
     if (first) throw new InvalidOperationError(first, ...rest);
-    return this.deps.projects.put(id ?? randomUUID(), definition);
+    const saved = this.deps.projects.put(id ?? randomUUID(), definition);
+    // プロジェクトが増えると、数える実行待ちも変わる（PBI-118）
+    this.trackQueue();
+    return saved;
   }
 
   /** プロジェクトの定義をエクスポートする（個人の設定や秘密情報は含めない）。 */
@@ -3252,10 +3332,14 @@ export class TaskService {
       events,
     });
     for (const event of written) {
+      const previous = this.tasks.get(event.taskId);
       this.tasks = applyEvent(this.tasks, event);
+      const applied = this.tasks.get(event.taskId);
+      if (applied) this.dashboardStats.add(event, previous, applied);
     }
     const updated = this.tasks.get(task.id);
     if (!updated) throw new Error("task is missing from the projection");
+    this.trackQueue();
     // 人間の出番（承認待ち・エスカレーション・一時停止）と完了を通知する（送るのは待たない。PBI-38）
     const kind = notificationFor(before, updated);
     // 通知の誤りは、書き終えたタスクの操作に伝えない（PBI-115 レビュー指摘）
@@ -3696,6 +3780,7 @@ export class TaskService {
     }
     const entry = { runIds: new Set<string>(), done: Promise.resolve() };
     this.inflight.set(taskId, entry);
+    this.trackQueue();
     // 完了は、止めたコンテナの確認と一時停止の記録まで含める（一時停止・中止はこれを待つ）
     entry.done = this.runningTask.run(taskId, async () => {
       try {
@@ -3711,6 +3796,7 @@ export class TaskService {
       await entry.done;
     } finally {
       this.inflight.delete(taskId);
+      this.trackQueue();
     }
   }
 

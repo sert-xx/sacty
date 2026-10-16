@@ -38,7 +38,7 @@ Code: `apps/daemon/src/activity.ts` (`SqliteActivityStore`, `SCHEMA`, `RENAME_LE
 ## Projection
 
 - At startup, all events are read with `project`, and a `Task` per task ID is built and held in memory. If `seq` is not greater than the previous one,
-  an exception is thrown.
+  an exception is thrown. The same pass folds the events into the dashboard aggregates (`DashboardStats`) ([Dashboard aggregates](architecture.en.md#dashboard-aggregates)).
 - When writing an event, `applyEvent` first checks that it can be applied to the current state (if not, the error is `task.invalidState`); the event is written to the activity log
   and then applied to the in-memory state.
 - Events that cannot be applied (duplicate creation, unknown tasks, events for cancelled tasks, mismatched state or run IDs, and so on) make the projection throw

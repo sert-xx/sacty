@@ -1,4 +1,5 @@
 export * from "./cost.js";
+export * from "./dashboard.js";
 export * from "./events.js";
 export * from "./github-url.js";
 export { code, DaemonText, message } from "./message-code.js";

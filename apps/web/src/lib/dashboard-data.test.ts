@@ -1,14 +1,18 @@
-import type { Task, TaskStatus } from "@sacty/core";
+import type { DashboardSummary, Task, TaskStatus } from "@sacty/core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { messagesFor } from "@/i18n";
 
 const listProjects = vi.fn();
 const listTasks = vi.fn();
 const getStatus = vi.fn(async () => ({ agent: null, problems: [], warnings: [], intake: null }));
-vi.mock("@/lib/daemon", () => ({ listProjects, listTasks, getStatus }));
+const getDashboardSummary = vi.fn();
+vi.mock("@/lib/daemon", () => ({ listProjects, listTasks, getStatus, getDashboardSummary }));
 vi.mock("@/i18n/server", () => ({ getMessages: async () => messagesFor("ja") }));
 
-const { isOpenTask, loadDashboard } = await import("./dashboard-data");
+const { attentionRows, isOpenTask, loadDashboard, nearBudgetRows, pausedGroups } = await import(
+  "./dashboard-data"
+);
+const { PAUSE_REASON_ORDER } = await import("./dashboard-rules");
 
 const project = (id: string, name: string) => ({
   id,
@@ -17,6 +21,8 @@ const project = (id: string, name: string) => ({
   createdAt: "",
   updatedAt: "",
 });
+const projects = [project("p1", "決済"), project("p2", "Webサイト")];
+const { labels } = messagesFor("ja");
 
 let n = 0;
 const task = (patch: Partial<Task> = {}): Task => ({
@@ -55,11 +61,44 @@ const done = [
   { key: "pr", state: "skip" },
 ] as Task["steps"];
 
+const gate = (step: "requirements" | "implement" = "requirements") =>
+  ({ step, submission: 1 }) as Task["gate"];
+
+const summary = (patch: Partial<DashboardSummary> = {}): DashboardSummary => ({
+  timeZone: "Asia/Tokyo",
+  waitingSince: {},
+  costs: {
+    today: { actualUsd: 0.5, estimatedUsd: 0 },
+    days7: { actualUsd: 2, estimatedUsd: 1 },
+    since: { today: "2026-10-15T15:00:00.000Z", days7: "2026-10-09T15:00:00.000Z" },
+  },
+  flow: {
+    days7: { completed: 1, cancelled: 0, medianLeadMs: 3_600_000 },
+    days30: { completed: 4, cancelled: 1, medianLeadMs: 7_200_000 },
+    since: { days7: "2026-10-09T15:00:00.000Z", days30: "2026-09-16T15:00:00.000Z" },
+  },
+  quality: {
+    since: "2026-09-16T15:00:00.000Z",
+    counts: {
+      changesRequested: 2,
+      pullRequestRework: 1,
+      guardianMissed: 0,
+      integrationFailed: 0,
+      fixTask: 1,
+    },
+    reworkBySteps: { design: 2, implement: 1 },
+  },
+  queue: { running: 1, queued: 2, max: 3 },
+  ...patch,
+});
+
 beforeEach(() => {
   n = 0;
   listProjects.mockReset();
   listTasks.mockReset();
-  listProjects.mockResolvedValue([project("p1", "決済"), project("p2", "Webサイト")]);
+  getDashboardSummary.mockReset();
+  listProjects.mockResolvedValue(projects);
+  getDashboardSummary.mockResolvedValue(summary());
 });
 
 describe("ダッシュボードの終わっていないタスク（PBI-114）", () => {
@@ -90,7 +129,7 @@ describe("ダッシュボードの終わっていないタスク（PBI-114）", 
         projectId: "p2",
         title: "承認待ち",
         status: "awaiting_approval",
-        gate: { step: "implement", submission: 1 } as Task["gate"],
+        gate: gate("implement"),
         updatedAt: "2026-10-12T00:00:00Z",
       }),
       task({ id: "c", projectId: "p1", status: "cancelled", updatedAt: "2026-10-13T00:00:00Z" }),
@@ -118,32 +157,183 @@ describe("ダッシュボードの終わっていないタスク（PBI-114）", 
     listTasks.mockResolvedValue([task({ projectId: "gone" })]);
     expect((await loadDashboard()).openTasks).toEqual([]);
     listProjects.mockResolvedValue([]);
-    expect(await loadDashboard()).toEqual({ projects: 0, openTasks: [], notificationProblems: [] });
+    const data = await loadDashboard();
+    expect(data.projects).toBe(0);
+    expect(data.openTasks).toEqual([]);
+    expect(data.attention).toEqual([]);
+    expect(data.paused).toEqual([]);
+    expect(data.costs.nearBudget).toEqual([]);
   });
 
   it("デーモンに届かなければ例外（画面は届かないことを出す）", async () => {
     listTasks.mockRejectedValue(new Error("unreachable"));
     await expect(loadDashboard()).rejects.toThrow("unreachable");
+    listTasks.mockResolvedValue([]);
+    getDashboardSummary.mockRejectedValue(new Error("daemon responded 404"));
+    await expect(loadDashboard()).rejects.toThrow("404");
   });
 });
 
-describe("ダッシュボードの Slack の通知を送れなかった理由（PBI-115）", () => {
-  it("デーモンの警告から、通知を送れなかった理由だけを画面の言語の文にして持つ", async () => {
-    listProjects.mockResolvedValue([]);
+describe("ダッシュボードのデータの形（PBI-118）", () => {
+  it("デーモンの集計（費用・流量・品質・待ち行列・タイムゾーン）と取り込みの状況を、そのまま欄のデータにする", async () => {
     listTasks.mockResolvedValue([]);
     getStatus.mockResolvedValueOnce({
       agent: null,
       problems: [],
-      warnings: [
-        { code: "notify.failed", params: { detail: "HTTP 500: down" } },
-        { code: "secret.opMissing" },
-        "ほかの警告",
-      ],
-      intake: null,
+      warnings: [],
+      intake: {
+        label: "sacty",
+        runs: { issues: { lastRunAt: "2026-10-15T00:00:00Z", imported: 2 } },
+      },
     } as never);
-    expect((await loadDashboard()).notificationProblems).toEqual([
-      "Slack の通知を送れませんでした：HTTP 500: down（タスクは止めていません）",
+    const data = await loadDashboard();
+    const s = summary();
+    expect(getDashboardSummary).toHaveBeenCalledTimes(1);
+    expect(data.costs).toEqual({ ...s.costs, timeZone: "Asia/Tokyo", nearBudget: [] });
+    expect(data.flow).toEqual(s.flow);
+    expect(data.quality).toEqual(s.quality);
+    expect(data.queue).toEqual(s.queue);
+    expect(data.intake).toEqual({
+      label: "sacty",
+      runs: { issues: { lastRunAt: "2026-10-15T00:00:00Z", imported: 2 } },
+    });
+    expect(Object.keys(data).sort()).toEqual(
+      [
+        "projects",
+        "openTasks",
+        "notificationProblems",
+        "attention",
+        "paused",
+        "costs",
+        "intake",
+        "flow",
+        "quality",
+        "queue",
+      ].sort(),
+    );
+  });
+});
+
+describe("ダッシュボードのあなたの出番（PBI-118）", () => {
+  it("承認待ち・一時停止・エスカレーションを、待っている時間が長い順に、判断する場所へのリンクつきで出す", () => {
+    const tasks = [
+      task({
+        id: "a",
+        status: "awaiting_approval",
+        gate: gate(),
+        updatedAt: "2026-10-12T00:00:00Z",
+      }),
+      task({
+        id: "b",
+        status: "paused",
+        pausedReason: "budget",
+        updatedAt: "2026-10-11T00:00:00Z",
+      }),
+      task({
+        id: "c",
+        status: "escalated",
+        escalation: { step: "design", target: "design", pendingRemarks: [] },
+        updatedAt: "2026-10-13T00:00:00Z",
+      }),
+      // 人の出番ではない
+      task({ id: "d", status: "running" }),
+      task({ id: "e", status: "queued" }),
+      // 承認待ちでも、ゴールガーディアンが PR の指摘を判断している間は出さない
+      task({
+        id: "f",
+        status: "awaiting_approval",
+        gate: gate("implement"),
+        pendingReview: { keys: ["k"], remarks: ["r"] },
+      }),
+    ];
+    const rows = attentionRows(
+      projects,
+      tasks,
+      // c は作業履歴の記録の時刻（updatedAt より古い）、a は記録が無いので updatedAt
+      { c: "2026-10-09T00:00:00Z", b: "2026-10-11T00:00:00Z" },
+      labels,
+    );
+    expect(rows.map((r) => [r.id, r.waitingSince, r.href])).toEqual([
+      ["c", "2026-10-09T00:00:00Z", "/tasks/c/review"],
+      ["b", "2026-10-11T00:00:00Z", "/tasks/b"],
+      ["a", "2026-10-12T00:00:00Z", "/tasks/a/review"],
     ]);
-    expect((await loadDashboard()).notificationProblems).toEqual([]);
+    expect(rows[0]?.projectName).toBe("決済");
+    expect(rows[1]?.status).toEqual({ text: "予算上限で一時停止", tone: "person" });
+  });
+
+  it("0 件・1 件・消したプロジェクト", () => {
+    expect(attentionRows(projects, [], {}, labels)).toEqual([]);
+    expect(
+      attentionRows(projects, [task({ status: "paused", projectId: "gone" })], {}, labels),
+    ).toEqual([]);
+    expect(
+      attentionRows(projects, [task({ id: "only", status: "paused" })], {}, labels).map(
+        (r) => r.id,
+      ),
+    ).toEqual(["only"]);
+  });
+});
+
+describe("ダッシュボードの止まっているタスクの理由（PBI-118）", () => {
+  it("理由ごとに件数とタスクをまとめ、利用上限・認証を先頭にする。件数 0 の理由は出さない", () => {
+    const tasks = [
+      task({
+        id: "a",
+        status: "paused",
+        pausedReason: "budget",
+        updatedAt: "2026-10-11T00:00:00Z",
+      }),
+      task({ id: "b", status: "paused", pausedReason: "auth" }),
+      task({
+        id: "c",
+        status: "paused",
+        pausedReason: "budget",
+        updatedAt: "2026-10-12T00:00:00Z",
+      }),
+      task({ id: "d", status: "running" }),
+      task({ id: "e", status: "paused", pausedReason: "auth", projectId: "gone" }),
+      // 理由の無い古い記録は「人が止めた」
+      task({ id: "f", status: "paused" }),
+    ];
+    expect(pausedGroups(projects, tasks).map((g) => [g.reason, g.tasks.map((t) => t.id)])).toEqual([
+      ["auth", ["b"]],
+      ["budget", ["c", "a"]],
+      ["manual", ["f"]],
+    ]);
+    expect(PAUSE_REASON_ORDER.slice(0, 2)).toEqual(["usage_limit", "auth"]);
+    expect(pausedGroups(projects, [])).toEqual([]);
+    expect(
+      pausedGroups(projects, [task({ id: "t1", status: "paused", pausedReason: "error" })]),
+    ).toEqual([{ reason: "error", tasks: [{ id: "t1", title: "タスク", projectName: "決済" }] }]);
+  });
+});
+
+describe("ダッシュボードの予算に近いタスク（PBI-118）", () => {
+  it("終わっていないタスクのうち、80% 以上か上限に達したものを、割合の大きい順に出す", () => {
+    const budget = (usedUsd: number, capUsd: number, estimated = false) => ({
+      usedUsd,
+      capUsd,
+      warned: false,
+      estimated,
+    });
+    const tasks = [
+      task({ id: "a", budget: budget(0.8, 1) }),
+      task({ id: "b", budget: budget(0.79, 1) }),
+      task({ id: "c", budget: budget(2, 2, true) }),
+      task({ id: "d", budget: budget(1.8, 2) }),
+      // 終わったタスクと、消したプロジェクトのタスクは出さない
+      task({ id: "e", budget: budget(1, 1), status: "cancelled" }),
+      task({ id: "f", budget: budget(1, 1), status: "idle", steps: done }),
+      task({ id: "g", budget: budget(1, 1), projectId: "gone" }),
+    ];
+    const rows = nearBudgetRows(projects, tasks);
+    expect(rows.map((r) => [r.id, r.exceeded, r.estimated])).toEqual([
+      ["c", true, true],
+      ["d", false, false],
+      ["a", false, false],
+    ]);
+    expect(rows[0]).toMatchObject({ usedUsd: 2, capUsd: 2, projectName: "決済" });
+    expect(nearBudgetRows(projects, [])).toEqual([]);
   });
 });
