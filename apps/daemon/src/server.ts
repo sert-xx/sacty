@@ -94,6 +94,9 @@ export function createApp(
 
   app.get("/api/status", (c) => c.json(service.status()));
 
+  // ダッシュボードの集計（対応待ちの時刻・費用・流量・品質・待ち行列。PBI-118）。畳み込んで持つ記録から作るので軽い
+  app.get("/api/dashboard", (c) => c.json(service.dashboard()));
+
   // gh にログイン済みの GitHub のアカウント（プロジェクトの設定で選ぶ。PBI-13）。トークンは返さない
   app.get("/api/github/accounts", async (c) => c.json(await service.githubAccounts()));
 

@@ -39,7 +39,7 @@ sacty up（packages/cli）
 
 | 種類 | パス |
 | --- | --- |
-| 状態 | `GET /api/health`・`GET /api/status`・`GET /api/github/accounts` |
+| 状態 | `GET /api/health`・`GET /api/status`・`GET /api/dashboard`・`GET /api/github/accounts` |
 | タスク | `GET/POST /api/tasks`（`GET` の `?open=1` は終わっていないタスクだけ）・`GET /api/tasks/:id`・`POST /api/tasks/:id/{approve,request-changes,pause,resume,cancel,repository,questions,rereview}`・`GET /api/tasks/:id/cleanup-plan`・`POST /api/tasks/:id/remarks/:remarkId/void`・`POST /api/tasks/:id/proposals/:proposalId/decide`・`POST /api/tasks/:id/exports/:step/retry` |
 | 実行の記録 | `GET /api/tasks/:id/runs/:runId/log`・`…/files/:file`・`…/agent-files`・`…/agent-files/raw` |
 | プロジェクト | `GET/POST /api/projects`・`GET/PUT /api/projects/:id`・`GET /api/projects/:id/{repositories,platforms,export}`・`GET/POST /api/projects/:id/context-preview`・`POST /api/projects/import` |
@@ -65,17 +65,59 @@ sacty up（packages/cli）
   後は、そのプロジェクトの設定（`/projects/<ID>/settings`）へ移る。タスクの詳細の「タスク」（パンくず）は、そのタスクのプロジェクトの
   タスクの一覧へ戻る（タスクを読む前・デーモンに届かないときは `/projects/current/tasks`）。
 - プロジェクトの画面のプロジェクトは、URL の ID で決める。デーモンのプロジェクトの一覧に無い ID なら 404。
-- ダッシュボードは、欄（カード）を並べる。幅が足りれば横に並べ、足りなければ縦に積む（欄が1つなら幅いっぱい）。いまの欄は
-  「終わっていないタスク」だけ。
-  - すべてのプロジェクトの、完了・中止を除くタスク（承認待ち・一時停止・エスカレーションも含む。`statusTone` が `completed`・
-    `cancelled` でないもの）を、最後に動いた順（`updatedAt` の新しい順）に出す。件数の上限は無い。消したプロジェクトのタスクは出さない。
-  - デーモンからは、終わっていないタスクだけを取る（`GET /api/tasks?open=1`。終わったタスクは `isFinished`）。完了したタスクの成果物を
+- ダッシュボードは、欄（カード）を並べる。幅が足りれば横に並べ、足りなければ縦に積む（欄が1つなら幅いっぱい）。欄の並びは、
+  あなたの出番 → 止まっているタスクの理由 → 終わっていないタスク → 費用と予算 → 工程の待ち行列 → 取り込みの状況 → 流量 → 品質の信号。
+  すべての欄はすべてのプロジェクトをまたぎ、消したプロジェクトのタスクは出さない・数えない。
+  - データは3つの経路で取る：終わっていないタスク（`GET /api/tasks?open=1`。終わったタスクは `isFinished`。完了したタスクの成果物を
     3秒ごとに運ばないため（完了したものを含む全件は、成果物の大きさによって1回で数十〜数百 MB になる）。ヘッダーのお知らせ（対応待ち）も
-    同じ経路で取る。
-  - 各行に、題（タスクの詳細へのリンク）・プロジェクトの名前・状態を出す。1行の高さは 4rem 以上、欄の高さは5件分（20rem）で、それより
+    同じ経路で取る）、作業履歴を要する集計（`GET /api/dashboard`。下の[ダッシュボードの集計](#ダッシュボードの集計)）、取り込みの状況
+    （`GET /api/status` の `intake`）。タスクの全件や作業履歴を3秒ごとに運ばない。
+  - 一覧の欄（あなたの出番・終わっていないタスク・予算に近いタスク）は、1行の高さが 4rem 以上、欄の高さは5件分（20rem）で、それより
     多ければ欄の中でスクロールする（キーボードでもスクロールできるよう、欄がフォーカスを受ける）。題とプロジェクトの名前は1行に切り詰め、
-    全文はホバー（`title`）と、行にフォーカスがある間の折り返しで出す。件数の補足（「すべてのプロジェクト・N件」）は、言語ごとの文言で組み立てる。
-  - プロジェクトが無いとき・終わっていないタスクが無いときは、そのことを出す。
+    全文はホバー（`title`）と、行にフォーカスがある間の折り返しで出す。件数の補足は、言語ごとの文言で組み立てる。
+  - 見出しの横の補足（`Hint`）に、仕組み・数字の定義・期間の境を書き、本文には出さない（[画面の文言と補足](ui-wording.md)）。
+  - 待っている時間と「続いている」の判定は、画面の時計（1分ごとに進む。`CLOCK_INTERVAL_MS`）で計算する。データに「今」を入れない
+    （取り直しのたびに版が変わるため）。
+  - あなたの出番：終わっていないタスクのうち、状態の表示が人の出番のもの（`statusTone` が `person`。承認待ち・一時停止・
+    エスカレーション。承認待ちでもゴールガーディアンが PR の指摘を判断している間は除く）を、待っている時間が長い順に出す。各行は、題
+    （人が判断する場所へのリンク。`personAction`）・プロジェクト・状態・待っている時間。待ち始めは、その状態になった作業履歴の記録
+    （`StepSubmitted`・`TaskPaused`・`TaskEscalated`・再現できなかった `ReproductionChecked`）の最後の時刻（集計の `waitingSince`）。記録が無ければ `updatedAt`。待っている
+    時間は、分・時間・日のどれか1つ（切り捨て。1分未満は「1分未満」。`durationText`）。無ければ「対応待ちはありません。」
+  - 止まっているタスクの理由：一時停止（`paused`）のタスクを、理由（`pausedReason`。無ければ `manual`）ごとに数える。並びは
+    利用上限・認証・予算・エラー・検証の不合格・人が止めた・子タスクの中止（`PAUSE_REASON_ORDER`）で、件数が 0 の理由は出さない。
+    利用上限・認証（`FIX_ONCE_REASONS`）は、1か所直せばまとめて動くことが多いので目立たせる。行は `details` で、開くとその理由の
+    タスク（題はタスクの詳細へのリンク・プロジェクト）が欄の中で広がる（取り直しでも同じ要素が残るので、開いた状態は消えない）。
+    無ければ「止まっているタスクはありません。」
+  - 終わっていないタスク：完了・中止を除くタスク（承認待ち・一時停止・エスカレーションも含む。`statusTone` が `completed`・
+    `cancelled` でないもの）を、最後に動いた順（`updatedAt` の新しい順）に出す。件数の上限は無い。各行に、題（タスクの詳細への
+    リンク）・プロジェクトの名前・状態を出す。プロジェクトが無いとき・終わっていないタスクが無いときは、そのことを出す。
+  - 費用と予算：今日と、今日を含む直近7日の費用（集計の `costs`。完了・中止したタスクの分も含む）。実請求（`estimated` でない）と
+    概算（サブスクリプションなどの換算値）を分けて出し、概算の行はどちらかの期間に概算があるときだけ出す。予算に近いタスクは、
+    終わっていないタスクのうち、使用済みが上限の 80%（`BUDGET_WARN_RATIO`）以上のもの（上限に達したものを含む）を、使った割合の
+    大きい順に、使用済み / 上限・概算の印・上限に達した印つきで出す（`nearBudgetRows`）。
+  - 工程の待ち行列：実行中の件数 / 同時に実行する数の上限（sacty の設定 `maxParallelTasks`。設定していなければ・読めなければ
+    既定値）と、実行待ちの件数。実行中は、ワーカーが処理しているタスク（`inflight`。実装の後のテスト・最終レビュー・再現の確認・
+    書き出しなど、状態が `idle` の処理も含む）。実行待ちは、ワーカーが次に処理する対象（`queuedTaskIds`。ワーカーと同じ判定）のうち、
+    まだ処理していないもの。実行待ちが上限より多い状態が10分（`QUEUE_OVER_MS`）続いたら目立たせ、sacty の設定へのリンクを添える。
+    「続いている」の始まり（`overSince`）は、デーモンが、作業履歴に書くたび・実行の開始と終わり・sacty の設定とプロジェクトの保存の
+    たびに更新し（`trackQueue`・`queueOverSince`。画面の取得には依らない）、メモリーだけに持つ（再起動で数え直す）。
+  - 取り込みの状況：プロジェクトの一覧と同じ表示（`IntakeStatusView`。種類ごとの最後の取り込みの時刻・作ったタスクの数・
+    取り込めなかった対象。設定が無い・Off・読めないときはそのことと sacty の設定へのリンク）と、「今すぐ取り込む」（`runIntakeAction`。
+    設定ファイルを読めないときは出さない）。
+  - 流量：今日を含む直近7日・30日の完了・中止の件数と、その期間に完了したタスクの作成（`createdAt`）から完了までの時間の中央値
+    （完了が無ければ「—」）。終わった時刻は、作業履歴の記録でタスクが終わった（`isFinished` が偽から真になった）時刻。終わった後に
+    終わっていない状態に戻れば数えず、また終われば新しい時刻で数える。
+  - 品質の信号：今日を含む直近30日の回数。差し戻しは、実際に差し戻した記録（`ChangesRequested`）を1回として数え、PR の指摘で
+    ゴールガーディアンが戻したもの（投影がその記録の時刻を `prRework` に残す）を「PR の指摘の差し戻し」、ほかを「人の差し戻し」に
+    分ける（判断 `ReworkJudged` だけで差し戻されなかったものは数えない）。ほかに、ゴールガーディアンの見逃し（`GuardianMissed`）、
+    統合レビューの不合格（`IntegrationReviewed` の `passed` が偽）、監視で作った修正のタスク（`DeploymentFixRegistered`）。
+    工程ごとの差し戻しは、人の差し戻しと PR の指摘の差し戻しを、差し戻された成果物の工程（`ChangesRequested` の `step`。承認ゲートで
+    止まっていた工程）ごとに数え、要求要件・設計・実装（`REWORK_STEPS`）は常に、ほかの工程は回数があるときだけ出す。
+  - 期間の境は、画面の言語ではなく、sacty を動かしているマシン（デーモン）のローカルの日付で決める（今日＝その日の 0 時から。
+    直近7日＝今日を含む7日。直近30日＝今日を含む30日）。タイムゾーンは集計の `timeZone` で画面に渡し、費用の欄の補足に出す。
+  - 空のとき：プロジェクトが無い・該当が無い・設定が無いときは、欄ごとにそのことを出す。描いたときにデーモンに届かなければ、欄を
+    出さずに届かないことを出す（届いたら欄を出す）。一度出した後に届かなくなったときは、欄を最後に取れた内容のまま残し、更新できない
+    ことを出す（[画面のデータの取り直し](#画面のデータの取り直し)）。
   - 欄を足すときは、`DashboardData`（`loadDashboard`）に欄のデータを足し、`LiveDashboard` に `DashboardCard` を足す（取り直しは画面で1つ）。
 - 欄の上に、Slack の通知を送れなかった理由（デーモンの警告のうち `notify.failed`。`notificationProblems`）を、sacty の設定へのリンクつきで出す
   （無ければ出さない）。欄と同じく取り直す。
@@ -83,7 +125,28 @@ sacty up（packages/cli）
 コード: `apps/web/src/lib/paths.ts`、`apps/web/src/app/page.tsx`、`apps/web/src/app/dashboard/page.tsx`、
 `apps/web/src/app/projects/[id]/page.tsx`、`apps/web/src/app/projects/[id]/tasks/page.tsx`、`apps/web/src/app/projects/[id]/settings/page.tsx`、
 `apps/web/src/app/projects/current/[[...view]]/route.ts`、`apps/web/src/app/tasks/[id]/page.tsx`（`Breadcrumb`）、
-`packages/core/src/projection.ts`（`isFinished`）、`apps/daemon/src/server.ts`（`createApp`）、`apps/web/src/lib/dashboard-data.ts`（`loadDashboard`・`isOpenTask`・`openTaskRows`）、`apps/web/src/components/dashboard.tsx`（`LiveDashboard`・`DashboardGrid`・`DashboardCard`・`OpenTasksCard`）
+`packages/core/src/projection.ts`（`isFinished`）、`apps/daemon/src/server.ts`（`createApp`）、`apps/web/src/lib/dashboard-data.ts`（`loadDashboard`・`isOpenTask`・`openTaskRows`・`attentionRows`・`pausedGroups`・`nearBudgetRows`）、`apps/web/src/components/dashboard.tsx`（`LiveDashboard`・`DashboardGrid`・`DashboardCard`・`AttentionCard`・`PausedCard`・`OpenTasksCard`・`CostsCard`・`QueueCard`・`IntakeCard`・`FlowCard`・`QualityCard`・`durationText`）、`apps/web/src/components/intake-status.tsx`（`IntakeStatusView`・`IntakeRunNow`）、`apps/web/src/lib/dashboard-rules.ts`（`PAUSE_REASON_ORDER`・`FIX_ONCE_REASONS`・`REWORK_STEPS`）、`apps/web/src/lib/labels.ts`（`statusTone`・`personAction`）
+
+## ダッシュボードの集計
+
+作業履歴を要する集計（対応待ちの時刻・費用・流量・品質・待ち行列）は、デーモンが `GET /api/dashboard` で返す（`DashboardSummary`）。
+画面が3秒ごとに取り直しても、タスクの全件や作業履歴を読み直さない。
+
+- デーモンは、起動のときに作業履歴を読んで状態を復元するのと同じ1回の走査で、イベントを1つずつ `DashboardStats` に畳み込む（`project` の
+  `applied`）。作業履歴に書き足すときも、適用したイベントを畳み込む。
+- 持つもの：タスクごとの、対応待ちになった最後の記録の時刻（`StepSubmitted`・`TaskPaused`・`TaskEscalated`・再現できなかった `ReproductionChecked`）。費用を持つイベント
+  （`CHARGED_EVENT_TYPES`。費用が 0 のものは持たない）の時刻・費用・概算か。タスクが終わった時刻（`isFinished` が偽から真になった
+  イベントの時刻。終わっていない状態に戻れば消す）と作成からの時間。品質の信号のイベントの時刻・種類・工程。32日（`KEEP_DAYS`）より
+  古い記録は、畳み込みの中で記録の時刻で1日に1回と、集計のときに捨てる（直近30日の欄と、日付の境の余裕。画面を開かずに動かし続けても
+  増え続けない）。
+- 集計のとき、今あるプロジェクトの ID と今のタスクを渡し、消したプロジェクトのタスクの記録は数えない（プロジェクトが戻れば数える）。
+- 返すもの：`timeZone`、`waitingSince`（対応待ちのタスクだけ）、`costs`（`today`・`days7` の `actualUsd`・`estimatedUsd` と期間の
+  始まり `since`）、`flow`（`days7`・`days30` の `completed`・`cancelled`・`medianLeadMs` と `since`）、`quality`（`since`・`counts`・
+  `reworkBySteps`）、`queue`（`running`・`queued`・`max`・`overSince`）。「今」の時刻は返さない（画面の時計で計算する）。
+- 期間の境は、デーモンのマシンのローカルの日付（`localDayStart`）。未来の時刻の記録は除かない（デーモンの時計で記録したものだけなので）。
+  中央値（`median`）は、偶数個なら真ん中2つの平均。
+
+コード: `packages/core/src/dashboard.ts`（`DashboardStats`・`localDayStart`・`median`）、`packages/core/src/projection.ts`（`project`）、`apps/daemon/src/service.ts`（`dashboard`）、`apps/daemon/src/server.ts`（`createApp`）、`apps/web/src/lib/daemon.ts`（`getDashboardSummary`）
 
 ## 画面のヘッダーとサイドメニュー（表示しているプロジェクト・お知らせ）
 
@@ -128,7 +191,7 @@ sacty up（packages/cli）
 
   | 先 | 返すもの |
   | --- | --- |
-  | `GET /live/dashboard` | ダッシュボードの欄のデータ（終わっていないタスク・通知を送れなかった理由。`loadDashboard`） |
+  | `GET /live/dashboard` | ダッシュボードの欄のデータ（あなたの出番・止まっている理由・終わっていないタスク・費用と予算・待ち行列・取り込みの状況・流量・品質の信号・通知を送れなかった理由。`loadDashboard`） |
   | `GET /live/tasks?project=<ID>` | URL のプロジェクトの、タスクの一覧の行と、人間の判断が必要なタスクのカード（表示に要るものだけ。`loadTaskList`）。プロジェクトが無い・ID の形が違えば `{ missing: true }` |
   | `GET /live/tasks/<ID>` | タスクの詳細に出すもの（タスク・作業履歴・親・子タスク・片付けるもの・イメージの候補など。`loadTaskDetail`） |
   | `GET /live/header?current=<ID>` | ヘッダーのプロジェクトの切り替え（対応待ちの件数）とお知らせ（`loadHeaderData`） |

@@ -4,6 +4,7 @@ import {
   type CreateTaskInput,
   type CreateTemplateTaskInput,
   type DaemonText,
+  type DashboardSummary,
   type IntakeKind,
   type Project,
   type ProjectDefinitionInput,
@@ -444,6 +445,12 @@ export async function getGitHubAccounts(): Promise<GitHubAccounts> {
 export async function getStatus(): Promise<DaemonStatus> {
   const res = await ensureOk(await daemonFetch("/api/status"));
   return (await res.json()) as DaemonStatus;
+}
+
+/** ダッシュボードの集計（対応待ちの時刻・費用・流量・品質・待ち行列。PBI-118）。 */
+export async function getDashboardSummary(): Promise<DashboardSummary> {
+  const res = await ensureOk(await daemonFetch("/api/dashboard"));
+  return (await res.json()) as DashboardSummary;
 }
 
 /** 再開する。状態に合わない場合は、画面に出せる理由を返す。 */

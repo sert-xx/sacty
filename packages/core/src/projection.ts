@@ -1812,8 +1812,14 @@ export function applyEvent(
   return next;
 }
 
-/** 作業履歴のイベント列から、すべてのタスクの状態を復元する。 */
-export function project(events: Iterable<ActivityEvent>): Map<string, Task> {
+/**
+ * 作業履歴のイベント列から、すべてのタスクの状態を復元する。applied を渡せば、イベントを1つ適用するごとに、その前後のタスクと
+ * 一緒に呼ぶ（デーモンがダッシュボードの集計を同じ読み込みで作る。PBI-118）。
+ */
+export function project(
+  events: Iterable<ActivityEvent>,
+  applied?: (event: ActivityEvent, before: Task | undefined, after: Task) => void,
+): Map<string, Task> {
   let tasks = new Map<string, Task>();
   let lastSeq = 0;
   for (const event of events) {
@@ -1821,7 +1827,10 @@ export function project(events: Iterable<ActivityEvent>): Map<string, Task> {
       throw new Error(`activity is out of order at seq ${event.seq}`);
     }
     lastSeq = event.seq;
+    const before = tasks.get(event.taskId);
     tasks = applyEvent(tasks, event);
+    const after = tasks.get(event.taskId);
+    if (applied && after) applied(event, before, after);
   }
   return tasks;
 }
