@@ -14,6 +14,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import { Hint } from "@/components/ui/hint";
 import { useMessages } from "@/i18n/client";
 import type { CleanupItem } from "@/lib/daemon";
 
@@ -64,7 +65,10 @@ export function TaskControls({
               <input type="hidden" name="taskId" value={taskId} />
               <DialogHeader>
                 <DialogTitle>{t.dialogTitle(title)}</DialogTitle>
-                <DialogDescription>{t.dialogBody}</DialogDescription>
+                <DialogDescription className="flex flex-wrap items-center gap-1">
+                  {t.dialogBody}
+                  <Hint text={t.dialogHint} />
+                </DialogDescription>
               </DialogHeader>
               <ul className="flex flex-col gap-2 text-sm">
                 {plan.map((item) => (

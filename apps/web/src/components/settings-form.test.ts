@@ -97,13 +97,13 @@ describe("取り込みの種類ごとの間隔（PBI-100）", () => {
     }
     locale = "ja";
     expect(messagesFor("ja").settings.intervalWhenOn(300, true)).toBe(
-      "取り込みを始めると、300 秒ごとに取り込みます（既定）。",
+      "始めると 300 秒ごと（既定）。",
     );
     // ブラウザの検査（ブラウザの言語）に任せず、デーモンの文言（画面の言語）で誤りを出す
     expect(render()).toMatch(/<form[^>]*novalidate=""/i);
     locale = "ja";
     expect(messagesFor("ja").settings.intervalCurrent(300, true)).toBe(
-      "いまは 300 秒ごとに取り込みます（既定）。",
+      "いまは 300 秒ごと（既定）。",
     );
   });
 });

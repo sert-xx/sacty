@@ -1,13 +1,16 @@
 import type { ReactNode } from "react";
+import { Hint } from "@/components/ui/hint";
 
 /**
  * タスク詳細のカード。collapsed なら折りたたんで見出しだけを出す（開けば中身を読める）。
  * 承認済みの成果物など、確かめ終えたものでページが長くならないようにする。
+ * note は見出しの横に出す短い事実（件数・状態）。仕組みの説明は hint に書き、印にマウスを乗せると出す（PBI-117）。
  */
 export function CardSection({
   id,
   title,
   note,
+  hint,
   collapsed = false,
   footer,
   children,
@@ -15,6 +18,8 @@ export function CardSection({
   id: string;
   title: ReactNode;
   note?: ReactNode;
+  /** 補足（ツールチップ）。折りたたんでも印は見える。 */
+  hint?: ReactNode;
   collapsed?: boolean;
   /** 折りたたんでも見せるもの（書き出した先の URL など）。中身の後に出す。 */
   footer?: ReactNode;
@@ -27,6 +32,12 @@ export function CardSection({
         <>
           {" "}
           <span className="text-[13px] font-normal text-muted-foreground">{note}</span>
+        </>
+      )}
+      {hint && (
+        <>
+          {" "}
+          <Hint text={hint} />
         </>
       )}
     </h2>

@@ -3,12 +3,12 @@ import { messagesFor } from "./index";
 
 describe("取り込みの文言（PBI-99）", () => {
   it("プロジェクトの対象の案内は、Issue は取り込むラベル、PR はレビュー用のラベルかレビューの依頼で取り込むと書く", () => {
-    const ja = messagesFor("ja").projects.editor.targetsHelp;
+    const ja = messagesFor("ja").projects.editor.targetsHint;
     expect(ja).toContain("Issue は、取り込むラベル");
     expect(ja).toContain("PR は、レビュー用のラベル");
     expect(ja).toContain("レビューを依頼されて");
     expect(ja).not.toContain("Issue・PR");
-    const en = messagesFor("en").projects.editor.targetsHelp;
+    const en = messagesFor("en").projects.editor.targetsHint;
     expect(en).toContain("issues with the intake label");
     expect(en).toContain("PRs with the review label");
     expect(en).toContain("request your review");
@@ -32,10 +32,10 @@ describe("取り込みの文言（PBI-99）", () => {
   });
 
   it("sacty の PR にラベルを付けるのは、レビュー用のラベルを設定して On にしたときだけと書く", () => {
-    expect(messagesFor("ja").settings.reviewHelp).toContain(
+    expect(messagesFor("ja").settings.reviewLabelHint).toContain(
       "レビュー用のラベルを設定し、その PR の取り込みを On にしているときは",
     );
-    expect(messagesFor("en").settings.reviewHelp).toContain(
+    expect(messagesFor("en").settings.reviewLabelHint).toContain(
       "When the review label is set and importing PRs with it is on",
     );
   });

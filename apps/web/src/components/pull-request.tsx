@@ -7,6 +7,7 @@ import {
   parseRepoUrl,
   type Task,
 } from "@sacty/core";
+import { Hint } from "@/components/ui/hint";
 import { useMessages } from "@/i18n/client";
 
 type PullRequestMessages = ReturnType<typeof useMessages>["parts"]["pullRequest"];
@@ -107,7 +108,7 @@ export function PullRequestCard({ task }: { task: Task }) {
       className="flex flex-col gap-3 rounded-xl border border-border bg-card p-5"
     >
       <h2 id="pull-request" className="text-[15px] font-semibold">
-        PR <span className="text-[13px] font-normal text-muted-foreground">{m.note}</span>
+        PR
       </h2>
       {(pr || steps.length > 0 || rework) && (
         <dl className="grid grid-cols-[72px_minmax(0,1fr)] gap-x-3 gap-y-1.5 text-sm leading-6">
@@ -125,7 +126,9 @@ export function PullRequestCard({ task }: { task: Task }) {
                     {m.open(pr.number)}
                   </a>
                 ) : (
-                  <span className="text-muted-foreground">{m.notCreated}</span>
+                  <span className="text-muted-foreground">
+                    {m.notCreated} <Hint text={m.notCreatedHint} />
+                  </span>
                 )}
               </dd>
               <dt className="pt-0.5 text-xs text-muted-foreground">{m.branch}</dt>

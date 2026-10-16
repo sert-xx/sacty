@@ -76,8 +76,8 @@ Recurring updates, monitoring, and automation of long-running work across severa
 
 Even in a repository that has no tests at all, such as one with only a README, tasks proceed without stopping.
 
-- The Orchestrator leaves the basis for judging that the repository has no tests. The step field of the task details shows "Test command: none (… Basis: …)"
-  (it also appears in "Steps chosen" in the Activity).
+- The Orchestrator leaves the basis for judging that the repository has no tests. The step field of the task details shows "Test command: none · judged by the goal",
+  and the hint mark (i) next to it shows the basis (it also appears in "Steps chosen" in the Activity).
 - Verification of the implementation does not run tests. The Goal Guardian judges acceptance for each viewpoint from the task's goal, the requirements (and design), and the code after implementation, the diff, and the implementation's description.
   If it does not pass, the implementation is redone, as for a task with tests, and if it fails 3 times in a row, the task is paused.
 - The implementation deliverable (the task details and the Implement approval screen) shows "Not verified by tests". The test line of the PR body also
@@ -88,8 +88,8 @@ Even in a repository that has no tests at all, such as one with only a README, t
   If they fail, the implementation is redone). If the implementation does not write the test command report (a code block whose language name is `sacty-test-command`) correctly (including when it cannot be read as JSON),
   the task
   is paused with an error (resuming redoes the implementation).
-- While the implementation is being redone after failing the tests, the previous implementation's test results and final review are shown under headings such as "… for the previous submission (not yet … for the current one)".
-  They are not results for the current implementation (this is the same for tasks with tests).
+- While the implementation is being redone after failing the tests, the previous implementation's test results and final review are shown under headings such as "… for the previous submission"
+  (the hint mark next to them says that nothing has run or been judged for the current submission yet). They are not results for the current implementation (this is the same for tasks with tests).
 - A bug fix (Reproduce → Implementation) confirms the reproduction with tests, so it is not chosen for a repository without tests. If it is chosen, the task stops.
 
 ### When the task stopped instead of proceeding without tests
@@ -180,6 +180,11 @@ See [Container images](images.en.md#changing-a-steps-image) for details.
 - If you pause while the implementation PR is being opened, the PR is finished and Implement waits for approval; the task is not paused (the screen says it was not paused).
   Decide on the PR, or cancel the task to stop it.
 
+## Hints on the screen
+
+The text on the screen says only the current state and what to do next, briefly. How things work and why is shown when you hover over the hint mark (i) next to a heading or item.
+With the keyboard, it opens when you stop on the mark with Tab; on a phone, it opens on tap. Esc or a tap outside closes it. Items without a hint have no mark.
+
 ## Automatic updates on the screen
 
 While they are open, the dashboard, the task list, the task details, and the header's notices fetch the latest state every 3 seconds and show it. They do this whatever
@@ -189,7 +194,7 @@ approvals and resumes in other tabs or the CLI, tasks the daemon picked up and s
 - The screen is not reloaded; only the parts that changed are shown again. Questions, comments, and form values you are writing, what you selected, open
   dialogs and sections, focus, and the scroll position stay as they are.
 - While the tab is hidden, nothing is fetched. When you come back to the tab, the screen is brought up to date right away.
-- While the daemon cannot be reached, the screen stays as it is and shows "Cannot update right now" (the header shows "Updates paused"). What is shown is what
+- While the daemon cannot be reached, the screen stays as it is and shows "The daemon cannot be reached" (the header shows "Updates paused"). What is shown is what
   was last fetched. When the daemon can be reached again, the screen is brought up to date again and the notice goes away.
 - The Approval screen and the project list (the intake status) are also brought up to date in the same way, without reloading. Comments you are
   writing are not lost.

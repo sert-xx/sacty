@@ -3,6 +3,7 @@
 import { DEPLOYMENT_CI_TIMEOUT_MS, isFailedCiCheck, MAX_FIX_CHAIN, type Task } from "@sacty/core";
 import Link from "next/link";
 import { CardSection } from "@/components/card-section";
+import { Hint } from "@/components/ui/hint";
 import { useMessages } from "@/i18n/client";
 import { formatStamp } from "@/lib/labels";
 
@@ -24,7 +25,7 @@ export function DeploymentWatchCard({ task, fixTask }: { task: Task; fixTask?: T
     if (!step) return null;
     const choice = task.deploymentChoice;
     return (
-      <CardSection id="deployment" title={m.title} note={m.note}>
+      <CardSection id="deployment" title={m.title} hint={m.hint}>
         {step.state === "skip" ? (
           <p className="text-sm text-muted-foreground" data-testid="deployment-skipped">
             <span className="font-semibold">{m.state.skipped}</span>{" "}
@@ -32,7 +33,12 @@ export function DeploymentWatchCard({ task, fixTask }: { task: Task; fixTask?: T
           </p>
         ) : (
           <p className="text-sm text-muted-foreground [overflow-wrap:anywhere]">
-            {m.notStarted(choice && "skill" in choice ? choice.skill : "deployment-observer")}
+            {m.notStarted}
+            <br />
+            {m.skill}
+            <span className="font-mono">
+              {choice && "skill" in choice ? choice.skill : "deployment-observer"}
+            </span>
           </p>
         )}
       </CardSection>
@@ -62,7 +68,7 @@ export function DeploymentWatchCard({ task, fixTask }: { task: Task; fixTask?: T
       : m.state[watch.state];
 
   return (
-    <CardSection id="deployment" title={m.title} note={m.note}>
+    <CardSection id="deployment" title={m.title} hint={m.hint}>
       <p className="flex flex-wrap items-baseline gap-2 text-sm">
         <span
           data-testid="deployment-state"
@@ -167,7 +173,7 @@ export function DeploymentWatchCard({ task, fixTask }: { task: Task; fixTask?: T
               {f.excerpt && (
                 <details>
                   <summary className="cursor-pointer text-xs text-muted-foreground">
-                    {m.log}
+                    {m.log} <Hint text={m.logHint} />
                   </summary>
                   <pre className="mt-2 max-h-72 overflow-auto rounded-lg border border-border bg-muted p-3 font-mono text-xs whitespace-pre-wrap">
                     {f.excerpt}

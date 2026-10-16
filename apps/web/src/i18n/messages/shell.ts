@@ -1,9 +1,9 @@
 /**
- * 画面の文言：ヘッダー・メニュー・サイドメニュー。サイドメニューの名称は幅が狭いので、折り返す位置に幅の無い空白（\u200b）
+ * 画面の文言：ヘッダー・メニュー・サイドメニュー。サイドメニューの名称は幅が狭いので、折り返す位置に幅の無い空白（​）
  * を入れる。英語の用語は labels.ts の用語集に合わせる。
  */
 const ja = {
-  nav: { main: "メイン", dashboard: "ダッシュ\u200bボード", tasks: "タスク", settings: "設定" },
+  nav: { main: "メイン", dashboard: "ダッシュ​ボード", tasks: "タスク", settings: "設定" },
   project: {
     label: "プロジェクト",
     trigger: (name: string) => `プロジェクト：${name}（切り替える）`,
@@ -15,13 +15,12 @@ const ja = {
   },
   notices: {
     label: "お知らせ",
-    labelWithCount: (n: number) => `お知らせ（人間の対応待ち ${n}件）`,
-    title: "人間の対応待ち",
+    labelWithCount: (n: number) => `お知らせ（対応待ち ${n}件）`,
+    title: "あなたの出番",
     total: (n: number) => `全${n}件`,
     none: "対応待ちはありません。",
     others: "ほかのプロジェクト",
     here: (name: string) => `このプロジェクト（${name}）`,
-    hint: "開くと、そのプロジェクトに切り替えてタスクを表示します。",
   },
   user: {
     label: "ユーザー設定",
@@ -30,7 +29,7 @@ const ja = {
     themes: { system: "システムに従う", light: "ライト", dark: "ダーク" },
     language: "言語",
     languages: { system: "システムに従う", ja: "日本語", en: "English" },
-    languageNote: "エージェントの成果物は、書かれた言語のまま表示します。",
+    languageNote: "エージェントの成果物は訳しません。",
   },
 };
 
@@ -55,7 +54,6 @@ const en: ShellMessages = {
     none: "Nothing needs you.",
     others: "Other projects",
     here: (name) => `This project (${name})`,
-    hint: "Opens the task in its own project.",
   },
   user: {
     label: "Preferences",
@@ -64,7 +62,7 @@ const en: ShellMessages = {
     themes: { system: "System", light: "Light", dark: "Dark" },
     language: "Language",
     languages: { system: "System", ja: "日本語", en: "English" },
-    languageNote: "Deliverables are shown in the language they were written in.",
+    languageNote: "Agent deliverables are not translated.",
   },
 };
 

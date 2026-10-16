@@ -277,7 +277,7 @@ describe("実行のログ：実行中は、足された行だけを取って後�
     await wait();
     expect(text()).toContain("始めます");
     expect(container.querySelector('[data-testid="live-stale"]')?.textContent).toContain(
-      "いま更新できません",
+      "デーモンに届きません",
     );
     daemon.down = false;
     daemon.events += say("戻りました");

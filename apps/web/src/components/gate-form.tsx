@@ -4,6 +4,7 @@ import { GATED_STEPS, type StepKey } from "@sacty/core";
 import { useActionState } from "react";
 import { type GateState, gateAction } from "@/app/actions";
 import { Button } from "@/components/ui/button";
+import { Hint } from "@/components/ui/hint";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useMessages } from "@/i18n/client";
@@ -56,7 +57,10 @@ export function GateForm({
       {pullRequest && (
         <div className="flex flex-col gap-2 rounded-md border border-border bg-muted p-3 text-sm leading-6">
           <p className="font-semibold">{t.prTitle}</p>
-          <p>{step === "implement" ? t.prHelp : t.stepPrHelp(stepLabel[step])}</p>
+          <p className="flex flex-wrap items-center gap-1">
+            {step === "implement" ? t.prHelp : t.stepPrHelp(stepLabel[step])}
+            <Hint text={step === "implement" ? t.prHint : t.stepPrHint(stepLabel[step])} />
+          </p>
           {pullRequest.url && (
             <a
               href={pullRequest.url}
@@ -76,7 +80,10 @@ export function GateForm({
         <div className="flex flex-col gap-1.5 rounded-md border border-warn-line bg-warn-soft p-3 text-sm leading-6 text-warn">
           <p className="font-semibold">{t.reworkTitle}</p>
           <p>{t.reworkSuggestion(stepLabel[rework.target], rework.note)}</p>
-          <p>{t.reworkHelp}</p>
+          <p className="flex flex-wrap items-center gap-1">
+            {t.reworkHelp}
+            <Hint text={t.reworkHint} />
+          </p>
         </div>
       )}
       {noChanges && (
@@ -85,7 +92,10 @@ export function GateForm({
           className="flex flex-col gap-1.5 rounded-md border border-warn-line bg-warn-soft p-3 text-sm leading-6 text-warn"
         >
           <p className="font-semibold">{t.noChangesTitle}</p>
-          <p>{t.noChangesHelp}</p>
+          <p className="flex flex-wrap items-center gap-1">
+            {t.noChangesHelp}
+            <Hint text={t.noChangesHint} />
+          </p>
         </div>
       )}
       {notReproduced && (
@@ -125,7 +135,10 @@ export function GateForm({
       )}
       {targets.length > 0 && (
         <>
-          <Label htmlFor="gate-comments">{t.commentsLabel}</Label>
+          <span className="flex items-center gap-1">
+            <Label htmlFor="gate-comments">{t.commentsLabel}</Label>
+            <Hint text={t.commentsHint(maxChanges)} />
+          </span>
           <Textarea
             id="gate-comments"
             name="comments"
@@ -171,9 +184,6 @@ export function GateForm({
           </Button>
         )}
       </div>
-      {targets.length > 0 && (
-        <p className="text-xs leading-5 text-muted-foreground">{t.note(maxChanges)}</p>
-      )}
     </form>
   );
 }

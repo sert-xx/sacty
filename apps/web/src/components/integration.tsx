@@ -30,7 +30,7 @@ export function IntegrationResult({ task }: { task: Task }) {
   const titles = new Map((task.approved.design?.testViewpoints ?? []).map((v) => [v.id, v.title]));
   return (
     // 人間が承認した（タスクが完了した）統合レビューは折りたたむ
-    <CardSection id="integration" title={m.title} note={m.note} collapsed={isCompleted(task)}>
+    <CardSection id="integration" title={m.title} hint={m.hint} collapsed={isCompleted(task)}>
       <p className="flex flex-wrap items-center gap-2 text-sm">
         <Pill ok={review.passed}>{review.passed ? m.passed : m.failed}</Pill>
         {!review.passed && task.integrationFailures > 0 && (

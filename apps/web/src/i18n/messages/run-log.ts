@@ -9,7 +9,7 @@ const ja = {
   agent: "エージェント",
   started: "開始",
   finished: "終了",
-  unfinished: "終わりが記録されていません（実行中か、デーモンが途中で止まりました）",
+  unfinished: "終わりの記録がありません。実行中か、デーモンが途中で止まりました。",
   outcome: "結果",
   completed: "完了",
   failed: (reason: string) => `失敗（${reason}）`,
@@ -17,26 +17,24 @@ const ja = {
   downloadEvents: "途中の出来事（JSONL）",
   downloadStderr: "標準エラー出力",
   truncated: (file: string, head: string, tail: string, dropped: string, lines: number) =>
-    `${file}は上限（先頭 ${head}・末尾 ${tail}）を超えたため、先頭と末尾を残し、間の ${dropped}（${lines.toLocaleString("ja-JP")}行）を省きました。`,
+    `${file}は大きいため、先頭 ${head} と末尾 ${tail} を残し、間の ${dropped}（${lines.toLocaleString("ja-JP")}行）を省きました。`,
   events: "途中の出来事",
   eventsEmpty: "途中の出来事はありません。",
   stderr: "標準エラー出力",
   stderrEmpty: "標準エラー出力はありません。",
   shown: (shown: number, total: number) =>
-    `出来事が多いため、最初と最後の${shown}件ずつを表示しています（全${total}件）。間は生のファイルで確かめてください。`,
-  skipped: (n: number) =>
-    `…ここで${n}件の出来事を表示から省いています（生のファイルにはあります）…`,
-  clipped: "……（長いため、先頭と末尾だけを表示しています。全文は生のファイルにあります）……",
+    `出来事が多いため、最初と最後の${shown}件ずつを出しています（全${total}件）。残りは生のファイルにあります。`,
+  skipped: (n: number) => `…${n}件を省略（生のファイルにあります）…`,
+  clipped: "……（長いため先頭と末尾だけ。全文は生のファイルにあります）……",
   notFound: "この実行のセッションログはありません。",
-  notFoundHelp:
-    "ログを残すようになる前の実行か、エージェントを起動する前に止まった実行です。作業履歴の記録を確かめてください。",
+  notFoundHelp: "ログを残す前の実行か、エージェントを起動する前に止まった実行です。",
   history: "この実行の作業履歴",
   kind: {
     session: "セッションの開始",
     thinking: "考えたこと",
     message: "発言",
     toolCall: "ツールの呼び出し",
-    toolCallUnfinished: "ツールの呼び出し（終わらないまま止まりました）",
+    toolCallUnfinished: "ツールの呼び出し・未完了",
     toolResult: "ツールの結果",
     toolError: "ツールの結果（エラー）",
     result: "最終結果",
@@ -46,6 +44,7 @@ const ja = {
     raw: "生の行",
     truncated: "ここで間を省きました",
   },
+  /** 役割の見出し。ゴールガーディアンは何の判断かを括弧で添える（見出しなので、文言の規則の括弧の例外）。 */
   roles: {
     orchestrator: "オーケストレーター",
     guardian: "ゴールガーディアン（変更の申し出の判定）",
@@ -58,9 +57,9 @@ const ja = {
   line: (n: number) => `${n}行目`,
   agentFiles: {
     title: "エージェントの元のファイル",
+    hint: "AI エージェントが自分で書いたセッションのファイルの写しです（秘密情報は伏せています）。大きさとハッシュを作業履歴に記録し、いまのファイルと一致するかを確かめています。",
     /** 一覧を読めず、取り直している（PR #119 再レビュー指摘）。 */
-    failed: "一覧を読めませんでした。取り直しています（読めたら、ここに出します）。",
-    help: "AI エージェントが自分で書いたセッションのファイルの写しです（秘密情報は伏せています）。大きさとハッシュは作業履歴に記録しており、いまのファイルと一致するかを確かめています。",
+    failed: "一覧を読めませんでした。取り直しています。",
     session: "セッション",
     runtime: { "claude-code": "Claude Code", codex: "Codex" } as Record<string, string>,
     file: "ファイル",
@@ -69,21 +68,21 @@ const ja = {
     check: "記録との一致",
     status: {
       match: "一致",
-      mismatch: "不一致（書き換えられています）",
+      mismatch: "不一致",
       missing: "ファイルがありません",
     },
     currentHash: (hash: string) => `いまのファイル：${hash}`,
     download: "ダウンロード",
     truncated: (dropped: string, lines: number) =>
-      `上限を超えたため、先頭と末尾を残し、間の ${dropped}（${lines.toLocaleString("ja-JP")}行）を省きました`,
+      `上限を超えたため、間の ${dropped}（${lines.toLocaleString("ja-JP")}行）を省きました`,
     limit: (limit: string) =>
-      `1実行あたりの上限 ${limit} を超えたファイルは、先頭と末尾を残して間を省いています。`,
+      `1 実行あたり ${limit} を超えたファイルは、先頭と末尾だけを残しています。`,
     mismatchNote: (n: number) =>
-      `${n}件のファイルが、作業履歴に記録した内容と一致しません。写した後に書き換えられたか、消されています。`,
+      `${n}件のファイルが作業履歴の記録と一致しません。写した後に書き換えられたか、消されています。`,
     skipped: (paths: string) => `読めずに写せなかったファイル：${paths}`,
     notArchived: {
       container_not_confirmed:
-        "コンテナが止まったことを確かめられなかったため、この実行のファイルは写していません（動いたままのコンテナが、写す途中のファイルを差し替えられるため）。",
+        "コンテナが止まったことを確かめられなかったため、この実行のファイルは写していません。",
     } as Record<string, string>,
     notFound: "このファイルはありません。",
   },
@@ -101,7 +100,7 @@ const en: RunLogMessages = {
   agent: "Agent",
   started: "Started",
   finished: "Finished",
-  unfinished: "No end was recorded (still running, or the daemon stopped midway)",
+  unfinished: "No end recorded. Still running, or the daemon stopped midway.",
   outcome: "Result",
   completed: "Completed",
   failed: (reason: string) => `Failed (${reason})`,
@@ -109,26 +108,25 @@ const en: RunLogMessages = {
   downloadEvents: "Events (JSONL)",
   downloadStderr: "Standard error",
   truncated: (file: string, head: string, tail: string, dropped: string, lines: number) =>
-    `The ${file} exceeded the limit (first ${head}, last ${tail}), so the beginning and the end were kept and ${dropped} (${lines.toLocaleString("en-US")} lines) in between was omitted.`,
+    `The ${file} is large, so the first ${head} and the last ${tail} were kept and ${dropped} (${lines.toLocaleString("en-US")} lines) in between was omitted.`,
   events: "Events",
   eventsEmpty: "No events.",
   stderr: "Standard error",
   stderrEmpty: "No standard error output.",
   shown: (shown: number, total: number) =>
-    `There are many events, so the first and last ${shown} of ${total} are shown. Check the raw file for the rest.`,
-  skipped: (n: number) => `… ${n} events are not shown here (they are in the raw file) …`,
-  clipped:
-    "…… (Long, so only the beginning and the end are shown. The raw file has the full text.) ……",
+    `Many events, so the first and last ${shown} of ${total} are shown. The rest is in the raw file.`,
+  skipped: (n: number) => `… ${n} events omitted (they are in the raw file) …`,
+  clipped: "…… (Long: only the beginning and the end. The raw file has the full text.) ……",
   notFound: "There is no session log for this run.",
   notFoundHelp:
-    "The run is from before session logs were kept, or it stopped before the agent started. Check the activity records.",
+    "The run is from before session logs were kept, or it stopped before the agent started.",
   history: "Activity for this run",
   kind: {
     session: "Session started",
     thinking: "Thinking",
     message: "Message",
     toolCall: "Tool call",
-    toolCallUnfinished: "Tool call (stopped before finishing)",
+    toolCallUnfinished: "Tool call, unfinished",
     toolResult: "Tool result",
     toolError: "Tool result (error)",
     result: "Final result",
@@ -150,19 +148,19 @@ const en: RunLogMessages = {
   line: (n: number) => `Line ${n}`,
   agentFiles: {
     title: "Agent's original files",
-    failed: "Could not read the list. Retrying (it appears here once it can be read).",
-    help: "Copies of the session files the AI agent wrote itself (secrets are redacted). Their sizes and hashes are recorded in the activity log, and the current files are checked against them.",
+    hint: "Copies of the session files the AI agent wrote itself (secrets are redacted). Their sizes and hashes are recorded in the activity, and the current files are checked against them.",
+    failed: "Could not read the list. Retrying.",
     session: "Session",
     runtime: { "claude-code": "Claude Code", codex: "Codex" },
     file: "File",
     size: "Size",
     hash: "SHA-256 (recorded)",
     check: "Matches the record",
-    status: { match: "Matches", mismatch: "Does not match (modified)", missing: "File is missing" },
+    status: { match: "Matches", mismatch: "Does not match", missing: "File is missing" },
     currentHash: (hash: string) => `Current file: ${hash}`,
     download: "Download",
     truncated: (dropped: string, lines: number) =>
-      `Exceeded the limit, so the beginning and the end were kept and ${dropped} (${lines.toLocaleString("en-US")} lines) in between was omitted`,
+      `Exceeded the limit, so ${dropped} (${lines.toLocaleString("en-US")} lines) in between was omitted`,
     limit: (limit: string) =>
       `Files over the per-run limit of ${limit} keep only their beginning and end.`,
     mismatchNote: (n: number) =>
@@ -170,7 +168,7 @@ const en: RunLogMessages = {
     skipped: (paths: string) => `Files that could not be read and were not copied: ${paths}`,
     notArchived: {
       container_not_confirmed:
-        "The files of this run were not copied because the container could not be confirmed to have stopped (a running container could swap files while they are copied).",
+        "The files of this run were not copied because the container could not be confirmed to have stopped.",
     },
     notFound: "This file does not exist.",
   },

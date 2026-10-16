@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useLayoutEffect, useRef, useState } from "react";
 import { DaemonError } from "@/components/daemon-error";
 import { FollowProjectAfterRecovery, StaleNotice } from "@/components/live-status";
+import { Hint } from "@/components/ui/hint";
 import type { Messages } from "@/i18n";
 import { useMessages } from "@/i18n/client";
 import type { AgentFiles, RunLogMeta } from "@/lib/daemon";
@@ -386,9 +387,8 @@ function AgentFilesView({
       className="flex flex-col gap-3 rounded-xl border border-border bg-card p-5 text-sm"
     >
       <h2 id="run-agent-files" className="text-[15px] font-semibold">
-        {m.title}
+        {m.title} <Hint text={m.hint} />
       </h2>
-      <p className="text-muted-foreground">{m.help}</p>
       <dl className="grid grid-cols-[max-content_minmax(0,1fr)] gap-x-4 gap-y-1">
         <dt className="text-muted-foreground">{m.session}</dt>
         <dd className="font-mono text-xs break-all">

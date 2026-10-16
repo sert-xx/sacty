@@ -4,7 +4,9 @@ import { DEFAULT_MENTION_KINDS, NotificationKind, type SlackNotification } from 
 import { startTransition, useActionState, useId, useState } from "react";
 import { type TestNotificationState, testNotificationAction } from "@/app/actions";
 import { Button } from "@/components/ui/button";
+import { Hint } from "@/components/ui/hint";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { useMessages } from "@/i18n/client";
 
 const SELECT =
@@ -93,13 +95,15 @@ export function NotificationSettings({
         value={notification ? JSON.stringify(notification) : ""}
       />
       <h2 id={`${uid}-notification`} className="text-[15px] font-semibold">
-        {t.notifyTitle}{" "}
-        <span className="text-[13px] font-normal text-muted-foreground">{t.notifyNote}</span>
+        {t.notifyTitle} <Hint text={t.notifyHint} />
       </h2>
-      <p className="text-sm leading-6 whitespace-pre-line text-muted-foreground">{t.notifyHelp}</p>
       {/* 送り先はすべてのプロジェクトで共通なので、見る人の範囲を確かめてもらう（PBI-115 レビュー指摘） */}
-      <p data-testid="notification-audience" className="text-sm leading-6 text-warn">
+      <p
+        data-testid="notification-audience"
+        className="flex flex-wrap items-center gap-1 text-sm leading-6 text-warn"
+      >
         {t.notifyAudience}
+        <Hint text={t.notifyAudienceHint} />
       </p>
       {problems.length > 0 && (
         <div
@@ -167,11 +171,13 @@ export function NotificationSettings({
               className="font-mono"
             />
           </label>
-          <label
-            htmlFor={`${uid}-notify-token`}
-            className="flex w-full min-w-0 flex-col sm:w-auto sm:min-w-48 sm:flex-1 gap-1 text-xs text-muted-foreground"
-          >
-            {t.notifyToken}
+          <div className="flex w-full min-w-0 flex-col sm:w-auto sm:min-w-48 sm:flex-1 gap-1 text-xs text-muted-foreground">
+            <span className="flex items-center gap-1">
+              <Label htmlFor={`${uid}-notify-token`} className="text-xs font-normal">
+                {t.notifyToken}
+              </Label>
+              <Hint text={t.notifySecretHint} className="size-4" />
+            </span>
             <Input
               id={`${uid}-notify-token`}
               value={notifyToken}
@@ -179,15 +185,17 @@ export function NotificationSettings({
               onChange={(e) => setNotifyToken(e.target.value)}
               className="font-mono"
             />
-          </label>
+          </div>
         </div>
       )}
       {notifyKind === "slack-webhook" && (
-        <label
-          htmlFor={`${uid}-notify-webhook`}
-          className="flex max-w-md flex-col gap-1 text-xs text-muted-foreground"
-        >
-          {t.notifyWebhookSecret}
+        <div className="flex max-w-md flex-col gap-1 text-xs text-muted-foreground">
+          <span className="flex items-center gap-1">
+            <Label htmlFor={`${uid}-notify-webhook`} className="text-xs font-normal">
+              {t.notifyWebhookSecret}
+            </Label>
+            <Hint text={t.notifySecretHint} className="size-4" />
+          </span>
           <Input
             id={`${uid}-notify-webhook`}
             value={notifyWebhook}
@@ -195,16 +203,18 @@ export function NotificationSettings({
             onChange={(e) => setNotifyWebhook(e.target.value)}
             className="font-mono"
           />
-        </label>
+        </div>
       )}
       {notifyKind && (
         <fieldset className="flex flex-col gap-2 rounded-lg border border-border p-3">
           <legend className="px-1 text-xs text-muted-foreground">{t.mentionTitle}</legend>
-          <label
-            htmlFor={`${uid}-mention-targets`}
-            className="flex max-w-xl flex-col gap-1 text-xs text-muted-foreground"
-          >
-            {t.mentionTargets}
+          <div className="flex max-w-xl flex-col gap-1 text-xs text-muted-foreground">
+            <span className="flex items-center gap-1">
+              <Label htmlFor={`${uid}-mention-targets`} className="text-xs font-normal">
+                {t.mentionTargets}
+              </Label>
+              <Hint text={t.mentionHint} className="size-4" />
+            </span>
             <Input
               id={`${uid}-mention-targets`}
               value={mentionTargets}
@@ -212,10 +222,7 @@ export function NotificationSettings({
               onChange={(e) => setMentionTargets(e.target.value)}
               className="font-mono"
             />
-          </label>
-          <p className="text-xs leading-5 whitespace-pre-line text-muted-foreground">
-            {t.mentionHelp}
-          </p>
+          </div>
           <fieldset className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
             <legend className="float-left mr-1 text-xs text-muted-foreground">
               {t.mentionKinds}

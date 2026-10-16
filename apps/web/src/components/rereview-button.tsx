@@ -3,6 +3,7 @@
 import { useActionState } from "react";
 import { rereviewTaskAction, type TaskControlState } from "@/app/actions";
 import { Button } from "@/components/ui/button";
+import { Hint } from "@/components/ui/hint";
 import { useMessages } from "@/i18n/client";
 
 const initial: TaskControlState = {};
@@ -17,7 +18,7 @@ export function RereviewButton({ taskId }: { taskId: string }) {
       <Button type="submit" variant="outline" disabled={pending} className="min-h-10">
         {pending ? t.rereviewing : t.rereview}
       </Button>
-      <span className="text-sm text-muted-foreground">{t.rereviewNote}</span>
+      <Hint text={t.rereviewHint} />
       {state.message && (
         <p role="alert" className="w-full text-sm text-warn">
           {state.message}

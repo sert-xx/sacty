@@ -3,6 +3,7 @@
 import type { Task } from "@sacty/core";
 import { cn } from "cn";
 import { Check } from "lucide-react";
+import { Hint } from "@/components/ui/hint";
 import { useMessages } from "@/i18n/client";
 import { type StatusTone, statusText, statusTone, usd } from "@/lib/labels";
 
@@ -106,11 +107,12 @@ export function CostMeter({ task }: { task: Task }) {
         {usd(usedUsd)} / {usd(capUsd)}
       </span>
       {estimated && (
-        <span className="rounded-full border border-input px-2 py-0.5 text-xs text-muted-foreground">
+        <span className="inline-flex items-center gap-0.5 rounded-full border border-input py-0.5 pr-0.5 pl-2 text-xs text-muted-foreground">
           {m.parts.bits.estimated}
+          <Hint text={m.parts.bits.estimatedHint} className="size-4" />
         </span>
       )}
-      <span className="text-muted-foreground">{m.parts.bits.budgetNote}</span>
+      <Hint text={m.parts.bits.budgetHint} />
     </div>
   );
 }

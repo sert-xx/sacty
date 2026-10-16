@@ -672,25 +672,23 @@ export function formatStamp(iso: string, locale: "ja" | "en" = "ja"): string {
 }
 
 /**
- * テストの仕組みが無いタスク（PBI-94）の、工程の欄のテストのコマンドの文。合格のときだけ「検証し、目的から判定します」とし、
- * 不合格・実行待ちはそれぞれの文にする（PR #105 再々レビュー指摘）。
+ * テストの仕組みが無いタスク（PBI-94）の、工程の欄のテストのコマンドの文。合格・不合格・実行待ちをそれぞれの文にする
+ * （PR #105 再々レビュー指摘）。判断した根拠は、画面が補足（ツールチップ）で出す（PBI-117）。
  */
 export function testCommandOfNoTests(
   task: Task,
-  reason: string,
   m: Pick<
     TaskMessages,
     "testCommandAdded" | "testCommandAddedFailed" | "testCommandAddedPending" | "testCommandNone"
   >,
 ): string {
   const added = addedTestsResult(task);
-  if (added === "passed" && task.lastTests)
-    return m.testCommandAdded(task.lastTests.command, reason);
+  if (added === "passed" && task.lastTests) return m.testCommandAdded(task.lastTests.command);
   if (added === "failed" && task.lastTests) {
-    return m.testCommandAddedFailed(task.lastTests.command, reason);
+    return m.testCommandAddedFailed(task.lastTests.command);
   }
-  if (added === "pending") return m.testCommandAddedPending(task.addedTestCommand ?? "", reason);
-  return m.testCommandNone(reason);
+  if (added === "pending") return m.testCommandAddedPending(task.addedTestCommand ?? "");
+  return m.testCommandNone;
 }
 
 /** タスクの詳細の「工程のイメージ」の1行（PBI-106）。 */

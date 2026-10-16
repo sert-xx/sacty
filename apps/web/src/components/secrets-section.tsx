@@ -3,6 +3,7 @@
 import { useActionState } from "react";
 import { type PrefetchSecretsState, prefetchSecretsAction } from "@/app/actions";
 import { Button } from "@/components/ui/button";
+import { Hint } from "@/components/ui/hint";
 import { useMessages } from "@/i18n/client";
 
 const initial: PrefetchSecretsState = {};
@@ -20,10 +21,8 @@ export function SecretsSection() {
       className="flex flex-col gap-3 rounded-xl border border-border bg-card p-5"
     >
       <h2 id="secrets" className="text-[15px] font-semibold">
-        {t.secretsTitle}{" "}
-        <span className="text-[13px] font-normal text-muted-foreground">{t.secretsNote}</span>
+        {t.secretsTitle} <Hint text={t.secretsHint} />
       </h2>
-      <p className="text-sm leading-6 whitespace-pre-line text-muted-foreground">{t.secretsHelp}</p>
       <form action={action}>
         <Button type="submit" variant="outline" disabled={pending} className="w-fit">
           {pending ? t.secretsFetching : t.secretsFetch}
