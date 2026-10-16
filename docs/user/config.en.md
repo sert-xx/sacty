@@ -102,7 +102,8 @@ step_agents:          # default_agent if omitted (guardian_agent for Integration
 ```
 
 The keys you can write in `step_agents` are `orchestrator`, the steps `investigate` (Investigation), `review` (Review), `requirements` (Requirements),
-`design` (Design), `split` (Task split), `integrate` (Integration review), `reproduce` (Reproduce), and `implement` (Implementation), and
+`design` (Design), `split` (Task split), `integrate` (Integration review), `reproduce` (Reproduce), `implement` (Implementation),
+`document` (Document), `operation` (Operation), and
 `deployment` (the deployment check after a merge. [After-merge watch](deployment-watch.en.md)).
 Writing a name that is not in `agents` in `default_agent`, `guardian_agent`, or `step_agents` is an error.
 The `pr` key (PR作成) of earlier versions can no longer be written because the step was removed (it is an error; delete it).
@@ -111,7 +112,7 @@ The `pr` key (PR作成) of earlier versions can no longer be written because the
 
 - The default budget per task is `budget.default_per_task_usd` (default $1).
 - At 80% of the budget, a notice is recorded in the activity log, and when the limit is reached the task is paused (the work is kept). To resume, enter a new cumulative limit in the web UI.
-- The task is also paused on a subscription usage limit or an authentication error, and resuming runs the stopped step again.
+- The task is also paused on a subscription usage limit or an authentication error, and resuming runs the stopped step again. An Operation that has started cannot be resumed and stays paused.
 
 ## Related pages
 

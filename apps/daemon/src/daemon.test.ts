@@ -18713,3 +18713,532 @@ describe("テストの仕組みが無いリポジトリ（PBI-94）", () => {
     activity.close();
   });
 });
+
+describe("非コードの成果と単発作業（PBI-112）", () => {
+  const out = (output: string): AgentOutcome => ({
+    kind: "completed",
+    output,
+    usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 1 },
+  });
+  const block = (value: Record<string, unknown>) => `\`\`\`json\n${JSON.stringify(value)}\n\`\`\``;
+  const planner =
+    (plan: "document" | "operation"): ServiceDeps["planner"] =>
+    async () => ({
+      steps: [...STEP_PLANS[plan]],
+      plan,
+      reason: "非コード作業",
+      ...(plan === "operation" ? { operation } : {}),
+      fallback: false,
+      costUsd: 0,
+      estimated: false,
+    });
+  const calendar = () =>
+    toPlatform(
+      "calendar",
+      PlatformFile.parse({
+        upstream: "https://calendar.example.com",
+        description: "チームの予定表",
+        auth: { header: "Authorization", prefix: "Bearer ", secret: "github-token" },
+        allow: ["GET /**", "PUT /**"],
+      }),
+    );
+  const operation = {
+    via: "platform" as const,
+    name: "calendar",
+    target: "event-42",
+    change: "開始時刻を10時から11時に変更する",
+    verification: "event-42を再取得して開始時刻を確認する",
+  };
+  const success = out(
+    block({
+      "sacty-operation-result": {
+        success: true,
+        evidence: "event-42の開始時刻が11時であることを再取得して確認した",
+      },
+    }),
+  );
+
+  it("実オーケストレーターの1回の選択からoperationを直接実行して結果だけ承認する", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const selected = out(
+      block({ "sacty-steps": { plan: "operation", reason: "依頼された予定変更", operation } }),
+    );
+    const { service, executor } = makeService(activity, [selected, success], {
+      realPlanner: true,
+      config: configOf(agent(), 1, [calendar()]),
+      gateway: fakeGateway(),
+    });
+    const { id } = service.createTask({
+      projectId: "default",
+      title: "event-42の開始時刻を11時に変更",
+      repo: null,
+    });
+    await service.runNext(id);
+    const task = service.get(id)?.task;
+    expect(task?.steps.map((step) => step.key)).toEqual(["operation"]);
+    expect(task?.operation).toEqual(operation);
+    expect(task?.gate?.step).toBe("operation");
+    expect(executor.calls).toHaveLength(2); // 工程選択 + 単発作業。準備の実行や承認はない。
+    expect(executor.calls[0]?.command.join(" ")).toContain("実行設定を同じ回答に書く");
+    expect(executor.calls[1]?.command.join(" ")).toContain("event-42の開始時刻を11時に変更");
+    expect(activity.forTask(id).filter((e) => e.type === "StepSubmitted")).toHaveLength(1);
+    const { service: restored } = makeService(activity);
+    expect(restored.get(id)?.task.operation).toEqual(operation);
+    restored.approve(id, { step: "operation", submission: 1 });
+    expect(isCompleted(restored.get(id)?.task as Task)).toBe(true);
+    activity.close();
+  });
+
+  it("ユーザー文書を実装なしで作成し、差戻し後の成果を承認して完了できる", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service, executor, repos, tests, pulls } = makeService(
+      activity,
+      [out("# 利用手順 v1"), out("# 利用手順 v2")],
+      { planner: planner("document") },
+    );
+    const { id } = service.createTask({
+      projectId: "default",
+      title: "利用手順を作る",
+      repo: null,
+    });
+    await service.runNext(id);
+    expect(service.get(id)?.task.gate?.step).toBe("document");
+    service.requestChanges(id, {
+      step: "document",
+      submission: 1,
+      comments: ["初回設定の説明を追加"],
+    });
+    await service.runNext(id);
+    service.approve(id, { step: "document", submission: 2 });
+    expect(isCompleted(service.get(id)?.task as Task)).toBe(true);
+    expect(executor.calls).toHaveLength(2);
+    expect(repos.prepared).toEqual([]);
+    expect(tests.calls).toEqual([]);
+    expect(pulls.calls).toEqual([]);
+    activity.close();
+  });
+
+  it("文書は承認後に指定先へ書き出し、URLを記録する", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const selected: ServiceDeps["planner"] = async () => ({
+      steps: [...STEP_PLANS.document],
+      plan: "document",
+      reason: "利用者向け手順",
+      fallback: false,
+      costUsd: 0,
+      estimated: false,
+      exports: {
+        document: {
+          to: { via: "platform", name: "calendar", location: "説明ページ" },
+          reason: "依頼された保存先",
+        },
+      },
+    });
+    const { service, executor } = makeService(
+      activity,
+      [
+        out("# 予定表の利用手順"),
+        out(block({ "sacty-export": { url: "https://calendar.example.com/help" } })),
+      ],
+      { planner: selected, config: configOf(agent(), 1, [calendar()]), gateway: fakeGateway() },
+    );
+    const { id } = service.createTask({
+      projectId: "default",
+      title: "利用手順の作成と保存",
+      repo: null,
+    });
+    await service.runNext(id);
+    expect(executor.calls).toHaveLength(1);
+    service.approve(id, { step: "document", submission: 1 });
+    expect(exportDue(service.get(id)?.task as Task)).toBe("document");
+    await service.runNext(id);
+    expect(service.get(id)?.task.exports.document?.url).toBe("https://calendar.example.com/help");
+    expect(executor.calls).toHaveLength(2);
+    activity.close();
+  });
+
+  it("オーケストレーターの作業指定を保存して一度実行し、結果だけの承認を待つ", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service, executor } = makeService(activity, [success], {
+      planner: planner("operation"),
+      config: configOf(agent(), 1, [calendar()]),
+      gateway: fakeGateway(),
+    });
+    const { id } = service.createTask({
+      projectId: "default",
+      title: "予定を11時へ変更",
+      repo: null,
+    });
+    await service.runNext(id);
+    expect(service.get(id)?.task.operation).toEqual(operation);
+    expect(service.get(id)?.task.operationAttempted).toBe(true);
+    expect(service.get(id)?.task.gate?.step).toBe("operation");
+    expect(executor.calls).toHaveLength(1);
+    expect(executor.calls[0]?.env.SACTY_PF_URL).toBeDefined();
+    expect(executor.calls[0]?.command.join(" ")).toContain("event-42");
+    expect(() =>
+      service.requestChanges(id, { step: "operation", submission: 1, comments: ["もう一度"] }),
+    ).toThrow();
+    await service.runNext(id);
+    expect(executor.calls).toHaveLength(1);
+    service.approve(id, { step: "operation", submission: 1 });
+    expect(isCompleted(service.get(id)?.task as Task)).toBe(true);
+    activity.close();
+  });
+
+  it("成功根拠を返さない外部作業は停止し、再起動と再開後にも再実行しない", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const options = {
+      planner: planner("operation"),
+      config: configOf(agent(), 1, [calendar()]),
+      gateway: fakeGateway(),
+    };
+    const { service, executor } = makeService(activity, [out("処理しました")], options);
+    const { id } = service.createTask({ projectId: "default", title: "予定更新", repo: null });
+    await service.runNext(id);
+    expect(service.get(id)?.task.status).toBe("paused");
+    expect(executor.calls).toHaveLength(1);
+    const restarted = makeService(activity, [success], options);
+    restarted.service.recoverInterrupted();
+    expect(restarted.service.get(id)?.task.operationAttempted).toBe(true);
+    expect(() => restarted.service.resume(id, {})).toThrow();
+    await restarted.service.runNext(id);
+    expect(restarted.executor.calls).toEqual([]);
+    expect(restarted.service.get(id)?.task.status).toBe("paused");
+    activity.close();
+  });
+
+  it("外部作業の実行器がタイムアウトしても再開・再実行しない", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service, executor } = makeService(
+      activity,
+      [{ kind: "failed", reason: "error", message: "Executor timeout" }],
+      {
+        planner: planner("operation"),
+        config: configOf(agent(), 1, [calendar()]),
+        gateway: fakeGateway(),
+      },
+    );
+    const { id } = service.createTask({ projectId: "default", title: "予定更新", repo: null });
+    await service.runNext(id);
+    expect(service.get(id)?.task.operationAttempted).toBe(true);
+    expect(service.get(id)?.task.status).toBe("paused");
+    expect(() => service.resume(id, {})).toThrow();
+    await service.runNext(id);
+    expect(executor.calls).toHaveLength(1);
+    expect(service.get(id)?.task.status).toBe("paused");
+    activity.close();
+  });
+
+  it("実行開始の記録後にデーモンが停止した場合も再起動後に再実行しない", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const options = {
+      planner: planner("operation"),
+      config: configOf(agent(), 1, [calendar()]),
+      gateway: fakeGateway(),
+    };
+    const { service } = makeService(activity, [], options);
+    const { id } = service.createTask({ projectId: "default", title: "予定更新", repo: null });
+    activity.append({
+      taskId: id,
+      projectId: "default",
+      events: [
+        {
+          actor: "sacty",
+          event: {
+            type: "StepsChosen",
+            payload: {
+              steps: [...STEP_PLANS.operation],
+              plan: "operation",
+              reason: "予定更新",
+              operation,
+            },
+          },
+        },
+        {
+          actor: "sacty",
+          event: {
+            type: "AgentRunStarted",
+            payload: {
+              runId: "interrupted-operation",
+              step: "operation",
+              agentId: "claude-subscription",
+              authMode: "subscription",
+            },
+          },
+        },
+      ],
+    });
+    const restarted = makeService(activity, [success], options);
+    restarted.service.recoverInterrupted();
+    expect(restarted.service.get(id)?.task.operationAttempted).toBe(true);
+    expect(restarted.service.get(id)?.task.status).toBe("paused");
+    expect(() => restarted.service.resume(id, {})).toThrow();
+    await restarted.service.runNext(id);
+    expect(restarted.executor.calls).toEqual([]);
+    expect(restarted.service.get(id)?.task.status).toBe("paused");
+    activity.close();
+  });
+
+  it("文書作成には登録済みPF・MCP・コンテキストを渡さず、承認前に外部更新できない", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const gateway = fakeGateway();
+    const register = vi.spyOn(gateway, "register");
+    const projects = projectsWithAccount();
+    projects.put("default", {
+      name: "デフォルト",
+      targets: [{ scope: "repo", target: "https://github.com/acme/app" }],
+      githubAccounts: { "github.com": "me" },
+      context: { repo: "https://github.com/acme/context" },
+    });
+    const { service, executor } = makeService(activity, [out("# 利用者マニュアル")], {
+      planner: planner("document"),
+      projects,
+      config: configOf(
+        agent(),
+        1,
+        [calendar()],
+        [toHostMcp("notion", HostMcpFile.parse({ command: "notion-mcp" }))],
+      ),
+      contexts: new FakeContexts({
+        "https://github.com/acme/context": { "CLAUDE.md": "外部の予定を更新する" },
+      }),
+      gateway,
+    });
+    const { id } = service.createTask({
+      projectId: "default",
+      title: "利用者マニュアル作成",
+      repo: null,
+    });
+    await service.runNext(id);
+    expect(executor.calls).toHaveLength(1);
+    expect(executor.calls[0]?.env.SACTY_PF_URL).toBeUndefined();
+    expect(executor.mcpConfigs[0]).toBeUndefined();
+    expect(executor.contexts[0]).toBeUndefined();
+    expect(register).not.toHaveBeenCalled();
+    expect(service.get(id)?.task.gate?.step).toBe("document");
+    activity.close();
+  });
+
+  it.each(["platform", "mcp"] as const)(
+    "複数のPFとMCPがあっても指定された%s接続だけを実行に渡す",
+    async (via) => {
+      const activity = new SqliteActivityStore(dbPath);
+      const gateway = fakeGateway();
+      const register = vi.spyOn(gateway, "register");
+      const name = via === "platform" ? "calendar" : "notion";
+      const { service, executor } = makeService(activity, [success], {
+        planner: async () => ({
+          steps: [...STEP_PLANS.operation],
+          plan: "operation",
+          reason: "予定更新",
+          fallback: false,
+          costUsd: 0,
+          estimated: false,
+          operation: { ...operation, via, name },
+        }),
+        gateway,
+        config: configOf(
+          agent(),
+          1,
+          [calendar(), { ...calendar(), name: "other-calendar" }],
+          [
+            toHostMcp("notion", HostMcpFile.parse({ command: "notion-mcp" })),
+            toHostMcp("other-mcp", HostMcpFile.parse({ command: "other-mcp" })),
+          ],
+        ),
+      });
+      const { id } = service.createTask({ projectId: "default", title: "予定変更", repo: null });
+      await service.runNext(id);
+      expect(service.get(id)?.task.gate?.step).toBe("operation");
+      const invocation = executor.calls[0];
+      expect(invocation?.env.SACTY_PF_URL !== undefined).toBe(via === "platform");
+      const mcp = JSON.parse(executor.mcpConfigs[0] ?? "{}").mcpServers ?? {};
+      expect(Object.keys(mcp)).toEqual(via === "mcp" ? ["notion"] : []);
+      expect(register.mock.calls.at(-1)?.[3]).toEqual({
+        platforms: via === "platform" ? ["calendar"] : [],
+        hostMcp: via === "mcp" ? ["notion"] : [],
+      });
+      service.approve(id, { step: "operation", submission: 1 });
+      expect(isCompleted(service.get(id)?.task as Task)).toBe(true);
+      activity.close();
+    },
+  );
+
+  it("工程決定後に接続先が削除されたら外部実行を開始せず一時停止する", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const gateway = fakeGateway();
+    const register = vi.spyOn(gateway, "register");
+    const { service, executor } = makeService(activity, [success], {
+      planner: planner("operation"),
+      config: configOf(agent(), 1, []),
+      gateway,
+    });
+    const { id } = service.createTask({ projectId: "default", title: "予定更新", repo: null });
+    activity.append({
+      taskId: id,
+      projectId: "default",
+      events: [
+        {
+          actor: "sacty",
+          event: {
+            type: "StepsChosen",
+            payload: {
+              steps: [...STEP_PLANS.operation],
+              plan: "operation",
+              reason: "削除前の接続先を選択",
+              operation,
+            },
+          },
+        },
+      ],
+    });
+    const restarted = makeService(activity, [success], {
+      config: configOf(agent(), 1, []),
+      gateway,
+    });
+    await restarted.service.runNext(id);
+    expect(restarted.service.get(id)?.task.status).toBe("paused");
+    expect(restarted.service.get(id)?.task.operationAttempted).toBeUndefined();
+    expect(executor.calls).toEqual([]);
+    expect(restarted.executor.calls).toEqual([]);
+    expect(register).not.toHaveBeenCalled();
+    expect(() => restarted.service.resume(id, {})).not.toThrow();
+    activity.close();
+  });
+
+  it("外部実行中に中止した後で成功応答が届いても承認待ちにせず再実行しない", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service, executor } = makeService(activity, [], {
+      planner: planner("operation"),
+      config: configOf(agent(), 1, [calendar()]),
+      gateway: fakeGateway(),
+    });
+    const { id } = service.createTask({ projectId: "default", title: "予定更新", repo: null });
+    const started = Promise.withResolvers<void>();
+    const outcome = Promise.withResolvers<AgentOutcome>();
+    const run = vi.spyOn(executor, "run").mockImplementationOnce(async () => {
+      started.resolve();
+      return outcome.promise;
+    });
+    const running = service.runNext(id);
+    await started.promise;
+    expect(service.get(id)?.task.operationAttempted).toBe(true);
+    const stopRequested = Promise.withResolvers<void>();
+    vi.spyOn(executor, "kill").mockImplementation(() => {
+      stopRequested.resolve();
+    });
+    const cancelling = service.cancel(id);
+    await stopRequested.promise;
+    outcome.resolve(success);
+    await Promise.all([running, cancelling]);
+    expect(service.get(id)?.task.status).toBe("cancelled");
+    expect(service.get(id)?.task.gate).toBeUndefined();
+    await service.runNext(id);
+    expect(run).toHaveBeenCalledTimes(1);
+    activity.close();
+  });
+
+  it.each([
+    ["未指定", undefined],
+    ["対象なし", { ...operation, target: "" }],
+    ["変更内容なし", { ...operation, change: "" }],
+    ["確認方法なし", { ...operation, verification: "" }],
+    ["接続先名なし", { ...operation, name: "" }],
+  ])("作業指定が不十分（%s）なら実行前に停止し再開は許可する", async (_name, specified) => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service, executor } = makeService(activity, [success], {
+      planner: async () => ({
+        steps: [...STEP_PLANS.operation],
+        plan: "operation",
+        reason: "予定更新",
+        fallback: false,
+        costUsd: 0,
+        estimated: false,
+        operation: specified as typeof operation | undefined,
+      }),
+      config: configOf(agent(), 1, [calendar()]),
+      gateway: fakeGateway(),
+    });
+    const { id } = service.createTask({ projectId: "default", title: "予定更新", repo: null });
+    await service.runNext(id);
+    expect(service.get(id)?.task.status).toBe("paused");
+    expect(service.get(id)?.task.operationAttempted).toBeUndefined();
+    expect(executor.calls).toEqual([]);
+    expect(() => service.resume(id, {})).not.toThrow();
+    activity.close();
+  });
+
+  it.each(["manual", "failed", "throw"] as const)(
+    "外部実行の停止未確認を保持し、中止で再確認する（%s）",
+    async (mode) => {
+      const activity = new SqliteActivityStore(dbPath);
+      const { service, executor } = makeService(activity, [HOLD], {
+        planner: planner("operation"),
+        config: configOf(agent(), 1, [calendar()]),
+        gateway: fakeGateway(),
+      });
+      const { id } = service.createTask({ projectId: "default", title: "予定更新", repo: null });
+      executor.stops = false;
+      if (mode === "failed")
+        vi.spyOn(executor, "run").mockResolvedValueOnce({
+          kind: "failed",
+          reason: "error",
+          message: "timeout",
+        });
+      if (mode === "throw")
+        vi.spyOn(executor, "run").mockRejectedValueOnce(new Error("executor lost connection"));
+      const running = service.runNext(id);
+      if (mode === "manual") {
+        await executor.started.promise;
+        await service.pause(id);
+      }
+      await running;
+      const stopped = service.get(id)?.task;
+      const runId = activity
+        .forTask(id)
+        .filter((e) => e.type === "AgentRunStarted")
+        .at(-1)?.payload.runId as string;
+      expect(stopped?.status).toBe("paused");
+      expect(stopped?.unstoppedRuns).toEqual([runId]);
+      const workspace = join(dir, "workspaces", id, "operation", runId);
+      expect(existsSync(workspace)).toBe(true);
+      const { service: restarted, executor: restartedExecutor } = makeService(activity);
+      expect(restarted.get(id)?.task.unstoppedRuns).toEqual([runId]);
+      restartedExecutor.stops = false;
+      expect(await restarted.confirmPausedContainers(id)).toBe(false);
+      expect(restartedExecutor.killed).toContain(runId);
+      const cancelled = await restarted.cancel(id);
+      expect(cancelled.cancelled?.cleanup.find((c) => c.target === "container")?.result).toBe(
+        "failed",
+      );
+      expect(cancelled.cancelled?.cleanup.find((c) => c.target === "workspace")?.result).toBe(
+        "failed",
+      );
+      expect(existsSync(workspace)).toBe(true);
+      activity.close();
+    },
+  );
+
+  it("外部実行の停止を後から確認できれば中止で保持した作業領域を消す", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service, executor } = makeService(activity, [HOLD], {
+      planner: planner("operation"),
+      config: configOf(agent(), 1, [calendar()]),
+      gateway: fakeGateway(),
+    });
+    const { id } = service.createTask({ projectId: "default", title: "予定更新", repo: null });
+    executor.stops = false;
+    const running = service.runNext(id);
+    const runId = await executor.started.promise;
+    await service.pause(id);
+    await running;
+    const workspace = join(dir, "workspaces", id, "operation", runId);
+    expect(existsSync(workspace)).toBe(true);
+    executor.stops = true;
+    const cancelled = await service.cancel(id);
+    expect(cancelled.cancelled?.cleanup.find((c) => c.target === "container")?.result).toBe("done");
+    expect(existsSync(workspace)).toBe(false);
+    activity.close();
+  });
+});

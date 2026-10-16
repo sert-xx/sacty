@@ -42,6 +42,10 @@ const PARAMS = {
   "cancel.cleaningUp": null,
   "cancel.guardianJudging": null,
   "resume.notPaused": null,
+  "operation.incomplete": null,
+  "operation.attempted": null,
+  "operation.unconfirmed": null,
+  "operation.connectionMissing": null,
   "resume.capRequired": null,
   "resume.capTooLow": z.object({ usedUsd: z.number().nonnegative() }),
   "containers.notStopped": z.object({ names: z.string() }),
@@ -518,6 +522,14 @@ const ja: MessageDictionary = {
   "cancel.guardianJudging":
     "ゴールガーディアンが変更の申し出を判定しているため、終わるまで中止できません。",
   "resume.notPaused": "一時停止中のタスクではありません。",
+  "operation.incomplete":
+    "外部作業は開始していません。対象・変更内容・確認方法・接続先が未確定です。依頼を具体的にした新しいタスクを作成してください。",
+  "operation.attempted":
+    "外部作業はすでに実行を開始しています。重複を避けるため再実行しません。接続先の状態と実行ログを確認し、このタスクを中止して、必要なら未実施分だけを新しいタスクにしてください。",
+  "operation.unconfirmed":
+    "外部作業の成功を確認できません。自動再実行はしません。実行ログと接続先の状態を確認し、中止後に必要なら未実施分のタスクを作成してください。",
+  "operation.connectionMissing":
+    "外部作業は開始していません。選択された接続先が利用できません。設定を確認してから再開してください。",
   "resume.capRequired": "予算で止まったタスクを再開するには、新しい上限が必要です。",
   "resume.capTooLow": ({ usedUsd }) =>
     `新しい上限は、使用済み（${formatUsd(usedUsd)}）より大きい金額にしてください。`,
@@ -968,6 +980,14 @@ const en: MessageDictionary = {
   "cancel.guardianJudging":
     "The Goal Guardian is judging a change request. You can cancel once it finishes.",
   "resume.notPaused": "The task is not paused.",
+  "operation.incomplete":
+    "The operation has not started. The target, changes, verification, or connection is missing. Create a new task with the missing details.",
+  "operation.attempted":
+    "The operation has already started and will not be repeated. Check the external state and execution log, cancel this task, and create a new task only for any remaining work.",
+  "operation.unconfirmed":
+    "The operation could not be confirmed successful and will not be retried automatically. Check the execution log and external state, cancel this task, and create a task for remaining work if needed.",
+  "operation.connectionMissing":
+    "The operation has not started. The selected connection is unavailable. Check its configuration before resuming.",
   "resume.capRequired": "To resume a task stopped by its budget, set a new cap.",
   "resume.capTooLow": ({ usedUsd }) =>
     `Set a new cap greater than the amount used (${formatUsd(usedUsd)}).`,

@@ -39,6 +39,8 @@ const STEP: Record<Language, Record<StepKey, string>> = {
     integrate: "統合レビュー",
     reproduce: "再現",
     implement: "実装",
+    document: "文書作成",
+    operation: "作業",
   },
   en: {
     investigate: "Investigate",
@@ -49,6 +51,8 @@ const STEP: Record<Language, Record<StepKey, string>> = {
     integrate: "Integration review",
     reproduce: "Reproduce",
     implement: "Implement",
+    document: "Document",
+    operation: "Operation",
   },
 };
 

@@ -78,16 +78,18 @@
 | `integrate` | 統合レビュー | 子タスクの成果が親の要求要件を満たすかを確かめる |
 | `reproduce` | 再現 | 不具合を再現する（失敗する）テストを書く |
 | `implement` | 実装 | 実装する。検証に通ったら、sacty が実装の PR を作り、人の承認（PR のマージ）を待つ |
+| `document` | 文書作成 | Markdown の原稿を作成・編集し、画面で承認を待つ |
+| `operation` | 作業 | 依頼された外部変更を1回実行し、根拠を提出して結果の承認を待つ |
 
 工程の分類：
 
-- 承認ゲートのある工程（`GATED_STEPS`）：`investigate`・`requirements`・`design`・`integrate`・`implement`。ただし、実装する組み合わせの先頭の
+- 承認ゲートのある工程（`GATED_STEPS`）：`investigate`・`requirements`・`design`・`integrate`・`implement`・`document`・`operation`。ただし、実装する組み合わせの先頭の
   調査（前段の調査）は承認せずに次へ進む（`StepCompleted`）。調査が目的のタスク（最後の工程が `investigate`）の調査だけを承認する。
   実装は、エージェントの実行が終わってもすぐには承認待ちにせず、検証（下の「実装の検証」）に通り、実装の PR を作ってから承認待ちにする。
-- 差し戻しでやり直せる工程（`REWORK_STEPS`）：`investigate`・`reproduce`・`requirements`・`design`・`implement`。
+- 差し戻しでやり直せる工程（`REWORK_STEPS`）：`investigate`・`reproduce`・`requirements`・`design`・`implement`・`document`。
 - リポジトリが要る工程（`REPO_STEPS`）：`implement`・`reproduce`・`review`。
 - docker compose のサービスを使える工程（`SERVICE_STEPS`）：`investigate`（不具合の調査のときだけ）・`reproduce`・`implement`。
-- 書き出せる工程（`EXPORT_STEPS`）：`investigate`（最後の工程のときだけ）・`requirements`・`design`。
+- 書き出せる工程（`EXPORT_STEPS`）：`investigate`（最後の工程のときだけ）・`requirements`・`design`・`document`。
 
 コード: `packages/core/src/events.ts`（`StepKey`・`GATED_STEPS`・`REWORK_STEPS`・`EXPORT_STEPS`・`exportSteps`）、`packages/core/src/projection.ts`（`investigationIsGoal`）、`apps/daemon/src/service.ts`（`REPO_STEPS`・`submitEvents`）、`apps/daemon/src/prompts.ts`（`SERVICE_STEPS`）
 
@@ -102,11 +104,24 @@
 | `review` | `review`（レビューだけ） |
 | `split` | `investigate` → `requirements` → `design` → `split` → `integrate` |
 | `bugfix` | `investigate` → `reproduce` → `implement` |
+| `document` | `document` |
+| `operation` | `operation` |
 
 選べる組み合わせの制限（`allowedPlans`）：`review` はリポジトリがあり、タスクが PR を指しているときだけ。`design-only` はリポジトリの
-無いタスクだけ。`split` は子タスクでは選べない（分割は1段だけ）。
+無いタスクだけ。`document` と `operation` もリポジトリの無いタスクだけ。`split` は子タスクでは選べない（分割は1段だけ）。
 
 コード: `packages/core/src/events.ts`（`STEP_PLANS`）、`apps/daemon/src/prompts.ts`（`allowedPlans`・`REPO_PLANS`）
+
+## 非開発作業と工程の選択
+
+オーケストレーターは `standard` を無条件に推奨せず、目的・成果物・変更対象・規模を比較する。質問・原因調査は `investigate`、既存 PR のレビューは `review`、全体設計は `design-only`、原稿作成は `document`。文書を含むリポジトリのファイル変更は、局所的なら `skip-design`、広い設計判断が必要なら `standard`、複数 PR に分けるなら `split`。再現可能な不具合は `bugfix`、設計判断が必要な不具合は `standard` とする。
+
+- `document` は要求要件・設計の形式を強制せず Markdown の原稿を作る。画面で差し戻し・承認できる。承認前は MCP/PF のアクセスとプロジェクトコンテキストを渡さず、外部原稿の読取も行わない。元の本文・規約等はタスク本文か人間の差し戻しで補う。任意の書き出しには既存の仕組みを使い、書き出し失敗はタスクの完了を止めない。既存の外部文書を直接更新する場合は `operation` を使う。
+- `operation` は単一の工程である。既存のオーケストレーターが、接続先1つ・一意の対象 ID/URL・依頼内容と前提・確認方法を選定する。追加の準備エージェント・準備成果物・実行前の承認ゲートは設けない。対象や接続先が不足しているときは実行開始前に停止する。
+- 作業には選定された接続先だけを渡し、依頼に従って実行する。対象と前提の確認、再送しない1回の書込、変更後の読戻確認を指示する。成功結果と根拠が返れば人間の結果承認を待つ。失敗・中断・再起動・結果不明では停止し、永続化した開始記録によって再開を拒否し、停止を維持する。実行開始後は差し戻せない。人間が外部状態を確認し、タスクを中止して、未実施分を新しいタスクにする。
+- 外部側の exactly-once を保証するものではない。1回の書込と読戻確認はエージェントへの指示である。定期実行・監視・任意の連携追加・複数接続先をまたぐ業務の制御は追加しない。複数種類の成果物を含む依頼は承認境界を明確にしてタスクを分ける。
+
+コード: `apps/daemon/src/prompts.ts`、`apps/daemon/src/service.ts`、`packages/core/src/events.ts`、`packages/core/src/projection.ts`
 
 ## オーケストレーター
 
@@ -126,6 +141,7 @@
 | `defaultReasons` | 既定のイメージ（`default`）を使う工程ごとの、`images` のどれも合わない理由（下の「工程のイメージ」） |
 | `services`・`servicesReason` | 起動する compose のファイル・サービス・工程（[サービス](services.md)）。共用の compose は名前で選ぶ（無い名前なら止める） |
 | `exports` | 工程ごとの書き出し先と理由（[書き出し](export.md)） |
+| `operation` | 単発作業の実行設定（`via`・`name`・`target`・`change`・`verification`）。独立した成果物ではなく工程選択の一部。対象が不明なら省略し、実行開始前に停止する。 |
 | `documentsDir` | 要求要件・設計のファイルを置くディレクトリ（[承認と差し戻し](approval.md)） |
 | `repo`・`repoReason` | リポジトリの無いタスクで、リポジトリが要る組み合わせを選んだときの作業するリポジトリ |
 
@@ -317,7 +333,7 @@ AI は `guardian_agent`（無ければ `default_agent`）。実行ごとに `wor
   （人が止めていたら `manual`）。時間をおいて自動で再開する仕組みは無い。
 - 人の一時停止：承認待ち・エスカレーション・子タスク待ち・ゴールガーディアンの判定中は止められない。実行中なら、コンテナ・テスト・
   サービスの起動を止めてから記録する。止まったことを確かめられないコンテナがあれば、そのことを確かめるまで再開しない。
-- 再開：止まる前の状態が実行待ちなら、止まった工程を実行し直す。
+- 再開：止まる前の状態が実行待ちなら、止まった工程を実行し直す。ただし、開始済みの作業は再開を拒否し、停止を維持する。
 - 中止：ゴールガーディアンの判定中は中止できない。次の順に片付け、対象（`container`・`workspace`・`session`・`branch`・
   `pull_request`）ごとの結果（`done`・`skipped`・`failed`）を `TaskCancelled` に記録する。
   1. 質問への答えの実行と、実行中のコンテナを止める。

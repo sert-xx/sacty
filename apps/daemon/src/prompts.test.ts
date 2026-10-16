@@ -32,6 +32,7 @@ import {
   extractReviewComments,
   extractSplitPlan,
   extractStepPlan,
+  operationSucceeded,
   postedLatestCommit,
   servicePromptLines,
 } from "./prompts.js";
@@ -1288,6 +1289,8 @@ describe("リポジトリを指定しないタスク（PBI-73）", () => {
 
   it("設計だけはリポジトリの無いタスクだけが選べ、リポジトリの無いタスクはレビューを選べない", () => {
     expect(allowedPlans(repoless)).toEqual([
+      "document",
+      "operation",
       "standard",
       "skip-design",
       "investigate",
@@ -1615,5 +1618,185 @@ describe("テストのコマンドの申告を読む工程（PR #105 再レビ�
     const declared = extractBlocks(output, new Set(), [], DECLARE);
     expect(declared.testCommandInvalid).toBe(true);
     expect(declared.output).not.toContain("sacty-test-command");
+  });
+});
+
+describe("non-code workflow boundaries", () => {
+  const task = {
+    title: "利用者ガイド",
+    body: "手順をまとめる",
+    noRepo: true,
+    steps: [],
+    remarks: [],
+    outputs: {},
+    approved: {},
+  } as unknown as Task;
+  const json = (value: unknown) => `\`\`\`json\n${JSON.stringify(value)}\n\`\`\``;
+  const operation = {
+    via: "mcp",
+    name: "calendar",
+    target: "event-1",
+    change: "開始時刻を10時にする",
+    verification: "event-1の開始時刻が10時",
+  };
+  it("repo内文書変更を非開発専用経路へ逃がさない", () => {
+    expect(
+      allowedPlans({ ...task, noRepo: false, repo: "https://github.com/acme/app" }),
+    ).not.toContain("document");
+    expect(
+      allowedPlans({ ...task, noRepo: false, repo: "https://github.com/acme/app" }),
+    ).not.toContain("operation");
+    expect(allowedPlans(task)).toEqual(expect.arrayContaining(["document", "operation"]));
+  });
+  it("原稿を要求要件や設計にせず、既存出力と指摘を渡す", () => {
+    const prompt = buildPrompt({ ...task, outputs: { document: "旧版" } }, "document");
+    expect(prompt).toContain("完成原稿");
+    expect(prompt).toContain("旧版");
+    expect(prompt).toContain("外部サービスやリポジトリを更新しない");
+  });
+  it("無条件standard推奨を外し成果と変更対象から比較させる（実モデル分類の評価ではない）", () => {
+    for (const candidate of [task, { ...task, noRepo: false }]) {
+      const prompt = buildOrchestratorPrompt(candidate, { repoless: { repositories: [] } });
+      expect(prompt).not.toContain("迷う場合は standard");
+      expect(prompt).toContain("目的・成果物・変更対象・規模");
+      expect(prompt).toContain("リポジトリ内の文書変更もファイル変更");
+    }
+  });
+  it("不足/不正な具体案と根拠なしの成功は受け入れない", () => {
+    const read = (value: unknown) =>
+      extractStepPlan(
+        json({ "sacty-steps": { plan: "operation", reason: "依頼に従う", operation: value } }),
+      )?.operation;
+    expect(read(operation)).toEqual(operation);
+    for (const value of [
+      null,
+      {},
+      { ...operation, target: " " },
+      { ...operation, via: "other" },
+      { ...operation, verification: null },
+    ]) {
+      expect(read(value)).toBeUndefined();
+    }
+    expect(operationSucceeded("完了しました")).toBe(false);
+    expect(
+      operationSucceeded(json({ "sacty-operation-result": { success: true, evidence: " " } })),
+    ).toBe(false);
+    expect(
+      operationSucceeded(json({ "sacty-operation-result": { success: false, evidence: "失敗" } })),
+    ).toBe(false);
+    expect(
+      operationSucceeded(
+        json({ "sacty-operation-result": { success: true, evidence: "event-1の状態を読戻確認" } }),
+      ),
+    ).toBe(true);
+  });
+});
+
+describe("単発操作の曖昧なJSONを拒否する", () => {
+  const proposal = {
+    "sacty-steps": {
+      plan: "operation",
+      reason: "依頼に従う",
+      operation: {
+        via: "platform",
+        name: "calendar",
+        target: "event-1",
+        change: "10時に変更",
+        verification: "時刻を確認",
+      },
+    },
+  };
+  const success = JSON.stringify({
+    "sacty-operation-result": { success: true, evidence: "変更を読み戻した" },
+  });
+  const failure = JSON.stringify({
+    "sacty-operation-result": { success: false, evidence: "先の成功報告を訂正" },
+  });
+  it("共通抽出器の大文字JSON囲み・囲みなしを受け付ける", () => {
+    expect(
+      extractStepPlan(`\`\`\`JSON\n${JSON.stringify(proposal)}\n\`\`\``)?.operation?.target,
+    ).toBe("event-1");
+    expect(operationSucceeded(success)).toBe(true);
+  });
+  it("対象訂正・複数案・壊れた当該ブロック併記では実行しない", () => {
+    const original = JSON.stringify(proposal);
+    const corrected = JSON.stringify({
+      "sacty-steps": {
+        ...proposal["sacty-steps"],
+        operation: { ...proposal["sacty-steps"].operation, target: "event-2" },
+      },
+    });
+    for (const extra of [corrected, original, '{"sacty-steps": null}', '{"sacty-steps": broken}']) {
+      expect(extractStepPlan(`${original}\n${extra}`)).toBeUndefined();
+    }
+  });
+  it("成功後の失敗訂正・不正ブロック・同じ見出しの重複キーを成功にしない", () => {
+    for (const extra of [
+      failure,
+      success,
+      '{"sacty-operation-result": null}',
+      '{"sacty-operation-result": broken}',
+    ]) {
+      expect(operationSucceeded(`${success}\n${extra}`)).toBe(false);
+    }
+    expect(
+      operationSucceeded(
+        '{"sacty-operation-result":{"success":false},"sacty-operation-result":{"success":true,"evidence":"ok"}}',
+      ),
+    ).toBe(false);
+    const escaped = String.raw`{"sacty-operation-result":{"success":false},"\u0073acty-operation-result":{"success":true,"evidence":"ok"}}`;
+    expect(operationSucceeded(escaped)).toBe(false);
+  });
+  it("実オーケストレータープロンプトに原稿の書き出し指定を含める", () => {
+    const task = {
+      title: "原稿",
+      body: "指定先へ",
+      noRepo: true,
+      steps: [],
+      remarks: [],
+      outputs: {},
+    } as unknown as Task;
+    const prompt = buildOrchestratorPrompt(task, {
+      repoless: { repositories: [] },
+      exports: { destinations: [{ via: "mcp", name: "docs", description: "文書保存" }] },
+    });
+    expect(prompt).toContain("document の完成原稿");
+    expect(prompt).toContain('"exports": {"document":');
+    expect(prompt).toContain("書き出しは、工程の承認の後");
+  });
+});
+
+describe("リポジトリなしの工程選択のJSON例", () => {
+  it.each([
+    [false, false],
+    [true, false],
+    [false, true],
+    [true, true],
+  ])("イメージ=%s・書き出し先=%sでも例全体がJSONとして読める", (images, exports) => {
+    const task = {
+      title: "予定更新",
+      body: "event-1を10時に変更",
+      noRepo: true,
+      steps: [],
+      remarks: [],
+      outputs: {},
+    } as unknown as Task;
+    const prompt = buildOrchestratorPrompt(task, {
+      repoless: { repositories: [] },
+      ...(images ? { images: [{ name: "node", description: "Node.js" }] } : {}),
+      ...(exports
+        ? {
+            exports: {
+              destinations: [{ via: "mcp" as const, name: "calendar", description: "予定表" }],
+            },
+          }
+        : {}),
+    });
+    const blocks = [...prompt.matchAll(/```json\n([\s\S]*?)\n```/g)];
+    expect(blocks).toHaveLength(1);
+    const example = JSON.parse(blocks[0]?.[1] ?? "");
+    expect(example["sacty-steps"].operation).toMatchObject({ target: "一意な対象ID/URL" });
+    expect(blocks[0]?.[1]).not.toContain("operationの場合のみ");
+    expect(prompt).toContain("operationの場合のみ。不足時は省略");
   });
 });

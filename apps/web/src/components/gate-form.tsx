@@ -28,7 +28,7 @@ export function GateForm({
   step: StepKey;
   /** 画面が表示している提出回。最新でなければデーモンが拒否する。 */
   submission: number;
-  /** 差し戻し先の候補（先頭が承認ゲートの工程）。1つだけなら選択肢を出さない。 */
+  /** 差し戻し先の候補（先頭が承認ゲートの工程）。空なら差し戻し不可。1つだけなら選択肢を出さない。 */
   targets: StepKey[];
   defaultTarget: StepKey;
   escalated: boolean;
@@ -94,7 +94,7 @@ export function GateForm({
           <p>{t.notReproducedHelp}</p>
         </div>
       )}
-      {escalated && !rework && (
+      {targets.length > 0 && escalated && !rework && (
         <p className="rounded-md border border-warn-line bg-warn-soft p-3 text-sm leading-6 text-warn">
           {t.escalated(maxChanges)}
         </p>
@@ -123,33 +123,42 @@ export function GateForm({
           ))}
         </fieldset>
       )}
-      <Label htmlFor="gate-comments">{t.commentsLabel}</Label>
-      <Textarea
-        id="gate-comments"
-        name="comments"
-        rows={5}
-        className="max-h-72 overflow-y-auto bg-card"
-        placeholder={t.commentsPlaceholder}
-        defaultValue={state.comments ?? pendingComments.join("\n")}
-        aria-invalid={Boolean(state.message)}
-        aria-describedby={state.message ? "gate-error" : undefined}
-      />
+      {targets.length > 0 && (
+        <>
+          <Label htmlFor="gate-comments">{t.commentsLabel}</Label>
+          <Textarea
+            id="gate-comments"
+            name="comments"
+            rows={5}
+            className="max-h-72 overflow-y-auto bg-card"
+            placeholder={t.commentsPlaceholder}
+            defaultValue={state.comments ?? pendingComments.join("\n")}
+            aria-invalid={Boolean(state.message)}
+            aria-describedby={state.message ? "gate-error" : undefined}
+          />
+        </>
+      )}
+      {targets.length === 0 && step === "operation" && (
+        <p className="text-sm leading-6 text-muted-foreground">{t.operationExecutedHelp}</p>
+      )}
       {state.message && (
         <p id="gate-error" role="alert" className="text-sm text-warn">
           {state.message}
         </p>
       )}
       <div className="flex flex-wrap gap-2.5">
-        <Button
-          type="submit"
-          name="decision"
-          value={escalated && !rework ? "continue" : "request"}
-          variant="outline"
-          disabled={pending}
-          className="min-h-11 flex-1 border-warn-line text-warn"
-        >
-          {escalated && !rework ? t.requestOverLimit : t.request}
-        </Button>
+        {targets.length > 0 && (
+          <Button
+            type="submit"
+            name="decision"
+            value={escalated && !rework ? "continue" : "request"}
+            variant="outline"
+            disabled={pending}
+            className="min-h-11 flex-1 border-warn-line text-warn"
+          >
+            {escalated && !rework ? t.requestOverLimit : t.request}
+          </Button>
+        )}
         {!pullRequest && !notReproduced && (
           <Button
             type="submit"
@@ -162,7 +171,9 @@ export function GateForm({
           </Button>
         )}
       </div>
-      <p className="text-xs leading-5 text-muted-foreground">{t.note(maxChanges)}</p>
+      {targets.length > 0 && (
+        <p className="text-xs leading-5 text-muted-foreground">{t.note(maxChanges)}</p>
+      )}
     </form>
   );
 }

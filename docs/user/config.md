@@ -102,7 +102,8 @@ step_agents:          # 書かなければ default_agent（統合レビューは
 ```
 
 `step_agents` に書けるキーは、`orchestrator` と工程の `investigate`（調査）・`review`（レビュー）・`requirements`（要求要件）・
-`design`（設計）・`split`（タスク分割）・`integrate`（統合レビュー）・`reproduce`（再現）・`implement`（実装）と、
+`design`（設計）・`split`（タスク分割）・`integrate`（統合レビュー）・`reproduce`（再現）・`implement`（実装）・
+`document`（文書作成）・`operation`（作業）と、
 `deployment`（マージの後のデプロイの確認。[マージの後の監視](deployment-watch.md)）です。
 `default_agent`・`guardian_agent`・`step_agents` に、`agents` に無い名前を書くと誤りになります。
 以前の版の `pr`（PR作成）は、工程を無くしたので書けません（書くと誤りになります。消してください）。
@@ -111,7 +112,7 @@ step_agents:          # 書かなければ default_agent（統合レビューは
 
 - 1タスクあたりの予算の既定値は `budget.default_per_task_usd`（既定 $1）です。
 - 予算の 80% で作業履歴に通知を記録し、上限に達したら一時停止します（作業は残します）。再開するときは、累計の新しい上限を画面で入力します。
-- サブスクリプションの利用上限や認証エラーでも一時停止し、再開すると止まった工程を実行し直します。
+- サブスクリプションの利用上限や認証エラーでも一時停止し、再開すると止まった工程を実行し直します。ただし、開始済みの作業は再開できず、停止したままになります。
 
 ## 関係するページ
 

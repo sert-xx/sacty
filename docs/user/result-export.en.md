@@ -4,7 +4,7 @@
 
 # Exporting results (Confluence, Notion, and so on)
 
-You can export results that a human has approved, namely Investigation results (for Investigation-only tasks), Requirements, and Design (including Test viewpoints), to Confluence, Notion, and similar services.
+You can export results that a human has approved, namely Investigation results (for Investigation-only tasks), Requirements, Design (including Test viewpoints), and document drafts, to Confluence, Notion, and similar services.
 
 ## Configure the destinations
 

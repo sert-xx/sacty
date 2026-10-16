@@ -12,6 +12,7 @@ import {
   MAX_SPLIT_CHILDREN,
   MIN_SPLIT_CHILDREN,
   message,
+  OperationSettings,
   type RemarkResponse,
   type ReviewComment,
   type ReviewVerdict,
@@ -53,6 +54,8 @@ const ja = (value: DaemonText) => renderMessage(value, "ja");
  * ここに無い工程は、承認後も実行せずに待機する。
  */
 export const EXECUTABLE_STEPS: readonly StepKey[] = [
+  "document",
+  "operation",
   "investigate",
   "review",
   "requirements",
@@ -266,6 +269,8 @@ function noTestsReasonLines(reason: string): string[] {
 }
 
 const STEP_NAME: Record<StepKey, string> = {
+  document: "文書作成",
+  operation: "作業",
   investigate: "調査",
   review: "レビュー",
   requirements: "要求要件",
@@ -503,6 +508,28 @@ export function buildPrompt(
   const previous = task.outputs[step];
 
   switch (step) {
+    case "document":
+      return [
+        "あなたは文書作成エージェントです。タスクが求めるユーザーガイド・手順書・報告書などの完成原稿をMarkdownで作成・編集してください。",
+        "要求要件や設計の形式を強制せず、読者・目的・指定された形式に合わせてください。根拠と未確認事項を区別してください。",
+        "この工程には外部サービスの接続・認証・プロジェクトコンテキストを渡していません。外部文書を読み取ることもできません。必要な原稿や根拠がタスクに無ければ不足情報を明記し、人間に本文等の提供と差し戻しを求めてください。",
+        "外部サービスやリポジトリを更新しないでください。原稿はsactyに保存し、人間の承認後に設定済みの書き出し先へ反映します。既存文書の直接更新依頼は作業で扱います。",
+        "--- タスク ---",
+        content,
+        ...(previous ? ["--- 前回の原稿 ---", previous] : []),
+        ...remarkLines(task, step, "原稿の本文"),
+      ].join("\n");
+    case "operation":
+      return [
+        "あなたは単発作業の実行エージェントです。次のタスクの依頼内容に従い、指定された接続先・対象だけを操作してください。",
+        "最初に対象と前提条件を読み取って確認し、相違・不足があれば変更せず失敗を報告してください。タスクから許可されていない更新・メッセージ送信を行わないでください。変更後は必ず状態を読み直して確認してください。",
+        "書込要求は1回だけです。エラーやタイムアウトの後に再送しないでください。成功したか不明なら失敗として報告してください。追加の準備成果物や事前承認を求めず、依頼の範囲を拡張しないでください。",
+        "--- タスク ---",
+        content,
+        "--- 工程選択時に決めた実行設定 ---",
+        JSON.stringify(task.operation ?? {}),
+        '結果と確認した根拠をMarkdownで報告し、最後に ```json のブロックで {"sacty-operation-result":{"success":true,"evidence":"対象ID/URLと確認済みの変更後状態"}} を出してください。失敗/未確認の場合はsuccess:falseとし、evidenceに理由を記載してください。',
+      ].join("\n");
     case "investigate": {
       // 前段の調査（PBI-29）：後の工程のために、関係するコードと事実を集める。人間は承認しない
       if (!investigationIsGoal(task)) {
@@ -2218,7 +2245,7 @@ function exportChoiceLines(
       ? `${task.ticket.key}（${task.ticket.url}）`
       : undefined;
   return [
-    "- exports：人間が承認した成果（investigate の調査の結果は調査だけのとき・requirements の要求要件・design の設計とテスト観点）を、Confluence・Notion などに書き出すか（PBI-56）。選んだ組み合わせのこれらの工程ごとに、書き出し先の接続先の名前（to）と種類（via）、置き場所の手がかり（location。例：Confluence のスペースと親のページ、Notion の親のページ）、理由（reason）を書く。書き出さない工程は to を空にして、理由を書く。タスクの内容・取り込み元のチケット・プロジェクトのコンテキストの規約（どこに何を書くか）・接続先の説明から判断し、規約や指示が無いのに推測で書き出さない。書き出しは、工程の承認の後に sacty が行う（ここでは書き出さない）",
+    "- exports：人間が承認した成果（investigate の調査の結果は調査だけのとき・requirements の要求要件・design の設計とテスト観点・document の完成原稿）を、Confluence・Notion などに書き出すか（PBI-56）。選んだ組み合わせのこれらの工程ごとに、書き出し先の接続先の名前（to）と種類（via）、置き場所の手がかり（location。例：Confluence のスペースと親のページ、Notion の親のページ）、理由（reason）を書く。書き出さない工程は to を空にして、理由を書く。タスクの内容・取り込み元のチケット・プロジェクトのコンテキストの規約（どこに何を書くか）・接続先の説明から判断し、規約や指示が無いのに推測で書き出さない。書き出しは、工程の承認の後に sacty が行う（ここでは書き出さない）",
     ...(source ? [`  - 取り込み元：${source}`] : []),
     "  - 使える接続先：",
     ...destinations.map(
@@ -2263,8 +2290,12 @@ const NO_CHANGE_LINE =
 
 /** オーケストレーターに渡す、工程の組み合わせの説明（PBI-17）。 */
 const planDescriptions: Record<StepPlan, string> = {
+  document:
+    "文書作成。ユーザーガイド・手順書・報告書などの原稿そのものを作り、画面で承認する。リポジトリのファイル変更や既存の外部文書の直接更新は含まない。",
+  operation:
+    "作業のみ。予定表の更新・既存の外部文書の直接編集など、外部サービスへの単発の変更。タスクの依頼に従って実行し、確認した結果を人間が承認する。リポジトリ不要。",
   standard:
-    "調査 → 要求要件 → 設計（テスト観点）→ 実装（PR を作り、マージで承認）。既定。振る舞いが複数ある・影響範囲が広い・テスト観点を人間と合意したい変更",
+    "調査 → 要求要件 → 設計（テスト観点）→ 実装（PR を作り、マージで承認）。振る舞いが複数ある・影響範囲が広い・テスト観点を人間と合意したい変更",
   "skip-design":
     "調査 → 要求要件 → 実装（PR を作り、マージで承認）。設計を省く。変更が小さく局所的で、要求要件の受け入れ条件だけで十分にテストできる変更（例：文言の修正、小さな関数の追加）",
   investigate:
@@ -2368,7 +2399,7 @@ export function buildOrchestratorPrompt(
     "選べる工程の組み合わせ：",
     ...Object.entries(plans).map(([key, text]) => `- ${key}：${text}`),
     "",
-    "迷う場合は standard を選んでください。実装する組み合わせは、先頭の調査（人間の承認なし）の結果を後の工程に渡します。",
+    ...PLAN_SELECTION_LINES,
     "",
     "--- タスク ---",
     `# ${task.title}`,
@@ -2407,6 +2438,7 @@ export function allowedPlans(task: Task): StepPlan[] {
     (plan) =>
       (plan !== "review" || (!repoless && referencedPullRequest(task))) &&
       (plan !== "design-only" || repoless) &&
+      ((plan !== "document" && plan !== "operation") || repoless) &&
       // 分割は1段だけ。子タスクは分割できない（PBI-27）
       (plan !== "split" || !task.parent),
   );
@@ -2433,8 +2465,9 @@ function buildRepolessOrchestratorPrompt(
     "あなたはオーケストレーターです。このタスクには対象リポジトリがありません（リポジトリを指定せずに作ったタスクです）。タスクの内容と、プロジェクトのコンテキスト・プロジェクトの対象をもとに、このタスクの進め方（工程の組み合わせ）を選んでください。",
     "作業領域（カレントディレクトリ）は空で、コードはありません。",
     "",
+    ...PLAN_SELECTION_LINES,
     "進め方は、次のどれかです。",
-    "- コードを変えない仕事（調べもの・全体の設計など）：investigate か design-only を選ぶ。リポジトリ無しのまま進め、成果は sacty の画面で人間が承認する（PR やブランチは作らない）",
+    "- コードを変えない仕事（調べもの・全体の設計など）：investigate・design-only・document・operation から目的に合うものを選ぶ。リポジトリ無しのまま進め、成果は sacty の画面で人間が承認する（PR やブランチは作らない）",
     "- 分ける必要がある大きなタスク：split を選ぶ。設計の承認の後に、タスク分割のエージェントが子タスクに分け、子タスクごとにプロジェクトの対象からリポジトリを選んで付ける（子タスクごとに違うリポジトリでよい）。ここではリポジトリを書かない",
     `- コードの変更が要り、分けないタスク：${REPO_PLANS.join("・")} のどれかを選び、作業するリポジトリ（repo）をプロジェクトの対象から1つ選んで、選んだ理由（repoReason）を書く。sacty がそのリポジトリを用意した後に、もう一度あなたに工程を選んでもらう（テストのコマンドなどは、そのときにコードを読んで決める）。どのリポジトリか決められなければ repo を空にして、repoReason に理由を書く（人間がリポジトリを選ぶ）`,
     "",
@@ -2454,6 +2487,11 @@ function buildRepolessOrchestratorPrompt(
     "",
     "あわせて、次のことを決めてください。",
     "- investigation：調査の工程の性質（PBI-43）。リポジトリの無いタスクでは content にする",
+    "- operation：operationを選ぶ場合だけ、依頼に基づく実行設定を同じ回答に書く。via（platformまたはmcp）、name（下記の設定済み接続先）、target（一意な対象ID/URL）、change（依頼された変更内容と前提条件）、verification（結果の確認方法）。対象や変更内容を特定できなければ推測せずoperationを省略し、reasonに不足情報を書く。実行前の独立した準備や承認は設けない。",
+    "--- 単発作業に使える接続先 ---",
+    ...(destinations.length
+      ? destinations.map((d) => `- ${d.via}/${d.name}：${d.description}`)
+      : ["（設定済みの接続先がありません。外部操作は開始できません）"]),
     ...(images.length > 0
       ? [
           "- images：工程ごとに使う実行のイメージ（PBI-41）。コードは無いので、ふつうは書かない（default）",
@@ -2473,8 +2511,9 @@ function buildRepolessOrchestratorPrompt(
     task.body || "（内容なし）",
     "",
     "選んだ進め方を、次の形式で必ず出してください。",
+    "operation の実行設定は operationの場合のみ。不足時は省略し、reasonに不足情報を書いてください。",
     "```json",
-    `{"${PLAN_HEADING}": {"plan": "${Object.keys(plans).join(" または ")}", "reason": "選んだ理由", "repo": "作業するリポジトリの URL（${REPO_PLANS.join("・")} のときだけ。決められなければ空）", "repoReason": "そのリポジトリを選んだ理由（決められなければ、その理由）", "investigation": "content"${images.length > 0 ? ', "images": {"requirements": "イメージの名前"}' : ""}${destinations.length > 0 ? ', "exports": {"requirements": {"to": "接続先の名前", "via": "platform または mcp", "location": "置き場所の手がかり", "reason": "そこに書き出す理由"}, "design": {"to": "", "reason": "書き出さない理由"}}' : ""}}}`,
+    `{"${PLAN_HEADING}": {"plan": "${Object.keys(plans).join(" または ")}", "reason": "選んだ理由", "repo": "作業するリポジトリの URL（${REPO_PLANS.join("・")} のときだけ。決められなければ空）", "repoReason": "そのリポジトリを選んだ理由（決められなければ、その理由）", "operation": {"via": "platform または mcp", "name": "接続先名", "target": "一意な対象ID/URL", "change": "依頼された変更内容と前提条件", "verification": "確認方法"}, "investigation": "content"${images.length > 0 ? ', "images": {"requirements": "イメージの名前"}' : ""}${destinations.length > 0 ? ', "exports": {"document": {"to": "接続先の名前", "via": "platform または mcp", "location": "原稿の置き場所", "reason": "そこに書き出す理由"}, "requirements": {"to": "接続先の名前", "via": "platform または mcp", "location": "置き場所の手がかり", "reason": "そこに書き出す理由"}, "design": {"to": "", "reason": "書き出さない理由"}}' : ""}}}`,
     "```",
   ].join("\n");
 }
@@ -2610,6 +2649,7 @@ export function extractStepPlan(
 ):
   | {
       plan: StepPlan;
+      operation?: OperationSettings;
       reason: string;
       baseBranch?: string;
       testCommand?: string;
@@ -2645,6 +2685,11 @@ export function extractStepPlan(
     const plan = StepPlan.safeParse(v.plan);
     const reason = text(v.reason);
     if (plan.success && allowed.includes(plan.data) && reason) {
+      // 外部操作は、複数の工程設定や壊れた訂正を混ぜた回答を使わない。
+      if (plan.data === "operation" && !uniqueOperationObject(output, PLAN_HEADING))
+        return undefined;
+      const operation =
+        plan.data === "operation" ? OperationSettings.safeParse(v.operation) : undefined;
       // ブランチ名とテストのコマンドは、形の正しいものだけを使う（PBI-25）
       const baseBranch = text(v.baseBranch);
       const testCommand = text(v.testCommand).slice(0, 1000);
@@ -2687,6 +2732,7 @@ export function extractStepPlan(
         ...(repoReason ? { repoReason } : {}),
         ...(isDocumentsDir(documentsDir) ? { documentsDir } : {}),
         plan: plan.data,
+        ...(operation?.success ? { operation: operation.data } : {}),
         reason,
         ...(/^[\w./-]+$/.test(baseBranch) && !baseBranch.startsWith("-") ? { baseBranch } : {}),
         ...(testCommand ? { testCommand } : {}),
@@ -3269,4 +3315,42 @@ export function buildReviewBody(
 /** PR の行へのコメントとして投稿するもの（目印を先頭に入れる）。 */
 export function buildReviewComments(task: Task): ReviewComment[] {
   return task.reviewComments.map((c) => ({ ...c, body: `${reviewMarker(task)}\n${c.body}` }));
+}
+
+/** 候補の順序や無条件の既定値ではなく、利用者の求める成果から比較する。 */
+const PLAN_SELECTION_LINES = [
+  "目的・成果物・変更対象・規模の順に候補を比較してください。standardを無条件の既定や、不明な仕事の受け皿にしないでください。",
+  "質問・原因調査・見積もりはinvestigate、PRレビューはreview、全体設計だけならdesign-only、原稿の作成はdocument、予定表更新など外部への単発変更はoperationです。選べない候補を選ばないでください。",
+  "リポジトリ内の文書変更もファイル変更です。小さく局所的ならskip-design、設計判断や広い影響範囲があるならstandard。文書という語だけでdocumentにしないでください。",
+  "期待動作が明確でテスト再現できる不具合はbugfix、設計判断が要る不具合はstandard。分割の候補がある場合は、1つのPRで扱えない変更に使います。",
+  "reasonには成果物と変更対象、候補を比較して必要な工程・省ける工程の根拠を書いてください。不足情報を隠して標準工程で進めず、不明点を明記してください。",
+];
+
+/** 操作は訂正前の案や成功だけを拾わない。壊れた当該JSONの併記も拒否する。 */
+function uniqueOperationObject(
+  output: string,
+  heading: string,
+): Record<string, unknown> | undefined {
+  const candidates = jsonCandidates(output).filter((c) => Object.hasOwn(c.value, heading));
+  // 正常な候補以外にも見出しが現れたら、壊れたJSONや重複キーの可能性があるため実行しない。
+  const mentions = [...output.matchAll(/"(?:\\.|[^"\\])*"\s*:/g)].filter((match) => {
+    try {
+      return JSON.parse(match[0].replace(/\s*:$/, "")) === heading;
+    } catch {
+      return false;
+    }
+  });
+  if (candidates.length !== 1 || mentions.length !== 1) return undefined;
+  const candidate = candidates[0];
+  return candidate ? headedObject(candidate.value, heading) : undefined;
+}
+
+export function operationSucceeded(output: string): boolean {
+  const result = uniqueOperationObject(output, "sacty-operation-result");
+  return Boolean(
+    result &&
+      result.success === true &&
+      typeof result.evidence === "string" &&
+      result.evidence.trim(),
+  );
 }

@@ -2,7 +2,7 @@
 
 # Export
 
-Exports human-approved Investigation results (for investigation-only tasks), Requirements, and Design to Confluence, Notion, and similar services. sacty has no
+Exports human-approved Investigation results (for investigation-only tasks), Requirements, Design, and document drafts to Confluence, Notion, and similar services. sacty has no
 settings per kind of destination; it has an agent do the export using the connections written as organization platforms (PF) or MCP servers. Exporting and importing
 project settings are also described in this document.
 
@@ -10,7 +10,7 @@ Related ADR: [Do not include Slack mentions (targets and kinds) in project expor
 
 ## What is exported and where
 
-- The steps that can be exported are `investigate` (only when it is the last step), `requirements`, and `design` (`EXPORT_STEPS`).
+- The steps that can be exported are `investigate` (only when it is the last step), `requirements`, `design`, and `document` (`EXPORT_STEPS`).
 - Whether to export and where are decided by the Orchestrator per step when it chooses the steps (`exports`: `to`, `via` (`platform` | `mcp`),
   `location`, `reason`). The available connections are the host's PFs, the PFs in the project's context, the host's MCP servers, and the MCP servers in the context. If there are no connections or no
   exportable steps, nothing is decided. Steps with no decision, or for which an unknown connection was chosen, are not exported.

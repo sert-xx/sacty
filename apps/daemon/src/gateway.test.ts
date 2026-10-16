@@ -899,3 +899,48 @@ describe("コンテキストの HTTP の MCP サーバーの中継（PBI-49）",
     });
   });
 });
+
+describe("単発作業の接続先制限", () => {
+  it("選択されたPFだけを通し、原稿作成のトークンと別PF/MCPへのアクセスは拒否する", async () => {
+    const up = upstream([json(200, { ok: true })]);
+    const platform = (name: string) =>
+      toPlatform(
+        name,
+        PlatformFile.parse({
+          upstream: `https://${name}.example.com`,
+          auth: { secret: "key" },
+          allow: ["GET /**"],
+        }),
+      );
+    gateway = new AiGateway({
+      fetchImpl: up.fetchImpl,
+      platforms: () => [platform("calendar"), platform("other")],
+      credentials: new PlatformCredentials({
+        secrets: new MemorySecretStore({ key: "test-value" }),
+      }),
+    });
+    const port = await gateway.listen();
+    const execute = gateway.register(undefined, undefined, undefined, {
+      platforms: ["calendar"],
+      hostMcp: [],
+    });
+    const draft = gateway.register(undefined, undefined, undefined, {
+      platforms: [],
+      hostMcp: [],
+    });
+    const allowed = await fetch(`http://127.0.0.1:${port}/r/${execute.token}/pf/calendar/events`);
+    expect(allowed.status).toBe(200);
+    for (const [token, name] of [
+      [execute.token, "other"],
+      [draft.token, "calendar"],
+    ]) {
+      const response = await fetch(`http://127.0.0.1:${port}/r/${token}/pf/${name}/events`);
+      expect(response.status).toBe(403);
+    }
+    const mcp = await fetch(`http://127.0.0.1:${port}/mcp/other`, {
+      headers: { authorization: `Bearer ${execute.token}` },
+    });
+    expect(mcp.status).toBe(403);
+    expect(up.calls).toHaveLength(1);
+  });
+});

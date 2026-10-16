@@ -451,6 +451,11 @@ export function TaskDetailView({ data }: { data: TaskDetailData }) {
             task.steps.some((s) => s.key === "design" && s.state !== "todo")) && (
             <Deliverable task={task} step="design" />
           )}
+          {(["document", "operation"] as const).map((step) =>
+            task.steps.some((s) => s.key === step) ? (
+              <Deliverable key={step} task={task} step={step} />
+            ) : null,
+          )}
           {task.split && <Subtasks task={task} subtasks={data.children} />}
           {/* 統合レビューの結果（PBI-31） */}
           <IntegrationResult task={task} />

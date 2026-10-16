@@ -122,6 +122,7 @@ type RunState = Partial<GatewayRoute> & {
    * トークンでは、名前を知っていても使えない）。認証は秘密情報の名前のまま持ち、使うときにホストで取り出す。
    */
   platforms?: readonly Platform[];
+  access?: { platforms: readonly string[]; hostMcp: readonly string[] };
   stats: GatewayStats;
   /** いまの一続きの失敗で待った合計。成功すると0に戻る。 */
   streakWaitedMs: number;
@@ -232,10 +233,12 @@ export class AiGateway {
     mcp?: Record<string, ContextMcpRoute>,
     /** プロジェクトのコンテキストで定義した外部 PF（PBI-74）。この実行だけが使える。 */
     platforms?: readonly Platform[],
+    access?: { platforms: readonly string[]; hostMcp: readonly string[] },
   ): { token: string; stats: () => GatewayStats; close: () => void } {
     const token = `sacty-gw-${randomBytes(24).toString("hex")}`;
     const state: RunState = {
       ...route,
+      ...(access ? { access } : {}),
       ...(mcp && Object.keys(mcp).length > 0 ? { mcp } : {}),
       ...(platforms && platforms.length > 0 ? { platforms: [...platforms] } : {}),
       stats: { retries: 0, waitedMs: 0, statuses: [], gaveUp: false },
@@ -267,6 +270,9 @@ export class AiGateway {
     const run = this.runs.get(target.token);
     if (!run) {
       return fail(res, 401, "sacty gateway: unknown or expired run token");
+    }
+    if (run.access && !run.access.platforms.includes(target.name)) {
+      return fail(res, 403, "sacty gateway: platform is outside the selected operation");
     }
     // ホストの PF（config.yaml）を先に引き、無ければこの実行のプロジェクトのコンテキストの PF（PBI-74）。同じ名前なら
     // ホストのものを使う（合成と同じ規則。設定を読み直したときも、ホストのものが優先される）
@@ -462,6 +468,9 @@ export class AiGateway {
     const mcp = /^\/mcp\/([A-Za-z0-9_-]+)\/?(\?.*)?$/.exec(req.url ?? "");
     if (mcp) {
       if (!run) return fail(res, 401, "sacty gateway: unknown or expired run token");
+      if (run.access && !run.access.hostMcp.includes(mcp[1] ?? "")) {
+        return fail(res, 403, "sacty gateway: MCP server is outside the selected operation");
+      }
       if (!this.deps.hostMcp) return fail(res, 404, "sacty gateway: no host MCP servers");
       return relayHostMcp(this.deps.hostMcp, mcp[1] ?? "", req, res);
     }

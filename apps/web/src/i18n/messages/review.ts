@@ -45,6 +45,8 @@ const ja = {
     requestOverLimit: "上限を超えて差し戻す",
     request: "差し戻す",
     approve: "承認する",
+    operationExecutedHelp:
+      "外部操作は実行済みです。このタスクでは差し戻し・再実行できません。結果を確認して承認してください。結果を受け入れられない場合はタスク詳細から中止し、必要な修正操作は新しいタスクとして依頼してください。",
     notReproducedTitle: "再現できませんでした",
     notReproducedHelp:
       "再現のテストが失敗しなかった（または、再現のテストが無かった）ので、先へは進めません。再現の手がかり（手順・入力・環境など）を指摘に書いて差し戻すと、再現をやり直します。不要なら、タスクを中止してください。",
@@ -122,6 +124,8 @@ const en: ReviewMessages = {
     requestOverLimit: "Request changes beyond the limit",
     request: "Request changes",
     approve: "Approve",
+    operationExecutedHelp:
+      "The external operation has already run. It cannot be sent back or rerun in this task. Check the result and approve it. If you cannot accept the result, cancel from task details and request any corrective operation in a new task.",
     notReproducedTitle: "The bug was not reproduced",
     notReproducedHelp:
       "The reproduction test did not fail (or there was no reproduction test), so the task can't move on. Request changes with hints for reproducing it (steps, input, environment) to try again, or cancel the task.",

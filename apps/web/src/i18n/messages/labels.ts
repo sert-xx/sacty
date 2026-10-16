@@ -29,6 +29,8 @@ const ja = {
     integrate: "統合レビュー",
     reproduce: "再現",
     implement: "実装",
+    document: "文書作成",
+    operation: "作業",
   } satisfies Record<StepKey, string>,
   start: {
     sacty: "sacty",
@@ -387,6 +389,8 @@ const en: LabelMessages = {
     integrate: "Integration review",
     reproduce: "Reproduce",
     implement: "Implement",
+    document: "Document",
+    operation: "Operation",
   },
   start: {
     sacty: "sacty",

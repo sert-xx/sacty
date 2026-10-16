@@ -51,6 +51,24 @@ For tasks created from a template, the template name appears in "Started from" i
 From the API, send `{"template": "sacty-setup", "projectId": "<project ID>", "repo": "<repository URL>"}` to `POST /api/tasks`
 (do not pass `title` or `body`). The CLI has no command to create tasks.
 
+## Documents and one-off external work
+
+To create a user guide, meeting notes, or a translated draft, leave the repository unselected and include the audience, purpose, and source contents in the task. Review the Markdown draft in Document, request changes, and approve it. Export follows approval only if the Orchestrator selected a destination. Check the selected destination and reason in the task’s steps section ([Exporting results](result-export.en.md)). An export failure does not stop completion of the draft, so also check the external publication result. To change documentation files in a repository, choose that repository. The change follows the normal Implementation and PR approval flow.
+
+Document does not use external connections or project context and does not read drafts from external sources. Include the source text and any necessary rules in the task body; supply missing details through Request changes. Providing only a URL does not let this step retrieve the page’s contents to write the draft.
+
+You can also request a calendar, register, or existing external page update without choosing a repository. This covers one-off changes that use one configured destination.
+
+1. Include the specific target ID/URL, change and preconditions, and desired result in the request. The Orchestrator selects the destination, target, requested change, and verification method. Missing target or connection details stop the task before execution starts.
+2. The single Operation step performs the request once. There is no separate preparation step or pre-execution approval, so confirm the request is correct before starting the task.
+3. Check the evidence in the successful result and approve it to complete the task. Failure or an unknown result does not count as completion.
+
+If target details are missing, create a new task with the missing information included in the request. If the selected connection became unavailable before execution started, correct its configuration and resume the task.
+
+You cannot request changes after execution starts. Resume is rejected after interruption, restart, or failure, and the task stays paused. Check the actual state in the external service, cancel the task, and create a new task for only the changes that remain undone. The agent is instructed to write once and check the result, but this does not guarantee duplicate prevention by the external service.
+
+Recurring updates, monitoring, and automation of long-running work across several destinations are outside this scope. Split requests with several deliverables, such as a draft and an external update, into units you can review and approve.
+
 ## Repositories without tests
 
 Even in a repository that has no tests at all, such as one with only a README, tasks proceed without stopping.
@@ -177,6 +195,12 @@ approvals and resumes in other tabs or the CLI, tasks the daemon picked up and s
   the screen shows that and that it is retrying, and shows the list once it can be read.
 - The sacty settings and project settings screens are not updated automatically (only the header's notices are). To see the latest, open the screen
   again or reload it in the browser.
+
+## Back up before updating and returning to an older version
+
+A database containing tasks with Document or Operation cannot be read by an older version that does not support these steps, and startup fails. Stop the daemon and back up the data directory before updating. To return to an older version, use the backup made before the update. If your settings include the new steps, also restore settings compatible with the older version.
+
+Restoring the backup does not restore tasks or progress recorded after it was made. Keep a separate copy of the data before returning to the older version, and check which history will be lost. External changes, such as calendar updates, are not rolled back. External operation start records made after the backup are also lost, so check the actual external state and do not repeat changes already made.
 
 ## Tasks from earlier versions (with the Open PR step)
 

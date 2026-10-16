@@ -334,6 +334,10 @@ export type Task = {
     estimated: boolean;
   };
   currentRunId?: string;
+  /** 外部操作の実行開始。再開・差し戻しでも消さず、二重実行を防ぐ。 */
+  operationAttempted?: boolean;
+  /** 工程選択時に依頼から決めた単発作業の実行設定。 */
+  operation?: PayloadOf<"StepsChosen">["operation"];
   /** 承認ゲートで止まっている工程と、何回目の提出か。 */
   gate?: { step: StepKey; submission: number };
   /** 工程ごとの提出回数。 */
@@ -611,6 +615,7 @@ export function applyEvent(
       if (event.payload.noTestsReason && !event.payload.testCommand) {
         task.noTestsReason = event.payload.noTestsReason;
       }
+      if (event.payload.steps.includes("operation")) task.operation = event.payload.operation;
       if (event.payload.investigation) task.investigation = event.payload.investigation;
       if (event.payload.images) task.images = event.payload.images;
       if (event.payload.images && event.payload.imageSource) {
@@ -636,6 +641,13 @@ export function applyEvent(
     case "AgentRunStarted":
       if (task.status !== "queued")
         throw new ActivityIntegrityError(event, `status ${task.status}`);
+      if (event.payload.step === "operation") {
+        if (task.operationAttempted)
+          throw new ActivityIntegrityError(event, "operation was already attempted");
+        if (!task.operation)
+          throw new ActivityIntegrityError(event, "operation settings are missing");
+        task.operationAttempted = true;
+      }
       task.status = "running";
       task.currentRunId = event.payload.runId;
       break;
@@ -1896,6 +1908,7 @@ export function appliedProposalFor(task: Task, step: StepKey): TaskProposal | un
  * ゲートの工程か、それより前の、工程エージェントが作る工程。
  */
 export function reworkTargets(task: Task, gateStep: StepKey): StepKey[] {
+  if (task.operationAttempted) return [];
   // 統合レビューの承認待ちで差し戻すと、タスク分割をやり直して修正の子タスクを追加する（PBI-31）。
   // 親の要求要件・設計は、子タスクが作られた後なので戻さない
   if (gateStep === "integrate") return task.steps.some((s) => s.key === "split") ? ["split"] : [];
