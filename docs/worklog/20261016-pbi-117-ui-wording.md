@@ -2,7 +2,7 @@
 
 - 日付: 2026-10-16（UTC）
 - タスク: PBI-117
-- PR: なし
+- PR: #127
 - ブランチ: feat/issue-117-ui-wording
 - 関係する ADR: [画面の文言を本文と補足に分け、仕組みの説明はツールチップで出す](../adr/20261016-1244-ui-wording-body-and-hints.md)
 
@@ -41,7 +41,7 @@
 
 - `npx biome check apps packages tests docs README.md README.en.md CONTRIBUTING.md`：通った（`npm run lint` は、別のセッションの
   worktree `.claude/worktrees/` の `biome.json` を拾って止まるので、対象を指定した）。
-- `npm run typecheck`・`npx vitest run`・`npm run build`：下の「残したこと」を参照（PR を作る前に通す）。
+- `npm run typecheck`・`npx vitest run`（88 ファイル・1809 件）・`npm run build`：通った。
 - 画面：`preview_start`（`.claude/launch.json` の `sacty`）で、sacty の設定・プロジェクトの設定・タスクの作成の画面を開き、補足の印に
   マウスを乗せる・Tab で止まる・スマホの幅でタップする・Esc で閉じる、ライトとダーク、日本語と英語を確かめた。
 
