@@ -10345,6 +10345,40 @@ describe("API", () => {
     reopened.close();
   });
 
+  it("待ち行列の混雑の始まりは、画面の取得に依らず、タスクの作成・中止・設定の変更で追う（PR #128 レビュー指摘）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    let now = Date.parse("2026-10-16T03:00:00.000Z");
+    const settings = new MemorySettingsStore({ maxParallelTasks: 1 });
+    const { service } = makeService(activity, [], { settings, now: () => now });
+    const create = (title: string) => service.createTask({ projectId: "default", title });
+    const a = create("A");
+    // 実行待ち 1 件は上限（1）より多くない
+    expect(service.dashboard().queue).toEqual({ running: 0, queued: 1, max: 1 });
+    // 2 件目を作った時刻が始まり（ダッシュボードを取る前から数える）
+    now += 60_000;
+    create("B");
+    const startedAt = now;
+    now += 15 * 60_000;
+    expect(service.dashboard().queue).toEqual({
+      running: 0,
+      queued: 2,
+      max: 1,
+      overSince: new Date(startedAt).toISOString(),
+    });
+    // 画面を開いていない間に解消して（中止）、再発した（作成）：始まりは再発の時刻
+    now += 60_000;
+    await service.cancel(a.id);
+    now += 60_000;
+    create("C");
+    const again = now;
+    now += 60_000;
+    expect(service.dashboard().queue.overSince).toBe(new Date(again).toISOString());
+    // 上限を上げると解消する
+    service.saveSettings({ maxParallelTasks: 3 });
+    expect(service.dashboard().queue).toEqual({ running: 0, queued: 2, max: 3 });
+    activity.close();
+  });
+
   it("GET /api/dashboard は、消したプロジェクトのタスクを数えず、設定を読めなければ上限は既定値（PBI-118）", async () => {
     const activity = new SqliteActivityStore(dbPath);
     const projects = projectsWithAccount();

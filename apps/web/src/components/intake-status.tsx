@@ -17,7 +17,17 @@ export function IntakeStatusView({ intake }: { intake: DaemonStatus["intake"] })
   const t = m.projects.intake;
   // 取り込みの種類ごとの直近の取り込み（PBI-100）
   const { runs, errors } = intake ? intakeRuns(intake) : { runs: [], errors: [] };
-  if (!intake) return <p className="text-muted-foreground">{t.stopped}</p>;
+  // 設定ファイルを読めず止まっている（PR #128 レビュー指摘：復旧先の sacty の設定へ進めるようにする）
+  if (!intake) {
+    return (
+      <p className="text-warn">
+        {t.stopped}{" "}
+        <Link href="/settings" className="underline">
+          {t.settings}
+        </Link>
+      </p>
+    );
+  }
   if (
     !intake.settingsUnreadable &&
     !intake.label &&

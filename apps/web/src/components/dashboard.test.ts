@@ -194,8 +194,9 @@ describe("ダッシュボードの欄の並び（PBI-118）", () => {
     expect(text()).toContain(
       "設定ファイル（config.yaml）を読めないので、取り込みは止まっています。",
     );
-    // 設定ファイルを読めないときは「今すぐ取り込む」を出さない
+    // 設定ファイルを読めないときは「今すぐ取り込む」を出さないが、復旧先の sacty の設定へのリンクは出す（PR #128 レビュー指摘）
     expect(card("intake-status")?.querySelector('button[type="submit"]')).toBeNull();
+    expect(card("intake-status")?.querySelector('a[href="/settings"]')).not.toBeNull();
     expect(byId("flow-days7-lead")?.textContent).toBe("—");
     expect(byId("quality-changesRequested")?.textContent).toBe("0回");
     expect(byId("queue-running")?.textContent).toBe("0 / 3");
@@ -305,6 +306,38 @@ describe("ダッシュボードの止まっているタスクの理由（PBI-118
     expect(byId("paused-task-b1")?.querySelector("a")?.getAttribute("href")).toBe("/tasks/b1");
     expect(byId("paused-task-b2")?.textContent).toContain("Webサイト");
     expect(byId("paused-task-u1")).not.toBeNull();
+  });
+
+  it("展開した一覧は 5 件分の高さで、あふれたら欄の中でスクロールし、取り直しでスクロールの位置が消えない（PR #128 レビュー指摘）", async () => {
+    const many = (n: number): DashboardData["paused"] => [
+      {
+        reason: "error",
+        tasks: Array.from({ length: n }, (_, i) => ({
+          id: `e${i}`,
+          title: `エラー ${i}`,
+          projectName: "決済",
+        })),
+      },
+    ];
+    show(base({ paused: many(100) }));
+    const details = byId("paused-error")?.querySelector("details") as HTMLDetailsElement;
+    act(() => {
+      details.open = true;
+    });
+    const list = byId("paused-tasks-error") as HTMLElement;
+    expect(list.className).toContain("max-h-80");
+    expect(list.className).toContain("overflow-y-auto");
+    expect(list.getAttribute("tabindex")).toBe("0");
+    expect(container.querySelectorAll('[data-testid^="paused-task-e"]')).toHaveLength(100);
+    list.scrollTop = 300;
+    list.focus();
+    server = base({ paused: many(101) });
+    await wait();
+    expect(byId("paused-tasks-error")).toBe(list);
+    expect(list.scrollTop).toBe(300);
+    expect(details.open).toBe(true);
+    expect(document.activeElement).toBe(list);
+    expect(byId("paused-task-e100")).not.toBeNull();
   });
 
   it("開いた状態は、取り直しで消えない（同じ要素が残る）。件数が変わる・理由が無くなる", async () => {

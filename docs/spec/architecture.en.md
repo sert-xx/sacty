@@ -98,10 +98,13 @@ Code: `apps/daemon/src/server.ts` (`createApp`, `handleError`), `apps/web/src/li
     appears only when either period has an estimate. Tasks near their budget are the open tasks whose used amount is 80% (`BUDGET_WARN_RATIO`)
     or more of the cap (including those that reached it), largest ratio first, with used / cap, the estimate mark, and the cap-reached mark
     (`nearBudgetRows`).
-  - Step queue: the number of running tasks (`running`) / the parallel limit (the sacty setting `maxParallelTasks`; the default when it is
-    not set or cannot be read) and the number of waiting tasks (`queued`). When more tasks than the limit have been waiting for 10 minutes
-    (`QUEUE_OVER_MS`), it is highlighted with a link to the sacty settings. The start of "has persisted" (`overSince`) is decided each time the
-    daemon returns the aggregate and is kept in memory only (counted again after a restart).
+  - Step queue: the number of running tasks / the parallel limit (the sacty setting `maxParallelTasks`; the default when it is not set or
+    cannot be read) and the number of waiting tasks. Running means the tasks the worker is processing (`inflight`, including work while the
+    status is `idle`: tests after implementation, the final review, the reproduction check, exports). Waiting means the tasks the worker will
+    process next (`queuedTaskIds`, the same decision as the worker) that it is not processing yet. When more tasks than the limit have been
+    waiting for 10 minutes (`QUEUE_OVER_MS`), it is highlighted with a link to the sacty settings. The start of "has persisted" (`overSince`)
+    is updated by the daemon whenever it writes to the activity log, starts or finishes a run, or saves the sacty settings or a project
+    (`trackQueue`, `queueOverSince`; independent of the UI fetching) and is kept in memory only (counted again after a restart).
   - Intake: the same display as the project list (`IntakeStatusView`: the last intake per kind, how many tasks it created, what could not be
     imported; when intake is not set, off, or the settings cannot be read, that fact with a link to the sacty settings) and "Run intake now"
     (`runIntakeAction`; not shown when the settings file cannot be read).
@@ -109,17 +112,20 @@ Code: `apps/daemon/src/server.ts` (`createApp`, `handleError`), `apps/web/src/li
     (`createdAt`) to completion for the tasks completed in that period ("—" when none). The finish time is the activity record that finished
     the task (`isFinished` went from false to true). A task that becomes unfinished again is not counted; when it finishes again, the new
     time counts.
-  - Quality signals: counts for the last 30 days including today. Changes requested by a person (`ChangesRequested`), rework from PR
-    feedback (`ReworkJudged`), goal guardian misses (`GuardianMissed`), integration review failures (`IntegrationReviewed` with `passed`
-    false), and fix tasks from the post-merge watch (`DeploymentFixRegistered`). Rework by step counts changes requested by a person and
-    rework from PR feedback by the step whose deliverable was sent back (`step` of `ChangesRequested`; for PR feedback the rework target
-    `target`, or the step at the approval gate of that PR when missing); requirements, design, and implement (`REWORK_STEPS`) are always shown, other steps only when they
-    have a count.
+  - Quality signals: counts for the last 30 days including today. A send-back is counted once, by the record of the actual send-back
+    (`ChangesRequested`); those the goal guardian made from PR feedback (the projection keeps that record's time in `prRework`) count as
+    "rework from PR feedback", the others as "changes requested by a person" (a judgement `ReworkJudged` that did not lead to a send-back is
+    not counted). Also goal guardian misses (`GuardianMissed`), integration review failures (`IntegrationReviewed` with `passed` false), and
+    fix tasks from the post-merge watch (`DeploymentFixRegistered`). Rework by step counts changes requested by a person and rework from PR
+    feedback by the step whose deliverable was sent back (`step` of `ChangesRequested`, the step at the approval gate); requirements, design,
+    and implement (`REWORK_STEPS`) are always shown, other steps only when they have a count.
   - Period boundaries follow the local date of the machine running sacty (the daemon), not the UI language (today = from 0:00 of that day;
     last 7 days = 7 days including today; last 30 days = 30 days including today). The time zone is passed to the UI as the aggregate's
     `timeZone` and shown in the hint of the cost section.
   - Empty states: when there are no projects, nothing matches, or nothing is configured, each section says so. When the daemon cannot be
-    reached, the sections are not shown and the error is shown instead (the sections appear once it can be reached).
+    reached at render time, the sections are not shown and the error is shown instead (the sections appear once it can be reached). When it
+    becomes unreachable after the sections were shown, they keep what was last fetched and the UI says it cannot update
+    ([Refetching screen data](#refetching-screen-data)).
   - To add a section, add its data to `DashboardData` (`loadDashboard`) and add a `DashboardCard` to `LiveDashboard` (one refetch per screen).
 - Above the sections, the reason Slack notifications could not be sent (the daemon warning `notify.failed`; `notificationProblems`) is shown with a link to the sacty settings
   (nothing when there is none). It is fetched again together with the sections.
@@ -139,7 +145,8 @@ Even though the UI refetches every 3 seconds, neither all tasks nor the activity
 - What it keeps: per task, the time of the latest record that made it wait for a person (`StepSubmitted`, `TaskPaused`, `TaskEscalated`, or `ReproductionChecked` when not reproduced). For events
   that carry a cost (`CHARGED_EVENT_TYPES`; zero costs are not kept), the time, the cost, and whether it is an estimate. The time a task finished (the
   event where `isFinished` went from false to true; removed when the task becomes unfinished again) and its time since creation. The time, kind, and step of
-  quality-signal events. Records older than 32 days (`KEEP_DAYS`) are dropped when aggregating (the 30-day sections plus a margin for the date boundary).
+  quality-signal events. Records older than 32 days (`KEEP_DAYS`) are dropped once a day (by record time) while folding and when aggregating (the 30-day
+  sections plus a margin for the date boundary; they do not keep growing when the daemon runs without the dashboard being opened).
 - When aggregating, the IDs of the existing projects and the current tasks are passed in; records of tasks of deleted projects are not counted (they count again if the project comes back).
 - What it returns: `timeZone`, `waitingSince` (only tasks waiting for a person), `costs` (`actualUsd` and `estimatedUsd` for `today` and `days7`, and the period
   starts `since`), `flow` (`completed`, `cancelled`, `medianLeadMs` for `days7` and `days30`, and `since`), `quality` (`since`, `counts`,

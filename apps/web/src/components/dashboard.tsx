@@ -342,7 +342,13 @@ export function PausedCard({ data }: { data: DashboardData }) {
                       {m.count(group.tasks.length)}
                     </span>
                   </summary>
-                  <ul className="flex flex-col gap-2 px-5 pb-3">
+                  {/* 展開した一覧も、ほかの一覧の欄と同じく 5 件分の高さで、あふれたら欄の中でスクロールする（PR #128 レビュー指摘） */}
+                  <ul
+                    data-testid={`paused-tasks-${group.reason}`}
+                    // biome-ignore lint/a11y/noNoninteractiveTabindex: スクロールする一覧を、キーボードでもスクロールできるようにする
+                    tabIndex={0}
+                    className="flex max-h-80 flex-col gap-2 overflow-y-auto px-5 pb-3 outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  >
                     {group.tasks.map((task) => (
                       <li
                         key={task.id}

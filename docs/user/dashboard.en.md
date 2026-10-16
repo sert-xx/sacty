@@ -30,7 +30,9 @@ Sections sit side by side when there is room and stack otherwise. The same secti
 - The cost includes completed and cancelled tasks. An estimate is a converted value (such as a subscription), not an actual charge.
 - The waiting time counts from the record that made the task await approval, pause, or escalate.
 - Tasks of deleted projects are neither shown nor counted in any section.
-- While the daemon cannot be reached, the error is shown instead of the sections. The sections appear once it can be reached.
+- If the daemon cannot be reached when you open the page, the error is shown instead of the sections. The sections appear once it can be reached.
+- If the daemon becomes unreachable after the sections were shown, they keep what was last fetched and a notice above them says updates are
+  paused. Even though the sections are visible, their numbers are not current during that time. Updates resume once it can be reached.
 
 ## Related pages
 

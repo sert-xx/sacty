@@ -16,9 +16,9 @@ export type FlowSum = { completed: number; cancelled: number; medianLeadMs: numb
 
 /** 品質の信号の種類（直近 30 日の回数）。 */
 export type QualityKind =
-  /** 人が差し戻した（ChangesRequested）。 */
+  /** 人が差し戻した（ChangesRequested のうち、PR の指摘によるものでないもの）。 */
   | "changesRequested"
-  /** PR の指摘で差し戻した（ReworkJudged）。 */
+  /** PR の指摘で差し戻した（ChangesRequested のうち、ゴールガーディアンの判断で戻したもの。Task の prRework）。 */
   | "pullRequestRework"
   /** ゴールガーディアンの見逃し（GuardianMissed）。 */
   | "guardianMissed"
@@ -56,7 +56,9 @@ export type DashboardSummary = {
     reworkBySteps: Partial<Record<StepKey, number>>;
   };
   queue: {
+    /** 実行中（ワーカーが処理している）タスクの数。 */
     running: number;
+    /** 実行待ち（ワーカーが次に処理する対象で、まだ処理していない）タスクの数。 */
     queued: number;
     /** 同時に実行するタスクの数の上限（sacty の設定）。 */
     max: number;
@@ -81,8 +83,23 @@ export function median(values: readonly number[]): number | null {
     : ((sorted[mid - 1] as number) + (sorted[mid] as number)) / 2;
 }
 
+/**
+ * 実行待ちが上限より多い状態の始まり（PBI-118）。多ければ、前の始まり（previous）があればそれ、無ければ now。多くなければ無い。
+ * デーモンは、タスクの状態・実行の開始と終わり・設定・プロジェクトが変わるたびにこれで更新し、画面の取得に依らず追う。
+ */
+export function queueOverSince(
+  waiting: number,
+  max: number,
+  now: number,
+  previous: number | undefined,
+): number | undefined {
+  if (waiting <= max) return undefined;
+  return previous ?? now;
+}
+
 /** 持っておく期間（直近 30 日の欄に要る分と、日付の境のずれの余裕）。これより古い記録は捨てる。 */
 const KEEP_DAYS = 32;
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 type CostEntry = { at: number; projectId: string; usd: number; estimated: boolean };
 type FinishEntry = { at: number; projectId: string; cancelled: boolean; leadMs: number };
@@ -103,13 +120,15 @@ const QUALITY_KINDS: readonly QualityKind[] = [
  * - costs：費用を持つイベント（CHARGED_EVENT_TYPES）の費用と時刻
  * - finished：タスクが終わった（isFinished が偽から真になった）時刻（終わっていない状態に戻れば消す）
  * - quality：品質の信号のイベントの時刻と種類
- * 古い記録（KEEP_DAYS より前）は、集計のときに捨てる。
+ * 古い記録（KEEP_DAYS より前）は、畳み込みの中で1日に1回と、集計のときに捨てる（画面を開かずに動かし続けても増え続けない）。
  */
 export class DashboardStats {
   private readonly waiting = new Map<string, string>();
   private costs: CostEntry[] = [];
   private readonly finished = new Map<string, FinishEntry>();
   private quality: QualityEntry[] = [];
+  /** 最後に古い記録を捨てた時刻（畳み込んだイベントの時刻で数える）。 */
+  private prunedAt = Number.NEGATIVE_INFINITY;
 
   /** イベントを1つ畳み込む。before はそのイベントの前のタスク（作成なら無い）、after は後のタスク。 */
   add(event: ActivityEvent, before: Task | undefined, after: Task): void {
@@ -125,20 +144,14 @@ export class DashboardStats {
         if (!event.payload.reproduced) this.waiting.set(event.taskId, event.at);
         break;
       case "ChangesRequested":
+        // 差し戻しは、実際に差し戻した記録（ChangesRequested）を1回として数える。PR の指摘でゴールガーディアンが戻したものは、
+        // 投影がこの記録の時刻で prRework に残す（PBI-58）。判断（ReworkJudged）だけで差し戻されなかった（上限で
+        // エスカレーションした）ものは数えない
         this.quality.push({
           at,
           projectId: event.projectId,
-          kind: "changesRequested",
+          kind: after.prRework?.at === event.at ? "pullRequestRework" : "changesRequested",
           step: event.payload.step,
-        });
-        break;
-      case "ReworkJudged":
-        // 戻し先を判断できなければ、その PR の工程（承認ゲートの工程）をやり直す（PBI-58・PBI-110）
-        this.quality.push({
-          at,
-          projectId: event.projectId,
-          kind: "pullRequestRework",
-          step: event.payload.target ?? after.gate?.step ?? "implement",
         });
         break;
       case "GuardianMissed":
@@ -174,19 +187,26 @@ export class DashboardStats {
     } else if (wasFinished && !isFinished(after)) {
       this.finished.delete(event.taskId);
     }
+    // 記録の時刻で1日に1回、古い記録を捨てる（起動のときの読み込みでも、集計を取る前でも増え続けない）
+    if (at - this.prunedAt >= DAY_MS) this.prune(at);
   }
 
   /**
-   * 集計する。projects は今あるプロジェクトの ID（消したプロジェクトのタスクは数えない）。tasks は今のタスク（待ち行列と
-   * 対応待ちの時刻に使う）。overSince は、実行待ちが上限より多い状態の始まり（呼ぶ側が前の値を渡す）。
+   * 集計する。projects は今あるプロジェクトの ID（消したプロジェクトのタスクは数えない）。tasks は今のタスク（対応待ちの時刻と、
+   * 待ち行列のタスクのプロジェクトの確認に使う）。queue は、ワーカーが処理しているタスクの ID（running）、ワーカーが次に処理する対象で
+   * まだ処理していないタスクの ID（waiting）、上限、実行待ちが上限より多い状態の始まり（呼ぶ側が追う。queueOverSince）。
    */
   summary(input: {
     now: number;
     timeZone: string;
     projects: ReadonlySet<string>;
     tasks: Iterable<Task>;
-    maxParallel: number;
-    overSince?: number;
+    queue: {
+      running: Iterable<string>;
+      waiting: Iterable<string>;
+      max: number;
+      overSince?: number;
+    };
   }): DashboardSummary {
     const { now, projects } = input;
     this.prune(now);
@@ -229,12 +249,10 @@ export class DashboardStats {
     }
 
     const waitingSince: Record<string, string> = {};
-    let running = 0;
-    let queued = 0;
+    const liveTasks = new Set<string>();
     for (const task of input.tasks) {
       if (!projects.has(task.projectId)) continue;
-      if (task.status === "running") running += 1;
-      if (task.status === "queued") queued += 1;
+      liveTasks.add(task.id);
       if (
         task.status === "awaiting_approval" ||
         task.status === "paused" ||
@@ -244,8 +262,8 @@ export class DashboardStats {
         if (since) waitingSince[task.id] = since;
       }
     }
-    const over = queued > input.maxParallel;
-    const overSince = over ? (input.overSince ?? now) : undefined;
+    const count = (ids: Iterable<string>) => [...ids].filter((id) => liveTasks.has(id)).length;
+    const overSince = input.queue.overSince;
 
     return {
       timeZone: input.timeZone,
@@ -268,16 +286,17 @@ export class DashboardStats {
       },
       quality: { since: new Date(days30Start).toISOString(), counts, reworkBySteps },
       queue: {
-        running,
-        queued,
-        max: input.maxParallel,
+        running: count(input.queue.running),
+        queued: count(input.queue.waiting),
+        max: input.queue.max,
         ...(overSince !== undefined ? { overSince: new Date(overSince).toISOString() } : {}),
       },
     };
   }
 
   private prune(now: number): void {
-    const limit = now - KEEP_DAYS * 24 * 60 * 60 * 1000;
+    this.prunedAt = now;
+    const limit = now - KEEP_DAYS * DAY_MS;
     this.costs = this.costs.filter((c) => c.at >= limit);
     this.quality = this.quality.filter((q) => q.at >= limit);
     for (const [id, f] of this.finished) if (f.at < limit) this.finished.delete(id);
