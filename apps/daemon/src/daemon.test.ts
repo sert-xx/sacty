@@ -9206,6 +9206,32 @@ describe("Slack の通知先は sacty の設定（PBI-115）", () => {
     activity.close();
   });
 
+  it("通知が同期的に例外を投げても、書き終えたタスクの操作は成功として返す（レビュー指摘）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const notifier: NonNullable<ServiceDeps["notifier"]> = {
+      notify: () => {
+        throw new Error("database is locked");
+      },
+      test: async () => {},
+      problems: () => [],
+    };
+    const { service } = makeService(activity, [completed(10)], { notifier });
+    const app = createApp(service, token);
+    const task = service.createTask({ projectId: "default", title: "決済API" });
+    // 承認待ちになる実行（通知する）も、例外にならない
+    await expect(service.runNext(task.id)).resolves.not.toThrow();
+    expect(service.get(task.id)?.task.status).toBe("awaiting_approval");
+    // 人の操作（API）も、成功として返り、作業履歴に1回だけ書く
+    const res = await app.request(`/api/tasks/${task.id}/approve`, {
+      method: "POST",
+      headers: json,
+      body: JSON.stringify({ step: "requirements", submission: 1 }),
+    });
+    expect(res.status).toBe(200);
+    expect(service.get(task.id)?.activity.filter((e) => e.type === "StepApproved")).toHaveLength(1);
+    activity.close();
+  });
+
   it("送れなかった理由は sacty 全体の警告に1つだけ出し（秘密情報は伏せる）、送れたら消す", async () => {
     const activity = new SqliteActivityStore(dbPath);
     const settings = new MemorySettingsStore({ notification: destination });

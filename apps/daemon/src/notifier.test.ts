@@ -587,3 +587,97 @@ describe("Slack の通知のメンション（PBI-69）", () => {
     expect(String(plain.calls[1]?.body.text)).toMatch(/^:wave: /);
   });
 });
+
+describe("通知の失敗をタスクの操作に伝えない・古い結果で警告を変えない（PBI-115 レビュー指摘）", () => {
+  const a = {
+    kind: "slack-api" as const,
+    url: "https://a.example.com/api/chat.postMessage",
+    channel: "#a",
+    language: "ja" as const,
+  };
+  const b = { ...a, url: "https://b.example.com/api/chat.postMessage", channel: "#b" };
+
+  /** 送り先ごとに、応答を後から決められる Slack の偽物。 */
+  function heldSlack() {
+    const pending: { url: string; resolve: (res: Response) => void }[] = [];
+    const fetchImpl = ((url: string) =>
+      new Promise<Response>((resolve) => pending.push({ url, resolve }))) as typeof fetch;
+    const answer = async (i: number, res: Response) => {
+      pending[i]?.resolve(res);
+      await new Promise((r) => setTimeout(r, 0));
+    };
+    return { pending, fetchImpl, answer };
+  }
+
+  it("プロジェクトを読めない・本文を作れないときも、notify は例外にせず、送れなかった理由として持つ", async () => {
+    const api = slack();
+    const notifier = new SlackNotifier({
+      notification: () => a,
+      project: () => {
+        throw new Error("database is locked");
+      },
+      secrets: new MemorySecretStore({}),
+      webUrl: "http://x",
+      fetchImpl: api.fetchImpl,
+    });
+    let result: Promise<void> | undefined;
+    expect(() => {
+      result = notifier.notify(task(), "completed");
+    }).not.toThrow();
+    await expect(result).resolves.toBeUndefined();
+    expect(api.calls).toHaveLength(0);
+    expect(renderMessage(notifier.problems()[0], "ja")).toContain("database is locked");
+  });
+
+  it("送り先を変えた後に、古い送り先への送信が失敗しても、新しい送り先の警告にしない", async () => {
+    let current: SlackNotification = a;
+    const held = heldSlack();
+    const notifier = new SlackNotifier({
+      notification: () => current,
+      project: (id) => projects[id],
+      secrets: new MemorySecretStore({}),
+      webUrl: "http://x",
+      fetchImpl: held.fetchImpl,
+    });
+    const old = notifier.notify(task(), "completed");
+    current = b;
+    const test = notifier.test();
+    await new Promise((r) => setTimeout(r, 0));
+    await held.answer(1, Response.json({ ok: true }));
+    await test;
+    expect(notifier.problems()).toEqual([]);
+    await held.answer(0, new Response("down", { status: 500 }));
+    await old;
+    expect(notifier.problems()).toEqual([]);
+    // 古い送り先の失敗は、送り先を戻しても出さない（結果を持たない）
+    current = a;
+    expect(notifier.problems()).toEqual([]);
+  });
+
+  it("同じ送り先で並行して送ったときは、後に始めた送信の結果を残す", async () => {
+    const held = heldSlack();
+    const notifier = new SlackNotifier({
+      notification: () => a,
+      project: (id) => projects[id],
+      secrets: new MemorySecretStore({}),
+      webUrl: "http://x",
+      fetchImpl: held.fetchImpl,
+    });
+    // 先に始めた送信が後から失敗しても、後に始めた送信の成功を上書きしない
+    const first = notifier.notify(task(), "completed");
+    const second = notifier.notify(task(), "completed");
+    await new Promise((r) => setTimeout(r, 0));
+    await held.answer(1, Response.json({ ok: true }));
+    await held.answer(0, new Response("down", { status: 500 }));
+    await Promise.all([first, second]);
+    expect(notifier.problems()).toEqual([]);
+    // 先に始めた送信が後から成功しても、後に始めた送信の失敗を消さない
+    const third = notifier.notify(task(), "completed");
+    const fourth = notifier.notify(task(), "completed");
+    await new Promise((r) => setTimeout(r, 0));
+    await held.answer(3, new Response("down", { status: 503 }));
+    await held.answer(2, Response.json({ ok: true }));
+    await Promise.all([third, fourth]);
+    expect(renderMessage(notifier.problems()[0], "ja")).toContain("HTTP 503");
+  });
+});

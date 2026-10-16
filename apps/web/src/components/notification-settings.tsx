@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { useMessages } from "@/i18n/client";
 
 const SELECT =
-  "h-9 rounded-md border border-input bg-card px-2 text-sm focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none";
+  "h-9 max-w-full rounded-md border border-input bg-card px-2 text-sm focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none";
 
 /**
  * sacty の設定の、Slack の通知先（PBI-38。PBI-115 でプロジェクトの設定から移した）。入力は、sacty の設定のフォームに
@@ -97,6 +97,10 @@ export function NotificationSettings({
         <span className="text-[13px] font-normal text-muted-foreground">{t.notifyNote}</span>
       </h2>
       <p className="text-sm leading-6 whitespace-pre-line text-muted-foreground">{t.notifyHelp}</p>
+      {/* 送り先はすべてのプロジェクトで共通なので、見る人の範囲を確かめてもらう（PBI-115 レビュー指摘） */}
+      <p data-testid="notification-audience" className="text-sm leading-6 text-warn">
+        {t.notifyAudience}
+      </p>
       {problems.length > 0 && (
         <div
           role="status"
@@ -109,7 +113,7 @@ export function NotificationSettings({
         </div>
       )}
       <div className="flex flex-wrap items-end gap-2">
-        <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+        <label className="flex min-w-0 max-w-full flex-col gap-1 text-xs text-muted-foreground">
           {t.notifyKind}
           <select
             className={SELECT}
@@ -122,7 +126,7 @@ export function NotificationSettings({
           </select>
         </label>
         {notifyKind && (
-          <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+          <label className="flex min-w-0 max-w-full flex-col gap-1 text-xs text-muted-foreground">
             {t.notifyLanguage}
             <select
               className={SELECT}
@@ -139,7 +143,7 @@ export function NotificationSettings({
         <div className="flex flex-wrap items-end gap-2">
           <label
             htmlFor={`${uid}-notify-url`}
-            className="flex min-w-72 flex-[2] flex-col gap-1 text-xs text-muted-foreground"
+            className="flex w-full min-w-0 flex-col sm:w-auto sm:min-w-72 sm:flex-[2] gap-1 text-xs text-muted-foreground"
           >
             {t.notifyUrl}
             <Input
@@ -152,7 +156,7 @@ export function NotificationSettings({
           </label>
           <label
             htmlFor={`${uid}-notify-channel`}
-            className="flex min-w-40 flex-1 flex-col gap-1 text-xs text-muted-foreground"
+            className="flex w-full min-w-0 flex-col sm:w-auto sm:min-w-40 sm:flex-1 gap-1 text-xs text-muted-foreground"
           >
             {t.notifyChannel}
             <Input
@@ -165,7 +169,7 @@ export function NotificationSettings({
           </label>
           <label
             htmlFor={`${uid}-notify-token`}
-            className="flex min-w-48 flex-1 flex-col gap-1 text-xs text-muted-foreground"
+            className="flex w-full min-w-0 flex-col sm:w-auto sm:min-w-48 sm:flex-1 gap-1 text-xs text-muted-foreground"
           >
             {t.notifyToken}
             <Input

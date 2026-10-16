@@ -9,6 +9,10 @@ sacty notifies Slack when you are needed (awaiting approval, Escalation, Pause) 
 
 There is one destination, and tasks in every project are notified to it. Project settings have no notification fields.
 
+**Before you set it up, make sure that everyone who can see the destination (channel) may receive notifications from every project.**
+Notifications include project names, task titles and links, and steps. You can no longer use a different destination per project as before, so
+notifications from projects meant for different audiences also go to the same channel.
+
 ## How to send
 
 - Slack API (chat.postMessage, Slack Proxy): write the URL to send to (`https://slack.com/api/chat.postMessage`, or a Slack Proxy that needs no authentication) and

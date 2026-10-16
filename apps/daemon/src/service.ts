@@ -3145,7 +3145,14 @@ export class TaskService {
     if (!updated) throw new Error("task is missing from the projection");
     // 人間の出番（承認待ち・エスカレーション・一時停止）と完了を通知する（送るのは待たない。PBI-38）
     const kind = notificationFor(before, updated);
-    if (kind) void this.deps.notifier?.notify(updated, kind);
+    // 通知の誤りは、書き終えたタスクの操作に伝えない（PBI-115 レビュー指摘）
+    if (kind) {
+      try {
+        void this.deps.notifier?.notify(updated, kind)?.catch?.(() => {});
+      } catch {
+        // 通知の側で理由を持つ
+      }
+    }
     return updated;
   }
 

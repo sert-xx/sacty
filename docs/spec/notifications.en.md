@@ -60,6 +60,11 @@ Code: `apps/daemon/src/notifier.ts` (`notificationText`, `mentionText`, `withMen
 - The reason sending failed is truncated to 400 characters after redacting secrets (tokens and webhook URLs), and sacty keeps the last one for all of sacty and shows it
   as a warning in the web UI (`notify.failed`; cleared the next time sending succeeds, and not shown after the destination is removed). The web UI shows it on the dashboard, in the notification section of the sacty settings, and on the task list (`notificationProblems`). It is also written to the daemon log
   with `[notify]`. It is not recorded in the Activity. If the sacty settings cannot be read, sacty does not send and shows that reason the same way.
+- Notifications are sent after the Activity is written, so even when the settings or the project cannot be read or the body cannot be built, sacty does
+  not throw; it keeps the reason as a failure to send (it is not passed to the task operation).
+- Only the latest result for the current destination is kept. Sends are numbered in the order they start, and the result of a send started earlier does not
+  overwrite that of a send started later. Results of an old destination that finish after the destination changed are not applied. The reason is kept with its
+  destination and is not shown if it differs from the current one.
 - `POST /api/settings/notification-test` sends a test notification to the destination in the saved sacty settings (mentions are added regardless of the kind).
   It returns 409 with `notify.notConfigured` when there is no destination, or with the reason (`notify.failed`) when it cannot be sent.
 

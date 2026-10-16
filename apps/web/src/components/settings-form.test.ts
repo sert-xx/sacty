@@ -167,7 +167,7 @@ describe("sacty の設定の Slack の通知（PBI-115）", () => {
     );
     expect(section).toContain(t.notifyWebhookSecret);
     expect(section).toContain('value="slack-webhook"');
-    expect(section).not.toContain(t.notifyChannel);
+    expect(section).not.toContain("-notify-channel");
   });
 });
 
@@ -180,5 +180,49 @@ describe("sacty の設定の、通知を送れなかった理由（PBI-115）", 
     expect(shown).toContain('data-testid="notification-problems"');
     expect(shown).toContain(problem);
     expect(section(render())).not.toContain("notification-problems");
+  });
+});
+
+describe("sacty の設定の Slack の通知の区画の見え方（PBI-115 レビュー指摘）", () => {
+  const section = (html: string) => html.split("<section").at(-1) ?? "";
+  const destination = {
+    kind: "slack-api" as const,
+    url: "https://slack.example.com/api/chat.postMessage",
+    channel: "#sacty",
+    token: "slack-bot",
+    language: "ja" as const,
+  };
+
+  it("送り先を見る人が、すべてのプロジェクトの通知を受け取ってよいかを確かめるよう、日英で示す", () => {
+    for (const lang of ["ja", "en"] as const) {
+      locale = lang;
+      const t = messagesFor(lang).settings;
+      // 通知先を設定する前（通知しない）から出す
+      for (const html of [render(), render({ notification: destination })]) {
+        const shown = section(html);
+        expect(shown, lang).toContain('data-testid="notification-audience"');
+        expect(shown, lang).toContain(t.notifyAudience.replaceAll("'", "&#x27;"));
+      }
+    }
+    locale = "ja";
+    expect(messagesFor("ja").settings.notifyAudience).toContain("すべてのプロジェクトの通知");
+    expect(messagesFor("en").settings.notifyAudience).toContain("every project");
+  });
+
+  it("狭い画面（320px）で入力欄が収まるよう、最小の幅は広い画面（sm）だけに付ける", () => {
+    locale = "ja";
+    const shown = section(render({ notification: destination }));
+    const classes = [...shown.matchAll(/class="([^"]*)"/g)].map((m) => m[1]?.split(/\s+/) ?? []);
+    // sm: の付かない min-w-<数>（min-w-0 を除く）を使わない
+    expect(classes.flat().filter((c) => /^min-w-(?!0$)/.test(c))).toEqual([]);
+    // URL・チャンネル・トークンの欄は、狭い幅では幅いっぱいで縮められる
+    const fields = classes.filter((c) => c.some((x) => x.startsWith("sm:min-w-")));
+    expect(fields).toHaveLength(3);
+    for (const c of fields) {
+      expect(c).toContain("w-full");
+      expect(c).toContain("min-w-0");
+      // 狭い幅では横に並べて押しつぶさない（伸び縮みは sm 以上だけ）
+      expect(c.filter((x) => /^flex-(?:1|\[2\])$/.test(x))).toEqual([]);
+    }
   });
 });

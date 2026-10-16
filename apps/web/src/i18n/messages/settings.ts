@@ -58,6 +58,8 @@ const ja = {
   notifyWebhookSecret: "Webhook の URL",
   notifyHelp:
     "すべてのプロジェクトのタスクを、この送り先に通知します。本文の題名の前に、[プロジェクトの名前] を付けます。\nトークンと Webhook の URL は、秘密情報の名前か 1Password の参照（op://…）で書きます。\n人が自分で一時停止したときは通知しません。",
+  notifyAudience:
+    "設定する前に、この送り先（チャンネル）を見る人が、すべてのプロジェクトの通知（プロジェクトの名前・タスクの題名とリンク・工程）を受け取ってよいかを確かめてください。プロジェクトごとに送り先を分けることはできません。",
   notifyTest: "テストの通知を送る",
   notifySaveFirst: "保存してから送れます",
   notifySent: "送りました。Slack を確かめてください。",
@@ -155,6 +157,8 @@ const en: SettingsMessages = {
   notifyWebhookSecret: "Webhook URL",
   notifyHelp:
     "Tasks in every project are notified to this destination. The message puts [project name] before the task title.\nWrite tokens and the webhook URL as a secret name or a 1Password reference (op://…).\nPausing a task yourself is not notified.",
+  notifyAudience:
+    "Before you set this up, make sure that everyone who can see this destination (channel) may receive notifications from every project (project names, task titles and links, and steps). You cannot use a different destination per project.",
   notifyTest: "Send a test notification",
   notifySaveFirst: "Save first to send",
   notifySent: "Sent. Check Slack.",

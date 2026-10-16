@@ -242,9 +242,18 @@ export function notificationFor(
   return undefined;
 }
 
+/** 送り先を見分ける値（秘密情報は参照の名前だけなので、値は入らない）。 */
+const keyOf = (destination: SlackNotification) => JSON.stringify(destination);
+
 export class SlackNotifier {
-  /** 最後に送れなかった理由（sacty 全体で1つ。送れたら消す。PBI-115）。 */
-  private failure: DaemonText | undefined;
+  /**
+   * 最後に送れなかった理由（sacty 全体で1つ。送れたら消す。PBI-115）。key は、そのときの送り先（設定を読めなかったときは
+   * 無し）。今の送り先と違えば、画面に出さない（送り先を変えた後に、古い送り先の理由を出さない）。
+   */
+  private failure: { key: string | undefined; text: DaemonText } | undefined;
+  /** 送り始めた順の番号と、結果を反映した最後の番号（後に始めた送信の結果を、先に始めた送信の結果で上書きしない）。 */
+  private started = 0;
+  private settled = 0;
 
   constructor(
     private readonly deps: {
@@ -260,26 +269,32 @@ export class SlackNotifier {
     },
   ) {}
 
-  /** 通知する（送るのを待たない。送れなくても例外にしない）。 */
+  /**
+   * 通知する（送るのを待たない）。設定・プロジェクトを読めない・本文を作れない・送れない、のどれでも例外にせず、送れなかった
+   * 理由として持つ（タスクの操作は、作業履歴に書いた後に呼ぶので、例外を伝えると成功した操作が失敗に見える。PBI-115 レビュー指摘）。
+   */
   notify(task: Task, kind: NotificationKind): Promise<void> {
-    let destination: SlackNotification | undefined;
+    const seq = ++this.started;
+    let key: string | undefined;
     try {
-      destination = this.deps.notification();
-    } catch (error) {
-      // sacty の設定を読めなければ送れない（理由を画面に出す）
-      this.fail(error, []);
-      return Promise.resolve();
-    }
-    if (!destination) return Promise.resolve();
-    const projectName = this.deps.project(task.projectId)?.name;
-    return this.send(
-      destination,
-      withMention(
+      const destination = this.deps.notification();
+      if (!destination) return Promise.resolve();
+      key = keyOf(destination);
+      const projectName = this.deps.project(task.projectId)?.name;
+      const text = withMention(
         notificationText(task, kind, destination.language, this.deps.webUrl, projectName),
         destination.mention,
         kind,
-      ),
-    ).catch(() => {});
+      );
+      return this.send(destination, text, seq).catch(() => {});
+    } catch (error) {
+      try {
+        this.fail(error, [], key, seq);
+      } catch {
+        // 理由を持てなくても、タスクの操作には伝えない
+      }
+      return Promise.resolve();
+    }
   }
 
   /** テストの通知を送る（sacty の設定の画面から）。送れなければ、理由の例外にする。 */
@@ -290,34 +305,67 @@ export class SlackNotifier {
       destination.language === "ja"
         ? ":wave: sacty からのテストの通知です。人間の出番になると、すべてのプロジェクトのタスクを、ここに通知します。"
         : ":wave: Test notification from sacty. sacty will notify you here about tasks in every project when it needs you.";
-    await this.send(destination, withMention(text, destination.mention, undefined));
+    await this.send(destination, withMention(text, destination.mention, undefined), ++this.started);
   }
 
-  /** 送れなかった理由（無ければ空）。通知先を外したら、前の理由は出さない。 */
+  /** 送れなかった理由（無ければ空）。今の送り先の理由だけを出す（通知先を外した・変えたら、前の理由は出さない）。 */
   problems(): DaemonText[] {
     if (!this.failure) return [];
+    let current: string | undefined;
     try {
-      if (!this.deps.notification()) return [];
+      const destination = this.deps.notification();
+      if (!destination) return [];
+      current = keyOf(destination);
     } catch {
       // 設定を読めないときは、持っている理由を出す
+      return [this.failure.text];
     }
-    return [this.failure];
+    return this.failure.key === current ? [this.failure.text] : [];
   }
 
-  /** 送れなかった理由を、秘密情報を伏せてから切り詰めて持つ（ログにも出す）。切り詰めた理由を返す。 */
-  private fail(error: unknown, secrets: readonly string[]): string {
+  /**
+   * 結果を反映してよいか。後に始めた送信の結果がすでに反映されていれば反映しない。送り先が変わっていれば（今の設定を読めない
+   * ときも）、古い送り先の結果なので反映しない。key が無い（設定を読めなかった）ときは、そのまま反映する。
+   */
+  private settle(seq: number, key: string | undefined): boolean {
+    if (seq < this.settled) return false;
+    if (key !== undefined) {
+      let current: string | undefined;
+      try {
+        const destination = this.deps.notification();
+        current = destination ? keyOf(destination) : undefined;
+      } catch {
+        current = undefined;
+      }
+      if (current !== key) return false;
+    }
+    this.settled = seq;
+    return true;
+  }
+
+  /**
+   * 送れなかった理由を、秘密情報を伏せてから切り詰め、ログに出す。今の送り先の最新の結果なら、画面に出す理由として持つ。
+   * 切り詰めた理由を返す。
+   */
+  private fail(
+    error: unknown,
+    secrets: readonly string[],
+    key: string | undefined,
+    seq: number,
+  ): string {
     const raw = errorText(error);
     const hidden = secrets.reduce(
       (t, s) => hideSecret(t, s),
       typeof raw === "string" ? raw : renderMessage(raw, "ja"),
     );
     const detail = hidden.length > REASON_MAX ? `${hidden.slice(0, REASON_MAX)}…` : hidden;
-    this.failure = message("notify.failed", { detail });
+    if (this.settle(seq, key)) this.failure = { key, text: message("notify.failed", { detail }) };
     this.deps.log?.(`[notify] ${detail}`);
     return detail;
   }
 
-  private async send(destination: SlackNotification, text: string): Promise<void> {
+  private async send(destination: SlackNotification, text: string, seq: number): Promise<void> {
+    const key = keyOf(destination);
     const secrets: string[] = [];
     try {
       const fetchImpl = this.deps.fetchImpl ?? fetch;
@@ -367,9 +415,9 @@ export class SlackNotifier {
         }
         if (parsed?.ok === false) throw new Error(`Slack: ${parsed.error ?? "not ok"}`);
       }
-      this.failure = undefined;
+      if (this.settle(seq, key)) this.failure = undefined;
     } catch (error) {
-      throw new Error(this.fail(error, secrets));
+      throw new Error(this.fail(error, secrets, key, seq));
     }
   }
 }
