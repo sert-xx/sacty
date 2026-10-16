@@ -25,7 +25,7 @@
 
 - デーモンが待ち受けを始めたら、使う秘密情報をまとめて取り出す（`prefetchSecrets`）。対象（`secretUses`）は、使うエージェント
   （既定・ゴールガーディアン・`step_agents`）の `auth.secret`、`providers.<名前>.secret`、`gateway.platforms` の `auth.secret`・`auth.token.secret`、
-  `gateway.mcp_servers` の `env` の秘密情報、プロジェクトの通知先（Slack のトークン・Webhook の URL）と、登録済みのプロジェクトのコンテキストの
+  `gateway.mcp_servers` の `env` の秘密情報、sacty の設定の通知先（Slack のトークン・Webhook の URL。`settingsSecretUses`）と、登録済みのプロジェクトのコンテキストの
   秘密情報。npm のトークン（イメージの作成だけで使う）・gh のトークンは含めない（使うときに取り出す）。
 - コンテキストの秘密情報（`contextSecretUses`）：コンテキストリポジトリを設定したプロジェクトごとに、コンテキストを取得して合成し（継承の鎖の
   上の層と既定のコンテキストを含む。`contextSecretSources`）、合成した `platforms.yaml` の `auth.secret`・`auth.token.secret` と、`mcp.yaml` の
@@ -46,16 +46,18 @@
   取り出し直す。取り出せた数（`fetched`）・対象の数（`total`）・読めなかったコンテキストの数（`unreadContexts`。その中の秘密情報は `total` に
   入らない）・警告（`problems`）を返す。画面は、読めなかったコンテキストがあれば、確かめていない秘密情報があると出す。
 - プロジェクトの保存（`POST /api/projects`・`PUT /api/projects/:id`・`POST /api/projects/import`）の後、応答を待たせずに、そのプロジェクトの
-  秘密情報（通知先と、コンテキストの秘密情報）をまとめて取り出す（`prefetchProjectSecrets`）。持っている参照は取り出さない（1Password に
+  コンテキストの秘密情報をまとめて取り出す（`prefetchProjectSecrets`）。持っている参照は取り出さない（1Password に
   問い合わせない）。取り出せなかったもの（`secret.savePrefetchFailed`）とコンテキストを取得できなかった理由は、画面の警告に出し、そのプロジェクトの
   前の警告と置き換える。
-- 警告の置き換え：取り出しを始めるたびに世代を進め、全体（設定の秘密情報）とプロジェクトごとに、最後に始めた取り出しの世代を持つ。起動・取り出し直し・
+- sacty の設定の保存（`PUT /api/settings`）の後も、応答を待たせずに、通知先の秘密情報を取り出す（`prefetchSettingsSecrets`）。持っている参照は
+  取り出さない。取り出せなかったもの（`secret.settingsSavePrefetchFailed`）は画面の警告に出し、sacty の設定の前の警告と置き換える。
+- 警告の置き換え：取り出しを始めるたびに世代を進め、全体（設定ファイルの秘密情報）・sacty の設定（通知先）・プロジェクトごとに、最後に始めた取り出しの世代を持つ。起動・取り出し直し・
   保存のどれも、終わったときに、自分より後に始まった取り出しがある範囲の警告は書き換えない（重なっても、古い結果で新しい結果を上書きしない）。
 - 起動の後にコンテキストリポジトリに足された秘密情報（コンテキストは取得のたびに ref の先頭を取る）は、ほかの時点では前もって取り出さず、使うときに
   その場で取り出す（そのときに 1Password の認証を求めることがある）。前もって取り出すには、取り出し直すか、プロジェクトを保存し直す。
 - ホストの MCP サーバーの起動と組織内 PF の認証の用意は、まとめての取り出しの後に始める。
 
-コード: `apps/daemon/src/service.ts`（`prefetchSecrets`・`prefetchProjectSecrets`・`contextSecretUsesOf`・`CONTEXT_SECRETS_TIMEOUT_MS`・`CONTEXT_SECRETS_CONCURRENCY`）、`apps/daemon/src/secret-uses.ts`（`secretUses`・`projectSecretUses`・`contextSecretUses`）、`apps/daemon/src/context.ts`（`contextSecretSources`）、`apps/daemon/src/secrets.ts`（`OnePasswordSecretStore.prefetch`・`ResolvingSecretStore.prefetch`）、`apps/daemon/src/server.ts`、`apps/daemon/src/main.ts`
+コード: `apps/daemon/src/service.ts`（`prefetchSecrets`・`prefetchProjectSecrets`・`prefetchSettingsSecrets`・`contextSecretUsesOf`・`CONTEXT_SECRETS_TIMEOUT_MS`・`CONTEXT_SECRETS_CONCURRENCY`）、`apps/daemon/src/secret-uses.ts`（`secretUses`・`settingsSecretUses`・`contextSecretUses`）、`apps/daemon/src/context.ts`（`contextSecretSources`）、`apps/daemon/src/secrets.ts`（`OnePasswordSecretStore.prefetch`・`ResolvingSecretStore.prefetch`）、`apps/daemon/src/server.ts`、`apps/daemon/src/main.ts`
 
 ## 値を出さないための扱い
 

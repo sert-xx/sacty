@@ -1,21 +1,23 @@
-import type { Project } from "@sacty/core";
+import type { Project, SactySettings } from "@sacty/core";
 import type { AgentConfig, SactyConfig } from "./config.js";
 import { GATEWAY_TOKEN_SECRET, type McpServer } from "./context.js";
 import type { Platform } from "./platforms.js";
 
 /**
  * 秘密情報の参照と、どこに書いたか（取り出せなかったときに示す。値は持たない。PBI-48）。projectId は、プロジェクトの
- * 設定（通知先・コンテキスト）に書いたもの（保存し直したときに、そのプロジェクトの警告だけを置き換える。PBI-107）。
+ * コンテキストに書いたもの（保存し直したときに、そのプロジェクトの警告だけを置き換える。PBI-107）。settings は、
+ * sacty の設定（通知先）に書いたもの（設定を保存し直したときに、その警告だけを置き換える。PBI-115）。
  */
-export type SecretUse = { ref: string; where: string; projectId?: string };
+export type SecretUse = { ref: string; where: string; projectId?: string; settings?: true };
 
 /**
- * sacty の実行で使う秘密情報の参照を、設定とプロジェクトから集める（sacty up の起動時にまとめて取り出すため。
+ * sacty の実行で使う秘密情報の参照を、設定ファイルと sacty の設定から集める（sacty up の起動時にまとめて取り出すため。
  * PBI-48）。使うエージェント（既定・ゴールガーディアン・工程ごと）の認証と接続先の API キー、組織内 PF の認証、
- * ホストで動かす MCP サーバーの環境変数、プロジェクトの通知先。イメージの作成だけで使う npm のトークンと、
- * gh から取る GitHub のトークン、コンテキストリポジトリの mcp.yaml・platforms.yaml（取得しないと分からない）は含めない。
+ * ホストで動かす MCP サーバーの環境変数、sacty の設定の通知先（PBI-115）。イメージの作成だけで使う npm のトークンと、
+ * gh から取る GitHub のトークン、コンテキストリポジトリの mcp.yaml・platforms.yaml（取得しないと分からない。
+ * contextSecretUses で集める）は含めない。
  */
-export function secretUses(config: SactyConfig, projects: readonly Project[]): SecretUse[] {
+export function secretUses(config: SactyConfig, settings: SactySettings): SecretUse[] {
   const uses: SecretUse[] = [];
   const add = (ref: string | undefined, where: string) => {
     if (ref && ref !== GATEWAY_TOKEN_SECRET) uses.push({ ref, where });
@@ -43,13 +45,13 @@ export function secretUses(config: SactyConfig, projects: readonly Project[]): S
         add(value.secret, `gateway.mcp_servers.${server.name}.env.${env}`);
     }
   }
-  for (const project of projects) uses.push(...projectSecretUses(project));
+  uses.push(...settingsSecretUses(settings));
   return uniqueUses(uses);
 }
 
-/** プロジェクトの設定（通知先）に書いた秘密情報の参照（PBI-48。保存のときにも使う。PBI-107）。 */
-export function projectSecretUses(project: Project): SecretUse[] {
-  const notification = project.notification;
+/** sacty の設定の通知先に書いた秘密情報の参照（PBI-115。設定を保存したときにも使う）。 */
+export function settingsSecretUses(settings: SactySettings): SecretUse[] {
+  const notification = settings.notification;
   const where =
     notification?.kind === "slack-api"
       ? { ref: notification.token, label: "Slack のトークン" }
@@ -57,13 +59,7 @@ export function projectSecretUses(project: Project): SecretUse[] {
         ? { ref: notification.webhook, label: "Webhook の URL" }
         : undefined;
   return where?.ref
-    ? [
-        {
-          ref: where.ref,
-          where: `プロジェクト「${project.name}」の通知先（${where.label}）`,
-          projectId: project.id,
-        },
-      ]
+    ? [{ ref: where.ref, where: `sacty の設定の通知先（${where.label}）`, settings: true }]
     : [];
 }
 

@@ -173,6 +173,8 @@ const service = new TaskService({
   contextMcp,
   // 人間の出番を Slack に通知する（PBI-38）。リンクは、起動した画面の URL
   notifier: new SlackNotifier({
+    // 通知先は sacty の設定（すべてのプロジェクトで共通。PBI-115）。本文にはタスクのプロジェクトの名前を入れる
+    notification: () => settings.get().notification,
     project: (id) => projects.get(id),
     secrets,
     webUrl: process.env.SACTY_WEB_URL ?? "http://127.0.0.1:4700",

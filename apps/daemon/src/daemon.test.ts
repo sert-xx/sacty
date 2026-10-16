@@ -62,10 +62,11 @@ import {
   sactyReviewTask,
 } from "./github.js";
 import { type HostMcpConnection, HostMcpFile, type HostMcpSpec, toHostMcp } from "./host-mcp.js";
+import { SlackNotifier } from "./notifier.js";
 import { OrchestratorSessionStore } from "./orchestrator-sessions.js";
 import { type Platform, PlatformCredentials, PlatformFile, toPlatform } from "./platforms.js";
 import { NOT_APPLICABLE, PR_BODY_MAX, type TemplateLookup } from "./pr-template.js";
-import { MemoryProjectStore } from "./projects.js";
+import { MemoryProjectStore, SqliteProjectStore } from "./projects.js";
 import { buildOrchestratorPrompt, buildPullRequestBody, changeableSteps } from "./prompts.js";
 import { NothingToCommitError, type RepositoryWorkspace } from "./repository.js";
 import {
@@ -1239,7 +1240,7 @@ describe("工程の実行と費用", () => {
         sent.push(`${kind}:${task.status}:${task.gate?.step ?? task.pausedReason ?? ""}`);
       },
       test: async () => {},
-      problems: () => [message("notify.failed", { project: "デフォルト", detail: "x" })],
+      problems: () => [message("notify.failed", { detail: "x" })],
     };
     const { service } = makeService(activity, [completed(20_000), completed(20_000)], {
       notifier,
@@ -9069,42 +9070,307 @@ describe("プロジェクト定義のエクスポート・インポート（PBI-
   });
 });
 
-describe("通知のメンションのエクスポート・インポート（PBI-69・PBI-103）", () => {
-  it("保存したメンションの設定は、エクスポートして別の sacty にインポートすると相手も種類も無くなり、形が違えば保存できない", () => {
+describe("Slack の通知先は sacty の設定（PBI-115）", () => {
+  const token = "test-token";
+  const auth = { authorization: `Bearer ${token}` };
+  const json = { ...auth, "content-type": "application/json" };
+  const destination = {
+    kind: "slack-api" as const,
+    url: "https://slack.example.com/api/chat.postMessage",
+    channel: "#sacty",
+    token: "slack-bot",
+    language: "ja" as const,
+    mention: { targets: ["U0123ABCD"], kinds: ["approval" as const] },
+  };
+
+  /** Slack の偽物（送られた本文を記録する）。 */
+  const fakeSlack = (status = 200) => {
+    const calls: { url: string; auth: string | null; body: Record<string, unknown> }[] = [];
+    const fetchImpl = (async (url: string, init: RequestInit) => {
+      calls.push({
+        url,
+        auth: new Headers(init.headers).get("authorization"),
+        body: JSON.parse(String(init.body)) as Record<string, unknown>,
+      });
+      return status === 200
+        ? Response.json({ ok: true })
+        : new Response("xoxb-very-secret down", { status });
+    }) as typeof fetch;
+    return { calls, fetchImpl };
+  };
+
+  it("sacty の設定に通知先を保存・検証でき（API）、テストの通知は保存した送り先に送る", async () => {
     const activity = new SqliteActivityStore(dbPath);
-    const { service } = makeService(activity, [], { projects: new MemoryProjectStore() });
-    const destination = {
-      kind: "slack-api" as const,
-      url: "https://slack.com/api/chat.postMessage",
-      channel: "#sacty",
-      token: "slack-bot",
-      language: "en" as const,
+    const settings = new MemorySettingsStore({});
+    const slack = fakeSlack();
+    const projects = projectsWithAccount();
+    const notifier = new SlackNotifier({
+      notification: () => settings.get().notification,
+      project: (id) => projects.get(id),
+      secrets: new MemorySecretStore({ "slack-bot": "xoxb-very-secret" }),
+      webUrl: "http://127.0.0.1:4700",
+      fetchImpl: slack.fetchImpl,
+    });
+    const { service } = makeService(activity, [], { settings, projects, notifier });
+    const app = createApp(service, token);
+    const put = (body: unknown) =>
+      app.request("/api/settings", { method: "PUT", headers: json, body: JSON.stringify(body) });
+    const testNotification = () =>
+      app.request("/api/settings/notification-test", { method: "POST", headers: auth });
+    // 通知先が無ければ、テストの通知は理由を返す
+    const none = await testNotification();
+    expect(none.status).toBe(409);
+    expect(((await none.json()) as { messages: unknown[] }).messages).toEqual([
+      { code: "notify.notConfigured" },
+    ]);
+    // 検査はプロジェクトの設定のときと同じ（秘密情報の値・メンションの形・URL）
+    for (const [notification, code] of [
+      [{ ...destination, token: "xoxb plain value" }, "input.secretRef"],
+      [{ ...destination, mention: { targets: ["@alice"] } }, "input.slackMention"],
+      [{ ...destination, url: "nope" }, "input.invalidUrl"],
+      [
+        { kind: "slack-webhook", webhook: "https://hooks.slack.com/services/T/B/X" },
+        "input.secretRef",
+      ],
+    ] as const) {
+      const bad = await put({ intakeLabel: "sacty", notification });
+      expect(bad.status).toBe(400);
+      expect(
+        ((await bad.json()) as { issues: { message: { code: string } }[] }).issues.map(
+          (i) => i.message.code,
+        ),
+      ).toContain(code);
+    }
+    expect(settings.get().notification).toBeUndefined();
+    const saved = await put({ intakeLabel: "sacty", notification: destination });
+    expect(saved.status).toBe(200);
+    expect(settings.get().notification).toEqual(destination);
+    const got = (await (await app.request("/api/settings", { headers: auth })).json()) as {
+      settings: { notification?: unknown };
     };
-    const notification = {
-      ...destination,
-      mention: {
-        targets: ["U0123ABCD", "S0789EFGH", "@here"],
-        kinds: ["approval" as const, "completed" as const],
-      },
-    };
-    const pay = service.saveProject(undefined, { name: "決済", notification });
-    expect(pay.notification).toEqual(notification);
-    const exported = service.exportProject(pay.id);
-    // メンションは使う人や環境ごとに違うので、エクスポートに含めない（PBI-103）
-    expect(exported?.project.notification).toEqual(destination);
-    const otherActivity = new SqliteActivityStore(join(dir, "other.db"));
-    const other = makeService(otherActivity, [], { projects: new MemoryProjectStore() });
-    const imported = other.service.importProject(JSON.parse(JSON.stringify(exported)));
-    expect(imported.notification).toEqual(destination);
-    expect(() =>
-      service.saveProject(pay.id, {
-        name: "決済",
-        notification: { ...notification, mention: { targets: ["@alice"] } },
+    expect(got.settings.notification).toEqual(destination);
+    expect((await testNotification()).status).toBe(200);
+    expect(slack.calls).toHaveLength(1);
+    expect(slack.calls[0]?.url).toBe(destination.url);
+    expect(slack.calls[0]?.auth).toBe("Bearer xoxb-very-secret");
+    expect(String(slack.calls[0]?.body.text)).toMatch(
+      /^<@U0123ABCD> :wave: sacty からのテストの通知/,
+    );
+    // プロジェクトのテストの通知の API は無い
+    const old = await app.request("/api/projects/default/notification-test", {
+      method: "POST",
+      headers: auth,
+    });
+    expect(old.status).toBe(404);
+    activity.close();
+  });
+
+  it("2つのプロジェクトのタスクの通知が、1つの送り先に、プロジェクトの名前と工程の名前つきで届く", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const settings = new MemorySettingsStore({ notification: destination });
+    const projects = projectsWithAccount();
+    projects.put("search", {
+      name: "検索チーム",
+      targets: [{ scope: "repo", target: "https://github.com/acme/search" }],
+      githubAccounts: { "github.com": "me" },
+    });
+    const slack = fakeSlack();
+    const notifier = new SlackNotifier({
+      notification: () => settings.get().notification,
+      project: (id) => projects.get(id),
+      secrets: new MemorySecretStore({ "slack-bot": "xoxb-very-secret" }),
+      webUrl: "http://127.0.0.1:4700",
+      fetchImpl: slack.fetchImpl,
+    });
+    const { service } = makeService(activity, [completed(10), completed(10)], {
+      settings,
+      projects,
+      notifier,
+    });
+    const pay = service.createTask({ projectId: "default", title: "決済API" });
+    const search = service.createTask({ projectId: "search", title: "検索の改善" });
+    await service.runNext(pay.id);
+    await service.runNext(search.id);
+    await vi.waitFor(() => expect(slack.calls).toHaveLength(2));
+    expect(slack.calls.map((c) => [c.url, c.body.channel])).toEqual([
+      [destination.url, "#sacty"],
+      [destination.url, "#sacty"],
+    ]);
+    const [first, second] = slack.calls.map((c) => String(c.body.text));
+    expect(first).toContain(`[デフォルト] <http://127.0.0.1:4700/tasks/${pay.id}|決済API>`);
+    expect(first).toContain("要求要件の承認を待っています");
+    expect(second).toContain(`[検索チーム] <http://127.0.0.1:4700/tasks/${search.id}|検索の改善>`);
+    expect(second).toContain("要求要件の承認を待っています");
+    // メンションの付け方は、これまでどおり（承認待ちに付ける）
+    expect(first?.startsWith("<@U0123ABCD> ")).toBe(true);
+    activity.close();
+  });
+
+  it("送れなかった理由は sacty 全体の警告に1つだけ出し（秘密情報は伏せる）、送れたら消す", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const settings = new MemorySettingsStore({ notification: destination });
+    const projects = projectsWithAccount();
+    let slack = fakeSlack(500);
+    const lines: string[] = [];
+    const notifier = new SlackNotifier({
+      notification: () => settings.get().notification,
+      project: (id) => projects.get(id),
+      secrets: new MemorySecretStore({ "slack-bot": "xoxb-very-secret" }),
+      webUrl: "http://x",
+      fetchImpl: ((...args: Parameters<typeof fetch>) => slack.fetchImpl(...args)) as typeof fetch,
+      log: (line) => lines.push(line),
+    });
+    const { service } = makeService(activity, [completed(10), completed(10)], {
+      settings,
+      projects,
+      notifier,
+    });
+    const a = service.createTask({ projectId: "default", title: "A" });
+    const b = service.createTask({ projectId: "default", title: "B" });
+    await service.runNext(a.id);
+    await service.runNext(b.id);
+    await vi.waitFor(() => expect(slack.calls).toHaveLength(2));
+    await vi.waitFor(() =>
+      expect(
+        service
+          .status()
+          .warnings.filter((w) => typeof w !== "string" && w.code === "notify.failed"),
+      ).toHaveLength(1),
+    );
+    const shown = [JSON.stringify(service.status()), ...lines].join("\n");
+    expect(shown).toContain("HTTP 500");
+    expect(shown).not.toContain("xoxb-very-secret");
+    // 台帳には、秘密情報も送れなかった理由も残さない
+    const ledger = JSON.stringify(service.get(a.id)?.activity);
+    expect(ledger).not.toContain("xoxb-very-secret");
+    expect(ledger).not.toContain("notify.failed");
+    slack = fakeSlack();
+    await expect(service.testNotification()).resolves.toBeUndefined();
+    expect(service.status().warnings).toEqual([]);
+    activity.close();
+  });
+
+  it("プロジェクトには通知先を保存しない。古いデータ（通知先を持つプロジェクト）があっても読め、その通知先には送らない", async () => {
+    // 以前の sacty が保存したプロジェクトの行（通知先を持つ）を、そのまま DB に置く
+    const store = new SqliteProjectStore(dbPath);
+    const db = new DatabaseSync(dbPath);
+    db.prepare("INSERT INTO projects VALUES (?, ?, ?, ?)").run(
+      "old",
+      JSON.stringify({
+        name: "古いプロジェクト",
+        targets: [{ scope: "repo", target: "https://github.com/acme/app" }],
+        githubAccounts: { "github.com": "me" },
+        notification: {
+          kind: "slack-webhook",
+          webhook: "old-webhook",
+          language: "en",
+          mention: { targets: ["U0OLD0000"], kinds: ["completed"] },
+        },
       }),
-    ).toThrow();
-    // エクスポートしても、元のプロジェクトのメンションは変えない
-    expect(service.listProjects()[0]?.notification).toEqual(notification);
-    otherActivity.close();
+      "2026-10-01T00:00:00.000Z",
+      "2026-10-01T00:00:00.000Z",
+    );
+    db.close();
+    const old = store.get("old");
+    expect(old?.name).toBe("古いプロジェクト");
+    expect(old).not.toHaveProperty("notification");
+    const activity = new SqliteActivityStore(dbPath);
+    const settings = new MemorySettingsStore({});
+    const slack = fakeSlack();
+    const notifier = new SlackNotifier({
+      notification: () => settings.get().notification,
+      project: (id) => store.get(id),
+      secrets: new MemorySecretStore({ "old-webhook": "https://hooks.slack.com/services/OLD" }),
+      webUrl: "http://x",
+      fetchImpl: slack.fetchImpl,
+    });
+    const { service } = makeService(activity, [completed(10)], {
+      projects: store as unknown as MemoryProjectStore,
+      settings,
+      notifier,
+    });
+    const app = createApp(service, token);
+    expect((await app.request("/api/projects/old", { headers: auth })).status).toBe(200);
+    expect((await app.request("/api/projects", { headers: auth })).status).toBe(200);
+    const exported = await (
+      await app.request("/api/projects/old/export", { headers: auth })
+    ).text();
+    expect(exported).not.toMatch(/notification|old-webhook|U0OLD0000/);
+    // 古いプロジェクトの通知先には送らない（sacty の設定に通知先が無いので、どこにも送らない）
+    const task = service.createTask({ projectId: "old", title: "古いタスク" });
+    await service.runNext(task.id);
+    expect(service.get(task.id)?.task.status).toBe("awaiting_approval");
+    expect(slack.calls).toEqual([]);
+    // 保存で送られた通知先は、保存しない（知らない項目として捨てる）
+    const saved = service.saveProject("old", {
+      name: "古いプロジェクト",
+      targets: [{ scope: "repo", target: "https://github.com/acme/app" }],
+      githubAccounts: { "github.com": "me" },
+      notification: { kind: "slack-webhook", webhook: "old-webhook" },
+    } as unknown as Parameters<typeof service.saveProject>[1]);
+    expect(saved).not.toHaveProperty("notification");
+    expect(store.get("old")).not.toHaveProperty("notification");
+    activity.close();
+    store.close();
+  });
+
+  it("起動のときと sacty の設定を保存したときに、通知先のトークン・Webhook の URL を取り出し、取り出せなければ設定の警告に出す", async () => {
+    class PrefetchStore extends MemorySecretStore {
+      prefetched: string[][] = [];
+      constructor(readonly available: Record<string, string>) {
+        super(available);
+      }
+      async prefetch(refs: readonly string[]) {
+        this.prefetched.push([...refs]);
+        return refs
+          .filter((ref) => !(ref in this.available))
+          .map((ref) => ({ ref, error: new SecretNotFoundError(ref) }));
+      }
+    }
+    const activity = new SqliteActivityStore(dbPath);
+    const store = new PrefetchStore({ "claude-oauth-token": "oauth-secret" });
+    const settings = new MemorySettingsStore({
+      notification: { kind: "slack-webhook", webhook: "op://Work/Slack/webhook", language: "ja" },
+    });
+    const { service } = makeService(activity, [], { secretStore: store, settings });
+    await service.prefetchSecrets();
+    expect(store.prefetched.at(-1)).toEqual(["claude-oauth-token", "op://Work/Slack/webhook"]);
+    expect(service.status().warnings.map((w) => ja(w))).toEqual([
+      expect.stringContaining(
+        "起動のときに、秘密情報（sacty の設定の通知先（Webhook の URL））を取り出せませんでした",
+      ),
+    ]);
+    // 設定を保存し直すと、設定の警告だけを置き換える（API で保存すると取り出す）
+    const app = createApp(service, token);
+    const res = await app.request("/api/settings", {
+      method: "PUT",
+      headers: json,
+      body: JSON.stringify({
+        notification: {
+          kind: "slack-api",
+          url: "https://slack.example.com/api/chat.postMessage",
+          channel: "#a",
+          token: "slack-bot",
+        },
+      }),
+    });
+    expect(res.status).toBe(200);
+    await vi.waitFor(() => expect(store.prefetched.at(-1)).toEqual(["slack-bot"]));
+    await vi.waitFor(() =>
+      expect(service.status().warnings.map((w) => ja(w))).toEqual([
+        expect.stringContaining(
+          "sacty の設定を保存したときに、秘密情報（sacty の設定の通知先（Slack のトークン））を取り出せませんでした",
+        ),
+      ]),
+    );
+    store.available["slack-bot"] = "xoxb-x";
+    await service.prefetchSettingsSecrets();
+    expect(service.status().warnings).toEqual([]);
+    expect(JSON.stringify(service.status())).not.toContain("xoxb-x");
+    // 通知先を外せば、取り出すものは無い
+    service.saveSettings({});
+    await service.prefetchSettingsSecrets();
+    expect(store.prefetched.at(-1)).toEqual([]);
     activity.close();
   });
 });
@@ -10060,7 +10326,7 @@ describe("API", () => {
     const exported = await res.json();
     expect(exported).toMatchObject({
       sacty: "project",
-      version: 4,
+      version: 5,
       project: {
         name: "決済",
         targets: [{ scope: "repo", target: "https://github.com/acme/payments" }],
@@ -10110,7 +10376,7 @@ describe("API", () => {
     activity.close();
   });
 
-  it("プロジェクトのエクスポートはメンションの相手を含めず、インポートしたプロジェクトにも無い。後から足せる（PBI-103）", async () => {
+  it("プロジェクトのエクスポートは通知先を含めず、通知先を含んでいた版（3・4）と通知先を足したファイルは断る（PBI-115）", async () => {
     const activity = new SqliteActivityStore(dbPath);
     const { service } = makeService(activity, [], { projects: new MemoryProjectStore() });
     const app = createApp(service, token);
@@ -10120,20 +10386,19 @@ describe("API", () => {
       channel: "#sacty",
       token: "op://Work/Slack/token",
       language: "en",
+      mention: { targets: ["U0123ABCD"] },
     } as const;
-    const pay = service.saveProject(undefined, {
-      name: "決済",
-      notification: {
-        ...notification,
-        mention: { targets: ["U0123ABCD", "W0456XYZ", "S0789EFGH", "@here", "@channel"] },
-      },
-    });
+    const pay = service.saveProject(undefined, { name: "決済" });
     const res = await app.request(`/api/projects/${pay.id}/export`, { headers: auth });
     expect(res.status).toBe(200);
     const text = await res.text();
-    expect(text).not.toMatch(/U0123ABCD|W0456XYZ|S0789EFGH|@here|@channel|mention/);
+    expect(text).not.toMatch(/notification|slack|U0123ABCD|mention/);
     const exported = JSON.parse(text);
-    expect(exported).toMatchObject({ version: 4, project: { notification } });
+    expect(exported).toEqual({
+      sacty: "project",
+      version: 5,
+      project: { name: "決済", targets: [] },
+    });
 
     const post = (body: unknown) =>
       app.request("/api/projects/import", {
@@ -10141,64 +10406,32 @@ describe("API", () => {
         headers: json,
         body: JSON.stringify(body),
       });
-    const created = await post({
-      ...exported,
-      project: { ...exported.project, name: "決済（コピー）" },
-    });
-    expect(created.status).toBe(201);
-    const { project } = (await created.json()) as { project: { id: string } };
-    expect(service.listProjects().find((p) => p.id === project.id)?.notification).toEqual(
-      notification,
-    );
-    // 元のプロジェクトのメンションは変えない
-    expect(
-      service.listProjects().find((p) => p.id === pay.id)?.notification?.mention?.targets,
-    ).toHaveLength(5);
-    // インポートの後に、設定の画面（保存の API）で相手を足せる
-    const save = await app.request(`/api/projects/${project.id}`, {
-      method: "PUT",
-      headers: json,
-      body: JSON.stringify({
-        name: "決済（コピー）",
-        notification: { ...notification, mention: { targets: ["U0999ZZZZ"] } },
-      }),
-    });
-    expect(save.status).toBe(200);
-    expect(service.listProjects().find((p) => p.id === project.id)?.notification?.mention).toEqual({
-      targets: ["U0999ZZZZ"],
-      kinds: ["approval", "escalation", "paused"],
-    });
-
-    // 以前の版（3）のファイルは、理由を示して断る（何も作らない）
     const before = service.listProjects().length;
-    const old = await post({
-      sacty: "project",
-      version: 3,
-      project: {
-        name: "古い",
-        notification: { ...notification, mention: { targets: ["U0123ABCD"] } },
-      },
-    });
-    expect(old.status).toBe(400);
-    expect(((await old.json()) as { issues: unknown[] }).issues[0]).toEqual({
-      path: ["version"],
-      message: { code: "input.exportVersionWithMentions" },
-    });
-    // 今の版にメンションを足したファイルも、知らない項目として断る
+    for (const version of [3, 4]) {
+      const old = await post({
+        sacty: "project",
+        version,
+        project: { name: "古い", notification },
+      });
+      expect(old.status).toBe(400);
+      expect(((await old.json()) as { issues: unknown[] }).issues[0]).toEqual({
+        path: ["version"],
+        message: { code: "input.exportVersionWithNotification" },
+      });
+    }
+    // 今の版に通知先を足したファイルも、知らない項目として断る
     const added = await post({
       ...exported,
-      project: {
-        ...exported.project,
-        name: "足した",
-        notification: { ...notification, mention: { targets: ["U0123ABCD"] } },
-      },
+      project: { ...exported.project, name: "足した", notification },
     });
     expect(added.status).toBe(400);
     expect(((await added.json()) as { issues: unknown[] }).issues[0]).toEqual({
-      path: ["project", "notification"],
-      message: { code: "input.unknownKeys", params: { keys: "mention" } },
+      path: ["project"],
+      message: { code: "input.unknownKeys", params: { keys: "notification" } },
     });
     expect(service.listProjects()).toHaveLength(before);
+    const created = await post({ ...exported, project: { ...exported.project, name: "コピー" } });
+    expect(created.status).toBe(201);
     activity.close();
   });
 

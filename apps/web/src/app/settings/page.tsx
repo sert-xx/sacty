@@ -42,6 +42,7 @@ async function Settings() {
       issueIntervalSec={settings.issueIntervalSec}
       reviewIntervalSec={settings.reviewIntervalSec}
       ticketIntervalSec={settings.ticketIntervalSec}
+      notification={settings.notification}
     />
   );
 }

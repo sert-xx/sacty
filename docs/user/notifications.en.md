@@ -1,11 +1,13 @@
-<!-- Code: packages/core/src/projects.ts (ProjectNotification, SlackMention, DEFAULT_MENTION_KINDS), apps/daemon/src/notifier.ts, apps/web/src/i18n/messages/projects.ts -->
+<!-- Code: packages/core/src/projects.ts (SactySettings, SlackNotification, SlackMention, DEFAULT_MENTION_KINDS), apps/daemon/src/notifier.ts, apps/web/src/components/notification-settings.tsx, apps/web/src/i18n/messages/settings.ts -->
 
 [日本語](notifications.md) | **English**
 
 # Slack notifications
 
-sacty notifies Slack, per project, when you are needed (awaiting approval, Escalation, Pause) and when a task finishes. In "Slack notifications" in the
-project settings of the web UI, choose how to send and the language (Japanese or English. Japanese by default). If you do not set it up, nothing is sent.
+sacty notifies Slack when you are needed (awaiting approval, Escalation, Pause) and when a task finishes. In "Slack notifications" in the
+"sacty settings" of the web UI (user menu), choose how to send and the language (Japanese or English. Japanese by default), and save. If you do not set it up, nothing is sent.
+
+There is one destination, and tasks in every project are notified to it. Project settings have no notification fields.
 
 ## How to send
 
@@ -25,17 +27,24 @@ If you do not set it up, nobody is mentioned.
 - In the message they are written as `<@U…>`, `<!subteam^S…>`, `<!here>`, and `<!channel>`.
 - Choose the kinds from awaiting approval, Escalation, Pause, and completion. By default, only the ones where you are needed (awaiting approval, Escalation, Pause) mention; completion
   does not.
-- Mention settings (targets and kinds) are not included in project exports, because the targets differ per person and environment. In an
-  imported project, set both the targets and the kinds again on the project settings page as needed
-  (the kinds return to the default; [Export and import](project-settings.en.md#export-and-import)).
 
 ## Notification content and failures
 
-- Notifications include links to the task and to the approval page (and to the PR for steps approved on a PR). Nothing is sent when you pause a task yourself.
-- If a notification cannot be sent, the task is not stopped, and the reason is shown on the task list page.
-- Use "Send a test notification" in the project settings page to check that sending works (you can send after saving).
+- The first line of a notification has `[project name]` and a link to the task (so you can tell which project the task belongs to).
+- The second line says which step the notification is about. For example: "Design is waiting for your approval", "Paused in Implement (budget cap)", and
+  "Escalated in Requirements; your decision is needed". Completion notifications and a Pause before the steps are decided ("Paused before the steps were decided") have
+  no step name.
+- Notifications also include a link to the approval page (and to the PR for steps approved on a PR). Nothing is sent when you pause a task yourself.
+- If a notification cannot be sent, the task is not stopped, and the reason is shown as a warning on the task list page (it is a warning for all of sacty, so it appears in the list of every project; it disappears the next time sending succeeds).
+- Use "Send a test notification" in the "sacty settings" to check that sending works (you can send after saving).
+
+## If you used an earlier sacty
+
+An earlier sacty set notifications per project. Notifications set in projects are no longer used and are not moved.
+Set the destination again in the "sacty settings" (nothing is sent until you do).
 
 ## Related pages
 
+- [Importing issues, PRs, and tickets](intake.en.md) (the other items in the "sacty settings")
 - [Project settings](project-settings.en.md)
 - [Secrets](secrets.en.md)

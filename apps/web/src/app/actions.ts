@@ -4,6 +4,7 @@ import {
   CreateTaskInput,
   type ProjectDefinitionInput,
   renderMessage,
+  type SactySettingsInput,
   StepKey,
   TASK_BODY_MAX,
   TASK_TITLE_MAX,
@@ -354,6 +355,8 @@ export async function saveSettingsAction(
       issueIntervalSec: String(formData.get("issueIntervalSec") ?? ""),
       reviewIntervalSec: String(formData.get("reviewIntervalSec") ?? ""),
       ticketIntervalSec: String(formData.get("ticketIntervalSec") ?? ""),
+      // Slack の通知先（PBI-115）。画面が JSON で渡す。空なら通知しない
+      ...notificationInput(formData.get("notification")),
     });
   } catch {
     return { message: a.daemonDown };
@@ -363,18 +366,34 @@ export async function saveSettingsAction(
   return { saved: true };
 }
 
-/** GitHub Issue の取り込みを、すぐに実行する。 */
+/**
+ * 画面の通知先の入力（JSON）。空なら通知しない。読めない JSON は、そのまま渡してデーモンの検査で断る（黙って消さない）。
+ */
+function notificationInput(
+  value: FormDataEntryValue | null,
+): Pick<SactySettingsInput, "notification"> {
+  const text = typeof value === "string" ? value.trim() : "";
+  if (!text) return {};
+  let notification: unknown;
+  try {
+    notification = JSON.parse(text);
+  } catch {
+    notification = text;
+  }
+  return { notification } as Pick<SactySettingsInput, "notification">;
+}
+
 export type TestNotificationState = { message?: string; sent?: boolean };
 
-/** プロジェクトの通知先に、テストの通知を送る（保存済みの設定で送る。PBI-38）。 */
+/** sacty の設定の通知先に、テストの通知を送る（保存済みの設定で送る。PBI-38・PBI-115）。 */
 export async function testNotificationAction(
   _prev: TestNotificationState,
-  formData: FormData,
+  _formData: FormData,
 ): Promise<TestNotificationState> {
   const a = (await getMessages()).common.action;
   let result: Awaited<ReturnType<typeof testNotification>>;
   try {
-    result = await testNotification(String(formData.get("projectId") ?? ""));
+    result = await testNotification();
   } catch {
     return { message: a.daemonDown };
   }

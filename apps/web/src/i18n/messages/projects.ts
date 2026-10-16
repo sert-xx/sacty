@@ -41,7 +41,7 @@ const ja = {
   settingsTitle: (name: string) => `${name} の設定`,
   export: "エクスポート",
   exportNote:
-    "アカウント・トークン・Slack のメンション（相手と種類）は、エクスポートに含めません。インポートした先で、相手と種類の両方を必要に応じて設定し直してください。",
+    "アカウントとトークンは、エクスポートに含めません。Slack の通知は sacty の設定にあるので、これも含めません。",
   exportNotFound: "プロジェクトが見つかりません。",
   preview: {
     title: "コンテキストのプレビュー",
@@ -185,34 +185,6 @@ const ja = {
     deployLabel: "sacty のタスクの PR がマージされたら、CI/CD とデプロイ後のアプリを監視する",
     deployHelp:
       "マージのコミットの CI/CD（GitHub Actions のワークフロー・チェック）を待ち、失敗したら修正のタスクを自動で登録します。\nCI/CD が通り、リポジトリにデプロイの確認のスキル（.agents/skills/deployment-observer/SKILL.md）があれば、エージェントがデプロイ後のアプリを確かめます（費用はタスクの予算に入ります）。既定は Off です。",
-    notifyTitle: "Slack の通知（任意）",
-    notifyNote: "承認待ち・エスカレーション・一時停止・完了を知らせる",
-    notifyKind: "送り方",
-    notifyNone: "通知しない",
-    notifyApi: "Slack API（chat.postMessage・Slack Proxy）",
-    notifyWebhook: "Incoming Webhook",
-    notifyLanguage: "言語",
-    notifyUrl: "送り先の URL",
-    notifyChannel: "チャンネル",
-    notifyToken: "トークン（任意）",
-    notifyTokenPlaceholder: "Proxy なら空",
-    notifyWebhookSecret: "Webhook の URL",
-    notifyHelp:
-      "トークンと Webhook の URL は、秘密情報の名前か 1Password の参照（op://…）で書きます。\n人が自分で一時停止したときは通知しません。",
-    notifyTest: "テストの通知を送る",
-    notifySaveFirst: "保存してから送れます",
-    notifySent: "送りました。Slack を確かめてください。",
-    mentionTitle: "メンション（任意）",
-    mentionTargets: "メンションする相手",
-    mentionHelp:
-      "Slack のメンバー ID（U…）、ユーザーグループの ID（S…）、@here、@channel を、カンマか空白で区切って書きます。@表示名では届きません。\nメンバー ID は、Slack のプロフィールの「その他」→「メンバー ID をコピー」で、ユーザーグループの ID は、グループのページの URL の末尾（S…）で調べられます。\nメンションは本文の先頭に付けます（テストの通知にも付けます）。",
-    mentionKinds: "メンションする通知",
-    mentionKind: {
-      approval: "承認待ち",
-      escalation: "エスカレーション",
-      paused: "一時停止",
-      completed: "完了",
-    },
     saved: "保存しました。",
     createdContextError: (detail: string) =>
       `作成しましたが、コンテキストに誤りがあります（このままでは工程の実行で止まります）：${detail}`,
@@ -265,7 +237,7 @@ const en: ProjectsMessages = {
   settingsTitle: (name) => `${name} settings`,
   export: "Export",
   exportNote:
-    "Accounts, tokens, and Slack mentions (targets and kinds) are not exported. Where the project is imported, set both the targets and the kinds again as needed.",
+    "Accounts and tokens are not exported. Slack notifications are in the sacty settings, so they are not exported either.",
   exportNotFound: "Project not found.",
   preview: {
     title: "Context preview",
@@ -418,34 +390,6 @@ const en: ProjectsMessages = {
     deployLabel: "Watch CI/CD and the deployed app after a sacty task's pull request is merged",
     deployHelp:
       "Waits for CI/CD (GitHub Actions workflows and checks) on the merge commit and registers a fix task automatically if it fails.\nIf CI/CD passes and the repository has a deployment check skill (.agents/skills/deployment-observer/SKILL.md), an agent checks the deployed app (the cost counts toward the task budget). Off by default.",
-    notifyTitle: "Slack notifications (optional)",
-    notifyNote: "Tell you about approvals, escalations, pauses, and completions",
-    notifyKind: "Send via",
-    notifyNone: "Don't notify",
-    notifyApi: "Slack API (chat.postMessage, Slack Proxy)",
-    notifyWebhook: "Incoming Webhook",
-    notifyLanguage: "Language",
-    notifyUrl: "URL to send to",
-    notifyChannel: "Channel",
-    notifyToken: "Token (optional)",
-    notifyTokenPlaceholder: "Empty for a proxy",
-    notifyWebhookSecret: "Webhook URL",
-    notifyHelp:
-      "Write tokens and the webhook URL as a secret name or a 1Password reference (op://…).\nPausing a task yourself is not notified.",
-    notifyTest: "Send a test notification",
-    notifySaveFirst: "Save first to send",
-    notifySent: "Sent. Check Slack.",
-    mentionTitle: "Mentions (optional)",
-    mentionTargets: "Who to mention",
-    mentionHelp:
-      "Write Slack member IDs (U…), user group IDs (S…), @here, or @channel, separated by commas or spaces. Display names don't notify anyone.\nCopy a member ID from the person's Slack profile (More → Copy member ID). A user group ID is at the end of the group page's URL (S…).\nMentions go at the start of the message (test notifications include them too).",
-    mentionKinds: "Mention in",
-    mentionKind: {
-      approval: "Approvals",
-      escalation: "Escalations",
-      paused: "Pauses",
-      completed: "Completions",
-    },
   },
 };
 

@@ -236,9 +236,9 @@ import { CONTAINER_LOGS_DIR, stageQuestionLogs } from "./question-logs.js";
 import { NothingToCommitError, type RepositoryWorkspace } from "./repository.js";
 import {
   contextSecretUses,
-  projectSecretUses,
   type SecretUse,
   secretUses,
+  settingsSecretUses,
   uniqueUses,
 } from "./secret-uses.js";
 import { type PrefetchingSecretStore, SecretNotFoundError, type SecretStore } from "./secrets.js";
@@ -6948,18 +6948,16 @@ export class TaskService {
     }
   }
 
-  /** プロジェクトの通知先に、テストの通知を送る（PBI-38）。送れなければ、理由の例外にする。 */
-  async testNotification(projectId: string): Promise<void> {
-    if (!this.deps.projects.get(projectId)) {
-      throw new InvalidOperationError(message("project.notFound"));
+  /** sacty の設定の通知先に、テストの通知を送る（PBI-38・PBI-115）。送れなければ、理由の例外にする。 */
+  async testNotification(): Promise<void> {
+    if (!this.deps.notifier || !this.readableSettings().notification) {
+      throw new InvalidOperationError(message("notify.notConfigured"));
     }
-    if (!this.deps.notifier) throw new InvalidOperationError(message("notify.notConfigured"));
     try {
-      await this.deps.notifier.test(projectId);
+      await this.deps.notifier.test();
     } catch (error) {
       throw new InvalidOperationError(
         message("notify.failed", {
-          project: this.deps.projects.get(projectId)?.name ?? projectId,
           detail: error instanceof Error ? error.message : String(error),
         }),
       );
@@ -7164,9 +7162,10 @@ export class TaskService {
 
   /**
    * 取り出せなかった秘密情報（起動のとき・取り出し直したとき。PBI-48）と、読めなかったプロジェクトのコンテキスト
-   * （PBI-107）。projectId のあるものは、そのプロジェクトの警告（保存し直すと置き換える）。
+   * （PBI-107）。projectId のあるものは、そのプロジェクトの警告（保存し直すと置き換える）。settings のものは、
+   * sacty の設定（通知先。PBI-115）の警告（設定を保存し直すと置き換える）。
    */
-  private secretProblems: { text: DaemonText; projectId?: string }[] = [];
+  private secretProblems: { text: DaemonText; projectId?: string; settings?: true }[] = [];
 
   /**
    * 秘密情報の取り出しの世代（PBI-107）。取り出しを始めるたびに1つ進め、全体（設定の秘密情報）とプロジェクトごとに、
@@ -7175,17 +7174,20 @@ export class TaskService {
    */
   private secretRound = 0;
   private globalSecretRound = 0;
+  private settingsSecretRound = 0;
   private readonly projectSecretRounds = new Map<string, number>();
 
   /** 取り出しの結果の警告を、その世代が最新の範囲だけ置き換える（PBI-107）。 */
   private applySecretProblems(
     round: number,
-    problems: readonly { text: DaemonText; projectId?: string }[],
+    problems: readonly { text: DaemonText; projectId?: string; settings?: true }[],
   ): void {
-    const latest = (p: { projectId?: string }) =>
-      p.projectId === undefined
-        ? this.globalSecretRound === round
-        : this.projectSecretRounds.get(p.projectId) === round;
+    const latest = (p: { projectId?: string; settings?: true }) =>
+      p.projectId !== undefined
+        ? this.projectSecretRounds.get(p.projectId) === round
+        : p.settings
+          ? this.settingsSecretRound === round
+          : this.globalSecretRound === round;
     this.secretProblems = [
       ...this.secretProblems.filter((p) => !latest(p)),
       ...problems.filter(latest),
@@ -7214,10 +7216,14 @@ export class TaskService {
     const projects = this.deps.projects.all();
     const round = ++this.secretRound;
     this.globalSecretRound = round;
+    this.settingsSecretRound = round;
     for (const project of projects) this.projectSecretRounds.set(project.id, round);
     // コンテキストを読み終えてから、ほかの秘密情報と一緒に1回で取り出す（1Password の承認を1回にする。PBI-107）
     const context = await this.contextSecretUsesOf(projects, config.config);
-    const uses = uniqueUses([...secretUses(config.config, projects), ...context.uses]);
+    const uses = uniqueUses([
+      ...secretUses(config.config, this.readableSettings()),
+      ...context.uses,
+    ]);
     const failures = await secrets.prefetch(
       uses.map((u) => u.ref),
       options,
@@ -7229,6 +7235,7 @@ export class TaskService {
         return {
           text: message("secret.prefetchFailed", { where: use?.where ?? ref, detail: error.text }),
           ...(use?.projectId ? { projectId: use.projectId } : {}),
+          ...(use?.settings ? { settings: true as const } : {}),
         };
       }),
     ];
@@ -7242,7 +7249,7 @@ export class TaskService {
   }
 
   /**
-   * プロジェクトを保存したときに、そのプロジェクトの秘密情報（コンテキスト・通知先）をまとめて取り出す（PBI-107）。
+   * プロジェクトを保存したときに、そのプロジェクトの秘密情報（コンテキスト）をまとめて取り出す（PBI-107）。
    * すでに持っている参照は取り出さない（1Password に問い合わせない）。取り出せなかったものと、コンテキストを読めなかった
    * 理由は、画面の警告に出す（そのプロジェクトの前の警告は置き換える）。保存は止めないので、呼ぶ側は待たない。
    */
@@ -7255,7 +7262,7 @@ export class TaskService {
     const round = ++this.secretRound;
     this.projectSecretRounds.set(id, round);
     const context = await this.contextSecretUsesOf([project], config.config);
-    const uses = uniqueUses([...projectSecretUses(project), ...context.uses]);
+    const uses = context.uses;
     const failures = await secrets.prefetch(uses.map((u) => u.ref));
     const problems = [
       ...context.problems,
@@ -7269,6 +7276,38 @@ export class TaskService {
     ];
     this.applySecretProblems(round, problems);
     return problems.map((p) => p.text);
+  }
+
+  /**
+   * sacty の設定を保存したときに、設定の秘密情報（通知先のトークン・Webhook の URL。PBI-115）を取り出す。すでに持って
+   * いる参照は取り出さない。取り出せなかったものは画面の警告に出す（前の設定の警告は置き換える）。呼ぶ側は待たない。
+   */
+  async prefetchSettingsSecrets(): Promise<DaemonText[]> {
+    const config = this.deps.config();
+    const secrets = this.deps.secrets as SecretStore & Partial<PrefetchingSecretStore>;
+    if (!config.ok || !secrets.prefetch) return [];
+    const round = ++this.secretRound;
+    this.settingsSecretRound = round;
+    const uses = settingsSecretUses(this.readableSettings());
+    const failures = await secrets.prefetch(uses.map((u) => u.ref));
+    const problems = failures.map(({ ref, error }) => ({
+      text: message("secret.settingsSavePrefetchFailed", {
+        where: uses.find((u) => u.ref === ref)?.where ?? ref,
+        detail: error.text,
+      }),
+      settings: true as const,
+    }));
+    this.applySecretProblems(round, problems);
+    return problems.map((p) => p.text);
+  }
+
+  /** sacty の設定（読めなければ空。読めない理由は、取り込みの状況に出る）。 */
+  private readableSettings(): SactySettings {
+    try {
+      return this.deps.settings.get();
+    } catch {
+      return {};
+    }
   }
 
   /**

@@ -25,7 +25,7 @@ Code: `apps/daemon/src/secrets.ts` (`SecretRef`, `isOnePasswordRef`, `KeychainSe
 
 - When the daemon starts listening, it retrieves the secrets it will use all at once (`prefetchSecrets`). The targets (`secretUses`) are `auth.secret` of the agents in use
   (default, Goal Guardian, `step_agents`), `providers.<name>.secret`, `auth.secret` and `auth.token.secret` of `gateway.platforms`,
-  secrets in `env` of `gateway.mcp_servers`, the projects' notification destinations (Slack tokens and webhook URLs), and the secrets in the contexts of
+  secrets in `env` of `gateway.mcp_servers`, the notification destination in the sacty settings (the Slack token or webhook URL; `settingsSecretUses`), and the secrets in the contexts of
   registered projects. npm tokens (used only for building images) and gh tokens are not included (they are retrieved when used).
 - Context secrets (`contextSecretUses`): for each project with a context repository, sacty fetches and composes the context (including the upper layers of the
   inheritance chain and the default context; `contextSecretSources`), and collects `auth.secret` and `auth.token.secret` of the composed `platforms.yaml` and the secrets in
@@ -45,16 +45,18 @@ Code: `apps/daemon/src/secrets.ts` (`SecretRef`, `isOnePasswordRef`, `KeychainSe
 - `POST /api/secrets/prefetch` ("Get secrets again" in the web UI) discards the values it holds, fetches the contexts again, and retrieves the same targets as at startup.
   It returns the number retrieved (`fetched`), the number of targets (`total`), the number of contexts that could not be read (`unreadContexts`; the secrets in them are not counted in `total`),
   and the warnings (`problems`). If some contexts could not be read, the web UI says that some secrets were not checked.
-- After a project is saved (`POST /api/projects`, `PUT /api/projects/:id`, `POST /api/projects/import`), sacty retrieves that project's secrets (the notification destination
-  and the context secrets) all at once without holding up the response (`prefetchProjectSecrets`). References it already holds are not retrieved (1Password is not asked).
+- After a project is saved (`POST /api/projects`, `PUT /api/projects/:id`, `POST /api/projects/import`), sacty retrieves that project's
+  context secrets all at once without holding up the response (`prefetchProjectSecrets`). References it already holds are not retrieved (1Password is not asked).
   Values that could not be retrieved (`secret.savePrefetchFailed`) and the reasons a context could not be fetched are shown as warnings in the web UI, replacing that project's previous warnings.
-- Replacing warnings: each retrieval advances a generation when it starts, and sacty keeps the generation of the last retrieval started for the whole (the settings' secrets) and for each project.
+- After the sacty settings are saved (`PUT /api/settings`), sacty also retrieves the notification destination's secret without holding up the response (`prefetchSettingsSecrets`).
+  References it already holds are not retrieved. Values that could not be retrieved (`secret.settingsSavePrefetchFailed`) are shown as warnings in the web UI, replacing the previous warnings of the sacty settings.
+- Replacing warnings: each retrieval advances a generation when it starts, and sacty keeps the generation of the last retrieval started for the whole (the config file's secrets), for the sacty settings (the notification destination), and for each project.
   When startup, getting secrets again, or saving finishes, it does not rewrite the warnings of any scope for which a later retrieval has started (even if they overlap, older results never overwrite newer ones).
 - Secrets added to a context repository after startup (the context is fetched at the head of the ref each time) are not retrieved in advance at any other point; they are retrieved
   when used (1Password may ask for authentication then). To retrieve them in advance, get the secrets again or save the project again.
 - Starting the host's MCP servers and preparing authentication for organization platforms (PF) begin after the bulk retrieval.
 
-Code: `apps/daemon/src/service.ts` (`prefetchSecrets`, `prefetchProjectSecrets`, `contextSecretUsesOf`, `CONTEXT_SECRETS_TIMEOUT_MS`, `CONTEXT_SECRETS_CONCURRENCY`), `apps/daemon/src/secret-uses.ts` (`secretUses`, `projectSecretUses`, `contextSecretUses`), `apps/daemon/src/context.ts` (`contextSecretSources`), `apps/daemon/src/secrets.ts` (`OnePasswordSecretStore.prefetch`, `ResolvingSecretStore.prefetch`), `apps/daemon/src/server.ts`, `apps/daemon/src/main.ts`
+Code: `apps/daemon/src/service.ts` (`prefetchSecrets`, `prefetchProjectSecrets`, `prefetchSettingsSecrets`, `contextSecretUsesOf`, `CONTEXT_SECRETS_TIMEOUT_MS`, `CONTEXT_SECRETS_CONCURRENCY`), `apps/daemon/src/secret-uses.ts` (`secretUses`, `settingsSecretUses`, `contextSecretUses`), `apps/daemon/src/context.ts` (`contextSecretSources`), `apps/daemon/src/secrets.ts` (`OnePasswordSecretStore.prefetch`, `ResolvingSecretStore.prefetch`), `apps/daemon/src/server.ts`, `apps/daemon/src/main.ts`
 
 ## Keeping values from being shown
 

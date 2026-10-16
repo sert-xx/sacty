@@ -397,9 +397,9 @@ export function askQuestion(id: string, text: string): Promise<OpResult> {
 }
 
 /** GitHub Issue の取り込みを、間隔を待たずに実行する。 */
-/** プロジェクトの通知先に、テストの通知を送る（PBI-38）。 */
-export async function testNotification(projectId: string): Promise<OpResult> {
-  return postOp(`/api/projects/${encodeURIComponent(projectId)}/notification-test`, {});
+/** sacty の設定の通知先に、テストの通知を送る（PBI-38・PBI-115）。 */
+export async function testNotification(): Promise<OpResult> {
+  return postOp("/api/settings/notification-test", {});
 }
 
 /** 使う秘密情報を取り出し直す（PBI-48）。取り出した数と、取り出せなかった理由を返す（値は返さない）。 */

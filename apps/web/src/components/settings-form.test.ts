@@ -5,7 +5,10 @@ import { messagesFor } from "@/i18n";
 import type { Locale } from "@/i18n/locale";
 
 let locale: Locale = "ja";
-vi.mock("@/app/actions", () => ({ saveSettingsAction: async () => ({}) }));
+vi.mock("@/app/actions", () => ({
+  saveSettingsAction: async () => ({}),
+  testNotificationAction: async () => ({}),
+}));
 vi.mock("@/i18n/client", () => ({ useMessages: () => messagesFor(locale) }));
 
 const { SettingsForm } = await import("./settings-form");
@@ -102,5 +105,68 @@ describe("取り込みの種類ごとの間隔（PBI-100）", () => {
     expect(messagesFor("ja").settings.intervalCurrent(300, true)).toBe(
       "いまは 300 秒ごとに取り込みます（既定）。",
     );
+  });
+});
+
+describe("sacty の設定の Slack の通知（PBI-115）", () => {
+  const destination = {
+    kind: "slack-api" as const,
+    url: "https://slack.example.com/api/chat.postMessage",
+    channel: "#sacty",
+    token: "slack-bot",
+    language: "en" as const,
+    mention: { targets: ["U0123ABCD", "@here"], kinds: ["approval" as const, "paused" as const] },
+  };
+  /** 通知の区画（最後の section）。 */
+  const notificationSection = (html: string) => html.split("<section").at(-1) ?? "";
+
+  it("通知の区画に、送り方・言語・URL・チャンネル・トークン・メンション・テストの通知を、日英の文言で出す", () => {
+    for (const lang of ["ja", "en"] as const) {
+      locale = lang;
+      const t = messagesFor(lang).settings;
+      const section = notificationSection(render({ notification: destination }));
+      expect(headings(section)[0], lang).toBe(t.notifyTitle);
+      for (const text of [
+        t.notifyKind,
+        t.notifyLanguage,
+        t.notifyUrl,
+        t.notifyChannel,
+        t.notifyToken,
+        t.mentionTargets,
+        t.mentionKinds,
+        t.notifyTest,
+        ...Object.values(t.mentionKind),
+      ]) {
+        expect(section, `${lang}:${text}`).toContain(text);
+      }
+      expect(section, lang).toContain('value="https://slack.example.com/api/chat.postMessage"');
+      expect(section, lang).toContain('value="U0123ABCD, @here"');
+      // 保存する値は、フォームに JSON で渡す（保存したものと同じなので、テストの通知を送れる）
+      const hidden = section.match(/name="notification" value="([^"]*)"/)?.[1] ?? "";
+      expect(JSON.parse(hidden.replaceAll("&quot;", '"'))).toEqual(destination);
+      expect(section, lang).not.toContain(t.notifySaveFirst);
+    }
+    locale = "ja";
+  });
+
+  it("通知先が無ければ「通知しない」で、入力の欄とテストの通知は出さず、何も送らない", () => {
+    locale = "ja";
+    const t = messagesFor("ja").settings;
+    const section = notificationSection(render());
+    expect(section).toContain(t.notifyNone);
+    expect(section).toContain('name="notification" value=""');
+    expect(section).not.toContain(t.notifyUrl);
+    expect(section).not.toContain(t.notifyTest);
+  });
+
+  it("Webhook の通知先は、Webhook の URL の欄を出す", () => {
+    locale = "ja";
+    const t = messagesFor("ja").settings;
+    const section = notificationSection(
+      render({ notification: { kind: "slack-webhook", webhook: "slack-webhook", language: "ja" } }),
+    );
+    expect(section).toContain(t.notifyWebhookSecret);
+    expect(section).toContain('value="slack-webhook"');
+    expect(section).not.toContain(t.notifyChannel);
   });
 });

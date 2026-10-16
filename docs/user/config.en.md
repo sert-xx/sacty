@@ -7,7 +7,7 @@
 These are the settings for all of sacty, written in `~/.sacty/config.yaml` (`$SACTY_HOME/config.yaml` if you change `SACTY_HOME`).
 Create the template with `npx sacty config init` ([CLI](cli.en.md#sacty-config-init)).
 
-Per-project settings (targets, GitHub accounts, the context repository, notifications, and so on) go in
+Per-project settings (targets, GitHub accounts, the context repository, and so on) go in
 [Project settings](project-settings.en.md) in the web UI, not in config.yaml.
 
 ## Settings

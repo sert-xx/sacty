@@ -18,7 +18,7 @@ If you are new to sacty, start with [Getting started](getting-started.en.md). Fo
 9. [Container images](images.en.md): private registries, per-language images
 10. [docker compose services](compose.en.md): databases, mock APIs, shared compose
 11. [Exporting results](result-export.en.md): exporting to Confluence, Notion, and others
-12. [Slack notifications](notifications.en.md): how notifications are sent, mentions
+12. [Slack notifications](notifications.en.md): the destination in the sacty settings, mentions
 13. [After-merge watch](deployment-watch.en.md): checking CI/CD and the app after deployment, registering fix tasks automatically
 14. [CLI](cli.en.md): the sacty command and its options
 15. [Troubleshooting](troubleshooting.en.md): common ways things stop and what to check

@@ -6,7 +6,7 @@
 持たず、組織内 PF か MCP サーバーとして書いた接続先を使って、エージェントに書き出させる。プロジェクトの設定のエクスポート・インポートも
 この文書に書く。
 
-関係する ADR: [プロジェクトのエクスポートに Slack のメンション（相手と種類）を含めず、含んでいた版 3 のファイルは理由を示して断る](../adr/20261015-0850-export-without-mentions.md)
+関係する ADR: [Slack の通知先を、プロジェクトの設定から sacty の設定に移し、すべてのプロジェクトの通知を1つの送り先に送る](../adr/20261016-0421-slack-notification-in-sacty-settings.md)
 
 ## 何を・どこに書き出すか
 
@@ -34,16 +34,14 @@
 
 ## プロジェクトのエクスポート・インポート
 
-- `GET /api/projects/:id/export` は `{ sacty: "project", version: 4, project: { … } }`（`PROJECT_EXPORT_VERSION`）を返す。`project` には
-  `name`・`targets`・`context`・`notification`（秘密情報は参照だけ）・`tickets`・`sharedComposes`・`deploymentWatch`（`true` のときだけ）を入れる。ID・日時・
+- `GET /api/projects/:id/export` は `{ sacty: "project", version: 5, project: { … } }`（`PROJECT_EXPORT_VERSION`）を返す。`project` には
+  `name`・`targets`・`context`・`tickets`・`sharedComposes`・`deploymentWatch`（`true` のときだけ）を入れる。ID・日時・
   `githubAccounts`（個人の設定）は入れない。画面からは `sacty-project-<名前>.json` としてダウンロードする。
-- `notification` には、Slack のメンション（`mention`）を入れない。相手（`targets`）は使う人や環境ごとに違い、相手の無い種類（`kinds`）は
-  意味が無いので、どちらも入れない。送り先・チャンネル・言語・秘密情報の参照は入れる。
+- Slack の通知先は sacty の設定にあり（[通知](notifications.md)）、プロジェクトの定義に無いので、エクスポートに入れない。
 - `POST /api/projects/import` は、同じ形を厳密に確かめ（知らない項目・`sacty` の違い・版の違いは誤り）、新しい ID のプロジェクトとして保存する
   （保存の前にほかのプロジェクトとの重複を確かめる）。画面からは 1,000,000 バイトまでのファイルを読む。
-  - 通知先の `mention` は、知らない項目として誤りにする（`input.unknownKeys`）。インポートしたプロジェクトにはメンションが無く、
-    プロジェクトの設定で相手と種類の両方を設定し直す（種類を足すときの既定は `approval`・`escalation`・`paused`）。
-  - 版 3（メンションを含んでいた版）のファイルは、メンションの有無によらず、エクスポートし直すように示して断る（`input.exportVersionWithMentions`）。
+  - `project` の `notification` は、知らない項目として誤りにする（`input.unknownKeys`）。
+  - 版 3・4（通知先を含んでいた版）のファイルは、通知先の有無によらず、エクスポートし直すように示して断る（`input.exportVersionWithNotification`）。
     ほかの版の違いは `input.unsupportedVersion`。どちらも、版の誤りを最初の誤りとして返す（画面は最初の誤りを出す）。
 
-コード: `packages/core/src/projects.ts`（`ProjectExport`・`ExportNotification`・`exportProject`・`withoutMention`・`PROJECT_EXPORT_VERSION`）、`apps/daemon/src/service.ts`（`exportProject`・`importProject`・`saveProject`）、`apps/web/src/app/projects/[id]/export/route.ts`、`apps/web/src/app/actions.ts`（`importProjectAction`）
+コード: `packages/core/src/projects.ts`（`ProjectExport`・`exportProject`・`PROJECT_EXPORT_VERSION`）、`apps/daemon/src/service.ts`（`exportProject`・`importProject`・`saveProject`）、`apps/web/src/app/projects/[id]/export/route.ts`、`apps/web/src/app/actions.ts`（`importProjectAction`）
