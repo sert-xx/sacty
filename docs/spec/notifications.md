@@ -65,7 +65,9 @@ sacty の設定（`sacty.db` の `settings`）の `notification`。無ければ�
   （タスクの操作には伝えない）。
 - 理由を持つのは、今の送り先の最新の結果だけ。送り始めた順に番号を付け、後に始めた送信の結果を、先に始めた送信の結果で上書きしない。
   送り先が変わった後に終わった、古い送り先の結果は反映しない。理由は送り先とともに持ち、今の送り先と違えば出さない。
+- sacty の設定の保存で通知先が変わったら、持っている理由を捨て、それまでに始めた送信の結果も反映しない（送り先を A → B → A と戻しても、
+  変える前の失敗を出さない）。
 - `POST /api/settings/notification-test` で、保存した sacty の設定の送り先にテストの通知を送る（メンションは種類によらず付ける）。
   通知先が無ければ `notify.notConfigured`、送れなければ理由（`notify.failed`）を 409 で返す。
 
-コード: `apps/daemon/src/notifier.ts`（`SlackNotifier.notify`・`test`・`problems`・`fail`・`REASON_MAX`）、`apps/daemon/src/service.ts`（`testNotification`）、`apps/daemon/src/server.ts`、`apps/web/src/lib/notification-problems.ts`（`notificationProblems`）
+コード: `apps/daemon/src/notifier.ts`（`SlackNotifier.notify`・`test`・`problems`・`fail`・`settingsChanged`・`REASON_MAX`）、`apps/daemon/src/service.ts`（`testNotification`・`saveSettings`）、`apps/daemon/src/server.ts`、`apps/web/src/lib/notification-problems.ts`（`notificationProblems`）

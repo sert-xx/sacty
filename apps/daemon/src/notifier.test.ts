@@ -681,3 +681,64 @@ describe("通知の失敗をタスクの操作に伝えない・古い結果で�
     expect(renderMessage(notifier.problems()[0], "ja")).toContain("HTTP 503");
   });
 });
+
+describe("通知先を変えたら、変える前の失敗を出さない（PBI-115 再レビュー指摘）", () => {
+  const a = {
+    kind: "slack-api" as const,
+    url: "https://a.example.com/api/chat.postMessage",
+    channel: "#a",
+    language: "ja" as const,
+  };
+  const b = { ...a, url: "https://b.example.com/api/chat.postMessage", channel: "#b" };
+
+  for (const [name, middle] of [
+    ["B", b],
+    ["未設定", undefined],
+  ] as const) {
+    it(`A で失敗 → ${name} → 何も送らずに A に戻しても、前の失敗を出さない`, async () => {
+      let current: SlackNotification | undefined = a;
+      const notifier = new SlackNotifier({
+        notification: () => current,
+        project: (id) => projects[id],
+        secrets: new MemorySecretStore({}),
+        webUrl: "http://x",
+        fetchImpl: slack(() => new Response("down", { status: 500 })).fetchImpl,
+      });
+      await notifier.notify(task(), "completed");
+      expect(notifier.problems()).toHaveLength(1);
+      current = middle;
+      notifier.settingsChanged();
+      expect(notifier.problems()).toEqual([]);
+      current = a;
+      notifier.settingsChanged();
+      expect(notifier.problems()).toEqual([]);
+      // 戻した後に新しく送れなかったら、その理由は出す
+      await notifier.notify(task(), "completed");
+      expect(notifier.problems()).toHaveLength(1);
+    });
+  }
+
+  it("変える前に始めた送信が、A に戻した後に失敗しても、その結果を出さない", async () => {
+    let current: SlackNotification = a;
+    let answer: ((res: Response) => void) | undefined;
+    const notifier = new SlackNotifier({
+      notification: () => current,
+      project: (id) => projects[id],
+      secrets: new MemorySecretStore({}),
+      webUrl: "http://x",
+      fetchImpl: (() =>
+        new Promise<Response>((resolve) => {
+          answer = resolve;
+        })) as typeof fetch,
+    });
+    const old = notifier.notify(task(), "completed");
+    await new Promise((r) => setTimeout(r, 0));
+    current = b;
+    notifier.settingsChanged();
+    current = a;
+    notifier.settingsChanged();
+    answer?.(new Response("down", { status: 500 }));
+    await old;
+    expect(notifier.problems()).toEqual([]);
+  });
+});

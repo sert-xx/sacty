@@ -9232,6 +9232,37 @@ describe("Slack の通知先は sacty の設定（PBI-115）", () => {
     activity.close();
   });
 
+  it("sacty の設定で通知先を A → B → A と戻すと、変える前の失敗は出さない。通知先を変えない保存では残す（再レビュー指摘）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const settings = new MemorySettingsStore({});
+    const projects = projectsWithAccount();
+    const notifier = new SlackNotifier({
+      notification: () => settings.get().notification,
+      project: (id) => projects.get(id),
+      secrets: new MemorySecretStore({ "slack-bot": "xoxb-very-secret" }),
+      webUrl: "http://x",
+      fetchImpl: fakeSlack(500).fetchImpl,
+    });
+    const { service } = makeService(activity, [], { settings, projects, notifier });
+    const app = createApp(service, token);
+    const put = (body: unknown) =>
+      app.request("/api/settings", { method: "PUT", headers: json, body: JSON.stringify(body) });
+    const failed = () =>
+      service.status().warnings.filter((w) => typeof w !== "string" && w.code === "notify.failed");
+    const b = { ...destination, url: "https://slack-b.example.com/api/chat.postMessage" };
+    expect((await put({ notification: destination })).status).toBe(200);
+    await expect(service.testNotification()).rejects.toThrow();
+    expect(failed()).toHaveLength(1);
+    // 通知先を変えない保存（ほかの項目だけ）では、送れなかった理由を残す
+    expect((await put({ intakeLabel: "sacty", notification: destination })).status).toBe(200);
+    expect(failed()).toHaveLength(1);
+    expect((await put({ notification: b })).status).toBe(200);
+    expect(failed()).toEqual([]);
+    expect((await put({ notification: destination })).status).toBe(200);
+    expect(failed()).toEqual([]);
+    activity.close();
+  });
+
   it("送れなかった理由は sacty 全体の警告に1つだけ出し（秘密情報は伏せる）、送れたら消す", async () => {
     const activity = new SqliteActivityStore(dbPath);
     const settings = new MemorySettingsStore({ notification: destination });

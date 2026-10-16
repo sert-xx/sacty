@@ -65,7 +65,9 @@ Code: `apps/daemon/src/notifier.ts` (`notificationText`, `mentionText`, `withMen
 - Only the latest result for the current destination is kept. Sends are numbered in the order they start, and the result of a send started earlier does not
   overwrite that of a send started later. Results of an old destination that finish after the destination changed are not applied. The reason is kept with its
   destination and is not shown if it differs from the current one.
+- When saving the sacty settings changes the destination, the kept reason is discarded, and results of sends started before that are not applied either (even if
+  the destination goes A → B → A, the failure from before the change is not shown).
 - `POST /api/settings/notification-test` sends a test notification to the destination in the saved sacty settings (mentions are added regardless of the kind).
   It returns 409 with `notify.notConfigured` when there is no destination, or with the reason (`notify.failed`) when it cannot be sent.
 
-Code: `apps/daemon/src/notifier.ts` (`SlackNotifier.notify`, `test`, `problems`, `fail`, `REASON_MAX`), `apps/daemon/src/service.ts` (`testNotification`), `apps/daemon/src/server.ts`, `apps/web/src/lib/notification-problems.ts` (`notificationProblems`)
+Code: `apps/daemon/src/notifier.ts` (`SlackNotifier.notify`, `test`, `problems`, `fail`, `settingsChanged`, `REASON_MAX`), `apps/daemon/src/service.ts` (`testNotification`, `saveSettings`), `apps/daemon/src/server.ts`, `apps/web/src/lib/notification-problems.ts` (`notificationProblems`)

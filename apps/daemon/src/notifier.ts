@@ -254,6 +254,11 @@ export class SlackNotifier {
   /** 送り始めた順の番号と、結果を反映した最後の番号（後に始めた送信の結果を、先に始めた送信の結果で上書きしない）。 */
   private started = 0;
   private settled = 0;
+  /**
+   * 送り先の設定を変えたときの、送り始めた番号（PBI-115 レビュー指摘）。これまでに始めた送信の結果は、変える前の設定のものなので
+   * 反映しない（A → B → A と戻しても、変える前の失敗を今の障害として出さない）。
+   */
+  private changedAt = 0;
 
   constructor(
     private readonly deps: {
@@ -324,11 +329,19 @@ export class SlackNotifier {
   }
 
   /**
-   * 結果を反映してよいか。後に始めた送信の結果がすでに反映されていれば反映しない。送り先が変わっていれば（今の設定を読めない
+   * sacty の設定の通知先を変えたときに呼ぶ。持っている失敗を捨て、変える前に始めた送信の結果を反映しないようにする。
+   */
+  settingsChanged(): void {
+    this.changedAt = this.started;
+    this.failure = undefined;
+  }
+
+  /**
+   * 結果を反映してよいか。通知先を変える前に始めた送信の結果は反映しない。後に始めた送信の結果がすでに反映されていれば反映しない。送り先が変わっていれば（今の設定を読めない
    * ときも）、古い送り先の結果なので反映しない。key が無い（設定を読めなかった）ときは、そのまま反映する。
    */
   private settle(seq: number, key: string | undefined): boolean {
-    if (seq < this.settled) return false;
+    if (seq <= this.changedAt || seq < this.settled) return false;
     if (key !== undefined) {
       let current: string | undefined;
       try {

@@ -391,7 +391,8 @@ export type ServiceDeps = {
    */
   contextMcp?: Pick<ContextMcpServers, "lease" | "ready">;
   /** 人間の出番の通知（PBI-38）。送るのは待たない。 */
-  notifier?: Pick<SlackNotifier, "notify" | "test" | "problems">;
+  notifier?: Pick<SlackNotifier, "notify" | "test" | "problems"> &
+    Partial<Pick<SlackNotifier, "settingsChanged">>;
   /**
    * 要求要件・設計を、対象のリポジトリへの PR のマージで承認するか（PBI-57）。既定は承認する（PR を作れるタスクだけ）。
    * false なら、これまでどおり sacty の画面で承認する（画面の承認の流れを確かめるテストで切る）。
@@ -2501,7 +2502,17 @@ export class TaskService {
    * 同じ名前でもよい（Issue と PR は検索の条件で分かれる。PBI-104）。
    */
   saveSettings(raw: unknown): SactySettings {
-    const saved = this.deps.settings.put(SactySettings.parse(raw));
+    const parsed = SactySettings.parse(raw);
+    let before: string | undefined;
+    try {
+      before = JSON.stringify(this.deps.settings.get().notification ?? null);
+    } catch {
+      before = undefined; // 読めなかった設定から変えたときも、変えたものとして扱う
+    }
+    const saved = this.deps.settings.put(parsed);
+    // 通知先を変えたら、変える前の送れなかった理由を捨てる（戻しても、前の失敗を今の障害として出さない。PBI-115 レビュー指摘）
+    if (before !== JSON.stringify(saved.notification ?? null))
+      this.deps.notifier?.settingsChanged?.();
     // 保存したら、取り込みはすべての種類を次の確認ですぐに取り込む（何が変わったかは見分けない。PBI-100）
     this.settingsSaves += 1;
     return saved;
