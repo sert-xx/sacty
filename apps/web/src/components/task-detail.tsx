@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  type ActivityEvent,
   appliedProposalFor,
   canRereview,
   canRetryExport,
@@ -35,10 +36,11 @@ import { CostMeter, StatusLabel, StepChips } from "@/components/task-bits";
 import { TaskChat } from "@/components/task-chat";
 import { TaskControls } from "@/components/task-controls";
 import { TestViewpoints } from "@/components/test-viewpoints";
+import { Hint } from "@/components/ui/hint";
 import { useMessages } from "@/i18n/client";
 import {
   canControl,
-  describeEvent,
+  describeEventParts,
   formatStamp,
   needsTicketRepositories,
   personAction,
@@ -198,8 +200,14 @@ export function TaskDetailView({ data }: { data: TaskDetailData }) {
                 {task.source?.repo ?? task.repo ?? task.repository?.url}
               </span>
               {/* オーケストレーター・人が選んだリポジトリ（子タスクに付けたものを含む）は、選んだ理由を出す（PBI-73） */}
-              {task.repoChoice &&
-                m.repoChoice(labels.text(task.repoChoice.reason), task.repoChoice.by === "person")}
+              {task.repoChoice && (
+                <>
+                  {m.repoChoiceBy(task.repoChoice.by === "person")}
+                  {task.repoChoice.by !== "person" && (
+                    <Hint text={m.repoChoiceHint(labels.text(task.repoChoice.reason))} />
+                  )}
+                </>
+              )}
             </>
           ) : (
             // リポジトリを指定せずに作ったタスク（PBI-73）
@@ -356,10 +364,14 @@ export function TaskDetailView({ data }: { data: TaskDetailData }) {
           >
             <h2 id="steps" className="text-[15px] font-semibold">
               {m.steps}{" "}
-              <span className="text-[13px] font-normal text-muted-foreground">
-                {/* PR のレビューの取り込みのタスクは、sacty がレビューだけにする（PBI-44） */}
-                {task.source?.review ? m.stepsNoteReview : m.stepsNote}
-              </span>
+              {/* PR のレビューの取り込みのタスクは、sacty がレビューだけにする（PBI-44） */}
+              {task.source?.review ? (
+                <span className="text-[13px] font-normal text-muted-foreground">
+                  {m.stepsNoteReview}
+                </span>
+              ) : (
+                <Hint text={m.stepsHint} />
+              )}
             </h2>
             <StepChips task={task} />
             {/* オーケストレーターが決めたベースブランチとテストのコマンド（PBI-25） */}
@@ -374,8 +386,11 @@ export function TaskDetailView({ data }: { data: TaskDetailData }) {
                     {task.testCommand ? (
                       <span className="font-mono">{task.testCommand}</span>
                     ) : task.noTestsReason ? (
-                      // テストの仕組みが無いと判断したタスク（PBI-94）
-                      testCommandOfNoTests(task, task.noTestsReason, m)
+                      // テストの仕組みが無いと判断したタスク（PBI-94）。根拠は補足に出す
+                      <>
+                        {testCommandOfNoTests(task, m)}{" "}
+                        <Hint text={m.noTestsReason(task.noTestsReason)} />
+                      </>
                     ) : (
                       m.testCommandUnknown
                     )}
@@ -393,7 +408,9 @@ export function TaskDetailView({ data }: { data: TaskDetailData }) {
             {/* オーケストレーターが工程ごとに決めた書き出し先と理由（PBI-56） */}
             {task.exportPlans && Object.keys(task.exportPlans).length > 0 && (
               <div className="flex flex-col gap-1 text-sm leading-6">
-                <h3 className="font-semibold">{m.exports.title}</h3>
+                <h3 className="font-semibold">
+                  {m.exports.title} <Hint text={m.exports.hint} />
+                </h3>
                 <ul className="flex flex-col gap-1 text-muted-foreground">
                   {task.steps
                     .filter((s) => task.exportPlans?.[s.key])
@@ -423,7 +440,11 @@ export function TaskDetailView({ data }: { data: TaskDetailData }) {
             {task.steps.length > 0 && <StepImages task={task} imageStatus={data.imageStatus} />}
           </section>
           {task.operation && (
-            <CardSection id="operation-settings" title={m.operationSettings.title}>
+            <CardSection
+              id="operation-settings"
+              title={m.operationSettings.title}
+              hint={m.operationSettings.hint}
+            >
               <p className="text-sm text-muted-foreground">{m.operationSettings.description}</p>
               <dl className="grid gap-3 text-sm leading-6">
                 {(
@@ -505,8 +526,7 @@ export function TaskDetailView({ data }: { data: TaskDetailData }) {
           className="flex min-w-0 flex-[1_1_320px] flex-col gap-1 rounded-xl border border-border bg-card p-5"
         >
           <h2 id="activity" className="pb-2 text-[15px] font-semibold">
-            {m.activity}{" "}
-            <span className="text-[13px] font-normal text-muted-foreground">{m.activityNote}</span>
+            {m.activity}
           </h2>
           <ol className="flex flex-col">
             {[...activity].reverse().map((event) => (
@@ -522,7 +542,7 @@ export function TaskDetailView({ data }: { data: TaskDetailData }) {
                 </time>
                 {/* パスやブランチ名など、区切りの無い長い文字列でも幅からはみ出さないようにする */}
                 <span className="[overflow-wrap:anywhere]">
-                  {describeEvent(event, labels)}
+                  <EventText event={event} />
                   {/* エージェントの実行の行から、その実行のセッションログを開く（PBI-62） */}
                   {runLogId(event) && (
                     <Link
@@ -544,6 +564,23 @@ export function TaskDetailView({ data }: { data: TaskDetailData }) {
   );
 }
 
+/**
+ * 作業履歴の1行の文。長い行（コンテキストの用意の外部 PF の一覧）は、1行目だけを出し、詳細は開いて読む（PR #127 レビュー指摘）。
+ */
+export function EventText({ event }: { event: ActivityEvent }) {
+  const { labels } = useMessages();
+  const { text, detail } = describeEventParts(event, labels);
+  if (!detail) return <>{text}</>;
+  return (
+    <details className="inline">
+      <summary className="inline cursor-pointer list-none [&::-webkit-details-marker]:hidden">
+        {text} <span className="text-xs text-accent-foreground underline">{labels.event.more}</span>
+      </summary>
+      <span className="block pt-1 text-xs text-muted-foreground">{detail}</span>
+    </details>
+  );
+}
+
 /** 工程のイメージ（PBI-41）と、選んだ元・いつから使うか。中止していなければ、どの工程も変えられる（PBI-106）。 */
 function StepImages({
   task,
@@ -562,7 +599,7 @@ function StepImages({
   return (
     <div className="flex flex-col gap-1 text-sm leading-6" data-testid="step-images">
       <h3 className="font-semibold">
-        {m.title} <span className="text-[13px] font-normal text-muted-foreground">{m.note}</span>
+        {m.title} <Hint text={m.hint} />
       </h3>
       {!options && (
         <p role="status" className="text-warn" data-testid="step-images-unavailable">
@@ -630,7 +667,7 @@ function Subtasks({ task, subtasks }: { task: Task; subtasks: Task[] }) {
   const { children, done, costUsd } = subtaskSummary(task, all);
   const titles = new Map(children.map((c) => [c.taskId, c.title]));
   return (
-    <CardSection id="subtasks" title={m.title} note={m.note}>
+    <CardSection id="subtasks" title={m.title} hint={m.hint}>
       <p className="text-sm text-muted-foreground">
         {m.progress(done, children.length)} ・ {m.cost(usd(costUsd))}
       </p>
@@ -649,11 +686,9 @@ function Subtasks({ task, subtasks }: { task: Task; subtasks: Task[] }) {
               </Link>
               {/* 統合レビューの後に追加した修正の子タスク（PBI-31） */}
               {c.round > 1 && (
-                <span
-                  title={m.fixNote}
-                  className="rounded-full border border-back-line bg-back-soft px-2 py-0.5 text-xs font-semibold text-back"
-                >
+                <span className="inline-flex items-center gap-0.5 rounded-full border border-back-line bg-back-soft py-0.5 pr-0.5 pl-2 text-xs font-semibold text-back">
                   {m.fix}
+                  <Hint text={m.fixHint} className="size-4" />
                 </span>
               )}
               {c.task ? (
@@ -698,31 +733,36 @@ function Deliverable({ task, step }: { task: Task; step: StepKey }) {
   const fromProposal = approved ? undefined : appliedProposalFor(task, step);
   const running =
     task.status === "running" && task.steps.some((s) => s.key === step && s.state === "active");
+  // 見出しの横の短い事実と、仕組みの補足（PBI-117）
+  const [note, hint]: [string, string | undefined] =
+    // 再現は、sacty がテストで確かめて先へ進む（人間は承認しない。PBI-29）
+    approved && step === "reproduce"
+      ? [m.reproduced, undefined]
+      : approved && step === "investigate" && !investigationIsGoal(task)
+        ? [m.preliminary, m.preliminaryHint]
+        : approved?.edited?.fallback
+          ? // 人が直してマージしたが、成果のファイルが消された・読めなかった（PBI-63）
+            [
+              m.approvedFallback(approved.submission, approved.edited.fallback === "deleted"),
+              m.approvedFallbackHint,
+            ]
+          : approved?.edited?.sacty !== undefined
+            ? [m.approvedEdited(approved.submission), m.approvedHint]
+            : approved
+              ? [m.approved(approved.submission), m.approvedHint]
+              : step === "review" && task.reviewPost
+                ? [m.reviewPosted, undefined]
+                : fromProposal
+                  ? [m.fromProposal(fromProposal.id), undefined]
+                  : stale
+                    ? [m.stale, m.staleHint]
+                    : [m.draft, undefined];
   return (
     <CardSection
       id={`deliverable-${step}`}
       title={messages.labels.step[step]}
-      note={
-        // 再現は、sacty がテストで確かめて先へ進む（人間は承認しない。PBI-29）
-        approved && step === "reproduce"
-          ? m.reproduced
-          : approved && step === "investigate" && !investigationIsGoal(task)
-            ? m.preliminary
-            : approved?.edited?.fallback
-              ? // 人が直してマージしたが、成果のファイルが消された・読めなかった（PBI-63）
-                m.approvedFallback(approved.submission, approved.edited.fallback === "deleted")
-              : approved?.edited?.sacty !== undefined
-                ? m.approvedEdited(approved.submission)
-                : approved
-                  ? m.approved(approved.submission)
-                  : step === "review" && task.reviewPost
-                    ? m.reviewPosted
-                    : fromProposal
-                      ? m.fromProposal(fromProposal.id)
-                      : stale
-                        ? m.stale
-                        : m.draft
-      }
+      note={note}
+      hint={hint}
       // 承認済みの成果物は折りたたむ（承認待ち・作業中のものは開いたまま）
       collapsed={Boolean(approved)}
       // 承認した成果の書き出しの結果（PBI-56）。折りたたんでも見えるようにする
@@ -798,7 +838,8 @@ function Deliverable({ task, step }: { task: Task; step: StepKey }) {
             {m.viewpoints}{" "}
             <span className="text-[13px] font-normal text-muted-foreground">
               {m.viewpointsNote(viewpoints.length)}
-            </span>
+            </span>{" "}
+            <Hint text={m.viewpointsHint} />
           </h3>
           <TestViewpoints viewpoints={viewpoints} />
         </>
@@ -855,7 +896,8 @@ function ExportResult({ task, step }: { task: Task; step: StepKey }) {
       ) : last?.failed !== undefined ? (
         <>
           <p className="text-warn [overflow-wrap:anywhere]">
-            {m.failed(last.submission, messages.labels.text(last.failed))}
+            {m.failed(last.submission, messages.labels.text(last.failed))}{" "}
+            <Hint text={m.failedHint} />
           </p>
           {exported?.url && (
             <p className="[overflow-wrap:anywhere] text-muted-foreground">

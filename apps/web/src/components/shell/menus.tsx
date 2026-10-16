@@ -177,7 +177,6 @@ export function NotificationsMenu({
                 {here.map(item)}
               </Menu.Group>
             )}
-            {total > 0 && <p className="px-3 pt-2 pb-1 text-xs text-muted-foreground">{t.hint}</p>}
           </Menu.Popup>
         </Menu.Positioner>
       </Menu.Portal>

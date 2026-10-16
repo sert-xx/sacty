@@ -11,6 +11,7 @@ import { startTransition, useActionState, useId, useState } from "react";
 import { type SaveSettingsState, saveSettingsAction } from "@/app/actions";
 import { NotificationSettings } from "@/components/notification-settings";
 import { Button } from "@/components/ui/button";
+import { Hint } from "@/components/ui/hint";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useMessages } from "@/i18n/client";
@@ -131,12 +132,8 @@ export function SettingsForm({
         className="flex flex-col gap-3 rounded-xl border border-border bg-card p-5"
       >
         <h2 id={`${uid}-intake`} className="text-[15px] font-semibold">
-          {t.intakeTitle}{" "}
-          <span className="text-[13px] font-normal text-muted-foreground">{t.intakeNote}</span>
+          {t.intakeTitle} <Hint text={t.intakeHint} />
         </h2>
-        <p className="text-sm leading-6 whitespace-pre-line text-muted-foreground">
-          {t.intakeHelp}
-        </p>
         {toggle("issues", t.triageIssues)}
         <div className="flex flex-col gap-1.5">
           <Label htmlFor={`${uid}-label`}>{t.intakeLabel}</Label>
@@ -160,12 +157,8 @@ export function SettingsForm({
         className="flex flex-col gap-3 rounded-xl border border-border bg-card p-5"
       >
         <h2 id={`${uid}-review`} className="text-[15px] font-semibold">
-          {t.reviewTitle}{" "}
-          <span className="text-[13px] font-normal text-muted-foreground">{t.reviewNote}</span>
+          {t.reviewTitle} <Hint text={t.reviewHint} />
         </h2>
-        <p className="text-sm leading-6 whitespace-pre-line text-muted-foreground">
-          {t.reviewHelp}
-        </p>
         <label className="flex items-center gap-2 text-sm">
           <input
             type="checkbox"
@@ -178,7 +171,10 @@ export function SettingsForm({
         </label>
         {toggle("reviewLabel", t.triageReviewLabel)}
         <div className="flex flex-col gap-1.5">
-          <Label htmlFor={`${uid}-review-label`}>{t.reviewLabel}</Label>
+          <span className="flex items-center gap-1">
+            <Label htmlFor={`${uid}-review-label`}>{t.reviewLabel}</Label>
+            <Hint text={t.reviewLabelHint} />
+          </span>
           <Input
             id={`${uid}-review-label`}
             name="reviewLabel"
@@ -211,12 +207,8 @@ export function SettingsForm({
         className="flex flex-col gap-3 rounded-xl border border-border bg-card p-5"
       >
         <h2 id={`${uid}-tickets`} className="text-[15px] font-semibold">
-          {t.ticketsTitle}{" "}
-          <span className="text-[13px] font-normal text-muted-foreground">{t.ticketsNote}</span>
+          {t.ticketsTitle} <Hint text={t.ticketsHint} />
         </h2>
-        <p className="text-sm leading-6 whitespace-pre-line text-muted-foreground">
-          {t.ticketsHelp}
-        </p>
         {toggle("tickets", t.triageTickets)}
         <div className="flex flex-col gap-1.5">
           <Label htmlFor={`${uid}-ticket-label`}>{t.ticketLabel}</Label>
@@ -248,12 +240,8 @@ export function SettingsForm({
         className="flex flex-col gap-3 rounded-xl border border-border bg-card p-5"
       >
         <h2 id={`${uid}-parallel`} className="text-[15px] font-semibold">
-          {t.parallelTitle}{" "}
-          <span className="text-[13px] font-normal text-muted-foreground">{t.parallelNote}</span>
+          {t.parallelTitle} <Hint text={t.parallelHint} />
         </h2>
-        <p className="text-sm leading-6 whitespace-pre-line text-muted-foreground">
-          {t.parallelHelp(DEFAULT_MAX_PARALLEL_TASKS, MAX_PARALLEL_TASKS_LIMIT)}
-        </p>
         <div className="flex flex-col gap-1.5">
           <Label htmlFor={`${uid}-parallel-input`}>{t.parallelLabel}</Label>
           <Input
@@ -270,7 +258,8 @@ export function SettingsForm({
             className="max-w-32"
           />
         </div>
-        <p className="text-sm">
+        <p className="text-sm text-muted-foreground">
+          {t.parallelHelp(DEFAULT_MAX_PARALLEL_TASKS, MAX_PARALLEL_TASKS_LIMIT)}{" "}
           {t.parallelCurrent(
             maxParallelTasks ?? DEFAULT_MAX_PARALLEL_TASKS,
             maxParallelTasks === undefined,

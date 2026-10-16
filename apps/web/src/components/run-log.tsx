@@ -6,10 +6,12 @@ import Link from "next/link";
 import { useLayoutEffect, useRef, useState } from "react";
 import { DaemonError } from "@/components/daemon-error";
 import { FollowProjectAfterRecovery, StaleNotice } from "@/components/live-status";
+import { EventText } from "@/components/task-detail";
+import { Hint } from "@/components/ui/hint";
 import type { Messages } from "@/i18n";
 import { useMessages } from "@/i18n/client";
 import type { AgentFiles, RunLogMeta } from "@/lib/daemon";
-import { describeEvent, formatStamp } from "@/lib/labels";
+import { formatStamp } from "@/lib/labels";
 import { fetchLive, LIVE_INTERVAL_MS, pollWhileVisible } from "@/lib/live";
 import type { RunLogData } from "@/lib/run-log-data";
 import { type LogEntry, parseSessionLog } from "@/lib/session-log";
@@ -221,7 +223,7 @@ function RunLogView({ runId, data }: { runId: string; data: RunLogData }) {
                   {formatStamp(event.at, messages.locale)}
                 </time>
                 <span className="[overflow-wrap:anywhere]">
-                  {describeEvent(event, messages.labels)}
+                  <EventText event={event} />
                 </span>
               </li>
             ))}
@@ -386,9 +388,8 @@ function AgentFilesView({
       className="flex flex-col gap-3 rounded-xl border border-border bg-card p-5 text-sm"
     >
       <h2 id="run-agent-files" className="text-[15px] font-semibold">
-        {m.title}
+        {m.title} <Hint text={m.hint} />
       </h2>
-      <p className="text-muted-foreground">{m.help}</p>
       <dl className="grid grid-cols-[max-content_minmax(0,1fr)] gap-x-4 gap-y-1">
         <dt className="text-muted-foreground">{m.session}</dt>
         <dd className="font-mono text-xs break-all">

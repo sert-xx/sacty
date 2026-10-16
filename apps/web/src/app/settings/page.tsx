@@ -2,6 +2,7 @@ import { Suspense } from "react";
 import { DaemonError } from "@/components/daemon-error";
 import { SecretsSection } from "@/components/secrets-section";
 import { SettingsForm } from "@/components/settings-form";
+import { Hint } from "@/components/ui/hint";
 import { getMessages } from "@/i18n/server";
 import { DaemonUnavailableError, getSettings, getStatus } from "@/lib/daemon";
 import { notificationProblems } from "@/lib/notification-problems";
@@ -11,10 +12,10 @@ export default async function SettingsPage() {
   const t = (await getMessages()).settings;
   return (
     <>
-      <div className="flex flex-col gap-2">
-        <h1 className="text-2xl font-bold">{t.title}</h1>
-        <p className="text-sm leading-6 text-muted-foreground whitespace-pre-line">{t.note}</p>
-      </div>
+      <h1 className="flex items-center gap-2 text-2xl font-bold">
+        {t.title}
+        <Hint text={t.hint} />
+      </h1>
       <Suspense fallback={<p className="text-sm text-muted-foreground">{t.loading}</p>}>
         <Settings />
       </Suspense>

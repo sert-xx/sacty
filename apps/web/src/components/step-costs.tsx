@@ -2,6 +2,7 @@
 
 import type { ActivityEvent, Task, TokenUsage } from "@sacty/core";
 import { CardSection } from "@/components/card-section";
+import { Hint } from "@/components/ui/hint";
 import { useMessages } from "@/i18n/client";
 import { formatStamp, usd } from "@/lib/labels";
 import { type CostRole, type CostRun, stepCosts } from "@/lib/step-costs";
@@ -44,7 +45,7 @@ export function StepCosts({
   const ran = rows.filter((r) => r.runs.length > 0);
 
   return (
-    <CardSection id="step-costs" title={m.title} note={m.note}>
+    <CardSection id="step-costs" title={m.title} hint={m.hint}>
       <div className="overflow-x-auto">
         <table className="w-full min-w-[560px] border-collapse text-sm">
           <thead>
@@ -223,11 +224,9 @@ function Cost({ usd: value, estimated, m }: { usd: number; estimated: boolean; m
     <span className="inline-flex items-center justify-end gap-1.5">
       <span className="font-mono tabular-nums">{usd(value)}</span>
       {estimated && (
-        <span
-          title={m.estimatedNote}
-          className="rounded-full border border-input px-1.5 py-0.5 text-xs text-muted-foreground"
-        >
+        <span className="inline-flex items-center gap-0.5 rounded-full border border-input py-0.5 pr-0.5 pl-1.5 text-xs text-muted-foreground">
           {m.estimated}
+          <Hint text={m.estimatedHint} className="size-4" />
         </span>
       )}
     </span>

@@ -4,6 +4,7 @@ import { Suspense } from "react";
 import { DaemonError } from "@/components/daemon-error";
 import { ProjectEditor } from "@/components/project-editor";
 import { FollowProject } from "@/components/shell/follow-project";
+import { Hint } from "@/components/ui/hint";
 import { getMessages } from "@/i18n/server";
 import {
   CONTEXT_CHECK_PARAM,
@@ -67,15 +68,17 @@ async function ProjectSettings({
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-2xl font-bold">{t.settingsTitle(view.project.name)}</h1>
         {/* ダウンロードなので、クライアントの画面遷移にしない */}
-        <a
-          href={`/projects/${encodeURIComponent(view.project.id)}/export`}
-          download
-          className="inline-flex min-h-9 items-center rounded-md border border-input bg-card px-3 text-sm font-medium hover:bg-muted"
-        >
-          {t.export}
-        </a>
+        <span className="flex items-center gap-1.5">
+          <a
+            href={`/projects/${encodeURIComponent(view.project.id)}/export`}
+            download
+            className="inline-flex min-h-9 items-center rounded-md border border-input bg-card px-3 text-sm font-medium hover:bg-muted"
+          >
+            {t.export}
+          </a>
+          <Hint text={t.exportHint} />
+        </span>
       </div>
-      <p className="text-sm text-muted-foreground">{t.exportNote}</p>
       {contextError !== undefined && (
         <p role="alert" className="text-sm leading-6 whitespace-pre-line text-warn">
           {t.editor.createdContextError(messages.labels.text(contextError))}

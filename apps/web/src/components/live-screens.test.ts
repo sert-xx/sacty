@@ -567,7 +567,7 @@ describe("ヘッダーのお知らせも、データだけを取り直す（PBI-
       ],
     } satisfies HeaderData;
     await wait();
-    expect(document.querySelector('[aria-label="お知らせ（人間の対応待ち 1件）"]')).not.toBeNull();
+    expect(document.querySelector('[aria-label="お知らせ（対応待ち 1件）"]')).not.toBeNull();
     expect(requests.every((u) => u === "/live/header?current=p1")).toBe(true);
   });
 });
@@ -586,7 +586,7 @@ describe("更新できない間・描いたときに届かなかったとき・�
     server = "down";
     await wait();
     expect(container.querySelector('[data-testid="live-stale"]')?.textContent).toContain(
-      "いま更新できません",
+      "デーモンに届きません",
     );
     expect(container.querySelector("#gate")).not.toBeNull();
     server = detail(awaiting);

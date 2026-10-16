@@ -4,6 +4,7 @@ import Link from "next/link";
 import { DaemonError } from "@/components/daemon-error";
 import { FollowProjectAfterRecovery, StaleNotice } from "@/components/live-status";
 import { StatusLabelView, StepChipsView } from "@/components/task-bits";
+import { Hint } from "@/components/ui/hint";
 import { useMessages } from "@/i18n/client";
 import type { TaskListData } from "@/lib/task-list-data";
 import { useLiveData } from "@/lib/use-live-data";
@@ -83,7 +84,7 @@ export function LiveTaskList({
                     {m.column.start}
                   </th>
                   <th scope="col" className="px-3 py-2.5 font-medium">
-                    {m.column.steps}
+                    {m.column.steps} <Hint text={m.stepsHint} className="size-4" />
                   </th>
                   <th scope="col" className="px-5 py-2.5 font-medium">
                     {m.column.status}

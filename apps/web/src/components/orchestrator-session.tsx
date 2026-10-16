@@ -23,7 +23,7 @@ export function OrchestratorSession({ task }: { task: Task }) {
     [m.lastUsed, formatStamp(session.lastUsedAt, locale)],
   ];
   return (
-    <CardSection id="orchestrator-session" title={m.title} note={m.note}>
+    <CardSection id="orchestrator-session" title={m.title} hint={m.hint}>
       <dl className="grid grid-cols-[max-content_minmax(0,1fr)] gap-x-4 gap-y-1.5 text-sm">
         {rows.map(([label, value]) => (
           <div key={label} className="contents">

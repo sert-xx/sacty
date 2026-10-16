@@ -11,7 +11,7 @@ export function ReproductionResult({ task }: { task: Task }) {
   if (!r) return null;
   const m = messages.reproduction;
   return (
-    <CardSection id="reproduction" title={m.title} note={m.note}>
+    <CardSection id="reproduction" title={m.title} hint={m.hint}>
       <p className={r.reproduced ? "text-sm font-medium" : "text-sm font-medium text-warn"}>
         {r.reproduced ? m.reproduced : m.notReproduced}
       </p>

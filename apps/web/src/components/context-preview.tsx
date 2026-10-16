@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import { previewContextAction } from "@/app/actions";
 import { Button } from "@/components/ui/button";
+import { Hint } from "@/components/ui/hint";
 import { useMessages } from "@/i18n/client";
 import type { ContextPreview, ContextPreviewResult, PreviewRuntime } from "@/lib/daemon";
 
@@ -45,10 +46,12 @@ export function ContextPreviewPanel({
       className="flex flex-col gap-3 rounded-xl border border-border bg-card p-5"
     >
       <h2 id="context-preview" className="text-[15px] font-semibold">
-        {t.title} <span className="text-[13px] font-normal text-muted-foreground">{t.note}</span>
+        {t.title} <Hint text={t.hint} />
       </h2>
-      <p className="text-sm leading-6 text-muted-foreground">{t.help}</p>
-      <p className="text-sm leading-6 whitespace-pre-line text-warn">{t.secretsNote}</p>
+      <p className="flex items-center gap-1 text-sm leading-6 text-warn">
+        {t.secretsNote}
+        <Hint text={t.secretsHint} />
+      </p>
       <div className="flex flex-wrap items-center gap-3">
         <fieldset className="flex items-center gap-1 rounded-md border border-input p-0.5">
           <legend className="sr-only">{t.runtime}</legend>

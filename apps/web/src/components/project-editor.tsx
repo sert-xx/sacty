@@ -6,6 +6,7 @@ import { startTransition, useActionState, useId, useState } from "react";
 import { type SaveProjectState, saveProjectAction } from "@/app/actions";
 import { ContextPreviewPanel } from "@/components/context-preview";
 import { Button } from "@/components/ui/button";
+import { Hint } from "@/components/ui/hint";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useMessages } from "@/i18n/client";
@@ -172,13 +173,9 @@ export function ProjectEditor({
             className="flex flex-col gap-3 rounded-xl border border-border bg-card p-5"
           >
             <h2 id="targets" className="text-[15px] font-semibold">
-              {t.targetsTitle}{" "}
-              <span className="text-[13px] font-normal text-muted-foreground">{t.targetsNote}</span>
+              {t.targetsTitle} <Hint text={t.targetsHint} />
             </h2>
-            <p className="text-sm leading-6 whitespace-pre-line text-muted-foreground">
-              {t.targetsHelp}
-            </p>
-            <p className="text-sm leading-6 text-warn whitespace-pre-line">{t.prNotice}</p>
+            <p className="text-sm leading-6 text-warn">{t.prNotice}</p>
             {targets.length === 0 && <p className="text-sm text-muted-foreground">{t.noTargets}</p>}
             <ul className="flex flex-col gap-2.5">
               {targets.map((target, i) => {
@@ -296,12 +293,8 @@ export function ProjectEditor({
             className="flex flex-col gap-3 rounded-xl border border-border bg-card p-5"
           >
             <h2 id="context" className="text-[15px] font-semibold">
-              {t.contextTitle}{" "}
-              <span className="text-[13px] font-normal text-muted-foreground">{t.contextNote}</span>
+              {t.contextTitle} <Hint text={t.contextHint} />
             </h2>
-            <p className="text-sm leading-6 whitespace-pre-line text-muted-foreground">
-              {t.contextHelp}
-            </p>
             <div className="flex flex-wrap items-end gap-2">
               <label
                 htmlFor={`${uid}-context-repo`}
@@ -343,14 +336,8 @@ export function ProjectEditor({
               className="flex flex-col gap-3 rounded-xl border border-border bg-card p-5"
             >
               <h2 id="platforms" className="text-[15px] font-semibold">
-                {t.platformsTitle}{" "}
-                <span className="text-[13px] font-normal text-muted-foreground">
-                  {t.platformsNote}
-                </span>
+                {t.platformsTitle} <Hint text={t.platformsHint} />
               </h2>
-              <p className="text-sm leading-6 whitespace-pre-line text-muted-foreground">
-                {t.platformsHelp}
-              </p>
               {projectPlatforms.error !== undefined && (
                 <p role="alert" className="text-sm text-warn">
                   {t.platformsError} {messages.labels.text(projectPlatforms.error)}
@@ -396,12 +383,8 @@ export function ProjectEditor({
             className="flex flex-col gap-3 rounded-xl border border-border bg-card p-5"
           >
             <h2 id="shared-compose" className="text-[15px] font-semibold">
-              {t.sharedTitle}{" "}
-              <span className="text-[13px] font-normal text-muted-foreground">{t.sharedNote}</span>
+              {t.sharedTitle} <Hint text={t.sharedHint} />
             </h2>
-            <p className="text-sm leading-6 whitespace-pre-line text-muted-foreground">
-              {t.sharedHelp}
-            </p>
             <ul className="flex flex-col gap-2.5">
               {shared.map((row, i) => (
                 <li
@@ -513,12 +496,8 @@ export function ProjectEditor({
             className="flex flex-col gap-3 rounded-xl border border-border bg-card p-5"
           >
             <h2 id="github" className="text-[15px] font-semibold">
-              {t.githubTitle}{" "}
-              <span className="text-[13px] font-normal text-muted-foreground">{t.githubNote}</span>
+              {t.githubTitle} <Hint text={t.githubHint} />
             </h2>
-            <p className="text-sm leading-6 whitespace-pre-line text-muted-foreground">
-              {t.githubHelp}
-            </p>
             {!hosts.some((h) => h.required) && (
               <p className="text-sm text-muted-foreground">{t.githubNoTargets}</p>
             )}
@@ -579,12 +558,11 @@ export function ProjectEditor({
             className="flex flex-col gap-3 rounded-xl border border-border bg-card p-5"
           >
             <h2 id="tickets" className="text-[15px] font-semibold">
-              {t.ticketsTitle}{" "}
-              <span className="text-[13px] font-normal text-muted-foreground">{t.ticketsNote}</span>
+              {t.ticketsTitle} <Hint text={t.ticketsHint} />
             </h2>
-            <p className="text-sm leading-6 whitespace-pre-line text-muted-foreground">
-              {platforms.length > 0 ? t.ticketsHelp : t.ticketsNoPlatforms}
-            </p>
+            {platforms.length === 0 && (
+              <p className="text-sm leading-6 text-muted-foreground">{t.ticketsNoPlatforms}</p>
+            )}
             <ul className="flex flex-col gap-2.5">
               {tickets.map((ticket, i) => (
                 <li

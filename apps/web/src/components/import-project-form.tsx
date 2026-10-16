@@ -3,6 +3,7 @@
 import { useActionState, useId } from "react";
 import { type ImportProjectState, importProjectAction } from "@/app/actions";
 import { Button } from "@/components/ui/button";
+import { Hint } from "@/components/ui/hint";
 import { useMessages } from "@/i18n/client";
 
 const initial: ImportProjectState = {};
@@ -17,9 +18,10 @@ export function ImportProjectForm() {
       action={formAction}
       className="flex flex-col gap-3 rounded-xl border border-border bg-card p-5 text-sm"
     >
-      <label htmlFor={id} className="leading-6">
-        {t.label}
-      </label>
+      <span className="flex flex-wrap items-center gap-1 leading-6">
+        <label htmlFor={id}>{t.label}</label>
+        <Hint text={t.hint} />
+      </span>
       <input
         id={id}
         name="file"

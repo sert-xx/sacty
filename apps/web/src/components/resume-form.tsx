@@ -4,6 +4,7 @@ import type { PauseReason } from "@sacty/core";
 import { useActionState } from "react";
 import { type ResumeState, resumeTaskAction } from "@/app/actions";
 import { Button } from "@/components/ui/button";
+import { Hint } from "@/components/ui/hint";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useMessages } from "@/i18n/client";
@@ -62,7 +63,10 @@ export function ResumeForm({
         <input type="hidden" name="taskId" value={taskId} />
         {repositories && (
           <div className="flex min-w-0 flex-col gap-1.5">
-            <Label htmlFor="ticket-repo">{repoLabel ?? m.parts.resume.ticketRepo}</Label>
+            <span className="flex items-center gap-1">
+              <Label htmlFor="ticket-repo">{repoLabel ?? m.parts.resume.ticketRepo}</Label>
+              {repoOptional && <Hint text={m.parts.resume.repoKeepHint} />}
+            </span>
             {repositories.length > 0 ? (
               <select
                 id="ticket-repo"

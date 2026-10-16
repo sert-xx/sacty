@@ -99,7 +99,7 @@ describe("取り込みの種類ごとの直近の取り込み（PBI-100）", () 
       expect(t.lastRun(t.runKinds.reviews, "10:00", 2), lang).toContain(t.runKinds.reviews);
     }
     expect(messagesFor("ja").projects.intake.lastRun("PR のレビュー", "10:00", 2)).toBe(
-      "最後の取り込み（PR のレビュー）：10:00（2件のタスクを作成）",
+      "最後の取り込み（PR のレビュー）：10:00・2件のタスクを作成",
     );
   });
 });
