@@ -940,8 +940,14 @@ export function planContext(
   runtime: "claude-code" | "codex",
   /** コンテナの中での設定のディレクトリ（Codex の AGENTS.md にスキルの場所を書くため）。 */
   containerDir: string,
-): { files: PlannedFile[]; placed: PlacedContext } {
+  /**
+   * sacty が足して置くファイル（段階のサブエージェントの定義。PBI-119）。層の同じパスのファイルより優先し、層のものは
+   * 写さずに警告する（`context.reservedTierFile`）。
+   */
+  extraFiles: readonly PlannedFile[] = [],
+): { files: PlannedFile[]; placed: PlacedContext; warnings: DaemonText[] } {
   const files = new Map<string, PlannedFile>();
+  const warnings: DaemonText[] = [];
   const put = (file: PlannedFile) => {
     // 上書きしたものは、書いた順の位置に置き直す
     files.delete(file.path);
@@ -962,10 +968,24 @@ export function planContext(
       secrets,
       ...(env ? { env } : {}),
     },
+    warnings,
   });
   // 層のエージェントの設定のディレクトリのファイルを先に写す（sacty が作るファイルは除いてある）
   for (const file of composed.agentFiles[runtime === "codex" ? "codex" : "claude"]) {
     put({ path: file.path, src: file.src, from: file.from });
+  }
+  // sacty が足すファイル（段階のサブエージェントの定義。PBI-119）。層に同じパスがあれば、sacty のものを使って警告する
+  for (const extra of extraFiles) {
+    const existing = files.get(extra.path);
+    if (existing?.from) {
+      warnings.push(
+        message("context.reservedTierFile", {
+          from: existing.from,
+          path: `${AGENT_DIRS[runtime === "codex" ? "codex" : "claude"]}/${extra.path}`,
+        }),
+      );
+    }
+    put(extra);
   }
   for (const skill of composed.skills) {
     for (const rel of filesUnder(skill.dir)) {
@@ -1412,10 +1432,13 @@ async function buildContext(
   auth: ContextAuth | undefined,
   defaultDir: string | undefined,
   routing: McpRouting,
+  /** sacty が足して置くファイル（段階のサブエージェントの定義。PBI-119）。 */
+  extraFiles: readonly PlannedFile[] = [],
 ) {
   const layers = await loadLayers(fetcher, root, work, auth, defaultDir);
   const { composed, gatewayMcp, hostedMcp } = routeMcp(composeContext(layers, runtime), routing);
-  const { files, placed } = planContext(composed, runtime, containerDir);
+  const { files, placed, warnings } = planContext(composed, runtime, containerDir, extraFiles);
+  composed.warnings.push(...warnings);
   return { layers, composed, gatewayMcp, hostedMcp, files, placed };
 }
 
@@ -1441,6 +1464,8 @@ export async function prepareContext(
   onlyMcp?: string,
   /** 層の command の MCP サーバーをホストで起動するか（PBI-84。McpRouting の hostCommands）。 */
   hostCommands?: boolean,
+  /** sacty が足して置くファイル（段階のサブエージェントの定義。PBI-119）。 */
+  extraFiles: readonly PlannedFile[] = [],
 ): Promise<{
   dir: string;
   layers: { repo: string; ref?: string; commit: string }[];
@@ -1460,12 +1485,17 @@ export async function prepareContext(
   const work = mkdtempSync(join(tmpdir(), "sacty-context-"));
   const dispose = () => rmSync(work, { recursive: true, force: true });
   try {
-    const built = await buildContext(fetcher, root, runtime, containerDir, work, auth, defaultDir, {
-      hostMcp,
-      gatewayOrigin,
-      onlyMcp,
-      hostCommands,
-    });
+    const built = await buildContext(
+      fetcher,
+      root,
+      runtime,
+      containerDir,
+      work,
+      auth,
+      defaultDir,
+      { hostMcp, gatewayOrigin, onlyMcp, hostCommands },
+      extraFiles,
+    );
     const dir = join(work, "out");
     writePlanned(built.files, dir);
     return {
@@ -1659,6 +1689,8 @@ export async function previewContext(
   auth?: ContextAuth,
   defaultDir?: string,
   routing: McpRouting = {},
+  /** sacty が足して置くファイル（段階のサブエージェントの定義。PBI-119）。 */
+  extraFiles: readonly PlannedFile[] = [],
 ): Promise<ContextPreview> {
   const work = mkdtempSync(join(tmpdir(), "sacty-context-"));
   try {
@@ -1671,6 +1703,7 @@ export async function previewContext(
       auth,
       defaultDir,
       routing,
+      extraFiles,
     );
     return {
       runtime,

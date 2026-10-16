@@ -486,8 +486,44 @@ const ConfigFile = z
           params: { id: agent.auth.provider },
         });
       }
+      // 段階のエージェント（PBI-119）は、名前の接頭辞と runtime を合わせる
+      const tier = parseTierId(id);
+      if (tier && agent.runtime !== tier.runtime) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["agents", id, "runtime"],
+          message: code("config.tierRuntime"),
+          params: { id, runtime: agent.runtime, expected: tier.runtime },
+        });
+      }
     }
   });
+
+/**
+ * エージェントの段階（PBI-119）。`agents` に `claude_<段階>`・`codex_<段階>` の名前で書くと、sacty がその runtime の
+ * 工程の実行で、接頭辞を外した名前（`lite` など）のサブエージェントの定義を置く。スキルは段階の名前で担当を起動する。
+ */
+export const AGENT_TIERS = ["lite", "entry", "standard", "advanced", "ultimate"] as const;
+export type AgentTier = (typeof AGENT_TIERS)[number];
+/** 段階のエージェントを置ける runtime（stub には置かない）。 */
+export type TierRuntime = "claude-code" | "codex";
+/** 段階のエージェントの名前の接頭辞（runtime ごと）。 */
+export const TIER_PREFIX: Record<TierRuntime, string> = {
+  "claude-code": "claude_",
+  codex: "codex_",
+};
+
+/** `agents` の名前が段階のエージェントなら、その runtime と段階。そうでなければ undefined。 */
+export function parseTierId(id: string): { runtime: TierRuntime; tier: AgentTier } | undefined {
+  for (const runtime of Object.keys(TIER_PREFIX) as TierRuntime[]) {
+    const prefix = TIER_PREFIX[runtime];
+    if (!id.startsWith(prefix)) continue;
+    const tier = id.slice(prefix.length);
+    if ((AGENT_TIERS as readonly string[]).includes(tier))
+      return { runtime, tier: tier as AgentTier };
+  }
+  return undefined;
+}
 
 export type AgentConfig = z.infer<typeof Agent> & {
   id: string;
@@ -527,6 +563,8 @@ export type SactyConfig = {
   guardianAgent: AgentConfig;
   /** 工程・オーケストレーターごとに使う AI（書いてある役割だけ。PBI-40）。 */
   stepAgents?: Partial<Record<AgentRoleKey, AgentConfig>>;
+  /** 段階のエージェント（runtime ごと・段階ごと。書いてある段階だけ。PBI-119）。 */
+  tierAgents?: Partial<Record<TierRuntime, Partial<Record<AgentTier, AgentConfig>>>>;
   budgetPerTaskUsd: number;
   /** ゲートウェイの AI の呼び出しのリトライの上限（PBI-37）。 */
   gatewayRetry: RetryPolicy;
@@ -710,8 +748,33 @@ export function loadConfig(home: string): ConfigResult {
       stepAgents: Object.fromEntries(
         Object.entries(file.step_agents).flatMap(([role, id]) => (id ? [[role, resolve(id)]] : [])),
       ),
+      tierAgents: tierAgentsOf(Object.keys(file.agents), resolve),
     },
   };
+}
+
+/** `agents` の名前から、段階のエージェントを runtime ごと・段階ごとに集める（PBI-119）。 */
+function tierAgentsOf(
+  ids: readonly string[],
+  resolve: (id: string) => AgentConfig,
+): SactyConfig["tierAgents"] {
+  const tiers: NonNullable<SactyConfig["tierAgents"]> = {};
+  for (const id of ids) {
+    const parsed = parseTierId(id);
+    if (!parsed) continue;
+    const ofRuntime = tiers[parsed.runtime] ?? {};
+    ofRuntime[parsed.tier] = resolve(id);
+    tiers[parsed.runtime] = ofRuntime;
+  }
+  return tiers;
+}
+
+/** runtime の段階のエージェント（書いてある段階だけ。PBI-119）。 */
+export function tierAgentsFor(
+  config: SactyConfig,
+  runtime: TierRuntime,
+): Partial<Record<AgentTier, AgentConfig>> {
+  return config.tierAgents?.[runtime] ?? {};
 }
 
 /** `sacty config init` が書き出す雛形。 */
@@ -873,6 +936,27 @@ agents:
   #   # ホストのゲートウェイ経由にすると、API キーをコンテナに渡さず、レート制限（429）をリトライする
   #   via_gateway: true
   #   price_per_mtok_usd: { input: 1.25, cached_input: 0.125, output: 10 }
+
+  # 段階のエージェント。claude_<段階>・codex_<段階>（段階は lite・entry・standard・advanced・ultimate）の名前で書くと、
+  # その runtime の工程の実行で、接頭辞を外した名前（lite など）のサブエージェントの定義を置き、スキル（review など）が
+  # 観点ごとに段階の名前で担当を起動する。モデルの世代が変わったら、ここの model を直すだけでよい。
+  # 認証・接続先は工程のエージェント（default_agent・step_agents）と同じにする（違う段階は置かない）
+  # claude_lite:
+  #   runtime: claude-code
+  #   model: claude-haiku-5-5
+  #   auth: { mode: subscription, secret: claude-oauth-token }
+  #   price_per_mtok_usd: { input: 1, cached_input: 0.1, cache_write: 1.25, output: 5 }
+  # claude_standard:
+  #   runtime: claude-code
+  #   model: claude-sonnet-5-5
+  #   auth: { mode: subscription, secret: claude-oauth-token }
+  #   price_per_mtok_usd: { input: 3, cached_input: 0.3, cache_write: 3.75, output: 15 }
+  # claude_ultimate:
+  #   runtime: claude-code
+  #   model: claude-opus-5-5
+  #   reasoning_effort: high
+  #   auth: { mode: subscription, secret: claude-oauth-token }
+  #   price_per_mtok_usd: { input: 15, cached_input: 1.5, cache_write: 18.75, output: 75 }
 
   # 動作確認用のスタブ（実際のAIは呼ばない）
   stub:

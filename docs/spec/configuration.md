@@ -31,6 +31,9 @@
 | `gateway.mcp_servers` | `{}` | ホストで動かす MCP サーバー。名前は `^[A-Za-z0-9_-]+$`（同上） |
 
 ほかの検査：`default_agent`・`guardian_agent`・`step_agents` の値が `agents` に無い、`provider` の名前が `providers` に無いときは誤り。
+`agents` の名前が段階（`claude_<段階>`・`codex_<段階>`。段階は `AGENT_TIERS` の `lite`・`entry`・`standard`・`advanced`・`ultimate`）なのに
+`runtime` が接頭辞と合わないときも誤り（`config.tierRuntime`）。段階のエージェントは `tierAgents`（runtime ごと・段階ごと）にも集める
+（`parseTierId`・`tierAgentsFor`）。置き方は [コンテキストの合成](context.md#実行のときに置くファイル)。
 
 知らない項目は、誤りにせずに読まない。取り込みの間隔は `config.yaml` には無く、sacty の設定に持つ（[取り込み](intake.md#間隔)）。
 以前の `github.poll_interval_sec`（`github:`）も、書いてあれば読まない（警告もしない）。

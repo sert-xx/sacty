@@ -45,6 +45,8 @@ npx sacty context init sacty-context   # 指定したディレクトリ（省略
     `env` の認証・接続先の変数（`ANTHROPIC_API_KEY`・`ANTHROPIC_BASE_URL`・`CLAUDE_CODE_OAUTH_TOKEN`・`AWS_BEARER_TOKEN_BEDROCK` など）と
     `SACTY_` で始まる変数
   - ファイル：Codex の `auth.json`・`AGENTS.md`・`skills/`、Claude Code の `.credentials.json`・`.claude.json`・`CLAUDE.md`・`mcp.json`・`skills/`
+- 段階のサブエージェントの定義（`agents/claude/agents/<段階>.md`・`agents/codex/agents/<段階>.toml`。段階は `lite`・`entry`・`standard`・
+  `advanced`・`ultimate`）は、`config.yaml` の[エージェントの段階](config.md#エージェントの段階)から sacty が作るので、置いても使いません（警告を残します）。
 - Codex のルール（`agents/codex/rules/*.rules`）は、既定のルールを消さないように `sacty.rules` 以外の名前にしてください。
 - モデルは、`config.yaml` のエージェントに `model` があれば、そちらが設定より優先します。
 

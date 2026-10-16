@@ -105,6 +105,7 @@ import {
 import type { AgentOutcome } from "./agents/parse.js";
 import { redact, redactText } from "./agents/redact.js";
 import type { TestRunner, TestRunResult } from "./agents/test-runner.js";
+import { type PlacedTier, selectTiers, tierFiles } from "./agents/tiers.js";
 import { CI_FAILURES_MAX, type CiStatusReader, isFailedConclusion } from "./ci.js";
 import {
   type AgentConfig,
@@ -115,6 +116,8 @@ import {
   githubRepoOf,
   resolveImage,
   type SactyConfig,
+  type TierRuntime,
+  tierAgentsFor,
 } from "./config.js";
 import {
   type ContextFetcher,
@@ -294,6 +297,9 @@ function clipText(text: DaemonText, max: number): DaemonText {
 }
 
 type ActivityItem = { actor: Actor; event: EventInput };
+
+/** 実行に渡すコンテキストと、置いた段階のサブエージェントの定義（PBI-119）。 */
+type RunContext = Awaited<ReturnType<typeof prepareContext>> & { tiers: PlacedTier[] };
 
 export type CleanupItem = { target: CleanupTarget; present: boolean; detail?: DaemonText };
 type CleanupResult = {
@@ -2052,6 +2058,11 @@ export class TaskService {
     const config = loaded.ok ? loaded.config : undefined;
     const usedSecrets: string[] = [];
     try {
+      // 段階のサブエージェントの定義（PBI-119）。親は、その runtime の既定のエージェント（無ければ工程の・ゴールガーディアンの
+      // エージェントのうち、その runtime のもの）。無ければ置かない
+      const parent = config ? this.previewParent(config, runtime) : undefined;
+      const tiers =
+        parent && config ? this.tiersFor(parent, config) : { entries: [], warnings: [] };
       const preview = await previewContext(
         this.deps.contexts,
         project.context,
@@ -2060,6 +2071,7 @@ export class TaskService {
         (repo) => this.gitAuth({ projectId: id }, repo, usedSecrets, definition),
         this.deps.defaultContext,
         this.mcpRouting(config),
+        tierFiles(runtime, tiers.entries),
       );
       // 使える外部 PF：ホストの PF と、合成した PF（同じ名前ならホストのもの。実行と同じ。PBI-74）
       const merged = mergePlatforms(config?.platforms ?? [], preview.platforms);
@@ -2067,12 +2079,35 @@ export class TaskService {
         preview: {
           ...preview,
           platforms: merged.platforms.map(platformSummary),
-          warnings: [...preview.warnings, ...merged.warnings],
+          warnings: [...preview.warnings, ...tiers.warnings, ...merged.warnings],
         },
       };
     } catch (error) {
       return { error: redactText(errorText(error), usedSecrets) };
     }
+  }
+
+  /**
+   * 親（工程のエージェント）に置く段階のサブエージェントの定義と、置かなかった段階の注意（PBI-119）。stub の親には置かない。
+   */
+  private tiersFor(
+    agent: AgentConfig,
+    config: SactyConfig,
+  ): { entries: PlacedTier[]; warnings: DaemonText[] } {
+    if (agent.runtime === "stub") return { entries: [], warnings: [] };
+    return selectTiers(agent, tierAgentsFor(config, agent.runtime));
+  }
+
+  /**
+   * プレビューで段階の親にするエージェント（PBI-119）。その runtime の既定のエージェント、無ければ工程・ゴールガーディアンの
+   * エージェントのうち最初のもの。その runtime のエージェントが無ければ undefined。
+   */
+  private previewParent(config: SactyConfig, runtime: TierRuntime): AgentConfig | undefined {
+    return [
+      config.defaultAgent,
+      ...Object.values(config.stepAgents ?? {}),
+      config.guardianAgent,
+    ].find((a) => a?.runtime === runtime);
   }
 
   /**
@@ -3990,7 +4025,7 @@ export class TaskService {
 
     // sacty の既定のコンテキストと、プロジェクトのコンテキストを取得・合成して渡し、
     // 使ったリポジトリとコミット（既定は中身のハッシュ）を記録する
-    let context: Awaited<ReturnType<typeof prepareContext>> | undefined;
+    let context: RunContext | undefined;
     if (step !== "document") {
       const usedSecrets: string[] = [];
       try {
@@ -4037,6 +4072,8 @@ export class TaskService {
                 ...(runPlatforms.platforms.length > 0
                   ? { platforms: runPlatforms.platforms.map(platformSummary) }
                   : {}),
+                // 置いた段階のサブエージェントの定義（PBI-119）
+                ...(context.tiers.length > 0 ? { tiers: context.tiers } : {}),
               },
             },
           },
@@ -4415,11 +4452,21 @@ export class TaskService {
     usedSecrets: string[],
     /** 渡す MCP サーバーを、この名前の1つに絞る（成果の書き出し。PBI-56）。 */
     onlyMcp?: string,
-  ): Promise<Awaited<ReturnType<typeof prepareContext>> | undefined> {
+  ): Promise<RunContext | undefined> {
     const contextSource = this.deps.projects.get(task.projectId)?.context;
     const defaultContext = this.deps.defaultContext;
     const { hostMcp = [], gatewayOrigin, hostCommands } = this.mcpRouting(config);
-    if (!contextSource && !defaultContext && hostMcp.length === 0) return undefined;
+    // 段階のサブエージェントの定義（PBI-119）。置くものがあれば、コンテキストが無くても設定のディレクトリに置く
+    const tiers = this.tiersFor(agent, config);
+    if (
+      !contextSource &&
+      !defaultContext &&
+      hostMcp.length === 0 &&
+      tiers.entries.length === 0 &&
+      tiers.warnings.length === 0
+    ) {
+      return undefined;
+    }
     // 使うホストの MCP サーバーの準備を待つ（PBI-77）。書き出しは、決めた接続先がそれなら、それだけを待つ
     const waitFor = hostMcp
       .map((m) => m.name)
@@ -4434,18 +4481,24 @@ export class TaskService {
     if (onlyProblem) throw new MessageError(onlyProblem);
     // コンテキストと継承の各リポジトリも、HTTPS の GitHub はプロジェクトの gh のアカウントで取得する
     const runtime = agent.runtime === "codex" ? "codex" : "claude-code";
-    const prepared = await prepareContext(
-      this.deps.contexts,
-      contextSource,
-      runtime,
-      contextContainerDir(runtime),
-      (repo) => this.gitAuth(task, repo, usedSecrets),
-      defaultContext,
-      hostMcp,
-      gatewayOrigin,
-      onlyMcp,
-      hostCommands,
-    );
+    const prepared: RunContext = {
+      ...(await prepareContext(
+        this.deps.contexts,
+        contextSource,
+        runtime,
+        contextContainerDir(runtime),
+        (repo) => this.gitAuth(task, repo, usedSecrets),
+        defaultContext,
+        hostMcp,
+        gatewayOrigin,
+        onlyMcp,
+        hostCommands,
+        tierFiles(runtime, tiers.entries),
+      )),
+      tiers: tiers.entries,
+    };
+    // 置かなかった段階（親と認証・接続先が違う）は、注意として記録する（PBI-119）
+    prepared.warnings.push(...tiers.warnings);
     // 準備ができないホストの MCP サーバーは、どれかがわかるよう、コンテキストの注意として記録する（実行は止めない。
     // 起動し直して準備ができれば、実行の途中からでも使える）
     prepared.warnings.push(...hostProblems);

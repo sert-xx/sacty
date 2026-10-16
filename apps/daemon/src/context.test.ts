@@ -2079,3 +2079,37 @@ describe("コンテキストのプレビュー（PBI-76）", () => {
     expect(preview).toMatchObject({ layers: [], files: [], mcp: [], secrets: [], warnings: [] });
   });
 });
+
+describe("段階のサブエージェントの定義（PBI-119）", () => {
+  it("sacty が足すファイルは、層の同じパスのファイルより優先し、層のものは写さずに警告する", async () => {
+    const defaultDir = place(join(dir, "default"), { "rules.md": "# 規則" });
+    const fetcher = new FakeFetcher({
+      "https://example.com/p.git": {
+        "agents/claude/agents/standard.md": "---\nname: standard\nmodel: my-model\n---\n",
+        "agents/claude/agents/reviewer.md": "---\nname: reviewer\n---\n",
+      },
+    });
+    const claude = await prepareContext(
+      fetcher,
+      { repo: "https://example.com/p.git" },
+      "claude-code",
+      "/h",
+      undefined,
+      defaultDir,
+      [],
+      undefined,
+      undefined,
+      undefined,
+      [{ path: "agents/standard.md", content: "---\nname: standard\nmodel: sacty-model\n---\n" }],
+    );
+    expect(readFileSync(join(claude.dir, "agents/standard.md"), "utf8")).toContain("sacty-model");
+    // 段階でないサブエージェントの定義は、そのまま写す
+    expect(readFileSync(join(claude.dir, "agents/reviewer.md"), "utf8")).toContain("reviewer");
+    expect(claude.warnings.map(ja)).toEqual([
+      expect.stringMatching(
+        /^https:\/\/example.com\/p.git@\w{7} の agents\/claude\/agents\/standard.md は、sacty が段階のサブエージェントの定義として作るため、写しませんでした。$/,
+      ),
+    ]);
+    claude.dispose();
+  });
+});

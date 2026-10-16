@@ -20224,3 +20224,128 @@ describe("非コードの成果と単発作業（PBI-112）", () => {
     activity.close();
   });
 });
+
+describe("エージェントの段階のサブエージェント（PBI-119）", () => {
+  const tiered = (a: AgentConfig): (() => ConfigResult) => {
+    const base = (configOf(a)() as { ok: true; config: SactyConfig }).config;
+    return () => ({
+      ok: true,
+      config: {
+        ...base,
+        tierAgents: {
+          "claude-code": {
+            lite: agent({
+              id: "claude_lite",
+              model: "claude-haiku-5-5",
+              // 別のトークンで動く段階は、親では使えない
+              auth: { mode: "subscription", secret: "another-token" },
+            }),
+            standard: agent({ id: "claude_standard", model: "claude-sonnet-5-5" }),
+            ultimate: agent({
+              id: "claude_ultimate",
+              model: "claude-opus-5-5",
+              reasoning_effort: "high",
+            }),
+          },
+          codex: {
+            standard: agent({
+              id: "codex_standard",
+              runtime: "codex",
+              model: "gpt-6-sol",
+              auth: { mode: "api-key", secret: "openai-key" },
+            }),
+          },
+        },
+      },
+    });
+  };
+
+  it("工程の実行で、親と同じ接続先の段階を接頭辞を外した名前で置き、置いた段階と置かなかった段階を作業履歴に残す", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service, executor } = makeService(activity, [completed(20_000)], {
+      config: tiered(agent()),
+      defaultContext: DEFAULT_CONTEXT_DIR,
+    });
+    const task = service.createTask({ projectId: "default", title: "段階を置く" });
+    await service.runNext(task.id);
+    const placed = executor.seeds[0] ?? {};
+    expect(placed["agents/standard.md"]).toContain('model: "claude-sonnet-5-5"');
+    expect(placed["agents/ultimate.md"]).toContain('effort: "high"');
+    // 接続先が違う段階と、別の runtime の段階は置かない
+    expect(placed["agents/lite.md"]).toBeUndefined();
+    expect(Object.keys(placed).some((p) => p.endsWith(".toml"))).toBe(false);
+    const resolved = service.get(task.id)?.activity.find((e) => e.type === "ContextResolved");
+    expect(resolved?.type === "ContextResolved" && resolved.payload.tiers).toEqual([
+      { tier: "standard", agentId: "claude_standard", model: "claude-sonnet-5-5" },
+      {
+        tier: "ultimate",
+        agentId: "claude_ultimate",
+        model: "claude-opus-5-5",
+        reasoningEffort: "high",
+      },
+    ]);
+    expect(resolved?.type === "ContextResolved" && resolved.payload.warnings).toContainEqual(
+      message("agents.tierConnectionDiffers", {
+        tier: "lite",
+        id: "claude_lite",
+        parent: "claude-subscription",
+      }),
+    );
+    activity.close();
+  });
+
+  it("Codex の工程には、Codex の段階を agents/<段階>.toml で置く", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const codex = agent({
+      id: "codex-key",
+      runtime: "codex",
+      auth: { mode: "api-key", secret: "openai-key" },
+    });
+    const { service, executor } = makeService(activity, [completed(20_000)], {
+      config: tiered(codex),
+      secrets: { "openai-key": "sk-test", "github-token": "ghp_secret" },
+      defaultContext: DEFAULT_CONTEXT_DIR,
+    });
+    const task = service.createTask({ projectId: "default", title: "Codex の段階" });
+    await service.runNext(task.id);
+    const placed = executor.seeds[0] ?? {};
+    expect(placed["agents/standard.toml"]).toContain('model = "gpt-6-sol"');
+    expect(Object.keys(placed).some((p) => p.endsWith(".md") && p.startsWith("agents/"))).toBe(
+      false,
+    );
+    const resolved = service.get(task.id)?.activity.find((e) => e.type === "ContextResolved");
+    expect(resolved?.type === "ContextResolved" && resolved.payload.tiers).toEqual([
+      { tier: "standard", agentId: "codex_standard", model: "gpt-6-sol" },
+    ]);
+    activity.close();
+  });
+
+  it("コンテキストのプレビューにも、実行と同じ段階の定義と警告を出す", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service } = makeService(activity, [], {
+      config: tiered(agent()),
+      defaultContext: DEFAULT_CONTEXT_DIR,
+    });
+    const result = await service.projectContextPreview("default", "claude-code");
+    expect(result && "preview" in result).toBe(true);
+    if (!result || !("preview" in result)) return;
+    const paths = result.preview.files.map((f) => f.path);
+    expect(paths).toContain("agents/standard.md");
+    expect(paths).toContain("agents/ultimate.md");
+    expect(paths).not.toContain("agents/lite.md");
+    expect(result.preview.files.find((f) => f.path === "agents/standard.md")?.generated).toBe(true);
+    expect(result.preview.warnings).toContainEqual(
+      message("agents.tierConnectionDiffers", {
+        tier: "lite",
+        id: "claude_lite",
+        parent: "claude-subscription",
+      }),
+    );
+    // Codex のプレビューは、Codex の段階。その runtime のエージェントが無ければ置かない
+    const codex = await service.projectContextPreview("default", "codex");
+    expect(codex && "preview" in codex && codex.preview.files.map((f) => f.path)).not.toContain(
+      "agents/standard.toml",
+    );
+    activity.close();
+  });
+});
