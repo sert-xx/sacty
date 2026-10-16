@@ -564,6 +564,16 @@ const UNION_SETTINGS: Record<keyof AgentSettings, (path: string[]) => boolean> =
     ["allow", "deny", "ask"].includes(path[1] ?? ""),
 };
 
+/** Codex のカスタムエージェントの定義（TOML）の name。読めない・無ければ undefined。 */
+function codexRoleName(path: string): string | undefined {
+  try {
+    const parsed = parseToml(readFileSync(path, "utf8"));
+    return isPlainObject(parsed) && typeof parsed.name === "string" ? parsed.name : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** 層の、エージェントの設定のディレクトリ（`agents/codex`・`agents/claude`）。 */
 const AGENT_DIRS = { codex: "agents/codex", claude: "agents/claude" } as const;
 
@@ -825,19 +835,49 @@ export function composeContext(
     const from = label(layer);
     for (const kind of kinds) {
       const own = withoutReserved(kind, layer.agents[kind], from, warnings);
+      const agentDir = join(layer.dir, AGENT_DIRS[kind]);
+      // Codex の [agents.<名前>] が config_file で指す定義の中の name が段階なら、その宣言も使わない（PBI-119）
+      if (kind === "codex" && isPlainObject(own.agents)) {
+        for (const [key, value] of Object.entries(own.agents)) {
+          const configFile = isPlainObject(value) ? value.config_file : undefined;
+          if (typeof configFile !== "string") continue;
+          const role = codexRoleName(join(agentDir, configFile));
+          if (role !== undefined && (AGENT_TIERS as readonly string[]).includes(role)) {
+            warnings.push(
+              message("context.reservedSetting", {
+                from,
+                file: AGENT_SETTINGS_FILES[kind],
+                key: `agents.${key}`,
+              }),
+            );
+            delete own.agents[key];
+          }
+        }
+      }
       if (Object.keys(own).length > 0) agentsFrom[kind].push(from);
       agents[kind] = mergeSettings(agents[kind], own, UNION_SETTINGS[kind]);
       const settingsFile = AGENT_SETTINGS_FILES[kind].slice(AGENT_DIRS[kind].length + 1);
       for (const path of layerAgentFiles(layer, kind)) {
         if (path === settingsFile) continue;
-        const src = join(layer.dir, AGENT_DIRS[kind], path);
+        const src = join(agentDir, path);
         if (RESERVED_FILES[kind].some((r) => path === r || path.startsWith(`${r}/`))) {
           warnings.push(
             message("context.reservedSetting", { from, file: `${AGENT_DIRS[kind]}/`, key: path }),
           );
-        } else {
-          files[kind].set(path, { src, from });
+          continue;
         }
+        // Codex は agents/*.toml の中の name をロールの名前にする（ファイル名ではない）。name が段階なら、ファイル名が
+        // 違っても sacty の段階の定義と衝突するので写さない（PBI-119。PR #129 再レビュー指摘）
+        if (kind === "codex" && path.startsWith("agents/") && path.endsWith(".toml")) {
+          const role = codexRoleName(src);
+          if (role !== undefined && (AGENT_TIERS as readonly string[]).includes(role)) {
+            warnings.push(
+              message("context.reservedTierFile", { from, path: `${AGENT_DIRS[kind]}/${path}` }),
+            );
+            continue;
+          }
+        }
+        files[kind].set(path, { src, from });
       }
     }
   }

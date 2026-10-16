@@ -2191,3 +2191,81 @@ describe("段階の固定名の層のファイルと、Codex の宣言（PR #129
     codex.dispose();
   });
 });
+
+describe("Codex の定義の中の name が段階のとき（PR #129 再レビュー指摘）", () => {
+  it("ファイル名が違っても、agents/*.toml の name が段階なら写さずに警告し、段階でない定義は写す", async () => {
+    const defaultDir = place(join(dir, "default"), { "rules.md": "# 規則" });
+    const fetcher = new FakeFetcher({
+      "https://example.com/p.git": {
+        "agents/codex/agents/a-reviewer.toml": [
+          'name = "standard"',
+          'description = "層の standard"',
+          'developer_instructions = "x"',
+          'model = "layer-model"',
+          "",
+        ].join("\n"),
+        "agents/codex/agents/helper.toml": 'name = "helper"\ndescription = "x"\n',
+        "agents/codex/agents/broken.toml": "this is not toml = = =",
+      },
+    });
+    const codex = await prepareContext(
+      fetcher,
+      { repo: "https://example.com/p.git" },
+      "codex",
+      "/h",
+      undefined,
+      defaultDir,
+    );
+    expect(existsSync(join(codex.dir, "agents/a-reviewer.toml"))).toBe(false);
+    expect(existsSync(join(codex.dir, "agents/helper.toml"))).toBe(true);
+    // 読めないファイルは、そのまま写す（Codex が読めなければ無視する）
+    expect(existsSync(join(codex.dir, "agents/broken.toml"))).toBe(true);
+    expect(codex.warnings.map(ja)).toEqual([
+      expect.stringMatching(
+        /^https:\/\/example.com\/p.git@\w{7} の agents\/codex\/agents\/a-reviewer.toml は、sacty が段階のサブエージェントの定義として作るため、写しませんでした。$/,
+      ),
+    ]);
+    codex.dispose();
+  });
+
+  it("[agents.<名前>] の config_file が指す定義の name が段階なら、その宣言も使わずに警告する", async () => {
+    const defaultDir = place(join(dir, "default"), { "rules.md": "# 規則" });
+    const fetcher = new FakeFetcher({
+      "https://example.com/p.git": {
+        "agents/codex/config.toml": [
+          "[agents.helper]",
+          'description = "段階の定義を指す宣言"',
+          'config_file = "agents/helper.toml"',
+          "",
+          "[agents.other]",
+          'description = "段階でない定義を指す宣言"',
+          'config_file = "agents/other.toml"',
+          "",
+        ].join("\n"),
+        "agents/codex/agents/helper.toml": 'name = "advanced"\ndescription = "x"\n',
+        "agents/codex/agents/other.toml": 'name = "other"\ndescription = "x"\n',
+      },
+    });
+    const codex = await prepareContext(
+      fetcher,
+      { repo: "https://example.com/p.git" },
+      "codex",
+      "/h",
+      undefined,
+      defaultDir,
+    );
+    const config = parseToml(readFileSync(join(codex.dir, "config.toml"), "utf8")) as {
+      agents: Record<string, unknown>;
+    };
+    expect(Object.keys(config.agents)).toEqual(["other"]);
+    expect(existsSync(join(codex.dir, "agents/helper.toml"))).toBe(false);
+    expect(existsSync(join(codex.dir, "agents/other.toml"))).toBe(true);
+    expect(codex.warnings.map(ja)).toEqual([
+      expect.stringMatching(/agents\/codex\/config.toml の「agents.helper」は sacty が決める項目/),
+      expect.stringMatching(
+        /agents\/codex\/agents\/helper.toml は、sacty が段階のサブエージェントの定義として作るため/,
+      ),
+    ]);
+    codex.dispose();
+  });
+});

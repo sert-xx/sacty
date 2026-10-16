@@ -13481,6 +13481,59 @@ describe("成果の書き出し（PBI-56）", () => {
     );
     activity.close();
   });
+
+  it("書き出しの記録（ContextResolved）に失敗しても、用意したコンテキストのディレクトリを消す（PR #129 再レビュー指摘）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const outs: string[] = [];
+    class RecordingOut extends FakeContexts {
+      override async fetch(ref: ContextRef, out: string, authEnv?: Record<string, string>) {
+        outs.push(out);
+        return super.fetch(ref, out, authEnv);
+      }
+    }
+    const contexts = new RecordingOut({
+      "https://github.com/acme/ctx.git": {
+        "mcp.yaml": ["servers:", "  docs:", "    url: https://docs.example.com/mcp"].join("\n"),
+      },
+    });
+    const { service } = makeService(
+      activity,
+      [out("# 要求要件"), exportOut({ url: "https://docs.example.com/p/9" })],
+      {
+        gateway: fakeGateway(),
+        contexts,
+        secrets,
+        planner: plannerWith({
+          requirements: { to: { via: "mcp", name: "docs", location: "" }, reason: "規約" },
+        }),
+      },
+    );
+    service.saveProject("default", {
+      name: "デフォルト",
+      targets: [{ scope: "repo", target: "https://github.com/acme/app" }],
+      githubAccounts: { "github.com": "me" },
+      context: { repo: "https://github.com/acme/ctx.git" },
+    });
+    const { id } = service.createTask({ projectId: "default", title: "A" });
+    await approveRequirements(service, id);
+    // 承認の後の最初の ContextResolved（書き出しの実行の記録）の書き込みで失敗させる
+    const original = activity.append.bind(activity);
+    let seen = 0;
+    const spy = vi.spyOn(activity, "append").mockImplementation((entry) => {
+      if (entry.events.some((e) => e.event.type === "ContextResolved") && ++seen === 1) {
+        throw new Error("db full");
+      }
+      return original(entry);
+    });
+    await expect(service.runNext(id)).rejects.toThrow("db full");
+    spy.mockRestore();
+    expect(seen).toBe(1);
+    // 取得した層の置き場所（用意したコンテキストの一時ディレクトリの下）が消えている
+    const exportFetch = outs.at(-1);
+    expect(outs.length).toBeGreaterThanOrEqual(2);
+    expect(exportFetch && existsSync(exportFetch)).toBe(false);
+    activity.close();
+  });
 });
 
 describe("要求要件・設計の PR（タスクブランチへのフロー。PBI-57）", () => {
@@ -20541,5 +20594,44 @@ describe("エージェントの段階のサブエージェント（PBI-119）", 
       "agents/standard.toml",
     );
     activity.close();
+  });
+
+  it("API キーの実行でも、段階を置いた実行の費用は推定にし、置かない実行は従来どおり実績にする", async () => {
+    const keyed = agent({ id: "claude-key", auth: { mode: "api-key", secret: "claude-key" } });
+    const run = async (withTiers: boolean) => {
+      const activity = new SqliteActivityStore(dbPath);
+      const base = (configOf(keyed)() as { ok: true; config: SactyConfig }).config;
+      const { service } = makeService(activity, [completed(20_000)], {
+        config: () => ({
+          ok: true,
+          config: withTiers
+            ? {
+                ...base,
+                tierAgents: {
+                  "claude-code": {
+                    standard: agent({
+                      id: "claude_standard",
+                      model: "claude-sonnet-5-5",
+                      auth: { mode: "api-key", secret: "claude-key" },
+                    }),
+                  },
+                },
+              }
+            : base,
+        }),
+        secrets: { "claude-key": "sk-test", "github-token": "ghp_secret" },
+        defaultContext: DEFAULT_CONTEXT_DIR,
+      });
+      const task = service.createTask({ projectId: "default", title: "概算の印" });
+      await service.runNext(task.id);
+      const done = service.get(task.id)?.activity.find((e) => e.type === "AgentRunCompleted");
+      const estimated = done?.type === "AgentRunCompleted" ? done.payload.estimated : undefined;
+      const budget = service.get(task.id)?.task.budget.estimated;
+      activity.close();
+      rmSync(dbPath, { force: true });
+      return { estimated, budget };
+    };
+    expect(await run(true)).toEqual({ estimated: true, budget: true });
+    expect(await run(false)).toEqual({ estimated: false, budget: false });
   });
 });

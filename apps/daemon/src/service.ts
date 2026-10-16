@@ -4925,10 +4925,6 @@ export class TaskService {
         context?.dispose();
         return fail(message("export.destinationMissing", { name: to.name }));
       }
-      // 用意したコンテキスト（層・注意・置いた段階）を、この実行の記録として残す（PBI-119）
-      this.append(this.mustGet(task.id), [
-        this.contextResolved(runId, context, { platforms: [], warnings: [] }),
-      ]);
     }
     const workspaceDir = join(this.deps.workspaceRoot, "_export", runId);
     let executed: Executed;
@@ -4949,7 +4945,10 @@ export class TaskService {
       ) {
         return;
       }
+      // 用意したコンテキスト（層・注意・置いた段階）も、この実行の記録として残す（PBI-119）。finally で消す範囲の中で
+      // 記録する（記録に失敗しても、用意したディレクトリとホストの MCP サーバーの確保を残さない。PR #129 再レビュー指摘）
       this.append(latest, [
+        ...(context ? [this.contextResolved(runId, context, { platforms: [], warnings: [] })] : []),
         {
           actor: "sacty",
           event: { type: "ExportStarted", payload: { step, runId, approvedAt: approved.at } },
