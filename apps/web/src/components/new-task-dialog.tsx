@@ -19,6 +19,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useMessages } from "@/i18n/client";
+import { projectSettingsPath } from "@/lib/paths";
 import { candidatesLoader, type RepositoryCandidates } from "@/lib/repository-candidates";
 
 const initial: CreateTaskState = {};
@@ -113,7 +114,7 @@ export function NewTaskDialog({
           {!target.hasTargets ? (
             <p role="alert" className="text-sm text-warn">
               {t.noRepository}{" "}
-              <Link href={`/projects/${target.id}`} className="underline">
+              <Link href={projectSettingsPath(target.id)} className="underline">
                 {t.projectSettings}
               </Link>
             </p>

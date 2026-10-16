@@ -10,11 +10,13 @@ import {
   exportDue,
   gatePullRequest,
   isCompleted,
+  isFinished,
   isRepoless,
   pendingQuestion,
   project,
   questionBlocked,
   stepRunning,
+  type Task,
 } from "./projection.js";
 
 let seq = 0;
@@ -1429,5 +1431,32 @@ describe("単発作業の二重開始をイベント再生でも拒否する", (
       payload: { runId: "second", step: "operation", agentId: "a", authMode: "subscription" },
     });
     expect(() => project([...events, duplicate])).toThrow("operation was already attempted");
+  });
+});
+
+describe("終わったタスク（PBI-114）", () => {
+  const base = { steps: [{ key: "implement", state: "done" }] } as unknown as Task;
+  it("中止と、工程をすべて終えて止まったタスクだけが終わり。承認待ち・一時停止・エスカレーション・テストの途中は終わっていない", () => {
+    expect(isFinished({ ...base, status: "cancelled" })).toBe(true);
+    expect(isFinished({ ...base, status: "idle" })).toBe(true);
+    for (const status of [
+      "awaiting_approval",
+      "paused",
+      "escalated",
+      "running",
+      "queued",
+      "blocked",
+      "waiting_children",
+    ] as const) {
+      expect(isFinished({ ...base, status }), status).toBe(false);
+    }
+    expect(isFinished({ ...base, status: "idle", steps: [] })).toBe(false);
+    expect(
+      isFinished({
+        ...base,
+        status: "idle",
+        steps: [{ key: "implement", state: "active" }],
+      } as Task),
+    ).toBe(false);
   });
 });

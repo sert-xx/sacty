@@ -1,4 +1,4 @@
-<!-- 対応するコード: package.json、packages/cli/src/index.ts、apps/daemon/src/config.ts（CONFIG_TEMPLATE・resolveHome）、apps/daemon/src/instance-lock.ts -->
+<!-- 対応するコード: package.json、packages/cli/src/index.ts、apps/web/src/lib/paths.ts、apps/web/src/components/dashboard.tsx、apps/web/src/components/shell/rail.tsx、apps/daemon/src/config.ts（CONFIG_TEMPLATE・resolveHome）、apps/daemon/src/instance-lock.ts -->
 
 **日本語** | [English](getting-started.en.md)
 
@@ -36,6 +36,24 @@ npx sacty up
 
 デーモンと画面を起動し、端末に `http://127.0.0.1:4700` を表示します。ブラウザーで開いてください（自動では開きません）。Ctrl+C で両方が終了します。ポートは `--port`・`--daemon-port`
 で変えられます（[CLI](cli.md#sacty-up)）。
+
+## 画面の構成
+
+画面を開くと、まずダッシュボードを表示します。
+
+| 画面 | URL | 中身 |
+| --- | --- | --- |
+| ダッシュボード | `/dashboard`（`/` を開いたときも） | すべてのプロジェクトの、終わっていないタスク（完了・中止を除くすべて。承認待ち・一時停止も含みます）。プロジェクトの名前・状態と、タスクの詳細へのリンクを出します。5件より多いときは、欄の中でスクロールします |
+| タスクの一覧 | `/projects/<ID>/tasks` | そのプロジェクトのタスク。「タスクを作成」もここにあります |
+| プロジェクトの設定 | `/projects/<ID>/settings` | そのプロジェクトの設定（[プロジェクトの設定](project-settings.md)） |
+| プロジェクトの一覧 | `/projects` | プロジェクトの作成・インポート |
+| タスクの詳細 | `/tasks/<ID>` | タスクの進み具合・承認・実行のログ |
+
+- ヘッダーのプロジェクトの切り替えで「すべてのプロジェクト」を選ぶとダッシュボードに、プロジェクトを選ぶとそのプロジェクトのタスクの
+  一覧に移ります。ヘッダーは、開いている画面のプロジェクト（ダッシュボードなどでは「すべてのプロジェクト」）を表示します。
+- サイドメニューの「タスク」「設定」は、ヘッダーで選んでいるプロジェクトのタスクの一覧・設定を開きます。「すべてのプロジェクト」を
+  選んでいる間は「タスク」を出さず、「設定」はプロジェクトの一覧を開きます。
+- `/projects/<ID>` を開くと、そのプロジェクトのタスクの一覧に移ります。無いプロジェクトの ID を開くと、ページが見つからないと表示します。
 
 ## 最初のプロジェクトとタスク
 

@@ -1,6 +1,5 @@
 import { isRepoless, type Task } from "@sacty/core";
 import { getMessages } from "@/i18n/server";
-import { currentProjectId, resolveProject } from "@/lib/current-project";
 import { listProjects, listTasks } from "@/lib/daemon";
 
 import { needsPerson, personAction, type StatusTone, statusText, statusTone } from "@/lib/labels";
@@ -30,32 +29,29 @@ export type NeedsYouCard = {
   action: { href: string; label: string };
 };
 
-/** 表示しているプロジェクトのタスクの一覧（PBI-108）。 */
+/** プロジェクトのタスクの一覧（PBI-108）。 */
 export type TaskListData = {
-  /** 表示しているプロジェクト（無ければ null）。 */
-  projectId: string | null;
+  /** 一覧のプロジェクト（URL の ID。PBI-114）。 */
+  projectId: string;
   needsYou: NeedsYouCard[];
   rows: TaskRow[];
 };
 
 /**
- * タスクの一覧のデータ。projectId を渡せば、そのプロジェクト（画面を描いたときのプロジェクトのまま取り直す）。渡さな
- * ければ cookie のプロジェクト。デーモンに届かなければ例外。
+ * プロジェクトのタスクの一覧のデータ（projectId は URL のプロジェクト。PBI-114）。プロジェクトが無ければ null。デーモンに
+ * 届かなければ例外。
  */
-export async function loadTaskList(projectId?: string): Promise<TaskListData> {
-  const [tasks, projects, cookie, { labels }] = await Promise.all([
+export async function loadTaskList(projectId: string): Promise<TaskListData | null> {
+  const [tasks, projects, { labels }] = await Promise.all([
     listTasks(),
     listProjects(),
-    currentProjectId(),
     getMessages(),
   ]);
-  const project =
-    projectId !== undefined
-      ? projects.find((p) => p.id === projectId)
-      : resolveProject(projects, cookie);
-  const mine = tasks.filter((t) => t.projectId === project?.id);
+  const project = projects.find((p) => p.id === projectId);
+  if (!project) return null;
+  const mine = tasks.filter((t) => t.projectId === project.id);
   return {
-    projectId: project?.id ?? null,
+    projectId: project.id,
     needsYou: mine.filter(needsPerson).map((t) => ({
       id: t.id,
       title: t.title,

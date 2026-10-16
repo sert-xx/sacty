@@ -2,37 +2,42 @@
 
 import Link from "next/link";
 import { DaemonError } from "@/components/daemon-error";
-import { StaleNotice } from "@/components/live-status";
+import { FollowProjectAfterRecovery, StaleNotice } from "@/components/live-status";
 import { StatusLabelView, StepChipsView } from "@/components/task-bits";
 import { useMessages } from "@/i18n/client";
 import type { TaskListData } from "@/lib/task-list-data";
 import { useLiveData } from "@/lib/use-live-data";
 
-/** タスクの一覧のデータを取り直す先。プロジェクトは、描いたときのままにする。 */
-export function taskListLiveUrl(projectId: string | null | undefined): string {
-  return projectId ? `/live/tasks?project=${encodeURIComponent(projectId)}` : "/live/tasks";
+/** タスクの一覧のデータを取り直す先。プロジェクトは、URL のプロジェクト（PBI-114）。 */
+export function taskListLiveUrl(projectId: string): string {
+  return `/live/tasks?project=${encodeURIComponent(projectId)}`;
 }
 
 /**
  * 人間の判断が必要なタスクと、すべてのタスク（PBI-108）。画面をリロードせず、一定の間隔でデータだけを取り直し、
  * 新しいタスク・状態の変化を出す（タブが隠れている間は止め、見えたらすぐに取り直す）。
- * initial が null（描いたときにデーモンに届かなかった）なら、届くまで error を出し、届いたら一覧を出す。
+ * projectId は URL のプロジェクト（PBI-114）。描いたときにデーモンに届かなくても、そのプロジェクトを取り直す。
+ * initial が null（描いたときにデーモンに届かなかった）なら、届くまで error を出し、届いたら一覧を出し、表示している
+ * プロジェクトを URL のプロジェクトに合わせる（ヘッダーとずらさない）。
  */
 export function LiveTaskList({
+  projectId,
   initial,
   initialVersion,
   error,
 }: {
+  projectId: string;
   initial: TaskListData | null;
   initialVersion?: string;
   error?: string;
 }) {
-  const url = taskListLiveUrl(initial?.projectId);
+  const url = taskListLiveUrl(projectId);
   const { data, stale } = useLiveData(() => url, initial, initialVersion);
   const { tasks: m, labels } = useMessages();
   return (
     <>
       <StaleNotice stale={stale} />
+      {initial === null && data && <FollowProjectAfterRecovery projectId={data.projectId} />}
       {data && data.needsYou.length > 0 && (
         <section aria-labelledby="needs-you" className="flex flex-col gap-3">
           <h2 id="needs-you" className="text-[15px] font-semibold">

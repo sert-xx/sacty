@@ -7,6 +7,7 @@ import { useEffect, useState, useTransition } from "react";
 import { setLanguageAction } from "@/app/actions";
 import { useMessages } from "@/i18n/client";
 import type { LanguagePreference } from "@/i18n/locale";
+import { DASHBOARD_PATH, projectTasksPath, switchPath } from "@/lib/paths";
 import { applyTheme, readTheme, type ThemePreference, writeTheme } from "@/lib/theme";
 
 const POPUP =
@@ -32,42 +33,57 @@ function Count({ n, className }: { n: number; className?: string }) {
 
 export type ProjectOption = { id: string; name: string; needsYou: number };
 
-/** プロジェクトの切り替え。プロジェクトごとに、人間の対応待ちの件数を出す。 */
+/**
+ * プロジェクトの切り替え。プロジェクトごとに、人間の対応待ちの件数を出す。先頭の「すべてのプロジェクト」はダッシュボード
+ * へ、個別のプロジェクトはそのタスクの一覧へ移る（PBI-114）。current は開いている画面のプロジェクト（null なら
+ * 「すべてのプロジェクト」。件数はすべてのプロジェクトの合計）。
+ */
 export function ProjectMenu({
   projects,
   current,
 }: {
   projects: ProjectOption[];
-  current: ProjectOption;
+  current: ProjectOption | null;
 }) {
   const t = useMessages().shell.project;
+  const name = current ? current.name : t.all;
+  const count = current ? current.needsYou : projects.reduce((n, p) => n + p.needsYou, 0);
   return (
     <Menu.Root>
       <Menu.Trigger
         className={cn(TRIGGER, "min-w-0 gap-2.5 px-3")}
-        aria-label={t.trigger(current.name)}
+        aria-label={t.trigger(name)}
+        data-testid="project-menu"
       >
         <span className="flex min-w-0 flex-col text-left leading-tight">
           <span className="text-[11px] text-muted-foreground">{t.label}</span>
-          <span className="truncate text-sm font-semibold">{current.name}</span>
+          <span className="truncate text-sm font-semibold">{name}</span>
         </span>
-        <Count n={current.needsYou} />
+        <Count n={count} />
         <ChevronDownIcon aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
       </Menu.Trigger>
       <Menu.Portal>
         <Menu.Positioner sideOffset={8} align="start">
           <Menu.Popup className={cn(POPUP, "w-72 p-1.5")}>
             <p className="px-3 pt-2 pb-1 text-xs text-muted-foreground">{t.switch}</p>
+            <Menu.LinkItem
+              href={DASHBOARD_PATH}
+              className={cn(ITEM, "min-h-11", current === null && "font-semibold")}
+              aria-current={current === null ? "true" : undefined}
+            >
+              {t.all}
+            </Menu.LinkItem>
+            <Menu.Separator className="my-1 h-px bg-border" />
             {projects.map((p) => (
               <Menu.LinkItem
                 key={p.id}
-                href={`/switch?project=${encodeURIComponent(p.id)}&to=/`}
+                href={switchPath(p.id, projectTasksPath(p.id))}
                 className={cn(
                   ITEM,
                   "min-h-11 justify-between",
-                  p.id === current.id && "font-semibold",
+                  p.id === current?.id && "font-semibold",
                 )}
-                aria-current={p.id === current.id ? "true" : undefined}
+                aria-current={p.id === current?.id ? "true" : undefined}
               >
                 <span className="truncate">{p.name}</span>
                 {p.needsYou > 0 ? (
@@ -100,6 +116,8 @@ export type Notice = {
 /**
  * お知らせ：全プロジェクトの、人間の対応待ち。ほかのプロジェクトを先に並べる
  * （表示中のプロジェクトのものは一覧で見えているため）。開くと、そのプロジェクトに切り替える。
+ * currentName が無い（「すべてのプロジェクト」を選んでいる。PBI-114）ときは、分けずに新しい順に並べる（どれも
+ * そのタスクのプロジェクトに切り替えて開く）。
  */
 export function NotificationsMenu({
   others,
@@ -108,14 +126,14 @@ export function NotificationsMenu({
 }: {
   others: Notice[];
   here: Notice[];
-  currentName: string;
+  currentName?: string;
 }) {
   const t = useMessages().shell.notices;
   const total = others.length + here.length;
   const item = (n: Notice) => (
     <Menu.LinkItem
       key={n.taskId}
-      href={`/switch?project=${encodeURIComponent(n.projectId)}&to=${encodeURIComponent(n.href)}`}
+      href={switchPath(n.projectId, n.href)}
       className={cn(ITEM, "flex-col items-start gap-0.5 border-t border-border first:border-t-0")}
     >
       <span className="text-xs font-semibold text-warn">{n.status}</span>
@@ -140,7 +158,10 @@ export function NotificationsMenu({
               <span className="text-xs font-normal text-muted-foreground">{t.total(total)}</span>
             </p>
             {total === 0 && <p className="px-3 py-4 text-sm text-muted-foreground">{t.none}</p>}
-            {others.length > 0 && (
+            {currentName === undefined && others.length > 0 && (
+              <Menu.Group>{others.map(item)}</Menu.Group>
+            )}
+            {currentName !== undefined && others.length > 0 && (
               <Menu.Group>
                 <Menu.GroupLabel className="mt-1 rounded-md bg-muted px-3 py-1 text-[11px] text-muted-foreground">
                   {t.others}
@@ -148,7 +169,7 @@ export function NotificationsMenu({
                 {others.map(item)}
               </Menu.Group>
             )}
-            {here.length > 0 && (
+            {currentName !== undefined && here.length > 0 && (
               <Menu.Group>
                 <Menu.GroupLabel className="mt-1 rounded-md bg-muted px-3 py-1 text-[11px] text-muted-foreground">
                   {t.here(currentName)}

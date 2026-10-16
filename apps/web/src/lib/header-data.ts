@@ -18,7 +18,8 @@ export type HeaderData = {
  * プロジェクト。プロジェクトが1つも無ければ null。デーモンに届かなければ例外。
  */
 export async function loadHeaderData(currentId?: string): Promise<HeaderData | null> {
-  const [projects, tasks] = await Promise.all([listProjects(), listTasks()]);
+  // 対応待ち（承認待ち・エスカレーション・一時停止）は終わっていないタスクなので、終わっていないタスクだけを取る（PBI-114）
+  const [projects, tasks] = await Promise.all([listProjects(), listTasks({ open: true })]);
   // プロジェクトが1つも無いときは、切り替えもお知らせも出さない（作成画面のほかへ移らせない。PBI-22）
   if (projects.length === 0) return null;
   const m = await getMessages();

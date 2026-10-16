@@ -6,8 +6,10 @@
 
 You register per-project settings in the project settings of the web UI (they do not go in config.yaml).
 
-You switch the displayed project in the header of the web UI. When you create or import a project, the web UI switches to that project.
-When you open a task or a project's settings (from a list, a notification link, or a URL), the header also switches to that project.
+You open a project's settings at `/projects/<ID>/settings` ("Settings" in the side menu opens the settings of the project selected in the header).
+You switch the displayed project in the header of the web UI (choosing one moves to that project's task list). When you create or import a project,
+the web UI switches to that project and opens its settings. When you open a task or a project's settings (from a list, a notification link, or a URL),
+the header also switches to that project ([Web UI screens](getting-started.en.md#web-ui-screens)).
 
 | Field | Contents | Details |
 | --- | --- | --- |

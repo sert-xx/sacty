@@ -25,7 +25,7 @@ Related ADRs: [Remove the "PR作成" step and open the PR and wait for approval 
 - A PR-review-only task has `source.review` (`requested` or `label`; `sacty` if it is a PR that sacty created and gave the review label).
 - When creating a task in the web UI, if no repository is specified (`repo: null`), or the repository is omitted and the project's targets are not exactly one repository,
   the task becomes a task without a repository (`noRepo`). It cannot be created in a project with no targets (`task.repositoryMissing`).
-- The "Create task" button in the web UI reads only the current project before it appears. The repository suggestions (the daemon's
+- The "Create task" button in the web UI reads only the list's project (the ID in the URL) before it appears (it does not appear for a project that does not exist). The repository suggestions (the daemon's
   `GET /api/projects/:id/repositories`; org targets are read with `gh`) are read when the create dialog opens, through the web route
   `GET /projects/:id/repositories` (read again on every open; a late result from an earlier open is dropped). Rendering the task list and its
   automatic refresh do not read them. The dialog shows that the suggestions are loading, could not be read, or are empty, and in every state the

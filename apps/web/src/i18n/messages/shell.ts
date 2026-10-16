@@ -1,10 +1,14 @@
-/** 画面の文言：ヘッダー・メニュー・サイドメニュー。英語の用語は labels.ts の用語集に合わせる。 */
+/**
+ * 画面の文言：ヘッダー・メニュー・サイドメニュー。サイドメニューの名称は幅が狭いので、折り返す位置に幅の無い空白（\u200b）
+ * を入れる。英語の用語は labels.ts の用語集に合わせる。
+ */
 const ja = {
-  nav: { main: "メイン", tasks: "タスク", settings: "設定" },
+  nav: { main: "メイン", dashboard: "ダッシュ\u200bボード", tasks: "タスク", settings: "設定" },
   project: {
     label: "プロジェクト",
     trigger: (name: string) => `プロジェクト：${name}（切り替える）`,
     switch: "プロジェクトを切り替える",
+    all: "すべてのプロジェクト",
     needsYou: (n: number) => `対応待ち ${n}`,
     manage: "プロジェクトを管理する",
     fallbackName: "デフォルト",
@@ -33,11 +37,12 @@ const ja = {
 export type ShellMessages = typeof ja;
 
 const en: ShellMessages = {
-  nav: { main: "Main", tasks: "Tasks", settings: "Settings" },
+  nav: { main: "Main", dashboard: "Dashboard", tasks: "Tasks", settings: "Settings" },
   project: {
     label: "Project",
     trigger: (name) => `Project: ${name} (switch)`,
     switch: "Switch project",
+    all: "All projects",
     needsYou: (n) => `${n} need${n === 1 ? "s" : ""} you`,
     manage: "Manage projects",
     fallbackName: "Default",
