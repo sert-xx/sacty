@@ -978,6 +978,8 @@ export class TaskService {
     const record = (payload: Payload) => {
       const latest = this.tasks.get(task.id);
       if (!latest || this.cancelling.has(task.id) || !awaitingDeploymentCi(latest)) return;
+      // 読んでいる間に一時停止したなら、結果を捨てる（再開した後の確認で取り直す。PBI-116 レビュー指摘）
+      if (latest.status === "paused" || this.pauseRequested.has(task.id)) return;
       this.append(latest, [{ actor: "sacty", event: { type: "DeploymentCiFinished", payload } }]);
     };
     let token: string;
@@ -1273,17 +1275,21 @@ export class TaskService {
       if (updated.deployment?.state === "failed") this.registerFixTask(updated);
     };
     const usedSecrets: string[] = [];
+    // 準備・実行の途中で人が止めたなら、失敗ではなく中断として扱う（準備が止めたことで失敗しても、再開で確かめ直す。
+    // PBI-116 レビュー指摘）
     const fail = (failed: DaemonText, cost?: Partial<Payload>) =>
-      record("sacty", {
-        result: "unknown",
-        evidence: [],
-        failed: message("deploy.checkFailed", { detail: redactText(failed, usedSecrets) }),
-        runResult: "failed",
-        ...setting,
-        costUsd: 0,
-        estimated: false,
-        ...cost,
-      });
+      stopped()
+        ? interrupted({ costUsd: 0, estimated: false, ...cost })
+        : record("sacty", {
+            result: "unknown",
+            evidence: [],
+            failed: message("deploy.checkFailed", { detail: redactText(failed, usedSecrets) }),
+            runResult: "failed",
+            ...setting,
+            costUsd: 0,
+            estimated: false,
+            ...cost,
+          });
     const stopped = () => this.pauseRequested.has(task.id) || this.cancelling.has(task.id);
     // マージの後の監視の工程（PBI-116）なら、人が止めた確認は結果にせず、再開で確かめ直す（ほかの工程の実行と同じ）。
     // 工程の無い PBI-116 より前のタスクの監視は、これまでどおり確かめられなかったものとして終える

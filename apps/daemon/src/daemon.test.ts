@@ -18995,6 +18995,86 @@ describe("マージの後の CI/CD とデプロイの監視（PBI-89）", () => 
     t.activity.close();
   });
 
+  it("CI/CD を読んでいる間に一時停止したら、結果を記録せず（修正のタスクも作らず）、再開した後に取り直す（PBI-116 レビュー指摘）", async () => {
+    const ci = new FakeCi();
+    ci.snap = { checks: [{ kind: "workflow", name: "CI", status: "pending" }], failedRuns: [] };
+    ci.failuresList = [testFailure];
+    const t = setup({ ci });
+    const id = t.create();
+    await t.merge(id);
+    // 失敗が出そろった（1回目の確認で並びを覚え、2回目で決める）
+    ci.snap = failing();
+    await t.service.checkPullRequests();
+    // 2回目の確認で CI/CD を読んでいる間に、一時停止する
+    const reading = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const snapshot = ci.snapshot.bind(ci);
+    ci.snapshot = async (input) => {
+      reading.resolve();
+      await release.promise;
+      return snapshot(input);
+    };
+    const check = t.service.checkPullRequests();
+    await reading.promise;
+    await t.service.pause(id);
+    release.resolve();
+    await check;
+    expect(t.service.get(id)?.task).toMatchObject({ status: "paused" });
+    expect(deploymentTypes(t.service, id)).toEqual(["DeploymentWatchStarted"]);
+    expect(t.service.list()).toHaveLength(1);
+    // 再開すると取り直し、結果を記録して修正のタスクを登録する
+    ci.snapshot = snapshot;
+    t.service.resume(id, {});
+    await t.service.checkPullRequests();
+    await t.service.checkPullRequests();
+    expect(t.service.get(id)?.task.deployment?.state).toBe("failed");
+    expect(t.service.get(id)?.task.deployment?.fix).toBeDefined();
+    expect(isFinished(t.service.get(id)?.task as Task)).toBe(true);
+    t.activity.close();
+  });
+
+  it("確認の準備の途中で一時停止し、準備が失敗しても、結果にせずに止め、再開すると確かめ直す（PBI-116 レビュー指摘）", async () => {
+    const repos = new FakeRepos();
+    repos.files[MERGE] = { [SKILL]: "# skill" };
+    const ci = new FakeCi();
+    ci.snap = success();
+    const t = setup({ ci, repos, outcomes: [checkOut(answer("healthy"))] });
+    const id = t.create();
+    await t.merge(id);
+    expect(t.service.get(id)?.task.deployment).toMatchObject({ phase: "check" });
+    // マージのコミットを取得している間に一時停止し、その取得が失敗する
+    const fetching = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const fetchCommits = repos.fetchCommits.bind(repos);
+    repos.fetchCommits = async () => {
+      fetching.resolve();
+      await release.promise;
+      throw new Error("止めたので取得できなかった");
+    };
+    const run = t.service.runNext(id);
+    await fetching.promise;
+    const paused = t.service.pause(id);
+    release.resolve();
+    await paused;
+    await run;
+    const task = t.service.get(id)?.task as Task;
+    expect(task).toMatchObject({ status: "paused", pausedReason: "manual" });
+    expect(task.deployment).toMatchObject({ state: "waiting", phase: "check" });
+    expect(task.deployment?.check).toBeUndefined();
+    expect(
+      t.service.get(id)?.activity.find((e) => e.type === "DeploymentChecked")?.payload,
+    ).toMatchObject({ retry: true, runResult: "interrupted", failed: { code: "deploy.stopped" } });
+    // 再開すると確かめ直す
+    repos.fetchCommits = fetchCommits;
+    t.service.resume(id, {});
+    await t.service.runNext(id);
+    expect(t.service.get(id)?.task.deployment).toMatchObject({
+      state: "passed",
+      check: { result: "healthy" },
+    });
+    t.activity.close();
+  });
+
   it("監視の間に中止すると、マージした実装の PR は閉じずに、監視をやめる（PBI-116）", async () => {
     const ci = new FakeCi();
     ci.snap = { checks: [{ kind: "workflow", name: "CI", status: "pending" }], failedRuns: [] };

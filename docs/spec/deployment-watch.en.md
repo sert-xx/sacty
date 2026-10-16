@@ -127,7 +127,7 @@ Code: `apps/daemon/src/deployment.ts` (`findDeploymentSkill`, `resolveInReposito
 - Answer (`extractDeploymentCheck`): JSON under the heading `sacty-deployment`.
 
   ```json
-  {"sacty-deployment": {"ci": {"result": "passed", "summary": "CI/CD の確認の要点", "reason": "飛ばした・判断できない理由"}, "deployment": {"result": "skipped", "summary": "デプロイの確認の要点", "reason": "デプロイしていない"}, "summary": "全体の要点", "evidence": ["根拠"]}}
+  {"sacty-deployment": {"ci": {"result": "passed", "summary": "Summary of the CI/CD check", "reason": "Why it was skipped or could not be determined"}, "deployment": {"result": "skipped", "summary": "Summary of the deployment check", "reason": "This repository does not deploy"}, "summary": "Overall summary", "evidence": ["Evidence"]}}
   ```
 
   | Field | Values |
@@ -175,10 +175,28 @@ On a failure (`failed`), when no decision about a fix task has been made yet (`f
 
 Code: `apps/daemon/src/service.ts` (`registerFixTask`, `createRegisteredFixTask`), `apps/daemon/src/deployment.ts` (`ciFingerprint`, `deploymentFingerprint`, `buildCiFixTask`, `buildDeploymentFixTask`), `packages/core/src/projection.ts` (`fixDecisionPending`, `fixTaskOpen`), `packages/core/src/events.ts` (`MAX_FIX_CHAIN`, `DeploymentFixRegistered`, `DeploymentFixSuppressed`)
 
+## When it could not be checked
+
+In the following cases, sacty ends the watch without creating a fix task (it is not a failure), ends the step, and completes the task. There is no automatic retry.
+
+| Case | `state` and `reason` | Where to notice |
+| --- | --- | --- |
+| CI/CD does not finish in 60 minutes, or 60 minutes pass while the GitHub API cannot be read | `timed_out` | The watch card, the Activity (`timed_out` of `DeploymentCiFinished`), and the daemon log for why it could not be read |
+| No CI/CD at all after 5 minutes | `skipped`, `no_ci` | The watch card, the Activity |
+| The check by the skill cannot determine the result, the run fails, or the answer cannot be read | `skipped`, `check_unknown` (`detail`) | The watch card (the results and reasons of the CI/CD check and the deployment check), the Activity |
+| The budget cap | `skipped`, `budget` | The watch card, the Activity |
+
+- The Slack completion notification ([Slack notifications](notifications.en.md)) has the same text regardless of the result of the watch and does not include the result (check it from the link to the task).
+- There is no mechanism to check again. A person fixes the permissions or connection of the project's GitHub account, checks the CI/CD of the merge commit (the link in the card) on GitHub and
+  the deployed app with the skill's steps, and creates a new task if something needs fixing.
+
+Code: `apps/daemon/src/service.ts` (`pollDeploymentCi`, `checkDeployment`), `apps/web/src/components/deployment.tsx` (`DeploymentWatchCard`), `apps/daemon/src/notifier.ts` (`notificationText`)
+
 ## Pause, cancel, and restart
 
 - Pause: during the watch (idle), the task can be paused like other steps. While paused, sacty does not watch CI/CD and does not run the check (registering a fix task also waits
-  until resume). On resume, it goes back to idle and continues. If a check is running, the container is stopped, the check is not turned into a result (`retry`), the task is paused, and it is checked again on resume.
+  until resume). If it is paused while CI/CD is being read, the result read is discarded without being recorded (it is read again after resume). On resume, it goes back to idle and continues.
+  If the check is being prepared or running, the container is stopped, the check is not turned into a result (`retry`), the task is paused, and it is checked again on resume (the same applies if the preparation fails because it was stopped).
 - Cancel: the watch ends (nothing is recorded on a canceled task). If a check is running, it is stopped like any other run (`retry` is recorded, then the task is canceled).
   The merged implementation PR is not closed (the cleanup of the PR is `skipped`). Branches and the workspace are cleaned up as for other steps.
 - Restart: a watch waiting for CI/CD continues after a restart (the time limit is counted from when the watch started). If the daemon stops while a check is running, at startup

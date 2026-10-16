@@ -32,8 +32,8 @@ and registers a fix task automatically if something failed. This is done as the 
 4. If CI/CD passes, an agent checks as the skill says. What to check (only CI/CD, or also the deployed app) depends on
    how the skill is written. If it finds a failure or an error, sacty registers a fix task with the result and evidence. If it could not determine the result,
    sacty skips without creating a fix task.
-5. When the watch ends (passed, failed and registered a fix task, skipped, or timed out), the task is completed. Even on failure, the original task is not stopped
-   (the fix task takes over).
+5. When the watch ends, the task is completed. It ends when it passed, was skipped, or timed out, or when it failed and sacty registered a fix task or decided not to create
+   one (see "Duplicate registration and limits" below). Even on failure, the original task is not stopped (the fix task takes over).
 
 Fix tasks proceed as ordinary tasks (their merges are watched in the same way).
 
@@ -55,7 +55,7 @@ Fix tasks proceed as ordinary tasks (their merges are watched in the same way).
   sacty instructs it to only check and change nothing, not to wait long (sacty does the waiting), and to answer at the end in this form.
 
 ```json
-{"sacty-deployment": {"ci": {"result": "passed", "summary": "必要なワークフローは通った"}, "deployment": {"result": "skipped", "reason": "デプロイしていない"}, "summary": "CI/CD だけ確かめた", "evidence": ["CI: success"]}}
+{"sacty-deployment": {"ci": {"result": "passed", "summary": "The required workflows passed"}, "deployment": {"result": "skipped", "reason": "This repository does not deploy"}, "summary": "Checked only CI/CD", "evidence": ["CI: success"]}}
 ```
 
 | Field | Values |
@@ -90,6 +90,28 @@ step_agents:
   While waiting, the page refreshes automatically.
 - A link to the original task appears at the top of the fix task's details.
 - The Activity also records whether the step was included (or why it was skipped), the start of the watch, the CI/CD result, the check, and the fix task registration (or why one was not created).
+
+## When it could not be checked
+
+In the following cases, sacty ends the watch without creating a fix task, and the task is completed. sacty does not retry automatically.
+
+- CI/CD did not finish within 60 minutes, or the GitHub API could not be read (no permission, cannot connect, and so on): the state is "Timed out".
+- No CI/CD appeared within 5 minutes: the state is "Skipped" (no CI/CD).
+- The check by the skill could not determine the result, could not run, its answer could not be read, or the budget cap had been reached: the state is "Skipped" with the reason.
+
+How to notice:
+
+- "After-merge watch" in the task's details shows the state and the reason. The result of the check by the skill is shown for each of the CI/CD check and the deployment check.
+- The Activity has lines such as "CI/CD did not finish in time (timed out)" and "Result of the check by the skill: could not determine".
+- The reason the GitHub API could not be read appears in the daemon log (`[daemon] … の CI/CD の状態を読めませんでした`).
+- The Slack completion notification has the same text regardless of the result of the watch. Open the task's details from the link in the notification to see the result.
+
+How to check again (by hand):
+
+1. Fix the permissions or the connection of the project's GitHub account.
+2. From the "Merge commit" link in the card, check the result of CI/CD (Actions and checks) for that commit on GitHub.
+3. Check the deployed app with the steps written in the skill (`.agents/skills/deployment-observer/SKILL.md`).
+4. If something needs fixing, create a new task.
 
 ## Pause, cancel, and restart
 

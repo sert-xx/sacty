@@ -355,22 +355,22 @@ const ja = {
     ) =>
       result === "passed"
         ? skill
-          ? `CI/CD が通った。スキル ${skill} でデプロイを確かめる`
-          : `CI/CD が通った（デプロイの確認は飛ばした${skipCheck ? `：${skipCheck}` : ""}）`
+          ? `CI/CD が通った。スキル ${skill} に従って確かめる`
+          : `CI/CD が通った（スキルに従った確認は飛ばした${skipCheck ? `：${skipCheck}` : ""}）`
         : result === "failed"
           ? `CI/CD が失敗した：${failed.join("、")}`
           : result === "none"
             ? "このコミットに CI/CD が無いため、監視を飛ばした"
             : "CI/CD が時間内に終わらなかった（時間切れ）",
-    DeploymentCheckStarted: (skill: string) => `デプロイの確認を始めた（${skill}）`,
+    DeploymentCheckStarted: (skill: string) => `スキルに従った確認を始めた（${skill}）`,
     DeploymentChecked: (
       result: "healthy" | "unhealthy" | "unknown",
       detail: string | undefined,
       cost: string,
     ) =>
-      `デプロイの確認の結果：${result === "healthy" ? "問題なし" : result === "unhealthy" ? "失敗・エラーあり" : "判断できない"}（${cost}）${detail ? `：${detail}` : ""}`,
+      `スキルに従った確認の結果：${result === "healthy" ? "問題なし" : result === "unhealthy" ? "失敗・エラーあり" : "判断できない"}（${cost}）${detail ? `：${detail}` : ""}`,
     DeploymentCheckStopped: (detail: string | undefined, cost: string) =>
-      `デプロイの確認を中断した。再開すると確かめ直す（${cost}）${detail ? `：${detail}` : ""}`,
+      `スキルに従った確認を中断した。再開すると確かめ直す（${cost}）${detail ? `：${detail}` : ""}`,
     /** スキルに従った CI/CD の確認・デプロイの確認それぞれの結果（PBI-116）。 */
     deploymentPart: (kind: "ci" | "deployment", result: string, reason: string | undefined) =>
       ` / ${kind === "ci" ? "CI/CD の確認" : "デプロイの確認"}：${
@@ -383,7 +383,7 @@ const ja = {
           unknown: "判断できない",
         }[result] ?? result
       }${reason ? `（${reason}）` : ""}`,
-    DeploymentWatchSkipped: (detail: string) => `デプロイの確認を飛ばした：${detail}`,
+    DeploymentWatchSkipped: (detail: string) => `スキルに従った確認を飛ばした：${detail}`,
     DeploymentFixRegistered: (kind: "ci" | "deployment", title: string) =>
       `修正のタスクを登録した（${kind === "ci" ? "CI/CD" : "デプロイ後のアプリ"}）：${title}`,
     DeploymentFixSuppressed: (reason: "duplicate" | "chain_limit", max: number) =>
@@ -684,18 +684,18 @@ const en: LabelMessages = {
     DeploymentCiFinished: (result, failed, skill, skipCheck) =>
       result === "passed"
         ? skill
-          ? `CI/CD passed. Checking the deployment with the skill ${skill}`
-          : `CI/CD passed (skipped the deployment check${skipCheck ? `: ${skipCheck}` : ""})`
+          ? `CI/CD passed. Checking as the skill ${skill} says`
+          : `CI/CD passed (skipped the check by the skill${skipCheck ? `: ${skipCheck}` : ""})`
         : result === "failed"
           ? `CI/CD failed: ${failed.join(", ")}`
           : result === "none"
             ? "Skipped the watch because this commit has no CI/CD"
             : "CI/CD did not finish in time (timed out)",
-    DeploymentCheckStarted: (skill) => `Started the deployment check (${skill})`,
+    DeploymentCheckStarted: (skill) => `Started the check by the skill (${skill})`,
     DeploymentChecked: (result, detail, cost) =>
-      `Deployment check result: ${result === "healthy" ? "no problems" : result === "unhealthy" ? "failures or errors found" : "could not determine"} (${cost})${detail ? `: ${detail}` : ""}`,
+      `Result of the check by the skill: ${result === "healthy" ? "no problems" : result === "unhealthy" ? "failures or errors found" : "could not determine"} (${cost})${detail ? `: ${detail}` : ""}`,
     DeploymentCheckStopped: (detail, cost) =>
-      `Stopped the deployment check. It is checked again on resume (${cost})${detail ? `: ${detail}` : ""}`,
+      `Stopped the check by the skill. It is checked again on resume (${cost})${detail ? `: ${detail}` : ""}`,
     deploymentPart: (kind, result, reason) =>
       ` / ${kind === "ci" ? "CI/CD check" : "Deployment check"}: ${
         {
@@ -707,7 +707,7 @@ const en: LabelMessages = {
           unknown: "could not determine",
         }[result] ?? result
       }${reason ? ` (${reason})` : ""}`,
-    DeploymentWatchSkipped: (detail) => `Skipped the deployment check: ${detail}`,
+    DeploymentWatchSkipped: (detail) => `Skipped the check by the skill: ${detail}`,
     DeploymentFixRegistered: (kind, title) =>
       `Registered a fix task (${kind === "ci" ? "CI/CD" : "deployed app"}): ${title}`,
     DeploymentFixSuppressed: (reason, max) =>

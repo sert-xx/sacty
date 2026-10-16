@@ -175,10 +175,28 @@ CI/CD（GitHub Actions のワークフローの実行・チェック）を待ち
 
 コード: `apps/daemon/src/service.ts`（`registerFixTask`・`createRegisteredFixTask`）、`apps/daemon/src/deployment.ts`（`ciFingerprint`・`deploymentFingerprint`・`buildCiFixTask`・`buildDeploymentFixTask`）、`packages/core/src/projection.ts`（`fixDecisionPending`・`fixTaskOpen`）、`packages/core/src/events.ts`（`MAX_FIX_CHAIN`・`DeploymentFixRegistered`・`DeploymentFixSuppressed`）
 
+## 確かめられなかったとき
+
+次のときは、修正のタスクを作らずに監視を終え（失敗ではない）、工程を終えてタスクを完了にする。自動のやり直しは無い。
+
+| 場合 | `state`・`reason` | 気づく場所 |
+| --- | --- | --- |
+| CI/CD が60分で終わらない・GitHub の API を読めないまま60分を過ぎた | `timed_out` | 監視のカード、作業履歴（`DeploymentCiFinished` の `timed_out`）、読めなかった理由はデーモンのログ |
+| 5分たっても CI/CD が1つも無い | `skipped`・`no_ci` | 監視のカード、作業履歴 |
+| スキルに従った確認で判断できない・実行に失敗・答えを読めない | `skipped`・`check_unknown`（`detail`） | 監視のカード（CI/CD の確認・デプロイの確認それぞれの結果と理由）、作業履歴 |
+| 予算の上限 | `skipped`・`budget` | 監視のカード、作業履歴 |
+
+- Slack の完了の通知（[Slack の通知](notifications.md)）は、監視の結果によらず同じ文で、結果は書かない（タスクへのリンクから確かめる）。
+- 確かめ直す仕組みは無い。人が、プロジェクトの GitHub のアカウントの権限・接続を直し、マージのコミット（カードのリンク）の CI/CD を GitHub で、
+  デプロイ後のアプリをスキルの手順で確かめ、直すことがあれば新しいタスクを作る。
+
+コード: `apps/daemon/src/service.ts`（`pollDeploymentCi`・`checkDeployment`）、`apps/web/src/components/deployment.tsx`（`DeploymentWatchCard`）、`apps/daemon/src/notifier.ts`（`notificationText`）
+
 ## 一時停止・中止・再起動
 
 - 一時停止：監視の間（待機）は、ほかの工程と同じく止められる。止めている間は CI/CD を見ず、確認も実行しない（修正のタスクの登録も
-  再開の後）。再開すると待機に戻り、続ける。確認の実行中なら、コンテナを止め、結果にせずに（`retry`）一時停止し、再開で確かめ直す。
+  再開の後）。CI/CD を読んでいる間に止めたら、読んだ結果は記録せずに捨てる（再開の後に読み直す）。再開すると待機に戻り、続ける。
+  確認の準備・実行の途中なら、コンテナを止め、結果にせずに（`retry`）一時停止し、再開で確かめ直す（止めたことで準備が失敗しても同じ）。
 - 中止：監視は終わる（中止したタスクには記録しない）。確認の実行中なら、ほかの実行と同じく止める（`retry` を記録してから中止）。
   マージした実装の PR は閉じない（片付けの PR は `skipped`）。ブランチ・作業領域は、ほかの工程と同じく片付ける。
 - 再起動：CI/CD を待っている監視は、再起動の後も続く（時間の上限は監視を始めた時刻から）。確認の実行中に止まったら、起動のとき

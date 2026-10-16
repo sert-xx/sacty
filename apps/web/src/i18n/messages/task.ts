@@ -238,7 +238,7 @@ const ja = {
   /** マージの後の監視（PBI-89）。 */
   deployment: {
     title: "マージの後の監視",
-    note: "（工程。CI/CD とデプロイ後のアプリ。対象のリポジトリにデプロイの確認のスキルがあるとき）",
+    note: "（工程。CI/CD を待ち、リポジトリのスキルに従って確かめる。スキルがあるときだけ）",
     notStarted: (skill: string) =>
       `実装の PR のマージを待っています。マージの後に CI/CD を待ち、スキル（${skill}）に従って確かめます。`,
     skippedStep: "この工程は飛ばしました。",
@@ -260,15 +260,15 @@ const ja = {
       skipped: "飛ばした",
       timed_out: "時間切れ",
     } satisfies Record<DeploymentWatchState, string>,
-    phase: { ci: "CI/CD の結果を待っている", check: "デプロイの確認を待っている" },
-    checking: "デプロイの確認をしている",
+    phase: { ci: "CI/CD の結果を待っている", check: "スキルに従った確認を待っている" },
+    checking: "スキルに従って確かめている",
     reason: {
       no_commit: "マージのコミットが分からないため、監視を飛ばしました。",
       no_ci: "このコミットに CI/CD（ワークフロー・チェック）が無いため、監視を飛ばしました。",
       no_skill:
-        "CI/CD は通りました。デプロイの確認のスキルが無いため、デプロイの確認は飛ばしました。",
+        "CI/CD は通りました。マージのコミットにスキルが無いため、スキルに従った確認は飛ばしました。",
       budget:
-        "CI/CD は通りました。予算の上限に達しているため、デプロイの確認を実行しませんでした。",
+        "CI/CD は通りました。予算の上限に達しているため、スキルに従った確認を実行しませんでした。",
       check_unknown:
         "CI/CD は通りました。スキルに従った確認で、確かめられなかった（判断できない）ものがあります。",
     } satisfies Record<DeploymentWatchReason, string>,
@@ -541,7 +541,7 @@ const en: TaskMessages = {
   },
   deployment: {
     title: "After-merge watch",
-    note: "(A step. CI/CD and the deployed app, when the repository has a deployment check skill)",
+    note: "(A step. Waits for CI/CD and checks as the repository's skill says. Only when there is a skill)",
     notStarted: (skill) =>
       `Waiting for the implementation pull request to be merged. After the merge, sacty waits for CI/CD and checks it as the skill (${skill}) says.`,
     skippedStep: "This step was skipped.",
@@ -564,15 +564,15 @@ const en: TaskMessages = {
       skipped: "Skipped",
       timed_out: "Timed out",
     },
-    phase: { ci: "Waiting for CI/CD", check: "Waiting for the deployment check" },
-    checking: "Checking the deployment",
+    phase: { ci: "Waiting for CI/CD", check: "Waiting for the check by the skill" },
+    checking: "Checking as the skill says",
     reason: {
       no_commit: "Skipped the watch because the merge commit is unknown.",
       no_ci: "Skipped the watch because this commit has no CI/CD (workflows or checks).",
       no_skill:
-        "CI/CD passed. Skipped the deployment check because the repository has no deployment check skill.",
+        "CI/CD passed. Skipped the check by the skill because the merge commit has no skill.",
       budget:
-        "CI/CD passed. Did not run the deployment check because the budget cap has been reached.",
+        "CI/CD passed. Did not run the check by the skill because the budget cap has been reached.",
       check_unknown:
         "CI/CD passed. The check by the skill could not determine some of the results.",
     },

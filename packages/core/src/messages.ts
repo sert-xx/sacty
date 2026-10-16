@@ -583,18 +583,18 @@ const ja: MessageDictionary = {
   "export.unreadable":
     "書き出しのエージェントの出力から、書き出した先の URL を読み取れませんでした。",
   "deploy.skillMissing":
-    "デプロイの確認のスキル（.agents/skills/deployment-observer/SKILL.md か .claude/skills/deployment-observer/SKILL.md）が無いため、デプロイの確認を飛ばしました。",
+    "デプロイの確認のスキル（.agents/skills/deployment-observer/SKILL.md か .claude/skills/deployment-observer/SKILL.md）が無いため、スキルに従った確認を飛ばしました。",
   "deploy.skillOutside": ({ path }) =>
     `デプロイの確認のスキル（${path}）のシンボリックリンクがリポジトリの外を指す（またはたどりすぎる）ため、使いませんでした。`,
   "deploy.skillUnreadable": ({ path, detail }, text) =>
     `デプロイの確認のスキル（${path}）を読めないため、使いませんでした：${text(detail)}`,
-  "deploy.budgetExceeded": "予算の上限に達しているため、デプロイの確認を実行しませんでした。",
+  "deploy.budgetExceeded": "予算の上限に達しているため、スキルに従った確認を実行しませんでした。",
   "deploy.checkFailed": ({ detail }, text) =>
-    `デプロイの確認を実行できませんでした：${text(detail)}`,
-  "deploy.unreadable": "デプロイの確認の結果（sacty-deployment）を読み取れませんでした。",
+    `スキルに従った確認を実行できませんでした：${text(detail)}`,
+  "deploy.unreadable": "スキルに従った確認の結果（sacty-deployment）を読み取れませんでした。",
   "deploy.undetermined":
     "エージェントが、スキルに従った確認（CI/CD・デプロイ後のアプリ）の結果を判断できませんでした。",
-  "deploy.stopped": "デプロイの確認を中断しました（止めた・中止した）。",
+  "deploy.stopped": "スキルに従った確認を中断しました（止めた・中止した）。",
   "deploy.noSkill":
     "対象のリポジトリに、デプロイの確認のスキル（.agents/skills/deployment-observer/SKILL.md か .claude/skills/deployment-observer/SKILL.md）がありません。",
   "deploy.skillLookupFailed": ({ detail }, text) =>
@@ -1050,18 +1050,19 @@ const en: MessageDictionary = {
     `Could not export: ${text(detail).replace(/[。.]\s*$/, "")}.`,
   "export.unreadable": "Could not read the exported URL from the export agent's output.",
   "deploy.skillMissing":
-    "Skipped the deployment check because there is no deployment check skill (.agents/skills/deployment-observer/SKILL.md or .claude/skills/deployment-observer/SKILL.md).",
+    "Skipped the check by the skill because there is no deployment check skill (.agents/skills/deployment-observer/SKILL.md or .claude/skills/deployment-observer/SKILL.md).",
   "deploy.skillOutside": ({ path }) =>
     `Did not use the deployment check skill (${path}) because its symbolic link points outside the repository (or is followed too many times).`,
   "deploy.skillUnreadable": ({ path, detail }, text) =>
     `Did not use the deployment check skill (${path}) because it could not be read: ${text(detail)}`,
   "deploy.budgetExceeded":
-    "Did not run the deployment check because the budget cap has been reached.",
-  "deploy.checkFailed": ({ detail }, text) => `Could not run the deployment check: ${text(detail)}`,
-  "deploy.unreadable": "Could not read the result of the deployment check (sacty-deployment).",
+    "Did not run the check by the skill because the budget cap has been reached.",
+  "deploy.checkFailed": ({ detail }, text) =>
+    `Could not run the check by the skill: ${text(detail)}`,
+  "deploy.unreadable": "Could not read the result of the check by the skill (sacty-deployment).",
   "deploy.undetermined":
     "The agent could not determine the result of the check by the skill (CI/CD and the deployed app).",
-  "deploy.stopped": "Stopped the deployment check (paused or cancelled).",
+  "deploy.stopped": "Stopped the check by the skill (paused or cancelled).",
   "deploy.noSkill":
     "The repository has no deployment check skill (.agents/skills/deployment-observer/SKILL.md or .claude/skills/deployment-observer/SKILL.md).",
   "deploy.skillLookupFailed": ({ detail }, text) =>
