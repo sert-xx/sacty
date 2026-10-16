@@ -19033,6 +19033,76 @@ describe("マージの後の CI/CD とデプロイの監視（PBI-89）", () => 
     t.activity.close();
   });
 
+  it("CI/CD を読んでいる間に一時停止してすぐに再開し、その後に古い応答が届いても、記録しない（PBI-116 再レビュー指摘）", async () => {
+    const ci = new FakeCi();
+    ci.snap = { checks: [{ kind: "workflow", name: "CI", status: "pending" }], failedRuns: [] };
+    ci.failuresList = [testFailure];
+    const t = setup({ ci });
+    const id = t.create();
+    await t.merge(id);
+    ci.snap = failing();
+    await t.service.checkPullRequests();
+    // 次の確認で CI/CD を読んでいる間に、一時停止してすぐに再開する。その後に、止める前に読み始めた応答が届く
+    const reading = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const snapshot = ci.snapshot.bind(ci);
+    ci.snapshot = async (input) => {
+      reading.resolve();
+      await release.promise;
+      return snapshot(input);
+    };
+    const check = t.service.checkPullRequests();
+    await reading.promise;
+    await t.service.pause(id);
+    t.service.resume(id, {});
+    expect(t.service.get(id)?.task.status).toBe("idle");
+    release.resolve();
+    await check;
+    expect(deploymentTypes(t.service, id)).toEqual(["DeploymentWatchStarted"]);
+    expect(t.service.list()).toHaveLength(1);
+    expect(isFinished(t.service.get(id)?.task as Task)).toBe(false);
+    // 再開した後の確認では、読み直して記録する
+    ci.snapshot = snapshot;
+    await t.service.checkPullRequests();
+    await t.service.checkPullRequests();
+    expect(t.service.get(id)?.task.deployment?.state).toBe("failed");
+    expect(t.service.get(id)?.task.deployment?.fix).toBeDefined();
+    t.activity.close();
+  });
+
+  it("確認の準備・実行の間は、一時停止を求めても、止め終わるまで再開できない（古い準備の結果が再開の後に届くことは無い）", async () => {
+    const repos = new FakeRepos();
+    repos.files[MERGE] = { [SKILL]: "# skill" };
+    const ci = new FakeCi();
+    ci.snap = success();
+    const t = setup({ ci, repos, outcomes: [checkOut(answer("healthy"))] });
+    const id = t.create();
+    await t.merge(id);
+    const fetching = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const fetchCommits = repos.fetchCommits.bind(repos);
+    repos.fetchCommits = async (...args) => {
+      fetching.resolve();
+      await release.promise;
+      return fetchCommits(...args);
+    };
+    const run = t.service.runNext(id);
+    await fetching.promise;
+    const paused = t.service.pause(id);
+    // 止め終わる（準備が終わり、一時停止を記録する）までは、再開できない
+    expect(() => t.service.resume(id, {})).toThrow();
+    release.resolve();
+    await paused;
+    await run;
+    expect(t.service.get(id)?.task).toMatchObject({ status: "paused" });
+    expect(t.service.get(id)?.task.deployment?.check).toBeUndefined();
+    repos.fetchCommits = fetchCommits;
+    t.service.resume(id, {});
+    await t.service.runNext(id);
+    expect(t.service.get(id)?.task.deployment).toMatchObject({ state: "passed" });
+    t.activity.close();
+  });
+
   it("確認の準備の途中で一時停止し、準備が失敗しても、結果にせずに止め、再開すると確かめ直す（PBI-116 レビュー指摘）", async () => {
     const repos = new FakeRepos();
     repos.files[MERGE] = { [SKILL]: "# skill" };

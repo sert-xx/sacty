@@ -33,7 +33,9 @@ and registers a fix task automatically if something failed. This is done as the 
    how the skill is written. If it finds a failure or an error, sacty registers a fix task with the result and evidence. If it could not determine the result,
    sacty skips without creating a fix task.
 5. When the watch ends, the task is completed. It ends when it passed, was skipped, or timed out, or when it failed and sacty registered a fix task or decided not to create
-   one (see "Duplicate registration and limits" below). Even on failure, the original task is not stopped (the fix task takes over).
+   one (see "Duplicate registration and limits" below). Even on failure, the original task is not stopped. If a fix task was registered, the fix task takes over.
+   If none was created because of duplicate registration or the chain limit, check the reason shown in "After-merge watch" in the task's details (a link to the open fix task for
+   the same failure, or the chain limit).
 
 Fix tasks proceed as ordinary tasks (their merges are watched in the same way).
 
@@ -101,7 +103,9 @@ In the following cases, sacty ends the watch without creating a fix task, and th
 
 How to notice:
 
-- "After-merge watch" in the task's details shows the state and the reason. The result of the check by the skill is shown for each of the CI/CD check and the deployment check.
+- "After-merge watch" in the task's details shows the state and the reason. The results of the CI/CD check and the deployment check are shown only when the agent's answer
+  could be read. If the check could not run, its answer could not be read, or the budget cap had been reached, these results are not shown, so look at the overall state and
+  reason.
 - The Activity has lines such as "CI/CD did not finish in time (timed out)" and "Result of the check by the skill: could not determine".
 - The reason the GitHub API could not be read appears in the daemon log (`[daemon] … の CI/CD の状態を読めませんでした`).
 - The Slack completion notification has the same text regardless of the result of the watch. Open the task's details from the link in the notification to see the result.
@@ -110,7 +114,9 @@ How to check again (by hand):
 
 1. Fix the permissions or the connection of the project's GitHub account.
 2. From the "Merge commit" link in the card, check the result of CI/CD (Actions and checks) for that commit on GitHub.
-3. Check the deployed app with the steps written in the skill (`.agents/skills/deployment-observer/SKILL.md`).
+3. Check the deployed app with the steps written in the skill (`.agents/skills/deployment-observer/SKILL.md` or `.claude/skills/deployment-observer/SKILL.md`).
+   If the implementation PR removed the skill, the merge commit has no skill. Look at the skill in the commit the task started from, shown in "Target repository prepared"
+   in the Activity.
 4. If something needs fixing, create a new task.
 
 ## Pause, cancel, and restart

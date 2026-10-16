@@ -568,6 +568,12 @@ export class TaskService {
   private readonly runningTask = new AsyncLocalStorage<string>();
   /** 人間が一時停止・中止を求めたタスク。実行中の処理は、終わったら一時停止として記録する。 */
   private readonly pauseRequested = new Set<string>();
+  /**
+   * タスクごとの、人が一時停止を求めた回数（メモリーだけに持つ。PBI-116 レビュー指摘）。CI/CD を読み始めたときと記録する直前で
+   * 違えば、読んでいる間に一時停止した（すぐに再開していても）ので、読んだ結果を捨てる。読んでいる途中の処理はデーモンの再起動で
+   * 消えるので、再起動で数え直しても困らない。
+   */
+  private readonly pauseCounts = new Map<string, number>();
   /** 共用の compose の取得（deps に無いときの既定。PBI-70）。 */
   private defaultSharedComposes: SharedComposeFetcher | undefined;
   /** 中止の後片付けをしているタスク（その間に実行を始めないため）。 */
@@ -974,12 +980,20 @@ export class TaskService {
     const commit = watch.commit;
     const elapsed = this.now() - Date.parse(watch.startedAt);
     const usedSecrets: string[] = [];
+    // 読み始めたときの一時停止の回数（読んでいる間に一時停止したかを、すぐに再開した後でも見分ける）
+    const pauses = this.pauseCounts.get(task.id) ?? 0;
     type Payload = Extract<EventInput, { type: "DeploymentCiFinished" }>["payload"];
     const record = (payload: Payload) => {
       const latest = this.tasks.get(task.id);
       if (!latest || this.cancelling.has(task.id) || !awaitingDeploymentCi(latest)) return;
-      // 読んでいる間に一時停止したなら、結果を捨てる（再開した後の確認で取り直す。PBI-116 レビュー指摘）
-      if (latest.status === "paused" || this.pauseRequested.has(task.id)) return;
+      // 読んでいる間に一時停止した（すぐに再開したときも）なら、結果を捨てる（再開した後の確認で取り直す。PBI-116 レビュー指摘）
+      if (
+        latest.status === "paused" ||
+        this.pauseRequested.has(task.id) ||
+        (this.pauseCounts.get(task.id) ?? 0) !== pauses
+      ) {
+        return;
+      }
       this.append(latest, [{ actor: "sacty", event: { type: "DeploymentCiFinished", payload } }]);
     };
     let token: string;
@@ -5727,6 +5741,7 @@ export class TaskService {
       throw new InvalidOperationError(message("pause.guardianJudging"));
     }
     this.pauseRequested.add(id);
+    this.pauseCounts.set(id, (this.pauseCounts.get(id) ?? 0) + 1);
     const inflight = this.inflight.get(id);
     if (inflight) {
       this.stopRuns(inflight.runIds);

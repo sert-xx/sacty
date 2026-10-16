@@ -183,7 +183,7 @@ CI/CD（GitHub Actions のワークフローの実行・チェック）を待ち
 | --- | --- | --- |
 | CI/CD が60分で終わらない・GitHub の API を読めないまま60分を過ぎた | `timed_out` | 監視のカード、作業履歴（`DeploymentCiFinished` の `timed_out`）、読めなかった理由はデーモンのログ |
 | 5分たっても CI/CD が1つも無い | `skipped`・`no_ci` | 監視のカード、作業履歴 |
-| スキルに従った確認で判断できない・実行に失敗・答えを読めない | `skipped`・`check_unknown`（`detail`） | 監視のカード（CI/CD の確認・デプロイの確認それぞれの結果と理由）、作業履歴 |
+| スキルに従った確認で判断できない・実行に失敗・答えを読めない | `skipped`・`check_unknown`（`detail`） | 監視のカード（答えを読めたときだけ、CI/CD の確認・デプロイの確認それぞれの結果と理由も）、作業履歴 |
 | 予算の上限 | `skipped`・`budget` | 監視のカード、作業履歴 |
 
 - Slack の完了の通知（[Slack の通知](notifications.md)）は、監視の結果によらず同じ文で、結果は書かない（タスクへのリンクから確かめる）。
@@ -195,7 +195,9 @@ CI/CD（GitHub Actions のワークフローの実行・チェック）を待ち
 ## 一時停止・中止・再起動
 
 - 一時停止：監視の間（待機）は、ほかの工程と同じく止められる。止めている間は CI/CD を見ず、確認も実行しない（修正のタスクの登録も
-  再開の後）。CI/CD を読んでいる間に止めたら、読んだ結果は記録せずに捨てる（再開の後に読み直す）。再開すると待機に戻り、続ける。
+  再開の後）。CI/CD を読んでいる間に止めたら、すぐに再開していても、読んだ結果は記録せずに捨てる（再開の後に読み直す。読み始めたときと
+  記録する直前の、人が一時停止を求めた回数（`pauseCounts`。メモリーだけに持つ）で見分ける。読んでいる途中の処理は再起動で消えるので、
+  再起動で数え直しても困らない）。確認の準備・実行の間は、止め終わるまで再開できないので、古い準備の結果が再開の後に届くことは無い。再開すると待機に戻り、続ける。
   確認の準備・実行の途中なら、コンテナを止め、結果にせずに（`retry`）一時停止し、再開で確かめ直す（止めたことで準備が失敗しても同じ）。
 - 中止：監視は終わる（中止したタスクには記録しない）。確認の実行中なら、ほかの実行と同じく止める（`retry` を記録してから中止）。
   マージした実装の PR は閉じない（片付けの PR は `skipped`）。ブランチ・作業領域は、ほかの工程と同じく片付ける。
@@ -203,7 +205,7 @@ CI/CD（GitHub Actions のワークフローの実行・チェック）を待ち
   （`recoverInterrupted`）に、ほかの工程の実行と同じく、`DeploymentChecked`（`retry`、`unknown`、`interrupted`、`run.daemonStopped`）と
   `TaskPaused`（`error`、`run.daemonStopped`）を記録する。再開で確かめ直す。始める前の確認は、起動の後にワーカーが実行する。
 
-コード: `apps/daemon/src/service.ts`（`pause`・`resume`・`cancel`・`recoverInterrupted`・`checkDeployments`・`checkDeployment`）
+コード: `apps/daemon/src/service.ts`（`pause`・`resume`・`cancel`・`recoverInterrupted`・`checkDeployments`・`pollDeploymentCi`・`checkDeployment`）
 
 ## 工程の無い以前のタスク
 

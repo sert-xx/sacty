@@ -183,7 +183,7 @@ In the following cases, sacty ends the watch without creating a fix task (it is 
 | --- | --- | --- |
 | CI/CD does not finish in 60 minutes, or 60 minutes pass while the GitHub API cannot be read | `timed_out` | The watch card, the Activity (`timed_out` of `DeploymentCiFinished`), and the daemon log for why it could not be read |
 | No CI/CD at all after 5 minutes | `skipped`, `no_ci` | The watch card, the Activity |
-| The check by the skill cannot determine the result, the run fails, or the answer cannot be read | `skipped`, `check_unknown` (`detail`) | The watch card (the results and reasons of the CI/CD check and the deployment check), the Activity |
+| The check by the skill cannot determine the result, the run fails, or the answer cannot be read | `skipped`, `check_unknown` (`detail`) | The watch card (also the results and reasons of the CI/CD check and the deployment check, only when the answer could be read), the Activity |
 | The budget cap | `skipped`, `budget` | The watch card, the Activity |
 
 - The Slack completion notification ([Slack notifications](notifications.en.md)) has the same text regardless of the result of the watch and does not include the result (check it from the link to the task).
@@ -195,7 +195,9 @@ Code: `apps/daemon/src/service.ts` (`pollDeploymentCi`, `checkDeployment`), `app
 ## Pause, cancel, and restart
 
 - Pause: during the watch (idle), the task can be paused like other steps. While paused, sacty does not watch CI/CD and does not run the check (registering a fix task also waits
-  until resume). If it is paused while CI/CD is being read, the result read is discarded without being recorded (it is read again after resume). On resume, it goes back to idle and continues.
+  until resume). If it is paused while CI/CD is being read, the result read is discarded without being recorded, even if it was resumed right away (it is read again after resume. This is told apart
+  by the number of times a person asked to pause (`pauseCounts`, kept only in memory) when reading started and just before recording. Reading in progress disappears on a restart,
+  so counting again after a restart is fine). While the check is being prepared or running, the task cannot be resumed until it has stopped, so an old preparation result never arrives after resume. On resume, it goes back to idle and continues.
   If the check is being prepared or running, the container is stopped, the check is not turned into a result (`retry`), the task is paused, and it is checked again on resume (the same applies if the preparation fails because it was stopped).
 - Cancel: the watch ends (nothing is recorded on a canceled task). If a check is running, it is stopped like any other run (`retry` is recorded, then the task is canceled).
   The merged implementation PR is not closed (the cleanup of the PR is `skipped`). Branches and the workspace are cleaned up as for other steps.
@@ -203,7 +205,7 @@ Code: `apps/daemon/src/service.ts` (`pollDeploymentCi`, `checkDeployment`), `app
   (`recoverInterrupted`), like a run of other steps, sacty records `DeploymentChecked` (`retry`, `unknown`, `interrupted`, `run.daemonStopped`) and
   `TaskPaused` (`error`, `run.daemonStopped`). It is checked again on resume. A check that had not started yet is run by the worker after startup.
 
-Code: `apps/daemon/src/service.ts` (`pause`, `resume`, `cancel`, `recoverInterrupted`, `checkDeployments`, `checkDeployment`)
+Code: `apps/daemon/src/service.ts` (`pause`, `resume`, `cancel`, `recoverInterrupted`, `checkDeployments`, `pollDeploymentCi`, `checkDeployment`)
 
 ## Tasks from before the step
 
