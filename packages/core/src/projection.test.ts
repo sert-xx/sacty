@@ -1460,3 +1460,281 @@ describe("終わったタスク（PBI-114）", () => {
     ).toBe(false);
   });
 });
+
+describe("マージの後の監視の工程（PBI-116）", () => {
+  const chosen = (id: string, deployment: Record<string, unknown> = { skill: "s/SKILL.md" }) =>
+    ev(id, {
+      type: "StepsChosen",
+      payload: { steps: ["implement", "deployment"], testCommand: "npm test", deployment },
+    } as EventInput);
+  const toGate = (id: string, deployment?: Record<string, unknown>) => [
+    created(id),
+    chosen(id, deployment),
+    ev(id, {
+      type: "RepositoryPrepared",
+      payload: { url: "https://github.com/acme/app", baseBranch: "main", baseCommit: "b1" },
+    }),
+    ...verifiedImplementation(id),
+    ev(id, {
+      type: "PullRequestPublished",
+      payload: {
+        branch: "sacty/t",
+        commit: "c1",
+        url: "https://github.com/acme/app/pull/7",
+        number: 7,
+      },
+    }),
+    ev(id, { type: "StepSubmitted", payload: { step: "implement", submission: 1 } }),
+  ];
+  const merged = (id: string) => [
+    ev(id, { type: "PullRequestMerged", payload: { number: 7, commit: "c1" } }, "person"),
+    ev(id, { type: "StepApproved", payload: { step: "implement", next: "idle" } }, "person"),
+  ];
+  const watch = (id: string, commit: string | undefined = "m1") =>
+    ev(id, {
+      type: "DeploymentWatchStarted",
+      payload: {
+        number: 7,
+        repo: "https://github.com/acme/app",
+        branch: "main",
+        ...(commit ? { commit } : {}),
+      },
+    });
+  const ciPassed = (id: string) =>
+    ev(id, { type: "DeploymentCiFinished", payload: { result: "passed", skill: "s/SKILL.md" } });
+  const checkStarted = (id: string) =>
+    ev(id, { type: "DeploymentCheckStarted", payload: { runId: "r1", skill: "s/SKILL.md" } });
+  const stateOf = (task: Task | undefined) => task?.steps.map((s) => [s.key, s.state]);
+
+  it("スキルが無ければ工程を飛ばし、実装の承認で完了する。あれば工程に進み、監視の間は完了しない", () => {
+    seq = 0;
+    const skipped = project([
+      ...toGate("a", { skipped: { code: "deploy.stepSkipped", params: { detail: "無い" } } }),
+      ...merged("a"),
+    ]).get("a");
+    expect(stateOf(skipped)).toEqual([
+      ["implement", "done"],
+      ["deployment", "skip"],
+    ]);
+    expect(skipped?.deploymentChoice).toMatchObject({ skipped: { code: "deploy.stepSkipped" } });
+    expect(skipped && isFinished(skipped)).toBe(true);
+
+    seq = 0;
+    const watching = project([...toGate("b"), ...merged("b"), watch("b")]).get("b") as Task;
+    expect(stateOf(watching)).toEqual([
+      ["implement", "done"],
+      ["deployment", "active"],
+    ]);
+    expect(watching.status).toBe("idle");
+    expect(isCompleted(watching)).toBe(false);
+    expect(isFinished(watching)).toBe(false);
+  });
+
+  it("監視が終わると工程を終えて完了する。失敗は、修正のタスクを決めるまで終えない", () => {
+    seq = 0;
+    const passed = project([
+      ...toGate("t"),
+      ...merged("t"),
+      watch("t"),
+      ev("t", { type: "DeploymentCiFinished", payload: { result: "passed" } }),
+    ]).get("t") as Task;
+    expect(passed.deployment).toMatchObject({ state: "passed", reason: "no_skill" });
+    expect(isFinished(passed)).toBe(true);
+    for (const result of ["none", "timed_out"] as const) {
+      seq = 0;
+      const t = project([
+        ...toGate("t"),
+        ...merged("t"),
+        watch("t"),
+        ev("t", { type: "DeploymentCiFinished", payload: { result } }),
+      ]).get("t") as Task;
+      expect(isFinished(t)).toBe(true);
+    }
+    seq = 0;
+    const noCommit = project([...toGate("t"), ...merged("t"), watch("t", "")]).get("t") as Task;
+    expect(noCommit.deployment).toMatchObject({ state: "skipped", reason: "no_commit" });
+    expect(isFinished(noCommit)).toBe(true);
+
+    seq = 0;
+    const failing = [
+      ...toGate("t"),
+      ...merged("t"),
+      watch("t"),
+      ev("t", { type: "DeploymentCiFinished", payload: { result: "failed" } }),
+    ];
+    const failed = project(failing).get("t") as Task;
+    expect(failed.deployment?.state).toBe("failed");
+    expect(isFinished(failed)).toBe(false);
+    const decided = project([
+      ...failing,
+      ev("t", {
+        type: "DeploymentFixSuppressed",
+        payload: { kind: "ci", fingerprint: "f", reason: "chain_limit" },
+      }),
+    ]).get("t") as Task;
+    expect(isFinished(decided)).toBe(true);
+    expect(decided.status).toBe("idle");
+  });
+
+  it("止めた確認（retry）は結果にせず、確かめ直せる。費用は入れる。実行中は工程が実行中", () => {
+    seq = 0;
+    const running = [...toGate("t"), ...merged("t"), watch("t"), ciPassed("t"), checkStarted("t")];
+    const during = project(running).get("t") as Task;
+    expect(stepRunning(during, "deployment")).toBe(true);
+    const retried = project([
+      ...running,
+      ev("t", {
+        type: "DeploymentChecked",
+        payload: {
+          result: "unknown",
+          runResult: "interrupted",
+          agentId: "a",
+          runId: "r1",
+          retry: true,
+          costUsd: 0.25,
+        },
+      }),
+    ]).get("t") as Task;
+    expect(retried.deployment).toMatchObject({ state: "waiting", phase: "check" });
+    expect(retried.deployment?.check).toBeUndefined();
+    expect(retried.budget.usedUsd).toBe(0.25);
+    expect(isFinished(retried)).toBe(false);
+    expect(stepRunning(retried, "deployment")).toBe(false);
+  });
+
+  it("CI/CD・デプロイの確認それぞれの結果を残す", () => {
+    seq = 0;
+    const done = project([
+      ...toGate("t"),
+      ...merged("t"),
+      watch("t"),
+      ciPassed("t"),
+      checkStarted("t"),
+      ev("t", {
+        type: "DeploymentChecked",
+        payload: {
+          result: "healthy",
+          ci: { result: "passed" },
+          deployment: { result: "skipped", reason: "デプロイしていない" },
+          runResult: "completed",
+          agentId: "a",
+          runId: "r1",
+        },
+      }),
+    ]).get("t") as Task;
+    expect(done.deployment?.check).toMatchObject({
+      ci: { result: "passed" },
+      deployment: { result: "skipped", reason: "デプロイしていない" },
+    });
+    expect(isFinished(done)).toBe(true);
+  });
+
+  it("マージの前に監視を始めた記録は受け付けない。変更なしで実装を承認したら、監視の工程を飛ばす", () => {
+    seq = 0;
+    expect(() => project([...toGate("t"), watch("t")])).toThrow(/not merged/);
+    seq = 0;
+    const noChanges = project([
+      created("n"),
+      chosen("n"),
+      ev("n", {
+        type: "RepositoryPrepared",
+        payload: { url: "https://github.com/acme/app", baseBranch: "main", baseCommit: "b1" },
+      }),
+      ...verifiedImplementation("n"),
+      ev("n", { type: "NoChangesFound", payload: { submission: 1 } }),
+      ev("n", { type: "StepSubmitted", payload: { step: "implement", submission: 1 } }),
+      ev("n", { type: "StepApproved", payload: { step: "implement", next: "idle" } }, "person"),
+    ]).get("n") as Task;
+    expect(stateOf(noChanges)).toEqual([
+      ["implement", "done"],
+      ["deployment", "skip"],
+    ]);
+    expect(isFinished(noChanges)).toBe(true);
+  });
+
+  it("前の工程に戻しても、飛ばした工程は飛ばしたまま", () => {
+    seq = 0;
+    const events = [
+      created("r"),
+      ev("r", {
+        type: "StepsChosen",
+        payload: {
+          steps: ["requirements", "implement", "deployment"],
+          testCommand: "npm test",
+          deployment: { skipped: "無い" },
+        },
+      }),
+      ev("r", {
+        type: "AgentRunStarted",
+        payload: { runId: "q1", step: "requirements", agentId: "a", authMode: "subscription" },
+      }),
+      ev("r", {
+        type: "AgentRunCompleted",
+        payload: {
+          runId: "q1",
+          step: "requirements",
+          agentId: "a",
+          output: "# 要求",
+          authMode: "subscription",
+          usage,
+          costUsd: 0,
+          estimated: false,
+        },
+      }),
+      ev("r", { type: "StepSubmitted", payload: { step: "requirements", submission: 1 } }),
+      ev(
+        "r",
+        { type: "StepApproved", payload: { step: "requirements", next: "queued" } },
+        "person",
+      ),
+    ];
+    const approved = project(events).get("r") as Task;
+    expect(stateOf(approved)).toEqual([
+      ["requirements", "done"],
+      ["implement", "active"],
+      ["deployment", "skip"],
+    ]);
+    // 実装の工程が要求要件の変更を申し出て認められ、要求要件に戻した
+    const reopened = project([
+      ...events,
+      ev("r", {
+        type: "AgentRunStarted",
+        payload: { runId: "i1", step: "implement", agentId: "a", authMode: "subscription" },
+      }),
+      ev("r", {
+        type: "AgentRunCompleted",
+        payload: {
+          runId: "i1",
+          step: "implement",
+          agentId: "a",
+          output: "# 実装",
+          authMode: "subscription",
+          usage,
+          costUsd: 0,
+          estimated: false,
+        },
+      }),
+      ev("r", {
+        type: "ChangeProposed",
+        payload: {
+          proposalId: "CP-1",
+          fromStep: "implement",
+          target: "requirements",
+          reason: "前提が違う",
+          facts: ["事実"],
+          proposed: "# 要求（直した）",
+        },
+      }),
+      ev("r", {
+        type: "ChangeJudged",
+        payload: { proposalId: "CP-1", verdict: "approved", reason: "妥当", agentId: "g" },
+      }),
+      ev("r", { type: "ChangeApplied", payload: { proposalId: "CP-1" } }),
+    ]).get("r") as Task;
+    expect(stateOf(reopened)).toEqual([
+      ["requirements", "active"],
+      ["implement", "todo"],
+      ["deployment", "skip"],
+    ]);
+  });
+});

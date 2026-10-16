@@ -93,6 +93,9 @@ const PARAMS = {
   "deploy.unreadable": null,
   "deploy.undetermined": null,
   "deploy.stopped": null,
+  "deploy.noSkill": null,
+  "deploy.skillLookupFailed": z.object({ detail: TextParam }),
+  "deploy.stepSkipped": z.object({ detail: TextParam }),
   "export.stopped": null,
   "export.notRetryable": null,
   "input.tooManyRemarks": null,
@@ -589,8 +592,15 @@ const ja: MessageDictionary = {
   "deploy.checkFailed": ({ detail }, text) =>
     `デプロイの確認を実行できませんでした：${text(detail)}`,
   "deploy.unreadable": "デプロイの確認の結果（sacty-deployment）を読み取れませんでした。",
-  "deploy.undetermined": "エージェントが、デプロイ後のアプリの状態を確かめられませんでした。",
+  "deploy.undetermined":
+    "エージェントが、スキルに従った確認（CI/CD・デプロイ後のアプリ）の結果を判断できませんでした。",
   "deploy.stopped": "デプロイの確認を中断しました（止めた・中止した）。",
+  "deploy.noSkill":
+    "対象のリポジトリに、デプロイの確認のスキル（.agents/skills/deployment-observer/SKILL.md か .claude/skills/deployment-observer/SKILL.md）がありません。",
+  "deploy.skillLookupFailed": ({ detail }, text) =>
+    `デプロイの確認のスキルを探せませんでした：${text(detail)}`,
+  "deploy.stepSkipped": ({ detail }, text) =>
+    `マージの後の監視の工程を飛ばします（CI/CD も見ません）。${text(detail)}`,
   "export.budgetExceeded":
     "予算の上限に達しているため、書き出しませんでした。予算の上限を上げてから、書き出し直してください。",
   "export.stopped": "人間が止めたため、書き出しを中断しました。",
@@ -1049,8 +1059,15 @@ const en: MessageDictionary = {
     "Did not run the deployment check because the budget cap has been reached.",
   "deploy.checkFailed": ({ detail }, text) => `Could not run the deployment check: ${text(detail)}`,
   "deploy.unreadable": "Could not read the result of the deployment check (sacty-deployment).",
-  "deploy.undetermined": "The agent could not determine the state of the deployed app.",
+  "deploy.undetermined":
+    "The agent could not determine the result of the check by the skill (CI/CD and the deployed app).",
   "deploy.stopped": "Stopped the deployment check (paused or cancelled).",
+  "deploy.noSkill":
+    "The repository has no deployment check skill (.agents/skills/deployment-observer/SKILL.md or .claude/skills/deployment-observer/SKILL.md).",
+  "deploy.skillLookupFailed": ({ detail }, text) =>
+    `Could not look for the deployment check skill: ${text(detail)}`,
+  "deploy.stepSkipped": ({ detail }, text) =>
+    `Skipping the after-merge watch step (CI/CD is not watched either). ${text(detail)}`,
   "export.budgetExceeded":
     "Not exported because the budget cap has been reached. Raise the cap, then export again.",
   "export.stopped": "The export was interrupted because a person stopped it.",

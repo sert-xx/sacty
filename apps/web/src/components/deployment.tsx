@@ -17,8 +17,27 @@ const CHECKS_SHOWN = 20;
 export function DeploymentWatchCard({ task, fixTask }: { task: Task; fixTask?: Task }) {
   const { task: messages, labels, locale } = useMessages();
   const watch = task.deployment;
-  if (!watch) return null;
   const m = messages.deployment;
+  // マージの後の監視の工程（PBI-116）で、まだ監視を始めていない（マージを待っている・工程を飛ばした）
+  if (!watch) {
+    const step = task.steps.find((s) => s.key === "deployment");
+    if (!step) return null;
+    const choice = task.deploymentChoice;
+    return (
+      <CardSection id="deployment" title={m.title} note={m.note}>
+        {step.state === "skip" ? (
+          <p className="text-sm text-muted-foreground" data-testid="deployment-skipped">
+            <span className="font-semibold">{m.state.skipped}</span>{" "}
+            {choice && "skipped" in choice ? labels.text(choice.skipped) : m.noMerge}
+          </p>
+        ) : (
+          <p className="text-sm text-muted-foreground [overflow-wrap:anywhere]">
+            {m.notStarted(choice && "skill" in choice ? choice.skill : "deployment-observer")}
+          </p>
+        )}
+      </CardSection>
+    );
+  }
   const commitUrl = watch.commit
     ? `${watch.repo.replace(/\/+$/, "")}/commit/${watch.commit}`
     : undefined;
@@ -177,6 +196,32 @@ export function DeploymentWatchCard({ task, fixTask }: { task: Task; fixTask?: T
               {m.result[watch.check.result]}
             </p>
           )}
+          {(["ci", "deployment"] as const).map((key) => {
+            const part = watch.check?.[key];
+            if (!part) return null;
+            const failed = part.result === "failed" || part.result === "unhealthy";
+            return (
+              <p
+                key={key}
+                data-testid={`deployment-part-${key}`}
+                data-result={part.result}
+                className="[overflow-wrap:anywhere]"
+              >
+                {m.part[key]}
+                <span className={failed ? "font-medium text-warn" : "font-medium"}>
+                  {m.partResult[part.result]}
+                </span>
+                {part.summary && ` ${part.summary}`}
+                {part.reason && (
+                  <span className="text-muted-foreground">
+                    {" "}
+                    {m.partReason}
+                    {part.reason}
+                  </span>
+                )}
+              </p>
+            );
+          })}
           {watch.check?.summary && <p className="whitespace-pre-line">{watch.check.summary}</p>}
           {(watch.check?.evidence?.length ?? 0) > 0 && (
             <>

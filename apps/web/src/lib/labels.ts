@@ -1,5 +1,6 @@
 import {
   type ActivityEvent,
+  activeStep,
   awaitingRepository,
   awaitingTicketTriage,
   deliveredWithoutChanges,
@@ -29,6 +30,10 @@ export function statusText(task: Task, l: LabelMessages): string {
   }
   if (task.status === "idle" && task.verification === "pending") return l.state.testsRunning;
   if (task.status === "idle" && task.reproductionPending) return l.state.testsRunning;
+  // マージの後の監視の工程（PBI-116）。sacty が CI/CD を待ち、スキルで確かめている（人の出番ではない）
+  if (task.status === "idle" && activeStep(task) === "deployment") {
+    return task.deployment?.phase === "check" ? l.state.watchingCheck : l.state.watchingCi;
+  }
   if (task.status === "idle" && task.verification === "tests_passed") {
     return l.state.finalReviewing;
   }
@@ -274,7 +279,13 @@ export function describeEvent(event: ActivityEvent, l: LabelMessages): string {
           : "") +
         servicesChoice(event.payload, l) +
         // テストの仕組みが無いと判断した根拠（PBI-94）
-        (event.payload.noTestsReason ? e.stepsNoTests(event.payload.noTestsReason) : "")
+        (event.payload.noTestsReason ? e.stepsNoTests(event.payload.noTestsReason) : "") +
+        // マージの後の監視の工程をするか（PBI-116）
+        (event.payload.deployment
+          ? "skill" in event.payload.deployment
+            ? e.stepsDeployment(event.payload.deployment.skill)
+            : e.stepsDeploymentSkipped(l.text(event.payload.deployment.skipped))
+          : "")
       );
     }
     case "TicketTriaged":
@@ -617,12 +628,19 @@ export function describeEvent(event: ActivityEvent, l: LabelMessages): string {
       );
     case "DeploymentCheckStarted":
       return e.DeploymentCheckStarted(event.payload.skill);
-    case "DeploymentChecked":
-      return e.DeploymentChecked(
-        event.payload.result,
-        event.payload.failed !== undefined ? l.text(event.payload.failed) : event.payload.summary,
-        cost(event.payload.costUsd, event.payload.estimated),
+    case "DeploymentChecked": {
+      const p = event.payload;
+      const detail = p.failed !== undefined ? l.text(p.failed) : p.summary;
+      // 人が止めた・デーモンが止まった確認は、結果にせず確かめ直す（PBI-116）
+      if (p.retry) return e.DeploymentCheckStopped(detail, cost(p.costUsd, p.estimated));
+      return (
+        e.DeploymentChecked(p.result, detail, cost(p.costUsd, p.estimated)) +
+        (p.ci ? e.deploymentPart("ci", p.ci.result, p.ci.reason) : "") +
+        (p.deployment
+          ? e.deploymentPart("deployment", p.deployment.result, p.deployment.reason)
+          : "")
       );
+    }
     case "DeploymentWatchSkipped":
       return e.DeploymentWatchSkipped(l.text(event.payload.detail ?? event.payload.reason));
     case "DeploymentFixRegistered":

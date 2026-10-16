@@ -10,6 +10,8 @@ import { code, DaemonText } from "./message-code.js";
  * reproduce（再現）は、不具合を再現する失敗するテストを書き、sacty が失敗を確かめる工程（PBI-29）。
  * integrate（統合レビュー）は、子タスクの成果を組み合わせて親の要求要件を満たすかを、ゴールガーディアンが
  * 確かめる工程（PBI-31）。タスク分割の後に置く。
+ * deployment（マージの後の監視）は、実装の PR のマージの後に、CI/CD とデプロイ後のアプリを見届ける工程（PBI-116）。人の
+ * 承認は無い。対象のリポジトリにデプロイの確認のスキル（deployment-observer）があるときだけ行い、無ければ飛ばす（skip）。
  */
 export const StepKey = z.enum([
   "investigate",
@@ -20,6 +22,7 @@ export const StepKey = z.enum([
   "integrate",
   "reproduce",
   "implement",
+  "deployment",
   "document",
   "operation",
 ]);
@@ -40,11 +43,11 @@ export const STEP_PLANS = {
   /**
    * 標準：調査 → 要求要件 → 設計（テスト観点）→ 実装。実装する組み合わせは、先頭に前段の調査を置き、
    * その結果を後の工程に渡す。前段の調査は人間が承認しない（PBI-29）。実装は、検証に通ったら PR を作り、そのマージで
-   * 承認する（PBI-110）
+   * 承認する（PBI-110）。マージの後は、マージの後の監視（PBI-116。スキルが無ければ飛ばす）
    */
-  standard: ["investigate", "requirements", "design", "implement"],
+  standard: ["investigate", "requirements", "design", "implement", "deployment"],
   /** 小さな変更：設計を省く（要求要件の受け入れ条件をテストで確かめる） */
-  "skip-design": ["investigate", "requirements", "implement"],
+  "skip-design": ["investigate", "requirements", "implement", "deployment"],
   /** 調査だけ：コードを調べて報告する。実装や PR は作らない（PBI-18） */
   investigate: ["investigate"],
   /**
@@ -63,7 +66,7 @@ export const STEP_PLANS = {
   /**
    * 不具合の修正：再現 → 実装。不具合を再現する失敗するテストを書き、それを通すように直す（PBI-29）
    */
-  bugfix: ["investigate", "reproduce", "implement"],
+  bugfix: ["investigate", "reproduce", "implement", "deployment"],
 } as const satisfies Record<string, readonly StepKey[]>;
 export type StepPlan = keyof typeof STEP_PLANS;
 export const StepPlan = z.enum(Object.keys(STEP_PLANS) as [StepPlan, ...StepPlan[]]);
@@ -549,6 +552,14 @@ const StepsChosen = z.object({
      * （DEFAULT_DOCUMENTS_DIR）。ファイルは、この下のタスクの短い ID のディレクトリに置く。
      */
     documentsDir: z.string().min(1).max(300).optional(),
+    /**
+     * マージの後の監視の工程（deployment）をするか（PBI-116）。工程を選んだときに、sacty が起点のコミットでデプロイの確認の
+     * スキル（deployment-observer）を探して決める。skill はそのパス（リポジトリの根から）、skipped は飛ばした理由
+     * （この工程は skip になる）。工程に deployment があるときだけ持つ。
+     */
+    deployment: z
+      .union([z.object({ skill: z.string().min(1) }), z.object({ skipped: DaemonText })])
+      .optional(),
     agentId: z.string().optional(),
     ...AgentSetting,
     ...RunRef,
@@ -1616,8 +1627,9 @@ export const CiFailure = z.object({
 export type CiFailure = z.infer<typeof CiFailure>;
 
 /**
- * 実装の PR のマージで、マージのコミットの監視を始めた（PBI-89。プロジェクトの deploymentWatch が true のときだけ、
- * PullRequestMerged と同じ追記で記録する）。commit が無い（マージのコミットが取れなかった）なら、監視を飛ばす。
+ * 実装の PR のマージで、マージのコミットの監視を始めた（PBI-89。PullRequestMerged と同じ追記で記録する）。PBI-116 からは、
+ * マージの後の監視の工程（deployment）を飛ばしていないタスクだけ。PBI-116 より前は、プロジェクトの deploymentWatch が true の
+ * とき（工程の無い、完了したタスクの監視）。commit が無い（マージのコミットが取れなかった）なら、監視を飛ばす。
  */
 const DeploymentWatchStarted = z.object({
   type: z.literal("DeploymentWatchStarted"),
@@ -1645,6 +1657,15 @@ const DeploymentCiFinished = z.object({
   }),
 });
 
+/** デプロイの確認の答えの、CI/CD・デプロイの確認それぞれの結果（PBI-116）。 */
+function DeploymentCheckPart<const T extends readonly [string, ...string[]]>(results: T) {
+  return z.object({
+    result: z.enum(results),
+    summary: z.string().max(2000).optional(),
+    reason: z.string().max(2000).optional(),
+  });
+}
+
 /** デプロイの確認のエージェントの実行を始めた（PBI-89）。 */
 const DeploymentCheckStarted = z.object({
   type: z.literal("DeploymentCheckStarted"),
@@ -1660,6 +1681,17 @@ const DeploymentChecked = z.object({
   type: z.literal("DeploymentChecked"),
   payload: z.object({
     result: z.enum(["healthy", "unhealthy", "unknown"]),
+    /**
+     * スキルに従った、CI/CD の確認とデプロイの確認それぞれの結果（PBI-116）。どこまで見るかはスキルが決めるので、飛ばした
+     * もの（skipped）とその理由（reason）も持つ。result は、この2つから sacty が決めた全体の結果。PBI-116 より前の記録には無い。
+     */
+    ci: DeploymentCheckPart(["passed", "failed", "skipped", "unknown"]).optional(),
+    deployment: DeploymentCheckPart(["healthy", "unhealthy", "skipped", "unknown"]).optional(),
+    /**
+     * 人が止めた・デーモンが止まったので、確認を結果にせず、確かめ直す（PBI-116。工程の再開で、もう一度実行する）。
+     * result は unknown。費用は記録する。
+     */
+    retry: z.literal(true).optional(),
     summary: z.string().max(4000).optional(),
     evidence: z.array(z.string().max(2000)).max(20).default([]),
     failed: DaemonText.optional(),

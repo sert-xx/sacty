@@ -525,10 +525,16 @@ describe("工程の選択と内容の調査では、開発のセットアップ�
     expect(prompt).not.toContain("PR作成");
     expect(prompt).not.toContain("PR 作成");
     expect(prompt).not.toMatch(/\bpr\b/);
+    // 実装の後に、マージの後の監視（スキルがあるときだけ。sacty が決める。PBI-116）
+    const watch =
+      "→ マージの後の監視（対象のリポジトリにデプロイの確認のスキルがあるときだけ。sacty が決める）。";
     expect(prompt).toContain(
-      "- standard：調査 → 要求要件 → 設計（テスト観点）→ 実装（PR を作り、マージで承認）。",
+      `- standard：調査 → 要求要件 → 設計（テスト観点）→ 実装（PR を作り、マージで承認）${watch}`,
     );
-    expect(prompt).toContain("- bugfix：調査 → 再現 → 実装（PR を作り、マージで承認）。");
+    expect(prompt).toContain(
+      `- skip-design：調査 → 要求要件 → 実装（PR を作り、マージで承認）${watch}`,
+    );
+    expect(prompt).toContain(`- bugfix：調査 → 再現 → 実装（PR を作り、マージで承認）${watch}`);
   });
 
   it("内容の調査（調査だけ・前段の調査）のプロンプトに、セットアップをしないこと・優先することを書く", () => {

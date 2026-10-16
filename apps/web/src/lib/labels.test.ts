@@ -1565,3 +1565,107 @@ describe("工程のイメージの選択肢（PBI-106・PR #116 レビュー指�
     expect(stepImageOptions({ problems: [] }, "既定")).toBeUndefined();
   });
 });
+
+describe("マージの後の監視の工程の表示（PBI-116）", () => {
+  const event = (e: Pick<ActivityEvent, "type" | "payload">): ActivityEvent =>
+    ({
+      ...e,
+      seq: 1,
+      id: "e1",
+      taskId: "t1",
+      projectId: "default",
+      at: "2026-10-10T00:00:00.000Z",
+      actor: "sacty",
+    }) as ActivityEvent;
+  const watching = (phase: "ci" | "check") =>
+    task({
+      steps: [
+        { key: "implement", state: "done" },
+        { key: "deployment", state: "active" },
+      ],
+      deployment: {
+        number: 7,
+        repo: "https://github.com/acme/app",
+        branch: "main",
+        commit: "m1",
+        startedAt: "2026-10-10T00:00:00.000Z",
+        state: "waiting",
+        phase,
+      },
+    });
+
+  it("監視の間は、完了でも人の出番でもなく、監視していることを出す", () => {
+    expect(statusText(watching("ci"))).toBe("マージの後の監視中（CI/CD を待っている）");
+    expect(statusText(watching("check"))).toBe("マージの後の監視中（スキルで確かめている）");
+    expect(statusTone(watching("ci"))).toBe("working");
+    expect(needsPerson(watching("ci"))).toBe(false);
+    // 英語の工程の名前も、ほかの工程とそろえる
+    expect(labels.en.step.deployment).toBe("After-merge watch");
+    expect(statusTextIn(watching("ci"), labels.en)).toBe("After-merge watch (waiting for CI/CD)");
+  });
+
+  it("工程を決めた記録に、監視をするか（スキル）・飛ばす理由を出す", () => {
+    const chosen = (deployment: unknown) =>
+      describeEvent(
+        event({
+          type: "StepsChosen",
+          payload: {
+            steps: ["implement", "deployment"],
+            fallback: false,
+            costUsd: 0,
+            estimated: false,
+            deployment,
+          },
+        } as Pick<ActivityEvent, "type" | "payload">),
+      );
+    expect(chosen({ skill: ".agents/skills/deployment-observer/SKILL.md" })).toBe(
+      "工程を決定：実装 → マージの後の監視 / マージの後の監視：する（スキル .agents/skills/deployment-observer/SKILL.md）",
+    );
+    expect(
+      chosen({
+        skipped: { code: "deploy.stepSkipped", params: { detail: { code: "deploy.noSkill" } } },
+      }),
+    ).toContain(
+      "マージの後の監視：飛ばす（マージの後の監視の工程を飛ばします（CI/CD も見ません）。",
+    );
+  });
+
+  it("確認の結果は、CI/CD・デプロイの確認それぞれを出し、止めた確認は確かめ直すと出す", () => {
+    expect(
+      describeEvent(
+        event({
+          type: "DeploymentChecked",
+          payload: {
+            result: "healthy",
+            ci: { result: "passed" },
+            deployment: { result: "skipped", reason: "デプロイしていない" },
+            evidence: [],
+            runResult: "completed",
+            agentId: "a",
+            costUsd: 0,
+            estimated: false,
+          },
+        } as Pick<ActivityEvent, "type" | "payload">),
+      ),
+    ).toBe(
+      "デプロイの確認の結果：問題なし（$0.0000） / CI/CD の確認：通った / デプロイの確認：飛ばした（デプロイしていない）",
+    );
+    expect(
+      describeEvent(
+        event({
+          type: "DeploymentChecked",
+          payload: {
+            result: "unknown",
+            retry: true,
+            failed: { code: "deploy.stopped" },
+            evidence: [],
+            runResult: "interrupted",
+            agentId: "a",
+            costUsd: 0,
+            estimated: false,
+          },
+        } as Pick<ActivityEvent, "type" | "payload">),
+      ),
+    ).toContain("デプロイの確認を中断した。再開すると確かめ直す");
+  });
+});

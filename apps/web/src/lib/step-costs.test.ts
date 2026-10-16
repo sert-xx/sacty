@@ -555,3 +555,48 @@ describe("成果の書き出しの費用（PBI-56）", () => {
     expect(total.costUsd).toBe(task.budget.usedUsd);
   });
 });
+
+describe("マージの後の監視の工程の費用（PBI-116）", () => {
+  it("デプロイの確認は、工程の順の監視の工程の行に出し、実行中・止めて確かめ直した回も数える", () => {
+    seq = 0;
+    const chosen = [
+      created(),
+      ev({
+        type: "StepsChosen",
+        payload: { steps: ["implement", "deployment"], deployment: { skill: "s/SKILL.md" } },
+      }),
+    ];
+    const task = taskOf(chosen);
+    const check = (runId: string) =>
+      ev({ type: "DeploymentCheckStarted", payload: { runId, skill: "s/SKILL.md" } });
+    const checked = (runId: string, costUsd: number, extra: Record<string, unknown>) =>
+      ev(
+        {
+          type: "DeploymentChecked",
+          payload: { agentId: "luna", authMode: "api-key", runId, costUsd, ...extra },
+        } as EventInput,
+        "agent",
+      );
+    const running = stepCosts(task, [...chosen, check("d1")]);
+    expect(running.rows.map((r) => r.role)).toEqual(["implement", "deployment"]);
+    expect(running.rows[1]?.runs.map((r) => r.result)).toEqual(["running"]);
+    const done = stepCosts(task, [
+      ...chosen,
+      check("d1"),
+      checked("d1", 0.1, { result: "unknown", runResult: "interrupted", retry: true }),
+      check("d2"),
+      checked("d2", 0.2, {
+        result: "healthy",
+        runResult: "completed",
+        ci: { result: "passed" },
+        deployment: { result: "skipped" },
+      }),
+    ]);
+    expect(done.rows.map((r) => r.role)).toEqual(["implement", "deployment"]);
+    expect(done.rows[1]?.runs.map((r) => [r.result, r.costUsd, r.agentId])).toEqual([
+      ["interrupted", 0.1, "luna"],
+      ["completed", 0.2, "luna"],
+    ]);
+    expect(done.total.costUsd).toBeCloseTo(0.3, 6);
+  });
+});

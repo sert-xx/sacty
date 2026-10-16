@@ -75,6 +75,9 @@ export type DeploymentWatch = PayloadOf<"DeploymentWatchStarted"> & {
     skill: string;
     startedAt: string;
     result?: PayloadOf<"DeploymentChecked">["result"];
+    /** スキルに従った CI/CD の確認・デプロイの確認それぞれの結果（PBI-116）。 */
+    ci?: PayloadOf<"DeploymentChecked">["ci"];
+    deployment?: PayloadOf<"DeploymentChecked">["deployment"];
     summary?: string;
     evidence?: string[];
     failed?: DaemonText;
@@ -234,8 +237,13 @@ export type Task = {
   start: "sacty" | "github_issue" | "github_pull_request" | "split" | "jira" | "deployment";
   /** マージの後の監視で見つけた失敗の、修正のタスク（PBI-89）。元のタスクと、何段目か。 */
   fix?: PayloadOf<"TaskCreated">["fix"];
-  /** 実装の PR のマージの後の、CI/CD とデプロイの監視（PBI-89）。 */
+  /**
+   * 実装の PR のマージの後の、CI/CD とデプロイの監視（PBI-89）。PBI-116 からは、マージの後の監視の工程（deployment）の中身。
+   * PBI-116 より前の作業履歴では、工程の無い、完了したタスクの監視。
+   */
   deployment?: DeploymentWatch;
+  /** マージの後の監視の工程をするか（工程を選んだときに sacty が決めた。PBI-116）。skipped なら飛ばした理由。 */
+  deploymentChoice?: PayloadOf<"StepsChosen">["deployment"];
   /** 取り込み元（GitHub Issue）。 */
   source?: TaskSource;
   /** 取り込み元のチケット（JIRA など。PBI-52）。 */
@@ -497,7 +505,8 @@ function reopen(task: Task, target: StepKey) {
   const to = task.steps.findIndex((s) => s.key === target);
   task.steps = task.steps.map((s, i) => {
     if (i === to) return { ...s, state: "active" as const };
-    if (i > to) return { ...s, state: "todo" as const };
+    // 飛ばした工程（マージの後の監視。PBI-116）は、飛ばしたまま
+    if (i > to && s.state !== "skip") return { ...s, state: "todo" as const };
     return s;
   });
   // 前の工程からやり直すので、実装の検証の途中経過と失敗の回数は持ち越さない
@@ -508,6 +517,39 @@ function reopen(task: Task, target: StepKey) {
   const keep = new Set(task.steps.slice(0, to).map((s) => s.key));
   task.approved = Object.fromEntries(
     Object.entries(task.approved).filter(([key]) => keep.has(key as StepKey)),
+  );
+}
+
+/**
+ * 工程を終え、次の工程に進める。飛ばした工程（skip。PBI-116）には進まない（その次のまだの工程へ）。次が無ければ、
+ * どれも active にしない（タスクの完了）。
+ */
+function advance(task: Task, index: number) {
+  const next = task.steps.findIndex((s, i) => i > index && s.state === "todo");
+  task.steps = task.steps.map((s, i) => {
+    if (i === index) return { ...s, state: "done" as const };
+    if (i === next) return { ...s, state: "active" as const };
+    return s;
+  });
+}
+
+/** 工程を終えた後の、次の工程（無ければ undefined。飛ばした工程は除く）。 */
+function nextStep(task: Task, step: StepKey): StepKey | undefined {
+  const index = task.steps.findIndex((s) => s.key === step);
+  return task.steps.find((s, i) => i > index && s.state === "todo")?.key;
+}
+
+/**
+ * マージの後の監視の工程（PBI-116）が終わったら、工程を終えてタスクを完了にする。監視が終わり（通った・失敗した・飛ばした・
+ * 時間切れ）、失敗なら修正のタスクを決めた（登録した・作らなかった）とき。失敗しても、タスクは止めない。
+ */
+function settleDeploymentStep(task: Task) {
+  if (activeStep(task) !== "deployment" || task.status === "cancelled") return;
+  const watch = task.deployment;
+  if (!watch || watch.state === "waiting" || fixDecisionPending(task)) return;
+  advance(
+    task,
+    task.steps.findIndex((s) => s.key === "deployment"),
   );
 }
 
@@ -607,10 +649,25 @@ export function applyEvent(
     case "StepsChosen":
       if (task.steps.length > 0)
         throw new ActivityIntegrityError(event, "steps are already chosen");
-      task.steps = event.payload.steps.map((key, i) => ({
-        key,
-        state: i === 0 ? ("active" as const) : ("todo" as const),
-      }));
+      {
+        // マージの後の監視の工程は、スキルが無ければ飛ばす（PBI-116）
+        const skipped = (key: StepKey) =>
+          key === "deployment" &&
+          event.payload.deployment !== undefined &&
+          "skipped" in event.payload.deployment;
+        const first = event.payload.steps.findIndex((key) => !skipped(key));
+        task.steps = event.payload.steps.map((key, i) => ({
+          key,
+          state: skipped(key)
+            ? ("skip" as const)
+            : i === first
+              ? ("active" as const)
+              : ("todo" as const),
+        }));
+      }
+      if (event.payload.deployment && event.payload.steps.includes("deployment")) {
+        task.deploymentChoice = event.payload.deployment;
+      }
       if (event.payload.testCommand) task.testCommand = event.payload.testCommand;
       if (event.payload.noTestsReason && !event.payload.testCommand) {
         task.noTestsReason = event.payload.noTestsReason;
@@ -718,12 +775,21 @@ export function applyEvent(
       if (task.gate?.step !== event.payload.step) {
         throw new ActivityIntegrityError(event, "approved step is not at the gate");
       }
-      const index = task.steps.findIndex((s) => s.key === event.payload.step);
-      task.steps = task.steps.map((s, i) => {
-        if (i === index) return { ...s, state: "done" as const };
-        if (i === index + 1) return { ...s, state: "active" as const };
-        return s;
-      });
+      advance(
+        task,
+        task.steps.findIndex((s) => s.key === event.payload.step),
+      );
+      // 実装の PR をマージせずに実装を承認した（変更が無く PR を作らなかった。PBI-90）なら、見るマージが無いので、
+      // マージの後の監視の工程を飛ばす（PBI-116）
+      if (
+        event.payload.step === "implement" &&
+        task.pullRequestState !== "merged" &&
+        activeStep(task) === "deployment"
+      ) {
+        task.steps = task.steps.map((s) =>
+          s.key === "deployment" ? { ...s, state: "skip" as const } : s,
+        );
+      }
       const step = event.payload.step;
       const submitted = task.outputs[step] ?? "";
       // 人が PR の中で直してからマージした（PBI-63）。要求要件・設計は、人が直したファイルの内容を承認済みの成果にする
@@ -760,12 +826,10 @@ export function applyEvent(
       if (task.status !== "idle" || activeStep(task) !== event.payload.step) {
         throw new ActivityIntegrityError(event, "the completed step is not the active step");
       }
-      const index = task.steps.findIndex((s) => s.key === event.payload.step);
-      task.steps = task.steps.map((s, i) => {
-        if (i === index) return { ...s, state: "done" as const };
-        if (i === index + 1) return { ...s, state: "active" as const };
-        return s;
-      });
+      advance(
+        task,
+        task.steps.findIndex((s) => s.key === event.payload.step),
+      );
       const submission = (task.submissions[event.payload.step] ?? 0) + 1;
       task.submissions = { ...task.submissions, [event.payload.step]: submission };
       task.approved = {
@@ -1499,12 +1563,10 @@ export function applyEvent(
       task.reproductionPending = undefined;
       if (event.payload.reproduced) {
         // 再現できたら、人間の承認なしに次の工程（実装）へ進む
-        const index = task.steps.findIndex((s) => s.key === "reproduce");
-        task.steps = task.steps.map((s, i) => {
-          if (i === index) return { ...s, state: "done" as const };
-          if (i === index + 1) return { ...s, state: "active" as const };
-          return s;
-        });
+        advance(
+          task,
+          task.steps.findIndex((s) => s.key === "reproduce"),
+        );
         task.approved = {
           ...task.approved,
           reproduce: {
@@ -1534,14 +1596,13 @@ export function applyEvent(
         throw new ActivityIntegrityError(event, `status ${task.status}`);
       }
       {
-        const index = task.steps.findIndex((s) => s.key === "split");
-        task.steps = task.steps.map((s, i) => {
-          if (i === index) return { ...s, state: "done" as const };
-          if (i === index + 1) return { ...s, state: "active" as const };
-          return s;
-        });
+        const following = nextStep(task, "split");
+        advance(
+          task,
+          task.steps.findIndex((s) => s.key === "split"),
+        );
         // 統合レビュー（PBI-31）へ進む。それより前に分割したタスクは、これで完了する
-        task.status = task.steps[index + 1] ? "queued" : "idle";
+        task.status = following ? "queued" : "idle";
       }
       break;
 
@@ -1582,10 +1643,15 @@ export function applyEvent(
       task.budget = { ...task.budget, capUsd: event.payload.capUsd };
       break;
 
-    // マージの後の監視（PBI-89）。タスクの状態・工程は変えない
+    // マージの後の監視（PBI-89）。PBI-116 からは、マージの後の監視の工程の中身で、監視が終わると工程を終える
+    // （settleDeploymentStep）。工程の無い PBI-116 より前のタスクは、完了したタスクのまま、状態・工程を変えない
     case "DeploymentWatchStarted": {
       if (task.deployment) throw new ActivityIntegrityError(event, "the watch has started");
-      if (task.pullRequestState !== "merged" || !isCompleted(task)) {
+      const step = task.steps.some((s) => s.key === "deployment");
+      if (
+        task.pullRequestState !== "merged" ||
+        (step ? activeStep(task) !== "deployment" : !isCompleted(task))
+      ) {
         throw new ActivityIntegrityError(event, "the pull request is not merged");
       }
       task.deployment = event.payload.commit
@@ -1651,6 +1717,11 @@ export function applyEvent(
         throw new ActivityIntegrityError(event, "the check is not running");
       }
       const p = event.payload;
+      // 人が止めた・デーモンが止まった確認は、結果にせず、確かめ直す（PBI-116。工程の再開で、もう一度実行する）
+      if (p.retry) {
+        task.deployment = { ...watch, check: undefined };
+        break;
+      }
       const state: DeploymentWatchState =
         p.result === "healthy" ? "passed" : p.result === "unhealthy" ? "failed" : "skipped";
       task.deployment = {
@@ -1666,6 +1737,8 @@ export function applyEvent(
           ...(p.summary !== undefined ? { summary: p.summary } : {}),
           evidence: p.evidence,
           ...(p.failed !== undefined ? { failed: p.failed } : {}),
+          ...(p.ci ? { ci: p.ci } : {}),
+          ...(p.deployment ? { deployment: p.deployment } : {}),
           at: event.at,
         },
       };
@@ -1730,6 +1803,8 @@ export function applyEvent(
       break;
   }
 
+  // マージの後の監視が終わったら、その工程を終える（PBI-116）
+  if (event.type.startsWith("Deployment")) settleDeploymentStep(task);
   // 費用を持つイベント（CHARGED_EVENT_TYPES）の費用を、タスクの予算に入れる（PBI-86。画面の工程ごとの費用の表と同じ規則）。
   // 受け付けない並び（上の検査で投げる）の費用は入れない
   task.budget = chargeBudget(task.budget, event);
@@ -2001,6 +2076,8 @@ export function stepRunning(task: Task, step: StepKey): boolean {
   if (activeStep(task) !== step) return false;
   return (
     task.status === "running" ||
+    // マージの後の監視の工程で、デプロイの確認を実行している（PBI-116）
+    (step === "deployment" && deploymentCheckRunning(task)) ||
     (task.status === "idle" &&
       (task.verification !== undefined || task.reproductionPending === true))
   );

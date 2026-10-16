@@ -229,7 +229,6 @@ const ja = {
     repository: "リポジトリの選択（オーケストレーター）",
     chat: "質問への答え（オーケストレーター）",
     export: "書き出し",
-    deployment: "デプロイの確認",
     total: "このタスクの合計",
     children: "子タスクの合計",
     breakdown: (n: number) => `各回の内訳（${n}回）`,
@@ -239,7 +238,21 @@ const ja = {
   /** マージの後の監視（PBI-89）。 */
   deployment: {
     title: "マージの後の監視",
-    note: "（CI/CD とデプロイ後のアプリ。プロジェクトの設定で On のとき）",
+    note: "（工程。CI/CD とデプロイ後のアプリ。対象のリポジトリにデプロイの確認のスキルがあるとき）",
+    notStarted: (skill: string) =>
+      `実装の PR のマージを待っています。マージの後に CI/CD を待ち、スキル（${skill}）に従って確かめます。`,
+    skippedStep: "この工程は飛ばしました。",
+    noMerge: "実装の PR をマージせずに実装を承認した（変更なし）ため、この工程を飛ばしました。",
+    part: { ci: "CI/CD の確認：", deployment: "デプロイの確認：" },
+    partResult: {
+      passed: "通った",
+      failed: "失敗",
+      healthy: "正しく動いている",
+      unhealthy: "エラーになっている",
+      skipped: "飛ばした",
+      unknown: "判断できない",
+    },
+    partReason: "理由：",
     state: {
       waiting: "待っている",
       passed: "通った",
@@ -256,7 +269,8 @@ const ja = {
         "CI/CD は通りました。デプロイの確認のスキルが無いため、デプロイの確認は飛ばしました。",
       budget:
         "CI/CD は通りました。予算の上限に達しているため、デプロイの確認を実行しませんでした。",
-      check_unknown: "CI/CD は通りました。デプロイ後のアプリの状態を確かめられませんでした。",
+      check_unknown:
+        "CI/CD は通りました。スキルに従った確認で、確かめられなかった（判断できない）ものがあります。",
     } satisfies Record<DeploymentWatchReason, string>,
     commit: "マージのコミット：",
     branch: " ・ ベースブランチ：",
@@ -514,7 +528,6 @@ const en: TaskMessages = {
     repository: "Choosing the repository (Orchestrator)",
     chat: "Answers to questions (Orchestrator)",
     export: "Export",
-    deployment: "Deployment check",
     total: "Total for this task",
     children: "Total for subtasks",
     breakdown: (n) => `Breakdown per run (${n})`,
@@ -528,7 +541,22 @@ const en: TaskMessages = {
   },
   deployment: {
     title: "After-merge watch",
-    note: "(CI/CD and the deployed app, when enabled in the project settings)",
+    note: "(A step. CI/CD and the deployed app, when the repository has a deployment check skill)",
+    notStarted: (skill) =>
+      `Waiting for the implementation pull request to be merged. After the merge, sacty waits for CI/CD and checks it as the skill (${skill}) says.`,
+    skippedStep: "This step was skipped.",
+    noMerge:
+      "This step was skipped because the implementation was approved without merging a pull request (no changes).",
+    part: { ci: "CI/CD check: ", deployment: "Deployment check: " },
+    partResult: {
+      passed: "Passed",
+      failed: "Failed",
+      healthy: "Working",
+      unhealthy: "Erroring",
+      skipped: "Skipped",
+      unknown: "Could not determine",
+    },
+    partReason: "Reason: ",
     state: {
       waiting: "Waiting",
       passed: "Passed",
@@ -545,7 +573,8 @@ const en: TaskMessages = {
         "CI/CD passed. Skipped the deployment check because the repository has no deployment check skill.",
       budget:
         "CI/CD passed. Did not run the deployment check because the budget cap has been reached.",
-      check_unknown: "CI/CD passed. Could not determine the state of the deployed app.",
+      check_unknown:
+        "CI/CD passed. The check by the skill could not determine some of the results.",
     },
     commit: "Merge commit: ",
     branch: " · Base branch: ",

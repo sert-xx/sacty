@@ -223,13 +223,20 @@ describe("プロジェクト定義のエクスポート・インポート（PBI-
     ).toThrow();
   });
 
-  it("マージの後の監視（PBI-89）は、On のときだけ書き出し、読める", () => {
-    const on = exportProject({ ...full, deploymentWatch: true });
-    expect(on.project.deploymentWatch).toBe(true);
-    expect(ProjectExport.parse(JSON.parse(JSON.stringify(on)))).toEqual(on);
-    expect("deploymentWatch" in exportProject({ ...full, deploymentWatch: false }).project).toBe(
-      false,
-    );
+  it("マージの後の監視の On・Off は持たない。以前の版の deploymentWatch は読まずに捨てる（PBI-116）", () => {
+    const exported = exportProject({ ...full, deploymentWatch: true } as Project);
+    expect("deploymentWatch" in exported.project).toBe(false);
+    for (const old of [true, false, "yes"]) {
+      const parsed = ProjectExport.parse({
+        ...exported,
+        project: { ...exported.project, deploymentWatch: old },
+      });
+      expect(parsed).toEqual(exported);
+      expect("deploymentWatch" in parsed.project).toBe(false);
+    }
+    // 保存した定義に残っていても読まない
+    const stored = ProjectDefinition.parse({ name: "acme", deploymentWatch: true });
+    expect("deploymentWatch" in stored).toBe(false);
   });
 
   it("形式・版の違うファイルや、知らない項目（秘密情報など）は読まない", () => {
