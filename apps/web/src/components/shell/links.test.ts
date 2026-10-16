@@ -88,6 +88,13 @@ describe("サイドメニューのリンクと強調（PBI-114）", () => {
     expect(current()).toEqual([label]);
   });
 
+  it("狭いサイドメニューで「ダッシュボード」を「ダッシュ／ボード」の所でだけ折り返す", () => {
+    render(h(RailNav, { pathname: "/dashboard" }));
+    const name = container.querySelector('nav a[href="/dashboard"] span') as HTMLElement;
+    expect(name.textContent).toBe("ダッシュ\u200bボード");
+    expect(name.className).toContain("[word-break:keep-all]");
+  });
+
   it("タスクという名前のプロジェクトの設定は、設定を強調する（ID の部分で見分けない）", () => {
     render(h(RailNav, { pathname: "/projects/tasks/settings" }));
     expect(current()).toEqual(["設定"]);

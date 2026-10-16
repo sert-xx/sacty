@@ -12,7 +12,9 @@ export async function NewTask({ projectId }: { projectId: string }) {
     const project = (await listProjects()).find((p) => p.id === projectId);
     if (!project) return null;
     return (
+      // 別のプロジェクトの一覧へ移ったら、ダイアログを作り直す（作成先を開いた時のプロジェクトに固定しているため。PBI-114）
       <NewTaskDialog
+        key={project.id}
         projectId={project.id}
         projectName={project.name}
         hasTargets={project.targets.length > 0}

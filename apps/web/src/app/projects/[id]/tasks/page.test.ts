@@ -156,9 +156,15 @@ describe("プロジェクトのタスクの一覧の URL（PBI-114）", () => {
     // プロジェクトの名前と作成先も URL のプロジェクト
     expect(renderToStaticMarkup((await part("ProjectName", "p2")) as never)).toContain("Webサイト");
     const button = (await part("NewTaskFor", "p2")) as Element;
-    expect(
-      ((await (button.type as (p: unknown) => Promise<unknown>)(button.props)) as Element).props,
-    ).toMatchObject({ projectId: "p2", projectName: "Webサイト" });
+    const dialog = (await (button.type as (p: unknown) => Promise<unknown>)(
+      button.props,
+    )) as Element & {
+      key: string | null;
+    };
+    expect(dialog.props).toMatchObject({ projectId: "p2", projectName: "Webサイト" });
+    // 別のプロジェクトの一覧へ移ったら、作成のダイアログと取り直しの状態を作り直す（作成先を前のプロジェクトのままにしない）
+    expect(dialog.key).toBe("p2");
+    expect((list as unknown as { key: string | null }).key).toBe("p2");
   });
 
   it("存在しないプロジェクトの ID なら 404", async () => {

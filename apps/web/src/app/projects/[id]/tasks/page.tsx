@@ -115,7 +115,7 @@ async function Tasks({ params }: { params: Promise<{ id: string }> }) {
     data = await loadTaskList(id);
   } catch (error) {
     if (error instanceof DaemonUnavailableError) {
-      return <LiveTaskList projectId={id} initial={null} error={error.message} />;
+      return <LiveTaskList key={id} projectId={id} initial={null} error={error.message} />;
     }
     throw error;
   }
@@ -125,7 +125,8 @@ async function Tasks({ params }: { params: Promise<{ id: string }> }) {
     <>
       {/* 開いたプロジェクトを、表示しているプロジェクトにする（ヘッダーの選択と URL をずらさない。PBI-98・PBI-114） */}
       <FollowProject projectId={id} />
-      <LiveTaskList projectId={id} initial={data} initialVersion={liveVersion(data)} />
+      {/* 別のプロジェクトの一覧へ移ったら、取り直しの状態を作り直す */}
+      <LiveTaskList key={id} projectId={id} initial={data} initialVersion={liveVersion(data)} />
     </>
   );
 }

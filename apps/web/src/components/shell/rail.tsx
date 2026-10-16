@@ -80,7 +80,8 @@ export function RailNav({ pathname }: { pathname?: string }) {
             <Icon aria-hidden="true" className="size-5" strokeWidth={1.8} />
             <span
               className={cn(
-                "text-center text-[10px] leading-tight sm:text-[11px]",
+                // 名称の中で折り返すのは、幅の無い空白（\u200b）の所だけにする
+                "text-center text-[10px] leading-tight [word-break:keep-all] sm:text-[11px]",
                 on && "font-semibold",
               )}
             >
