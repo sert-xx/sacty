@@ -114,7 +114,7 @@ step_agents:          # 書かなければ default_agent（統合レビューは
 Claude Code と Codex のどちらでも同じ段階の担当が動きます。モデルの世代が変わったら、段階の `model` を直すだけで済みます。
 
 `agents` に `claude_<段階>`・`codex_<段階>` の名前で書きます。段階は `lite`・`entry`・`standard`・`advanced`・`ultimate` の 5 つで、
-書いた段階だけを置きます。
+書いた段階だけを置きます。`npx sacty config init` の雛形に、両ツールの 5 段階すべての例がコメントで入っています。
 
 ```yaml
 agents:

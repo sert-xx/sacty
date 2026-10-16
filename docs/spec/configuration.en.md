@@ -33,7 +33,8 @@ Related ADRs: none
 Other checks: it is an error when a value of `default_agent`, `guardian_agent`, or `step_agents` is not in `agents`, or when a `provider` name is not in `providers`.
 It is also an error when an `agents` name is a tier (`claude_<tier>`, `codex_<tier>`; the tiers are `lite`, `entry`, `standard`, `advanced`, and `ultimate` in `AGENT_TIERS`)
 but its `runtime` does not match the prefix (`config.tierRuntime`). Tier agents are also collected in `tierAgents` (per runtime and tier;
-`parseTierId`, `tierAgentsFor`). How they are placed is in [Context composition](context.en.md#files-placed-for-a-run).
+`parseTierId`, `tierAgentsFor`). How they are placed is in [Context composition](context.en.md#files-placed-for-a-run). The template (`CONFIG_TEMPLATE`) has commented examples of all five tiers
+for both runtimes.
 
 Unknown items are not treated as errors and are not read. The intake interval is not in `config.yaml` but in the sacty settings ([Intake](intake.en.md#interval)).
 The former `github.poll_interval_sec` (`github:`) is not read either, even if written (no warning).

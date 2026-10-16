@@ -2044,26 +2044,29 @@ agents:
     expect(text).toContain('"claude_lite" は段階のエージェントなので、runtime を claude-code に');
   });
 
-  it("雛形に段階のエージェントの例があり、例のコメントを外しても読める", () => {
+  it("雛形に、両ツールの 5 段階すべての例があり、例のコメントを外しても読める", () => {
     dir = mkdtempSync(join(tmpdir(), "sacty-config-"));
-    expect(CONFIG_TEMPLATE).toContain("# claude_lite:");
-    expect(CONFIG_TEMPLATE).toContain("# claude_ultimate:");
-    // 段階の例の塊（「  # claude_lite:」から次の空行まで）だけ、コメントを外す
     const lines = CONFIG_TEMPLATE.split("\n");
-    const start = lines.findIndex((line) => line === "  # claude_lite:");
-    const end = lines.findIndex((line, i) => i > start && line === "");
-    expect(start).toBeGreaterThan(0);
+    // 段階の例の塊（「  # claude_lite:」「  # codex_lite:」から次の空行まで）だけ、コメントを外す
+    const blocks = ["claude_lite", "codex_lite"].map((first) => {
+      const start = lines.findIndex((line) => line === `  # ${first}:`);
+      const end = lines.findIndex((line, i) => i > start && line === "");
+      expect(start, first).toBeGreaterThan(0);
+      return { start, end };
+    });
     const uncommented = lines
-      .map((line, i) => (i >= start && i < end ? line.replace(/^ {2}# /, "  ") : line))
+      .map((line, i) =>
+        blocks.some((b) => i >= b.start && i < b.end) ? line.replace(/^ {2}# /, "  ") : line,
+      )
       .join("\n");
     writeFileSync(join(dir, "config.yaml"), uncommented);
     const result = loadConfig(dir);
     expect(result.ok, result.ok ? "" : renderMessage(result.problem, "ja")).toBe(true);
     if (!result.ok) return;
-    expect(Object.keys(result.config.tierAgents?.["claude-code"] ?? {})).toEqual([
-      "lite",
-      "standard",
-      "ultimate",
-    ]);
+    const all = ["lite", "entry", "standard", "advanced", "ultimate"];
+    expect(Object.keys(result.config.tierAgents?.["claude-code"] ?? {})).toEqual(all);
+    expect(Object.keys(result.config.tierAgents?.codex ?? {})).toEqual(all);
+    // 雛形の既定（default_agent）はそのまま
+    expect(result.config.defaultAgent.id).toBe("claude-subscription");
   });
 });

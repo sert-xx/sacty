@@ -924,23 +924,70 @@ agents:
   # 段階のエージェント。claude_<段階>・codex_<段階>（段階は lite・entry・standard・advanced・ultimate）の名前で書くと、
   # その runtime の工程の実行で、接頭辞を外した名前（lite など）のサブエージェントの定義を置き、スキル（review など）が
   # 観点ごとに段階の名前で担当を起動する。モデルの世代が変わったら、ここの model を直すだけでよい。
-  # 認証・接続先は工程のエージェント（default_agent・step_agents）と同じにする（違う段階は置かない）
+  # 書いた段階だけを置く（書いていない段階の担当は、工程のエージェントと同じモデルで動く）。
+  # 認証・接続先（auth・provider・via_gateway）は、工程のエージェント（default_agent・step_agents）と同じにする（違う段階は置かない）。
+  # モデル名・リーズニングエフォート・単価は例。手元の契約で使えるものに替える
+
+  # Claude Code の工程で使う段階
   # claude_lite:
   #   runtime: claude-code
   #   model: claude-haiku-5-5
   #   auth: { mode: subscription, secret: claude-oauth-token }
   #   price_per_mtok_usd: { input: 1, cached_input: 0.1, cache_write: 1.25, output: 5 }
+  # claude_entry:
+  #   runtime: claude-code
+  #   model: claude-sonnet-5-5
+  #   reasoning_effort: low
+  #   auth: { mode: subscription, secret: claude-oauth-token }
+  #   price_per_mtok_usd: { input: 3, cached_input: 0.3, cache_write: 3.75, output: 15 }
   # claude_standard:
   #   runtime: claude-code
   #   model: claude-sonnet-5-5
   #   auth: { mode: subscription, secret: claude-oauth-token }
   #   price_per_mtok_usd: { input: 3, cached_input: 0.3, cache_write: 3.75, output: 15 }
+  # claude_advanced:
+  #   runtime: claude-code
+  #   model: claude-opus-5-5
+  #   auth: { mode: subscription, secret: claude-oauth-token }
+  #   price_per_mtok_usd: { input: 15, cached_input: 1.5, cache_write: 18.75, output: 75 }
   # claude_ultimate:
   #   runtime: claude-code
   #   model: claude-opus-5-5
   #   reasoning_effort: high
   #   auth: { mode: subscription, secret: claude-oauth-token }
   #   price_per_mtok_usd: { input: 15, cached_input: 1.5, cache_write: 18.75, output: 75 }
+
+  # Codex の工程で使う段階（auth は Codex の工程のエージェントと同じにする。例は API キー）
+  # codex_lite:
+  #   runtime: codex
+  #   model: gpt-6-mini
+  #   reasoning_effort: low
+  #   auth: { mode: api-key, secret: openai-api-key }
+  #   price_per_mtok_usd: { input: 0.25, cached_input: 0.025, output: 2 }
+  # codex_entry:
+  #   runtime: codex
+  #   model: gpt-6-mini
+  #   reasoning_effort: medium
+  #   auth: { mode: api-key, secret: openai-api-key }
+  #   price_per_mtok_usd: { input: 0.25, cached_input: 0.025, output: 2 }
+  # codex_standard:
+  #   runtime: codex
+  #   model: gpt-6-sol
+  #   reasoning_effort: medium
+  #   auth: { mode: api-key, secret: openai-api-key }
+  #   price_per_mtok_usd: { input: 1.25, cached_input: 0.125, output: 10 }
+  # codex_advanced:
+  #   runtime: codex
+  #   model: gpt-6-sol
+  #   reasoning_effort: high
+  #   auth: { mode: api-key, secret: openai-api-key }
+  #   price_per_mtok_usd: { input: 1.25, cached_input: 0.125, output: 10 }
+  # codex_ultimate:
+  #   runtime: codex
+  #   model: gpt-6-sol
+  #   reasoning_effort: xhigh
+  #   auth: { mode: api-key, secret: openai-api-key }
+  #   price_per_mtok_usd: { input: 1.25, cached_input: 0.125, output: 10 }
 
   # 動作確認用のスタブ（実際のAIは呼ばない）
   stub:

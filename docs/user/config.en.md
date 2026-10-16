@@ -114,7 +114,7 @@ If you sort your agents into tiers, skills (such as the default `review`) start 
 tier runs in both Claude Code and Codex. When a new model generation comes out, you only change the tier's `model`.
 
 Write them in `agents` under the names `claude_<tier>` and `codex_<tier>`. The tiers are `lite`, `entry`, `standard`, `advanced`, and `ultimate`,
-and only the tiers you write are placed.
+and only the tiers you write are placed. The template from `npx sacty config init` has commented examples of all five tiers for both tools.
 
 ```yaml
 agents:

@@ -156,7 +156,7 @@ sacty が作るファイルの順に置く（同じパスは後のものが上�
 ## 雛形（sacty context init）
 
 `README.md`・`rules.md`・`skills/README.md`・`mcp.yaml`・`platforms.yaml`・`sacty-context.yaml`・`agents/codex/config.toml` を作る（中身は説明の
-コメントだけで、既定のコンテキストを変えない）。同じパスか `rules` があれば、`--force` が無い限り何も書かずに止まる。途中のディレクトリが
+コメントだけで、既定のコンテキストを変えない）。`README.md` には、段階のサブエージェントの定義は sacty が作るので置いても使わないことを書く。同じパスか `rules` があれば、`--force` が無い限り何も書かずに止まる。途中のディレクトリが
 ディレクトリでなければ `--force` でも止まる。
 
 コード: `apps/daemon/src/context-template.ts`（`CONTEXT_TEMPLATE_FILES`・`initContextRepo`）
