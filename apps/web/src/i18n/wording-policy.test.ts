@@ -5,7 +5,7 @@ import type { Locale } from "./locale";
 /**
  * 画面の文言の規則（docs/README.md の「画面の文言の書き方」。PBI-117）を、辞書の文字列の葉について機械的に確かめる。
  * - 本文（常に見える文言）：改行を含まない。長すぎない。長い括弧書きの注釈を含まない。
- * - 補足（キーが hint・*Hint・*Help のもの）：本文より長くてよいが、上限がある。
+ * - 補足（キーが hint・*Hint のもの）：本文より長くてよいが、上限がある。*Help は常に見える判断の案内なので本文として確かめる。
  * 引数を取る文言（関数）は呼び出さないと文にならないので、ここでは確かめない（レビューで見る）。
  */
 
@@ -32,7 +32,6 @@ const EXCEPTIONS: Record<string, string> = {
   "review.gate.notReproducedHelp": "判断の案内。何が起きた・何をするの2文",
   "review.gate.noChangesHelp": "判断の案内。何が起きた・承認と差し戻しの結果の2文",
   "review.gate.prMergedOutdated": "判断の案内。何が起きた・次に何が起きるの2文",
-  "review.gate.prHint": "補足（キーの名前が Hint で終わらないが補足）",
   "parts.changeDecision.requirementsHelp": "判断の案内。認める・認めないの結果の2文",
   "parts.changeDecision.designHelp": "判断の案内。認める・認めないの結果の2文",
   "parts.implementation.noTestsSkipped": "検証の状態。何をしていない・誰が判定するの2文",
@@ -90,7 +89,7 @@ function leaves(value: unknown, path: string, out: Leaf[]): void {
 
 function isHint(path: string): boolean {
   const key = path.split(".").at(-1) ?? "";
-  return key === "hint" || key.endsWith("Hint") || key.endsWith("Help");
+  return key === "hint" || key.endsWith("Hint");
 }
 
 /** 括弧書き（全角・半角）の中の長さの最大。 */

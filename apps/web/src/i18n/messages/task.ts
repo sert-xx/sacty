@@ -190,9 +190,10 @@ const ja = {
     approved: (n: number) => `承認済み・${n}回目の提出`,
     approvedHint: "凍結しています。変えるには、この工程へ差し戻します。",
     approvedEdited: (n: number) => `人が PR で直してマージ・${n}回目の提出`,
-    approvedFallback: (n: number) => `sacty の版を承認済み・${n}回目の提出`,
-    approvedFallbackHint: (deleted: boolean) =>
-      `人が PR で直してマージしましたが、成果のファイルが${deleted ? "消されていた" : "読めなかった"}ため、sacty の版を承認済みにしました。`,
+    approvedFallback: (n: number, deleted: boolean) =>
+      `人が直した成果が${deleted ? "消されていた" : "読めなかった"}ため、sacty の版を承認済み・${n}回目の提出`,
+    approvedFallbackHint:
+      "人が PR で直してマージしましたが、直した成果のファイルを取り込めなかったため、sacty が出した版を承認済みにして次の工程へ進めました。",
     sactyVersion: "sacty が出した版を見る",
     fromProposal: (id: string) => `${id}の変更案・再承認待ち`,
     stale: "前回の下書き",
@@ -489,9 +490,10 @@ const en: TaskMessages = {
     approved: (n) => `Approved · submission ${n}`,
     approvedHint: "Frozen. To change it, request changes on this step.",
     approvedEdited: (n) => `Edited in the PR and merged · submission ${n}`,
-    approvedFallback: (n) => `sacty's version approved · submission ${n}`,
-    approvedFallbackHint: (deleted) =>
-      `A person edited and merged the PR, but the file was ${deleted ? "deleted" : "unreadable"}, so sacty's version was approved.`,
+    approvedFallback: (n, deleted) =>
+      `Edited file ${deleted ? "deleted" : "unreadable"}; sacty's version approved · submission ${n}`,
+    approvedFallbackHint:
+      "A person edited and merged the PR, but the edited file could not be taken in, so the version sacty wrote was approved and the task moved on.",
     sactyVersion: "Show sacty's version",
     fromProposal: (id) => `Change proposed in ${id} · awaiting re-approval`,
     stale: "Previous draft",

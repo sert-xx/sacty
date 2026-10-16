@@ -138,9 +138,10 @@ const ja = {
   control: {
     pause: "一時停止",
     pausing: "止めています…",
-    rereview: "再レビュー",
+    rereview: "再レビューして PR に投稿",
     rereviewing: "始めています…",
-    rereviewHint: "PR の最新のコミットを、もう一度レビューして投稿します。",
+    rereviewHint:
+      "PR の最新のコミットをもう一度レビューし、結果を GitHub の PR にレビューとして投稿します。",
     cancel: "中止",
     dialogTitle: (title: string) => `「${title}」を中止しますか？`,
     dialogBody: "中止すると再開できません。次のものを片付けます。",
@@ -300,9 +301,10 @@ const en: PartsMessages = {
   control: {
     pause: "Pause",
     pausing: "Stopping…",
-    rereview: "Review again",
+    rereview: "Review again and post to the PR",
     rereviewing: "Starting…",
-    rereviewHint: "Reviews the latest commit of the PR again and posts the review.",
+    rereviewHint:
+      "Reviews the latest commit of the PR again and posts the result to the PR on GitHub as a review.",
     cancel: "Cancel",
     dialogTitle: (title) => `Cancel "${title}"?`,
     dialogBody: "A cancelled task can't be resumed. The following is cleaned up.",

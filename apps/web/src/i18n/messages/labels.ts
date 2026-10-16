@@ -304,12 +304,17 @@ const ja = {
     changesTail: (count: number, overLimit: boolean, actor: string) =>
       `：指摘${count}件${overLimit ? "（上限を超えて）" : ""}（${actor}）`,
     RemarkVoided: (id: string, actor: string) => `指摘 ${id} を無効にした（${actor}）`,
-    ContextResolved: (
-      layers: string[],
-      warnings: string[],
-      platforms: { name: string; from?: string; description: string; allow: string[] }[] = [],
+    /** 長い行を展開する印（PR #127 レビュー指摘）。 */
+    more: "詳細",
+    /** コンテキストの用意。1行目は層と注意、詳細（展開）は使える外部 PF（PR #127 レビュー指摘）。 */
+    ContextResolved: (layers: string[], warnings: string[]) =>
+      `コンテキストを用意：${layers.join(" → ")}${warnings.length > 0 ? `／注意：${warnings.join(" ")}` : ""}`,
+    ContextPlatforms: (
+      platforms: { name: string; from?: string; description: string; allow: string[] }[],
     ) =>
-      `コンテキストを用意：${layers.join(" → ")}${platforms.length > 0 ? `／使える外部 PF：${platforms.map((p) => `${p.name}（${p.from ?? "config.yaml"}${p.description ? `。${p.description}` : ""}。${p.allow.join("、")}）`).join("・")}` : ""}${warnings.length > 0 ? `／注意：${warnings.join(" ")}` : ""}`,
+      platforms.length > 0
+        ? `使える外部 PF：${platforms.map((p) => `${p.name}（${p.from ?? "config.yaml"}${p.description ? `。${p.description}` : ""}。${p.allow.join("、")}）`).join("・")}`
+        : "",
     TaskCancelled: (done: string[], failed: string[], actor: string) =>
       `中止（${actor}）：${done.length > 0 ? `${done.join("・")}を片付けた` : "片付ける対象なし"}${failed.length > 0 ? `／失敗：${failed.join("・")}` : ""}`,
     escalatedUndecidable: (id: string | undefined) =>
@@ -638,8 +643,13 @@ const en: LabelMessages = {
     changesTail: (count, overLimit, actor) =>
       `: ${count} comment${count === 1 ? "" : "s"}${overLimit ? " (over the limit)" : ""} (${actor})`,
     RemarkVoided: (id, actor) => `Comment ${id} voided (${actor})`,
-    ContextResolved: (layers, warnings, platforms = []) =>
-      `Context prepared: ${layers.join(" → ")}${platforms.length > 0 ? `; external platforms: ${platforms.map((p) => `${p.name} (${p.from ?? "config.yaml"}${p.description ? `; ${p.description}` : ""}; ${p.allow.join(", ")})`).join(", ")}` : ""}${warnings.length > 0 ? `; notes: ${warnings.join(" ")}` : ""}`,
+    more: "Details",
+    ContextResolved: (layers, warnings) =>
+      `Context prepared: ${layers.join(" → ")}${warnings.length > 0 ? `; notes: ${warnings.join(" ")}` : ""}`,
+    ContextPlatforms: (platforms) =>
+      platforms.length > 0
+        ? `External platforms: ${platforms.map((p) => `${p.name} (${p.from ?? "config.yaml"}${p.description ? `; ${p.description}` : ""}; ${p.allow.join(", ")})`).join(", ")}`
+        : "",
     TaskCancelled: (done, failed, actor) =>
       `Cancelled (${actor}): ${done.length > 0 ? `cleaned up ${done.join(", ")}` : "nothing to clean up"}${failed.length > 0 ? `; failed: ${failed.join(", ")}` : ""}`,
     escalatedUndecidable: (id) =>

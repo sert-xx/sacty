@@ -136,7 +136,9 @@ export function GateForm({
       {targets.length > 0 && (
         <>
           <span className="flex items-center gap-1">
-            <Label htmlFor="gate-comments">{t.commentsLabel}</Label>
+            <Label htmlFor="gate-comments">
+              {rework ? t.commentsLabelRework : t.commentsLabel}
+            </Label>
             <Hint text={t.commentsHint(maxChanges)} />
           </span>
           <Textarea

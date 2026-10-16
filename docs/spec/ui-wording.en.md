@@ -36,18 +36,23 @@ Related ADR: [Split screen wording into body and hints, and show explanations of
 - The mark is a small i icon next to a heading, label or value, in a color less prominent than the body.
 - It opens on hover. It opens when the mark receives keyboard focus (Tab). On touch devices it opens on tap. Esc or a click or tap
   outside closes it.
-- A hint opened by hovering does not take focus. The hint text stays in the DOM while closed and is linked from the mark by
-  `aria-describedby`, so a screen reader reads the mark's name ("Details") and the text.
+- A hint opened by hovering does not take focus. The hint text is also placed hidden inside the mark (`sr-only`) and linked
+  from the mark by `aria-describedby`, so a screen reader reads the mark's name ("Details") and the text without opening it.
+- A long hint is limited to the screen height (20rem or the viewport) and scrolls inside. With the keyboard, the arrow keys and
+  PageUp/PageDown scroll it while the mark keeps focus (the hint is in a portal, so Tab does not move into it). It closes when focus
+  leaves the mark.
+- A long activity line (the list of available external platforms in the context preparation) shows only its first line, and
+  "Details" opens the rest.
 - Card headings take a short fact (a count or a status) as `note` and the explanation of the mechanism as `hint`.
 - Hints that used to be `title` attributes (such as the cost "Estimate") were replaced by this component.
 
-Code: `apps/web/src/components/ui/hint.tsx` (`Hint`, `WithHint`), `apps/web/src/components/card-section.tsx` (`CardSection`)
+Code: `apps/web/src/components/ui/hint.tsx` (`Hint`, `WithHint`), `apps/web/src/components/card-section.tsx` (`CardSection`), `apps/web/src/lib/labels.ts` (`describeEventParts`)
 
 ## Dictionaries and checks
 
 - The wording lives in per-area dictionaries, and the type of the Japanese dictionary is applied to English (a message missing in one
   language is a type error).
-- Hint keys are `hint` and `*Hint`. Decision guidance keys are `*Help` (guidance of up to two sentences that stays in the body).
+- Hint keys are `hint` and `*Hint`. Decision guidance keys are `*Help` (guidance of up to two sentences that stays in the body and is checked as body text).
 - A test checks the string leaves of the dictionaries in both languages: the body contains no line break, is within 60 characters in
   Japanese and 130 in English, and contains no parenthesized note of 14 or more characters in Japanese or 30 or more in English. Hints are
   within 150 characters in Japanese and 320 in English. Exceptions are listed with the key path and the reason (parentheses in headings,

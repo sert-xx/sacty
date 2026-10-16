@@ -45,10 +45,11 @@ const ja = {
     redo: (step: string) => `${step}をやり直す`,
     redoFrom: (step: string) => `${step}からやり直す`,
     revokeNote: (step: string) => `${step}の承認を取り消し、もう一度承認します。`,
-    commentsLabel: "指摘（1 行に 1 件）",
+    commentsLabel: "指摘（差し戻すときは必須）",
+    commentsLabelRework: "指摘（空なら取り込んだ指摘のまま）",
     commentsHint: (max: number) =>
-      `差し戻すときは必須です。指摘はタスクに累積し、再提出のたびにすべてエージェントに渡します。同じ工程への差し戻しが${max}回を超えるとエスカレーションです。`,
-    commentsPlaceholder: "例：受け入れ条件に、エラー時の振る舞いがない",
+      `指摘はタスクに累積し、再提出のたびにすべてエージェントに渡します。同じ工程への差し戻しが${max}回を超えるとエスカレーションです。`,
+    commentsPlaceholder: "1 行に 1 件。例：受け入れ条件に、エラー時の振る舞いがない",
     requestOverLimit: "上限を超えて差し戻す",
     request: "差し戻す",
     approve: "承認する",
@@ -64,7 +65,7 @@ const ja = {
     prTitle: "GitHub の PR で判断します",
     prHelp: "マージで承認、コメントで差し戻しです。",
     prHint:
-      "実装は、タスクブランチ（無ければ sacty のブランチ）からベースブランチへの PR です。レビュー・行へのコメント・コメントを差し戻しとして取り込み、ゴールガーディアンが決めた工程（実装・設計・要求要件）からやり直します。sacty は 1 分ごとに確かめ、最後のコメントから 2 分後に取り込みます。設計・要求要件からやり直したときは、もう一度承認します。",
+      "レビュー・行へのコメント・コメントを差し戻しとして取り込み、ゴールガーディアンが決めた工程（実装・設計・要求要件）からやり直します。取り込みは、最後のコメントから 2 分後です。設計・要求要件からやり直したら、もう一度承認します。",
     stepPrHelp: (step: string) =>
       `マージで${step}を承認し、次の工程に進みます。コメントは差し戻しです。`,
     stepPrHint: (step: string) =>
@@ -127,10 +128,11 @@ const en: ReviewMessages = {
     redo: (step) => `Redo ${step}`,
     redoFrom: (step) => `Redo from ${step}`,
     revokeNote: (step) => `Revokes the ${step} approval; approve it again afterwards.`,
-    commentsLabel: "Comments (one per line)",
+    commentsLabel: "Comments (required to request changes)",
+    commentsLabelRework: "Comments (empty keeps the imported ones)",
     commentsHint: (max) =>
-      `Required to request changes. Comments accumulate on the task and are all passed to the agent on every resubmission. Requesting changes on the same step more than ${max} time${max === 1 ? "" : "s"} escalates the task.`,
-    commentsPlaceholder: "e.g. The acceptance criteria don't cover error behavior",
+      `Comments accumulate on the task and are all passed to the agent on every resubmission. Requesting changes on the same step more than ${max} time${max === 1 ? "" : "s"} escalates the task.`,
+    commentsPlaceholder: "One per line, e.g. The acceptance criteria don't cover error behavior",
     requestOverLimit: "Request changes beyond the limit",
     request: "Request changes",
     approve: "Approve",
@@ -147,7 +149,7 @@ const en: ReviewMessages = {
     prTitle: "Decide on the GitHub PR",
     prHelp: "Merging approves; comments request changes.",
     prHint:
-      "The implementation is a PR from the task branch (or a sacty branch) to the base branch. Comments in reviews, on lines, or on the PR are imported as change requests, and the work is redone from the step the Goal Guardian picks (implementation, design, or requirements). sacty checks every minute and imports two minutes after the last comment. When design or requirements are redone, approve the reworked deliverable again.",
+      "Comments in reviews, on lines, or on the PR are imported as change requests, and the work is redone from the step the Goal Guardian picks (implementation, design, or requirements). Comments are imported two minutes after the last one. When design or requirements are redone, approve the reworked deliverable again.",
     stepPrHelp: (step) =>
       `Merging approves the ${step} and moves on to the next step; comments request changes.`,
     stepPrHint: (step) =>

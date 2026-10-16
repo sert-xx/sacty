@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  type ActivityEvent,
   appliedProposalFor,
   canRereview,
   canRetryExport,
@@ -39,7 +40,7 @@ import { Hint } from "@/components/ui/hint";
 import { useMessages } from "@/i18n/client";
 import {
   canControl,
-  describeEvent,
+  describeEventParts,
   formatStamp,
   needsTicketRepositories,
   personAction,
@@ -541,7 +542,7 @@ export function TaskDetailView({ data }: { data: TaskDetailData }) {
                 </time>
                 {/* パスやブランチ名など、区切りの無い長い文字列でも幅からはみ出さないようにする */}
                 <span className="[overflow-wrap:anywhere]">
-                  {describeEvent(event, labels)}
+                  <EventText event={event} />
                   {/* エージェントの実行の行から、その実行のセッションログを開く（PBI-62） */}
                   {runLogId(event) && (
                     <Link
@@ -560,6 +561,23 @@ export function TaskDetailView({ data }: { data: TaskDetailData }) {
       {/* オーケストレーターへの質問と答え（PBI-54）。画面の右の AI のアイコンから開くサイドパネル（PBI-61） */}
       <TaskChat task={task} />
     </>
+  );
+}
+
+/**
+ * 作業履歴の1行の文。長い行（コンテキストの用意の外部 PF の一覧）は、1行目だけを出し、詳細は開いて読む（PR #127 レビュー指摘）。
+ */
+export function EventText({ event }: { event: ActivityEvent }) {
+  const { labels } = useMessages();
+  const { text, detail } = describeEventParts(event, labels);
+  if (!detail) return <>{text}</>;
+  return (
+    <details className="inline">
+      <summary className="inline cursor-pointer list-none [&::-webkit-details-marker]:hidden">
+        {text} <span className="text-xs text-accent-foreground underline">{labels.event.more}</span>
+      </summary>
+      <span className="block pt-1 text-xs text-muted-foreground">{detail}</span>
+    </details>
   );
 }
 
@@ -725,8 +743,8 @@ function Deliverable({ task, step }: { task: Task; step: StepKey }) {
         : approved?.edited?.fallback
           ? // 人が直してマージしたが、成果のファイルが消された・読めなかった（PBI-63）
             [
-              m.approvedFallback(approved.submission),
-              m.approvedFallbackHint(approved.edited.fallback === "deleted"),
+              m.approvedFallback(approved.submission, approved.edited.fallback === "deleted"),
+              m.approvedFallbackHint,
             ]
           : approved?.edited?.sacty !== undefined
             ? [m.approvedEdited(approved.submission), m.approvedHint]

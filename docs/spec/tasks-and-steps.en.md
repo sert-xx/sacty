@@ -228,7 +228,7 @@ Code: `apps/daemon/src/activity.ts` (`purgeLegacyPrStepTasks`, `purgeLegacyTasks
 - The implementation deliverable (the task screen and the Implement approval screen) shows the test results and the final review in the correspondence table only for the
   current submission's verification (`verificationResults`). Test results and final reviews after the verification of a redone implementation has started (`verification` is `pending`), and final
   reviews older than the latest test result (or, if tests were skipped, the time they were skipped), are treated as the previous submission's: they are shown under the headings "Test run for the
-  previous submission (not yet run for the current one)" and "Final review of the previous submission (not yet judged for the current one)", and the result in the correspondence table is
+  previous submission" and "Final review of the previous submission" (that nothing has run or been judged for the current submission yet is shown in the hint (tooltip) next to the heading), and the result in the correspondence table is
   "Not run". For a task without tests, a viewpoint without tests is shown as "Judged by the goal" only when there is a final review of the current submission; while waiting for
   verification (before the judgment by the goal), it is "Not run" (`judgedByGoalForCurrent`).
 

@@ -233,8 +233,37 @@ function defaultImagesChoice(
   );
 }
 
-/** 作業履歴の1行を、人が読める文にする。 */
+/** 作業履歴の1行を、人が読める文にする（展開できる詳細があれば、空白で続ける）。 */
 export function describeEvent(event: ActivityEvent, l: LabelMessages): string {
+  const { text, detail } = describeEventParts(event, l);
+  return detail ? `${text} ${detail}` : text;
+}
+
+/**
+ * 作業履歴の1行を、常に出す文（text）と、展開して読む詳細（detail）に分ける（PR #127 レビュー指摘）。
+ * 長くなる行（コンテキストの用意の外部 PF の一覧）だけ detail を持つ。
+ */
+export function describeEventParts(
+  event: ActivityEvent,
+  l: LabelMessages,
+): { text: string; detail?: string } {
+  if (event.type === "ContextResolved") {
+    // 使えるようにした外部 PF（PBI-74）。どの層のものか（ホストは config.yaml）と、使える API
+    const detail = l.event.ContextPlatforms(event.payload.platforms ?? []);
+    return {
+      text: l.event.ContextResolved(
+        event.payload.layers.map(
+          (layer) => `${layer.repo}${layer.ref ? `#${layer.ref}` : ""}@${layer.commit.slice(0, 7)}`,
+        ),
+        event.payload.warnings.map(l.text),
+      ),
+      ...(detail ? { detail } : {}),
+    };
+  }
+  return { text: describeEventText(event, l) };
+}
+
+function describeEventText(event: ActivityEvent, l: LabelMessages): string {
   const e = l.event;
   const actor = l.actor[event.actor];
   const cost = (costUsd: number, estimated: boolean) =>
@@ -563,14 +592,8 @@ export function describeEvent(event: ActivityEvent, l: LabelMessages): string {
     case "ReviewRestarted":
       return e.ReviewRestarted(actor);
     case "ContextResolved":
-      return e.ContextResolved(
-        event.payload.layers.map(
-          (layer) => `${layer.repo}${layer.ref ? `#${layer.ref}` : ""}@${layer.commit.slice(0, 7)}`,
-        ),
-        event.payload.warnings.map(l.text),
-        // 使えるようにした外部 PF（PBI-74）。どの層のものか（ホストは config.yaml）と、使える API
-        event.payload.platforms ?? [],
-      );
+      // describeEventParts で分けて出す（ここには来ない）
+      return describeEventParts(event, l).text;
     case "RemarkVoided":
       return e.RemarkVoided(event.payload.remarkId, actor);
     case "TaskEscalated":

@@ -47,9 +47,9 @@ const ja = {
   preview: {
     title: "コンテキストのプレビュー",
     hint: "実行のときと同じ処理で、sacty の既定のコンテキストとコンテキストリポジトリを合成し、Claude Code・Codex の設定のディレクトリに置くファイルを出します。ファイルは置かず、取得したリポジトリは消します。",
-    secretsNote: "秘密情報は名前だけを出します。",
+    secretsNote: "秘密情報は名前だけを出します。直書きした値は、そのまま出ます。",
     secretsHint:
-      "値と、実行ごとのゲートウェイのトークンは出しません。コンテキストリポジトリに書かれた値（層の設定・mcp.yaml の literal など）は、そのまま出ます。",
+      "参照した秘密情報の値と、実行ごとのゲートウェイのトークンは出しません。コンテキストリポジトリに直書きした値（層の設定の中身・mcp.yaml の literal など）は伏せません。",
     runtime: "AI の種類",
     saved: "保存した設定でプレビュー",
     editing: "編集中の設定でプレビュー",
@@ -142,7 +142,7 @@ const ja = {
     contextRefPlaceholder: "既定のブランチ",
     platformsTitle: "使える外部 PF",
     platformsHint:
-      "工程エージェントが $SACTY_PF_URL で呼べる API です。config.yaml の gateway.platforms はすべてのプロジェクトで、コンテキストリポジトリの platforms.yaml はこのプロジェクトだけで使えます。認証の秘密情報は出しません。",
+      "工程エージェントが $SACTY_PF_URL で呼べる API。gateway.platforms（config.yaml）は全プロジェクト、platforms.yaml（コンテキスト）はこのプロジェクトだけ。同名なら config.yaml が優先。保存した設定から読み、秘密情報は出しません。",
     platformsNone: "使える外部 PF はありません。",
     platformsError: "コンテキストを読めないため、config.yaml の PF だけです：",
     platformFromHost: "config.yaml",
@@ -231,9 +231,9 @@ const en: ProjectsMessages = {
   preview: {
     title: "Context preview",
     hint: "Composes the sacty default context and the context repository with the same process as a run, and shows the files placed in the Claude Code or Codex config directory. Nothing is placed, and the fetched repositories are deleted.",
-    secretsNote: "Secrets are shown by name only.",
+    secretsNote: "Secrets are shown by name only. Values written directly are shown as written.",
     secretsHint:
-      "Values and the per-run gateway token are not shown. Values written in the context repository, such as layer settings and literal values in mcp.yaml, are shown as written.",
+      "Referenced secret values and the per-run gateway token are not shown. Values written directly in the context repository, such as layer settings and literal values in mcp.yaml, are not masked.",
     runtime: "AI",
     saved: "Preview the saved settings",
     editing: "Preview the settings being edited",
