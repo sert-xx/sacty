@@ -52,7 +52,7 @@ function tempDir(): string {
  * コマンドを動かし、終了コード・標準出力・標準エラー出力を返す。pauseMs のあいだは読まない（読み手が遅い状態）。
  * onStart で、動いている子プロセスを受け取れる（シグナルを送るなど）。
  * 自分のプロセスグループで起動し、後始末（afterEach）でグループごと止める。中継が先に終わって、親が付け替えられた
- * コマンド・その子孫も、グループで見つけて止める。
+ * コマンド・その子孫も、グループで見つけて止める。TMPDIR は、後始末で消す一時ディレクトリにする（env で変えられる）。
  */
 function run(
   command: string[],
@@ -66,7 +66,8 @@ function run(
     const [file = "", ...args] = command;
     const child = spawn(file, args, {
       stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, ...options.env },
+      // 中継の一時ファイル（sacty-output-*）は、後始末で中継を止めると中継が消せないので、後始末で消す場所に作らせる
+      env: { ...process.env, TMPDIR: tempDir(), ...options.env },
       detached: true,
     });
     if (child.pid !== undefined) groups.add(child.pid);
