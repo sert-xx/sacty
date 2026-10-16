@@ -5,17 +5,19 @@ const ja = {
   loading: "読み込み中…",
   project: (name: string | undefined) => `プロジェクト：${name ?? ""}`,
   cannotRun: "工程を実行できません。",
-  agent: "工程を実行するAI：",
+  agent: "実行する AI：",
   agentAuth: (auth: string) => `（${auth}）`,
   needsYou: "あなたの出番",
-  empty: "タスクはまだありません。「タスクを作成」から最初のタスクを作ってください。",
+  empty: "タスクはまだありません。",
   noRepository: "リポジトリ無し",
   column: {
     task: "タスク",
     start: "開始地点",
-    steps: "工程（オーケストレーターが選択）",
+    steps: "工程",
     status: "状態",
   },
+  /** 工程の列の補足。 */
+  stepsHint: "タスクの内容と対象リポジトリを読んで、オーケストレーターが選びます。",
 };
 
 export type TasksMessages = typeof ja;
@@ -26,17 +28,18 @@ const en: TasksMessages = {
   loading: "Loading…",
   project: (name) => `Project: ${name ?? ""}`,
   cannotRun: "Steps cannot run. ",
-  agent: "AI running the steps: ",
+  agent: "AI: ",
   agentAuth: (auth) => ` (${auth})`,
   needsYou: "Needs you",
-  empty: "No tasks yet. Use “Create task” to make the first one.",
+  empty: "No tasks yet.",
   noRepository: "No repository",
   column: {
     task: "Task",
     start: "Started from",
-    steps: "Steps (chosen by the Orchestrator)",
+    steps: "Steps",
     status: "Status",
   },
+  stepsHint: "The Orchestrator chooses them from the task and the target repository.",
 };
 
 export const tasks = { ja, en };

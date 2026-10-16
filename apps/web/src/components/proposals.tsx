@@ -5,6 +5,7 @@ import { cn } from "cn";
 import { ChangeDecisionForm } from "@/components/change-decision-form";
 import { Markdown } from "@/components/markdown";
 import { TestViewpoints } from "@/components/test-viewpoints";
+import { Hint } from "@/components/ui/hint";
 import type { Messages } from "@/i18n";
 import { useMessages } from "@/i18n/client";
 import { formatStamp } from "@/lib/labels";
@@ -39,7 +40,7 @@ export function Proposals({ task }: { task: Task }) {
       className="flex flex-col gap-3 rounded-xl border border-border bg-card p-5"
     >
       <h2 id="proposals" className="text-[15px] font-semibold">
-        {m.title} <span className="text-[13px] font-normal text-muted-foreground">{m.note}</span>
+        {m.title} <Hint text={m.hint} />
       </h2>
       {task.proposals.length === 0 ? (
         <p className="text-sm text-muted-foreground">{m.empty}</p>

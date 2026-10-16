@@ -228,8 +228,8 @@ Code: `apps/daemon/src/activity.ts` (`purgeLegacyPrStepTasks`, `purgeLegacyTasks
 - The implementation deliverable (the task screen and the Implement approval screen) shows the test results and the final review in the correspondence table only for the
   current submission's verification (`verificationResults`). Test results and final reviews after the verification of a redone implementation has started (`verification` is `pending`), and final
   reviews older than the latest test result (or, if tests were skipped, the time they were skipped), are treated as the previous submission's: they are shown under the headings "Test run for the
-  previous submission (not yet run for the current one)" and "Final review of the previous submission (not yet judged for the current one)", and the result in the correspondence table is
-  "Not run". For a task without tests, a viewpoint without tests is shown as "No tests (judged by the goal)" only when there is a final review of the current submission; while waiting for
+  previous submission" and "Final review of the previous submission" (that nothing has run or been judged for the current submission yet is shown in the hint (tooltip) next to the heading), and the result in the correspondence table is
+  "Not run". For a task without tests, a viewpoint without tests is shown as "Judged by the goal" only when there is a final review of the current submission; while waiting for
   verification (before the judgment by the goal), it is "Not run" (`judgedByGoalForCurrent`).
 
 ### The PR for a verified implementation
@@ -301,8 +301,8 @@ test command, and acceptance is judged from the task's goal instead of by tests.
     the code after implementation. It is told not to fail the task because there are no tests or because a viewpoint has no corresponding test, and to base its judgment only on what in the implementation's
     description is backed by the code and the diff. The viewpoints (the design's test viewpoints or `REQ`), pass or fail, and
     the redo limit of `MAX_VERIFY_ATTEMPTS` are the same as for a task with tests.
-- Display: the step field of the task screen (test command: none, with the basis; for tests set up in the implementation, "verified and judged by the goal" if they passed,
-  "failed, so the implementation is redone" if they failed, and "will run next" while waiting. `testCommandOfNoTests`), the notice on the implementation deliverable (the task screen and the Implement approval screen)
+- Display: the step field of the task screen (test command: none, judged by the goal; the basis is in a hint (tooltip). For tests set up in the implementation, "tests added in the implementation: command" if they passed,
+  "failed; redoing" if they failed, and "will run next" while waiting. `testCommandOfNoTests`), the notice on the implementation deliverable (the task screen and the Implement approval screen)
   ("Not verified by tests" if the latest verification skipped the tests, "Verified by the tests added in the implementation" (success color) if the tests set up in the implementation ran and passed,
   "The tests added in the implementation failed" with the exit code (failure color) if they failed, and "Waiting to run the tests added in the implementation" if the current submission's tests have not run yet
   (`verification` is `pending` and there is a report; the previous submission's result is not shown). `addedTestsResult`), the test line of the PR body (`テスト：テストのコマンドが無いため、テストでは検証していません。

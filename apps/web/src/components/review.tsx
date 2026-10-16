@@ -22,6 +22,7 @@ import { Markdown } from "@/components/markdown";
 import { PullRequestCard } from "@/components/pull-request";
 import { ReproductionResult } from "@/components/reproduction";
 import { TestViewpoints } from "@/components/test-viewpoints";
+import { Hint } from "@/components/ui/hint";
 import type { Messages } from "@/i18n";
 import { useMessages } from "@/i18n/client";
 import { useLiveData } from "@/lib/use-live-data";
@@ -208,7 +209,8 @@ export function ReviewView({ task }: { task: Task }) {
                 {t.viewpoints}{" "}
                 <span className="text-[13px] font-normal text-muted-foreground">
                   {t.viewpointsNote(task.testViewpoints.length)}
-                </span>
+                </span>{" "}
+                <Hint text={t.viewpointsHint} />
               </h2>
               <TestViewpoints viewpoints={task.testViewpoints} />
             </section>
@@ -219,7 +221,8 @@ export function ReviewView({ task }: { task: Task }) {
                 {t.frozenRequirements}{" "}
                 <span className="text-[13px] font-normal text-muted-foreground">
                   {t.frozenNote(frozenRequirements.submission)}
-                </span>
+                </span>{" "}
+                <Hint text={t.frozenHint} />
               </summary>
               <Markdown className="mt-3 rounded-lg border border-border bg-muted px-5 py-4">
                 {frozenRequirements.output}
@@ -327,7 +330,7 @@ function RemarkItem({
         )}
       </span>
       {!remark.voided && (
-        <form action={voidRemarkAction} className="col-start-2">
+        <form action={voidRemarkAction} className="col-start-2 flex items-center gap-1">
           <input type="hidden" name="taskId" value={taskId} />
           <input type="hidden" name="remarkId" value={remark.id} />
           <button
@@ -336,6 +339,7 @@ function RemarkItem({
           >
             {t.void}
           </button>
+          <Hint text={t.voidHint} className="size-4" />
         </form>
       )}
     </li>

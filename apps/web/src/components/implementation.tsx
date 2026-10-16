@@ -4,6 +4,7 @@ import { isCompleted, type Task } from "@sacty/core";
 import { cn } from "cn";
 import { CardSection } from "@/components/card-section";
 import { Markdown } from "@/components/markdown";
+import { Hint } from "@/components/ui/hint";
 import { useMessages } from "@/i18n/client";
 import {
   addedTestsResult,
@@ -64,7 +65,6 @@ export function Implementation({ task }: { task: Task }) {
         <p className="text-xs break-all text-muted-foreground">
           {m.repository(task.repository.url, task.repository.baseBranch)}
           <span className="font-mono">{task.repository.baseCommit.slice(0, 7)}</span>
-          {m.repositoryTail}
         </p>
       )}
       {noTests && (
@@ -98,6 +98,7 @@ export function Implementation({ task }: { task: Task }) {
                 : added === "pending"
                   ? m.noTestsAddedPending(task.addedTestCommand ?? "")
                   : m.noTestsSkipped}
+            {added === "pending" && <Hint text={m.noTestsAddedPendingHint} />}
           </p>
           <p className="text-xs break-words text-muted-foreground">{m.noTestsReason(noTests)}</p>
         </div>
@@ -111,8 +112,7 @@ export function Implementation({ task }: { task: Task }) {
       {task.outputs.implement && (
         <>
           <h3 className="pt-2 text-sm font-semibold">
-            {m.mapTitle}{" "}
-            <span className="text-[13px] font-normal text-muted-foreground">{m.mapNote}</span>
+            {m.mapTitle} <Hint text={m.mapHint} />
           </h3>
           <ol className="flex flex-col gap-2.5">
             {viewpoints.map((v) => {
@@ -176,7 +176,8 @@ export function Implementation({ task }: { task: Task }) {
       {tests && (
         <details className="rounded-lg border border-border p-3.5 text-sm">
           <summary className="cursor-pointer">
-            <span className="font-semibold">{testsCurrent ? m.testRun : m.previousTestRun}</span>{" "}
+            <span className="font-semibold">{testsCurrent ? m.testRun : m.previousTestRun}</span>
+            {!testsCurrent && <Hint text={m.previousHint} />}{" "}
             <Pill tone={tests.passed ? OK : NG}>{tests.passed ? m.pass : m.fail}</Pill>{" "}
             <span className="text-xs text-muted-foreground">
               {m.runMeta(tests.exitCode, (tests.durationMs / 1000).toFixed(1))}
@@ -206,6 +207,7 @@ export function Implementation({ task }: { task: Task }) {
             <span className="font-semibold">
               {reviewIsCurrent ? m.finalReview : m.previousFinalReview}
             </span>
+            {!reviewIsCurrent && <Hint text={m.previousHint} />}
             <Pill tone={review.passed ? OK : NG}>{review.passed ? m.pass : m.fail}</Pill>
             <span className="text-xs text-muted-foreground">
               {m.reviewer}

@@ -4,6 +4,7 @@ import { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
 import { BotIcon, XIcon } from "lucide-react";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { Hint } from "@/components/ui/hint";
 import { useMessages } from "@/i18n/client";
 
 /**
@@ -81,8 +82,9 @@ export function ChatPanel({
               <DialogPrimitive.Title className="text-[15px] font-semibold">
                 {m.title}
               </DialogPrimitive.Title>
-              <DialogPrimitive.Description className="text-xs text-muted-foreground">
+              <DialogPrimitive.Description className="flex items-center gap-1 text-xs text-muted-foreground">
                 {m.note}
+                <Hint text={m.hint} className="size-4" />
               </DialogPrimitive.Description>
             </div>
             <DialogPrimitive.Close

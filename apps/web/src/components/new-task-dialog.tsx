@@ -15,6 +15,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import { Hint } from "@/components/ui/hint";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -72,7 +73,10 @@ export function NewTaskDialog({
           <input type="hidden" name="projectId" value={target.id} />
           <DialogHeader>
             <DialogTitle>{t.create}</DialogTitle>
-            <DialogDescription>{t.description(target.name)}</DialogDescription>
+            <DialogDescription className="flex items-center gap-1">
+              {t.description(target.name)}
+              <Hint text={t.descriptionHint} className="size-4" />
+            </DialogDescription>
           </DialogHeader>
           {target.hasTargets && <CandidatesProblems candidates={candidates} />}
           <fieldset className="flex flex-col gap-2">
@@ -105,9 +109,10 @@ export function NewTaskDialog({
             {template === "sacty-setup" && (
               <p
                 data-testid="template-setup-hint"
-                className="text-xs leading-5 whitespace-pre-line text-muted-foreground"
+                className="flex flex-wrap items-center gap-1 text-xs leading-5 text-muted-foreground"
               >
-                {t.templateSetupHint}
+                {t.templateSetupNote}
+                <Hint text={t.templateSetupHint} className="size-4" />
               </p>
             )}
           </fieldset>
@@ -120,7 +125,10 @@ export function NewTaskDialog({
             </p>
           ) : (
             <div className="flex flex-col gap-2">
-              <Label htmlFor="task-repo">{template ? t.repositoryRequired : t.repository}</Label>
+              <span className="flex items-center gap-1">
+                <Label htmlFor="task-repo">{template ? t.repositoryRequired : t.repository}</Label>
+                <Hint text={template ? t.templateRepositoryHint : t.repositoryHint} />
+              </span>
               {/* Org の対象ではリポジトリが多いので、入力して絞り込めるようにする */}
               {/* 空欄なら、リポジトリを指定せずに作る（PBI-73） */}
               <Input
@@ -128,7 +136,6 @@ export function NewTaskDialog({
                 name="repo"
                 list="task-repo-options"
                 autoComplete="off"
-                aria-describedby="task-repo-hint"
                 required={template !== ""}
                 // 候補が1つなら入れておく。候補が届く前に入力していれば、入力を残す（React は、入力していない
                 // ときだけ defaultValue の変化を表示に反映する）
@@ -144,9 +151,6 @@ export function NewTaskDialog({
                 ))}
               </datalist>
               <CandidatesStatus candidates={candidates} />
-              <p id="task-repo-hint" className="text-xs leading-5 text-muted-foreground">
-                {template ? t.templateRepositoryHint : t.repositoryHint}
-              </p>
             </div>
           )}
           {/* テンプレートでは、題と説明を入力させない（PBI-90） */}

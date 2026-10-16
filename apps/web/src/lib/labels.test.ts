@@ -128,7 +128,7 @@ describe("実装の承認の表示（PBI-10b・PBI-110）", () => {
       describeEvent(
         event({ type: "StepSubmitted", payload: { step: "implement", submission: 2 } }),
       ),
-    ).toBe("実装を提出（2回目）→ 承認待ち");
+    ).toBe("実装を提出（2回目）");
     expect(
       describeEvent(event({ type: "StepApproved", payload: { step: "implement", next: "idle" } })),
     ).toBe("実装を承認・凍結（人間）");
@@ -234,10 +234,10 @@ describe("一時停止と中止の表示（PBI-3）", () => {
       },
     });
     expect(describeEvent(cancelled)).toBe(
-      "中止（人間）：実行中のコンテナ・sacty が作ったブランチを片付けた／失敗：sacty が作ったPR（閉じる）",
+      "中止（人間）：実行中のコンテナ・sacty が作ったブランチを片付けた／失敗：sacty が作った PR",
     );
     expect(describeIn(cancelled, labels.en)).toBe(
-      "Cancelled (person): cleaned up Running container, Branch created by sacty; failed: PR opened by sacty (closed)",
+      "Cancelled (person): cleaned up Running container, Branch created by sacty; failed: PR opened by sacty",
     );
     expect(statusText(task({ status: "cancelled" }))).toBe("中止");
     expect(needsPerson(task({ status: "cancelled" }))).toBe(false);
@@ -342,10 +342,8 @@ describe("PR で判断する実装の承認（PBI-14a・PBI-110）", () => {
     });
   it("PR の状態に合わせて、状態を表示する", () => {
     expect(statusText(atPrGate("open"))).toBe("実装の PR のマージ待ち");
-    expect(statusText(atPrGate("closed"))).toBe("PR が閉じられた（判断待ち）");
-    expect(statusText(atPrGate("merged_outdated"))).toBe(
-      "違う内容でマージされた（承認として進めます）",
-    );
+    expect(statusText(atPrGate("closed"))).toBe("PR が閉じられた・判断待ち");
+    expect(statusText(atPrGate("merged_outdated"))).toBe("別の内容でマージ・承認へ");
     // PR を作っていなければ、これまでどおり画面で承認する
     expect(statusText(atPrGate(undefined))).toBe("実装の承認待ち");
     expect(statusTextIn(atPrGate("open"), labels.en)).toBe("Implement PR awaiting merge");
@@ -364,11 +362,11 @@ describe("PR で判断する実装の承認（PBI-14a・PBI-110）", () => {
       }) as ActivityEvent;
     expect(
       describeEvent(event({ type: "PullRequestMerged", payload: { number: 7, by: "reviewer" } })),
-    ).toBe("PR #7 がマージされた（reviewer）→ 承認");
+    ).toBe("PR #7 がマージされ、承認（reviewer）");
     // 前の版の作業履歴（古い内容でのマージ）も読める
     expect(
       describeEvent(event({ type: "PullRequestMerged", payload: { number: 7, outdated: true } })),
-    ).toBe("PR #7 が最新の提出より前の内容でマージされた→ 人間の判断待ち");
+    ).toBe("PR #7 が最新の提出より前の内容でマージされた・判断待ち");
     // 人が直してからのマージは、両方のコミットと、成果のファイルを読めなかったことを出す（PBI-63）
     const edited = (document?: { path: string; fallback?: "deleted" | "unreadable" }) =>
       event({
@@ -383,7 +381,7 @@ describe("PR で判断する実装の承認（PBI-14a・PBI-110）", () => {
         },
       });
     expect(describeEvent(edited())).toBe(
-      "PR #7 が人の直した内容でマージされた（reviewer）→ 承認（sacty の提出 aaaaaaa → 人が直した最終 eeeeeee）",
+      "PR #7 が人の直した内容でマージされ、承認（reviewer）（aaaaaaa → eeeeeee）",
     );
     expect(describeEvent(edited({ path: "d.md", fallback: "deleted" }))).toContain(
       "成果のファイルが消されていたため、sacty の版を承認済みにした",
@@ -392,10 +390,10 @@ describe("PR で判断する実装の承認（PBI-14a・PBI-110）", () => {
       "成果のファイルを読めなかったため",
     );
     expect(describeIn(edited(), labels.en)).toBe(
-      "PR #7 was merged with a person's edits (reviewer) → approved (sacty's submission aaaaaaa → final eeeeeee)",
+      "PR #7 was merged with a person's edits and approved (reviewer) (aaaaaaa → eeeeeee)",
     );
     expect(describeEvent(event({ type: "PullRequestClosed", payload: { number: 7 } }))).toBe(
-      "PR #7 がマージされずに閉じられた → 人間の判断待ち",
+      "PR #7 がマージされずに閉じられた・判断待ち",
     );
   });
 });
@@ -423,8 +421,8 @@ describe("要求要件・設計の PR（PBI-57）", () => {
   it("PR を作った工程は、PR の状態に合わせて表示する。PR が無ければ、これまでどおり承認待ち", () => {
     expect(statusText(pr("open"))).toBe("設計の PR のマージ待ち");
     expect(statusText(pr("open", 2))).toBe("設計の PR のマージ待ち（2回目）");
-    expect(statusText(pr("closed"))).toBe("PR が閉じられた（判断待ち）");
-    expect(statusText(pr("merged_outdated"))).toBe("違う内容でマージされた（承認として進めます）");
+    expect(statusText(pr("closed"))).toBe("PR が閉じられた・判断待ち");
+    expect(statusText(pr("merged_outdated"))).toBe("別の内容でマージ・承認へ");
     expect(statusTextIn(pr("open"), labels.en)).toBe("Design PR awaiting merge");
     expect(
       statusText(task({ status: "awaiting_approval", gate: { step: "design", submission: 1 } })),
@@ -467,7 +465,7 @@ describe("要求要件・設計の PR（PBI-57）", () => {
           },
         }),
       ),
-    ).toBe("設計の PR を作成・更新（#10・docs/sacty/t1/design.md）。作り直したので PR #8 を閉じた");
+    ).toBe("設計の PR を作成・更新（#10・docs/sacty/t1/design.md）。PR #8 を閉じた");
   });
 });
 
@@ -562,14 +560,14 @@ describe("オーケストレーターが選んだ工程（PBI-17）", () => {
       imagesUnexplained: ["investigate"],
     });
     expect(describeEvent(defaults)).toContain(
-      " / 既定のイメージ（images のどれも合わない）：要求要件＝文書だけ / 理由が無いまま既定のイメージで動かす：調査（オーケストレーターが images から選ばず、合わない理由も書かなかった）",
+      " / 既定のイメージ：要求要件＝文書だけ / 理由なく既定のイメージ：調査",
     );
     expect(describeIn(defaults, labels.en)).toContain(
-      " / Default image (none of images fits): Requirements: 文書だけ / Runs on the default image with no reason: Investigate",
+      " / Default image: Requirements: 文書だけ / Default image without a reason: Investigate",
     );
     // イメージを1つも書かなかったときも出す
     expect(describeEvent(chosen({ imagesUnexplained: ["implement"] }))).toBe(
-      "工程を決定：要求要件 → 実装（小さな変更） / 理由が無いまま既定のイメージで動かす：実装（オーケストレーターが images から選ばず、合わない理由も書かなかった）",
+      "工程を決定：要求要件 → 実装（小さな変更） / 理由なく既定のイメージ：実装",
     );
   });
 
@@ -584,11 +582,9 @@ describe("オーケストレーターが選んだ工程（PBI-17）", () => {
       at: "2026-10-15T00:00:00.000Z",
       actor: "person",
     } as ActivityEvent;
-    expect(describeEvent(changed)).toBe(
-      "実装のイメージを default から playwright に変更（人間。次にその工程を実行するときから使う）",
-    );
+    expect(describeEvent(changed)).toBe("実装のイメージを default から playwright に変更（人間）");
     expect(describeIn(changed, labels.en)).toBe(
-      "Implement image changed from default to playwright (person; used from the next run of the step)",
+      "Implement image changed from default to playwright (person)",
     );
   });
 
@@ -641,10 +637,10 @@ describe("オーケストレーターが選んだ工程（PBI-17）", () => {
       describeEvent(chosen({ sharedComposes: ["infra"], servicesReason: "単体テストだけ" })),
     ).toBe("工程を決定：実装（小さな変更） / 共用の compose（infra）：使わない（単体テストだけ）");
     expect(describeEvent(chosen({ sharedComposes: ["infra", "kafka"] }))).toBe(
-      "工程を決定：実装（小さな変更） / 共用の compose（infra、kafka）：使わない（理由の記載なし）",
+      "工程を決定：実装（小さな変更） / 共用の compose（infra、kafka）：使わない",
     );
     expect(describeIn(chosen({ sharedComposes: ["infra"] }), labels.en)).toContain(
-      "Shared compose (infra): not used (no reason given)",
+      "Shared compose (infra): not used",
     );
   });
 
@@ -666,7 +662,7 @@ describe("オーケストレーターが選んだ工程（PBI-17）", () => {
       actor: "sacty",
     } as ActivityEvent;
     expect(describeEvent(event)).toBe(
-      "実装のためにサービスを起動：redis（共用の compose「infra」の compose/redis.yml（abc1234）。実行の後に消す）",
+      "実装のためにサービスを起動：redis（共用の compose「infra」の compose/redis.yml（abc1234））",
     );
   });
 
@@ -692,15 +688,13 @@ describe("オーケストレーターが選んだ工程（PBI-17）", () => {
         at: "2026-10-11T00:00:00.000Z",
         actor: "sacty",
       }) as ActivityEvent;
-    expect(describeEvent(started())).toBe(
-      "実装のためにサービスを起動：db、mock（compose.yaml。実行の後に消す）",
-    );
+    expect(describeEvent(started())).toBe("実装のためにサービスを起動：db、mock（compose.yaml）");
     expect(describeEvent(started(true))).toBe(
-      "実装のテストのためにサービスを起動：db、mock（compose.yaml。実行の後に消す）",
+      "実装のテストのためにサービスを起動：db、mock（compose.yaml）",
     );
     // 複数のサービスが使うため、localhost に転送しなかったポート（PBI-60）
     expect(describeEvent(started(false, [8080, 9000]))).toBe(
-      "実装のためにサービスを起動：db、mock（compose.yaml。実行の後に消す） / 複数のサービスが使うため localhost に転送しないポート：8080、9000",
+      "実装のためにサービスを起動：db、mock（compose.yaml） / localhost に転送しないポート：8080、9000",
     );
     // ホストに出すポートからの転送（PBI-60）
     const withHostPorts = {
@@ -716,11 +710,11 @@ describe("オーケストレーターが選んだ工程（PBI-17）", () => {
       },
     } as ActivityEvent;
     expect(describeEvent(withHostPorts)).toBe(
-      "実装のためにサービスを起動：db（localhost:15432 → db:5432）、mock（compose.yaml。実行の後に消す）",
+      "実装のためにサービスを起動：db（localhost:15432 → db:5432）、mock（compose.yaml）",
     );
     expect(describeIn(withHostPorts, labels.en)).toContain("db (localhost:15432 → db:5432)");
     expect(describeIn(started(false, [8080]), labels.en)).toContain(
-      "not forwarded to localhost because several services use them: 8080",
+      "not forwarded to localhost: 8080",
     );
   });
 });
@@ -799,7 +793,7 @@ describe("再現の表示（PBI-29）", () => {
   it("再現できなかったときは承認待ちではなく判断待ちと出し、作業履歴に結果を出す", () => {
     expect(
       statusText(task({ status: "awaiting_approval", gate: { step: "reproduce", submission: 1 } })),
-    ).toBe("再現できなかった（判断待ち）");
+    ).toBe("再現できなかった・判断待ち");
     // 再現のテストを実行している間（PBI-29）
     const checking = task({ status: "idle", reproductionPending: true });
     expect(statusText(checking)).toBe("テストを実行中");
@@ -810,16 +804,16 @@ describe("再現の表示（PBI-29）", () => {
         actor: "sacty",
       }) as unknown as ActivityEvent;
     expect(describeEvent(event({ reproduced: true, exitCode: 1 }))).toBe(
-      "再現を確認：再現のテストが失敗した（終了コード 1）→ 実装へ",
+      "再現を確認（終了コード 1）・実装へ",
     );
     expect(describeEvent(event({ reproduced: false, exitCode: 0 }))).toBe(
-      "再現できなかった（テストが通った・終了コード 0）→ 人間の判断待ち",
+      "再現できなかった（テストが通った・終了コード 0）・判断待ち",
     );
     expect(
       describeEvent(event({ reproduced: false, note: { code: "reproduce.noTests" } })),
     ).toMatch(/^再現できなかった（再現のエージェントが、再現のテストを申告しませんでした/);
     expect(describeIn(event({ reproduced: true, exitCode: 1 }), labels.en)).toBe(
-      "Reproduced: the reproduction test failed (exit code 1) → implement",
+      "Reproduced (exit code 1) · on to Implement",
     );
     expect(
       describeEvent({
@@ -827,7 +821,7 @@ describe("再現の表示（PBI-29）", () => {
         payload: { step: "investigate", next: "queued" },
         actor: "sacty",
       } as unknown as ActivityEvent),
-    ).toBe("調査を完了（前段の調査のため承認なし）→ 次の工程へ");
+    ).toBe("調査を完了（承認なし）");
   });
 });
 
@@ -850,7 +844,7 @@ describe("統合レビューの表示（PBI-31）", () => {
     };
     expect(statusText(task({ ...gate, integration: review(true) }))).toBe("統合レビューの承認待ち");
     expect(statusText(task({ ...gate, integration: review(false) }))).toBe(
-      "統合レビューに通らない（判断待ち）",
+      "統合レビュー不合格・判断待ち",
     );
     const event = (passed: boolean) =>
       ({
@@ -858,12 +852,10 @@ describe("統合レビューの表示（PBI-31）", () => {
         payload: review(passed),
         actor: "guardian",
       }) as unknown as ActivityEvent;
-    expect(describeEvent(event(true))).toBe("統合レビュー（main・ccccccc）：合格 → 人間の承認待ち");
-    expect(describeEvent(event(false))).toBe(
-      "統合レビュー（main・ccccccc）：不合格（足りないこと2件）",
-    );
+    expect(describeEvent(event(true))).toBe("統合レビュー（main・ccccccc）：合格・承認待ち");
+    expect(describeEvent(event(false))).toBe("統合レビュー（main・ccccccc）：不合格（2件）");
     expect(describeIn(event(false), labels.en)).toBe(
-      "Integration review (main · ccccccc): failed (2 missing items)",
+      "Integration review (main · ccccccc): failed (2)",
     );
   });
 });
@@ -903,13 +895,13 @@ describe("ゲートウェイのリトライの表示（PBI-37）", () => {
         actor: "sacty",
       }) as unknown as ActivityEvent;
     expect(describeEvent(event(false))).toBe(
-      "ゲートウェイが AI の呼び出しを3回リトライ（429, connection・合計21秒待った）",
+      "ゲートウェイが AI の呼び出しを3回リトライ（429, connection・計21秒）",
     );
     expect(describeEvent(event(true))).toBe(
-      "ゲートウェイが AI の呼び出しを3回リトライ（429, connection・合計21秒待った）→ 上限に達したため、あきらめた",
+      "ゲートウェイが AI の呼び出しを3回リトライ（429, connection・計21秒）・上限であきらめた",
     );
     expect(describeIn(event(true), labels.en)).toBe(
-      "The gateway retried the AI call 3 times (429, connection; waited 21s in total) → gave up at the limit",
+      "The gateway retried the AI call 3 times (429, connection; 21s in total) · gave up at the limit",
     );
   });
 });
@@ -943,11 +935,9 @@ describe("オーケストレーターのセッションの記録の表示（PBI-
     );
     expect(
       describeEvent(event({ role: "chat", mode: "forked", resumedFrom: "s1", sessionId: "f1" })),
-    ).toBe(
-      "質問に答えるため、オーケストレーターのセッション（s1）を複製した：f1（元のセッションには書き戻さない）",
-    );
+    ).toBe("質問のためにセッション（s1）を複製した：f1");
     expect(describeEvent(event({ role: "chat", mode: "new", reason: "first" }))).toBe(
-      "質問に答えるため、新しいセッションで始めた（このタスクで初めて）",
+      "質問のために新しいセッションを始めた（このタスクで初めて）",
     );
     expect(
       describeIn(event({ mode: "new", reason: "truncated", sessionId: "s3" }), labels.en),
@@ -982,13 +972,13 @@ describe("エージェントの元のファイルを写した記録の表示（P
         actor: "sacty",
       }) as unknown as ActivityEvent;
     expect(describeEvent(event([file(false), file(false)]))).toBe(
-      "エージェントの元のファイル2件を写し、大きさとハッシュを記録",
+      "エージェントの元のファイル2件を写した",
     );
     expect(describeEvent(event([file(true), file(false)]))).toBe(
-      "エージェントの元のファイル2件を写し、大きさとハッシュを記録（うち1件は上限を超えたため、間を省いた）",
+      "エージェントの元のファイル2件を写した（1件は間を省いた）",
     );
     expect(describeIn(event([file(false)]), labels.en)).toBe(
-      "Copied 1 original file written by the agent and recorded its size and hash",
+      "Copied 1 original file written by the agent",
     );
   });
 
@@ -1008,10 +998,10 @@ describe("エージェントの元のファイルを写した記録の表示（P
       actor: "sacty",
     } as unknown as ActivityEvent;
     expect(describeEvent(event)).toBe(
-      "コンテナが止まったことを確かめられなかったため、エージェントの元のファイルを写さなかった",
+      "コンテナの停止を確かめられず、エージェントの元のファイルを写さなかった",
     );
     expect(describeIn(event, labels.en)).toBe(
-      "Did not copy the agent's original files because the container could not be confirmed to have stopped",
+      "Did not copy the agent's original files; the container could not be confirmed to have stopped",
     );
   });
 });
@@ -1079,9 +1069,7 @@ describe("PR のレビューの取り込み（PBI-44）", () => {
     expect(
       describeEvent(ev("TaskCancelled", { reason: "pull_request_closed", cleanup: [] })),
     ).toContain("（PR が閉じられたため）");
-    expect(describeEvent(ev("ReviewRestarted", {}, "person"))).toBe(
-      "再レビューを始めた（PR の最新のコミットをレビューする。人間）",
-    );
+    expect(describeEvent(ev("ReviewRestarted", {}, "person"))).toBe("再レビューを始めた（人間）");
     expect(
       describeIn(ev("TaskCancelled", { reason: "pull_request_merged", cleanup: [] }), labels.en),
     ).toContain("(the PR was merged)");
@@ -1298,7 +1286,7 @@ describe("実装に変更が無い実装の承認（PBI-90・PBI-110）", () => 
       at: "2026-10-15T00:00:00.000Z",
       actor: "sacty",
     } as ActivityEvent;
-    expect(describeEvent(event)).toBe("実装に変更が無いため、PR を作らずに実装の承認待ちへ");
+    expect(describeEvent(event)).toBe("実装に変更が無いため、PR を作らずに承認待ち");
   });
 });
 
@@ -1330,7 +1318,7 @@ describe("テストの仕組みが無いタスクの作業履歴（PBI-94）", (
     expect(describeIn(chosen, labels.en)).toContain(" / No tests in the repository: README だけ");
     const skipped = { type: "TestsSkipped", payload: {}, ...at, actor: "sacty" } as ActivityEvent;
     expect(describeEvent(skipped)).toBe(
-      "テストのコマンドが無いため、テストを実行せずに最終レビューへ（目的から判定）",
+      "テストのコマンドが無いため、テストを飛ばして最終レビューへ",
     );
   });
 });
@@ -1372,17 +1360,19 @@ describe("実装で用意したテストの結果（PBI-94・PR #105 レビュ�
     ).toBe("failed");
   });
 
-  it("工程の欄は、合格のときだけ「検証し、目的から判定します」にする（PR #105 再々レビュー指摘）", () => {
+  it("工程の欄は、合格・不合格・実行待ちをそれぞれの文にする（PR #105 再々レビュー指摘。根拠は補足に出す。PBI-117）", () => {
     const m = taskMessages.ja;
     const of = (patch: Partial<Task>) =>
-      testCommandOfNoTests(task({ noTestsReason: "無い", ...patch }), "無い", m);
-    expect(of({ lastTests: ran(true) })).toBe(m.testCommandAdded("make test", "無い"));
-    expect(of({ lastTests: ran(false) })).toBe(m.testCommandAddedFailed("make test", "無い"));
-    expect(of({ lastTests: ran(false) })).not.toContain("目的から判定します");
+      testCommandOfNoTests(task({ noTestsReason: "無い", ...patch }), m);
+    expect(of({ lastTests: ran(true) })).toBe(m.testCommandAdded("make test"));
+    expect(of({ lastTests: ran(false) })).toBe(m.testCommandAddedFailed("make test"));
+    expect(of({ lastTests: ran(false) })).not.toContain("目的から判定");
     expect(
       of({ lastTests: ran(false), verification: "pending", addedTestCommand: "make check" }),
-    ).toBe(m.testCommandAddedPending("make check", "無い"));
-    expect(of({})).toBe(m.testCommandNone("無い"));
+    ).toBe(m.testCommandAddedPending("make check"));
+    expect(of({})).toBe(m.testCommandNone);
+    // 根拠は文に入れず、画面が補足で出す
+    for (const text of [of({ lastTests: ran(true) }), of({})]) expect(text).not.toContain("無い");
   });
 });
 
@@ -1595,13 +1585,13 @@ describe("マージの後の監視の工程の表示（PBI-116）", () => {
     });
 
   it("監視の間は、完了でも人の出番でもなく、監視していることを出す", () => {
-    expect(statusText(watching("ci"))).toBe("マージの後の監視中（CI/CD を待っている）");
-    expect(statusText(watching("check"))).toBe("マージの後の監視中（スキルで確かめている）");
+    expect(statusText(watching("ci"))).toBe("マージの後の監視・CI/CD 待ち");
+    expect(statusText(watching("check"))).toBe("マージの後の監視・確認中");
     expect(statusTone(watching("ci"))).toBe("working");
     expect(needsPerson(watching("ci"))).toBe(false);
     // 英語の工程の名前も、ほかの工程とそろえる
     expect(labels.en.step.deployment).toBe("After-merge watch");
-    expect(statusTextIn(watching("ci"), labels.en)).toBe("After-merge watch (waiting for CI/CD)");
+    expect(statusTextIn(watching("ci"), labels.en)).toBe("After-merge watch · waiting for CI/CD");
   });
 
   it("工程を決めた記録に、監視をするか（スキル）・飛ばす理由を出す", () => {
@@ -1648,7 +1638,7 @@ describe("マージの後の監視の工程の表示（PBI-116）", () => {
         } as Pick<ActivityEvent, "type" | "payload">),
       ),
     ).toBe(
-      "スキルに従った確認の結果：問題なし（$0.0000） / CI/CD の確認：通った / デプロイの確認：飛ばした（デプロイしていない）",
+      "スキルの確認：問題なし（$0.0000） / CI/CD の確認：通った / デプロイの確認：飛ばした（デプロイしていない）",
     );
     expect(
       describeEvent(
@@ -1666,6 +1656,6 @@ describe("マージの後の監視の工程の表示（PBI-116）", () => {
           },
         } as Pick<ActivityEvent, "type" | "payload">),
       ),
-    ).toContain("スキルに従った確認を中断した。再開すると確かめ直す");
+    ).toContain("スキルの確認を中断した。再開すると確かめ直す");
   });
 });
