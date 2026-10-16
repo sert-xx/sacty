@@ -112,9 +112,11 @@ How to notice:
 
 How to check again (by hand):
 
-1. Fix the permissions or the connection of the project's GitHub account.
+1. Only if the GitHub API could not be read (the daemon log shows why), fix the permissions or the connection of the project's GitHub account.
+   This is not needed for other reasons, such as the budget cap or an answer that could not be read.
 2. From the "Merge commit" link in the card, check the result of CI/CD (Actions and checks) for that commit on GitHub.
-3. Check the deployed app with the steps written in the skill (`.agents/skills/deployment-observer/SKILL.md` or `.claude/skills/deployment-observer/SKILL.md`).
+3. Check with the steps written in the skill (`.agents/skills/deployment-observer/SKILL.md` or `.claude/skills/deployment-observer/SKILL.md`).
+   Check the deployed app only when the skill asks for it (if the skill checks only CI/CD, step 2 is enough).
    If the implementation PR removed the skill, the merge commit has no skill. Look at the skill in the commit the task started from, shown in "Target repository prepared"
    in the Activity.
 4. If something needs fixing, create a new task.

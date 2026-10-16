@@ -187,8 +187,9 @@ CI/CD（GitHub Actions のワークフローの実行・チェック）を待ち
 | 予算の上限 | `skipped`・`budget` | 監視のカード、作業履歴 |
 
 - Slack の完了の通知（[Slack の通知](notifications.md)）は、監視の結果によらず同じ文で、結果は書かない（タスクへのリンクから確かめる）。
-- 確かめ直す仕組みは無い。人が、プロジェクトの GitHub のアカウントの権限・接続を直し、マージのコミット（カードのリンク）の CI/CD を GitHub で、
-  デプロイ後のアプリをスキルの手順で確かめ、直すことがあれば新しいタスクを作る。
+- 確かめ直す仕組みは無い。人が、GitHub の API を読めなかったときだけプロジェクトの GitHub のアカウントの権限・接続を直し、マージのコミット
+  （カードのリンク）の CI/CD を GitHub で確かめ、スキルの手順で確かめ（デプロイ後のアプリは、スキルが求めているときだけ）、直すことがあれば
+  新しいタスクを作る。
 
 コード: `apps/daemon/src/service.ts`（`pollDeploymentCi`・`checkDeployment`）、`apps/web/src/components/deployment.tsx`（`DeploymentWatchCard`）、`apps/daemon/src/notifier.ts`（`notificationText`）
 

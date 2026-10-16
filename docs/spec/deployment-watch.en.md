@@ -187,8 +187,8 @@ In the following cases, sacty ends the watch without creating a fix task (it is 
 | The budget cap | `skipped`, `budget` | The watch card, the Activity |
 
 - The Slack completion notification ([Slack notifications](notifications.en.md)) has the same text regardless of the result of the watch and does not include the result (check it from the link to the task).
-- There is no mechanism to check again. A person fixes the permissions or connection of the project's GitHub account, checks the CI/CD of the merge commit (the link in the card) on GitHub and
-  the deployed app with the skill's steps, and creates a new task if something needs fixing.
+- There is no mechanism to check again. A person fixes the permissions or connection of the project's GitHub account only if the GitHub API could not be read, checks the CI/CD of the merge commit
+  (the link in the card) on GitHub, checks with the skill's steps (the deployed app only when the skill asks for it), and creates a new task if something needs fixing.
 
 Code: `apps/daemon/src/service.ts` (`pollDeploymentCi`, `checkDeployment`), `apps/web/src/components/deployment.tsx` (`DeploymentWatchCard`), `apps/daemon/src/notifier.ts` (`notificationText`)
 
