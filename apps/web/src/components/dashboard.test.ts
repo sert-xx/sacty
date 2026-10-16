@@ -191,9 +191,8 @@ describe("ダッシュボードの欄の並び（PBI-118）", () => {
     expect(text()).toContain("止まっているタスクはありません。");
     expect(text()).toContain("終わっていないタスクはありません。");
     expect(text()).toContain("予算に近いタスクはありません。");
-    expect(text()).toContain(
-      "設定ファイル（config.yaml）を読めないので、取り込みは止まっています。",
-    );
+    // 取り込みの文はプロジェクトの一覧と同じ辞書（projects.intake）を使う
+    expect(text()).toContain(messagesFor("ja").projects.intake.stopped);
     // 設定ファイルを読めないときは「今すぐ取り込む」を出さないが、復旧先の sacty の設定へのリンクは出す（PR #128 レビュー指摘）
     expect(card("intake-status")?.querySelector('button[type="submit"]')).toBeNull();
     expect(card("intake-status")?.querySelector('a[href="/settings"]')).not.toBeNull();
@@ -214,9 +213,10 @@ describe("ダッシュボードの欄の並び（PBI-118）", () => {
     expect(cardHint("attention")).toContain("作業履歴の記録の時刻");
     // 終わっていないタスクの欄には補足が無い（印を出さない）
     expect(card("open-tasks")?.querySelector('[data-slot="hint"]')).toBeNull();
-    // 補足の文は本文に出ない（印の中にだけある）
-    const body = card("costs")?.textContent ?? "";
-    expect(body).not.toContain("マシンの日付");
+    // 補足の文は本文に出ない（印の中（スクリーンリーダー向けの隠した文）にだけある）
+    const costs = card("costs")?.cloneNode(true) as HTMLElement;
+    for (const hint of costs.querySelectorAll('[data-slot="hint"]')) hint.remove();
+    expect(costs.textContent).not.toContain("マシンの日付");
   });
 });
 
@@ -482,7 +482,7 @@ describe("ダッシュボードの取り込みの状況（PBI-118）", () => {
   it("取り込みの設定が無ければ、そのことと設定へのリンクを出す", () => {
     show(base({ intake: {} }));
     const c = card("intake-status");
-    expect(c?.textContent).toContain("取り込みは止まっています");
+    expect(c?.textContent).toContain(messagesFor("ja").projects.intake.noLabel);
     expect(c?.querySelector('a[href="/settings"]')).not.toBeNull();
     expect(c?.querySelector('button[type="submit"]')).not.toBeNull();
   });

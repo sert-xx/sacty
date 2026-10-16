@@ -76,7 +76,8 @@ Code: `apps/daemon/src/server.ts` (`createApp`, `handleError`), `apps/web/src/li
   - In the list sections (Needs you, Open tasks, Tasks near their budget), a row is at least 4rem high and the section is 5 rows high (20rem);
     with more rows, the section scrolls inside (the section takes focus so it can also be scrolled with the keyboard). The title and the project
     name are cut to one line; the full text is shown on hover (`title`) and wrapped while the row has focus. Count notes are built from per-language wording.
-  - Mechanisms, the definitions of the numbers, and the period boundaries go into the hint next to the heading (`Hint`), not into the body.
+  - Mechanisms, the definitions of the numbers, and the period boundaries go into the hint next to the heading (`Hint`), not into the body
+    ([Web UI wording and hints](ui-wording.en.md)).
   - Waiting times and the "has persisted" decision are computed with the screen's clock (advances every minute; `CLOCK_INTERVAL_MS`). The data
     does not carry "now" (the version would change on every refetch).
   - Needs you: the open tasks whose state display is a person's turn (`statusTone` is `person`: awaiting approval, paused, escalated;
