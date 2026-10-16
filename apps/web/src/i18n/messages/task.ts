@@ -15,6 +15,17 @@ const ja = {
   parent: " ・ 親タスク：",
   sourceOpen: "（",
   sourceClose: "）",
+  operationSettings: {
+    title: "作業の実行設定",
+    description: "オーケストレーターが依頼から選んだ設定です。作業結果と照合してください。",
+    connection: "接続先",
+    via: "接続方式",
+    platform: "プラットフォーム（platform）",
+    mcp: "MCP",
+    target: "対象",
+    change: "変更内容",
+    verification: "確認方法",
+  },
   gate: {
     undecidable: "ゴールガーディアンが変更の申し出を判定できませんでした（エスカレーション）",
     tooMany: "差し戻しが上限に達しました（エスカレーション）",
@@ -292,6 +303,18 @@ const en: TaskMessages = {
   parent: " · Parent task: ",
   sourceOpen: " (",
   sourceClose: ")",
+  operationSettings: {
+    title: "Operation settings",
+    description:
+      "Settings chosen by the Orchestrator from your request. Compare them with the operation result.",
+    connection: "Connection",
+    via: "Connection type",
+    platform: "Platform (platform)",
+    mcp: "MCP",
+    target: "Target",
+    change: "Change",
+    verification: "Verification",
+  },
   gate: {
     undecidable: "The Goal Guardian could not decide on a change request (escalated)",
     tooMany: "Changes requested reached the limit (escalated)",

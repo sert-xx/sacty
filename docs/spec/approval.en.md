@@ -11,6 +11,7 @@ Related ADRs: [Remove the "PR作成" step and open the PR and wait for approval 
 
 - Approval is possible when the status is `awaiting_approval` or `escalated`, the step is the step waiting for approval (`gate.step`), and the submission round the web UI was showing
   (`submission`) is the current round (otherwise `gate.staleSubmission`).
+- Document drafts and successful Operation results are approved in the web UI. Operation has no pre-execution approval gate; it performs the request and then waits for result approval. Changes cannot be requested after execution starts. Failure or an unknown result cannot be approved to complete the task and requires checking external state.
 - A Reproduce (`reproduce`) awaiting approval (the bug was not reproduced) cannot be approved.
 - Steps that opened a PR (Implementation, and Requirements or Design with a PR) cannot be approved from the web UI (`gate.approveOnPullRequest`). An implementation
   for which no PR was opened because the implementation had no changes is approved in the web UI ("When the implementation has no changes" below).

@@ -53,6 +53,7 @@ import {
   MAX_VERIFY_ATTEMPTS,
   mapFreeText,
   message,
+  OperationSettings,
   openProposal,
   type PauseReason,
   type Project,
@@ -218,6 +219,7 @@ import {
   extractVerdict,
   integrationViewpointIds,
   investigationMarker,
+  operationSucceeded,
   postedLatestCommit,
   type RawExportPlan,
   type RawServices,
@@ -1734,6 +1736,14 @@ export class TaskService {
       } = choice;
       choice = noCode;
     }
+    const { operation: rawOperation, ...withoutOperation } = choice;
+    const operation = OperationSettings.safeParse(rawOperation);
+    choice = {
+      ...withoutOperation,
+      ...(choice.steps.includes("operation") && operation.success
+        ? { operation: operation.data }
+        : {}),
+    };
     const withShared = this.withSharedCompose(choice, shared);
     if ("failure" in withShared) return withShared;
     return this.withImages(
@@ -2364,6 +2374,7 @@ export class TaskService {
       return {
         steps: [...STEP_PLANS[chosen.plan]],
         plan: chosen.plan,
+        ...(chosen.operation ? { operation: chosen.operation } : {}),
         reason: chosen.reason,
         fallback: false,
         ...(chosen.testCommand ? { testCommand: chosen.testCommand } : {}),
@@ -3350,7 +3361,16 @@ export class TaskService {
             },
           },
         },
-        { actor: "sacty", event: { type: "TaskPaused", payload: { reason: "error" } } },
+        {
+          actor: "sacty",
+          event: {
+            type: "TaskPaused",
+            payload: {
+              reason: "error",
+              ...(step === "operation" ? this.unstoppedPayload([task.currentRunId]) : {}),
+            },
+          },
+        },
       ]);
     }
   }
@@ -3789,6 +3809,7 @@ export class TaskService {
 
     // 統合レビューは、ゴールガーディアンがベースブランチの最新のコードで行う（PBI-31）
     if (step === "integrate") return this.integrate(task, config.config);
+    if (step === "operation") return this.executeOperation(task, config.config);
 
     // レビューの工程は、エージェントを実行する（費用をかける）前に、対象の PR を確かめて記録する（PBI-19）
     if (step === "review" && !task.reviewTarget) {
@@ -3856,7 +3877,7 @@ export class TaskService {
     // sacty の既定のコンテキストと、プロジェクトのコンテキストを取得・合成して渡し、
     // 使ったリポジトリとコミット（既定は中身のハッシュ）を記録する
     let context: Awaited<ReturnType<typeof prepareContext>> | undefined;
-    {
+    if (step !== "document") {
       const usedSecrets: string[] = [];
       try {
         context = await this.runContext(task, agent, config.config, usedSecrets);
@@ -3881,7 +3902,10 @@ export class TaskService {
       }
     }
     // 使える外部 PF：ホストの PF と、プロジェクトのコンテキストで合成した PF（同じ名前ならホストのもの。PBI-74）
-    const runPlatforms = mergePlatforms(config.config.platforms, context?.platforms ?? []);
+    const runPlatforms = mergePlatforms(
+      step === "document" ? [] : config.config.platforms,
+      context?.platforms ?? [],
+    );
     // ここから実行の try（finally で消す）までに例外になっても、用意したコンテキスト（一時のディレクトリ・ホストで起動する
     // MCP サーバーの確保）を残さない（PR #89 レビュー指摘）
     let splitCandidates: string[] | undefined;
@@ -4379,6 +4403,181 @@ export class TaskService {
       // 層の command の MCP サーバーは、ホストで起動してゲートウェイ経由にする（PBI-84）
       hostCommands: Boolean(this.deps.contextMcp),
     };
+  }
+
+  /** 依頼された外部操作を一度だけ開始する。停止未確認の実行と作業領域は中止で確認するまで残す。 */
+  private async executeOperation(task: Task, config: SactyConfig): Promise<void> {
+    const step = "operation" as const;
+    const pause = (detail: DaemonText) =>
+      this.append(this.mustGet(task.id), [
+        {
+          actor: "sacty",
+          event: {
+            type: "TaskPaused",
+            payload: { reason: "error", message: detail },
+          },
+        },
+      ]);
+    if (task.operationAttempted) {
+      pause(message("operation.attempted"));
+      return;
+    }
+    const parsedOperation = OperationSettings.safeParse(task.operation);
+    if (!parsedOperation.success) {
+      pause(message("operation.incomplete"));
+      return;
+    }
+    const operation = parsedOperation.data;
+    const available = await this.exportDestinations(task, config);
+    if (!available.destinations.some((d) => d.via === operation.via && d.name === operation.name)) {
+      pause(message("operation.connectionMissing"));
+      return;
+    }
+    const agent = agentFor(config, step);
+    const image = resolveImage(config, task.images?.[step]);
+    if (!image.ok) {
+      pause(image.message);
+      return;
+    }
+    const usedSecrets: string[] = [];
+    let context: Awaited<ReturnType<typeof prepareContext>> | undefined;
+    let platform: Platform | undefined;
+    const runId = randomUUID();
+    const workspaceDir = join(this.deps.workspaceRoot, task.id, "operation", runId);
+    let attempted = false;
+    let preserveWorkspace = false;
+    const stoppedInfo = async () => {
+      let runs: string[];
+      try {
+        runs = await this.unstopped([runId]);
+      } catch {
+        runs = [runId];
+      }
+      preserveWorkspace = runs.length > 0;
+      return this.unstoppedPayload(runs);
+    };
+    try {
+      if (operation.via === "mcp") {
+        context = await this.runContext(task, agent, config, usedSecrets, operation.name);
+        if (!context?.placed.mcpServers.includes(operation.name))
+          throw new MessageError(message("operation.connectionMissing"));
+      } else {
+        platform = await this.findPlatform(task, config, operation.name, usedSecrets);
+        if (!platform) throw new MessageError(message("operation.connectionMissing"));
+      }
+      const latest = this.mustGet(task.id);
+      if (latest.status !== "queued" || this.stopRequested(task.id)) return;
+      mkdirSync(workspaceDir, { recursive: true });
+      // 実行前に永続化する。結果が失われても再送しない。
+      this.append(latest, [
+        {
+          actor: "sacty",
+          event: {
+            type: "AgentRunStarted",
+            payload: { runId, step, agentId: agent.id, ...agentSetting(agent) },
+          },
+        },
+      ]);
+      attempted = true;
+      const { outcome, costUsd, estimated } = await this.execute({
+        agent,
+        taskId: task.id,
+        runId,
+        role: step,
+        image: image.image,
+        imageEnv: image.env,
+        workspaceDir,
+        prompt: [
+          buildPrompt(latest, step),
+          ...platformPromptLines(platform ? [platform] : []),
+        ].join("\n"),
+        ...(platform ? { platforms: [platform] } : {}),
+        ...(context
+          ? { context: { dir: context.dir, ...context.placed }, contextMcp: context.gatewayMcp }
+          : {}),
+      });
+      const stopped = await stoppedInfo();
+      const current = this.mustGet(task.id);
+      const success =
+        !preserveWorkspace &&
+        outcome.kind !== "failed" &&
+        operationSucceeded(outcome.output) &&
+        !this.stopRequested(task.id);
+      const events: ActivityItem[] = [
+        {
+          actor: "agent",
+          event:
+            outcome.kind === "failed"
+              ? {
+                  type: "AgentRunFailed",
+                  payload: {
+                    runId,
+                    step,
+                    agentId: agent.id,
+                    reason: outcome.reason,
+                    message: outcome.message,
+                    usage: outcome.usage,
+                    costUsd,
+                    estimated,
+                  },
+                }
+              : {
+                  type: "AgentRunCompleted",
+                  payload: {
+                    runId,
+                    step,
+                    agentId: agent.id,
+                    authMode: agent.auth.mode,
+                    output: outcome.output,
+                    responses: [],
+                    usage: outcome.usage,
+                    costUsd,
+                    estimated,
+                  },
+                },
+        },
+      ];
+      if (success) events.push(...this.submitEvents(current, step));
+      else
+        events.push({
+          actor: "sacty",
+          event: {
+            type: "TaskPaused",
+            payload: {
+              reason: this.stopReason(task.id, "error"),
+              message: message("operation.unconfirmed"),
+              ...stopped,
+            },
+          },
+        });
+      this.checkBudget(this.append(current, events));
+    } catch (error) {
+      const latest = this.mustGet(task.id);
+      const detail = redactText(errorText(error), usedSecrets);
+      const stopped = attempted ? await stoppedInfo() : {};
+      if (latest.currentRunId === runId)
+        this.append(latest, [
+          {
+            actor: "sacty",
+            event: {
+              type: "AgentRunFailed",
+              payload: { runId, step, agentId: agent.id, reason: "error", message: detail },
+            },
+          },
+        ]);
+      this.append(this.mustGet(task.id), [
+        {
+          actor: "sacty",
+          event: {
+            type: "TaskPaused",
+            payload: { reason: this.stopReason(task.id, "error"), message: detail, ...stopped },
+          },
+        },
+      ]);
+    } finally {
+      context?.dispose();
+      if (!preserveWorkspace) rmSync(workspaceDir, { recursive: true, force: true });
+    }
   }
 
   /**
@@ -6430,6 +6629,9 @@ export class TaskService {
           route,
           contextMcp,
           platforms.filter((p) => p.from !== undefined),
+          run.role === "operation" || run.role === "document"
+            ? { platforms: platforms.map((p) => p.name), hostMcp: run.context?.mcpServers ?? [] }
+            : undefined,
         );
         usedSecrets.push(gatewayRun.token);
         if (viaGateway) {
@@ -7162,6 +7364,7 @@ export class TaskService {
     if (task.status !== "paused") {
       throw new InvalidOperationError(message("resume.notPaused"));
     }
+    if (task.operationAttempted) throw new InvalidOperationError(message("operation.attempted"));
     // 止めたコンテナがまだ残っているかもしれないうちは、再開しない（作業領域を取り合うため）
     if (task.unstoppedRuns?.length && !options.containersConfirmed) {
       throw new InvalidOperationError(this.notStopped(task.unstoppedRuns));

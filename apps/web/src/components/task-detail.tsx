@@ -418,6 +418,29 @@ export function TaskDetailView({ data }: { data: TaskDetailData }) {
             {/* 工程のイメージと、選んだ元。いつでも変えられ、その工程を次に実行するときから使う（PBI-106） */}
             {task.steps.length > 0 && <StepImages task={task} imageStatus={data.imageStatus} />}
           </section>
+          {task.operation && (
+            <CardSection id="operation-settings" title={m.operationSettings.title}>
+              <p className="text-sm text-muted-foreground">{m.operationSettings.description}</p>
+              <dl className="grid gap-3 text-sm leading-6">
+                {(
+                  [
+                    [m.operationSettings.connection, task.operation.name],
+                    [m.operationSettings.via, m.operationSettings[task.operation.via]],
+                    [m.operationSettings.target, task.operation.target],
+                    [m.operationSettings.change, task.operation.change],
+                    [m.operationSettings.verification, task.operation.verification],
+                  ] as const
+                ).map(([label, value]) => (
+                  <div key={label}>
+                    <dt className="font-semibold">{label}</dt>
+                    <dd className="whitespace-pre-wrap [overflow-wrap:anywhere] text-muted-foreground">
+                      {value}
+                    </dd>
+                  </div>
+                ))}
+              </dl>
+            </CardSection>
+          )}
           <section
             aria-labelledby="content"
             className="flex flex-col gap-3 rounded-xl border border-border bg-card p-5"
@@ -450,6 +473,11 @@ export function TaskDetailView({ data }: { data: TaskDetailData }) {
           {(task.outputs.design ||
             task.steps.some((s) => s.key === "design" && s.state !== "todo")) && (
             <Deliverable task={task} step="design" />
+          )}
+          {(["document", "operation"] as const).map((step) =>
+            task.steps.some((s) => s.key === step) ? (
+              <Deliverable key={step} task={task} step={step} />
+            ) : null,
           )}
           {task.split && <Subtasks task={task} subtasks={data.children} />}
           {/* 統合レビューの結果（PBI-31） */}

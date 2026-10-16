@@ -20,6 +20,8 @@ export const StepKey = z.enum([
   "integrate",
   "reproduce",
   "implement",
+  "document",
+  "operation",
 ]);
 export type StepKey = z.infer<typeof StepKey>;
 
@@ -31,6 +33,10 @@ export const MVP_STEPS: readonly StepKey[] = ["requirements", "design", "impleme
  * 工程の種類を増やしたら（調査・レビューなど）、ここに組み合わせを足す。
  */
 export const STEP_PLANS = {
+  /** リポジトリを変えず、原稿を作って承認する。 */
+  document: ["document"],
+  /** 依頼された単発の外部操作を実行し、結果を承認する。 */
+  operation: ["operation"],
   /**
    * 標準：調査 → 要求要件 → 設計（テスト観点）→ 実装。実装する組み合わせは、先頭に前段の調査を置き、
    * その結果を後の工程に渡す。前段の調査は人間が承認しない（PBI-29）。実装は、検証に通ったら PR を作り、そのマージで
@@ -74,7 +80,12 @@ export type InvestigationKind = z.infer<typeof InvestigationKind>;
  * 成果を外（Confluence・Notion など）に書き出せる工程（PBI-56）。人間が承認した版だけを書き出すので、調査は、
  * 調査そのものが目的のタスク（調査だけの組み合わせ）のときだけ（前段の調査は人間が承認しない）。
  */
-export const EXPORT_STEPS: readonly StepKey[] = ["investigate", "requirements", "design"];
+export const EXPORT_STEPS: readonly StepKey[] = [
+  "investigate",
+  "requirements",
+  "design",
+  "document",
+];
 
 /** 工程の組み合わせのうち、書き出せる工程（PBI-56）。 */
 export function exportSteps(steps: readonly StepKey[]): StepKey[] {
@@ -111,6 +122,8 @@ export type ExportPlan = z.infer<typeof ExportPlan>;
  * 親タスクの最後の確認（PBI-31）。
  */
 export const GATED_STEPS: readonly StepKey[] = [
+  "document",
+  "operation",
   "investigate",
   "requirements",
   "design",
@@ -120,6 +133,7 @@ export const GATED_STEPS: readonly StepKey[] = [
 
 /** 差し戻しでやり直せる（工程エージェントが作る）工程。 */
 export const REWORK_STEPS: readonly StepKey[] = [
+  "document",
   "investigate",
   "reproduce",
   "requirements",
@@ -437,6 +451,16 @@ const SplitCompleted = z.object({
   payload: z.object({}),
 });
 
+/** 単発作業の実行設定。工程選択時に依頼から決める（独立した成果物や承認は作らない）。 */
+export const OperationSettings = z.object({
+  via: ExportVia,
+  name: z.string().trim().min(1).max(100),
+  target: z.string().trim().min(1).max(2000),
+  change: z.string().trim().min(1).max(8000),
+  verification: z.string().trim().min(1).max(4000),
+});
+export type OperationSettings = z.infer<typeof OperationSettings>;
+
 /**
  * タスクの工程を決めた。PBI-17 からは、オーケストレーター（AI）がタスクの内容と対象リポジトリを読んで、
  * 候補（STEP_PLANS）から選び、理由とともに記録する（人間の承認は無い）。判断できなければ、この記録の代わりに
@@ -447,6 +471,7 @@ const StepsChosen = z.object({
   payload: z.object({
     steps: z.array(StepKey).min(1),
     plan: StepPlan.optional(),
+    operation: OperationSettings.optional(),
     /** オーケストレーターが書いた理由。判断できなかったときは sacty の文言。 */
     reason: DaemonText.optional(),
     /** 判断できず、標準の工程にした（PBI-40 より前の作業履歴。いまは判断できなければ OrchestratorFailed で止める）。 */

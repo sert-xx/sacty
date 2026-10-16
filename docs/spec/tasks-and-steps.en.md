@@ -78,16 +78,18 @@ Code: `packages/core/src/events.ts` (`TaskTemplate`, `CreateTemplateTaskInput`, 
 | `integrate` | Integration review | Checks whether the child tasks' results meet the parent's requirements |
 | `reproduce` | Reproduce | Writes a test that reproduces the bug (fails) |
 | `implement` | Implementation | Implements. After it passes verification, sacty opens the implementation PR and waits for a person's approval (merging the PR) |
+| `document` | Document | Creates or edits a Markdown draft and waits for approval in the web UI |
+| `operation` | Operation | Performs the requested external change once and submits evidence for result approval |
 
 Step categories:
 
-- Steps with an approval gate (`GATED_STEPS`): `investigate`, `requirements`, `design`, `integrate`, `implement`. However, Investigation at the start of a plan that implements
+- Steps with an approval gate (`GATED_STEPS`): `investigate`, `requirements`, `design`, `integrate`, `implement`, `document`, `operation`. However, Investigation at the start of a plan that implements
   (preliminary investigation) moves on to the next step without approval (`StepCompleted`). Only Investigation in a task whose purpose is investigation (the last step is `investigate`) is approved.
   Implementation does not wait for approval as soon as the agent's run ends; it waits for approval only after it passes verification ("Verifying the implementation" below) and the implementation PR is opened.
-- Steps that can be redone through Request changes (`REWORK_STEPS`): `investigate`, `reproduce`, `requirements`, `design`, `implement`.
+- Steps that can be redone through Request changes (`REWORK_STEPS`): `investigate`, `reproduce`, `requirements`, `design`, `implement`, `document`.
 - Steps that need a repository (`REPO_STEPS`): `implement`, `reproduce`, `review`.
 - Steps that can use docker compose services (`SERVICE_STEPS`): `investigate` (only for bug investigation), `reproduce`, `implement`.
-- Steps that can be exported (`EXPORT_STEPS`): `investigate` (only when it is the last step), `requirements`, `design`.
+- Steps that can be exported (`EXPORT_STEPS`): `investigate` (only when it is the last step), `requirements`, `design`, `document`.
 
 Code: `packages/core/src/events.ts` (`StepKey`, `GATED_STEPS`, `REWORK_STEPS`, `EXPORT_STEPS`, `exportSteps`), `packages/core/src/projection.ts` (`investigationIsGoal`), `apps/daemon/src/service.ts` (`REPO_STEPS`, `submitEvents`), `apps/daemon/src/prompts.ts` (`SERVICE_STEPS`)
 
@@ -102,11 +104,25 @@ Code: `packages/core/src/events.ts` (`StepKey`, `GATED_STEPS`, `REWORK_STEPS`, `
 | `review` | `review` (review only) |
 | `split` | `investigate` → `requirements` → `design` → `split` → `integrate` |
 | `bugfix` | `investigate` → `reproduce` → `implement` |
+| `document` | `document` |
+| `operation` | `operation` |
 
 Restrictions on which plans can be chosen (`allowedPlans`): `review` only when there is a repository and the task points to a PR. `design-only` only for tasks
-without a repository. `split` cannot be chosen by child tasks (splitting is one level only).
+without a repository. `document` and `operation` are also restricted to tasks without a repository. `split` cannot be chosen by child tasks (splitting is one level only).
 
 Code: `packages/core/src/events.ts` (`STEP_PLANS`), `apps/daemon/src/prompts.ts` (`allowedPlans`, `REPO_PLANS`)
+
+## Non-development work and plan selection
+
+The Orchestrator compares the purpose, deliverable, change target, and scope rather than recommending `standard` unconditionally. Questions and cause analysis use `investigate`, existing PR reviews use `review`, overall design uses `design-only`, and drafts use `document`. Repository file changes, including documentation, use `skip-design` for local changes, `standard` for broader design decisions, or `split` for work spanning multiple PRs. Reproducible bugs use `bugfix`; bugs requiring design decisions use `standard`.
+
+- `document` produces a Markdown draft without enforcing the Requirements or Design format. A person can request changes and approve it in the web UI. Before approval, it receives no MCP/PF access or project context and does not read external drafts. Source text and rules must come from the task body or human feedback through Request changes. Optional export follows the existing export mechanism; an export failure does not stop task completion. Direct updates to existing external documents use `operation`.
+- `operation` is a single step. The existing Orchestrator selects one destination, a unique target ID or URL, the requested change and its preconditions, and how to verify it. This does not add a preparation agent, proposal deliverable, or pre-execution approval gate. If the target or connection is missing, the task stops before execution starts.
+- The task details display the selected operation settings (`name`, `via`, `target`, `change`, `verification`) as read-only information. They are execution settings selected by the Orchestrator, not a new deliverable or approval gate.
+- The operation receives only the selected destination and performs the request. Its prompt requires checking the target and preconditions, sending one write request without retrying, and reading back the result. A successful result with evidence waits for human approval. Failure, interruption, restart, or an unknown result stops execution; the persisted start record rejects Resume and keeps the task paused. After execution starts, Request changes is unavailable. A person checks external state, cancels the task, and creates a new task for any remaining work.
+- This is not an external exactly-once guarantee: one write and read-back verification are agent instructions. It does not add recurring work, monitoring, arbitrary integrations, or orchestration across several destinations. Separate mixed deliverables into tasks with explicit approval boundaries.
+
+Code: `apps/daemon/src/prompts.ts`, `apps/daemon/src/service.ts`, `packages/core/src/events.ts`, `packages/core/src/projection.ts`, `apps/web/src/components/task-detail.tsx`
 
 ## Orchestrator
 
@@ -126,6 +142,7 @@ The following are read from the answer (JSON under the heading `sacty-steps`) an
 | `defaultReasons` | For each step that uses the default image (`default`), why none of `images` fits ("Step images" below) |
 | `services`, `servicesReason` | The compose files, services, and steps to start ([Services](services.en.md)). Shared compose files are chosen by name (an unknown name stops the task) |
 | `exports` | The export destination and reason per step ([Export](export.en.md)) |
+| `operation` | Execution settings for a one-off operation (`via`, `name`, `target`, `change`, `verification`). Part of step selection, not a separate deliverable. If the target is unknown, this is omitted and execution stops before starting. |
 | `documentsDir` | The directory for the requirements and design files ([Approval and request changes](approval.en.md)) |
 | `repo`, `repoReason` | For a task without a repository that chose a plan needing one, the repository to work in |
 
@@ -315,7 +332,7 @@ Code: `apps/daemon/src/service.ts` (`judge`, `settleEvents`, `runGuardian`, `ver
   (`manual` if a person had paused it). There is no mechanism to resume automatically after a while.
 - Pausing by a person: a task cannot be paused while waiting for approval, in Escalation, waiting for child tasks, or while the Goal Guardian is judging. If it is running, the container, tests,
   and service startup are stopped before recording. If any container cannot be confirmed as stopped, the task does not resume until that is confirmed.
-- Resume: if the status before the pause was waiting to run, the stopped step is run again.
+- Resume: if the status before the pause was waiting to run, the stopped step is run again. Resume is rejected for an Operation that has started, keeping the task paused.
 - Cancel: a task cannot be canceled while the Goal Guardian is judging. Cleanup proceeds in the following order, and the result (`done`, `skipped`, `failed`) for each target (`container`, `workspace`, `session`, `branch`,
   `pull_request`) is recorded in `TaskCancelled`.
   1. Stop runs answering questions and running containers.

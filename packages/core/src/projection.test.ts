@@ -1386,3 +1386,48 @@ describe("実装の工程の中で PR を作り、承認を待つ（PBI-110）",
     expect(task?.publishPending).toBeUndefined();
   });
 });
+
+describe("単発作業の二重開始をイベント再生でも拒否する", () => {
+  it("最初の外部作業が失敗してqueuedに戻っても二度目の開始イベントを拒否する", () => {
+    seq = 0;
+    const operation = {
+      via: "platform" as const,
+      name: "calendar",
+      target: "event-42",
+      change: "開始時刻を11時へ変更する",
+      verification: "更新後の開始時刻を取得して確認する",
+    };
+    const events = [
+      created("operation-task"),
+      ev("operation-task", {
+        type: "StepsChosen",
+        payload: { steps: ["operation"], plan: "operation", operation },
+      }),
+      ev("operation-task", {
+        type: "AgentRunStarted",
+        payload: { runId: "first", step: "operation", agentId: "a", authMode: "subscription" },
+      }),
+      ev("operation-task", {
+        type: "AgentRunFailed",
+        payload: {
+          runId: "first",
+          step: "operation",
+          agentId: "a",
+          reason: "error",
+          message: "応答を確認できない",
+        },
+      }),
+    ];
+    const failed = project(events).get("operation-task");
+    // queued・設定あり・実行中runなしを確認し、他の状態ガードによる拒否ではないことを保証する。
+    expect(failed?.status).toBe("queued");
+    expect(failed?.currentRunId).toBeUndefined();
+    expect(failed?.operation).toEqual(operation);
+    expect(failed?.operationAttempted).toBe(true);
+    const duplicate = ev("operation-task", {
+      type: "AgentRunStarted",
+      payload: { runId: "second", step: "operation", agentId: "a", authMode: "subscription" },
+    });
+    expect(() => project([...events, duplicate])).toThrow("operation was already attempted");
+  });
+});
