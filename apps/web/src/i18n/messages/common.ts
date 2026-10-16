@@ -1,6 +1,8 @@
 /** 画面の文言：共通（読み込み中・デーモンとの通信・actions の結果）。英語の用語は labels.ts の用語集に合わせる。 */
 const ja = {
   loading: "読み込み中…",
+  /** 補足（ツールチップ）の印の名前（PBI-117）。 */
+  hint: "補足",
   /** 取り直しで更新できない間に出す（PR #119 レビュー指摘）。 */
   live: {
     stale:
@@ -39,6 +41,7 @@ export type CommonMessages = typeof ja;
 
 const en: CommonMessages = {
   loading: "Loading…",
+  hint: "Details",
   live: {
     stale:
       "Cannot update right now (the daemon cannot be reached). This shows what was last fetched. It updates automatically when the daemon can be reached again.",

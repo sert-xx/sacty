@@ -10276,6 +10276,91 @@ describe("API", () => {
     activity.close();
   });
 
+  it("GET /api/dashboard は、対応待ちの時刻・費用・流量・品質・待ち行列の集計を返し、再起動しても同じ（PBI-118）", async () => {
+    type Summary = import("@sacty/core").DashboardSummary;
+    const activity = new SqliteActivityStore(dbPath);
+    const { service } = makeService(activity, [completed(20_000)], {
+      settings: new MemorySettingsStore({ maxParallelTasks: 2 }),
+    });
+    const app = createApp(service, token);
+    const summary = async () =>
+      (await (await app.request("/api/dashboard", { headers: auth })).json()) as Summary;
+    expect((await app.request("/api/dashboard")).status).toBe(401);
+    const task = service.createTask({ projectId: "default", title: "決済API" });
+    const created = await summary();
+    expect(Object.keys(created)).toEqual([
+      "timeZone",
+      "waitingSince",
+      "costs",
+      "flow",
+      "quality",
+      "queue",
+    ]);
+    expect(created.timeZone).toBe(Intl.DateTimeFormat().resolvedOptions().timeZone);
+    expect(created.waitingSince).toEqual({});
+    expect(created.costs.today).toEqual({ actualUsd: 0, estimatedUsd: 0 });
+    expect(created.queue).toEqual({ running: 0, queued: 1, max: 2 });
+    expect(created.flow.days7).toEqual({ completed: 0, cancelled: 0, medianLeadMs: null });
+    expect(created.quality.counts.changesRequested).toBe(0);
+
+    // 要求要件を提出して承認待ち：待ち始めは提出の記録の時刻。費用は今日の分に入る
+    await service.runNext(task.id);
+    const waiting = await summary();
+    const submitted = service.get(task.id)?.activity.find((e) => e.type === "StepSubmitted");
+    expect(waiting.waitingSince).toEqual({ [task.id]: submitted?.at });
+    const budget = service.get(task.id)?.task.budget;
+    expect(budget?.usedUsd).toBeGreaterThan(0);
+    expect(waiting.costs.today).toEqual(
+      budget?.estimated
+        ? { actualUsd: 0, estimatedUsd: budget.usedUsd }
+        : { actualUsd: budget?.usedUsd, estimatedUsd: 0 },
+    );
+    expect(waiting.costs.days7).toEqual(waiting.costs.today);
+    expect(waiting.queue).toEqual({ running: 0, queued: 0, max: 2 });
+
+    // 人が差し戻すと品質の信号に数え、提出し直すと待ち始めが新しい提出になる
+    service.requestChanges(task.id, {
+      step: "requirements",
+      submission: 1,
+      comments: ["受け入れ条件を足す"],
+    });
+    expect((await summary()).waitingSince).toEqual({});
+    expect((await summary()).quality.counts.changesRequested).toBe(1);
+    expect((await summary()).quality.reworkBySteps).toEqual({ requirements: 1 });
+
+    // 中止すると、対応待ちから消え、流量の中止に数える
+    await service.cancel(task.id);
+    const cancelled = await summary();
+    expect(cancelled.waitingSince).toEqual({});
+    expect(cancelled.flow.days7).toEqual({ completed: 0, cancelled: 1, medianLeadMs: null });
+    expect(cancelled.flow.days30.cancelled).toBe(1);
+
+    // 作業履歴から読み直しても（再起動）、同じ集計になる
+    activity.close();
+    const reopened = new SqliteActivityStore(dbPath);
+    const again = makeService(reopened, [], {
+      settings: new MemorySettingsStore({ maxParallelTasks: 2 }),
+    }).service;
+    expect(again.dashboard()).toEqual(cancelled);
+    reopened.close();
+  });
+
+  it("GET /api/dashboard は、消したプロジェクトのタスクを数えず、設定を読めなければ上限は既定値（PBI-118）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const projects = projectsWithAccount();
+    const settings = new MemorySettingsStore({});
+    const { service } = makeService(activity, [], { projects, settings });
+    service.createTask({ projectId: "default", title: "A" });
+    expect(service.dashboard().queue).toEqual({ running: 0, queued: 1, max: 3 });
+    settings.get = () => {
+      throw new Error("設定を読めません");
+    };
+    expect(service.dashboard().queue.max).toBe(3);
+    projects.all = () => [];
+    expect(service.dashboard().queue).toEqual({ running: 0, queued: 0, max: 3 });
+    activity.close();
+  });
+
   it("タスクを作ると、一覧と詳細（作業履歴つき）に現れる", async () => {
     const activity = new SqliteActivityStore(dbPath);
     const app = createApp(makeService(activity).service, token);

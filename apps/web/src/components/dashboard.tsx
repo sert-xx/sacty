@@ -2,12 +2,17 @@
 
 import { cn } from "cn";
 import Link from "next/link";
-import type { ReactNode } from "react";
+import { Fragment, type ReactNode, useEffect, useState } from "react";
 import { DaemonError } from "@/components/daemon-error";
+import { IntakeRunNow, IntakeStatusView } from "@/components/intake-status";
 import { StaleNotice } from "@/components/live-status";
 import { StatusLabelView } from "@/components/task-bits";
+import { Hint, WithHint } from "@/components/ui/hint";
 import { useMessages } from "@/i18n/client";
+import type { DashboardMessages } from "@/i18n/messages/dashboard";
 import type { DashboardData } from "@/lib/dashboard-data";
+import { FIX_ONCE_REASONS, REWORK_STEPS } from "@/lib/dashboard-rules";
+import { usd } from "@/lib/labels";
 import { taskPath } from "@/lib/paths";
 import { useLiveData } from "@/lib/use-live-data";
 
@@ -18,8 +23,39 @@ const FULL_ON_FOCUS =
 /** ダッシュボードのデータを取り直す先（PBI-114）。 */
 export const DASHBOARD_LIVE_URL = "/live/dashboard";
 
+/** 画面の時計を進める間隔（待っている時間の表示。PBI-118）。 */
+export const CLOCK_INTERVAL_MS = 60_000;
+
+/** 実行待ちが上限より多い状態が、これだけ続いたら目立たせる（PBI-118）。 */
+export const QUEUE_OVER_MS = 10 * 60_000;
+
 /**
- * ダッシュボード（PBI-114）。欄（カード）を並べる。画面をリロードせず、一定の間隔でデータだけを取り直す（PBI-108）。
+ * 待っている時間・期間の文（分・時間・日のどれか1つ。PBI-118）。1分未満は「1分未満」。
+ */
+export function durationText(ms: number, d: DashboardMessages["duration"]): string {
+  const minutes = Math.floor(Math.max(0, ms) / 60_000);
+  if (minutes < 1) return d.underMinute;
+  if (minutes < 60) return d.minutes(minutes);
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return d.hours(hours);
+  return d.days(Math.floor(hours / 24));
+}
+
+/**
+ * 画面の時計（1分ごとに進む）。待っている時間と、待ち行列の「続いている」の判定に使う。データに「今」を入れると取り直しの
+ * たびに版が変わるので、画面で持つ。
+ */
+function useClock(): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), CLOCK_INTERVAL_MS);
+    return () => clearInterval(id);
+  }, []);
+  return now;
+}
+
+/**
+ * ダッシュボード（PBI-114・PBI-118）。欄（カード）を並べる。画面をリロードせず、一定の間隔でデータだけを取り直す（PBI-108）。
  * 欄を足すときは、DashboardData に欄のデータを足し、ここに DashboardCard を足す。
  * initial が null（描いたときにデーモンに届かなかった）なら、届くまで error を出し、届いたら欄を出す。
  */
@@ -33,6 +69,7 @@ export function LiveDashboard({
   error?: string;
 }) {
   const { data, stale } = useLiveData(() => DASHBOARD_LIVE_URL, initial, initialVersion);
+  const now = useClock();
   return (
     <>
       <StaleNotice stale={stale} />
@@ -42,7 +79,14 @@ export function LiveDashboard({
         <>
           <NotificationProblems problems={data.notificationProblems ?? []} />
           <DashboardGrid>
+            <AttentionCard data={data} now={now} />
+            <PausedCard data={data} />
             <OpenTasksCard data={data} />
+            <CostsCard data={data} />
+            <QueueCard data={data} now={now} />
+            <IntakeCard data={data} />
+            <FlowCard data={data} />
+            <QualityCard data={data} />
           </DashboardGrid>
         </>
       )}
@@ -85,16 +129,18 @@ export function DashboardGrid({ children }: { children: ReactNode }) {
   );
 }
 
-/** ダッシュボードの欄（カード）。見出しと、見出しの横の補足を出す。 */
+/** ダッシュボードの欄（カード）。見出しと、見出しの横の短い事実（note）と、仕組みの補足（hint。PBI-117）を出す。 */
 export function DashboardCard({
   id,
   title,
   note,
+  hint,
   children,
 }: {
   id: string;
   title: ReactNode;
   note?: ReactNode;
+  hint?: ReactNode;
   children: ReactNode;
 }) {
   return (
@@ -105,9 +151,12 @@ export function DashboardCard({
     >
       {/* 狭い画面では、見出しを折り返さず、補足を次の行に回す */}
       <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5 px-5 pt-4 pb-3">
-        <h2 id={id} className="shrink-0 text-[15px] font-semibold">
-          {title}
-        </h2>
+        <span className="inline-flex shrink-0 items-center gap-1">
+          <h2 id={id} className="text-[15px] font-semibold">
+            {title}
+          </h2>
+          <Hint text={hint} />
+        </span>
         {note && <span className="text-[13px] text-muted-foreground">{note}</span>}
       </div>
       {children}
@@ -115,9 +164,220 @@ export function DashboardCard({
   );
 }
 
+/** 欄の中の空のときの文。 */
+function Empty({ children }: { children: ReactNode }) {
+  return <p className="px-5 pb-5 text-sm text-muted-foreground">{children}</p>;
+}
+
+/**
+ * 一覧の欄の一覧。1行は h-16（4rem）。5件分の高さ（20rem）を超えたら、欄の中でスクロールする。キーボードでもスクロール
+ * できるよう、フォーカスを受ける（取り直しでは同じ要素が残るので、スクロールの位置は消えない）。
+ */
+function ScrollList({
+  label,
+  testId,
+  children,
+}: {
+  label: string;
+  testId: string;
+  children: ReactNode;
+}) {
+  return (
+    <ul
+      aria-label={label}
+      data-testid={testId}
+      // biome-ignore lint/a11y/noNoninteractiveTabindex: スクロールする欄を、キーボードでもスクロールできるようにする
+      tabIndex={0}
+      className="max-h-80 overflow-y-auto border-t border-border outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    >
+      {children}
+    </ul>
+  );
+}
+
+/**
+ * 一覧の欄の1行。題（リンク）とプロジェクトの名前は1行に切り詰め、全文は、ホバーで title に、行にフォーカスがある間は
+ * 折り返して出す（同じ書き出しの項目を見分けられるように）。右側（aside）に状態などを出す。
+ */
+function TaskRow({
+  testId,
+  href,
+  title,
+  projectName,
+  aside,
+}: {
+  testId: string;
+  href: string;
+  title: string;
+  projectName: string;
+  aside?: ReactNode;
+}) {
+  const m = useMessages().dashboard.openTasks;
+  return (
+    <li
+      data-testid={testId}
+      className="group flex min-h-16 items-center gap-4 border-b border-border px-5 py-2 last:border-b-0 hover:bg-muted"
+    >
+      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <Link
+          href={href}
+          title={title}
+          className={cn("font-medium text-foreground hover:underline", FULL_ON_FOCUS)}
+        >
+          {title}
+        </Link>
+        <span title={projectName} className={cn("text-xs text-muted-foreground", FULL_ON_FOCUS)}>
+          <span className="sr-only">{m.project}</span>
+          {projectName}
+        </span>
+      </div>
+      {aside && <div className="flex shrink-0 flex-col items-end gap-0.5 text-sm">{aside}</div>}
+    </li>
+  );
+}
+
+/**
+ * あなたの出番（PBI-118）：人の判断を待っているタスクを、待っている時間が長い順に出す。題は、人が判断する場所（承認の画面か
+ * タスクの詳細）へのリンク。
+ */
+export function AttentionCard({ data, now }: { data: DashboardData; now: number }) {
+  const t = useMessages().dashboard;
+  const m = t.attention;
+  const rows = data.attention;
+  return (
+    <DashboardCard
+      id="attention"
+      title={m.title}
+      hint={m.hint}
+      note={
+        rows.length > 0 ? (
+          <span data-testid="attention-summary">{m.summary(rows.length)}</span>
+        ) : undefined
+      }
+    >
+      {rows.length === 0 ? (
+        <Empty>{m.empty}</Empty>
+      ) : (
+        <ScrollList label={m.list} testId="attention-list">
+          {rows.map((task) => (
+            <TaskRow
+              key={task.id}
+              testId={`attention-${task.id}`}
+              href={task.href}
+              title={task.title}
+              projectName={task.projectName}
+              aside={
+                <>
+                  <span className="sr-only">{t.openTasks.status}</span>
+                  <StatusLabelView text={task.status.text} tone={task.status.tone} />
+                  {/* 待っている時間は画面の時計で計算するので、サーバーと数秒ずれても描き直さない */}
+                  <span
+                    data-testid={`attention-waiting-${task.id}`}
+                    className="text-xs text-muted-foreground tabular-nums"
+                    suppressHydrationWarning
+                  >
+                    <span className="sr-only">{m.waiting}</span>
+                    {durationText(now - Date.parse(task.waitingSince), t.duration)}
+                  </span>
+                </>
+              }
+            />
+          ))}
+        </ScrollList>
+      )}
+    </DashboardCard>
+  );
+}
+
+/**
+ * 止まっているタスクの理由（PBI-118）：一時停止の理由ごとの件数。行を押すと、その理由のタスクが欄の中で広がる（details。
+ * 取り直しでも同じ要素が残るので、開いた状態は消えない）。利用上限・認証は、1か所直せばまとめて動くことが多いので目立たせる。
+ * 無ければ欄を小さく出す。
+ */
+export function PausedCard({ data }: { data: DashboardData }) {
+  const m = useMessages().dashboard.paused;
+  const groups = data.paused;
+  const total = groups.reduce((n, g) => n + g.tasks.length, 0);
+  return (
+    <DashboardCard
+      id="paused"
+      title={m.title}
+      hint={m.hint}
+      note={total > 0 ? <span data-testid="paused-summary">{m.summary(total)}</span> : undefined}
+    >
+      {groups.length === 0 ? (
+        <Empty>{m.empty}</Empty>
+      ) : (
+        <ul data-testid="paused-reasons" className="border-t border-border">
+          {groups.map((group) => {
+            const fixOnce = FIX_ONCE_REASONS.includes(group.reason);
+            return (
+              <li
+                key={group.reason}
+                data-testid={`paused-${group.reason}`}
+                className="border-b border-border last:border-b-0"
+              >
+                <details className="group/reason">
+                  <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-5 py-3 text-sm hover:bg-muted [&::-webkit-details-marker]:hidden">
+                    <span className="flex min-w-0 flex-wrap items-center gap-2">
+                      <span className={cn("font-medium", fixOnce && "text-warn")}>
+                        {m.reasons[group.reason]}
+                      </span>
+                      {fixOnce && (
+                        <span
+                          data-testid={`paused-fix-once-${group.reason}`}
+                          className="rounded-full border border-warn-line bg-warn-soft px-2 py-0.5 text-xs text-warn"
+                        >
+                          {m.fixOnce}
+                        </span>
+                      )}
+                    </span>
+                    <span
+                      data-testid={`paused-count-${group.reason}`}
+                      className={cn(
+                        "shrink-0 font-semibold tabular-nums underline decoration-dotted underline-offset-4",
+                        fixOnce ? "text-warn" : "text-foreground",
+                      )}
+                    >
+                      {m.count(group.tasks.length)}
+                    </span>
+                  </summary>
+                  <ul className="flex flex-col gap-2 px-5 pb-3">
+                    {group.tasks.map((task) => (
+                      <li
+                        key={task.id}
+                        data-testid={`paused-task-${task.id}`}
+                        className="group flex min-w-0 flex-col"
+                      >
+                        <Link
+                          href={taskPath(task.id)}
+                          title={task.title}
+                          className={cn("text-sm font-medium hover:underline", FULL_ON_FOCUS)}
+                        >
+                          {task.title}
+                        </Link>
+                        <span
+                          title={task.projectName}
+                          className={cn("text-xs text-muted-foreground", FULL_ON_FOCUS)}
+                        >
+                          {task.projectName}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </DashboardCard>
+  );
+}
+
 /**
  * すべてのプロジェクトの、終わっていないタスク（PBI-114）。件数の上限は無く、欄の高さは5件分。それより多ければ欄の中で
- * スクロールする（取り直しでは同じ要素が残るので、スクロールの位置は消えない）。
+ * スクロールする。
  */
 export function OpenTasksCard({ data }: { data: DashboardData }) {
   const m = useMessages().dashboard.openTasks;
@@ -133,55 +393,308 @@ export function OpenTasksCard({ data }: { data: DashboardData }) {
       }
     >
       {data.projects === 0 ? (
-        <p className="px-5 pb-5 text-sm text-muted-foreground">
+        <Empty>
           {m.noProjects}{" "}
           <Link href="/projects" className="text-accent-foreground underline">
             {m.createProject}
           </Link>
-        </p>
+        </Empty>
       ) : rows.length === 0 ? (
-        <p className="px-5 pb-5 text-sm text-muted-foreground">{m.empty}</p>
+        <Empty>{m.empty}</Empty>
       ) : (
-        // 1行は h-16（4rem）。5件分の高さ（20rem）を超えたら、欄の中でスクロールする。キーボードでもスクロールできるよう、
-        // フォーカスを受ける。題とプロジェクトの名前は1行に切り詰め、全文は、ホバーで title に、行にフォーカスがある間は
-        // 折り返して出す（同じ書き出しの項目を見分けられるように）
-        <ul
-          aria-label={m.list}
-          data-testid="open-tasks-list"
-          // biome-ignore lint/a11y/noNoninteractiveTabindex: スクロールする欄を、キーボードでもスクロールできるようにする
-          tabIndex={0}
-          className="max-h-80 overflow-y-auto border-t border-border outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        >
+        <ScrollList label={m.list} testId="open-tasks-list">
           {rows.map((task) => (
-            <li
+            <TaskRow
               key={task.id}
-              data-testid={`open-task-${task.id}`}
-              className="group flex min-h-16 items-center gap-4 border-b border-border px-5 py-2 last:border-b-0 hover:bg-muted"
-            >
-              <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-                <Link
-                  href={taskPath(task.id)}
-                  title={task.title}
-                  className={cn("font-medium text-foreground hover:underline", FULL_ON_FOCUS)}
-                >
-                  {task.title}
-                </Link>
-                <span
-                  title={task.projectName}
-                  className={cn("text-xs text-muted-foreground", FULL_ON_FOCUS)}
-                >
-                  <span className="sr-only">{m.project}</span>
-                  {task.projectName}
-                </span>
-              </div>
-              <div className="shrink-0 text-sm">
-                <span className="sr-only">{m.status}</span>
-                <StatusLabelView text={task.status.text} tone={task.status.tone} />
-              </div>
-            </li>
+              testId={`open-task-${task.id}`}
+              href={taskPath(task.id)}
+              title={task.title}
+              projectName={task.projectName}
+              aside={
+                <>
+                  <span className="sr-only">{m.status}</span>
+                  <StatusLabelView text={task.status.text} tone={task.status.tone} />
+                </>
+              }
+            />
           ))}
-        </ul>
+        </ScrollList>
       )}
+    </DashboardCard>
+  );
+}
+
+/**
+ * 費用と予算（PBI-118）：今日と直近7日の費用（実請求と概算を分ける。概算が無ければ概算の行は出さない）と、予算に近いタスク
+ * （80% 以上か上限に達した。終わっていないタスクだけ）。
+ */
+export function CostsCard({ data }: { data: DashboardData }) {
+  const m = useMessages().dashboard.costs;
+  const { today, days7, nearBudget, timeZone } = data.costs;
+  const hasEstimated = today.estimatedUsd > 0 || days7.estimatedUsd > 0;
+  const cell = "px-2 py-1 text-right whitespace-nowrap";
+  return (
+    <DashboardCard id="costs" title={m.title} hint={m.hint(timeZone)}>
+      <div className="px-3 pb-3">
+        <table aria-label={m.table} className="text-sm tabular-nums">
+          <thead>
+            <tr className="text-muted-foreground">
+              <td />
+              <th scope="col" className={cn(cell, "font-normal")}>
+                {m.today}
+              </th>
+              <th scope="col" className={cn(cell, "font-normal")}>
+                {m.days7}
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <th
+                scope="row"
+                className="px-2 py-1 text-left font-normal whitespace-nowrap text-muted-foreground"
+              >
+                {m.actual}
+              </th>
+              <td data-testid="cost-today-actual" className={cn(cell, "font-semibold")}>
+                {usd(today.actualUsd)}
+              </td>
+              <td data-testid="cost-days7-actual" className={cn(cell, "font-semibold")}>
+                {usd(days7.actualUsd)}
+              </td>
+            </tr>
+            {hasEstimated && (
+              <tr data-testid="cost-estimated">
+                <th
+                  scope="row"
+                  className="px-2 py-1 text-left font-normal whitespace-nowrap text-muted-foreground"
+                >
+                  <WithHint hint={m.estimatedHint}>{m.estimated}</WithHint>
+                </th>
+                <td data-testid="cost-today-estimated" className={cn(cell, "font-semibold")}>
+                  {usd(today.estimatedUsd)}
+                </td>
+                <td data-testid="cost-days7-estimated" className={cn(cell, "font-semibold")}>
+                  {usd(days7.estimatedUsd)}
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+      <h3 className="px-5 pb-2 text-sm font-medium">
+        <WithHint hint={m.nearBudgetHint}>{m.nearBudget}</WithHint>
+      </h3>
+      {nearBudget.length === 0 ? (
+        <Empty>{m.nearBudgetEmpty}</Empty>
+      ) : (
+        <ScrollList label={m.nearBudgetList} testId="near-budget-list">
+          {nearBudget.map((task) => (
+            <TaskRow
+              key={task.id}
+              testId={`near-budget-${task.id}`}
+              href={taskPath(task.id)}
+              title={task.title}
+              projectName={task.projectName}
+              aside={
+                <>
+                  <span
+                    data-testid={`near-budget-used-${task.id}`}
+                    className={cn("font-mono text-xs tabular-nums", task.exceeded && "text-warn")}
+                  >
+                    <span className="sr-only">{m.used}</span>
+                    {usd(task.usedUsd)} / {usd(task.capUsd)}
+                  </span>
+                  <span className="flex gap-1">
+                    {task.estimated && (
+                      <span className="rounded-full border border-input px-2 py-0.5 text-xs text-muted-foreground">
+                        {m.estimated}
+                      </span>
+                    )}
+                    {task.exceeded && (
+                      <span
+                        data-testid={`near-budget-exceeded-${task.id}`}
+                        className="rounded-full border border-warn-line bg-warn-soft px-2 py-0.5 text-xs text-warn"
+                      >
+                        {m.exceeded}
+                      </span>
+                    )}
+                  </span>
+                </>
+              }
+            />
+          ))}
+        </ScrollList>
+      )}
+    </DashboardCard>
+  );
+}
+
+/**
+ * 工程の待ち行列（PBI-118）：実行中の件数 / 同時に実行する数の上限と、実行待ちの件数。実行待ちが上限より多い状態が
+ * QUEUE_OVER_MS 続いたら目立たせ、sacty の設定へのリンクを添える。
+ */
+export function QueueCard({ data, now }: { data: DashboardData; now: number }) {
+  const m = useMessages().dashboard.queue;
+  const { running, queued, max, overSince } = data.queue;
+  const over = overSince !== undefined && now - Date.parse(overSince) >= QUEUE_OVER_MS;
+  const figure = "text-2xl font-semibold tabular-nums";
+  return (
+    <DashboardCard id="queue" title={m.title} hint={m.hint}>
+      <dl className="flex flex-wrap gap-x-8 gap-y-2 px-5 pb-5 text-sm">
+        <div className="flex flex-col">
+          <dt className="text-muted-foreground">{m.running}</dt>
+          <dd data-testid="queue-running" className={figure}>
+            {m.ratio(running, max)}
+          </dd>
+        </div>
+        <div className="flex flex-col">
+          <dt className="text-muted-foreground">{m.queued}</dt>
+          <dd data-testid="queue-queued" className={cn(figure, over && "text-warn")}>
+            {queued}
+          </dd>
+        </div>
+      </dl>
+      {over && (
+        <p
+          role="status"
+          data-testid="queue-over"
+          className="mx-5 mb-5 rounded-lg border border-warn-line bg-warn-soft px-3 py-2 text-sm text-warn"
+        >
+          {m.over}{" "}
+          <Link href="/settings" className="underline">
+            {m.openSettings}
+          </Link>
+        </p>
+      )}
+    </DashboardCard>
+  );
+}
+
+/** 取り込みの状況（PBI-118）：プロジェクトの一覧と同じ表示と、「今すぐ取り込む」。 */
+export function IntakeCard({ data }: { data: DashboardData }) {
+  const m = useMessages().dashboard.intake;
+  return (
+    <DashboardCard id="intake-status" title={m.title} hint={m.hint}>
+      <div className="flex flex-col gap-1 px-5 pb-4 text-sm">
+        <IntakeStatusView intake={data.intake} />
+      </div>
+      {data.intake && (
+        <div className="px-5 pb-5">
+          <IntakeRunNow intake={data.intake} />
+        </div>
+      )}
+    </DashboardCard>
+  );
+}
+
+/** 流量（PBI-118）：直近7日・30日の完了・中止の件数と、作成から完了までの時間の中央値。 */
+export function FlowCard({ data }: { data: DashboardData }) {
+  const t = useMessages().dashboard;
+  const m = t.flow;
+  const cell = "px-2 py-1 text-right whitespace-nowrap";
+  const lead = (ms: number | null) => (ms === null ? m.none : durationText(ms, t.duration));
+  const periods = [
+    ["days7", m.days7, data.flow.days7],
+    ["days30", m.days30, data.flow.days30],
+  ] as const;
+  return (
+    <DashboardCard id="flow" title={m.title} hint={m.hint}>
+      <div className="px-3 pb-5">
+        <table aria-label={m.table} className="w-full text-sm tabular-nums">
+          <thead>
+            <tr className="text-muted-foreground">
+              <th scope="col" className="px-2 py-1 text-left font-normal whitespace-nowrap">
+                {m.period}
+              </th>
+              <th scope="col" className={cn(cell, "font-normal")}>
+                {m.completed}
+              </th>
+              <th scope="col" className={cn(cell, "font-normal")}>
+                {m.cancelled}
+              </th>
+              {/* 狭い画面では、この見出しだけ折り返す（数字の列は折り返さない） */}
+              <th scope="col" className="px-2 py-1 text-right font-normal">
+                <WithHint hint={m.leadHint}>{m.lead}</WithHint>
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {periods.map(([key, label, sum]) => (
+              <tr key={key} data-testid={`flow-${key}`}>
+                <th
+                  scope="row"
+                  className="px-2 py-1 text-left font-normal whitespace-nowrap text-muted-foreground"
+                >
+                  {label}
+                </th>
+                <td data-testid={`flow-${key}-completed`} className={cn(cell, "font-semibold")}>
+                  {sum.completed}
+                </td>
+                <td data-testid={`flow-${key}-cancelled`} className={cn(cell, "font-semibold")}>
+                  {sum.cancelled}
+                </td>
+                <td data-testid={`flow-${key}-lead`} className={cn(cell, "font-semibold")}>
+                  {lead(sum.medianLeadMs)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </DashboardCard>
+  );
+}
+
+/**
+ * 品質の信号（PBI-118）：直近30日の、人の差し戻し・PR の指摘の差し戻し・ゴールガーディアンの見逃し・統合レビューの不合格・
+ * 監視で作った修正のタスクの回数と、工程ごとの差し戻しの回数（要求要件・設計・実装は常に出し、ほかの工程は回数があるときだけ）。
+ */
+export function QualityCard({ data }: { data: DashboardData }) {
+  const all = useMessages();
+  const m = all.dashboard.quality;
+  const { counts, reworkBySteps } = data.quality;
+  const signals = [
+    ["changesRequested", m.changesRequested, m.changesRequestedHint],
+    ["pullRequestRework", m.pullRequestRework, m.pullRequestReworkHint],
+    ["guardianMissed", m.guardianMissed, m.guardianMissedHint],
+    ["integrationFailed", m.integrationFailed, m.integrationFailedHint],
+    ["fixTask", m.fixTask, m.fixTaskHint],
+  ] as const;
+  const steps = [
+    ...REWORK_STEPS,
+    ...(Object.keys(reworkBySteps) as (keyof typeof reworkBySteps)[]).filter(
+      (step) => !REWORK_STEPS.includes(step) && (reworkBySteps[step] ?? 0) > 0,
+    ),
+  ];
+  const row = "grid grid-cols-[1fr_auto] items-baseline gap-x-4 gap-y-1 text-sm";
+  return (
+    <DashboardCard id="quality" title={m.title} hint={m.hint}>
+      <dl aria-label={m.counts} className={cn(row, "px-5 pb-4")}>
+        {signals.map(([key, label, hint]) => (
+          <Fragment key={key}>
+            <dt className="text-muted-foreground">
+              <WithHint hint={hint}>{label}</WithHint>
+            </dt>
+            <dd data-testid={`quality-${key}`} className="text-right font-semibold tabular-nums">
+              {m.times(counts[key])}
+            </dd>
+          </Fragment>
+        ))}
+      </dl>
+      <h3 className="px-5 pb-1 text-sm font-medium">
+        <WithHint hint={m.byStepsHint}>{m.bySteps}</WithHint>
+      </h3>
+      <dl className={cn(row, "px-5 pb-5")}>
+        {steps.map((step) => (
+          <Fragment key={step}>
+            <dt className="text-muted-foreground">{all.labels.step[step]}</dt>
+            <dd data-testid={`rework-${step}`} className="text-right font-semibold tabular-nums">
+              {m.times(reworkBySteps[step] ?? 0)}
+            </dd>
+          </Fragment>
+        ))}
+      </dl>
     </DashboardCard>
   );
 }

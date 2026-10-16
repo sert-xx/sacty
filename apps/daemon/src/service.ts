@@ -27,6 +27,8 @@ import {
   computeCostUsd,
   type DaemonMessage,
   type DaemonText,
+  DashboardStats,
+  type DashboardSummary,
   DEFAULT_BUDGET_USD,
   DEFAULT_MAX_PARALLEL_TASKS,
   DEPLOYMENT_CI_GRACE_MS,
@@ -591,8 +593,16 @@ export class TaskService {
    */
   private readonly ciSettled = new Map<string, string>();
 
+  /** ダッシュボードの集計の元（作業履歴を畳み込んで持つ。PBI-118）。 */
+  private readonly dashboardStats = new DashboardStats();
+  /** 実行待ちが上限より多い状態の始まり（ダッシュボードの待ち行列の欄。メモリーだけに持つ）。 */
+  private queueOverSince: number | undefined;
+
   constructor(private readonly deps: ServiceDeps) {
-    this.tasks = project(deps.activity.all());
+    // 作業履歴を読むのと同じ1回の走査で、ダッシュボードの集計も作る（PBI-118）
+    this.tasks = project(deps.activity.all(), (event, before, after) =>
+      this.dashboardStats.add(event, before, after),
+    );
   }
 
   list(): Task[] {
@@ -2565,6 +2575,29 @@ export class TaskService {
   }
 
   /**
+   * ダッシュボードの集計（PBI-118）。畳み込んで持っている記録と今のタスクから作るので、作業履歴やタスクの全件を読み直さない。
+   * 消したプロジェクトのタスクは数えない。期間の境は、このマシンのローカルの日付。設定を読めなければ、上限は既定値。
+   */
+  dashboard(): DashboardSummary {
+    let maxParallel = DEFAULT_MAX_PARALLEL_TASKS;
+    try {
+      maxParallel = this.maxParallelTasks();
+    } catch {
+      // 設定の問題は status() で画面に出す
+    }
+    const summary = this.dashboardStats.summary({
+      now: this.now(),
+      timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      projects: new Set(this.deps.projects.all().map((p) => p.id)),
+      tasks: this.tasks.values(),
+      maxParallel,
+      ...(this.queueOverSince !== undefined ? { overSince: this.queueOverSince } : {}),
+    });
+    this.queueOverSince = summary.queue.overSince ? Date.parse(summary.queue.overSince) : undefined;
+    return summary;
+  }
+
+  /**
    * sacty 全体の設定を変える。取り込むラベルが変わると、取り込みは先頭から読み直す。取り込むラベルとレビュー用のラベルは
    * 同じ名前でもよい（Issue と PR は検索の条件で分かれる。PBI-104）。
    */
@@ -3217,7 +3250,10 @@ export class TaskService {
       events,
     });
     for (const event of written) {
+      const previous = this.tasks.get(event.taskId);
       this.tasks = applyEvent(this.tasks, event);
+      const applied = this.tasks.get(event.taskId);
+      if (applied) this.dashboardStats.add(event, previous, applied);
     }
     const updated = this.tasks.get(task.id);
     if (!updated) throw new Error("task is missing from the projection");

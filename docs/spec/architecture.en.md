@@ -39,7 +39,7 @@ Main APIs (`apps/daemon/src/server.ts`):
 
 | Kind | Path |
 | --- | --- |
-| Status | `GET /api/health`, `GET /api/status`, `GET /api/github/accounts` |
+| Status | `GET /api/health`, `GET /api/status`, `GET /api/dashboard`, `GET /api/github/accounts` |
 | Tasks | `GET/POST /api/tasks` (`?open=1` on `GET` returns only tasks that are not finished), `GET /api/tasks/:id`, `POST /api/tasks/:id/{approve,request-changes,pause,resume,cancel,repository,questions,rereview}`, `GET /api/tasks/:id/cleanup-plan`, `POST /api/tasks/:id/remarks/:remarkId/void`, `POST /api/tasks/:id/proposals/:proposalId/decide`, `POST /api/tasks/:id/exports/:step/retry` |
 | Run records | `GET /api/tasks/:id/runs/:runId/log`, `…/files/:file`, `…/agent-files`, `…/agent-files/raw` |
 | Projects | `GET/POST /api/projects`, `GET/PUT /api/projects/:id`, `GET /api/projects/:id/{repositories,platforms,export}`, `GET/POST /api/projects/:id/context-preview`, `POST /api/projects/import` |
@@ -66,18 +66,60 @@ Code: `apps/daemon/src/server.ts` (`createApp`, `handleError`), `apps/web/src/li
   task list of the task's project (`/projects/current/tasks` before the task is read and while the daemon is unreachable).
 - The project of a project screen is decided by the ID in the URL. An ID that is not in the daemon's project list is 404.
 - The dashboard lays out sections (cards). They sit side by side when there is room and stack otherwise (a single section takes the full
-  width). The only section for now is "Open tasks".
-  - It shows the tasks of all projects except completed and cancelled ones (including awaiting approval, paused, and escalated; those whose
-    `statusTone` is not `completed` or `cancelled`), most recently updated first (`updatedAt`, newest first). There is no limit on the count.
-    Tasks of deleted projects are not shown.
-  - Only tasks that are not finished are fetched from the daemon (`GET /api/tasks?open=1`; finished tasks are `isFinished`), so the deliverables
-    of completed tasks are not carried every 3 seconds (all tasks including completed ones can be tens to hundreds of MB per fetch, depending on
-    the size of the deliverables). The header's notices (tasks that need you) are fetched the same way.
-  - Each row shows the title (a link to the task details), the project name, and the state. A row is at least 4rem high and the section is 5 rows
-    high (20rem); with more rows, the section scrolls inside (the section takes focus so it can also be scrolled with the keyboard). The title and
-    the project name are cut to one line; the full text is shown on hover (`title`) and wrapped while the row has focus. The count note
-    ("All projects · N tasks") is built from per-language wording.
-  - When there are no projects or no open tasks, it says so.
+  width). The order is: Needs you → Why tasks are paused → Open tasks → Cost and budget → Step queue → Intake → Throughput → Quality signals.
+  Every section spans all projects; tasks of deleted projects are neither shown nor counted.
+  - The data comes through three routes: the open tasks (`GET /api/tasks?open=1`; finished tasks are `isFinished`. This avoids carrying the
+    deliverables of completed tasks every 3 seconds (all tasks including completed ones can be tens to hundreds of MB per fetch, depending on
+    the size of the deliverables). The header's notices (tasks that need you) are fetched the same way), the aggregates that need the activity
+    log (`GET /api/dashboard`; see [Dashboard aggregates](#dashboard-aggregates) below), and the intake status
+    (`intake` of `GET /api/status`). Neither all tasks nor the activity log is carried every 3 seconds.
+  - In the list sections (Needs you, Open tasks, Tasks near their budget), a row is at least 4rem high and the section is 5 rows high (20rem);
+    with more rows, the section scrolls inside (the section takes focus so it can also be scrolled with the keyboard). The title and the project
+    name are cut to one line; the full text is shown on hover (`title`) and wrapped while the row has focus. Count notes are built from per-language wording.
+  - Mechanisms, the definitions of the numbers, and the period boundaries go into the hint next to the heading (`Hint`), not into the body.
+  - Waiting times and the "has persisted" decision are computed with the screen's clock (advances every minute; `CLOCK_INTERVAL_MS`). The data
+    does not carry "now" (the version would change on every refetch).
+  - Needs you: the open tasks whose state display is a person's turn (`statusTone` is `person`: awaiting approval, paused, escalated;
+    excluding tasks awaiting approval while the goal guardian is judging PR feedback), longest wait first. Each row shows the title (a link to
+    where the person decides; `personAction`), the project, the state, and the waiting time. The wait starts at the latest activity record
+    that put the task in that state (`StepSubmitted`, `TaskPaused`, `TaskEscalated`, or `ReproductionChecked` when not reproduced; the aggregate's `waitingSince`), or `updatedAt` when
+    there is no record. The waiting time is one of minutes, hours, or days (rounded down; "under a minute" below one minute; `durationText`).
+    When there is none: "Nothing needs you right now."
+  - Why tasks are paused: paused tasks (`paused`) counted by reason (`pausedReason`; `manual` when missing). The order is usage limit,
+    authentication, budget cap, error, verification failed, paused by a person, subtask cancelled (`PAUSE_REASON_ORDER`); reasons with 0
+    tasks are not shown. Usage limit and authentication (`FIX_ONCE_REASONS`) are highlighted because one fix usually resumes all of them.
+    Each row is a `details`; opening it expands that reason's tasks (title linking to the task details, project) inside the section (the
+    same element survives a refetch, so the open state is kept). When there is none: "No tasks are paused."
+  - Open tasks: the tasks except completed and cancelled ones (including awaiting approval, paused, and escalated; those whose `statusTone`
+    is not `completed` or `cancelled`), most recently updated first (`updatedAt`, newest first). There is no limit on the count. Each row
+    shows the title (a link to the task details), the project name, and the state. When there are no projects or no open tasks, it says so.
+  - Cost and budget: the cost for today and for the last 7 days including today (the aggregate's `costs`; including completed and cancelled
+    tasks). Billed cost (not `estimated`) and estimates (converted values such as a subscription) are shown separately; the estimate row
+    appears only when either period has an estimate. Tasks near their budget are the open tasks whose used amount is 80% (`BUDGET_WARN_RATIO`)
+    or more of the cap (including those that reached it), largest ratio first, with used / cap, the estimate mark, and the cap-reached mark
+    (`nearBudgetRows`).
+  - Step queue: the number of running tasks (`running`) / the parallel limit (the sacty setting `maxParallelTasks`; the default when it is
+    not set or cannot be read) and the number of waiting tasks (`queued`). When more tasks than the limit have been waiting for 10 minutes
+    (`QUEUE_OVER_MS`), it is highlighted with a link to the sacty settings. The start of "has persisted" (`overSince`) is decided each time the
+    daemon returns the aggregate and is kept in memory only (counted again after a restart).
+  - Intake: the same display as the project list (`IntakeStatusView`: the last intake per kind, how many tasks it created, what could not be
+    imported; when intake is not set, off, or the settings cannot be read, that fact with a link to the sacty settings) and "Run intake now"
+    (`runIntakeAction`; not shown when the settings file cannot be read).
+  - Throughput: the completed and cancelled counts for the last 7 and 30 days including today, and the median time from creation
+    (`createdAt`) to completion for the tasks completed in that period ("—" when none). The finish time is the activity record that finished
+    the task (`isFinished` went from false to true). A task that becomes unfinished again is not counted; when it finishes again, the new
+    time counts.
+  - Quality signals: counts for the last 30 days including today. Changes requested by a person (`ChangesRequested`), rework from PR
+    feedback (`ReworkJudged`), goal guardian misses (`GuardianMissed`), integration review failures (`IntegrationReviewed` with `passed`
+    false), and fix tasks from the post-merge watch (`DeploymentFixRegistered`). Rework by step counts changes requested by a person and
+    rework from PR feedback by the step whose deliverable was sent back (`step` of `ChangesRequested`; for PR feedback the rework target
+    `target`, or the step at the approval gate of that PR when missing); requirements, design, and implement (`REWORK_STEPS`) are always shown, other steps only when they
+    have a count.
+  - Period boundaries follow the local date of the machine running sacty (the daemon), not the UI language (today = from 0:00 of that day;
+    last 7 days = 7 days including today; last 30 days = 30 days including today). The time zone is passed to the UI as the aggregate's
+    `timeZone` and shown in the hint of the cost section.
+  - Empty states: when there are no projects, nothing matches, or nothing is configured, each section says so. When the daemon cannot be
+    reached, the sections are not shown and the error is shown instead (the sections appear once it can be reached).
   - To add a section, add its data to `DashboardData` (`loadDashboard`) and add a `DashboardCard` to `LiveDashboard` (one refetch per screen).
 - Above the sections, the reason Slack notifications could not be sent (the daemon warning `notify.failed`; `notificationProblems`) is shown with a link to the sacty settings
   (nothing when there is none). It is fetched again together with the sections.
@@ -85,7 +127,27 @@ Code: `apps/daemon/src/server.ts` (`createApp`, `handleError`), `apps/web/src/li
 Code: `apps/web/src/lib/paths.ts`, `apps/web/src/app/page.tsx`, `apps/web/src/app/dashboard/page.tsx`,
 `apps/web/src/app/projects/[id]/page.tsx`, `apps/web/src/app/projects/[id]/tasks/page.tsx`, `apps/web/src/app/projects/[id]/settings/page.tsx`,
 `apps/web/src/app/projects/current/[[...view]]/route.ts`, `apps/web/src/app/tasks/[id]/page.tsx` (`Breadcrumb`),
-`packages/core/src/projection.ts` (`isFinished`), `apps/daemon/src/server.ts` (`createApp`), `apps/web/src/lib/dashboard-data.ts` (`loadDashboard`, `isOpenTask`, `openTaskRows`), `apps/web/src/components/dashboard.tsx` (`LiveDashboard`, `DashboardGrid`, `DashboardCard`, `OpenTasksCard`)
+`packages/core/src/projection.ts` (`isFinished`), `apps/daemon/src/server.ts` (`createApp`), `apps/web/src/lib/dashboard-data.ts` (`loadDashboard`, `isOpenTask`, `openTaskRows`, `attentionRows`, `pausedGroups`, `nearBudgetRows`), `apps/web/src/components/dashboard.tsx` (`LiveDashboard`, `DashboardGrid`, `DashboardCard`, `AttentionCard`, `PausedCard`, `OpenTasksCard`, `CostsCard`, `QueueCard`, `IntakeCard`, `FlowCard`, `QualityCard`, `durationText`), `apps/web/src/components/intake-status.tsx` (`IntakeStatusView`, `IntakeRunNow`), `apps/web/src/lib/dashboard-rules.ts` (`PAUSE_REASON_ORDER`, `FIX_ONCE_REASONS`, `REWORK_STEPS`), `apps/web/src/lib/labels.ts` (`statusTone`, `personAction`)
+
+## Dashboard aggregates
+
+The aggregates that need the activity log (waiting times, cost, throughput, quality, queue) are returned by the daemon at `GET /api/dashboard` (`DashboardSummary`).
+Even though the UI refetches every 3 seconds, neither all tasks nor the activity log is read again.
+
+- At startup, in the same single pass that reads the activity log to restore the state, the daemon folds each event into `DashboardStats` (the
+  `applied` callback of `project`). When appending to the activity log, the applied events are folded in too.
+- What it keeps: per task, the time of the latest record that made it wait for a person (`StepSubmitted`, `TaskPaused`, `TaskEscalated`, or `ReproductionChecked` when not reproduced). For events
+  that carry a cost (`CHARGED_EVENT_TYPES`; zero costs are not kept), the time, the cost, and whether it is an estimate. The time a task finished (the
+  event where `isFinished` went from false to true; removed when the task becomes unfinished again) and its time since creation. The time, kind, and step of
+  quality-signal events. Records older than 32 days (`KEEP_DAYS`) are dropped when aggregating (the 30-day sections plus a margin for the date boundary).
+- When aggregating, the IDs of the existing projects and the current tasks are passed in; records of tasks of deleted projects are not counted (they count again if the project comes back).
+- What it returns: `timeZone`, `waitingSince` (only tasks waiting for a person), `costs` (`actualUsd` and `estimatedUsd` for `today` and `days7`, and the period
+  starts `since`), `flow` (`completed`, `cancelled`, `medianLeadMs` for `days7` and `days30`, and `since`), `quality` (`since`, `counts`,
+  `reworkBySteps`), `queue` (`running`, `queued`, `max`, `overSince`). "Now" is not returned (the UI computes with its own clock).
+- Period boundaries follow the local date of the daemon's machine (`localDayStart`). Records with a future time are not excluded (only the daemon's clock writes them).
+  The median (`median`) of an even count is the mean of the middle two.
+
+Code: `packages/core/src/dashboard.ts` (`DashboardStats`, `localDayStart`, `median`), `packages/core/src/projection.ts` (`project`), `apps/daemon/src/service.ts` (`dashboard`), `apps/daemon/src/server.ts` (`createApp`), `apps/web/src/lib/daemon.ts` (`getDashboardSummary`)
 
 ## Web UI header and side menu (the displayed project and notices)
 
@@ -130,7 +192,7 @@ only the data at a fixed interval, and only the parts that changed are reflected
 
   | Route | Returns |
   | --- | --- |
-  | `GET /live/dashboard` | The data of the dashboard's sections (open tasks and the reason notifications could not be sent. `loadDashboard`) |
+  | `GET /live/dashboard` | The data of the dashboard's sections (needs you, why tasks are paused, open tasks, cost and budget, step queue, intake, throughput, quality signals, and the reason notifications could not be sent. `loadDashboard`) |
   | `GET /live/tasks?project=<ID>` | The rows of the task list of the URL's project and the cards of tasks that need a person (only what is shown. `loadTaskList`). `{ missing: true }` if the project does not exist or the ID has the wrong form |
   | `GET /live/tasks/<ID>` | What the task details show (the task, the activity, the parent, the subtasks, what to clean up, the image choices, and so on. `loadTaskDetail`) |
   | `GET /live/header?current=<ID>` | The header's project switcher (the counts that need you) and notices (`loadHeaderData`) |
