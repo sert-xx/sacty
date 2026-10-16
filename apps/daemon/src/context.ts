@@ -16,7 +16,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, relative } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { code, type DaemonText, issueMessage, message } from "@sacty/core";
 import { parse as parseToml, stringify as stringifyToml } from "smol-toml";
@@ -565,10 +565,33 @@ const UNION_SETTINGS: Record<keyof AgentSettings, (path: string[]) => boolean> =
 };
 
 /** Codex のカスタムエージェントの定義（TOML）の name。読めない・無ければ undefined。 */
-function codexRoleName(path: string): string | undefined {
+/** Codex のカスタムエージェントの定義として読む大きさの上限（バイト。PR #129 再レビュー指摘）。 */
+const CODEX_ROLE_FILE_MAX_BYTES = 256 * 1024;
+
+/**
+ * Codex のカスタムエージェントの定義（TOML）の name（前後の空白を除く。Codex 0.160.0 と同じく trim して比べる）。
+ * root（層のエージェントの設定のディレクトリ）の中の、シンボリックリンクでない通常のファイルだけを読む。root の外・
+ * リンク・通常でないファイル（デバイス・FIFO など）・大きすぎるもの・読めないもの・空の名前は undefined
+ * （PR #129 再レビュー指摘）。
+ */
+function codexRoleName(root: string, rel: string): string | undefined {
+  if (isAbsolute(rel)) return undefined;
+  const path = resolve(root, rel);
+  const inside = relative(resolve(root), path);
+  if (inside === "" || inside.startsWith("..") || isAbsolute(inside)) return undefined;
   try {
+    // 途中のディレクトリも含めて、リンクを通らないことを確かめる
+    let at = resolve(root);
+    for (const part of inside.split(/[\\/]/)) {
+      at = join(at, part);
+      if (lstatSync(at).isSymbolicLink()) return undefined;
+    }
+    const stat = lstatSync(path);
+    if (!stat.isFile() || stat.size > CODEX_ROLE_FILE_MAX_BYTES) return undefined;
     const parsed = parseToml(readFileSync(path, "utf8"));
-    return isPlainObject(parsed) && typeof parsed.name === "string" ? parsed.name : undefined;
+    if (!isPlainObject(parsed) || typeof parsed.name !== "string") return undefined;
+    const name = parsed.name.trim();
+    return name === "" ? undefined : name;
   } catch {
     return undefined;
   }
@@ -841,7 +864,7 @@ export function composeContext(
         for (const [key, value] of Object.entries(own.agents)) {
           const configFile = isPlainObject(value) ? value.config_file : undefined;
           if (typeof configFile !== "string") continue;
-          const role = codexRoleName(join(agentDir, configFile));
+          const role = codexRoleName(agentDir, configFile);
           if (role !== undefined && (AGENT_TIERS as readonly string[]).includes(role)) {
             warnings.push(
               message("context.reservedSetting", {
@@ -869,7 +892,7 @@ export function composeContext(
         // Codex は agents/*.toml の中の name をロールの名前にする（ファイル名ではない）。name が段階なら、ファイル名が
         // 違っても sacty の段階の定義と衝突するので写さない（PBI-119。PR #129 再レビュー指摘）
         if (kind === "codex" && path.startsWith("agents/") && path.endsWith(".toml")) {
-          const role = codexRoleName(src);
+          const role = codexRoleName(agentDir, path);
           if (role !== undefined && (AGENT_TIERS as readonly string[]).includes(role)) {
             warnings.push(
               message("context.reservedTierFile", { from, path: `${AGENT_DIRS[kind]}/${path}` }),

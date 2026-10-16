@@ -76,7 +76,8 @@ PR のレビュー（流れ `pr-review`）と、既定の `git` の PR への投
 - 段階のサブエージェントの定義（`agents/claude/agents/<段階>.md`・`agents/codex/agents/<段階>.toml`。[設定](configuration.md#エージェントagents)の
   `claude_<段階>`・`codex_<段階>`）は sacty が作るので、層にあれば、その段階を置くかどうかによらず写さずに警告する（`context.reservedTierFile`。
   残すと、スキルが段階の名前で起動したときに層の定義が使われるため）。Codex はファイルの中の `name` をロールの名前にするので、
-  `agents/codex/agents/*.toml` の `name` が段階のものも、ファイル名によらず写さずに警告する（`codexRoleName`。読めないファイルはそのまま写す）。
+  `agents/codex/agents/*.toml` の `name` が段階のものも、ファイル名によらず写さずに警告する（`codexRoleName`。`name` は前後の空白を除いて比べ、空なら名前とみなさない。読むのは層のエージェントの設定のディレクトリの中の、リンクでない通常の
+  ファイル（256KB まで）だけで、`config_file` が外・絶対パス・通常でないファイルを指すときは読まずに宣言を残す。読めないファイルはそのまま写す）。
   Codex の `config.toml` の `agents.<段階>`（カスタムエージェントの宣言。自動で探す `agents/<段階>.toml` より先に登録される）と、
   `config_file` が指す定義の `name` が段階の `agents.<名前>` も、sacty が決める項目として使わずに警告する（`context.reservedSetting`。
   `agents` のほかの項目は残す）。

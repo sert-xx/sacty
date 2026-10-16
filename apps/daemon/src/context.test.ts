@@ -2269,3 +2269,81 @@ describe("Codex の定義の中の name が段階のとき（PR #129 再レビ�
     codex.dispose();
   });
 });
+
+describe("Codex の定義の name の読み取りの範囲と正規化（PR #129 再々レビュー指摘）", () => {
+  it("name の前後の空白を除いて比べ、自動で探す定義と config_file の参照の両方で除外する", async () => {
+    const defaultDir = place(join(dir, "default"), { "rules.md": "# 規則" });
+    const fetcher = new FakeFetcher({
+      "https://example.com/p.git": {
+        "agents/codex/config.toml": [
+          "[agents.helper]",
+          'description = "空白つきの段階の定義を指す宣言"',
+          'config_file = "agents/helper.toml"',
+          "",
+        ].join("\n"),
+        "agents/codex/agents/a-reviewer.toml": 'name = " standard "\ndescription = "x"\n',
+        "agents/codex/agents/helper.toml": 'name = "\\tadvanced\\n"\ndescription = "x"\n',
+        // 空白だけの name は名前として扱わない（写す）
+        "agents/codex/agents/blank.toml": 'name = "   "\ndescription = "x"\n',
+      },
+    });
+    const codex = await prepareContext(
+      fetcher,
+      { repo: "https://example.com/p.git" },
+      "codex",
+      "/h",
+      undefined,
+      defaultDir,
+    );
+    expect(existsSync(join(codex.dir, "agents/a-reviewer.toml"))).toBe(false);
+    expect(existsSync(join(codex.dir, "agents/helper.toml"))).toBe(false);
+    expect(existsSync(join(codex.dir, "agents/blank.toml"))).toBe(true);
+    const config = parseToml(readFileSync(join(codex.dir, "config.toml"), "utf8")) as {
+      agents?: Record<string, unknown>;
+    };
+    expect(config.agents ?? {}).toEqual({});
+    codex.dispose();
+  });
+
+  it("config_file が層の外・絶対パス・通常でないファイルを指すときは読まず、宣言はそのまま残す", async () => {
+    const defaultDir = place(join(dir, "default"), { "rules.md": "# 規則" });
+    const fetcher = new FakeFetcher({
+      "https://example.com/p.git": {
+        "agents/codex/config.toml": [
+          "[agents.outside]",
+          'description = "層の外を指す"',
+          'config_file = "../../outside.toml"',
+          "",
+          "[agents.absolute]",
+          'description = "絶対パスを指す"',
+          'config_file = "/dev/zero"',
+          "",
+          "[agents.dir]",
+          'description = "ディレクトリを指す"',
+          'config_file = "agents"',
+          "",
+        ].join("\n"),
+        // 層の中だが、エージェントの設定のディレクトリの外にある、段階の名前の定義
+        "outside.toml": 'name = "standard"\ndescription = "x"\n',
+        "agents/codex/agents/ok.toml": 'name = "ok"\ndescription = "x"\n',
+      },
+    });
+    const started = Date.now();
+    const codex = await prepareContext(
+      fetcher,
+      { repo: "https://example.com/p.git" },
+      "codex",
+      "/h",
+      undefined,
+      defaultDir,
+    );
+    // /dev/zero を読み続けない
+    expect(Date.now() - started).toBeLessThan(5_000);
+    const config = parseToml(readFileSync(join(codex.dir, "config.toml"), "utf8")) as {
+      agents: Record<string, unknown>;
+    };
+    expect(Object.keys(config.agents).sort()).toEqual(["absolute", "dir", "outside"]);
+    expect(codex.warnings.map(ja).filter((w) => w.includes("agents."))).toEqual([]);
+    codex.dispose();
+  });
+});
