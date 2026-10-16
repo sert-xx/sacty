@@ -84,7 +84,7 @@
   | `AgentRunCompleted`・`AgentRunFailed` | その工程 |
   | `OutputExported` | 書き出し（`export`） |
   | `QuestionAnswered` | 質問への答え（`chat`） |
-  | `DeploymentChecked` | デプロイの確認（`deployment`。[マージの後の監視](deployment-watch.md)） |
+  | `DeploymentChecked` | マージの後の監視の工程（`deployment`。[マージの後の監視](deployment-watch.md)） |
   | `ChangeJudged`・`ReworkJudged`・`FinalReviewed`・`FinalReviewFailed` | ゴールガーディアン（`guardian`） |
 
 - 投影と工程ごとの費用の表は、どちらも同じ規則（`chargeBudget`）で費用を足す。一覧に無い種類が `costUsd` を持つと、型の検査で
@@ -113,7 +113,7 @@
 - タスクの詳細は `GET /api/tasks/:id` の `{ task, activity }` を読み、作業履歴を新しい順に、イベントの種類ごとの文で並べる。
 - 工程ごとの費用の表は、費用を持つイベントを行（[費用](#費用)の表）ごとに分けて集計する。行の順は、チケットの読み取り・
   リポジトリの選択・オーケストレーター（記録があるときだけ）、タスクの工程の順の工程（実行していない工程も0回で出す。工程の一覧に無い
-  工程の記録も出す）、書き出し・質問への答え・ゴールガーディアン・デプロイの確認（記録があるときだけ）。
+  工程の記録も出す。デプロイの確認は、マージの後の監視の工程の行。実行中も出す）、書き出し・質問への答え・ゴールガーディアン（記録があるときだけ）。
 - 人が決めたチケットの読み取り・リポジトリの選択と、工程を固定していた頃の `StepsChosen`（エージェント・費用・使用量が無い）は、
   実行に数えない。
 - 表の合計の費用と推定かどうかは、作業履歴の順に `chargeBudget` で足すので、タスクの費用（`budget.usedUsd`・`budget.estimated`）と

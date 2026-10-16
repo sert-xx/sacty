@@ -39,9 +39,10 @@ that fills in what is missing.
 - Instructions for agents (AGENTS.md, CLAUDE.md, and so on)
 - How to run the tests (if the repository has no tests yet, that there are none and how to check changes; this task does not add a new language or test framework)
 - Services the tests need (databases, mocks, and so on)
-- For repositories deployed by CI/CD, the deployment check skill `deployment-observer` (used by the after-merge watch). The original is
+- For repositories with CI/CD (even if they do not deploy), the after-merge watch skill `deployment-observer`. The original is
   `.agents/skills/deployment-observer/SKILL.md`, and `.claude/skills/deployment-observer` for Claude Code is a relative symbolic
-  link to the original.
+  link to the original. A reference on how to check CI/CD (`references/ci.md`) is also created, and if the repository does not deploy, the skill says to skip the deployment check
+  ([After-merge watch](deployment-watch.en.md#skill)). If there is no CI/CD, it is not created.
 
 If everything is already in place and nothing needs to change, the task finishes without a PR, keeping the check results as investigation results (you approve it in the web UI to finish).
 If, after Requirements, Design, and Implementation, it turns out that nothing needs to change, the task also finishes without a PR, keeping the check results in the implementation notes, when you approve it in the web UI
@@ -130,8 +131,8 @@ are not approved from the sacty web UI (the web UI guides you to the PR and show
 3. The Design (including Test viewpoints. `design.md`) is likewise opened as a PR to the task branch.
 4. When the Design PR is merged, the task moves to the Implementation step. When the implementation passes the tests and the Goal Guardian's final review, within the Implementation step the
    implementation is committed to the task branch and opened as a PR from the task branch to the base branch (CI runs). Implement waits for approval, and merging the PR approves the implementation and
-   completes the task. The implementation PR also contains the Requirements and Design files. If you turn it On in the project settings, sacty
-   follows CI/CD and the deployment after the merge ([After-merge watch](deployment-watch.en.md)).
+   moves on to the after-merge watch step (if the target repository has no skill and the step was skipped, the task is completed). The implementation PR also contains the Requirements and Design
+   files. In the after-merge watch, sacty follows CI/CD and the deployment, and the task is completed when it ends ([After-merge watch](deployment-watch.en.md)).
 
 - If the rules of the repository or the project's context decide where the files go, the Orchestrator follows them.
 - PR reviews, line comments, and regular comments (excluding bots and sacty's own posts, but including posts by the sacty review task that imported that PR.

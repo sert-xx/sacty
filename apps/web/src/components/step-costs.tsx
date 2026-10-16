@@ -36,11 +36,7 @@ export function StepCosts({
     : undefined;
   const count = new Intl.NumberFormat(NUMBER_LOCALE[locale]);
   const roleLabel = (role: CostRole) =>
-    role === "chat" ||
-    role === "export" ||
-    role === "triage" ||
-    role === "repository" ||
-    role === "deployment"
+    role === "chat" || role === "export" || role === "triage" || role === "repository"
       ? m[role]
       : role === "orchestrator" || role === "guardian"
         ? labels.actor[role]

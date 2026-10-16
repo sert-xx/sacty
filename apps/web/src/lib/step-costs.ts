@@ -15,7 +15,8 @@ import {
 /**
  * 費用の表の行。工程と、工程の外の費用：チケットの読み取り（オーケストレーター。PBI-52）・作業するリポジトリの選択
  * （オーケストレーター。PBI-73）・オーケストレーター（工程の選択）・質問への答え（オーケストレーター。PBI-54）・
- * 承認した成果の書き出し（PBI-56）・ゴールガーディアン（判定・最終レビュー）。
+ * 承認した成果の書き出し（PBI-56）・ゴールガーディアン（判定・最終レビュー）。マージの後のデプロイの確認は、マージの後の
+ * 監視の工程（deployment）の行（PBI-116）。
  */
 export type CostRole =
   | StepKey
@@ -24,12 +25,11 @@ export type CostRole =
   | "orchestrator"
   | "chat"
   | "export"
-  | "guardian"
-  | "deployment";
+  | "guardian";
 
 /** 工程の外の行（表に出す順）。 */
 const OUTSIDE_BEFORE = ["triage", "repository", "orchestrator"] as const;
-const OUTSIDE_AFTER = ["export", "chat", "guardian", "deployment"] as const;
+const OUTSIDE_AFTER = ["export", "chat", "guardian"] as const;
 const OUTSIDE: readonly CostRole[] = [...OUTSIDE_BEFORE, ...OUTSIDE_AFTER];
 
 /** 1回の実行。作業履歴に記録が無い項目（PBI-46 より前のモデル・エフォートなど）は持たない。 */
@@ -190,10 +190,28 @@ export function stepCosts(task: Task, activity: readonly ActivityEvent[]) {
       case "OutputExported":
         push("export", runOf(event, event.payload, event.payload.runResult));
         return;
-      // マージの後のデプロイの確認（PBI-89）
-      case "DeploymentChecked":
-        push("deployment", runOf(event, event.payload, event.payload.runResult));
+      // マージの後のデプロイの確認（PBI-89）。マージの後の監視の工程の行（PBI-116。工程の無い以前のタスクでも、
+      // 工程の一覧に無い工程の行として出す）
+      case "DeploymentChecked": {
+        const p = event.payload;
+        const run = p.runId ? started.get(p.runId) : undefined;
+        if (!run || !p.runId) {
+          push("deployment", runOf(event, p, p.runResult));
+          return;
+        }
+        started.delete(p.runId);
+        Object.assign(run, {
+          ...(p.usage ? { usage: p.usage } : {}),
+          ...(p.authMode ? { authMode: p.authMode } : {}),
+          ...(p.model ? { model: p.model } : {}),
+          ...(p.reasoningEffort ? { reasoningEffort: p.reasoningEffort } : {}),
+          agentId: p.agentId,
+          costUsd: p.costUsd,
+          estimated: p.estimated,
+          result: p.runResult,
+        });
         return;
+      }
       default:
         return event satisfies never;
     }
@@ -205,6 +223,19 @@ export function stepCosts(task: Task, activity: readonly ActivityEvent[]) {
       const run = runOf(event, { ...event.payload, costUsd: 0, estimated: false }, "running");
       started.set(event.payload.runId, run);
       push(event.payload.step, run);
+      continue;
+    }
+    // デプロイの確認を始めた（PBI-116。結果の記録で、使用量と費用を埋める。ほかの工程の実行と同じく、実行中を出す）
+    if (event.type === "DeploymentCheckStarted") {
+      const run: CostRun = {
+        id: event.id,
+        at: event.at,
+        costUsd: 0,
+        estimated: false,
+        result: "running",
+      };
+      started.set(event.payload.runId, run);
+      push("deployment", run);
       continue;
     }
     if (!isChargedEvent(event)) continue;

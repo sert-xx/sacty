@@ -568,6 +568,12 @@ export class TaskService {
   private readonly runningTask = new AsyncLocalStorage<string>();
   /** 人間が一時停止・中止を求めたタスク。実行中の処理は、終わったら一時停止として記録する。 */
   private readonly pauseRequested = new Set<string>();
+  /**
+   * タスクごとの、人が一時停止を求めた回数（メモリーだけに持つ。PBI-116 レビュー指摘）。CI/CD を読み始めたときと記録する直前で
+   * 違えば、読んでいる間に一時停止した（すぐに再開していても）ので、読んだ結果を捨てる。読んでいる途中の処理はデーモンの再起動で
+   * 消えるので、再起動で数え直しても困らない。
+   */
+  private readonly pauseCounts = new Map<string, number>();
   /** 共用の compose の取得（deps に無いときの既定。PBI-70）。 */
   private defaultSharedComposes: SharedComposeFetcher | undefined;
   /** 中止の後片付けをしているタスク（その間に実行を始めないため）。 */
@@ -912,8 +918,8 @@ export class TaskService {
   }
 
   /**
-   * 実装の PR のマージで、マージのコミットの監視を始める記録（PBI-89）。プロジェクトの deploymentWatch が true で、
-   * 実装の PR のマージのときだけ。マージのコミットが取れなければ、監視を飛ばす記録になる。
+   * 実装の PR のマージで、マージのコミットの監視を始める記録（PBI-89）。マージの後の監視の工程（PBI-116）を飛ばしていない
+   * タスクの、実装の PR のマージのときだけ。マージのコミットが取れなければ、監視を飛ばす記録になる（工程も終わる）。
    */
   private deploymentWatchEvents(
     task: Task,
@@ -923,7 +929,7 @@ export class TaskService {
     mergeCommit: string | undefined,
   ): { actor: Actor; event: EventInput }[] {
     if (step !== "implement" || !task.repository) return [];
-    if (this.deps.projects.get(task.projectId)?.deploymentWatch !== true) return [];
+    if (!task.steps.some((s) => s.key === "deployment" && s.state === "todo")) return [];
     return [
       {
         actor: "sacty",
@@ -948,6 +954,8 @@ export class TaskService {
   async checkDeployments(): Promise<void> {
     for (const task of [...this.tasks.values()]) {
       if (task.status === "cancelled" || !task.deployment || this.cancelling.has(task.id)) continue;
+      // 一時停止したタスクは、CI/CD を見ない（再開すると続ける。PBI-116）
+      if (task.status === "paused" || this.pauseRequested.has(task.id)) continue;
       try {
         if (awaitingDeploymentCi(task)) await this.pollDeploymentCi(task);
         const latest = this.tasks.get(task.id);
@@ -972,10 +980,20 @@ export class TaskService {
     const commit = watch.commit;
     const elapsed = this.now() - Date.parse(watch.startedAt);
     const usedSecrets: string[] = [];
+    // 読み始めたときの一時停止の回数（読んでいる間に一時停止したかを、すぐに再開した後でも見分ける）
+    const pauses = this.pauseCounts.get(task.id) ?? 0;
     type Payload = Extract<EventInput, { type: "DeploymentCiFinished" }>["payload"];
     const record = (payload: Payload) => {
       const latest = this.tasks.get(task.id);
       if (!latest || this.cancelling.has(task.id) || !awaitingDeploymentCi(latest)) return;
+      // 読んでいる間に一時停止した（すぐに再開したときも）なら、結果を捨てる（再開した後の確認で取り直す。PBI-116 レビュー指摘）
+      if (
+        latest.status === "paused" ||
+        this.pauseRequested.has(task.id) ||
+        (this.pauseCounts.get(task.id) ?? 0) !== pauses
+      ) {
+        return;
+      }
       this.append(latest, [{ actor: "sacty", event: { type: "DeploymentCiFinished", payload } }]);
     };
     let token: string;
@@ -1067,6 +1085,48 @@ export class TaskService {
     );
   }
 
+  /**
+   * マージの後の監視の工程をするかを決める（PBI-116）。起点のコミットに、デプロイの確認のスキル（deployment-observer）が
+   * あればする（そのパス）。無い・使えない・探せないなら、理由を付けて飛ばす。工程を決めた後にスキルが増えても、この
+   * タスクでは見ない。消えたら、CI/CD を見てデプロイの確認を飛ばす（マージのコミットで探し直す。checkDeployments）。
+   */
+  private async deploymentChoice(
+    task: Task,
+    commit: string | undefined,
+  ): Promise<NonNullable<Extract<EventInput, { type: "StepsChosen" }>["payload"]["deployment"]>> {
+    const skip = (detail: DaemonText) => ({ skipped: message("deploy.stepSkipped", { detail }) });
+    if (!commit) return skip(message("deploy.noSkill"));
+    try {
+      const found = await findDeploymentSkill(this.deps.repos, this.trustedGitDir(task), commit);
+      if ("path" in found) return { skill: found.path };
+      return skip(
+        typeof found.problem !== "string" && found.problem.code === "deploy.skillMissing"
+          ? message("deploy.noSkill")
+          : found.problem,
+      );
+    } catch (error) {
+      return skip(message("deploy.skillLookupFailed", { detail: errorText(error) }));
+    }
+  }
+
+  /**
+   * 工程の選択に、マージの後の監視の工程をするかを足す（PBI-116）。飛ばすなら、その工程の既定のイメージの理由・理由が
+   * 無いことは記録しない（実行しないので）。
+   */
+  private withDeploymentChoice(
+    chosen: ChosenSteps,
+    deployment: NonNullable<ChosenSteps["deployment"]>,
+  ): Partial<ChosenSteps> {
+    if (!("skipped" in deployment)) return { deployment };
+    const { deployment: _reason, ...reasons } = chosen.defaultImageReasons ?? {};
+    const unexplained = (chosen.imagesUnexplained ?? []).filter((step) => step !== "deployment");
+    return {
+      deployment,
+      defaultImageReasons: Object.keys(reasons).length > 0 ? reasons : undefined,
+      imagesUnexplained: unexplained.length > 0 ? unexplained : undefined,
+    };
+  }
+
   /** マージのコミットの、デプロイの確認のスキル（PBI-89）。コミットを取得できなければ retry。 */
   private async deploymentSkill(
     task: Task,
@@ -1124,6 +1184,8 @@ export class TaskService {
     const open = [...this.tasks.values()].find(
       (t) =>
         t.projectId === task.projectId &&
+        // 監視しているタスク自身（修正のタスクのマージの監視。PBI-116 からは、監視の間は終わっていない）は除く
+        t.id !== task.id &&
         // 登録して、まだ作っていないもの（デーモンが止まった）も含める
         ((t.fix?.fingerprint === fingerprint && fixTaskOpen(t)) ||
           (t.deployment?.fix?.fingerprint === fingerprint &&
@@ -1227,18 +1289,35 @@ export class TaskService {
       if (updated.deployment?.state === "failed") this.registerFixTask(updated);
     };
     const usedSecrets: string[] = [];
+    // 準備・実行の途中で人が止めたなら、失敗ではなく中断として扱う（準備が止めたことで失敗しても、再開で確かめ直す。
+    // PBI-116 レビュー指摘）
     const fail = (failed: DaemonText, cost?: Partial<Payload>) =>
+      stopped()
+        ? interrupted({ costUsd: 0, estimated: false, ...cost })
+        : record("sacty", {
+            result: "unknown",
+            evidence: [],
+            failed: message("deploy.checkFailed", { detail: redactText(failed, usedSecrets) }),
+            runResult: "failed",
+            ...setting,
+            costUsd: 0,
+            estimated: false,
+            ...cost,
+          });
+    const stopped = () => this.pauseRequested.has(task.id) || this.cancelling.has(task.id);
+    // マージの後の監視の工程（PBI-116）なら、人が止めた確認は結果にせず、再開で確かめ直す（ほかの工程の実行と同じ）。
+    // 工程の無い PBI-116 より前のタスクの監視は、これまでどおり確かめられなかったものとして終える
+    const stepped = task.steps.some((s) => s.key === "deployment");
+    const interrupted = (cost: Pick<Payload, "costUsd" | "estimated"> & Partial<Payload>) =>
       record("sacty", {
         result: "unknown",
         evidence: [],
-        failed: message("deploy.checkFailed", { detail: redactText(failed, usedSecrets) }),
-        runResult: "failed",
+        failed: message("deploy.stopped"),
+        runResult: "interrupted",
         ...setting,
-        costUsd: 0,
-        estimated: false,
         ...cost,
+        ...(stepped ? { retry: true as const } : {}),
       });
-    const stopped = () => this.pauseRequested.has(task.id) || this.cancelling.has(task.id);
     const workspaceDir = join(this.deps.workspaceRoot, "_deployment", runId);
     let context: Awaited<ReturnType<typeof prepareContext>> | undefined;
     let executed: Executed;
@@ -1256,19 +1335,13 @@ export class TaskService {
         return fail(errorText(error));
       }
       const platforms = mergePlatforms(config.platforms, context?.platforms ?? []);
-      // 実装の工程のイメージ（言語ごとのイメージ。PBI-41）があればそれ、無ければ既定のイメージ
-      const image = resolveImage(config, current.images?.implement);
-      if (stopped()) {
-        return record("sacty", {
-          result: "unknown",
-          evidence: [],
-          failed: message("deploy.stopped"),
-          runResult: "interrupted",
-          ...setting,
-          costUsd: 0,
-          estimated: false,
-        });
-      }
+      // マージの後の監視の工程のイメージ（ほかの工程と同じく、オーケストレーターか人が選ぶ。PBI-116）。工程の無い
+      // PBI-116 より前のタスクは、実装の工程のイメージ。無ければ既定のイメージ
+      const image = resolveImage(
+        config,
+        stepped ? current.images?.deployment : current.images?.implement,
+      );
+      if (stopped()) return interrupted({ costUsd: 0, estimated: false });
       executed = await this.execute({
         agent,
         taskId: task.id,
@@ -1296,15 +1369,7 @@ export class TaskService {
       costUsd,
       estimated,
     };
-    if (stopped()) {
-      return record("sacty", {
-        result: "unknown",
-        evidence: [],
-        failed: message("deploy.stopped"),
-        runResult: "interrupted",
-        ...cost,
-      });
-    }
+    if (stopped()) return interrupted(cost);
     if (outcome.kind === "failed") return fail(outcome.message, cost);
     // 秘密情報は、execute が出力の全文から取り除いている（切り詰めるのは、その後）
     const answer = extractDeploymentCheck(outcome.output);
@@ -1319,6 +1384,8 @@ export class TaskService {
     }
     return record("agent", {
       result: answer.result,
+      ci: answer.ci,
+      deployment: answer.deployment,
       ...(answer.summary ? { summary: answer.summary } : {}),
       evidence: answer.evidence,
       ...(answer.result === "unknown" ? { failed: message("deploy.undetermined") } : {}),
@@ -3321,9 +3388,12 @@ export class TaskService {
         },
       ]);
     }
-    // デーモンが止まって途中になったデプロイの確認は、確かめられなかった（中断）として記録する（やり直さない。PBI-89）
+    // デーモンが止まって途中になったデプロイの確認は、マージの後の監視の工程（PBI-116）なら、ほかの工程の実行と同じく
+    // 中断として記録して一時停止する（再開すると確かめ直す）。工程の無い PBI-116 より前のタスクの監視は、確かめられなかった
+    // （中断）として終える（やり直さない。PBI-89）
     for (const task of [...this.tasks.values()]) {
       if (!deploymentCheckRunning(task)) continue;
+      const stepped = task.steps.some((s) => s.key === "deployment");
       this.append(task, [
         {
           actor: "sacty",
@@ -3336,9 +3406,21 @@ export class TaskService {
               runResult: "interrupted",
               agentId: "unknown",
               ...(task.deployment?.check ? { runId: task.deployment.check.runId } : {}),
+              ...(stepped ? { retry: true as const } : {}),
             },
           },
         },
+        ...(stepped && (task.status === "idle" || task.status === "queued")
+          ? [
+              {
+                actor: "sacty" as const,
+                event: {
+                  type: "TaskPaused" as const,
+                  payload: { reason: "error" as const, message: message("run.daemonStopped") },
+                },
+              },
+            ]
+          : []),
       ]);
     }
     for (const task of this.tasks.values()) {
@@ -3761,6 +3843,20 @@ export class TaskService {
               branch: baseBranch,
             })
           : undefined;
+      // マージの後の監視の工程をするかを、起点のコミットのデプロイの確認のスキルで決める（PBI-116）
+      if (chosen.steps.includes("deployment")) {
+        const commit =
+          rebased?.ok && rebased.prepared
+            ? rebased.prepared.baseCommit
+            : this.mustGet(taskId).repository?.baseCommit;
+        Object.assign(
+          chosen,
+          this.withDeploymentChoice(
+            chosen,
+            await this.deploymentChoice(this.mustGet(taskId), commit),
+          ),
+        );
+      }
       // 選んでいる間に、人間が止めた・中止したなら、記録しない（止めた記録は runNext の後始末で行う）
       const latest = this.mustGet(taskId);
       if (
@@ -5645,6 +5741,7 @@ export class TaskService {
       throw new InvalidOperationError(message("pause.guardianJudging"));
     }
     this.pauseRequested.add(id);
+    this.pauseCounts.set(id, (this.pauseCounts.get(id) ?? 0) + 1);
     const inflight = this.inflight.get(id);
     if (inflight) {
       this.stopRuns(inflight.runIds);
@@ -5803,7 +5900,8 @@ export class TaskService {
       const pr = latest.pullRequest;
       // PR：sacty が作ったものだけを閉じる（マージはしない）。番号はリポジトリの中でしか一意でないので、
       // 作ったときに記録したリポジトリに対してだけ閉じる（いまの設定のリポジトリは使わない）
-      if (pr?.number) {
+      // マージした実装の PR（マージの後の監視の工程の間に中止した。PBI-116）は、閉じられないので触れない
+      if (pr?.number && latest.pullRequestState !== "merged") {
         const usedSecrets: string[] = [];
         try {
           if (!pr.repo) {

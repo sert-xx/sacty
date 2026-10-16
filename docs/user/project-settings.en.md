@@ -20,9 +20,9 @@ the header also switches to that project ([Web UI screens](getting-started.en.md
 | Available external platforms | APIs that step agents can call through `$SACTY_PF_URL` (display only) | [Gateway](gateway.en.md#organization-platform-pf-apis) |
 | GitHub account | The `gh` account to use for each host | [GitHub account](#github-account) |
 | Shared compose (optional) | A team-shared docker compose used for tests | [docker compose services](compose.en.md#shared-compose) |
-| After-merge watch | After an implementation PR is merged, check CI/CD and the deployed app, and register a fix task if something fails (Off by default) | [After-merge watch](deployment-watch.en.md) |
 
 Slack notifications are not in project settings: set one destination shared by all projects in the "sacty settings" ([Slack notifications](notifications.en.md)).
+The after-merge watch is not turned on or off in project settings. If the target repository has the skill, it is added to the task's steps ([After-merge watch](deployment-watch.en.md)).
 
 ## Targets
 
@@ -70,8 +70,8 @@ step runs will stop).
 
 You can export a project definition and import it into another sacty.
 
-- Included: the name, targets (including image choices), the context repository, ticket sources, shared composes,
-  and the after-merge watch (only when On).
+- Included: the name, targets (including image choices), the context repository, ticket sources, and shared composes.
+- If a file exported by an earlier sacty has the after-merge watch setting, it is imported without reading that setting.
 - Not included: GitHub accounts (personal settings), tokens, and Slack notifications (they are in the "sacty settings", not in project settings).
 - On import, files with unknown fields are rejected.
 - Files exported with an earlier version (version 3 or 4) cannot be imported, whether or not they include a notification destination. The web UI shows the reason;

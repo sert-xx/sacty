@@ -16,15 +16,24 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import type { CiFailure, DaemonText, EventInput, StepKey, Task } from "@sacty/core";
+import type {
+  CiFailure,
+  DaemonText,
+  EventInput,
+  ProjectDefinition,
+  StepKey,
+  Task,
+} from "@sacty/core";
 import {
   ANSWER_MAX,
+  activeStep,
   budgetState,
   DEPLOYMENT_CI_GRACE_MS,
   DEPLOYMENT_CI_TIMEOUT_MS,
   deliveredWithoutChanges,
   exportDue,
   isCompleted,
+  isFinished,
   MAX_CHANGE_REQUESTS,
   MAX_FIX_CHAIN,
   MAX_VERIFY_ATTEMPTS,
@@ -3552,6 +3561,8 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         requirements: "java",
         design: "java",
         implement: "java",
+        // マージの後の監視の工程も、ほかの工程と同じく対象の指定を使う（PBI-116）
+        deployment: "java",
       });
       expect(chosen?.type === "StepsChosen" && chosen.payload.imageSource).toBe("project");
       expect(executor.images[1]).toEqual({ image: java.image, env: java.env });
@@ -5056,11 +5067,15 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       const chosen = service.get(id)?.activity.find((e) => e.type === "StepsChosen");
       expect(chosen?.actor).toBe("orchestrator");
       expect(chosen?.payload).toMatchObject({
-        steps: ["investigate", "requirements", "implement"],
+        steps: ["investigate", "requirements", "implement", "deployment"],
         plan: "skip-design",
         reason: "小さな変更",
         fallback: false,
         testCommand: "npm test",
+        // 起点のコミットにデプロイの確認のスキルが無いので、マージの後の監視の工程は飛ばす（PBI-116）
+        deployment: {
+          skipped: { code: "deploy.stepSkipped", params: { detail: { code: "deploy.noSkill" } } },
+        },
       });
       // 実装する組み合わせは、先頭の前段の調査を同じ実行で続けて行い、人間の承認なしに次の工程へ進む（PBI-29）
       expect(promptOf(executor, 1)).toContain("このあと 要求要件 → 実装 の工程で進めます");
@@ -5069,6 +5084,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         ["investigate", "done"],
         ["requirements", "active"],
         ["implement", "todo"],
+        ["deployment", "skip"],
       ]);
       expect(investigated?.status).toBe("queued");
       expect(investigated?.gate).toBeUndefined();
@@ -5077,7 +5093,12 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       expect(promptOf(executor, 2)).toContain("--- 前段の調査の結果");
       expect(promptOf(executor, 2)).toContain("src/button.ts:3 に文言");
       const task = service.get(id)?.task;
-      expect(task?.steps.map((st) => st.key)).toEqual(["investigate", "requirements", "implement"]);
+      expect(task?.steps.map((st) => st.key)).toEqual([
+        "investigate",
+        "requirements",
+        "implement",
+        "deployment",
+      ]);
       expect(task?.stepsChoice).toEqual({
         plan: "skip-design",
         reason: "小さな変更",
@@ -11259,7 +11280,13 @@ describe("再現の工程（PBI-29）", () => {
     const { id } = service.createTask({ projectId: "default", title: "二重に決済される" });
     // 前段の調査は、人間の承認なしに再現へ進む
     await service.runNext(id);
-    expect(service.get(id)?.task.steps.map((s) => s.state)).toEqual(["done", "active", "todo"]);
+    // マージの後の監視は、スキルが無いので飛ばす（PBI-116）
+    expect(service.get(id)?.task.steps.map((s) => s.state)).toEqual([
+      "done",
+      "active",
+      "todo",
+      "skip",
+    ]);
     expect(service.get(id)?.activity.some((e) => e.type === "StepSubmitted")).toBe(false);
     executor.calls.shift();
     executor.scratch.shift();
@@ -11279,7 +11306,7 @@ describe("再現の工程（PBI-29）", () => {
     });
     // 申告の形式のブロックは、再現の説明から取り除く
     expect(task?.outputs.reproduce).toBe("# 再現の説明");
-    expect(task?.steps.map((s) => s.state)).toEqual(["done", "done", "active"]);
+    expect(task?.steps.map((s) => s.state)).toEqual(["done", "done", "active", "skip"]);
     expect(task?.status).toBe("queued");
 
     await drain(service);
@@ -17502,7 +17529,10 @@ describe("タスクのテンプレート「Sacty セットアップ」（PBI-90�
     expect(task.body).toContain(".claude/skills/deployment-observer");
     expect(task.body).toContain("../../.agents/skills/deployment-observer");
     expect(task.body).toContain("name: deployment-observer");
-    expect(task.body).toContain('{"sacty-deployment": {"result": "healthy | unhealthy | unknown"');
+    expect(task.body).toContain(
+      '{"sacty-deployment": {"ci": {"result": "passed | failed | skipped | unknown"',
+    );
+    expect(task.body).toContain(".agents/skills/deployment-observer/references/ci.md");
     // 変更が要らなければ、PR を作らずに検査の結果を残して終える
     expect(task.body).toContain("PR を作らずに");
     const created = activity.forTask(task.id).find((e) => e.type === "TaskCreated");
@@ -18003,19 +18033,26 @@ describe("マージの後の CI/CD とデプロイの監視（PBI-89）", () => 
     url: "https://github.com/acme/app/actions/runs/1/job/7",
     excerpt: "FAIL pay.test.ts\ntoken=[REDACTED]",
   };
-  const watchedProjects = (on: boolean | null = true) => {
+  /** 起点のコミット（FakeRepos の clone の先頭）。 */
+  const BASE = "base123";
+  const watchedProjects = () => {
     const projects = new MemoryProjectStore();
     projects.put("default", {
       name: "デフォルト",
       targets: [{ scope: "repo", target: "https://github.com/acme/app" }],
       githubAccounts: { "github.com": "me" },
-      ...(on === null ? {} : { deploymentWatch: on }),
     });
     return projects;
   };
   const types = (svc: TaskService, id: string) => svc.get(id)?.activity.map((e) => e.type) ?? [];
   const deploymentTypes = (svc: TaskService, id: string) =>
     types(svc, id).filter((t) => t.startsWith("Deployment"));
+  /** デプロイの確認の答え（PBI-116 の形）。ci は通った、deployment は result の結果。 */
+  const answer = (
+    result: string,
+    rest: Record<string, unknown> = {},
+    ci: Record<string, unknown> = { result: "passed", summary: "CI は通っている" },
+  ) => ({ ci, deployment: { result, summary: "アプリの確認" }, ...rest });
   const checkOut = (v: Record<string, unknown>, output = 1000): AgentOutcome => ({
     kind: "completed",
     output: `確かめました\n\n\`\`\`json\n${JSON.stringify({ "sacty-deployment": v })}\n\`\`\``,
@@ -18051,21 +18088,29 @@ describe("マージの後の CI/CD とデプロイの監視（PBI-89）", () => 
       pulls?: FakePulls;
       plannerCost?: number;
       templates?: ServiceDeps["templates"];
+      /** 起点のコミットに、デプロイの確認のスキルを置くか（PBI-116。既定は置く）。 */
+      skill?: boolean;
+      /** オーケストレーターが選ぶ工程（既定は実装とマージの後の監視）。 */
+      steps?: StepKey[];
     } = {},
   ) {
     const activity = options.activity ?? new SqliteActivityStore(dbPath);
     const ci = options.ci ?? new FakeCi();
+    const repos = options.repos ?? new FakeRepos();
+    if (options.skill !== false) {
+      repos.files[BASE] = { ...repos.files[BASE], [SKILL]: "# deployment-observer" };
+    }
     const clock = { offset: 0 };
     const made = makeService(activity, options.outcomes as AgentOutcome[], {
       projects: options.projects ?? watchedProjects(),
       ci,
       now: () => Date.now() + clock.offset,
-      ...(options.repos ? { repos: options.repos } : {}),
+      repos,
       ...(options.config ? { config: options.config } : {}),
       ...(options.pulls ? { pulls: options.pulls } : {}),
       ...(options.templates ? { templates: options.templates } : {}),
       planner: async () => ({
-        steps: ["implement"],
+        steps: options.steps ?? ["implement", "deployment"],
         fallback: false,
         testCommand: "npm test",
         costUsd: options.plannerCost ?? 0,
@@ -18102,21 +18147,92 @@ describe("マージの後の CI/CD とデプロイの監視（PBI-89）", () => 
     return { ...made, activity, ci, clock, merge, create };
   }
 
-  it("設定していない・Off のプロジェクトでは、マージの後に何も記録せず、CI/CD も読まない", async () => {
-    for (const on of [null, false]) {
-      rmSync(dbPath, { force: true });
-      const t = setup({ projects: watchedProjects(on) });
-      const id = t.create();
-      await t.merge(id);
-      expect(isCompleted(t.service.get(id)?.task as Task)).toBe(true);
-      expect(deploymentTypes(t.service, id)).toEqual([]);
-      expect(t.service.get(id)?.task.deployment).toBeUndefined();
-      expect(t.ci.calls).toEqual([]);
-      t.activity.close();
-    }
+  it("起点のコミットにスキルが無ければ、工程を飛ばし（理由を残す）、マージの後に何も記録せず、CI/CD も読まない（PBI-116）", async () => {
+    const t = setup({ skill: false });
+    const id = t.create();
+    await t.service.runNext(id);
+    const chosen = t.service.get(id)?.activity.find((e) => e.type === "StepsChosen");
+    expect(chosen?.type === "StepsChosen" && chosen.payload.deployment).toEqual({
+      skipped: { code: "deploy.stepSkipped", params: { detail: { code: "deploy.noSkill" } } },
+    });
+    expect(t.service.get(id)?.task.steps).toEqual([
+      { key: "implement", state: "active" },
+      { key: "deployment", state: "skip" },
+    ]);
+    // スキルは起点のコミットで探す
+    expect(t.repos.readCalls.map((c) => c.commit)).toEqual([BASE, BASE]);
+    await t.merge(id);
+    const task = t.service.get(id)?.task as Task;
+    expect(isCompleted(task)).toBe(true);
+    expect(isFinished(task)).toBe(true);
+    expect(deploymentTypes(t.service, id)).toEqual([]);
+    expect(task.deployment).toBeUndefined();
+    expect(t.ci.calls).toEqual([]);
+    t.activity.close();
   });
 
-  it("実装の PR のマージで、マージのコミットの CI/CD を待ち、通ってスキルが無ければ、デプロイの確認を飛ばして通ったにする", async () => {
+  it("起点のコミットにスキルがあれば、工程に入れ、そのパスを残す（PBI-116）", async () => {
+    const t = setup();
+    const id = t.create();
+    await t.service.runNext(id);
+    const chosen = t.service.get(id)?.activity.find((e) => e.type === "StepsChosen");
+    expect(chosen?.type === "StepsChosen" && chosen.payload.deployment).toEqual({ skill: SKILL });
+    expect(t.service.get(id)?.task.steps.map((s) => s.state)).toEqual(["active", "todo"]);
+    expect(t.service.get(id)?.task.deploymentChoice).toEqual({ skill: SKILL });
+    t.activity.close();
+  });
+
+  it("スキルを探せない（リポジトリの外を指す・読めない・git の失敗）なら、理由を付けて工程を飛ばす（PBI-116）", async () => {
+    const repos = new FakeRepos();
+    repos.links[BASE] = { ".agents/skills/deployment-observer": "../../../../etc" };
+    const t = setup({ skill: false, repos });
+    const id = t.create();
+    await t.service.runNext(id);
+    expect(t.service.get(id)?.task.deploymentChoice).toEqual({
+      skipped: {
+        code: "deploy.stepSkipped",
+        params: {
+          detail: {
+            code: "deploy.skillOutside",
+            params: { path: ".agents/skills/deployment-observer/SKILL.md" },
+          },
+        },
+      },
+    });
+    t.activity.close();
+    rmSync(dbPath, { force: true });
+    const broken = new FakeRepos();
+    broken.readLink = async () => {
+      throw new Error("git が無い");
+    };
+    const u = setup({ skill: false, repos: broken });
+    const other = u.create();
+    await u.service.runNext(other);
+    expect(u.service.get(other)?.task.deploymentChoice).toEqual({
+      skipped: {
+        code: "deploy.stepSkipped",
+        params: { detail: { code: "deploy.skillLookupFailed", params: { detail: "git が無い" } } },
+      },
+    });
+    expect(u.service.get(other)?.task.steps.at(-1)).toEqual({ key: "deployment", state: "skip" });
+    u.activity.close();
+  });
+
+  it("工程を決めた後に実装の PR がスキルを足しても、このタスクでは見ない（PBI-116）", async () => {
+    const repos = new FakeRepos();
+    repos.files[MERGE] = { [SKILL]: "# deployment-observer" };
+    const ci = new FakeCi();
+    ci.snap = success();
+    const t = setup({ skill: false, repos, ci });
+    const id = t.create();
+    await t.merge(id);
+    expect(isFinished(t.service.get(id)?.task as Task)).toBe(true);
+    expect(deploymentTypes(t.service, id)).toEqual([]);
+    expect(ci.calls).toEqual([]);
+    t.activity.close();
+  });
+
+  it("実装の PR のマージで、マージのコミットの CI/CD を待ち、通っても実装の PR がスキルを消していれば、デプロイの確認を飛ばして通ったにする", async () => {
     const ci = new FakeCi();
     ci.snap = {
       checks: [{ kind: "workflow", name: "CI", status: "pending" }],
@@ -18141,6 +18257,12 @@ describe("マージの後の CI/CD とデプロイの監視（PBI-89）", () => 
       commit: MERGE,
     });
     expect(t.service.get(id)?.task.deployment).toMatchObject({ state: "waiting", phase: "ci" });
+    // 監視の間は、タスクを完了にしない（終わっていないタスク。PBI-116）
+    const waiting = t.service.get(id)?.task as Task;
+    expect(waiting.status).toBe("idle");
+    expect(activeStep(waiting)).toBe("deployment");
+    expect(isCompleted(waiting)).toBe(false);
+    expect(isFinished(waiting)).toBe(false);
 
     ci.snap = success();
     await t.service.checkPullRequests();
@@ -18152,10 +18274,16 @@ describe("マージの後の CI/CD とデプロイの監視（PBI-89）", () => 
     });
     // スキルはマージのコミットから探す
     expect(t.repos.fetchedCommits.at(-1)?.commits).toEqual([MERGE]);
-    expect(t.repos.readCalls.map((c) => [c.commit, c.path])).toEqual([
+    expect(
+      t.repos.readCalls.filter((c) => c.commit === MERGE).map((c) => [c.commit, c.path]),
+    ).toEqual([
       [MERGE, ".agents/skills/deployment-observer/SKILL.md"],
       [MERGE, ".claude/skills/deployment-observer/SKILL.md"],
     ]);
+    // 監視が終わったら、工程を終えてタスクを完了にする
+    const done = t.service.get(id)?.task as Task;
+    expect(done.steps.at(-1)).toEqual({ key: "deployment", state: "done" });
+    expect(isFinished(done)).toBe(true);
     // 終わった監視は、もう確かめない。エージェントも実行しない
     const calls = ci.calls.length;
     await t.service.checkPullRequests();
@@ -18359,7 +18487,7 @@ describe("マージの後の CI/CD とデプロイの監視（PBI-89）", () => 
       ci,
       repos,
       outcomes: [
-        checkOut({ result: "healthy", summary: "200 を返す", evidence: ["GET /health → 200"] }),
+        checkOut(answer("healthy", { summary: "200 を返す", evidence: ["GET /health → 200"] })),
       ],
     });
     const id = t.create();
@@ -18370,12 +18498,21 @@ describe("マージの後の CI/CD とデプロイの監視（PBI-89）", () => 
       ci: { result: "passed", skill: SKILL },
     });
     expect(t.service.queuedTaskIds()).toEqual([id]);
+    // 確認の間も、タスクは終わっていない
+    expect(isFinished(t.service.get(id)?.task as Task)).toBe(false);
     await t.service.runNext(id);
     const task = t.service.get(id)?.task;
     expect(task?.deployment).toMatchObject({
       state: "passed",
-      check: { result: "healthy", summary: "200 を返す", evidence: ["GET /health → 200"] },
+      check: {
+        result: "healthy",
+        ci: { result: "passed" },
+        deployment: { result: "healthy" },
+        summary: "200 を返す",
+        evidence: ["GET /health → 200"],
+      },
     });
+    expect(isFinished(task as Task)).toBe(true);
     // マージのコミットのコードの写しを作業領域にし、スキルの場所を伝える
     expect(repos.snapshots.at(-1)?.baseCommit).toBe(MERGE);
     expect(t.executor.scratch.at(-1)).toBe(false);
@@ -18383,6 +18520,13 @@ describe("マージの後の CI/CD とデプロイの監視（PBI-89）", () => 
     const prompt = t.executor.calls.at(-1)?.command.join(" ") ?? "";
     expect(prompt).toContain(SKILL);
     expect(prompt).toContain(MERGE);
+    // sacty が待って判定した CI/CD の結果をデータとして渡し、範囲はスキルに任せ、長く待たせない（PBI-116）
+    expect(prompt).toContain(
+      '[{"kind":"workflow","name":"CI","status":"completed","conclusion":"success"}]',
+    );
+    expect(prompt).toContain("どう確かめるかは、スキルに従います");
+    expect(prompt).toContain("CI/CD やデプロイが終わるのを長く待たない");
+    expect(prompt).toContain("スキルに別の答えの形が書いてあっても、この形式を優先する");
     // 1000 出力トークン = $0.015 を予算に入れる
     expect(task?.budget.usedUsd).toBeCloseTo(0.015, 6);
     expect(t.service.get(id)?.activity.at(-1)).toMatchObject({
@@ -18408,7 +18552,9 @@ describe("マージの後の CI/CD とデプロイの監視（PBI-89）", () => 
         ci,
         repos,
         outcomes: [
-          checkOut({ result, summary: "500 を返す", evidence: ["GET /pay → 500", "ログに NPE"] }),
+          checkOut(
+            answer(result, { summary: "500 を返す", evidence: ["GET /pay → 500", "ログに NPE"] }),
+          ),
         ],
       });
       const id = t.create();
@@ -18427,6 +18573,8 @@ describe("マージの後の CI/CD とデプロイの監視（PBI-89）", () => 
         expect(watch?.fix).toBeUndefined();
         expect(t.service.list()).toHaveLength(1);
       }
+      // 失敗しても、元のタスクは止めずに完了にする（修正のタスクに引き継ぐ。PBI-116）
+      expect(isFinished(t.service.get(id)?.task as Task)).toBe(true);
       t.activity.close();
     }
   });
@@ -18489,7 +18637,7 @@ describe("マージの後の CI/CD とデプロイの監視（PBI-89）", () => 
     t.activity.close();
   });
 
-  it("確認の途中でデーモンが止まったら、起動のときに中断として記録して飛ばす（やり直さない）", async () => {
+  it("確認の途中でデーモンが止まったら、ほかの工程と同じく中断として一時停止し、再開すると確かめ直す（PBI-116）", async () => {
     const repos = new FakeRepos();
     repos.files[MERGE] = { [SKILL]: "# skill" };
     const ci = new FakeCi();
@@ -18501,14 +18649,92 @@ describe("マージの後の CI/CD とデプロイの監視（PBI-89）", () => 
     await t.executor.started.promise;
     expect(t.service.get(id)?.task.deployment?.check?.result).toBeUndefined();
     // 再起動
-    const again = setup({ ci, repos, activity: t.activity });
+    const again = setup({
+      ci,
+      repos,
+      activity: t.activity,
+      outcomes: [checkOut(answer("healthy"))],
+    });
     again.service.recoverInterrupted();
+    const paused = again.service.get(id)?.task as Task;
+    expect(paused).toMatchObject({
+      status: "paused",
+      pausedReason: "error",
+      pausedMessage: { code: "run.daemonStopped" },
+    });
+    expect(paused.deployment).toMatchObject({ state: "waiting", phase: "check" });
+    expect(paused.deployment?.check).toBeUndefined();
+    expect(
+      again.service.get(id)?.activity.find((e) => e.type === "DeploymentChecked")?.payload,
+    ).toMatchObject({ result: "unknown", retry: true, runResult: "interrupted" });
+    expect(again.service.queuedTaskIds()).toEqual([]);
+    again.service.resume(id, {});
+    expect(again.service.queuedTaskIds()).toEqual([id]);
+    await again.service.runNext(id);
+    const done = again.service.get(id)?.task as Task;
+    expect(done.deployment).toMatchObject({ state: "passed", check: { result: "healthy" } });
+    expect(isFinished(done)).toBe(true);
+    t.activity.close();
+  });
+
+  it("工程の無い以前のタスクの監視（古い台帳）も読め、これまでどおり完了したタスクのまま見届ける。確認の途中で止まったら中断として飛ばす", async () => {
+    const repos = new FakeRepos();
+    repos.files[MERGE] = { [SKILL]: "# skill" };
+    const ci = new FakeCi();
+    ci.snap = success();
+    // 以前の版のタスク：工程は実装だけで、完了した後に、マージの記録と同じく監視を始めた
+    const t = setup({ ci, repos, steps: ["implement"], skill: false, outcomes: [HOLD] });
+    const id = t.create();
+    await t.merge(id);
+    expect(deploymentTypes(t.service, id)).toEqual([]);
+    t.activity.append({
+      taskId: id,
+      projectId: "default",
+      events: [
+        {
+          actor: "sacty",
+          event: {
+            type: "DeploymentWatchStarted",
+            payload: {
+              number: 7,
+              repo: "https://github.com/acme/app",
+              branch: "main",
+              commit: MERGE,
+            },
+          },
+        },
+      ],
+    });
+    // 読み直す（再起動）
+    const again = setup({
+      ci,
+      repos,
+      activity: t.activity,
+      steps: ["implement"],
+      outcomes: [HOLD],
+    });
+    expect(again.service.get(id)?.task.deployment).toMatchObject({ state: "waiting", phase: "ci" });
+    expect(isCompleted(again.service.get(id)?.task as Task)).toBe(true);
+    await again.service.checkPullRequests();
+    await again.service.checkPullRequests();
     expect(again.service.get(id)?.task.deployment).toMatchObject({
+      state: "waiting",
+      phase: "check",
+      ci: { skill: SKILL },
+    });
+    void again.service.runNext(id);
+    await again.executor.started.promise;
+    const third = setup({ ci, repos, activity: t.activity, steps: ["implement"] });
+    third.service.recoverInterrupted();
+    const task = third.service.get(id)?.task as Task;
+    expect(task.deployment).toMatchObject({
       state: "skipped",
       reason: "check_unknown",
       check: { result: "unknown", failed: { code: "run.daemonStopped" } },
     });
-    expect(again.service.queuedTaskIds()).toEqual([]);
+    // 以前のタスクは止めず、工程も変えない
+    expect(task.status).toBe("idle");
+    expect(task.steps).toEqual([{ key: "implement", state: "done" }]);
     t.activity.close();
   });
 
@@ -18638,6 +18864,342 @@ describe("マージの後の CI/CD とデプロイの監視（PBI-89）", () => 
     await t.service.checkPullRequests();
     expect(ci.calls).toHaveLength(calls);
     expect(t.service.list()).toHaveLength(1);
+    t.activity.close();
+  });
+
+  it("スキルが CI/CD の確認だけを指すときは、デプロイの確認をしないで終わる（飛ばした理由を残す。PBI-116）", async () => {
+    const repos = new FakeRepos();
+    repos.files[MERGE] = { [SKILL]: "# CI/CD だけ" };
+    const ci = new FakeCi();
+    ci.snap = success();
+    const t = setup({
+      ci,
+      repos,
+      outcomes: [
+        checkOut({
+          ci: { result: "passed", summary: "必要なワークフローはすべて通った" },
+          deployment: { result: "skipped", reason: "このリポジトリはデプロイしていない" },
+          summary: "CI/CD だけ確かめた",
+          evidence: ["CI: success"],
+        }),
+      ],
+    });
+    const id = t.create();
+    await t.merge(id);
+    await t.service.runNext(id);
+    const task = t.service.get(id)?.task as Task;
+    expect(task.deployment).toMatchObject({
+      state: "passed",
+      check: {
+        result: "healthy",
+        ci: { result: "passed" },
+        deployment: { result: "skipped", reason: "このリポジトリはデプロイしていない" },
+      },
+    });
+    expect(task.deployment?.fix).toBeUndefined();
+    expect(isFinished(task)).toBe(true);
+    expect(t.service.list()).toHaveLength(1);
+    t.activity.close();
+  });
+
+  it("スキルに従った CI/CD の確認で失敗を見つけたら、修正のタスクを登録する（PBI-116）", async () => {
+    const repos = new FakeRepos();
+    repos.files[MERGE] = { [SKILL]: "# skill" };
+    const ci = new FakeCi();
+    ci.snap = success();
+    const t = setup({
+      ci,
+      repos,
+      outcomes: [
+        checkOut(
+          answer(
+            "skipped",
+            { summary: "デプロイのワークフローが動いていない" },
+            { result: "failed", summary: "Deploy のワークフローが実行されていない" },
+          ),
+        ),
+      ],
+    });
+    const id = t.create();
+    await t.merge(id);
+    await t.service.runNext(id);
+    const watch = t.service.get(id)?.task.deployment;
+    expect(watch).toMatchObject({ state: "failed", check: { result: "unhealthy" } });
+    const fix = t.service.get(watch?.fix?.taskId ?? "")?.task;
+    expect(fix?.title).toBe(
+      `マージの後の確認で見つけた CI/CD の失敗を直す（${MERGE.slice(0, 7)}）`,
+    );
+    expect(fix?.body).toContain(
+      "- CI/CD の確認：failed（Deploy のワークフローが実行されていない）",
+    );
+    expect(isFinished(t.service.get(id)?.task as Task)).toBe(true);
+    t.activity.close();
+  });
+
+  it("CI/CD を待つ間に一時停止すると CI/CD を見ず、再開すると続ける（PBI-116）", async () => {
+    const ci = new FakeCi();
+    ci.snap = { checks: [{ kind: "workflow", name: "CI", status: "pending" }], failedRuns: [] };
+    const t = setup({ ci });
+    const id = t.create();
+    await t.merge(id);
+    await t.service.pause(id);
+    expect(t.service.get(id)?.task).toMatchObject({ status: "paused", pausedReason: "manual" });
+    const calls = ci.calls.length;
+    ci.snap = success();
+    await t.service.checkPullRequests();
+    await t.service.checkPullRequests();
+    expect(ci.calls).toHaveLength(calls);
+    expect(t.service.get(id)?.task.deployment?.state).toBe("waiting");
+    t.service.resume(id, {});
+    expect(t.service.get(id)?.task.status).toBe("idle");
+    await t.service.checkPullRequests();
+    await t.service.checkPullRequests();
+    expect(t.service.get(id)?.task.deployment?.state).toBe("passed");
+    expect(isFinished(t.service.get(id)?.task as Task)).toBe(true);
+    t.activity.close();
+  });
+
+  it("確認の途中で一時停止すると、確認を結果にせずに止め、再開すると確かめ直す（PBI-116）", async () => {
+    const repos = new FakeRepos();
+    repos.files[MERGE] = { [SKILL]: "# skill" };
+    const ci = new FakeCi();
+    ci.snap = success();
+    const t = setup({ ci, repos, outcomes: [HOLD, checkOut(answer("healthy"))] });
+    const id = t.create();
+    await t.merge(id);
+    const run = t.service.runNext(id);
+    await t.executor.started.promise;
+    await t.service.pause(id);
+    await run;
+    const paused = t.service.get(id)?.task as Task;
+    expect(paused).toMatchObject({ status: "paused", pausedReason: "manual" });
+    expect(paused.deployment).toMatchObject({ state: "waiting", phase: "check" });
+    expect(paused.deployment?.check).toBeUndefined();
+    expect(t.service.queuedTaskIds()).toEqual([]);
+    t.service.resume(id, {});
+    expect(t.service.queuedTaskIds()).toEqual([id]);
+    await t.service.runNext(id);
+    expect(t.service.get(id)?.task.deployment).toMatchObject({
+      state: "passed",
+      check: { result: "healthy" },
+    });
+    expect(
+      t.service
+        .get(id)
+        ?.activity.filter((e) => e.type === "DeploymentChecked")
+        .map((e) => e.type === "DeploymentChecked" && [e.payload.result, e.payload.retry]),
+    ).toEqual([
+      ["unknown", true],
+      ["healthy", undefined],
+    ]);
+    t.activity.close();
+  });
+
+  it("CI/CD を読んでいる間に一時停止したら、結果を記録せず（修正のタスクも作らず）、再開した後に取り直す（PBI-116 レビュー指摘）", async () => {
+    const ci = new FakeCi();
+    ci.snap = { checks: [{ kind: "workflow", name: "CI", status: "pending" }], failedRuns: [] };
+    ci.failuresList = [testFailure];
+    const t = setup({ ci });
+    const id = t.create();
+    await t.merge(id);
+    // 失敗が出そろった（1回目の確認で並びを覚え、2回目で決める）
+    ci.snap = failing();
+    await t.service.checkPullRequests();
+    // 2回目の確認で CI/CD を読んでいる間に、一時停止する
+    const reading = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const snapshot = ci.snapshot.bind(ci);
+    ci.snapshot = async (input) => {
+      reading.resolve();
+      await release.promise;
+      return snapshot(input);
+    };
+    const check = t.service.checkPullRequests();
+    await reading.promise;
+    await t.service.pause(id);
+    release.resolve();
+    await check;
+    expect(t.service.get(id)?.task).toMatchObject({ status: "paused" });
+    expect(deploymentTypes(t.service, id)).toEqual(["DeploymentWatchStarted"]);
+    expect(t.service.list()).toHaveLength(1);
+    // 再開すると取り直し、結果を記録して修正のタスクを登録する
+    ci.snapshot = snapshot;
+    t.service.resume(id, {});
+    await t.service.checkPullRequests();
+    await t.service.checkPullRequests();
+    expect(t.service.get(id)?.task.deployment?.state).toBe("failed");
+    expect(t.service.get(id)?.task.deployment?.fix).toBeDefined();
+    expect(isFinished(t.service.get(id)?.task as Task)).toBe(true);
+    t.activity.close();
+  });
+
+  it("CI/CD を読んでいる間に一時停止してすぐに再開し、その後に古い応答が届いても、記録しない（PBI-116 再レビュー指摘）", async () => {
+    const ci = new FakeCi();
+    ci.snap = { checks: [{ kind: "workflow", name: "CI", status: "pending" }], failedRuns: [] };
+    ci.failuresList = [testFailure];
+    const t = setup({ ci });
+    const id = t.create();
+    await t.merge(id);
+    ci.snap = failing();
+    await t.service.checkPullRequests();
+    // 次の確認で CI/CD を読んでいる間に、一時停止してすぐに再開する。その後に、止める前に読み始めた応答が届く
+    const reading = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const snapshot = ci.snapshot.bind(ci);
+    ci.snapshot = async (input) => {
+      reading.resolve();
+      await release.promise;
+      return snapshot(input);
+    };
+    const check = t.service.checkPullRequests();
+    await reading.promise;
+    await t.service.pause(id);
+    t.service.resume(id, {});
+    expect(t.service.get(id)?.task.status).toBe("idle");
+    release.resolve();
+    await check;
+    expect(deploymentTypes(t.service, id)).toEqual(["DeploymentWatchStarted"]);
+    expect(t.service.list()).toHaveLength(1);
+    expect(isFinished(t.service.get(id)?.task as Task)).toBe(false);
+    // 再開した後の確認では、読み直して記録する
+    ci.snapshot = snapshot;
+    await t.service.checkPullRequests();
+    await t.service.checkPullRequests();
+    expect(t.service.get(id)?.task.deployment?.state).toBe("failed");
+    expect(t.service.get(id)?.task.deployment?.fix).toBeDefined();
+    t.activity.close();
+  });
+
+  it("確認の準備・実行の間は、一時停止を求めても、止め終わるまで再開できない（古い準備の結果が再開の後に届くことは無い）", async () => {
+    const repos = new FakeRepos();
+    repos.files[MERGE] = { [SKILL]: "# skill" };
+    const ci = new FakeCi();
+    ci.snap = success();
+    const t = setup({ ci, repos, outcomes: [checkOut(answer("healthy"))] });
+    const id = t.create();
+    await t.merge(id);
+    const fetching = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const fetchCommits = repos.fetchCommits.bind(repos);
+    repos.fetchCommits = async (...args) => {
+      fetching.resolve();
+      await release.promise;
+      return fetchCommits(...args);
+    };
+    const run = t.service.runNext(id);
+    await fetching.promise;
+    const paused = t.service.pause(id);
+    // 止め終わる（準備が終わり、一時停止を記録する）までは、再開できない
+    expect(() => t.service.resume(id, {})).toThrow();
+    release.resolve();
+    await paused;
+    await run;
+    expect(t.service.get(id)?.task).toMatchObject({ status: "paused" });
+    expect(t.service.get(id)?.task.deployment?.check).toBeUndefined();
+    repos.fetchCommits = fetchCommits;
+    t.service.resume(id, {});
+    await t.service.runNext(id);
+    expect(t.service.get(id)?.task.deployment).toMatchObject({ state: "passed" });
+    t.activity.close();
+  });
+
+  it("確認の準備の途中で一時停止し、準備が失敗しても、結果にせずに止め、再開すると確かめ直す（PBI-116 レビュー指摘）", async () => {
+    const repos = new FakeRepos();
+    repos.files[MERGE] = { [SKILL]: "# skill" };
+    const ci = new FakeCi();
+    ci.snap = success();
+    const t = setup({ ci, repos, outcomes: [checkOut(answer("healthy"))] });
+    const id = t.create();
+    await t.merge(id);
+    expect(t.service.get(id)?.task.deployment).toMatchObject({ phase: "check" });
+    // マージのコミットを取得している間に一時停止し、その取得が失敗する
+    const fetching = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const fetchCommits = repos.fetchCommits.bind(repos);
+    repos.fetchCommits = async () => {
+      fetching.resolve();
+      await release.promise;
+      throw new Error("止めたので取得できなかった");
+    };
+    const run = t.service.runNext(id);
+    await fetching.promise;
+    const paused = t.service.pause(id);
+    release.resolve();
+    await paused;
+    await run;
+    const task = t.service.get(id)?.task as Task;
+    expect(task).toMatchObject({ status: "paused", pausedReason: "manual" });
+    expect(task.deployment).toMatchObject({ state: "waiting", phase: "check" });
+    expect(task.deployment?.check).toBeUndefined();
+    expect(
+      t.service.get(id)?.activity.find((e) => e.type === "DeploymentChecked")?.payload,
+    ).toMatchObject({ retry: true, runResult: "interrupted", failed: { code: "deploy.stopped" } });
+    // 再開すると確かめ直す
+    repos.fetchCommits = fetchCommits;
+    t.service.resume(id, {});
+    await t.service.runNext(id);
+    expect(t.service.get(id)?.task.deployment).toMatchObject({
+      state: "passed",
+      check: { result: "healthy" },
+    });
+    t.activity.close();
+  });
+
+  it("監視の間に中止すると、マージした実装の PR は閉じずに、監視をやめる（PBI-116）", async () => {
+    const ci = new FakeCi();
+    ci.snap = { checks: [{ kind: "workflow", name: "CI", status: "pending" }], failedRuns: [] };
+    const t = setup({ ci });
+    const id = t.create();
+    await t.merge(id);
+    const cancelled = await t.service.cancel(id);
+    expect(t.pulls.closed).toEqual([]);
+    expect(cancelled.cancelled?.cleanup).toContainEqual({
+      target: "pull_request",
+      result: "skipped",
+    });
+    t.activity.close();
+  });
+
+  it("マージの後の監視の工程は、ほかの工程と同じく、工程のイメージで確かめる（PBI-116）", async () => {
+    const repos = new FakeRepos();
+    repos.files[MERGE] = { [SKILL]: "# skill" };
+    const ci = new FakeCi();
+    ci.snap = success();
+    const base = configOf(agent())() as { ok: true; config: SactyConfig };
+    const config = (): ConfigResult => ({
+      ok: true,
+      config: {
+        ...base.config,
+        images: {
+          java: { name: "java", image: "sacty-agent-java:test", description: "Java", env: {} },
+          web: { name: "web", image: "sacty-agent-web:test", description: "ブラウザ", env: {} },
+        },
+      },
+    });
+    const t = setup({ ci, repos, config, outcomes: [checkOut(answer("healthy"))] });
+    const id = t.create();
+    await t.service.runNext(id);
+    t.service.changeStepImage(id, { step: "implement", image: "java" });
+    t.service.changeStepImage(id, { step: "deployment", image: "web" });
+    await t.merge(id);
+    await t.service.runNext(id);
+    expect(t.executor.images.at(-1)?.image).toBe("sacty-agent-web:test");
+    t.activity.close();
+  });
+
+  it("以前のデータでプロジェクトに deploymentWatch があっても読まず、スキルの有無だけで決める（PBI-116）", async () => {
+    const projects = new MemoryProjectStore();
+    projects.put("default", {
+      name: "デフォルト",
+      targets: [{ scope: "repo", target: "https://github.com/acme/app" }],
+      githubAccounts: { "github.com": "me" },
+      deploymentWatch: true,
+    } as ProjectDefinition);
+    const t = setup({ projects, skill: false });
+    const id = t.create();
+    await t.merge(id);
+    expect(deploymentTypes(t.service, id)).toEqual([]);
+    expect(isFinished(t.service.get(id)?.task as Task)).toBe(true);
     t.activity.close();
   });
 });

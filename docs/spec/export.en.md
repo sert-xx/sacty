@@ -35,7 +35,7 @@ Code: `apps/daemon/src/service.ts` (`awaitingExport`, `exportOutput`, `retryExpo
 ## Exporting and importing projects
 
 - `GET /api/projects/:id/export` returns `{ sacty: "project", version: 5, project: { … } }` (`PROJECT_EXPORT_VERSION`). `project` contains
-  `name`, `targets`, `context`, `tickets`, `sharedComposes`, and `deploymentWatch` (only when `true`). IDs, timestamps, and
+  `name`, `targets`, `context`, `tickets`, and `sharedComposes`. IDs, timestamps, and
   `githubAccounts` (personal settings) are not included. From the web UI, it downloads as `sacty-project-<name>.json`.
 - The Slack notification destination is in the sacty settings ([Notifications](notifications.en.md)), not in the project definition, so it is not exported.
 - `POST /api/projects/import` strictly checks the same shape (unknown fields, a different `sacty`, or a different version are errors) and saves it as a project with a new ID

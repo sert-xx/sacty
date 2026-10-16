@@ -525,10 +525,16 @@ describe("工程の選択と内容の調査では、開発のセットアップ�
     expect(prompt).not.toContain("PR作成");
     expect(prompt).not.toContain("PR 作成");
     expect(prompt).not.toMatch(/\bpr\b/);
+    // 実装の後に、マージの後の監視（スキルがあるときだけ。sacty が決める。PBI-116）
+    const watch =
+      "→ マージの後の監視（対象のリポジトリにデプロイの確認のスキルがあるときだけ。sacty が決める）。";
     expect(prompt).toContain(
-      "- standard：調査 → 要求要件 → 設計（テスト観点）→ 実装（PR を作り、マージで承認）。",
+      `- standard：調査 → 要求要件 → 設計（テスト観点）→ 実装（PR を作り、マージで承認）${watch}`,
     );
-    expect(prompt).toContain("- bugfix：調査 → 再現 → 実装（PR を作り、マージで承認）。");
+    expect(prompt).toContain(
+      `- skip-design：調査 → 要求要件 → 実装（PR を作り、マージで承認）${watch}`,
+    );
+    expect(prompt).toContain(`- bugfix：調査 → 再現 → 実装（PR を作り、マージで承認）${watch}`);
   });
 
   it("内容の調査（調査だけ・前段の調査）のプロンプトに、セットアップをしないこと・優先することを書く", () => {
@@ -1165,6 +1171,21 @@ describe("成果の書き出し（PBI-56）", () => {
       expect(footer).not.toContain("成果物チェック");
     }
     expect(parts.footer).toContain(`sacty task ${task.id}`);
+    // マージの後の監視の工程があれば、それを終えてから完了すると書く（飛ばしたなら書かない。PBI-116）
+    const watched = (state: "todo" | "skip") =>
+      buildPullRequestBody({
+        ...task,
+        steps: [
+          { key: "implement", state: "active" },
+          { key: "deployment", state },
+        ],
+      } as Task);
+    expect(watched("todo")).toContain(
+      "- この PR をマージすると、実装を承認したことになり、マージの後の監視（CI/CD とスキルに従った確認）を終えるとタスクが完了します（sacty の画面からは承認しません）。",
+    );
+    expect(watched("skip")).toContain(
+      "- この PR をマージすると、実装を承認したことになり、タスクが完了します（sacty の画面からは承認しません）。",
+    );
   });
 
   it("チケットへの PR のコメントに、書き出した成果の URL を添える", () => {

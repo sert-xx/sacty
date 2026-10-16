@@ -36,7 +36,7 @@ Code: `packages/cli/src/index.ts` (`up`, `waitForDaemon`, `parsePort`), `package
 6. It starts listening on the gateway.
 7. It recovers interrupted runs (`recoverInterrupted`):
    - An "Ask the Orchestrator" that was in the middle of answering is recorded as interrupted.
-   - A deployment check that was in the middle of running is recorded as not determined (interrupted) ([After-merge watch](deployment-watch.en.md)).
+   - A deployment check that was in the middle of running is recorded as interrupted. For the after-merge watch step, the task is paused (`TaskPaused`, reason `error`) and checked again on resume. For tasks from before the step, it ends as not determined ([After-merge watch](deployment-watch.en.md)).
    - A Goal Guardian judgment that was in the middle of judging is recorded as not judged (`undecidable`).
    - Tasks that were running (`running`) are recorded as a run failure (`AgentRunFailed`) and paused (`TaskPaused`, reason `error`).
 8. Steps that were waiting because they could not run are queued (`queueWaitingSteps`).

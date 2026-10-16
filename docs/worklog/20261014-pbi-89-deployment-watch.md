@@ -4,7 +4,7 @@
 - タスク: PBI-89
 - PR: #97
 - ブランチ: feat/issue-89-deploy-observer
-- 関係する ADR: [sacty のタスクの実装の PR がマージされたら、CI/CD とデプロイ後のアプリを見届け、失敗したら修正のタスクを登録する](../adr/20261014-1439-deployment-watch-after-merge.md)
+- 関係する ADR: [sacty のタスクの実装の PR がマージされたら、CI/CD とデプロイ後のアプリを見届け、失敗したら修正のタスクを登録する](../adr/20261014-1439-superseded-deployment-watch-after-merge.md)
 
 ## 目的
 

@@ -78,6 +78,32 @@ describe("Slack の通知（PBI-38）", () => {
     expect(notificationFor(undefined, task({ status: "queued" }))).toBeUndefined();
   });
 
+  it("マージの後の監視の工程（PBI-116）：監視の間は完了を知らせず、終わったら知らせる。止まったら工程の名前を書く", () => {
+    const watching = task({
+      steps: [
+        { key: "implement", state: "done" },
+        { key: "deployment", state: "active" },
+      ],
+    });
+    const gate = task({ status: "awaiting_approval", gate: { step: "implement", submission: 1 } });
+    expect(notificationFor(gate, watching)).toBeUndefined();
+    const done = task({
+      steps: [
+        { key: "implement", state: "done" },
+        { key: "deployment", state: "done" },
+      ],
+    });
+    expect(notificationFor(watching, done)).toBe("completed");
+    const paused = task({ ...watching, status: "paused", pausedReason: "error" });
+    expect(notificationFor(watching, paused)).toBe("paused");
+    expect(notificationText(paused, "paused", "ja", "http://127.0.0.1:4700/")).toContain(
+      "マージの後の監視",
+    );
+    expect(notificationText(paused, "paused", "en", "http://127.0.0.1:4700/")).toContain(
+      "After-merge watch",
+    );
+  });
+
   it("本文には、何の判断か・タスクと窓口へのリンク（実装の承認は PR も）を、プロジェクトの言語で書く", () => {
     const pr = task({
       status: "awaiting_approval",

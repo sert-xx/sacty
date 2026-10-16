@@ -54,17 +54,19 @@
   2. テストの実行の仕方（コマンドと前提。今の設定と合っているか）。テストの仕組みがまだ無ければ、無いことと変更の確かめ方を書かせ、
      言語やテストの仕組みを新しく入れさせない（入れるなら別のタスク）
   3. テストに要るサービス（起動の仕方・つなぎ先。要らなければそう書く）
-  4. CI/CD でデプロイしているリポジトリでは、デプロイの確認のスキル `deployment-observer`。原本を
-     `.agents/skills/deployment-observer/SKILL.md`、`.claude/skills/deployment-observer` を `../../.agents/skills/deployment-observer`
-     への相対のシンボリックリンクにする。front matter（`name`・`description`）、デプロイの完了の見分け方・確かめ方・つなぎ方、
-     変更しない・秘密情報を出さない・判断できなければ `unknown` の約束、見出し `sacty-deployment` の JSON の答えの形を書かせる。
-     置き場所・リンク先・見出しは、マージの後の監視の `DEPLOYMENT_SKILL_PATHS`・`DEPLOYMENT_HEADING` から作る
-     （[マージの後の監視](deployment-watch.md)）。
+  4. CI/CD のあるリポジトリでは（デプロイしていなくても）、マージの後の監視のスキル `deployment-observer`。CI/CD が無ければ作らない
+     （マージの後の監視の工程は飛ばされる）。原本を `.agents/skills/deployment-observer/SKILL.md`、`.claude/skills/deployment-observer` を
+     `../../.agents/skills/deployment-observer` への相対のシンボリックリンクにする。front matter（`name`・`description`）と、CI/CD の確認の
+     仕方の reference（`references/ci.md`。どのワークフロー・チェックが何を確かめるか・無視してよい失敗・結果やログの見方）を書かせる。
+     デプロイしているなら、デプロイの完了の見分け方・確かめ方・つなぎ方・エラーの基準を、デプロイしていないなら、デプロイの確認を飛ばす
+     （`skipped` と理由）ことを書かせる。変更しない・秘密情報を出さない・長く待たない・判断できなければ `unknown` の約束と、見出し
+     `sacty-deployment` の JSON の答えの形（CI/CD の確認・デプロイの確認それぞれの結果）を書かせる。置き場所・リンク先・reference・見出しは、
+     マージの後の監視の `DEPLOYMENT_SKILL_PATHS`・`CI_REFERENCE`・`DEPLOYMENT_HEADING` から作る（[マージの後の監視](deployment-watch.md)）。
 - ゴールには、整っていて変更が要らなければ PR を作らずに調査だけで終え、項目ごとの検査の結果を残すことも書く（オーケストレーターが
   `investigate` を選べば、調査の結果を画面で承認して完了する）。工程を進めた後に変更が要らないとわかったときは、ファイルを変えずに
   検査の結果と理由を実装の説明に書くよう求める（PR を作らず、人間が確かめて変更なしで完了する。[承認と差し戻し](approval.md#実装に変更が無いとき)）。
 
-コード: `packages/core/src/events.ts`（`TaskTemplate`・`CreateTemplateTaskInput`・`TaskCreated`）、`apps/daemon/src/service.ts`（`createTask`・`createTemplateTask`・`projectRepository`）、`apps/daemon/src/task-templates.ts`（`templateTask`）、`apps/daemon/src/deployment.ts`（`DEPLOYMENT_SKILL_PATHS`・`DEPLOYMENT_HEADING`）
+コード: `packages/core/src/events.ts`（`TaskTemplate`・`CreateTemplateTaskInput`・`TaskCreated`）、`apps/daemon/src/service.ts`（`createTask`・`createTemplateTask`・`projectRepository`）、`apps/daemon/src/task-templates.ts`（`templateTask`）、`apps/daemon/src/deployment.ts`（`DEPLOYMENT_SKILL_PATHS`・`CI_REFERENCE`・`DEPLOYMENT_HEADING`）
 
 ## 工程
 
@@ -78,6 +80,7 @@
 | `integrate` | 統合レビュー | 子タスクの成果が親の要求要件を満たすかを確かめる |
 | `reproduce` | 再現 | 不具合を再現する（失敗する）テストを書く |
 | `implement` | 実装 | 実装する。検証に通ったら、sacty が実装の PR を作り、人の承認（PR のマージ）を待つ |
+| `deployment` | マージの後の監視 | 実装の PR のマージの後に、CI/CD を待ち、スキルに従って確かめ、失敗したら修正のタスクを登録する（人の承認は無い。[マージの後の監視](deployment-watch.md)） |
 | `document` | 文書作成 | Markdown の原稿を作成・編集し、画面で承認を待つ |
 | `operation` | 作業 | 依頼された外部変更を1回実行し、根拠を提出して結果の承認を待つ |
 
@@ -90,6 +93,8 @@
 - リポジトリが要る工程（`REPO_STEPS`）：`implement`・`reproduce`・`review`。
 - docker compose のサービスを使える工程（`SERVICE_STEPS`）：`investigate`（不具合の調査のときだけ）・`reproduce`・`implement`。
 - 書き出せる工程（`EXPORT_STEPS`）：`investigate`（最後の工程のときだけ）・`requirements`・`design`・`document`。
+- 実行しない工程（`EXECUTABLE_STEPS` に無い）：`deployment`。前の工程の承認の後は待機になり、sacty が PR の確認で進める。対象のリポジトリに
+  スキルが無ければ、工程を選ぶときに飛ばす（`skip`。[マージの後の監視](deployment-watch.md)）。工程を進めるときは、`skip` の工程を飛ばす。
 
 コード: `packages/core/src/events.ts`（`StepKey`・`GATED_STEPS`・`REWORK_STEPS`・`EXPORT_STEPS`・`exportSteps`）、`packages/core/src/projection.ts`（`investigationIsGoal`）、`apps/daemon/src/service.ts`（`REPO_STEPS`・`submitEvents`）、`apps/daemon/src/prompts.ts`（`SERVICE_STEPS`）
 
@@ -97,13 +102,13 @@
 
 | `plan` | 工程 |
 | --- | --- |
-| `standard` | `investigate` → `requirements` → `design` → `implement` |
-| `skip-design` | `investigate` → `requirements` → `implement` |
+| `standard` | `investigate` → `requirements` → `design` → `implement` → `deployment` |
+| `skip-design` | `investigate` → `requirements` → `implement` → `deployment` |
 | `investigate` | `investigate`（調査だけ） |
 | `design-only` | `requirements` → `design`（設計だけ） |
 | `review` | `review`（レビューだけ） |
 | `split` | `investigate` → `requirements` → `design` → `split` → `integrate` |
-| `bugfix` | `investigate` → `reproduce` → `implement` |
+| `bugfix` | `investigate` → `reproduce` → `implement` → `deployment` |
 | `document` | `document` |
 | `operation` | `operation` |
 
@@ -244,7 +249,7 @@
   - 一時停止：実装の承認待ちのまま、一時停止はしない。一時停止の操作には、承認待ちになったので止めなかったことを返す（`pause.reachedApproval`。409）。
   - 中止：PR の作成が終わるのを待ってから、記録した PR を閉じ、タスクを中止する（下の「予算・一時停止・再開・中止」の片付け）。
 - 承認待ちの扱い（PR のマージでの承認・差し戻し・PR の指摘の取り込み）は、要求要件・設計と同じ（[承認と差し戻し](approval.md)）。
-  PR のマージで実装を承認すると、タスクは完了する。
+  PR のマージで実装を承認すると、マージの後の監視の工程へ進む（飛ばしていれば、タスクは完了する）。
 
 コード: `apps/daemon/src/service.ts`（`runNextInner`・`publish`・`implementSubmitted`・`submitEvents`・`pause`）、`packages/core/src/projection.ts`（`publishPending`・`gatePullRequest`）
 

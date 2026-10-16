@@ -35,7 +35,7 @@
 ## プロジェクトのエクスポート・インポート
 
 - `GET /api/projects/:id/export` は `{ sacty: "project", version: 5, project: { … } }`（`PROJECT_EXPORT_VERSION`）を返す。`project` には
-  `name`・`targets`・`context`・`tickets`・`sharedComposes`・`deploymentWatch`（`true` のときだけ）を入れる。ID・日時・
+  `name`・`targets`・`context`・`tickets`・`sharedComposes` を入れる。ID・日時・
   `githubAccounts`（個人の設定）は入れない。画面からは `sacty-project-<名前>.json` としてダウンロードする。
 - Slack の通知先は sacty の設定にあり（[通知](notifications.md)）、プロジェクトの定義に無いので、エクスポートに入れない。
 - `POST /api/projects/import` は、同じ形を厳密に確かめ（知らない項目・`sacty` の違い・版の違いは誤り）、新しい ID のプロジェクトとして保存する

@@ -17,7 +17,7 @@ Related ADRs: none
 | `image` | `sacty-agent:0.1.0` (`DEFAULT_IMAGE`) | The default image. Used to run agents and tests |
 | `default_agent` | (required) | The default AI. A name in `agents` |
 | `guardian_agent` | `default_agent` | The Goal Guardian's AI |
-| `step_agents` | `{}` | The AI per step (`StepKey`) and for `orchestrator` and `deployment` (checking deployment after a merge). If not written, `default_agent`; for Integration review (`integrate`), `guardian_agent` |
+| `step_agents` | `{}` | The AI per step (`StepKey`; `deployment` is the check in the after-merge watch step) and for `orchestrator`. If not written, `default_agent`; for Integration review (`integrate`), `guardian_agent` |
 | `agents` | (required) | Agent definitions ("Agents" below) |
 | `providers` | `{}` | OpenAI-compatible (Responses API) endpoints. Names match `^[A-Za-z0-9_-]+$`. `base_url` (http or https), `secret` (optional), `via_gateway` (default `false`) |
 | `budget.default_per_task_usd` | `1` (`DEFAULT_BUDGET_USD`) | The budget per task (US dollars; a positive number) |
