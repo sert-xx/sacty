@@ -40,7 +40,7 @@ sacty up（packages/cli）
 | 種類 | パス |
 | --- | --- |
 | 状態 | `GET /api/health`・`GET /api/status`・`GET /api/github/accounts` |
-| タスク | `GET/POST /api/tasks`・`GET /api/tasks/:id`・`POST /api/tasks/:id/{approve,request-changes,pause,resume,cancel,repository,questions,rereview}`・`GET /api/tasks/:id/cleanup-plan`・`POST /api/tasks/:id/remarks/:remarkId/void`・`POST /api/tasks/:id/proposals/:proposalId/decide`・`POST /api/tasks/:id/exports/:step/retry` |
+| タスク | `GET/POST /api/tasks`（`GET` の `?open=1` は終わっていないタスクだけ）・`GET /api/tasks/:id`・`POST /api/tasks/:id/{approve,request-changes,pause,resume,cancel,repository,questions,rereview}`・`GET /api/tasks/:id/cleanup-plan`・`POST /api/tasks/:id/remarks/:remarkId/void`・`POST /api/tasks/:id/proposals/:proposalId/decide`・`POST /api/tasks/:id/exports/:step/retry` |
 | 実行の記録 | `GET /api/tasks/:id/runs/:runId/log`・`…/files/:file`・`…/agent-files`・`…/agent-files/raw` |
 | プロジェクト | `GET/POST /api/projects`・`GET/PUT /api/projects/:id`・`GET /api/projects/:id/{repositories,platforms,export}`・`GET/POST /api/projects/:id/context-preview`・`POST /api/projects/import`・`POST /api/projects/:id/notification-test` |
 | sacty の設定 | `GET/PUT /api/settings`・`POST /api/intake/run`・`POST /api/secrets/prefetch` |
@@ -57,7 +57,7 @@ sacty up（packages/cli）
 | `/projects/<ID>` | `/projects/<ID>/tasks` へ移す |
 | `/projects/<ID>/tasks` | そのプロジェクトのタスクの一覧（人間の判断が必要なタスクのカード・「タスクを作成」） |
 | `/projects/<ID>/settings` | そのプロジェクトの設定 |
-| `/projects/current`・`/projects/current/tasks` | 表示しているプロジェクト（cookie）の設定・タスクの一覧へ移す（303）。ほかの `/projects/current/…` は 404 |
+| `/projects/current`・`/projects/current/tasks` | 表示しているプロジェクト（cookie）の設定・タスクの一覧へ移す（303）。ほかの `/projects/current/…`（`/projects/current/settings` も）は 404 |
 | `/tasks/<ID>`・`/tasks/<ID>/review`・`/tasks/<ID>/runs/<実行の ID>` | タスクの詳細・成果物のレビュー・実行のログ |
 | `/settings` | sacty の設定 |
 
@@ -69,15 +69,19 @@ sacty up（packages/cli）
   「終わっていないタスク」だけ。
   - すべてのプロジェクトの、完了・中止を除くタスク（承認待ち・一時停止・エスカレーションも含む。`statusTone` が `completed`・
     `cancelled` でないもの）を、最後に動いた順（`updatedAt` の新しい順）に出す。件数の上限は無い。消したプロジェクトのタスクは出さない。
-  - 各行に、題（タスクの詳細へのリンク）・プロジェクトの名前・状態を出す。1行の高さは 4rem、欄の高さは5件分（20rem）で、それより
-    多ければ欄の中でスクロールする（キーボードでもスクロールできるよう、欄がフォーカスを受ける）。
+  - デーモンからは、終わっていないタスクだけを取る（`GET /api/tasks?open=1`。終わったタスクは `isFinished`）。完了したタスクの成果物を
+    3秒ごとに運ばないため（完了したものを含む全件は、成果物の大きさによって1回で数十〜数百 MB になる）。ヘッダーのお知らせ（対応待ち）も
+    同じ経路で取る。
+  - 各行に、題（タスクの詳細へのリンク）・プロジェクトの名前・状態を出す。1行の高さは 4rem 以上、欄の高さは5件分（20rem）で、それより
+    多ければ欄の中でスクロールする（キーボードでもスクロールできるよう、欄がフォーカスを受ける）。題とプロジェクトの名前は1行に切り詰め、
+    全文はホバー（`title`）と、行にフォーカスがある間の折り返しで出す。件数の補足（「すべてのプロジェクト・N件」）は、言語ごとの文言で組み立てる。
   - プロジェクトが無いとき・終わっていないタスクが無いときは、そのことを出す。
   - 欄を足すときは、`DashboardData`（`loadDashboard`）に欄のデータを足し、`LiveDashboard` に `DashboardCard` を足す（取り直しは画面で1つ）。
 
 コード: `apps/web/src/lib/paths.ts`、`apps/web/src/app/page.tsx`、`apps/web/src/app/dashboard/page.tsx`、
 `apps/web/src/app/projects/[id]/page.tsx`、`apps/web/src/app/projects/[id]/tasks/page.tsx`、`apps/web/src/app/projects/[id]/settings/page.tsx`、
 `apps/web/src/app/projects/current/[[...view]]/route.ts`、`apps/web/src/app/tasks/[id]/page.tsx`（`Breadcrumb`）、
-`apps/web/src/lib/dashboard-data.ts`（`loadDashboard`・`isOpenTask`・`openTaskRows`）、`apps/web/src/components/dashboard.tsx`（`LiveDashboard`・`DashboardGrid`・`DashboardCard`・`OpenTasksCard`）
+`packages/core/src/projection.ts`（`isFinished`）、`apps/daemon/src/server.ts`（`createApp`）、`apps/web/src/lib/dashboard-data.ts`（`loadDashboard`・`isOpenTask`・`openTaskRows`）、`apps/web/src/components/dashboard.tsx`（`LiveDashboard`・`DashboardGrid`・`DashboardCard`・`OpenTasksCard`）
 
 ## 画面のヘッダーとサイドメニュー（表示しているプロジェクト・お知らせ）
 

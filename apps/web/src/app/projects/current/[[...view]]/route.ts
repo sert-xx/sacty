@@ -13,7 +13,7 @@ export async function GET(
 ) {
   const view = (await params).view ?? [];
   const to =
-    view.length === 0 || (view.length === 1 && view[0] === "settings")
+    view.length === 0
       ? projectSettingsPath
       : view.length === 1 && view[0] === "tasks"
         ? projectTasksPath

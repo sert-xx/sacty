@@ -1,5 +1,6 @@
 "use client";
 
+import { cn } from "cn";
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { DaemonError } from "@/components/daemon-error";
@@ -9,6 +10,10 @@ import { useMessages } from "@/i18n/client";
 import type { DashboardData } from "@/lib/dashboard-data";
 import { taskPath } from "@/lib/paths";
 import { useLiveData } from "@/lib/use-live-data";
+
+/** 1行に切り詰め、行にフォーカスがある間は折り返して全文を出す。 */
+const FULL_ON_FOCUS =
+  "truncate group-focus-within:whitespace-normal group-focus-within:[overflow-wrap:anywhere]";
 
 /** ダッシュボードのデータを取り直す先（PBI-114）。 */
 export const DASHBOARD_LIVE_URL = "/live/dashboard";
@@ -72,8 +77,9 @@ export function DashboardCard({
       data-testid={`dashboard-card-${id}`}
       className="flex min-w-0 flex-col rounded-xl border border-border bg-card"
     >
-      <div className="flex items-baseline justify-between gap-3 px-5 pt-4 pb-3">
-        <h2 id={id} className="text-[15px] font-semibold">
+      {/* 狭い画面では、見出しを折り返さず、補足を次の行に回す */}
+      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5 px-5 pt-4 pb-3">
+        <h2 id={id} className="shrink-0 text-[15px] font-semibold">
           {title}
         </h2>
         {note && <span className="text-[13px] text-muted-foreground">{note}</span>}
@@ -96,9 +102,7 @@ export function OpenTasksCard({ data }: { data: DashboardData }) {
       title={m.title}
       note={
         data.projects > 0 ? (
-          <>
-            {m.note}・<span data-testid="open-tasks-count">{m.count(rows.length)}</span>
-          </>
+          <span data-testid="open-tasks-summary">{m.summary(rows.length)}</span>
         ) : undefined
       }
     >
@@ -113,7 +117,8 @@ export function OpenTasksCard({ data }: { data: DashboardData }) {
         <p className="px-5 pb-5 text-sm text-muted-foreground">{m.empty}</p>
       ) : (
         // 1行は h-16（4rem）。5件分の高さ（20rem）を超えたら、欄の中でスクロールする。キーボードでもスクロールできるよう、
-        // フォーカスを受ける
+        // フォーカスを受ける。題とプロジェクトの名前は1行に切り詰め、全文は、ホバーで title に、行にフォーカスがある間は
+        // 折り返して出す（同じ書き出しの項目を見分けられるように）
         <ul
           aria-label={m.list}
           data-testid="open-tasks-list"
@@ -125,16 +130,20 @@ export function OpenTasksCard({ data }: { data: DashboardData }) {
             <li
               key={task.id}
               data-testid={`open-task-${task.id}`}
-              className="flex h-16 items-center gap-4 border-b border-border px-5 last:border-b-0 hover:bg-muted"
+              className="group flex min-h-16 items-center gap-4 border-b border-border px-5 py-2 last:border-b-0 hover:bg-muted"
             >
               <div className="flex min-w-0 flex-1 flex-col gap-0.5">
                 <Link
                   href={taskPath(task.id)}
-                  className="truncate font-medium text-foreground hover:underline"
+                  title={task.title}
+                  className={cn("font-medium text-foreground hover:underline", FULL_ON_FOCUS)}
                 >
                   {task.title}
                 </Link>
-                <span className="truncate text-xs text-muted-foreground">
+                <span
+                  title={task.projectName}
+                  className={cn("text-xs text-muted-foreground", FULL_ON_FOCUS)}
+                >
                   <span className="sr-only">{m.project}</span>
                   {task.projectName}
                 </span>

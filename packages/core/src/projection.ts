@@ -2011,6 +2011,14 @@ export function isCompleted(task: Task): boolean {
 }
 
 /**
+ * 終わったタスクか（中止したか、工程をすべて終えて止まっている。PBI-114）。画面の状態の「完了」「中止」と同じ。承認待ち・
+ * 一時停止・エスカレーション・テストや最終レビューの途中は、終わっていない。
+ */
+export function isFinished(task: Task): boolean {
+  return task.status === "cancelled" || (task.status === "idle" && isCompleted(task));
+}
+
+/**
  * 対象リポジトリの無いタスクか（PBI-73）。リポジトリを指定せずに作り、まだリポジトリを決めていない（決めたら、ふつうの
  * リポジトリのあるタスクとして進む）。対象リポジトリを選ぶ前の版（PBI-21 より前）のタスクは含めない（理由を示して止める）。
  */

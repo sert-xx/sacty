@@ -96,6 +96,8 @@ describe("ダッシュボードの終わっていないタスク（PBI-114）", 
       task({ id: "d", projectId: "p2", status: "idle", steps: done }),
     ]);
     const data = await loadDashboard();
+    // 終わっていないタスクだけをデーモンから取る（完了したタスクの成果物を3秒ごとに運ばない）
+    expect(listTasks).toHaveBeenCalledWith({ open: true });
     expect(data.projects).toBe(2);
     expect(data.openTasks.map((t) => [t.id, t.projectId, t.projectName])).toEqual([
       ["b", "p2", "Webサイト"],

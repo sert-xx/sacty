@@ -1,7 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { Readable } from "node:stream";
-import { issueMessage, ProjectDefinition } from "@sacty/core";
+import { isFinished, issueMessage, ProjectDefinition } from "@sacty/core";
 import { type Context, Hono } from "hono";
 import { ZodError, z } from "zod";
 import { safeRelativePath } from "./agent-sessions.js";
@@ -87,7 +87,14 @@ export function createApp(
   // gh にログイン済みの GitHub のアカウント（プロジェクトの設定で選ぶ。PBI-13）。トークンは返さない
   app.get("/api/github/accounts", async (c) => c.json(await service.githubAccounts()));
 
-  app.get("/api/tasks", (c) => c.json({ tasks: service.list() }));
+  // ?open=1 なら、終わっていないタスクだけ（ダッシュボードとヘッダーが3秒ごとに取るので、完了したタスクの成果物を毎回
+  // 送らない。PBI-114）
+  app.get("/api/tasks", (c) => {
+    const tasks = service.list();
+    return c.json({
+      tasks: c.req.query("open") === "1" ? tasks.filter((t) => !isFinished(t)) : tasks,
+    });
+  });
 
   app.get("/api/tasks/:id", (c) => {
     const found = service.get(c.req.param("id"));

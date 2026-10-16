@@ -52,8 +52,9 @@ async function ensureOk(res: Response): Promise<Response> {
   return res;
 }
 
-export async function listTasks(): Promise<Task[]> {
-  const res = await ensureOk(await daemonFetch("/api/tasks"));
+/** タスクの一覧。open なら、終わっていないタスクだけ（完了・中止を除く。PBI-114）。 */
+export async function listTasks(options: { open?: boolean } = {}): Promise<Task[]> {
+  const res = await ensureOk(await daemonFetch(options.open ? "/api/tasks?open=1" : "/api/tasks"));
   return ((await res.json()) as { tasks: Task[] }).tasks;
 }
 

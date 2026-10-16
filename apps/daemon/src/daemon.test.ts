@@ -9906,6 +9906,32 @@ describe("API", () => {
     activity.close();
   });
 
+  it("?open=1 の一覧は、終わっていないタスクだけを返す（中止したタスクを除く。PBI-114）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service } = makeService(activity);
+    const app = createApp(service, token);
+    const create = async (title: string) => {
+      const res = await app.request("/api/tasks", {
+        method: "POST",
+        headers: json,
+        body: JSON.stringify({ title, body: "", projectId: "default" }),
+      });
+      return ((await res.json()) as { task: { id: string } }).task.id;
+    };
+    const open = await create("続けるタスク");
+    const cancelled = await create("やめるタスク");
+    await service.cancel(cancelled);
+    const ids = async (path: string) =>
+      (
+        (await (await app.request(path, { headers: auth })).json()) as { tasks: { id: string }[] }
+      ).tasks
+        .map((t) => t.id)
+        .sort();
+    expect(await ids("/api/tasks")).toEqual([open, cancelled].sort());
+    expect(await ids("/api/tasks?open=1")).toEqual([open]);
+    activity.close();
+  });
+
   it("タスクを作ると、一覧と詳細（作業履歴つき）に現れる", async () => {
     const activity = new SqliteActivityStore(dbPath);
     const app = createApp(makeService(activity).service, token);

@@ -44,9 +44,8 @@ describe("画面の URL のリダイレクト（PBI-114）", () => {
     const res = await currentAt(undefined, "p%202");
     expect(res.status).toBe(303);
     expect(res.headers.get("location")).toBe("/projects/p%202/settings");
-    expect((await currentAt(["settings"], "p1")).headers.get("location")).toBe(
-      "/projects/p1/settings",
-    );
+    // 別名は作らない（サイドメニューは /projects/current を使う）
+    expect((await currentAt(["settings"], "p1")).status).toBe(404);
   });
 
   it("サイドメニューの「タスク」（/projects/current/tasks）は、表示しているプロジェクトのタスクの一覧へ移す", async () => {

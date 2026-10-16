@@ -58,9 +58,9 @@ afterEach(() => {
 let container: HTMLDivElement;
 let root: Root;
 
-function render(node: ReactNode) {
+function render(node: ReactNode, locale: "ja" | "en" = "ja") {
   act(() => {
-    root.render(h(I18nProvider as unknown as FC<{ locale: "ja" }>, { locale: "ja" }, node));
+    root.render(h(I18nProvider as unknown as FC<{ locale: "ja" | "en" }>, { locale }, node));
   });
 }
 
@@ -101,6 +101,41 @@ describe("ダッシュボードの終わっていないタスクの欄（PBI-114
     expect(item("a")?.querySelector("a")?.getAttribute("href")).toBe("/tasks/a");
   });
 
+  it("切り詰めた題とプロジェクトの名前の全文を、ホバー（title）と、行にフォーカスがある間の折り返しで見られる", () => {
+    const long = "請求書の PDF の日付の形式をそろえる（明細・合計・発行日・支払期限のすべて）";
+    const data: DashboardData = {
+      projects: 1,
+      openTasks: [
+        { ...row("a", "p1", "決済システムの請求まわり"), title: `${long} その1` },
+        { ...row("b", "p1", "決済システムの請求まわり"), title: `${long} その2` },
+      ],
+    };
+    render(h(LiveDashboard, { initial: data, initialVersion: liveVersion(data) }));
+    const link = item("b")?.querySelector("a") as HTMLAnchorElement;
+    expect(link.title).toBe(`${long} その2`);
+    expect(link.className).toContain("truncate");
+    expect(link.className).toContain("group-focus-within:whitespace-normal");
+    const project = item("b")?.querySelector('span[title="決済システムの請求まわり"]');
+    expect(project?.className).toContain("group-focus-within:whitespace-normal");
+    expect(item("b")?.className).toContain("group");
+  });
+
+  it("件数の補足は言語ごとの文言で組み立てる（英語に「・」を出さない）", () => {
+    const data: DashboardData = {
+      projects: 2,
+      openTasks: [row("a", "p1", "Payments"), row("b", "p2", "Web")],
+    };
+    render(h(LiveDashboard, { initial: data, initialVersion: liveVersion(data) }), "en");
+    const summary = container.querySelector('[data-testid="open-tasks-summary"]')?.textContent;
+    expect(summary).toBe("All projects · 2 tasks");
+    act(() => root.unmount());
+    root = createRoot(container);
+    render(h(LiveDashboard, { initial: data, initialVersion: liveVersion(data) }));
+    expect(container.querySelector('[data-testid="open-tasks-summary"]')?.textContent).toBe(
+      "すべてのプロジェクト・2件",
+    );
+  });
+
   it("欄の高さは5件分で、それより多ければ欄の中でスクロールする（件数の上限は無い）", () => {
     const data: DashboardData = {
       projects: 1,
@@ -108,10 +143,10 @@ describe("ダッシュボードの終わっていないタスクの欄（PBI-114
     };
     render(h(LiveDashboard, { initial: data, initialVersion: liveVersion(data) }));
     expect(container.querySelectorAll('[data-testid^="open-task-t"]')).toHaveLength(30);
-    // 1行が h-16（4rem）、欄が max-h-80（20rem）＝5件分。あふれたら欄の中でスクロールする
+    // 1行が min-h-16（4rem）、欄が max-h-80（20rem）＝5件分。あふれたら欄の中でスクロールする
     expect(list()?.className).toContain("max-h-80");
     expect(list()?.className).toContain("overflow-y-auto");
-    expect(item("t0")?.className).toContain("h-16");
+    expect(item("t0")?.className).toContain("min-h-16");
     // キーボードでもスクロールできる
     expect(list()?.tabIndex).toBe(0);
   });

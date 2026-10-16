@@ -40,7 +40,7 @@ Main APIs (`apps/daemon/src/server.ts`):
 | Kind | Path |
 | --- | --- |
 | Status | `GET /api/health`, `GET /api/status`, `GET /api/github/accounts` |
-| Tasks | `GET/POST /api/tasks`, `GET /api/tasks/:id`, `POST /api/tasks/:id/{approve,request-changes,pause,resume,cancel,repository,questions,rereview}`, `GET /api/tasks/:id/cleanup-plan`, `POST /api/tasks/:id/remarks/:remarkId/void`, `POST /api/tasks/:id/proposals/:proposalId/decide`, `POST /api/tasks/:id/exports/:step/retry` |
+| Tasks | `GET/POST /api/tasks` (`?open=1` on `GET` returns only tasks that are not finished), `GET /api/tasks/:id`, `POST /api/tasks/:id/{approve,request-changes,pause,resume,cancel,repository,questions,rereview}`, `GET /api/tasks/:id/cleanup-plan`, `POST /api/tasks/:id/remarks/:remarkId/void`, `POST /api/tasks/:id/proposals/:proposalId/decide`, `POST /api/tasks/:id/exports/:step/retry` |
 | Run records | `GET /api/tasks/:id/runs/:runId/log`, `…/files/:file`, `…/agent-files`, `…/agent-files/raw` |
 | Projects | `GET/POST /api/projects`, `GET/PUT /api/projects/:id`, `GET /api/projects/:id/{repositories,platforms,export}`, `GET/POST /api/projects/:id/context-preview`, `POST /api/projects/import`, `POST /api/projects/:id/notification-test` |
 | sacty settings | `GET/PUT /api/settings`, `POST /api/intake/run`, `POST /api/secrets/prefetch` |
@@ -57,7 +57,7 @@ Code: `apps/daemon/src/server.ts` (`createApp`, `handleError`), `apps/web/src/li
 | `/projects/<ID>` | Moves to `/projects/<ID>/tasks` |
 | `/projects/<ID>/tasks` | The project's task list (cards for tasks that need a human decision, "Create task") |
 | `/projects/<ID>/settings` | The project's settings |
-| `/projects/current`, `/projects/current/tasks` | Moves (303) to the settings or the task list of the displayed project (cookie). Any other `/projects/current/…` is 404 |
+| `/projects/current`, `/projects/current/tasks` | Moves (303) to the settings or the task list of the displayed project (cookie). Any other `/projects/current/…` (including `/projects/current/settings`) is 404 |
 | `/tasks/<ID>`, `/tasks/<ID>/review`, `/tasks/<ID>/runs/<run ID>` | The task details, the deliverable review, the run log |
 | `/settings` | The sacty settings |
 
@@ -70,15 +70,20 @@ Code: `apps/daemon/src/server.ts` (`createApp`, `handleError`), `apps/web/src/li
   - It shows the tasks of all projects except completed and cancelled ones (including awaiting approval, paused, and escalated; those whose
     `statusTone` is not `completed` or `cancelled`), most recently updated first (`updatedAt`, newest first). There is no limit on the count.
     Tasks of deleted projects are not shown.
-  - Each row shows the title (a link to the task details), the project name, and the state. A row is 4rem high and the section is 5 rows high
-    (20rem); with more rows, the section scrolls inside (the section takes focus so it can also be scrolled with the keyboard).
+  - Only tasks that are not finished are fetched from the daemon (`GET /api/tasks?open=1`; finished tasks are `isFinished`), so the deliverables
+    of completed tasks are not carried every 3 seconds (all tasks including completed ones can be tens to hundreds of MB per fetch, depending on
+    the size of the deliverables). The header's notices (tasks that need you) are fetched the same way.
+  - Each row shows the title (a link to the task details), the project name, and the state. A row is at least 4rem high and the section is 5 rows
+    high (20rem); with more rows, the section scrolls inside (the section takes focus so it can also be scrolled with the keyboard). The title and
+    the project name are cut to one line; the full text is shown on hover (`title`) and wrapped while the row has focus. The count note
+    ("All projects · N tasks") is built from per-language wording.
   - When there are no projects or no open tasks, it says so.
   - To add a section, add its data to `DashboardData` (`loadDashboard`) and add a `DashboardCard` to `LiveDashboard` (one refetch per screen).
 
 Code: `apps/web/src/lib/paths.ts`, `apps/web/src/app/page.tsx`, `apps/web/src/app/dashboard/page.tsx`,
 `apps/web/src/app/projects/[id]/page.tsx`, `apps/web/src/app/projects/[id]/tasks/page.tsx`, `apps/web/src/app/projects/[id]/settings/page.tsx`,
 `apps/web/src/app/projects/current/[[...view]]/route.ts`, `apps/web/src/app/tasks/[id]/page.tsx` (`Breadcrumb`),
-`apps/web/src/lib/dashboard-data.ts` (`loadDashboard`, `isOpenTask`, `openTaskRows`), `apps/web/src/components/dashboard.tsx` (`LiveDashboard`, `DashboardGrid`, `DashboardCard`, `OpenTasksCard`)
+`packages/core/src/projection.ts` (`isFinished`), `apps/daemon/src/server.ts` (`createApp`), `apps/web/src/lib/dashboard-data.ts` (`loadDashboard`, `isOpenTask`, `openTaskRows`), `apps/web/src/components/dashboard.tsx` (`LiveDashboard`, `DashboardGrid`, `DashboardCard`, `OpenTasksCard`)
 
 ## Web UI header and side menu (the displayed project and notices)
 
