@@ -367,6 +367,7 @@ function describeEventText(event: ActivityEvent, l: LabelMessages): string {
         l.step[event.payload.step],
         cost(event.payload.costUsd, event.payload.estimated),
         event.payload.step === "design" ? event.payload.testViewpoints.length : undefined,
+        event.payload.selfReview,
       );
     case "AgentRunFailed":
       return e.AgentRunFailed(l.step[event.payload.step], l.text(event.payload.message));

@@ -9,6 +9,7 @@ import type {
   Remark,
   ReviewComment,
   ReviewVerdict,
+  SelfReview,
   StepKey,
   StepPlan,
   StepPullRequestKey,
@@ -462,6 +463,11 @@ export type Task = {
   /** オーケストレーターが判断した、調査の工程の性質（PBI-43）。無ければ内容の調査として扱う。 */
   investigation?: InvestigationKind;
   /** 工程ごとに使うイメージの名前（PBI-41）。書いていない工程は既定のイメージ。人が変えたら、変えた名前（PBI-106）。 */
+  /**
+   * 工程ごとの、最新の提出のセルフレビューの報告（PBI-120）。null は報告が無い・読めなかった。セルフレビューより前の記録の
+   * 工程には無い。
+   */
+  selfReviews?: Partial<Record<StepKey, SelfReview | null>>;
   images?: Partial<Record<StepKey, string>>;
   /** 工程を選んだときにイメージを決めたのが、プロジェクトの対象の指定か、オーケストレーターか（PBI-41）。 */
   imageSource?: "project" | "orchestrator";
@@ -745,6 +751,16 @@ export function applyEvent(
           task.verification = "pending";
         }
         task.outputs = { ...task.outputs, [event.payload.step]: event.payload.output };
+        // 提出の前のセルフレビュー（PBI-120）。報告をさせない工程・それより前の記録では、前の報告を残さない
+        if (event.payload.selfReview !== undefined) {
+          task.selfReviews = {
+            ...task.selfReviews,
+            [event.payload.step]: event.payload.selfReview,
+          };
+        } else if (task.selfReviews?.[event.payload.step] !== undefined) {
+          const { [event.payload.step]: _dropped, ...rest } = task.selfReviews;
+          task.selfReviews = rest;
+        }
         // その工程の有効な指摘は、今回の提出で回答がなければ未回答に戻す
         // （前回の対応文が残ると、最新の成果物への対応だと誤認して承認してしまうため）
         const step = event.payload.step;

@@ -4,6 +4,7 @@ import { isCompleted, type Task } from "@sacty/core";
 import { cn } from "cn";
 import { CardSection } from "@/components/card-section";
 import { Markdown } from "@/components/markdown";
+import { SelfReviewNote } from "@/components/self-review";
 import { Hint } from "@/components/ui/hint";
 import { useMessages } from "@/i18n/client";
 import {
@@ -103,6 +104,8 @@ export function Implementation({ task }: { task: Task }) {
           <p className="text-xs break-words text-muted-foreground">{m.noTestsReason(noTests)}</p>
         </div>
       )}
+      {/* 提出の前のセルフレビュー（PBI-120） */}
+      {task.outputs.implement && <SelfReviewNote task={task} step="implement" />}
       {task.outputs.implement ? (
         <Markdown>{task.outputs.implement}</Markdown>
       ) : (

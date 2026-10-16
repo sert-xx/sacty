@@ -1858,3 +1858,124 @@ describe("工程選択での説明のまとまり", () => {
     }
   });
 });
+
+describe("提出の前のセルフレビュー（PBI-120）", () => {
+  const task = (steps: Task["steps"][number]["key"][], extra: Partial<Task> = {}): Task =>
+    ({
+      id: "t-1",
+      title: "決済",
+      body: "失敗したら再試行する",
+      steps: steps.map((key) => ({ key, state: "todo" })),
+      remarks: [],
+      outputs: {},
+      approved: {
+        requirements: { output: "# 要求要件", submission: 1 },
+        design: {
+          output: "# 設計",
+          submission: 1,
+          testViewpoints: [{ id: "TV-1", title: "再試行", input: "失敗", expected: "再試行" }],
+        },
+      },
+      testViewpoints: [],
+      reproductionTests: [],
+      testCommand: "npm test",
+      proposals: [],
+      repository: {
+        url: "https://github.com/acme/app",
+        baseBranch: "main",
+        baseCommit: "abcdef1234",
+      },
+      ...extra,
+    }) as unknown as Task;
+  const HEADING = '{"sacty-self-review": {"rounds": 2, "passed": true';
+  const steps: Task["steps"][number]["key"][] = ["requirements", "design", "implement"];
+
+  it("要求要件・設計は design-doc、実装（標準・不具合の修正・テストの仕組みが無い）は code で、パスするまで繰り返させる", () => {
+    const cases: [string, string, string][] = [
+      [buildPrompt(task(steps), "requirements"), "design-doc", "要求要件"],
+      [buildPrompt(task(steps), "design"), "design-doc", "設計とテスト観点"],
+      [buildPrompt(task(steps), "implement"), "code", "実装（コードとテスト）"],
+      [
+        buildPrompt(
+          task(["investigate", "reproduce", "implement"], {
+            reproduction: {
+              reproduced: true,
+              tests: ["t › x"],
+              command: "npm test",
+              exitCode: 1,
+              output: "1 failed",
+            },
+          } as Partial<Task>),
+          "implement",
+        ),
+        "code",
+        "修正（コードとテスト）",
+      ],
+      [
+        buildPrompt(task(steps, { noTestsReason: "テストが無い" }), "implement"),
+        "code",
+        "実装（コードとテスト）",
+      ],
+    ];
+    for (const [prompt, kind, target] of cases) {
+      expect(prompt, target).toContain(
+        `- 提出の前に、既定のスキル review-dispatch（流れは self-review、主対象の種類は ${kind}）で${target}をセルフレビューする`,
+      );
+      expect(prompt, target).toContain(
+        "- must の指摘が無くなる（パスする）まで、修正と再レビューを繰り返す。回数の上限はスキルの規則（初回を含めて最大 5 回）",
+      );
+      expect(prompt, target).toContain(
+        "- 上限に達しても must が残るときは、残った指摘を報告して提出する。黙って提出しない",
+      );
+      expect(prompt, target).toContain(HEADING);
+    }
+  });
+
+  it("差し戻しのやり直しでも、同じ指示を付ける", () => {
+    const redo = task(steps, {
+      outputs: { requirements: "# 前回" },
+      approved: {},
+      remarks: [{ id: "R-1", step: "requirements", round: 1, text: "異常系が無い" }],
+    } as Partial<Task>);
+    const prompt = buildPrompt(redo, "requirements");
+    expect(prompt).toContain("R-1");
+    expect(prompt).toContain(HEADING);
+  });
+
+  it("文書作成・調査の工程には付けない", () => {
+    expect(buildPrompt(task(["document"]), "document")).not.toContain("sacty-self-review");
+    expect(buildPrompt(task(["investigate"]), "investigate")).not.toContain("sacty-self-review");
+  });
+
+  it("報告を読み、本文から取り除く。形が違う・無いときは読まない", () => {
+    const report = {
+      "sacty-self-review": {
+        rounds: 3,
+        passed: false,
+        remaining: ["境界値の観点が足りない"],
+        notReviewed: ["C-7"],
+        summary: "2 回直した",
+      },
+    };
+    const output = `# 要求要件\n\n- 受け入れ条件\n\n\`\`\`json\n${JSON.stringify(report)}\n\`\`\``;
+    const read = extractBlocks(output, new Set());
+    expect(read.selfReview).toEqual(report["sacty-self-review"]);
+    expect(read.output).toBe("# 要求要件\n\n- 受け入れ条件");
+    // remaining・notReviewed・summary は省ける
+    const minimal = '# 設計\n\n```json\n{"sacty-self-review": {"rounds": 1, "passed": true}}\n```';
+    expect(extractBlocks(minimal, new Set()).selfReview).toEqual({
+      rounds: 1,
+      passed: true,
+      remaining: [],
+      notReviewed: [],
+      summary: "",
+    });
+    // 形が違えば読まないが、本文からは取り除く
+    const broken =
+      '# 設計\n\n```json\n{"sacty-self-review": {"rounds": "two", "passed": "yes"}}\n```';
+    const brokenRead = extractBlocks(broken, new Set());
+    expect(brokenRead).not.toHaveProperty("selfReview");
+    expect(brokenRead.output).toBe("# 設計");
+    expect(extractBlocks("# 設計", new Set())).not.toHaveProperty("selfReview");
+  });
+});

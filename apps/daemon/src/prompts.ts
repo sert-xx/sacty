@@ -18,6 +18,7 @@ import {
   type ReviewVerdict,
   ReviewVerdict as ReviewVerdictSchema,
   renderMessage,
+  SelfReview,
   StepKey,
   StepPlan,
   type StepPullRequestKey,
@@ -78,6 +79,8 @@ export const REQUIREMENTS_VIEWPOINT = "REQ";
 /** 不具合の修正（再現 → 実装）で、最終レビューの観点にする「再現のテストが通る」（PBI-29）。 */
 export const REPRODUCTION_VIEWPOINT = "REPRO";
 const REPRODUCTION_HEADING = "sacty-reproduction";
+/** 提出の前のセルフレビューの報告の見出し（PBI-120）。 */
+export const SELF_REVIEW_HEADING = "sacty-self-review";
 
 /**
  * 実装の検証の基準。設計があればテスト観点、再現があれば再現のテスト（PBI-29）、
@@ -488,6 +491,31 @@ function splitRepositoryFields(task: Task): string {
     : "";
 }
 
+/**
+ * 提出の前のセルフレビュー（PBI-120）。既定のスキル review-dispatch の self-review の流れで、must が無くなるまで修正と
+ * 再レビューを繰り返させ、結果を決まった形（見出し sacty-self-review の JSON）で報告させる。sacty はその JSON を読み、
+ * 成果物の本文から取り除く。
+ */
+function selfReviewLines(kind: "design-doc" | "code", deliverable: string): string[] {
+  return [
+    "",
+    "--- 提出の前のセルフレビュー ---",
+    `- 提出の前に、既定のスキル review-dispatch（流れは self-review、主対象の種類は ${kind}）で${deliverable}をセルフレビューする`,
+    ...(kind === "design-doc"
+      ? [
+          `- ${deliverable}の下書きを一時ファイル（例：/tmp/sacty-self-review/draft.md）に書き、それをレビューの対象にする（作業領域の外に置き、リポジトリには書かない）`,
+        ]
+      : []),
+    "- must の指摘が無くなる（パスする）まで、修正と再レビューを繰り返す。回数の上限はスキルの規則（初回を含めて最大 5 回）",
+    "- 上限に達しても must が残るときは、残った指摘を報告して提出する。黙って提出しない",
+    "- スキルが成果の説明の末尾に書く「自己レビュー」の節は書かない。代わりに、結果を次の形式で必ず付ける（sacty が読み、成果物の本文からは取り除く）",
+    "- このプロンプトが求めるほかの出力の形（ほかの JSON のブロック）は変えない",
+    "```json",
+    `{"${SELF_REVIEW_HEADING}": {"rounds": 2, "passed": true, "remaining": ["残った must の指摘の要約（無ければ空）"], "notReviewed": ["見られなかった観点（無ければ空）"], "summary": "短い総評"}}`,
+    "```",
+  ];
+}
+
 export function buildPrompt(
   task: Task,
   step: StepKey,
@@ -666,6 +694,7 @@ export function buildPrompt(
       ];
       if (hasRemarks) lines.push("", "--- 前回の下書き ---", previous ?? "（なし）");
       lines.push(...remarkLines(task, step, "要求要件の本文"));
+      lines.push(...selfReviewLines("design-doc", "要求要件"));
       return lines.join("\n");
     }
     case "design": {
@@ -715,6 +744,7 @@ export function buildPrompt(
         );
       }
       lines.push(...remarkLines(task, step, "テスト観点"), ...proposalLines(task, step));
+      lines.push(...selfReviewLines("design-doc", "設計とテスト観点"));
       return lines.join("\n");
     }
     case "split": {
@@ -867,6 +897,7 @@ export function buildPrompt(
         }
         if (previous) lines.push("", "--- 前回の修正の説明 ---", previous);
         lines.push(...feedbackLines(task), ...remarkLines(task, step, "観点ごとのテストの対応"));
+        lines.push(...selfReviewLines("code", "修正（コードとテスト）"));
         return lines.join("\n");
       }
       // テストの仕組みが無いタスク（PBI-94）は、テストを書かせず、観点ごとにどう満たしたかを説明に書かせる
@@ -950,6 +981,7 @@ export function buildPrompt(
         ...feedbackLines(task),
         ...remarkLines(task, step, "観点ごとのテストの対応"),
         ...proposalLines(task, step),
+        ...selfReviewLines("code", "実装（コードとテスト）"),
       );
       return lines.join("\n");
     }
@@ -961,6 +993,8 @@ export function buildPrompt(
 export type Extracted = {
   /** 表示用の本文（sacty が読むJSONのブロックを除いたもの）。 */
   output: string;
+  /** 提出の前のセルフレビューの報告（PBI-120）。無い・読めなければ undefined。 */
+  selfReview?: SelfReview;
   responses: RemarkResponse[];
   testViewpoints: TestViewpoint[];
   /** 承認済みの成果物への変更の申し出（1件まで）。 */
@@ -1006,6 +1040,8 @@ export function extractBlocks(
   let proposal: ExtractedProposal | undefined;
   let proposalSeen = false;
   let testMap: TestMapping[] | undefined;
+  let selfReview: SelfReview | undefined;
+  let selfReviewSeen = false;
   // テストのコマンドの申告は、専用のコードブロックだけから読み、本文（とほかの JSON の読み取り）からは取り除く（PR #105 再々レビュー指摘）
   const declared = options.testCommand ? extractTestCommandFences(output) : { output };
   const body = declared.output;
@@ -1016,7 +1052,17 @@ export function extractBlocks(
     const viewpoints = record[VIEWPOINTS_HEADING];
     const proposed = record[PROPOSAL_HEADING];
     const map = record[TEST_MAP_HEADING];
+    const reviewed = record[SELF_REVIEW_HEADING];
     let read = false;
+    // 提出の前のセルフレビュー（PBI-120）。最後のものを使い、形が違えば読めなかったものとする（本文からは取り除く）
+    if (reviewed !== undefined) {
+      read = true;
+      if (!selfReviewSeen) {
+        selfReviewSeen = true;
+        const parsed = SelfReview.safeParse(reviewed);
+        if (parsed.success) selfReview = parsed.data;
+      }
+    }
     if (Array.isArray(map)) {
       read = true;
       testMap ??= map
@@ -1055,6 +1101,7 @@ export function extractBlocks(
     testViewpoints: testViewpoints ?? [],
     proposal,
     testMap: testMap ?? [],
+    ...(selfReview ? { selfReview } : {}),
     ...(testCommand && !testCommandInvalid ? { testCommand } : {}),
     ...(testCommandInvalid ? { testCommandInvalid } : {}),
   };

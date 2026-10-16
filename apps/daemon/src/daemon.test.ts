@@ -20343,3 +20343,61 @@ describe("非コードの成果と単発作業（PBI-112）", () => {
     activity.close();
   });
 });
+
+describe("提出の前のセルフレビューの記録（PBI-120）", () => {
+  const withReport = (body: string, report?: unknown): AgentOutcome => ({
+    kind: "completed",
+    output:
+      report === undefined
+        ? body
+        : `${body}\n\n\`\`\`json\n${JSON.stringify({ "sacty-self-review": report })}\n\`\`\``,
+    usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 100 },
+  });
+
+  it("要求要件の報告を作業履歴とタスクに残し、成果物の本文からは取り除く", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const report = { rounds: 2, passed: true, remaining: [], notReviewed: [], summary: "直した" };
+    const { service } = makeService(activity, [withReport("# 要求要件", report)]);
+    const { id } = service.createTask({ projectId: "default", title: "A" });
+    await service.runNext(id);
+    const done = service.get(id)?.activity.find((e) => e.type === "AgentRunCompleted");
+    expect(done?.type === "AgentRunCompleted" && done.payload.selfReview).toEqual(report);
+    const task = service.get(id)?.task;
+    expect(task?.selfReviews?.requirements).toEqual(report);
+    expect(task?.outputs.requirements).toBe("# 要求要件");
+    activity.close();
+  });
+
+  it("報告が無い・形が違うときは「記録なし」（null）にして、工程は止めない", async () => {
+    for (const report of [undefined, { rounds: "two" }]) {
+      const activity = new SqliteActivityStore(dbPath);
+      const { service } = makeService(activity, [withReport("# 要求要件", report)]);
+      const { id } = service.createTask({ projectId: "default", title: "A" });
+      await service.runNext(id);
+      const task = service.get(id)?.task;
+      expect(task?.selfReviews?.requirements).toBeNull();
+      expect(task?.status).toBe("awaiting_approval");
+      expect(task?.outputs.requirements).toBe("# 要求要件");
+      activity.close();
+      rmSync(dbPath, { force: true });
+    }
+  });
+
+  it("やり直して報告が変われば、最新の報告にする", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service } = makeService(activity, [
+      withReport("# 要求要件", { rounds: 5, passed: false, remaining: ["異常系が無い"] }),
+      withReport("# 要求要件（直した）", { rounds: 1, passed: true }),
+    ]);
+    const { id } = service.createTask({ projectId: "default", title: "A" });
+    await service.runNext(id);
+    expect(service.get(id)?.task.selfReviews?.requirements?.passed).toBe(false);
+    service.requestChanges(id, { step: "requirements", submission: 1, comments: ["異常系を足す"] });
+    await service.runNext(id);
+    expect(service.get(id)?.task.selfReviews?.requirements).toMatchObject({
+      passed: true,
+      rounds: 1,
+    });
+    activity.close();
+  });
+});
