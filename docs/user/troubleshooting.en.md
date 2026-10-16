@@ -45,7 +45,7 @@ This page lists common ways sacty stops and what to check.
 
 | Symptom | What to check |
 | --- | --- |
-| Slack notifications do not arrive | Look at the reason shown on the task list page. You can check with "Send a test notification" in the project settings ([Notifications](notifications.en.md)) |
+| Slack notifications do not arrive | Look at the reason shown on the dashboard or in "Slack notifications" in the "sacty settings". You can check with "Send a test notification" in the "sacty settings". Notifications set in projects with an earlier sacty are not used, so set them again in the "sacty settings" ([Notifications](notifications.en.md)) |
 | Mentions do not arrive | Write people by ID (`U…`, `W…`, `S…`) instead of @display name |
 | The sender name and icon are not `Sacty` | Give the Slack app's bot token the `chat:write.customize` scope |
 

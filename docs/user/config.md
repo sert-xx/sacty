@@ -7,7 +7,7 @@
 `~/.sacty/config.yaml`（`SACTY_HOME` を変えたら `$SACTY_HOME/config.yaml`）に書く、sacty 全体の設定です。
 雛形は `npx sacty config init` で作ります（[CLI](cli.md#sacty-config-init)）。
 
-プロジェクトごとの設定（対象・GitHub のアカウント・コンテキストリポジトリ・通知など）は、config.yaml ではなく画面の
+プロジェクトごとの設定（対象・GitHub のアカウント・コンテキストリポジトリなど）は、config.yaml ではなく画面の
 [プロジェクトの設定](project-settings.md) に書きます。
 
 ## 項目の一覧

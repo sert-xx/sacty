@@ -42,8 +42,8 @@ Main APIs (`apps/daemon/src/server.ts`):
 | Status | `GET /api/health`, `GET /api/status`, `GET /api/github/accounts` |
 | Tasks | `GET/POST /api/tasks` (`?open=1` on `GET` returns only tasks that are not finished), `GET /api/tasks/:id`, `POST /api/tasks/:id/{approve,request-changes,pause,resume,cancel,repository,questions,rereview}`, `GET /api/tasks/:id/cleanup-plan`, `POST /api/tasks/:id/remarks/:remarkId/void`, `POST /api/tasks/:id/proposals/:proposalId/decide`, `POST /api/tasks/:id/exports/:step/retry` |
 | Run records | `GET /api/tasks/:id/runs/:runId/log`, `…/files/:file`, `…/agent-files`, `…/agent-files/raw` |
-| Projects | `GET/POST /api/projects`, `GET/PUT /api/projects/:id`, `GET /api/projects/:id/{repositories,platforms,export}`, `GET/POST /api/projects/:id/context-preview`, `POST /api/projects/import`, `POST /api/projects/:id/notification-test` |
-| sacty settings | `GET/PUT /api/settings`, `POST /api/intake/run`, `POST /api/secrets/prefetch` |
+| Projects | `GET/POST /api/projects`, `GET/PUT /api/projects/:id`, `GET /api/projects/:id/{repositories,platforms,export}`, `GET/POST /api/projects/:id/context-preview`, `POST /api/projects/import` |
+| sacty settings | `GET/PUT /api/settings`, `POST /api/settings/notification-test`, `POST /api/intake/run`, `POST /api/secrets/prefetch` |
 
 Code: `apps/daemon/src/server.ts` (`createApp`, `handleError`), `apps/web/src/lib/daemon.ts` (`daemonFetch`), `packages/cli/src/index.ts` (`up`)
 
@@ -79,6 +79,8 @@ Code: `apps/daemon/src/server.ts` (`createApp`, `handleError`), `apps/web/src/li
     ("All projects · N tasks") is built from per-language wording.
   - When there are no projects or no open tasks, it says so.
   - To add a section, add its data to `DashboardData` (`loadDashboard`) and add a `DashboardCard` to `LiveDashboard` (one refetch per screen).
+- Above the sections, the reason Slack notifications could not be sent (the daemon warning `notify.failed`; `notificationProblems`) is shown with a link to the sacty settings
+  (nothing when there is none). It is fetched again together with the sections.
 
 Code: `apps/web/src/lib/paths.ts`, `apps/web/src/app/page.tsx`, `apps/web/src/app/dashboard/page.tsx`,
 `apps/web/src/app/projects/[id]/page.tsx`, `apps/web/src/app/projects/[id]/tasks/page.tsx`, `apps/web/src/app/projects/[id]/settings/page.tsx`,
@@ -128,7 +130,7 @@ only the data at a fixed interval, and only the parts that changed are reflected
 
   | Route | Returns |
   | --- | --- |
-  | `GET /live/dashboard` | The data of the dashboard's sections (open tasks. `loadDashboard`) |
+  | `GET /live/dashboard` | The data of the dashboard's sections (open tasks and the reason notifications could not be sent. `loadDashboard`) |
   | `GET /live/tasks?project=<ID>` | The rows of the task list of the URL's project and the cards of tasks that need a person (only what is shown. `loadTaskList`). `{ missing: true }` if the project does not exist or the ID has the wrong form |
   | `GET /live/tasks/<ID>` | What the task details show (the task, the activity, the parent, the subtasks, what to clean up, the image choices, and so on. `loadTaskDetail`) |
   | `GET /live/header?current=<ID>` | The header's project switcher (the counts that need you) and notices (`loadHeaderData`) |
@@ -207,9 +209,9 @@ Code: `apps/daemon/src/config.ts` (`resolveHome`, `configPath`), `apps/daemon/sr
   The intake label (`intakeLabel`; issues only), the ticket intake label (`ticketLabel`), the PR review label (`reviewLabel`),
   intake of review requests to yourself (`reviewRequested`), the triage kinds turned Off (`triageOff`; `issues`, `reviewLabel`, `tickets`), and
   the number of tasks run at the same time (`maxParallelTasks`; default 3), and the interval per kind of intake (`issueIntervalSec`, `reviewIntervalSec`,
-  `ticketIntervalSec`; seconds; 60 or more; default 300; [Intake](intake.en.md#interval)).
+  `ticketIntervalSec`; seconds; 60 or more; default 300; [Intake](intake.en.md#interval)), and the Slack notification destination (`notification`; [Notifications](notifications.en.md)).
   - When the settings store is opened (when the daemon starts), a removed item (`pullRequests` in `triageOff`) that is still saved is removed and the settings are rewritten
     (nothing is written if there is nothing to remove).
-- Projects (`sacty.db`): targets, GitHub account, context repository, notifications, shared compose, ticket intake, and so on.
+- Projects (`sacty.db`): targets, GitHub account, context repository, shared compose, ticket intake, and so on (notifications are in the sacty settings).
 
 Code: `apps/daemon/src/settings.ts` (`SqliteSettingsStore`, `dropRemovedItems`), `packages/core/src/projects.ts` (`SactySettings`, `DEFAULT_MAX_PARALLEL_TASKS`), `apps/daemon/src/projects.ts`

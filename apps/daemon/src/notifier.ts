@@ -1,4 +1,5 @@
 import {
+  activeStep,
   type DaemonText,
   gatePullRequest,
   isCompleted,
@@ -6,9 +7,9 @@ import {
   type NotificationKind,
   type PauseReason,
   type Project,
-  type ProjectNotification,
   renderMessage,
   type SlackMention,
+  type SlackNotification,
   type StepKey,
   type Task,
 } from "@sacty/core";
@@ -18,8 +19,9 @@ import type { SecretStore } from "./secrets.js";
 
 /**
  * 人間の出番を Slack に通知する（PBI-38）。承認待ち・エスカレーション・一時停止（人間が止めたときを除く）・完了を、
- * タスクのプロジェクトの通知先に送る。送り方は Slack API の形（chat.postMessage。Slack Proxy でも使える）か
- * Incoming Webhook。送れなくてもタスクは止めず、理由をプロジェクトごとに持って画面に出す（次に送れたら消す）。
+ * sacty の設定の通知先に送る（すべてのプロジェクトのタスクを1つの送り先に送り、本文にプロジェクトの名前を入れる。
+ * PBI-115）。送り方は Slack API の形（chat.postMessage。Slack Proxy でも使える）か Incoming Webhook。送れなくても
+ * タスクは止めず、最後に送れなかった理由を1つ持って画面に出す（次に送れたら消す）。
  */
 
 /** 送れなかった理由の長さの上限（画面・ログに出す。秘密情報を伏せてから切り詰める）。 */
@@ -90,32 +92,43 @@ const escapeMrkdwn = (text: string) =>
   text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 const link = (url: string, label: string) => `<${url}|${escapeMrkdwn(label)}>`;
 
-/** 通知の本文（Slack の mrkdwn）。 */
+/**
+ * 通知の本文（Slack の mrkdwn）。projectName は、タスクのプロジェクトの名前（1つの送り先に、すべてのプロジェクトの
+ * タスクを送るので、題名の前に [名前] で入れる。PBI-115）。どの工程の通知かがわかるように、工程の名前を入れる
+ * （承認待ちは承認を待つ工程、エスカレーションはエスカレーションした工程、一時停止は止まったときの工程。PBI-115）。
+ * 工程に結びつかない通知（完了・工程を決める前の一時停止など）には、工程を入れない。
+ */
 export function notificationText(
   task: Task,
   kind: NotificationKind,
   language: Language,
   webUrl: string,
+  projectName?: string,
 ): string {
   const ja = language === "ja";
   const base = webUrl.replace(/\/+$/, "");
-  const title = link(`${base}/tasks/${task.id}`, task.title);
+  const title = `${projectName ? `[${escapeMrkdwn(projectName)}] ` : ""}${link(`${base}/tasks/${task.id}`, task.title)}`;
   const review = `${base}/tasks/${task.id}/review`;
-  const step = task.gate?.step ?? task.escalation?.step;
-  const stepName = step ? STEP[language][step] : "";
+  const nameOf = (step: StepKey | undefined) => (step ? STEP[language][step] : "");
   if (kind === "approval") {
+    const step = task.gate?.step;
+    const stepName = nameOf(step);
     const what =
       step === "reproduce"
         ? ja
-          ? "再現できなかったため、判断を待っています"
-          : "The bug was not reproduced; your decision is needed"
+          ? `${stepName}の工程で再現できなかったため、判断を待っています`
+          : `${stepName}: the bug was not reproduced; your decision is needed`
         : step === "integrate" && task.integration?.passed === false
           ? ja
-            ? "統合レビューに通らないため、判断を待っています"
-            : "The integration review keeps failing; your decision is needed"
-          : ja
-            ? `${stepName}の承認を待っています`
-            : `${stepName} is waiting for your approval`;
+            ? `${stepName}に通らないため、判断を待っています`
+            : `${stepName} keeps failing; your decision is needed`
+          : stepName
+            ? ja
+              ? `${stepName}の承認を待っています`
+              : `${stepName} is waiting for your approval`
+            : ja
+              ? "承認を待っています"
+              : "Waiting for your approval";
     // 実装の PR と、要求要件・設計の PR（PBI-57・PBI-110）は、マージで承認する
     const watched = gatePullRequest(task);
     const pr = watched?.url
@@ -134,14 +147,16 @@ export function notificationText(
   }
   if (kind === "escalation") {
     const reason = task.escalation?.reason;
+    const stepName = nameOf(task.escalation?.step ?? task.gate?.step);
+    const where = stepName ? (ja ? `${stepName}で` : ` in ${stepName}`) : "";
     const what =
       reason === "rework_confirmation"
         ? ja
-          ? "PR の指摘の戻し先を確かめてください（エスカレーション）"
-          : "Confirm the step to redo for the PR comments (escalated)"
+          ? `${where}エスカレーションしました。PR の指摘の戻し先を確かめてください`
+          : `Escalated${where}: confirm the step to redo for the PR comments`
         : ja
-          ? `${stepName}がエスカレーションしました。判断してください`
-          : `${stepName} was escalated; your decision is needed`;
+          ? `${where}エスカレーションしました。判断してください`
+          : `Escalated${where}; your decision is needed`;
     return [
       `:warning: ${title}`,
       what,
@@ -152,9 +167,21 @@ export function notificationText(
     const reason = task.pausedReason ? PAUSE[language][task.pausedReason] : "";
     const detail = task.pausedMessage ? renderMessage(task.pausedMessage, language) : "";
     const short = detail.length > 300 ? `${detail.slice(0, 300)}…` : detail;
+    // 止まったときの工程。工程を決める前（オーケストレーターが工程を決める前）なら、そう書く
+    const stepName = nameOf(activeStep(task));
+    const where = stepName
+      ? ja
+        ? `${stepName}で`
+        : ` in ${stepName}`
+      : task.steps.length === 0
+        ? ja
+          ? "工程を決める前に"
+          : " before the steps were decided"
+        : "";
+    const why = reason ? (ja ? `（${reason}）` : ` (${reason})`) : "";
     return [
       `:double_vertical_bar: ${title}`,
-      ja ? `一時停止しました（${reason}）` : `Paused (${reason})`,
+      ja ? `${where}一時停止しました${why}` : `Paused${where}${why}`,
       short ? escapeMrkdwn(short) : "",
       ja ? "確かめてから再開してください。" : "Check it and resume.",
     ]
@@ -215,12 +242,29 @@ export function notificationFor(
   return undefined;
 }
 
+/** 送り先を見分ける値（秘密情報は参照の名前だけなので、値は入らない）。 */
+const keyOf = (destination: SlackNotification) => JSON.stringify(destination);
+
 export class SlackNotifier {
-  /** プロジェクトごとの、最後に送れなかった理由（送れたら消す）。 */
-  private readonly failures = new Map<string, DaemonText>();
+  /**
+   * 最後に送れなかった理由（sacty 全体で1つ。送れたら消す。PBI-115）。key は、そのときの送り先（設定を読めなかったときは
+   * 無し）。今の送り先と違えば、画面に出さない（送り先を変えた後に、古い送り先の理由を出さない）。
+   */
+  private failure: { key: string | undefined; text: DaemonText } | undefined;
+  /** 送り始めた順の番号と、結果を反映した最後の番号（後に始めた送信の結果を、先に始めた送信の結果で上書きしない）。 */
+  private started = 0;
+  private settled = 0;
+  /**
+   * 送り先の設定を変えたときの、送り始めた番号（PBI-115 レビュー指摘）。これまでに始めた送信の結果は、変える前の設定のものなので
+   * 反映しない（A → B → A と戻しても、変える前の失敗を今の障害として出さない）。
+   */
+  private changedAt = 0;
 
   constructor(
     private readonly deps: {
+      /** sacty の設定の通知先（PBI-115）。読めなければ例外。 */
+      notification: () => SlackNotification | undefined;
+      /** タスクのプロジェクト（本文に名前を入れる）。 */
       project: (id: string) => Project | undefined;
       secrets: SecretStore;
       /** sacty の画面の URL（リンクに使う）。 */
@@ -230,45 +274,111 @@ export class SlackNotifier {
     },
   ) {}
 
-  /** 通知する（送るのを待たない。送れなくても例外にしない）。 */
+  /**
+   * 通知する（送るのを待たない）。設定・プロジェクトを読めない・本文を作れない・送れない、のどれでも例外にせず、送れなかった
+   * 理由として持つ（タスクの操作は、作業履歴に書いた後に呼ぶので、例外を伝えると成功した操作が失敗に見える。PBI-115 レビュー指摘）。
+   */
   notify(task: Task, kind: NotificationKind): Promise<void> {
-    const project = this.deps.project(task.projectId);
-    const destination = project?.notification;
-    if (!project || !destination) return Promise.resolve();
-    return this.send(
-      project,
-      destination,
-      withMention(
-        notificationText(task, kind, destination.language, this.deps.webUrl),
+    const seq = ++this.started;
+    let key: string | undefined;
+    try {
+      const destination = this.deps.notification();
+      if (!destination) return Promise.resolve();
+      key = keyOf(destination);
+      const projectName = this.deps.project(task.projectId)?.name;
+      const text = withMention(
+        notificationText(task, kind, destination.language, this.deps.webUrl, projectName),
         destination.mention,
         kind,
-      ),
-    ).catch(() => {});
+      );
+      return this.send(destination, text, seq).catch(() => {});
+    } catch (error) {
+      try {
+        this.fail(error, [], key, seq);
+      } catch {
+        // 理由を持てなくても、タスクの操作には伝えない
+      }
+      return Promise.resolve();
+    }
   }
 
-  /** テストの通知を送る（プロジェクトの設定の画面から）。送れなければ、理由の例外にする。 */
-  async test(projectId: string): Promise<void> {
-    const project = this.deps.project(projectId);
-    const destination = project?.notification;
-    if (!project || !destination)
-      throw new Error(renderMessage(message("notify.notConfigured"), "ja"));
+  /** テストの通知を送る（sacty の設定の画面から）。送れなければ、理由の例外にする。 */
+  async test(): Promise<void> {
+    const destination = this.deps.notification();
+    if (!destination) throw new Error(renderMessage(message("notify.notConfigured"), "ja"));
     const text =
       destination.language === "ja"
-        ? `:wave: sacty からのテストの通知です（プロジェクト「${escapeMrkdwn(project.name)}」）。人間の出番になると、ここに通知します。`
-        : `:wave: Test notification from sacty (project "${escapeMrkdwn(project.name)}"). sacty will notify you here when it needs you.`;
-    await this.send(project, destination, withMention(text, destination.mention, undefined));
+        ? ":wave: sacty からのテストの通知です。人間の出番になると、すべてのプロジェクトのタスクを、ここに通知します。"
+        : ":wave: Test notification from sacty. sacty will notify you here about tasks in every project when it needs you.";
+    await this.send(destination, withMention(text, destination.mention, undefined), ++this.started);
   }
 
-  /** 送れなかったプロジェクトの理由。 */
+  /** 送れなかった理由（無ければ空）。今の送り先の理由だけを出す（通知先を外した・変えたら、前の理由は出さない）。 */
   problems(): DaemonText[] {
-    return [...this.failures.values()];
+    if (!this.failure) return [];
+    let current: string | undefined;
+    try {
+      const destination = this.deps.notification();
+      if (!destination) return [];
+      current = keyOf(destination);
+    } catch {
+      // 設定を読めないときは、持っている理由を出す
+      return [this.failure.text];
+    }
+    return this.failure.key === current ? [this.failure.text] : [];
   }
 
-  private async send(
-    project: Project,
-    destination: ProjectNotification,
-    text: string,
-  ): Promise<void> {
+  /**
+   * sacty の設定の通知先を変えたときに呼ぶ。持っている失敗を捨て、変える前に始めた送信の結果を反映しないようにする。
+   */
+  settingsChanged(): void {
+    this.changedAt = this.started;
+    this.failure = undefined;
+  }
+
+  /**
+   * 結果を反映してよいか。通知先を変える前に始めた送信の結果は反映しない。後に始めた送信の結果がすでに反映されていれば反映しない。送り先が変わっていれば（今の設定を読めない
+   * ときも）、古い送り先の結果なので反映しない。key が無い（設定を読めなかった）ときは、そのまま反映する。
+   */
+  private settle(seq: number, key: string | undefined): boolean {
+    if (seq <= this.changedAt || seq < this.settled) return false;
+    if (key !== undefined) {
+      let current: string | undefined;
+      try {
+        const destination = this.deps.notification();
+        current = destination ? keyOf(destination) : undefined;
+      } catch {
+        current = undefined;
+      }
+      if (current !== key) return false;
+    }
+    this.settled = seq;
+    return true;
+  }
+
+  /**
+   * 送れなかった理由を、秘密情報を伏せてから切り詰め、ログに出す。今の送り先の最新の結果なら、画面に出す理由として持つ。
+   * 切り詰めた理由を返す。
+   */
+  private fail(
+    error: unknown,
+    secrets: readonly string[],
+    key: string | undefined,
+    seq: number,
+  ): string {
+    const raw = errorText(error);
+    const hidden = secrets.reduce(
+      (t, s) => hideSecret(t, s),
+      typeof raw === "string" ? raw : renderMessage(raw, "ja"),
+    );
+    const detail = hidden.length > REASON_MAX ? `${hidden.slice(0, REASON_MAX)}…` : hidden;
+    if (this.settle(seq, key)) this.failure = { key, text: message("notify.failed", { detail }) };
+    this.deps.log?.(`[notify] ${detail}`);
+    return detail;
+  }
+
+  private async send(destination: SlackNotification, text: string, seq: number): Promise<void> {
+    const key = keyOf(destination);
     const secrets: string[] = [];
     try {
       const fetchImpl = this.deps.fetchImpl ?? fetch;
@@ -318,17 +428,9 @@ export class SlackNotifier {
         }
         if (parsed?.ok === false) throw new Error(`Slack: ${parsed.error ?? "not ok"}`);
       }
-      this.failures.delete(project.id);
+      if (this.settle(seq, key)) this.failure = undefined;
     } catch (error) {
-      const raw = errorText(error);
-      const hidden = secrets.reduce(
-        (t, s) => hideSecret(t, s),
-        typeof raw === "string" ? raw : renderMessage(raw, "ja"),
-      );
-      const detail = hidden.length > REASON_MAX ? `${hidden.slice(0, REASON_MAX)}…` : hidden;
-      this.failures.set(project.id, message("notify.failed", { project: project.name, detail }));
-      this.deps.log?.(`[notify] ${project.name}: ${detail}`);
-      throw new Error(detail);
+      throw new Error(this.fail(error, secrets, key, seq));
     }
   }
 }

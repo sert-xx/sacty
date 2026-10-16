@@ -12,6 +12,9 @@ const ja = {
     createProject: "プロジェクトを作る",
     empty: "終わっていないタスクはありません。",
   },
+  notification: {
+    openSettings: "sacty の設定で Slack の通知を確かめる",
+  },
 };
 
 export type DashboardMessages = typeof ja;
@@ -28,6 +31,9 @@ const en: DashboardMessages = {
     noProjects: "There are no projects.",
     createProject: "Create a project",
     empty: "There are no open tasks.",
+  },
+  notification: {
+    openSettings: "Check Slack notifications in sacty settings",
   },
 };
 

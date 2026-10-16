@@ -3,7 +3,8 @@ import { DaemonError } from "@/components/daemon-error";
 import { SecretsSection } from "@/components/secrets-section";
 import { SettingsForm } from "@/components/settings-form";
 import { getMessages } from "@/i18n/server";
-import { DaemonUnavailableError, getSettings } from "@/lib/daemon";
+import { DaemonUnavailableError, getSettings, getStatus } from "@/lib/daemon";
+import { notificationProblems } from "@/lib/notification-problems";
 
 /** sacty 全体の設定（プロジェクトとは別。PBI-26）。 */
 export default async function SettingsPage() {
@@ -25,12 +26,14 @@ export default async function SettingsPage() {
 
 async function Settings() {
   let settings: Awaited<ReturnType<typeof getSettings>>;
+  let status: Awaited<ReturnType<typeof getStatus>>;
   try {
-    settings = await getSettings();
+    [settings, status] = await Promise.all([getSettings(), getStatus()]);
   } catch (error) {
     if (error instanceof DaemonUnavailableError) return <DaemonError message={error.message} />;
     throw error;
   }
+  const { labels } = await getMessages();
   return (
     <SettingsForm
       intakeLabel={settings.intakeLabel ?? ""}
@@ -42,6 +45,8 @@ async function Settings() {
       issueIntervalSec={settings.issueIntervalSec}
       reviewIntervalSec={settings.reviewIntervalSec}
       ticketIntervalSec={settings.ticketIntervalSec}
+      notification={settings.notification}
+      notificationProblems={notificationProblems(status.warnings, labels.text)}
     />
   );
 }

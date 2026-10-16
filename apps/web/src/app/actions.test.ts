@@ -351,6 +351,23 @@ describe("sacty の設定の保存（PBI-99）", () => {
     });
   });
 
+  it("Slack の通知先（PBI-115）は画面の JSON を送り、空なら送らない。読めない JSON はそのまま送ってデーモンに断らせる", async () => {
+    saveSettings.mockReset();
+    saveSettings.mockResolvedValue({ ok: true, settings: {} });
+    const notification = { kind: "slack-webhook", webhook: "slack-webhook", language: "en" };
+    await saveSettingsAction(
+      {},
+      form({ intakeLabel: "sacty", notification: JSON.stringify(notification) }),
+    );
+    expect(saveSettings.mock.calls[0]?.[0]).toMatchObject({ notification });
+    await saveSettingsAction({}, form({ intakeLabel: "sacty", notification: "" }));
+    expect(saveSettings.mock.calls[1]?.[0]).not.toHaveProperty("notification");
+    await saveSettingsAction({}, form({ intakeLabel: "sacty" }));
+    expect(saveSettings.mock.calls[2]?.[0]).not.toHaveProperty("notification");
+    await saveSettingsAction({}, form({ intakeLabel: "sacty", notification: "{broken" }));
+    expect(saveSettings.mock.calls[3]?.[0]).toMatchObject({ notification: "{broken" });
+  });
+
   it("デーモンが拒否した理由（使えない文字のラベルなど）を、そのまま返す", async () => {
     saveSettings.mockReset();
     saveSettings.mockResolvedValue({ ok: false, message: 'ラベルに " と \\ は使えません。' });

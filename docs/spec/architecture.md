@@ -42,8 +42,8 @@ sacty up（packages/cli）
 | 状態 | `GET /api/health`・`GET /api/status`・`GET /api/github/accounts` |
 | タスク | `GET/POST /api/tasks`（`GET` の `?open=1` は終わっていないタスクだけ）・`GET /api/tasks/:id`・`POST /api/tasks/:id/{approve,request-changes,pause,resume,cancel,repository,questions,rereview}`・`GET /api/tasks/:id/cleanup-plan`・`POST /api/tasks/:id/remarks/:remarkId/void`・`POST /api/tasks/:id/proposals/:proposalId/decide`・`POST /api/tasks/:id/exports/:step/retry` |
 | 実行の記録 | `GET /api/tasks/:id/runs/:runId/log`・`…/files/:file`・`…/agent-files`・`…/agent-files/raw` |
-| プロジェクト | `GET/POST /api/projects`・`GET/PUT /api/projects/:id`・`GET /api/projects/:id/{repositories,platforms,export}`・`GET/POST /api/projects/:id/context-preview`・`POST /api/projects/import`・`POST /api/projects/:id/notification-test` |
-| sacty の設定 | `GET/PUT /api/settings`・`POST /api/intake/run`・`POST /api/secrets/prefetch` |
+| プロジェクト | `GET/POST /api/projects`・`GET/PUT /api/projects/:id`・`GET /api/projects/:id/{repositories,platforms,export}`・`GET/POST /api/projects/:id/context-preview`・`POST /api/projects/import` |
+| sacty の設定 | `GET/PUT /api/settings`・`POST /api/settings/notification-test`・`POST /api/intake/run`・`POST /api/secrets/prefetch` |
 
 コード: `apps/daemon/src/server.ts`（`createApp`・`handleError`）、`apps/web/src/lib/daemon.ts`（`daemonFetch`）、`packages/cli/src/index.ts`（`up`）
 
@@ -77,6 +77,8 @@ sacty up（packages/cli）
     全文はホバー（`title`）と、行にフォーカスがある間の折り返しで出す。件数の補足（「すべてのプロジェクト・N件」）は、言語ごとの文言で組み立てる。
   - プロジェクトが無いとき・終わっていないタスクが無いときは、そのことを出す。
   - 欄を足すときは、`DashboardData`（`loadDashboard`）に欄のデータを足し、`LiveDashboard` に `DashboardCard` を足す（取り直しは画面で1つ）。
+- 欄の上に、Slack の通知を送れなかった理由（デーモンの警告のうち `notify.failed`。`notificationProblems`）を、sacty の設定へのリンクつきで出す
+  （無ければ出さない）。欄と同じく取り直す。
 
 コード: `apps/web/src/lib/paths.ts`、`apps/web/src/app/page.tsx`、`apps/web/src/app/dashboard/page.tsx`、
 `apps/web/src/app/projects/[id]/page.tsx`、`apps/web/src/app/projects/[id]/tasks/page.tsx`、`apps/web/src/app/projects/[id]/settings/page.tsx`、
@@ -126,7 +128,7 @@ sacty up（packages/cli）
 
   | 先 | 返すもの |
   | --- | --- |
-  | `GET /live/dashboard` | ダッシュボードの欄のデータ（終わっていないタスク。`loadDashboard`） |
+  | `GET /live/dashboard` | ダッシュボードの欄のデータ（終わっていないタスク・通知を送れなかった理由。`loadDashboard`） |
   | `GET /live/tasks?project=<ID>` | URL のプロジェクトの、タスクの一覧の行と、人間の判断が必要なタスクのカード（表示に要るものだけ。`loadTaskList`）。プロジェクトが無い・ID の形が違えば `{ missing: true }` |
   | `GET /live/tasks/<ID>` | タスクの詳細に出すもの（タスク・作業履歴・親・子タスク・片付けるもの・イメージの候補など。`loadTaskDetail`） |
   | `GET /live/header?current=<ID>` | ヘッダーのプロジェクトの切り替え（対応待ちの件数）とお知らせ（`loadHeaderData`） |
@@ -203,9 +205,9 @@ sacty up（packages/cli）
   取り込むラベル（`intakeLabel`。Issue だけ）・チケットの取り込むラベル（`ticketLabel`）・PR のレビュー用のラベル（`reviewLabel`）・
   自分へのレビュー依頼の取り込み（`reviewRequested`）・Off にしたトリアージの種類（`triageOff`。`issues`・`reviewLabel`・`tickets`）・
   同時に実行するタスクの数（`maxParallelTasks`。既定 3）・取り込みの種類ごとの間隔（`issueIntervalSec`・`reviewIntervalSec`・
-  `ticketIntervalSec`。秒。60 以上。既定 300。[取り込み](intake.md#間隔)）。
+  `ticketIntervalSec`。秒。60 以上。既定 300。[取り込み](intake.md#間隔)）・Slack の通知先（`notification`。[通知](notifications.md)）。
   - 設定の保存先を開くとき（デーモンの起動のとき）、消した項目（`triageOff` の `pullRequests`）が保存されていれば消して書き直す
     （消すものが無ければ書かない）。
-- プロジェクト（`sacty.db`）：対象・GitHub のアカウント・コンテキストリポジトリ・通知・共用の compose・チケットの取り込みなど。
+- プロジェクト（`sacty.db`）：対象・GitHub のアカウント・コンテキストリポジトリ・共用の compose・チケットの取り込みなど（通知は sacty の設定）。
 
 コード: `apps/daemon/src/settings.ts`（`SqliteSettingsStore`・`dropRemovedItems`）、`packages/core/src/projects.ts`（`SactySettings`・`DEFAULT_MAX_PARALLEL_TASKS`）、`apps/daemon/src/projects.ts`

@@ -35,7 +35,7 @@ const ja = {
   },
   import: {
     label:
-      "sacty からエクスポートしたプロジェクトの定義（JSON）を選んでください。新しいプロジェクトとして作ります。対象がほかのプロジェクトと重複していれば、インポートしません。Slack のメンション（相手と種類）は含まないので、インポートの後に、プロジェクトの設定で相手と種類の両方を必要に応じて設定し直してください（種類は既定に戻ります）。",
+      "sacty からエクスポートしたプロジェクトの定義（JSON）を選んでください。新しいプロジェクトとして作ります。対象がほかのプロジェクトと重複していれば、インポートしません。Slack の通知は sacty の設定にあり、ファイルには含みません。",
     submit: "インポートする",
   },
 };
@@ -78,7 +78,7 @@ const en: FormsMessages = {
   },
   import: {
     label:
-      "Choose a project definition (JSON) exported from sacty. It is created as a new project. If a target overlaps with another project, nothing is imported. Slack mentions (targets and kinds) are not included. After importing, set both the targets and the kinds again in the project settings as needed (the kinds return to the default).",
+      "Choose a project definition (JSON) exported from sacty. It is created as a new project. If a target overlaps with another project, nothing is imported. Slack notifications are in the sacty settings and are not included in the file.",
     submit: "Import",
   },
 };

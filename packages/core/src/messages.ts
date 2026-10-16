@@ -115,7 +115,7 @@ const PARAMS = {
   "input.ticketIntervalInvalid": null,
   "input.notExportFile": null,
   "input.unsupportedVersion": null,
-  "input.exportVersionWithMentions": null,
+  "input.exportVersionWithNotification": null,
   // 入力の検査のうち、コードを指定していない検査（zod の標準の検査。issueMessage で変換する）
   "input.required": null,
   "input.tooShort": z.object({ minimum: Count }),
@@ -170,7 +170,7 @@ const PARAMS = {
   "input.slackMention": null,
   "input.mentionKinds": null,
   // Slack の通知（PBI-38）
-  "notify.failed": z.object({ project: z.string(), detail: TextParam }),
+  "notify.failed": z.object({ detail: TextParam }),
   "notify.notConfigured": null,
   "input.allowRule": null,
   "input.platformName": null,
@@ -222,6 +222,8 @@ const PARAMS = {
   "secret.prefetchFailed": z.object({ where: z.string(), detail: TextParam }),
   // プロジェクトのコンテキストの秘密情報も、まとめて取り出す（PBI-107）
   "secret.savePrefetchFailed": z.object({ where: z.string(), detail: TextParam }),
+  // sacty の設定（通知先）を保存したときの取り出し（PBI-115）
+  "secret.settingsSavePrefetchFailed": z.object({ where: z.string(), detail: TextParam }),
   "secret.contextUnavailable": z.object({ project: z.string(), detail: TextParam }),
   "secret.contextTimedOut": z.object({ seconds: z.number() }),
   "run.repositoryNotConfigured": null,
@@ -620,7 +622,7 @@ const ja: MessageDictionary = {
     "チケットの取り込みの間隔は、60 以上の整数（秒）を書いてください（空なら 300 秒）。",
   "input.notExportFile": "sacty のプロジェクト定義のファイルではありません。",
   "input.unsupportedVersion": `対応していない版です（対応している版：${PROJECT_EXPORT_VERSION}）。`,
-  "input.exportVersionWithMentions": `版 3 のファイルは読めません。版 ${PROJECT_EXPORT_VERSION} から、Slack のメンションの相手を含めなくなりました。今の sacty でエクスポートし直してください。`,
+  "input.exportVersionWithNotification": `版 3・4 のファイルは読めません。版 ${PROJECT_EXPORT_VERSION} から、Slack の通知先をプロジェクトに含めなくなりました（通知先は sacty の設定にあります）。今の sacty でエクスポートし直してください。`,
   "input.required": "入力してください。",
   "input.tooShort": ({ minimum }) => `${minimum}文字以上で入力してください。`,
   "input.tooLong": ({ maximum }) =>
@@ -727,9 +729,9 @@ const ja: MessageDictionary = {
   "input.slackMention":
     "メンションする相手は、Slack のメンバー ID（U… か W…）、ユーザーグループの ID（S…）、@here、@channel のどれかで書いてください（@表示名では届きません）。",
   "input.mentionKinds": "メンションする通知の種類を、1つ以上選んでください。",
-  "notify.failed": ({ project, detail }, text) =>
-    `プロジェクト「${project}」の Slack の通知を送れませんでした：${text(detail)}（タスクは止めていません）`,
-  "notify.notConfigured": "このプロジェクトには、通知先が設定されていません。",
+  "notify.failed": ({ detail }, text) =>
+    `Slack の通知を送れませんでした：${text(detail)}（タスクは止めていません）`,
+  "notify.notConfigured": "sacty の設定に、Slack の通知先が設定されていません。",
   "input.secretRef":
     "秘密情報は、キーチェーンの名前（英数字と . _ -）か、1Password の参照（op://保管庫/アイテム/フィールド）で書いてください。",
   "input.envName": "環境変数の名前が正しくありません。",
@@ -762,6 +764,8 @@ const ja: MessageDictionary = {
     `起動のときに、秘密情報（${where}）を取り出せませんでした：${text(detail)}用意してから、「sacty の設定」の「秘密情報を取り出し直す」を押してください（使うときにも、もう一度取り出します）。`,
   "secret.savePrefetchFailed": ({ where, detail }, text) =>
     `プロジェクトの設定を保存したときに、秘密情報（${where}）を取り出せませんでした：${text(detail)}用意してから、「sacty の設定」の「秘密情報を取り出し直す」を押してください（使うときにも、もう一度取り出します）。`,
+  "secret.settingsSavePrefetchFailed": ({ where, detail }, text) =>
+    `sacty の設定を保存したときに、秘密情報（${where}）を取り出せませんでした：${text(detail)}用意してから、「sacty の設定」の「秘密情報を取り出し直す」を押してください（使うときにも、もう一度取り出します）。`,
   "secret.contextUnavailable": ({ project, detail }, text) =>
     `プロジェクト「${project}」のコンテキストを読めず、その秘密情報を前もって取り出せませんでした（使うときに、その場で取り出します）：${text(detail)}`,
   "secret.contextTimedOut": ({ seconds }) => `${seconds} 秒のうちに取得できませんでした。`,
@@ -1077,7 +1081,7 @@ const en: MessageDictionary = {
     "Enter a whole number of 60 or more (seconds) for the ticket intake interval (300 seconds if empty).",
   "input.notExportFile": "This is not a sacty project definition file.",
   "input.unsupportedVersion": `Unsupported version (supported: ${PROJECT_EXPORT_VERSION}).`,
-  "input.exportVersionWithMentions": `Version 3 files cannot be imported. Since version ${PROJECT_EXPORT_VERSION}, Slack mention targets are no longer exported. Export the project again with the current sacty.`,
+  "input.exportVersionWithNotification": `Version 3 and 4 files cannot be imported. Since version ${PROJECT_EXPORT_VERSION}, the Slack notification destination is no longer part of a project (it is in the sacty settings). Export the project again with the current sacty.`,
   "input.required": "This field is required.",
   "input.tooShort": ({ minimum }) => `Enter at least ${minimum} characters.`,
   "input.tooLong": ({ maximum }) => `Keep it within ${maximum.toLocaleString("en-US")} characters.`,
@@ -1184,9 +1188,9 @@ const en: MessageDictionary = {
   "input.slackMention":
     "Write each person to mention as a Slack member ID (U… or W…), a user group ID (S…), @here, or @channel (display names don't notify anyone).",
   "input.mentionKinds": "Choose at least one kind of notification to mention in.",
-  "notify.failed": ({ project, detail }, text) =>
-    `Could not send the Slack notification for the project "${project}": ${text(detail)} (tasks keep running)`,
-  "notify.notConfigured": "No notification destination is set for this project.",
+  "notify.failed": ({ detail }, text) =>
+    `Could not send the Slack notification: ${text(detail)} (tasks keep running)`,
+  "notify.notConfigured": "No Slack notification destination is set in the sacty settings.",
   "input.secretRef":
     "Write a secret as a keychain name (letters, digits, and . _ -) or a 1Password reference (op://vault/item/field).",
   "input.envName": "The environment variable name is not valid.",
@@ -1221,6 +1225,8 @@ const en: MessageDictionary = {
     `Could not get the secret (${where}) at startup: ${text(detail)} Set it up, then press "Get secrets again" in sacty settings (sacty also tries again when it is used).`,
   "secret.savePrefetchFailed": ({ where, detail }, text) =>
     `Could not get the secret (${where}) when the project settings were saved: ${text(detail)} Set it up, then press "Get secrets again" in sacty settings (sacty also tries again when it is used).`,
+  "secret.settingsSavePrefetchFailed": ({ where, detail }, text) =>
+    `Could not get the secret (${where}) when the sacty settings were saved: ${text(detail)} Set it up, then press "Get secrets again" in sacty settings (sacty also tries again when it is used).`,
   "secret.contextUnavailable": ({ project, detail }, text) =>
     `Could not read the context of project "${project}", so its secrets were not fetched in advance (sacty gets them when they are used): ${text(detail)}`,
   "secret.contextTimedOut": ({ seconds }) => `It could not be fetched within ${seconds} seconds.`,

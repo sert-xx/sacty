@@ -59,13 +59,23 @@ export function createApp(
   const app = new Hono();
 
   /**
-   * 保存したプロジェクトの秘密情報（コンテキスト・通知先）を、まとめて取り出す（PBI-107）。保存は止めないので待たない
+   * 保存したプロジェクトの秘密情報（コンテキスト）を、まとめて取り出す（PBI-107）。保存は止めないので待たない
    * （1Password の承認を待つことがある）。取り出せなかったものは、画面の警告に出る。
    */
   const prefetchProjectSecrets = (id: string) => {
     service.prefetchProjectSecrets(id).catch((error: unknown) => {
       console.warn(
         "[daemon] プロジェクトの秘密情報を取り出せませんでした：",
+        error instanceof Error ? error.message : error,
+      );
+    });
+  };
+
+  /** 保存した sacty の設定の秘密情報（通知先。PBI-115）を取り出す。プロジェクトと同じく待たない。 */
+  const prefetchSettingsSecrets = () => {
+    service.prefetchSettingsSecrets().catch((error: unknown) => {
+      console.warn(
+        "[daemon] sacty の設定の秘密情報を取り出せませんでした：",
         error instanceof Error ? error.message : error,
       );
     });
@@ -177,7 +187,19 @@ export function createApp(
     const json = await readJson(c);
     if (!json.ok) return c.json({ error: "invalid_json" }, 400);
     try {
-      return c.json({ settings: service.saveSettings(json.body) });
+      const settings = service.saveSettings(json.body);
+      prefetchSettingsSecrets();
+      return c.json({ settings });
+    } catch (error) {
+      return handleError(c, error);
+    }
+  });
+
+  /** sacty の設定の通知先に、テストの通知を送る（PBI-38。PBI-115 でプロジェクトから移した）。 */
+  app.post("/api/settings/notification-test", async (c) => {
+    try {
+      await service.testNotification();
+      return c.json({ ok: true });
     } catch (error) {
       return handleError(c, error);
     }
@@ -263,16 +285,6 @@ export function createApp(
       // 保存したコンテキストを、プレビューと同じ検査で確かめる（誤りは保存を止めず、知らせる。PBI-76）
       const contextError = await service.checkProjectContext(project.id);
       return c.json({ project, ...(contextError ? { contextError } : {}) });
-    } catch (error) {
-      return handleError(c, error);
-    }
-  });
-
-  /** プロジェクトの通知先に、テストの通知を送る（PBI-38）。 */
-  app.post("/api/projects/:id/notification-test", async (c) => {
-    try {
-      await service.testNotification(c.req.param("id"));
-      return c.json({ ok: true });
     } catch (error) {
       return handleError(c, error);
     }

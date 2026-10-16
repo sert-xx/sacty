@@ -199,7 +199,7 @@ describe("プロジェクト定義のエクスポート・インポート（PBI-
     const exported = exportProject(full);
     expect(exported).toEqual({
       sacty: "project",
-      version: 4,
+      version: 5,
       project: {
         name: "決済",
         targets: [
@@ -252,60 +252,70 @@ describe("プロジェクト定義のエクスポート・インポート（PBI-
   });
 });
 
-describe("通知先（PBI-38）", () => {
-  it("Slack API の形と Incoming Webhook を受け付け、秘密情報は名前か参照だけ。エクスポートにも含める", () => {
-    const api = ProjectDefinition.parse({
-      name: "決済",
-      notification: {
-        kind: "slack-api",
-        url: "https://slack-proxy-b.example.com/api/chat.postMessage",
-        channel: "#sacty",
-      },
+describe("Slack の通知先（PBI-38。PBI-115 で sacty の設定に移した）", () => {
+  const settings = (notification: unknown) =>
+    SactySettings.safeParse(notification === undefined ? {} : { notification });
+
+  it("sacty の設定に、Slack API の形と Incoming Webhook を書け、秘密情報は名前か参照だけ", () => {
+    const api = settings({
+      kind: "slack-api",
+      url: "https://slack-proxy-b.example.com/api/chat.postMessage",
+      channel: "#sacty",
     });
-    expect(api.notification).toEqual({
+    expect(api.success && api.data.notification).toEqual({
       kind: "slack-api",
       url: "https://slack-proxy-b.example.com/api/chat.postMessage",
       channel: "#sacty",
       language: "ja",
     });
     expect(
-      ProjectDefinition.safeParse({
-        name: "x",
-        notification: { kind: "slack-webhook", webhook: "op://Work/Slack/webhook", language: "en" },
-      }).success,
+      settings({ kind: "slack-webhook", webhook: "op://Work/Slack/webhook", language: "en" })
+        .success,
     ).toBe(true);
+    // 書かなければ通知しない
+    const none = settings(undefined);
+    expect(none.success && none.data).not.toHaveProperty("notification");
+    const reasons = (notification: unknown) => {
+      const result = settings(notification);
+      expect(result.success).toBe(false);
+      return result.error?.issues.map((i) => i.message);
+    };
     // 秘密情報の値（URL）をそのまま書いたら受け付けない
     expect(
-      ProjectDefinition.safeParse({
-        name: "x",
-        notification: { kind: "slack-webhook", webhook: "https://hooks.slack.com/services/T/B/X" },
-      }).success,
-    ).toBe(false);
+      reasons({ kind: "slack-webhook", webhook: "https://hooks.slack.com/services/T/B/X" }),
+    ).toContain("input.secretRef");
+    expect(reasons({ kind: "slack-api", url: "not a url", channel: "#a" })).toContain(
+      "input.invalidUrl",
+    );
     expect(
-      ProjectDefinition.safeParse({
-        name: "x",
-        notification: { kind: "slack-api", url: "not a url", channel: "#a" },
-      }).success,
-    ).toBe(false);
-    const exported = exportProject({ ...api, targets: [], id: "p", createdAt: "", updatedAt: "" });
-    expect(exported.project.notification).toEqual(api.notification);
-    expect(ProjectExport.parse(exported).project.notification).toEqual(api.notification);
+      reasons({ kind: "slack-api", url: "https://slack.com/api/chat.postMessage", channel: " " }),
+    ).toContain("input.channelRequired");
+    expect(
+      reasons({
+        kind: "slack-api",
+        url: "https://slack.com/api/chat.postMessage",
+        channel: "#a",
+        token: "xoxb secret",
+      }),
+    ).toContain("input.secretRef");
+    expect(settings({ kind: "email", to: "a@example.com" }).success).toBe(false);
+    expect(settings({ kind: "slack-webhook", webhook: "hook", language: "fr" }).success).toBe(
+      false,
+    );
   });
 
   it("メンション（PBI-69）：ユーザー・ユーザーグループ・@here・@channel を複数書け、種類の既定は人の出番だけ", () => {
     const parse = (mention: unknown, kind: "slack-api" | "slack-webhook" = "slack-api") =>
-      ProjectDefinition.safeParse({
-        name: "x",
-        notification:
-          kind === "slack-api"
-            ? {
-                kind,
-                url: "https://slack.com/api/chat.postMessage",
-                channel: "#a",
-                ...(mention === undefined ? {} : { mention }),
-              }
-            : { kind, webhook: "slack-webhook", ...(mention === undefined ? {} : { mention }) },
-      });
+      settings(
+        kind === "slack-api"
+          ? {
+              kind,
+              url: "https://slack.com/api/chat.postMessage",
+              channel: "#a",
+              ...(mention === undefined ? {} : { mention }),
+            }
+          : { kind, webhook: "slack-webhook", ...(mention === undefined ? {} : { mention }) },
+      );
     const both = parse({
       targets: [" U0123ABCD ", "W0456", "S0789EFGH", "@here", "@channel", "U0123ABCD"],
     });
@@ -323,7 +333,7 @@ describe("通知先（PBI-38）", () => {
       targets: ["@here"],
       kinds: ["approval", "completed"],
     });
-    // 書かなければ、これまでどおりメンションしない
+    // 書かなければ、メンションしない
     const none = parse(undefined);
     expect(none.success && none.data.notification).not.toHaveProperty("mention");
 
@@ -356,130 +366,80 @@ describe("通知先（PBI-38）", () => {
     expect(renderMessage({ code: "input.mentionKinds" }, "en")).toContain("at least one");
   });
 
-  describe("メンションはエクスポートに含めない（PBI-103）", () => {
-    // ユーザー（U…・W…）・ユーザーグループ（S…）・@here・@channel をすべて書き、上限の20件まで並べる
-    const targets = [
-      "U0123ABCD",
-      "W0456XYZ",
-      "S0789EFGH",
-      "@here",
-      "@channel",
-      ...Array.from({ length: 15 }, (_, i) => `U9${String(i).padStart(4, "0")}`),
-    ];
-    const api = ProjectDefinition.parse({
-      name: "決済",
-      notification: {
-        kind: "slack-api",
-        url: "https://slack-proxy-b.example.com/api/chat.postMessage",
-        channel: "#sacty",
-        token: "op://Work/Slack/token",
-        language: "en",
-        mention: { targets, kinds: ["approval", "completed"] },
-      },
-    });
-    const webhook = ProjectDefinition.parse({
-      name: "決済",
-      notification: {
-        kind: "slack-webhook",
-        webhook: "op://Work/Slack/webhook",
-        mention: { targets: ["S0789EFGH", "U0123ABCD"] },
-      },
-    });
-    const asProject = (def: ProjectDefinition) =>
-      ({ ...def, id: "p", createdAt: "", updatedAt: "" }) as Project;
-    const mentionLike = /\b[UWS][A-Z0-9]{2,30}\b|@here|@channel/;
+  describe("プロジェクトには通知先を持たない（PBI-115）", () => {
+    const old = {
+      kind: "slack-api",
+      url: "https://slack.com/api/chat.postMessage",
+      channel: "#old",
+      token: "op://Work/Slack/token",
+      mention: { targets: ["U0123ABCD"] },
+    };
 
-    it("相手も種類も書き出さず、ID・@here・@channel はファイルのどこにも残らない。ほかの設定は書き出す", () => {
-      expect(api.notification?.mention?.targets).toHaveLength(20);
-      const fromApi = exportProject(asProject(api));
-      expect(fromApi.project.notification).toEqual({
-        kind: "slack-api",
-        url: "https://slack-proxy-b.example.com/api/chat.postMessage",
-        channel: "#sacty",
-        token: "op://Work/Slack/token",
-        language: "en",
-      });
-      const fromWebhook = exportProject(asProject(webhook));
-      expect(fromWebhook.project.notification).toEqual({
-        kind: "slack-webhook",
-        webhook: "op://Work/Slack/webhook",
-        language: "ja",
-      });
-      for (const exported of [fromApi, fromWebhook]) {
-        const text = JSON.stringify(exported);
-        expect(text).not.toMatch(mentionLike);
-        expect(text).not.toContain("mention");
-        // 書き出したものは、そのまま読め、読んだプロジェクトにはメンションが無い
-        const imported = ProjectExport.parse(JSON.parse(text)).project;
-        expect(imported.notification).not.toHaveProperty("mention");
-        expect(ProjectDefinition.parse(imported).notification).not.toHaveProperty("mention");
-      }
-      // 書き出しても、元のプロジェクトの設定は変えない
-      expect(api.notification?.mention?.targets).toHaveLength(20);
-    });
-
-    it("メンションの無い通知先は、これまでどおり書き出し、読める", () => {
-      const none = ProjectDefinition.parse({
-        name: "x",
-        notification: {
-          kind: "slack-api",
-          url: "https://slack.com/api/chat.postMessage",
-          channel: "#a",
-        },
-      });
-      const exported = exportProject(asProject(none));
-      expect(exported.project.notification).toEqual(none.notification);
-      expect(
-        ProjectExport.parse(JSON.parse(JSON.stringify(exported))).project.notification,
-      ).toEqual(none.notification);
-    });
-
-    it("メンションを足したファイルは、知らない項目として読まない（相手が空でも）", () => {
-      const exported = exportProject(asProject(api));
-      for (const mention of [
-        { targets: ["U0123ABCD"] },
-        { targets: [] },
-        { kinds: ["approval"] },
-        {},
-      ]) {
-        const result = ProjectExport.safeParse({
-          ...exported,
-          project: {
-            ...exported.project,
-            notification: { ...exported.project.notification, mention },
-          },
-        });
-        expect(result.success).toBe(false);
-        expect(result.error?.issues.map((i) => issueMessage(i))).toContainEqual({
-          code: "input.unknownKeys",
-          params: { keys: "mention" },
-        });
+    it("プロジェクトの定義に通知先の項目は無く、保存してあった古い通知先は読まずに捨てる（壊れたものでも）", () => {
+      expect(Object.keys(ProjectDefinition.shape)).not.toContain("notification");
+      for (const notification of [old, { kind: "nope" }, "broken", null]) {
+        const parsed = ProjectDefinition.parse({ name: "決済", notification });
+        expect(parsed).not.toHaveProperty("notification");
+        expect(parsed.name).toBe("決済");
       }
     });
 
-    it("以前の版（3）のファイルは、メンションを含んでも含まなくても、理由を示して読まない", () => {
-      const exported = exportProject(asProject(webhook));
-      for (const project of [
-        { ...exported.project, notification: webhook.notification },
-        exported.project,
-        { name: "古い" },
-      ]) {
-        const result = ProjectExport.safeParse({ sacty: "project", version: 3, project });
-        expect(result.success).toBe(false);
-        // 画面が出すのは最初の誤りなので、版の誤りが最初に来る
-        expect(result.error?.issues[0]).toMatchObject({
-          path: ["version"],
-          message: "input.exportVersionWithMentions",
-        });
+    it("エクスポートに通知先を含めず、通知先を書いたファイルは知らない項目として読まない", () => {
+      const project = {
+        ...ProjectDefinition.parse({ name: "決済", notification: old }),
+        // 型の外から古い通知先が紛れ込んでも、書き出さない
+        notification: old,
+        id: "p",
+        createdAt: "",
+        updatedAt: "",
+      } as Project;
+      const exported = exportProject(project);
+      expect(exported.version).toBe(5);
+      const text = JSON.stringify(exported);
+      expect(text).not.toContain("notification");
+      expect(text).not.toContain("slack");
+      expect(text).not.toContain("U0123ABCD");
+      const result = ProjectExport.safeParse({
+        ...exported,
+        project: { ...exported.project, notification: { kind: "slack-webhook", webhook: "x" } },
+      });
+      expect(result.success).toBe(false);
+      expect(result.error?.issues.map((i) => issueMessage(i))).toContainEqual({
+        code: "input.unknownKeys",
+        params: { keys: "notification" },
+      });
+    });
+
+    it("通知先を含んでいた版（3・4）のファイルは、通知先があってもなくても、理由を示して読まない", () => {
+      const exported = exportProject({
+        ...ProjectDefinition.parse({ name: "決済" }),
+        id: "p",
+        createdAt: "",
+        updatedAt: "",
+      });
+      for (const version of [3, 4]) {
+        for (const project of [
+          { ...exported.project, notification: old },
+          exported.project,
+          { name: "古い" },
+        ]) {
+          const result = ProjectExport.safeParse({ sacty: "project", version, project });
+          expect(result.success).toBe(false);
+          // 画面が出すのは最初の誤りなので、版の誤りが最初に来る
+          expect(result.error?.issues[0]).toMatchObject({
+            path: ["version"],
+            message: "input.exportVersionWithNotification",
+          });
+        }
       }
-      expect(renderMessage({ code: "input.exportVersionWithMentions" }, "ja")).toContain(
-        "メンションの相手",
+      expect(renderMessage({ code: "input.exportVersionWithNotification" }, "ja")).toContain(
+        "sacty の設定",
       );
-      expect(renderMessage({ code: "input.exportVersionWithMentions" }, "en")).toContain(
-        "mention targets",
+      expect(renderMessage({ code: "input.exportVersionWithNotification" }, "en")).toContain(
+        "sacty settings",
       );
       // ほかの版は、これまでどおりの理由
-      for (const version of [1, 2, 5, "4", "3"]) {
+      for (const version of [1, 2, 6, "5", "4", "3"]) {
         const result = ProjectExport.safeParse({ ...exported, version });
         expect(result.error?.issues[0]?.message, String(version)).toBe("input.unsupportedVersion");
       }

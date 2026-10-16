@@ -5,9 +5,11 @@ import {
   DEFAULT_MAX_PARALLEL_TASKS,
   MAX_PARALLEL_TASKS_LIMIT,
   MIN_INTAKE_INTERVAL_SEC,
+  type SlackNotification,
 } from "@sacty/core";
 import { startTransition, useActionState, useId, useState } from "react";
 import { type SaveSettingsState, saveSettingsAction } from "@/app/actions";
+import { NotificationSettings } from "@/components/notification-settings";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -18,6 +20,7 @@ const initial: SaveSettingsState = {};
 /**
  * sacty 全体の設定の編集（取り込むラベル。PBI-26。同時に実行するタスクの数。PBI-30）。取り込みは「Issue の取り込み」と
  * 「PR のレビューの取り込み」に分ける（PR を取り込むのはレビューだけ。PBI-99）。取り込みの間隔は種類ごと（PBI-100）。
+ * Slack の通知先も、ここで設定する（PBI-115。以前はプロジェクトごと）。
  */
 export function SettingsForm({
   intakeLabel,
@@ -29,6 +32,8 @@ export function SettingsForm({
   issueIntervalSec,
   reviewIntervalSec,
   ticketIntervalSec,
+  notification,
+  notificationProblems = [],
 }: {
   intakeLabel: string;
   /** PR のレビューの取り込み（PBI-44）。 */
@@ -44,6 +49,10 @@ export function SettingsForm({
   issueIntervalSec?: number;
   reviewIntervalSec?: number;
   ticketIntervalSec?: number;
+  /** Slack の通知先（PBI-115）。設定していなければ undefined（通知しない）。 */
+  notification?: SlackNotification;
+  /** Slack の通知を送れなかった理由（画面の言語の文。PBI-115）。 */
+  notificationProblems?: string[];
 }) {
   const [state, formAction, pending] = useActionState(saveSettingsAction, initial);
   const t = useMessages().settings;
@@ -268,6 +277,7 @@ export function SettingsForm({
           )}
         </p>
       </section>
+      <NotificationSettings saved={notification} problems={notificationProblems} />
       {state.message && (
         <p role="alert" className="text-sm text-warn">
           {state.message}

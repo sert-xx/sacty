@@ -4,7 +4,8 @@ import { messagesFor } from "@/i18n";
 
 const listProjects = vi.fn();
 const listTasks = vi.fn();
-vi.mock("@/lib/daemon", () => ({ listProjects, listTasks }));
+const getStatus = vi.fn(async () => ({ agent: null, problems: [], warnings: [], intake: null }));
+vi.mock("@/lib/daemon", () => ({ listProjects, listTasks, getStatus }));
 vi.mock("@/i18n/server", () => ({ getMessages: async () => messagesFor("ja") }));
 
 const { isOpenTask, loadDashboard } = await import("./dashboard-data");
@@ -117,11 +118,32 @@ describe("ダッシュボードの終わっていないタスク（PBI-114）", 
     listTasks.mockResolvedValue([task({ projectId: "gone" })]);
     expect((await loadDashboard()).openTasks).toEqual([]);
     listProjects.mockResolvedValue([]);
-    expect(await loadDashboard()).toEqual({ projects: 0, openTasks: [] });
+    expect(await loadDashboard()).toEqual({ projects: 0, openTasks: [], notificationProblems: [] });
   });
 
   it("デーモンに届かなければ例外（画面は届かないことを出す）", async () => {
     listTasks.mockRejectedValue(new Error("unreachable"));
     await expect(loadDashboard()).rejects.toThrow("unreachable");
+  });
+});
+
+describe("ダッシュボードの Slack の通知を送れなかった理由（PBI-115）", () => {
+  it("デーモンの警告から、通知を送れなかった理由だけを画面の言語の文にして持つ", async () => {
+    listProjects.mockResolvedValue([]);
+    listTasks.mockResolvedValue([]);
+    getStatus.mockResolvedValueOnce({
+      agent: null,
+      problems: [],
+      warnings: [
+        { code: "notify.failed", params: { detail: "HTTP 500: down" } },
+        { code: "secret.opMissing" },
+        "ほかの警告",
+      ],
+      intake: null,
+    } as never);
+    expect((await loadDashboard()).notificationProblems).toEqual([
+      "Slack の通知を送れませんでした：HTTP 500: down（タスクは止めていません）",
+    ]);
+    expect((await loadDashboard()).notificationProblems).toEqual([]);
   });
 });

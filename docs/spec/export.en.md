@@ -6,7 +6,7 @@ Exports human-approved Investigation results (for investigation-only tasks), Req
 settings per kind of destination; it has an agent do the export using the connections written as organization platforms (PF) or MCP servers. Exporting and importing
 project settings are also described in this document.
 
-Related ADR: [Do not include Slack mentions (targets and kinds) in project exports, and reject version 3 files, which included them, with the reason](../adr/20261015-0850-export-without-mentions.md)
+Related ADR: [Move the Slack notification destination from project settings to the sacty settings, and send notifications of every project to one destination](../adr/20261016-0421-slack-notification-in-sacty-settings.md)
 
 ## What is exported and where
 
@@ -34,16 +34,14 @@ Code: `apps/daemon/src/service.ts` (`awaitingExport`, `exportOutput`, `retryExpo
 
 ## Exporting and importing projects
 
-- `GET /api/projects/:id/export` returns `{ sacty: "project", version: 4, project: { … } }` (`PROJECT_EXPORT_VERSION`). `project` contains
-  `name`, `targets`, `context`, `notification` (secrets only as references), `tickets`, `sharedComposes`, and `deploymentWatch` (only when `true`). IDs, timestamps, and
+- `GET /api/projects/:id/export` returns `{ sacty: "project", version: 5, project: { … } }` (`PROJECT_EXPORT_VERSION`). `project` contains
+  `name`, `targets`, `context`, `tickets`, `sharedComposes`, and `deploymentWatch` (only when `true`). IDs, timestamps, and
   `githubAccounts` (personal settings) are not included. From the web UI, it downloads as `sacty-project-<name>.json`.
-- `notification` does not include Slack mentions (`mention`). The targets (`targets`) differ per person and environment, and kinds (`kinds`) without targets
-  mean nothing, so neither is included. The destination, channel, language, and secret references are included.
+- The Slack notification destination is in the sacty settings ([Notifications](notifications.en.md)), not in the project definition, so it is not exported.
 - `POST /api/projects/import` strictly checks the same shape (unknown fields, a different `sacty`, or a different version are errors) and saves it as a project with a new ID
   (checking for conflicts with other projects before saving). From the web UI, it reads files up to 1,000,000 bytes.
-  - A `mention` in the notification destination is an unknown-field error (`input.unknownKeys`). The imported project has no mentions; set both the targets and the kinds again in
-    the project settings (when added, the kinds default to `approval`, `escalation`, and `paused`).
-  - Version 3 files (the version that included mentions) are rejected with or without mentions, with a message asking to export again (`input.exportVersionWithMentions`).
+  - A `notification` in `project` is an unknown-field error (`input.unknownKeys`).
+  - Version 3 and 4 files (the versions that included the notification destination) are rejected with or without it, with a message asking to export again (`input.exportVersionWithNotification`).
     Other version differences are `input.unsupportedVersion`. Either way, the version error is returned as the first error (the web UI shows the first error).
 
-Code: `packages/core/src/projects.ts` (`ProjectExport`, `ExportNotification`, `exportProject`, `withoutMention`, `PROJECT_EXPORT_VERSION`), `apps/daemon/src/service.ts` (`exportProject`, `importProject`, `saveProject`), `apps/web/src/app/projects/[id]/export/route.ts`, `apps/web/src/app/actions.ts` (`importProjectAction`)
+Code: `packages/core/src/projects.ts` (`ProjectExport`, `exportProject`, `PROJECT_EXPORT_VERSION`), `apps/daemon/src/service.ts` (`exportProject`, `importProject`, `saveProject`), `apps/web/src/app/projects/[id]/export/route.ts`, `apps/web/src/app/actions.ts` (`importProjectAction`)

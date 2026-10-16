@@ -21,7 +21,8 @@ the header also switches to that project ([Web UI screens](getting-started.en.md
 | GitHub account | The `gh` account to use for each host | [GitHub account](#github-account) |
 | Shared compose (optional) | A team-shared docker compose used for tests | [docker compose services](compose.en.md#shared-compose) |
 | After-merge watch | After an implementation PR is merged, check CI/CD and the deployed app, and register a fix task if something fails (Off by default) | [After-merge watch](deployment-watch.en.md) |
-| Slack notifications (optional) | Tell you when you are needed and when tasks finish | [Notifications](notifications.en.md) |
+
+Slack notifications are not in project settings: set one destination shared by all projects in the "sacty settings" ([Slack notifications](notifications.en.md)).
 
 ## Targets
 
@@ -69,13 +70,11 @@ step runs will stop).
 
 You can export a project definition and import it into another sacty.
 
-- Included: the name, targets (including image choices), the context repository, notification destinations (destination, channel, and language; secrets only as names or references),
-  ticket sources, shared composes, and the after-merge watch (only when On).
-- Not included: GitHub accounts (personal settings), tokens, and Slack mentions (targets and kinds). Mention targets differ per person and
-  environment. After importing, set both the targets and the kinds again on the project settings page as needed
-  (the kinds return to the default, only when a person is needed).
+- Included: the name, targets (including image choices), the context repository, ticket sources, shared composes,
+  and the after-merge watch (only when On).
+- Not included: GitHub accounts (personal settings), tokens, and Slack notifications (they are in the "sacty settings", not in project settings).
 - On import, files with unknown fields are rejected.
-- Files exported with an earlier version (version 3) cannot be imported, whether or not they include mentions. The web UI shows the reason;
+- Files exported with an earlier version (version 3 or 4) cannot be imported, whether or not they include a notification destination. The web UI shows the reason;
   export the project again with the current sacty.
 
 ## Related pages
