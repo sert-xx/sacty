@@ -11,6 +11,8 @@ Before starting the reviewers, the default review skills run the formatting, lin
 
 The default writing skill `writing` sets how agents write PR descriptions, review comments, reports, and other text. In Japanese text, it adds a line break after each "。" and puts structured information in lists and tables. If the target repository has writing rules (AGENTS.md, CONTRIBUTING, and so on), those take precedence.
 
+The default requirements skill `ears-requirements` has the acceptance criteria of requirements written in the EARS (Easy Approach to Requirements Syntax) patterns. Each requirement is one sentence in a fixed pattern such as "When <trigger>, the <system> shall <response>." with an ID such as `R-1`. The Requirements step writes its acceptance criteria with this skill. If the target repository has rules for requirements, those take precedence.
+
 ## Creating the template
 
 ```sh

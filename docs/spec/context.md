@@ -45,6 +45,20 @@ PR のレビュー（流れ `pr-review`）と、既定の `git` の PR への投
 
 コード: `apps/daemon/default-context/skills/writing/SKILL.md`、`apps/daemon/default-context/skills/writing/references/layout.md`、`apps/daemon/default-context/skills/writing/references/sentences.md`
 
+## 既定の要求要件用スキル
+
+既定のコンテキストには、要求要件の受け入れ条件を EARS（Easy Approach to Requirements Syntax）の文型で書く `ears-requirements` がある（PBI-122）。
+文型は、常時・イベント駆動・状態駆動・望まない振る舞い・オプションと、その組み合わせ（日本語と英語）。
+1文に1つの要求を書き、ID（`R-1` など）を付け、応答は第三者が合否を決められる形にする。
+従う順は、依頼した人の指示、対象のリポジトリの要求要件の決まり、このスキルの順。
+要求要件の工程の指示は、受け入れ条件を EARS の形式で書き、このスキルがあれば従うよう求める（[タスクと工程](tasks-and-steps.md)）。
+プロジェクトのコンテキストでスキルを消していても形式がわかるよう、文型・ID・異常系の書き方は指示にも書く。
+既定のスキルは、あらゆる言語・分野のリポジトリと sacty の外の使い方に渡るので、sacty に限った書き方をしない。
+
+関係する ADR: [要求要件の受け入れ条件を EARS 形式で書かせ、既定のスキル ears-requirements を同梱する](../adr/20261017-0130-ears-requirements.md)
+
+コード: `apps/daemon/default-context/skills/ears-requirements/SKILL.md`、`apps/daemon/default-context/skills/ears-requirements/references/patterns.md`、`apps/daemon/src/prompts.ts`（`earsLines`）
+
 ## コンテキストリポジトリのファイル
 
 読むのは `sacty-context.yaml`・`mcp.yaml`・`platforms.yaml`・`rules.md`・`rules/`・`skills/`・`agents/` だけ（`README.md` は読まない）。

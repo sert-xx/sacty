@@ -86,3 +86,30 @@ describe("既定の review スキルの、段階のサブエージェント（PB
     expect(read("skills/review/review-dispatch/references/aggregation.md")).toContain('"tier":');
   });
 });
+
+describe("既定のスキル ears-requirements（PBI-122）", () => {
+  it("EARS の文型（日英）・ID・見直しを持ち、優先する指示を書き、sacty に限った書き方をしない", () => {
+    const skill = read("skills/ears-requirements/SKILL.md");
+    expect(skill).toMatch(/^---\nname: ears-requirements\ndescription: .+\n---\n/);
+    for (const text of [
+      "`<システム>は、<応答>しなければならない。`",
+      "`When <trigger>, the <system> shall <response>.`",
+      "`While <precondition>, the <system> shall <response>.`",
+      "`If <trigger>, then the <system> shall <response>.`",
+      "`Where <feature is included>, the <system> shall <response>.`",
+      "依頼した人の指示",
+      "対象のリポジトリの要求要件の決まり",
+      "要求に ID を付ける",
+      "## 見直し",
+      "references/patterns.md",
+    ]) {
+      expect(skill).toContain(text);
+    }
+    const files = markdownUnder(join(DEFAULT_CONTEXT_DIR, "skills/ears-requirements"));
+    expect(files.map((f) => f.path).sort()).toEqual([
+      "skills/ears-requirements/SKILL.md",
+      "skills/ears-requirements/references/patterns.md",
+    ]);
+    for (const { path, text } of files) expect(text.toLowerCase(), path).not.toContain("sacty");
+  });
+});

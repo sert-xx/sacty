@@ -1858,3 +1858,57 @@ describe("工程選択での説明のまとまり", () => {
     }
   });
 });
+
+describe("要求要件を EARS 形式で書かせる（PBI-122）", () => {
+  const task = (steps: Task["steps"][number]["key"][], extra: Record<string, unknown> = {}) =>
+    ({
+      title: "予約",
+      body: "",
+      steps: steps.map((key) => ({ key, state: "todo" })),
+      remarks: [],
+      outputs: {},
+      approved: {},
+      reproductionTests: [],
+      testCommand: "npm test",
+      repository: {
+        url: "https://github.com/acme/app",
+        baseBranch: "main",
+        baseCommit: "abcdef1234",
+      },
+      ...extra,
+    }) as unknown as Task;
+  const EARS =
+    "受け入れ条件を EARS（Easy Approach to Requirements Syntax）の形式で書く。既定のスキル ears-requirements があれば、それに従う";
+
+  it("要求要件の指示に、EARS の形式と既定のスキル・文型・ID・異常系を書く（スキルが無くても形式がわかる）", () => {
+    const prompt = buildPrompt(task(["requirements", "design", "implement"]), "requirements");
+    expect(prompt).toContain(EARS);
+    for (const pattern of ["常時", "イベント駆動", "状態駆動", "望まない振る舞い", "オプション"]) {
+      expect(prompt).toContain(pattern);
+    }
+    expect(prompt).toContain("ID（R-1、R-2…）");
+    expect(prompt).toContain("正常系に対応する異常系も、望まない振る舞いの文型で書く");
+    expect(prompt).not.toContain("検証できる形の箇条書きで書く");
+  });
+
+  it("タスク分割の子タスクと、差し戻しのやり直しでも同じ指示を出す", () => {
+    const child = task(["requirements", "implement"], { parent: { taskId: "p", dependsOn: [] } });
+    expect(buildPrompt(child, "requirements")).toContain(EARS);
+    const redo = task(["requirements"], {
+      remarks: [
+        { id: "requirements-1-1", step: "requirements", text: "異常系が無い", submission: 1 },
+      ],
+      outputs: { requirements: "# 要求要件 v1" },
+    });
+    const redoPrompt = buildPrompt(redo, "requirements");
+    expect(redoPrompt).toContain(EARS);
+    expect(redoPrompt).toContain("# 要求要件 v1");
+  });
+
+  it("ほかの工程の指示には出さない", () => {
+    const t = task(["investigate", "requirements", "design", "implement"]);
+    for (const step of ["investigate", "design", "implement"] as const) {
+      expect(buildPrompt(t, step), step).not.toContain("EARS");
+    }
+  });
+});
