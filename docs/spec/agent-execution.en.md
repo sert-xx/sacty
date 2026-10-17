@@ -14,7 +14,7 @@ Related ADRs: none
   - `--network <network>`: runs that started docker compose services ([Services](services.en.md)).
   - `--add-host host.docker.internal:<host address>`: runs that use the gateway. The address is `gateway.host_address` (default `host-gateway`).
   - Extra mounts (only locations sacty prepares: the config location, the review diff `/sacty-review` read-only, the session logs of each run for answers to questions
-    `/sacty-logs` read-only, and so on).
+    `/sacty-logs` read-only, memories `/sacty-memory/project` and `/sacty-memory/repository` read-only ([Memory](memory.en.md)), and so on).
 - The user is the image's `USER node` (`--user` is not passed).
 - For environment variables, the arguments contain only the name (`-e NAME`); the values are passed through the environment of the docker command's process (so they do not appear in `ps`).
   The only host environment variables kept in the docker command's process are `PATH`, `HOME`, `DOCKER_HOST`, `DOCKER_CONTEXT`, `DOCKER_CONFIG`, and `TMPDIR`;

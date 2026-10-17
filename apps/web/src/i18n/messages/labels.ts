@@ -412,8 +412,8 @@ const ja = {
     AuditQueued: (cap: string) => `監査を待つ（予算 ${cap}）`,
     AuditSurveyed: (concerns: number, tail: string) =>
       `大まかな監査を終えた（懸念のある工程 ${concerns}件・${tail}）`,
-    AuditDeepDived: (step: string, findings: number, tail: string) =>
-      `${step}の深掘りを終えた（原因 ${findings}件・${tail}）`,
+    AuditDeepDived: (step: string, findings: number, memories: number, tail: string) =>
+      `${step}の深掘りを終えた（原因 ${findings}件・${memories > 0 ? `メモリーを ${memories}件登録・` : ""}${tail}）`,
     AuditCompleted: "監査を終えた",
     AuditFailed: (reason: string) => `監査を実行できなかった：${reason}`,
     AuditBudgetWarned: (used: string, cap: string) =>
@@ -424,6 +424,10 @@ const ja = {
     AuditProposalAdopted: (withTask: boolean): string =>
       withTask ? "改修の提案を採用し、改修のタスクを作った" : "改修の提案を採用した（sacty 宛て）",
     AuditProposalRejected: (reason: string) => `改修の提案を却下した：${reason}`,
+    AuditMemoryDeleted: (byPerson: boolean): string =>
+      byPerson
+        ? "監査が登録したメモリーを消した"
+        : "階層の件数の上限を超えたので、この監査が登録したメモリーを消した",
   },
 };
 
@@ -756,8 +760,8 @@ const en: LabelMessages = {
     AuditQueued: (cap) => `Waiting for the audit (budget ${cap})`,
     AuditSurveyed: (concerns, tail) =>
       `Finished the survey (${concerns} step${concerns === 1 ? "" : "s"} of concern · ${tail})`,
-    AuditDeepDived: (step, findings, tail) =>
-      `Finished the deep dive into ${step} (${findings} cause${findings === 1 ? "" : "s"} · ${tail})`,
+    AuditDeepDived: (step, findings, memories, tail) =>
+      `Finished the deep dive into ${step} (${findings} cause${findings === 1 ? "" : "s"} · ${memories > 0 ? `registered ${memories} memor${memories === 1 ? "y" : "ies"} · ` : ""}${tail})`,
     AuditCompleted: "Finished the audit",
     AuditFailed: (reason) => `The audit could not run: ${reason}`,
     AuditBudgetWarned: (used, cap) => `The audit reached 80% of its budget (${used} / ${cap})`,
@@ -767,6 +771,10 @@ const en: LabelMessages = {
     AuditProposalAdopted: (withTask) =>
       withTask ? "Adopted a proposal and created a fix task" : "Adopted a proposal (for sacty)",
     AuditProposalRejected: (reason) => `Rejected a proposal: ${reason}`,
+    AuditMemoryDeleted: (byPerson) =>
+      byPerson
+        ? "Deleted a memory the audit registered"
+        : "Deleted a memory this audit registered because the layer exceeded its limit",
   },
 };
 

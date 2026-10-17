@@ -59,6 +59,15 @@ Related ADR: [Have the requirements acceptance criteria written in EARS and ship
 
 Code: `apps/daemon/default-context/skills/ears-requirements/SKILL.md`, `apps/daemon/default-context/skills/ears-requirements/references/patterns.md`, `apps/daemon/src/prompts.ts` (`earsLines`)
 
+## Default memory skill
+
+The default context has `memory`, a skill for reading the memories the audit registered (PBI-126).
+It describes the locations (`/sacty-memory/project`, `/sacty-memory/repository`), how to read (open only the relevant ones from the index), and the order to follow
+(the person's instructions → the context's and repository's rules → the actual repository → memories). The prompt of a run with memories mounted states the same way of reading ([Memory](memory.en.md)).
+The default skills apply to repositories of any language or field, so they are not written for sacty only.
+
+Code: `apps/daemon/default-context/skills/memory/SKILL.md`, `apps/daemon/src/memory.ts` (`memoryPromptLines`)
+
 ## Context repository files
 
 Only `sacty-context.yaml`, `mcp.yaml`, `platforms.yaml`, `rules.md`, `rules/`, `skills/`, and `agents/` are read (`README.md` is not).

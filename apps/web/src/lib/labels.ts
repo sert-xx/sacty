@@ -696,6 +696,7 @@ function describeEventText(event: ActivityEvent, l: LabelMessages): string {
       return e.AuditDeepDived(
         l.step[event.payload.step],
         event.payload.findings.length,
+        event.payload.memories.length,
         cost(event.payload.auditCostUsd, event.payload.estimated),
       );
     case "AuditCompleted":
@@ -712,6 +713,8 @@ function describeEventText(event: ActivityEvent, l: LabelMessages): string {
       return e.AuditProposalAdopted(event.payload.fixTaskId !== undefined);
     case "AuditProposalRejected":
       return e.AuditProposalRejected(event.payload.reason);
+    case "AuditMemoryDeleted":
+      return e.AuditMemoryDeleted(event.payload.reason === "person");
   }
 }
 
