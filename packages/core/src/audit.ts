@@ -1,5 +1,10 @@
 import { z } from "zod";
-import { type AuditEvidenceKind, AuditTarget, type StepKey } from "./events.js";
+import {
+  type AuditEvidenceKind,
+  AuditTarget,
+  type MemoryDeleteReason,
+  type StepKey,
+} from "./events.js";
 import { code, type DaemonText } from "./message-code.js";
 
 /*
@@ -117,6 +122,20 @@ export type AuditFinding = {
   recurred?: true;
 };
 
+/** 監査が登録したメモリー（PBI-126）。repo は scope が repository のとき。消したら deleted。 */
+export type AuditMemory = {
+  id: string;
+  scope: "project" | "repository";
+  repo?: string;
+  title: string;
+  summary: string;
+  /** 中身（Markdown）。 */
+  body: string;
+  step: StepKey;
+  at: string;
+  deleted?: { at: string; reason: MemoryDeleteReason };
+};
+
 /** 1つのタスクの監査。 */
 export type TaskAudit = {
   taskId: string;
@@ -131,6 +150,8 @@ export type TaskAudit = {
   survey?: { summary: string; counts: Record<AuditEvidenceKind, number> };
   deepDives: AuditDeepDive[];
   findings: AuditFinding[];
+  /** この監査で登録したメモリー（PBI-126）。 */
+  memories: AuditMemory[];
   /** モックのデータ。 */
   mock?: true;
 };

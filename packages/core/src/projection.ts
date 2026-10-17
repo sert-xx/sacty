@@ -1,9 +1,11 @@
 import { budgetState, chargeBudget } from "./cost.js";
 import type {
   ActivityEvent,
+  AuditMemoryRecord,
   AuditTarget,
   ExportPlan,
   InvestigationKind,
+  MemoryDeleteReason,
   OrchestratorSessionReason,
   ParsedEventInput,
   PauseReason,
@@ -244,6 +246,13 @@ export type TaskAuditFinding = Omit<
   })[];
 };
 
+/** 監査が登録したメモリー（PBI-126）。at は登録した時刻。消したら deleted。 */
+export type TaskAuditMemory = AuditMemoryRecord & {
+  at: string;
+  step: StepKey;
+  deleted?: { at: string; reason: MemoryDeleteReason };
+};
+
 /** タスクの監査の状態（PBI-125）。usedUsd は監査の費用の合計で、タスクの予算とは別。 */
 export type TaskAuditState = {
   auditId: string;
@@ -258,8 +267,12 @@ export type TaskAuditState = {
   paused?: { at: string };
   survey?: Omit<PayloadOf<"AuditSurveyed">, "auditId"> & { at: string };
   /** 深掘りを終えた工程（終えた順）。 */
-  dives: (Omit<PayloadOf<"AuditDeepDived">, "auditId" | "findings"> & { at: string })[];
+  dives: (Omit<PayloadOf<"AuditDeepDived">, "auditId" | "findings" | "memories"> & {
+    at: string;
+  })[];
   findings: TaskAuditFinding[];
+  /** この監査で登録したメモリー（PBI-126）。 */
+  memories: TaskAuditMemory[];
   failed?: { at: string; reason: DaemonText; step?: StepKey };
   completedAt?: string;
 };
@@ -1934,10 +1947,22 @@ function applyAuditEvent(task: Task, event: ActivityEvent): void {
       estimated: false,
       dives: [],
       findings: [],
+      memories: [],
     };
     return;
   }
   const audit = task.audit;
+  if (event.type === "AuditMemoryDeleted") {
+    const memory = audit?.memories.find((m) => m.id === event.payload.memoryId);
+    if (!audit || !memory) throw integrity("unknown audit memory");
+    if (memory.deleted) throw integrity("the audit memory is already deleted");
+    const deleted = { at: event.at, reason: event.payload.reason };
+    task.audit = {
+      ...audit,
+      memories: audit.memories.map((m) => (m === memory ? { ...m, deleted } : m)),
+    };
+    return;
+  }
   if (event.type === "AuditProposalAdopted" || event.type === "AuditProposalRejected") {
     const id = event.payload.proposalId;
     const finding = audit?.findings.find((f) => f.proposals.some((p) => p.id === id));
@@ -1982,12 +2007,16 @@ function applyAuditEvent(task: Task, event: ActivityEvent): void {
       if (ended || nextAuditDive(audit) !== event.payload.step) {
         throw integrity("the step is not the next deep dive");
       }
-      const { auditId: _id, findings, ...dive } = event.payload;
+      const { auditId: _id, findings, memories, ...dive } = event.payload;
       task.audit = {
         ...audit,
         ...charge(event.payload),
         dives: [...audit.dives, { ...dive, at: event.at }],
         findings: [...audit.findings, ...findings.map((f) => ({ ...f, at: event.at }))],
+        memories: [
+          ...audit.memories,
+          ...memories.map((m) => ({ ...m, at: event.at, step: event.payload.step })),
+        ],
       };
       return;
     }

@@ -4,6 +4,7 @@ import { auditCounts, countToolFailures } from "./audit-evidence.js";
 import {
   AUDIT_MAX_CONCERNS,
   AUDIT_MAX_FINDINGS,
+  AUDIT_MAX_MEMORIES,
   AUDIT_MAX_PROPOSALS,
   buildAuditDivePrompt,
   buildAuditSurveyPrompt,
@@ -145,6 +146,7 @@ describe("深掘りの出力（PBI-125）", () => {
         },
         { title: "原因B", detail: "", evidence: [], proposals: [] },
       ],
+      memories: [],
     });
   });
 
@@ -277,5 +279,125 @@ describe("根拠の件数（PBI-125）", () => {
       toolFailure: 5,
       escalation: 1,
     });
+  });
+});
+
+describe("深掘りのメモリーの登録（PBI-126）", () => {
+  const context = {
+    eventIds: new Set<string>(),
+    runIds: new Set<string>(),
+    candidates: [{ kind: "sacty" } as const],
+    knownKeys: new Set<string>(),
+    knownMemoryIds: new Set(["m-known"]),
+  };
+  const read = (memories: unknown, repository?: string) =>
+    extractAuditDive(block({ "sacty-audit-findings": { summary: "", findings: [], memories } }), {
+      ...context,
+      ...(repository ? { repository } : {}),
+    });
+  const item = (patch: Record<string, unknown> = {}) => ({
+    scope: "project",
+    title: "題",
+    summary: "概要",
+    body: "中身",
+    ...patch,
+  });
+
+  it("既存と同じもの・題や中身の無いものは登録しない。題と概要は1行にする", () => {
+    const result = read([
+      item({ sameAs: "m-known" }),
+      item({ title: "" }),
+      item({ body: " " }),
+      item({ title: "改行\nのある 題", summary: "概要\n2行目" }),
+    ]);
+    expect(result.ok && result.memories).toEqual([
+      { scope: "project", title: "改行 のある 題", summary: "概要 2行目", body: "中身" },
+    ]);
+  });
+
+  it("知らない sameAs は無視して登録する", () => {
+    const result = read([item({ sameAs: "m-unknown" })]);
+    expect(result.ok && result.memories).toHaveLength(1);
+  });
+
+  it("リポジトリのメモリーは、GitHub の対象リポジトリがあるときだけ、その宛先で登録する", () => {
+    expect(
+      read([item({ scope: "repository" })]).ok && read([item({ scope: "repository" })]),
+    ).toMatchObject({
+      memories: [],
+    });
+    const result = read(
+      [item({ scope: "repository", repo: "https://evil.example/x" })],
+      "https://github.com/a/app",
+    );
+    expect(result.ok && result.memories).toEqual([
+      {
+        scope: "repository",
+        repo: "https://github.com/a/app",
+        title: "題",
+        summary: "概要",
+        body: "中身",
+      },
+    ]);
+    expect(read([item({ scope: "global" })]).ok && read([item({ scope: "global" })])).toMatchObject(
+      {
+        memories: [],
+      },
+    );
+  });
+
+  it(`1回の深掘りで登録するのは ${AUDIT_MAX_MEMORIES} つまで。memories が無い・配列でなければ空`, () => {
+    const many = Array.from({ length: AUDIT_MAX_MEMORIES + 1 }, (_, i) =>
+      item({ title: `題${i}` }),
+    );
+    const result = read(many);
+    expect(result.ok && result.memories.map((m) => m.title)).toEqual(
+      many.slice(0, AUDIT_MAX_MEMORIES).map((m) => m.title),
+    );
+    expect(read(undefined)).toMatchObject({ ok: true, memories: [] });
+    expect(read("x")).toMatchObject({ ok: true, memories: [] });
+  });
+
+  it("指示には、既存のメモリーと登録の決まりを入れる。リポジトリが無ければ project だけにさせる", () => {
+    const base = {
+      step: "implement" as const,
+      reason: "r",
+      survey: "s",
+      candidates: [{ kind: "sacty" } as const],
+      known: [],
+      rejected: [],
+    };
+    const withRepo = buildAuditDivePrompt(
+      task,
+      [],
+      zero,
+      { runs: [] },
+      {
+        ...base,
+        memories: [
+          {
+            id: "m1",
+            scope: "project",
+            title: "題",
+            summary: "概要",
+            path: "/sacty-memory/project/references/m1.md",
+          },
+        ],
+        repository: "https://github.com/a/app",
+      },
+    );
+    expect(withRepo).toContain(
+      "- m1（プロジェクト）：題：概要（/sacty-memory/project/references/m1.md）",
+    );
+    expect(withRepo).toContain("このリポジトリ（https://github.com/a/app）そのものに関すること");
+    expect(withRepo).toContain("プロジェクト・組織・コンテキストに固有の名前や事情を書かない");
+    expect(withRepo).toContain('"memories"');
+    const noRepo = buildAuditDivePrompt(task, [], zero, { runs: [] }, { ...base, memories: [] });
+    expect(noRepo).toContain("scope は project だけにする");
+    expect(noRepo).toContain("--- 既存のメモリー");
+    expect(noRepo).toContain("（なし）");
+    const disabled = buildAuditDivePrompt(task, [], zero, { runs: [] }, base);
+    expect(disabled).not.toContain("memories");
+    expect(disabled).not.toContain("既存のメモリー");
   });
 });

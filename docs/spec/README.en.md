@@ -57,6 +57,7 @@ Code: `<path>` (`<function name>`)
 - [Approval and request changes](approval.en.md): approving in the web UI, approving in PRs, taking in PR comments, request changes, escalation
 - [Task split and integration review](split-and-integrate.en.md)
 - [Audit of completed tasks](audit.en.md): audit states, causes and proposals, audit budget, mock, API, screens
+- [Memory](memory.en.md): layers and locations, source of truth and writing, registration by the audit, what agents get, deletion by people
 - [Activity log (events and projection)](event-log.en.md): events, storage, projection, costs, session logs
 - [Agent execution](agent-execution.en.md): containers, commands, authentication, output handling, saving and reusing sessions, images, running tests
 - [Context composition](context.en.md): layers, context repository files (`mcp.yaml`, `platforms.yaml`, and others), composition rules, preview

@@ -33,6 +33,7 @@ export type AuditLedger = {
   adoptAuditProposal(proposalId: string, raw: unknown): Task;
   rejectAuditProposal(proposalId: string, raw: unknown): Promise<Task>;
   resumeAudit(taskId: string, raw: unknown): Task;
+  deleteAuditMemory(memoryId: string): Task;
   /** 監査の画面・レポートに出す文（元のタスクの題など）の秘密情報を伏せる関数（プロジェクトごと）。 */
   auditHide(projectId: string): Promise<(text: string) => string>;
 };
@@ -191,6 +192,17 @@ export class LedgerAuditService implements AuditService {
       findings: audit.findings.map((f) =>
         this.findingView(task, f, causes.get(f.causeKey), byId, hide),
       ),
+      memories: audit.memories.map((m) => ({
+        id: m.id,
+        scope: m.scope,
+        ...(m.scope === "repository" ? { repo: m.repo } : {}),
+        title: m.title,
+        summary: m.summary,
+        body: m.body,
+        step: m.step,
+        at: m.at,
+        ...(m.deleted ? { deleted: m.deleted } : {}),
+      })),
     };
   }
 
@@ -339,6 +351,13 @@ export class LedgerAuditService implements AuditService {
 
   async reject(proposalId: string, input: unknown): Promise<ListedAuditProposal> {
     return this.proposalAfter(await this.ledger.rejectAuditProposal(proposalId, input), proposalId);
+  }
+
+  async deleteMemory(memoryId: string): Promise<TaskAudit> {
+    const task = this.ledger.deleteAuditMemory(memoryId);
+    const audit = await this.taskAudit(task.id);
+    if (!audit) throw new Error("the audit is missing after deleting the memory");
+    return audit;
   }
 
   async resume(taskId: string, input: unknown): Promise<TaskAudit> {

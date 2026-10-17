@@ -24,7 +24,8 @@ Code: `apps/daemon/src/service.ts` (`auditQueueEvent`, `awaitingAudit`, `runAudi
 1. **Survey** (role `audit`): the agent reads the whole ledger of the task (body, approved outputs, evidence counts, human remarks,
    judgments, activity) and each run's session log, and flags up to 3 steps of concern (`AuditSurveyed`).
 2. **Deep dive** (role `audit-dive`): for each flagged step, the agent gives causes (up to 3) and fix proposals per cause (up to 2)
-   (`AuditDeepDived`). After every step is deep-dived, `AuditCompleted`. With no steps of concern, the audit finishes without a deep dive.
+   (`AuditDeepDived`). Knowledge that will help later tasks is registered as memories ([Memory](memory.en.md)). After every step is deep-dived,
+   `AuditCompleted`. With no steps of concern, the audit finishes without a deep dive.
 
 - Both run in a new session every time, with `audit_agent` in config.yaml (or `guardian_agent`, or `default_agent`).
 - Session logs are mounted read-only at `/sacty-logs`, as for answers to questions. The full ledger (one JSON event per line) is mounted read-only
@@ -107,6 +108,7 @@ Code: `apps/daemon/src/audits.ts` (`MockAuditService`, `AuditService`), `apps/da
 | `GET /api/audits/dashboard` | Counts for the dashboard (per project and per week) |
 | `POST /api/audits/proposals/:id/adopt` | Adopt a proposal (`{ target }`) |
 | `POST /api/audits/proposals/:id/reject` | Reject a proposal (`{ reason }`) |
+| `POST /api/audits/memories/:id/delete` | Delete a memory the audit registered ([Memory](memory.en.md)). Returns the audit that registered it (`{ audit }`) |
 
 Invalid input is 400 (message codes). An operation that does not fit the state (already decided, a target not in the candidates, a
 cancelled task, not paused, too low a cap) is 409.
@@ -115,7 +117,7 @@ Code: `apps/daemon/src/server.ts` (`createApp`)
 
 ## Screens
 
-- Task details: completed tasks have an "Audit" card (state, cost, survey, steps of concern, causes and proposals, resume form).
+- Task details: completed tasks have an "Audit" card (state, cost, survey, steps of concern, causes and proposals, registered memories, resume form).
   Evidence links to the activity row (`#event-<ID>`) and the run log. Activity rows of audit runs also open their logs.
 - Audit page (`/projects/<ID>/audit`; "Audit" in the side menu): causes (recurred first), proposals (those needing a decision first),
   audited tasks, and report export. An adoption for sacty shows that no task was created in the project.

@@ -59,6 +59,15 @@ PR のレビュー（流れ `pr-review`）と、既定の `git` の PR への投
 
 コード: `apps/daemon/default-context/skills/ears-requirements/SKILL.md`、`apps/daemon/default-context/skills/ears-requirements/references/patterns.md`、`apps/daemon/src/prompts.ts`（`earsLines`）
 
+## 既定のメモリー用スキル
+
+既定のコンテキストには、監査が登録したメモリーを読むためのスキル `memory` がある（PBI-126）。
+置き場所（`/sacty-memory/project`・`/sacty-memory/repository`）、索引から関係するものだけを開く読み方、従う順（人の指示 → コンテキストと
+リポジトリの決まり → リポジトリの実物 → メモリー）を書く。メモリーをマウントした実行の指示にも、同じ読み方を書く（[メモリー](memory.md)）。
+既定のスキルは、あらゆる言語・分野のリポジトリに渡るので、sacty に限った書き方をしない。
+
+コード: `apps/daemon/default-context/skills/memory/SKILL.md`、`apps/daemon/src/memory.ts`（`memoryPromptLines`）
+
 ## コンテキストリポジトリのファイル
 
 読むのは `sacty-context.yaml`・`mcp.yaml`・`platforms.yaml`・`rules.md`・`rules/`・`skills/`・`agents/` だけ（`README.md` は読まない）。

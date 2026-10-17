@@ -29,6 +29,7 @@ import {
   chooseTicketRepository,
   createTask,
   decideChange,
+  deleteAuditMemory,
   importProject,
   listProjects,
   type PreviewRuntime,
@@ -680,6 +681,25 @@ export async function rejectAuditProposalAction(
     return { message: a.daemonDown, reason };
   }
   if (!result.ok) return { message: result.message, reason };
+  refresh();
+  return {};
+}
+
+export type DeleteAuditMemoryState = { message?: string };
+
+/** 監査が登録したメモリーを消す（PBI-126）。 */
+export async function deleteAuditMemoryAction(
+  _prev: DeleteAuditMemoryState,
+  formData: FormData,
+): Promise<DeleteAuditMemoryState> {
+  const a = (await getMessages()).common.action;
+  let result: Awaited<ReturnType<typeof deleteAuditMemory>>;
+  try {
+    result = await deleteAuditMemory(String(formData.get("memoryId") ?? ""));
+  } catch {
+    return { message: a.daemonDown };
+  }
+  if (!result.ok) return { message: result.message };
   refresh();
   return {};
 }

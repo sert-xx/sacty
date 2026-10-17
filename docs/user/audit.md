@@ -1,4 +1,4 @@
-<!-- 対応するコード: apps/web/src/components/audit.tsx、apps/web/src/components/audit-screen.tsx、apps/web/src/lib/audit-report.ts、apps/web/src/i18n/messages/audit.ts、apps/daemon/src/audits.ts、apps/daemon/src/ledger-audits.ts、apps/daemon/src/audit-prompts.ts、apps/daemon/src/service.ts、packages/core/src/audit.ts -->
+<!-- 対応するコード: apps/web/src/components/audit.tsx、apps/web/src/components/audit-screen.tsx、apps/web/src/lib/audit-report.ts、apps/web/src/i18n/messages/audit.ts、apps/daemon/src/audits.ts、apps/daemon/src/ledger-audits.ts、apps/daemon/src/audit-prompts.ts、apps/daemon/src/service.ts、apps/daemon/src/memory.ts、apps/daemon/default-context/skills/memory/SKILL.md、packages/core/src/audit.ts -->
 
 **日本語** | [English](audit.en.md)
 
@@ -72,6 +72,21 @@ SACTY_AUDIT_MOCK=1 npx sacty up
 
 ダッシュボードの「監査」の欄に、プロジェクトごとの原因・再発・判断待ちの件数と提案の採用率、週ごとのタスクあたりの差し戻し・指摘の
 件数を出します（[ダッシュボード](dashboard.md)）。プロジェクトの名前を押すと、その監査の画面に移ります。
+
+## メモリー
+
+深掘りで、次のタスクにも役立つ知見（テストの走らせ方・規約の落とし穴など）が見つかると、監査はそれをメモリーとして登録します。
+登録するのは監査だけです。設定は要りません。
+
+- メモリーは、プロジェクトとリポジトリの2つの階層に分かれます。データディレクトリ（既定 `~/.sacty`）の `memory/projects/<プロジェクトの ID>/` と
+  `memory/repos/<ホスト>/<オーナー>/<名前>/` に置きます。リポジトリのメモリーは、プロジェクトの設定を変えても、同じリポジトリを扱うタスクで使い続けます。
+- 次のタスクの工程のエージェントは、そのタスクのプロジェクトと対象リポジトリのメモリーの索引（題・概要・有効な最終利用日）を読み、関係するものだけを開きます。
+  ほかのプロジェクトのメモリーは読みません。ゴールガーディアンには渡しません。
+- メモリーは、あなたの指示・コンテキストの規則とスキル・リポジトリの AGENTS.md などより優先度が低く、食い違うときはそちらに従います。
+- 1つの階層に置くのは 30 件までです。超えると、有効な最終利用日の古いものから消します。
+- タスクの詳細の監査の欄に、その監査が登録したメモリーが出ます。誤ったメモリーは「消す」→「消すことを確定する」で消せます。消したメモリーは戻せません。
+  メモリーを手で足すことはできません。
+- `memory/` の中のファイルは、sacty が作業履歴から書き直します。手で書き換えても、次に起動したときに戻ります。
 
 ## 予算
 

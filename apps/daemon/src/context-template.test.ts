@@ -83,6 +83,7 @@ describe("コンテキストリポジトリの雛形（PBI-45）", () => {
         expect(readdirSync(join(prepared.dir, "skills"))).toEqual([
           "ears-requirements",
           "git",
+          "memory",
           "review-dispatch",
           "review-execution",
           "writing",
@@ -104,6 +105,7 @@ describe("コンテキストリポジトリの雛形（PBI-45）", () => {
       expect(defaultOnly.skills.map((s) => s.name)).toEqual([
         "ears-requirements",
         "git",
+        "memory",
         "review-dispatch",
         "review-execution",
         "writing",

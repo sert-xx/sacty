@@ -257,6 +257,7 @@ sacty up（packages/cli）
 | `cache/shared-compose/` | 共用の compose のリポジトリのキャッシュ |
 | `host-mcp/processes/` | ホストの MCP サーバー（コンテキストのコマンド型を含む）のプロセスの記録 |
 | `context-mcp/layers/` | ホストで起動するコンテキストのコマンド型の MCP サーバーの作業ディレクトリ（層のリポジトリの写し） |
+| `memory/` | 監査が登録したメモリー（`projects/<ID>/`・`repos/<ホスト>/<オーナー>/<名前>/`）。正本は作業履歴で、起動のときに書き直す（[メモリー](memory.md)） |
 
 コード: `apps/daemon/src/config.ts`（`resolveHome`・`configPath`）、`apps/daemon/src/main.ts`、`apps/daemon/src/service.ts`（`repoDir`・`trustedGitDir`）、`apps/daemon/src/instance-lock.ts`、`packages/cli/src/context-preview.ts`（`DAEMON_FILE`）
 

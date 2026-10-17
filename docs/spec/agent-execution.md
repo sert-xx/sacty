@@ -14,7 +14,7 @@ docker のコンテナの中で1回実行して行う。テストの実行も、
   - `--network <ネットワーク>`：docker compose のサービスを起動した実行（[サービス](services.md)）。
   - `--add-host host.docker.internal:<ホストのアドレス>`：ゲートウェイを使う実行。アドレスは `gateway.host_address`（既定 `host-gateway`）。
   - 追加のマウント（sacty が用意する場所だけ。設定の場所・レビューの差分 `/sacty-review` の読み取り専用・質問への答えの各実行のセッションログ
-    `/sacty-logs` の読み取り専用など）。
+    `/sacty-logs` の読み取り専用・メモリー `/sacty-memory/project`・`/sacty-memory/repository` の読み取り専用（[メモリー](memory.md)）など）。
 - 動かすユーザーは、イメージの `USER node`（`--user` は付けない）。
 - 環境変数は、引数には名前だけ（`-e NAME`）を書き、値は docker コマンドのプロセスの環境から渡す（`ps` に値を出さない）。
   docker コマンドのプロセスに残すホストの環境変数は `PATH`・`HOME`・`DOCKER_HOST`・`DOCKER_CONTEXT`・`DOCKER_CONFIG`・`TMPDIR` だけで、

@@ -1,4 +1,4 @@
-<!-- Code: apps/web/src/components/audit.tsx, apps/web/src/components/audit-screen.tsx, apps/web/src/lib/audit-report.ts, apps/web/src/i18n/messages/audit.ts, apps/daemon/src/audits.ts, apps/daemon/src/ledger-audits.ts, apps/daemon/src/audit-prompts.ts, apps/daemon/src/service.ts, packages/core/src/audit.ts -->
+<!-- Code: apps/web/src/components/audit.tsx, apps/web/src/components/audit-screen.tsx, apps/web/src/lib/audit-report.ts, apps/web/src/i18n/messages/audit.ts, apps/daemon/src/audits.ts, apps/daemon/src/ledger-audits.ts, apps/daemon/src/audit-prompts.ts, apps/daemon/src/service.ts, apps/daemon/src/memory.ts, apps/daemon/default-context/skills/memory/SKILL.md, packages/core/src/audit.ts -->
 
 [日本語](audit.md) | **English**
 
@@ -77,6 +77,22 @@ Audit results are not combined across projects.
 The "Audit" card on the dashboard shows, per project, the causes, recurred and needing-decision counts, and the adoption
 rate, and, per week, the changes requested and PR remarks per task ([Dashboard](dashboard.en.md)). Press a project name
 to open its audit page.
+
+## Memories
+
+When a deep dive finds knowledge that will help later tasks (how to run the tests, pitfalls in the conventions, and so on), the audit registers it
+as a memory. Only the audit registers memories. No setup is needed.
+
+- Memories have two layers, project and repository. They live in the data directory (default `~/.sacty`) under
+  `memory/projects/<project ID>/` and `memory/repos/<host>/<owner>/<name>/`. Repository memories stay in use for tasks on the same repository
+  even after you change project settings.
+- In later tasks, step agents read the index (title, summary, last useful date) of the memories of the task's project and target repository,
+  and open only the relevant ones. They never read other projects' memories. The Goal Guardian gets none.
+- Memories rank below your instructions, the context's rules and skills, and the repository's AGENTS.md and so on; when they conflict, those win.
+- Each layer holds up to 30 memories. Beyond that, the ones with the oldest last useful date are deleted.
+- The audit card in the task details shows the memories that audit registered. Delete a wrong memory with "Delete" → "Confirm delete". A deleted
+  memory cannot be restored. You cannot add memories by hand.
+- sacty rewrites the files under `memory/` from the activity log. Hand edits are reverted at the next startup.
 
 ## Budget
 

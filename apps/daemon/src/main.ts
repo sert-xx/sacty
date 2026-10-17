@@ -171,6 +171,8 @@ const service = new TaskService({
   sessionLogs: new SessionLogStore(join(home, "runs")),
   // タスクごとのオーケストレーターのセッション（PBI-67）。台帳が正本で、これは使い回すためのキャッシュ
   orchestratorSessions: new OrchestratorSessionStore(join(home, "sessions")),
+  // 監査が登録したメモリーの書き出し先（PBI-126）。正本は作業履歴
+  memoryRoot: join(home, "memory"),
   gateway,
   platformProblems: (names) => credentials.unavailable(names),
   hostMcpProblems: () => hostMcp.problems(),
@@ -190,6 +192,8 @@ const service = new TaskService({
 service.recoverInterrupted();
 // 採用を記録したが、作る前に止まった監査の改修のタスクを作る（PBI-125）
 service.resumeAuditFixTasks();
+// 監査が登録したメモリーを、作業履歴に合わせて書き直す（PBI-126）
+service.syncMemories();
 service.queueWaitingSteps();
 
 const status = service.status();

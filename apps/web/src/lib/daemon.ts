@@ -577,6 +577,11 @@ export function rejectAuditProposal(proposalId: string, reason: string): Promise
   return postOp(`/api/audits/proposals/${encodeURIComponent(proposalId)}/reject`, { reason });
 }
 
+/** 監査が登録したメモリーを消す（PBI-126）。 */
+export function deleteAuditMemory(memoryId: string): Promise<OpResult> {
+  return postOp(`/api/audits/memories/${encodeURIComponent(memoryId)}/delete`, {});
+}
+
 /** 予算で一時停止した監査を、新しい上限（累計）で再開する（PBI-124）。 */
 export function resumeAudit(taskId: string, capUsd: number): Promise<OpResult> {
   return postOp(`/api/tasks/${encodeURIComponent(taskId)}/audit/resume`, { capUsd });
