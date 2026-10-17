@@ -50,10 +50,11 @@ const hrefs = () =>
 const current = () => [...container.querySelectorAll('nav a[aria-current="page"]')].map(label);
 
 describe("サイドメニューのリンクと強調（PBI-114）", () => {
-  it("プロジェクトの画面では、ダッシュボード・表示しているプロジェクトのタスクの一覧・設定へ移る", () => {
+  it("プロジェクトの画面では、ダッシュボード・表示しているプロジェクトのタスクの一覧・監査・設定へ移る", () => {
     for (const p of [
       "/projects/p1/tasks",
       "/projects/p1/settings",
+      "/projects/p1/audit",
       "/tasks/t1",
       "/tasks/t1/runs/r1",
     ]) {
@@ -61,12 +62,13 @@ describe("サイドメニューのリンクと強調（PBI-114）", () => {
       expect(hrefs(), p).toEqual([
         ["ダッシュボード", "/dashboard"],
         ["タスク", "/projects/current/tasks"],
+        ["監査", "/projects/current/audit"],
         ["設定", "/projects/current"],
       ]);
     }
   });
 
-  it("「すべてのプロジェクト」の画面では、タスクを出さず、設定はプロジェクトの一覧へ移る（どのプロジェクトにも飛ばない）", () => {
+  it("「すべてのプロジェクト」の画面では、タスク・監査を出さず、設定はプロジェクトの一覧へ移る（どのプロジェクトにも飛ばない）", () => {
     for (const p of ["/dashboard", "/projects", "/settings"]) {
       render(h(RailNav, { pathname: p }));
       expect(hrefs(), p).toEqual([
@@ -83,6 +85,7 @@ describe("サイドメニューのリンクと強調（PBI-114）", () => {
     ["/tasks/t1/review", "タスク"],
     ["/projects/p1/settings", "設定"],
     ["/projects", "設定"],
+    ["/projects/p1/audit", "監査"],
   ])("%s では「%s」を強調する", (pathname, label) => {
     render(h(RailNav, { pathname }));
     expect(current()).toEqual([label]);
@@ -97,6 +100,8 @@ describe("サイドメニューのリンクと強調（PBI-114）", () => {
 
   it("タスクという名前のプロジェクトの設定は、設定を強調する（ID の部分で見分けない）", () => {
     render(h(RailNav, { pathname: "/projects/tasks/settings" }));
+    expect(current()).toEqual(["設定"]);
+    render(h(RailNav, { pathname: "/projects/audit/settings" }));
     expect(current()).toEqual(["設定"]);
   });
 });

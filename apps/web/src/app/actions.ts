@@ -1,6 +1,7 @@
 "use server";
 
 import {
+  AuditTarget,
   CreateTaskInput,
   type ProjectDefinitionInput,
   renderMessage,
@@ -17,6 +18,7 @@ import { isLocale, LANG_COOKIE, type LanguagePreference } from "@/i18n/locale";
 import { getMessages } from "@/i18n/server";
 import { currentProjectId, selectProject } from "@/lib/current-project";
 import {
+  adoptAuditProposal,
   approveStep,
   askQuestion,
   CONTEXT_CHECK_PARAM,
@@ -33,8 +35,10 @@ import {
   pauseTask,
   prefetchSecrets,
   previewProjectContext,
+  rejectAuditProposal,
   requestChanges,
   rereviewTask,
+  resumeAudit,
   resumeTask,
   retryExport,
   runIntake,
@@ -631,6 +635,76 @@ export async function cancelTaskAction(
     return { message: a.daemonDown };
   }
   if (!result.ok) return { message: result.message };
+  refresh();
+  return {};
+}
+
+export type AuditProposalState = { message?: string; reason?: string };
+
+/** 監査の改修の提案を採用する（PBI-124）。宛先は選んだ候補（JSON）。 */
+export async function adoptAuditProposalAction(
+  _prev: AuditProposalState,
+  formData: FormData,
+): Promise<AuditProposalState> {
+  const a = (await getMessages()).common.action;
+  const proposalId = String(formData.get("proposalId") ?? "");
+  let target: AuditTarget;
+  try {
+    target = AuditTarget.parse(JSON.parse(String(formData.get("target") ?? "")));
+  } catch {
+    return { message: a.invalidTarget };
+  }
+  let result: Awaited<ReturnType<typeof adoptAuditProposal>>;
+  try {
+    result = await adoptAuditProposal(proposalId, target);
+  } catch {
+    return { message: a.daemonDown };
+  }
+  if (!result.ok) return { message: result.message };
+  refresh();
+  return {};
+}
+
+/** 監査の改修の提案を、理由を添えて却下する（PBI-124）。 */
+export async function rejectAuditProposalAction(
+  _prev: AuditProposalState,
+  formData: FormData,
+): Promise<AuditProposalState> {
+  const a = (await getMessages()).common.action;
+  const proposalId = String(formData.get("proposalId") ?? "");
+  const reason = String(formData.get("reason") ?? "");
+  let result: Awaited<ReturnType<typeof rejectAuditProposal>>;
+  try {
+    result = await rejectAuditProposal(proposalId, reason);
+  } catch {
+    return { message: a.daemonDown, reason };
+  }
+  if (!result.ok) return { message: result.message, reason };
+  refresh();
+  return {};
+}
+
+export type ResumeAuditState = { message?: string; capUsd?: string };
+
+/** 予算で一時停止した監査を、新しい上限で再開する（PBI-124）。 */
+export async function resumeAuditAction(
+  _prev: ResumeAuditState,
+  formData: FormData,
+): Promise<ResumeAuditState> {
+  const a = (await getMessages()).common.action;
+  const taskId = String(formData.get("taskId") ?? "");
+  const capText = String(formData.get("capUsd") ?? "").trim();
+  const capUsd = Number(capText);
+  if (!capText || !Number.isFinite(capUsd) || capUsd <= 0) {
+    return { message: a.capPositive, capUsd: capText };
+  }
+  let result: Awaited<ReturnType<typeof resumeAudit>>;
+  try {
+    result = await resumeAudit(taskId, capUsd);
+  } catch {
+    return { message: a.daemonDown, capUsd: capText };
+  }
+  if (!result.ok) return { message: result.message, capUsd: capText };
   refresh();
   return {};
 }

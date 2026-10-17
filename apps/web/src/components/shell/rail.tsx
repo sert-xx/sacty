@@ -1,12 +1,18 @@
 "use client";
 
 import { cn } from "cn";
-import { LayoutDashboardIcon, ListChecksIcon, SlidersHorizontalIcon } from "lucide-react";
+import {
+  LayoutDashboardIcon,
+  ListChecksIcon,
+  ScanSearchIcon,
+  SlidersHorizontalIcon,
+} from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useMessages } from "@/i18n/client";
 import { pageScope } from "@/lib/page-scope";
 import {
+  CURRENT_PROJECT_AUDIT_PATH,
   CURRENT_PROJECT_SETTINGS_PATH,
   CURRENT_PROJECT_TASKS_PATH,
   DASHBOARD_PATH,
@@ -15,6 +21,8 @@ import {
 
 /** プロジェクトのタスクの一覧の画面か（`/projects/<ID>/tasks`。PBI-114）。 */
 const PROJECT_TASKS = /^\/projects\/[^/]+\/tasks(\/|$)/;
+/** プロジェクトの監査の画面か（`/projects/<ID>/audit`。PBI-124）。 */
+const PROJECT_AUDIT = /^\/projects\/[^/]+\/audit(\/|$)/;
 
 const DASHBOARD = {
   href: DASHBOARD_PATH,
@@ -29,6 +37,12 @@ const TASKS = {
   active: (p: string) =>
     PROJECT_TASKS.test(p) || p === CURRENT_PROJECT_TASKS_PATH || p.startsWith("/tasks"),
 };
+const AUDIT = {
+  href: CURRENT_PROJECT_AUDIT_PATH,
+  key: "audit" as const,
+  icon: ScanSearchIcon,
+  active: (p: string) => PROJECT_AUDIT.test(p) || p === CURRENT_PROJECT_AUDIT_PATH,
+};
 const SETTINGS = {
   href: CURRENT_PROJECT_SETTINGS_PATH,
   key: "settings" as const,
@@ -36,19 +50,21 @@ const SETTINGS = {
   active: (p: string) =>
     (p === "/projects" || p.startsWith("/projects/")) &&
     !PROJECT_TASKS.test(p) &&
-    p !== CURRENT_PROJECT_TASKS_PATH,
+    !PROJECT_AUDIT.test(p) &&
+    p !== CURRENT_PROJECT_TASKS_PATH &&
+    p !== CURRENT_PROJECT_AUDIT_PATH,
 };
 
 /**
- * サイドメニューの項目（PBI-114）。プロジェクトの画面では、タスク・設定は表示しているプロジェクト（cookie。画面が合わせる）
- * の画面へ移る。「すべてのプロジェクト」の画面（ダッシュボードなど）では、プロジェクトを決められないので、タスクを出さず、
- * 設定はプロジェクトの一覧へ移る（どのプロジェクトにも飛ばない）。
+ * サイドメニューの項目（PBI-114）。プロジェクトの画面では、タスク・監査・設定は表示しているプロジェクト（cookie。画面が
+ * 合わせる）の画面へ移る。「すべてのプロジェクト」の画面（ダッシュボードなど）では、プロジェクトを決められないので、タスク・
+ * 監査を出さず、設定はプロジェクトの一覧へ移る（どのプロジェクトにも飛ばない）。
  */
 export function railItems(pathname: string | undefined) {
   if (pathname !== undefined && pageScope(pathname).kind === "all") {
     return [DASHBOARD, { ...SETTINGS, href: PROJECTS_PATH }];
   }
-  return [DASHBOARD, TASKS, SETTINGS];
+  return [DASHBOARD, TASKS, AUDIT, SETTINGS];
 }
 
 /** サイドメニュー。表示中の画面を強調する。 */

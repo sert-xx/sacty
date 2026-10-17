@@ -6,7 +6,9 @@
  * - `/projects/<ID>`：そのプロジェクトのタスクの一覧へ移す
  * - `/projects/<ID>/tasks`：そのプロジェクトのタスクの一覧
  * - `/projects/<ID>/settings`：そのプロジェクトの設定
- * - `/projects/current`・`/projects/current/tasks`：表示しているプロジェクト（cookie）の設定・タスクの一覧へ移す
+ * - `/projects/<ID>/audit`：そのプロジェクトの監査（PBI-124）
+ * - `/projects/current`・`/projects/current/tasks`・`/projects/current/audit`：表示しているプロジェクト（cookie）の
+ *   設定・タスクの一覧・監査へ移す
  */
 
 export const DASHBOARD_PATH = "/dashboard";
@@ -24,8 +26,19 @@ export function projectSettingsPath(id: string): string {
   return `/projects/${encodeURIComponent(id)}/settings`;
 }
 
-/** 表示しているプロジェクト（cookie）のタスクの一覧・設定へ移る URL（サイドメニューから）。 */
+/** プロジェクトの監査（PBI-124）。 */
+export function projectAuditPath(id: string): string {
+  return `/projects/${encodeURIComponent(id)}/audit`;
+}
+
+/** プロジェクトの監査のレポート（Markdown のダウンロード。PBI-124）。 */
+export function projectAuditReportPath(id: string): string {
+  return `/projects/${encodeURIComponent(id)}/audit/report`;
+}
+
+/** 表示しているプロジェクト（cookie）のタスクの一覧・監査・設定へ移る URL（サイドメニューから）。 */
 export const CURRENT_PROJECT_TASKS_PATH = "/projects/current/tasks";
+export const CURRENT_PROJECT_AUDIT_PATH = "/projects/current/audit";
 export const CURRENT_PROJECT_SETTINGS_PATH = "/projects/current";
 
 /** タスクの詳細。 */

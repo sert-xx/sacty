@@ -21,6 +21,7 @@ Hover over or tap the mark (i) next to a heading to see what the numbers mean an
 | Intake | For issues, PR reviews, and tickets: the time of the last intake, how many tasks it created, and what could not be imported. "Run intake now" is also here | That intake is not set or cannot be read, with a link to the sacty settings |
 | Throughput | Completed and cancelled counts for the last 7 and 30 days, and the median time from creation to completion | 0 and "—" |
 | Quality signals | For the last 30 days: changes requested by a person, rework from PR feedback, goal guardian misses, integration review failures, fix tasks from the post-merge watch, and rework counted by step | 0 times |
+| Audit | Per project, the causes, recurred and needing-decision counts and the adoption rate, and, per week, the changes requested and PR remarks per task. Press a project name to open its audit page ([Audits](audit.en.md)). The card is hidden when the audit data cannot be read | "No audit results yet." |
 
 Sections sit side by side when there is room and stack otherwise. The same sections appear at phone width.
 

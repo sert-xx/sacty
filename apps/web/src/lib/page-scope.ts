@@ -9,7 +9,7 @@
  */
 export type PageScope = { kind: "all" } | { kind: "project"; id?: string };
 
-const PROJECT_PAGE = /^\/projects\/([^/]+)\/(?:tasks|settings)(?:\/|$)/;
+const PROJECT_PAGE = /^\/projects\/([^/]+)\/(?:tasks|settings|audit)(?:\/|$)/;
 
 export function pageScope(pathname: string): PageScope {
   const match = PROJECT_PAGE.exec(pathname);

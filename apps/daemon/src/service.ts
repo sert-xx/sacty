@@ -30,6 +30,7 @@ import {
   type DaemonText,
   DashboardStats,
   type DashboardSummary,
+  DEFAULT_AUDIT_BUDGET_USD,
   DEFAULT_BUDGET_USD,
   DEFAULT_MAX_PARALLEL_TASKS,
   DEPLOYMENT_CI_GRACE_MS,
@@ -2662,6 +2663,12 @@ export class TaskService {
         ...(a.reasoning_effort ? { reasoningEffort: a.reasoning_effort } : {}),
       })),
     };
+  }
+
+  /** 1回の監査の、予算の既定の上限（config.yaml の budget.default_per_audit_usd。読めなければ既定値。PBI-124）。 */
+  auditBudgetUsd(): number {
+    const config = this.deps.config();
+    return config.ok ? config.config.budgetPerAuditUsd : DEFAULT_AUDIT_BUDGET_USD;
   }
 
   listProjects(): Project[] {

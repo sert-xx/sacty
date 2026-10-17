@@ -1,11 +1,11 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { PROJECT_COOKIE, resolveProject } from "@/lib/current-project";
 import { listProjects } from "@/lib/daemon";
-import { projectSettingsPath, projectTasksPath } from "@/lib/paths";
+import { projectAuditPath, projectSettingsPath, projectTasksPath } from "@/lib/paths";
 
 /**
  * 表示しているプロジェクトの画面へ移る（サイドメニューから）。`/projects/current` は設定、`/projects/current/tasks` は
- * タスクの一覧（PBI-114）。ほかは 404。
+ * タスクの一覧（PBI-114）、`/projects/current/audit` は監査（PBI-124）。ほかは 404。
  */
 export async function GET(
   request: NextRequest,
@@ -17,7 +17,9 @@ export async function GET(
       ? projectSettingsPath
       : view.length === 1 && view[0] === "tasks"
         ? projectTasksPath
-        : undefined;
+        : view.length === 1 && view[0] === "audit"
+          ? projectAuditPath
+          : undefined;
   if (!to) return new NextResponse(null, { status: 404 });
   const id = request.cookies.get(PROJECT_COOKIE)?.value ?? "";
   // cookie のプロジェクトが無い・消えていれば、最初のプロジェクト（既定のプロジェクトは無い。PBI-22）。

@@ -418,6 +418,13 @@ const PARAMS = {
   "agent.unchanged": z.object({ name: z.string() }),
   "agent.configUnavailable": z.object({ detail: TextParam }),
   "agent.chosenMissing": z.object({ step: z.string(), name: z.string() }),
+  // 完了したタスクの監査（PBI-124）
+  "audit.notFound": null,
+  "audit.proposalNotFound": null,
+  "audit.alreadyDecided": null,
+  "audit.targetNotCandidate": null,
+  "audit.notPaused": null,
+  "audit.runFailed": z.object({ detail: TextParam }),
   // エージェントの段階（PBI-119）
   "config.tierRuntime": z.object({ id: z.string(), runtime: z.string(), expected: z.string() }),
   "agents.tierConnectionDiffers": z.object({
@@ -980,6 +987,13 @@ const ja: MessageDictionary = {
   "agent.notInAgents": ({ name }) =>
     `エージェント「${name}」は config.yaml の agents にありません。agents の名前から選んでください。`,
   "agent.unchanged": ({ name }) => `工程のエージェントは、すでに「${name}」です。`,
+  "audit.notFound": "このタスクの監査はありません。",
+  "audit.proposalNotFound": "その提案はありません。",
+  "audit.alreadyDecided": "その提案は、すでに採用か却下をしています。",
+  "audit.targetNotCandidate":
+    "その宛先は、この提案の宛先の候補にありません。候補から選んでください。",
+  "audit.notPaused": "予算で一時停止している監査ではありません。",
+  "audit.runFailed": ({ detail }, text) => `監査を実行できませんでした：${text(detail)}`,
   "agent.configUnavailable": ({ detail }, text) =>
     `config.yaml を読めないため、工程のエージェントを変えられません。設定を直してから、もう一度変えてください：${text(detail)}`,
   "agent.chosenMissing": ({ step, name }) =>
@@ -1465,6 +1479,13 @@ const en: MessageDictionary = {
   "agent.notInAgents": ({ name }) =>
     `The agent "${name}" is not in agents in config.yaml. Choose a name from agents.`,
   "agent.unchanged": ({ name }) => `The step agent is already "${name}".`,
+  "audit.notFound": "This task has no audit.",
+  "audit.proposalNotFound": "That proposal does not exist.",
+  "audit.alreadyDecided": "That proposal has already been adopted or rejected.",
+  "audit.targetNotCandidate":
+    "That target is not one of this proposal's candidates. Choose one of them.",
+  "audit.notPaused": "The audit is not paused by its budget.",
+  "audit.runFailed": ({ detail }, text) => `The audit could not run: ${text(detail)}`,
   "agent.configUnavailable": ({ detail }, text) =>
     `config.yaml cannot be read, so the step agent cannot be changed. Fix the settings and try again: ${text(detail)}`,
   "agent.chosenMissing": ({ step, name }) =>

@@ -1,10 +1,17 @@
-import type { ActivityEvent, StepKey, Task } from "@sacty/core";
+import {
+  type ActivityEvent,
+  isFinished,
+  type StepKey,
+  type Task,
+  type TaskAudit,
+} from "@sacty/core";
 import {
   type CleanupItem,
   getCleanupPlan,
   getProject,
   getStatus,
   getTask,
+  getTaskAudit,
   listProjectRepositories,
   listTasks,
 } from "@/lib/daemon";
@@ -40,6 +47,11 @@ export type TaskDetailData = {
   ticketRepositories?: string[];
   /** 候補を求めたが、取れなかった（画面は、間を空けて取り直す）。 */
   ticketRepositoriesFailed?: boolean;
+  /**
+   * 完了したタスクの監査（PBI-124）。完了したタスクだけに持ち（監査が無ければ null）、完了していないタスクには無い。
+   * 監査を取れなかったときも null（タスクの詳細は出す）。
+   */
+  audit?: TaskAudit | null;
 };
 
 /**
@@ -53,7 +65,8 @@ export async function loadTaskDetail(
   const found = await getTask(id);
   if (!found) return null;
   const { task, activity } = found;
-  const [project, parent, origin, deploymentFix, all, cleanupPlan, status, candidates] =
+  const completed = isFinished(task) && task.status !== "cancelled";
+  const [project, parent, origin, deploymentFix, all, cleanupPlan, status, candidates, audit] =
     await Promise.all([
       getProject(task.projectId),
       task.parent ? getTask(task.parent.taskId) : undefined,
@@ -65,6 +78,7 @@ export async function loadTaskDetail(
       repositories && needsTicketRepositories(task)
         ? listProjectRepositories(task.projectId).catch(() => undefined)
         : undefined,
+      completed ? getTaskAudit(task.id).catch(() => null) : undefined,
     ]);
   const childIds = new Set((task.split?.children ?? []).map((c) => c.taskId));
   return {
@@ -75,6 +89,7 @@ export async function loadTaskDetail(
     ...(origin ? { origin: origin.task } : {}),
     ...(deploymentFix ? { deploymentFix: deploymentFix.task } : {}),
     children: (all ?? []).filter((t) => childIds.has(t.id)),
+    ...(completed ? { audit: audit ?? null } : {}),
     ...(cleanupPlan !== undefined ? { cleanupPlan: cleanupPlan ?? [] } : {}),
     ...(status ? { imageStatus: { problems: status.problems, images: status.images } } : {}),
     ...(status
