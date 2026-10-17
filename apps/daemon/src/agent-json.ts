@@ -268,8 +268,8 @@ export type HeadingSpan = {
 /**
  * 見出し heading を最初のキーに持つ JSON のオブジェクト（{"見出し": …}）を、JSON として読めるかを問わずに、出てきた順に
  * すべて返す（PR #130 レビュー指摘）。末尾のカンマなどで読めない報告も見つけ、本文から取り除けるようにする。範囲は
- * 見出しの直前の「{」から、文字列の中を除いて括弧が閉じるところまで。閉じなければ、囲みの終わりの行か空行（どちらも
- * 無ければ出力の終わり）の手前まで（後ろの本文を消さない）。囲みの中なら、囲みの行も含める。
+ * 見出しの直前の「{」から、文字列の中を除いて括弧が閉じるところまで。閉じなければ、囲みの中は囲みの終わりの行まで、
+ * 囲みの外は最初の空行か ``` の行の手前まで（後ろの本文を消さない。objectClose）。囲みの中なら、囲みの行も含める。
  */
 export function headingSpans(output: string, heading: string): HeadingSpan[] {
   const found: HeadingSpan[] = [];
@@ -282,7 +282,10 @@ export function headingSpans(output: string, heading: string): HeadingSpan[] {
     while (open > 0 && /\s/.test(output[open - 1] ?? "")) open--;
     if (output[open - 1] !== "{") continue;
     open--;
-    const close = objectClose(output, open);
+    fences ??= fenceLines(output);
+    let before = open;
+    while (before > 0 && /\s/.test(output[before - 1] ?? "")) before--;
+    const close = objectClose(output, open, fences.opens.has(before));
     let value: unknown;
     try {
       const parsed: unknown = JSON.parse(output.slice(open, close));
@@ -292,7 +295,6 @@ export function headingSpans(output: string, heading: string): HeadingSpan[] {
     } catch {
       value = undefined;
     }
-    fences ??= fenceLines(output);
     let end = close;
     while (end > open && /\s/.test(output[end - 1] ?? "")) end--;
     found.push({ ...withFence(output, fences, open, end), value });
@@ -302,16 +304,26 @@ export function headingSpans(output: string, heading: string): HeadingSpan[] {
 }
 
 /**
- * open の「{」が閉じる位置の次。文字列の中の括弧は数えない。閉じなければ、囲みの終わりの行（行の頭が ```）か空行の頭、
- * どちらも無ければ出力の終わり。
+ * open の「{」が閉じる位置の次。文字列の中の括弧は数えない。JSON の文字列は改行を含めないので、文字列の中で改行に来たら、
+ * 閉じない文字列としてそこで終える（PR #130 再レビュー指摘）。括弧が閉じなければ、囲みの中（fenced）なら囲みの終わりの行
+ * （行の頭が ```）の頭、囲みの外なら最初の空行か ``` の行の頭（どれも無ければ出力の終わり）。空行で区切るのは閉じない
+ * 報告だけで、閉じる報告（空行を含む正しい JSON も）は途中で切らない（PR #130 再レビュー指摘）。
  */
-function objectClose(output: string, open: number): number {
+function objectClose(output: string, open: number, fenced: boolean): number {
   let depth = 0;
   let inString = false;
+  let firstBlank: number | undefined;
   for (let i = open; i < output.length; i++) {
     const c = output[i];
+    if (c === "\n") {
+      inString = false;
+      const next = output.slice(i + 1, i + 8);
+      if (/^[ \t]*```/.test(next)) return fenced ? i + 1 : Math.min(firstBlank ?? i + 1, i + 1);
+      if (firstBlank === undefined && /^[ \t]*\n/.test(next)) firstBlank = i + 1;
+      continue;
+    }
     if (inString) {
-      if (c === "\\") i++;
+      if (c === "\\" && output[i + 1] !== "\n") i++;
       else if (c === '"') inString = false;
       continue;
     }
@@ -320,10 +332,7 @@ function objectClose(output: string, open: number): number {
     else if (c === "}" || c === "]") {
       depth--;
       if (depth === 0) return i + 1;
-    } else if (c === "\n" && /^[ \t]*(?:```|\n)/.test(output.slice(i + 1, i + 8))) {
-      // 閉じないまま、囲みの終わりの行か空行に来た。後ろの本文は報告に含めない
-      return i + 1;
     }
   }
-  return output.length;
+  return fenced ? output.length : (firstBlank ?? output.length);
 }

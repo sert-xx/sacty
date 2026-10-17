@@ -2000,10 +2000,36 @@ describe("提出の前のセルフレビュー（PBI-120）", () => {
     const fenceRead = extractBlocks(unclosedFence, new Set());
     expect(fenceRead).not.toHaveProperty("selfReview");
     expect(fenceRead.output).toBe("# 設計\n\n\n\n## 補足");
+    // 引用符が閉じない報告でも、囲みの後ろの本文は消さない（PR #130 再レビュー指摘）
+    const openString = `# 設計\n\n\`\`\`json\n{"sacty-self-review": {"rounds": 2, "passed": true, "summary": "未完\n\`\`\`\n\n## 重要な補足\n\n- 消してはいけない`;
+    const openStringRead = extractBlocks(openString, new Set());
+    expect(openStringRead).not.toHaveProperty("selfReview");
+    expect(openStringRead.output).toMatch(/^# 設計\n+## 重要な補足\n\n- 消してはいけない$/);
+    // 囲みの外でも、閉じない文字列の後ろ（空行の後）の本文は消さない
+    const openStringBare = `# 設計\n\n{"sacty-self-review": {"rounds": 2, "summary": "未完\n\n## 重要な補足`;
+    expect(extractBlocks(openStringBare, new Set()).output).toMatch(/^# 設計\n+## 重要な補足$/);
+    // 囲みの中の閉じない報告は、空行があっても囲みの終わりまでを取り除く
+    const blankInFence = `# 設計\n\n\`\`\`json\n{"sacty-self-review": {"rounds": 2,\n\n"passed": true\n\`\`\`\n\n## 補足`;
+    expect(extractBlocks(blankInFence, new Set()).output).toMatch(/^# 設計\n+## 補足$/);
     // 読めない報告の後に読める報告があれば、最後（読める方）を使う
     const corrected = `# 設計\n\n${trailingComma}\n\n${passed}`;
     expect(extractBlocks(corrected, new Set()).selfReview).toMatchObject({ passed: true });
     expect(extractBlocks(corrected, new Set()).output).toBe("# 設計");
+    // 空行を含む正しい JSON の報告は、途中で切らずに読む（PR #130 再レビュー指摘）
+    for (const fenced of [true, false]) {
+      const json =
+        '{"sacty-self-review": {\n"rounds": 2,\n\n"passed": true, "remaining": [], "summary": "ok"}}';
+      const withBlank = fenced ? `# 設計\n\n\`\`\`json\n${json}\n\`\`\`` : `# 設計\n\n${json}`;
+      const blankRead = extractBlocks(withBlank, new Set());
+      expect(blankRead.selfReview, String(fenced)).toEqual({
+        rounds: 2,
+        passed: true,
+        remaining: [],
+        notReviewed: [],
+        summary: "ok",
+      });
+      expect(blankRead.output).toBe("# 設計");
+    }
     // 見出しを文中で挙げただけ（オブジェクトのキーでない）なら、本文に残す
     const prose = '# 設計\n\n報告は "sacty-self-review": の形で書く。';
     expect(extractBlocks(prose, new Set()).output).toBe(prose);
