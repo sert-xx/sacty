@@ -2,7 +2,7 @@
 
 - 日付: 2026-10-17（UTC）
 - タスク: PBI-123
-- PR: なし
+- PR: #133
 - ブランチ: feat/issue-123-flaky-git-timeout-test
 - 関係する ADR: なし
 
