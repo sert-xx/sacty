@@ -4,6 +4,7 @@ import { join } from "node:path";
 import {
   code,
   type DaemonText,
+  DEFAULT_AUDIT_BUDGET_USD,
   DEFAULT_BUDGET_USD,
   issueMessage,
   message,
@@ -238,7 +239,11 @@ const ConfigFile = z
     /** ゴールガーディアンに使うAI。省略すると default_agent。 */
     guardian_agent: z.string().optional(),
     budget: z
-      .object({ default_per_task_usd: z.number().positive().default(DEFAULT_BUDGET_USD) })
+      .object({
+        default_per_task_usd: z.number().positive().default(DEFAULT_BUDGET_USD),
+        /** 1回の監査の予算の既定の上限（PBI-124）。タスクの予算とは別に持つ。 */
+        default_per_audit_usd: z.number().positive().default(DEFAULT_AUDIT_BUDGET_USD),
+      })
       .prefault({}),
     /**
      * 名前は空にできない（タスクの詳細で選んだ名前を作業履歴に残すため。PR #131 再レビュー指摘）。default_agent などは、
@@ -583,6 +588,8 @@ export type SactyConfig = {
   /** 段階のエージェント（runtime ごと・段階ごと。書いてある段階だけ。PBI-119）。 */
   tierAgents?: Partial<Record<TierRuntime, Partial<Record<AgentTier, AgentConfig>>>>;
   budgetPerTaskUsd: number;
+  /** 1回の監査の予算の既定の上限（PBI-124）。 */
+  budgetPerAuditUsd: number;
   /** ゲートウェイの AI の呼び出しのリトライの上限（PBI-37）。 */
   gatewayRetry: RetryPolicy;
   /** コンテナから見たホストのアドレス（host.docker.internal の向き先。PBI-40）。 */
@@ -728,6 +735,7 @@ export function loadConfig(home: string): ConfigResult {
     config: {
       image: file.image,
       budgetPerTaskUsd: file.budget.default_per_task_usd,
+      budgetPerAuditUsd: file.budget.default_per_audit_usd,
       ...(file.onepassword?.account ? { onePasswordAccount: file.onepassword.account } : {}),
       imageBuild: {
         ...(file.image_build?.base_image ? { baseImage: file.image_build.base_image } : {}),
@@ -861,6 +869,8 @@ default_agent: claude-subscription
 
 budget:
   default_per_task_usd: ${DEFAULT_BUDGET_USD}
+  # 完了したタスクの監査の、1回あたりの上限（タスクの予算とは別）
+  default_per_audit_usd: ${DEFAULT_AUDIT_BUDGET_USD}
 
 # タスクの対象リポジトリ（URL・ベースブランチ・テストのコマンド・PR を作るか）は、
 # 画面のプロジェクトの設定で登録する

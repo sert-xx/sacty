@@ -23,3 +23,4 @@ If you are new to sacty, start with [Getting started](getting-started.en.md). Fo
 14. [After-merge watch](deployment-watch.en.md): the step after Implement. Checking CI/CD and the app after deployment, placing the skill, registering fix tasks automatically
 15. [CLI](cli.en.md): the sacty command and its options
 16. [Troubleshooting](troubleshooting.en.md): common ways things stop and what to check
+17. [Audits](audit.en.md): audits of completed tasks, adopting and rejecting proposals, the audit page, reports

@@ -21,6 +21,7 @@ Related ADRs: none
 | `agents` | (required) | Agent definitions ("Agents" below) |
 | `providers` | `{}` | OpenAI-compatible (Responses API) endpoints. Names match `^[A-Za-z0-9_-]+$`. `base_url` (http or https), `secret` (optional), `via_gateway` (default `false`) |
 | `budget.default_per_task_usd` | `1` (`DEFAULT_BUDGET_USD`) | The budget per task (US dollars; a positive number) |
+| `budget.default_per_audit_usd` | `1` (`DEFAULT_AUDIT_BUDGET_USD`) | The budget per audit (US dollars; a positive number; separate from the task budget; [Audit](audit.en.md)) |
 | `image_build` | none | The source for `sacty image build` ("Images" in [Agent execution](agent-execution.en.md)) |
 | `images` | `{}` | Images per language (same as above) |
 | `onepassword.account` | none | The 1Password account ([Secrets](secrets.en.md)) |

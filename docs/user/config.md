@@ -20,6 +20,7 @@
 | `agents` | AI の定義（名前ごと。[エージェント](#エージェント)）。必須 | なし |
 | `providers` | OpenAI 互換の接続先（[ゲートウェイ](gateway.md#openai-互換の接続先providers)） | なし |
 | `budget.default_per_task_usd` | 1タスクあたりの予算（米ドル。0 より大きい数） | `1` |
+| `budget.default_per_audit_usd` | 1回の監査の予算（米ドル。0 より大きい数。タスクの予算とは別。[監査](audit.md#予算)） | `1` |
 | `image` | エージェントとテストの実行に使うイメージ | `sacty-agent:0.1.0` |
 | `image_build` | `sacty image build` の元のイメージと npm の設定（[コンテナイメージ](images.md)） | なし |
 | `images` | 言語ごとのイメージ（[コンテナイメージ](images.md#言語ごとのイメージ)） | なし |

@@ -5,6 +5,7 @@ import { renderMessage } from "@sacty/core";
 import { purgeLegacyTasksAtStartup, SqliteActivityStore } from "./activity.js";
 import { DockerExecutor } from "./agents/docker.js";
 import { DockerTestRunner } from "./agents/test-runner.js";
+import { MockAuditService, NoAuditService } from "./audits.js";
 import { GitHubCiStatus } from "./ci.js";
 import { loadConfig, resolveHome } from "./config.js";
 import { DEFAULT_CONTEXT_DIR, GitContextFetcher } from "./context.js";
@@ -191,7 +192,20 @@ const worker = new Worker(service);
 const intake = new IssueIntake(service, new GitHubIssueSearch(), github, config, Date.now, tickets);
 // 承認待ちの PR（実装・要求要件・設計）を見守る（マージで承認。PBI-14a）
 const prWatcher = new PullRequestWatcher(service);
-const app = createApp(service, token, { intake });
+// 完了したタスクの監査（PBI-124）。モックは SACTY_AUDIT_MOCK=1 のときだけ（既定では監査の無い実装）
+const auditDeps = {
+  tasks: () => service.list(),
+  activity: (id: string) => service.get(id)?.activity ?? [],
+  projects: () => service.listProjects(),
+  defaultCapUsd: () => service.auditBudgetUsd(),
+};
+const audits =
+  process.env.SACTY_AUDIT_MOCK === "1"
+    ? new MockAuditService(auditDeps)
+    : new NoAuditService(auditDeps);
+if (process.env.SACTY_AUDIT_MOCK === "1")
+  console.warn("[daemon] 監査はモックのデータを返します（SACTY_AUDIT_MOCK=1）。");
+const app = createApp(service, token, { intake, audits });
 
 const server = serve({ fetch: app.fetch, hostname: "127.0.0.1", port }, (info) => {
   console.log(`[daemon] listening on http://127.0.0.1:${info.port} (data: ${home})`);

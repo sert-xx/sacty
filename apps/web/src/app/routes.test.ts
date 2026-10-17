@@ -57,6 +57,14 @@ describe("画面の URL のリダイレクト（PBI-114）", () => {
     expect((await currentAt(["tasks"])).headers.get("location")).toBe("/projects/p1/tasks");
   });
 
+  it("サイドメニューの「監査」（/projects/current/audit）は、表示しているプロジェクトの監査へ移す（PBI-124）", async () => {
+    expect((await currentAt(["audit"], "p%202")).headers.get("location")).toBe(
+      "/projects/p%202/audit",
+    );
+    expect((await currentAt(["audit"], "gone")).headers.get("location")).toBe("/projects/p1/audit");
+    expect((await currentAt(["audit", "report"], "p1")).status).toBe(404);
+  });
+
   it("デーモンにつながらなければプロジェクトの一覧へ。知らない画面は 404", async () => {
     listProjects.mockRejectedValue(new Error("unreachable"));
     expect((await currentAt(["tasks"], "p1")).headers.get("location")).toBe("/projects");

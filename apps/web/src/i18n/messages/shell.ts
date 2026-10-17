@@ -3,7 +3,13 @@
  * を入れる。英語の用語は labels.ts の用語集に合わせる。
  */
 const ja = {
-  nav: { main: "メイン", dashboard: "ダッシュ​ボード", tasks: "タスク", settings: "設定" },
+  nav: {
+    main: "メイン",
+    dashboard: "ダッシュ​ボード",
+    tasks: "タスク",
+    audit: "監査",
+    settings: "設定",
+  },
   project: {
     label: "プロジェクト",
     trigger: (name: string) => `プロジェクト：${name}（切り替える）`,
@@ -36,7 +42,13 @@ const ja = {
 export type ShellMessages = typeof ja;
 
 const en: ShellMessages = {
-  nav: { main: "Main", dashboard: "Dashboard", tasks: "Tasks", settings: "Settings" },
+  nav: {
+    main: "Main",
+    dashboard: "Dashboard",
+    tasks: "Tasks",
+    audit: "Audit",
+    settings: "Settings",
+  },
   project: {
     label: "Project",
     trigger: (name) => `Project: ${name} (switch)`,

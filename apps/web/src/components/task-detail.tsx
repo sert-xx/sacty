@@ -16,6 +16,7 @@ import {
 } from "@sacty/core";
 import Link from "next/link";
 import { useRef } from "react";
+import { TaskAuditCard } from "@/components/audit";
 import { CardSection } from "@/components/card-section";
 import { DaemonError } from "@/components/daemon-error";
 import { DeploymentWatchCard } from "@/components/deployment";
@@ -445,6 +446,8 @@ export function TaskDetailView({ data }: { data: TaskDetailData }) {
             {/* 工程のエージェント。人が選ぶと、その工程の次の実行から使う（PBI-121） */}
             {task.steps.length > 0 && <StepAgents task={task} agentStatus={data.agentStatus} />}
           </section>
+          {/* 完了したタスクの監査（PBI-124） */}
+          {data.audit !== undefined && <TaskAuditCard audit={data.audit} />}
           {task.operation && (
             <CardSection
               id="operation-settings"
@@ -538,7 +541,9 @@ export function TaskDetailView({ data }: { data: TaskDetailData }) {
             {[...activity].reverse().map((event) => (
               <li
                 key={event.id}
-                className="grid grid-cols-[96px_minmax(0,1fr)] gap-3 border-t border-border py-2.5 text-[13px]"
+                // 監査の根拠から、作業履歴の行へたどれるようにする（PBI-124）
+                id={`event-${event.id}`}
+                className="scroll-mt-20 grid grid-cols-[96px_minmax(0,1fr)] gap-3 border-t border-border py-2.5 text-[13px] target:bg-accent"
               >
                 <time
                   dateTime={event.at}

@@ -1,4 +1,5 @@
 import type { Locale } from "./locale";
+import { audit } from "./messages/audit";
 import { common } from "./messages/common";
 import { dashboard } from "./messages/dashboard";
 import { forms } from "./messages/forms";
@@ -28,6 +29,7 @@ export function messagesFor(locale: Locale) {
     forms: forms[locale],
     projects: projects[locale],
     settings: settings[locale],
+    audit: audit[locale],
   };
 }
 

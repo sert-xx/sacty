@@ -1,4 +1,5 @@
 import {
+  type AuditDashboard,
   BUDGET_WARN_RATIO,
   type DashboardSummary,
   isFinished,
@@ -9,6 +10,7 @@ import {
 import { getMessages } from "@/i18n/server";
 import {
   type DaemonStatus,
+  getAuditDashboard,
   getDashboardSummary,
   getStatus,
   listProjects,
@@ -66,7 +68,26 @@ export type DashboardData = {
   flow: DashboardSummary["flow"];
   quality: DashboardSummary["quality"];
   queue: DashboardSummary["queue"];
+  /** 監査の指標（PBI-124）。件数だけ。取れなければ無い。projects はプロジェクトの名前を添えたもの。 */
+  audit?: Omit<AuditDashboard, "projects"> & {
+    projects: (AuditDashboard["projects"][number] & { projectName: string })[];
+  };
 };
+
+/** 監査の指標に、プロジェクトの名前を添える（消したプロジェクトの分は出さない。PBI-124）。 */
+export function auditSection(
+  projects: readonly Project[],
+  audit: AuditDashboard,
+): NonNullable<DashboardData["audit"]> {
+  const names = new Map(projects.map((p) => [p.id, p.name]));
+  return {
+    ...audit,
+    projects: audit.projects.flatMap((p) => {
+      const projectName = names.get(p.projectId);
+      return projectName === undefined ? [] : [{ ...p, projectName }];
+    }),
+  };
+}
 
 /** 終わっていないタスクか（完了・中止を除くすべて。承認待ち・一時停止・エスカレーションも含む。PBI-114）。 */
 export function isOpenTask(task: Task): boolean {
@@ -172,7 +193,7 @@ export function nearBudgetRows(projects: readonly Project[], tasks: readonly Tas
 
 /** ダッシュボードのデータ。デーモンに届かなければ例外。 */
 export async function loadDashboard(): Promise<DashboardData> {
-  const [projects, tasks, status, summary, { labels }] = await Promise.all([
+  const [projects, tasks, status, summary, { labels }, audit] = await Promise.all([
     listProjects(),
     // 終わっていないタスクだけを取る（完了したタスクの成果物を3秒ごとに運ばない）
     listTasks({ open: true }),
@@ -180,6 +201,8 @@ export async function loadDashboard(): Promise<DashboardData> {
     // 作業履歴を要する集計は、デーモンが畳み込んで持っているものを取る（PBI-118）
     getDashboardSummary(),
     getMessages(),
+    // 監査の指標（PBI-124）。取れなくても、ほかの欄は出す
+    getAuditDashboard().catch(() => undefined),
   ]);
   return {
     projects: projects.length,
@@ -196,5 +219,6 @@ export async function loadDashboard(): Promise<DashboardData> {
     flow: summary.flow,
     quality: summary.quality,
     queue: summary.queue,
+    ...(audit ? { audit: auditSection(projects, audit) } : {}),
   };
 }

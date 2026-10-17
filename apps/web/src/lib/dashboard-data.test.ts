@@ -6,7 +6,17 @@ const listProjects = vi.fn();
 const listTasks = vi.fn();
 const getStatus = vi.fn(async () => ({ agent: null, problems: [], warnings: [], intake: null }));
 const getDashboardSummary = vi.fn();
-vi.mock("@/lib/daemon", () => ({ listProjects, listTasks, getStatus, getDashboardSummary }));
+// 監査の指標（PBI-124）。既定は取れない（ほかの欄の確かめに混ぜない）
+const getAuditDashboard = vi.fn(async (): Promise<unknown> => {
+  throw new Error("no audit");
+});
+vi.mock("@/lib/daemon", () => ({
+  listProjects,
+  listTasks,
+  getStatus,
+  getDashboardSummary,
+  getAuditDashboard,
+}));
 vi.mock("@/i18n/server", () => ({ getMessages: async () => messagesFor("ja") }));
 
 const { attentionRows, isOpenTask, loadDashboard, nearBudgetRows, pausedGroups } = await import(

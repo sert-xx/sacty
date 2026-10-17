@@ -1,8 +1,10 @@
 "use client";
 
+import { auditAdoptionRate } from "@sacty/core";
 import { cn } from "cn";
 import Link from "next/link";
 import { Fragment, type ReactNode, useEffect, useState } from "react";
+import { MockBadge } from "@/components/audit";
 import { DaemonError } from "@/components/daemon-error";
 import { IntakeRunNow, IntakeStatusView } from "@/components/intake-status";
 import { StaleNotice } from "@/components/live-status";
@@ -10,10 +12,11 @@ import { StatusLabelView } from "@/components/task-bits";
 import { Hint, WithHint } from "@/components/ui/hint";
 import { useMessages } from "@/i18n/client";
 import type { DashboardMessages } from "@/i18n/messages/dashboard";
+import { perTask } from "@/lib/audit";
 import type { DashboardData } from "@/lib/dashboard-data";
 import { FIX_ONCE_REASONS, REWORK_STEPS } from "@/lib/dashboard-rules";
 import { usd } from "@/lib/labels";
-import { taskPath } from "@/lib/paths";
+import { projectAuditPath, taskPath } from "@/lib/paths";
 import { useLiveData } from "@/lib/use-live-data";
 
 /** 1行に切り詰め、行にフォーカスがある間は折り返して全文を出す。 */
@@ -87,6 +90,7 @@ export function LiveDashboard({
             <IntakeCard data={data} />
             <FlowCard data={data} />
             <QualityCard data={data} />
+            {data.audit && <AuditCard audit={data.audit} />}
           </DashboardGrid>
         </>
       )}
@@ -701,6 +705,120 @@ export function QualityCard({ data }: { data: DashboardData }) {
           </Fragment>
         ))}
       </dl>
+    </DashboardCard>
+  );
+}
+
+/**
+ * 監査（PBI-124）：プロジェクトごとの原因・再発・判断待ちの件数と提案の採用率、週ごとのタスクあたりの差し戻し・指摘の件数。
+ * 件数だけを出し、原因や提案の中身は、プロジェクトの監査の画面で見る（プロジェクトをまたいで集約しない）。
+ */
+export function AuditCard({ audit }: { audit: NonNullable<DashboardData["audit"]> }) {
+  const all = useMessages();
+  const m = all.audit.dashboard;
+  const cell = "px-2 py-1 text-right whitespace-nowrap tabular-nums";
+  return (
+    <DashboardCard
+      // タスクの詳細の監査の欄（id="audit"）と重ねない。画面を移っても前の画面が裏に残るので、#audit が取り違える
+      id="audit-summary"
+      title={m.title}
+      hint={m.hint}
+      note={audit.mock ? <MockBadge /> : undefined}
+    >
+      {audit.projects.length === 0 && audit.trend.length === 0 ? (
+        <Empty>{m.none}</Empty>
+      ) : (
+        <div className="flex flex-col gap-4 px-3 pb-5">
+          {/* 狭い画面・英語・文字の拡大でも、表はカードの中で横にスクロールする（ページを横に広げない。PR #134 レビュー指摘） */}
+          {audit.projects.length > 0 && (
+            <div className="overflow-x-auto" data-testid="audit-projects-scroll">
+              <table aria-label={m.title} className="w-full text-sm">
+                <thead>
+                  <tr className="text-muted-foreground">
+                    <th scope="col" className="px-2 py-1 text-left font-normal">
+                      {m.project}
+                    </th>
+                    <th scope="col" className={cn(cell, "font-normal")}>
+                      {m.causes}
+                    </th>
+                    <th scope="col" className={cn(cell, "font-normal")}>
+                      {m.recurred}
+                    </th>
+                    <th scope="col" className={cn(cell, "font-normal")}>
+                      {m.pending}
+                    </th>
+                    <th scope="col" className={cn(cell, "font-normal")}>
+                      <WithHint hint={m.adoptionHint}>{m.adoption}</WithHint>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {audit.projects.map((p) => {
+                    const rate = auditAdoptionRate(p.adopted, p.rejected);
+                    return (
+                      <tr key={p.projectId} data-testid={`audit-project-${p.projectId}`}>
+                        <th scope="row" className="px-2 py-1 text-left font-normal">
+                          <Link
+                            href={projectAuditPath(p.projectId)}
+                            className="text-accent-foreground underline [overflow-wrap:anywhere]"
+                          >
+                            {p.projectName}
+                          </Link>
+                        </th>
+                        <td className={cn(cell, "font-semibold")}>{p.causes}</td>
+                        <td className={cn(cell, "font-semibold", p.recurred > 0 && "text-warn")}>
+                          {p.recurred}
+                        </td>
+                        <td className={cn(cell, "font-semibold")}>{p.pending}</td>
+                        <td className={cn(cell, "font-semibold")}>
+                          {rate === null ? m.noRate : `${Math.round(rate * 100)}%`}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {audit.trend.length > 0 && (
+            <div className="flex flex-col gap-1">
+              <h3 className="px-2 text-sm font-medium">
+                <WithHint hint={m.trendHint}>{m.trend}</WithHint>
+              </h3>
+              <div className="overflow-x-auto" data-testid="audit-trend-scroll">
+                <table aria-label={m.trend} className="w-full text-sm">
+                  <thead>
+                    <tr className="text-muted-foreground">
+                      <th scope="col" className="px-2 py-1 text-left font-normal">
+                        {m.week}
+                      </th>
+                      <th scope="col" className={cn(cell, "font-normal")}>
+                        {m.tasks}
+                      </th>
+                      <th scope="col" className={cn(cell, "font-normal")}>
+                        {m.perTask}
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {audit.trend.map((w) => (
+                      <tr key={w.weekStart} data-testid={`audit-trend-${w.weekStart}`}>
+                        <th scope="row" className="px-2 py-1 text-left font-mono font-normal">
+                          {w.weekStart}
+                        </th>
+                        <td className={cn(cell, "font-semibold")}>{w.tasks}</td>
+                        <td className={cn(cell, "font-semibold")}>
+                          {perTask(w.remarks, w.tasks) ?? m.noRate}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
     </DashboardCard>
   );
 }

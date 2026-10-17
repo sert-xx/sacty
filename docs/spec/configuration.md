@@ -21,6 +21,7 @@
 | `agents` | （必須） | エージェントの定義（下の「エージェント」） |
 | `providers` | `{}` | OpenAI 互換（Responses API）の接続先。名前は `^[A-Za-z0-9_-]+$`。`base_url`（http・https）・`secret`（任意）・`via_gateway`（既定 `false`） |
 | `budget.default_per_task_usd` | `1`（`DEFAULT_BUDGET_USD`） | 1タスクあたりの予算（米ドル。正の数） |
+| `budget.default_per_audit_usd` | `1`（`DEFAULT_AUDIT_BUDGET_USD`） | 1回の監査の予算（米ドル。正の数。タスクの予算とは別。[監査](audit.md)） |
 | `image_build` | なし | `sacty image build` の元（[エージェントの実行](agent-execution.md)の「イメージ」） |
 | `images` | `{}` | 言語ごとのイメージ（同上） |
 | `onepassword.account` | なし | 1Password のアカウント（[秘密情報](secrets.md)） |

@@ -1,5 +1,7 @@
 import {
   type ActivityEvent,
+  type AuditDashboard,
+  type AuditTarget,
   type CleanupTarget,
   type CreateTaskInput,
   type CreateTemplateTaskInput,
@@ -7,12 +9,14 @@ import {
   type DashboardSummary,
   type IntakeKind,
   type Project,
+  type ProjectAudits,
   type ProjectDefinitionInput,
   renderMessage,
   type SactySettings,
   type SactySettingsInput,
   type StepKey,
   type Task,
+  type TaskAudit,
   type TriageKind,
 } from "@sacty/core";
 import { connection } from "next/server";
@@ -538,6 +542,44 @@ export function voidRemark(id: string, remarkId: string): Promise<OpResult> {
     `/api/tasks/${encodeURIComponent(id)}/remarks/${encodeURIComponent(remarkId)}/void`,
     {},
   );
+}
+
+/** タスクの監査（PBI-124）。監査が無ければ null。 */
+export async function getTaskAudit(taskId: string): Promise<TaskAudit | null> {
+  const res = await daemonFetch(`/api/tasks/${encodeURIComponent(taskId)}/audit`);
+  // 監査の API の無い古いデーモン
+  if (res.status === 404) return null;
+  await ensureOk(res);
+  return ((await res.json()) as { audit: TaskAudit | null }).audit;
+}
+
+/** プロジェクトの監査（監査の画面。PBI-124）。プロジェクトが無ければ null。 */
+export async function getProjectAudits(projectId: string): Promise<ProjectAudits | null> {
+  const res = await daemonFetch(`/api/projects/${encodeURIComponent(projectId)}/audits`);
+  if (res.status === 404) return null;
+  await ensureOk(res);
+  return (await res.json()) as ProjectAudits;
+}
+
+/** ダッシュボードの監査の指標（PBI-124）。 */
+export async function getAuditDashboard(): Promise<AuditDashboard> {
+  const res = await ensureOk(await daemonFetch("/api/audits/dashboard"));
+  return (await res.json()) as AuditDashboard;
+}
+
+/** 改修の提案を採用する（PBI-124）。宛先は提案の宛先の候補から選ぶ。 */
+export function adoptAuditProposal(proposalId: string, target: AuditTarget): Promise<OpResult> {
+  return postOp(`/api/audits/proposals/${encodeURIComponent(proposalId)}/adopt`, { target });
+}
+
+/** 改修の提案を却下する（PBI-124）。理由は必須。 */
+export function rejectAuditProposal(proposalId: string, reason: string): Promise<OpResult> {
+  return postOp(`/api/audits/proposals/${encodeURIComponent(proposalId)}/reject`, { reason });
+}
+
+/** 予算で一時停止した監査を、新しい上限（累計）で再開する（PBI-124）。 */
+export function resumeAudit(taskId: string, capUsd: number): Promise<OpResult> {
+  return postOp(`/api/tasks/${encodeURIComponent(taskId)}/audit/resume`, { capUsd });
 }
 
 /**

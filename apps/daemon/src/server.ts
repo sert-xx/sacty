@@ -5,6 +5,7 @@ import { isFinished, issueMessage, ProjectDefinition } from "@sacty/core";
 import { type Context, Hono } from "hono";
 import { ZodError, z } from "zod";
 import { safeRelativePath } from "./agent-sessions.js";
+import { type AuditService, NoAuditService } from "./audits.js";
 import { InvalidOperationError, type TaskService } from "./service.js";
 import { validLogId } from "./session-logs.js";
 
@@ -54,9 +55,18 @@ function handleError(c: Context, error: unknown) {
 export function createApp(
   service: TaskService,
   token: string,
-  options: { intake?: { tick(force: boolean): Promise<void> } } = {},
+  options: { intake?: { tick(force: boolean): Promise<void> }; audits?: AuditService } = {},
 ) {
   const app = new Hono();
+  // 完了したタスクの監査（PBI-124）。渡されなければ監査の無い実装（モックは main.ts が切り替える）
+  const audits =
+    options.audits ??
+    new NoAuditService({
+      tasks: () => service.list(),
+      activity: (id) => service.get(id)?.activity ?? [],
+      projects: () => service.listProjects(),
+      defaultCapUsd: () => service.auditBudgetUsd(),
+    });
 
   /**
    * 保存したプロジェクトの秘密情報（コンテキスト）を、まとめて取り出す（PBI-107）。保存は止めないので待たない
@@ -452,6 +462,48 @@ export function createApp(
       // 一時停止のときに停止を確かめられなかったコンテナがあれば、確かめ直してから再開する
       const containersConfirmed = await service.confirmPausedContainers(id);
       return c.json({ task: service.resume(id, json.body, { containersConfirmed }) });
+    } catch (error) {
+      return handleError(c, error);
+    }
+  });
+
+  // 完了したタスクの監査（PBI-124）。監査が無ければ audit は null
+  app.get("/api/tasks/:id/audit", (c) => c.json({ audit: audits.taskAudit(c.req.param("id")) }));
+
+  app.post("/api/tasks/:id/audit/resume", async (c) => {
+    const json = await readJson(c);
+    if (!json.ok) return c.json({ error: "invalid_json" }, 400);
+    try {
+      return c.json({ audit: audits.resume(c.req.param("id"), json.body) });
+    } catch (error) {
+      return handleError(c, error);
+    }
+  });
+
+  // プロジェクトの監査の画面（PBI-124）。プロジェクトをまたいで集約しない
+  app.get("/api/projects/:id/audits", (c) => {
+    const found = audits.projectAudits(c.req.param("id"));
+    return found ? c.json(found) : c.json({ error: "not_found" }, 404);
+  });
+
+  // ダッシュボードの監査の指標（件数だけ。PBI-124）
+  app.get("/api/audits/dashboard", (c) => c.json(audits.dashboard()));
+
+  app.post("/api/audits/proposals/:id/adopt", async (c) => {
+    const json = await readJson(c);
+    if (!json.ok) return c.json({ error: "invalid_json" }, 400);
+    try {
+      return c.json({ proposal: audits.adopt(c.req.param("id"), json.body) });
+    } catch (error) {
+      return handleError(c, error);
+    }
+  });
+
+  app.post("/api/audits/proposals/:id/reject", async (c) => {
+    const json = await readJson(c);
+    if (!json.ok) return c.json({ error: "invalid_json" }, 400);
+    try {
+      return c.json({ proposal: audits.reject(c.req.param("id"), json.body) });
     } catch (error) {
       return handleError(c, error);
     }
