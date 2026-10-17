@@ -2,7 +2,7 @@
 
 - 日付: 2026-10-17（UTC）
 - タスク: PBI-122
-- PR: なし
+- PR: #132
 - ブランチ: feat/issue-122-ears-requirements
 - 関係する ADR: [要求要件の受け入れ条件を EARS 形式で書かせ、既定のスキル ears-requirements を同梱する](../adr/20261017-0130-ears-requirements.md)
 
