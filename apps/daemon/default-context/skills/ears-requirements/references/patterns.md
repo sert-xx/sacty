@@ -10,13 +10,13 @@
 | 常時 | 予約システムは、予約の一覧を開始日時の早い順に表示しなければならない。 | The booking system shall list bookings in ascending order of start time. |
 | イベント駆動 | 利用者が予約を確定したとき、予約システムは、確定の通知を利用者に送らなければならない。 | When a user confirms a booking, the booking system shall send a confirmation notice to the user. |
 | 状態駆動 | 保守の時間帯の間、予約システムは、新しい予約を受け付けてはならない。 | While the maintenance window is active, the booking system shall not accept new bookings. |
-| 望まない振る舞い | 確定の時点で枠が埋まっていた場合、予約システムは、予約を確定せずに、空いている別の枠を3件まで示さなければならない。 | If the slot is full at confirmation, then the booking system shall not confirm the booking and shall show up to three other available slots. |
+| 望まない振る舞い | 確定の時点で枠が埋まっていた場合、予約システムは、予約を確定してはならない。 | If the slot is full at confirmation, then the booking system shall not confirm the booking. |
+| 望まない振る舞い | 確定の時点で枠が埋まっていた場合、予約システムは、空いている別の枠を3件まで示さなければならない。 | If the slot is full at confirmation, then the booking system shall show up to three other available slots. |
 | オプション | 決済の機能を含む場合、予約システムは、確定の前に料金を表示しなければならない。 | Where the payment feature is included, the booking system shall display the price before confirmation. |
 | 複合 | 利用者がログインしている間、予約を取り消したとき、予約システムは、取り消しの記録を残さなければならない。 | While a user is signed in, when the user cancels a booking, the booking system shall record the cancellation. |
 
-望まない振る舞いの例は、応答が「確定しない」「示す」の2つに見える。
-「確定せずに別の枠を示す」は、同じ事象への1つのまとまった応答なので1文にしてよい。
-別々に確かめたいときは、要求を分ける。
+望まない振る舞いの例は、同じ事象への応答が「確定しない」「別の枠を示す」の2つあるので、2つの要求に分けている。
+同じ条件・きっかけでも、応答が2つあれば、1文にまとめずに要求を分ける。
 
 ## 選び方
 
