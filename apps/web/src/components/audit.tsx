@@ -210,7 +210,11 @@ function UsefulMemories({ memories }: { memories: AuditUsefulMemory[] }) {
       </h3>
       <ul className="flex flex-col gap-1 text-sm">
         {memories.map((memory) => (
-          <li key={memory.id} data-testid={`audit-useful-memory-${memory.id}`}>
+          <li
+            key={memory.id}
+            data-testid={`audit-useful-memory-${memory.id}`}
+            className="min-w-0 [overflow-wrap:anywhere]"
+          >
             <span className="font-medium">{memory.title}</span>{" "}
             <span className="text-xs text-muted-foreground">
               {memory.scope === "project" ? m.project : m.repository}
@@ -237,8 +241,9 @@ function AuditMemories({ memories }: { memories: AuditMemory[] }) {
             data-testid={`audit-memory-${memory.id}`}
             className="flex flex-col gap-1 rounded-lg border border-border px-3 py-2"
           >
-            <div className="flex flex-wrap items-center gap-2 text-sm">
-              <span className="font-semibold">{memory.title}</span>
+            <div className="flex min-w-0 flex-wrap items-center gap-2 text-sm">
+              {/* 空白の無い長い題・概要（識別子・パス・URL）も、狭い画面で折り返す（PR #136 レビュー指摘） */}
+              <span className="min-w-0 font-semibold [overflow-wrap:anywhere]">{memory.title}</span>
               <span className="text-xs text-muted-foreground">
                 {memory.scope === "project" ? m.project : m.repository}
               </span>
@@ -259,7 +264,9 @@ function AuditMemories({ memories }: { memories: AuditMemory[] }) {
                 </span>
               )}
             </div>
-            <p className="text-[13px] text-muted-foreground">{memory.summary}</p>
+            <p className="min-w-0 text-[13px] text-muted-foreground [overflow-wrap:anywhere]">
+              {memory.summary}
+            </p>
             {!memory.deleted && (
               <p
                 className="text-xs text-muted-foreground"
