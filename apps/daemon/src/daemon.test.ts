@@ -7983,23 +7983,45 @@ describe("プロジェクトのコンテキストの秘密情報も、まとめ�
         return false;
       }
     };
+    // 上限の時間のタイマーだけを捕まえ、偽の git が動き出して子プロセスを作ってから時間切れにする。実時間に任せると、
+    // テストの負荷が高いときに git が動き出す前（認証の準備・起動の間）に時間切れになり、止める処理を確かめられない
+    // （プロセス番号が記録されずに落ちていた）
+    const LIMIT_MS = 900;
+    const realSetTimeout = globalThis.setTimeout;
+    let expire: (() => void) | undefined;
+    const timers = vi.spyOn(globalThis, "setTimeout").mockImplementation(((
+      callback: () => void,
+      delay?: number,
+      ...args: unknown[]
+    ) => {
+      if (delay === LIMIT_MS && !expire) {
+        expire = callback;
+        return { unref() {}, ref() {}, hasRef: () => false } as unknown as NodeJS.Timeout;
+      }
+      return realSetTimeout(callback, delay, ...args);
+    }) as typeof setTimeout);
     try {
       const { activity, service } = setup([], {
         contexts: new GitContextFetcher(),
-        timeoutMs: 1000,
+        timeoutMs: LIMIT_MS,
       });
-      const started = await service.prefetchSecrets();
+      const prefetching = service.prefetchSecrets();
+      // git（sh）と、その子プロセス（sleep）が動き出すまで待つ
+      await vi.waitFor(() => expect(pids()).toHaveLength(2), { timeout: 10_000 });
+      expect(expire).toBeDefined();
+      expire?.();
+      const started = await prefetching;
       expect(ja(started.problems[0])).toContain("1 秒のうちに取得できませんでした。");
-      await vi.waitFor(() => expect(pids()).toHaveLength(2));
       await vi.waitFor(
         () => {
           expect(pids().filter(alive)).toEqual([]);
           expect(readdirSync(temp)).toEqual([]);
         },
-        { timeout: 2_500 },
+        { timeout: 5_000 },
       );
       activity.close();
     } finally {
+      timers.mockRestore();
       process.env.PATH = path;
       if (tmp === undefined) delete process.env.TMPDIR;
       else process.env.TMPDIR = tmp;
