@@ -7790,6 +7790,10 @@ export class TaskService {
       );
       // デーモンを止める・タスクを中止するときの実行の終わりは、記録しない（次の起動で、もう一度実行する）
       if (this.stopping || this.cancelling.has(task.id)) return;
+      // 監査の間に秘密情報の値・参照を変えても伏せるよう、記録する前に今の値を取り直す（送る前の値も合わせて伏せる。
+      // PR #135 再レビュー指摘）
+      const fresh = await this.auditRedactor(task, config);
+      const hideResult = (text: string) => fresh(hide(text));
       const run = {
         agentId: agent.id,
         ...agentSetting(agent),
@@ -7808,9 +7812,11 @@ export class TaskService {
         },
       ];
       if (outcome.kind === "failed") {
-        record = failed(message("audit.runFailed", { detail: mapFreeText(outcome.message, hide) }));
+        record = failed(
+          message("audit.runFailed", { detail: mapFreeText(outcome.message, hideResult) }),
+        );
       } else if (!step) {
-        const survey = extractAuditSurvey(hide(outcome.output), task);
+        const survey = extractAuditSurvey(hideResult(outcome.output), task);
         record = survey.ok
           ? [
               {
@@ -7829,7 +7835,7 @@ export class TaskService {
             ]
           : failed(survey.reason);
       } else {
-        const dive = extractAuditDive(hide(outcome.output), {
+        const dive = extractAuditDive(hideResult(outcome.output), {
           eventIds: new Set(activity.map((e) => e.id)),
           runIds: new Set(
             activity.flatMap((e) => {

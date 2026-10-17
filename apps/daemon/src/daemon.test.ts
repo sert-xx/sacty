@@ -22715,4 +22715,76 @@ describe("監査で伏せる秘密情報の値の使い回し（PR #135 再レ�
     expect(sentB).not.toContain("zz-new-ref-value");
     expect(sentB).toContain("[REDACTED]");
   });
+
+  it("監査の AI の実行中に同じ参照の値を変えても、結果・失敗の理由は記録する前に今の値で伏せる（PR #135 再レビュー指摘）", async () => {
+    const values: Record<string, string> = {
+      "claude-oauth-token": "oauth-secret",
+      "github-token": "ghp_secret",
+      "audit-key": "zz-start-value",
+    };
+    const activity = new SqliteActivityStore(dbPath);
+    const { service, executor } = makeService(activity, [], {
+      audit: true,
+      config: configWithAuditRef(() => "audit-key"),
+      secretStore: { get: async (name: string) => values[name] ?? "" },
+      planner: onlyRequirements,
+    });
+    // 監査の AI が動いている間に値を入れ替え、入れ替えた後の値を結果に入れて返す
+    executor.respond = (invocation) => {
+      const text = prompt(invocation);
+      if (isSurvey(invocation)) {
+        values["audit-key"] = "zz-during-survey";
+        if (text.includes("題：監査B")) {
+          return { kind: "failed", reason: "error", message: "失敗 zz-during-survey" };
+        }
+        // 実行器の例外も、失敗の結果として同じように伏せる
+        if (text.includes("題：監査C")) throw new Error("例外 zz-during-survey");
+        return json({
+          "sacty-audit-survey": {
+            summary: "要約 zz-during-survey",
+            concerns: [{ step: "requirements", reason: "理由 zz-during-survey" }],
+          },
+        });
+      }
+      if (isDive(invocation)) {
+        values["audit-key"] = "zz-during-dive";
+        return json({
+          "sacty-audit-findings": {
+            summary: "深掘り zz-during-dive",
+            findings: [
+              {
+                title: "原因 zz-during-dive",
+                detail: "",
+                evidence: [],
+                proposals: [{ title: "直す zz-during-dive", body: "", target: 0 }],
+              },
+            ],
+          },
+        });
+      }
+      return out("# 要求要件");
+    };
+    const make = async (title: string) => {
+      const task = service.createTask({ projectId: "default", title, body: "" });
+      await service.runNext(task.id);
+      service.approve(task.id, { step: "requirements", submission: 1 });
+      return task.id;
+    };
+    const a = await make("監査A");
+    await service.runNext(a);
+    await service.runNext(a);
+    const b = await make("監査B");
+    await service.runNext(b);
+    const c = await make("監査C");
+    await service.runNext(c);
+    const recorded = JSON.stringify(
+      [a, b, c].flatMap((id) => activity.forTask(id).filter((e) => e.type.startsWith("Audit"))),
+    );
+    expect(recorded).toContain("要約 [REDACTED]");
+    expect(recorded).toContain("原因 [REDACTED]");
+    expect(recorded).toContain("失敗 [REDACTED]");
+    expect(recorded).toContain("例外 [REDACTED]");
+    expect(recorded).not.toContain("zz-during-survey");
+    expect(recorded).not.toContain("zz-during-dive");
+  });
 });
