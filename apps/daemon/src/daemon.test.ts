@@ -20343,3 +20343,124 @@ describe("非コードの成果と単発作業（PBI-112）", () => {
     activity.close();
   });
 });
+
+describe("タスクの詳細で工程のエージェントを変える（PBI-121）", () => {
+  const base = agent();
+  const strong = agent({ id: "strong", model: "claude-opus-5-5", reasoning_effort: "high" });
+  const withAgents = (agents: AgentConfig[]): (() => ConfigResult) => {
+    const config = (configOf(base)() as { ok: true; config: SactyConfig }).config;
+    return () => ({
+      ok: true,
+      config: { ...config, agents: Object.fromEntries(agents.map((a) => [a.id, a])) },
+    });
+  };
+  const started = (service: TaskService, id: string) =>
+    (service.get(id)?.activity ?? []).flatMap((e) =>
+      e.type === "AgentRunStarted" ? [`${e.payload.step}:${e.payload.agentId}`] : [],
+    );
+
+  it("変えたことを作業履歴に残し、その工程の次の実行から使う（config.yaml の step_agents より優先）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service } = makeService(activity, [completed(100), completed(100)], {
+      config: withAgents([base, strong]),
+    });
+    const { id } = service.createTask({ projectId: "default", title: "A" });
+    await service.runNext(id);
+    expect(started(service, id)).toEqual(["requirements:claude-subscription"]);
+    const changed = service.changeStepAgent(id, { step: "requirements", agent: "strong" });
+    expect(changed.agents).toEqual({ requirements: "strong" });
+    expect(changed.agentChanges?.requirements).toMatchObject({
+      from: "claude-subscription",
+      to: "strong",
+    });
+    const event = service.get(id)?.activity.find((e) => e.type === "StepAgentChanged");
+    expect(event?.actor).toBe("person");
+    service.requestChanges(id, { step: "requirements", submission: 1, comments: ["直す"] });
+    await service.runNext(id);
+    expect(started(service, id)).toEqual([
+      "requirements:claude-subscription",
+      "requirements:strong",
+    ]);
+    // 段階の設定（モデル・エフォート）も、選んだエージェントのもので記録する
+    const last = (service.get(id)?.activity ?? [])
+      .filter((e) => e.type === "AgentRunStarted")
+      .at(-1);
+    expect(last?.type === "AgentRunStarted" && last.payload).toMatchObject({
+      agentId: "strong",
+      model: "claude-opus-5-5",
+      reasoningEffort: "high",
+    });
+    activity.close();
+  });
+
+  it("無い名前・同じ名前・無い工程・中止したタスク・設定を読めないときは、理由を示して断る", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    let ok = true;
+    const configured = withAgents([base, strong]);
+    const { service } = makeService(activity, [completed(100)], {
+      config: () =>
+        ok ? configured() : { ok: false, problem: message("config.missing", { path: "x" }) },
+    });
+    const { id } = service.createTask({ projectId: "default", title: "A" });
+    await service.runNext(id);
+    const reject = (raw: unknown) => {
+      try {
+        service.changeStepAgent(id, raw);
+      } catch (error) {
+        return error instanceof InvalidOperationError ? error.messages[0] : error;
+      }
+      return undefined;
+    };
+    expect(reject({ step: "requirements", agent: "nope" })).toEqual(
+      message("agent.notInAgents", { name: "nope" }),
+    );
+    expect(reject({ step: "requirements", agent: "claude-subscription" })).toEqual(
+      message("agent.unchanged", { name: "claude-subscription" }),
+    );
+    expect(reject({ step: "operation", agent: "strong" })).toEqual(message("agent.stepMissing"));
+    ok = false;
+    expect(reject({ step: "requirements", agent: "strong" })).toMatchObject({
+      code: "agent.configUnavailable",
+    });
+    ok = true;
+    await service.cancel(id);
+    expect(reject({ step: "requirements", agent: "strong" })).toEqual(message("task.cancelled"));
+    expect(service.get(id)?.activity.some((e) => e.type === "StepAgentChanged")).toBe(false);
+    activity.close();
+  });
+
+  it("選んだ名前が config.yaml から消えていたら、既定に戻さず、理由を示して一時停止する", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    let agents = [base, strong];
+    const { service, executor } = makeService(activity, [completed(100), completed(100)], {
+      config: () => withAgents(agents)(),
+    });
+    const { id } = service.createTask({ projectId: "default", title: "A" });
+    await service.runNext(id);
+    service.changeStepAgent(id, { step: "requirements", agent: "strong" });
+    service.requestChanges(id, { step: "requirements", submission: 1, comments: ["直す"] });
+    agents = [base];
+    await service.runNext(id);
+    const task = service.get(id)?.task;
+    expect(task?.status).toBe("paused");
+    expect(task?.pausedMessage).toEqual(
+      message("agent.chosenMissing", { step: "requirements", name: "strong" }),
+    );
+    // エージェントを動かしていない（1 回目の実行だけ）
+    expect(executor.calls).toHaveLength(1);
+    activity.close();
+  });
+
+  it("状態に、選べるエージェント（秘密・接続先なし）と config.yaml で決まる工程ごとの名前を出す", () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service } = makeService(activity, [], { config: withAgents([base, strong]) });
+    const status = service.status();
+    expect(status.agents).toEqual([
+      { id: "claude-subscription", runtime: "claude-code" },
+      { id: "strong", runtime: "claude-code", model: "claude-opus-5-5", reasoningEffort: "high" },
+    ]);
+    expect(JSON.stringify(status.agents)).not.toContain("secret");
+    expect(status.stepAgents.requirements).toBe("claude-subscription");
+    activity.close();
+  });
+});

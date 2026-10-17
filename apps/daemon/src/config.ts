@@ -509,6 +509,20 @@ export function agentFor(config: SactyConfig, role: AgentRoleKey): AgentConfig {
   );
 }
 /**
+ * 工程に使う AI（PBI-121）。人がタスクの詳細で選んだエージェントがあればそれ（config.yaml の step_agents より優先）、無ければ
+ * agentFor。選んだ名前が agents から消えていれば missing（黙って既定に戻さない）。
+ */
+export function stepAgentFor(
+  config: SactyConfig,
+  step: AgentRoleKey,
+  chosen: string | undefined,
+): { ok: true; agent: AgentConfig } | { ok: false; missing: string } {
+  if (chosen === undefined) return { ok: true, agent: agentFor(config, step) };
+  const agent = config.agents?.[chosen];
+  return agent ? { ok: true, agent } : { ok: false, missing: chosen };
+}
+
+/**
  * 作業履歴に記録する、実行に使った AI の設定（接続先・モデル・リーズニングエフォート。PBI-46）。
  * 秘密の値（API キーや接続先の URL）は含めない。
  */
@@ -527,6 +541,8 @@ export type SactyConfig = {
   guardianAgent: AgentConfig;
   /** 工程・オーケストレーターごとに使う AI（書いてある役割だけ。PBI-40）。 */
   stepAgents?: Partial<Record<AgentRoleKey, AgentConfig>>;
+  /** agents のすべて（名前ごと。タスクの詳細で工程のエージェントを選ぶのに使う。PBI-121）。 */
+  agents?: Record<string, AgentConfig>;
   budgetPerTaskUsd: number;
   /** ゲートウェイの AI の呼び出しのリトライの上限（PBI-37）。 */
   gatewayRetry: RetryPolicy;
@@ -710,6 +726,7 @@ export function loadConfig(home: string): ConfigResult {
       stepAgents: Object.fromEntries(
         Object.entries(file.step_agents).flatMap(([role, id]) => (id ? [[role, resolve(id)]] : [])),
       ),
+      agents: Object.fromEntries(Object.keys(file.agents).map((id) => [id, resolve(id)])),
     },
   };
 }

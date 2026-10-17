@@ -196,6 +196,26 @@ Code: `apps/daemon/src/service.ts` (`askOrchestrator`, `runNextInner`, `withImag
 
 Code: `apps/daemon/src/service.ts` (`changeStepImage`, `runNextInner`, `integrate`), `apps/daemon/src/server.ts`, `packages/core/src/events.ts` (`StepImageChanged`, `ChangeStepImageInput`), `packages/core/src/projection.ts` (`stepRunning`), `apps/web/src/lib/labels.ts` (`stepImageRows`, `stepImageOptions`)
 
+## Changing a step's agent
+
+- In the task details, a person can change the agent of each step (`POST /api/tasks/:id/agents`; the input is `step` and `agent` of `ChangeStepAgentInput`).
+  The state of the step does not matter. A cancelled task cannot be changed. The targets are the steps run by step agents (Integration review is done by the Goal Guardian,
+  so it is not shown on the screen).
+- The choices are the names in `agents` in config.yaml. These are rejected with a reason (409): a name not in `agents` (`agent.notInAgents`), the same name as now
+  (`agent.unchanged`), a step not in the task (`agent.stepMissing`), and config.yaml that cannot be read (`agent.configUnavailable`).
+- A change adds `StepAgentChanged` (`step`, `from`, `to`; actor `person`). `from` is the name before the change (the name decided by config.yaml if no person chose one).
+  The projection sets `agents` to `to` and keeps the last change per step in `agentChanges`.
+- Step runs, the check of the after-merge watch, operations, and exports use the agent a person chose in preference to `step_agents` and `default_agent` in config.yaml
+  (`stepAgentFor`). It is decided at the start of a run (`AgentRunStarted`), so a running run does not change. If the chosen name is no longer in `agents`, the task
+  does not fall back to the default and pauses with `agent.chosenMissing` (an export records it as the reason it could not export). Tier subagents are placed with the
+  chosen agent as the parent.
+- The status (`GET /api/status`) returns the agents that can be chosen (name, runtime, model, reasoning effort; no secret values or endpoint URLs) and the name per step
+  decided by config.yaml (`stepAgents`). The screen shows, for each step, the agent, where it came from (config.yaml, or the time and previous name of a person's change),
+  and when it is used (`stepAgentRows`). The choices are not shown when the status cannot be read or the settings cannot be read, and stub is offered only when the
+  current agent is stub (`stepAgentOptions`). A chosen name not in `agents` is shown with a warning.
+
+Code: `apps/daemon/src/service.ts` (`changeStepAgent`, `pauseForMissingAgent`, `status`), `apps/daemon/src/config.ts` (`stepAgentFor`), `apps/daemon/src/server.ts`, `packages/core/src/events.ts` (`StepAgentChanged`, `ChangeStepAgentInput`), `apps/web/src/lib/labels.ts` (`stepAgentRows`, `stepAgentOptions`)
+
 ## Tasks from the version with the "PR作成" step
 
 Earlier versions had a "PR作成" (open PR) step (`pr`) after Implementation. That step was removed, with no compatibility layer. Its records can't be read as a step name,

@@ -1,0 +1,38 @@
+# タスクの詳細で、工程ごとのエージェントを変えられるようにする
+
+- 日付: 2026-10-17（UTC）
+- タスク: PBI-121
+- PR: なし
+- ブランチ: feat/issue-121-step-agent
+- 関係する ADR: [タスクの詳細で工程ごとのエージェントを人が変えられるようにし、config.yaml の step_agents より優先する](../adr/20261017-0005-step-agent-override.md)
+
+## 目的
+
+エラーで止まった・差し戻した工程だけ、より強いエージェントで実行し直せるように、タスクの詳細で工程ごとのエージェントを変えられるようにする。
+config.yaml を書き換えずに、そのタスクのその工程だけを変える。
+
+## したこと
+
+- core：`StepAgentChanged` イベント・`ChangeStepAgentInput`、投影の `agents`・`agentChanges`、文言のコード（`agent.*`）。
+- daemon：`SactyConfig.agents`・`stepAgentFor`（config.ts）、`changeStepAgent`・`pauseForMissingAgent`、工程の実行・マージの後の監視の確認・
+  外部作業・書き出しで人が選んだエージェントを優先、状態に `agents`・`stepAgents`、`POST /api/tasks/:id/agents`。
+- web：`changeStepAgent`・`changeStepAgentAction`、`StepAgentForm`、タスクの詳細の「工程のエージェント」の欄（`stepAgentRows`・
+  `stepAgentOptions`）、作業履歴の行、辞書（日英）。
+- docs：仕様書（タスクと工程の「工程のエージェントを人が変える」）、ユーザードキュメント（タスクを進める）、ADR。英語の版も直した。
+
+## 確かめたこと
+
+- `npx biome check`・`npm run typecheck`・`npx vitest run`・`npm run build` が通った。
+- 回帰テスト（`daemon.test.ts`）：変えたことを作業履歴に残し、次の実行で使う（config より優先・モデルとエフォートも記録）、断る場合（無い名前・
+  同じ名前・無い工程・設定を読めない・中止したタスク）、消えた名前で一時停止してエージェントを動かさない、状態の一覧に秘密を出さない。
+  （`step-agents.test.ts`）：欄の行（決めた元・統合レビューを出さない・状態が無いとき）、選択肢（状態が無い・設定を読めない・stub の扱い）。
+
+## レビューの指摘と対応
+
+| 指摘 | 対応 |
+| --- | --- |
+| （まだ無い） | |
+
+## 残したこと
+
+- 実機の AI では確かめていない（スタブの AI で画面を確かめた）。

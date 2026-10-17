@@ -471,6 +471,10 @@ export type Task = {
   imagesUnexplained?: StepKey[];
   /** 人がタスクの詳細で変えた、工程のイメージ（PBI-106）。工程ごとに最後の変更。 */
   imageChanges?: Partial<Record<StepKey, { from: string; to: string; at: string }>>;
+  /** 人が選んだ、工程のエージェント（config.yaml の agents の名前。PBI-121）。無い工程は config.yaml で決まる。 */
+  agents?: Partial<Record<StepKey, string>>;
+  /** 人が工程のエージェントを変えた記録（工程ごとの最新。PBI-121）。 */
+  agentChanges?: Partial<Record<StepKey, { from: string; to: string; at: string }>>;
   /** 工程・テストの実行の前に起動する docker compose のサービス（PBI-47）。 */
   services?: PayloadOf<"StepsChosen">["services"];
   /** サービスを使う・使わないと判断した理由（PBI-70）。 */
@@ -1633,6 +1637,17 @@ export function applyEvent(
       }
       task.images = { ...task.images, [step]: to };
       task.imageChanges = { ...task.imageChanges, [step]: { from, to, at: event.at } };
+      break;
+    }
+
+    // 人が工程のエージェントを変えた（PBI-121）。工程の状態は問わず、その工程を次に実行するときから使う
+    case "StepAgentChanged": {
+      const { step, from, to } = event.payload;
+      if (!task.steps.some((s) => s.key === step)) {
+        throw new ActivityIntegrityError(event, `step ${step} is not chosen`);
+      }
+      task.agents = { ...task.agents, [step]: to };
+      task.agentChanges = { ...task.agentChanges, [step]: { from, to, at: event.at } };
       break;
     }
 

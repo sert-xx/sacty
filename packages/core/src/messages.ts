@@ -410,6 +410,12 @@ const PARAMS = {
   "gateway.mcpReadyTimeout": z.object({ name: z.string(), seconds: z.number() }),
   "gateway.unavailable": null,
   "config.agentMissing": z.object({ key: z.string(), id: z.string() }),
+  // 工程のエージェントを人が変える（PBI-121）
+  "agent.stepMissing": null,
+  "agent.notInAgents": z.object({ name: z.string() }),
+  "agent.unchanged": z.object({ name: z.string() }),
+  "agent.configUnavailable": z.object({ detail: TextParam }),
+  "agent.chosenMissing": z.object({ step: z.string(), name: z.string() }),
 } as const satisfies Record<string, z.ZodType | null>;
 
 export type MessageParams = {
@@ -957,6 +963,14 @@ const ja: MessageDictionary = {
   "gateway.unavailable":
     "ホストのゲートウェイが起動していないため、ゲートウェイ経由のエージェントを実行できません。sacty を起動し直してください。",
   "config.agentMissing": ({ key, id }) => `${key} の "${id}" が agents にありません。`,
+  "agent.stepMissing": "その工程は、このタスクの工程にありません。",
+  "agent.notInAgents": ({ name }) =>
+    `エージェント「${name}」は config.yaml の agents にありません。agents の名前から選んでください。`,
+  "agent.unchanged": ({ name }) => `工程のエージェントは、すでに「${name}」です。`,
+  "agent.configUnavailable": ({ detail }, text) =>
+    `config.yaml を読めないため、工程のエージェントを変えられません。設定を直してから、もう一度変えてください：${text(detail)}`,
+  "agent.chosenMissing": ({ step, name }) =>
+    `工程（${step}）に選んだエージェント「${name}」が config.yaml の agents にありません。タスクの詳細でエージェントを選び直してから、再開してください。`,
 };
 
 /** 英語。用語は画面の用語集（apps/web の labels.ts）に合わせる。 */
@@ -1425,6 +1439,14 @@ const en: MessageDictionary = {
   "gateway.unavailable":
     "The host gateway is not running, so an agent that goes through it cannot run. Restart sacty.",
   "config.agentMissing": ({ key, id }) => `${key} "${id}" is not in agents.`,
+  "agent.stepMissing": "That step is not one of this task's steps.",
+  "agent.notInAgents": ({ name }) =>
+    `The agent "${name}" is not in agents in config.yaml. Choose a name from agents.`,
+  "agent.unchanged": ({ name }) => `The step agent is already "${name}".`,
+  "agent.configUnavailable": ({ detail }, text) =>
+    `config.yaml cannot be read, so the step agent cannot be changed. Fix the settings and try again: ${text(detail)}`,
+  "agent.chosenMissing": ({ step, name }) =>
+    `The agent "${name}" chosen for the step (${step}) is not in agents in config.yaml. Choose the agent again in the task details, then resume.`,
 };
 
 export const DAEMON_MESSAGES = { ja, en } as const;
