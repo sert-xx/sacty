@@ -165,6 +165,21 @@ Use "Ask the Orchestrator" in the task details to ask about the status of the ta
 - Asking does not change the steps or approved contents, and does not stop work, even on a task in progress.
 - The cost of the answer is added to the task's cost. You cannot ask on a task that has reached its budget limit.
 
+## Self-review before submitting
+
+In the Requirements, Design, and Implementation steps, the agent self-reviews the work by viewpoint with the default skill `review-dispatch` before submitting,
+and fixes it until no `must` findings are left (up to 5 rounds including the first).
+
+The result appears on the deliverable cards, the Implementation card, and the approval screen.
+
+| Shown | Meaning |
+| --- | --- |
+| Self-review: passed · n rounds | Fixed until no `must` findings were left |
+| Self-review: not passed · n rounds · m findings left | `must` findings were still left at the limit. Check them before deciding |
+| No self-review record | The agent did not report a result. Check the deliverable yourself |
+
+The cost of the self-review is included in the cost of that step.
+
 ## Changing a step's image
 
 The "Steps" section of the task detail shows the image of each step and where it came from (the Orchestrator, the project target, or a person).
