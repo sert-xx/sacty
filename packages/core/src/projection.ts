@@ -573,6 +573,15 @@ function failVerification(task: Task, feedback: NonNullable<Task["verifyFeedback
   task.status = "queued";
 }
 
+/**
+ * 成果物の本文を、工程の実行の外で差し替えた（変更の申し出の適用・人が PR の中で直してからのマージ）。前のセルフレビューは
+ * 新しい本文を見ていないので、「記録なし」にする（PR #130 レビュー指摘）。セルフレビューより前の記録（報告が無い）はそのまま。
+ */
+function voidSelfReview(task: Task, step: StepKey): void {
+  if (task.selfReviews?.[step] === undefined) return;
+  task.selfReviews = { ...task.selfReviews, [step]: null };
+}
+
 function findProposal(task: Task, event: ActivityEvent, id: string): TaskProposal {
   const proposal = task.proposals.find((p) => p.id === id);
   if (!proposal) throw new ActivityIntegrityError(event, `unknown proposal ${id}`);
@@ -813,7 +822,10 @@ export function applyEvent(
       const merge = gateMerge(task);
       const final = merge?.document?.final;
       const output = final !== undefined ? documentOutput(final) : submitted;
-      if (final !== undefined) task.outputs = { ...task.outputs, [step]: output };
+      if (final !== undefined) {
+        task.outputs = { ...task.outputs, [step]: output };
+        voidSelfReview(task, step);
+      }
       task.approved = {
         ...task.approved,
         [step]: {
@@ -989,6 +1001,7 @@ export function applyEvent(
         };
       }
       task.outputs = { ...task.outputs, [proposal.target]: proposal.proposed };
+      voidSelfReview(task, proposal.target);
       if (proposal.target === "design" && proposal.testViewpoints) {
         task.testViewpoints = proposal.testViewpoints;
       }

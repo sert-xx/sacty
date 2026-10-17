@@ -1978,4 +1978,59 @@ describe("提出の前のセルフレビュー（PBI-120）", () => {
     expect(brokenRead.output).toBe("# 設計");
     expect(extractBlocks("# 設計", new Set())).not.toHaveProperty("selfReview");
   });
+
+  it("最後の報告が JSON として読めなければ、前の報告に戻らず記録なしにし、どちらも本文から取り除く（PR #130 レビュー指摘）", () => {
+    const passed = '```json\n{"sacty-self-review": {"rounds": 1, "passed": true}}\n```';
+    const trailingComma = '```json\n{"sacty-self-review":{"rounds":5,"passed":false,}}\n```';
+    const output = `# 設計\n\n${passed}\n\n訂正します。\n\n${trailingComma}`;
+    const read = extractBlocks(output, new Set());
+    expect(read).not.toHaveProperty("selfReview");
+    expect(read.output).toBe("# 設計\n\n\n\n訂正します。");
+    // 囲みなし・閉じない括弧でも、見出しでわかる報告は取り除く
+    const unclosed = `# 設計\n\n${passed}\n\n{"sacty-self-review": {"rounds": 2, "passed": false`;
+    const unclosedRead = extractBlocks(unclosed, new Set());
+    expect(unclosedRead).not.toHaveProperty("selfReview");
+    expect(unclosedRead.output).toBe("# 設計");
+    // 閉じない報告の後ろの本文（空行の後）は消さない
+    const followed = `${unclosed}\n\n## 補足\n\n- 後ろの本文`;
+    const followedOutput = extractBlocks(followed, new Set()).output;
+    expect(followedOutput).toMatch(/^# 設計\n+## 補足\n\n- 後ろの本文$/);
+    expect(followedOutput).not.toContain("sacty-self-review");
+    const unclosedFence = `# 設計\n\n\`\`\`json\n{"sacty-self-review": {"rounds": 2,\n\`\`\`\n\n## 補足`;
+    const fenceRead = extractBlocks(unclosedFence, new Set());
+    expect(fenceRead).not.toHaveProperty("selfReview");
+    expect(fenceRead.output).toBe("# 設計\n\n\n\n## 補足");
+    // 読めない報告の後に読める報告があれば、最後（読める方）を使う
+    const corrected = `# 設計\n\n${trailingComma}\n\n${passed}`;
+    expect(extractBlocks(corrected, new Set()).selfReview).toMatchObject({ passed: true });
+    expect(extractBlocks(corrected, new Set()).output).toBe("# 設計");
+    // 見出しを文中で挙げただけ（オブジェクトのキーでない）なら、本文に残す
+    const prose = '# 設計\n\n報告は "sacty-self-review": の形で書く。';
+    expect(extractBlocks(prose, new Set()).output).toBe(prose);
+  });
+
+  it("矛盾する報告（回数が 1〜5 の外・パスなのに残った指摘がある）は記録なしにする（PR #130 レビュー指摘）", () => {
+    const of = (report: unknown) =>
+      extractBlocks(
+        `# 設計\n\n\`\`\`json\n${JSON.stringify({ "sacty-self-review": report })}\n\`\`\``,
+        new Set(),
+      );
+    for (const report of [
+      { rounds: 0, passed: true, remaining: ["未解決の不具合"] },
+      { rounds: 0, passed: true },
+      { rounds: 6, passed: false },
+      { rounds: 2, passed: true, remaining: ["未解決の不具合"] },
+      { rounds: 1.5, passed: true },
+    ]) {
+      const read = of(report);
+      expect(read, JSON.stringify(report)).not.toHaveProperty("selfReview");
+      expect(read.output).toBe("# 設計");
+    }
+    // 境界：1 回・5 回は読む。パスしていなければ残った指摘があってよい
+    expect(of({ rounds: 1, passed: true }).selfReview?.rounds).toBe(1);
+    expect(of({ rounds: 5, passed: false, remaining: ["残った"] }).selfReview).toMatchObject({
+      rounds: 5,
+      passed: false,
+    });
+  });
 });

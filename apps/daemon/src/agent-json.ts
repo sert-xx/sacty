@@ -238,14 +238,92 @@ export function headedObject(
     : undefined;
 }
 
-/** 候補の範囲を、表示用の本文から取り除く（範囲は重ならない）。 */
-export function withoutCandidates(output: string, candidates: readonly JsonCandidate[]): string {
+/**
+ * 候補の範囲を、表示用の本文から取り除く。範囲は重なってもよい（同じ報告を、JSON の候補と見出しの両方で見つけた
+ * とき。PR #130 レビュー指摘）。
+ */
+export function withoutCandidates(
+  output: string,
+  candidates: readonly Pick<JsonCandidate, "start" | "end">[],
+): string {
   const parts: string[] = [];
   let at = 0;
   for (const c of [...candidates].sort((a, b) => a.start - b.start)) {
-    parts.push(output.slice(at, c.start));
-    at = c.end;
+    if (c.start > at) parts.push(output.slice(at, c.start));
+    at = Math.max(at, c.end);
   }
   parts.push(output.slice(at));
   return parts.join("");
+}
+
+/** 見出しで見つけた JSON のオブジェクト（読めるかを問わない）。 */
+export type HeadingSpan = {
+  /** 表示用の本文から取り除く範囲（囲みがあれば、囲みの行も含む）。 */
+  start: number;
+  end: number;
+  /** JSON として読めれば見出しの値。読めなければ undefined。 */
+  value: unknown;
+};
+
+/**
+ * 見出し heading を最初のキーに持つ JSON のオブジェクト（{"見出し": …}）を、JSON として読めるかを問わずに、出てきた順に
+ * すべて返す（PR #130 レビュー指摘）。末尾のカンマなどで読めない報告も見つけ、本文から取り除けるようにする。範囲は
+ * 見出しの直前の「{」から、文字列の中を除いて括弧が閉じるところまで。閉じなければ、囲みの終わりの行か空行（どちらも
+ * 無ければ出力の終わり）の手前まで（後ろの本文を消さない）。囲みの中なら、囲みの行も含める。
+ */
+export function headingSpans(output: string, heading: string): HeadingSpan[] {
+  const found: HeadingSpan[] = [];
+  const key = new RegExp(`"${heading.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"\\s*:`, "g");
+  let fences: ReturnType<typeof fenceLines> | undefined;
+  let after = 0;
+  for (const m of output.matchAll(key)) {
+    if (m.index < after) continue;
+    let open = m.index;
+    while (open > 0 && /\s/.test(output[open - 1] ?? "")) open--;
+    if (output[open - 1] !== "{") continue;
+    open--;
+    const close = objectClose(output, open);
+    let value: unknown;
+    try {
+      const parsed: unknown = JSON.parse(output.slice(open, close));
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        value = (parsed as Record<string, unknown>)[heading];
+      }
+    } catch {
+      value = undefined;
+    }
+    fences ??= fenceLines(output);
+    let end = close;
+    while (end > open && /\s/.test(output[end - 1] ?? "")) end--;
+    found.push({ ...withFence(output, fences, open, end), value });
+    after = close;
+  }
+  return found;
+}
+
+/**
+ * open の「{」が閉じる位置の次。文字列の中の括弧は数えない。閉じなければ、囲みの終わりの行（行の頭が ```）か空行の頭、
+ * どちらも無ければ出力の終わり。
+ */
+function objectClose(output: string, open: number): number {
+  let depth = 0;
+  let inString = false;
+  for (let i = open; i < output.length; i++) {
+    const c = output[i];
+    if (inString) {
+      if (c === "\\") i++;
+      else if (c === '"') inString = false;
+      continue;
+    }
+    if (c === '"') inString = true;
+    else if (c === "{" || c === "[") depth++;
+    else if (c === "}" || c === "]") {
+      depth--;
+      if (depth === 0) return i + 1;
+    } else if (c === "\n" && /^[ \t]*(?:```|\n)/.test(output.slice(i + 1, i + 8))) {
+      // 閉じないまま、囲みの終わりの行か空行に来た。後ろの本文は報告に含めない
+      return i + 1;
+    }
+  }
+  return output.length;
 }

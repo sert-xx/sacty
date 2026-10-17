@@ -32,6 +32,7 @@ import {
 } from "@sacty/core";
 import {
   headedObject,
+  headingSpans,
   type JsonCandidate,
   jsonCandidates,
   lastJsonAnswer,
@@ -1040,12 +1041,15 @@ export function extractBlocks(
   let proposal: ExtractedProposal | undefined;
   let proposalSeen = false;
   let testMap: TestMapping[] | undefined;
-  let selfReview: SelfReview | undefined;
-  let selfReviewSeen = false;
   // テストのコマンドの申告は、専用のコードブロックだけから読み、本文（とほかの JSON の読み取り）からは取り除く（PR #105 再々レビュー指摘）
   const declared = options.testCommand ? extractTestCommandFences(output) : { output };
   const body = declared.output;
   const used: JsonCandidate[] = [];
+  // 提出の前のセルフレビューの報告（PBI-120）。JSON として読めるものと、読めないが見出しでわかるもの（PR #130 レビュー指摘）
+  const reports: { start: number; end: number; value: unknown }[] = headingSpans(
+    body,
+    SELF_REVIEW_HEADING,
+  );
   for (const candidate of jsonCandidates(body).reverse()) {
     const record = candidate.value;
     const list = record[RESPONSES_HEADING];
@@ -1054,14 +1058,9 @@ export function extractBlocks(
     const map = record[TEST_MAP_HEADING];
     const reviewed = record[SELF_REVIEW_HEADING];
     let read = false;
-    // 提出の前のセルフレビュー（PBI-120）。最後のものを使い、形が違えば読めなかったものとする（本文からは取り除く）
     if (reviewed !== undefined) {
       read = true;
-      if (!selfReviewSeen) {
-        selfReviewSeen = true;
-        const parsed = SelfReview.safeParse(reviewed);
-        if (parsed.success) selfReview = parsed.data;
-      }
+      reports.push({ start: candidate.start, end: candidate.end, value: reviewed });
     }
     if (Array.isArray(map)) {
       read = true;
@@ -1093,10 +1092,17 @@ export function extractBlocks(
     // 読んだ JSON は、表示用の本文から取り除く
     if (read) used.push(candidate);
   }
+  // 最後の報告だけを使う。最後が読めない・形が合わないときは、前の報告に戻らず、記録なしにする（どの報告も本文からは取り除く）
+  const last = reports.reduce<(typeof reports)[number] | undefined>(
+    (latest, r) => (latest === undefined || r.start >= latest.start ? r : latest),
+    undefined,
+  );
+  const parsedReview = last ? SelfReview.safeParse(last.value) : undefined;
+  const selfReview = parsedReview?.success ? parsedReview.data : undefined;
   const testCommand = "testCommand" in declared ? declared.testCommand : undefined;
   const testCommandInvalid = "invalid" in declared ? declared.invalid : undefined;
   return {
-    output: withoutCandidates(body, used).trim(),
+    output: withoutCandidates(body, [...used, ...reports]).trim(),
     responses: responses ?? [],
     testViewpoints: testViewpoints ?? [],
     proposal,

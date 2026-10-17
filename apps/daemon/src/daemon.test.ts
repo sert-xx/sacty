@@ -14629,6 +14629,29 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       activity.close();
     });
 
+    it("人が直した版を承認済みにしたら、前のセルフレビューの「パス」を残さず記録なしにする。直していなければ残す（PR #130 レビュー指摘）", async () => {
+      const report = '```json\n{"sacty-self-review": {"rounds": 2, "passed": true}}\n```';
+      for (const edited of [true, false]) {
+        const made = await start([out(`# 要求要件 v1\n\n${report}`)]);
+        const { activity, service, id } = made;
+        expect(taskOf(service, id).selfReviews?.requirements?.passed).toBe(true);
+        mergeEdited(
+          made,
+          "requirements",
+          edited ? `${header(id, "要求要件")}# 要求要件（人が直した）\n` : undefined,
+        );
+        await service.checkPullRequests();
+        const task = taskOf(service, id);
+        expect(task.approved.requirements?.output).toBe(
+          edited ? "# 要求要件（人が直した）" : "# 要求要件 v1",
+        );
+        if (edited) expect(task.selfReviews?.requirements).toBeNull();
+        else expect(task.selfReviews?.requirements?.passed).toBe(true);
+        activity.close();
+        rmSync(dbPath, { force: true });
+      }
+    });
+
     it("成果のファイルが消された・読めないときは、止めずに sacty の版を承認済みにし、そのことを残す", async () => {
       // 消された
       const deleted = await start([out("# 要求要件 v1")]);
@@ -20526,6 +20549,54 @@ describe("提出の前のセルフレビューの記録（PBI-120）", () => {
       passed: true,
       rounds: 1,
     });
+    activity.close();
+  });
+
+  it("変更の申し出で本文を差し替えたら、前の「パス」を残さず「記録なし」にする（PR #130 レビュー指摘）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const json = (b: Record<string, unknown>) => `\`\`\`json\n${JSON.stringify(b)}\n\`\`\``;
+    const design: AgentOutcome = {
+      kind: "completed",
+      output: [
+        "# 設計 v1",
+        json({
+          "sacty-test-viewpoints": [{ title: "A", input: "Aの入力", expected: "Aの期待結果" }],
+        }),
+        json({
+          "sacty-change-proposal": {
+            target: "requirements",
+            reason: "外部APIが冪等性キーに対応していない",
+            facts: ["API仕様書に Idempotency-Key が無い"],
+            proposed: "# 要求要件 v2",
+          },
+        }),
+        json({ "sacty-self-review": { rounds: 1, passed: true } }),
+      ].join("\n\n"),
+      usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 100 },
+    };
+    const undecidable: AgentOutcome = {
+      kind: "completed",
+      output: json({ "sacty-verdict": { verdict: "undecidable", reason: "価値判断を含む" } }),
+      usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 100 },
+    };
+    const { service } = makeService(activity, [
+      withReport("# 要求要件 v1", { rounds: 2, passed: true }),
+      design,
+      undecidable,
+    ]);
+    const { id } = service.createTask({ projectId: "default", title: "A" });
+    await service.runNext(id);
+    expect(service.get(id)?.task.selfReviews?.requirements?.passed).toBe(true);
+    service.approve(id, { step: "requirements", submission: 1 });
+    await service.runNext(id);
+    const applied = service.decideChange(id, "CP-1", { accept: true });
+    // 新しい本文を、工程を動かさずに再承認に回す。前の「パス」は新しい本文を見ていない
+    expect(applied.gate).toEqual({ step: "requirements", submission: 2 });
+    expect(applied.outputs.requirements).toBe("# 要求要件 v2");
+    expect(applied.selfReviews?.requirements).toBeNull();
+    // 再承認しても、記録なしのまま
+    const reapproved = service.approve(id, { step: "requirements", submission: 2 });
+    expect(reapproved.selfReviews?.requirements).toBeNull();
     activity.close();
   });
 });
