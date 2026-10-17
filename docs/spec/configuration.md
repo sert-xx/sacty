@@ -63,6 +63,7 @@
 | `provider` | `provider`（`providers` の名前） | 不可 | 可 | 不可 |
 | `stub` | なし | 不可 | 不可 | 可 |
 
+`agents` の名前は空にできない（`config.agentNameEmpty`。タスクの詳細で選んだ名前を作業履歴に残すため）。
 使う AI と役割の対応は `agentFor`：`step_agents` にあればそれ、無ければ `default_agent`（`integrate` は `guardian_agent`）。
 工程（マージの後の監視・外部作業・書き出しを含む）は、人がタスクの詳細で選んだエージェントがあれば、それを優先する（`stepAgentFor`。[工程のエージェントを人が変える](tasks-and-steps.md#工程のエージェントを人が変える)）。
 作業履歴には、使った AI の `authMode`・`model`・`reasoningEffort` だけを残す（秘密の値・接続先の URL は残さない。`agentSetting`）。

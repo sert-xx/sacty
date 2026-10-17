@@ -230,7 +230,7 @@ Code: `apps/daemon/src/service.ts` (`changeStepImage`, `runNextInner`, `integrat
   The projection sets `agents` to `to` and keeps the last change per step in `agentChanges`.
 - Step runs, the check of the after-merge watch, operations, and exports use the agent a person chose in preference to `step_agents` and `default_agent` in config.yaml
   (`stepAgentFor`). It is decided at the start of a run (`AgentRunStarted`), so a running run does not change. Step runs and the watch read it from the latest task after
-  preparing. If it changes while an operation or export is preparing (its connection and context), the run does not start with the old agent; the task stays queued and
+  preparing. An operation reads it from the latest task after looking up its connection. If it changes while an operation or export is preparing (its connection and context), the run does not start with the old agent; the task stays queued and
   the next run prepares again with the new agent. If the chosen name is no longer in `agents`, the task
   does not fall back to the default and pauses with `agent.chosenMissing` (an export records it as the reason it could not export). Tier subagents are placed with the
   chosen agent as the parent.

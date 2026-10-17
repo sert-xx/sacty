@@ -1084,6 +1084,32 @@ agents:
     });
   });
 
+  it("agents の空の名前は、理由つきで拒否する（default_agent が空の名前でも。PR #131 再レビュー指摘）", () => {
+    dir = mkdtempSync(join(tmpdir(), "sacty-config-"));
+    writeFileSync(
+      join(dir, "config.yaml"),
+      `default_agent: ""
+agents:
+  "":
+    runtime: stub
+    auth: { mode: stub }
+    price_per_mtok_usd: { input: 1, cached_input: 0.1, output: 2 }
+  strong:
+    runtime: stub
+    auth: { mode: stub }
+    price_per_mtok_usd: { input: 1, cached_input: 0.1, output: 2 }
+`,
+    );
+    const result = loadConfig(dir);
+    expect(result).toMatchObject({
+      ok: false,
+      problem: { code: "config.invalid", params: { detail: { code: "config.agentNameEmpty" } } },
+    });
+    expect(renderMessage((result as { problem: unknown }).problem, "ja")).toContain(
+      "agents の名前は空にできません。",
+    );
+  });
+
   it("使えない認証方式の組み合わせや、存在しない既定のAIは理由つきで拒否する", () => {
     dir = mkdtempSync(join(tmpdir(), "sacty-config-"));
     const write = (yaml: string) => writeFileSync(join(dir, "config.yaml"), yaml);

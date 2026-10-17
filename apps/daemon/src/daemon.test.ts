@@ -20489,6 +20489,62 @@ describe("非コードの成果と単発作業（PBI-112）", () => {
     }
   });
 
+  it("外部作業の接続先を調べている間に、消えた名前から有効な名前へ選び直したら、古い名前で止めずに新しい名前で始める（PR #131 再レビュー指摘）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const removed = agent({ id: "removed", model: "claude-haiku-5-5" });
+    const valid = agent({ id: "valid", model: "claude-sonnet-5-5" });
+    let agents = [agent(), removed, valid];
+    const base = configOf(agent(), 1, [calendar()]);
+    const config = (): ConfigResult => {
+      const loaded = base() as { ok: true; config: SactyConfig };
+      return {
+        ok: true,
+        config: { ...loaded.config, agents: Object.fromEntries(agents.map((a) => [a.id, a])) },
+      };
+    };
+    const { service } = makeService(activity, [], { config, gateway: fakeGateway() });
+    const { id } = service.createTask({ projectId: "default", title: "予定更新", repo: null });
+    activity.append({
+      taskId: id,
+      projectId: "default",
+      events: [
+        {
+          actor: "sacty",
+          event: {
+            type: "StepsChosen",
+            payload: {
+              steps: [...STEP_PLANS.operation],
+              plan: "operation",
+              reason: "予定更新",
+              operation,
+            },
+          },
+        },
+      ],
+    });
+    const restarted = makeService(activity, [success], { config, gateway: fakeGateway() });
+    restarted.service.changeStepAgent(id, { step: "operation", agent: "removed" });
+    agents = [agent(), valid];
+    const svc = restarted.service as unknown as {
+      exportDestinations: (...args: unknown[]) => Promise<unknown>;
+    };
+    const destinations = svc.exportDestinations.bind(svc);
+    vi.spyOn(svc, "exportDestinations").mockImplementationOnce(async (...args) => {
+      const found = await destinations(...args);
+      restarted.service.changeStepAgent(id, { step: "operation", agent: "valid" });
+      return found;
+    });
+    await restarted.service.runNext(id);
+    const task = restarted.service.get(id)?.task;
+    expect(task?.pausedMessage).toBeUndefined();
+    const started = restarted.service.get(id)?.activity.filter((e) => e.type === "AgentRunStarted");
+    expect(started?.map((e) => e.type === "AgentRunStarted" && e.payload.agentId)).toEqual([
+      "valid",
+    ]);
+    expect(restarted.executor.calls[0]?.command.join(" ")).toContain("claude-sonnet-5-5");
+    activity.close();
+  });
+
   it("外部実行中に中止した後で成功応答が届いても承認待ちにせず再実行しない", async () => {
     const activity = new SqliteActivityStore(dbPath);
     const { service, executor } = makeService(activity, [], {

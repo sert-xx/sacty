@@ -240,7 +240,15 @@ const ConfigFile = z
     budget: z
       .object({ default_per_task_usd: z.number().positive().default(DEFAULT_BUDGET_USD) })
       .prefault({}),
-    agents: z.record(z.string(), Agent),
+    /**
+     * 名前は空にできない（タスクの詳細で選んだ名前を作業履歴に残すため。PR #131 再レビュー指摘）。default_agent などは、
+     * agents の名前で書くので、空の名前は agents に無い名前として誤りになる。
+     */
+    agents: z.record(z.string(), Agent).superRefine((agents, ctx) => {
+      if (Object.hasOwn(agents, "")) {
+        ctx.addIssue({ code: "custom", path: [""], message: code("config.agentNameEmpty") });
+      }
+    }),
     /**
      * `sacty image build` でイメージを作るときの元（PBI-33）。プライベートのレジストリしか使えない環境向け。
      * 書かなければ、Docker Hub の node のイメージと、npm の公開レジストリから作る。

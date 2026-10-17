@@ -4742,7 +4742,10 @@ export class TaskService {
       pause(message("operation.connectionMissing"));
       return;
     }
-    const chosen = stepAgentFor(config, step, task.agents?.[step]);
+    // 接続先を調べている間に人が選び直していれば、それで決める（消えた名前から選び直したのに、古い名前で止めない。
+    // PR #131 再レビュー指摘）
+    const chosenName = this.mustGet(task.id).agents?.[step];
+    const chosen = stepAgentFor(config, step, chosenName);
     if (!chosen.ok) {
       pause(message("agent.chosenMissing", { step, name: chosen.missing }));
       return;
@@ -4787,7 +4790,7 @@ export class TaskService {
       if (latest.status !== "queued" || this.stopRequested(task.id)) return;
       // 準備（接続先・コンテキストの用意）の間に人がエージェントを変えたなら、古いエージェントでは始めない。実行待ちのまま
       // 戻し、次の実行で新しいエージェントで準備し直す（PR #131 レビュー指摘）
-      if (latest.agents?.[step] !== task.agents?.[step]) return;
+      if (latest.agents?.[step] !== chosenName) return;
       mkdirSync(workspaceDir, { recursive: true });
       // 実行前に永続化する。結果が失われても再送しない。
       this.append(latest, [

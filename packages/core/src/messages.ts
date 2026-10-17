@@ -141,6 +141,7 @@ const PARAMS = {
   "config.providerMissing": z.object({ id: z.string() }),
   "config.hostAddress": null,
   "config.npmVersion": null,
+  "config.agentNameEmpty": null,
   "config.npmConfigKey": null,
   "config.npmConfigSecret": null,
   // 言語ごとのイメージ（PBI-41）
@@ -705,6 +706,7 @@ const ja: MessageDictionary = {
   "config.providerMissing": ({ id }) => `providers に "${id}" がありません。`,
   "config.hostAddress":
     "gateway.host_address は、ホスト名か IP アドレス（または host-gateway）で書いてください。",
+  "config.agentNameEmpty": "agents の名前は空にできません。エージェントに名前を付けてください。",
   "config.npmVersion":
     "image_build.npm_version は、版（例 11、11.6.2）か latest で書いてください。",
   "config.npmConfigKey":
@@ -1189,6 +1191,7 @@ const en: MessageDictionary = {
   "config.hostAddress":
     "Write gateway.host_address as a host name or IP address (or host-gateway).",
   "config.npmVersion": "Write image_build.npm_version as a version (e.g. 11, 11.6.2) or latest.",
+  "config.agentNameEmpty": "The names in agents cannot be empty. Give each agent a name.",
   "config.npmConfigKey":
     "Write each image_build.npm_config item as an npm config name and a one-line value.",
   "config.npmConfigSecret":
