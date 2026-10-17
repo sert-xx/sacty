@@ -69,7 +69,8 @@ const ja = {
     rejected: "却下",
     adopt: "採用する",
     adopting: "採用しています…",
-    adoptHint: "採用すると、選んだ宛先に対する改修のタスクを作ります。",
+    adoptHint:
+      "採用すると、選んだ宛先のリポジトリに改修のタスクを作ります。sacty の既定のコンテキストが宛先なら、タスクは作らず、採用の記録だけを残します。",
     reject: "却下する",
     rejectConfirm: "却下を確定する",
     rejecting: "却下しています…",
@@ -217,7 +218,8 @@ const en: AuditMessages = {
     rejected: "Rejected",
     adopt: "Adopt",
     adopting: "Adopting…",
-    adoptHint: "Adopting creates a task that makes the fix in the chosen target.",
+    adoptHint:
+      "Adopting creates a fix task for the chosen target's repository. If the target is the sacty default context, no task is created; only the adoption is recorded.",
     reject: "Reject",
     rejectConfirm: "Confirm rejection",
     rejecting: "Rejecting…",

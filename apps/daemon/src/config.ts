@@ -495,7 +495,8 @@ const ConfigFile = z
         params: { key: "guardian_agent", id: config.guardian_agent },
       });
     }
-    if (config.audit_agent && !config.agents[config.audit_agent]) {
+    // 空文字・継承のプロパティの名前（constructor など）も、agents に無い名前として誤りにする（PR #135 レビュー指摘）
+    if (config.audit_agent !== undefined && !Object.hasOwn(config.agents, config.audit_agent)) {
       ctx.addIssue({
         code: "custom",
         path: ["audit_agent"],

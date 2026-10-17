@@ -30,6 +30,9 @@ import {
  */
 
 export const AUDIT_SURVEY_HEADING = "sacty-audit-survey";
+/** 台帳の全文（秘密情報を伏せたもの）を置く場所と、ファイルの名前（1行に作業履歴の1件の JSON）。 */
+export const AUDIT_LEDGER_DIR = "/sacty-ledger";
+export const AUDIT_LEDGER_FILE = "ledger.jsonl";
 export const AUDIT_FINDINGS_HEADING = "sacty-audit-findings";
 
 /** 大まかな監査で挙げる、懸念のある工程の上限。深掘りの回数（＝費用）の上限になる。 */
@@ -97,12 +100,14 @@ function ledgerLines(
       clip(task.approved[s.key]?.output ?? "", AUDIT_TEXT_IN_PROMPT),
     ]);
   const remarks = humanRemarks(task);
+  const layers = task.context?.layers ?? [];
   return [
     "--- タスク ---",
     `題：${task.title}`,
     `始まり：${task.start}`,
     `工程：${steps || "（なし）"}`,
     task.repository ? `対象リポジトリ：${task.repository.url}` : "対象リポジトリ：なし",
+    `使ったコンテキストの版：${layers.length > 0 ? layers.map((l) => `${l.repo}@${l.commit.slice(0, 12)}`).join(" → ") : "（記録なし）"}`,
     "本文：",
     clip(task.body || "（なし）", AUDIT_TEXT_IN_PROMPT),
     ...approved,
@@ -119,6 +124,7 @@ function ledgerLines(
     ...chatJudgementLines(task),
     "",
     "--- 作業履歴（古い順。行の最後の event は、その行の ID） ---",
+    `作業履歴の各行は、内容を先頭だけにし、多いときは間を省いています。全文（秘密情報は伏せてあります）は ${AUDIT_LEDGER_DIR}/${AUDIT_LEDGER_FILE} にあります（1行に1件の JSON。id で行を探せます。書き換えはできません）。一時停止の理由・判定・使ったコンテキストの版など、ここに無い詳細は全文で確かめてください。`,
     ...activityLines(activity),
   ];
 }
@@ -180,7 +186,17 @@ export type AuditSurveyOutput =
   | { ok: false; reason: DaemonText };
 
 const text = (v: unknown) => (typeof v === "string" ? v.trim() : "");
-const cut = (v: string, max: number) => (v.length > max ? `${v.slice(0, max - 1)}…` : v);
+/**
+ * 上限（UTF-16 のコード単位）に収まるように切る。切る位置がサロゲートペアの間なら1つ戻し、文字を壊さない
+ * （PR #135 レビュー指摘）。
+ */
+export function cut(v: string, max: number): string {
+  if (v.length <= max) return v;
+  let end = max - 1;
+  const last = v.charCodeAt(end - 1);
+  if (last >= 0xd800 && last <= 0xdbff) end--;
+  return `${v.slice(0, end)}…`;
+}
 
 /** 大まかな監査の出力を読む。挙げた工程は、タスクの工程にあるものだけ（重なりは1つにし、上限まで）。 */
 export function extractAuditSurvey(output: string, task: Task): AuditSurveyOutput {

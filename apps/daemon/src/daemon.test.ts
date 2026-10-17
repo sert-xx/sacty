@@ -21971,3 +21971,261 @@ describe("この機能より前に完了したタスクへの、後からの記�
     expect(latest?.audit).toBeUndefined();
   });
 });
+
+describe("監査のレビューの指摘（PR #135）", () => {
+  const out = (text: string, usageOutput = 100): AgentOutcome => ({
+    kind: "completed",
+    output: text,
+    usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: usageOutput },
+  });
+  const json = (value: unknown) => out(`\`\`\`json\n${JSON.stringify(value)}\n\`\`\``);
+  const survey = (concerns: { step: string; reason: string }[], summary = "要約") =>
+    json({ "sacty-audit-survey": { summary, concerns } });
+  const dive = (findings: unknown[]) =>
+    json({ "sacty-audit-findings": { summary: "深掘り", findings } });
+  const prompt = (invocation: Invocation) => invocation.command.join(" ");
+  const isSurvey = (invocation: Invocation) =>
+    prompt(invocation).includes("いまは大まかな監査です");
+  const isDive = (invocation: Invocation) => prompt(invocation).includes("深掘りする工程：");
+  const onlyRequirements = async () => ({
+    steps: ["requirements" as const],
+    fallback: false,
+    costUsd: 0,
+    estimated: false,
+  });
+  /** 監査の実行に渡した台帳の全文（実行の後に消されるので、実行の中で読む）。 */
+  const ledgerOf = (invocation: Invocation) => {
+    const mount = invocation.mounts?.find((m) => m.containerPath === "/sacty-ledger");
+    return mount
+      ? {
+          readOnly: mount.readOnly,
+          text: readFileSync(join(mount.hostPath, "ledger.jsonl"), "utf8"),
+        }
+      : undefined;
+  };
+
+  async function complete(
+    service: TaskService,
+    executor: FakeExecutor,
+    body: string,
+  ): Promise<string> {
+    const previous = executor.respond;
+    executor.respond = (invocation) => previous?.(invocation) ?? out("# 要求要件");
+    const task = service.createTask({ projectId: "default", title: "A", body });
+    await service.runNext(task.id);
+    service.approve(task.id, { step: "requirements", submission: 1 });
+    return task.id;
+  }
+
+  it("監査の材料（本文・却下の理由）と出力は、切り詰める前に秘密情報を伏せる。台帳の全文も伏せて読み取り専用で渡す", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service, executor } = makeService(activity, [], {
+      audit: true,
+      planner: onlyRequirements,
+    });
+    const ledgers: { readOnly: boolean; text: string }[] = [];
+    // 本文の切り詰める境界（3000 文字）に秘密の値をまたがせる。形で分かる秘密情報も入れる
+    const body = `${"あ".repeat(2995)}oauth-secret の後ろ ghp_${"A".repeat(36)}`;
+    executor.respond = (invocation) => {
+      const ledger = ledgerOf(invocation);
+      if (ledger) ledgers.push(ledger);
+      if (isSurvey(invocation)) {
+        return survey([{ step: "requirements", reason: "理由" }], "要約 ghp_secret を見た");
+      }
+      if (isDive(invocation)) {
+        return dive([
+          {
+            title: "原因 ghp_secret",
+            detail: "",
+            evidence: [],
+            proposals: [{ title: "直す", body: "ghp_secret を消す", target: 0 }],
+          },
+        ]);
+      }
+      return undefined;
+    };
+    const id = await complete(service, executor, body);
+    await service.runNext(id);
+    await service.runNext(id);
+    const surveyCall = executor.calls.find(isSurvey);
+    const text = surveyCall ? prompt(surveyCall) : "";
+    expect(text).not.toContain("oauth-secret");
+    expect(text).not.toContain("oauth-se");
+    expect(text).not.toContain(`ghp_${"A".repeat(36)}`);
+    // 伏せてから切るので、境界には伏せた印（の先頭）だけが残る
+    expect(text).toContain("あ[REDA");
+    // 台帳の全文も伏せる。読み取り専用
+    expect(ledgers.length).toBeGreaterThan(0);
+    for (const ledger of ledgers) {
+      expect(ledger.readOnly).toBe(true);
+      expect(ledger.text).not.toContain("oauth-secret");
+    }
+    // 監査の出力も、記録の前に伏せる
+    const audit = service.get(id)?.task.audit;
+    expect(audit?.survey?.summary).toBe("要約 [REDACTED] を見た");
+    expect(audit?.findings[0]?.title).toBe("原因 [REDACTED]");
+    expect(audit?.findings[0]?.proposals[0]?.body).toBe("[REDACTED] を消す");
+
+    // 却下の理由に書いた秘密の値も、次の監査には伏せて渡す
+    const proposalId = audit?.findings[0]?.proposals[0]?.id ?? "";
+    service.rejectAuditProposal(proposalId, { reason: "oauth-secret を書いてしまった" });
+    const second = await complete(service, executor, "B");
+    await service.runNext(second);
+    await service.runNext(second);
+    const diveCall = executor.calls.filter(isDive).at(-1);
+    expect(diveCall && prompt(diveCall)).toContain("[REDACTED] を書いてしまった");
+    expect(diveCall && prompt(diveCall)).not.toContain("oauth-secret");
+  });
+
+  it("指示で省いた作業履歴の行も、台帳の全文で読める。使ったコンテキストの版を指示に入れる", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service, executor } = makeService(activity, [], {
+      audit: true,
+      planner: onlyRequirements,
+    });
+    let ledger = "";
+    executor.respond = (invocation) => {
+      if (isSurvey(invocation)) {
+        ledger = ledgerOf(invocation)?.text ?? "";
+        return survey([]);
+      }
+      return out("# 要求要件");
+    };
+    const task = service.createTask({ projectId: "default", title: "A", body: "" });
+    await service.runNext(task.id);
+    // 長い作業履歴（質問と答えを何度も繰り返す）で、指示から中ほどの行を省かせる
+    const previous = executor.respond;
+    executor.respond = (invocation) =>
+      prompt(invocation).includes("--- 質問 ---")
+        ? out(`答え ${"y".repeat(400)}`)
+        : previous?.(invocation);
+    for (let i = 0; i < 60; i++) {
+      await service.askQuestion(task.id, { text: `質問 ${i} ${"x".repeat(400)}` }).answered;
+    }
+    service.approve(task.id, { step: "requirements", submission: 1 });
+    await service.runNext(task.id);
+    const call = executor.calls.find(isSurvey);
+    const text = call ? prompt(call) : "";
+    expect(text).toMatch(/件を省きました/);
+    expect(text).toContain("/sacty-ledger/ledger.jsonl");
+    expect(text).toContain("使ったコンテキストの版");
+    // 指示に無い行も、全文にはある
+    const ids = (service.get(task.id)?.activity ?? []).map((e) => e.id);
+    const missing = ids.filter((eventId) => !text.includes(`(event ${eventId})`));
+    expect(missing.length).toBeGreaterThan(0);
+    for (const eventId of missing.slice(0, 5)) expect(ledger).toContain(`"id":"${eventId}"`);
+  });
+
+  it("完了の記録と監査の登録は、同じ追記で保存する（間で止まっても監査が抜けない）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service, executor } = makeService(activity, [], {
+      audit: true,
+      planner: onlyRequirements,
+    });
+    executor.respond = () => out("# 要求要件");
+    const task = service.createTask({ projectId: "default", title: "A", body: "" });
+    await service.runNext(task.id);
+    const appends: string[][] = [];
+    const original = activity.append.bind(activity);
+    activity.append = (input) => {
+      appends.push(input.events.map((e) => (e.event as { type: string }).type));
+      return original(input);
+    };
+    service.approve(task.id, { step: "requirements", submission: 1 });
+    expect(appends).toEqual([["StepApproved", "AuditQueued"]]);
+  });
+
+  it("同じプロジェクトの深掘りを同時に始めても、1つずつ実行し、同じ新しい原因は1つの鍵にまとまる", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service, executor } = makeService(activity, [], {
+      audit: true,
+      planner: onlyRequirements,
+    });
+    executor.respond = (invocation) => {
+      if (isSurvey(invocation)) return survey([{ step: "requirements", reason: "理由" }]);
+      if (!isDive(invocation)) return undefined;
+      // 既存の原因に同じ題があれば、その鍵を使う（AI の判断の代わり）
+      const known = /- ([^\s：]+)：同じ新しい原因/.exec(prompt(invocation))?.[1];
+      return dive([
+        {
+          ...(known ? { sameAs: known } : {}),
+          title: "同じ新しい原因",
+          detail: "",
+          evidence: [],
+          proposals: [],
+        },
+      ]);
+    };
+    const a = await complete(service, executor, "A");
+    const b = await complete(service, executor, "B");
+    await service.runNext(a);
+    await service.runNext(b);
+    await Promise.all([service.runNext(a), service.runNext(b)]);
+    const keyOf = (id: string) => service.get(id)?.task.audit?.findings[0]?.causeKey;
+    expect(keyOf(a)).toBeDefined();
+    expect(keyOf(a)).toBe(keyOf(b));
+  });
+
+  it("改修のタスクの対象リポジトリは、元のタスクと同じ形にそろえ、元と同じ URL で clone する", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service, executor, repos } = makeService(activity, [], {
+      audit: true,
+      planner: onlyRequirements,
+    });
+    executor.respond = (invocation) =>
+      isSurvey(invocation)
+        ? survey([{ step: "requirements", reason: "理由" }])
+        : isDive(invocation)
+          ? dive([
+              {
+                title: "原因",
+                detail: "",
+                evidence: [],
+                proposals: [{ title: "直す", body: "本文", target: 0 }],
+              },
+            ])
+          : undefined;
+    const id = await complete(service, executor, "A");
+    await service.runNext(id);
+    await service.runNext(id);
+    const original = repos.prepared[0]?.url ?? "";
+    expect(original).toMatch(/\.git$/);
+    const proposal = service.get(id)?.task.audit?.findings[0]?.proposals[0];
+    if (!proposal) throw new Error("proposal");
+    expect(proposal.target).toEqual({ kind: "repository", repo: original.replace(/\.git$/, "") });
+    service.adoptAuditProposal(proposal.id, { target: proposal.target });
+    const decision = service.get(id)?.task.audit?.findings[0]?.proposals[0]?.decision;
+    const fixId = decision?.kind === "adopted" ? (decision.fixTaskId ?? "") : "";
+    await service.runNext(fixId);
+    expect(repos.prepared.at(-1)?.url).toBe(original);
+  });
+
+  it("大まかな監査も深掘りも、毎回新しいセッション（再開しない）で、実行の ID も別", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service, executor } = makeService(activity, [], {
+      audit: true,
+      planner: onlyRequirements,
+      orchestratorSessions: new OrchestratorSessionStore(join(dir, "sessions")),
+    });
+    executor.respond = (invocation) =>
+      isSurvey(invocation)
+        ? survey([{ step: "requirements", reason: "理由" }])
+        : isDive(invocation)
+          ? dive([])
+          : undefined;
+    const id = await complete(service, executor, "A");
+    await service.runNext(id);
+    await service.runNext(id);
+    const audits = executor.calls.filter((c) => isSurvey(c) || isDive(c));
+    expect(audits).toHaveLength(2);
+    for (const call of audits) {
+      expect(call.command).not.toContain("--resume");
+      expect(call.command).not.toContain("--continue");
+      expect(call.command.includes("resume")).toBe(false);
+    }
+    const runIds = (service.get(id)?.activity ?? []).flatMap((e) =>
+      e.type === "AuditSurveyed" || e.type === "AuditDeepDived" ? [e.payload.runId] : [],
+    );
+    expect(new Set(runIds).size).toBe(2);
+  });
+});

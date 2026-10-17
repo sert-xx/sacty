@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
   type ActivityEvent,
@@ -122,8 +123,10 @@ import type { AgentOutcome } from "./agents/parse.js";
 import { redact, redactText } from "./agents/redact.js";
 import type { TestRunner, TestRunResult } from "./agents/test-runner.js";
 import { type PlacedTier, selectTiers, tierFiles } from "./agents/tiers.js";
-import { auditCounts, countToolFailures } from "./audit-evidence.js";
+import { auditCounts, countToolFailures, redactDeep } from "./audit-evidence.js";
 import {
+  AUDIT_LEDGER_DIR,
+  AUDIT_LEDGER_FILE,
   buildAuditDivePrompt,
   buildAuditSurveyPrompt,
   extractAuditDive,
@@ -132,7 +135,7 @@ import {
   type RejectedAuditProposal,
 } from "./audit-prompts.js";
 import { auditTargetCandidates } from "./audit-targets.js";
-import { CI_FAILURES_MAX, type CiStatusReader, isFailedConclusion } from "./ci.js";
+import { CI_FAILURES_MAX, type CiStatusReader, isFailedConclusion, redactLog } from "./ci.js";
 import {
   type AgentConfig,
   agentFor,
@@ -3421,10 +3424,24 @@ export class TaskService {
       }
     }
     const before = this.tasks.get(task.id);
+    // 完了した瞬間の追記なら、監査を待つ記録を同じ追記に入れる（完了と監査の登録の間で止まっても、監査が抜けないように。
+    // この機能より前に完了したタスクは監査しない。PBI-125・PR #135 レビュー指摘）
+    const queued = this.auditQueueEvent(before, preview.get(task.id));
+    if (queued) {
+      preview = applyEvent(preview, {
+        ...EventInput.parse(queued.event),
+        seq: Number.MAX_SAFE_INTEGER,
+        id: "preview-audit",
+        taskId: task.id,
+        projectId: task.projectId,
+        at,
+        actor: queued.actor,
+      });
+    }
     const written = this.deps.activity.append({
       taskId: task.id,
       projectId: task.projectId,
-      events,
+      events: queued ? [...events, queued] : events,
     });
     for (const event of written) {
       const previous = this.tasks.get(event.taskId);
@@ -3435,8 +3452,6 @@ export class TaskService {
     const updated = this.tasks.get(task.id);
     if (!updated) throw new Error("task is missing from the projection");
     this.trackQueue();
-    // 完了した瞬間に、監査を待つ記録を足す（PBI-125）。この機能より前に完了したタスクは監査しない
-    this.queueAuditOnCompletion(before, updated);
     // 人間の出番（承認待ち・エスカレーション・一時停止）と完了を通知する（送るのは待たない。PBI-38）
     const kind = notificationFor(before, updated);
     // 通知の誤りは、書き終えたタスクの操作に伝えない（PBI-115 レビュー指摘）
@@ -7604,19 +7619,45 @@ export class TaskService {
     return task !== undefined && this.awaitingAudit(task) && this.inflight.has(taskId);
   }
 
-  /** タスクが完了した瞬間（監査の対象になった瞬間）に、監査を待つ記録を足す。 */
-  private queueAuditOnCompletion(before: Task | undefined, after: Task): void {
-    if (this.deps.audit !== true || after.audit || !isAuditTarget(after)) return;
-    if (before && isAuditTarget(before)) return;
-    this.append(after, [
-      {
-        actor: "sacty",
-        event: {
-          type: "AuditQueued",
-          payload: { auditId: randomUUID(), capUsd: this.auditBudgetUsd() },
-        },
+  /** タスクが完了する（監査の対象になる）追記なら、監査を待つ記録（同じ追記に入れる）。 */
+  private auditQueueEvent(
+    before: Task | undefined,
+    after: Task | undefined,
+  ): { actor: Actor; event: EventInput } | undefined {
+    if (this.deps.audit !== true || !after || after.audit || !isAuditTarget(after))
+      return undefined;
+    if (before && isAuditTarget(before)) return undefined;
+    return {
+      actor: "sacty",
+      event: {
+        type: "AuditQueued",
+        payload: { auditId: randomUUID(), capUsd: this.auditBudgetUsd() },
       },
-    ]);
+    };
+  }
+
+  /** プロジェクトごとの、深掘りの順番待ち（既存の原因の一覧を読んでから記録するまでを重ねない）。 */
+  private readonly auditDiveLocks = new Map<string, Promise<void>>();
+
+  /**
+   * 同じプロジェクトの深掘りを1つずつ実行する（PR #135 レビュー指摘）。並べて実行すると、どちらも同じ既存の原因の一覧を
+   * 読むため、同じ新しい原因が別の鍵で記録され、まとまらない。
+   */
+  private async withAuditDiveLock(projectId: string, run: () => Promise<void>): Promise<void> {
+    const previous = this.auditDiveLocks.get(projectId) ?? Promise.resolve();
+    let release = () => {};
+    const mine = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const chain = previous.then(() => mine);
+    this.auditDiveLocks.set(projectId, chain);
+    await previous;
+    try {
+      await run();
+    } finally {
+      release();
+      if (this.auditDiveLocks.get(projectId) === chain) this.auditDiveLocks.delete(projectId);
+    }
   }
 
   /**
@@ -7647,7 +7688,14 @@ export class TaskService {
       ]);
       return;
     }
-    await this.runAuditAgent(task, config.config, step);
+    if (!step) return this.runAuditAgent(task, config.config, undefined);
+    await this.withAuditDiveLock(task.projectId, async () => {
+      // 順番を待つ間に、中止された・別の実行が進めたなら、何もしない
+      const latest = this.tasks.get(task.id);
+      if (!latest || !this.awaitingAudit(latest) || !latest.audit?.survey) return;
+      if (nextAuditDive(latest.audit) !== step) return;
+      await this.runAuditAgent(latest, config.config, step);
+    });
   }
 
   /** 監査のエージェントを1回実行して記録する。step が無ければ大まかな監査、あれば その工程の深掘り。 */
@@ -7661,24 +7709,39 @@ export class TaskService {
     const agent = config.auditAgent;
     const runId = randomUUID();
     const logsDir = join(this.deps.workspaceRoot, "_audit-logs", runId);
+    const ledgerDir = join(this.deps.workspaceRoot, "_audit-ledger", runId);
     let record: { actor: Actor; event: EventInput }[];
     try {
-      const activity = this.deps.activity.forTask(task.id);
-      const logs = this.stageQuestionLogs(task.id, activity, logsDir, runId);
-      const counts = auditCounts(activity, this.taskToolFailures(task.id, activity));
+      // 監査に渡す材料（台帳・タスクの本文・指摘・却下の理由など）は、切り詰める前に秘密情報を伏せる（PR #135 レビュー指摘）
+      const hide = await this.auditRedactor(task, config);
+      const raw = this.deps.activity.forTask(task.id);
+      const activity = raw.map(
+        (e) => ({ ...e, payload: redactDeep(e.payload, hide) }) as ActivityEvent,
+      );
+      const shown = redactDeep(task, hide);
+      const logs = this.stageQuestionLogs(task.id, raw, logsDir, runId);
+      // 台帳の全文（伏せたもの）を、読み取り専用で渡す（指示には上限まで入れ、省いた行はここで読める。PR #135 レビュー指摘）
+      mkdirSync(ledgerDir, { recursive: true });
+      writeFileSync(
+        join(ledgerDir, AUDIT_LEDGER_FILE),
+        `${activity.map((e) => JSON.stringify(e)).join("\n")}\n`,
+      );
+      // 根拠の件数は大まかな監査のときに数え、深掘りでは記録した件数を使う（ログを毎回読み直さない。PR #135 レビュー指摘）
+      const counts =
+        audit.survey?.counts ?? auditCounts(raw, await this.taskToolFailures(task.id, raw));
       const project = this.deps.projects.get(task.projectId);
       const candidates = auditTargetCandidates(task, project);
       const known = this.knownAuditCauses(task.projectId);
       const prompt = step
-        ? buildAuditDivePrompt(task, activity, counts, logs, {
+        ? buildAuditDivePrompt(shown, activity, counts, logs, {
             step,
-            reason: audit.survey?.concerns.find((c) => c.step === step)?.reason ?? "",
-            survey: audit.survey?.summary ?? "",
+            reason: hide(audit.survey?.concerns.find((c) => c.step === step)?.reason ?? ""),
+            survey: hide(audit.survey?.summary ?? ""),
             candidates,
-            known: known.causes,
-            rejected: known.rejected,
+            known: known.causes.map((c) => ({ ...c, title: hide(c.title) })),
+            rejected: known.rejected.map((r) => ({ title: hide(r.title), reason: hide(r.reason) })),
           })
-        : buildAuditSurveyPrompt(task, activity, counts, logs);
+        : buildAuditSurveyPrompt(shown, activity, counts, logs);
       const {
         outcome,
         costUsd,
@@ -7691,12 +7754,13 @@ export class TaskService {
           image: config.image,
           prompt,
           role: step ? "audit-dive" : "audit",
-          ...("runs" in logs
-            ? {
-                mounts: [{ hostPath: logsDir, containerPath: CONTAINER_LOGS_DIR, readOnly: true }],
-                readDirs: [CONTAINER_LOGS_DIR],
-              }
-            : {}),
+          mounts: [
+            { hostPath: ledgerDir, containerPath: AUDIT_LEDGER_DIR, readOnly: true },
+            ...("runs" in logs
+              ? [{ hostPath: logsDir, containerPath: CONTAINER_LOGS_DIR, readOnly: true }]
+              : []),
+          ],
+          readDirs: [AUDIT_LEDGER_DIR, ...("runs" in logs ? [CONTAINER_LOGS_DIR] : [])],
           runId,
           stopped: () => this.cancelling.has(task.id) || this.stopping,
         },
@@ -7722,9 +7786,9 @@ export class TaskService {
         },
       ];
       if (outcome.kind === "failed") {
-        record = failed(message("audit.runFailed", { detail: outcome.message }));
+        record = failed(message("audit.runFailed", { detail: mapFreeText(outcome.message, hide) }));
       } else if (!step) {
-        const survey = extractAuditSurvey(outcome.output, task);
+        const survey = extractAuditSurvey(hide(outcome.output), task);
         record = survey.ok
           ? [
               {
@@ -7743,7 +7807,7 @@ export class TaskService {
             ]
           : failed(survey.reason);
       } else {
-        const dive = extractAuditDive(outcome.output, {
+        const dive = extractAuditDive(hide(outcome.output), {
           eventIds: new Set(activity.map((e) => e.id)),
           runIds: new Set(
             activity.flatMap((e) => {
@@ -7802,6 +7866,7 @@ export class TaskService {
       ];
     } finally {
       rmSync(logsDir, { recursive: true, force: true });
+      rmSync(ledgerDir, { recursive: true, force: true });
     }
     const latest = this.tasks.get(task.id);
     if (!latest || !isAuditTarget(latest) || latest.audit?.auditId !== audit.auditId) return;
@@ -7827,8 +7892,14 @@ export class TaskService {
     ]);
   }
 
-  /** タスクの各実行のセッションログから、失敗したツール呼び出しを数える（ログが無ければ 0）。 */
-  private taskToolFailures(taskId: string, activity: readonly ActivityEvent[]): number {
+  /**
+   * タスクの各実行のセッションログ（標準出力の JSONL だけ）から、失敗したツール呼び出しを数える（ログが無ければ 0）。
+   * 1つずつ非同期で読む（大きいログで、ほかのタスクの進行や API の応答を止めない。PR #135 レビュー指摘）。
+   */
+  private async taskToolFailures(
+    taskId: string,
+    activity: readonly ActivityEvent[],
+  ): Promise<number> {
     const store = this.deps.sessionLogs;
     if (!store) return 0;
     const runIds = new Set(
@@ -7839,14 +7910,38 @@ export class TaskService {
     );
     let failures = 0;
     for (const runId of runIds) {
+      const path = store.path(taskId, runId, "events");
+      if (!path) continue;
       try {
-        const log = store.read(taskId, runId);
-        if (log) failures += countToolFailures(log.events);
+        failures += countToolFailures(await readFile(path, "utf8"));
       } catch {
-        // 読めないログは数えない
+        // 無い・読めないログは数えない
       }
     }
     return failures;
+  }
+
+  /**
+   * 監査の材料から秘密情報を伏せる関数（PR #135 レビュー指摘）。sacty の設定・sacty の設定で使う秘密情報の値と、
+   * GitHub のトークン、よくある秘密情報の形（CI のログと同じ規則）を伏せる。取り出せない値は飛ばす。
+   */
+  private async auditRedactor(task: Task, config: SactyConfig): Promise<(text: string) => string> {
+    const values: string[] = [];
+    for (const use of uniqueUses(secretUses(config, this.readableSettings()))) {
+      try {
+        values.push(await this.deps.secrets.get(use.ref));
+      } catch {
+        // 取り出せない値は伏せられないが、形で伏せる
+      }
+    }
+    if (task.repository) {
+      try {
+        await this.githubToken(task, task.repository.url, values);
+      } catch {
+        // GitHub のアカウントを選んでいないなど
+      }
+    }
+    return (text: string) => redactLog(text, values);
   }
 
   /** プロジェクトの既存の原因（鍵・題・状態）と、人が却下した提案と理由（監査に渡す）。 */

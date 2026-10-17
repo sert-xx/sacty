@@ -199,7 +199,6 @@ const worker = new Worker(service);
 const intake = new IssueIntake(service, new GitHubIssueSearch(), github, config, Date.now, tickets);
 // 承認待ちの PR（実装・要求要件・設計）を見守る（マージで承認。PBI-14a）
 const prWatcher = new PullRequestWatcher(service);
-// 完了したタスクの監査（PBI-124）。モックは SACTY_AUDIT_MOCK=1 のときだけ（既定では監査の無い実装）
 // 完了したタスクの監査（PBI-125）。作業履歴の記録から作る。SACTY_AUDIT_MOCK=1 なら、モックのデータを返す（PBI-124）
 const audits = auditMock
   ? new MockAuditService({

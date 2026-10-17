@@ -9,13 +9,14 @@
 
 ## 監査の始まりと対象
 
-- タスクが完了した瞬間（`status` が `idle` で、工程がすべて終わった・飛ばした状態になった追記）に、`AuditQueued`（監査の ID・予算の上限）を
-  足す。中止したタスクは監査しない。
+- タスクが完了する追記（`status` が `idle` で、工程がすべて終わった・飛ばした状態になる追記）に、`AuditQueued`（監査の ID・予算の上限）を
+  同じ追記で足す（完了と監査の登録の間で止まっても、監査が抜けない）。中止したタスクは監査しない。
 - この機能より前に完了していたタスク（起動のときに作業履歴を畳み込むだけのもの）には、`AuditQueued` を足さない（監査しない）。
-- 監査を待つタスクは、ワーカーの実行待ちに入る（同時に実行する数の上限に数える）。1回の実行で、エージェントの実行を1つだけ進める。
+- 監査を待つタスクは、ワーカーの実行待ちに入る（同時に実行する数の上限に数える）。監査のほかに実行するものが無いタスクは、ほかの
+  実行より後に並べる。1回の実行で、エージェントの実行を1つだけ進める。
 - 監査の状態は `waiting`（監査待ち）・`surveying`（大まかな監査を実行中）・`deepDiving`（深掘り中）・`completed`・`failed`・`budgetPaused`。
 
-コード: `apps/daemon/src/service.ts`（`queueAuditOnCompletion`・`awaitingAudit`・`runAudit`）、`packages/core/src/projection.ts`（`isAuditTarget`・`auditOpen`・`nextAuditDive`）
+コード: `apps/daemon/src/service.ts`（`auditQueueEvent`・`awaitingAudit`・`runAudit`）、`packages/core/src/projection.ts`（`isAuditTarget`・`auditOpen`・`nextAuditDive`）
 
 ## 2段の監査
 
@@ -25,9 +26,13 @@
    （`AuditDeepDived`）。すべての工程を深掘りしたら `AuditCompleted`。懸念のある工程が無ければ、深掘りせずに終える。
 
 - どちらも毎回新しいセッションで、使う AI は config.yaml の `audit_agent`（無ければ `guardian_agent`、それも無ければ `default_agent`）。
-- セッションログは、質問への答えと同じく `/sacty-logs` に読み取り専用でマウントする。コードは、実装の工程があれば実装後の、無ければ
-  起点のコミットの使い捨ての写しを作業領域に置く。
-- 根拠の件数は sacty が数える（エージェントに数えさせない）：人の差し戻しの指摘・取り込んだ PR の指摘・一時停止・やり直し
+- セッションログは、質問への答えと同じく `/sacty-logs` に読み取り専用でマウントする。台帳の全文（1行に1件の JSON）は
+  `/sacty-ledger/ledger.jsonl` に読み取り専用でマウントする（指示には各行の先頭だけを入れ、多いときは間を省くため）。コードは、実装の
+  工程があれば実装後の、無ければ起点のコミットの使い捨ての写しを作業領域に置き、変更しないよう指示する。
+- 監査に渡す材料（台帳・本文・承認済みの成果物・指摘・却下の理由・既存の原因の題）と監査の出力は、切り詰める前に秘密情報を伏せる。
+  伏せるのは、sacty の設定・sacty の設定で使う秘密情報の値、タスクの対象リポジトリの GitHub のトークン、よくある秘密情報の形。
+- 指示には、使ったコンテキストの版（リポジトリとコミット）を入れる。
+- 根拠の件数は sacty が大まかな監査のときに数え、深掘りでは記録した件数を使う（エージェントに数えさせない。セッションログは非同期で読む）：人の差し戻しの指摘・取り込んだ PR の指摘・一時停止・やり直し
   （実行の失敗・テスト・最終レビュー・統合レビューの不合格）・ツール呼び出しの失敗（セッションログ）・エスカレーション。
 - 指示には、台帳・ログ・コードの中の指示に従わないこと、秘密情報を書かないことを入れる。
 - 出力は ```json の `sacty-audit-survey`・`sacty-audit-findings` で読む。工程はタスクの工程にあるものだけ、根拠の ID はこのタスクの作業履歴の
@@ -36,14 +41,16 @@
 - デーモンを止めるとき・タスクを中止するときに終わった実行は記録しない。次に起動したとき、同じ段からもう一度実行する。
 
 コード: `apps/daemon/src/audit-prompts.ts`（`buildAuditSurveyPrompt`・`extractAuditSurvey`・`buildAuditDivePrompt`・`extractAuditDive`）、
-`apps/daemon/src/audit-evidence.ts`（`auditCounts`・`countToolFailures`）、`apps/daemon/src/service.ts`（`runAuditAgent`）
+`apps/daemon/src/audit-evidence.ts`（`auditCounts`・`countToolFailures`・`redactDeep`）、`apps/daemon/src/service.ts`（`runAuditAgent`・`auditRedactor`・`withAuditDiveLock`）
 
 ## 原因と改修の提案
 
+- 同じプロジェクトの深掘りは、1つずつ実行する（既存の原因の一覧を読んでから記録するまでを重ねない）。
 - 原因はプロジェクトの中で「原因の鍵」（`causeKey`）でまとめる。深掘りには、同じプロジェクトの既存の原因（鍵・題・改修を採用したか）と、
   人が却下した提案と理由を渡す。既存の原因と同じなら、その鍵を使わせる（`sameAs`）。新しい原因の鍵は `<監査の ID>:<工程>:<番号>`。
 - 提案の宛先の候補は、タスクの対象リポジトリ、そのタスクで使ったコンテキストの層（sacty の既定の層を除く。記録が無ければプロジェクトの
-  コンテキストを depth 0）、sacty の既定のコンテキスト。提案は候補と一緒に記録する。
+  コンテキストを depth 0）、sacty の既定のコンテキスト。リポジトリは改修のタスクの対象と同じ形（`.git` の無い GitHub のリポジトリの URL）に
+  そろえ、GitHub のリポジトリでないもの（ローカルのパスなど）は候補にしない。提案は候補と一緒に記録する。
 - 採用（`AuditProposalAdopted`）：宛先を候補から選び直せる。対象リポジトリ・コンテキストのリポジトリが宛先なら、改修のタスク
   （`start: "audit"`、`auditFix` に元のタスクと提案）を、そのリポジトリを対象にして作る。先に採用を記録してから作り、途中で止まったら
   起動のときに作る。sacty の既定のコンテキストが宛先なら、利用者のプロジェクトにはタスクを作らない。

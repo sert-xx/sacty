@@ -10,13 +10,14 @@ Related ADRs: [Build the audit screens first, on a mock backend](../adr/20261017
 
 ## When an audit starts, and what is audited
 
-- At the moment a task completes (an append that makes `status` `idle` with every step done or skipped), `AuditQueued` (the audit ID and budget
-  cap) is added. Cancelled tasks are not audited.
+- `AuditQueued` (the audit ID and budget cap) is added in the same append that completes a task (makes `status` `idle` with every step done or
+  skipped), so the audit is not lost if the daemon stops in between. Cancelled tasks are not audited.
 - Tasks that completed before this feature (only folded from the activity log at startup) get no `AuditQueued` and are not audited.
-- A task waiting for its audit enters the worker's queue (it counts toward the limit on parallel runs). Each run advances one agent run.
+- A task waiting for its audit enters the worker's queue (it counts toward the limit on parallel runs). Tasks with nothing but the audit left
+  are queued after other runs. Each run advances one agent run.
 - The audit states are `waiting`, `surveying` (the survey is running), `deepDiving`, `completed`, `failed`, and `budgetPaused`.
 
-Code: `apps/daemon/src/service.ts` (`queueAuditOnCompletion`, `awaitingAudit`, `runAudit`), `packages/core/src/projection.ts` (`isAuditTarget`, `auditOpen`, `nextAuditDive`)
+Code: `apps/daemon/src/service.ts` (`auditQueueEvent`, `awaitingAudit`, `runAudit`), `packages/core/src/projection.ts` (`isAuditTarget`, `auditOpen`, `nextAuditDive`)
 
 ## Two stages
 
@@ -26,9 +27,16 @@ Code: `apps/daemon/src/service.ts` (`queueAuditOnCompletion`, `awaitingAudit`, `
    (`AuditDeepDived`). After every step is deep-dived, `AuditCompleted`. With no steps of concern, the audit finishes without a deep dive.
 
 - Both run in a new session every time, with `audit_agent` in config.yaml (or `guardian_agent`, or `default_agent`).
-- Session logs are mounted read-only at `/sacty-logs`, as for answers to questions. The workspace gets a disposable copy of the code: after the
-  implementation if the task has an implement step, otherwise at the base commit.
-- sacty counts the evidence (the agent does not): human change requests, imported PR remarks, pauses, retries (failed runs, failed
+- Session logs are mounted read-only at `/sacty-logs`, as for answers to questions. The full ledger (one JSON event per line) is mounted read-only
+  at `/sacty-ledger/ledger.jsonl` (the instructions hold only the start of each row and omit the middle when long). The workspace gets a
+  disposable copy of the code, after the implementation if the task has an implement step, otherwise at the base commit, with an instruction
+  not to change it.
+- Secrets are redacted before truncation from the materials (ledger, body, approved outputs, remarks, rejection reasons, existing cause
+  titles) and from the audit output: the values of secrets used by the settings and sacty settings, the GitHub token of the task's
+  repository, and common secret patterns.
+- The instructions include the context versions used (repositories and commits).
+- sacty counts the evidence during the survey, and the deep dives reuse the recorded counts (the agent does not count; session logs are read
+  asynchronously): human change requests, imported PR remarks, pauses, retries (failed runs, failed
   tests, final reviews, and integration reviews), failed tool calls (session logs), and escalations.
 - The instructions say not to follow instructions found in the ledger, logs, or code, and not to write secrets.
 - The output is read from ```json blocks headed `sacty-audit-survey` and `sacty-audit-findings`. Only steps the task has, evidence IDs that
@@ -37,15 +45,17 @@ Code: `apps/daemon/src/service.ts` (`queueAuditOnCompletion`, `awaitingAudit`, `
 - Runs that end because the daemon is stopping or the task is being cancelled are not recorded. On the next start, the same stage runs again.
 
 Code: `apps/daemon/src/audit-prompts.ts` (`buildAuditSurveyPrompt`, `extractAuditSurvey`, `buildAuditDivePrompt`, `extractAuditDive`),
-`apps/daemon/src/audit-evidence.ts` (`auditCounts`, `countToolFailures`), `apps/daemon/src/service.ts` (`runAuditAgent`)
+`apps/daemon/src/audit-evidence.ts` (`auditCounts`, `countToolFailures`, `redactDeep`), `apps/daemon/src/service.ts` (`runAuditAgent`, `auditRedactor`, `withAuditDiveLock`)
 
 ## Causes and proposals
 
+- Deep dives in the same project run one at a time (reading the existing causes and recording the result do not overlap).
 - Causes are grouped within a project by a cause key (`causeKey`). The deep dive gets the project's existing causes (key, title, whether a
   fix was adopted) and the rejected proposals with their reasons. If a cause is the same as an existing one, the agent uses its key
   (`sameAs`). A new cause key is `<audit ID>:<step>:<number>`.
 - The target candidates are the task's target repository, the context layers the task used (without the sacty default layer; if there is no
-  record, the project's context as depth 0), and the sacty default context. Each proposal is recorded with its candidates.
+  record, the project's context as depth 0), and the sacty default context. Repositories are normalized to the fix task's form (a GitHub
+  repository URL without `.git`), and non-GitHub ones (such as local paths) are not candidates. Each proposal is recorded with its candidates.
 - Adopt (`AuditProposalAdopted`): another target can be chosen from the candidates. If the target is the target repository or a context
   repository, a fix task (`start: "audit"`, `auditFix` holding the original task and proposal) is created for that repository. The
   adoption is recorded first; if the daemon stops before the task is created, it is created at the next start. If the target is the sacty

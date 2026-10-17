@@ -87,3 +87,16 @@ export function auditCounts(
   }
   return counts;
 }
+
+/**
+ * 値の中のすべての文字列に hide をかける（オブジェクト・配列はたどる。監査の材料の秘密情報を伏せる。PR #135 レビュー指摘）。
+ * キーは変えない。
+ */
+export function redactDeep<T>(value: T, hide: (text: string) => string): T {
+  if (typeof value === "string") return hide(value) as T;
+  if (Array.isArray(value)) return value.map((v) => redactDeep(v, hide)) as T;
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, redactDeep(v, hide)])) as T;
+  }
+  return value;
+}
