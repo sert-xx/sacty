@@ -7951,7 +7951,8 @@ export class TaskService {
    * GitHub のトークン、よくある秘密情報の形（CI のログと同じ規則）を伏せる。取り出せない値は飛ばす。
    */
   private async auditRedactor(task: Task, config: SactyConfig): Promise<(text: string) => string> {
-    const values = [...(await this.auditSecretValues(task.projectId, config))];
+    // 監査に送る前・記録する前は、使い回さずに今の設定から取り出す（設定を変えた直後の値も伏せる。PR #135 再レビュー指摘）
+    const values = [...(await this.auditSecretValues(task.projectId, config, { fresh: true }))];
     if (task.repository) {
       try {
         await this.githubToken(task, task.repository.url, values);
@@ -7962,33 +7963,53 @@ export class TaskService {
     return (text: string) => redactLog(text, values);
   }
 
-  /** 監査で伏せる秘密情報の値（プロジェクトごとに、短い間だけ持つ。画面の取り直しのたびに取り出さないため）。 */
-  private readonly auditSecretCache = new Map<string, { at: number; values: string[] }>();
+  /**
+   * 画面に出す文を伏せる秘密情報の値（プロジェクトごとに、短い間だけ持つ。画面の取り直しのたびに取り出さないため）。key は
+   * 秘密情報の参照と GitHub のアカウントの一覧で、設定を変えたら使わない（PR #135 再レビュー指摘）。
+   */
+  private readonly auditSecretCache = new Map<
+    string,
+    { at: number; key: string; values: string[] }
+  >();
 
   /**
    * 監査で伏せる秘密情報の値：sacty の設定・sacty の設定で使う秘密情報（監査の AI のものを含む）と、プロジェクトで選んだ
    * GitHub のアカウントのトークン。取り出せない値は飛ばす（形で伏せる）。
    */
-  private async auditSecretValues(projectId: string, config: SactyConfig): Promise<string[]> {
+  private async auditSecretValues(
+    projectId: string,
+    config: SactyConfig,
+    options: { fresh?: boolean } = {},
+  ): Promise<string[]> {
+    const refs = uniqueUses(secretUses(config, this.readableSettings())).map((u) => u.ref);
+    const project = this.deps.projects.get(projectId);
+    const accounts = project?.githubAccounts ?? {};
+    const key = JSON.stringify({ refs: [...refs].sort(), accounts });
     const cached = this.auditSecretCache.get(projectId);
-    if (cached && this.now() - cached.at < AUDIT_SECRET_CACHE_MS) return cached.values;
+    if (
+      !options.fresh &&
+      cached &&
+      cached.key === key &&
+      this.now() - cached.at < AUDIT_SECRET_CACHE_MS
+    ) {
+      return cached.values;
+    }
     const values: string[] = [];
-    for (const use of uniqueUses(secretUses(config, this.readableSettings()))) {
+    for (const ref of refs) {
       try {
-        values.push(await this.deps.secrets.get(use.ref));
+        values.push(await this.deps.secrets.get(ref));
       } catch {
         // 取り出せない値は伏せられないが、形で伏せる
       }
     }
-    const project = this.deps.projects.get(projectId);
-    for (const host of Object.keys(project?.githubAccounts ?? {})) {
+    for (const host of Object.keys(accounts)) {
       try {
         await this.githubToken({ projectId }, `https://${host}/sacty/sacty`, values);
       } catch {
         // gh にログインしていないなど
       }
     }
-    this.auditSecretCache.set(projectId, { at: this.now(), values });
+    this.auditSecretCache.set(projectId, { at: this.now(), key, values });
     return values;
   }
 

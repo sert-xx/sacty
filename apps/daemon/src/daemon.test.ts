@@ -22501,3 +22501,112 @@ describe("監査の再々レビューの指摘（PR #135）", () => {
     expect(order).toEqual(["監査A", "監査C"]);
   });
 });
+
+describe("監査で伏せる秘密情報の値の使い回し（PR #135 再レビュー指摘）", () => {
+  const out = (text: string): AgentOutcome => ({
+    kind: "completed",
+    output: text,
+    usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 100 },
+  });
+  const json = (value: unknown) => out(`\`\`\`json\n${JSON.stringify(value)}\n\`\`\``);
+  const prompt = (invocation: Invocation) => invocation.command.join(" ");
+  const isSurvey = (invocation: Invocation) =>
+    prompt(invocation).includes("いまは大まかな監査です");
+  const isDive = (invocation: Invocation) => prompt(invocation).includes("深掘りする工程：");
+
+  it("画面を取った後に監査の AI の秘密情報の参照・値を変えても、時間内でも新しい値を材料・却下の理由・画面から伏せる", async () => {
+    const values: Record<string, string> = {
+      "claude-oauth-token": "oauth-secret",
+      "github-token": "ghp_secret",
+      "audit-old": "zz-old-value-1",
+      "audit-new": "zz-new-value-9",
+      "audit-rotated": "zz-before-rotate",
+    };
+    let ref = "audit-old";
+    const base = configOf(agent());
+    const config = (): ConfigResult => {
+      const c = base();
+      if (!c.ok) return c;
+      return {
+        ok: true,
+        config: {
+          ...c.config,
+          auditAgent: agent({
+            id: "auditor",
+            auth: { mode: "api-key", secret: ref },
+          }),
+        },
+      };
+    };
+    const activity = new SqliteActivityStore(dbPath);
+    const { service, executor } = makeService(activity, [], {
+      audit: true,
+      config,
+      // 時刻を止めて、使い回す時間の中で確かめる
+      now: () => Date.parse("2026-10-17T00:00:00Z"),
+      secretStore: { get: async (name: string) => values[name] ?? "" },
+      planner: async () => ({
+        steps: ["requirements" as const],
+        fallback: false,
+        costUsd: 0,
+        estimated: false,
+      }),
+    });
+    executor.respond = (invocation) =>
+      isSurvey(invocation)
+        ? json({
+            "sacty-audit-survey": {
+              summary: "要約",
+              concerns: [{ step: "requirements", reason: "理由" }],
+            },
+          })
+        : isDive(invocation)
+          ? json({
+              "sacty-audit-findings": {
+                summary: "深掘り",
+                findings: [
+                  {
+                    title: "原因",
+                    detail: "",
+                    evidence: [],
+                    proposals: [{ title: "直す", body: "", target: 0 }],
+                  },
+                ],
+              },
+            })
+          : out("# 要求要件");
+    // 画面を取って、古い参照で値を持たせる
+    const view = new LedgerAuditService(service);
+    await view.projectAudits("default");
+    // 監査の AI の秘密情報の参照を変える（使い回す時間の中）
+    ref = "audit-new";
+    const task = service.createTask({
+      projectId: "default",
+      title: "題 zz-new-value-9",
+      body: "本文 zz-new-value-9",
+    });
+    await service.runNext(task.id);
+    service.approve(task.id, { step: "requirements", submission: 1 });
+    await service.runNext(task.id);
+    // 同じ参照のまま値を入れ替えても、送る前は今の値で伏せる
+    ref = "audit-rotated";
+    await view.projectAudits("default");
+    values["audit-rotated"] = "zz-after-rotate";
+    await service.runNext(task.id);
+    // 大まかな監査は、参照を変えた直後（audit-new の間）に送った。深掘りは値を入れ替えた後（audit-rotated）に送った
+    const surveyed = executor.calls.filter(isSurvey).map(prompt).join("\n");
+    expect(surveyed).toContain("本文");
+    expect(surveyed).not.toContain("zz-new-value-9");
+    const proposal = service.get(task.id)?.task.audit?.findings[0]?.proposals[0];
+    await service.rejectAuditProposal(proposal?.id ?? "", { reason: "理由 zz-after-rotate" });
+    expect(service.get(task.id)?.task.audit?.findings[0]?.proposals[0]?.decision).toMatchObject({
+      kind: "rejected",
+      reason: "理由 [REDACTED]",
+    });
+    // 画面は、参照を変えたら使い回さない
+    ref = "audit-new";
+    const shown = await view.projectAudits("default");
+    expect(JSON.stringify(shown)).not.toContain("zz-new-value-9");
+    expect(shown?.audits[0]?.taskTitle).toBe("題 [REDACTED]");
+  });
+});
