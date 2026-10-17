@@ -2,7 +2,7 @@
 
 - 日付: 2026-10-17（UTC）
 - タスク: PBI-121
-- PR: なし
+- PR: #131
 - ブランチ: feat/issue-121-step-agent
 - 関係する ADR: [タスクの詳細で工程ごとのエージェントを人が変えられるようにし、config.yaml の step_agents より優先する](../adr/20261017-0005-step-agent-override.md)
 
