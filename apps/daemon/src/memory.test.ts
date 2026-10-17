@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   countOpenedMemories,
   expiredMemories,
+  groupByLayer,
   type LiveMemory,
   lastUsefulAt,
   liveMemories,
@@ -366,5 +367,30 @@ describe("昇格（PBI-128）", () => {
     const memories = ["merged", "open", "pending", "rejected"].map((id) => live(id));
     expect(promotedMemories(tasks, memories).map((m) => m.id)).toEqual(["merged"]);
     expect(promotedMemories(tasks, [])).toEqual([]);
+  });
+});
+
+describe("階層ごとに分ける（PR #136 レビュー指摘）", () => {
+  it("1回の走査で階層に分け、各階層を新しい順にする。多くの階層でも件数に比例した時間で済む", () => {
+    const memories: LiveMemory[] = [];
+    for (let l = 0; l < 300; l++) {
+      for (let i = 0; i < 30; i++) {
+        memories.push(
+          live(`m${l}-${i}`, {
+            scope: "repository",
+            repo: `https://github.com/o/r${l}`,
+            lastUsefulAt: `2026-10-${String((i % 28) + 1).padStart(2, "0")}T00:00:00.000Z`,
+          } as Partial<LiveMemory>),
+        );
+      }
+    }
+    const started = performance.now();
+    const groups = groupByLayer(memories);
+    const over = overCapacity(memories, 30);
+    expect(performance.now() - started).toBeLessThan(500);
+    expect(groups.size).toBe(300);
+    expect(over).toEqual([]);
+    const first = groups.values().next().value?.memories ?? [];
+    expect(first[0]?.lastUsefulAt >= (first.at(-1)?.lastUsefulAt ?? "")).toBe(true);
   });
 });

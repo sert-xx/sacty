@@ -440,12 +440,14 @@ describe("大まかな監査の、役に立ったメモリー（PBI-127）", () 
         },
       }),
       task,
+      undefined,
       new Set(["m1"]),
     );
     expect(read.ok && read.usefulMemories).toEqual(["m1"]);
     const missing = extractAuditSurvey(
       block({ "sacty-audit-survey": { summary: "s", concerns: [] } }),
       task,
+      undefined,
       new Set(["m1"]),
     );
     expect(missing.ok && missing.usefulMemories).toEqual([]);
@@ -480,6 +482,7 @@ describe("大まかな監査の、メモリーの昇格（PBI-128）", () => {
     extractAuditSurvey(
       block({ "sacty-audit-survey": { summary: "s", concerns: [], ...value } }),
       task,
+      undefined,
       new Set(),
       input,
     );
@@ -528,6 +531,26 @@ describe("大まかな監査の、メモリーの昇格（PBI-128）", () => {
     expect(result.ok && result.memoryPromotions).toHaveLength(AUDIT_MAX_MEMORY_PROMOTIONS);
   });
 
+  it("提案の題と本文も、デコードした後に伏せる（PR #136 レビュー指摘）", () => {
+    const result = extractAuditSurvey(
+      block({
+        "sacty-audit-survey": {
+          summary: "s",
+          concerns: [],
+          memoryPromotions: [{ id: "p1", target: 0, title: 't a"b', body: 'b a"b' }],
+        },
+      }),
+      task,
+      (t) => t.split('a"b').join("[REDACTED]"),
+      new Set(),
+      promotion,
+    );
+    expect(result.ok && result.memoryPromotions[0]).toMatchObject({
+      title: "t [REDACTED]",
+      body: "b [REDACTED]",
+    });
+  });
+
   it("提案は、提案中でないもの・候補の番号の宛先・題のあるものだけ", () => {
     const result = read({
       memoryPromotions: [
@@ -563,5 +586,55 @@ describe("大まかな監査の、メモリーの昇格（PBI-128）", () => {
       "プロジェクト・組織・コンテキストに固有の名前や事情を含むものは repository に移さない",
     );
     expect(buildAuditSurveyPrompt(task, [], zero, { runs: [] }, [])).not.toContain("memoryMoves");
+  });
+});
+
+describe("出力の文は、デコードした後に伏せる（PR #136 レビュー指摘）", () => {
+  const hide = (t: string) => t.split('a"b').join("[REDACTED]");
+  it("深掘りの原因・根拠・提案・メモリーと、大まかな監査の要約・理由を伏せてから切り詰める", () => {
+    const dive = extractAuditDive(
+      block({
+        "sacty-audit-findings": {
+          summary: 's a"b',
+          findings: [
+            {
+              title: 't a"b',
+              detail: 'd a"b',
+              evidence: [{ kind: "retry", text: 'e a"b' }],
+              proposals: [{ title: 'p a"b', body: 'b a"b', target: 0 }],
+            },
+          ],
+          memories: [
+            { scope: "project", title: 'm a"b', summary: 'u a"b', body: `${"x".repeat(4000)}a"b` },
+          ],
+        },
+      }),
+      {
+        eventIds: new Set(),
+        runIds: new Set(),
+        candidates: [{ kind: "sacty" }],
+        knownKeys: new Set(),
+        knownMemoryIds: new Set(),
+      },
+      hide,
+    );
+    const text = JSON.stringify(dive);
+    expect(text).not.toContain('a\\"b');
+    expect(dive.ok && dive.findings[0]?.title).toBe("t [REDACTED]");
+    expect(dive.ok && dive.memories[0]?.summary).toBe("u [REDACTED]");
+    // 伏せた後に切り詰めるので、上限を超えない
+    expect(dive.ok && dive.memories[0]?.body.length).toBeLessThanOrEqual(4000);
+    const survey = extractAuditSurvey(
+      block({
+        "sacty-audit-survey": {
+          summary: 's a"b',
+          concerns: [{ step: "implement", reason: 'r a"b' }],
+        },
+      }),
+      task,
+      hide,
+    );
+    expect(survey.ok && survey.summary).toBe("s [REDACTED]");
+    expect(survey.ok && survey.concerns[0]?.reason).toBe("r [REDACTED]");
   });
 });

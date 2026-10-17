@@ -58,7 +58,9 @@ Code: `apps/daemon/src/memory.ts` (`liveMemories`, `writeMemoryLayer`, `syncMemo
   made single-line; the contents are capped at 4000 characters. Items missing a title, summary, or contents, items whose `sameAs` is an existing
   ID, and `repository` items without a target repository are dropped. sacty sets the `repository` destination to the target repository (the
   output's destination is not used).
-- Like other audit output, secrets are redacted before recording. sacty assigns the IDs.
+- Like other audit output, secrets are redacted before recording. The same redaction is also applied to the title, summary, and contents after
+  decoding the JSON and before truncation (values containing quotes, backslashes, or newlines are escaped in the JSON string and would not
+  match there). sacty assigns the IDs.
 - Deep dives of the same project run one at a time, so duplicates in the project layer are checked against the list at registration time. The
   repository layer can receive a registration from another project's deep dive at the same time; then the same knowledge may end up as two memories.
 - Each layer holds at most 30 memories (`MEMORY_MAX_PER_LAYER`). When a registration exceeds it, the memories with the oldest last useful date
@@ -134,14 +136,15 @@ Code: `apps/daemon/src/memory.ts` (`expiredMemories`, `MEMORY_CLEANUP_INTERVAL_M
 
 ## Giving memories to agents
 
-- Runs of steps (except the integration review) and their rework (`rework`) get the task's project layer at `/sacty-memory/project` and the
+- Runs of steps (except the integration review) get the task's project layer at `/sacty-memory/project` and the
   target repository's layer at `/sacty-memory/repository`, mounted read-only. Layers without an index are not mounted. For Claude Code, they are
   added to the readable places with `--add-dir`.
 - When something is mounted, reading instructions are added at the start of the prompt: read the index and open only the relevant files under
   `references/`. When a memory conflicts with the person's instructions, the context's rules and skills, or the target repository's AGENTS.md and
   so on, follow those instead.
 - The audit (survey and deep dive) gets the same mounts (to check for duplicates), without the reading instructions.
-- The Goal Guardian (change-request judgement, final review, integration review), the orchestrator, question answers, and exports get none.
+- The Goal Guardian (change-request judgement, final review, integration review, and judging where to send PR remarks back (role `rework`)),
+  the orchestrator, question answers, and exports get none. The rework after sending back runs again under the step's role, so it gets them.
 - Other projects' project layers and other repositories' layers are never given.
 
 Code: `apps/daemon/src/service.ts` (`withMemory`, `MEMORY_STEP_ROLES`), `apps/daemon/src/memory.ts` (`taskMemoryLayers`, `existingLayerDir`, `memoryPromptLines`)

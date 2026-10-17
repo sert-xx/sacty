@@ -3229,6 +3229,8 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       services?: ServiceRunner;
       sharedComposes?: SharedComposeFetcher;
       projects?: MemoryProjectStore;
+      /** メモリーを書き出す・渡す（PBI-126）。 */
+      memory?: boolean;
     } = {},
   ) {
     const activity = new SqliteActivityStore(dbPath);
@@ -5668,6 +5670,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       repos?: FakeRepos;
       config?: () => ConfigResult;
       now?: () => number;
+      memory?: boolean;
     } = {},
   ) {
     const made = await toImplement([implement("# 実装の説明"), review(), ...outcomes], options);
@@ -6024,6 +6027,36 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       url: `https://github.com/acme/app/pull/7#${key}`,
       body: "全体として、失敗時のログが足りない",
       ...patch,
+    });
+
+    it("PR の指摘の差し戻し先の判定（ゴールガーディアン）には、メモリーを渡さない（PR #136 レビュー指摘）", async () => {
+      // 前のタスクの監査が登録したメモリーがある
+      const layer = join(dir, "memory", "projects", "default");
+      mkdirSync(join(layer, "references"), { recursive: true });
+      writeFileSync(join(layer, "SKILL.md"), "- [題](references/m1.md)：概要");
+      const pulls = new FakePulls();
+      const { service, executor } = await toImplementGate([rework("implement", "実装で直せる")], {
+        pulls,
+        now: later,
+        memory: true,
+      });
+      // 工程（実装）の実行には渡している
+      const implementCall = executor.calls.find((c) =>
+        c.command.join(" ").includes("--- メモリー ---"),
+      );
+      expect(implementCall?.mounts?.some((m) => m.containerPath === "/sacty-memory/project")).toBe(
+        true,
+      );
+      pulls.feedbackList = [item("comment:1")];
+      const before = executor.calls.length;
+      await service.checkPullRequests();
+      const judge = executor.calls[before];
+      expect(judge?.command.join(" ")).toContain("sacty-rework");
+      expect((judge?.mounts ?? []).some((m) => m.containerPath.startsWith("/sacty-memory"))).toBe(
+        false,
+      );
+      expect(judge?.command.join(" ")).not.toContain("--- メモリー ---");
+      expect(judge?.command).not.toContain("/sacty-memory/project");
     });
 
     it("レビュー・行のコメント・通常のコメントを指摘として取り込み、ゴールガーディアンが実装と判断したら差し戻す", async () => {
@@ -22941,13 +22974,14 @@ describe("監査のメモリー（PBI-126）", () => {
       "guardian",
       "final-review",
       "integrate",
+      "rework",
       "orchestrator",
       "chat",
       "export",
     ]) {
       expect(MEMORY_STEP_ROLES.has(role as never), role).toBe(false);
     }
-    for (const role of ["requirements", "design", "implement", "review", "rework"]) {
+    for (const role of ["requirements", "design", "implement", "review"]) {
       expect(MEMORY_STEP_ROLES.has(role as never), role).toBe(true);
     }
   });
@@ -23061,6 +23095,69 @@ describe("監査のメモリー（PBI-126）", () => {
     expect(index).toContain("知見2");
     expect(index).toContain("知見3");
     expect(readdirSync(join(projectDir(), "references"))).toHaveLength(2);
+  });
+
+  it("JSON でエスケープされる文字を含む秘密情報の値も、デコードした後に伏せてからメモリーと原因に記録する（PR #136 レビュー指摘）", async () => {
+    const secret = 'zz"q\\p\nend';
+    const activity = new SqliteActivityStore(dbPath);
+    const { service, executor } = makeService(activity, [], {
+      audit: true,
+      memory: true,
+      planner: onlyRequirements,
+      secrets: { "claude-oauth-token": secret, "github-token": "ghp_secret" },
+    });
+    executor.respond = (invocation) => {
+      if (isSurvey(invocation)) {
+        return json({
+          "sacty-audit-survey": {
+            summary: `要約 ${secret}`,
+            concerns: [{ step: "requirements", reason: `理由 ${secret}` }],
+          },
+        });
+      }
+      if (isDive(invocation)) {
+        return json({
+          "sacty-audit-findings": {
+            summary: "深掘り",
+            findings: [
+              {
+                title: `原因 ${secret}`,
+                detail: "",
+                evidence: [{ kind: "retry", text: `根拠 ${secret}` }],
+                proposals: [{ title: "直す", body: `本文 ${secret}`, target: 0 }],
+              },
+            ],
+            memories: [
+              memory({ title: `題 ${secret}`, summary: `概要 ${secret}`, body: `中身 ${secret}` }),
+            ],
+          },
+        });
+      }
+      return out("# 要求要件");
+    };
+    const a = await completeAndAudit(service, "A");
+    const recorded = JSON.stringify(activity.forTask(a));
+    expect(recorded).not.toContain(JSON.stringify(secret).slice(1, -1));
+    const audit = service.get(a)?.task.audit;
+    const texts = [
+      audit?.survey?.summary,
+      audit?.survey?.concerns[0]?.reason,
+      audit?.findings[0]?.title,
+      audit?.findings[0]?.evidence[0]?.text,
+      audit?.findings[0]?.proposals[0]?.body,
+      audit?.memories[0]?.title,
+      audit?.memories[0]?.summary,
+      audit?.memories[0]?.body,
+    ];
+    for (const text of texts) {
+      expect(text).toContain("[REDACTED]");
+      expect(text).not.toContain(secret);
+    }
+    const files = readdirSync(join(projectDir(), "references")).map((name) =>
+      readFileSync(join(projectDir(), "references", name), "utf8"),
+    );
+    files.push(readFileSync(join(projectDir(), "SKILL.md"), "utf8"));
+    for (const file of files) expect(file).not.toContain(secret);
   });
 
   it("既存のメモリーと同じ（sameAs）なら登録しない", async () => {

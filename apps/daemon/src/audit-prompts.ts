@@ -284,6 +284,7 @@ function usefulMemoryRuleLines(): string[] {
 function surveyPromotions(
   v: Record<string, unknown>,
   promotion: PromotionInput | undefined,
+  str: (v: unknown) => string,
 ): { memoryMoves: SurveyMemoryMove[]; memoryPromotions: SurveyMemoryPromotion[] } {
   const byId = new Map((promotion?.memories ?? []).map((m) => [m.id, m]));
   const moves: SurveyMemoryMove[] = [];
@@ -305,10 +306,10 @@ function surveyPromotions(
       typeof item.target === "number" && Number.isInteger(item.target)
         ? promotion?.candidates[item.target]
         : undefined;
-    const title = cut(text(item.title).replace(/\s+/g, " "), AUDIT_TITLE_MAX);
+    const title = cut(str(item.title).replace(/\s+/g, " "), AUDIT_TITLE_MAX);
     if (!memory || memory.promoting || !target || !title) continue;
     if (promotions.some((p) => p.id === memory.id)) continue;
-    promotions.push({ id: memory.id, target, title, body: cut(text(item.body), AUDIT_TEXT_MAX) });
+    promotions.push({ id: memory.id, target, title, body: cut(str(item.body), AUDIT_TEXT_MAX) });
     if (promotions.length >= AUDIT_MAX_MEMORY_PROMOTIONS) break;
   }
   return { memoryMoves: moves, memoryPromotions: promotions };
@@ -365,6 +366,13 @@ function openedMemoryLines(opened: readonly OpenedMemory[]): string[] {
 }
 
 const text = (v: unknown) => (typeof v === "string" ? v.trim() : "");
+
+/**
+ * 出力の文を伏せる関数（JSON をデコードした後に、切り詰める前に当てる）。JSON の文字列のままでは、引用符・バックスラッシュ・
+ * 改行を含む秘密情報の値はエスケープされて一致せず、デコードで元の値に戻るため（PR #136 レビュー指摘）。
+ */
+export type OutputRedactor = (text: string) => string;
+const keep: OutputRedactor = (t) => t;
 /**
  * 上限（UTF-16 のコード単位）に収まるように切る。切る位置がサロゲートペアの間なら1つ戻し、文字を壊さない
  * （PR #135 レビュー指摘）。
@@ -381,12 +389,14 @@ export function cut(v: string, max: number): string {
 export function extractAuditSurvey(
   output: string,
   task: Task,
+  hide: OutputRedactor = keep,
   /** タスクの実行で開いたメモリーの ID（役に立ったものは、この中からだけ残す。PBI-127）。 */
   opened: ReadonlySet<string> = new Set(),
   /** 昇格の判断の材料（移す・提案するメモリーは、この中からだけ残す。PBI-128）。 */
   promotion?: PromotionInput,
 ): AuditSurveyOutput {
   const steps = new Set(task.steps.map((s) => s.key));
+  const str = (v: unknown) => hide(text(v));
   const found = lastJsonAnswer(output, (value) => {
     const v = headedObject(value, AUDIT_SURVEY_HEADING);
     if (!v || typeof v.summary !== "string" || !Array.isArray(v.concerns)) return undefined;
@@ -394,7 +404,7 @@ export function extractAuditSurvey(
     for (const c of v.concerns as unknown[]) {
       const item = (c ?? {}) as { step?: unknown; reason?: unknown };
       const step = StepKey.safeParse(item.step);
-      const reason = text(item.reason);
+      const reason = str(item.reason);
       if (!step.success || !steps.has(step.data) || !reason) continue;
       if (concerns.some((x) => x.step === step.data)) continue;
       concerns.push({ step: step.data, reason: cut(reason, 500) });
@@ -403,10 +413,10 @@ export function extractAuditSurvey(
       ? [...new Set(v.usefulMemories.map(text).filter((id) => opened.has(id)))]
       : [];
     return {
-      summary: cut(text(v.summary), AUDIT_TEXT_MAX),
+      summary: cut(str(v.summary), AUDIT_TEXT_MAX),
       concerns,
       usefulMemories: useful,
-      ...surveyPromotions(v, promotion),
+      ...surveyPromotions(v, promotion, str),
     };
   });
   if (!found) return { ok: false, reason: message("audit.unreadable") };
@@ -557,7 +567,9 @@ export function extractAuditDive(
     knownMemoryIds?: ReadonlySet<string>;
     repository?: string;
   },
+  hide: OutputRedactor = keep,
 ): AuditDiveOutput {
+  const str = (v: unknown) => hide(text(v));
   const kinds = new Set<string>(AUDIT_EVIDENCE_KINDS);
   const found = lastJsonAnswer(output, (value) => {
     const v = headedObject(value, AUDIT_FINDINGS_HEADING);
@@ -565,12 +577,12 @@ export function extractAuditDive(
     const findings: AuditDiveFinding[] = [];
     for (const raw of v.findings as unknown[]) {
       const f = (raw ?? {}) as Record<string, unknown>;
-      const title = text(f.title);
+      const title = str(f.title);
       if (!title) continue;
       const evidence = (Array.isArray(f.evidence) ? f.evidence : []).flatMap((e: unknown) => {
         const item = (e ?? {}) as Record<string, unknown>;
         const kind = text(item.kind);
-        const what = text(item.text);
+        const what = str(item.text);
         if (!kinds.has(kind) || !what) return [];
         const eventId = text(item.event);
         const runId = text(item.run);
@@ -589,12 +601,12 @@ export function extractAuditDive(
           typeof item.target === "number" && Number.isInteger(item.target)
             ? context.candidates[item.target]
             : undefined;
-        const ptitle = text(item.title);
+        const ptitle = str(item.title);
         if (!target || !ptitle) return [];
         return [
           {
             title: cut(ptitle, AUDIT_TITLE_MAX),
-            body: cut(text(item.body), AUDIT_TEXT_MAX),
+            body: cut(str(item.body), AUDIT_TEXT_MAX),
             target,
           },
         ];
@@ -603,15 +615,15 @@ export function extractAuditDive(
       findings.push({
         ...(context.knownKeys.has(sameAs) ? { sameAs } : {}),
         title: cut(title, AUDIT_TITLE_MAX),
-        detail: cut(text(f.detail), AUDIT_TEXT_MAX),
+        detail: cut(str(f.detail), AUDIT_TEXT_MAX),
         evidence: evidence.slice(0, 20),
         proposals: proposals.slice(0, AUDIT_MAX_PROPOSALS),
       });
     }
     return {
-      summary: cut(text(v.summary), AUDIT_TEXT_MAX),
+      summary: cut(str(v.summary), AUDIT_TEXT_MAX),
       findings,
-      memories: diveMemories(v.memories, context),
+      memories: diveMemories(v.memories, context, str),
     };
   });
   if (!found) return { ok: false, reason: message("audit.unreadable") };
@@ -652,14 +664,15 @@ function memoryRuleLines(repository: string | undefined): string[] {
 function diveMemories(
   raw: unknown,
   context: { knownMemoryIds?: ReadonlySet<string>; repository?: string },
+  str: (v: unknown) => string,
 ): AuditDiveMemory[] {
   const memories: AuditDiveMemory[] = [];
   for (const item of Array.isArray(raw) ? raw : []) {
     const m = (item ?? {}) as Record<string, unknown>;
     if (context.knownMemoryIds?.has(text(m.sameAs))) continue;
-    const title = cut(text(m.title).replace(/\s+/g, " "), MEMORY_TITLE_MAX);
-    const summary = cut(text(m.summary).replace(/\s+/g, " "), MEMORY_SUMMARY_MAX);
-    const body = cut(text(m.body), MEMORY_BODY_MAX);
+    const title = cut(str(m.title).replace(/\s+/g, " "), MEMORY_TITLE_MAX);
+    const summary = cut(str(m.summary).replace(/\s+/g, " "), MEMORY_SUMMARY_MAX);
+    const body = cut(str(m.body), MEMORY_BODY_MAX);
     if (!title || !summary || !body) continue;
     if (m.scope === "project") memories.push({ scope: "project", title, summary, body });
     else if (m.scope === "repository" && context.repository) {
