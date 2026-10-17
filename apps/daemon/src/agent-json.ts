@@ -285,7 +285,9 @@ export function headingSpans(output: string, heading: string): HeadingSpan[] {
     fences ??= fenceLines(output);
     let before = open;
     while (before > 0 && /\s/.test(output[before - 1] ?? "")) before--;
-    const close = objectClose(output, open, fences.opens.has(before));
+    const fenced = fences.opens.has(before);
+    const bounds = objectClose(output, open, fenced);
+    let close = bounds.end;
     let value: unknown;
     try {
       const parsed: unknown = JSON.parse(output.slice(open, close));
@@ -293,6 +295,9 @@ export function headingSpans(output: string, heading: string): HeadingSpan[] {
         value = (parsed as Record<string, unknown>)[heading];
       }
     } catch {
+      // 読めない報告の括弧の数は当てにならない（後ろの本文の「}」で閉じたように見える）。囲みの外では、最初の空行か
+      // 文字列が途切れた行で区切り、後ろの本文を消さない（PR #130 再々レビュー指摘）
+      if (!fenced && bounds.recover !== undefined && bounds.recover < close) close = bounds.recover;
       value = undefined;
     }
     let end = close;
@@ -307,23 +312,34 @@ export function headingSpans(output: string, heading: string): HeadingSpan[] {
  * open の「{」が閉じる位置の次。文字列の中の括弧は数えない。JSON の文字列は改行を含めないので、文字列の中で改行に来たら、
  * 閉じない文字列としてそこで終える（PR #130 再レビュー指摘）。括弧が閉じなければ、囲みの中（fenced）なら囲みの終わりの行
  * （行の頭が ```）の頭、囲みの外なら最初の空行か ``` の行の頭（どれも無ければ出力の終わり）。空行で区切るのは閉じない
- * 報告だけで、閉じる報告（空行を含む正しい JSON も）は途中で切らない（PR #130 再レビュー指摘）。
+ * 報告だけで、閉じる報告（空行を含む正しい JSON も）は途中で切らない（PR #130 再レビュー指摘）。空行は CRLF の行も含む。
+ * recover は、閉じたように見えても JSON として読めないときに区切り直す位置（最初の空行、無ければ文字列が途切れた行の
+ * 次の行の頭。PR #130 再々レビュー指摘）。
  */
-function objectClose(output: string, open: number, fenced: boolean): number {
+function objectClose(
+  output: string,
+  open: number,
+  fenced: boolean,
+): { end: number; recover: number | undefined } {
   let depth = 0;
   let inString = false;
   let firstBlank: number | undefined;
+  let brokenString: number | undefined;
+  const recover = () => firstBlank ?? brokenString;
   for (let i = open; i < output.length; i++) {
     const c = output[i];
     if (c === "\n") {
+      if (inString) brokenString ??= i + 1;
       inString = false;
       const next = output.slice(i + 1, i + 8);
-      if (/^[ \t]*```/.test(next)) return fenced ? i + 1 : Math.min(firstBlank ?? i + 1, i + 1);
-      if (firstBlank === undefined && /^[ \t]*\n/.test(next)) firstBlank = i + 1;
+      if (/^[ \t\r]*```/.test(next)) {
+        return { end: fenced ? i + 1 : Math.min(firstBlank ?? i + 1, i + 1), recover: recover() };
+      }
+      if (firstBlank === undefined && /^[ \t\r]*\n/.test(next)) firstBlank = i + 1;
       continue;
     }
     if (inString) {
-      if (c === "\\" && output[i + 1] !== "\n") i++;
+      if (c === "\\" && output[i + 1] !== "\n" && output[i + 1] !== "\r") i++;
       else if (c === '"') inString = false;
       continue;
     }
@@ -331,8 +347,8 @@ function objectClose(output: string, open: number, fenced: boolean): number {
     else if (c === "{" || c === "[") depth++;
     else if (c === "}" || c === "]") {
       depth--;
-      if (depth === 0) return i + 1;
+      if (depth === 0) return { end: i + 1, recover: recover() };
     }
   }
-  return fenced ? output.length : (firstBlank ?? output.length);
+  return { end: fenced ? output.length : (firstBlank ?? output.length), recover: recover() };
 }

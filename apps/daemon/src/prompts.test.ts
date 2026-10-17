@@ -2011,6 +2011,29 @@ describe("提出の前のセルフレビュー（PBI-120）", () => {
     // 囲みの中の閉じない報告は、空行があっても囲みの終わりまでを取り除く
     const blankInFence = `# 設計\n\n\`\`\`json\n{"sacty-self-review": {"rounds": 2,\n\n"passed": true\n\`\`\`\n\n## 補足`;
     expect(extractBlocks(blankInFence, new Set()).output).toMatch(/^# 設計\n+## 補足$/);
+    // 囲みの外の読めない報告で、後ろの本文に閉じ括弧があっても、本文を消さない（PR #130 再々レビュー指摘）
+    const braceLater =
+      '# 設計\n\n{"sacty-self-review": {"rounds":2, "summary":"未完\n\n## 補足\n終了トークンは }} とする。';
+    const braceLaterRead = extractBlocks(braceLater, new Set());
+    expect(braceLaterRead).not.toHaveProperty("selfReview");
+    expect(braceLaterRead.output).toMatch(/^# 設計\n+## 補足\n終了トークンは \}\} とする。$/);
+    // 空行が無くても、文字列が途切れた行の後ろの本文は消さない
+    const braceSameParagraph =
+      '# 設計\n\n{"sacty-self-review": {"rounds":2, "summary":"未完\n終了トークンは }} とする。';
+    expect(extractBlocks(braceSameParagraph, new Set()).output).toMatch(
+      /^# 設計\n+終了トークンは \}\} とする。$/,
+    );
+    // CRLF の空行でも区切る
+    const crlf = '# 設計\n\n{"sacty-self-review": {"rounds":2,\r\n\r\n## 補足\r\n本文';
+    const crlfRead = extractBlocks(crlf, new Set());
+    expect(crlfRead).not.toHaveProperty("selfReview");
+    expect(crlfRead.output).toMatch(/^# 設計\s+## 補足\r\n本文$/);
+    // CRLF の正しい報告（空行を含む）は読む
+    const crlfValid =
+      '# 設計\r\n\r\n{"sacty-self-review": {\r\n"rounds": 1,\r\n\r\n"passed": true}}\r\n\r\n## 補足';
+    const crlfValidRead = extractBlocks(crlfValid, new Set());
+    expect(crlfValidRead.selfReview).toMatchObject({ rounds: 1, passed: true });
+    expect(crlfValidRead.output).toMatch(/^# 設計\s+## 補足$/);
     // 読めない報告の後に読める報告があれば、最後（読める方）を使う
     const corrected = `# 設計\n\n${trailingComma}\n\n${passed}`;
     expect(extractBlocks(corrected, new Set()).selfReview).toMatchObject({ passed: true });
