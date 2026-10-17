@@ -10,6 +10,7 @@ vi.mock("@/i18n/client", () => ({ useMessages: () => messagesFor(locale) }));
 vi.mock("@/app/actions", () => ({
   adoptAuditProposalAction: vi.fn(),
   rejectAuditProposalAction: vi.fn(),
+  deleteAuditMemoryAction: vi.fn(),
   resumeAuditAction: vi.fn(),
 }));
 
@@ -32,6 +33,7 @@ const audit = (patch: Partial<TaskAudit>): TaskAudit => ({
   budget: { usedUsd: 0.25, capUsd: 1 },
   deepDives: [],
   findings: [],
+  memories: [],
   ...patch,
 });
 
@@ -245,5 +247,67 @@ describe("プロジェクトの監査の画面（PBI-124）", () => {
     expect(html).toContain("原因はまだありません。");
     expect(html).toContain("提案はまだありません。");
     expect(html).toContain("完了したタスクはまだありません。");
+  });
+});
+
+describe("監査が登録したメモリー（PBI-126）", () => {
+  const memory = {
+    id: "m1",
+    scope: "repository" as const,
+    repo: "https://github.com/a/app",
+    title: "lint は biome",
+    summary: "lint の道具",
+    body: "**biome** を使う",
+    step: "implement" as const,
+    at: "2026-10-01T00:00:00.000Z",
+  };
+
+  it("登録したメモリーの題・階層・概要・中身と、消すボタンを出す", () => {
+    locale = "ja";
+    const html = render(audit({ memories: [memory] }));
+    expect(html).toContain("登録したメモリー");
+    expect(html).toContain("lint は biome");
+    expect(html).toContain("リポジトリ");
+    expect(html).toContain("https://github.com/a/app");
+    expect(html).toContain("lint の道具");
+    expect(html).toContain("<strong>biome</strong>");
+    expect(html).toContain('data-testid="audit-memory-m1"');
+    expect(html).toContain("消す");
+    // 空白の無い長い題・概要も折り返す（PR #136 レビュー指摘）
+    expect(html).toMatch(
+      /<span class="[^"]*\[overflow-wrap:anywhere\][^"]*">lint は biome<\/span>/,
+    );
+    expect(html).toMatch(/<p class="[^"]*\[overflow-wrap:anywhere\][^"]*">lint の道具<\/p>/);
+  });
+
+  it("消したメモリーは印を出し、中身と消すボタンを出さない。上限で消したものは理由の補足を出す", () => {
+    locale = "ja";
+    const html = render(
+      audit({
+        memories: [
+          { ...memory, deleted: { at: "2026-10-02T00:00:00.000Z", reason: "person" } },
+          {
+            ...memory,
+            id: "m2",
+            scope: "project",
+            repo: undefined,
+            deleted: { at: "2026-10-02T00:00:00.000Z", reason: "capacity" },
+          },
+        ],
+      }),
+    );
+    expect(html).toContain("消した");
+    expect(html).toContain("上限で消した");
+    expect(html).toContain("有効な最終利用日の古いものから消しました");
+    expect(html).not.toContain("<strong>biome</strong>");
+    expect(html).not.toContain(">消す<");
+  });
+
+  it("メモリーが無ければ欄を出さない。英語の画面", () => {
+    locale = "ja";
+    expect(render(audit({}))).not.toContain("登録したメモリー");
+    locale = "en";
+    expect(render(audit({ memories: [memory] }))).toContain("Registered memories");
+    locale = "ja";
   });
 });

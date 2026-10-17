@@ -422,6 +422,8 @@ const PARAMS = {
   "audit.notFound": null,
   "audit.proposalNotFound": null,
   "audit.alreadyDecided": null,
+  "audit.memoryNotFound": null,
+  "audit.memoryDeleted": null,
   "audit.targetNotCandidate": null,
   "audit.notPaused": null,
   "audit.runFailed": z.object({ detail: TextParam }),
@@ -993,6 +995,8 @@ const ja: MessageDictionary = {
   "audit.notFound": "このタスクの監査はありません。",
   "audit.proposalNotFound": "その提案はありません。",
   "audit.alreadyDecided": "その提案は、すでに採用か却下をしています。",
+  "audit.memoryNotFound": "そのメモリーはありません。",
+  "audit.memoryDeleted": "そのメモリーは、すでに消しています。",
   "audit.targetNotCandidate":
     "その宛先は、この提案の宛先の候補にありません。候補から選んでください。",
   "audit.notPaused": "予算で一時停止している監査ではありません。",
@@ -1488,6 +1492,8 @@ const en: MessageDictionary = {
   "audit.notFound": "This task has no audit.",
   "audit.proposalNotFound": "That proposal does not exist.",
   "audit.alreadyDecided": "That proposal has already been adopted or rejected.",
+  "audit.memoryNotFound": "That memory does not exist.",
+  "audit.memoryDeleted": "That memory has already been deleted.",
   "audit.targetNotCandidate":
     "That target is not one of this proposal's candidates. Choose one of them.",
   "audit.notPaused": "The audit is not paused by its budget.",

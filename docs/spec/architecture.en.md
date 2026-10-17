@@ -268,6 +268,7 @@ Data is stored under `SACTY_HOME` (default `~/.sacty`).
 | `cache/shared-compose/` | Cache of shared compose repositories |
 | `host-mcp/processes/` | Process records of host MCP servers (including the context's command MCP servers) |
 | `context-mcp/layers/` | Working directories of the context's command MCP servers started on the host (copies of the layer repositories) |
+| `memory/` | Memories the audit registered (`projects/<ID>/`, `repos/<host>/<owner>/<name>/`). The activity log is the source of truth; rewritten at startup ([Memory](memory.en.md)) |
 
 Code: `apps/daemon/src/config.ts` (`resolveHome`, `configPath`), `apps/daemon/src/main.ts`, `apps/daemon/src/service.ts` (`repoDir`, `trustedGitDir`), `apps/daemon/src/instance-lock.ts`, `packages/cli/src/context-preview.ts` (`DAEMON_FILE`)
 

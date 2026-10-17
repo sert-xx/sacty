@@ -1878,6 +1878,38 @@ export const AuditFindingRecord = z.object({
   proposals: z.array(AuditProposalRecord).max(5),
 });
 
+/** メモリーの題・概要・中身の上限（文字数。PBI-126）。 */
+export const MEMORY_TITLE_MAX = 200;
+export const MEMORY_SUMMARY_MAX = 300;
+export const MEMORY_BODY_MAX = 4000;
+
+/**
+ * 監査が登録したメモリー（PBI-126）。scope が project ならタスクのプロジェクトの、repository なら repo（.git の無い GitHub の
+ * リポジトリの URL）のメモリー。
+ */
+export const AuditMemoryRecord = z.discriminatedUnion("scope", [
+  z.object({
+    id: z.string().min(1),
+    scope: z.literal("project"),
+    title: z.string().min(1).max(MEMORY_TITLE_MAX),
+    summary: z.string().min(1).max(MEMORY_SUMMARY_MAX),
+    body: z.string().min(1).max(MEMORY_BODY_MAX),
+  }),
+  z.object({
+    id: z.string().min(1),
+    scope: z.literal("repository"),
+    repo: z.string().min(1),
+    title: z.string().min(1).max(MEMORY_TITLE_MAX),
+    summary: z.string().min(1).max(MEMORY_SUMMARY_MAX),
+    body: z.string().min(1).max(MEMORY_BODY_MAX),
+  }),
+]);
+export type AuditMemoryRecord = z.infer<typeof AuditMemoryRecord>;
+
+/** メモリーを消した理由：人が消した・階層の件数の上限を超えたので古いものを消した（PBI-126）。 */
+export const MEMORY_DELETE_REASONS = ["person", "capacity"] as const;
+export type MemoryDeleteReason = (typeof MEMORY_DELETE_REASONS)[number];
+
 /** 監査を待つ（タスクが完了した）。capUsd は監査の予算の上限。 */
 const AuditQueued = z.object({
   type: z.literal("AuditQueued"),
@@ -1906,6 +1938,8 @@ const AuditDeepDived = z.object({
     step: StepKey,
     summary: z.string().max(AUDIT_TEXT_MAX),
     findings: z.array(AuditFindingRecord).max(10),
+    /** 登録したメモリー（PBI-126）。 */
+    memories: z.array(AuditMemoryRecord).max(10).default([]),
     ...AuditRun,
   }),
 });
@@ -1975,6 +2009,12 @@ const AuditProposalAdopted = z.object({
 const AuditProposalRejected = z.object({
   type: z.literal("AuditProposalRejected"),
   payload: z.object({ proposalId: z.string().min(1), reason: z.string().trim().min(1).max(2000) }),
+});
+
+/** 監査が登録したメモリーを消した（PBI-126）。メモリーを登録したタスクの作業履歴に記録する。 */
+const AuditMemoryDeleted = z.object({
+  type: z.literal("AuditMemoryDeleted"),
+  payload: z.object({ memoryId: z.string().min(1), reason: z.enum(MEMORY_DELETE_REASONS) }),
 });
 
 /** 作業履歴に書けるイベント（追加する前の形）。 */
@@ -2062,6 +2102,7 @@ export const EventInput = z.discriminatedUnion("type", [
   AuditCapRaised,
   AuditProposalAdopted,
   AuditProposalRejected,
+  AuditMemoryDeleted,
 ]);
 export type EventInput = z.input<typeof EventInput>;
 export type ParsedEventInput = z.infer<typeof EventInput>;

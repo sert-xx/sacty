@@ -511,5 +511,14 @@ export function createApp(
     }
   });
 
+  // 監査が登録したメモリーを、人が消す（PBI-126）。登録はできない
+  app.post("/api/audits/memories/:id/delete", async (c) => {
+    try {
+      return c.json({ audit: await audits.deleteMemory(c.req.param("id")) });
+    } catch (error) {
+      return handleError(c, error);
+    }
+  });
+
   return app;
 }

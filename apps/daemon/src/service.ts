@@ -132,6 +132,7 @@ import {
   extractAuditDive,
   extractAuditSurvey,
   type KnownAuditCause,
+  type KnownMemory,
   type RejectedAuditProposal,
 } from "./audit-prompts.js";
 import { auditTargetCandidates } from "./audit-targets.js";
@@ -192,6 +193,23 @@ import {
   sactyReviewKey,
   sactyReviewTask,
 } from "./github.js";
+import {
+  CONTAINER_PROJECT_MEMORY_DIR,
+  CONTAINER_REPOSITORY_MEMORY_DIR,
+  existingLayerDir,
+  type LiveMemory,
+  layerOf,
+  liveMemories,
+  MEMORY_MAX_PER_LAYER,
+  MEMORY_REFERENCES_DIR,
+  type MemoryLayer,
+  memoriesOf,
+  memoryPromptLines,
+  overCapacity,
+  repositoryMemoryKey,
+  syncMemoryLayers,
+  taskMemoryLayers,
+} from "./memory.js";
 import { notificationFor, type SlackNotifier } from "./notifier.js";
 import type { OrchestratorSessionStore } from "./orchestrator-sessions.js";
 import {
@@ -366,6 +384,15 @@ export class InvalidOperationError extends Error {
   }
 }
 
+/**
+ * メモリーを読ませる工程の実行（PBI-126）。統合レビューはゴールガーディアンの役なので除く（判定の材料を承認済みのものに
+ * 限る）。rework は、PR の指摘の差し戻し先をゴールガーディアンが判定する実行なので入れない（手直しそのものは、工程の役で
+ * 実行し直す。PR #136 レビュー指摘）。
+ */
+export const MEMORY_STEP_ROLES: ReadonlySet<AgentRole> = new Set<AgentRole>(
+  StepKey.options.filter((k) => k !== "integrate"),
+);
+
 export type ServiceDeps = {
   activity: ActivityStore;
   /**
@@ -447,6 +474,13 @@ export type ServiceDeps = {
    * 毎回新しいセッションで実行する。
    */
   orchestratorSessions?: OrchestratorSessionStore;
+  /**
+   * 監査が登録したメモリーを書き出す場所（SACTY_HOME/memory。PBI-126）。無ければ、深掘りに登録を求めず、出力にあっても
+   * 登録しない。エージェントにも渡さない。
+   */
+  memoryRoot?: string;
+  /** 階層ごとのメモリーの件数の上限（無ければ MEMORY_MAX_PER_LAYER。テストで小さくする）。 */
+  memoryLimit?: number;
 };
 
 export type DaemonStatus = {
@@ -6736,8 +6770,9 @@ export class TaskService {
    * は、タスクのセッションを使い回す（PBI-67）。返す runId は、最後に実行したもの（再開できずに新しく始め直したら変わる）。
    */
   private async execute(
-    run: ExecuteRun,
+    original: ExecuteRun,
   ): Promise<{ outcome: AgentOutcome; costUsd: number; estimated: boolean; runId: string }> {
+    const run = this.withMemory(original);
     if (run.role === "orchestrator") {
       // 同じタスクで、オーケストレーターの実行は同時に1つだけ（並ぶ）
       return this.withOrchestratorLock(run.taskId, () => this.executeWithSession(run));
@@ -7754,6 +7789,9 @@ export class TaskService {
       const project = this.deps.projects.get(task.projectId);
       const candidates = auditTargetCandidates(task, project);
       const known = this.knownAuditCauses(task.projectId);
+      // メモリーは書き出す場所があるときだけ登録させる（無ければ、エージェントにも渡せない。PBI-126）
+      const memoryRepo = task.repository ? repositoryMemoryKey(task.repository.url) : undefined;
+      const memories = this.deps.memoryRoot ? this.knownMemories(task) : undefined;
       const prompt = step
         ? buildAuditDivePrompt(shown, activity, counts, logs, {
             step,
@@ -7762,6 +7800,16 @@ export class TaskService {
             candidates,
             known: known.causes.map((c) => ({ ...c, title: hide(c.title) })),
             rejected: known.rejected.map((r) => ({ title: hide(r.title), reason: hide(r.reason) })),
+            ...(memories
+              ? {
+                  memories: memories.map((m) => ({
+                    ...m,
+                    title: hide(m.title),
+                    summary: hide(m.summary),
+                  })),
+                  ...(memoryRepo ? { repository: memoryRepo } : {}),
+                }
+              : {}),
           })
         : buildAuditSurveyPrompt(shown, activity, counts, logs);
       const {
@@ -7816,7 +7864,7 @@ export class TaskService {
           message("audit.runFailed", { detail: mapFreeText(outcome.message, hideResult) }),
         );
       } else if (!step) {
-        const survey = extractAuditSurvey(hideResult(outcome.output), task);
+        const survey = extractAuditSurvey(hideResult(outcome.output), task, hideResult);
         record = survey.ok
           ? [
               {
@@ -7835,17 +7883,27 @@ export class TaskService {
             ]
           : failed(survey.reason);
       } else {
-        const dive = extractAuditDive(hideResult(outcome.output), {
-          eventIds: new Set(activity.map((e) => e.id)),
-          runIds: new Set(
-            activity.flatMap((e) => {
-              const id = (e.payload as { runId?: unknown }).runId;
-              return typeof id === "string" && id ? [id] : [];
-            }),
-          ),
-          candidates,
-          knownKeys: new Set(known.causes.map((c) => c.causeKey)),
-        });
+        const dive = extractAuditDive(
+          hideResult(outcome.output),
+          {
+            eventIds: new Set(activity.map((e) => e.id)),
+            runIds: new Set(
+              activity.flatMap((e) => {
+                const id = (e.payload as { runId?: unknown }).runId;
+                return typeof id === "string" && id ? [id] : [];
+              }),
+            ),
+            candidates,
+            knownKeys: new Set(known.causes.map((c) => c.causeKey)),
+            ...(memories
+              ? {
+                  knownMemoryIds: new Set(memories.map((m) => m.id)),
+                  ...(memoryRepo ? { repository: memoryRepo } : {}),
+                }
+              : {}),
+          },
+          hideResult,
+        );
         record = dive.ok
           ? [
               {
@@ -7870,6 +7928,9 @@ export class TaskService {
                         candidates,
                       })),
                     })),
+                    ...(memories
+                      ? { memories: dive.memories.map((m) => ({ ...m, id: randomUUID() })) }
+                      : {}),
                     ...run,
                   },
                 },
@@ -7899,7 +7960,158 @@ export class TaskService {
     const latest = this.tasks.get(task.id);
     if (!latest || !isAuditTarget(latest) || latest.audit?.auditId !== audit.auditId) return;
     this.append(latest, record);
+    // 登録したメモリーを書き出す（上限を超えた階層は、古いものを消してから。PBI-126）
+    const registered = record.flatMap(({ event }) =>
+      event.type === "AuditDeepDived" ? (event.payload.memories ?? []) : [],
+    );
+    if (registered.length > 0) {
+      const layers = registered.map(
+        (m): MemoryLayer =>
+          m.scope === "project"
+            ? { kind: "project", projectId: task.projectId }
+            : { kind: "repository", repo: m.repo },
+      );
+      this.writeMemories([...layers, ...this.trimMemories()]);
+    }
     this.warnAuditBudget(this.mustGet(task.id));
+  }
+
+  /**
+   * メモリーを読ませる実行なら、タスクのプロジェクトと対象リポジトリのメモリーを読み取り専用でマウントする（PBI-126）。
+   * 工程（統合レビューを除く）には、読み方の指示も足す。監査には、既存のメモリーとの重複を確かめるために渡す。
+   * ゴールガーディアン（判定・最終レビュー・統合レビュー・PR の指摘の差し戻し先の判定）・オーケストレーター・質問への答え・
+   * 書き出しには渡さない
+   * （ゴールガーディアンの判定の材料は、承認済みのものに限るため）。ほかのプロジェクト・リポジトリのメモリーは渡さない。
+   */
+  private withMemory(run: ExecuteRun): ExecuteRun {
+    const root = this.deps.memoryRoot;
+    const step = MEMORY_STEP_ROLES.has(run.role);
+    if (!root || (!step && run.role !== "audit" && run.role !== "audit-dive")) return run;
+    const task = this.tasks.get(run.taskId);
+    if (!task) return run;
+    const layers = taskMemoryLayers(task);
+    const mounts: { hostPath: string; containerPath: string; readOnly: boolean }[] = [];
+    const project = existingLayerDir(root, layers.project);
+    if (project) {
+      mounts.push({
+        hostPath: project,
+        containerPath: CONTAINER_PROJECT_MEMORY_DIR,
+        readOnly: true,
+      });
+    }
+    const repository = layers.repository && existingLayerDir(root, layers.repository);
+    if (repository) {
+      mounts.push({
+        hostPath: repository,
+        containerPath: CONTAINER_REPOSITORY_MEMORY_DIR,
+        readOnly: true,
+      });
+    }
+    if (mounts.length === 0) return run;
+    const dirs = mounts.map((m) => m.containerPath);
+    return {
+      ...run,
+      mounts: [...(run.mounts ?? []), ...mounts],
+      readDirs: [...(run.readDirs ?? []), ...dirs],
+      ...(step ? { prompt: [...memoryPromptLines(dirs), "", run.prompt].join("\n") } : {}),
+    };
+  }
+
+  /** 消していないメモリー（すべてのプロジェクト）。 */
+  private memories(): LiveMemory[] {
+    return liveMemories(this.tasks.values());
+  }
+
+  /**
+   * 階層のメモリーを書き出す（PBI-126）。layers を渡さなければ、すべての階層を書き直す（起動のとき）。正本は作業履歴なので、
+   * 書けなくても記録は残り、次の起動で書き直す。
+   */
+  private writeMemories(layers?: readonly MemoryLayer[]): void {
+    const root = this.deps.memoryRoot;
+    if (!root) return;
+    try {
+      syncMemoryLayers(root, this.memories(), layers);
+    } catch (error) {
+      console.warn("[daemon] メモリーを書き出せませんでした：", errorText(error));
+    }
+  }
+
+  /**
+   * 階層ごとの件数の上限を超えたメモリーを、有効な最終利用日の古いものから消す（PBI-126）。消したことは、メモリーを登録した
+   * タスクの作業履歴に記録する。消した階層を返す。
+   */
+  private trimMemories(): MemoryLayer[] {
+    const trimmed: MemoryLayer[] = [];
+    for (const memory of overCapacity(
+      this.memories(),
+      this.deps.memoryLimit ?? MEMORY_MAX_PER_LAYER,
+    )) {
+      const task = this.tasks.get(memory.taskId);
+      if (!task) continue;
+      this.append(task, [
+        {
+          actor: "sacty",
+          event: {
+            type: "AuditMemoryDeleted",
+            payload: { memoryId: memory.id, reason: "capacity" },
+          },
+        },
+      ]);
+      trimmed.push(layerOf(memory));
+    }
+    return trimmed;
+  }
+
+  /**
+   * 起動のとき、上限を超えたメモリーを消し、すべての階層を作業履歴に合わせて書き直す（登録・削除の記録の後、書き出す前に
+   * 止まっていても直す。PBI-126）。
+   */
+  syncMemories(): void {
+    this.trimMemories();
+    this.writeMemories();
+  }
+
+  /** 深掘りに渡す、タスクの階層の既存のメモリー（PBI-126）。 */
+  private knownMemories(task: Task): KnownMemory[] {
+    const layers = taskMemoryLayers(task);
+    const all = this.memories();
+    const known = (layer: MemoryLayer, dir: string): KnownMemory[] =>
+      memoriesOf(all, layer).map((m) => ({
+        id: m.id,
+        scope: m.scope,
+        title: m.title,
+        summary: m.summary,
+        path: `${dir}/${MEMORY_REFERENCES_DIR}/${m.id}.md`,
+      }));
+    return [
+      ...known(layers.project, CONTAINER_PROJECT_MEMORY_DIR),
+      ...(layers.repository ? known(layers.repository, CONTAINER_REPOSITORY_MEMORY_DIR) : []),
+    ];
+  }
+
+  /**
+   * 監査が登録したメモリーを、人が消す（PBI-126）。人はメモリーを登録できず、誤ったものを消すだけ。消したことは、メモリーを
+   * 登録したタスクの作業履歴に記録する。
+   */
+  deleteAuditMemory(memoryId: string): Task {
+    for (const task of this.tasks.values()) {
+      const memory = task.audit?.memories.find((m) => m.id === memoryId);
+      if (!memory) continue;
+      if (memory.deleted) throw new InvalidOperationError(message("audit.memoryDeleted"));
+      const updated = this.append(task, [
+        {
+          actor: "person",
+          event: { type: "AuditMemoryDeleted", payload: { memoryId, reason: "person" } },
+        },
+      ]);
+      this.writeMemories([
+        memory.scope === "project"
+          ? { kind: "project", projectId: task.projectId }
+          : { kind: "repository", repo: repositoryMemoryKey(memory.repo) ?? memory.repo },
+      ]);
+      return updated;
+    }
+    throw new InvalidOperationError(message("audit.memoryNotFound"));
   }
 
   /** 監査の予算の 80% に達したら記録する（上限ごとに1回）。 */

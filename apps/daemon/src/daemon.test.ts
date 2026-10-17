@@ -91,6 +91,7 @@ import { createApp } from "./server.js";
 import {
   awaitingIssueComment,
   InvalidOperationError,
+  MEMORY_STEP_ROLES,
   type ServiceDeps,
   TaskService,
 } from "./service.js";
@@ -941,6 +942,10 @@ function makeService(
     ci?: ServiceDeps["ci"];
     /** 完了したタスクを監査する（PBI-125）。既定は監査しない。 */
     audit?: boolean;
+    /** メモリーを書き出す（PBI-126）。既定は書き出さない。 */
+    memory?: boolean;
+    /** 階層ごとのメモリーの件数の上限（PBI-126）。 */
+    memoryLimit?: number;
   } = {},
 ) {
   const executor = new FakeExecutor(outcomes);
@@ -998,6 +1003,8 @@ function makeService(
     ...(options.templates ? { templates: options.templates } : {}),
     ...(options.ci ? { ci: options.ci } : {}),
     ...(options.audit ? { audit: true } : {}),
+    ...(options.memory ? { memoryRoot: join(dir, "memory") } : {}),
+    ...(options.memoryLimit ? { memoryLimit: options.memoryLimit } : {}),
   });
   return { service, executor, repos, tests, pulls };
 }
@@ -3213,6 +3220,8 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       services?: ServiceRunner;
       sharedComposes?: SharedComposeFetcher;
       projects?: MemoryProjectStore;
+      /** メモリーを書き出す・渡す（PBI-126）。 */
+      memory?: boolean;
     } = {},
   ) {
     const activity = new SqliteActivityStore(dbPath);
@@ -5652,6 +5661,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       repos?: FakeRepos;
       config?: () => ConfigResult;
       now?: () => number;
+      memory?: boolean;
     } = {},
   ) {
     const made = await toImplement([implement("# 実装の説明"), review(), ...outcomes], options);
@@ -6008,6 +6018,36 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       url: `https://github.com/acme/app/pull/7#${key}`,
       body: "全体として、失敗時のログが足りない",
       ...patch,
+    });
+
+    it("PR の指摘の差し戻し先の判定（ゴールガーディアン）には、メモリーを渡さない（PR #136 レビュー指摘）", async () => {
+      // 前のタスクの監査が登録したメモリーがある
+      const layer = join(dir, "memory", "projects", "default");
+      mkdirSync(join(layer, "references"), { recursive: true });
+      writeFileSync(join(layer, "SKILL.md"), "- [題](references/m1.md)：概要");
+      const pulls = new FakePulls();
+      const { service, executor } = await toImplementGate([rework("implement", "実装で直せる")], {
+        pulls,
+        now: later,
+        memory: true,
+      });
+      // 工程（実装）の実行には渡している
+      const implementCall = executor.calls.find((c) =>
+        c.command.join(" ").includes("--- メモリー ---"),
+      );
+      expect(implementCall?.mounts?.some((m) => m.containerPath === "/sacty-memory/project")).toBe(
+        true,
+      );
+      pulls.feedbackList = [item("comment:1")];
+      const before = executor.calls.length;
+      await service.checkPullRequests();
+      const judge = executor.calls[before];
+      expect(judge?.command.join(" ")).toContain("sacty-rework");
+      expect((judge?.mounts ?? []).some((m) => m.containerPath.startsWith("/sacty-memory"))).toBe(
+        false,
+      );
+      expect(judge?.command.join(" ")).not.toContain("--- メモリー ---");
+      expect(judge?.command).not.toContain("/sacty-memory/project");
     });
 
     it("レビュー・行のコメント・通常のコメントを指摘として取り込み、ゴールガーディアンが実装と判断したら差し戻す", async () => {
@@ -22786,5 +22826,385 @@ describe("監査で伏せる秘密情報の値の使い回し（PR #135 再レ�
     expect(recorded).toContain("例外 [REDACTED]");
     expect(recorded).not.toContain("zz-during-survey");
     expect(recorded).not.toContain("zz-during-dive");
+  });
+});
+
+describe("監査のメモリー（PBI-126）", () => {
+  const out = (text: string, usageOutput = 100): AgentOutcome => ({
+    kind: "completed",
+    output: text,
+    usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: usageOutput },
+  });
+  const json = (value: unknown) => out(`\`\`\`json\n${JSON.stringify(value)}\n\`\`\``);
+  const prompt = (invocation: Invocation) => invocation.command.join(" ");
+  const isSurvey = (invocation: Invocation) =>
+    prompt(invocation).includes("いまは大まかな監査です");
+  const isDive = (invocation: Invocation) => prompt(invocation).includes("深掘りする工程：");
+  const isStep = (invocation: Invocation) => !isSurvey(invocation) && !isDive(invocation);
+  const onlyRequirements = async () => ({
+    steps: ["requirements" as const],
+    fallback: false,
+    costUsd: 0,
+    estimated: false,
+  });
+  const memory = (patch: Record<string, unknown> = {}) => ({
+    scope: "project",
+    title: "テストは npm test で走らせる",
+    summary: "テストの走らせ方",
+    body: "pnpm ではなく npm を使う",
+    ...patch,
+  });
+  /** 監査が、懸念のある工程を1つ挙げ、その深掘りで memories を登録する。 */
+  const auditing =
+    (memories: () => unknown[]) =>
+    (invocation: Invocation): AgentOutcome | undefined => {
+      if (isSurvey(invocation)) {
+        return json({
+          "sacty-audit-survey": {
+            summary: "要約",
+            concerns: [{ step: "requirements", reason: "差し戻し" }],
+          },
+        });
+      }
+      if (isDive(invocation)) {
+        return json({
+          "sacty-audit-findings": { summary: "深掘り", findings: [], memories: memories() },
+        });
+      }
+      return out("# 要求要件");
+    };
+  const memoryRoot = () => join(dir, "memory");
+  const projectDir = (id = "default") => join(memoryRoot(), "projects", id);
+  const repoDir = () => join(memoryRoot(), "repos", "github.com", "acme", "app");
+
+  /** タスクを作って完了させ、監査を終える。 */
+  async function completeAndAudit(
+    service: TaskService,
+    title: string,
+    projectId = "default",
+  ): Promise<string> {
+    const task = service.createTask({ projectId, title, body: "" });
+    await service.runNext(task.id);
+    service.approve(task.id, { step: "requirements", submission: 1 });
+    for (let i = 0; i < 3 && service.get(task.id)?.task.audit?.completedAt === undefined; i++) {
+      await service.runNext(task.id);
+    }
+    return task.id;
+  }
+
+  it("深掘りが登録したメモリーを索引の形で書き出し、次のタスクの工程に読み取り専用で渡す", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service, executor } = makeService(activity, [], {
+      audit: true,
+      memory: true,
+      planner: onlyRequirements,
+    });
+    let registered = [
+      memory(),
+      memory({
+        scope: "repository",
+        title: "lint は biome",
+        summary: "lint の道具",
+        body: "biome",
+      }),
+    ];
+    executor.respond = auditing(() => registered);
+    const a = await completeAndAudit(service, "A");
+    const memories = service.get(a)?.task.audit?.memories ?? [];
+    expect(memories.map((m) => [m.scope, m.title])).toEqual([
+      ["project", "テストは npm test で走らせる"],
+      ["repository", "lint は biome"],
+    ]);
+    expect(memories[1]).toMatchObject({ repo: "https://github.com/acme/app" });
+    // 索引には、リンク・概要・有効な最終利用日だけを書き、中身は references に置く
+    const [projectMemory, repoMemory] = memories;
+    const index = readFileSync(join(projectDir(), "SKILL.md"), "utf8");
+    expect(index).toContain(
+      `- [テストは npm test で走らせる](references/${projectMemory?.id}.md)：テストの走らせ方（有効な最終利用日：`,
+    );
+    expect(index).not.toContain("pnpm ではなく npm を使う");
+    expect(
+      readFileSync(join(projectDir(), "references", `${projectMemory?.id}.md`), "utf8"),
+    ).toContain("pnpm ではなく npm を使う");
+    expect(readFileSync(join(repoDir(), "SKILL.md"), "utf8")).toContain(
+      `(references/${repoMemory?.id}.md)：lint の道具`,
+    );
+
+    // 次のタスクの工程には、両方の階層を読み取り専用でマウントし、読み方を指示する
+    registered = [];
+    executor.calls.length = 0;
+    const b = service.createTask({ projectId: "default", title: "B", body: "" });
+    await service.runNext(b.id);
+    const step = executor.calls.find(isStep);
+    expect(step?.mounts).toEqual(
+      expect.arrayContaining([
+        { hostPath: projectDir(), containerPath: "/sacty-memory/project", readOnly: true },
+        { hostPath: repoDir(), containerPath: "/sacty-memory/repository", readOnly: true },
+      ]),
+    );
+    expect(prompt(step as Invocation)).toContain("--- メモリー ---");
+    expect(prompt(step as Invocation)).toContain(
+      "いまのタスクに関係するものだけを references/ から開いて",
+    );
+    expect(step?.command).toEqual(expect.arrayContaining(["--add-dir", "/sacty-memory/project"]));
+
+    // 次の監査の深掘りには、既存のメモリーを渡す（重複を作らない）。メモリーの読み方の指示は足さない
+    service.approve(b.id, { step: "requirements", submission: 1 });
+    await service.runNext(b.id);
+    await service.runNext(b.id);
+    const dive = executor.calls.find(isDive);
+    expect(prompt(dive as Invocation)).toContain(
+      `- ${projectMemory?.id}（プロジェクト）：テストは npm test で走らせる：テストの走らせ方（/sacty-memory/project/references/${projectMemory?.id}.md）`,
+    );
+    expect(prompt(dive as Invocation)).not.toContain("--- メモリー ---");
+    expect(dive?.mounts?.some((m) => m.containerPath === "/sacty-memory/project")).toBe(true);
+  });
+
+  it("ゴールガーディアン（判定・最終レビュー・統合レビュー）・オーケストレーター・質問への答え・書き出しにはメモリーを渡さない", () => {
+    for (const role of [
+      "guardian",
+      "final-review",
+      "integrate",
+      "rework",
+      "orchestrator",
+      "chat",
+      "export",
+    ]) {
+      expect(MEMORY_STEP_ROLES.has(role as never), role).toBe(false);
+    }
+    for (const role of ["requirements", "design", "implement", "review"]) {
+      expect(MEMORY_STEP_ROLES.has(role as never), role).toBe(true);
+    }
+  });
+
+  it("プロジェクトの設定を変えて、ほかのプロジェクトが同じリポジトリを扱うと、リポジトリのメモリーだけを渡す", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const projects = projectsWithAccount();
+    const { service, executor } = makeService(activity, [], {
+      audit: true,
+      memory: true,
+      projects,
+      planner: onlyRequirements,
+    });
+    let registered = [memory(), memory({ scope: "repository", title: "リポジトリの知見" })];
+    executor.respond = auditing(() => registered);
+    await completeAndAudit(service, "A");
+    // リポジトリの担当を、ほかのプロジェクトに移す
+    projects.put("default", {
+      name: "デフォルト",
+      targets: [{ scope: "repo", target: "https://github.com/acme/web" }],
+      githubAccounts: { "github.com": "me" },
+    });
+    projects.put("other", {
+      name: "ほか",
+      targets: [{ scope: "repo", target: "https://github.com/acme/app" }],
+      githubAccounts: { "github.com": "me" },
+    });
+    registered = [];
+    executor.calls.length = 0;
+    const other = service.createTask({ projectId: "other", title: "B", body: "" });
+    await service.runNext(other.id);
+    const step = executor.calls.find(isStep);
+    const paths = (step?.mounts ?? []).map((m) => m.containerPath);
+    expect(paths).toContain("/sacty-memory/repository");
+    expect(paths).not.toContain("/sacty-memory/project");
+    expect((step?.mounts ?? []).some((m) => m.hostPath.startsWith(projectDir()))).toBe(false);
+  });
+
+  it("メモリーが無ければ、マウントも指示もしない", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service, executor } = makeService(activity, [], {
+      audit: true,
+      memory: true,
+      planner: onlyRequirements,
+    });
+    executor.respond = auditing(() => []);
+    const a = await completeAndAudit(service, "A");
+    expect(service.get(a)?.task.audit?.memories).toEqual([]);
+    expect(existsSync(memoryRoot())).toBe(false);
+    executor.calls.length = 0;
+    const b = service.createTask({ projectId: "default", title: "B", body: "" });
+    await service.runNext(b.id);
+    const step = executor.calls.find(isStep);
+    expect(step?.mounts ?? []).toEqual([]);
+    expect(prompt(step as Invocation)).not.toContain("--- メモリー ---");
+  });
+
+  it("人が消したメモリーはファイルから消え、作業履歴に残る。二度は消せない", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service, executor } = makeService(activity, [], {
+      audit: true,
+      memory: true,
+      planner: onlyRequirements,
+    });
+    executor.respond = auditing(() => [memory(), memory({ title: "二つめ", summary: "残す" })]);
+    const a = await completeAndAudit(service, "A");
+    const [first, second] = service.get(a)?.task.audit?.memories ?? [];
+    service.deleteAuditMemory(first?.id ?? "");
+    expect(existsSync(join(projectDir(), "references", `${first?.id}.md`))).toBe(false);
+    expect(existsSync(join(projectDir(), "references", `${second?.id}.md`))).toBe(true);
+    expect(readFileSync(join(projectDir(), "SKILL.md"), "utf8")).not.toContain(first?.id ?? "-");
+    const deleted = service.get(a)?.task.audit?.memories.find((m) => m.id === first?.id)?.deleted;
+    expect(deleted?.reason).toBe("person");
+    expect(activity.forTask(a).at(-1)).toMatchObject({
+      actor: "person",
+      type: "AuditMemoryDeleted",
+      payload: { memoryId: first?.id, reason: "person" },
+    });
+    expect(() => service.deleteAuditMemory(first?.id ?? "")).toThrow(InvalidOperationError);
+    expect(() => service.deleteAuditMemory("unknown")).toThrow(InvalidOperationError);
+    // 最後の1件を消すと、階層のディレクトリごと消える
+    service.deleteAuditMemory(second?.id ?? "");
+    expect(existsSync(projectDir())).toBe(false);
+  });
+
+  it("階層の件数の上限を超えたら、有効な最終利用日の古いものから消し、登録したタスクの作業履歴に記録する", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service, executor } = makeService(activity, [], {
+      audit: true,
+      memory: true,
+      memoryLimit: 2,
+      planner: onlyRequirements,
+    });
+    let n = 0;
+    executor.respond = auditing(() => [memory({ title: `知見${++n}` })]);
+    const a = await completeAndAudit(service, "A");
+    const b = await completeAndAudit(service, "B");
+    // 上限ちょうどでは消さない
+    expect(service.get(a)?.task.audit?.memories[0]?.deleted).toBeUndefined();
+    const c = await completeAndAudit(service, "C");
+    expect(service.get(a)?.task.audit?.memories[0]?.deleted?.reason).toBe("capacity");
+    expect(service.get(b)?.task.audit?.memories[0]?.deleted).toBeUndefined();
+    expect(service.get(c)?.task.audit?.memories[0]?.deleted).toBeUndefined();
+    expect(activity.forTask(a).at(-1)).toMatchObject({
+      actor: "sacty",
+      type: "AuditMemoryDeleted",
+      payload: { reason: "capacity" },
+    });
+    const index = readFileSync(join(projectDir(), "SKILL.md"), "utf8");
+    expect(index).not.toContain("知見1");
+    expect(index).toContain("知見2");
+    expect(index).toContain("知見3");
+    expect(readdirSync(join(projectDir(), "references"))).toHaveLength(2);
+  });
+
+  it("JSON でエスケープされる文字を含む秘密情報の値も、デコードした後に伏せてからメモリーと原因に記録する（PR #136 レビュー指摘）", async () => {
+    // 引用符・バックスラッシュ・末尾の改行を含む値（PR #136 再レビュー指摘）
+    const secret = 'zz"q\\p\nend\n';
+    const activity = new SqliteActivityStore(dbPath);
+    const { service, executor } = makeService(activity, [], {
+      audit: true,
+      memory: true,
+      planner: onlyRequirements,
+      secrets: { "claude-oauth-token": secret, "github-token": "ghp_secret" },
+    });
+    executor.respond = (invocation) => {
+      if (isSurvey(invocation)) {
+        return json({
+          "sacty-audit-survey": {
+            summary: `要約 ${secret}`,
+            concerns: [{ step: "requirements", reason: `理由 ${secret}` }],
+          },
+        });
+      }
+      if (isDive(invocation)) {
+        return json({
+          "sacty-audit-findings": {
+            summary: "深掘り",
+            findings: [
+              {
+                title: `原因 ${secret}`,
+                detail: "",
+                evidence: [{ kind: "retry", text: `根拠 ${secret}` }],
+                proposals: [{ title: "直す", body: `本文 ${secret}`, target: 0 }],
+              },
+            ],
+            memories: [
+              memory({ title: `題 ${secret}`, summary: `概要 ${secret}`, body: `中身 ${secret}` }),
+            ],
+          },
+        });
+      }
+      return out("# 要求要件");
+    };
+    const a = await completeAndAudit(service, "A");
+    const recorded = JSON.stringify(activity.forTask(a));
+    expect(recorded).not.toContain(JSON.stringify(secret).slice(1, -1));
+    const audit = service.get(a)?.task.audit;
+    const texts = [
+      audit?.survey?.summary,
+      audit?.survey?.concerns[0]?.reason,
+      audit?.findings[0]?.title,
+      audit?.findings[0]?.evidence[0]?.text,
+      audit?.findings[0]?.proposals[0]?.body,
+      audit?.memories[0]?.title,
+      audit?.memories[0]?.summary,
+      audit?.memories[0]?.body,
+    ];
+    for (const text of texts) {
+      expect(text).toContain("[REDACTED]");
+      expect(text).not.toContain(secret);
+    }
+    const files = readdirSync(join(projectDir(), "references")).map((name) =>
+      readFileSync(join(projectDir(), "references", name), "utf8"),
+    );
+    files.push(readFileSync(join(projectDir(), "SKILL.md"), "utf8"));
+    for (const file of files) expect(file).not.toContain(secret);
+  });
+
+  it("既存のメモリーと同じ（sameAs）なら登録しない", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service, executor } = makeService(activity, [], {
+      audit: true,
+      memory: true,
+      planner: onlyRequirements,
+    });
+    let registered: unknown[] = [memory()];
+    executor.respond = auditing(() => registered);
+    const a = await completeAndAudit(service, "A");
+    const id = service.get(a)?.task.audit?.memories[0]?.id;
+    registered = [memory({ sameAs: id, title: "同じ知見" })];
+    const b = await completeAndAudit(service, "B");
+    expect(service.get(b)?.task.audit?.memories).toEqual([]);
+    expect(readdirSync(join(projectDir(), "references"))).toEqual([`${id}.md`]);
+  });
+
+  it("書き出す場所が無ければ、深掘りにメモリーの登録を求めず、出力にあっても登録しない", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service, executor } = makeService(activity, [], {
+      audit: true,
+      planner: onlyRequirements,
+    });
+    executor.respond = auditing(() => [memory()]);
+    const a = await completeAndAudit(service, "A");
+    const dive = executor.calls.find(isDive);
+    expect(prompt(dive as Invocation)).not.toContain("memories");
+    expect(prompt(dive as Invocation)).not.toContain("既存のメモリー");
+    expect(service.get(a)?.task.audit?.memories).toEqual([]);
+  });
+
+  it("起動のとき、作業履歴に合わせて書き直す（消えたファイルを戻し、記録の無い階層を消す）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service, executor } = makeService(activity, [], {
+      audit: true,
+      memory: true,
+      planner: onlyRequirements,
+    });
+    executor.respond = auditing(() => [memory()]);
+    const a = await completeAndAudit(service, "A");
+    const id = service.get(a)?.task.audit?.memories[0]?.id;
+    rmSync(join(projectDir(), "references"), { recursive: true });
+    mkdirSync(join(projectDir("stale"), "references"), { recursive: true });
+    writeFileSync(join(projectDir("stale"), "SKILL.md"), "古い");
+    mkdirSync(join(memoryRoot(), "repos", "github.com", "old", "repo"), { recursive: true });
+
+    const restarted = makeService(new SqliteActivityStore(dbPath), [], {
+      audit: true,
+      memory: true,
+    }).service;
+    restarted.syncMemories();
+    expect(existsSync(join(projectDir(), "references", `${id}.md`))).toBe(true);
+    expect(existsSync(projectDir("stale"))).toBe(false);
+    expect(existsSync(join(memoryRoot(), "repos", "github.com", "old", "repo"))).toBe(false);
   });
 });

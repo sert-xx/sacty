@@ -6,6 +6,9 @@ import {
   type AuditEvidenceKind,
   type AuditTarget,
   type DaemonText,
+  MEMORY_BODY_MAX,
+  MEMORY_SUMMARY_MAX,
+  MEMORY_TITLE_MAX,
   message,
   StepKey,
   type Task,
@@ -40,6 +43,8 @@ export const AUDIT_MAX_CONCERNS = 3;
 /** 深掘り1回で挙げる原因と、原因ごとの提案の上限。 */
 export const AUDIT_MAX_FINDINGS = 3;
 export const AUDIT_MAX_PROPOSALS = 2;
+/** 深掘り1回で登録するメモリーの上限（PBI-126）。 */
+export const AUDIT_MAX_MEMORIES = 2;
 /** 根拠1つの文の上限（文字数）。 */
 const EVIDENCE_TEXT_MAX = 500;
 
@@ -59,6 +64,15 @@ const KIND_NAME: Record<AuditEvidenceKind, string> = {
 
 /** プロジェクトの既存の原因（監査が同じ原因かを判断するため）。 */
 export type KnownAuditCause = { causeKey: string; title: string; status: string };
+/** 既存のメモリー（重複を作らないため。PBI-126）。 */
+export type KnownMemory = {
+  id: string;
+  scope: "project" | "repository";
+  title: string;
+  summary: string;
+  /** 中身を読める、コンテナの中の場所。 */
+  path: string;
+};
 /** 人が却下した提案と理由（同じ提案を繰り返さないため）。 */
 export type RejectedAuditProposal = { title: string; reason: string };
 
@@ -186,6 +200,21 @@ export type AuditSurveyOutput =
   | { ok: false; reason: DaemonText };
 
 const text = (v: unknown) => (typeof v === "string" ? v.trim() : "");
+
+/**
+ * 出力の文を伏せる関数（JSON をデコードした後に、切り詰める前に当てる）。JSON の文字列のままでは、引用符・バックスラッシュ・
+ * 改行を含む秘密情報の値はエスケープされて一致せず、デコードで元の値に戻るため（PR #136 レビュー指摘）。
+ */
+export type OutputRedactor = (text: string) => string;
+const keep: OutputRedactor = (t) => t;
+
+/**
+ * 出力の文を読む関数：文字列であることだけを確かめた元の値を伏せてから、前後の空白を除く（PR #136 再レビュー指摘）。先に除くと、
+ * 末尾に改行のある秘密情報の値が一致しなくなり、改行のほかが残る。1行化と長さの制限は、呼ぶ側がこの後に行う。
+ */
+function redacted(hide: OutputRedactor): (v: unknown) => string {
+  return (v) => (typeof v === "string" ? hide(v).trim() : "");
+}
 /**
  * 上限（UTF-16 のコード単位）に収まるように切る。切る位置がサロゲートペアの間なら1つ戻し、文字を壊さない
  * （PR #135 レビュー指摘）。
@@ -199,8 +228,13 @@ export function cut(v: string, max: number): string {
 }
 
 /** 大まかな監査の出力を読む。挙げた工程は、タスクの工程にあるものだけ（重なりは1つにし、上限まで）。 */
-export function extractAuditSurvey(output: string, task: Task): AuditSurveyOutput {
+export function extractAuditSurvey(
+  output: string,
+  task: Task,
+  hide: OutputRedactor = keep,
+): AuditSurveyOutput {
   const steps = new Set(task.steps.map((s) => s.key));
+  const str = redacted(hide);
   const found = lastJsonAnswer(output, (value) => {
     const v = headedObject(value, AUDIT_SURVEY_HEADING);
     if (!v || typeof v.summary !== "string" || !Array.isArray(v.concerns)) return undefined;
@@ -208,12 +242,12 @@ export function extractAuditSurvey(output: string, task: Task): AuditSurveyOutpu
     for (const c of v.concerns as unknown[]) {
       const item = (c ?? {}) as { step?: unknown; reason?: unknown };
       const step = StepKey.safeParse(item.step);
-      const reason = text(item.reason);
+      const reason = str(item.reason);
       if (!step.success || !steps.has(step.data) || !reason) continue;
       if (concerns.some((x) => x.step === step.data)) continue;
       concerns.push({ step: step.data, reason: cut(reason, 500) });
     }
-    return { summary: cut(text(v.summary), AUDIT_TEXT_MAX), concerns };
+    return { summary: cut(str(v.summary), AUDIT_TEXT_MAX), concerns };
   });
   if (!found) return { ok: false, reason: message("audit.unreadable") };
   return { ok: true, ...found.value, concerns: found.value.concerns.slice(0, AUDIT_MAX_CONCERNS) };
@@ -235,6 +269,9 @@ export function buildAuditDivePrompt(
     candidates: readonly AuditTarget[];
     known: readonly KnownAuditCause[];
     rejected: readonly RejectedAuditProposal[];
+    /** 既存のメモリーと、リポジトリのメモリーを登録できるか（PBI-126）。 */
+    memories?: readonly KnownMemory[];
+    repository?: string;
   },
 ): string {
   const targetLine = (t: AuditTarget, i: number) =>
@@ -256,6 +293,7 @@ export function buildAuditDivePrompt(
     "- 下の既存の原因と同じ原因なら、sameAs にその鍵を書く（新しい原因なら書かない）",
     "- 却下された提案と同じ提案は出さない。却下の理由を踏まえ、別の手があれば出す",
     "- 改修が要る原因が無ければ、findings は空でよい",
+    ...(dive.memories ? memoryRuleLines(dive.repository) : []),
     ...AUDIT_RULES,
     ...guardianCodeLines(task, "implemented"),
     "",
@@ -272,6 +310,7 @@ export function buildAuditDivePrompt(
       ? dive.rejected.map((r) => `- ${r.title}：${clip(r.reason, 300).replace(/\n/g, " ")}`)
       : ["（なし）"]),
     "",
+    ...(dive.memories ? knownMemoryLines(dive.memories) : []),
     "--- 大まかな監査の要約 ---",
     clip(dive.survey || "（なし）", AUDIT_TEXT_IN_PROMPT),
     "",
@@ -298,6 +337,19 @@ export function buildAuditDivePrompt(
               ],
             },
           ],
+          ...(dive.memories
+            ? {
+                memories: [
+                  {
+                    sameAs: "",
+                    scope: "project",
+                    title: "知見の題（1行）",
+                    summary: "いつ役立つか・何が分かるかの概要（1〜2文）",
+                    body: "知見の中身（Markdown）",
+                  },
+                ],
+              }
+            : {}),
         },
       },
       null,
@@ -321,8 +373,13 @@ export type AuditDiveFinding = {
   proposals: { title: string; body: string; target: AuditTarget }[];
 };
 
+/** 深掘りの出力の、登録するメモリー（ID は sacty が決める前の形。PBI-126）。 */
+export type AuditDiveMemory =
+  | { scope: "project"; title: string; summary: string; body: string }
+  | { scope: "repository"; repo: string; title: string; summary: string; body: string };
+
 export type AuditDiveOutput =
-  | { ok: true; summary: string; findings: AuditDiveFinding[] }
+  | { ok: true; summary: string; findings: AuditDiveFinding[]; memories: AuditDiveMemory[] }
   | { ok: false; reason: DaemonText };
 
 /**
@@ -336,8 +393,13 @@ export function extractAuditDive(
     runIds: ReadonlySet<string>;
     candidates: readonly AuditTarget[];
     knownKeys: ReadonlySet<string>;
+    /** 既存のメモリーの ID と、リポジトリのメモリーの宛先（GitHub の対象リポジトリが無ければ無い。PBI-126）。 */
+    knownMemoryIds?: ReadonlySet<string>;
+    repository?: string;
   },
+  hide: OutputRedactor = keep,
 ): AuditDiveOutput {
+  const str = redacted(hide);
   const kinds = new Set<string>(AUDIT_EVIDENCE_KINDS);
   const found = lastJsonAnswer(output, (value) => {
     const v = headedObject(value, AUDIT_FINDINGS_HEADING);
@@ -345,12 +407,12 @@ export function extractAuditDive(
     const findings: AuditDiveFinding[] = [];
     for (const raw of v.findings as unknown[]) {
       const f = (raw ?? {}) as Record<string, unknown>;
-      const title = text(f.title);
+      const title = str(f.title);
       if (!title) continue;
       const evidence = (Array.isArray(f.evidence) ? f.evidence : []).flatMap((e: unknown) => {
         const item = (e ?? {}) as Record<string, unknown>;
         const kind = text(item.kind);
-        const what = text(item.text);
+        const what = str(item.text);
         if (!kinds.has(kind) || !what) return [];
         const eventId = text(item.event);
         const runId = text(item.run);
@@ -369,12 +431,12 @@ export function extractAuditDive(
           typeof item.target === "number" && Number.isInteger(item.target)
             ? context.candidates[item.target]
             : undefined;
-        const ptitle = text(item.title);
+        const ptitle = str(item.title);
         if (!target || !ptitle) return [];
         return [
           {
             title: cut(ptitle, AUDIT_TITLE_MAX),
-            body: cut(text(item.body), AUDIT_TEXT_MAX),
+            body: cut(str(item.body), AUDIT_TEXT_MAX),
             target,
           },
         ];
@@ -383,13 +445,70 @@ export function extractAuditDive(
       findings.push({
         ...(context.knownKeys.has(sameAs) ? { sameAs } : {}),
         title: cut(title, AUDIT_TITLE_MAX),
-        detail: cut(text(f.detail), AUDIT_TEXT_MAX),
+        detail: cut(str(f.detail), AUDIT_TEXT_MAX),
         evidence: evidence.slice(0, 20),
         proposals: proposals.slice(0, AUDIT_MAX_PROPOSALS),
       });
     }
-    return { summary: cut(text(v.summary), AUDIT_TEXT_MAX), findings };
+    return {
+      summary: cut(str(v.summary), AUDIT_TEXT_MAX),
+      findings,
+      memories: diveMemories(v.memories, context, str),
+    };
   });
   if (!found) return { ok: false, reason: message("audit.unreadable") };
   return { ok: true, ...found.value, findings: found.value.findings.slice(0, AUDIT_MAX_FINDINGS) };
+}
+
+/** 深掘りの指示の、既存のメモリーの節（PBI-126）。 */
+function knownMemoryLines(memories: readonly KnownMemory[]): string[] {
+  return [
+    "--- 既存のメモリー（中身は path で読めます。書き換えはできません） ---",
+    ...(memories.length > 0
+      ? memories.map(
+          (m) =>
+            `- ${m.id}（${m.scope === "project" ? "プロジェクト" : "リポジトリ"}）：${m.title}：${m.summary}（${m.path}）`,
+        )
+      : ["（なし）"]),
+    "",
+  ];
+}
+
+/** 深掘りの指示の、メモリーの登録の決まり（PBI-126）。 */
+function memoryRuleLines(repository: string | undefined): string[] {
+  return [
+    `- 次のタスクのエージェントが最初から知っていれば防げた知見は、メモリーとして memories に登録する（最大 ${AUDIT_MAX_MEMORIES} つ）。メモリーは、次のタスクの工程のエージェントが、関係するときだけ読む`,
+    "- 登録するのは、次の同じ種類のタスクでも役立つ具体的な知見（テストの走らせ方・規約の落とし穴・構成の前提など）。このタスクだけの事情や、一度きりの出来事は登録しない。改修の提案で恒久的に直せるものでも、直るまでの間に役立つなら登録してよい",
+    "- 既存のメモリーと同じ知見なら、新しく作らずに sameAs にその ID を書く。登録するものが無ければ memories は空でよい",
+    repository
+      ? `- scope は、このリポジトリ（${repository}）そのものに関すること（ビルド・テスト・規約・構成）なら repository、プロジェクトやコンテキストに固有のことなら project。repository のメモリーは、ほかのプロジェクトのタスクでも読まれるので、プロジェクト・組織・コンテキストに固有の名前や事情を書かない`
+      : "- scope は project だけにする（このタスクには GitHub の対象リポジトリが無い）",
+    "- メモリーには秘密情報・個人の情報を書かない",
+  ];
+}
+
+/**
+ * 深掘りの出力の、登録するメモリーを読む（PBI-126）。既存のメモリーと同じ（sameAs が既存の ID）なら登録しない。
+ * repository は、GitHub の対象リポジトリがあるときだけ。題・概要・中身のどれかが無ければ捨てる。
+ */
+function diveMemories(
+  raw: unknown,
+  context: { knownMemoryIds?: ReadonlySet<string>; repository?: string },
+  str: (v: unknown) => string,
+): AuditDiveMemory[] {
+  const memories: AuditDiveMemory[] = [];
+  for (const item of Array.isArray(raw) ? raw : []) {
+    const m = (item ?? {}) as Record<string, unknown>;
+    if (context.knownMemoryIds?.has(text(m.sameAs))) continue;
+    const title = cut(str(m.title).replace(/\s+/g, " "), MEMORY_TITLE_MAX);
+    const summary = cut(str(m.summary).replace(/\s+/g, " "), MEMORY_SUMMARY_MAX);
+    const body = cut(str(m.body), MEMORY_BODY_MAX);
+    if (!title || !summary || !body) continue;
+    if (m.scope === "project") memories.push({ scope: "project", title, summary, body });
+    else if (m.scope === "repository" && context.repository) {
+      memories.push({ scope: "repository", repo: context.repository, title, summary, body });
+    }
+    if (memories.length >= AUDIT_MAX_MEMORIES) break;
+  }
+  return memories;
 }

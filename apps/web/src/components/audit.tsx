@@ -3,6 +3,7 @@
 import {
   AUDIT_EVIDENCE_KINDS,
   type AuditEvidence,
+  type AuditMemory,
   type AuditProposal,
   type AuditTarget,
   type TaskAudit,
@@ -12,6 +13,8 @@ import { useActionState, useEffect, useRef, useState } from "react";
 import {
   type AuditProposalState,
   adoptAuditProposalAction,
+  type DeleteAuditMemoryState,
+  deleteAuditMemoryAction,
   type ResumeAuditState,
   rejectAuditProposalAction,
   resumeAuditAction,
@@ -190,7 +193,123 @@ export function TaskAuditCard({ audit }: { audit: TaskAudit | null }) {
           )}
         </div>
       )}
+      {audit.memories.length > 0 && <AuditMemories memories={audit.memories} />}
     </CardSection>
+  );
+}
+
+/** 監査が登録したメモリー（PBI-126）。人は誤ったものを消せる（登録はできない）。 */
+function AuditMemories({ memories }: { memories: AuditMemory[] }) {
+  const m = useMessages().audit.memories;
+  return (
+    <div className="flex flex-col gap-2">
+      <h3 className="text-sm font-semibold">
+        <WithHint hint={m.hint}>{m.title}</WithHint>
+      </h3>
+      <ul className="flex flex-col gap-2">
+        {memories.map((memory) => (
+          <li
+            key={memory.id}
+            data-testid={`audit-memory-${memory.id}`}
+            className="flex flex-col gap-1 rounded-lg border border-border px-3 py-2"
+          >
+            <div className="flex min-w-0 flex-wrap items-center gap-2 text-sm">
+              {/* 空白の無い長い題・概要（識別子・パス・URL）も、狭い画面で折り返す（PR #136 レビュー指摘） */}
+              <span className="min-w-0 font-semibold [overflow-wrap:anywhere]">{memory.title}</span>
+              <span className="text-xs text-muted-foreground">
+                {memory.scope === "project" ? m.project : m.repository}
+              </span>
+              {memory.repo && (
+                <span className="font-mono text-xs break-all text-muted-foreground">
+                  {memory.repo}
+                </span>
+              )}
+              {memory.deleted && (
+                <span className="inline-flex items-center gap-1 rounded-full border border-border bg-back-soft px-2 py-0.5 text-xs text-muted-foreground">
+                  {memory.deleted.reason === "person" ? m.deleted : m.deletedByCapacity}
+                  {memory.deleted.reason === "capacity" && <Hint text={m.deletedHint} />}
+                </span>
+              )}
+            </div>
+            <p className="min-w-0 text-[13px] text-muted-foreground [overflow-wrap:anywhere]">
+              {memory.summary}
+            </p>
+            {!memory.deleted && (
+              <>
+                <Markdown>{memory.body}</Markdown>
+                <AuditMemoryDeleteForm memoryId={memory.id} />
+              </>
+            )}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+const initialDeleteMemoryState: DeleteAuditMemoryState = {};
+
+/** メモリーを消すフォーム。消すと戻せないので、確定のボタンを開いてから消す。 */
+function AuditMemoryDeleteForm({ memoryId }: { memoryId: string }) {
+  const m = useMessages().audit.memories;
+  const [state, action, deleting] = useActionState(
+    deleteAuditMemoryAction,
+    initialDeleteMemoryState,
+  );
+  const [open, setOpen] = useState(false);
+  // 開いたら確定のボタンへ、やめたら「消す」へフォーカスを移す（押したボタンが消えるため）。人が開閉したときだけ移す
+  const toggled = useRef(false);
+  const confirmRef = useRef<HTMLButtonElement>(null);
+  const openRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!toggled.current) return;
+    toggled.current = false;
+    (open ? confirmRef.current : openRef.current)?.focus();
+  }, [open]);
+  const toggle = (next: boolean) => {
+    toggled.current = true;
+    setOpen(next);
+  };
+  return (
+    <form action={action} className="flex flex-col gap-2">
+      <input type="hidden" name="memoryId" value={memoryId} />
+      {open ? (
+        <>
+          <p className="text-[13px] text-muted-foreground">{m.deleteNote}</p>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              ref={confirmRef}
+              type="submit"
+              variant="outline"
+              disabled={deleting}
+              className="min-h-9"
+            >
+              {deleting ? m.deleting : m.deleteConfirm}
+            </Button>
+            <Button type="button" variant="ghost" className="min-h-9" onClick={() => toggle(false)}>
+              {m.cancel}
+            </Button>
+          </div>
+        </>
+      ) : (
+        <div>
+          <Button
+            ref={openRef}
+            type="button"
+            variant="outline"
+            className="min-h-9"
+            onClick={() => toggle(true)}
+          >
+            {m.delete}
+          </Button>
+        </div>
+      )}
+      {state.message && (
+        <p role="alert" className="text-sm text-warn">
+          {state.message}
+        </p>
+      )}
+    </form>
   );
 }
 

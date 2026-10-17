@@ -4,6 +4,7 @@ import { auditCounts, countToolFailures } from "./audit-evidence.js";
 import {
   AUDIT_MAX_CONCERNS,
   AUDIT_MAX_FINDINGS,
+  AUDIT_MAX_MEMORIES,
   AUDIT_MAX_PROPOSALS,
   buildAuditDivePrompt,
   buildAuditSurveyPrompt,
@@ -145,6 +146,7 @@ describe("深掘りの出力（PBI-125）", () => {
         },
         { title: "原因B", detail: "", evidence: [], proposals: [] },
       ],
+      memories: [],
     });
   });
 
@@ -277,5 +279,240 @@ describe("根拠の件数（PBI-125）", () => {
       toolFailure: 5,
       escalation: 1,
     });
+  });
+});
+
+describe("深掘りのメモリーの登録（PBI-126）", () => {
+  const context = {
+    eventIds: new Set<string>(),
+    runIds: new Set<string>(),
+    candidates: [{ kind: "sacty" } as const],
+    knownKeys: new Set<string>(),
+    knownMemoryIds: new Set(["m-known"]),
+  };
+  const read = (memories: unknown, repository?: string) =>
+    extractAuditDive(block({ "sacty-audit-findings": { summary: "", findings: [], memories } }), {
+      ...context,
+      ...(repository ? { repository } : {}),
+    });
+  const item = (patch: Record<string, unknown> = {}) => ({
+    scope: "project",
+    title: "題",
+    summary: "概要",
+    body: "中身",
+    ...patch,
+  });
+
+  it("既存と同じもの・題や中身の無いものは登録しない。題と概要は1行にする", () => {
+    const result = read([
+      item({ sameAs: "m-known" }),
+      item({ title: "" }),
+      item({ body: " " }),
+      item({ title: "改行\nのある 題", summary: "概要\n2行目" }),
+    ]);
+    expect(result.ok && result.memories).toEqual([
+      { scope: "project", title: "改行 のある 題", summary: "概要 2行目", body: "中身" },
+    ]);
+  });
+
+  it("知らない sameAs は無視して登録する", () => {
+    const result = read([item({ sameAs: "m-unknown" })]);
+    expect(result.ok && result.memories).toHaveLength(1);
+  });
+
+  it("リポジトリのメモリーは、GitHub の対象リポジトリがあるときだけ、その宛先で登録する", () => {
+    expect(
+      read([item({ scope: "repository" })]).ok && read([item({ scope: "repository" })]),
+    ).toMatchObject({
+      memories: [],
+    });
+    const result = read(
+      [item({ scope: "repository", repo: "https://evil.example/x" })],
+      "https://github.com/a/app",
+    );
+    expect(result.ok && result.memories).toEqual([
+      {
+        scope: "repository",
+        repo: "https://github.com/a/app",
+        title: "題",
+        summary: "概要",
+        body: "中身",
+      },
+    ]);
+    expect(read([item({ scope: "global" })]).ok && read([item({ scope: "global" })])).toMatchObject(
+      {
+        memories: [],
+      },
+    );
+  });
+
+  it(`1回の深掘りで登録するのは ${AUDIT_MAX_MEMORIES} つまで。memories が無い・配列でなければ空`, () => {
+    const many = Array.from({ length: AUDIT_MAX_MEMORIES + 1 }, (_, i) =>
+      item({ title: `題${i}` }),
+    );
+    const result = read(many);
+    expect(result.ok && result.memories.map((m) => m.title)).toEqual(
+      many.slice(0, AUDIT_MAX_MEMORIES).map((m) => m.title),
+    );
+    expect(read(undefined)).toMatchObject({ ok: true, memories: [] });
+    expect(read("x")).toMatchObject({ ok: true, memories: [] });
+  });
+
+  it("指示には、既存のメモリーと登録の決まりを入れる。リポジトリが無ければ project だけにさせる", () => {
+    const base = {
+      step: "implement" as const,
+      reason: "r",
+      survey: "s",
+      candidates: [{ kind: "sacty" } as const],
+      known: [],
+      rejected: [],
+    };
+    const withRepo = buildAuditDivePrompt(
+      task,
+      [],
+      zero,
+      { runs: [] },
+      {
+        ...base,
+        memories: [
+          {
+            id: "m1",
+            scope: "project",
+            title: "題",
+            summary: "概要",
+            path: "/sacty-memory/project/references/m1.md",
+          },
+        ],
+        repository: "https://github.com/a/app",
+      },
+    );
+    expect(withRepo).toContain(
+      "- m1（プロジェクト）：題：概要（/sacty-memory/project/references/m1.md）",
+    );
+    expect(withRepo).toContain("このリポジトリ（https://github.com/a/app）そのものに関すること");
+    expect(withRepo).toContain("プロジェクト・組織・コンテキストに固有の名前や事情を書かない");
+    expect(withRepo).toContain('"memories"');
+    const noRepo = buildAuditDivePrompt(task, [], zero, { runs: [] }, { ...base, memories: [] });
+    expect(noRepo).toContain("scope は project だけにする");
+    expect(noRepo).toContain("--- 既存のメモリー");
+    expect(noRepo).toContain("（なし）");
+    const disabled = buildAuditDivePrompt(task, [], zero, { runs: [] }, base);
+    expect(disabled).not.toContain("memories");
+    expect(disabled).not.toContain("既存のメモリー");
+  });
+});
+
+describe("出力の文は、デコードした後に伏せる（PR #136 レビュー指摘）", () => {
+  const hide = (t: string) => t.split('a"b').join("[REDACTED]");
+  it("深掘りの原因・根拠・提案・メモリーと、大まかな監査の要約・理由を伏せてから切り詰める", () => {
+    const dive = extractAuditDive(
+      block({
+        "sacty-audit-findings": {
+          summary: 's a"b',
+          findings: [
+            {
+              title: 't a"b',
+              detail: 'd a"b',
+              evidence: [{ kind: "retry", text: 'e a"b' }],
+              proposals: [{ title: 'p a"b', body: 'b a"b', target: 0 }],
+            },
+          ],
+          memories: [
+            { scope: "project", title: 'm a"b', summary: 'u a"b', body: `${"x".repeat(4000)}a"b` },
+          ],
+        },
+      }),
+      {
+        eventIds: new Set(),
+        runIds: new Set(),
+        candidates: [{ kind: "sacty" }],
+        knownKeys: new Set(),
+        knownMemoryIds: new Set(),
+      },
+      hide,
+    );
+    const text = JSON.stringify(dive);
+    expect(text).not.toContain('a\\"b');
+    expect(dive.ok && dive.findings[0]?.title).toBe("t [REDACTED]");
+    expect(dive.ok && dive.memories[0]?.summary).toBe("u [REDACTED]");
+    // 伏せた後に切り詰めるので、上限を超えない
+    expect(dive.ok && dive.memories[0]?.body.length).toBeLessThanOrEqual(4000);
+    const survey = extractAuditSurvey(
+      block({
+        "sacty-audit-survey": {
+          summary: 's a"b',
+          concerns: [{ step: "implement", reason: 'r a"b' }],
+        },
+      }),
+      task,
+      hide,
+    );
+    expect(survey.ok && survey.summary).toBe("s [REDACTED]");
+    expect(survey.ok && survey.concerns[0]?.reason).toBe("r [REDACTED]");
+  });
+});
+
+describe("出力の文は、前後の空白を除く前に伏せる（PR #136 再レビュー指摘）", () => {
+  const secret = 'zz"q\\p\n';
+  const hide = (t: string) => t.split(secret).join("[REDACTED]");
+  const context = {
+    eventIds: new Set<string>(),
+    runIds: new Set<string>(),
+    candidates: [{ kind: "sacty" } as const],
+    knownKeys: new Set<string>(),
+    knownMemoryIds: new Set<string>(),
+  };
+
+  it("末尾に改行のある秘密情報の値を、文の全体・末尾に置いても伏せる", () => {
+    const dive = extractAuditDive(
+      block({
+        "sacty-audit-findings": {
+          summary: secret,
+          findings: [{ title: `原因 ${secret}`, detail: secret, evidence: [], proposals: [] }],
+          memories: [{ scope: "project", title: secret, summary: `概要 ${secret}`, body: secret }],
+        },
+      }),
+      context,
+      hide,
+    );
+    const text = JSON.stringify(dive);
+    expect(text).not.toContain("zz");
+    expect(dive.ok && dive.summary).toBe("[REDACTED]");
+    expect(dive.ok && dive.findings[0]?.title).toBe("原因 [REDACTED]");
+    expect(dive.ok && dive.memories[0]).toMatchObject({
+      title: "[REDACTED]",
+      summary: "概要 [REDACTED]",
+      body: "[REDACTED]",
+    });
+    const survey = extractAuditSurvey(
+      block({
+        "sacty-audit-survey": {
+          summary: `要約 ${secret}`,
+          concerns: [{ step: "implement", reason: secret }],
+        },
+      }),
+      task,
+      hide,
+    );
+    expect(JSON.stringify(survey)).not.toContain("zz");
+  });
+
+  it("上限の境界をまたぐ秘密情報の値も、伏せてから切るので先頭が残らない", () => {
+    const body = `${"x".repeat(3996)}${secret}`;
+    const dive = extractAuditDive(
+      block({
+        "sacty-audit-findings": {
+          summary: "",
+          findings: [],
+          memories: [{ scope: "project", title: "題", summary: "概要", body }],
+        },
+      }),
+      context,
+      hide,
+    );
+    const saved = dive.ok ? (dive.memories[0]?.body ?? "") : "";
+    expect(saved.length).toBeLessThanOrEqual(4000);
+    expect(saved).not.toContain("zz");
+    expect(saved).toContain("[RE");
   });
 });

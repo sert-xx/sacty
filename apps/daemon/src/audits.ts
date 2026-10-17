@@ -50,6 +50,8 @@ export interface AuditService {
   reject(proposalId: string, input: unknown): ListedAuditProposal | Promise<ListedAuditProposal>;
   /** 予算で一時停止した監査を、新しい上限（累計）で再開する。 */
   resume(taskId: string, input: unknown): TaskAudit | Promise<TaskAudit>;
+  /** 監査が登録したメモリーを、人が消す（PBI-126）。メモリーを登録した監査を返す。 */
+  deleteMemory(memoryId: string): TaskAudit | Promise<TaskAudit>;
 }
 
 export type AuditDeps = {
@@ -100,6 +102,11 @@ export class NoAuditService implements AuditService {
     ResumeAuditInput.parse(input);
     void taskId;
     throw new InvalidOperationError(message("audit.notFound"));
+  }
+
+  deleteMemory(memoryId: string): TaskAudit {
+    void memoryId;
+    throw new InvalidOperationError(message("audit.memoryNotFound"));
   }
 }
 
@@ -353,6 +360,7 @@ export class MockAuditService implements AuditService {
       taskId: task.id,
       projectId,
       startedAt,
+      memories: [],
       mock: true as const,
     };
     const resumedCap = this.resumed.get(task.id);
@@ -723,6 +731,12 @@ export class MockAuditService implements AuditService {
     if (proposal.decision) throw new InvalidOperationError(message("audit.alreadyDecided"));
     this.decisions.set(proposalId, { kind: "rejected", at: new Date().toISOString(), reason });
     return this.findProposal(proposalId);
+  }
+
+  /** モックの監査はメモリーを登録しない。 */
+  deleteMemory(memoryId: string): TaskAudit {
+    void memoryId;
+    throw new InvalidOperationError(message("audit.memoryNotFound"));
   }
 
   resume(taskId: string, input: unknown): TaskAudit {
