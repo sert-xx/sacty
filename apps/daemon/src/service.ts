@@ -8273,13 +8273,10 @@ export class TaskService {
         {
           causeKey: `memory:${p.id}`,
           title: cut(`メモリーをコンテキストにする：${memory.title}`, AUDIT_TITLE_MAX),
-          detail: cut(
-            [
-              "何度も役に立ったメモリーを、これからも守る決まりとして、コンテキストか対象リポジトリに書く。",
-              "改修の PR がマージされたら、元のメモリーは消す。",
-            ].join("\n"),
-            AUDIT_TEXT_MAX,
-          ),
+          // Markdown で1つの段落に出すので、改行でつながない（改行は空白になる）
+          detail:
+            "何度も役に立ったメモリーを、これからも守る決まりとして、コンテキストか対象リポジトリに書く。" +
+            "改修の PR がマージされたら、元のメモリーは消す。",
           evidence: [],
           proposals: [
             {
