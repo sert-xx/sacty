@@ -45,6 +45,20 @@ The default `git`, `review-dispatch`, and `review-execution` skills refer to thi
 
 Code: `apps/daemon/default-context/skills/writing/SKILL.md`, `apps/daemon/default-context/skills/writing/references/layout.md`, `apps/daemon/default-context/skills/writing/references/sentences.md`
 
+## Default requirements skill
+
+The default context has `ears-requirements`, which writes the acceptance criteria of requirements in the EARS (Easy Approach to Requirements Syntax) patterns (PBI-122).
+The patterns are ubiquitous, event-driven, state-driven, unwanted behavior, and optional, plus their combination, in Japanese and English.
+Each sentence states one requirement with an ID (such as `R-1`), and its response is written so that a third party can decide pass or fail.
+The order of precedence is the requester's instructions, then the target repository's rules for requirements, then this skill.
+The instructions of the Requirements step ask for acceptance criteria in EARS and to follow this skill when it is present ([Tasks and steps](tasks-and-steps.en.md)).
+The instructions also state the patterns, IDs, and how to write unwanted behavior, so the format is clear even when a project's context removes the skill.
+The default skills apply to repositories of any language or field and to use outside sacty, so they are not written for sacty only.
+
+Related ADR: [Have the requirements acceptance criteria written in EARS and ship the default skill ears-requirements](../adr/20261017-0130-ears-requirements.md)
+
+Code: `apps/daemon/default-context/skills/ears-requirements/SKILL.md`, `apps/daemon/default-context/skills/ears-requirements/references/patterns.md`, `apps/daemon/src/prompts.ts` (`earsLines`)
+
 ## Context repository files
 
 Only `sacty-context.yaml`, `mcp.yaml`, `platforms.yaml`, `rules.md`, `rules/`, `skills/`, and `agents/` are read (`README.md` is not).

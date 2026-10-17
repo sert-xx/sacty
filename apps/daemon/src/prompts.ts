@@ -298,6 +298,21 @@ export function changeableSteps(task: Task, step: StepKey): StepKey[] {
   );
 }
 
+/** 既定のスキル（EARS 形式で要求要件を書く。PBI-122）の名前。 */
+export const EARS_SKILL = "ears-requirements";
+
+/**
+ * 要求要件の受け入れ条件を EARS 形式で書かせる（PBI-122）。既定のスキル ears-requirements に従わせる。プロジェクトの
+ * コンテキストでスキルを消していても形式がわかるよう、文型はここにも書く。
+ */
+function earsLines(): string[] {
+  return [
+    `- 受け入れ条件を EARS（Easy Approach to Requirements Syntax）の形式で書く。既定のスキル ${EARS_SKILL} があれば、それに従う`,
+    "  - 1つの要求を1文にし、次のどれかの文型で書く：常時「<システム>は、<応答>しなければならない。」、イベント駆動「<きっかけ>とき、…」、状態駆動「<状態>の間、…」、望まない振る舞い「<望まない事象>場合、…」、オプション「<機能>を含む場合、…」（状態ときっかけの両方が要れば組み合わせる）",
+    "  - 要求に ID（R-1、R-2…）を付け、応答は第三者が合否を決められる形（数・時間・状態など）で書く。正常系に対応する異常系も、望まない振る舞いの文型で書く",
+  ];
+}
+
 /** 前段の調査の結果（実装する組み合わせの先頭の調査。PBI-29）。後の工程に渡す。 */
 function investigationLines(task: Task): string[] {
   const output = task.approved.investigate?.output;
@@ -683,7 +698,7 @@ export function buildPrompt(
         "次のタスクから、要求要件をMarkdownで書いてください。",
         "",
         "- 何を実現するかを1〜3文で書く",
-        "- 受け入れ条件を、検証できる形の箇条書きで書く",
+        ...earsLines(),
         "- 実装方法には踏み込まない",
         "- タスクの内容から判断できないことは「確認したいこと」として最後に列挙する",
         ...codeLines(task),
