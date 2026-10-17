@@ -425,6 +425,9 @@ const PARAMS = {
   "audit.targetNotCandidate": null,
   "audit.notPaused": null,
   "audit.runFailed": z.object({ detail: TextParam }),
+  "audit.unreadable": null,
+  "audit.interrupted": null,
+  "audit.notAdoptable": null,
   // エージェントの段階（PBI-119）
   "config.tierRuntime": z.object({ id: z.string(), runtime: z.string(), expected: z.string() }),
   "agents.tierConnectionDiffers": z.object({
@@ -994,6 +997,9 @@ const ja: MessageDictionary = {
     "その宛先は、この提案の宛先の候補にありません。候補から選んでください。",
   "audit.notPaused": "予算で一時停止している監査ではありません。",
   "audit.runFailed": ({ detail }, text) => `監査を実行できませんでした：${text(detail)}`,
+  "audit.unreadable": "監査のエージェントの出力を、決まった形で読めませんでした。",
+  "audit.interrupted": "デーモンが止まったため、監査が途中で終わりました。",
+  "audit.notAdoptable": "このタスクは中止されたため、提案を採用・却下できません。",
   "agent.configUnavailable": ({ detail }, text) =>
     `config.yaml を読めないため、工程のエージェントを変えられません。設定を直してから、もう一度変えてください：${text(detail)}`,
   "agent.chosenMissing": ({ step, name }) =>
@@ -1486,6 +1492,9 @@ const en: MessageDictionary = {
     "That target is not one of this proposal's candidates. Choose one of them.",
   "audit.notPaused": "The audit is not paused by its budget.",
   "audit.runFailed": ({ detail }, text) => `The audit could not run: ${text(detail)}`,
+  "audit.unreadable": "The audit agent's output could not be read in the expected form.",
+  "audit.interrupted": "The audit stopped partway because the daemon stopped.",
+  "audit.notAdoptable": "This task was cancelled, so its proposals cannot be adopted or rejected.",
   "agent.configUnavailable": ({ detail }, text) =>
     `config.yaml cannot be read, so the step agent cannot be changed. Fix the settings and try again: ${text(detail)}`,
   "agent.chosenMissing": ({ step, name }) =>

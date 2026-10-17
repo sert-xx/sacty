@@ -1,4 +1,4 @@
-<!-- Code: apps/web/src/components/audit.tsx, apps/web/src/components/audit-screen.tsx, apps/web/src/lib/audit-report.ts, apps/web/src/i18n/messages/audit.ts, apps/daemon/src/audits.ts, packages/core/src/audit.ts -->
+<!-- Code: apps/web/src/components/audit.tsx, apps/web/src/components/audit-screen.tsx, apps/web/src/lib/audit-report.ts, apps/web/src/i18n/messages/audit.ts, apps/daemon/src/audits.ts, apps/daemon/src/ledger-audits.ts, apps/daemon/src/audit-prompts.ts, apps/daemon/src/service.ts, packages/core/src/audit.ts -->
 
 [日本語](audit.md) | **English**
 
@@ -8,15 +8,26 @@ An audit examines the whole process of a completed task, from the step choices t
 changes requested, remarks, and the agents' trial and error, and proposes fixes that prevent them (context, skills, agent
 rules, linters, tests, and so on). Adopting a proposal creates a fix task.
 
-> In this version, audits are screens only. The audit data is a mock, shown only when sacty is started with
-> `SACTY_AUDIT_MOCK=1`. Without it, the audit card and page show "No audits yet."
+## How an audit runs
+
+When a task completes, sacty starts its audit automatically. No setup is needed.
+
+1. **Survey**: an AI agent reads the task's whole activity and each run's session log, and flags up to 3 steps where changes were
+   requested or there was trial and error (steps of concern).
+2. **Deep dive**: for each flagged step, in its own session, the agent finds the causes and proposes fixes for each cause.
+3. After the deep dives, the audit is done. A task where nothing went wrong finishes without a deep dive.
+
+- Audits run one by one in the same queue as other runs (they count toward the limit on parallel runs).
+- Choose the AI for audits with `audit_agent` in config.yaml. If omitted, the Goal Guardian's AI is used ([config.yaml settings](config.en.md)).
+- Tasks that completed before audits were added are not audited.
+- If an audit cannot run, it becomes "Audit failed" with the reason. An audit in progress when sacty stops continues at the next start.
+
+> To check only the screens, start with `SACTY_AUDIT_MOCK=1`: no real audits run, and mock data is shown. Adopting, rejecting, and
+> resuming are kept only in the daemon's memory and reset when you restart sacty.
 
 ```sh
 SACTY_AUDIT_MOCK=1 npx sacty up
 ```
-
-The mock assigns various audit states to the project's completed tasks. Adopting, rejecting, and resuming are kept only in
-the daemon's memory and reset when you restart sacty.
 
 ## The audit card in task details
 
@@ -38,7 +49,10 @@ A proposal that needs a decision shows a target choice and "Adopt" and "Reject".
 
 - Choose the target from the target repository, a context (the project layer or an upper layer), or the sacty default
   context (the goal guardian's prompts and the default skills). The target the audit chose is selected first.
-- "Adopt" creates a task that makes the fix in the chosen target (the mock does not create it; it only records that it did).
+- "Adopt" creates a fix task for the chosen target's repository. The task goes through the usual flow (requirements, design,
+  implementation, PR).
+- If the target is the sacty default context, no task is created in your project; only the adoption is recorded. Use the
+  proposal text as a fix for sacty itself.
 - "Reject" opens a reason field. The reason is required. It is passed to later audits so they do not repeat the same
   proposal.
 - A decided proposal cannot be changed.
@@ -47,7 +61,7 @@ A proposal that needs a decision shows a target choice and "Adopt" and "Reject".
 
 "Audit" in the side menu opens the audit page of the project you are viewing (`/projects/<ID>/audit`).
 
-- **Causes**: the same cause grouped across tasks, with its state (Recurred, Proposed, Adopted, Fixed, Rejected), how many
+- **Causes**: the same cause grouped across tasks (found again after its fix task's PR is merged, it becomes Recurred), with its state (Recurred, Proposed, Adopted, Fixed, Rejected), how many
   times it was found, and the tasks. Recurred causes come first and stand out.
 - **Proposals**: those needing a decision come first. Each shows which task's audit it came from, and you can adopt or
   reject it here too.

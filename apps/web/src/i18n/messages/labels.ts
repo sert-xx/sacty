@@ -41,6 +41,7 @@ const ja = {
     split: "タスク分割",
     jira: "JIRA",
     deployment: "マージの後の監視",
+    audit: "監査の改修の提案",
   } satisfies Record<Task["start"], string>,
   /** タスクのテンプレート（PBI-90）。 */
   template: { "sacty-setup": "Sacty セットアップ" } satisfies Record<
@@ -92,6 +93,7 @@ const ja = {
     orchestrator: "オーケストレーター",
     guardian: "ゴールガーディアン",
     agent: "工程エージェント",
+    auditor: "監査",
   } satisfies Record<Actor, string>,
   verdict: {
     approved: "承認",
@@ -406,6 +408,22 @@ const ja = {
         : `修正の連鎖が上限（${max}段）に達したため、修正のタスクを作らなかった`,
     ReworkJudged: (target: string | undefined, reason: string, tail: string) =>
       `戻し先：${target ?? "判断できない"}（${reason}・${tail}）`,
+    // 完了したタスクの監査（PBI-125）
+    AuditQueued: (cap: string) => `監査を待つ（予算 ${cap}）`,
+    AuditSurveyed: (concerns: number, tail: string) =>
+      `大まかな監査を終えた（懸念のある工程 ${concerns}件・${tail}）`,
+    AuditDeepDived: (step: string, findings: number, tail: string) =>
+      `${step}の深掘りを終えた（原因 ${findings}件・${tail}）`,
+    AuditCompleted: "監査を終えた",
+    AuditFailed: (reason: string) => `監査を実行できなかった：${reason}`,
+    AuditBudgetWarned: (used: string, cap: string) =>
+      `監査の予算の 80% に達した（${used} / ${cap}）`,
+    AuditBudgetPaused: (used: string, cap: string) =>
+      `監査の予算の上限に達したため、監査を一時停止した（${used} / ${cap}）`,
+    AuditCapRaised: (cap: string) => `監査の予算の上限を ${cap} に上げて再開した`,
+    AuditProposalAdopted: (withTask: boolean): string =>
+      withTask ? "改修の提案を採用し、改修のタスクを作った" : "改修の提案を採用した（sacty 宛て）",
+    AuditProposalRejected: (reason: string) => `改修の提案を却下した：${reason}`,
   },
 };
 
@@ -433,6 +451,7 @@ const en: LabelMessages = {
     split: "Task split",
     jira: "JIRA",
     deployment: "After-merge watch",
+    audit: "Audit proposal",
   },
   template: { "sacty-setup": "Sacty setup" },
   status: {
@@ -479,6 +498,7 @@ const en: LabelMessages = {
     orchestrator: "Orchestrator",
     guardian: "Goal Guardian",
     agent: "step agent",
+    auditor: "audit",
   },
   verdict: {
     approved: "Approved",
@@ -733,6 +753,20 @@ const en: LabelMessages = {
         : `Did not create a fix task because the chain reached the limit (${max})`,
     ReworkJudged: (target, reason, tail) =>
       `Step to redo: ${target ?? "undecided"} (${reason} · ${tail})`,
+    AuditQueued: (cap) => `Waiting for the audit (budget ${cap})`,
+    AuditSurveyed: (concerns, tail) =>
+      `Finished the survey (${concerns} step${concerns === 1 ? "" : "s"} of concern · ${tail})`,
+    AuditDeepDived: (step, findings, tail) =>
+      `Finished the deep dive into ${step} (${findings} cause${findings === 1 ? "" : "s"} · ${tail})`,
+    AuditCompleted: "Finished the audit",
+    AuditFailed: (reason) => `The audit could not run: ${reason}`,
+    AuditBudgetWarned: (used, cap) => `The audit reached 80% of its budget (${used} / ${cap})`,
+    AuditBudgetPaused: (used, cap) =>
+      `Paused the audit because it reached its budget cap (${used} / ${cap})`,
+    AuditCapRaised: (cap) => `Raised the audit budget cap to ${cap} and resumed`,
+    AuditProposalAdopted: (withTask) =>
+      withTask ? "Adopted a proposal and created a fix task" : "Adopted a proposal (for sacty)",
+    AuditProposalRejected: (reason) => `Rejected a proposal: ${reason}`,
   },
 };
 

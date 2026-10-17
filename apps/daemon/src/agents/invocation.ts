@@ -18,7 +18,9 @@ export type AgentRole =
   | "orchestrator"
   | "chat"
   | "export"
-  | "deployment";
+  | "deployment"
+  | "audit"
+  | "audit-dive";
 
 /** コンテナの中での設定ディレクトリ。毎回空の場所を使い、ホストの設定やメモリーを読ませない。 */
 export const CONTAINER_CLAUDE_CONFIG_DIR = "/tmp/sacty-claude-config";
@@ -293,9 +295,11 @@ export async function buildInvocation(
     }
 
     case "stub": {
-      const stub = agent.stub ?? {
+      const stub: NonNullable<typeof agent.stub> = agent.stub ?? {
         output: "# 要求要件（スタブ）",
         outputs: {},
+        audit: "",
+        audit_dive: "",
         guardian: "",
         final_review: "",
         rework: "",
@@ -318,21 +322,25 @@ export async function buildInvocation(
             type: "result",
             is_error: false,
             result:
-              role === "guardian"
-                ? stub.guardian
-                : role === "final-review"
-                  ? stub.final_review
-                  : role === "rework"
-                    ? stub.rework
-                    : role === "orchestrator"
-                      ? stub.orchestrator
-                      : role === "chat"
-                        ? stub.chat
-                        : role === "export"
-                          ? stub.export
-                          : role === "deployment"
-                            ? stub.deployment
-                            : ((role && stub.outputs[role]) ?? stub.output),
+              role === "audit"
+                ? stub.audit
+                : role === "audit-dive"
+                  ? stub.audit_dive
+                  : role === "guardian"
+                    ? stub.guardian
+                    : role === "final-review"
+                      ? stub.final_review
+                      : role === "rework"
+                        ? stub.rework
+                        : role === "orchestrator"
+                          ? stub.orchestrator
+                          : role === "chat"
+                            ? stub.chat
+                            : role === "export"
+                              ? stub.export
+                              : role === "deployment"
+                                ? stub.deployment
+                                : ((role && stub.outputs[role]) ?? stub.output),
             usage: {
               input_tokens: stub.usage.input,
               cache_read_input_tokens: stub.usage.cache_read,

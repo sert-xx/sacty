@@ -183,7 +183,7 @@ export const MAX_INTEGRATION_ATTEMPTS = 3;
 export const BUDGET_WARN_RATIO = 0.8;
 
 /** 誰がその記録を残したか。 */
-export const Actor = z.enum(["person", "sacty", "orchestrator", "guardian", "agent"]);
+export const Actor = z.enum(["person", "sacty", "orchestrator", "guardian", "agent", "auditor"]);
 export type Actor = z.infer<typeof Actor>;
 
 /** エージェントの認証方式。 */
@@ -340,6 +340,38 @@ export type TaskTemplate = z.infer<typeof TaskTemplate>;
  */
 const DeploymentFixKind = z.enum(["ci", "deployment"]);
 
+/** 監査の根拠になった出来事の種類（PBI-124）。 */
+export const AUDIT_EVIDENCE_KINDS = [
+  "changesRequested",
+  "pullRequestRemark",
+  "pause",
+  "retry",
+  "toolFailure",
+  "escalation",
+] as const;
+export type AuditEvidenceKind = (typeof AUDIT_EVIDENCE_KINDS)[number];
+
+/**
+ * 改修の提案の宛先（PBI-124）。対象リポジトリ・コンテキストのリポジトリ（depth はプロジェクトのコンテキストを 0 として、
+ * extends で上へたどった数）・sacty の既定のコンテキスト（ゴールガーディアンのプロンプトや既定のスキル）。
+ * repo の長さは制限しない：宛先の候補は、タスクの対象リポジトリと使ったコンテキストの指定（それぞれの入力の上限に従う）
+ * から作るので、ここで狭めると、正しい候補を採用できなくなる（PR #134 レビュー指摘）。採用のときは候補と一致するかを
+ * 確かめるので、候補に無い長い文字列は通らない。
+ */
+export const AuditTarget = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("repository"), repo: z.string().min(1) }),
+  z.object({
+    kind: z.literal("context"),
+    repo: z.string().min(1),
+    depth: z.number().int().min(0).max(100),
+  }),
+  z.object({ kind: z.literal("sacty") }),
+]);
+export type AuditTarget = z.infer<typeof AuditTarget>;
+
+/** 監査の改修の提案から作ったタスクの、元の提案（PBI-125）。 */
+const AuditFixLink = z.object({ taskId: z.string().min(1), proposalId: z.string().min(1) });
+
 /** 修正のタスクを作るときに付ける、元のタスクとのつながり（PBI-89）。 */
 const DeploymentFix = z.object({
   taskId: z.string().min(1),
@@ -367,6 +399,7 @@ const TaskCreated = z.object({
         "ticket",
         "jira",
         "deployment",
+        "audit",
       ])
       .transform((start) => (start === "ticket" ? "sacty" : start)),
     /**
@@ -416,6 +449,8 @@ const TaskCreated = z.object({
      * ための目印・何段目の修正のタスクか（元のタスクが 0。MAX_FIX_CHAIN まで）。
      */
     fix: DeploymentFix.optional(),
+    /** 監査の改修の提案を採用して作ったタスクの、元の提案（start: audit。PBI-125）。 */
+    auditFix: AuditFixLink.optional(),
   }),
 });
 
@@ -1796,6 +1831,152 @@ const DeploymentFixSuppressed = z.object({
   }),
 });
 
+/*
+ * 完了したタスクの監査（PBI-125）。監査は、監査したタスクの作業履歴に追記する。タスクの状態・工程は変えない。監査の費用は
+ * auditCostUsd に持ち、タスクの予算（costUsd を持つイベントの合計）には足さない（監査の予算は別。ADR 20261017-1145）。
+ */
+
+/** 監査の AI の実行の記録。 */
+const AuditRun = {
+  agentId: z.string(),
+  ...AgentSetting,
+  ...RunRef,
+  usage: TokenUsage.optional(),
+  auditCostUsd: z.number().nonnegative().default(0),
+  estimated: z.boolean().default(false),
+};
+
+/** 監査の文の上限（文字数）。 */
+export const AUDIT_TEXT_MAX = 4000;
+export const AUDIT_TITLE_MAX = 200;
+
+/** 根拠になった出来事。eventId は作業履歴の行、runId はエージェントの実行。 */
+export const AuditEvidenceRecord = z.object({
+  kind: z.enum(AUDIT_EVIDENCE_KINDS),
+  text: z.string().min(1).max(500),
+  step: StepKey.optional(),
+  eventId: z.string().min(1).optional(),
+  runId: z.string().min(1).optional(),
+});
+
+/** 改修の提案。candidates は採用のときに選べる宛先（target を含む）。 */
+export const AuditProposalRecord = z.object({
+  id: z.string().min(1),
+  title: z.string().min(1).max(AUDIT_TITLE_MAX),
+  body: z.string().max(AUDIT_TEXT_MAX),
+  target: AuditTarget,
+  candidates: z.array(AuditTarget).min(1),
+});
+
+/** 原因。causeKey はプロジェクトの中でタスクをまたいで同じ原因をまとめる鍵。 */
+export const AuditFindingRecord = z.object({
+  causeKey: z.string().min(1).max(200),
+  title: z.string().min(1).max(AUDIT_TITLE_MAX),
+  detail: z.string().max(AUDIT_TEXT_MAX),
+  step: StepKey.optional(),
+  evidence: z.array(AuditEvidenceRecord).max(20),
+  proposals: z.array(AuditProposalRecord).max(5),
+});
+
+/** 監査を待つ（タスクが完了した）。capUsd は監査の予算の上限。 */
+const AuditQueued = z.object({
+  type: z.literal("AuditQueued"),
+  payload: z.object({ auditId: z.string().min(1), capUsd: z.number().positive() }),
+});
+
+/** 大まかな監査の結果。counts は sacty が作業履歴とセッションログから数えた件数。concerns は深掘りする工程。 */
+const AuditSurveyed = z.object({
+  type: z.literal("AuditSurveyed"),
+  payload: z.object({
+    auditId: z.string().min(1),
+    summary: z.string().max(AUDIT_TEXT_MAX),
+    counts: z.record(z.enum(AUDIT_EVIDENCE_KINDS), z.number().int().nonnegative()),
+    concerns: z
+      .array(z.object({ step: StepKey, reason: z.string().min(1).max(500) }))
+      .max(StepKey.options.length),
+    ...AuditRun,
+  }),
+});
+
+/** 懸念のある工程の深掘りの結果と、見つけた原因。 */
+const AuditDeepDived = z.object({
+  type: z.literal("AuditDeepDived"),
+  payload: z.object({
+    auditId: z.string().min(1),
+    step: StepKey,
+    summary: z.string().max(AUDIT_TEXT_MAX),
+    findings: z.array(AuditFindingRecord).max(10),
+    ...AuditRun,
+  }),
+});
+
+/** 監査を終えた。 */
+const AuditCompleted = z.object({
+  type: z.literal("AuditCompleted"),
+  payload: z.object({ auditId: z.string().min(1) }),
+});
+
+/** 監査を実行できなかった（AI の実行の失敗・出力を読めない・中断）。step は深掘りの工程。 */
+const AuditFailed = z.object({
+  type: z.literal("AuditFailed"),
+  payload: z.object({
+    auditId: z.string().min(1),
+    reason: DaemonText,
+    step: StepKey.optional(),
+    agentId: z.string().optional(),
+    ...AgentSetting,
+    ...RunRef,
+    usage: TokenUsage.optional(),
+    auditCostUsd: z.number().nonnegative().default(0),
+    estimated: z.boolean().default(false),
+  }),
+});
+
+/** 監査の予算の 80% に達した。 */
+const AuditBudgetWarned = z.object({
+  type: z.literal("AuditBudgetWarned"),
+  payload: z.object({
+    auditId: z.string().min(1),
+    usedUsd: z.number().nonnegative(),
+    capUsd: z.number().positive(),
+  }),
+});
+
+/** 監査の予算の上限に達し、一時停止した。 */
+const AuditBudgetPaused = z.object({
+  type: z.literal("AuditBudgetPaused"),
+  payload: z.object({
+    auditId: z.string().min(1),
+    usedUsd: z.number().nonnegative(),
+    capUsd: z.number().positive(),
+  }),
+});
+
+/** 人が監査の予算の上限を上げて再開した（累計）。 */
+const AuditCapRaised = z.object({
+  type: z.literal("AuditCapRaised"),
+  payload: z.object({ auditId: z.string().min(1), capUsd: z.number().positive() }),
+});
+
+/**
+ * 人が改修の提案を採用した。fixTaskId は作った改修のタスク（sacty の既定のコンテキストが宛先なら作らない。
+ * ADR 20261017-1145）。
+ */
+const AuditProposalAdopted = z.object({
+  type: z.literal("AuditProposalAdopted"),
+  payload: z.object({
+    proposalId: z.string().min(1),
+    target: AuditTarget,
+    fixTaskId: z.string().min(1).optional(),
+  }),
+});
+
+/** 人が改修の提案を却下した。理由は以後の監査に渡す。 */
+const AuditProposalRejected = z.object({
+  type: z.literal("AuditProposalRejected"),
+  payload: z.object({ proposalId: z.string().min(1), reason: z.string().trim().min(1).max(2000) }),
+});
+
 /** 作業履歴に書けるイベント（追加する前の形）。 */
 export const EventInput = z.discriminatedUnion("type", [
   TaskCreated,
@@ -1871,6 +2052,16 @@ export const EventInput = z.discriminatedUnion("type", [
   DeploymentWatchSkipped,
   DeploymentFixRegistered,
   DeploymentFixSuppressed,
+  AuditQueued,
+  AuditSurveyed,
+  AuditDeepDived,
+  AuditCompleted,
+  AuditFailed,
+  AuditBudgetWarned,
+  AuditBudgetPaused,
+  AuditCapRaised,
+  AuditProposalAdopted,
+  AuditProposalRejected,
 ]);
 export type EventInput = z.input<typeof EventInput>;
 export type ParsedEventInput = z.infer<typeof EventInput>;

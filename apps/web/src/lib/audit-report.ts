@@ -113,7 +113,7 @@ export function auditReport(
       `- ${m.proposal.from}: ${p.taskTitle}`,
     );
     if (p.decision?.kind === "adopted")
-      lines.push(`- ${m.proposal.task}: ${p.decision.task.title}`);
+      lines.push(`- ${m.proposal.task}: ${p.decision.task?.title ?? m.proposal.noTaskForSacty}`);
     if (p.decision?.kind === "rejected") {
       lines.push(`- ${m.proposal.rejectedReason}: ${p.decision.reason}`);
     }

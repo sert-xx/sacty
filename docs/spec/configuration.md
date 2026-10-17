@@ -17,6 +17,7 @@
 | `image` | `sacty-agent:0.1.0`（`DEFAULT_IMAGE`） | 既定のイメージ。エージェントとテストの実行に使う |
 | `default_agent` | （必須） | 既定の AI。`agents` にある名前 |
 | `guardian_agent` | `default_agent` | ゴールガーディアンの AI |
+| `audit_agent` | `guardian_agent`（無ければ `default_agent`） | 完了したタスクの監査の AI（[監査](audit.md)） |
 | `step_agents` | `{}` | 工程（`StepKey`。`deployment` はマージの後の監視の工程の確認）と `orchestrator` ごとの AI。書かなければ `default_agent`、統合レビュー（`integrate`）は `guardian_agent` |
 | `agents` | （必須） | エージェントの定義（下の「エージェント」） |
 | `providers` | `{}` | OpenAI 互換（Responses API）の接続先。名前は `^[A-Za-z0-9_-]+$`。`base_url`（http・https）・`secret`（任意）・`via_gateway`（既定 `false`） |
@@ -31,7 +32,7 @@
 | `gateway.platforms` | `{}` | 組織内 PF。名前は `^[a-z0-9][a-z0-9-]*$`（[ゲートウェイ](gateway.md)） |
 | `gateway.mcp_servers` | `{}` | ホストで動かす MCP サーバー。名前は `^[A-Za-z0-9_-]+$`（同上） |
 
-ほかの検査：`default_agent`・`guardian_agent`・`step_agents` の値が `agents` に無い、`provider` の名前が `providers` に無いときは誤り。
+ほかの検査：`default_agent`・`guardian_agent`・`audit_agent`・`step_agents` の値が `agents` に無い、`provider` の名前が `providers` に無いときは誤り。
 `agents` の名前が段階（`claude_<段階>`・`codex_<段階>`。段階は `AGENT_TIERS` の `lite`・`entry`・`standard`・`advanced`・`ultimate`）なのに
 `runtime` が接頭辞と合わないときも誤り（`config.tierRuntime`）。段階のエージェントは `tierAgents`（runtime ごと・段階ごと）にも集める
 （`parseTierId`・`tierAgentsFor`）。置き方は [コンテキストの合成](context.md#実行のときに置くファイル)。雛形（`CONFIG_TEMPLATE`）には、両 runtime の 5 段階すべての例を

@@ -16,6 +16,7 @@ Per-project settings (targets, GitHub accounts, the context repository, and so o
 | --- | --- | --- |
 | `default_agent` | The AI that runs the steps (a name in `agents`). Required | None |
 | `guardian_agent` | The AI used for the Goal Guardian | `default_agent` |
+| `audit_agent` | The AI used for audits of completed tasks ([Audits](audit.en.md)) | `guardian_agent` (or `default_agent`) |
 | `step_agents` | The AI to use for each step (including the after-merge watch) and the Orchestrator ([Models per step](#models-per-step)) | `default_agent` if omitted (`guardian_agent` for Integration review) |
 | `agents` | AI definitions (by name. [Agents](#agents)). Required | None |
 | `providers` | OpenAI-compatible connections ([Gateway](gateway.en.md#openai-compatible-endpoints-providers)) | None |
@@ -106,7 +107,7 @@ The keys you can write in `step_agents` are `orchestrator`, the steps `investiga
 `design` (Design), `split` (Task split), `integrate` (Integration review), `reproduce` (Reproduce), `implement` (Implementation),
 `document` (Document), `operation` (Operation), and
 `deployment` (the check in the after-merge watch step. [After-merge watch](deployment-watch.en.md)).
-Writing a name that is not in `agents` in `default_agent`, `guardian_agent`, or `step_agents` is an error.
+Writing a name that is not in `agents` in `default_agent`, `guardian_agent`, `audit_agent`, or `step_agents` is an error.
 The `pr` key (PR作成) of earlier versions can no longer be written because the step was removed (it is an error; delete it).
 
 ## Agent tiers
