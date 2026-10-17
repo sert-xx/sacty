@@ -412,6 +412,7 @@ const PARAMS = {
   "config.agentMissing": z.object({ key: z.string(), id: z.string() }),
   // 工程のエージェントを人が変える（PBI-121）
   "agent.stepMissing": null,
+  "agent.stepNotChangeable": null,
   "agent.notInAgents": z.object({ name: z.string() }),
   "agent.unchanged": z.object({ name: z.string() }),
   "agent.configUnavailable": z.object({ detail: TextParam }),
@@ -972,6 +973,8 @@ const ja: MessageDictionary = {
     "ホストのゲートウェイが起動していないため、ゲートウェイ経由のエージェントを実行できません。sacty を起動し直してください。",
   "config.agentMissing": ({ key, id }) => `${key} の "${id}" が agents にありません。`,
   "agent.stepMissing": "その工程は、このタスクの工程にありません。",
+  "agent.stepNotChangeable":
+    "統合レビューは、ゴールガーディアン（config.yaml の guardian_agent）が実行するため、工程のエージェントを変えられません。",
   "agent.notInAgents": ({ name }) =>
     `エージェント「${name}」は config.yaml の agents にありません。agents の名前から選んでください。`,
   "agent.unchanged": ({ name }) => `工程のエージェントは、すでに「${name}」です。`,
@@ -1454,6 +1457,8 @@ const en: MessageDictionary = {
     "The host gateway is not running, so an agent that goes through it cannot run. Restart sacty.",
   "config.agentMissing": ({ key, id }) => `${key} "${id}" is not in agents.`,
   "agent.stepMissing": "That step is not one of this task's steps.",
+  "agent.stepNotChangeable":
+    "The integration review is run by the goal guardian (guardian_agent in config.yaml), so its step agent cannot be changed.",
   "agent.notInAgents": ({ name }) =>
     `The agent "${name}" is not in agents in config.yaml. Choose a name from agents.`,
   "agent.unchanged": ({ name }) => `The step agent is already "${name}".`,

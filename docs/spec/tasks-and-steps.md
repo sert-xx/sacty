@@ -223,14 +223,18 @@
 ## 工程のエージェントを人が変える
 
 - タスクの詳細で、工程ごとのエージェントを人が変えられる（`POST /api/tasks/:id/agents`、入力は `ChangeStepAgentInput` の `step`・`agent`）。
-  工程の状態は問わない。中止したタスクは変えられない。対象は、工程のエージェントで動く工程（統合レビューはゴールガーディアンが行うので
-  画面に出さない）。
-- 選べるのは config.yaml の `agents` の名前。次は、理由を示して断る（409）：`agents` に無い名前（`agent.notInAgents`）、今と同じ名前
-  （`agent.unchanged`）、タスクの工程に無い工程（`agent.stepMissing`）、config.yaml を読めない（`agent.configUnavailable`）。
+  工程の状態は問わない。中止したタスクは変えられない。対象は、工程のエージェントで動く工程（`stepAgentChangeable`）。統合レビューは
+  ゴールガーディアンが行うので、画面に出さず、API でも断る（`agent.stepNotChangeable`）。
+- 選べるのは config.yaml の `agents` に書いた名前。名前は config.yaml のキーのまま受け取り、空白を除いたり長さで切ったりしない。継承の
+  名前（`constructor`・`toString` など）は、`agents` に書いた名前としない（`definedAgent`）。次は、理由を示して断る（409）：`agents` に無い
+  名前（`agent.notInAgents`）、今と同じ名前（`agent.unchanged`）、タスクの工程に無い工程（`agent.stepMissing`）、統合レビュー
+  （`agent.stepNotChangeable`）、config.yaml を読めない（`agent.configUnavailable`）。
 - 変えたら `StepAgentChanged`（`step`・`from`・`to`。actor は `person`）を足す。`from` は変える前の名前（人が選んでいなければ、config.yaml で
   決まる名前）。投影は `agents` を `to` にし、`agentChanges` に工程ごとの最後の変更を持つ。
 - 工程の実行・マージの後の監視の確認・外部作業・書き出しは、人が選んだエージェントを config.yaml の `step_agents`・`default_agent` より優先して
-  使う（`stepAgentFor`）。実行の開始（`AgentRunStarted`）のときに決めるので、今の実行は変えない。選んだ名前が `agents` から消えていたら、
+  使う（`stepAgentFor`）。実行の開始（`AgentRunStarted`）のときに決めるので、今の実行は変えない。工程の実行・監視は、準備の後に最新の
+  タスクから読む。外部作業・書き出しは、準備（接続先・コンテキストの用意）の間に変わったら、古いエージェントでは始めず、実行待ちのまま
+  戻して、次の実行で新しいエージェントで準備し直す。選んだ名前が `agents` から消えていたら、
   既定に戻さず、`agent.chosenMissing` で一時停止する（書き出しは、書き出せなかった理由にする）。段階のサブエージェントは、選んだエージェントを
   親として置く。
 - 状態（`GET /api/status`）は、選べるエージェント（名前・runtime・モデル・リーズニングエフォート。秘密の値・接続先の URL は出さない）と、

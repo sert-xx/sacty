@@ -538,8 +538,17 @@ export function stepAgentFor(
   chosen: string | undefined,
 ): { ok: true; agent: AgentConfig } | { ok: false; missing: string } {
   if (chosen === undefined) return { ok: true, agent: agentFor(config, step) };
-  const agent = config.agents?.[chosen];
+  const agent = definedAgent(config, chosen);
   return agent ? { ok: true, agent } : { ok: false, missing: chosen };
+}
+
+/**
+ * config.yaml の agents に、その名前そのもので書いたエージェント（PBI-121）。継承したプロパティの名前（constructor・
+ * __proto__・toString など）はエージェントとしない（PR #131 レビュー指摘）。
+ */
+export function definedAgent(config: SactyConfig, name: string): AgentConfig | undefined {
+  const agents = config.agents;
+  return agents && Object.hasOwn(agents, name) ? agents[name] : undefined;
 }
 
 /**

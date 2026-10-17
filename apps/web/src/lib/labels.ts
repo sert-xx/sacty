@@ -11,6 +11,7 @@ import {
   MAX_FIX_CHAIN,
   openProposal,
   type StepKey,
+  stepAgentChangeable,
   stepRunning,
   type Task,
 } from "@sacty/core";
@@ -812,7 +813,7 @@ export function stepAgentRows(
   stepAgents: Partial<Record<StepKey, string>> | undefined,
 ): StepAgentRow[] {
   return task.steps
-    .filter((s) => s.key !== "integrate")
+    .filter((s) => stepAgentChangeable(s.key))
     .map((s) => {
       const change = task.agentChanges?.[s.key];
       const chosen = task.agents?.[s.key];

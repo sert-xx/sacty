@@ -86,6 +86,7 @@ import {
   StepKey,
   StepPullRequestKey,
   sameGitHubUrl,
+  stepAgentChangeable,
   stepDocumentPath,
   type Task,
   type TaskProposal,
@@ -118,6 +119,7 @@ import {
   agentSetting,
   type ConfigResult,
   DEFAULT_IMAGE_NAME,
+  definedAgent,
   githubRepoOf,
   resolveImage,
   type SactyConfig,
@@ -1307,7 +1309,7 @@ export class TaskService {
       return;
     }
     // 人がタスクの詳細で選んだエージェントを優先する（PBI-121）。選んだ名前が消えていれば、理由を示して止める
-    const chosen = stepAgentFor(config, "deployment", task.agents?.deployment);
+    const chosen = stepAgentFor(config, "deployment", this.mustGet(task.id).agents?.deployment);
     if (!chosen.ok) {
       this.pauseForMissingAgent(task, "deployment", chosen.missing);
       return;
@@ -4130,8 +4132,9 @@ export class TaskService {
       if (!resolved.ok) return;
     }
 
-    // 工程に使う AI（人がタスクの詳細で選んだもの。無ければ step_agents か default_agent。PBI-40・PBI-121）
-    const chosen = stepAgentFor(config.config, step, task.agents?.[step]);
+    // 工程に使う AI（人がタスクの詳細で選んだもの。無ければ step_agents か default_agent。PBI-40・PBI-121）。準備（レビューの
+    // 対象の確認など）の間に人が変えていれば、それを使う。決めてから開始の記録までは待たない（PR #131 レビュー指摘）
+    const chosen = stepAgentFor(config.config, step, this.mustGet(task.id).agents?.[step]);
     if (!chosen.ok) {
       this.pauseForMissingAgent(task, step, chosen.missing);
       return;
@@ -4782,6 +4785,9 @@ export class TaskService {
       }
       const latest = this.mustGet(task.id);
       if (latest.status !== "queued" || this.stopRequested(task.id)) return;
+      // 準備（接続先・コンテキストの用意）の間に人がエージェントを変えたなら、古いエージェントでは始めない。実行待ちのまま
+      // 戻し、次の実行で新しいエージェントで準備し直す（PR #131 レビュー指摘）
+      if (latest.agents?.[step] !== task.agents?.[step]) return;
       mkdirSync(workspaceDir, { recursive: true });
       // 実行前に永続化する。結果が失われても再送しない。
       this.append(latest, [
@@ -4979,12 +4985,14 @@ export class TaskService {
       } catch (error) {
         return fail(message("export.failed", { detail: errorText(error) }));
       }
-      // 準備の間に人間が止めた・中止した・承認が取り消されたなら、始めない（再開・承認し直すと書き出す）
+      // 準備の間に人間が止めた・中止した・承認が取り消されたなら、始めない（再開・承認し直すと書き出す）。エージェントを
+      // 変えたなら、古いエージェントでは始めず、次の実行で新しいエージェントで書き出す（PR #131 レビュー指摘）
       const latest = this.mustGet(task.id);
       if (
         this.pauseRequested.has(task.id) ||
         this.cancelling.has(task.id) ||
-        latest.approved[step]?.at !== approved.at
+        latest.approved[step]?.at !== approved.at ||
+        latest.agents?.[step] !== task.agents?.[step]
       ) {
         return;
       }
@@ -7244,13 +7252,17 @@ export class TaskService {
     if (!task.steps.some((s) => s.key === step)) {
       throw new InvalidOperationError(message("agent.stepMissing"));
     }
+    // 統合レビューは、ゴールガーディアンが実行する。画面で出さないだけでなく、API でも断る（PR #131 レビュー指摘）
+    if (!stepAgentChangeable(step)) {
+      throw new InvalidOperationError(message("agent.stepNotChangeable"));
+    }
     const config = this.deps.config();
     if (!config.ok) {
       throw new InvalidOperationError(
         message("agent.configUnavailable", { detail: config.problem }),
       );
     }
-    if (!config.config.agents?.[agent]) {
+    if (!definedAgent(config.config, agent)) {
       throw new InvalidOperationError(message("agent.notInAgents", { name: agent }));
     }
     const from = task.agents?.[step] ?? agentFor(config.config, step).id;

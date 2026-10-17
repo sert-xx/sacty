@@ -64,6 +64,7 @@ Code: `apps/daemon/src/config.ts` (`ConfigFile`, `loadConfig`, `agentFor`, `CONF
 | `stub` | none | No | No | Yes |
 
 The AI used for each role is chosen by `agentFor`: the one in `step_agents` if present, otherwise `default_agent` (`guardian_agent` for `integrate`).
+For steps (including the after-merge watch, operations, and exports), an agent a person chose in the task details takes precedence (`stepAgentFor`; [Changing a step's agent](tasks-and-steps.en.md#changing-a-steps-agent)).
 The Activity keeps only the `authMode`, `model`, and `reasoningEffort` of the AI used (it does not keep secret values or endpoint URLs; `agentSetting`).
 
 Code: `apps/daemon/src/config.ts` (`Agent`, `Auth`, `Provider`, `StubBehavior`, `agentFor`, `agentSetting`)

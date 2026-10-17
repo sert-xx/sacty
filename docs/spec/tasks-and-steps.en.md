@@ -220,14 +220,18 @@ Code: `apps/daemon/src/service.ts` (`changeStepImage`, `runNextInner`, `integrat
 ## Changing a step's agent
 
 - In the task details, a person can change the agent of each step (`POST /api/tasks/:id/agents`; the input is `step` and `agent` of `ChangeStepAgentInput`).
-  The state of the step does not matter. A cancelled task cannot be changed. The targets are the steps run by step agents (Integration review is done by the Goal Guardian,
-  so it is not shown on the screen).
-- The choices are the names in `agents` in config.yaml. These are rejected with a reason (409): a name not in `agents` (`agent.notInAgents`), the same name as now
-  (`agent.unchanged`), a step not in the task (`agent.stepMissing`), and config.yaml that cannot be read (`agent.configUnavailable`).
+  The state of the step does not matter. A cancelled task cannot be changed. The targets are the steps run by step agents (`stepAgentChangeable`). Integration review is
+  done by the Goal Guardian, so it is not shown on the screen and is also rejected by the API (`agent.stepNotChangeable`).
+- The choices are the names written in `agents` in config.yaml. A name is taken exactly as the config.yaml key, without trimming spaces or limiting its length. Inherited
+  names (`constructor`, `toString`, and so on) are not names written in `agents` (`definedAgent`). These are rejected with a reason (409): a name not in `agents`
+  (`agent.notInAgents`), the same name as now (`agent.unchanged`), a step not in the task (`agent.stepMissing`), Integration review (`agent.stepNotChangeable`), and
+  config.yaml that cannot be read (`agent.configUnavailable`).
 - A change adds `StepAgentChanged` (`step`, `from`, `to`; actor `person`). `from` is the name before the change (the name decided by config.yaml if no person chose one).
   The projection sets `agents` to `to` and keeps the last change per step in `agentChanges`.
 - Step runs, the check of the after-merge watch, operations, and exports use the agent a person chose in preference to `step_agents` and `default_agent` in config.yaml
-  (`stepAgentFor`). It is decided at the start of a run (`AgentRunStarted`), so a running run does not change. If the chosen name is no longer in `agents`, the task
+  (`stepAgentFor`). It is decided at the start of a run (`AgentRunStarted`), so a running run does not change. Step runs and the watch read it from the latest task after
+  preparing. If it changes while an operation or export is preparing (its connection and context), the run does not start with the old agent; the task stays queued and
+  the next run prepares again with the new agent. If the chosen name is no longer in `agents`, the task
   does not fall back to the default and pauses with `agent.chosenMissing` (an export records it as the reason it could not export). Tier subagents are placed with the
   chosen agent as the parent.
 - The status (`GET /api/status`) returns the agents that can be chosen (name, runtime, model, reasoning effort; no secret values or endpoint URLs) and the name per step
