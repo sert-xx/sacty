@@ -21,6 +21,7 @@ import { FollowProjectAfterRecovery, StaleNotice } from "@/components/live-statu
 import { Markdown } from "@/components/markdown";
 import { PullRequestCard } from "@/components/pull-request";
 import { ReproductionResult } from "@/components/reproduction";
+import { SelfReviewNote } from "@/components/self-review";
 import { TestViewpoints } from "@/components/test-viewpoints";
 import { Hint } from "@/components/ui/hint";
 import type { Messages } from "@/i18n";
@@ -186,6 +187,8 @@ export function ReviewView({ task }: { task: Task }) {
                   {stepLabel[step]}
                 </span>
               </h2>
+              {/* 提出の前のセルフレビュー（PBI-120） */}
+              {task.outputs[step] && <SelfReviewNote task={task} step={step} />}
               {task.outputs[step] ? (
                 <Markdown className="rounded-lg border border-border bg-muted px-5 py-4">
                   {task.outputs[step]}

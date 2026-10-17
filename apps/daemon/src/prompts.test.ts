@@ -1912,3 +1912,249 @@ describe("要求要件を EARS 形式で書かせる（PBI-122）", () => {
     }
   });
 });
+
+describe("提出の前のセルフレビュー（PBI-120）", () => {
+  const task = (steps: Task["steps"][number]["key"][], extra: Partial<Task> = {}): Task =>
+    ({
+      id: "t-1",
+      title: "決済",
+      body: "失敗したら再試行する",
+      steps: steps.map((key) => ({ key, state: "todo" })),
+      remarks: [],
+      outputs: {},
+      approved: {
+        requirements: { output: "# 要求要件", submission: 1 },
+        design: {
+          output: "# 設計",
+          submission: 1,
+          testViewpoints: [{ id: "TV-1", title: "再試行", input: "失敗", expected: "再試行" }],
+        },
+      },
+      testViewpoints: [],
+      reproductionTests: [],
+      testCommand: "npm test",
+      proposals: [],
+      repository: {
+        url: "https://github.com/acme/app",
+        baseBranch: "main",
+        baseCommit: "abcdef1234",
+      },
+      ...extra,
+    }) as unknown as Task;
+  const HEADING = '{"sacty-self-review": {"rounds": 2, "passed": true';
+  const steps: Task["steps"][number]["key"][] = ["requirements", "design", "implement"];
+
+  it("要求要件・設計は design-doc、実装（標準・不具合の修正・テストの仕組みが無い）は code で、パスするまで繰り返させる", () => {
+    const cases: [string, string, string][] = [
+      [buildPrompt(task(steps), "requirements"), "design-doc", "要求要件"],
+      [buildPrompt(task(steps), "design"), "design-doc", "設計とテスト観点"],
+      [buildPrompt(task(steps), "implement"), "code", "実装（コードとテスト）"],
+      [
+        buildPrompt(
+          task(["investigate", "reproduce", "implement"], {
+            reproduction: {
+              reproduced: true,
+              tests: ["t › x"],
+              command: "npm test",
+              exitCode: 1,
+              output: "1 failed",
+            },
+          } as Partial<Task>),
+          "implement",
+        ),
+        "code",
+        "修正（コードとテスト）",
+      ],
+      [
+        buildPrompt(task(steps, { noTestsReason: "テストが無い" }), "implement"),
+        "code",
+        "実装（コードとテスト）",
+      ],
+    ];
+    for (const [prompt, kind, target] of cases) {
+      expect(prompt, target).toContain(
+        `- 提出の前に、既定のスキル review-dispatch（流れは self-review、主対象の種類は ${kind}）で${target}をセルフレビューする`,
+      );
+      expect(prompt, target).toContain(
+        "- must の指摘が無くなる（パスする）まで、修正と再レビューを繰り返す。回数の上限はスキルの規則（初回を含めて最大 5 回）",
+      );
+      expect(prompt, target).toContain(
+        "- 上限に達しても must が残るときは、残った指摘を報告して提出する。黙って提出しない",
+      );
+      expect(prompt, target).toContain(HEADING);
+    }
+  });
+
+  it("差し戻しのやり直しでも、同じ指示を付ける", () => {
+    const redo = task(steps, {
+      outputs: { requirements: "# 前回" },
+      approved: {},
+      remarks: [{ id: "R-1", step: "requirements", round: 1, text: "異常系が無い" }],
+    } as Partial<Task>);
+    const prompt = buildPrompt(redo, "requirements");
+    expect(prompt).toContain("R-1");
+    expect(prompt).toContain(HEADING);
+  });
+
+  it("文書作成・調査の工程には付けない", () => {
+    expect(buildPrompt(task(["document"]), "document")).not.toContain("sacty-self-review");
+    expect(buildPrompt(task(["investigate"]), "investigate")).not.toContain("sacty-self-review");
+  });
+
+  it("報告を読み、本文から取り除く。形が違う・無いときは読まない", () => {
+    const report = {
+      "sacty-self-review": {
+        rounds: 3,
+        passed: false,
+        remaining: ["境界値の観点が足りない"],
+        notReviewed: ["C-7"],
+        summary: "2 回直した",
+      },
+    };
+    const output = `# 要求要件\n\n- 受け入れ条件\n\n\`\`\`json\n${JSON.stringify(report)}\n\`\`\``;
+    const read = extractBlocks(output, new Set());
+    expect(read.selfReview).toEqual(report["sacty-self-review"]);
+    expect(read.output).toBe("# 要求要件\n\n- 受け入れ条件");
+    // remaining・notReviewed・summary は省ける
+    const minimal = '# 設計\n\n```json\n{"sacty-self-review": {"rounds": 1, "passed": true}}\n```';
+    expect(extractBlocks(minimal, new Set()).selfReview).toEqual({
+      rounds: 1,
+      passed: true,
+      remaining: [],
+      notReviewed: [],
+      summary: "",
+    });
+    // 形が違えば読まないが、本文からは取り除く
+    const broken =
+      '# 設計\n\n```json\n{"sacty-self-review": {"rounds": "two", "passed": "yes"}}\n```';
+    const brokenRead = extractBlocks(broken, new Set());
+    expect(brokenRead).not.toHaveProperty("selfReview");
+    expect(brokenRead.output).toBe("# 設計");
+    expect(extractBlocks("# 設計", new Set())).not.toHaveProperty("selfReview");
+  });
+
+  it("最後の報告が JSON として読めなければ、前の報告に戻らず記録なしにし、どちらも本文から取り除く（PR #130 レビュー指摘）", () => {
+    const passed = '```json\n{"sacty-self-review": {"rounds": 1, "passed": true}}\n```';
+    const trailingComma = '```json\n{"sacty-self-review":{"rounds":5,"passed":false,}}\n```';
+    const output = `# 設計\n\n${passed}\n\n訂正します。\n\n${trailingComma}`;
+    const read = extractBlocks(output, new Set());
+    expect(read).not.toHaveProperty("selfReview");
+    expect(read.output).toBe("# 設計\n\n\n\n訂正します。");
+    // 囲みなし・閉じない括弧でも、見出しでわかる報告は取り除く
+    const unclosed = `# 設計\n\n${passed}\n\n{"sacty-self-review": {"rounds": 2, "passed": false`;
+    const unclosedRead = extractBlocks(unclosed, new Set());
+    expect(unclosedRead).not.toHaveProperty("selfReview");
+    expect(unclosedRead.output).toBe("# 設計");
+    // 閉じない報告の後ろの本文（空行の後）は消さない
+    const followed = `${unclosed}\n\n## 補足\n\n- 後ろの本文`;
+    const followedOutput = extractBlocks(followed, new Set()).output;
+    expect(followedOutput).toMatch(/^# 設計\n+## 補足\n\n- 後ろの本文$/);
+    expect(followedOutput).not.toContain("sacty-self-review");
+    const unclosedFence = `# 設計\n\n\`\`\`json\n{"sacty-self-review": {"rounds": 2,\n\`\`\`\n\n## 補足`;
+    const fenceRead = extractBlocks(unclosedFence, new Set());
+    expect(fenceRead).not.toHaveProperty("selfReview");
+    expect(fenceRead.output).toBe("# 設計\n\n\n\n## 補足");
+    // 引用符が閉じない報告でも、囲みの後ろの本文は消さない（PR #130 再レビュー指摘）
+    const openString = `# 設計\n\n\`\`\`json\n{"sacty-self-review": {"rounds": 2, "passed": true, "summary": "未完\n\`\`\`\n\n## 重要な補足\n\n- 消してはいけない`;
+    const openStringRead = extractBlocks(openString, new Set());
+    expect(openStringRead).not.toHaveProperty("selfReview");
+    expect(openStringRead.output).toMatch(/^# 設計\n+## 重要な補足\n\n- 消してはいけない$/);
+    // 囲みの外でも、閉じない文字列の後ろ（空行の後）の本文は消さない
+    const openStringBare = `# 設計\n\n{"sacty-self-review": {"rounds": 2, "summary": "未完\n\n## 重要な補足`;
+    expect(extractBlocks(openStringBare, new Set()).output).toMatch(/^# 設計\n+## 重要な補足$/);
+    // 囲みの中の閉じない報告は、空行があっても囲みの終わりまでを取り除く
+    const blankInFence = `# 設計\n\n\`\`\`json\n{"sacty-self-review": {"rounds": 2,\n\n"passed": true\n\`\`\`\n\n## 補足`;
+    expect(extractBlocks(blankInFence, new Set()).output).toMatch(/^# 設計\n+## 補足$/);
+    // 囲みの外の読めない報告で、後ろの本文に閉じ括弧があっても、本文を消さない（PR #130 再々レビュー指摘）
+    const braceLater =
+      '# 設計\n\n{"sacty-self-review": {"rounds":2, "summary":"未完\n\n## 補足\n終了トークンは }} とする。';
+    const braceLaterRead = extractBlocks(braceLater, new Set());
+    expect(braceLaterRead).not.toHaveProperty("selfReview");
+    expect(braceLaterRead.output).toMatch(/^# 設計\n+## 補足\n終了トークンは \}\} とする。$/);
+    // 空行が無くても、文字列が途切れた行の後ろの本文は消さない
+    const braceSameParagraph =
+      '# 設計\n\n{"sacty-self-review": {"rounds":2, "summary":"未完\n終了トークンは }} とする。';
+    expect(extractBlocks(braceSameParagraph, new Set()).output).toMatch(
+      /^# 設計\n+終了トークンは \}\} とする。$/,
+    );
+    // 文字列が途切れた後の段落を、後ろの空行まで巻き込まない（閉じ括弧の有無を問わない。PR #130 再々レビュー指摘）
+    for (const tail of ["", "\n終了トークンは }} とする。"]) {
+      const multi = `# 設計\n\n{"sacty-self-review": {"rounds":2, "summary":"未完\n## 補足\n消してはいけない本文\n\n次の段落${tail}`;
+      const multiRead = extractBlocks(multi, new Set());
+      expect(multiRead, tail).not.toHaveProperty("selfReview");
+      expect(multiRead.output, tail).toMatch(
+        new RegExp(
+          `^# 設計\\n+## 補足\\n消してはいけない本文\\n\\n次の段落${tail.replace(/[{}]/g, "\\$&")}$`,
+        ),
+      );
+    }
+    // 文字列が途切れていない壊れた報告（値の誤り）でも、後ろの本文の閉じ括弧まで巻き込まない
+    const badValue =
+      '# 設計\n\n{"sacty-self-review": {"rounds": 2, "passed": tru\n## 補足\n本文 }}';
+    const badValueRead = extractBlocks(badValue, new Set());
+    expect(badValueRead).not.toHaveProperty("selfReview");
+    expect(badValueRead.output).toMatch(/^# 設計\n+## 補足\n本文 \}\}$/);
+    // 1行の壊れた報告（末尾のカンマ）は、行ごと取り除き、後ろの本文は残す
+    const oneLine =
+      '# 設計\n\n{"sacty-self-review":{"rounds":5,"passed":false,}}\n## 補足\n本文 }}';
+    expect(extractBlocks(oneLine, new Set()).output).toMatch(/^# 設計\n+## 補足\n本文 \}\}$/);
+    // CRLF の空行でも区切る
+    const crlf = '# 設計\n\n{"sacty-self-review": {"rounds":2,\r\n\r\n## 補足\r\n本文';
+    const crlfRead = extractBlocks(crlf, new Set());
+    expect(crlfRead).not.toHaveProperty("selfReview");
+    expect(crlfRead.output).toMatch(/^# 設計\s+## 補足\r\n本文$/);
+    // CRLF の正しい報告（空行を含む）は読む
+    const crlfValid =
+      '# 設計\r\n\r\n{"sacty-self-review": {\r\n"rounds": 1,\r\n\r\n"passed": true}}\r\n\r\n## 補足';
+    const crlfValidRead = extractBlocks(crlfValid, new Set());
+    expect(crlfValidRead.selfReview).toMatchObject({ rounds: 1, passed: true });
+    expect(crlfValidRead.output).toMatch(/^# 設計\s+## 補足$/);
+    // 読めない報告の後に読める報告があれば、最後（読める方）を使う
+    const corrected = `# 設計\n\n${trailingComma}\n\n${passed}`;
+    expect(extractBlocks(corrected, new Set()).selfReview).toMatchObject({ passed: true });
+    expect(extractBlocks(corrected, new Set()).output).toBe("# 設計");
+    // 空行を含む正しい JSON の報告は、途中で切らずに読む（PR #130 再レビュー指摘）
+    for (const fenced of [true, false]) {
+      const json =
+        '{"sacty-self-review": {\n"rounds": 2,\n\n"passed": true, "remaining": [], "summary": "ok"}}';
+      const withBlank = fenced ? `# 設計\n\n\`\`\`json\n${json}\n\`\`\`` : `# 設計\n\n${json}`;
+      const blankRead = extractBlocks(withBlank, new Set());
+      expect(blankRead.selfReview, String(fenced)).toEqual({
+        rounds: 2,
+        passed: true,
+        remaining: [],
+        notReviewed: [],
+        summary: "ok",
+      });
+      expect(blankRead.output).toBe("# 設計");
+    }
+    // 見出しを文中で挙げただけ（オブジェクトのキーでない）なら、本文に残す
+    const prose = '# 設計\n\n報告は "sacty-self-review": の形で書く。';
+    expect(extractBlocks(prose, new Set()).output).toBe(prose);
+  });
+
+  it("矛盾する報告（回数が 1〜5 の外・パスなのに残った指摘がある）は記録なしにする（PR #130 レビュー指摘）", () => {
+    const of = (report: unknown) =>
+      extractBlocks(
+        `# 設計\n\n\`\`\`json\n${JSON.stringify({ "sacty-self-review": report })}\n\`\`\``,
+        new Set(),
+      );
+    for (const report of [
+      { rounds: 0, passed: true, remaining: ["未解決の不具合"] },
+      { rounds: 0, passed: true },
+      { rounds: 6, passed: false },
+      { rounds: 2, passed: true, remaining: ["未解決の不具合"] },
+      { rounds: 1.5, passed: true },
+    ]) {
+      const read = of(report);
+      expect(read, JSON.stringify(report)).not.toHaveProperty("selfReview");
+      expect(read.output).toBe("# 設計");
+    }
+    // 境界：1 回・5 回は読む。パスしていなければ残った指摘があってよい
+    expect(of({ rounds: 1, passed: true }).selfReview?.rounds).toBe(1);
+    expect(of({ rounds: 5, passed: false, remaining: ["残った"] }).selfReview).toMatchObject({
+      rounds: 5,
+      passed: false,
+    });
+  });
+});
