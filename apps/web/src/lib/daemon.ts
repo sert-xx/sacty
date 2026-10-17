@@ -121,6 +121,10 @@ export type DaemonStatus = {
   images?: { name: string; description: string }[];
   /** チケットの取り込み先に選べる接続先（PBI-52）。古いデーモンには無い。 */
   platforms?: string[];
+  /** 工程のエージェントに選べるもの（config.yaml の agents。PBI-121）。古いデーモンには無い。 */
+  agents?: { id: string; runtime: string; model?: string; reasoningEffort?: string }[];
+  /** config.yaml で決まる、工程ごとのエージェントの名前（PBI-121）。古いデーモンには無い。 */
+  stepAgents?: Partial<Record<StepKey, string>>;
 };
 
 export type ProjectView = {
@@ -477,6 +481,11 @@ type OpResult = { ok: true } | { ok: false; message: string };
 /** チケットのタスクの、作業するリポジトリを人が選ぶ（PBI-52）。 */
 export async function chooseTicketRepository(id: string, repo: string): Promise<OpResult> {
   return postOp(`/api/tasks/${encodeURIComponent(id)}/repository`, { repo });
+}
+
+/** タスクの詳細で、工程のエージェントを変える（PBI-121）。agent は config.yaml の agents の名前。 */
+export async function changeStepAgent(id: string, step: StepKey, agent: string): Promise<OpResult> {
+  return postOp(`/api/tasks/${encodeURIComponent(id)}/agents`, { step, agent });
 }
 
 /** タスクの詳細で、工程のイメージを変える（PBI-106）。image は images の名前か default。 */

@@ -31,6 +31,7 @@ import { ReproductionResult } from "@/components/reproduction";
 import { RereviewButton } from "@/components/rereview-button";
 import { ResumeForm } from "@/components/resume-form";
 import { SelfReviewNote } from "@/components/self-review";
+import { StepAgentForm } from "@/components/step-agent-form";
 import { StepCosts } from "@/components/step-costs";
 import { StepImageForm } from "@/components/step-image-form";
 import { CostMeter, StatusLabel, StepChips } from "@/components/task-bits";
@@ -46,6 +47,8 @@ import {
   needsTicketRepositories,
   personAction,
   statusText,
+  stepAgentOptions,
+  stepAgentRows,
   stepImageOptions,
   stepImageRows,
   testCommandOfNoTests,
@@ -439,6 +442,8 @@ export function TaskDetailView({ data }: { data: TaskDetailData }) {
             )}
             {/* 工程のイメージと、選んだ元。いつでも変えられ、その工程を次に実行するときから使う（PBI-106） */}
             {task.steps.length > 0 && <StepImages task={task} imageStatus={data.imageStatus} />}
+            {/* 工程のエージェント。人が選ぶと、その工程の次の実行から使う（PBI-121） */}
+            {task.steps.length > 0 && <StepAgents task={task} agentStatus={data.agentStatus} />}
           </section>
           {task.operation && (
             <CardSection
@@ -656,6 +661,82 @@ function StepImages({
             )}
           </li>
         ))}
+      </ul>
+    </div>
+  );
+}
+
+/** 工程のエージェントと、決めた元・いつから使うか（PBI-121）。中止していなければ、どの工程も変えられる。 */
+function StepAgents({
+  task,
+  agentStatus,
+}: {
+  task: Task;
+  agentStatus: TaskDetailData["agentStatus"];
+}) {
+  const { task: t, labels, locale } = useMessages();
+  const m = t.agents;
+  const rows = stepAgentRows(task, agentStatus?.stepAgents);
+  if (rows.length === 0) return null;
+  const images = t.images;
+  return (
+    <div className="flex flex-col gap-1 text-sm leading-6" data-testid="step-agents">
+      <h3 className="font-semibold">
+        {m.title} <Hint text={m.hint} />
+      </h3>
+      {stepAgentOptions(agentStatus, undefined) === undefined && (
+        <p role="status" className="text-warn" data-testid="step-agents-unavailable">
+          {m.unavailable}
+        </p>
+      )}
+      <ul className="flex flex-col gap-2">
+        {rows.map((row) => {
+          const options = stepAgentOptions(agentStatus, row.agent);
+          const missing =
+            options && row.agent && !agentStatus?.agents?.some((a) => a.id === row.agent);
+          return (
+            <li
+              key={row.step}
+              className="flex flex-col gap-1 [overflow-wrap:anywhere]"
+              data-testid={`step-agent-row-${row.step}`}
+            >
+              <span>
+                <span className="font-medium">{labels.step[row.step]}</span>
+                {m.sep}
+                <span className="font-mono">{row.agent ?? m.unknown}</span>
+                {missing && (
+                  <span className="inline-flex items-center gap-1 text-warn">
+                    {" "}
+                    {m.missing}
+                    <Hint text={m.missingHint} />
+                  </span>
+                )}
+                <span className="text-muted-foreground">
+                  {" ・ "}
+                  {row.source.by === "person"
+                    ? m.byPerson(formatStamp(row.source.at, locale), row.source.from)
+                    : m.byConfig}
+                </span>
+              </span>
+              <span className="text-xs text-muted-foreground">
+                {row.when === "running"
+                  ? images.whenRunning
+                  : row.when === "done"
+                    ? images.whenDone
+                    : images.whenNext}
+              </span>
+              {options && task.status !== "cancelled" && (
+                <StepAgentForm
+                  key={`${row.step}:${row.agent ?? ""}`}
+                  taskId={task.id}
+                  step={row.step}
+                  current={row.agent}
+                  options={options}
+                />
+              )}
+            </li>
+          );
+        })}
       </ul>
     </div>
   );

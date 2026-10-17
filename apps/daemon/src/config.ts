@@ -240,7 +240,15 @@ const ConfigFile = z
     budget: z
       .object({ default_per_task_usd: z.number().positive().default(DEFAULT_BUDGET_USD) })
       .prefault({}),
-    agents: z.record(z.string(), Agent),
+    /**
+     * 名前は空にできない（タスクの詳細で選んだ名前を作業履歴に残すため。PR #131 再レビュー指摘）。default_agent などは、
+     * agents の名前で書くので、空の名前は agents に無い名前として誤りになる。
+     */
+    agents: z.record(z.string(), Agent).superRefine((agents, ctx) => {
+      if (Object.hasOwn(agents, "")) {
+        ctx.addIssue({ code: "custom", path: [""], message: code("config.agentNameEmpty") });
+      }
+    }),
     /**
      * `sacty image build` でイメージを作るときの元（PBI-33）。プライベートのレジストリしか使えない環境向け。
      * 書かなければ、Docker Hub の node のイメージと、npm の公開レジストリから作る。
@@ -529,6 +537,29 @@ export function agentFor(config: SactyConfig, role: AgentRoleKey): AgentConfig {
   );
 }
 /**
+ * 工程に使う AI（PBI-121）。人がタスクの詳細で選んだエージェントがあればそれ（config.yaml の step_agents より優先）、無ければ
+ * agentFor。選んだ名前が agents から消えていれば missing（黙って既定に戻さない）。
+ */
+export function stepAgentFor(
+  config: SactyConfig,
+  step: AgentRoleKey,
+  chosen: string | undefined,
+): { ok: true; agent: AgentConfig } | { ok: false; missing: string } {
+  if (chosen === undefined) return { ok: true, agent: agentFor(config, step) };
+  const agent = definedAgent(config, chosen);
+  return agent ? { ok: true, agent } : { ok: false, missing: chosen };
+}
+
+/**
+ * config.yaml の agents に、その名前そのもので書いたエージェント（PBI-121）。継承したプロパティの名前（constructor・
+ * __proto__・toString など）はエージェントとしない（PR #131 レビュー指摘）。
+ */
+export function definedAgent(config: SactyConfig, name: string): AgentConfig | undefined {
+  const agents = config.agents;
+  return agents && Object.hasOwn(agents, name) ? agents[name] : undefined;
+}
+
+/**
  * 作業履歴に記録する、実行に使った AI の設定（接続先・モデル・リーズニングエフォート。PBI-46）。
  * 秘密の値（API キーや接続先の URL）は含めない。
  */
@@ -547,6 +578,8 @@ export type SactyConfig = {
   guardianAgent: AgentConfig;
   /** 工程・オーケストレーターごとに使う AI（書いてある役割だけ。PBI-40）。 */
   stepAgents?: Partial<Record<AgentRoleKey, AgentConfig>>;
+  /** agents のすべて（名前ごと。タスクの詳細で工程のエージェントを選ぶのに使う。PBI-121）。 */
+  agents?: Record<string, AgentConfig>;
   /** 段階のエージェント（runtime ごと・段階ごと。書いてある段階だけ。PBI-119）。 */
   tierAgents?: Partial<Record<TierRuntime, Partial<Record<AgentTier, AgentConfig>>>>;
   budgetPerTaskUsd: number;
@@ -732,6 +765,7 @@ export function loadConfig(home: string): ConfigResult {
       stepAgents: Object.fromEntries(
         Object.entries(file.step_agents).flatMap(([role, id]) => (id ? [[role, resolve(id)]] : [])),
       ),
+      agents: Object.fromEntries(Object.keys(file.agents).map((id) => [id, resolve(id)])),
       tierAgents: tierAgentsOf(Object.keys(file.agents), resolve),
     },
   };

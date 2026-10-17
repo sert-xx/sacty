@@ -1,4 +1,4 @@
-import type { ActivityEvent, Task } from "@sacty/core";
+import type { ActivityEvent, StepKey, Task } from "@sacty/core";
 import {
   type CleanupItem,
   getCleanupPlan,
@@ -27,6 +27,12 @@ export type TaskDetailData = {
   cleanupPlan?: CleanupItem[];
   /** 工程のイメージの候補の元（取得できなければ無い。PBI-106）。 */
   imageStatus?: { problems: unknown[]; images?: { name: string; description: string }[] };
+  /** 工程のエージェントに選べるもの（PBI-121）。デーモンの状態を取れない・設定を読めなければ無い。 */
+  agentStatus?: {
+    problems: unknown[];
+    agents?: { id: string; runtime: string; model?: string; reasoningEffort?: string }[];
+    stepAgents?: Partial<Record<StepKey, string>>;
+  };
   /**
    * 一時停止で、人がリポジトリを選ぶときの候補（PBI-52・PBI-73）。Org の対象はデーモンが gh で GitHub に問い合わせる
    * ので、求められたときだけ取る（取り直しのたびには取らない）。
@@ -71,6 +77,15 @@ export async function loadTaskDetail(
     children: (all ?? []).filter((t) => childIds.has(t.id)),
     ...(cleanupPlan !== undefined ? { cleanupPlan: cleanupPlan ?? [] } : {}),
     ...(status ? { imageStatus: { problems: status.problems, images: status.images } } : {}),
+    ...(status
+      ? {
+          agentStatus: {
+            problems: status.problems,
+            agents: status.agents,
+            stepAgents: status.stepAgents,
+          },
+        }
+      : {}),
     // 取れなかったときは候補を持たせず、画面が後で取り直す（取れた0件と分ける。PR #119 レビュー指摘）
     ...(repositories && needsTicketRepositories(task)
       ? candidates

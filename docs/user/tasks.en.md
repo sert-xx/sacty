@@ -186,6 +186,16 @@ The "Steps" section of the task detail shows the image of each step and where it
 If an image doesn't fit a step, you can choose again there. The changed image is used from the next run of the step (for a running step, from the next run).
 See [Container images](images.en.md#changing-a-steps-image) for details.
 
+## Changing a step's agent
+
+In "Step agents" in the "Steps" section of the task details, you can choose again the agent each step uses, from the names in `agents` in config.yaml.
+For example, run only a step that stopped on an error or was sent back with a stronger agent (one with a stronger model or reasoning effort, written as in [Models per step](config.en.md#models-per-step)).
+
+- The changed agent is used from the next run of the step. It takes precedence over `step_agents` in config.yaml. Other tasks are not affected.
+- Who changed what, when, and from what to what is kept in the Activity.
+- If you delete the chosen name from config.yaml, the task pauses when the step runs. Choose again, then resume.
+- Integration review (the Goal Guardian) and the Orchestrator cannot be changed here.
+
 ## Pause, resume, and cancel
 
 - For a task stopped by the budget limit, an AI usage limit, an authentication error, an error, and so on, check the cause and then resume it in the web UI (for the budget, see

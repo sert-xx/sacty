@@ -606,6 +606,15 @@ const StepImageChanged = z.object({
   payload: z.object({ step: StepKey, from: z.string().min(1), to: z.string().min(1) }),
 });
 
+/**
+ * 人が、タスクの詳細で工程のエージェントを変えた（PBI-121）。from は変える前の名前（指定が無ければ config.yaml で決まる名前）、
+ * to は config.yaml の agents の名前。その工程の次の実行から使う（config.yaml の step_agents より優先）。actor は person。
+ */
+const StepAgentChanged = z.object({
+  type: z.literal("StepAgentChanged"),
+  payload: z.object({ step: StepKey, from: z.string().min(1), to: z.string().min(1) }),
+});
+
 const AgentRunStarted = z.object({
   type: z.literal("AgentRunStarted"),
   payload: z.object({
@@ -1797,6 +1806,7 @@ export const EventInput = z.discriminatedUnion("type", [
   StepCompleted,
   StepsChosen,
   StepImageChanged,
+  StepAgentChanged,
   ServicesStarted,
   TicketTriaged,
   RepositoryChosen,
@@ -1954,6 +1964,24 @@ export const ChangeStepImageInput = z.object({
   image: z.string().trim().min(1).max(100),
 });
 export type ChangeStepImageInput = z.infer<typeof ChangeStepImageInput>;
+
+/**
+ * タスクの詳細で、工程のエージェントを変える入力（PBI-121）。agent は config.yaml の agents の名前。名前は config.yaml の
+ * キーのまま受け取り、空白を除いたり長さで切ったりしない（別のエージェントを選んだことにしない。PR #131 レビュー指摘）。
+ */
+export const ChangeStepAgentInput = z.object({
+  step: StepKey,
+  agent: z.string().min(1),
+});
+
+/**
+ * 人が工程のエージェントを変えられる工程か（PBI-121）。統合レビューは、ゴールガーディアンが実行するので変えられない
+ * （PR #131 レビュー指摘）。
+ */
+export function stepAgentChangeable(step: StepKey): boolean {
+  return step !== "integrate";
+}
+export type ChangeStepAgentInput = z.infer<typeof ChangeStepAgentInput>;
 
 /** ゴールガーディアンが判定できなかった変更の申し出を、人間が判断する入力。 */
 export const DecideChangeInput = z.object({ accept: z.boolean() });

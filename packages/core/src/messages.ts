@@ -141,6 +141,7 @@ const PARAMS = {
   "config.providerMissing": z.object({ id: z.string() }),
   "config.hostAddress": null,
   "config.npmVersion": null,
+  "config.agentNameEmpty": null,
   "config.npmConfigKey": null,
   "config.npmConfigSecret": null,
   // 言語ごとのイメージ（PBI-41）
@@ -410,6 +411,13 @@ const PARAMS = {
   "gateway.mcpReadyTimeout": z.object({ name: z.string(), seconds: z.number() }),
   "gateway.unavailable": null,
   "config.agentMissing": z.object({ key: z.string(), id: z.string() }),
+  // 工程のエージェントを人が変える（PBI-121）
+  "agent.stepMissing": null,
+  "agent.stepNotChangeable": null,
+  "agent.notInAgents": z.object({ name: z.string() }),
+  "agent.unchanged": z.object({ name: z.string() }),
+  "agent.configUnavailable": z.object({ detail: TextParam }),
+  "agent.chosenMissing": z.object({ step: z.string(), name: z.string() }),
   // エージェントの段階（PBI-119）
   "config.tierRuntime": z.object({ id: z.string(), runtime: z.string(), expected: z.string() }),
   "agents.tierConnectionDiffers": z.object({
@@ -698,6 +706,7 @@ const ja: MessageDictionary = {
   "config.providerMissing": ({ id }) => `providers に "${id}" がありません。`,
   "config.hostAddress":
     "gateway.host_address は、ホスト名か IP アドレス（または host-gateway）で書いてください。",
+  "config.agentNameEmpty": "agents の名前は空にできません。エージェントに名前を付けてください。",
   "config.npmVersion":
     "image_build.npm_version は、版（例 11、11.6.2）か latest で書いてください。",
   "config.npmConfigKey":
@@ -965,6 +974,16 @@ const ja: MessageDictionary = {
   "gateway.unavailable":
     "ホストのゲートウェイが起動していないため、ゲートウェイ経由のエージェントを実行できません。sacty を起動し直してください。",
   "config.agentMissing": ({ key, id }) => `${key} の "${id}" が agents にありません。`,
+  "agent.stepMissing": "その工程は、このタスクの工程にありません。",
+  "agent.stepNotChangeable":
+    "統合レビューは、ゴールガーディアン（config.yaml の guardian_agent）が実行するため、工程のエージェントを変えられません。",
+  "agent.notInAgents": ({ name }) =>
+    `エージェント「${name}」は config.yaml の agents にありません。agents の名前から選んでください。`,
+  "agent.unchanged": ({ name }) => `工程のエージェントは、すでに「${name}」です。`,
+  "agent.configUnavailable": ({ detail }, text) =>
+    `config.yaml を読めないため、工程のエージェントを変えられません。設定を直してから、もう一度変えてください：${text(detail)}`,
+  "agent.chosenMissing": ({ step, name }) =>
+    `工程（${step}）に選んだエージェント「${name}」が config.yaml の agents にありません。タスクの詳細でエージェントを選び直してから、再開してください。`,
   "config.tierRuntime": ({ id, runtime, expected }) =>
     `agents の "${id}" は段階のエージェントなので、runtime を ${expected} にしてください（${runtime} になっています）。`,
   "agents.tierConnectionDiffers": ({ tier, id, parent }) =>
@@ -1172,6 +1191,7 @@ const en: MessageDictionary = {
   "config.hostAddress":
     "Write gateway.host_address as a host name or IP address (or host-gateway).",
   "config.npmVersion": "Write image_build.npm_version as a version (e.g. 11, 11.6.2) or latest.",
+  "config.agentNameEmpty": "The names in agents cannot be empty. Give each agent a name.",
   "config.npmConfigKey":
     "Write each image_build.npm_config item as an npm config name and a one-line value.",
   "config.npmConfigSecret":
@@ -1439,6 +1459,16 @@ const en: MessageDictionary = {
   "gateway.unavailable":
     "The host gateway is not running, so an agent that goes through it cannot run. Restart sacty.",
   "config.agentMissing": ({ key, id }) => `${key} "${id}" is not in agents.`,
+  "agent.stepMissing": "That step is not one of this task's steps.",
+  "agent.stepNotChangeable":
+    "The integration review is run by the goal guardian (guardian_agent in config.yaml), so its step agent cannot be changed.",
+  "agent.notInAgents": ({ name }) =>
+    `The agent "${name}" is not in agents in config.yaml. Choose a name from agents.`,
+  "agent.unchanged": ({ name }) => `The step agent is already "${name}".`,
+  "agent.configUnavailable": ({ detail }, text) =>
+    `config.yaml cannot be read, so the step agent cannot be changed. Fix the settings and try again: ${text(detail)}`,
+  "agent.chosenMissing": ({ step, name }) =>
+    `The agent "${name}" chosen for the step (${step}) is not in agents in config.yaml. Choose the agent again in the task details, then resume.`,
   "config.tierRuntime": ({ id, runtime, expected }) =>
     `"${id}" in agents is a tier agent, so its runtime must be ${expected} (it is ${runtime}).`,
   "agents.tierConnectionDiffers": ({ tier, id, parent }) =>
