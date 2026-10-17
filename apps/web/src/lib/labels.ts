@@ -248,8 +248,14 @@ export function describeEventParts(
   l: LabelMessages,
 ): { text: string; detail?: string } {
   if (event.type === "ContextResolved") {
-    // 使えるようにした外部 PF（PBI-74）。どの層のものか（ホストは config.yaml）と、使える API
-    const detail = l.event.ContextPlatforms(event.payload.platforms ?? []);
+    // 使えるようにした外部 PF（PBI-74）。どの層のものか（ホストは config.yaml）と、使える API。
+    // 置いた段階のサブエージェントの定義（PBI-119）も詳細に出す
+    const detail = [
+      l.event.ContextTiers(event.payload.tiers ?? []),
+      l.event.ContextPlatforms(event.payload.platforms ?? []),
+    ]
+      .filter(Boolean)
+      .join("\n");
     return {
       text: l.event.ContextResolved(
         event.payload.layers.map(

@@ -416,6 +416,14 @@ const PARAMS = {
   "agent.unchanged": z.object({ name: z.string() }),
   "agent.configUnavailable": z.object({ detail: TextParam }),
   "agent.chosenMissing": z.object({ step: z.string(), name: z.string() }),
+  // エージェントの段階（PBI-119）
+  "config.tierRuntime": z.object({ id: z.string(), runtime: z.string(), expected: z.string() }),
+  "agents.tierConnectionDiffers": z.object({
+    tier: z.string(),
+    id: z.string(),
+    parent: z.string(),
+  }),
+  "context.reservedTierFile": z.object({ from: z.string(), path: z.string() }),
 } as const satisfies Record<string, z.ZodType | null>;
 
 export type MessageParams = {
@@ -971,6 +979,12 @@ const ja: MessageDictionary = {
     `config.yaml を読めないため、工程のエージェントを変えられません。設定を直してから、もう一度変えてください：${text(detail)}`,
   "agent.chosenMissing": ({ step, name }) =>
     `工程（${step}）に選んだエージェント「${name}」が config.yaml の agents にありません。タスクの詳細でエージェントを選び直してから、再開してください。`,
+  "config.tierRuntime": ({ id, runtime, expected }) =>
+    `agents の "${id}" は段階のエージェントなので、runtime を ${expected} にしてください（${runtime} になっています）。`,
+  "agents.tierConnectionDiffers": ({ tier, id, parent }) =>
+    `段階「${tier}」（${id}）は、工程のエージェント（${parent}）と認証・接続先が違うため、サブエージェントの定義を置きませんでした。`,
+  "context.reservedTierFile": ({ from, path }) =>
+    `${from} の ${path} は、sacty が段階のサブエージェントの定義として作るため、写しませんでした。`,
 };
 
 /** 英語。用語は画面の用語集（apps/web の labels.ts）に合わせる。 */
@@ -1447,6 +1461,12 @@ const en: MessageDictionary = {
     `config.yaml cannot be read, so the step agent cannot be changed. Fix the settings and try again: ${text(detail)}`,
   "agent.chosenMissing": ({ step, name }) =>
     `The agent "${name}" chosen for the step (${step}) is not in agents in config.yaml. Choose the agent again in the task details, then resume.`,
+  "config.tierRuntime": ({ id, runtime, expected }) =>
+    `"${id}" in agents is a tier agent, so its runtime must be ${expected} (it is ${runtime}).`,
+  "agents.tierConnectionDiffers": ({ tier, id, parent }) =>
+    `The tier "${tier}" (${id}) uses a different authentication or endpoint from the step agent (${parent}), so its subagent definition was not placed.`,
+  "context.reservedTierFile": ({ from, path }) =>
+    `${path} of ${from} was not copied because sacty writes it as the subagent definition of a tier.`,
 };
 
 export const DAEMON_MESSAGES = { ja, en } as const;

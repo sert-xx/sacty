@@ -318,6 +318,13 @@ const ja = {
       platforms.length > 0
         ? `使える外部 PF：${platforms.map((p) => `${p.name}（${p.from ?? "config.yaml"}${p.description ? `。${p.description}` : ""}。${p.allow.join("、")}）`).join("・")}`
         : "",
+    /** 置いた段階のサブエージェントの定義（PBI-119）。詳細（展開）に出す。 */
+    ContextTiers: (
+      tiers: { tier: string; agentId: string; model?: string; reasoningEffort?: string }[],
+    ) =>
+      tiers.length > 0
+        ? `段階のサブエージェント：${tiers.map((t) => `${t.tier}＝${t.agentId}${t.model || t.reasoningEffort ? `（${[t.model, t.reasoningEffort].filter(Boolean).join("・")}）` : ""}`).join("、")}`
+        : "",
     TaskCancelled: (done: string[], failed: string[], actor: string) =>
       `中止（${actor}）：${done.length > 0 ? `${done.join("・")}を片付けた` : "片付ける対象なし"}${failed.length > 0 ? `／失敗：${failed.join("・")}` : ""}`,
     escalatedUndecidable: (id: string | undefined) =>
@@ -654,6 +661,10 @@ const en: LabelMessages = {
     ContextPlatforms: (platforms) =>
       platforms.length > 0
         ? `External platforms: ${platforms.map((p) => `${p.name} (${p.from ?? "config.yaml"}${p.description ? `; ${p.description}` : ""}; ${p.allow.join(", ")})`).join(", ")}`
+        : "",
+    ContextTiers: (tiers) =>
+      tiers.length > 0
+        ? `Tier subagents: ${tiers.map((t) => `${t.tier}=${t.agentId}${t.model || t.reasoningEffort ? ` (${[t.model, t.reasoningEffort].filter(Boolean).join(", ")})` : ""}`).join(", ")}`
         : "",
     TaskCancelled: (done, failed, actor) =>
       `Cancelled (${actor}): ${done.length > 0 ? `cleaned up ${done.join(", ")}` : "nothing to clean up"}${failed.length > 0 ? `; failed: ${failed.join(", ")}` : ""}`,

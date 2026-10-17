@@ -13,6 +13,7 @@ import {
 } from "@sacty/core";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
+import { type AgentTier, parseTierId, type TierRuntime } from "./agents/tier-names.js";
 import { DEFAULT_HOST_ADDRESS, DEFAULT_RETRY_POLICY, type RetryPolicy } from "./gateway.js";
 import { HostMcpFile, type HostMcpSpec, toHostMcp } from "./host-mcp.js";
 import { type Platform, PlatformFile, toPlatform } from "./platforms.js";
@@ -486,8 +487,27 @@ const ConfigFile = z
           params: { id: agent.auth.provider },
         });
       }
+      // 段階のエージェント（PBI-119）は、名前の接頭辞と runtime を合わせる
+      const tier = parseTierId(id);
+      if (tier && agent.runtime !== tier.runtime) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["agents", id, "runtime"],
+          message: code("config.tierRuntime"),
+          params: { id, runtime: agent.runtime, expected: tier.runtime },
+        });
+      }
     }
   });
+
+export {
+  AGENT_TIERS,
+  type AgentTier,
+  parseTierId,
+  TIER_PREFIX,
+  type TierRuntime,
+  tierFilePath,
+} from "./agents/tier-names.js";
 
 export type AgentConfig = z.infer<typeof Agent> & {
   id: string;
@@ -543,6 +563,8 @@ export type SactyConfig = {
   stepAgents?: Partial<Record<AgentRoleKey, AgentConfig>>;
   /** agents のすべて（名前ごと。タスクの詳細で工程のエージェントを選ぶのに使う。PBI-121）。 */
   agents?: Record<string, AgentConfig>;
+  /** 段階のエージェント（runtime ごと・段階ごと。書いてある段階だけ。PBI-119）。 */
+  tierAgents?: Partial<Record<TierRuntime, Partial<Record<AgentTier, AgentConfig>>>>;
   budgetPerTaskUsd: number;
   /** ゲートウェイの AI の呼び出しのリトライの上限（PBI-37）。 */
   gatewayRetry: RetryPolicy;
@@ -727,8 +749,33 @@ export function loadConfig(home: string): ConfigResult {
         Object.entries(file.step_agents).flatMap(([role, id]) => (id ? [[role, resolve(id)]] : [])),
       ),
       agents: Object.fromEntries(Object.keys(file.agents).map((id) => [id, resolve(id)])),
+      tierAgents: tierAgentsOf(Object.keys(file.agents), resolve),
     },
   };
+}
+
+/** `agents` の名前から、段階のエージェントを runtime ごと・段階ごとに集める（PBI-119）。 */
+function tierAgentsOf(
+  ids: readonly string[],
+  resolve: (id: string) => AgentConfig,
+): SactyConfig["tierAgents"] {
+  const tiers: NonNullable<SactyConfig["tierAgents"]> = {};
+  for (const id of ids) {
+    const parsed = parseTierId(id);
+    if (!parsed) continue;
+    const ofRuntime = tiers[parsed.runtime] ?? {};
+    ofRuntime[parsed.tier] = resolve(id);
+    tiers[parsed.runtime] = ofRuntime;
+  }
+  return tiers;
+}
+
+/** runtime の段階のエージェント（書いてある段階だけ。PBI-119）。 */
+export function tierAgentsFor(
+  config: SactyConfig,
+  runtime: TierRuntime,
+): Partial<Record<AgentTier, AgentConfig>> {
+  return config.tierAgents?.[runtime] ?? {};
 }
 
 /** `sacty config init` が書き出す雛形。 */
@@ -889,6 +936,74 @@ agents:
   #     endpoint: runtime
   #   # ホストのゲートウェイ経由にすると、API キーをコンテナに渡さず、レート制限（429）をリトライする
   #   via_gateway: true
+  #   price_per_mtok_usd: { input: 1.25, cached_input: 0.125, output: 10 }
+
+  # 段階のエージェント。claude_<段階>・codex_<段階>（段階は lite・entry・standard・advanced・ultimate）の名前で書くと、
+  # その runtime の工程の実行で、接頭辞を外した名前（lite など）のサブエージェントの定義を置き、スキル（review など）が
+  # 観点ごとに段階の名前で担当を起動する。モデルの世代が変わったら、ここの model を直すだけでよい。
+  # 書いた段階だけを置く（書いていない段階の担当は、工程のエージェントと同じモデルで動く）。
+  # 認証・接続先（auth・provider・via_gateway）は、工程のエージェント（default_agent・step_agents）と同じにする（違う段階は置かない）。
+  # モデル名・リーズニングエフォート・単価は例。手元の契約で使えるものに替える
+
+  # Claude Code の工程で使う段階
+  # claude_lite:
+  #   runtime: claude-code
+  #   model: claude-haiku-5-5
+  #   auth: { mode: subscription, secret: claude-oauth-token }
+  #   price_per_mtok_usd: { input: 1, cached_input: 0.1, cache_write: 1.25, output: 5 }
+  # claude_entry:
+  #   runtime: claude-code
+  #   model: claude-sonnet-5-5
+  #   reasoning_effort: low
+  #   auth: { mode: subscription, secret: claude-oauth-token }
+  #   price_per_mtok_usd: { input: 3, cached_input: 0.3, cache_write: 3.75, output: 15 }
+  # claude_standard:
+  #   runtime: claude-code
+  #   model: claude-sonnet-5-5
+  #   auth: { mode: subscription, secret: claude-oauth-token }
+  #   price_per_mtok_usd: { input: 3, cached_input: 0.3, cache_write: 3.75, output: 15 }
+  # claude_advanced:
+  #   runtime: claude-code
+  #   model: claude-opus-5-5
+  #   auth: { mode: subscription, secret: claude-oauth-token }
+  #   price_per_mtok_usd: { input: 15, cached_input: 1.5, cache_write: 18.75, output: 75 }
+  # claude_ultimate:
+  #   runtime: claude-code
+  #   model: claude-opus-5-5
+  #   reasoning_effort: high
+  #   auth: { mode: subscription, secret: claude-oauth-token }
+  #   price_per_mtok_usd: { input: 15, cached_input: 1.5, cache_write: 18.75, output: 75 }
+
+  # Codex の工程で使う段階（auth は Codex の工程のエージェントと同じにする。例は API キー）
+  # codex_lite:
+  #   runtime: codex
+  #   model: gpt-6-mini
+  #   reasoning_effort: low
+  #   auth: { mode: api-key, secret: openai-api-key }
+  #   price_per_mtok_usd: { input: 0.25, cached_input: 0.025, output: 2 }
+  # codex_entry:
+  #   runtime: codex
+  #   model: gpt-6-mini
+  #   reasoning_effort: medium
+  #   auth: { mode: api-key, secret: openai-api-key }
+  #   price_per_mtok_usd: { input: 0.25, cached_input: 0.025, output: 2 }
+  # codex_standard:
+  #   runtime: codex
+  #   model: gpt-6-sol
+  #   reasoning_effort: medium
+  #   auth: { mode: api-key, secret: openai-api-key }
+  #   price_per_mtok_usd: { input: 1.25, cached_input: 0.125, output: 10 }
+  # codex_advanced:
+  #   runtime: codex
+  #   model: gpt-6-sol
+  #   reasoning_effort: high
+  #   auth: { mode: api-key, secret: openai-api-key }
+  #   price_per_mtok_usd: { input: 1.25, cached_input: 0.125, output: 10 }
+  # codex_ultimate:
+  #   runtime: codex
+  #   model: gpt-6-sol
+  #   reasoning_effort: xhigh
+  #   auth: { mode: api-key, secret: openai-api-key }
   #   price_per_mtok_usd: { input: 1.25, cached_input: 0.125, output: 10 }
 
   # 動作確認用のスタブ（実際のAIは呼ばない）

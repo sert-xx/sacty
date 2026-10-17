@@ -108,6 +108,50 @@ The keys you can write in `step_agents` are `orchestrator`, the steps `investiga
 Writing a name that is not in `agents` in `default_agent`, `guardian_agent`, or `step_agents` is an error.
 The `pr` key (PR作成) of earlier versions can no longer be written because the step was removed (it is an error; delete it).
 
+## Agent tiers
+
+If you sort your agents into tiers, skills (such as the default `review`) start a subagent by tier name for each viewpoint, and the same
+tier runs in both Claude Code and Codex. When a new model generation comes out, you only change the tier's `model`.
+
+Write them in `agents` under the names `claude_<tier>` and `codex_<tier>`. The tiers are `lite`, `entry`, `standard`, `advanced`, and `ultimate`,
+and only the tiers you write are placed. The template from `npx sacty config init` has commented examples of all five tiers for both tools.
+
+```yaml
+agents:
+  claude_lite:
+    runtime: claude-code
+    model: claude-haiku-5-5
+    auth: { mode: subscription, secret: claude-oauth-token }
+    price_per_mtok_usd: { input: 1, cached_input: 0.1, cache_write: 1.25, output: 5 }
+  claude_ultimate:
+    runtime: claude-code
+    model: claude-opus-5-5
+    reasoning_effort: high
+    auth: { mode: subscription, secret: claude-oauth-token }
+    price_per_mtok_usd: { input: 15, cached_input: 1.5, cache_write: 18.75, output: 75 }
+```
+
+| Tier | Meaning | Intended use |
+| --- | --- | --- |
+| `lite` | Fastest and cheapest | Mechanical checks such as wording and links |
+| `entry` | Enough for everyday work | Wording and fit for the reader |
+| `standard` | Standard | The default for most viewpoints |
+| `advanced` | Hard reasoning | Correctness, robustness, security, concurrency, and design consistency |
+| `ultimate` | The top tier | Defect hunting not bound to a viewpoint |
+
+- When a step runs, sacty places the tiers of that tool (`claude_*` for Claude Code, `codex_*` for Codex) in the config location as subagent
+  definitions named without the prefix (`agents/<tier>.md` for Claude Code, `agents/<tier>.toml` for Codex).
+- Subagents run in the same process as the step agent, so give a tier the same `auth`, `provider`, and `via_gateway` as the step agent
+  (`default_agent`, `step_agents`). A tier that differs is not placed, and a note is left in the Activity.
+- It is an error when the prefix of a tier name does not match its `runtime` (for example `claude_lite` with `runtime: codex`).
+- You can see the placed tiers in the details of "Context prepared" in the Activity and in the context preview of the project settings.
+- If you write no tiers, subagents run with the same model as the step agent.
+- A tier agent is an ordinary agent too, so you can write it in `step_agents` to use it for a step.
+- Costs are calculated from the step agent's usage and unit prices, not from each reviewer's model. The cost of a run that placed tiers is recorded as an estimate
+  and marked "Estimate" on the screen. A tier's `price_per_mtok_usd` is the unit price used when that tier runs a step through `step_agents`.
+- Definitions of the same name in the context repository (`agents/claude/agents/<tier>.md`, `agents/codex/agents/<tier>.toml`, and `[agents.<tier>]` in Codex's
+  `config.toml`) are not used (a warning is left).
+
 ## Budget
 
 - The default budget per task is `budget.default_per_task_usd` (default $1).

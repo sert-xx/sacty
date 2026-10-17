@@ -1974,3 +1974,99 @@ describe("再開の拒否の判定（PBI-67 レビュー指摘。本物の出力
     );
   });
 });
+
+describe("エージェントの段階（PBI-119）", () => {
+  let dir: string;
+  afterEach(() => {
+    if (dir) rmSync(dir, { recursive: true, force: true });
+  });
+  const base = `default_agent: claude-subscription
+agents:
+  claude-subscription:
+    runtime: claude-code
+    auth: { mode: subscription, secret: claude-oauth-token }
+    price_per_mtok_usd: { input: 3, cached_input: 0.3, output: 15 }
+`;
+
+  it("claude_<段階>・codex_<段階> を、runtime ごと・段階ごとの段階のエージェントとして読む", () => {
+    dir = mkdtempSync(join(tmpdir(), "sacty-config-"));
+    writeFileSync(
+      join(dir, "config.yaml"),
+      `${base}  claude_standard:
+    runtime: claude-code
+    model: claude-sonnet-5-5
+    auth: { mode: subscription, secret: claude-oauth-token }
+    price_per_mtok_usd: { input: 3, cached_input: 0.3, output: 15 }
+  codex_lite:
+    runtime: codex
+    model: gpt-6-mini
+    reasoning_effort: low
+    auth: { mode: api-key, secret: openai-key }
+    price_per_mtok_usd: { input: 1, cached_input: 0.1, output: 2 }
+  codex_other:
+    runtime: codex
+    auth: { mode: api-key, secret: openai-key }
+    price_per_mtok_usd: { input: 1, cached_input: 0.1, output: 2 }
+`,
+    );
+    const result = loadConfig(dir);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(Object.keys(result.config.tierAgents?.["claude-code"] ?? {})).toEqual(["standard"]);
+    expect(result.config.tierAgents?.["claude-code"]?.standard).toMatchObject({
+      id: "claude_standard",
+      model: "claude-sonnet-5-5",
+    });
+    expect(result.config.tierAgents?.codex?.lite).toMatchObject({
+      id: "codex_lite",
+      model: "gpt-6-mini",
+      reasoning_effort: "low",
+    });
+    // 段階の名前でないもの（codex_other）は、普通のエージェント
+    expect(Object.keys(result.config.tierAgents?.codex ?? {})).toEqual(["lite"]);
+  });
+
+  it("段階の名前の接頭辞と runtime が合わなければ、どの項目かを示して止める", () => {
+    dir = mkdtempSync(join(tmpdir(), "sacty-config-"));
+    writeFileSync(
+      join(dir, "config.yaml"),
+      `${base}  claude_lite:
+    runtime: codex
+    auth: { mode: api-key, secret: openai-key }
+    price_per_mtok_usd: { input: 1, cached_input: 0.1, output: 2 }
+`,
+    );
+    const result = loadConfig(dir);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    const text = renderMessage(result.problem, "ja");
+    expect(text).toContain("agents.claude_lite.runtime");
+    expect(text).toContain('"claude_lite" は段階のエージェントなので、runtime を claude-code に');
+  });
+
+  it("雛形に、両ツールの 5 段階すべての例があり、例のコメントを外しても読める", () => {
+    dir = mkdtempSync(join(tmpdir(), "sacty-config-"));
+    const lines = CONFIG_TEMPLATE.split("\n");
+    // 段階の例の塊（「  # claude_lite:」「  # codex_lite:」から次の空行まで）だけ、コメントを外す
+    const blocks = ["claude_lite", "codex_lite"].map((first) => {
+      const start = lines.findIndex((line) => line === `  # ${first}:`);
+      const end = lines.findIndex((line, i) => i > start && line === "");
+      expect(start, first).toBeGreaterThan(0);
+      return { start, end };
+    });
+    const uncommented = lines
+      .map((line, i) =>
+        blocks.some((b) => i >= b.start && i < b.end) ? line.replace(/^ {2}# /, "  ") : line,
+      )
+      .join("\n");
+    writeFileSync(join(dir, "config.yaml"), uncommented);
+    const result = loadConfig(dir);
+    expect(result.ok, result.ok ? "" : renderMessage(result.problem, "ja")).toBe(true);
+    if (!result.ok) return;
+    const all = ["lite", "entry", "standard", "advanced", "ultimate"];
+    expect(Object.keys(result.config.tierAgents?.["claude-code"] ?? {})).toEqual(all);
+    expect(Object.keys(result.config.tierAgents?.codex ?? {})).toEqual(all);
+    // 雛形の既定（default_agent）はそのまま
+    expect(result.config.defaultAgent.id).toBe("claude-subscription");
+  });
+});
