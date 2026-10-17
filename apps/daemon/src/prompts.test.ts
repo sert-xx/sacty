@@ -2023,6 +2023,27 @@ describe("提出の前のセルフレビュー（PBI-120）", () => {
     expect(extractBlocks(braceSameParagraph, new Set()).output).toMatch(
       /^# 設計\n+終了トークンは \}\} とする。$/,
     );
+    // 文字列が途切れた後の段落を、後ろの空行まで巻き込まない（閉じ括弧の有無を問わない。PR #130 再々レビュー指摘）
+    for (const tail of ["", "\n終了トークンは }} とする。"]) {
+      const multi = `# 設計\n\n{"sacty-self-review": {"rounds":2, "summary":"未完\n## 補足\n消してはいけない本文\n\n次の段落${tail}`;
+      const multiRead = extractBlocks(multi, new Set());
+      expect(multiRead, tail).not.toHaveProperty("selfReview");
+      expect(multiRead.output, tail).toMatch(
+        new RegExp(
+          `^# 設計\\n+## 補足\\n消してはいけない本文\\n\\n次の段落${tail.replace(/[{}]/g, "\\$&")}$`,
+        ),
+      );
+    }
+    // 文字列が途切れていない壊れた報告（値の誤り）でも、後ろの本文の閉じ括弧まで巻き込まない
+    const badValue =
+      '# 設計\n\n{"sacty-self-review": {"rounds": 2, "passed": tru\n## 補足\n本文 }}';
+    const badValueRead = extractBlocks(badValue, new Set());
+    expect(badValueRead).not.toHaveProperty("selfReview");
+    expect(badValueRead.output).toMatch(/^# 設計\n+## 補足\n本文 \}\}$/);
+    // 1行の壊れた報告（末尾のカンマ）は、行ごと取り除き、後ろの本文は残す
+    const oneLine =
+      '# 設計\n\n{"sacty-self-review":{"rounds":5,"passed":false,}}\n## 補足\n本文 }}';
+    expect(extractBlocks(oneLine, new Set()).output).toMatch(/^# 設計\n+## 補足\n本文 \}\}$/);
     // CRLF の空行でも区切る
     const crlf = '# 設計\n\n{"sacty-self-review": {"rounds":2,\r\n\r\n## 補足\r\n本文';
     const crlfRead = extractBlocks(crlf, new Set());

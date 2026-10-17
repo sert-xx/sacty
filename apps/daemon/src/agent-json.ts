@@ -267,9 +267,13 @@ export type HeadingSpan = {
 
 /**
  * 見出し heading を最初のキーに持つ JSON のオブジェクト（{"見出し": …}）を、JSON として読めるかを問わずに、出てきた順に
- * すべて返す（PR #130 レビュー指摘）。末尾のカンマなどで読めない報告も見つけ、本文から取り除けるようにする。範囲は
- * 見出しの直前の「{」から、文字列の中を除いて括弧が閉じるところまで。閉じなければ、囲みの中は囲みの終わりの行まで、
- * 囲みの外は最初の空行か ``` の行の手前まで（後ろの本文を消さない。objectClose）。囲みの中なら、囲みの行も含める。
+ * すべて返す（PR #130 レビュー指摘）。末尾のカンマなどで読めない報告も見つけ、本文から取り除けるようにする。
+ *
+ * 範囲は、見出しの直前の「{」から、文字列の中を除いて括弧が閉じるところまで。囲みの中なら、囲みの行も含める。
+ * - 囲みの中：括弧が閉じなければ、囲みの終わりの行まで（囲みの中はすべて報告）
+ * - 囲みの外：JSON として読めなければ、括弧の数は当てにならない（後ろの本文の「}」で閉じたように見える・文字列が途切れて
+ *   本文を巻き込む）。報告が始まった行の終わりまでにし、後ろの本文は消さない（PR #130 再々レビュー指摘）。複数行の壊れた
+ *   報告では、2行目からが本文に残るが、成果物の本文を消すよりよい
  */
 export function headingSpans(output: string, heading: string): HeadingSpan[] {
   const found: HeadingSpan[] = [];
@@ -286,8 +290,7 @@ export function headingSpans(output: string, heading: string): HeadingSpan[] {
     let before = open;
     while (before > 0 && /\s/.test(output[before - 1] ?? "")) before--;
     const fenced = fences.opens.has(before);
-    const bounds = objectClose(output, open, fenced);
-    let close = bounds.end;
+    let close = objectClose(output, open, fenced);
     let value: unknown;
     try {
       const parsed: unknown = JSON.parse(output.slice(open, close));
@@ -295,10 +298,11 @@ export function headingSpans(output: string, heading: string): HeadingSpan[] {
         value = (parsed as Record<string, unknown>)[heading];
       }
     } catch {
-      // 読めない報告の括弧の数は当てにならない（後ろの本文の「}」で閉じたように見える）。囲みの外では、最初の空行か
-      // 文字列が途切れた行で区切り、後ろの本文を消さない（PR #130 再々レビュー指摘）
-      if (!fenced && bounds.recover !== undefined && bounds.recover < close) close = bounds.recover;
       value = undefined;
+      if (!fenced) {
+        const lineEnd = output.indexOf("\n", open);
+        close = Math.min(close, lineEnd === -1 ? output.length : lineEnd + 1);
+      }
     }
     let end = close;
     while (end > open && /\s/.test(output[end - 1] ?? "")) end--;
@@ -313,28 +317,17 @@ export function headingSpans(output: string, heading: string): HeadingSpan[] {
  * 閉じない文字列としてそこで終える（PR #130 再レビュー指摘）。括弧が閉じなければ、囲みの中（fenced）なら囲みの終わりの行
  * （行の頭が ```）の頭、囲みの外なら最初の空行か ``` の行の頭（どれも無ければ出力の終わり）。空行で区切るのは閉じない
  * 報告だけで、閉じる報告（空行を含む正しい JSON も）は途中で切らない（PR #130 再レビュー指摘）。空行は CRLF の行も含む。
- * recover は、閉じたように見えても JSON として読めないときに区切り直す位置（最初の空行、無ければ文字列が途切れた行の
- * 次の行の頭。PR #130 再々レビュー指摘）。
  */
-function objectClose(
-  output: string,
-  open: number,
-  fenced: boolean,
-): { end: number; recover: number | undefined } {
+function objectClose(output: string, open: number, fenced: boolean): number {
   let depth = 0;
   let inString = false;
   let firstBlank: number | undefined;
-  let brokenString: number | undefined;
-  const recover = () => firstBlank ?? brokenString;
   for (let i = open; i < output.length; i++) {
     const c = output[i];
     if (c === "\n") {
-      if (inString) brokenString ??= i + 1;
       inString = false;
       const next = output.slice(i + 1, i + 8);
-      if (/^[ \t\r]*```/.test(next)) {
-        return { end: fenced ? i + 1 : Math.min(firstBlank ?? i + 1, i + 1), recover: recover() };
-      }
+      if (/^[ \t\r]*```/.test(next)) return fenced ? i + 1 : Math.min(firstBlank ?? i + 1, i + 1);
       if (firstBlank === undefined && /^[ \t\r]*\n/.test(next)) firstBlank = i + 1;
       continue;
     }
@@ -347,8 +340,8 @@ function objectClose(
     else if (c === "{" || c === "[") depth++;
     else if (c === "}" || c === "]") {
       depth--;
-      if (depth === 0) return { end: i + 1, recover: recover() };
+      if (depth === 0) return i + 1;
     }
   }
-  return { end: fenced ? output.length : (firstBlank ?? output.length), recover: recover() };
+  return fenced ? output.length : (firstBlank ?? output.length);
 }

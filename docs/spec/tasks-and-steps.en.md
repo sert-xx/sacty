@@ -106,7 +106,8 @@ Code: `packages/core/src/events.ts` (`StepKey`, `GATED_STEPS`, `REWORK_STEPS`, `
   The round limit follows the skill (up to 5 including the first); if `must` findings are still left at the limit, the agent reports them and submits. Redoing after requested changes or
   PR comments runs with the same instructions.
 - The agent reports the result as JSON under the heading `sacty-self-review` (`rounds`, `passed`, `remaining`, `notReviewed`, `summary`). sacty reads only the last one (`extractBlocks`)
-  and removes every report from the deliverable. A report is found as an object whose first key is the heading, even when it is not valid JSON (`headingSpans`). When the last
+  and removes every report from the deliverable. A report is found as an object whose first key is the heading, even when it is not valid JSON (`headingSpans`).
+  For an unreadable report outside a code fence, only up to the end of the line where it starts is removed, and the text after it is kept. When the last
   report cannot be read, sacty does not fall back to an earlier one. The agent does not write the "self-review" section the skill puts at the end of the description.
 - `rounds` is 1 to 5, and `passed: true` is allowed only when `remaining` is empty. A report that does not match is treated as a wrong shape (`SelfReview`).
 - The report is recorded in `selfReview` of `AgentRunCompleted`. When there is no report, or it cannot be read or its shape is wrong, it is `null` (no record). The step does not stop.
