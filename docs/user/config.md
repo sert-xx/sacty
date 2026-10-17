@@ -29,6 +29,7 @@
 | `gateway` | ホストのゲートウェイ（[ゲートウェイ](gateway.md)） | なし |
 
 取り込みの間隔は、config.yaml ではなく画面の「sacty の設定」で、取り込みの種類ごとに決めます（[取り込み](intake.md#取り込みの間隔)）。
+メモリーを残す日数も「sacty の設定」で決めます（[監査を見る](audit.md#メモリー)）。
 以前の版の `github:`（`poll_interval_sec`）は、書いてあっても読みません。消してかまいません。
 
 設定に誤りがあると、どの項目（例 `agents.claude-subscription.auth.secret`）の何が誤りかを画面に出します。

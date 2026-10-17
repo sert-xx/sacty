@@ -36,6 +36,7 @@ import {
   DEFAULT_AUDIT_BUDGET_USD,
   DEFAULT_BUDGET_USD,
   DEFAULT_MAX_PARALLEL_TASKS,
+  DEFAULT_MEMORY_RETENTION_DAYS,
   DEPLOYMENT_CI_GRACE_MS,
   DEPLOYMENT_CI_TIMEOUT_MS,
   DecideChangeInput,
@@ -133,6 +134,7 @@ import {
   extractAuditSurvey,
   type KnownAuditCause,
   type KnownMemory,
+  type OpenedMemory,
   type RejectedAuditProposal,
 } from "./audit-prompts.js";
 import { auditTargetCandidates } from "./audit-targets.js";
@@ -196,7 +198,9 @@ import {
 import {
   CONTAINER_PROJECT_MEMORY_DIR,
   CONTAINER_REPOSITORY_MEMORY_DIR,
+  countOpenedMemories,
   existingLayerDir,
+  expiredMemories,
   type LiveMemory,
   layerOf,
   liveMemories,
@@ -7792,6 +7796,9 @@ export class TaskService {
       // メモリーは書き出す場所があるときだけ登録させる（無ければ、エージェントにも渡せない。PBI-126）
       const memoryRepo = task.repository ? repositoryMemoryKey(task.repository.url) : undefined;
       const memories = this.deps.memoryRoot ? this.knownMemories(task) : undefined;
+      // 大まかな監査には、タスクの実行で開いたメモリーを渡し、役に立ったかを判断させる（PBI-127）
+      const opened =
+        !step && this.deps.memoryRoot ? await this.openedMemories(task, raw) : undefined;
       const prompt = step
         ? buildAuditDivePrompt(shown, activity, counts, logs, {
             step,
@@ -7811,7 +7818,13 @@ export class TaskService {
                 }
               : {}),
           })
-        : buildAuditSurveyPrompt(shown, activity, counts, logs);
+        : buildAuditSurveyPrompt(
+            shown,
+            activity,
+            counts,
+            logs,
+            opened?.map((m) => ({ ...m, title: hide(m.title), summary: hide(m.summary) })),
+          );
       const {
         outcome,
         costUsd,
@@ -7864,7 +7877,11 @@ export class TaskService {
           message("audit.runFailed", { detail: mapFreeText(outcome.message, hideResult) }),
         );
       } else if (!step) {
-        const survey = extractAuditSurvey(hideResult(outcome.output), task);
+        const survey = extractAuditSurvey(
+          hideResult(outcome.output),
+          task,
+          new Set(opened?.map((m) => m.id)),
+        );
         record = survey.ok
           ? [
               {
@@ -7876,6 +7893,12 @@ export class TaskService {
                     summary: survey.summary,
                     counts,
                     concerns: survey.concerns,
+                    ...(opened
+                      ? {
+                          openedMemories: opened.map((m) => m.id),
+                          usefulMemories: survey.usefulMemories,
+                        }
+                      : {}),
                     ...run,
                   },
                 },
@@ -7968,6 +7991,19 @@ export class TaskService {
             : { kind: "repository", repo: m.repo },
       );
       this.writeMemories([...layers, ...this.trimMemories()]);
+    }
+    // 役に立ったメモリーの有効な最終利用日が変わるので、その階層を書き直す（PBI-127）
+    const useful = new Set(
+      record.flatMap(({ event }) =>
+        event.type === "AuditSurveyed" ? (event.payload.usefulMemories ?? []) : [],
+      ),
+    );
+    if (useful.size > 0) {
+      this.writeMemories(
+        this.memories()
+          .filter((m) => useful.has(m.id))
+          .map(layerOf),
+      );
     }
     this.warnAuditBudget(this.mustGet(task.id));
   }
@@ -8062,8 +8098,82 @@ export class TaskService {
    * 止まっていても直す。PBI-126）。
    */
   syncMemories(): void {
+    this.expireMemories();
     this.trimMemories();
     this.writeMemories();
+  }
+
+  /**
+   * 有効な最終利用日から、sacty の設定の残す日数を過ぎたメモリーを消す（PBI-127）。消したことは、メモリーを登録したタスクの
+   * 作業履歴に記録し、その階層を書き直す。デーモンが定期的に実行する（起動のときも）。記録と書き出しは同期で行うので、
+   * 監査の記録の途中に挟まらない。
+   */
+  cleanupMemories(): void {
+    const layers = this.expireMemories();
+    if (layers.length > 0) this.writeMemories(layers);
+  }
+
+  /** 残す日数を過ぎたメモリーを消し、消した階層を返す（PBI-127）。 */
+  private expireMemories(): MemoryLayer[] {
+    if (!this.deps.memoryRoot) return [];
+    const days = this.deps.settings.get().memoryRetentionDays ?? DEFAULT_MEMORY_RETENTION_DAYS;
+    const expired: MemoryLayer[] = [];
+    for (const memory of expiredMemories(this.memories(), this.now(), days)) {
+      const task = this.tasks.get(memory.taskId);
+      if (!task) continue;
+      this.append(task, [
+        {
+          actor: "sacty",
+          event: {
+            type: "AuditMemoryDeleted",
+            payload: { memoryId: memory.id, reason: "expired" },
+          },
+        },
+      ]);
+      expired.push(layerOf(memory));
+    }
+    return expired;
+  }
+
+  /**
+   * 大まかな監査に渡す、タスクの実行で開いたメモリー（PBI-127）。タスクのプロジェクトと対象リポジトリの、消していないメモリーの
+   * うち、タスクの実行のセッションログに中身のファイルの場所が出てきたもの（開いた回数の多い順）。
+   */
+  private async openedMemories(
+    task: Task,
+    activity: readonly ActivityEvent[],
+  ): Promise<OpenedMemory[]> {
+    const store = this.deps.sessionLogs;
+    if (!store) return [];
+    const layers = taskMemoryLayers(task);
+    const all = this.memories();
+    const candidates = [
+      ...memoriesOf(all, layers.project),
+      ...(layers.repository ? memoriesOf(all, layers.repository) : []),
+    ];
+    if (candidates.length === 0) return [];
+    const ids = new Set(candidates.map((m) => m.id));
+    // 大まかな監査は監査の最初の実行なので、ここにある実行はタスクの実行だけ（監査の実行のログはまだ無い）
+    const runIds = new Set(
+      activity.flatMap((e) => {
+        const id = (e.payload as { runId?: unknown }).runId;
+        return typeof id === "string" && id ? [id] : [];
+      }),
+    );
+    const counts = new Map<string, number>();
+    for (const runId of runIds) {
+      const path = store.path(task.id, runId, "events");
+      if (!path) continue;
+      try {
+        countOpenedMemories(await readFile(path, "utf8"), ids, counts);
+      } catch {
+        // 無い・読めないログは数えない
+      }
+    }
+    return candidates
+      .filter((m) => counts.has(m.id))
+      .map((m) => ({ id: m.id, title: m.title, summary: m.summary, count: counts.get(m.id) ?? 0 }))
+      .sort((a, b) => b.count - a.count);
   }
 
   /** 深掘りに渡す、タスクの階層の既存のメモリー（PBI-126）。 */

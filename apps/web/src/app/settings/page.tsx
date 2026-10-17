@@ -43,6 +43,7 @@ async function Settings() {
       triageOff={settings.triageOff ?? []}
       ticketLabel={settings.ticketLabel ?? ""}
       maxParallelTasks={settings.maxParallelTasks}
+      memoryRetentionDays={settings.memoryRetentionDays}
       issueIntervalSec={settings.issueIntervalSec}
       reviewIntervalSec={settings.reviewIntervalSec}
       ticketIntervalSec={settings.ticketIntervalSec}

@@ -46,6 +46,13 @@ const ja = {
   parallelHelp: (fallback: number, max: number) => `1〜${max}。空なら ${fallback}。`,
   parallelCurrent: (n: number, byDefault: boolean) =>
     `いまは ${n} 件まで${byDefault ? "（既定）" : ""}。`,
+  memoryTitle: "メモリー",
+  memoryHint:
+    "監査が登録したメモリーは、タスクで役に立つたびに有効な最終利用日が新しくなります。有効な最終利用日からこの日数を過ぎたメモリーは、自動で消します。",
+  memoryLabel: "メモリーを残す日数",
+  memoryHelp: (fallback: number, max: number) => `1〜${max}。空なら ${fallback}。`,
+  memoryCurrent: (n: number, byDefault: boolean) =>
+    `いまは ${n} 日${byDefault ? "（既定）" : ""}。`,
   notifyTitle: "Slack の通知（任意）",
   notifyHint:
     "承認待ち・エスカレーション・一時停止・完了を Slack に知らせます。本文の題名の前に [プロジェクトの名前] を付けます。人が自分で一時停止したときは知らせません。",
@@ -143,6 +150,13 @@ const en: SettingsMessages = {
   parallelHelp: (fallback, max) => `1 to ${max}. ${fallback} if empty.`,
   parallelCurrent: (n, byDefault) =>
     `Up to ${n} task${n === 1 ? "" : "s"} now${byDefault ? " (default)" : ""}.`,
+  memoryTitle: "Memory",
+  memoryHint:
+    "Each time a memory the audit registered helps a task, its last useful date moves forward. Memories whose last useful date is older than this many days are deleted automatically.",
+  memoryLabel: "Days to keep memories",
+  memoryHelp: (fallback, max) => `1 to ${max}. ${fallback} if empty.`,
+  memoryCurrent: (n, byDefault) =>
+    `${n} day${n === 1 ? "" : "s"} now${byDefault ? " (default)" : ""}.`,
   notifyTitle: "Slack notifications (optional)",
   notifyHint:
     "Tells Slack about approvals, escalations, pauses, and completions. The message puts [project name] before the task title. Pausing a task yourself is not notified.",

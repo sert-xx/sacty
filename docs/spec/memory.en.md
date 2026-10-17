@@ -22,7 +22,7 @@ Related ADR: [監査が登録したメモリーを、作業履歴を正本にし
 - Each layer is an index, `SKILL.md`, plus one file per memory, `references/<memory ID>.md`.
   - Each index line is only `- [title](references/<ID>.md)：summary（有効な最終利用日：YYYY-MM-DD）`. The contents are not in the index.
   - A memory file holds the title, summary, last useful date, registration date, and the contents (Markdown).
-  - The last useful date is the date (UTC) of the registration time.
+  - The last useful date moves forward when the audit judges the memory helpful in a task ([Updating the last useful date](#updating-the-last-useful-date)). Dates are UTC.
 
 Code: `apps/daemon/src/memory.ts` (`memoryLayerDir`, `repositoryMemoryKey`, `renderMemoryIndex`, `renderMemoryReference`, `indexLine`)
 
@@ -30,13 +30,13 @@ Code: `apps/daemon/src/memory.ts` (`memoryLayerDir`, `repositoryMemoryKey`, `ren
 
 - The activity log is the source of truth. Registrations are recorded in the deep-dive result (`memories` of `AuditDeepDived`), deletions in
   `AuditMemoryDeleted` (`memoryId`, `reason`). Both are appended to the activity log of the audited task that registered the memory. `reason` is
-  `person` (a person deleted it) or `capacity` (the count limit).
+  `person` (a person deleted it), `capacity` (the count limit), or `expired` (past the retention period).
 - Only the daemon writes the files. After recording a registration or deletion, it rewrites that layer from the activity log. A layer with no
   memories left is removed with its directory.
   - The directory is not replaced; each file is written to a temporary file in the same directory and then renamed over the old one (so a running
     container keeps its mount and never reads a half-written file). Files whose contents are unchanged are not written.
   - If writing fails, the record remains and a warning is printed.
-- At startup, the daemon removes memories over the count limit, then rewrites every layer to match the activity log. Directories of layers with
+- At startup, the daemon removes expired memories and memories over the count limit, then rewrites every layer to match the activity log. Directories of layers with
   no records are removed (this repairs a stop between recording and writing).
 - With no place to write (`memoryRoot`), memories are not written and the deep dive is not asked to register any.
 
@@ -67,6 +67,36 @@ Code: `apps/daemon/src/memory.ts` (`liveMemories`, `writeMemoryLayer`, `syncMemo
 Code: `apps/daemon/src/audit-prompts.ts` (`buildAuditDivePrompt`, `extractAuditDive`, `AUDIT_MAX_MEMORIES`), `apps/daemon/src/service.ts` (`knownMemories`, `trimMemories`, `runAuditAgent`),
 `apps/daemon/src/memory.ts` (`overCapacity`, `MEMORY_MAX_PER_LAYER`)
 
+## Updating the last useful date
+
+- Before the survey, sacty counts, in the session logs (stdout JSONL) of the task's runs, the non-deleted memories of the task's project and target
+  repository whose file location (`/sacty-memory/<layer>/references/<ID>.md`) appears (times opened). A relative index link (`references/<ID>.md`)
+  alone does not count. The survey is the audit's first run, so only the task's own run logs are counted.
+- The survey prompt includes the opened memories (ID, title, summary, times opened) and the judging rules, and asks for the IDs of the helpful ones
+  (the work followed that knowledge and avoided a detour or a change request) in `usefulMemories`. IDs that were not opened are dropped.
+- `AuditSurveyed` records the opened memories (`openedMemories`) and the helpful ones (`usefulMemories`). After recording, the helpful memories'
+  layers are rewritten.
+- The last useful date is the later of the registration time and the latest completion time (the time of `AuditQueued`) of a task that judged it
+  helpful. A late audit of an older task never moves it back. Memories that were not opened or did not help keep their dates.
+- The audit card shows the memories that helped (title, layer) and the last useful date of registered memories.
+
+Code: `apps/daemon/src/memory.ts` (`countOpenedMemories`, `usefulDates`, `lastUsefulAt`), `apps/daemon/src/service.ts` (`openedMemories`),
+`apps/daemon/src/audit-prompts.ts` (`buildAuditSurveyPrompt`, `extractAuditSurvey`), `apps/daemon/src/ledger-audits.ts` (`LedgerAuditService`)
+
+## Cleanup
+
+- Memories whose last useful date is more than `memoryRetentionDays` in the sacty settings (1 to 3650; 90 days if not set;
+  `DEFAULT_MEMORY_RETENTION_DAYS`) old are deleted (exactly that many days is kept). The deletion is recorded in the activity log of the task that
+  registered the memory as `AuditMemoryDeleted` (`reason: "expired"`), and that layer is rewritten.
+- The daemon cleans up at startup and every hour (`MEMORY_CLEANUP_INTERVAL_MS`). Memories that expired while it was stopped are deleted at the next
+  startup. On shutdown, the cleanup stops before the activity log is closed.
+- Cleanup and audit recording both run synchronously in the daemon, so neither interrupts the other's recording. A memory can disappear while an
+  audit run is reading it (even if that audit judges it helpful, a deleted memory does not come back).
+- With no place to write (`memoryRoot`), nothing is cleaned up.
+
+Code: `apps/daemon/src/memory.ts` (`expiredMemories`, `MEMORY_CLEANUP_INTERVAL_MS`), `apps/daemon/src/service.ts` (`cleanupMemories`, `syncMemories`),
+`apps/daemon/src/main.ts`, `packages/core/src/projects.ts` (`SactySettings`, `DEFAULT_MEMORY_RETENTION_DAYS`)
+
 ## Giving memories to agents
 
 - Runs of steps (except the integration review) and their rework (`rework`) get the task's project layer at `/sacty-memory/project` and the
@@ -93,7 +123,7 @@ Code: `apps/daemon/default-context/skills/memory/SKILL.md`
 
 - The audit card shows the memories that audit registered (title, layer, repository, summary, contents). Memories not yet deleted have a Delete
   button; confirming deletes it (`POST /api/audits/memories/:id/delete`). People cannot register memories.
-- Deleted memories show only a mark (deleted by a person, or deleted by the limit), without contents or the Delete button. A deleted memory cannot
+- Deleted memories show only a mark (deleted by a person, by the limit, or by expiry), without contents or the Delete button. A deleted memory cannot
   be deleted again (409).
 
 Code: `apps/daemon/src/service.ts` (`deleteAuditMemory`), `apps/daemon/src/ledger-audits.ts` (`LedgerAuditService`), `apps/daemon/src/server.ts` (`createApp`),

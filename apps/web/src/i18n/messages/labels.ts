@@ -424,10 +424,12 @@ const ja = {
     AuditProposalAdopted: (withTask: boolean): string =>
       withTask ? "改修の提案を採用し、改修のタスクを作った" : "改修の提案を採用した（sacty 宛て）",
     AuditProposalRejected: (reason: string) => `改修の提案を却下した：${reason}`,
-    AuditMemoryDeleted: (byPerson: boolean): string =>
-      byPerson
+    AuditMemoryDeleted: (reason: "person" | "capacity" | "expired"): string =>
+      reason === "person"
         ? "監査が登録したメモリーを消した"
-        : "階層の件数の上限を超えたので、この監査が登録したメモリーを消した",
+        : reason === "capacity"
+          ? "階層の件数の上限を超えたので、この監査が登録したメモリーを消した"
+          : "残す日数を過ぎたので、この監査が登録したメモリーを消した",
   },
 };
 
@@ -771,10 +773,12 @@ const en: LabelMessages = {
     AuditProposalAdopted: (withTask) =>
       withTask ? "Adopted a proposal and created a fix task" : "Adopted a proposal (for sacty)",
     AuditProposalRejected: (reason) => `Rejected a proposal: ${reason}`,
-    AuditMemoryDeleted: (byPerson) =>
-      byPerson
+    AuditMemoryDeleted: (reason) =>
+      reason === "person"
         ? "Deleted a memory the audit registered"
-        : "Deleted a memory this audit registered because the layer exceeded its limit",
+        : reason === "capacity"
+          ? "Deleted a memory this audit registered because the layer exceeded its limit"
+          : "Deleted a memory this audit registered because it passed the retention period",
   },
 };
 

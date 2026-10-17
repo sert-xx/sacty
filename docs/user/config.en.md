@@ -29,6 +29,7 @@ Per-project settings (targets, GitHub accounts, the context repository, and so o
 | `gateway` | The gateway on the host ([Gateway](gateway.en.md)) | None |
 
 You set the intake interval for each kind of intake in "sacty settings" in the web UI, not in config.yaml ([Intake](intake.en.md#intake-intervals)).
+The days to keep memories are also set in "sacty settings" ([Viewing audits](audit.en.md#memories)).
 `github:` (`poll_interval_sec`) from earlier versions is not read even if written. You can delete it.
 
 If a setting is wrong, the web UI shows which setting (for example `agents.claude-subscription.auth.secret`) is wrong and why.

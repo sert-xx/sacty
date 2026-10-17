@@ -380,6 +380,8 @@ export async function saveSettingsAction(
         (kind) => formData.get(`triage-${kind}`) !== "on",
       ),
       maxParallelTasks: String(formData.get("maxParallelTasks") ?? ""),
+      // メモリーを残す日数（PBI-127）
+      memoryRetentionDays: String(formData.get("memoryRetentionDays") ?? ""),
       // 取り込みの種類ごとの間隔（PBI-100）
       issueIntervalSec: String(formData.get("issueIntervalSec") ?? ""),
       reviewIntervalSec: String(formData.get("reviewIntervalSec") ?? ""),

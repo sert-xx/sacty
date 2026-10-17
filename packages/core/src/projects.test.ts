@@ -3,9 +3,11 @@ import { parseRepoUrl, RepoUrl } from "./github-url.js";
 import { issueMessage, renderMessage } from "./messages.js";
 import {
   DEFAULT_INTAKE_INTERVAL_SEC,
+  DEFAULT_MEMORY_RETENTION_DAYS,
   excludedRepositories,
   exportProject,
   intakeIntervalSec,
+  MAX_MEMORY_RETENTION_DAYS,
   MIN_INTAKE_INTERVAL_SEC,
   type Project,
   ProjectDefinition,
@@ -720,6 +722,23 @@ describe("取り込みの種類ごとの間隔（PBI-100）", () => {
         expect(text, lang).toContain(String(MIN_INTAKE_INTERVAL_SEC));
         expect(text, lang).toContain(String(DEFAULT_INTAKE_INTERVAL_SEC));
       }
+    }
+  });
+});
+
+describe("メモリーを残す日数（PBI-127）", () => {
+  it("1〜上限の整数。画面の入力（文字列）と空も受け付け、空は設定しない（既定の 90 日）", () => {
+    expect(DEFAULT_MEMORY_RETENTION_DAYS).toBe(90);
+    expect(SactySettings.parse({ memoryRetentionDays: "30" })).toEqual({ memoryRetentionDays: 30 });
+    expect(SactySettings.parse({ memoryRetentionDays: 1 })).toEqual({ memoryRetentionDays: 1 });
+    expect(SactySettings.parse({ memoryRetentionDays: MAX_MEMORY_RETENTION_DAYS })).toEqual({
+      memoryRetentionDays: MAX_MEMORY_RETENTION_DAYS,
+    });
+    expect(SactySettings.parse({ memoryRetentionDays: " " })).toEqual({});
+    for (const bad of [0, -1, 1.5, MAX_MEMORY_RETENTION_DAYS + 1, "abc"]) {
+      const result = SactySettings.safeParse({ memoryRetentionDays: bad });
+      expect(result.success, String(bad)).toBe(false);
+      expect(result.error?.issues[0]?.path).toEqual(["memoryRetentionDays"]);
     }
   });
 });
