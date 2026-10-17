@@ -410,6 +410,14 @@ const PARAMS = {
   "gateway.mcpReadyTimeout": z.object({ name: z.string(), seconds: z.number() }),
   "gateway.unavailable": null,
   "config.agentMissing": z.object({ key: z.string(), id: z.string() }),
+  // エージェントの段階（PBI-119）
+  "config.tierRuntime": z.object({ id: z.string(), runtime: z.string(), expected: z.string() }),
+  "agents.tierConnectionDiffers": z.object({
+    tier: z.string(),
+    id: z.string(),
+    parent: z.string(),
+  }),
+  "context.reservedTierFile": z.object({ from: z.string(), path: z.string() }),
 } as const satisfies Record<string, z.ZodType | null>;
 
 export type MessageParams = {
@@ -957,6 +965,12 @@ const ja: MessageDictionary = {
   "gateway.unavailable":
     "ホストのゲートウェイが起動していないため、ゲートウェイ経由のエージェントを実行できません。sacty を起動し直してください。",
   "config.agentMissing": ({ key, id }) => `${key} の "${id}" が agents にありません。`,
+  "config.tierRuntime": ({ id, runtime, expected }) =>
+    `agents の "${id}" は段階のエージェントなので、runtime を ${expected} にしてください（${runtime} になっています）。`,
+  "agents.tierConnectionDiffers": ({ tier, id, parent }) =>
+    `段階「${tier}」（${id}）は、工程のエージェント（${parent}）と認証・接続先が違うため、サブエージェントの定義を置きませんでした。`,
+  "context.reservedTierFile": ({ from, path }) =>
+    `${from} の ${path} は、sacty が段階のサブエージェントの定義として作るため、写しませんでした。`,
 };
 
 /** 英語。用語は画面の用語集（apps/web の labels.ts）に合わせる。 */
@@ -1425,6 +1439,12 @@ const en: MessageDictionary = {
   "gateway.unavailable":
     "The host gateway is not running, so an agent that goes through it cannot run. Restart sacty.",
   "config.agentMissing": ({ key, id }) => `${key} "${id}" is not in agents.`,
+  "config.tierRuntime": ({ id, runtime, expected }) =>
+    `"${id}" in agents is a tier agent, so its runtime must be ${expected} (it is ${runtime}).`,
+  "agents.tierConnectionDiffers": ({ tier, id, parent }) =>
+    `The tier "${tier}" (${id}) uses a different authentication or endpoint from the step agent (${parent}), so its subagent definition was not placed.`,
+  "context.reservedTierFile": ({ from, path }) =>
+    `${path} of ${from} was not copied because sacty writes it as the subagent definition of a tier.`,
 };
 
 export const DAEMON_MESSAGES = { ja, en } as const;

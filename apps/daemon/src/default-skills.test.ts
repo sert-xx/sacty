@@ -58,3 +58,31 @@ describe("既定のスキル（git・review）の、PR のレビューの投稿�
     for (const { path, text } of files) expect(text.toLowerCase(), path).not.toContain("sacty");
   });
 });
+
+describe("既定の review スキルの、段階のサブエージェント（PBI-119）", () => {
+  it("観点カタログに観点ごとの段階の表があり、5 つの段階をすべて使う", () => {
+    const text = read("skills/review/review-dispatch/references/viewpoints.md");
+    expect(text).toContain("## 観点ごとの段階");
+    for (const tier of ["lite", "entry", "standard", "advanced", "ultimate"]) {
+      expect(text, tier).toMatch(new RegExp(`^\\| \`${tier}\` \\|`, "m"));
+    }
+    // 横断の欠陥探索は最上位
+    expect(text).toMatch(/^\| `ultimate` \| X-1 \|/m);
+  });
+
+  it("親は段階の名前で担当を起動し、定義が無ければ段階を指定せずに起動して起動表に「親と同じ」と書く", () => {
+    const skill = read("skills/review/review-dispatch/SKILL.md");
+    // 起動の規則
+    expect(skill).toContain("その段階の名前のサブエージェント");
+    expect(skill).toContain(
+      "段階を指定せずに（親と同じモデルで）起動し、起動表の「段階」に「親と同じ」と書く",
+    );
+    // 担当への依頼
+    expect(skill).toContain("段階の定義が無ければ、指定せずに起動する");
+    // 起動表に段階の列
+    expect(skill).toContain("| 観点 | 起動 | 段階 | 理由（起動しないとき） | 結果 |");
+    expect(skill).toContain("| X-2 検証結果の分析 | 常時 | 親と同じ | | must 1 |");
+    // 集約の記録にも段階
+    expect(read("skills/review/review-dispatch/references/aggregation.md")).toContain('"tier":');
+  });
+});

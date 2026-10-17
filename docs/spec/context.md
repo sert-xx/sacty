@@ -29,6 +29,8 @@ Claude Code・Codex の設定の場所に置く。層は、sacty の既定のコ
 
 既定の Codex 設定では、同時に開く担当の上限は `max_threads = 16`、担当からの追加起動を防ぐ深さは `max_depth = 1` とする。
 
+担当を起動するサブエージェントの段階（`lite`・`entry`・`standard`・`advanced`・`ultimate`）は、観点カタログの「観点ごとの段階」で観点ごとに決める。親は、その段階の名前のサブエージェント（設定の場所の `agents/` に sacty が置く定義。下の「実行のときに置くファイル」）を指定して起動し、定義が無い段階は親と同じモデルで起動して起動表の「段階」に「親と同じ」と書く。
+
 PR のレビュー（流れ `pr-review`）と、既定の `git` の PR への投稿は、依頼した側（呼び出したツールやプロンプト）が出力の形と投稿のしかたを決めていればそれに従い、エージェントは自分で投稿しない。決めていない（人が対話で投稿を頼んだ）ときだけ、`git` の手順で 1 件の `COMMENT` のレビューとして投稿する。指摘の頭は `[要修正]`・`[提案]`、判定は「修正が必要」「提案あり（マージは可）」「指摘なし」の3つ。差分の中に付けられる行が無い指摘は、確かめる相手（対話で依頼した人）がいれば投稿の前に扱いを確かめ、いなければ止まらずに総評に書く。sacty の PR のレビューのタスクは、指示で出力の形を決め、投稿は sacty がする（[タスクと工程](tasks-and-steps.md#pr-のレビューだけのタスク)）。既定のスキルは、あらゆる言語・分野のリポジトリと sacty の外の使い方に渡るので、sacty に限った書き方をしない。
 
 コード: `apps/daemon/default-context/skills/review/review-dispatch/SKILL.md`、`apps/daemon/default-context/skills/review/review-dispatch/references/pr-review.md`、`apps/daemon/default-context/skills/git/references/pr-review-posting.md`、`apps/daemon/default-context/skills/review/review-dispatch/references/verification-run.md`、`apps/daemon/default-context/skills/review/review-execution/references/X-2.md`、`apps/daemon/default-context/agents/codex/config.toml`
@@ -71,6 +73,14 @@ PR のレビュー（流れ `pr-review`）と、既定の `git` の PR への投
   Claude の `apiKeyHelper` など、Claude の `env` の認証・接続先・設定の場所の変数と `SACTY_` で始まる名前）は使わずに警告する
   （`context.reservedSetting`）。`agents/` の下の `auth.json`・`AGENTS.md`・`CLAUDE.md`・`.credentials.json`・`.claude.json`・`mcp.json`・
   `skills` も写さずに警告する。
+- 段階のサブエージェントの定義（`agents/claude/agents/<段階>.md`・`agents/codex/agents/<段階>.toml`。[設定](configuration.md#エージェントagents)の
+  `claude_<段階>`・`codex_<段階>`）は sacty が作るので、層にあれば、その段階を置くかどうかによらず写さずに警告する（`context.reservedTierFile`。
+  残すと、スキルが段階の名前で起動したときに層の定義が使われるため）。Codex はファイルの中の `name` をロールの名前にするので、
+  `agents/codex/agents/*.toml` の `name` が段階のものも、ファイル名によらず写さずに警告する（`codexRoleName`。`name` は前後の空白を除いて比べ、空なら名前とみなさない。読むのは層のエージェントの設定のディレクトリの中の、リンクでない通常の
+  ファイル（256KB まで）だけで、`config_file` が外・絶対パス・通常でないファイルを指すときは読まずに宣言を残す。読めないファイルはそのまま写す）。
+  Codex の `config.toml` の `agents.<段階>`（カスタムエージェントの宣言。自動で探す `agents/<段階>.toml` より先に登録される）と、
+  `config_file` が指す定義の `name` が段階の `agents.<名前>` も、sacty が決める項目として使わずに警告する（`context.reservedSetting`。
+  `agents` のほかの項目は残す）。
 - ホストの MCP サーバー（`gateway.mcp_servers`）を足す。層の MCP と同じ名前なら、ホストのものを使い警告する（`context.hostMcpOverride`）。
 - PF は、ホストの `gateway.platforms` と合わせる。同じ名前ならホストのものを使い警告する（`context.hostPlatform`）。
 - 警告は工程を止めない。合成の結果（層・警告・PF の要約）は、工程の実行ごとに `ContextResolved` に記録する。取得の失敗と形の誤りは、
@@ -85,8 +95,17 @@ sacty が作るファイルの順に置く（同じパスは後のものが上�
 
 | runtime | sacty が作るファイル |
 | --- | --- |
-| Claude Code | `CLAUDE.md`（規則）、`settings.json`（合成した設定）、`mcp.json`（`{ "mcpServers": … }`。コマンド型は `command`・`args`・`env`、URL 型は `type: "http"`・`url`・`headers`） |
-| Codex | `AGENTS.md`（規則と、スキルの一覧 `- <名前>：<description>（<場所>）`）、`config.toml`（合成した設定と `[mcp_servers."<名前>"]`。URL 型は `url`・`http_headers`・`env_http_headers`） |
+| Claude Code | `CLAUDE.md`（規則）、`settings.json`（合成した設定）、`mcp.json`（`{ "mcpServers": … }`。コマンド型は `command`・`args`・`env`、URL 型は `type: "http"`・`url`・`headers`）、`agents/<段階>.md`（段階のサブエージェントの定義。frontmatter の `name`・`description`・`model`・`effort`） |
+| Codex | `AGENTS.md`（規則と、スキルの一覧 `- <名前>：<description>（<場所>）`）、`config.toml`（合成した設定と `[mcp_servers."<名前>"]`。URL 型は `url`・`http_headers`・`env_http_headers`）、`agents/<段階>.toml`（段階のサブエージェントの定義。`name`・`description`・`developer_instructions`・`model`・`model_reasoning_effort`） |
+
+- 段階のサブエージェントの定義（PBI-119）：`config.yaml` の `claude_<段階>`・`codex_<段階>` のうち、工程のエージェントと同じ runtime で、認証・
+  接続先（`auth`・`endpoint`・`via_gateway`）が同じものを、接頭辞を外した名前で置く（`selectTiers`・`tierFiles`）。違うものは置かず、
+  `agents.tierConnectionDiffers` を注意に残す。stub の工程には置かない。`model`・`reasoning_effort` を書いていない段階は、それを書かない定義
+  （親のモデルを引き継ぐ）になる。置いた段階（段階・エージェントの名前・モデル・リーズニングエフォート）は `ContextResolved` の `tiers` に
+  記録し、プレビューにも同じファイルを出す（プレビューの親は、その runtime の `default_agent`、無ければ `step_agents`・`guardian_agent` の
+  うち最初のもの）。`ContextResolved` は、工程の実行だけでなく、マージの後の監視・外部作業・書き出しの実行でも、コンテキストを渡すたびに
+  その実行の `runId` で記録する（`contextResolved`）。段階を置いた実行の費用は推定（`estimated`）として記録する（担当が親と違うモデルで
+  動きうるが、費用は親の結果の使用量 × 親の単価でしか出せないため。[エージェントの実行](agent-execution.md#認証)）。
 
 - MCP の秘密情報は、ファイルには `SACTY_MCP_SECRET_<番号>` の環境変数として書き、値はコンテナの環境変数で渡す（ホストで取り出す）。
 - 層の `mcp.yaml`・`platforms.yaml` の秘密情報は、デーモンの起動のとき・取り出し直したとき・プロジェクトを保存したときに、ほかの秘密情報と
@@ -138,7 +157,7 @@ sacty が作るファイルの順に置く（同じパスは後のものが上�
 ## 雛形（sacty context init）
 
 `README.md`・`rules.md`・`skills/README.md`・`mcp.yaml`・`platforms.yaml`・`sacty-context.yaml`・`agents/codex/config.toml` を作る（中身は説明の
-コメントだけで、既定のコンテキストを変えない）。同じパスか `rules` があれば、`--force` が無い限り何も書かずに止まる。途中のディレクトリが
+コメントだけで、既定のコンテキストを変えない）。`README.md` には、段階のサブエージェントの定義は sacty が作るので置いても使わないことを書く。同じパスか `rules` があれば、`--force` が無い限り何も書かずに止まる。途中のディレクトリが
 ディレクトリでなければ `--force` でも止まる。
 
 コード: `apps/daemon/src/context-template.ts`（`CONTEXT_TEMPLATE_FILES`・`initContextRepo`）

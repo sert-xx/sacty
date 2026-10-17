@@ -108,6 +108,50 @@ step_agents:          # 書かなければ default_agent（統合レビューは
 `default_agent`・`guardian_agent`・`step_agents` に、`agents` に無い名前を書くと誤りになります。
 以前の版の `pr`（PR作成）は、工程を無くしたので書けません（書くと誤りになります。消してください）。
 
+## エージェントの段階
+
+エージェントを「段階」で分けておくと、スキル（既定の `review` など）が観点ごとに段階の名前でサブエージェントを起動し、
+Claude Code と Codex のどちらでも同じ段階の担当が動きます。モデルの世代が変わったら、段階の `model` を直すだけで済みます。
+
+`agents` に `claude_<段階>`・`codex_<段階>` の名前で書きます。段階は `lite`・`entry`・`standard`・`advanced`・`ultimate` の 5 つで、
+書いた段階だけを置きます。`npx sacty config init` の雛形に、両ツールの 5 段階すべての例がコメントで入っています。
+
+```yaml
+agents:
+  claude_lite:
+    runtime: claude-code
+    model: claude-haiku-5-5
+    auth: { mode: subscription, secret: claude-oauth-token }
+    price_per_mtok_usd: { input: 1, cached_input: 0.1, cache_write: 1.25, output: 5 }
+  claude_ultimate:
+    runtime: claude-code
+    model: claude-opus-5-5
+    reasoning_effort: high
+    auth: { mode: subscription, secret: claude-oauth-token }
+    price_per_mtok_usd: { input: 15, cached_input: 1.5, cache_write: 18.75, output: 75 }
+```
+
+| 段階 | 意味 | 想定する使い方 |
+| --- | --- | --- |
+| `lite` | 最も速く安い | 表記・リンクなどの機械的な確認 |
+| `entry` | 日常の作業に十分 | 文言・読み手の適合 |
+| `standard` | 標準 | ほとんどの観点の既定 |
+| `advanced` | 難しい推論 | 正しさ・堅牢性・セキュリティ・並行・設計の整合 |
+| `ultimate` | 最上位 | 観点に縛られない欠陥探索 |
+
+- 工程を動かすとき、sacty はそのツールの段階（Claude Code なら `claude_*`、Codex なら `codex_*`）を、接頭辞を外した名前の
+  サブエージェントの定義として設定の場所に置きます（Claude Code は `agents/<段階>.md`、Codex は `agents/<段階>.toml`）。
+- サブエージェントは工程のエージェントと同じプロセスで動くので、段階の `auth`・`provider`・`via_gateway` は、工程のエージェント
+  （`default_agent`・`step_agents`）と同じにしてください。違う段階は置かず、作業履歴に注意を残します。
+- 段階の名前の接頭辞と `runtime` が合わないと誤りになります（例 `claude_lite` に `runtime: codex`）。
+- 置いた段階は、作業履歴の「コンテキストを用意」の詳細と、プロジェクトの設定のコンテキストのプレビューで確かめられます。
+- 段階を書いていなければ、サブエージェントは工程のエージェントと同じモデルで動きます。
+- 段階のエージェントも普通のエージェントなので、`step_agents` に書いて工程に使えます。
+- 費用は、担当ごとのモデルの単価ではなく、工程のエージェントの結果の使用量と単価から計算します。段階を置いた実行の費用は概算として
+  記録し、画面では「概算」の印を付けます。段階の `price_per_mtok_usd` は、その段階を `step_agents` で工程に使ったときの単価です。
+- コンテキストリポジトリに同じ名前の定義（`agents/claude/agents/<段階>.md`・`agents/codex/agents/<段階>.toml`、Codex の `config.toml` の
+  `[agents.<段階>]`）があっても使いません（警告を残します）。
+
 ## 予算
 
 - 1タスクあたりの予算の既定値は `budget.default_per_task_usd`（既定 $1）です。

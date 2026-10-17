@@ -1557,6 +1557,20 @@ const ContextResolved = z.object({
         }),
       )
       .optional(),
+    /**
+     * 置いた段階のサブエージェントの定義（PBI-119）。段階の名前（lite など）と、config.yaml のエージェントの名前・モデル・
+     * リーズニングエフォート。段階を書いていない・置かなかった実行には無い。
+     */
+    tiers: z
+      .array(
+        z.object({
+          tier: z.string(),
+          agentId: z.string(),
+          model: z.string().optional(),
+          reasoningEffort: z.string().optional(),
+        }),
+      )
+      .optional(),
   }),
 });
 

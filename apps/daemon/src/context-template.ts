@@ -20,6 +20,7 @@ sacty の工程エージェントに渡す規則・スキル・MCP・外部 PF�
 - \`agents/codex/\`・\`agents/claude/\`：worker の CODEX_HOME・CLAUDE_CONFIG_DIR に写すファイル（同じパスは下位が上書き）
   - \`config.toml\`・\`settings.json\` はキーごとに重ね、下位が上書きする
   - Codex のルール（\`agents/codex/rules/*.rules\`）は、既定のルールを消さないように \`sacty.rules\` 以外の名前にする
+  - 段階のサブエージェントの定義（\`agents/claude/agents/<段階>.md\`・\`agents/codex/agents/*.toml\` の name が段階のもの・Codex の config.toml の \`[agents.<段階>]\`。段階は lite・entry・standard・advanced・ultimate）は、sacty が config.yaml の claude_<段階>・codex_<段階> から作るので、ここに置いても使わない
 - \`sacty-context.yaml\`：extends（親のリポジトリ）・locked（下位で上書き・取り除きできない項目）・remove（上位から引き継いだ項目を取り除く）
 `,
   "rules.md": `# プロジェクトの規則

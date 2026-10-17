@@ -49,7 +49,7 @@
   "workflow": "self-review | pr-review",
   "round": 1,
   "target_kind": "code | design-doc | user-doc",
-  "launched": [{ "viewpoint": "C-1", "status": "passed | changes_required | failed", "findings": { "must": 0, "should": 0, "nit": 0 } }],
+  "launched": [{ "viewpoint": "C-1", "tier": "advanced | …| 親と同じ", "status": "passed | changes_required | failed", "findings": { "must": 0, "should": 0, "nit": 0 } }],
   "not_launched": [{ "viewpoint": "C-7", "reason": "並行処理・共有状態の変更が無い" }],
   "verification": { "summary": "<一時ディレクトリ>/review-verify/round-1/summary.json", "failed": ["test:pytest"], "not_run": ["build（CI で実行していない）"] },
   "adopted": [],
