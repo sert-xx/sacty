@@ -882,6 +882,11 @@ class FakeExecutor implements AgentExecutor {
     this.held.get(runId)?.({ kind: "failed", reason: "error", message: "container killed" });
     this.held.delete(runId);
   }
+  /** HOLD の実行を、渡した結果で終える（PBI-128）。 */
+  finishHeld(runId: string, outcome: AgentOutcome) {
+    this.held.get(runId)?.(outcome);
+    this.held.delete(runId);
+  }
 }
 
 /** ディレクトリの下のファイル（相対パスと中身）。 */
@@ -23372,5 +23377,276 @@ describe("メモリーの有効な最終利用日と掃除（PBI-127）", () => 
       usefulMemories: [],
     });
     expect(() => service.cleanupMemories()).not.toThrow();
+  });
+});
+
+describe("監査によるメモリーの昇格（PBI-128）", () => {
+  const out = (text: string, usageOutput = 100): AgentOutcome => ({
+    kind: "completed",
+    output: text,
+    usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: usageOutput },
+  });
+  const json = (value: unknown) => out(`\`\`\`json\n${JSON.stringify(value)}\n\`\`\``);
+  const prompt = (invocation: Invocation) => invocation.command.join(" ");
+  const isSurvey = (invocation: Invocation) =>
+    prompt(invocation).includes("いまは大まかな監査です");
+  const isDive = (invocation: Invocation) => prompt(invocation).includes("深掘りする工程：");
+  const isStep = (invocation: Invocation) => !isSurvey(invocation) && !isDive(invocation);
+  const onlyRequirements = async () => ({
+    steps: ["requirements" as const],
+    fallback: false,
+    costUsd: 0,
+    estimated: false,
+  });
+  const memoryRoot = () => join(dir, "memory");
+  const projectDir = () => join(memoryRoot(), "projects", "default");
+  const repoDir = () => join(memoryRoot(), "repos", "github.com", "acme", "app");
+
+  function setup() {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service, executor } = makeService(activity, [], {
+      audit: true,
+      memory: true,
+      planner: onlyRequirements,
+      sessionLogs: new SessionLogStore(join(dir, "runs")),
+    });
+    const audit = {
+      register: (): unknown[] => [],
+      survey: (): Record<string, unknown> => ({}),
+      onSurvey: () => {},
+    };
+    executor.respond = (invocation) => {
+      if (isSurvey(invocation)) {
+        audit.onSurvey();
+        return json({
+          "sacty-audit-survey": {
+            summary: "要約",
+            concerns: [{ step: "requirements", reason: "差し戻し" }],
+            ...audit.survey(),
+          },
+        });
+      }
+      if (isDive(invocation)) {
+        return json({
+          "sacty-audit-findings": { summary: "深掘り", findings: [], memories: audit.register() },
+        });
+      }
+      return out("# 要求要件");
+    };
+    return { service, executor, activity, audit };
+  }
+  async function completeAndAudit(service: TaskService, title: string): Promise<string> {
+    const task = service.createTask({ projectId: "default", title, body: "" });
+    await service.runNext(task.id);
+    service.approve(task.id, { step: "requirements", submission: 1 });
+    for (let i = 0; i < 3 && service.get(task.id)?.task.audit?.completedAt === undefined; i++) {
+      await service.runNext(task.id);
+    }
+    return task.id;
+  }
+  const memory = {
+    scope: "project",
+    title: "lint は biome",
+    summary: "lint の道具",
+    body: "biome check を使う",
+  };
+
+  it("大まかな監査に、タスクの階層のメモリー（有効な最終利用日・役に立った回数）と宛先の候補を渡し、別の階層に移す", async () => {
+    const { service, executor, activity, audit } = setup();
+    audit.register = () => [memory];
+    const a = await completeAndAudit(service, "A");
+    const id = service.get(a)?.task.audit?.memories[0]?.id ?? "";
+    audit.register = () => [];
+    // 2つめのタスクで開いて役に立ち、リポジトリそのものの知見なので、リポジトリの階層に移す
+    executor.logLines = (invocation) =>
+      isStep(invocation) ? `/sacty-memory/project/references/${id}.md\n` : undefined;
+    audit.survey = () => ({ usefulMemories: [id], memoryMoves: [{ id, to: "repository" }] });
+    executor.calls.length = 0;
+    const b = await completeAndAudit(service, "B");
+    const survey = executor.calls.find(isSurvey);
+    expect(prompt(survey as Invocation)).toContain(
+      `- ${id}（プロジェクト）：lint は biome：lint の道具（有効な最終利用日 `,
+    );
+    expect(prompt(survey as Invocation)).toContain("役に立った回数 0 回");
+    expect(prompt(survey as Invocation)).toContain(
+      "- 0：対象リポジトリ（https://github.com/acme/app）",
+    );
+    expect(prompt(survey as Invocation)).not.toContain("sacty の既定のコンテキスト（");
+    expect(activity.forTask(b).find((e) => e.type === "AuditSurveyed")?.payload).toMatchObject({
+      memoryMoves: [{ id, scope: "repository", repo: "https://github.com/acme/app" }],
+    });
+    // 移した先にだけ置く。プロジェクトの階層はメモリーが無くなったので消える
+    expect(existsSync(projectDir())).toBe(false);
+    expect(readFileSync(join(repoDir(), "SKILL.md"), "utf8")).toContain(`references/${id}.md`);
+    expect((await new LedgerAuditService(service).taskAudit(b))?.movedMemories).toEqual([
+      { id, title: "lint は biome", scope: "repository", repo: "https://github.com/acme/app" },
+    ]);
+
+    // 3つめのタスクでは、移した先の階層として渡り、役に立った回数が数えてある。プロジェクトに戻せる
+    audit.survey = () => ({ memoryMoves: [{ id, to: "project" }] });
+    executor.calls.length = 0;
+    const c = await completeAndAudit(service, "C");
+    const third = executor.calls.find(isSurvey);
+    expect(prompt(third as Invocation)).toContain(`- ${id}（リポジトリ）：lint は biome`);
+    expect(prompt(third as Invocation)).toContain("役に立った回数 1 回");
+    expect(activity.forTask(c).find((e) => e.type === "AuditSurveyed")?.payload).toMatchObject({
+      memoryMoves: [{ id, scope: "project", projectId: "default" }],
+    });
+    expect(existsSync(repoDir())).toBe(false);
+    expect(existsSync(join(projectDir(), "references", `${id}.md`))).toBe(true);
+  });
+
+  it("記録の時点で、消えたメモリー・すでに移す先にあるメモリーは移さない", async () => {
+    const { service, activity, audit } = setup();
+    audit.register = () => [memory, { ...memory, title: "二つめ" }];
+    const a = await completeAndAudit(service, "A");
+    const [first, second] = service.get(a)?.task.audit?.memories ?? [];
+    audit.register = () => [];
+    // 大まかな監査の実行中に、1つめが人に消される
+    audit.onSurvey = () => {
+      if (!service.get(a)?.task.audit?.memories[0]?.deleted) {
+        service.deleteAuditMemory(first?.id ?? "");
+      }
+    };
+    audit.survey = () => ({
+      memoryMoves: [
+        { id: first?.id, to: "repository" },
+        { id: second?.id, to: "project" },
+      ],
+    });
+    const b = await completeAndAudit(service, "B");
+    expect(activity.forTask(b).find((e) => e.type === "AuditSurveyed")?.payload).toMatchObject({
+      memoryMoves: [],
+    });
+  });
+
+  it("コンテキストにする提案は、元のメモリーの中身を添えた改修の提案になり、採用すると改修のタスクができる。提案中は重ねない", async () => {
+    const { service, activity, audit } = setup();
+    audit.register = () => [memory];
+    const a = await completeAndAudit(service, "A");
+    const id = service.get(a)?.task.audit?.memories[0]?.id ?? "";
+    audit.register = () => [];
+    audit.survey = () => ({
+      memoryPromotions: [
+        { id, target: 0, title: "AGENTS.md に lint の手順を書く", body: "AGENTS.md に書く" },
+      ],
+    });
+    const b = await completeAndAudit(service, "B");
+    const finding = service.get(b)?.task.audit?.findings.find((f) => f.causeKey === `memory:${id}`);
+    expect(finding?.title).toBe("メモリーをコンテキストにする：lint は biome");
+    const proposal = finding?.proposals[0];
+    expect(proposal).toMatchObject({
+      title: "AGENTS.md に lint の手順を書く",
+      memoryId: id,
+      target: { kind: "repository", repo: "https://github.com/acme/app" },
+    });
+    expect(proposal?.body).toContain("元のメモリー：lint は biome（lint の道具）");
+    expect(proposal?.body).toContain("biome check を使う");
+    expect(proposal?.candidates.some((c) => c.kind === "sacty")).toBe(false);
+    // 提案中のものは、次の監査でも重ねて提案しない（記録の時点で外す）
+    const c = await completeAndAudit(service, "C");
+    expect(activity.forTask(c).find((e) => e.type === "AuditSurveyed")?.payload).toMatchObject({
+      promotions: [],
+    });
+    // 採用すると改修のタスクができる。マージまではメモリーを残す
+    service.adoptAuditProposal(proposal?.id ?? "", { target: proposal?.target });
+    const fixId = service
+      .get(b)
+      ?.task.audit?.findings.flatMap((f) => f.proposals)
+      .find((p) => p.id === proposal?.id)?.decision;
+    expect(fixId?.kind).toBe("adopted");
+    service.cleanupMemories();
+    expect(service.get(a)?.task.audit?.memories[0]?.deleted).toBeUndefined();
+  });
+
+  it("改修の PR がマージされたメモリーを消す確認は、PR の確認・掃除・起動のときに行う", async () => {
+    const { service } = setup();
+    const spy = vi.spyOn(service as never, "retirePromotedMemories");
+    await service.checkPullRequests();
+    service.cleanupMemories();
+    service.syncMemories();
+    expect(spy).toHaveBeenCalledTimes(3);
+  });
+
+  it("同時に動いた大まかな監査が先に提案していれば、記録の時点で同じ提案を重ねない", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service, executor } = makeService(activity, [HOLD], {
+      audit: true,
+      memory: true,
+      planner: onlyRequirements,
+    });
+    let registered: unknown[] = [memory];
+    let id = "";
+    const promote = () =>
+      json({
+        "sacty-audit-survey": {
+          summary: "要約",
+          concerns: [],
+          memoryPromotions: [{ id, target: 0, title: "AGENTS.md に書く", body: "本文" }],
+        },
+      });
+    executor.respond = (invocation) => {
+      if (isSurvey(invocation)) {
+        if (!id) {
+          return json({
+            "sacty-audit-survey": {
+              summary: "要約",
+              concerns: [{ step: "requirements", reason: "差し戻し" }],
+            },
+          });
+        }
+        // B の大まかな監査は止めておき、その間に C が提案する
+        return prompt(invocation).includes("題：B") ? undefined : promote();
+      }
+      if (isDive(invocation)) {
+        return json({
+          "sacty-audit-findings": { summary: "深掘り", findings: [], memories: registered },
+        });
+      }
+      return out("# 要求要件");
+    };
+    const a = await completeAndAudit(service, "A");
+    id = service.get(a)?.task.audit?.memories[0]?.id ?? "";
+    registered = [];
+    const b = service.createTask({ projectId: "default", title: "B", body: "" });
+    await service.runNext(b.id);
+    service.approve(b.id, { step: "requirements", submission: 1 });
+    const held = service.runNext(b.id);
+    const runId = await executor.started.promise;
+    const c = await completeAndAudit(service, "C");
+    expect(
+      service.get(c)?.task.audit?.findings.filter((f) => f.causeKey === `memory:${id}`),
+    ).toHaveLength(1);
+    executor.finishHeld(runId, promote());
+    await held;
+    expect(activity.forTask(b.id).find((e) => e.type === "AuditSurveyed")?.payload).toMatchObject({
+      promotions: [],
+    });
+  });
+
+  it("却下した提案は、理由を次の大まかな監査に渡し、メモリーは残す", async () => {
+    const { service, executor, audit } = setup();
+    audit.register = () => [memory];
+    const a = await completeAndAudit(service, "A");
+    const id = service.get(a)?.task.audit?.memories[0]?.id ?? "";
+    audit.register = () => [];
+    audit.survey = () => ({
+      memoryPromotions: [{ id, target: 0, title: "書く", body: "本文" }],
+    });
+    const b = await completeAndAudit(service, "B");
+    const proposalId =
+      service.get(b)?.task.audit?.findings.find((f) => f.causeKey === `memory:${id}`)?.proposals[0]
+        ?.id ?? "";
+    await service.rejectAuditProposal(proposalId, { reason: "まだ早い" });
+    service.cleanupMemories();
+    expect(service.get(a)?.task.audit?.memories[0]?.deleted).toBeUndefined();
+    audit.survey = () => ({});
+    executor.calls.length = 0;
+    await completeAndAudit(service, "C");
+    const survey = executor.calls.find(isSurvey);
+    expect(prompt(survey as Invocation)).toContain("コンテキストにする提案は却下：まだ早い");
+    // 深掘りの「既存の原因」には、コンテキストにする提案を入れない
+    const dive = executor.calls.find(isDive);
+    expect(prompt(dive as Invocation)).not.toContain(`memory:${id}`);
   });
 });

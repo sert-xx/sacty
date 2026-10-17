@@ -35,6 +35,7 @@ const audit = (patch: Partial<TaskAudit>): TaskAudit => ({
   findings: [],
   memories: [],
   usefulMemories: [],
+  movedMemories: [],
   ...patch,
 });
 
@@ -346,5 +347,41 @@ describe("役に立ったメモリーと期限での削除（PBI-127）", () => 
     expect(html).toContain("期限で消した");
     expect(html).toContain("メモリーを残す日数");
     expect(html).not.toContain("有効な最終利用日：");
+  });
+});
+
+describe("移したメモリーとコンテキストにしたメモリー（PBI-128）", () => {
+  it("移したメモリーの欄と、コンテキストにして消した印を出す", () => {
+    locale = "ja";
+    const html = render(
+      audit({
+        movedMemories: [
+          {
+            id: "m1",
+            title: "lint は biome",
+            scope: "repository",
+            repo: "https://github.com/a/app",
+          },
+        ],
+        memories: [
+          {
+            id: "m2",
+            scope: "project",
+            title: "知見",
+            summary: "概要",
+            body: "中身",
+            step: "implement",
+            at: "2026-10-01T00:00:00.000Z",
+            lastUsefulAt: "2026-10-01T00:00:00.000Z",
+            deleted: { at: "2026-10-09T00:00:00.000Z", reason: "promoted" },
+          },
+        ],
+      }),
+    );
+    expect(html).toContain("移したメモリー");
+    expect(html).toContain('data-testid="audit-moved-memory-m1"');
+    expect(html).toContain("→ リポジトリ");
+    expect(html).toContain("コンテキストにした");
+    expect(render(audit({}))).not.toContain("移したメモリー");
   });
 });

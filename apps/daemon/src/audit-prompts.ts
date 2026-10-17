@@ -75,6 +75,44 @@ export type KnownMemory = {
 };
 /** タスクの実行で開いたメモリー（役に立ったかを判断させるため。PBI-127）。count は開いた回数。 */
 export type OpenedMemory = { id: string; title: string; summary: string; count: number };
+
+/** 1回の大まかな監査で、別の階層に移すメモリーと、コンテキストにする提案の上限（PBI-128）。 */
+export const AUDIT_MAX_MEMORY_MOVES = 3;
+export const AUDIT_MAX_MEMORY_PROMOTIONS = 2;
+
+/**
+ * 昇格を判断する材料の、タスクの階層のメモリー（PBI-128）。usefulCount は役に立ったと判断された回数、promoting はコンテキストに
+ * する提案が判断待ちか採用済みか。
+ */
+export type PromotableMemory = {
+  id: string;
+  scope: "project" | "repository";
+  title: string;
+  summary: string;
+  lastUsefulAt: string;
+  usefulCount: number;
+  promoting: boolean;
+  /** コンテキストにする提案を、人が却下した理由（最後のもの）。 */
+  rejectedReason?: string;
+  path: string;
+};
+
+/** 大まかな監査の、昇格の判断の材料（PBI-128）。repository はタスクの GitHub の対象リポジトリ（無ければ無い）。 */
+export type PromotionInput = {
+  memories: readonly PromotableMemory[];
+  /** コンテキストにする提案の宛先の候補（sacty の既定のコンテキストは除く）。 */
+  candidates: readonly AuditTarget[];
+  repository?: string;
+};
+
+/** 大まかな監査の出力の、階層の移動とコンテキストにする提案（ID や宛先は、まだ検査の前）。 */
+export type SurveyMemoryMove = { id: string; to: "project" | "repository" };
+export type SurveyMemoryPromotion = {
+  id: string;
+  target: AuditTarget;
+  title: string;
+  body: string;
+};
 /** 人が却下した提案と理由（同じ提案を繰り返さないため）。 */
 export type RejectedAuditProposal = { title: string; reason: string };
 
@@ -163,6 +201,8 @@ export function buildAuditSurveyPrompt(
   logs: ChatLogs,
   /** タスクの実行で開いたメモリー。メモリーを使わないなら無い（PBI-127）。 */
   opened?: readonly OpenedMemory[],
+  /** 昇格の判断の材料。メモリーを使わないなら無い（PBI-128）。 */
+  promotion?: PromotionInput,
 ): string {
   const steps = task.steps.map((s) => s.key);
   return [
@@ -175,10 +215,12 @@ export function buildAuditSurveyPrompt(
     `- 挙げる工程は最大 ${AUDIT_MAX_CONCERNS} つ。根拠の多い順。工程は次のキーから選ぶ：${steps.join("・") || "（なし）"}`,
     "- 理由には、その工程で何が起きたかを、台帳かログの事実で短く書く",
     ...(opened ? usefulMemoryRuleLines() : []),
+    ...(promotion ? promotionRuleLines(promotion) : []),
     ...AUDIT_RULES,
     ...guardianCodeLines(task, "implemented"),
     "",
     ...(opened ? openedMemoryLines(opened) : []),
+    ...(promotion ? promotionMaterialLines(promotion) : []),
     ...chatLogLines(logs),
     "",
     ...ledgerLines(task, activity, counts),
@@ -192,6 +234,19 @@ export function buildAuditSurveyPrompt(
           summary: "経緯の要約（Markdown。何が起きたか・どこで手間がかかったか）",
           concerns: [{ step: steps[0] ?? "implement", reason: "その工程で起きたこと" }],
           ...(opened ? { usefulMemories: [opened[0]?.id ?? "メモリーの ID"] } : {}),
+          ...(promotion
+            ? {
+                memoryMoves: [{ id: "メモリーの ID", to: "repository" }],
+                memoryPromotions: [
+                  {
+                    id: "メモリーの ID",
+                    target: 0,
+                    title: "改修の題（1行）",
+                    body: "どのファイルに、何を書くか（Markdown）",
+                  },
+                ],
+              }
+            : {}),
         },
       },
       null,
@@ -209,6 +264,9 @@ export type AuditSurveyOutput =
       concerns: { step: StepKey; reason: string }[];
       /** 役に立ったメモリー（開いたものだけ。PBI-127）。 */
       usefulMemories: string[];
+      /** 階層の移動と、コンテキストにする提案（PBI-128）。 */
+      memoryMoves: SurveyMemoryMove[];
+      memoryPromotions: SurveyMemoryPromotion[];
     }
   | { ok: false; reason: DaemonText };
 
@@ -216,6 +274,82 @@ export type AuditSurveyOutput =
 function usefulMemoryRuleLines(): string[] {
   return [
     "- 下の「このタスクで開いたメモリー」のうち、このタスクの作業で実際に役に立ったもの（その知見に沿って進め、遠回りや差し戻しを避けられたもの）の ID を usefulMemories に挙げる。開いただけ・関係しなかった・誤っていたものは挙げない。無ければ空でよい",
+  ];
+}
+
+/**
+ * 大まかな監査の出力の、階層の移動とコンテキストにする提案を読む（PBI-128）。メモリーは材料にあるものだけ、移す先は今と違う
+ * 階層だけ（repository は対象リポジトリがあるときだけ）、提案は提案中でないものと候補の番号の宛先だけ。同じメモリーは1回だけ。
+ */
+function surveyPromotions(
+  v: Record<string, unknown>,
+  promotion: PromotionInput | undefined,
+): { memoryMoves: SurveyMemoryMove[]; memoryPromotions: SurveyMemoryPromotion[] } {
+  const byId = new Map((promotion?.memories ?? []).map((m) => [m.id, m]));
+  const moves: SurveyMemoryMove[] = [];
+  for (const raw of Array.isArray(v.memoryMoves) ? v.memoryMoves : []) {
+    const item = (raw ?? {}) as Record<string, unknown>;
+    const memory = byId.get(text(item.id));
+    const to = item.to;
+    if (!memory || (to !== "project" && to !== "repository") || memory.scope === to) continue;
+    if (to === "repository" && !promotion?.repository) continue;
+    if (moves.some((m) => m.id === memory.id)) continue;
+    moves.push({ id: memory.id, to });
+    if (moves.length >= AUDIT_MAX_MEMORY_MOVES) break;
+  }
+  const promotions: SurveyMemoryPromotion[] = [];
+  for (const raw of Array.isArray(v.memoryPromotions) ? v.memoryPromotions : []) {
+    const item = (raw ?? {}) as Record<string, unknown>;
+    const memory = byId.get(text(item.id));
+    const target =
+      typeof item.target === "number" && Number.isInteger(item.target)
+        ? promotion?.candidates[item.target]
+        : undefined;
+    const title = cut(text(item.title).replace(/\s+/g, " "), AUDIT_TITLE_MAX);
+    if (!memory || memory.promoting || !target || !title) continue;
+    if (promotions.some((p) => p.id === memory.id)) continue;
+    promotions.push({ id: memory.id, target, title, body: cut(text(item.body), AUDIT_TEXT_MAX) });
+    if (promotions.length >= AUDIT_MAX_MEMORY_PROMOTIONS) break;
+  }
+  return { memoryMoves: moves, memoryPromotions: promotions };
+}
+
+/** 大まかな監査の指示の、昇格の判断の決まり（PBI-128）。 */
+function promotionRuleLines(promotion: PromotionInput): string[] {
+  return [
+    "- 下の「このタスクの階層のメモリー」から、置き場所が合っていないものを memoryMoves で別の階層に移す（最大 " +
+      `${AUDIT_MAX_MEMORY_MOVES} つ）。`,
+    promotion.repository
+      ? `  - リポジトリ（${promotion.repository}）そのものに関すること（ビルド・テスト・規約・構成）で、ほかのプロジェクトのタスクでも役立つものは repository へ。プロジェクト・組織・コンテキストに固有の名前や事情を含むものは repository に移さない`
+      : "  - このタスクには GitHub の対象リポジトリが無いので、repository には移さない",
+    "  - プロジェクトやコンテキストに固有のことが repository にあれば project へ",
+    "- 何度も役に立ち（役に立った回数が 2 回以上を目安）、これからも守るべき決まりになったものは、memoryPromotions でコンテキスト（スキル・規約）か対象リポジトリ（AGENTS.md など）にする改修を提案する（最大 " +
+      `${AUDIT_MAX_MEMORY_PROMOTIONS} つ）。宛先は下の候補の番号から選ぶ。提案中のものは出さない。却下されたものは、却下の理由を踏まえ、同じ提案を繰り返さない`,
+    "- 移すもの・提案するものが無ければ、どちらも空でよい",
+  ];
+}
+
+/** 大まかな監査の指示の、昇格の判断の材料の節（PBI-128）。 */
+function promotionMaterialLines(promotion: PromotionInput): string[] {
+  const scope = (s: "project" | "repository") => (s === "project" ? "プロジェクト" : "リポジトリ");
+  const target = (t: AuditTarget, i: number) =>
+    t.kind === "repository"
+      ? `- ${i}：対象リポジトリ（${t.repo}）。AGENTS.md などのエージェントのルール`
+      : t.kind === "context"
+        ? `- ${i}：コンテキストのリポジトリ（${t.repo}・${t.depth === 0 ? "プロジェクトの層" : `上位 ${t.depth} 層`}）。スキル・規約`
+        : `- ${i}：sacty の既定のコンテキスト`;
+  return [
+    "--- このタスクの階層のメモリー（昇格の判断の材料。中身は path で読めます） ---",
+    ...(promotion.memories.length > 0
+      ? promotion.memories.map(
+          (m) =>
+            `- ${m.id}（${scope(m.scope)}）：${m.title}：${m.summary}（有効な最終利用日 ${m.lastUsefulAt.slice(0, 10)}・役に立った回数 ${m.usefulCount} 回${m.promoting ? "・コンテキストにする提案中" : ""}${m.rejectedReason ? `・コンテキストにする提案は却下：${clip(m.rejectedReason, 200).replace(/\n/g, " ")}` : ""}・${m.path}）`,
+        )
+      : ["（なし）"]),
+    "",
+    "--- コンテキストにする提案の宛先の候補 ---",
+    ...(promotion.candidates.length > 0 ? promotion.candidates.map(target) : ["（なし）"]),
+    "",
   ];
 }
 
@@ -249,6 +383,8 @@ export function extractAuditSurvey(
   task: Task,
   /** タスクの実行で開いたメモリーの ID（役に立ったものは、この中からだけ残す。PBI-127）。 */
   opened: ReadonlySet<string> = new Set(),
+  /** 昇格の判断の材料（移す・提案するメモリーは、この中からだけ残す。PBI-128）。 */
+  promotion?: PromotionInput,
 ): AuditSurveyOutput {
   const steps = new Set(task.steps.map((s) => s.key));
   const found = lastJsonAnswer(output, (value) => {
@@ -266,7 +402,12 @@ export function extractAuditSurvey(
     const useful = Array.isArray(v.usefulMemories)
       ? [...new Set(v.usefulMemories.map(text).filter((id) => opened.has(id)))]
       : [];
-    return { summary: cut(text(v.summary), AUDIT_TEXT_MAX), concerns, usefulMemories: useful };
+    return {
+      summary: cut(text(v.summary), AUDIT_TEXT_MAX),
+      concerns,
+      usefulMemories: useful,
+      ...surveyPromotions(v, promotion),
+    };
   });
   if (!found) return { ok: false, reason: message("audit.unreadable") };
   return { ok: true, ...found.value, concerns: found.value.concerns.slice(0, AUDIT_MAX_CONCERNS) };

@@ -10,7 +10,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
-import { type AuditMemoryRecord, parseRepoUrl, type Task } from "@sacty/core";
+import { type AuditMemoryRecord, type MemoryMove, parseRepoUrl, type Task } from "@sacty/core";
 import { githubRepoOf } from "./config.js";
 
 /*
@@ -107,6 +107,31 @@ export function usefulDates(tasks: Iterable<Task>): Map<string, string> {
   return dates;
 }
 
+/** メモリーごとの、役に立ったと監査が判断したタスクの数（昇格の判断の材料。PBI-128）。 */
+export function usefulCounts(tasks: Iterable<Task>): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const task of tasks) {
+    for (const id of new Set(task.audit?.survey?.usefulMemories ?? [])) {
+      counts.set(id, (counts.get(id) ?? 0) + 1);
+    }
+  }
+  return counts;
+}
+
+/**
+ * メモリーごとの、今の置き場所（監査が移した先。PBI-128）。大まかな監査の記録の順に、移した記録を当てる（最後に移した先）。
+ * 移していなければ無い。
+ */
+export function memoryPlacements(tasks: Iterable<Task>): Map<string, MemoryMove> {
+  const moves = [...tasks]
+    .flatMap((t) => {
+      const survey = t.audit?.survey;
+      return survey ? survey.memoryMoves.map((move) => ({ move, at: survey.at })) : [];
+    })
+    .sort((a, b) => a.at.localeCompare(b.at));
+  return new Map(moves.map(({ move }) => [move.id, move]));
+}
+
 /** 有効な最終利用日：役に立ったタスクの完了日の最新と、登録した時刻の遅い方（前に戻さない。PBI-127）。 */
 export function lastUsefulAt(createdAt: string, useful: string | undefined): string {
   return useful && useful > createdAt ? useful : createdAt;
@@ -116,21 +141,57 @@ export function lastUsefulAt(createdAt: string, useful: string | undefined): str
 export function liveMemories(tasks: Iterable<Task>): LiveMemory[] {
   const all = [...tasks];
   const dates = usefulDates(all);
+  const placements = memoryPlacements(all);
   const live: LiveMemory[] = [];
   for (const task of all) {
     for (const m of task.audit?.memories ?? []) {
       if (m.deleted) continue;
-      const { at, step: _step, deleted: _deleted, ...record } = m;
-      live.push({
-        ...record,
+      const placed = placements.get(m.id);
+      const base = {
+        id: m.id,
+        title: m.title,
+        summary: m.summary,
+        body: m.body,
         taskId: task.id,
-        projectId: task.projectId,
-        createdAt: at,
-        lastUsefulAt: lastUsefulAt(at, dates.get(m.id)),
-      });
+        createdAt: m.at,
+        lastUsefulAt: lastUsefulAt(m.at, dates.get(m.id)),
+      };
+      // 監査が移したメモリーは、移した先の階層に置く（PBI-128）
+      if (placed?.scope === "project") {
+        live.push({ ...base, scope: "project", projectId: placed.projectId });
+      } else if (placed?.scope === "repository") {
+        live.push({ ...base, scope: "repository", repo: placed.repo, projectId: task.projectId });
+      } else if (m.scope === "repository") {
+        live.push({ ...base, scope: "repository", repo: m.repo, projectId: task.projectId });
+      } else {
+        live.push({ ...base, scope: "project", projectId: task.projectId });
+      }
     }
   }
   return live.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+}
+
+/**
+ * コンテキストにする改修の PR がマージされた、消していないメモリー（PBI-128）。元のメモリーを持つ提案が採用され、作った改修の
+ * タスクの PR がマージされたもの。判断待ち・却下・マージの前のものは入れない。
+ */
+export function promotedMemories(tasks: Iterable<Task>, live: readonly LiveMemory[]): LiveMemory[] {
+  const all = [...tasks];
+  const byId = new Map(all.map((t) => [t.id, t]));
+  const liveById = new Map(live.map((m) => [m.id, m]));
+  const promoted = new Map<string, LiveMemory>();
+  for (const task of all) {
+    for (const finding of task.audit?.findings ?? []) {
+      for (const p of finding.proposals) {
+        const memory = p.memoryId ? liveById.get(p.memoryId) : undefined;
+        const fixTaskId = p.decision?.kind === "adopted" ? p.decision.fixTaskId : undefined;
+        if (memory && fixTaskId && byId.get(fixTaskId)?.pullRequestMerge) {
+          promoted.set(memory.id, memory);
+        }
+      }
+    }
+  }
+  return [...promoted.values()];
 }
 
 /** 1日（ミリ秒）。 */

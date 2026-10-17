@@ -30,7 +30,7 @@ Code: `apps/daemon/src/memory.ts` (`memoryLayerDir`, `repositoryMemoryKey`, `ren
 
 - The activity log is the source of truth. Registrations are recorded in the deep-dive result (`memories` of `AuditDeepDived`), deletions in
   `AuditMemoryDeleted` (`memoryId`, `reason`). Both are appended to the activity log of the audited task that registered the memory. `reason` is
-  `person` (a person deleted it), `capacity` (the count limit), or `expired` (past the retention period).
+  `person` (a person deleted it), `capacity` (the count limit), `expired` (past the retention period), or `promoted` (the fix that made it context was merged).
 - Only the daemon writes the files. After recording a registration or deletion, it rewrites that layer from the activity log. A layer with no
   memories left is removed with its directory.
   - The directory is not replaced; each file is written to a temporary file in the same directory and then renamed over the old one (so a running
@@ -83,6 +83,41 @@ Code: `apps/daemon/src/audit-prompts.ts` (`buildAuditDivePrompt`, `extractAuditD
 Code: `apps/daemon/src/memory.ts` (`countOpenedMemories`, `usefulDates`, `lastUsefulAt`), `apps/daemon/src/service.ts` (`openedMemories`),
 `apps/daemon/src/audit-prompts.ts` (`buildAuditSurveyPrompt`, `extractAuditSurvey`), `apps/daemon/src/ledger-audits.ts` (`LedgerAuditService`)
 
+## Promotion
+
+- The survey (when there is a place to write memories) includes the material for promotion: the non-deleted memories of the task's project and
+  target repository (ID, layer, title, summary, last useful date, times helpful, whether a promotion to context is pending, the rejection reason,
+  and where the contents are), and the candidate targets for a promotion to context (the fix proposal targets minus sacty's default context).
+  Times helpful is the number of tasks that judged the memory helpful.
+- **Moving between layers** (`memoryMoves`; at most 3 per survey; `AUDIT_MAX_MEMORY_MOVES`): memories in the wrong layer are moved to the task's
+  project or target repository layer. Things about the repository itself (helpful to other projects' tasks too) go to `repository`; things
+  specific to the project or context go to `project`. Memories containing names or circumstances specific to a project, organization, or context
+  must not be moved to `repository`.
+  - When reading: only memories in the material, only to a different layer, each memory once. With no target repository, nothing moves to `repository`.
+  - When recording: the memory must still exist, still be in the task's layers, and be in a different layer (surveys of the same project can run
+    at the same time). `memoryMoves` of `AuditSurveyed` records the destination (the project ID for `project`, the repository for `repository`).
+  - A memory's place is decided by applying every task's moves in survey-time order (the last move wins). Its last useful date, registering
+    task, and ID do not change. After recording, the layers before and after the move are rewritten.
+- **Promotion to context** (`memoryPromotions`; at most 2 per survey; `AUDIT_MAX_MEMORY_PROMOTIONS`): memories that helped repeatedly (about 2 times
+  or more) and became rules worth keeping are proposed as fixes that write them into the context (skills, conventions) or the target repository
+  (AGENTS.md and so on).
+  - When reading: only memories without a pending promotion, only targets from the candidate numbers, and only items with a title.
+  - When recording: the memory must still exist, still be in the task's layers, and have no pending promotion. It is recorded as a cause in
+    `promotions` of `AuditSurveyed` (cause key `memory:<memory ID>`). The proposal (`memoryId` holds the original memory) carries the original
+    memory's title, summary, and contents in its body.
+  - Adopting and rejecting work as for other fix proposals. Adopting creates a fix task on the target repository that goes through to a PR
+    (context changes always go through a human PR review).
+  - A memory with a pending or adopted proposal counts as "being promoted" and gets no duplicate proposal. A rejected memory stays, and the
+    rejection reason is added to the material.
+  - The list of existing causes given to deep dives leaves out promotions to context.
+- **Deleting the original memory**: when the PR of the fix task from an adopted proposal is merged, the original memory is deleted with
+  `AuditMemoryDeleted` (`reason: "promoted"`). This is checked on each PR watch pass, each cleanup, and at startup.
+- The audit card shows the moved memories (title, destination) and a mark on memories deleted after becoming context.
+
+Code: `apps/daemon/src/audit-prompts.ts` (`buildAuditSurveyPrompt`, `extractAuditSurvey`, `AUDIT_MAX_MEMORY_MOVES`, `AUDIT_MAX_MEMORY_PROMOTIONS`),
+`apps/daemon/src/service.ts` (`promotionInput`, `surveyPromotionRecord`, `retirePromotedMemories`, `knownAuditCauses`),
+`apps/daemon/src/memory.ts` (`memoryPlacements`, `usefulCounts`, `promotedMemories`), `packages/core/src/events.ts` (`MemoryMove`, `AuditProposalRecord`)
+
 ## Cleanup
 
 - Memories whose last useful date is more than `memoryRetentionDays` in the sacty settings (1 to 3650; 90 days if not set;
@@ -123,7 +158,7 @@ Code: `apps/daemon/default-context/skills/memory/SKILL.md`
 
 - The audit card shows the memories that audit registered (title, layer, repository, summary, contents). Memories not yet deleted have a Delete
   button; confirming deletes it (`POST /api/audits/memories/:id/delete`). People cannot register memories.
-- Deleted memories show only a mark (deleted by a person, by the limit, or by expiry), without contents or the Delete button. A deleted memory cannot
+- Deleted memories show only a mark (deleted by a person, by the limit, by expiry, or after becoming context), without contents or the Delete button. A deleted memory cannot
   be deleted again (409).
 
 Code: `apps/daemon/src/service.ts` (`deleteAuditMemory`), `apps/daemon/src/ledger-audits.ts` (`LedgerAuditService`), `apps/daemon/src/server.ts` (`createApp`),
