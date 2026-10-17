@@ -34,7 +34,7 @@ Code: `apps/daemon/src/service.ts` (`auditQueueEvent`, `awaitingAudit`, `runAudi
   not to change it.
 - Secrets are redacted before truncation from the materials (ledger, body, approved outputs, remarks, rejection reasons, existing cause
   titles, session logs) and from the audit output. For the output, redaction is applied both to the raw JSON string and to the decoded texts
-  (summary, reasons, causes, evidence, proposals, memories), so escaped values are covered too. Session logs are staged as hard links to the original logs, so they are replaced with
+  (summary, reasons, causes, evidence, proposals, memories), so escaped values are covered too. After decoding, redaction runs before trimming, so values ending in a newline are covered. Session logs are staged as hard links to the original logs, so they are replaced with
   redacted copies before mounting, leaving the originals unchanged. The redaction covers the values of secrets used by the settings and sacty settings (including the audit AI's), the GitHub
   tokens of the project's chosen accounts and of the task's repository, and common secret patterns. The values are never reused: they are fetched
   each time before sending to the audit AI, before recording the result after the audit AI returns (together with the values fetched before

@@ -23093,7 +23093,8 @@ describe("監査のメモリー（PBI-126）", () => {
   });
 
   it("JSON でエスケープされる文字を含む秘密情報の値も、デコードした後に伏せてからメモリーと原因に記録する（PR #136 レビュー指摘）", async () => {
-    const secret = 'zz"q\\p\nend';
+    // 引用符・バックスラッシュ・末尾の改行を含む値（PR #136 再レビュー指摘）
+    const secret = 'zz"q\\p\nend\n';
     const activity = new SqliteActivityStore(dbPath);
     const { service, executor } = makeService(activity, [], {
       audit: true,

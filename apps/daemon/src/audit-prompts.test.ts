@@ -492,3 +492,68 @@ describe("出力の文は、デコードした後に伏せる（PR #136 レビ�
     expect(survey.ok && survey.concerns[0]?.reason).toBe("r [REDACTED]");
   });
 });
+
+describe("出力の文は、前後の空白を除く前に伏せる（PR #136 再レビュー指摘）", () => {
+  const secret = 'zz"q\\p\n';
+  const hide = (t: string) => t.split(secret).join("[REDACTED]");
+  const context = {
+    eventIds: new Set<string>(),
+    runIds: new Set<string>(),
+    candidates: [{ kind: "sacty" } as const],
+    knownKeys: new Set<string>(),
+    knownMemoryIds: new Set<string>(),
+  };
+
+  it("末尾に改行のある秘密情報の値を、文の全体・末尾に置いても伏せる", () => {
+    const dive = extractAuditDive(
+      block({
+        "sacty-audit-findings": {
+          summary: secret,
+          findings: [{ title: `原因 ${secret}`, detail: secret, evidence: [], proposals: [] }],
+          memories: [{ scope: "project", title: secret, summary: `概要 ${secret}`, body: secret }],
+        },
+      }),
+      context,
+      hide,
+    );
+    const text = JSON.stringify(dive);
+    expect(text).not.toContain("zz");
+    expect(dive.ok && dive.summary).toBe("[REDACTED]");
+    expect(dive.ok && dive.findings[0]?.title).toBe("原因 [REDACTED]");
+    expect(dive.ok && dive.memories[0]).toMatchObject({
+      title: "[REDACTED]",
+      summary: "概要 [REDACTED]",
+      body: "[REDACTED]",
+    });
+    const survey = extractAuditSurvey(
+      block({
+        "sacty-audit-survey": {
+          summary: `要約 ${secret}`,
+          concerns: [{ step: "implement", reason: secret }],
+        },
+      }),
+      task,
+      hide,
+    );
+    expect(JSON.stringify(survey)).not.toContain("zz");
+  });
+
+  it("上限の境界をまたぐ秘密情報の値も、伏せてから切るので先頭が残らない", () => {
+    const body = `${"x".repeat(3996)}${secret}`;
+    const dive = extractAuditDive(
+      block({
+        "sacty-audit-findings": {
+          summary: "",
+          findings: [],
+          memories: [{ scope: "project", title: "題", summary: "概要", body }],
+        },
+      }),
+      context,
+      hide,
+    );
+    const saved = dive.ok ? (dive.memories[0]?.body ?? "") : "";
+    expect(saved.length).toBeLessThanOrEqual(4000);
+    expect(saved).not.toContain("zz");
+    expect(saved).toContain("[RE");
+  });
+});

@@ -59,7 +59,7 @@ Code: `apps/daemon/src/memory.ts` (`liveMemories`, `writeMemoryLayer`, `syncMemo
   ID, and `repository` items without a target repository are dropped. sacty sets the `repository` destination to the target repository (the
   output's destination is not used).
 - Like other audit output, secrets are redacted before recording. The same redaction is also applied to the title, summary, and contents after
-  decoding the JSON and before truncation (values containing quotes, backslashes, or newlines are escaped in the JSON string and would not
+  decoding the JSON and before trimming, joining into one line, and truncation (values containing quotes, backslashes, or newlines are escaped in the JSON string and would not
   match there). sacty assigns the IDs.
 - Deep dives of the same project run one at a time, so duplicates in the project layer are checked against the list at registration time. The
   repository layer can receive a registration from another project's deep dive at the same time; then the same knowledge may end up as two memories.

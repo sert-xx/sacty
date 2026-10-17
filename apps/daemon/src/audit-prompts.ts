@@ -238,6 +238,14 @@ const text = (v: unknown) => (typeof v === "string" ? v.trim() : "");
  */
 export type OutputRedactor = (text: string) => string;
 const keep: OutputRedactor = (t) => t;
+
+/**
+ * 出力の文を読む関数：文字列であることだけを確かめた元の値を伏せてから、前後の空白を除く（PR #136 再レビュー指摘）。先に除くと、
+ * 末尾に改行のある秘密情報の値が一致しなくなり、改行のほかが残る。1行化と長さの制限は、呼ぶ側がこの後に行う。
+ */
+function redacted(hide: OutputRedactor): (v: unknown) => string {
+  return (v) => (typeof v === "string" ? hide(v).trim() : "");
+}
 /**
  * 上限（UTF-16 のコード単位）に収まるように切る。切る位置がサロゲートペアの間なら1つ戻し、文字を壊さない
  * （PR #135 レビュー指摘）。
@@ -259,7 +267,7 @@ export function extractAuditSurvey(
   opened: ReadonlySet<string> = new Set(),
 ): AuditSurveyOutput {
   const steps = new Set(task.steps.map((s) => s.key));
-  const str = (v: unknown) => hide(text(v));
+  const str = redacted(hide);
   const found = lastJsonAnswer(output, (value) => {
     const v = headedObject(value, AUDIT_SURVEY_HEADING);
     if (!v || typeof v.summary !== "string" || !Array.isArray(v.concerns)) return undefined;
@@ -427,7 +435,7 @@ export function extractAuditDive(
   },
   hide: OutputRedactor = keep,
 ): AuditDiveOutput {
-  const str = (v: unknown) => hide(text(v));
+  const str = redacted(hide);
   const kinds = new Set<string>(AUDIT_EVIDENCE_KINDS);
   const found = lastJsonAnswer(output, (value) => {
     const v = headedObject(value, AUDIT_FINDINGS_HEADING);
