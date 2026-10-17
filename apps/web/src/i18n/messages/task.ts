@@ -229,6 +229,19 @@ const ja = {
     reviewPost: "投稿したレビュー：",
     reviewComments: (n: number) => `行へのコメント（${n}件）`,
   },
+  /** 提出の前のセルフレビュー（PBI-120）。 */
+  selfReview: {
+    passed: (rounds: number) => `セルフレビュー：パス・${rounds}回`,
+    failed: (rounds: number, remaining: number) =>
+      `セルフレビュー：パスしていません・${rounds}回・残った指摘 ${remaining}件`,
+    missing: "セルフレビューの記録がありません",
+    hint: "提出の前に、エージェントがスキル review-dispatch で観点ごとにレビューし、must の指摘が無くなるまで直した結果です（最大 5 回）。",
+    missingHint:
+      "エージェントがセルフレビューの結果を報告しませんでした。成果物を自分で確かめてください。",
+    remaining: "残った指摘",
+    notReviewed: "見られなかった観点",
+    summary: "総評",
+  },
   costs: {
     title: "工程ごとの費用",
     hint: "工程ごとのエージェント・設定・トークンの使用量と費用です。記録に無い項目は「—」。",
@@ -544,6 +557,17 @@ const en: TaskMessages = {
     reviewTarget: "PR under review: ",
     reviewPost: "Posted review: ",
     reviewComments: (n) => `Line comments (${n})`,
+  },
+  selfReview: {
+    passed: (rounds) => `Self-review: passed · ${rounds} round${rounds === 1 ? "" : "s"}`,
+    failed: (rounds, remaining) =>
+      `Self-review: not passed · ${rounds} round${rounds === 1 ? "" : "s"} · ${remaining} finding${remaining === 1 ? "" : "s"} left`,
+    missing: "No self-review record",
+    hint: "Before submitting, the agent reviewed the work by viewpoint with the review-dispatch skill and fixed it until no must findings were left (up to 5 rounds).",
+    missingHint: "The agent did not report a self-review. Check the deliverable yourself.",
+    remaining: "Findings left",
+    notReviewed: "Viewpoints not reviewed",
+    summary: "Summary",
   },
   costs: {
     title: "Cost per step",

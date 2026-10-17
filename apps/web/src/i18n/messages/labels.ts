@@ -205,8 +205,14 @@ const ja = {
     serviceHostPorts: (name: string, ports: string) => `${name}（${ports}）`,
     AgentRunStarted: (step: string, agent: string, auth: string) =>
       `${step}の実行を開始（${agent}・${auth}）`,
-    AgentRunCompleted: (step: string, cost: string, viewpoints?: number) =>
-      `${step}の実行が完了（${cost}${viewpoints === undefined ? "" : `・テスト観点${viewpoints}件`}）`,
+    AgentRunCompleted: (
+      step: string,
+      cost: string,
+      viewpoints?: number,
+      /** 提出の前のセルフレビュー（PBI-120）。null は記録なし。 */
+      selfReview?: { passed: boolean; rounds: number } | null,
+    ) =>
+      `${step}の実行が完了（${cost}${viewpoints === undefined ? "" : `・テスト観点${viewpoints}件`}${selfReview === undefined ? "" : selfReview === null ? "・セルフレビューの記録なし" : `・セルフレビュー${selfReview.passed ? "パス" : "未パス"}（${selfReview.rounds}回）`}）`,
     AgentRunFailed: (step: string, message: string) => `${step}の実行が失敗：${message}`,
     BudgetWarned: (used: string, cap: string) => `予算の80%に到達（${used} / ${cap}）`,
     BudgetCapRaised: (cap: string, actor: string) => `予算の上限を${cap}に変更（${actor}）`,
@@ -566,8 +572,8 @@ const en: LabelMessages = {
     serviceHostPorts: (name, ports) => `${name} (${ports})`,
     stepsJoin: " → ",
     AgentRunStarted: (step, agent, auth) => `${step} started (${agent} · ${auth})`,
-    AgentRunCompleted: (step, cost, viewpoints) =>
-      `${step} finished (${cost}${viewpoints === undefined ? "" : ` · ${viewpoints} test viewpoint${viewpoints === 1 ? "" : "s"}`})`,
+    AgentRunCompleted: (step, cost, viewpoints, selfReview) =>
+      `${step} finished (${cost}${viewpoints === undefined ? "" : ` · ${viewpoints} test viewpoint${viewpoints === 1 ? "" : "s"}`}${selfReview === undefined ? "" : selfReview === null ? " · no self-review record" : ` · self-review ${selfReview.passed ? "passed" : "not passed"} (${selfReview.rounds} round${selfReview.rounds === 1 ? "" : "s"})`})`,
     AgentRunFailed: (step, message) => `${step} failed: ${message}`,
     BudgetWarned: (used, cap) => `Reached 80% of budget (${used} / ${cap})`,
     BudgetCapRaised: (cap, actor) => `Budget cap changed to ${cap} (${actor})`,

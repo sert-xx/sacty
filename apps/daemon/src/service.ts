@@ -80,6 +80,7 @@ import {
   responsibleTicketProject,
   reworkTargets,
   SactySettings,
+  SELF_REVIEW_STEPS,
   type SharedCompose,
   STEP_PLANS,
   StepKey,
@@ -4521,6 +4522,10 @@ export class TaskService {
             responses,
             ...(step === "design" ? { testViewpoints } : {}),
             ...(step === "implement" ? { testMap } : {}),
+            // 提出の前のセルフレビューの報告（PBI-120）。させた工程で報告が無い・読めなければ null（記録なし）
+            ...((SELF_REVIEW_STEPS as readonly StepKey[]).includes(step)
+              ? { selfReview: extracted.selfReview ?? null }
+              : {}),
             // テストの仕組みが無いタスクで、実装がテストの仕組みを用意したときだけ、そのコマンドを使う（PBI-94）
             ...(step === "implement" && latest.noTestsReason && testCommand ? { testCommand } : {}),
             ...(review ? { reviewComments: review.comments } : {}),

@@ -238,14 +238,110 @@ export function headedObject(
     : undefined;
 }
 
-/** 候補の範囲を、表示用の本文から取り除く（範囲は重ならない）。 */
-export function withoutCandidates(output: string, candidates: readonly JsonCandidate[]): string {
+/**
+ * 候補の範囲を、表示用の本文から取り除く。範囲は重なってもよい（同じ報告を、JSON の候補と見出しの両方で見つけた
+ * とき。PR #130 レビュー指摘）。
+ */
+export function withoutCandidates(
+  output: string,
+  candidates: readonly Pick<JsonCandidate, "start" | "end">[],
+): string {
   const parts: string[] = [];
   let at = 0;
   for (const c of [...candidates].sort((a, b) => a.start - b.start)) {
-    parts.push(output.slice(at, c.start));
-    at = c.end;
+    if (c.start > at) parts.push(output.slice(at, c.start));
+    at = Math.max(at, c.end);
   }
   parts.push(output.slice(at));
   return parts.join("");
+}
+
+/** 見出しで見つけた JSON のオブジェクト（読めるかを問わない）。 */
+export type HeadingSpan = {
+  /** 表示用の本文から取り除く範囲（囲みがあれば、囲みの行も含む）。 */
+  start: number;
+  end: number;
+  /** JSON として読めれば見出しの値。読めなければ undefined。 */
+  value: unknown;
+};
+
+/**
+ * 見出し heading を最初のキーに持つ JSON のオブジェクト（{"見出し": …}）を、JSON として読めるかを問わずに、出てきた順に
+ * すべて返す（PR #130 レビュー指摘）。末尾のカンマなどで読めない報告も見つけ、本文から取り除けるようにする。
+ *
+ * 範囲は、見出しの直前の「{」から、文字列の中を除いて括弧が閉じるところまで。囲みの中なら、囲みの行も含める。
+ * - 囲みの中：括弧が閉じなければ、囲みの終わりの行まで（囲みの中はすべて報告）
+ * - 囲みの外：JSON として読めなければ、括弧の数は当てにならない（後ろの本文の「}」で閉じたように見える・文字列が途切れて
+ *   本文を巻き込む）。報告が始まった行の終わりまでにし、後ろの本文は消さない（PR #130 再々レビュー指摘）。複数行の壊れた
+ *   報告では、2行目からが本文に残るが、成果物の本文を消すよりよい
+ */
+export function headingSpans(output: string, heading: string): HeadingSpan[] {
+  const found: HeadingSpan[] = [];
+  const key = new RegExp(`"${heading.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"\\s*:`, "g");
+  let fences: ReturnType<typeof fenceLines> | undefined;
+  let after = 0;
+  for (const m of output.matchAll(key)) {
+    if (m.index < after) continue;
+    let open = m.index;
+    while (open > 0 && /\s/.test(output[open - 1] ?? "")) open--;
+    if (output[open - 1] !== "{") continue;
+    open--;
+    fences ??= fenceLines(output);
+    let before = open;
+    while (before > 0 && /\s/.test(output[before - 1] ?? "")) before--;
+    const fenced = fences.opens.has(before);
+    let close = objectClose(output, open, fenced);
+    let value: unknown;
+    try {
+      const parsed: unknown = JSON.parse(output.slice(open, close));
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        value = (parsed as Record<string, unknown>)[heading];
+      }
+    } catch {
+      value = undefined;
+      if (!fenced) {
+        const lineEnd = output.indexOf("\n", open);
+        close = Math.min(close, lineEnd === -1 ? output.length : lineEnd + 1);
+      }
+    }
+    let end = close;
+    while (end > open && /\s/.test(output[end - 1] ?? "")) end--;
+    found.push({ ...withFence(output, fences, open, end), value });
+    after = close;
+  }
+  return found;
+}
+
+/**
+ * open の「{」が閉じる位置の次。文字列の中の括弧は数えない。JSON の文字列は改行を含めないので、文字列の中で改行に来たら、
+ * 閉じない文字列としてそこで終える（PR #130 再レビュー指摘）。括弧が閉じなければ、囲みの中（fenced）なら囲みの終わりの行
+ * （行の頭が ```）の頭、囲みの外なら最初の空行か ``` の行の頭（どれも無ければ出力の終わり）。空行で区切るのは閉じない
+ * 報告だけで、閉じる報告（空行を含む正しい JSON も）は途中で切らない（PR #130 再レビュー指摘）。空行は CRLF の行も含む。
+ */
+function objectClose(output: string, open: number, fenced: boolean): number {
+  let depth = 0;
+  let inString = false;
+  let firstBlank: number | undefined;
+  for (let i = open; i < output.length; i++) {
+    const c = output[i];
+    if (c === "\n") {
+      inString = false;
+      const next = output.slice(i + 1, i + 8);
+      if (/^[ \t\r]*```/.test(next)) return fenced ? i + 1 : Math.min(firstBlank ?? i + 1, i + 1);
+      if (firstBlank === undefined && /^[ \t\r]*\n/.test(next)) firstBlank = i + 1;
+      continue;
+    }
+    if (inString) {
+      if (c === "\\" && output[i + 1] !== "\n" && output[i + 1] !== "\r") i++;
+      else if (c === '"') inString = false;
+      continue;
+    }
+    if (c === '"') inString = true;
+    else if (c === "{" || c === "[") depth++;
+    else if (c === "}" || c === "]") {
+      depth--;
+      if (depth === 0) return i + 1;
+    }
+  }
+  return fenced ? output.length : (firstBlank ?? output.length);
 }

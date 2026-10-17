@@ -98,6 +98,28 @@
 
 コード: `packages/core/src/events.ts`（`StepKey`・`GATED_STEPS`・`REWORK_STEPS`・`EXPORT_STEPS`・`exportSteps`）、`packages/core/src/projection.ts`（`investigationIsGoal`）、`apps/daemon/src/service.ts`（`REPO_STEPS`・`submitEvents`）、`apps/daemon/src/prompts.ts`（`SERVICE_STEPS`）
 
+### 提出の前のセルフレビュー
+
+- 要求要件・設計・実装の工程（`SELF_REVIEW_STEPS`。実装は、不具合の修正・テストの仕組みが無いタスクも含む）の指示に、提出の前に既定の
+  スキル `review-dispatch` の `self-review` の流れでセルフレビューし、`must` の指摘が無くなる（パスする）まで修正と再レビューを繰り返すことを
+  書く（`selfReviewLines`）。主対象の種類は、要求要件・設計が `design-doc`（下書きを作業領域の外の一時ファイルに書いて対象にする）、実装が
+  `code`。回数の上限はスキルの規則（初回を含めて最大 5 回）で、上限に達しても `must` が残れば残った指摘を報告して提出させる。差し戻し・
+  PR の指摘によるやり直しも、同じ指示で実行する。
+- 結果は、見出し `sacty-self-review` の JSON（`rounds`・`passed`・`remaining`・`notReviewed`・`summary`）で報告させる。sacty は最後の
+  ものだけを読み（`extractBlocks`）、報告はすべて成果物の本文から取り除く。報告は、見出しを最初のキーに持つオブジェクトとして、JSON として
+  読めなくても見つける（`headingSpans`）。囲みの外の読めない報告は、報告が始まった行の終わりまでを取り除き、後ろの本文は消さない。
+  最後の報告が読めないときは、前の報告に戻らない。スキルが説明の末尾に書く「自己レビュー」の節は
+  書かせない。
+- 回数（`rounds`）は 1〜5、パス（`passed: true`）は `remaining` が空のときだけ。合わない報告は形が違うものとして扱う（`SelfReview`）。
+- 読んだ報告は `AgentRunCompleted` の `selfReview` に記録する。報告が無い・読めない・形が違うときは `null`（記録なし）にする。工程は止めない。
+  投影は、工程ごとに最新の提出の報告を `selfReviews` に持つ（セルフレビューをさせない工程と、それより前の記録には無い）。工程の実行の外で
+  本文を差し替えたとき（変更の申し出の適用・人が PR の中で直してからのマージ）は、前の報告は新しい本文を見ていないので、記録なしにする。
+- 画面は、成果物のカード（承認済みの成果物では出さない）・実装のカード・承認の画面に、パス（回数）・パスしていない（回数・残った指摘の数）・
+  記録なしを出す。パスしていない・記録なしは警告の色にし、パスしていなければ残った指摘と見られなかった観点を開いたまま出す。作業履歴の
+  「実行が完了」の行にも添える。
+
+コード: `apps/daemon/src/prompts.ts`（`selfReviewLines`・`SELF_REVIEW_HEADING`・`extractBlocks`）、`packages/core/src/events.ts`（`SelfReview`・`SELF_REVIEW_STEPS`）、`packages/core/src/projection.ts`、`apps/web/src/components/self-review.tsx`（`SelfReviewNote`）
+
 ## 進め方の組み合わせ
 
 | `plan` | 工程 |

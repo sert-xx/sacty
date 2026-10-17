@@ -30,6 +30,7 @@ import { PullRequestCard } from "@/components/pull-request";
 import { ReproductionResult } from "@/components/reproduction";
 import { RereviewButton } from "@/components/rereview-button";
 import { ResumeForm } from "@/components/resume-form";
+import { SelfReviewNote } from "@/components/self-review";
 import { StepAgentForm } from "@/components/step-agent-form";
 import { StepCosts } from "@/components/step-costs";
 import { StepImageForm } from "@/components/step-image-form";
@@ -849,6 +850,8 @@ function Deliverable({ task, step }: { task: Task; step: StepKey }) {
       // 承認した成果の書き出しの結果（PBI-56）。折りたたんでも見えるようにする
       footer={task.exportPlans?.[step]?.to ? <ExportResult task={task} step={step} /> : undefined}
     >
+      {/* 提出の前のセルフレビュー（PBI-120）。承認済みの成果物では、凍結した版のものではないので出さない */}
+      {!approved && output && <SelfReviewNote task={task} step={step} />}
       {output ? (
         <Markdown>{output}</Markdown>
       ) : // 行へのコメントだけのレビューは本文が空（書き終えている）

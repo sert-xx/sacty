@@ -222,6 +222,33 @@ export type Remark = z.infer<typeof Remark>;
 
 /** 工程エージェントの、指摘への対応。 */
 export const RemarkResponse = z.object({ remarkId: z.string(), text: z.string() });
+
+/**
+ * 工程エージェントが提出の前に行ったセルフレビュー（既定のスキル review-dispatch の self-review。PBI-120）の報告。
+ * rounds は回数（初回を含む）、passed は must の指摘が残らなかったか、remaining は残った must の要約、notReviewed は
+ * 見られなかった観点、summary は短い総評。回数はスキルの規則どおり 1〜5 回で、パスは must が残らないときだけ。合わない報告
+ * （回数が範囲の外・パスなのに残った指摘がある）は受け付けない（読む側で「記録なし」にする。PR #130 レビュー指摘）。
+ */
+export const SELF_REVIEW_MAX_ROUNDS = 5;
+export const SelfReview = z
+  .object({
+    rounds: z.number().int().min(1).max(SELF_REVIEW_MAX_ROUNDS),
+    passed: z.boolean(),
+    remaining: z.array(z.string()).default([]),
+    notReviewed: z.array(z.string()).default([]),
+    summary: z.string().default(""),
+  })
+  .refine((r) => !r.passed || r.remaining.length === 0, {
+    message: "a passed self-review must not have remaining must findings",
+    path: ["remaining"],
+  });
+export type SelfReview = z.infer<typeof SelfReview>;
+/** セルフレビューをさせる工程（PBI-120）。 */
+export const SELF_REVIEW_STEPS = [
+  "requirements",
+  "design",
+  "implement",
+] as const satisfies readonly StepKey[];
 export type RemarkResponse = z.infer<typeof RemarkResponse>;
 
 /**
@@ -633,6 +660,11 @@ const AgentRunCompleted = z.object({
      * 実装の検証で、sacty がこのコマンドでテストを実行する。
      */
     testCommand: z.string().trim().min(1).max(1000).optional(),
+    /**
+     * 提出の前のセルフレビューの報告（要求要件・設計・実装の工程。PBI-120）。null は、セルフレビューをさせたが報告が無い・
+     * 読めなかった。セルフレビューをさせない工程と、それより前の記録には無い。
+     */
+    selfReview: SelfReview.nullable().optional(),
   }),
 });
 
