@@ -4134,8 +4134,12 @@ export class TaskService {
 
     // 工程に使う AI（人がタスクの詳細で選んだもの。無ければ step_agents か default_agent。PBI-40・PBI-121）。準備（レビューの
     // 対象の確認など）の間に人が変えていれば、それを使う。決めてから開始の記録までは待たない（PR #131 レビュー指摘）
-    const chosen = stepAgentFor(config.config, step, this.mustGet(task.id).agents?.[step]);
+    const chosenName = this.mustGet(task.id).agents?.[step];
+    const chosen = stepAgentFor(config.config, step, chosenName);
     if (!chosen.ok) {
+      // 準備の間に選び直した名前が、この実行が読んだ設定に無い（その間に config.yaml に足した）なら、止めずに実行待ちの
+      // まま戻し、次の実行で最新の設定から決め直す（PR #131 再々レビュー指摘）
+      if (chosenName !== task.agents?.[step]) return;
       this.pauseForMissingAgent(task, step, chosen.missing);
       return;
     }
@@ -4747,6 +4751,9 @@ export class TaskService {
     const chosenName = this.mustGet(task.id).agents?.[step];
     const chosen = stepAgentFor(config, step, chosenName);
     if (!chosen.ok) {
+      // 接続先を調べている間に選び直した名前が、この実行が読んだ設定に無い（その間に config.yaml に足した）なら、止めずに
+      // 実行待ちのまま戻し、次の実行で最新の設定から決め直す（PR #131 再々レビュー指摘）
+      if (chosenName !== task.agents?.[step]) return;
       pause(message("agent.chosenMissing", { step, name: chosen.missing }));
       return;
     }

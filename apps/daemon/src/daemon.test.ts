@@ -20545,6 +20545,64 @@ describe("非コードの成果と単発作業（PBI-112）", () => {
     activity.close();
   });
 
+  it("外部作業の接続先を調べている間に、config.yaml に足した名前を選んだら、古い設定で止めずに次の実行で最新の設定から始める（PR #131 再々レビュー指摘）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const old = agent({ id: "old", model: "claude-haiku-5-5" });
+    const added = agent({ id: "new", model: "claude-sonnet-5-5" });
+    let agents = [agent(), old];
+    const base = configOf(agent(), 1, [calendar()]);
+    const config = (): ConfigResult => {
+      const loaded = base() as { ok: true; config: SactyConfig };
+      return {
+        ok: true,
+        config: { ...loaded.config, agents: Object.fromEntries(agents.map((a) => [a.id, a])) },
+      };
+    };
+    const { service } = makeService(activity, [], { config, gateway: fakeGateway() });
+    const { id } = service.createTask({ projectId: "default", title: "予定更新", repo: null });
+    activity.append({
+      taskId: id,
+      projectId: "default",
+      events: [
+        {
+          actor: "sacty",
+          event: {
+            type: "StepsChosen",
+            payload: {
+              steps: [...STEP_PLANS.operation],
+              plan: "operation",
+              reason: "予定更新",
+              operation,
+            },
+          },
+        },
+      ],
+    });
+    const restarted = makeService(activity, [success], { config, gateway: fakeGateway() });
+    restarted.service.changeStepAgent(id, { step: "operation", agent: "old" });
+    const svc = restarted.service as unknown as {
+      exportDestinations: (...args: unknown[]) => Promise<unknown>;
+    };
+    const destinations = svc.exportDestinations.bind(svc);
+    vi.spyOn(svc, "exportDestinations").mockImplementationOnce(async (...args) => {
+      const found = await destinations(...args);
+      // 待っている間に config.yaml に足し、それを選ぶ
+      agents = [agent(), old, added];
+      restarted.service.changeStepAgent(id, { step: "operation", agent: "new" });
+      return found;
+    });
+    await restarted.service.runNext(id);
+    // 古い設定には無いが、止めずに実行待ちのまま戻す
+    expect(restarted.service.get(id)?.task.status).toBe("queued");
+    expect(restarted.service.get(id)?.task.pausedMessage).toBeUndefined();
+    expect(restarted.executor.calls).toEqual([]);
+    await restarted.service.runNext(id);
+    const started = restarted.service.get(id)?.activity.filter((e) => e.type === "AgentRunStarted");
+    expect(started?.map((e) => e.type === "AgentRunStarted" && e.payload.agentId)).toEqual(["new"]);
+    expect(restarted.executor.calls[0]?.command.join(" ")).toContain("claude-sonnet-5-5");
+    activity.close();
+  });
+
   it("外部実行中に中止した後で成功応答が届いても承認待ちにせず再実行しない", async () => {
     const activity = new SqliteActivityStore(dbPath);
     const { service, executor } = makeService(activity, [], {
@@ -21035,6 +21093,72 @@ describe("タスクの詳細で工程のエージェントを変える（PBI-121
     expect(started(service, id)).toEqual(["review:strong"]);
     expect(executor.calls).toHaveLength(1);
     expect(executor.calls[0]?.command.join(" ")).toContain("claude-opus-5-5");
+    activity.close();
+  });
+
+  it("準備の間に config.yaml に足した名前を選んだら、古い設定で止めずに、次の実行で最新の設定から始める（PR #131 再々レビュー指摘）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const pulls = new FakePulls();
+    const gate = Promise.withResolvers<void>();
+    const asked = Promise.withResolvers<void>();
+    const read = pulls.pullRequest.bind(pulls);
+    pulls.pullRequest = async (input) => {
+      asked.resolve();
+      await gate.promise;
+      return read(input);
+    };
+    const added = agent({ id: "added", model: "claude-sonnet-5-5" });
+    let agents = [base, strong];
+    const { service, executor } = makeService(activity, [completed(100)], {
+      config: () => withAgents(agents)(),
+      pulls,
+      settings: new MemorySettingsStore({ reviewRequested: true }),
+      realPlanner: true,
+    });
+    const [task] = service.importIssues([
+      {
+        repo: "https://github.com/acme/app",
+        number: 12,
+        title: "PR 12",
+        body: "本文",
+        url: "https://github.com/acme/app/pull/12",
+        labels: [],
+        pullRequest: true,
+        review: "requested",
+        requestedFor: "me",
+      },
+    ]);
+    const id = task?.id ?? "";
+    const running = service.runNext(id);
+    await asked.promise;
+    // レビューの対象を確かめている間に、config.yaml にエージェントを足して選ぶ
+    agents = [base, strong, added];
+    service.changeStepAgent(id, { step: "review", agent: "added" });
+    gate.resolve();
+    await running;
+    expect(service.get(id)?.task.status).toBe("queued");
+    expect(service.get(id)?.task.pausedMessage).toBeUndefined();
+    expect(executor.calls).toEqual([]);
+    await service.runNext(id);
+    expect(started(service, id)).toEqual(["review:added"]);
+    expect(executor.calls[0]?.command.join(" ")).toContain("claude-sonnet-5-5");
+    activity.close();
+  });
+
+  it("準備の間に選び直していないのに名前が無ければ、これまでどおり一時停止する（実行待ちに戻し続けない）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    let agents = [base, strong];
+    const { service, executor } = makeService(activity, [completed(100)], {
+      config: () => withAgents(agents)(),
+    });
+    const { id } = service.createTask({ projectId: "default", title: "A" });
+    await service.runNext(id);
+    service.changeStepAgent(id, { step: "requirements", agent: "strong" });
+    service.requestChanges(id, { step: "requirements", submission: 1, comments: ["直す"] });
+    agents = [base];
+    await service.runNext(id);
+    expect(service.get(id)?.task.status).toBe("paused");
+    expect(executor.calls).toHaveLength(1);
     activity.close();
   });
 });
