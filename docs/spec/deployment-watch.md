@@ -115,7 +115,7 @@ CI/CD（GitHub Actions のワークフローの実行・チェック）を待ち
 - スキルがあり、確認を待っている（`awaitingDeploymentCheck`）タスクは、ワーカーが実行待ちとして拾う（一時停止中のタスクは拾わない）。
   同時に実行する数の上限は、ほかの実行と同じ。
 - 予算の上限に達していれば実行せず、`DeploymentWatchSkipped`（`budget`）を記録する（タスクは止めない）。
-- AI は `step_agents.deployment`（無ければ `default_agent`）。イメージはこの工程のイメージ（ほかの工程と同じく、オーケストレーターが選び、
+- AI は、人がタスクの詳細で選んだエージェント（[工程のエージェントを人が変える](tasks-and-steps.md#工程のエージェントを人が変える)）、無ければ `step_agents.deployment`（無ければ `default_agent`）。イメージはこの工程のイメージ（ほかの工程と同じく、オーケストレーターが選び、
   人が変えられる。無ければ既定のイメージ）。作業領域は `workspaces/_deployment/<実行 ID>` に書き出したマージのコミットのコードの写し
   （終わったら消す）。プロジェクトのコンテキスト（外部 PF・MCP サーバー）を、工程のエージェントと同じく渡す。
 - 実行の前に `DeploymentCheckStarted`（実行の ID・スキル）を記録する。

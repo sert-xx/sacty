@@ -22,6 +22,7 @@ import {
   CONTEXT_CHECK_PARAM,
   type ContextPreviewResult,
   cancelTask,
+  changeStepAgent,
   changeStepImage,
   chooseTicketRepository,
   createTask,
@@ -232,6 +233,29 @@ export async function changeStepImageAction(
   let result: Awaited<ReturnType<typeof changeStepImage>>;
   try {
     result = await changeStepImage(taskId, step.data, image);
+  } catch {
+    return { message: a.daemonDown };
+  }
+  if (!result.ok) return { message: result.message };
+  refresh();
+  return {};
+}
+
+export type ChangeStepAgentState = { message?: string };
+
+/** タスクの詳細で、工程のエージェントを変える（PBI-121）。agents に無い名前は、デーモンが理由を示して断る。 */
+export async function changeStepAgentAction(
+  _prev: ChangeStepAgentState,
+  formData: FormData,
+): Promise<ChangeStepAgentState> {
+  const a = (await getMessages()).common.action;
+  const taskId = String(formData.get("taskId") ?? "");
+  const step = StepKey.safeParse(formData.get("step"));
+  const agent = String(formData.get("agent") ?? "");
+  if (!step.success) return { message: a.invalidStep };
+  let result: Awaited<ReturnType<typeof changeStepAgent>>;
+  try {
+    result = await changeStepAgent(taskId, step.data, agent);
   } catch {
     return { message: a.daemonDown };
   }

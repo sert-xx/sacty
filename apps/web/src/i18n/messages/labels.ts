@@ -217,6 +217,9 @@ const ja = {
     BudgetWarned: (used: string, cap: string) => `予算の80%に到達（${used} / ${cap}）`,
     BudgetCapRaised: (cap: string, actor: string) => `予算の上限を${cap}に変更（${actor}）`,
     /** 人が工程のイメージを変えた（PBI-106）。 */
+    /** 人が工程のエージェントを変えた（PBI-121）。 */
+    StepAgentChanged: (step: string, from: string, to: string, actor: string) =>
+      `${step}のエージェントを ${from} から ${to} に変更（${actor}）`,
     StepImageChanged: (step: string, from: string, to: string, actor: string) =>
       `${step}のイメージを ${from} から ${to} に変更（${actor}）`,
     TaskResumed: (actor: string) => `再開（${actor}）`,
@@ -574,6 +577,8 @@ const en: LabelMessages = {
     AgentRunFailed: (step, message) => `${step} failed: ${message}`,
     BudgetWarned: (used, cap) => `Reached 80% of budget (${used} / ${cap})`,
     BudgetCapRaised: (cap, actor) => `Budget cap changed to ${cap} (${actor})`,
+    StepAgentChanged: (step, from, to, actor) =>
+      `Changed the agent for ${step} from ${from} to ${to} (${actor})`,
     StepImageChanged: (step, from, to, actor) =>
       `${step} image changed from ${from} to ${to} (${actor})`,
     TaskResumed: (actor) => `Resumed (${actor})`,

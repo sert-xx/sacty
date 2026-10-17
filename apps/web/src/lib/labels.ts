@@ -11,6 +11,7 @@ import {
   MAX_FIX_CHAIN,
   openProposal,
   type StepKey,
+  stepAgentChangeable,
   stepRunning,
   type Task,
 } from "@sacty/core";
@@ -387,6 +388,13 @@ function describeEventText(event: ActivityEvent, l: LabelMessages): string {
     case "BudgetCapRaised":
       return e.BudgetCapRaised(usd(event.payload.capUsd), actor);
     // 人が工程のイメージを変えた（PBI-106）
+    case "StepAgentChanged":
+      return e.StepAgentChanged(
+        l.step[event.payload.step],
+        event.payload.from,
+        event.payload.to,
+        actor,
+      );
     case "StepImageChanged":
       return e.StepImageChanged(
         l.step[event.payload.step],
@@ -783,4 +791,62 @@ export function stepImageOptions(
  */
 export function needsTicketRepositories(task: Task): boolean {
   return (awaitingTicketTriage(task) || awaitingRepository(task)) && task.status === "paused";
+}
+
+/** タスクの詳細の「工程のエージェント」の1行（PBI-121）。 */
+export type StepAgentRow = {
+  step: StepKey;
+  /** 使うエージェントの名前。config.yaml を読めず、人も選んでいなければ undefined。 */
+  agent?: string;
+  /** 決めた元。人が変えたら、いつ・何から変えたか。 */
+  source: { by: "person"; at: string; from: string } | { by: "config" };
+  /** 変えたエージェントをいつから使うか（工程のイメージと同じ）。 */
+  when: StepImageRow["when"];
+};
+
+/**
+ * 工程ごとのエージェントと、決めた元（PBI-121）。ゴールガーディアンが行う統合レビューは、工程のエージェントで動かないので出さない。
+ * stepAgents は config.yaml で決まる名前（デーモンの状態。取れなければ undefined）。
+ */
+export function stepAgentRows(
+  task: Task,
+  stepAgents: Partial<Record<StepKey, string>> | undefined,
+): StepAgentRow[] {
+  return task.steps
+    .filter((s) => stepAgentChangeable(s.key))
+    .map((s) => {
+      const change = task.agentChanges?.[s.key];
+      const chosen = task.agents?.[s.key];
+      const agent = chosen ?? stepAgents?.[s.key];
+      const when: StepAgentRow["when"] = stepRunning(task, s.key)
+        ? "running"
+        : s.state === "done" || s.state === "skip"
+          ? "done"
+          : "next";
+      return {
+        step: s.key,
+        ...(agent ? { agent } : {}),
+        source:
+          chosen && change ? { by: "person", at: change.at, from: change.from } : { by: "config" },
+        when,
+      };
+    });
+}
+
+/**
+ * 工程のエージェントの選択肢（PBI-121）。デーモンの状態を取得できない・設定を読めないときは undefined（消した名前と取り違えない）。
+ * stub は、今のエージェントが stub のときだけ出す（動作確認用の設定のとき）。
+ */
+export function stepAgentOptions(
+  status:
+    | {
+        problems: unknown[];
+        agents?: { id: string; runtime: string; model?: string; reasoningEffort?: string }[];
+      }
+    | undefined,
+  current: string | undefined,
+): { id: string; runtime: string; model?: string; reasoningEffort?: string }[] | undefined {
+  if (!status || status.problems.length > 0 || !status.agents) return undefined;
+  const currentRuntime = status.agents.find((a) => a.id === current)?.runtime;
+  return status.agents.filter((a) => a.runtime !== "stub" || currentRuntime === "stub");
 }

@@ -16,6 +16,7 @@ import {
   awaitingTicketTriage,
   BUDGET_WARN_RATIO,
   budgetState,
+  ChangeStepAgentInput,
   ChangeStepImageInput,
   type CiFailure,
   type CleanupTarget,
@@ -85,6 +86,7 @@ import {
   StepKey,
   StepPullRequestKey,
   sameGitHubUrl,
+  stepAgentChangeable,
   stepDocumentPath,
   type Task,
   type TaskProposal,
@@ -117,9 +119,11 @@ import {
   agentSetting,
   type ConfigResult,
   DEFAULT_IMAGE_NAME,
+  definedAgent,
   githubRepoOf,
   resolveImage,
   type SactyConfig,
+  stepAgentFor,
   type TierRuntime,
   tierAgentsFor,
 } from "./config.js";
@@ -428,6 +432,10 @@ export type DaemonStatus = {
   images: { name: string; description: string }[];
   /** チケットの取り込み先に選べる接続先（gateway.platforms の名前。PBI-52）。 */
   platforms: string[];
+  /** タスクの詳細で工程のエージェントに選べるもの（config.yaml の agents。PBI-121）。 */
+  agents: { id: string; runtime: string; model?: string; reasoningEffort?: string }[];
+  /** config.yaml で決まる、工程ごとのエージェントの名前（step_agents か default_agent。PBI-121）。 */
+  stepAgents: Partial<Record<StepKey, string>>;
 };
 
 export type IntakeStatus = {
@@ -1300,7 +1308,13 @@ export class TaskService {
       ]);
       return;
     }
-    const agent = agentFor(config, "deployment");
+    // 人がタスクの詳細で選んだエージェントを優先する（PBI-121）。選んだ名前が消えていれば、理由を示して止める
+    const chosen = stepAgentFor(config, "deployment", this.mustGet(task.id).agents?.deployment);
+    if (!chosen.ok) {
+      this.pauseForMissingAgent(task, "deployment", chosen.missing);
+      return;
+    }
+    const agent = chosen.agent;
     const runId = randomUUID();
     const setting = { agentId: agent.id, ...agentSetting(agent), runId };
     this.append(task, [
@@ -2613,6 +2627,8 @@ export class TaskService {
         intake: null,
         images: [],
         platforms: [],
+        agents: [],
+        stepAgents: {},
       };
     }
     const agent = config.config.defaultAgent;
@@ -2634,6 +2650,17 @@ export class TaskService {
       })),
       // チケットの取り込み先に選べる接続先（PBI-52）
       platforms: (config.config.platforms ?? []).map((p) => p.name),
+      // タスクの詳細で工程のエージェントに選べるもの（PBI-121）。秘密の値・接続先の URL は出さない
+      // config.yaml で決まる工程ごとのエージェント（人が選ばなければ使うもの。PBI-121）
+      stepAgents: Object.fromEntries(
+        StepKey.options.map((step) => [step, agentFor(config.config, step).id]),
+      ),
+      agents: Object.values(config.config.agents ?? {}).map((a) => ({
+        id: a.id,
+        runtime: a.runtime,
+        ...(a.model ? { model: a.model } : {}),
+        ...(a.reasoning_effort ? { reasoningEffort: a.reasoning_effort } : {}),
+      })),
     };
   }
 
@@ -4105,8 +4132,18 @@ export class TaskService {
       if (!resolved.ok) return;
     }
 
-    // 工程に使う AI（step_agents か default_agent。PBI-40）
-    const agent = agentFor(config.config, step);
+    // 工程に使う AI（人がタスクの詳細で選んだもの。無ければ step_agents か default_agent。PBI-40・PBI-121）。準備（レビューの
+    // 対象の確認など）の間に人が変えていれば、それを使う。決めてから開始の記録までは待たない（PR #131 レビュー指摘）
+    const chosenName = this.mustGet(task.id).agents?.[step];
+    const chosen = stepAgentFor(config.config, step, chosenName);
+    if (!chosen.ok) {
+      // 準備の間に選び直した名前が、この実行が読んだ設定に無い（その間に config.yaml に足した）なら、止めずに実行待ちの
+      // まま戻し、次の実行で最新の設定から決め直す（PR #131 再々レビュー指摘）
+      if (chosenName !== task.agents?.[step]) return;
+      this.pauseForMissingAgent(task, step, chosen.missing);
+      return;
+    }
+    const agent = chosen.agent;
     const runId = randomUUID();
     this.append(task, [
       {
@@ -4709,7 +4746,18 @@ export class TaskService {
       pause(message("operation.connectionMissing"));
       return;
     }
-    const agent = agentFor(config, step);
+    // 接続先を調べている間に人が選び直していれば、それで決める（消えた名前から選び直したのに、古い名前で止めない。
+    // PR #131 再レビュー指摘）
+    const chosenName = this.mustGet(task.id).agents?.[step];
+    const chosen = stepAgentFor(config, step, chosenName);
+    if (!chosen.ok) {
+      // 接続先を調べている間に選び直した名前が、この実行が読んだ設定に無い（その間に config.yaml に足した）なら、止めずに
+      // 実行待ちのまま戻し、次の実行で最新の設定から決め直す（PR #131 再々レビュー指摘）
+      if (chosenName !== task.agents?.[step]) return;
+      pause(message("agent.chosenMissing", { step, name: chosen.missing }));
+      return;
+    }
+    const agent = chosen.agent;
     const image = resolveImage(config, task.images?.[step]);
     if (!image.ok) {
       pause(image.message);
@@ -4747,6 +4795,9 @@ export class TaskService {
       }
       const latest = this.mustGet(task.id);
       if (latest.status !== "queued" || this.stopRequested(task.id)) return;
+      // 準備（接続先・コンテキストの用意）の間に人がエージェントを変えたなら、古いエージェントでは始めない。実行待ちのまま
+      // 戻し、次の実行で新しいエージェントで準備し直す（PR #131 レビュー指摘）
+      if (latest.agents?.[step] !== chosenName) return;
       mkdirSync(workspaceDir, { recursive: true });
       // 実行前に永続化する。結果が失われても再送しない。
       this.append(latest, [
@@ -4878,8 +4929,9 @@ export class TaskService {
     // 設定の問題は status() で画面に出す。書き出しは待ったままにする
     if (!to || !approved || !loaded.ok) return;
     const config = loaded.config;
-    // 書き出しは、その工程のエージェント（step_agents か default_agent）で行う
-    const agent = agentFor(config, step);
+    // 書き出しは、その工程のエージェント（人が選んだもの。無ければ step_agents か default_agent。PBI-121）で行う
+    const chosen = stepAgentFor(config, step, task.agents?.[step]);
+    const agent = chosen.ok ? chosen.agent : agentFor(config, step);
     const runId = randomUUID();
     const previous = task.exports[step];
     const base = {
@@ -4903,6 +4955,8 @@ export class TaskService {
     const fail = (failed: DaemonText) =>
       record("sacty", { ...base, failed, runResult: "failed", costUsd: 0, estimated: false });
     if (budgetState(task.budget) === "exceeded") return fail(message("export.budgetExceeded"));
+    // 人が選んだエージェントが config.yaml から消えていれば、既定に戻さず、書き出せなかった理由にする（PBI-121）
+    if (!chosen.ok) return fail(message("agent.chosenMissing", { step, name: chosen.missing }));
     const usedSecrets: string[] = [];
     let platform: Platform | undefined;
     if (to.via === "platform") {
@@ -4941,12 +4995,14 @@ export class TaskService {
       } catch (error) {
         return fail(message("export.failed", { detail: errorText(error) }));
       }
-      // 準備の間に人間が止めた・中止した・承認が取り消されたなら、始めない（再開・承認し直すと書き出す）
+      // 準備の間に人間が止めた・中止した・承認が取り消されたなら、始めない（再開・承認し直すと書き出す）。エージェントを
+      // 変えたなら、古いエージェントでは始めず、次の実行で新しいエージェントで書き出す（PR #131 レビュー指摘）
       const latest = this.mustGet(task.id);
       if (
         this.pauseRequested.has(task.id) ||
         this.cancelling.has(task.id) ||
-        latest.approved[step]?.at !== approved.at
+        latest.approved[step]?.at !== approved.at ||
+        latest.agents?.[step] !== task.agents?.[step]
       ) {
         return;
       }
@@ -7190,6 +7246,54 @@ export class TaskService {
       {
         actor: "person",
         event: { type: "StepImageChanged", payload: { step, from, to: image } },
+      },
+    ]);
+  }
+
+  /**
+   * 人が、タスクの詳細で工程のエージェントを変える（PBI-121）。工程のイメージ（PBI-106）と同じく、工程の状態は問わず、
+   * 今の実行は止めず、その工程を次に実行するときから使う。config.yaml の step_agents より優先する。agents に無い名前は断る。
+   */
+  changeStepAgent(id: string, raw: unknown): Task {
+    const { step, agent } = ChangeStepAgentInput.parse(raw);
+    const task = this.tasks.get(id);
+    if (!task) throw new InvalidOperationError(message("task.notFound"));
+    if (task.status === "cancelled") throw new InvalidOperationError(message("task.cancelled"));
+    if (!task.steps.some((s) => s.key === step)) {
+      throw new InvalidOperationError(message("agent.stepMissing"));
+    }
+    // 統合レビューは、ゴールガーディアンが実行する。画面で出さないだけでなく、API でも断る（PR #131 レビュー指摘）
+    if (!stepAgentChangeable(step)) {
+      throw new InvalidOperationError(message("agent.stepNotChangeable"));
+    }
+    const config = this.deps.config();
+    if (!config.ok) {
+      throw new InvalidOperationError(
+        message("agent.configUnavailable", { detail: config.problem }),
+      );
+    }
+    if (!definedAgent(config.config, agent)) {
+      throw new InvalidOperationError(message("agent.notInAgents", { name: agent }));
+    }
+    const from = task.agents?.[step] ?? agentFor(config.config, step).id;
+    if (from === agent)
+      throw new InvalidOperationError(message("agent.unchanged", { name: agent }));
+    return this.append(task, [
+      { actor: "person", event: { type: "StepAgentChanged", payload: { step, from, to: agent } } },
+    ]);
+  }
+
+  /** 人が選んだ工程のエージェントが config.yaml から消えていたら、理由を示して一時停止する（PBI-121）。 */
+  private pauseForMissingAgent(task: Task, step: StepKey, name: string): void {
+    const latest = this.mustGet(task.id);
+    if (latest.status !== "queued" && latest.status !== "idle") return;
+    this.append(latest, [
+      {
+        actor: "sacty",
+        event: {
+          type: "TaskPaused",
+          payload: { reason: "error", message: message("agent.chosenMissing", { step, name }) },
+        },
       },
     ]);
   }
