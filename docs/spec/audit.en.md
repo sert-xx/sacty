@@ -85,7 +85,7 @@ Code: `apps/daemon/src/server.ts` (`createApp`)
   decision first), audited tasks, and report export.
 - Dashboard: the "Audit" card shows, per project, causes, recurred, and needing-decision counts and the adoption rate, and,
   per week, the changes requested and PR remarks per task.
-- Report (`/projects/<ID>/audit/report?from=&to=`): Markdown with the causes, proposals, and decisions of audits finished
+- Report (`/projects/<ID>/audit/report?from=&to=`; a date that does not exist or a start after the end is 400): Markdown with the causes, proposals, and decisions of audits finished
   in the period (UTC dates, through the end of the last day). Headings follow the UI language; audit text is not
   translated. Times are UTC with the year.
 

@@ -75,6 +75,10 @@ describe("ダッシュボードの監査の欄（PBI-124）", () => {
     expect(html).toContain("2026-10-12");
     expect(html).toContain("1.5");
     expect(html).toContain("モック");
+    // 表はカードの中で横にスクロールする（ページを横に広げない。PR #134 レビュー指摘）
+    expect(html).toMatch(/data-testid="audit-projects-scroll"[^>]*>\s*<table/);
+    expect(html).toMatch(/class="overflow-x-auto" data-testid="audit-projects-scroll"/);
+    expect(html).toMatch(/class="overflow-x-auto" data-testid="audit-trend-scroll"/);
   });
 
   it("監査の結果が無ければ、無いことを出す", () => {

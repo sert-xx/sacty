@@ -8,7 +8,7 @@ import {
   type TaskAudit,
 } from "@sacty/core";
 import Link from "next/link";
-import { useActionState, useState } from "react";
+import { useActionState, useEffect, useRef, useState } from "react";
 import {
   type AuditProposalState,
   adoptAuditProposalAction,
@@ -338,6 +338,20 @@ function ProposalDecisionForms({ proposal }: { proposal: AuditProposal }) {
     initialProposalState,
   );
   const [rejectOpen, setRejectOpen] = useState(false);
+  // 却下の入力を開いたら理由の欄へ、やめたら「却下する」へフォーカスを移す（フォームごと入れ替わり、押したボタンが
+  // 消えるため。PR #134 レビュー指摘）。人が開閉したときだけ移す（最初の表示では移さない）
+  const toggled = useRef(false);
+  const reasonRef = useRef<HTMLTextAreaElement>(null);
+  const rejectButtonRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!toggled.current) return;
+    toggled.current = false;
+    (rejectOpen ? reasonRef.current : rejectButtonRef.current)?.focus();
+  }, [rejectOpen]);
+  const toggleReject = (open: boolean) => {
+    toggled.current = true;
+    setRejectOpen(open);
+  };
   const selectId = `audit-target-${proposal.id}`;
   const reasonId = `audit-reason-${proposal.id}`;
   return (
@@ -370,10 +384,11 @@ function ProposalDecisionForms({ proposal }: { proposal: AuditProposal }) {
             {adopting ? m.adopting : m.adopt}
           </Button>
           <Button
+            ref={rejectButtonRef}
             type="button"
             variant="outline"
             className="min-h-9"
-            onClick={() => setRejectOpen(true)}
+            onClick={() => toggleReject(true)}
           >
             {m.reject}
           </Button>
@@ -392,6 +407,7 @@ function ProposalDecisionForms({ proposal }: { proposal: AuditProposal }) {
             <Hint text={m.reasonHint} />
           </span>
           <Textarea
+            ref={reasonRef}
             id={reasonId}
             name="reason"
             required
@@ -414,7 +430,7 @@ function ProposalDecisionForms({ proposal }: { proposal: AuditProposal }) {
               type="button"
               variant="ghost"
               className="min-h-9"
-              onClick={() => setRejectOpen(false)}
+              onClick={() => toggleReject(false)}
             >
               {m.cancel}
             </Button>

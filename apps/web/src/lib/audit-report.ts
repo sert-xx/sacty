@@ -17,8 +17,8 @@ export function reportStamp(iso: string): string {
 }
 
 /**
- * レポートの期間（PBI-124）。from・to は日付（YYYY-MM-DD、UTC）で、to の日の終わりまでを含む。日付でない・from が to より
- * 後なら null。
+ * レポートの期間（PBI-124）。from・to は日付（YYYY-MM-DD、UTC）で、to の日の終わりまでを含む。日付でない・実在しない・
+ * from が to より後なら null。
  */
 export function reportPeriod(
   from: string | null,
@@ -28,6 +28,9 @@ export function reportPeriod(
   const start = Date.parse(`${from}T00:00:00Z`);
   const end = Date.parse(`${to}T00:00:00Z`) + 86_400_000;
   if (Number.isNaN(start) || Number.isNaN(end) || start >= end) return null;
+  // 実在しない日付（2月30日など）は、Date が翌月へ繰り越すので、日付に戻して入力と比べる（PR #134 レビュー指摘）
+  const day = (ms: number) => new Date(ms).toISOString().slice(0, 10);
+  if (day(start) !== from || day(end - 86_400_000) !== to) return null;
   return { from, to, start: new Date(start).toISOString(), end: new Date(end).toISOString() };
 }
 

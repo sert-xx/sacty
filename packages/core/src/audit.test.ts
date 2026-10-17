@@ -33,6 +33,16 @@ describe("監査の入力（PBI-124）", () => {
     );
   });
 
+  it("宛先の repo の長さは制限しない（コンテキストの指定の上限 500 文字を超える候補も採用できる。PR #134 レビュー指摘）", () => {
+    const repo = `https://example.com/${"a".repeat(600)}`;
+    expect(
+      AdoptAuditProposalInput.safeParse({ target: { kind: "context", repo, depth: 0 } }).success,
+    ).toBe(true);
+    expect(
+      AdoptAuditProposalInput.safeParse({ target: { kind: "repository", repo } }).success,
+    ).toBe(true);
+  });
+
   it("却下の理由は、前後の空白を除いて 1 文字から上限まで", () => {
     expect(RejectAuditProposalInput.parse({ reason: "  理由  " })).toEqual({ reason: "理由" });
     expect(RejectAuditProposalInput.safeParse({ reason: "   " }).success).toBe(false);
@@ -50,6 +60,9 @@ describe("監査の入力（PBI-124）", () => {
     expect(ResumeAuditInput.parse({})).toEqual({});
     expect(ResumeAuditInput.safeParse({ capUsd: 0 }).success).toBe(false);
     expect(ResumeAuditInput.safeParse({ capUsd: 2 }).success).toBe(true);
+    // 既定の予算に上限が無いので、再開の上限にも上限を設けない（PR #134 レビュー指摘）
+    expect(ResumeAuditInput.safeParse({ capUsd: 20_000 }).success).toBe(true);
+    expect(ResumeAuditInput.safeParse({ capUsd: Number.POSITIVE_INFINITY }).success).toBe(false);
   });
 });
 

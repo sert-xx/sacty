@@ -38,12 +38,15 @@ export type AuditStatus = (typeof AUDIT_STATUSES)[number];
 /**
  * 改修の提案の宛先。対象リポジトリ・コンテキストのリポジトリ（depth はプロジェクトのコンテキストを 0 として、
  * extends で上へたどった数）・sacty の既定のコンテキスト（ゴールガーディアンのプロンプトや既定のスキル）。
+ * repo の長さは制限しない：宛先の候補は、タスクの対象リポジトリと使ったコンテキストの指定（それぞれの入力の上限に従う）
+ * から作るので、ここで狭めると、正しい候補を採用できなくなる（PR #134 レビュー指摘）。採用のときは候補と一致するかを
+ * 確かめるので、候補に無い長い文字列は通らない。
  */
 export const AuditTarget = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("repository"), repo: z.string().min(1).max(200) }),
+  z.object({ kind: z.literal("repository"), repo: z.string().min(1) }),
   z.object({
     kind: z.literal("context"),
-    repo: z.string().min(1).max(200),
+    repo: z.string().min(1),
     depth: z.number().int().min(0).max(100),
   }),
   z.object({ kind: z.literal("sacty") }),
@@ -74,10 +77,12 @@ export const RejectAuditProposalInput = z
   .strict();
 export type RejectAuditProposalInput = z.infer<typeof RejectAuditProposalInput>;
 
-/** 予算で一時停止した監査を、新しい上限（累計）で再開する（タスクの予算と同じ扱い）。 */
-export const ResumeAuditInput = z
-  .object({ capUsd: z.number().positive().max(10_000).optional() })
-  .strict();
+/**
+ * 予算で一時停止した監査を、新しい上限（累計）で再開する（タスクの予算と同じ扱い）。上限の金額に上限を設けない：
+ * 既定の予算（config.yaml の budget.default_per_audit_usd）は正の数なら何でもよく、再開には使った額より大きい
+ * 金額が要るので、ここで上限を設けると、大きい既定の予算で止まった監査を再開できなくなる（PR #134 レビュー指摘）。
+ */
+export const ResumeAuditInput = z.object({ capUsd: z.number().positive().optional() }).strict();
 export type ResumeAuditInput = z.infer<typeof ResumeAuditInput>;
 
 /** 根拠になった出来事。eventId は作業履歴の行、runId はエージェントの実行（セッションログ）。 */

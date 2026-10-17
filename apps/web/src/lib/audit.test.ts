@@ -72,6 +72,11 @@ describe("監査のレポート（PBI-124）", () => {
     expect(reportPeriod("2026/10/01", "2026-10-02")).toBeNull();
     expect(reportPeriod(null, "2026-10-02")).toBeNull();
     expect(reportPeriod("2026-13-01", "2026-10-02")).toBeNull();
+    // 実在しない日付は、翌月へ繰り越さずに断る（PR #134 レビュー指摘）
+    expect(reportPeriod("2026-02-30", "2026-03-03")).toBeNull();
+    expect(reportPeriod("2026-02-01", "2026-02-29")).toBeNull();
+    expect(reportPeriod("2026-04-31", "2026-05-01")).toBeNull();
+    expect(reportPeriod("2028-02-29", "2028-03-01")?.start).toBe("2028-02-29T00:00:00.000Z");
   });
 
   const zero = {

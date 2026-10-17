@@ -79,7 +79,7 @@
   レポートの出力。
 - ダッシュボード：「監査」の欄に、プロジェクトごとの原因・再発・判断待ちの件数と採用率、週ごとのタスクあたりの差し戻し・
   指摘の件数を出す。
-- レポート（`/projects/<ID>/audit/report?from=&to=`）：期間（UTC の日付。終了日の終わりまで）に完了した監査の原因・提案・判断を
+- レポート（`/projects/<ID>/audit/report?from=&to=`）：期間（UTC の日付。終了日の終わりまで。実在しない日付と、開始が終了より後の期間は 400）に完了した監査の原因・提案・判断を
   Markdown で出す。見出しは画面の言語、監査の結果の文は訳さない。日時は年を含めた UTC。
 
 コード: `apps/web/src/components/audit.tsx`（`TaskAuditCard`・`ProposalView`）、`apps/web/src/components/audit-screen.tsx`（`AuditScreen`）、

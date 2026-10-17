@@ -729,87 +729,92 @@ export function AuditCard({ audit }: { audit: NonNullable<DashboardData["audit"]
         <Empty>{m.none}</Empty>
       ) : (
         <div className="flex flex-col gap-4 px-3 pb-5">
+          {/* 狭い画面・英語・文字の拡大でも、表はカードの中で横にスクロールする（ページを横に広げない。PR #134 レビュー指摘） */}
           {audit.projects.length > 0 && (
-            <table aria-label={m.title} className="w-full text-sm">
-              <thead>
-                <tr className="text-muted-foreground">
-                  <th scope="col" className="px-2 py-1 text-left font-normal">
-                    {m.project}
-                  </th>
-                  <th scope="col" className={cn(cell, "font-normal")}>
-                    {m.causes}
-                  </th>
-                  <th scope="col" className={cn(cell, "font-normal")}>
-                    {m.recurred}
-                  </th>
-                  <th scope="col" className={cn(cell, "font-normal")}>
-                    {m.pending}
-                  </th>
-                  <th scope="col" className={cn(cell, "font-normal")}>
-                    <WithHint hint={m.adoptionHint}>{m.adoption}</WithHint>
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {audit.projects.map((p) => {
-                  const rate = auditAdoptionRate(p.adopted, p.rejected);
-                  return (
-                    <tr key={p.projectId} data-testid={`audit-project-${p.projectId}`}>
-                      <th scope="row" className="px-2 py-1 text-left font-normal">
-                        <Link
-                          href={projectAuditPath(p.projectId)}
-                          className="text-accent-foreground underline [overflow-wrap:anywhere]"
-                        >
-                          {p.projectName}
-                        </Link>
-                      </th>
-                      <td className={cn(cell, "font-semibold")}>{p.causes}</td>
-                      <td className={cn(cell, "font-semibold", p.recurred > 0 && "text-warn")}>
-                        {p.recurred}
-                      </td>
-                      <td className={cn(cell, "font-semibold")}>{p.pending}</td>
-                      <td className={cn(cell, "font-semibold")}>
-                        {rate === null ? m.noRate : `${Math.round(rate * 100)}%`}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+            <div className="overflow-x-auto" data-testid="audit-projects-scroll">
+              <table aria-label={m.title} className="w-full text-sm">
+                <thead>
+                  <tr className="text-muted-foreground">
+                    <th scope="col" className="px-2 py-1 text-left font-normal">
+                      {m.project}
+                    </th>
+                    <th scope="col" className={cn(cell, "font-normal")}>
+                      {m.causes}
+                    </th>
+                    <th scope="col" className={cn(cell, "font-normal")}>
+                      {m.recurred}
+                    </th>
+                    <th scope="col" className={cn(cell, "font-normal")}>
+                      {m.pending}
+                    </th>
+                    <th scope="col" className={cn(cell, "font-normal")}>
+                      <WithHint hint={m.adoptionHint}>{m.adoption}</WithHint>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {audit.projects.map((p) => {
+                    const rate = auditAdoptionRate(p.adopted, p.rejected);
+                    return (
+                      <tr key={p.projectId} data-testid={`audit-project-${p.projectId}`}>
+                        <th scope="row" className="px-2 py-1 text-left font-normal">
+                          <Link
+                            href={projectAuditPath(p.projectId)}
+                            className="text-accent-foreground underline [overflow-wrap:anywhere]"
+                          >
+                            {p.projectName}
+                          </Link>
+                        </th>
+                        <td className={cn(cell, "font-semibold")}>{p.causes}</td>
+                        <td className={cn(cell, "font-semibold", p.recurred > 0 && "text-warn")}>
+                          {p.recurred}
+                        </td>
+                        <td className={cn(cell, "font-semibold")}>{p.pending}</td>
+                        <td className={cn(cell, "font-semibold")}>
+                          {rate === null ? m.noRate : `${Math.round(rate * 100)}%`}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           )}
           {audit.trend.length > 0 && (
             <div className="flex flex-col gap-1">
               <h3 className="px-2 text-sm font-medium">
                 <WithHint hint={m.trendHint}>{m.trend}</WithHint>
               </h3>
-              <table aria-label={m.trend} className="w-full text-sm">
-                <thead>
-                  <tr className="text-muted-foreground">
-                    <th scope="col" className="px-2 py-1 text-left font-normal">
-                      {m.week}
-                    </th>
-                    <th scope="col" className={cn(cell, "font-normal")}>
-                      {m.tasks}
-                    </th>
-                    <th scope="col" className={cn(cell, "font-normal")}>
-                      {m.perTask}
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {audit.trend.map((w) => (
-                    <tr key={w.weekStart} data-testid={`audit-trend-${w.weekStart}`}>
-                      <th scope="row" className="px-2 py-1 text-left font-mono font-normal">
-                        {w.weekStart}
+              <div className="overflow-x-auto" data-testid="audit-trend-scroll">
+                <table aria-label={m.trend} className="w-full text-sm">
+                  <thead>
+                    <tr className="text-muted-foreground">
+                      <th scope="col" className="px-2 py-1 text-left font-normal">
+                        {m.week}
                       </th>
-                      <td className={cn(cell, "font-semibold")}>{w.tasks}</td>
-                      <td className={cn(cell, "font-semibold")}>
-                        {perTask(w.remarks, w.tasks) ?? m.noRate}
-                      </td>
+                      <th scope="col" className={cn(cell, "font-normal")}>
+                        {m.tasks}
+                      </th>
+                      <th scope="col" className={cn(cell, "font-normal")}>
+                        {m.perTask}
+                      </th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {audit.trend.map((w) => (
+                      <tr key={w.weekStart} data-testid={`audit-trend-${w.weekStart}`}>
+                        <th scope="row" className="px-2 py-1 text-left font-mono font-normal">
+                          {w.weekStart}
+                        </th>
+                        <td className={cn(cell, "font-semibold")}>{w.tasks}</td>
+                        <td className={cn(cell, "font-semibold")}>
+                          {perTask(w.remarks, w.tasks) ?? m.noRate}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
         </div>

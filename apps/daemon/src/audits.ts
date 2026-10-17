@@ -136,6 +136,15 @@ function shift(iso: string, minutes: number): string {
   return new Date(Date.parse(iso) + minutes * 60_000).toISOString();
 }
 
+/** モックの監査の開始（タスクの完了の1分後）と完了（開始の6分後）。 */
+function mockAuditStartedAt(task: Task): string {
+  return shift(task.updatedAt, 1);
+}
+
+function mockAuditFinishedAt(task: Task): string {
+  return shift(mockAuditStartedAt(task), 6);
+}
+
 /** モックの原因の型。宛先の種類（実際の宛先はタスクの候補から選ぶ）と、提案の文。 */
 type MockCause = {
   id: string;
@@ -357,7 +366,7 @@ export class MockAuditService implements AuditService {
   ): TaskAudit {
     const projectId = task.projectId;
     const scenario = scenarioAt(index);
-    const startedAt = shift(task.updatedAt, 1);
+    const startedAt = mockAuditStartedAt(task);
     const candidates = auditTargetCandidates(task, project);
     const base = {
       taskId: task.id,
@@ -449,7 +458,7 @@ export class MockAuditService implements AuditService {
         return {
           ...base,
           status: "completed",
-          finishedAt: shift(startedAt, 6),
+          finishedAt: mockAuditFinishedAt(task),
           budget: { usedUsd: cap * (0.3 + 0.1 * (index % 3)), capUsd: cap },
           survey: this.survey(counts(scenario.counts)),
           deepDives: [...new Set(findings.flatMap((f) => (f.step ? [f.step] : [])))].map(
@@ -533,7 +542,8 @@ export class MockAuditService implements AuditService {
     if (adopted) {
       return {
         kind: "adopted",
-        at: shift(at, 10),
+        // 監査の完了と同時に採用したことにする（改修のマージ（fixedAt）より前になる）
+        at: shift(at, 6),
         target: proposal.target,
         task: { taskId: `mock-${proposal.id}`, title: `改修：${proposal.title}`, mock: true },
       };
@@ -566,9 +576,12 @@ export class MockAuditService implements AuditService {
     const first = tasks[0];
     if (!first) return undefined;
     const third = tasks[2];
-    // 3つ目のタスクが無ければ、最初の監査の後にマージしたことにする（改修済みのまま）
-    const end = third ? Date.parse(third.updatedAt) : Date.parse(first.updatedAt) + 3_600_000;
-    return new Date((Date.parse(first.updatedAt) + end) / 2).toISOString();
+    // 最初の監査の完了と、3つ目の監査の完了の間にする（最初の原因に再発を付けない。PR #134 レビュー指摘）。少なくとも
+    // 最初の監査の完了より後にし、同じ時刻に完了したなら再発にしない。3つ目のタスクが無ければ、最初の監査の後に
+    // マージしたことにする（改修済みのまま）
+    const start = Date.parse(mockAuditFinishedAt(first));
+    const end = third ? Date.parse(mockAuditFinishedAt(third)) : start + 3_600_000;
+    return new Date(Math.max(start + 1, Math.floor((start + end) / 2))).toISOString();
   }
 
   taskAudit(taskId: string): TaskAudit | null {

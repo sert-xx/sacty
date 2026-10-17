@@ -115,12 +115,17 @@ const projectOf = (id: string, name: string): Project => ({
   updatedAt: "",
 });
 
-/** プロジェクト p1 に、完了したタスクを n 件（1日ずつずらして）作る。 */
-function setup(n: number, extra: ActivityEvent[] = []) {
+/** プロジェクト p1 に、完了したタスクを n 件（既定は1日ずつずらして）作る。 */
+function setup(
+  n: number,
+  extra: ActivityEvent[] = [],
+  options: { intervalMs?: number; capUsd?: number } = {},
+) {
   seq = 0;
   const events: ActivityEvent[] = [];
+  const interval = options.intervalMs ?? 86_400_000;
   for (let i = 0; i < n; i++) {
-    const at = new Date(Date.parse("2026-09-01T00:00:00Z") + i * 86_400_000).toISOString();
+    const at = new Date(Date.parse("2026-09-01T00:00:00Z") + i * interval).toISOString();
     events.push(...taskEvents(`t${String(i + 1).padStart(2, "0")}`, "p1", at));
   }
   events.push(...extra);
@@ -133,9 +138,9 @@ function setup(n: number, extra: ActivityEvent[] = []) {
     tasks: () => tasks,
     activity: (id) => events.filter((e) => e.taskId === id),
     projects: () => [projectOf("p1", "決済"), projectOf("p2", "Web")],
-    defaultCapUsd: () => 1,
+    defaultCapUsd: () => options.capUsd ?? 1,
   };
-  return { tasks, deps, mock: new MockAuditService(deps) };
+  return { tasks, deps, mock: new MockAuditService(deps), events };
 }
 
 describe("監査の対象と宛先の候補（PBI-124）", () => {
@@ -236,6 +241,31 @@ describe("モックの監査（PBI-124）", () => {
     ).toBeUndefined();
   });
 
+  it.each([
+    ["1 分", 60_000],
+    ["同じ時刻", 0],
+  ])(
+    "タスクの完了の間隔が短くても（%s）、最初の原因に再発を付けない（PR #134 レビュー指摘）",
+    (_label, intervalMs) => {
+      const { mock } = setup(3, [], { intervalMs });
+      const lint = mock.projectAudits("p1")?.causes.find((c) => c.id === "lint");
+      expect(
+        mock.taskAudit("t01")?.findings.find((f) => f.causeId === "lint")?.recurred,
+      ).toBeUndefined();
+      const first = mock.taskAudit("t01")?.finishedAt ?? "";
+      expect(lint?.fixedAt && lint.fixedAt > first).toBe(true);
+      // 間隔があれば3つ目で再発し、同じ時刻なら再発にしない
+      expect(lint?.status).toBe(intervalMs > 0 ? "recurred" : "fixed");
+      // 採用した時刻は、改修のマージより前
+      const adopted = mock
+        .projectAudits("p1")
+        ?.proposals.find((p) => p.causeId === "lint" && p.decision?.kind === "adopted");
+      expect(adopted?.decision?.at && lint?.fixedAt && adopted.decision.at < lint.fixedAt).toBe(
+        true,
+      );
+    },
+  );
+
   it("完了したタスクが 1 件なら、最初の場面だけ（改修済みにはなるが、再発はしない）", () => {
     const { mock } = setup(1);
     const data = mock.projectAudits("p1");
@@ -319,6 +349,42 @@ describe("モックの監査（PBI-124）", () => {
     expect(() => mock.resume("missing", { capUsd: 5 })).toThrow("このタスクの監査はありません");
     const resumed = mock.resume("t05", { capUsd: 2.5 });
     expect(resumed).toMatchObject({ status: "deepDiving", budget: { usedUsd: 1, capUsd: 2.5 } });
+  });
+
+  it("既定の予算が大きくても（10,000 ドル）、使った額より大きい上限で再開できる（PR #134 レビュー指摘）", () => {
+    const { mock } = setup(5, [], { capUsd: 10_000 });
+    expect(mock.taskAudit("t05")?.budget).toEqual({ usedUsd: 10_000, capUsd: 10_000 });
+    expect(() => mock.resume("t05", { capUsd: 10_000 })).toThrow("より大きい金額");
+    expect(mock.resume("t05", { capUsd: 10_000.01 }).budget.capUsd).toBe(10_000.01);
+  });
+
+  it("コンテキストの指定の上限（500 文字）を超える長さの宛先の候補も採用できる（PR #134 レビュー指摘）", () => {
+    const longRepo = `https://example.com/${"c".repeat(600)}`;
+    seq = 0;
+    // 3件目に、判断待ちのコンテキスト宛ての提案（境界値）が出る
+    const events = ["t01", "t02", "t03"]
+      .flatMap((id, i) => taskEvents(id, "p1", `2026-09-0${i + 1}T00:00:00Z`))
+      .map((e) =>
+        e.type === "ContextResolved"
+          ? ({
+              ...e,
+              payload: { ...e.payload, layers: [{ repo: longRepo, commit: "x" }] },
+            } as ActivityEvent)
+          : e,
+      );
+    const tasks = [...projectTasks(events).values()];
+    const mock = new MockAuditService({
+      tasks: () => tasks,
+      activity: () => events,
+      projects: () => [projectOf("p1", "決済")],
+      defaultCapUsd: () => 1,
+    });
+    const proposal = mock
+      .projectAudits("p1")
+      ?.proposals.find((p) => !p.decision && p.causeId === "boundary");
+    const target = proposal?.targetCandidates.find((c) => c.kind === "context") as AuditTarget;
+    expect(target).toEqual({ kind: "context", repo: longRepo, depth: 0 });
+    expect(mock.adopt(proposal?.id ?? "", { target }).decision?.kind).toBe("adopted");
   });
 
   it("根拠は、作業履歴の行とエージェントの実行に結び付く（ツール呼び出しの失敗は実行のログへ）", () => {
