@@ -714,7 +714,7 @@ function describeEventText(event: ActivityEvent, l: LabelMessages): string {
     case "AuditProposalRejected":
       return e.AuditProposalRejected(event.payload.reason);
     case "AuditMemoryDeleted":
-      return e.AuditMemoryDeleted(event.payload.reason === "person");
+      return e.AuditMemoryDeleted(event.payload.reason);
   }
 }
 

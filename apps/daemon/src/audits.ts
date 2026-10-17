@@ -361,6 +361,7 @@ export class MockAuditService implements AuditService {
       projectId,
       startedAt,
       memories: [],
+      usefulMemories: [],
       mock: true as const,
     };
     const resumedCap = this.resumed.get(task.id);

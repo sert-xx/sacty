@@ -62,6 +62,13 @@ const ja = {
     deleted: "消した",
     deletedByCapacity: "上限で消した",
     deletedHint: "階層の件数の上限を超えたので、有効な最終利用日の古いものから消しました。",
+    deletedByExpiry: "期限で消した",
+    deletedByExpiryHint:
+      "有効な最終利用日から、sacty の設定の「メモリーを残す日数」を過ぎたので消しました。",
+    lastUseful: (date: string) => `有効な最終利用日：${date}`,
+    usefulTitle: "役に立ったメモリー",
+    usefulHint:
+      "このタスクで開いたメモリーのうち、監査が役に立ったと判断したものです。有効な最終利用日を、このタスクの完了日にしました。",
     delete: "消す",
     deleteConfirm: "消すことを確定する",
     deleteNote: "消したメモリーは戻せません。次のタスクから読まれなくなります。",
@@ -226,6 +233,13 @@ const en: AuditMessages = {
     deletedByCapacity: "Deleted (limit)",
     deletedHint:
       "Deleted because the layer exceeded its limit, starting from the oldest last useful date.",
+    deletedByExpiry: "Deleted (expired)",
+    deletedByExpiryHint:
+      'Deleted because its last useful date is older than "Days to keep memories" in the sacty settings.',
+    lastUseful: (date) => `Last useful: ${date}`,
+    usefulTitle: "Memories that helped",
+    usefulHint:
+      "Memories opened in this task that the audit judged helpful. Their last useful date is now this task's completion date.",
     delete: "Delete",
     deleteConfirm: "Confirm delete",
     deleteNote: "A deleted memory cannot be restored. Later tasks will no longer read it.",

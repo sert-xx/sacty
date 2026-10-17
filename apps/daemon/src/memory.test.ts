@@ -4,7 +4,10 @@ import { join } from "node:path";
 import type { Task } from "@sacty/core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  countOpenedMemories,
+  expiredMemories,
   type LiveMemory,
+  lastUsefulAt,
   liveMemories,
   memoryLayerDir,
   memoryPromptLines,
@@ -13,6 +16,7 @@ import {
   repositoryMemoryKey,
   syncMemoryLayers,
   taskMemoryLayers,
+  usefulDates,
   writeMemoryLayer,
 } from "./memory.js";
 
@@ -180,5 +184,66 @@ describe("書き出し（PBI-126）", () => {
     expect(lines).toContain("/sacty-memory/project");
     expect(lines).toContain("関係しないものは開かないでください");
     expect(lines).toContain("優先度が低い");
+  });
+});
+
+describe("有効な最終利用日と掃除（PBI-127）", () => {
+  const task = (id: string, queuedAt: string, useful: string[]) =>
+    ({
+      id,
+      projectId: "p1",
+      audit: { queuedAt, memories: [], survey: { usefulMemories: useful } },
+    }) as unknown as Task;
+
+  it("役に立ったと判断されたタスクの完了日の最新を、メモリーごとに取る", () => {
+    const dates = usefulDates([
+      task("a", "2026-10-05T00:00:00.000Z", ["m1"]),
+      task("b", "2026-10-09T00:00:00.000Z", ["m1", "m2"]),
+      task("c", "2026-10-07T00:00:00.000Z", ["m1"]),
+      { id: "d", projectId: "p1" } as unknown as Task,
+    ]);
+    expect(dates.get("m1")).toBe("2026-10-09T00:00:00.000Z");
+    expect(dates.get("m2")).toBe("2026-10-09T00:00:00.000Z");
+    expect(dates.has("m3")).toBe(false);
+    expect(usefulDates([]).size).toBe(0);
+  });
+
+  it("有効な最終利用日は、登録した時刻より前に戻さない", () => {
+    expect(lastUsefulAt("2026-10-05T00:00:00.000Z", undefined)).toBe("2026-10-05T00:00:00.000Z");
+    expect(lastUsefulAt("2026-10-05T00:00:00.000Z", "2026-10-01T00:00:00.000Z")).toBe(
+      "2026-10-05T00:00:00.000Z",
+    );
+    expect(lastUsefulAt("2026-10-05T00:00:00.000Z", "2026-10-09T00:00:00.000Z")).toBe(
+      "2026-10-09T00:00:00.000Z",
+    );
+  });
+
+  it("残す日数を超えたものだけを返す（ちょうどは残す）", () => {
+    const at = Date.parse("2026-10-01T00:00:00.000Z");
+    const day = 86_400_000;
+    const memories = [live("m1"), live("m2", { lastUsefulAt: "2026-10-02T00:00:00.000Z" })];
+    expect(expiredMemories([], at + 100 * day, 1)).toEqual([]);
+    expect(expiredMemories(memories, at + 10 * day - 1, 10)).toEqual([]);
+    expect(expiredMemories(memories, at + 10 * day, 10)).toEqual([]);
+    expect(expiredMemories(memories, at + 10 * day + 1, 10).map((m) => m.id)).toEqual(["m1"]);
+    expect(expiredMemories(memories, at + 11 * day + 1, 10).map((m) => m.id)).toEqual(["m1", "m2"]);
+  });
+
+  it("開いた回数は、中身のファイルの場所だけを数える（索引の相対リンク・知らない ID・ほかの場所は数えない）", () => {
+    const ids = new Set(["m1", "m2"]);
+    const log = [
+      '{"input":{"file_path":"/sacty-memory/project/references/m1.md"}}',
+      "cat /sacty-memory/repository/references/m1.md",
+      "- [題](references/m2.md)：概要",
+      "/sacty-memory/project/references/m9.md",
+      "/workspace/references/m2.md",
+      "/sacty-memory/project/SKILL.md",
+    ].join("\n");
+    const counts = countOpenedMemories(log, ids);
+    expect([...counts.entries()]).toEqual([["m1", 2]]);
+    expect(countOpenedMemories("", ids).size).toBe(0);
+    // 複数のログを足し合わせる
+    countOpenedMemories("/sacty-memory/project/references/m2.md", ids, counts);
+    expect(counts.get("m2")).toBe(1);
   });
 });

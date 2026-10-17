@@ -743,6 +743,8 @@ class FakeExecutor implements AgentExecutor {
   started = Promise.withResolvers<string>();
   private held = new Map<string, (outcome: AgentOutcome) => void>();
   constructor(private readonly outcomes: (AgentOutcome | typeof HOLD)[]) {}
+  /** 実行ごとに、セッションログの標準出力に足す行（エージェントがファイルを読んだ記録の代わり。PBI-127）。 */
+  logLines?: (invocation: Invocation) => string | undefined;
   /** 実行ごとに、作業領域を読み取り専用で渡したか。 */
   /** 実行ごとに、使い捨ての写し（実装の作業領域ではない）を渡したか。 */
   scratch: boolean[] = [];
@@ -782,6 +784,8 @@ class FakeExecutor implements AgentExecutor {
     // セッションログ（PBI-62）には、渡された環境変数の値（秘密情報を含む）を出してみる（伏せられることを確かめる）
     log?.stdout(`${JSON.stringify({ type: "fake", env: Object.values(invocation.env) })}\n`);
     log?.stderr(`env ${Object.values(invocation.env).join(" ")}\n`);
+    const extra = this.logLines?.(invocation);
+    if (extra) log?.stdout(extra);
     this.networks.push(network);
     this.forwards.push(forwards);
     this.images.push({ image, ...(imageEnv ? { env: imageEnv } : {}) });
@@ -23108,5 +23112,265 @@ describe("監査のメモリー（PBI-126）", () => {
     expect(existsSync(join(projectDir(), "references", `${id}.md`))).toBe(true);
     expect(existsSync(projectDir("stale"))).toBe(false);
     expect(existsSync(join(memoryRoot(), "repos", "github.com", "old", "repo"))).toBe(false);
+  });
+});
+
+describe("メモリーの有効な最終利用日と掃除（PBI-127）", () => {
+  const out = (text: string, usageOutput = 100): AgentOutcome => ({
+    kind: "completed",
+    output: text,
+    usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: usageOutput },
+  });
+  const json = (value: unknown) => out(`\`\`\`json\n${JSON.stringify(value)}\n\`\`\``);
+  const prompt = (invocation: Invocation) => invocation.command.join(" ");
+  const isSurvey = (invocation: Invocation) =>
+    prompt(invocation).includes("いまは大まかな監査です");
+  const isDive = (invocation: Invocation) => prompt(invocation).includes("深掘りする工程：");
+  const isStep = (invocation: Invocation) => !isSurvey(invocation) && !isDive(invocation);
+  const onlyRequirements = async () => ({
+    steps: ["requirements" as const],
+    fallback: false,
+    costUsd: 0,
+    estimated: false,
+  });
+  const DAY = 86_400_000;
+  const day = (n: number) => Date.parse("2026-10-01T00:00:00.000Z") + (n - 1) * DAY;
+  const memoryRoot = () => join(dir, "memory");
+  const projectDir = () => join(memoryRoot(), "projects", "default");
+  const readRef = (id: string) =>
+    readFileSync(join(projectDir(), "references", `${id}.md`), "utf8");
+
+  /** 時計を進められる作業履歴とサービス。監査は、survey と dive の出力を差し替えられる。 */
+  function setup(options: { retentionDays?: number; memory?: boolean } = {}): {
+    service: TaskService;
+    executor: FakeExecutor;
+    activity: SqliteActivityStore;
+    clock: { now: number };
+    audit: {
+      useful: () => unknown;
+      register: () => unknown[];
+      concerns: () => unknown[];
+    };
+  } {
+    const clock = { now: day(1) };
+    const activity = new SqliteActivityStore(dbPath, () => new Date(clock.now));
+    const { service, executor } = makeService(activity, [], {
+      audit: true,
+      memory: options.memory ?? true,
+      planner: onlyRequirements,
+      sessionLogs: new SessionLogStore(join(dir, "runs")),
+      now: () => clock.now,
+      settings: new MemorySettingsStore({
+        intakeLabel: "sacty",
+        ...(options.retentionDays ? { memoryRetentionDays: options.retentionDays } : {}),
+      }),
+    });
+    const audit = {
+      useful: (): unknown => [],
+      register: (): unknown[] => [],
+      concerns: (): unknown[] => [{ step: "requirements", reason: "差し戻し" }],
+    };
+    executor.respond = (invocation) => {
+      if (isSurvey(invocation)) {
+        return json({
+          "sacty-audit-survey": {
+            summary: "要約",
+            concerns: audit.concerns(),
+            usefulMemories: audit.useful(),
+          },
+        });
+      }
+      if (isDive(invocation)) {
+        return json({
+          "sacty-audit-findings": { summary: "深掘り", findings: [], memories: audit.register() },
+        });
+      }
+      return out("# 要求要件");
+    };
+    return { service, executor, activity, clock, audit };
+  }
+
+  const memory = (title: string) => ({
+    scope: "project",
+    title,
+    summary: `${title}の概要`,
+    body: `${title}の中身`,
+  });
+
+  /** タスクを作って完了させる（監査は待たせたまま）。 */
+  async function complete(service: TaskService, title: string): Promise<string> {
+    const task = service.createTask({ projectId: "default", title, body: "" });
+    await service.runNext(task.id);
+    service.approve(task.id, { step: "requirements", submission: 1 });
+    return task.id;
+  }
+  async function audit(service: TaskService, id: string): Promise<void> {
+    for (let i = 0; i < 3 && service.get(id)?.task.audit?.completedAt === undefined; i++) {
+      await service.runNext(id);
+    }
+  }
+
+  it("タスクで開き、監査が役に立ったと判断したメモリーだけ、有効な最終利用日をそのタスクの完了日にする", async () => {
+    const { service, executor, activity, clock, audit: out1 } = setup();
+    out1.register = () => [memory("役に立つ"), memory("開かない")];
+    const a = await complete(service, "A");
+    await audit(service, a);
+    const [useful, unopened] = service.get(a)?.task.audit?.memories ?? [];
+    expect(readRef(useful?.id ?? "")).toContain("有効な最終利用日：2026-10-01");
+
+    // 10 日目のタスクで、1つめの中身だけを開く（索引に出てくる2つめの場所は、開いたことにしない）
+    clock.now = day(10);
+    out1.register = () => [];
+    out1.concerns = () => [];
+    out1.useful = () => [useful?.id, unopened?.id, "unknown"];
+    executor.logLines = (invocation) =>
+      isStep(invocation)
+        ? [
+            JSON.stringify({
+              type: "assistant",
+              message: {
+                content: [
+                  {
+                    type: "tool_use",
+                    name: "Read",
+                    input: { file_path: `/sacty-memory/project/references/${useful?.id}.md` },
+                  },
+                ],
+              },
+            }),
+            JSON.stringify({ type: "user", text: `- [開かない](references/${unopened?.id}.md)` }),
+            "",
+          ].join("\n")
+        : undefined;
+    executor.calls.length = 0;
+    const b = await complete(service, "B");
+    await audit(service, b);
+    const survey = executor.calls.find(isSurvey);
+    expect(prompt(survey as Invocation)).toContain(
+      `- ${useful?.id}：役に立つ：役に立つの概要（1 回）`,
+    );
+    expect(prompt(survey as Invocation)).not.toContain(`- ${unopened?.id}：`);
+    const surveyed = activity.forTask(b).find((e) => e.type === "AuditSurveyed");
+    expect(surveyed?.payload).toMatchObject({
+      openedMemories: [useful?.id],
+      usefulMemories: [useful?.id],
+    });
+    expect(readRef(useful?.id ?? "")).toContain("有効な最終利用日：2026-10-10");
+    expect(readRef(unopened?.id ?? "")).toContain("有効な最終利用日：2026-10-01");
+    expect(readFileSync(join(projectDir(), "SKILL.md"), "utf8")).toContain(
+      "役に立つの概要（有効な最終利用日：2026-10-10）",
+    );
+    // 監査の欄：役に立ったメモリーと、登録したメモリーの有効な最終利用日
+    const audits = new LedgerAuditService(service);
+    expect((await audits.taskAudit(b))?.usefulMemories).toEqual([
+      { id: useful?.id, scope: "project", title: "役に立つ" },
+    ]);
+    expect((await audits.taskAudit(a))?.memories.map((m) => m.lastUsefulAt.slice(0, 10))).toEqual([
+      "2026-10-10",
+      "2026-10-01",
+    ]);
+  });
+
+  it("監査の実行のログは数えない。開いたメモリーが無ければ、役に立ったものは記録しない", async () => {
+    const { service, executor, activity, audit: out1 } = setup();
+    out1.register = () => [memory("知見")];
+    const a = await complete(service, "A");
+    await audit(service, a);
+    const id = service.get(a)?.task.audit?.memories[0]?.id ?? "";
+    out1.register = () => [];
+    out1.useful = () => [id];
+    // 監査の実行だけが中身を開く
+    executor.logLines = (invocation) =>
+      isStep(invocation) ? undefined : `/sacty-memory/project/references/${id}.md\n`;
+    const b = await complete(service, "B");
+    await audit(service, b);
+    const surveyed = activity.forTask(b).find((e) => e.type === "AuditSurveyed");
+    expect(surveyed?.payload).toMatchObject({ openedMemories: [], usefulMemories: [] });
+  });
+
+  it("古いタスクの監査が後から終わっても、有効な最終利用日を前に戻さない", async () => {
+    const { service, executor, clock, audit: out1 } = setup();
+    out1.register = () => [memory("知見")];
+    const a = await complete(service, "A");
+    await audit(service, a);
+    const id = service.get(a)?.task.audit?.memories[0]?.id ?? "";
+    out1.register = () => [];
+    out1.concerns = () => [];
+    out1.useful = () => [id];
+    executor.logLines = (invocation) =>
+      isStep(invocation) ? `/sacty-memory/project/references/${id}.md\n` : undefined;
+    clock.now = day(5);
+    const older = await complete(service, "古い");
+    clock.now = day(10);
+    const newer = await complete(service, "新しい");
+    await audit(service, newer);
+    expect(readRef(id)).toContain("有効な最終利用日：2026-10-10");
+    await audit(service, older);
+    expect(service.get(older)?.task.audit?.survey?.usefulMemories).toEqual([id]);
+    expect(readRef(id)).toContain("有効な最終利用日：2026-10-10");
+  });
+
+  it("掃除：有効な最終利用日から残す日数を超えたものだけを消し、登録したタスクの作業履歴に記録する（ちょうどは残す）", async () => {
+    const { service, activity, clock, audit: out1 } = setup({ retentionDays: 10 });
+    out1.register = () => [memory("古い")];
+    const a = await complete(service, "A");
+    await audit(service, a);
+    clock.now = day(3);
+    out1.register = () => [memory("新しい")];
+    const b = await complete(service, "B");
+    await audit(service, b);
+    const [older] = service.get(a)?.task.audit?.memories ?? [];
+    const [newer] = service.get(b)?.task.audit?.memories ?? [];
+    const registeredAt = Date.parse(older?.at ?? "");
+
+    clock.now = registeredAt + 10 * DAY - DAY;
+    service.cleanupMemories();
+    clock.now = registeredAt + 10 * DAY;
+    service.cleanupMemories();
+    expect(service.get(a)?.task.audit?.memories[0]?.deleted).toBeUndefined();
+    clock.now = registeredAt + 10 * DAY + 1;
+    service.cleanupMemories();
+    expect(service.get(a)?.task.audit?.memories[0]?.deleted?.reason).toBe("expired");
+    expect(service.get(b)?.task.audit?.memories[0]?.deleted).toBeUndefined();
+    expect(activity.forTask(a).at(-1)).toMatchObject({
+      actor: "sacty",
+      type: "AuditMemoryDeleted",
+      payload: { memoryId: older?.id, reason: "expired" },
+    });
+    expect(existsSync(join(projectDir(), "references", `${older?.id}.md`))).toBe(false);
+    expect(existsSync(join(projectDir(), "references", `${newer?.id}.md`))).toBe(true);
+    // 消したものは、もう一度は消さない
+    const before = activity.forTask(a).length;
+    service.cleanupMemories();
+    expect(activity.forTask(a).length).toBe(before);
+  });
+
+  it("残す日数を設定していなければ 90 日。起動のときにも掃除する", async () => {
+    const { service, clock, audit: out1 } = setup();
+    out1.register = () => [memory("知見")];
+    const a = await complete(service, "A");
+    await audit(service, a);
+    const at = Date.parse(service.get(a)?.task.audit?.memories[0]?.at ?? "");
+    clock.now = at + 90 * DAY;
+    service.syncMemories();
+    expect(service.get(a)?.task.audit?.memories[0]?.deleted).toBeUndefined();
+    clock.now = at + 90 * DAY + 1;
+    service.syncMemories();
+    expect(service.get(a)?.task.audit?.memories[0]?.deleted?.reason).toBe("expired");
+    expect(existsSync(projectDir())).toBe(false);
+  });
+
+  it("書き出す場所が無ければ、開いたメモリーの判断を求めず、掃除もしない", async () => {
+    const { service, executor, activity, audit: out1 } = setup({ memory: false });
+    out1.useful = () => ["m1"];
+    const a = await complete(service, "A");
+    await audit(service, a);
+    const survey = executor.calls.find(isSurvey);
+    expect(prompt(survey as Invocation)).not.toContain("このタスクで開いたメモリー");
+    expect(prompt(survey as Invocation)).not.toContain("usefulMemories");
+    expect(activity.forTask(a).find((e) => e.type === "AuditSurveyed")?.payload).toMatchObject({
+      usefulMemories: [],
+    });
+    expect(() => service.cleanupMemories()).not.toThrow();
   });
 });

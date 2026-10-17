@@ -17,6 +17,7 @@ import {
 } from "@sacty/core";
 import { type AuditService, causeStatus, sortCauses, weekStart } from "./audits.js";
 import { redactLog } from "./ci.js";
+import { lastUsefulAt, usefulDates } from "./memory.js";
 
 /*
  * 完了したタスクの監査を、作業履歴の記録（タスクの監査の状態。Audit… のイベントを畳み込んだもの）から組み立てる（PBI-125）。
@@ -163,6 +164,12 @@ export class LedgerAuditService implements AuditService {
             : "deepDiving";
     const next = nextAuditDive(audit);
     const finishedAt = audit.completedAt ?? audit.failed?.at;
+    // メモリーの有効な最終利用日と、役に立ったメモリーの題（ほかのタスクの監査が登録したものを含む。PBI-127）
+    const tasks = [...byId.values()];
+    const dates = usefulDates(tasks);
+    const registered = new Map(
+      tasks.flatMap((t) => (t.audit?.memories ?? []).map((m) => [m.id, m] as const)),
+    );
     return {
       taskId: task.id,
       projectId: task.projectId,
@@ -201,8 +208,13 @@ export class LedgerAuditService implements AuditService {
         body: m.body,
         step: m.step,
         at: m.at,
+        lastUsefulAt: lastUsefulAt(m.at, dates.get(m.id)),
         ...(m.deleted ? { deleted: m.deleted } : {}),
       })),
+      usefulMemories: (audit.survey?.usefulMemories ?? []).flatMap((id) => {
+        const m = registered.get(id);
+        return m ? [{ id, scope: m.scope, title: m.title }] : [];
+      }),
     };
   }
 

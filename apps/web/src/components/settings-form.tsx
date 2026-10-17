@@ -3,6 +3,8 @@
 import {
   DEFAULT_INTAKE_INTERVAL_SEC,
   DEFAULT_MAX_PARALLEL_TASKS,
+  DEFAULT_MEMORY_RETENTION_DAYS,
+  MAX_MEMORY_RETENTION_DAYS,
   MAX_PARALLEL_TASKS_LIMIT,
   MIN_INTAKE_INTERVAL_SEC,
   type SlackNotification,
@@ -30,6 +32,7 @@ export function SettingsForm({
   triageOff = [],
   ticketLabel: savedTicketLabel = "",
   maxParallelTasks,
+  memoryRetentionDays,
   issueIntervalSec,
   reviewIntervalSec,
   ticketIntervalSec,
@@ -46,6 +49,8 @@ export function SettingsForm({
   ticketLabel?: string;
   /** 設定していなければ undefined（既定の数で実行する）。 */
   maxParallelTasks?: number;
+  /** メモリーを残す日数（PBI-127）。設定していなければ undefined（既定の日数）。 */
+  memoryRetentionDays?: number;
   /** 取り込みの種類ごとの間隔（秒。PBI-100）。設定していなければ undefined（既定の間隔）。 */
   issueIntervalSec?: number;
   reviewIntervalSec?: number;
@@ -114,6 +119,9 @@ export function SettingsForm({
   );
   const [parallel, setParallel] = useState(
     maxParallelTasks === undefined ? "" : String(maxParallelTasks),
+  );
+  const [retention, setRetention] = useState(
+    memoryRetentionDays === undefined ? "" : String(memoryRetentionDays),
   );
   return (
     <form
@@ -263,6 +271,37 @@ export function SettingsForm({
           {t.parallelCurrent(
             maxParallelTasks ?? DEFAULT_MAX_PARALLEL_TASKS,
             maxParallelTasks === undefined,
+          )}
+        </p>
+      </section>
+      <section
+        aria-labelledby={`${uid}-memory`}
+        className="flex flex-col gap-3 rounded-xl border border-border bg-card p-5"
+      >
+        <h2 id={`${uid}-memory`} className="text-[15px] font-semibold">
+          {t.memoryTitle} <Hint text={t.memoryHint} />
+        </h2>
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor={`${uid}-memory-input`}>{t.memoryLabel}</Label>
+          <Input
+            id={`${uid}-memory-input`}
+            name="memoryRetentionDays"
+            type="number"
+            inputMode="numeric"
+            min={1}
+            max={MAX_MEMORY_RETENTION_DAYS}
+            step={1}
+            value={retention}
+            placeholder={String(DEFAULT_MEMORY_RETENTION_DAYS)}
+            onChange={(e) => setRetention(e.target.value)}
+            className="max-w-32"
+          />
+        </div>
+        <p className="text-sm text-muted-foreground">
+          {t.memoryHelp(DEFAULT_MEMORY_RETENTION_DAYS, MAX_MEMORY_RETENTION_DAYS)}{" "}
+          {t.memoryCurrent(
+            memoryRetentionDays ?? DEFAULT_MEMORY_RETENTION_DAYS,
+            memoryRetentionDays === undefined,
           )}
         </p>
       </section>
