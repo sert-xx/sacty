@@ -82,5 +82,8 @@ describe("ダッシュボードの監査の欄（PBI-124）", () => {
       createElement(AuditCard, { audit: { mock: false, projects: [], trend: [] } }),
     );
     expect(html).toContain("監査の結果はまだありません。");
+    // タスクの詳細の監査の欄（id="audit"）と id を重ねない（前の画面が裏に残るので、#audit が取り違える）
+    expect(html).toContain('id="audit-summary"');
+    expect(html).not.toContain('id="audit"');
   });
 });

@@ -719,7 +719,8 @@ export function AuditCard({ audit }: { audit: NonNullable<DashboardData["audit"]
   const cell = "px-2 py-1 text-right whitespace-nowrap tabular-nums";
   return (
     <DashboardCard
-      id="audit"
+      // タスクの詳細の監査の欄（id="audit"）と重ねない。画面を移っても前の画面が裏に残るので、#audit が取り違える
+      id="audit-summary"
       title={m.title}
       hint={m.hint}
       note={audit.mock ? <MockBadge /> : undefined}
