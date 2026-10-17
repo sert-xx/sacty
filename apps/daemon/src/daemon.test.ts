@@ -7956,85 +7956,94 @@ describe("プロジェクトのコンテキストの秘密情報も、まとめ�
     });
   });
 
-  it("上限の時間を過ぎたら、取得の git の子プロセスを止め、一時ディレクトリも残さない（PR #117 レビュー指摘）", async () => {
-    const work = mkdtempSync(join(tmpdir(), "sacty-git-hang-"));
-    const bin = join(work, "bin");
-    const temp = join(work, "tmp");
-    mkdirSync(bin);
-    mkdirSync(temp);
-    const pidFile = join(work, "pids");
-    // 応答しない git（clone が止まったまま。子プロセスも作る）
-    writeFileSync(
-      join(bin, "git"),
-      `#!/bin/sh\necho $$ >> "${pidFile}"\nsleep 30 &\necho $! >> "${pidFile}"\nwait\n`,
-    );
-    chmodSync(join(bin, "git"), 0o755);
-    const path = process.env.PATH;
-    const tmp = process.env.TMPDIR;
-    process.env.PATH = `${bin}:${path}`;
-    process.env.TMPDIR = temp;
-    const pids = () =>
-      existsSync(pidFile) ? readFileSync(pidFile, "utf8").trim().split("\n").map(Number) : [];
-    const alive = (pid: number) => {
-      try {
-        process.kill(pid, 0);
-        return true;
-      } catch {
-        return false;
-      }
-    };
-    // 上限の時間のタイマーだけを捕まえ、偽の git が動き出して子プロセスを作ってから時間切れにする。実時間に任せると、
-    // テストの負荷が高いときに git が動き出す前（認証の準備・起動の間）に時間切れになり、止める処理を確かめられない
-    // （プロセス番号が記録されずに落ちていた）
-    const LIMIT_MS = 900;
-    const realSetTimeout = globalThis.setTimeout;
-    let expire: (() => void) | undefined;
-    const timers = vi.spyOn(globalThis, "setTimeout").mockImplementation(((
-      callback: () => void,
-      delay?: number,
-      ...args: unknown[]
-    ) => {
-      if (delay === LIMIT_MS && !expire) {
-        expire = callback;
-        return { unref() {}, ref() {}, hasRef: () => false } as unknown as NodeJS.Timeout;
-      }
-      return realSetTimeout(callback, delay, ...args);
-    }) as typeof setTimeout);
-    try {
-      const { activity, service } = setup([], {
-        contexts: new GitContextFetcher(),
-        timeoutMs: LIMIT_MS,
-      });
-      const prefetching = service.prefetchSecrets();
-      // git（sh）と、その子プロセス（sleep）が動き出すまで待つ
-      await vi.waitFor(() => expect(pids()).toHaveLength(2), { timeout: 10_000 });
-      expect(expire).toBeDefined();
-      expire?.();
-      const started = await prefetching;
-      expect(ja(started.problems[0])).toContain("1 秒のうちに取得できませんでした。");
-      await vi.waitFor(
-        () => {
-          expect(pids().filter(alive)).toEqual([]);
-          expect(readdirSync(temp)).toEqual([]);
-        },
-        { timeout: 5_000 },
+  /** 偽の git と子プロセスが動き出すまで待つ時間と、止まって一時ディレクトリが消えるまで待つ時間。 */
+  const GIT_STARTUP_WAIT_MS = 10_000;
+  const GIT_STOP_WAIT_MS = 5_000;
+  it(
+    "上限の時間を過ぎたら、取得の git の子プロセスを止め、一時ディレクトリも残さない（PR #117 レビュー指摘）",
+    async () => {
+      const work = mkdtempSync(join(tmpdir(), "sacty-git-hang-"));
+      const bin = join(work, "bin");
+      const temp = join(work, "tmp");
+      mkdirSync(bin);
+      mkdirSync(temp);
+      const pidFile = join(work, "pids");
+      // 応答しない git（clone が止まったまま。子プロセスも作る）
+      writeFileSync(
+        join(bin, "git"),
+        `#!/bin/sh\necho $$ >> "${pidFile}"\nsleep 30 &\necho $! >> "${pidFile}"\nwait\n`,
       );
-      activity.close();
-    } finally {
-      timers.mockRestore();
-      process.env.PATH = path;
-      if (tmp === undefined) delete process.env.TMPDIR;
-      else process.env.TMPDIR = tmp;
-      for (const pid of pids()) {
+      chmodSync(join(bin, "git"), 0o755);
+      const path = process.env.PATH;
+      const tmp = process.env.TMPDIR;
+      process.env.PATH = `${bin}:${path}`;
+      process.env.TMPDIR = temp;
+      const pids = () =>
+        existsSync(pidFile) ? readFileSync(pidFile, "utf8").trim().split("\n").map(Number) : [];
+      const alive = (pid: number) => {
         try {
-          process.kill(pid, "SIGKILL");
+          process.kill(pid, 0);
+          return true;
         } catch {
-          // 止まっている
+          return false;
         }
+      };
+      // 上限の時間のタイマーだけを捕まえ、偽の git が動き出して子プロセスを作ってから時間切れにする。実時間に任せると、
+      // テストの負荷が高いときに git が動き出す前（認証の準備・起動の間）に時間切れになり、止める処理を確かめられない
+      // （プロセス番号が記録されずに落ちていた）
+      const LIMIT_MS = 900;
+      const realSetTimeout = globalThis.setTimeout;
+      let expire: (() => void) | undefined;
+      const timers = vi.spyOn(globalThis, "setTimeout").mockImplementation(((
+        callback: () => void,
+        delay?: number,
+        ...args: unknown[]
+      ) => {
+        if (delay === LIMIT_MS && !expire) {
+          expire = callback;
+          return { unref() {}, ref() {}, hasRef: () => false } as unknown as NodeJS.Timeout;
+        }
+        return realSetTimeout(callback, delay, ...args);
+      }) as typeof setTimeout);
+      try {
+        const { activity, service } = setup([], {
+          contexts: new GitContextFetcher(),
+          timeoutMs: LIMIT_MS,
+        });
+        const prefetching = service.prefetchSecrets();
+        // git（sh）と、その子プロセス（sleep）が動き出すまで待つ
+        await vi.waitFor(() => expect(pids()).toHaveLength(2), { timeout: GIT_STARTUP_WAIT_MS });
+        expect(expire).toBeDefined();
+        expire?.();
+        const started = await prefetching;
+        expect(ja(started.problems[0])).toContain("1 秒のうちに取得できませんでした。");
+        await vi.waitFor(
+          () => {
+            expect(pids().filter(alive)).toEqual([]);
+            expect(readdirSync(temp)).toEqual([]);
+          },
+          { timeout: GIT_STOP_WAIT_MS },
+        );
+        activity.close();
+      } finally {
+        timers.mockRestore();
+        process.env.PATH = path;
+        if (tmp === undefined) delete process.env.TMPDIR;
+        else process.env.TMPDIR = tmp;
+        for (const pid of pids()) {
+          try {
+            process.kill(pid, "SIGKILL");
+          } catch {
+            // 止まっている
+          }
+        }
+        rmSync(work, { recursive: true, force: true });
       }
-      rmSync(work, { recursive: true, force: true });
-    }
-  });
+      // テスト全体の時間切れ（既定は 5 秒）は、中の待ちを使い切れる長さにする。中の待ちが先に失敗し、finally で PATH・TMPDIR・
+      // setTimeout を戻してから終わるように、待ちの合計に余裕（準備と取得の時間）を足す（PR #133 レビュー指摘）
+    },
+    GIT_STARTUP_WAIT_MS + GIT_STOP_WAIT_MS + 10_000,
+  );
 
   it("「秘密情報を取り出し直す」は、持っている値を捨て、コンテキストの秘密情報も含めて取り出し直す", async () => {
     const { activity, op, service, executor } = setup([completed(20_000)]);
