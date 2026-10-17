@@ -9,12 +9,12 @@
 
 ## イベントの形
 
-- 書くときの形は `{ type, payload }`。`type` で種類を分ける zod の判別共用体（`EventInput`）で検証する。種類は70（タスクの作成・分割、
+- 書くときの形は `{ type, payload }`。`type` で種類を分ける zod の判別共用体（`EventInput`）で検証する。種類は83（タスクの作成・分割、
   工程の進行、エージェントの実行、予算・一時停止・再開・中止、変更の申し出と判定、検証、git・PR、レビュー、取り込み元への返信、
-  質問、書き出し、PR のラベル、マージの後の監視など）。
+  質問、書き出し、PR のラベル、マージの後の監視、完了したタスクの監査など）。
 - 記録した後の形（`ActivityEvent`）は、それに `seq`（作業履歴全体で単調に増える）・`id`（UUID）・`taskId`・`projectId`・`at`
   （同じ追記の中のイベントは同じ時刻）・`actor` を足したもの。
-- `actor` は `person`・`sacty`・`orchestrator`・`guardian`・`agent` のどれか。
+- `actor` は `person`・`sacty`・`orchestrator`・`guardian`・`agent`・`auditor`（完了したタスクの監査。[監査](audit.md)）のどれか。
 - AI を使ったイベントの多くは、トークン数（`usage`：`input`・`cacheRead`・`cacheWrite`・`output`）・費用（`costUsd`）・推定かどうか
   （`estimated`）・使った AI の設定（`authMode`・`model`・`reasoningEffort`）・実行の ID（`runId`）を持つ。
 - イベントの版の番号は無い。古い作業履歴は、スキーマの既定値（`.default`）・任意の項目（`.optional`）・読み替え（`.transform`）で読む。
@@ -89,6 +89,8 @@
 
 - 投影と工程ごとの費用の表は、どちらも同じ規則（`chargeBudget`）で費用を足す。一覧に無い種類が `costUsd` を持つと、型の検査で
   typecheck が通らない。
+- 完了したタスクの監査（`Audit…` のイベント）の費用は `auditCostUsd` に持ち、タスクの予算には入れない。監査の予算（タスクの
+  監査の状態の `usedUsd`）に足す（[監査](audit.md)）。
 - 予算の状態（`budgetState`）：使った額が上限以上なら `exceeded`、まだ通知していなくて上限の `BUDGET_WARN_RATIO`（0.8）以上なら `warn`、
   それ以外は `ok`。
 

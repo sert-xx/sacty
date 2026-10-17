@@ -148,7 +148,7 @@ export function TaskAuditCard({ audit }: { audit: TaskAudit | null }) {
           </ul>
         </div>
       )}
-      {audit.status === "completed" && (
+      {(audit.status === "completed" || audit.findings.length > 0) && (
         <div className="flex flex-col gap-2">
           <h3 className="text-sm font-semibold">{m.findings.title}</h3>
           {audit.findings.length === 0 ? (
@@ -291,7 +291,10 @@ export function ProposalView({
       {decision?.kind === "adopted" && (
         <p className="text-[13px]">
           <span className="mr-2 text-muted-foreground">{m.task}</span>
-          {decision.task.mock ? (
+          {!decision.task ? (
+            // sacty の既定のコンテキストが宛先の提案は、利用者のプロジェクトにタスクを作らない（PBI-125）
+            <span className="text-muted-foreground">{m.noTaskForSacty}</span>
+          ) : decision.task.mock ? (
             <span>
               {decision.task.title}
               <span className="ml-2 text-xs text-muted-foreground">{m.mockTask}</span>

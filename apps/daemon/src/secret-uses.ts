@@ -26,6 +26,8 @@ export function secretUses(config: SactyConfig, settings: SactySettings): Secret
   for (const agent of [
     config.defaultAgent,
     config.guardianAgent,
+    // 完了したタスクの監査の AI（PBI-125。監査の材料を伏せるときにも使う。PR #135 再レビュー指摘）
+    config.auditAgent,
     ...Object.values(config.stepAgents ?? {}),
   ]) {
     if (agent) agents.set(agent.id, agent);

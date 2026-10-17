@@ -16,6 +16,7 @@
 | --- | --- | --- |
 | `default_agent` | 工程を実行する AI（`agents` の名前）。必須 | なし |
 | `guardian_agent` | ゴールガーディアンに使う AI | `default_agent` |
+| `audit_agent` | 完了したタスクの監査に使う AI（[監査](audit.md)） | `guardian_agent`（無ければ `default_agent`） |
 | `step_agents` | 工程（マージの後の監視を含む）とオーケストレーターごとに使う AI（[工程ごとのモデル](#工程ごとのモデル)） | 書かなければ `default_agent`（統合レビューは `guardian_agent`） |
 | `agents` | AI の定義（名前ごと。[エージェント](#エージェント)）。必須 | なし |
 | `providers` | OpenAI 互換の接続先（[ゲートウェイ](gateway.md#openai-互換の接続先providers)） | なし |
@@ -106,7 +107,7 @@ step_agents:          # 書かなければ default_agent（統合レビューは
 `design`（設計）・`split`（タスク分割）・`integrate`（統合レビュー）・`reproduce`（再現）・`implement`（実装）・
 `document`（文書作成）・`operation`（作業）と、
 `deployment`（マージの後の監視の工程の確認。[マージの後の監視](deployment-watch.md)）です。
-`default_agent`・`guardian_agent`・`step_agents` に、`agents` に無い名前を書くと誤りになります。
+`default_agent`・`guardian_agent`・`audit_agent`・`step_agents` に、`agents` に無い名前を書くと誤りになります。
 以前の版の `pr`（PR作成）は、工程を無くしたので書けません（書くと誤りになります。消してください）。
 
 ## エージェントの段階

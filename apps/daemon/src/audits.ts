@@ -13,7 +13,7 @@ import {
   type AuditRow,
   type AuditTarget,
   auditRemarkCount,
-  isCompleted,
+  isAuditTarget,
   isPendingAuditProposal,
   type ListedAuditProposal,
   message,
@@ -26,7 +26,7 @@ import {
   type Task,
   type TaskAudit,
 } from "@sacty/core";
-import { DEFAULT_CONTEXT_REPO } from "./context.js";
+import { auditTargetCandidates } from "./audit-targets.js";
 import { InvalidOperationError } from "./service.js";
 
 /*
@@ -39,17 +39,17 @@ import { InvalidOperationError } from "./service.js";
 /** 監査のデータと操作。server.ts はこの形だけを使う（PBI-125 で実装を差し替える）。 */
 export interface AuditService {
   /** タスクの監査。監査が無ければ null。 */
-  taskAudit(taskId: string): TaskAudit | null;
+  taskAudit(taskId: string): TaskAudit | null | Promise<TaskAudit | null>;
   /** プロジェクトの監査。プロジェクトが無ければ null。 */
-  projectAudits(projectId: string): ProjectAudits | null;
+  projectAudits(projectId: string): ProjectAudits | null | Promise<ProjectAudits | null>;
   /** ダッシュボードの監査の指標（件数だけ）。 */
   dashboard(): AuditDashboard;
   /** 提案を採用し、改修のタスクを作る。 */
-  adopt(proposalId: string, input: unknown): ListedAuditProposal;
-  /** 提案を却下する（理由は必須）。 */
-  reject(proposalId: string, input: unknown): ListedAuditProposal;
+  adopt(proposalId: string, input: unknown): ListedAuditProposal | Promise<ListedAuditProposal>;
+  /** 提案を却下する（理由は必須。記録の前に秘密情報を伏せるので、待つことがある）。 */
+  reject(proposalId: string, input: unknown): ListedAuditProposal | Promise<ListedAuditProposal>;
   /** 予算で一時停止した監査を、新しい上限（累計）で再開する。 */
-  resume(taskId: string, input: unknown): TaskAudit;
+  resume(taskId: string, input: unknown): TaskAudit | Promise<TaskAudit>;
 }
 
 export type AuditDeps = {
@@ -103,26 +103,7 @@ export class NoAuditService implements AuditService {
   }
 }
 
-/** 完了したタスクか（中止したタスクは監査しない）。 */
-export function isAuditTarget(task: Task): boolean {
-  return task.status === "idle" && isCompleted(task);
-}
-
-/** 改修の提案の宛先の候補：対象リポジトリ・使ったコンテキストの層（プロジェクトのものが depth 0）・sacty の既定。 */
-export function auditTargetCandidates(task: Task, project: Project | undefined): AuditTarget[] {
-  const candidates: AuditTarget[] = [];
-  if (task.repository) candidates.push({ kind: "repository", repo: task.repository.url });
-  const layers = (task.context?.layers ?? []).filter((l) => l.repo !== DEFAULT_CONTEXT_REPO);
-  if (layers.length > 0) {
-    layers.forEach((layer, i) => {
-      candidates.push({ kind: "context", repo: layer.repo, depth: layers.length - 1 - i });
-    });
-  } else if (project?.context?.repo) {
-    candidates.push({ kind: "context", repo: project.context.repo, depth: 0 });
-  }
-  candidates.push({ kind: "sacty" });
-  return candidates;
-}
+export { auditTargetCandidates, isAuditTarget };
 
 const ZERO_COUNTS: Record<AuditEvidenceKind, number> = Object.fromEntries(
   AUDIT_EVIDENCE_KINDS.map((k) => [k, 0]),
@@ -782,14 +763,14 @@ function pickTarget(
  * 判断待ちがあれば提案あり、すべて却下なら却下。
  */
 export function causeStatus(
-  proposals: AuditProposal[],
+  proposals: readonly Pick<AuditProposal, "decision">[],
   fixedAt: string | undefined,
   recurredAt: string | undefined,
 ): AuditCauseStatus {
   if (fixedAt && recurredAt) return "recurred";
   if (fixedAt) return "fixed";
   if (proposals.some((p) => p.decision?.kind === "adopted")) return "adopted";
-  if (proposals.some(isPendingAuditProposal)) return "proposed";
+  if (proposals.some((p) => p.decision === undefined)) return "proposed";
   return "rejected";
 }
 

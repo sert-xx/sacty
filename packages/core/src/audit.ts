@@ -1,26 +1,16 @@
 import { z } from "zod";
-import type { StepKey } from "./events.js";
+import { type AuditEvidenceKind, AuditTarget, type StepKey } from "./events.js";
 import { code, type DaemonText } from "./message-code.js";
 
 /*
  * 完了したタスクの監査（PBI-124）。監査は、完了したタスクの過程（工程の判断から完了まで）を調べ、差し戻し・指摘・
  * 試行錯誤の原因と、それを防ぐ改修の提案を出す。ここは画面とデーモンが共有するデータの形で、PBI-124 では
- * デーモンがモックのデータを返し、PBI-125 で実際の監査の記録から作る。
+ * デーモンがモックのデータを返し、PBI-125 で実際の監査の記録（作業履歴の Audit… のイベント）から作る。
+ * 宛先（AuditTarget）と根拠の種類（AUDIT_EVIDENCE_KINDS）は、作業履歴のイベントでも使うので events.ts に置く。
  */
 
 /** 1回の監査の、予算の既定の上限（米ドル。config.yaml の budget.default_per_audit_usd で変えられる）。 */
 export const DEFAULT_AUDIT_BUDGET_USD = 1;
-
-/** 監査の根拠になった出来事の種類。 */
-export const AUDIT_EVIDENCE_KINDS = [
-  "changesRequested",
-  "pullRequestRemark",
-  "pause",
-  "retry",
-  "toolFailure",
-  "escalation",
-] as const;
-export type AuditEvidenceKind = (typeof AUDIT_EVIDENCE_KINDS)[number];
 
 /**
  * 監査の状態。待ち → 大まかな監査（surveying）→ 深掘り（deepDiving）→ 完了。失敗と、予算で一時停止もある。
@@ -34,24 +24,6 @@ export const AUDIT_STATUSES = [
   "budgetPaused",
 ] as const;
 export type AuditStatus = (typeof AUDIT_STATUSES)[number];
-
-/**
- * 改修の提案の宛先。対象リポジトリ・コンテキストのリポジトリ（depth はプロジェクトのコンテキストを 0 として、
- * extends で上へたどった数）・sacty の既定のコンテキスト（ゴールガーディアンのプロンプトや既定のスキル）。
- * repo の長さは制限しない：宛先の候補は、タスクの対象リポジトリと使ったコンテキストの指定（それぞれの入力の上限に従う）
- * から作るので、ここで狭めると、正しい候補を採用できなくなる（PR #134 レビュー指摘）。採用のときは候補と一致するかを
- * 確かめるので、候補に無い長い文字列は通らない。
- */
-export const AuditTarget = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("repository"), repo: z.string().min(1) }),
-  z.object({
-    kind: z.literal("context"),
-    repo: z.string().min(1),
-    depth: z.number().int().min(0).max(100),
-  }),
-  z.object({ kind: z.literal("sacty") }),
-]);
-export type AuditTarget = z.infer<typeof AuditTarget>;
 
 /** 宛先が同じか。 */
 export function sameAuditTarget(a: AuditTarget, b: AuditTarget): boolean {
@@ -111,7 +83,8 @@ export type AuditProposalDecision =
       kind: "adopted";
       at: string;
       target: AuditTarget;
-      task: { taskId: string; title: string; mock?: true };
+      /** 作った改修のタスク。sacty の既定のコンテキストが宛先なら作らないので無い（PBI-125）。 */
+      task?: { taskId: string; title: string; mock?: true };
     }
   | { kind: "rejected"; at: string; reason: string };
 

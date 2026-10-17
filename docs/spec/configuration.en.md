@@ -17,6 +17,7 @@ Related ADRs: none
 | `image` | `sacty-agent:0.1.0` (`DEFAULT_IMAGE`) | The default image. Used to run agents and tests |
 | `default_agent` | (required) | The default AI. A name in `agents` |
 | `guardian_agent` | `default_agent` | The Goal Guardian's AI |
+| `audit_agent` | `guardian_agent` (or `default_agent`) | The AI for audits of completed tasks ([Audit](audit.en.md)) |
 | `step_agents` | `{}` | The AI per step (`StepKey`; `deployment` is the check in the after-merge watch step) and for `orchestrator`. If not written, `default_agent`; for Integration review (`integrate`), `guardian_agent` |
 | `agents` | (required) | Agent definitions ("Agents" below) |
 | `providers` | `{}` | OpenAI-compatible (Responses API) endpoints. Names match `^[A-Za-z0-9_-]+$`. `base_url` (http or https), `secret` (optional), `via_gateway` (default `false`) |
@@ -31,7 +32,7 @@ Related ADRs: none
 | `gateway.platforms` | `{}` | Organization platforms (PF). Names match `^[a-z0-9][a-z0-9-]*$` ([Gateway](gateway.en.md)) |
 | `gateway.mcp_servers` | `{}` | MCP servers run on the host. Names match `^[A-Za-z0-9_-]+$` (same as above) |
 
-Other checks: it is an error when a value of `default_agent`, `guardian_agent`, or `step_agents` is not in `agents`, or when a `provider` name is not in `providers`.
+Other checks: it is an error when a value of `default_agent`, `guardian_agent`, `audit_agent`, or `step_agents` is not in `agents`, or when a `provider` name is not in `providers`.
 It is also an error when an `agents` name is a tier (`claude_<tier>`, `codex_<tier>`; the tiers are `lite`, `entry`, `standard`, `advanced`, and `ultimate` in `AGENT_TIERS`)
 but its `runtime` does not match the prefix (`config.tierRuntime`). Tier agents are also collected in `tierAgents` (per runtime and tier;
 `parseTierId`, `tierAgentsFor`). How they are placed is in [Context composition](context.en.md#files-placed-for-a-run). The template (`CONFIG_TEMPLATE`) has commented examples of all five tiers

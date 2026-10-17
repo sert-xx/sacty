@@ -685,6 +685,33 @@ function describeEventText(event: ActivityEvent, l: LabelMessages): string {
       return e.DeploymentFixRegistered(event.payload.kind, event.payload.title);
     case "DeploymentFixSuppressed":
       return e.DeploymentFixSuppressed(event.payload.reason, MAX_FIX_CHAIN);
+    case "AuditQueued":
+      return e.AuditQueued(usd(event.payload.capUsd));
+    case "AuditSurveyed":
+      return e.AuditSurveyed(
+        event.payload.concerns.length,
+        cost(event.payload.auditCostUsd, event.payload.estimated),
+      );
+    case "AuditDeepDived":
+      return e.AuditDeepDived(
+        l.step[event.payload.step],
+        event.payload.findings.length,
+        cost(event.payload.auditCostUsd, event.payload.estimated),
+      );
+    case "AuditCompleted":
+      return e.AuditCompleted;
+    case "AuditFailed":
+      return e.AuditFailed(l.text(event.payload.reason));
+    case "AuditBudgetWarned":
+      return e.AuditBudgetWarned(usd(event.payload.usedUsd), usd(event.payload.capUsd));
+    case "AuditBudgetPaused":
+      return e.AuditBudgetPaused(usd(event.payload.usedUsd), usd(event.payload.capUsd));
+    case "AuditCapRaised":
+      return e.AuditCapRaised(usd(event.payload.capUsd));
+    case "AuditProposalAdopted":
+      return e.AuditProposalAdopted(event.payload.fixTaskId !== undefined);
+    case "AuditProposalRejected":
+      return e.AuditProposalRejected(event.payload.reason);
   }
 }
 

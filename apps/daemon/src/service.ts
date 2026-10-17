@@ -1,15 +1,18 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
   type ActivityEvent,
   type Actor,
+  AdoptAuditProposalInput,
   ANSWER_MAX,
   ApproveStepInput,
   AskQuestionInput,
   activeStep,
   applyEvent,
+  auditOpen,
   awaitingDeploymentCheck,
   awaitingDeploymentCi,
   awaitingRepository,
@@ -48,6 +51,7 @@ import {
   gatePullRequest,
   type IntakeKind,
   investigationIsGoal,
+  isAuditTarget,
   isCompleted,
   isRepoless,
   latestStepPullRequest,
@@ -57,6 +61,7 @@ import {
   MAX_VERIFY_ATTEMPTS,
   mapFreeText,
   message,
+  nextAuditDive,
   OperationSettings,
   openProposal,
   type PauseReason,
@@ -73,8 +78,10 @@ import {
   proposalAccepted,
   questionBlocked,
   queueOverSince,
+  RejectAuditProposalInput,
   RepoUrl,
   RequestChangesInput,
+  ResumeAuditInput,
   ResumeTaskInput,
   renderMessage,
   responsibleProject,
@@ -86,9 +93,12 @@ import {
   STEP_PLANS,
   StepKey,
   StepPullRequestKey,
+  sameAuditTarget,
   sameGitHubUrl,
   stepAgentChangeable,
   stepDocumentPath,
+  TASK_BODY_MAX,
+  TASK_TITLE_MAX,
   type Task,
   type TaskProposal,
   type TicketService,
@@ -113,7 +123,19 @@ import type { AgentOutcome } from "./agents/parse.js";
 import { redact, redactText } from "./agents/redact.js";
 import type { TestRunner, TestRunResult } from "./agents/test-runner.js";
 import { type PlacedTier, selectTiers, tierFiles } from "./agents/tiers.js";
-import { CI_FAILURES_MAX, type CiStatusReader, isFailedConclusion } from "./ci.js";
+import { auditCounts, countToolFailures, redactDeep, redactStagedFiles } from "./audit-evidence.js";
+import {
+  AUDIT_LEDGER_DIR,
+  AUDIT_LEDGER_FILE,
+  buildAuditDivePrompt,
+  buildAuditSurveyPrompt,
+  extractAuditDive,
+  extractAuditSurvey,
+  type KnownAuditCause,
+  type RejectedAuditProposal,
+} from "./audit-prompts.js";
+import { auditTargetCandidates } from "./audit-targets.js";
+import { CI_FAILURES_MAX, type CiStatusReader, isFailedConclusion, redactLog } from "./ci.js";
 import {
   type AgentConfig,
   agentFor,
@@ -346,6 +368,11 @@ export class InvalidOperationError extends Error {
 
 export type ServiceDeps = {
   activity: ActivityStore;
+  /**
+   * 完了したタスクを監査する（PBI-125）。既定は監査しない（テストや、監査の画面をモックで確かめるとき）。main.ts が
+   * モックでないときに有効にする。
+   */
+  audit?: boolean;
   /** 呼ぶたびに設定を読み直す（デーモンを止めずに設定を変えられるように）。 */
   config: () => ConfigResult;
   secrets: SecretStore;
@@ -3397,10 +3424,24 @@ export class TaskService {
       }
     }
     const before = this.tasks.get(task.id);
+    // 完了した瞬間の追記なら、監査を待つ記録を同じ追記に入れる（完了と監査の登録の間で止まっても、監査が抜けないように。
+    // この機能より前に完了したタスクは監査しない。PBI-125・PR #135 レビュー指摘）
+    const queued = this.auditQueueEvent(before, preview.get(task.id));
+    if (queued) {
+      preview = applyEvent(preview, {
+        ...EventInput.parse(queued.event),
+        seq: Number.MAX_SAFE_INTEGER,
+        id: "preview-audit",
+        taskId: task.id,
+        projectId: task.projectId,
+        at,
+        actor: queued.actor,
+      });
+    }
     const written = this.deps.activity.append({
       taskId: task.id,
       projectId: task.projectId,
-      events,
+      events: queued ? [...events, queued] : events,
     });
     for (const event of written) {
       const previous = this.tasks.get(event.taskId);
@@ -3523,35 +3564,44 @@ export class TaskService {
   }
 
   queuedTaskIds(): string[] {
-    return [...this.tasks.values()]
-      .filter((t) =>
-        // 親が中止された子タスクは実行せず、中止する（親の中止の途中でデーモンが止まっても、
-        // 再起動の後に中止を終えるため。PBI-27 レビュー指摘）
-        this.parentCancelled(t)
-          ? t.status !== "cancelled" && !isCompleted(t)
-          : // 工程がまだ決まっていないタスクも、オーケストレーターが選ぶので実行対象にする（PBI-17）
-            (t.status === "queued" && (activeStep(t) || t.steps.length === 0)) ||
-            awaitingVerification(t) ||
-            // 完了した調査の結果を、取り込み元の Issue に返す（PBI-18）
-            awaitingIssueComment(t) ||
-            // 書いたレビューを、対象の PR に投稿する（PBI-19）
-            awaitingReviewPost(t) ||
-            // 分割した子タスクを作る・始める、子タスクがすべて終わったら完了にする（PBI-27）
-            this.splitPending(t) ||
-            // 再現のテストを実行して、再現できたかを確かめる（PBI-29）
-            awaitingReproductionCheck(t) ||
-            // 作った PR の URL を、チケットにコメントする（PBI-52）
-            awaitingTicketPrComment(t) ||
-            // 承認した成果を、決めた書き出し先に書き出す（PBI-56）
-            awaitingExport(t) !== undefined ||
-            // 要求要件・設計の成果を、タスクブランチへの PR にする（PBI-57）
-            this.awaitingStepPullRequest(t) !== undefined ||
-            // マージの後のデプロイの確認（PBI-89）。一時停止中のタスクでは実行しない
-            (awaitingDeploymentCheck(t) && t.status !== "paused"),
-      )
-      .filter((t) => !this.cancelling.has(t.id) && !this.pauseRequested.has(t.id))
-      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
-      .map((t) => t.id);
+    return (
+      [...this.tasks.values()]
+        .filter((t) =>
+          // 親が中止された子タスクは実行せず、中止する（親の中止の途中でデーモンが止まっても、
+          // 再起動の後に中止を終えるため。PBI-27 レビュー指摘）
+          this.parentCancelled(t)
+            ? t.status !== "cancelled" && !isCompleted(t)
+            : // 工程がまだ決まっていないタスクも、オーケストレーターが選ぶので実行対象にする（PBI-17）
+              (t.status === "queued" && (activeStep(t) || t.steps.length === 0)) ||
+              awaitingVerification(t) ||
+              // 完了した調査の結果を、取り込み元の Issue に返す（PBI-18）
+              awaitingIssueComment(t) ||
+              // 書いたレビューを、対象の PR に投稿する（PBI-19）
+              awaitingReviewPost(t) ||
+              // 分割した子タスクを作る・始める、子タスクがすべて終わったら完了にする（PBI-27）
+              this.splitPending(t) ||
+              // 再現のテストを実行して、再現できたかを確かめる（PBI-29）
+              awaitingReproductionCheck(t) ||
+              // 作った PR の URL を、チケットにコメントする（PBI-52）
+              awaitingTicketPrComment(t) ||
+              // 承認した成果を、決めた書き出し先に書き出す（PBI-56）
+              awaitingExport(t) !== undefined ||
+              // 要求要件・設計の成果を、タスクブランチへの PR にする（PBI-57）
+              this.awaitingStepPullRequest(t) !== undefined ||
+              // マージの後のデプロイの確認（PBI-89）。一時停止中のタスクでは実行しない
+              (awaitingDeploymentCheck(t) && t.status !== "paused") ||
+              // 完了したタスクの監査（PBI-125）
+              this.awaitingAudit(t),
+        )
+        .filter((t) => !this.cancelling.has(t.id) && !this.pauseRequested.has(t.id))
+        // 監査だけが残るタスク（完了したタスク）は、ほかの実行の後にする（監査で、進めている作業の実行の枠を塞がない。PBI-125）
+        .sort(
+          (a, b) =>
+            Number(this.auditOnly(a)) - Number(this.auditOnly(b)) ||
+            a.createdAt.localeCompare(b.createdAt),
+        )
+        .map((t) => t.id)
+    );
   }
 
   /**
@@ -3944,6 +3994,8 @@ export class TaskService {
     if (initial && awaitingDeploymentCheck(initial) && initial.status !== "paused") {
       return this.checkDeployment(initial);
     }
+    // 完了したタスクの監査（PBI-125）。1回の呼び出しで、エージェントの実行を1つだけ進める
+    if (initial && this.awaitingAudit(initial)) return this.runAudit(initial);
     if (initial?.status !== "queued") return;
     const config = this.deps.config();
     if (!config.ok) return; // 設定の問題は status() で画面に出す。タスクは実行待ちのまま。
@@ -6098,6 +6150,8 @@ export class TaskService {
       let containerStopped = true;
       if (inflight) {
         this.pauseRequested.add(id);
+        // 監査の深掘りの順番を待っているなら、待つのをやめさせる（PR #135 再レビュー指摘）
+        this.auditLockWaits.get(id)?.();
         const runIds = [...inflight.runIds];
         this.stopRuns(runIds);
         await inflight.done.catch(() => {});
@@ -7535,6 +7589,591 @@ export class TaskService {
     }
     // 予算の通知は記録するが、タスクは止めない（次の工程の実行の前に、予算で止まる）
     this.warnIfNeeded(this.mustGet(task.id));
+  }
+
+  // ─── 完了したタスクの監査（PBI-125） ───────────────────────────────────────────────
+
+  /** デーモンを止めている（止めるときの実行の失敗を、監査の失敗として記録しない）。 */
+  private stopping = false;
+
+  /** デーモンを止め始めた（main.ts が、実行中のコンテナを止める前に呼ぶ）。 */
+  beginShutdown(): void {
+    this.stopping = true;
+  }
+
+  /** 監査を進めるタスクか。 */
+  private awaitingAudit(task: Task): boolean {
+    return this.deps.audit === true && isAuditTarget(task) && auditOpen(task);
+  }
+
+  /** 監査のほかに実行するものが無いタスクか（待ち行列で後にする）。 */
+  private auditOnly(task: Task): boolean {
+    return (
+      this.awaitingAudit(task) &&
+      awaitingExport(task) === undefined &&
+      !(awaitingDeploymentCheck(task) && task.status !== "paused")
+    );
+  }
+
+  /** 監査のエージェントの実行中か（画面の「大まかな監査中」「深掘り中」の表示）。 */
+  auditRunning(taskId: string): boolean {
+    const task = this.tasks.get(taskId);
+    return task !== undefined && this.awaitingAudit(task) && this.inflight.has(taskId);
+  }
+
+  /** タスクが完了する（監査の対象になる）追記なら、監査を待つ記録（同じ追記に入れる）。 */
+  private auditQueueEvent(
+    before: Task | undefined,
+    after: Task | undefined,
+  ): { actor: Actor; event: EventInput } | undefined {
+    if (this.deps.audit !== true || !after || after.audit || !isAuditTarget(after))
+      return undefined;
+    if (before && isAuditTarget(before)) return undefined;
+    return {
+      actor: "sacty",
+      event: {
+        type: "AuditQueued",
+        payload: { auditId: randomUUID(), capUsd: this.auditBudgetUsd() },
+      },
+    };
+  }
+
+  /** プロジェクトごとの、深掘りの順番待ち（既存の原因の一覧を読んでから記録するまでを重ねない）。 */
+  private readonly auditDiveLocks = new Map<string, Promise<void>>();
+
+  /**
+   * 同じプロジェクトの深掘りを1つずつ実行する（PR #135 レビュー指摘）。並べて実行すると、どちらも同じ既存の原因の一覧を
+   * 読むため、同じ新しい原因が別の鍵で記録され、まとまらない。
+   */
+  private async withAuditDiveLock(
+    projectId: string,
+    taskId: string,
+    run: () => Promise<void>,
+  ): Promise<void> {
+    const previous = this.auditDiveLocks.get(projectId) ?? Promise.resolve();
+    let release = () => {};
+    const mine = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const chain = previous.then(() => mine);
+    this.auditDiveLocks.set(projectId, chain);
+    // 順番を待つ間に中止されたら、待つのをやめる（中止の操作が、先の深掘りの終わりを待たない。PR #135 再レビュー指摘）。
+    // 後に並んだ深掘りは、自分の順番（先の深掘りの後）を保ったまま進む
+    const aborted = new Promise<true>((resolve) =>
+      this.auditLockWaits.set(taskId, () => resolve(true)),
+    );
+    try {
+      const stopped = await Promise.race([previous.then(() => false), aborted]);
+      if (stopped || this.cancelling.has(taskId) || this.stopping) return;
+      await run();
+    } finally {
+      this.auditLockWaits.delete(taskId);
+      release();
+      // 待つのをやめたときも、先の深掘りが終わるまで（chain が解決するまで）は、順番の記録を消さない。後から来た深掘りが
+      // 先の深掘りと重ならないように（PR #135 再レビュー指摘）
+      void chain.then(() => {
+        if (this.auditDiveLocks.get(projectId) === chain) this.auditDiveLocks.delete(projectId);
+      });
+    }
+  }
+
+  /** 深掘りの順番を待っているタスクの、待つのをやめさせる関数（中止のとき）。 */
+  private readonly auditLockWaits = new Map<string, () => void>();
+
+  /**
+   * 監査を1つ進める（ワーカーが実行する）。大まかな監査 → 懸念のある工程の深掘り（1つずつ）→ 完了。エージェントを実行する
+   * 前に予算を確かめ、上限に達していれば一時停止する。
+   */
+  private async runAudit(task: Task): Promise<void> {
+    const audit = task.audit;
+    if (!audit) return;
+    const config = this.deps.config();
+    if (!config.ok) return; // 設定の問題は status() で画面に出す。監査は待ったまま
+    const step = audit.survey ? nextAuditDive(audit) : undefined;
+    if (audit.survey && !step) {
+      this.append(task, [
+        { actor: "sacty", event: { type: "AuditCompleted", payload: { auditId: audit.auditId } } },
+      ]);
+      return;
+    }
+    if (audit.usedUsd >= audit.capUsd) {
+      this.append(task, [
+        {
+          actor: "sacty",
+          event: {
+            type: "AuditBudgetPaused",
+            payload: { auditId: audit.auditId, usedUsd: audit.usedUsd, capUsd: audit.capUsd },
+          },
+        },
+      ]);
+      return;
+    }
+    if (!step) return this.runAuditAgent(task, config.config, undefined);
+    await this.withAuditDiveLock(task.projectId, task.id, async () => {
+      // 順番を待つ間に、中止された・別の実行が進めたなら、何もしない
+      const latest = this.tasks.get(task.id);
+      if (!latest || !this.awaitingAudit(latest) || !latest.audit?.survey) return;
+      if (nextAuditDive(latest.audit) !== step) return;
+      await this.runAuditAgent(latest, config.config, step);
+    });
+  }
+
+  /** 監査のエージェントを1回実行して記録する。step が無ければ大まかな監査、あれば その工程の深掘り。 */
+  private async runAuditAgent(
+    task: Task,
+    config: SactyConfig,
+    step: StepKey | undefined,
+  ): Promise<void> {
+    const audit = task.audit;
+    if (!audit) return;
+    const agent = config.auditAgent;
+    const runId = randomUUID();
+    const logsDir = join(this.deps.workspaceRoot, "_audit-logs", runId);
+    const ledgerDir = join(this.deps.workspaceRoot, "_audit-ledger", runId);
+    let record: { actor: Actor; event: EventInput }[];
+    try {
+      // 監査に渡す材料（台帳・タスクの本文・指摘・却下の理由など）は、切り詰める前に秘密情報を伏せる（PR #135 レビュー指摘）
+      const hide = await this.auditRedactor(task, config);
+      const raw = this.deps.activity.forTask(task.id);
+      const activity = raw.map(
+        (e) => ({ ...e, payload: redactDeep(e.payload, hide) }) as ActivityEvent,
+      );
+      const shown = redactDeep(task, hide);
+      const logs = this.stageQuestionLogs(task.id, raw, logsDir, runId);
+      // 並べたログは元のファイルへのハードリンクなので、元を変えずに、伏せた写しに置き換える（PR #135 再レビュー指摘）
+      if ("runs" in logs) await redactStagedFiles(logsDir, hide);
+      // 台帳の全文（伏せたもの）を、読み取り専用で渡す（指示には上限まで入れ、省いた行はここで読める。PR #135 レビュー指摘）
+      mkdirSync(ledgerDir, { recursive: true });
+      writeFileSync(
+        join(ledgerDir, AUDIT_LEDGER_FILE),
+        `${activity.map((e) => JSON.stringify(e)).join("\n")}\n`,
+      );
+      // 根拠の件数は大まかな監査のときに数え、深掘りでは記録した件数を使う（ログを毎回読み直さない。PR #135 レビュー指摘）
+      const counts =
+        audit.survey?.counts ?? auditCounts(raw, await this.taskToolFailures(task.id, raw));
+      const project = this.deps.projects.get(task.projectId);
+      const candidates = auditTargetCandidates(task, project);
+      const known = this.knownAuditCauses(task.projectId);
+      const prompt = step
+        ? buildAuditDivePrompt(shown, activity, counts, logs, {
+            step,
+            reason: hide(audit.survey?.concerns.find((c) => c.step === step)?.reason ?? ""),
+            survey: hide(audit.survey?.summary ?? ""),
+            candidates,
+            known: known.causes.map((c) => ({ ...c, title: hide(c.title) })),
+            rejected: known.rejected.map((r) => ({ title: hide(r.title), reason: hide(r.reason) })),
+          })
+        : buildAuditSurveyPrompt(shown, activity, counts, logs);
+      const {
+        outcome,
+        costUsd,
+        estimated,
+        runId: ran,
+      } = await this.runGuardian(
+        task,
+        {
+          agent,
+          image: config.image,
+          prompt,
+          role: step ? "audit-dive" : "audit",
+          mounts: [
+            { hostPath: ledgerDir, containerPath: AUDIT_LEDGER_DIR, readOnly: true },
+            ...("runs" in logs
+              ? [{ hostPath: logsDir, containerPath: CONTAINER_LOGS_DIR, readOnly: true }]
+              : []),
+          ],
+          readDirs: [AUDIT_LEDGER_DIR, ...("runs" in logs ? [CONTAINER_LOGS_DIR] : [])],
+          runId,
+          stopped: () => this.cancelling.has(task.id) || this.stopping,
+        },
+        task.steps.some((s) => s.key === "implement") ? "implemented" : "base",
+      );
+      // デーモンを止める・タスクを中止するときの実行の終わりは、記録しない（次の起動で、もう一度実行する）
+      if (this.stopping || this.cancelling.has(task.id)) return;
+      // 監査の間に秘密情報の値・参照を変えても伏せるよう、記録する前に今の値を取り直す（送る前の値も合わせて伏せる。
+      // PR #135 再レビュー指摘）
+      const fresh = await this.auditRedactor(task, config);
+      const hideResult = (text: string) => fresh(hide(text));
+      const run = {
+        agentId: agent.id,
+        ...agentSetting(agent),
+        runId: ran,
+        ...(outcome.usage ? { usage: outcome.usage } : {}),
+        auditCostUsd: costUsd,
+        estimated,
+      };
+      const failed = (reason: DaemonText): { actor: Actor; event: EventInput }[] => [
+        {
+          actor: "auditor",
+          event: {
+            type: "AuditFailed",
+            payload: { auditId: audit.auditId, reason, ...(step ? { step } : {}), ...run },
+          },
+        },
+      ];
+      if (outcome.kind === "failed") {
+        record = failed(
+          message("audit.runFailed", { detail: mapFreeText(outcome.message, hideResult) }),
+        );
+      } else if (!step) {
+        const survey = extractAuditSurvey(hideResult(outcome.output), task);
+        record = survey.ok
+          ? [
+              {
+                actor: "auditor",
+                event: {
+                  type: "AuditSurveyed",
+                  payload: {
+                    auditId: audit.auditId,
+                    summary: survey.summary,
+                    counts,
+                    concerns: survey.concerns,
+                    ...run,
+                  },
+                },
+              },
+            ]
+          : failed(survey.reason);
+      } else {
+        const dive = extractAuditDive(hideResult(outcome.output), {
+          eventIds: new Set(activity.map((e) => e.id)),
+          runIds: new Set(
+            activity.flatMap((e) => {
+              const id = (e.payload as { runId?: unknown }).runId;
+              return typeof id === "string" && id ? [id] : [];
+            }),
+          ),
+          candidates,
+          knownKeys: new Set(known.causes.map((c) => c.causeKey)),
+        });
+        record = dive.ok
+          ? [
+              {
+                actor: "auditor",
+                event: {
+                  type: "AuditDeepDived",
+                  payload: {
+                    auditId: audit.auditId,
+                    step,
+                    summary: dive.summary,
+                    findings: dive.findings.map((f, i) => ({
+                      causeKey: f.sameAs ?? `${audit.auditId}:${step}:${i}`,
+                      title: f.title,
+                      detail: f.detail,
+                      step,
+                      evidence: f.evidence.map((e) => ({ ...e, step })),
+                      proposals: f.proposals.map((p, j) => ({
+                        id: `${task.id}:${audit.auditId}:${step}:${i}:${j}`,
+                        title: p.title,
+                        body: p.body,
+                        target: p.target,
+                        candidates,
+                      })),
+                    })),
+                    ...run,
+                  },
+                },
+              },
+            ]
+          : failed(dive.reason);
+      }
+    } catch (error) {
+      if (this.stopping || this.cancelling.has(task.id)) return;
+      record = [
+        {
+          actor: "auditor",
+          event: {
+            type: "AuditFailed",
+            payload: {
+              auditId: audit.auditId,
+              reason: message("audit.runFailed", { detail: errorText(error) }),
+              ...(step ? { step } : {}),
+            },
+          },
+        },
+      ];
+    } finally {
+      rmSync(logsDir, { recursive: true, force: true });
+      rmSync(ledgerDir, { recursive: true, force: true });
+    }
+    const latest = this.tasks.get(task.id);
+    if (!latest || !isAuditTarget(latest) || latest.audit?.auditId !== audit.auditId) return;
+    this.append(latest, record);
+    this.warnAuditBudget(this.mustGet(task.id));
+  }
+
+  /** 監査の予算の 80% に達したら記録する（上限ごとに1回）。 */
+  private warnAuditBudget(task: Task): void {
+    const audit = task.audit;
+    if (!audit || !auditOpen(task)) return;
+    if (audit.usedUsd < audit.capUsd * BUDGET_WARN_RATIO || audit.warnedCapUsd === audit.capUsd) {
+      return;
+    }
+    this.append(task, [
+      {
+        actor: "sacty",
+        event: {
+          type: "AuditBudgetWarned",
+          payload: { auditId: audit.auditId, usedUsd: audit.usedUsd, capUsd: audit.capUsd },
+        },
+      },
+    ]);
+  }
+
+  /**
+   * タスクの各実行のセッションログ（標準出力の JSONL だけ）から、失敗したツール呼び出しを数える（ログが無ければ 0）。
+   * 1つずつ非同期で読む（大きいログで、ほかのタスクの進行や API の応答を止めない。PR #135 レビュー指摘）。
+   */
+  private async taskToolFailures(
+    taskId: string,
+    activity: readonly ActivityEvent[],
+  ): Promise<number> {
+    const store = this.deps.sessionLogs;
+    if (!store) return 0;
+    const runIds = new Set(
+      activity.flatMap((e) => {
+        const id = (e.payload as { runId?: unknown }).runId;
+        return typeof id === "string" && id ? [id] : [];
+      }),
+    );
+    let failures = 0;
+    for (const runId of runIds) {
+      const path = store.path(taskId, runId, "events");
+      if (!path) continue;
+      try {
+        failures += countToolFailures(await readFile(path, "utf8"));
+      } catch {
+        // 無い・読めないログは数えない
+      }
+    }
+    return failures;
+  }
+
+  /**
+   * 監査の材料から秘密情報を伏せる関数（PR #135 レビュー指摘）。sacty の設定・sacty の設定で使う秘密情報の値と、
+   * GitHub のトークン、よくある秘密情報の形（CI のログと同じ規則）を伏せる。取り出せない値は飛ばす。
+   */
+  private async auditRedactor(task: Task, config: SactyConfig): Promise<(text: string) => string> {
+    // 実行に使う設定と、今の設定の両方から取り出す（深掘りの順番を待つ間に設定を変えても伏せる。PR #135 再レビュー指摘）
+    const values = await this.auditSecretValues(task.projectId, config);
+    if (task.repository) {
+      try {
+        await this.githubToken(task, task.repository.url, values);
+      } catch {
+        // GitHub のアカウントを選んでいないなど
+      }
+    }
+    return (text: string) => redactLog(text, values);
+  }
+
+  /**
+   * 監査で伏せる秘密情報の値：sacty の設定・sacty の設定で使う秘密情報（監査の AI のものを含む）と、プロジェクトで選んだ
+   * GitHub のアカウントのトークン。取り出せない値は飛ばす（形で伏せる）。config を渡したときは、それと今の設定の両方から
+   * 取り出す。同じ参照の値の入れ替えは知る手立てが無いので、使い回さずに毎回取り出す（PR #135 再レビュー指摘）。
+   */
+  private async auditSecretValues(projectId: string, config?: SactyConfig): Promise<string[]> {
+    const current = this.deps.config();
+    const configs = [config, current.ok ? current.config : undefined].filter(
+      (c): c is SactyConfig => c !== undefined,
+    );
+    const refs = [
+      ...new Set(
+        configs.flatMap((c) =>
+          uniqueUses(secretUses(c, this.readableSettings())).map((u) => u.ref),
+        ),
+      ),
+    ];
+    const accounts = this.deps.projects.get(projectId)?.githubAccounts ?? {};
+    const values: string[] = [];
+    for (const ref of refs) {
+      try {
+        values.push(await this.deps.secrets.get(ref));
+      } catch {
+        // 取り出せない値は伏せられないが、形で伏せる
+      }
+    }
+    for (const host of Object.keys(accounts)) {
+      try {
+        await this.githubToken({ projectId }, `https://${host}/sacty/sacty`, values);
+      } catch {
+        // gh にログインしていないなど
+      }
+    }
+    return values;
+  }
+
+  /**
+   * 監査の画面・レポートに出す文（元のタスクの題など）の秘密情報を伏せる関数（PR #135 再レビュー指摘）。設定を読めなければ、
+   * よくある秘密情報の形だけを伏せる。
+   */
+  async auditHide(projectId: string): Promise<(text: string) => string> {
+    const values = await this.auditSecretValues(projectId);
+    return (text: string) => redactLog(text, values);
+  }
+
+  /** プロジェクトの既存の原因（鍵・題・状態）と、人が却下した提案と理由（監査に渡す）。 */
+  private knownAuditCauses(projectId: string): {
+    causes: KnownAuditCause[];
+    rejected: RejectedAuditProposal[];
+  } {
+    const causes = new Map<string, KnownAuditCause>();
+    const rejected: RejectedAuditProposal[] = [];
+    for (const t of this.tasks.values()) {
+      if (t.projectId !== projectId || !t.audit || t.status === "cancelled") continue;
+      for (const f of t.audit.findings) {
+        const adopted = f.proposals.some((p) => p.decision?.kind === "adopted");
+        const previous = causes.get(f.causeKey);
+        causes.set(f.causeKey, {
+          causeKey: f.causeKey,
+          title: previous?.title ?? f.title,
+          status:
+            adopted || previous?.status === "改修を採用した" ? "改修を採用した" : "改修は未採用",
+        });
+        for (const p of f.proposals) {
+          if (p.decision?.kind === "rejected") {
+            rejected.push({ title: p.title, reason: p.decision.reason });
+          }
+        }
+      }
+    }
+    return { causes: [...causes.values()], rejected };
+  }
+
+  /** 改修の提案を持つタスクと、その提案を探す。 */
+  private findAuditProposal(proposalId: string) {
+    for (const task of this.tasks.values()) {
+      for (const finding of task.audit?.findings ?? []) {
+        const proposal = finding.proposals.find((p) => p.id === proposalId);
+        if (proposal) return { task, finding, proposal };
+      }
+    }
+    return undefined;
+  }
+
+  /**
+   * 改修の提案を採用する（PBI-125）。宛先は提案の候補から選ぶ。対象リポジトリ・コンテキストのリポジトリが宛先なら、
+   * 改修のタスクを作る（先に採用を記録してから作り、途中で止まっても起動のときに作る）。sacty の既定のコンテキストが
+   * 宛先なら、利用者のプロジェクトにはタスクを作らず、採用だけを記録する（ADR 20261017-1145）。
+   */
+  adoptAuditProposal(proposalId: string, raw: unknown): Task {
+    const { target } = AdoptAuditProposalInput.parse(raw);
+    const found = this.findAuditProposal(proposalId);
+    if (!found) throw new InvalidOperationError(message("audit.proposalNotFound"));
+    const { task, proposal } = found;
+    if (task.status === "cancelled") throw new InvalidOperationError(message("audit.notAdoptable"));
+    if (proposal.decision) throw new InvalidOperationError(message("audit.alreadyDecided"));
+    if (!proposal.candidates.some((c) => sameAuditTarget(c, target))) {
+      throw new InvalidOperationError(message("audit.targetNotCandidate"));
+    }
+    const fixTaskId = target.kind === "sacty" ? undefined : randomUUID();
+    const updated = this.append(task, [
+      {
+        actor: "person",
+        event: {
+          type: "AuditProposalAdopted",
+          payload: { proposalId, target, ...(fixTaskId ? { fixTaskId } : {}) },
+        },
+      },
+    ]);
+    this.createAuditFixTask(updated, proposalId);
+    return this.mustGet(task.id);
+  }
+
+  /** 採用した提案の改修のタスクを作る（作ってあれば何もしない）。 */
+  private createAuditFixTask(task: Task, proposalId: string): void {
+    const finding = task.audit?.findings.find((f) => f.proposals.some((p) => p.id === proposalId));
+    const proposal = finding?.proposals.find((p) => p.id === proposalId);
+    const decision = proposal?.decision;
+    if (!finding || !proposal || decision?.kind !== "adopted" || !decision.fixTaskId) return;
+    if (decision.target.kind === "sacty" || this.tasks.has(decision.fixTaskId)) return;
+    const config = this.deps.config();
+    const budgetCapUsd = config.ok ? config.config.budgetPerTaskUsd : DEFAULT_BUDGET_USD;
+    const title = `改修：${proposal.title}`;
+    const body = [
+      proposal.body,
+      "",
+      "---",
+      `監査で見つけた原因：${finding.title}`,
+      "",
+      finding.detail,
+    ].join("\n");
+    this.append({ id: decision.fixTaskId, projectId: task.projectId }, [
+      {
+        actor: "sacty",
+        event: {
+          type: "TaskCreated",
+          payload: {
+            title: title.length > TASK_TITLE_MAX ? `${title.slice(0, TASK_TITLE_MAX - 1)}…` : title,
+            body: body.length > TASK_BODY_MAX ? `${body.slice(0, TASK_BODY_MAX - 1)}…` : body,
+            start: "audit",
+            repo: decision.target.repo,
+            budgetCapUsd,
+            auditFix: { taskId: task.id, proposalId },
+          },
+        },
+      },
+    ]);
+  }
+
+  /** 採用を記録したが、作る前に止まった改修のタスクを作る（起動のとき）。 */
+  resumeAuditFixTasks(): void {
+    for (const task of [...this.tasks.values()]) {
+      for (const finding of task.audit?.findings ?? []) {
+        for (const p of finding.proposals) {
+          if (p.decision?.kind === "adopted" && p.decision.fixTaskId) {
+            this.createAuditFixTask(this.mustGet(task.id), p.id);
+          }
+        }
+      }
+    }
+  }
+
+  /**
+   * 改修の提案を、理由を添えて却下する（PBI-125）。理由は以後の監査に渡す。理由は監査の画面・レポートにも出るので、
+   * 記録する前に秘密情報を伏せる（PR #135 再レビュー指摘）。
+   */
+  async rejectAuditProposal(proposalId: string, raw: unknown): Promise<Task> {
+    const { reason } = RejectAuditProposalInput.parse(raw);
+    const check = () => {
+      const found = this.findAuditProposal(proposalId);
+      if (!found) throw new InvalidOperationError(message("audit.proposalNotFound"));
+      if (found.task.status === "cancelled") {
+        throw new InvalidOperationError(message("audit.notAdoptable"));
+      }
+      if (found.proposal.decision) throw new InvalidOperationError(message("audit.alreadyDecided"));
+      return found;
+    };
+    const config = this.deps.config();
+    const hide = config.ok
+      ? await this.auditRedactor(check().task, config.config)
+      : (text: string) => redactLog(text, []);
+    // 秘密情報を取り出す間に、ほかの操作が判断していないかを確かめ直す
+    const found = check();
+    return this.append(found.task, [
+      {
+        actor: "person",
+        event: { type: "AuditProposalRejected", payload: { proposalId, reason: hide(reason) } },
+      },
+    ]);
+  }
+
+  /** 予算で一時停止した監査を、新しい上限（累計。使った額より大きい）で再開する（PBI-125）。 */
+  resumeAudit(taskId: string, raw: unknown): Task {
+    const { capUsd } = ResumeAuditInput.parse(raw);
+    const task = this.tasks.get(taskId);
+    const audit = task && isAuditTarget(task) ? task.audit : undefined;
+    if (!task || !audit) throw new InvalidOperationError(message("audit.notFound"));
+    if (!audit.paused) throw new InvalidOperationError(message("audit.notPaused"));
+    if (capUsd === undefined) throw new InvalidOperationError(message("resume.capRequired"));
+    if (capUsd <= audit.usedUsd) {
+      throw new InvalidOperationError(message("resume.capTooLow", { usedUsd: audit.usedUsd }));
+    }
+    return this.append(task, [
+      {
+        actor: "person",
+        event: { type: "AuditCapRaised", payload: { auditId: audit.auditId, capUsd } },
+      },
+    ]);
   }
 
   /**

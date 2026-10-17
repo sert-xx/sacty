@@ -224,7 +224,7 @@ function viewpointLines(viewpoints: readonly TestViewpoint[]): string[] {
 }
 
 /** 人間の差し戻しの指摘（全工程・無効にしたものを除く）。 */
-function humanRemarks(task: Task) {
+export function humanRemarks(task: Task) {
   return task.remarks.filter((r) => !r.voided);
 }
 
@@ -272,7 +272,7 @@ function noTestsReasonLines(reason: string): string[] {
   ];
 }
 
-const STEP_NAME: Record<StepKey, string> = {
+export const STEP_NAME: Record<StepKey, string> = {
   document: "文書作成",
   operation: "作業",
   investigate: "調査",
@@ -387,7 +387,7 @@ const REPOLESS_LINES = [
  * 開発のためのセットアップをしない指示（PBI-43）。コードを読めば足りる場面（工程の選択・内容の調査）で、
  * リポジトリの AGENTS.md などに「最初にセットアップを実行する」とあっても、時間と失敗の原因を増やさないため。
  */
-const NO_SETUP_LINES = [
+export const NO_SETUP_LINES = [
   "- 開発のためのセットアップ（依存関係のインストール・ビルド・setup のスクリプトなど）は実行しない。コードと設定のファイルを読んで判断する",
   "- リポジトリの AGENTS.md・CLAUDE.md・README などの指示とぶつかる場合は、このプロンプトの指示を優先する（「最初にセットアップを実行する」とあっても実行しない）",
 ];
@@ -413,7 +413,7 @@ function investigationSetupLines(task: Task): string[] {
  * ゴールガーディアンの作業領域にあるコードについて伝える（PBI-16）。base は起点のコミットのコード、
  * implemented は実装後のコード。どちらも使い捨ての写し。
  */
-function guardianCodeLines(task: Task, code: "base" | "implemented"): string[] {
+export function guardianCodeLines(task: Task, code: "base" | "implemented"): string[] {
   if (!task.repository) return [];
   const what =
     code === "base"
@@ -2057,6 +2057,8 @@ const RUN_ROLE_NAME: Record<string, string> = {
   rework: "差し戻し先の判断（ゴールガーディアン）",
   chat: "質問への答え（オーケストレーター）",
   export: "成果の書き出し",
+  audit: "大まかな監査",
+  "audit-dive": "監査の深掘り",
 };
 
 function runRoleName(role: string | undefined): string {
@@ -2107,7 +2109,7 @@ function chatLogRunLine(run: QuestionLogRun): string {
 }
 
 /** 質問への答えの指示に入れる、各実行のセッションログの節（PBI-91）。 */
-function chatLogLines(logs: ChatLogs | undefined): string[] {
+export function chatLogLines(logs: ChatLogs | undefined): string[] {
   const heading = "--- 各実行のセッションログ（読み取り専用） ---";
   if (!logs || "unavailable" in logs) {
     return [
@@ -2154,12 +2156,12 @@ function chatLogLines(logs: ChatLogs | undefined): string[] {
 }
 
 /** 長い文を先頭だけにする。 */
-function clip(text: string, max: number): string {
+export function clip(text: string, max: number): string {
   return text.length > max ? `${text.slice(0, max)}\n…（長いため、先頭だけ）` : text;
 }
 
 /** 作業履歴の1件を、指示に入れる1行にする（長い内容は切り詰める）。 */
-function chatEventLine(event: ActivityEvent): string {
+export function chatEventLine(event: ActivityEvent): string {
   const payload = JSON.stringify(event.payload);
   const shown =
     payload.length > CHAT_EVENT_IN_PROMPT ? `${payload.slice(0, CHAT_EVENT_IN_PROMPT)}…` : payload;
@@ -2167,7 +2169,7 @@ function chatEventLine(event: ActivityEvent): string {
 }
 
 /** 質問への答えに渡す、判定（テスト・最終レビュー・統合レビュー・再現・変更の申し出）。 */
-function chatJudgementLines(task: Task): string[] {
+export function chatJudgementLines(task: Task): string[] {
   const lines: string[] = [];
   if (task.lastTests) {
     const t = task.lastTests;

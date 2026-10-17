@@ -358,8 +358,9 @@ describe("モックの監査（PBI-124）", () => {
     expect(mock.resume("t05", { capUsd: 10_000.01 }).budget.capUsd).toBe(10_000.01);
   });
 
-  it("コンテキストの指定の上限（500 文字）を超える長さの宛先の候補も採用できる（PR #134 レビュー指摘）", () => {
-    const longRepo = `https://example.com/${"c".repeat(600)}`;
+  it("以前の上限（200 文字）を超える長さの宛先の候補も採用できる（PR #134 レビュー指摘）", () => {
+    // GitHub Enterprise のような長いホスト名の、改修のタスクを作れる GitHub のリポジトリ（以前の上限 200 文字を超える）
+    const longRepo = `https://${"g".repeat(400)}.example.com/acme/ctx`;
     seq = 0;
     // 3件目に、判断待ちのコンテキスト宛ての提案（境界値）が出る
     const events = ["t01", "t02", "t03"]

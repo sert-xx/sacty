@@ -5,7 +5,7 @@ import { renderMessage } from "@sacty/core";
 import { purgeLegacyTasksAtStartup, SqliteActivityStore } from "./activity.js";
 import { DockerExecutor } from "./agents/docker.js";
 import { DockerTestRunner } from "./agents/test-runner.js";
-import { MockAuditService, NoAuditService } from "./audits.js";
+import { MockAuditService } from "./audits.js";
 import { GitHubCiStatus } from "./ci.js";
 import { loadConfig, resolveHome } from "./config.js";
 import { DEFAULT_CONTEXT_DIR, GitContextFetcher } from "./context.js";
@@ -19,6 +19,7 @@ import { HostMcpServers } from "./host-mcp.js";
 import { HostMcpProcesses } from "./host-mcp-processes.js";
 import { acquireInstanceLock, alreadyRunningMessage } from "./instance-lock.js";
 import { IssueIntake } from "./intake.js";
+import { LedgerAuditService } from "./ledger-audits.js";
 import { SlackNotifier } from "./notifier.js";
 import { OrchestratorSessionStore } from "./orchestrator-sessions.js";
 import { PlatformCredentials } from "./platforms.js";
@@ -142,8 +143,12 @@ const gateway = new AiGateway({
   credentials,
 });
 await gateway.listen();
+// 監査の画面をモックで確かめるとき（SACTY_AUDIT_MOCK=1）は、実際の監査を動かさない（PBI-124・PBI-125）
+const auditMock = process.env.SACTY_AUDIT_MOCK === "1";
 const service = new TaskService({
   activity,
+  // 完了したタスクを監査する（PBI-125）
+  audit: !auditMock,
   config,
   secrets,
   projects,
@@ -183,6 +188,8 @@ const service = new TaskService({
   }),
 });
 service.recoverInterrupted();
+// 採用を記録したが、作る前に止まった監査の改修のタスクを作る（PBI-125）
+service.resumeAuditFixTasks();
 service.queueWaitingSteps();
 
 const status = service.status();
@@ -192,19 +199,16 @@ const worker = new Worker(service);
 const intake = new IssueIntake(service, new GitHubIssueSearch(), github, config, Date.now, tickets);
 // 承認待ちの PR（実装・要求要件・設計）を見守る（マージで承認。PBI-14a）
 const prWatcher = new PullRequestWatcher(service);
-// 完了したタスクの監査（PBI-124）。モックは SACTY_AUDIT_MOCK=1 のときだけ（既定では監査の無い実装）
-const auditDeps = {
-  tasks: () => service.list(),
-  activity: (id: string) => service.get(id)?.activity ?? [],
-  projects: () => service.listProjects(),
-  defaultCapUsd: () => service.auditBudgetUsd(),
-};
-const audits =
-  process.env.SACTY_AUDIT_MOCK === "1"
-    ? new MockAuditService(auditDeps)
-    : new NoAuditService(auditDeps);
-if (process.env.SACTY_AUDIT_MOCK === "1")
-  console.warn("[daemon] 監査はモックのデータを返します（SACTY_AUDIT_MOCK=1）。");
+// 完了したタスクの監査（PBI-125）。作業履歴の記録から作る。SACTY_AUDIT_MOCK=1 なら、モックのデータを返す（PBI-124）
+const audits = auditMock
+  ? new MockAuditService({
+      tasks: () => service.list(),
+      activity: (id: string) => service.get(id)?.activity ?? [],
+      projects: () => service.listProjects(),
+      defaultCapUsd: () => service.auditBudgetUsd(),
+    })
+  : new LedgerAuditService(service);
+if (auditMock) console.warn("[daemon] 監査はモックのデータを返します（SACTY_AUDIT_MOCK=1）。");
 const app = createApp(service, token, { intake, audits });
 
 const server = serve({ fetch: app.fetch, hostname: "127.0.0.1", port }, (info) => {
@@ -256,6 +260,8 @@ const shutdown = async () => {
   // ホストの MCP サーバーは、実行中のコンテナを止めたら使わないので、後片付けを待たずに止め始める（後片付けが長引いて、
   // CLI に強制終了されても残らないように。PBI-78）
   const stoppingHostMcp = Promise.all([hostMcp.stop(), contextMcp.stop()]);
+  // 止めるときの実行の終わりを、監査の失敗として記録しない（次の起動で、もう一度実行する。PBI-125）
+  service.beginShutdown();
   executor.abortAll();
   tests.abortAll();
   const timedOut = await Promise.race([

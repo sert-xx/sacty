@@ -23,6 +23,10 @@ const RUN_EVENTS = new Set<ActivityEvent["type"]>([
   "OutputExported",
   "AgentSessionArchived",
   "OrchestratorSessionUsed",
+  // 完了したタスクの監査の実行（PBI-125）
+  "AuditSurveyed",
+  "AuditDeepDived",
+  "AuditFailed",
 ]);
 
 /** 作業履歴の行から、ログを見られる実行の ID。実行の行でない・ID の無い古い行なら undefined。 */

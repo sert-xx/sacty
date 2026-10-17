@@ -9,12 +9,12 @@ Related ADRs: none
 
 ## Event shape
 
-- The shape for writing is `{ type, payload }`. It is validated with a zod discriminated union keyed on `type` (`EventInput`). There are 70 kinds (task creation and split,
+- The shape for writing is `{ type, payload }`. It is validated with a zod discriminated union keyed on `type` (`EventInput`). There are 83 kinds (task creation and split,
   step progress, agent runs, budget, pause, resume, and cancel, change proposals and their judgments, verification, git and PRs, reviews, replies to the intake source,
-  questions, export, PR labels, the after-merge watch, and so on).
+  questions, export, PR labels, the after-merge watch, audits of completed tasks, and so on).
 - The recorded shape (`ActivityEvent`) adds `seq` (increasing monotonically across the whole activity log), `id` (UUID), `taskId`, `projectId`, `at`
   (events in the same append share the same time), and `actor`.
-- `actor` is one of `person`, `sacty`, `orchestrator`, `guardian`, or `agent`.
+- `actor` is one of `person`, `sacty`, `orchestrator`, `guardian`, `agent`, or `auditor` (audits of completed tasks; [Audit](audit.en.md)).
 - Most events that used AI carry token counts (`usage`: `input`, `cacheRead`, `cacheWrite`, `output`), cost (`costUsd`), whether it is estimated
   (`estimated`), the AI settings used (`authMode`, `model`, `reasoningEffort`), and the run ID (`runId`).
 - Events have no version number. Older activity logs are read through schema defaults (`.default`), optional fields (`.optional`), and conversions (`.transform`).
@@ -89,6 +89,8 @@ Code: `packages/core/src/projection.ts` (`project`, `applyEvent`, `Task`, `TaskS
 
 - The projection and the per-step cost table both add cost with the same rule (`chargeBudget`). If a kind not in the list carries `costUsd`, the type check
   fails and typecheck does not pass.
+- The cost of audits of completed tasks (`Audit…` events) is held in `auditCostUsd` and is not counted toward the task budget. It is added to the audit's own
+  budget (`usedUsd` in the task's audit state; [Audit](audit.en.md)).
 - Budget state (`budgetState`): `exceeded` if the amount used is at or above the limit; `warn` if not yet notified and at or above `BUDGET_WARN_RATIO` (0.8) of the limit;
   otherwise `ok`.
 

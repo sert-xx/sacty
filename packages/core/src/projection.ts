@@ -1,6 +1,7 @@
 import { budgetState, chargeBudget } from "./cost.js";
 import type {
   ActivityEvent,
+  AuditTarget,
   ExportPlan,
   InvestigationKind,
   OrchestratorSessionReason,
@@ -230,14 +231,75 @@ export function proposalAccepted(p: TaskProposal): boolean | undefined {
   return undefined;
 }
 
+/** 監査の原因（作業履歴の記録）と、その提案への人の判断（PBI-125）。at は見つけた時刻。 */
+export type TaskAuditFinding = Omit<
+  PayloadOf<"AuditDeepDived">["findings"][number],
+  "proposals"
+> & {
+  at: string;
+  proposals: (PayloadOf<"AuditDeepDived">["findings"][number]["proposals"][number] & {
+    decision?:
+      | { kind: "adopted"; at: string; target: AuditTarget; fixTaskId?: string }
+      | { kind: "rejected"; at: string; reason: string };
+  })[];
+};
+
+/** タスクの監査の状態（PBI-125）。usedUsd は監査の費用の合計で、タスクの予算とは別。 */
+export type TaskAuditState = {
+  auditId: string;
+  queuedAt: string;
+  capUsd: number;
+  usedUsd: number;
+  /** 換算値（サブスクリプションなど）を含むか。 */
+  estimated: boolean;
+  /** 80% の通知をした上限（上限を上げたら、また通知する）。 */
+  warnedCapUsd?: number;
+  /** 予算で一時停止している（上限を上げると外れる）。 */
+  paused?: { at: string };
+  survey?: Omit<PayloadOf<"AuditSurveyed">, "auditId"> & { at: string };
+  /** 深掘りを終えた工程（終えた順）。 */
+  dives: (Omit<PayloadOf<"AuditDeepDived">, "auditId" | "findings"> & { at: string })[];
+  findings: TaskAuditFinding[];
+  failed?: { at: string; reason: DaemonText; step?: StepKey };
+  completedAt?: string;
+};
+
+/** 監査の対象か（完了したタスク。中止したタスクは監査しない。PBI-124）。 */
+export function isAuditTarget(task: Task): boolean {
+  return task.status === "idle" && isCompleted(task);
+}
+
+/** 監査を進めるべきか（終わっていない・失敗していない・予算で止まっていない）。 */
+export function auditOpen(task: Task): boolean {
+  const a = task.audit;
+  return a !== undefined && !a.completedAt && !a.failed && !a.paused;
+}
+
+/** 次に深掘りする工程（大まかな監査が挙げた工程のうち、まだ深掘りしていないもの）。 */
+export function nextAuditDive(audit: TaskAuditState): StepKey | undefined {
+  const done = new Set(audit.dives.map((d) => d.step));
+  return audit.survey?.concerns.find((c) => !done.has(c.step))?.step;
+}
+
 export type Task = {
   id: string;
   projectId: string;
   title: string;
   body: string;
-  start: "sacty" | "github_issue" | "github_pull_request" | "split" | "jira" | "deployment";
+  start:
+    | "sacty"
+    | "github_issue"
+    | "github_pull_request"
+    | "split"
+    | "jira"
+    | "deployment"
+    | "audit";
   /** マージの後の監視で見つけた失敗の、修正のタスク（PBI-89）。元のタスクと、何段目か。 */
   fix?: PayloadOf<"TaskCreated">["fix"];
+  /** 監査の改修の提案を採用して作ったタスクの、元の提案（PBI-125）。 */
+  auditFix?: PayloadOf<"TaskCreated">["auditFix"];
+  /** 完了したタスクの監査（PBI-125）。監査を待つ記録（AuditQueued）が無ければ無い。 */
+  audit?: TaskAuditState;
   /**
    * 実装の PR のマージの後の、CI/CD とデプロイの監視（PBI-89）。PBI-116 からは、マージの後の監視の工程（deployment）の中身。
    * PBI-116 より前の作業履歴では、工程の無い、完了したタスクの監視。
@@ -625,6 +687,7 @@ export function applyEvent(
       ...(event.payload.parent ? { parent: event.payload.parent } : {}),
       ...(event.payload.template ? { template: event.payload.template } : {}),
       ...(event.payload.fix ? { fix: event.payload.fix } : {}),
+      ...(event.payload.auditFix ? { auditFix: event.payload.auditFix } : {}),
       // 依存先の子タスクがあれば、それが完了するまで待つ（PBI-27）
       status: event.payload.parent?.dependsOn.length ? "blocked" : "queued",
       steps: [],
@@ -1847,6 +1910,8 @@ export function applyEvent(
       break;
   }
 
+  // 完了したタスクの監査（PBI-125）。タスクの状態・工程は変えない
+  if (event.type.startsWith("Audit")) applyAuditEvent(task, event);
   // マージの後の監視が終わったら、その工程を終える（PBI-116）
   if (event.type.startsWith("Deployment")) settleDeploymentStep(task);
   // 費用を持つイベント（CHARGED_EVENT_TYPES）の費用を、タスクの予算に入れる（PBI-86。画面の工程ごとの費用の表と同じ規則）。
@@ -1854,6 +1919,110 @@ export function applyEvent(
   task.budget = chargeBudget(task.budget, event);
   next.set(event.taskId, task);
   return next;
+}
+
+/** 監査のイベントを、タスクの監査の状態に適用する（PBI-125）。並びの合わない記録は受け付けない。 */
+function applyAuditEvent(task: Task, event: ActivityEvent): void {
+  const integrity = (why: string) => new ActivityIntegrityError(event, why);
+  if (event.type === "AuditQueued") {
+    if (task.audit) throw integrity("the task is already audited");
+    task.audit = {
+      auditId: event.payload.auditId,
+      queuedAt: event.at,
+      capUsd: event.payload.capUsd,
+      usedUsd: 0,
+      estimated: false,
+      dives: [],
+      findings: [],
+    };
+    return;
+  }
+  const audit = task.audit;
+  if (event.type === "AuditProposalAdopted" || event.type === "AuditProposalRejected") {
+    const id = event.payload.proposalId;
+    const finding = audit?.findings.find((f) => f.proposals.some((p) => p.id === id));
+    const proposal = finding?.proposals.find((p) => p.id === id);
+    if (!audit || !finding || !proposal) throw integrity("unknown audit proposal");
+    if (proposal.decision) throw integrity("the audit proposal is already decided");
+    const decision =
+      event.type === "AuditProposalAdopted"
+        ? {
+            kind: "adopted" as const,
+            at: event.at,
+            target: event.payload.target,
+            ...(event.payload.fixTaskId ? { fixTaskId: event.payload.fixTaskId } : {}),
+          }
+        : { kind: "rejected" as const, at: event.at, reason: event.payload.reason };
+    task.audit = {
+      ...audit,
+      findings: audit.findings.map((f) =>
+        f !== finding
+          ? f
+          : { ...f, proposals: f.proposals.map((p) => (p.id === id ? { ...p, decision } : p)) },
+      ),
+    };
+    return;
+  }
+  if (!audit || !("auditId" in event.payload) || event.payload.auditId !== audit.auditId) {
+    throw integrity("unknown audit");
+  }
+  const charge = (p: { auditCostUsd: number; estimated: boolean }) => ({
+    usedUsd: audit.usedUsd + p.auditCostUsd,
+    estimated: audit.estimated || (p.auditCostUsd > 0 && p.estimated),
+  });
+  const ended = audit.completedAt !== undefined || audit.failed !== undefined;
+  switch (event.type) {
+    case "AuditSurveyed": {
+      if (ended || audit.survey) throw integrity("the audit is not waiting for a survey");
+      const { auditId: _id, ...survey } = event.payload;
+      task.audit = { ...audit, ...charge(event.payload), survey: { ...survey, at: event.at } };
+      return;
+    }
+    case "AuditDeepDived": {
+      if (ended || nextAuditDive(audit) !== event.payload.step) {
+        throw integrity("the step is not the next deep dive");
+      }
+      const { auditId: _id, findings, ...dive } = event.payload;
+      task.audit = {
+        ...audit,
+        ...charge(event.payload),
+        dives: [...audit.dives, { ...dive, at: event.at }],
+        findings: [...audit.findings, ...findings.map((f) => ({ ...f, at: event.at }))],
+      };
+      return;
+    }
+    case "AuditCompleted":
+      if (ended || !audit.survey || nextAuditDive(audit) !== undefined) {
+        throw integrity("the audit is not finished");
+      }
+      task.audit = { ...audit, completedAt: event.at };
+      return;
+    case "AuditFailed":
+      if (ended) throw integrity("the audit has ended");
+      task.audit = {
+        ...audit,
+        ...charge(event.payload),
+        failed: {
+          at: event.at,
+          reason: event.payload.reason,
+          ...(event.payload.step ? { step: event.payload.step } : {}),
+        },
+      };
+      return;
+    case "AuditBudgetWarned":
+      task.audit = { ...audit, warnedCapUsd: event.payload.capUsd };
+      return;
+    case "AuditBudgetPaused":
+      if (ended) throw integrity("the audit has ended");
+      task.audit = { ...audit, paused: { at: event.at } };
+      return;
+    case "AuditCapRaised":
+      if (!audit.paused) throw integrity("the audit is not paused");
+      if (event.payload.capUsd <= audit.usedUsd)
+        throw integrity("the new cap is not above the used amount");
+      task.audit = { ...audit, capUsd: event.payload.capUsd, paused: undefined };
+      return;
+  }
 }
 
 /**

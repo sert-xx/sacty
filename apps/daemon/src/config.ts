@@ -102,6 +102,18 @@ const StubBehavior = z.object({
     .default(
       '```json\n{"sacty-rework": {"target": "undecidable", "reason": "スタブのため判断しません"}}\n```',
     ),
+  /** 完了したタスクの大まかな監査の出力（PBI-125）。既定は、懸念のある工程が無い。 */
+  audit: z
+    .string()
+    .default(
+      '```json\n{"sacty-audit-survey": {"summary": "スタブのため監査しません", "concerns": []}}\n```',
+    ),
+  /** 完了したタスクの、懸念のある工程の深掘りの出力（PBI-125）。既定は、原因が無い。 */
+  audit_dive: z
+    .string()
+    .default(
+      '```json\n{"sacty-audit-findings": {"summary": "スタブのため深掘りしません", "findings": []}}\n```',
+    ),
   /** ゴールガーディアンとして呼ばれたときの出力。 */
   guardian: z
     .string()
@@ -238,6 +250,8 @@ const ConfigFile = z
       .default({}),
     /** ゴールガーディアンに使うAI。省略すると default_agent。 */
     guardian_agent: z.string().optional(),
+    /** 完了したタスクの監査に使うAI（PBI-125）。省略すると guardian_agent（それも無ければ default_agent）。 */
+    audit_agent: z.string().optional(),
     budget: z
       .object({
         default_per_task_usd: z.number().positive().default(DEFAULT_BUDGET_USD),
@@ -481,6 +495,15 @@ const ConfigFile = z
         params: { key: "guardian_agent", id: config.guardian_agent },
       });
     }
+    // 空文字・継承のプロパティの名前（constructor など）も、agents に無い名前として誤りにする（PR #135 レビュー指摘）
+    if (config.audit_agent !== undefined && !Object.hasOwn(config.agents, config.audit_agent)) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["audit_agent"],
+        message: code("config.agentMissing"),
+        params: { key: "audit_agent", id: config.audit_agent },
+      });
+    }
     for (const [role, id] of Object.entries(config.step_agents)) {
       if (id && !config.agents[id]) {
         ctx.addIssue({
@@ -581,6 +604,8 @@ export type SactyConfig = {
   defaultAgent: AgentConfig;
   /** ゴールガーディアンに使うAI。 */
   guardianAgent: AgentConfig;
+  /** 完了したタスクの監査に使うAI（PBI-125。audit_agent・guardian_agent・default_agent の順）。 */
+  auditAgent: AgentConfig;
   /** 工程・オーケストレーターごとに使う AI（書いてある役割だけ。PBI-40）。 */
   stepAgents?: Partial<Record<AgentRoleKey, AgentConfig>>;
   /** agents のすべて（名前ごと。タスクの詳細で工程のエージェントを選ぶのに使う。PBI-121）。 */
@@ -770,6 +795,7 @@ export function loadConfig(home: string): ConfigResult {
       },
       defaultAgent: resolve(file.default_agent),
       guardianAgent: resolve(file.guardian_agent ?? file.default_agent),
+      auditAgent: resolve(file.audit_agent ?? file.guardian_agent ?? file.default_agent),
       stepAgents: Object.fromEntries(
         Object.entries(file.step_agents).flatMap(([role, id]) => (id ? [[role, resolve(id)]] : [])),
       ),
@@ -850,6 +876,8 @@ image: ${DEFAULT_IMAGE}
 default_agent: claude-subscription
 # ゴールガーディアン（変更の申し出の判定）に使うAI。省略すると default_agent
 # guardian_agent: claude-subscription
+# 完了したタスクの監査に使う AI（書かなければ guardian_agent。無ければ default_agent）
+# audit_agent: claude-subscription
 # 工程・オーケストレーターごとに使う AI（書かなければ default_agent。統合レビューは guardian_agent）
 # step_agents:
 #   orchestrator: luna-low
