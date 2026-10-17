@@ -273,6 +273,11 @@ describe("監査が登録したメモリー（PBI-126）", () => {
     expect(html).toContain("<strong>biome</strong>");
     expect(html).toContain('data-testid="audit-memory-m1"');
     expect(html).toContain("消す");
+    // 空白の無い長い題・概要も折り返す（PR #136 レビュー指摘）
+    expect(html).toMatch(
+      /<span class="[^"]*\[overflow-wrap:anywhere\][^"]*">lint は biome<\/span>/,
+    );
+    expect(html).toMatch(/<p class="[^"]*\[overflow-wrap:anywhere\][^"]*">lint の道具<\/p>/);
   });
 
   it("消したメモリーは印を出し、中身と消すボタンを出さない。上限で消したものは理由の補足を出す", () => {

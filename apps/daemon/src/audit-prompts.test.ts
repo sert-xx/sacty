@@ -401,3 +401,53 @@ describe("深掘りのメモリーの登録（PBI-126）", () => {
     expect(disabled).not.toContain("既存のメモリー");
   });
 });
+
+describe("出力の文は、デコードした後に伏せる（PR #136 レビュー指摘）", () => {
+  const hide = (t: string) => t.split('a"b').join("[REDACTED]");
+  it("深掘りの原因・根拠・提案・メモリーと、大まかな監査の要約・理由を伏せてから切り詰める", () => {
+    const dive = extractAuditDive(
+      block({
+        "sacty-audit-findings": {
+          summary: 's a"b',
+          findings: [
+            {
+              title: 't a"b',
+              detail: 'd a"b',
+              evidence: [{ kind: "retry", text: 'e a"b' }],
+              proposals: [{ title: 'p a"b', body: 'b a"b', target: 0 }],
+            },
+          ],
+          memories: [
+            { scope: "project", title: 'm a"b', summary: 'u a"b', body: `${"x".repeat(4000)}a"b` },
+          ],
+        },
+      }),
+      {
+        eventIds: new Set(),
+        runIds: new Set(),
+        candidates: [{ kind: "sacty" }],
+        knownKeys: new Set(),
+        knownMemoryIds: new Set(),
+      },
+      hide,
+    );
+    const text = JSON.stringify(dive);
+    expect(text).not.toContain('a\\"b');
+    expect(dive.ok && dive.findings[0]?.title).toBe("t [REDACTED]");
+    expect(dive.ok && dive.memories[0]?.summary).toBe("u [REDACTED]");
+    // 伏せた後に切り詰めるので、上限を超えない
+    expect(dive.ok && dive.memories[0]?.body.length).toBeLessThanOrEqual(4000);
+    const survey = extractAuditSurvey(
+      block({
+        "sacty-audit-survey": {
+          summary: 's a"b',
+          concerns: [{ step: "implement", reason: 'r a"b' }],
+        },
+      }),
+      task,
+      hide,
+    );
+    expect(survey.ok && survey.summary).toBe("s [REDACTED]");
+    expect(survey.ok && survey.concerns[0]?.reason).toBe("r [REDACTED]");
+  });
+});

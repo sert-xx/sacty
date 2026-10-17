@@ -386,12 +386,12 @@ export class InvalidOperationError extends Error {
 
 /**
  * メモリーを読ませる工程の実行（PBI-126）。統合レビューはゴールガーディアンの役なので除く（判定の材料を承認済みのものに
- * 限る）。手直し（rework）は工程の続き。
+ * 限る）。rework は、PR の指摘の差し戻し先をゴールガーディアンが判定する実行なので入れない（手直しそのものは、工程の役で
+ * 実行し直す。PR #136 レビュー指摘）。
  */
-export const MEMORY_STEP_ROLES: ReadonlySet<AgentRole> = new Set<AgentRole>([
-  ...StepKey.options.filter((k) => k !== "integrate"),
-  "rework",
-]);
+export const MEMORY_STEP_ROLES: ReadonlySet<AgentRole> = new Set<AgentRole>(
+  StepKey.options.filter((k) => k !== "integrate"),
+);
 
 export type ServiceDeps = {
   activity: ActivityStore;
@@ -475,8 +475,8 @@ export type ServiceDeps = {
    */
   orchestratorSessions?: OrchestratorSessionStore;
   /**
-   * 監査が登録したメモリーを書き出す場所（SACTY_HOME/memory。PBI-126）。無ければ、メモリーを書き出さず、エージェントにも
-   * 渡さない（記録はする）。
+   * 監査が登録したメモリーを書き出す場所（SACTY_HOME/memory。PBI-126）。無ければ、深掘りに登録を求めず、出力にあっても
+   * 登録しない。エージェントにも渡さない。
    */
   memoryRoot?: string;
   /** 階層ごとのメモリーの件数の上限（無ければ MEMORY_MAX_PER_LAYER。テストで小さくする）。 */
@@ -7864,7 +7864,7 @@ export class TaskService {
           message("audit.runFailed", { detail: mapFreeText(outcome.message, hideResult) }),
         );
       } else if (!step) {
-        const survey = extractAuditSurvey(hideResult(outcome.output), task);
+        const survey = extractAuditSurvey(hideResult(outcome.output), task, hideResult);
         record = survey.ok
           ? [
               {
@@ -7883,23 +7883,27 @@ export class TaskService {
             ]
           : failed(survey.reason);
       } else {
-        const dive = extractAuditDive(hideResult(outcome.output), {
-          eventIds: new Set(activity.map((e) => e.id)),
-          runIds: new Set(
-            activity.flatMap((e) => {
-              const id = (e.payload as { runId?: unknown }).runId;
-              return typeof id === "string" && id ? [id] : [];
-            }),
-          ),
-          candidates,
-          knownKeys: new Set(known.causes.map((c) => c.causeKey)),
-          ...(memories
-            ? {
-                knownMemoryIds: new Set(memories.map((m) => m.id)),
-                ...(memoryRepo ? { repository: memoryRepo } : {}),
-              }
-            : {}),
-        });
+        const dive = extractAuditDive(
+          hideResult(outcome.output),
+          {
+            eventIds: new Set(activity.map((e) => e.id)),
+            runIds: new Set(
+              activity.flatMap((e) => {
+                const id = (e.payload as { runId?: unknown }).runId;
+                return typeof id === "string" && id ? [id] : [];
+              }),
+            ),
+            candidates,
+            knownKeys: new Set(known.causes.map((c) => c.causeKey)),
+            ...(memories
+              ? {
+                  knownMemoryIds: new Set(memories.map((m) => m.id)),
+                  ...(memoryRepo ? { repository: memoryRepo } : {}),
+                }
+              : {}),
+          },
+          hideResult,
+        );
         record = dive.ok
           ? [
               {
@@ -7974,8 +7978,9 @@ export class TaskService {
 
   /**
    * メモリーを読ませる実行なら、タスクのプロジェクトと対象リポジトリのメモリーを読み取り専用でマウントする（PBI-126）。
-   * 工程（統合レビューを除く）とその手直しには、読み方の指示も足す。監査には、既存のメモリーとの重複を確かめるために渡す。
-   * ゴールガーディアン（判定・最終レビュー・統合レビュー）・オーケストレーター・質問への答え・書き出しには渡さない
+   * 工程（統合レビューを除く）には、読み方の指示も足す。監査には、既存のメモリーとの重複を確かめるために渡す。
+   * ゴールガーディアン（判定・最終レビュー・統合レビュー・PR の指摘の差し戻し先の判定）・オーケストレーター・質問への答え・
+   * 書き出しには渡さない
    * （ゴールガーディアンの判定の材料は、承認済みのものに限るため）。ほかのプロジェクト・リポジトリのメモリーは渡さない。
    */
   private withMemory(run: ExecuteRun): ExecuteRun {

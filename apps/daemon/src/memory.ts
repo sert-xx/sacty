@@ -109,19 +109,35 @@ export function liveMemories(tasks: Iterable<Task>): LiveMemory[] {
 
 /** その階層のメモリー（有効な最終利用日の新しい順）。 */
 export function memoriesOf(memories: readonly LiveMemory[], layer: MemoryLayer): LiveMemory[] {
-  return memories
-    .filter((m) => sameLayer(layerOf(m), layer))
-    .sort(
-      (a, b) =>
-        b.lastUsefulAt.localeCompare(a.lastUsefulAt) || b.createdAt.localeCompare(a.createdAt),
-    );
+  return groupByLayer(memories).get(layerKey(layer))?.memories ?? [];
+}
+
+/** 新しい順（有効な最終利用日、同じなら登録）。 */
+const newestFirst = (a: LiveMemory, b: LiveMemory) =>
+  b.lastUsefulAt.localeCompare(a.lastUsefulAt) || b.createdAt.localeCompare(a.createdAt);
+
+/**
+ * メモリーを、1回の走査で階層ごとに分ける（各階層は新しい順）。階層ごとに全件を走査し直すと、階層の数 × 件数になり、
+ * 登録・起動のたびにデーモンを止める時間が延びるため（PR #136 レビュー指摘）。
+ */
+export function groupByLayer(
+  memories: readonly LiveMemory[],
+): Map<string, { layer: MemoryLayer; memories: LiveMemory[] }> {
+  const groups = new Map<string, { layer: MemoryLayer; memories: LiveMemory[] }>();
+  for (const m of memories) {
+    const layer = layerOf(m);
+    const key = layerKey(layer);
+    const group = groups.get(key);
+    if (group) group.memories.push(m);
+    else groups.set(key, { layer, memories: [m] });
+  }
+  for (const group of groups.values()) group.memories.sort(newestFirst);
+  return groups;
 }
 
 /** 階層ごとの件数の上限を超えた分（有効な最終利用日の古いものから）。 */
 export function overCapacity(memories: readonly LiveMemory[], max: number): LiveMemory[] {
-  const layers = new Map<string, MemoryLayer>();
-  for (const m of memories) layers.set(layerKey(layerOf(m)), layerOf(m));
-  return [...layers.values()].flatMap((layer) => memoriesOf(memories, layer).slice(max));
+  return [...groupByLayer(memories).values()].flatMap((g) => g.memories.slice(max));
 }
 
 /** 有効な最終利用日（日付だけ。UTC）。 */
@@ -234,10 +250,13 @@ export function syncMemoryLayers(
   memories: readonly LiveMemory[],
   layers?: readonly MemoryLayer[],
 ): void {
+  const groups = groupByLayer(memories);
   const targets = new Map<string, MemoryLayer>();
-  for (const layer of layers ?? memories.map(layerOf)) targets.set(layerKey(layer), layer);
-  for (const layer of targets.values()) {
-    writeMemoryLayer(root, layer, memoriesOf(memories, layer));
+  for (const layer of layers ?? [...groups.values()].map((g) => g.layer)) {
+    targets.set(layerKey(layer), layer);
+  }
+  for (const [key, layer] of targets) {
+    writeMemoryLayer(root, layer, groups.get(key)?.memories ?? []);
   }
   if (layers) return;
   const wanted = new Set([...targets.values()].map((l) => memoryLayerDir(root, l)));
