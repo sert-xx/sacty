@@ -33,8 +33,8 @@ Code: `apps/daemon/src/service.ts` (`auditQueueEvent`, `awaitingAudit`, `runAudi
   not to change it.
 - Secrets are redacted before truncation from the materials (ledger, body, approved outputs, remarks, rejection reasons, existing cause
   titles, session logs) and from the audit output. Session logs are staged as hard links to the original logs, so they are replaced with
-  redacted copies before mounting, leaving the originals unchanged. The redaction covers the values of secrets used by the settings and sacty settings, the GitHub token of the task's
-  repository, and common secret patterns.
+  redacted copies before mounting, leaving the originals unchanged. The redaction covers the values of secrets used by the settings and sacty settings (including the audit AI's), the GitHub
+  tokens of the project's chosen accounts and of the task's repository, and common secret patterns. The values are kept per project for 60 seconds.
 - The instructions include the context versions used (repositories and commits).
 - sacty counts the evidence during the survey, and the deep dives reuse the recorded counts (the agent does not count; session logs are read
   asynchronously): human change requests, imported PR remarks, pauses, retries (failed runs, failed
@@ -51,7 +51,8 @@ Code: `apps/daemon/src/audit-prompts.ts` (`buildAuditSurveyPrompt`, `extractAudi
 ## Causes and proposals
 
 - Deep dives in the same project run one at a time (reading the existing causes and recording the result do not overlap). A task cancelled
-  while waiting for its turn stops waiting (cancelling does not wait for the earlier deep dive).
+  while waiting for its turn stops waiting (cancelling does not wait for the earlier deep dive). The queue entry stays until the earlier deep
+  dive finishes, so deep dives that arrive later still run after it.
 - Causes are grouped within a project by a cause key (`causeKey`). The deep dive gets the project's existing causes (key, title, whether a
   fix was adopted) and the rejected proposals with their reasons. If a cause is the same as an existing one, the agent uses its key
   (`sameAs`). A new cause key is `<audit ID>:<step>:<number>`.
@@ -67,6 +68,8 @@ Code: `apps/daemon/src/audit-prompts.ts` (`buildAuditSurveyPrompt`, `extractAudi
   of a cancelled task cannot be decided.
 - Cause state: `recurred` if a cause with the same key is found after the merge of its fix task's PR (`pullRequestMerge.at`), `fixed` if not,
   `adopted` if a proposal was adopted, `proposed` if a proposal needs a decision, and `rejected` if all were rejected.
+- Task titles shown on the audit page and in reports (audited tasks, the audit a proposal came from, a cause's tasks, fix tasks) are
+  redacted by the same rule (the tasks themselves are unchanged).
 - Nothing is aggregated across projects. The dashboard shows only counts.
 
 Code: `apps/daemon/src/service.ts` (`adoptAuditProposal`, `createAuditFixTask`, `resumeAuditFixTasks`, `rejectAuditProposal`, `knownAuditCauses`),

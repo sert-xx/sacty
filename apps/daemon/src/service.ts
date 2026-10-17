@@ -366,6 +366,9 @@ export class InvalidOperationError extends Error {
   }
 }
 
+/** 監査で伏せる秘密情報の値を持つ間（ミリ秒）。 */
+const AUDIT_SECRET_CACHE_MS = 60_000;
+
 export type ServiceDeps = {
   activity: ActivityStore;
   /**
@@ -7669,7 +7672,11 @@ export class TaskService {
     } finally {
       this.auditLockWaits.delete(taskId);
       release();
-      if (this.auditDiveLocks.get(projectId) === chain) this.auditDiveLocks.delete(projectId);
+      // 待つのをやめたときも、先の深掘りが終わるまで（chain が解決するまで）は、順番の記録を消さない。後から来た深掘りが
+      // 先の深掘りと重ならないように（PR #135 再レビュー指摘）
+      void chain.then(() => {
+        if (this.auditDiveLocks.get(projectId) === chain) this.auditDiveLocks.delete(projectId);
+      });
     }
   }
 
@@ -7944,6 +7951,27 @@ export class TaskService {
    * GitHub のトークン、よくある秘密情報の形（CI のログと同じ規則）を伏せる。取り出せない値は飛ばす。
    */
   private async auditRedactor(task: Task, config: SactyConfig): Promise<(text: string) => string> {
+    const values = [...(await this.auditSecretValues(task.projectId, config))];
+    if (task.repository) {
+      try {
+        await this.githubToken(task, task.repository.url, values);
+      } catch {
+        // GitHub のアカウントを選んでいないなど
+      }
+    }
+    return (text: string) => redactLog(text, values);
+  }
+
+  /** 監査で伏せる秘密情報の値（プロジェクトごとに、短い間だけ持つ。画面の取り直しのたびに取り出さないため）。 */
+  private readonly auditSecretCache = new Map<string, { at: number; values: string[] }>();
+
+  /**
+   * 監査で伏せる秘密情報の値：sacty の設定・sacty の設定で使う秘密情報（監査の AI のものを含む）と、プロジェクトで選んだ
+   * GitHub のアカウントのトークン。取り出せない値は飛ばす（形で伏せる）。
+   */
+  private async auditSecretValues(projectId: string, config: SactyConfig): Promise<string[]> {
+    const cached = this.auditSecretCache.get(projectId);
+    if (cached && this.now() - cached.at < AUDIT_SECRET_CACHE_MS) return cached.values;
     const values: string[] = [];
     for (const use of uniqueUses(secretUses(config, this.readableSettings()))) {
       try {
@@ -7952,13 +7980,25 @@ export class TaskService {
         // 取り出せない値は伏せられないが、形で伏せる
       }
     }
-    if (task.repository) {
+    const project = this.deps.projects.get(projectId);
+    for (const host of Object.keys(project?.githubAccounts ?? {})) {
       try {
-        await this.githubToken(task, task.repository.url, values);
+        await this.githubToken({ projectId }, `https://${host}/sacty/sacty`, values);
       } catch {
-        // GitHub のアカウントを選んでいないなど
+        // gh にログインしていないなど
       }
     }
+    this.auditSecretCache.set(projectId, { at: this.now(), values });
+    return values;
+  }
+
+  /**
+   * 監査の画面・レポートに出す文（元のタスクの題など）の秘密情報を伏せる関数（PR #135 再レビュー指摘）。設定を読めなければ、
+   * よくある秘密情報の形だけを伏せる。
+   */
+  async auditHide(projectId: string): Promise<(text: string) => string> {
+    const config = this.deps.config();
+    const values = config.ok ? await this.auditSecretValues(projectId, config.config) : [];
     return (text: string) => redactLog(text, values);
   }
 

@@ -468,21 +468,23 @@ export function createApp(
   });
 
   // 完了したタスクの監査（PBI-124）。監査が無ければ audit は null
-  app.get("/api/tasks/:id/audit", (c) => c.json({ audit: audits.taskAudit(c.req.param("id")) }));
+  app.get("/api/tasks/:id/audit", async (c) =>
+    c.json({ audit: await audits.taskAudit(c.req.param("id")) }),
+  );
 
   app.post("/api/tasks/:id/audit/resume", async (c) => {
     const json = await readJson(c);
     if (!json.ok) return c.json({ error: "invalid_json" }, 400);
     try {
-      return c.json({ audit: audits.resume(c.req.param("id"), json.body) });
+      return c.json({ audit: await audits.resume(c.req.param("id"), json.body) });
     } catch (error) {
       return handleError(c, error);
     }
   });
 
   // プロジェクトの監査の画面（PBI-124）。プロジェクトをまたいで集約しない
-  app.get("/api/projects/:id/audits", (c) => {
-    const found = audits.projectAudits(c.req.param("id"));
+  app.get("/api/projects/:id/audits", async (c) => {
+    const found = await audits.projectAudits(c.req.param("id"));
     return found ? c.json(found) : c.json({ error: "not_found" }, 404);
   });
 
@@ -493,7 +495,7 @@ export function createApp(
     const json = await readJson(c);
     if (!json.ok) return c.json({ error: "invalid_json" }, 400);
     try {
-      return c.json({ proposal: audits.adopt(c.req.param("id"), json.body) });
+      return c.json({ proposal: await audits.adopt(c.req.param("id"), json.body) });
     } catch (error) {
       return handleError(c, error);
     }

@@ -179,23 +179,25 @@ function ledger(events: ActivityEvent[], extra: Task[] = [], running: string[] =
       calls.push(`resume ${id}`);
       return tasks[0] as Task;
     },
+    // 秘密の値の代わりに SECRET を伏せる
+    auditHide: async () => (text: string) => text.replaceAll("SECRET", "[REDACTED]"),
   };
   return { service: new LedgerAuditService(l), tasks, calls };
 }
 
 /** 改修のタスク（PR をマージした時刻だけを持つ）。 */
-const fixTask = (id: string, mergedAt?: string) =>
+const fixTask = (id: string, mergedAt?: string, title = `改修 ${id}`) =>
   ({
     id,
     projectId: "p1",
-    title: `改修 ${id}`,
+    title,
     status: "idle",
     steps: [],
     ...(mergedAt ? { pullRequestMerge: { at: mergedAt } } : {}),
   }) as unknown as Task;
 
 describe("作業履歴から作る監査（PBI-125）", () => {
-  it("監査の状態：待ち・実行中（大まかな監査）・深掘り・予算で一時停止・失敗・完了", () => {
+  it("監査の状態：待ち・実行中（大まかな監査）・深掘り・予算で一時停止・失敗・完了", async () => {
     seq = 0;
     const { service } = ledger(
       [
@@ -209,8 +211,8 @@ describe("作業履歴から作る監査（PBI-125）", () => {
       [],
       ["s", "d"],
     );
-    const status = (id: string) => service.taskAudit(id)?.status;
-    expect(["w", "s", "d", "p", "f", "c"].map(status)).toEqual([
+    const status = async (id: string) => (await service.taskAudit(id))?.status;
+    expect(await Promise.all(["w", "s", "d", "p", "f", "c"].map(status))).toEqual([
       "waiting",
       "surveying",
       "deepDiving",
@@ -218,12 +220,13 @@ describe("作業履歴から作る監査（PBI-125）", () => {
       "failed",
       "completed",
     ]);
-    expect(service.taskAudit("d")?.deepDives).toEqual([
+    expect((await service.taskAudit("d"))?.deepDives).toEqual([
       { step: "document", reason: "理由", status: "running" },
     ]);
-    expect(service.taskAudit("f")?.deepDives[0]?.status).toBe("failed");
-    expect(service.taskAudit("f")?.failure).toEqual({ code: "audit.unreadable" });
-    const done = service.taskAudit("c");
+    const failed = await service.taskAudit("f");
+    expect(failed?.deepDives[0]?.status).toBe("failed");
+    expect(failed?.failure).toEqual({ code: "audit.unreadable" });
+    const done = await service.taskAudit("c");
     expect(done?.deepDives[0]).toMatchObject({ status: "completed", summary: "深掘り" });
     expect(done?.budget).toEqual({ usedUsd: 0.2, capUsd: 1 });
     expect(done?.survey?.counts.toolFailure).toBe(3);
@@ -231,10 +234,10 @@ describe("作業履歴から作る監査（PBI-125）", () => {
       causeId: "k",
       proposals: [{ id: "c:prop", taskId: "c", targetCandidates: [repo, { kind: "sacty" }] }],
     });
-    expect(service.taskAudit("missing")).toBeNull();
+    expect(await service.taskAudit("missing")).toBeNull();
   });
 
-  it("原因を鍵ごとにまとめ、改修の PR のマージより後に見つかれば再発。マージの前に見つかったものには付けない", () => {
+  it("原因を鍵ごとにまとめ、改修の PR のマージより後に見つかれば再発。マージの前に見つかったものには付けない", async () => {
     seq = 0;
     const events = [
       ...audited("t1", "2026-10-01T00:00:00Z", "lint"),
@@ -248,7 +251,7 @@ describe("作業履歴から作る監査（PBI-125）", () => {
       }),
     );
     const { service } = ledger(events, [fixTask("fix", "2026-10-02T00:00:00Z")]);
-    const data = service.projectAudits("p1");
+    const data = await service.projectAudits("p1");
     const cause = data?.causes.find((c) => c.id === "lint");
     expect(cause).toMatchObject({
       status: "recurred",
@@ -256,8 +259,8 @@ describe("作業履歴から作る監査（PBI-125）", () => {
       recurredAt: "2026-10-03T00:03:00.000Z",
     });
     expect(cause?.occurrences.map((o) => o.taskId)).toEqual(["t2", "t1"]);
-    expect(service.taskAudit("t2")?.findings[0]?.recurred).toBe(true);
-    expect(service.taskAudit("t1")?.findings[0]?.recurred).toBeUndefined();
+    expect((await service.taskAudit("t2"))?.findings[0]?.recurred).toBe(true);
+    expect((await service.taskAudit("t1"))?.findings[0]?.recurred).toBeUndefined();
     // 採用した提案は、改修のタスクの題で出す
     const adopted = data?.proposals.find((p) => p.id === "t1:prop");
     expect(adopted?.decision).toMatchObject({
@@ -266,7 +269,7 @@ describe("作業履歴から作る監査（PBI-125）", () => {
     });
   });
 
-  it("改修のタスクがまだマージされていなければ採用、マージ後に見つかっていなければ改修済み、却下・判断待ち", () => {
+  it("改修のタスクがまだマージされていなければ採用、マージ後に見つかっていなければ改修済み、却下・判断待ち", async () => {
     seq = 0;
     const events = [
       ...audited("t1", "2026-10-01T00:00:00Z", "a"),
@@ -291,15 +294,14 @@ describe("作業履歴から作る監査（PBI-125）", () => {
       }),
     );
     const { service } = ledger(events, [fixTask("f1"), fixTask("f2", "2026-10-05T00:00:00Z")]);
-    const status = Object.fromEntries(
-      service.projectAudits("p1")?.causes.map((c) => [c.id, c.status]) ?? [],
-    );
+    const data = await service.projectAudits("p1");
+    const status = Object.fromEntries(data?.causes.map((c) => [c.id, c.status]) ?? []);
     expect(status).toEqual({ a: "adopted", b: "fixed", c: "rejected", d: "proposed" });
     // 判断待ちの提案を先に並べる
-    expect(service.projectAudits("p1")?.proposals[0]?.id).toBe("t4:prop");
+    expect(data?.proposals[0]?.id).toBe("t4:prop");
   });
 
-  it("sacty 宛ての採用は、改修のタスクを持たない", () => {
+  it("sacty 宛ての採用は、改修のタスクを持たない", async () => {
     seq = 0;
     const events = audited("t1", "2026-10-01T00:00:00Z", "a");
     events.push(
@@ -309,21 +311,46 @@ describe("作業履歴から作る監査（PBI-125）", () => {
       }),
     );
     const { service } = ledger(events);
-    const decision = service.taskAudit("t1")?.findings[0]?.proposals[0]?.decision;
+    const decision = (await service.taskAudit("t1"))?.findings[0]?.proposals[0]?.decision;
     expect(decision).toMatchObject({ kind: "adopted", target: { kind: "sacty" } });
     expect(decision && "task" in decision).toBe(false);
   });
 
-  it("プロジェクトをまたいで集約しない。ダッシュボードは件数と週ごとの推移だけ。無いプロジェクトは null", () => {
+  it("監査の画面に出す元のタスクの題・改修のタスクの題は伏せる（元のタスクは変えない。PR #135 再レビュー指摘）", async () => {
+    seq = 0;
+    const events = audited("t1", "2026-10-01T00:00:00Z", "a");
+    // 題に秘密の値を入れる
+    const created = events[0] as { payload: { title: string } };
+    created.payload.title = "題 SECRET";
+    events.push(
+      ev("t1", "2026-10-02T00:00:00Z", "AuditProposalAdopted", {
+        proposalId: "t1:prop",
+        target: repo,
+        fixTaskId: "fix",
+      }),
+    );
+    const { service, tasks } = ledger(events, [fixTask("fix", undefined, "改修 SECRET")]);
+    const data = await service.projectAudits("p1");
+    const text = JSON.stringify([data, await service.taskAudit("t1")]);
+    expect(text).not.toContain("SECRET");
+    expect(data?.audits[0]?.taskTitle).toBe("題 [REDACTED]");
+    expect(data?.proposals[0]?.taskTitle).toBe("題 [REDACTED]");
+    expect(data?.causes[0]?.occurrences[0]?.taskTitle).toBe("題 [REDACTED]");
+    expect(data?.proposals[0]?.decision).toMatchObject({ task: { title: "改修 [REDACTED]" } });
+    expect(tasks.find((t) => t.id === "t1")?.title).toBe("題 SECRET");
+  });
+
+  it("プロジェクトをまたいで集約しない。ダッシュボードは件数と週ごとの推移だけ。無いプロジェクトは null", async () => {
     seq = 0;
     const { service } = ledger([
       ...audited("t1", "2026-10-05T00:00:00Z", "same"),
       ...audited("o1", "2026-10-06T00:00:00Z", "same", { projectId: "p2" }),
       ...audited("o2", "2026-10-13T00:00:00Z", "other", { projectId: "p2" }),
     ]);
-    expect(service.projectAudits("p1")?.causes.map((c) => c.occurrences.length)).toEqual([1]);
-    expect(service.projectAudits("p1")?.audits.map((a) => a.taskId)).toEqual(["t1"]);
-    expect(service.projectAudits("nope")).toBeNull();
+    const data = await service.projectAudits("p1");
+    expect(data?.causes.map((c) => c.occurrences.length)).toEqual([1]);
+    expect(data?.audits.map((a) => a.taskId)).toEqual(["t1"]);
+    expect(await service.projectAudits("nope")).toBeNull();
     const dashboard = service.dashboard();
     expect(dashboard.mock).toBe(false);
     expect(dashboard.projects).toEqual([
@@ -339,9 +366,9 @@ describe("作業履歴から作る監査（PBI-125）", () => {
   it("採用・却下・再開は TaskService に任せ、操作の後の形を返す", async () => {
     seq = 0;
     const { service, calls } = ledger(audited("t1", "2026-10-01T00:00:00Z", "a"));
-    expect(service.adopt("t1:prop", { target: repo }).id).toBe("t1:prop");
+    expect((await service.adopt("t1:prop", { target: repo })).id).toBe("t1:prop");
     expect((await service.reject("t1:prop", { reason: "r" })).id).toBe("t1:prop");
-    expect(service.resume("t1", { capUsd: 2 }).taskId).toBe("t1");
+    expect((await service.resume("t1", { capUsd: 2 })).taskId).toBe("t1");
     expect(calls).toEqual(["adopt t1:prop", "reject t1:prop", "resume t1"]);
   });
 });

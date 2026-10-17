@@ -22332,7 +22332,7 @@ describe("監査の再レビューの指摘（PR #135）", () => {
       ],
     });
     const restarted = makeService(activity, [], { audit: true }).service;
-    const view = new LedgerAuditService(restarted).projectAudits("default");
+    const view = await new LedgerAuditService(restarted).projectAudits("default");
     const reasons = (view?.proposals ?? []).map((p) =>
       p.decision?.kind === "rejected" ? p.decision.reason : "",
     );
@@ -22376,5 +22376,128 @@ describe("監査の再レビューの指摘（PR #135）", () => {
     await waitingC;
     expect(order).toEqual(["監査A", "監査C"]);
     expect(service.get(c)?.task.audit?.dives).toHaveLength(1);
+  });
+});
+
+describe("監査の再々レビューの指摘（PR #135）", () => {
+  const out = (text: string): AgentOutcome => ({
+    kind: "completed",
+    output: text,
+    usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 100 },
+  });
+  const json = (value: unknown) => out(`\`\`\`json\n${JSON.stringify(value)}\n\`\`\``);
+  const survey = (concerns: { step: string; reason: string }[]) =>
+    json({ "sacty-audit-survey": { summary: "要約", concerns } });
+  const dive = (findings: unknown[]) =>
+    json({ "sacty-audit-findings": { summary: "深掘り", findings } });
+  const prompt = (invocation: Invocation) => invocation.command.join(" ");
+  const isSurvey = (invocation: Invocation) =>
+    prompt(invocation).includes("いまは大まかな監査です");
+  const isDive = (invocation: Invocation) => prompt(invocation).includes("深掘りする工程：");
+  const onlyRequirements = async () => ({
+    steps: ["requirements" as const],
+    fallback: false,
+    costUsd: 0,
+    estimated: false,
+  });
+  async function complete(service: TaskService, title: string, body = ""): Promise<string> {
+    const task = service.createTask({ projectId: "default", title, body });
+    await service.runNext(task.id);
+    service.approve(task.id, { step: "requirements", submission: 1 });
+    return task.id;
+  }
+
+  it("監査だけで使う AI の秘密の値（決まった形でない値）も、材料・却下の理由・画面の題から伏せる", async () => {
+    // 監査の AI だけが使う API キー（よくある秘密情報の形ではない）
+    const secretValue = "zz-audit-only-7f3k";
+    const base = configOf(agent());
+    const config = (): ConfigResult => {
+      const c = base();
+      if (!c.ok) return c;
+      return {
+        ok: true,
+        config: {
+          ...c.config,
+          auditAgent: agent({
+            id: "auditor",
+            runtime: "claude-code",
+            auth: { mode: "api-key", secret: "audit-api-key" },
+          }),
+        },
+      };
+    };
+    const activity = new SqliteActivityStore(dbPath);
+    const { service, executor } = makeService(activity, [], {
+      audit: true,
+      planner: onlyRequirements,
+      config,
+      secrets: {
+        "claude-oauth-token": "oauth-secret",
+        "github-token": "ghp_secret",
+        "audit-api-key": secretValue,
+      },
+    });
+    executor.respond = (invocation) =>
+      isSurvey(invocation)
+        ? survey([{ step: "requirements", reason: "理由" }])
+        : isDive(invocation)
+          ? dive([
+              {
+                title: "原因",
+                detail: "",
+                evidence: [],
+                proposals: [{ title: "直す", body: "", target: 0 }],
+              },
+            ])
+          : out("# 要求要件");
+    const id = await complete(service, `題 ${secretValue}`, `本文 ${secretValue}`);
+    await service.runNext(id);
+    await service.runNext(id);
+    const sent = executor.calls
+      .filter((c) => isSurvey(c) || isDive(c))
+      .map(prompt)
+      .join("\n");
+    expect(sent).not.toContain(secretValue);
+    const proposal = service.get(id)?.task.audit?.findings[0]?.proposals[0];
+    await service.rejectAuditProposal(proposal?.id ?? "", { reason: `理由 ${secretValue}` });
+    const view = await new LedgerAuditService(service).projectAudits("default");
+    const shown = JSON.stringify(view);
+    expect(shown).not.toContain(secretValue);
+    expect(view?.audits[0]?.taskTitle).toBe("題 [REDACTED]");
+  });
+
+  it("末尾の待機を中止した後に来た深掘りも、先の深掘りの終わりを待つ", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service, executor } = makeService(activity, [HOLD], {
+      audit: true,
+      planner: onlyRequirements,
+    });
+    const order: string[] = [];
+    executor.respond = (invocation) => {
+      if (isSurvey(invocation)) return survey([{ step: "requirements", reason: "理由" }]);
+      if (isDive(invocation)) {
+        const title = /題：(監査[ABC])/.exec(prompt(invocation))?.[1] ?? "";
+        order.push(title);
+        return title === "監査A" ? undefined : dive([]);
+      }
+      return out("# 要求要件");
+    };
+    const a = await complete(service, "監査A");
+    const b = await complete(service, "監査B");
+    const c = await complete(service, "監査C");
+    for (const id of [a, b, c]) await service.runNext(id);
+    const runningA = service.runNext(a);
+    const heldRun = await executor.started.promise;
+    const waitingB = service.runNext(b);
+    await service.cancel(b);
+    await waitingB;
+    // B の中止の後に C が来ても、A の深掘りの間は始めない
+    const waitingC = service.runNext(c);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(order).toEqual(["監査A"]);
+    executor.kill(heldRun);
+    await runningA;
+    await waitingC;
+    expect(order).toEqual(["監査A", "監査C"]);
   });
 });

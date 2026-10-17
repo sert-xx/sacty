@@ -33,7 +33,12 @@ export type AuditLedger = {
   adoptAuditProposal(proposalId: string, raw: unknown): Task;
   rejectAuditProposal(proposalId: string, raw: unknown): Promise<Task>;
   resumeAudit(taskId: string, raw: unknown): Task;
+  /** 監査の画面・レポートに出す文（元のタスクの題など）の秘密情報を伏せる関数（プロジェクトごと）。 */
+  auditHide(projectId: string): Promise<(text: string) => string>;
 };
+
+/** 監査の画面・レポートに出す文の、秘密情報を伏せる関数。 */
+type Hide = (text: string) => string;
 
 /** 原因の鍵ごとの、まとめた情報。 */
 type CauseInfo = {
@@ -85,6 +90,7 @@ export class LedgerAuditService implements AuditService {
   private decisionOf(
     decision: TaskAuditFinding["proposals"][number]["decision"],
     byId: ReadonlyMap<string, Task>,
+    hide: Hide,
   ): AuditProposalDecision | undefined {
     if (!decision) return undefined;
     // 却下の理由は記録する前に伏せている。それより前の記録のために、画面に出す前にも、よくある秘密情報の形を伏せる
@@ -97,7 +103,7 @@ export class LedgerAuditService implements AuditService {
       at: decision.at,
       target: decision.target,
       ...(decision.fixTaskId
-        ? { task: { taskId: decision.fixTaskId, title: fix?.title ?? decision.fixTaskId } }
+        ? { task: { taskId: decision.fixTaskId, title: hide(fix?.title ?? decision.fixTaskId) } }
         : {}),
     };
   }
@@ -107,6 +113,7 @@ export class LedgerAuditService implements AuditService {
     finding: TaskAuditFinding,
     info: CauseInfo | undefined,
     byId: ReadonlyMap<string, Task>,
+    hide: Hide,
   ): AuditFinding {
     const recurred = info?.fixedAt !== undefined && finding.at > info.fixedAt;
     return {
@@ -116,7 +123,7 @@ export class LedgerAuditService implements AuditService {
       ...(finding.step ? { step: finding.step } : {}),
       evidence: finding.evidence.map((e) => ({ ...e, at: finding.at })),
       proposals: finding.proposals.map((p) => {
-        const decision = this.decisionOf(p.decision, byId);
+        const decision = this.decisionOf(p.decision, byId, hide);
         return {
           id: p.id,
           causeId: finding.causeKey,
@@ -133,7 +140,12 @@ export class LedgerAuditService implements AuditService {
   }
 
   /** タスクの監査の状態を、画面の形にする。 */
-  private view(task: Task, causes: Map<string, CauseInfo>, byId: Map<string, Task>): TaskAudit {
+  private view(
+    task: Task,
+    causes: Map<string, CauseInfo>,
+    byId: Map<string, Task>,
+    hide: Hide,
+  ): TaskAudit {
     const audit = task.audit;
     if (!audit) throw new Error("the task has no audit");
     const running = this.ledger.auditRunning(task.id);
@@ -176,11 +188,19 @@ export class LedgerAuditService implements AuditService {
           ...(done ? { summary: done.summary } : {}),
         };
       }),
-      findings: audit.findings.map((f) => this.findingView(task, f, causes.get(f.causeKey), byId)),
+      findings: audit.findings.map((f) =>
+        this.findingView(task, f, causes.get(f.causeKey), byId, hide),
+      ),
     };
   }
 
-  taskAudit(taskId: string): TaskAudit | null {
+  async taskAudit(taskId: string): Promise<TaskAudit | null> {
+    const task = this.ledger.list().find((t) => t.id === taskId);
+    if (!task) return null;
+    return this.taskAuditWith(taskId, await this.ledger.auditHide(task.projectId));
+  }
+
+  private taskAuditWith(taskId: string, hide: Hide): TaskAudit | null {
     const tasks = this.ledger.list();
     const task = tasks.find((t) => t.id === taskId);
     if (!task || !isAuditTarget(task) || !task.audit) return null;
@@ -188,20 +208,30 @@ export class LedgerAuditService implements AuditService {
       task,
       this.causeInfo(task.projectId, tasks),
       new Map(tasks.map((t) => [t.id, t])),
+      hide,
     );
   }
 
-  projectAudits(projectId: string): ProjectAudits | null {
+  async projectAudits(projectId: string): Promise<ProjectAudits | null> {
+    if (!this.ledger.listProjects().some((p) => p.id === projectId)) return null;
+    return this.projectAuditsWith(projectId, await this.ledger.auditHide(projectId));
+  }
+
+  /**
+   * プロジェクトの監査の画面の形。元のタスクの題は、監査の画面・レポートに出すので hide で伏せる（元のタスクは変えない。
+   * PR #135 再レビュー指摘）。
+   */
+  private projectAuditsWith(projectId: string, hide: Hide): ProjectAudits | null {
     if (!this.ledger.listProjects().some((p) => p.id === projectId)) return null;
     const tasks = this.ledger.list();
     const byId = new Map(tasks.map((t) => [t.id, t]));
     const causes = this.causeInfo(projectId, tasks);
     const audited = this.audited(projectId, tasks);
-    const views = audited.map((t) => ({ task: t, audit: this.view(t, causes, byId) }));
+    const views = audited.map((t) => ({ task: t, audit: this.view(t, causes, byId, hide) }));
     const rows: AuditRow[] = views
       .map(({ task, audit }) => ({
         taskId: task.id,
-        taskTitle: task.title,
+        taskTitle: hide(task.title),
         status: audit.status,
         ...(audit.finishedAt ? { finishedAt: audit.finishedAt } : {}),
         usedUsd: audit.budget.usedUsd,
@@ -210,7 +240,9 @@ export class LedgerAuditService implements AuditService {
       .reverse();
     const proposals: ListedAuditProposal[] = views
       .flatMap(({ task, audit }) =>
-        audit.findings.flatMap((f) => f.proposals.map((p) => ({ ...p, taskTitle: task.title }))),
+        audit.findings.flatMap((f) =>
+          f.proposals.map((p) => ({ ...p, taskTitle: hide(task.title) })),
+        ),
       )
       .reverse()
       .sort((a, b) => Number(isPendingAuditProposal(b)) - Number(isPendingAuditProposal(a)));
@@ -219,12 +251,16 @@ export class LedgerAuditService implements AuditService {
       for (const { task, finding } of info.findings) {
         const seen = occurrences.get(task.id);
         if (!seen || seen.at < finding.at) {
-          occurrences.set(task.id, { taskId: task.id, taskTitle: task.title, at: finding.at });
+          occurrences.set(task.id, {
+            taskId: task.id,
+            taskTitle: hide(task.title),
+            at: finding.at,
+          });
         }
       }
       const all = info.findings.flatMap(({ finding }) =>
         finding.proposals.map((p) => {
-          const decision = this.decisionOf(p.decision, byId);
+          const decision = this.decisionOf(p.decision, byId, hide);
           return decision ? { decision } : {};
         }),
       );
@@ -250,7 +286,8 @@ export class LedgerAuditService implements AuditService {
 
   dashboard(): AuditDashboard {
     const projects = this.ledger.listProjects().flatMap((p) => {
-      const data = this.projectAudits(p.id);
+      // 件数だけを出すので、題は伏せなくてよい
+      const data = this.projectAuditsWith(p.id, (text) => text);
       if (!data) return [];
       const decided = (kind: "adopted" | "rejected") =>
         data.proposals.filter((x) => x.decision?.kind === kind).length;
@@ -288,13 +325,15 @@ export class LedgerAuditService implements AuditService {
   }
 
   /** 操作の後の提案（画面に返す）。 */
-  private proposalAfter(task: Task, proposalId: string): ListedAuditProposal {
-    const found = this.projectAudits(task.projectId)?.proposals.find((p) => p.id === proposalId);
+  private async proposalAfter(task: Task, proposalId: string): Promise<ListedAuditProposal> {
+    const found = (await this.projectAudits(task.projectId))?.proposals.find(
+      (p) => p.id === proposalId,
+    );
     if (!found) throw new Error("the proposal is missing after the operation");
     return found;
   }
 
-  adopt(proposalId: string, input: unknown): ListedAuditProposal {
+  async adopt(proposalId: string, input: unknown): Promise<ListedAuditProposal> {
     return this.proposalAfter(this.ledger.adoptAuditProposal(proposalId, input), proposalId);
   }
 
@@ -302,9 +341,9 @@ export class LedgerAuditService implements AuditService {
     return this.proposalAfter(await this.ledger.rejectAuditProposal(proposalId, input), proposalId);
   }
 
-  resume(taskId: string, input: unknown): TaskAudit {
+  async resume(taskId: string, input: unknown): Promise<TaskAudit> {
     this.ledger.resumeAudit(taskId, input);
-    const audit = this.taskAudit(taskId);
+    const audit = await this.taskAudit(taskId);
     if (!audit) throw new Error("the audit is missing after resuming");
     return audit;
   }

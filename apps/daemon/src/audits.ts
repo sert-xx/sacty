@@ -39,17 +39,17 @@ import { InvalidOperationError } from "./service.js";
 /** 監査のデータと操作。server.ts はこの形だけを使う（PBI-125 で実装を差し替える）。 */
 export interface AuditService {
   /** タスクの監査。監査が無ければ null。 */
-  taskAudit(taskId: string): TaskAudit | null;
+  taskAudit(taskId: string): TaskAudit | null | Promise<TaskAudit | null>;
   /** プロジェクトの監査。プロジェクトが無ければ null。 */
-  projectAudits(projectId: string): ProjectAudits | null;
+  projectAudits(projectId: string): ProjectAudits | null | Promise<ProjectAudits | null>;
   /** ダッシュボードの監査の指標（件数だけ）。 */
   dashboard(): AuditDashboard;
   /** 提案を採用し、改修のタスクを作る。 */
-  adopt(proposalId: string, input: unknown): ListedAuditProposal;
+  adopt(proposalId: string, input: unknown): ListedAuditProposal | Promise<ListedAuditProposal>;
   /** 提案を却下する（理由は必須。記録の前に秘密情報を伏せるので、待つことがある）。 */
   reject(proposalId: string, input: unknown): ListedAuditProposal | Promise<ListedAuditProposal>;
   /** 予算で一時停止した監査を、新しい上限（累計）で再開する。 */
-  resume(taskId: string, input: unknown): TaskAudit;
+  resume(taskId: string, input: unknown): TaskAudit | Promise<TaskAudit>;
 }
 
 export type AuditDeps = {
