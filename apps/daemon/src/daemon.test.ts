@@ -22609,4 +22609,110 @@ describe("監査で伏せる秘密情報の値の使い回し（PR #135 再レ�
     expect(JSON.stringify(shown)).not.toContain("zz-new-value-9");
     expect(shown?.audits[0]?.taskTitle).toBe("題 [REDACTED]");
   });
+
+  const configWithAuditRef = (current: () => string) => {
+    const base = configOf(agent());
+    return (): ConfigResult => {
+      const c = base();
+      if (!c.ok) return c;
+      return {
+        ok: true,
+        config: {
+          ...c.config,
+          auditAgent: agent({ id: "auditor", auth: { mode: "api-key", secret: current() } }),
+        },
+      };
+    };
+  };
+  const onlyRequirements = async () => ({
+    steps: ["requirements" as const],
+    fallback: false,
+    costUsd: 0,
+    estimated: false,
+  });
+  const survey = json({
+    "sacty-audit-survey": { summary: "要約", concerns: [{ step: "requirements", reason: "理由" }] },
+  });
+  const dive = json({ "sacty-audit-findings": { summary: "深掘り", findings: [] } });
+
+  it("同じ参照の値を入れ替えたら、監査を挟まずに画面を取り直しても、時間内でも新しい値を伏せる（PR #135 再レビュー指摘）", async () => {
+    const values: Record<string, string> = {
+      "claude-oauth-token": "oauth-secret",
+      "github-token": "ghp_secret",
+      "audit-key": "zz-first-value",
+    };
+    const activity = new SqliteActivityStore(dbPath);
+    const { service, executor } = makeService(activity, [], {
+      audit: true,
+      config: configWithAuditRef(() => "audit-key"),
+      now: () => Date.parse("2026-10-17T00:00:00Z"),
+      secretStore: { get: async (name: string) => values[name] ?? "" },
+      planner: onlyRequirements,
+    });
+    executor.respond = (invocation) =>
+      isSurvey(invocation) ? survey : isDive(invocation) ? dive : out("# 要求要件");
+    const task = service.createTask({
+      projectId: "default",
+      title: "題 zz-second-value",
+      body: "",
+    });
+    await service.runNext(task.id);
+    service.approve(task.id, { step: "requirements", submission: 1 });
+    const view = new LedgerAuditService(service);
+    expect((await view.projectAudits("default"))?.audits[0]?.taskTitle).toBe("題 zz-second-value");
+    // 監査も却下もしないまま、同じ参照の値だけを入れ替える
+    values["audit-key"] = "zz-second-value";
+    const shown = await view.projectAudits("default");
+    expect(JSON.stringify(shown)).not.toContain("zz-second-value");
+    expect(shown?.audits[0]?.taskTitle).toBe("題 [REDACTED]");
+  });
+
+  it("深掘りの順番を待つ間に監査の AI の秘密情報の参照を変えても、送る前に今の設定の値を伏せる（PR #135 再レビュー指摘）", async () => {
+    const values: Record<string, string> = {
+      "claude-oauth-token": "oauth-secret",
+      "github-token": "ghp_secret",
+      "old-ref": "zz-old-ref-value",
+      "new-ref": "zz-new-ref-value",
+    };
+    let ref = "old-ref";
+    const activity = new SqliteActivityStore(dbPath);
+    const { service, executor } = makeService(activity, [HOLD], {
+      audit: true,
+      config: configWithAuditRef(() => ref),
+      secretStore: { get: async (name: string) => values[name] ?? "" },
+      planner: onlyRequirements,
+    });
+    const dived: string[] = [];
+    executor.respond = (invocation) => {
+      if (isSurvey(invocation)) return survey;
+      if (isDive(invocation)) {
+        dived.push(prompt(invocation));
+        // A の深掘りは、止められるまで終わらない
+        return prompt(invocation).includes("題：監査A") ? undefined : dive;
+      }
+      return out("# 要求要件");
+    };
+    const make = async (title: string, body: string) => {
+      const task = service.createTask({ projectId: "default", title, body });
+      await service.runNext(task.id);
+      service.approve(task.id, { step: "requirements", submission: 1 });
+      await service.runNext(task.id);
+      return task.id;
+    };
+    const a = await make("監査A", "");
+    const b = await make("監査B", "本文 zz-new-ref-value");
+    const runningA = service.runNext(a);
+    const heldRun = await executor.started.promise;
+    // B は A の深掘りの後を待つ。その間に参照を変える
+    const waitingB = service.runNext(b);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    ref = "new-ref";
+    executor.kill(heldRun);
+    await runningA;
+    await waitingB;
+    const sentB = dived.filter((text) => text.includes("題：監査B")).join("\n");
+    expect(sentB).toContain("本文");
+    expect(sentB).not.toContain("zz-new-ref-value");
+    expect(sentB).toContain("[REDACTED]");
+  });
 });

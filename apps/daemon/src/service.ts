@@ -366,9 +366,6 @@ export class InvalidOperationError extends Error {
   }
 }
 
-/** 監査で伏せる秘密情報の値を持つ間（ミリ秒）。 */
-const AUDIT_SECRET_CACHE_MS = 60_000;
-
 export type ServiceDeps = {
   activity: ActivityStore;
   /**
@@ -7951,8 +7948,8 @@ export class TaskService {
    * GitHub のトークン、よくある秘密情報の形（CI のログと同じ規則）を伏せる。取り出せない値は飛ばす。
    */
   private async auditRedactor(task: Task, config: SactyConfig): Promise<(text: string) => string> {
-    // 監査に送る前・記録する前は、使い回さずに今の設定から取り出す（設定を変えた直後の値も伏せる。PR #135 再レビュー指摘）
-    const values = [...(await this.auditSecretValues(task.projectId, config, { fresh: true }))];
+    // 実行に使う設定と、今の設定の両方から取り出す（深掘りの順番を待つ間に設定を変えても伏せる。PR #135 再レビュー指摘）
+    const values = await this.auditSecretValues(task.projectId, config);
     if (task.repository) {
       try {
         await this.githubToken(task, task.repository.url, values);
@@ -7964,36 +7961,23 @@ export class TaskService {
   }
 
   /**
-   * 画面に出す文を伏せる秘密情報の値（プロジェクトごとに、短い間だけ持つ。画面の取り直しのたびに取り出さないため）。key は
-   * 秘密情報の参照と GitHub のアカウントの一覧で、設定を変えたら使わない（PR #135 再レビュー指摘）。
-   */
-  private readonly auditSecretCache = new Map<
-    string,
-    { at: number; key: string; values: string[] }
-  >();
-
-  /**
    * 監査で伏せる秘密情報の値：sacty の設定・sacty の設定で使う秘密情報（監査の AI のものを含む）と、プロジェクトで選んだ
-   * GitHub のアカウントのトークン。取り出せない値は飛ばす（形で伏せる）。
+   * GitHub のアカウントのトークン。取り出せない値は飛ばす（形で伏せる）。config を渡したときは、それと今の設定の両方から
+   * 取り出す。同じ参照の値の入れ替えは知る手立てが無いので、使い回さずに毎回取り出す（PR #135 再レビュー指摘）。
    */
-  private async auditSecretValues(
-    projectId: string,
-    config: SactyConfig,
-    options: { fresh?: boolean } = {},
-  ): Promise<string[]> {
-    const refs = uniqueUses(secretUses(config, this.readableSettings())).map((u) => u.ref);
-    const project = this.deps.projects.get(projectId);
-    const accounts = project?.githubAccounts ?? {};
-    const key = JSON.stringify({ refs: [...refs].sort(), accounts });
-    const cached = this.auditSecretCache.get(projectId);
-    if (
-      !options.fresh &&
-      cached &&
-      cached.key === key &&
-      this.now() - cached.at < AUDIT_SECRET_CACHE_MS
-    ) {
-      return cached.values;
-    }
+  private async auditSecretValues(projectId: string, config?: SactyConfig): Promise<string[]> {
+    const current = this.deps.config();
+    const configs = [config, current.ok ? current.config : undefined].filter(
+      (c): c is SactyConfig => c !== undefined,
+    );
+    const refs = [
+      ...new Set(
+        configs.flatMap((c) =>
+          uniqueUses(secretUses(c, this.readableSettings())).map((u) => u.ref),
+        ),
+      ),
+    ];
+    const accounts = this.deps.projects.get(projectId)?.githubAccounts ?? {};
     const values: string[] = [];
     for (const ref of refs) {
       try {
@@ -8009,7 +7993,6 @@ export class TaskService {
         // gh にログインしていないなど
       }
     }
-    this.auditSecretCache.set(projectId, { at: this.now(), key, values });
     return values;
   }
 
@@ -8018,8 +8001,7 @@ export class TaskService {
    * よくある秘密情報の形だけを伏せる。
    */
   async auditHide(projectId: string): Promise<(text: string) => string> {
-    const config = this.deps.config();
-    const values = config.ok ? await this.auditSecretValues(projectId, config.config) : [];
+    const values = await this.auditSecretValues(projectId);
     return (text: string) => redactLog(text, values);
   }
 

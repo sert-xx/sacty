@@ -34,9 +34,9 @@ Code: `apps/daemon/src/service.ts` (`auditQueueEvent`, `awaitingAudit`, `runAudi
 - Secrets are redacted before truncation from the materials (ledger, body, approved outputs, remarks, rejection reasons, existing cause
   titles, session logs) and from the audit output. Session logs are staged as hard links to the original logs, so they are replaced with
   redacted copies before mounting, leaving the originals unchanged. The redaction covers the values of secrets used by the settings and sacty settings (including the audit AI's), the GitHub
-  tokens of the project's chosen accounts and of the task's repository, and common secret patterns. The values used to redact what the page shows
-  are kept per project for 60 seconds (not reused once the secret references or GitHub accounts change). Before sending to the audit AI and
-  before recording, the current values are always fetched.
+  tokens of the project's chosen accounts and of the task's repository, and common secret patterns. The values are never reused: they are fetched
+  each time before sending to the audit AI, before recording and before showing. If the settings change while a deep dive waits for its
+  turn, the values from both the settings used for the run and the current settings are redacted.
 - The instructions include the context versions used (repositories and commits).
 - sacty counts the evidence during the survey, and the deep dives reuse the recorded counts (the agent does not count; session logs are read
   asynchronously): human change requests, imported PR remarks, pauses, retries (failed runs, failed
