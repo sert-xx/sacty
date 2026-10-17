@@ -32,7 +32,8 @@ Code: `apps/daemon/src/service.ts` (`auditQueueEvent`, `awaitingAudit`, `runAudi
   disposable copy of the code, after the implementation if the task has an implement step, otherwise at the base commit, with an instruction
   not to change it.
 - Secrets are redacted before truncation from the materials (ledger, body, approved outputs, remarks, rejection reasons, existing cause
-  titles) and from the audit output: the values of secrets used by the settings and sacty settings, the GitHub token of the task's
+  titles, session logs) and from the audit output. Session logs are staged as hard links to the original logs, so they are replaced with
+  redacted copies before mounting, leaving the originals unchanged. The redaction covers the values of secrets used by the settings and sacty settings, the GitHub token of the task's
   repository, and common secret patterns.
 - The instructions include the context versions used (repositories and commits).
 - sacty counts the evidence during the survey, and the deep dives reuse the recorded counts (the agent does not count; session logs are read
@@ -49,7 +50,8 @@ Code: `apps/daemon/src/audit-prompts.ts` (`buildAuditSurveyPrompt`, `extractAudi
 
 ## Causes and proposals
 
-- Deep dives in the same project run one at a time (reading the existing causes and recording the result do not overlap).
+- Deep dives in the same project run one at a time (reading the existing causes and recording the result do not overlap). A task cancelled
+  while waiting for its turn stops waiting (cancelling does not wait for the earlier deep dive).
 - Causes are grouped within a project by a cause key (`causeKey`). The deep dive gets the project's existing causes (key, title, whether a
   fix was adopted) and the rejected proposals with their reasons. If a cause is the same as an existing one, the agent uses its key
   (`sameAs`). A new cause key is `<audit ID>:<step>:<number>`.
@@ -60,7 +62,8 @@ Code: `apps/daemon/src/audit-prompts.ts` (`buildAuditSurveyPrompt`, `extractAudi
   repository, a fix task (`start: "audit"`, `auditFix` holding the original task and proposal) is created for that repository. The
   adoption is recorded first; if the daemon stops before the task is created, it is created at the next start. If the target is the sacty
   default context, no task is created in the user's project.
-- Reject (`AuditProposalRejected`): needs a reason (1–2000 characters after trimming). A decided proposal cannot be decided again. Proposals
+- Reject (`AuditProposalRejected`): needs a reason (1–2000 characters after trimming). The reason also appears on the audit page and in
+  reports, so secrets are redacted before it is recorded (older records get common secret patterns redacted when shown). A decided proposal cannot be decided again. Proposals
   of a cancelled task cannot be decided.
 - Cause state: `recurred` if a cause with the same key is found after the merge of its fix task's PR (`pullRequestMerge.at`), `fixed` if not,
   `adopted` if a proposal was adopted, `proposed` if a proposal needs a decision, and `rejected` if all were rejected.

@@ -46,8 +46,8 @@ export interface AuditService {
   dashboard(): AuditDashboard;
   /** 提案を採用し、改修のタスクを作る。 */
   adopt(proposalId: string, input: unknown): ListedAuditProposal;
-  /** 提案を却下する（理由は必須）。 */
-  reject(proposalId: string, input: unknown): ListedAuditProposal;
+  /** 提案を却下する（理由は必須。記録の前に秘密情報を伏せるので、待つことがある）。 */
+  reject(proposalId: string, input: unknown): ListedAuditProposal | Promise<ListedAuditProposal>;
   /** 予算で一時停止した監査を、新しい上限（累計）で再開する。 */
   resume(taskId: string, input: unknown): TaskAudit;
 }

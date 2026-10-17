@@ -503,7 +503,7 @@ export function createApp(
     const json = await readJson(c);
     if (!json.ok) return c.json({ error: "invalid_json" }, 400);
     try {
-      return c.json({ proposal: audits.reject(c.req.param("id"), json.body) });
+      return c.json({ proposal: await audits.reject(c.req.param("id"), json.body) });
     } catch (error) {
       return handleError(c, error);
     }

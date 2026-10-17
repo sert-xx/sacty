@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import {
+  appendFileSync,
   chmodSync,
   cpSync,
   existsSync,
@@ -71,6 +72,7 @@ import {
   sactyReviewTask,
 } from "./github.js";
 import { type HostMcpConnection, HostMcpFile, type HostMcpSpec, toHostMcp } from "./host-mcp.js";
+import { LedgerAuditService } from "./ledger-audits.js";
 import { SlackNotifier } from "./notifier.js";
 import { OrchestratorSessionStore } from "./orchestrator-sessions.js";
 import { type Platform, PlatformCredentials, PlatformFile, toPlatform } from "./platforms.js";
@@ -21769,8 +21771,8 @@ describe("完了したタスクの監査（PBI-125）", () => {
     expect(() => service.adoptAuditProposal("missing", { target: { kind: "sacty" } })).toThrow(
       "その提案はありません",
     );
-    expect(() => service.rejectAuditProposal(repo.id, { reason: "  " })).toThrow();
-    service.rejectAuditProposal(repo.id, { reason: "ほかのチームと共有しているため" });
+    await expect(service.rejectAuditProposal(repo.id, { reason: "  " })).rejects.toThrow();
+    await service.rejectAuditProposal(repo.id, { reason: "ほかのチームと共有しているため" });
     expect(service.get(id)?.task.audit?.findings[0]?.proposals[0]?.decision).toMatchObject({
       kind: "rejected",
       reason: "ほかのチームと共有しているため",
@@ -21834,7 +21836,7 @@ describe("完了したタスクの監査（PBI-125）", () => {
     expect(() => service.adoptAuditProposal(repo.id, { target: repo.target })).toThrow(
       "中止されたため",
     );
-    expect(() => service.rejectAuditProposal(repo.id, { reason: "理由" })).toThrow(
+    await expect(service.rejectAuditProposal(repo.id, { reason: "理由" })).rejects.toThrow(
       "中止されたため",
     );
   });
@@ -22068,7 +22070,7 @@ describe("監査のレビューの指摘（PR #135）", () => {
 
     // 却下の理由に書いた秘密の値も、次の監査には伏せて渡す
     const proposalId = audit?.findings[0]?.proposals[0]?.id ?? "";
-    service.rejectAuditProposal(proposalId, { reason: "oauth-secret を書いてしまった" });
+    await service.rejectAuditProposal(proposalId, { reason: "oauth-secret を書いてしまった" });
     const second = await complete(service, executor, "B");
     await service.runNext(second);
     await service.runNext(second);
@@ -22227,5 +22229,152 @@ describe("監査のレビューの指摘（PR #135）", () => {
       e.type === "AuditSurveyed" || e.type === "AuditDeepDived" ? [e.payload.runId] : [],
     );
     expect(new Set(runIds).size).toBe(2);
+  });
+});
+
+describe("監査の再レビューの指摘（PR #135）", () => {
+  const out = (text: string): AgentOutcome => ({
+    kind: "completed",
+    output: text,
+    usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 100 },
+  });
+  const json = (value: unknown) => out(`\`\`\`json\n${JSON.stringify(value)}\n\`\`\``);
+  const survey = (concerns: { step: string; reason: string }[]) =>
+    json({ "sacty-audit-survey": { summary: "要約", concerns } });
+  const dive = (findings: unknown[]) =>
+    json({ "sacty-audit-findings": { summary: "深掘り", findings } });
+  const prompt = (invocation: Invocation) => invocation.command.join(" ");
+  const isSurvey = (invocation: Invocation) =>
+    prompt(invocation).includes("いまは大まかな監査です");
+  const isDive = (invocation: Invocation) => prompt(invocation).includes("深掘りする工程：");
+  const onlyRequirements = async () => ({
+    steps: ["requirements" as const],
+    fallback: false,
+    costUsd: 0,
+    estimated: false,
+  });
+  const token = `ghp_${"A".repeat(36)}`;
+
+  async function complete(service: TaskService, title: string): Promise<string> {
+    const task = service.createTask({ projectId: "default", title, body: "" });
+    await service.runNext(task.id);
+    service.approve(task.id, { step: "requirements", submission: 1 });
+    return task.id;
+  }
+
+  it("監査に渡すセッションログは、秘密情報を伏せた写しにする（元のログは変えない）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const sessionLogs = new SessionLogStore(join(dir, "runs"));
+    const { service, executor } = makeService(activity, [], {
+      audit: true,
+      planner: onlyRequirements,
+      sessionLogs,
+    });
+    executor.respond = (invocation) => (isSurvey(invocation) ? survey([]) : out("# 要求要件"));
+    const id = await complete(service, "A");
+    // 実行のログにだけある秘密情報（実行に渡した値ではないので、ログの保存では伏せられない）
+    const runId = (service.get(id)?.activity ?? []).flatMap((e) =>
+      e.type === "AgentRunCompleted" ? [e.payload.runId] : [],
+    )[0];
+    const path = sessionLogs.path(id, runId ?? "", "events") ?? "";
+    appendFileSync(path, `${JSON.stringify({ type: "tool_result", content: `token ${token}` })}\n`);
+    await service.runNext(id);
+    const mounted = executor.logMounts.at(-1);
+    const files = Object.entries(mounted?.files ?? {});
+    expect(files.some(([name]) => name.endsWith("events.jsonl"))).toBe(true);
+    for (const [, text] of files) expect(text).not.toContain(token);
+    expect(files.some(([, text]) => text.includes("[REDACTED]"))).toBe(true);
+    // 元のログは変えない
+    expect(readFileSync(path, "utf8")).toContain(token);
+  });
+
+  it("却下の理由は、記録する前に秘密情報を伏せる。前の記録も、画面に出す前に形で伏せる", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service, executor } = makeService(activity, [], {
+      audit: true,
+      planner: onlyRequirements,
+    });
+    executor.respond = (invocation) =>
+      isSurvey(invocation)
+        ? survey([{ step: "requirements", reason: "理由" }])
+        : isDive(invocation)
+          ? dive([
+              {
+                title: "原因",
+                detail: "",
+                evidence: [],
+                proposals: [
+                  { title: "提案1", body: "", target: 0 },
+                  { title: "提案2", body: "", target: 0 },
+                ],
+              },
+            ])
+          : out("# 要求要件");
+    const id = await complete(service, "A");
+    await service.runNext(id);
+    await service.runNext(id);
+    const [first, second] = service.get(id)?.task.audit?.findings[0]?.proposals ?? [];
+    await service.rejectAuditProposal(first?.id ?? "", { reason: `値は ${token} と ghp_secret` });
+    const stored = service.get(id)?.task.audit?.findings[0]?.proposals[0]?.decision;
+    expect(stored).toMatchObject({ kind: "rejected", reason: "値は [REDACTED] と [REDACTED]" });
+    // 伏せる前に記録された理由（この修正より前の記録）も、画面の形にするときに伏せる
+    activity.append({
+      taskId: id,
+      projectId: "default",
+      events: [
+        {
+          actor: "person",
+          event: {
+            type: "AuditProposalRejected",
+            payload: { proposalId: second?.id ?? "", reason: `前の記録 ${token}` },
+          },
+        },
+      ],
+    });
+    const restarted = makeService(activity, [], { audit: true }).service;
+    const view = new LedgerAuditService(restarted).projectAudits("default");
+    const reasons = (view?.proposals ?? []).map((p) =>
+      p.decision?.kind === "rejected" ? p.decision.reason : "",
+    );
+    expect(reasons.join(" ")).not.toContain(token);
+    expect(reasons).toContain("前の記録 [REDACTED]");
+  });
+
+  it("深掘りの順番を待っているタスクの中止は、先の深掘りの終わりを待たない。後の深掘りは順番を保って進む", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service, executor } = makeService(activity, [HOLD], {
+      audit: true,
+      planner: onlyRequirements,
+    });
+    const order: string[] = [];
+    executor.respond = (invocation) => {
+      if (isSurvey(invocation)) return survey([{ step: "requirements", reason: "理由" }]);
+      if (isDive(invocation)) {
+        const title = /題：(監査[ABC])/.exec(prompt(invocation))?.[1] ?? "";
+        order.push(title);
+        // A の深掘りは、止められるまで終わらない
+        return title === "監査A" ? undefined : dive([]);
+      }
+      return out("# 要求要件");
+    };
+    const a = await complete(service, "監査A");
+    const b = await complete(service, "監査B");
+    const c = await complete(service, "監査C");
+    for (const id of [a, b, c]) await service.runNext(id);
+    const runningA = service.runNext(a);
+    const heldRun = await executor.started.promise;
+    const waitingB = service.runNext(b);
+    const waitingC = service.runNext(c);
+    // B は A の深掘りの後を待っている。中止は A の終わりを待たずに終わる
+    await service.cancel(b);
+    await waitingB;
+    expect(service.get(b)?.task.status).toBe("cancelled");
+    expect(order).toEqual(["監査A"]);
+    // A を終わらせると、C が順番どおりに深掘りする
+    executor.kill(heldRun);
+    await runningA;
+    await waitingC;
+    expect(order).toEqual(["監査A", "監査C"]);
+    expect(service.get(c)?.task.audit?.dives).toHaveLength(1);
   });
 });

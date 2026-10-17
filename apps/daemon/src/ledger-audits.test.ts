@@ -171,7 +171,7 @@ function ledger(events: ActivityEvent[], extra: Task[] = [], running: string[] =
       calls.push(`adopt ${id}`);
       return tasks[0] as Task;
     },
-    rejectAuditProposal: (id) => {
+    rejectAuditProposal: async (id) => {
       calls.push(`reject ${id}`);
       return tasks[0] as Task;
     },
@@ -336,11 +336,11 @@ describe("作業履歴から作る監査（PBI-125）", () => {
     ]);
   });
 
-  it("採用・却下・再開は TaskService に任せ、操作の後の形を返す", () => {
+  it("採用・却下・再開は TaskService に任せ、操作の後の形を返す", async () => {
     seq = 0;
     const { service, calls } = ledger(audited("t1", "2026-10-01T00:00:00Z", "a"));
     expect(service.adopt("t1:prop", { target: repo }).id).toBe("t1:prop");
-    expect(service.reject("t1:prop", { reason: "r" }).id).toBe("t1:prop");
+    expect((await service.reject("t1:prop", { reason: "r" })).id).toBe("t1:prop");
     expect(service.resume("t1", { capUsd: 2 }).taskId).toBe("t1");
     expect(calls).toEqual(["adopt t1:prop", "reject t1:prop", "resume t1"]);
   });

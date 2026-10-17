@@ -123,7 +123,7 @@ import type { AgentOutcome } from "./agents/parse.js";
 import { redact, redactText } from "./agents/redact.js";
 import type { TestRunner, TestRunResult } from "./agents/test-runner.js";
 import { type PlacedTier, selectTiers, tierFiles } from "./agents/tiers.js";
-import { auditCounts, countToolFailures, redactDeep } from "./audit-evidence.js";
+import { auditCounts, countToolFailures, redactDeep, redactStagedFiles } from "./audit-evidence.js";
 import {
   AUDIT_LEDGER_DIR,
   AUDIT_LEDGER_FILE,
@@ -6150,6 +6150,8 @@ export class TaskService {
       let containerStopped = true;
       if (inflight) {
         this.pauseRequested.add(id);
+        // 監査の深掘りの順番を待っているなら、待つのをやめさせる（PR #135 再レビュー指摘）
+        this.auditLockWaits.get(id)?.();
         const runIds = [...inflight.runIds];
         this.stopRuns(runIds);
         await inflight.done.catch(() => {});
@@ -7643,7 +7645,11 @@ export class TaskService {
    * 同じプロジェクトの深掘りを1つずつ実行する（PR #135 レビュー指摘）。並べて実行すると、どちらも同じ既存の原因の一覧を
    * 読むため、同じ新しい原因が別の鍵で記録され、まとまらない。
    */
-  private async withAuditDiveLock(projectId: string, run: () => Promise<void>): Promise<void> {
+  private async withAuditDiveLock(
+    projectId: string,
+    taskId: string,
+    run: () => Promise<void>,
+  ): Promise<void> {
     const previous = this.auditDiveLocks.get(projectId) ?? Promise.resolve();
     let release = () => {};
     const mine = new Promise<void>((resolve) => {
@@ -7651,14 +7657,24 @@ export class TaskService {
     });
     const chain = previous.then(() => mine);
     this.auditDiveLocks.set(projectId, chain);
-    await previous;
+    // 順番を待つ間に中止されたら、待つのをやめる（中止の操作が、先の深掘りの終わりを待たない。PR #135 再レビュー指摘）。
+    // 後に並んだ深掘りは、自分の順番（先の深掘りの後）を保ったまま進む
+    const aborted = new Promise<true>((resolve) =>
+      this.auditLockWaits.set(taskId, () => resolve(true)),
+    );
     try {
+      const stopped = await Promise.race([previous.then(() => false), aborted]);
+      if (stopped || this.cancelling.has(taskId) || this.stopping) return;
       await run();
     } finally {
+      this.auditLockWaits.delete(taskId);
       release();
       if (this.auditDiveLocks.get(projectId) === chain) this.auditDiveLocks.delete(projectId);
     }
   }
+
+  /** 深掘りの順番を待っているタスクの、待つのをやめさせる関数（中止のとき）。 */
+  private readonly auditLockWaits = new Map<string, () => void>();
 
   /**
    * 監査を1つ進める（ワーカーが実行する）。大まかな監査 → 懸念のある工程の深掘り（1つずつ）→ 完了。エージェントを実行する
@@ -7689,7 +7705,7 @@ export class TaskService {
       return;
     }
     if (!step) return this.runAuditAgent(task, config.config, undefined);
-    await this.withAuditDiveLock(task.projectId, async () => {
+    await this.withAuditDiveLock(task.projectId, task.id, async () => {
       // 順番を待つ間に、中止された・別の実行が進めたなら、何もしない
       const latest = this.tasks.get(task.id);
       if (!latest || !this.awaitingAudit(latest) || !latest.audit?.survey) return;
@@ -7720,6 +7736,8 @@ export class TaskService {
       );
       const shown = redactDeep(task, hide);
       const logs = this.stageQuestionLogs(task.id, raw, logsDir, runId);
+      // 並べたログは元のファイルへのハードリンクなので、元を変えずに、伏せた写しに置き換える（PR #135 再レビュー指摘）
+      if ("runs" in logs) await redactStagedFiles(logsDir, hide);
       // 台帳の全文（伏せたもの）を、読み取り専用で渡す（指示には上限まで入れ、省いた行はここで読める。PR #135 レビュー指摘）
       mkdirSync(ledgerDir, { recursive: true });
       writeFileSync(
@@ -8061,19 +8079,31 @@ export class TaskService {
     }
   }
 
-  /** 改修の提案を、理由を添えて却下する（PBI-125）。理由は以後の監査に渡す。 */
-  rejectAuditProposal(proposalId: string, raw: unknown): Task {
+  /**
+   * 改修の提案を、理由を添えて却下する（PBI-125）。理由は以後の監査に渡す。理由は監査の画面・レポートにも出るので、
+   * 記録する前に秘密情報を伏せる（PR #135 再レビュー指摘）。
+   */
+  async rejectAuditProposal(proposalId: string, raw: unknown): Promise<Task> {
     const { reason } = RejectAuditProposalInput.parse(raw);
-    const found = this.findAuditProposal(proposalId);
-    if (!found) throw new InvalidOperationError(message("audit.proposalNotFound"));
-    if (found.task.status === "cancelled") {
-      throw new InvalidOperationError(message("audit.notAdoptable"));
-    }
-    if (found.proposal.decision) throw new InvalidOperationError(message("audit.alreadyDecided"));
+    const check = () => {
+      const found = this.findAuditProposal(proposalId);
+      if (!found) throw new InvalidOperationError(message("audit.proposalNotFound"));
+      if (found.task.status === "cancelled") {
+        throw new InvalidOperationError(message("audit.notAdoptable"));
+      }
+      if (found.proposal.decision) throw new InvalidOperationError(message("audit.alreadyDecided"));
+      return found;
+    };
+    const config = this.deps.config();
+    const hide = config.ok
+      ? await this.auditRedactor(check().task, config.config)
+      : (text: string) => redactLog(text, []);
+    // 秘密情報を取り出す間に、ほかの操作が判断していないかを確かめ直す
+    const found = check();
     return this.append(found.task, [
       {
         actor: "person",
-        event: { type: "AuditProposalRejected", payload: { proposalId, reason } },
+        event: { type: "AuditProposalRejected", payload: { proposalId, reason: hide(reason) } },
       },
     ]);
   }

@@ -1,3 +1,5 @@
+import { readdir, readFile, unlink, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import type { ActivityEvent, AuditEvidenceKind } from "@sacty/core";
 
 /*
@@ -99,4 +101,23 @@ export function redactDeep<T>(value: T, hide: (text: string) => string): T {
     return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, redactDeep(v, hide)])) as T;
   }
   return value;
+}
+
+/**
+ * dir の下のファイルを、秘密情報を伏せた写しに置き換える（監査に渡すセッションログ。PR #135 再レビュー指摘）。並べたファイルは
+ * 元のログへのハードリンクのことがあるので、上書きせずに、消してから書く（元のログは変えない）。1つずつ非同期で行う。
+ */
+export async function redactStagedFiles(
+  dir: string,
+  hide: (text: string) => string,
+): Promise<void> {
+  const entries = await readdir(dir, { withFileTypes: true, recursive: true });
+  for (const entry of entries) {
+    if (!entry.isFile()) continue;
+    const path = join(entry.parentPath, entry.name);
+    const text = await readFile(path, "utf8");
+    const hidden = hide(text);
+    await unlink(path);
+    await writeFile(path, hidden);
+  }
 }

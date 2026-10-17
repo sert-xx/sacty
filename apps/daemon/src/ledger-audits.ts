@@ -16,6 +16,7 @@ import {
   type TaskAuditFinding,
 } from "@sacty/core";
 import { type AuditService, causeStatus, sortCauses, weekStart } from "./audits.js";
+import { redactLog } from "./ci.js";
 
 /*
  * 完了したタスクの監査を、作業履歴の記録（タスクの監査の状態。Audit… のイベントを畳み込んだもの）から組み立てる（PBI-125）。
@@ -30,7 +31,7 @@ export type AuditLedger = {
   auditBudgetUsd(): number;
   auditRunning(taskId: string): boolean;
   adoptAuditProposal(proposalId: string, raw: unknown): Task;
-  rejectAuditProposal(proposalId: string, raw: unknown): Task;
+  rejectAuditProposal(proposalId: string, raw: unknown): Promise<Task>;
   resumeAudit(taskId: string, raw: unknown): Task;
 };
 
@@ -86,7 +87,10 @@ export class LedgerAuditService implements AuditService {
     byId: ReadonlyMap<string, Task>,
   ): AuditProposalDecision | undefined {
     if (!decision) return undefined;
-    if (decision.kind === "rejected") return decision;
+    // 却下の理由は記録する前に伏せている。それより前の記録のために、画面に出す前にも、よくある秘密情報の形を伏せる
+    // （PR #135 再レビュー指摘）
+    if (decision.kind === "rejected")
+      return { ...decision, reason: redactLog(decision.reason, []) };
     const fix = decision.fixTaskId ? byId.get(decision.fixTaskId) : undefined;
     return {
       kind: "adopted",
@@ -294,8 +298,8 @@ export class LedgerAuditService implements AuditService {
     return this.proposalAfter(this.ledger.adoptAuditProposal(proposalId, input), proposalId);
   }
 
-  reject(proposalId: string, input: unknown): ListedAuditProposal {
-    return this.proposalAfter(this.ledger.rejectAuditProposal(proposalId, input), proposalId);
+  async reject(proposalId: string, input: unknown): Promise<ListedAuditProposal> {
+    return this.proposalAfter(await this.ledger.rejectAuditProposal(proposalId, input), proposalId);
   }
 
   resume(taskId: string, input: unknown): TaskAudit {
