@@ -4,6 +4,7 @@ import {
   AUDIT_EVIDENCE_KINDS,
   type AuditEvidence,
   type AuditMemory,
+  type AuditMovedMemory,
   type AuditProposal,
   type AuditTarget,
   type AuditUsefulMemory,
@@ -195,6 +196,7 @@ export function TaskAuditCard({ audit }: { audit: TaskAudit | null }) {
         </div>
       )}
       {audit.usefulMemories.length > 0 && <UsefulMemories memories={audit.usefulMemories} />}
+      {audit.movedMemories.length > 0 && <MovedMemories memories={audit.movedMemories} />}
       {audit.memories.length > 0 && <AuditMemories memories={audit.memories} />}
     </CardSection>
   );
@@ -215,6 +217,33 @@ function UsefulMemories({ memories }: { memories: AuditUsefulMemory[] }) {
             <span className="text-xs text-muted-foreground">
               {memory.scope === "project" ? m.project : m.repository}
             </span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/** 監査が別の階層に移したメモリー（PBI-128）。 */
+function MovedMemories({ memories }: { memories: AuditMovedMemory[] }) {
+  const m = useMessages().audit.memories;
+  return (
+    <div className="flex flex-col gap-2">
+      <h3 className="text-sm font-semibold">
+        <WithHint hint={m.movedHint}>{m.movedTitle}</WithHint>
+      </h3>
+      <ul className="flex flex-col gap-1 text-sm">
+        {memories.map((memory) => (
+          <li key={memory.id} data-testid={`audit-moved-memory-${memory.id}`}>
+            <span className="font-medium">{memory.title}</span>{" "}
+            <span className="text-xs text-muted-foreground">
+              {m.movedTo(memory.scope === "project" ? m.project : m.repository)}
+            </span>
+            {memory.repo && (
+              <span className="ml-1.5 font-mono text-xs break-all text-muted-foreground">
+                {memory.repo}
+              </span>
+            )}
           </li>
         ))}
       </ul>
@@ -253,9 +282,12 @@ function AuditMemories({ memories }: { memories: AuditMemory[] }) {
                     ? m.deleted
                     : memory.deleted.reason === "capacity"
                       ? m.deletedByCapacity
-                      : m.deletedByExpiry}
+                      : memory.deleted.reason === "expired"
+                        ? m.deletedByExpiry
+                        : m.deletedByPromotion}
                   {memory.deleted.reason === "capacity" && <Hint text={m.deletedHint} />}
                   {memory.deleted.reason === "expired" && <Hint text={m.deletedByExpiryHint} />}
+                  {memory.deleted.reason === "promoted" && <Hint text={m.deletedByPromotionHint} />}
                 </span>
               )}
             </div>

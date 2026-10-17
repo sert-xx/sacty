@@ -10,12 +10,15 @@ import {
   lastUsefulAt,
   liveMemories,
   memoryLayerDir,
+  memoryPlacements,
   memoryPromptLines,
   overCapacity,
+  promotedMemories,
   renderMemoryIndex,
   repositoryMemoryKey,
   syncMemoryLayers,
   taskMemoryLayers,
+  usefulCounts,
   usefulDates,
   writeMemoryLayer,
 } from "./memory.js";
@@ -245,5 +248,123 @@ describe("有効な最終利用日と掃除（PBI-127）", () => {
     // 複数のログを足し合わせる
     countOpenedMemories("/sacty-memory/project/references/m2.md", ids, counts);
     expect(counts.get("m2")).toBe(1);
+  });
+});
+
+describe("昇格（PBI-128）", () => {
+  const registered = (id: string, scope: "project" | "repository" = "project") => ({
+    id,
+    scope,
+    ...(scope === "repository" ? { repo: "https://github.com/a/app" } : {}),
+    title: "題",
+    summary: "概要",
+    body: "中身",
+    step: "implement",
+    at: "2026-10-01T00:00:00.000Z",
+  });
+  const surveyed = (id: string, at: string, moves: unknown[], useful: string[] = []) =>
+    ({
+      id,
+      projectId: "p2",
+      audit: {
+        queuedAt: at,
+        memories: [],
+        findings: [],
+        survey: { at, memoryMoves: moves, usefulMemories: useful },
+      },
+    }) as unknown as Task;
+
+  it("移した記録を、大まかな監査の時刻の順に当て、最後に移した先に置く。日付は引き継ぐ", () => {
+    const source = {
+      id: "t1",
+      projectId: "p1",
+      audit: {
+        queuedAt: "",
+        memories: [registered("m1"), registered("m2", "repository")],
+        findings: [],
+      },
+    } as unknown as Task;
+    const tasks = [
+      source,
+      surveyed(
+        "t3",
+        "2026-10-05T00:00:00.000Z",
+        [{ id: "m1", scope: "project", projectId: "p2" }],
+        ["m1"],
+      ),
+      surveyed("t2", "2026-10-03T00:00:00.000Z", [
+        { id: "m1", scope: "repository", repo: "https://github.com/a/app" },
+        { id: "m2", scope: "project", projectId: "p2" },
+      ]),
+    ];
+    expect(memoryPlacements(tasks).get("m1")).toEqual({
+      id: "m1",
+      scope: "project",
+      projectId: "p2",
+    });
+    const live = liveMemories(tasks);
+    expect(live.find((m) => m.id === "m1")).toMatchObject({
+      scope: "project",
+      projectId: "p2",
+      taskId: "t1",
+      lastUsefulAt: "2026-10-05T00:00:00.000Z",
+    });
+    expect(live.find((m) => m.id === "m2")).toMatchObject({ scope: "project", projectId: "p2" });
+    expect(memoryPlacements([source]).size).toBe(0);
+  });
+
+  it("役に立った回数は、判断したタスクの数（同じタスクの重なりは1回）", () => {
+    const counts = usefulCounts([
+      surveyed("a", "2026-10-01T00:00:00.000Z", [], ["m1", "m1"]),
+      surveyed("b", "2026-10-02T00:00:00.000Z", [], ["m1", "m2"]),
+    ]);
+    expect(counts.get("m1")).toBe(2);
+    expect(counts.get("m2")).toBe(1);
+    expect(usefulCounts([]).size).toBe(0);
+  });
+
+  it("コンテキストにする提案を採用し、改修のタスクの PR がマージされたメモリーだけを返す", () => {
+    const proposal = (memoryId: string, decision?: unknown) => ({
+      id: `p-${memoryId}`,
+      memoryId,
+      title: "t",
+      body: "",
+      target: { kind: "sacty" },
+      candidates: [{ kind: "sacty" }],
+      ...(decision ? { decision } : {}),
+    });
+    const adopted = (fixTaskId: string) => ({
+      kind: "adopted",
+      at: "",
+      target: { kind: "sacty" },
+      fixTaskId,
+    });
+    const tasks = [
+      {
+        id: "audit",
+        projectId: "p1",
+        audit: {
+          memories: [],
+          findings: [
+            {
+              causeKey: "memory:x",
+              proposals: [
+                proposal("merged", adopted("fix-merged")),
+                proposal("open", adopted("fix-open")),
+                proposal("pending"),
+                proposal("rejected", { kind: "rejected", at: "", reason: "r" }),
+                proposal("gone", adopted("fix-gone")),
+              ],
+            },
+          ],
+        },
+      },
+      { id: "fix-merged", projectId: "p1", pullRequestMerge: { at: "2026-10-05T00:00:00.000Z" } },
+      { id: "fix-open", projectId: "p1" },
+      { id: "fix-gone", projectId: "p1", pullRequestMerge: { at: "2026-10-05T00:00:00.000Z" } },
+    ] as unknown as Task[];
+    const memories = ["merged", "open", "pending", "rejected"].map((id) => live(id));
+    expect(promotedMemories(tasks, memories).map((m) => m.id)).toEqual(["merged"]);
+    expect(promotedMemories(tasks, [])).toEqual([]);
   });
 });

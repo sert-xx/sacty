@@ -5,6 +5,8 @@ import {
   AUDIT_MAX_CONCERNS,
   AUDIT_MAX_FINDINGS,
   AUDIT_MAX_MEMORIES,
+  AUDIT_MAX_MEMORY_MOVES,
+  AUDIT_MAX_MEMORY_PROMOTIONS,
   AUDIT_MAX_PROPOSALS,
   buildAuditDivePrompt,
   buildAuditSurveyPrompt,
@@ -69,6 +71,8 @@ describe("大まかな監査の出力（PBI-125）", () => {
         { step: "design", reason: "観点の漏れ" },
       ].slice(0, AUDIT_MAX_CONCERNS),
       usefulMemories: [],
+      memoryMoves: [],
+      memoryPromotions: [],
     });
   });
 
@@ -82,7 +86,14 @@ describe("大まかな監査の出力（PBI-125）", () => {
     );
     expect(
       extractAuditSurvey(block({ "sacty-audit-survey": { summary: "x", concerns: [] } }), task),
-    ).toEqual({ ok: true, summary: "x", concerns: [], usefulMemories: [] });
+    ).toEqual({
+      ok: true,
+      summary: "x",
+      concerns: [],
+      usefulMemories: [],
+      memoryMoves: [],
+      memoryPromotions: [],
+    });
   });
 });
 
@@ -438,5 +449,119 @@ describe("大まかな監査の、役に立ったメモリー（PBI-127）", () 
       new Set(["m1"]),
     );
     expect(missing.ok && missing.usefulMemories).toEqual([]);
+  });
+});
+
+describe("大まかな監査の、メモリーの昇格（PBI-128）", () => {
+  const candidates = [
+    { kind: "repository", repo: "https://github.com/a/app" } as const,
+    { kind: "context", repo: "https://github.com/a/ctx", depth: 0 } as const,
+  ];
+  const memory = (id: string, scope: "project" | "repository", promoting = false) => ({
+    id,
+    scope,
+    title: `題${id}`,
+    summary: "概要",
+    lastUsefulAt: "2026-10-05T00:00:00.000Z",
+    usefulCount: 2,
+    promoting,
+    path: `/sacty-memory/${scope}/references/${id}.md`,
+  });
+  const promotion = {
+    memories: [
+      memory("p1", "project"),
+      memory("r1", "repository"),
+      memory("busy", "project", true),
+    ],
+    candidates,
+    repository: "https://github.com/a/app",
+  };
+  const read = (value: Record<string, unknown>, input = promotion) =>
+    extractAuditSurvey(
+      block({ "sacty-audit-survey": { summary: "s", concerns: [], ...value } }),
+      task,
+      new Set(),
+      input,
+    );
+
+  it("移すのは材料にあるメモリーだけ、今と違う階層だけ、同じメモリーは1回だけ。リポジトリが無ければ repository に移さない", () => {
+    const moves = [
+      { id: "p1", to: "repository" },
+      { id: "p1", to: "repository" },
+      { id: "r1", to: "repository" },
+      { id: "r1", to: "project" },
+      { id: "unknown", to: "project" },
+      { id: "p1", to: "global" },
+    ];
+    expect(read({ memoryMoves: moves }).ok && read({ memoryMoves: moves })).toMatchObject({
+      memoryMoves: [
+        { id: "p1", to: "repository" },
+        { id: "r1", to: "project" },
+      ],
+    });
+    const noRepo = { ...promotion, repository: undefined };
+    expect(read({ memoryMoves: moves }, noRepo)).toMatchObject({
+      memoryMoves: [{ id: "r1", to: "project" }],
+    });
+    // 材料が無ければ（メモリーを使わない）、移さない
+    expect(
+      extractAuditSurvey(
+        block({ "sacty-audit-survey": { summary: "s", concerns: [], memoryMoves: moves } }),
+        task,
+      ),
+    ).toMatchObject({ memoryMoves: [], memoryPromotions: [] });
+  });
+
+  it(`移すのは ${AUDIT_MAX_MEMORY_MOVES} つまで、提案は ${AUDIT_MAX_MEMORY_PROMOTIONS} つまで`, () => {
+    const many = Array.from({ length: AUDIT_MAX_MEMORY_MOVES + 2 }, (_, i) =>
+      memory(`m${i}`, "project"),
+    );
+    const input = { ...promotion, memories: many };
+    const result = read(
+      {
+        memoryMoves: many.map((m) => ({ id: m.id, to: "repository" })),
+        memoryPromotions: many.map((m) => ({ id: m.id, target: 1, title: "t", body: "" })),
+      },
+      input,
+    );
+    expect(result.ok && result.memoryMoves).toHaveLength(AUDIT_MAX_MEMORY_MOVES);
+    expect(result.ok && result.memoryPromotions).toHaveLength(AUDIT_MAX_MEMORY_PROMOTIONS);
+  });
+
+  it("提案は、提案中でないもの・候補の番号の宛先・題のあるものだけ", () => {
+    const result = read({
+      memoryPromotions: [
+        { id: "busy", target: 0, title: "提案中", body: "" },
+        { id: "p1", target: 9, title: "範囲の外", body: "" },
+        { id: "p1", target: "0", title: "番号でない", body: "" },
+        { id: "p1", target: 0, title: "", body: "題が無い" },
+        { id: "p1", target: 1, title: "規約に\n書く", body: "本文" },
+        { id: "p1", target: 0, title: "重なり", body: "" },
+      ],
+    });
+    expect(result.ok && result.memoryPromotions).toEqual([
+      { id: "p1", target: candidates[1], title: "規約に 書く", body: "本文" },
+    ]);
+  });
+
+  it("指示には、材料（有効な最終利用日・役に立った回数・提案中・却下の理由）・宛先の候補・決まりを入れる", () => {
+    const text = buildAuditSurveyPrompt(task, [], zero, { runs: [] }, [], {
+      ...promotion,
+      memories: [...promotion.memories, { ...memory("no", "project"), rejectedReason: "まだ早い" }],
+    });
+    expect(text).toContain(
+      "- p1（プロジェクト）：題p1：概要（有効な最終利用日 2026-10-05・役に立った回数 2 回・/sacty-memory/project/references/p1.md）",
+    );
+    expect(text).toContain("・コンテキストにする提案中・");
+    expect(text).toContain("・コンテキストにする提案は却下：まだ早い・");
+    expect(text).toContain(
+      "- 1：コンテキストのリポジトリ（https://github.com/a/ctx・プロジェクトの層）",
+    );
+    expect(text).toContain("memoryMoves");
+    expect(text).toContain("memoryPromotions");
+    expect(text).toContain(
+      "プロジェクト・組織・コンテキストに固有の名前や事情を含むものは repository に移さない",
+    );
+    expect(buildAuditSurveyPrompt(task, [], zero, { runs: [] }, [])).not.toContain("memoryMoves");
   });
 });

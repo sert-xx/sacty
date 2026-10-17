@@ -424,12 +424,14 @@ const ja = {
     AuditProposalAdopted: (withTask: boolean): string =>
       withTask ? "改修の提案を採用し、改修のタスクを作った" : "改修の提案を採用した（sacty 宛て）",
     AuditProposalRejected: (reason: string) => `改修の提案を却下した：${reason}`,
-    AuditMemoryDeleted: (reason: "person" | "capacity" | "expired"): string =>
+    AuditMemoryDeleted: (reason: "person" | "capacity" | "expired" | "promoted"): string =>
       reason === "person"
         ? "監査が登録したメモリーを消した"
         : reason === "capacity"
           ? "階層の件数の上限を超えたので、この監査が登録したメモリーを消した"
-          : "残す日数を過ぎたので、この監査が登録したメモリーを消した",
+          : reason === "expired"
+            ? "残す日数を過ぎたので、この監査が登録したメモリーを消した"
+            : "コンテキストにする改修がマージされたので、この監査が登録したメモリーを消した",
   },
 };
 
@@ -778,7 +780,9 @@ const en: LabelMessages = {
         ? "Deleted a memory the audit registered"
         : reason === "capacity"
           ? "Deleted a memory this audit registered because the layer exceeded its limit"
-          : "Deleted a memory this audit registered because it passed the retention period",
+          : reason === "expired"
+            ? "Deleted a memory this audit registered because it passed the retention period"
+            : "Deleted a memory this audit registered because the fix that made it context was merged",
   },
 };
 

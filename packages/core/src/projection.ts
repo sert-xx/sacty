@@ -265,7 +265,7 @@ export type TaskAuditState = {
   warnedCapUsd?: number;
   /** 予算で一時停止している（上限を上げると外れる）。 */
   paused?: { at: string };
-  survey?: Omit<PayloadOf<"AuditSurveyed">, "auditId"> & { at: string };
+  survey?: Omit<PayloadOf<"AuditSurveyed">, "auditId" | "promotions"> & { at: string };
   /** 深掘りを終えた工程（終えた順）。 */
   dives: (Omit<PayloadOf<"AuditDeepDived">, "auditId" | "findings" | "memories"> & {
     at: string;
@@ -1999,8 +1999,14 @@ function applyAuditEvent(task: Task, event: ActivityEvent): void {
   switch (event.type) {
     case "AuditSurveyed": {
       if (ended || audit.survey) throw integrity("the audit is not waiting for a survey");
-      const { auditId: _id, ...survey } = event.payload;
-      task.audit = { ...audit, ...charge(event.payload), survey: { ...survey, at: event.at } };
+      // メモリーをコンテキストにする提案は、原因として持つ（採用・却下は、ほかの提案と同じ。PBI-128）
+      const { auditId: _id, promotions, ...survey } = event.payload;
+      task.audit = {
+        ...audit,
+        ...charge(event.payload),
+        survey: { ...survey, at: event.at },
+        findings: [...audit.findings, ...promotions.map((f) => ({ ...f, at: event.at }))],
+      };
       return;
     }
     case "AuditDeepDived": {

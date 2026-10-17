@@ -17,7 +17,7 @@ import {
 } from "@sacty/core";
 import { type AuditService, causeStatus, sortCauses, weekStart } from "./audits.js";
 import { redactLog } from "./ci.js";
-import { lastUsefulAt, usefulDates } from "./memory.js";
+import { lastUsefulAt, memoryPlacements, usefulDates } from "./memory.js";
 
 /*
  * 完了したタスクの監査を、作業履歴の記録（タスクの監査の状態。Audit… のイベントを畳み込んだもの）から組み立てる（PBI-125）。
@@ -167,6 +167,7 @@ export class LedgerAuditService implements AuditService {
     // メモリーの有効な最終利用日と、役に立ったメモリーの題（ほかのタスクの監査が登録したものを含む。PBI-127）
     const tasks = [...byId.values()];
     const dates = usefulDates(tasks);
+    const placements = memoryPlacements(tasks);
     const registered = new Map(
       tasks.flatMap((t) => (t.audit?.memories ?? []).map((m) => [m.id, m] as const)),
     );
@@ -213,7 +214,16 @@ export class LedgerAuditService implements AuditService {
       })),
       usefulMemories: (audit.survey?.usefulMemories ?? []).flatMap((id) => {
         const m = registered.get(id);
-        return m ? [{ id, scope: m.scope, title: m.title }] : [];
+        return m ? [{ id, scope: placements.get(id)?.scope ?? m.scope, title: m.title }] : [];
+      }),
+      movedMemories: (audit.survey?.memoryMoves ?? []).flatMap((move) => {
+        const m = registered.get(move.id);
+        if (!m) return [];
+        return [
+          move.scope === "repository"
+            ? { id: move.id, title: m.title, scope: "repository" as const, repo: move.repo }
+            : { id: move.id, title: m.title, scope: "project" as const },
+        ];
       }),
     };
   }
