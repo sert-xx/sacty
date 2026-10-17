@@ -230,3 +230,13 @@ describe("コンテキストリポジトリの雛形（PBI-45）", () => {
     expect(readFileSync(join(dir, "skills"), "utf8")).toBe("ファイル");
   });
 });
+
+describe("コンテキストリポジトリの雛形の、段階のサブエージェント（PBI-119）", () => {
+  it("段階の名前の定義は sacty が作るので、置いても使わないことを README に書く", () => {
+    const readme = CONTEXT_TEMPLATE_FILES["README.md"] ?? "";
+    expect(readme).toContain("段階のサブエージェントの定義");
+    expect(readme).toContain("agents/claude/agents/<段階>.md");
+    expect(readme).toContain("[agents.<段階>]");
+    expect(readme).toContain("ここに置いても使わない");
+  });
+});

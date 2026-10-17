@@ -16,12 +16,13 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, relative } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { code, type DaemonText, issueMessage, message } from "@sacty/core";
 import { parse as parseToml, stringify as stringifyToml } from "smol-toml";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
+import { AGENT_TIERS, tierFilePath } from "./agents/tier-names.js";
 import { errorText, MessageError } from "./errors.js";
 import { spawnStoppable } from "./fetch-processes.js";
 import { type Platform, PlatformFile, toPlatform } from "./platforms.js";
@@ -495,6 +496,20 @@ function withoutReserved(
       warnings.push(message("context.reservedSetting", { from, file, key }));
       continue;
     }
+    // Codex の [agents.<段階>]（カスタムエージェントの宣言）は sacty が段階の定義として作る。層に同じ名前の宣言があると、
+    // 自動で探す agents/<段階>.toml より先に登録されて sacty の定義が使われないので、使わずに警告する（PBI-119）
+    if (kind === "codex" && key === "agents" && isPlainObject(value)) {
+      const agents: Record<string, unknown> = {};
+      for (const [name, v] of Object.entries(value)) {
+        if ((AGENT_TIERS as readonly string[]).includes(name)) {
+          warnings.push(message("context.reservedSetting", { from, file, key: `agents.${name}` }));
+        } else {
+          agents[name] = v;
+        }
+      }
+      result[key] = agents;
+      continue;
+    }
     if (key === "env" && reserved.env && isPlainObject(value)) {
       const env: Record<string, unknown> = {};
       for (const [name, v] of Object.entries(value)) {
@@ -548,6 +563,39 @@ const UNION_SETTINGS: Record<keyof AgentSettings, (path: string[]) => boolean> =
     path[0] === "permissions" &&
     ["allow", "deny", "ask"].includes(path[1] ?? ""),
 };
+
+/** Codex のカスタムエージェントの定義（TOML）の name。読めない・無ければ undefined。 */
+/** Codex のカスタムエージェントの定義として読む大きさの上限（バイト。PR #129 再レビュー指摘）。 */
+const CODEX_ROLE_FILE_MAX_BYTES = 256 * 1024;
+
+/**
+ * Codex のカスタムエージェントの定義（TOML）の name（前後の空白を除く。Codex 0.160.0 と同じく trim して比べる）。
+ * root（層のエージェントの設定のディレクトリ）の中の、シンボリックリンクでない通常のファイルだけを読む。root の外・
+ * リンク・通常でないファイル（デバイス・FIFO など）・大きすぎるもの・読めないもの・空の名前は undefined
+ * （PR #129 再レビュー指摘）。
+ */
+function codexRoleName(root: string, rel: string): string | undefined {
+  if (isAbsolute(rel)) return undefined;
+  const path = resolve(root, rel);
+  const inside = relative(resolve(root), path);
+  if (inside === "" || inside.startsWith("..") || isAbsolute(inside)) return undefined;
+  try {
+    // 途中のディレクトリも含めて、リンクを通らないことを確かめる
+    let at = resolve(root);
+    for (const part of inside.split(/[\\/]/)) {
+      at = join(at, part);
+      if (lstatSync(at).isSymbolicLink()) return undefined;
+    }
+    const stat = lstatSync(path);
+    if (!stat.isFile() || stat.size > CODEX_ROLE_FILE_MAX_BYTES) return undefined;
+    const parsed = parseToml(readFileSync(path, "utf8"));
+    if (!isPlainObject(parsed) || typeof parsed.name !== "string") return undefined;
+    const name = parsed.name.trim();
+    return name === "" ? undefined : name;
+  } catch {
+    return undefined;
+  }
+}
 
 /** 層の、エージェントの設定のディレクトリ（`agents/codex`・`agents/claude`）。 */
 const AGENT_DIRS = { codex: "agents/codex", claude: "agents/claude" } as const;
@@ -810,19 +858,49 @@ export function composeContext(
     const from = label(layer);
     for (const kind of kinds) {
       const own = withoutReserved(kind, layer.agents[kind], from, warnings);
+      const agentDir = join(layer.dir, AGENT_DIRS[kind]);
+      // Codex の [agents.<名前>] が config_file で指す定義の中の name が段階なら、その宣言も使わない（PBI-119）
+      if (kind === "codex" && isPlainObject(own.agents)) {
+        for (const [key, value] of Object.entries(own.agents)) {
+          const configFile = isPlainObject(value) ? value.config_file : undefined;
+          if (typeof configFile !== "string") continue;
+          const role = codexRoleName(agentDir, configFile);
+          if (role !== undefined && (AGENT_TIERS as readonly string[]).includes(role)) {
+            warnings.push(
+              message("context.reservedSetting", {
+                from,
+                file: AGENT_SETTINGS_FILES[kind],
+                key: `agents.${key}`,
+              }),
+            );
+            delete own.agents[key];
+          }
+        }
+      }
       if (Object.keys(own).length > 0) agentsFrom[kind].push(from);
       agents[kind] = mergeSettings(agents[kind], own, UNION_SETTINGS[kind]);
       const settingsFile = AGENT_SETTINGS_FILES[kind].slice(AGENT_DIRS[kind].length + 1);
       for (const path of layerAgentFiles(layer, kind)) {
         if (path === settingsFile) continue;
-        const src = join(layer.dir, AGENT_DIRS[kind], path);
+        const src = join(agentDir, path);
         if (RESERVED_FILES[kind].some((r) => path === r || path.startsWith(`${r}/`))) {
           warnings.push(
             message("context.reservedSetting", { from, file: `${AGENT_DIRS[kind]}/`, key: path }),
           );
-        } else {
-          files[kind].set(path, { src, from });
+          continue;
         }
+        // Codex は agents/*.toml の中の name をロールの名前にする（ファイル名ではない）。name が段階なら、ファイル名が
+        // 違っても sacty の段階の定義と衝突するので写さない（PBI-119。PR #129 再レビュー指摘）
+        if (kind === "codex" && path.startsWith("agents/") && path.endsWith(".toml")) {
+          const role = codexRoleName(agentDir, path);
+          if (role !== undefined && (AGENT_TIERS as readonly string[]).includes(role)) {
+            warnings.push(
+              message("context.reservedTierFile", { from, path: `${AGENT_DIRS[kind]}/${path}` }),
+            );
+            continue;
+          }
+        }
+        files[kind].set(path, { src, from });
       }
     }
   }
@@ -940,8 +1018,14 @@ export function planContext(
   runtime: "claude-code" | "codex",
   /** コンテナの中での設定のディレクトリ（Codex の AGENTS.md にスキルの場所を書くため）。 */
   containerDir: string,
-): { files: PlannedFile[]; placed: PlacedContext } {
+  /**
+   * sacty が足して置くファイル（段階のサブエージェントの定義。PBI-119）。層の同じパスのファイルより優先し、層のものは
+   * 写さずに警告する（`context.reservedTierFile`）。
+   */
+  extraFiles: readonly PlannedFile[] = [],
+): { files: PlannedFile[]; placed: PlacedContext; warnings: DaemonText[] } {
   const files = new Map<string, PlannedFile>();
+  const warnings: DaemonText[] = [];
   const put = (file: PlannedFile) => {
     // 上書きしたものは、書いた順の位置に置き直す
     files.delete(file.path);
@@ -962,11 +1046,29 @@ export function planContext(
       secrets,
       ...(env ? { env } : {}),
     },
+    warnings,
   });
   // 層のエージェントの設定のディレクトリのファイルを先に写す（sacty が作るファイルは除いてある）
   for (const file of composed.agentFiles[runtime === "codex" ? "codex" : "claude"]) {
     put({ path: file.path, src: file.src, from: file.from });
   }
+  // 段階のサブエージェントの定義のパス（agents/<段階>.md・.toml）は sacty が作る。層にあれば、段階を置くかどうかによらず
+  // 写さずに警告する（残すと、スキルが段階の名前で起動したときに層の定義を使ってしまう。PBI-119）
+  for (const tier of AGENT_TIERS) {
+    const path = tierFilePath(runtime, tier);
+    const existing = files.get(path);
+    if (existing?.from) {
+      warnings.push(
+        message("context.reservedTierFile", {
+          from: existing.from,
+          path: `${AGENT_DIRS[runtime === "codex" ? "codex" : "claude"]}/${path}`,
+        }),
+      );
+      files.delete(path);
+    }
+  }
+  // sacty が足すファイル（段階のサブエージェントの定義。PBI-119）
+  for (const extra of extraFiles) put(extra);
   for (const skill of composed.skills) {
     for (const rel of filesUnder(skill.dir)) {
       put({ path: `skills/${skill.name}/${rel}`, src: join(skill.dir, rel), from: skill.from });
@@ -1412,10 +1514,13 @@ async function buildContext(
   auth: ContextAuth | undefined,
   defaultDir: string | undefined,
   routing: McpRouting,
+  /** sacty が足して置くファイル（段階のサブエージェントの定義。PBI-119）。 */
+  extraFiles: readonly PlannedFile[] = [],
 ) {
   const layers = await loadLayers(fetcher, root, work, auth, defaultDir);
   const { composed, gatewayMcp, hostedMcp } = routeMcp(composeContext(layers, runtime), routing);
-  const { files, placed } = planContext(composed, runtime, containerDir);
+  const { files, placed, warnings } = planContext(composed, runtime, containerDir, extraFiles);
+  composed.warnings.push(...warnings);
   return { layers, composed, gatewayMcp, hostedMcp, files, placed };
 }
 
@@ -1441,6 +1546,8 @@ export async function prepareContext(
   onlyMcp?: string,
   /** 層の command の MCP サーバーをホストで起動するか（PBI-84。McpRouting の hostCommands）。 */
   hostCommands?: boolean,
+  /** sacty が足して置くファイル（段階のサブエージェントの定義。PBI-119）。 */
+  extraFiles: readonly PlannedFile[] = [],
 ): Promise<{
   dir: string;
   layers: { repo: string; ref?: string; commit: string }[];
@@ -1460,12 +1567,17 @@ export async function prepareContext(
   const work = mkdtempSync(join(tmpdir(), "sacty-context-"));
   const dispose = () => rmSync(work, { recursive: true, force: true });
   try {
-    const built = await buildContext(fetcher, root, runtime, containerDir, work, auth, defaultDir, {
-      hostMcp,
-      gatewayOrigin,
-      onlyMcp,
-      hostCommands,
-    });
+    const built = await buildContext(
+      fetcher,
+      root,
+      runtime,
+      containerDir,
+      work,
+      auth,
+      defaultDir,
+      { hostMcp, gatewayOrigin, onlyMcp, hostCommands },
+      extraFiles,
+    );
     const dir = join(work, "out");
     writePlanned(built.files, dir);
     return {
@@ -1659,6 +1771,8 @@ export async function previewContext(
   auth?: ContextAuth,
   defaultDir?: string,
   routing: McpRouting = {},
+  /** sacty が足して置くファイル（段階のサブエージェントの定義。PBI-119）。 */
+  extraFiles: readonly PlannedFile[] = [],
 ): Promise<ContextPreview> {
   const work = mkdtempSync(join(tmpdir(), "sacty-context-"));
   try {
@@ -1671,6 +1785,7 @@ export async function previewContext(
       auth,
       defaultDir,
       routing,
+      extraFiles,
     );
     return {
       runtime,

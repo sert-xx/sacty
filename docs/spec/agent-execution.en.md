@@ -61,7 +61,9 @@ The container receives only the variables for the chosen authentication method (
   In that case the API key is given to the gateway, and the container receives only the per-run token and the gateway URL (`http://host.docker.internal:<port>/openai/v1`)
   ([Gateway](gateway.en.md)).
 - If a secret is not found, the run fails (reason `auth`) and the task is paused.
-- The cost of subscription and stub runs is recorded as estimated (`estimated`).
+- The cost of subscription and stub runs is recorded as estimated (`estimated`). So is the cost of a run that placed tier subagent definitions (`estimateCost`),
+  because a reviewer may run with a model other than the parent's while the cost can only be computed from the parent's usage and unit prices
+  ([Context composition](context.en.md#files-placed-for-a-run)).
 
 Code: `apps/daemon/src/agents/invocation.ts` (`buildInvocation`), `apps/daemon/src/agents/docker.ts` (`syncBackIfChanged`), `apps/daemon/src/service.ts` (`executeLogged`, `bedrockOrigin`)
 

@@ -108,6 +108,7 @@ import {
 import type { AgentOutcome } from "./agents/parse.js";
 import { redact, redactText } from "./agents/redact.js";
 import type { TestRunner, TestRunResult } from "./agents/test-runner.js";
+import { type PlacedTier, selectTiers, tierFiles } from "./agents/tiers.js";
 import { CI_FAILURES_MAX, type CiStatusReader, isFailedConclusion } from "./ci.js";
 import {
   type AgentConfig,
@@ -118,6 +119,8 @@ import {
   githubRepoOf,
   resolveImage,
   type SactyConfig,
+  type TierRuntime,
+  tierAgentsFor,
 } from "./config.js";
 import {
   type ContextFetcher,
@@ -297,6 +300,9 @@ function clipText(text: DaemonText, max: number): DaemonText {
 }
 
 type ActivityItem = { actor: Actor; event: EventInput };
+
+/** 実行に渡すコンテキストと、置いた段階のサブエージェントの定義（PBI-119）。 */
+type RunContext = Awaited<ReturnType<typeof prepareContext>> & { tiers: PlacedTier[] };
 
 export type CleanupItem = { target: CleanupTarget; present: boolean; detail?: DaemonText };
 type CleanupResult = {
@@ -487,6 +493,11 @@ type ExecuteRun = {
   workspaceDir: string;
   /** エージェントの形式に変換したコンテキスト（工程エージェントだけ。PBI-6）。 */
   context?: Parameters<typeof buildInvocation>[5];
+  /**
+   * 費用を概算として記録する（PBI-119）。段階のサブエージェントの定義を置いた実行は、担当が親と違うモデルで動きうるが、
+   * 費用は親の結果の使用量 × 親の単価でしか出せないため。
+   */
+  estimateCost?: boolean;
   /** 使わせる組織内 PF の API（工程エージェントだけ。PBI-35）。 */
   platforms?: readonly Platform[];
   /** イメージの環境変数（言語ごとのイメージの env。PBI-41）。 */
@@ -1334,7 +1345,7 @@ export class TaskService {
         ...(stepped ? { retry: true as const } : {}),
       });
     const workspaceDir = join(this.deps.workspaceRoot, "_deployment", runId);
-    let context: Awaited<ReturnType<typeof prepareContext>> | undefined;
+    let context: RunContext | undefined;
     let executed: Executed;
     try {
       const ready = await this.prepareRepository(task, config);
@@ -1350,6 +1361,10 @@ export class TaskService {
         return fail(errorText(error));
       }
       const platforms = mergePlatforms(config.platforms, context?.platforms ?? []);
+      // 用意したコンテキスト（層・注意・置いた段階）を、この実行の記録として残す（PBI-119）
+      if (context) {
+        this.append(this.mustGet(task.id), [this.contextResolved(runId, context, platforms)]);
+      }
       // マージの後の監視の工程のイメージ（ほかの工程と同じく、オーケストレーターか人が選ぶ。PBI-116）。工程の無い
       // PBI-116 より前のタスクは、実装の工程のイメージ。無ければ既定のイメージ
       const image = resolveImage(
@@ -1372,6 +1387,7 @@ export class TaskService {
         workspaceDir,
         ...(context ? { context: { dir: context.dir, ...context.placed } } : {}),
         ...(context && context.gatewayMcp.length > 0 ? { contextMcp: context.gatewayMcp } : {}),
+        ...(context && context.tiers.length > 0 ? { estimateCost: true } : {}),
       });
     } finally {
       context?.dispose();
@@ -2067,6 +2083,11 @@ export class TaskService {
     const config = loaded.ok ? loaded.config : undefined;
     const usedSecrets: string[] = [];
     try {
+      // 段階のサブエージェントの定義（PBI-119）。親は、その runtime の既定のエージェント（無ければ工程の・ゴールガーディアンの
+      // エージェントのうち、その runtime のもの）。無ければ置かない
+      const parent = config ? this.previewParent(config, runtime) : undefined;
+      const tiers =
+        parent && config ? this.tiersFor(parent, config) : { entries: [], warnings: [] };
       const preview = await previewContext(
         this.deps.contexts,
         project.context,
@@ -2075,6 +2096,7 @@ export class TaskService {
         (repo) => this.gitAuth({ projectId: id }, repo, usedSecrets, definition),
         this.deps.defaultContext,
         this.mcpRouting(config),
+        tierFiles(runtime, tiers.entries),
       );
       // 使える外部 PF：ホストの PF と、合成した PF（同じ名前ならホストのもの。実行と同じ。PBI-74）
       const merged = mergePlatforms(config?.platforms ?? [], preview.platforms);
@@ -2082,12 +2104,61 @@ export class TaskService {
         preview: {
           ...preview,
           platforms: merged.platforms.map(platformSummary),
-          warnings: [...preview.warnings, ...merged.warnings],
+          warnings: [...preview.warnings, ...tiers.warnings, ...merged.warnings],
         },
       };
     } catch (error) {
       return { error: redactText(errorText(error), usedSecrets) };
     }
+  }
+
+  /**
+   * 用意したコンテキストの記録（層・注意・外部 PF の要約・置いた段階。PBI-74・PBI-119）。工程・マージの後の監視・外部作業・
+   * 書き出しの、コンテキストを渡す実行のたびに残す。
+   */
+  private contextResolved(
+    runId: string,
+    context: RunContext,
+    platforms: { platforms: readonly Platform[]; warnings: readonly DaemonText[] },
+  ): ActivityItem {
+    return {
+      actor: "sacty",
+      event: {
+        type: "ContextResolved",
+        payload: {
+          runId,
+          layers: context.layers,
+          warnings: [...context.warnings, ...platforms.warnings],
+          ...(platforms.platforms.length > 0
+            ? { platforms: platforms.platforms.map(platformSummary) }
+            : {}),
+          ...(context.tiers.length > 0 ? { tiers: context.tiers } : {}),
+        },
+      },
+    };
+  }
+
+  /**
+   * 親（工程のエージェント）に置く段階のサブエージェントの定義と、置かなかった段階の注意（PBI-119）。stub の親には置かない。
+   */
+  private tiersFor(
+    agent: AgentConfig,
+    config: SactyConfig,
+  ): { entries: PlacedTier[]; warnings: DaemonText[] } {
+    if (agent.runtime === "stub") return { entries: [], warnings: [] };
+    return selectTiers(agent, tierAgentsFor(config, agent.runtime));
+  }
+
+  /**
+   * プレビューで段階の親にするエージェント（PBI-119）。その runtime の既定のエージェント、無ければ工程・ゴールガーディアンの
+   * エージェントのうち最初のもの。その runtime のエージェントが無ければ undefined。
+   */
+  private previewParent(config: SactyConfig, runtime: TierRuntime): AgentConfig | undefined {
+    return [
+      config.defaultAgent,
+      ...Object.values(config.stepAgents ?? {}),
+      config.guardianAgent,
+    ].find((a) => a?.runtime === runtime);
   }
 
   /**
@@ -4076,7 +4147,7 @@ export class TaskService {
 
     // sacty の既定のコンテキストと、プロジェクトのコンテキストを取得・合成して渡し、
     // 使ったリポジトリとコミット（既定は中身のハッシュ）を記録する
-    let context: Awaited<ReturnType<typeof prepareContext>> | undefined;
+    let context: RunContext | undefined;
     if (step !== "document") {
       const usedSecrets: string[] = [];
       try {
@@ -4110,24 +4181,7 @@ export class TaskService {
     // MCP サーバーの確保）を残さない（PR #89 レビュー指摘）
     let splitCandidates: string[] | undefined;
     try {
-      if (context) {
-        this.append(task, [
-          {
-            actor: "sacty",
-            event: {
-              type: "ContextResolved",
-              payload: {
-                runId,
-                layers: context.layers,
-                warnings: [...context.warnings, ...runPlatforms.warnings],
-                ...(runPlatforms.platforms.length > 0
-                  ? { platforms: runPlatforms.platforms.map(platformSummary) }
-                  : {}),
-              },
-            },
-          },
-        ]);
-      }
+      if (context) this.append(task, [this.contextResolved(runId, context, runPlatforms)]);
 
       // 対象リポジトリの無いタスクを分けるときの、子タスクのリポジトリの候補（プロジェクトの対象。PBI-73）
       splitCandidates =
@@ -4268,6 +4322,7 @@ export class TaskService {
           : {}),
         context: context && { dir: context.dir, ...context.placed },
         ...(context && context.gatewayMcp.length > 0 ? { contextMcp: context.gatewayMcp } : {}),
+        ...(context && context.tiers.length > 0 ? { estimateCost: true } : {}),
       });
     } finally {
       // サービスは、作業領域（ビルドの context）を消す前に止めて消す
@@ -4501,11 +4556,21 @@ export class TaskService {
     usedSecrets: string[],
     /** 渡す MCP サーバーを、この名前の1つに絞る（成果の書き出し。PBI-56）。 */
     onlyMcp?: string,
-  ): Promise<Awaited<ReturnType<typeof prepareContext>> | undefined> {
+  ): Promise<RunContext | undefined> {
     const contextSource = this.deps.projects.get(task.projectId)?.context;
     const defaultContext = this.deps.defaultContext;
     const { hostMcp = [], gatewayOrigin, hostCommands } = this.mcpRouting(config);
-    if (!contextSource && !defaultContext && hostMcp.length === 0) return undefined;
+    // 段階のサブエージェントの定義（PBI-119）。置くものがあれば、コンテキストが無くても設定のディレクトリに置く
+    const tiers = this.tiersFor(agent, config);
+    if (
+      !contextSource &&
+      !defaultContext &&
+      hostMcp.length === 0 &&
+      tiers.entries.length === 0 &&
+      tiers.warnings.length === 0
+    ) {
+      return undefined;
+    }
     // 使うホストの MCP サーバーの準備を待つ（PBI-77）。書き出しは、決めた接続先がそれなら、それだけを待つ
     const waitFor = hostMcp
       .map((m) => m.name)
@@ -4520,18 +4585,24 @@ export class TaskService {
     if (onlyProblem) throw new MessageError(onlyProblem);
     // コンテキストと継承の各リポジトリも、HTTPS の GitHub はプロジェクトの gh のアカウントで取得する
     const runtime = agent.runtime === "codex" ? "codex" : "claude-code";
-    const prepared = await prepareContext(
-      this.deps.contexts,
-      contextSource,
-      runtime,
-      contextContainerDir(runtime),
-      (repo) => this.gitAuth(task, repo, usedSecrets),
-      defaultContext,
-      hostMcp,
-      gatewayOrigin,
-      onlyMcp,
-      hostCommands,
-    );
+    const prepared: RunContext = {
+      ...(await prepareContext(
+        this.deps.contexts,
+        contextSource,
+        runtime,
+        contextContainerDir(runtime),
+        (repo) => this.gitAuth(task, repo, usedSecrets),
+        defaultContext,
+        hostMcp,
+        gatewayOrigin,
+        onlyMcp,
+        hostCommands,
+        tierFiles(runtime, tiers.entries),
+      )),
+      tiers: tiers.entries,
+    };
+    // 置かなかった段階（親と認証・接続先が違う）は、注意として記録する（PBI-119）
+    prepared.warnings.push(...tiers.warnings);
     // 準備ができないホストの MCP サーバーは、どれかがわかるよう、コンテキストの注意として記録する（実行は止めない。
     // 起動し直して準備ができれば、実行の途中からでも使える）
     prepared.warnings.push(...hostProblems);
@@ -4640,7 +4711,7 @@ export class TaskService {
       return;
     }
     const usedSecrets: string[] = [];
-    let context: Awaited<ReturnType<typeof prepareContext>> | undefined;
+    let context: RunContext | undefined;
     let platform: Platform | undefined;
     const runId = randomUUID();
     const workspaceDir = join(this.deps.workspaceRoot, task.id, "operation", runId);
@@ -4661,6 +4732,10 @@ export class TaskService {
         context = await this.runContext(task, agent, config, usedSecrets, operation.name);
         if (!context?.placed.mcpServers.includes(operation.name))
           throw new MessageError(message("operation.connectionMissing"));
+        // 用意したコンテキスト（層・注意・置いた段階）を、この実行の記録として残す（PBI-119）
+        this.append(this.mustGet(task.id), [
+          this.contextResolved(runId, context, { platforms: [], warnings: [] }),
+        ]);
       } else {
         platform = await this.findPlatform(task, config, operation.name, usedSecrets);
         if (!platform) throw new MessageError(message("operation.connectionMissing"));
@@ -4693,7 +4768,11 @@ export class TaskService {
         ].join("\n"),
         ...(platform ? { platforms: [platform] } : {}),
         ...(context
-          ? { context: { dir: context.dir, ...context.placed }, contextMcp: context.gatewayMcp }
+          ? {
+              context: { dir: context.dir, ...context.placed },
+              contextMcp: context.gatewayMcp,
+              ...(context.tiers.length > 0 ? { estimateCost: true } : {}),
+            }
           : {}),
       });
       const stopped = await stoppedInfo();
@@ -4832,7 +4911,7 @@ export class TaskService {
       }
       if (!platform) return fail(message("export.destinationMissing", { name: to.name }));
     }
-    let context: Awaited<ReturnType<typeof prepareContext>> | undefined;
+    let context: RunContext | undefined;
     if (to.via === "mcp") {
       try {
         // 決めた接続先の MCP サーバーだけを渡す（ほかの MCP サーバーは使わせず、その認証も取り出さない）
@@ -4866,7 +4945,10 @@ export class TaskService {
       ) {
         return;
       }
+      // 用意したコンテキスト（層・注意・置いた段階）も、この実行の記録として残す（PBI-119）。finally で消す範囲の中で
+      // 記録する（記録に失敗しても、用意したディレクトリとホストの MCP サーバーの確保を残さない。PR #129 再レビュー指摘）
       this.append(latest, [
+        ...(context ? [this.contextResolved(runId, context, { platforms: [], warnings: [] })] : []),
         {
           actor: "sacty",
           event: { type: "ExportStarted", payload: { step, runId, approvedAt: approved.at } },
@@ -4897,6 +4979,7 @@ export class TaskService {
         ...(platform ? { platforms: [platform] } : {}),
         ...(context ? { context: { dir: context.dir, ...context.placed } } : {}),
         ...(context && context.gatewayMcp.length > 0 ? { contextMcp: context.gatewayMcp } : {}),
+        ...(context && context.tiers.length > 0 ? { estimateCost: true } : {}),
       });
     } finally {
       context?.dispose();
@@ -6907,7 +6990,10 @@ export class TaskService {
         ? { ...outcome, message: redactText(outcome.message, usedSecrets) }
         : { ...outcome, output: redact(outcome.output, usedSecrets) };
     // サブスクリプションは実際の請求が発生しないので、同じ単価で換算した値として扱う
-    const estimated = run.agent.auth.mode === "subscription" || run.agent.auth.mode === "stub";
+    const estimated =
+      run.agent.auth.mode === "subscription" ||
+      run.agent.auth.mode === "stub" ||
+      run.estimateCost === true;
     const costUsd = outcome.usage ? computeCostUsd(outcome.usage, run.agent.price) : 0;
     return { outcome, costUsd, estimated };
   }
