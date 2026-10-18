@@ -2377,8 +2377,15 @@ export class TaskService {
     runId: string,
     workspaceDir: string,
     forTests = false,
+    /**
+     * エージェントのイメージの名前（PBI-130）。あれば、サービスを起動する前に ID に確定させて返す（サービスのビルドが
+     * タグを書き換えても、確定したイメージで動かす）。確かめられなければ返さない（名前のまま実行する）。
+     */
+    agentImage?: string,
   ): Promise<
-    { ok: true; started: StartedServices } | { ok: false; message: DaemonText } | undefined
+    | { ok: true; started: StartedServices; image?: string }
+    | { ok: false; message: DaemonText }
+    | undefined
   > {
     const found = this.serviceSpec(task, step);
     const services = this.deps.services;
@@ -2419,7 +2426,9 @@ export class TaskService {
         };
       }
     }
-    // 取得（認証の用意・取得）を待つ間に止められたら、取得したものを片付けて起動しない
+    // エージェントのイメージを、起動する前に確定させる（PBI-130）
+    const image = agentImage ? await services.imageId?.(agentImage, runId) : undefined;
+    // 取得（認証の用意・取得）・イメージの確定を待つ間に止められたら、取得したものを片付けて起動しない
     if (this.stopRequested(task.id)) {
       if (compose) rmSync(dir, { recursive: true, force: true });
       return stopped;
@@ -2458,7 +2467,7 @@ export class TaskService {
         },
       ]);
     }
-    return result;
+    return result.ok && image ? { ...result, image } : result;
   }
 
   /**
@@ -4422,17 +4431,20 @@ export class TaskService {
           estimated: false,
         };
       }
-      // エージェントのイメージを、サービスを起動する前にイメージ ID に確定させる。サービスのビルドがタグを書き換えても、
-      // 確定したイメージで動かす（PBI-130）。確かめられなければ名前のまま（無いイメージは、実行の失敗で示す）
-      const imageName = stepImage.ok ? stepImage.image : config.config.image;
-      const image = executed
-        ? imageName
-        : ((await this.deps.services?.imageId?.(imageName)) ?? imageName);
-      // docker compose のサービス（PBI-47）。この工程で使うなら、実行の前に起動し、終わったら消す
+      // docker compose のサービス（PBI-47）。この工程で使うなら、実行の前に起動し、終わったら消す。起動するときは、その前に
+      // エージェントのイメージを ID に確定させ、その ID で実行する（PBI-130）
       const workspaceDir = snapshotDir ?? ready.dir;
+      const imageName = stepImage.ok ? stepImage.image : config.config.image;
       const services = executed
         ? undefined
-        : await this.startServices(this.mustGet(task.id), step, runId, workspaceDir);
+        : await this.startServices(
+            this.mustGet(task.id),
+            step,
+            runId,
+            workspaceDir,
+            false,
+            imageName,
+          );
       if (services && !services.ok) {
         executed = {
           outcome: { kind: "failed", reason: "error", message: services.message },
@@ -4444,7 +4456,7 @@ export class TaskService {
       executed ??= await this.execute({
         agent,
         taskId: task.id,
-        image,
+        image: (services?.ok && services.image) || imageName,
         ...(stepImage.ok ? { imageEnv: stepImage.env } : {}),
         ...(started ? serviceConnection(started) : {}),
         runId,

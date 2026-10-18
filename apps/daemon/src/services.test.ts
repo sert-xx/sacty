@@ -265,14 +265,55 @@ describe("エージェントのイメージを、イメージ ID に確定させ
 
   it("docker image inspect の ID を返す", async () => {
     const { calls, runner } = docker(`${ID}\n`, 0);
-    expect(await runner.imageId("sacty-agent:0.1.0")).toBe(ID);
+    expect(await runner.imageId("sacty-agent:0.1.0", "r1")).toBe(ID);
     expect(calls).toEqual([["image", "inspect", "--format", "{{.Id}}", "sacty-agent:0.1.0"]]);
   });
 
   it("無いイメージ・ID の形でない出力は、確定させない", async () => {
-    expect(await docker("", 1).runner.imageId("missing:1")).toBeUndefined();
-    expect(await docker("sacty-agent:0.1.0\n", 0).runner.imageId("x")).toBeUndefined();
-    expect(await docker(`${ID}\n${ID}\n`, 0).runner.imageId("x")).toBeUndefined();
+    expect(await docker("", 1).runner.imageId("missing:1", "r1")).toBeUndefined();
+    expect(await docker("sacty-agent:0.1.0\n", 0).runner.imageId("x", "r1")).toBeUndefined();
+    expect(await docker(`${ID}\n${ID}\n`, 0).runner.imageId("x", "r1")).toBeUndefined();
+  });
+
+  /** 応答しない docker（kill されるまで終わらない。PBI-130 レビュー指摘）。 */
+  function hangingDocker() {
+    const killed: string[] = [];
+    const spawned = Promise.withResolvers<void>();
+    const spawnImpl = (() => {
+      const child = Object.assign(new EventEmitter(), {
+        stdout: new EventEmitter(),
+        stderr: new EventEmitter(),
+        kill: (signal: string) => {
+          killed.push(signal);
+          setImmediate(() => child.emit("close", null));
+          return true;
+        },
+      });
+      spawned.resolve();
+      return child;
+    }) as never;
+    return { killed, spawned: spawned.promise, runner: new DockerComposeServices(spawnImpl) };
+  }
+
+  it("docker が応答しなければ、期限で止めて確定させない（名前のまま実行する）", async () => {
+    const { killed, runner } = hangingDocker();
+    expect(await runner.imageId("x", "r1", 20)).toBeUndefined();
+    expect(killed).toEqual(["SIGTERM"]);
+  });
+
+  it("確定を待つ間に打ち切られたら（一時停止・中止）、子プロセスを止めて確定させない", async () => {
+    const { killed, spawned, runner } = hangingDocker();
+    const pending = runner.imageId("x", "r1", 60_000);
+    await spawned;
+    // ほかの実行の打ち切りでは止めない
+    runner.abort("other");
+    expect(killed).toEqual([]);
+    runner.abort("r1");
+    expect(await pending).toBeUndefined();
+    expect(killed).toEqual(["SIGTERM"]);
+    // 終わった後に打ち切っても、何もしない
+    runner.abort("r1");
+    expect(killed).toHaveLength(1);
   });
 });
 

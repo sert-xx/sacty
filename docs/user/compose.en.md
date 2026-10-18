@@ -16,8 +16,9 @@ no configuration is needed.
   networks, and volumes when it finishes. Tasks in the same repository can run in parallel without colliding. Data is discarded after each run.
 - Agents and tests connect by service name and container port (for example `db:5432`). sacty starts the services with `ports` (host ports) and `container_name`
   removed.
-- Service images are pulled and built by the host's Docker, using the names written in the compose file (for images in your organization's registry, run
-  `docker login` on the host beforehand).
+- Images of services that do not build (only `image`) are pulled by the host's Docker, using the names written in the compose file (for images in your
+  organization's registry, run `docker login` on the host beforehand). Services that build (`build`) do not use the written `image` name; they are built under a
+  name for each run ("Unsupported settings" below).
 - Services left behind when the daemon ends unexpectedly are removed the next time it starts (the daemon that started them is recorded in the container label `io.sacty.owner`,
   and services whose daemon is still running, that is, those of another sacty running with the same `SACTY_HOME`, are not removed).
 

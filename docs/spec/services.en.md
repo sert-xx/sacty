@@ -33,7 +33,9 @@ Code: `apps/daemon/src/service.ts` (`serviceSpec`, `startServices`, `stopService
 6. Afterward (even on failure or timeout), `docker compose -p <name> down -v --remove-orphans --rmi local` removes the containers, networks, volumes,
    and built images.
 - In steps that use services, before starting them, the agent image (the step's image) is pinned to its image ID with `docker image inspect`, and the run uses
-  that ID (it keeps the pinned image even if the tag changes after the services start). If the ID cannot be read, the run uses the name.
+  that ID (it keeps the pinned image even if the tag changes after the services start). If the ID cannot be read or the check does not finish within 30 seconds
+  (`IMAGE_ID_TIMEOUT_MS`), the run uses the name. If a person stops the task (pause or cancel) while it waits, `docker image inspect` is stopped and neither the
+  services nor the agent start. Steps that do not use services and service starts for tests do not check.
 - Failure reasons are the last 2000 characters after redacting secrets.
 - At daemon startup, projects whose names start with `sacty-svc-` and whose owner-label daemon is not running (including those without the label) are
   removed. If `ps` cannot be read, nothing is removed.

@@ -513,13 +513,19 @@ export interface ServiceRunner {
   abort?(runId: string): void;
   /**
    * イメージの名前（タグ）を、今のイメージ ID にする（PBI-130）。サービスを起動する前に、エージェントのイメージを
-   * 確定させるのに使う。無ければ undefined。
+   * 確定させるのに使う。無い・期限（IMAGE_ID_TIMEOUT_MS）を過ぎた・abort(runId) で打ち切ったなら undefined。
    */
-  imageId?(image: string): Promise<string | undefined>;
+  imageId?(image: string, runId: string): Promise<string | undefined>;
 }
 
 /** 出力の末尾（失敗の理由に添える）。 */
 const LOG_TAIL = 2000;
+
+/**
+ * イメージ ID を確かめる（docker image inspect）待ちの上限（PBI-130 レビュー指摘）。Docker が応答しなくても、工程・一時停止・
+ * 中止を止めたままにしない（過ぎたら名前のまま実行する）。
+ */
+export const IMAGE_ID_TIMEOUT_MS = 30_000;
 
 /** サービスを起動したデーモン（PID と開始時刻）を残す、コンテナのラベル。 */
 export const OWNER_LABEL = "io.sacty.owner";
@@ -613,10 +619,41 @@ export class DockerComposeServices implements ServiceRunner {
     });
   }
 
-  async imageId(image: string): Promise<string | undefined> {
-    const { code, stdout } = await this.docker(["image", "inspect", "--format", "{{.Id}}", image]);
-    const id = stdout.trim();
-    return code === 0 && /^sha256:[0-9a-f]{64}$/.test(id) ? id : undefined;
+  async imageId(
+    image: string,
+    runId: string,
+    timeoutMs = IMAGE_ID_TIMEOUT_MS,
+  ): Promise<string | undefined> {
+    // 起動の待ちと同じく、実行として覚える（人間の一時停止・中止で abort(runId) されたら、子プロセスを止める）
+    const state: { aborted: boolean; child?: ChildProcess } = { aborted: false };
+    this.starting.set(runId, state);
+    try {
+      const { code, stdout } = await new Promise<{ code: number; stdout: string }>((done) => {
+        const child = this.spawnImpl("docker", ["image", "inspect", "--format", "{{.Id}}", image], {
+          env: dockerClientEnv(),
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+        state.child = child;
+        let stdout = "";
+        const timer = setTimeout(() => child.kill("SIGTERM"), timeoutMs);
+        child.stdout?.on("data", (chunk) => {
+          stdout += chunk;
+        });
+        child.stderr?.on("data", () => {});
+        child.on("error", () => {
+          clearTimeout(timer);
+          done({ code: 127, stdout });
+        });
+        child.on("close", (code) => {
+          clearTimeout(timer);
+          done({ code: code ?? 1, stdout });
+        });
+      });
+      const id = stdout.trim();
+      return !state.aborted && code === 0 && /^sha256:[0-9a-f]{64}$/.test(id) ? id : undefined;
+    } finally {
+      if (this.starting.get(runId) === state) this.starting.delete(runId);
+    }
   }
 
   abort(runId: string): void {
