@@ -944,3 +944,267 @@ describe("単発作業の接続先制限", () => {
     expect(up.calls).toHaveLength(1);
   });
 });
+
+describe("受け取る本文の上限（PBI-132）", () => {
+  // ブロックを 1 バイトにして、合計に数える量を受け取った量と同じにする（ブロックの数え方は、別のテストで確かめる）
+  const LIMITS = { perRequest: 100, total: 250, block: 1 };
+
+  /** 本文を送る（chunked か Content-Length か、決めた量を決めた回数に分けて）。応答の状態と本文を返す。 */
+  function post(
+    port: number,
+    path: string,
+    token: string,
+    options: { chunks: number[]; contentLength?: number; keepOpen?: boolean },
+  ) {
+    return new Promise<{ status: number; body: string }>((resolve, reject) => {
+      const req = request(
+        {
+          host: "127.0.0.1",
+          port,
+          path,
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${token}`,
+            "content-type": "application/json",
+            ...(options.contentLength !== undefined
+              ? { "content-length": String(options.contentLength) }
+              : {}),
+          },
+        },
+        (res) => {
+          let body = "";
+          res.on("data", (c) => {
+            body += c;
+          });
+          res.on("end", () => resolve({ status: res.statusCode ?? 0, body }));
+        },
+      );
+      // 断られて接続を切られても、送る側のエラーにしない（応答を読む）
+      req.on("error", (error) => {
+        if (!req.writableEnded) reject(error);
+      });
+      // 本文を書く前でもヘッダーを送る（本文を送らないまま待つ要求のため）
+      req.flushHeaders();
+      for (const size of options.chunks) req.write("x".repeat(size));
+      if (!options.keepOpen) req.end();
+    });
+  }
+
+  /** 1 つめの上流の呼び出しを、release を呼ぶまで返さない上流。 */
+  function heldUpstream() {
+    const bodies: number[] = [];
+    let release = () => {};
+    let first = true;
+    const fetchImpl = (async (_url: string, init: RequestInit) => {
+      bodies.push(Buffer.from(init.body as Uint8Array).length);
+      if (first) {
+        first = false;
+        await new Promise<void>((r) => {
+          release = r;
+        });
+      }
+      return json(200, { ok: true });
+    }) as typeof fetch;
+    return { fetchImpl, bodies, release: () => release() };
+  }
+
+  async function startAi(fetchImpl: typeof fetch) {
+    gateway = new AiGateway({ fetchImpl, bodyLimits: LIMITS, sleep: async () => {} });
+    const port = await gateway.listen();
+    const run = gateway.register({ base: "https://ai.example.com/v1", apiKey: "k" });
+    return { port, run, path: "/openai/v1/responses" };
+  }
+
+  it("Content-Length が上限を超えていれば、本文を読む前に 413 で断り、上流に送らない", async () => {
+    const up = upstream([]);
+    const g = await startAi(up.fetchImpl);
+    // 宣言だけ大きく、本文は送らないまま待つ（読む前に断るので、本文の終わりを待たない）
+    const res = await post(g.port, g.path, g.run.token, {
+      chunks: [],
+      contentLength: 1_000_000,
+      keepOpen: true,
+    });
+    expect(res.status).toBe(413);
+    expect(res.body).toContain("larger than the limit (100 bytes)");
+    expect(up.calls).toHaveLength(0);
+  });
+
+  it("Content-Length が無い（chunked）ときも、受け取った量が上限を超えたら 413 で断る", async () => {
+    const up = upstream([]);
+    const g = await startAi(up.fetchImpl);
+    const res = await post(g.port, g.path, g.run.token, { chunks: [60, 60] });
+    expect(res.status).toBe(413);
+    expect(up.calls).toHaveLength(0);
+  });
+
+  it("ちょうど上限は中継し、1 バイト多ければ断る（Content-Length あり・なしとも）", async () => {
+    const up = upstream([json(200, { ok: 1 }), json(200, { ok: 2 })]);
+    const g = await startAi(up.fetchImpl);
+    const send = (chunks: number[], contentLength?: number) =>
+      post(g.port, g.path, g.run.token, {
+        chunks,
+        ...(contentLength !== undefined ? { contentLength } : {}),
+      });
+    expect((await send([100], 100)).status).toBe(200);
+    expect((await send([50, 50])).status).toBe(200);
+    expect(up.calls.map((c) => c.body.length)).toEqual([100, 100]);
+    expect((await send([101], 101)).status).toBe(413);
+    expect((await send([50, 51])).status).toBe(413);
+    expect(up.calls).toHaveLength(2);
+  });
+
+  it("同時に受け取っている合計が上限を超えたら 503 で断り、応答を返し終えたら、その分を空ける", async () => {
+    const up = heldUpstream();
+    const g = await startAi(up.fetchImpl);
+    // 1 つめ（100）は、上流で止まっている間も数える
+    const first = post(g.port, g.path, g.run.token, { chunks: [100] });
+    await expect.poll(() => up.bodies.length).toBe(1);
+    expect(gateway?.bodiesInUse()).toBe(100);
+    // 2 つめ（100）は、本文の途中で止めておく（受け取って数えたことを確かめてから、次を送る。PR #144 レビュー提案）
+    post(g.port, g.path, g.run.token, { chunks: [100], keepOpen: true }).catch(() => {});
+    await expect.poll(() => gateway?.bodiesInUse()).toBe(200);
+    // 合計の上限 250 を超える（100 + 100 + 60）
+    const third = await post(g.port, g.path, g.run.token, { chunks: [60] });
+    expect(third.status).toBe(503);
+    expect(third.body).toContain("Retry later");
+    up.release();
+    expect((await first).status).toBe(200);
+    // 1 つめを返し終えたので、その分が空く（100 + 100 で受け取れる）
+    expect((await post(g.port, g.path, g.run.token, { chunks: [100] })).status).toBe(200);
+  });
+
+  it("断った本文・途中で切れた本文の分は、合計に残さない", async () => {
+    const up = upstream(Array.from({ length: 3 }, () => json(200, { ok: true })));
+    const g = await startAi(up.fetchImpl);
+    for (let i = 0; i < 5; i++) {
+      expect((await post(g.port, g.path, g.run.token, { chunks: [90, 90] })).status).toBe(413);
+    }
+    // 本文の途中で接続を切る
+    for (let i = 0; i < 5; i++) {
+      await new Promise<void>((resolve) => {
+        const req = request({
+          host: "127.0.0.1",
+          port: g.port,
+          path: g.path,
+          method: "POST",
+          headers: { authorization: `Bearer ${g.run.token}`, "content-length": "100" },
+        });
+        req.on("error", () => {});
+        req.write("x".repeat(80));
+        // ゲートウェイが受け取って数えたことを確かめてから切る（PR #144 レビュー提案）
+        expect
+          .poll(() => gateway?.bodiesInUse())
+          .toBe(80)
+          .then(() => {
+            req.destroy();
+            resolve();
+          });
+      });
+      // 切った分を空ける
+      await expect.poll(() => gateway?.bodiesInUse()).toBe(0);
+    }
+    // 合計の上限（250）に近い量を、同時に受け取れる
+    const a = post(g.port, g.path, g.run.token, { chunks: [100] });
+    const b = post(g.port, g.path, g.run.token, { chunks: [100] });
+    expect((await a).status).toBe(200);
+    expect((await b).status).toBe(200);
+  });
+
+  it("細かい chunk を大量に送られても、確保したブロックの大きさで数え、持つメモリーを抑える（PR #144 レビュー指摘）", async () => {
+    const up = upstream([json(200, { ok: true })]);
+    // ブロックは 16 バイト、合計は 40 バイト（ブロック 2 つと半分）
+    gateway = new AiGateway({
+      fetchImpl: up.fetchImpl,
+      bodyLimits: { perRequest: 1000, total: 40, block: 16 },
+      sleep: async () => {},
+    });
+    const port = await gateway.listen();
+    const run = gateway.register({ base: "https://ai.example.com/v1", apiKey: "k" });
+    const path = "/openai/v1/responses";
+    // 1 バイトずつ 20 回：受け取ったのは 20 バイトでも、ブロック 2 つ（32）を数える
+    const open = request({
+      host: "127.0.0.1",
+      port,
+      path,
+      method: "POST",
+      headers: { authorization: `Bearer ${run.token}` },
+    });
+    open.on("error", () => {});
+    for (let i = 0; i < 20; i++) open.write("x");
+    await expect.poll(() => gateway?.bodiesInUse()).toBe(32);
+    // 1 バイトの要求でも、新しいブロック（16）が合計（40）に収まらないので断る
+    expect((await post(port, path, run.token, { chunks: [1] })).status).toBe(503);
+    expect(gateway.bodiesInUse()).toBe(32);
+    // 細かく届いた本文も、欠けずにつながって上流に届く（ブロックの残りは付けない）
+    open.end("z");
+    await expect.poll(() => up.calls.length).toBe(1);
+    expect(up.calls[0]?.body).toBe(`${"x".repeat(20)}z`);
+    await expect.poll(() => gateway?.bodiesInUse()).toBe(0);
+  });
+
+  it("組織内 PF・コンテキストの MCP・ホストの MCP の中継でも、上限を超えたら 413 で断る", async () => {
+    const up = upstream([]);
+    const ticket = toPlatform(
+      "ticket",
+      PlatformFile.parse({
+        upstream: "https://ticket.example.com",
+        auth: { header: "X-Token", secret: "t" },
+        allow: ["POST /api/**"],
+      }),
+    );
+    const handled: string[] = [];
+    gateway = new AiGateway({
+      fetchImpl: up.fetchImpl,
+      bodyLimits: LIMITS,
+      platforms: () => [ticket],
+      credentials: new PlatformCredentials({
+        secrets: new MemorySecretStore({ t: "secret" }),
+        fetchImpl: up.fetchImpl,
+      }),
+      hostMcp: {
+        handle: async (name: string) => {
+          handled.push(name);
+          return { status: 200, body: {} };
+        },
+      } as never,
+    });
+    const port = await gateway.listen();
+    const run = gateway.register(undefined, {
+      docs: { url: "https://mcp.example.com/mcp", headers: {} },
+    });
+    for (const path of [`/r/${run.token}/pf/ticket/api/x`, "/ctx-mcp/docs", "/mcp/notes"]) {
+      expect((await post(port, path, run.token, { chunks: [101] })).status).toBe(413);
+    }
+    expect(up.calls).toHaveLength(0);
+    expect(handled).toEqual([]);
+  });
+
+  it("Expect: 100-continue を付けた要求（curl の大きな本文）も中継し、上流には expect を送らない", async () => {
+    const up = upstream([json(200, { ok: true })]);
+    const g = await startAi(up.fetchImpl);
+    const status = await new Promise<number>((resolve, reject) => {
+      const req = request(
+        {
+          host: "127.0.0.1",
+          port: g.port,
+          path: g.path,
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${g.run.token}`,
+            "content-length": "50",
+            expect: "100-continue",
+          },
+        },
+        (res) => {
+          res.resume();
+          res.on("end", () => resolve(res.statusCode ?? 0));
+        },
+      );
+      req.on("error", reject);
+      req.on("continue", () => req.end("x".repeat(50)));
+    });
+    expect(status).toBe(200);
+    expect(up.calls[0]?.headers.get("expect")).toBeNull();
+    expect(up.calls[0]?.body).toHaveLength(50);
+  });
+});

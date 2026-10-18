@@ -37,7 +37,10 @@ const RETRYABLE = new Set([429, 500, 502, 503, 504]);
 const BASE_DELAY_MS = 1_000;
 const MAX_DELAY_MS = 60_000;
 
-/** 転送しないリクエストのヘッダー（宛先・認証・長さ・接続。圧縮は上流に任せず、平文で受ける）。 */
+/**
+ * 転送しないリクエストのヘッダー（宛先・認証・長さ・接続。圧縮は上流に任せず、平文で受ける）。expect（curl などが大きな本文に
+ * 付ける 100-continue）は、ゲートウェイが本文を受け取り終えてから送るので要らず、fetch が受け付けない（PBI-132 の確認で発見）。
+ */
 const DROP_REQUEST = new Set([
   "host",
   "authorization",
@@ -46,6 +49,7 @@ const DROP_REQUEST = new Set([
   "keep-alive",
   "transfer-encoding",
   "accept-encoding",
+  "expect",
 ]);
 /** 転送しない応答のヘッダー（fetch が展開した後の本文を流すので、長さ・圧縮は付け直させる）。 */
 const DROP_RESPONSE = new Set([
@@ -153,7 +157,46 @@ export type GatewayDeps = {
    * 差し替える。
    */
   longFetchImpl?: (url: URL, init: Record<string, unknown>) => Promise<Response>;
+  /**
+   * 受け取る本文の上限（PBI-132）。テストでは小さくする。無ければ GATEWAY_BODY_MAX・GATEWAY_BODIES_MAX・
+   * GATEWAY_BODY_BLOCK。
+   */
+  bodyLimits?: { perRequest: number; total: number; block?: number };
 };
+
+/**
+ * コンテナから受け取る本文の上限（1 つの要求。PBI-132）。上流へ送る前にホストのメモリーにためるので、1 つの工程のコンテナが
+ * デーモンのメモリーを使い尽くせないようにする。AI の要求（画像・長いコンテキスト）を妨げない大きさにする。
+ */
+export const GATEWAY_BODY_MAX = 64 * 1024 * 1024;
+/** 同時に受け取っている本文（応答を返し終えるまで）の合計の上限（PBI-132）。 */
+export const GATEWAY_BODIES_MAX = 256 * 1024 * 1024;
+/**
+ * 本文をためるブロックの大きさ（PBI-132。PR #144 レビュー指摘）。受け取った分は、このブロックに写して持ち、合計には確保した
+ * ブロックの大きさで数える。届いた chunk をそのまま持つと、1 バイトの chunk ごとに Buffer と配列の要素が残り、数えた量より
+ * ずっと多くのメモリーを使う（chunk が、より大きな受信のバッファーを指したままのこともある）。
+ */
+export const GATEWAY_BODY_BLOCK = 16 * 1024;
+
+/** 受け取っている本文の量（確保したブロックの合計。すべての実行で共有する。PBI-132）。 */
+class BodyBudget {
+  used = 0;
+  constructor(
+    readonly perRequest: number,
+    readonly total: number,
+    readonly block: number,
+  ) {}
+}
+
+/** 本文を上限で断った（413：1 つの要求が大きすぎる、503：同時に受け取っている量が多すぎる）。 */
+class BodyRefused extends Error {
+  constructor(
+    readonly status: 413 | 503,
+    message: string,
+  ) {
+    super(message);
+  }
+}
 
 const abortableSleep = (ms: number, signal: AbortSignal) =>
   new Promise<void>((resolve) => {
@@ -182,8 +225,20 @@ export class AiGateway {
   private readonly runs = new Map<string, RunState>();
   /** 待つ上限ごとの接続（PBI-75。使い回す）。 */
   private readonly dispatchers = new Map<number, Agent>();
+  private readonly bodies: BodyBudget;
 
-  constructor(private readonly deps: GatewayDeps = {}) {}
+  constructor(private readonly deps: GatewayDeps = {}) {
+    this.bodies = new BodyBudget(
+      deps.bodyLimits?.perRequest ?? GATEWAY_BODY_MAX,
+      deps.bodyLimits?.total ?? GATEWAY_BODIES_MAX,
+      deps.bodyLimits?.block ?? GATEWAY_BODY_BLOCK,
+    );
+  }
+
+  /** いま受け取っている本文のために確保している量（バイト。PBI-132）。テストで、受け取ったことを確かめるのに使う。 */
+  bodiesInUse(): number {
+    return this.bodies.used;
+  }
 
   /** 127.0.0.1 で待ち受ける（port 0 なら空いているポート）。 */
   async listen(port = 0): Promise<number> {
@@ -306,9 +361,9 @@ export class AiGateway {
     });
     let body: Buffer;
     try {
-      body = await readBody(req);
-    } catch {
-      return;
+      body = await readBody(req, res, this.bodies);
+    } catch (error) {
+      return refuseBody(req, res, error);
     }
     const authHeader = platform.auth.header.toLowerCase();
     const headers = new Headers();
@@ -388,9 +443,9 @@ export class AiGateway {
     let body: Buffer | undefined;
     if (method !== "GET" && method !== "HEAD") {
       try {
-        body = await readBody(req);
-      } catch {
-        return;
+        body = await readBody(req, res, this.bodies);
+      } catch (error) {
+        return refuseBody(req, res, error);
       }
     }
     const headers: Record<string, string> = {};
@@ -460,7 +515,7 @@ export class AiGateway {
       if ("host" in target) {
         // ホストで起動したコンテキストの command の MCP サーバー（PBI-84）
         if (!this.deps.contextHostMcp) return fail(res, 404, "sacty gateway: no host MCP servers");
-        return relayHostMcp(this.deps.contextHostMcp, target.host, req, res);
+        return relayHostMcp(this.deps.contextHostMcp, target.host, req, res, this.bodies);
       }
       return this.handleContextMcp(req, res, name, target, contextMcp[2] ?? "");
     }
@@ -472,7 +527,7 @@ export class AiGateway {
         return fail(res, 403, "sacty gateway: MCP server is outside the selected operation");
       }
       if (!this.deps.hostMcp) return fail(res, 404, "sacty gateway: no host MCP servers");
-      return relayHostMcp(this.deps.hostMcp, mcp[1] ?? "", req, res);
+      return relayHostMcp(this.deps.hostMcp, mcp[1] ?? "", req, res, this.bodies);
     }
     if (!run?.base) {
       return fail(res, 401, "sacty gateway: unknown or expired run token");
@@ -486,10 +541,10 @@ export class AiGateway {
     });
     let body: Buffer;
     try {
-      body = await readBody(req);
-    } catch {
-      // 本文を受け取り終える前に、コンテナとの接続が切れた
-      return;
+      body = await readBody(req, res, this.bodies);
+    } catch (error) {
+      // 本文を受け取り終える前に、コンテナとの接続が切れた（か、上限で断った）
+      return refuseBody(req, res, error);
     }
     const headers = new Headers();
     for (const [name, value] of Object.entries(req.headers)) {
@@ -565,12 +620,13 @@ async function relayHostMcp(
   name: string,
   req: IncomingMessage,
   res: ServerResponse,
+  bodies: BodyBudget,
 ): Promise<void> {
   let raw: Buffer;
   try {
-    raw = await readBody(req);
-  } catch {
-    return;
+    raw = await readBody(req, res, bodies);
+  } catch (error) {
+    return refuseBody(req, res, error);
   }
   let body: unknown;
   try {
@@ -607,17 +663,105 @@ export function sentUrl(upstream: string, path: string, query: string): string |
   return url.toString();
 }
 
-function readBody(req: IncomingMessage): Promise<Buffer> {
+/**
+ * 本文を受け取る。1 つの要求の上限と、同時に受け取っている合計の上限を超えたら、それ以上ためずに断る（PBI-132）。
+ * Content-Length が上限を超えていれば、読む前に断る（無くても、chunked でも、受け取った量で止める）。受け取った分は
+ * 決まった大きさのブロックに写して持ち、合計には確保したブロックの大きさで数える（細かい chunk を大量に送られても、数えた量
+ * より多くのメモリーを使わない。PR #144 レビュー指摘）。ためた分は、応答を返し終える（接続が閉じる）まで合計に数える
+ * （上流へ送っている間も、ホストのメモリーにあるため）。
+ */
+function readBody(req: IncomingMessage, res: ServerResponse, bodies: BodyBudget): Promise<Buffer> {
   return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    req.on("data", (chunk: Buffer) => chunks.push(chunk));
-    req.on("end", () => resolve(Buffer.concat(chunks)));
-    req.on("error", reject);
+    /** 受け取った本文の量（1 つの要求の上限と比べる）。 */
+    let held = 0;
+    /** 確保したブロックの合計（合計に数える量）。 */
+    let reserved = 0;
+    let released = false;
+    const release = () => {
+      if (released) return;
+      released = true;
+      bodies.used -= reserved;
+    };
+    res.on("close", release);
+    const refuse = (error: BodyRefused) => {
+      req.off("data", onData);
+      req.pause();
+      release();
+      reject(error);
+    };
+    const declared = Number(req.headers["content-length"]);
+    if (Number.isFinite(declared) && declared > bodies.perRequest) {
+      return refuse(tooLarge(bodies));
+    }
+    const blocks: Buffer[] = [];
+    let current: Buffer | undefined;
+    let offset = 0;
+    function onData(chunk: Buffer) {
+      if (held + chunk.length > bodies.perRequest) return refuse(tooLarge(bodies));
+      for (let from = 0; from < chunk.length; ) {
+        if (!current || offset === current.length) {
+          if (bodies.used + bodies.block > bodies.total) {
+            return refuse(
+              new BodyRefused(
+                503,
+                `sacty gateway: too many request bodies are being received at once (over ${bodies.total} bytes in total). Retry later`,
+              ),
+            );
+          }
+          // 共有のプールから切り出さない（ほかの小さな Buffer と同じ領域を持ち続けないように）
+          current = Buffer.allocUnsafeSlow(bodies.block);
+          offset = 0;
+          blocks.push(current);
+          bodies.used += bodies.block;
+          reserved += bodies.block;
+        }
+        const copied = chunk.copy(current, offset, from);
+        offset += copied;
+        from += copied;
+      }
+      held += chunk.length;
+    }
+    req.on("data", onData);
+    req.on("end", () => resolve(Buffer.concat(blocks, held)));
+    req.on("error", (error) => {
+      release();
+      reject(error);
+    });
     // 本文の途中で切れたとき、error を出さずに aborted・close だけになることもある
     req.on("close", () => {
-      if (!req.complete) reject(new Error("the request was aborted"));
+      if (!req.complete) {
+        release();
+        reject(new Error("the request was aborted"));
+      }
     });
   });
+}
+
+function tooLarge(bodies: BodyBudget): BodyRefused {
+  return new BodyRefused(
+    413,
+    `sacty gateway: the request body is larger than the limit (${bodies.perRequest} bytes)`,
+  );
+}
+
+/**
+ * 本文を受け取れなかったときの終わり方。上限で断ったなら、理由を返してから接続を切る（残りの本文を受け取らない）。
+ * 接続が切れたなら、何もしない。
+ */
+function refuseBody(req: IncomingMessage, res: ServerResponse, error: unknown): void {
+  if (!(error instanceof BodyRefused)) return;
+  if (res.headersSent || res.destroyed) {
+    req.destroy();
+    return;
+  }
+  res.writeHead(error.status, {
+    "content-type": "application/json",
+    connection: "close",
+    ...(error.status === 503 ? { "retry-after": "1" } : {}),
+  });
+  res.end(JSON.stringify({ error: { message: error.message, type: "sacty_gateway" } }), () =>
+    req.destroy(),
+  );
 }
 
 function fail(res: ServerResponse, status: number, message: string): void {

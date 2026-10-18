@@ -5,7 +5,7 @@
 An HTTP relay that runs inside the daemon. When an agent's container calls the AI, the API of an organization platform (PF), or an MCP server, the authentication values are
 not passed to the container; the gateway attaches them and forwards the request. The container receives only a per-run token.
 
-Related ADRs: [Start command-type MCP servers in the context's mcp.yaml on the host by default and route them through the gateway](../adr/20261014-0927-context-command-mcp-on-host.md)
+Related ADRs: [Start command-type MCP servers in the context's mcp.yaml on the host by default and route them through the gateway](../adr/20261014-0927-context-command-mcp-on-host.md), [Limit the request bodies the gateway receives](../adr/20261018-0450-gateway-body-limit.md)
 
 ## Listening and tokens
 
@@ -14,6 +14,15 @@ Related ADRs: [Start command-type MCP servers in the context's mcp.yaml on the h
 - For each run it issues a token `sacty-gw-<48 hex digits>` and binds to it the AI endpoint, MCP, and the project context's PFs that the run uses.
   The token is deleted when the run ends (401 after that). The token is included in the values hidden from output.
 - A failure during relaying ends only that request (502 if the response has not started). Error responses are `{ error: { message, type: "sacty_gateway" } }`.
+- Request bodies (common to all relays; they are held in the host's memory before being sent upstream) are limited. Over a limit, the gateway stops holding more,
+  returns the reason, and closes the connection.
+  - One request may be up to 64 MiB (`GATEWAY_BODY_MAX`); over that, 413. If `Content-Length` exceeds the limit, it is refused before reading; without it (or chunked),
+    it stops at the amount received.
+  - The bodies being received at the same time may total up to 256 MiB (`GATEWAY_BODIES_MAX`); over that, 503 (`Retry-After: 1`). Held bodies count until the
+    response finishes (the connection closes).
+  - Received data is copied into 16 KiB blocks (`GATEWAY_BODY_BLOCK`), and the total counts the size of the allocated blocks (so that a flood of tiny chunks does not
+    use more memory than is counted).
+- The destination, authentication, length, connection, compression, and `expect` (the `100-continue` that curl and others add to large bodies) headers are not sent upstream.
 
 | Path | Purpose | Authentication |
 | --- | --- | --- |
@@ -22,7 +31,7 @@ Related ADRs: [Start command-type MCP servers in the context's mcp.yaml on the h
 | `/mcp/<name>` | Host MCP servers | `Authorization: Bearer <token>` |
 | `/openai/v1/…` | AI calls (Codex's Bedrock and providers) | `Authorization: Bearer <token>` (passed in `AWS_BEARER_TOKEN_BEDROCK` or `SACTY_PROVIDER_API_KEY`) |
 
-Code: `apps/daemon/src/gateway.ts` (`AiGateway.listen`, `register`, `handle`, `containerOrigin`, `platformsUrl`, `DEFAULT_HOST_ADDRESS`), `apps/daemon/src/service.ts` (`executeLogged`)
+Code: `apps/daemon/src/gateway.ts` (`AiGateway.listen`, `register`, `handle`, `containerOrigin`, `platformsUrl`, `DEFAULT_HOST_ADDRESS`, `readBody`, `GATEWAY_BODY_MAX`, `GATEWAY_BODIES_MAX`, `GATEWAY_BODY_BLOCK`, `DROP_REQUEST`), `apps/daemon/src/service.ts` (`executeLogged`)
 
 ## Relaying AI calls
 
