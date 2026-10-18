@@ -43,7 +43,8 @@ Requirements and Design (`StepPullRequestKey`) and Implementation are approved t
   starts with `https://` (`reviewPullRequestUrl`). The label is "Review on the PR", and the sacty approval screen is skipped (PBI-136). When the
   task is escalated (such as confirming the step to redo for PR comments), or the PR was closed, merged with different content, or does not exist,
   it goes to the sacty approval screen (`/tasks/<ID>/review`). A link that opens outside is marked with "↗" and, for screen readers, "opens in a new
-  tab" (`ActionLink`). From the notifications, it opens without switching the project.
+  tab" (`ActionLink`). From the notifications, it opens without switching the project. On the dashboard and in the notifications, the link is the task
+  title, so only the title is truncated and the mark is placed outside the truncation (it stays even for a long title; PR #148 review suggestion).
 
 Code (web UI links): `apps/web/src/lib/labels.ts` (`personAction`, `personLink`, `reviewPullRequestUrl`), `apps/web/src/components/action-link.tsx` (`ActionLink`, `ExternalMark`)
 

@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { type FC, createElement as h } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
@@ -35,5 +36,41 @@ describe("ActionLink", () => {
     expect(html).toContain('href="/tasks/t1/review"');
     expect(html).not.toContain("target=");
     expect(html).not.toContain("↗");
+  });
+});
+
+describe("文言を省略するとき（PR #148 レビュー提案）", () => {
+  it("外部なら、省略は文言だけに付け、印はその外（省略されない）に置く", () => {
+    const html = renderToStaticMarkup(
+      h(
+        I18nProvider as unknown as FC<{ locale: "ja" }>,
+        { locale: "ja" },
+        h(
+          ActionLink,
+          { href: "https://github.com/x", external: true, labelClassName: "truncate" },
+          "長い題",
+        ),
+      ),
+    );
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    const label = doc.querySelector(".truncate");
+    expect(label?.textContent).toBe("長い題");
+    expect(label?.textContent).not.toContain("↗");
+    expect(doc.querySelector("a")?.textContent).toContain("↗");
+  });
+
+  it("sacty の画面へのリンクは、今までどおり文言ごとリンクを省略する", () => {
+    const html = renderToStaticMarkup(
+      h(
+        I18nProvider as unknown as FC<{ locale: "ja" }>,
+        { locale: "ja" },
+        h(
+          ActionLink,
+          { href: "/tasks/t1", labelClassName: "truncate", className: "font-medium" },
+          "長い題",
+        ),
+      ),
+    );
+    expect(html).toContain('class="font-medium truncate"');
   });
 });

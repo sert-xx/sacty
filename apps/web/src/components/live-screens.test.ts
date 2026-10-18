@@ -877,5 +877,9 @@ describe("PR で確かめる工程の「チェックする」は、PR を新し�
       href: PR,
       target: "_blank",
     });
+    // 題だけを省略し、外部の印は省略の外に置く（長い題でも残す。PR #148 レビュー提案）
+    const item = document.querySelector(`a[href="${PR}"]`);
+    expect(item?.querySelector(".line-clamp-2")?.textContent).toBe("ログインを直す");
+    expect(item?.textContent).toContain("↗");
   });
 });

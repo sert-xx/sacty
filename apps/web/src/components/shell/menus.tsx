@@ -142,8 +142,9 @@ export function NotificationsMenu({
       className={cn(ITEM, "flex-col items-start gap-0.5 border-t border-border first:border-t-0")}
     >
       <span className="text-xs font-semibold text-warn">{n.status}</span>
-      <span className="line-clamp-2 font-medium">
-        {n.title}
+      {/* 題だけを省略し、外部の印は省略の外に置く（長い題でも残す。PR #148 レビュー提案） */}
+      <span className="flex w-full min-w-0 items-start font-medium">
+        <span className="line-clamp-2 min-w-0">{n.title}</span>
         {n.external && <ExternalMark />}
       </span>
       <span className="text-xs text-muted-foreground">{n.projectName}</span>

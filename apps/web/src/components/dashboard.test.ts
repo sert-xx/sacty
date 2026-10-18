@@ -727,3 +727,26 @@ describe("あなたの出番の PR で確かめる工程（PBI-136）", () => {
     expect(b?.getAttribute("target")).toBeNull();
   });
 });
+
+describe("長い題の PR の行でも、外部の印は残る（PR #148 レビュー提案）", () => {
+  it("題だけを省略し、印は省略の外に置く", () => {
+    show(
+      base({
+        attention: [
+          attention("a", minutes(10), {
+            title: "とても長い題".repeat(20),
+            href: "https://github.com/acme/web/pull/7",
+            external: true,
+          }),
+        ],
+      }),
+    );
+    const a = byId("attention-a")?.querySelector("a");
+    const label = a?.querySelector(".truncate");
+    expect(label?.textContent).toBe("とても長い題".repeat(20));
+    expect(a?.textContent).toContain("↗");
+    expect(label?.textContent).not.toContain("↗");
+    // リンク全体は省略しない（省略すると、末尾の印も切れる）
+    expect(a?.className).not.toContain("truncate");
+  });
+});

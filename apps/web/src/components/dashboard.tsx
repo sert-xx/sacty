@@ -231,7 +231,9 @@ function TaskRow({
           href={href}
           external={external}
           title={title}
-          className={cn("font-medium text-foreground hover:underline", FULL_ON_FOCUS)}
+          className="font-medium text-foreground hover:underline"
+          // 題だけを省略し、外部の印は省略の外に置く（PR #148 レビュー提案）
+          labelClassName={FULL_ON_FOCUS}
         >
           {title}
         </ActionLink>
