@@ -16,6 +16,7 @@ import {
 } from "@sacty/core";
 import Link from "next/link";
 import { useRef } from "react";
+import { ActionLink } from "@/components/action-link";
 import { TaskAuditCard } from "@/components/audit";
 import { CardSection } from "@/components/card-section";
 import { DaemonError } from "@/components/daemon-error";
@@ -297,12 +298,13 @@ export function TaskDetailView({ data }: { data: TaskDetailData }) {
                                   : m.gate.reviewHelp}
             </p>
           </div>
-          <Link
+          <ActionLink
             href={action.href}
+            external={action.external}
             className="inline-flex min-h-11 items-center rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground"
           >
             {action.label}
-          </Link>
+          </ActionLink>
         </section>
       )}
 

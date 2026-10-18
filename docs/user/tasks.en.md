@@ -125,6 +125,13 @@ When the Implementation step changes nothing (it decided the requirements are al
 Steps that need human approval (Requirements, Design, and Implement) are decided in PRs to the target repository. Approval = merge, and steps that created a PR
 are not approved from the sacty web UI (the web UI guides you to the PR and shows the status).
 
+While awaiting approval, if the PR of the current submission is open, "Review on the PR" (in the task details, the task list, the dashboard, and the
+header notifications) opens the GitHub PR directly in a new tab (without the sacty approval screen in between). Once you merge the PR, the task
+moves on at the next check without returning to the sacty web UI. In the following cases, you are taken to the sacty approval screen as before ("Review", "Decide").
+
+- When the task is escalated, such as when a person chooses the step to redo for PR comments.
+- When the PR was closed without merging, was merged with content different from the submission, or does not exist yet.
+
 1. sacty creates a task branch (`sacty/task-<short task ID>`) from the starting commit of the base branch.
 2. The Requirements are written to a file (by default `docs/sacty/<short task ID>/requirements.md`) and opened as a PR to the task branch. When it is merged,
    it is recorded as approval of the Requirements and the task moves to the next step.

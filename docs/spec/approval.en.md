@@ -38,6 +38,14 @@ Requirements and Design (`StepPullRequestKey`) and Implementation are approved t
   If there is no task branch, it is opened as a PR from a sacty branch (`sacty/task-<first 8 characters of the task ID>`) to the base branch.
   If changes other than the requirements and design files have been stacked on the task branch, publishing stops (`pr.taskBranchChanged`).
 - Each child task of Task split has its own task branch.
+- The "review" link in the web UI (`personAction`: the task details, the task list, "Needs you" on the dashboard, and the header notifications)
+  opens the PR in a new tab when the task is `awaiting_approval`, the PR of the current submission (`gatePullRequest`) is `open`, and its URL
+  starts with `https://` (`reviewPullRequestUrl`). The label is "Review on the PR", and the sacty approval screen is skipped (PBI-136). When the
+  task is escalated (such as confirming the step to redo for PR comments), or the PR was closed, merged with different content, or does not exist,
+  it goes to the sacty approval screen (`/tasks/<ID>/review`). A link that opens outside is marked with "↗" and, for screen readers, "opens in a new
+  tab" (`ActionLink`). From the notifications, it opens without switching the project.
+
+Code (web UI links): `apps/web/src/lib/labels.ts` (`personAction`, `personLink`, `reviewPullRequestUrl`), `apps/web/src/components/action-link.tsx` (`ActionLink`, `ExternalMark`)
 
 ## When the implementation has no changes
 

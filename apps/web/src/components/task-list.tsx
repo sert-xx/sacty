@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { ActionLink } from "@/components/action-link";
 import { DaemonError } from "@/components/daemon-error";
 import { FollowProjectAfterRecovery, StaleNotice } from "@/components/live-status";
 import { StatusLabelView, StepChipsView } from "@/components/task-bits";
@@ -54,12 +55,14 @@ export function LiveTaskList({
                   {task.status}
                 </span>
                 <span className="text-[17px] font-semibold">{task.title}</span>
-                <Link
+                <ActionLink
                   href={task.action.href}
+                  external={task.action.external}
                   className="text-sm font-semibold text-accent-foreground"
                 >
-                  {task.action.label} →
-                </Link>
+                  {task.action.label}
+                  {!task.action.external && " →"}
+                </ActionLink>
               </li>
             ))}
           </ul>

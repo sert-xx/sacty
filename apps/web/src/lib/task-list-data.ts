@@ -26,7 +26,8 @@ export type NeedsYouCard = {
   id: string;
   title: string;
   status: string;
-  action: { href: string; label: string };
+  /** 人が判断する場所。external なら GitHub の PR（新しいタブで開く。PBI-136）。 */
+  action: { href: string; label: string; external?: true };
 };
 
 /** プロジェクトのタスクの一覧（PBI-108）。 */

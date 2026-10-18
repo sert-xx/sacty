@@ -82,7 +82,7 @@ Code: `apps/daemon/src/server.ts` (`createApp`, `handleError`), `apps/web/src/li
     does not carry "now" (the version would change on every refetch).
   - Needs you: the open tasks whose state display is a person's turn (`statusTone` is `person`: awaiting approval, paused, escalated;
     excluding tasks awaiting approval while the goal guardian is judging PR feedback), longest wait first. Each row shows the title (a link to
-    where the person decides; `personAction`), the project, the state, and the waiting time. The wait starts at the latest activity record
+    where the person decides; `personAction`; for steps reviewed on a PR, it opens the PR in a new tab, see [Approval and request changes](approval.en.md#approval-through-prs)), the project, the state, and the waiting time. The wait starts at the latest activity record
     that put the task in that state (`StepSubmitted`, `TaskPaused`, `TaskEscalated`, or `ReproductionChecked` when not reproduced; the aggregate's `waitingSince`), or `updatedAt` when
     there is no record. The waiting time is one of minutes, hours, or days (rounded down; "under a minute" below one minute; `durationText`).
     When there is none: "Nothing needs you right now."
