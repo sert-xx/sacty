@@ -25,6 +25,10 @@ Starts the daemon and the web UI (Next.js) and prints the web UI sign-in URL (`h
 - Writing `web: { auth: false }` in `~/.sacty/config.yaml` turns this sign-in off, and you can just open `http://127.0.0.1:4700` shown in the terminal.
   However, code running in step containers (tests in the target repository, prompt injection) can then approve or change settings through the web UI.
   While it is off, a warning is shown on every start.
+  - `web.auth` is read only when `sacty up` starts. After changing it, stop the running `sacty up` with Ctrl+C and start it again
+    (while it keeps running, the previous setting stays in effect).
+  - You can tell whether it is on or off from the terminal output at startup: when on, the sign-in URL (`…/auth?token=…`); when off, `http://127.0.0.1:4700`
+    and a warning.
 - Ports must be between 1 and 65535, and `--port` and `--daemon-port` must be different numbers.
 - You cannot start it twice with the same `SACTY_HOME` ([Getting started](getting-started.en.md#where-data-is-stored)).
 

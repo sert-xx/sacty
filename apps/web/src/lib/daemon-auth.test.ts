@@ -31,6 +31,8 @@ describe("デーモンへ中継する前に、起動した本人のブラウザ�
     vi.stubEnv("SACTY_DAEMON_TOKEN", "daemon-token");
     vi.stubEnv("SACTY_WEB_TOKEN", "web-secret");
     vi.stubEnv("SACTY_WEB_PORT", "4700");
+    // 起動元の環境（SACTY_WEB_AUTH=off など）に左右されないよう、認証 ON から始める（PR #145 レビュー提案）
+    vi.stubEnv("SACTY_WEB_AUTH", "");
   });
   afterEach(() => {
     vi.unstubAllGlobals();

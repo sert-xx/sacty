@@ -27,6 +27,7 @@
 | `images` | 言語ごとのイメージ（[コンテナイメージ](images.md#言語ごとのイメージ)） | なし |
 | `onepassword.account` | 使う 1Password のアカウント（[秘密情報](secrets.md#1password)） | なし |
 | `gateway` | ホストのゲートウェイ（[ゲートウェイ](gateway.md)） | なし |
+| `web.auth` | 画面の認証。`false` にすると、入り口の URL を開かなくても画面を使える（危険と切り替え方は [CLI](cli.md#sacty-up)）。`sacty up` の起動のときだけ読む | `true` |
 
 取り込みの間隔は、config.yaml ではなく画面の「sacty の設定」で、取り込みの種類ごとに決めます（[取り込み](intake.md#取り込みの間隔)）。
 メモリーを残す日数も「sacty の設定」で決めます（[監査を見る](audit.md#メモリー)）。

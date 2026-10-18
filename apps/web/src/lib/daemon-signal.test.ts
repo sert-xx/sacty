@@ -38,6 +38,7 @@ describe("画面の取り直しから、デーモンへの問い合わせに中�
     vi.stubEnv("SACTY_DAEMON_URL", "http://127.0.0.1:1");
     vi.stubEnv("SACTY_DAEMON_TOKEN", "test-token");
     vi.stubEnv("SACTY_WEB_TOKEN", "web-secret");
+    vi.stubEnv("SACTY_WEB_AUTH", "");
     hangingDaemon();
   });
   afterEach(() => {

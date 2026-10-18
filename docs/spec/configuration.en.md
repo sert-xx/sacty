@@ -3,7 +3,8 @@
 # Configuration (config.yaml)
 
 `SACTY_HOME/config.yaml` holds the per-machine settings (AI agents, authentication, images, and the gateway). The daemon
-reads it again on every use (you can change it without stopping the daemon). When it cannot be read or has the wrong shape, the location of the first error (`path`) and the reason become the message shown as a warning in the web UI.
+reads it again on every use (you can change it without stopping the daemon), except `web.auth`, which is read only when `sacty up` starts (it is fixed in the web UI
+child process's environment; restart after changing it). When it cannot be read or has the wrong shape, the location of the first error (`path`) and the reason become the message shown as a warning in the web UI.
 `sacty config init` writes the template (`CONFIG_TEMPLATE`) with permission 0600 (if the file exists, it stops unless `--force` is given).
 
 How to write it, for users, is in the [user documentation](../user/README.en.md). This page describes the meaning and default of each item, and the validation rules.
