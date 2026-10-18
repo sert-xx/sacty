@@ -205,6 +205,15 @@ describe("単価（available_models）が無いモデル", () => {
         problem: { params: { detail: { code: "config.agentUnavailable" } } },
       });
     }
+    // 誤りには、使えない理由（足すべき単価・接続先）も載せる。設定が誤りのときは画面の警告が出ないため（PR #146 レビュー提案）
+    expect(
+      problem(`${base}default_agent: codex_lite\nstep_agents:\n  design: codex_standard\n`),
+    ).toBe(
+      '設定ファイルに誤りがあります（step_agents.design）：step_agents.design の "codex_standard" は使えません：providers.codex.available_models に gpt-6.1-sol の単価が無いので、codex_standard を使えません。単価を足してください。',
+    );
+    expect(problem(`${base}default_agent: claude_lite\n`)).toContain(
+      "エージェント「claude_lite」は、providers.claude が無いので使えません。",
+    );
     // 無い名前は、今までどおり agents に無い名前の誤り（継承したプロパティの名前も）
     for (const id of ["nope", "toString", "constructor"]) {
       expect(load(`${base}default_agent: ${id}\n`)).toMatchObject({

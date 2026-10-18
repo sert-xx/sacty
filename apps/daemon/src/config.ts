@@ -814,7 +814,13 @@ function buildAgents(
   file: z.output<typeof ConfigFile>,
   defaults: DefaultsFileT,
 ):
-  | { ok: true; agents: Record<string, AgentConfig>; unusable: Set<string>; warnings: DaemonText[] }
+  | {
+      ok: true;
+      agents: Record<string, AgentConfig>;
+      /** 使えないエージェントと、その理由（工程の AI などに指定したときの誤りに載せる。PR #146 レビュー提案）。 */
+      unusable: Map<string, DaemonText>;
+      warnings: DaemonText[];
+    }
   | ConfigProblem {
   type Merged = AgentFileT & { runtime: AgentConfig["runtime"] };
   const merged = new Map<string, { agent: Merged; written: boolean }>();
@@ -829,7 +835,7 @@ function buildAgents(
     merged.set(id, { agent: { ...base, ...written, runtime } as Merged, written: true });
   }
   const agents: Record<string, AgentConfig> = {};
-  const unusable = new Set<string>();
+  const unusable = new Map<string, DaemonText>();
   const warnings: DaemonText[] = [];
   const unpriced = new Map<string, { provider: ProviderKey; model: string; ids: string[] }>();
   for (const [id, { agent, written }] of merged) {
@@ -867,15 +873,19 @@ function buildAgents(
     const key = providerKeyOf(agent.runtime) as ProviderKey;
     const provider = file.providers[key];
     if (!provider) {
-      unusable.add(id);
-      if (written) warnings.push(message("config.agentProviderMissing", { id, provider: key }));
+      const reason = message("config.agentProviderMissing", { id, provider: key });
+      unusable.set(id, reason);
+      if (written) warnings.push(reason);
       continue;
     }
     const price = Object.hasOwn(provider.available_models, agent.model)
       ? provider.available_models[agent.model]
       : undefined;
     if (!price) {
-      unusable.add(id);
+      unusable.set(
+        id,
+        message("config.modelPriceMissing", { provider: key, model: agent.model, agents: id }),
+      );
       const group = `${key}\n${agent.model}`;
       const entry = unpriced.get(group) ?? { provider: key, model: agent.model, ids: [] };
       entry.ids.push(id);
@@ -943,10 +953,12 @@ export function loadConfig(home: string, defaultsPath: string = DEFAULT_AGENTS_P
   const { agents, unusable } = built;
   const pick = (key: string, id: string): AgentConfig | ConfigProblem => {
     if (Object.hasOwn(agents, id)) return agents[id] as AgentConfig;
+    // 使えない理由（足すべき単価・接続先）も載せる。設定が誤りのときは画面の警告を出さないため（PR #146 レビュー提案）
+    const reason = unusable.get(id);
     return invalid(
       key,
-      unusable.has(id)
-        ? message("config.agentUnavailable", { key, id })
+      reason
+        ? message("config.agentUnavailable", { key, id, reason })
         : message("config.agentMissing", { key, id }),
     );
   };

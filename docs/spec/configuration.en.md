@@ -38,7 +38,7 @@ Related ADRs: [Keep the agent defaults in the repository, and limit config.yaml 
 | `web.auth` | `true` | Web UI sign-in. `false` turns it off (booleans only; [Daemon startup and shutdown](daemon-lifecycle.en.md#web-ui-sign-in)) |
 
 Other checks: it is an error when a value of `default_agent`, `guardian_agent`, `audit_agent`, or `step_agents` is not an agent (`config.agentMissing`),
-and also when it is an agent that cannot be used ("Usable agents" below; `config.agentUnavailable`).
+and also when it is an agent that cannot be used ("Usable agents" below; `config.agentUnavailable`, which carries the reason in `reason`, because the web UI shows no warnings while the config has an error).
 It is also an error when an `agents` name is a tier (`claude_<tier>`, `codex_<tier>`; the tiers are `lite`, `entry`, `standard`, `advanced`, and `ultimate` in `AGENT_TIERS`)
 but its `runtime` does not match the prefix (`config.tierRuntime`). Usable tier agents are also collected in `tierAgents` (per runtime and tier;
 `parseTierId`, `tierAgentsFor`). How they are placed is in [Context composition](context.en.md#files-placed-for-a-run).

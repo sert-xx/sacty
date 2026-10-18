@@ -403,7 +403,7 @@ const PARAMS = {
   "config.providerLegacyName": z.object({ name: z.string() }),
   "config.agentLegacyKey": z.object({ key: z.string() }),
   "config.defaultsUnreadable": z.object({ path: z.string(), detail: z.string() }),
-  "config.agentUnavailable": z.object({ key: z.string(), id: z.string() }),
+  "config.agentUnavailable": z.object({ key: z.string(), id: z.string(), reason: TextParam }),
   "config.noDefaultAgent": null,
   "config.agentRuntimeRequired": null,
   "config.agentModelRequired": null,
@@ -999,8 +999,8 @@ const ja: MessageDictionary = {
     `エージェントには ${key} を書けません。認証・接続先は providers.codex・providers.claude の auth・via_gateway に、単価は providers.<runtime>.available_models にモデルごとに書いてください。`,
   "config.defaultsUnreadable": ({ path, detail }) =>
     `sacty のエージェントの既定（${path}）を読めません：${detail}。sacty を入れ直してください。`,
-  "config.agentUnavailable": ({ key, id }) =>
-    `${key} の "${id}" は使えません（providers に接続先が無いか、モデルの単価が available_models にありません）。画面の警告を確かめてください。`,
+  "config.agentUnavailable": ({ key, id, reason }, text) =>
+    `${key} の "${id}" は使えません：${text(reason)}`,
   "config.noDefaultAgent":
     "工程を動かす AI がありません。providers.codex か providers.claude に、接続先と既定のモデルの単価（available_models）を書いてください（default_agent を書いて選ぶこともできます）。",
   "config.agentRuntimeRequired":
@@ -1512,8 +1512,8 @@ const en: MessageDictionary = {
     `Agents cannot contain ${key}. Write authentication and endpoints in auth and via_gateway of providers.codex or providers.claude, and prices per model in providers.<runtime>.available_models.`,
   "config.defaultsUnreadable": ({ path, detail }) =>
     `Cannot read sacty's agent defaults (${path}): ${detail}. Reinstall sacty.`,
-  "config.agentUnavailable": ({ key, id }) =>
-    `${key} "${id}" cannot be used (providers has no endpoint for it, or its model's price is not in available_models). Check the warnings in the web UI.`,
+  "config.agentUnavailable": ({ key, id, reason }, text) =>
+    `${key} "${id}" cannot be used: ${text(reason)}`,
   "config.noDefaultAgent":
     "There is no AI to run steps. Write an endpoint and the prices of the default models (available_models) in providers.codex or providers.claude (you can also choose one with default_agent).",
   "config.agentRuntimeRequired":

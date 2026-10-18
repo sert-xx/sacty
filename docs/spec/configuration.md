@@ -38,7 +38,7 @@
 | `web.auth` | `true` | 画面の認証。`false` で OFF（真偽だけ。[デーモンの起動と終了](daemon-lifecycle.md#画面の認証)） |
 
 ほかの検査：`default_agent`・`guardian_agent`・`audit_agent`・`step_agents` の値が、エージェントに無いときは誤り（`config.agentMissing`）、
-使えないエージェント（下の「使えるエージェント」）のときも誤り（`config.agentUnavailable`）。
+使えないエージェント（下の「使えるエージェント」）のときも誤り（`config.agentUnavailable`。使えない理由の文言を `reason` に載せる。設定が誤りのときは画面の警告を出さないため）。
 `agents` の名前が段階（`claude_<段階>`・`codex_<段階>`。段階は `AGENT_TIERS` の `lite`・`entry`・`standard`・`advanced`・`ultimate`）なのに
 `runtime` が接頭辞と合わないときも誤り（`config.tierRuntime`）。使える段階のエージェントは `tierAgents`（runtime ごと・段階ごと）にも集める
 （`parseTierId`・`tierAgentsFor`）。置き方は [コンテキストの合成](context.md#実行のときに置くファイル)。
