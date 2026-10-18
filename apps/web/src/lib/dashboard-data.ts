@@ -17,7 +17,7 @@ import {
   listTasks,
 } from "@/lib/daemon";
 import { PAUSE_REASON_ORDER } from "@/lib/dashboard-rules";
-import { personAction, type StatusTone, statusText, statusTone } from "@/lib/labels";
+import { personLink, type StatusTone, statusText, statusTone } from "@/lib/labels";
 import { notificationProblems } from "@/lib/notification-problems";
 
 /** ダッシュボードの「終わっていないタスク」の欄の1行（PBI-114）。 */
@@ -32,6 +32,8 @@ export type OpenTaskRow = {
 /** 「あなたの出番」の1行（PBI-118）。href は人が判断する場所（personAction と同じ）。 */
 export type AttentionRow = OpenTaskRow & {
   href: string;
+  /** href が GitHub の PR（新しいタブで開く。PBI-136）。 */
+  external?: true;
   /** 待ち始めた時刻（その状態になった作業履歴の記録。無ければ updatedAt）。 */
   waitingSince: string;
 };
@@ -143,7 +145,7 @@ export function attentionRows(
       projectId: t.projectId,
       projectName: names.get(t.projectId) ?? t.projectId,
       status: { text: statusText(t, labels), tone: statusTone(t) },
-      href: personAction(t, labels).href,
+      ...personLink(t, labels),
       waitingSince: waitingSince[t.id] ?? t.updatedAt,
     }))
     .sort((a, b) => a.waitingSince.localeCompare(b.waitingSince) || a.id.localeCompare(b.id));

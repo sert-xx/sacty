@@ -9,6 +9,7 @@ import { useMessages } from "@/i18n/client";
 import type { LanguagePreference } from "@/i18n/locale";
 import { DASHBOARD_PATH, projectTasksPath, switchPath } from "@/lib/paths";
 import { applyTheme, readTheme, type ThemePreference, writeTheme } from "@/lib/theme";
+import { ExternalMark } from "../action-link";
 
 const POPUP =
   "z-50 max-h-[min(70dvh,32rem)] max-w-[calc(100vw-1.5rem)] overflow-y-auto rounded-xl border border-border bg-popover text-popover-foreground shadow-lg outline-none";
@@ -111,6 +112,8 @@ export type Notice = {
   projectName: string;
   status: string;
   href: string;
+  /** href が GitHub の PR（プロジェクトを切り替えず、新しいタブで開く。PBI-136）。 */
+  external?: true;
 };
 
 /**
@@ -133,11 +136,17 @@ export function NotificationsMenu({
   const item = (n: Notice) => (
     <Menu.LinkItem
       key={n.taskId}
-      href={switchPath(n.projectId, n.href)}
+      {...(n.external
+        ? { href: n.href, target: "_blank", rel: "noreferrer" }
+        : { href: switchPath(n.projectId, n.href) })}
       className={cn(ITEM, "flex-col items-start gap-0.5 border-t border-border first:border-t-0")}
     >
       <span className="text-xs font-semibold text-warn">{n.status}</span>
-      <span className="line-clamp-2 font-medium">{n.title}</span>
+      {/* 題だけを省略し、外部の印は省略の外に置く（長い題でも残す。PR #148 レビュー提案） */}
+      <span className="flex w-full min-w-0 items-start font-medium">
+        <span className="line-clamp-2 min-w-0">{n.title}</span>
+        {n.external && <ExternalMark />}
+      </span>
       <span className="text-xs text-muted-foreground">{n.projectName}</span>
     </Menu.LinkItem>
   );

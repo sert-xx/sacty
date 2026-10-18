@@ -152,8 +152,24 @@ export function addedTestsResult(task: Task): "pending" | "passed" | "failed" | 
   return task.lastTests.passed ? "passed" : "failed";
 }
 
-/** 人間が判断する場所への導線。 */
-export function personAction(task: Task, l: LabelMessages): { href: string; label: string } {
+/**
+ * PR で確かめる工程（実装・要求要件・設計）の承認待ちで、今の提出の PR（gatePullRequest。今のゲートの工程・提出のもの）が
+ * 開いていれば、その URL（PBI-136）。
+ * 閉じられた・マージ済み・前の提出の PR・URL の無い PR、エスカレーション（戻し先を人が選ぶなど）は undefined
+ * （sacty のレビュー画面で判断する）。https の URL だけを返す（作業履歴の値をそのまま href にしない）。
+ */
+export function reviewPullRequestUrl(task: Task): string | undefined {
+  if (task.status !== "awaiting_approval") return undefined;
+  const pr = gatePullRequest(task);
+  if (pr?.state !== "open" || !pr.url) return undefined;
+  return /^https:\/\/[^\s"'<>]+$/.test(pr.url) ? pr.url : undefined;
+}
+
+/** 人間が判断する場所への導線。external なら GitHub の PR（新しいタブで開く。PBI-136）。 */
+export function personAction(
+  task: Task,
+  l: LabelMessages,
+): { href: string; label: string; external?: true } {
   // ゴールガーディアンが判定できなかった申し出は、タスク詳細の「変更の申し出と判定」で判断する
   if (task.status === "escalated" && openProposal(task)) {
     return { href: `/tasks/${task.id}#proposals`, label: l.action.decide };
@@ -162,9 +178,18 @@ export function personAction(task: Task, l: LabelMessages): { href: string; labe
     return { href: `/tasks/${task.id}/review`, label: l.action.decide };
   }
   if (task.status === "awaiting_approval") {
+    // PR で確かめる工程は、sacty のレビュー画面を挟まずに PR を開く（PBI-136）
+    const pr = reviewPullRequestUrl(task);
+    if (pr) return { href: pr, label: l.action.reviewOnPr, external: true };
     return { href: `/tasks/${task.id}/review`, label: l.action.review };
   }
   return { href: `/tasks/${task.id}`, label: l.action.decide };
+}
+
+/** 人が判断する場所へのリンク（行き先と、外部の PR なら印。一覧の行・お知らせ用。PBI-136）。 */
+export function personLink(task: Task, l: LabelMessages): { href: string; external?: true } {
+  const { href, external } = personAction(task, l);
+  return external ? { href, external } : { href };
 }
 
 /** 一時停止・中止の操作を出すか。中止したタスクと、完了したタスクには出さない。 */

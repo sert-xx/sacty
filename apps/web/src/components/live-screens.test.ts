@@ -773,3 +773,113 @@ describe("取っている間にサーバーが描き直したとき（PR #119 �
     expect(container.querySelector('[data-testid="live-stale"]')).not.toBeNull();
   });
 });
+
+describe("PR で確かめる工程の「チェックする」は、PR を新しいタブで開く（PBI-136）", () => {
+  const PR = "https://github.com/acme/web/pull/7";
+  const external = (a: Element | null | undefined) => ({
+    href: a?.getAttribute("href"),
+    target: a?.getAttribute("target"),
+  });
+
+  it("タスク詳細：今の提出の PR が開いていれば PR を開き、閉じたらレビュー画面", async () => {
+    const pr = task({
+      ...awaiting,
+      stepPullRequests: [
+        {
+          step: "requirements",
+          branch: "sacty/t1-requirements",
+          commit: "abc",
+          base: "sacty/t1",
+          path: "docs/requirements.md",
+          url: PR,
+          number: 7,
+          repo: "acme/web",
+          submission: 1,
+          state: "open",
+        },
+      ],
+    });
+    server = detail(pr);
+    render(
+      h(LiveTaskDetail, { id: "t1", initial: detail(pr), initialVersion: liveVersion(server) }),
+    );
+    // 「チェックする」の導線（PR のときは「PR でチェックする」）
+    const link = () =>
+      [...container.querySelectorAll("a")].find((a) => a.textContent?.includes("チェックする"));
+    expect(external(link())).toEqual({ href: PR, target: "_blank" });
+    expect(link()?.textContent).toContain("PR でチェックする");
+    // PR が閉じられたら、sacty のレビュー画面へ（開き直すか中止するかを案内する）
+    server = detail(
+      task({
+        ...pr,
+        stepPullRequests: pr.stepPullRequests.map((x) => ({ ...x, state: "closed" })),
+      }),
+    );
+    await wait();
+    expect(external(link())).toEqual({ href: "/tasks/t1/review", target: null });
+  });
+
+  it("タスク一覧の「あなたの出番」も PR を開く", () => {
+    const list: TaskListData = {
+      projectId: "p1",
+      needsYou: [
+        {
+          id: "t1",
+          title: "ログインを直す",
+          status: "要求要件の承認待ち",
+          action: { href: PR, label: "PR でチェックする", external: true },
+        },
+        {
+          id: "t2",
+          title: "検索を直す",
+          status: "設計の承認待ち",
+          action: { href: "/tasks/t2/review", label: "チェックする" },
+        },
+      ],
+      rows: [],
+    };
+    server = list;
+    render(h(LiveTaskList, { projectId: "p1", initial: list, initialVersion: liveVersion(list) }));
+    expect(external(container.querySelector(`a[href="${PR}"]`))).toEqual({
+      href: PR,
+      target: "_blank",
+    });
+    expect(external(container.querySelector('a[href="/tasks/t2/review"]')).target).toBeNull();
+  });
+
+  it("ヘッダーのお知らせも PR を開く（プロジェクトを切り替えない）", async () => {
+    const data: HeaderData = {
+      projects: [{ id: "p1", name: "Acme", needsYou: 1 }],
+      current: { id: "p1", name: "Acme", needsYou: 1 },
+      notices: [
+        {
+          taskId: "t1",
+          title: "ログインを直す",
+          projectId: "p1",
+          projectName: "Acme",
+          status: "要求要件の承認待ち",
+          href: PR,
+          external: true,
+        },
+      ],
+    };
+    server = data;
+    render(
+      h(LiveHeaderMenus, { initial: data, initialVersion: liveVersion(data), language: "ja" }),
+    );
+    const trigger = document.querySelector(
+      '[aria-label="お知らせ（対応待ち 1件）"]',
+    ) as HTMLElement;
+    await act(async () => {
+      trigger.click();
+    });
+    expect(external(document.querySelector(`a[href="${PR}"]`))).toEqual({
+      href: PR,
+      target: "_blank",
+    });
+    // 題だけを省略し、外部の印は省略の外に置く（長い題でも残す。PR #148 レビュー提案）
+    const item = document.querySelector(`a[href="${PR}"]`);
+    expect(item?.querySelector(".line-clamp-2")?.textContent).toBe("ログインを直す");
+    expect(item?.textContent).toContain("↗");
+  });
+});

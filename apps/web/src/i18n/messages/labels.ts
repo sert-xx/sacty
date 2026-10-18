@@ -120,7 +120,13 @@ const ja = {
     integrationFailed: "統合レビュー不合格・判断待ち",
     stepApproval: (step: string, n: number) => `${step}の承認待ち${n > 1 ? `（${n}回目）` : ""}`,
   },
-  action: { decide: "判断する", review: "チェックする" },
+  action: {
+    decide: "判断する",
+    review: "チェックする",
+    /** PR で確かめる工程の承認待ち（PBI-136）。GitHub の PR を新しいタブで開く。 */
+    reviewOnPr: "PR でチェックする",
+    newTab: "（新しいタブで開く）",
+  },
   cleanupTarget: {
     container: "実行中のコンテナ",
     workspace: "作業領域",
@@ -534,7 +540,12 @@ const en: LabelMessages = {
     integrationFailed: "Integration review failed · needs you",
     stepApproval: (step, n) => `${step} awaiting approval${n > 1 ? ` (submission ${n})` : ""}`,
   },
-  action: { decide: "Decide", review: "Review" },
+  action: {
+    decide: "Decide",
+    review: "Review",
+    reviewOnPr: "Review on the PR",
+    newTab: "(opens in a new tab)",
+  },
   cleanupTarget: {
     container: "Running container",
     workspace: "Workspace",

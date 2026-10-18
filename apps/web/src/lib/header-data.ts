@@ -2,7 +2,7 @@ import type { Notice, ProjectOption } from "@/components/shell/menus";
 import { getMessages } from "@/i18n/server";
 import { currentProjectId, resolveProject } from "@/lib/current-project";
 import { listProjects, listTasks } from "@/lib/daemon";
-import { needsPerson, personAction, statusText } from "@/lib/labels";
+import { needsPerson, personLink, statusText } from "@/lib/labels";
 
 /** ヘッダーのプロジェクトの切り替えとお知らせに出すもの（PBI-98）。画面が取り直す（PBI-108）。 */
 export type HeaderData = {
@@ -39,7 +39,7 @@ export async function loadHeaderData(currentId?: string): Promise<HeaderData | n
       projectId: t.projectId,
       projectName: name(t.projectId),
       status: statusText(t, m.labels),
-      href: personAction(t, m.labels).href,
+      ...personLink(t, m.labels),
     }));
   return {
     projects: options,

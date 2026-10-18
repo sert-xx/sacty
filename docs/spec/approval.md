@@ -38,6 +38,14 @@
   タスクブランチが無ければ、sacty のブランチ（`sacty/task-<タスク ID の先頭8文字>`）からベースブランチへの PR にする。
   タスクブランチに、要求要件・設計のファイル以外の変更が積まれていれば、公開を止める（`pr.taskBranchChanged`）。
 - タスク分割の子タスクは、それぞれ自分のタスクブランチを持つ。
+- 画面の「チェックする」の導線（`personAction`。タスクの詳細・タスクの一覧・ダッシュボードの「あなたの出番」・ヘッダーのお知らせ）は、
+  `awaiting_approval` で、今の提出の PR（`gatePullRequest`）が `open` で、URL が `https://` で始まるとき（`reviewPullRequestUrl`）、
+  その PR を新しいタブで開く（文言は「PR でチェックする」。sacty の承認の画面を挟まない。PBI-136）。エスカレーション（PR の指摘の戻し先の
+  確認など）・PR が閉じられた・提出と違う内容でマージされた・無いときは、sacty の承認の画面（`/tasks/<ID>/review`）へ案内する。
+  外部へ開くリンクは、見た目の「↗」と読み上げの「新しいタブで開く」で示す（`ActionLink`）。お知らせからは、プロジェクトを切り替えずに開く。
+  ダッシュボード・お知らせでは、導線はタスクの題のリンクなので、題だけを省略し、印は省略の外に置く（長い題でも印が残る。PR #148 レビュー提案）。
+
+コード（画面の導線）: `apps/web/src/lib/labels.ts`（`personAction`・`personLink`・`reviewPullRequestUrl`）、`apps/web/src/components/action-link.tsx`（`ActionLink`・`ExternalMark`）
 
 ## 実装に変更が無いとき
 

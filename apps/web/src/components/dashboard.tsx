@@ -4,6 +4,7 @@ import { auditAdoptionRate } from "@sacty/core";
 import { cn } from "cn";
 import Link from "next/link";
 import { Fragment, type ReactNode, useEffect, useState } from "react";
+import { ActionLink } from "@/components/action-link";
 import { MockBadge } from "@/components/audit";
 import { DaemonError } from "@/components/daemon-error";
 import { IntakeRunNow, IntakeStatusView } from "@/components/intake-status";
@@ -206,12 +207,15 @@ function ScrollList({
 function TaskRow({
   testId,
   href,
+  external,
   title,
   projectName,
   aside,
 }: {
   testId: string;
   href: string;
+  /** href が GitHub の PR（新しいタブで開く。PBI-136）。 */
+  external?: boolean;
   title: string;
   projectName: string;
   aside?: ReactNode;
@@ -223,13 +227,16 @@ function TaskRow({
       className="group flex min-h-16 items-center gap-4 border-b border-border px-5 py-2 last:border-b-0 hover:bg-muted"
     >
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <Link
+        <ActionLink
           href={href}
+          external={external}
           title={title}
-          className={cn("font-medium text-foreground hover:underline", FULL_ON_FOCUS)}
+          className="font-medium text-foreground hover:underline"
+          // 題だけを省略し、外部の印は省略の外に置く（PR #148 レビュー提案）
+          labelClassName={FULL_ON_FOCUS}
         >
           {title}
-        </Link>
+        </ActionLink>
         <span title={projectName} className={cn("text-xs text-muted-foreground", FULL_ON_FOCUS)}>
           <span className="sr-only">{m.project}</span>
           {projectName}
@@ -268,6 +275,7 @@ export function AttentionCard({ data, now }: { data: DashboardData; now: number 
               key={task.id}
               testId={`attention-${task.id}`}
               href={task.href}
+              external={task.external}
               title={task.title}
               projectName={task.projectName}
               aside={

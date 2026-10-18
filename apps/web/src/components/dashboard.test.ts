@@ -707,3 +707,46 @@ describe("ダッシュボードの Slack の通知を送れなかった理由（
     expect(box()).toBeNull();
   });
 });
+
+describe("あなたの出番の PR で確かめる工程（PBI-136）", () => {
+  it("PR なら題から PR を新しいタブで開き、ほかは sacty の画面へ", () => {
+    const PR = "https://github.com/acme/web/pull/7";
+    show(
+      base({
+        attention: [
+          attention("a", minutes(10), { href: PR, external: true }),
+          attention("b", minutes(5)),
+        ],
+      }),
+    );
+    const a = byId("attention-a")?.querySelector("a");
+    expect(a?.getAttribute("href")).toBe(PR);
+    expect(a?.getAttribute("target")).toBe("_blank");
+    const b = byId("attention-b")?.querySelector("a");
+    expect(b?.getAttribute("href")).toBe("/tasks/b/review");
+    expect(b?.getAttribute("target")).toBeNull();
+  });
+});
+
+describe("長い題の PR の行でも、外部の印は残る（PR #148 レビュー提案）", () => {
+  it("題だけを省略し、印は省略の外に置く", () => {
+    show(
+      base({
+        attention: [
+          attention("a", minutes(10), {
+            title: "とても長い題".repeat(20),
+            href: "https://github.com/acme/web/pull/7",
+            external: true,
+          }),
+        ],
+      }),
+    );
+    const a = byId("attention-a")?.querySelector("a");
+    const label = a?.querySelector(".truncate");
+    expect(label?.textContent).toBe("とても長い題".repeat(20));
+    expect(a?.textContent).toContain("↗");
+    expect(label?.textContent).not.toContain("↗");
+    // リンク全体は省略しない（省略すると、末尾の印も切れる）
+    expect(a?.className).not.toContain("truncate");
+  });
+});
