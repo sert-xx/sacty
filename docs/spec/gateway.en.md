@@ -29,14 +29,14 @@ Related ADRs: [Start command-type MCP servers in the context's mcp.yaml on the h
 | `/r/<token>/pf/<PF name>/<path>` | Organization platform (PF) (the agent receives `SACTY_PF_URL` = `…/r/<token>/pf`) | The token in the URL |
 | `/ctx-mcp/<name>` | Context repository MCP (relaying the URL type, and the command type started on the host) | `Authorization: Bearer <token>` |
 | `/mcp/<name>` | Host MCP servers | `Authorization: Bearer <token>` |
-| `/openai/v1/…` | AI calls (Codex's Bedrock and providers) | `Authorization: Bearer <token>` (passed in `AWS_BEARER_TOKEN_BEDROCK` or `SACTY_PROVIDER_API_KEY`) |
+| `/openai/v1/…` | AI calls (`bedrock` and `openai-compatible` of `providers.codex`) | `Authorization: Bearer <token>` (passed in `AWS_BEARER_TOKEN_BEDROCK` or `SACTY_PROVIDER_API_KEY`) |
 
 Code: `apps/daemon/src/gateway.ts` (`AiGateway.listen`, `register`, `handle`, `containerOrigin`, `platformsUrl`, `DEFAULT_HOST_ADDRESS`, `readBody`, `GATEWAY_BODY_MAX`, `GATEWAY_BODIES_MAX`, `GATEWAY_BODY_BLOCK`, `DROP_REQUEST`), `apps/daemon/src/service.ts` (`executeLogged`)
 
 ## Relaying AI calls
 
 - The destination is, for Bedrock, `https://bedrock-runtime.<region>.amazonaws.com/openai/v1` (`endpoint: runtime`; the default) or
-  `https://bedrock-mantle.<region>.api.aws/openai/v1` (`mantle`), and for providers, `base_url`. The API key is retrieved on the host and attached as `Authorization: Bearer`.
+  `https://bedrock-mantle.<region>.api.aws/openai/v1` (`mantle`), and for `openai-compatible`, `base_url`. The API key is retrieved on the host and attached as `Authorization: Bearer`.
   Headers the agent set, such as `authorization` and `host`, are not sent.
 - On 429, 500, 502, 503, 504, or when the upstream could not be reached, the gateway waits and retries, using `Retry-After` (seconds or a date) or, if absent, an interval that starts at 1 second and doubles (capped at 60 seconds,
   with jitter). Any other response is streamed as is. Once the response has started, there is no retry.

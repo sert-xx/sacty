@@ -54,10 +54,11 @@ docker のコンテナの中で1回実行して行う。テストの実行も、
 | claude-code × `bedrock` | `CLAUDE_CODE_USE_BEDROCK=1`・`AWS_BEARER_TOKEN_BEDROCK`・`AWS_REGION` |
 | codex × `subscription` | ホストの `auth_file`（既定 `~/.codex/auth.json`）を設定の場所に `auth.json` として写す。実行の後に変わっていれば、ホストに書き戻す（実行中にホストのファイルが変わっていたら書き戻さない） |
 | codex × `api-key` | `CODEX_API_KEY`・`OPENAI_API_KEY`（同じ値） |
-| codex × `bedrock` | `AWS_BEARER_TOKEN_BEDROCK`・`AWS_REGION`。`via_gateway: true` なら、API キーの代わりに実行ごとのゲートウェイのトークン |
-| codex × `provider` | `SACTY_PROVIDER_API_KEY`（接続先に `secret` があるとき。`via_gateway: true` なら実行ごとのトークン）。接続先は `-c model_providers.sacty-provider={ … wire_api = "responses" }` |
+| codex × `bedrock` | `AWS_BEARER_TOKEN_BEDROCK`・`AWS_REGION`。`providers.codex` が `via_gateway: true` なら、API キーの代わりに実行ごとのゲートウェイのトークン |
+| codex × `openai-compatible`（実行のときの `auth.mode` は `provider`） | `SACTY_PROVIDER_API_KEY`（`auth.secret` があるとき。`via_gateway: true` なら実行ごとのトークン）。接続先は `-c model_providers.sacty-provider={ … wire_api = "responses" }` |
 
-- ゲートウェイ経由（`via_gateway`）の判定は、エージェントの `via_gateway` かつ `bedrock`、または `provider` で接続先の `via_gateway`。
+- ゲートウェイ経由（`via_gateway`）の判定は、`providers.codex` の `via_gateway` が `true` で、`auth.mode` が `bedrock` か `openai-compatible` のとき
+  （認証・接続先は、エージェントの runtime の `providers` から作る。`connectionOf`。[設定](configuration.md#接続先providers)）。
   そのときは API キーをゲートウェイに渡し、コンテナには実行ごとのトークンとゲートウェイの URL（`http://host.docker.internal:<ポート>/openai/v1`）
   だけを渡す（[ゲートウェイ](gateway.md)）。
 - 秘密情報が見つからないときは、実行の失敗（理由 `auth`）にして、タスクを一時停止する。

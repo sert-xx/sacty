@@ -23,8 +23,8 @@ Code: `apps/daemon/src/secrets.ts` (`SecretRef`, `isOnePasswordRef`, `KeychainSe
 
 ## Retrieving everything at startup
 
-- When the daemon starts listening, it retrieves the secrets it will use all at once (`prefetchSecrets`). The targets (`secretUses`) are `auth.secret` of the agents in use
-  (default, Goal Guardian, `step_agents`), `providers.<name>.secret`, `auth.secret` and `auth.token.secret` of `gateway.platforms`,
+- When the daemon starts listening, it retrieves the secrets it will use all at once (`prefetchSecrets`). The targets (`secretUses`) are `auth.secret` of the endpoints for the runtimes of the agents in use
+  (default, Goal Guardian, `step_agents`) (`providers.<codex|claude>.auth.secret`; `providerKeyOf`), `auth.secret` and `auth.token.secret` of `gateway.platforms`,
   secrets in `env` of `gateway.mcp_servers`, the notification destination in the sacty settings (the Slack token or webhook URL; `settingsSecretUses`), and the secrets in the contexts of
   registered projects. npm tokens (used only for building images) and gh tokens are not included (they are retrieved when used).
 - Context secrets (`contextSecretUses`): for each project with a context repository, sacty fetches and composes the context (including the upper layers of the
@@ -41,7 +41,7 @@ Code: `apps/daemon/src/secrets.ts` (`SecretRef`, `isOnePasswordRef`, `KeychainSe
 - 1Password references are passed to a child process as environment variables with a single `op run --no-masking --env-file <a file containing only the references (0600)>`, and received
   as JSON (so authentication happens once). If retrieving them all at once fails, each reference is retrieved again individually, and the ones that could not be retrieved are collected. For the keychain,
   sacty only checks that each value can be retrieved.
-- For values that could not be retrieved, the setting (such as `agents.<ID>.auth.secret`) and the reason are shown in the terminal and as a warning in the web UI (startup does not stop).
+- For values that could not be retrieved, the setting (such as `providers.codex.auth.secret`) and the reason are shown in the terminal and as a warning in the web UI (startup does not stop).
 - `POST /api/secrets/prefetch` ("Get secrets again" in the web UI) discards the values it holds, fetches the contexts again, and retrieves the same targets as at startup.
   It returns the number retrieved (`fetched`), the number of targets (`total`), the number of contexts that could not be read (`unreadContexts`; the secrets in them are not counted in `total`),
   and the warnings (`problems`). If some contexts could not be read, the web UI says that some secrets were not checked.

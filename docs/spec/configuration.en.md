@@ -2,26 +2,29 @@
 
 # Configuration (config.yaml)
 
-`SACTY_HOME/config.yaml` holds the per-machine settings (AI agents, authentication, images, and the gateway). The daemon
+`SACTY_HOME/config.yaml` holds the per-machine settings (AI endpoints and prices, agent overrides, images, and the gateway). The daemon
 reads it again on every use (you can change it without stopping the daemon), except `web.auth`, which is read only when `sacty up` starts (it is fixed in the web UI
 child process's environment; restart after changing it). When it cannot be read or has the wrong shape, the location of the first error (`path`) and the reason become the message shown as a warning in the web UI.
 `sacty config init` writes the template (`CONFIG_TEMPLATE`) with permission 0600 (if the file exists, it stops unless `--force` is given).
 
+The defaults of the agent definitions (model and reasoning effort) are kept in the repository's `config/agents.yaml` (`DEFAULT_AGENTS_PATH`).
+`loadConfig(home, defaultsPath)` lays `agents` of `config.yaml` over the defaults.
+
 How to write it, for users, is in the [user documentation](../user/README.en.md). This page describes the meaning and default of each item, and the validation rules.
 
-Related ADRs: none
+Related ADRs: [Keep the agent defaults in the repository, and limit config.yaml to endpoints and prices](../adr/20261018-1105-agent-defaults-in-repo.md)
 
 ## Top-level items
 
 | Item | Default | Meaning |
 | --- | --- | --- |
 | `image` | `sacty-agent:0.1.0` (`DEFAULT_IMAGE`) | The default image. Used to run agents and tests |
-| `default_agent` | (required) | The default AI. A name in `agents` |
+| `providers` | `{}` | The endpoint per runtime ("Providers" below). Only the names `codex` and `claude` |
+| `default_agent` | The first usable one in `default_agent` of `config/agents.yaml` | The default AI. An agent name |
 | `guardian_agent` | `default_agent` | The Goal Guardian's AI |
 | `audit_agent` | `guardian_agent` (or `default_agent`) | The AI for audits of completed tasks ([Audit](audit.en.md)) |
 | `step_agents` | `{}` | The AI per step (`StepKey`; `deployment` is the check in the after-merge watch step) and for `orchestrator`. If not written, `default_agent`; for Integration review (`integrate`), `guardian_agent` |
-| `agents` | (required) | Agent definitions ("Agents" below) |
-| `providers` | `{}` | OpenAI-compatible (Responses API) endpoints. Names match `^[A-Za-z0-9_-]+$`. `base_url` (http or https), `secret` (optional), `via_gateway` (default `false`) |
+| `agents` | `{}` | Overrides of and additions to the agent defaults ("Agent defaults and overrides" below) |
 | `budget.default_per_task_usd` | `1` (`DEFAULT_BUDGET_USD`) | The budget per task (US dollars; a positive number) |
 | `budget.default_per_audit_usd` | `1` (`DEFAULT_AUDIT_BUDGET_USD`) | The budget per audit (US dollars; a positive number; separate from the task budget; [Audit](audit.en.md)) |
 | `image_build` | none | The source for `sacty image build` ("Images" in [Agent execution](agent-execution.en.md)) |
@@ -34,45 +37,99 @@ Related ADRs: none
 | `gateway.mcp_servers` | `{}` | MCP servers run on the host. Names match `^[A-Za-z0-9_-]+$` (same as above) |
 | `web.auth` | `true` | Web UI sign-in. `false` turns it off (booleans only; [Daemon startup and shutdown](daemon-lifecycle.en.md#web-ui-sign-in)) |
 
-Other checks: it is an error when a value of `default_agent`, `guardian_agent`, `audit_agent`, or `step_agents` is not in `agents`, or when a `provider` name is not in `providers`.
+Other checks: it is an error when a value of `default_agent`, `guardian_agent`, `audit_agent`, or `step_agents` is not an agent (`config.agentMissing`),
+and also when it is an agent that cannot be used ("Usable agents" below; `config.agentUnavailable`).
 It is also an error when an `agents` name is a tier (`claude_<tier>`, `codex_<tier>`; the tiers are `lite`, `entry`, `standard`, `advanced`, and `ultimate` in `AGENT_TIERS`)
-but its `runtime` does not match the prefix (`config.tierRuntime`). Tier agents are also collected in `tierAgents` (per runtime and tier;
-`parseTierId`, `tierAgentsFor`). How they are placed is in [Context composition](context.en.md#files-placed-for-a-run). The template (`CONFIG_TEMPLATE`) has commented examples of all five tiers
-for both runtimes.
+but its `runtime` does not match the prefix (`config.tierRuntime`). Usable tier agents are also collected in `tierAgents` (per runtime and tier;
+`parseTierId`, `tierAgentsFor`). How they are placed is in [Context composition](context.en.md#files-placed-for-a-run).
 
 Unknown items are not treated as errors and are not read. The intake interval is not in `config.yaml` but in the sacty settings ([Intake](intake.en.md#interval)).
 The former `github.poll_interval_sec` (`github:`) is not read either, even if written (no warning).
 
-Code: `apps/daemon/src/config.ts` (`ConfigFile`, `loadConfig`, `agentFor`, `CONFIG_TEMPLATE`)
+Code: `apps/daemon/src/config.ts` (`ConfigFile`, `loadConfig`, `DEFAULT_AGENTS_PATH`, `agentFor`, `CONFIG_TEMPLATE`)
 
-## Agents (agents)
+## Providers
+
+There is one entry in `providers` per runtime: `codex` (`runtime: codex`) and `claude` (`runtime: claude-code`). `stub` uses no endpoint.
+Other names are errors (`config.providerLegacyName`; it says to rewrite a former named OpenAI-compatible endpoint as the `auth` of `providers.codex`).
+
+| Item | Default | Meaning |
+| --- | --- | --- |
+| `auth` | (required) | Authentication (table below) |
+| `via_gateway` | `false` | Route AI calls through the host gateway. It can be `true` only when `auth.mode` of `codex` is `bedrock` or `openai-compatible` (`config.gatewayUnsupported`) |
+| `available_models` | `{}` | Prices per model name (US dollars per million tokens). `input`, `cached_input`, `output` (required), and `cache_write` (default 0) |
+
+`auth.mode` and the allowed providers:
+
+| `auth.mode` | Items | `claude` | `codex` |
+| --- | --- | --- | --- |
+| `subscription` | `secret` (required for `claude`; `config.subscriptionSecret`), `auth_file` (Codex; default `~/.codex/auth.json`) | Yes | Yes |
+| `api-key` | `secret` | Yes | Yes |
+| `bedrock` | `secret`, `region`, `endpoint` (`runtime`｜`mantle`; `codex` only (`config.bedrockEndpointCodexOnly`); `runtime` when omitted) | Yes | Yes |
+| `openai-compatible` | `base_url` (http or https), `secret` (optional) | No | Yes |
+
+Combinations that are not allowed are errors (`config.authUnsupported`). At run time, the authentication, gateway, and endpoint are built from the provider of the agent's runtime
+(`providerKeyOf`, `connectionOf`). For `openai-compatible`, `auth.mode` at run time is `provider`, and `base_url` (without trailing `/`),
+`secret`, and `via_gateway` are put in `endpoint` (named `codex`; [Agent execution](agent-execution.en.md#authentication)).
+
+Code: `apps/daemon/src/config.ts` (`ProviderFile`, `ProviderAuth`, `PriceFile`, `refineProvider`, `providerKeyOf`, `connectionOf`)
+
+## Agent defaults and overrides
+
+The repository's `config/agents.yaml` (`DefaultsFile`) has `default_agent` (a list of candidates; at least one) and `agents` (definitions per name; `runtime` is required).
+When it cannot be read or has the wrong shape, loading stops with the file's location and the reason (`config.defaultsUnreadable`).
+
+| Name | `runtime` | `model` | `reasoning_effort` |
+| --- | --- | --- | --- |
+| `codex_lite` | `codex` | `gpt-6-luna` | `low` |
+| `codex_entry` | `codex` | `gpt-6-luna` | `high` |
+| `codex_standard` | `codex` | `gpt-6.1-sol` | `low` |
+| `codex_advanced` | `codex` | `gpt-6.1-sol` | `medium` |
+| `codex_ultimate` | `codex` | `gpt-6.1-sol` | `high` |
+| `claude_lite` | `claude-code` | `claude-haiku-5-5` | none |
+| `claude_entry` | `claude-code` | `claude-sonnet-5-5` | `low` |
+| `claude_standard` | `claude-code` | `claude-sonnet-5-5` | `medium` |
+| `claude_advanced` | `claude-code` | `claude-opus-5-5` | `medium` |
+| `claude_ultimate` | `claude-code` | `claude-opus-5-5` | `high` |
+
+The `default_agent` candidates are `codex_standard`, then `claude_standard`. When `config.yaml` has no `default_agent`, the first usable candidate is used.
+If none is usable, it is an error (`config.noDefaultAgent`).
+
+`agents` in `config.yaml` (`AgentFile`):
 
 | Item | Meaning |
 | --- | --- |
-| `runtime` | `claude-code`, `codex`, or `stub` |
-| `model` | The model (optional) |
+| `runtime` | `claude-code`, `codex`, or `stub`. Can be omitted for a name in the defaults. Required for a name not in the defaults (`config.agentRuntimeRequired`) |
+| `model` | The model. For `claude-code` and `codex`, required in the result merged with the defaults (`config.agentModelRequired`; its price is looked up in `available_models`) |
 | `reasoning_effort` | The reasoning effort (optional; `^[a-z][a-z0-9_-]{0,30}$`). Passed to Codex as `model_reasoning_effort` and to Claude Code as `--effort` |
-| `auth` | Authentication (table below). Writing only `provider: <name>` instead of `auth` is read as `auth: { mode: provider, provider: <name> }` |
-| `price_per_mtok_usd` | US dollars per million tokens. `input`, `cached_input`, `output` (required), and `cache_write` (default 0) |
-| `via_gateway` | Default `false`. It can be `true` only with `runtime: codex` and `auth.mode: bedrock` |
+| `price_per_mtok_usd` | `runtime: stub` only. The price (written the same way as `available_models`; 0 if not written) |
 | `stub` | The output of `runtime: stub` (default outputs for steps, the Orchestrator, the Goal Guardian, and so on; token counts; and `fail: usage_limit｜auth` to reproduce failures) |
 
-`auth.mode` and the allowed `runtime`:
+- For a name that is in the defaults, only the items written are laid over the default (items not written keep the default). A name not in the defaults adds that agent.
+- Writing `auth`, `provider`, or `via_gateway` on an agent is an error. Writing `price_per_mtok_usd` on an agent other than `stub` is also an error (`config.agentLegacyKey`;
+  it says to write them in `auth`, `via_gateway`, and `available_models` of `providers`). The former format is not converted automatically.
+- Names in `agents` cannot be empty (`config.agentNameEmpty`; the name chosen in the task details is recorded in the Activity).
 
-| `auth.mode` | Items | `claude-code` | `codex` | `stub` |
-| --- | --- | --- | --- | --- |
-| `subscription` | `secret` (required for Claude Code), `auth_file` (Codex; default `~/.codex/auth.json`) | Yes | Yes | No |
-| `api-key` | `secret` | Yes | Yes | No |
-| `bedrock` | `secret`, `region`, `endpoint` (`runtime`｜`mantle`; Codex only; `runtime` when omitted) | Yes | Yes | No |
-| `provider` | `provider` (a name in `providers`) | No | Yes | No |
-| `stub` | none | No | No | Yes |
+Code: `apps/daemon/src/config.ts` (`DefaultsFile`, `AgentFile`, `LEGACY_AGENT_KEYS`, `loadDefaults`, `buildAgents`, `StubBehavior`)
 
-Names in `agents` cannot be empty (`config.agentNameEmpty`; the name chosen in the task details is recorded in the Activity).
+## Usable agents
+
+Of the agents merged from the defaults and the overrides, the following cannot be used (unusable). This is not a settings error (so that settings can still be read
+when a sacty update changes the default models). Unusable agents are not put in `agents` or `tierAgents`, and are not offered in the task details.
+
+- The endpoint of the runtime (`providers.codex`, `providers.claude`) is not written. A warning is shown only for agents the user wrote in `agents` of `config.yaml`
+  (`config.agentProviderMissing`). Default agents get no warning, because that runtime is just not in use.
+- The model's price is not in `available_models` of the provider (names of inherited properties are not treated as prices). A warning is shown per model, listing the names of
+  the unusable agents (`config.modelPriceMissing`).
+
+The warnings are kept in `agentWarnings` and shown as warnings in the web UI (`warnings` of `GET /api/status`). Agents with `runtime: stub` are usable without
+looking at endpoints or prices (the price is `price_per_mtok_usd`, or 0).
+
 The AI used for each role is chosen by `agentFor`: the one in `step_agents` if present, otherwise `default_agent` (`guardian_agent` for `integrate`).
 For steps (including the after-merge watch, operations, and exports), an agent a person chose in the task details takes precedence (`stepAgentFor`; [Changing a step's agent](tasks-and-steps.en.md#changing-a-steps-agent)).
 The Activity keeps only the `authMode`, `model`, and `reasoningEffort` of the AI used (it does not keep secret values or endpoint URLs; `agentSetting`).
 
-Code: `apps/daemon/src/config.ts` (`Agent`, `Auth`, `Provider`, `StubBehavior`, `agentFor`, `agentSetting`)
+Code: `apps/daemon/src/config.ts` (`buildAgents`, `loadConfig`, `agentFor`, `stepAgentFor`, `agentSetting`), `apps/daemon/src/service.ts` (`TaskService.status`)
 
 ## Validation of image settings
 

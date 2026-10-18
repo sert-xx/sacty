@@ -21,10 +21,11 @@ npm run build
 npx sacty config init   # ~/.sacty/config.yaml を作る
 ```
 
-1. `npx sacty config init` で作った `~/.sacty/config.yaml` を開き、工程を実行する AI（`default_agent` と `agents`）・認証方式・単価を
-   設定します（[config.yaml の設定](config.md)）。雛形の `default_agent` は、Claude Code のサブスクリプション（`claude-subscription`）です。
+1. `npx sacty config init` で作った `~/.sacty/config.yaml` を開き、`providers` に使うツールの認証方式と、使えるモデルの単価
+   （`available_models`）を設定します（[config.yaml の設定](config.md#接続先と単価providers)）。工程を実行する AI のモデルは sacty の既定を
+   使うので、`agents` は書かなくてかまいません。雛形は、Codex の API キー（`providers.codex`）です。
 2. 認証のトークンや API キーを、キーチェーンか 1Password に用意します（[秘密情報](secrets.md)）。雛形のままなら、
-   `claude setup-token` で作ったトークンを `npx sacty secret set claude-oauth-token` で保存します。
+   OpenAI の API キーを `npx sacty secret set openai-api-key` で保存します。
 3. エージェント実行用のコンテナイメージを `npx sacty image build` で作ります。Docker Hub や npm の公開レジストリを使えない環境では、
    作る前に `image_build` を書いてください（[コンテナイメージ](images.md)）。
 

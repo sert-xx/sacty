@@ -29,14 +29,14 @@
 | `/r/<トークン>/pf/<PF の名前>/<パス>` | 組織内 PF（エージェントには `SACTY_PF_URL` = `…/r/<トークン>/pf` を渡す） | URL の中のトークン |
 | `/ctx-mcp/<名前>` | コンテキストリポジトリの MCP（URL 型の中継と、ホストで起動したコマンド型） | `Authorization: Bearer <トークン>` |
 | `/mcp/<名前>` | ホストの MCP サーバー | `Authorization: Bearer <トークン>` |
-| `/openai/v1/…` | AI の呼び出し（Codex の Bedrock・providers） | `Authorization: Bearer <トークン>`（`AWS_BEARER_TOKEN_BEDROCK`・`SACTY_PROVIDER_API_KEY` に入れて渡す） |
+| `/openai/v1/…` | AI の呼び出し（`providers.codex` の `bedrock`・`openai-compatible`） | `Authorization: Bearer <トークン>`（`AWS_BEARER_TOKEN_BEDROCK`・`SACTY_PROVIDER_API_KEY` に入れて渡す） |
 
 コード: `apps/daemon/src/gateway.ts`（`AiGateway.listen`・`register`・`handle`・`containerOrigin`・`platformsUrl`・`DEFAULT_HOST_ADDRESS`・`readBody`・`GATEWAY_BODY_MAX`・`GATEWAY_BODIES_MAX`・`GATEWAY_BODY_BLOCK`・`DROP_REQUEST`）、`apps/daemon/src/service.ts`（`executeLogged`）
 
 ## AI の呼び出しの中継
 
 - 転送先は、Bedrock なら `https://bedrock-runtime.<region>.amazonaws.com/openai/v1`（`endpoint: runtime`。既定）か
-  `https://bedrock-mantle.<region>.api.aws/openai/v1`（`mantle`）、providers なら `base_url`。API キーはホストで取り出して `Authorization: Bearer`
+  `https://bedrock-mantle.<region>.api.aws/openai/v1`（`mantle`）、`openai-compatible` なら `base_url`。API キーはホストで取り出して `Authorization: Bearer`
   で付ける。エージェントが付けた `authorization`・`host` などのヘッダーは送らない。
 - 429・500・502・503・504 と、上流に届かなかったときは、`Retry-After`（秒か日時）か、無ければ1秒から倍にしていく間隔（60秒で頭打ち。
   揺らぎを加える）で待ってリトライする。それ以外の応答はそのまま流す。返し始めた後はリトライしない。

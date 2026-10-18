@@ -223,9 +223,7 @@ describe("「PR作成」の工程を前提にした古いタスクを捨てる�
           ...(stepAgents ? ["step_agents:", stepAgents] : []),
           "agents:",
           "  x:",
-          "    runtime: claude-code",
-          "    auth: { mode: subscription, secret: claude-oauth-token }",
-          "    price_per_mtok_usd: { input: 1, cached_input: 0.1, output: 2 }",
+          "    runtime: stub",
         ].join("\n"),
       );
     const store = new SqliteActivityStore(path);

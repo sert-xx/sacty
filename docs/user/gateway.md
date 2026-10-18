@@ -1,4 +1,4 @@
-<!-- 対応するコード: apps/daemon/src/config.ts（gateway・providers・Provider）、apps/daemon/src/gateway.ts（DEFAULT_RETRY_POLICY・DEFAULT_HOST_ADDRESS）、apps/daemon/src/host-mcp.ts（HostMcpFile）、apps/daemon/src/host-mcp-processes.ts、apps/daemon/src/platforms.ts（PlatformFile） -->
+<!-- 対応するコード: apps/daemon/src/config.ts（gateway・providers・ProviderFile・ProviderAuth）、apps/daemon/src/gateway.ts（DEFAULT_RETRY_POLICY・DEFAULT_HOST_ADDRESS）、apps/daemon/src/host-mcp.ts（HostMcpFile）、apps/daemon/src/host-mcp-processes.ts、apps/daemon/src/platforms.ts（PlatformFile） -->
 
 **日本語** | [English](gateway.en.md)
 
@@ -8,7 +8,7 @@ sacty は、ホストでゲートウェイを動かし、工程エージェン�
 認証の値はゲートウェイだけが持ち、エージェントのコンテナには実行ごとのトークンだけを渡します。
 
 - ゲートウェイは 127.0.0.1 だけで待ち受け、実行中のエージェントのトークンを持つリクエストだけを受け付けます。
-- 設定は `config.yaml` の `gateway`（と `providers`、エージェントの `via_gateway`）に書きます。
+- 設定は `config.yaml` の `gateway`（と `providers.codex` の `via_gateway`）に書きます。
 
 | 項目 | 意味 | 既定値 |
 | --- | --- | --- |
@@ -20,9 +20,9 @@ sacty は、ホストでゲートウェイを動かし、工程エージェン�
 
 ## AI の呼び出しを中継する
 
-エージェントに `via_gateway: true` を書くと、AI の呼び出しを sacty のゲートウェイ経由にします。エージェントに直接書けるのは
-Codex × Bedrock（`runtime: codex`・`auth.mode: bedrock`）だけです。OpenAI 互換の接続先は、`providers` の `via_gateway` で決めます
-（[次の節](#openai-互換の接続先providers)）。
+`providers.codex` に `via_gateway: true` を書くと、Codex のエージェントの AI の呼び出しを sacty のゲートウェイ経由にします。
+使えるのは、`auth.mode` が `bedrock` か `openai-compatible`（[次の節](#openai-互換の接続先)）のときだけです。ほかの認証方式と
+`providers.claude` に書くと誤りになります（[config.yaml の設定](config.md#接続先と単価providers)）。
 
 - API キーはゲートウェイだけが持ち、エージェントのコンテナには実行ごとのトークンだけを渡します。
 - レート制限（429）と一時的な失敗（500・502・503・504・接続の失敗）は、`Retry-After`（無ければ1秒から倍にしていき、60秒で頭打ちの間隔）で
@@ -38,41 +38,33 @@ gateway:
     max_wait_sec: 600   # 成功するまでの一続きの失敗で待つ合計の上限
 ```
 
-## OpenAI 互換の接続先（providers）
+## OpenAI 互換の接続先
 
-OpenAI 互換（Responses API）の接続先（組織の AI gateway など）は `providers` に書き、Codex のエージェントから `provider` で使います
-（[工程ごとのモデル](config.md#工程ごとのモデル)）。
+OpenAI 互換（Responses API）の接続先（組織の AI gateway など）は、`providers.codex` の `auth` に `mode: openai-compatible` で書きます。
+Codex の既定のエージェント（[既定のエージェント](config.md#既定のエージェント)）が、この接続先を使います。
 
 ```yaml
 providers:
-  acme-gw:
-    base_url: https://ai-gateway.example.com/v1   # Codex の model_providers の base_url と同じ
-    secret: op://Work/AI-Gateway/api-key           # env_key に入れていた API キー
-    via_gateway: true                              # sacty のゲートウェイ経由（429 のリトライ・キーをコンテナに渡さない）
-agents:
-  sol-high:
-    runtime: codex
-    provider: acme-gw
-    model: gpt-6-sol
-    reasoning_effort: high
-    price_per_mtok_usd: { input: 1.25, cached_input: 0.125, output: 10 }
-  luna-low:
-    runtime: codex
-    provider: acme-gw
-    model: gpt-6-luna
-    reasoning_effort: low
-    price_per_mtok_usd: { input: 0.3, cached_input: 0.03, output: 1.5 }
-default_agent: luna-low
+  codex:
+    auth:
+      mode: openai-compatible
+      base_url: https://ai-gateway.example.com/v1   # Codex の model_providers の base_url と同じ
+      secret: op://Work/AI-Gateway/api-key           # env_key に入れていた API キー
+    via_gateway: true                                # sacty のゲートウェイ経由（429 のリトライ・キーをコンテナに渡さない）
+    available_models:                                # 単価は例。契約の単価に合わせる
+      gpt-6-luna: { input: 0.25, cached_input: 0.025, output: 2 }
+      gpt-6.1-sol: { input: 1.25, cached_input: 0.125, output: 10 }
 ```
 
 | 項目 | 意味 | 既定値 |
 | --- | --- | --- |
-| （名前） | 英数字・`_`・`-` | なし |
-| `base_url` | 接続先（`http`・`https` の URL）。必須 | なし |
-| `secret` | API キー（Bearer で付ける。秘密情報の名前か 1Password の参照）。認証が要らなければ書かない | なし |
+| `auth.base_url` | 接続先（`http`・`https` の URL）。必須 | なし |
+| `auth.secret` | API キー（Bearer で付ける。秘密情報の名前か 1Password の参照）。認証が要らなければ書かない | なし |
 | `via_gateway` | sacty のゲートウェイ経由にする | `false` |
 
-`agents` の `provider` に、`providers` に無い名前を書くと誤りになります。
+- 接続先でモデルの名前が違うときは、[エージェントの上書き](config.md#エージェントの上書き)で `model` を書き換え、その名前の単価を
+  `available_models` に書きます。
+- 以前の版の、名前を付けた `providers` とエージェントの `provider` は誤りになります。上の形に書き直してください。
 
 ## ホストのアドレス
 

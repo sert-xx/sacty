@@ -225,8 +225,8 @@
 - タスクの詳細で、工程ごとのエージェントを人が変えられる（`POST /api/tasks/:id/agents`、入力は `ChangeStepAgentInput` の `step`・`agent`）。
   工程の状態は問わない。中止したタスクは変えられない。対象は、工程のエージェントで動く工程（`stepAgentChangeable`）。統合レビューは
   ゴールガーディアンが行うので、画面に出さず、API でも断る（`agent.stepNotChangeable`）。
-- 選べるのは config.yaml の `agents` に書いた名前。名前は config.yaml のキーのまま受け取り、空白を除いたり長さで切ったりしない。継承の
-  名前（`constructor`・`toString` など）は、`agents` に書いた名前としない（`definedAgent`）。次は、理由を示して断る（409）：`agents` に無い
+- 選べるのは使えるエージェント（`config/agents.yaml` の既定に config.yaml の `agents` を重ね、接続先と単価があるもの。[設定](configuration.md#使えるエージェント)）の名前。名前はキーのまま受け取り、空白を除いたり長さで切ったりしない。継承の
+  名前（`constructor`・`toString` など）は、エージェントの名前としない（`definedAgent`）。次は、理由を示して断る（409）：使えるエージェントに無い
   名前（`agent.notInAgents`）、今と同じ名前（`agent.unchanged`）、タスクの工程に無い工程（`agent.stepMissing`）、統合レビュー
   （`agent.stepNotChangeable`）、config.yaml を読めない（`agent.configUnavailable`）。
 - 変えたら `StepAgentChanged`（`step`・`from`・`to`。actor は `person`）を足す。`from` は変える前の名前（人が選んでいなければ、config.yaml で
@@ -235,13 +235,13 @@
   使う（`stepAgentFor`）。実行の開始（`AgentRunStarted`）のときに決めるので、今の実行は変えない。工程の実行・監視は、準備の後に最新の
   タスクから読む。外部作業は、接続先を調べた後に最新のタスクから読む。外部作業・書き出しは、準備（接続先・コンテキストの用意）の間に変わったら、古いエージェントでは始めず、実行待ちのまま
   戻して、次の実行で新しいエージェントで準備し直す。準備の間に選び直した名前が、その実行が読んだ設定に無い（その間に config.yaml に
-  足した）ときも、止めずに実行待ちのまま戻し、次の実行で最新の設定から決め直す。選んだ名前が `agents` から消えていたら、
+  足した）ときも、止めずに実行待ちのまま戻し、次の実行で最新の設定から決め直す。選んだ名前が使えるエージェントから消えていたら（設定から消した・接続先や単価が無いなど）、
   既定に戻さず、`agent.chosenMissing` で一時停止する（書き出しは、書き出せなかった理由にする）。段階のサブエージェントは、選んだエージェントを
   親として置く。
 - 状態（`GET /api/status`）は、選べるエージェント（名前・runtime・モデル・リーズニングエフォート。秘密の値・接続先の URL は出さない）と、
   config.yaml で決まる工程ごとの名前（`stepAgents`）を返す。画面は、工程ごとにエージェント・決めた元（config.yaml か、人が変えた時刻と前の
   名前）・いつから使うかを出す（`stepAgentRows`）。選択肢は、状態を取れない・設定を読めないときは出さず、stub は今のエージェントが stub の
-  ときだけ出す（`stepAgentOptions`）。選んだ名前が `agents` に無ければ警告を出す。
+  ときだけ出す（`stepAgentOptions`）。選んだ名前が使えるエージェントに無ければ警告を出す。
 
 コード: `apps/daemon/src/service.ts`（`changeStepAgent`・`pauseForMissingAgent`・`status`）、`apps/daemon/src/config.ts`（`stepAgentFor`）、`apps/daemon/src/server.ts`、`packages/core/src/events.ts`（`StepAgentChanged`・`ChangeStepAgentInput`）、`apps/web/src/lib/labels.ts`（`stepAgentRows`・`stepAgentOptions`）
 

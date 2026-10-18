@@ -54,10 +54,11 @@ The container receives only the variables for the chosen authentication method (
 | claude-code × `bedrock` | `CLAUDE_CODE_USE_BEDROCK=1`, `AWS_BEARER_TOKEN_BEDROCK`, `AWS_REGION` |
 | codex × `subscription` | The host's `auth_file` (default `~/.codex/auth.json`) is copied to the config location as `auth.json`. If it changed after the run, it is written back to the host (not written back if the host's file changed during the run) |
 | codex × `api-key` | `CODEX_API_KEY`, `OPENAI_API_KEY` (the same value) |
-| codex × `bedrock` | `AWS_BEARER_TOKEN_BEDROCK`, `AWS_REGION`. With `via_gateway: true`, a per-run gateway token instead of the API key |
-| codex × `provider` | `SACTY_PROVIDER_API_KEY` (when the endpoint has `secret`; with `via_gateway: true`, the per-run token). The endpoint is `-c model_providers.sacty-provider={ … wire_api = "responses" }` |
+| codex × `bedrock` | `AWS_BEARER_TOKEN_BEDROCK`, `AWS_REGION`. When `providers.codex` has `via_gateway: true`, a per-run gateway token instead of the API key |
+| codex × `openai-compatible` (`auth.mode` at run time is `provider`) | `SACTY_PROVIDER_API_KEY` (when `auth.secret` is written; with `via_gateway: true`, the per-run token). The endpoint is `-c model_providers.sacty-provider={ … wire_api = "responses" }` |
 
-- A run goes through the gateway (`via_gateway`) when the agent has `via_gateway` and uses `bedrock`, or uses `provider` with the endpoint's `via_gateway`.
+- A run goes through the gateway (`via_gateway`) when `via_gateway` of `providers.codex` is `true` and `auth.mode` is `bedrock` or `openai-compatible`
+  (authentication and the endpoint are built from the `providers` entry of the agent's runtime; `connectionOf`; [Configuration](configuration.en.md#providers)).
   In that case the API key is given to the gateway, and the container receives only the per-run token and the gateway URL (`http://host.docker.internal:<port>/openai/v1`)
   ([Gateway](gateway.en.md)).
 - If a secret is not found, the run fails (reason `auth`) and the task is paused.

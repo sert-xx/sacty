@@ -12,7 +12,7 @@
 | --- | --- |
 | `sacty up` が、ほかの sacty が動いていると言って終わる | 同じ `SACTY_HOME` で sacty が動いています。表示された接続先と PID の sacty を止めるか、別の `SACTY_HOME` とポートで起動してください（[はじめに](getting-started.md#データの置き場所)） |
 | `--port and --daemon-port must be different` で終わる | `--port` と `--daemon-port` に違う番号を指定してください（[CLI](cli.md#sacty-up)） |
-| 画面に設定ファイルの誤りが出る | 画面に出た項目（例 `agents.<名前>.auth.secret`）と理由を見て、`config.yaml` を直してください（[config.yaml の設定](config.md)）。ファイルが無ければ `npx sacty config init` で作ります |
+| 画面に設定ファイルの誤りが出る | 画面に出た項目（例 `providers.codex.auth.secret`）と理由を見て、`config.yaml` を直してください（[config.yaml の設定](config.md)）。ファイルが無ければ `npx sacty config init` で作ります |
 | `sacty context preview` が、起動中の sacty が見つからないと言って終わる | 先に `npx sacty up` で起動してください（同じ `SACTY_HOME` で） |
 
 ## 秘密情報

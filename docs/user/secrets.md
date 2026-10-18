@@ -19,16 +19,15 @@ npx sacty secret set claude-oauth-token
 
 ## 1Password
 
-1Password に保存した秘密情報は、名前の代わりに参照（`op://保管庫/アイテム/フィールド`）を書きます。エージェントの認証・
-`providers`・`gateway.platforms`・`gateway.mcp_servers`・コンテキストリポジトリの `mcp.yaml`・`platforms.yaml`・「sacty の設定」の Slack の通知先・
+1Password に保存した秘密情報は、名前の代わりに参照（`op://保管庫/アイテム/フィールド`）を書きます。`providers` の認証・`gateway.platforms`・`gateway.mcp_servers`・コンテキストリポジトリの `mcp.yaml`・`platforms.yaml`・「sacty の設定」の Slack の通知先・
 npm のトークンなど、秘密情報を書くすべての所で使えます。
 
 ```yaml
-agents:
-  codex-bedrock:
-    runtime: codex
-    auth: { mode: bedrock, secret: "op://Work/Bedrock/credential", region: us-east-2 }
-    price_per_mtok_usd: { input: 1.25, cached_input: 0.125, output: 10 }
+providers:
+  codex:
+    auth: { mode: api-key, secret: "op://Work/OpenAI/api-key" }
+    available_models:
+      gpt-6.1-sol: { input: 1.25, cached_input: 0.125, output: 10 }
 # 複数の 1Password のアカウントにサインインしているときは、使うアカウントを書く
 onepassword:
   account: acme.1password.com
@@ -40,7 +39,7 @@ onepassword:
 
 ## 起動のときに取り出すもの
 
-- `sacty up` の起動のときに、使う秘密情報（使うエージェントの認証・`providers`・`gateway.platforms`・`gateway.mcp_servers` の
+- `sacty up` の起動のときに、使う秘密情報（使うエージェントの `providers` の認証・`gateway.platforms`・`gateway.mcp_servers` の
   環境変数・「sacty の設定」の Slack の通知先・プロジェクトのコンテキストリポジトリの `mcp.yaml`・`platforms.yaml`）をまとめて取り出します。
   1Password の参照は1回の `op run` で取り出すので、認証は起動のときの1回だけです。
   キーチェーンの秘密情報は、取り出せるかを確かめます（使うたびに取り出します）。

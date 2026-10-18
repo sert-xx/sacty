@@ -2728,6 +2728,8 @@ export class TaskService {
       agent: { id: agent.id, runtime: agent.runtime, authMode: agent.auth.mode },
       problems: [],
       warnings: [
+        // 接続先・単価が無くて使えないエージェント（PBI-134）
+        ...(config.config.agentWarnings ?? []),
         // 起動のときに取り出せなかった秘密情報（PBI-48）
         ...this.secretProblems.map((p) => p.text),
         ...(this.deps.platformProblems?.(config.config.platforms.map((p) => p.name)) ?? []),

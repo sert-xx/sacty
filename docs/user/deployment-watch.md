@@ -69,7 +69,7 @@ sacty が見届け、失敗していたら修正のタスクを自動で登録�
 
 ```yaml
 step_agents:
-  deployment: luna-low
+  deployment: codex_lite
 ```
 
 ## 費用と予算

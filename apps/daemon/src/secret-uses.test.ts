@@ -25,7 +25,10 @@ describe("起動時に取り出す秘密情報の参照（PBI-48）", () => {
   it("使うエージェント・接続先・PF・ホストの MCP・sacty の設定の通知先の参照を、重ねずに集める（PBI-115）", () => {
     const uses = secretUses(
       config({
-        guardianAgent: agent("guard", { mode: "api-key", secret: "op://Work/Anthropic/key" }),
+        guardianAgent: {
+          ...agent("guard", { mode: "api-key", secret: "op://Work/Anthropic/key" }),
+          runtime: "claude-code",
+        },
         stepAgents: {
           implement: agent(
             "gw",
@@ -83,9 +86,10 @@ describe("起動時に取り出す秘密情報の参照（PBI-48）", () => {
       },
     );
     expect(uses).toEqual([
-      { ref: "claude-token", where: "agents.main.auth.secret" },
-      { ref: "op://Work/Anthropic/key", where: "agents.guard.auth.secret" },
-      { ref: "op://Work/GW/key", where: "providers.corp.secret" },
+      // 認証・接続先は runtime ごとの providers に書く（PBI-134）
+      { ref: "claude-token", where: "providers.codex.auth.secret" },
+      { ref: "op://Work/Anthropic/key", where: "providers.claude.auth.secret" },
+      { ref: "op://Work/GW/key", where: "providers.corp.auth.secret" },
       { ref: "op://Work/Ticket/client", where: "gateway.platforms.ticket.auth.token.secret" },
       { ref: "op://Work/Docs/token", where: "gateway.mcp_servers.docs.env.TOKEN" },
       { ref: "slack-token", where: "sacty の設定の通知先（Slack のトークン）", settings: true },
