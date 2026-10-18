@@ -10,8 +10,6 @@ import {
   ANSWER_MAX,
   ApproveStepInput,
   AskQuestionInput,
-  AUDIT_TEXT_MAX,
-  AUDIT_TITLE_MAX,
   type AuditTarget,
   activeStep,
   applyEvent,

@@ -5,7 +5,7 @@ import {
   type ProjectAudits,
 } from "@sacty/core";
 import type { Messages } from "@/i18n";
-import { auditCauseTitle, auditTargetText } from "@/lib/audit";
+import { auditCauseTitle, auditTargetText, isMemoryPromotionCause } from "@/lib/audit";
 import { usd } from "@/lib/labels";
 
 /** 日付（YYYY-MM-DD）か。 */
@@ -83,6 +83,8 @@ export function auditReport(
     lines.push(
       `### ${auditCauseTitle(c.id, c.title, m)}`,
       "",
+      // メモリーをコンテキストにする原因は、定型の説明も画面の言語で出す（PR #138 再レビュー指摘）
+      ...(isMemoryPromotionCause(c.id) ? [m.findings.memoryPromotionDetail, ""] : []),
       `- ${m.screen.status}: ${m.screen.causeStatus[c.status]}`,
       `- ${m.screen.tasks}: ${c.occurrences.map((o) => o.taskTitle).join(", ")}`,
     );
@@ -118,6 +120,19 @@ export function auditReport(
       lines.push(`- ${m.proposal.rejectedReason}: ${p.decision.reason}`);
     }
     lines.push("", p.body, "");
+    // 元のメモリーは提案の本文と別の項目なので、レポートにも出す（PR #138 再レビュー指摘）
+    if (p.memoryOriginal) {
+      lines.push(
+        `#### ${m.findings.memoryOriginal}`,
+        "",
+        `**${p.memoryOriginal.title}**`,
+        "",
+        p.memoryOriginal.summary,
+        "",
+        p.memoryOriginal.body,
+        "",
+      );
+    }
   }
   lines.push(
     `## ${m.screen.audits}`,
