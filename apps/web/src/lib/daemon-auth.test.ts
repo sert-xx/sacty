@@ -31,6 +31,8 @@ describe("デーモンへ中継する前に、起動した本人のブラウザ�
     vi.stubEnv("SACTY_DAEMON_TOKEN", "daemon-token");
     vi.stubEnv("SACTY_WEB_TOKEN", "web-secret");
     vi.stubEnv("SACTY_WEB_PORT", "4700");
+    // 起動元の環境（SACTY_WEB_AUTH=off など）に左右されないよう、認証 ON から始める（PR #145 レビュー提案）
+    vi.stubEnv("SACTY_WEB_AUTH", "");
   });
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -58,6 +60,18 @@ describe("デーモンへ中継する前に、起動した本人のブラウザ�
     cookieValue = sessionValue("");
     await expect(listTasks()).rejects.toThrow("画面の認証が設定されていません");
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("認証を OFF にした（SACTY_WEB_AUTH=off）なら、cookie が無くても問い合わせる。off 以外の値では OFF にしない（PBI-133）", async () => {
+    vi.stubEnv("SACTY_WEB_TOKEN", "");
+    for (const value of ["false", "OFF", "0", ""]) {
+      vi.stubEnv("SACTY_WEB_AUTH", value);
+      await expect(listTasks()).rejects.toBeInstanceOf(DaemonUnavailableError);
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+    vi.stubEnv("SACTY_WEB_AUTH", "off");
+    await expect(listTasks()).resolves.toEqual([]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("今の起動の cookie なら、今までどおりデーモンに問い合わせる（ポートを入れた名前の cookie を読む）", async () => {

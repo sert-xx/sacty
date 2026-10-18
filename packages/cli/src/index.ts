@@ -26,7 +26,7 @@ import {
   readDaemonFile,
   removeDaemonFile,
 } from "./context-preview.js";
-import { daemonEnv, signInUrl, webEnv } from "./up-env.js";
+import { daemonEnv, startMessage, webAuthEnabled, webEnv } from "./up-env.js";
 
 const require = createRequire(import.meta.url);
 
@@ -204,8 +204,11 @@ async function waitForDaemon(url: string, token: string, timeoutMs: number): Pro
 
 async function up(webPort: number, daemonPort: number) {
   const token = randomBytes(32).toString("hex");
-  // 画面の入り口の秘密（PBI-129）。デーモンのトークンとは別にし、画面にだけ渡す
-  const webToken = randomBytes(32).toString("base64url");
+  // 画面の入り口の秘密（PBI-129）。デーモンのトークンとは別にし、画面にだけ渡す。config.yaml で画面の認証を OFF に
+  // したときは作らない（PBI-133）
+  const webToken = webAuthEnabled(loadConfig(resolveHome()))
+    ? randomBytes(32).toString("base64url")
+    : undefined;
   const daemonUrl = `http://127.0.0.1:${daemonPort}`;
   const children: ChildProcess[] = [];
   let stopping = false;
@@ -300,7 +303,7 @@ async function up(webPort: number, daemonPort: number) {
   );
 
   // この URL を開いたブラウザだけが画面を使える（PBI-129）。起動し直すと、新しい URL になる
-  console.log(`\n[sacty] Open ${signInUrl(webPort, webToken)} in your browser.\n`);
+  console.log(startMessage(webPort, webToken));
 }
 
 async function main() {

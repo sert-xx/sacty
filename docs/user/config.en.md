@@ -27,6 +27,7 @@ Per-project settings (targets, GitHub accounts, the context repository, and so o
 | `images` | Images per language ([Container images](images.en.md#per-language-images)) | None |
 | `onepassword.account` | The 1Password account to use ([Secrets](secrets.en.md#1password)) | None |
 | `gateway` | The gateway on the host ([Gateway](gateway.en.md)) | None |
+| `web.auth` | Web UI sign-in. With `false`, you can use the web UI without opening the sign-in URL (for the risk and how to switch, see [CLI](cli.en.md#sacty-up)). Read only when `sacty up` starts | `true` |
 
 You set the intake interval for each kind of intake in "sacty settings" in the web UI, not in config.yaml ([Intake](intake.en.md#intake-intervals)).
 The days to keep memories are also set in "sacty settings" ([Viewing audits](audit.en.md#memories)).

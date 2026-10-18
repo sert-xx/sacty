@@ -477,6 +477,16 @@ const ConfigFile = z
           .default({}),
       })
       .prefault({}),
+    /** 画面（PBI-133）。 */
+    web: z
+      .object({
+        /**
+         * 画面の認証（PBI-129）。false にすると、`sacty up` が表示する入り口の URL を開かなくても使える。工程のコンテナから
+         * 画面を通して承認・設定の変更をできてしまうので、既定は true。
+         */
+        auth: z.boolean().default(true),
+      })
+      .prefault({}),
   })
   .superRefine((config, ctx) => {
     if (!config.agents[config.default_agent]) {
@@ -619,6 +629,8 @@ export type SactyConfig = {
   gatewayRetry: RetryPolicy;
   /** コンテナから見たホストのアドレス（host.docker.internal の向き先。PBI-40）。 */
   hostAddress: string;
+  /** 画面の認証（PBI-129）。false なら OFF（PBI-133）。 */
+  webAuth: boolean;
   /** 組織内 PF の API（PBI-35）。 */
   platforms: Platform[];
   /** ホストで動かす MCP サーバー（PBI-36）。 */
@@ -789,6 +801,7 @@ export function loadConfig(home: string): ConfigResult {
       platforms: Object.entries(file.gateway.platforms).map(([name, p]) => toPlatform(name, p)),
       hostMcp: Object.entries(file.gateway.mcp_servers).map(([name, m]) => toHostMcp(name, m)),
       hostAddress: file.gateway.host_address,
+      webAuth: file.web.auth,
       gatewayRetry: {
         maxAttempts: file.gateway.retry.max_attempts,
         maxWaitMs: file.gateway.retry.max_wait_sec * 1000,
@@ -902,6 +915,12 @@ budget:
 
 # タスクの対象リポジトリ（URL・ベースブランチ・テストのコマンド・PR を作るか）は、
 # 画面のプロジェクトの設定で登録する
+
+# 画面。auth: false にすると、\`sacty up\` が表示する入り口の URL を開かなくても画面を使える（既定は true）。
+# ただし、工程のコンテナで動くコード（対象リポジトリのテスト・プロンプトインジェクション）が、画面を通して承認や
+# 設定の変更をできるようになる。信頼できるリポジトリだけを扱う環境で使う
+# web:
+#   auth: false
 
 # ホストのゲートウェイ（via_gateway: true のエージェントの AI の呼び出しを中継する）。
 # レート制限（429）や一時的な失敗（5xx）は、Retry-After（無ければ1秒から倍にしていく間隔）で待ってリトライする

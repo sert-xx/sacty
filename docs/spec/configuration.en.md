@@ -3,7 +3,8 @@
 # Configuration (config.yaml)
 
 `SACTY_HOME/config.yaml` holds the per-machine settings (AI agents, authentication, images, and the gateway). The daemon
-reads it again on every use (you can change it without stopping the daemon). When it cannot be read or has the wrong shape, the location of the first error (`path`) and the reason become the message shown as a warning in the web UI.
+reads it again on every use (you can change it without stopping the daemon), except `web.auth`, which is read only when `sacty up` starts (it is fixed in the web UI
+child process's environment; restart after changing it). When it cannot be read or has the wrong shape, the location of the first error (`path`) and the reason become the message shown as a warning in the web UI.
 `sacty config init` writes the template (`CONFIG_TEMPLATE`) with permission 0600 (if the file exists, it stops unless `--force` is given).
 
 How to write it, for users, is in the [user documentation](../user/README.en.md). This page describes the meaning and default of each item, and the validation rules.
@@ -31,6 +32,7 @@ Related ADRs: none
 | `gateway.retry.max_wait_sec` | `600` | The upper limit on total waiting during a run of failures (0 to 86400 seconds) |
 | `gateway.platforms` | `{}` | Organization platforms (PF). Names match `^[a-z0-9][a-z0-9-]*$` ([Gateway](gateway.en.md)) |
 | `gateway.mcp_servers` | `{}` | MCP servers run on the host. Names match `^[A-Za-z0-9_-]+$` (same as above) |
+| `web.auth` | `true` | Web UI sign-in. `false` turns it off (booleans only; [Daemon startup and shutdown](daemon-lifecycle.en.md#web-ui-sign-in)) |
 
 Other checks: it is an error when a value of `default_agent`, `guardian_agent`, `audit_agent`, or `step_agents` is not in `agents`, or when a `provider` name is not in `providers`.
 It is also an error when an `agents` name is a tier (`claude_<tier>`, `codex_<tier>`; the tiers are `lite`, `entry`, `standard`, `advanced`, and `ultimate` in `AGENT_TIERS`)

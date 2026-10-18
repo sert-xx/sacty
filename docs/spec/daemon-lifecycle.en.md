@@ -5,7 +5,7 @@
 `sacty up` starts the daemon (`apps/daemon`) and the web UI (Next.js in `apps/web`) as child processes, and stops both when either one ends.
 Only one daemon runs per `SACTY_HOME` (determined by an OS file lock).
 
-Related ADRs: [The web UI is usable only from browsers that signed in with the per-start secret](../adr/20261018-0414-web-session-auth.md)
+Related ADRs: [The web UI is usable only from browsers that signed in with the per-start secret](../adr/20261018-0414-web-session-auth.md), [Allow turning off web UI sign-in in the settings](../adr/20261018-0929-web-auth-off-setting.md)
 
 ## sacty up
 
@@ -39,6 +39,10 @@ browser of the person who started sacty.
   after signing in sends the browser to the top.
 - The sign-in URL can be used any number of times while that start lasts (you can open it again in another browser). After a restart the
   secret changes, and the old cookie and URL no longer work.
+- It can be turned off with `web.auth: false` in `config.yaml` (on by default; also on when the settings file is missing or unreadable). When off, `sacty up`
+  creates no secret and passes `SACTY_WEB_AUTH=off` to the web UI (it removes `SACTY_WEB_AUTH` from the user's shell, so only the settings file decides).
+  The web UI can be used without checking the cookie (the Host check remains; the sign-in URL just redirects to the top), and the terminal shows the web UI URL
+  and a warning that step containers can operate the web UI.
 - On every request (pages, live refreshes, downloads, and Server Actions; except built static files and icons), the Proxy
   (`apps/web/src/proxy.ts`) checks the following. When it refuses, it returns only a fixed text in the screen's language, without the page
   parts (which query the daemon).

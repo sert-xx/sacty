@@ -1013,6 +1013,32 @@ agents:
     );
   });
 
+  it("画面の認証（web.auth）は、書かなければ ON、false なら OFF。真偽でない値は誤り（PBI-133）", () => {
+    dir = mkdtempSync(join(tmpdir(), "sacty-config-"));
+    const write = (yaml: string) => writeFileSync(join(dir, "config.yaml"), yaml);
+    const base = `default_agent: x
+agents:
+  x:
+    runtime: claude-code
+    auth: { mode: api-key, secret: k }
+    price_per_mtok_usd: { input: 1, cached_input: 0.1, output: 2 }
+`;
+    write(base);
+    expect(loadConfig(dir)).toMatchObject({ ok: true, config: { webAuth: true } });
+    write(`${base}web:\n  auth: false\n`);
+    expect(loadConfig(dir)).toMatchObject({ ok: true, config: { webAuth: false } });
+    write(`${base}web:\n  auth: true\n`);
+    expect(loadConfig(dir)).toMatchObject({ ok: true, config: { webAuth: true } });
+    write(`${base}web: {}\n`);
+    expect(loadConfig(dir)).toMatchObject({ ok: true, config: { webAuth: true } });
+    for (const value of ['"off"', "no", "0"]) {
+      write(`${base}web:\n  auth: ${value}\n`);
+      expect(loadConfig(dir).ok).toBe(false);
+    }
+    // 雛形は ON のまま（OFF の例はコメントだけ）
+    expect(CONFIG_TEMPLATE).toMatch(/^# web:\n# {3}auth: false$/m);
+  });
+
   it("雛形の Codex × Bedrock の例は、コメントを外せばそのまま読める（PBI-32）", () => {
     dir = mkdtempSync(join(tmpdir(), "sacty-config-"));
     const lines = CONFIG_TEMPLATE.split("\n");

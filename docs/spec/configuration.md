@@ -3,7 +3,8 @@
 # 設定（config.yaml）
 
 `SACTY_HOME/config.yaml` は、マシンごとの設定（AI のエージェント・認証・イメージ・ゲートウェイ）を持つ。デーモンは
-使うたびに読み直す（止めずに変えられる）。読めない・形が違うときは、最初の誤りの場所（`path`）と理由を、画面の警告に出す文言にする。
+使うたびに読み直す（止めずに変えられる）。ただし `web.auth` は、`sacty up` の起動のときだけ読む（画面の子プロセスの環境に固定する。
+変えたら起動し直す）。読めない・形が違うときは、最初の誤りの場所（`path`）と理由を、画面の警告に出す文言にする。
 `sacty config init` は雛形（`CONFIG_TEMPLATE`）を権限 0600 で書く（あれば `--force` が無いと止まる）。
 
 利用者向けの書き方は [ユーザードキュメント](../user/README.md) にある。ここでは項目の意味と既定値、検査の規則を書く。
@@ -31,6 +32,7 @@
 | `gateway.retry.max_wait_sec` | `600` | 一続きの失敗で待つ合計の上限（0〜86400 秒） |
 | `gateway.platforms` | `{}` | 組織内 PF。名前は `^[a-z0-9][a-z0-9-]*$`（[ゲートウェイ](gateway.md)） |
 | `gateway.mcp_servers` | `{}` | ホストで動かす MCP サーバー。名前は `^[A-Za-z0-9_-]+$`（同上） |
+| `web.auth` | `true` | 画面の認証。`false` で OFF（真偽だけ。[デーモンの起動と終了](daemon-lifecycle.md#画面の認証)） |
 
 ほかの検査：`default_agent`・`guardian_agent`・`audit_agent`・`step_agents` の値が `agents` に無い、`provider` の名前が `providers` に無いときは誤り。
 `agents` の名前が段階（`claude_<段階>`・`codex_<段階>`。段階は `AGENT_TIERS` の `lite`・`entry`・`standard`・`advanced`・`ultimate`）なのに

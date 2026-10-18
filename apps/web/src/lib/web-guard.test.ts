@@ -132,6 +132,23 @@ describe("画面の入り口で、起動した本人のブラウザかを確か�
     expect(webGuard(request("/auth?token="), { secret: "", port: "4700" }).status).toBe(401);
   });
 
+  it("認証を OFF にした（web.auth: false）なら、cookie が無くても通し、Host は確かめる（PBI-133）", () => {
+    const off = { secret: undefined, port: "4700", authOff: true };
+    expect(passed(webGuard(request("/dashboard"), off))).toBe(true);
+    expect(passed(webGuard(request("/live/projects"), off))).toBe(true);
+    expect(
+      passed(
+        webGuard(request("/tasks/t1", { method: "POST", headers: { "next-action": "abc" } }), off),
+      ),
+    ).toBe(true);
+    // 入り口の URL は、トップへ移すだけ（cookie は渡さない）
+    const auth = webGuard(request("/auth?token=x"), off);
+    expect(auth.status).toBe(303);
+    expect(auth.headers.get("set-cookie")).toBeNull();
+    // ループバック以外の Host は断る（DNS rebinding）
+    expect(webGuard(request("/dashboard", { host: "evil.example:4700" }), off).status).toBe(403);
+  });
+
   it("断る画面は、画面の言語で出す", async () => {
     const en = webGuard(request("/dashboard", { headers: { "accept-language": "en-US" } }), env);
     expect(await en.text()).toContain("Sign in to sacty");

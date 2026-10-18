@@ -1,5 +1,5 @@
 import type { NextRequest } from "next/server";
-import { WEB_PORT_ENV, WEB_TOKEN_ENV } from "@/lib/web-auth";
+import { WEB_AUTH_ENV, WEB_PORT_ENV, WEB_TOKEN_ENV, webAuthDisabled } from "@/lib/web-auth";
 import { webGuard } from "@/lib/web-guard";
 
 /** 画面へのすべてのリクエストで、起動した本人のブラウザかを確かめる（PBI-129）。 */
@@ -7,6 +7,7 @@ export function proxy(request: NextRequest) {
   return webGuard(request, {
     secret: process.env[WEB_TOKEN_ENV],
     port: process.env[WEB_PORT_ENV],
+    authOff: webAuthDisabled(process.env[WEB_AUTH_ENV]),
   });
 }
 

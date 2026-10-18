@@ -8,6 +8,17 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 export const WEB_TOKEN_ENV = "SACTY_WEB_TOKEN";
 /** 画面のポート（cookie の名前に入れる。同じホストで別のポートの sacty の cookie を上書きしないように）。 */
 export const WEB_PORT_ENV = "SACTY_WEB_PORT";
+/**
+ * 画面の認証を OFF にした（config.yaml の web.auth: false。PBI-133）。`sacty up` が設定ファイルを読んで "off" を渡す
+ * （利用者のシェルにあっても、`sacty up` は取り除いてから画面を起動する）。
+ */
+export const WEB_AUTH_ENV = "SACTY_WEB_AUTH";
+
+/** 画面の認証を OFF にしたか。"off" のときだけ OFF（ほかの値・無いときは ON）。 */
+export function webAuthDisabled(value: string | undefined): boolean {
+  return value === "off";
+}
+
 /** 端末に表示する、入り口の URL のパスと、秘密を渡すパラメーター。 */
 export const AUTH_PATH = "/auth";
 export const AUTH_TOKEN_PARAM = "token";
