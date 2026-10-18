@@ -2,7 +2,7 @@
 
 - 日付: 2026-10-18（UTC）
 - タスク: PBI-135
-- PR: なし
+- PR: #147
 - ブランチ: feat/issue-135-update-check
 - 関係する ADR: [sacty の最新版を、手元のコミットと GitHub の main で比べて知らせる](../adr/20261018-1213-update-check-against-main.md)
 
