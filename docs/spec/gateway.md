@@ -20,6 +20,8 @@
     受け取った量で止める。
   - 同時に受け取っている本文の合計は 256 MiB（`GATEWAY_BODIES_MAX`）まで。超えたら 503（`Retry-After: 1`）。ためた分は、応答を返し終える
     （接続が閉じる）まで数える。
+  - 受け取った分は 16 KiB（`GATEWAY_BODY_BLOCK`）のブロックに写して持ち、合計には確保したブロックの大きさで数える（細かい chunk を大量に
+    送られても、数えた量より多くのメモリーを使わない）。
 - 上流へは、宛先・認証・長さ・接続・圧縮・`expect`（curl などが大きな本文に付ける `100-continue`）のヘッダーを送らない。
 
 | パス | 用途 | 認証 |
@@ -29,7 +31,7 @@
 | `/mcp/<名前>` | ホストの MCP サーバー | `Authorization: Bearer <トークン>` |
 | `/openai/v1/…` | AI の呼び出し（Codex の Bedrock・providers） | `Authorization: Bearer <トークン>`（`AWS_BEARER_TOKEN_BEDROCK`・`SACTY_PROVIDER_API_KEY` に入れて渡す） |
 
-コード: `apps/daemon/src/gateway.ts`（`AiGateway.listen`・`register`・`handle`・`containerOrigin`・`platformsUrl`・`DEFAULT_HOST_ADDRESS`・`readBody`・`GATEWAY_BODY_MAX`・`GATEWAY_BODIES_MAX`・`DROP_REQUEST`）、`apps/daemon/src/service.ts`（`executeLogged`）
+コード: `apps/daemon/src/gateway.ts`（`AiGateway.listen`・`register`・`handle`・`containerOrigin`・`platformsUrl`・`DEFAULT_HOST_ADDRESS`・`readBody`・`GATEWAY_BODY_MAX`・`GATEWAY_BODIES_MAX`・`GATEWAY_BODY_BLOCK`・`DROP_REQUEST`）、`apps/daemon/src/service.ts`（`executeLogged`）
 
 ## AI の呼び出しの中継
 

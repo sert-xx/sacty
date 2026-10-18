@@ -946,7 +946,8 @@ describe("単発作業の接続先制限", () => {
 });
 
 describe("受け取る本文の上限（PBI-132）", () => {
-  const LIMITS = { perRequest: 100, total: 250 };
+  // ブロックを 1 バイトにして、合計に数える量を受け取った量と同じにする（ブロックの数え方は、別のテストで確かめる）
+  const LIMITS = { perRequest: 100, total: 250, block: 1 };
 
   /** 本文を送る（chunked か Content-Length か、決めた量を決めた回数に分けて）。応答の状態と本文を返す。 */
   function post(
@@ -1058,9 +1059,10 @@ describe("受け取る本文の上限（PBI-132）", () => {
     // 1 つめ（100）は、上流で止まっている間も数える
     const first = post(g.port, g.path, g.run.token, { chunks: [100] });
     await expect.poll(() => up.bodies.length).toBe(1);
-    // 2 つめ（100）は、本文の途中で止めておく（受け取った分を数える）
+    expect(gateway?.bodiesInUse()).toBe(100);
+    // 2 つめ（100）は、本文の途中で止めておく（受け取って数えたことを確かめてから、次を送る。PR #144 レビュー提案）
     post(g.port, g.path, g.run.token, { chunks: [100], keepOpen: true }).catch(() => {});
-    await new Promise((r) => setTimeout(r, 50));
+    await expect.poll(() => gateway?.bodiesInUse()).toBe(200);
     // 合計の上限 250 を超える（100 + 100 + 60）
     const third = await post(g.port, g.path, g.run.token, { chunks: [60] });
     expect(third.status).toBe(503);
@@ -1088,20 +1090,56 @@ describe("受け取る本文の上限（PBI-132）", () => {
           headers: { authorization: `Bearer ${g.run.token}`, "content-length": "100" },
         });
         req.on("error", () => {});
-        req.write("x".repeat(80), () => {
-          setTimeout(() => {
+        req.write("x".repeat(80));
+        // ゲートウェイが受け取って数えたことを確かめてから切る（PR #144 レビュー提案）
+        expect
+          .poll(() => gateway?.bodiesInUse())
+          .toBe(80)
+          .then(() => {
             req.destroy();
             resolve();
-          }, 20);
-        });
+          });
       });
+      // 切った分を空ける
+      await expect.poll(() => gateway?.bodiesInUse()).toBe(0);
     }
-    await new Promise((r) => setTimeout(r, 50));
     // 合計の上限（250）に近い量を、同時に受け取れる
     const a = post(g.port, g.path, g.run.token, { chunks: [100] });
     const b = post(g.port, g.path, g.run.token, { chunks: [100] });
     expect((await a).status).toBe(200);
     expect((await b).status).toBe(200);
+  });
+
+  it("細かい chunk を大量に送られても、確保したブロックの大きさで数え、持つメモリーを抑える（PR #144 レビュー指摘）", async () => {
+    const up = upstream([json(200, { ok: true })]);
+    // ブロックは 16 バイト、合計は 40 バイト（ブロック 2 つと半分）
+    gateway = new AiGateway({
+      fetchImpl: up.fetchImpl,
+      bodyLimits: { perRequest: 1000, total: 40, block: 16 },
+      sleep: async () => {},
+    });
+    const port = await gateway.listen();
+    const run = gateway.register({ base: "https://ai.example.com/v1", apiKey: "k" });
+    const path = "/openai/v1/responses";
+    // 1 バイトずつ 20 回：受け取ったのは 20 バイトでも、ブロック 2 つ（32）を数える
+    const open = request({
+      host: "127.0.0.1",
+      port,
+      path,
+      method: "POST",
+      headers: { authorization: `Bearer ${run.token}` },
+    });
+    open.on("error", () => {});
+    for (let i = 0; i < 20; i++) open.write("x");
+    await expect.poll(() => gateway?.bodiesInUse()).toBe(32);
+    // 1 バイトの要求でも、新しいブロック（16）が合計（40）に収まらないので断る
+    expect((await post(port, path, run.token, { chunks: [1] })).status).toBe(503);
+    expect(gateway.bodiesInUse()).toBe(32);
+    // 細かく届いた本文も、欠けずにつながって上流に届く（ブロックの残りは付けない）
+    open.end("z");
+    await expect.poll(() => up.calls.length).toBe(1);
+    expect(up.calls[0]?.body).toBe(`${"x".repeat(20)}z`);
+    await expect.poll(() => gateway?.bodiesInUse()).toBe(0);
   });
 
   it("組織内 PF・コンテキストの MCP・ホストの MCP の中継でも、上限を超えたら 413 で断る", async () => {

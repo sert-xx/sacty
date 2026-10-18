@@ -20,6 +20,8 @@ Related ADRs: [Start command-type MCP servers in the context's mcp.yaml on the h
     it stops at the amount received.
   - The bodies being received at the same time may total up to 256 MiB (`GATEWAY_BODIES_MAX`); over that, 503 (`Retry-After: 1`). Held bodies count until the
     response finishes (the connection closes).
+  - Received data is copied into 16 KiB blocks (`GATEWAY_BODY_BLOCK`), and the total counts the size of the allocated blocks (so that a flood of tiny chunks does not
+    use more memory than is counted).
 - The destination, authentication, length, connection, compression, and `expect` (the `100-continue` that curl and others add to large bodies) headers are not sent upstream.
 
 | Path | Purpose | Authentication |
@@ -29,7 +31,7 @@ Related ADRs: [Start command-type MCP servers in the context's mcp.yaml on the h
 | `/mcp/<name>` | Host MCP servers | `Authorization: Bearer <token>` |
 | `/openai/v1/…` | AI calls (Codex's Bedrock and providers) | `Authorization: Bearer <token>` (passed in `AWS_BEARER_TOKEN_BEDROCK` or `SACTY_PROVIDER_API_KEY`) |
 
-Code: `apps/daemon/src/gateway.ts` (`AiGateway.listen`, `register`, `handle`, `containerOrigin`, `platformsUrl`, `DEFAULT_HOST_ADDRESS`, `readBody`, `GATEWAY_BODY_MAX`, `GATEWAY_BODIES_MAX`, `DROP_REQUEST`), `apps/daemon/src/service.ts` (`executeLogged`)
+Code: `apps/daemon/src/gateway.ts` (`AiGateway.listen`, `register`, `handle`, `containerOrigin`, `platformsUrl`, `DEFAULT_HOST_ADDRESS`, `readBody`, `GATEWAY_BODY_MAX`, `GATEWAY_BODIES_MAX`, `GATEWAY_BODY_BLOCK`, `DROP_REQUEST`), `apps/daemon/src/service.ts` (`executeLogged`)
 
 ## Relaying AI calls
 
