@@ -20,6 +20,7 @@ import { HostMcpProcesses } from "./host-mcp-processes.js";
 import { acquireInstanceLock, alreadyRunningMessage } from "./instance-lock.js";
 import { IssueIntake } from "./intake.js";
 import { LedgerAuditService } from "./ledger-audits.js";
+import { startMemoryCleanup } from "./memory.js";
 import { SlackNotifier } from "./notifier.js";
 import { OrchestratorSessionStore } from "./orchestrator-sessions.js";
 import { PlatformCredentials } from "./platforms.js";
@@ -192,8 +193,10 @@ const service = new TaskService({
 service.recoverInterrupted();
 // 採用を記録したが、作る前に止まった監査の改修のタスクを作る（PBI-125）
 service.resumeAuditFixTasks();
-// 監査が登録したメモリーを、作業履歴に合わせて書き直す（PBI-126）
+// 監査が登録したメモリーを、作業履歴に合わせて書き直す（PBI-126）。残す日数を過ぎたものも消す（PBI-127）
 service.syncMemories();
+// 残す日数を過ぎたメモリーを、定期的に消す（PBI-127）
+const stopMemoryCleanup = startMemoryCleanup(() => service.cleanupMemories());
 service.queueWaitingSteps();
 
 const status = service.status();
@@ -258,6 +261,8 @@ const shutdown = async () => {
   // 秘密情報の取り出しのための、コンテキストの取得の git を止める（別のプロセスグループで動くので、Ctrl+C が届かない。
   // process.exit でも止めるが、後処理を待つ前に止める。PBI-107）
   stopFetchProcessesSync();
+  // 作業履歴を閉じた後に、メモリーの掃除が記録しないように止める（PBI-127）
+  stopMemoryCleanup();
   // 実行中のコンテナを止め、実行の後処理（作業履歴への記録、認証ファイルの書き戻し、
   // 一時ファイルの削除）が終わるのを待ってから、作業履歴を閉じて終了する。
   const draining = Promise.all([worker.drain(), intake.stop(), prWatcher.stop()]);

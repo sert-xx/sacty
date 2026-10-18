@@ -372,3 +372,26 @@ describe("作業履歴から作る監査（PBI-125）", () => {
     expect(calls).toEqual(["adopt t1:prop", "reject t1:prop", "resume t1"]);
   });
 });
+
+describe("メモリーの集計は一覧の中で1回だけ（PR #137 レビュー指摘）", () => {
+  it("監査したタスクが多くても、メモリーの集計のために各タスクを読み直さない", async () => {
+    const events = Array.from({ length: 200 }, (_, i) =>
+      audited(`t${i}`, "2026-10-01T00:00:00.000Z", `k${i}`, { stop: "surveyed" }),
+    ).flat();
+    const { service, tasks } = ledger(events);
+    // 1つのタスクの登録したメモリーを読んだ回数を数える
+    const audit = tasks[0]?.audit as { memories: unknown[] };
+    const memories = audit.memories;
+    let reads = 0;
+    Object.defineProperty(audit, "memories", {
+      get: () => {
+        reads++;
+        return memories;
+      },
+    });
+    const listed = await service.projectAudits("p1");
+    expect(listed?.audits).toHaveLength(200);
+    // 集計で1回と、そのタスク自身の画面の形で1回（監査のタスクごとに読み直すと、200 回を超える）
+    expect(reads).toBeLessThanOrEqual(3);
+  });
+});

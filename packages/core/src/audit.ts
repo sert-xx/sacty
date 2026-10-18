@@ -133,7 +133,16 @@ export type AuditMemory = {
   body: string;
   step: StepKey;
   at: string;
+  /** 有効な最終利用日（ISO の時刻。役に立ったと判断されたタスクの完了日。無ければ登録した時刻。PBI-127）。 */
+  lastUsefulAt: string;
   deleted?: { at: string; reason: MemoryDeleteReason };
+};
+
+/** 監査が、タスクで役に立ったと判断したメモリー（PBI-127）。 */
+export type AuditUsefulMemory = {
+  id: string;
+  scope: "project" | "repository";
+  title: string;
 };
 
 /** 1つのタスクの監査。 */
@@ -152,6 +161,8 @@ export type TaskAudit = {
   findings: AuditFinding[];
   /** この監査で登録したメモリー（PBI-126）。 */
   memories: AuditMemory[];
+  /** タスクで役に立ったと監査が判断したメモリー（PBI-127）。 */
+  usefulMemories: AuditUsefulMemory[];
   /** モックのデータ。 */
   mock?: true;
 };

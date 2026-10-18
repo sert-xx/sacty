@@ -280,7 +280,8 @@ Code: `apps/daemon/src/config.ts` (`resolveHome`, `configPath`), `apps/daemon/sr
   The intake label (`intakeLabel`; issues only), the ticket intake label (`ticketLabel`), the PR review label (`reviewLabel`),
   intake of review requests to yourself (`reviewRequested`), the triage kinds turned Off (`triageOff`; `issues`, `reviewLabel`, `tickets`), and
   the number of tasks run at the same time (`maxParallelTasks`; default 3), and the interval per kind of intake (`issueIntervalSec`, `reviewIntervalSec`,
-  `ticketIntervalSec`; seconds; 60 or more; default 300; [Intake](intake.en.md#interval)), and the Slack notification destination (`notification`; [Notifications](notifications.en.md)).
+  `ticketIntervalSec`; seconds; 60 or more; default 300; [Intake](intake.en.md#interval)), the Slack notification destination (`notification`; [Notifications](notifications.en.md)),
+  and the days to keep memories (`memoryRetentionDays`; 1 to 3650; default 90; [Memory](memory.en.md#cleanup)).
   - When the settings store is opened (when the daemon starts), a removed item (`pullRequests` in `triageOff`) that is still saved is removed and the settings are rewritten
     (nothing is written if there is nothing to remove).
 - Projects (`sacty.db`): targets, GitHub account, context repository, shared compose, ticket intake, and so on (notifications are in the sacty settings).

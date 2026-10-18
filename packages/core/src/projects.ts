@@ -36,6 +36,9 @@ export type ProjectTarget = z.infer<typeof ProjectTarget>;
 /** 同時に実行するタスクの数の既定値と範囲（PBI-30）。 */
 export const DEFAULT_MAX_PARALLEL_TASKS = 3;
 export const MAX_PARALLEL_TASKS_LIMIT = 10;
+/** メモリーを残す日数の既定と上限（有効な最終利用日から。PBI-127）。 */
+export const DEFAULT_MEMORY_RETENTION_DAYS = 90;
+export const MAX_MEMORY_RETENTION_DAYS = 3650;
 
 /**
  * 取り込みの種類（PBI-100）。issues：Issue の取り込み、reviews：PR のレビューの取り込み（レビュー用のラベルと自分への
@@ -199,6 +202,11 @@ export const SactySettings = z.object({
   ticketIntervalSec: IntakeIntervalInput("input.ticketIntervalInvalid"),
   /** Slack の通知先（PBI-38。PBI-115 でプロジェクトから移した）。無ければ通知しない。 */
   notification: SlackNotification.optional(),
+  /**
+   * メモリーを残す日数（PBI-127）。有効な最終利用日からこの日数を過ぎたメモリーを消す。空は「設定しない」
+   * （DEFAULT_MEMORY_RETENTION_DAYS）。
+   */
+  memoryRetentionDays: numberInput(z.number().int().min(1).max(MAX_MEMORY_RETENTION_DAYS)),
 });
 export type SactySettings = z.infer<typeof SactySettings>;
 export type SactySettingsInput = z.input<typeof SactySettings>;

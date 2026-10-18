@@ -17,6 +17,7 @@ import {
 } from "@sacty/core";
 import { type AuditService, causeStatus, sortCauses, weekStart } from "./audits.js";
 import { redactLog } from "./ci.js";
+import { lastUsefulAt, usefulDates } from "./memory.js";
 
 /*
  * 完了したタスクの監査を、作業履歴の記録（タスクの監査の状態。Audit… のイベントを畳み込んだもの）から組み立てる（PBI-125）。
@@ -37,6 +38,22 @@ export type AuditLedger = {
   /** 監査の画面・レポートに出す文（元のタスクの題など）の秘密情報を伏せる関数（プロジェクトごと）。 */
   auditHide(projectId: string): Promise<(text: string) => string>;
 };
+
+/** メモリーの有効な最終利用日と、登録したメモリー（ほかのタスクの監査が登録したものを含む。PBI-127）。 */
+type MemoryIndex = {
+  dates: Map<string, string>;
+  registered: Map<string, NonNullable<Task["audit"]>["memories"][number]>;
+};
+
+/** すべてのタスクから、メモリーの集計を作る（画面の形を作るときに1回だけ）。 */
+function memoryIndex(tasks: readonly Task[]): MemoryIndex {
+  return {
+    dates: usefulDates(tasks),
+    registered: new Map(
+      tasks.flatMap((t) => (t.audit?.memories ?? []).map((m) => [m.id, m] as const)),
+    ),
+  };
+}
 
 /** 監査の画面・レポートに出す文の、秘密情報を伏せる関数。 */
 type Hide = (text: string) => string;
@@ -146,6 +163,7 @@ export class LedgerAuditService implements AuditService {
     causes: Map<string, CauseInfo>,
     byId: Map<string, Task>,
     hide: Hide,
+    memory: MemoryIndex,
   ): TaskAudit {
     const audit = task.audit;
     if (!audit) throw new Error("the task has no audit");
@@ -163,6 +181,7 @@ export class LedgerAuditService implements AuditService {
             : "deepDiving";
     const next = nextAuditDive(audit);
     const finishedAt = audit.completedAt ?? audit.failed?.at;
+    const { dates, registered } = memory;
     return {
       taskId: task.id,
       projectId: task.projectId,
@@ -201,8 +220,13 @@ export class LedgerAuditService implements AuditService {
         body: m.body,
         step: m.step,
         at: m.at,
+        lastUsefulAt: lastUsefulAt(m.at, dates.get(m.id)),
         ...(m.deleted ? { deleted: m.deleted } : {}),
       })),
+      usefulMemories: (audit.survey?.usefulMemories ?? []).flatMap((id) => {
+        const m = registered.get(id);
+        return m ? [{ id, scope: m.scope, title: m.title }] : [];
+      }),
     };
   }
 
@@ -221,6 +245,7 @@ export class LedgerAuditService implements AuditService {
       this.causeInfo(task.projectId, tasks),
       new Map(tasks.map((t) => [t.id, t])),
       hide,
+      memoryIndex(tasks),
     );
   }
 
@@ -239,7 +264,12 @@ export class LedgerAuditService implements AuditService {
     const byId = new Map(tasks.map((t) => [t.id, t]));
     const causes = this.causeInfo(projectId, tasks);
     const audited = this.audited(projectId, tasks);
-    const views = audited.map((t) => ({ task: t, audit: this.view(t, causes, byId, hide) }));
+    // メモリーの集計は、一覧の中で1回だけ行う（監査のタスクごとに全タスクを走査し直さない。PR #137 レビュー指摘）
+    const memory = memoryIndex(tasks);
+    const views = audited.map((t) => ({
+      task: t,
+      audit: this.view(t, causes, byId, hide, memory),
+    }));
     const rows: AuditRow[] = views
       .map(({ task, audit }) => ({
         taskId: task.id,

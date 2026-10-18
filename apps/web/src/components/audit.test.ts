@@ -34,6 +34,7 @@ const audit = (patch: Partial<TaskAudit>): TaskAudit => ({
   deepDives: [],
   findings: [],
   memories: [],
+  usefulMemories: [],
   ...patch,
 });
 
@@ -260,6 +261,7 @@ describe("監査が登録したメモリー（PBI-126）", () => {
     body: "**biome** を使う",
     step: "implement" as const,
     at: "2026-10-01T00:00:00.000Z",
+    lastUsefulAt: "2026-10-05T00:00:00.000Z",
   };
 
   it("登録したメモリーの題・階層・概要・中身と、消すボタンを出す", () => {
@@ -309,5 +311,45 @@ describe("監査が登録したメモリー（PBI-126）", () => {
     locale = "en";
     expect(render(audit({ memories: [memory] }))).toContain("Registered memories");
     locale = "ja";
+  });
+});
+
+describe("役に立ったメモリーと期限での削除（PBI-127）", () => {
+  const memory = {
+    id: "m1",
+    scope: "project" as const,
+    title: "知見",
+    summary: "概要",
+    body: "中身",
+    step: "implement" as const,
+    at: "2026-10-01T00:00:00.000Z",
+    lastUsefulAt: "2026-10-05T00:00:00.000Z",
+  };
+
+  it("役に立ったメモリーの欄と、登録したメモリーの有効な最終利用日を出す", () => {
+    locale = "ja";
+    const html = render(
+      audit({
+        memories: [memory],
+        usefulMemories: [{ id: "m9", scope: "repository", title: "前の知見" }],
+      }),
+    );
+    expect(html).toContain("役に立ったメモリー");
+    expect(html).toContain('data-testid="audit-useful-memory-m9"');
+    expect(html).toContain("前の知見");
+    expect(html).toContain("有効な最終利用日：2026-10-05");
+    expect(render(audit({}))).not.toContain("役に立ったメモリー");
+  });
+
+  it("期限で消したメモリーは印と理由の補足を出す", () => {
+    locale = "ja";
+    const html = render(
+      audit({
+        memories: [{ ...memory, deleted: { at: "2026-12-01T00:00:00.000Z", reason: "expired" } }],
+      }),
+    );
+    expect(html).toContain("期限で消した");
+    expect(html).toContain("メモリーを残す日数");
+    expect(html).not.toContain("有効な最終利用日：");
   });
 });

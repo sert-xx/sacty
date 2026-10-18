@@ -89,6 +89,13 @@ as a memory. Only the audit registers memories. No setup is needed.
 - In later tasks, step agents read the index (title, summary, last useful date) of the memories of the task's project and target repository,
   and open only the relevant ones. They never read other projects' memories. The Goal Guardian gets none.
 - Memories rank below your instructions, the context's rules and skills, and the repository's AGENTS.md and so on; when they conflict, those win.
+- The last useful date is the last day the memory helped. When a task opens a memory and that task's audit judges it helpful, the date is updated
+  from that task's completion date (a newer date stays as it is). The audit card's "Memories that helped" lists the ones that helped in that task.
+- Whether a memory was opened is counted from the session logs of the task's runs. Runs whose logs are missing or unreadable are not counted, so if
+  a memory that should be helping never gets a newer date, check the daemon log for "メモリーを開いたかを数えるログを読めませんでした" and the
+  `runs/` folder in the data directory.
+- Memories whose last useful date is older than "Days to keep memories" in the sacty settings (1 to 3650; 90 if empty) are deleted
+  automatically. Those that expire while sacty is stopped are deleted at the next startup.
 - Each layer holds up to 30 memories. Beyond that, the ones with the oldest last useful date are deleted.
 - The audit card in the task details shows the memories that audit registered. Delete a wrong memory with "Delete" → "Confirm delete". A deleted
   memory cannot be restored. You cannot add memories by hand.

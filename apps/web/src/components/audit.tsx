@@ -6,6 +6,7 @@ import {
   type AuditMemory,
   type AuditProposal,
   type AuditTarget,
+  type AuditUsefulMemory,
   type TaskAudit,
 } from "@sacty/core";
 import Link from "next/link";
@@ -193,8 +194,35 @@ export function TaskAuditCard({ audit }: { audit: TaskAudit | null }) {
           )}
         </div>
       )}
+      {audit.usefulMemories.length > 0 && <UsefulMemories memories={audit.usefulMemories} />}
       {audit.memories.length > 0 && <AuditMemories memories={audit.memories} />}
     </CardSection>
+  );
+}
+
+/** タスクで役に立ったと監査が判断したメモリー（PBI-127）。 */
+function UsefulMemories({ memories }: { memories: AuditUsefulMemory[] }) {
+  const m = useMessages().audit.memories;
+  return (
+    <div className="flex flex-col gap-2">
+      <h3 className="text-sm font-semibold">
+        <WithHint hint={m.usefulHint}>{m.usefulTitle}</WithHint>
+      </h3>
+      <ul className="flex flex-col gap-1 text-sm">
+        {memories.map((memory) => (
+          <li
+            key={memory.id}
+            data-testid={`audit-useful-memory-${memory.id}`}
+            className="min-w-0 [overflow-wrap:anywhere]"
+          >
+            <span className="font-medium">{memory.title}</span>{" "}
+            <span className="text-xs text-muted-foreground">
+              {memory.scope === "project" ? m.project : m.repository}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 
@@ -226,14 +254,27 @@ function AuditMemories({ memories }: { memories: AuditMemory[] }) {
               )}
               {memory.deleted && (
                 <span className="inline-flex items-center gap-1 rounded-full border border-border bg-back-soft px-2 py-0.5 text-xs text-muted-foreground">
-                  {memory.deleted.reason === "person" ? m.deleted : m.deletedByCapacity}
+                  {memory.deleted.reason === "person"
+                    ? m.deleted
+                    : memory.deleted.reason === "capacity"
+                      ? m.deletedByCapacity
+                      : m.deletedByExpiry}
                   {memory.deleted.reason === "capacity" && <Hint text={m.deletedHint} />}
+                  {memory.deleted.reason === "expired" && <Hint text={m.deletedByExpiryHint} />}
                 </span>
               )}
             </div>
             <p className="min-w-0 text-[13px] text-muted-foreground [overflow-wrap:anywhere]">
               {memory.summary}
             </p>
+            {!memory.deleted && (
+              <p
+                className="text-xs text-muted-foreground"
+                data-testid={`audit-memory-useful-${memory.id}`}
+              >
+                {m.lastUseful(memory.lastUsefulAt.slice(0, 10))}
+              </p>
+            )}
             {!memory.deleted && (
               <>
                 <Markdown>{memory.body}</Markdown>

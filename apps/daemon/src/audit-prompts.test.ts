@@ -68,6 +68,7 @@ describe("大まかな監査の出力（PBI-125）", () => {
         { step: "requirements", reason: "差し戻し" },
         { step: "design", reason: "観点の漏れ" },
       ].slice(0, AUDIT_MAX_CONCERNS),
+      usefulMemories: [],
     });
   });
 
@@ -81,7 +82,7 @@ describe("大まかな監査の出力（PBI-125）", () => {
     );
     expect(
       extractAuditSurvey(block({ "sacty-audit-survey": { summary: "x", concerns: [] } }), task),
-    ).toEqual({ ok: true, summary: "x", concerns: [] });
+    ).toEqual({ ok: true, summary: "x", concerns: [], usefulMemories: [] });
   });
 });
 
@@ -399,6 +400,46 @@ describe("深掘りのメモリーの登録（PBI-126）", () => {
     const disabled = buildAuditDivePrompt(task, [], zero, { runs: [] }, base);
     expect(disabled).not.toContain("memories");
     expect(disabled).not.toContain("既存のメモリー");
+  });
+});
+
+describe("大まかな監査の、役に立ったメモリー（PBI-127）", () => {
+  const opened = [{ id: "m1", title: "題", summary: "概要", count: 2 }];
+
+  it("開いたメモリーと判断の決まりを入れる。メモリーを使わなければ入れない", () => {
+    const text = buildAuditSurveyPrompt(task, [], zero, { runs: [] }, opened);
+    expect(text).toContain("このタスクで開いたメモリー");
+    expect(text).toContain("- m1：題：概要（2 回）");
+    expect(text).toContain("usefulMemories");
+    const none = buildAuditSurveyPrompt(task, [], zero, { runs: [] }, []);
+    expect(none).toContain("このタスクで開いたメモリー");
+    expect(none).toContain("（なし）");
+    const disabled = buildAuditSurveyPrompt(task, [], zero, { runs: [] });
+    expect(disabled).not.toContain("このタスクで開いたメモリー");
+    expect(disabled).not.toContain("usefulMemories");
+  });
+
+  it("役に立ったメモリーは、開いたものだけを残し、重なりを1つにする", () => {
+    const read = extractAuditSurvey(
+      block({
+        "sacty-audit-survey": {
+          summary: "s",
+          concerns: [],
+          usefulMemories: ["m1", "m1", "m2", 3, ""],
+        },
+      }),
+      task,
+      undefined,
+      new Set(["m1"]),
+    );
+    expect(read.ok && read.usefulMemories).toEqual(["m1"]);
+    const missing = extractAuditSurvey(
+      block({ "sacty-audit-survey": { summary: "s", concerns: [] } }),
+      task,
+      undefined,
+      new Set(["m1"]),
+    );
+    expect(missing.ok && missing.usefulMemories).toEqual([]);
   });
 });
 

@@ -1906,8 +1906,11 @@ export const AuditMemoryRecord = z.discriminatedUnion("scope", [
 ]);
 export type AuditMemoryRecord = z.infer<typeof AuditMemoryRecord>;
 
-/** メモリーを消した理由：人が消した・階層の件数の上限を超えたので古いものを消した（PBI-126）。 */
-export const MEMORY_DELETE_REASONS = ["person", "capacity"] as const;
+/**
+ * メモリーを消した理由：人が消した・階層の件数の上限を超えたので古いものを消した（PBI-126）・有効な最終利用日から残す日数を
+ * 過ぎた（PBI-127）。
+ */
+export const MEMORY_DELETE_REASONS = ["person", "capacity", "expired"] as const;
 export type MemoryDeleteReason = (typeof MEMORY_DELETE_REASONS)[number];
 
 /** 監査を待つ（タスクが完了した）。capUsd は監査の予算の上限。 */
@@ -1926,6 +1929,12 @@ const AuditSurveyed = z.object({
     concerns: z
       .array(z.object({ step: StepKey, reason: z.string().min(1).max(500) }))
       .max(StepKey.options.length),
+    /**
+     * タスクの実行で開いたメモリー（sacty がセッションログから数えた）と、そのうち監査が役に立ったと判断したもの（PBI-127）。
+     * 役に立ったものの有効な最終利用日を、このタスクの完了日にする。
+     */
+    openedMemories: z.array(z.string().min(1)).max(200).default([]),
+    usefulMemories: z.array(z.string().min(1)).max(200).default([]),
     ...AuditRun,
   }),
 });

@@ -73,6 +73,8 @@ export type KnownMemory = {
   /** 中身を読める、コンテナの中の場所。 */
   path: string;
 };
+/** タスクの実行で開いたメモリー（役に立ったかを判断させるため。PBI-127）。count は開いた回数。 */
+export type OpenedMemory = { id: string; title: string; summary: string; count: number };
 /** 人が却下した提案と理由（同じ提案を繰り返さないため）。 */
 export type RejectedAuditProposal = { title: string; reason: string };
 
@@ -159,6 +161,8 @@ export function buildAuditSurveyPrompt(
   activity: readonly ActivityEvent[],
   counts: Record<AuditEvidenceKind, number>,
   logs: ChatLogs,
+  /** タスクの実行で開いたメモリー。メモリーを使わないなら無い（PBI-127）。 */
+  opened?: readonly OpenedMemory[],
 ): string {
   const steps = task.steps.map((s) => s.key);
   return [
@@ -170,9 +174,11 @@ export function buildAuditSurveyPrompt(
     "- 懸念のある工程は、差し戻し・指摘・やり直し・ツール呼び出しの失敗・遠回りが実際にあった工程だけにする。何も起きていなければ、挙げない（空でよい）",
     `- 挙げる工程は最大 ${AUDIT_MAX_CONCERNS} つ。根拠の多い順。工程は次のキーから選ぶ：${steps.join("・") || "（なし）"}`,
     "- 理由には、その工程で何が起きたかを、台帳かログの事実で短く書く",
+    ...(opened ? usefulMemoryRuleLines() : []),
     ...AUDIT_RULES,
     ...guardianCodeLines(task, "implemented"),
     "",
+    ...(opened ? openedMemoryLines(opened) : []),
     ...chatLogLines(logs),
     "",
     ...ledgerLines(task, activity, counts),
@@ -185,6 +191,7 @@ export function buildAuditSurveyPrompt(
         [AUDIT_SURVEY_HEADING]: {
           summary: "経緯の要約（Markdown。何が起きたか・どこで手間がかかったか）",
           concerns: [{ step: steps[0] ?? "implement", reason: "その工程で起きたこと" }],
+          ...(opened ? { usefulMemories: [opened[0]?.id ?? "メモリーの ID"] } : {}),
         },
       },
       null,
@@ -196,8 +203,32 @@ export function buildAuditSurveyPrompt(
 
 /** 大まかな監査の出力。読めなければ、理由。 */
 export type AuditSurveyOutput =
-  | { ok: true; summary: string; concerns: { step: StepKey; reason: string }[] }
+  | {
+      ok: true;
+      summary: string;
+      concerns: { step: StepKey; reason: string }[];
+      /** 役に立ったメモリー（開いたものだけ。PBI-127）。 */
+      usefulMemories: string[];
+    }
   | { ok: false; reason: DaemonText };
+
+/** 大まかな監査の指示の、開いたメモリーが役に立ったかの判断の決まり（PBI-127）。 */
+function usefulMemoryRuleLines(): string[] {
+  return [
+    "- 下の「このタスクで開いたメモリー」のうち、このタスクの作業で実際に役に立ったもの（その知見に沿って進め、遠回りや差し戻しを避けられたもの）の ID を usefulMemories に挙げる。開いただけ・関係しなかった・誤っていたものは挙げない。無ければ空でよい",
+  ];
+}
+
+/** 大まかな監査の指示の、開いたメモリーの節（PBI-127）。 */
+function openedMemoryLines(opened: readonly OpenedMemory[]): string[] {
+  return [
+    "--- このタスクで開いたメモリー（sacty がセッションログから数えた） ---",
+    ...(opened.length > 0
+      ? opened.map((m) => `- ${m.id}：${m.title}：${m.summary}（${m.count} 回）`)
+      : ["（なし）"]),
+    "",
+  ];
+}
 
 const text = (v: unknown) => (typeof v === "string" ? v.trim() : "");
 
@@ -232,6 +263,8 @@ export function extractAuditSurvey(
   output: string,
   task: Task,
   hide: OutputRedactor = keep,
+  /** タスクの実行で開いたメモリーの ID（役に立ったものは、この中からだけ残す。PBI-127）。 */
+  opened: ReadonlySet<string> = new Set(),
 ): AuditSurveyOutput {
   const steps = new Set(task.steps.map((s) => s.key));
   const str = redacted(hide);
@@ -247,7 +280,10 @@ export function extractAuditSurvey(
       if (concerns.some((x) => x.step === step.data)) continue;
       concerns.push({ step: step.data, reason: cut(reason, 500) });
     }
-    return { summary: cut(str(v.summary), AUDIT_TEXT_MAX), concerns };
+    const useful = Array.isArray(v.usefulMemories)
+      ? [...new Set(v.usefulMemories.map(text).filter((id) => opened.has(id)))]
+      : [];
+    return { summary: cut(str(v.summary), AUDIT_TEXT_MAX), concerns, usefulMemories: useful };
   });
   if (!found) return { ok: false, reason: message("audit.unreadable") };
   return { ok: true, ...found.value, concerns: found.value.concerns.slice(0, AUDIT_MAX_CONCERNS) };
