@@ -73,4 +73,32 @@ describe("デコードすると秘密情報に戻る JSON のエスケープを�
     expect(performance.now() - start).toBeLessThan(2000);
     expect(out.endsWith(`"${REDACTED}"`)).toBe(true);
   });
+
+  it("エスケープした引用符の多い、長い 1 つの JSON の文字列でも、二乗の時間にならない（PR #143 レビュー指摘）", () => {
+    // 秘密情報を含まない（エスケープした " ごとに末尾まで解析し直すと、120KB で数秒かかっていた）
+    const plain = JSON.stringify('"a'.repeat(40_000));
+    let start = performance.now();
+    expect(redactEscaped(plain, ["unrelated-secret-value"])).toBe(plain);
+    expect(performance.now() - start).toBeLessThan(500);
+    // 末尾に、エスケープした秘密情報を含む
+    const tail = `{"body": "${'\\"a'.repeat(40_000)} sk-live-1234\\u0035"}`;
+    start = performance.now();
+    const body = (JSON.parse(hide(tail)) as { body: string }).body;
+    expect(performance.now() - start).toBeLessThan(500);
+    expect(body.endsWith(` ${REDACTED}`)).toBe(true);
+    expect(body).not.toContain(SECRET);
+  });
+
+  it("エスケープした引用符からは、文字列が始まるとみなさない（前のバックスラッシュが偶数個なら始まる）", () => {
+    // \" の後ろから始めると、秘密情報の文字列を取り違える（正しい組でだけ確かめる）
+    expect(JSON.parse(hide('{"a": "x\\" y", "b": "sk-live-1234\\u0035"}'))).toEqual({
+      a: 'x" y',
+      b: REDACTED,
+    });
+    // \\" は、バックスラッシュのエスケープの後の、エスケープしていない "（文字列の終わり）
+    expect(JSON.parse(hide('{"a": "x\\\\", "b": "sk-live-1234\\u0035"}'))).toEqual({
+      a: "x\\",
+      b: REDACTED,
+    });
+  });
 });

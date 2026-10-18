@@ -64,7 +64,7 @@ Code: `apps/daemon/src/service.ts` (`prefetchSecrets`, `prefetchProjectSecrets`,
   strings of 16 or more characters in auth files) are replaced with `[REDACTED]` before being recorded in the Activity (longest values first, regardless of length).
   Message codes and arguments with fixed values are not changed; only free text is replaced.
 - JSON strings (`"…"`) in the output that contain a value once their escapes (such as `\u0073`) are decoded are also replaced with redacted strings (sacty decodes
-  the output's JSON for review comments, audits, reproduction tests, and so on). A string may start at any `"` in the output, and JSON inside escaped JSON is checked too.
+  the output's JSON for review comments, audits, reproduction tests, and so on). A string may start at any `"` in the output (except escaped `"`; each position is read once, so the time is proportional to the output length), and JSON inside escaped JSON is checked too.
 - Session logs are written after redacting both the values themselves and their JSON-string forms ([Activity log](event-log.en.md)).
 - Reasons for failures in getting PF tokens, starting the host's MCP servers, and notifications are truncated after redacting the values (and their JSON forms and each line).
 - For AI, PFs, and context MCP servers going through the gateway (including `env` of command-type servers started on the host), values are not passed to containers. For settings
