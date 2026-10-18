@@ -34,7 +34,7 @@ npx sacty config init   # creates ~/.sacty/config.yaml
 npx sacty up
 ```
 
-This starts the daemon and the web UI and prints `http://127.0.0.1:4700` in the terminal. Open it in your browser (it does not open automatically). Press Ctrl+C to stop both. You can change the ports with `--port` and `--daemon-port`
+This starts the daemon and the web UI and prints the web UI sign-in URL (`http://127.0.0.1:4700/auth?token=…`) in the terminal. Open it in your browser (it does not open automatically). Only browsers that opened this URL can use the web UI. Press Ctrl+C to stop both. You can change the ports with `--port` and `--daemon-port`
 ([CLI](cli.en.md#sacty-up)).
 
 ## Web UI screens

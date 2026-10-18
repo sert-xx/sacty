@@ -5,25 +5,50 @@
 `sacty up` starts the daemon (`apps/daemon`) and the web UI (Next.js in `apps/web`) as child processes, and stops both when either one ends.
 Only one daemon runs per `SACTY_HOME` (determined by an OS file lock).
 
-Related ADRs: none
+Related ADRs: [The web UI is usable only from browsers that signed in with the per-start secret](../adr/20261018-0414-web-session-auth.md)
 
 ## sacty up
 
 - The options are `--port` (the web UI port; default `4700`) and `--daemon-port` (the daemon port; default `4710`). Both must be integers from 1 to 65535,
   and the same value for both is an error.
-- On every start, it creates the token used between the daemon and the web UI (32 random bytes in hex).
+- On every start, it creates the token used between the daemon and the web UI (32 random bytes in hex) and the web UI sign-in secret
+  (32 random bytes in base64url; separate from the daemon token).
 - It starts the daemon with the environment variables `SACTY_DAEMON_PORT`, `SACTY_DAEMON_TOKEN`, and `SACTY_WEB_URL` (`http://127.0.0.1:<web-ui-port>`; used for links in notifications),
-  and waits up to 15 seconds for `GET /api/health` to respond (checking every 200 milliseconds). If it does not respond, it stops.
+  (removing the web UI sign-in secret `SACTY_WEB_TOKEN` even if the user's shell has it), and waits up to 15 seconds for `GET /api/health` to respond (checking every 200 milliseconds). If it does not respond, it stops.
 - Once the daemon responds, it writes the daemon's address and token to `SACTY_HOME/daemon.json` (mode 0600) (read by `sacty context preview`).
   If the file already holds another sacty's address and that address responds with its token, it does not overwrite the file and shows a warning. When exiting, it removes the file only if it wrote it
   (the address and token are the same).
-- Next, it starts the web UI with `next start -H 127.0.0.1 -p <web-ui-port>`, with `SACTY_DAEMON_URL` and `SACTY_DAEMON_TOKEN`.
+- Next, it starts the web UI with `next start -H 127.0.0.1 -p <web-ui-port>`, with `SACTY_DAEMON_URL`, `SACTY_DAEMON_TOKEN`,
+  `SACTY_WEB_TOKEN` (the web UI sign-in secret), and `SACTY_WEB_PORT` (the web UI port).
+- It prints the web UI sign-in URL (`http://127.0.0.1:<web-ui-port>/auth?token=<sign-in secret>`) in the terminal (see "Web UI sign-in" below).
 - On SIGINT or SIGTERM, it sends SIGTERM to the child processes and exits after all of them have ended. Children still running after 30 seconds receive SIGKILL
   (it waits longer than the daemon's 20-second cleanup limit).
 - When a child process ends unexpectedly, it stops the other one too and exits with a failure exit code (1 even if the child's exit code was 0). When the daemon
   exits with exit code `3` (`ALREADY_RUNNING_EXIT_CODE`), it reports that the daemon did not start because another sacty is running.
 
-Code: `packages/cli/src/index.ts` (`up`, `waitForDaemon`, `parsePort`), `packages/cli/src/context-preview.ts` (`claimDaemonFile`, `removeDaemonFile`, `DAEMON_FILE`)
+Code: `packages/cli/src/index.ts` (`up`, `waitForDaemon`, `parsePort`), `packages/cli/src/up-env.ts` (`daemonEnv`, `webEnv`, `signInUrl`), `packages/cli/src/context-preview.ts` (`claimDaemonFile`, `removeDaemonFile`, `DAEMON_FILE`)
+
+## Web UI sign-in
+
+Step containers can also reach the host's 127.0.0.1 (`host.docker.internal`), so the web UI relays to the daemon only the requests from the
+browser of the person who started sacty.
+
+- A browser that opens the sign-in URL (`/auth?token=<secret>`) gets a cookie (named `sacty-session-<web-ui-port>`; the value is an
+  HMAC-SHA256 made from the secret; `HttpOnly`, `SameSite=Lax`, `Path=/`, 30 days) and is sent to the top (`/`). The redirect keeps the Host
+  the browser opened (`127.0.0.1` and `localhost` get separate cookies). A wrong or empty secret gets 401 and no cookie. Opening just `/auth`
+  after signing in sends the browser to the top.
+- The sign-in URL can be used any number of times while that start lasts (you can open it again in another browser). After a restart the
+  secret changes, and the old cookie and URL no longer work.
+- On every request (pages, live refreshes, downloads, and Server Actions; except built static files and icons), the Proxy
+  (`apps/web/src/proxy.ts`) checks the following. When it refuses, it returns only a fixed text in the screen's language, without the page
+  parts (which query the daemon).
+  - If the Host is not a loopback name (`127.0.0.1`, `localhost`, `[::1]`; any port), 403 (against DNS rebinding).
+  - Without the cookie of the current start, 401. Without the web UI secret (not started with `sacty up`), also 401, with how to start.
+- Where requests are relayed to the daemon (`daemonFetch`), the cookie of the current start is checked again, and without it the request is
+  refused without using the daemon token (even an entry point outside the Proxy's range is not relayed).
+- The daemon API's authentication (`SACTY_DAEMON_TOKEN`) does not change. The web UI secret is passed to neither the daemon nor step containers.
+
+Code: `apps/web/src/proxy.ts`, `apps/web/src/lib/web-auth.ts`, `apps/web/src/lib/web-guard.ts`, `apps/web/src/lib/daemon.ts` (`daemonFetch`)
 
 ## Daemon startup order
 

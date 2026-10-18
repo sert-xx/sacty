@@ -19,6 +19,13 @@ const ja = {
     invalidAmount: "金額を正しく入力してください。",
     atPath: (text: string, path: string) => `${text}（${path}）`,
   },
+  /** 画面の認証（PBI-129）。認証が無いときは、画面の部品を使わずにこの文だけを出す。 */
+  auth: {
+    title: "sacty に入る",
+    signIn: "`sacty up` が端末に表示した URL を、このブラウザーで開いてください。",
+    notConfigured: "画面の認証が設定されていません。`sacty up` で起動してください。",
+    wrongHost: "この画面は http://127.0.0.1 か localhost で開いてください。",
+  },
   action: {
     daemonDown: "操作できませんでした。デーモンが動いているか確認してください。",
     createFailed: "タスクを作成できませんでした。デーモンが動いているか確認してください。",
@@ -55,6 +62,12 @@ const en: CommonMessages = {
     checkFile: "Check the contents of the file.",
     invalidAmount: "Enter a valid amount.",
     atPath: (text, path) => `${text} (${path})`,
+  },
+  auth: {
+    title: "Sign in to sacty",
+    signIn: "Open the URL that `sacty up` printed in the terminal in this browser.",
+    notConfigured: "Web UI sign-in is not set up. Start sacty with `sacty up`.",
+    wrongHost: "Open this page at http://127.0.0.1 or localhost.",
   },
   action: {
     daemonDown: "Could not complete the action. Check that the daemon is running.",

@@ -1,6 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("next/server", () => ({ connection: async () => {} }));
+// 起動した本人のブラウザ（今の起動の cookie）からの問い合わせとする（PBI-129）
+vi.mock("next/headers", async () => {
+  const { sessionValue } = await import("./web-auth");
+  return { cookies: async () => ({ get: () => ({ value: sessionValue("web-secret") }) }) };
+});
 vi.mock("@/i18n/server", async () => {
   const { messagesFor } = await import("@/i18n");
   return { getMessages: async () => messagesFor("ja") };
@@ -32,6 +37,7 @@ describe("画面の取り直しから、デーモンへの問い合わせに中�
     signals.length = 0;
     vi.stubEnv("SACTY_DAEMON_URL", "http://127.0.0.1:1");
     vi.stubEnv("SACTY_DAEMON_TOKEN", "test-token");
+    vi.stubEnv("SACTY_WEB_TOKEN", "web-secret");
     hangingDaemon();
   });
   afterEach(() => {

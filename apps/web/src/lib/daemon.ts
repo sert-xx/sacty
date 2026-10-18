@@ -19,9 +19,11 @@ import {
   type TaskAudit,
   type TriageKind,
 } from "@sacty/core";
+import { cookies } from "next/headers";
 import { connection } from "next/server";
 import { getMessages } from "@/i18n/server";
 import { currentDaemonSignal } from "@/lib/daemon-signal";
+import { isValidSession, sessionCookieName, WEB_PORT_ENV, WEB_TOKEN_ENV } from "@/lib/web-auth";
 
 /**
  * デーモンのAPIを呼ぶ。サーバー側でだけ使う（トークンをブラウザに渡さないため）。
@@ -35,6 +37,14 @@ async function daemonFetch(path: string, init: RequestInit = {}): Promise<Respon
   const token = process.env.SACTY_DAEMON_TOKEN;
   if (!url || !token) {
     throw new DaemonUnavailableError((await getMessages()).common.daemon.notConfigured);
+  }
+  // 起動した本人のブラウザ（今の起動の cookie）からのリクエストだけを中継する。Proxy でも断るが、Proxy の範囲から外れた
+  // 入口（Server Actions など）があっても、デーモンのトークンを使わせない（PBI-129）
+  const secret = process.env[WEB_TOKEN_ENV];
+  const session = (await cookies()).get(sessionCookieName(process.env[WEB_PORT_ENV]))?.value;
+  if (!isValidSession(session, secret)) {
+    const m = (await getMessages()).common.auth;
+    throw new DaemonUnavailableError(secret ? m.signIn : m.notConfigured);
   }
   // 画面の取り直しの中なら、ブラウザの中断と期限を、デーモンへの問い合わせ（本文を読む間も）に渡す（PR #119 再レビュー指摘）
   const signal = init.signal ?? currentDaemonSignal();
