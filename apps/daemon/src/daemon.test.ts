@@ -205,6 +205,7 @@ class FakeServices implements ServiceRunner {
     secrets?: readonly string[];
   }) {
     this.started.push(input);
+    this.order.push("start");
     // 起動の待ち（up --wait）を、打ち切られるまで終わらせない（一時停止・中止のテスト）
     if (this.hold) {
       this.entered.resolve();
@@ -220,6 +221,13 @@ class FakeServices implements ServiceRunner {
   }
   async stop(runId: string) {
     this.stopped.push(runId);
+  }
+  /** イメージ ID（PBI-130）。決めた名前だけを確定させ、呼ばれた順を起動と同じ記録に残す。 */
+  imageIds: Record<string, string> = {};
+  order: string[] = [];
+  async imageId(image: string) {
+    this.order.push(`imageId:${image}`);
+    return this.imageIds[image];
   }
   /** true なら、起動を打ち切られるまで待つ。 */
   hold = false;
@@ -4022,6 +4030,38 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       expect(started.every((e) => e.type === "ServicesStarted" && !e.payload.sharedPorts)).toBe(
         true,
       );
+      activity.close();
+    });
+
+    it("エージェントのイメージを、サービスを起動する前にイメージ ID に確定させ、その ID で実行する（PBI-130）", async () => {
+      const services = new FakeServices();
+      const id = `sha256:${"b".repeat(64)}`;
+      services.imageIds = { "sacty-agent:test": id };
+      const tests = new FakeTests([{ exitCode: 0, output: "ok", durationMs: 1 }]);
+      const { activity, service, executor } = await toImplement([implement("# 実装"), review()], {
+        tests,
+        services,
+        planner: servicesPlan(),
+      });
+      await drain(service);
+      // サービスを起動する前に確定させる（起動の後にタグが変わっても、確定したイメージで動く）
+      expect(services.order.indexOf("imageId:sacty-agent:test")).toBeLessThan(
+        services.order.indexOf("start"),
+      );
+      expect(executor.images[3]?.image).toBe(id);
+      activity.close();
+    });
+
+    it("イメージ ID を確かめられなければ、名前のまま実行する（PBI-130）", async () => {
+      const services = new FakeServices();
+      const tests = new FakeTests([{ exitCode: 0, output: "ok", durationMs: 1 }]);
+      const { activity, service, executor } = await toImplement([implement("# 実装"), review()], {
+        tests,
+        services,
+        planner: servicesPlan(),
+      });
+      await drain(service);
+      expect(executor.images[3]?.image).toBe("sacty-agent:test");
       activity.close();
     });
 

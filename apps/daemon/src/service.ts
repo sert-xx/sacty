@@ -4422,6 +4422,12 @@ export class TaskService {
           estimated: false,
         };
       }
+      // エージェントのイメージを、サービスを起動する前にイメージ ID に確定させる。サービスのビルドがタグを書き換えても、
+      // 確定したイメージで動かす（PBI-130）。確かめられなければ名前のまま（無いイメージは、実行の失敗で示す）
+      const imageName = stepImage.ok ? stepImage.image : config.config.image;
+      const image = executed
+        ? imageName
+        : ((await this.deps.services?.imageId?.(imageName)) ?? imageName);
       // docker compose のサービス（PBI-47）。この工程で使うなら、実行の前に起動し、終わったら消す
       const workspaceDir = snapshotDir ?? ready.dir;
       const services = executed
@@ -4438,7 +4444,7 @@ export class TaskService {
       executed ??= await this.execute({
         agent,
         taskId: task.id,
-        image: stepImage.ok ? stepImage.image : config.config.image,
+        image,
         ...(stepImage.ok ? { imageEnv: stepImage.env } : {}),
         ...(started ? serviceConnection(started) : {}),
         runId,

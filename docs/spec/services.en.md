@@ -6,7 +6,7 @@ When tests or checks need a database, a mock API, or similar, sacty starts docke
 to their network (agents are not given Docker permissions). The compose file is either the target repository's own or a shared compose
 (in another repository) written in the project, never both.
 
-Related ADR: none
+Related ADR: [Service builds cannot tag shared images, and the agent image is pinned to an ID](../adr/20261018-0430-compose-build-image-isolation.md)
 
 ## When services start
 
@@ -25,15 +25,20 @@ Code: `apps/daemon/src/service.ts` (`serviceSpec`, `startServices`, `stopService
 2. The file is normalized with `docker compose -f <file> config --format json --no-env-resolution`.
 3. Only the services in use and their dependencies (`depends_on`, `network_mode: service:`) are kept, and the safety check runs (below).
 4. `ports` and `container_name` are removed from each service, and each is put on the network `sacty`. Fixed names of networks and volumes are removed.
+   From services with `build`, `image` and `build.tags` are removed and `pull_policy: build` is set (so built images cannot take tags shared on the host, such
+   as the agent image; compose names them `<project>-<service>`).
    The owner label `io.sacty.owner` (the PID and start time of the daemon that started it) is added.
 5. With the settings written to a temporary file, the services start with `docker compose -p sacty-svc-<name derived from the run ID> -f <settings> up -d --wait --wait-timeout 300 <services>`.
    The agent and test containers connect with `--network sacty-svc-…_sacty`, and reach the services by service name and container port.
-6. Afterward (even on failure or timeout), `docker compose -p <name> down -v --remove-orphans` removes the containers, networks, and volumes.
+6. Afterward (even on failure or timeout), `docker compose -p <name> down -v --remove-orphans --rmi local` removes the containers, networks, volumes,
+   and built images.
+- In steps that use services, before starting them, the agent image (the step's image) is pinned to its image ID with `docker image inspect`, and the run uses
+  that ID (it keeps the pinned image even if the tag changes after the services start). If the ID cannot be read, the run uses the name.
 - Failure reasons are the last 2000 characters after redacting secrets.
 - At daemon startup, projects whose names start with `sacty-svc-` and whose owner-label daemon is not running (including those without the label) are
   removed. If `ps` cannot be read, nothing is removed.
 
-Code: `apps/daemon/src/services.ts` (`DockerComposeServices.startOnce`, `stop`, `cleanupAll`, `sanitizeCompose`, `composeProject`, `labelOwner`, `OWNER_LABEL`, `LOG_TAIL`)
+Code: `apps/daemon/src/services.ts` (`DockerComposeServices.startOnce`, `stop`, `cleanupAll`, `imageId`, `sanitizeCompose`, `composeProject`, `labelOwner`, `OWNER_LABEL`, `LOG_TAIL`)
 
 ## Safety check
 
@@ -42,7 +47,7 @@ If the services in use or their dependencies have any of the following, sacty do
 - `privileged`, `cap_add`, `devices`, `device_cgroup_rules`, `volumes_from`, `cgroup_parent`, `use_api_socket`, `provider`
 - `network_mode` (other than `service:` and `bridge`), `host` or `container:` for `pid`, `ipc`, `uts`, `userns_mode`, or `cgroup`, and `unconfined` in `security_opt`
 - Bind mounts outside the workspace (including types other than `volume` and `tmpfs`), a `build` context or Dockerfile outside the workspace, `additional_contexts`,
-  `ssh`, `network: host`, `privileged`, or `entitlements` in `build`, and `env_file` outside the workspace
+  `ssh`, `network: host`, `privileged`, `entitlements`, or `cache_to` in `build`, and `env_file` outside the workspace
 - Top-level `external` networks or volumes, network `driver` other than `bridge`, volume `driver` or `driver_opts`,
   and `secrets` or `configs` that are `external` or have a `file` outside the workspace
 

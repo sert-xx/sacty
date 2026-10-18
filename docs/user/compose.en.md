@@ -50,11 +50,14 @@ sacty normalizes the compose file with `docker compose config` before checking i
 
 - `privileged`, `cap_add`, `devices`, `volumes_from`, host networking, host PID, and similar (`network_mode: host`, `pid: host`, and so on), and
   unconfined in `security_opt`
-- `use_api_socket` (which passes the Docker API socket), `provider` (which runs a command on the host), and in build: `ssh`, `network: host`, `privileged`, and
-  `entitlements`
+- `use_api_socket` (which passes the Docker API socket), `provider` (which runs a command on the host), and in build: `ssh`, `network: host`, `privileged`,
+  `entitlements`, and `cache_to`
 - Mounts of paths outside the workspace (including the Docker socket), and `build`, `env_file`, `label_file`, `secrets`, `include`, or
   `extends` files outside the workspace (variables cannot be used in these paths)
 - External networks and volumes, network drivers other than bridge, and volume driver settings
+
+For services that build (`build`), `image` and `build.tags` are not used; sacty builds them every time under a name for that run only (so that host images,
+such as the agent image, are not overwritten). Built images are removed when the services stop.
 
 ## Shared compose
 

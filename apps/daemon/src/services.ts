@@ -276,6 +276,15 @@ export function sanitizeCompose(
       if (Array.isArray(service.build.entitlements) && service.build.entitlements.length > 0) {
         bad("build.entitlements は使えません");
       }
+      // ビルドの結果を、実行の外（ホストのディレクトリ・レジストリ）へ書き出す指定（PBI-130）
+      if (service.build.cache_to !== undefined) bad("build.cache_to は使えません");
+      // ビルドしたイメージに、ホストで共有するタグ（エージェントのイメージなど）を付けさせない（PBI-130）。image と
+      // build.tags を外すと、compose が実行ごとのプロジェクトの名前（<プロジェクト>-<サービス>）を付け、止めるときに
+      // down --rmi local で消す。外した名前のイメージを先に取りに行かず、毎回ビルドする
+      const { tags: _tags, ...build } = service.build;
+      service.build = build;
+      delete service.image;
+      service.pull_policy = "build";
     }
     for (const file of Array.isArray(service.env_file) ? (service.env_file as unknown[]) : []) {
       const path = isObject(file) ? file.path : file;
@@ -502,6 +511,11 @@ export interface ServiceRunner {
    * 起動したものを止めて消してから、失敗として返る。起動していなければ何もしない。
    */
   abort?(runId: string): void;
+  /**
+   * イメージの名前（タグ）を、今のイメージ ID にする（PBI-130）。サービスを起動する前に、エージェントのイメージを
+   * 確定させるのに使う。無ければ undefined。
+   */
+  imageId?(image: string): Promise<string | undefined>;
 }
 
 /** 出力の末尾（失敗の理由に添える）。 */
@@ -597,6 +611,12 @@ export class DockerComposeServices implements ServiceRunner {
       child.on("error", (error) => done({ code: 127, stdout, out: error.message }));
       child.on("close", (code) => done({ code: code ?? 1, stdout, out: stdout + stderr }));
     });
+  }
+
+  async imageId(image: string): Promise<string | undefined> {
+    const { code, stdout } = await this.docker(["image", "inspect", "--format", "{{.Id}}", image]);
+    const id = stdout.trim();
+    return code === 0 && /^sha256:[0-9a-f]{64}$/.test(id) ? id : undefined;
   }
 
   abort(runId: string): void {
@@ -752,12 +772,20 @@ export class DockerComposeServices implements ServiceRunner {
         .map(parseOwner)
         .some((owner) => owner && isRunning(owner, table));
       if (alive) continue;
-      await this.compose(["-p", name, "down", "-v", "--remove-orphans"]);
+      await this.compose(["-p", name, "down", "-v", "--remove-orphans", "--rmi", "local"]);
     }
   }
 
   async stop(runId: string): Promise<void> {
-    // プロジェクトの名前だけで止めて消せる（compose ファイルは要らない）
-    await this.compose(["-p", composeProject(runId), "down", "-v", "--remove-orphans"]);
+    // プロジェクトの名前だけで止めて消せる（compose ファイルは要らない）。ビルドしたイメージ（実行ごとの名前。PBI-130）も消す
+    await this.compose([
+      "-p",
+      composeProject(runId),
+      "down",
+      "-v",
+      "--remove-orphans",
+      "--rmi",
+      "local",
+    ]);
   }
 }
