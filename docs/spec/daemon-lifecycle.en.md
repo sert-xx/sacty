@@ -47,6 +47,8 @@ browser of the person who started sacty.
 - Where requests are relayed to the daemon (`daemonFetch`), the cookie of the current start is checked again, and without it the request is
   refused without using the daemon token (even an entry point outside the Proxy's range is not relayed).
 - The daemon API's authentication (`SACTY_DAEMON_TOKEN`) does not change. The web UI secret is passed to neither the daemon nor step containers.
+- When a live refresh of a page left open gets 401 (sacty was restarted and the old cookie no longer works), the page tells the user to open the new URL
+  printed in the terminal, separately from the daemon being unreachable (the last fetched data stays on screen).
 
 Code: `apps/web/src/proxy.ts`, `apps/web/src/lib/web-auth.ts`, `apps/web/src/lib/web-guard.ts`, `apps/web/src/lib/daemon.ts` (`daemonFetch`)
 

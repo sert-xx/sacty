@@ -12,7 +12,7 @@ import type { Messages } from "@/i18n";
 import { useMessages } from "@/i18n/client";
 import type { AgentFiles, RunLogMeta } from "@/lib/daemon";
 import { formatStamp } from "@/lib/labels";
-import { fetchLive, LIVE_INTERVAL_MS, pollWhileVisible } from "@/lib/live";
+import { fetchLive, LIVE_INTERVAL_MS, type LiveStale, pollWhileVisible } from "@/lib/live";
 import type { RunLogData } from "@/lib/run-log-data";
 import { type LogEntry, parseSessionLog } from "@/lib/session-log";
 
@@ -95,7 +95,7 @@ export function LiveRunLog({
   error?: string;
 }) {
   const [data, setData] = useState(initial);
-  const [stale, setStale] = useState(false);
+  const [stale, setStale] = useState<LiveStale>(false);
   // 持っている分の終わりの位置（バイト）と、前に受け取った版
   const have = useRef({
     events: initial?.log?.offsets?.events.next ?? 0,
@@ -123,7 +123,7 @@ export function LiveRunLog({
           runLogLiveUrl(taskId, runId, at),
           have.current.version,
         );
-        setStale(next === "failed");
+        setStale(next === "failed" || next === "signedOut" ? next : false);
         if (typeof next !== "object") return;
         const reply = next.data;
         const now = latest.current;

@@ -3,12 +3,14 @@
 import { useEffect, useTransition } from "react";
 import { followProjectAction } from "@/app/actions";
 import { useMessages } from "@/i18n/client";
+import type { LiveStale } from "@/lib/live";
 
 /**
  * 取り直しで更新できない間に出す（PR #119 レビュー指摘）。表示は最後に取れたデータのまま残し、それが今の値でないかも
- * しれないことを知らせる。更新できたら消える。
+ * しれないことを知らせる。更新できたら消える。画面の認証が無い（sacty を起動し直した）ときは、デーモンに届かないのではなく、
+ * 端末の新しい URL で入り直すよう出す（PR #141 レビュー提案）。
  */
-export function StaleNotice({ stale }: { stale: boolean }) {
+export function StaleNotice({ stale }: { stale: LiveStale }) {
   const m = useMessages().common.live;
   if (!stale) return null;
   return (
@@ -17,7 +19,7 @@ export function StaleNotice({ stale }: { stale: boolean }) {
       data-testid="live-stale"
       className="rounded-xl border border-warn-line bg-warn-soft px-4 py-2.5 text-sm text-warn"
     >
-      {m.stale}
+      {stale === "signedOut" ? m.signedOut : m.stale}
     </p>
   );
 }

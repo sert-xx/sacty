@@ -91,8 +91,13 @@ export const LIVE_TIMEOUT_MS = 10_000;
  * - `"current"`：いまのデータのままでよい（版が同じ・対象が無い）。
  * - `"failed"`：更新できなかった（デーモンや画面のサーバーに届かない・期限切れ・読めない応答）。画面は「更新が止まって
  *   いる」ことを出す。
+ * - `"signedOut"`：画面の認証が無い（401。`sacty up` を起動し直して、前の起動の cookie が使えなくなった。PBI-129）。
+ *   画面は、端末に表示された新しい URL で入り直すよう出す。
  */
-export type LiveResult<T> = { data: T; version: string } | "current" | "failed";
+export type LiveResult<T> = { data: T; version: string } | "current" | "failed" | "signedOut";
+
+/** 取り直しで更新できない理由（更新できていれば false）。 */
+export type LiveStale = false | "failed" | "signedOut";
 
 /**
  * url から最新のデータを取る。例外にはしない。timeoutMs で打ち切る（応答の本文を読む間も含む）。
@@ -121,11 +126,13 @@ export async function fetchLive<T>(
           signal: controller.signal,
           headers: version ? { [LIVE_VERSION_HEADER]: version } : {},
         });
+        if (res.status === 401) return "signedOut" as const;
         if (!res.ok) return undefined;
         return (await res.json()) as LiveReply<T>;
       })(),
       expired,
     ]);
+    if (reply === "signedOut") return reply;
     if (!reply || "unavailable" in reply) return "failed";
     return "data" in reply ? reply : "current";
   } catch {

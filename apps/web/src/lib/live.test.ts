@@ -129,6 +129,16 @@ describe("取り直しの返事（fetchLive・liveResponse。PBI-108）", () => 
     expect(await fetchLive("/x", "v", broken as unknown as typeof fetch)).toBe("failed");
   });
 
+  it("401（画面の認証が無い）は、届かないのと分けて signedOut にする（PR #141 レビュー提案）", async () => {
+    const fetcher = vi.fn(async () => new Response("<!doctype html>", { status: 401 }));
+    expect(await fetchLive("/x", "v", fetcher as unknown as typeof fetch)).toBe("signedOut");
+    // ほかの失敗の状態は、これまでどおり failed
+    for (const status of [403, 500, 502]) {
+      const other = vi.fn(async () => new Response("x", { status }));
+      expect(await fetchLive("/x", "v", other as unknown as typeof fetch)).toBe("failed");
+    }
+  });
+
   it("応答が無くても期限で打ち切り（中断する）、次の取り直しを続ける（PR #119 レビュー指摘）", async () => {
     vi.useFakeTimers();
     try {

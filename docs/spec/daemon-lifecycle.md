@@ -45,6 +45,8 @@
 - デーモンへ中継する所（`daemonFetch`）でも、今の起動の cookie を確かめ直し、無ければデーモンのトークンを使わずに断る（Proxy の範囲
   から外れた入口があっても中継しない）。
 - デーモンの API の認証（`SACTY_DAEMON_TOKEN`）は変えない。画面の秘密は、デーモンにも工程のコンテナにも渡さない。
+- 開いたままの画面の取り直し（live）が 401 になった（起動し直して、前の cookie が使えない）ときは、デーモンに届かないのとは分けて、
+  端末に表示された新しい URL を開くよう出す（表示は最後に取れたデータのまま残す）。
 
 コード: `apps/web/src/proxy.ts`、`apps/web/src/lib/web-auth.ts`、`apps/web/src/lib/web-guard.ts`、`apps/web/src/lib/daemon.ts`（`daemonFetch`）
 

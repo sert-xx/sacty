@@ -10,6 +10,9 @@ const ja = {
   live: {
     stale: "デーモンに届きません。表示は最後に取得した内容です。",
     staleShort: "更新が止まっています",
+    /** 画面の認証が無い（sacty を起動し直した。PBI-129）。 */
+    signedOut: "sacty が起動し直されました。端末に表示された新しい URL を開いてください。",
+    signedOutShort: "入り直してください",
   },
   daemon: {
     notConfigured: "デーモンの接続先が設定されていません。`sacty up` で起動してください。",
@@ -54,6 +57,8 @@ const en: CommonMessages = {
   live: {
     stale: "The daemon cannot be reached. This shows what was last fetched.",
     staleShort: "Updates paused",
+    signedOut: "sacty was restarted. Open the new URL printed in the terminal.",
+    signedOutShort: "Sign in again",
   },
   daemon: {
     notConfigured: "The daemon address is not set. Start sacty with `sacty up`.",
