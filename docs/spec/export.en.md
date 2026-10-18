@@ -21,7 +21,8 @@ Code: `packages/core/src/events.ts` (`EXPORT_STEPS`, `exportSteps`), `apps/daemo
 ## Running the export
 
 - It runs after the step is approved, before the next step and before the comment on the intake source (so that the comment can include the URL). It does not run for paused or running tasks.
-- It runs with that step's AI, passing only the chosen connection (role `export`). The content to export is placed in `sacty-export.md` in the workspace `workspaces/_export/<run ID>`,
+- It runs with that step's AI, passing only the chosen connection (role `export`). With the run's token, only the chosen PF or MCP server can be used
+  through the gateway (other host PFs and MCP servers get 403). The content to export is placed in `sacty-export.md` in the workspace `workspaces/_export/<run ID>`,
   which is deleted afterward. The answer is JSON under the heading `sacty-export` (`url` or `error`).
 - If there is a previously exported URL, the agent updates that page (it does not create a new one). If a previous export stopped before it was recorded (only `ExportStarted` exists),
   the agent finds the same page by its marker and updates it.

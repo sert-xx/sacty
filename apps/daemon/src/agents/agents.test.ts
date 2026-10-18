@@ -1561,6 +1561,14 @@ describe("コンテナで更新されたトークンの除去（偽のdockerコ�
     const bin = join(dir, "bin");
     mkdirSync(bin);
     const newToken = "n".repeat(40);
+    // 出力の JSON に、1 文字だけ Unicode エスケープしたトークンも書く（デコードすると元に戻る形。PBI-131）
+    const message = JSON.stringify({
+      type: "item.completed",
+      item: {
+        type: "agent_message",
+        text: `new token is ${newToken} {"body":"\\u006e${newToken.slice(1)}"}`,
+      },
+    });
     writeFileSync(
       join(bin, "docker"),
       `#!/bin/sh
@@ -1572,7 +1580,7 @@ for a in "$@"; do
   prev="$a"
 done
 printf '{"tokens":{"access_token":"${newToken}"}}' > "$host/auth.json"
-echo '{"type":"item.completed","item":{"type":"agent_message","text":"new token is ${newToken}"}}'
+printf '%s\\n' '${message}'
 echo '{"type":"turn.completed","usage":{"input_tokens":10,"cached_input_tokens":0,"output_tokens":5}}'
 `,
     );
@@ -1598,7 +1606,7 @@ echo '{"type":"turn.completed","usage":{"input_tokens":10,"cached_input_tokens":
 
     expect(outcome.kind).toBe("completed");
     if (outcome.kind === "completed") {
-      expect(outcome.output).toBe("new token is [REDACTED]");
+      expect(outcome.output).toBe('new token is [REDACTED] {"body":"[REDACTED]"}');
       expect(outcome.output).not.toContain(newToken);
     }
     expect(readFileSync(hostAuth, "utf8")).toContain(newToken);

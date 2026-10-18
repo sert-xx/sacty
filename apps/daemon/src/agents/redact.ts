@@ -24,6 +24,45 @@ export function redact(text: string, secrets: readonly string[]): string {
 }
 
 /**
+ * 出力の中の JSON の文字列（"…"）のうち、エスケープ（`\u0073` など）を戻すと秘密情報を含むものを、伏せた文字列に置き換える
+ * （PBI-131）。sacty はエージェントの出力の JSON をデコードして使う（レビューのコメント・監査・再現のテストなど）ので、生の文字列で
+ * 伏せただけでは、デコードで元の値に戻ってしまう。先に redact で生の文字列を伏せてから呼ぶ。
+ * 文字列の始まりは、出力の中のどの `"` からでも試す（前にある地の文の `"` で、組がずれても見落とさないように）。入れ子の JSON の
+ * 文字列（エスケープした JSON）も、デコードした中身を同じように確かめる。
+ */
+export function redactEscaped(text: string, secrets: readonly string[]): string {
+  const targets = secrets.filter((s) => s.length > 0);
+  if (targets.length === 0 || !text.includes("\\")) return text;
+  const literal = /"(?:[^"\\\n]|\\.)*"/y;
+  const out: string[] = [];
+  let last = 0;
+  let i = text.indexOf('"');
+  while (i !== -1) {
+    literal.lastIndex = i;
+    const found = literal.exec(text)?.[0];
+    if (found?.includes("\\")) {
+      let decoded: unknown;
+      try {
+        decoded = JSON.parse(found);
+      } catch {
+        decoded = undefined;
+      }
+      if (typeof decoded === "string") {
+        const hidden = redactEscaped(redact(decoded, targets), targets);
+        if (hidden !== decoded) {
+          out.push(text.slice(last, i), JSON.stringify(hidden));
+          last = i + found.length;
+          i = text.indexOf('"', last);
+          continue;
+        }
+      }
+    }
+    i = text.indexOf('"', i + 1);
+  }
+  return last === 0 ? text : out.join("") + text.slice(last);
+}
+
+/**
  * 文（コードと引数の文言を含む）から、秘密情報を取り除く。コードと引数の文言は、引数の文を取り除く
  * （外から来た文を引数に入れているため）。
  */

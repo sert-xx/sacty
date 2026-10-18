@@ -1067,6 +1067,19 @@ const fakeGateway = (): NonNullable<ServiceDeps["gateway"]> => ({
   }),
 });
 
+/** 登録した実行の許可リスト（register の 4 つめの引数）を記録するゲートウェイの偽物（PBI-131）。 */
+const recordingGateway = () => {
+  const access: unknown[] = [];
+  const gateway: NonNullable<ServiceDeps["gateway"]> = {
+    ...fakeGateway(),
+    register: (...args: unknown[]) => {
+      access.push(args[3]);
+      return fakeGateway().register();
+    },
+  };
+  return { gateway, access };
+};
+
 /** チケットの取り込みの1段目の出力（PBI-52）。 */
 const triageOut = (v: Record<string, unknown>, output = 100): AgentOutcome => ({
   kind: "completed",
@@ -4800,6 +4813,46 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       ]);
       expect(pulls.reviews[0]?.body).toContain("`src/retry.ts:40` 差分の外の行");
       expect(pulls.reviews[0]?.body).not.toContain("上限を設定から読む");
+      activity.close();
+    });
+
+    it("JSON のエスケープで書いた秘密値は、デコードした後のコメント（行・差分の外・パス）にも残さず、PR に投稿しない（PBI-131）", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const pulls = new FakePulls();
+      // 実行に渡した秘密値（oauth-secret）を、1 文字だけ Unicode エスケープ・改行や引用符のエスケープを混ぜて書く
+      const raw = [
+        "# 評価",
+        "",
+        '前置きの "引用符" の後に続けても見落とさない：{"sacty-review-comments": [',
+        '{"path": "src/retry.ts", "line": 2, "body": "鍵は oauth-s\\u0065cret です"},',
+        '{"path": "src/retry.ts", "line": 40, "body": "差分の外：\\"oauth\\u002dsecret\\"\\n次の行"},',
+        '{"path": "src/oauth-secre\\u0074.ts", "line": 1, "body": "パスにも"}',
+        "]}",
+      ].join("\n");
+      const { service } = makeService(activity, [out(raw)], {
+        pulls,
+        planner: reviewPlanner,
+        secrets: { "claude-oauth-token": "oauth-secret" },
+      });
+      const id = importReviewIssue(service, "https://github.com/acme/app/pull/12");
+      await service.runNext(id);
+      const task = service.get(id)?.task;
+      expect(task?.reviewComments).toEqual([
+        { path: "src/retry.ts", line: 2, body: "鍵は [REDACTED] です" },
+      ]);
+      expect(task?.outputs.review).toContain('差分の外："[REDACTED]"');
+      expect(task?.outputs.review).toContain("`src/[REDACTED].ts:1` パスにも");
+
+      await service.runNext(id);
+      expect(pulls.reviews).toHaveLength(1);
+      const posted = JSON.stringify(pulls.reviews[0]);
+      expect(posted).not.toContain("oauth-secret");
+      expect(pulls.reviews[0]?.comments[0]?.body).toContain("鍵は [REDACTED] です");
+      expect(JSON.stringify(activity.forTask(id))).not.toContain("oauth-secret");
+      // 作業履歴に残す出力からも、エスケープした形を消す（後でデコードされても戻らない）
+      expect(JSON.stringify(activity.forTask(id))).not.toMatch(
+        /u0065cret|u002dsecret|secre\\+u0074/,
+      );
       activity.close();
     });
 
@@ -12814,12 +12867,13 @@ describe("成果の書き出し（PBI-56）", () => {
 
   it("オーケストレーターが決めた書き出し先と理由を記録し、承認した要求要件をゲートウェイの接続先に書き出して URL を残す（認証はコンテナにも作業履歴にも出ない）", async () => {
     const activity = new SqliteActivityStore(dbPath);
+    const recorded = recordingGateway();
     const { service, executor } = makeService(
       activity,
       [out("# 要求要件 v1"), exportOut({ url: URL1 }), out("# 設計")],
       {
         config: configOf(agent(), 1, [confluence()]),
-        gateway: fakeGateway(),
+        gateway: recorded.gateway,
         planner: toConfluence,
         secrets,
       },
@@ -12842,6 +12896,8 @@ describe("成果の書き出し（PBI-56）", () => {
     await service.runNext(id);
     const call = executor.calls[1];
     expect(call?.env.SACTY_PF_URL).toBe("http://host.docker.internal:5001/r/sacty-gw-run/pf");
+    // 書き出しのトークンで使えるのは、選んだ PF だけ（ほかのホストの PF・MCP は使えない。PBI-131）
+    expect(recorded.access.at(-1)).toEqual({ platforms: ["confluence"], hostMcp: [] });
     const prompt = promptOf(executor, 1);
     expect(prompt).toContain("sacty-export.md");
     expect(prompt).toContain("$SACTY_PF_URL/confluence");
@@ -12894,6 +12950,7 @@ describe("成果の書き出し（PBI-56）", () => {
 
   it("オーケストレーターに使える接続先（ゲートウェイの接続先・ホストの MCP）と規約を渡し、選んだ MCP サーバーで書き出す", async () => {
     const activity = new SqliteActivityStore(dbPath);
+    const recorded = recordingGateway();
     const notion = toHostMcp(
       "notion",
       HostMcpFile.parse({ command: "notion-mcp", description: "Notion（チームのワークスペース）" }),
@@ -12926,7 +12983,7 @@ describe("成果の書き出し（PBI-56）", () => {
       ],
       {
         config: configOf(agent(), 1, [confluence()], [notion]),
-        gateway: fakeGateway(),
+        gateway: recorded.gateway,
         contexts,
         realPlanner: true,
         secrets,
@@ -12965,6 +13022,8 @@ describe("成果の書き出し（PBI-56）", () => {
     });
     expect(promptOf(executor, 3)).toContain("MCP サーバー。そのツールで書く");
     expect(promptOf(executor, 3)).toContain("Notion（チームのワークスペース）");
+    // 書き出しのトークンで使えるのは、選んだ MCP サーバーだけ（ホストの PF の confluence は使えない。PBI-131）
+    expect(recorded.access.at(-1)).toEqual({ platforms: [], hostMcp: ["notion"] });
     expect(taskOf(service, id).exports.requirements?.url).toBe("https://notion.example.com/p/1");
     activity.close();
   });
