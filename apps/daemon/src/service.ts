@@ -8159,11 +8159,19 @@ export class TaskService {
     ];
     if (candidates.length === 0) return [];
     const ids = new Set(candidates.map((m) => m.id));
-    // 大まかな監査は監査の最初の実行なので、ここにある実行はタスクの実行だけ（監査の実行のログはまだ無い）
+    // 監査の実行は数えない（PR #137 レビュー指摘）。大まかな監査の途中でデーモンを止めると、監査の記録は残らないが、実行の
+    // セッションの記録（role が audit・audit-dive）は残り、次の起動の大まかな監査で、前の監査が開いたものまで数えてしまうため
+    const auditRuns = new Set(
+      activity.flatMap((e) => {
+        const p = e.payload as { runId?: unknown; role?: unknown };
+        const audit = e.type.startsWith("Audit") || p.role === "audit" || p.role === "audit-dive";
+        return audit && typeof p.runId === "string" ? [p.runId] : [];
+      }),
+    );
     const runIds = new Set(
       activity.flatMap((e) => {
         const id = (e.payload as { runId?: unknown }).runId;
-        return typeof id === "string" && id ? [id] : [];
+        return typeof id === "string" && id && !auditRuns.has(id) ? [id] : [];
       }),
     );
     const counts = new Map<string, number>();
@@ -8172,8 +8180,14 @@ export class TaskService {
       if (!path) continue;
       try {
         countOpenedMemories(await readFile(path, "utf8"), ids, counts);
-      } catch {
-        // 無い・読めないログは数えない
+      } catch (error) {
+        // 無いログは数えない。それ以外の読めなかったログは、追えるように警告する（ログの中身は出さない。PR #137 レビュー指摘）
+        const code = (error as { code?: unknown }).code;
+        if (code !== "ENOENT") {
+          console.warn(
+            `[daemon] メモリーを開いたかを数えるログを読めませんでした（task ${task.id}・run ${runId}・${typeof code === "string" ? code : "unknown"}）。`,
+          );
+        }
       }
     }
     return candidates

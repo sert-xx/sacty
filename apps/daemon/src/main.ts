@@ -20,7 +20,7 @@ import { HostMcpProcesses } from "./host-mcp-processes.js";
 import { acquireInstanceLock, alreadyRunningMessage } from "./instance-lock.js";
 import { IssueIntake } from "./intake.js";
 import { LedgerAuditService } from "./ledger-audits.js";
-import { MEMORY_CLEANUP_INTERVAL_MS } from "./memory.js";
+import { startMemoryCleanup } from "./memory.js";
 import { SlackNotifier } from "./notifier.js";
 import { OrchestratorSessionStore } from "./orchestrator-sessions.js";
 import { PlatformCredentials } from "./platforms.js";
@@ -196,14 +196,7 @@ service.resumeAuditFixTasks();
 // 監査が登録したメモリーを、作業履歴に合わせて書き直す（PBI-126）。残す日数を過ぎたものも消す（PBI-127）
 service.syncMemories();
 // 残す日数を過ぎたメモリーを、定期的に消す（PBI-127）
-const memoryCleanup = setInterval(() => {
-  try {
-    service.cleanupMemories();
-  } catch (error) {
-    console.warn("[daemon] メモリーを掃除できませんでした：", error);
-  }
-}, MEMORY_CLEANUP_INTERVAL_MS);
-memoryCleanup.unref();
+const stopMemoryCleanup = startMemoryCleanup(() => service.cleanupMemories());
 service.queueWaitingSteps();
 
 const status = service.status();
@@ -269,7 +262,7 @@ const shutdown = async () => {
   // process.exit でも止めるが、後処理を待つ前に止める。PBI-107）
   stopFetchProcessesSync();
   // 作業履歴を閉じた後に、メモリーの掃除が記録しないように止める（PBI-127）
-  clearInterval(memoryCleanup);
+  stopMemoryCleanup();
   // 実行中のコンテナを止め、実行の後処理（作業履歴への記録、認証ファイルの書き戻し、
   // 一時ファイルの削除）が終わるのを待ってから、作業履歴を閉じて終了する。
   const draining = Promise.all([worker.drain(), intake.stop(), prWatcher.stop()]);

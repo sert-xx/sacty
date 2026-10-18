@@ -882,6 +882,11 @@ class FakeExecutor implements AgentExecutor {
     this.held.get(runId)?.({ kind: "failed", reason: "error", message: "container killed" });
     this.held.delete(runId);
   }
+  /** HOLD の実行を、渡した結果で終える（PBI-128）。 */
+  finishHeld(runId: string, outcome: AgentOutcome) {
+    this.held.get(runId)?.(outcome);
+    this.held.delete(runId);
+  }
 }
 
 /** ディレクトリの下のファイル（相対パスと中身）。 */
@@ -23367,6 +23372,88 @@ describe("メモリーの有効な最終利用日と掃除（PBI-127）", () => 
       "2026-10-10",
       "2026-10-01",
     ]);
+  });
+
+  it("大まかな監査の途中で止めて再起動しても、前の監査だけが開いたメモリーは数えない（PR #137 レビュー指摘）", async () => {
+    const clock = { now: day(1) };
+    const sessionLogs = new SessionLogStore(join(dir, "runs"));
+    const first = makeService(new SqliteActivityStore(dbPath, () => new Date(clock.now)), [HOLD], {
+      audit: true,
+      memory: true,
+      planner: onlyRequirements,
+      sessionLogs,
+      now: () => clock.now,
+    });
+    let id = "";
+    const respond = (executor: FakeExecutor, holdSurvey: boolean) => {
+      // 監査の実行のセッションを記録する（止めても残る）
+      executor.sessionFiles = () => ({ "projects/-workspace/s.jsonl": "{}\n" });
+      executor.logLines = (invocation) =>
+        isSurvey(invocation) && id ? `/sacty-memory/project/references/${id}.md\n` : undefined;
+      executor.respond = (invocation) => {
+        if (isSurvey(invocation)) {
+          if (!id) {
+            return json({
+              "sacty-audit-survey": {
+                summary: "要約",
+                concerns: [{ step: "requirements", reason: "差し戻し" }],
+              },
+            });
+          }
+          return holdSurvey
+            ? undefined
+            : json({
+                "sacty-audit-survey": { summary: "要約", concerns: [], usefulMemories: [id] },
+              });
+        }
+        if (isDive(invocation)) {
+          return json({
+            "sacty-audit-findings": {
+              summary: "深掘り",
+              findings: [],
+              memories: id ? [] : [memory("知見")],
+            },
+          });
+        }
+        return out("# 要求要件");
+      };
+    };
+    respond(first.executor, true);
+    const a = await complete(first.service, "A");
+    await audit(first.service, a);
+    id = first.service.get(a)?.task.audit?.memories[0]?.id ?? "";
+    // B の大まかな監査の実行中に止める（監査の記録は残らず、セッションの記録だけが残る）
+    const b = await complete(first.service, "B");
+    const held = first.service.runNext(b);
+    const runId = await first.executor.started.promise;
+    first.service.beginShutdown();
+    first.executor.finishHeld(
+      runId,
+      json({ "sacty-audit-survey": { summary: "要約", concerns: [], usefulMemories: [id] } }),
+    );
+    await held;
+    const activity = new SqliteActivityStore(dbPath, () => new Date(clock.now));
+    expect(activity.forTask(b).some((e) => e.type === "AuditSurveyed")).toBe(false);
+    expect(
+      activity
+        .forTask(b)
+        .some((e) => e.type === "AgentSessionArchived" && e.payload.runId === runId),
+    ).toBe(true);
+    // 再起動した後の大まかな監査では、前の監査のログを数えない
+    const second = makeService(activity, [], {
+      audit: true,
+      memory: true,
+      planner: onlyRequirements,
+      sessionLogs,
+      now: () => clock.now,
+    });
+    respond(second.executor, false);
+    second.executor.logLines = () => undefined;
+    await audit(second.service, b);
+    expect(activity.forTask(b).find((e) => e.type === "AuditSurveyed")?.payload).toMatchObject({
+      openedMemories: [],
+      usefulMemories: [],
+    });
   });
 
   it("監査の実行のログは数えない。開いたメモリーが無ければ、役に立ったものは記録しない", async () => {
