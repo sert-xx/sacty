@@ -22,6 +22,9 @@ Starts the daemon and the web UI (Next.js) and prints the web UI sign-in URL (`h
 - Both the web UI and the daemon listen only on 127.0.0.1.
 - Only browsers that opened the sign-in URL can use the web UI (so that step containers cannot operate it). The URL changes on every start,
   and while that start lasts you can open it in another browser too. A browser that has not signed in sees only how to sign in.
+- Writing `web: { auth: false }` in `~/.sacty/config.yaml` turns this sign-in off, and you can just open `http://127.0.0.1:4700` shown in the terminal.
+  However, code running in step containers (tests in the target repository, prompt injection) can then approve or change settings through the web UI.
+  While it is off, a warning is shown on every start.
 - Ports must be between 1 and 65535, and `--port` and `--daemon-port` must be different numbers.
 - You cannot start it twice with the same `SACTY_HOME` ([Getting started](getting-started.en.md#where-data-is-stored)).
 

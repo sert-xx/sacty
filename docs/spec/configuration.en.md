@@ -31,6 +31,7 @@ Related ADRs: none
 | `gateway.retry.max_wait_sec` | `600` | The upper limit on total waiting during a run of failures (0 to 86400 seconds) |
 | `gateway.platforms` | `{}` | Organization platforms (PF). Names match `^[a-z0-9][a-z0-9-]*$` ([Gateway](gateway.en.md)) |
 | `gateway.mcp_servers` | `{}` | MCP servers run on the host. Names match `^[A-Za-z0-9_-]+$` (same as above) |
+| `web.auth` | `true` | Web UI sign-in. `false` turns it off (booleans only; [Daemon startup and shutdown](daemon-lifecycle.en.md#web-ui-sign-in)) |
 
 Other checks: it is an error when a value of `default_agent`, `guardian_agent`, `audit_agent`, or `step_agents` is not in `agents`, or when a `provider` name is not in `providers`.
 It is also an error when an `agents` name is a tier (`claude_<tier>`, `codex_<tier>`; the tiers are `lite`, `entry`, `standard`, `advanced`, and `ultimate` in `AGENT_TIERS`)

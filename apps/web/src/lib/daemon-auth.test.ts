@@ -60,6 +60,18 @@ describe("デーモンへ中継する前に、起動した本人のブラウザ�
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("認証を OFF にした（SACTY_WEB_AUTH=off）なら、cookie が無くても問い合わせる。off 以外の値では OFF にしない（PBI-133）", async () => {
+    vi.stubEnv("SACTY_WEB_TOKEN", "");
+    for (const value of ["false", "OFF", "0", ""]) {
+      vi.stubEnv("SACTY_WEB_AUTH", value);
+      await expect(listTasks()).rejects.toBeInstanceOf(DaemonUnavailableError);
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+    vi.stubEnv("SACTY_WEB_AUTH", "off");
+    await expect(listTasks()).resolves.toEqual([]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("今の起動の cookie なら、今までどおりデーモンに問い合わせる（ポートを入れた名前の cookie を読む）", async () => {
     cookieValue = sessionValue("web-secret");
     await expect(listTasks()).resolves.toEqual([]);

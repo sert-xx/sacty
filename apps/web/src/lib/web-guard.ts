@@ -18,13 +18,17 @@ import {
  */
 export function webGuard(
   request: NextRequest,
-  env: { secret: string | undefined; port: string | undefined },
+  env: { secret: string | undefined; port: string | undefined; authOff?: boolean },
 ): NextResponse {
   const m = messagesFor(
     pickLocale(request.cookies.get(LANG_COOKIE)?.value, request.headers.get("accept-language")),
   );
   if (!isAllowedHost(request.headers.get("host"))) {
     return refusal(403, m.locale, m.common.auth.title, m.common.auth.wrongHost);
+  }
+  // 認証を OFF にした（PBI-133）なら、Host だけを確かめて通す。入り口の URL はトップへ移す
+  if (env.authOff) {
+    return request.nextUrl.pathname === AUTH_PATH ? toHome(request) : NextResponse.next();
   }
   const cookieName = sessionCookieName(env.port);
   const signedIn = isValidSession(request.cookies.get(cookieName)?.value, env.secret);

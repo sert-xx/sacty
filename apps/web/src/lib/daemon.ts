@@ -23,7 +23,14 @@ import { cookies } from "next/headers";
 import { connection } from "next/server";
 import { getMessages } from "@/i18n/server";
 import { currentDaemonSignal } from "@/lib/daemon-signal";
-import { isValidSession, sessionCookieName, WEB_PORT_ENV, WEB_TOKEN_ENV } from "@/lib/web-auth";
+import {
+  isValidSession,
+  sessionCookieName,
+  WEB_AUTH_ENV,
+  WEB_PORT_ENV,
+  WEB_TOKEN_ENV,
+  webAuthDisabled,
+} from "@/lib/web-auth";
 
 /**
  * デーモンのAPIを呼ぶ。サーバー側でだけ使う（トークンをブラウザに渡さないため）。
@@ -40,9 +47,10 @@ async function daemonFetch(path: string, init: RequestInit = {}): Promise<Respon
   }
   // 起動した本人のブラウザ（今の起動の cookie）からのリクエストだけを中継する。Proxy でも断るが、Proxy の範囲から外れた
   // 入口（Server Actions など）があっても、デーモンのトークンを使わせない（PBI-129）
+  // 認証を OFF にした（config.yaml の web.auth: false。PBI-133）なら確かめない
   const secret = process.env[WEB_TOKEN_ENV];
   const session = (await cookies()).get(sessionCookieName(process.env[WEB_PORT_ENV]))?.value;
-  if (!isValidSession(session, secret)) {
+  if (!webAuthDisabled(process.env[WEB_AUTH_ENV]) && !isValidSession(session, secret)) {
     const m = (await getMessages()).common.auth;
     throw new DaemonUnavailableError(secret ? m.signIn : m.notConfigured);
   }

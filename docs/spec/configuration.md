@@ -31,6 +31,7 @@
 | `gateway.retry.max_wait_sec` | `600` | 一続きの失敗で待つ合計の上限（0〜86400 秒） |
 | `gateway.platforms` | `{}` | 組織内 PF。名前は `^[a-z0-9][a-z0-9-]*$`（[ゲートウェイ](gateway.md)） |
 | `gateway.mcp_servers` | `{}` | ホストで動かす MCP サーバー。名前は `^[A-Za-z0-9_-]+$`（同上） |
+| `web.auth` | `true` | 画面の認証。`false` で OFF（真偽だけ。[デーモンの起動と終了](daemon-lifecycle.md#画面の認証)） |
 
 ほかの検査：`default_agent`・`guardian_agent`・`audit_agent`・`step_agents` の値が `agents` に無い、`provider` の名前が `providers` に無いときは誤り。
 `agents` の名前が段階（`claude_<段階>`・`codex_<段階>`。段階は `AGENT_TIERS` の `lite`・`entry`・`standard`・`advanced`・`ultimate`）なのに
