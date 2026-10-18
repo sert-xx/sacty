@@ -147,6 +147,8 @@ export type DaemonStatus = {
   agents?: { id: string; runtime: string; model?: string; reasoningEffort?: string }[];
   /** config.yaml で決まる、工程ごとのエージェントの名前（PBI-121）。古いデーモンには無い。 */
   stepAgents?: Partial<Record<StepKey, string>>;
+  /** sacty の新しい版（PBI-135）。最新・確かめられない・OFF のときと、古いデーモンには無い。 */
+  update?: { behindBy: number; compareUrl: string };
 };
 
 export type ProjectView = {

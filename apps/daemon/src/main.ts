@@ -36,6 +36,7 @@ import { SessionLogStore } from "./session-logs.js";
 import { SqliteSettingsStore } from "./settings.js";
 import { cleanupSharedComposeRuns, GitSharedComposeFetcher } from "./shared-compose.js";
 import { JiraTickets } from "./tickets.js";
+import { gitHeadCommit, startUpdateCheck, UpdateChecker } from "./update-check.js";
 import { Worker } from "./worker.js";
 
 const home = resolveHome();
@@ -146,6 +147,14 @@ const gateway = new AiGateway({
 await gateway.listen();
 // 監査の画面をモックで確かめるとき（SACTY_AUDIT_MOCK=1）は、実際の監査を動かさない（PBI-124・PBI-125）
 const auditMock = process.env.SACTY_AUDIT_MOCK === "1";
+// sacty の最新版の確かめ（PBI-135）。設定を読めなければ確かめる（既定は ON）
+const updates = new UpdateChecker({
+  localCommit: () => gitHeadCommit(),
+  enabled: () => {
+    const c = config();
+    return c.ok ? c.config.updateCheck : true;
+  },
+});
 const service = new TaskService({
   activity,
   // 完了したタスクを監査する（PBI-125）
@@ -180,6 +189,7 @@ const service = new TaskService({
   // 実行の前に、使うホストの MCP サーバーを設定と突き合わせ、足したものは起動を待つ（PBI-77）
   hostMcpReady: (names) => hostMcp.ready(names),
   contextMcp,
+  update: () => updates.status(),
   // 人間の出番を Slack に通知する（PBI-38）。リンクは、起動した画面の URL
   notifier: new SlackNotifier({
     // 通知先は sacty の設定（すべてのプロジェクトで共通。PBI-115）。本文にはタスクのプロジェクトの名前を入れる
@@ -197,6 +207,8 @@ service.resumeAuditFixTasks();
 service.syncMemories();
 // 残す日数を過ぎたメモリーを、定期的に消す（PBI-127）
 const stopMemoryCleanup = startMemoryCleanup(() => service.cleanupMemories());
+// sacty の最新版を、起動のときと1日ごとに確かめる（PBI-135）
+const stopUpdateCheck = startUpdateCheck(updates);
 service.queueWaitingSteps();
 
 const status = service.status();
@@ -263,6 +275,7 @@ const shutdown = async () => {
   stopFetchProcessesSync();
   // 作業履歴を閉じた後に、メモリーの掃除が記録しないように止める（PBI-127）
   stopMemoryCleanup();
+  stopUpdateCheck();
   // 実行中のコンテナを止め、実行の後処理（作業履歴への記録、認証ファイルの書き戻し、
   // 一時ファイルの削除）が終わるのを待ってから、作業履歴を閉じて終了する。
   const draining = Promise.all([worker.drain(), intake.stop(), prWatcher.stop()]);

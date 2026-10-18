@@ -65,6 +65,29 @@ When you open the web UI, it shows the dashboard first.
 
 Note: once you register a target, sacty may push branches to the target repositories and open PRs, depending on the task.
 
+## Updating sacty
+
+Every day, sacty checks `main` of the sacty repository on GitHub, and if it has changes that the running version does not, every screen shows
+"A new version of sacty is available" at the top. Update when you see it, to get the recommended models ([Default agents](config.en.md#default-agents)) and fixes.
+It also appears on screens that are already open, without reloading (they fetch it again every 30 seconds).
+
+First, stop the running `sacty up` with Ctrl+C and wait for it to exit. Then run the following in the sacty repository.
+
+```sh
+git pull origin main
+npm install
+npm run build
+npx sacty up
+```
+
+`npm run build` deletes and recreates the web UI build output (`apps/web/.next`). Running it while `sacty up` is running can break the web UI,
+so always stop it first.
+
+- "See the changes" in the notice opens the changes on GitHub.
+- When it cannot check (no internet access, local-only commits, and so on), nothing is shown.
+- Where the internet is not reachable, write `update_check: false` in `config.yaml` to stop the check ([config.yaml settings](config.en.md)).
+- When the default models change, you may see a warning about a model with no price in `available_models`. Add the price of that model.
+
 ## Where data is stored
 
 - The activity log, settings, and workspaces are stored in `~/.sacty/`. You can change this with the environment variable `SACTY_HOME`.

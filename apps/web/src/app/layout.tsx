@@ -12,6 +12,7 @@ import { AppHeader, HeaderFallback } from "@/components/shell/header";
 import { Localized } from "@/components/shell/localized";
 import { ProjectGate, RailGate } from "@/components/shell/project-gate";
 import { RailNav } from "@/components/shell/rail";
+import { UpdateNotice } from "@/components/shell/update-notice";
 import { THEME_SCRIPT } from "@/lib/theme";
 import "./globals.css";
 
@@ -44,6 +45,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           </Suspense>
           <main className="min-w-0 flex-1 px-4 py-7 sm:px-8">
             <div className="mx-auto flex max-w-6xl flex-col gap-6">
+              {/* sacty の新しい版（PBI-135）。どの画面でも、中身の上に出す */}
+              <Suspense fallback={null}>
+                <Localized>
+                  <UpdateNotice />
+                </Localized>
+              </Suspense>
               <Suspense fallback={null}>
                 <Localized>
                   <ProjectGate>{children}</ProjectGate>

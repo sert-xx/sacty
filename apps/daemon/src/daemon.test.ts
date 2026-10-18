@@ -957,6 +957,8 @@ function makeService(
     hostMcpReady?: ServiceDeps["hostMcpReady"];
     contextMcp?: ServiceDeps["contextMcp"];
     notifier?: ServiceDeps["notifier"];
+    /** sacty の新しい版の知らせ（PBI-135）。 */
+    update?: ServiceDeps["update"];
     services?: ServiceRunner;
     sharedComposes?: SharedComposeFetcher;
     tickets?: ServiceDeps["tickets"];
@@ -1024,6 +1026,7 @@ function makeService(
     ...(options.hostMcpReady ? { hostMcpReady: options.hostMcpReady } : {}),
     ...(options.contextMcp ? { contextMcp: options.contextMcp } : {}),
     ...(options.notifier ? { notifier: options.notifier } : {}),
+    ...(options.update ? { update: options.update } : {}),
     ...(options.services ? { services: options.services } : {}),
     ...(options.sharedComposes ? { sharedComposes: options.sharedComposes } : {}),
     ...(options.tickets ? { tickets: options.tickets } : {}),
@@ -24162,6 +24165,24 @@ describe("使えないエージェントの警告（PBI-134）", () => {
     const status = service.status();
     expect(status.warnings).toEqual([warning]);
     expect(status.agents.map((a) => a.id)).toEqual([agent().id]);
+    activity.close();
+  });
+});
+
+describe("sacty の新しい版の知らせ（PBI-135）", () => {
+  it("新しい版があれば画面の状態に載せ、無ければ項目ごと出さない。設定に誤りがあっても載せる", () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const update = { behindBy: 2, compareUrl: "https://github.com/sert-xx/sacty/compare/a...main" };
+    let current: typeof update | undefined = update;
+    const { service } = makeService(activity, [], { update: () => current });
+    expect(service.status().update).toEqual(update);
+    current = undefined;
+    expect("update" in service.status()).toBe(false);
+    const broken = makeService(activity, [], {
+      update: () => update,
+      config: () => ({ ok: false, problem: message("config.noDefaultAgent") }),
+    });
+    expect(broken.service.status()).toMatchObject({ agent: null, update });
     activity.close();
   });
 });
