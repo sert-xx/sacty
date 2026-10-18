@@ -5,7 +5,7 @@
 `sacty up` starts the daemon (`apps/daemon`) and the web UI (Next.js in `apps/web`) as child processes, and stops both when either one ends.
 Only one daemon runs per `SACTY_HOME` (determined by an OS file lock).
 
-Related ADRs: [The web UI is usable only from browsers that signed in with the per-start secret](../adr/20261018-0414-web-session-auth.md), [Allow turning off web UI sign-in in the settings](../adr/20261018-0929-web-auth-off-setting.md)
+Related ADRs: [The web UI is usable only from browsers that signed in with the per-start secret](../adr/20261018-0414-web-session-auth.md), [Allow turning off web UI sign-in in the settings](../adr/20261018-0929-web-auth-off-setting.md), [Tell users about newer sacty by comparing the local commit with main on GitHub](../adr/20261018-1213-update-check-against-main.md)
 
 ## sacty up
 
@@ -82,6 +82,30 @@ Every 2 seconds, the worker runs queued tasks in order of creation, oldest first
 
 Code: `apps/daemon/src/main.ts`, `apps/daemon/src/service.ts` (`recoverInterrupted`, `queueWaitingSteps`, `maxParallelTasks`),
 `apps/daemon/src/worker.ts` (`Worker`), `apps/daemon/src/pr-watcher.ts` (`PullRequestWatcher`), `packages/core/src/projects.ts` (`DEFAULT_MAX_PARALLEL_TASKS`)
+
+## Checking for a newer version
+
+The daemon compares the commit of the running sacty with `main` of the sacty repository on GitHub (`SACTY_REPOSITORY` = `sert-xx/sacty`),
+and if `main` has commits that the local one does not, it tells the web UI that a newer version is available (PBI-135). When releases start
+being published, this switches to GitHub Releases.
+
+- The local commit is `git rev-parse HEAD` of the sacty repository (three directories above `apps/daemon`). Because it is the commit of the
+  running code, it is read once, at the first check after startup (after `git pull`, the previous commit is compared until a restart). If it is not
+  40 hexadecimal digits, no check is made.
+- If `ahead_by` of GitHub's compare API (`GET /repos/sert-xx/sacty/compare/<local>...main`; the number of commits in `main` that the local
+  one lacks, seen from the local base toward the `main` head) is 1 or more, a newer version is available (`status` is `ahead` or `diverged`). `identical` and `behind` (the local one is only ahead) are not reported. No authentication is sent (the repository is public; well under
+  the limit of 60 requests per hour).
+- At startup and then every hour, it asks if one day (`UPDATE_CHECK_INTERVAL_MS`) has passed since the last request. The time is recorded
+  before asking, so requests do not overlap. After a failure, the next request is one day later.
+- When it cannot check (not a git working tree, a commit GitHub does not know, network unreachable, rate limited, an unexpected response,
+  or no response in 10 seconds), it silently clears the notice. It is not an error or warning.
+- With `update_check: false` in `config.yaml`, it does not ask and shows no notice (on if the config cannot be read). Since it is read on every
+  use, turning it back on checks within an hour.
+- The notice is `update` (`behindBy`, `compareUrl`) of `GET /api/status`, included even when the config has an error. The web UI shows it above
+  the content on every screen: how many commits behind, a link to the compare page (only one starting with `https://github.com/`), and the update commands.
+
+Code: `apps/daemon/src/update-check.ts` (`UpdateChecker`, `gitHeadCommit`, `startUpdateCheck`, `SACTY_REPOSITORY`, `UPDATE_CHECK_INTERVAL_MS`),
+`apps/daemon/src/service.ts` (`TaskService.status`), `apps/web/src/components/shell/update-notice.tsx` (`UpdateNotice`, `safeCompareUrl`)
 
 ## Duplicate start
 

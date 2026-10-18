@@ -331,6 +331,7 @@ import {
 import { templateTask } from "./task-templates.js";
 import { findTestFiles, noTestsStop } from "./test-files.js";
 import { type FoundTicket, type TicketClient, ticketErrorText } from "./tickets.js";
+import type { UpdateStatus } from "./update-check.js";
 
 /**
  * レビューの工程で、PR の差分の全体を置くファイルの名前（PBI-65）。sacty が管理する `_review/<runId>/` に置き、
@@ -478,6 +479,8 @@ export type ServiceDeps = {
    * コンテナの中で起動する。
    */
   contextMcp?: Pick<ContextMcpServers, "lease" | "ready">;
+  /** sacty の新しい版の知らせ（PBI-135）。最新・確かめられない・OFF なら undefined。 */
+  update?: () => UpdateStatus | undefined;
   /** 人間の出番の通知（PBI-38）。送るのは待たない。 */
   notifier?: Pick<SlackNotifier, "notify" | "test" | "problems"> &
     Partial<Pick<SlackNotifier, "settingsChanged">>;
@@ -517,6 +520,8 @@ export type DaemonStatus = {
   agents: { id: string; runtime: string; model?: string; reasoningEffort?: string }[];
   /** config.yaml で決まる、工程ごとのエージェントの名前（step_agents か default_agent。PBI-121）。 */
   stepAgents: Partial<Record<StepKey, string>>;
+  /** sacty の新しい版（PBI-135）。最新・確かめられない・OFF なら無い。 */
+  update?: UpdateStatus;
 };
 
 export type IntakeStatus = {
@@ -2721,6 +2726,8 @@ export class TaskService {
         platforms: [],
         agents: [],
         stepAgents: {},
+        // 設定に誤りがあっても知らせる（更新で直ることもあるため）
+        ...this.updateStatus(),
       };
     }
     const agent = config.config.defaultAgent;
@@ -2755,7 +2762,14 @@ export class TaskService {
         ...(a.model ? { model: a.model } : {}),
         ...(a.reasoning_effort ? { reasoningEffort: a.reasoning_effort } : {}),
       })),
+      ...this.updateStatus(),
     };
+  }
+
+  /** sacty の新しい版の知らせ（PBI-135）。無ければ項目ごと出さない。 */
+  private updateStatus(): { update?: UpdateStatus } {
+    const update = this.deps.update?.();
+    return update ? { update } : {};
   }
 
   /** 1回の監査の、予算の既定の上限（config.yaml の budget.default_per_audit_usd。読めなければ既定値。PBI-124）。 */

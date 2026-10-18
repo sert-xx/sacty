@@ -28,6 +28,14 @@ const ja = {
     others: "ほかのプロジェクト",
     here: (name: string) => `このプロジェクト（${name}）`,
   },
+  /** sacty の新しい版（PBI-135）。 */
+  update: {
+    title: "sacty の新しい版があります",
+    behind: (n: number) =>
+      `sacty の main に、動いている版に無い変更が ${n} 件あります。更新すると推奨のモデルや修正が入ります。`,
+    compare: "変更を見る",
+    steps: "sacty のリポジトリで次を実行し、sacty up を起動し直してください。",
+  },
   user: {
     label: "ユーザー設定",
     settings: "sacty の設定",
@@ -66,6 +74,13 @@ const en: ShellMessages = {
     none: "Nothing needs you.",
     others: "Other projects",
     here: (name) => `This project (${name})`,
+  },
+  update: {
+    title: "A new version of sacty is available",
+    behind: (n) =>
+      `sacty main has ${n} change${n === 1 ? "" : "s"} not in the running version. Updating brings the recommended models and fixes.`,
+    compare: "See the changes",
+    steps: "Run these in the sacty repository, then restart sacty up.",
   },
   user: {
     label: "Preferences",

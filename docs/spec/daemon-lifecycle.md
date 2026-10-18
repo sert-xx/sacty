@@ -5,7 +5,7 @@
 `sacty up` が、デーモン（`apps/daemon`）と画面（`apps/web` の Next.js）を子プロセスとして起動し、どちらかが終われば両方を止める。
 デーモンは、同じ `SACTY_HOME` で1つしか動かない（OS のファイルロックで判定する）。
 
-関係する ADR: [画面は、起動ごとの秘密で入ったブラウザだけが使える](../adr/20261018-0414-web-session-auth.md)、[画面の認証を設定で OFF にできるようにする](../adr/20261018-0929-web-auth-off-setting.md)
+関係する ADR: [画面は、起動ごとの秘密で入ったブラウザだけが使える](../adr/20261018-0414-web-session-auth.md)、[画面の認証を設定で OFF にできるようにする](../adr/20261018-0929-web-auth-off-setting.md)、[sacty の最新版を、手元のコミットと GitHub の main で比べて知らせる](../adr/20261018-1213-update-check-against-main.md)
 
 ## sacty up
 
@@ -80,6 +80,28 @@
 
 コード: `apps/daemon/src/main.ts`、`apps/daemon/src/service.ts`（`recoverInterrupted`・`queueWaitingSteps`・`maxParallelTasks`）、
 `apps/daemon/src/worker.ts`（`Worker`）、`apps/daemon/src/pr-watcher.ts`（`PullRequestWatcher`）、`packages/core/src/projects.ts`（`DEFAULT_MAX_PARALLEL_TASKS`）
+
+## 最新版の確かめ
+
+デーモンは、動いている sacty のコミットと、GitHub の sacty のリポジトリ（`SACTY_REPOSITORY` = `sert-xx/sacty`）の `main` を比べ、
+`main` に手元に無いコミットがあれば、新しい版があると画面に知らせる（PBI-135）。リリースの運用を始めたら、GitHub Releases に切り替える。
+
+- 手元のコミットは、sacty のリポジトリ（`apps/daemon` の3つ上のディレクトリ）の `git rev-parse HEAD`。動いているコードのコミットなので、
+  起動してから最初の確かめのときに1回だけ取る（`git pull` しても、起動し直すまでは前のコミットと比べる）。40 桁の 16 進でなければ確かめない。
+- GitHub の比較の API（`GET /repos/sert-xx/sacty/compare/<手元>...main`）の `ahead_by`（`main` にあって手元に無いコミットの数。向きは
+  base の手元から見た head の `main`）が 1 以上なら、新しい版がある（`status` が `ahead` か `diverged`）。`identical`・`behind`（手元が
+  進んでいるだけ）なら知らせない。認証は付けない（公開のリポジトリ。1時間に 60 回の上限より十分少ない）。
+- 起動のときと、それから1時間ごとに、前に問い合わせてから1日（`UPDATE_CHECK_INTERVAL_MS`）たっていれば問い合わせる。問い合わせる前に
+  時刻を記録するので、重ねて問い合わせない。失敗しても次の問い合わせは1日後。
+- 確かめられない（git の作業ツリーでない・GitHub が知らないコミット・ネットワークに届かない・レート制限・応答の形が違う・10 秒で
+  応答しない）ときは、黙って知らせを消す。誤りや警告にしない。
+- `config.yaml` の `update_check: false` なら問い合わせず、知らせも出さない（設定を読めなければ ON）。使うたびに読むので、ON に戻すと
+  1時間以内に確かめる。
+- 知らせは `GET /api/status` の `update`（`behindBy`・`compareUrl`）。設定に誤りがあっても載せる。画面は、どの画面でも中身の上に、
+  遅れている数・差分のページへのリンク（`https://github.com/` で始まるものだけ）・更新のコマンドを出す。
+
+コード: `apps/daemon/src/update-check.ts`（`UpdateChecker`・`gitHeadCommit`・`startUpdateCheck`・`SACTY_REPOSITORY`・`UPDATE_CHECK_INTERVAL_MS`）、
+`apps/daemon/src/service.ts`（`TaskService.status`）、`apps/web/src/components/shell/update-notice.tsx`（`UpdateNotice`・`safeCompareUrl`）
 
 ## 二重の起動
 

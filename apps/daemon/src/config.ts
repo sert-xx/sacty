@@ -504,6 +504,10 @@ const ConfigFile = z.object({
         .default({}),
     })
     .prefault({}),
+  /**
+   * sacty の最新版を確かめる（PBI-135）。false なら GitHub に問い合わせない（インターネットに出られない環境など）。
+   */
+  update_check: z.boolean().default(true),
   /** 画面（PBI-133）。 */
   web: z
     .object({
@@ -669,6 +673,8 @@ export type SactyConfig = {
   hostAddress: string;
   /** 画面の認証（PBI-129）。false なら OFF（PBI-133）。 */
   webAuth: boolean;
+  /** sacty の最新版を確かめるか（PBI-135）。 */
+  updateCheck: boolean;
   /** 組織内 PF の API（PBI-35）。 */
   platforms: Platform[];
   /** ホストで動かす MCP サーバー（PBI-36）。 */
@@ -1022,6 +1028,7 @@ export function loadConfig(home: string, defaultsPath: string = DEFAULT_AGENTS_P
       hostMcp: Object.entries(file.gateway.mcp_servers).map(([name, m]) => toHostMcp(name, m)),
       hostAddress: file.gateway.host_address,
       webAuth: file.web.auth,
+      updateCheck: file.update_check,
       gatewayRetry: {
         maxAttempts: file.gateway.retry.max_attempts,
         maxWaitMs: file.gateway.retry.max_wait_sec * 1000,
@@ -1182,6 +1189,10 @@ budget:
 # 設定の変更をできるようになる。信頼できるリポジトリだけを扱う環境で使う
 # web:
 #   auth: false
+
+# sacty の最新版（GitHub の sacty のリポジトリの main）を1日ごとに確かめ、新しい版があれば画面に出す（既定は true）。
+# インターネットに出られない環境では false にする（GitHub に問い合わせない）
+# update_check: false
 
 # ホストのゲートウェイ（via_gateway: true のエージェントの AI の呼び出しを中継する）。
 # レート制限（429）や一時的な失敗（5xx）は、Retry-After（無ければ1秒から倍にしていく間隔）で待ってリトライする
