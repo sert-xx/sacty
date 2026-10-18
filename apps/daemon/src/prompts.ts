@@ -84,6 +84,44 @@ const REPRODUCTION_HEADING = "sacty-reproduction";
 export const SELF_REVIEW_HEADING = "sacty-self-review";
 
 /**
+ * 実装のテストの対応と最終レビューで判定する観点の ID。設計があればテスト観点、不具合の修正は再現のテスト（REPRO。PBI-29）、
+ * 設計を省いたタスクは要求要件の受け入れ条件（REQ。PBI-17）。
+ */
+export function finalReviewViewpointIds(task: Task): string[] {
+  const basis = verificationBasis(task);
+  return basis === "design"
+    ? (task.approved.design?.testViewpoints ?? []).map((v) => v.id)
+    : basis === "reproduce"
+      ? [REPRODUCTION_VIEWPOINT]
+      : [REQUIREMENTS_VIEWPOINT];
+}
+
+/**
+ * 判定の出力の形式の例（最終レビュー・統合レビュー）。観点の ID は、判定する実際の観点の ID にする。固定の例（TV-1）だと、
+ * 設計を省いたタスクの REQ などで、例の ID で答えて判定が無いことになる（PBI-137）。
+ */
+function verdictFormatLines(
+  heading: string,
+  viewpointIds: readonly string[],
+  extra: Record<string, unknown> = {},
+): string[] {
+  const example = {
+    [heading]: {
+      viewpoints: viewpointIds.map((id) => ({ id, verified: true, reason: "理由" })),
+      remarks: [{ id: "指摘のID", notRecurred: true, reason: "理由" }],
+      ...extra,
+      summary: "全体の所見",
+    },
+  };
+  return [
+    `観点の id は、上のテスト観点の ID（${viewpointIds.join("・")}）を、そのまま使ってください（ほかの ID では判定が無いことになります）。`,
+    "```json",
+    JSON.stringify(example),
+    "```",
+  ];
+}
+
+/**
  * 実装の検証の基準。設計があればテスト観点、再現があれば再現のテスト（PBI-29）、
  * どちらも無ければ要求要件の受け入れ条件（PBI-17）。
  */
@@ -1383,9 +1421,7 @@ export function buildFinalReviewPrompt(task: Task, diff: string): string {
     diff || "（差分がありません）",
     "",
     "判定を、次の形式で必ず出してください。観点と指摘は、上のものをすべて含めてください。",
-    "```json",
-    `{"${FINAL_REVIEW_HEADING}": {"viewpoints": [{"id": "TV-1", "verified": true, "reason": "理由"}], "remarks": [{"id": "指摘のID", "notRecurred": true, "reason": "理由"}], "summary": "全体の所見"}}`,
-    "```",
+    ...verdictFormatLines(FINAL_REVIEW_HEADING, finalReviewViewpointIds(task)),
   ].join("\n");
 }
 
@@ -1434,12 +1470,18 @@ function readVerdicts(
   const vs = byId(raw?.viewpoints);
   const rs = byId(raw?.remarks);
   const missing = raw ? message("review.verdictMissing") : unreadable;
+  // 判定する観点に無い ID で答えた（例：REQ を判定するのに TV-1）なら、読み替えずに、ID が違うことを理由に出す（PBI-137）
+  const strays = [...vs.keys()].filter((id) => !viewpointIds.includes(id));
   const viewpoints = viewpointIds.map((id) => {
     const r = vs.get(id);
     return {
       viewpointId: id,
       verified: r?.verified === true,
-      reason: text(r?.reason) || missing,
+      reason:
+        text(r?.reason) ||
+        (!r && strays.length > 0
+          ? message("review.verdictIdMismatch", { expected: id, answered: strays.join(", ") })
+          : missing),
     };
   });
   const remarks = remarkIds.map((id) => {
@@ -1536,9 +1578,9 @@ export function buildIntegrationReviewPrompt(
     task.body || "（内容なし）",
     "",
     "判定の説明をMarkdownで書き、そのあとに判定を次の形式で必ず出してください。観点と指摘は、上のものをすべて含めてください。",
-    "```json",
-    `{"${INTEGRATION_HEADING}": {"viewpoints": [{"id": "TV-1", "verified": true, "reason": "理由"}], "remarks": [{"id": "指摘のID", "notRecurred": true, "reason": "理由"}], "findings": ["直す必要があること"], "summary": "全体の所見"}}`,
-    "```",
+    ...verdictFormatLines(INTEGRATION_HEADING, integrationViewpointIds(task), {
+      findings: ["直す必要があること"],
+    }),
   ].join("\n");
 }
 

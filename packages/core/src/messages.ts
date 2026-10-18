@@ -268,6 +268,7 @@ const PARAMS = {
   "github.accountUnavailable": z.object({ account: z.string(), host: z.string() }),
   "github.ghFailed": z.object({ detail: z.string() }),
   "review.verdictMissing": null,
+  "review.verdictIdMismatch": z.object({ expected: z.string(), answered: z.string() }),
   "review.unreadable": null,
   "run.guardianFailed": z.object({ detail: TextParam }),
   "verify.testsUnavailable": z.object({ detail: TextParam }),
@@ -880,6 +881,8 @@ const ja: MessageDictionary = {
     `${host} のアカウント「${account}」で gh にログインしていません。gh auth login --hostname ${host} でログインするか、プロジェクトの設定でアカウントを選び直してください。`,
   "github.ghFailed": ({ detail }) => `gh コマンドが失敗しました：${detail}`,
   "review.verdictMissing": "判定がありません。",
+  "review.verdictIdMismatch": ({ expected, answered }) =>
+    `観点 ${expected} の判定がありません（ゴールガーディアンは、判定する観点に無い ID ${answered} で答えました）。`,
   "review.unreadable": "最終レビューの出力から、判定を読み取れませんでした。",
   "run.guardianFailed": ({ detail }, text) =>
     `ゴールガーディアンの実行に失敗しました：${text(detail)}`,
@@ -1393,6 +1396,8 @@ const en: MessageDictionary = {
     `The account "${account}" on ${host} is not signed in to gh. Sign in with gh auth login --hostname ${host}, or choose another account in the project settings.`,
   "github.ghFailed": ({ detail }) => `The gh command failed: ${detail}`,
   "review.verdictMissing": "No verdict was given.",
+  "review.verdictIdMismatch": ({ expected, answered }) =>
+    `No verdict for the viewpoint ${expected} (the goal guardian answered with ${answered}, which is not a viewpoint under review).`,
   "review.unreadable": "Could not read the verdicts from the final review output.",
   "run.guardianFailed": ({ detail }, text) => `The Goal Guardian run failed: ${text(detail)}`,
   "verify.testsUnavailable": ({ detail }, text) => `Cannot run the tests: ${text(detail)}`,

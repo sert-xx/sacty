@@ -283,20 +283,18 @@ import {
   extractStepPlan,
   extractTicketTriage,
   extractVerdict,
+  finalReviewViewpointIds,
   integrationViewpointIds,
   investigationMarker,
   operationSucceeded,
   postedLatestCommit,
   type RawExportPlan,
   type RawServices,
-  REPRODUCTION_VIEWPOINT,
-  REQUIREMENTS_VIEWPOINT,
   referencedPullRequest,
   reviewMarker,
   type SplitChild,
   type SubtaskSummary,
   servicePromptLines,
-  verificationBasis,
 } from "./prompts.js";
 import { CONTAINER_LOGS_DIR, stageQuestionLogs } from "./question-logs.js";
 import { NothingToCommitError, type RepositoryWorkspace } from "./repository.js";
@@ -5318,13 +5316,7 @@ export class TaskService {
     // テストを対応させる観点。設計を省いたタスク（PBI-17）は、要求要件の受け入れ条件（REQ）を観点にする。
     // テストの対応の確かめと、最終レビューの両方で同じ観点を使う
     // 不具合の修正（PBI-29）は、再現のテストが通ること（REPRO）を観点にする
-    const basis = verificationBasis(task);
-    const viewpointIds =
-      basis === "design"
-        ? (task.approved.design?.testViewpoints ?? []).map((v) => v.id)
-        : basis === "reproduce"
-          ? [REPRODUCTION_VIEWPOINT]
-          : [REQUIREMENTS_VIEWPOINT];
+    const viewpointIds = finalReviewViewpointIds(task);
 
     let current = task;
     if (current.verification === "pending" && !testCommand) {
