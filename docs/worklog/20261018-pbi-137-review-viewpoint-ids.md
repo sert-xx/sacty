@@ -2,7 +2,7 @@
 
 - 日付: 2026-10-18（UTC）
 - タスク: PBI-137
-- PR: なし
+- PR: #149
 - ブランチ: feat/issue-137-review-viewpoint-ids
 - 関係する ADR: なし
 
