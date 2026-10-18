@@ -75,7 +75,7 @@ const ja = {
     lastUseful: (date: string) => `有効な最終利用日：${date}`,
     usefulTitle: "役に立ったメモリー",
     usefulHint:
-      "このタスクで開いたメモリーのうち、監査が役に立ったと判断したものです。有効な最終利用日を、このタスクの完了日にしました。",
+      "このタスクで開いたメモリーのうち、監査が役に立ったと判断したものです。有効な最終利用日は、このタスクの完了日を基に更新します。すでに新しい日付なら変わりません。",
     delete: "消す",
     deleteConfirm: "消すことを確定する",
     deleteNote: "消したメモリーは戻せません。次のタスクから読まれなくなります。",
@@ -253,7 +253,7 @@ const en: AuditMessages = {
     lastUseful: (date) => `Last useful: ${date}`,
     usefulTitle: "Memories that helped",
     usefulHint:
-      "Memories opened in this task that the audit judged helpful. Their last useful date is now this task's completion date.",
+      "Memories opened in this task that the audit judged helpful. Their last useful date is updated from this task's completion date; a newer date stays as it is.",
     delete: "Delete",
     deleteConfirm: "Confirm delete",
     deleteNote: "A deleted memory cannot be restored. Later tasks will no longer read it.",

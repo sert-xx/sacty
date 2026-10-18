@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync }
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Task } from "@sacty/core";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   countOpenedMemories,
   expiredMemories,
@@ -10,6 +10,7 @@ import {
   type LiveMemory,
   lastUsefulAt,
   liveMemories,
+  MEMORY_CLEANUP_INTERVAL_MS,
   memoryLayerDir,
   memoryPlacements,
   memoryPromptLines,
@@ -17,6 +18,7 @@ import {
   promotedMemories,
   renderMemoryIndex,
   repositoryMemoryKey,
+  startMemoryCleanup,
   syncMemoryLayers,
   taskMemoryLayers,
   usefulCounts,
@@ -392,5 +394,36 @@ describe("階層ごとに分ける（PR #136 レビュー指摘）", () => {
     expect(over).toEqual([]);
     const first = groups.values().next().value?.memories ?? [];
     expect(first[0]?.lastUsefulAt >= (first.at(-1)?.lastUsefulAt ?? "")).toBe(true);
+  });
+});
+
+describe("定期の掃除（PR #137 レビュー指摘）", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("1時間ごとに動き、失敗しても次の回は動き、止めた後は動かない", () => {
+    vi.useFakeTimers();
+    let calls = 0;
+    const warned: string[] = [];
+    const stop = startMemoryCleanup(
+      () => {
+        calls++;
+        if (calls === 1) throw new Error("一時的な失敗");
+      },
+      undefined,
+      (message) => warned.push(message),
+    );
+    vi.advanceTimersByTime(MEMORY_CLEANUP_INTERVAL_MS - 1);
+    expect(calls).toBe(0);
+    vi.advanceTimersByTime(1);
+    expect(calls).toBe(1);
+    expect(warned).toHaveLength(1);
+    vi.advanceTimersByTime(MEMORY_CLEANUP_INTERVAL_MS);
+    expect(calls).toBe(2);
+    stop();
+    vi.advanceTimersByTime(MEMORY_CLEANUP_INTERVAL_MS * 3);
+    expect(calls).toBe(2);
+    expect(MEMORY_CLEANUP_INTERVAL_MS).toBe(60 * 60 * 1000);
   });
 });

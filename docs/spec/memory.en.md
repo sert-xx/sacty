@@ -73,7 +73,10 @@ Code: `apps/daemon/src/audit-prompts.ts` (`buildAuditDivePrompt`, `extractAuditD
 
 - Before the survey, sacty counts, in the session logs (stdout JSONL) of the task's runs, the non-deleted memories of the task's project and target
   repository whose file location (`/sacty-memory/<layer>/references/<ID>.md`) appears (times opened). A relative index link (`references/<ID>.md`)
-  alone does not count. The survey is the audit's first run, so only the task's own run logs are counted.
+  alone does not count. Only the task's own run logs are counted; audit runs (the `runId` of audit records, and session records whose role is `audit`
+  or `audit-dive`) are excluded, because stopping the daemon during a survey leaves the session record without an audit record. Runs without a log
+  are not counted. Logs unreadable for other reasons are not counted either, and a warning gives the task and run IDs and the error code (not the
+  log contents).
 - The survey prompt includes the opened memories (ID, title, summary, times opened) and the judging rules, and asks for the IDs of the helpful ones
   (the work followed that knowledge and avoided a detour or a change request) in `usefulMemories`. IDs that were not opened are dropped.
 - `AuditSurveyed` records the opened memories (`openedMemories`) and the helpful ones (`usefulMemories`). After recording, the helpful memories'

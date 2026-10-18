@@ -27,6 +27,27 @@ export const MEMORY_MAX_PER_LAYER = 30;
 /** 残す日数を過ぎたメモリーを消す間隔（PBI-127）。 */
 export const MEMORY_CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
 
+/**
+ * 定期的にメモリーを掃除する（PBI-127）。1回が失敗しても、次の回は動く。返す関数で止める（デーモンを止めるとき、作業履歴を
+ * 閉じる前に）。タイマーは、ほかの処理が無ければプロセスを生かし続けない。
+ */
+export function startMemoryCleanup(
+  cleanup: () => void,
+  intervalMs = MEMORY_CLEANUP_INTERVAL_MS,
+  warn: (message: string, error: unknown) => void = (message, error) =>
+    console.warn(message, error),
+): () => void {
+  const timer = setInterval(() => {
+    try {
+      cleanup();
+    } catch (error) {
+      warn("[daemon] メモリーを掃除できませんでした：", error);
+    }
+  }, intervalMs);
+  timer.unref();
+  return () => clearInterval(timer);
+}
+
 /** コンテナの中で、メモリーを置く場所。 */
 export const CONTAINER_MEMORY_DIR = "/sacty-memory";
 export const CONTAINER_PROJECT_MEMORY_DIR = `${CONTAINER_MEMORY_DIR}/project`;
