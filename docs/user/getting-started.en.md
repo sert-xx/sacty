@@ -21,10 +21,11 @@ npm run build
 npx sacty config init   # creates ~/.sacty/config.yaml
 ```
 
-1. Open the `~/.sacty/config.yaml` created by `npx sacty config init`, and set the AI that runs the steps (`default_agent` and `agents`),
-   the authentication method, and the unit prices ([config.yaml settings](config.en.md)). In the template, `default_agent` is a Claude Code subscription (`claude-subscription`).
+1. Open the `~/.sacty/config.yaml` created by `npx sacty config init`, and set in `providers` the authentication method of the tool you use and the prices
+   of the models you can use (`available_models`) ([config.yaml settings](config.en.md#connections-and-prices-providers)). The models of the AI that runs the steps come from sacty's
+   defaults, so you do not have to write `agents`. The template uses a Codex API key (`providers.codex`).
 2. Put the authentication tokens and API keys in the Keychain or 1Password ([Secrets](secrets.en.md)). If you keep the template as is,
-   save the token created with `claude setup-token` using `npx sacty secret set claude-oauth-token`.
+   save your OpenAI API key using `npx sacty secret set openai-api-key`.
 3. Build the container image for running agents with `npx sacty image build`. If your environment cannot use Docker Hub or the public npm registry,
    write `image_build` before you build it ([Container images](images.en.md)).
 

@@ -96,7 +96,7 @@ PR のレビュー（流れ `pr-review`）と、既定の `git` の PR への投
   Claude の `apiKeyHelper` など、Claude の `env` の認証・接続先・設定の場所の変数と `SACTY_` で始まる名前）は使わずに警告する
   （`context.reservedSetting`）。`agents/` の下の `auth.json`・`AGENTS.md`・`CLAUDE.md`・`.credentials.json`・`.claude.json`・`mcp.json`・
   `skills` も写さずに警告する。
-- 段階のサブエージェントの定義（`agents/claude/agents/<段階>.md`・`agents/codex/agents/<段階>.toml`。[設定](configuration.md#エージェントagents)の
+- 段階のサブエージェントの定義（`agents/claude/agents/<段階>.md`・`agents/codex/agents/<段階>.toml`。[設定](configuration.md#エージェントの既定と上書き)の
   `claude_<段階>`・`codex_<段階>`）は sacty が作るので、層にあれば、その段階を置くかどうかによらず写さずに警告する（`context.reservedTierFile`。
   残すと、スキルが段階の名前で起動したときに層の定義が使われるため）。Codex はファイルの中の `name` をロールの名前にするので、
   `agents/codex/agents/*.toml` の `name` が段階のものも、ファイル名によらず写さずに警告する（`codexRoleName`。`name` は前後の空白を除いて比べ、空なら名前とみなさない。読むのは層のエージェントの設定のディレクトリの中の、リンクでない通常の
@@ -121,10 +121,11 @@ sacty が作るファイルの順に置く（同じパスは後のものが上�
 | Claude Code | `CLAUDE.md`（規則）、`settings.json`（合成した設定）、`mcp.json`（`{ "mcpServers": … }`。コマンド型は `command`・`args`・`env`、URL 型は `type: "http"`・`url`・`headers`）、`agents/<段階>.md`（段階のサブエージェントの定義。frontmatter の `name`・`description`・`model`・`effort`） |
 | Codex | `AGENTS.md`（規則と、スキルの一覧 `- <名前>：<description>（<場所>）`）、`config.toml`（合成した設定と `[mcp_servers."<名前>"]`。URL 型は `url`・`http_headers`・`env_http_headers`）、`agents/<段階>.toml`（段階のサブエージェントの定義。`name`・`description`・`developer_instructions`・`model`・`model_reasoning_effort`） |
 
-- 段階のサブエージェントの定義（PBI-119）：`config.yaml` の `claude_<段階>`・`codex_<段階>` のうち、工程のエージェントと同じ runtime で、認証・
+- 段階のサブエージェントの定義（PBI-119）：使えるエージェント（`config/agents.yaml` の既定に `config.yaml` の `agents` を重ね、接続先と単価が
+  あるもの。[設定](configuration.md#エージェントの既定と上書き)）の `claude_<段階>`・`codex_<段階>` のうち、工程のエージェントと同じ runtime で、認証・
   接続先（`auth`・`endpoint`・`via_gateway`）が同じものを、接頭辞を外した名前で置く（`selectTiers`・`tierFiles`）。違うものは置かず、
-  `agents.tierConnectionDiffers` を注意に残す。stub の工程には置かない。`model`・`reasoning_effort` を書いていない段階は、それを書かない定義
-  （親のモデルを引き継ぐ）になる。置いた段階（段階・エージェントの名前・モデル・リーズニングエフォート）は `ContextResolved` の `tiers` に
+  `agents.tierConnectionDiffers` を注意に残す（接続先は runtime ごとの `providers` から作るので、同じ runtime の段階はいつも同じになる）。
+  stub の工程には置かない。`reasoning_effort` の無い段階（既定の `claude_lite` など）は、それを書かない定義（ツールの既定）になる。置いた段階（段階・エージェントの名前・モデル・リーズニングエフォート）は `ContextResolved` の `tiers` に
   記録し、プレビューにも同じファイルを出す（プレビューの親は、その runtime の `default_agent`、無ければ `step_agents`・`guardian_agent` の
   うち最初のもの）。`ContextResolved` は、工程の実行だけでなく、マージの後の監視・外部作業・書き出しの実行でも、コンテキストを渡すたびに
   その実行の `runId` で記録する（`contextResolved`）。段階を置いた実行の費用は推定（`estimated`）として記録する（担当が親と違うモデルで

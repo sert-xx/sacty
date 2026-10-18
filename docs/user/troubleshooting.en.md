@@ -12,7 +12,7 @@ This page lists common ways sacty stops and what to check.
 | --- | --- |
 | `sacty up` exits saying another sacty is running | A sacty is running with the same `SACTY_HOME`. Stop the sacty at the address and PID shown, or start with a different `SACTY_HOME` and ports ([Getting started](getting-started.en.md#where-data-is-stored)) |
 | It exits with `--port and --daemon-port must be different` | Specify different numbers for `--port` and `--daemon-port` ([CLI](cli.en.md#sacty-up)) |
-| The web UI shows an error in the configuration file | Look at the item (for example `agents.<name>.auth.secret`) and the reason shown on the web UI, and fix `config.yaml` ([config.yaml settings](config.en.md)). If the file does not exist, create it with `npx sacty config init` |
+| The web UI shows an error in the configuration file | Look at the item (for example `providers.codex.auth.secret`) and the reason shown on the web UI, and fix `config.yaml` ([config.yaml settings](config.en.md)). If the file does not exist, create it with `npx sacty config init` |
 | `sacty context preview` exits saying it cannot find a running sacty | Start sacty first with `npx sacty up` (with the same `SACTY_HOME`) |
 
 ## Secrets

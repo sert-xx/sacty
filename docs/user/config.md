@@ -1,4 +1,4 @@
-<!-- 対応するコード: apps/daemon/src/config.ts（ConfigFile・Agent・Auth・Provider・CONFIG_TEMPLATE）、packages/core/src/events.ts（StepKey・DEFAULT_BUDGET_USD） -->
+<!-- 対応するコード: apps/daemon/src/config.ts（ConfigFile・ProviderFile・ProviderAuth・AgentFile・loadConfig・CONFIG_TEMPLATE）、config/agents.yaml、packages/core/src/events.ts（StepKey・DEFAULT_BUDGET_USD） -->
 
 **日本語** | [English](config.en.md)
 
@@ -14,12 +14,12 @@
 
 | 項目 | 意味 | 既定値 |
 | --- | --- | --- |
-| `default_agent` | 工程を実行する AI（`agents` の名前）。必須 | なし |
+| `providers` | runtime ごとの接続先（認証）と、使えるモデルの単価（[接続先と単価](#接続先と単価providers)）。`codex` と `claude` だけ | なし |
+| `default_agent` | 工程を実行する AI（エージェントの名前） | `codex_standard`（使えなければ `claude_standard`） |
 | `guardian_agent` | ゴールガーディアンに使う AI | `default_agent` |
 | `audit_agent` | 完了したタスクの監査に使う AI（[監査](audit.md)） | `guardian_agent`（無ければ `default_agent`） |
 | `step_agents` | 工程（マージの後の監視を含む）とオーケストレーターごとに使う AI（[工程ごとのモデル](#工程ごとのモデル)） | 書かなければ `default_agent`（統合レビューは `guardian_agent`） |
-| `agents` | AI の定義（名前ごと。[エージェント](#エージェント)）。必須 | なし |
-| `providers` | OpenAI 互換の接続先（[ゲートウェイ](gateway.md#openai-互換の接続先providers)） | なし |
+| `agents` | sacty の既定のエージェントの上書き・追加（[エージェントの上書き](#エージェントの上書き)）。任意 | なし（sacty の既定を使う） |
 | `budget.default_per_task_usd` | 1タスクあたりの予算（米ドル。0 より大きい数） | `1` |
 | `budget.default_per_audit_usd` | 1回の監査の予算（米ドル。0 より大きい数。タスクの予算とは別。[監査](audit.md#予算)） | `1` |
 | `image` | エージェントとテストの実行に使うイメージ | `sacty-agent:0.1.0` |
@@ -33,107 +33,152 @@
 メモリーを残す日数も「sacty の設定」で決めます（[監査を見る](audit.md#メモリー)）。
 以前の版の `github:`（`poll_interval_sec`）は、書いてあっても読みません。消してかまいません。
 
-設定に誤りがあると、どの項目（例 `agents.claude-subscription.auth.secret`）の何が誤りかを画面に出します。
+設定に誤りがあると、どの項目（例 `providers.codex.auth.secret`）の何が誤りかを画面に出します。
 
-## エージェント
+## 接続先と単価（providers）
 
-`agents` に、名前ごとに AI を書きます。
+工程を動かす AI のモデルとリーズニングエフォートは、sacty が推奨する既定（[既定のエージェント](#既定のエージェント)）を使います。
+config.yaml には、使うツールの接続先（認証）と、使えるモデルの単価（`available_models`）だけを書けば動きます。
 
 ```yaml
-agents:
-  claude-subscription:
-    runtime: claude-code
+providers:
+  codex:
     auth:
-      mode: subscription
-      secret: claude-oauth-token
-    price_per_mtok_usd: { input: 3, cached_input: 0.3, cache_write: 3.75, output: 15 }
+      mode: api-key
+      secret: openai-api-key   # 値は npx sacty secret set openai-api-key で保存する
+    available_models:          # 単価は例。契約の単価に合わせる
+      gpt-6-luna: { input: 0.25, cached_input: 0.025, output: 2 }
+      gpt-6.1-sol: { input: 1.25, cached_input: 0.125, output: 10 }
 ```
+
+`providers` に書けるのは、Codex の `codex` と Claude Code の `claude` の2つだけです。片方だけでも、両方でもかまいません。
 
 | 項目 | 意味 | 既定値 |
 | --- | --- | --- |
-| `runtime` | `claude-code`・`codex`・`stub`（動作確認用。実際の AI は呼ばない） | 必須 |
-| `model` | モデル | エージェントの既定 |
-| `reasoning_effort` | リーズニングエフォート（Codex の `model_reasoning_effort`、Claude Code の `--effort`）。英小文字で始まる、英小文字・数字・`_`・`-` | エージェントの既定 |
-| `auth` | 認証方式（[認証方式](#認証方式)）。`provider` を書くときは書かない | 必須 |
-| `provider` | `auth` の代わりに書く、`providers` の接続先の名前（Codex だけ） | なし |
-| `price_per_mtok_usd` | 100万トークンあたりの単価（米ドル）。`input`・`cached_input`・`output` は必須、`cache_write` は任意 | `cache_write` は `0` |
-| `via_gateway` | AI の呼び出しを、ホストのゲートウェイ経由にする（Codex × Bedrock だけ。[ゲートウェイ](gateway.md#ai-の呼び出しを中継する)） | `false` |
+| `auth` | 認証方式（[認証方式](#認証方式)）。必須 | なし |
+| `via_gateway` | AI の呼び出しを、ホストのゲートウェイ経由にする（`codex` の `bedrock`・`openai-compatible` だけ。[ゲートウェイ](gateway.md#ai-の呼び出しを中継する)） | `false` |
+| `available_models` | 使えるモデルと、100万トークンあたりの単価（米ドル）。モデルの名前ごとに `input`・`cached_input`・`output` は必須、`cache_write` は任意 | なし（`cache_write` は `0`） |
 
-単価は、利用するモデルの最新の単価に合わせてください。契約で単価が違う場合は、その単価を書きます。費用は、この単価とトークン数から計算します。
-サブスクリプションでは実際の請求は発生しませんが、同じ単価で換算した値を費用として扱い、予算の判定に使います。
+- `available_models` に単価の無いモデルのエージェントは、使えない扱いになります。工程・タスクの詳細の選択肢に出さず、画面の警告に
+  どのモデルの単価が無いか（そのモデルを使うエージェントの名前）を出します。設定の誤りにはしません。
+- sacty を更新して既定のモデルが変わったら、警告に出たモデルの単価を `available_models` に足してください。
+- 単価は、利用するモデルの最新の単価に合わせてください。契約で単価が違う場合は、その単価を書きます。費用は、この単価とトークン数から計算します。
+  サブスクリプションでは実際の請求は発生しませんが、同じ単価で換算した値を費用として扱い、予算の判定に使います。
+- `default_agent`・`guardian_agent`・`audit_agent`・`step_agents` に、使えないエージェントを書くと誤りになります。
+- `default_agent` を書かず、`codex_standard`・`claude_standard` のどちらも使えないときも、誤りになります（`providers` を書いていないときなど）。
 
 ## 認証方式
 
 | AI | 認証方式（`auth.mode`） | 用意するもの |
 | --- | --- | --- |
-| Claude Code | `subscription` | `claude setup-token` で作ったトークン（`secret` は必須） |
-| Claude Code | `api-key` | Anthropic の API キー |
-| Claude Code | `bedrock` | Bedrock の API キーと `region`。`model` は推論プロファイル ID |
-| Codex | `subscription` | ChatGPT でのログイン（`auth_file`。既定 `~/.codex/auth.json`） |
-| Codex | `api-key` | OpenAI の API キー |
-| Codex | `bedrock` | Bedrock の API キーと `region`。`endpoint` は `runtime`（既定。`model` は推論プロファイル ID、例 `global.openai.gpt-6-sol`）か `mantle`（`model` は例 `openai.gpt-6-sol`） |
-| （動作確認用） | `stub` | なし。`runtime: stub` のときだけ使える |
+| Claude Code（`claude`） | `subscription` | `claude setup-token` で作ったトークン（`secret` は必須） |
+| Claude Code（`claude`） | `api-key` | Anthropic の API キー |
+| Claude Code（`claude`） | `bedrock` | Bedrock の API キーと `region`。モデルは推論プロファイル ID |
+| Codex（`codex`） | `subscription` | ChatGPT でのログイン（`auth_file`。既定 `~/.codex/auth.json`） |
+| Codex（`codex`） | `api-key` | OpenAI の API キー |
+| Codex（`codex`） | `bedrock` | Bedrock の API キーと `region`。`endpoint` は `runtime`（既定。モデルは推論プロファイル ID、例 `global.openai.gpt-6-sol`）か `mantle`（モデルは例 `openai.gpt-6-sol`） |
+| Codex（`codex`） | `openai-compatible` | OpenAI 互換の接続先の `base_url` と API キー（[ゲートウェイ](gateway.md#openai-互換の接続先)） |
 
 - トークンや API キーは `secret` に名前（または 1Password の参照）だけを書き、値はキーチェーンか 1Password に置きます（[秘密情報](secrets.md)）。
-- `endpoint` は Codex だけで使います。Claude Code の `bedrock` に書くと誤りになります。
+- `endpoint` は Codex だけで使います。`claude` の `bedrock` に書くと誤りになります。
 - コンテナには、選んだ認証方式の環境変数だけを渡します（ホストの `ANTHROPIC_API_KEY` などは引き継ぎません）。
+- Bedrock ではモデルの名前が変わるので、[エージェントの上書き](#エージェントの上書き)で `model` を書き換え、その名前の単価を
+  `available_models` に書きます。上書きしていない段階は単価が無いので、使えない扱いになり、画面に警告が出ます。
 
 ```yaml
-agents:
-  codex-bedrock:
-    runtime: codex
-    model: global.openai.gpt-6-sol
+providers:
+  codex:
     auth:
       mode: bedrock
       secret: bedrock-api-key
       region: us-east-2
       endpoint: runtime
     via_gateway: true
-    price_per_mtok_usd: { input: 1.25, cached_input: 0.125, output: 10 }
+    available_models:
+      global.openai.gpt-6-sol: { input: 1.25, cached_input: 0.125, output: 10 }
+agents:
+  codex_standard:
+    model: global.openai.gpt-6-sol
+default_agent: codex_standard
 ```
+
+## 既定のエージェント
+
+sacty は、段階（[エージェントの段階](#エージェントの段階)）ごとのエージェントを既定で持っています。モデルが新しくなったら、
+sacty の更新で既定も新しくなります。
+
+| 名前 | ツール | モデル | リーズニングエフォート |
+| --- | --- | --- | --- |
+| `codex_lite` | Codex | `gpt-6-luna` | `low` |
+| `codex_entry` | Codex | `gpt-6-luna` | `high` |
+| `codex_standard` | Codex | `gpt-6.1-sol` | `low` |
+| `codex_advanced` | Codex | `gpt-6.1-sol` | `medium` |
+| `codex_ultimate` | Codex | `gpt-6.1-sol` | `high` |
+| `claude_lite` | Claude Code | `claude-haiku-5-5` | （ツールの既定） |
+| `claude_entry` | Claude Code | `claude-sonnet-5-5` | `low` |
+| `claude_standard` | Claude Code | `claude-sonnet-5-5` | `medium` |
+| `claude_advanced` | Claude Code | `claude-opus-5-5` | `medium` |
+| `claude_ultimate` | Claude Code | `claude-opus-5-5` | `high` |
+
+- `default_agent` を書かなければ、`codex_standard` を使います。`codex_standard` が使えない（`providers.codex` が無い・単価が無い）ときは
+  `claude_standard` を使います。
+- `providers` に無いツールの既定のエージェントは、使えない扱いになります（そのツールを使っていないだけなので、警告は出しません）。
+
+## エージェントの上書き
+
+`agents` は書かなくてかまいません。書いたときは、既定と同じ名前のエージェントを、書いた項目だけ上書きします
+（書いていない項目は既定のままです）。新しい名前で足すこともできます。
+
+```yaml
+agents:
+  codex_ultimate:
+    reasoning_effort: xhigh   # モデルは既定のまま
+  my-reviewer:                # 新しい名前（runtime・model が要る）
+    runtime: claude-code
+    model: claude-opus-5-5
+    reasoning_effort: high
+```
+
+| 項目 | 意味 | 既定値 |
+| --- | --- | --- |
+| `runtime` | `claude-code`・`codex`・`stub`（動作確認用。実際の AI は呼ばない）。新しい名前では必須 | 既定のエージェントのもの |
+| `model` | モデル。新しい名前では必須（単価を `available_models` から引くため） | 既定のエージェントのもの |
+| `reasoning_effort` | リーズニングエフォート（Codex の `model_reasoning_effort`、Claude Code の `--effort`）。英小文字で始まる、英小文字・数字・`_`・`-` | 既定のエージェントのもの（無ければツールの既定） |
+| `price_per_mtok_usd` | `runtime: stub` だけ。100万トークンあたりの単価（米ドル）。書き方は `available_models` と同じ | `0` |
+| `stub` | `runtime: stub` の出力 | なし |
+
+- エージェントには、認証・接続先・単価（`auth`・`provider`・`via_gateway`・`price_per_mtok_usd`）を書けません。`providers` に書きます
+  （`runtime: stub` の `price_per_mtok_usd` を除く）。
+- 新しい名前のエージェントも、そのツールの `providers` が無いか、モデルの単価が無ければ使えない扱いになり、画面に警告を出します。
 
 ## 工程ごとのモデル
 
-エージェントを「接続先・モデル・リーズニングエフォート・単価」の組で書き、`step_agents` で工程とオーケストレーターごとに選びます。
+`step_agents` で、工程とオーケストレーターごとにエージェントを選びます。
 
 ```yaml
-default_agent: luna-low
-guardian_agent: sol-high
+default_agent: codex_standard
+guardian_agent: codex_advanced
 step_agents:          # 書かなければ default_agent（統合レビューは guardian_agent）
-  orchestrator: luna-low
-  requirements: sol-high
-  design: sol-high
+  orchestrator: codex_lite
+  requirements: codex_advanced
+  design: codex_advanced
 ```
 
 `step_agents` に書けるキーは、`orchestrator` と工程の `investigate`（調査）・`review`（レビュー）・`requirements`（要求要件）・
 `design`（設計）・`split`（タスク分割）・`integrate`（統合レビュー）・`reproduce`（再現）・`implement`（実装）・
 `document`（文書作成）・`operation`（作業）と、
 `deployment`（マージの後の監視の工程の確認。[マージの後の監視](deployment-watch.md)）です。
-`default_agent`・`guardian_agent`・`audit_agent`・`step_agents` に、`agents` に無い名前を書くと誤りになります。
+`default_agent`・`guardian_agent`・`audit_agent`・`step_agents` に、無い名前や使えないエージェントを書くと誤りになります。
 以前の版の `pr`（PR作成）は、工程を無くしたので書けません（書くと誤りになります。消してください）。
 
 ## エージェントの段階
 
 エージェントを「段階」で分けておくと、スキル（既定の `review` など）が観点ごとに段階の名前でサブエージェントを起動し、
-Claude Code と Codex のどちらでも同じ段階の担当が動きます。モデルの世代が変わったら、段階の `model` を直すだけで済みます。
+Claude Code と Codex のどちらでも同じ段階の担当が動きます。モデルの世代が変わったら、sacty の更新で段階の既定のモデルも新しくなります。
 
-`agents` に `claude_<段階>`・`codex_<段階>` の名前で書きます。段階は `lite`・`entry`・`standard`・`advanced`・`ultimate` の 5 つで、
-書いた段階だけを置きます。`npx sacty config init` の雛形に、両ツールの 5 段階すべての例がコメントで入っています。
-
-```yaml
-agents:
-  claude_lite:
-    runtime: claude-code
-    model: claude-haiku-5-5
-    auth: { mode: subscription, secret: claude-oauth-token }
-    price_per_mtok_usd: { input: 1, cached_input: 0.1, cache_write: 1.25, output: 5 }
-  claude_ultimate:
-    runtime: claude-code
-    model: claude-opus-5-5
-    reasoning_effort: high
-    auth: { mode: subscription, secret: claude-oauth-token }
-    price_per_mtok_usd: { input: 15, cached_input: 1.5, cache_write: 18.75, output: 75 }
-```
+段階のエージェントは、`claude_<段階>`・`codex_<段階>` の名前で sacty が既定で持っています（[既定のエージェント](#既定のエージェント)）。
+段階は `lite`・`entry`・`standard`・`advanced`・`ultimate` の 5 つで、使える段階（`providers` に接続先とモデルの単価がある段階）だけを置きます。
+段階のモデルを変えるときは、[エージェントの上書き](#エージェントの上書き)で同じ名前に `model` を書きます。
 
 | 段階 | 意味 | 想定する使い方 |
 | --- | --- | --- |
@@ -145,16 +190,26 @@ agents:
 
 - 工程を動かすとき、sacty はそのツールの段階（Claude Code なら `claude_*`、Codex なら `codex_*`）を、接頭辞を外した名前の
   サブエージェントの定義として設定の場所に置きます（Claude Code は `agents/<段階>.md`、Codex は `agents/<段階>.toml`）。
-- サブエージェントは工程のエージェントと同じプロセスで動くので、段階の `auth`・`provider`・`via_gateway` は、工程のエージェント
-  （`default_agent`・`step_agents`）と同じにしてください。違う段階は置かず、作業履歴に注意を残します。
+- サブエージェントは工程のエージェントと同じプロセスで動きます。接続先はツールごとの `providers` なので、同じツールの段階は
+  工程のエージェントと同じ接続先になります。
 - 段階の名前の接頭辞と `runtime` が合わないと誤りになります（例 `claude_lite` に `runtime: codex`）。
 - 置いた段階は、作業履歴の「コンテキストを用意」の詳細と、プロジェクトの設定のコンテキストのプレビューで確かめられます。
-- 段階を書いていなければ、サブエージェントは工程のエージェントと同じモデルで動きます。
+- 使える段階が無ければ、サブエージェントは工程のエージェントと同じモデルで動きます。
 - 段階のエージェントも普通のエージェントなので、`step_agents` に書いて工程に使えます。
 - 費用は、担当ごとのモデルの単価ではなく、工程のエージェントの結果の使用量と単価から計算します。段階を置いた実行の費用は概算として
-  記録し、画面では「概算」の印を付けます。段階の `price_per_mtok_usd` は、その段階を `step_agents` で工程に使ったときの単価です。
+  記録し、画面では「概算」の印を付けます。段階のモデルの `available_models` の単価は、その段階を `step_agents` で工程に使ったときに使います。
 - コンテキストリポジトリに同じ名前の定義（`agents/claude/agents/<段階>.md`・`agents/codex/agents/<段階>.toml`、Codex の `config.toml` の
   `[agents.<段階>]`）があっても使いません（警告を残します）。
+
+## 以前の版から移す
+
+以前の版の書き方は、自動では読み替えません。誤りになるので、次のように書き直してください。
+
+- エージェントの `auth`・`via_gateway` は、そのツールの `providers.codex`・`providers.claude` に移します。
+- エージェントの `price_per_mtok_usd` は、モデルごとの単価として `providers.<ツール>.available_models` に移します。
+- 名前を付けた `providers`（OpenAI 互換の接続先）と、エージェントの `provider` は、`providers.codex` の `auth`
+  （`mode: openai-compatible`・`base_url`・`secret`）に書き直します。
+- 既定と同じモデルで足りるエージェントは、`agents` から消してかまいません。`default_agent` などは既定のエージェントの名前に直します。
 
 ## 予算
 

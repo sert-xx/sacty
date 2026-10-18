@@ -136,9 +136,7 @@ const PARAMS = {
   "input.secretRef": null,
   "input.invalidUrl": null,
   "input.reasoningEffort": null,
-  "input.providerName": null,
   "input.imageName": null,
-  "config.providerMissing": z.object({ id: z.string() }),
   "config.hostAddress": null,
   "config.npmVersion": null,
   "config.agentNameEmpty": null,
@@ -400,7 +398,21 @@ const PARAMS = {
   }),
   "config.subscriptionSecret": null,
   "config.bedrockEndpointCodexOnly": null,
-  "config.gatewayCodexBedrockOnly": null,
+  "config.gatewayUnsupported": null,
+  // エージェントの既定と接続先（PBI-134）
+  "config.providerLegacyName": z.object({ name: z.string() }),
+  "config.agentLegacyKey": z.object({ key: z.string() }),
+  "config.defaultsUnreadable": z.object({ path: z.string(), detail: z.string() }),
+  "config.agentUnavailable": z.object({ key: z.string(), id: z.string(), reason: TextParam }),
+  "config.noDefaultAgent": null,
+  "config.agentRuntimeRequired": null,
+  "config.agentModelRequired": null,
+  "config.agentProviderMissing": z.object({ id: z.string(), provider: z.string() }),
+  "config.modelPriceMissing": z.object({
+    provider: z.string(),
+    model: z.string(),
+    agents: z.string(),
+  }),
   "config.platformAuth": null,
   // トークンの取得のクエリ（PBI-93）
   "config.platformTokenQuery": null,
@@ -712,10 +724,8 @@ const ja: MessageDictionary = {
   "input.invalidUrl": "URL（http または https）を書いてください。",
   "input.reasoningEffort":
     "リーズニングエフォートは、英小文字で書いてください（例：low・medium・high・xhigh）。",
-  "input.providerName": "接続先の名前は、英数字・_・- で書いてください。",
   "input.imageName":
     "イメージの名前は、英小文字・数字・_・- で書いてください（config.yaml の images の名前か default）。",
-  "config.providerMissing": ({ id }) => `providers に "${id}" がありません。`,
   "config.hostAddress":
     "gateway.host_address は、ホスト名か IP アドレス（または host-gateway）で書いてください。",
   "config.agentNameEmpty": "agents の名前は空にできません。エージェントに名前を付けてください。",
@@ -981,8 +991,26 @@ const ja: MessageDictionary = {
     `ホストの MCP サーバー「${name}」の準備が ${seconds} 秒待ってもできません（起動・認証の途中）。準備ができるまで、エージェントはこの MCP を使えません。`,
   "gateway.platformUnavailable": ({ name, detail }, text) =>
     `組織内 PF「${name}」の認証情報を用意できません：${text(detail)}（ほかの PF は使えます）`,
-  "config.gatewayCodexBedrockOnly":
-    "ゲートウェイ経由（via_gateway）は、いまは Codex × Bedrock（auth.mode: bedrock）だけで使えます。",
+  "config.gatewayUnsupported":
+    "ゲートウェイ経由（via_gateway）は、providers.codex の auth.mode が bedrock か openai-compatible のときだけ使えます。",
+  "config.providerLegacyName": ({ name }) =>
+    `providers に書けるのは codex と claude だけです（"${name}" があります）。名前を付けた接続先は providers.codex の auth（mode: openai-compatible、base_url、secret）に書き直してください。`,
+  "config.agentLegacyKey": ({ key }) =>
+    `エージェントには ${key} を書けません。認証・接続先は providers.codex・providers.claude の auth・via_gateway に、単価は providers.<runtime>.available_models にモデルごとに書いてください。`,
+  "config.defaultsUnreadable": ({ path, detail }) =>
+    `sacty のエージェントの既定（${path}）を読めません：${detail}。sacty を入れ直してください。`,
+  "config.agentUnavailable": ({ key, id, reason }, text) =>
+    `${key} の "${id}" は使えません：${text(reason)}`,
+  "config.noDefaultAgent":
+    "工程を動かす AI がありません。providers.codex か providers.claude に、接続先と既定のモデルの単価（available_models）を書いてください（default_agent を書いて選ぶこともできます）。",
+  "config.agentRuntimeRequired":
+    "sacty の既定に無い名前のエージェントには、runtime（claude-code・codex・stub）を書いてください。",
+  "config.agentModelRequired":
+    "エージェントには model を書いてください（単価を providers の available_models から引くため）。",
+  "config.agentProviderMissing": ({ id, provider }) =>
+    `エージェント「${id}」は、providers.${provider} が無いので使えません。`,
+  "config.modelPriceMissing": ({ provider, model, agents }) =>
+    `providers.${provider}.available_models に ${model} の単価が無いので、${agents} を使えません。単価を足してください。`,
   "gateway.unavailable":
     "ホストのゲートウェイが起動していないため、ゲートウェイ経由のエージェントを実行できません。sacty を起動し直してください。",
   "config.agentMissing": ({ key, id }) => `${key} の "${id}" が agents にありません。`,
@@ -990,7 +1018,7 @@ const ja: MessageDictionary = {
   "agent.stepNotChangeable":
     "統合レビューは、ゴールガーディアン（config.yaml の guardian_agent）が実行するため、工程のエージェントを変えられません。",
   "agent.notInAgents": ({ name }) =>
-    `エージェント「${name}」は config.yaml の agents にありません。agents の名前から選んでください。`,
+    `エージェント「${name}」は使えるエージェントにありません。画面に出ているエージェントから選んでください。`,
   "agent.unchanged": ({ name }) => `工程のエージェントは、すでに「${name}」です。`,
   "audit.notFound": "このタスクの監査はありません。",
   "audit.proposalNotFound": "その提案はありません。",
@@ -1007,7 +1035,7 @@ const ja: MessageDictionary = {
   "agent.configUnavailable": ({ detail }, text) =>
     `config.yaml を読めないため、工程のエージェントを変えられません。設定を直してから、もう一度変えてください：${text(detail)}`,
   "agent.chosenMissing": ({ step, name }) =>
-    `工程（${step}）に選んだエージェント「${name}」が config.yaml の agents にありません。タスクの詳細でエージェントを選び直してから、再開してください。`,
+    `工程（${step}）に選んだエージェント「${name}」が使えるエージェントにありません（設定から消した・接続先や単価が無いなど）。タスクの詳細でエージェントを選び直してから、再開してください。`,
   "config.tierRuntime": ({ id, runtime, expected }) =>
     `agents の "${id}" は段階のエージェントなので、runtime を ${expected} にしてください（${runtime} になっています）。`,
   "agents.tierConnectionDiffers": ({ tier, id, parent }) =>
@@ -1208,10 +1236,8 @@ const en: MessageDictionary = {
   "input.invalidUrl": "Write a URL (http or https).",
   "input.reasoningEffort":
     "Write the reasoning effort in lowercase letters (e.g. low, medium, high, xhigh).",
-  "input.providerName": "Use only letters, digits, _ and - in provider names.",
   "input.imageName":
     "Use only lowercase letters, digits, _ and - in image names (a name in images in config.yaml, or default).",
-  "config.providerMissing": ({ id }) => `"${id}" is not in providers.`,
   "config.hostAddress":
     "Write gateway.host_address as a host name or IP address (or host-gateway).",
   "config.npmVersion": "Write image_build.npm_version as a version (e.g. 11, 11.6.2) or latest.",
@@ -1478,8 +1504,26 @@ const en: MessageDictionary = {
     `The host MCP server "${name}" is still not ready after waiting ${seconds} seconds (it is starting or authenticating). The agent cannot use it until it is ready.`,
   "gateway.platformUnavailable": ({ name, detail }, text) =>
     `Cannot prepare the credentials for the internal platform "${name}": ${text(detail)} (other platforms still work)`,
-  "config.gatewayCodexBedrockOnly":
-    "via_gateway currently works only for Codex with Bedrock (auth.mode: bedrock).",
+  "config.gatewayUnsupported":
+    "via_gateway works only when auth.mode of providers.codex is bedrock or openai-compatible.",
+  "config.providerLegacyName": ({ name }) =>
+    `providers can contain only codex and claude (found "${name}"). Rewrite a named endpoint as the auth of providers.codex (mode: openai-compatible, base_url, secret).`,
+  "config.agentLegacyKey": ({ key }) =>
+    `Agents cannot contain ${key}. Write authentication and endpoints in auth and via_gateway of providers.codex or providers.claude, and prices per model in providers.<runtime>.available_models.`,
+  "config.defaultsUnreadable": ({ path, detail }) =>
+    `Cannot read sacty's agent defaults (${path}): ${detail}. Reinstall sacty.`,
+  "config.agentUnavailable": ({ key, id, reason }, text) =>
+    `${key} "${id}" cannot be used: ${text(reason)}`,
+  "config.noDefaultAgent":
+    "There is no AI to run steps. Write an endpoint and the prices of the default models (available_models) in providers.codex or providers.claude (you can also choose one with default_agent).",
+  "config.agentRuntimeRequired":
+    "An agent whose name is not in sacty's defaults needs runtime (claude-code, codex, or stub).",
+  "config.agentModelRequired":
+    "Write model for the agent (its price is looked up in available_models of providers).",
+  "config.agentProviderMissing": ({ id, provider }) =>
+    `The agent "${id}" cannot be used because providers.${provider} is not written.`,
+  "config.modelPriceMissing": ({ provider, model, agents }) =>
+    `${agents} cannot be used because providers.${provider}.available_models has no price for ${model}. Add its price.`,
   "gateway.unavailable":
     "The host gateway is not running, so an agent that goes through it cannot run. Restart sacty.",
   "config.agentMissing": ({ key, id }) => `${key} "${id}" is not in agents.`,
@@ -1487,7 +1531,7 @@ const en: MessageDictionary = {
   "agent.stepNotChangeable":
     "The integration review is run by the goal guardian (guardian_agent in config.yaml), so its step agent cannot be changed.",
   "agent.notInAgents": ({ name }) =>
-    `The agent "${name}" is not in agents in config.yaml. Choose a name from agents.`,
+    `The agent "${name}" is not one of the usable agents. Choose one of the agents shown.`,
   "agent.unchanged": ({ name }) => `The step agent is already "${name}".`,
   "audit.notFound": "This task has no audit.",
   "audit.proposalNotFound": "That proposal does not exist.",
@@ -1504,7 +1548,7 @@ const en: MessageDictionary = {
   "agent.configUnavailable": ({ detail }, text) =>
     `config.yaml cannot be read, so the step agent cannot be changed. Fix the settings and try again: ${text(detail)}`,
   "agent.chosenMissing": ({ step, name }) =>
-    `The agent "${name}" chosen for the step (${step}) is not in agents in config.yaml. Choose the agent again in the task details, then resume.`,
+    `The agent "${name}" chosen for the step (${step}) is not one of the usable agents (removed from the settings, or no endpoint or price). Choose the agent again in the task details, then resume.`,
   "config.tierRuntime": ({ id, runtime, expected }) =>
     `"${id}" in agents is a tier agent, so its runtime must be ${expected} (it is ${runtime}).`,
   "agents.tierConnectionDiffers": ({ tier, id, parent }) =>

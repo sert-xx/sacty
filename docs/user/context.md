@@ -51,11 +51,11 @@ npx sacty context init sacty-context   # 指定したディレクトリ（省略
     `SACTY_` で始まる変数
   - ファイル：Codex の `auth.json`・`AGENTS.md`・`skills/`、Claude Code の `.credentials.json`・`.claude.json`・`CLAUDE.md`・`mcp.json`・`skills/`
 - 段階のサブエージェントの定義（`agents/claude/agents/<段階>.md`・`agents/codex/agents/<段階>.toml`。段階は `lite`・`entry`・`standard`・
-  `advanced`・`ultimate`）と、Codex の `config.toml` の `[agents.<段階>]` は、`config.yaml` の[エージェントの段階](config.md#エージェントの段階)から
-  sacty が作るので、置いても使いません（段階を書いていなくても使いません。警告を残します）。Codex の `agents/*.toml` は、ファイル名が違っても
+  `advanced`・`ultimate`）と、Codex の `config.toml` の `[agents.<段階>]` は、[エージェントの段階](config.md#エージェントの段階)から
+  sacty が作るので、置いても使いません（使える段階が無くても使いません。警告を残します）。Codex の `agents/*.toml` は、ファイル名が違っても
   中の `name` が段階なら使いません。
 - Codex のルール（`agents/codex/rules/*.rules`）は、既定のルールを消さないように `sacty.rules` 以外の名前にしてください。
-- モデルは、`config.yaml` のエージェントに `model` があれば、そちらが設定より優先します。
+- モデルは、エージェントの `model`（sacty の既定か、`config.yaml` の `agents` の上書き）が、ここの設定より優先します。
 
 ## sacty-context.yaml
 

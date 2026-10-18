@@ -20,15 +20,15 @@ npx sacty secret set claude-oauth-token
 ## 1Password
 
 For secrets stored in 1Password, write a reference (`op://vault/item/field`) instead of a name. You can use references anywhere a secret goes:
-agent authentication, `providers`, `gateway.platforms`, `gateway.mcp_servers`, `mcp.yaml` and `platforms.yaml` in the context repository, the Slack notification destination in the "sacty settings",
+authentication in `providers`, `gateway.platforms`, `gateway.mcp_servers`, `mcp.yaml` and `platforms.yaml` in the context repository, the Slack notification destination in the "sacty settings",
 npm tokens, and so on.
 
 ```yaml
-agents:
-  codex-bedrock:
-    runtime: codex
-    auth: { mode: bedrock, secret: "op://Work/Bedrock/credential", region: us-east-2 }
-    price_per_mtok_usd: { input: 1.25, cached_input: 0.125, output: 10 }
+providers:
+  codex:
+    auth: { mode: api-key, secret: "op://Work/OpenAI/api-key" }
+    available_models:
+      gpt-6.1-sol: { input: 1.25, cached_input: 0.125, output: 10 }
 # If you are signed in to more than one 1Password account, write the account to use
 onepassword:
   account: acme.1password.com
@@ -40,7 +40,7 @@ onepassword:
 
 ## What is fetched at startup
 
-- When `sacty up` starts, it fetches the secrets in use all at once (authentication of the agents in use, `providers`, the environment variables of `gateway.platforms` and `gateway.mcp_servers`,
+- When `sacty up` starts, it fetches the secrets in use all at once (authentication in `providers` of the agents in use, the environment variables of `gateway.platforms` and `gateway.mcp_servers`,
   the Slack notification destination in the "sacty settings", and `mcp.yaml` and `platforms.yaml` in the projects' context repositories).
   1Password references are fetched with a single `op run`, so you authenticate only once, at startup.
   For Keychain secrets, it checks that they can be fetched (they are fetched each time they are used).

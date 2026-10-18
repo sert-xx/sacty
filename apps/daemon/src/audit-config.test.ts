@@ -20,11 +20,9 @@ afterEach(() => {
 const base = `agents:
   a:
     runtime: stub
-    auth: { mode: stub }
     price_per_mtok_usd: { input: 1, cached_input: 0.1, output: 2 }
   b:
     runtime: stub
-    auth: { mode: stub }
     price_per_mtok_usd: { input: 1, cached_input: 0.1, output: 2 }
 default_agent: a
 `;

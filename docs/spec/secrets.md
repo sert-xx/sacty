@@ -24,7 +24,7 @@
 ## 起動のときのまとめての取り出し
 
 - デーモンが待ち受けを始めたら、使う秘密情報をまとめて取り出す（`prefetchSecrets`）。対象（`secretUses`）は、使うエージェント
-  （既定・ゴールガーディアン・`step_agents`）の `auth.secret`、`providers.<名前>.secret`、`gateway.platforms` の `auth.secret`・`auth.token.secret`、
+  （既定・ゴールガーディアン・`step_agents`）の runtime の接続先の `auth.secret`（`providers.<codex|claude>.auth.secret`。`providerKeyOf`）、`gateway.platforms` の `auth.secret`・`auth.token.secret`、
   `gateway.mcp_servers` の `env` の秘密情報、sacty の設定の通知先（Slack のトークン・Webhook の URL。`settingsSecretUses`）と、登録済みのプロジェクトのコンテキストの
   秘密情報。npm のトークン（イメージの作成だけで使う）・gh のトークンは含めない（使うときに取り出す）。
 - コンテキストの秘密情報（`contextSecretUses`）：コンテキストリポジトリを設定したプロジェクトごとに、コンテキストを取得して合成し（継承の鎖の
@@ -41,7 +41,7 @@
 - 1Password の参照は、1回の `op run --no-masking --env-file <参照だけを書いたファイル（0600）>` で子のプロセスに環境変数として渡し、JSON で
   受け取る（認証を1回にする）。まとめて取り出せなければ、参照ごとに取り出し直して、取り出せなかったものを集める。キーチェーンは、
   取り出せるかだけを確かめる。
-- 取り出せなかったものは、どの設定か（`agents.<ID>.auth.secret` など）と理由を、端末と画面の警告に出す（起動は止めない）。
+- 取り出せなかったものは、どの設定か（`providers.codex.auth.secret` など）と理由を、端末と画面の警告に出す（起動は止めない）。
 - `POST /api/secrets/prefetch`（画面の「秘密情報を取り出し直す」）は、持っている値を捨て、コンテキストを取得し直して、起動のときと同じ対象を
   取り出し直す。取り出せた数（`fetched`）・対象の数（`total`）・読めなかったコンテキストの数（`unreadContexts`。その中の秘密情報は `total` に
   入らない）・警告（`problems`）を返す。画面は、読めなかったコンテキストがあれば、確かめていない秘密情報があると出す。

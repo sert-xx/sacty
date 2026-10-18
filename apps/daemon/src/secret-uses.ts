@@ -1,5 +1,5 @@
 import type { Project, SactySettings } from "@sacty/core";
-import type { AgentConfig, SactyConfig } from "./config.js";
+import { type AgentConfig, providerKeyOf, type SactyConfig } from "./config.js";
 import { GATEWAY_TOKEN_SECRET, type McpServer } from "./context.js";
 import type { Platform } from "./platforms.js";
 
@@ -33,9 +33,11 @@ export function secretUses(config: SactyConfig, settings: SactySettings): Secret
     if (agent) agents.set(agent.id, agent);
   }
   for (const agent of agents.values()) {
-    if ("secret" in agent.auth) add(agent.auth.secret, `agents.${agent.id}.auth.secret`);
+    // 認証・接続先は runtime ごとの providers に書く（PBI-134）
+    const provider = providerKeyOf(agent.runtime);
+    if ("secret" in agent.auth) add(agent.auth.secret, `providers.${provider}.auth.secret`);
     if (agent.endpoint?.secret)
-      add(agent.endpoint.secret, `providers.${agent.endpoint.name}.secret`);
+      add(agent.endpoint.secret, `providers.${agent.endpoint.name}.auth.secret`);
   }
   for (const platform of config.platforms) {
     add(platform.auth.secret, `gateway.platforms.${platform.name}.auth.secret`);

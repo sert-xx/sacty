@@ -120,7 +120,6 @@ const agent = (overrides: Partial<AgentConfig> = {}): AgentConfig => ({
   id: "claude-subscription",
   runtime: "claude-code",
   auth: { mode: "subscription", secret: "claude-oauth-token" },
-  price_per_mtok_usd: { input: 3, cached_input: 0.3, cache_write: 3.75, output: 15 },
   price: { input: 3, cachedInput: 0.3, cacheWrite: 3.75, output: 15 },
   ...overrides,
 });
@@ -1203,17 +1202,14 @@ describe("工程の実行と費用", () => {
     const activity = new SqliteActivityStore(dbPath);
     const cheap = agent({
       id: "luna-low",
-      price_per_mtok_usd: { input: 1, cached_input: 0.1, cache_write: 0, output: 1 },
       price: { input: 1, cachedInput: 0.1, cacheWrite: 0, output: 1 },
     });
     const strong = agent({
       id: "sol-high",
-      price_per_mtok_usd: { input: 1, cached_input: 0.1, cache_write: 0, output: 10 },
       price: { input: 1, cachedInput: 0.1, cacheWrite: 0, output: 10 },
     });
     const orchestrator = agent({
       id: "orchestrator",
-      price_per_mtok_usd: { input: 0, cached_input: 0, cache_write: 0, output: 0 },
       price: { input: 0, cachedInput: 0, cacheWrite: 0, output: 0 },
     });
     const plan = {
@@ -2004,7 +2000,6 @@ describe("工程の実行と費用", () => {
       model: "global.openai.gpt-6-sol",
       auth: { mode: "bedrock", secret: "bedrock-api-key", region: "us-east-2" },
       // 契約の単価（一般の価格ではない）
-      price_per_mtok_usd: { input: 1, cached_input: 0.1, cache_write: 0, output: 4 },
       price: { input: 1, cachedInput: 0.1, cacheWrite: 0, output: 4 },
     });
     const { service, executor } = makeService(activity, [completed(20_000)], {
@@ -7581,7 +7576,7 @@ describe("起動時に秘密情報をまとめて取り出す（PBI-48）", () =
     expect(first.total).toBe(1);
     expect(service.status().warnings.map((w) => ja(w))).toEqual([
       expect.stringContaining(
-        "起動のときに、秘密情報（agents.claude-subscription.auth.secret）を取り出せませんでした",
+        "起動のときに、秘密情報（providers.claude.auth.secret）を取り出せませんでした",
       ),
     ]);
     (store as unknown as { available: Record<string, string> }).available["claude-oauth-token"] =
@@ -24145,5 +24140,28 @@ describe("監査によるメモリーの昇格（PBI-128）", () => {
     // 深掘りの「既存の原因」には、コンテキストにする提案を入れない
     const dive = executor.calls.find(isDive);
     expect(prompt(dive as Invocation)).not.toContain(`memory:${id}`);
+  });
+});
+
+describe("使えないエージェントの警告（PBI-134）", () => {
+  it("接続先・単価が無くて使えないエージェントは、画面の状態の警告に出し、選べるエージェントに入れない", () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const base = configOf(agent())();
+    if (!base.ok) throw new Error("unreachable");
+    const warning = message("config.modelPriceMissing", {
+      provider: "codex",
+      model: "gpt-6.1-sol",
+      agents: "codex_standard",
+    });
+    const { service } = makeService(activity, [], {
+      config: () => ({
+        ok: true,
+        config: { ...base.config, agents: { [agent().id]: agent() }, agentWarnings: [warning] },
+      }),
+    });
+    const status = service.status();
+    expect(status.warnings).toEqual([warning]);
+    expect(status.agents.map((a) => a.id)).toEqual([agent().id]);
+    activity.close();
   });
 });

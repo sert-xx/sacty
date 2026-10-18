@@ -655,7 +655,6 @@ ${script}`,
     authMode: "subscription",
   });
   const base: Omit<AgentConfig, "id" | "runtime" | "auth"> = {
-    price_per_mtok_usd: { input: 3, cached_input: 0.3, cache_write: 3.75, output: 15 },
     price: { input: 3, cachedInput: 0.3, cacheWrite: 3.75, output: 15 },
   };
 

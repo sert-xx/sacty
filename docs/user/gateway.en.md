@@ -1,4 +1,4 @@
-<!-- Code: apps/daemon/src/config.ts (gateway, providers, Provider), apps/daemon/src/gateway.ts (DEFAULT_RETRY_POLICY, DEFAULT_HOST_ADDRESS), apps/daemon/src/host-mcp.ts (HostMcpFile), apps/daemon/src/host-mcp-processes.ts, apps/daemon/src/platforms.ts (PlatformFile) -->
+<!-- Code: apps/daemon/src/config.ts (gateway, providers, ProviderFile, ProviderAuth), apps/daemon/src/gateway.ts (DEFAULT_RETRY_POLICY, DEFAULT_HOST_ADDRESS), apps/daemon/src/host-mcp.ts (HostMcpFile), apps/daemon/src/host-mcp-processes.ts, apps/daemon/src/platforms.ts (PlatformFile) -->
 
 [日本語](gateway.md) | **English**
 
@@ -8,7 +8,7 @@ sacty runs a gateway on the host that relays AI calls, MCP, and external platfor
 Only the gateway holds authentication values; the agent containers receive only a per-run token.
 
 - The gateway listens only on 127.0.0.1 and accepts only requests that carry the token of a running agent.
-- Configure it in `gateway` in `config.yaml` (along with `providers` and the agents' `via_gateway`).
+- Configure it in `gateway` in `config.yaml` (along with `via_gateway` of `providers.codex`).
 
 | Item | Meaning | Default |
 | --- | --- | --- |
@@ -20,9 +20,9 @@ Only the gateway holds authentication values; the agent containers receive only 
 
 ## Relaying AI calls
 
-If you write `via_gateway: true` on an agent, its AI calls go through sacty's gateway. The only combination you can write directly on an agent is
-Codex × Bedrock (`runtime: codex`, `auth.mode: bedrock`). For OpenAI-compatible endpoints, `via_gateway` in `providers` decides this
-([next section](#openai-compatible-endpoints-providers)).
+If you write `via_gateway: true` in `providers.codex`, the AI calls of Codex agents go through sacty's gateway.
+It works only when `auth.mode` is `bedrock` or `openai-compatible` ([next section](#openai-compatible-endpoints)). Writing it with other authentication methods or
+in `providers.claude` is an error ([config.yaml settings](config.en.md#connections-and-prices-providers)).
 
 - Only the gateway holds the API key; the agent containers receive only a per-run token.
 - Rate limits (429) and temporary failures (500, 502, 503, 504, connection failures) are retried after waiting for `Retry-After` (or, if there is none, an interval
@@ -38,41 +38,33 @@ gateway:
     max_wait_sec: 600   # maximum total wait across a run of consecutive failures before success
 ```
 
-## OpenAI-compatible endpoints (providers)
+## OpenAI-compatible endpoints
 
-Write OpenAI-compatible (Responses API) endpoints (such as your organization's AI gateway) in `providers`, and use them from Codex agents with `provider`
-([Models per step](config.en.md#models-per-step)).
+Write an OpenAI-compatible (Responses API) endpoint (such as your organization's AI gateway) in the `auth` of `providers.codex` with `mode: openai-compatible`.
+Codex's default agents ([Default agents](config.en.md#default-agents)) use this endpoint.
 
 ```yaml
 providers:
-  acme-gw:
-    base_url: https://ai-gateway.example.com/v1   # same as base_url in Codex's model_providers
-    secret: op://Work/AI-Gateway/api-key           # the API key you used to put in env_key
-    via_gateway: true                              # through sacty's gateway (429 retries; the key is not passed to the container)
-agents:
-  sol-high:
-    runtime: codex
-    provider: acme-gw
-    model: gpt-6-sol
-    reasoning_effort: high
-    price_per_mtok_usd: { input: 1.25, cached_input: 0.125, output: 10 }
-  luna-low:
-    runtime: codex
-    provider: acme-gw
-    model: gpt-6-luna
-    reasoning_effort: low
-    price_per_mtok_usd: { input: 0.3, cached_input: 0.03, output: 1.5 }
-default_agent: luna-low
+  codex:
+    auth:
+      mode: openai-compatible
+      base_url: https://ai-gateway.example.com/v1   # same as base_url in Codex's model_providers
+      secret: op://Work/AI-Gateway/api-key           # the API key you used to put in env_key
+    via_gateway: true                                # through sacty's gateway (429 retries; the key is not passed to the container)
+    available_models:                                # the prices are examples; match your contract
+      gpt-6-luna: { input: 0.25, cached_input: 0.025, output: 2 }
+      gpt-6.1-sol: { input: 1.25, cached_input: 0.125, output: 10 }
 ```
 
 | Item | Meaning | Default |
 | --- | --- | --- |
-| (name) | Alphanumerics, `_`, and `-` | None |
-| `base_url` | The endpoint (an `http` or `https` URL). Required | None |
-| `secret` | The API key (sent as Bearer; a secret name or a 1Password reference). Omit it if no authentication is needed | None |
+| `auth.base_url` | The endpoint (an `http` or `https` URL). Required | None |
+| `auth.secret` | The API key (sent as Bearer; a secret name or a 1Password reference). Omit it if no authentication is needed | None |
 | `via_gateway` | Go through sacty's gateway | `false` |
 
-Writing a name in an agent's `provider` in `agents` that is not in `providers` is an error.
+- When the endpoint uses different model names, change `model` with [Overriding agents](config.en.md#overriding-agents) and write the price for that name in
+  `available_models`.
+- Named `providers` and `provider` of agents from earlier versions are errors. Rewrite them in the form above.
 
 ## Host address
 

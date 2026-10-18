@@ -69,7 +69,7 @@ Fix tasks proceed as ordinary tasks (their merges are watched in the same way).
 
 ```yaml
 step_agents:
-  deployment: luna-low
+  deployment: codex_lite
 ```
 
 ## Cost and budget

@@ -1,4 +1,4 @@
-<!-- Code: apps/daemon/src/config.ts (ConfigFile, Agent, Auth, Provider, CONFIG_TEMPLATE), packages/core/src/events.ts (StepKey, DEFAULT_BUDGET_USD) -->
+<!-- Code: apps/daemon/src/config.ts (ConfigFile, ProviderFile, ProviderAuth, AgentFile, loadConfig, CONFIG_TEMPLATE), config/agents.yaml, packages/core/src/events.ts (StepKey, DEFAULT_BUDGET_USD) -->
 
 [日本語](config.md) | **English**
 
@@ -14,12 +14,12 @@ Per-project settings (targets, GitHub accounts, the context repository, and so o
 
 | Setting | Meaning | Default |
 | --- | --- | --- |
-| `default_agent` | The AI that runs the steps (a name in `agents`). Required | None |
+| `providers` | The connection (authentication) per runtime and the prices of the models you can use ([Connections and prices](#connections-and-prices-providers)). Only `codex` and `claude` | None |
+| `default_agent` | The AI that runs the steps (an agent name) | `codex_standard` (`claude_standard` if it cannot be used) |
 | `guardian_agent` | The AI used for the Goal Guardian | `default_agent` |
 | `audit_agent` | The AI used for audits of completed tasks ([Audits](audit.en.md)) | `guardian_agent` (or `default_agent`) |
 | `step_agents` | The AI to use for each step (including the after-merge watch) and the Orchestrator ([Models per step](#models-per-step)) | `default_agent` if omitted (`guardian_agent` for Integration review) |
-| `agents` | AI definitions (by name. [Agents](#agents)). Required | None |
-| `providers` | OpenAI-compatible connections ([Gateway](gateway.en.md#openai-compatible-endpoints-providers)) | None |
+| `agents` | Overrides of and additions to sacty's default agents ([Overriding agents](#overriding-agents)). Optional | None (sacty's defaults are used) |
 | `budget.default_per_task_usd` | Budget per task (US dollars. A number greater than 0) | `1` |
 | `budget.default_per_audit_usd` | Budget per audit (US dollars. A number greater than 0. Separate from the task budget. [Audits](audit.en.md#budget)) | `1` |
 | `image` | The image used to run agents and tests | `sacty-agent:0.1.0` |
@@ -33,107 +33,152 @@ You set the intake interval for each kind of intake in "sacty settings" in the w
 The days to keep memories are also set in "sacty settings" ([Viewing audits](audit.en.md#memories)).
 `github:` (`poll_interval_sec`) from earlier versions is not read even if written. You can delete it.
 
-If a setting is wrong, the web UI shows which setting (for example `agents.claude-subscription.auth.secret`) is wrong and why.
+If a setting is wrong, the web UI shows which setting (for example `providers.codex.auth.secret`) is wrong and why.
 
-## Agents
+## Connections and prices (providers)
 
-In `agents`, write each AI under a name.
+The models and reasoning efforts of the AIs that run steps come from the defaults sacty recommends ([Default agents](#default-agents)).
+In config.yaml, you only need to write the connection (authentication) of the tool you use and the prices of the models you can use (`available_models`).
 
 ```yaml
-agents:
-  claude-subscription:
-    runtime: claude-code
+providers:
+  codex:
     auth:
-      mode: subscription
-      secret: claude-oauth-token
-    price_per_mtok_usd: { input: 3, cached_input: 0.3, cache_write: 3.75, output: 15 }
+      mode: api-key
+      secret: openai-api-key   # Save the value with npx sacty secret set openai-api-key
+    available_models:          # The prices are examples. Match your contract
+      gpt-6-luna: { input: 0.25, cached_input: 0.025, output: 2 }
+      gpt-6.1-sol: { input: 1.25, cached_input: 0.125, output: 10 }
 ```
+
+Only two names can be written in `providers`: `codex` for Codex and `claude` for Claude Code. You can write one of them or both.
 
 | Setting | Meaning | Default |
 | --- | --- | --- |
-| `runtime` | `claude-code`, `codex`, or `stub` (for trying things out. It does not call a real AI) | Required |
-| `model` | The model | The agent's default |
-| `reasoning_effort` | The reasoning effort (`model_reasoning_effort` for Codex, `--effort` for Claude Code). Lowercase letters, digits, `_`, and `-`, starting with a lowercase letter | The agent's default |
-| `auth` | The authentication method ([Authentication](#authentication)). Omit it when you write `provider` | Required |
-| `provider` | Instead of `auth`, the name of a connection in `providers` (Codex only) | None |
-| `price_per_mtok_usd` | The unit price per million tokens (US dollars). `input`, `cached_input`, and `output` are required; `cache_write` is optional | `cache_write` is `0` |
-| `via_gateway` | Route AI calls through the gateway on the host (Codex with Bedrock only. [Gateway](gateway.en.md#relaying-ai-calls)) | `false` |
+| `auth` | The authentication method ([Authentication](#authentication)). Required | None |
+| `via_gateway` | Route AI calls through the gateway on the host (`bedrock` and `openai-compatible` of `codex` only. [Gateway](gateway.en.md#relaying-ai-calls)) | `false` |
+| `available_models` | The models you can use and their unit prices per million tokens (US dollars). For each model name, `input`, `cached_input`, and `output` are required; `cache_write` is optional | None (`cache_write` is `0`) |
 
-Keep the unit prices in line with the latest prices of the models you use. If your contract has different prices, write those. Costs are calculated from these unit prices and the token counts.
-With a subscription you are not actually billed, but sacty treats the value converted at the same unit prices as the cost and uses it to check the budget.
+- An agent whose model has no price in `available_models` cannot be used. It is not offered for steps or in the task details, and the web UI
+  shows a warning saying which model has no price (with the names of the agents that use that model). It is not a settings error.
+- When a sacty update changes the default models, add the prices of the models shown in the warning to `available_models`.
+- Keep the unit prices in line with the latest prices of the models you use. If your contract has different prices, write those. Costs are calculated from these unit prices and the token counts.
+  With a subscription you are not actually billed, but sacty treats the value converted at the same unit prices as the cost and uses it to check the budget.
+- Writing an agent that cannot be used in `default_agent`, `guardian_agent`, `audit_agent`, or `step_agents` is an error.
+- It is also an error when `default_agent` is not written and neither `codex_standard` nor `claude_standard` can be used (for example, when `providers` is not written).
 
 ## Authentication
 
 | AI | Authentication method (`auth.mode`) | What you need |
 | --- | --- | --- |
-| Claude Code | `subscription` | A token created with `claude setup-token` (`secret` is required) |
-| Claude Code | `api-key` | An Anthropic API key |
-| Claude Code | `bedrock` | A Bedrock API key and `region`. `model` is an inference profile ID |
-| Codex | `subscription` | Sign-in with ChatGPT (`auth_file`. Default `~/.codex/auth.json`) |
-| Codex | `api-key` | An OpenAI API key |
-| Codex | `bedrock` | A Bedrock API key and `region`. `endpoint` is `runtime` (the default. `model` is an inference profile ID, for example `global.openai.gpt-6-sol`) or `mantle` (`model` is, for example, `openai.gpt-6-sol`) |
-| (For trying things out) | `stub` | None. Only available with `runtime: stub` |
+| Claude Code (`claude`) | `subscription` | A token created with `claude setup-token` (`secret` is required) |
+| Claude Code (`claude`) | `api-key` | An Anthropic API key |
+| Claude Code (`claude`) | `bedrock` | A Bedrock API key and `region`. The model is an inference profile ID |
+| Codex (`codex`) | `subscription` | Sign-in with ChatGPT (`auth_file`. Default `~/.codex/auth.json`) |
+| Codex (`codex`) | `api-key` | An OpenAI API key |
+| Codex (`codex`) | `bedrock` | A Bedrock API key and `region`. `endpoint` is `runtime` (the default. The model is an inference profile ID, for example `global.openai.gpt-6-sol`) or `mantle` (the model is, for example, `openai.gpt-6-sol`) |
+| Codex (`codex`) | `openai-compatible` | The `base_url` and API key of an OpenAI-compatible endpoint ([Gateway](gateway.en.md#openai-compatible-endpoints)) |
 
 - For tokens and API keys, write only a name (or a 1Password reference) in `secret`, and keep the value in the Keychain or 1Password ([Secrets](secrets.en.md)).
-- `endpoint` is used only by Codex. Writing it for Claude Code's `bedrock` is an error.
+- `endpoint` is used only by Codex. Writing it for `bedrock` of `claude` is an error.
 - Only the environment variables of the chosen authentication method are passed to the container (host variables such as `ANTHROPIC_API_KEY` are not inherited).
+- With Bedrock the model names differ, so change `model` with [Overriding agents](#overriding-agents) and write the price for that name in
+  `available_models`. Tiers you do not override have no price, so they cannot be used and the web UI shows a warning.
 
 ```yaml
-agents:
-  codex-bedrock:
-    runtime: codex
-    model: global.openai.gpt-6-sol
+providers:
+  codex:
     auth:
       mode: bedrock
       secret: bedrock-api-key
       region: us-east-2
       endpoint: runtime
     via_gateway: true
-    price_per_mtok_usd: { input: 1.25, cached_input: 0.125, output: 10 }
+    available_models:
+      global.openai.gpt-6-sol: { input: 1.25, cached_input: 0.125, output: 10 }
+agents:
+  codex_standard:
+    model: global.openai.gpt-6-sol
+default_agent: codex_standard
 ```
+
+## Default agents
+
+sacty has default agents for each tier ([Agent tiers](#agent-tiers)). When models are renewed,
+the defaults are renewed with a sacty update.
+
+| Name | Tool | Model | Reasoning effort |
+| --- | --- | --- | --- |
+| `codex_lite` | Codex | `gpt-6-luna` | `low` |
+| `codex_entry` | Codex | `gpt-6-luna` | `high` |
+| `codex_standard` | Codex | `gpt-6.1-sol` | `low` |
+| `codex_advanced` | Codex | `gpt-6.1-sol` | `medium` |
+| `codex_ultimate` | Codex | `gpt-6.1-sol` | `high` |
+| `claude_lite` | Claude Code | `claude-haiku-5-5` | (the tool's default) |
+| `claude_entry` | Claude Code | `claude-sonnet-5-5` | `low` |
+| `claude_standard` | Claude Code | `claude-sonnet-5-5` | `medium` |
+| `claude_advanced` | Claude Code | `claude-opus-5-5` | `medium` |
+| `claude_ultimate` | Claude Code | `claude-opus-5-5` | `high` |
+
+- If you do not write `default_agent`, `codex_standard` is used. When `codex_standard` cannot be used (no `providers.codex`, or no price),
+  `claude_standard` is used.
+- The default agents of a tool that is not in `providers` cannot be used (you are just not using that tool, so no warning is shown).
+
+## Overriding agents
+
+You do not have to write `agents`. When you write it, an agent with the same name as a default is overridden only in the settings you write
+(the settings you do not write keep their defaults). You can also add agents under new names.
+
+```yaml
+agents:
+  codex_ultimate:
+    reasoning_effort: xhigh   # The model stays the default
+  my-reviewer:                # A new name (needs runtime and model)
+    runtime: claude-code
+    model: claude-opus-5-5
+    reasoning_effort: high
+```
+
+| Setting | Meaning | Default |
+| --- | --- | --- |
+| `runtime` | `claude-code`, `codex`, or `stub` (for trying things out. It does not call a real AI). Required for a new name | The default agent's |
+| `model` | The model. Required for a new name (its price is looked up in `available_models`) | The default agent's |
+| `reasoning_effort` | The reasoning effort (`model_reasoning_effort` for Codex, `--effort` for Claude Code). Lowercase letters, digits, `_`, and `-`, starting with a lowercase letter | The default agent's (or the tool's default) |
+| `price_per_mtok_usd` | `runtime: stub` only. The unit price per million tokens (US dollars), written the same way as in `available_models` | `0` |
+| `stub` | The output of `runtime: stub` | None |
+
+- Agents cannot contain authentication, connections, or prices (`auth`, `provider`, `via_gateway`, `price_per_mtok_usd`). Write them in `providers`
+  (except `price_per_mtok_usd` of `runtime: stub`).
+- An agent under a new name also cannot be used, with a warning in the web UI, when its tool has no `providers` entry or its model has no price.
 
 ## Models per step
 
-Write each agent as a set of "connection, model, reasoning effort, and unit price", and choose one for each step and the Orchestrator in `step_agents`.
+In `step_agents`, choose an agent for each step and the Orchestrator.
 
 ```yaml
-default_agent: luna-low
-guardian_agent: sol-high
+default_agent: codex_standard
+guardian_agent: codex_advanced
 step_agents:          # default_agent if omitted (guardian_agent for Integration review)
-  orchestrator: luna-low
-  requirements: sol-high
-  design: sol-high
+  orchestrator: codex_lite
+  requirements: codex_advanced
+  design: codex_advanced
 ```
 
 The keys you can write in `step_agents` are `orchestrator`, the steps `investigate` (Investigation), `review` (Review), `requirements` (Requirements),
 `design` (Design), `split` (Task split), `integrate` (Integration review), `reproduce` (Reproduce), `implement` (Implementation),
 `document` (Document), `operation` (Operation), and
 `deployment` (the check in the after-merge watch step. [After-merge watch](deployment-watch.en.md)).
-Writing a name that is not in `agents` in `default_agent`, `guardian_agent`, `audit_agent`, or `step_agents` is an error.
+Writing a name that does not exist or an agent that cannot be used in `default_agent`, `guardian_agent`, `audit_agent`, or `step_agents` is an error.
 The `pr` key (PR作成) of earlier versions can no longer be written because the step was removed (it is an error; delete it).
 
 ## Agent tiers
 
 If you sort your agents into tiers, skills (such as the default `review`) start a subagent by tier name for each viewpoint, and the same
-tier runs in both Claude Code and Codex. When a new model generation comes out, you only change the tier's `model`.
+tier runs in both Claude Code and Codex. When a new model generation comes out, a sacty update renews the tiers' default models too.
 
-Write them in `agents` under the names `claude_<tier>` and `codex_<tier>`. The tiers are `lite`, `entry`, `standard`, `advanced`, and `ultimate`,
-and only the tiers you write are placed. The template from `npx sacty config init` has commented examples of all five tiers for both tools.
-
-```yaml
-agents:
-  claude_lite:
-    runtime: claude-code
-    model: claude-haiku-5-5
-    auth: { mode: subscription, secret: claude-oauth-token }
-    price_per_mtok_usd: { input: 1, cached_input: 0.1, cache_write: 1.25, output: 5 }
-  claude_ultimate:
-    runtime: claude-code
-    model: claude-opus-5-5
-    reasoning_effort: high
-    auth: { mode: subscription, secret: claude-oauth-token }
-    price_per_mtok_usd: { input: 15, cached_input: 1.5, cache_write: 18.75, output: 75 }
-```
+sacty has the tier agents by default under the names `claude_<tier>` and `codex_<tier>` ([Default agents](#default-agents)).
+The tiers are `lite`, `entry`, `standard`, `advanced`, and `ultimate`, and only the tiers that can be used (with a connection and a model price in `providers`) are placed.
+To change a tier's model, write `model` under the same name with [Overriding agents](#overriding-agents).
 
 | Tier | Meaning | Intended use |
 | --- | --- | --- |
@@ -145,16 +190,26 @@ agents:
 
 - When a step runs, sacty places the tiers of that tool (`claude_*` for Claude Code, `codex_*` for Codex) in the config location as subagent
   definitions named without the prefix (`agents/<tier>.md` for Claude Code, `agents/<tier>.toml` for Codex).
-- Subagents run in the same process as the step agent, so give a tier the same `auth`, `provider`, and `via_gateway` as the step agent
-  (`default_agent`, `step_agents`). A tier that differs is not placed, and a note is left in the Activity.
+- Subagents run in the same process as the step agent. The connection is per tool in `providers`, so the tiers of the same tool
+  have the same connection as the step agent.
 - It is an error when the prefix of a tier name does not match its `runtime` (for example `claude_lite` with `runtime: codex`).
 - You can see the placed tiers in the details of "Context prepared" in the Activity and in the context preview of the project settings.
-- If you write no tiers, subagents run with the same model as the step agent.
+- If no tier can be used, subagents run with the same model as the step agent.
 - A tier agent is an ordinary agent too, so you can write it in `step_agents` to use it for a step.
 - Costs are calculated from the step agent's usage and unit prices, not from each reviewer's model. The cost of a run that placed tiers is recorded as an estimate
-  and marked "Estimate" on the screen. A tier's `price_per_mtok_usd` is the unit price used when that tier runs a step through `step_agents`.
+  and marked "Estimate" on the screen. The price of a tier's model in `available_models` is used when that tier runs a step through `step_agents`.
 - Definitions of the same name in the context repository (`agents/claude/agents/<tier>.md`, `agents/codex/agents/<tier>.toml`, and `[agents.<tier>]` in Codex's
   `config.toml`) are not used (a warning is left).
+
+## Moving from earlier versions
+
+The format of earlier versions is not converted automatically. It is an error, so rewrite it as follows.
+
+- Move `auth` and `via_gateway` of agents to `providers.codex` or `providers.claude` of that tool.
+- Move `price_per_mtok_usd` of agents to `providers.<tool>.available_models` as per-model prices.
+- Rewrite named `providers` (OpenAI-compatible endpoints) and `provider` of agents as the `auth` of `providers.codex`
+  (`mode: openai-compatible`, `base_url`, `secret`).
+- You can delete agents from `agents` when the default models are enough. Change `default_agent` and the others to the names of default agents.
 
 ## Budget
 

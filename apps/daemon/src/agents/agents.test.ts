@@ -624,21 +624,40 @@ describe("設定ファイル", () => {
     expect(result.ok && "github" in result.config).toBe(false);
   });
 
+  /** 雛形の、有効な providers.codex の認証（例のコメントを外す前に消す）。 */
+  const ACTIVE_CODEX_AUTH = /^ {4}auth:\n {6}mode: api-key\n {6}secret: openai-api-key.*\n/m;
+  /** 雛形を書き換える（書き換える箇所が無ければ、雛形が変わったのでテストを止める）。 */
+  const sub = (text: string, pattern: RegExp, to: string) => {
+    expect(text).toMatch(pattern);
+    return text.replace(pattern, to);
+  };
+  const ALL_TIERS = ["lite", "entry", "standard", "advanced", "ultimate"];
+
   it("`sacty config init` の雛形はそのまま読める", () => {
     dir = mkdtempSync(join(tmpdir(), "sacty-config-"));
     writeFileSync(join(dir, "config.yaml"), CONFIG_TEMPLATE);
     const result = loadConfig(dir);
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.config.defaultAgent.id).toBe("claude-subscription");
-      expect(result.config.budgetPerTaskUsd).toBe(1);
-      expect(result.config.defaultAgent.price).toEqual({
-        input: 3,
-        cachedInput: 0.3,
-        cacheWrite: 3.75,
-        output: 15,
-      });
-    }
+    if (!result.ok) throw new Error(ja(result.problem));
+    // 工程の AI は sacty の既定（config/agents.yaml）の codex_standard。単価は available_models から引く（PBI-134）
+    expect(result.config.defaultAgent).toMatchObject({
+      id: "codex_standard",
+      model: "gpt-6.1-sol",
+      reasoning_effort: "low",
+      auth: { mode: "api-key", secret: "openai-api-key" },
+    });
+    expect(result.config.defaultAgent.price).toEqual({
+      input: 1.25,
+      cachedInput: 0.125,
+      cacheWrite: 0,
+      output: 10,
+    });
+    expect(result.config.budgetPerTaskUsd).toBe(1);
+    expect(Object.keys(result.config.tierAgents?.codex ?? {})).toEqual(ALL_TIERS);
+    // providers.claude は例だけなので、claude の段階は使えない（警告もしない）
+    expect(result.config.tierAgents?.["claude-code"]).toBeUndefined();
+    expect(result.config.agentWarnings).toEqual([]);
+    // agents は書かない（上書きの例はコメントだけ）
+    expect(CONFIG_TEMPLATE).not.toMatch(/^agents:/m);
   });
 
   it("秘密情報には 1Password の参照も書け、使うアカウントを読む（PBI-34）", () => {
@@ -646,12 +665,11 @@ describe("設定ファイル", () => {
     const write = (secret: string, extra = "") =>
       writeFileSync(
         join(dir, "config.yaml"),
-        `default_agent: x
-agents:
-  x:
-    runtime: codex
+        `providers:
+  codex:
     auth: { mode: bedrock, secret: "${secret}", region: us-east-2 }
-    price_per_mtok_usd: { input: 1, cached_input: 0.1, output: 2 }
+    available_models:
+      gpt-6.1-sol: { input: 1, cached_input: 0.1, output: 2 }
 ${extra}`,
       );
     write("op://Work/Bedrock/credential", "onepassword:\n  account: my-company.1password.com\n");
@@ -669,80 +687,65 @@ ${extra}`,
     );
   });
 
-  it("providers の接続先・エージェントごとのモデルとリーズニングエフォート・工程ごとのエージェントを読む（PBI-40）", () => {
+  it("providers.codex の OpenAI 互換の接続先・工程ごとのエージェントを読む（PBI-40・PBI-134）", () => {
     dir = mkdtempSync(join(tmpdir(), "sacty-config-"));
     const write = (yaml: string) => writeFileSync(join(dir, "config.yaml"), yaml);
     const base = `providers:
-  corp-gw:
-    base_url: https://ai-gw.example.com/llm/v1/
-    secret: op://Work/AI-GW/api-key
+  codex:
+    auth:
+      mode: openai-compatible
+      base_url: https://ai-gw.example.com/llm/v1/
+      secret: op://Work/AI-GW/api-key
     via_gateway: true
-agents:
-  sol-high:
-    runtime: codex
-    provider: corp-gw
-    model: gpt-6-sol
-    reasoning_effort: high
-    price_per_mtok_usd: { input: 2, cached_input: 0.2, output: 12 }
-  luna-low:
-    runtime: codex
-    provider: corp-gw
-    model: gpt-6-luna
-    reasoning_effort: low
-    price_per_mtok_usd: { input: 0.3, cached_input: 0.03, output: 1.5 }
+    available_models:
+      gpt-6-luna: { input: 0.3, cached_input: 0.03, output: 1.5 }
+      gpt-6.1-sol: { input: 2, cached_input: 0.2, output: 12 }
 `;
-    write(`${base}default_agent: luna-low
-guardian_agent: sol-high
+    write(`${base}default_agent: codex_lite
+guardian_agent: codex_advanced
 step_agents:
-  orchestrator: luna-low
-  design: sol-high
+  orchestrator: codex_lite
+  design: codex_advanced
 `);
     const result = loadConfig(dir);
     if (!result.ok) throw new Error(ja(result.problem));
-    const sol = result.config.stepAgents?.design;
-    expect(sol).toMatchObject({
-      id: "sol-high",
-      model: "gpt-6-sol",
-      reasoning_effort: "high",
-      auth: { mode: "provider", provider: "corp-gw" },
+    expect(result.config.stepAgents?.design).toMatchObject({
+      id: "codex_advanced",
+      model: "gpt-6.1-sol",
+      reasoning_effort: "medium",
+      auth: { mode: "provider", provider: "codex" },
       endpoint: {
-        name: "corp-gw",
+        name: "codex",
         baseUrl: "https://ai-gw.example.com/llm/v1",
         secret: "op://Work/AI-GW/api-key",
         viaGateway: true,
       },
+      via_gateway: false,
       price: { input: 2, cachedInput: 0.2, output: 12 },
     });
     // 工程ごとに書いたものはそれ、書いていなければ default_agent（統合レビューは guardian_agent）
-    expect(agentFor(result.config, "design").id).toBe("sol-high");
-    expect(agentFor(result.config, "orchestrator").id).toBe("luna-low");
-    expect(agentFor(result.config, "implement").id).toBe("luna-low");
-    expect(agentFor(result.config, "integrate").id).toBe("sol-high");
+    expect(agentFor(result.config, "design").id).toBe("codex_advanced");
+    expect(agentFor(result.config, "orchestrator").id).toBe("codex_lite");
+    expect(agentFor(result.config, "implement").id).toBe("codex_lite");
+    expect(agentFor(result.config, "integrate").id).toBe("codex_advanced");
 
     const problem = (yaml: string) => {
       write(yaml);
       const r = loadConfig(dir);
       return r.ok ? "" : ja(r.problem);
     };
-    expect(problem(`${base}default_agent: luna-low\nstep_agents:\n  design: nope\n`)).toContain(
+    expect(problem(`${base}step_agents:\n  design: nope\n`)).toContain(
       'step_agents.design の "nope" が agents にありません',
     );
+    expect(problem(`${base}agents:\n  codex_lite:\n    reasoning_effort: HIGH!\n`)).toContain(
+      "リーズニングエフォート",
+    );
+    // OpenAI 互換の接続先は Codex だけ
     expect(
       problem(
-        `${base.replace("provider: corp-gw\n    model: gpt-6-sol", "provider: other\n    model: gpt-6-sol")}default_agent: luna-low\n`,
+        "providers:\n  claude:\n    auth: { mode: openai-compatible, base_url: https://gw.example.com/v1 }\n",
       ),
-    ).toContain('providers に "other" がありません');
-    expect(
-      problem(
-        `${base.replace("reasoning_effort: high", "reasoning_effort: HIGH!")}default_agent: luna-low\n`,
-      ),
-    ).toContain("リーズニングエフォート");
-    // 接続先は、いまは Codex だけ
-    expect(
-      problem(
-        `${base.replace("runtime: codex\n    provider: corp-gw\n    model: gpt-6-sol", "runtime: claude-code\n    provider: corp-gw\n    model: gpt-6-sol")}default_agent: luna-low\n`,
-      ),
-    ).toContain("claude-code では provider を使えません");
+    ).toContain("claude-code では openai-compatible を使えません");
   });
 
   it("イメージの作成の元（元のイメージ・npm のレジストリ・トークンの名前）を読む（PBI-33）", () => {
@@ -754,7 +757,6 @@ step_agents:
 agents:
   x:
     runtime: stub
-    auth: { mode: stub }
     price_per_mtok_usd: { input: 1, cached_input: 0.1, output: 2 }
 ${extra}`,
       );
@@ -828,7 +830,6 @@ ${extra}`,
 agents:
   x:
     runtime: stub
-    auth: { mode: stub }
     price_per_mtok_usd: { input: 1, cached_input: 0.1, output: 2 }
 ${extra}`,
       );
@@ -967,23 +968,29 @@ ${extra}`,
     }
   });
 
-  it("ゲートウェイ経由は Codex × Bedrock だけ。リトライの上限を読み、書かなければ既定にする（PBI-37）", () => {
+  it("ゲートウェイ経由は Codex の bedrock・openai-compatible だけ。リトライの上限を読み、書かなければ既定にする（PBI-37・PBI-134）", () => {
     dir = mkdtempSync(join(tmpdir(), "sacty-config-"));
     const write = (yaml: string) => writeFileSync(join(dir, "config.yaml"), yaml);
-    const agentYaml = (runtime: string, auth: string) => `default_agent: x
-agents:
-  x:
-    runtime: ${runtime}
+    const problem = () => {
+      const r = loadConfig(dir);
+      return r.ok ? "" : ja(r.problem);
+    };
+    const providerYaml = (key: string, auth: string) => `providers:
+  ${key}:
     auth: ${auth}
     via_gateway: true
-    price_per_mtok_usd: { input: 1, cached_input: 0.1, output: 2 }
+    available_models:
+      gpt-6.1-sol: { input: 1, cached_input: 0.1, output: 2 }
+      claude-sonnet-5-5: { input: 1, cached_input: 0.1, output: 2 }
 `;
-    write(agentYaml("codex", "{ mode: api-key, secret: k }"));
-    const result = loadConfig(dir);
-    expect(result.ok ? "" : ja(result.problem)).toBe(
-      "設定ファイルに誤りがあります（agents.x.via_gateway）：ゲートウェイ経由（via_gateway）は、いまは Codex × Bedrock（auth.mode: bedrock）だけで使えます。",
+    write(providerYaml("codex", "{ mode: api-key, secret: k }"));
+    expect(problem()).toBe(
+      "設定ファイルに誤りがあります（providers.codex.via_gateway）：ゲートウェイ経由（via_gateway）は、providers.codex の auth.mode が bedrock か openai-compatible のときだけ使えます。",
     );
-    write(agentYaml("codex", "{ mode: bedrock, secret: k, region: us-east-2 }"));
+    write(providerYaml("claude", "{ mode: bedrock, secret: k, region: us-east-1 }"));
+    expect(problem()).toContain("providers.claude.via_gateway");
+    const bedrock = providerYaml("codex", "{ mode: bedrock, secret: k, region: us-east-2 }");
+    write(bedrock);
     expect(loadConfig(dir)).toMatchObject({
       ok: true,
       config: {
@@ -991,26 +998,25 @@ agents:
         gatewayRetry: { maxAttempts: 8, maxWaitMs: 600_000 },
       },
     });
+    // OpenAI 互換の接続先は、接続先の側でゲートウェイ経由にする
     write(
-      `${agentYaml("codex", "{ mode: bedrock, secret: k, region: us-east-2 }")}gateway:\n  retry:\n    max_attempts: 3\n    max_wait_sec: 30\n`,
+      providerYaml("codex", "{ mode: openai-compatible, base_url: https://gw.example.com/v1 }"),
     );
+    expect(loadConfig(dir)).toMatchObject({
+      ok: true,
+      config: { defaultAgent: { via_gateway: false, endpoint: { viaGateway: true } } },
+    });
+    write(`${bedrock}gateway:\n  retry:\n    max_attempts: 3\n    max_wait_sec: 30\n`);
     expect(loadConfig(dir)).toMatchObject({
       ok: true,
       config: { gatewayRetry: { maxAttempts: 3, maxWaitMs: 30_000 }, hostAddress: "host-gateway" },
     });
     // コンテナから見たホストのアドレス（Rancher Desktop。PBI-40）
-    write(
-      `${agentYaml("codex", "{ mode: bedrock, secret: k, region: us-east-2 }")}gateway:\n  host_address: 192.168.5.2\n`,
-    );
+    write(`${bedrock}gateway:\n  host_address: 192.168.5.2\n`);
     expect(loadConfig(dir)).toMatchObject({ ok: true, config: { hostAddress: "192.168.5.2" } });
     // docker の引数に紛れ込むものは書けない
-    write(
-      `${agentYaml("codex", "{ mode: bedrock, secret: k, region: us-east-2 }")}gateway:\n  host_address: "1.2.3.4 --privileged"\n`,
-    );
-    const bad = loadConfig(dir);
-    expect(bad.ok ? "" : ja(bad.problem)).toContain(
-      "gateway.host_address は、ホスト名か IP アドレス",
-    );
+    write(`${bedrock}gateway:\n  host_address: "1.2.3.4 --privileged"\n`);
+    expect(problem()).toContain("gateway.host_address は、ホスト名か IP アドレス");
   });
 
   it("画面の認証（web.auth）は、書かなければ ON、false なら OFF。真偽でない値は誤り（PBI-133）", () => {
@@ -1019,9 +1025,7 @@ agents:
     const base = `default_agent: x
 agents:
   x:
-    runtime: claude-code
-    auth: { mode: api-key, secret: k }
-    price_per_mtok_usd: { input: 1, cached_input: 0.1, output: 2 }
+    runtime: stub
 `;
     write(base);
     expect(loadConfig(dir)).toMatchObject({ ok: true, config: { webAuth: true } });
@@ -1041,57 +1045,72 @@ agents:
 
   it("雛形の Codex × Bedrock の例は、コメントを外せばそのまま読める（PBI-32）", () => {
     dir = mkdtempSync(join(tmpdir(), "sacty-config-"));
-    const lines = CONFIG_TEMPLATE.split("\n");
-    const start = lines.indexOf("  # codex-bedrock:");
-    const end = lines.findIndex((l, i) => i > start && l.trim() === "");
-    const example = lines.slice(start, end).map((l) => l.replace(/^ {2}# ?/, "  "));
-    const yaml = CONFIG_TEMPLATE.replace(
-      "default_agent: claude-subscription",
-      "default_agent: codex-bedrock",
-    ).replace("\nagents:\n", `\nagents:\n${example.join("\n")}\n`);
+    let yaml = sub(CONFIG_TEMPLATE, ACTIVE_CODEX_AUTH, "");
+    yaml = sub(yaml, /^ {4}# (auth: \{ mode: bedrock, .*region: us-east-2.*)$/m, "    $1");
+    yaml = sub(yaml, /^ {4}# (via_gateway: true)$/m, "    $1");
     writeFileSync(join(dir, "config.yaml"), yaml);
     const result = loadConfig(dir);
     expect(result).toMatchObject({
       ok: true,
       config: {
         defaultAgent: {
-          id: "codex-bedrock",
+          id: "codex_standard",
           runtime: "codex",
           auth: { mode: "bedrock", secret: "bedrock-api-key", endpoint: "runtime" },
+          via_gateway: true,
         },
       },
     });
   });
 
-  it("雛形の providers・接続先を使うエージェント・step_agents の例は、コメントを外せばそのまま読める（PBI-40）", () => {
+  it("雛形の OpenAI 互換の接続先・step_agents・agents の上書きの例は、コメントを外せばそのまま読める（PBI-40・PBI-134）", () => {
     dir = mkdtempSync(join(tmpdir(), "sacty-config-"));
-    const lines = CONFIG_TEMPLATE.split("\n");
-    const block = (first: string) => {
+    /** 「# <first>」から次の「#」で始まらない行までの、行の頭のコメントを外す。 */
+    const uncommentBlock = (text: string, first: string) => {
+      const lines = text.split("\n");
       const start = lines.indexOf(first);
-      const end = lines.findIndex((l, i) => i > start && !l.trimStart().startsWith("#"));
-      return lines.slice(start, end).map((l) => l.replace(/^( *)# ?/, "$1"));
+      expect(start, first).toBeGreaterThanOrEqual(0);
+      const end = lines.findIndex((l, i) => i > start && !l.startsWith("#"));
+      return [
+        ...lines.slice(0, start),
+        ...lines.slice(start, end).map((l) => l.replace(/^# ?/, "")),
+        ...lines.slice(end),
+      ].join("\n");
     };
-    const providers = block("# providers:");
-    const agentExample = block("  # sol-high:");
-    const stepAgents = block("# step_agents:").map((l) =>
-      l.replaceAll("luna-low", "sol-high").replaceAll("sol-medium", "sol-high"),
+    let yaml = sub(CONFIG_TEMPLATE, ACTIVE_CODEX_AUTH, "");
+    yaml = sub(
+      yaml,
+      /^ {4}# auth:\n {4}# {3}mode: openai-compatible\n {4}# {3}(base_url: .*)\n {4}# {3}(secret: .*)$/m,
+      "    auth:\n      mode: openai-compatible\n      $1\n      $2",
     );
-    const yaml = CONFIG_TEMPLATE.replace(
-      "default_agent: claude-subscription",
-      "default_agent: sol-high",
-    ).replace(
-      "\nagents:\n",
-      `\n${providers.join("\n")}\n${stepAgents.join("\n")}\nagents:\n${agentExample.join("\n")}\n`,
-    );
+    yaml = sub(yaml, /^ {4}# (via_gateway: true)$/m, "    $1");
+    yaml = uncommentBlock(yaml, "# step_agents:");
+    yaml = uncommentBlock(yaml, "# agents:");
     writeFileSync(join(dir, "config.yaml"), yaml);
     const result = loadConfig(dir);
     if (!result.ok) throw new Error(ja(result.problem));
     expect(result.config.defaultAgent).toMatchObject({
-      id: "sol-high",
-      reasoning_effort: "high",
-      endpoint: { name: "corp-gw", viaGateway: true },
+      id: "codex_standard",
+      endpoint: {
+        name: "codex",
+        baseUrl: "https://ai-gateway.example.com/v1",
+        secret: "op://Work/AI-Gateway/api-key",
+        viaGateway: true,
+      },
     });
-    expect(result.config.stepAgents?.design?.id).toBe("sol-high");
+    expect(result.config.stepAgents?.design?.id).toBe("codex_advanced");
+    expect(result.config.stepAgents?.orchestrator?.id).toBe("codex_lite");
+    // 上書きは項目ごと（model は既定のまま）
+    expect(result.config.agents?.codex_ultimate).toMatchObject({
+      model: "gpt-6.1-sol",
+      reasoning_effort: "xhigh",
+    });
+    expect(result.config.agents?.stub?.price).toMatchObject({ input: 3, output: 15 });
+    // providers.claude の無い claude_lite は、書いた（上書きした）ので警告する
+    expect(result.config.agents?.claude_lite).toBeUndefined();
+    expect((result.config.agentWarnings ?? []).map((w) => ja(w))).toEqual([
+      "エージェント「claude_lite」は、providers.claude が無いので使えません。",
+    ]);
   });
 
   it("雛形の images の例は、コメントを外せばそのまま読める（PBI-41）", () => {
@@ -1118,11 +1137,9 @@ agents:
 agents:
   "":
     runtime: stub
-    auth: { mode: stub }
     price_per_mtok_usd: { input: 1, cached_input: 0.1, output: 2 }
   strong:
     runtime: stub
-    auth: { mode: stub }
     price_per_mtok_usd: { input: 1, cached_input: 0.1, output: 2 }
 `,
     );
@@ -1139,19 +1156,15 @@ agents:
   it("使えない認証方式の組み合わせや、存在しない既定のAIは理由つきで拒否する", () => {
     dir = mkdtempSync(join(tmpdir(), "sacty-config-"));
     const write = (yaml: string) => writeFileSync(join(dir, "config.yaml"), yaml);
-    write(`default_agent: x
-agents:
-  x:
-    runtime: codex
-    auth: { mode: stub }
-    price_per_mtok_usd: { input: 1, cached_input: 0.1, output: 2 }
-`);
+    write(
+      "providers:\n  claude:\n    auth: { mode: openai-compatible, base_url: https://gw.example.com/v1 }\n",
+    );
     const problem = () => {
       const result = loadConfig(dir);
       return result.ok ? "" : ja(result.problem);
     };
     expect(problem()).toBe(
-      "設定ファイルに誤りがあります（agents.x.auth.mode）：codex では stub を使えません（使えるもの：subscription, api-key, bedrock, provider）。",
+      "設定ファイルに誤りがあります（providers.claude.auth.mode）：claude-code では openai-compatible を使えません（使えるもの：subscription, api-key, bedrock）。",
     );
     // コードと引数で返す（画面が画面の言語の文にする）
     expect(loadConfig(dir)).toMatchObject({
@@ -1159,41 +1172,46 @@ agents:
       problem: {
         code: "config.invalid",
         params: {
-          detail: { code: "config.authUnsupported", params: { runtime: "codex", mode: "stub" } },
+          detail: {
+            code: "config.authUnsupported",
+            params: { runtime: "claude-code", mode: "openai-compatible" },
+          },
         },
       },
     });
     expect(renderMessage((loadConfig(dir) as { problem: unknown }).problem, "en")).toBe(
-      "The config file has an error (agents.x.auth.mode): codex cannot use stub (supported: subscription, api-key, bedrock, provider).",
+      "The config file has an error (providers.claude.auth.mode): claude-code cannot use openai-compatible (supported: subscription, api-key, bedrock).",
     );
     // Bedrock の接続先は Codex だけ（Claude Code に書いても使われないので、誤りとして知らせる。PBI-32）
-    write(`default_agent: x
-agents:
-  x:
-    runtime: claude-code
-    auth: { mode: bedrock, secret: k, region: us-east-1, endpoint: mantle }
-    price_per_mtok_usd: { input: 1, cached_input: 0.1, output: 2 }
-`);
-    expect(problem()).toBe(
-      "設定ファイルに誤りがあります（agents.x.auth.endpoint）：Bedrock の接続先（endpoint）は Codex だけで選べます。Claude Code では書かないでください。",
+    write(
+      "providers:\n  claude:\n    auth: { mode: bedrock, secret: k, region: us-east-1, endpoint: mantle }\n",
     );
-    write(`default_agent: x
-agents:
-  x:
-    runtime: codex
-    model: global.openai.gpt-6-sol
+    expect(problem()).toBe(
+      "設定ファイルに誤りがあります（providers.claude.auth.endpoint）：Bedrock の接続先（endpoint）は Codex だけで選べます。Claude Code では書かないでください。",
+    );
+    write("providers:\n  claude:\n    auth: { mode: subscription }\n");
+    expect(problem()).toContain("providers.claude.auth.secret");
+    // Bedrock のモデル名は、agents で上書きする
+    write(`providers:
+  codex:
     auth: { mode: bedrock, secret: k, region: us-east-2, endpoint: runtime }
-    price_per_mtok_usd: { input: 1.25, cached_input: 0.125, output: 10 }
+    available_models:
+      global.openai.gpt-6-sol: { input: 1.25, cached_input: 0.125, output: 10 }
+agents:
+  codex_standard:
+    model: global.openai.gpt-6-sol
 `);
     expect(loadConfig(dir)).toMatchObject({
       ok: true,
       config: {
-        defaultAgent: { runtime: "codex", auth: { mode: "bedrock", endpoint: "runtime" } },
+        defaultAgent: {
+          runtime: "codex",
+          model: "global.openai.gpt-6-sol",
+          auth: { mode: "bedrock", endpoint: "runtime" },
+        },
       },
     });
-    write(`default_agent: missing
-agents: {}
-`);
+    write("default_agent: missing\n");
     expect(problem()).toContain('default_agent の "missing" が agents にありません');
     write("default_agent: [unclosed");
     expect(problem()).toContain("YAML");
@@ -2040,62 +2058,52 @@ describe("エージェントの段階（PBI-119）", () => {
   afterEach(() => {
     if (dir) rmSync(dir, { recursive: true, force: true });
   });
-  const base = `default_agent: claude-subscription
-agents:
-  claude-subscription:
-    runtime: claude-code
+  // 接続先は両方。単価は、claude は sonnet だけ、codex は luna だけ（PBI-134）
+  const base = `providers:
+  claude:
     auth: { mode: subscription, secret: claude-oauth-token }
-    price_per_mtok_usd: { input: 3, cached_input: 0.3, output: 15 }
+    available_models:
+      claude-sonnet-5-5: { input: 3, cached_input: 0.3, output: 15 }
+  codex:
+    auth: { mode: api-key, secret: openai-key }
+    available_models:
+      gpt-6-luna: { input: 1, cached_input: 0.1, output: 2 }
+agents:
 `;
 
-  it("claude_<段階>・codex_<段階> を、runtime ごと・段階ごとの段階のエージェントとして読む", () => {
+  it("claude_<段階>・codex_<段階> を、runtime ごと・段階ごとの段階のエージェントとして読む（単価のあるものだけ）", () => {
     dir = mkdtempSync(join(tmpdir(), "sacty-config-"));
     writeFileSync(
       join(dir, "config.yaml"),
-      `${base}  claude_standard:
-    runtime: claude-code
-    model: claude-sonnet-5-5
-    auth: { mode: subscription, secret: claude-oauth-token }
-    price_per_mtok_usd: { input: 3, cached_input: 0.3, output: 15 }
-  codex_lite:
+      `${base}  codex_other:
     runtime: codex
-    model: gpt-6-mini
-    reasoning_effort: low
-    auth: { mode: api-key, secret: openai-key }
-    price_per_mtok_usd: { input: 1, cached_input: 0.1, output: 2 }
-  codex_other:
-    runtime: codex
-    auth: { mode: api-key, secret: openai-key }
-    price_per_mtok_usd: { input: 1, cached_input: 0.1, output: 2 }
+    model: gpt-6-luna
 `,
     );
     const result = loadConfig(dir);
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(Object.keys(result.config.tierAgents?.["claude-code"] ?? {})).toEqual(["standard"]);
+    if (!result.ok) throw new Error(ja(result.problem));
+    expect(Object.keys(result.config.tierAgents?.["claude-code"] ?? {})).toEqual([
+      "entry",
+      "standard",
+    ]);
     expect(result.config.tierAgents?.["claude-code"]?.standard).toMatchObject({
       id: "claude_standard",
       model: "claude-sonnet-5-5",
+      reasoning_effort: "medium",
     });
     expect(result.config.tierAgents?.codex?.lite).toMatchObject({
       id: "codex_lite",
-      model: "gpt-6-mini",
+      model: "gpt-6-luna",
       reasoning_effort: "low",
     });
     // 段階の名前でないもの（codex_other）は、普通のエージェント
-    expect(Object.keys(result.config.tierAgents?.codex ?? {})).toEqual(["lite"]);
+    expect(result.config.agents?.codex_other).toMatchObject({ runtime: "codex" });
+    expect(Object.keys(result.config.tierAgents?.codex ?? {})).toEqual(["lite", "entry"]);
   });
 
   it("段階の名前の接頭辞と runtime が合わなければ、どの項目かを示して止める", () => {
     dir = mkdtempSync(join(tmpdir(), "sacty-config-"));
-    writeFileSync(
-      join(dir, "config.yaml"),
-      `${base}  claude_lite:
-    runtime: codex
-    auth: { mode: api-key, secret: openai-key }
-    price_per_mtok_usd: { input: 1, cached_input: 0.1, output: 2 }
-`,
-    );
+    writeFileSync(join(dir, "config.yaml"), `${base}  claude_lite:\n    runtime: codex\n`);
     const result = loadConfig(dir);
     expect(result.ok).toBe(false);
     if (result.ok) return;
@@ -2104,29 +2112,28 @@ agents:
     expect(text).toContain('"claude_lite" は段階のエージェントなので、runtime を claude-code に');
   });
 
-  it("雛形に、両ツールの 5 段階すべての例があり、例のコメントを外しても読める", () => {
+  it("雛形の providers.claude の例のコメントを外すと、両ツールの 5 段階すべてが使える（PBI-119・PBI-134）", () => {
     dir = mkdtempSync(join(tmpdir(), "sacty-config-"));
     const lines = CONFIG_TEMPLATE.split("\n");
-    // 段階の例の塊（「  # claude_lite:」「  # codex_lite:」から次の空行まで）だけ、コメントを外す
-    const blocks = ["claude_lite", "codex_lite"].map((first) => {
-      const start = lines.findIndex((line) => line === `  # ${first}:`);
-      const end = lines.findIndex((line, i) => i > start && line === "");
-      expect(start, first).toBeGreaterThan(0);
-      return { start, end };
-    });
-    const uncommented = lines
-      .map((line, i) =>
-        blocks.some((b) => i >= b.start && i < b.end) ? line.replace(/^ {2}# /, "  ") : line,
-      )
+    const start = lines.indexOf("  # claude:");
+    expect(start).toBeGreaterThan(0);
+    const end = lines.findIndex((l, i) => i > start && !l.startsWith("  #"));
+    const yaml = lines
+      .map((l, i) => (i >= start && i < end ? l.replace(/^ {2}# ?/, "  ") : l))
       .join("\n");
-    writeFileSync(join(dir, "config.yaml"), uncommented);
+    writeFileSync(join(dir, "config.yaml"), yaml);
     const result = loadConfig(dir);
-    expect(result.ok, result.ok ? "" : renderMessage(result.problem, "ja")).toBe(true);
-    if (!result.ok) return;
+    if (!result.ok) throw new Error(ja(result.problem));
     const all = ["lite", "entry", "standard", "advanced", "ultimate"];
     expect(Object.keys(result.config.tierAgents?.["claude-code"] ?? {})).toEqual(all);
     expect(Object.keys(result.config.tierAgents?.codex ?? {})).toEqual(all);
-    // 雛形の既定（default_agent）はそのまま
-    expect(result.config.defaultAgent.id).toBe("claude-subscription");
+    expect(result.config.tierAgents?.["claude-code"]?.ultimate).toMatchObject({
+      model: "claude-opus-5-5",
+      reasoning_effort: "high",
+      auth: { mode: "subscription", secret: "claude-oauth-token" },
+    });
+    expect(result.config.agentWarnings).toEqual([]);
+    // 既定の工程の AI は、providers.codex があるので codex_standard のまま
+    expect(result.config.defaultAgent.id).toBe("codex_standard");
   });
 });
