@@ -97,6 +97,11 @@ as a memory. Only the audit registers memories. No setup is needed.
 - Memories whose last useful date is older than "Days to keep memories" in the sacty settings (1 to 3650; 90 if empty) are deleted
   automatically. Those that expire while sacty is stopped are deleted at the next startup.
 - Each layer holds up to 30 memories. Beyond that, the ones with the oldest last useful date are deleted.
+- The audit moves memories that are in the wrong layer between project and repository. They show under "Moved memories" on the audit card.
+- For memories that helped many times, the audit proposes a fix that writes them into the context (skills, conventions) or the target repository
+  (AGENTS.md and so on); the cause title starts with "Make memory context:". As with other proposals, adopting creates a fix task, and
+  merging its PR puts it into the context. Once merged, the original memory is deleted as "Made context". If you reject it, the memory stays and
+  the reason is passed to the next audit.
 - The audit card in the task details shows the memories that audit registered. Delete a wrong memory with "Delete" → "Confirm delete". A deleted
   memory cannot be restored. You cannot add memories by hand.
 - sacty rewrites the files under `memory/` from the activity log. Hand edits are reverted at the next startup.

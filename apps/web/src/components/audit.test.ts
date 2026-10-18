@@ -35,6 +35,7 @@ const audit = (patch: Partial<TaskAudit>): TaskAudit => ({
   findings: [],
   memories: [],
   usefulMemories: [],
+  movedMemories: [],
   ...patch,
 });
 
@@ -351,5 +352,79 @@ describe("役に立ったメモリーと期限での削除（PBI-127）", () => 
     expect(html).toContain("期限で消した");
     expect(html).toContain("メモリーを残す日数");
     expect(html).not.toContain("有効な最終利用日：");
+  });
+});
+
+describe("移したメモリーとコンテキストにしたメモリー（PBI-128）", () => {
+  it("移したメモリーの欄と、コンテキストにして消した印を出す", () => {
+    locale = "ja";
+    const html = render(
+      audit({
+        movedMemories: [
+          {
+            id: "m1",
+            title: "lint は biome",
+            scope: "repository",
+            repo: "https://github.com/a/app",
+          },
+        ],
+        memories: [
+          {
+            id: "m2",
+            scope: "project",
+            title: "知見",
+            summary: "概要",
+            body: "中身",
+            step: "implement",
+            at: "2026-10-01T00:00:00.000Z",
+            lastUsefulAt: "2026-10-01T00:00:00.000Z",
+            deleted: { at: "2026-10-09T00:00:00.000Z", reason: "promoted" },
+          },
+        ],
+      }),
+    );
+    expect(html).toContain("移したメモリー");
+    expect(html).toContain('data-testid="audit-moved-memory-m1"');
+    expect(html).toContain("→ リポジトリ");
+    expect(html).toContain("コンテキストにした");
+    expect(render(audit({}))).not.toContain("移したメモリー");
+  });
+});
+
+describe("メモリーをコンテキストにする原因の表示（PR #138 レビュー指摘）", () => {
+  const finding = {
+    causeId: "memory:m1",
+    title: "lint は biome",
+    detail: "",
+    evidence: [],
+    proposals: [
+      {
+        ...proposal,
+        id: "t1:a:memory:m1",
+        causeId: "memory:m1",
+        body: "AGENTS.md に書く",
+        memoryOriginal: {
+          title: "lint は biome",
+          summary: "lint の道具",
+          body: "**biome** を使う",
+        },
+      },
+    ],
+  };
+
+  it("定型の題と説明は画面の言語で出し、元のメモリーは訳さずに提案と別に出す", () => {
+    locale = "ja";
+    const ja = render(audit({ findings: [finding] }));
+    expect(ja).toContain("メモリーをコンテキストにする：lint は biome");
+    expect(ja).toContain("マージで元のメモリーは消えます。");
+    expect(ja).toContain('data-testid="audit-proposal-memory-t1:a:memory:m1"');
+    expect(ja).toContain("元のメモリー");
+    expect(ja).toContain("<strong>biome</strong>");
+    locale = "en";
+    const en = render(audit({ findings: [finding] }));
+    expect(en).toContain("Make memory context: lint は biome");
+    expect(en).toContain("Original memory");
+    expect(en).not.toContain("メモリーをコンテキストにする");
+    locale = "ja";
   });
 });

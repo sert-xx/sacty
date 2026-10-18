@@ -53,6 +53,10 @@ const ja = {
     evidence: "根拠",
     openEvent: "作業履歴",
     openRun: "ログ",
+    memoryPromotion: (title: string) => `メモリーをコンテキストにする：${title}`,
+    memoryPromotionDetail:
+      "何度も役に立ったメモリーを、コンテキストか対象リポジトリに書く提案です。マージで元のメモリーは消えます。",
+    memoryOriginal: "元のメモリー",
   },
   memories: {
     title: "登録したメモリー",
@@ -63,6 +67,13 @@ const ja = {
     deletedByCapacity: "上限で消した",
     deletedHint: "階層の件数の上限を超えたので、有効な最終利用日の古いものから消しました。",
     deletedByExpiry: "期限で消した",
+    deletedByPromotion: "コンテキストにした",
+    deletedByPromotionHint:
+      "コンテキストにする改修の PR がマージされたので、メモリーとしては消しました。",
+    movedTitle: "移したメモリー",
+    movedHint:
+      "置き場所が合っていないメモリーを、監査が別の階層に移しました。リポジトリのメモリーは、同じリポジトリを扱うほかのプロジェクトのタスクでも読まれます。",
+    movedTo: (layer: string) => `→ ${layer}`,
     deletedByExpiryHint:
       "有効な最終利用日から、sacty の設定の「メモリーを残す日数」を過ぎたので消しました。",
     lastUseful: (date: string) => `有効な最終利用日：${date}`,
@@ -223,6 +234,10 @@ const en: AuditMessages = {
     evidence: "Evidence",
     openEvent: "Activity",
     openRun: "Log",
+    memoryPromotion: (title) => `Make memory context: ${title}`,
+    memoryPromotionDetail:
+      "A memory that helped many times, proposed as a rule for the context or target repository. Merging the fix deletes the memory.",
+    memoryOriginal: "Original memory",
   },
   memories: {
     title: "Registered memories",
@@ -234,6 +249,13 @@ const en: AuditMessages = {
     deletedHint:
       "Deleted because the layer exceeded its limit, starting from the oldest last useful date.",
     deletedByExpiry: "Deleted (expired)",
+    deletedByPromotion: "Made context",
+    deletedByPromotionHint:
+      "Deleted as a memory because the fix that turned it into context was merged.",
+    movedTitle: "Moved memories",
+    movedHint:
+      "The audit moved memories that were in the wrong layer. Repository memories are also read by tasks of other projects on the same repository.",
+    movedTo: (layer) => `→ ${layer}`,
     deletedByExpiryHint:
       'Deleted because its last useful date is older than "Days to keep memories" in the sacty settings.',
     lastUseful: (date) => `Last useful: ${date}`,

@@ -1850,6 +1850,11 @@ const AuditRun = {
 export const AUDIT_TEXT_MAX = 4000;
 export const AUDIT_TITLE_MAX = 200;
 
+/** メモリーの題・概要・中身の上限（文字数。PBI-126）。 */
+export const MEMORY_TITLE_MAX = 200;
+export const MEMORY_SUMMARY_MAX = 300;
+export const MEMORY_BODY_MAX = 4000;
+
 /** 根拠になった出来事。eventId は作業履歴の行、runId はエージェントの実行。 */
 export const AuditEvidenceRecord = z.object({
   kind: z.enum(AUDIT_EVIDENCE_KINDS),
@@ -1859,13 +1864,28 @@ export const AuditEvidenceRecord = z.object({
   runId: z.string().min(1).optional(),
 });
 
-/** 改修の提案。candidates は採用のときに選べる宛先（target を含む）。 */
+/**
+ * 改修の提案。candidates は採用のときに選べる宛先（target を含む）。memoryId は、メモリーをコンテキストにする提案の元の
+ * メモリー（PBI-128。改修の PR がマージされたら、元のメモリーを消す）。
+ */
 export const AuditProposalRecord = z.object({
   id: z.string().min(1),
   title: z.string().min(1).max(AUDIT_TITLE_MAX),
   body: z.string().max(AUDIT_TEXT_MAX),
   target: AuditTarget,
   candidates: z.array(AuditTarget).min(1),
+  memoryId: z.string().min(1).optional(),
+  /**
+   * コンテキストにする元のメモリーの題・概要・中身（PBI-128）。提案の本文と別に持ち、どちらも上限まで欠けずに改修のタスクへ渡す
+   * （PR #138 レビュー指摘）。
+   */
+  memoryOriginal: z
+    .object({
+      title: z.string().max(MEMORY_TITLE_MAX),
+      summary: z.string().max(MEMORY_SUMMARY_MAX),
+      body: z.string().max(MEMORY_BODY_MAX),
+    })
+    .optional(),
 });
 
 /** 原因。causeKey はプロジェクトの中でタスクをまたいで同じ原因をまとめる鍵。 */
@@ -1877,11 +1897,6 @@ export const AuditFindingRecord = z.object({
   evidence: z.array(AuditEvidenceRecord).max(20),
   proposals: z.array(AuditProposalRecord).max(5),
 });
-
-/** メモリーの題・概要・中身の上限（文字数。PBI-126）。 */
-export const MEMORY_TITLE_MAX = 200;
-export const MEMORY_SUMMARY_MAX = 300;
-export const MEMORY_BODY_MAX = 4000;
 
 /**
  * 監査が登録したメモリー（PBI-126）。scope が project ならタスクのプロジェクトの、repository なら repo（.git の無い GitHub の
@@ -1908,10 +1923,17 @@ export type AuditMemoryRecord = z.infer<typeof AuditMemoryRecord>;
 
 /**
  * メモリーを消した理由：人が消した・階層の件数の上限を超えたので古いものを消した（PBI-126）・有効な最終利用日から残す日数を
- * 過ぎた（PBI-127）。
+ * 過ぎた（PBI-127）・コンテキストにする改修の PR がマージされた（PBI-128）。
  */
-export const MEMORY_DELETE_REASONS = ["person", "capacity", "expired"] as const;
+export const MEMORY_DELETE_REASONS = ["person", "capacity", "expired", "promoted"] as const;
 export type MemoryDeleteReason = (typeof MEMORY_DELETE_REASONS)[number];
+
+/** メモリーを移した先の階層（PBI-128）。project ならそのプロジェクト、repository ならそのリポジトリ。 */
+export const MemoryMove = z.discriminatedUnion("scope", [
+  z.object({ id: z.string().min(1), scope: z.literal("project"), projectId: z.string().min(1) }),
+  z.object({ id: z.string().min(1), scope: z.literal("repository"), repo: z.string().min(1) }),
+]);
+export type MemoryMove = z.infer<typeof MemoryMove>;
 
 /** 監査を待つ（タスクが完了した）。capUsd は監査の予算の上限。 */
 const AuditQueued = z.object({
@@ -1935,6 +1957,10 @@ const AuditSurveyed = z.object({
      */
     openedMemories: z.array(z.string().min(1)).max(200).default([]),
     usefulMemories: z.array(z.string().min(1)).max(200).default([]),
+    /** 監査が別の階層に移したメモリーと、移した先（PBI-128）。 */
+    memoryMoves: z.array(MemoryMove).max(10).default([]),
+    /** メモリーをコンテキストにする改修の提案（原因の鍵は `memory:<メモリーの ID>`。PBI-128）。 */
+    promotions: z.array(AuditFindingRecord).max(10).default([]),
     ...AuditRun,
   }),
 });

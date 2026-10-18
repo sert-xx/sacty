@@ -106,6 +106,8 @@ export type AuditProposal = {
   target: AuditTarget;
   /** 採用するときに選べる宛先（監査が選んだ宛先を含む）。 */
   targetCandidates: AuditTarget[];
+  /** コンテキストにする元のメモリー（PBI-128）。 */
+  memoryOriginal?: { title: string; summary: string; body: string };
   decision?: AuditProposalDecision;
 };
 
@@ -138,6 +140,14 @@ export type AuditMemory = {
   deleted?: { at: string; reason: MemoryDeleteReason };
 };
 
+/** 監査が別の階層に移したメモリー（PBI-128）。scope・repo は移した先。 */
+export type AuditMovedMemory = {
+  id: string;
+  title: string;
+  scope: "project" | "repository";
+  repo?: string;
+};
+
 /** 監査が、タスクで役に立ったと判断したメモリー（PBI-127）。 */
 export type AuditUsefulMemory = {
   id: string;
@@ -163,6 +173,8 @@ export type TaskAudit = {
   memories: AuditMemory[];
   /** タスクで役に立ったと監査が判断したメモリー（PBI-127）。 */
   usefulMemories: AuditUsefulMemory[];
+  /** この監査が別の階層に移したメモリー（PBI-128）。 */
+  movedMemories: AuditMovedMemory[];
   /** モックのデータ。 */
   mock?: true;
 };

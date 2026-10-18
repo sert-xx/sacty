@@ -30,7 +30,7 @@
 
 - 正本は作業履歴。登録は深掘りの結果（`AuditDeepDived` の `memories`）に、削除は `AuditMemoryDeleted`（`memoryId`・`reason`）に記録する。
   どちらも、メモリーを登録した監査のタスクの作業履歴に追記する。`reason` は `person`（人が消した）・`capacity`（件数の上限）・
-  `expired`（残す日数を過ぎた）。
+  `expired`（残す日数を過ぎた）・`promoted`（コンテキストにする改修の PR がマージされた）。
 - 書き出すのはデーモンだけ。登録・削除を記録した後、その階層を作業履歴から書き直す。メモリーが無くなった階層は、ディレクトリごと消す。
   - ディレクトリは置き換えず、中のファイルを、同じディレクトリの一時ファイルに書いてから置き換える（実行中のコンテナがマウントしている
     場所を保ち、書きかけを読ませない）。中身が同じなら書かない。
@@ -82,6 +82,41 @@
 コード: `apps/daemon/src/memory.ts`（`countOpenedMemories`・`usefulDates`・`lastUsefulAt`）、`apps/daemon/src/service.ts`（`openedMemories`）、
 `apps/daemon/src/audit-prompts.ts`（`buildAuditSurveyPrompt`・`extractAuditSurvey`）、`apps/daemon/src/ledger-audits.ts`（`LedgerAuditService`）
 
+## 昇格
+
+- 大まかな監査（メモリーを書き出す場所があるとき）に、昇格を判断する材料を入れる：タスクのプロジェクトと対象リポジトリの、消していない
+  メモリー（ID・階層・題・概要・有効な最終利用日・役に立った回数・コンテキストにする提案中か・却下の理由・中身の場所）と、コンテキストにする
+  提案の宛先の候補（改修の提案の宛先の候補から、sacty の既定のコンテキストを除いたもの）。役に立った回数は、役に立ったと判断したタスクの数。
+- **階層の移動**（`memoryMoves`。1回で最大 3 つ。`AUDIT_MAX_MEMORY_MOVES`）：置き場所が合っていないメモリーを、タスクのプロジェクトか対象
+  リポジトリの階層に移す。リポジトリそのものに関すること（ほかのプロジェクトのタスクでも役立つもの）は `repository` へ、プロジェクトや
+  コンテキストに固有のことは `project` へ。`repository` には、プロジェクト・組織・コンテキストに固有の名前や事情を含むものを移させない。
+  - 読むとき：材料にあるメモリーだけ、今と違う階層だけ、同じメモリーは1回だけ。対象リポジトリが無ければ `repository` に移さない。
+  - 記録するとき：メモリーが消えていない・まだタスクの階層にある・今と違う階層であることを確かめ直す（大まかな監査は同じプロジェクトで同時に
+    動くことがあるため）。`AuditSurveyed` の `memoryMoves` に、移した先（`project` ならプロジェクトの ID、`repository` ならリポジトリ）を記録する。
+  - メモリーの置き場所は、すべてのタスクの移した記録を、大まかな監査の記録を追記した順（`seq`）に当てて決める（最後に移した先）。時刻では
+    決めない（同じ時刻の記録が、タスクを作った順にならないように）。有効な最終利用日・登録したタスク・ID は変わらない。
+  - 記録した後、移した先が件数の上限を超えたら、登録のときと同じく、有効な最終利用日の古いものから `capacity` で消す。そのうえで、移す前と
+    後の階層と、消した階層を書き直す。
+- **コンテキストへの昇格**（`memoryPromotions`。1回で最大 2 つ。`AUDIT_MAX_MEMORY_PROMOTIONS`）：何度も役に立ち（役に立った回数 2 回以上を目安）、
+  これからも守るべき決まりになったメモリーを、コンテキスト（スキル・規約）か対象リポジトリ（AGENTS.md など）にする改修を提案する。
+  - 読むとき：提案中でないメモリーだけ、宛先は候補の番号のものだけ、題の無いものは捨てる。
+  - 記録するとき：メモリーが消えていない・まだタスクの階層にある・提案中でないことを確かめ直す。`AuditSurveyed` の `promotions` に原因として
+    記録する（原因の鍵は `memory:<メモリーの ID>`）。提案は `memoryId` に元のメモリーの ID を、`memoryOriginal` に元のメモリーの題・概要・
+    中身を持つ（提案の本文とは別の項目で、どちらも上限まで欠けない）。元のメモリーは、今の秘密情報の値で伏せてから写す（登録の後に秘密情報に
+    なった値も伏せる）。改修のタスクの本文には、提案の本文と元のメモリーを並べる。
+  - 原因の題は元のメモリーの題、説明は空で記録し、画面とレポートでは「メモリーをコンテキストにする：<題>」と定型の説明を、画面の言語で出す。
+  - 採用・却下はほかの改修の提案と同じ。採用すると宛先のリポジトリに改修のタスクを作り、PR まで進む（コンテキストの変更は人の PR の
+    レビューを通る）。
+  - 判断待ち・採用済みの提案があるメモリーは「提案中」として、同じ提案を重ねない。却下されたメモリーは、却下の理由を材料に添え、残す。
+  - 深掘りに渡す既存の原因の一覧には、コンテキストにする提案を入れない。
+- **元のメモリーを消す**：採用した提案の改修のタスクの PR がマージされたら、元のメモリーを `AuditMemoryDeleted`（`reason: "promoted"`）で
+  消す。PR を見守る確認のたび・掃除のたび・起動のときに確かめる。
+- 監査の欄に、移したメモリー（題・移した先）と、コンテキストにして消した印を出す。
+
+コード: `apps/daemon/src/audit-prompts.ts`（`buildAuditSurveyPrompt`・`extractAuditSurvey`・`AUDIT_MAX_MEMORY_MOVES`・`AUDIT_MAX_MEMORY_PROMOTIONS`）、
+`apps/daemon/src/service.ts`（`promotionInput`・`surveyPromotionRecord`・`retirePromotedMemories`・`knownAuditCauses`）、
+`apps/daemon/src/memory.ts`（`memoryPlacements`・`usefulCounts`・`promotedMemories`）、`packages/core/src/events.ts`（`MemoryMove`・`AuditProposalRecord`）
+
 ## 掃除
 
 - 有効な最終利用日から、sacty の設定の `memoryRetentionDays`（1〜3650。設定していなければ 90 日。`DEFAULT_MEMORY_RETENTION_DAYS`）を
@@ -120,7 +155,8 @@
 
 - 監査の欄に、その監査が登録したメモリー（題・階層・リポジトリ・概要・中身）を出す。消していないものには「消す」が出て、確定のボタンを
   押すと消す（`POST /api/audits/memories/:id/delete`）。人は登録できない。
-- 消したものは印（人が消した・上限で消した・期限で消した）だけを出し、中身と「消す」は出さない。消したものを、もう一度は消せない（409）。
+- 消したものは印（人が消した・上限で消した・期限で消した・コンテキストにした）だけを出し、中身と「消す」は出さない。消したものを、もう一度は消せない（409）。
+- 消した後は、メモリーの今の置き場所（監査が移していれば、移した先）の階層を書き直す。
 
 コード: `apps/daemon/src/service.ts`（`deleteAuditMemory`）、`apps/daemon/src/ledger-audits.ts`（`LedgerAuditService`）、`apps/daemon/src/server.ts`（`createApp`）、
 `apps/web/src/components/audit.tsx`（`TaskAuditCard`）

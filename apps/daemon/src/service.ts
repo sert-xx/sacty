@@ -10,6 +10,7 @@ import {
   ANSWER_MAX,
   ApproveStepInput,
   AskQuestionInput,
+  type AuditTarget,
   activeStep,
   applyEvent,
   auditOpen,
@@ -60,6 +61,10 @@ import {
   MAX_FIX_CHAIN,
   MAX_INTEGRATION_ATTEMPTS,
   MAX_VERIFY_ATTEMPTS,
+  MEMORY_BODY_MAX,
+  MEMORY_SUMMARY_MAX,
+  MEMORY_TITLE_MAX,
+  type MemoryMove,
   mapFreeText,
   message,
   nextAuditDive,
@@ -130,11 +135,13 @@ import {
   AUDIT_LEDGER_FILE,
   buildAuditDivePrompt,
   buildAuditSurveyPrompt,
+  cut,
   extractAuditDive,
   extractAuditSurvey,
   type KnownAuditCause,
   type KnownMemory,
   type OpenedMemory,
+  type PromotionInput,
   type RejectedAuditProposal,
 } from "./audit-prompts.js";
 import { auditTargetCandidates } from "./audit-targets.js";
@@ -210,9 +217,12 @@ import {
   memoriesOf,
   memoryPromptLines,
   overCapacity,
+  promotedMemories,
   repositoryMemoryKey,
+  sameLayer,
   syncMemoryLayers,
   taskMemoryLayers,
+  usefulCounts,
 } from "./memory.js";
 import { notificationFor, type SlackNotifier } from "./notifier.js";
 import type { OrchestratorSessionStore } from "./orchestrator-sessions.js";
@@ -387,6 +397,11 @@ export class InvalidOperationError extends Error {
     this.messages = messages;
   }
 }
+
+/** 大まかな監査の記録の、メモリーをコンテキストにする提案（原因の形。PBI-128）。 */
+type SurveyPromotionRecord = NonNullable<
+  Extract<EventInput, { type: "AuditSurveyed" }>["payload"]["promotions"]
+>[number];
 
 /**
  * メモリーを読ませる工程の実行（PBI-126）。統合レビューはゴールガーディアンの役なので除く（判定の材料を承認済みのものに
@@ -897,6 +912,8 @@ export class TaskService {
         ]);
       }
     }
+    // コンテキストにする改修の PR がマージされたメモリーを消す（PBI-128）
+    this.cleanupPromotedMemories();
     await this.checkReviewPullRequests();
     // 公開の後、ラベルを付ける前に止まった PR に付ける（PBI-88 レビュー指摘）
     await this.resumePullRequestLabels();
@@ -7799,6 +7816,8 @@ export class TaskService {
       // 大まかな監査には、タスクの実行で開いたメモリーを渡し、役に立ったかを判断させる（PBI-127）
       const opened =
         !step && this.deps.memoryRoot ? await this.openedMemories(task, raw) : undefined;
+      // 大まかな監査には、階層の移動とコンテキストへの昇格を判断する材料も渡す（PBI-128）
+      const promotion = opened ? this.promotionInput(task, candidates) : undefined;
       const prompt = step
         ? buildAuditDivePrompt(shown, activity, counts, logs, {
             step,
@@ -7824,6 +7843,15 @@ export class TaskService {
             counts,
             logs,
             opened?.map((m) => ({ ...m, title: hide(m.title), summary: hide(m.summary) })),
+            promotion && {
+              ...promotion,
+              memories: promotion.memories.map((m) => ({
+                ...m,
+                title: hide(m.title),
+                summary: hide(m.summary),
+                ...(m.rejectedReason ? { rejectedReason: hide(m.rejectedReason) } : {}),
+              })),
+            },
           );
       const {
         outcome,
@@ -7882,6 +7910,7 @@ export class TaskService {
           task,
           hideResult,
           new Set(opened?.map((m) => m.id)),
+          promotion,
         );
         record = survey.ok
           ? [
@@ -7898,6 +7927,13 @@ export class TaskService {
                       ? {
                           openedMemories: opened.map((m) => m.id),
                           usefulMemories: survey.usefulMemories,
+                          ...this.surveyPromotionRecord(
+                            task,
+                            audit.auditId,
+                            survey,
+                            promotion,
+                            hideResult,
+                          ),
                         }
                       : {}),
                     ...run,
@@ -7983,6 +8019,8 @@ export class TaskService {
     }
     const latest = this.tasks.get(task.id);
     if (!latest || !isAuditTarget(latest) || latest.audit?.auditId !== audit.auditId) return;
+    // 移す前の置き場所（書き直すため。PBI-128）
+    const beforeMoves = this.memories();
     this.append(latest, record);
     // 登録したメモリーを書き出す（上限を超えた階層は、古いものを消してから。PBI-126）
     const registered = record.flatMap(({ event }) =>
@@ -7996,6 +8034,24 @@ export class TaskService {
             : { kind: "repository", repo: m.repo },
       );
       this.writeMemories([...layers, ...this.trimMemories()]);
+    }
+    // 移したメモリーは、移す前と後の階層を書き直す（PBI-128）
+    const moved = record.flatMap(({ event }) =>
+      event.type === "AuditSurveyed" ? (event.payload.memoryMoves ?? []) : [],
+    );
+    if (moved.length > 0) {
+      const before = new Map(beforeMoves.map((m) => [m.id, layerOf(m)]));
+      // 移した先が上限を超えたら、登録のときと同じく古いものから消す（PR #138 レビュー指摘）
+      const trimmed = this.trimMemories();
+      this.writeMemories([
+        ...trimmed,
+        ...moved.flatMap((move): MemoryLayer[] => [
+          ...(before.has(move.id) ? [before.get(move.id) as MemoryLayer] : []),
+          move.scope === "project"
+            ? { kind: "project", projectId: move.projectId }
+            : { kind: "repository", repo: move.repo },
+        ]),
+      ]);
     }
     // 役に立ったメモリーの有効な最終利用日が変わるので、その階層を書き直す（PBI-127）
     const useful = new Set(
@@ -8105,6 +8161,7 @@ export class TaskService {
    */
   syncMemories(): void {
     this.expireMemories();
+    this.retirePromotedMemories();
     this.trimMemories();
     this.writeMemories();
   }
@@ -8115,7 +8172,148 @@ export class TaskService {
    * 監査の記録の途中に挟まらない。
    */
   cleanupMemories(): void {
-    const layers = this.expireMemories();
+    const layers = [...this.expireMemories(), ...this.retirePromotedMemories()];
+    if (layers.length > 0) this.writeMemories(layers);
+  }
+
+  /**
+   * コンテキストにする改修の PR がマージされたメモリーを消す（PBI-128）。コンテキストになったので、メモリーとしては要らない。
+   * 却下・判断待ち・マージ前なら残す。消したことは、メモリーを登録したタスクの作業履歴に記録する。消した階層を返す。
+   */
+  private retirePromotedMemories(): MemoryLayer[] {
+    if (!this.deps.memoryRoot) return [];
+    const retired: MemoryLayer[] = [];
+    for (const memory of promotedMemories(this.tasks.values(), this.memories())) {
+      const source = this.tasks.get(memory.taskId);
+      if (!source) continue;
+      this.append(source, [
+        {
+          actor: "sacty",
+          event: {
+            type: "AuditMemoryDeleted",
+            payload: { memoryId: memory.id, reason: "promoted" },
+          },
+        },
+      ]);
+      retired.push(layerOf(memory));
+    }
+    return retired;
+  }
+
+  /** コンテキストにする提案が、判断待ちか採用済みのメモリー（同じ提案を重ねないため）と、却下の理由（PBI-128）。 */
+  private memoryPromotions(): { promoting: Set<string>; rejected: Map<string, string> } {
+    const promoting = new Set<string>();
+    const rejected = new Map<string, string>();
+    for (const task of this.tasks.values()) {
+      if (task.status === "cancelled") continue;
+      for (const finding of task.audit?.findings ?? []) {
+        for (const p of finding.proposals) {
+          if (!p.memoryId) continue;
+          if (p.decision?.kind === "rejected") rejected.set(p.memoryId, p.decision.reason);
+          else promoting.add(p.memoryId);
+        }
+      }
+    }
+    return { promoting, rejected };
+  }
+
+  /**
+   * 大まかな監査に渡す、昇格の判断の材料（PBI-128）。タスクのプロジェクトと対象リポジトリの、消していないメモリー（有効な
+   * 最終利用日・役に立った回数・提案中か）と、コンテキストにする提案の宛先の候補（sacty の既定のコンテキストは除く）。
+   */
+  private promotionInput(task: Task, candidates: readonly AuditTarget[]): PromotionInput {
+    const layers = taskMemoryLayers(task);
+    const all = this.memories();
+    const counts = usefulCounts(this.tasks.values());
+    const { promoting, rejected } = this.memoryPromotions();
+    const of = (layer: MemoryLayer, dir: string) =>
+      memoriesOf(all, layer).map((m) => ({
+        id: m.id,
+        scope: m.scope,
+        title: m.title,
+        summary: m.summary,
+        lastUsefulAt: m.lastUsefulAt,
+        usefulCount: counts.get(m.id) ?? 0,
+        promoting: promoting.has(m.id),
+        ...(rejected.has(m.id) ? { rejectedReason: rejected.get(m.id) } : {}),
+        path: `${dir}/${MEMORY_REFERENCES_DIR}/${m.id}.md`,
+      }));
+    return {
+      memories: [
+        ...of(layers.project, CONTAINER_PROJECT_MEMORY_DIR),
+        ...(layers.repository ? of(layers.repository, CONTAINER_REPOSITORY_MEMORY_DIR) : []),
+      ],
+      candidates: candidates.filter((c) => c.kind !== "sacty"),
+      ...(layers.repository?.kind === "repository" ? { repository: layers.repository.repo } : {}),
+    };
+  }
+
+  /**
+   * 大まかな監査が出した、階層の移動とコンテキストにする提案を、記録の形にする（PBI-128）。記録の時点で、メモリーが消えて
+   * いない・まだタスクの階層にある・移す先と違う階層にある・提案中でないことを確かめ直す（大まかな監査は同じプロジェクトで
+   * 同時に動くことがあるため）。提案は、元のメモリーの中身を本文に添え、原因の鍵を `memory:<ID>` にする。
+   */
+  private surveyPromotionRecord(
+    task: Task,
+    auditId: string,
+    survey: Extract<ReturnType<typeof extractAuditSurvey>, { ok: true }>,
+    promotion: PromotionInput | undefined,
+    hide: (text: string) => string,
+  ): { memoryMoves: MemoryMove[]; promotions: SurveyPromotionRecord[] } {
+    if (!promotion) return { memoryMoves: [], promotions: [] };
+    const layers = taskMemoryLayers(task);
+    const inTask = (m: LiveMemory) =>
+      sameLayer(layerOf(m), layers.project) ||
+      (layers.repository !== undefined && sameLayer(layerOf(m), layers.repository));
+    const live = new Map(this.memories().map((m) => [m.id, m]));
+    const memoryMoves: MemoryMove[] = survey.memoryMoves.flatMap((move): MemoryMove[] => {
+      const memory = live.get(move.id);
+      if (!memory || !inTask(memory) || memory.scope === move.to) return [];
+      if (move.to === "project")
+        return [{ id: move.id, scope: "project", projectId: task.projectId }];
+      return promotion.repository
+        ? [{ id: move.id, scope: "repository", repo: promotion.repository }]
+        : [];
+    });
+    const { promoting } = this.memoryPromotions();
+    const promotions = survey.memoryPromotions.flatMap((p): SurveyPromotionRecord[] => {
+      const memory = live.get(p.id);
+      if (!memory || !inTask(memory) || promoting.has(p.id)) return [];
+      // 元のメモリーも、今の秘密情報の値で伏せてから添える（登録の後に秘密情報になった値や、共有のリポジトリのメモリーに
+      // 入っている値を、提案に平文で写さない。PR #138 レビュー指摘）
+      const original = {
+        title: cut(hide(memory.title), MEMORY_TITLE_MAX),
+        summary: cut(hide(memory.summary), MEMORY_SUMMARY_MAX),
+        body: cut(hide(memory.body), MEMORY_BODY_MAX),
+      };
+      return [
+        {
+          // 題は元のメモリーの題だけを持ち、「メモリーをコンテキストにする」の定型の題と説明は、画面の言語で出す
+          // （原因の鍵 memory:<ID> で見分ける。PR #138 レビュー指摘）
+          causeKey: `memory:${p.id}`,
+          title: original.title || p.title,
+          detail: "",
+          evidence: [],
+          proposals: [
+            {
+              id: `${task.id}:${auditId}:memory:${p.id}`,
+              title: p.title,
+              body: p.body,
+              target: p.target,
+              candidates: [...promotion.candidates],
+              memoryId: p.id,
+              memoryOriginal: original,
+            },
+          ],
+        },
+      ];
+    });
+    return { memoryMoves, promotions };
+  }
+
+  /** コンテキストにする改修の PR がマージされたメモリーを消し、階層を書き直す（PBI-128）。 */
+  private cleanupPromotedMemories(): void {
+    const layers = this.retirePromotedMemories();
     if (layers.length > 0) this.writeMemories(layers);
   }
 
@@ -8223,6 +8421,8 @@ export class TaskService {
       const memory = task.audit?.memories.find((m) => m.id === memoryId);
       if (!memory) continue;
       if (memory.deleted) throw new InvalidOperationError(message("audit.memoryDeleted"));
+      // 監査が移したメモリーは、登録したときの階層ではなく、今の置き場所の階層を書き直す（PR #138 レビュー指摘）
+      const placed = this.memories().find((m) => m.id === memoryId);
       const updated = this.append(task, [
         {
           actor: "person",
@@ -8230,9 +8430,11 @@ export class TaskService {
         },
       ]);
       this.writeMemories([
-        memory.scope === "project"
-          ? { kind: "project", projectId: task.projectId }
-          : { kind: "repository", repo: repositoryMemoryKey(memory.repo) ?? memory.repo },
+        placed
+          ? layerOf(placed)
+          : memory.scope === "project"
+            ? { kind: "project", projectId: task.projectId }
+            : { kind: "repository", repo: repositoryMemoryKey(memory.repo) ?? memory.repo },
       ]);
       return updated;
     }
@@ -8358,6 +8560,8 @@ export class TaskService {
     for (const t of this.tasks.values()) {
       if (t.projectId !== projectId || !t.audit || t.status === "cancelled") continue;
       for (const f of t.audit.findings) {
+        // メモリーをコンテキストにする提案は、深掘りの原因の一覧に入れない（PBI-128）
+        if (f.causeKey.startsWith("memory:")) continue;
         const adopted = f.proposals.some((p) => p.decision?.kind === "adopted");
         const previous = causes.get(f.causeKey);
         causes.set(f.causeKey, {
@@ -8426,14 +8630,20 @@ export class TaskService {
     const config = this.deps.config();
     const budgetCapUsd = config.ok ? config.config.budgetPerTaskUsd : DEFAULT_BUDGET_USD;
     const title = `改修：${proposal.title}`;
-    const body = [
-      proposal.body,
-      "",
-      "---",
-      `監査で見つけた原因：${finding.title}`,
-      "",
-      finding.detail,
-    ].join("\n");
+    // コンテキストにする提案は、元のメモリーを欠けずに添える（PBI-128。PR #138 レビュー指摘）
+    const original = proposal.memoryOriginal;
+    const body = original
+      ? [
+          proposal.body,
+          "",
+          "---",
+          `コンテキストにする元のメモリー：${original.title}（${original.summary}）`,
+          "",
+          original.body,
+        ].join("\n")
+      : [proposal.body, "", "---", `監査で見つけた原因：${finding.title}`, "", finding.detail].join(
+          "\n",
+        );
     this.append({ id: decision.fixTaskId, projectId: task.projectId }, [
       {
         actor: "sacty",

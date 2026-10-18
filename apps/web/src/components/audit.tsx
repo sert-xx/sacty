@@ -4,6 +4,7 @@ import {
   AUDIT_EVIDENCE_KINDS,
   type AuditEvidence,
   type AuditMemory,
+  type AuditMovedMemory,
   type AuditProposal,
   type AuditTarget,
   type AuditUsefulMemory,
@@ -29,7 +30,14 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useMessages } from "@/i18n/client";
-import { auditStatusTone, auditTargetText, auditTargetValue, suggestedAuditCap } from "@/lib/audit";
+import {
+  auditCauseTitle,
+  auditStatusTone,
+  auditTargetText,
+  auditTargetValue,
+  isMemoryPromotionCause,
+  suggestedAuditCap,
+} from "@/lib/audit";
 import { formatStamp, usd } from "@/lib/labels";
 import { taskPath } from "@/lib/paths";
 
@@ -166,7 +174,9 @@ export function TaskAuditCard({ audit }: { audit: TaskAudit | null }) {
                   className="flex flex-col gap-2 rounded-lg border border-border p-3"
                 >
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-sm font-semibold">{f.title}</span>
+                    <span className="text-sm font-semibold">
+                      {auditCauseTitle(f.causeId, f.title, m)}
+                    </span>
                     {f.step && (
                       <span className="text-xs text-muted-foreground">
                         {messages.labels.step[f.step]}
@@ -179,7 +189,11 @@ export function TaskAuditCard({ audit }: { audit: TaskAudit | null }) {
                       </span>
                     )}
                   </div>
-                  <Markdown>{f.detail}</Markdown>
+                  <Markdown>
+                    {isMemoryPromotionCause(f.causeId) && !f.detail
+                      ? m.findings.memoryPromotionDetail
+                      : f.detail}
+                  </Markdown>
                   <Evidence taskId={audit.taskId} items={f.evidence} />
                   <ul className="flex flex-col gap-2">
                     {f.proposals.map((p) => (
@@ -195,6 +209,7 @@ export function TaskAuditCard({ audit }: { audit: TaskAudit | null }) {
         </div>
       )}
       {audit.usefulMemories.length > 0 && <UsefulMemories memories={audit.usefulMemories} />}
+      {audit.movedMemories.length > 0 && <MovedMemories memories={audit.movedMemories} />}
       {audit.memories.length > 0 && <AuditMemories memories={audit.memories} />}
     </CardSection>
   );
@@ -219,6 +234,37 @@ function UsefulMemories({ memories }: { memories: AuditUsefulMemory[] }) {
             <span className="text-xs text-muted-foreground">
               {memory.scope === "project" ? m.project : m.repository}
             </span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/** 監査が別の階層に移したメモリー（PBI-128）。 */
+function MovedMemories({ memories }: { memories: AuditMovedMemory[] }) {
+  const m = useMessages().audit.memories;
+  return (
+    <div className="flex flex-col gap-2">
+      <h3 className="text-sm font-semibold">
+        <WithHint hint={m.movedHint}>{m.movedTitle}</WithHint>
+      </h3>
+      <ul className="flex flex-col gap-1 text-sm">
+        {memories.map((memory) => (
+          <li
+            key={memory.id}
+            data-testid={`audit-moved-memory-${memory.id}`}
+            className="min-w-0 [overflow-wrap:anywhere]"
+          >
+            <span className="font-medium">{memory.title}</span>{" "}
+            <span className="text-xs text-muted-foreground">
+              {m.movedTo(memory.scope === "project" ? m.project : m.repository)}
+            </span>
+            {memory.repo && (
+              <span className="ml-1.5 font-mono text-xs break-all text-muted-foreground">
+                {memory.repo}
+              </span>
+            )}
           </li>
         ))}
       </ul>
@@ -258,9 +304,12 @@ function AuditMemories({ memories }: { memories: AuditMemory[] }) {
                     ? m.deleted
                     : memory.deleted.reason === "capacity"
                       ? m.deletedByCapacity
-                      : m.deletedByExpiry}
+                      : memory.deleted.reason === "expired"
+                        ? m.deletedByExpiry
+                        : m.deletedByPromotion}
                   {memory.deleted.reason === "capacity" && <Hint text={m.deletedHint} />}
                   {memory.deleted.reason === "expired" && <Hint text={m.deletedByExpiryHint} />}
+                  {memory.deleted.reason === "promoted" && <Hint text={m.deletedByPromotionHint} />}
                 </span>
               )}
             </div>
@@ -439,6 +488,21 @@ export function ProposalView({
         </p>
       )}
       <Markdown>{proposal.body}</Markdown>
+      {proposal.memoryOriginal && (
+        <div
+          data-testid={`audit-proposal-memory-${proposal.id}`}
+          className="flex min-w-0 flex-col gap-1 rounded-md border border-border px-3 py-2 [overflow-wrap:anywhere]"
+        >
+          <span className="text-xs text-muted-foreground">
+            {messages.audit.findings.memoryOriginal}
+          </span>
+          <span className="text-sm font-medium">{proposal.memoryOriginal.title}</span>
+          <span className="text-[13px] text-muted-foreground">
+            {proposal.memoryOriginal.summary}
+          </span>
+          <Markdown>{proposal.memoryOriginal.body}</Markdown>
+        </div>
+      )}
       {/* 判断待ちの間は、宛先を採用のフォームの選択で出す（同じ宛先を2回出さない） */}
       {decision && (
         <p className="flex flex-wrap items-baseline gap-x-2 text-[13px]">

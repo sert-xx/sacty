@@ -25,6 +25,23 @@ export function auditStatusTone(status: AuditStatus): StatusTone {
   }
 }
 
+/** メモリーをコンテキストにする原因か（原因の鍵が memory:<ID>。PBI-128）。 */
+export function isMemoryPromotionCause(causeId: string): boolean {
+  return causeId.startsWith("memory:");
+}
+
+/**
+ * 原因の題。メモリーをコンテキストにする原因は、元のメモリーの題に画面の言語の定型の題を添える（デーモンが作った定型の文は
+ * 訳し、元のメモリーの題は訳さない。PR #138 レビュー指摘）。
+ */
+export function auditCauseTitle(
+  causeId: string,
+  title: string,
+  m: Pick<Messages["audit"], "findings">,
+): string {
+  return isMemoryPromotionCause(causeId) ? m.findings.memoryPromotion(title) : title;
+}
+
 /** 宛先を選ぶ選択肢の値（JSON。キーの並びを決めて、同じ宛先が同じ値になるようにする）。 */
 export function auditTargetValue(target: AuditTarget): string {
   switch (target.kind) {

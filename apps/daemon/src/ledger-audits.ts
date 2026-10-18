@@ -8,6 +8,7 @@ import {
   isAuditTarget,
   isPendingAuditProposal,
   type ListedAuditProposal,
+  type MemoryMove,
   nextAuditDive,
   type Project,
   type ProjectAudits,
@@ -17,7 +18,7 @@ import {
 } from "@sacty/core";
 import { type AuditService, causeStatus, sortCauses, weekStart } from "./audits.js";
 import { redactLog } from "./ci.js";
-import { lastUsefulAt, usefulDates } from "./memory.js";
+import { lastUsefulAt, memoryPlacements, usefulDates } from "./memory.js";
 
 /*
  * 完了したタスクの監査を、作業履歴の記録（タスクの監査の状態。Audit… のイベントを畳み込んだもの）から組み立てる（PBI-125）。
@@ -42,6 +43,8 @@ export type AuditLedger = {
 /** メモリーの有効な最終利用日と、登録したメモリー（ほかのタスクの監査が登録したものを含む。PBI-127）。 */
 type MemoryIndex = {
   dates: Map<string, string>;
+  /** 監査が移したメモリーの、今の置き場所（PBI-128）。 */
+  placements: Map<string, MemoryMove>;
   registered: Map<string, NonNullable<Task["audit"]>["memories"][number]>;
 };
 
@@ -49,6 +52,7 @@ type MemoryIndex = {
 function memoryIndex(tasks: readonly Task[]): MemoryIndex {
   return {
     dates: usefulDates(tasks),
+    placements: memoryPlacements(tasks),
     registered: new Map(
       tasks.flatMap((t) => (t.audit?.memories ?? []).map((m) => [m.id, m] as const)),
     ),
@@ -150,6 +154,7 @@ export class LedgerAuditService implements AuditService {
           body: p.body,
           target: p.target,
           targetCandidates: p.candidates,
+          ...(p.memoryOriginal ? { memoryOriginal: p.memoryOriginal } : {}),
           ...(decision ? { decision } : {}),
         };
       }),
@@ -181,7 +186,7 @@ export class LedgerAuditService implements AuditService {
             : "deepDiving";
     const next = nextAuditDive(audit);
     const finishedAt = audit.completedAt ?? audit.failed?.at;
-    const { dates, registered } = memory;
+    const { dates, registered, placements } = memory;
     return {
       taskId: task.id,
       projectId: task.projectId,
@@ -225,7 +230,16 @@ export class LedgerAuditService implements AuditService {
       })),
       usefulMemories: (audit.survey?.usefulMemories ?? []).flatMap((id) => {
         const m = registered.get(id);
-        return m ? [{ id, scope: m.scope, title: m.title }] : [];
+        return m ? [{ id, scope: placements.get(id)?.scope ?? m.scope, title: m.title }] : [];
+      }),
+      movedMemories: (audit.survey?.memoryMoves ?? []).flatMap((move) => {
+        const m = registered.get(move.id);
+        if (!m) return [];
+        return [
+          move.scope === "repository"
+            ? { id: move.id, title: m.title, scope: "repository" as const, repo: move.repo }
+            : { id: move.id, title: m.title, scope: "project" as const },
+        ];
       }),
     };
   }

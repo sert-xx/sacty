@@ -198,3 +198,63 @@ describe("監査のレポート（PBI-124）", () => {
     expect(reportStamp("2026-10-05T10:00:59.000Z")).toBe("2026-10-05 10:00 UTC");
   });
 });
+
+describe("レポートの、メモリーをコンテキストにする原因と元のメモリー（PR #138 再レビュー指摘）", () => {
+  const data: ProjectAudits = {
+    projectId: "p1",
+    mock: false,
+    defaultCapUsd: 1,
+    audits: [
+      {
+        taskId: "t1",
+        taskTitle: "タスク",
+        status: "completed",
+        finishedAt: "2026-10-05T10:00:00.000Z",
+        usedUsd: 0.1,
+      },
+    ],
+    causes: [
+      {
+        id: "memory:m1",
+        projectId: "p1",
+        title: "lint は biome",
+        status: "proposed",
+        occurrences: [{ taskId: "t1", taskTitle: "タスク", at: "2026-10-05T10:00:00.000Z" }],
+      },
+    ],
+    proposals: [
+      {
+        id: "t1:a:memory:m1",
+        causeId: "memory:m1",
+        taskId: "t1",
+        taskTitle: "タスク",
+        title: "AGENTS.md に書く",
+        body: "AGENTS.md に書く",
+        target: { kind: "repository", repo: "https://github.com/a/b" },
+        targetCandidates: [],
+        memoryOriginal: {
+          title: "lint は biome",
+          summary: "lint の道具",
+          body: "biome check を使う",
+        },
+      },
+    ],
+  };
+  const period = reportPeriod("2026-10-01", "2026-10-17");
+
+  it("定型の題と説明を画面の言語で出し、元のメモリーの題・概要・中身を出す", () => {
+    if (!period) throw new Error("period");
+    const ja = auditReport(data, "決済", period, messagesFor("ja"));
+    expect(ja).toContain("### メモリーをコンテキストにする：lint は biome");
+    expect(ja).toContain("マージで元のメモリーは消えます。");
+    expect(ja).toContain("#### 元のメモリー");
+    expect(ja).toContain("**lint は biome**");
+    expect(ja).toContain("lint の道具");
+    expect(ja).toContain("biome check を使う");
+    const en = auditReport(data, "Pay", period, messagesFor("en"));
+    expect(en).toContain("### Make memory context: lint は biome");
+    expect(en).toContain("Merging the fix deletes the memory.");
+    expect(en).toContain("#### Original memory");
+    expect(en).not.toContain("メモリーをコンテキストにする");
+  });
+});
