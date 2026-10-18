@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { CONFIG_TEMPLATE, loadConfig } from "./config.js";
 import {
   gitHeadCommit,
@@ -143,11 +143,82 @@ describe("確かめる間隔", () => {
   });
 });
 
+describe("問い合わせの途中で OFF にしたとき（PR #147 レビュー指摘）", () => {
+  /** 外から解決できる Promise。 */
+  function deferred<T>() {
+    let resolve!: (value: T) => void;
+    const promise = new Promise<T>((r) => {
+      resolve = r;
+    });
+    return { promise, resolve };
+  }
+
+  function controlled() {
+    const commit = deferred<string | undefined>();
+    const reply = deferred<Response>();
+    const state = { enabled: true, now: 1_000_000, fetches: 0 };
+    const checker = new UpdateChecker({
+      localCommit: () => commit.promise,
+      enabled: () => state.enabled,
+      now: () => state.now,
+      fetch: (async () => {
+        state.fetches += 1;
+        return reply.promise;
+      }) as typeof fetch,
+    });
+    const respond = (aheadBy: number) =>
+      reply.resolve(new Response(JSON.stringify(compare("ahead", aheadBy)), { status: 200 }));
+    return { checker, state, commit, respond };
+  }
+
+  it("git を待つ間に OFF にされたら、GitHub に問い合わせない", async () => {
+    const { checker, state, commit } = controlled();
+    const running = checker.check();
+    state.enabled = false;
+    commit.resolve(COMMIT);
+    await running;
+    expect(state.fetches).toBe(0);
+    expect(checker.status()).toBeUndefined();
+  });
+
+  it("問い合わせの間に OFF を見て ON に戻したら、その結果は残さず、間隔を待たずに確かめ直す", async () => {
+    const { checker, state, commit, respond } = controlled();
+    commit.resolve(COMMIT);
+    const running = checker.check();
+    await vi.waitFor(() => expect(state.fetches).toBe(1));
+    state.enabled = false;
+    expect(checker.status()).toBeUndefined();
+    state.enabled = true;
+    respond(3);
+    await running;
+    expect(checker.status()).toBeUndefined();
+    // OFF の間に時刻も消しているので、次の確かめで問い合わせる（1日待たない）
+    await checker.check();
+    expect(state.fetches).toBe(2);
+  });
+
+  it("OFF を status だけで見ても、ON に戻したときに古い知らせを出さず、次の確かめで問い合わせる", async () => {
+    const { checker, state, commit, respond } = controlled();
+    commit.resolve(COMMIT);
+    respond(2);
+    await checker.check();
+    expect(checker.status()?.behindBy).toBe(2);
+    state.enabled = false;
+    expect(checker.status()).toBeUndefined();
+    state.enabled = true;
+    expect(checker.status()).toBeUndefined();
+    await checker.check();
+    expect(state.fetches).toBe(2);
+  });
+});
+
 describe("OFF（config.yaml の update_check: false）", () => {
   it("OFF なら問い合わせず、知らせも出さない。ON に戻したら、間隔を待たずに確かめる", async () => {
     const off = setup({ enabled: false });
     await off.checker.check();
     expect(off.state.urls).toEqual([]);
+    // 手元のコミットも取らない（OFF の間は git も動かさない）
+    expect(off.state.commitCalls).toBe(0);
 
     const { checker, state } = setup({
       replies: [{ body: compare("ahead", 2) }, { body: compare("ahead", 3) }],

@@ -69,14 +69,19 @@ Note: once you register a target, sacty may push branches to the target reposito
 
 Every day, sacty checks `main` of the sacty repository on GitHub, and if it has changes that the running version does not, every screen shows
 "A new version of sacty is available" at the top. Update when you see it, to get the recommended models ([Default agents](config.en.md#default-agents)) and fixes.
+It also appears on screens that are already open, without reloading (they fetch it again every 30 seconds).
+
+First, stop the running `sacty up` with Ctrl+C and wait for it to exit. Then run the following in the sacty repository.
 
 ```sh
 git pull origin main
 npm install
 npm run build
+npx sacty up
 ```
 
-Run the above in the sacty repository, then stop the running `sacty up` with Ctrl+C and start it again.
+`npm run build` deletes and recreates the web UI build output (`apps/web/.next`). Running it while `sacty up` is running can break the web UI,
+so always stop it first.
 
 - "See the changes" in the notice opens the changes on GitHub.
 - When it cannot check (no internet access, local-only commits, and so on), nothing is shown.

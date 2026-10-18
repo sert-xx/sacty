@@ -99,13 +99,19 @@ being published, this switches to GitHub Releases.
   before asking, so requests do not overlap. After a failure, the next request is one day later.
 - When it cannot check (not a git working tree, a commit GitHub does not know, network unreachable, rate limited, an unexpected response,
   or no response in 10 seconds), it silently clears the notice. It is not an error or warning.
-- With `update_check: false` in `config.yaml`, it does not ask and shows no notice (on if the config cannot be read). Since it is read on every
-  use, turning it back on checks within an hour.
+- With `update_check: false` in `config.yaml`, it does not ask (nor read the local commit) and shows no notice (on if the config cannot be read).
+  It is read on every use. When it sees off (when checking or when returning the status), it clears the notice and the request time and advances
+  the generation. If it is turned off while waiting for the local commit or for the response, it does not ask or keep the result (even if it is back on
+  by then). Turning it back on checks within an hour.
 - The notice is `update` (`behindBy`, `compareUrl`) of `GET /api/status`, included even when the config has an error. The web UI shows it above
   the content on every screen: how many commits behind, a link to the compare page (only one starting with `https://github.com/`), and the update commands.
+  Because the shared frame is not redrawn when moving between screens, the web UI fetches `/live/update` every 30 seconds (`UPDATE_LIVE_INTERVAL_MS`),
+  so the notice appears and disappears without reloading.
+- The update commands are shown in the order of stopping the running `sacty up` first (`npm run build` deletes and recreates `.next` of the web UI).
 
 Code: `apps/daemon/src/update-check.ts` (`UpdateChecker`, `gitHeadCommit`, `startUpdateCheck`, `SACTY_REPOSITORY`, `UPDATE_CHECK_INTERVAL_MS`),
-`apps/daemon/src/service.ts` (`TaskService.status`), `apps/web/src/components/shell/update-notice.tsx` (`UpdateNotice`, `safeCompareUrl`)
+`apps/daemon/src/service.ts` (`TaskService.status`), `apps/web/src/components/shell/update-notice.tsx` (`UpdateNotice`),
+`apps/web/src/components/shell/update-notice-live.tsx` (`UpdateNoticeLive`, `UPDATE_LIVE_INTERVAL_MS`), `apps/web/src/components/shell/update-notice-view.tsx` (`UpdateNoticeView`, `safeCompareUrl`, `UPDATE_COMMANDS`)
 
 ## Duplicate start
 

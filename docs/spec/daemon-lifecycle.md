@@ -95,13 +95,17 @@
   時刻を記録するので、重ねて問い合わせない。失敗しても次の問い合わせは1日後。
 - 確かめられない（git の作業ツリーでない・GitHub が知らないコミット・ネットワークに届かない・レート制限・応答の形が違う・10 秒で
   応答しない）ときは、黙って知らせを消す。誤りや警告にしない。
-- `config.yaml` の `update_check: false` なら問い合わせず、知らせも出さない（設定を読めなければ ON）。使うたびに読むので、ON に戻すと
-  1時間以内に確かめる。
+- `config.yaml` の `update_check: false` なら問い合わせず（手元のコミットも取らない）、知らせも出さない（設定を読めなければ ON）。
+  使うたびに読む。OFF を見たら（確かめのときも、状態を返すときも）、知らせと問い合わせの時刻を消し、世代を進める。手元のコミットを待つ間や
+  問い合わせの間に OFF にされたら、問い合わせない・結果を残さない（その間に ON に戻っていても）。ON に戻すと、1時間以内に確かめる。
 - 知らせは `GET /api/status` の `update`（`behindBy`・`compareUrl`）。設定に誤りがあっても載せる。画面は、どの画面でも中身の上に、
-  遅れている数・差分のページへのリンク（`https://github.com/` で始まるものだけ）・更新のコマンドを出す。
+  遅れている数・差分のページへのリンク（`https://github.com/` で始まるものだけ）・更新のコマンドを出す。共通の外枠は画面の移動で描き直されない
+  ので、画面は `/live/update` から 30 秒ごと（`UPDATE_LIVE_INTERVAL_MS`）に取り直し、知らせが現れる・消えるのをリロードせずに反映する。
+- 更新のコマンドは、動いている `sacty up` を止めてから実行する順に示す（`npm run build` が画面の `.next` を消して作り直すため）。
 
 コード: `apps/daemon/src/update-check.ts`（`UpdateChecker`・`gitHeadCommit`・`startUpdateCheck`・`SACTY_REPOSITORY`・`UPDATE_CHECK_INTERVAL_MS`）、
-`apps/daemon/src/service.ts`（`TaskService.status`）、`apps/web/src/components/shell/update-notice.tsx`（`UpdateNotice`・`safeCompareUrl`）
+`apps/daemon/src/service.ts`（`TaskService.status`）、`apps/web/src/components/shell/update-notice.tsx`（`UpdateNotice`）、
+`apps/web/src/components/shell/update-notice-live.tsx`（`UpdateNoticeLive`・`UPDATE_LIVE_INTERVAL_MS`）、`apps/web/src/components/shell/update-notice-view.tsx`（`UpdateNoticeView`・`safeCompareUrl`・`UPDATE_COMMANDS`）
 
 ## 二重の起動
 

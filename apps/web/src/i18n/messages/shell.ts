@@ -34,7 +34,7 @@ const ja = {
     behind: (n: number) =>
       `sacty の main に、動いている版に無い変更が ${n} 件あります。更新すると推奨のモデルや修正が入ります。`,
     compare: "変更を見る",
-    steps: "sacty のリポジトリで次を実行し、sacty up を起動し直してください。",
+    steps: "動いている sacty up を Ctrl+C で止めてから、sacty のリポジトリで次を実行してください。",
   },
   user: {
     label: "ユーザー設定",
@@ -80,7 +80,7 @@ const en: ShellMessages = {
     behind: (n) =>
       `sacty main has ${n} change${n === 1 ? "" : "s"} not in the running version. Updating brings the recommended models and fixes.`,
     compare: "See the changes",
-    steps: "Run these in the sacty repository, then restart sacty up.",
+    steps: "Stop the running sacty up with Ctrl+C, then run these in the sacty repository.",
   },
   user: {
     label: "Preferences",

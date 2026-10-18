@@ -50,12 +50,18 @@ export class UpdateChecker {
   private latest: UpdateStatus | undefined;
   private lastAttempt: number | undefined;
   private commit: Promise<string | undefined> | undefined;
+  /** OFF を見るたびに進める。問い合わせの途中で OFF になったら、その結果を捨てる（PR #147 レビュー指摘）。 */
+  private generation = 0;
 
   constructor(private readonly deps: UpdateCheckDeps) {}
 
-  /** 画面に出す知らせ。最新・確かめられない・OFF のときは undefined。 */
+  /** 画面に出す知らせ。最新・確かめられない・OFF のときは undefined。OFF を見たら、状態も消す。 */
   status(): UpdateStatus | undefined {
-    return this.deps.enabled() ? this.latest : undefined;
+    if (!this.deps.enabled()) {
+      this.reset();
+      return undefined;
+    }
+    return this.latest;
   }
 
   /**
@@ -64,23 +70,43 @@ export class UpdateChecker {
    */
   async check(): Promise<void> {
     if (!this.deps.enabled()) {
-      this.latest = undefined;
-      this.lastAttempt = undefined;
+      this.reset();
       return;
     }
     const now = (this.deps.now ?? Date.now)();
     if (this.lastAttempt !== undefined && now - this.lastAttempt < UPDATE_CHECK_INTERVAL_MS) return;
     this.lastAttempt = now;
-    this.latest = await this.fetchStatus();
+    const generation = this.generation;
+    const status = await this.fetchStatus(generation);
+    // 問い合わせの間に OFF になった（ON に戻っていても）なら、結果を残さない
+    if (this.current(generation)) this.latest = status;
+  }
+
+  /** OFF を見たときに、知らせと問い合わせの時刻を消す（ON に戻したら、間隔を待たずに確かめる）。 */
+  private reset(): void {
+    this.latest = undefined;
+    this.lastAttempt = undefined;
+    this.generation += 1;
+  }
+
+  /** 問い合わせを始めたときから OFF になっていないか（いまも ON か）。 */
+  private current(generation: number): boolean {
+    if (!this.deps.enabled()) {
+      this.reset();
+      return false;
+    }
+    return generation === this.generation;
   }
 
   /** GitHub に問い合わせる。確かめられなければ undefined（黙る）。 */
-  private async fetchStatus(): Promise<UpdateStatus | undefined> {
+  private async fetchStatus(generation: number): Promise<UpdateStatus | undefined> {
     try {
       // 動いているコードのコミットなので、起動のときに1回だけ取る（git pull しても、起動し直すまでは古いまま）
       this.commit ??= this.deps.localCommit();
       const commit = await this.commit;
       if (!commit || !/^[0-9a-f]{40}$/.test(commit)) return undefined;
+      // git を待つ間に OFF にされたら、GitHub に問い合わせない（PR #147 レビュー指摘）
+      if (!this.current(generation)) return undefined;
       const res = await (this.deps.fetch ?? fetch)(
         `https://api.github.com/repos/${SACTY_REPOSITORY}/compare/${commit}...${SACTY_BRANCH}`,
         {
