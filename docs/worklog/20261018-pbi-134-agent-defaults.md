@@ -2,7 +2,7 @@
 
 - 日付: 2026-10-18（UTC）
 - タスク: PBI-134
-- PR: なし
+- PR: #146
 - ブランチ: feat/issue-134-agent-defaults
 - 関係する ADR: [エージェントの既定をリポジトリに持ち、config.yaml は接続先と単価だけにする](../adr/20261018-1105-agent-defaults-in-repo.md)
 
