@@ -5,7 +5,7 @@
 デーモンの中で動く HTTP の中継。エージェントのコンテナから、AI の呼び出し・組織内 PF の API・MCP サーバーを使うときに、認証の値を
 コンテナに渡さず、ゲートウェイが付けて転送する。コンテナには実行ごとのトークンだけを渡す。
 
-関係する ADR: [コンテキストの mcp.yaml の command の MCP サーバーを、既定でホストで起動してゲートウェイ経由にする](../adr/20261014-0927-context-command-mcp-on-host.md)
+関係する ADR: [コンテキストの mcp.yaml の command の MCP サーバーを、既定でホストで起動してゲートウェイ経由にする](../adr/20261014-0927-context-command-mcp-on-host.md)、[ゲートウェイが受け取る本文に上限を設ける](../adr/20261018-0450-gateway-body-limit.md)
 
 ## 待ち受けとトークン
 
@@ -14,6 +14,13 @@
 - 実行ごとにトークン `sacty-gw-<48桁の16進>` を発行し、その実行が使う AI の接続先・MCP・プロジェクトのコンテキストの PF を結びつける。
   実行が終わったら消す（以後は 401）。トークンは出力から伏せる対象に入れる。
 - 中継の途中の失敗は、そのリクエストだけを終わらせる（返し始める前なら 502）。誤りの応答は `{ error: { message, type: "sacty_gateway" } }`。
+- 受け取る本文（すべての中継で共通。上流へ送る前にホストのメモリーにためる）には、上限を設ける。超えたら、それ以上ためずに理由を返し、
+  接続を切る。
+  - 1 つの要求は 64 MiB（`GATEWAY_BODY_MAX`）まで。超えたら 413。`Content-Length` が上限を超えていれば読む前に断り、無くても（chunked でも）
+    受け取った量で止める。
+  - 同時に受け取っている本文の合計は 256 MiB（`GATEWAY_BODIES_MAX`）まで。超えたら 503（`Retry-After: 1`）。ためた分は、応答を返し終える
+    （接続が閉じる）まで数える。
+- 上流へは、宛先・認証・長さ・接続・圧縮・`expect`（curl などが大きな本文に付ける `100-continue`）のヘッダーを送らない。
 
 | パス | 用途 | 認証 |
 | --- | --- | --- |
@@ -22,7 +29,7 @@
 | `/mcp/<名前>` | ホストの MCP サーバー | `Authorization: Bearer <トークン>` |
 | `/openai/v1/…` | AI の呼び出し（Codex の Bedrock・providers） | `Authorization: Bearer <トークン>`（`AWS_BEARER_TOKEN_BEDROCK`・`SACTY_PROVIDER_API_KEY` に入れて渡す） |
 
-コード: `apps/daemon/src/gateway.ts`（`AiGateway.listen`・`register`・`handle`・`containerOrigin`・`platformsUrl`・`DEFAULT_HOST_ADDRESS`）、`apps/daemon/src/service.ts`（`executeLogged`）
+コード: `apps/daemon/src/gateway.ts`（`AiGateway.listen`・`register`・`handle`・`containerOrigin`・`platformsUrl`・`DEFAULT_HOST_ADDRESS`・`readBody`・`GATEWAY_BODY_MAX`・`GATEWAY_BODIES_MAX`・`DROP_REQUEST`）、`apps/daemon/src/service.ts`（`executeLogged`）
 
 ## AI の呼び出しの中継
 
