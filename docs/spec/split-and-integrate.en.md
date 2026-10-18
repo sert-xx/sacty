@@ -26,7 +26,7 @@ Code: `apps/daemon/src/service.ts` (`settleSplit`, `childSettled`, `splitWithRep
 - The AI is `step_agents.integrate`, or `guardian_agent` if absent (or `default_agent` if that is absent too).
 - The latest base branch is fetched and passed as a disposable copy. For a parent without a repository, copies are laid out per child task repository and base branch.
   The instructions include the approved requirements and design, the test viewpoints (`REQ` if none), a summary of the child tasks (title, status, PR URL, round, repository), and the person's past
-  comments.
+  comments. The viewpoint IDs in the output format example are the viewpoint IDs under review (`integrationViewpointIds`; PBI-137).
 - The answer (heading `sacty-integration-review`) passes only when every viewpoint is met, no comment has recurred, and `findings` is empty.
 - If it passes, the task waits for a person's approval. If it fails, it goes back to `split` to add fix child tasks. If it fails `MAX_INTEGRATION_ATTEMPTS` (3) times
   in a row, it waits for a person's approval while still failing, without adding fix child tasks. Requesting changes while Integration review is waiting for approval resets the count.

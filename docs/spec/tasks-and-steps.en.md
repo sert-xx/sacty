@@ -266,6 +266,13 @@ Code: `apps/daemon/src/activity.ts` (`purgeLegacyPrStepTasks`, `purgeLegacyTasks
   every verification viewpoint corresponds to a test. The viewpoints are the design's test viewpoints if there is a design, `REPRO` if there is a reproduction, and otherwise `REQ`.
 - After the tests pass, the task moves to the Goal Guardian's final review. The final review reads the code after implementation and the diff, judges each viewpoint and each comment,
   and passes only when all are met. If it passes, the task stays in the Implementation step, and sacty opens the implementation PR and the task waits for the Implement approval ("The PR for a verified implementation" below).
+  - The viewpoints are the same as for the test mapping (`finalReviewViewpointIds`). The output format example at the end of the instructions lists every
+    viewpoint ID under review as is (`REQ` for a task without a design, `REPRO` for a bug fix), and the instructions say to answer with those IDs (with the fixed
+    example `TV-1`, a `REQ` task was answered with the example's ID and treated as having no verdict; PBI-137).
+  - A viewpoint without a verdict fails. When the answer uses only IDs that are not under review, it is not reinterpreted: it fails with the reason
+    `review.verdictIdMismatch` (the viewpoint and the answered ID differ). If there is no other ID either, the reason is `review.verdictMissing` (no verdict).
+
+  Code: `apps/daemon/src/prompts.ts` (`finalReviewViewpointIds`, `buildFinalReviewPrompt`, `extractFinalReview`)
 - If the tests or the final review do not pass, the implementation is redone. If they fail `MAX_VERIFY_ATTEMPTS` (3) times in a row, the task is paused (`verification`).
   Resuming resets the count.
 - After the Reproduce step, the reproduction test is run; if the exit code is not 0, the bug is treated as reproduced and the task moves to Implementation. If it is 0 (or no reproduction test
