@@ -105,6 +105,8 @@ let container: HTMLDivElement;
 let root: Root;
 const requests: string[] = [];
 let handler: (url: string, headers: Record<string, string>) => unknown;
+/** 画面の認証が無い（sacty を起動し直した）。Proxy が 401 を返す（PBI-129）。 */
+let signedOut = false;
 
 function render(node: ReactNode) {
   act(() => {
@@ -124,12 +126,14 @@ const text = () => document.body.textContent ?? "";
 beforeEach(() => {
   vi.useFakeTimers();
   requests.length = 0;
+  signedOut = false;
   followProjectAction.mockClear();
   Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "visible" });
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string, init?: RequestInit) => {
       requests.push(url);
+      if (signedOut) return new Response("<!doctype html>", { status: 401 });
       // 実行のログは、画面のサーバーのルートをそのまま通す
       if (url.startsWith("/live/tasks/t1/runs/r1")) {
         return runLogRoute(new Request(`http://web${url}`, { headers: init?.headers }), {
@@ -283,6 +287,19 @@ describe("実行のログ：実行中は、足された行だけを取って後�
     daemon.events += say("戻りました");
     await wait();
     expect(text()).toContain("戻りました");
+    expect(container.querySelector('[data-testid="live-stale"]')).toBeNull();
+  });
+
+  it("画面の認証が無くなったら、届かないのではなく入り直すよう出す（PR #141 レビュー提案）", async () => {
+    render(h(LiveRunLog, { taskId: "t1", runId: "r1", initial: initial() }));
+    signedOut = true;
+    await wait();
+    expect(text()).toContain("始めます");
+    expect(container.querySelector('[data-testid="live-stale"]')?.textContent).toContain(
+      "端末に表示された新しい URL を開いてください",
+    );
+    signedOut = false;
+    await wait();
     expect(container.querySelector('[data-testid="live-stale"]')).toBeNull();
   });
 

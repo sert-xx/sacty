@@ -58,7 +58,7 @@ export function LiveHeaderMenus({
           data-testid="live-stale-header"
           className="text-xs font-semibold text-warn"
         >
-          {m.staleShort}
+          {stale === "signedOut" ? m.signedOutShort : m.staleShort}
         </span>
       )}
       {data && (

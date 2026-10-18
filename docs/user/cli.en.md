@@ -12,7 +12,7 @@ Run it as `npx sacty <command>`. `npx sacty --help` (`-h`) shows the usage. If y
 npx sacty up [--port <web-ui-port>] [--daemon-port <daemon-port>]
 ```
 
-Starts the daemon and the web UI (Next.js) and prints `http://127.0.0.1:4700` in the terminal (it does not open a browser). Ctrl+C stops both.
+Starts the daemon and the web UI (Next.js) and prints the web UI sign-in URL (`http://127.0.0.1:4700/auth?token=…`) in the terminal (it does not open a browser). Ctrl+C stops both.
 
 | Option | Default | Description |
 | --- | --- | --- |
@@ -20,6 +20,8 @@ Starts the daemon and the web UI (Next.js) and prints `http://127.0.0.1:4700` in
 | `--daemon-port` | `4710` | Port of the daemon |
 
 - Both the web UI and the daemon listen only on 127.0.0.1.
+- Only browsers that opened the sign-in URL can use the web UI (so that step containers cannot operate it). The URL changes on every start,
+  and while that start lasts you can open it in another browser too. A browser that has not signed in sees only how to sign in.
 - Ports must be between 1 and 65535, and `--port` and `--daemon-port` must be different numbers.
 - You cannot start it twice with the same `SACTY_HOME` ([Getting started](getting-started.en.md#where-data-is-stored)).
 

@@ -26,6 +26,7 @@ import {
   readDaemonFile,
   removeDaemonFile,
 } from "./context-preview.js";
+import { daemonEnv, signInUrl, webEnv } from "./up-env.js";
 
 const require = createRequire(import.meta.url);
 
@@ -203,6 +204,8 @@ async function waitForDaemon(url: string, token: string, timeoutMs: number): Pro
 
 async function up(webPort: number, daemonPort: number) {
   const token = randomBytes(32).toString("hex");
+  // 画面の入り口の秘密（PBI-129）。デーモンのトークンとは別にし、画面にだけ渡す
+  const webToken = randomBytes(32).toString("base64url");
   const daemonUrl = `http://127.0.0.1:${daemonPort}`;
   const children: ChildProcess[] = [];
   let stopping = false;
@@ -259,13 +262,7 @@ async function up(webPort: number, daemonPort: number) {
     "daemon",
     spawn(process.execPath, ["--disable-warning=ExperimentalWarning", daemonMain], {
       stdio: "inherit",
-      env: {
-        ...process.env,
-        SACTY_DAEMON_PORT: String(daemonPort),
-        SACTY_DAEMON_TOKEN: token,
-        // 通知のリンクに使う、画面の URL（PBI-38）
-        SACTY_WEB_URL: `http://127.0.0.1:${webPort}`,
-      },
+      env: daemonEnv(process.env, { daemonPort, daemonToken: token, webPort }),
     }),
   );
 
@@ -298,15 +295,12 @@ async function up(webPort: number, daemonPort: number) {
     spawn(process.execPath, [nextBin, "start", "-H", "127.0.0.1", "-p", String(webPort)], {
       cwd: webDir,
       stdio: "inherit",
-      env: {
-        ...process.env,
-        SACTY_DAEMON_URL: daemonUrl,
-        SACTY_DAEMON_TOKEN: token,
-      },
+      env: webEnv(process.env, { daemonUrl, daemonToken: token, webPort, webToken }),
     }),
   );
 
-  console.log(`\n[sacty] Open http://127.0.0.1:${webPort} in your browser.\n`);
+  // この URL を開いたブラウザだけが画面を使える（PBI-129）。起動し直すと、新しい URL になる
+  console.log(`\n[sacty] Open ${signInUrl(webPort, webToken)} in your browser.\n`);
 }
 
 async function main() {

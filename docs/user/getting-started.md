@@ -34,7 +34,7 @@ npx sacty config init   # ~/.sacty/config.yaml を作る
 npx sacty up
 ```
 
-デーモンと画面を起動し、端末に `http://127.0.0.1:4700` を表示します。ブラウザーで開いてください（自動では開きません）。Ctrl+C で両方が終了します。ポートは `--port`・`--daemon-port`
+デーモンと画面を起動し、端末に画面の入り口の URL（`http://127.0.0.1:4700/auth?token=…`）を表示します。ブラウザーで開いてください（自動では開きません）。この URL を開いたブラウザーだけが画面を使えます。Ctrl+C で両方が終了します。ポートは `--port`・`--daemon-port`
 で変えられます（[CLI](cli.md#sacty-up)）。
 
 ## 画面の構成

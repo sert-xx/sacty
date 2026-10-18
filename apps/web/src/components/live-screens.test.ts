@@ -130,6 +130,13 @@ function stubServer() {
       requests.push(url);
       const headers = (init?.headers ?? {}) as Record<string, string>;
       if (server === "down") return Response.json({ unavailable: true });
+      // sacty を起動し直して、前の起動の cookie が使えない（画面の Proxy が入り方の HTML を 401 で返す。PBI-129）
+      if (server === "signed-out") {
+        return new Response("<!doctype html><h1>sacty に入る</h1>", {
+          status: 401,
+          headers: { "content-type": "text/html; charset=utf-8" },
+        });
+      }
       // 遅れて失敗する（取っている間に画面が描き直される場合を試す）
       if (server === "slow-down") {
         await new Promise((resolve) => setTimeout(resolve, 5_000));
@@ -592,6 +599,48 @@ describe("更新できない間・描いたときに届かなかったとき・�
     server = detail(awaiting);
     await wait();
     expect(container.querySelector('[data-testid="live-stale"]')).toBeNull();
+  });
+
+  it("詳細：画面の認証が無くなったら（sacty を起動し直した）、届かないのではなく入り直すよう出す（PR #141 レビュー提案）", async () => {
+    server = detail(awaiting);
+    render(
+      h(LiveTaskDetail, {
+        id: "t1",
+        initial: detail(awaiting),
+        initialVersion: liveVersion(server),
+      }),
+    );
+    server = "signed-out";
+    await wait();
+    const notice = container.querySelector('[data-testid="live-stale"]')?.textContent ?? "";
+    expect(notice).toContain("端末に表示された新しい URL を開いてください");
+    expect(notice).not.toContain("デーモンに届きません");
+    // 表示は残す
+    expect(container.querySelector("#gate")).not.toBeNull();
+    // 入り直して取れたら消える
+    server = detail(awaiting);
+    await wait();
+    expect(container.querySelector('[data-testid="live-stale"]')).toBeNull();
+  });
+
+  it("ヘッダー：画面の認証が無くなったら、入り直すよう短く出す（PR #141 レビュー提案）", async () => {
+    const quiet: HeaderData = {
+      projects: [{ id: "p1", name: "Acme", needsYou: 0 }],
+      current: { id: "p1", name: "Acme", needsYou: 0 },
+      notices: [],
+    };
+    server = quiet;
+    render(
+      h(LiveHeaderMenus, { initial: quiet, initialVersion: liveVersion(quiet), language: "ja" }),
+    );
+    server = "signed-out";
+    await wait();
+    expect(document.querySelector('[data-testid="live-stale-header"]')?.textContent).toBe(
+      "入り直してください",
+    );
+    server = quiet;
+    await wait();
+    expect(document.querySelector('[data-testid="live-stale-header"]')).toBeNull();
   });
 
   it("一覧：更新できない間は、それを出す", async () => {

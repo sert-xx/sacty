@@ -10,6 +10,9 @@ const ja = {
   live: {
     stale: "デーモンに届きません。表示は最後に取得した内容です。",
     staleShort: "更新が止まっています",
+    /** 画面の認証が無い（sacty を起動し直した。PBI-129）。 */
+    signedOut: "sacty が起動し直されました。端末に表示された新しい URL を開いてください。",
+    signedOutShort: "入り直してください",
   },
   daemon: {
     notConfigured: "デーモンの接続先が設定されていません。`sacty up` で起動してください。",
@@ -18,6 +21,13 @@ const ja = {
     checkFile: "ファイルの内容を確認してください。",
     invalidAmount: "金額を正しく入力してください。",
     atPath: (text: string, path: string) => `${text}（${path}）`,
+  },
+  /** 画面の認証（PBI-129）。認証が無いときは、画面の部品を使わずにこの文だけを出す。 */
+  auth: {
+    title: "sacty に入る",
+    signIn: "`sacty up` が端末に表示した URL を、このブラウザーで開いてください。",
+    notConfigured: "画面の認証が設定されていません。`sacty up` で起動してください。",
+    wrongHost: "この画面は http://127.0.0.1 か localhost で開いてください。",
   },
   action: {
     daemonDown: "操作できませんでした。デーモンが動いているか確認してください。",
@@ -47,6 +57,8 @@ const en: CommonMessages = {
   live: {
     stale: "The daemon cannot be reached. This shows what was last fetched.",
     staleShort: "Updates paused",
+    signedOut: "sacty was restarted. Open the new URL printed in the terminal.",
+    signedOutShort: "Sign in again",
   },
   daemon: {
     notConfigured: "The daemon address is not set. Start sacty with `sacty up`.",
@@ -55,6 +67,12 @@ const en: CommonMessages = {
     checkFile: "Check the contents of the file.",
     invalidAmount: "Enter a valid amount.",
     atPath: (text, path) => `${text} (${path})`,
+  },
+  auth: {
+    title: "Sign in to sacty",
+    signIn: "Open the URL that `sacty up` printed in the terminal in this browser.",
+    notConfigured: "Web UI sign-in is not set up. Start sacty with `sacty up`.",
+    wrongHost: "Open this page at http://127.0.0.1 or localhost.",
   },
   action: {
     daemonDown: "Could not complete the action. Check that the daemon is running.",
