@@ -63,6 +63,9 @@ import {
   MAX_FIX_CHAIN,
   MAX_INTEGRATION_ATTEMPTS,
   MAX_VERIFY_ATTEMPTS,
+  MEMORY_BODY_MAX,
+  MEMORY_SUMMARY_MAX,
+  MEMORY_TITLE_MAX,
   type MemoryMove,
   mapFreeText,
   message,
@@ -397,16 +400,16 @@ export class InvalidOperationError extends Error {
   }
 }
 
-/**
- * メモリーを読ませる工程の実行（PBI-126）。統合レビューはゴールガーディアンの役なので除く（判定の材料を承認済みのものに
- * 限る）。rework は、PR の指摘の差し戻し先をゴールガーディアンが判定する実行なので入れない（手直しそのものは、工程の役で
- * 実行し直す。PR #136 レビュー指摘）。
- */
 /** 大まかな監査の記録の、メモリーをコンテキストにする提案（原因の形。PBI-128）。 */
 type SurveyPromotionRecord = NonNullable<
   Extract<EventInput, { type: "AuditSurveyed" }>["payload"]["promotions"]
 >[number];
 
+/**
+ * メモリーを読ませる工程の実行（PBI-126）。統合レビューはゴールガーディアンの役なので除く（判定の材料を承認済みのものに
+ * 限る）。rework は、PR の指摘の差し戻し先をゴールガーディアンが判定する実行なので入れない（手直しそのものは、工程の役で
+ * 実行し直す。PR #136 レビュー指摘）。
+ */
 export const MEMORY_STEP_ROLES: ReadonlySet<AgentRole> = new Set<AgentRole>(
   StepKey.options.filter((k) => k !== "integrate"),
 );
@@ -7926,7 +7929,13 @@ export class TaskService {
                       ? {
                           openedMemories: opened.map((m) => m.id),
                           usefulMemories: survey.usefulMemories,
-                          ...this.surveyPromotionRecord(task, audit.auditId, survey, promotion),
+                          ...this.surveyPromotionRecord(
+                            task,
+                            audit.auditId,
+                            survey,
+                            promotion,
+                            hideResult,
+                          ),
                         }
                       : {}),
                     ...run,
@@ -8034,14 +8043,17 @@ export class TaskService {
     );
     if (moved.length > 0) {
       const before = new Map(beforeMoves.map((m) => [m.id, layerOf(m)]));
-      this.writeMemories(
-        moved.flatMap((move): MemoryLayer[] => [
+      // 移した先が上限を超えたら、登録のときと同じく古いものから消す（PR #138 レビュー指摘）
+      const trimmed = this.trimMemories();
+      this.writeMemories([
+        ...trimmed,
+        ...moved.flatMap((move): MemoryLayer[] => [
           ...(before.has(move.id) ? [before.get(move.id) as MemoryLayer] : []),
           move.scope === "project"
             ? { kind: "project", projectId: move.projectId }
             : { kind: "repository", repo: move.repo },
         ]),
-      );
+      ]);
     }
     // 役に立ったメモリーの有効な最終利用日が変わるので、その階層を書き直す（PBI-127）
     const useful = new Set(
@@ -8248,6 +8260,7 @@ export class TaskService {
     auditId: string,
     survey: Extract<ReturnType<typeof extractAuditSurvey>, { ok: true }>,
     promotion: PromotionInput | undefined,
+    hide: (text: string) => string,
   ): { memoryMoves: MemoryMove[]; promotions: SurveyPromotionRecord[] } {
     if (!promotion) return { memoryMoves: [], promotions: [] };
     const layers = taskMemoryLayers(task);
@@ -8268,30 +8281,30 @@ export class TaskService {
     const promotions = survey.memoryPromotions.flatMap((p): SurveyPromotionRecord[] => {
       const memory = live.get(p.id);
       if (!memory || !inTask(memory) || promoting.has(p.id)) return [];
-      const original = [
-        "",
-        "---",
-        `元のメモリー：${memory.title}（${memory.summary}）`,
-        "",
-        memory.body,
-      ].join("\n");
+      // 元のメモリーも、今の秘密情報の値で伏せてから添える（登録の後に秘密情報になった値や、共有のリポジトリのメモリーに
+      // 入っている値を、提案に平文で写さない。PR #138 レビュー指摘）
+      const original = {
+        title: cut(hide(memory.title), MEMORY_TITLE_MAX),
+        summary: cut(hide(memory.summary), MEMORY_SUMMARY_MAX),
+        body: cut(hide(memory.body), MEMORY_BODY_MAX),
+      };
       return [
         {
+          // 題は元のメモリーの題だけを持ち、「メモリーをコンテキストにする」の定型の題と説明は、画面の言語で出す
+          // （原因の鍵 memory:<ID> で見分ける。PR #138 レビュー指摘）
           causeKey: `memory:${p.id}`,
-          title: cut(`メモリーをコンテキストにする：${memory.title}`, AUDIT_TITLE_MAX),
-          // Markdown で1つの段落に出すので、改行でつながない（改行は空白になる）
-          detail:
-            "何度も役に立ったメモリーを、これからも守る決まりとして、コンテキストか対象リポジトリに書く。" +
-            "改修の PR がマージされたら、元のメモリーは消す。",
+          title: original.title || p.title,
+          detail: "",
           evidence: [],
           proposals: [
             {
               id: `${task.id}:${auditId}:memory:${p.id}`,
               title: p.title,
-              body: cut(`${p.body}${original}`, AUDIT_TEXT_MAX),
+              body: p.body,
               target: p.target,
               candidates: [...promotion.candidates],
               memoryId: p.id,
+              memoryOriginal: original,
             },
           ],
         },
@@ -8410,6 +8423,8 @@ export class TaskService {
       const memory = task.audit?.memories.find((m) => m.id === memoryId);
       if (!memory) continue;
       if (memory.deleted) throw new InvalidOperationError(message("audit.memoryDeleted"));
+      // 監査が移したメモリーは、登録したときの階層ではなく、今の置き場所の階層を書き直す（PR #138 レビュー指摘）
+      const placed = this.memories().find((m) => m.id === memoryId);
       const updated = this.append(task, [
         {
           actor: "person",
@@ -8417,9 +8432,11 @@ export class TaskService {
         },
       ]);
       this.writeMemories([
-        memory.scope === "project"
-          ? { kind: "project", projectId: task.projectId }
-          : { kind: "repository", repo: repositoryMemoryKey(memory.repo) ?? memory.repo },
+        placed
+          ? layerOf(placed)
+          : memory.scope === "project"
+            ? { kind: "project", projectId: task.projectId }
+            : { kind: "repository", repo: repositoryMemoryKey(memory.repo) ?? memory.repo },
       ]);
       return updated;
     }
@@ -8615,14 +8632,20 @@ export class TaskService {
     const config = this.deps.config();
     const budgetCapUsd = config.ok ? config.config.budgetPerTaskUsd : DEFAULT_BUDGET_USD;
     const title = `改修：${proposal.title}`;
-    const body = [
-      proposal.body,
-      "",
-      "---",
-      `監査で見つけた原因：${finding.title}`,
-      "",
-      finding.detail,
-    ].join("\n");
+    // コンテキストにする提案は、元のメモリーを欠けずに添える（PBI-128。PR #138 レビュー指摘）
+    const original = proposal.memoryOriginal;
+    const body = original
+      ? [
+          proposal.body,
+          "",
+          "---",
+          `コンテキストにする元のメモリー：${original.title}（${original.summary}）`,
+          "",
+          original.body,
+        ].join("\n")
+      : [proposal.body, "", "---", `監査で見つけた原因：${finding.title}`, "", finding.detail].join(
+          "\n",
+        );
     this.append({ id: decision.fixTaskId, projectId: task.projectId }, [
       {
         actor: "sacty",

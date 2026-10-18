@@ -53,6 +53,10 @@ const ja = {
     evidence: "根拠",
     openEvent: "作業履歴",
     openRun: "ログ",
+    memoryPromotion: (title: string) => `メモリーをコンテキストにする：${title}`,
+    memoryPromotionDetail:
+      "何度も役に立ったメモリーを、コンテキストか対象リポジトリに書く提案です。マージで元のメモリーは消えます。",
+    memoryOriginal: "元のメモリー",
   },
   memories: {
     title: "登録したメモリー",
@@ -230,6 +234,10 @@ const en: AuditMessages = {
     evidence: "Evidence",
     openEvent: "Activity",
     openRun: "Log",
+    memoryPromotion: (title) => `Make memory context: ${title}`,
+    memoryPromotionDetail:
+      "A memory that helped many times, proposed as a rule for the context or target repository. Merging the fix deletes the memory.",
+    memoryOriginal: "Original memory",
   },
   memories: {
     title: "Registered memories",

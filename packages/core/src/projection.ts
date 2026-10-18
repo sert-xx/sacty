@@ -265,7 +265,8 @@ export type TaskAuditState = {
   warnedCapUsd?: number;
   /** 予算で一時停止している（上限を上げると外れる）。 */
   paused?: { at: string };
-  survey?: Omit<PayloadOf<"AuditSurveyed">, "auditId" | "promotions"> & { at: string };
+  /** seq は追記の順（同じ時刻の記録の前後を決める。PR #138 レビュー指摘）。 */
+  survey?: Omit<PayloadOf<"AuditSurveyed">, "auditId" | "promotions"> & { at: string; seq: number };
   /** 深掘りを終えた工程（終えた順）。 */
   dives: (Omit<PayloadOf<"AuditDeepDived">, "auditId" | "findings" | "memories"> & {
     at: string;
@@ -2004,7 +2005,7 @@ function applyAuditEvent(task: Task, event: ActivityEvent): void {
       task.audit = {
         ...audit,
         ...charge(event.payload),
-        survey: { ...survey, at: event.at },
+        survey: { ...survey, at: event.at, seq: event.seq },
         findings: [...audit.findings, ...promotions.map((f) => ({ ...f, at: event.at }))],
       };
       return;

@@ -154,6 +154,7 @@ export class LedgerAuditService implements AuditService {
           body: p.body,
           target: p.target,
           targetCandidates: p.candidates,
+          ...(p.memoryOriginal ? { memoryOriginal: p.memoryOriginal } : {}),
           ...(decision ? { decision } : {}),
         };
       }),

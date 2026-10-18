@@ -106,6 +106,8 @@ export type AuditProposal = {
   target: AuditTarget;
   /** 採用するときに選べる宛先（監査が選んだ宛先を含む）。 */
   targetCandidates: AuditTarget[];
+  /** コンテキストにする元のメモリー（PBI-128）。 */
+  memoryOriginal?: { title: string; summary: string; body: string };
   decision?: AuditProposalDecision;
 };
 

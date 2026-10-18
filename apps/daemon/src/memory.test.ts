@@ -273,7 +273,7 @@ describe("昇格（PBI-128）", () => {
         queuedAt: at,
         memories: [],
         findings: [],
-        survey: { at, memoryMoves: moves, usefulMemories: useful },
+        survey: { at, seq: Date.parse(at), memoryMoves: moves, usefulMemories: useful },
       },
     }) as unknown as Task;
 
@@ -425,5 +425,32 @@ describe("定期の掃除（PR #137 レビュー指摘）", () => {
     vi.advanceTimersByTime(MEMORY_CLEANUP_INTERVAL_MS * 3);
     expect(calls).toBe(2);
     expect(MEMORY_CLEANUP_INTERVAL_MS).toBe(60 * 60 * 1000);
+  });
+});
+
+describe("移した記録は追記の順に当てる（PR #138 レビュー指摘）", () => {
+  it("同じ時刻なら、タスクを作った順ではなく、記録を追記した順に当てる", () => {
+    const at = "2026-10-05T00:00:00.000Z";
+    const surveyed = (id: string, seq: number, move: unknown) =>
+      ({
+        id,
+        projectId: "p1",
+        audit: {
+          queuedAt: at,
+          memories: [],
+          findings: [],
+          survey: { at, seq, memoryMoves: [move], usefulMemories: [] },
+        },
+      }) as unknown as Task;
+    // 作った順は A → B だが、追記した順は B → A（A が最後）
+    const tasks = [
+      surveyed("A", 20, { id: "m1", scope: "project", projectId: "p1" }),
+      surveyed("B", 10, { id: "m1", scope: "repository", repo: "https://github.com/a/app" }),
+    ];
+    expect(memoryPlacements(tasks).get("m1")).toEqual({
+      id: "m1",
+      scope: "project",
+      projectId: "p1",
+    });
   });
 });

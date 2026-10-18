@@ -101,15 +101,21 @@ Code: `apps/daemon/src/memory.ts` (`countOpenedMemories`, `usefulDates`, `lastUs
   - When reading: only memories in the material, only to a different layer, each memory once. With no target repository, nothing moves to `repository`.
   - When recording: the memory must still exist, still be in the task's layers, and be in a different layer (surveys of the same project can run
     at the same time). `memoryMoves` of `AuditSurveyed` records the destination (the project ID for `project`, the repository for `repository`).
-  - A memory's place is decided by applying every task's moves in survey-time order (the last move wins). Its last useful date, registering
-    task, and ID do not change. After recording, the layers before and after the move are rewritten.
+  - A memory's place is decided by applying every task's moves in the order the surveys were appended (`seq`; the last move wins), not by time
+    (so records with the same time do not fall back to task creation order). Its last useful date, registering task, and ID do not change.
+  - After recording, if the destination exceeds the count limit, the memories with the oldest last useful date are deleted with `capacity`, as
+    on registration. Then the layers before and after the move and any trimmed layers are rewritten.
 - **Promotion to context** (`memoryPromotions`; at most 2 per survey; `AUDIT_MAX_MEMORY_PROMOTIONS`): memories that helped repeatedly (about 2 times
   or more) and became rules worth keeping are proposed as fixes that write them into the context (skills, conventions) or the target repository
   (AGENTS.md and so on).
   - When reading: only memories without a pending promotion, only targets from the candidate numbers, and only items with a title.
   - When recording: the memory must still exist, still be in the task's layers, and have no pending promotion. It is recorded as a cause in
-    `promotions` of `AuditSurveyed` (cause key `memory:<memory ID>`). The proposal (`memoryId` holds the original memory) carries the original
-    memory's title, summary, and contents in its body.
+    `promotions` of `AuditSurveyed` (cause key `memory:<memory ID>`). The proposal holds the original memory's ID in `memoryId` and its title,
+    summary, and contents in `memoryOriginal` (a field separate from the proposal body, so neither is cut short). The original is redacted with
+    the current secret values before copying (values that became secrets after registration are covered). The fix task's body puts the proposal
+    body and the original memory side by side.
+  - The cause is recorded with the original memory's title and an empty description; the screen and report show "Make memory context: <title>"
+    and a fixed description in the screen's language.
   - Adopting and rejecting work as for other fix proposals. Adopting creates a fix task on the target repository that goes through to a PR
     (context changes always go through a human PR review).
   - A memory with a pending or adopted proposal counts as "being promoted" and gets no duplicate proposal. A rejected memory stays, and the
@@ -166,6 +172,7 @@ Code: `apps/daemon/default-context/skills/memory/SKILL.md`
   button; confirming deletes it (`POST /api/audits/memories/:id/delete`). People cannot register memories.
 - Deleted memories show only a mark (deleted by a person, by the limit, by expiry, or after becoming context), without contents or the Delete button. A deleted memory cannot
   be deleted again (409).
+- After deleting, the layer where the memory currently lives (the destination, if the audit moved it) is rewritten.
 
 Code: `apps/daemon/src/service.ts` (`deleteAuditMemory`), `apps/daemon/src/ledger-audits.ts` (`LedgerAuditService`), `apps/daemon/src/server.ts` (`createApp`),
 `apps/web/src/components/audit.tsx` (`TaskAuditCard`)

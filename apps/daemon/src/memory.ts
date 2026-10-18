@@ -140,16 +140,17 @@ export function usefulCounts(tasks: Iterable<Task>): Map<string, number> {
 }
 
 /**
- * メモリーごとの、今の置き場所（監査が移した先。PBI-128）。大まかな監査の記録の順に、移した記録を当てる（最後に移した先）。
+ * メモリーごとの、今の置き場所（監査が移した先。PBI-128）。大まかな監査の記録の追記の順に、移した記録を当てる（最後に移した先）。
  * 移していなければ無い。
  */
 export function memoryPlacements(tasks: Iterable<Task>): Map<string, MemoryMove> {
   const moves = [...tasks]
     .flatMap((t) => {
       const survey = t.audit?.survey;
-      return survey ? survey.memoryMoves.map((move) => ({ move, at: survey.at })) : [];
+      return survey ? survey.memoryMoves.map((move) => ({ move, seq: survey.seq })) : [];
     })
-    .sort((a, b) => a.at.localeCompare(b.at));
+    // 時刻ではなく追記の順に当てる（同じ時刻に記録した移動の前後を、タスクを作った順にしない。PR #138 レビュー指摘）
+    .sort((a, b) => a.seq - b.seq);
   return new Map(moves.map(({ move }) => [move.id, move]));
 }
 

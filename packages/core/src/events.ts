@@ -1850,6 +1850,11 @@ const AuditRun = {
 export const AUDIT_TEXT_MAX = 4000;
 export const AUDIT_TITLE_MAX = 200;
 
+/** メモリーの題・概要・中身の上限（文字数。PBI-126）。 */
+export const MEMORY_TITLE_MAX = 200;
+export const MEMORY_SUMMARY_MAX = 300;
+export const MEMORY_BODY_MAX = 4000;
+
 /** 根拠になった出来事。eventId は作業履歴の行、runId はエージェントの実行。 */
 export const AuditEvidenceRecord = z.object({
   kind: z.enum(AUDIT_EVIDENCE_KINDS),
@@ -1870,6 +1875,17 @@ export const AuditProposalRecord = z.object({
   target: AuditTarget,
   candidates: z.array(AuditTarget).min(1),
   memoryId: z.string().min(1).optional(),
+  /**
+   * コンテキストにする元のメモリーの題・概要・中身（PBI-128）。提案の本文と別に持ち、どちらも上限まで欠けずに改修のタスクへ渡す
+   * （PR #138 レビュー指摘）。
+   */
+  memoryOriginal: z
+    .object({
+      title: z.string().max(MEMORY_TITLE_MAX),
+      summary: z.string().max(MEMORY_SUMMARY_MAX),
+      body: z.string().max(MEMORY_BODY_MAX),
+    })
+    .optional(),
 });
 
 /** 原因。causeKey はプロジェクトの中でタスクをまたいで同じ原因をまとめる鍵。 */
@@ -1881,11 +1897,6 @@ export const AuditFindingRecord = z.object({
   evidence: z.array(AuditEvidenceRecord).max(20),
   proposals: z.array(AuditProposalRecord).max(5),
 });
-
-/** メモリーの題・概要・中身の上限（文字数。PBI-126）。 */
-export const MEMORY_TITLE_MAX = 200;
-export const MEMORY_SUMMARY_MAX = 300;
-export const MEMORY_BODY_MAX = 4000;
 
 /**
  * 監査が登録したメモリー（PBI-126）。scope が project ならタスクのプロジェクトの、repository なら repo（.git の無い GitHub の

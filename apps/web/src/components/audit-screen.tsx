@@ -10,6 +10,7 @@ import { WithHint } from "@/components/ui/hint";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useMessages } from "@/i18n/client";
+import { auditCauseTitle } from "@/lib/audit";
 import { formatStamp, usd } from "@/lib/labels";
 import { projectAuditReportPath, taskPath } from "@/lib/paths";
 
@@ -68,7 +69,9 @@ export function AuditScreen({ data, today }: { data: ProjectAudits; today: strin
                   >
                     {m.screen.causeStatus[cause.status]}
                   </span>
-                  <span className="text-sm font-semibold">{cause.title}</span>
+                  <span className="text-sm font-semibold">
+                    {auditCauseTitle(cause.id, cause.title, m)}
+                  </span>
                   <span className="text-xs text-muted-foreground tabular-nums">
                     {m.screen.occurrences(cause.occurrences.length)}
                   </span>

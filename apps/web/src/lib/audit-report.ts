@@ -5,7 +5,7 @@ import {
   type ProjectAudits,
 } from "@sacty/core";
 import type { Messages } from "@/i18n";
-import { auditTargetText } from "@/lib/audit";
+import { auditCauseTitle, auditTargetText } from "@/lib/audit";
 import { usd } from "@/lib/labels";
 
 /** 日付（YYYY-MM-DD）か。 */
@@ -81,7 +81,7 @@ export function auditReport(
   if (causes.length === 0) lines.push(m.screen.causesNone);
   for (const c of causes) {
     lines.push(
-      `### ${c.title}`,
+      `### ${auditCauseTitle(c.id, c.title, m)}`,
       "",
       `- ${m.screen.status}: ${m.screen.causeStatus[c.status]}`,
       `- ${m.screen.tasks}: ${c.occurrences.map((o) => o.taskTitle).join(", ")}`,

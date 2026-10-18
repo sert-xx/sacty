@@ -23582,13 +23582,17 @@ describe("監査によるメモリーの昇格（PBI-128）", () => {
   const projectDir = () => join(memoryRoot(), "projects", "default");
   const repoDir = () => join(memoryRoot(), "repos", "github.com", "acme", "app");
 
-  function setup() {
+  function setup(
+    options: { secretStore?: ServiceDeps["secrets"]; memoryLimit?: number; held?: boolean } = {},
+  ) {
     const activity = new SqliteActivityStore(dbPath);
-    const { service, executor } = makeService(activity, [], {
+    const { service, executor } = makeService(activity, options.held ? [HOLD] : [], {
       audit: true,
       memory: true,
       planner: onlyRequirements,
       sessionLogs: new SessionLogStore(join(dir, "runs")),
+      ...(options.secretStore ? { secretStore: options.secretStore } : {}),
+      ...(options.memoryLimit ? { memoryLimit: options.memoryLimit } : {}),
     });
     const audit = {
       register: (): unknown[] => [],
@@ -23713,15 +23717,22 @@ describe("監査によるメモリーの昇格（PBI-128）", () => {
     });
     const b = await completeAndAudit(service, "B");
     const finding = service.get(b)?.task.audit?.findings.find((f) => f.causeKey === `memory:${id}`);
-    expect(finding?.title).toBe("メモリーをコンテキストにする：lint は biome");
+    // 題は元のメモリーの題だけ（定型の題と説明は、画面の言語で出す。PR #138 レビュー指摘）
+    expect(finding?.title).toBe("lint は biome");
+    expect(finding?.detail).toBe("");
     const proposal = finding?.proposals[0];
     expect(proposal).toMatchObject({
       title: "AGENTS.md に lint の手順を書く",
       memoryId: id,
       target: { kind: "repository", repo: "https://github.com/acme/app" },
     });
-    expect(proposal?.body).toContain("元のメモリー：lint は biome（lint の道具）");
-    expect(proposal?.body).toContain("biome check を使う");
+    // 元のメモリーは、提案の本文と別に持つ
+    expect(proposal?.body).toBe("AGENTS.md に書く");
+    expect(proposal?.memoryOriginal).toEqual({
+      title: "lint は biome",
+      summary: "lint の道具",
+      body: "biome check を使う",
+    });
     expect(proposal?.candidates.some((c) => c.kind === "sacty")).toBe(false);
     // 提案中のものは、次の監査でも重ねて提案しない（記録の時点で外す）
     const c = await completeAndAudit(service, "C");
@@ -23802,6 +23813,176 @@ describe("監査によるメモリーの昇格（PBI-128）", () => {
     expect(activity.forTask(b.id).find((e) => e.type === "AuditSurveyed")?.payload).toMatchObject({
       promotions: [],
     });
+  });
+
+  it("元のメモリーも、今の秘密情報の値で伏せてから提案に添える（PR #138 レビュー指摘）", async () => {
+    const values: Record<string, string> = {
+      "claude-oauth-token": "oauth-secret",
+      "github-token": "ghp_secret",
+    };
+    const { service, audit } = setup({
+      secretStore: { get: async (name: string) => values[name] ?? "" },
+    });
+    // 登録したときには秘密情報ではなかった値が、後から秘密情報になる
+    audit.register = () => [
+      { ...memory, title: "題 zz-later", summary: "概要 zz-later", body: "中身 zz-later" },
+    ];
+    const a = await completeAndAudit(service, "A");
+    const id = service.get(a)?.task.audit?.memories[0]?.id ?? "";
+    values["claude-oauth-token"] = "zz-later";
+    audit.register = () => [];
+    audit.survey = () => ({
+      memoryPromotions: [{ id, target: 0, title: "書く", body: "本文" }],
+    });
+    const b = await completeAndAudit(service, "B");
+    const finding = service.get(b)?.task.audit?.findings.find((f) => f.causeKey === `memory:${id}`);
+    expect(JSON.stringify(finding)).not.toContain("zz-later");
+    expect(finding?.title).toBe("題 [REDACTED]");
+    expect(finding?.proposals[0]?.memoryOriginal).toEqual({
+      title: "題 [REDACTED]",
+      summary: "概要 [REDACTED]",
+      body: "中身 [REDACTED]",
+    });
+  });
+
+  it("提案の本文と元のメモリーが上限の長さでも、どちらも欠けずに改修のタスクへ渡す（PR #138 レビュー指摘）", async () => {
+    const { service, audit } = setup();
+    const longBody = `${"あ".repeat(3990)}末尾の知見`;
+    audit.register = () => [{ ...memory, body: longBody }];
+    const a = await completeAndAudit(service, "A");
+    const id = service.get(a)?.task.audit?.memories[0]?.id ?? "";
+    audit.register = () => [];
+    const longProposal = `${"い".repeat(3990)}提案の末尾`;
+    audit.survey = () => ({
+      memoryPromotions: [{ id, target: 0, title: "書く", body: longProposal }],
+    });
+    const b = await completeAndAudit(service, "B");
+    const proposal = service.get(b)?.task.audit?.findings.find((f) => f.causeKey === `memory:${id}`)
+      ?.proposals[0];
+    expect(proposal?.body).toBe(longProposal);
+    expect(proposal?.memoryOriginal?.body).toBe(longBody);
+    service.adoptAuditProposal(proposal?.id ?? "", { target: proposal?.target });
+    const decision = service
+      .get(b)
+      ?.task.audit?.findings.flatMap((f) => f.proposals)
+      .find((p) => p.id === proposal?.id)?.decision;
+    const fixId = decision?.kind === "adopted" ? (decision.fixTaskId ?? "") : "";
+    const fixBody = service.get(fixId)?.task.body ?? "";
+    expect(fixBody).toContain("提案の末尾");
+    expect(fixBody).toContain("末尾の知見");
+  });
+
+  it("移したメモリーを人が消すと、移した先の階層からも消える（両方の向き。PR #138 レビュー指摘）", async () => {
+    const { service, audit } = setup();
+    audit.register = () => [memory, { ...memory, scope: "repository", title: "リポジトリの知見" }];
+    const a = await completeAndAudit(service, "A");
+    const [toRepo, toProject] = service.get(a)?.task.audit?.memories ?? [];
+    audit.register = () => [];
+    audit.survey = () => ({
+      memoryMoves: [
+        { id: toRepo?.id, to: "repository" },
+        { id: toProject?.id, to: "project" },
+      ],
+    });
+    await completeAndAudit(service, "B");
+    expect(existsSync(join(repoDir(), "references", `${toRepo?.id}.md`))).toBe(true);
+    expect(existsSync(join(projectDir(), "references", `${toProject?.id}.md`))).toBe(true);
+    service.deleteAuditMemory(toRepo?.id ?? "");
+    expect(existsSync(join(repoDir(), "references", `${toRepo?.id}.md`))).toBe(false);
+    service.deleteAuditMemory(toProject?.id ?? "");
+    expect(existsSync(projectDir())).toBe(false);
+    expect(existsSync(repoDir())).toBe(false);
+  });
+
+  it("移した先が件数の上限を超えたら、登録のときと同じく古いものから消す（PR #138 レビュー指摘）", async () => {
+    const { service, activity, audit } = setup({ memoryLimit: 1 });
+    audit.register = () => [{ ...memory, scope: "repository", title: "リポジトリの知見" }];
+    const a = await completeAndAudit(service, "A");
+    audit.register = () => [{ ...memory, title: "プロジェクトの知見" }];
+    const b = await completeAndAudit(service, "B");
+    const older = service.get(a)?.task.audit?.memories[0];
+    const moving = service.get(b)?.task.audit?.memories[0];
+    audit.register = () => [];
+    audit.survey = () => ({ memoryMoves: [{ id: moving?.id, to: "repository" }] });
+    await completeAndAudit(service, "C");
+    expect(service.get(a)?.task.audit?.memories[0]?.deleted?.reason).toBe("capacity");
+    expect(activity.forTask(a).at(-1)).toMatchObject({
+      type: "AuditMemoryDeleted",
+      payload: { memoryId: older?.id, reason: "capacity" },
+    });
+    expect(readdirSync(join(repoDir(), "references"))).toEqual([`${moving?.id}.md`]);
+  });
+
+  it("別の監査が先に移していれば、記録の時点で移さない（PR #138 レビュー指摘）", async () => {
+    const { service, activity, executor, audit } = setup({ held: true });
+    audit.register = () => [memory];
+    const a = await completeAndAudit(service, "A");
+    const id = service.get(a)?.task.audit?.memories[0]?.id ?? "";
+    audit.register = () => [];
+    const move = () =>
+      json({
+        "sacty-audit-survey": {
+          summary: "要約",
+          concerns: [],
+          memoryMoves: [{ id, to: "repository" }],
+        },
+      });
+    const previous = executor.respond;
+    executor.respond = (invocation) =>
+      isSurvey(invocation)
+        ? prompt(invocation).includes("題：B")
+          ? undefined
+          : move()
+        : previous?.(invocation);
+    const b = service.createTask({ projectId: "default", title: "B", body: "" });
+    await service.runNext(b.id);
+    service.approve(b.id, { step: "requirements", submission: 1 });
+    const held = service.runNext(b.id);
+    const runId = await executor.started.promise;
+    const c = await completeAndAudit(service, "C");
+    expect(activity.forTask(c).find((e) => e.type === "AuditSurveyed")?.payload).toMatchObject({
+      memoryMoves: [{ id, scope: "repository" }],
+    });
+    executor.finishHeld(runId, move());
+    await held;
+    expect(activity.forTask(b.id).find((e) => e.type === "AuditSurveyed")?.payload).toMatchObject({
+      memoryMoves: [],
+    });
+  });
+
+  it("改修の PR がマージされたら、元のメモリーを promoted で消し、索引と中身から消す（PR #138 レビュー指摘）", async () => {
+    const { service, activity, audit } = setup();
+    audit.register = () => [memory];
+    const a = await completeAndAudit(service, "A");
+    const id = service.get(a)?.task.audit?.memories[0]?.id ?? "";
+    audit.register = () => [];
+    audit.survey = () => ({
+      memoryPromotions: [{ id, target: 0, title: "書く", body: "本文" }],
+    });
+    const b = await completeAndAudit(service, "B");
+    const proposal = service.get(b)?.task.audit?.findings.find((f) => f.causeKey === `memory:${id}`)
+      ?.proposals[0];
+    service.adoptAuditProposal(proposal?.id ?? "", { target: proposal?.target });
+    const decision = service
+      .get(b)
+      ?.task.audit?.findings.flatMap((f) => f.proposals)
+      .find((p) => p.id === proposal?.id)?.decision;
+    const fixId = decision?.kind === "adopted" ? (decision.fixTaskId ?? "") : "";
+    // マージの前は残す
+    service.cleanupMemories();
+    expect(service.get(a)?.task.audit?.memories[0]?.deleted).toBeUndefined();
+    // 改修のタスクの PR がマージされた状態にする（マージの流れは PR の見守りのテストで確かめている）
+    const tasks = (service as unknown as { tasks: Map<string, Task> }).tasks;
+    const fix = tasks.get(fixId) as Task;
+    tasks.set(fixId, { ...fix, pullRequestMerge: { at: "2026-10-18T00:00:00.000Z" } as never });
+    service.cleanupMemories();
+    expect(service.get(a)?.task.audit?.memories[0]?.deleted?.reason).toBe("promoted");
+    expect(activity.forTask(a).at(-1)).toMatchObject({
+      actor: "sacty",
+      type: "AuditMemoryDeleted",
+      payload: { memoryId: id, reason: "promoted" },
+    });
+    expect(existsSync(projectDir())).toBe(false);
   });
 
   it("却下した提案は、理由を次の大まかな監査に渡し、メモリーは残す", async () => {
