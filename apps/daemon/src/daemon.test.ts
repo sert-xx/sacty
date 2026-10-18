@@ -205,6 +205,7 @@ class FakeServices implements ServiceRunner {
     secrets?: readonly string[];
   }) {
     this.started.push(input);
+    this.order.push("start");
     // 起動の待ち（up --wait）を、打ち切られるまで終わらせない（一時停止・中止のテスト）
     if (this.hold) {
       this.entered.resolve();
@@ -221,6 +222,26 @@ class FakeServices implements ServiceRunner {
   async stop(runId: string) {
     this.stopped.push(runId);
   }
+  /** イメージ ID（PBI-130）。決めた名前だけを確定させ、呼ばれた順を起動と同じ記録に残す。 */
+  imageIds: Record<string, string> = {};
+  order: string[] = [];
+  imageRuns: string[] = [];
+  /** true なら、イメージ ID の確定を、打ち切られるまで終わらせない（一時停止・中止のテスト。PBI-130 レビュー指摘）。 */
+  imageHold = false;
+  imageEntered = Promise.withResolvers<void>();
+  private releaseImage?: () => void;
+  async imageId(image: string, runId: string) {
+    this.order.push(`imageId:${image}`);
+    this.imageRuns.push(runId);
+    if (this.imageHold) {
+      this.imageEntered.resolve();
+      await new Promise<void>((resolve) => {
+        this.releaseImage = resolve;
+      });
+      return undefined;
+    }
+    return this.imageIds[image];
+  }
   /** true なら、起動を打ち切られるまで待つ。 */
   hold = false;
   entered = Promise.withResolvers<void>();
@@ -229,6 +250,7 @@ class FakeServices implements ServiceRunner {
   abort(runId: string) {
     this.aborted.push(runId);
     this.release?.();
+    this.releaseImage?.();
   }
 }
 
@@ -4022,6 +4044,61 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       expect(started.every((e) => e.type === "ServicesStarted" && !e.payload.sharedPorts)).toBe(
         true,
       );
+      activity.close();
+    });
+
+    it("エージェントのイメージを、サービスを起動する前にイメージ ID に確定させ、その ID で実行する（PBI-130）", async () => {
+      const services = new FakeServices();
+      const id = `sha256:${"b".repeat(64)}`;
+      services.imageIds = { "sacty-agent:test": id };
+      const tests = new FakeTests([{ exitCode: 0, output: "ok", durationMs: 1 }]);
+      const { activity, service, executor } = await toImplement([implement("# 実装"), review()], {
+        tests,
+        services,
+        planner: servicesPlan(),
+      });
+      await drain(service);
+      // サービスを起動する前に確定させる（起動の後にタグが変わっても、確定したイメージで動く）
+      expect(services.order.indexOf("imageId:sacty-agent:test")).toBeLessThan(
+        services.order.indexOf("start"),
+      );
+      // サービスを使わない工程（要求要件・設計）と、テストのためのサービスの起動では確かめない（PBI-130 レビュー指摘）
+      expect(services.order).toEqual(["imageId:sacty-agent:test", "start", "start"]);
+      expect(executor.images[3]?.image).toBe(id);
+      activity.close();
+    });
+
+    for (const mode of ["pause", "cancel"] as const) {
+      it(`イメージ ID の確定を待つ間に${mode === "pause" ? "一時停止" : "中止"}されたら、確定を打ち切り、サービスもエージェントも始めない（PBI-130 レビュー指摘）`, async () => {
+        const services = new FakeServices();
+        services.imageHold = true;
+        const { activity, service, executor, id } = await toImplement([implement("# 実装")], {
+          services,
+          planner: servicesPlan(),
+        });
+        const before = executor.calls.length;
+        const running = service.runNext(id);
+        await services.imageEntered.promise;
+        await (mode === "pause" ? service.pause(id) : service.cancel(id));
+        await running;
+        expect(services.aborted).toEqual([services.imageRuns[0]]);
+        expect(services.started).toHaveLength(0);
+        expect(executor.calls).toHaveLength(before);
+        expect(service.get(id)?.task.status).toBe(mode === "pause" ? "paused" : "cancelled");
+        activity.close();
+      });
+    }
+
+    it("イメージ ID を確かめられなければ、名前のまま実行する（PBI-130）", async () => {
+      const services = new FakeServices();
+      const tests = new FakeTests([{ exitCode: 0, output: "ok", durationMs: 1 }]);
+      const { activity, service, executor } = await toImplement([implement("# 実装"), review()], {
+        tests,
+        services,
+        planner: servicesPlan(),
+      });
+      await drain(service);
+      expect(executor.images[3]?.image).toBe("sacty-agent:test");
       activity.close();
     });
 

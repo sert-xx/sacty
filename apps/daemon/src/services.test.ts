@@ -189,6 +189,134 @@ describe("compose の設定の確かめ（PBI-47）", () => {
   });
 });
 
+describe("サービスのビルドが、ホストで共有するタグを書き換えない（PBI-130）", () => {
+  const AGENT = "sacty-agent:0.1.0";
+
+  it("ビルドするサービスの image・build.tags を外し、毎回その実行の名前でビルドする（元の設定は変えない）", () => {
+    const build = {
+      context: ws,
+      dockerfile: "Dockerfile",
+      tags: [AGENT, "ghcr.io/acme/agent:1"],
+    };
+    const config = normalized({
+      app: { image: AGENT, pull_policy: "build", build },
+      cached: { image: AGENT, pull_policy: "missing", build: { context: ws } },
+      plain: { build: { context: ws } },
+    });
+    const result = sanitizeCompose(config, ws, ["app", "cached", "plain"]);
+    if (!result.ok) throw new Error(result.problems.join());
+    const services = result.config.services as Record<string, Record<string, unknown>>;
+    for (const name of ["app", "cached", "plain"]) {
+      expect(services[name]).not.toHaveProperty("image");
+      expect(services[name]?.build).not.toHaveProperty("tags");
+      expect(services[name]?.pull_policy).toBe("build");
+    }
+    expect(services.app?.build).toEqual({ context: ws, dockerfile: "Dockerfile" });
+    // 正規化した元の設定（ほかのサービスの確かめにも使う）は書き換えない
+    expect(build.tags).toEqual([AGENT, "ghcr.io/acme/agent:1"]);
+    expect((config.services.app as Record<string, unknown>).image).toBe(AGENT);
+  });
+
+  it("ビルドしないサービスの image と pull_policy は、そのまま使う", () => {
+    const result = sanitizeCompose(
+      normalized({ db: { image: "postgres:16", pull_policy: "always" } }),
+      ws,
+      ["db"],
+    );
+    if (!result.ok) throw new Error(result.problems.join());
+    const db = (result.config.services as Record<string, Record<string, unknown>>).db;
+    expect(db?.image).toBe("postgres:16");
+    expect(db?.pull_policy).toBe("always");
+  });
+
+  it("ビルドの結果を実行の外へ書き出す build.cache_to は拒否する（cache_from は使える）", () => {
+    const result = sanitizeCompose(
+      normalized({
+        app: {
+          build: { context: ws, cache_to: ["type=local,dest=/Users/someone/.ssh"] },
+        },
+        ok: { build: { context: ws, cache_from: ["type=registry,ref=acme/app:cache"] } },
+      }),
+      ws,
+      ["app", "ok"],
+    );
+    expect(result).toEqual({ ok: false, problems: ["app：build.cache_to は使えません"] });
+  });
+});
+
+describe("エージェントのイメージを、イメージ ID に確定させる（PBI-130）", () => {
+  const ID = `sha256:${"a".repeat(64)}`;
+  function docker(stdout: string, code: number) {
+    const calls: string[][] = [];
+    const spawnImpl = ((_cmd: string, args: string[]) => {
+      calls.push(args);
+      const child = Object.assign(new EventEmitter(), {
+        stdout: new EventEmitter(),
+        stderr: new EventEmitter(),
+      });
+      setImmediate(() => {
+        child.stdout.emit("data", stdout);
+        child.emit("close", code);
+      });
+      return child;
+    }) as never;
+    return { calls, runner: new DockerComposeServices(spawnImpl) };
+  }
+
+  it("docker image inspect の ID を返す", async () => {
+    const { calls, runner } = docker(`${ID}\n`, 0);
+    expect(await runner.imageId("sacty-agent:0.1.0", "r1")).toBe(ID);
+    expect(calls).toEqual([["image", "inspect", "--format", "{{.Id}}", "sacty-agent:0.1.0"]]);
+  });
+
+  it("無いイメージ・ID の形でない出力は、確定させない", async () => {
+    expect(await docker("", 1).runner.imageId("missing:1", "r1")).toBeUndefined();
+    expect(await docker("sacty-agent:0.1.0\n", 0).runner.imageId("x", "r1")).toBeUndefined();
+    expect(await docker(`${ID}\n${ID}\n`, 0).runner.imageId("x", "r1")).toBeUndefined();
+  });
+
+  /** 応答しない docker（kill されるまで終わらない。PBI-130 レビュー指摘）。 */
+  function hangingDocker() {
+    const killed: string[] = [];
+    const spawned = Promise.withResolvers<void>();
+    const spawnImpl = (() => {
+      const child = Object.assign(new EventEmitter(), {
+        stdout: new EventEmitter(),
+        stderr: new EventEmitter(),
+        kill: (signal: string) => {
+          killed.push(signal);
+          setImmediate(() => child.emit("close", null));
+          return true;
+        },
+      });
+      spawned.resolve();
+      return child;
+    }) as never;
+    return { killed, spawned: spawned.promise, runner: new DockerComposeServices(spawnImpl) };
+  }
+
+  it("docker が応答しなければ、期限で止めて確定させない（名前のまま実行する）", async () => {
+    const { killed, runner } = hangingDocker();
+    expect(await runner.imageId("x", "r1", 20)).toBeUndefined();
+    expect(killed).toEqual(["SIGTERM"]);
+  });
+
+  it("確定を待つ間に打ち切られたら（一時停止・中止）、子プロセスを止めて確定させない", async () => {
+    const { killed, spawned, runner } = hangingDocker();
+    const pending = runner.imageId("x", "r1", 60_000);
+    await spawned;
+    // ほかの実行の打ち切りでは止めない
+    runner.abort("other");
+    expect(killed).toEqual([]);
+    runner.abort("r1");
+    expect(await pending).toBeUndefined();
+    expect(killed).toEqual(["SIGTERM"]);
+    // 終わった後に打ち切っても、何もしない
+    runner.abort("r1");
+    expect(killed).toHaveLength(1);
+  });
+});
+
 describe("正規化で元の参照が消えるファイルの確かめ（PBI-47 レビュー指摘）", () => {
   const write = (path: string, body: string) => {
     mkdirSync(join(path, ".."), { recursive: true });
@@ -868,6 +996,8 @@ describe("共用の compose の起動（PBI-70）", () => {
       "down",
       "-v",
       "--remove-orphans",
+      "--rmi",
+      "local",
     ]);
     // 終わった後に打ち切っても、何もしない
     runner.abort("r1");
@@ -929,6 +1059,14 @@ describe("前回の残りのサービスの片付け（PBI-78 レビュー指摘
           else child.stdout.emit("data", owners[name] ?? "");
         } else if (args.includes("down")) {
           downs.push(args[args.indexOf("-p") + 1] ?? "");
+          // ビルドしたイメージ（実行ごとの名前。PBI-130）も消す
+          expect(args.slice(args.indexOf("down"))).toEqual([
+            "down",
+            "-v",
+            "--remove-orphans",
+            "--rmi",
+            "local",
+          ]);
         } else if (args.includes("config")) {
           child.stdout.emit("data", JSON.stringify({ services: { db: { image: "postgres" } } }));
         } else if (args.includes("up")) {

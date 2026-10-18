@@ -16,8 +16,9 @@
   ネットワーク・ボリュームを消します。同じリポジトリのタスクを並行で動かしてもぶつかりません。データは実行ごとに消えます。
 - エージェントとテストは、サービス名とコンテナのポートで接続します（例 `db:5432`）。`ports`（ホストのポート）と `container_name` は外して
   起動します。
-- サービスのイメージは、compose ファイルに書かれた名前のまま、ホストの Docker で取得・ビルドします（組織のレジストリのイメージは、ホストで
-  `docker login` しておいてください）。
+- ビルドしないサービス（`image` だけ）のイメージは、compose ファイルに書かれた名前のまま、ホストの Docker で取得します（組織のレジストリの
+  イメージは、ホストで `docker login` しておいてください）。ビルドするサービス（`build`）は、書かれた `image` の名前を使わず、実行ごとの
+  名前でビルドします（下の「使えない設定」）。
 - デーモンが途中で終わって残ったサービスは、次の起動のときに消します（起動したデーモンをコンテナのラベル `io.sacty.owner` に残し、
   そのデーモンが動いているもの、つまり同じ `SACTY_HOME` で動いているほかの sacty のものは消しません）。
 
@@ -51,10 +52,13 @@ compose ファイルは `docker compose config` で正規化してから確か�
 - `privileged`・`cap_add`・`devices`・`volumes_from`・ホストのネットワーク・PID など（`network_mode: host`・`pid: host` など）・
   `security_opt` の unconfined
 - Docker の API のソケットを渡す `use_api_socket`・ホストでコマンドを動かす `provider`・ビルドの `ssh`・`network: host`・`privileged`・
-  `entitlements`
+  `entitlements`・`cache_to`
 - 作業領域の外のパスのマウント（Docker のソケットを含む）・作業領域の外の `build`・`env_file`・`label_file`・`secrets`・`include`・
   `extends` のファイル（これらのパスに変数は使えない）
 - external のネットワーク・ボリューム、bridge 以外のネットワークのドライバー、ボリュームのドライバーの指定
+
+ビルドするサービス（`build`）の `image` と `build.tags` は使わず、毎回その実行だけの名前でビルドします（エージェントのイメージなど、
+ホストのイメージを書き換えないように）。ビルドしたイメージは、サービスを止めるときに消します。
 
 ## 共用の compose
 

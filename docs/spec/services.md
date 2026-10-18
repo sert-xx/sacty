@@ -6,7 +6,7 @@
 そのネットワークにつなぐ（エージェントには Docker の権限を渡さない）。compose ファイルは、対象リポジトリのものか、プロジェクトに書いた
 共用の compose（別のリポジトリ）のどちらか一方を使う。
 
-関係する ADR: なし
+関係する ADR: [サービスのビルドに共有のタグを付けさせず、エージェントのイメージを ID に確定させる](../adr/20261018-0430-compose-build-image-isolation.md)
 
 ## いつ起動するか
 
@@ -25,15 +25,22 @@
 2. `docker compose -f <ファイル> config --format json --no-env-resolution` で正規化する。
 3. 使うサービスとその依存（`depends_on`・`network_mode: service:`）だけを残して、安全の検査をする（下）。
 4. 各サービスから `ports` と `container_name` を外し、ネットワーク `sacty` に入れる。ネットワーク・ボリュームの固定の名前を外す。
+   `build` を持つサービスからは `image` と `build.tags` を外し、`pull_policy: build` にする（ビルドしたイメージに、エージェントのイメージ
+   などホストで共有するタグを付けさせない。compose が `<プロジェクト>-<サービス>` の名前を付ける）。
    所有のラベル `io.sacty.owner`（起動したデーモンの PID と開始時刻）を付ける。
 5. 一時ファイルに書いた設定で、`docker compose -p sacty-svc-<実行 ID から作った名前> -f <設定> up -d --wait --wait-timeout 300 <サービス>` で起動する。
    エージェント・テストのコンテナは `--network sacty-svc-…_sacty` でつなぎ、サービス名とコンテナのポートで接続する。
-6. 終わったら（失敗・打ち切りでも）`docker compose -p <名前> down -v --remove-orphans` で、コンテナ・ネットワーク・ボリュームを消す。
+6. 終わったら（失敗・打ち切りでも）`docker compose -p <名前> down -v --remove-orphans --rmi local` で、コンテナ・ネットワーク・ボリューム
+   と、ビルドしたイメージを消す。
+- サービスを使う工程では、起動する前に、エージェントのイメージ（工程のイメージ）を `docker image inspect` でイメージ ID に確定させ、その
+  ID で実行する（起動の後にタグが変わっても、確定したイメージで動く）。確かめられない・30 秒（`IMAGE_ID_TIMEOUT_MS`）で終わらなければ、
+  名前のまま実行する。確定を待つ間に人が止めたら（一時停止・中止）、`docker image inspect` を止め、サービスもエージェントも始めない。
+  サービスを使わない工程と、テストのためのサービスの起動では確かめない。
 - 失敗の理由は、秘密情報を伏せてから末尾 2000 文字にする。
 - デーモンの起動のとき、名前が `sacty-svc-` で始まるプロジェクトのうち、所有のラベルのデーモンが動いていないもの（ラベルが無いものを含む）を
   消す。`ps` を読めなければ何も消さない。
 
-コード: `apps/daemon/src/services.ts`（`DockerComposeServices.startOnce`・`stop`・`cleanupAll`・`sanitizeCompose`・`composeProject`・`labelOwner`・`OWNER_LABEL`・`LOG_TAIL`）
+コード: `apps/daemon/src/services.ts`（`DockerComposeServices.startOnce`・`stop`・`cleanupAll`・`imageId`・`sanitizeCompose`・`composeProject`・`labelOwner`・`OWNER_LABEL`・`LOG_TAIL`）
 
 ## 安全の検査
 
@@ -42,7 +49,7 @@
 - `privileged`・`cap_add`・`devices`・`device_cgroup_rules`・`volumes_from`・`cgroup_parent`・`use_api_socket`・`provider`
 - `network_mode`（`service:` と `bridge` のほか）、`pid`・`ipc`・`uts`・`userns_mode`・`cgroup` の `host`・`container:`、`security_opt` の `unconfined`
 - 作業領域の外の bind マウント（`volume`・`tmpfs` 以外の種類も）、作業領域の外の `build` の context・Dockerfile、`build` の `additional_contexts`・
-  `ssh`・`network: host`・`privileged`・`entitlements`、作業領域の外の `env_file`
+  `ssh`・`network: host`・`privileged`・`entitlements`・`cache_to`、作業領域の外の `env_file`
 - トップレベルの `external` のネットワーク・ボリューム、`bridge` 以外のネットワークの `driver`、ボリュームの `driver`・`driver_opts`、
   `external` か作業領域の外の `file` の `secrets`・`configs`
 
