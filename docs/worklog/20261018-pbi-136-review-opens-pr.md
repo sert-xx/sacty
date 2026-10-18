@@ -2,7 +2,7 @@
 
 - 日付: 2026-10-18（UTC）
 - タスク: PBI-136
-- PR: なし
+- PR: #148
 - ブランチ: feat/issue-136-review-opens-pr
 - 関係する ADR: なし
 
