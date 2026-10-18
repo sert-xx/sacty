@@ -120,5 +120,7 @@
   実行に数えない。
 - 表の合計の費用と推定かどうかは、作業履歴の順に `chargeBudget` で足すので、タスクの費用（`budget.usedUsd`・`budget.estimated`）と
   一致する。
+- 表のセルには、推定（換算した概算）かどうかの印を出さない（表を読みにくくするため）。換算値で実際の請求ではないことは、表の見出しの
+  補足で説明する。
 
 コード: `apps/web/src/lib/labels.ts`（`describeEvent`）、`apps/web/src/lib/step-costs.ts`（`stepCosts`）、`apps/web/src/components/step-costs.tsx`（`StepCosts`）

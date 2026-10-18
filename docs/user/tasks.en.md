@@ -194,12 +194,13 @@ The cost of the self-review is included in the cost of that step.
 ## Changing a step's image
 
 The "Steps" section of the task detail shows the image of each step and where it came from (the Orchestrator, the project target, or a person).
-If an image doesn't fit a step, you can choose again there. The changed image is used from the next run of the step (for a running step, from the next run).
+It is usually left as is, so only its heading is shown, collapsed (click the heading to open it). If an image doesn't fit a step, you can choose again there. The changed image is used from the next run of the step (for a running step, from the next run).
 See [Container images](images.en.md#changing-a-steps-image) for details.
 
 ## Changing a step's agent
 
 In "Step agents" in the "Steps" section of the task details, you can choose again the agent each step uses, from the usable agents (sacty's defaults and `agents` in config.yaml that have a connection and a price).
+It is usually left as is, so only its heading is shown, collapsed (it is shown open when something needs checking, such as a name removed from the settings).
 For example, run only a step that stopped on an error or was sent back with a stronger agent (one with a stronger model or reasoning effort, written as in [Models per step](config.en.md#models-per-step)).
 
 - The changed agent is used from the next run of the step. It takes precedence over `step_agents` in config.yaml. Other tasks are not affected.

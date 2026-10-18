@@ -214,6 +214,8 @@ Code: `apps/daemon/src/service.ts` (`askOrchestrator`, `runNextInner`, `withImag
 - For a step the Orchestrator left on the default image, where it came from shows the reason for the default image (`defaultImageReasons`) or that no reason was
   given (`imagesUnexplained`) until a person changes it. After a person changes it, the person's change is shown. The "Steps chosen" line in the Activity stays as recorded
   when the steps were chosen (the later `StepImageChanged` line shows the change).
+- On the screen, "Step images" is usually not changed, so only its heading is shown, collapsed. When the choices cannot be confirmed or a name not in `images`
+  is in use, it is shown open so it is not overlooked.
 
 Code: `apps/daemon/src/service.ts` (`changeStepImage`, `runNextInner`, `integrate`), `apps/daemon/src/server.ts`, `packages/core/src/events.ts` (`StepImageChanged`, `ChangeStepImageInput`), `packages/core/src/projection.ts` (`stepRunning`), `apps/web/src/lib/labels.ts` (`stepImageRows`, `stepImageOptions`)
 
@@ -239,6 +241,8 @@ Code: `apps/daemon/src/service.ts` (`changeStepImage`, `runNextInner`, `integrat
   decided by config.yaml (`stepAgents`). The screen shows, for each step, the agent, where it came from (config.yaml, or the time and previous name of a person's change),
   and when it is used (`stepAgentRows`). The choices are not shown when the status cannot be read or the settings cannot be read, and stub is offered only when the
   current agent is stub (`stepAgentOptions`). A chosen name not among the usable agents is shown with a warning.
+- On the screen, "Step agents" is usually not changed, so only its heading is shown, collapsed. When the choices cannot be confirmed or a name not among the
+  usable agents is in use, it is shown open so it is not overlooked.
 
 Code: `apps/daemon/src/service.ts` (`changeStepAgent`, `pauseForMissingAgent`, `status`), `apps/daemon/src/config.ts` (`stepAgentFor`), `apps/daemon/src/server.ts`, `packages/core/src/events.ts` (`StepAgentChanged`, `ChangeStepAgentInput`), `apps/web/src/lib/labels.ts` (`stepAgentRows`, `stepAgentOptions`)
 

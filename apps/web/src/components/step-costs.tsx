@@ -2,7 +2,6 @@
 
 import type { ActivityEvent, Task, TokenUsage } from "@sacty/core";
 import { CardSection } from "@/components/card-section";
-import { Hint } from "@/components/ui/hint";
 import { useMessages } from "@/i18n/client";
 import { formatStamp, usd } from "@/lib/labels";
 import { type CostRole, type CostRun, stepCosts } from "@/lib/step-costs";
@@ -71,11 +70,7 @@ export function StepCosts({
                 </th>
                 <UsageCells usage={row.usage} count={count} m={m} />
                 <td className="px-3 py-2.5 text-right whitespace-nowrap">
-                  {row.runs.length > 0 ? (
-                    <Cost usd={row.costUsd} estimated={row.estimated} m={m} />
-                  ) : (
-                    m.none
-                  )}
+                  {row.runs.length > 0 ? <Cost usd={row.costUsd} /> : m.none}
                 </td>
                 <td className="py-2.5 pl-3 text-right whitespace-nowrap tabular-nums">
                   {m.runs(row.runs.length)}
@@ -90,7 +85,7 @@ export function StepCosts({
               </th>
               <UsageCells usage={total.usage} count={count} m={m} />
               <td className="px-3 py-2.5 text-right whitespace-nowrap">
-                <Cost usd={total.costUsd} estimated={total.estimated} m={m} />
+                <Cost usd={total.costUsd} />
               </td>
               <td />
             </tr>
@@ -147,7 +142,7 @@ export function StepCosts({
                       </th>
                       <UsageCells usage={run.usage} count={count} m={m} />
                       <td className="px-3 py-2 text-right whitespace-nowrap">
-                        <Cost usd={run.costUsd} estimated={run.estimated} m={m} />
+                        <Cost usd={run.costUsd} />
                       </td>
                       <td
                         className={
@@ -218,19 +213,9 @@ function UsageCells({
   );
 }
 
-/** 費用。換算した値は「概算」を添えて、実際の請求と区別する。 */
-function Cost({ usd: value, estimated, m }: { usd: number; estimated: boolean; m: CostMessages }) {
-  return (
-    <span className="inline-flex items-center justify-end gap-1.5">
-      <span className="font-mono tabular-nums">{usd(value)}</span>
-      {estimated && (
-        <span className="inline-flex items-center gap-0.5 rounded-full border border-input py-0.5 pr-0.5 pl-1.5 text-xs text-muted-foreground">
-          {m.estimated}
-          <Hint text={m.estimatedHint} className="size-4" />
-        </span>
-      )}
-    </span>
-  );
+/** 費用。換算した概算かどうかはセルに出さず、見出しの補足で説明する（PBI-138。セルごとの印は表を読みにくくするため）。 */
+function Cost({ usd: value }: { usd: number }) {
+  return <span className="font-mono tabular-nums">{usd(value)}</span>;
 }
 
 /**
