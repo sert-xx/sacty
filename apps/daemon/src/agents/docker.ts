@@ -27,7 +27,7 @@ import { forwardNotices, type LocalForward, withLocalForwards } from "./forward.
 import type { Invocation } from "./invocation.js";
 import { withOutputRelay } from "./output-relay.js";
 import { type AgentOutcome, ClaudeOutcomeReader, CodexOutcomeReader } from "./parse.js";
-import { redact, redactText, secretStringsInJson } from "./redact.js";
+import { redact, redactEscaped, redactText, secretStringsInJson } from "./redact.js";
 
 export const CONTAINER_WORKSPACE = "/workspace";
 /** レビューの工程で、PR の差分の全体を読み取り専用で置くディレクトリ（作業領域の外。PBI-65）。 */
@@ -557,6 +557,7 @@ export class DockerExecutor implements AgentExecutor {
     }
     return outcome.kind === "failed"
       ? { ...outcome, message: redactText(outcome.message, stagedSecrets) }
-      : { ...outcome, output: redact(outcome.output, stagedSecrets) };
+      : // デコードすると元の値に戻る JSON のエスケープも伏せる（PBI-131）
+        { ...outcome, output: redactEscaped(redact(outcome.output, stagedSecrets), stagedSecrets) };
   }
 }

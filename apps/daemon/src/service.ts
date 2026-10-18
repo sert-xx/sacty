@@ -126,7 +126,7 @@ import {
   type OrchestratorSessionResume,
 } from "./agents/invocation.js";
 import type { AgentOutcome } from "./agents/parse.js";
-import { redact, redactText } from "./agents/redact.js";
+import { redact, redactEscaped, redactText } from "./agents/redact.js";
 import type { TestRunner, TestRunResult } from "./agents/test-runner.js";
 import { type PlacedTier, selectTiers, tierFiles } from "./agents/tiers.js";
 import { auditCounts, countToolFailures, redactDeep, redactStagedFiles } from "./audit-evidence.js";
@@ -7110,7 +7110,9 @@ export class TaskService {
           route,
           contextMcp,
           platforms.filter((p) => p.from !== undefined),
-          run.role === "operation" || run.role === "document"
+          // 接続先を決めて使う実行（操作・文書・書き出し）は、決めた PF・MCP だけを使える。書き出しは、選んだ PF か、
+          // 選んだ MCP だけを置いたコンテキストを渡すので、その範囲に縛る（PBI-131）
+          run.role === "operation" || run.role === "document" || run.role === "export"
             ? { platforms: platforms.map((p) => p.name), hostMcp: run.context?.mcpServers ?? [] }
             : undefined,
         );
@@ -7184,7 +7186,9 @@ export class TaskService {
     outcome =
       outcome.kind === "failed"
         ? { ...outcome, message: redactText(outcome.message, usedSecrets) }
-        : { ...outcome, output: redact(outcome.output, usedSecrets) };
+        : // 出力の JSON は、取り出すときにデコードする（レビューのコメント・監査・再現のテストなど）。デコードすると元の値に
+          // 戻るエスケープ（"\u0073…"）も伏せる（PBI-131）
+          { ...outcome, output: redactEscaped(redact(outcome.output, usedSecrets), usedSecrets) };
     // サブスクリプションは実際の請求が発生しないので、同じ単価で換算した値として扱う
     const estimated =
       run.agent.auth.mode === "subscription" ||

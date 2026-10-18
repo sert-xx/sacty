@@ -64,6 +64,9 @@
 - エージェントの結果の文と出力から、その実行で使った値（取り出した秘密情報・ゲートウェイのトークン・MCP のヘッダーの値・gh のトークン・
   認証ファイルの中の 16 文字以上の文字列）を `[REDACTED]` に置き換えてから作業履歴に記録する（長い値から順に、長さにかかわらず）。
   文言のコードと決まった値の引数は変えず、自由な文だけを置き換える。
+- 出力の JSON の文字列（`"…"`）のうち、エスケープ（`\u0073` など）を戻すと値を含むものも、伏せた文字列に置き換える（sacty は出力の JSON
+  をデコードして、レビューのコメント・監査・再現のテストなどに使うため）。文字列の始まりは出力の中のどの `"` からでも試し（エスケープした
+  `"` は除く。どの位置も一度ずつ読むので、出力の長さに比例する時間で終わる）、エスケープした JSON の中の JSON も確かめる。
 - セッションログは、値そのものと JSON の文字列にした形を伏せてから書く（[作業履歴](event-log.md)）。
 - PF のトークンの取得・ホストの MCP サーバーの起動・通知の失敗の理由は、値（と JSON にした形・各行）を伏せてから切り詰める。
 - ゲートウェイ経由の AI・PF・コンテキストの MCP（ホストで起動するコマンド型の `env` を含む）では、値をコンテナに渡さない。コンテナから
@@ -72,4 +75,4 @@
   （[設定](configuration.md)）。
 - gh のトークンは使うたびに `gh auth token --hostname <ホスト> --user <アカウント>` で取り出し、保存しない。
 
-コード: `apps/daemon/src/agents/redact.ts`（`redact`・`redactText`・`secretStringsInJson`・`REDACTED`）、`apps/daemon/src/session-logs.ts`（`secretForms`）、`apps/daemon/src/platforms.ts`（`hideSecret`）、`apps/daemon/src/gh.ts`（`GhCliAuth`）
+コード: `apps/daemon/src/agents/redact.ts`（`redact`・`redactEscaped`・`redactText`・`secretStringsInJson`・`REDACTED`）、`apps/daemon/src/session-logs.ts`（`secretForms`）、`apps/daemon/src/platforms.ts`（`hideSecret`）、`apps/daemon/src/gh.ts`（`GhCliAuth`）
