@@ -217,6 +217,8 @@
 - オーケストレーターが既定のイメージにした工程は、人が変えるまで、選んだ元に既定のイメージにした理由（`defaultImageReasons`）か、理由の記載が
   無いこと（`imagesUnexplained`）を出す。人が変えたら、人の変更を出す。作業履歴の「工程を決定」の行は、工程を決めたときの記録のまま残る
   （その後の `StepImageChanged` の行で、変えたことがわかる）。
+- 画面の「工程のイメージ」は、普段は変えないので見出しだけを出して閉じる。候補を確かめられない・`images` に無い名前を使っているときは、
+  見落とさないよう開いて出す。
 
 コード: `apps/daemon/src/service.ts`（`changeStepImage`・`runNextInner`・`integrate`）、`apps/daemon/src/server.ts`、`packages/core/src/events.ts`（`StepImageChanged`・`ChangeStepImageInput`）、`packages/core/src/projection.ts`（`stepRunning`）、`apps/web/src/lib/labels.ts`（`stepImageRows`・`stepImageOptions`）
 
@@ -242,6 +244,8 @@
   config.yaml で決まる工程ごとの名前（`stepAgents`）を返す。画面は、工程ごとにエージェント・決めた元（config.yaml か、人が変えた時刻と前の
   名前）・いつから使うかを出す（`stepAgentRows`）。選択肢は、状態を取れない・設定を読めないときは出さず、stub は今のエージェントが stub の
   ときだけ出す（`stepAgentOptions`）。選んだ名前が使えるエージェントに無ければ警告を出す。
+- 画面の「工程のエージェント」は、普段は変えないので見出しだけを出して閉じる。候補を確かめられない・使えるエージェントに無い名前を
+  使っているときは、見落とさないよう開いて出す。
 
 コード: `apps/daemon/src/service.ts`（`changeStepAgent`・`pauseForMissingAgent`・`status`）、`apps/daemon/src/config.ts`（`stepAgentFor`）、`apps/daemon/src/server.ts`、`packages/core/src/events.ts`（`StepAgentChanged`・`ChangeStepAgentInput`）、`apps/web/src/lib/labels.ts`（`stepAgentRows`・`stepAgentOptions`）
 

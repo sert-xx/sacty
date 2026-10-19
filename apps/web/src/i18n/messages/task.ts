@@ -244,7 +244,7 @@ const ja = {
   },
   costs: {
     title: "工程ごとの費用",
-    hint: "工程ごとのエージェント・設定・トークンの使用量と費用です。記録に無い項目は「—」。",
+    hint: "工程ごとのエージェント・設定・トークンの使用量と費用です。記録に無い項目は「—」。サブスクリプションなどの費用は換算した概算で、実際の請求ではありません。",
     column: {
       role: "工程・設定",
       run: "実行",
@@ -256,8 +256,6 @@ const ja = {
       result: "結果",
     },
     runs: (n: number) => `${n}回`,
-    estimated: "概算",
-    estimatedHint: "サブスクリプションなどの換算値で、実際の請求ではありません。",
     none: "—",
     setting: (agent: string, auth: string, model: string, effort: string) =>
       `${agent}・${auth}・${model}・${effort}`,
@@ -571,7 +569,7 @@ const en: TaskMessages = {
   },
   costs: {
     title: "Cost per step",
-    hint: "Agents, settings, token usage and cost per step. Items not recorded are shown as “—”.",
+    hint: "Agents, settings, token usage and cost per step. Items not recorded are shown as “—”. Costs for subscriptions and the like are converted estimates, not actual charges.",
     column: {
       role: "Step · settings",
       run: "Run",
@@ -583,8 +581,6 @@ const en: TaskMessages = {
       result: "Result",
     },
     runs: (n) => `${n} run${n === 1 ? "" : "s"}`,
-    estimated: "Estimate",
-    estimatedHint: "Converted value (such as a subscription), not an actual charge.",
     none: "—",
     setting: (agent, auth, model, effort) => `${agent} · ${auth} · ${model} · ${effort}`,
     triage: "Reading the ticket",

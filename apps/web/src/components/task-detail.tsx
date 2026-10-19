@@ -15,7 +15,7 @@ import {
   type Task,
 } from "@sacty/core";
 import Link from "next/link";
-import { useRef } from "react";
+import { type ReactNode, useRef } from "react";
 import { ActionLink } from "@/components/action-link";
 import { TaskAuditCard } from "@/components/audit";
 import { CardSection } from "@/components/card-section";
@@ -609,11 +609,9 @@ function StepImages({
   // 選べるのは、既定のイメージと images の名前（説明も出す）。取得できない・設定を読めないときは、候補を確かめられない
   // ことを出し、消した名前の警告と変更の操作は出さない（一時的な失敗を、設定から消したことと取り違えない）
   const options = stepImageOptions(imageStatus, m.defaultDescription);
+  const attention = !options || rows.some((row) => !options.some((o) => o.name === row.image));
   return (
-    <div className="flex flex-col gap-1 text-sm leading-6" data-testid="step-images">
-      <h3 className="font-semibold">
-        {m.title} <Hint text={m.hint} />
-      </h3>
+    <StepSettings title={m.title} hint={m.hint} open={attention} testId="step-images">
       {!options && (
         <p role="status" className="text-warn" data-testid="step-images-unavailable">
           {m.unavailable}
@@ -669,7 +667,7 @@ function StepImages({
           </li>
         ))}
       </ul>
-    </div>
+    </StepSettings>
   );
 }
 
@@ -686,12 +684,15 @@ function StepAgents({
   const rows = stepAgentRows(task, agentStatus?.stepAgents);
   if (rows.length === 0) return null;
   const images = t.images;
+  const unavailable = stepAgentOptions(agentStatus, undefined) === undefined;
+  const missing = (agent: string | undefined) =>
+    stepAgentOptions(agentStatus, agent) !== undefined &&
+    Boolean(agent) &&
+    !agentStatus?.agents?.some((a) => a.id === agent);
+  const attention = unavailable || rows.some((row) => missing(row.agent));
   return (
-    <div className="flex flex-col gap-1 text-sm leading-6" data-testid="step-agents">
-      <h3 className="font-semibold">
-        {m.title} <Hint text={m.hint} />
-      </h3>
-      {stepAgentOptions(agentStatus, undefined) === undefined && (
+    <StepSettings title={m.title} hint={m.hint} open={attention} testId="step-agents">
+      {unavailable && (
         <p role="status" className="text-warn" data-testid="step-agents-unavailable">
           {m.unavailable}
         </p>
@@ -699,8 +700,6 @@ function StepAgents({
       <ul className="flex flex-col gap-2">
         {rows.map((row) => {
           const options = stepAgentOptions(agentStatus, row.agent);
-          const missing =
-            options && row.agent && !agentStatus?.agents?.some((a) => a.id === row.agent);
           return (
             <li
               key={row.step}
@@ -711,7 +710,7 @@ function StepAgents({
                 <span className="font-medium">{labels.step[row.step]}</span>
                 {m.sep}
                 <span className="font-mono">{row.agent ?? m.unknown}</span>
-                {missing && (
+                {missing(row.agent) && (
                   <span className="inline-flex items-center gap-1 text-warn">
                     {" "}
                     {m.missing}
@@ -745,7 +744,36 @@ function StepAgents({
           );
         })}
       </ul>
-    </div>
+    </StepSettings>
+  );
+}
+
+/**
+ * 工程の設定（イメージ・エージェント）の折りたたみ（PBI-138）。普段は変えないので見出しだけを出して閉じ、確かめが要る
+ * とき（候補を確かめられない・設定から消えた名前）は見落とさないよう開いて出す。
+ */
+function StepSettings({
+  title,
+  hint,
+  open,
+  testId,
+  children,
+}: {
+  title: string;
+  hint: string;
+  open: boolean;
+  testId: string;
+  children: ReactNode;
+}) {
+  return (
+    <details open={open} className="text-sm leading-6" data-testid={testId}>
+      <summary className="cursor-pointer marker:text-muted-foreground">
+        <h3 className="inline font-semibold">
+          {title} <Hint text={hint} />
+        </h3>
+      </summary>
+      <div className="flex flex-col gap-1 pt-1">{children}</div>
+    </details>
   );
 }
 

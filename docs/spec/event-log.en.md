@@ -120,5 +120,7 @@ Code: `apps/daemon/src/session-logs.ts` (`SessionLogStore`, `SESSION_LOG_LIMITS`
   not counted as runs.
 - The table's total cost and whether it is estimated are summed with `chargeBudget` in activity log order, so they
   match the task's cost (`budget.usedUsd`, `budget.estimated`).
+- The table's cells carry no mark for whether a cost is estimated (a converted estimate), to keep the table readable. The hint on the
+  table's heading explains that converted values are not actual charges.
 
 Code: `apps/web/src/lib/labels.ts` (`describeEvent`), `apps/web/src/lib/step-costs.ts` (`stepCosts`), `apps/web/src/components/step-costs.tsx` (`StepCosts`)
