@@ -47,6 +47,14 @@ For each item in the sacty settings, sacty searches the project's targets (an or
 There are two kinds of intake: "Issue intake" (`intakeLabel`) and "PR review intake" (`reviewLabel`, `reviewRequested`). Only PR review intake
 takes in PRs.
 
+- Searches are combined per domain (host), account, and kind of search (Issues with the intake label / PRs with the review label / review requests to you):
+  all projects' targets go into one search (listed like `repo:a/b repo:c/d org:e`; GitHub finds what matches any of them).
+  This keeps the number of searches to GitHub to a minimum regardless of the number of projects and targets. One search holds up to `INTAKE_SCOPES_PER_QUERY` (30) targets,
+  and is split beyond that. The responsible project, duplicates, and the requested person are checked for each item found, in `importIssues`.
+  Targets of a project with no account chosen are not combined; they stay per project and are not searched, with the reason shown.
+- A combined search returns the other targets' results even if it includes a repository that does not exist or cannot be viewed (it does not fail because of that target alone).
+  If all its targets are like that, it is recorded as a failure of that search.
+
 | Setting | Search condition | Task |
 | --- | --- | --- |
 | `intakeLabel` | `is:open is:issue label:"<label>"` | An ordinary task (issues only) |

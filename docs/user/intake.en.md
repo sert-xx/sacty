@@ -20,6 +20,8 @@ You set the interval in "Intake interval (seconds)" in each section of "sacty se
   (if the intake takes long, it starts later than 30 seconds). For a kind whose intake is stopped, the field shows
   the interval that will apply when intake starts.
 - Even if one kind fails or hits a GitHub rate limit, the other kinds keep being imported.
+- GitHub searches combine up to 30 targets of the same domain and account, across projects, for each kind (beyond 30, the search is split).
+  So as long as there are at most 30 targets, adding projects does not add searches. sacty decides which project each item belongs to after it is found.
 - "Import now" on the project page imports every kind without waiting for the interval. The project page shows the last intake for each kind, and
   the targets that could not be imported together with which kind they belong to (kinds that are not On are not shown).
 - You do not need any intake settings in `config.yaml`. JIRA tickets are imported without writing `github:` too. `github:`

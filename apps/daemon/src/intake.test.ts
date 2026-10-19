@@ -23,9 +23,16 @@ import {
 } from "./prompts.js";
 import { MemorySecretStore } from "./secrets.js";
 import { createApp } from "./server.js";
-import { TaskService } from "./service.js";
+import { INTAKE_SCOPES_PER_QUERY, TaskService } from "./service.js";
 import { MemorySettingsStore } from "./settings.js";
 import type { TicketClient } from "./tickets.js";
+
+/** 取り込みの対象にする、n 個のリポジトリ（acme/<name>-0 …）。 */
+const manyRepos = (name: string, n: number) =>
+  Array.from({ length: n }, (_, i) => ({
+    scope: "repo" as const,
+    target: `https://github.com/acme/${name}-${i}`,
+  }));
 
 /** 記録した文言（コードと引数）を、日本語の文にする（PBI-11）。 */
 const ja = (text: unknown) => renderMessage(text, "ja");
@@ -240,10 +247,14 @@ describe("GitHub Issue の定期的な取り込み（PBI-5a）", () => {
   });
 
   it("1つの取り込み元の検索に失敗しても、ほかの取り込み元は取り込む（レビュー指摘）", async () => {
-    const { activity, service, search, intake } = setup();
+    // 同じアカウントの対象は1つの検索にまとまるので（PBI-140）、別のアカウントの検索で確かめる
+    const { activity, service, search, intake } = setup(
+      true,
+      new FakeGh({ me: "ghp_secret", "side-job": "ghp_side" }),
+    );
     service.saveProject(undefined, {
       name: "削除されたリポジトリ",
-      githubAccounts: { "github.com": "me" },
+      githubAccounts: { "github.com": "side-job" },
       targets: [{ scope: "repo", target: "https://github.com/acme/deleted" }],
     });
     search.failQuery = 'is:open is:issue repo:acme/deleted label:"sacty"';
@@ -430,10 +441,11 @@ describe("GitHub Issue の定期的な取り込み（PBI-5a）", () => {
 
   it("読んだところから次の取り込みを続け、レート制限ならその回のほかの検索をやめる（レビュー指摘）", async () => {
     const { activity, service, search, intake, advance } = setup();
+    // 同じアカウントの対象は1つの検索にまとまるので（PBI-140）、上限を超える数の対象で、検索を2つにする
     service.saveProject(undefined, {
       name: "認証",
       githubAccounts: { "github.com": "me" },
-      targets: [{ scope: "repo", target: "https://github.com/acme/auth" }],
+      targets: manyRepos("auth", INTAKE_SCOPES_PER_QUERY),
     });
     search.cursor = "2026-10-10T00:00:00Z";
     search.rateLimited = true;
@@ -496,6 +508,157 @@ describe("GitHub Issue の定期的な取り込み（PBI-5a）", () => {
     expect(fallback.keep).toEqual([expect.stringContaining(`sacty task ${task.id}`), "Closes #7"]);
     const stepFallback = buildStepPullRequestBodyText(task, "design", "docs/x.md");
     expect(stepFallback.keep[1]).toContain("この PR をマージすると、設計を承認したことになり");
+    activity.close();
+  });
+});
+
+describe("GitHub の検索をドメインごとにまとめる（PBI-140）", () => {
+  it("同じドメイン・アカウントの対象は、プロジェクトをまたいで種類ごとに1つの検索にし、見つかったものは担当のプロジェクトに取り込む", async () => {
+    const gh = new FakeGh({
+      me: "ghp_me",
+      "side-job": "ghp_side",
+      "ghe.example.com/me": "ghp_ghe",
+    });
+    const { activity, service, search, intake } = setup(true, gh);
+    service.saveSettings({
+      intakeLabel: "sacty",
+      reviewLabel: "sacty-review",
+      reviewRequested: true,
+    });
+    const auth = service.saveProject(undefined, {
+      name: "認証",
+      githubAccounts: { "github.com": "me", "ghe.example.com": "me" },
+      targets: [
+        { scope: "repo", target: "https://github.com/acme/auth" },
+        // 別のドメインは、同じ名前のアカウントでも別の検索
+        { scope: "org", target: "https://ghe.example.com/corp" },
+      ],
+    });
+    service.saveProject(undefined, {
+      name: "副業",
+      githubAccounts: { "github.com": "side-job" },
+      targets: [{ scope: "repo", target: "https://github.com/side/app" }],
+    });
+    // アカウントを選んでいないプロジェクトは、まとめずにプロジェクトごと（検索せず理由を示す）
+    service.saveProject(undefined, {
+      name: "未設定",
+      targets: [{ scope: "repo", target: "https://github.com/acme/legacy" }],
+    });
+    expect(service.intakeSources().map((s) => [s.host, s.account, s.project, s.query])).toEqual([
+      [
+        "github.com",
+        "me",
+        "決済・認証",
+        'is:open is:issue repo:acme/payments repo:acme/auth label:"sacty"',
+      ],
+      [
+        "github.com",
+        "me",
+        "決済・認証",
+        'is:open is:pr repo:acme/payments repo:acme/auth label:"sacty-review"',
+      ],
+      [
+        "github.com",
+        "me",
+        "決済・認証",
+        "is:open is:pr repo:acme/payments repo:acme/auth user-review-requested:me",
+      ],
+      ["ghe.example.com", "me", "認証", 'is:open is:issue org:corp label:"sacty"'],
+      ["ghe.example.com", "me", "認証", 'is:open is:pr org:corp label:"sacty-review"'],
+      ["ghe.example.com", "me", "認証", "is:open is:pr org:corp user-review-requested:me"],
+      ["github.com", "side-job", "副業", 'is:open is:issue repo:side/app label:"sacty"'],
+      ["github.com", "side-job", "副業", 'is:open is:pr repo:side/app label:"sacty-review"'],
+      [
+        "github.com",
+        "side-job",
+        "副業",
+        "is:open is:pr repo:side/app user-review-requested:side-job",
+      ],
+      ["github.com", undefined, "未設定", 'is:open is:issue repo:acme/legacy label:"sacty"'],
+      ["github.com", undefined, "未設定", 'is:open is:pr repo:acme/legacy label:"sacty-review"'],
+      [
+        "github.com",
+        undefined,
+        "未設定",
+        "is:open is:pr repo:acme/legacy user-review-requested:@me",
+      ],
+    ]);
+
+    search.issues.push({
+      repo: "https://github.com/acme/auth",
+      number: 3,
+      title: "ログインの失敗",
+      body: "本文",
+      url: "https://github.com/acme/auth/issues/3",
+      labels: ["sacty"],
+    });
+    await intake.tick(true);
+    // Issue の検索は、ドメイン・アカウントごとに1回（未設定のプロジェクトは検索しない）
+    expect(search.queries.filter((q) => q.includes("is:issue"))).toEqual([
+      'is:open is:issue repo:acme/payments repo:acme/auth label:"sacty"',
+      'is:open is:issue org:corp label:"sacty"',
+      'is:open is:issue repo:side/app label:"sacty"',
+    ]);
+    // 1つの検索で見つかったものを、それぞれの担当のプロジェクトに取り込む
+    expect(
+      service
+        .list()
+        .map((t) => [t.projectId === auth.id ? "認証" : "決済", t.source?.number])
+        .sort(),
+    ).toEqual([
+      ["決済", 7],
+      ["認証", 3],
+    ]);
+    expect(service.status().intake?.runs?.issues?.errors).toEqual([
+      { query: 'is:open is:issue repo:acme/legacy label:"sacty"', message: expect.anything() },
+    ]);
+    activity.close();
+  });
+
+  it("アカウントを選んでいないプロジェクトどうしは、まとめずにプロジェクトごとに理由を示す", async () => {
+    const { activity, service, search, intake } = setup();
+    for (const [name, repo] of [
+      ["未設定1", "acme/one"],
+      ["未設定2", "acme/two"],
+    ]) {
+      service.saveProject(undefined, {
+        name,
+        targets: [{ scope: "repo", target: `https://github.com/${repo}` }],
+      });
+    }
+    expect(service.intakeSources().map((s) => [s.project, s.query])).toEqual([
+      ["決済", 'is:open is:issue repo:acme/payments label:"sacty"'],
+      ["未設定1", 'is:open is:issue repo:acme/one label:"sacty"'],
+      ["未設定2", 'is:open is:issue repo:acme/two label:"sacty"'],
+    ]);
+    await intake.tick(true);
+    expect(search.queries).toEqual(['is:open is:issue repo:acme/payments label:"sacty"']);
+    expect(service.status().intake?.runs?.issues?.errors?.map((e) => ja(e.message))).toEqual([
+      expect.stringContaining("未設定1"),
+      expect.stringContaining("未設定2"),
+    ]);
+    activity.close();
+  });
+
+  it("対象が上限を超えたら、上限ずつの検索に分ける", () => {
+    const { activity, service } = setup();
+    // プロジェクトの対象は 50 個までなので、2つのプロジェクトに分けて置く
+    for (const name of ["a", "b"]) {
+      service.saveProject(undefined, {
+        name: `たくさん${name}`,
+        githubAccounts: { "github.com": "me" },
+        targets: manyRepos(name, INTAKE_SCOPES_PER_QUERY),
+      });
+    }
+    const scopes = service
+      .intakeSources()
+      .map((s) => s.query.split(" ").filter((w) => w.startsWith("repo:")).length);
+    // 決済の1つと合わせて 61 個 → 30・30・1
+    expect(scopes).toEqual([INTAKE_SCOPES_PER_QUERY, INTAKE_SCOPES_PER_QUERY, 1]);
+    const all = service.intakeSources().flatMap((s) => s.query.split(" "));
+    expect(new Set(all.filter((w) => w.startsWith("repo:"))).size).toBe(
+      INTAKE_SCOPES_PER_QUERY * 2 + 1,
+    );
     activity.close();
   });
 });
@@ -939,10 +1102,11 @@ describe("取り込みの種類ごとの間隔（PBI-100）", () => {
         ? { ...result, rateLimited: true, incomplete: "レート制限" }
         : result;
     };
+    // 上限を超える数の対象で、種類ごとに検索を2つにする（PBI-140）
     service.saveProject(undefined, {
       name: "認証",
       githubAccounts: { "github.com": "me" },
-      targets: [{ scope: "repo", target: "https://github.com/acme/auth" }],
+      targets: manyRepos("auth", INTAKE_SCOPES_PER_QUERY),
     });
     await intake.tick(true);
     // Issue は1つ目でレート制限になり2つ目は探さないが、PR のレビューは2つとも探す
