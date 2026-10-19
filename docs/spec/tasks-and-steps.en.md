@@ -459,8 +459,8 @@ Code: `apps/daemon/src/service.ts` (`askQuestion`, `answerQuestion`, `stageQuest
   `no_findings`: no findings). sacty raises it to `changes_required` if a line comment has `[要修正]`, and to `suggestions` if there are findings but the verdict is `no_findings`.
   Line comments alone do not make it `changes_required`. If there is no verdict or it is not one of the values, and there is no `[要修正]` finding,
   nothing is kept (unreadable). When the review could not be completed, the agent is told not to add a verdict. The verdict block is removed from the posted body and kept in
-  `reviewVerdict` of `AgentRunCompleted` (per round in `reviewVerdicts`). A review of a PR sacty opened is delivered to the original task only for rounds with
-  `changes_required` or an unreadable verdict ([Approval and request changes](approval.en.md#importing-pr-comments)).
+  `reviewVerdict` of `AgentRunCompleted` (per round in `reviewVerdicts`). A review of a PR sacty opened is delivered to the original task for rounds with
+  `changes_required`, `suggestions`, or an unreadable verdict (rounds with `no_findings` are not delivered; [Approval and request changes](approval.en.md#importing-pr-comments)).
 - Posted body: the marker, the heading "sacty のレビュー", one line with the @ mention of the author and the verdict (no @ if the author is not in the form of a login; says so if the verdict is unreadable),
   the agent's body, and the fixed sentence saying that AI reviewed it, in this order.
 - Right before posting, the PR's head commit is checked (not when an already posted review is found by the marker). If it differs from the reviewed commit

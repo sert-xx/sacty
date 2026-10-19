@@ -78,8 +78,8 @@ If the "Label for PR reviews" is set, sacty adds that label to every PR it creat
 
 - If the repository does not have the label, sacty creates it first. If the label cannot be added (permissions and so on), the PR is left as it is, and the reason appears in the task's Activity.
 - A labeled PR becomes, at the next intake, a separate "PR review only" task apart from the task that created it. The review is posted to the PR, and if its verdict is changes
-  required, it reaches the creating task as PR findings, and the Goal Guardian decides where to go back to and fixes them. A review with suggestions only (OK to merge)
-  or no findings is not delivered and does not request changes (the task waits for the PR to be merged).
+  required or suggestions only (OK to merge), it reaches the creating task as PR findings, and the Goal Guardian decides where to go back to and fixes them (the task's budget
+  stops the cost of repetition). A review with no findings is not delivered and does not request changes (the task waits for the PR to be merged).
 - Even if the review label has the same name as the label to import, a labeled PR becomes a "PR review only" task only once, and never an
   implementation task. Its findings reach the creating task in the same way.
 - The label is added once per PR. Updating the PR with fixes does not add it again or create a new review task (to have it reviewed again,

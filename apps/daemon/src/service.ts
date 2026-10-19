@@ -1613,8 +1613,8 @@ export class TaskService {
 
   /**
    * この PR をレビューした sacty のタスクの回と、そのタスクが投稿に使うアカウント（PBI-88）。レビュー用のラベルを付けて取り込んだ
-   * レビューだけのタスク（`source.review: sacty`）の、直すべき指摘のある回（評価を読めなかった回も）は、元のタスクへの PR の
-   * 指摘として取り込む（allowed）。ほかの回・ほかのレビューのタスクの投稿は、アカウントが元のタスクと違っても除く。
+   * レビューだけのタスク（`source.review: sacty`）の、指摘のある回（修正が必要・提案あり。判定を読めなかった回も）は、元のタスクへの
+   * PR の指摘として取り込む（allowed。PBI-145）。指摘の無い回・ほかのレビューのタスクの投稿は、アカウントが元のタスクと違っても除く。
    */
   private sactyReviewsOf(repo: string, number: number): { sactyReviews?: SactyReviewRound[] } {
     const rounds = [...this.tasks.values()].flatMap((t) => {
@@ -1630,12 +1630,12 @@ export class TaskService {
         return {
           key: sactyReviewKey(t.id, round),
           account,
-          // 修正が必要でない（提案だけ・指摘なし。マージしてよい）回は、差し戻さないので取り込まない。判定を読めなければ、
-          // 指摘を落とさないように取り込む（PBI-111）
+          // 指摘のある回（修正が必要・提案あり）は、元のタスクに対応させるために取り込む。提案だけの回も取り込む（繰り返しの
+          // 費用は予算で止める。PBI-145）。指摘の無い回は取り込まない。判定を読めなければ、指摘を落とさないように取り込む（PBI-111）
           allowed:
             t.source?.review === "sacty" &&
             verdict !== undefined &&
-            (verdict.verdict === undefined || verdict.verdict === "changes_required"),
+            verdict.verdict !== "no_findings",
         };
       });
     });
