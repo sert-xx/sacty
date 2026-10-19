@@ -1796,34 +1796,39 @@ export class TaskService {
   }
 
   /**
-   * 再レビュー（PBI-44）で、前回のレビューの投稿の後の、PR の作者の返答（PBI-111）。PR のレビュー・行へのコメント・通常のコメントの
-   * うち、作者が前回の投稿の後に書いたもの（sacty のレビューの目印で始まるものは除く）。作者が分からなければ、返答を選べないので
-   * 読めなかったものとする（例外にする）。
+   * レビューの工程に渡す、対象の PR にすでにあるレビュー・行へのコメント・通常のコメント（existing。他のレビュアーの指摘と作者の返答。
+   * このタスクのアカウントの sacty のレビューの目印で始まる投稿＝前回の投稿は含まない。PBI-144）と、再レビュー（PBI-44）での、
+   * 前回のレビューの投稿の後の PR の作者の返答（replies。PBI-111。作者が前回の投稿の後に書いたもので、目印で始まるものは除く）。
+   * 返答は再レビューのときだけ。作者が分からなければ、返答を選べないので返答だけ読めなかったもの（"unreadable"）にする。
    */
-  private async reviewReplies(
+  private async reviewFeedback(
     task: Task,
     target: NonNullable<Task["reviewTarget"]>,
     usedSecrets: string[],
-  ): Promise<PullRequestFeedback[]> {
-    const previous = task.previousReview;
-    const author = target.author.toLowerCase();
-    if (!previous) return [];
-    if (!author) throw new Error("the pull request author is unknown");
+  ): Promise<{
+    existing: PullRequestFeedback[];
+    replies?: PullRequestFeedback[] | "unreadable";
+  }> {
     const token = await this.githubToken(task, target.repo, usedSecrets);
     const account = this.githubAccountOf(task, target.repo).account;
-    const items = await this.deps.pulls.feedback({
+    const existing = await this.deps.pulls.feedback({
       repo: target.repo,
       token,
       number: target.number,
       ...(account ? { account } : {}),
     });
+    const previous = task.previousReview;
+    if (!previous) return { existing };
+    const author = target.author.toLowerCase();
+    if (!author) return { existing, replies: "unreadable" };
     const since = Date.parse(previous.at);
-    return items.filter(
+    const replies = existing.filter(
       (item) =>
         item.author.toLowerCase() === author &&
         Date.parse(item.at) > since &&
         sactyReviewTask(item.body) === undefined,
     );
+    return { existing, replies };
   }
 
   /**
@@ -4569,6 +4574,8 @@ export class TaskService {
     let reviewDiff: string | undefined;
     // 再レビューで、前回の投稿の後の PR の作者の返答（PBI-111）
     let reviewReplies: PullRequestFeedback[] | "unreadable" | undefined;
+    // PR にすでにあるレビュー・コメント（他のレビュアーの指摘と作者の返答。PBI-144）
+    let reviewExisting: PullRequestFeedback[] | "unreadable" | undefined;
     // 要求要件・設計の工程は、起点のコミットのコードを実行ごとのディレクトリに書き出して渡し、終わったら消す
     // （実装の作業領域は実装の変更を含むので使わない。差し戻しでやり直しても、同じ起点のコードを読む）
     const snapshotDir = scratch ? join(this.deps.workspaceRoot, "_snapshots", runId) : undefined;
@@ -4595,18 +4602,21 @@ export class TaskService {
               reviewTarget.headCommit,
               { full: true },
             );
+            // PR にすでにあるレビュー・コメント（PBI-144）と、再レビューでの作者の返答（PBI-111）を読む。
             // 読めなくてもレビューは止めない（読めなかったことをプロンプトに書く）
             // 運用する人のために、読めなかった理由はタスクと PR を添えてデーモンのログに残す（秘密の値は伏せる）
+            const feedbackSecrets: string[] = [];
+            const feedback = await this.reviewFeedback(latest, reviewTarget, feedbackSecrets).catch(
+              (error: unknown) => {
+                console.warn(
+                  `[daemon] レビューのタスク ${task.id} で、PR #${reviewTarget.number}（${reviewTarget.repo}）の既存のレビューと作者の返答を読めませんでした。それらなしでレビューします：${renderMessage(redactText(errorText(error), feedbackSecrets), "ja")}`,
+                );
+                return "unreadable" as const;
+              },
+            );
+            reviewExisting = feedback === "unreadable" ? "unreadable" : feedback.existing;
             if (latest.previousReview) {
-              const replySecrets: string[] = [];
-              reviewReplies = await this.reviewReplies(latest, reviewTarget, replySecrets).catch(
-                (error: unknown) => {
-                  console.warn(
-                    `[daemon] レビューのタスク ${task.id} で、PR #${reviewTarget.number}（${reviewTarget.repo}）の作者の返答を読めませんでした。返答なしで再レビューします：${renderMessage(redactText(errorText(error), replySecrets), "ja")}`,
-                  );
-                  return "unreadable" as const;
-                },
-              );
+              reviewReplies = feedback === "unreadable" ? "unreadable" : feedback.replies;
             }
           }
           await this.deps.repos.snapshot(
@@ -4679,6 +4689,8 @@ export class TaskService {
                 }
               : {}),
             ...(reviewReplies !== undefined ? { replies: reviewReplies } : {}),
+            // PR にすでにあるレビュー・コメント（PBI-144）
+            ...(reviewExisting !== undefined ? { existing: reviewExisting } : {}),
             // 修正の子タスクを追加するときは、これまでの子タスクを渡す（PBI-31）
             ...(step === "split" ? { subtasks: this.subtaskSummaries(task) } : {}),
             // 対象リポジトリの無いタスクを分けるときは、子タスクに付けられるリポジトリを渡す（PBI-73）

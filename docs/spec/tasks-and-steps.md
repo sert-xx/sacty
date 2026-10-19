@@ -442,6 +442,12 @@ AI は `guardian_agent`（無ければ `default_agent`）。実行ごとに `wor
 
 - 工程は `review` だけ。実行の前に、対象の PR の先頭と起点のコミット、PR の作者の login を記録する（`ReviewTargetResolved`。作者を読めなければ空）。
   PR の先頭のコミットのコードと、差分の全体（`/sacty-review` に読み取り専用でマウント。指示には先頭の 100000 文字）を渡す。
+- PR にすでにあるレビュー：実行の前に、PR のレビュー・行へのコメント・通常のコメント（bot の投稿と、このタスクのアカウントの目印付きの投稿＝前回の
+  投稿は除く。他のレビュアーの指摘と作者の返答）を読み、指示とは分けた JSON のデータ（`existingReviews`。古い順。新しい 30 件
+  （`EXISTING_IN_PROMPT`）、1 件 2000 文字）で渡す（初回も再レビューも）。指示には、レビューの前に既存の指摘の状況を確かめること、既存の指摘と
+  同じ箇所・同じ問題を繰り返さないこと、判定は繰り返さなかった指摘を除いて決めること、省いた件数を総評に短く書くこと（本文は写さない）を書く。
+  無ければ「まだ無い」と渡す。読めなければ、そう指示に書いてレビューは止めず、理由をデーモンのログに残す（秘密の値は伏せる）。
+  再レビューの作者の返答（下）は、同じ読み出しから選ぶ（作者を読めなければ、返答だけ読めなかったものにする）。
 - 投稿は sacty がする。指示には、既定のスキル `review-dispatch`（流れは `pr-review`）と `writing` を使うこと、エージェントは自分で投稿しない
   （gh・GitHub の API で PR に書かない）こと、スキルと食い違えば指示の出力の形を優先することを書く。判定・作者への @ メンション・AI による
   投稿である旨は sacty が付けるので、エージェントには書かせない。
@@ -476,4 +482,4 @@ AI は `guardian_agent`（無ければ `default_agent`）。実行ごとに `wor
   決まり（スキル `writing` の順）に従わせ、決まりが無ければ日本語にする。
 - PR の確認（60秒ごと）で、終わっていないレビューのタスクの PR がマージ・クローズされていたら、タスクを中止する。
 
-コード: `apps/daemon/src/service.ts`（`reviewOnlySteps`・`resolveReviewTarget`・`reviewReplies`・`postReview`・`rereview`・`checkReviewPullRequests`）、`apps/daemon/src/prompts.ts`（`PR_DIFF_IN_PROMPT`・`extractReviewComments`・`buildReviewBody`・`MUST_TAG`・`SUGGESTION_TAG`）、`packages/core/src/events.ts`（`ReviewVerdict`）
+コード: `apps/daemon/src/service.ts`（`reviewOnlySteps`・`resolveReviewTarget`・`reviewFeedback`・`postReview`・`rereview`・`checkReviewPullRequests`）、`apps/daemon/src/prompts.ts`（`PR_DIFF_IN_PROMPT`・`existingReviewLines`・`EXISTING_IN_PROMPT`・`rereviewLines`・`extractReviewComments`・`buildReviewBody`・`MUST_TAG`・`SUGGESTION_TAG`）、`packages/core/src/events.ts`（`ReviewVerdict`）
