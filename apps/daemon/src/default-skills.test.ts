@@ -110,6 +110,15 @@ describe("既定の review スキルの、本文で示された文書（PBI-142�
     expect(text).toContain("差分の外でも範囲から外さない");
   });
 
+  it("文書の置き場はプロジェクトごとに違うので、特定の PF の名前を書かない", () => {
+    const files = markdownUnder(join(DEFAULT_CONTEXT_DIR, "skills/review"));
+    for (const { path, text } of files) {
+      expect(text, path).not.toMatch(
+        /\b(confluence|notion|google docs|sharepoint|wiki|jira|backlog|esa|kibela|qiita|box|dropbox)\b|コンフル/i,
+      );
+    }
+  });
+
   it("全文は親が取得して作業領域の外に写し、認証情報は求めない", () => {
     const text = read(linked);
     expect(text).toContain("対象と根拠の文書の全文を、親が取得する");
