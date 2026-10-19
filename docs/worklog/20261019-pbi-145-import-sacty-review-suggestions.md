@@ -1,9 +1,9 @@
 # sacty のレビューのタスクの指摘を、提案だけの回も元のタスクに届けて対応させる
 
 - 日付: 2026-10-19（UTC）
-- タスク: PBI-127
-- PR: なし
-- ブランチ: feat/pbi-127-sacty-review-import
+- タスク: PBI-145
+- PR: #159
+- ブランチ: feat/pbi-145-sacty-review-import
 - 関係する ADR: [sacty のレビューのタスクの投稿は、提案だけの回も元のタスクの PR の指摘として取り込む](../adr/20261019-1239-import-sacty-review-suggestions.md)
 
 ## 目的
