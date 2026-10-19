@@ -15,7 +15,7 @@ const ja = {
     templateNone: "なし",
     templateSetup: "Sacty セットアップ",
     templateSetupNote:
-      "リポジトリのエージェントの設定を検査し、足りないものを整える PR を作ります。題と内容は sacty が決めます。",
+      "リポジトリのエージェントの設定を検査し、足りないものを整える PR を作ります。題と内容は Sacty が決めます。",
     templateSetupHint:
       "検査するもの：エージェント向けの指示・テストの実行の仕方・テストに要るサービス・デプロイの確認のスキル。整っていて変更が要らなければ、PR を作らずに検査の結果だけを残します。",
     repository: "対象リポジトリ（任意）",
@@ -39,8 +39,8 @@ const ja = {
     submit: "作成する",
   },
   import: {
-    label: "sacty からエクスポートした JSON を選んでください。",
-    hint: "新しいプロジェクトとして作ります。対象がほかのプロジェクトと重なると、インポートしません。Slack の通知は sacty の設定にあり、ファイルには含みません。",
+    label: "Sacty からエクスポートした JSON を選んでください。",
+    hint: "新しいプロジェクトとして作ります。対象がほかのプロジェクトと重なると、インポートしません。Slack の通知は Sacty の設定にあり、ファイルには含みません。",
     submit: "インポートする",
   },
 };
@@ -60,7 +60,7 @@ const en: FormsMessages = {
     templateNone: "None",
     templateSetup: "Sacty setup",
     templateSetupNote:
-      "Checks the agent setup of the repository and opens a PR that fills in what is missing. sacty writes the title and description.",
+      "Checks the agent setup of the repository and opens a PR that fills in what is missing. Sacty writes the title and description.",
     templateSetupHint:
       "It checks the instructions for agents, how to run the tests, the services the tests need, and the deployment check skill. If nothing needs to change, it keeps the results of the check without a PR.",
     repository: "Target repository (optional)",
@@ -83,8 +83,8 @@ const en: FormsMessages = {
     submit: "Create",
   },
   import: {
-    label: "Choose a JSON file exported from sacty.",
-    hint: "It is created as a new project. If a target overlaps with another project, nothing is imported. Slack notifications are in the sacty settings and are not in the file.",
+    label: "Choose a JSON file exported from Sacty.",
+    hint: "It is created as a new project. If a target overlaps with another project, nothing is imported. Slack notifications are in the Sacty settings and are not in the file.",
     submit: "Import",
   },
 };

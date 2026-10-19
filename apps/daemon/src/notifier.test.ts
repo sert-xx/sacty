@@ -367,7 +367,7 @@ describe("sacty の設定の通知先（PBI-115）", () => {
       fetchImpl: api.fetchImpl,
     });
     await none.notify(task(), "completed");
-    await expect(none.test()).rejects.toThrow(/sacty の設定に、Slack の通知先が設定されていません/);
+    await expect(none.test()).rejects.toThrow(/Sacty の設定に、Slack の通知先が設定されていません/);
     expect(none.problems()).toEqual([]);
     const broken = new SlackNotifier({
       notification: () => {

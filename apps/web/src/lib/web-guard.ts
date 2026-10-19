@@ -66,7 +66,7 @@ function toHome(request: NextRequest): NextResponse {
 
 /** 断るときの画面。ヘッダーなどの画面の部品はデーモンに問い合わせるので使わず、決まった文だけを返す。 */
 function refusal(status: number, lang: string, title: string, text: string): NextResponse {
-  const html = `<!doctype html><html lang="${lang}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>sacty</title><style>body{font-family:system-ui,sans-serif;max-width:40rem;margin:4rem auto;padding:0 1rem;line-height:1.7;color:#222;background:#fff}@media (prefers-color-scheme:dark){body{color:#eee;background:#111}}code{font-family:ui-monospace,monospace}</style></head><body><h1>${escapeHtml(title)}</h1><p>${escapeHtml(text).replace(/`([^`]+)`/g, "<code>$1</code>")}</p></body></html>`;
+  const html = `<!doctype html><html lang="${lang}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Sacty</title><style>body{font-family:system-ui,sans-serif;max-width:40rem;margin:4rem auto;padding:0 1rem;line-height:1.7;color:#222;background:#fff}@media (prefers-color-scheme:dark){body{color:#eee;background:#111}}code{font-family:ui-monospace,monospace}</style></head><body><h1>${escapeHtml(title)}</h1><p>${escapeHtml(text).replace(/`([^`]+)`/g, "<code>$1</code>")}</p></body></html>`;
   return new NextResponse(html, {
     status,
     headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },

@@ -17,7 +17,7 @@ import { THEME_SCRIPT } from "@/lib/theme";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "sacty",
+  title: "Sacty",
   description: "AI software factory",
 };
 

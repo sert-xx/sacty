@@ -85,7 +85,7 @@ describe("取り込みの種類ごとの直近の取り込み（PBI-100）", () 
     expect(runs.map((r) => r.kind)).toEqual(["issues", "reviews", "tickets"]);
     expect(errors).toHaveLength(3);
     expect(messagesFor("ja").projects.intake.settingsUnreadable).toContain(
-      "sacty の設定を読めない",
+      "Sacty の設定を読めない",
     );
     expect(messagesFor("en").projects.intake.settingsUnreadable).toContain("cannot be read");
     // 理由はこの文の後に続ける（下の一覧には、定期の確認の前は出ないため）

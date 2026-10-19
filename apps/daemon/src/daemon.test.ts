@@ -1749,7 +1749,7 @@ describe("工程の実行と費用", () => {
     const warnings = resolved?.type === "ContextResolved" ? resolved.payload.warnings : [];
     expect(warnings.map((w) => renderMessage(w, "ja"))).toEqual([
       expect.stringContaining(
-        "「sacty-no-such-command-84」が、sacty を動かすホストに見つかりません",
+        "「sacty-no-such-command-84」が、Sacty を動かすホストに見つかりません",
       ),
     ]);
     // どのプロジェクトのものか（プロジェクトの名前）も残す（PBI-92）
@@ -9650,7 +9650,7 @@ describe("Slack の通知先は sacty の設定（PBI-115）", () => {
     expect(store.prefetched.at(-1)).toEqual(["claude-oauth-token", "op://Work/Slack/webhook"]);
     expect(service.status().warnings.map((w) => ja(w))).toEqual([
       expect.stringContaining(
-        "起動のときに、秘密情報（sacty の設定の通知先（Webhook の URL））を取り出せませんでした",
+        "起動のときに、秘密情報（Sacty の設定の通知先（Webhook の URL））を取り出せませんでした",
       ),
     ]);
     // 設定を保存し直すと、設定の警告だけを置き換える（API で保存すると取り出す）
@@ -9672,7 +9672,7 @@ describe("Slack の通知先は sacty の設定（PBI-115）", () => {
     await vi.waitFor(() =>
       expect(service.status().warnings.map((w) => ja(w))).toEqual([
         expect.stringContaining(
-          "sacty の設定を保存したときに、秘密情報（sacty の設定の通知先（Slack のトークン））を取り出せませんでした",
+          "Sacty の設定を保存したときに、秘密情報（Sacty の設定の通知先（Slack のトークン））を取り出せませんでした",
         ),
       ]),
     );
@@ -14018,7 +14018,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
     expect(task.status).toBe("paused");
     const text = ja(task.pausedMessage);
     expect(text).toContain(
-      `タスクブランチ ${taskBranchOf(id)} に、sacty が積んでいない変更があります（human-fix.ts, src/b.ts）`,
+      `タスクブランチ ${taskBranchOf(id)} に、Sacty が積んでいない変更があります（human-fix.ts, src/b.ts）`,
     );
     expect(text).not.toContain("requirements.md");
     // 起点（sacty がまだ実装を積んでいない）から、タスクブランチの先頭までを確かめた
@@ -15344,7 +15344,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       const chosen = service.get(reviewId)?.activity.find((e) => e.type === "StepsChosen");
       expect(chosen?.type === "StepsChosen" && chosen.payload.steps).toEqual(["review"]);
       expect(ja(chosen?.type === "StepsChosen" ? chosen.payload.reason : undefined)).toContain(
-        "sacty がほかのタスクで作った PR",
+        "Sacty がほかのタスクで作った PR",
       );
       expect(executor.calls[before]?.command.join(" ")).toContain("レビューエージェント");
       await service.runNext(reviewId);

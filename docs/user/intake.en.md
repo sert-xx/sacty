@@ -5,16 +5,16 @@
 # Issue, PR, and ticket intake
 
 sacty regularly imports GitHub issues and PRs and JIRA tickets and turns them into tasks. Intake settings are shared by all projects, and
-you set them in "sacty settings" (the user menu) in the web UI.
+you set them in "Sacty settings" (the user menu) in the web UI.
 
 ## Intake intervals
 
 Intake runs at a separate interval for each kind: "Issue intake", "PR review intake", and "Ticket intake".
-You set the interval in "Intake interval (seconds)" in each section of "sacty settings".
+You set the interval in "Intake interval (seconds)" in each section of "Sacty settings".
 
 - Enter an integer of 60 or more (seconds). If you leave it empty, it is 300 seconds. Values shorter than 60 or not integers cannot be saved, and the reason is shown in the web UI.
 - A changed interval takes effect from the next intake without stopping the daemon. When the daemon starts, every kind is imported right away.
-- When you save "sacty settings", the kinds that are On and have their labels and so on set are imported within 30 seconds (without waiting for the interval to pass).
+- When you save "Sacty settings", the kinds that are On and have their labels and so on set are imported within 30 seconds (without waiting for the interval to pass).
   After that, they are imported at the new interval. Kinds that are Off, or that do not have their labels and so on set, are not imported even when you save.
   If a kind is being imported when you save, the new intake starts at the check (every 30 seconds) after the current intake ends
   (if the intake takes long, it starts later than 30 seconds). For a kind whose intake is stopped, the field shows
@@ -29,7 +29,7 @@ You set the interval in "Intake interval (seconds)" in each section of "sacty se
 
 ## Issues
 
-- Open issues in the project's targets that have the "Label to import" in "Issue intake" of "sacty settings" are imported as tasks.
+- Open issues in the project's targets that have the "Label to import" in "Issue intake" of "Sacty settings" are imported as tasks.
   If no label is set, nothing is imported.
 - PRs are not imported even if they have the label to import. PRs are imported by "PR reviews" below (if you want sacty to implement a PR, turn it into an issue
   and import that, or create a task from the web UI). Tasks of PRs that were already imported continue as they are.
@@ -38,7 +38,7 @@ You set the interval in "Intake interval (seconds)" in each section of "sacty se
 
 ## PR reviews
 
-PRs are imported so that only their review is handed over ("PR review intake" in "sacty settings").
+PRs are imported so that only their review is handed over ("PR review intake" in "Sacty settings").
 
 - If you turn on "Import PRs that request my review", PRs that request a review personally from the GitHub account chosen for that host in the project
   are imported (requests to teams are excluded).
@@ -133,7 +133,7 @@ pbcopy < /dev/null
   key (such as `PAY`. Uppercase letters, digits, and `_`, starting with an uppercase letter). You can write more than one per project.
 - The same key on the same connection of a PF in `config.yaml` can be written in only one project. PFs in `platforms.yaml` of the context repository
   are identified together with the project, so you can write ticket sources with the same name and key in different projects (different connections).
-- Unfinished tickets with the label to import in "Ticket intake" of "sacty settings" (shared by all ticket sources) become tasks.
+- Unfinished tickets with the label to import in "Ticket intake" of "Sacty settings" (shared by all ticket sources) become tasks.
   You can turn this Off with "Import tickets".
 - The daemon searches only for the ticket keys and summaries. The Orchestrator reads the ticket through the gateway (and, for a subtask, its parent and the other subtasks),
   chooses the repository to work in from the project's targets, and writes the task title and summary. If it cannot choose, the task stops, and you can
@@ -143,7 +143,7 @@ pbcopy < /dev/null
 
 ## Running tasks in parallel
 
-Queued tasks run at the same time, oldest first, up to "Tasks to run at the same time" in "sacty settings" (1 to 10. 3 if empty).
+Queued tasks run at the same time, oldest first, up to "Tasks to run at the same time" in "Sacty settings" (1 to 10. 3 if empty).
 The more you allow, the more load on your machine and the more of your AI usage limits are consumed.
 
 ## Related pages

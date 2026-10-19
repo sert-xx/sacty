@@ -206,7 +206,7 @@ describe("ダッシュボードの欄の並び（PBI-118）", () => {
   it("仕組み・数字の定義・期間の境は、見出しの横の補足に出す（本文には出さない）", () => {
     show(base());
     expect(cardHint("costs")).toContain("Asia/Tokyo");
-    expect(cardHint("costs")).toContain("sacty を動かしているマシンの日付");
+    expect(cardHint("costs")).toContain("Sacty を動かしているマシンの日付");
     expect(cardHint("flow")).toContain("中央値");
     expect(cardHint("quality")).toContain("直近30日");
     expect(cardHint("queue")).toContain("10分");
@@ -440,7 +440,7 @@ describe("ダッシュボードの工程の待ち行列（PBI-118）", () => {
     await wait(60_000);
     expect(byId("queue-over")?.textContent).toContain("実行待ちが上限より多い状態が続いています。");
     expect(byId("queue-over")?.querySelector('a[href="/settings"]')?.textContent).toBe(
-      "sacty の設定で上限を変える",
+      "Sacty の設定で上限を変える",
     );
     expect(byId("queue-queued")?.className).toContain("text-warn");
     // 上限以下に戻れば消える
@@ -700,7 +700,7 @@ describe("ダッシュボードの Slack の通知を送れなかった理由（
     await wait();
     expect(box()?.textContent).toContain(problem);
     expect(box()?.querySelector('a[href="/settings"]')?.textContent).toBe(
-      "sacty の設定で Slack の通知を確かめる",
+      "Sacty の設定で Slack の通知を確かめる",
     );
     server = ok;
     await wait();

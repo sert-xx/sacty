@@ -30,8 +30,8 @@ Per-project settings (targets, GitHub accounts, the context repository, and so o
 | `web.auth` | Web UI sign-in. With `false`, you can use the web UI without opening the sign-in URL (for the risk and how to switch, see [CLI](cli.en.md#sacty-up)). Read only when `sacty up` starts | `true` |
 | `update_check` | Checks daily for a newer sacty and shows it in the web UI ([Updating sacty](getting-started.en.md#updating-sacty)). Set `false` where the internet is not reachable (GitHub is not contacted) | `true` |
 
-You set the intake interval for each kind of intake in "sacty settings" in the web UI, not in config.yaml ([Intake](intake.en.md#intake-intervals)).
-The days to keep memories are also set in "sacty settings" ([Viewing audits](audit.en.md#memories)).
+You set the intake interval for each kind of intake in "Sacty settings" in the web UI, not in config.yaml ([Intake](intake.en.md#intake-intervals)).
+The days to keep memories are also set in "Sacty settings" ([Viewing audits](audit.en.md#memories)).
 `github:` (`poll_interval_sec`) from earlier versions is not read even if written. You can delete it.
 
 If a setting is wrong, the web UI shows which setting (for example `providers.codex.auth.secret`) is wrong and why.

@@ -43,7 +43,7 @@ describe("監査の表示（PBI-124）", () => {
     expect(auditTargetText({ kind: "context", repo: "r", depth: 2 }, en).kind).toBe(
       "Context (2 layers up)",
     );
-    expect(auditTargetText({ kind: "sacty" }, ja)).toEqual({ kind: "sacty の既定のコンテキスト" });
+    expect(auditTargetText({ kind: "sacty" }, ja)).toEqual({ kind: "Sacty の既定のコンテキスト" });
   });
 
   it("再開の上限の初期値と、1件あたりの件数", () => {

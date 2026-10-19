@@ -35,7 +35,7 @@ const ja = {
     operation: "作業",
   } satisfies Record<StepKey, string>,
   start: {
-    sacty: "sacty",
+    sacty: "Sacty",
     github_issue: "GitHub Issue",
     github_pull_request: "GitHub PR",
     split: "タスク分割",
@@ -89,7 +89,7 @@ const ja = {
   } satisfies Record<AuthMode, string>,
   actor: {
     person: "人間",
-    sacty: "sacty",
+    sacty: "Sacty",
     orchestrator: "オーケストレーター",
     guardian: "ゴールガーディアン",
     agent: "工程エージェント",
@@ -131,8 +131,8 @@ const ja = {
     container: "実行中のコンテナ",
     workspace: "作業領域",
     session: "エージェントのセッション",
-    branch: "sacty が作ったブランチ",
-    pull_request: "sacty が作った PR",
+    branch: "Sacty が作ったブランチ",
+    pull_request: "Sacty が作った PR",
   } satisfies Record<CleanupTarget, string>,
   /** オーケストレーターのセッション（PBI-67）。 */
   orchestratorSession: {
@@ -254,7 +254,7 @@ const ja = {
       `PR を作らず、ブランチまで（${branch}・${commit}）`,
     NoChangesFound: "実装に変更が無いため、PR を作らずに承認待ち",
     BranchPushed: (branch: string, commit: string) =>
-      `sacty のブランチにプッシュ（${branch}・${commit}）`,
+      `Sacty のブランチにプッシュ（${branch}・${commit}）`,
     TaskBranchCreated: (branch: string, commit: string) =>
       `タスクブランチを作成（${branch}・${commit}）`,
     StepBranchPushed: (step: string, branch: string, commit: string) =>
@@ -276,7 +276,7 @@ const ja = {
       final: string,
       fallback?: "deleted" | "unreadable",
     ) =>
-      `PR #${number} が人の直した内容でマージされ、承認${by ? `（${by}）` : ""}（${submitted} → ${final}）${fallback === "deleted" ? "。成果のファイルが消されていたため、sacty の版を承認済みにした" : fallback === "unreadable" ? "。成果のファイルを読めなかったため、sacty の版を承認済みにした" : ""}`,
+      `PR #${number} が人の直した内容でマージされ、承認${by ? `（${by}）` : ""}（${submitted} → ${final}）${fallback === "deleted" ? "。成果のファイルが消されていたため、Sacty の版を承認済みにした" : fallback === "unreadable" ? "。成果のファイルを読めなかったため、Sacty の版を承認済みにした" : ""}`,
     PullRequestClosed: (number: number) => `PR #${number} がマージされずに閉じられた・判断待ち`,
     PullRequestReopened: (number: number) => `PR #${number} が開き直された・マージ待ち`,
     IssueCommented: (url: string) => `調査の結果を Issue にコメントした（${url}）`,
@@ -430,7 +430,7 @@ const ja = {
       `監査の予算の上限に達したため、監査を一時停止した（${used} / ${cap}）`,
     AuditCapRaised: (cap: string) => `監査の予算の上限を ${cap} に上げて再開した`,
     AuditProposalAdopted: (withTask: boolean): string =>
-      withTask ? "改修の提案を採用し、改修のタスクを作った" : "改修の提案を採用した（sacty 宛て）",
+      withTask ? "改修の提案を採用し、改修のタスクを作った" : "改修の提案を採用した（Sacty 宛て）",
     AuditProposalRejected: (reason: string) => `改修の提案を却下した：${reason}`,
     AuditMemoryDeleted: (reason: "person" | "capacity" | "expired" | "promoted"): string =>
       reason === "person"
@@ -461,7 +461,7 @@ const en: LabelMessages = {
     operation: "Operation",
   },
   start: {
-    sacty: "sacty",
+    sacty: "Sacty",
     github_issue: "GitHub Issue",
     github_pull_request: "GitHub PR",
     split: "Task split",
@@ -510,7 +510,7 @@ const en: LabelMessages = {
   },
   actor: {
     person: "person",
-    sacty: "sacty",
+    sacty: "Sacty",
     orchestrator: "Orchestrator",
     guardian: "Goal Guardian",
     agent: "step agent",
@@ -552,8 +552,8 @@ const en: LabelMessages = {
     container: "Running container",
     workspace: "Workspace",
     session: "Agent sessions",
-    branch: "Branch created by sacty",
-    pull_request: "PR opened by sacty",
+    branch: "Branch created by Sacty",
+    pull_request: "PR opened by Sacty",
   },
   orchestratorSession: {
     reason: {
@@ -644,7 +644,7 @@ const en: LabelMessages = {
       `PR opened or updated (#${number} · ${branch} · ${commit})`,
     branchPushed: (branch, commit) => `No PR; branch only (${branch} · ${commit})`,
     NoChangesFound: "The implementation changed nothing, so no PR was opened; awaiting approval",
-    BranchPushed: (branch, commit) => `Pushed to sacty branch (${branch} · ${commit})`,
+    BranchPushed: (branch, commit) => `Pushed to Sacty branch (${branch} · ${commit})`,
     TaskBranchCreated: (branch, commit) => `Created the task branch (${branch} · ${commit})`,
     StepBranchPushed: (step, branch, commit) =>
       `Pushed the ${step} file to a branch (${branch} · ${commit})`,
@@ -658,7 +658,7 @@ const en: LabelMessages = {
     PullRequestMergedOutdated: (number, by) =>
       `PR #${number} was merged with content older than the latest submission${by ? ` (${by})` : ""} · needs you`,
     PullRequestMergedEdited: (number, by, submitted, final, fallback) =>
-      `PR #${number} was merged with a person's edits and approved${by ? ` (${by})` : ""} (${submitted} → ${final})${fallback === "deleted" ? ". The file was deleted, so sacty's version was approved" : fallback === "unreadable" ? ". The file could not be read, so sacty's version was approved" : ""}`,
+      `PR #${number} was merged with a person's edits and approved${by ? ` (${by})` : ""} (${submitted} → ${final})${fallback === "deleted" ? ". The file was deleted, so Sacty's version was approved" : fallback === "unreadable" ? ". The file could not be read, so Sacty's version was approved" : ""}`,
     PullRequestClosed: (number) => `PR #${number} closed without merging · needs you`,
     PullRequestReopened: (number) => `PR #${number} reopened · awaiting merge`,
     IssueCommented: (url) => `Posted the investigation result to the issue (${url})`,
@@ -788,7 +788,7 @@ const en: LabelMessages = {
       `Paused the audit because it reached its budget cap (${used} / ${cap})`,
     AuditCapRaised: (cap) => `Raised the audit budget cap to ${cap} and resumed`,
     AuditProposalAdopted: (withTask) =>
-      withTask ? "Adopted a proposal and created a fix task" : "Adopted a proposal (for sacty)",
+      withTask ? "Adopted a proposal and created a fix task" : "Adopted a proposal (for Sacty)",
     AuditProposalRejected: (reason) => `Rejected a proposal: ${reason}`,
     AuditMemoryDeleted: (reason) =>
       reason === "person"

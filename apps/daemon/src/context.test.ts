@@ -1389,10 +1389,10 @@ describe("エージェントの設定の合成（PBI-24）", () => {
     // サンドボックスも sacty が決める（コンテナの中では Codex のサンドボックスを作れない。PBI-40）
     expect(codex.warnings.map(ja)).toEqual([
       expect.stringMatching(
-        /^sacty-default@\w{7} の agents\/codex\/config.toml の「sandbox_mode」は sacty が決める項目/,
+        /^sacty-default@\w{7} の agents\/codex\/config.toml の「sandbox_mode」は Sacty が決める項目/,
       ),
       expect.stringMatching(
-        /^sacty-default@\w{7} の agents\/codex\/config.toml の「approval_policy」は sacty が決める項目/,
+        /^sacty-default@\w{7} の agents\/codex\/config.toml の「approval_policy」は Sacty が決める項目/,
       ),
       expect.stringMatching(
         /^https:\/\/example.com\/p.git@\w{7} の agents\/codex\/config.toml の「sandbox_workspace_write」/,
@@ -1472,7 +1472,7 @@ describe("エージェントの設定の合成（PBI-24）", () => {
     expect(existsSync(join(codex.dir, "agents"))).toBe(false);
     expect(codex.warnings.map(ja)).toEqual([
       expect.stringMatching(
-        /^sacty-default@\w{7} の agents\/codex\/ の「auth.json」は sacty が決める項目/,
+        /^sacty-default@\w{7} の agents\/codex\/ の「auth.json」は Sacty が決める項目/,
       ),
       expect.stringMatching(/agents\/codex\/ の「skills\/x\/SKILL.md」/),
     ]);
@@ -2107,7 +2107,7 @@ describe("段階のサブエージェントの定義（PBI-119）", () => {
     expect(readFileSync(join(claude.dir, "agents/reviewer.md"), "utf8")).toContain("reviewer");
     expect(claude.warnings.map(ja)).toEqual([
       expect.stringMatching(
-        /^https:\/\/example.com\/p.git@\w{7} の agents\/claude\/agents\/standard.md は、sacty が段階のサブエージェントの定義として作るため、写しませんでした。$/,
+        /^https:\/\/example.com\/p.git@\w{7} の agents\/claude\/agents\/standard.md は、Sacty が段階のサブエージェントの定義として作るため、写しませんでした。$/,
       ),
     ]);
     claude.dispose();
@@ -2135,7 +2135,7 @@ describe("段階の固定名の層のファイルと、Codex の宣言（PR #129
     expect(existsSync(join(codex.dir, "agents/helper.toml"))).toBe(true);
     expect(codex.warnings.map(ja)).toEqual([
       expect.stringMatching(
-        /^https:\/\/example.com\/p.git@\w{7} の agents\/codex\/agents\/standard.toml は、sacty が段階のサブエージェントの定義として作るため、写しませんでした。$/,
+        /^https:\/\/example.com\/p.git@\w{7} の agents\/codex\/agents\/standard.toml は、Sacty が段階のサブエージェントの定義として作るため、写しませんでした。$/,
       ),
     ]);
     codex.dispose();
@@ -2182,10 +2182,10 @@ describe("段階の固定名の層のファイルと、Codex の宣言（PR #129
     expect(readFileSync(join(codex.dir, "agents/standard.toml"), "utf8")).toContain("sacty-model");
     expect(codex.warnings.map(ja)).toEqual([
       expect.stringMatching(
-        /agents\/codex\/config.toml の「agents.standard」は sacty が決める項目/,
+        /agents\/codex\/config.toml の「agents.standard」は Sacty が決める項目/,
       ),
       expect.stringMatching(
-        /agents\/codex\/config.toml の「agents.advanced」は sacty が決める項目/,
+        /agents\/codex\/config.toml の「agents.advanced」は Sacty が決める項目/,
       ),
     ]);
     codex.dispose();
@@ -2222,7 +2222,7 @@ describe("Codex の定義の中の name が段階のとき（PR #129 再レビ�
     expect(existsSync(join(codex.dir, "agents/broken.toml"))).toBe(true);
     expect(codex.warnings.map(ja)).toEqual([
       expect.stringMatching(
-        /^https:\/\/example.com\/p.git@\w{7} の agents\/codex\/agents\/a-reviewer.toml は、sacty が段階のサブエージェントの定義として作るため、写しませんでした。$/,
+        /^https:\/\/example.com\/p.git@\w{7} の agents\/codex\/agents\/a-reviewer.toml は、Sacty が段階のサブエージェントの定義として作るため、写しませんでした。$/,
       ),
     ]);
     codex.dispose();
@@ -2261,9 +2261,9 @@ describe("Codex の定義の中の name が段階のとき（PR #129 再レビ�
     expect(existsSync(join(codex.dir, "agents/helper.toml"))).toBe(false);
     expect(existsSync(join(codex.dir, "agents/other.toml"))).toBe(true);
     expect(codex.warnings.map(ja)).toEqual([
-      expect.stringMatching(/agents\/codex\/config.toml の「agents.helper」は sacty が決める項目/),
+      expect.stringMatching(/agents\/codex\/config.toml の「agents.helper」は Sacty が決める項目/),
       expect.stringMatching(
-        /agents\/codex\/agents\/helper.toml は、sacty が段階のサブエージェントの定義として作るため/,
+        /agents\/codex\/agents\/helper.toml は、Sacty が段階のサブエージェントの定義として作るため/,
       ),
     ]);
     codex.dispose();

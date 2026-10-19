@@ -18,7 +18,7 @@ const ja = {
     empty: "終わっていないタスクはありません。",
   },
   notification: {
-    openSettings: "sacty の設定で Slack の通知を確かめる",
+    openSettings: "Sacty の設定で Slack の通知を確かめる",
   },
   /** あなたの出番（PBI-118）。 */
   attention: {
@@ -58,7 +58,7 @@ const ja = {
   costs: {
     title: "費用と予算",
     hint: (timeZone: string) =>
-      `今日と、今日を含む直近7日の費用です。完了・中止したタスクの分も含みます。期間の境は、sacty を動かしているマシンの日付（${timeZone}）です。`,
+      `今日と、今日を含む直近7日の費用です。完了・中止したタスクの分も含みます。期間の境は、Sacty を動かしているマシンの日付（${timeZone}）です。`,
     today: "今日",
     days7: "直近7日",
     actual: "実請求",
@@ -80,7 +80,7 @@ const ja = {
   /** 流量（PBI-118）。 */
   flow: {
     title: "流量",
-    hint: "完了・中止の件数と、完了したタスクの作成から完了までの時間の中央値です。期間は今日を含み、境は sacty を動かしているマシンの日付です。",
+    hint: "完了・中止の件数と、完了したタスクの作成から完了までの時間の中央値です。期間は今日を含み、境は Sacty を動かしているマシンの日付です。",
     table: "期間ごとの完了・中止",
     period: "期間",
     days7: "直近7日",
@@ -94,7 +94,7 @@ const ja = {
   /** 品質の信号（PBI-118）。 */
   quality: {
     title: "品質の信号",
-    hint: "今日を含む直近30日の回数です。境は sacty を動かしているマシンの日付です。",
+    hint: "今日を含む直近30日の回数です。境は Sacty を動かしているマシンの日付です。",
     counts: "品質の信号の回数",
     changesRequested: "人の差し戻し",
     changesRequestedHint: "承認の画面で、人が成果物を差し戻した回数です。",
@@ -119,7 +119,7 @@ const ja = {
     queued: "実行待ち",
     ratio: (running: number, max: number) => `${running} / ${max}`,
     over: "実行待ちが上限より多い状態が続いています。",
-    openSettings: "sacty の設定で上限を変える",
+    openSettings: "Sacty の設定で上限を変える",
   },
 };
 
@@ -139,7 +139,7 @@ const en: DashboardMessages = {
     empty: "There are no open tasks.",
   },
   notification: {
-    openSettings: "Check Slack notifications in sacty settings",
+    openSettings: "Check Slack notifications in Sacty settings",
   },
   attention: {
     title: "Needs you",
@@ -175,7 +175,7 @@ const en: DashboardMessages = {
   costs: {
     title: "Cost and budget",
     hint: (timeZone) =>
-      `Cost for today and the last 7 days including today, including completed and cancelled tasks. Days are split by the date of the machine running sacty (${timeZone}).`,
+      `Cost for today and the last 7 days including today, including completed and cancelled tasks. Days are split by the date of the machine running Sacty (${timeZone}).`,
     today: "Today",
     days7: "Last 7 days",
     actual: "Billed",
@@ -195,7 +195,7 @@ const en: DashboardMessages = {
   },
   flow: {
     title: "Throughput",
-    hint: "Completed and cancelled counts, and the median time from creation to completion. Periods include today and are split by the date of the machine running sacty.",
+    hint: "Completed and cancelled counts, and the median time from creation to completion. Periods include today and are split by the date of the machine running Sacty.",
     table: "Completed and cancelled by period",
     period: "Period",
     days7: "Last 7 days",
@@ -208,7 +208,7 @@ const en: DashboardMessages = {
   },
   quality: {
     title: "Quality signals",
-    hint: "Counts for the last 30 days including today, split by the date of the machine running sacty.",
+    hint: "Counts for the last 30 days including today, split by the date of the machine running Sacty.",
     counts: "Quality signal counts",
     changesRequested: "Changes requested by a person",
     changesRequestedHint: "How many times a person sent a deliverable back on the review screen.",
@@ -235,7 +235,7 @@ const en: DashboardMessages = {
     queued: "Waiting",
     ratio: (running, max) => `${running} / ${max}`,
     over: "More tasks than the limit have been waiting to run.",
-    openSettings: "Change the limit in sacty settings",
+    openSettings: "Change the limit in Sacty settings",
   },
 };
 

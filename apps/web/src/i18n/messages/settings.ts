@@ -3,7 +3,7 @@
  * 仕組みの説明は *Hint に書き、補足の印で出す（PBI-117）。
  */
 const ja = {
-  title: "sacty の設定",
+  title: "Sacty の設定",
   hint: "すべてのプロジェクトに共通の設定です。",
   loading: "読み込み中…",
   intakeTitle: "Issue の取り込み",
@@ -26,7 +26,7 @@ const ja = {
   reviewHint:
     "取り込んだ PR はレビューだけを行い、結果を PR に投稿します。実装や PR の作成はしません。レビューの依頼は、プロジェクトで選んだ GitHub アカウントへの個人の依頼だけです。",
   reviewLabelHint:
-    "レビュー用のラベルを設定していると、sacty が作る PR にもこのラベルを付け、別のタスクでレビューします（取り込みが Off の間も付けます）。直す点があれば、PR を作ったタスクが直します。取り込むラベルと同じ名前にもできます。",
+    "レビュー用のラベルを設定していると、Sacty が作る PR にもこのラベルを付け、別のタスクでレビューします（取り込みが Off の間も付けます）。直す点があれば、PR を作ったタスクが直します。取り込むラベルと同じ名前にもできます。",
   reviewRequested: "自分にレビューが依頼された PR を取り込む",
   reviewLabel: "PR のレビュー用のラベル",
   reviewPlaceholder: "例：sacty-review",
@@ -88,7 +88,7 @@ const ja = {
   saved: "保存しました。",
   secretsTitle: "秘密情報",
   secretsHint:
-    "sacty up の起動時と、sacty やプロジェクトの設定を保存したときに、使う秘密情報をまとめて取り出します。1Password にサインインし直したときや参照を直したときは、取り出し直してください。コンテキストリポジトリに後から足した秘密情報は、使うときに取り出します。",
+    "sacty up の起動時と、Sacty やプロジェクトの設定を保存したときに、使う秘密情報をまとめて取り出します。1Password にサインインし直したときや参照を直したときは、取り出し直してください。コンテキストリポジトリに後から足した秘密情報は、使うときに取り出します。",
   secretsFetch: "秘密情報を取り出し直す",
   secretsFetching: "取り出しています…",
   /** unread は、読めなかったプロジェクトのコンテキストの数（その中の秘密情報は数に入らず、確かめていない。PBI-107）。 */
@@ -108,7 +108,7 @@ const ja = {
 export type SettingsMessages = typeof ja;
 
 const en: SettingsMessages = {
-  title: "sacty settings",
+  title: "Sacty settings",
   hint: "Shared by all projects.",
   loading: "Loading…",
   intakeTitle: "Issue intake",
@@ -131,7 +131,7 @@ const en: SettingsMessages = {
   reviewHint:
     "Imported PRs are only reviewed, and the review is posted to the PR. No implementation and no PR. Only reviews requested from you personally (the GitHub account chosen in the project) count.",
   reviewLabelHint:
-    "When the review label is set, sacty also adds this label to the PRs it creates (even while importing them is off), so another task reviews them. If changes are needed, the task that created the PR makes them. The review label can be the same as the label to import.",
+    "When the review label is set, Sacty also adds this label to the PRs it creates (even while importing them is off), so another task reviews them. If changes are needed, the task that created the PR makes them. The review label can be the same as the label to import.",
   reviewRequested: "Import PRs that request my review",
   reviewLabel: "Label for PR reviews",
   reviewPlaceholder: "e.g. sacty-review",
@@ -192,7 +192,7 @@ const en: SettingsMessages = {
   saved: "Saved.",
   secretsTitle: "Secrets",
   secretsHint:
-    "sacty up gets the secrets it uses all at once at startup and when you save the sacty or project settings. Get them again after you sign in to 1Password again or fix a reference. Secrets added to a context repository later are fetched when they are used.",
+    "sacty up gets the secrets it uses all at once at startup and when you save the Sacty or project settings. Get them again after you sign in to 1Password again or fix a reference. Secrets added to a context repository later are fetched when they are used.",
   secretsFetch: "Get secrets again",
   secretsFetching: "Getting…",
   secretsResult: (ok, total, unread = 0) => {

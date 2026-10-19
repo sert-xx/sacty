@@ -5,7 +5,7 @@
 # Slack notifications
 
 sacty notifies Slack when you are needed (awaiting approval, Escalation, Pause) and when a task finishes. In "Slack notifications" in the
-"sacty settings" of the web UI (user menu), choose how to send and the language (Japanese or English. Japanese by default), and save. If you do not set it up, nothing is sent.
+"Sacty settings" of the web UI (user menu), choose how to send and the language (Japanese or English. Japanese by default), and save. If you do not set it up, nothing is sent.
 
 There is one destination, and tasks in every project are notified to it. Project settings have no notification fields.
 
@@ -39,17 +39,17 @@ If you do not set it up, nobody is mentioned.
   "Escalated in Requirements; your decision is needed". Completion notifications and a Pause before the steps are decided ("Paused before the steps were decided") have
   no step name.
 - Notifications also include a link to the approval page (and to the PR for steps approved on a PR). Nothing is sent when you pause a task yourself.
-- If a notification cannot be sent, the task is not stopped, and the reason is shown as a warning. It appears on the dashboard (with a link to the "sacty settings"), in the
-  "Slack notifications" section of the "sacty settings", and on the task list page (it is a warning for all of sacty, so it appears in the list of every project). It disappears the next time sending succeeds.
-- Use "Send a test notification" in the "sacty settings" to check that sending works (you can send after saving).
+- If a notification cannot be sent, the task is not stopped, and the reason is shown as a warning. It appears on the dashboard (with a link to the "Sacty settings"), in the
+  "Slack notifications" section of the "Sacty settings", and on the task list page (it is a warning for all of sacty, so it appears in the list of every project). It disappears the next time sending succeeds.
+- Use "Send a test notification" in the "Sacty settings" to check that sending works (you can send after saving).
 
 ## If you used an earlier sacty
 
 An earlier sacty set notifications per project. Notifications set in projects are no longer used and are not moved.
-Set the destination again in the "sacty settings" (nothing is sent until you do).
+Set the destination again in the "Sacty settings" (nothing is sent until you do).
 
 ## Related pages
 
-- [Importing issues, PRs, and tickets](intake.en.md) (the other items in the "sacty settings")
+- [Importing issues, PRs, and tickets](intake.en.md) (the other items in the "Sacty settings")
 - [Project settings](project-settings.en.md)
 - [Secrets](secrets.en.md)

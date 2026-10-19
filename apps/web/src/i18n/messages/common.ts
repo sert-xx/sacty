@@ -11,7 +11,7 @@ const ja = {
     stale: "デーモンに届きません。表示は最後に取得した内容です。",
     staleShort: "更新が止まっています",
     /** 画面の認証が無い（sacty を起動し直した。PBI-129）。 */
-    signedOut: "sacty が起動し直されました。端末に表示された新しい URL を開いてください。",
+    signedOut: "Sacty が起動し直されました。端末に表示された新しい URL を開いてください。",
     signedOutShort: "入り直してください",
   },
   daemon: {
@@ -24,7 +24,7 @@ const ja = {
   },
   /** 画面の認証（PBI-129）。認証が無いときは、画面の部品を使わずにこの文だけを出す。 */
   auth: {
-    title: "sacty に入る",
+    title: "Sacty に入る",
     signIn: "`sacty up` が端末に表示した URL を、このブラウザーで開いてください。",
     notConfigured: "画面の認証が設定されていません。`sacty up` で起動してください。",
     wrongHost: "この画面は http://127.0.0.1 か localhost で開いてください。",
@@ -44,8 +44,8 @@ const ja = {
     invalidSubmission: "提出回が不正です。画面を更新してください。",
     unreadableInput: "入力を読み取れませんでした。画面を更新してください。",
     chooseFile: "インポートするファイルを選んでください。",
-    fileTooLarge: "ファイルが大きすぎます。sacty からエクスポートしたファイルを選んでください。",
-    notJson: "JSON として読めません。sacty からエクスポートしたファイルを選んでください。",
+    fileTooLarge: "ファイルが大きすぎます。Sacty からエクスポートしたファイルを選んでください。",
+    notJson: "JSON として読めません。Sacty からエクスポートしたファイルを選んでください。",
   },
 };
 
@@ -57,11 +57,11 @@ const en: CommonMessages = {
   live: {
     stale: "The daemon cannot be reached. This shows what was last fetched.",
     staleShort: "Updates paused",
-    signedOut: "sacty was restarted. Open the new URL printed in the terminal.",
+    signedOut: "Sacty was restarted. Open the new URL printed in the terminal.",
     signedOutShort: "Sign in again",
   },
   daemon: {
-    notConfigured: "The daemon address is not set. Start sacty with `sacty up`.",
+    notConfigured: "The daemon address is not set. Start Sacty with `sacty up`.",
     unreachable: "Cannot reach the daemon. Check that `sacty up` is running.",
     checkInput: "Check your input.",
     checkFile: "Check the contents of the file.",
@@ -69,9 +69,9 @@ const en: CommonMessages = {
     atPath: (text, path) => `${text} (${path})`,
   },
   auth: {
-    title: "Sign in to sacty",
+    title: "Sign in to Sacty",
     signIn: "Open the URL that `sacty up` printed in the terminal in this browser.",
-    notConfigured: "Web UI sign-in is not set up. Start sacty with `sacty up`.",
+    notConfigured: "Web UI sign-in is not set up. Start Sacty with `sacty up`.",
     wrongHost: "Open this page at http://127.0.0.1 or localhost.",
   },
   action: {
@@ -88,8 +88,8 @@ const en: CommonMessages = {
     invalidSubmission: "Invalid submission. Reload the page.",
     unreadableInput: "Could not read the input. Reload the page.",
     chooseFile: "Choose a file to import.",
-    fileTooLarge: "The file is too large. Choose a file exported from sacty.",
-    notJson: "Not valid JSON. Choose a file exported from sacty.",
+    fileTooLarge: "The file is too large. Choose a file exported from Sacty.",
+    notJson: "Not valid JSON. Choose a file exported from Sacty.",
   },
 };
 

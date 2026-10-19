@@ -53,7 +53,7 @@ const ja = {
     notReproducedHelp:
       "不具合を再現できませんでした。再現の手がかりを書いて差し戻すか、中止してください。",
     prMergedOutdatedHelp:
-      "PR は sacty の提出と別の内容でマージされました。次の確認で、その内容を承認として進めます。",
+      "PR は Sacty の提出と別の内容でマージされました。次の確認で、その内容を承認として進めます。",
   },
   content: "内容",
   contentEmpty: "内容はありません。",
@@ -71,7 +71,7 @@ const ja = {
     result: "書き出し",
     exported: (n: number) => `${n}回目の提出を書き出した：`,
     failed: (n: number, reason: string) => `${n}回目の提出を書き出せませんでした：${reason}`,
-    failedHint: "成果は sacty に残り、取り込み元へのコメントは通常どおりです。",
+    failedHint: "成果は Sacty に残り、取り込み元へのコメントは通常どおりです。",
     pending: "承認した版を書き出しています…",
     paused: "再開すると書き出します。",
     previous: "前に書き出した先：",
@@ -135,7 +135,7 @@ const ja = {
   activity: "作業履歴",
   reproduction: {
     title: "再現の確かめ",
-    hint: "sacty が再現のテストを実行した結果です。テストが失敗すれば再現できたとして、実装へ進みます。",
+    hint: "Sacty が再現のテストを実行した結果です。テストが失敗すれば再現できたとして、実装へ進みます。",
     reproduced: "再現できた",
     notReproduced: "再現できなかった",
     command: (command: string, exitCode?: number) =>
@@ -208,10 +208,10 @@ const ja = {
     approvedHint: "凍結しています。変えるには、この工程へ差し戻します。",
     approvedEdited: (n: number) => `人が PR で直してマージ・${n}回目の提出`,
     approvedFallback: (n: number, deleted: boolean) =>
-      `人が直した成果が${deleted ? "消されていた" : "読めなかった"}ため、sacty の版を承認済み・${n}回目の提出`,
+      `人が直した成果が${deleted ? "消されていた" : "読めなかった"}ため、Sacty の版を承認済み・${n}回目の提出`,
     approvedFallbackHint:
-      "人が PR で直してマージしましたが、直した成果のファイルを取り込めなかったため、sacty が出した版を承認済みにして次の工程へ進めました。",
-    sactyVersion: "sacty が出した版を見る",
+      "人が PR で直してマージしましたが、直した成果のファイルを取り込めなかったため、Sacty が出した版を承認済みにして次の工程へ進めました。",
+    sactyVersion: "Sacty が出した版を見る",
     fromProposal: (id: string) => `${id}の変更案・再承認待ち`,
     stale: "前回の下書き",
     staleHint: "前の工程が承認された後に、作り直します。",
@@ -384,7 +384,7 @@ const en: TaskMessages = {
     notReproducedHelp:
       "The bug was not reproduced. Request changes with hints for reproducing it, or cancel the task.",
     prMergedOutdatedHelp:
-      "The PR was merged with content different from sacty's submission. On the next check, that content is approved and the task moves on.",
+      "The PR was merged with content different from Sacty's submission. On the next check, that content is approved and the task moves on.",
   },
   content: "Description",
   contentEmpty: "No description.",
@@ -402,7 +402,7 @@ const en: TaskMessages = {
     result: "Export",
     exported: (n) => `Exported submission ${n}: `,
     failed: (n, reason) => `Could not export submission ${n}: ${reason}`,
-    failedHint: "The deliverable is kept in sacty, and comments to the source work as usual.",
+    failedHint: "The deliverable is kept in Sacty, and comments to the source work as usual.",
     pending: "Exporting the approved version…",
     paused: "It will be exported when you resume.",
     previous: "Previously exported to: ",
@@ -461,7 +461,7 @@ const en: TaskMessages = {
   activity: "Activity",
   reproduction: {
     title: "Reproduction check",
-    hint: "Result of sacty running the reproduction test. If the test fails, the bug is reproduced and the task moves on to Implement.",
+    hint: "Result of Sacty running the reproduction test. If the test fails, the bug is reproduced and the task moves on to Implement.",
     reproduced: "Reproduced",
     notReproduced: "Not reproduced",
     command: (command, exitCode) =>
@@ -535,10 +535,10 @@ const en: TaskMessages = {
     approvedHint: "Frozen. To change it, request changes on this step.",
     approvedEdited: (n) => `Edited in the PR and merged · submission ${n}`,
     approvedFallback: (n, deleted) =>
-      `Edited file ${deleted ? "deleted" : "unreadable"}; sacty's version approved · submission ${n}`,
+      `Edited file ${deleted ? "deleted" : "unreadable"}; Sacty's version approved · submission ${n}`,
     approvedFallbackHint:
-      "A person edited and merged the PR, but the edited file could not be taken in, so the version sacty wrote was approved and the task moved on.",
-    sactyVersion: "Show sacty's version",
+      "A person edited and merged the PR, but the edited file could not be taken in, so the version Sacty wrote was approved and the task moved on.",
+    sactyVersion: "Show Sacty's version",
     fromProposal: (id) => `Change proposed in ${id} · awaiting re-approval`,
     stale: "Previous draft",
     staleHint: "Redone after the earlier step is approved.",
