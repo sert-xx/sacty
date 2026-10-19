@@ -6010,14 +6010,11 @@ export class TaskService {
   }
 
   /**
-   * いま sacty の PR に付けるラベル（PBI-88）。レビュー用のラベル（sacty の設定 reviewLabel。PBI-99）。設定していない、または
-   * レビュー用のラベルのトリアージを Off にしている（付けても取り込まれない）なら無い。
+   * いま sacty の PR に付けるラベル（PBI-88）。レビュー用のラベル（sacty の設定 reviewLabel。PBI-99）。設定していなければ無い。
+   * そのトリアージを Off にしていても付ける（一時的に Off にした間の PR も、On に戻したら取り込まれるように。PBI-139）。
    */
   private labelForPullRequests(): string | undefined {
-    const settings = this.deps.settings.get();
-    return settings.reviewLabel && !settings.triageOff?.includes("reviewLabel")
-      ? settings.reviewLabel
-      : undefined;
+    return this.deps.settings.get().reviewLabel || undefined;
   }
 
   /**
@@ -6059,7 +6056,7 @@ export class TaskService {
 
   /**
    * 付ける予定のまま記録の無い PR に、レビュー用のラベルを付ける（PBI-88・PBI-99）。PR の確認（60秒ごと）のたびに行う。中止した
-   * タスク・いまは付けない設定（レビュー用のラベルが無い・そのトリアージが Off）なら付けない（記録もしない）。
+   * タスク・いまは付けない設定（レビュー用のラベルが無い）なら付けない（記録もしない）。
    */
   private async resumePullRequestLabels(): Promise<void> {
     if (!this.labelForPullRequests()) return;
@@ -6084,7 +6081,7 @@ export class TaskService {
   /**
    * sacty が作った PR（実装の PR と、要求要件・設計の PR）に、レビュー用のラベル（sacty の設定 reviewLabel）を付ける
    * （PBI-88・PBI-99）。別のタスクとして取り込ませ、レビューだけを行わせるため。
-   * - レビュー用のラベルを設定していない、またはそのトリアージを Off にしている（取り込まれない）なら、付けない
+   * - レビュー用のラベルを設定していなければ、付けない（そのトリアージが Off でも付ける。PBI-139）
    * - 1つの PR につき1回だけ付ける（付けた・付けられなかった記録があれば、PR を更新しても付けない。人が外したラベルを
    *   付け直さないため）。同じ PR を付けている途中なら、重ねて付けない
    * - 付けられなければ、理由を台帳に残す（秘密の値は伏せる）。PR の作成は失敗にしない
