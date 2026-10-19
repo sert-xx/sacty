@@ -72,8 +72,8 @@ sacty が作る PR すべて（実装の PR と、要求要件・設計の PR）
 別のタスク（PR のレビューだけのタスク）として取り込ませ、作ったタスクとは別のコンテキストでレビューさせるため
 （[チケットの取り込みと GitHub](intake.md)）。取り込むラベル（`intakeLabel`）は付けない。
 
-- レビュー用のラベルを設定していない、またはそのトリアージを Off にしている（`triageOff` に `reviewLabel`。付けても取り込まれない）なら、
-  付けない。何も記録しない。
+- レビュー用のラベルを設定していなければ、付けない。何も記録しない。そのトリアージを Off にしていても（`triageOff` に `reviewLabel`）付ける
+  （一時的に Off にした間に作った PR も、On に戻したら取り込まれるように。Off の間は取り込まない）。
 - リポジトリにラベルが無ければ（`GET /repos/<owner>/<name>/labels/<ラベル>` が 404）、作ってから（`POST .../labels`、色 `0e8a16`）
   PR に付ける（`POST .../issues/<番号>/labels`）。作っている間にほかで作られた（422 の `already_exists`）ときは、そのまま付ける。
 - 付けたら `PullRequestLabeled`（`created`：ラベルを作った）、付けられなければ `PullRequestLabelFailed`（どの操作が失敗したか
@@ -86,7 +86,7 @@ sacty が作る PR すべて（実装の PR と、要求要件・設計の PR）
 - 付ける予定を、PR の公開の記録（`PullRequestPublished`・`StepPullRequestPublished` の `label`）に残してから付ける。公開を
   記録した後、付ける前に止まった（停止・クラッシュ）PR は、PR の確認（60秒ごと。再起動の後も）で、予定があり、付けた・付けられなかった
   記録が無く、開いている PR に付ける。付けるのは、そのときの設定のレビュー用のラベル。中止したタスク、いまは付けない設定（レビュー用の
-  ラベルが無い・そのトリアージが Off）なら付けない。同じ PR を付けている途中なら、重ねて付けない。
+  ラベルが無い）なら付けない。同じ PR を付けている途中なら、重ねて付けない。
 - それより前の記録の `intakeLabel`（取り込むラベルを付ける予定）は、読み込めるが、付ける予定としては扱わない（台帳は書き換えない）。
 
 コード: `apps/daemon/src/service.ts`（`labelPullRequest`・`labelDue`・`resumePullRequestLabels`・`publishStepPullRequest`・`publish`）、`apps/daemon/src/github.ts`（`GitHubPullRequests.addLabel`）、`packages/core/src/projection.ts`（`pullRequestLabels`）

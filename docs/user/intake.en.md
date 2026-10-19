@@ -71,7 +71,8 @@ If the "Label for PR reviews" is set, sacty adds that label to every PR it creat
   implementation task. Its findings reach the creating task in the same way.
 - The label is added once per PR. Updating the PR with fixes does not add it again or create a new review task (to have it reviewed again,
   use "Review again" on the review task). A label that someone removed is not added again either.
-- If "Import PRs with the review label" is Off, the label is not added (because the PR would not be imported).
+- Even if "Import PRs with the review label" is Off, the label is still added. While it is Off, the PRs are not imported; once you turn it back On, they are
+  (PRs opened while it was temporarily Off are not missed).
 
 ## JIRA tickets
 

@@ -15214,11 +15214,41 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       again.close();
     });
 
-    it("レビュー用のラベルを設定していない・そのトリアージを Off にしているなら、付けずに PR を作る（取り込むラベルは付けない。PBI-99）", async () => {
+    it("レビュー用のラベルのトリアージを Off にしていても、要求要件・設計の PR と実装の PR に付ける（On に戻したら取り込まれる。PBI-139）", async () => {
+      const settings = new MemorySettingsStore({
+        intakeLabel: "sacty",
+        reviewLabel: "sacty-review",
+        triageOff: ["reviewLabel", "issues"],
+      });
+      const pulls = new FakePulls();
+      const made = await start([out("# 要求要件 v1"), design(), implement(), review()], {
+        pulls,
+        settings,
+      });
+      await merge(made, "requirements");
+      await made.service.runNext(made.id);
+      await merge(made, "design");
+      await drain(made.service);
+      expect(pulls.labels.map((l) => [l.number, l.label])).toEqual([
+        [7, "sacty-review"],
+        [8, "sacty-review"],
+        [9, "sacty-review"],
+      ]);
+      expect(taskOf(made.service, made.id).pullRequestLabels?.map((l) => l.number)).toEqual([
+        7, 8, 9,
+      ]);
+      // Off の間は、ラベルを付けた sacty の PR も取り込まない。On に戻したら、レビューだけのタスクとして取り込む
+      const labeled = { ...labeledPr(7), review: "label" as const };
+      expect(made.service.importIssues([labeled])).toEqual([]);
+      made.service.saveSettings({ intakeLabel: "sacty", reviewLabel: "sacty-review" });
+      expect(made.service.importIssues([labeled]).map((t) => t.source?.review)).toEqual(["sacty"]);
+      made.activity.close();
+    });
+
+    it("レビュー用のラベルを設定していないなら、付けずに PR を作る（取り込むラベルは付けない。PBI-99）", async () => {
       for (const settings of [
         new MemorySettingsStore({}),
         new MemorySettingsStore({ intakeLabel: "sacty" }),
-        new MemorySettingsStore({ reviewLabel: "sacty-review", triageOff: ["reviewLabel"] }),
       ]) {
         const pulls = new FakePulls();
         const { activity, service, id } = await start([out("# 要求要件 v1")], { pulls, settings });
@@ -15600,8 +15630,10 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       expect(off.pulls.labels).toEqual([]);
       expect(types(off.service, id).at(-1)).toBe("StepSubmitted");
       off.activity.close();
-      // 起動し直した後の PR の確認で付けて記録する。次の確認では重ねて付けない
-      const again = await restart();
+      // 起動し直した後の PR の確認で付けて記録する（レビュー用のラベルのトリアージが Off でも。PBI-139）。次の確認では重ねて付けない
+      const offTriage = () =>
+        new MemorySettingsStore({ reviewLabel: "sacty-review", triageOff: ["reviewLabel"] });
+      const again = await restart(offTriage());
       expect(again.pulls.labels.map((l) => [l.number, l.label])).toEqual([[7, "sacty-review"]]);
       expect(types(again.service, id).at(-1)).toBe("PullRequestLabeled");
       await again.service.checkPullRequests();
@@ -15626,7 +15658,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         label: "sacty-review",
       });
       expect(types(made.service, made.id).at(-1)).toBe("StepSubmitted");
-      const resumed = await restart();
+      const resumed = await restart(offTriage());
       expect(resumed.pulls.labels.map((l) => l.number)).toEqual([9]);
       expect(taskOf(resumed.service, made.id).pullRequestLabels?.map((l) => l.number)).toEqual([
         7, 8, 9,
