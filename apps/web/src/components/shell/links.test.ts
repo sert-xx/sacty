@@ -50,7 +50,7 @@ const hrefs = () =>
 const current = () => [...container.querySelectorAll('nav a[aria-current="page"]')].map(label);
 
 describe("サイドメニューのリンクと強調（PBI-114）", () => {
-  it("プロジェクトの画面では、ダッシュボード・表示しているプロジェクトのタスクの一覧・監査・設定へ移る", () => {
+  it("プロジェクトの画面では、表示しているプロジェクトのタスクの一覧・監査・設定へ移る（ダッシュボードは出さない。PBI-141）", () => {
     for (const p of [
       "/projects/p1/tasks",
       "/projects/p1/settings",
@@ -60,7 +60,6 @@ describe("サイドメニューのリンクと強調（PBI-114）", () => {
     ]) {
       render(h(RailNav, { pathname: p }));
       expect(hrefs(), p).toEqual([
-        ["ダッシュボード", "/dashboard"],
         ["タスク", "/projects/current/tasks"],
         ["監査", "/projects/current/audit"],
         ["設定", "/projects/current"],
@@ -68,18 +67,21 @@ describe("サイドメニューのリンクと強調（PBI-114）", () => {
     }
   });
 
-  it("「すべてのプロジェクト」の画面では、タスク・監査を出さず、設定はプロジェクトの一覧へ移る（どのプロジェクトにも飛ばない）", () => {
+  it("「すべてのプロジェクト」の画面では、タスク・監査を出さず、設定はプロジェクトの一覧へ移る（どのプロジェクトにも飛ばない。ダッシュボードは出さない）", () => {
     for (const p of ["/dashboard", "/projects", "/settings"]) {
       render(h(RailNav, { pathname: p }));
-      expect(hrefs(), p).toEqual([
-        ["ダッシュボード", "/dashboard"],
-        ["設定", "/projects"],
-      ]);
+      expect(hrefs(), p).toEqual([["設定", "/projects"]]);
+    }
+  });
+
+  it("ダッシュボードの画面では、サイドメニューのどれも強調しない（PBI-141）", () => {
+    for (const pathname of ["/dashboard", "/"]) {
+      render(h(RailNav, { pathname }));
+      expect(current(), pathname).toEqual([]);
     }
   });
 
   it.each([
-    ["/dashboard", "ダッシュボード"],
     ["/projects/p1/tasks", "タスク"],
     ["/tasks/t1", "タスク"],
     ["/tasks/t1/review", "タスク"],
@@ -91,11 +93,13 @@ describe("サイドメニューのリンクと強調（PBI-114）", () => {
     expect(current()).toEqual([label]);
   });
 
-  it("狭いサイドメニューで「ダッシュボード」を「ダッシュ／ボード」の所でだけ折り返す", () => {
-    render(h(RailNav, { pathname: "/dashboard" }));
-    const name = container.querySelector('nav a[href="/dashboard"] span') as HTMLElement;
-    expect(name.textContent).toBe("ダッシュ\u200bボード");
+  it("狭いサイドメニューの名称は、幅の無い空白の所でだけ折り返す", () => {
+    render(h(RailNav, { pathname: "/projects/p1/tasks" }));
+    const name = container.querySelector(
+      'nav a[href="/projects/current/tasks"] span',
+    ) as HTMLElement;
     expect(name.className).toContain("[word-break:keep-all]");
+    expect(container.querySelector('nav a[href="/dashboard"]')).toBeNull();
   });
 
   it("タスクという名前のプロジェクトの設定は、設定を強調する（ID の部分で見分けない）", () => {

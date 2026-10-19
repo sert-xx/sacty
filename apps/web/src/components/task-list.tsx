@@ -114,6 +114,15 @@ export function LiveTaskList({
                       >
                         {task.title}
                       </Link>
+                      {/* 作業するリポジトリ（repo だけ。PBI-141） */}
+                      {task.repoName && (
+                        <span
+                          className="mt-0.5 block font-mono text-xs text-muted-foreground [overflow-wrap:anywhere]"
+                          data-testid={`task-repo-${task.id}`}
+                        >
+                          {task.repoName}
+                        </span>
+                      )}
                     </td>
                     <td className="px-3 py-3.5 whitespace-nowrap text-muted-foreground">
                       {labels.start[task.start]}
@@ -123,20 +132,14 @@ export function LiveTaskList({
                           {labels.template[task.template]}
                         </span>
                       )}
+                      {/* 取り込み元の番号（リポジトリは題の下に出す。PBI-141） */}
                       {task.source && (
-                        <span className="block font-mono text-xs">
-                          {task.source.repo}#{task.source.number}
-                        </span>
+                        <span className="block font-mono text-xs">#{task.source.number}</span>
                       )}
-                      {/* リポジトリを指定せずに作ったタスクと、分割の子タスクに付けたリポジトリ（PBI-73） */}
+                      {/* リポジトリを指定せずに作ったタスク（PBI-73） */}
                       {task.repoless && (
                         <span className="mt-0.5 block w-fit rounded border border-border px-1.5 text-xs">
                           {m.noRepository}
-                        </span>
-                      )}
-                      {task.repo && (
-                        <span className="block font-mono text-xs [overflow-wrap:anywhere] whitespace-normal">
-                          {task.repo}
                         </span>
                       )}
                     </td>

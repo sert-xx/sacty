@@ -217,6 +217,12 @@ For example, run only a step that stopped on an error or was sent back with a st
 - If you pause while the implementation PR is being opened, the PR is finished and Implement waits for approval; the task is not paused (the screen says it was not paused).
   Decide on the PR, or cancel the task to stop it.
 
+## Task list
+
+Each row of the task list shows the name of the repository the task works on (only `repo` of `org/repo`) under its title. Tasks whose repository
+is not decided yet show none (a task created without a repository shows "No repository"). Tasks taken in from an Issue or PR show its number
+(such as `#7`) under where they started.
+
 ## Hints on the screen
 
 The text on the screen says only the current state and what to do next, briefly. How things work and why is shown when you hover over the hint mark (i) next to a heading or item.
