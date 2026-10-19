@@ -24261,17 +24261,20 @@ describe("レビューの再依頼で、自動で再レビューする（PBI-143
     (service.get(id)?.activity ?? []).filter((e) => e.type === "ReviewRestarted");
 
   /** 依頼で取り込んだ PR 9 のレビューを、投稿して完了させる。 */
-  async function posted() {
-    const activity = new SqliteActivityStore(dbPath);
+  async function posted(now?: () => number) {
+    const activity = new SqliteActivityStore(dbPath, now && (() => new Date(now())));
     const pulls = new FakePulls();
     pulls.prInfo = { ...pulls.prInfo, number: 9, url: "https://github.com/acme/app/pull/9" };
     const settings = new MemorySettingsStore({
       reviewRequested: true,
       reviewLabel: "sacty-review",
     });
+    const projects = projectsWithAccount();
     const { service } = makeService(activity, [out("# 1回目"), out("# 2回目"), out("# 3回目")], {
       pulls,
       settings,
+      projects,
+      now,
     });
     const [task] = service.importIssues([pr(9)]);
     const id = task?.id ?? "";
@@ -24279,7 +24282,7 @@ describe("レビューの再依頼で、自動で再レビューする（PBI-143
     await service.runNext(id);
     expect(pulls.reviews).toHaveLength(1);
     expect(service.get(id)?.task.reviewPost).toBeDefined();
-    return { activity, pulls, settings, service, id };
+    return { activity, pulls, settings, projects, service, id };
   }
 
   /** 最後の投稿から ms 後に、依頼した（再依頼）ことにする。 */
@@ -24287,6 +24290,81 @@ describe("レビューの再依頼で、自動で再レビューする（PBI-143
     const at = Date.parse(service.get(id)?.task.reviewPost?.at ?? "");
     pulls.lastRequestAt = new Date(at + ms).toISOString();
   }
+
+  it.each([
+    ["other", "me"],
+    ["me", "other"],
+  ])("複数アカウントの結果が %s、%s の順でも、対象への再依頼を1回拾う", async (first, second) => {
+    const { activity, pulls, service, id } = await posted();
+    pulls.prInfo = { ...pulls.prInfo, requestedReviewers: ["me", "other"] };
+    requestAfterPost(service, pulls, id);
+    const { restarted } = await service.restartRerequestedReviews([
+      pr(9, { requestedFor: first }),
+      pr(9, { requestedFor: second }),
+      pr(9),
+    ]);
+    expect(restarted.map((t) => [t.id, t.reviewRound])).toEqual([[id, 2]]);
+    expect(pulls.lastRequestQueries).toHaveLength(1);
+    expect(pulls.lastRequestQueries[0]?.reviewer).toBe("me");
+    activity.close();
+  });
+
+  it.each(["Off", "account"])("API待機中に%sへ変更したら、再レビューしない", async (change) => {
+    const { activity, pulls, settings, projects, service, id } = await posted();
+    pulls.prInfo = { ...pulls.prInfo, requestedReviewers: ["me"] };
+    requestAfterPost(service, pulls, id);
+    const requestAt = pulls.lastRequestAt;
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    vi.spyOn(pulls, "lastReviewRequest").mockImplementation(async () => {
+      entered.resolve();
+      await release.promise;
+      return requestAt;
+    });
+    const pending = service.restartRerequestedReviews([pr(9)]);
+    await entered.promise;
+    if (change === "Off") settings.put({ reviewRequested: false });
+    else {
+      const project = projects.get("default");
+      if (!project) throw new Error("project missing");
+      projects.put(project.id, { ...project, githubAccounts: { "github.com": "other" } });
+    }
+    release.resolve();
+    expect(await pending).toEqual({ restarted: [], failed: [] });
+    expect(restarts(service, id)).toEqual([]);
+    activity.close();
+  });
+
+  it.each([0, 2_000])(
+    "API待機中に人の再レビューが%dms後に投稿完了しても、同じ依頼で重ねない",
+    async (elapsed) => {
+      let now = Date.parse("2026-10-19T00:00:00Z");
+      const { activity, pulls, service, id } = await posted(() => now);
+      pulls.prInfo = { ...pulls.prInfo, requestedReviewers: ["me"] };
+      requestAfterPost(service, pulls, id, 1_000);
+      const requestAt = pulls.lastRequestAt;
+      const entered = Promise.withResolvers<void>();
+      const release = Promise.withResolvers<void>();
+      vi.spyOn(pulls, "lastReviewRequest").mockImplementation(async () => {
+        entered.resolve();
+        await release.promise;
+        return requestAt;
+      });
+      const pending = service.restartRerequestedReviews([pr(9)]);
+      await entered.promise;
+      now += elapsed;
+      service.rereview(id);
+      await service.runNext(id);
+      await service.runNext(id);
+      expect(pulls.reviews).toHaveLength(2);
+      expect(service.get(id)?.task.reviewPost?.at).toBe(new Date(now).toISOString());
+      release.resolve();
+      expect(await pending).toEqual({ restarted: [], failed: [] });
+      expect(restarts(service, id)).toHaveLength(1);
+      expect(service.get(id)?.task.reviewRound).toBe(2);
+      activity.close();
+    },
+  );
 
   it("投稿の後に依頼が残っていれば（再依頼）、1回だけ再レビューする。検索に残っていても、今の依頼先に無ければしない", async () => {
     const { activity, pulls, service, id } = await posted();

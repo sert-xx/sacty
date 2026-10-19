@@ -3248,6 +3248,7 @@ export class TaskService {
     const key = (repo: string, number: number) => `${repoKey(repo)}#${number}`;
     const seen = new Set<string>();
     for (const issue of found) {
+      if (!this.deps.settings.get().reviewRequested) break;
       if (!issue.pullRequest || issue.review !== "requested" || !issue.requestedFor) continue;
       const id = key(issue.repo, issue.number);
       if (seen.has(id)) continue;
@@ -3259,13 +3260,15 @@ export class TaskService {
           canRereview(t),
       );
       if (!task) continue;
-      seen.add(id);
       const host = httpsHost(`${issue.repo}/`);
       const account = host && this.deps.projects.get(task.projectId)?.githubAccounts?.[host];
       // そのタスクのアカウントへの依頼の検索で見つかったものだけ
       if (!account || account.toLowerCase() !== issue.requestedFor.toLowerCase()) continue;
+      seen.add(id);
       const usedSecrets: string[] = [];
-      const posted = task.reviewPost ? Date.parse(task.reviewPost.at) : Number.NaN;
+      const postedAt = task.reviewPost?.at;
+      const posted = Date.parse(postedAt ?? "");
+      const round = task.reviewRound;
       let requested: boolean;
       try {
         const token = await this.githubToken(task, issue.repo, usedSecrets);
@@ -3293,6 +3296,14 @@ export class TaskService {
       const latest = this.tasks.get(task.id);
       if (!latest || !canRereview(latest) || this.pauseRequested.has(task.id)) continue;
       if (this.cancelling.has(task.id)) continue;
+      if (latest.reviewRound !== round || latest.reviewPost?.at !== postedAt) continue;
+      const latestAccount =
+        host && this.deps.projects.get(latest.projectId)?.githubAccounts?.[host];
+      if (
+        !this.deps.settings.get().reviewRequested ||
+        latestAccount?.toLowerCase() !== account.toLowerCase()
+      )
+        continue;
       restarted.push(
         this.append(latest, [
           {

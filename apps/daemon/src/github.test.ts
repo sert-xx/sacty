@@ -738,6 +738,36 @@ describe("PR のレビュー（PBI-19）", () => {
     ).toMatchObject({ code: "github.failed", params: { action: "listEvents", status: 404 } });
   });
 
+  it.each([50, 51])(
+    "依頼のできごとが%dページなら、上限内の完了と未完了を区別する",
+    async (pages) => {
+      const { impl, calls } = fakeFetch(
+        Array.from({ length: pages }, (_, index) => ({
+          status: 200,
+          headers:
+            index + 1 < pages
+              ? { link: `<${api}/issues/12/events?per_page=100&page=${index + 2}>; rel="next"` }
+              : {},
+          json: [
+            {
+              event: "review_requested",
+              requested_reviewer: { login: "me" },
+              created_at: index === 50 ? "2026-10-19T03:00:00Z" : "2026-10-19T01:00:00Z",
+            },
+          ],
+        })),
+      );
+      const result = new GitHubPullRequests(impl).lastReviewRequest({ ...target, reviewer: "me" });
+      if (pages === 50) await expect(result).resolves.toBe("2026-10-19T01:00:00Z");
+      else {
+        expect(errorText(await result.catch((error: unknown) => error))).toMatchObject({
+          code: "github.eventsIncomplete",
+        });
+      }
+      expect(calls).toHaveLength(50);
+    },
+  );
+
   it("コメントのレビュー（承認も変更の要求もしない）を、読んだコミットに投稿する", async () => {
     const { impl, calls } = fakeFetch([
       {

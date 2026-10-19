@@ -59,6 +59,9 @@ PRs are imported so that only their review is handed over ("PR review intake" in
 - When new commits are pushed, use "Review again" in the task details to review the latest commit again and post it.
   For a PR taken in by a review request, re-requesting the review on GitHub (Re-request review) makes sacty find it at the next intake and review it again automatically.
   Each re-request starts one re-review. PRs taken in by the label and PRs sacty created are not re-reviewed by a re-request (use "Review again").
+  Automatic re-review applies only to requests made after the review was posted and the task completed. A request made during a review is not queued for another round.
+  If you re-requested during a review, re-request again after completion or use "Review again" in the task details.
+  If the re-request cannot be checked, no automatic re-review starts; the intake result shows the reason, and sacty checks again next time. You can also start it manually with "Review again".
   The activity shows "Started a re-review because a review was re-requested on the PR".
   A re-review says, for each previous finding, whether it is fixed or still open (it also reads the PR author's replies since the previous review).
 - Only open PRs are imported for review.

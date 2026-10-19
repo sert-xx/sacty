@@ -81,6 +81,9 @@ takes in PRs.
   - Tasks that are running, not yet posted, or cancelled, tasks taken in by the label, and tasks for PRs sacty created are excluded. Nothing is checked while `reviewRequested` is off.
   - If the current requested reviewers or the request time cannot be read, no re-review starts, `intake.rerequestUnchecked` is recorded, and that search's read position is not advanced (the same PR
     is found again at the next intake). Each PR is checked once per intake.
+  - If the same PR appears in searches for multiple accounts, deduplication happens only after matching the task's account.
+  - PR events are read up to 50 pages. If another page remains, reading is recorded as failed; partial results are not used to decide whether a review was re-requested.
+  - After the API reads, intake must still be on, and the selected account, review round, and posting time must be unchanged before a re-review starts.
 - If a PR created by sacty (one in the ledger: the implementation PR of a task, a Requirements or Design PR, or a PR given the label; see [The review label on PRs](approval.en.md#the-review-label-on-prs))
   has the review label, it becomes a separate review-only task, not the task that created it (`source.review: sacty`; the Orchestrator does not
   choose steps). Even if it also matches a review request, it is `sacty` (so that the review reaches the task that created the PR). If the review label's triage is

@@ -326,6 +326,10 @@ export class GitHubPullRequests implements PullRequests {
       const next = nextPage(res.headers.get("link"));
       url = next?.startsWith(`${api}/`) ? next : undefined;
     }
+    // 最後の依頼を判定するには全ページが必要。部分結果では再依頼なしと区別できない。
+    if (action === "listEvents" && url) {
+      throw new MessageError(message("github.eventsIncomplete"));
+    }
     return all;
   }
 
