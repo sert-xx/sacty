@@ -47,6 +47,9 @@ PRs are imported so that only their review is handed over ("PR review intake" in
   Even then, issues with that label are taken in as ordinary tasks and PRs as review-only tasks. An issue is never taken in as a review, and a PR
   never as an ordinary task.
 - Imported PRs are only reviewed, without the Orchestrator, and the review is posted to the PR (as comments). No implementation or PR creation is done.
+- If the PR description links to documents (such as a design written outside Git), the agent decides from the PR title, description, and diff whether each is a review target or only background.
+  Documents judged to be targets are reviewed too, and their findings go in the body (they cannot be attached to PR lines), with the document and section.
+  To let the agent read them, provide something that can read where the documents live, such as an MCP server, in the agent's environment. Documents it could not read are listed in the review's scope in the body.
 - When the PR is merged or closed, review tasks that have not finished are cancelled.
 - The posted review starts with an @ mention of the PR author and the verdict ("修正が必要" (changes required), "提案あり（マージは可）" (suggestions only, OK to merge), or "指摘なし" (no findings)).
   When the PR author is a bot (such as `dependabot[bot]`), there is no @ mention, only the verdict.

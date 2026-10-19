@@ -87,6 +87,63 @@ describe("既定の review スキルの、段階のサブエージェント（PB
   });
 });
 
+describe("既定の review スキルの、本文で示された文書（PBI-142）", () => {
+  const linked = "skills/review/review-dispatch/references/linked-docs.md";
+
+  it("親は読む順序と手順で、本文で示された文書を対象か根拠かに分け、主対象の判断に含める", () => {
+    const skill = read("skills/review/review-dispatch/SKILL.md");
+    expect(skill).toContain(
+      "[references/linked-docs.md](references/linked-docs.md)（対象か根拠かを分け",
+    );
+    expect(skill).toContain("本文で示された文書のうち、レビューの対象にしたものも含めて決める");
+    expect(skill).toContain("本文や依頼文で示された文書を、対象か根拠かに分けて取得する");
+    // 担当への依頼文の「対象」に写しが入る
+    expect(skill).toContain("本文で示された文書のうち対象にしたものの写しのパスと取得元");
+  });
+
+  it("分け方は総合して判断し、迷ったら対象にする。対象の文書は差分の外でも範囲から外さない", () => {
+    const text = read(linked);
+    expect(text).toContain("| 対象（レビューする） |");
+    expect(text).toContain("| 根拠（読むだけ） |");
+    expect(text).toContain("タイトル・説明・差分を総合して判断し、1 つの手がかりだけで決めない");
+    expect(text).toContain("迷ったら対象にする");
+    expect(text).toContain("差分の外でも範囲から外さない");
+  });
+
+  it("全文は親が取得して作業領域の外に写し、認証情報は求めない", () => {
+    const text = read(linked);
+    expect(text).toContain("対象と根拠の文書の全文を、親が取得する");
+    expect(text).toContain("作業領域の外の一時ディレクトリに保存する");
+    expect(text).toContain("認証情報を求めない・探さない");
+  });
+
+  it("主対象の文書を取得できなければ完了できず、ほかの対象の文書なら範囲に書いて合格と書かない", () => {
+    const text = read(linked);
+    expect(text).toContain(
+      "その文書を主対象にした（レビューの中心だった）とき：レビューを完了できない",
+    );
+    expect(text).toContain("見られなかった文書がある初回の `pr-review` は、合格と書かない");
+    const pr = read("skills/review/review-dispatch/references/pr-review.md");
+    expect(pr).toContain("本文で示された文書を主対象にしたのに、その文書を取得できない");
+    expect(pr).toContain("[linked-docs.md](linked-docs.md)");
+    expect(read("skills/review/review-dispatch/references/aggregation.md")).toContain(
+      "レビューの対象にした文書（[linked-docs.md](linked-docs.md)）を取得できなかったときも同じ",
+    );
+  });
+
+  it("文書への指摘は位置を付けられない指摘として、文書と節を添え、分けた結果を記録に残す", () => {
+    const pr = read("skills/review/review-dispatch/references/pr-review.md");
+    expect(pr).toContain("差分の外のコード・本文で示された文書についての指摘）は、次のように扱う");
+    expect(pr).toContain("文書への指摘には、文書の名前か URL と、節の見出しを添える");
+    expect(read("skills/review/review-execution/SKILL.md")).toContain(
+      "`path` は写しのパスではなく取得元（文書の名前か URL）、`line` は節の見出し",
+    );
+    expect(read("skills/review/review-dispatch/references/aggregation.md")).toContain(
+      '"linked_docs":',
+    );
+  });
+});
+
 describe("既定のスキル ears-requirements（PBI-122）", () => {
   it("EARS の文型（日英）・ID・見直しを持ち、優先する指示を書き、sacty に限った書き方をしない", () => {
     const skill = read("skills/ears-requirements/SKILL.md");
