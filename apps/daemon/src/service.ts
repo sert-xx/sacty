@@ -3232,6 +3232,91 @@ export class TaskService {
   }
 
   /**
+   * レビューの再依頼（PBI-143）。依頼の検索で見つかった PR のうち、依頼で取り込んでレビューを投稿して完了したタスク
+   * （「再レビュー」できるもの）がある PR を、PR の今の依頼先で確かめ、そのタスクのアカウントに依頼されていれば再レビューする。
+   * 依頼された人がレビューを投稿すると GitHub が依頼を外すので、投稿の後に依頼があれば、作者が再依頼したもの。
+   * 検索の結果は反映が遅れる（投稿の直後に、外れた依頼が残る）ので、それだけでは再レビューしない。
+   * 確かめられなかった PR は failed に返す（取り込み側は、その検索の読んだ位置を進めず、次の取り込みで確かめ直す）。
+   */
+  async restartRerequestedReviews(
+    found: readonly FoundIssue[],
+  ): Promise<{ restarted: Task[]; failed: { issue: FoundIssue; message: DaemonText }[] }> {
+    const restarted: Task[] = [];
+    const failed: { issue: FoundIssue; message: DaemonText }[] = [];
+    // Off にしたら再レビューしない（検索の後に設定を変えたときも）
+    if (!this.deps.settings.get().reviewRequested) return { restarted, failed };
+    const key = (repo: string, number: number) => `${repoKey(repo)}#${number}`;
+    const seen = new Set<string>();
+    for (const issue of found) {
+      if (!this.deps.settings.get().reviewRequested) break;
+      if (!issue.pullRequest || issue.review !== "requested" || !issue.requestedFor) continue;
+      const id = key(issue.repo, issue.number);
+      if (seen.has(id)) continue;
+      // 依頼で取り込んだタスクだけ（ラベルで取り込んだもの・sacty が作った PR のものは、元の動きのまま）
+      const task = [...this.tasks.values()].find(
+        (t) =>
+          t.source?.review === "requested" &&
+          key(t.source.repo, t.source.number) === id &&
+          canRereview(t),
+      );
+      if (!task) continue;
+      const host = httpsHost(`${issue.repo}/`);
+      const account = host && this.deps.projects.get(task.projectId)?.githubAccounts?.[host];
+      // そのタスクのアカウントへの依頼の検索で見つかったものだけ
+      if (!account || account.toLowerCase() !== issue.requestedFor.toLowerCase()) continue;
+      seen.add(id);
+      const usedSecrets: string[] = [];
+      const postedAt = task.reviewPost?.at;
+      const posted = Date.parse(postedAt ?? "");
+      const round = task.reviewRound;
+      let requested: boolean;
+      try {
+        const token = await this.githubToken(task, issue.repo, usedSecrets);
+        const ref = { repo: issue.repo, number: issue.number, token };
+        const pr = await this.deps.pulls.pullRequest(ref);
+        // 今も依頼されていて、最後の依頼が前回の投稿より後（再依頼）のときだけ。投稿で依頼が外れなかった（取り込みの後に
+        // アカウントを変えたなど）ときに、投稿のたびに再レビューを繰り返さないため
+        requested =
+          pr.requestedReviewers.some((r) => r.toLowerCase() === account.toLowerCase()) &&
+          Date.parse(
+            (await this.deps.pulls.lastReviewRequest({ ...ref, reviewer: account })) ?? "",
+          ) > posted;
+      } catch (error) {
+        failed.push({
+          issue,
+          message: message("intake.rerequestUnchecked", {
+            pr: `${issue.repo}#${issue.number}`,
+            detail: redactText(errorText(error), usedSecrets),
+          }),
+        });
+        continue;
+      }
+      if (!requested) continue;
+      // 確かめている間に、人が再レビュー・中止・一時停止したら、始めない
+      const latest = this.tasks.get(task.id);
+      if (!latest || !canRereview(latest) || this.pauseRequested.has(task.id)) continue;
+      if (this.cancelling.has(task.id)) continue;
+      if (latest.reviewRound !== round || latest.reviewPost?.at !== postedAt) continue;
+      const latestAccount =
+        host && this.deps.projects.get(latest.projectId)?.githubAccounts?.[host];
+      if (
+        !this.deps.settings.get().reviewRequested ||
+        latestAccount?.toLowerCase() !== account.toLowerCase()
+      )
+        continue;
+      restarted.push(
+        this.append(latest, [
+          {
+            actor: "sacty",
+            event: { type: "ReviewRestarted", payload: { reason: "rerequested" } },
+          },
+        ]),
+      );
+    }
+    return { restarted, failed };
+  }
+
+  /**
    * チケットの取り込み先（PBI-52）。すべてのプロジェクトの取り込み先を、接続先と種類ごとにまとめる（キーは合わせる）。
    * 取り込むラベル（sacty の設定）が無いか、チケットのトリアージを Off にしていれば、取り込まない。
    */

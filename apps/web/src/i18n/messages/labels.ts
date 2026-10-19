@@ -285,6 +285,8 @@ const ja = {
       `レビューの対象の PR を確認（${url}・${commit}）`,
     PullRequestReviewPosted: (url: string) => `レビューを PR に投稿した（${url}）`,
     ReviewRestarted: (actor: string) => `再レビューを始めた（${actor}）`,
+    ReviewRestartedByRequest: (actor: string) =>
+      `PR でレビューが再依頼されたので、再レビューを始めた（${actor}）`,
     cancelledBecause: (text: string, reason: "pull_request_merged" | "pull_request_closed") =>
       `${text}（${reason === "pull_request_merged" ? "PR がマージされたため" : "PR が閉じられたため"}）`,
     GuardianMissed: "ゴールガーディアンの見逃し：合格にした成果物が差し戻された",
@@ -663,6 +665,8 @@ const en: LabelMessages = {
     ReviewTargetResolved: (url, commit) => `Confirmed the PR to review (${url} · ${commit})`,
     PullRequestReviewPosted: (url) => `Posted the review to the PR (${url})`,
     ReviewRestarted: (actor) => `Started a re-review (${actor})`,
+    ReviewRestartedByRequest: (actor) =>
+      `Started a re-review because a review was re-requested on the PR (${actor})`,
     cancelledBecause: (text, reason) =>
       `${text} (${reason === "pull_request_merged" ? "the PR was merged" : "the PR was closed"})`,
     IssueCommentFailed: (message) =>

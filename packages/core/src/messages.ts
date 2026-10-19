@@ -320,16 +320,19 @@ const PARAMS = {
       "createLabel",
       "addLabel",
       "readChecks",
+      "listEvents",
     ]),
     status: z.number(),
     detail: z.string(),
     hint: z.enum(["none", "token", "permission"]),
   }),
+  "github.eventsIncomplete": null,
   "intake.searchTimedOut": null,
   "intake.tooManySameTime": null,
   "intake.partial": null,
   "intake.rateLimited": null,
   "intake.skippedRateLimited": null,
+  "intake.rerequestUnchecked": z.object({ pr: z.string(), detail: TextParam }),
   "context.cycle": z.object({ key: z.string() }),
   "context.tooDeep": z.object({ max: Count }),
   "context.fetchFailed": z.object({ key: z.string(), detail: TextParam }),
@@ -495,6 +498,7 @@ const githubActionJa = {
   createLabel: "リポジトリにラベルを作れませんでした",
   addLabel: "PR にラベルを付けられませんでした",
   readChecks: "CI/CD の状態を読めませんでした",
+  listEvents: "PR のできごと（レビューの依頼など）を読めませんでした",
 } as const;
 const githubActionEn = {
   updatePr: "Could not update the PR",
@@ -511,6 +515,7 @@ const githubActionEn = {
   createLabel: "Could not create the label in the repository",
   addLabel: "Could not add the label to the PR",
   readChecks: "Could not read the CI/CD status",
+  listEvents: "Could not read the PR events (such as review requests)",
 } as const;
 const githubHintJa = {
   none: "",
@@ -929,6 +934,8 @@ const ja: MessageDictionary = {
   "git.fileNotText": ({ path }) => `${path} は UTF-8 のテキストではありません。`,
   "github.failed": ({ action, status, detail, hint }) =>
     `${githubActionJa[action]}：GitHub API ${status} ${detail}${githubHintJa[hint]}`,
+  "github.eventsIncomplete":
+    "ページ数の上限に達したため、PR のできごとを最後まで読めませんでした。",
   "intake.searchTimedOut":
     "GitHub の検索が時間内に終わらず、結果の一部しか得られませんでした（次の取り込みで、この範囲を検索し直します）。",
   "intake.tooManySameTime":
@@ -938,6 +945,8 @@ const ja: MessageDictionary = {
   "intake.rateLimited":
     "GitHub の検索のレート制限に達しました。次の取り込みで、続きから検索します。",
   "intake.skippedRateLimited": "レート制限のため、次の取り込みで検索します。",
+  "intake.rerequestUnchecked": ({ pr, detail }, text) =>
+    `${pr} でレビューが再依頼されたかを確かめられませんでした（次の取り込みで確かめ直します）：${text(detail)}`,
   "context.cycle": ({ key }) => `コンテキストの継承が循環しています（${key}）。`,
   "context.tooDeep": ({ max }) => `コンテキストの継承が深すぎます（上限 ${max} 段）。`,
   "context.fetchFailed": ({ key, detail }, text) =>
@@ -1444,6 +1453,7 @@ const en: MessageDictionary = {
   "git.fileNotText": ({ path }) => `${path} is not UTF-8 text.`,
   "github.failed": ({ action, status, detail, hint }) =>
     `${githubActionEn[action]}: GitHub API ${status} ${detail}${githubHintEn[hint]}`,
+  "github.eventsIncomplete": "Reached the page limit before all PR events could be read.",
   "intake.searchTimedOut":
     "The GitHub search did not finish in time and returned partial results (this range will be searched again next time).",
   "intake.tooManySameTime":
@@ -1453,6 +1463,8 @@ const en: MessageDictionary = {
   "intake.rateLimited":
     "Reached the GitHub search rate limit. The search will continue from here next time.",
   "intake.skippedRateLimited": "Skipped because of the rate limit; it will be searched next time.",
+  "intake.rerequestUnchecked": ({ pr, detail }, text) =>
+    `Could not check whether a review was re-requested on ${pr} (it will be checked again next time): ${text(detail)}`,
   "context.cycle": ({ key }) => `The context inheritance has a cycle (${key}).`,
   "context.tooDeep": ({ max }) => `The context inheritance is too deep (limit ${max} levels).`,
   "context.fetchFailed": ({ key, detail }, text) =>

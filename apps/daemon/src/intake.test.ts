@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { message, parseRepoUrl, renderMessage } from "@sacty/core";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SqliteActivityStore } from "./activity.js";
 import type { AgentExecutor } from "./agents/docker.js";
 import type { ConfigResult } from "./config.js";
@@ -1380,5 +1380,82 @@ describe("JIRA のチケットの取り込み（PBI-52）", () => {
     expect(off.tickets.searched).toEqual([]);
     expect(off.service.list()).toEqual([]);
     off.activity.close();
+  });
+});
+
+describe("レビューの再依頼の確かめ（PBI-143）", () => {
+  const requested = "is:open is:pr repo:acme/payments user-review-requested:me";
+
+  it.each(["HTTP", "page-limit"])(
+    "依頼を確かめられなければ（%s）、理由を残し、検索の読んだ位置を進めない",
+    async (reason) => {
+      const { activity, service, search, intake, advance } = setup();
+      service.saveSettings({ intakeLabel: "sacty", reviewRequested: true });
+      search.cursor = "2026-10-19T00:00:00Z";
+      search.issues.push({
+        repo: "https://github.com/acme/payments",
+        number: 9,
+        title: "PR 9",
+        body: "",
+        url: "https://github.com/acme/payments/pull/9",
+        labels: [],
+        pullRequest: true,
+      });
+      const failure = message("intake.rerequestUnchecked", {
+        pr: "https://github.com/acme/payments#9",
+        detail: reason === "HTTP" ? "GitHub API 502" : message("github.eventsIncomplete"),
+      });
+      const check = vi
+        .spyOn(service, "restartRerequestedReviews")
+        .mockImplementationOnce(async (found) => ({
+          restarted: [],
+          failed: found
+            .filter((i) => i.number === 9)
+            .slice(0, 1)
+            .map((issue) => ({ issue, message: failure })),
+        }))
+        .mockImplementation(async () => ({ restarted: [], failed: [] }));
+      const sinceOf = (query: string) =>
+        search.sinces.filter((_, i) => search.queries[i] === query).at(-1);
+
+      await intake.tick(true);
+      // 依頼の検索で見つかったものとして、誰への依頼かを付けて渡す
+      expect(check).toHaveBeenCalledTimes(1);
+      // （偽の検索は is:pr で絞らないので、Issue 7 も見つかる）
+      expect(check.mock.calls[0]?.[0].find((i) => i.number === 9)).toMatchObject({
+        review: "requested",
+        requestedFor: "me",
+      });
+      expect(ja(service.status().intake.runs?.reviews?.errors?.map((e) => e.message)[0])).toContain(
+        "https://github.com/acme/payments#9 でレビューが再依頼されたかを確かめられませんでした",
+      );
+      if (reason === "page-limit") {
+        expect(ja(service.status().intake.runs?.reviews?.errors?.[0]?.message)).toContain(
+          "ページ数の上限に達したため",
+        );
+      }
+
+      // 次の取り込みは、同じ範囲を検索し直す（読んだ位置を進めていない）
+      advance(24 * 60 * 60 * 1000);
+      await intake.tick(true);
+      expect(sinceOf(requested)).toBeUndefined();
+      expect(check).toHaveBeenCalledTimes(2);
+      expect(service.status().intake.runs?.reviews?.errors).toBeUndefined();
+
+      // 確かめられたら、読んだ位置を進める
+      advance(24 * 60 * 60 * 1000);
+      await intake.tick(true);
+      expect(sinceOf(requested)).toBe("2026-10-19T00:00:00Z");
+      activity.close();
+    },
+  );
+
+  it("Issue の取り込みでは、再依頼を確かめない", async () => {
+    const { activity, service, intake } = setup();
+    const check = vi.spyOn(service, "restartRerequestedReviews");
+    await intake.tick(true);
+    expect(service.list().map((t) => t.source?.number)).toEqual([7]);
+    expect(check).not.toHaveBeenCalled();
+    activity.close();
   });
 });

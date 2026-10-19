@@ -71,6 +71,19 @@ PR のレビューの取り込みだけ。
   保存で拒否する。
 - レビューの依頼は、個人としての依頼だけ（チームへの依頼は含まない）。担当のプロジェクトでそのホストに選んだアカウントへの依頼だけを取り込む。
   レビュー用のラベルと依頼の両方に当たっても、レビューのタスクは1つ。
+- レビューの再依頼（PBI-143）：依頼の検索で、依頼で取り込んだ（`source.review: requested`）タスクのうち「再レビュー」できるもの
+  （`canRereview`）の PR が見つかったら、PR の今の依頼先（`requested_reviewers`）と、そのタスクのアカウントへの最後の依頼の日時
+  （PR のできごとの `review_requested`）を読む。今も依頼されていて、最後の依頼が前回の投稿より後なら、再依頼として再レビューする
+  （`ReviewRestarted`、`reason: rerequested`、actor は sacty。`restartRerequestedReviews`）。
+  - 依頼された人がレビューを投稿すると GitHub が依頼を外すので、ふつうは投稿で依頼が無くなる。検索の結果は反映が遅れる（投稿の直後に外れた
+    依頼が残る）ので、それだけでは再レビューしない。投稿で依頼が外れなかった（取り込みの後にアカウントを変えたなど）ときも、最後の依頼が
+    投稿より前なので、投稿のたびに繰り返さない。
+  - 作業中・投稿の前・中止したタスク、ラベルで取り込んだタスク、sacty が作った PR のタスクは対象外。`reviewRequested` が Off なら確かめない。
+  - 今の依頼先か依頼の日時を読めなければ、再レビューせずに `intake.rerequestUnchecked` を記録し、その検索の読んだ位置を進めない（次の取り込みで、
+    同じ PR がまた見つかる）。同じ PR は1回の取り込みで1回だけ確かめる。
+  - 同じ PR が複数アカウントの検索で見つかっても、タスクのアカウントと一致してから重複を除く。
+  - PR のできごとは50ページまで読む。次のページが残っていれば取得不能として記録し、部分結果で再依頼を判定しない。
+  - API の読取後に、取り込みが On で、担当アカウント・レビューの回・投稿の時刻が読取前と変わっていないことを確かめてから再開する。
 - sacty が作った PR（台帳にある、タスクの実装の PR・要求要件・設計の PR・ラベルを付けた PR。[PR のレビュー用のラベル](approval.md#pr-のレビュー用のラベル)）に
   レビュー用のラベルが付いていれば、作ったタスクとは別の、PR のレビューだけのタスクにする（`source.review: sacty`。オーケストレーターに工程を
   選ばせない）。レビューの依頼にも当たっても `sacty` にする（そのレビューを作ったタスクに届けるため）。レビュー用のラベルのトリアージを
@@ -85,7 +98,7 @@ PR のレビューの取り込みだけ。
 - レート制限（403・429 で残りが 0 か `retry-after`）に当たったら、そのアカウントのほかの検索を飛ばす。
 - アカウントを選んでいない取り込み元は検索せず、`github.accountRequired` を記録する。
 
-コード: `apps/daemon/src/service.ts`（`intakeSources`・`importIssues`・`sactyReviewsOf`・`saveSettings`）、`apps/daemon/src/github.ts`（`GitHubIssueSearch`）、`packages/core/src/projects.ts`（`SactySettings`・`TriageKind`・`responsibleProject`）
+コード: `apps/daemon/src/service.ts`（`intakeSources`・`importIssues`・`restartRerequestedReviews`・`sactyReviewsOf`・`saveSettings`）、`apps/daemon/src/github.ts`（`GitHubIssueSearch`）、`packages/core/src/projects.ts`（`SactySettings`・`TriageKind`・`responsibleProject`）
 
 ## JIRA のチケット
 

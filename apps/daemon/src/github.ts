@@ -69,6 +69,16 @@ export interface PullRequests {
   /** レビューの対象の PR（PBI-19）。 */
   pullRequest(input: { repo: string; token: string; number: number }): Promise<PullRequestInfo>;
   /**
+   * PR で reviewer に最後にレビューを依頼した日時（ISO。PBI-143）。依頼が無ければ undefined。個人への依頼だけ
+   * （チームへの依頼は含めない）。再依頼が、前回のレビューの投稿より後かを確かめるため。
+   */
+  lastReviewRequest(input: {
+    repo: string;
+    token: string;
+    number: number;
+    reviewer: string;
+  }): Promise<string | undefined>;
+  /**
    * account が投稿した PR のレビューのうち、本文が marker で始まるものを探す
    * （同じレビューを二度投稿しないため。PBI-19）。
    */
@@ -103,6 +113,11 @@ export type PullRequestInfo = {
   baseSha: string;
   /** PR の作者の login（PBI-111）。読めなければ空。 */
   author: string;
+  /**
+   * 今レビューを依頼されている人の login（PBI-143）。チームへの依頼は含めない。依頼された人がレビューを投稿すると、
+   * GitHub が外す。検索の結果と違い、読んだ時点の依頼先。
+   */
+  requestedReviewers: string[];
 };
 
 /** PR をレビューした sacty のタスクの回（PBI-88）。`PullRequests.feedback` の sactyReviews を参照。 */
@@ -283,7 +298,7 @@ export class GitHubPullRequests implements PullRequests {
     repo: string,
     path: string,
     token: string,
-    action: "getReviews" | "listIssueComments",
+    action: "getReviews" | "listIssueComments" | "listEvents",
   ): Promise<Record<string, unknown>[]> {
     const { api, base } = repoApi(repo);
     return this.listAt(api, `${base}${path}`, token, action);
@@ -294,7 +309,7 @@ export class GitHubPullRequests implements PullRequests {
     api: string,
     first: string,
     token: string,
-    action: "getReviews" | "listIssueComments" | "listRepositories",
+    action: "getReviews" | "listIssueComments" | "listRepositories" | "listEvents",
   ): Promise<Record<string, unknown>[]> {
     const headers = {
       accept: "application/vnd.github+json",
@@ -310,6 +325,10 @@ export class GitHubPullRequests implements PullRequests {
       if (Array.isArray(json)) all.push(...(json as Record<string, unknown>[]));
       const next = nextPage(res.headers.get("link"));
       url = next?.startsWith(`${api}/`) ? next : undefined;
+    }
+    // 最後の依頼を判定するには全ページが必要。部分結果では再依頼なしと区別できない。
+    if (action === "listEvents" && url) {
+      throw new MessageError(message("github.eventsIncomplete"));
     }
     return all;
   }
@@ -398,7 +417,36 @@ export class GitHubPullRequests implements PullRequests {
       headSha: sha("head"),
       baseSha: sha("base"),
       author: String((json.user as { login?: unknown } | null)?.login ?? ""),
+      requestedReviewers: Array.isArray(json.requested_reviewers)
+        ? json.requested_reviewers.flatMap((r) => {
+            const login = (r as { login?: unknown } | null)?.login;
+            return typeof login === "string" && login ? [login] : [];
+          })
+        : [],
     };
+  }
+
+  async lastReviewRequest(input: Parameters<PullRequests["lastReviewRequest"]>[0]) {
+    const events = await this.list(
+      input.repo,
+      `/issues/${input.number}/events?per_page=100`,
+      input.token,
+      "listEvents",
+    );
+    let last: string | undefined;
+    for (const e of events) {
+      const login = (e.requested_reviewer as { login?: unknown } | null | undefined)?.login;
+      if (
+        e.event === "review_requested" &&
+        typeof login === "string" &&
+        login.toLowerCase() === input.reviewer.toLowerCase() &&
+        typeof e.created_at === "string" &&
+        (last === undefined || Date.parse(e.created_at) > Date.parse(last))
+      ) {
+        last = e.created_at;
+      }
+    }
+    return last;
   }
 
   async findReview(input: Parameters<PullRequests["findReview"]>[0]) {
@@ -604,6 +652,7 @@ export function apiError(
     | "postReview"
     | "searchIssues"
     | "readChecks"
+    | "listEvents"
     | "getLabel"
     | "createLabel"
     | "addLabel",

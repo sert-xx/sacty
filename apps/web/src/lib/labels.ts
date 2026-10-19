@@ -630,7 +630,9 @@ function describeEventText(event: ActivityEvent, l: LabelMessages): string {
       return event.payload.reason ? e.cancelledBecause(cancelled, event.payload.reason) : cancelled;
     }
     case "ReviewRestarted":
-      return e.ReviewRestarted(actor);
+      return event.payload.reason === "rerequested"
+        ? e.ReviewRestartedByRequest(actor)
+        : e.ReviewRestarted(actor);
     case "ContextResolved":
       // describeEventParts で分けて出す（ここには来ない）
       return describeEventParts(event, l).text;
