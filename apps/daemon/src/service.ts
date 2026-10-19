@@ -340,6 +340,19 @@ const REVIEW_DIFF_FILE = "pr.diff";
 /** 共用の compose の取得の失敗の理由（git の出力）の上限（PBI-70）。 */
 const SHARED_FETCH_DETAIL_MAX = 2000;
 
+/**
+ * 取り込みの1つの検索に入れる対象（repo:・org:）の数の上限（PBI-140）。GitHub の検索は 80 個でも答えるが、URL の長さに
+ * 余裕を持たせて、これを超えたら検索を分ける。
+ */
+export const INTAKE_SCOPES_PER_QUERY = 30;
+
+/** 並びを size ずつに分ける。 */
+function chunk<T>(items: readonly T[], size: number): T[][] {
+  const parts: T[][] = [];
+  for (let i = 0; i < items.length; i += size) parts.push(items.slice(i, i + size));
+  return parts;
+}
+
 /** 文の、外から来た文の部分を、末尾の max 文字に切り詰める（秘密情報を伏せた後に使う）。 */
 /** コンテナの中での、エージェントの設定のディレクトリ（コンテキストを置く場所）。 */
 function contextContainerDir(runtime: "claude-code" | "codex"): string {
@@ -550,7 +563,8 @@ export type IntakeRun = {
 };
 
 /**
- * 取り込みの検索の条件（取り込み元）。account は検索に使う gh のアカウント、project はプロジェクトの名前。
+ * 取り込みの検索の条件（取り込み元）。account は検索に使う gh のアカウント、project はプロジェクトの名前（まとめた検索は、
+ * 含むプロジェクトの名前を「・」でつないだもの。PBI-140）。
  * review は、PR のレビューの取り込みの検索（PBI-44）。
  */
 export type IntakeSource = {
@@ -3002,48 +3016,99 @@ export class TaskService {
   }
 
   /**
-   * 対象ごとの取り込みの検索の条件と、検索に使う gh のアカウント（プロジェクトの設定。PBI-13）。
-   * アカウントを選んでいないプロジェクトは、プロジェクトの名前を返す（取り込みで理由を示す）。
+   * 取り込みの検索の条件と、検索に使う gh のアカウント（プロジェクトの設定。PBI-13）。
+   * 検索は、ドメイン（ホスト）・アカウント・検索の種類ごとに、すべてのプロジェクトの対象（repo:・org:）を1つの検索にまとめる
+   * （GitHub への検索を最小にする。複数の repo:・org: は、どれかに当たるものを探す。PBI-140）。対象が多ければ
+   * INTAKE_SCOPES_PER_QUERY ずつに分ける。担当のプロジェクトの判定は、見つかったものごとに importIssues で行う。
+   * アカウントを選んでいないプロジェクトは、プロジェクトごとに分け、その名前を返す（検索せず、取り込みで理由を示す）。
    * ラベルは sacty 全体の設定（PBI-26）。設定していなければ取り込まない。取り込むラベルは Issue だけを探す（PBI-99）。
    * PR は、PR のレビューの取り込み（PBI-44）だけで探す。自分（そのホストのアカウント）に個人としてレビューが依頼された PR と、
    * レビュー用のラベルの付いた PR を探す（review にどちらの検索かを添える）。
    */
   intakeSources(): IntakeSource[] {
     const settings = this.deps.settings.get();
-    const sources = new Map<string, IntakeSource>();
+    const off = new Set(settings.triageOff ?? []);
+    // 検索の種類ごとの、対象（repo:・org:）を入れる前後の条件
+    const kinds: {
+      key: string;
+      review?: IntakeSource["review"];
+      query: (scopes: string, account?: string) => string;
+    }[] = [
+      // 取り込むラベルは Issue だけ（PR は取り込まない。PBI-99）。Off なら検索しない（PBI-53）
+      ...(settings.intakeLabel && !off.has("issues")
+        ? [
+            {
+              key: "issues",
+              query: (scopes: string) =>
+                `is:open is:issue ${scopes} label:"${settings.intakeLabel}"`,
+            },
+          ]
+        : []),
+      ...(settings.reviewLabel && !off.has("reviewLabel")
+        ? [
+            {
+              key: "label",
+              review: "label" as const,
+              query: (scopes: string) => `is:open is:pr ${scopes} label:"${settings.reviewLabel}"`,
+            },
+          ]
+        : []),
+      // チームへの依頼は含めない（user-review-requested は、個人として依頼されたものだけ）。
+      // アカウントを選んでいなければ検索しない（理由を示すため、条件だけ返す）
+      ...(settings.reviewRequested
+        ? [
+            {
+              key: "requested",
+              review: "requested" as const,
+              query: (scopes: string, account?: string) =>
+                `is:open is:pr ${scopes} user-review-requested:${account ?? "@me"}`,
+            },
+          ]
+        : []),
+    ];
+    const groups = new Map<
+      string,
+      {
+        host: string;
+        account?: string;
+        kind: (typeof kinds)[number];
+        scopes: string[];
+        projects: string[];
+      }
+    >();
     for (const project of this.deps.projects.all()) {
       for (const target of project.targets) {
         // 検索は、対象のホストの GitHub で、そのホストのアカウントで行う（PBI-40）
         const host = targetHost(target);
-        const where =
+        const scope =
           target.scope === "org"
             ? `org:${parseOrgUrl(target.target)?.owner}`
             : `repo:${parseRepoUrl(target.target)?.path}`;
         const account = project.githubAccounts?.[host];
-        const add = (query: string, review?: IntakeSource["review"]) =>
-          sources.set(`${host}\n${account ?? ""}\n${query}`, {
+        for (const kind of kinds) {
+          const id = `${host}\n${account ?? `\u0000${project.id}`}\n${kind.key}`;
+          const group = groups.get(id) ?? {
             host,
-            query,
             ...(account ? { account } : {}),
-            project: project.name,
-            ...(review ? { review } : {}),
-          });
-        // 取り込むラベルは Issue だけ（PR は取り込まない。PBI-99）。Off なら検索しない（PBI-53）
-        const off = new Set(settings.triageOff ?? []);
-        if (settings.intakeLabel && !off.has("issues")) {
-          add(`is:open is:issue ${where} label:"${settings.intakeLabel}"`);
-        }
-        if (settings.reviewLabel && !off.has("reviewLabel")) {
-          add(`is:open is:pr ${where} label:"${settings.reviewLabel}"`, "label");
-        }
-        // チームへの依頼は含めない（user-review-requested は、個人として依頼されたものだけ）。
-        // アカウントを選んでいなければ検索しない（理由を示すため、条件だけ返す）
-        if (settings.reviewRequested) {
-          add(`is:open is:pr ${where} user-review-requested:${account ?? "@me"}`, "requested");
+            kind,
+            scopes: [],
+            projects: [],
+          };
+          if (!group.scopes.includes(scope)) group.scopes.push(scope);
+          if (!group.projects.includes(project.name)) group.projects.push(project.name);
+          groups.set(id, group);
         }
       }
     }
-    return [...sources.values()];
+    return [...groups.values()].flatMap(({ host, account, kind, scopes, projects }) =>
+      chunk(scopes, INTAKE_SCOPES_PER_QUERY).map((part) => ({
+        host,
+        query: kind.query(part.join(" "), account),
+        ...(account ? { account } : {}),
+        project: projects.join("・"),
+        ...(kind.review ? { review: kind.review } : {}),
+      })),
+    );
   }
 
   /**
