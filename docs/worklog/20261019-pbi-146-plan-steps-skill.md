@@ -2,7 +2,7 @@
 
 - 日付: 2026-10-19（UTC）
 - タスク: PBI-146
-- PR: なし
+- PR: #162
 - ブランチ: feat/pbi-146-plan-steps-skill
 - 関係する ADR: [オーケストレーターにもコンテキストを渡し、工程の選択を既定のスキル plan-steps にして答えの JSON を検査させる](../adr/20261019-1512-orchestrator-plan-steps-skill.md)
 
