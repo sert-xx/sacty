@@ -445,6 +445,8 @@ Code: `apps/daemon/src/service.ts` (`askQuestion`, `answerQuestion`, `stageQuest
 - Finding prefixes: `[要修正]` (must fix before merging) and `[提案]` (worth fixing). The agent adds them to findings in the body. For line comments
   (`sacty-review-comments`), the agent writes the severity (`severity`: `must` or `should`; `nit` is treated as `should`) and sacty adds the prefix at the start of the comment body
   (a prefix already at the start is replaced; with neither severity nor prefix, nothing is added). Findings with no line in the diff to attach to are written in the body without asking a person.
+- Documents shown in the PR description (such as a design outside Git): following the skill, the agent sorts each into a review target or evidence, and reviews the targets too.
+  Findings on documents go in the body. If a document chosen as a target cannot be read, the review is treated as not completed and no verdict is given.
 - Verdict: the agent adds `verdict` in `sacty-review-verdict` (`changes_required`: changes required, `suggestions`: suggestions only (OK to merge),
   `no_findings`: no findings). sacty raises it to `changes_required` if a line comment has `[要修正]`, and to `suggestions` if there are findings but the verdict is `no_findings`.
   Line comments alone do not make it `changes_required`. If there is no verdict or it is not one of the values, and there is no `[要修正]` finding,

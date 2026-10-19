@@ -34,6 +34,7 @@
 - `should` のみ：自己レビューでは修正に戻す。PR レビューでは「提案あり（マージは可）」
 - 指摘なし：合格（`passed`）。ただし、見られなかった観点があれば、判定に「見られなかった観点」を併記する
 - 見られなかった観点が1つでもある初回の PR レビューは、合格と書かない
+- レビューの対象にした文書（[linked-docs.md](linked-docs.md)）を取得できなかった PR レビューは、初回でも再レビューでも合格と書かない
 - 検証のコマンドが失敗しているのに、その原因が指摘になっていない（X-2 が既存の失敗・環境の問題と判断した）ときは、判断の根拠を確かめる。今回の変更が原因でないと確かめられなければ合格と書かない
 
 ## 順序
@@ -51,6 +52,7 @@
   "target_kind": "code | design-doc | user-doc",
   "launched": [{ "viewpoint": "C-1", "tier": "advanced | …| 親と同じ", "status": "passed | changes_required | failed", "findings": { "must": 0, "should": 0, "nit": 0 } }],
   "not_launched": [{ "viewpoint": "C-7", "reason": "並行処理・共有状態の変更が無い" }],
+  "linked_docs": [{ "source": "<URL かリポジトリ内のパス>", "role": "target | evidence", "reason": "本文が成果物の設計書として示している", "fetched": true, "copy": "<一時ディレクトリ>/review-linked/design.md", "version": "<版や更新日時。分からなければ空>", "not_fetched_reason": "" }],
   "verification": { "summary": "<一時ディレクトリ>/review-verify/round-1/summary.json", "failed": ["test:pytest"], "not_run": ["build（CI で実行していない）"] },
   "adopted": [],
   "dismissed": [{ "viewpoint": "C-5", "title": "…", "reason": "範囲の外（既存の問題）" }],

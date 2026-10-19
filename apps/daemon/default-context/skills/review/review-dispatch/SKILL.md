@@ -32,10 +32,11 @@ description: 成果物（コード・設計書・要求要件・利用者向け�
 2. 流れを1つ選び、対応する資料だけ読む
     - 自分が作っている成果物を提出前に見直す：[references/self-review.md](references/self-review.md)
     - 他者が提出した GitHub の PR を査読する：[references/pr-review.md](references/pr-review.md)
-3. 担当を起動する前に検証を実行するとき：[references/verification-run.md](references/verification-run.md)
-4. 観点を決めるとき：[references/viewpoints.md](references/viewpoints.md)（観点カタログ）
-5. 担当の出力の形式を知るとき：[references/finding-format.md](references/finding-format.md)（担当に読ませるスキル `review-execution` の SKILL.md は、親は読まない）
-6. 結果を集約するとき：[references/aggregation.md](references/aggregation.md)
+3. PR の本文や依頼文に文書（外部の URL・リポジトリ内のパス）が示されているとき：[references/linked-docs.md](references/linked-docs.md)（対象か根拠かを分け、対象ならレビューに含める）
+4. 担当を起動する前に検証を実行するとき：[references/verification-run.md](references/verification-run.md)
+5. 観点を決めるとき：[references/viewpoints.md](references/viewpoints.md)（観点カタログ）
+6. 担当の出力の形式を知るとき：[references/finding-format.md](references/finding-format.md)（担当に読ませるスキル `review-execution` の SKILL.md は、親は読まない）
+7. 結果を集約するとき：[references/aggregation.md](references/aggregation.md)
 
 記述が衝突したら、この SKILL.md、流れの資料、観点カタログの順に優先する。
 
@@ -58,7 +59,7 @@ description: 成果物（コード・設計書・要求要件・利用者向け�
 | `design-doc` | 設計書、ADR、要求要件、比較・判断の記録、構成図の説明 |
 | `user-doc` | README、利用者向けの資料、運用手順（runbook）、移行手順、環境構築の手順 |
 
-拡張子だけで決めない。PR の差分が小さくリンク先が主題なら、リンク先を主対象にする。
+拡張子だけで決めない。本文で示された文書のうち、レビューの対象にしたものも含めて決める（[references/linked-docs.md](references/linked-docs.md) の「主対象と観点」）。たとえば、差分が小さく、リンク先の設計書が主題なら、リンク先を主対象にする。
 actor・principal・endpoint・sequence・decision・network path が主題なら `design-doc`、実行する手順と運用の成立が主題なら `user-doc`。
 種類が本質的に混在するときは主対象を1つ決め、他の種類の必須観点のうち当てはまるものを足す（例：実装と README の両方を変える PR は `code` を主にして、`user-doc` の「正確性・コードとの同期」を足す）。
 
@@ -66,7 +67,7 @@ actor・principal・endpoint・sequence・decision・network path が主題な�
 
 担当を起動する前に、次を揃える。揃わなければ担当を起動せず、流れの資料の「完了できないとき」に従う。
 
-- 対象の本体：差分と、差分の周辺を読める作業領域（コード）、または文書の全文
+- 対象の本体：差分と、差分の周辺を読める作業領域（コード）、または文書の全文。PR の本文や依頼文で示された文書は、対象か根拠かを分け、全文を取得しておく（[references/linked-docs.md](references/linked-docs.md)）。主対象にした文書のほかは、取得できなくても揃わないとはみなさない。取得できなかった文書と理由を記録し、それを入力として起動する（扱いは linked-docs.md の「取得できないとき」）
 - 根拠：タスク・Issue・PR の本文、承認済みの要求要件・設計・テスト観点（あるもの）。無いものは「無い」と記録する
 - 範囲：何をレビューの対象にするか（PR 全体、今回の変更、文書の章）。範囲の外は指摘しない
 - 直近の差分（再レビューのとき）：前回のレビュー以降に変わった箇所
@@ -110,7 +111,7 @@ actor・principal・endpoint・sequence・decision・network path が主題な�
 - 観点：<ID> <名前>
   - 見るもの：<カタログの「見るもの」>
   - 見ないもの：<カタログの「見ないもの」>
-- 対象：<作業領域のパス、差分の場所（差分の全体のファイル、例：/tmp/review/pr.diff。または .git があれば取り方、例：git diff abc123...HEAD）、または文書のパス>
+- 対象：<作業領域のパス、差分の場所（差分の全体のファイル、例：/tmp/review/pr.diff。または .git があれば取り方、例：git diff abc123...HEAD）、文書のパス、本文で示された文書のうち対象にしたものの写しのパスと取得元>
 - 範囲：<PR 全体 | 今回の変更と、その変更が直接必要にする既存の箇所 | 文書の章>
 - 直近の差分（再レビューのとき）：<取り方>
 - 根拠：<タスク・Issue・PR 本文・要求要件・設計・テスト観点のパスや本文>
@@ -140,7 +141,7 @@ actor・principal・endpoint・sequence・decision・network path が主題な�
 
 ## 親の手順
 
-1. 流れと主対象の種類を決める
+1. 流れを決める。本文や依頼文で示された文書を、対象か根拠かに分けて取得する（[references/linked-docs.md](references/linked-docs.md)）。それを含めて主対象の種類を決める
 2. 入力を揃える。揃わなければ起動せず、流れの資料の「完了できないとき」に従う
 3. 初回か再レビューかを決める（流れの資料の規則）
 4. 検証を実行する（[references/verification-run.md](references/verification-run.md)）。検証が失敗しても担当の起動は止めない（失敗は X-2 が分析する）
