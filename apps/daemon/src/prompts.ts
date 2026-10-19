@@ -280,6 +280,7 @@ function existingReviewLines(
       ...(r.path ? { path: r.path } : {}),
       ...(r.line !== undefined ? { line: r.line } : {}),
       ...(r.requestChanges ? { requestChanges: true } : {}),
+      ...(r.approved ? { approved: true } : {}),
       body: r.body.slice(0, REPLY_IN_PROMPT),
     })),
   };

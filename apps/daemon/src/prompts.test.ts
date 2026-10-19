@@ -374,11 +374,20 @@ describe("PR のレビューのプロンプトと、投稿する本文（PBI-111
         line: 1,
         url: "https://github.com/acme/app/pull/12#discussion_r2",
       },
+      // 本文のある承認（「承認するが、ここは直してほしい」）も既存の指摘（PR #161 レビュー指摘）
+      {
+        key: "review:3",
+        kind: "review" as const,
+        author: "carol",
+        at: "2026-10-16T00:50:00Z",
+        body: "承認します。src/new.ts の名前は後で直してください",
+        approved: true,
+      },
     ];
     const prompt = buildPrompt(reviewTask(), "review", { diff, existing });
     expect(prompt).toContain("--- PR の既存のレビュー ---");
     expect(prompt).toContain(
-      "PR には、すでに 2 件のレビュー・コメント（他のレビュアーの指摘と、作者の返答。あなたの前回の投稿は含みません）があります。",
+      "PR には、すでに 3 件のレビュー・コメント（他のレビュアーの指摘と、作者の返答。あなたの前回の投稿は含みません）があります。",
     );
     expect(prompt).toContain(
       "レビューの前に、既存の指摘の状況（誰が・どこに・何を指摘したか、作者が対応・返答したか）を確かめる",
@@ -406,6 +415,13 @@ describe("PR のレビューのプロンプトと、投稿する本文（PBI-111
           path: "src/new.ts",
           line: 1,
           body: "後続で対応します",
+        },
+        {
+          kind: "review",
+          author: "carol",
+          at: "2026-10-16T00:50:00Z",
+          approved: true,
+          body: "承認します。src/new.ts の名前は後で直してください",
         },
       ],
     });

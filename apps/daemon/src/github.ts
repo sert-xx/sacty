@@ -34,6 +34,11 @@ export interface PullRequests {
      * PR の指摘として含め、そうでなければ除く（Bot かどうか・元のタスクのアカウントかどうかに関わらない）。
      */
     sactyReviews?: readonly SactyReviewRound[];
+    /**
+     * 本文のある承認（APPROVED）のレビューも含める（PBI-144。レビューの工程に渡す既存のレビュー）。既定では、承認は指摘ではないので
+     * 含めない（PR の指摘の取り込み）。
+     */
+    includeApprovals?: boolean;
   }): Promise<PullRequestFeedback[]>;
   /**
    * PR にラベルを付ける（PBI-88）。リポジトリにそのラベルが無ければ作ってから付ける（created）。すでに付いていれば
@@ -157,6 +162,8 @@ export type PullRequestFeedback = {
   path?: string;
   line?: number;
   requestChanges?: boolean;
+  /** 承認（APPROVED）のレビュー（本文のあるもの。`includeApprovals` のときだけ）。 */
+  approved?: boolean;
 };
 
 /**
@@ -249,9 +256,17 @@ export class GitHubPullRequests implements PullRequests {
     ];
     const items: PullRequestFeedback[] = [];
     for (const r of reviews.filter(human)) {
-      // 承認は指摘ではない。コメントだけのレビューは本文があるときだけ
+      // 承認は指摘ではない（既存のレビューとして渡すときだけ、本文のある承認を含める）。コメントだけのレビューは本文があるときだけ
       const requestChanges = r.state === "CHANGES_REQUESTED";
-      if (!requestChanges && !(r.state === "COMMENTED" && body(r).trim())) continue;
+      const approved = r.state === "APPROVED";
+      const withBody = body(r).trim() !== "";
+      if (
+        !requestChanges &&
+        !(r.state === "COMMENTED" && withBody) &&
+        !(approved && input.includeApprovals && withBody)
+      ) {
+        continue;
+      }
       items.push({
         key: `review:${r.id}`,
         kind: "review",
@@ -260,6 +275,7 @@ export class GitHubPullRequests implements PullRequests {
         ...url(r),
         body: body(r),
         ...(requestChanges ? { requestChanges } : {}),
+        ...(approved ? { approved: true } : {}),
       });
     }
     for (const c of reviewComments.filter(human)) {

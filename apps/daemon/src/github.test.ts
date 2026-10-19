@@ -1054,6 +1054,44 @@ describe("sacty が作る PR の取り込むラベル（PBI-88）", () => {
     expect(feedback.map((f) => f.key)).toEqual(["review:1", "review:2", "review_comment:4"]);
   });
 
+  it("includeApprovals なら、本文のある承認のレビューも含める（本文の無い承認は含めない。PR #161 レビュー指摘）", async () => {
+    const human = { login: "reviewer", type: "User" };
+    const reviews = [
+      {
+        id: 1,
+        state: "APPROVED",
+        user: human,
+        body: "承認しますが、src/retry.ts の上限は改善してください",
+        submitted_at: "2026-10-11T00:00:01Z",
+      },
+      { id: 2, state: "APPROVED", user: human, body: "", submitted_at: "2026-10-11T00:00:02Z" },
+      {
+        id: 3,
+        state: "COMMENTED",
+        user: human,
+        body: "ログが足りない",
+        submitted_at: "2026-10-11T00:00:03Z",
+      },
+    ];
+    const responses = () => [
+      { status: 200, json: reviews },
+      { status: 200, json: [] },
+      { status: 200, json: [] },
+    ];
+    const withApprovals = await new GitHubPullRequests(fakeFetch(responses()).impl).feedback({
+      ...pr,
+      includeApprovals: true,
+    });
+    expect(withApprovals.map((f) => [f.key, f.approved])).toEqual([
+      ["review:1", true],
+      ["review:3", undefined],
+    ]);
+    expect(withApprovals[0]?.body).toBe("承認しますが、src/retry.ts の上限は改善してください");
+    // 既定（PR の指摘の取り込み）では、承認は指摘ではないので含めない
+    const without = await new GitHubPullRequests(fakeFetch(responses()).impl).feedback(pr);
+    expect(without.map((f) => f.key)).toEqual(["review:3"]);
+  });
+
   it("リポジトリにラベルがあれば、そのまま PR に付ける", async () => {
     const { impl, calls } = fakeFetch([
       { status: 200, json: { name: "sacty ai" } },

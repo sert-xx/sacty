@@ -440,7 +440,8 @@ Code: `apps/daemon/src/service.ts` (`askQuestion`, `answerQuestion`, `stageQuest
 - The only step is `review`. Before running, the head of the target PR, the base commit, and the PR author's login are recorded (`ReviewTargetResolved`; empty if the author cannot be read).
   The code at the PR's head commit and the whole diff (mounted read-only at `/sacty-review`; the first 100000 characters in the instructions) are passed.
 - Reviews already on the PR: before running, the PR's reviews, line comments, and ordinary comments (excluding posts by bots and posts by this task's account that start with
-  the marker, that is, its previous posts; findings by other reviewers and the author's replies) are read and passed as JSON data separate from the instructions
+  the marker, that is, its previous posts; findings by other reviewers and the author's replies; approving reviews with a body are included too (`includeApprovals`; they are not
+  included when importing PR comments)) are read and passed as JSON data separate from the instructions
   (`existingReviews`; oldest first; the newest 30 (`EXISTING_IN_PROMPT`), 2000 characters each), for the first review and re-reviews alike. The instructions tell the agent
   to check the state of the existing findings before reviewing, not to repeat a problem already raised at the same place, to decide the verdict without the findings it did not
   repeat, and to write briefly in the summary how many were left out (without copying them). If there are none, "none yet" is passed. If they cannot be read, the instructions say so,

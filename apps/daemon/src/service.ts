@@ -1816,6 +1816,8 @@ export class TaskService {
       token,
       number: target.number,
       ...(account ? { account } : {}),
+      // 本文のある承認（「承認するが、ここは直してほしい」）も、既存の指摘として渡す（PR #161 レビュー指摘）
+      includeApprovals: true,
     });
     const previous = task.previousReview;
     if (!previous) return { existing };
