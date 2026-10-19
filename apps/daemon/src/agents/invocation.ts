@@ -275,10 +275,11 @@ export async function buildInvocation(
       if (agent.reasoning_effort) {
         command.push("-c", `model_reasoning_effort=${tomlString(agent.reasoning_effort)}`);
       }
-      // 保存したセッションを再開する（PBI-67。`codex exec [オプション] resume <ID> <指示>`）。Codex には複製が無いので、
+      // 保存したセッションを再開する（PBI-67。`codex exec [オプション] resume <ID> -- <指示>`）。Codex には複製が無いので、
       // 質問への答えも再開する（実行ごとの使い捨ての場所で再開し、元のセッションには書き戻さない）
       if (session) command.push("resume", session.resume);
-      command.push(prompt);
+      // 指示は `--` の後に置く。指示が `-` で始まる（`--- メモリー ---` など）と、Codex がオプションとして読んで止まる
+      command.push("--", prompt);
       return {
         command,
         env,

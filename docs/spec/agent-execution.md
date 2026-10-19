@@ -32,7 +32,7 @@ docker のコンテナの中で1回実行して行う。テストの実行も、
 | runtime | コマンド | 設定の場所 |
 | --- | --- | --- |
 | `claude-code` | `claude -p <指示> --output-format stream-json --verbose`（作業領域の外で読ませる場所があれば `--add-dir <場所>`。質問への答えの `/sacty-logs` だけ。再開は `--resume <ID>`、複製は `--fork-session`。MCP があれば `--mcp-config …/mcp.json --strict-mcp-config --allowedTools mcp__<名前>,…`。`--model`（Bedrock では環境変数 `ANTHROPIC_MODEL`）・`--effort`） | `CLAUDE_CONFIG_DIR=/tmp/sacty-claude-config`、`CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` |
-| `codex` | `codex exec --json --skip-git-repo-check --sandbox danger-full-access`（接続先は `-c model_provider=…` などで指定。`--model`・`-c model_reasoning_effort=…`。再開は `resume <ID>`。最後に指示） | `CODEX_HOME=/.codex` |
+| `codex` | `codex exec --json --skip-git-repo-check --sandbox danger-full-access`（接続先は `-c model_provider=…` などで指定。`--model`・`-c model_reasoning_effort=…`。再開は `resume <ID>`。最後に `--` と指示。指示が `-` で始まってもオプションとして読ませない） | `CODEX_HOME=/.codex` |
 | `stub` | `sh -c 'printf "%s" "$SACTY_STUB_RESULT"'`（設定の `stub` の出力を返す。AI は呼ばない） | なし |
 
 - 設定の場所には、実行ごとの一時ディレクトリを読み書きでマウントし、合成したコンテキスト（[コンテキストの合成](context.md)）・

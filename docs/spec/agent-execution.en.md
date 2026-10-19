@@ -32,7 +32,7 @@ Code: `apps/daemon/src/agents/docker.ts` (`dockerRunArgs`, `dockerClientEnv`, `D
 | runtime | Command | Config location |
 | --- | --- | --- |
 | `claude-code` | `claude -p <instructions> --output-format stream-json --verbose` (`--add-dir <location>` if there is a location outside the workspace to read; only `/sacty-logs` for answers to questions. Resume is `--resume <ID>`, fork is `--fork-session`. With MCP, `--mcp-config …/mcp.json --strict-mcp-config --allowedTools mcp__<name>,…`. `--model` (on Bedrock, the environment variable `ANTHROPIC_MODEL`), `--effort`) | `CLAUDE_CONFIG_DIR=/tmp/sacty-claude-config`, `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` |
-| `codex` | `codex exec --json --skip-git-repo-check --sandbox danger-full-access` (the endpoint is specified with `-c model_provider=…` and the like. `--model`, `-c model_reasoning_effort=…`. Resume is `resume <ID>`. The instructions come last) | `CODEX_HOME=/.codex` |
+| `codex` | `codex exec --json --skip-git-repo-check --sandbox danger-full-access` (the endpoint is specified with `-c model_provider=…` and the like. `--model`, `-c model_reasoning_effort=…`. Resume is `resume <ID>`. Last come `--` and the instructions, so that instructions starting with `-` are not read as an option) | `CODEX_HOME=/.codex` |
 | `stub` | `sh -c 'printf "%s" "$SACTY_STUB_RESULT"'` (returns the output of the `stub` setting; no AI is called) | None |
 
 - A temporary directory per run is mounted read-write at the config location, and the composed context ([Context composition](context.en.md)),
