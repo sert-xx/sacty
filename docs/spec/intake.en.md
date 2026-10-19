@@ -5,7 +5,7 @@
 Periodically searches GitHub Issues and PRs and JIRA tickets and turns them into tasks. The intake sources and the GitHub account to use are set in the project, and the intake labels
 in the sacty settings (shared by all projects). GitHub is accessed with the accounts logged in to `gh` on the host.
 
-Related ADRs: [Allow the same name for the intake label and the review label](../adr/20261015-0850-allow-same-intake-and-review-label.md), [Keep the intake interval in the sacty settings, per kind of intake](../adr/20261015-0310-intake-intervals-per-kind.md), [Split intake into "Issue intake" and "PR review intake", and add the review label to sacty's PRs](../adr/20261015-0240-superseded-split-issue-and-pr-review-intake.md), [Add the intake label to PRs created by sacty, and take in reviews from a separate task as comments on the original task's PR](../adr/20261014-1445-superseded-label-sacty-pull-requests-for-review.md)
+Related ADRs: [Allow the same name for the intake label and the review label](../adr/20261015-0850-allow-same-intake-and-review-label.md), [Keep the intake interval in the sacty settings, per kind of intake](../adr/20261015-0310-intake-intervals-per-kind.md), [Split intake into "Issue intake" and "PR review intake", and add the review label to sacty's PRs](../adr/20261015-0240-superseded-split-issue-and-pr-review-intake.md), [Add the intake label to PRs created by sacty, and take in reviews from a separate task as comments on the original task's PR](../adr/20261014-1445-superseded-label-sacty-pull-requests-for-review.md), [Create a separate task for a GitHub review re-request](../adr/20261019-0503-review-rerequest-new-task.md)
 
 ## Interval
 
@@ -71,19 +71,22 @@ takes in PRs.
   are rejected when saving.
 - Review requests are only those made to you as an individual (requests to teams are not included). Only requests to the account chosen for that host in the responsible project are taken in.
   Even if a PR matches both the review label and a request, there is one review task.
-- Review re-requests (PBI-143): when the request search finds the PR of a task taken in by a request (`source.review: requested`) that can be reviewed again
+- Review re-requests: when the request search finds the PR of a task taken in by a request (`source.review: requested`) that can be reviewed again
   (`canRereview`), sacty reads the PR's current requested reviewers (`requested_reviewers`) and the time of the last request to the task's account
-  (`review_requested` in the PR events). If the account is still requested and the last request is after the previous post, it reviews again as a re-request
-  (`ReviewRestarted` with `reason: rerequested`, actor sacty; `restartRerequestedReviews`).
+  (`review_requested` in the PR events). If the account is still requested and the last request is after the previous post, it creates a review-only task with a new ID in the same project
+  (`reviewRerequest` in `TaskCreated`; `restartRerequestedReviews`). The original task's completion status, post, history, cost, and execution session stay unchanged,
+  and the new task does not resume the original session. A snapshot of the previous review is carried into `previousReview` of the new task. `reviewRound` continues the review count by adding 1 to the previous round.
   - GitHub removes a request when the requested person posts a review, so a post normally clears it. Search results lag (a removed request can remain right
     after the post), so they alone never start a re-review. If a post did not clear the request (for example, the account changed after intake), the last request
     is older than the post, so it does not repeat after every post.
+  - The most recently created task for the same PR is the predecessor only if it has posted and completed; an older completed task is never used as a fallback. The request time, account, and predecessor task are saved in the event, preventing duplicates
+    across repeated polling, concurrent processing, and daemon restarts. A later request after the new task has posted and completed creates another separate task.
   - Tasks that are running, not yet posted, or cancelled, tasks taken in by the label, and tasks for PRs sacty created are excluded. Nothing is checked while `reviewRequested` is off.
   - If the current requested reviewers or the request time cannot be read, no re-review starts, `intake.rerequestUnchecked` is recorded, and that search's read position is not advanced (the same PR
     is found again at the next intake). Each PR is checked once per intake.
   - If the same PR appears in searches for multiple accounts, deduplication happens only after matching the task's account.
   - PR events are read up to 50 pages. If another page remains, reading is recorded as failed; partial results are not used to decide whether a review was re-requested.
-  - After the API reads, intake must still be on, and the selected account, review round, and posting time must be unchanged before a re-review starts.
+  - After the API reads, intake must still be on, and the selected account, review round, and posting time must be unchanged before a new task is created.
 - If a PR created by sacty (one in the ledger: the implementation PR of a task, a Requirements or Design PR, or a PR given the label; see [The review label on PRs](approval.en.md#the-review-label-on-prs))
   has the review label, it becomes a separate review-only task, not the task that created it (`source.review: sacty`; the Orchestrator does not
   choose steps). Even if it also matches a review request, it is `sacty` (so that the review reaches the task that created the PR). If the review label's triage is
@@ -94,11 +97,11 @@ takes in PRs.
   - Reviews that the review task posts on the PR, in rounds that require changes (and rounds whose verdict could not be read), are taken in as comments on the PR of the task that created it
     ([Importing PR comments](approval.en.md#importing-pr-comments)). Rounds with suggestions only or no findings are not taken in.
     The review task does not create PRs, so it does not itself add PRs that get the label.
-- For the responsible project, a repository target takes precedence over an org target (`responsibleProject`). The same Issue or PR (`<repository>#<number>`) is never taken in twice.
+- For the responsible project, a repository target takes precedence over an org target (`responsibleProject`). The same Issue or PR (`<repository>#<number>`) is never taken in twice (except for new tasks created by review re-requests as described above).
 - When a rate limit is hit (403 or 429 with 0 remaining, or `retry-after`), the other searches for that account are skipped.
 - Intake sources with no account chosen are not searched, and `github.accountRequired` is recorded.
 
-Code: `apps/daemon/src/service.ts` (`intakeSources`, `importIssues`, `restartRerequestedReviews`, `sactyReviewsOf`, `saveSettings`), `apps/daemon/src/github.ts` (`GitHubIssueSearch`), `packages/core/src/projects.ts` (`SactySettings`, `TriageKind`, `responsibleProject`)
+Code: `apps/daemon/src/service.ts` (`intakeSources`, `importIssues`, `restartRerequestedReviews`, `sactyReviewsOf`, `saveSettings`), `apps/daemon/src/github.ts` (`GitHubIssueSearch`), `packages/core/src/projects.ts` (`SactySettings`, `TriageKind`, `responsibleProject`), `packages/core/src/events.ts` (`TaskCreated`), `packages/core/src/projection.ts` (`applyEvent`)
 
 ## JIRA tickets
 

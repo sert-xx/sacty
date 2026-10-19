@@ -380,6 +380,16 @@ const DeploymentFix = z.object({
   depth: z.number().int().positive(),
 });
 
+/** 再レビューで参照する、前回投稿の凍結された内容。 */
+const PreviousReviewSnapshot = z.object({
+  round: z.number().int().positive(),
+  url: z.string(),
+  at: z.string(),
+  headCommit: z.string(),
+  body: z.string(),
+  comments: z.array(ReviewComment),
+});
+
 const TaskCreated = z.object({
   type: z.literal("TaskCreated"),
   payload: z.object({
@@ -424,6 +434,15 @@ const TaskCreated = z.object({
     budgetCapUsd: z.number().positive().default(DEFAULT_BUDGET_USD),
     /** 取り込み元（GitHub の Issue・PR のリポジトリと番号）。 */
     source: TaskSource.optional(),
+    /** GitHubの再依頼で作った別タスク。依頼時刻は重複取り込みを防ぐため永続化する。 */
+    reviewRerequest: z
+      .object({
+        taskId: z.string(),
+        requestedAt: z.iso.datetime({ offset: true }),
+        reviewer: z.string().min(1),
+        previousReview: PreviousReviewSnapshot,
+      })
+      .optional(),
     /**
      * 画面で作ったタスクの対象リポジトリ（リポジトリの URL。プロジェクトのリポジトリの設定から選んだもの。PBI-21）。
      * Issue から取り込んだタスクは、その Issue のリポジトリが対象なので持たない。PBI-21 より前の作業履歴にも無い。

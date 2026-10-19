@@ -72,6 +72,7 @@ import {
   sactyReviewTask,
 } from "./github.js";
 import { type HostMcpConnection, HostMcpFile, type HostMcpSpec, toHostMcp } from "./host-mcp.js";
+import { IssueIntake } from "./intake.js";
 import { LedgerAuditService } from "./ledger-audits.js";
 import { SlackNotifier } from "./notifier.js";
 import { OrchestratorSessionStore } from "./orchestrator-sessions.js";
@@ -24261,7 +24262,7 @@ describe("レビューの再依頼で、自動で再レビューする（PBI-143
     (service.get(id)?.activity ?? []).filter((e) => e.type === "ReviewRestarted");
 
   /** 依頼で取り込んだ PR 9 のレビューを、投稿して完了させる。 */
-  async function posted(now?: () => number) {
+  async function posted(now?: () => number, first = "# 1回目") {
     const activity = new SqliteActivityStore(dbPath, now && (() => new Date(now())));
     const pulls = new FakePulls();
     pulls.prInfo = { ...pulls.prInfo, number: 9, url: "https://github.com/acme/app/pull/9" };
@@ -24270,19 +24271,23 @@ describe("レビューの再依頼で、自動で再レビューする（PBI-143
       reviewLabel: "sacty-review",
     });
     const projects = projectsWithAccount();
-    const { service } = makeService(activity, [out("# 1回目"), out("# 2回目"), out("# 3回目")], {
-      pulls,
-      settings,
-      projects,
-      now,
-    });
+    const { service, executor } = makeService(
+      activity,
+      [out(first), out("# 2回目"), out("# 3回目")],
+      {
+        pulls,
+        settings,
+        projects,
+        now,
+      },
+    );
     const [task] = service.importIssues([pr(9)]);
     const id = task?.id ?? "";
     await service.runNext(id);
     await service.runNext(id);
     expect(pulls.reviews).toHaveLength(1);
     expect(service.get(id)?.task.reviewPost).toBeDefined();
-    return { activity, pulls, settings, projects, service, id };
+    return { activity, pulls, settings, projects, service, executor, id };
   }
 
   /** 最後の投稿から ms 後に、依頼した（再依頼）ことにする。 */
@@ -24303,7 +24308,9 @@ describe("レビューの再依頼で、自動で再レビューする（PBI-143
       pr(9, { requestedFor: second }),
       pr(9),
     ]);
-    expect(restarted.map((t) => [t.id, t.reviewRound])).toEqual([[id, 2]]);
+    expect(restarted).toHaveLength(1);
+    expect(restarted[0]?.id).not.toBe(id);
+    expect(restarted[0]?.previousReview?.body).toBe("# 1回目");
     expect(pulls.lastRequestQueries).toHaveLength(1);
     expect(pulls.lastRequestQueries[0]?.reviewer).toBe("me");
     activity.close();
@@ -24367,7 +24374,7 @@ describe("レビューの再依頼で、自動で再レビューする（PBI-143
   );
 
   it("投稿の後に依頼が残っていれば（再依頼）、1回だけ再レビューする。検索に残っていても、今の依頼先に無ければしない", async () => {
-    const { activity, pulls, service, id } = await posted();
+    const { activity, pulls, service, executor, id } = await posted();
     // 検索の反映の遅れで、投稿で外れた依頼がまだ見つかる：今の依頼先には無いので再レビューしない
     // （同じ PR が二度見つかっても、確かめるのは1回）
     pulls.prInfo = { ...pulls.prInfo, requestedReviewers: [] };
@@ -24378,6 +24385,7 @@ describe("レビューの再依頼で、自動で再レビューする（PBI-143
     });
     expect(pulls.prInfoRequests.length - first).toBe(1);
     expect(restarts(service, id)).toEqual([]);
+    expect(pulls.lastRequestQueries).toEqual([]);
     expect(pulls.prInfoRequests.at(-1)).toEqual({
       repo: "https://github.com/acme/app",
       number: 9,
@@ -24389,32 +24397,45 @@ describe("レビューの再依頼で、自動で再レビューする（PBI-143
     requestAfterPost(service, pulls, id);
     const before = pulls.prInfoRequests.length;
     const { restarted } = await service.restartRerequestedReviews([pr(9), pr(9)]);
-    expect(restarted.map((t) => [t.id, t.status, t.reviewRound])).toEqual([[id, "queued", 2]]);
+    const next = restarted[0];
+    if (!next) throw new Error("missing re-review task");
+    expect(next.id).not.toBe(id);
+    expect(next.status).toBe("queued");
+    expect(next.reviewRound).toBe(2);
+    expect(next.projectId).toBe(service.get(id)?.task.projectId);
+    expect(next.budget.usedUsd).toBe(0);
+    expect(next.reviewRerequest?.taskId).toBe(id);
+    expect(next.previousReview?.body).toBe("# 1回目");
     expect(pulls.prInfoRequests.length - before).toBe(1);
-    const [event] = restarts(service, id);
-    expect(event?.actor).toBe("sacty");
-    expect(event?.type === "ReviewRestarted" && event.payload.reason).toBe("rerequested");
+    expect(isCompleted(service.get(id)?.task as Task)).toBe(true);
+    expect(restarts(service, id)).toEqual([]);
 
-    // 再レビューの間は、依頼が残っていても重ねて始めない（PR も読まない）
-    const during = pulls.prInfoRequests.length;
+    const requests = pulls.prInfoRequests.length;
     expect((await service.restartRerequestedReviews([pr(9)])).restarted).toEqual([]);
-    expect(pulls.prInfoRequests.length).toBe(during);
-    await service.runNext(id);
-    await service.runNext(id);
+    expect(pulls.prInfoRequests).toHaveLength(requests);
+    await service.runNext(next.id);
+    await service.runNext(next.id);
     expect(pulls.reviews).toHaveLength(2);
+    expect(executor.calls.at(-1)?.command).not.toContain("resume");
+    expect(executor.calls.at(-1)?.command).not.toContain("--resume");
     expect(pulls.reviews[1]?.body).toContain("# 2回目");
-
-    // 再レビューの投稿で依頼が外れた：もう一度は始めない
     pulls.prInfo = { ...pulls.prInfo, requestedReviewers: [] };
     expect((await service.restartRerequestedReviews([pr(9)])).restarted).toEqual([]);
-    // 依頼が残っていても、最後の依頼が今回の投稿より前なら（投稿で外れなかった）、繰り返さない
     pulls.prInfo = { ...pulls.prInfo, requestedReviewers: ["me"] };
-    requestAfterPost(service, pulls, id, -1_000);
+    requestAfterPost(service, pulls, next.id, -1_000);
     expect((await service.restartRerequestedReviews([pr(9)])).restarted).toEqual([]);
-    // 2回目の再依頼で、もう一度
-    requestAfterPost(service, pulls, id);
-    expect((await service.restartRerequestedReviews([pr(9)])).restarted).toHaveLength(1);
-    expect(restarts(service, id)).toHaveLength(2);
+    // 次の依頼にはさらに別ID。引継ぎ元は初回ではなく最新の投稿。
+    pulls.lastRequestAt = new Date(
+      Math.max(
+        Date.parse(next.reviewRerequest?.requestedAt ?? ""),
+        Date.parse(service.get(next.id)?.task.reviewPost?.at ?? ""),
+      ) + 60_000,
+    ).toISOString();
+    const third = (await service.restartRerequestedReviews([pr(9)])).restarted[0];
+    expect(third?.id).not.toBe(next.id);
+    expect(third?.reviewRerequest?.taskId).toBe(next.id);
+    expect(third?.previousReview?.body).toBe("# 2回目");
+    expect(third?.reviewRound).toBe(3);
     activity.close();
   });
 
@@ -24437,9 +24458,216 @@ describe("レビューの再依頼で、自動で再レビューする（PBI-143
     // 投稿より 1 ミリ秒でも後なら、再依頼
     requestAfterPost(service, pulls, id, 1);
     expect((await service.restartRerequestedReviews([pr(9)])).restarted).toHaveLength(1);
-    expect(restarts(service, id)).toHaveLength(1);
+    expect(restarts(service, id)).toHaveLength(0);
     activity.close();
   });
+
+  it("元レビューの再開可能セッションが保存されていても、別タスクは新規実行し元ファイルを変えない", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const sessionLogs = new SessionLogStore(join(dir, "runs"));
+    const orchestratorSessions = new OrchestratorSessionStore(join(dir, "sessions"));
+    const pulls = new FakePulls();
+    pulls.prInfo = { ...pulls.prInfo, number: 9, url: "https://github.com/acme/app/pull/9" };
+    const { service, executor } = makeService(activity, [out("# 1回目"), out("# 2回目")], {
+      pulls,
+      sessionLogs,
+      orchestratorSessions,
+      settings: new MemorySettingsStore({ reviewRequested: true }),
+      projects: projectsWithAccount(),
+    });
+    executor.sessionFiles = (_, runId) => ({
+      [`projects/-workspace/session-${runId}.jsonl`]: `${JSON.stringify({ type: "user", message: "元のレビューセッション" })}\n`,
+    });
+    const original = service.importIssues([pr(9)])[0];
+    if (!original) throw new Error("missing task");
+    await service.runNext(original.id);
+    await service.runNext(original.id);
+    const archived = service
+      .get(original.id)
+      ?.activity.find((e) => e.type === "AgentSessionArchived");
+    if (archived?.type !== "AgentSessionArchived") throw new Error("missing archived session");
+    const sourceDir = sessionLogs.agentFilesDir(original.id, archived.payload.runId);
+    if (!sourceDir) throw new Error("missing archived files");
+    // 実レビューで保存されたファイルを、再開可能なタスク別キャッシュにも用意する。
+    expect(
+      await orchestratorSessions.save(original.id, {
+        agentId: agent().id,
+        runtime: "claude-code",
+        sessionId: archived.payload.sessionId,
+        runId: archived.payload.runId,
+        files: archived.payload.files,
+        sourceDir,
+      }),
+    ).toEqual({ saved: true });
+    expect(
+      await orchestratorSessions.plan(original.id, { agentId: agent().id, runtime: "claude-code" }),
+    ).toMatchObject({ mode: "resume", sessionId: archived.payload.sessionId });
+    const beforeTask = service.get(original.id);
+    const beforeArchive = readTree(sourceDir);
+    const beforeSession = readTree(join(dir, "sessions", original.id));
+    expect(Object.keys(beforeArchive)).toEqual([
+      `projects/-workspace/session-${archived.payload.runId}.jsonl`,
+    ]);
+    pulls.prInfo = { ...pulls.prInfo, requestedReviewers: ["me"] };
+    requestAfterPost(service, pulls, original.id);
+    const next = (await service.restartRerequestedReviews([pr(9)])).restarted[0];
+    if (!next) throw new Error("missing re-review task");
+    const start = executor.calls.length;
+    await service.runNext(next.id);
+    await service.runNext(next.id);
+    const calls = executor.calls.slice(start);
+    expect(calls).toHaveLength(1);
+    for (const invocation of calls) {
+      expect(invocation.command).not.toContain("resume");
+      expect(invocation.command).not.toContain("--resume");
+      expect(invocation.stage?.sessionDir).toBeUndefined();
+    }
+    expect(executor.restored.slice(start)).toEqual([undefined]);
+    expect(service.get(original.id)).toEqual(beforeTask);
+    expect(readTree(sourceDir)).toEqual(beforeArchive);
+    expect(readTree(join(dir, "sessions", original.id))).toEqual(beforeSession);
+    expect(orchestratorSessions.has(next.id)).toBe(false);
+    expect(pulls.reviews).toHaveLength(2);
+    activity.close();
+  });
+
+  it("定期取り込みのimported件数に実際に作成した再依頼タスクだけを加算する", async () => {
+    const { activity, pulls, service, settings, id } = await posted();
+    settings.put({ reviewRequested: true });
+    pulls.prInfo = { ...pulls.prInfo, requestedReviewers: ["me"] };
+    requestAfterPost(service, pulls, id);
+    const intake = new IssueIntake(
+      service,
+      { search: async () => ({ issues: [pr(9)] }) },
+      new FakeGitHub(),
+      configOf(agent()),
+    );
+    await intake.tick(true);
+    expect(service.status().intake?.runs?.reviews?.imported).toBe(1);
+    expect(service.list()).toHaveLength(2);
+    await intake.tick(true);
+    expect(service.status().intake?.runs?.reviews?.imported).toBe(0);
+    expect(service.list()).toHaveLength(2);
+    activity.close();
+  });
+
+  it("API待機中に異なる再依頼時刻が返っても、最新の未完了タスクを追い越して作成しない", async () => {
+    const { activity, pulls, service, id } = await posted();
+    pulls.prInfo = { ...pulls.prInfo, requestedReviewers: ["me"] };
+    const at = Date.parse(service.get(id)?.task.reviewPost?.at ?? "");
+    const earlier = Promise.withResolvers<string>();
+    const later = Promise.withResolvers<string>();
+    const entered = Promise.withResolvers<void>();
+    vi.spyOn(pulls, "lastReviewRequest")
+      .mockImplementationOnce(() => earlier.promise)
+      .mockImplementationOnce(() => {
+        entered.resolve();
+        return later.promise;
+      });
+    const first = service.restartRerequestedReviews([pr(9)]);
+    const second = service.restartRerequestedReviews([pr(9)]);
+    await entered.promise;
+    earlier.resolve(new Date(at + 1_000).toISOString());
+    expect((await first).restarted).toHaveLength(1);
+    later.resolve(new Date(at + 2_000).toISOString());
+    expect((await second).restarted).toEqual([]);
+    activity.close();
+  });
+
+  it("別タスクの再レビュー指示にも前回本文・行指摘・コミットと作者返答を渡す", async () => {
+    const first =
+      "# 1回目\n\n```json\n" +
+      JSON.stringify({
+        "sacty-review-comments": [
+          { path: "src/retry.ts", line: 2, severity: "must", body: "上限が無い" },
+        ],
+      }) +
+      "\n```";
+    const { activity, pulls, service, executor, id } = await posted(undefined, first);
+    const at = Date.parse(service.get(id)?.task.reviewPost?.at ?? "");
+    pulls.feedbackBy[9] = [
+      {
+        key: "after",
+        kind: "review_comment",
+        author: "alice",
+        at: new Date(at + 1_000).toISOString(),
+        body: "上限を直しました",
+        path: "src/retry.ts",
+        line: 2,
+      },
+      {
+        key: "before",
+        kind: "comment",
+        author: "alice",
+        at: new Date(at - 1_000).toISOString(),
+        body: "前の返答",
+      },
+      {
+        key: "other",
+        kind: "comment",
+        author: "bob",
+        at: new Date(at + 1_000).toISOString(),
+        body: "他の人",
+      },
+    ];
+    pulls.prInfo = { ...pulls.prInfo, requestedReviewers: ["me"], headSha: "n".repeat(40) };
+    requestAfterPost(service, pulls, id);
+    const next = (await service.restartRerequestedReviews([pr(9)])).restarted[0];
+    if (!next) throw new Error("missing task");
+    await service.runNext(next.id);
+    const prompt =
+      executor.calls
+        .map((c) => c.command.join(" "))
+        .filter((c) => c.includes("レビューエージェント"))[1] ?? "";
+    expect(prompt).toContain("--- 再レビュー ---");
+    const json = JSON.parse(
+      prompt.split("\n").find((l) => l.startsWith('{"previousReview"')) ?? "{}",
+    );
+    expect(json.previousReview).toMatchObject({
+      body: "# 1回目",
+      commit: "h".repeat(40),
+      comments: [{ path: "src/retry.ts", line: 2, body: "[要修正] 上限が無い" }],
+    });
+    expect(json.authorReplies).toEqual([
+      expect.objectContaining({ body: "上限を直しました", path: "src/retry.ts" }),
+    ]);
+    expect(service.get(next.id)?.task.reviewTarget?.headCommit).toBe("n".repeat(40));
+    activity.close();
+  });
+
+  it.each(["queued", "cancelled", "failed", "restart"])(
+    "並行取り込みと%sのあとも同じ依頼を別タスクに重複作成しない",
+    async (state) => {
+      const { activity, pulls, service, settings, projects, id } = await posted();
+      pulls.prInfo = { ...pulls.prInfo, requestedReviewers: ["me"] };
+      requestAfterPost(service, pulls, id);
+      const original = service.get(id);
+      const results = await Promise.all([
+        service.restartRerequestedReviews([pr(9)]),
+        service.restartRerequestedReviews([pr(9)]),
+      ]);
+      const created = results.flatMap((r) => r.restarted);
+      expect(created).toHaveLength(1);
+      const next = created[0];
+      if (!next) throw new Error("missing task");
+      expect(next.id).not.toBe(id);
+      expect(service.get(id)).toEqual(original);
+      if (state === "cancelled") await service.cancel(next.id);
+      if (state === "failed") {
+        pulls.prInfoFail = "GitHub API 502";
+        await service.runNext(next.id);
+        expect(service.get(next.id)?.task.status).toBe("paused");
+        pulls.prInfoFail = undefined;
+      }
+      const current =
+        state === "restart"
+          ? makeService(activity, [], { pulls, settings, projects }).service
+          : service;
+      expect((await current.restartRerequestedReviews([pr(9)])).restarted).toEqual([]);
+      expect(current.get(next.id)?.task.previousReview).toEqual(next.previousReview);
+      activity.close();
+    },
+  );
 
   it("依頼のできごとを読めなければ、再レビューせず、伏せた理由を返す", async () => {
     const { activity, pulls, service, id } = await posted();

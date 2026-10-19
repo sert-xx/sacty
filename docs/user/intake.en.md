@@ -57,15 +57,17 @@ PRs are imported so that only their review is handed over ("PR review intake" in
   The heading, verdict, and prefixes added by sacty are in Japanese. The findings follow the writing rules of the repository (Japanese when there are none).
 - If the PR is pushed to while it is being reviewed, the review is posted against the reviewed commit, and the body says which commit was reviewed.
 - When new commits are pushed, use "Review again" in the task details to review the latest commit again and post it.
-  For a PR taken in by a review request, re-requesting the review on GitHub (Re-request review) makes sacty find it at the next intake and review it again automatically.
-  Each re-request starts one re-review. PRs taken in by the label and PRs sacty created are not re-reviewed by a re-request (use "Review again").
+  For a PR taken in by a review request, re-requesting the review on GitHub (Re-request review) makes Sacty find it at the next intake and create a new review task in the same project.
+  The original completed task keeps its status, post, activity, and cost, while the new task reviews in a new execution session.
+  Each re-request creates one new task. Repeated intake of the same request and restarts do not add duplicates. A re-request after the new task completes creates another separate task.
+  PRs taken in by the label and PRs sacty created are not re-reviewed by a re-request (use "Review again").
   Automatic re-review applies only to requests made after the review was posted and the task completed. A request made during a review is not queued for another round.
   If you re-requested during a review, re-request again after completion or use "Review again" in the task details.
   If the re-request cannot be checked, no automatic re-review starts; the intake result shows the reason, and sacty checks again next time. You can also start it manually with "Review again".
-  The activity shows "Started a re-review because a review was re-requested on the PR".
+  "Review again" in the UI continues to rerun the selected task as before.
   A re-review says, for each previous finding, whether it is fixed or still open (it also reads the PR author's replies since the previous review).
 - Only open PRs are imported for review.
-- The same PR is never imported twice. A PR that already has a task (a task in any project, even a cancelled one) does not become a new task even if you add the label
+- Except when a GitHub review re-request creates a new task, the same PR is never imported twice. A PR that already has a task (a task in any project, even a cancelled one) does not become a new task even if you add the label
   to it.
 - Tasks of PRs imported by earlier versions remain as they are.
 
