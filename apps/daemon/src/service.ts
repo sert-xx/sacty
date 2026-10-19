@@ -2632,42 +2632,52 @@ export class TaskService {
         },
       };
     }
+    // 使える外部 PF：ホストの PF と、プロジェクトのコンテキストで合成した PF（工程の実行と同じ。PBI-74）
+    const runPlatforms = mergePlatforms(config.platforms, context?.platforms ?? []);
+    // 用意したコンテキスト（層・注意・置いた段階・PF）を、実行の記録として残す（ほかの実行と同じ。PBI-119）
+    const record = (id: string) => {
+      if (context) {
+        this.append(this.mustGet(task.id), [this.contextResolved(id, context, runPlatforms)]);
+      }
+    };
     let ran: Awaited<ReturnType<TaskService["runGuardian"]>>;
     try {
-      // 用意したコンテキスト（層・注意・置いた段階）を、この実行の記録として残す（ほかの実行と同じ。PBI-119）
-      if (context) {
-        this.append(this.mustGet(task.id), [
-          this.contextResolved(runId, context, mergePlatforms(config.platforms, context.platforms)),
-        ]);
-      }
+      record(runId);
       ran = await this.runGuardian(
         task,
         {
           agent,
           image: config.image,
           runId,
+          // 再開できなかったセッションを新しく始め直したら（PBI-67）、その実行の ID でも記録する（PR #162 レビュー指摘）
+          onRunId: record,
+          platforms: runPlatforms.platforms,
           context: context && { dir: context.dir, ...context.placed },
           ...(context && context.gatewayMcp.length > 0 ? { contextMcp: context.gatewayMcp } : {}),
           ...(context && context.tiers.length > 0 ? { estimateCost: true } : {}),
-          prompt: buildOrchestratorPrompt(task, {
-            images,
-            ...(exports.destinations.length > 0 ? { exports } : {}),
-            // 要求要件・設計を PR でレビューするなら、成果のファイルの置き場所を決めさせる（PBI-57）
-            ...(task.repository && this.deps.stepPullRequests !== false
-              ? { documents: { rules: exports.rules } }
-              : {}),
-            // 共用の compose（PBI-70）。要るかをタスクごとに判断させる
-            ...(sharedComposes.length > 0
-              ? {
-                  sharedComposes: sharedComposes.map((s) => ({
-                    name: s.name,
-                    file: s.file,
-                    ...(s.description ? { description: s.description } : {}),
-                  })),
-                }
-              : {}),
-            ...(repoless ? { repoless } : {}),
-          }),
+          prompt: [
+            buildOrchestratorPrompt(task, {
+              images,
+              ...(exports.destinations.length > 0 ? { exports } : {}),
+              // 要求要件・設計を PR でレビューするなら、成果のファイルの置き場所を決めさせる（PBI-57）
+              ...(task.repository && this.deps.stepPullRequests !== false
+                ? { documents: { rules: exports.rules } }
+                : {}),
+              // 共用の compose（PBI-70）。要るかをタスクごとに判断させる
+              ...(sharedComposes.length > 0
+                ? {
+                    sharedComposes: sharedComposes.map((s) => ({
+                      name: s.name,
+                      file: s.file,
+                      ...(s.description ? { description: s.description } : {}),
+                    })),
+                  }
+                : {}),
+              ...(repoless ? { repoless } : {}),
+            }),
+            // 使える組織内 PF の API（PBI-35・PBI-74）
+            ...platformPromptLines(runPlatforms.platforms),
+          ].join("\n"),
           role: "orchestrator",
         },
         "base",

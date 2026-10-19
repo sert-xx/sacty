@@ -154,7 +154,8 @@ Code: `apps/daemon/src/prompts.ts`, `apps/daemon/src/service.ts`, `packages/core
 
 It runs once before the steps are chosen (when the task starts). The AI is `step_agents.orchestrator` (or `default_agent` if absent); it uses the default image and
 reads a disposable copy of the code at the base commit. Its cost counts toward the task's budget. If the budget cap has been reached, the task is paused without running it.
-Like step runs, it receives the default context and the project's context (rules, skills, MCP servers, tier definitions) and records `ContextResolved` (PBI-146).
+Like step runs, it receives the default context and the project's context (rules, skills, MCP servers, external PFs, tier definitions), is told the usable PFs together with the
+host's PFs, and records `ContextResolved` (PBI-146). When a session that could not be resumed is started anew, it is recorded with that run's ID as well.
 If the context cannot be prepared, `OrchestratorFailed` is recorded and the task is paused without running it (no cost).
 
 The following are read from the answer (JSON under the heading `sacty-steps`) and recorded in `StepsChosen`.

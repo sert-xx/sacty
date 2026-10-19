@@ -10205,6 +10205,59 @@ describe("コンテキストの外部 PF（PBI-74）", () => {
     return { activity, ...made };
   };
 
+  it("オーケストレーターにも、プロジェクトで合成した PF とホストの PF を伝えて登録する（PR #162 レビュー指摘）", async () => {
+    const registered: Registered[] = [];
+    const activity = new SqliteActivityStore(dbPath);
+    const projects = new MemoryProjectStore();
+    projects.put("a", {
+      name: "A",
+      targets: [{ scope: "repo", target: "https://github.com/acme/a" }],
+      githubAccounts: { "github.com": "me" },
+      context: { repo: ctxRepo },
+    });
+    const { service, executor } = makeService(
+      activity,
+      [
+        {
+          kind: "completed",
+          output:
+            '```json\n{"sacty-steps": {"plan": "skip-design", "reason": "小さい", "testCommand": "npm test"}}\n```',
+          usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 10 },
+        },
+        completed(20_000),
+      ],
+      {
+        realPlanner: true,
+        config: configOf(agent(), 1, [jiraPlatform()]),
+        secrets: {
+          "claude-oauth-token": "oauth-secret",
+          "jira-token": "jira-secret",
+          "docs-token": "docs-secret",
+        },
+        gateway: recordingGateway(registered),
+        projects,
+        contexts: contexts(),
+      },
+    );
+    const task = service.createTask({ projectId: "a", title: "ドキュメントを調べる" });
+    await service.runNext(task.id);
+    // 1 回目の実行（オーケストレーター）でも、コンテキストの PF をゲートウェイに登録し、接続先と案内を渡す
+    expect(registered[0]?.platforms?.map((p) => p.name)).toEqual(["docs"]);
+    expect(executor.calls[0]?.env.SACTY_PF_URL).toBe(
+      "http://host.docker.internal:5001/r/sacty-gw-run/pf",
+    );
+    const prompt = executor.calls[0]?.command.join(" ") ?? "";
+    expect(prompt).toContain("--- 使える組織内 PF の API ---");
+    expect(prompt).toContain("- docs：チームのドキュメント（$SACTY_PF_URL/docs）");
+    expect(prompt).toContain("- jira");
+    // 記録の PF と、実行に渡した PF が揃う
+    const resolved = service.get(task.id)?.activity.find((e) => e.type === "ContextResolved");
+    expect(
+      resolved?.type === "ContextResolved" && resolved.payload.platforms?.map((p) => p.name).sort(),
+    ).toEqual(["docs", "jira"]);
+    activity.close();
+  });
+
   it("工程エージェントに、プロジェクトで合成した PF とホストの PF を伝え、コンテキストの PF はその実行だけに登録する", async () => {
     const registered: Registered[] = [];
     const { activity, service, executor } = setup([completed(20_000)], registered);
@@ -16719,7 +16772,9 @@ describe("オーケストレーターのセッションの使い回し（PBI-67�
       reason: "error",
       message: "No conversation found with session ID: x",
     };
-    const { activity, service, executor } = setup([unreadable, rejected, plan, completed(1_000)]);
+    const { activity, service, executor } = setup([unreadable, rejected, plan, completed(1_000)], {
+      defaultContext: DEFAULT_CONTEXT_DIR,
+    });
     emulateClaude(executor);
     const task = service.createTask({ projectId: "default", title: "A" });
     await service.runNext(task.id);
@@ -16744,6 +16799,13 @@ describe("オーケストレーターのセッションの使い回し（PBI-67�
     const chosen = service.get(task.id)?.activity.find((e) => e.type === "StepsChosen");
     expect(chosen?.type === "StepsChosen" && chosen.payload.runId).toBe(retried?.runId);
     expect(stored(task.id).sessionId).toBe(`session-${retried?.runId}`);
+    // 用意したコンテキストの記録は、受け付けなかった実行と、始め直した実行の両方に残る（PR #162 レビュー指摘）
+    const resolvedRuns = (service.get(task.id)?.activity ?? []).flatMap((e) =>
+      e.type === "ContextResolved" ? [e.payload.runId] : [],
+    );
+    // （4 つ目は、その後の工程の実行）
+    expect(resolvedRuns.slice(0, 3)).toEqual([firstRun, retried?.failedRunId, retried?.runId]);
+    expect(executor.seeds[2] ?? {}).toHaveProperty(["skills/plan-steps/SKILL.md"]);
     activity.close();
   });
 
