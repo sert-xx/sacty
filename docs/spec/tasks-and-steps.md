@@ -455,7 +455,7 @@ AI は `guardian_agent`（無ければ `default_agent`）。実行ごとに `wor
   なら `suggestions` に直す。行についての指摘があるだけでは `changes_required` にしない。判定が無い・決めた値でなく、`[要修正]` の指摘も無ければ
   残さない（読めない）。レビューを完了できなかったときは、判定を付けさせない。判定のブロックは投稿する本文から取り除き、
   `AgentRunCompleted` の `reviewVerdict` に残す（回ごとに `reviewVerdicts`）。sacty が作った PR のレビューを元のタスクに届けるのは、
-  `changes_required` と読めない回だけ（[承認と差し戻し](approval.md#pr-の指摘の取り込み)）。
+  `changes_required`・`suggestions` と読めない回（`no_findings` の回は届けない。[承認と差し戻し](approval.md#pr-の指摘の取り込み)）。
 - 投稿する本文：目印、見出し「sacty のレビュー」、作者への @ メンションと判定の1行（作者が login の形でなければ @ を付けない。判定を読めなければ
   そう書く）、エージェントの本文、AI がレビューした旨の固定の文の順。
 - 投稿の直前に、PR の先頭のコミットを確かめる（すでに投稿したレビューが目印で見つかったときは確かめない）。レビューしたコミットと違えば

@@ -15382,8 +15382,8 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
       activity.close();
     });
 
-    it("直すべき指摘の無い（そのままマージしてよい）レビューは、元のタスクに取り込まず差し戻さない。評価を読めなければ取り込む（PO の指摘）", async () => {
-      const cases: { name: string; review: string; imported: boolean }[] = [
+    it("指摘の無いレビューは、元のタスクに取り込まず差し戻さない。提案だけの回と、評価を読めない回は取り込む（PO の指摘・PBI-127）", async () => {
+      const cases: { name: string; review: string; imported: boolean; verdict?: string }[] = [
         {
           name: "指摘なし",
           review: [
@@ -15391,9 +15391,10 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
             block({ "sacty-review-verdict": { verdict: "no_findings" } }),
           ].join("\n\n"),
           imported: false,
+          verdict: "no_findings",
         },
         {
-          // 提案だけなら、行へのコメントがあっても差し戻さない（PBI-111）
+          // 提案だけの回も、元のタスクに対応させるために取り込む（PBI-127。繰り返しの費用は予算で止める）
           name: "提案あり",
           review: [
             "# 評価\n\nマージしてよい",
@@ -15404,7 +15405,8 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
             }),
             block({ "sacty-review-verdict": { verdict: "suggestions" } }),
           ].join("\n\n"),
-          imported: false,
+          imported: true,
+          verdict: "suggestions",
         },
         {
           // 判定が軽くても、[要修正] の指摘があれば差し戻す（PBI-111）
@@ -15419,6 +15421,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
             block({ "sacty-review-verdict": { verdict: "suggestions" } }),
           ].join("\n\n"),
           imported: true,
+          verdict: "changes_required",
         },
         { name: "評価なし", review: "# 評価\n\n直す点がある", imported: true },
       ];
@@ -15454,13 +15457,13 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
           expect(pulls.feedbackSactyReviews.at(-1), c.name).toEqual([reviewId]);
           expect(task.importedFeedback, c.name).toEqual(["review:50"]);
           expect(taskOf(service, reviewId).reviewVerdicts, c.name).toEqual([
-            { round: 1, ...(c.name === "要修正の指摘" ? { verdict: "changes_required" } : {}) },
+            { round: 1, ...(c.verdict ? { verdict: c.verdict } : {}) },
           ]);
           expect(task.status, c.name).toBe("queued");
         } else {
           // 取り込まず、ゴールガーディアンも動かさず（費用がかからない）、承認待ちのまま
           expect(taskOf(service, reviewId).reviewVerdicts, c.name).toEqual([
-            { round: 1, verdict: c.name === "提案あり" ? "suggestions" : "no_findings" },
+            { round: 1, verdict: c.verdict },
           ]);
           expect(pulls.feedbackSactyReviews.at(-1), c.name).toBeUndefined();
           expect(task.importedFeedback, c.name).toEqual([]);
