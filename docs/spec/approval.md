@@ -73,7 +73,8 @@ sacty が作る PR すべて（実装の PR と、要求要件・設計の PR）
 （[チケットの取り込みと GitHub](intake.md)）。取り込むラベル（`intakeLabel`）は付けない。
 
 - レビュー用のラベルを設定していなければ、付けない。何も記録しない。そのトリアージを Off にしていても（`triageOff` に `reviewLabel`）付ける
-  （一時的に Off にした間に作った PR も、On に戻したら取り込まれるように。Off の間は取り込まない）。
+  （一時的に Off にした間に作った PR も、On に戻した時点で開いていれば取り込まれるように。Off の間は取り込まない。取り込みは
+  `is:open is:pr` で探すので、Off の間にマージ・クローズした PR は取り込まれない）。
 - リポジトリにラベルが無ければ（`GET /repos/<owner>/<name>/labels/<ラベル>` が 404）、作ってから（`POST .../labels`、色 `0e8a16`）
   PR に付ける（`POST .../issues/<番号>/labels`）。作っている間にほかで作られた（422 の `already_exists`）ときは、そのまま付ける。
 - 付けたら `PullRequestLabeled`（`created`：ラベルを作った）、付けられなければ `PullRequestLabelFailed`（どの操作が失敗したか

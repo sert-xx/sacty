@@ -74,7 +74,8 @@ This is so that the PR is taken in as a separate task (a PR-review-only task) an
 ([Ticket intake and GitHub](intake.en.md)). The intake label (`intakeLabel`) is not attached.
 
 - If no review label is configured, the label is not attached. Nothing is recorded. It is attached even if its triage is Off (`reviewLabel` in `triageOff`),
-  so that PRs opened while it was temporarily Off are taken in once it is back On (nothing is taken in while it is Off).
+  so that PRs opened while it was temporarily Off are taken in once it is back On, if they are still open then (nothing is taken in while it is Off;
+  intake searches with `is:open is:pr`, so PRs merged or closed while it was Off are not taken in).
 - If the repository does not have the label (`GET /repos/<owner>/<name>/labels/<label>` returns 404), it is created (`POST .../labels`, color `0e8a16`) and then
   attached to the PR (`POST .../issues/<number>/labels`). If it was created elsewhere in the meantime (422 `already_exists`), it is attached as is.
 - Once attached, `PullRequestLabeled` is recorded (`created`: the label was created); if it could not be attached, `PullRequestLabelFailed` is recorded (which operation failed,
