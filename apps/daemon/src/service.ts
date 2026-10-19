@@ -598,7 +598,7 @@ type ExecuteRun = {
   prompt: string;
   role: AgentRole;
   workspaceDir: string;
-  /** エージェントの形式に変換したコンテキスト（工程エージェントだけ。PBI-6）。 */
+  /** エージェントの形式に変換したコンテキスト（工程エージェントとオーケストレーター。PBI-6・PBI-146）。 */
   context?: Parameters<typeof buildInvocation>[5];
   /**
    * 費用を概算として記録する（PBI-119）。段階のサブエージェントの定義を置いた実行は、担当が親と違うモデルで動きうるが、
@@ -1690,6 +1690,10 @@ export class TaskService {
       /** 追加でマウントする、sacty が管理するディレクトリ（質問への答えの各実行のセッションログ。PBI-91）。 */
       mounts?: ExecuteRun["mounts"];
       readDirs?: ExecuteRun["readDirs"];
+      /** エージェントの形式に変換したコンテキストと、その MCP サーバー（オーケストレーター。PBI-146）。 */
+      context?: ExecuteRun["context"];
+      contextMcp?: ExecuteRun["contextMcp"];
+      estimateCost?: boolean;
     },
     code: "base" | "implemented",
   ): Promise<Awaited<ReturnType<TaskService["execute"]>>> {
@@ -2606,41 +2610,90 @@ export class TaskService {
   > {
     // オーケストレーターに使う AI（step_agents.orchestrator か default_agent。PBI-40）。既定のイメージで動く
     const agent = agentFor(config, "orchestrator");
-    const { outcome, costUsd, estimated, runId } = await this.runGuardian(
-      task,
-      {
-        agent,
-        image: config.image,
-        prompt: buildOrchestratorPrompt(task, {
-          images,
-          ...(exports.destinations.length > 0 ? { exports } : {}),
-          // 要求要件・設計を PR でレビューするなら、成果のファイルの置き場所を決めさせる（PBI-57）
-          ...(task.repository && this.deps.stepPullRequests !== false
-            ? { documents: { rules: exports.rules } }
-            : {}),
-          // 共用の compose（PBI-70）。要るかをタスクごとに判断させる
-          ...(sharedComposes.length > 0
-            ? {
-                sharedComposes: sharedComposes.map((s) => ({
-                  name: s.name,
-                  file: s.file,
-                  ...(s.description ? { description: s.description } : {}),
-                })),
-              }
-            : {}),
-          ...(repoless ? { repoless } : {}),
-        }),
-        role: "orchestrator",
-      },
-      "base",
-    );
+    // 工程の実行と同じく、既定のコンテキストとプロジェクトのコンテキスト（規則・スキル・MCP サーバー）を渡す（PBI-146。
+    // 既定のスキル plan-steps で、答えの JSON を検査させる）。用意できなければ、実行せずに理由を返す（費用は無い）
+    const runId = randomUUID();
+    const contextSecrets: string[] = [];
+    let context: RunContext | undefined;
+    try {
+      context = await this.runContext(task, agent, config, contextSecrets);
+    } catch (error) {
+      return {
+        failure: {
+          reason: "error",
+          message: message("orchestrator.failed", {
+            detail: redactText(errorText(error), contextSecrets),
+          }),
+          agentId: agent.id,
+          ...agentSetting(agent),
+          runId,
+          costUsd: 0,
+          estimated: false,
+        },
+      };
+    }
+    // 使える外部 PF：ホストの PF と、プロジェクトのコンテキストで合成した PF（工程の実行と同じ。PBI-74）
+    const runPlatforms = mergePlatforms(config.platforms, context?.platforms ?? []);
+    // 用意したコンテキスト（層・注意・置いた段階・PF）を、実行の記録として残す（ほかの実行と同じ。PBI-119）
+    const record = (id: string) => {
+      if (context) {
+        this.append(this.mustGet(task.id), [this.contextResolved(id, context, runPlatforms)]);
+      }
+    };
+    let ran: Awaited<ReturnType<TaskService["runGuardian"]>>;
+    try {
+      record(runId);
+      ran = await this.runGuardian(
+        task,
+        {
+          agent,
+          image: config.image,
+          runId,
+          // 再開できなかったセッションを新しく始め直したら（PBI-67）、その実行の ID でも記録する（PR #162 レビュー指摘）
+          onRunId: record,
+          platforms: runPlatforms.platforms,
+          context: context && { dir: context.dir, ...context.placed },
+          ...(context && context.gatewayMcp.length > 0 ? { contextMcp: context.gatewayMcp } : {}),
+          ...(context && context.tiers.length > 0 ? { estimateCost: true } : {}),
+          prompt: [
+            buildOrchestratorPrompt(task, {
+              images,
+              ...(exports.destinations.length > 0 ? { exports } : {}),
+              // 要求要件・設計を PR でレビューするなら、成果のファイルの置き場所を決めさせる（PBI-57）
+              ...(task.repository && this.deps.stepPullRequests !== false
+                ? { documents: { rules: exports.rules } }
+                : {}),
+              // 共用の compose（PBI-70）。要るかをタスクごとに判断させる
+              ...(sharedComposes.length > 0
+                ? {
+                    sharedComposes: sharedComposes.map((s) => ({
+                      name: s.name,
+                      file: s.file,
+                      ...(s.description ? { description: s.description } : {}),
+                    })),
+                  }
+                : {}),
+              ...(repoless ? { repoless } : {}),
+            }),
+            // 使える組織内 PF の API（PBI-35・PBI-74）
+            ...platformPromptLines(runPlatforms.platforms),
+          ].join("\n"),
+          role: "orchestrator",
+        },
+        "base",
+      );
+    } finally {
+      context?.dispose();
+    }
+    // 再開できなかったセッションを新しく始め直したら、実行の ID はそちらになる（PBI-67）
+    const { outcome, costUsd, estimated, runId: ranId } = ran;
     // 実行に失敗した・選んだ工程を読み取れなかったときは、理由を記録して止める（PBI-32・PBI-40）。
     // 標準の工程で代わりに進めると、テストのコマンドも決まらず、調査のタスクでも設計・実装に進んでしまうため。
     // 再開すると、工程の選択からやり直す。使った分の費用は記録する
     const cost = {
       agentId: agent.id,
       ...agentSetting(agent),
-      runId,
+      runId: ranId,
       usage: outcome.usage,
       costUsd,
       estimated,

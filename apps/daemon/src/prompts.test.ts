@@ -2264,3 +2264,55 @@ describe("提出の前のセルフレビュー（PBI-120）", () => {
     });
   });
 });
+
+describe("オーケストレーターの答えの出し方（既定のスキル plan-steps。PBI-146）", () => {
+  const task = () =>
+    ({
+      id: "t1",
+      title: "決済",
+      body: "",
+      steps: [],
+      remarks: [],
+      outputs: {},
+      approved: {},
+      reproductionTests: [],
+      repository: {
+        url: "https://github.com/acme/app",
+        baseBranch: "main",
+        baseCommit: "abcdef1234",
+      },
+    }) as unknown as Task;
+  const repoless = {
+    title: "調べもの",
+    body: "仕組みを説明して",
+    noRepo: true,
+    steps: [],
+    remarks: [],
+    outputs: {},
+    approved: {},
+  } as unknown as Task;
+
+  it("対象リポジトリあり・なしの両方の指示で、スキルに従い、答えの JSON を道具で検査して通るまで直し、1 回だけ出すよう求める", () => {
+    for (const prompt of [
+      buildOrchestratorPrompt(task()),
+      buildOrchestratorPrompt(repoless, { repoless: { repositories: [] } }),
+    ]) {
+      expect(prompt).toContain(
+        "既定のスキル plan-steps があれば、その手順で候補を比べ、答えを出してください。",
+      );
+      expect(prompt).toContain("jq などの道具（無ければ python3 や node）で JSON として読めるか");
+      expect(prompt).toContain("通るまで直してください");
+      expect(prompt).toContain("答えは本文の最後に 1 回だけ出し");
+      expect(prompt).toContain("形の例の注釈（括弧書き）は出さないでください");
+    }
+  });
+
+  it("検査の指示は、答えの形の前に置く（形の例の後に、別の JSON の例を足さない）", () => {
+    const prompt = buildOrchestratorPrompt(task());
+    const check = prompt.indexOf("既定のスキル plan-steps があれば");
+    const format = prompt.indexOf("選んだ工程を、次の形式で必ず出してください。");
+    expect(check).toBeGreaterThan(0);
+    expect(check).toBeLessThan(format);
+    expect(prompt.split("```json\n")).toHaveLength(3);
+  });
+});

@@ -224,3 +224,51 @@ describe("既定のスキル review-dispatch の、PR にすでにあるレビ�
     );
   });
 });
+
+describe("既定のスキル plan-steps（工程の組み合わせを選んで JSON で答える。PBI-146）", () => {
+  it("スキルとして置かれ、オーケストレーターの依頼で使うことが説明にある", () => {
+    const skill = read("skills/plan-steps/SKILL.md");
+    expect(skill).toMatch(/^---\nname: plan-steps\ndescription: .+\n---\n/);
+    expect(skill).toContain("オーケストレーターとして「工程を選んでください」と依頼され");
+    // 依頼した人の指示を最初に置く
+    expect(skill).toContain(
+      "1. 依頼した人の指示（候補の組み合わせ・決める項目・答えの形と見出し）",
+    );
+  });
+
+  it("候補は目的・成果物・変更対象・規模の順に比べ、既定や受け皿にしない", () => {
+    const skill = read("skills/plan-steps/SKILL.md");
+    expect(skill).toContain("目的 → 成果物 → 変更対象 → 規模の順に");
+    expect(skill).toContain("どれか 1 つを無条件の既定や、分からない仕事の受け皿にしない");
+    expect(skill).toContain("依頼が「選べない」とした候補を選ばない");
+  });
+
+  it("答えの JSON は、ファイルに書いて道具で検査し、通るまで直してから、最後に 1 回だけ出す", () => {
+    const skill = read("skills/plan-steps/SKILL.md");
+    expect(skill).toContain("[検査の手順](references/json-check.md)");
+    expect(skill).toContain("通らなければ直し、通るまで繰り返す");
+    expect(skill).toContain("本文の最後に 1 回だけ出す");
+    expect(skill).toContain("下書き・途中の JSON・直す前の JSON を本文に出さない");
+    expect(skill).toContain("形の例の書き方を写さない");
+    const check = read("skills/plan-steps/references/json-check.md");
+    // 構文と形の両方を、jq と、jq の無い環境の道具で確かめる
+    expect(check).toContain("## 2. 構文を確かめる");
+    expect(check).toContain("## 3. 形を確かめる");
+    for (const tool of ["`jq`", "`python3`", "`node`"]) {
+      expect(check.split(tool).length - 1, tool).toBeGreaterThanOrEqual(2);
+    }
+    expect(check).toContain('jq -e . "$f"');
+    expect(check).toContain("どの道具も無いときは");
+    // 通るまで直す。上限は無く、継ぎ足しで直らなければ書き直す
+    expect(check).toContain("## 4. 通るまで直す");
+    expect(check).toContain("通るまで繰り返す。直した回数の上限は無い");
+    expect(check).toContain("同じ誤りが 3 回続いたら、継ぎ足しで直さず、答えを一から書き直す");
+    // 出すのは検査したファイルの中身そのまま
+    expect(check).toContain("通ったファイルの中身をそのまま出す");
+  });
+
+  it("特定の言語のツールチェーンに寄せない（検査の道具は複数を並べる）", () => {
+    const check = read("skills/plan-steps/references/json-check.md");
+    expect(check).not.toMatch(/npm|npx|package\.json/);
+  });
+});

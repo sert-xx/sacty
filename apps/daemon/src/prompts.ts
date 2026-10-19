@@ -388,6 +388,20 @@ export function changeableSteps(task: Task, step: StepKey): StepKey[] {
 /** 既定のスキル（EARS 形式で要求要件を書く。PBI-122）の名前。 */
 export const EARS_SKILL = "ears-requirements";
 
+/** 既定のスキル（工程の組み合わせを選び、答えの JSON を検査してから出す。PBI-146）の名前。 */
+export const PLAN_SKILL = "plan-steps";
+
+/**
+ * 工程の選択の答えの出し方（PBI-146）。既定のスキル plan-steps に従わせる。プロジェクトのコンテキストでスキルを消していても
+ * 最低限がわかるよう、答えの JSON を道具で検査して通るまで直すこと・答えを1回だけ出すことはここにも書く。
+ */
+function planAnswerLines(): string[] {
+  return [
+    `既定のスキル ${PLAN_SKILL} があれば、その手順で候補を比べ、答えを出してください。`,
+    "答えの JSON は、出す前にファイルに書き、jq などの道具（無ければ python3 や node）で JSON として読めるか・見出しと必須の項目があるかを確かめ、通るまで直してください。答えは本文の最後に 1 回だけ出し、下書き・途中の JSON・形の例の注釈（括弧書き）は出さないでください。",
+  ];
+}
+
 /**
  * 要求要件の受け入れ条件を EARS 形式で書かせる（PBI-122）。既定のスキル ears-requirements に従わせる。プロジェクトの
  * コンテキストでスキルを消していても形式がわかるよう、文型はここにも書く。
@@ -2584,6 +2598,7 @@ export function buildOrchestratorPrompt(
     "",
     task.body || "（内容なし）",
     "",
+    ...planAnswerLines(),
     "選んだ工程を、次の形式で必ず出してください。",
     "```json",
     `{"${PLAN_HEADING}": {"plan": "${Object.keys(plans).join(" または ")}", "reason": "選んだ理由", "baseBranch": "ベースブランチ", "testCommand": "テストのコマンド（分からなければ空）", "investigation": "content または bug"${images.length > 0 ? ', "images": {"investigate": "イメージの名前", "implement": "イメージの名前"}（pr を除く工程それぞれ）, "imageReason": "イメージを選んだ理由", "defaultReasons": {"工程": "images のどれも合わない理由"}（default を使う工程だけ）' : ""}${task.repository ? (shared.length > 0 ? ', "services": {"file": "対象リポジトリの compose ファイル", "compose": "または共用の compose の名前", "names": ["db"], "steps": ["implement"]}（要らなければ書かない）, "servicesReason": "サービスを使う・使わない理由"' : ', "services": {"file": "compose ファイル", "names": ["db"], "steps": ["implement"]}（要らなければ書かない）') : ""}${destinations.length > 0 ? ', "exports": {"requirements": {"to": "接続先の名前", "via": "platform または mcp", "location": "置き場所の手がかり", "reason": "そこに書き出す理由"}, "design": {"to": "", "reason": "書き出さない理由"}}' : ""}${options.documents ? ', "documentsDir": "要求要件・設計のファイルを置くディレクトリ（決まっていなければ書かない）"' : ""}}}`,
@@ -2689,6 +2704,7 @@ function buildRepolessOrchestratorPrompt(
     "",
     task.body || "（内容なし）",
     "",
+    ...planAnswerLines(),
     "選んだ進め方を、次の形式で必ず出してください。",
     "operation の実行設定は operationの場合のみ。不足時は省略し、reasonに不足情報を書いてください。",
     "```json",

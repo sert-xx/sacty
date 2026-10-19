@@ -2,7 +2,7 @@
 
 # Context composition
 
-The rules, skills, MCP servers, external PFs, and agent settings (the context) given to a step's agent are composed by stacking layers, and on every run they are placed
+The rules, skills, MCP servers, external PFs, and agent settings (the context) given to a step's agent and the Orchestrator are composed by stacking layers, and on every run they are placed
 in the Claude Code or Codex config location. The layers are sacty's default context and the context repository specified for the project (along with its
 inheritance chain).
 
@@ -68,6 +68,21 @@ The default skills apply to repositories of any language or field, so they are n
 
 Code: `apps/daemon/default-context/skills/memory/SKILL.md`, `apps/daemon/src/memory.ts` (`memoryPromptLines`)
 
+## Default plan-selection skill
+
+The default context has `plan-steps`, a skill for the Orchestrator to choose the plan of steps and answer in the requested JSON form (PBI-146).
+It describes how to compare the candidates (in the order purpose, deliverable, scope of change, size; no unconditional default or catch-all), how to write the reason,
+and the rules for the answer JSON (keep the heading and item names as given, do not copy the annotations of the format example, omit unneeded items by key).
+Before output, the answer is written to a file and checked with `jq` (or `python3` or `node` when absent) for syntax and shape (the heading and required items),
+fixed until the check passes, and then output exactly once at the end of the text (`references/json-check.md`).
+The Orchestrator prompt asks to follow this skill and, so that the minimum is known even when a project context removes the skill, also states checking until it passes and
+outputting once ([Tasks and steps](tasks-and-steps.en.md#orchestrator)).
+Since the skill covers how sacty chooses steps, it may name sacty, but it is not tied to a particular language toolchain.
+
+Related ADR: [オーケストレーターにもコンテキストを渡し、工程の選択を既定のスキル plan-steps にして答えの JSON を検査させる](../adr/20261019-1512-orchestrator-plan-steps-skill.md)
+
+Code: `apps/daemon/default-context/skills/plan-steps/SKILL.md`, `apps/daemon/default-context/skills/plan-steps/references/json-check.md`, `apps/daemon/src/prompts.ts` (`planAnswerLines`, `PLAN_SKILL`)
+
 ## Context repository files
 
 Only `sacty-context.yaml`, `mcp.yaml`, `platforms.yaml`, `rules.md`, `rules/`, `skills/`, and `agents/` are read (`README.md` is not).
@@ -127,7 +142,7 @@ files sacty generates (for the same path, the later one overwrites).
   and `agents.tierConnectionDiffers` is left as a note (the endpoint is built from the per-runtime `providers`, so tiers of the same runtime always match).
   Nothing is placed for a stub step. A tier without `reasoning_effort` (such as the default `claude_lite`) becomes a definition without it (the tool's default). The placed tiers (tier, agent name, model, reasoning effort) are recorded in `tiers` of `ContextResolved`, and the preview shows the same
   files (the parent for the preview is the `default_agent` of that runtime, otherwise the first of `step_agents` and `guardian_agent` with that runtime). `ContextResolved`
-  is recorded with the `runId` of every run that receives a context: not only step runs but also the after-merge watch, operations, and exports (`contextResolved`).
+  is recorded with the `runId` of every run that receives a context: not only step runs but also the Orchestrator (PBI-146), the after-merge watch, operations, and exports (`contextResolved`).
   The cost of a run that placed tiers is recorded as estimated (`estimated`), because a reviewer may run with a model other than the parent's while the cost can only be
   computed from the parent's usage and unit prices ([Agent execution](agent-execution.en.md#authentication)).
 
