@@ -173,10 +173,11 @@ Code: `packages/core/src/dashboard.ts` (`DashboardStats`, `localDayStart`, `medi
   details, review, run log). When a screen is opened, the cookie is changed only if it differs from the screen's project, by a server action after
   rendering (the screen and the header are redrawn). If the project is not in the daemon's project list (a task of a deleted project), it is not
   changed. If the list cannot be fetched, the project is not treated as missing and the cookie is changed.
-- On an "All projects" screen, the side menu shows only "Dashboard" and "Settings", and "Settings" moves to the project list (`/projects`), so it
+- On an "All projects" screen, the side menu shows only "Settings", and "Settings" moves to the project list (`/projects`), so it
   never jumps to a project. The notices are not split by project and are listed newest first; opening one switches to the task's project and
-  opens the task. On a project screen, the side menu shows "Dashboard", "Tasks", and "Settings", and the notices are split into "Other projects"
-  and "This project".
+  opens the task. On a project screen, the side menu shows "Tasks", "Audit", and "Settings", and the notices are split into "Other projects"
+  and "This project". The side menu does not show "Dashboard" (it is not used; the screen opens from the logo and from "All projects"
+  in the project switcher).
 - The header is in the root layout, so it is not redrawn by navigation (links) within the web UI (the selection is decided in the browser from the
   screen's URL). Server actions for operations that change what the notices cover (approve, request changes, pause, resume, cancel, create task,
   and so on) call `refresh()` so that the header is redrawn too (they call it before moving with `redirect` as well).

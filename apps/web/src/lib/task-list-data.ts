@@ -3,6 +3,7 @@ import { getMessages } from "@/i18n/server";
 import { listProjects, listTasks } from "@/lib/daemon";
 
 import { needsPerson, personAction, type StatusTone, statusText, statusTone } from "@/lib/labels";
+import { repoNameOf } from "@/lib/repo-name";
 import { withSubtasks } from "@/lib/subtasks";
 
 /** タスクの一覧の1行に出すもの（画面が取り直すのは、これだけ。PBI-108）。 */
@@ -15,8 +16,11 @@ export type TaskRow = {
   template?: NonNullable<Task["template"]>;
   source?: { repo: string; number: number };
   repoless: boolean;
-  /** 子タスクに付けたリポジトリ（PBI-73）。 */
-  repo?: string;
+  /**
+   * 作業するリポジトリの名前（org/repo の repo だけ。PBI-141）。題だけではどのリポジトリの作業かわからないため、題のそばに出す。
+   * まだ決まっていなければ無い。
+   */
+  repoName?: string;
   steps: Pick<Task["steps"][number], "key" | "state">[];
   status: { text: string; tone: StatusTone };
 };
@@ -67,7 +71,7 @@ export async function loadTaskList(projectId: string): Promise<TaskListData | nu
       ...(task.template ? { template: task.template } : {}),
       ...(task.source ? { source: { repo: task.source.repo, number: task.source.number } } : {}),
       repoless: isRepoless(task),
-      ...(child && task.repo ? { repo: task.repo } : {}),
+      ...repoNameOf(task),
       steps: task.steps.map((s) => ({ key: s.key, state: s.state })),
       status: { text: statusText(task, labels), tone: statusTone(task) },
     })),

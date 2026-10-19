@@ -5,7 +5,6 @@
 const ja = {
   nav: {
     main: "メイン",
-    dashboard: "ダッシュ​ボード",
     tasks: "タスク",
     audit: "監査",
     settings: "設定",
@@ -52,7 +51,6 @@ export type ShellMessages = typeof ja;
 const en: ShellMessages = {
   nav: {
     main: "Main",
-    dashboard: "Dashboard",
     tasks: "Tasks",
     audit: "Audit",
     settings: "Settings",

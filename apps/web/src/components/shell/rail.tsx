@@ -1,12 +1,7 @@
 "use client";
 
 import { cn } from "cn";
-import {
-  LayoutDashboardIcon,
-  ListChecksIcon,
-  ScanSearchIcon,
-  SlidersHorizontalIcon,
-} from "lucide-react";
+import { ListChecksIcon, ScanSearchIcon, SlidersHorizontalIcon } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useMessages } from "@/i18n/client";
@@ -15,7 +10,6 @@ import {
   CURRENT_PROJECT_AUDIT_PATH,
   CURRENT_PROJECT_SETTINGS_PATH,
   CURRENT_PROJECT_TASKS_PATH,
-  DASHBOARD_PATH,
   PROJECTS_PATH,
 } from "@/lib/paths";
 
@@ -24,12 +18,6 @@ const PROJECT_TASKS = /^\/projects\/[^/]+\/tasks(\/|$)/;
 /** プロジェクトの監査の画面か（`/projects/<ID>/audit`。PBI-124）。 */
 const PROJECT_AUDIT = /^\/projects\/[^/]+\/audit(\/|$)/;
 
-const DASHBOARD = {
-  href: DASHBOARD_PATH,
-  key: "dashboard" as const,
-  icon: LayoutDashboardIcon,
-  active: (p: string) => p === DASHBOARD_PATH || p === "/",
-};
 const TASKS = {
   href: CURRENT_PROJECT_TASKS_PATH,
   key: "tasks" as const,
@@ -58,13 +46,14 @@ const SETTINGS = {
 /**
  * サイドメニューの項目（PBI-114）。プロジェクトの画面では、タスク・監査・設定は表示しているプロジェクト（cookie。画面が
  * 合わせる）の画面へ移る。「すべてのプロジェクト」の画面（ダッシュボードなど）では、プロジェクトを決められないので、タスク・
- * 監査を出さず、設定はプロジェクトの一覧へ移る（どのプロジェクトにも飛ばない）。
+ * 監査を出さず、設定はプロジェクトの一覧へ移る（どのプロジェクトにも飛ばない）。ダッシュボードは出さない（使わないため。画面は
+ * ロゴ・プロジェクトの切り替えから開ける。PBI-141）。
  */
 export function railItems(pathname: string | undefined) {
   if (pathname !== undefined && pageScope(pathname).kind === "all") {
-    return [DASHBOARD, { ...SETTINGS, href: PROJECTS_PATH }];
+    return [{ ...SETTINGS, href: PROJECTS_PATH }];
   }
-  return [DASHBOARD, TASKS, AUDIT, SETTINGS];
+  return [TASKS, AUDIT, SETTINGS];
 }
 
 /** サイドメニュー。表示中の画面を強調する。 */
