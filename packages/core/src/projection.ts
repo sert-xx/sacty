@@ -41,14 +41,10 @@ type PayloadOf<T extends ParsedEventInput["type"]> = Extract<
 export type TestsRunResult = PayloadOf<"TestsRun"> & { at: string };
 
 /** 前回投稿したレビュー（PBI-111）。round は前回の回、headCommit は前回レビューしたコミット、at は投稿を記録した時刻。 */
-export type PreviousReview = {
-  round: number;
-  url: string;
-  at: string;
-  headCommit: string;
-  body: string;
-  comments: ReviewComment[];
-};
+export type PreviousReview = NonNullable<
+  PayloadOf<"TaskCreated">["reviewRerequest"]
+>["previousReview"];
+
 export type FinalReview = PayloadOf<"FinalReviewed"> & { at: string };
 export type IntegrationReview = PayloadOf<"IntegrationReviewed"> & { at: string };
 
@@ -523,6 +519,8 @@ export type Task = {
    * 再レビューのプロンプトに渡すため。
    */
   previousReview?: PreviousReview;
+  /** GitHub再依頼の取り込み済み目印（取消・失敗後も維持）。 */
+  reviewRerequest?: PayloadOf<"TaskCreated">["reviewRerequest"];
   /** 何回目のレビューか（「再レビュー」で2回目から。最初のレビューでは無い。PBI-44）。 */
   reviewRound?: number;
   /** オーケストレーターが決めた、テストのコマンド（PBI-25）。 */
@@ -692,6 +690,13 @@ export function applyEvent(
       body: event.payload.body,
       start: event.payload.start,
       ...(event.payload.source ? { source: event.payload.source } : {}),
+      ...(event.payload.reviewRerequest
+        ? {
+            reviewRerequest: event.payload.reviewRerequest,
+            previousReview: event.payload.reviewRerequest.previousReview,
+            reviewRound: event.payload.reviewRerequest.previousReview.round + 1,
+          }
+        : {}),
       ...(event.payload.ticket ? { ticket: event.payload.ticket } : {}),
       ...(event.payload.repo ? { repo: event.payload.repo } : {}),
       ...(event.payload.noRepo ? { noRepo: true as const } : {}),

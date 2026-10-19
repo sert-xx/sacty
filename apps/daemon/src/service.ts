@@ -3233,7 +3233,7 @@ export class TaskService {
 
   /**
    * レビューの再依頼（PBI-143）。依頼の検索で見つかった PR のうち、依頼で取り込んでレビューを投稿して完了したタスク
-   * （「再レビュー」できるもの）がある PR を、PR の今の依頼先で確かめ、そのタスクのアカウントに依頼されていれば再レビューする。
+   * （「再レビュー」できるもの）がある PR を、PR の今の依頼先で確かめ、そのタスクのアカウントに依頼されていれば別タスクで再レビューする。
    * 依頼された人がレビューを投稿すると GitHub が依頼を外すので、投稿の後に依頼があれば、作者が再依頼したもの。
    * 検索の結果は反映が遅れる（投稿の直後に、外れた依頼が残る）ので、それだけでは再レビューしない。
    * 確かめられなかった PR は failed に返す（取り込み側は、その検索の読んだ位置を進めず、次の取り込みで確かめ直す）。
@@ -3253,13 +3253,18 @@ export class TaskService {
       const id = key(issue.repo, issue.number);
       if (seen.has(id)) continue;
       // 依頼で取り込んだタスクだけ（ラベルで取り込んだもの・sacty が作った PR のものは、元の動きのまま）
-      const task = [...this.tasks.values()].find(
-        (t) =>
-          t.source?.review === "requested" &&
-          key(t.source.repo, t.source.number) === id &&
-          canRereview(t),
-      );
-      if (!task) continue;
+      const related = () =>
+        [...this.tasks.values()].filter(
+          (t) => t.source?.review === "requested" && key(t.source.repo, t.source.number) === id,
+        );
+      // 新しい依頼を処理中・失敗・中止なら、古い完了タスクから予約しない。
+      // 投稿が同時刻でも、より後に作ったタスクを優先する。
+      const latestRelated = () =>
+        related()
+          .reverse()
+          .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))[0];
+      const task = latestRelated();
+      if (!task || !canRereview(task)) continue;
       const host = httpsHost(`${issue.repo}/`);
       const account = host && this.deps.projects.get(task.projectId)?.githubAccounts?.[host];
       // そのタスクのアカウントへの依頼の検索で見つかったものだけ
@@ -3269,6 +3274,7 @@ export class TaskService {
       const postedAt = task.reviewPost?.at;
       const posted = Date.parse(postedAt ?? "");
       const round = task.reviewRound;
+      let requestedAt: string | undefined;
       let requested: boolean;
       try {
         const token = await this.githubToken(task, issue.repo, usedSecrets);
@@ -3276,11 +3282,10 @@ export class TaskService {
         const pr = await this.deps.pulls.pullRequest(ref);
         // 今も依頼されていて、最後の依頼が前回の投稿より後（再依頼）のときだけ。投稿で依頼が外れなかった（取り込みの後に
         // アカウントを変えたなど）ときに、投稿のたびに再レビューを繰り返さないため
-        requested =
-          pr.requestedReviewers.some((r) => r.toLowerCase() === account.toLowerCase()) &&
-          Date.parse(
-            (await this.deps.pulls.lastReviewRequest({ ...ref, reviewer: account })) ?? "",
-          ) > posted;
+        if (!pr.requestedReviewers.some((r) => r.toLowerCase() === account.toLowerCase())) continue;
+        requestedAt =
+          (await this.deps.pulls.lastReviewRequest({ ...ref, reviewer: account })) ?? undefined;
+        requested = Date.parse(requestedAt ?? "") > posted;
       } catch (error) {
         failed.push({
           issue,
@@ -3291,10 +3296,27 @@ export class TaskService {
         });
         continue;
       }
-      if (!requested) continue;
+      if (!requested || !requestedAt) continue;
+      // API待機中に別の取り込みが作っても、同期的な再確認とappendの間には割り込めない。
+      // 中止・失敗した再依頼タスクも、同じ依頼を再作成しない。
+      if (
+        related().some(
+          (t) =>
+            t.reviewRerequest &&
+            t.reviewRerequest.reviewer.toLowerCase() === account.toLowerCase() &&
+            Date.parse(t.reviewRerequest.requestedAt) >= Date.parse(requestedAt),
+        )
+      )
+        continue;
       // 確かめている間に、人が再レビュー・中止・一時停止したら、始めない
-      const latest = this.tasks.get(task.id);
-      if (!latest || !canRereview(latest) || this.pauseRequested.has(task.id)) continue;
+      const latest = latestRelated();
+      if (
+        !latest ||
+        latest.id !== task.id ||
+        !canRereview(latest) ||
+        this.pauseRequested.has(task.id)
+      )
+        continue;
       if (this.cancelling.has(task.id)) continue;
       if (latest.reviewRound !== round || latest.reviewPost?.at !== postedAt) continue;
       const latestAccount =
@@ -3304,11 +3326,35 @@ export class TaskService {
         latestAccount?.toLowerCase() !== account.toLowerCase()
       )
         continue;
+      if (!latest.reviewTarget || !latest.reviewPost || !latest.source) continue;
+      const config = this.deps.config();
       restarted.push(
-        this.append(latest, [
+        this.append({ id: randomUUID(), projectId: latest.projectId }, [
           {
             actor: "sacty",
-            event: { type: "ReviewRestarted", payload: { reason: "rerequested" } },
+            event: {
+              type: "TaskCreated",
+              payload: {
+                title: issue.title.trim() || latest.title,
+                body: issue.body,
+                start: "github_pull_request",
+                source: latest.source,
+                budgetCapUsd: config.ok ? config.config.budgetPerTaskUsd : DEFAULT_BUDGET_USD,
+                reviewRerequest: {
+                  taskId: latest.id,
+                  requestedAt,
+                  reviewer: account,
+                  previousReview: {
+                    round: latest.reviewRound ?? 1,
+                    url: latest.reviewPost.url,
+                    at: latest.reviewPost.at,
+                    headCommit: latest.reviewTarget.headCommit,
+                    body: latest.outputs.review ?? "",
+                    comments: latest.reviewComments,
+                  },
+                },
+              },
+            },
           },
         ]),
       );

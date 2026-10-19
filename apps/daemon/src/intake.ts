@@ -252,10 +252,11 @@ export class IssueIntake {
       }
     }
     // 見つからなければ、取り込みの処理（すべてのタスクを調べる）を省く
-    const imported = found.length > 0 ? this.service.importIssues(found).length : 0;
+    let imported = found.length > 0 ? this.service.importIssues(found).length : 0;
     // 依頼の検索で、すでにレビューを投稿したタスクの PR が見つかったら、再依頼かを確かめて再レビューする（PBI-143）
     if (kind === "reviews" && found.length > 0) {
-      const { failed } = await this.service.restartRerequestedReviews(found);
+      const { restarted, failed } = await this.service.restartRerequestedReviews(found);
+      imported += restarted.length;
       for (const { issue, message: text } of failed) {
         errors.push({ message: text });
         // 次の取り込みで、同じ PR がまた見つかるように、その検索の読んだ位置を進めない
