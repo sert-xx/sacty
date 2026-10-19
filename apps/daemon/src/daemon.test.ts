@@ -16463,8 +16463,8 @@ describe("オーケストレーターのセッションの使い回し（PBI-67�
     expect(executor.calls[0]?.command).not.toContain("resume");
     await rerunOrchestrator(service, task.id);
     const command = executor.calls[1]?.command ?? [];
-    // 指示（最後の引数）の直前に resume と ID
-    expect(command.slice(-3, -1)).toEqual(["resume", `thread-${firstRun}`]);
+    // 指示（最後の引数）と `--` の直前に resume と ID
+    expect(command.slice(-4, -2)).toEqual(["resume", `thread-${firstRun}`]);
     expect(command.slice(0, 2)).toEqual(["codex", "exec"]);
     expect(Object.keys(executor.restored[1] ?? {})).toEqual([
       `sessions/2026/10/14/rollout-2026-10-14T10-00-00-thread-${firstRun}.jsonl`,
@@ -16866,7 +16866,7 @@ describe("オーケストレーターのセッションの使い回し（PBI-67�
     const before = readFileSync(storedPath(task.id), "utf8");
     const firstRun = usedOf(service, task.id)[0]?.runId ?? "";
     await service.askQuestion(task.id, { text: "質問" }).answered;
-    expect(executor.calls[1]?.command.slice(-3, -1)).toEqual(["resume", `thread-${firstRun}`]);
+    expect(executor.calls[1]?.command.slice(-4, -2)).toEqual(["resume", `thread-${firstRun}`]);
     expect(usedOf(service, task.id)[1]).toMatchObject({
       role: "chat",
       mode: "forked",

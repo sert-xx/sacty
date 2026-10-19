@@ -320,6 +320,7 @@ describe("認証方式ごとの環境変数", () => {
       "gpt-6-sol",
       "-c",
       'model_reasoning_effort="high"',
+      "--",
       "prompt",
     ]);
     expect(direct.hostGateway).toBeUndefined();
@@ -429,6 +430,7 @@ describe("認証方式ごとの環境変数", () => {
       'web_search="disabled"',
       "--model",
       "global.openai.gpt-6-sol",
+      "--",
       "prompt",
     ]);
     expect(runtime.parser).toBe("codex-jsonl");
@@ -457,7 +459,7 @@ describe("認証方式ごとの環境変数", () => {
     const mantle = await bedrock("mantle");
     expect(mantle.command).toContain('model_provider="amazon-bedrock"');
     expect(mantle.command).not.toContain('web_search="disabled"');
-    expect(mantle.command.slice(-3)).toEqual(["--model", "openai.gpt-6-sol", "prompt"]);
+    expect(mantle.command.slice(-4)).toEqual(["--model", "openai.gpt-6-sol", "--", "prompt"]);
   });
 });
 
@@ -1869,7 +1871,7 @@ describe("オーケストレーターのセッションの再開（PBI-67）", (
     expect(forked.command[forked.command.indexOf("--resume") + 1]).toBe("abc-123");
   });
 
-  it("Codex：`codex exec <オプション> resume <ID> <指示>` で再開する（複製の引数は無い）", async () => {
+  it("Codex：`codex exec <オプション> resume <ID> -- <指示>` で再開する（複製の引数は無い）", async () => {
     const plain = await buildInvocation(codex, "prompt", secrets, () => {}, "orchestrator");
     expect(plain.command).not.toContain("resume");
     const resumed = await buildInvocation(
@@ -1883,7 +1885,7 @@ describe("オーケストレーターのセッションの再開（PBI-67）", (
       { ...session, fork: true },
     );
     expect(resumed.command.slice(0, 2)).toEqual(["codex", "exec"]);
-    expect(resumed.command.slice(-3)).toEqual(["resume", "abc-123", "prompt"]);
+    expect(resumed.command.slice(-4)).toEqual(["resume", "abc-123", "--", "prompt"]);
     // オプションは resume より前（exec のオプションとして読ませる）
     const at = resumed.command.indexOf("resume");
     for (const option of ["--json", "--skip-git-repo-check", "--sandbox", "--model"]) {
@@ -1891,6 +1893,12 @@ describe("オーケストレーターのセッションの再開（PBI-67）", (
       expect(resumed.command.indexOf(option)).toBeLessThan(at);
     }
     expect(resumed.stage).toMatchObject({ containerDir: "/.codex", sessionDir: session.filesDir });
+  });
+
+  it("Codex：`-` で始まる指示（`--- メモリー ---` など）は、`--` の後に置いてオプションとして読ませない", async () => {
+    const prompt = "--- メモリー ---\n本文";
+    const inv = await buildInvocation(codex, prompt, secrets, () => {}, "orchestrator");
+    expect(inv.command.slice(-2)).toEqual(["--", prompt]);
   });
 
   it("スタブは再開しない", async () => {
