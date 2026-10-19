@@ -1070,6 +1070,13 @@ describe("PR のレビューの取り込み（PBI-44）", () => {
       describeEvent(ev("TaskCancelled", { reason: "pull_request_closed", cleanup: [] })),
     ).toContain("（PR が閉じられたため）");
     expect(describeEvent(ev("ReviewRestarted", {}, "person"))).toBe("再レビューを始めた（人間）");
+    // PR でのレビューの再依頼を受けて、sacty が始めた（PBI-143）
+    expect(describeEvent(ev("ReviewRestarted", { reason: "rerequested" }, "sacty"))).toBe(
+      "PR でレビューが再依頼されたので、再レビューを始めた（sacty）",
+    );
+    expect(describeIn(ev("ReviewRestarted", { reason: "rerequested" }, "sacty"), labels.en)).toBe(
+      "Started a re-review because a review was re-requested on the PR (sacty)",
+    );
     expect(
       describeIn(ev("TaskCancelled", { reason: "pull_request_merged", cleanup: [] }), labels.en),
     ).toContain("(the PR was merged)");

@@ -1509,10 +1509,11 @@ const PullRequestReviewPosted = z.object({
 /**
  * 人間が「再レビュー」を求めた（PBI-44）。レビューを投稿して完了したタスクのレビューの工程をやり直し、PR の最新の
  * コミットに対してもう一度レビューして投稿する（対象の PR は、実行の前に確かめ直す）。
+ * reason が rerequested なら、PR の作者が GitHub でレビューを再依頼したのを、sacty が見つけて始めた（PBI-143）。
  */
 const ReviewRestarted = z.object({
   type: z.literal("ReviewRestarted"),
-  payload: z.object({}),
+  payload: z.object({ reason: z.literal("rerequested").optional() }),
 });
 
 /**

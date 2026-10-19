@@ -57,6 +57,9 @@ PRs are imported so that only their review is handed over ("PR review intake" in
   The heading, verdict, and prefixes added by sacty are in Japanese. The findings follow the writing rules of the repository (Japanese when there are none).
 - If the PR is pushed to while it is being reviewed, the review is posted against the reviewed commit, and the body says which commit was reviewed.
 - When new commits are pushed, use "Review again" in the task details to review the latest commit again and post it.
+  For a PR taken in by a review request, re-requesting the review on GitHub (Re-request review) makes sacty find it at the next intake and review it again automatically.
+  Each re-request starts one re-review. PRs taken in by the label and PRs sacty created are not re-reviewed by a re-request (use "Review again").
+  The activity shows "Started a re-review because a review was re-requested on the PR".
   A re-review says, for each previous finding, whether it is fixed or still open (it also reads the PR author's replies since the previous review).
 - Only open PRs are imported for review.
 - The same PR is never imported twice. A PR that already has a task (a task in any project, even a cancelled one) does not become a new task even if you add the label

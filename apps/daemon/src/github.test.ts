@@ -645,6 +645,9 @@ describe("PR のレビュー（PBI-19）", () => {
           user: { login: "alice" },
           head: { sha: "h".repeat(40) },
           base: { sha: "b".repeat(40) },
+          // チームへの依頼（requested_teams）は含めない。login の無いものは除く
+          requested_reviewers: [{ login: "me" }, { login: "" }, null, { id: 1 }, { login: "bob" }],
+          requested_teams: [{ slug: "core" }],
         },
       },
       { status: 404, json: { message: "Not Found" } },
@@ -660,13 +663,79 @@ describe("PR のレビュー（PBI-19）", () => {
       headSha: "h".repeat(40),
       baseSha: "b".repeat(40),
       author: "alice",
+      requestedReviewers: ["me", "bob"],
     });
     expect(calls[0]).toMatchObject({ url: `${api}/pulls/12`, auth: "Bearer ghp_secret" });
     expect(errorText(await client.pullRequest(target).catch((e: unknown) => e))).toMatchObject({
       code: "github.failed",
       params: { action: "getPr", status: 404 },
     });
-    expect((await client.pullRequest(target)).author).toBe("");
+    // 作者も依頼先も読めないときは空
+    expect(await client.pullRequest(target)).toMatchObject({ author: "", requestedReviewers: [] });
+  });
+
+  it("PR で、その人に最後にレビューを依頼した日時を、できごとのすべてのページから読む（PBI-143）", async () => {
+    const page2 = `${api}/issues/12/events?per_page=100&page=2`;
+    const { impl, calls } = fakeFetch([
+      {
+        status: 200,
+        headers: { link: `<${page2}>; rel="next"` },
+        json: [
+          {
+            event: "review_requested",
+            requested_reviewer: { login: "me" },
+            created_at: "2026-10-19T01:00:00Z",
+          },
+          {
+            event: "review_requested",
+            requested_reviewer: { login: "bob" },
+            created_at: "2026-10-19T05:00:00Z",
+          },
+          // チームへの依頼は含めない
+          {
+            event: "review_requested",
+            requested_team: { slug: "core" },
+            created_at: "2026-10-19T06:00:00Z",
+          },
+        ],
+      },
+      {
+        status: 200,
+        json: [
+          // login の大文字・小文字は区別しない。新しいものを返す（並びに頼らない）
+          {
+            event: "review_requested",
+            requested_reviewer: { login: "Me" },
+            created_at: "2026-10-19T03:00:00Z",
+          },
+          {
+            event: "review_requested",
+            requested_reviewer: { login: "me" },
+            created_at: "2026-10-19T02:00:00Z",
+          },
+          {
+            event: "review_request_removed",
+            requested_reviewer: { login: "me" },
+            created_at: "2026-10-19T04:00:00Z",
+          },
+          { event: "labeled", created_at: "2026-10-19T07:00:00Z" },
+        ],
+      },
+      { status: 200, json: [] },
+      { status: 404, json: { message: "Not Found" } },
+    ]);
+    const client = new GitHubPullRequests(impl);
+    expect(await client.lastReviewRequest({ ...target, reviewer: "me" })).toBe(
+      "2026-10-19T03:00:00Z",
+    );
+    expect(calls.map((c) => c.url)).toEqual([`${api}/issues/12/events?per_page=100`, page2]);
+    // 依頼が無ければ undefined
+    expect(await client.lastReviewRequest({ ...target, reviewer: "me" })).toBeUndefined();
+    expect(
+      errorText(
+        await client.lastReviewRequest({ ...target, reviewer: "me" }).catch((e: unknown) => e),
+      ),
+    ).toMatchObject({ code: "github.failed", params: { action: "listEvents", status: 404 } });
   });
 
   it("コメントのレビュー（承認も変更の要求もしない）を、読んだコミットに投稿する", async () => {

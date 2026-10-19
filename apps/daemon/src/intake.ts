@@ -9,7 +9,7 @@ import { redactText } from "./agents/redact.js";
 import type { ConfigResult } from "./config.js";
 import { errorText } from "./errors.js";
 import type { GitHubAuth } from "./gh.js";
-import type { IssueSearch } from "./github.js";
+import type { FoundIssue, IssueSearch } from "./github.js";
 import type { TaskService } from "./service.js";
 import { type FoundTicket, type TicketClient, ticketErrorText, ticketJql } from "./tickets.js";
 
@@ -185,7 +185,9 @@ export class IssueIntake {
     cursors: Map<string, string>,
     errors: { query?: string; message: DaemonText }[],
   ): Promise<{ imported: number; sources: number; advanced: Map<string, string | undefined> }> {
-    const found = [];
+    const found: FoundIssue[] = [];
+    // 見つかった PR が、どの検索の読んだ位置で見つかったか（再依頼を確かめられなかったら、その位置を進めない。PBI-143）
+    const foundIn = new Map<FoundIssue, string>();
     // 読んだ位置は、ここでは進めない（取り込み（タスクの保存）に成功し、途中で設定が変わらなかったら、runKind が進める）
     const advanced = new Map<string, string | undefined>();
     // アカウントごとのトークン（取り出せなければ、その理由）と、レート制限に達したか。
@@ -230,16 +232,16 @@ export class IssueIntake {
       try {
         const result = await this.search.search(host, query, auth.token, cursors.get(cursorKey));
         // PR のレビューの取り込みの検索（PBI-44）で見つかったものは、そのことを添える
-        found.push(
-          ...(review
-            ? result.issues.map((i) => ({
-                ...i,
-                review,
-                // 依頼の検索なら、誰への依頼を探したか（担当のプロジェクトのアカウントと照らし合わせる）
-                ...(review === "requested" ? { requestedFor: account } : {}),
-              }))
-            : result.issues),
-        );
+        const issues = review
+          ? result.issues.map((i) => ({
+              ...i,
+              review,
+              // 依頼の検索なら、誰への依頼を探したか（担当のプロジェクトのアカウントと照らし合わせる）
+              ...(review === "requested" ? { requestedFor: account } : {}),
+            }))
+          : result.issues;
+        for (const issue of issues) foundIn.set(issue, cursorKey);
+        found.push(...issues);
         if (result.cursor) advanced.set(cursorKey, result.cursor);
         if (result.incomplete) {
           errors.push({ query, message: redactText(result.incomplete, [auth.token]) });
@@ -251,6 +253,16 @@ export class IssueIntake {
     }
     // 見つからなければ、取り込みの処理（すべてのタスクを調べる）を省く
     const imported = found.length > 0 ? this.service.importIssues(found).length : 0;
+    // 依頼の検索で、すでにレビューを投稿したタスクの PR が見つかったら、再依頼かを確かめて再レビューする（PBI-143）
+    if (kind === "reviews" && found.length > 0) {
+      const { failed } = await this.service.restartRerequestedReviews(found);
+      for (const { issue, message: text } of failed) {
+        errors.push({ message: text });
+        // 次の取り込みで、同じ PR がまた見つかるように、その検索の読んだ位置を進めない
+        const cursorKey = foundIn.get(issue);
+        if (cursorKey) advanced.delete(cursorKey);
+      }
+    }
     return { imported, sources: sources.length, advanced };
   }
 

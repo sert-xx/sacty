@@ -71,6 +71,16 @@ takes in PRs.
   are rejected when saving.
 - Review requests are only those made to you as an individual (requests to teams are not included). Only requests to the account chosen for that host in the responsible project are taken in.
   Even if a PR matches both the review label and a request, there is one review task.
+- Review re-requests (PBI-143): when the request search finds the PR of a task taken in by a request (`source.review: requested`) that can be reviewed again
+  (`canRereview`), sacty reads the PR's current requested reviewers (`requested_reviewers`) and the time of the last request to the task's account
+  (`review_requested` in the PR events). If the account is still requested and the last request is after the previous post, it reviews again as a re-request
+  (`ReviewRestarted` with `reason: rerequested`, actor sacty; `restartRerequestedReviews`).
+  - GitHub removes a request when the requested person posts a review, so a post normally clears it. Search results lag (a removed request can remain right
+    after the post), so they alone never start a re-review. If a post did not clear the request (for example, the account changed after intake), the last request
+    is older than the post, so it does not repeat after every post.
+  - Tasks that are running, not yet posted, or cancelled, tasks taken in by the label, and tasks for PRs sacty created are excluded. Nothing is checked while `reviewRequested` is off.
+  - If the current requested reviewers or the request time cannot be read, no re-review starts, `intake.rerequestUnchecked` is recorded, and that search's read position is not advanced (the same PR
+    is found again at the next intake). Each PR is checked once per intake.
 - If a PR created by sacty (one in the ledger: the implementation PR of a task, a Requirements or Design PR, or a PR given the label; see [The review label on PRs](approval.en.md#the-review-label-on-prs))
   has the review label, it becomes a separate review-only task, not the task that created it (`source.review: sacty`; the Orchestrator does not
   choose steps). Even if it also matches a review request, it is `sacty` (so that the review reaches the task that created the PR). If the review label's triage is
@@ -85,7 +95,7 @@ takes in PRs.
 - When a rate limit is hit (403 or 429 with 0 remaining, or `retry-after`), the other searches for that account are skipped.
 - Intake sources with no account chosen are not searched, and `github.accountRequired` is recorded.
 
-Code: `apps/daemon/src/service.ts` (`intakeSources`, `importIssues`, `sactyReviewsOf`, `saveSettings`), `apps/daemon/src/github.ts` (`GitHubIssueSearch`), `packages/core/src/projects.ts` (`SactySettings`, `TriageKind`, `responsibleProject`)
+Code: `apps/daemon/src/service.ts` (`intakeSources`, `importIssues`, `restartRerequestedReviews`, `sactyReviewsOf`, `saveSettings`), `apps/daemon/src/github.ts` (`GitHubIssueSearch`), `packages/core/src/projects.ts` (`SactySettings`, `TriageKind`, `responsibleProject`)
 
 ## JIRA tickets
 

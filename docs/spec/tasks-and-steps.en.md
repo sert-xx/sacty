@@ -463,6 +463,8 @@ Code: `apps/daemon/src/service.ts` (`askQuestion`, `answerQuestion`, `stageQuest
 - The result is posted to the PR as a review (`COMMENT`) without waiting for a person's approval. If line comments are rejected with 422, they are put into the body and posted again.
   The task completes once posted.
 - Re-review: a task that completed after posting can put `review` back to waiting to run and review the latest commit again (`ReviewRestarted`).
+  Besides a person pressing "Review again", sacty starts it when a review is re-requested on a PR taken in by a request (`reason: rerequested`;
+  see [Intake](intake.en.md)).
   The previous body, line comments, reviewed commit, and posting time are kept in `previousReview`. The instructions include the previous findings and the PR author's
   replies since the previous post (PR reviews, line comments, and regular comments by the author's login, excluding those starting with sacty's review marker; the newest 30, up to
   2000 characters each) as JSON data separate from the instructions, and the agent writes, for each previous finding, whether it confirmed the fix or it is still open. If the replies cannot be read
