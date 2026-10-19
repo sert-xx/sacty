@@ -439,6 +439,14 @@ Code: `apps/daemon/src/service.ts` (`askQuestion`, `answerQuestion`, `stageQuest
 
 - The only step is `review`. Before running, the head of the target PR, the base commit, and the PR author's login are recorded (`ReviewTargetResolved`; empty if the author cannot be read).
   The code at the PR's head commit and the whole diff (mounted read-only at `/sacty-review`; the first 100000 characters in the instructions) are passed.
+- Reviews already on the PR: before running, the PR's reviews, line comments, and ordinary comments (excluding posts by bots and posts by this task's account that start with
+  the marker, that is, its previous posts; findings by other reviewers and the author's replies; approving reviews with a body are included too (`includeApprovals`; they are not
+  included when importing PR comments)) are read and passed as JSON data separate from the instructions
+  (`existingReviews`; oldest first; the newest 30 (`EXISTING_IN_PROMPT`), 2000 characters each), for the first review and re-reviews alike. The instructions tell the agent
+  to check the state of the existing findings before reviewing, not to repeat a problem already raised at the same place, to decide the verdict without the findings it did not
+  repeat, and to write briefly in the summary how many were left out (without copying them). If there are none, "none yet" is passed. If they cannot be read, the instructions say so,
+  the review is not stopped, and the reason is kept in the daemon log (secret values redacted). The author's replies for a re-review (below) are picked from the same read
+  (if the author cannot be read, only the replies are treated as unreadable).
 - sacty does the posting. The instructions tell the agent to use the default skills `review-dispatch` (with the `pr-review` flow) and `writing`, not to post by itself
   (not to write on the PR with gh or the GitHub API), and to give priority to the output format of the instructions when they conflict with the skills. sacty adds the verdict, the @ mention of the author,
   and the statement that AI posted the review, so the agent does not write them.
@@ -473,4 +481,4 @@ Code: `apps/daemon/src/service.ts` (`askQuestion`, `answerQuestion`, `stageQuest
   of the target repository (in the order of the skill `writing`), and Japanese when there are none.
 - In the PR check (every 60 seconds), if the PR of an unfinished review task has been merged or closed, the task is canceled.
 
-Code: `apps/daemon/src/service.ts` (`reviewOnlySteps`, `resolveReviewTarget`, `reviewReplies`, `postReview`, `rereview`, `checkReviewPullRequests`), `apps/daemon/src/prompts.ts` (`PR_DIFF_IN_PROMPT`, `extractReviewComments`, `buildReviewBody`, `MUST_TAG`, `SUGGESTION_TAG`), `packages/core/src/events.ts` (`ReviewVerdict`)
+Code: `apps/daemon/src/service.ts` (`reviewOnlySteps`, `resolveReviewTarget`, `reviewFeedback`, `postReview`, `rereview`, `checkReviewPullRequests`), `apps/daemon/src/prompts.ts` (`PR_DIFF_IN_PROMPT`, `existingReviewLines`, `EXISTING_IN_PROMPT`, `rereviewLines`, `extractReviewComments`, `buildReviewBody`, `MUST_TAG`, `SUGGESTION_TAG`), `packages/core/src/events.ts` (`ReviewVerdict`)

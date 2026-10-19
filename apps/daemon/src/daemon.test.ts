@@ -702,13 +702,17 @@ class FakePulls implements PullRequests {
   feedbackSactyReviews: (readonly string[] | undefined)[] = [];
   /** 渡された、この PR をレビューした sacty のタスクの回（PBI-88）。 */
   feedbackSactyRounds: (readonly SactyReviewRound[] | undefined)[] = [];
+  /** 本文のある承認のレビューも含めるか（レビューの工程に渡す既存のレビューだけ true。PBI-144）。 */
+  feedbackIncludeApprovals: (boolean | undefined)[] = [];
   async feedback(input: {
     account?: string;
     number: number;
     sactyReviews?: readonly SactyReviewRound[];
+    includeApprovals?: boolean;
   }) {
     const allowed = (input.sactyReviews ?? []).filter((r) => r.allowed).map((r) => r.key);
     this.feedbackSactyReviews.push(allowed.length > 0 ? allowed : undefined);
+    this.feedbackIncludeApprovals.push(input.includeApprovals);
     this.feedbackSactyRounds.push(input.sactyReviews);
     this.feedbackAccounts.push(input.account);
     this.feedbackNumbers.push(input.number);
@@ -6228,8 +6232,9 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       await service.checkPullRequests();
       const events = service.get(id)?.activity ?? [];
       const imported = events.find((e) => e.type === "PullRequestReviewImported");
-      // sacty が投稿したレビューを除けるよう、プロジェクトのアカウントを渡して読む（PBI-19）
+      // sacty が投稿したレビューを除けるよう、プロジェクトのアカウントを渡して読む（PBI-19）。承認は指摘ではないので含めない
       expect(pulls.feedbackAccounts.at(-1)).toBe("me");
+      expect(pulls.feedbackIncludeApprovals.at(-1)).toBeUndefined();
       expect(imported?.actor).toBe("person");
       expect(imported?.payload).toMatchObject({
         number: 7,
@@ -8904,7 +8909,7 @@ describe("PR のレビューだけを行う取り込み（PBI-44）", () => {
     activity.close();
   });
 
-  it("再レビューでは、前回の指摘と、前回の投稿の後の PR の作者の返答だけをプロンプトに渡す（PBI-111）", async () => {
+  it("再レビューでは、前回の指摘と、前回の投稿の後の PR の作者の返答だけをプロンプトに渡す（PBI-111）。既存のレビューは初回から渡す（PBI-144）", async () => {
     const activity = new SqliteActivityStore(dbPath);
     const pulls = new FakePulls();
     pulls.prInfo = { ...pulls.prInfo, number: 9, url: "https://github.com/acme/app/pull/9" };
@@ -8931,9 +8936,13 @@ describe("PR のレビューだけを行う取り込み（PBI-44）", () => {
     const id = task?.id ?? "";
     await service.runNext(id);
     await service.runNext(id);
-    // 最初のレビューには、再レビューの指示も返答の読み出しも無い
+    // 最初のレビューには、再レビューの指示は無い。PR にすでにあるレビューは、初回から読んで渡す（PBI-144）
     expect(promptOf(executor, 0)).not.toContain("--- 再レビュー ---");
-    expect(pulls.feedbackNumbers).toEqual([]);
+    expect(promptOf(executor, 0)).toContain("--- PR の既存のレビュー ---");
+    expect(promptOf(executor, 0)).toContain("PR には、まだレビュー・コメントがありません");
+    expect(pulls.feedbackNumbers).toEqual([9]);
+    // 本文のある承認のレビュー（「承認するが、ここは直してほしい」）も既存の指摘として読む（PR #161 レビュー指摘）
+    expect(pulls.feedbackIncludeApprovals).toEqual([true]);
     const postedAt = Date.parse(service.get(id)?.task.reviewPost?.at ?? "");
     const at = (offset: number) => new Date(postedAt + offset).toISOString();
     const reply = (key: string, patch: Partial<PullRequestFeedback>): PullRequestFeedback => ({
@@ -8969,6 +8978,22 @@ describe("PR のレビューだけを行う取り込み（PBI-44）", () => {
       "後続で対応します",
     ]);
     expect(json.authorReplies[0]).toMatchObject({ kind: "review_comment", path: "src/retry.ts" });
+    // 既存のレビューは、作者のものも他の人のものも、前回の投稿より前のものも渡す（自分の前回の投稿は含まない）
+    const existing = JSON.parse(
+      prompt.split("\n").find((l) => l.startsWith('{"existingReviews"')) ?? "{}",
+    );
+    expect(
+      existing.existingReviews.map((r: { author: string; body: string }) => [r.author, r.body]),
+    ).toEqual([
+      ["alice", "前回より前の作者のコメント"],
+      ["alice", "直しました"],
+      ["bob", "ほかの人のコメント"],
+      ["alice", `<!-- sacty-review:${id} -->\n写し`],
+      ["Alice", "後続で対応します"],
+    ]);
+    expect(prompt).toContain(
+      "既存の指摘と同じ箇所・同じ問題（言い換えを含む）は、新しい指摘として繰り返さない",
+    );
     await service.runNext(id);
     expect(pulls.reviews).toHaveLength(2);
 
@@ -8981,6 +9006,8 @@ describe("PR のレビューだけを行う取り込み（PBI-44）", () => {
     await service.runNext(id);
     const unreadable = promptOf(executor, 2);
     expect(unreadable).toContain("PR の作者の返答は読めませんでした");
+    expect(unreadable).toContain("PR にすでにあるレビュー・コメントは読めませんでした");
+    expect(unreadable).not.toContain("existingReviews");
     // 運用する人のために、タスクと PR と理由をデーモンのログに残す。秘密の値は伏せる（PR 121 レビュー指摘）
     const logged = warn.mock.calls.map((c) => c.join(" ")).find((l) => l.includes("作者の返答"));
     warn.mockRestore();
@@ -8994,14 +9021,15 @@ describe("PR のレビューだけを行う取り込み（PBI-44）", () => {
     await service.runNext(id);
     expect(pulls.reviews).toHaveLength(3);
 
-    // 作者が分からなければ、返答を選べないので読めなかったものとする
+    // 作者が分からなければ、返答を選べないので読めなかったものとする（既存のレビューは読んで渡す）
     const before = pulls.feedbackNumbers.length;
     pulls.feedback = FakePulls.prototype.feedback;
     pulls.prInfo = { ...pulls.prInfo, author: "" };
     service.rereview(id);
     await service.runNext(id);
     expect(promptOf(executor, 3)).toContain("PR の作者の返答は読めませんでした");
-    expect(pulls.feedbackNumbers.length).toBe(before);
+    expect(promptOf(executor, 3)).toContain('{"existingReviews"');
+    expect(pulls.feedbackNumbers.length).toBe(before + 1);
     activity.close();
   });
 });

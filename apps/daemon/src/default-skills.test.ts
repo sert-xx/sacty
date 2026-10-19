@@ -196,3 +196,31 @@ describe("既定のスキル ears-requirements（PBI-122）", () => {
     for (const { path, text } of files) expect(text.toLowerCase(), path).not.toContain("sacty");
   });
 });
+
+describe("既定のスキル review-dispatch の、PR にすでにあるレビューの確認（PBI-144）", () => {
+  it("入力に既存のレビューを揃え、レビューの前に状況を確かめる", () => {
+    expect(read("skills/review/review-dispatch/SKILL.md")).toContain(
+      "PR にすでにあるレビュー（`pr-review` のとき）",
+    );
+    const pr = read("skills/review/review-dispatch/references/pr-review.md");
+    expect(pr).toContain("## 既存のレビューの確認");
+    expect(pr).toContain("既存のレビューの状況を確かめる（上の「既存のレビューの確認」）");
+    // 再レビューでも確かめ直す
+    expect(pr).toContain("既存のレビューの状況も確かめ直す");
+  });
+
+  it("既存の指摘と重なるものは、must でも繰り返さず、省いた件数を総評に書く", () => {
+    const pr = read("skills/review/review-dispatch/references/pr-review.md");
+    expect(pr).toContain("## 既存の指摘との重なり");
+    expect(pr).toContain("`must` でも繰り返さない");
+    expect(pr).toContain("不採用の理由は「既存のレビューで指摘済み」");
+    expect(pr).toContain("判定は、採用した（まだ誰も指摘していない）指摘で決める");
+    expect(pr).toContain("その件数を短く書く（既存の指摘の本文は写さない）");
+    const aggregation = read("skills/review/review-dispatch/references/aggregation.md");
+    expect(aggregation).toContain("既存のレビューで指摘済み");
+    expect(aggregation).toContain('"existing_reviews":');
+    expect(aggregation).toContain(
+      "不採用にした指摘（既存のレビューで指摘済みのものを含む）は、判定に数えない",
+    );
+  });
+});

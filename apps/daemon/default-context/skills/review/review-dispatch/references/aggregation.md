@@ -25,13 +25,15 @@
 - 根拠が無い・`confidence: low` で親が確かめられない
 - 好みだけ、意図された振る舞いの変更、同じ問題の言い換え
 - 作者が対象外・後続対応を明示した論点（流れの資料の規則）
+- PR にすでにある他のレビュアーの指摘と同じ箇所・同じ問題（`pr-review`。言い換えを含む。理由は「既存のレビューで指摘済み」。`must` でも繰り返さない。規則は流れの資料の「既存の指摘との重なり」）
 
-`must` は、過去の指摘の履歴や「前回は出なかった」という理由だけで抑えない。
+`must` は、過去の指摘の履歴や「前回は出なかった」という理由だけで抑えない（他のレビュアーがすでに同じ指摘をしているときは除く。作者にはすでに届いている）。
 
 ## 判定
 
 - `must` が1件以上：修正が必要（`changes_required`）
 - `should` のみ：自己レビューでは修正に戻す。PR レビューでは「提案あり（マージは可）」
+- 不採用にした指摘（既存のレビューで指摘済みのものを含む）は、判定に数えない
 - 指摘なし：合格（`passed`）。ただし、見られなかった観点があれば、判定に「見られなかった観点」を併記する
 - 見られなかった観点が1つでもある初回の PR レビューは、合格と書かない
 - レビューの対象にした文書（[linked-docs.md](linked-docs.md)）を取得できなかった PR レビューは、初回でも再レビューでも合格と書かない
@@ -54,6 +56,7 @@
   "not_launched": [{ "viewpoint": "C-7", "reason": "並行処理・共有状態の変更が無い" }],
   "linked_docs": [{ "source": "<URL かリポジトリ内のパス>", "role": "target | evidence", "reason": "本文が成果物の設計書として示している", "fetched": true, "copy": "<一時ディレクトリ>/review-linked/design.md", "version": "<版や更新日時。分からなければ空>", "not_fetched_reason": "" }],
   "verification": { "summary": "<一時ディレクトリ>/review-verify/round-1/summary.json", "failed": ["test:pytest"], "not_run": ["build（CI で実行していない）"] },
+  "existing_reviews": { "count": 3, "readable": true, "overlapping": 1 },
   "adopted": [],
   "dismissed": [{ "viewpoint": "C-5", "title": "…", "reason": "範囲の外（既存の問題）" }],
   "verdict": "passed | changes_required | incomplete"
