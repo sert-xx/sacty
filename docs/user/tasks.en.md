@@ -244,7 +244,7 @@ approvals and resumes in other tabs or the CLI, tasks the daemon picked up and s
 - While a run is in progress, the run log adds new lines at the end automatically. The scroll position does not move while you are reading in the middle;
   the screen follows new lines only while you are looking at the bottom. If the list of the agent's original files cannot be read after the run has finished,
   the screen shows that and that it is retrying, and shows the list once it can be read.
-- The sacty settings and project settings screens are not updated automatically (only the header's notices are). To see the latest, open the screen
+- The Sacty settings and project settings screens are not updated automatically (only the header's notices are). To see the latest, open the screen
   again or reload it in the browser.
 
 ## Back up before updating and returning to an older version

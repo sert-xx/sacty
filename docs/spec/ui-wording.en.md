@@ -11,6 +11,8 @@ Related ADR: [Split screen wording into body and hints, and show explanations of
 
 ## Rules for the body
 
+- Write the product name as Sacty in both Japanese and English, including the header, browser title, sign-in page, activity, and errors.
+  Keep identifiers such as commands, settings keys, cookies, label names, and paths unchanged.
 - The body says only what is happening now and what to do next. How things work, reasons, numbers such as intervals and limits, settings
   file locations and definitions of terms go into a hint or are left out.
 - One message is one sentence. Headings, labels and statuses are nouns. Buttons are verbs. The guide is 40 characters in Japanese and

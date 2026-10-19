@@ -19,7 +19,7 @@ const ja = {
       `最後の取り込み（${kind}）：${at}・${n}件のタスクを作成`,
     runKinds: { issues: "Issue", reviews: "PR のレビュー", tickets: "チケット" },
     errorKind: (kind: string) => `【${kind}】`,
-    settingsUnreadable: "sacty の設定を読めないため、止まっています：",
+    settingsUnreadable: "Sacty の設定を読めないため、止まっています：",
     never: "まだ取り込んでいません。",
     noLabel: "止まっています。取り込むラベルも、PR のレビューもチケットも設定していません。",
     label: (label: string) => `Issue：ラベル ${label}`,
@@ -32,7 +32,7 @@ const ja = {
     ticket: (label: string) => `チケット：ラベル ${label}`,
     review: (requested: boolean, label: string) =>
       `PR のレビュー：${[requested ? "自分への依頼" : "", label ? `ラベル ${label}` : ""].filter(Boolean).join("・")}`,
-    settings: "sacty の設定を開く",
+    settings: "Sacty の設定を開く",
     errors: "取り込めなかった対象があります：",
     runNow: "今すぐ取り込む",
   },
@@ -46,7 +46,7 @@ const ja = {
   exportNotFound: "プロジェクトが見つかりません。",
   preview: {
     title: "コンテキストのプレビュー",
-    hint: "実行のときと同じ処理で、sacty の既定のコンテキストとコンテキストリポジトリを合成し、Claude Code・Codex の設定のディレクトリに置くファイルを出します。ファイルは置かず、取得したリポジトリは消します。",
+    hint: "実行のときと同じ処理で、Sacty の既定のコンテキストとコンテキストリポジトリを合成し、Claude Code・Codex の設定のディレクトリに置くファイルを出します。ファイルは置かず、取得したリポジトリは消します。",
     secretsNote: "秘密情報は名前だけを出します。直書きした値は、そのまま出ます。",
     secretsHint:
       "参照した秘密情報の値と、実行ごとのゲートウェイのトークンは出しません。コンテキストリポジトリに直書きした値（層の設定の中身・mcp.yaml の literal など）は伏せません。",
@@ -57,7 +57,7 @@ const ja = {
     fromSaved: "保存した設定で作りました。",
     fromEditing: "編集中の設定で作りました。",
     error: "コンテキストに誤りがあります：",
-    unavailable: "プレビューを作れません。画面を更新するか、sacty を起動し直してください。",
+    unavailable: "プレビューを作れません。画面を更新するか、Sacty を起動し直してください。",
     warnings: "警告",
     layers: "層（上位から）",
     locked: "上書き禁止",
@@ -95,7 +95,7 @@ const ja = {
     platformHost: "config.yaml",
     env: "実行のときに入れる環境変数",
     files: (n: number) => `置くファイル（${n}件）`,
-    generated: "sacty が作成",
+    generated: "Sacty が作成",
     size: (bytes: number) => `${bytes.toLocaleString("ja-JP")} バイト`,
     binary: "テキストでないため、中身は出しません。",
     truncated: "大きいため、途中までです。",
@@ -105,7 +105,7 @@ const ja = {
     name: "名前",
     targetsTitle: "対象",
     targetsHint:
-      "開いている Issue は、取り込むラベルが付いていればタスクにします。開いている PR は、レビュー用のラベルが付いているか、レビューを依頼されていれば、レビューだけのタスクにします（ラベルは sacty の設定）。Org とその中のリポジトリが別のプロジェクトにあれば、リポジトリが優先します。",
+      "開いている Issue は、取り込むラベルが付いていればタスクにします。開いている PR は、レビュー用のラベルが付いているか、レビューを依頼されていれば、レビューだけのタスクにします（ラベルは Sacty の設定）。Org とその中のリポジトリが別のプロジェクトにあれば、リポジトリが優先します。",
     prNotice: "対象のリポジトリに、ブランチと PR を作ることがあります。",
     noTargets: "対象はありません。",
     scope: "単位",
@@ -135,7 +135,7 @@ const ja = {
     addTarget: "対象を追加",
     contextTitle: "コンテキストリポジトリ（任意）",
     contextHint:
-      "工程エージェントに渡す規約・スキル・MCP・外部 PF を置いたリポジトリです（rules.md・skills/・mcp.yaml・platforms.yaml・agents/ など）。sacty の既定のコンテキストの上に重ねます。外すときは、リポジトリを空にして保存します。",
+      "工程エージェントに渡す規約・スキル・MCP・外部 PF を置いたリポジトリです（rules.md・skills/・mcp.yaml・platforms.yaml・agents/ など）。Sacty の既定のコンテキストの上に重ねます。外すときは、リポジトリを空にして保存します。",
     contextRepo: "リポジトリ",
     contextRef: "ブランチ・タグ",
     contextRepoPlaceholder: "例：git@github.com:acme/sacty-context.git",
@@ -203,7 +203,7 @@ const en: ProjectsMessages = {
     lastRun: (kind, at, n) => `Last ${kind} intake: ${at} · ${n} task${n === 1 ? "" : "s"} created`,
     runKinds: { issues: "issue", reviews: "PR review", tickets: "ticket" },
     errorKind: (kind) => `[${kind}] `,
-    settingsUnreadable: "Stopped because the sacty settings cannot be read: ",
+    settingsUnreadable: "Stopped because the Sacty settings cannot be read: ",
     never: "Nothing imported yet.",
     noLabel: "Stopped. No intake label, PR review intake, or ticket intake is set.",
     label: (label) => `Issues: label ${label}`,
@@ -216,7 +216,7 @@ const en: ProjectsMessages = {
     ticket: (label) => `Tickets: label ${label}`,
     review: (requested, label) =>
       `PR reviews: ${[requested ? "requested from me" : "", label ? `label ${label}` : ""].filter(Boolean).join(", ")}`,
-    settings: "Open sacty settings",
+    settings: "Open Sacty settings",
     errors: "Some targets could not be imported:",
     runNow: "Import now",
   },
@@ -230,7 +230,7 @@ const en: ProjectsMessages = {
   exportNotFound: "Project not found.",
   preview: {
     title: "Context preview",
-    hint: "Composes the sacty default context and the context repository with the same process as a run, and shows the files placed in the Claude Code or Codex config directory. Nothing is placed, and the fetched repositories are deleted.",
+    hint: "Composes the Sacty default context and the context repository with the same process as a run, and shows the files placed in the Claude Code or Codex config directory. Nothing is placed, and the fetched repositories are deleted.",
     secretsNote: "Secrets are shown by name only. Values written directly are shown as written.",
     secretsHint:
       "Referenced secret values and the per-run gateway token are not shown. Values written directly in the context repository, such as layer settings and literal values in mcp.yaml, are not masked.",
@@ -241,7 +241,7 @@ const en: ProjectsMessages = {
     fromSaved: "Built from the saved settings.",
     fromEditing: "Built from the settings being edited.",
     error: "The context has an error:",
-    unavailable: "The preview is unavailable. Reload the page or restart sacty.",
+    unavailable: "The preview is unavailable. Reload the page or restart Sacty.",
     warnings: "Warnings",
     layers: "Layers (top first)",
     locked: "Locked",
@@ -279,7 +279,7 @@ const en: ProjectsMessages = {
     platformHost: "config.yaml",
     env: "Environment variables set for a run",
     files: (n) => `Files to place (${n})`,
-    generated: "Created by sacty",
+    generated: "Created by Sacty",
     size: (bytes) => `${bytes.toLocaleString("en-US")} bytes`,
     binary: "Not a text file, so the content is not shown.",
     truncated: "Large file: only the beginning is shown.",
@@ -289,8 +289,8 @@ const en: ProjectsMessages = {
     name: "Name",
     targetsTitle: "Targets",
     targetsHint:
-      "Orgs and repositories to create tasks for and import from. Open issues with the intake label become tasks. Open PRs with the review label, or that request your review, become review-only tasks (labels are in the sacty settings). If an org and a repository in it are in different projects, the repository wins.",
-    prNotice: "sacty may push branches and open PRs in the target repositories.",
+      "Orgs and repositories to create tasks for and import from. Open issues with the intake label become tasks. Open PRs with the review label, or that request your review, become review-only tasks (labels are in the Sacty settings). If an org and a repository in it are in different projects, the repository wins.",
+    prNotice: "Sacty may push branches and open PRs in the target repositories.",
     noTargets: "No targets.",
     scope: "Scope",
     repoTarget: "Repository URL",
@@ -299,7 +299,7 @@ const en: ProjectsMessages = {
     imageAuto: "Chosen by the Orchestrator",
     ticketsTitle: "Ticket sources (optional)",
     ticketsHint:
-      "Tickets of these keys with the intake label (sacty settings) become tasks. Choose the connection from gateway.platforms in config.yaml or platforms.yaml in the context repository. The Orchestrator reads the ticket and chooses the repository from the targets.",
+      "Tickets of these keys with the intake label (Sacty settings) become tasks. Choose the connection from gateway.platforms in config.yaml or platforms.yaml in the context repository. The Orchestrator reads the ticket and chooses the repository from the targets.",
     ticketsNoPlatforms:
       "No connection to choose. Add a JIRA connection to gateway.platforms in config.yaml or to platforms.yaml in the context repository.",
     ticketPlatform: "Connection",
@@ -319,7 +319,7 @@ const en: ProjectsMessages = {
     addTarget: "Add target",
     contextTitle: "Context repository (optional)",
     contextHint:
-      "A repository with the rules, skills, MCP, and external platforms for step agents (rules.md, skills/, mcp.yaml, platforms.yaml, agents/, and so on). It is layered on top of sacty's default context. To remove it, clear the repository and save.",
+      "A repository with the rules, skills, MCP, and external platforms for step agents (rules.md, skills/, mcp.yaml, platforms.yaml, agents/, and so on). It is layered on top of Sacty's default context. To remove it, clear the repository and save.",
     contextRepo: "Repository",
     contextRef: "Branch or tag",
     contextRepoPlaceholder: "e.g. git@github.com:acme/sacty-context.git",
@@ -341,7 +341,7 @@ const en: ProjectsMessages = {
     githubForShared: " (shared compose, optional)",
     sharedTitle: "Shared compose (optional)",
     sharedHint:
-      "Team-shared docker compose for tests. Setting one does not start it: the Orchestrator decides per task whether it is needed, and only then sacty fetches and starts it and removes it afterwards. In the description, write the services it starts and which tests need them.",
+      "Team-shared docker compose for tests. Setting one does not start it: the Orchestrator decides per task whether it is needed, and only then Sacty fetches and starts it and removes it afterwards. In the description, write the services it starts and which tests need them.",
     sharedName: "Name",
     sharedNamePlaceholder: "e.g. infra",
     sharedRepo: "Repository (git URL or local path)",

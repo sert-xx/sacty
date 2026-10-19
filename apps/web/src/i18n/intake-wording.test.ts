@@ -33,11 +33,11 @@ describe("取り込みの文言（PBI-99）", () => {
 
   it("sacty の PR にラベルを付けるのは、レビュー用のラベルを設定したとき（取り込みが Off の間も付ける。PBI-139）と書く", () => {
     expect(messagesFor("ja").settings.reviewLabelHint).toContain(
-      "レビュー用のラベルを設定していると、sacty が作る PR にもこのラベルを付け",
+      "レビュー用のラベルを設定していると、Sacty が作る PR にもこのラベルを付け",
     );
     expect(messagesFor("ja").settings.reviewLabelHint).toContain("取り込みが Off の間も付けます");
     expect(messagesFor("en").settings.reviewLabelHint).toContain(
-      "When the review label is set, sacty also adds this label",
+      "When the review label is set, Sacty also adds this label",
     );
     expect(messagesFor("en").settings.reviewLabelHint).toContain(
       "even while importing them is off",

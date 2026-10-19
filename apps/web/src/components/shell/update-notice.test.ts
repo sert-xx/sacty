@@ -25,7 +25,7 @@ afterEach(() => {
 describe("sacty の新しい版の知らせ（PBI-135）", () => {
   it("新しい版があれば、遅れている数・変更を見るリンク・止めてから実行する更新の手順を出す", () => {
     const text = view({ behindBy: 3, compareUrl: COMPARE });
-    expect(text).toContain("sacty の新しい版があります");
+    expect(text).toContain("Sacty の新しい版があります");
     expect(text).toContain("変更が 3 件あります");
     expect(text).toContain(`href="${COMPARE}"`);
     // 動いている sacty up を止めてから、更新・ビルドして起動する（PR #147 レビュー提案）
@@ -61,7 +61,7 @@ describe("sacty の新しい版の知らせ（PBI-135）", () => {
 
   it("英語の文言もある", () => {
     const text = view({ behindBy: 1, compareUrl: COMPARE }, shell.en.update);
-    expect(text).toContain("A new version of sacty is available");
+    expect(text).toContain("A new version of Sacty is available");
     expect(text).toContain("1 change not in the running version");
     expect(text).toContain("Stop the running sacty up with Ctrl+C");
   });

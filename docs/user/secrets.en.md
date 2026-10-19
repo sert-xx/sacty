@@ -20,7 +20,7 @@ npx sacty secret set claude-oauth-token
 ## 1Password
 
 For secrets stored in 1Password, write a reference (`op://vault/item/field`) instead of a name. You can use references anywhere a secret goes:
-authentication in `providers`, `gateway.platforms`, `gateway.mcp_servers`, `mcp.yaml` and `platforms.yaml` in the context repository, the Slack notification destination in the "sacty settings",
+authentication in `providers`, `gateway.platforms`, `gateway.mcp_servers`, `mcp.yaml` and `platforms.yaml` in the context repository, the Slack notification destination in the "Sacty settings",
 npm tokens, and so on.
 
 ```yaml
@@ -41,21 +41,21 @@ onepassword:
 ## What is fetched at startup
 
 - When `sacty up` starts, it fetches the secrets in use all at once (authentication in `providers` of the agents in use, the environment variables of `gateway.platforms` and `gateway.mcp_servers`,
-  the Slack notification destination in the "sacty settings", and `mcp.yaml` and `platforms.yaml` in the projects' context repositories).
+  the Slack notification destination in the "Sacty settings", and `mcp.yaml` and `platforms.yaml` in the projects' context repositories).
   1Password references are fetched with a single `op run`, so you authenticate only once, at startup.
   For Keychain secrets, it checks that they can be fetched (they are fetched each time they are used).
 - Secrets in context repositories are collected by fetching each project's context (including the upper layers inherited with `extends`).
   Fetching waits at most 30 seconds. For projects whose context could not be fetched, the web UI shows a warning with the reason (those secrets are fetched when used).
 - For anything that could not be fetched at startup, the web UI shows a warning and the terminal shows which setting failed and why (startup does not stop). Once it is ready, press
-  "Get secrets again" in "sacty settings" in the web UI. Getting the secrets again also fetches the contexts again. If some contexts could not be read,
+  "Get secrets again" in "Sacty settings" in the web UI. Getting the secrets again also fetches the contexts again. If some contexts could not be read,
   the result says that the secrets in them were not checked.
 - npm tokens used only for building images are not fetched at startup (they are fetched when used). GitHub tokens are fetched from `gh` each time they are used.
 
-## What is fetched when you save a project or the sacty settings
+## What is fetched when you save a project or the Sacty settings
 
 - When you save project settings (including when you create or import a project), sacty fetches that project's context secrets
   all at once. 1Password asks for authentication only when there are references not fetched yet.
-- When you save the "sacty settings", sacty fetches the secret of the Slack notification destination (the token or webhook URL). 1Password asks for authentication
+- When you save the "Sacty settings", sacty fetches the secret of the Slack notification destination (the token or webhook URL). 1Password asks for authentication
   only when it has not been fetched yet.
 - Saving does not stop (it finishes without waiting for the fetch). Anything that could not be fetched is shown as a warning in the web UI.
 

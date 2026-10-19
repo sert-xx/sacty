@@ -16,7 +16,7 @@ function Frame({ children }: { children?: React.ReactNode }) {
         className="flex items-center gap-2 text-xl font-bold tracking-wide text-foreground"
       >
         <SactyMark className="size-7 shrink-0 rounded-[23%] dark:ring-1 dark:ring-white/20" />
-        sacty
+        Sacty
       </Link>
       <span aria-hidden="true" className="hidden h-7 w-px bg-border sm:block" />
       {children}

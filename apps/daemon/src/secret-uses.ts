@@ -63,7 +63,7 @@ export function settingsSecretUses(settings: SactySettings): SecretUse[] {
         ? { ref: notification.webhook, label: "Webhook の URL" }
         : undefined;
   return where?.ref
-    ? [{ ref: where.ref, where: `sacty の設定の通知先（${where.label}）`, settings: true }]
+    ? [{ ref: where.ref, where: `Sacty の設定の通知先（${where.label}）`, settings: true }]
     : [];
 }
 

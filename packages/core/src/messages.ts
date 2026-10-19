@@ -676,9 +676,9 @@ const ja: MessageDictionary = {
     "PR のレビューの取り込みの間隔は、60 以上の整数（秒）を書いてください（空なら 300 秒）。",
   "input.ticketIntervalInvalid":
     "チケットの取り込みの間隔は、60 以上の整数（秒）を書いてください（空なら 300 秒）。",
-  "input.notExportFile": "sacty のプロジェクト定義のファイルではありません。",
+  "input.notExportFile": "Sacty のプロジェクト定義のファイルではありません。",
   "input.unsupportedVersion": `対応していない版です（対応している版：${PROJECT_EXPORT_VERSION}）。`,
-  "input.exportVersionWithNotification": `版 3・4 のファイルは読めません。版 ${PROJECT_EXPORT_VERSION} から、Slack の通知先をプロジェクトに含めなくなりました（通知先は sacty の設定にあります）。今の sacty でエクスポートし直してください。`,
+  "input.exportVersionWithNotification": `版 3・4 のファイルは読めません。版 ${PROJECT_EXPORT_VERSION} から、Slack の通知先をプロジェクトに含めなくなりました（通知先は Sacty の設定にあります）。今の Sacty でエクスポートし直してください。`,
   "input.required": "入力してください。",
   "input.tooShort": ({ minimum }) => `${minimum}文字以上で入力してください。`,
   "input.tooLong": ({ maximum }) =>
@@ -747,7 +747,7 @@ const ja: MessageDictionary = {
   "config.imageEnvSecret":
     "images の env には、認証の値（TOKEN・PASSWORD などを含む名前や、ユーザー名・パスワードを含む URL）は書けません（コンテナの中のすべてのコマンドに見えるため）。",
   "config.imageEnvReserved":
-    "images の env には、PATH・HOME や、DOCKER_・SACTY_・CODEX_・CLAUDE_・ANTHROPIC_・OPENAI_・NPM_CONFIG_ で始まる名前は書けません（sacty と docker の設定とぶつかるため）。",
+    "images の env には、PATH・HOME や、DOCKER_・SACTY_・CODEX_・CLAUDE_・ANTHROPIC_・OPENAI_・NPM_CONFIG_ で始まる名前は書けません（Sacty と docker の設定とぶつかるため）。",
   "config.imagePackage":
     "images の packages には、パッケージの名前（英数字と . _ + : @ ~ = -）を書いてください。",
   "config.imageRun":
@@ -759,7 +759,7 @@ const ja: MessageDictionary = {
   "config.mavenMirror":
     "images の maven_mirror は、ユーザー名・パスワードを含まない URL（http または https）で書いてください。",
   "services.unsafe": ({ file, detail }) =>
-    `compose ファイル（${file}）に、sacty が起動できない設定があります：${detail}。エージェントにホストの権限を渡さないため、privileged・ホストのネットワーク・作業領域の外のマウントなどは使えません。`,
+    `compose ファイル（${file}）に、Sacty が起動できない設定があります：${detail}。エージェントにホストの権限を渡さないため、privileged・ホストのネットワーク・作業領域の外のマウントなどは使えません。`,
   "services.failed": ({ file, detail }) =>
     `compose ファイル（${file}）のサービスを起動できませんでした。出力の末尾：${detail}`,
   "services.sharedUnknown": ({ name }) =>
@@ -769,7 +769,7 @@ const ja: MessageDictionary = {
   "services.sharedMissing": ({ name, file }) =>
     `共用の compose「${name}」のリポジトリに、compose ファイル（${file}）がありません。プロジェクトの設定の compose ファイルのパスを確かめてください。`,
   "services.sharedUnsafe": ({ name, file, detail }) =>
-    `共用の compose「${name}」の compose ファイル（${file}）に、sacty が起動できない設定があります：${detail}。エージェントにホストの権限を渡さないため、privileged・ホストのネットワーク・取得したリポジトリの外のマウントなどは使えません。`,
+    `共用の compose「${name}」の compose ファイル（${file}）に、Sacty が起動できない設定があります：${detail}。エージェントにホストの権限を渡さないため、privileged・ホストのネットワーク・取得したリポジトリの外のマウントなどは使えません。`,
   "services.sharedFailed": ({ name, file, detail }) =>
     `共用の compose「${name}」の compose ファイル（${file}）のサービスを起動できませんでした。出力の末尾：${detail}`,
   "image.notInImages": ({ name }) =>
@@ -786,7 +786,7 @@ const ja: MessageDictionary = {
   "input.mentionKinds": "メンションする通知の種類を、1つ以上選んでください。",
   "notify.failed": ({ detail }, text) =>
     `Slack の通知を送れませんでした：${text(detail)}（タスクは止めていません）`,
-  "notify.notConfigured": "sacty の設定に、Slack の通知先が設定されていません。",
+  "notify.notConfigured": "Sacty の設定に、Slack の通知先が設定されていません。",
   "input.secretRef":
     "秘密情報は、キーチェーンの名前（英数字と . _ -）か、1Password の参照（op://保管庫/アイテム/フィールド）で書いてください。",
   "input.envName": "環境変数の名前が正しくありません。",
@@ -816,11 +816,11 @@ const ja: MessageDictionary = {
   "secret.opMissing":
     "1Password の op コマンドが見つかりません。1Password CLI をインストールし、サインインしてから再開してください。",
   "secret.prefetchFailed": ({ where, detail }, text) =>
-    `起動のときに、秘密情報（${where}）を取り出せませんでした：${text(detail)}用意してから、「sacty の設定」の「秘密情報を取り出し直す」を押してください（使うときにも、もう一度取り出します）。`,
+    `起動のときに、秘密情報（${where}）を取り出せませんでした：${text(detail)}用意してから、「Sacty の設定」の「秘密情報を取り出し直す」を押してください（使うときにも、もう一度取り出します）。`,
   "secret.savePrefetchFailed": ({ where, detail }, text) =>
-    `プロジェクトの設定を保存したときに、秘密情報（${where}）を取り出せませんでした：${text(detail)}用意してから、「sacty の設定」の「秘密情報を取り出し直す」を押してください（使うときにも、もう一度取り出します）。`,
+    `プロジェクトの設定を保存したときに、秘密情報（${where}）を取り出せませんでした：${text(detail)}用意してから、「Sacty の設定」の「秘密情報を取り出し直す」を押してください（使うときにも、もう一度取り出します）。`,
   "secret.settingsSavePrefetchFailed": ({ where, detail }, text) =>
-    `sacty の設定を保存したときに、秘密情報（${where}）を取り出せませんでした：${text(detail)}用意してから、「sacty の設定」の「秘密情報を取り出し直す」を押してください（使うときにも、もう一度取り出します）。`,
+    `Sacty の設定を保存したときに、秘密情報（${where}）を取り出せませんでした：${text(detail)}用意してから、「Sacty の設定」の「秘密情報を取り出し直す」を押してください（使うときにも、もう一度取り出します）。`,
   "secret.contextUnavailable": ({ project, detail }, text) =>
     `プロジェクト「${project}」のコンテキストを読めず、その秘密情報を前もって取り出せませんでした（使うときに、その場で取り出します）：${text(detail)}`,
   "secret.contextTimedOut": ({ seconds }) => `${seconds} 秒のうちに取得できませんでした。`,
@@ -863,7 +863,7 @@ const ja: MessageDictionary = {
   "orchestrator.noTestsUncertain": ({ reason }) =>
     `オーケストレーターは、対象リポジトリにテストの仕組みが無いと判断しました（${reason}）が、ファイルが多く、テストのファイルが無いことを確かめきれませんでした。テストのコマンドを決められなかったものとして扱い、実装を検証できないので止めます。タスクの内容にテストの実行方法を書いて、作り直してください。`,
   "orchestrator.noTestsUnreadable": ({ reason, path, detail }) =>
-    `オーケストレーターは、対象リポジトリにテストの仕組みが無いと判断しました（${reason}）が、作業領域のディレクトリ（${path}）を読めず（${detail}）、テストのファイルが無いことを確かめきれませんでした。テストのコマンドを決められなかったものとして扱い、止めます。sacty を動かしているユーザーがそのディレクトリを読めるか（権限・ディスクの状態）を確かめてから、タスクを作り直してください（再開しても、テストなしでは進めません）。`,
+    `オーケストレーターは、対象リポジトリにテストの仕組みが無いと判断しました（${reason}）が、作業領域のディレクトリ（${path}）を読めず（${detail}）、テストのファイルが無いことを確かめきれませんでした。テストのコマンドを決められなかったものとして扱い、止めます。Sacty を動かしているユーザーがそのディレクトリを読めるか（権限・ディスクの状態）を確かめてから、タスクを作り直してください（再開しても、テストなしでは進めません）。`,
   "orchestrator.bugfixNeedsTests": ({ reason }) =>
     `オーケストレーターは、対象リポジトリにテストの仕組みが無いと判断しました（${reason}）が、不具合の修正（再現 → 実装）を選びました。再現はテストで確かめるので、テストのコマンドが要ります。実装を検証できないので止めます。タスクの内容にテストの実行方法を書いて、作り直してください。`,
   "implement.testCommandInvalid":
@@ -873,7 +873,7 @@ const ja: MessageDictionary = {
   "review.pullRequestMissing": ({ repo }) =>
     `タスクに、レビューする PR（${repo} の PR の URL）がありません。`,
   "review.reviewOnly": ({ via }) =>
-    `${via === "requested" ? "自分にレビューが依頼された" : via === "sacty" ? "sacty がほかのタスクで作った" : "レビュー用のラベルの付いた"} PR なので、レビューだけを行います（オーケストレーターは使いません）。`,
+    `${via === "requested" ? "自分にレビューが依頼された" : via === "sacty" ? "Sacty がほかのタスクで作った" : "レビュー用のラベルの付いた"} PR なので、レビューだけを行います（オーケストレーターは使いません）。`,
   "review.notRereviewable":
     "再レビューできるのは、レビューを PR に投稿して完了したタスクだけです。",
   "review.headUnknown":
@@ -902,7 +902,7 @@ const ja: MessageDictionary = {
   "pr.unavailable": ({ detail }, text) => `PRを作れません：${text(detail)}`,
   "pr.workspaceMissing": "実装の作業領域が無いため、PRを作れません。",
   "pr.taskBranchChanged": ({ branch, paths, count }, text) =>
-    `タスクブランチ ${text(branch)} に、sacty が積んでいない変更があります（${text(paths)}${count > 10 ? ` ほか、全${count}件` : ""}）。実装の作業領域には含まれていないので、このまま実装を積むと消えてしまうため、PR を出すのを止めました。タスクブランチからその変更を取り除いてから再開してください（変更が必要なら、PR の指摘として書くと、sacty が実装に反映します）。`,
+    `タスクブランチ ${text(branch)} に、Sacty が積んでいない変更があります（${text(paths)}${count > 10 ? ` ほか、全${count}件` : ""}）。実装の作業領域には含まれていないので、このまま実装を積むと消えてしまうため、PR を出すのを止めました。タスクブランチからその変更を取り除いてから再開してください（変更が必要なら、PR の指摘として書くと、Sacty が実装に反映します）。`,
   "pr.failed": ({ detail }, text) => `PRを作れませんでした：${text(detail)}`,
   "pr.templateFailed": ({ path, status, detail }, text) =>
     `PR テンプレート${path ? `（${path}）` : ""}を確かめられませんでした${status ? `（HTTP ${status}）` : ""}${text(detail) ? `：${text(detail)}` : ""}`,
@@ -928,7 +928,7 @@ const ja: MessageDictionary = {
   "git.invalidBranch": "ブランチ名が不正です。",
   "git.invalidPath": "コミットするファイルのパスが不正です。",
   "git.nothingToCommit": "起点から変更がないため、コミットできません。",
-  "git.notSactyBranch": "sacty のブランチではありません。",
+  "git.notSactyBranch": "Sacty のブランチではありません。",
   "git.fileNotRegular": ({ path }) => `${path} は通常のファイルではありません。`,
   "git.fileTooLarge": ({ path, limit }) => `${path} が大きすぎます（上限 ${limit} バイト）。`,
   "git.fileNotText": ({ path }) => `${path} は UTF-8 のテキストではありません。`,
@@ -961,7 +961,7 @@ const ja: MessageDictionary = {
   "context.lockedRemove": ({ from, kind, name, lockedBy }) =>
     `${from} は${contextKindJa[kind]}「${name}」を取り除こうとしましたが、${lockedBy} で上書き禁止のため残しました。`,
   "context.reservedSetting": ({ from, file, key }) =>
-    `${from} の ${file} の「${key}」は sacty が決める項目のため、使いませんでした。`,
+    `${from} の ${file} の「${key}」は Sacty が決める項目のため、使いませんでした。`,
   "context.hostPlatform": ({ from, name }) =>
     `${from} の platforms.yaml の外部 PF「${name}」は、config.yaml の gateway.platforms に同じ名前があるため、config.yaml のものを使いました。`,
   "context.hostMcpOverride": ({ from, name }) =>
@@ -971,7 +971,7 @@ const ja: MessageDictionary = {
   "context.mcpHostReadyTimeout": ({ name, from, project, seconds }) =>
     `${projectJa(project)}${from} の mcp.yaml の MCP サーバー「${name}」の準備が、ホストで ${seconds} 秒待ってもできません（起動の途中）。準備ができるまで、エージェントはこの MCP を使えません。`,
   "context.mcpHostCommandMissing": ({ name, from, project, command }) =>
-    `${projectJa(project)}${from} の mcp.yaml の MCP サーバー「${name}」のコマンド「${command}」が、sacty を動かすホストに見つかりません。ホストに入れるか、コンテナの中で起動するなら、このサーバーに via_gateway: false を書いてください。`,
+    `${projectJa(project)}${from} の mcp.yaml の MCP サーバー「${name}」のコマンド「${command}」が、Sacty を動かすホストに見つかりません。ホストに入れるか、コンテナの中で起動するなら、このサーバーに via_gateway: false を書いてください。`,
   "context.duplicateSkill": ({ from, name, path, usedPath }) =>
     `${from} のスキル「${name}」が skills/${usedPath} と skills/${path} の両方にあるため、skills/${usedPath} を使いました。`,
   "context.mcpTimeoutOverRun": ({ name, key, seconds, minutes }) =>
@@ -1010,13 +1010,13 @@ const ja: MessageDictionary = {
   "config.agentLegacyKey": ({ key }) =>
     `エージェントには ${key} を書けません。認証・接続先は providers.codex・providers.claude の auth・via_gateway に、単価は providers.<runtime>.available_models にモデルごとに書いてください。`,
   "config.defaultsUnreadable": ({ path, detail }) =>
-    `sacty のエージェントの既定（${path}）を読めません：${detail}。sacty を入れ直してください。`,
+    `Sacty のエージェントの既定（${path}）を読めません：${detail}。Sacty を入れ直してください。`,
   "config.agentUnavailable": ({ key, id, reason }, text) =>
     `${key} の "${id}" は使えません：${text(reason)}`,
   "config.noDefaultAgent":
     "工程を動かす AI がありません。providers.codex か providers.claude に、接続先と既定のモデルの単価（available_models）を書いてください（default_agent を書いて選ぶこともできます）。",
   "config.agentRuntimeRequired":
-    "sacty の既定に無い名前のエージェントには、runtime（claude-code・codex・stub）を書いてください。",
+    "Sacty の既定に無い名前のエージェントには、runtime（claude-code・codex・stub）を書いてください。",
   "config.agentModelRequired":
     "エージェントには model を書いてください（単価を providers の available_models から引くため）。",
   "config.agentProviderMissing": ({ id, provider }) =>
@@ -1024,7 +1024,7 @@ const ja: MessageDictionary = {
   "config.modelPriceMissing": ({ provider, model, agents }) =>
     `providers.${provider}.available_models に ${model} の単価が無いので、${agents} を使えません。単価を足してください。`,
   "gateway.unavailable":
-    "ホストのゲートウェイが起動していないため、ゲートウェイ経由のエージェントを実行できません。sacty を起動し直してください。",
+    "ホストのゲートウェイが起動していないため、ゲートウェイ経由のエージェントを実行できません。Sacty を起動し直してください。",
   "config.agentMissing": ({ key, id }) => `${key} の "${id}" が agents にありません。`,
   "agent.stepMissing": "その工程は、このタスクの工程にありません。",
   "agent.stepNotChangeable":
@@ -1053,7 +1053,7 @@ const ja: MessageDictionary = {
   "agents.tierConnectionDiffers": ({ tier, id, parent }) =>
     `段階「${tier}」（${id}）は、工程のエージェント（${parent}）と認証・接続先が違うため、サブエージェントの定義を置きませんでした。`,
   "context.reservedTierFile": ({ from, path }) =>
-    `${from} の ${path} は、sacty が段階のサブエージェントの定義として作るため、写しませんでした。`,
+    `${from} の ${path} は、Sacty が段階のサブエージェントの定義として作るため、写しませんでした。`,
 };
 
 /** 英語。用語は画面の用語集（apps/web の labels.ts）に合わせる。 */
@@ -1194,9 +1194,9 @@ const en: MessageDictionary = {
     "Enter a whole number of 60 or more (seconds) for the PR review intake interval (300 seconds if empty).",
   "input.ticketIntervalInvalid":
     "Enter a whole number of 60 or more (seconds) for the ticket intake interval (300 seconds if empty).",
-  "input.notExportFile": "This is not a sacty project definition file.",
+  "input.notExportFile": "This is not a Sacty project definition file.",
   "input.unsupportedVersion": `Unsupported version (supported: ${PROJECT_EXPORT_VERSION}).`,
-  "input.exportVersionWithNotification": `Version 3 and 4 files cannot be imported. Since version ${PROJECT_EXPORT_VERSION}, the Slack notification destination is no longer part of a project (it is in the sacty settings). Export the project again with the current sacty.`,
+  "input.exportVersionWithNotification": `Version 3 and 4 files cannot be imported. Since version ${PROJECT_EXPORT_VERSION}, the Slack notification destination is no longer part of a project (it is in the Sacty settings). Export the project again with the current Sacty.`,
   "input.required": "This field is required.",
   "input.tooShort": ({ minimum }) => `Enter at least ${minimum} characters.`,
   "input.tooLong": ({ maximum }) => `Keep it within ${maximum.toLocaleString("en-US")} characters.`,
@@ -1265,7 +1265,7 @@ const en: MessageDictionary = {
   "config.imageEnvSecret":
     "images env can't contain credentials (names with TOKEN, PASSWORD and so on, or URLs with a user name or password), because every command in the container can read them.",
   "config.imageEnvReserved":
-    "images env can't use PATH, HOME, or names starting with DOCKER_, SACTY_, CODEX_, CLAUDE_, ANTHROPIC_, OPENAI_ or NPM_CONFIG_ (they would clash with sacty and docker settings).",
+    "images env can't use PATH, HOME, or names starting with DOCKER_, SACTY_, CODEX_, CLAUDE_, ANTHROPIC_, OPENAI_ or NPM_CONFIG_ (they would clash with Sacty and docker settings).",
   "config.imagePackage":
     "Write package names in images packages (letters, digits and . _ + : @ ~ = -).",
   "config.imageRun":
@@ -1277,7 +1277,7 @@ const en: MessageDictionary = {
   "config.mavenMirror":
     "Write images maven_mirror as a URL (http or https) without a user name or password.",
   "services.unsafe": ({ file, detail }) =>
-    `The compose file (${file}) has settings sacty can't start: ${detail}. To keep host privileges away from agents, privileged, host networking, mounts outside the workspace and so on are not allowed.`,
+    `The compose file (${file}) has settings Sacty can't start: ${detail}. To keep host privileges away from agents, privileged, host networking, mounts outside the workspace and so on are not allowed.`,
   "services.failed": ({ file, detail }) =>
     `Could not start the services in the compose file (${file}). End of the output: ${detail}`,
   "services.sharedUnknown": ({ name }) =>
@@ -1287,7 +1287,7 @@ const en: MessageDictionary = {
   "services.sharedMissing": ({ name, file }) =>
     `The repository of the shared compose "${name}" has no compose file (${file}). Check the compose file path in the project settings.`,
   "services.sharedUnsafe": ({ name, file, detail }) =>
-    `The compose file (${file}) of the shared compose "${name}" has settings sacty can't start: ${detail}. To keep host privileges away from agents, privileged, host networking, mounts outside the fetched repository and so on are not allowed.`,
+    `The compose file (${file}) of the shared compose "${name}" has settings Sacty can't start: ${detail}. To keep host privileges away from agents, privileged, host networking, mounts outside the fetched repository and so on are not allowed.`,
   "services.sharedFailed": ({ name, file, detail }) =>
     `Could not start the services in the compose file (${file}) of the shared compose "${name}". End of the output: ${detail}`,
   "image.notInImages": ({ name }) =>
@@ -1304,7 +1304,7 @@ const en: MessageDictionary = {
   "input.mentionKinds": "Choose at least one kind of notification to mention in.",
   "notify.failed": ({ detail }, text) =>
     `Could not send the Slack notification: ${text(detail)} (tasks keep running)`,
-  "notify.notConfigured": "No Slack notification destination is set in the sacty settings.",
+  "notify.notConfigured": "No Slack notification destination is set in the Sacty settings.",
   "input.secretRef":
     "Write a secret as a keychain name (letters, digits, and . _ -) or a 1Password reference (op://vault/item/field).",
   "input.envName": "The environment variable name is not valid.",
@@ -1336,13 +1336,13 @@ const en: MessageDictionary = {
   "secret.opMissing":
     "The 1Password op command was not found. Install 1Password CLI, sign in, and resume.",
   "secret.prefetchFailed": ({ where, detail }, text) =>
-    `Could not get the secret (${where}) at startup: ${text(detail)} Set it up, then press "Get secrets again" in sacty settings (sacty also tries again when it is used).`,
+    `Could not get the secret (${where}) at startup: ${text(detail)} Set it up, then press "Get secrets again" in Sacty settings (Sacty also tries again when it is used).`,
   "secret.savePrefetchFailed": ({ where, detail }, text) =>
-    `Could not get the secret (${where}) when the project settings were saved: ${text(detail)} Set it up, then press "Get secrets again" in sacty settings (sacty also tries again when it is used).`,
+    `Could not get the secret (${where}) when the project settings were saved: ${text(detail)} Set it up, then press "Get secrets again" in Sacty settings (Sacty also tries again when it is used).`,
   "secret.settingsSavePrefetchFailed": ({ where, detail }, text) =>
-    `Could not get the secret (${where}) when the sacty settings were saved: ${text(detail)} Set it up, then press "Get secrets again" in sacty settings (sacty also tries again when it is used).`,
+    `Could not get the secret (${where}) when the Sacty settings were saved: ${text(detail)} Set it up, then press "Get secrets again" in Sacty settings (Sacty also tries again when it is used).`,
   "secret.contextUnavailable": ({ project, detail }, text) =>
-    `Could not read the context of project "${project}", so its secrets were not fetched in advance (sacty gets them when they are used): ${text(detail)}`,
+    `Could not read the context of project "${project}", so its secrets were not fetched in advance (Sacty gets them when they are used): ${text(detail)}`,
   "secret.contextTimedOut": ({ seconds }) => `It could not be fetched within ${seconds} seconds.`,
   "secret.opSignedOut": ({ ref }) =>
     `Cannot read "${ref}" because 1Password is not signed in. Sign in with op signin (or the 1Password app integration) and resume.`,
@@ -1383,7 +1383,7 @@ const en: MessageDictionary = {
   "orchestrator.noTestsUncertain": ({ reason }) =>
     `The Orchestrator judged that the target repository has no tests (${reason}), but the repository has too many files to confirm that there are no test files. This is treated as an undetermined test command, so the implementation cannot be verified. Describe how to run the tests in the task and create it again.`,
   "orchestrator.noTestsUnreadable": ({ reason, path, detail }) =>
-    `The Orchestrator judged that the target repository has no tests (${reason}), but the workspace directory (${path}) could not be read (${detail}), so it could not be confirmed that there are no test files. This is treated as an undetermined test command. Check that the user running sacty can read that directory (permissions, disk state), then create the task again (resuming does not proceed without tests).`,
+    `The Orchestrator judged that the target repository has no tests (${reason}), but the workspace directory (${path}) could not be read (${detail}), so it could not be confirmed that there are no test files. This is treated as an undetermined test command. Check that the user running Sacty can read that directory (permissions, disk state), then create the task again (resuming does not proceed without tests).`,
   "orchestrator.bugfixNeedsTests": ({ reason }) =>
     `The Orchestrator judged that the target repository has no tests (${reason}), but chose a bug fix (reproduce → implement). A reproduction is confirmed by tests, so a test command is required. The implementation cannot be verified. Describe how to run the tests in the task and create it again.`,
   "implement.testCommandInvalid":
@@ -1393,7 +1393,7 @@ const en: MessageDictionary = {
   "review.pullRequestMissing": ({ repo }) =>
     `The task has no PR to review (a URL of a PR in ${repo}).`,
   "review.reviewOnly": ({ via }) =>
-    `The PR ${via === "requested" ? "requests your review" : via === "sacty" ? "was created by sacty in another task" : "has the review label"}, so sacty only reviews it (the Orchestrator is not used).`,
+    `The PR ${via === "requested" ? "requests your review" : via === "sacty" ? "was created by Sacty in another task" : "has the review label"}, so Sacty only reviews it (the Orchestrator is not used).`,
   "review.notRereviewable": "Only a task that posted its review to the PR can be reviewed again.",
   "review.headUnknown":
     "Could not check the PR's head commit before posting (the GitHub response has no commit). Resuming checks again.",
@@ -1421,7 +1421,7 @@ const en: MessageDictionary = {
   "pr.unavailable": ({ detail }, text) => `Cannot open a PR: ${text(detail)}`,
   "pr.workspaceMissing": "There is no implementation workspace, so a PR cannot be opened.",
   "pr.taskBranchChanged": ({ branch, paths, count }, text) =>
-    `The task branch ${text(branch)} has changes that sacty did not push (${text(paths)}${count > 10 ? ` and more, ${count} in total` : ""}). They are not in the implementation workspace and would be removed by the implementation commit, so the PR was not published. Remove those changes from the task branch, then resume (if the change is needed, write it as a PR comment and sacty will apply it in the implementation).`,
+    `The task branch ${text(branch)} has changes that Sacty did not push (${text(paths)}${count > 10 ? ` and more, ${count} in total` : ""}). They are not in the implementation workspace and would be removed by the implementation commit, so the PR was not published. Remove those changes from the task branch, then resume (if the change is needed, write it as a PR comment and Sacty will apply it in the implementation).`,
   "pr.failed": ({ detail }, text) => `Could not open the PR: ${text(detail)}`,
   "pr.templateFailed": ({ path, status, detail }, text) =>
     `Could not check the PR template${path ? ` (${path})` : ""}${status ? ` (HTTP ${status})` : ""}${text(detail) ? `: ${text(detail)}` : ""}`,
@@ -1447,7 +1447,7 @@ const en: MessageDictionary = {
   "git.invalidBranch": "The branch name is not valid.",
   "git.invalidPath": "The path of the file to commit is not valid.",
   "git.nothingToCommit": "Nothing changed since the base, so there is nothing to commit.",
-  "git.notSactyBranch": "This is not a sacty branch.",
+  "git.notSactyBranch": "This is not a Sacty branch.",
   "git.fileNotRegular": ({ path }) => `${path} is not a regular file.`,
   "git.fileTooLarge": ({ path, limit }) => `${path} is too large (limit ${limit} bytes).`,
   "git.fileNotText": ({ path }) => `${path} is not UTF-8 text.`,
@@ -1479,17 +1479,17 @@ const en: MessageDictionary = {
   "context.lockedRemove": ({ from, kind, name, lockedBy }) =>
     `${from} tried to remove the ${contextKindEn[kind]} "${name}", but ${lockedBy} locks it, so it was kept.`,
   "context.reservedSetting": ({ from, file, key }) =>
-    `"${key}" in ${file} of ${from} is set by sacty, so it was not used.`,
+    `"${key}" in ${file} of ${from} is set by Sacty, so it was not used.`,
   "context.hostPlatform": ({ from, name }) =>
     `The external platform "${name}" in platforms.yaml of ${from} has the same name as one in gateway.platforms of config.yaml, so the one in config.yaml was used.`,
   "context.hostMcpOverride": ({ from, name }) =>
     `The MCP server "${name}" in mcp.yaml of ${from} has the same name as one in gateway.mcp_servers of config.yaml, so the one in config.yaml (the host MCP server) was used.`,
   "context.mcpHostUnavailable": ({ name, from, project, detail }, text) =>
-    `The MCP server "${name}" in mcp.yaml of ${from}${projectEn(project)} could not be started on the host: ${text(detail)}. sacty restarts it every minute (the agent cannot use it until it is ready).`,
+    `The MCP server "${name}" in mcp.yaml of ${from}${projectEn(project)} could not be started on the host: ${text(detail)}. Sacty restarts it every minute (the agent cannot use it until it is ready).`,
   "context.mcpHostReadyTimeout": ({ name, from, project, seconds }) =>
     `The MCP server "${name}" in mcp.yaml of ${from}${projectEn(project)} is still not ready on the host after waiting ${seconds} seconds (it is starting). The agent cannot use it until it is ready.`,
   "context.mcpHostCommandMissing": ({ name, from, project, command }) =>
-    `The command "${command}" of the MCP server "${name}" in mcp.yaml of ${from}${projectEn(project)} was not found on the host running sacty. Install it on the host, or write via_gateway: false for this server to start it in the container.`,
+    `The command "${command}" of the MCP server "${name}" in mcp.yaml of ${from}${projectEn(project)} was not found on the host running Sacty. Install it on the host, or write via_gateway: false for this server to start it in the container.`,
   "context.duplicateSkill": ({ from, name, path, usedPath }) =>
     `${from} has the skill "${name}" in both skills/${usedPath} and skills/${path}, so skills/${usedPath} was used.`,
   "context.mcpTimeoutOverRun": ({ name, key, seconds, minutes }) =>
@@ -1516,7 +1516,7 @@ const en: MessageDictionary = {
   "config.platformTokenBody":
     "When the method for getting a token is GET or HEAD, json and form (a body) cannot be written. Send the key in query or headers.",
   "gateway.mcpUnavailable": ({ name, detail }, text) =>
-    `The host MCP server "${name}" is not ready (failed to start or authenticate): ${text(detail)}. sacty restarts it every minute.`,
+    `The host MCP server "${name}" is not ready (failed to start or authenticate): ${text(detail)}. Sacty restarts it every minute.`,
   "gateway.mcpReadyTimeout": ({ name, seconds }) =>
     `The host MCP server "${name}" is still not ready after waiting ${seconds} seconds (it is starting or authenticating). The agent cannot use it until it is ready.`,
   "gateway.platformUnavailable": ({ name, detail }, text) =>
@@ -1528,13 +1528,13 @@ const en: MessageDictionary = {
   "config.agentLegacyKey": ({ key }) =>
     `Agents cannot contain ${key}. Write authentication and endpoints in auth and via_gateway of providers.codex or providers.claude, and prices per model in providers.<runtime>.available_models.`,
   "config.defaultsUnreadable": ({ path, detail }) =>
-    `Cannot read sacty's agent defaults (${path}): ${detail}. Reinstall sacty.`,
+    `Cannot read Sacty's agent defaults (${path}): ${detail}. Reinstall Sacty.`,
   "config.agentUnavailable": ({ key, id, reason }, text) =>
     `${key} "${id}" cannot be used: ${text(reason)}`,
   "config.noDefaultAgent":
     "There is no AI to run steps. Write an endpoint and the prices of the default models (available_models) in providers.codex or providers.claude (you can also choose one with default_agent).",
   "config.agentRuntimeRequired":
-    "An agent whose name is not in sacty's defaults needs runtime (claude-code, codex, or stub).",
+    "An agent whose name is not in Sacty's defaults needs runtime (claude-code, codex, or stub).",
   "config.agentModelRequired":
     "Write model for the agent (its price is looked up in available_models of providers).",
   "config.agentProviderMissing": ({ id, provider }) =>
@@ -1542,7 +1542,7 @@ const en: MessageDictionary = {
   "config.modelPriceMissing": ({ provider, model, agents }) =>
     `${agents} cannot be used because providers.${provider}.available_models has no price for ${model}. Add its price.`,
   "gateway.unavailable":
-    "The host gateway is not running, so an agent that goes through it cannot run. Restart sacty.",
+    "The host gateway is not running, so an agent that goes through it cannot run. Restart Sacty.",
   "config.agentMissing": ({ key, id }) => `${key} "${id}" is not in agents.`,
   "agent.stepMissing": "That step is not one of this task's steps.",
   "agent.stepNotChangeable":
@@ -1571,7 +1571,7 @@ const en: MessageDictionary = {
   "agents.tierConnectionDiffers": ({ tier, id, parent }) =>
     `The tier "${tier}" (${id}) uses a different authentication or endpoint from the step agent (${parent}), so its subagent definition was not placed.`,
   "context.reservedTierFile": ({ from, path }) =>
-    `${path} of ${from} was not copied because sacty writes it as the subagent definition of a tier.`,
+    `${path} of ${from} was not copied because Sacty writes it as the subagent definition of a tier.`,
 };
 
 export const DAEMON_MESSAGES = { ja, en } as const;

@@ -69,7 +69,7 @@ const ja = {
     stepPrHelp: (step: string) =>
       `マージで${step}を承認し、次の工程に進みます。コメントは差し戻しです。`,
     stepPrHint: (step: string) =>
-      `${step}は、タスクブランチへの PR です。コメントを差し戻しとして取り込み、ゴールガーディアンが${step}のやり直し（同じ PR を更新）か、前の工程への差し戻しかを決めます。sacty は 1 分ごとに確かめ、最後のコメントから 2 分後に取り込みます。`,
+      `${step}は、タスクブランチへの PR です。コメントを差し戻しとして取り込み、ゴールガーディアンが${step}のやり直し（同じ PR を更新）か、前の工程への差し戻しかを決めます。Sacty は 1 分ごとに確かめ、最後のコメントから 2 分後に取り込みます。`,
     prOpen: (n: number) => `PR #${n} を GitHub で開く`,
     prClosed: "PR はマージされずに閉じられました。GitHub で開き直すか、中止してください。",
     prRequestNote: "差し戻すときは、ここに指摘を入力してください。",
@@ -79,7 +79,7 @@ const ja = {
     reworkHelp: "戻し先を選んで差し戻してください。PR の指摘は取り込み済みです。",
     reworkHint: "指摘を空にすると、取り込んだ指摘をそのまま使います。",
     prMergedOutdated:
-      "PR は sacty の提出と別の内容でマージされました。次の確認で、その内容を承認として進めます。",
+      "PR は Sacty の提出と別の内容でマージされました。次の確認で、その内容を承認として進めます。",
   },
 };
 
@@ -153,7 +153,7 @@ const en: ReviewMessages = {
     stepPrHelp: (step) =>
       `Merging approves the ${step} and moves on to the next step; comments request changes.`,
     stepPrHint: (step) =>
-      `The ${step} is a PR to the task branch. Comments are imported as change requests, and the Goal Guardian decides whether to redo the ${step} (updating the same PR) or go back to an earlier step. sacty checks every minute and imports two minutes after the last comment.`,
+      `The ${step} is a PR to the task branch. Comments are imported as change requests, and the Goal Guardian decides whether to redo the ${step} (updating the same PR) or go back to an earlier step. Sacty checks every minute and imports two minutes after the last comment.`,
     prOpen: (n) => `Open PR #${n} on GitHub`,
     prClosed: "The PR was closed without merging. Reopen it on GitHub, or cancel the task.",
     prRequestNote: "To request changes, enter your comments here.",
@@ -162,7 +162,7 @@ const en: ReviewMessages = {
     reworkHelp: "Choose the step to redo, then request changes. The PR comments are imported.",
     reworkHint: "Leave the comments empty to use the imported comments as they are.",
     prMergedOutdated:
-      "The PR was merged with content different from sacty's submission. On the next check, that content is approved and the task moves on.",
+      "The PR was merged with content different from Sacty's submission. On the next check, that content is approved and the task moves on.",
   },
 };
 

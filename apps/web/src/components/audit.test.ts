@@ -148,7 +148,7 @@ describe("タスクの詳細の監査の欄（PBI-124）", () => {
     expect(html).toContain('href="/tasks/real-1"');
     expect(html).toContain("変えない");
     // 採用した提案の宛先は、人が選んだ宛先
-    expect(html).toContain("sacty の既定のコンテキスト");
+    expect(html).toContain("Sacty の既定のコンテキスト");
   });
 
   it("監査済みで原因が無ければ、無いことを出す", () => {

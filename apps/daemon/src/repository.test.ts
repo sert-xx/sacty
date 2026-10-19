@@ -605,7 +605,7 @@ describe("対象リポジトリの作業領域（git）", { timeout: 30_000 }, (
     await workspace.deleteBranch(gitDir, branch);
     expect(git(origin, "branch", "--list", branch)).toBe("");
     await expect(workspace.deleteBranch(gitDir, "feature/human")).rejects.toThrow(
-      /sacty のブランチではありません/,
+      /Sacty のブランチではありません/,
     );
     expect(git(origin, "branch", "--list", "feature/human")).toContain("feature/human");
   });

@@ -234,10 +234,10 @@ describe("一時停止と中止の表示（PBI-3）", () => {
       },
     });
     expect(describeEvent(cancelled)).toBe(
-      "中止（人間）：実行中のコンテナ・sacty が作ったブランチを片付けた／失敗：sacty が作った PR",
+      "中止（人間）：実行中のコンテナ・Sacty が作ったブランチを片付けた／失敗：Sacty が作った PR",
     );
     expect(describeIn(cancelled, labels.en)).toBe(
-      "Cancelled (person): cleaned up Running container, Branch created by sacty; failed: PR opened by sacty",
+      "Cancelled (person): cleaned up Running container, Branch created by Sacty; failed: PR opened by Sacty",
     );
     expect(statusText(task({ status: "cancelled" }))).toBe("中止");
     expect(needsPerson(task({ status: "cancelled" }))).toBe(false);
@@ -384,7 +384,7 @@ describe("PR で判断する実装の承認（PBI-14a・PBI-110）", () => {
       "PR #7 が人の直した内容でマージされ、承認（reviewer）（aaaaaaa → eeeeeee）",
     );
     expect(describeEvent(edited({ path: "d.md", fallback: "deleted" }))).toContain(
-      "成果のファイルが消されていたため、sacty の版を承認済みにした",
+      "成果のファイルが消されていたため、Sacty の版を承認済みにした",
     );
     expect(describeEvent(edited({ path: "d.md", fallback: "unreadable" }))).toContain(
       "成果のファイルを読めなかったため",
@@ -1072,10 +1072,10 @@ describe("PR のレビューの取り込み（PBI-44）", () => {
     expect(describeEvent(ev("ReviewRestarted", {}, "person"))).toBe("再レビューを始めた（人間）");
     // PR でのレビューの再依頼を受けて、sacty が始めた（PBI-143）
     expect(describeEvent(ev("ReviewRestarted", { reason: "rerequested" }, "sacty"))).toBe(
-      "PR でレビューが再依頼されたので、再レビューを始めた（sacty）",
+      "PR でレビューが再依頼されたので、再レビューを始めた（Sacty）",
     );
     expect(describeIn(ev("ReviewRestarted", { reason: "rerequested" }, "sacty"), labels.en)).toBe(
-      "Started a re-review because a review was re-requested on the PR (sacty)",
+      "Started a re-review because a review was re-requested on the PR (Sacty)",
     );
     expect(
       describeIn(ev("TaskCancelled", { reason: "pull_request_merged", cleanup: [] }), labels.en),

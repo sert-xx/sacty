@@ -75,7 +75,7 @@ const ja = {
       "置き場所が合っていないメモリーを、監査が別の階層に移しました。リポジトリのメモリーは、同じリポジトリを扱うほかのプロジェクトのタスクでも読まれます。",
     movedTo: (layer: string) => `→ ${layer}`,
     deletedByExpiryHint:
-      "有効な最終利用日から、sacty の設定の「メモリーを残す日数」を過ぎたので消しました。",
+      "有効な最終利用日から、Sacty の設定の「メモリーを残す日数」を過ぎたので消しました。",
     lastUseful: (date: string) => `有効な最終利用日：${date}`,
     usefulTitle: "役に立ったメモリー",
     usefulHint:
@@ -92,7 +92,7 @@ const ja = {
     context: (layer: string) => `コンテキスト（${layer}）`,
     contextOwn: "プロジェクトの層",
     contextUpper: (n: number) => `上位 ${n} 層`,
-    sacty: "sacty の既定のコンテキスト",
+    sacty: "Sacty の既定のコンテキスト",
     sactyHint: "ゴールガーディアンのプロンプトと、既定のスキル。",
   },
   proposal: {
@@ -102,7 +102,7 @@ const ja = {
     adopt: "採用する",
     adopting: "採用しています…",
     adoptHint:
-      "採用すると、選んだ宛先のリポジトリに改修のタスクを作ります。sacty の既定のコンテキストが宛先なら、タスクは作らず、採用の記録だけを残します。",
+      "採用すると、選んだ宛先のリポジトリに改修のタスクを作ります。Sacty の既定のコンテキストが宛先なら、タスクは作らず、採用の記録だけを残します。",
     reject: "却下する",
     rejectConfirm: "却下を確定する",
     rejecting: "却下しています…",
@@ -112,7 +112,7 @@ const ja = {
     reasonPlaceholder: "例：上位のコンテキストは、ほかのチームと共有しているため変えない",
     task: "改修のタスク",
     mockTask: "モックのため、タスクは作っていません",
-    noTaskForSacty: "sacty 宛てのため、プロジェクトにはタスクを作っていません",
+    noTaskForSacty: "Sacty 宛てのため、プロジェクトにはタスクを作っていません",
     rejectedReason: "却下の理由",
     from: "出た監査",
   },
@@ -257,7 +257,7 @@ const en: AuditMessages = {
       "The audit moved memories that were in the wrong layer. Repository memories are also read by tasks of other projects on the same repository.",
     movedTo: (layer) => `→ ${layer}`,
     deletedByExpiryHint:
-      'Deleted because its last useful date is older than "Days to keep memories" in the sacty settings.',
+      'Deleted because its last useful date is older than "Days to keep memories" in the Sacty settings.',
     lastUseful: (date) => `Last useful: ${date}`,
     usefulTitle: "Memories that helped",
     usefulHint:
@@ -274,7 +274,7 @@ const en: AuditMessages = {
     context: (layer) => `Context (${layer})`,
     contextOwn: "project layer",
     contextUpper: (n) => `${n} layer${n === 1 ? "" : "s"} up`,
-    sacty: "sacty default context",
+    sacty: "Sacty default context",
     sactyHint: "The goal guardian's prompts and the default skills.",
   },
   proposal: {
@@ -284,7 +284,7 @@ const en: AuditMessages = {
     adopt: "Adopt",
     adopting: "Adopting…",
     adoptHint:
-      "Adopting creates a fix task for the chosen target's repository. If the target is the sacty default context, no task is created; only the adoption is recorded.",
+      "Adopting creates a fix task for the chosen target's repository. If the target is the Sacty default context, no task is created; only the adoption is recorded.",
     reject: "Reject",
     rejectConfirm: "Confirm rejection",
     rejecting: "Rejecting…",
@@ -295,7 +295,7 @@ const en: AuditMessages = {
     reasonPlaceholder: "e.g. The upper context is shared with other teams, so we keep it",
     task: "Fix task",
     mockTask: "Mock: no task was created",
-    noTaskForSacty: "For sacty, so no task was created in the project",
+    noTaskForSacty: "For Sacty, so no task was created in the project",
     rejectedReason: "Reason",
     from: "From audit of",
   },

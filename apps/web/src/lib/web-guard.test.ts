@@ -151,9 +151,9 @@ describe("画面の入り口で、起動した本人のブラウザかを確か�
 
   it("断る画面は、画面の言語で出す", async () => {
     const en = webGuard(request("/dashboard", { headers: { "accept-language": "en-US" } }), env);
-    expect(await en.text()).toContain("Sign in to sacty");
+    expect(await en.text()).toContain("Sign in to Sacty");
     const ja = webGuard(request("/dashboard", { headers: { "accept-language": "ja" } }), env);
-    expect(await ja.text()).toContain("sacty に入る");
+    expect(await ja.text()).toContain("Sacty に入る");
   });
 });
 

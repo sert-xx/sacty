@@ -19,7 +19,7 @@ This page lists common ways sacty stops and what to check.
 
 | Symptom | What to check |
 | --- | --- |
-| A warning at startup says a secret could not be retrieved | Prepare the secret for the setting named in the warning (for the Keychain, `npx sacty secret set <name>`; for 1Password, sign in and check the reference). Then press "Get secrets again" in "sacty settings" ([Secrets](secrets.en.md)) |
+| A warning at startup says a secret could not be retrieved | Prepare the secret for the setting named in the warning (for the Keychain, `npx sacty secret set <name>`; for 1Password, sign in and check the reference). Then press "Get secrets again" in "Sacty settings" ([Secrets](secrets.en.md)) |
 | A task stopped on a 1Password reference | Sign in with `op signin` (or through the 1Password app integration), then resume the task |
 | `sacty image build` says there is no npm token | Save it with `npx sacty secret set <name>` (for a 1Password reference, check the sign-in and the reference) |
 
@@ -27,10 +27,10 @@ This page lists common ways sacty stops and what to check.
 
 | Symptom | What to check |
 | --- | --- |
-| Issues are not taken in | Check that you set the label to import and turned it On in "Issue intake" of "sacty settings", and that you chose the project's targets and GitHub account. The reason may appear in "Some targets could not be imported" on the project page ([Intake](intake.en.md)) |
-| Tickets are not taken in | Check that you set the label and turned it On in "Ticket intake" of "sacty settings", that the ticket has that label and is not finished (not in a done status), and that you wrote the connection, the kind, and the JIRA project key in "Ticket sources" in the project settings. Also check the `upstream`, the authentication, and `allow` (the search API) of the connection's PF (`gateway.platforms` in `config.yaml`, or `platforms.yaml` in the context repository). The issue label to import and the GitHub account are not used for ticket intake. The reason may appear in "Some targets could not be imported" on the project page ([JIRA tickets](intake.en.md#jira-tickets)) |
-| A labeled PR is not taken in | Check that you saved the "Label for PR reviews" and turned "Import PRs with the review label" On in "sacty settings", that the label on the PR has that name (PRs with the label to import are not taken in), that the PR is open, that the PR does not already have a task (the same PR is never taken in twice, for a task in any project, even a cancelled one), and that you chose the project's targets and GitHub account ([PR reviews](intake.en.md#pr-reviews)) |
-| A PR that requests your review is not taken in | Check that you turned "Import PRs that request my review" On in "sacty settings", and that the review request is to the GitHub account chosen for that host in the project itself (requests to teams are not taken in) ([PR reviews](intake.en.md#pr-reviews)) |
+| Issues are not taken in | Check that you set the label to import and turned it On in "Issue intake" of "Sacty settings", and that you chose the project's targets and GitHub account. The reason may appear in "Some targets could not be imported" on the project page ([Intake](intake.en.md)) |
+| Tickets are not taken in | Check that you set the label and turned it On in "Ticket intake" of "Sacty settings", that the ticket has that label and is not finished (not in a done status), and that you wrote the connection, the kind, and the JIRA project key in "Ticket sources" in the project settings. Also check the `upstream`, the authentication, and `allow` (the search API) of the connection's PF (`gateway.platforms` in `config.yaml`, or `platforms.yaml` in the context repository). The issue label to import and the GitHub account are not used for ticket intake. The reason may appear in "Some targets could not be imported" on the project page ([JIRA tickets](intake.en.md#jira-tickets)) |
+| A labeled PR is not taken in | Check that you saved the "Label for PR reviews" and turned "Import PRs with the review label" On in "Sacty settings", that the label on the PR has that name (PRs with the label to import are not taken in), that the PR is open, that the PR does not already have a task (the same PR is never taken in twice, for a task in any project, even a cancelled one), and that you chose the project's targets and GitHub account ([PR reviews](intake.en.md#pr-reviews)) |
+| A PR that requests your review is not taken in | Check that you turned "Import PRs that request my review" On in "Sacty settings", and that the review request is to the GitHub account chosen for that host in the project itself (requests to teams are not taken in) ([PR reviews](intake.en.md#pr-reviews)) |
 | Paused at the budget cap | Enter a new cumulative cap on the web UI and resume ([config.yaml settings](config.en.md#budget)) |
 | Paused at the AI usage limit | Resume after the subscription limit or rate limit resets. The same applies when the gateway reaches its retry limit ([Gateway](gateway.en.md#relaying-ai-calls)) |
 | Codex with Bedrock or similar stays at `Reconnecting... error sending request` | With Docker inside a virtual machine (such as Rancher Desktop), set `gateway.host_address` to an address that reaches the host ([Gateway](gateway.en.md#host-address)) |
@@ -45,7 +45,7 @@ This page lists common ways sacty stops and what to check.
 
 | Symptom | What to check |
 | --- | --- |
-| Slack notifications do not arrive | Look at the reason shown on the dashboard or in "Slack notifications" in the "sacty settings". You can check with "Send a test notification" in the "sacty settings". Notifications set in projects with an earlier sacty are not used, so set them again in the "sacty settings" ([Notifications](notifications.en.md)) |
+| Slack notifications do not arrive | Look at the reason shown on the dashboard or in "Slack notifications" in the "Sacty settings". You can check with "Send a test notification" in the "Sacty settings". Notifications set in projects with an earlier sacty are not used, so set them again in the "Sacty settings" ([Notifications](notifications.en.md)) |
 | Mentions do not arrive | Write people by ID (`U…`, `W…`, `S…`) instead of @display name |
 | The sender name and icon are not `Sacty` | Give the Slack app's bot token the `chat:write.customize` scope |
 

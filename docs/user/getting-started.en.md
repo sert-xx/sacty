@@ -68,7 +68,7 @@ Note: once you register a target, sacty may push branches to the target reposito
 ## Updating sacty
 
 Every day, sacty checks `main` of the sacty repository on GitHub, and if it has changes that the running version does not, every screen shows
-"A new version of sacty is available" at the top. Update when you see it, to get the recommended models ([Default agents](config.en.md#default-agents)) and fixes.
+"A new version of Sacty is available" at the top. Update when you see it, to get the recommended models ([Default agents](config.en.md#default-agents)) and fixes.
 It also appears on screens that are already open, without reloading (they fetch it again every 30 seconds).
 
 First, stop the running `sacty up` with Ctrl+C and wait for it to exit. Then run the following in the sacty repository.

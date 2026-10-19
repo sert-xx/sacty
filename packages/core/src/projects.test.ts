@@ -442,10 +442,10 @@ describe("Slack の通知先（PBI-38。PBI-115 で sacty の設定に移した�
         }
       }
       expect(renderMessage({ code: "input.exportVersionWithNotification" }, "ja")).toContain(
-        "sacty の設定",
+        "Sacty の設定",
       );
       expect(renderMessage({ code: "input.exportVersionWithNotification" }, "en")).toContain(
-        "sacty settings",
+        "Sacty settings",
       );
       // ほかの版は、これまでどおりの理由
       for (const version of [1, 2, 6, "5", "4", "3"]) {

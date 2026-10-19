@@ -94,7 +94,7 @@ as a memory. Only the audit registers memories. No setup is needed.
 - Whether a memory was opened is counted from the session logs of the task's runs. Runs whose logs are missing or unreadable are not counted, so if
   a memory that should be helping never gets a newer date, check the daemon log for "メモリーを開いたかを数えるログを読めませんでした" and the
   `runs/` folder in the data directory.
-- Memories whose last useful date is older than "Days to keep memories" in the sacty settings (1 to 3650; 90 if empty) are deleted
+- Memories whose last useful date is older than "Days to keep memories" in the Sacty settings (1 to 3650; 90 if empty) are deleted
   automatically. Those that expire while sacty is stopped are deleted at the next startup.
 - Each layer holds up to 30 memories. Beyond that, the ones with the oldest last useful date are deleted.
 - The audit moves memories that are in the wrong layer between project and repository. They show under "Moved memories" on the audit card.

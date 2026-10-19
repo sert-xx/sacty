@@ -22,7 +22,7 @@ const config = (patch: Partial<SactyConfig> = {}): SactyConfig =>
   }) as SactyConfig;
 
 describe("起動時に取り出す秘密情報の参照（PBI-48）", () => {
-  it("使うエージェント・接続先・PF・ホストの MCP・sacty の設定の通知先の参照を、重ねずに集める（PBI-115）", () => {
+  it("使うエージェント・接続先・PF・ホストの MCP・Sacty の設定の通知先の参照を、重ねずに集める（PBI-115）", () => {
     const uses = secretUses(
       config({
         guardianAgent: {
@@ -92,7 +92,7 @@ describe("起動時に取り出す秘密情報の参照（PBI-48）", () => {
       { ref: "op://Work/GW/key", where: "providers.corp.auth.secret" },
       { ref: "op://Work/Ticket/client", where: "gateway.platforms.ticket.auth.token.secret" },
       { ref: "op://Work/Docs/token", where: "gateway.mcp_servers.docs.env.TOKEN" },
-      { ref: "slack-token", where: "sacty の設定の通知先（Slack のトークン）", settings: true },
+      { ref: "slack-token", where: "Sacty の設定の通知先（Slack のトークン）", settings: true },
     ]);
     // イメージの作成だけで使う npm のトークンは含めない
     expect(uses.some((u) => u.ref === "npm-token")).toBe(false);
@@ -209,7 +209,7 @@ describe("プロジェクトのコンテキストの秘密情報の参照（PBI-
   });
 });
 
-describe("sacty の設定の通知先の秘密情報（PBI-115）", () => {
+describe("Sacty の設定の通知先の秘密情報（PBI-115）", () => {
   it("Webhook の URL・トークンを sacty の設定から取り、通知先が無い・トークンの無い Proxy なら取らない", () => {
     expect(
       settingsSecretUses({
@@ -218,7 +218,7 @@ describe("sacty の設定の通知先の秘密情報（PBI-115）", () => {
     ).toEqual([
       {
         ref: "op://Work/Slack/webhook",
-        where: "sacty の設定の通知先（Webhook の URL）",
+        where: "Sacty の設定の通知先（Webhook の URL）",
         settings: true,
       },
     ]);
