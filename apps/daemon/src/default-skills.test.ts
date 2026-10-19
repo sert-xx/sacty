@@ -131,12 +131,23 @@ describe("既定の review スキルの、本文で示された文書（PBI-142�
     expect(text).toContain(
       "その文書を主対象にした（レビューの中心だった）とき：レビューを完了できない",
     );
-    expect(text).toContain("見られなかった文書がある初回の `pr-review` は、合格と書かない");
+    expect(text).toContain(
+      "見られなかった文書がある `pr-review` は、初回でも再レビューでも合格と書かない",
+    );
     const pr = read("skills/review/review-dispatch/references/pr-review.md");
     expect(pr).toContain("本文で示された文書を主対象にしたのに、その文書を取得できない");
     expect(pr).toContain("[linked-docs.md](linked-docs.md)");
     expect(read("skills/review/review-dispatch/references/aggregation.md")).toContain(
-      "レビューの対象にした文書（[linked-docs.md](linked-docs.md)）を取得できなかったときも同じ",
+      "レビューの対象にした文書（[linked-docs.md](linked-docs.md)）を取得できなかった PR レビューは、初回でも再レビューでも合格と書かない",
+    );
+  });
+
+  it("主対象のほかの文書を取得できなくても、記録を入力として担当を起動し、見られなかった文書は本文に書く", () => {
+    expect(read("skills/review/review-dispatch/SKILL.md")).toContain(
+      "主対象にした文書のほかは、取得できなくても揃わないとはみなさない。取得できなかった文書と理由を記録し、それを入力として起動する",
+    );
+    expect(read("skills/review/review-dispatch/references/pr-review.md")).toContain(
+      "ただし、読み手が知るべき見られなかった範囲は、本文の「レビューの範囲」に短く書く。たとえば、取得できなかった文書と理由",
     );
   });
 
@@ -144,9 +155,15 @@ describe("既定の review スキルの、本文で示された文書（PBI-142�
     const pr = read("skills/review/review-dispatch/references/pr-review.md");
     expect(pr).toContain("差分の外のコード・本文で示された文書についての指摘）は、次のように扱う");
     expect(pr).toContain("文書への指摘には、文書の名前か URL と、節の見出しを添える");
-    expect(read("skills/review/review-execution/SKILL.md")).toContain(
-      "`path` は写しのパスではなく取得元（文書の名前か URL）、`line` は節の見出し",
-    );
+    // 担当の出力の形式と、親が読む形式の説明は同じにする
+    for (const path of [
+      "skills/review/review-execution/SKILL.md",
+      "skills/review/review-dispatch/references/finding-format.md",
+    ]) {
+      expect(read(path), path).toContain(
+        "`path` は写しのパスではなく取得元（文書の名前か URL）、`line` は節の見出し",
+      );
+    }
     expect(read("skills/review/review-dispatch/references/aggregation.md")).toContain(
       '"linked_docs":',
     );
