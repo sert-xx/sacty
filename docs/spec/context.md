@@ -2,7 +2,7 @@
 
 # コンテキストの合成
 
-工程のエージェントに渡す規則・スキル・MCP サーバー・外部 PF・エージェントの設定（コンテキスト）を、層を重ねて合成し、実行のたびに
+工程のエージェントとオーケストレーターに渡す規則・スキル・MCP サーバー・外部 PF・エージェントの設定（コンテキスト）を、層を重ねて合成し、実行のたびに
 Claude Code・Codex の設定の場所に置く。層は、sacty の既定のコンテキストと、プロジェクトに指定したコンテキストリポジトリ（と、その
 継承の鎖）。
 
@@ -68,6 +68,21 @@ PR のレビュー（流れ `pr-review`）と、既定の `git` の PR への投
 
 コード: `apps/daemon/default-context/skills/memory/SKILL.md`、`apps/daemon/src/memory.ts`（`memoryPromptLines`）
 
+## 既定の工程の選択用スキル
+
+既定のコンテキストには、オーケストレーターが工程の組み合わせを選び、決められた形の JSON で答えるための `plan-steps` がある（PBI-146）。
+候補の比べ方（目的・成果物・変更対象・規模の順。無条件の既定や受け皿にしない）、理由の書き方、答えの JSON の決まり（見出しと項目の名前はそのまま、
+形の例の注釈を写さない、要らない項目はキーごと省く）を書く。
+答えは出す前にファイルに書き、`jq`（無ければ `python3`・`node`）で構文と形（見出しと必須の項目）を検査し、通るまで直してから、本文の最後に 1 回だけ出す
+（`references/json-check.md`）。
+オーケストレーターの指示は、このスキルに従うよう求め、プロジェクトのコンテキストでスキルを消していても最低限がわかるよう、検査して通るまで直すこと・
+1 回だけ出すことを指示にも書く（[タスクと工程](tasks-and-steps.md#オーケストレーター)）。
+sacty の工程の選び方を扱うスキルなので sacty の名前を書いてよいが、特定の言語のツールチェーンには寄せない。
+
+関係する ADR: [オーケストレーターにもコンテキストを渡し、工程の選択を既定のスキル plan-steps にして答えの JSON を検査させる](../adr/20261019-1512-orchestrator-plan-steps-skill.md)
+
+コード: `apps/daemon/default-context/skills/plan-steps/SKILL.md`、`apps/daemon/default-context/skills/plan-steps/references/json-check.md`、`apps/daemon/src/prompts.ts`（`planAnswerLines`・`PLAN_SKILL`）
+
 ## コンテキストリポジトリのファイル
 
 読むのは `sacty-context.yaml`・`mcp.yaml`・`platforms.yaml`・`rules.md`・`rules/`・`skills/`・`agents/` だけ（`README.md` は読まない）。
@@ -127,7 +142,7 @@ sacty が作るファイルの順に置く（同じパスは後のものが上�
   `agents.tierConnectionDiffers` を注意に残す（接続先は runtime ごとの `providers` から作るので、同じ runtime の段階はいつも同じになる）。
   stub の工程には置かない。`reasoning_effort` の無い段階（既定の `claude_lite` など）は、それを書かない定義（ツールの既定）になる。置いた段階（段階・エージェントの名前・モデル・リーズニングエフォート）は `ContextResolved` の `tiers` に
   記録し、プレビューにも同じファイルを出す（プレビューの親は、その runtime の `default_agent`、無ければ `step_agents`・`guardian_agent` の
-  うち最初のもの）。`ContextResolved` は、工程の実行だけでなく、マージの後の監視・外部作業・書き出しの実行でも、コンテキストを渡すたびに
+  うち最初のもの）。`ContextResolved` は、工程の実行だけでなく、オーケストレーター（PBI-146）・マージの後の監視・外部作業・書き出しの実行でも、コンテキストを渡すたびに
   その実行の `runId` で記録する（`contextResolved`）。段階を置いた実行の費用は推定（`estimated`）として記録する（担当が親と違うモデルで
   動きうるが、費用は親の結果の使用量 × 親の単価でしか出せないため。[エージェントの実行](agent-execution.md#認証)）。
 

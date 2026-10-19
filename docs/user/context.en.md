@@ -4,7 +4,7 @@
 
 # Context repository
 
-You can collect the rules, skills, MCP servers, external platforms, and agent settings that are passed to step agents in a context repository,
+You can collect the rules, skills, MCP servers, external platforms, and agent settings that are passed to step agents and the Orchestrator in a context repository,
 and specify it in the project settings (optional). It is layered on top of sacty's default context.
 
 Before starting the reviewers, the default review skills run the formatting, lint, type check, tests, and other checks defined by the target repository in check mode, and share the results with the reviewers. If verification or CI has results, they also start a reviewer that analyzes the failures and warnings. The verification logs are saved outside the review's workspace, and the PR quotes only the parts needed for the comments.
@@ -12,6 +12,8 @@ Before starting the reviewers, the default review skills run the formatting, lin
 The default writing skill `writing` sets how agents write PR descriptions, review comments, reports, and other text. In Japanese text, it adds a line break after each "。" and puts structured information in lists and tables. If the target repository has writing rules (AGENTS.md, CONTRIBUTING, and so on), those take precedence.
 
 The default requirements skill `ears-requirements` has the acceptance criteria of requirements written in the EARS (Easy Approach to Requirements Syntax) patterns. Each requirement is one sentence in a fixed pattern such as `When <trigger>, the <system> shall <response>.` with an ID such as `R-1`. The Requirements step writes its acceptance criteria with this skill. If the target repository has rules for requirements, those take precedence.
+
+The default plan-selection skill `plan-steps` sets how the Orchestrator chooses the plan of steps for a task and checks the answer JSON with a tool such as `jq` before output, fixing it until the check passes. This reduces stops caused by broken answer JSON (such as a missing closing brace) when the steps themselves were chosen.
 
 ## Creating the template
 

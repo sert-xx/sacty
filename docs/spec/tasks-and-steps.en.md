@@ -154,6 +154,8 @@ Code: `apps/daemon/src/prompts.ts`, `apps/daemon/src/service.ts`, `packages/core
 
 It runs once before the steps are chosen (when the task starts). The AI is `step_agents.orchestrator` (or `default_agent` if absent); it uses the default image and
 reads a disposable copy of the code at the base commit. Its cost counts toward the task's budget. If the budget cap has been reached, the task is paused without running it.
+Like step runs, it receives the default context and the project's context (rules, skills, MCP servers, tier definitions) and records `ContextResolved` (PBI-146).
+If the context cannot be prepared, `OrchestratorFailed` is recorded and the task is paused without running it (no cost).
 
 The following are read from the answer (JSON under the heading `sacty-steps`) and recorded in `StepsChosen`.
 
@@ -184,12 +186,15 @@ The following are read from the answer (JSON under the heading `sacty-steps`) an
 - When a task without a repository chooses steps that need a repository, `repo` is checked against the project's targets, `RepositoryChosen` is recorded,
   and the repository is prepared before asking to choose again. If it is not in the targets or is empty, the task stops, and a person can pick a repository in the web UI to resume (only while paused and
   waiting for a repository). If the plan does not need a repository, `testCommand`, `baseBranch`, `services`, and `documentsDir` are discarded.
+- How to answer (PBI-146): the prompt asks it to follow the default skill `plan-steps` if present to compare the candidates, to write the answer JSON to a file and check it with a tool such as `jq` before output,
+  and to fix it until the check passes and then output it exactly once at the end of the text (`planAnswerLines`; [Context composition](context.en.md#default-plan-selection-skill)). The reader (`extractStepPlan`) is
+  unchanged: a broken answer still stops the task as unreadable.
 - When the run fails or the answer cannot be read, `OrchestratorFailed` is recorded and the task is paused (it does not fall back to the standard plan).
 - For a task taken in from a ticket, before choosing steps the Orchestrator reads the ticket and decides the repository, title, and summary (`TicketTriaged`).
 - A PR-review-only task uses the `review` plan without the Orchestrator (`reviewOnlySteps`).
 - Reuse of Orchestrator sessions is described in "Saving and reusing sessions" in [Agent execution](agent-execution.en.md).
 
-Code: `apps/daemon/src/service.ts` (`askOrchestrator`, `runNextInner`, `withImages`, `defaultImagesOf`, `withSharedCompose`, `withExports`, `repositoryFromPlan`, `chooseRepository`, `triageTicket`, `reviewOnlySteps`), `apps/daemon/src/prompts.ts` (`extractStepPlan`), `packages/core/src/events.ts` (`StepsChosen`)
+Code: `apps/daemon/src/service.ts` (`askOrchestrator`, `runNextInner`, `withImages`, `defaultImagesOf`, `withSharedCompose`, `withExports`, `repositoryFromPlan`, `chooseRepository`, `triageTicket`, `reviewOnlySteps`), `apps/daemon/src/prompts.ts` (`extractStepPlan`, `planAnswerLines`, `PLAN_SKILL`), `apps/daemon/default-context/skills/plan-steps/SKILL.md`, `packages/core/src/events.ts` (`StepsChosen`)
 
 ## Changing a step's image
 

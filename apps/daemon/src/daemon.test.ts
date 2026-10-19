@@ -9788,6 +9788,102 @@ describe("コンテキストリポジトリ（PBI-6a）", () => {
     activity.close();
   });
 
+  it("オーケストレーターにも、既定のコンテキストとプロジェクトのコンテキスト（規則・スキル）を渡し、実行の記録を残す（PBI-146）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const contexts = new FakeContexts({
+      "https://example.com/team.git": { "rules.md": "# チームの規約" },
+    });
+    const { service, executor } = makeService(
+      activity,
+      [
+        {
+          kind: "completed",
+          output:
+            '```json\n{"sacty-steps": {"plan": "skip-design", "reason": "小さい", "testCommand": "npm test"}}\n```',
+          usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 10 },
+        },
+        out("# 要求要件"),
+      ],
+      {
+        realPlanner: true,
+        projects: projectsWithAccount(),
+        contexts,
+        defaultContext: DEFAULT_CONTEXT_DIR,
+      },
+    );
+    const project = service.saveProject(undefined, {
+      name: "決済",
+      targets: [{ scope: "repo", target: "https://github.com/acme/payments" }],
+      githubAccounts: { "github.com": "me" },
+      context: { repo: "https://example.com/team.git" },
+    });
+    const { id } = service.createTask({ title: "A", projectId: project.id });
+    await service.runNext(id);
+    // 1 回目の実行がオーケストレーター。指示はスキルに従うよう求め、規則と既定のスキル plan-steps が置かれる
+    expect(executor.calls[0]?.command.join(" ")).toContain("既定のスキル plan-steps があれば");
+    expect(executor.contexts[0]).toMatch(/sacty の既定の規則[\s\S]*チームの規約/);
+    expect(Object.keys(executor.seeds[0] ?? {})).toEqual(
+      expect.arrayContaining([
+        "skills/plan-steps/SKILL.md",
+        "skills/plan-steps/references/json-check.md",
+      ]),
+    );
+    // 用意したコンテキストの記録は、工程の選択と同じ実行の ID
+    const chosen = service.get(id)?.activity.find((e) => e.type === "StepsChosen");
+    const chosenRun = chosen?.type === "StepsChosen" ? chosen.payload.runId : undefined;
+    expect(chosenRun).toBeTruthy();
+    const resolved = service.get(id)?.activity.filter((e) => e.type === "ContextResolved") ?? [];
+    expect(resolved[0]?.type === "ContextResolved" && resolved[0].payload.runId).toBe(chosenRun);
+    expect(
+      resolved[0]?.type === "ContextResolved" && resolved[0].payload.layers.map((l) => l.repo),
+    ).toEqual(["sacty-default", "https://example.com/team.git"]);
+    // 工程の実行（skip-design の先頭の調査）にも、これまでどおり渡す（記録はそれぞれの実行に 1 つ）
+    expect(executor.calls).toHaveLength(2);
+    expect(executor.contexts[1]).toMatch(/チームの規約/);
+    expect(resolved).toHaveLength(2);
+    expect(
+      service
+        .get(id)
+        ?.task.steps.map((s) => s.key)
+        .slice(0, 2),
+    ).toEqual(["investigate", "requirements"]);
+    activity.close();
+  });
+
+  it("オーケストレーターのコンテキストを用意できなければ、実行せずに理由を残して止める。認証のトークンは出さない（PBI-146）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const contexts = new FakeContexts({});
+    contexts.fail = true;
+    const { service, executor } = makeService(activity, [out("# 要求要件")], {
+      realPlanner: true,
+      projects: projectsWithAccount(),
+      contexts,
+    });
+    const project = service.saveProject(undefined, {
+      name: "決済",
+      targets: [{ scope: "repo", target: "https://github.com/acme/payments" }],
+      githubAccounts: { "github.com": "me" },
+      context: { repo: "https://github.com/acme/ctx.git" },
+    });
+    const { id } = service.createTask({ title: "A", projectId: project.id });
+    await service.runNext(id);
+    expect(executor.calls).toHaveLength(0);
+    expect(service.get(id)?.task.status).toBe("paused");
+    expect(service.get(id)?.task.pausedReason).toBe("error");
+    const shown = ja(service.get(id)?.task.pausedMessage);
+    expect(shown).toContain("オーケストレーターを実行できませんでした：コンテキストリポジトリ（");
+    expect(shown).toContain("Authentication failed");
+    const authValue = contexts.fetched[0]?.authEnv?.GIT_CONFIG_VALUE_0 ?? "";
+    expect(authValue).not.toBe("");
+    expect(shown).not.toContain(authValue);
+    const failed = service.get(id)?.activity.find((e) => e.type === "OrchestratorFailed");
+    expect(failed?.type === "OrchestratorFailed" && failed.payload).toMatchObject({
+      reason: "error",
+      costUsd: 0,
+    });
+    activity.close();
+  });
+
   it("既定のコンテキスト（PBI-24）は、コンテキストリポジトリの無いプロジェクトにも渡し、ある場合はその上位に重ねる", async () => {
     const defaultDir = join(dir, "default-context");
     mkdirSync(defaultDir, { recursive: true });

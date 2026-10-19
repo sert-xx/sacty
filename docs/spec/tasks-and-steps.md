@@ -155,6 +155,8 @@
 
 工程を選ぶ前（タスクの開始時）に1回実行する。AI は `step_agents.orchestrator`（無ければ `default_agent`）で、既定のイメージを使い、
 起点のコミットのコードの使い捨ての写しを読む。費用はタスクの予算に入る。予算の上限に達していれば、実行せずに一時停止する。
+工程の実行と同じく、既定のコンテキストとプロジェクトのコンテキスト（規則・スキル・MCP サーバー・段階の定義）を渡し、`ContextResolved` を記録する（PBI-146）。
+コンテキストを用意できなければ、実行せずに `OrchestratorFailed` を記録して一時停止する（費用は無い）。
 
 答え（見出し `sacty-steps` の JSON）から次を読み、`StepsChosen` に記録する。
 
@@ -186,12 +188,15 @@
 - リポジトリの無いタスクで、リポジトリが要る工程を選んだら、`repo` をプロジェクトの対象と照らして `RepositoryChosen` を記録し、
   リポジトリを用意してからもう一度選ばせる。対象に無い・空なら止まり、画面で人がリポジトリを選んで再開できる（一時停止中で
   リポジトリを待っているときだけ）。リポジトリの要らない組み合わせなら、`testCommand`・`baseBranch`・`services`・`documentsDir` を捨てる。
+- 答えの出し方（PBI-146）：指示は、既定のスキル `plan-steps` があればその手順で候補を比べ、答えの JSON を出す前にファイルに書いて `jq` などの道具で検査し、
+  通るまで直してから本文の最後に 1 回だけ出すよう求める（`planAnswerLines`。[コンテキストの合成](context.md#既定の工程の選択用スキル)）。読み手（`extractStepPlan`）は
+  変えず、壊れた答えは今までどおり読めないものとして止める。
 - 実行に失敗した・答えを読めないときは、`OrchestratorFailed` を記録して一時停止する（標準の組み合わせにはしない）。
 - チケットから取り込んだタスクは、工程を選ぶ前に、オーケストレーターがチケットを読んでリポジトリ・題・概要を決める（`TicketTriaged`）。
 - PR のレビューだけのタスクは、オーケストレーターを使わずに `review` の組み合わせにする（`reviewOnlySteps`）。
 - オーケストレーターのセッションの使い回しは [エージェントの実行](agent-execution.md) の「セッションの保存と使い回し」。
 
-コード: `apps/daemon/src/service.ts`（`askOrchestrator`・`runNextInner`・`withImages`・`defaultImagesOf`・`withSharedCompose`・`withExports`・`repositoryFromPlan`・`chooseRepository`・`triageTicket`・`reviewOnlySteps`）、`apps/daemon/src/prompts.ts`（`extractStepPlan`）、`packages/core/src/events.ts`（`StepsChosen`）
+コード: `apps/daemon/src/service.ts`（`askOrchestrator`・`runNextInner`・`withImages`・`defaultImagesOf`・`withSharedCompose`・`withExports`・`repositoryFromPlan`・`chooseRepository`・`triageTicket`・`reviewOnlySteps`）、`apps/daemon/src/prompts.ts`（`extractStepPlan`・`planAnswerLines`・`PLAN_SKILL`）、`apps/daemon/default-context/skills/plan-steps/SKILL.md`、`packages/core/src/events.ts`（`StepsChosen`）
 
 ## 工程のイメージを人が変える
 
