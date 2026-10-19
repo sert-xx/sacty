@@ -107,6 +107,26 @@ npm run build       # すべてのパッケージのビルド
   辞書の文字列は `apps/web/src/i18n/wording-policy.test.ts` で確かめます）。
 - docs だけを変えたときも、`npx vitest run tests/docs` で docs の規則（ファイル名・リンク切れ・ADR の置き換えの関係）を確かめてください。
 
+## リリース
+
+版は [semver](https://semver.org/lang/ja/)（`MAJOR.MINOR.PATCH`）で付け、GitHub Releases で公開します（1.0.0 から）。
+利用者はリポジトリを clone して使うので、リリースはタグと変更の要約を示すものです（npm には公開しません）。
+
+1. 版を上げる PR を作ります。`apps/*/package.json`・`packages/*/package.json` の `version` と、ワークスペースの依存（`@sacty/core` など）の版、
+   `package-lock.json`（`npm install --package-lock-only`）、既定のイメージの名前（`apps/daemon/src/config.ts` の `DEFAULT_IMAGE`。
+   `sacty-agent:<版>`）と、それを書いている仕様書・ユーザードキュメント（日英）・テストを同じ版にします。
+   - 既定のイメージの名前が変わるので、利用者は更新の後に `npx sacty image build` でイメージを作り直します。リリースの説明に書きます。
+   - 互換性の無い変更（設定ファイルの形・台帳・コマンドの引数が変わるなど）があれば MAJOR、機能の追加は MINOR、修正だけなら PATCH を上げます。
+2. PR をマージしたら、main のそのコミットにタグ `v<版>`（例 `v1.0.0`）を付けて push します。
+3. そのタグで GitHub Release を作ります。説明には、前のリリースからの変更の要約（利用者に見える変更・互換性の無い変更・更新の後にすること）を
+   日本語で書き、PR の一覧は GitHub の自動生成に任せます。
+
+```sh
+git tag -a v1.0.0 -m "sacty 1.0.0" <マージコミット>
+git push origin v1.0.0
+gh release create v1.0.0 --title "sacty 1.0.0" --notes-file <説明のファイル> --generate-notes
+```
+
 ## ドキュメント
 
 docs は4種類（仕様書・ユーザードキュメント・ADR・作業履歴）に分けて `docs/` に置いており、種類ごとにメンテナンスの方針が違います。
