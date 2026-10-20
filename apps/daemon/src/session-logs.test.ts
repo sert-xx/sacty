@@ -342,6 +342,29 @@ describe("セッションログの保存（PBI-62）", () => {
     });
   });
 
+  it("実行中の写しで、末尾に収まらない行の終わりが伏せるために持っている分にあっても、壊れた行を残さない（PR #171 レビュー指摘）", () => {
+    const store = new SessionLogStore(join(dir, "runs"), {
+      events: { head: 0, tail: 20 },
+      stderr: { head: 0, tail: 20 },
+    });
+    const log = store.open(info, () => ["0123456789"]);
+    const long = `${JSON.stringify({ type: "x", text: "x".repeat(200) })}\n`;
+    log.stdout(long);
+    log.stderr(`${"e".repeat(200)}\n`);
+    const snapshot = store.snapshot("task-1", "run-1");
+    // 末尾の上限より長い行は、途中から始まるので残さない（省いた目印だけ）
+    const lines = snapshot?.events.trimEnd().split("\n") ?? [];
+    expect(lines).toHaveLength(1);
+    for (const l of lines) expect(JSON.parse(l)).toMatchObject({ type: TRUNCATED_EVENT });
+    expect(snapshot?.stderr).not.toContain("eee");
+    // 次の行が届けば、その行は残す
+    log.stdout('{"type":"ok"}\n');
+    const next = store.snapshot("task-1", "run-1")?.events.trimEnd().split("\n") ?? [];
+    for (const l of next) expect(() => JSON.parse(l)).not.toThrow();
+    log.close(done);
+    expect(store.snapshot("task-1", "run-1")).toBeUndefined();
+  });
+
   it("先頭と末尾に収まれば、何も省かず目印も足さない（改行で終わらない最後の行も残す）", () => {
     const store = new SessionLogStore(join(dir, "runs"), {
       events: { head: 30, tail: 40 },

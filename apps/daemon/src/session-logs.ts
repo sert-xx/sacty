@@ -297,7 +297,7 @@ export class HeadTailFile {
 
   /**
    * 実行中のいまの中身。書いた先頭（ファイル）と、メモリーに持つ分（先頭の書きかけの行・末尾）と、rest（まだ渡していない分）を
-   * つなげる（末尾の前を省いていれば、間に marker を入れ、末尾は行の頭から始める）。ファイルを読めなければ undefined。
+   * つなげる（末尾の前を省いていれば、間に marker を入れ、末尾と rest をつなげたものは行の頭から始める）。ファイルを読めなければ undefined。
    */
   snapshot(
     marker: (droppedBytes: number, droppedLines: number) => string,
@@ -311,7 +311,9 @@ export class HeadTailFile {
       head = Buffer.alloc(0);
     }
     if (!this.headFull) return Buffer.concat([head, this.pending, rest]);
-    let tail = Buffer.concat(this.tail);
+    // 末尾と rest をつなげてから、行の頭を探す（末尾全体が書きかけの行で、その行の終わりが rest にあるときに、
+    // 行の後ろ半分だけを残さない。PR #171 レビュー指摘）
+    let tail = Buffer.concat([...this.tail, rest]);
     const parts: Buffer[] = [head];
     if (this.evictedBytes > 0) {
       let start = 0;
@@ -326,7 +328,7 @@ export class HeadTailFile {
       parts.push(Buffer.from(`${this.endsWithNewline ? "" : "\n"}${text}`, "utf8"));
       tail = tail.subarray(start);
     }
-    return Buffer.concat([...parts, tail, rest]);
+    return Buffer.concat([...parts, tail]);
   }
 
   private toTail(buf: Buffer): void {
