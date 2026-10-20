@@ -104,11 +104,15 @@
   `{"type":"sacty.truncated", …}` の行）を入れる。
 - 書く前に秘密情報を伏せる（届いた出力の切れ目をまたぐ値も伏せる。後から分かった値は、閉じるときにファイル全体を伏せ直す）。
 - 書き込みに失敗しても実行は止めない（警告を1回出す）。
+- 実行中の写し：デーモンは、開いていてまだ閉じていない実行のログを覚えておき、求められたらいまの写し（`snapshot`）を返す
+  （質問への答えで使う。[タスクと工程](tasks-and-steps.md#オーケストレーターに質問)）。写しは、ファイルに書いた分・メモリーに持つ分
+  （先頭の書きかけの行・末尾・伏せるために持っている分）をつなげ、そのときの秘密情報（後から分かった値も）で伏せ直し、最後の改行で切る。
+  末尾の前を省いていれば、閉じたときと同じ目印を入れる。ファイルそのものは変えない。閉じた実行・ほかのデーモンが開いた実行の写しは無い。
 - エージェントの設定の場所のセッションのファイルの写しは `runs/<タスク ID>/<実行 ID>/agent/` に置く（[エージェントの実行](agent-execution.md)）。
 - タスクを中止しても消さない。
 - 画面は `GET /api/tasks/:id/runs/:runId/log` などで読み、Claude Code（stream-json）と Codex（`exec --json`）の出力を読み分けて表示する。
 
-コード: `apps/daemon/src/session-logs.ts`（`SessionLogStore`・`SESSION_LOG_LIMITS`・`TRUNCATED_EVENT`・`StreamRedactor`）、`apps/web/src/lib/session-log.ts`（`parseSessionLog`）
+コード: `apps/daemon/src/session-logs.ts`（`SessionLogStore`・`SessionLog.snapshot`・`SESSION_LOG_LIMITS`・`TRUNCATED_EVENT`・`StreamRedactor`）、`apps/web/src/lib/session-log.ts`（`parseSessionLog`）
 
 ## 画面の表示
 

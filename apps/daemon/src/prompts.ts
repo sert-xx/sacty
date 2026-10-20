@@ -2193,6 +2193,14 @@ function chatLogRunLine(run: QuestionLogRun): string {
   const notes: string[] = [];
   if (run.status === "unfinished") {
     notes.push("終わりが記録されていない（実行中か、デーモンが止まった）ため、ログは読めない");
+  } else if (run.status === "running") {
+    const shown = run.files.map((f) => `${f.path.slice(run.runId.length + 1)} ${kib(f.bytes)}`);
+    notes.push(
+      `実行中（${run.snapshotAt ?? "?"} 時点までのログの写し。この後も続く）：${shown.length > 0 ? shown.join("・") : "まだ出力が無い"}`,
+    );
+    if (run.truncated.length > 0) {
+      notes.push(`上限で間を省いた：${run.truncated.map((f) => QUESTION_LOG_FILES[f]).join("・")}`);
+    }
   } else if (run.status === "missing") {
     notes.push("ログが無い（ログを残す前の実行か、エージェントを起動する前に止まった実行）");
   } else if (run.status === "unreadable") {
@@ -2239,6 +2247,12 @@ export function chatLogLines(logs: ChatLogs | undefined): string[] {
     "- ログは大きいので、丸ごと読まないでください。grep などで探して、必要な部分だけを読んでください。書き換えはできません",
     "- 上限で間を省いたログには、省いたところに目印（sacty.truncated の行など）があります。省かれた部分は分からないと書いてください",
     "- ログを使って答えたら、どの工程・どの実行（実行の ID）のログかを書いてください。ログの無い・間を省いた・読めない実行があって答えに関わるなら、そのことも書いてください",
+    // 実行中の実行の写しがあるとき（質問への答え）だけ、読み方を足す
+    ...(logs.runs.some((r) => r.status === "running")
+      ? [
+          `- 一覧で「実行中」の実行は、質問を受けた時点までのログの写しです（エージェントの元のファイルは、終わるまでありません）。いまの様子（何をしているか・どこで時間がかかっているか・止まっていないか）を聞かれたら、${QUESTION_LOG_FILES.events} の末尾から読んでください。答えには、いつの時点の様子かを書いてください`,
+        ]
+      : []),
     "",
     "実行の一覧（始めた順）：",
   ];

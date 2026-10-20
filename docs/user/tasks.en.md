@@ -172,7 +172,9 @@ Use "Ask the Orchestrator" in the task details to ask about the status of the ta
   costs) and, if prepared, the code of the target repository at the starting commit (a disposable copy).
 - It also examines, read-only, the session logs of each run, such as the agents of each step and the Orchestrator itself (with secrets masked; this includes the original files written by
   Claude Code and Codex), and answers what the agents actually did. Answers state which step and which run the log is from.
-  For runs that are still running, runs without logs, logs with parts omitted due to limits, and logs that cannot be read, the answer says so.
+  For runs without logs, logs with parts omitted due to limits, and logs that cannot be read, the answer says so.
+- If a step is running, it also examines that step's log up to the time you asked. When work is taking a long time, ask "What is it doing now?" or
+  "Where is it taking time?" and it answers with the current state, noting as of when.
 - Asking does not change the steps or approved contents, and does not stop work, even on a task in progress.
 - The cost of the answer is added to the task's cost. You cannot ask on a task that has reached its budget limit.
 

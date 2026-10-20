@@ -13009,6 +13009,55 @@ describe("質問への答えで、各実行のセッションログを調べる�
     activity.close();
   });
 
+  it("実行中の工程のログも、質問を受けた時点までの写しを渡し、いまの様子を答えられる（秘密の値は伏せる）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const sessionLogs = new SessionLogStore(join(dir, "runs"));
+    const { service, executor } = makeService(activity, [HOLD, out("# 要求要件")], {
+      sessionLogs,
+    });
+    executor.logLines = (invocation) =>
+      isChat(invocation)
+        ? undefined
+        : `${JSON.stringify({ type: "tool_use", input: { command: "npm run build" } })}\n`;
+    const { id } = service.createTask({ projectId: "default", title: "決済API", body: "" });
+    const running = service.runNext(id);
+    const runId = await executor.started.promise;
+
+    executor.respond = (invocation) => {
+      if (!isChat(invocation)) return undefined;
+      const mount = invocation.mounts?.find((m) => m.containerPath === "/sacty-logs");
+      const events = mount ? readTree(mount.hostPath)[`${runId}/events.jsonl`] : undefined;
+      const command = events ? /"command":"([^"]+)"/.exec(events)?.[1] : undefined;
+      return out(`いまは \`${command}\` を実行しています`);
+    };
+    await service.askQuestion(id, { text: "いま何をしている？" }).answered;
+    expect(service.get(id)?.task.questions[0]?.answer?.text).toBe(
+      "いまは `npm run build` を実行しています",
+    );
+    const mounted = executor.logMounts.at(-1);
+    expect(mounted?.readOnly).toBe(true);
+    expect(Object.keys(mounted?.files ?? {}).sort()).toEqual(
+      ["index.json", `${runId}/events.jsonl`, `${runId}/meta.json`, `${runId}/stderr.log`].sort(),
+    );
+    const all = Object.values(mounted?.files ?? {}).join("\n");
+    expect(all).not.toContain("oauth-secret");
+    expect(all).toContain("[REDACTED]");
+    const prompt = executor.calls.at(-1)?.command[2] ?? "";
+    expect(prompt).toMatch(
+      new RegExp(
+        `- \\[要求要件・1回目\\] 実行 ${runId} .*：実行中（.+ 時点までのログの写し。この後も続く）：`,
+      ),
+    );
+    expect(prompt).toContain("events.jsonl の末尾から読んでください");
+    // 質問しても、実行中の工程は止めない
+    expect(executor.killed).toEqual([]);
+    expect(service.get(id)?.task.status).toBe("running");
+
+    executor.finishHeld(runId, out("# 要求要件"));
+    await running;
+    activity.close();
+  });
+
   it("オーケストレーター自身の実行と、これまでの質問への答えの実行のログも、どの実行かが分かる形で渡す", async () => {
     const activity = new SqliteActivityStore(dbPath);
     const sessionLogs = new SessionLogStore(join(dir, "runs"));

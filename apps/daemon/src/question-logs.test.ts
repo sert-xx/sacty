@@ -221,6 +221,121 @@ describe("質問への答えに読ませるセッションログ（PBI-91）", (
     ]);
   });
 
+  it("includeRunning なら、実行中の実行のいまの写しを並べ、後から分かった秘密情報も伏せる（元のファイルは変えない）", () => {
+    store = new SessionLogStore(join(dir, "runs")); // 上限で省かない大きさ
+    const secrets = ["early-secret"];
+    const log = store.open(
+      {
+        taskId: "t1",
+        runId: "r-running",
+        role: "implement",
+        agentId: "claude",
+        runtime: "claude-code",
+        authMode: "subscription",
+      },
+      () => secrets,
+    );
+    log.stdout(
+      '{"type":"tool","cmd":"npm test early-secret"}\n{"type":"tool","cmd":"late-token"}\n',
+    );
+    log.stdout('{"type":"half');
+    log.stderr("still running\n");
+    // 書き始めた後に分かった秘密情報（ファイルには、閉じるまで残っている）
+    log.addSecrets(["late-token"]);
+
+    const logs = stageQuestionLogs({
+      store,
+      taskId: "t1",
+      activity: [],
+      dest,
+      includeRunning: true,
+    });
+    expect(logs.runs).toMatchObject([
+      { runId: "r-running", status: "running", role: "implement", attempt: 1, truncated: [] },
+    ]);
+    expect(logs.runs[0]?.snapshotAt).toEqual(expect.any(String));
+    expect(tree(dest)).toEqual([
+      QUESTION_LOG_INDEX,
+      "r-running/events.jsonl",
+      "r-running/meta.json",
+      "r-running/stderr.log",
+    ]);
+    const events = readFileSync(join(dest, "r-running", "events.jsonl"), "utf8");
+    expect(events).toContain("npm test");
+    expect(events).not.toContain("early-secret");
+    expect(events).not.toContain("late-token");
+    // 書き終えていない行は入れない
+    expect(events).not.toContain("half");
+    expect(readFileSync(join(dest, "r-running", "stderr.log"), "utf8")).toBe("still running\n");
+    expect(JSON.parse(readFileSync(join(dest, "r-running", "meta.json"), "utf8"))).toMatchObject({
+      runId: "r-running",
+      role: "implement",
+    });
+    // 写しはハードリンクではない（元のファイルは、閉じるときに伏せ直すまでそのまま）
+    expect(store.read("t1", "r-running")?.events).toContain("late-token");
+
+    // 閉じた後は、終わった実行として並べる
+    log.close({ kind: "completed", output: "" });
+    const after = join(dir, "staged-after");
+    expect(
+      stageQuestionLogs({ store, taskId: "t1", activity: [], dest: after, includeRunning: true })
+        .runs,
+    ).toMatchObject([{ runId: "r-running", status: "available" }]);
+    expect(readFileSync(join(after, "r-running", "events.jsonl"), "utf8")).not.toContain(
+      "late-token",
+    );
+  });
+
+  it("実行中の写しでも、上限で間を省いたら目印を入れて末尾を残す。このデーモンで開いていない実行は並べない", () => {
+    const log = store.open(
+      {
+        taskId: "t1",
+        runId: "r-long",
+        role: "implement",
+        agentId: "claude",
+        runtime: "claude-code",
+        authMode: "subscription",
+      },
+      () => [],
+    );
+    for (let i = 0; i < 20; i++) log.stdout(`{"type":"x","n":${i}}\n`);
+    // 終わりを記録できなかった実行（デーモンが止まった）は、ほかのデーモンからは実行中に見えない
+    run("t1", "r-orphan", "design", { stdout: "{}\n", close: false });
+    const restarted = new SessionLogStore(join(dir, "runs"));
+    const orphan = stageQuestionLogs({
+      store: restarted,
+      taskId: "t1",
+      activity: [],
+      dest: join(dir, "staged-restarted"),
+      includeRunning: true,
+    });
+    expect(orphan.runs.map((r) => r.status)).toEqual(["unfinished", "unfinished"]);
+
+    const logs = stageQuestionLogs({
+      store,
+      taskId: "t1",
+      activity: [],
+      dest,
+      includeRunning: true,
+    });
+    const byId = Object.fromEntries(logs.runs.map((r) => [r.runId, r]));
+    expect(byId["r-long"]).toMatchObject({ status: "running", truncated: ["events"] });
+    // 同じデーモン（store）では、まだ閉じていないので実行中
+    expect(byId["r-orphan"]).toMatchObject({ status: "running" });
+    const events = readFileSync(join(dest, "r-long", "events.jsonl"), "utf8");
+    expect(events).toContain("sacty.truncated");
+    expect(events).toContain('"n":19}');
+    // どの行も、壊れていない JSON
+    for (const line of events.trim().split("\n")) expect(() => JSON.parse(line)).not.toThrow();
+    // includeRunning でなければ、これまでどおり並べない
+    const off = join(dir, "staged-off");
+    expect(
+      stageQuestionLogs({ store, taskId: "t1", activity: [], dest: off }).runs.map((r) => r.status),
+    ).toEqual(["unfinished", "unfinished"]);
+    expect(tree(off)).toEqual([QUESTION_LOG_INDEX]);
+    log.close({ kind: "completed", output: "" });
+  });
+
   it("まだ実行の無いタスクでも一覧を作り、ID の形が違うタスクのログは探さない", () => {
     expect(stageQuestionLogs({ store, taskId: "t1", activity: [], dest }).runs).toEqual([]);
     expect(existsSync(join(dest, QUESTION_LOG_INDEX))).toBe(true);

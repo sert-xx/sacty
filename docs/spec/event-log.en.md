@@ -104,11 +104,15 @@ Code: `packages/core/src/cost.ts` (`PricePerMTok`, `computeCostUsd`, `budgetStat
   `{"type":"sacty.truncated", …}` line).
 - Secrets are hidden before writing (including values that span chunk boundaries in the received output; values learned later are hidden again across the whole file on close).
 - A write failure does not stop the run (a warning is emitted once).
+- Snapshot of a running run: the daemon remembers the logs it has opened and not yet closed, and on request returns a snapshot of their current contents (`snapshot`)
+  (used for answers to questions; [Tasks and steps](tasks-and-steps.en.md#asking-the-orchestrator)). A snapshot joins what was written to the file and what is held in memory
+  (the unfinished line of the head, the tail, and what is held back for redaction), hides secrets again with the secrets known at that time (including values learned later), and is cut at the last newline.
+  If the part before the tail was omitted, the same marker as on close is inserted. The files themselves are not changed. There is no snapshot of a closed run or of a run opened by another daemon.
 - Copies of the session files from the agent's config location are placed in `runs/<task ID>/<run ID>/agent/` ([Agent execution](agent-execution.en.md)).
 - They are not deleted when the task is cancelled.
 - The web UI reads them through `GET /api/tasks/:id/runs/:runId/log` and similar, and parses Claude Code (stream-json) and Codex (`exec --json`) output separately for display.
 
-Code: `apps/daemon/src/session-logs.ts` (`SessionLogStore`, `SESSION_LOG_LIMITS`, `TRUNCATED_EVENT`, `StreamRedactor`), `apps/web/src/lib/session-log.ts` (`parseSessionLog`)
+Code: `apps/daemon/src/session-logs.ts` (`SessionLogStore`, `SessionLog.snapshot`, `SESSION_LOG_LIMITS`, `TRUNCATED_EVENT`, `StreamRedactor`), `apps/web/src/lib/session-log.ts` (`parseSessionLog`)
 
 ## Web UI display
 
