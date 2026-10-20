@@ -61,15 +61,15 @@ afterEach(() => {
 describe("docker でイメージを確かめる", () => {
   it("あれば present、無ければ missing（Docker の版による文言の違いも）", async () => {
     const present = fakeSpawn({});
-    expect(await inspectImage("sacty-agent:1.1.0", { spawnImpl: present.spawnImpl })).toBe(
+    expect(await inspectImage("sacty-agent:1.2.0", { spawnImpl: present.spawnImpl })).toBe(
       "present",
     );
     expect(present.calls).toEqual([
-      ["image", "inspect", "--format", "{{.Id}}", "sacty-agent:1.1.0"],
+      ["image", "inspect", "--format", "{{.Id}}", "sacty-agent:1.2.0"],
     ]);
     for (const stderr of [
-      "Error: No such image: sacty-agent:1.1.0\n",
-      "Error response from daemon: No such object: sacty-agent:1.1.0\n",
+      "Error: No such image: sacty-agent:1.2.0\n",
+      "Error response from daemon: No such object: sacty-agent:1.2.0\n",
       "error: no such image: x\n",
     ]) {
       expect(
@@ -141,7 +141,7 @@ describe("止めるときに、実行中の docker を残さない（PR #166 レ
     const signals: AbortSignal[] = [];
     let calls = 0;
     const checker = new ImagePresenceChecker({
-      targets: () => [{ image: "sacty-agent:1.1.0" }],
+      targets: () => [{ image: "sacty-agent:1.2.0" }],
       inspect: (_image, signal) => {
         calls += 1;
         signals.push(signal);
@@ -170,21 +170,21 @@ describe("止めるときに、実行中の docker を残さない（PR #166 レ
 describe("確かめるイメージと案内", () => {
   it("名前にレジストリのホストを含むかで、レジストリのイメージを見分ける", () => {
     for (const image of [
-      "registry.example.com/sacty-agent:1.1.0",
-      "localhost:5000/sacty-agent:1.1.0",
+      "registry.example.com/sacty-agent:1.2.0",
+      "localhost:5000/sacty-agent:1.2.0",
       "localhost/sacty-agent",
       "ghcr.io/acme/agent:1",
     ]) {
       expect(isRegistryImage(image), image).toBe(true);
     }
-    for (const image of ["sacty-agent:1.1.0", "library/node:22", "acme/agent:1", "sacty-agent"]) {
+    for (const image of ["sacty-agent:1.2.0", "library/node:22", "acme/agent:1", "sacty-agent"]) {
       expect(isRegistryImage(image), image).toBe(false);
     }
   });
 
   it("作るコマンドは、言語ごとのイメージなら名前を付ける", () => {
-    expect(buildCommand({ image: "sacty-agent:1.1.0" })).toBe("npx sacty image build");
-    expect(buildCommand({ image: "sacty-agent-java:1.1.0", name: "java" })).toBe(
+    expect(buildCommand({ image: "sacty-agent:1.2.0" })).toBe("npx sacty image build");
+    expect(buildCommand({ image: "sacty-agent-java:1.2.0", name: "java" })).toBe(
       "npx sacty image build java",
     );
   });
@@ -244,8 +244,8 @@ describe("確かめた結果の注意", () => {
 
   it("すべてあれば注意は無い", async () => {
     const { checker } = setup({
-      "sacty-agent:1.1.0": "present",
-      "sacty-agent-java:1.1.0": "present",
+      "sacty-agent:1.2.0": "present",
+      "sacty-agent-java:1.2.0": "present",
     });
     expect(await checker.check()).toEqual([]);
     expect(checker.problems()).toEqual([]);
@@ -253,46 +253,46 @@ describe("確かめた結果の注意", () => {
 
   it("無いイメージごとに、名前と作るコマンドを出す（一部だけ無いときは、その分だけ）", async () => {
     const { checker } = setup({
-      "sacty-agent:1.1.0": "missing",
-      "sacty-agent-java:1.1.0": "missing",
-      "sacty-agent-go:1.1.0": "present",
+      "sacty-agent:1.2.0": "missing",
+      "sacty-agent-java:1.2.0": "missing",
+      "sacty-agent-go:1.2.0": "present",
     });
     expect(ja(await checker.check())).toEqual([
-      "エージェント用のイメージ（sacty-agent:1.1.0）がありません。`npx sacty image build` で作成してください。",
-      "エージェント用のイメージ（sacty-agent-java:1.1.0）がありません。`npx sacty image build java` で作成してください。",
+      "エージェント用のイメージ（sacty-agent:1.2.0）がありません。`npx sacty image build` で作成してください。",
+      "エージェント用のイメージ（sacty-agent-java:1.2.0）がありません。`npx sacty image build java` で作成してください。",
     ]);
   });
 
   it("レジストリのイメージが手元に無いときは、取得を試みることと、作るコマンドを伝える", async () => {
-    const { checker } = setup({ "registry.example.com/sacty-agent:1.1.0": "missing" });
+    const { checker } = setup({ "registry.example.com/sacty-agent:1.2.0": "missing" });
     expect(ja(await checker.check())).toEqual([
-      "エージェント用のイメージ（registry.example.com/sacty-agent:1.1.0）が手元にありません。実行のときにレジストリから取得を試みます。取得できなければ `npx sacty image build` で作成してください。",
+      "エージェント用のイメージ（registry.example.com/sacty-agent:1.2.0）が手元にありません。実行のときにレジストリから取得を試みます。取得できなければ `npx sacty image build` で作成してください。",
     ]);
   });
 
   it("Docker に接続できなければ、イメージごとではなく 1 つにまとめ、無いとは言わない", async () => {
     const { checker } = setup({
-      "sacty-agent:1.1.0": "unreachable",
-      "sacty-agent-java:1.1.0": "unreachable",
+      "sacty-agent:1.2.0": "unreachable",
+      "sacty-agent-java:1.2.0": "unreachable",
     });
     expect(await checker.check()).toEqual([message("image.dockerUnreachable")]);
   });
 
   it("同じ名前は 1 回だけ確かめ、同時に呼ばれても docker は重ねて動かさない", async () => {
-    const { checker, asked } = setup({ "sacty-agent:1.1.0": "missing" }, [
-      "sacty-agent:1.1.0",
-      "sacty-agent:1.1.0",
+    const { checker, asked } = setup({ "sacty-agent:1.2.0": "missing" }, [
+      "sacty-agent:1.2.0",
+      "sacty-agent:1.2.0",
     ]);
     await Promise.all([checker.check(), checker.check()]);
-    expect(asked).toEqual(["sacty-agent:1.1.0"]);
+    expect(asked).toEqual(["sacty-agent:1.2.0"]);
     expect(checker.problems()).toHaveLength(1);
   });
 
   it("作った後の確かめで注意が消える", async () => {
-    const { checker, state } = setup({ "sacty-agent:1.1.0": "missing" });
+    const { checker, state } = setup({ "sacty-agent:1.2.0": "missing" });
     await checker.check();
     expect(checker.problems()).toHaveLength(1);
-    state.states["sacty-agent:1.1.0"] = "present";
+    state.states["sacty-agent:1.2.0"] = "present";
     await checker.check();
     expect(checker.problems()).toEqual([]);
   });
@@ -300,11 +300,11 @@ describe("確かめた結果の注意", () => {
   it("英語の文言もある", () => {
     expect(
       renderMessage(
-        message("image.missing", { image: "sacty-agent:1.1.0", command: "npx sacty image build" }),
+        message("image.missing", { image: "sacty-agent:1.2.0", command: "npx sacty image build" }),
         "en",
       ),
     ).toBe(
-      "The agent image (sacty-agent:1.1.0) is missing. Create it with `npx sacty image build`.",
+      "The agent image (sacty-agent:1.2.0) is missing. Create it with `npx sacty image build`.",
     );
     expect(renderMessage(message("image.dockerUnreachable"), "en")).toContain(
       "Docker is not reachable",
@@ -317,7 +317,7 @@ describe("起動のときと、それからの間隔", () => {
     vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
     let calls = 0;
     const checker = new ImagePresenceChecker({
-      targets: () => [{ image: "sacty-agent:1.1.0" }],
+      targets: () => [{ image: "sacty-agent:1.2.0" }],
       inspect: async () => {
         calls += 1;
         return "missing";
