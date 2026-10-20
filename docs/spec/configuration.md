@@ -18,7 +18,7 @@
 
 | 項目 | 既定値 | 意味 |
 | --- | --- | --- |
-| `image` | `sacty-agent:1.2.0`（`DEFAULT_IMAGE`） | 既定のイメージ。エージェントとテストの実行に使う |
+| `image` | `sacty-agent:1.3.0`（`DEFAULT_IMAGE`） | 既定のイメージ。エージェントとテストの実行に使う |
 | `providers` | `{}` | runtime ごとの接続先（下の「接続先」）。名前は `codex`・`claude` だけ |
 | `default_agent` | `config/agents.yaml` の `default_agent` のうち、使える最初のもの | 既定の AI。エージェントの名前 |
 | `guardian_agent` | `default_agent` | ゴールガーディアンの AI |

@@ -29,7 +29,7 @@ import {
 } from "./run-timeouts.js";
 import { SecretRef } from "./secrets.js";
 
-export const DEFAULT_IMAGE = "sacty-agent:1.2.0";
+export const DEFAULT_IMAGE = "sacty-agent:1.3.0";
 
 /** 秘密情報：キーチェーンの名前か、1Password の参照（op://…。PBI-34）。 */
 const SecretName = SecretRef;
