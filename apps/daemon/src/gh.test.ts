@@ -26,7 +26,14 @@ function fakeGh(result: { stdout?: string; stderr?: string; code?: number; error
   return { spawnImpl, calls };
 }
 
-const original = { GH_TOKEN: process.env.GH_TOKEN, GITHUB_TOKEN: process.env.GITHUB_TOKEN };
+const original = {
+  GH_TOKEN: process.env.GH_TOKEN,
+  GITHUB_TOKEN: process.env.GITHUB_TOKEN,
+  GH_ENTERPRISE_TOKEN: process.env.GH_ENTERPRISE_TOKEN,
+  HTTPS_PROXY: process.env.HTTPS_PROXY,
+  NO_PROXY: process.env.NO_PROXY,
+  SSL_CERT_FILE: process.env.SSL_CERT_FILE,
+};
 afterEach(() => {
   for (const [key, value] of Object.entries(original)) {
     if (value === undefined) delete process.env[key];
@@ -45,15 +52,33 @@ describe("gh コマンドでの GitHub の認証（PBI-13）", () => {
             { state: "error", active: false, login: "expired" },
           ],
           "ghe.example.co.jp": [{ state: "success", active: true, login: "corp" }],
+          // プロキシの先などで、gh がトークンを確かめられなかった（オンプレの GHES でよくある）
+          "ghe3.example.co.jp": [
+            {
+              state: "error",
+              error: 'Get "https://ghe3.example.co.jp/api/v3/": dial tcp: i/o timeout',
+              active: true,
+              login: "onprem",
+            },
+          ],
           "ghe2.example.co.jp": [{ state: "success", active: false, login: "corp2" }],
         },
       }),
     });
+    // トークンを確かめられなかったアカウントも外さず、その理由を添える（選べないと、オンプレの GHES を使えない）
     expect(await new GhCliAuth(gh.spawnImpl).accounts()).toEqual([
-      { host: "github.com", login: "personal", active: true },
-      { host: "github.com", login: "side-job", active: false },
-      { host: "ghe.example.co.jp", login: "corp", active: true },
-      { host: "ghe2.example.co.jp", login: "corp2", active: false },
+      { host: "github.com", login: "personal", active: true, state: "success" },
+      { host: "github.com", login: "side-job", active: false, state: "success" },
+      { host: "github.com", login: "expired", active: false, state: "error" },
+      { host: "ghe.example.co.jp", login: "corp", active: true, state: "success" },
+      {
+        host: "ghe3.example.co.jp",
+        login: "onprem",
+        active: true,
+        state: "error",
+        error: 'Get "https://ghe3.example.co.jp/api/v3/": dial tcp: i/o timeout',
+      },
+      { host: "ghe2.example.co.jp", login: "corp2", active: false, state: "success" },
     ]);
     // ホストで絞らない
     expect(gh.calls[0]?.args).toEqual(["auth", "status", "--json", "hosts"]);
@@ -77,6 +102,21 @@ describe("gh コマンドでの GitHub の認証（PBI-13）", () => {
     ]);
     expect(gh.calls[0]?.env.GH_TOKEN).toBeUndefined();
     expect(gh.calls[0]?.env.GITHUB_TOKEN).toBeUndefined();
+  });
+
+  it("プロキシと CA の環境変数は gh に渡す（渡さないと、オンプレの GHES に届かずアカウントが error になる）", async () => {
+    process.env.HTTPS_PROXY = "http://proxy.example.co.jp:8080";
+    process.env.NO_PROXY = "localhost";
+    process.env.SSL_CERT_FILE = "/etc/ssl/corp-ca.pem";
+    process.env.GH_ENTERPRISE_TOKEN = "env-ghe-token";
+    const gh = fakeGh({ stdout: JSON.stringify({ hosts: {} }) });
+    await new GhCliAuth(gh.spawnImpl).accounts();
+    expect(gh.calls[0]?.env).toMatchObject({
+      HTTPS_PROXY: "http://proxy.example.co.jp:8080",
+      NO_PROXY: "localhost",
+      SSL_CERT_FILE: "/etc/ssl/corp-ca.pem",
+    });
+    expect(gh.calls[0]?.env.GH_ENTERPRISE_TOKEN).toBeUndefined();
   });
 
   it("gh が無い・ログインしていなければ、理由を示す", async () => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseRepoUrl, RepoUrl } from "./github-url.js";
+import { parseRepoUrl, RepoUrl, targetUrlProblem } from "./github-url.js";
 import { issueMessage, renderMessage } from "./messages.js";
 import {
   DEFAULT_INTAKE_INTERVAL_SEC,
@@ -17,6 +17,7 @@ import {
   responsibleProject,
   responsibleTicketProject,
   SactySettings,
+  targetHost,
   targetImageOf,
 } from "./projects.js";
 
@@ -126,19 +127,59 @@ describe("プロジェクトの対象（PBI-5・PBI-25）", () => {
       "p3",
     );
     expect(responsibleProject(all, "https://github.com/acme/auth")?.project.id).toBe("p2");
-    // 短縮表記（owner/name・Org の名前だけ）や、http・ホストの無いものは受け付けない
-    for (const target of [
-      "acme/auth",
-      "http://github.com/acme/auth",
-      "https://github.com/acme/auth/x",
-    ]) {
+    // 短縮表記（owner/name・Org の名前だけ）や、http・ホストの無いものは受け付けない。読めない理由を示す
+    for (const [target, problem] of [
+      ["acme/auth", /input\.invalidRepo/],
+      ["http://github.com/acme/auth", /input\.urlNotHttps/],
+      ["https://github.com/acme/auth/x", /input\.urlExtraPath/],
+    ] as const) {
       expect(() =>
         ProjectDefinition.parse({ name: "x", targets: [{ scope: "repo", target }] }),
-      ).toThrow(/input\.invalidRepo/);
+      ).toThrow(problem);
     }
     expect(() =>
       ProjectDefinition.parse({ name: "x", targets: [{ scope: "org", target: "acme" }] }),
     ).toThrow(/input\.invalidOrg/);
+  });
+
+  it("見た目では正しい URL（全角の文字・ゼロ幅の空白・クエリ）を読み、読めないものは理由を示す", () => {
+    for (const url of [
+      "https：／／ghe.example.co.jp／acme／app",
+      "https://ghe.example.co.jp/acme/app\u200b",
+      "\ufeffhttps://ghe.example.co.jp/acme/app",
+      "https://ghe.example.co.jp/acme/app?tab=readme-ov-file",
+      "https://ghe.example.co.jp/acme/app#readme",
+    ]) {
+      expect(parseRepoUrl(url)?.url).toBe("https://ghe.example.co.jp/acme/app");
+      expect(targetHost({ scope: "repo", target: url })).toBe("ghe.example.co.jp");
+      expect(targetUrlProblem("repo", url)).toBeUndefined();
+    }
+    expect(targetUrlProblem("repo", "")).toBeUndefined();
+    expect(targetUrlProblem("repo", "git@ghe.example.co.jp:acme/app.git")).toBe("input.urlSsh");
+    expect(targetUrlProblem("repo", "ssh://git@ghe.example.co.jp/acme/app")).toBe("input.urlSsh");
+    expect(targetUrlProblem("repo", "http://ghe.example.co.jp/acme/app")).toBe("input.urlNotHttps");
+    expect(targetUrlProblem("repo", "https://me@ghe.example.co.jp/acme/app")).toBe(
+      "input.urlCredentials",
+    );
+    expect(targetUrlProblem("repo", "https://git_srv.example.co.jp/acme/app")).toBe(
+      "input.urlHost",
+    );
+    expect(targetUrlProblem("repo", "https://ghe.example.co.jp/acme/app/tree/main")).toBe(
+      "input.urlExtraPath",
+    );
+    expect(targetUrlProblem("repo", "https://ghe.example.co.jp/acme")).toBe(
+      "input.repoLooksLikeOrg",
+    );
+    expect(targetUrlProblem("org", "https://ghe.example.co.jp/acme/app")).toBe(
+      "input.orgLooksLikeRepo",
+    );
+    expect(targetUrlProblem("org", "https://ghe.example.co.jp/acme")).toBeUndefined();
+    expect(() =>
+      ProjectDefinition.parse({
+        name: "x",
+        targets: [{ scope: "repo", target: "https://ghe.example.co.jp/acme" }],
+      }),
+    ).toThrow(/input\.repoLooksLikeOrg/);
   });
 
   it("リポジトリ名は、先頭がドット・アンダースコアのもの（.github・_tools）も受け付ける（PBI-40 レビュー指摘）", () => {

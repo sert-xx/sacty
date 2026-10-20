@@ -461,9 +461,16 @@ export async function runIntake(): Promise<OpResult> {
   return postOp("/api/intake/run", {});
 }
 
-export type GitHubAccounts =
-  | { accounts: { host: string; login: string; active: boolean }[] }
-  | { error: DaemonText };
+/** gh にログイン済みのアカウント。state は gh auth status がトークンを確かめた結果（success・error・timeout）。 */
+export type GitHubAccount = {
+  host: string;
+  login: string;
+  active: boolean;
+  state: string;
+  error?: string;
+};
+
+export type GitHubAccounts = { accounts: GitHubAccount[] } | { error: DaemonText };
 
 /** gh にログイン済みの GitHub のアカウント（PBI-13）。 */
 export async function getGitHubAccounts(): Promise<GitHubAccounts> {

@@ -27,7 +27,9 @@ The after-merge watch is not turned on or off in project settings. If the target
 ## Targets
 
 Write each target (a GitHub org or repository) as an `https://` URL that includes the host (for example `https://github.com/acme/app` or
-`https://ghe.example.com/acme`. github.com and GitHub Enterprise Server use the same form). A trailing `/` or `.git` is ignored.
+`https://ghe.example.com/acme`. github.com and GitHub Enterprise Server use the same form). A trailing `/` or `.git`, a query (`?…`) or `#…`, full-width characters, and invisible
+characters that slip in when pasting are corrected when reading. For a URL that can't be read, the reason (http, SSH, an extra `/tree/…`, org and repository scope mixed up, and so on) is shown under the input.
+The host of a target that can't be read does not appear in the "GitHub account" section.
 
 - When you create a task in the web UI, you choose a repository from the targets (for an org target, you choose from that org's repositories read with `gh`).
 - Open issues in the targets that have the label to import are imported as tasks, and open PRs that have the review label (or that request your review)
@@ -57,6 +59,12 @@ gh auth login --hostname ghe.example.com      # Sign in to each GitHub Enterpris
 - HTTPS repositories are cloned and pushed with the token of that host's account (you do not need to set up git authentication on the host). SSH URLs and
   local paths use the host's authentication (ssh-agent and so on).
 - The token is fetched from `gh` each time it is used and never appears in the activity log, logs, the web UI, or containers.
+- Open "gh accounts Sacty can see" in the "GitHub account" section to check the accounts the daemon read from `gh auth status`, listed by host,
+  account, and status. If a host is missing, it is not signed in to `gh` for the user running the daemon
+  (also check differences such as `GH_CONFIG_DIR`).
+- An account with the status "Not verified" is one whose token `gh` could not verify (the reason is shown in the list). You can still choose it, but for a
+  GitHub Enterprise Server behind a corporate proxy, make sure `HTTPS_PROXY`, `NO_PROXY`, `SSL_CERT_FILE`, and similar are set in the shell that starts the daemon.
+  The daemon passes them to `gh`.
 
 ## Context repository
 

@@ -130,10 +130,16 @@ Code: `apps/daemon/src/service.ts` (`commentInvestigation`, `awaitingIssueCommen
 ## GitHub accounts and APIs
 
 - The account to use is chosen in the project's `githubAccounts` (per host). The active account of gh is not used. If none is chosen, the work stops.
-- The list comes from `gh auth status --json hosts` (only successfully logged-in accounts), and the token from `gh auth token --hostname <host> --user <account>` each time it is used.
-  gh receives only `GH_PROMPT_DISABLED=1`, `NO_COLOR=1`, and a limited set of the host's environment variables (`GH_TOKEN` and `GITHUB_TOKEN` are not passed).
+- The list comes from `gh auth status --json hosts`, and the token from `gh auth token --hostname <host> --user <account>` each time it is used.
+  The list also includes accounts whose token gh could not verify (`state` is `error` or `timeout`), with `state` and `error` (gh's reason).
+  The project settings screen lets you choose such an account, marked "not verified", and also shows the list of accounts read (host, account, status).
+  gh receives only `GH_PROMPT_DISABLED=1`, `NO_COLOR=1`, and a limited set of the host's environment variables (config, keyring, proxy, and CA locations)
+  (`GH_TOKEN`, `GITHUB_TOKEN`, and `GH_ENTERPRISE_TOKEN` are not passed).
+- The target host is read from the target URL (`https://<host>/<owner>[/<name>]`). Before reading, full-width characters are converted with NFKC, invisible characters (zero-width spaces, BOM),
+  the query, the fragment, a trailing `/`, and `.git` are removed, and the host is lowercased. A target that can't be read has no host, so it does not appear in the account section.
+  The reason it can't be read (SSH, http, a user name and so on, host characters, an extra path, or org and repository mixed up) is shown under the input and when saving.
 - The API is `https://api.github.com` for github.com, and `https://<host>/api/v3` for others (GitHub Enterprise Server).
 - Cloning and pushing HTTPS repositories pass the token of that host's account through `http.https://<host>/.extraheader`. SSH and local
   paths use the host's authentication.
 
-Code: `apps/daemon/src/gh.ts` (`GhCliAuth`, `ghEnv`, `gitAuthEnv`), `packages/core/src/github-url.ts` (`githubApiBase`), `apps/daemon/src/github.ts`
+Code: `apps/daemon/src/gh.ts` (`GhCliAuth`, `ghEnv`, `gitAuthEnv`), `apps/web/src/components/project-editor.tsx`, `packages/core/src/github-url.ts` (`githubApiBase`, `targetUrlProblem`), `apps/daemon/src/github.ts`

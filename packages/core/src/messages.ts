@@ -110,6 +110,13 @@ const PARAMS = {
   "input.invalidGithubName": null,
   "input.invalidRepo": null,
   "input.invalidOrg": null,
+  "input.urlSsh": null,
+  "input.urlNotHttps": null,
+  "input.urlCredentials": null,
+  "input.urlHost": null,
+  "input.urlExtraPath": null,
+  "input.repoLooksLikeOrg": null,
+  "input.orgLooksLikeRepo": null,
   "input.invalidHost": null,
   "input.contextRepoRequired": null,
   // 共用の compose（PBI-70）
@@ -679,6 +686,17 @@ const ja: MessageDictionary = {
   "input.invalidGithubName": "GitHub の名前として正しくありません。",
   "input.invalidRepo": "リポジトリは URL（例 https://github.com/acme/app）で入力してください。",
   "input.invalidOrg": "Org は URL（例 https://github.com/acme）で入力してください。",
+  "input.urlSsh":
+    "SSH の URL は使えません。https://<ホスト>/<owner>/<name> の形で入力してください（clone は gh のアカウントのトークンで行います）。",
+  "input.urlNotHttps": "http の URL は使えません。https で入力してください。",
+  "input.urlCredentials": "URL に、ユーザー名・パスワード・トークンを書かないでください。",
+  "input.urlHost": "URL のホストを読めません（使える文字は英数字・.・- と、:ポート番号）。",
+  "input.urlExtraPath":
+    "URL の余分な部分を外してください（リポジトリは https://<ホスト>/<owner>/<name>、Org は https://<ホスト>/<owner> まで。/tree/… などは付けません）。",
+  "input.repoLooksLikeOrg":
+    "Org の URL です。単位を「Org」にするか、リポジトリの URL を入力してください。",
+  "input.orgLooksLikeRepo":
+    "リポジトリの URL です。単位を「リポジトリ」にするか、Org の URL を入力してください。",
   "input.invalidHost": "ホスト名として正しくありません。",
   "input.contextRepoRequired": "コンテキストリポジトリを入力してください。",
   "input.sharedComposeName":
@@ -1213,6 +1231,17 @@ const en: MessageDictionary = {
   "input.invalidGithubName": "This is not a valid GitHub name.",
   "input.invalidRepo": "Enter the repository as a URL (e.g. https://github.com/acme/app).",
   "input.invalidOrg": "Enter the org as a URL (e.g. https://github.com/acme).",
+  "input.urlSsh":
+    "SSH URLs can't be used. Enter https://<host>/<owner>/<name> (cloning uses the token of the gh account).",
+  "input.urlNotHttps": "http URLs can't be used. Enter an https URL.",
+  "input.urlCredentials": "Don't put a user name, password or token in the URL.",
+  "input.urlHost":
+    "Can't read the host of the URL (use letters, digits, '.', '-', and an optional :port).",
+  "input.urlExtraPath":
+    "Remove the extra part of the URL (a repository is https://<host>/<owner>/<name> and an org is https://<host>/<owner>; no /tree/… and so on).",
+  "input.repoLooksLikeOrg": 'This is an org URL. Set the scope to "Org" or enter a repository URL.',
+  "input.orgLooksLikeRepo":
+    'This is a repository URL. Set the scope to "Repository" or enter an org URL.',
   "input.invalidHost": "This is not a valid host name.",
   "input.contextRepoRequired": "Enter the context repository.",
   "input.sharedComposeName":

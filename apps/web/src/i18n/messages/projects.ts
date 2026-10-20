@@ -153,6 +153,8 @@ const ja = {
       "gh auth login でログインしたアカウントから、ホストごとに選びます。gh でアカウントを切り替えても、ここで選んだものを使います。",
     githubAccount: (host: string) => `${host} のアカウント`,
     githubNoTargets: "対象を追加すると選べます。",
+    githubUnreadableTargets:
+      "URL を読めない対象があります。その対象のホストのアカウントは、URL を直すと選べるようになります。",
     githubForContext: "（コンテキストリポジトリ・任意）",
     githubForShared: "（共用の compose・任意）",
     sharedTitle: "共用の compose（任意）",
@@ -174,6 +176,17 @@ const ja = {
     githubNone: "選ばない（ホストの git の認証）",
     githubChoose: "選んでください",
     githubNotLoggedIn: (login: string) => `${login}（未ログイン）`,
+    githubUnverified: (login: string) => `${login}（gh で確認できず）`,
+    githubKnownTitle: (count: number) => `Sacty が認識している gh のアカウント（${count}）`,
+    githubKnownHint:
+      "デーモンが gh auth status から読んだアカウントです。無いホストは、デーモンを動かすユーザーの gh にログインしていません。「確認できず」も選べますが、プロキシや社内の CA の設定をデーモンにも渡しているか確かめてください。",
+    githubKnownNone: "gh にログイン済みのアカウントはありません。",
+    githubKnownHost: "ホスト",
+    githubKnownLogin: "アカウント",
+    githubKnownState: "状態",
+    githubStateOk: "確認済み",
+    githubStateActive: "アクティブ",
+    githubStateFailed: (state: string) => `確認できず（${state}）`,
     githubRequired: "対象のホストごとに、GitHub アカウントを選んでください。",
     saved: "保存しました。",
     createdContextError: (detail: string) =>
@@ -337,6 +350,8 @@ const en: ProjectsMessages = {
       "Choose, per host, from the accounts signed in with gh auth login. The account chosen here is used even if you switch accounts in gh.",
     githubAccount: (host) => `Account on ${host}`,
     githubNoTargets: "Add targets to choose accounts.",
+    githubUnreadableTargets:
+      "Some target URLs can't be read. You can choose an account for their host once the URL is fixed.",
     githubForContext: " (context repository, optional)",
     githubForShared: " (shared compose, optional)",
     sharedTitle: "Shared compose (optional)",
@@ -359,6 +374,17 @@ const en: ProjectsMessages = {
     githubNone: "None (host git credentials)",
     githubChoose: "Choose an account",
     githubNotLoggedIn: (login) => `${login} (not signed in)`,
+    githubUnverified: (login) => `${login} (not verified by gh)`,
+    githubKnownTitle: (count) => `gh accounts Sacty can see (${count})`,
+    githubKnownHint:
+      'Accounts the Sacty daemon read from gh auth status. A host missing here is not signed in to gh for the user running the daemon (also check GH_CONFIG_DIR and similar). "Not verified" means gh could not verify the token; you can still choose it, but make sure the daemon also gets your proxy and corporate CA settings.',
+    githubKnownNone: "No accounts are signed in to gh.",
+    githubKnownHost: "Host",
+    githubKnownLogin: "Account",
+    githubKnownState: "Status",
+    githubStateOk: "Verified",
+    githubStateActive: "active",
+    githubStateFailed: (state) => `Not verified (${state})`,
     githubRequired: "Choose a GitHub account for each target host.",
     saved: "Saved.",
     createdContextError: (detail) =>

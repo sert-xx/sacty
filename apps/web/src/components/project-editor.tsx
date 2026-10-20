@@ -1,6 +1,6 @@
 "use client";
 
-import type { Project, ProjectTarget } from "@sacty/core";
+import { type Project, type ProjectTarget, targetUrlProblem } from "@sacty/core";
 import { XIcon } from "lucide-react";
 import { startTransition, useActionState, useId, useState } from "react";
 import { type SaveProjectState, saveProjectAction } from "@/app/actions";
@@ -187,6 +187,8 @@ export function ProjectEditor({
                           target.target.trim().replace(/\/+$/, "").toLowerCase(),
                       )
                     : undefined;
+                // 読めない URL は、対象のホストにならず、アカウントの欄にも出ない。どこが違うのかをその場で示す
+                const urlProblem = targetUrlProblem(target.scope, target.target);
                 return (
                   <li
                     // biome-ignore lint/suspicious/noArrayIndexKey: 行は位置で編集する
@@ -261,6 +263,11 @@ export function ProjectEditor({
                         <XIcon aria-hidden="true" />
                       </Button>
                     </div>
+                    {urlProblem && (
+                      <p role="alert" className="text-xs text-warn">
+                        {messages.labels.text({ code: urlProblem })}
+                      </p>
+                    )}
                     {excluded && excluded.repos.length > 0 && (
                       <div className="text-xs leading-5 text-muted-foreground">
                         <p>{t.excluded}</p>
@@ -501,6 +508,9 @@ export function ProjectEditor({
             {!hosts.some((h) => h.required) && (
               <p className="text-sm text-muted-foreground">{t.githubNoTargets}</p>
             )}
+            {targets.some((target) => targetUrlProblem(target.scope, target.target)) && (
+              <p className="text-sm text-warn">{t.githubUnreadableTargets}</p>
+            )}
             {hosts.map(({ host, required, forContext, forShared }) => {
               const current = githubAccounts[host] ?? "";
               const onHost = accounts.filter((a) => a.host === host);
@@ -535,7 +545,7 @@ export function ProjectEditor({
                     {!required && <option value="">{t.githubNone}</option>}
                     {onHost.map((a) => (
                       <option key={a.login} value={a.login}>
-                        {a.login}
+                        {a.state === "success" ? a.login : t.githubUnverified(a.login)}
                       </option>
                     ))}
                     {/* 選んでいたアカウントが gh からログアウトしていても、そのまま見えるようにする */}
@@ -550,6 +560,62 @@ export function ProjectEditor({
               <p role="alert" className="text-sm text-warn">
                 {messages.labels.text(github.error)}
               </p>
+            )}
+            {/* Sacty が gh から読めたアカウントの一覧。ドメインが合うのに選べないときの切り分けに使う */}
+            {github && "accounts" in github && (
+              <details className="text-sm">
+                <summary className="cursor-pointer text-muted-foreground">
+                  {t.githubKnownTitle(accounts.length)}
+                </summary>
+                <div className="mt-2 flex flex-col gap-2">
+                  <p className="text-muted-foreground">{t.githubKnownHint}</p>
+                  {accounts.length === 0 ? (
+                    <p>{t.githubKnownNone}</p>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left">
+                        <thead className="text-muted-foreground">
+                          <tr>
+                            <th className="py-1 pr-4 font-normal">{t.githubKnownHost}</th>
+                            <th className="py-1 pr-4 font-normal">{t.githubKnownLogin}</th>
+                            <th className="py-1 font-normal">{t.githubKnownState}</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {accounts.map((a) => (
+                            <tr key={`${a.host}/${a.login}`} className="border-t border-border">
+                              <td className="py-1 pr-4 font-mono">{a.host}</td>
+                              <td className="py-1 pr-4">
+                                {a.login}
+                                {a.active && (
+                                  <span className="text-muted-foreground">
+                                    {" "}
+                                    ({t.githubStateActive})
+                                  </span>
+                                )}
+                              </td>
+                              <td className="py-1">
+                                {a.state === "success" ? (
+                                  t.githubStateOk
+                                ) : (
+                                  <span className="text-warn">
+                                    {t.githubStateFailed(a.state)}
+                                    {a.error && (
+                                      <span className="block break-all text-xs text-muted-foreground">
+                                        {a.error}
+                                      </span>
+                                    )}
+                                  </span>
+                                )}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              </details>
             )}
           </section>
 

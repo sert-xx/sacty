@@ -2,8 +2,18 @@ import { spawn } from "node:child_process";
 import { message } from "@sacty/core";
 import { MessageError } from "./errors.js";
 
-/** gh にログイン済みの GitHub のアカウント。host は github.com や GitHub Enterprise Server のホスト（PBI-40）。 */
-export type GitHubAccount = { host: string; login: string; active: boolean };
+/**
+ * gh にログイン済みの GitHub のアカウント。host は github.com や GitHub Enterprise Server のホスト（PBI-40）。
+ * state は、gh auth status がトークンを確かめた結果（success・error・timeout）。確かめられなくても（プロキシ越しの
+ * GitHub Enterprise Server に届かないなど）トークンは取り出せるので、一覧からは外さず、error に理由を載せる。
+ */
+export type GitHubAccount = {
+  host: string;
+  login: string;
+  active: boolean;
+  state: string;
+  error?: string;
+};
 
 /**
  * GitHub への認証を、ホストの gh コマンドから得る口（PBI-13）。テストでは偽物に差し替える。
@@ -17,8 +27,9 @@ export interface GitHubAuth {
 }
 
 /**
- * gh に渡す環境変数。gh の設定とキーチェーンを読むのに要るものだけを渡す。
- * GH_TOKEN・GITHUB_TOKEN は渡さない（渡すと、選んだアカウントではなく、そのトークンが使われるため）。
+ * gh に渡す環境変数。gh の設定とキーチェーンを読むのと、GitHub に届くのに要るもの（プロキシ・社内の CA）だけを渡す。
+ * プロキシなどを渡さないと、gh auth status がオンプレの GitHub Enterprise Server に届かず、アカウントが error になる。
+ * GH_TOKEN・GITHUB_TOKEN・GH_ENTERPRISE_TOKEN は渡さない（渡すと、選んだアカウントではなく、そのトークンが使われるため）。
  */
 function ghEnv(): Record<string, string> {
   const env: Record<string, string> = { GH_PROMPT_DISABLED: "1", NO_COLOR: "1" };
@@ -30,6 +41,20 @@ function ghEnv(): Record<string, string> {
     "LANG",
     "GH_CONFIG_DIR",
     "XDG_CONFIG_HOME",
+    // Linux のキーリング（Secret Service）
+    "DBUS_SESSION_BUS_ADDRESS",
+    "XDG_RUNTIME_DIR",
+    // プロキシと CA（gh は Go なので、大文字・小文字の両方を読む）
+    "HTTPS_PROXY",
+    "https_proxy",
+    "HTTP_PROXY",
+    "http_proxy",
+    "ALL_PROXY",
+    "all_proxy",
+    "NO_PROXY",
+    "no_proxy",
+    "SSL_CERT_FILE",
+    "SSL_CERT_DIR",
   ]) {
     const value = process.env[key];
     if (value) env[key] = value;
@@ -57,9 +82,18 @@ export class GhCliAuth implements GitHubAuth {
     return Object.entries(hosts).flatMap(([host, list]) =>
       Array.isArray(list)
         ? list
-            .map((item) => item as { login?: unknown; active?: unknown; state?: unknown })
-            .filter((item) => typeof item.login === "string" && item.state === "success")
-            .map((item) => ({ host, login: String(item.login), active: item.active === true }))
+            .map(
+              (item) =>
+                item as { login?: unknown; active?: unknown; state?: unknown; error?: unknown },
+            )
+            .filter((item) => typeof item.login === "string" && item.login !== "")
+            .map((item) => ({
+              host,
+              login: String(item.login),
+              active: item.active === true,
+              state: typeof item.state === "string" ? item.state : "unknown",
+              ...(typeof item.error === "string" && item.error ? { error: item.error } : {}),
+            }))
         : [],
     );
   }

@@ -27,7 +27,9 @@ Slack の通知は、プロジェクトの設定ではなく「Sacty の設定�
 ## 対象
 
 対象（GitHub の Org またはリポジトリ）は、ホストを含めた `https://` の URL で書きます（例 `https://github.com/acme/app`、
-`https://ghe.example.com/acme`。github.com も GitHub Enterprise Server も同じ形です）。末尾の `/`・`.git` は無視します。
+`https://ghe.example.com/acme`。github.com も GitHub Enterprise Server も同じ形です）。末尾の `/`・`.git`、クエリ（`?…`）・`#…`、全角の文字、貼り付けで紛れ込む
+見えない文字は直して読みます。読めない URL は、入力の下に理由（http・SSH・余分な `/tree/…`・Org とリポジトリの単位の取り違えなど）が出ます。
+読めない対象のホストは、「GitHub アカウント」の欄に出ません。
 
 - 画面でタスクを作るときは、対象の中からリポジトリを選びます（Org の対象は、`gh` で読んだその Org のリポジトリから選びます）。
 - 対象の、取り込むラベルの付いた開いている Issue はタスクとして、レビュー用のラベルの付いた（またはレビューを依頼された）開いている
@@ -57,6 +59,12 @@ gh auth login --hostname ghe.example.com      # GitHub Enterprise Server も、�
 - HTTPS のリポジトリは、そのホストのアカウントのトークンで clone・プッシュします（ホストの git の認証の設定は要りません）。SSH の URL や
   ローカルのパスは、ホストの認証（ssh-agent など）を使います。
 - トークンは使うたびに `gh` から取り出し、作業履歴・ログ・画面・コンテナには出しません。
+- 「GitHub アカウント」の欄の「Sacty が認識している gh のアカウント」を開くと、デーモンが `gh auth status` から読めたアカウントを、ホスト・
+  アカウント・状態の一覧で確かめられます。ホストが一覧に無ければ、デーモンを動かしているユーザーの `gh` にログインしていません
+  （`GH_CONFIG_DIR` などの違いも確かめてください）。
+- 状態が「確認できず」のアカウントは、`gh` がトークンを確かめられなかったもの（一覧に理由が出ます）です。選べますが、社内のプロキシの先にある
+  GitHub Enterprise Server では、デーモンを起動するシェルに `HTTPS_PROXY`・`NO_PROXY`・`SSL_CERT_FILE` などを設定しているか確かめてください。
+  デーモンはこれらを `gh` に渡します。
 
 ## コンテキストリポジトリ
 
