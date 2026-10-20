@@ -2,7 +2,7 @@
 
 - 日付: 2026-10-20（UTC）
 - タスク: PBI-148
-- PR: なし
+- PR: #166
 - ブランチ: feat/pbi-148-image-presence
 - 関係する ADR: なし
 
