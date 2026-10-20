@@ -4,7 +4,7 @@
 - タスク: なし
 - PR: #172
 - ブランチ: ccr-8e541545-dgzcfs
-- 関係する ADR: [利用制限に達したエージェントは、agents の fallback に書いた代わりのエージェントに切り替えて、止めずに続ける](../adr/20261020-1123-agent-fallback-on-usage-limit.md)
+- 関係する ADR: [利用制限に達したエージェントは、agents の fallback に書いた代わりのエージェントに切り替えて、止めずに続ける](../adr/20261020-1123-superseded-agent-fallback-on-usage-limit.md)
 
 ## 目的
 

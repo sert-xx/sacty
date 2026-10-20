@@ -23,7 +23,7 @@
 | `default_agent` | `config/agents.yaml` の `default_agent` のうち、使える最初のもの | 既定の AI。エージェントの名前 |
 | `guardian_agent` | `default_agent` | ゴールガーディアンの AI |
 | `audit_agent` | `guardian_agent`（無ければ `default_agent`） | 完了したタスクの監査の AI（[監査](audit.md)） |
-| `agent_fallback.cooldown_minutes` | `60`（`DEFAULT_FALLBACK_COOLDOWN_MINUTES`） | 利用制限（`usage_limit`）で失敗したエージェントを使わない時間（分。1〜1440 の整数）。その間は `agents` の `fallback` を使う（[エージェントの実行](agent-execution.md#利用制限のときの代わりのエージェント)） |
+| `agent_fallback.cooldown_minutes` | `60`（`DEFAULT_FALLBACK_COOLDOWN_MINUTES`） | 失敗したエージェントを使わない時間（分。1〜1440 の整数）。利用制限（`usage_limit`）ならすべてのタスクで、ほかの失敗ならそのタスクで、その間は `agents` の `fallback` を使う（[エージェントの実行](agent-execution.md#失敗したときの代わりのエージェント)） |
 | `step_agents` | `{}` | 工程（`StepKey`。`deployment` はマージの後の監視の工程の確認）と `orchestrator` ごとの AI。書かなければ `default_agent`、統合レビュー（`integrate`）は `guardian_agent` |
 | `agents` | `{}` | エージェントの既定の上書きと追加（下の「エージェントの既定と上書き」） |
 | `budget.default_per_task_usd` | `1`（`DEFAULT_BUDGET_USD`） | 1タスクあたりの予算（米ドル。正の数） |
@@ -107,7 +107,7 @@
 | `runtime` | `claude-code`・`codex`・`stub`。既定にある名前では省ける。既定に無い名前では必須（`config.agentRuntimeRequired`） |
 | `model` | モデル。`claude-code`・`codex` では、既定と重ねた結果に必須（`config.agentModelRequired`。単価を `available_models` から引くため） |
 | `reasoning_effort` | リーズニングエフォート（任意。`^[a-z][a-z0-9_-]{0,30}$`）。Codex は `model_reasoning_effort`、Claude Code は `--effort` で渡す |
-| `fallback` | 利用制限のときに代わりに使うエージェントの名前（任意。1つか並びで、上から順に試す）。`agents` に無い名前は誤り（`config.agentMissing`）、自分自身も誤り（`config.agentFallbackSelf`）。使えないエージェントは警告して外す（`config.agentFallbackUnavailable`） |
+| `fallback` | 実行が失敗したとき（理由は問わない）に代わりに使うエージェントの名前（任意。1つか並びで、上から順に試す）。`agents` に無い名前は誤り（`config.agentMissing`）、自分自身も誤り（`config.agentFallbackSelf`）。使えないエージェントは警告して外す（`config.agentFallbackUnavailable`） |
 | `price_per_mtok_usd` | `runtime: stub` だけ。単価（書き方は `available_models` と同じ。書かなければ 0） |
 | `stub` | `runtime: stub` の出力（工程・オーケストレーター・ゴールガーディアンなどの既定の出力、トークン数、`fail: usage_limit｜auth` で失敗の再現） |
 

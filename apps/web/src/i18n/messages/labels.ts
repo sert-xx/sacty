@@ -305,8 +305,14 @@ const ja = {
     sessionNotSaved: (why: string) => `。セッションは保存できなかった（${why}）`,
     sessionHandoff: (from: string, id: string, truncated: boolean) =>
       `。前のエージェント（${from}）のセッション（${id}）のやり取りを引き継いだ${truncated ? "（古い部分は省いた）" : ""}`,
-    AgentFellBack: (from: string, to: string, role: string, until: Date) =>
-      `${from} が利用制限に達したので、${to} に切り替えてやり直す（${role}。${until.toLocaleString("ja-JP", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })} まで ${from} を使わない）`,
+    AgentFellBack: (
+      from: string,
+      to: string,
+      role: string,
+      until: Date,
+      reason: "usage_limit" | "auth" | "error",
+    ) =>
+      `${from} が${{ usage_limit: "利用制限に達した", auth: "認証に失敗した", error: "失敗した" }[reason]}ので、${to} に切り替えてやり直す（${role}。${until.toLocaleString("ja-JP", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })} まで${reason === "usage_limit" ? "" : "このタスクでは"} ${from} を使わない）`,
     AiRequestsRetried: (retries: number, seconds: number, statuses: string, gaveUp: boolean) =>
       `ゲートウェイが AI の呼び出しを${retries}回リトライ（${statuses}・計${seconds}秒）${gaveUp ? "・上限であきらめた" : ""}`,
     StepQueued: (step: string) => `${step}を実行待ちにした`,
@@ -691,8 +697,8 @@ const en: LabelMessages = {
     sessionNotSaved: (why) => `. The session could not be saved (${why})`,
     sessionHandoff: (from, id, truncated) =>
       `. Handed over the conversation of the previous agent's (${from}) session (${id})${truncated ? " (older parts omitted)" : ""}`,
-    AgentFellBack: (from, to, role, until) =>
-      `${from} reached its usage limit, so retrying with ${to} (${role}; ${from} is not used until ${until.toLocaleString("en-US", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false })})`,
+    AgentFellBack: (from, to, role, until, reason) =>
+      `${from} ${{ usage_limit: "reached its usage limit", auth: "failed to authenticate", error: "failed" }[reason]}, so retrying with ${to} (${role}; ${from} is not used${reason === "usage_limit" ? "" : " for this task"} until ${until.toLocaleString("en-US", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false })})`,
     AiRequestsRetried: (retries, seconds, statuses, gaveUp) =>
       `The gateway retried the AI call ${retries} time${retries === 1 ? "" : "s"} (${statuses}; ${seconds}s in total)${gaveUp ? " · gave up at the limit" : ""}`,
     StepQueued: (step) => `${step} queued`,

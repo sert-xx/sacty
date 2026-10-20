@@ -1088,20 +1088,23 @@ const OrchestratorSessionUsed = z.object({
 });
 
 /**
- * エージェントが利用制限に達したので、代わりのエージェント（config.yaml の agents の fallback）に切り替えた。止めずに、
- * 同じ実行（工程・オーケストレーター・ゴールガーディアンなど）を代わりのエージェントでやり直す。until までは、利用制限に
- * 達したエージェントを使わない。失敗した実行と費用は、それぞれの失敗の記録（AgentRunFailed など）に残す。
+ * エージェントの実行が失敗したので、代わりのエージェント（config.yaml の agents の fallback）に切り替えた。止めずに、
+ * 同じ実行（工程・オーケストレーター・ゴールガーディアンなど）を代わりのエージェントでやり直す。until までは、失敗した
+ * エージェントを使わない（利用制限ならすべてのタスクで、ほかの失敗ならこのタスクで）。失敗した実行と費用は、それぞれの
+ * 失敗の記録（AgentRunFailed など）に残す。
  */
 const AgentFellBack = z.object({
   type: z.literal("AgentFellBack"),
   payload: z.object({
-    /** 利用制限で失敗した実行。 */
+    /** 失敗した実行。 */
     runId: z.string().min(1),
     /** 実行の役割（工程の名前・orchestrator・guardian など）。 */
     role: z.string().min(1),
     agentId: z.string().min(1),
     fallbackAgentId: z.string().min(1),
-    /** 利用制限に達したエージェントを使わない期限。 */
+    /** 失敗の理由（無ければ usage_limit。利用制限のときだけ切り替えていた版の記録）。 */
+    reason: z.enum(["usage_limit", "auth", "error"]).optional(),
+    /** 失敗したエージェントを使わない期限。 */
     until: z.string(),
   }),
 });

@@ -573,7 +573,13 @@ function describeEventText(event: ActivityEvent, l: LabelMessages): string {
     case "AgentFellBack": {
       const p = event.payload;
       const step = Object.hasOwn(l.step, p.role) ? l.step[p.role as StepKey] : p.role;
-      return e.AgentFellBack(p.agentId, p.fallbackAgentId, step, new Date(p.until));
+      return e.AgentFellBack(
+        p.agentId,
+        p.fallbackAgentId,
+        step,
+        new Date(p.until),
+        p.reason ?? "usage_limit",
+      );
     }
     case "OrchestratorFailed":
       return e.OrchestratorFailed(
