@@ -2397,6 +2397,34 @@ describe("工程の実行と費用", () => {
       activity.close();
     });
 
+    it("切り替えの間に同じタスクの質問に答えても、期限が過ぎても、試し終えたら止める", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      let now = Date.parse("2026-10-20T00:00:00Z");
+      const error: AgentOutcome = { kind: "failed", reason: "error", message: "timed out" };
+      const answer: AgentOutcome = {
+        kind: "completed",
+        output: "答えです",
+        usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 10 },
+      };
+      const { service, executor } = makeService(activity, [error, answer, error], {
+        config: withFallback(60_000),
+        secrets,
+        now: () => now,
+      });
+      const task = service.createTask({ projectId: "default", title: "A" });
+      await service.runNext(task.id); // 元のエージェント：工程が失敗（代わりへ）
+      expect(service.get(task.id)?.task.status).toBe("queued");
+      // 質問（chat）が成功しても、工程の切り替えの記録は消さない
+      await service.askQuestion(task.id, { text: "いまどこ？" }).answered;
+      now += 61_000;
+      await service.runNext(task.id); // 代わり：工程が失敗（元は期限が過ぎたが、試し終えたので止める）
+      expect(executor.calls).toHaveLength(3);
+      expect(executor.calls[2]?.env.ANTHROPIC_API_KEY).toBe("sk-ant-secret");
+      expect(service.get(task.id)?.task.status).toBe("paused");
+      expect(fellBack(service, task.id)).toHaveLength(1);
+      activity.close();
+    });
+
     it("コンテナが止まったことを確かめられなかった実行は、代わりに切り替えずに止める", async () => {
       const activity = new SqliteActivityStore(dbPath);
       const { service, executor } = makeService(
@@ -17112,6 +17140,43 @@ describe("オーケストレーターのセッションの使い回し（PBI-67�
     expect(service.get(task.id)?.task.steps.length).toBeGreaterThan(0);
     // 引き継ぎのために書いたファイルは、実行の後に消す
     expect(readdirSync(join(dir, "workspaces", "_handoff"))).toEqual([]);
+    activity.close();
+  });
+
+  it("代わりのエージェントが正常に終わって答えを読み取れなくても、期限が過ぎた元のエージェントには戻らずに止める", async () => {
+    const codex = agent({
+      id: "codex-key",
+      runtime: "codex",
+      auth: { mode: "api-key", secret: "openai-key" },
+    });
+    const claude = agent({ fallback: ["codex-key"] });
+    const config = (): ConfigResult => {
+      const base = configOf(claude)();
+      return base.ok
+        ? {
+            ok: true,
+            config: {
+              ...base.config,
+              agents: { [claude.id]: claude, [codex.id]: codex },
+              fallbackCooldownMs: 60_000,
+            },
+          }
+        : base;
+    };
+    let now = Date.parse("2026-10-20T00:00:00Z");
+    const { service, executor, activity } = setup([unreadable, unreadable, plan], {
+      config,
+      secrets: { "claude-oauth-token": "oauth-secret", "openai-key": "sk-secret" },
+      now: () => now,
+    });
+    const task = service.createTask({ projectId: "default", title: "A" });
+    await service.runNext(task.id); // Claude Code：工程を読み取れない（代わりへ）
+    expect(service.get(task.id)?.task.status).toBe("queued");
+    now += 61_000;
+    await service.runNext(task.id); // Codex：正常に終わったが、工程を読み取れない
+    expect(executor.calls).toHaveLength(2);
+    expect(executor.calls[1]?.command.slice(0, 2)).toEqual(["codex", "exec"]);
+    expect(service.get(task.id)?.task.status).toBe("paused");
     activity.close();
   });
 

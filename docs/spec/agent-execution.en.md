@@ -107,8 +107,11 @@ Code: `apps/daemon/src/agents/parse.ts` (`ClaudeOutcomeReader`, `CodexOutcomeRea
   exists, `AgentFellBack` (the failed run, the role, the original and fallback agents, the failure reason, and the time limit) is recorded instead of a pause (`TaskPaused`). The failure
   record has put the task back to queued, so the fallback agent runs it again in the next pass. Switching when the run ended normally but its answer could not be read
   applies only to the choice of steps and reading a ticket (an unreadable answer from the final review or the Goal Guardian's judgements is handled as before).
-- The agents tried while switching are remembered per task, separately from the time limit (`fallbackTried`), and an agent already tried is not used again
-  even after its time limit expires. When all have been tried, the task stops. They are forgotten when a run of that task succeeds or a person resumes the task.
+- The agents tried while switching are remembered per task and per role of the process being retried (the step name, `orchestrator`, `final-review`, and so on;
+  the role passed to `fallBack`), separately from the time limit (`fallbackTried`), and an agent already tried is not used again even after its time limit expires.
+  When all have been tried, the task stops. When the run after a switch ends without coming back to `fallBack` (the run succeeded and its answer could be read),
+  they are forgotten when the next run for that role is chosen (`usableAgent`). They are also forgotten when a person resumes the task. Success in another role
+  (such as answering a question) does not forget them. For the Goal Guardian's judgements, they are forgotten when one judgement ends.
 - A run whose container could not be confirmed as stopped (`run.containerNotConfirmed`) stops without switching (the original container may still be running, and
   a fallback starting in the same workspace could duplicate changes or outside operations).
 - Judging change proposals and rework remarks is redone on the spot with the fallback agent; `AgentFellBack` is recorded, and the cost of the failed run is
