@@ -426,20 +426,26 @@ Code: `apps/daemon/src/service.ts` (`warnIfNeeded`, `checkBudget`, `pause`, `res
     and the agent's original files recorded in the Activity's `AgentSessionArchived` (`<run ID>/agent/<relative path>`; files whose size differs from the record or that are not regular
     files are not laid out). Every run that goes through execute is covered: steps, the Orchestrator, the Goal Guardian, answers to earlier questions, and so on.
     Hard links are used on the same file system; otherwise the files are copied.
-  - What is not laid out: other tasks' logs (only this task's location is looked at), files other than the above, the answering run itself, and runs whose end is not recorded
-    (no `finishedAt` in `meta.json`; still running, or the daemon stopped. Secrets found after writing started are redacted again when the file is closed, so
-    a file not yet closed may still contain them).
-  - Status in the list: `available` (readable), `unfinished` (end not recorded), `missing` (the Activity has the run's ID but there is no log),
-    `unreadable` (`meta.json` cannot be read). It also holds logs with the middle omitted due to limits, the number of agent files, reasons for not copying, and files that could not be laid out.
+  - For a running run (a log this daemon has opened and not yet closed), a snapshot of the log at the time the question was received (the snapshot of a running run in
+    [Event log](event-log.en.md#session-logs-files-per-run), with secrets hidden again using the current secrets) is written to `<run ID>/meta.json`, `events.jsonl`, and `stderr.log` (only those with output)
+    (not hard links). The agent's original files do not exist until the run finishes.
+  - What is not laid out: other tasks' logs (only this task's location is looked at), files other than the above, the answering run itself, runs whose end is not recorded
+    and that are not running (no `finishedAt` in `meta.json` and not opened by this daemon; the daemon stopped), and the files themselves of runs whose end is not recorded
+    (secrets found after writing started are redacted again when the file is closed, so a file not yet closed may still contain them).
+  - Status in the list: `available` (readable), `running` (running; has the snapshot time `snapshotAt`), `unfinished` (end not recorded),
+    `missing` (the Activity has the run's ID but there is no log), `unreadable` (`meta.json` cannot be read). It also holds logs with the middle omitted due to limits, the number of agent
+    files, reasons for not copying, and files that could not be laid out.
   - The instructions include, before the ledger, the location and how to read it (search rather than read everything; it cannot be modified; state which run of which step; say so if any run
     has no log, was omitted, or is unreadable), and the list of runs (the step or role name and which attempt, the run ID, the agent, start and end, the result, the log size, truncation;
     up to 8000 characters; if it does not fit, older runs are omitted and the agent is told to read `index.json`). The logs' contents are not included.
+    If there is a running run, its line in the list says when the snapshot was taken (and that the run continues), and the agent is told to read `events.jsonl` from the end when asked about
+    the current state, and to say in the answer as of when it describes the state.
   - If the task's log location (`runs/<task ID>/`) does not exist, there are no runs yet (runs in the Activity are `missing`). If the location cannot be opened
     (no permission, not a directory, and so on, other than ENOENT), cannot be laid out, or no logs were kept, nothing is mounted; the instructions say the logs cannot be read and
     why (the kind of error, for example `ENOTDIR`), and the agent answers from the ledger (a warning goes to the daemon's log).
 - Asking a question does not change the status, steps, or approved content, and does not stop a running task. The cost of answering (even when no answer could be given) counts toward the task's budget.
 
-Code: `apps/daemon/src/service.ts` (`askQuestion`, `answerQuestion`, `stageQuestionLogs`), `apps/daemon/src/question-logs.ts` (`stageQuestionLogs`, `CONTAINER_LOGS_DIR`), `apps/daemon/src/prompts.ts` (`buildChatPrompt`, `CHAT_PROMPT_MAX`, `CHAT_LOGS_IN_PROMPT`), `packages/core/src/events.ts` (`QUESTION_MAX`, `ANSWER_MAX`), `packages/core/src/projection.ts` (`questionBlocked`)
+Code: `apps/daemon/src/service.ts` (`askQuestion`, `answerQuestion`, `stageQuestionLogs`), `apps/daemon/src/question-logs.ts` (`stageQuestionLogs`, `stageRunning`, `CONTAINER_LOGS_DIR`), `apps/daemon/src/session-logs.ts` (`SessionLogStore.snapshot`), `apps/daemon/src/prompts.ts` (`buildChatPrompt`, `CHAT_PROMPT_MAX`, `CHAT_LOGS_IN_PROMPT`), `packages/core/src/events.ts` (`QUESTION_MAX`, `ANSWER_MAX`), `packages/core/src/projection.ts` (`questionBlocked`)
 
 ## PR-review-only tasks
 

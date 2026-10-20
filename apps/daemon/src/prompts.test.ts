@@ -1049,6 +1049,22 @@ describe("オーケストレーターへの質問の指示（PBI-54）", () => {
           truncated: [],
           unreadable: [],
         },
+        {
+          runId: "r6",
+          status: "running",
+          role: "implement",
+          attempt: 2,
+          agentId: "claude",
+          runtime: "claude-code",
+          startedAt: "2026-10-14T00:04:00.000Z",
+          snapshotAt: "2026-10-14T00:09:00.000Z",
+          files: [
+            { path: "r6/meta.json", bytes: 300 },
+            { path: "r6/events.jsonl", bytes: 2048 },
+          ],
+          truncated: ["events"],
+          unreadable: [],
+        },
         { runId: "r4", status: "missing", files: [], truncated: [], unreadable: [] },
         { runId: "r5", status: "unreadable", files: [], truncated: [], unreadable: ["meta.json"] },
       ],
@@ -1064,6 +1080,10 @@ describe("オーケストレーターへの質問の指示（PBI-54）", () => {
     );
     expect(prompt).toContain("読めないファイル：agent/sessions/x.jsonl");
     expect(prompt).toContain("- [実装・1回目] 実行 r3：終わりが記録されていない");
+    expect(prompt).toContain(
+      "- [実装・2回目] 実行 r6 claude（claude-code） 2026-10-14T00:04:00.000Z〜：実行中（2026-10-14T00:09:00.000Z 時点までのログの写し。この後も続く）：meta.json 300B・events.jsonl 2KB。上限で間を省いた：events.jsonl",
+    );
+    expect(prompt).toContain("events.jsonl の末尾から読んでください");
     expect(prompt).toContain("- [（何の実行か不明）] 実行 r4：ログが無い");
     expect(prompt).toContain("実行 r5：ログの記録を読めない");
     // 台帳の前に置く（台帳が長くて切り詰められても残る）
@@ -1093,6 +1113,8 @@ describe("オーケストレーターへの質問の指示（PBI-54）", () => {
       expect(prompt.length).toBeLessThanOrEqual(CHAT_PROMPT_MAX);
       expect(prompt).toContain("run-0999-");
       expect(prompt).not.toContain("run-0000-");
+      // 実行中の実行が無ければ、その読み方は入れない
+      expect(prompt).not.toContain("末尾から読んでください");
       expect(prompt).toMatch(/古い \d+ 件は省きました。\/sacty-logs\/index\.json で読めます/);
       const section = prompt.slice(
         prompt.indexOf("実行の一覧（始めた順）"),

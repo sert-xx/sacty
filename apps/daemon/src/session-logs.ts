@@ -148,6 +148,11 @@ export class StreamRedactor {
     return redacted.slice(0, cut);
   }
 
+  /** まだ渡していない分（伏せた後のもの。次に届いた分とつなげるために持っている）。 */
+  peek(): string {
+    return this.pending;
+  }
+
   flush(): string {
     const rest = redact(this.pending, secretForms(this.secrets()));
     this.pending = "";
@@ -191,6 +196,11 @@ export class HeadTailFile {
   private lastEvicted: number | undefined;
   /** 閉じた後の、省いた大きさ・行数。 */
   dropped = { bytes: 0, lines: 0 };
+
+  /** 末尾の前を省いている（閉じたときに、間に目印が入る）か。 */
+  get truncating(): boolean {
+    return this.evictedBytes > 0;
+  }
 
   constructor(
     readonly path: string,
@@ -285,6 +295,42 @@ export class HeadTailFile {
     }
   }
 
+  /**
+   * 実行中のいまの中身。書いた先頭（ファイル）と、メモリーに持つ分（先頭の書きかけの行・末尾）と、rest（まだ渡していない分）を
+   * つなげる（末尾の前を省いていれば、間に marker を入れ、末尾と rest をつなげたものは行の頭から始める）。ファイルを読めなければ undefined。
+   */
+  snapshot(
+    marker: (droppedBytes: number, droppedLines: number) => string,
+    rest: Buffer,
+  ): Buffer | undefined {
+    let head: Buffer;
+    try {
+      head = readFileSync(this.path);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException | undefined)?.code !== "ENOENT") return undefined;
+      head = Buffer.alloc(0);
+    }
+    if (!this.headFull) return Buffer.concat([head, this.pending, rest]);
+    // 末尾と rest をつなげてから、行の頭を探す（末尾全体が書きかけの行で、その行の終わりが rest にあるときに、
+    // 行の後ろ半分だけを残さない。PR #171 レビュー指摘）
+    let tail = Buffer.concat([...this.tail, rest]);
+    const parts: Buffer[] = [head];
+    if (this.evictedBytes > 0) {
+      let start = 0;
+      if (this.lastEvicted !== NEWLINE) {
+        const i = tail.indexOf(NEWLINE);
+        start = i < 0 ? tail.length : i + 1;
+      }
+      const text = marker(
+        this.evictedBytes + start,
+        this.evictedLines + newlines(tail.subarray(0, start)),
+      );
+      parts.push(Buffer.from(`${this.endsWithNewline ? "" : "\n"}${text}`, "utf8"));
+      tail = tail.subarray(start);
+    }
+    return Buffer.concat([...parts, tail]);
+  }
+
   private toTail(buf: Buffer): void {
     if (buf.length === 0) return;
     this.tail.push(Buffer.from(buf));
@@ -351,6 +397,8 @@ export class SessionLog implements SessionLogSink {
     private readonly secrets: () => readonly string[],
     limits: Record<SessionLogFile, HeadTail>,
     private readonly agentLimit: number = AGENT_FILES_LIMIT,
+    /** 閉じたとき（実行中のログの一覧から外すため）。 */
+    private readonly onClose?: () => void,
   ) {
     const onError = (error: unknown) => this.warn(error);
     this.files = {
@@ -413,28 +461,46 @@ export class SessionLog implements SessionLogSink {
     };
   }
 
+  /**
+   * 実行中のログの、いまの写し。オーケストレーターへの質問で、実行中の工程の様子を読ませるために使う。
+   * 書き始めた後に分かった秘密情報も含めて、いまの秘密情報で伏せ直す（ファイルには、閉じるまで残っていることがあるため）。
+   * 書き終えていない最後の行は入れない。閉じた後・読めなければ undefined。
+   */
+  snapshot(): SessionLogSnapshot | undefined {
+    if (this.closed) return undefined;
+    const markers = this.markers();
+    const forms = secretForms(this.allSecrets());
+    const texts: Partial<Record<SessionLogFile, string>> = {};
+    for (const file of ["events", "stderr"] as const) {
+      const raw = this.files[file].snapshot(
+        markers[file],
+        Buffer.from(this.redactors[file].peek(), "utf8"),
+      );
+      if (!raw) return undefined;
+      // いまの秘密情報で伏せ直してから、最後の改行で切る（書きかけの行・途中までの秘密情報を残さない）
+      const text = redact(raw.toString("utf8"), forms);
+      texts[file] = text.slice(0, text.lastIndexOf("\n") + 1);
+    }
+    return {
+      at: new Date().toISOString(),
+      meta: { ...this.meta },
+      events: texts.events ?? "",
+      stderr: texts.stderr ?? "",
+      truncated: (["events", "stderr"] as const).filter((f) => this.files[f].truncating),
+    };
+  }
+
   /** 実行の結果を残して閉じる（結果の文は、伏せた後のもの）。2回目以降は何もしない。 */
   close(outcome: AgentOutcome): void {
     if (this.closed) return;
     this.closed = true;
+    this.onClose?.();
     for (const file of ["events", "stderr"] as const) {
       this.files[file].write(this.redactors[file].flush());
     }
-    const limits = this.meta.limits;
-    this.files.events.close(
-      (droppedBytes, droppedLines) =>
-        `${JSON.stringify({
-          type: TRUNCATED_EVENT,
-          droppedBytes,
-          droppedLines,
-          headBytes: limits.events.head,
-          tailBytes: limits.events.tail,
-        })}\n`,
-    );
-    this.files.stderr.close(
-      (droppedBytes, droppedLines) =>
-        `[sacty] truncated: ${droppedBytes} bytes (${droppedLines} lines) between the first ${limits.stderr.head} bytes and the last ${limits.stderr.tail} bytes were omitted.\n`,
-    );
+    const markers = this.markers();
+    this.files.events.close(markers.events);
+    this.files.stderr.close(markers.stderr);
     // 書き始めた後に分かった秘密情報（コンテナで更新されたトークンなど）は、書いたファイル全体から伏せ直す
     const all = this.allSecrets();
     if (this.secretsAtFirstWrite !== undefined && all.length > this.secretsAtFirstWrite) {
@@ -468,6 +534,26 @@ export class SessionLog implements SessionLogSink {
     this.writeMeta();
   }
 
+  /** 上限で間を省いたところに入れる目印（省いた大きさ・行数から作る）。 */
+  private markers(): Record<
+    SessionLogFile,
+    (droppedBytes: number, droppedLines: number) => string
+  > {
+    const limits = this.meta.limits;
+    return {
+      events: (droppedBytes, droppedLines) =>
+        `${JSON.stringify({
+          type: TRUNCATED_EVENT,
+          droppedBytes,
+          droppedLines,
+          headBytes: limits.events.head,
+          tailBytes: limits.events.tail,
+        })}\n`,
+      stderr: (droppedBytes, droppedLines) =>
+        `[sacty] truncated: ${droppedBytes} bytes (${droppedLines} lines) between the first ${limits.stderr.head} bytes and the last ${limits.stderr.tail} bytes were omitted.\n`,
+    };
+  }
+
   private write(file: SessionLogFile, text: string): void {
     if (this.closed || !text) return;
     this.secretsAtFirstWrite ??= this.allSecrets().length;
@@ -495,6 +581,18 @@ export class SessionLog implements SessionLogSink {
     );
   }
 }
+
+/** 実行中のログの、いまの写し。秘密情報は、写したときに分かっている分で伏せてある。 */
+export type SessionLogSnapshot = {
+  /** 写した時刻。 */
+  at: string;
+  /** 実行の記録（finishedAt・outcome は無い）。 */
+  meta: SessionLogMeta;
+  events: string;
+  stderr: string;
+  /** 末尾の前を省いているログ。 */
+  truncated: SessionLogFile[];
+};
 
 /** 何も残さないセッションログ（ログの場所を用意できないとき）。 */
 const NOOP_LOG = {
@@ -539,6 +637,9 @@ export function completeUtf8Length(buf: Uint8Array): number {
 
 /** セッションログの置き場所（SACTY_HOME/runs）。 */
 export class SessionLogStore {
+  /** このデーモンで開いていて、まだ閉じていない実行のログ（<タスク>/<実行>）。 */
+  private readonly live = new Map<string, SessionLog>();
+
   constructor(
     private readonly root: string,
     private readonly limits: Record<SessionLogFile, HeadTail> = SESSION_LOG_LIMITS,
@@ -562,13 +663,28 @@ export class SessionLogStore {
       );
       return NOOP_LOG;
     }
-    return new SessionLog(
+    const key = `${info.taskId}/${info.runId}`;
+    const log = new SessionLog(
       join(dir, info.runId),
       { ...info, startedAt: new Date().toISOString(), limits: this.limits },
       secrets,
       this.limits,
       this.agentLimit,
+      () => {
+        if (this.live.get(key) === log) this.live.delete(key);
+      },
     );
+    this.live.set(key, log);
+    return log;
+  }
+
+  /**
+   * 実行中（このデーモンで開いていて、まだ閉じていない）の実行のログの、いまの写し。実行中でなければ
+   * （終わった・デーモンが止まって終わりを記録できなかった）・読めなければ undefined。
+   */
+  snapshot(taskId: string, runId: string): SessionLogSnapshot | undefined {
+    if (!validLogId(taskId) || !validLogId(runId)) return undefined;
+    return this.live.get(`${taskId}/${runId}`)?.snapshot();
   }
 
   /**

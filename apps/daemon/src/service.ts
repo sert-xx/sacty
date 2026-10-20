@@ -7874,7 +7874,8 @@ export class TaskService {
     const logsDir = join(this.deps.workspaceRoot, "_question-logs", chat.runId);
     try {
       const activity = this.deps.activity.forTask(task.id);
-      const logs = this.stageQuestionLogs(task.id, activity, logsDir, chat.runId);
+      // 実行中の工程のログも、いまの写しを読ませる（処理が長引いているときに、いまの様子を答えられるように）
+      const logs = this.stageQuestionLogs(task.id, activity, logsDir, chat.runId, true);
       // オーケストレーターのセッションを複製して答える（作業中のセッションには話しかけない。PBI-67）
       const { outcome, costUsd, estimated, runId } = await this.runGuardian(
         task,
@@ -9049,18 +9050,27 @@ export class TaskService {
 
   /**
    * 質問への答えに読ませる、タスクの各実行のセッションログを dest に並べる（PBI-91）。ログの置き場所が無い・並べられない
-   * ときは、理由を返す（答えは台帳だけで作る）。並べるのは、このタスクの終わった実行の分だけ。
+   * ときは、理由を返す（答えは台帳だけで作る）。並べるのは、このタスクの終わった実行の分と、includeRunning なら
+   * 実行中の実行のいまの写し。
    */
   private stageQuestionLogs(
     taskId: string,
     activity: readonly ActivityEvent[],
     dest: string,
     chatRunId: string,
+    includeRunning = false,
   ): ChatLogs {
     const store = this.deps.sessionLogs;
     if (!store) return { unavailable: "セッションログを残していない" };
     try {
-      return stageQuestionLogs({ store, taskId, activity, dest, exclude: [chatRunId] });
+      return stageQuestionLogs({
+        store,
+        taskId,
+        activity,
+        dest,
+        exclude: [chatRunId],
+        includeRunning,
+      });
     } catch (error) {
       console.warn(
         `[daemon] 質問への答えに、セッションログを用意できませんでした（${taskId}）：`,

@@ -429,20 +429,26 @@ AI は `guardian_agent`（無ければ `default_agent`）。実行ごとに `wor
     作業履歴の `AgentSessionArchived` に記録したエージェントの元のファイル（`<実行 ID>/agent/<相対パス>`。記録と大きさが違う・通常の
     ファイルでないものは並べない）。工程・オーケストレーター・ゴールガーディアン・これまでの質問への答えなど、execute を通る実行すべてが対象。
     同じファイルシステムならハードリンクにし、できなければ写す。
+  - 実行中の実行（このデーモンで開いていて、まだ閉じていないログ）は、質問を受けた時点のログの写し（[イベントログ](event-log.md#セッションログ実行ごとのファイル)の
+    実行中の写し。いまの秘密情報で伏せ直したもの）を `<実行 ID>/meta.json`・`events.jsonl`・`stderr.log`（出力のあるものだけ）に書く
+    （ハードリンクにしない）。エージェントの元のファイルは、実行が終わるまで無い。
   - 並べないもの：ほかのタスクのログ（タスクごとの場所だけを見る）、上のファイル以外、答えの実行そのもの、終わりが記録されていない
-    実行（`meta.json` に `finishedAt` が無い。実行中か、デーモンが止まった。書き始めた後に分かった秘密情報は閉じるときに伏せ直すので、
-    閉じる前のファイルには残っていることがあるため）。
-  - 一覧の状態：`available`（読める）・`unfinished`（終わりが記録されていない）・`missing`（作業履歴に実行の ID があるがログが無い）・
-    `unreadable`（`meta.json` を読めない）。上限で間を省いたログ・エージェントのファイルの件数・写さなかった理由・並べられなかったファイルも持つ。
+    実行のうち実行中でないもの（`meta.json` に `finishedAt` が無く、このデーモンで開いていない。デーモンが止まった）、終わりが記録されて
+    いない実行のファイルそのもの（書き始めた後に分かった秘密情報は閉じるときに伏せ直すので、閉じる前のファイルには残っていることがあるため）。
+  - 一覧の状態：`available`（読める）・`running`（実行中。写した時刻 `snapshotAt` を持つ）・`unfinished`（終わりが記録されていない）・
+    `missing`（作業履歴に実行の ID があるがログが無い）・`unreadable`（`meta.json` を読めない）。上限で間を省いたログ・エージェントのファイルの
+    件数・写さなかった理由・並べられなかったファイルも持つ。
   - 指示には、置き場所と読み方（丸ごと読まずに探して読む・書き換えられない・どの工程のどの実行かを書く・ログの無い・省いた・読めない
     実行があればそう書く）と、実行の一覧（工程か役割の名前と何回目か・実行 ID・エージェント・開始と終了・結果・ログの大きさ・切り詰め。
     8000 文字まで。入りきらなければ古い実行を省き、`index.json` を読ませる）を、台帳の前に入れる。ログの中身は入れない。
+    実行中の実行があれば、一覧のその行に、いつの時点の写しか（この後も続くこと）を書き、いまの様子を聞かれたら `events.jsonl` の末尾から読み、
+    いつの時点の様子かを答えに書くように指示する。
   - タスクのログの場所（`runs/<タスク ID>/`）が無いときは、まだ実行が無いものとする（作業履歴にある実行は `missing`）。場所を開けない
     （権限が無い・ディレクトリでないなど、ENOENT 以外）・並べられない・ログを残していないときは、マウントせず、ログを読めないことと
     理由（エラーの種類。例 `ENOTDIR`）を指示に書いて、台帳から答えさせる（デーモンのログに警告を出す）。
 - 質問しても、状態・工程・承認済みの内容は変えず、実行中でも止めない。答えの費用（答えられなかったときも）はタスクの予算に入る。
 
-コード: `apps/daemon/src/service.ts`（`askQuestion`・`answerQuestion`・`stageQuestionLogs`）、`apps/daemon/src/question-logs.ts`（`stageQuestionLogs`・`CONTAINER_LOGS_DIR`）、`apps/daemon/src/prompts.ts`（`buildChatPrompt`・`CHAT_PROMPT_MAX`・`CHAT_LOGS_IN_PROMPT`）、`packages/core/src/events.ts`（`QUESTION_MAX`・`ANSWER_MAX`）、`packages/core/src/projection.ts`（`questionBlocked`）
+コード: `apps/daemon/src/service.ts`（`askQuestion`・`answerQuestion`・`stageQuestionLogs`）、`apps/daemon/src/question-logs.ts`（`stageQuestionLogs`・`stageRunning`・`CONTAINER_LOGS_DIR`）、`apps/daemon/src/session-logs.ts`（`SessionLogStore.snapshot`）、`apps/daemon/src/prompts.ts`（`buildChatPrompt`・`CHAT_PROMPT_MAX`・`CHAT_LOGS_IN_PROMPT`）、`packages/core/src/events.ts`（`QUESTION_MAX`・`ANSWER_MAX`）、`packages/core/src/projection.ts`（`questionBlocked`）
 
 ## PR のレビューだけのタスク
 

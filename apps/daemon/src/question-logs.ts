@@ -23,8 +23,10 @@ import {
  * 読み取り専用でマウントする（指示には一覧だけを入れ、中身は必要な部分を探して読ませる）。
  * - ほかのタスクのログは並べない（タスクごとの場所だけを見る）。ログ以外のファイルも並べない（決まった名前と、作業履歴に
  *   記録したエージェントのファイルだけ）。
- * - 終わっていない実行（実行中・デーモンが止まって終わりを記録できなかった）は並べない。書き始めた後に分かった秘密情報は
- *   閉じるときに伏せ直すので、閉じる前のファイルには残っていることがあるため。
+ * - 実行中の実行（このデーモンで開いていて、まだ閉じていないログ）は、includeRunning のときだけ、いまの写しを並べる。
+ *   写しは、書き始めた後に分かった秘密情報も含めて、写したときの秘密情報で伏せ直す（閉じる前のファイルには残っていることが
+ *   あるため、ファイルそのものは並べない）。エージェントの元のファイルは、実行が終わるまで無い。
+ * - 終わりが記録されていない実行のうち、実行中でないもの（デーモンが止まって終わりを記録できなかった）は並べない。
  * - 元のファイルは同じ場所の中ならハードリンクにし（写さない）、できなければ写す。
  * - タスクのログの場所が無ければ（まだ実行が無い）実行の無いタスクとし、開けなければ（権限が無い・ディレクトリでないなど）
  *   例外を投げる（呼ぶ側が、ログを読めないことを伝えて台帳から答えさせる）。
@@ -44,10 +46,11 @@ export const QUESTION_LOG_FILES: Record<SessionLogFile | "meta", string> = {
 export const QUESTION_LOG_INDEX = "index.json";
 
 /**
- * 実行の状態。available：読める（files にあるもの）、unfinished：終わりが記録されていない（並べない）、
- * missing：作業履歴にはあるがログが無い、unreadable：ログの記録（meta.json）を読めない。
+ * 実行の状態。available：読める（files にあるもの）、running：実行中（files は写したときまでの分）、
+ * unfinished：終わりが記録されていない（並べない）、missing：作業履歴にはあるがログが無い、
+ * unreadable：ログの記録（meta.json）を読めない。
  */
-export type QuestionLogStatus = "available" | "unfinished" | "missing" | "unreadable";
+export type QuestionLogStatus = "available" | "running" | "unfinished" | "missing" | "unreadable";
 
 export type QuestionLogRun = {
   runId: string;
@@ -61,6 +64,8 @@ export type QuestionLogRun = {
   model?: string;
   startedAt?: string;
   finishedAt?: string;
+  /** 実行中の実行のログを写した時刻（running のとき）。 */
+  snapshotAt?: string;
   /** 実行の結果（completed / failed の理由）。 */
   result?: string;
   /** 並べたファイル（並べた場所からの相対パス）と大きさ。 */
@@ -128,6 +133,8 @@ export function stageQuestionLogs(input: {
   activity: readonly ActivityEvent[];
   dest: string;
   exclude?: readonly string[];
+  /** 実行中の実行のログの、いまの写しも並べるか。 */
+  includeRunning?: boolean;
 }): QuestionLogs {
   const { store, taskId, activity, dest } = input;
   const exclude = new Set(input.exclude ?? []);
@@ -232,6 +239,7 @@ export function stageQuestionLogs(input: {
       };
     }
     if (run.status === "available") stageRun(store, taskId, runId, dest, run, archived?.files);
+    else if (input.includeRunning) stageRunning(store, taskId, runId, dest, run);
     runs.push(run);
   }
   for (const runId of referenced) {
@@ -258,6 +266,42 @@ export function stageQuestionLogs(input: {
     mode: 0o600,
   });
   return { runs };
+}
+
+/**
+ * 実行中の実行のログの、いまの写しを dest/<実行>/ に書く。このデーモンで開いていない（デーモンが止まって
+ * 終わりを記録できなかった）なら、何もしない（unfinished のまま）。
+ */
+function stageRunning(
+  store: SessionLogStore,
+  taskId: string,
+  runId: string,
+  dest: string,
+  run: QuestionLogRun,
+): void {
+  const snapshot = store.snapshot(taskId, runId);
+  if (!snapshot) return;
+  run.status = "running";
+  run.snapshotAt = snapshot.at;
+  run.truncated = snapshot.truncated;
+  const runDir = join(dest, runId);
+  const contents: [keyof typeof QUESTION_LOG_FILES, string][] = [
+    ["meta", `${JSON.stringify(snapshot.meta, null, 2)}\n`],
+    ["events", snapshot.events],
+    ["stderr", snapshot.stderr],
+  ];
+  for (const [file, text] of contents) {
+    const rel = QUESTION_LOG_FILES[file];
+    // まだ出力の無いログは置かない（終わった実行で、ファイルが無いのと同じ）
+    if (file !== "meta" && text.length === 0) continue;
+    try {
+      mkdirSync(runDir, { recursive: true, mode: 0o700 });
+      writeFileSync(join(runDir, rel), text, { mode: 0o600 });
+      run.files.push({ path: `${runId}/${rel}`, bytes: Buffer.byteLength(text) });
+    } catch {
+      run.unreadable.push(rel);
+    }
+  }
 }
 
 /** 終わった実行のログとエージェントの元のファイルを、dest/<実行>/ に並べる。 */
