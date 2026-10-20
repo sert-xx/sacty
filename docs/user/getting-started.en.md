@@ -67,7 +67,7 @@ Note: once you register a target, sacty may push branches to the target reposito
 
 ## Updating sacty
 
-Every day, sacty checks `main` of the sacty repository on GitHub, and if it has changes that the running version does not, every screen shows
+Every day, sacty checks the latest release of the sacty repository on GitHub, and if a version newer than the running one has been released, every screen shows
 "A new version of Sacty is available" at the top. Update when you see it, to get the recommended models ([Default agents](config.en.md#default-agents)) and fixes.
 It also appears on screens that are already open, without reloading (they fetch it again every 30 seconds).
 
@@ -77,14 +77,18 @@ First, stop the running `sacty up` with Ctrl+C and wait for it to exit. Then run
 git pull origin main
 npm install
 npm run build
+npx sacty image build
 npx sacty up
 ```
 
 `npm run build` deletes and recreates the web UI build output (`apps/web/.next`). Running it while `sacty up` is running can break the web UI,
 so always stop it first.
+`npx sacty image build` rebuilds the agent image. The default image name (`sacty-agent:<version>`) follows the version, so without rebuilding, runs stop
+because the image is missing. Even if you set your own name in `image` of `config.yaml`, rebuilding is the safe choice, because a new version may raise the
+agent CLI versions.
 
-- "See the changes" in the notice opens the changes on GitHub.
-- When it cannot check (no internet access, local-only commits, and so on), nothing is shown.
+- "See the release notes" in the notice opens the release description on GitHub.
+- When it cannot check (no internet access, no release yet, and so on), nothing is shown. A version under development (newer than the latest release) shows nothing either.
 - Where the internet is not reachable, write `update_check: false` in `config.yaml` to stop the check ([config.yaml settings](config.en.md)).
 - When the default models change, you may see a warning about a model with no price in `available_models`. Add the price of that model.
 

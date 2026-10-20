@@ -36,7 +36,7 @@
 | `gateway.platforms` | `{}` | 組織内 PF。名前は `^[a-z0-9][a-z0-9-]*$`（[ゲートウェイ](gateway.md)） |
 | `gateway.mcp_servers` | `{}` | ホストで動かす MCP サーバー。名前は `^[A-Za-z0-9_-]+$`（同上） |
 | `web.auth` | `true` | 画面の認証。`false` で OFF（真偽だけ。[デーモンの起動と終了](daemon-lifecycle.md#画面の認証)） |
-| `update_check` | `true` | sacty の最新版（GitHub の `main`）を確かめて画面に知らせる。`false` なら GitHub に問い合わせない（真偽だけ。[デーモンの起動と終了](daemon-lifecycle.md#最新版の確かめ)） |
+| `update_check` | `true` | sacty の最新版（GitHub Releases の最新のリリース）を確かめて画面に知らせる。`false` なら GitHub に問い合わせない（真偽だけ。[デーモンの起動と終了](daemon-lifecycle.md#最新版の確かめ)） |
 
 ほかの検査：`default_agent`・`guardian_agent`・`audit_agent`・`step_agents` の値が、エージェントに無いときは誤り（`config.agentMissing`）、
 使えないエージェント（下の「使えるエージェント」）のときも誤り（`config.agentUnavailable`。使えない理由の文言を `reason` に載せる。設定が誤りのときは画面の警告を出さないため）。

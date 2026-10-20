@@ -16,8 +16,11 @@ const { liveVersion } = await import("@/lib/live-server");
  * 開いている画面で、新しい版の知らせが現れる・消えるのを、リロードせずに反映する（PR #147 レビュー指摘）。
  */
 
-const COMPARE = "https://github.com/sert-xx/sacty/compare/0123abc...main";
-const behind = (n: number): UpdateData => ({ update: { behindBy: n, compareUrl: COMPARE } });
+const RELEASE = "https://github.com/sert-xx/sacty/releases/tag/v1.1.0";
+/** 新しい版 1.n.0 の知らせ（動いているのは 1.0.0）。 */
+const behind = (n: number): UpdateData => ({
+  update: { latest: `1.${n}.0`, current: "1.0.0", releaseUrl: RELEASE },
+});
 const none: UpdateData = { update: null };
 
 // 画面のサーバーの代わり。取り直しの問い合わせに、server の今のデータを返す（版が同じなら中身を送らない）
@@ -77,7 +80,7 @@ describe("新しい版の知らせの取り直し", () => {
     expect(text()).toBe("");
     server = behind(3);
     await wait(UPDATE_LIVE_INTERVAL_MS);
-    expect(text()).toContain("変更が 3 件あります");
+    expect(text()).toContain("Sacty 1.3.0 がリリースされました");
     expect(requests.every((url) => url === UPDATE_LIVE_URL)).toBe(true);
     server = none;
     await wait(UPDATE_LIVE_INTERVAL_MS);
@@ -86,7 +89,7 @@ describe("新しい版の知らせの取り直し", () => {
 
   it("取り直しは決まった間隔だけ（境界：間隔の1ミリ秒前には問い合わせない）", async () => {
     render(h(UpdateNoticeLive, { initial: behind(1) }));
-    expect(text()).toContain("変更が 1 件あります");
+    expect(text()).toContain("Sacty 1.1.0 がリリースされました");
     const first = requests.length;
     await wait(UPDATE_LIVE_INTERVAL_MS - 1);
     expect(requests.length).toBe(first);
@@ -98,6 +101,6 @@ describe("新しい版の知らせの取り直し", () => {
     render(h(UpdateNoticeLive, { initial: behind(2) }));
     server = "down";
     await wait(UPDATE_LIVE_INTERVAL_MS);
-    expect(text()).toContain("変更が 2 件あります");
+    expect(text()).toContain("Sacty 1.2.0 がリリースされました");
   });
 });

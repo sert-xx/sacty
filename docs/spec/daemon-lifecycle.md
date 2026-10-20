@@ -5,7 +5,7 @@
 `sacty up` が、デーモン（`apps/daemon`）と画面（`apps/web` の Next.js）を子プロセスとして起動し、どちらかが終われば両方を止める。
 デーモンは、同じ `SACTY_HOME` で1つしか動かない（OS のファイルロックで判定する）。
 
-関係する ADR: [画面は、起動ごとの秘密で入ったブラウザだけが使える](../adr/20261018-0414-web-session-auth.md)、[画面の認証を設定で OFF にできるようにする](../adr/20261018-0929-web-auth-off-setting.md)、[sacty の最新版を、手元のコミットと GitHub の main で比べて知らせる](../adr/20261018-1213-update-check-against-main.md)
+関係する ADR: [画面は、起動ごとの秘密で入ったブラウザだけが使える](../adr/20261018-0414-web-session-auth.md)、[画面の認証を設定で OFF にできるようにする](../adr/20261018-0929-web-auth-off-setting.md)、[sacty の最新版を、動いている版と GitHub Releases の最新のリリースで比べて知らせる](../adr/20261020-0008-update-check-against-releases.md)
 
 ## sacty up
 
@@ -83,29 +83,32 @@
 
 ## 最新版の確かめ
 
-デーモンは、動いている sacty のコミットと、GitHub の sacty のリポジトリ（`SACTY_REPOSITORY` = `sert-xx/sacty`）の `main` を比べ、
-`main` に手元に無いコミットがあれば、新しい版があると画面に知らせる（PBI-135）。リリースの運用を始めたら、GitHub Releases に切り替える。
+デーモンは、動いている sacty の版（`apps/daemon/package.json` の `version`）と、GitHub の sacty のリポジトリ（`SACTY_REPOSITORY` = `sert-xx/sacty`）の
+最新のリリース（GitHub Releases の `latest`。タグ `v<版>`）を比べ、最新のリリースの版が新しければ、新しい版があると画面に知らせる（PBI-135・PBI-147）。
+1.0.0 より前は、手元のコミットと `main` を比べていた。
 
-- 手元のコミットは、sacty のリポジトリ（`apps/daemon` の3つ上のディレクトリ）の `git rev-parse HEAD`。動いているコードのコミットなので、
-  起動してから最初の確かめのときに1回だけ取る（`git pull` しても、起動し直すまでは前のコミットと比べる）。40 桁の 16 進でなければ確かめない。
-- GitHub の比較の API（`GET /repos/sert-xx/sacty/compare/<手元>...main`）の `ahead_by`（`main` にあって手元に無いコミットの数。向きは
-  base の手元から見た head の `main`）が 1 以上なら、新しい版がある（`status` が `ahead` か `diverged`）。`identical`・`behind`（手元が
-  進んでいるだけ）なら知らせない。認証は付けない（公開のリポジトリ。1時間に 60 回の上限より十分少ない）。
+- 動いている版は、`apps/daemon/package.json` の `version`（src・dist のどちらから動いても同じファイル）。動いているコードの版なので、起動してから
+  最初の確かめのときに1回だけ読む（更新しても、起動し直すまでは前の版と比べる）。semver の `MAJOR.MINOR.PATCH`（先頭の `v` は任意。先行ゼロ・
+  プレリリース・ビルドは認めない）でなければ確かめない。
+- GitHub の最新のリリースの API（`GET /repos/sert-xx/sacty/releases/latest`）の `tag_name` を同じ形で読み、数で比べる（`1.10.0` は `1.9.0` より新しい）。
+  最新のリリースの版が動いている版より大きければ新しい版がある。同じ・小さい（手元が開発中の新しい版）なら知らせない。下書き・プレリリースは使わない
+  （`latest` は返さないが、返っても使わない）。認証は付けない（公開のリポジトリ。1時間に 60 回の上限より十分少ない）。
 - 起動のときと、それから1時間ごとに、前に問い合わせてから1日（`UPDATE_CHECK_INTERVAL_MS`）たっていれば問い合わせる。問い合わせる前に
   時刻を記録するので、重ねて問い合わせない。失敗しても次の問い合わせは1日後。
-- 確かめられない（git の作業ツリーでない・GitHub が知らないコミット・ネットワークに届かない・レート制限・応答の形が違う・10 秒で
+- 確かめられない（版を読めない・リリースが1つも無い（404）・ネットワークに届かない・レート制限・応答の形が違う・タグが版の形でない・10 秒で
   応答しない）ときは、黙って知らせを消す。誤りや警告にしない。
-- `config.yaml` の `update_check: false` なら問い合わせず（手元のコミットも取らない）、知らせも出さない（設定を読めなければ ON）。
-  使うたびに読む。OFF を見たら（確かめのときも、状態を返すときも）、知らせと問い合わせの時刻を消し、世代を進める。手元のコミットを待つ間や
+- `config.yaml` の `update_check: false` なら問い合わせず（動いている版も読まない）、知らせも出さない（設定を読めなければ ON）。
+  使うたびに読む。OFF を見たら（確かめのときも、状態を返すときも）、知らせと問い合わせの時刻を消し、世代を進める。版を待つ間や
   問い合わせの間に OFF にされたら、問い合わせない・結果を残さない（その間に ON に戻っていても）。ON に戻すと、1時間以内に確かめる。
-- 知らせは `GET /api/status` の `update`（`behindBy`・`compareUrl`）。設定に誤りがあっても載せる。画面は、どの画面でも中身の上に、
-  遅れている数・差分のページへのリンク（`https://github.com/` で始まるものだけ）・更新のコマンドを出す。共通の外枠は画面の移動で描き直されない
+- 知らせは `GET /api/status` の `update`（`latest`・`current`・`releaseUrl`）。設定に誤りがあっても載せる。画面は、どの画面でも中身の上に、
+  最新の版と動いている版・リリースのページへのリンク（`https://github.com/` で始まるものだけ）・更新のコマンドを出す。共通の外枠は画面の移動で描き直されない
   ので、画面は `/live/update` から 30 秒ごと（`UPDATE_LIVE_INTERVAL_MS`）に取り直し、知らせが現れる・消えるのをリロードせずに反映する。
-- 更新のコマンドは、動いている `sacty up` を止めてから実行する順に示す（`npm run build` が画面の `.next` を消して作り直すため）。
+- 更新のコマンドは、動いている `sacty up` を止めてから実行する順に示す（`npm run build` が画面の `.next` を消して作り直すため）。既定のイメージの名前は
+  版に連れて変わるので、`npx sacty image build` を含める。
 
-コード: `apps/daemon/src/update-check.ts`（`UpdateChecker`・`gitHeadCommit`・`startUpdateCheck`・`SACTY_REPOSITORY`・`UPDATE_CHECK_INTERVAL_MS`）、
+コード: `apps/daemon/src/update-check.ts`（`UpdateChecker`・`packageVersion`・`parseVersion`・`compareVersions`・`startUpdateCheck`・`SACTY_REPOSITORY`・`UPDATE_CHECK_INTERVAL_MS`）、
 `apps/daemon/src/service.ts`（`TaskService.status`）、`apps/web/src/components/shell/update-notice.tsx`（`UpdateNotice`）、
-`apps/web/src/components/shell/update-notice-live.tsx`（`UpdateNoticeLive`・`UPDATE_LIVE_INTERVAL_MS`）、`apps/web/src/components/shell/update-notice-view.tsx`（`UpdateNoticeView`・`safeCompareUrl`・`UPDATE_COMMANDS`）
+`apps/web/src/components/shell/update-notice-live.tsx`（`UpdateNoticeLive`・`UPDATE_LIVE_INTERVAL_MS`）、`apps/web/src/components/shell/update-notice-view.tsx`（`UpdateNoticeView`・`safeGitHubUrl`・`UPDATE_COMMANDS`）
 
 ## 二重の起動
 

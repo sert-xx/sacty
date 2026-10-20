@@ -1,10 +1,10 @@
 # sacty の最新版を、手元のコミットと GitHub の main で比べて知らせる
 
 - 日時: 2026-10-18 12:13 UTC
-- ステータス: 採用
+- ステータス: 置き換え済み（superseded）
 - 関係する PR・タスク: PBI-135
 - 置き換え元: なし
-- 置き換え先: なし
+- 置き換え先: [sacty の最新版を、動いている版と GitHub Releases の最新のリリースで比べて知らせる](20261020-0008-update-check-against-releases.md)
 
 ## 背景
 

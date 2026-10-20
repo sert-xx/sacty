@@ -36,7 +36,7 @@ import { SessionLogStore } from "./session-logs.js";
 import { SqliteSettingsStore } from "./settings.js";
 import { cleanupSharedComposeRuns, GitSharedComposeFetcher } from "./shared-compose.js";
 import { JiraTickets } from "./tickets.js";
-import { gitHeadCommit, startUpdateCheck, UpdateChecker } from "./update-check.js";
+import { packageVersion, startUpdateCheck, UpdateChecker } from "./update-check.js";
 import { Worker } from "./worker.js";
 
 const home = resolveHome();
@@ -147,9 +147,9 @@ const gateway = new AiGateway({
 await gateway.listen();
 // 監査の画面をモックで確かめるとき（SACTY_AUDIT_MOCK=1）は、実際の監査を動かさない（PBI-124・PBI-125）
 const auditMock = process.env.SACTY_AUDIT_MOCK === "1";
-// sacty の最新版の確かめ（PBI-135）。設定を読めなければ確かめる（既定は ON）
+// sacty の最新版の確かめ（PBI-135・PBI-147）。GitHub Releases の最新の版と比べる。設定を読めなければ確かめる（既定は ON）
 const updates = new UpdateChecker({
-  localCommit: () => gitHeadCommit(),
+  localVersion: () => packageVersion(),
   enabled: () => {
     const c = config();
     return c.ok ? c.config.updateCheck : true;
@@ -207,7 +207,7 @@ service.resumeAuditFixTasks();
 service.syncMemories();
 // 残す日数を過ぎたメモリーを、定期的に消す（PBI-127）
 const stopMemoryCleanup = startMemoryCleanup(() => service.cleanupMemories());
-// sacty の最新版を、起動のときと1日ごとに確かめる（PBI-135）
+// sacty の最新版を、起動のときと1日ごとに確かめる（PBI-135・PBI-147）
 const stopUpdateCheck = startUpdateCheck(updates);
 service.queueWaitingSteps();
 
