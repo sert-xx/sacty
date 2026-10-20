@@ -369,6 +369,23 @@ export const AuditTarget = z.discriminatedUnion("kind", [
 ]);
 export type AuditTarget = z.infer<typeof AuditTarget>;
 
+/** 採用のときに人が添える手入れの長さの上限（文字数）。 */
+export const AUDIT_ADOPT_NOTE_MAX = 4000;
+
+/**
+ * 採用のときに人が添える手入れの種類（PBI-151）。`supplement` は監査の改善案に情報を足す（改善案はそのまま残す）、
+ * `replace` は改善案を人の案に差し替える（原因は認めるが、直し方は人が決める）。どちらも改修のタスクの説明に入れる。
+ */
+export const AUDIT_ADOPT_NOTE_KINDS = ["supplement", "replace"] as const;
+export type AuditAdoptNoteKind = (typeof AUDIT_ADOPT_NOTE_KINDS)[number];
+
+/** 採用に添えた人の手入れ（PBI-151）。 */
+export const AuditAdoptNote = z.object({
+  kind: z.enum(AUDIT_ADOPT_NOTE_KINDS),
+  text: z.string().trim().min(1).max(AUDIT_ADOPT_NOTE_MAX),
+});
+export type AuditAdoptNote = z.infer<typeof AuditAdoptNote>;
+
 /** 監査の改修の提案から作ったタスクの、元の提案（PBI-125）。 */
 const AuditFixLink = z.object({ taskId: z.string().min(1), proposalId: z.string().min(1) });
 
@@ -2083,7 +2100,7 @@ const AuditCapRaised = z.object({
 
 /**
  * 人が改修の提案を採用した。fixTaskId は作った改修のタスク（sacty の既定のコンテキストが宛先なら作らない。
- * ADR 20261017-1145）。
+ * ADR 20261017-1145）。note は、採用に添えた人の手入れ（PBI-151。ADR 20261020-1432）。
  */
 const AuditProposalAdopted = z.object({
   type: z.literal("AuditProposalAdopted"),
@@ -2091,6 +2108,8 @@ const AuditProposalAdopted = z.object({
     proposalId: z.string().min(1),
     target: AuditTarget,
     fixTaskId: z.string().min(1).optional(),
+    /** 人が添えた手入れ（改善案への補足か、人の案への差し替え。PBI-151）。 */
+    note: AuditAdoptNote.optional(),
   }),
 });
 

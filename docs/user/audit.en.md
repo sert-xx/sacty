@@ -45,7 +45,7 @@ To resume an audit paused by its budget, enter a new cap (more than the amount u
 
 ## Adopting and rejecting proposals
 
-A proposal that needs a decision shows a target choice and "Adopt" and "Reject".
+A proposal that needs a decision shows a target choice and "Adopt", "Reject", and "Edit the proposed fix".
 
 - Choose the target from the target repository, a context (the project layer or an upper layer), or the sacty default
   context (the goal guardian's prompts and the default skills). The target the audit chose is selected first.
@@ -56,6 +56,20 @@ A proposal that needs a decision shows a target choice and "Adopt" and "Reject".
 - "Reject" opens a reason field. The reason is required. It is passed to later audits so they do not repeat the same
   proposal.
 - A decided proposal cannot be changed.
+
+### Adopting with an edit to the proposed fix
+
+When the cause is right but you do not want the proposed fix as it is, press "Edit the proposed fix", choose a kind, write
+the text, and then adopt (adopting without it uses the audit's proposal as it is).
+
+| Kind | What happens |
+| --- | --- |
+| Supplement (keep the proposal) | Your text is added after the audit's proposal, under "人が足した補足：" |
+| Replace (fix it your way) | Your text becomes the instruction for the fix, and the audit's proposal is kept after it |
+
+- Either way, it goes into the fix task's details (the cause's detail is attached as before).
+- The text is limited to 4,000 characters. It stays on the audit page and in reports with its kind.
+- It is also passed to later audits, so they do not repeat proposals that need the same edit.
 
 ## The audit page
 

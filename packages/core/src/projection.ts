@@ -1,6 +1,7 @@
 import { budgetState, chargeBudget } from "./cost.js";
 import type {
   ActivityEvent,
+  AuditAdoptNote,
   AuditMemoryRecord,
   AuditTarget,
   ExportPlan,
@@ -237,7 +238,14 @@ export type TaskAuditFinding = Omit<
   at: string;
   proposals: (PayloadOf<"AuditDeepDived">["findings"][number]["proposals"][number] & {
     decision?:
-      | { kind: "adopted"; at: string; target: AuditTarget; fixTaskId?: string }
+      | {
+          kind: "adopted";
+          at: string;
+          target: AuditTarget;
+          fixTaskId?: string;
+          /** 採用に添えた人の手入れ（PBI-151）。 */
+          note?: AuditAdoptNote;
+        }
       | { kind: "rejected"; at: string; reason: string };
   })[];
 };
@@ -2007,6 +2015,7 @@ function applyAuditEvent(task: Task, event: ActivityEvent): void {
             at: event.at,
             target: event.payload.target,
             ...(event.payload.fixTaskId ? { fixTaskId: event.payload.fixTaskId } : {}),
+            ...(event.payload.note ? { note: event.payload.note } : {}),
           }
         : { kind: "rejected" as const, at: event.at, reason: event.payload.reason };
     task.audit = {

@@ -1,6 +1,8 @@
 "use server";
 
 import {
+  AUDIT_ADOPT_NOTE_KINDS,
+  type AuditAdoptNoteKind,
   AuditTarget,
   CreateTaskInput,
   type ProjectDefinitionInput,
@@ -681,28 +683,48 @@ export async function rerunTaskAction(
   redirect(`/tasks/${encodeURIComponent(result.task.id)}`);
 }
 
-export type AuditProposalState = { message?: string; reason?: string };
+export type AuditProposalState = {
+  message?: string;
+  reason?: string;
+  /** 採用に添える手入れ（入力をやり直すときに残す。PBI-151）。 */
+  note?: string;
+  noteKind?: AuditAdoptNoteKind;
+};
 
-/** 監査の改修の提案を採用する（PBI-124）。宛先は選んだ候補（JSON）。 */
+/**
+ * 監査の改修の提案を採用する（PBI-124）。宛先は選んだ候補（JSON）。手入れ（`noteKind` と `note`）を書いていれば
+ * 添える。原因は認めつつ、改善案に補足する・人の案に差し替えるときに使う（PBI-151）。
+ */
 export async function adoptAuditProposalAction(
   _prev: AuditProposalState,
   formData: FormData,
 ): Promise<AuditProposalState> {
   const a = (await getMessages()).common.action;
   const proposalId = String(formData.get("proposalId") ?? "");
+  const text = String(formData.get("note") ?? "").trim();
+  const kindValue = String(formData.get("noteKind") ?? "");
+  const noteKind = AUDIT_ADOPT_NOTE_KINDS.find((k) => k === kindValue);
+  const values = { ...(text ? { note: text } : {}), ...(noteKind ? { noteKind } : {}) };
   let target: AuditTarget;
   try {
     target = AuditTarget.parse(JSON.parse(String(formData.get("target") ?? "")));
   } catch {
-    return { message: a.invalidTarget };
+    return { message: a.invalidTarget, ...values };
   }
+  // 種類だけ選んで中身が空、中身を書いて種類が無いときは、どちらを採用するかが決まらないので断る
+  if (text && !noteKind) return { message: a.invalidAdoptNote, ...values };
+  if (!text && kindValue) return { message: a.adoptNoteRequired, ...values };
   let result: Awaited<ReturnType<typeof adoptAuditProposal>>;
   try {
-    result = await adoptAuditProposal(proposalId, target);
+    result = await adoptAuditProposal(
+      proposalId,
+      target,
+      text && noteKind ? { kind: noteKind, text } : undefined,
+    );
   } catch {
-    return { message: a.daemonDown };
+    return { message: a.daemonDown, ...values };
   }
-  if (!result.ok) return { message: result.message };
+  if (!result.ok) return { message: result.message, ...values };
   refresh();
   return {};
 }

@@ -47,8 +47,48 @@ describe("提案の採用（PBI-124）", () => {
         form({ proposalId: "t1:c1:0", target: JSON.stringify(target) }),
       ),
     ).toEqual({});
-    expect(adoptAuditProposal).toHaveBeenCalledWith("t1:c1:0", target);
+    expect(adoptAuditProposal).toHaveBeenCalledWith("t1:c1:0", target, undefined);
     expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("手入れを書いていれば、種類と中身を添えて渡す（PBI-151）", async () => {
+    adoptAuditProposal.mockResolvedValue({ ok: true });
+    const target = { kind: "sacty" };
+    expect(
+      await adoptAuditProposalAction(
+        {},
+        form({
+          proposalId: "t1:c1:0",
+          target: JSON.stringify(target),
+          noteKind: "replace",
+          note: "  既にある設定に足す  ",
+        }),
+      ),
+    ).toEqual({});
+    expect(adoptAuditProposal).toHaveBeenCalledWith("t1:c1:0", target, {
+      kind: "replace",
+      text: "既にある設定に足す",
+    });
+  });
+
+  it("手入れの種類と中身がそろっていなければ、デーモンへ渡さずに理由と入力を返す（PBI-151）", async () => {
+    const target = JSON.stringify({ kind: "sacty" });
+    expect(
+      await adoptAuditProposalAction({}, form({ proposalId: "x", target, note: "足したい" })),
+    ).toEqual({
+      message: "手入れの種類（補足・差し替え）を選んでください。",
+      note: "足したい",
+    });
+    expect(
+      await adoptAuditProposalAction(
+        {},
+        form({ proposalId: "x", target, noteKind: "supplement", note: "   " }),
+      ),
+    ).toEqual({
+      message: "手入れの中身を入力してください。手を入れないなら、種類を選ばないでください。",
+      noteKind: "supplement",
+    });
+    expect(adoptAuditProposal).not.toHaveBeenCalled();
   });
 
   it("宛先が JSON でない・形が違えば、デーモンへ渡さずに理由を返す", async () => {

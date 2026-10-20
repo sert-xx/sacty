@@ -41,6 +41,9 @@ const ja = {
     resumeFailed: "再開できませんでした。デーモンが動いているか確認してください。",
     invalidStep: "工程が不正です。",
     invalidTarget: "宛先が不正です。",
+    invalidAdoptNote: "手入れの種類（補足・差し替え）を選んでください。",
+    adoptNoteRequired:
+      "手入れの中身を入力してください。手を入れないなら、種類を選ばないでください。",
     invalidSubmission: "提出回が不正です。画面を更新してください。",
     unreadableInput: "入力を読み取れませんでした。画面を更新してください。",
     chooseFile: "インポートするファイルを選んでください。",
@@ -85,6 +88,8 @@ const en: CommonMessages = {
     resumeFailed: "Could not resume. Check that the daemon is running.",
     invalidStep: "Invalid step.",
     invalidTarget: "Invalid target.",
+    invalidAdoptNote: "Choose the kind of note (supplement or replacement).",
+    adoptNoteRequired: "Enter the note. To adopt the proposal as it is, choose no kind.",
     invalidSubmission: "Invalid submission. Reload the page.",
     unreadableInput: "Could not read the input. Reload the page.",
     chooseFile: "Choose a file to import.",

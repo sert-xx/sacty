@@ -300,8 +300,17 @@ describe("モックの監査（PBI-124）", () => {
     const target = proposal?.targetCandidates.find(
       (c) => c.kind === "context" && c.depth === 1,
     ) as AuditTarget;
-    const adopted = mock.adopt(id, { target });
-    expect(adopted.decision).toMatchObject({ kind: "adopted", target, task: { mock: true } });
+    const adopted = mock.adopt(id, {
+      target,
+      note: { kind: "supplement", text: "既にある設定に足す" },
+    });
+    // 採用に添えた手入れも、モックの判断に残す（PBI-151）
+    expect(adopted.decision).toMatchObject({
+      kind: "adopted",
+      target,
+      task: { mock: true },
+      note: { kind: "supplement", text: "既にある設定に足す" },
+    });
     expect(mock.projectAudits("p1")?.causes.find((c) => c.id === "boundary")?.status).toBe(
       "adopted",
     );
@@ -317,6 +326,13 @@ describe("モックの監査（PBI-124）", () => {
     ).toThrow("宛先の候補にありません");
     expect(() => mock.adopt(id, { target: { kind: "context", repo: "x", depth: -1 } })).toThrow();
     expect(() => mock.adopt(id, { target: { kind: "sacty" }, extra: 1 })).toThrow();
+    // 手入れは、種類が決まったものだけ・中身が空白だけは不可（PBI-151）
+    expect(() =>
+      mock.adopt(id, { target: { kind: "sacty" }, note: { kind: "other", text: "x" } }),
+    ).toThrow();
+    expect(() =>
+      mock.adopt(id, { target: { kind: "sacty" }, note: { kind: "supplement", text: "  " } }),
+    ).toThrow();
     expect(() => mock.adopt("missing", { target: { kind: "sacty" } })).toThrow(
       "その提案はありません",
     );

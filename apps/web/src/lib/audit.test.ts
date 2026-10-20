@@ -144,6 +144,22 @@ describe("監査のレポート（PBI-124）", () => {
         decision: { kind: "rejected", at: "2026-10-06T00:00:00.000Z", reason: "変えない" },
       },
       {
+        id: "x3",
+        causeId: "c1",
+        taskId: "in",
+        taskTitle: "期間内 | 表",
+        title: "提案 3",
+        body: "本文 3",
+        target: { kind: "sacty" },
+        targetCandidates: [],
+        decision: {
+          kind: "adopted",
+          at: "2026-10-06T00:00:00.000Z",
+          target: { kind: "sacty" },
+          note: { kind: "supplement", text: "既にある設定に足す" },
+        },
+      },
+      {
         id: "x2",
         causeId: "c2",
         taskId: "out",
@@ -168,7 +184,9 @@ describe("監査のレポート（PBI-124）", () => {
     expect(md).not.toContain("期間外だけの原因");
     expect(md).not.toContain("期間外の提案");
     expect(md).toContain("- 却下の理由: 変えない");
-    expect(md).toContain("- 採用率: 0%");
+    // 採用に添えた手入れも出す（PBI-151）
+    expect(md).toContain("- 人の補足: 既にある設定に足す");
+    expect(md).toContain("- 採用率: 50%");
     // 表の中の | は、表を崩さないようにエスケープする
     expect(md).toContain("| 期間内 \\| 表 | 3 | $0.5000 | 2026-10-05 10:00 UTC |");
     expect(md).not.toContain("監査中");

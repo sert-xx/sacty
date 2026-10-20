@@ -22546,7 +22546,7 @@ describe("完了したタスクの監査（PBI-125）", () => {
     if (!repo || !sacty) throw new Error("proposals");
     expect(repo.target.kind).toBe("repository");
     expect(sacty.target).toEqual({ kind: "sacty" });
-    service.adoptAuditProposal(repo.id, { target: repo.target });
+    await service.adoptAuditProposal(repo.id, { target: repo.target });
     const decision = service.get(id)?.task.audit?.findings[0]?.proposals[0]?.decision;
     const fixId = decision?.kind === "adopted" ? decision.fixTaskId : undefined;
     const fix = fixId ? service.get(fixId)?.task : undefined;
@@ -22561,29 +22561,89 @@ describe("完了したタスクの監査（PBI-125）", () => {
     expect(service.get(id)?.task.audit?.completedAt).toBeDefined();
 
     const before = service.list().length;
-    service.adoptAuditProposal(sacty.id, { target: { kind: "sacty" } });
+    await service.adoptAuditProposal(sacty.id, { target: { kind: "sacty" } });
     expect(service.list().length).toBe(before);
     const sactyDecision = service.get(id)?.task.audit?.findings[0]?.proposals[1]?.decision;
     expect(sactyDecision).toMatchObject({ kind: "adopted", target: { kind: "sacty" } });
     expect(sactyDecision && "fixTaskId" in sactyDecision).toBe(false);
 
-    expect(() => service.adoptAuditProposal(repo.id, { target: repo.target })).toThrow(
+    await expect(service.adoptAuditProposal(repo.id, { target: repo.target })).rejects.toThrow(
       "すでに採用か却下をしています",
     );
+  });
+
+  it("採用に添えた補足は、記録・改修のタスクの説明に残り、以後の監査にも渡す（PBI-151）", async () => {
+    const { service, executor, id, proposals } = await auditedWithProposals();
+    const [repo] = proposals;
+    if (!repo) throw new Error("proposals");
+    // 中身が空の手入れは受け付けない（手を入れないなら、添えずに採用する）
+    await expect(
+      service.adoptAuditProposal(repo.id, {
+        target: repo.target,
+        note: { kind: "supplement", text: "   " },
+      }),
+    ).rejects.toThrow();
+    await service.adoptAuditProposal(repo.id, {
+      target: repo.target,
+      note: { kind: "supplement", text: "ghp_secret は使わない" },
+    });
+    const decision = service.get(id)?.task.audit?.findings[0]?.proposals[0]?.decision;
+    // 手入れも、却下の理由と同じく記録する前に秘密情報を伏せる
+    expect(decision).toMatchObject({
+      kind: "adopted",
+      note: { kind: "supplement", text: "[REDACTED] は使わない" },
+    });
+    const fixId = decision?.kind === "adopted" ? decision.fixTaskId : undefined;
+    const body = (fixId ? service.get(fixId)?.task.body : undefined) ?? "";
+    expect(body).toContain("人が足した補足：");
+    expect(body).toContain("[REDACTED] は使わない");
+    // 改善案（本文）の後に補足が来る（監査の改善案はそのまま残す）
+    expect(body.indexOf("本文")).toBeLessThan(body.indexOf("人が足した補足："));
+
+    executor.respond = (invocation) =>
+      isSurvey(invocation)
+        ? survey([{ step: "requirements", reason: "理由" }])
+        : isDive(invocation)
+          ? dive([])
+          : out("# 要求要件");
+    const second = service.createTask({ projectId: "default", title: "B", body: "" });
+    await service.runNext(second.id);
+    service.approve(second.id, { step: "requirements", submission: 1 });
+    await service.runNext(second.id);
+    await service.runNext(second.id);
+    const call = executor.calls.filter(isDive).at(-1);
+    expect(call && prompt(call)).toContain("リポジトリに書く（補足）：[REDACTED] は使わない");
+  });
+
+  it("採用で改善案を差し替えると、人の案を改修の指示にし、監査の改善案を記録として添える（PBI-151）", async () => {
+    const { service, id, proposals } = await auditedWithProposals();
+    const [repo] = proposals;
+    if (!repo) throw new Error("proposals");
+    await service.adoptAuditProposal(repo.id, {
+      target: repo.target,
+      note: { kind: "replace", text: "人の案で直す" },
+    });
+    const decision = service.get(id)?.task.audit?.findings[0]?.proposals[0]?.decision;
+    expect(decision).toMatchObject({ kind: "adopted", note: { kind: "replace" } });
+    const fixId = decision?.kind === "adopted" ? decision.fixTaskId : undefined;
+    const body = (fixId ? service.get(fixId)?.task.body : undefined) ?? "";
+    expect(body.startsWith("人の案で直す")).toBe(true);
+    expect(body).toContain("人が改善案を差し替えました。監査が出した改善案：");
+    expect(body).toContain("監査で見つけた原因：原因");
   });
 
   it("候補に無い宛先・無い提案では採用できない。却下の理由と既存の原因を以後の監査に渡し、同じ原因はその鍵を使う", async () => {
     const { service, executor, id, proposals } = await auditedWithProposals();
     const [repo] = proposals;
     if (!repo) throw new Error("proposals");
-    expect(() =>
+    await expect(
       service.adoptAuditProposal(repo.id, {
         target: { kind: "repository", repo: "https://github.com/other/x" },
       }),
-    ).toThrow("宛先の候補にありません");
-    expect(() => service.adoptAuditProposal("missing", { target: { kind: "sacty" } })).toThrow(
-      "その提案はありません",
-    );
+    ).rejects.toThrow("宛先の候補にありません");
+    await expect(
+      service.adoptAuditProposal("missing", { target: { kind: "sacty" } }),
+    ).rejects.toThrow("その提案はありません");
     await expect(service.rejectAuditProposal(repo.id, { reason: "  " })).rejects.toThrow();
     await service.rejectAuditProposal(repo.id, { reason: "ほかのチームと共有しているため" });
     expect(service.get(id)?.task.audit?.findings[0]?.proposals[0]?.decision).toMatchObject({
@@ -22646,7 +22706,7 @@ describe("完了したタスクの監査（PBI-125）", () => {
     const [repo] = proposals;
     if (!repo) throw new Error("proposals");
     await service.cancel(id);
-    expect(() => service.adoptAuditProposal(repo.id, { target: repo.target })).toThrow(
+    await expect(service.adoptAuditProposal(repo.id, { target: repo.target })).rejects.toThrow(
       "中止されたため",
     );
     await expect(service.rejectAuditProposal(repo.id, { reason: "理由" })).rejects.toThrow(
@@ -23008,7 +23068,7 @@ describe("監査のレビューの指摘（PR #135）", () => {
     const proposal = service.get(id)?.task.audit?.findings[0]?.proposals[0];
     if (!proposal) throw new Error("proposal");
     expect(proposal.target).toEqual({ kind: "repository", repo: original.replace(/\.git$/, "") });
-    service.adoptAuditProposal(proposal.id, { target: proposal.target });
+    await service.adoptAuditProposal(proposal.id, { target: proposal.target });
     const decision = service.get(id)?.task.audit?.findings[0]?.proposals[0]?.decision;
     const fixId = decision?.kind === "adopted" ? (decision.fixTaskId ?? "") : "";
     await service.runNext(fixId);
@@ -24504,7 +24564,7 @@ describe("監査によるメモリーの昇格（PBI-128）", () => {
       promotions: [],
     });
     // 採用すると改修のタスクができる。マージまではメモリーを残す
-    service.adoptAuditProposal(proposal?.id ?? "", { target: proposal?.target });
+    await service.adoptAuditProposal(proposal?.id ?? "", { target: proposal?.target });
     const fixId = service
       .get(b)
       ?.task.audit?.findings.flatMap((f) => f.proposals)
@@ -24625,7 +24685,7 @@ describe("監査によるメモリーの昇格（PBI-128）", () => {
       ?.proposals[0];
     expect(proposal?.body).toBe(longProposal);
     expect(proposal?.memoryOriginal?.body).toBe(longBody);
-    service.adoptAuditProposal(proposal?.id ?? "", { target: proposal?.target });
+    await service.adoptAuditProposal(proposal?.id ?? "", { target: proposal?.target });
     const decision = service
       .get(b)
       ?.task.audit?.findings.flatMap((f) => f.proposals)
@@ -24726,7 +24786,7 @@ describe("監査によるメモリーの昇格（PBI-128）", () => {
     const b = await completeAndAudit(service, "B");
     const proposal = service.get(b)?.task.audit?.findings.find((f) => f.causeKey === `memory:${id}`)
       ?.proposals[0];
-    service.adoptAuditProposal(proposal?.id ?? "", { target: proposal?.target });
+    await service.adoptAuditProposal(proposal?.id ?? "", { target: proposal?.target });
     const decision = service
       .get(b)
       ?.task.audit?.findings.flatMap((f) => f.proposals)

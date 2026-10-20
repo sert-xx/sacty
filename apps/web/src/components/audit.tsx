@@ -1,7 +1,10 @@
 "use client";
 
 import {
+  AUDIT_ADOPT_NOTE_KINDS,
+  AUDIT_ADOPT_NOTE_MAX,
   AUDIT_EVIDENCE_KINDS,
+  type AuditAdoptNoteKind,
   type AuditEvidence,
   type AuditMemory,
   type AuditMovedMemory,
@@ -536,6 +539,17 @@ export function ProposalView({
           </time>
         </p>
       )}
+      {decision?.kind === "adopted" && decision.note && (
+        <div
+          data-testid={`audit-proposal-note-${proposal.id}`}
+          className="flex min-w-0 flex-col gap-1 rounded-md border border-border px-3 py-2 [overflow-wrap:anywhere]"
+        >
+          <span className="text-xs text-muted-foreground">
+            {decision.note.kind === "replace" ? m.adoptedReplace : m.adoptedSupplement}
+          </span>
+          <Markdown>{decision.note.text}</Markdown>
+        </div>
+      )}
       {decision?.kind === "rejected" && (
         <p className="text-[13px] [overflow-wrap:anywhere]">
           <span className="mr-2 text-muted-foreground">{m.rejectedReason}</span>
@@ -552,7 +566,10 @@ export function ProposalView({
 
 const initialProposalState: AuditProposalState = {};
 
-/** 判断待ちの提案の、採用と却下のフォーム。却下は理由の入力を開いてから確定する。 */
+/**
+ * 判断待ちの提案の、採用と却下のフォーム。却下は理由の入力を開いてから確定する。採用は、改善案への手入れ
+ * （補足・差し替え）を開いてから添えられる（PBI-151）。
+ */
 function ProposalDecisionForms({ proposal }: { proposal: AuditProposal }) {
   const messages = useMessages();
   const m = messages.audit.proposal;
@@ -565,6 +582,9 @@ function ProposalDecisionForms({ proposal }: { proposal: AuditProposal }) {
     initialProposalState,
   );
   const [rejectOpen, setRejectOpen] = useState(false);
+  // 採用の操作でエラーに戻ったときは、書いた手入れを残したまま開いておく。人が開閉したら、その操作に従う（PBI-151）
+  const [noteOpen, setNoteOpen] = useState<boolean | undefined>(undefined);
+  const withNote = noteOpen ?? Boolean(adoptState.note);
   // 却下の入力を開いたら理由の欄へ、やめたら「却下する」へフォーカスを移す（フォームごと入れ替わり、押したボタンが
   // 消えるため。PR #134 レビュー指摘）。人が開閉したときだけ移す（最初の表示では移さない）
   const toggled = useRef(false);
@@ -579,46 +599,105 @@ function ProposalDecisionForms({ proposal }: { proposal: AuditProposal }) {
     toggled.current = true;
     setRejectOpen(open);
   };
+  // 手入れの入力を開いたら、その欄へフォーカスを移す（却下の理由と同じ扱い。PBI-151）
+  const noteRef = useRef<HTMLTextAreaElement>(null);
+  const noteToggled = useRef(false);
+  useEffect(() => {
+    if (!noteToggled.current || !withNote) return;
+    noteToggled.current = false;
+    noteRef.current?.focus();
+  }, [withNote]);
+  const toggleNote = (open: boolean) => {
+    noteToggled.current = true;
+    setNoteOpen(open);
+  };
   const selectId = `audit-target-${proposal.id}`;
   const reasonId = `audit-reason-${proposal.id}`;
+  const noteId = `audit-note-${proposal.id}`;
+  const noteKindText: Record<AuditAdoptNoteKind, string> = {
+    supplement: m.noteSupplement,
+    replace: m.noteReplace,
+  };
   return (
     <div className="flex flex-col gap-2">
       {!rejectOpen && (
-        <form action={adoptAction} className="flex flex-wrap items-end gap-2">
+        <form action={adoptAction} className="flex flex-col gap-2">
           <input type="hidden" name="proposalId" value={proposal.id} />
-          <div className="flex min-w-0 flex-col gap-1">
-            <span className="flex items-center gap-1">
-              <Label htmlFor={selectId}>{messages.audit.target.label}</Label>
-              <Hint text={m.adoptHint} />
-            </span>
-            <select
-              id={selectId}
-              name="target"
-              defaultValue={auditTargetValue(proposal.target)}
-              className="h-9 max-w-full min-w-0 rounded-md border border-border bg-card px-2 text-sm"
+          {withNote && (
+            <div className="flex min-w-0 flex-col gap-2">
+              <span className="flex items-center gap-1">
+                <Label htmlFor={noteId}>{m.noteLabel}</Label>
+                <Hint text={m.noteHint} />
+              </span>
+              <div className="flex flex-wrap gap-x-4 gap-y-1">
+                {AUDIT_ADOPT_NOTE_KINDS.map((kind) => (
+                  <label key={kind} className="flex items-center gap-1.5 text-sm">
+                    <input
+                      type="radio"
+                      name="noteKind"
+                      value={kind}
+                      defaultChecked={(adoptState.noteKind ?? "supplement") === kind}
+                    />
+                    {noteKindText[kind]}
+                  </label>
+                ))}
+              </div>
+              <Textarea
+                ref={noteRef}
+                id={noteId}
+                name="note"
+                required
+                maxLength={AUDIT_ADOPT_NOTE_MAX}
+                defaultValue={adoptState.note ?? ""}
+                placeholder={m.notePlaceholder}
+                className="bg-card"
+                aria-invalid={Boolean(adoptState.message)}
+              />
+            </div>
+          )}
+          <div className="flex flex-wrap items-end gap-2">
+            <div className="flex min-w-0 flex-col gap-1">
+              <span className="flex items-center gap-1">
+                <Label htmlFor={selectId}>{messages.audit.target.label}</Label>
+                <Hint text={m.adoptHint} />
+              </span>
+              <select
+                id={selectId}
+                name="target"
+                defaultValue={auditTargetValue(proposal.target)}
+                className="h-9 max-w-full min-w-0 rounded-md border border-border bg-card px-2 text-sm"
+              >
+                {proposal.targetCandidates.map((c) => {
+                  const text = auditTargetText(c, messages.audit.target);
+                  return (
+                    <option key={auditTargetValue(c)} value={auditTargetValue(c)}>
+                      {text.detail ? `${text.kind}: ${text.detail}` : text.kind}
+                    </option>
+                  );
+                })}
+              </select>
+            </div>
+            <Button type="submit" disabled={adopting} className="min-h-9">
+              {adopting ? m.adopting : m.adopt}
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              className="min-h-9"
+              onClick={() => toggleNote(!withNote)}
             >
-              {proposal.targetCandidates.map((c) => {
-                const text = auditTargetText(c, messages.audit.target);
-                return (
-                  <option key={auditTargetValue(c)} value={auditTargetValue(c)}>
-                    {text.detail ? `${text.kind}: ${text.detail}` : text.kind}
-                  </option>
-                );
-              })}
-            </select>
+              {withNote ? m.noteCancel : m.noteAdd}
+            </Button>
+            <Button
+              ref={rejectButtonRef}
+              type="button"
+              variant="outline"
+              className="min-h-9"
+              onClick={() => toggleReject(true)}
+            >
+              {m.reject}
+            </Button>
           </div>
-          <Button type="submit" disabled={adopting} className="min-h-9">
-            {adopting ? m.adopting : m.adopt}
-          </Button>
-          <Button
-            ref={rejectButtonRef}
-            type="button"
-            variant="outline"
-            className="min-h-9"
-            onClick={() => toggleReject(true)}
-          >
-            {m.reject}
-          </Button>
         </form>
       )}
       {adoptState.message && !rejectOpen && (

@@ -133,6 +133,7 @@ import type { TestRunner, TestRunResult } from "./agents/test-runner.js";
 import { type PlacedTier, selectTiers, tierFiles } from "./agents/tiers.js";
 import { auditCounts, countToolFailures, redactDeep, redactStagedFiles } from "./audit-evidence.js";
 import {
+  type AdoptedAuditProposalNote,
   AUDIT_LEDGER_DIR,
   AUDIT_LEDGER_FILE,
   buildAuditDivePrompt,
@@ -8438,6 +8439,11 @@ export class TaskService {
             candidates,
             known: known.causes.map((c) => ({ ...c, title: hide(c.title) })),
             rejected: known.rejected.map((r) => ({ title: hide(r.title), reason: hide(r.reason) })),
+            adoptNotes: known.adoptNotes.map((n) => ({
+              ...n,
+              title: hide(n.title),
+              text: hide(n.text),
+            })),
             ...(memories
               ? {
                   memories: memories.map((m) => ({
@@ -9166,9 +9172,11 @@ export class TaskService {
   private knownAuditCauses(projectId: string): {
     causes: KnownAuditCause[];
     rejected: RejectedAuditProposal[];
+    adoptNotes: AdoptedAuditProposalNote[];
   } {
     const causes = new Map<string, KnownAuditCause>();
     const rejected: RejectedAuditProposal[] = [];
+    const adoptNotes: AdoptedAuditProposalNote[] = [];
     for (const t of this.tasks.values()) {
       if (t.projectId !== projectId || !t.audit || t.status === "cancelled") continue;
       for (const f of t.audit.findings) {
@@ -9186,10 +9194,14 @@ export class TaskService {
           if (p.decision?.kind === "rejected") {
             rejected.push({ title: p.title, reason: p.decision.reason });
           }
+          // 採用のときの手入れも渡し、同じ手入れが要る提案を繰り返させない（PBI-151）
+          if (p.decision?.kind === "adopted" && p.decision.note) {
+            adoptNotes.push({ title: p.title, ...p.decision.note });
+          }
         }
       }
     }
-    return { causes: [...causes.values()], rejected };
+    return { causes: [...causes.values()], rejected, adoptNotes };
   }
 
   /** 改修の提案を持つタスクと、その提案を探す。 */
@@ -9207,24 +9219,45 @@ export class TaskService {
    * 改修の提案を採用する（PBI-125）。宛先は提案の候補から選ぶ。対象リポジトリ・コンテキストのリポジトリが宛先なら、
    * 改修のタスクを作る（先に採用を記録してから作り、途中で止まっても起動のときに作る）。sacty の既定のコンテキストが
    * 宛先なら、利用者のプロジェクトにはタスクを作らず、採用だけを記録する（ADR 20261017-1145）。
+   * 人が手入れ（改善案への補足か、人の案への差し替え）を添えていれば、却下の理由と同じく、記録する前に秘密情報を
+   * 伏せる（手入れは監査の画面・レポートと、改修のタスクの説明に出る。PBI-151）。
    */
-  adoptAuditProposal(proposalId: string, raw: unknown): Task {
-    const { target } = AdoptAuditProposalInput.parse(raw);
-    const found = this.findAuditProposal(proposalId);
-    if (!found) throw new InvalidOperationError(message("audit.proposalNotFound"));
-    const { task, proposal } = found;
-    if (task.status === "cancelled") throw new InvalidOperationError(message("audit.notAdoptable"));
-    if (proposal.decision) throw new InvalidOperationError(message("audit.alreadyDecided"));
-    if (!proposal.candidates.some((c) => sameAuditTarget(c, target))) {
-      throw new InvalidOperationError(message("audit.targetNotCandidate"));
+  async adoptAuditProposal(proposalId: string, raw: unknown): Promise<Task> {
+    const { target, note } = AdoptAuditProposalInput.parse(raw);
+    const check = () => {
+      const found = this.findAuditProposal(proposalId);
+      if (!found) throw new InvalidOperationError(message("audit.proposalNotFound"));
+      if (found.task.status === "cancelled") {
+        throw new InvalidOperationError(message("audit.notAdoptable"));
+      }
+      if (found.proposal.decision) throw new InvalidOperationError(message("audit.alreadyDecided"));
+      if (!found.proposal.candidates.some((c) => sameAuditTarget(c, target))) {
+        throw new InvalidOperationError(message("audit.targetNotCandidate"));
+      }
+      return found;
+    };
+    let hidden = note;
+    if (note) {
+      const config = this.deps.config();
+      const hide = config.ok
+        ? await this.auditRedactor(check().task, config.config)
+        : (text: string) => redactLog(text, []);
+      hidden = { ...note, text: hide(note.text) };
     }
+    // 秘密情報を取り出す間に、ほかの操作が判断していないかを確かめ直す
+    const { task } = check();
     const fixTaskId = target.kind === "sacty" ? undefined : randomUUID();
     const updated = this.append(task, [
       {
         actor: "person",
         event: {
           type: "AuditProposalAdopted",
-          payload: { proposalId, target, ...(fixTaskId ? { fixTaskId } : {}) },
+          payload: {
+            proposalId,
+            target,
+            ...(fixTaskId ? { fixTaskId } : {}),
+            ...(hidden ? { note: hidden } : {}),
+          },
         },
       },
     ]);
@@ -9242,20 +9275,31 @@ export class TaskService {
     const config = this.deps.config();
     const budgetCapUsd = config.ok ? config.config.budgetPerTaskUsd : DEFAULT_BUDGET_USD;
     const title = `改修：${proposal.title}`;
+    // 人が手入れを添えていれば、改修の指示に入れる。差し替えなら人の案を指示にし、監査の改善案は記録として
+    // 添える（原因は認めているので、改善案だけを人のものに替える。PBI-151）
+    const note = decision.note;
+    const plan = note?.kind === "replace" ? note.text : proposal.body;
+    const human =
+      note === undefined
+        ? []
+        : note.kind === "replace"
+          ? ["", "---", "人が改善案を差し替えました。監査が出した改善案：", "", proposal.body]
+          : ["", "---", "人が足した補足：", "", note.text];
     // コンテキストにする提案は、元のメモリーを欠けずに添える（PBI-128。PR #138 レビュー指摘）
     const original = proposal.memoryOriginal;
-    const body = original
-      ? [
-          proposal.body,
-          "",
-          "---",
-          `コンテキストにする元のメモリー：${original.title}（${original.summary}）`,
-          "",
-          original.body,
-        ].join("\n")
-      : [proposal.body, "", "---", `監査で見つけた原因：${finding.title}`, "", finding.detail].join(
-          "\n",
-        );
+    const body = [
+      plan,
+      ...human,
+      "",
+      "---",
+      ...(original
+        ? [
+            `コンテキストにする元のメモリー：${original.title}（${original.summary}）`,
+            "",
+            original.body,
+          ]
+        : [`監査で見つけた原因：${finding.title}`, "", finding.detail]),
+    ].join("\n");
     this.append({ id: decision.fixTaskId, projectId: task.projectId }, [
       {
         actor: "sacty",

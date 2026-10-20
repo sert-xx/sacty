@@ -1,5 +1,6 @@
 import {
   type ActivityEvent,
+  type AuditAdoptNote,
   type AuditDashboard,
   type AuditTarget,
   type CleanupTarget,
@@ -611,9 +612,19 @@ export async function getAuditDashboard(): Promise<AuditDashboard> {
   return (await res.json()) as AuditDashboard;
 }
 
-/** 改修の提案を採用する（PBI-124）。宛先は提案の宛先の候補から選ぶ。 */
-export function adoptAuditProposal(proposalId: string, target: AuditTarget): Promise<OpResult> {
-  return postOp(`/api/audits/proposals/${encodeURIComponent(proposalId)}/adopt`, { target });
+/**
+ * 改修の提案を採用する（PBI-124）。宛先は提案の宛先の候補から選ぶ。note は、改善案への補足か、人の案への
+ * 差し替え（添えなければ、監査の改善案をそのまま採用する。PBI-151）。
+ */
+export function adoptAuditProposal(
+  proposalId: string,
+  target: AuditTarget,
+  note?: AuditAdoptNote,
+): Promise<OpResult> {
+  return postOp(`/api/audits/proposals/${encodeURIComponent(proposalId)}/adopt`, {
+    target,
+    ...(note ? { note } : {}),
+  });
 }
 
 /** 改修の提案を却下する（PBI-124）。理由は必須。 */
