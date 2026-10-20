@@ -5,7 +5,7 @@
 `sacty up` starts the daemon (`apps/daemon`) and the web UI (Next.js in `apps/web`) as child processes, and stops both when either one ends.
 Only one daemon runs per `SACTY_HOME` (determined by an OS file lock).
 
-Related ADRs: [The web UI is usable only from browsers that signed in with the per-start secret](../adr/20261018-0414-web-session-auth.md), [Allow turning off web UI sign-in in the settings](../adr/20261018-0929-web-auth-off-setting.md), [Tell users about newer sacty by comparing the local commit with main on GitHub](../adr/20261018-1213-update-check-against-main.md)
+Related ADRs: [The web UI is usable only from browsers that signed in with the per-start secret](../adr/20261018-0414-web-session-auth.md), [Allow turning off web UI sign-in in the settings](../adr/20261018-0929-web-auth-off-setting.md), [Compare the running version with the latest GitHub release to report a newer sacty](../adr/20261020-0008-update-check-against-releases.md)
 
 ## sacty up
 
@@ -85,33 +85,34 @@ Code: `apps/daemon/src/main.ts`, `apps/daemon/src/service.ts` (`recoverInterrupt
 
 ## Checking for a newer version
 
-The daemon compares the commit of the running sacty with `main` of the sacty repository on GitHub (`SACTY_REPOSITORY` = `sert-xx/sacty`),
-and if `main` has commits that the local one does not, it tells the web UI that a newer version is available (PBI-135). When releases start
-being published, this switches to GitHub Releases.
+The daemon compares the version of the running sacty (`version` in `apps/daemon/package.json`) with the latest release of the sacty repository on GitHub
+(`SACTY_REPOSITORY` = `sert-xx/sacty`; the `latest` of GitHub Releases, tag `v<version>`), and if the latest release is newer, it tells the web UI that a newer version is available (PBI-135, PBI-147).
+Before 1.0.0, it compared the local commit with `main`.
 
-- The local commit is `git rev-parse HEAD` of the sacty repository (three directories above `apps/daemon`). Because it is the commit of the
-  running code, it is read once, at the first check after startup (after `git pull`, the previous commit is compared until a restart). If it is not
-  40 hexadecimal digits, no check is made.
-- If `ahead_by` of GitHub's compare API (`GET /repos/sert-xx/sacty/compare/<local>...main`; the number of commits in `main` that the local
-  one lacks, seen from the local base toward the `main` head) is 1 or more, a newer version is available (`status` is `ahead` or `diverged`). `identical` and `behind` (the local one is only ahead) are not reported. No authentication is sent (the repository is public; well under
-  the limit of 60 requests per hour).
+- The running version is `version` in `apps/daemon/package.json` (the same file whether running from src or dist). Because it is the version of the
+  running code, it is read once, at the first check after startup (after an update, the previous version is compared until a restart). If it is not semver
+  `MAJOR.MINOR.PATCH` (a leading `v` is optional; leading zeros, prereleases and builds are not accepted), no check is made.
+- `tag_name` of GitHub's latest-release API (`GET /repos/sert-xx/sacty/releases/latest`) is read in the same form and compared numerically (`1.10.0` is newer than `1.9.0`).
+  If the latest release's version is greater than the running one, a newer version is available. Equal or smaller (the local one is a newer version under development) is not reported. Drafts and prereleases are not used
+  (`latest` does not return them, but they are ignored if returned). No authentication is sent (the repository is public; well under the limit of 60 requests per hour).
 - At startup and then every hour, it asks if one day (`UPDATE_CHECK_INTERVAL_MS`) has passed since the last request. The time is recorded
   before asking, so requests do not overlap. After a failure, the next request is one day later.
-- When it cannot check (not a git working tree, a commit GitHub does not know, network unreachable, rate limited, an unexpected response,
-  or no response in 10 seconds), it silently clears the notice. It is not an error or warning.
-- With `update_check: false` in `config.yaml`, it does not ask (nor read the local commit) and shows no notice (on if the config cannot be read).
+- When it cannot check (the version cannot be read, there is no release at all (404), network unreachable, rate limited, an unexpected response, a tag that is not a version, or no response in
+  10 seconds), it silently clears the notice. It is not an error or warning.
+- With `update_check: false` in `config.yaml`, it does not ask (nor read the running version) and shows no notice (on if the config cannot be read).
   It is read on every use. When it sees off (when checking or when returning the status), it clears the notice and the request time and advances
-  the generation. If it is turned off while waiting for the local commit or for the response, it does not ask or keep the result (even if it is back on
+  the generation. If it is turned off while waiting for the version or for the response, it does not ask or keep the result (even if it is back on
   by then). Turning it back on checks within an hour.
-- The notice is `update` (`behindBy`, `compareUrl`) of `GET /api/status`, included even when the config has an error. The web UI shows it above
-  the content on every screen: how many commits behind, a link to the compare page (only one starting with `https://github.com/`), and the update commands.
+- The notice is `update` (`latest`, `current`, `releaseUrl`) of `GET /api/status`, included even when the config has an error. The web UI shows it above
+  the content on every screen: the latest and running versions, a link to the release page (only one starting with `https://github.com/`), and the update commands.
   Because the shared frame is not redrawn when moving between screens, the web UI fetches `/live/update` every 30 seconds (`UPDATE_LIVE_INTERVAL_MS`),
   so the notice appears and disappears without reloading.
-- The update commands are shown in the order of stopping the running `sacty up` first (`npm run build` deletes and recreates `.next` of the web UI).
+- The update commands are shown in the order of stopping the running `sacty up` first (`npm run build` deletes and recreates `.next` of the web UI). Because the default image name
+  follows the version, `npx sacty image build` is included.
 
-Code: `apps/daemon/src/update-check.ts` (`UpdateChecker`, `gitHeadCommit`, `startUpdateCheck`, `SACTY_REPOSITORY`, `UPDATE_CHECK_INTERVAL_MS`),
+Code: `apps/daemon/src/update-check.ts` (`UpdateChecker`, `packageVersion`, `parseVersion`, `compareVersions`, `startUpdateCheck`, `SACTY_REPOSITORY`, `UPDATE_CHECK_INTERVAL_MS`),
 `apps/daemon/src/service.ts` (`TaskService.status`), `apps/web/src/components/shell/update-notice.tsx` (`UpdateNotice`),
-`apps/web/src/components/shell/update-notice-live.tsx` (`UpdateNoticeLive`, `UPDATE_LIVE_INTERVAL_MS`), `apps/web/src/components/shell/update-notice-view.tsx` (`UpdateNoticeView`, `safeCompareUrl`, `UPDATE_COMMANDS`)
+`apps/web/src/components/shell/update-notice-live.tsx` (`UpdateNoticeLive`, `UPDATE_LIVE_INTERVAL_MS`), `apps/web/src/components/shell/update-notice-view.tsx` (`UpdateNoticeView`, `safeGitHubUrl`, `UPDATE_COMMANDS`)
 
 ## Duplicate start
 

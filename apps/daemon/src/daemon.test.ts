@@ -24414,7 +24414,11 @@ describe("使えないエージェントの警告（PBI-134）", () => {
 describe("sacty の新しい版の知らせ（PBI-135）", () => {
   it("新しい版があれば画面の状態に載せ、無ければ項目ごと出さない。設定に誤りがあっても載せる", () => {
     const activity = new SqliteActivityStore(dbPath);
-    const update = { behindBy: 2, compareUrl: "https://github.com/sert-xx/sacty/compare/a...main" };
+    const update = {
+      latest: "1.1.0",
+      current: "1.0.0",
+      releaseUrl: "https://github.com/sert-xx/sacty/releases/tag/v1.1.0",
+    };
     let current: typeof update | undefined = update;
     const { service } = makeService(activity, [], { update: () => current });
     expect(service.status().update).toEqual(update);

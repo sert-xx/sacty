@@ -9,10 +9,15 @@ vi.mock("@/lib/daemon", () => ({ getStatus: () => status() }));
 
 const { UpdateNotice } = await import("./update-notice");
 const { UpdateNoticeLive } = await import("./update-notice-live");
-const { UpdateNoticeView, UPDATE_COMMANDS, safeCompareUrl } = await import("./update-notice-view");
+const { UpdateNoticeView, UPDATE_COMMANDS, safeGitHubUrl } = await import("./update-notice-view");
 const { loadUpdateData } = await import("@/lib/update-data");
 
-const COMPARE = "https://github.com/sert-xx/sacty/compare/0123abc...main";
+const RELEASE = "https://github.com/sert-xx/sacty/releases/tag/v1.1.0";
+const newer = (latest = "1.1.0", releaseUrl = RELEASE) => ({
+  latest,
+  current: "1.0.0",
+  releaseUrl,
+});
 const view = (update: DaemonStatus["update"], t = shell.ja.update) => {
   const element = UpdateNoticeView({ update, t });
   return element ? renderToStaticMarkup(createElement(() => element)) : "";
@@ -22,54 +27,56 @@ afterEach(() => {
   status = async () => ({});
 });
 
-describe("sacty の新しい版の知らせ（PBI-135）", () => {
-  it("新しい版があれば、遅れている数・変更を見るリンク・止めてから実行する更新の手順を出す", () => {
-    const text = view({ behindBy: 3, compareUrl: COMPARE });
+describe("sacty の新しい版の知らせ（PBI-135・PBI-147）", () => {
+  it("新しい版があれば、最新の版と動いている版・リリースのリンク・止めてから実行する更新の手順（イメージの作り直しを含む）を出す", () => {
+    const text = view(newer());
     expect(text).toContain("Sacty の新しい版があります");
-    expect(text).toContain("変更が 3 件あります");
-    expect(text).toContain(`href="${COMPARE}"`);
-    // 動いている sacty up を止めてから、更新・ビルドして起動する（PR #147 レビュー提案）
+    expect(text).toContain("Sacty 1.1.0 がリリースされました（動いているのは 1.0.0）");
+    expect(text).toContain(`href="${RELEASE}"`);
+    expect(text).toContain("リリースの内容を見る");
+    // 動いている sacty up を止めてから、更新・ビルド・イメージの作り直しをして起動する（PR #147 レビュー提案・PBI-147）
     expect(text).toContain("Ctrl+C で止めてから");
     expect(UPDATE_COMMANDS.split("\n")).toEqual([
       "git pull origin main",
       "npm install",
       "npm run build",
+      "npx sacty image build",
       "npx sacty up",
     ]);
   });
 
-  it("新しい版が無い・0 件のときは何も出さない（境界：1 件なら出す）", () => {
+  it("新しい版が無いときは何も出さない", () => {
     expect(view(undefined)).toBe("");
-    expect(view({ behindBy: 0, compareUrl: COMPARE })).toBe("");
-    expect(view({ behindBy: 1, compareUrl: COMPARE })).not.toBe("");
+    expect(view(newer())).not.toBe("");
   });
 
-  it("差分のリンクは GitHub の https の URL だけ（ほかは文だけ出す）", () => {
-    expect(safeCompareUrl(COMPARE)).toBe(COMPARE);
+  it("リリースのリンクは GitHub の https の URL だけ（ほかは文だけ出す）", () => {
+    expect(safeGitHubUrl(RELEASE)).toBe(RELEASE);
     for (const bad of [
       "javascript:alert(1)",
-      "http://github.com/sert-xx/sacty/compare/a...main",
-      "https://evil.example/compare",
+      "http://github.com/sert-xx/sacty/releases/tag/v1.1.0",
+      "https://evil.example/releases",
       'https://github.com/x" onmouseover="y',
     ]) {
-      expect(safeCompareUrl(bad), bad).toBeUndefined();
+      expect(safeGitHubUrl(bad), bad).toBeUndefined();
     }
-    const text = view({ behindBy: 2, compareUrl: "javascript:alert(1)" });
-    expect(text).toContain("変更が 2 件あります");
+    const text = view(newer("1.2.0", "javascript:alert(1)"));
+    expect(text).toContain("Sacty 1.2.0 がリリースされました");
     expect(text).not.toContain("href=");
   });
 
   it("英語の文言もある", () => {
-    const text = view({ behindBy: 1, compareUrl: COMPARE }, shell.en.update);
+    const text = view(newer(), shell.en.update);
     expect(text).toContain("A new version of Sacty is available");
-    expect(text).toContain("1 change not in the running version");
+    expect(text).toContain("Sacty 1.1.0 has been released (you are running 1.0.0)");
+    expect(text).toContain("See the release notes");
     expect(text).toContain("Stop the running sacty up with Ctrl+C");
   });
 });
 
 describe("描いたときの状態と取り直しのデータ（PR #147 レビュー指摘）", () => {
   it("描いたときの状態から、取り直す部品を始める。知らせが無くても始める（後から現れるように）", async () => {
-    const update = { behindBy: 3, compareUrl: COMPARE };
+    const update = newer();
     status = async () => ({ update });
     let element = (await UpdateNotice()) as { type: unknown; props: { initial: unknown } };
     expect(element.type).toBe(UpdateNoticeLive);
@@ -85,8 +92,8 @@ describe("描いたときの状態と取り直しのデータ（PR #147 レビ�
   });
 
   it("取り直しのデータは、デーモンの状態の update だけ（無ければ null、届かなければ例外）", async () => {
-    status = async () => ({ update: { behindBy: 1, compareUrl: COMPARE }, problems: [] });
-    expect(await loadUpdateData()).toEqual({ update: { behindBy: 1, compareUrl: COMPARE } });
+    status = async () => ({ update: newer(), problems: [] });
+    expect(await loadUpdateData()).toEqual({ update: newer() });
     status = async () => ({ problems: [] });
     expect(await loadUpdateData()).toEqual({ update: null });
     status = () => Promise.reject(new Error("unreachable"));

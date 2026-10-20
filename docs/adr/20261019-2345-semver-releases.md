@@ -9,7 +9,7 @@
 ## 背景
 
 これまで版の番号はどのパッケージも `0.1.0` のままで、タグも GitHub Releases も運用していなかった
-（[sacty の最新版を、手元のコミットと GitHub の main で比べて知らせる](20261018-1213-update-check-against-main.md)）。
+（[sacty の最新版を、手元のコミットと GitHub の main で比べて知らせる](20261018-1213-superseded-update-check-against-main.md)）。
 主要な機能（取り込み、工程の選択、承認ゲート、PR のレビュー、監査とメモリー、ダッシュボード）が揃ったので、ステークホルダーが
 1.0.0 としてリリースすると決めた。
 

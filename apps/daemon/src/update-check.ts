@@ -1,16 +1,15 @@
-import { execFile } from "node:child_process";
-import { fileURLToPath } from "node:url";
+import { readFile } from "node:fs/promises";
 import { z } from "zod";
 
 /**
- * sacty の最新版の確かめ（PBI-135）。動いている sacty のコミットと、GitHub の sacty のリポジトリの main を比べ、main に
- * 手元に無いコミットがあれば、新しい版があるとする。確かめられないとき（git の作業ツリーでない・GitHub が知らないコミット・
- * ネットワークに届かないなど）は、黙って何も知らせない。リリースの運用を始めたら、GitHub Releases に切り替える。
+ * sacty の最新版の確かめ（PBI-135・PBI-147）。動いている sacty の版（apps/daemon/package.json の version）と、GitHub の sacty の
+ * リポジトリの最新のリリース（GitHub Releases の latest。タグ v<版>）を比べ、最新のリリースの版が新しければ、新しい版があるとする。
+ * 確かめられないとき（版を読めない・リリースが無い・ネットワークに届かない・タグが semver でないなど）は、黙って何も知らせない。
+ * 1.0.0 より前は、手元のコミットと main を比べていた（リリースを運用していなかったため）。
  */
 
-/** 比べる相手の、sacty のリポジトリと枝。 */
+/** 比べる相手の、sacty のリポジトリ。 */
 export const SACTY_REPOSITORY = "sert-xx/sacty";
-export const SACTY_BRANCH = "main";
 
 /** 確かめる間隔（1日）。 */
 export const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
@@ -19,27 +18,50 @@ export const UPDATE_CHECK_TICK_MS = 60 * 60 * 1000;
 /** GitHub への問い合わせを待つ上限。 */
 const FETCH_TIMEOUT_MS = 10_000;
 
-/** 新しい版があるときの知らせ（画面に出す）。 */
+/** 新しい版があるときの知らせ（画面に出す）。版は MAJOR.MINOR.PATCH の形にそろえる。 */
 export type UpdateStatus = {
-  /** main にあって、手元に無いコミットの数。 */
-  behindBy: number;
-  /** 手元のコミットと main の差分を見る GitHub のページ。 */
-  compareUrl: string;
+  /** 最新のリリースの版（タグの先頭の v を除いたもの。例 1.2.0）。 */
+  latest: string;
+  /** 動いている sacty の版（package.json の version）。 */
+  current: string;
+  /** 最新のリリースのページ（GitHub）。 */
+  releaseUrl: string;
 };
 
-/**
- * GitHub の比較の API（`<手元>...main`）の応答のうち、使うもの。status・ahead_by は、base（手元）から見た head（main）の向き。
- * main に手元に無いコミットがあれば status が ahead（または diverged）で、その数が ahead_by（behind_by は手元だけにあるコミットの数）。
- */
-const Compare = z.object({
-  status: z.enum(["ahead", "behind", "identical", "diverged"]),
-  ahead_by: z.number().int().nonnegative(),
+/** 版の数（MAJOR・MINOR・PATCH）。 */
+export type Version = [number, number, number];
+
+/** semver の MAJOR.MINOR.PATCH（先頭の v は任意。先行ゼロは認めない）。プレリリースやビルドの付いたものは版として読まない（リリースには付けない）。 */
+const VERSION = /^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
+
+/** 版の文字列を数に読む。形が違えば undefined。 */
+export function parseVersion(text: string): Version | undefined {
+  const m = VERSION.exec(text.trim());
+  return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : undefined;
+}
+
+/** a が b より新しければ正、同じなら 0、古ければ負。 */
+export function compareVersions(a: Version, b: Version): number {
+  for (let i = 0; i < 3; i++) {
+    const d = (a[i] ?? 0) - (b[i] ?? 0);
+    if (d !== 0) return d;
+  }
+  return 0;
+}
+
+const formatVersion = (v: Version) => v.join(".");
+
+/** GitHub の最新のリリースの API（`/releases/latest`）の応答のうち、使うもの。latest は下書き・プレリリースを返さないが、念のため読む。 */
+const Release = z.object({
+  tag_name: z.string(),
   html_url: z.url({ protocol: /^https$/ }),
+  draft: z.boolean().optional(),
+  prerelease: z.boolean().optional(),
 });
 
 export type UpdateCheckDeps = {
-  /** 動いている sacty のコミット（40桁の SHA）。わからなければ undefined。 */
-  localCommit: () => Promise<string | undefined>;
+  /** 動いている sacty の版（package.json の version）。わからなければ undefined。 */
+  localVersion: () => Promise<string | undefined>;
   /** 確かめるか（config.yaml の update_check。読めなければ ON）。 */
   enabled: () => boolean;
   fetch?: typeof fetch;
@@ -49,7 +71,7 @@ export type UpdateCheckDeps = {
 export class UpdateChecker {
   private latest: UpdateStatus | undefined;
   private lastAttempt: number | undefined;
-  private commit: Promise<string | undefined> | undefined;
+  private version: Promise<string | undefined> | undefined;
   /** OFF を見るたびに進める。問い合わせの途中で OFF になったら、その結果を捨てる（PR #147 レビュー指摘）。 */
   private generation = 0;
 
@@ -101,40 +123,53 @@ export class UpdateChecker {
   /** GitHub に問い合わせる。確かめられなければ undefined（黙る）。 */
   private async fetchStatus(generation: number): Promise<UpdateStatus | undefined> {
     try {
-      // 動いているコードのコミットなので、起動のときに1回だけ取る（git pull しても、起動し直すまでは古いまま）
-      this.commit ??= this.deps.localCommit();
-      const commit = await this.commit;
-      if (!commit || !/^[0-9a-f]{40}$/.test(commit)) return undefined;
-      // git を待つ間に OFF にされたら、GitHub に問い合わせない（PR #147 レビュー指摘）
+      // 動いているコードの版なので、起動のときに1回だけ読む（更新しても、起動し直すまでは前の版と比べる）
+      this.version ??= this.deps.localVersion();
+      const text = await this.version;
+      const current = text === undefined ? undefined : parseVersion(text);
+      if (!current) return undefined;
+      // 版を待つ間に OFF にされたら、GitHub に問い合わせない（PR #147 レビュー指摘）
       if (!this.current(generation)) return undefined;
       const res = await (this.deps.fetch ?? fetch)(
-        `https://api.github.com/repos/${SACTY_REPOSITORY}/compare/${commit}...${SACTY_BRANCH}`,
+        `https://api.github.com/repos/${SACTY_REPOSITORY}/releases/latest`,
         {
           headers: { accept: "application/vnd.github+json", "user-agent": "sacty-update-check" },
           signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
         },
       );
+      // リリースが1つも無ければ 404。レート制限などの失敗も黙る
       if (!res.ok) return undefined;
-      const parsed = Compare.safeParse(await res.json());
-      // main が手元より進んでいる（ahead_by）分が、手元に無い変更（PBI-135 の動作確認で、向きを本物の応答で確かめた）
-      if (!parsed.success || parsed.data.ahead_by === 0) return undefined;
-      return { behindBy: parsed.data.ahead_by, compareUrl: parsed.data.html_url };
+      const parsed = Release.safeParse(await res.json());
+      if (!parsed.success || parsed.data.draft || parsed.data.prerelease) return undefined;
+      const latest = parseVersion(parsed.data.tag_name);
+      // タグが版の形でない・同じ・古い（手元が開発中の新しい版）なら知らせない
+      if (!latest || compareVersions(latest, current) <= 0) return undefined;
+      return {
+        latest: formatVersion(latest),
+        current: formatVersion(current),
+        releaseUrl: parsed.data.html_url,
+      };
     } catch {
       return undefined;
     }
   }
 }
 
-/** sacty のリポジトリの場所（src・dist のどちらからも、リポジトリの直下）。 */
-const REPOSITORY_ROOT = fileURLToPath(new URL("../../../", import.meta.url));
+/** 動いている sacty の版を書いたファイル（src・dist のどちらからも apps/daemon/package.json）。 */
+const PACKAGE_JSON = new URL("../package.json", import.meta.url);
 
-/** 手元の sacty のリポジトリの HEAD のコミット。git の作業ツリーでなければ undefined。 */
-export function gitHeadCommit(root: string = REPOSITORY_ROOT): Promise<string | undefined> {
-  return new Promise((resolve) => {
-    execFile("git", ["-C", root, "rev-parse", "HEAD"], { timeout: 10_000 }, (error, stdout) => {
-      resolve(error ? undefined : stdout.trim());
-    });
-  });
+/** 動いている sacty の版（apps/daemon/package.json の version）。読めなければ undefined。 */
+export async function packageVersion(
+  file: URL | string = PACKAGE_JSON,
+): Promise<string | undefined> {
+  try {
+    const parsed = z
+      .object({ version: z.string() })
+      .safeParse(JSON.parse(await readFile(file, "utf8")));
+    return parsed.success ? parsed.data.version : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /** 起動のときと、それから1時間ごとに確かめる（間隔の判断は UpdateChecker.check）。止める関数を返す。 */
