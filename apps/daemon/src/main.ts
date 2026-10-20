@@ -17,6 +17,12 @@ import { GhCliAuth } from "./gh.js";
 import { GitHubIssueSearch, GitHubPullRequests } from "./github.js";
 import { HostMcpServers } from "./host-mcp.js";
 import { HostMcpProcesses } from "./host-mcp-processes.js";
+import {
+  ImagePresenceChecker,
+  imageTargets,
+  inspectImage,
+  startImagePresenceCheck,
+} from "./image-presence.js";
 import { acquireInstanceLock, alreadyRunningMessage } from "./instance-lock.js";
 import { IssueIntake } from "./intake.js";
 import { LedgerAuditService } from "./ledger-audits.js";
@@ -155,6 +161,11 @@ const updates = new UpdateChecker({
     return c.ok ? c.config.updateCheck : true;
   },
 });
+// エージェントのイメージが手元にあるか（PBI-148）。起動のときと1分ごとに確かめ、無ければ端末と画面で作るコマンドを知らせる
+const images = new ImagePresenceChecker({
+  targets: () => imageTargets(config()),
+  inspect: (image, signal) => inspectImage(image, { signal }),
+});
 const service = new TaskService({
   activity,
   // 完了したタスクを監査する（PBI-125）
@@ -186,6 +197,7 @@ const service = new TaskService({
   gateway,
   platformProblems: (names) => credentials.unavailable(names),
   hostMcpProblems: () => hostMcp.problems(),
+  imageProblems: () => images.problems(),
   // 実行の前に、使うホストの MCP サーバーを設定と突き合わせ、足したものは起動を待つ（PBI-77）
   hostMcpReady: (names) => hostMcp.ready(names),
   contextMcp,
@@ -209,6 +221,10 @@ service.syncMemories();
 const stopMemoryCleanup = startMemoryCleanup(() => service.cleanupMemories());
 // sacty の最新版を、起動のときと1日ごとに確かめる（PBI-135・PBI-147）
 const stopUpdateCheck = startUpdateCheck(updates);
+// エージェントのイメージを確かめ、最初の結果は端末にも出す（sacty up の出力。PBI-148）
+const stopImageCheck = startImagePresenceCheck(images, (problems) => {
+  for (const problem of problems) console.warn(`[daemon] ${renderMessage(problem, "ja")}`);
+});
 service.queueWaitingSteps();
 
 const status = service.status();
@@ -276,6 +292,7 @@ const shutdown = async () => {
   // 作業履歴を閉じた後に、メモリーの掃除が記録しないように止める（PBI-127）
   stopMemoryCleanup();
   stopUpdateCheck();
+  stopImageCheck();
   // 実行中のコンテナを止め、実行の後処理（作業履歴への記録、認証ファイルの書き戻し、
   // 一時ファイルの削除）が終わるのを待ってから、作業履歴を閉じて終了する。
   const draining = Promise.all([worker.drain(), intake.stop(), prWatcher.stop()]);

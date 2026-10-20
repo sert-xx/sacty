@@ -110,6 +110,25 @@
 `apps/daemon/src/service.ts`（`TaskService.status`）、`apps/web/src/components/shell/update-notice.tsx`（`UpdateNotice`）、
 `apps/web/src/components/shell/update-notice-live.tsx`（`UpdateNoticeLive`・`UPDATE_LIVE_INTERVAL_MS`）、`apps/web/src/components/shell/update-notice-view.tsx`（`UpdateNoticeView`・`safeGitHubUrl`・`UPDATE_COMMANDS`）
 
+## エージェントのイメージの確かめ
+
+デーモンは、起動のときと、それから1分ごと（`IMAGE_CHECK_INTERVAL_MS`）に、エージェントのイメージが手元にあるかを確かめる（PBI-148）。
+版を上げると既定のイメージの名前（`sacty-agent:<版>`）が変わるので、タスクを実行して `run.imageMissing` で止まる前に知らせる。
+
+- 確かめるのは、`config.yaml` の `image`（既定 `sacty-agent:<版>`）と `images.*` のイメージ（同じ名前は1回だけ）。設定ファイルが無ければ既定のイメージだけ、
+  設定に誤りがあれば確かめない（設定の誤りは別に知らせている）。設定は確かめるたびに読む。
+- `docker image inspect --format {{.Id}} <名前>` を実行する。終了コード 0 ならある。標準エラー出力に `No such image`・`No such object` があれば無い。
+  それ以外（Docker に接続できない・docker が無い・10 秒（`IMAGE_INSPECT_TIMEOUT_MS`）で応答しない。応答しなければ止める）は確かめられない。
+- 無いイメージごとに、名前と作るコマンド（既定のイメージは `npx sacty image build`、言語ごとのイメージは `npx sacty image build <名前>`）を注意にする
+  （`image.missing`）。名前にレジストリのホストを含むイメージ（最初の `/` の前に `.`・`:` があるか `localhost`）は、実行のときに取得を試みることも添える
+  （`image.notLocal`）。確かめられないイメージが1つでもあれば、「Docker に接続できないので確かめられない」を1つだけ出す（`image.dockerUnreachable`）。
+- 注意は `GET /api/status` の `warnings` に載せる（画面はタスクの一覧の注意の欄に出す）。設定ファイルが無いとき（設定の誤りとして `problems` が出る）も載せる。
+  最初の確かめの結果は、端末（`sacty up` の出力）にも出す。起動は止めず、自動では作らない。作れば、次の確かめで注意が消える。確かめている最中に重ねて確かめない。
+- デーモンを止めるときは、間隔を止め、実行中の `docker image inspect` を止める（`SIGKILL`）。打ち切った確かめの結果は残さず、それからは確かめない。
+
+コード: `apps/daemon/src/image-presence.ts`（`ImagePresenceChecker`・`inspectImage`・`imageTargets`・`isRegistryImage`・`buildCommand`・`startImagePresenceCheck`・`IMAGE_CHECK_INTERVAL_MS`・`IMAGE_INSPECT_TIMEOUT_MS`）、
+`apps/daemon/src/service.ts`（`TaskService.status`）、`apps/daemon/src/main.ts`
+
 ## 二重の起動
 
 - ロックのファイルは `SACTY_HOME/daemon.lock`。SQLite の排他ロック（`PRAGMA locking_mode = EXCLUSIVE; BEGIN EXCLUSIVE;`）を取り、

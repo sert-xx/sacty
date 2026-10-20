@@ -211,6 +211,10 @@ const PARAMS = {
   "run.dockerUnavailable": z.object({ detail: TextParam }),
   "run.dockerFailed": null,
   "run.imageMissing": z.object({ image: z.string() }),
+  // 起動のときのイメージの確かめ（PBI-148）
+  "image.missing": z.object({ image: z.string(), command: z.string() }),
+  "image.notLocal": z.object({ image: z.string(), command: z.string() }),
+  "image.dockerUnreachable": null,
   "run.authFileUnreadable": z.object({ path: z.string() }),
   "run.containerNotConfirmed": z.object({ name: z.string() }),
   // オーケストレーターのセッションを、実行の設定の場所に戻せなかった（PBI-67）
@@ -805,6 +809,12 @@ const ja: MessageDictionary = {
     "Docker がコンテナを実行できませんでした（docker run の終了コード 125）。Docker の起動・接続やイメージを確認してください。",
   "run.imageMissing": ({ image }) =>
     `エージェント用のイメージ（${image}）がありません。\`sacty image build\` で作成してください。`,
+  "image.missing": ({ image, command }) =>
+    `エージェント用のイメージ（${image}）がありません。\`${command}\` で作成してください。`,
+  "image.notLocal": ({ image, command }) =>
+    `エージェント用のイメージ（${image}）が手元にありません。実行のときにレジストリから取得を試みます。取得できなければ \`${command}\` で作成してください。`,
+  "image.dockerUnreachable":
+    "Docker に接続できないため、エージェント用のイメージがあるかを確かめられませんでした。Docker が起動しているか確認してください。",
   "run.authFileUnreadable": ({ path }) =>
     `認証ファイル（${path}）を読めません。ログインしているか確認してください。`,
   "run.containerNotConfirmed": ({ name }) =>
@@ -1325,6 +1335,12 @@ const en: MessageDictionary = {
     "Docker could not run the container (docker run exit code 125). Check that Docker is running and reachable, and check the image.",
   "run.imageMissing": ({ image }) =>
     `The agent image (${image}) is missing. Build it with \`sacty image build\`.`,
+  "image.missing": ({ image, command }) =>
+    `The agent image (${image}) is missing. Create it with \`${command}\`.`,
+  "image.notLocal": ({ image, command }) =>
+    `The agent image (${image}) is not on this machine. Runs will try to pull it from the registry. If that fails, create it with \`${command}\`.`,
+  "image.dockerUnreachable":
+    "Could not check whether the agent images exist because Docker is not reachable. Check that Docker is running.",
   "run.authFileUnreadable": ({ path }) =>
     `Cannot read the auth file (${path}). Check that you are signed in.`,
   "run.containerNotConfirmed": ({ name }) =>

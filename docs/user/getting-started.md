@@ -28,6 +28,7 @@ npx sacty config init   # ~/.sacty/config.yaml を作る
    OpenAI の API キーを `npx sacty secret set openai-api-key` で保存します。
 3. エージェント実行用のコンテナイメージを `npx sacty image build` で作ります。Docker Hub や npm の公開レジストリを使えない環境では、
    作る前に `image_build` を書いてください（[コンテナイメージ](images.md)）。
+   イメージが無いまま起動すると、`sacty up` の出力とタスクの一覧の注意に、作るコマンドが出ます。
 
 ## 起動する
 
