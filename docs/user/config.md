@@ -23,7 +23,7 @@
 | `agents` | sacty の既定のエージェントの上書き・追加（[エージェントの上書き](#エージェントの上書き)）。任意 | なし（sacty の既定を使う） |
 | `budget.default_per_task_usd` | 1タスクあたりの予算（米ドル。0 より大きい数） | `1` |
 | `budget.default_per_audit_usd` | 1回の監査の予算（米ドル。0 より大きい数。タスクの予算とは別。[監査](audit.md#予算)） | `1` |
-| `image` | エージェントとテストの実行に使うイメージ | `sacty-agent:1.4.0` |
+| `image` | エージェントとテストの実行に使うイメージ | `sacty-agent:1.5.0` |
 | `image_build` | `sacty image build` の元のイメージと npm の設定（[コンテナイメージ](images.md)） | なし |
 | `images` | 言語ごとのイメージ（[コンテナイメージ](images.md#言語ごとのイメージ)） | なし |
 | `onepassword.account` | 使う 1Password のアカウント（[秘密情報](secrets.md#1password)） | なし |
