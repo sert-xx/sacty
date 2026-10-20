@@ -145,7 +145,8 @@ const ja = {
     cancel: "中止",
     dialogTitle: (title: string) => `「${title}」を中止しますか？`,
     dialogBody: "中止すると再開できません。次のものを片付けます。",
-    dialogHint: "人が作ったブランチと PR には触れません。作業履歴は残ります。",
+    dialogHint:
+      "人が作ったブランチと PR には触れません。作業履歴は残り、中止の後に、再実行で最初からやり直せます。",
     present: "片付ける",
     absent: "対象なし",
     sessionNote: "Sacty はセッションを保存していません",
@@ -154,6 +155,30 @@ const ja = {
     cancelling: "片付けています…",
     cancelledTitle: "中止しました",
     cancelledAt: (at: string) => `${at} に中止`,
+  },
+  /** 中止したタスクを、最初からやり直す（再実行）。 */
+  rerun: {
+    open: "再実行",
+    title: "最初からやり直す",
+    description: "このタスクを引き継いだ新しいタスクを作り、最初から進めます。",
+    descriptionHint:
+      "中止で作業領域・ブランチ・PR は消えています。内容と補足に、前の試行の記録（工程の成果・指摘・質問と答え・止まった理由）を足して渡します。チケットのタスクは、チケットを引き継ぎ、読み直しません。",
+    titleLabel: "タイトル",
+    body: "内容",
+    note: "補足",
+    notePlaceholder: "足りなかった情報や、前と変えてほしいこと",
+    repository: "作業するリポジトリ（任意）",
+    repositoryHint:
+      "空欄なら、リポジトリを指定せずに作ります。コードの変更が要るときは、オーケストレーターがプロジェクトの対象から選びます。",
+    image: "イメージ",
+    imageAuto: "いつもどおり決める",
+    imageHint:
+      "選ぶと、すべての工程でこのイメージを使います。いつもどおりなら、プロジェクトの対象の指定かオーケストレーターが決めます。",
+    imagesUnavailable: "イメージの候補を読めません。いつもどおり決めます。",
+    close: "閉じる",
+    submit: "再実行する",
+    submitting: "作成中…",
+    rerunBy: "再実行したタスク：",
   },
   changeDecision: {
     requirementsHelp:
@@ -308,7 +333,8 @@ const en: PartsMessages = {
     cancel: "Cancel",
     dialogTitle: (title) => `Cancel "${title}"?`,
     dialogBody: "A cancelled task can't be resumed. The following is cleaned up.",
-    dialogHint: "Branches and PRs made by people aren't touched. The activity is kept.",
+    dialogHint:
+      "Branches and PRs made by people aren't touched. The activity is kept, and you can start over with a rerun after cancelling.",
     present: "Cleaned up",
     absent: "Nothing",
     sessionNote: "Sacty doesn't keep sessions",
@@ -317,6 +343,29 @@ const en: PartsMessages = {
     cancelling: "Cleaning up…",
     cancelledTitle: "Cancelled",
     cancelledAt: (at) => `Cancelled at ${at}`,
+  },
+  rerun: {
+    open: "Rerun",
+    title: "Start over",
+    description: "Creates a new task that takes over this one and starts from the beginning.",
+    descriptionHint:
+      "Cancelling removed the workspace, branches, and PRs. The record of the previous attempt (step outputs, remarks, questions and answers, why it stopped) is added after the description and notes. A ticket task keeps its ticket and doesn't read it again.",
+    titleLabel: "Title",
+    body: "Description",
+    note: "Additional notes",
+    notePlaceholder: "Missing information, or what should change from last time",
+    repository: "Repository to work in (optional)",
+    repositoryHint:
+      "Leave it empty to create the task without a repository. When code must change, the Orchestrator chooses one from the project's targets.",
+    image: "Image",
+    imageAuto: "Decide as usual",
+    imageHint:
+      "If you choose one, every step uses this image. Otherwise the project target's setting or the Orchestrator decides.",
+    imagesUnavailable: "Could not load the images. They are decided as usual.",
+    close: "Close",
+    submit: "Rerun",
+    submitting: "Creating…",
+    rerunBy: "Rerun task: ",
   },
   changeDecision: {
     requirementsHelp:

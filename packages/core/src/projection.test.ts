@@ -4,6 +4,8 @@ import type { ActivityEvent, EventInput } from "./events.js";
 import { EventInput as EventSchema, exportSteps, MVP_STEPS } from "./events.js";
 import {
   awaitingRepository,
+  awaitingTicketTriage,
+  canRerun,
   canRetryExport,
   deliveredWithoutChanges,
   documentOutput,
@@ -1736,5 +1738,60 @@ describe("マージの後の監視の工程（PBI-116）", () => {
       ["implement", "todo"],
       ["deployment", "skip"],
     ]);
+  });
+});
+
+describe("中止したタスクの再実行", () => {
+  const cancel = (taskId: string) =>
+    ev(taskId, { type: "TaskCancelled", payload: { cleanup: [] } }, "person");
+  const rerun = (taskId: string, of: string, extra: Record<string, unknown> = {}) =>
+    ev(
+      taskId,
+      {
+        type: "TaskCreated",
+        payload: {
+          title: "again",
+          body: "body",
+          start: "jira",
+          noRepo: true,
+          ticket: {
+            platform: "jira",
+            service: "jira-server",
+            key: "PAY-1",
+            url: "https://jira.example.com/browse/PAY-1",
+          },
+          rerun: { taskId: of },
+          ...extra,
+        },
+      },
+      "person",
+    );
+
+  it("元のタスクに再実行で作ったタスクを記録し、チケットを読み直さず、リポジトリ無しで進められる", () => {
+    const tasks = project([created("t1"), cancel("t1"), rerun("t2", "t1")]);
+    const original = tasks.get("t1");
+    const again = tasks.get("t2");
+    expect(original?.rerunBy).toBe("t2");
+    expect(original && canRerun(original)).toBe(false);
+    expect(again?.rerun).toEqual({ taskId: "t1" });
+    expect(again && awaitingTicketTriage(again)).toBe(false);
+    expect(again && isRepoless(again)).toBe(true);
+    expect(again && awaitingRepository(again)).toBe(true);
+  });
+
+  it("中止していない・再実行済みのタスクの再実行は、作業履歴に受け付けない", () => {
+    expect(() => project([created("t1"), rerun("t2", "t1")])).toThrow(/not a cancelled task/);
+    expect(() =>
+      project([created("t1"), cancel("t1"), rerun("t2", "t1"), rerun("t3", "t1")]),
+    ).toThrow(/not a cancelled task/);
+  });
+
+  it("中止したタスクだけを再実行できる（分割の子タスク・PR のレビューは除く）", () => {
+    const tasks = project([created("t1"), cancel("t1")]);
+    const cancelled = tasks.get("t1") as Task;
+    expect(canRerun(cancelled)).toBe(true);
+    expect(canRerun({ ...cancelled, status: "paused" })).toBe(false);
+    expect(canRerun({ ...cancelled, parent: { taskId: "p", dependsOn: [] } })).toBe(false);
+    expect(canRerun({ ...cancelled, start: "github_pull_request" })).toBe(false);
   });
 });

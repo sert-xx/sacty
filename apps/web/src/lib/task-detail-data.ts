@@ -1,5 +1,6 @@
 import {
   type ActivityEvent,
+  canRerun,
   isFinished,
   type StepKey,
   type Task,
@@ -30,6 +31,10 @@ export type TaskDetailData = {
   deploymentFix?: Task;
   /** 分割で作った子タスク（PBI-27）。 */
   children: Task[];
+  /** 再実行で作ったタスクの、元の（中止した）タスク。 */
+  rerunOf?: Task;
+  /** 中止したタスクを再実行して作ったタスク。 */
+  rerunBy?: Task;
   /** 中止したときに片付けるもの（操作できるときだけ）。 */
   cleanupPlan?: CleanupItem[];
   /** 工程のイメージの候補の元（取得できなければ無い。PBI-106）。 */
@@ -66,20 +71,34 @@ export async function loadTaskDetail(
   if (!found) return null;
   const { task, activity } = found;
   const completed = isFinished(task) && task.status !== "cancelled";
-  const [project, parent, origin, deploymentFix, all, cleanupPlan, status, candidates, audit] =
-    await Promise.all([
-      getProject(task.projectId),
-      task.parent ? getTask(task.parent.taskId) : undefined,
-      task.fix ? getTask(task.fix.taskId).catch(() => undefined) : undefined,
-      task.deployment?.fix ? getTask(task.deployment.fix.taskId).catch(() => undefined) : undefined,
-      task.split ? listTasks() : undefined,
-      canControl(task) ? getCleanupPlan(task.id) : undefined,
-      task.steps.length > 0 ? getStatus().catch(() => undefined) : undefined,
-      repositories && needsTicketRepositories(task)
-        ? listProjectRepositories(task.projectId).catch(() => undefined)
-        : undefined,
-      completed ? getTaskAudit(task.id).catch(() => null) : undefined,
-    ]);
+  const [
+    project,
+    parent,
+    origin,
+    deploymentFix,
+    all,
+    cleanupPlan,
+    status,
+    candidates,
+    audit,
+    rerunOf,
+    rerunBy,
+  ] = await Promise.all([
+    getProject(task.projectId),
+    task.parent ? getTask(task.parent.taskId) : undefined,
+    task.fix ? getTask(task.fix.taskId).catch(() => undefined) : undefined,
+    task.deployment?.fix ? getTask(task.deployment.fix.taskId).catch(() => undefined) : undefined,
+    task.split ? listTasks() : undefined,
+    canControl(task) ? getCleanupPlan(task.id) : undefined,
+    // 再実行のダイアログでも、選べるイメージを出す
+    task.steps.length > 0 || canRerun(task) ? getStatus().catch(() => undefined) : undefined,
+    repositories && needsTicketRepositories(task)
+      ? listProjectRepositories(task.projectId).catch(() => undefined)
+      : undefined,
+    completed ? getTaskAudit(task.id).catch(() => null) : undefined,
+    task.rerun ? getTask(task.rerun.taskId).catch(() => undefined) : undefined,
+    task.rerunBy ? getTask(task.rerunBy).catch(() => undefined) : undefined,
+  ]);
   const childIds = new Set((task.split?.children ?? []).map((c) => c.taskId));
   return {
     task,
@@ -89,6 +108,8 @@ export async function loadTaskDetail(
     ...(origin ? { origin: origin.task } : {}),
     ...(deploymentFix ? { deploymentFix: deploymentFix.task } : {}),
     children: (all ?? []).filter((t) => childIds.has(t.id)),
+    ...(rerunOf ? { rerunOf: rerunOf.task } : {}),
+    ...(rerunBy ? { rerunBy: rerunBy.task } : {}),
     ...(completed ? { audit: audit ?? null } : {}),
     ...(cleanupPlan !== undefined ? { cleanupPlan: cleanupPlan ?? [] } : {}),
     ...(status ? { imageStatus: { problems: status.problems, images: status.images } } : {}),

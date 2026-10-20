@@ -17,6 +17,7 @@ const ja = {
     byPerson ? "（人が選択）" : "（オーケストレーターが選択）",
   repoChoiceHint: (reason: string) => `選んだ理由：${reason}`,
   parent: " ・ 親タスク：",
+  rerunOf: " ・ 再実行の元：",
   sourceOpen: "（",
   sourceClose: "）",
   operationSettings: {
@@ -89,6 +90,7 @@ const ja = {
     unavailable: "候補を確かめられないため、いまは変えられません。少し待って開き直してください。",
     byPerson: (at: string, from: string) => `人が ${from} から変更（${at}）`,
     byProject: "プロジェクトの対象の指定",
+    byRerun: "再実行で人が指定",
     byOrchestrator: "オーケストレーターが選択",
     byOrchestratorDefault: (reason: string) => `オーケストレーターが既定を選択：${reason}`,
     byOrchestratorUnexplained: "オーケストレーターが既定を選択（理由なし）",
@@ -347,6 +349,7 @@ const en: TaskMessages = {
     byPerson ? " (chosen by a person)" : " (chosen by the Orchestrator)",
   repoChoiceHint: (reason) => `Why: ${reason}`,
   parent: " · Parent task: ",
+  rerunOf: " · Rerun of: ",
   sourceOpen: " (",
   sourceClose: ")",
   operationSettings: {
@@ -419,6 +422,7 @@ const en: TaskMessages = {
     unavailable: "The image choices can't be checked right now. Wait a moment and reopen.",
     byPerson: (at, from) => `changed by a person from ${from} (${at})`,
     byProject: "set on the project target",
+    byRerun: "set by a person on rerun",
     byOrchestrator: "chosen by the Orchestrator",
     byOrchestratorDefault: (reason) => `the Orchestrator chose the default: ${reason}`,
     byOrchestratorUnexplained: "the Orchestrator chose the default (no reason)",

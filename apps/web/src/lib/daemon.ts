@@ -11,6 +11,7 @@ import {
   type Project,
   type ProjectAudits,
   type ProjectDefinitionInput,
+  type RerunTaskInput,
   renderMessage,
   type SactySettings,
   type SactySettingsInput,
@@ -501,6 +502,22 @@ export async function resumeTask(
 }
 
 type OpResult = { ok: true } | { ok: false; message: string };
+
+/** 中止したタスクを、最初からやり直す（再実行）。元のタスクを引き継いだ新しいタスクを返す。 */
+export async function rerunTask(
+  id: string,
+  input: RerunTaskInput,
+): Promise<{ ok: true; task: Task } | { ok: false; message: string }> {
+  const res = await daemonFetch(`/api/tasks/${encodeURIComponent(id)}/rerun`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (res.status === 409) return { ok: false, message: await operationMessage(res) };
+  if (res.status === 400) return { ok: false, message: await inputMessage(res) };
+  await ensureOk(res);
+  return { ok: true, task: ((await res.json()) as { task: Task }).task };
+}
 
 /** チケットのタスクの、作業するリポジトリを人が選ぶ（PBI-52）。 */
 export async function chooseTicketRepository(id: string, repo: string): Promise<OpResult> {

@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { formatUsd } from "./cost.js";
-import { QUESTION_MAX, TASK_BODY_MAX, TASK_TITLE_MAX } from "./events.js";
+import { QUESTION_MAX, RERUN_NOTE_MAX, TASK_BODY_MAX, TASK_TITLE_MAX } from "./events.js";
 import { DaemonText } from "./message-code.js";
 import { PROJECT_EXPORT_VERSION } from "./projects.js";
 
@@ -44,6 +44,9 @@ const PARAMS = {
   "cancel.alreadyCancelled": null,
   "cancel.cleaningUp": null,
   "cancel.guardianJudging": null,
+  "rerun.notCancelled": null,
+  "rerun.notRerunnable": null,
+  "rerun.alreadyRerun": null,
   "resume.notPaused": null,
   "operation.incomplete": null,
   "operation.attempted": null,
@@ -68,6 +71,7 @@ const PARAMS = {
   "input.titleRequired": null,
   "input.titleTooLong": null,
   "input.bodyTooLong": null,
+  "input.noteTooLong": null,
   "input.remarkTooLong": null,
   // オーケストレーターへの質問（PBI-54）
   "input.questionRequired": null,
@@ -579,6 +583,10 @@ const ja: MessageDictionary = {
   "cancel.cleaningUp": "中止の後片付けをしています。",
   "cancel.guardianJudging":
     "ゴールガーディアンが変更の申し出を判定しているため、終わるまで中止できません。",
+  "rerun.notCancelled": "中止したタスクだけを再実行できます。",
+  "rerun.notRerunnable":
+    "このタスクは再実行できません（分割で作った子タスクは親から、PR のレビューは PR から依頼し直してください）。",
+  "rerun.alreadyRerun": "このタスクは再実行済みです。再実行で作ったタスクを確かめてください。",
   "resume.notPaused": "一時停止中のタスクではありません。",
   "operation.incomplete":
     "外部作業は開始していません。対象・変更内容・確認方法・接続先が未確定です。依頼を具体的にした新しいタスクを作成してください。",
@@ -614,6 +622,7 @@ const ja: MessageDictionary = {
   "input.titleRequired": "タイトルを入力してください。",
   "input.titleTooLong": `タイトルは${TASK_TITLE_MAX}文字以内で入力してください。`,
   "input.bodyTooLong": `内容は${TASK_BODY_MAX.toLocaleString("ja-JP")}文字以内で入力してください。`,
+  "input.noteTooLong": `補足は${RERUN_NOTE_MAX.toLocaleString("ja-JP")}文字以内で入力してください。`,
   "input.remarkTooLong": "指摘は1件あたり2,000文字以内にしてください。",
   "input.questionRequired": "質問を入力してください。",
   "input.questionTooLong": `質問は${QUESTION_MAX.toLocaleString("ja-JP")}文字以内にしてください。`,
@@ -1103,6 +1112,10 @@ const en: MessageDictionary = {
   "cancel.cleaningUp": "Cleaning up after cancellation.",
   "cancel.guardianJudging":
     "The Goal Guardian is judging a change request. You can cancel once it finishes.",
+  "rerun.notCancelled": "Only a cancelled task can be rerun.",
+  "rerun.notRerunnable":
+    "This task can't be rerun (rerun a subtask from its parent, and request a PR review again on the PR).",
+  "rerun.alreadyRerun": "This task has already been rerun. Check the task created by the rerun.",
   "resume.notPaused": "The task is not paused.",
   "operation.incomplete":
     "The operation has not started. The target, changes, verification, or connection is missing. Create a new task with the missing details.",
@@ -1138,6 +1151,7 @@ const en: MessageDictionary = {
   "input.titleRequired": "Enter a title.",
   "input.titleTooLong": `Keep the title within ${TASK_TITLE_MAX} characters.`,
   "input.bodyTooLong": `Keep the details within ${TASK_BODY_MAX.toLocaleString("en-US")} characters.`,
+  "input.noteTooLong": `Keep the additional notes within ${RERUN_NOTE_MAX.toLocaleString("en-US")} characters.`,
   "input.remarkTooLong": "Keep each comment within 2,000 characters.",
   "input.questionRequired": "Enter a question.",
   "input.questionTooLong": `Keep the question within ${QUESTION_MAX.toLocaleString("en-US")} characters.`,

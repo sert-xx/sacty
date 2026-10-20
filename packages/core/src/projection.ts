@@ -308,6 +308,10 @@ export type Task = {
   fix?: PayloadOf<"TaskCreated">["fix"];
   /** 監査の改修の提案を採用して作ったタスクの、元の提案（PBI-125）。 */
   auditFix?: PayloadOf<"TaskCreated">["auditFix"];
+  /** 中止したタスクを、人が最初からやり直すために作ったタスクの、元のタスクと指定したイメージ（再実行）。 */
+  rerun?: PayloadOf<"TaskCreated">["rerun"];
+  /** 中止したタスクを再実行して作ったタスク（再実行は1度だけ）。 */
+  rerunBy?: string;
   /** 完了したタスクの監査（PBI-125）。監査を待つ記録（AuditQueued）が無ければ無い。 */
   audit?: TaskAuditState;
   /**
@@ -543,8 +547,11 @@ export type Task = {
    */
   selfReviews?: Partial<Record<StepKey, SelfReview | null>>;
   images?: Partial<Record<StepKey, string>>;
-  /** 工程を選んだときにイメージを決めたのが、プロジェクトの対象の指定か、オーケストレーターか（PBI-41）。 */
-  imageSource?: "project" | "orchestrator";
+  /**
+   * 工程を選んだときにイメージを決めたのが、プロジェクトの対象の指定か、オーケストレーターか（PBI-41）、再実行で人が
+   * 指定したものか。
+   */
+  imageSource?: "project" | "orchestrator" | "rerun";
   /** オーケストレーターが既定のイメージにした工程と、images のどれも合わない理由（PBI-105）。 */
   defaultImageReasons?: Partial<Record<StepKey, string>>;
   /** images の候補を見せたのに、理由が無いまま既定のイメージにした工程（PBI-105）。 */
@@ -683,6 +690,19 @@ export function applyEvent(
 
   if (event.type === "TaskCreated") {
     if (current) throw new ActivityIntegrityError(event, "task is created twice");
+    // 再実行（中止したタスクをやり直す）。元のタスクに、再実行で作ったタスクを記録する（再実行は1度だけ）。
+    // 元のタスクが作業履歴に無ければ（取り込んだプロジェクトに含まれないなど）、記録だけを省く
+    const rerunOf = event.payload.rerun && next.get(event.payload.rerun.taskId);
+    if (rerunOf) {
+      if (
+        rerunOf.status !== "cancelled" ||
+        rerunOf.rerunBy ||
+        rerunOf.projectId !== event.projectId
+      ) {
+        throw new ActivityIntegrityError(event, "the rerun task is not a cancelled task to rerun");
+      }
+      next.set(rerunOf.id, { ...rerunOf, rerunBy: event.taskId });
+    }
     next.set(event.taskId, {
       id: event.taskId,
       projectId: event.projectId,
@@ -707,6 +727,7 @@ export function applyEvent(
       ...(event.payload.template ? { template: event.payload.template } : {}),
       ...(event.payload.fix ? { fix: event.payload.fix } : {}),
       ...(event.payload.auditFix ? { auditFix: event.payload.auditFix } : {}),
+      ...(event.payload.rerun ? { rerun: event.payload.rerun } : {}),
       // 依存先の子タスクがあれば、それが完了するまで待つ（PBI-27）
       status: event.payload.parent?.dependsOn.length ? "blocked" : "queued",
       steps: [],
@@ -2367,7 +2388,8 @@ export function isRepoless(task: Task): boolean {
     task.noRepo === true &&
     !task.repo &&
     !task.source &&
-    !task.ticket &&
+    // チケットのタスクの再実行は、リポジトリを指定しないこともできる（チケットを読み直してリポジトリを選ばない）
+    (!task.ticket || task.rerun !== undefined) &&
     task.repository === undefined
   );
 }
@@ -2380,10 +2402,23 @@ export function awaitingRepository(task: Task): boolean {
   return (
     task.noRepo === true &&
     !task.source &&
-    !task.ticket &&
+    (!task.ticket || task.rerun !== undefined) &&
     task.steps.length === 0 &&
     task.repository === undefined &&
     task.status !== "cancelled"
+  );
+}
+
+/**
+ * 中止したタスクを再実行できるか。中止して、まだ再実行していないタスクだけ。分割で作った子タスク（親が進め方を決める）・
+ * PR のレビューのタスク（PR で依頼し直す。PBI-44）は除く。
+ */
+export function canRerun(task: Task): boolean {
+  return (
+    task.status === "cancelled" &&
+    task.rerunBy === undefined &&
+    task.parent === undefined &&
+    task.start !== "github_pull_request"
   );
 }
 
@@ -2394,6 +2429,8 @@ export function awaitingRepository(task: Task): boolean {
 export function awaitingTicketTriage(task: Task): boolean {
   return (
     task.ticket !== undefined &&
+    // 再実行で作ったタスクは、人が作業するリポジトリ・題・説明を決めた（チケットを読み直さない）
+    task.rerun === undefined &&
     task.steps.length === 0 &&
     task.repository === undefined &&
     (!task.repo || task.ticketTriage?.by === "person")

@@ -28,6 +28,7 @@ import type {
 import {
   ANSWER_MAX,
   activeStep,
+  awaitingTicketTriage,
   budgetState,
   DEPLOYMENT_CI_GRACE_MS,
   DEPLOYMENT_CI_TIMEOUT_MS,
@@ -35,13 +36,16 @@ import {
   exportDue,
   isCompleted,
   isFinished,
+  isRepoless,
   MAX_CHANGE_REQUESTS,
   MAX_FIX_CHAIN,
   MAX_VERIFY_ATTEMPTS,
   MVP_STEPS,
   message,
   QUESTION_MAX,
+  RERUN_RECORD_HEADING,
   renderMessage,
+  rerunEditableBody,
   reworkTargets,
   STEP_PLANS,
   stepRunning,
@@ -25085,6 +25089,202 @@ describe("レビューの再依頼で、自動で再レビューする（PBI-143
     );
     expect(text).not.toContain("ghp_secret");
     expect(restarts(service, id)).toEqual([]);
+    activity.close();
+  });
+});
+
+describe("中止したタスクの再実行", () => {
+  const types = (svc: TaskService, id: string) => svc.get(id)?.activity.map((e) => e.type) ?? [];
+  const java = {
+    name: "java",
+    image: "sacty-agent-java:test",
+    description: "Java 17・Maven",
+    baseImage: "registry.example.com/ci/java:17",
+  };
+  const withImages = (): (() => ConfigResult) => () => ({
+    ok: true,
+    config: {
+      ...(configOf(agent(), 1, [jiraPlatform()])() as { ok: true; config: SactyConfig }).config,
+      images: { java },
+    },
+  });
+  const projects = () => {
+    const store = new MemoryProjectStore();
+    store.put("default", {
+      name: "デフォルト",
+      targets: [
+        { scope: "repo", target: "https://github.com/acme/app" },
+        { scope: "repo", target: "https://github.com/acme/api" },
+      ],
+      githubAccounts: { "github.com": "me" },
+      tickets: [{ platform: "jira", service: "jira-server", keys: ["PAY"] }],
+    });
+    return store;
+  };
+  const setup = (outcomes: AgentOutcome[] = []) => {
+    const activity = new SqliteActivityStore(dbPath);
+    const made = makeService(activity, outcomes, {
+      config: withImages(),
+      secrets: { "claude-oauth-token": "oauth-secret", "jira-token": "jira-secret" },
+      gateway: fakeGateway(),
+      projects: projects(),
+      settings: new MemorySettingsStore({ ticketLabel: "sacty" }),
+      tickets: new FakeTickets(),
+    });
+    return { activity, ...made };
+  };
+
+  it("中止したタスクを引き継いだ新しいタスクを作り、補足と前の試行の記録を説明に足す。再実行は1度だけ", async () => {
+    const { activity, service } = setup([completed(10)]);
+    const task = service.createTask({
+      projectId: "default",
+      title: "決済の再送",
+      body: "二重に請求される",
+      repo: "https://github.com/acme/app",
+    });
+    // 中止していないタスクは再実行できない
+    expect(() => service.rerunTask(task.id, { title: "x", repo: null })).toThrowError(
+      InvalidOperationError,
+    );
+    await service.runNext(task.id); // 要求要件
+    await service.cancel(task.id);
+
+    const rerun = service.rerunTask(task.id, {
+      title: "決済の再送（やり直し）",
+      body: "二重に請求される",
+      note: "再送は冪等キーで判定する",
+      repo: "https://github.com/acme/api",
+      image: "java",
+    });
+    expect(rerun).toMatchObject({
+      title: "決済の再送（やり直し）",
+      start: "sacty",
+      status: "queued",
+      repo: "https://github.com/acme/api",
+      rerun: { taskId: task.id, image: "java" },
+    });
+    expect(rerun.body).toMatch(
+      /^二重に請求される\n\n## 補足（再実行で人が足したもの）\n\n再送は冪等キーで判定する\n/,
+    );
+    expect(rerun.body).toContain(RERUN_RECORD_HEADING);
+    expect(rerun.body).toContain(`- 中止したタスク：決済の再送（${task.id}）`);
+    expect(rerun.body).toContain("- 作業したリポジトリ：https://github.com/acme/app");
+    expect(rerun.body).toContain("### 要求要件の成果（未承認）");
+    // 元のタスクに、再実行で作ったタスクを記録する（再起動の後も作業履歴から同じに戻る）
+    expect(service.get(task.id)?.task.rerunBy).toBe(rerun.id);
+    const { service: restarted } = makeService(activity, [], { projects: projects() });
+    expect(restarted.get(task.id)?.task.rerunBy).toBe(rerun.id);
+    expect(restarted.get(rerun.id)?.task.rerun).toEqual({ taskId: task.id, image: "java" });
+    // 2度目は断る
+    expect(() => service.rerunTask(task.id, { title: "again", repo: null })).toThrowError(
+      InvalidOperationError,
+    );
+    // 説明の元は、sacty が足した記録を除いたもの（再実行を重ねても記録が積み重ならない）
+    expect(rerunEditableBody(rerun)).toBe(
+      "二重に請求される\n\n## 補足（再実行で人が足したもの）\n\n再送は冪等キーで判定する",
+    );
+    activity.close();
+  });
+
+  it("API で再実行でき、作ったタスクを 201 で返す。再実行済みなら 409、入力の誤りは 400", async () => {
+    const { activity, service } = setup();
+    const task = service.createTask({ projectId: "default", title: "A", repo: null });
+    await service.cancel(task.id);
+    const app = createApp(service, "tok");
+    const post = (body: unknown) =>
+      app.request(`/api/tasks/${task.id}/rerun`, {
+        method: "POST",
+        headers: { authorization: "Bearer tok", "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    expect((await post({ title: " ", repo: null })).status).toBe(400);
+    const ok = await post({ title: "A", note: "補足", repo: null });
+    expect(ok.status).toBe(201);
+    expect(((await ok.json()) as { task: Task }).task.rerun).toEqual({ taskId: task.id });
+    const ng = await post({ title: "A", repo: null });
+    expect(ng.status).toBe(409);
+    expect(await ng.json()).toEqual({
+      error: "invalid_operation",
+      messages: [message("rerun.alreadyRerun")],
+    });
+    activity.close();
+  });
+
+  it("人が指定したイメージを、すべての工程で使う（再実行で人が指定したと記録する）", async () => {
+    const { activity, service } = setup([completed(10)]);
+    const task = service.createTask({ projectId: "default", title: "A", repo: null });
+    await service.cancel(task.id);
+    const rerun = service.rerunTask(task.id, {
+      title: "A",
+      repo: "https://github.com/acme/app",
+      image: "java",
+    });
+    await service.runNext(rerun.id);
+    const chosen = service.get(rerun.id)?.activity.find((e) => e.type === "StepsChosen");
+    expect(chosen?.type === "StepsChosen" && chosen.payload).toMatchObject({
+      images: Object.fromEntries(MVP_STEPS.map((s) => [s, "java"])),
+      imageSource: "rerun",
+    });
+    activity.close();
+  });
+
+  it("images に無いイメージ・プロジェクトの対象に無いリポジトリは断る", async () => {
+    const { activity, service } = setup();
+    const task = service.createTask({ projectId: "default", title: "A", repo: null });
+    await service.cancel(task.id);
+    expect(() =>
+      service.rerunTask(task.id, { title: "A", repo: null, image: "ruby" }),
+    ).toThrowError(InvalidOperationError);
+    expect(() =>
+      service.rerunTask(task.id, { title: "A", repo: "https://github.com/other/x" }),
+    ).toThrowError(InvalidOperationError);
+    expect(service.get(task.id)?.task.rerunBy).toBeUndefined();
+    activity.close();
+  });
+
+  it("チケットのタスクは、チケットを引き継ぎ、読み直さずに人が決めたリポジトリ（無しも）で進める。同じチケットは二重に取り込まない", async () => {
+    const { activity, service, executor } = setup([
+      triageOut({
+        repo: "https://github.com/acme/app",
+        title: "PAY-1 決済の再送",
+        summary: "再送で二重に請求される",
+        reason: "決済のコードがある",
+      }),
+    ]);
+    const [task] = service.importTickets([foundTicket("PAY-1")]);
+    const id = task?.id ?? "";
+    await service.runNext(id); // チケットを読む
+    await service.cancel(id);
+    const calls = executor.calls.length;
+
+    const rerun = service.rerunTask(id, {
+      title: "PAY-1 決済の再送",
+      body: "再送で二重に請求される",
+      note: "API 側の修正だけでよい",
+      repo: null,
+    });
+    expect(rerun).toMatchObject({
+      start: "jira",
+      ticket: { key: "PAY-1" },
+      noRepo: true,
+      rerun: { taskId: id },
+    });
+    expect(rerun.repo).toBeUndefined();
+    expect(rerun.body).toContain("- チケット：PAY-1（https://jira.example.com/browse/PAY-1）");
+    expect(awaitingTicketTriage(rerun)).toBe(false);
+    expect(isRepoless(rerun)).toBe(true);
+    // 工程を選ぶ（チケットは読み直さない。リポジトリ無しで進む）
+    await service.runNext(rerun.id);
+    expect(executor.calls.length).toBe(calls);
+    expect(types(service, rerun.id)).not.toContain("TicketTriaged");
+    // コードの変更が要る工程を選んだが、リポジトリを選べなかったので止まる。人が選ぶのは、リポジトリを指定せずに作った
+    // タスクと同じ選び方（チケットのリポジトリの選び方ではない）
+    expect(service.get(rerun.id)?.task.status).toBe("paused");
+    await service.chooseRepository(rerun.id, "https://github.com/acme/api");
+    expect(types(service, rerun.id)).toContain("RepositoryChosen");
+    expect(service.get(rerun.id)?.task.repo).toBe("https://github.com/acme/api");
+    // 同じチケットは、取り込み直さない
+    expect(service.importTickets([foundTicket("PAY-1")])).toEqual([]);
     activity.close();
   });
 });

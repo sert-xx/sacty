@@ -155,13 +155,13 @@ const ja = {
   event: {
     estimated: "・概算",
     withCost: (actor: string, cost: string) => `${actor}・${cost}`,
-    TaskCreated: (actor: string, template?: string) =>
-      `タスクを作成（${actor}${template ? `・テンプレート：${template}` : ""}）`,
+    TaskCreated: (actor: string, template?: string, rerun?: boolean) =>
+      `タスクを作成（${actor}${template ? `・テンプレート：${template}` : ""}${rerun ? "・中止したタスクの再実行" : ""}）`,
     StepsChosen: (steps: string, reason?: string) =>
       `工程を決定：${steps}${reason ? `（${reason}）` : ""}`,
     stepsJoin: " → ",
-    stepsImages: (images: string, source: "project" | "orchestrator", reason?: string) =>
-      ` / イメージ：${images}（${source === "project" ? "プロジェクトの対象の指定" : reason ? `オーケストレーター：${reason}` : "オーケストレーター"}）`,
+    stepsImages: (images: string, source: "project" | "orchestrator" | "rerun", reason?: string) =>
+      ` / イメージ：${images}（${source === "project" ? "プロジェクトの対象の指定" : source === "rerun" ? "再実行で人が指定" : reason ? `オーケストレーター：${reason}` : "オーケストレーター"}）`,
     stepImage: (step: string, image: string) => `${step}＝${image}`,
     /** 既定のイメージで動かす工程と、images のどれも合わない理由（PBI-105）。 */
     stepsDefaultImages: (reasons: string) => ` / 既定のイメージ：${reasons}`,
@@ -574,11 +574,11 @@ const en: LabelMessages = {
   event: {
     estimated: " · estimate",
     withCost: (actor, cost) => `${actor} · ${cost}`,
-    TaskCreated: (actor, template) =>
-      `Task created (${actor}${template ? ` · template: ${template}` : ""})`,
+    TaskCreated: (actor, template, rerun) =>
+      `Task created (${actor}${template ? ` · template: ${template}` : ""}${rerun ? " · rerun of a cancelled task" : ""})`,
     StepsChosen: (steps, reason) => `Steps chosen: ${steps}${reason ? ` (${reason})` : ""}`,
     stepsImages: (images, source, reason) =>
-      ` / images: ${images} (${source === "project" ? "set on the project target" : reason ? `Orchestrator: ${reason}` : "Orchestrator"})`,
+      ` / images: ${images} (${source === "project" ? "set on the project target" : source === "rerun" ? "set by a person on rerun" : reason ? `Orchestrator: ${reason}` : "Orchestrator"})`,
     stepImage: (step, image) => `${step}=${image}`,
     stepsDefaultImages: (reasons) => ` / Default image: ${reasons}`,
     stepDefaultImage: (step, reason) => `${step}: ${reason}`,

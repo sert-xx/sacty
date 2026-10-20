@@ -412,6 +412,31 @@ Code: `apps/daemon/src/service.ts` (`judge`, `settleEvents`, `runGuardian`, `ver
 
 Code: `apps/daemon/src/service.ts` (`warnIfNeeded`, `checkBudget`, `pause`, `resume`, `cancel`, `cleanupPlan`, `sactyBranches`, `stopReason`), `packages/core/src/events.ts` (`PauseReason`, `CleanupTarget`, `ResumeTaskInput`), `packages/core/src/cost.ts` (`budgetState`)
 
+### Rerunning a cancelled task
+
+- A cancelled task can be started over from "Rerun" on its detail page (`POST /api/tasks/:id/rerun`). Nothing can be appended to the activity of a
+  cancelled task, so a new task that takes over the original is created (`rerun` in `TaskCreated`: the original task's ID and the image a person chose). When
+  the activity is replayed, the original task records the rerun task (`rerunBy`); a task can be rerun only once (a second rerun and a task that is not
+  cancelled are refused). Subtasks created by a split and PR review tasks can't be rerun (`canRerun`).
+- What a person decides (`RerunTaskInput`): the title, the description (the original one; for a rerun task, without the record sacty added.
+  `rerunEditableBody`), additional notes (up to 10000 characters), the repository to work in (from the project's targets; `null` means no repository,
+  and the task proceeds like a task created without one), and the image (a name in `images` or `default`; without it, the image is decided as usual).
+  A repository outside the targets and an image not in `images` are refused.
+- The description is the edited description followed by the notes (`## 補足（再実行で人が足したもの）`) and the record of the previous attempt
+  (`## 前の試行の記録（中止したタスク）`) (`buildRerunBody`). The record holds what cancelling did not remove: the original task, the repository it worked
+  in, the ticket and the source, the steps and their states, why the steps were chosen, why it last stopped, the closed PR, when it was cancelled, the step
+  outputs (the approved one if approved; up to 3000 characters each), remarks that were not voided, and questions with answers. Because cancelling removed
+  the workspace, branches, and PRs, it says to start over from the beginning.
+- The chosen image takes priority over the project target's setting and is used for every step (`imageSource` in `StepsChosen` is `rerun`).
+- A task imported from a ticket keeps the ticket (`start` is `jira`; the PR URL is posted to the ticket, and the same ticket is not imported twice).
+  The ticket is not read again (`awaitingTicketTriage` does not apply), and the task proceeds with the repository the person chose. With no repository,
+  like a task created without one, the Orchestrator chooses a repository, and a person chooses it if the Orchestrator can't
+  (`isRepoless`, `awaitingRepository`, `chooseRepository`). A rerun of a task imported from a GitHub issue doesn't keep the source (`start` is `sacty`;
+  the record has the issue URL).
+- The budget cap is `budget_per_task_usd` at creation (the amount used is not carried over).
+
+Code: `apps/daemon/src/service.ts` (`rerunTask`, `pinnedImage`, `chooseRepository`), `apps/daemon/src/prompts.ts` (`buildRerunBody`), `apps/daemon/src/server.ts` (`/api/tasks/:id/rerun`), `packages/core/src/events.ts` (`RerunTaskInput`, `rerunEditableBody`), `packages/core/src/projection.ts` (`canRerun`, `awaitingTicketTriage`, `isRepoless`), `apps/web/src/components/rerun-dialog.tsx`
+
 ## Asking the Orchestrator
 
 - Questions are up to 2000 characters (`QUESTION_MAX`), and answers up to 20000 characters (`ANSWER_MAX`; truncated if longer). At most one question can be awaiting an answer.

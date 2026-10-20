@@ -27,6 +27,7 @@ import {
   CreateTaskInput,
   CreateTemplateTaskInput,
   canRereview,
+  canRerun,
   canRetryExport,
   changeRounds,
   computeCostUsd,
@@ -87,6 +88,7 @@ import {
   RejectAuditProposalInput,
   RepoUrl,
   RequestChangesInput,
+  RerunTaskInput,
   ResumeAuditInput,
   ResumeTaskInput,
   renderMessage,
@@ -257,6 +259,7 @@ import {
   buildPrompt,
   buildPullRequestBodyParts,
   buildPullRequestBodyText,
+  buildRerunBody,
   buildReviewBody,
   buildReviewComments,
   buildReworkPrompt,
@@ -367,6 +370,9 @@ function contextContainerDir(runtime: "claude-code" | "codex"): string {
 export type ContextPreviewView = Omit<ContextPreview, "platforms"> & {
   platforms: PlatformSummary[];
 };
+
+/** すべての工程で使うと決まっているイメージ（再実行で人が指定した・プロジェクトの対象で指定した。PBI-41）。 */
+type PinnedImage = { name: string; source: "project" | "rerun" };
 
 function clipText(text: DaemonText, max: number): DaemonText {
   return mapFreeText(text, (value) => (value.length > max ? `…${value.slice(-max)}` : value));
@@ -2039,7 +2045,8 @@ export class TaskService {
   async chooseRepository(id: string, repo: string): Promise<Task> {
     const task = this.tasks.get(id);
     if (!task) throw new InvalidOperationError(message("task.notFound"));
-    if (task.ticket) return this.chooseTicketRepository(id, repo);
+    // チケットのタスクの再実行は、リポジトリを指定せずに作ったタスクと同じく選ぶ（チケットを読み直さない）
+    if (task.ticket && !task.rerun) return this.chooseTicketRepository(id, repo);
     // 止まっているタスクだけ（オーケストレーターが選んでいる間に選ぶと、どちらを使うかがぶれるため）
     if (!awaitingRepository(task) || task.status !== "paused") {
       throw new InvalidOperationError(message("repo.notChoosable"));
@@ -2544,13 +2551,18 @@ export class TaskService {
     }
   }
 
-  /** プロジェクトの対象で指定したイメージの名前（PBI-41）。 */
-  private pinnedImage(task: Task): string | undefined {
+  /**
+   * すべての工程で使うと決まっているイメージの名前と、決めた元。再実行で人が指定したもの（優先する）か、プロジェクトの
+   * 対象で指定したもの（PBI-41）。
+   */
+  private pinnedImage(task: Task): PinnedImage | undefined {
+    if (task.rerun?.image) return { name: task.rerun.image, source: "rerun" };
     const repo = task.source
       ? task.source.repo
       : (task.repo ?? (task.repository && githubRepoOf(task.repository.url)));
     const project = this.deps.projects.get(task.projectId);
-    return repo && project ? targetImageOf(project, repo) : undefined;
+    const name = repo && project ? targetImageOf(project, repo) : undefined;
+    return name ? { name, source: "project" } : undefined;
   }
 
   /**
@@ -2563,7 +2575,7 @@ export class TaskService {
   private withImages(
     choice: ChosenSteps,
     config: SactyConfig,
-    pinned: string | undefined,
+    pinned: PinnedImage | undefined,
     offered = false,
   ): ChosenSteps | { failure: Extract<EventInput, { type: "OrchestratorFailed" }>["payload"] } {
     const {
@@ -2574,7 +2586,7 @@ export class TaskService {
       ...rest
     } = choice;
     const images = pinned
-      ? Object.fromEntries(choice.steps.map((step) => [step, pinned]))
+      ? Object.fromEntries(choice.steps.map((step) => [step, pinned.name]))
       : Object.fromEntries(
           Object.entries(picked ?? {}).filter(([step]) => choice.steps.includes(step as StepKey)),
         );
@@ -2603,7 +2615,7 @@ export class TaskService {
     return {
       ...rest,
       images,
-      imageSource: pinned ? "project" : "orchestrator",
+      imageSource: pinned ? pinned.source : "orchestrator",
       ...(!pinned && imageReason ? { imageReason } : {}),
       ...defaults,
     };
@@ -3910,6 +3922,63 @@ export class TaskService {
         event: {
           type: "TaskCreated",
           payload: { title, body, start: "sacty", repo, budgetCapUsd, template: input.template },
+        },
+      },
+    ]);
+  }
+
+  /**
+   * 中止したタスクを、最初からやり直す（再実行）。中止したタスクの作業履歴には書き足せないので、元のタスクを引き継いだ
+   * 新しいタスクを作る（元のタスクには、再実行で作ったタスクを記録する。再実行は1度だけ）。題・説明・作業するリポジトリ
+   * （null はリポジトリを指定しない）・イメージは人が決め、説明には補足と前の試行の記録を足す（中止で作業領域・ブランチ・
+   * PR は消えているため）。チケットから取り込んだタスクはチケットを引き継ぎ（PR の URL をチケットに返す・同じチケットを
+   * 二重に取り込まない）、チケットを読み直さずに、人が決めたリポジトリで進める。
+   */
+  rerunTask(id: string, raw: unknown): Task {
+    const input = RerunTaskInput.parse(raw);
+    const previous = this.tasks.get(id);
+    if (!previous) throw new InvalidOperationError(message("task.notFound"));
+    if (previous.status !== "cancelled") {
+      throw new InvalidOperationError(message("rerun.notCancelled"));
+    }
+    if (previous.rerunBy) throw new InvalidOperationError(message("rerun.alreadyRerun"));
+    if (!canRerun(previous)) throw new InvalidOperationError(message("rerun.notRerunnable"));
+    const project = this.deps.projects.get(previous.projectId);
+    if (!project) throw new InvalidOperationError(message("project.notFound"));
+    if (project.targets.length === 0) {
+      throw new InvalidOperationError(message("task.repositoryMissing", { project: project.name }));
+    }
+    const repo = input.repo === null ? undefined : this.projectRepository(project, input.repo);
+    const config = this.deps.config();
+    if (input.image !== undefined) {
+      // 設定を読めなければ、名前を確かめられないので、その理由を示して断る（PBI-106 と同じ）
+      if (!config.ok) {
+        throw new InvalidOperationError(
+          message("image.configUnavailable", { detail: config.problem }),
+        );
+      }
+      if (!resolveImage(config.config, input.image).ok) {
+        throw new InvalidOperationError(message("image.notInImages", { name: input.image }));
+      }
+    }
+    const budgetCapUsd = config.ok ? config.config.budgetPerTaskUsd : DEFAULT_BUDGET_USD;
+    const body = buildRerunBody(previous, input.body ?? "", input.note ?? "", (text) =>
+      renderMessage(text, "ja"),
+    );
+    return this.append({ id: randomUUID(), projectId: previous.projectId }, [
+      {
+        actor: "person",
+        event: {
+          type: "TaskCreated",
+          payload: {
+            title: input.title,
+            body,
+            start: previous.ticket ? "jira" : "sacty",
+            ...(previous.ticket ? { ticket: previous.ticket } : {}),
+            ...(repo ? { repo } : { noRepo: true as const }),
+            budgetCapUsd,
+            rerun: { taskId: previous.id, ...(input.image ? { image: input.image } : {}) },
+          },
         },
       },
     ]);
