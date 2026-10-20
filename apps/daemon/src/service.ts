@@ -2794,7 +2794,8 @@ export class TaskService {
       return {
         agent: null,
         problems: [config.problem],
-        warnings: [],
+        // 設定ファイルが無くても既定のイメージは確かめるので、その注意は載せる（PR #166 レビュー指摘。PBI-148）
+        warnings: [...(this.deps.imageProblems?.() ?? [])],
         intake: null,
         images: [],
         platforms: [],

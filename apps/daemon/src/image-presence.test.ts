@@ -61,7 +61,9 @@ afterEach(() => {
 describe("docker でイメージを確かめる", () => {
   it("あれば present、無ければ missing（Docker の版による文言の違いも）", async () => {
     const present = fakeSpawn({});
-    expect(await inspectImage("sacty-agent:1.1.0", present.spawnImpl)).toBe("present");
+    expect(await inspectImage("sacty-agent:1.1.0", { spawnImpl: present.spawnImpl })).toBe(
+      "present",
+    );
     expect(present.calls).toEqual([
       ["image", "inspect", "--format", "{{.Id}}", "sacty-agent:1.1.0"],
     ]);
@@ -70,9 +72,10 @@ describe("docker でイメージを確かめる", () => {
       "Error response from daemon: No such object: sacty-agent:1.1.0\n",
       "error: no such image: x\n",
     ]) {
-      expect(await inspectImage("x", fakeSpawn({ code: 1, stderr }).spawnImpl), stderr).toBe(
-        "missing",
-      );
+      expect(
+        await inspectImage("x", { spawnImpl: fakeSpawn({ code: 1, stderr }).spawnImpl }),
+        stderr,
+      ).toBe("missing");
     }
   });
 
@@ -88,9 +91,10 @@ describe("docker でイメージを確かめる", () => {
       { error: Object.assign(new Error("spawn docker ENOENT"), { code: "ENOENT" }) },
       { throws: true },
     ] as Reply[]) {
-      expect(await inspectImage("x", fakeSpawn(reply).spawnImpl), JSON.stringify(reply)).toBe(
-        "unreachable",
-      );
+      expect(
+        await inspectImage("x", { spawnImpl: fakeSpawn(reply).spawnImpl }),
+        JSON.stringify(reply),
+      ).toBe("unreachable");
     }
   });
 
@@ -98,7 +102,7 @@ describe("docker でイメージを確かめる", () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const hang = fakeSpawn({ hang: true });
     let state: ImageState | undefined;
-    void inspectImage("x", hang.spawnImpl).then((s) => {
+    void inspectImage("x", { spawnImpl: hang.spawnImpl }).then((s) => {
       state = s;
     });
     await vi.advanceTimersByTimeAsync(IMAGE_INSPECT_TIMEOUT_MS - 1);
@@ -107,6 +111,59 @@ describe("docker でイメージを確かめる", () => {
     await vi.advanceTimersByTimeAsync(1);
     expect(state).toBe("unreachable");
     expect(hang.killed).toEqual(["SIGKILL"]);
+  });
+});
+
+describe("止めるときに、実行中の docker を残さない（PR #166 レビュー提案）", () => {
+  it("確かめている最中に打ち切ると、docker を止めて unreachable で返る", async () => {
+    const hang = fakeSpawn({ hang: true });
+    const controller = new AbortController();
+    const running = inspectImage("x", { spawnImpl: hang.spawnImpl, signal: controller.signal });
+    await new Promise((r) => setImmediate(r));
+    expect(hang.calls).toHaveLength(1);
+    controller.abort();
+    expect(await running).toBe("unreachable");
+    expect(hang.killed).toEqual(["SIGKILL"]);
+  });
+
+  it("打ち切った後は docker を起動しない", async () => {
+    const spawned = fakeSpawn({});
+    const controller = new AbortController();
+    controller.abort();
+    expect(
+      await inspectImage("x", { spawnImpl: spawned.spawnImpl, signal: controller.signal }),
+    ).toBe("unreachable");
+    expect(spawned.calls).toEqual([]);
+  });
+
+  it("止める関数は、間隔を止め、実行中の確かめを打ち切り、その結果を残さない", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    const signals: AbortSignal[] = [];
+    let calls = 0;
+    const checker = new ImagePresenceChecker({
+      targets: () => [{ image: "sacty-agent:1.1.0" }],
+      inspect: (_image, signal) => {
+        calls += 1;
+        signals.push(signal);
+        // 応答しない docker の代わり。打ち切られたら返る
+        return new Promise((done) =>
+          signal.addEventListener("abort", () => done("unreachable"), { once: true }),
+        );
+      },
+    });
+    const first: DaemonText[][] = [];
+    const stop = startImagePresenceCheck(checker, (p) => first.push(p));
+    await vi.waitFor(() => expect(calls).toBe(1));
+    stop();
+    expect(signals[0]?.aborted).toBe(true);
+    await vi.waitFor(() => expect(first).toHaveLength(1));
+    // 打ち切った確かめを「Docker に接続できない」として残さない
+    expect(first[0]).toEqual([]);
+    expect(checker.problems()).toEqual([]);
+    // 止めた後は、間隔が来ても、呼ばれても確かめない
+    await vi.advanceTimersByTimeAsync(IMAGE_CHECK_INTERVAL_MS * 2);
+    await checker.check();
+    expect(calls).toBe(1);
   });
 });
 

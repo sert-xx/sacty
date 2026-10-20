@@ -51,21 +51,33 @@ export function buildCommand(target: ImageTarget): string {
 /** `docker image inspect` の標準エラー出力のうち、イメージが無いことを示すもの（Docker の版で文言が違う）。 */
 const NO_SUCH_IMAGE = /No such (image|object)/i;
 
-/** docker でイメージを確かめる。テストでは spawn を差し替える。 */
+/**
+ * docker でイメージを確かめる。テストでは spawn を差し替える。signal で打ち切ると、docker を止めて、確かめられなかったものとする
+ * （デーモンを止めるときに、応答しない docker を残さない。PR #166 レビュー提案）。
+ */
 export function inspectImage(
   image: string,
-  spawnImpl: typeof spawn = spawn,
-  timeoutMs = IMAGE_INSPECT_TIMEOUT_MS,
+  options: { spawnImpl?: typeof spawn; timeoutMs?: number; signal?: AbortSignal } = {},
 ): Promise<ImageState> {
+  const { spawnImpl = spawn, timeoutMs = IMAGE_INSPECT_TIMEOUT_MS, signal } = options;
   return new Promise((done) => {
+    if (signal?.aborted) {
+      done("unreachable");
+      return;
+    }
     let settled = false;
     const finish = (state: ImageState) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
       done(state);
     };
-    let child: ReturnType<typeof spawn>;
+    const onAbort = () => {
+      child?.kill("SIGKILL");
+      finish("unreachable");
+    };
+    let child: ReturnType<typeof spawn> | undefined;
     try {
       child = spawnImpl("docker", ["image", "inspect", "--format", "{{.Id}}", image], {
         env: dockerClientEnv(),
@@ -75,19 +87,21 @@ export function inspectImage(
       done("unreachable");
       return;
     }
+    const started = child;
     // 応答しなければ止めて、確かめられなかったものとする
     const timer = setTimeout(() => {
-      child.kill("SIGKILL");
+      started.kill("SIGKILL");
       finish("unreachable");
     }, timeoutMs);
+    signal?.addEventListener("abort", onAbort, { once: true });
     let stderr = "";
-    child.stdout?.on("data", () => {});
-    child.stderr?.on("data", (chunk) => {
+    started.stdout?.on("data", () => {});
+    started.stderr?.on("data", (chunk) => {
       // 大きな出力でも、判断に要る先頭だけ持つ
       if (stderr.length < 4096) stderr += chunk;
     });
-    child.on("error", () => finish("unreachable"));
-    child.on("close", (code) => {
+    started.on("error", () => finish("unreachable"));
+    started.on("close", (code) => {
       if (code === 0) finish("present");
       else finish(NO_SUCH_IMAGE.test(stderr) ? "missing" : "unreachable");
     });
@@ -97,12 +111,15 @@ export function inspectImage(
 export type ImagePresenceDeps = {
   /** 確かめるイメージ（使うたびに設定から読む）。 */
   targets: () => ImageTarget[];
-  inspect: (image: string) => Promise<ImageState>;
+  /** signal で打ち切られたら、docker を止めて返る。 */
+  inspect: (image: string, signal: AbortSignal) => Promise<ImageState>;
 };
 
 export class ImagePresenceChecker {
   private latest: DaemonText[] = [];
   private running: Promise<DaemonText[]> | undefined;
+  /** stop で打ち切る（実行中の docker も止める）。 */
+  private readonly controller = new AbortController();
 
   constructor(private readonly deps: ImagePresenceDeps) {}
 
@@ -111,8 +128,14 @@ export class ImagePresenceChecker {
     return this.latest;
   }
 
+  /** 確かめるのをやめる。実行中の docker を止め、それからは確かめない（デーモンを止めるとき）。 */
+  stop(): void {
+    this.controller.abort();
+  }
+
   /** 確かめて、注意を返す。確かめている最中に呼ばれたら、同じ確かめを待つ（重ねて docker を動かさない）。 */
   check(): Promise<DaemonText[]> {
+    if (this.controller.signal.aborted) return Promise.resolve(this.latest);
     this.running ??= this.run().finally(() => {
       this.running = undefined;
     });
@@ -126,9 +149,11 @@ export class ImagePresenceChecker {
     const results = await Promise.all(
       [...targets.values()].map(async (t) => ({
         target: t,
-        state: await this.deps.inspect(t.image),
+        state: await this.deps.inspect(t.image, this.controller.signal),
       })),
     );
+    // 止めた後の結果は残さない（打ち切った docker を「確かめられない」として出さない）
+    if (this.controller.signal.aborted) return this.latest;
     const problems: DaemonText[] = [];
     // Docker に接続できなければ、イメージごとではなく1つにまとめる
     if (results.some((r) => r.state === "unreachable")) {
@@ -147,7 +172,8 @@ export class ImagePresenceChecker {
 }
 
 /**
- * 起動のときに確かめ、それから一定の間隔で確かめ直す。最初の確かめの結果は onFirst に渡す（端末に出す）。止める関数を返す。
+ * 起動のときに確かめ、それから一定の間隔で確かめ直す。最初の確かめの結果は onFirst に渡す（端末に出す）。止める関数を返す
+ * （間隔を止め、実行中の docker も止める。PR #166 レビュー提案）。
  */
 export function startImagePresenceCheck(
   checker: ImagePresenceChecker,
@@ -157,5 +183,8 @@ export function startImagePresenceCheck(
   void checker.check().then(onFirst, () => {});
   const timer = setInterval(() => void checker.check().catch(() => {}), intervalMs);
   timer.unref();
-  return () => clearInterval(timer);
+  return () => {
+    clearInterval(timer);
+    checker.stop();
+  };
 }

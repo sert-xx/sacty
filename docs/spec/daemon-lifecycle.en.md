@@ -126,8 +126,9 @@ Raising the version changes the default image name (`sacty-agent:<version>`), so
 - For each missing image, the notice gives the name and the command to create it (`npx sacty image build` for the default image, `npx sacty image build <name>` for a per-language image)
   (`image.missing`). For an image whose name includes a registry host (`.` or `:` before the first `/`, or `localhost`), it also says runs will try to pull it
   (`image.notLocal`). If any image cannot be checked, a single "cannot check because Docker is not reachable" notice is shown (`image.dockerUnreachable`).
-- The notices are in `warnings` of `GET /api/status` (the web UI shows them in the notices on the task list). The result of the first check is also printed to the terminal (the output of `sacty up`).
-  Startup is not stopped and nothing is built automatically. Once built, the notice disappears at the next check. Checks do not overlap.
+- The notices are in `warnings` of `GET /api/status` (the web UI shows them in the notices on the task list), also when there is no config file (when `problems` has the config error).
+  The result of the first check is also printed to the terminal (the output of `sacty up`). Startup is not stopped and nothing is built automatically. Once built, the notice disappears at the next check. Checks do not overlap.
+- When the daemon stops, it stops the interval and the running `docker image inspect` (`SIGKILL`). The result of an aborted check is not kept, and no further checks run.
 
 Code: `apps/daemon/src/image-presence.ts` (`ImagePresenceChecker`, `inspectImage`, `imageTargets`, `isRegistryImage`, `buildCommand`, `startImagePresenceCheck`, `IMAGE_CHECK_INTERVAL_MS`, `IMAGE_INSPECT_TIMEOUT_MS`),
 `apps/daemon/src/service.ts` (`TaskService.status`), `apps/daemon/src/main.ts`

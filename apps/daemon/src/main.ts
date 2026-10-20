@@ -164,7 +164,7 @@ const updates = new UpdateChecker({
 // エージェントのイメージが手元にあるか（PBI-148）。起動のときと1分ごとに確かめ、無ければ端末と画面で作るコマンドを知らせる
 const images = new ImagePresenceChecker({
   targets: () => imageTargets(config()),
-  inspect: (image) => inspectImage(image),
+  inspect: (image, signal) => inspectImage(image, { signal }),
 });
 const service = new TaskService({
   activity,

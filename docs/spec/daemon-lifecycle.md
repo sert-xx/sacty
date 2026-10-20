@@ -122,8 +122,9 @@
 - 無いイメージごとに、名前と作るコマンド（既定のイメージは `npx sacty image build`、言語ごとのイメージは `npx sacty image build <名前>`）を注意にする
   （`image.missing`）。名前にレジストリのホストを含むイメージ（最初の `/` の前に `.`・`:` があるか `localhost`）は、実行のときに取得を試みることも添える
   （`image.notLocal`）。確かめられないイメージが1つでもあれば、「Docker に接続できないので確かめられない」を1つだけ出す（`image.dockerUnreachable`）。
-- 注意は `GET /api/status` の `warnings` に載せる（画面はタスクの一覧の注意の欄に出す）。最初の確かめの結果は、端末（`sacty up` の出力）にも出す。
-  起動は止めず、自動では作らない。作れば、次の確かめで注意が消える。確かめている最中に重ねて確かめない。
+- 注意は `GET /api/status` の `warnings` に載せる（画面はタスクの一覧の注意の欄に出す）。設定ファイルが無いとき（設定の誤りとして `problems` が出る）も載せる。
+  最初の確かめの結果は、端末（`sacty up` の出力）にも出す。起動は止めず、自動では作らない。作れば、次の確かめで注意が消える。確かめている最中に重ねて確かめない。
+- デーモンを止めるときは、間隔を止め、実行中の `docker image inspect` を止める（`SIGKILL`）。打ち切った確かめの結果は残さず、それからは確かめない。
 
 コード: `apps/daemon/src/image-presence.ts`（`ImagePresenceChecker`・`inspectImage`・`imageTargets`・`isRegistryImage`・`buildCommand`・`startImagePresenceCheck`・`IMAGE_CHECK_INTERVAL_MS`・`IMAGE_INSPECT_TIMEOUT_MS`）、
 `apps/daemon/src/service.ts`（`TaskService.status`）、`apps/daemon/src/main.ts`

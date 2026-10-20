@@ -24427,6 +24427,26 @@ describe("手元に無いエージェントのイメージ（PBI-148）", () => 
     expect(service.status().warnings).not.toContainEqual(missing);
     activity.close();
   });
+
+  it("設定ファイルが無いとき（既定のイメージだけ確かめる）も、注意を載せる（PR #166 レビュー指摘）", () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const missing = message("image.missing", {
+      image: "sacty-agent:1.1.0",
+      command: "npx sacty image build",
+    });
+    const unreachable = message("image.dockerUnreachable");
+    let current = [missing];
+    const { service } = makeService(activity, [], {
+      imageProblems: () => current,
+      config: () => ({ ok: false, problem: message("config.missing", { path: "/x" }) }),
+    });
+    expect(service.status()).toMatchObject({ agent: null, warnings: [missing] });
+    current = [unreachable];
+    expect(service.status().warnings).toEqual([unreachable]);
+    current = [];
+    expect(service.status().warnings).toEqual([]);
+    activity.close();
+  });
 });
 
 describe("sacty の新しい版の知らせ（PBI-135）", () => {
