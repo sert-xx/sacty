@@ -2,7 +2,7 @@
 
 - 日付: 2026-10-20（UTC）
 - タスク: なし
-- PR: なし
+- PR: #171
 - ブランチ: ccr-7d0e9c8f-axjgnn
 - 関係する ADR: [質問の答えで実行中の実行のログの写しも読ませる](../adr/20261020-1108-question-reads-running-logs.md)
 
