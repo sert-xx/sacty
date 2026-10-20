@@ -433,7 +433,7 @@ AI は `guardian_agent`（無ければ `default_agent`）。実行ごとに `wor
   チケットを読み直さない（`awaitingTicketTriage` に当たらない）で、人が決めたリポジトリで進める。リポジトリ無しなら、リポジトリを指定せずに
   作ったタスクと同じく、オーケストレーターがリポジトリを選び、選べなければ人が選ぶ（`isRepoless`・`awaitingRepository`・`chooseRepository`）。
   GitHub の Issue から取り込んだタスクの再実行は、取り込み元を引き継がない（`start` は `sacty`。記録に Issue の URL を書く）。
-- 予算の上限は、作ったときの `budget_per_task_usd`（使った額は引き継がない）。
+- 予算の上限は、再実行のタスクを作った時点の `budget.default_per_task_usd`（元のタスクの上限・使った額は引き継がない）。
 
 コード: `apps/daemon/src/service.ts`（`rerunTask`・`pinnedImage`・`chooseRepository`）、`apps/daemon/src/prompts.ts`（`buildRerunBody`）、`apps/daemon/src/server.ts`（`/api/tasks/:id/rerun`）、`packages/core/src/events.ts`（`RerunTaskInput`・`rerunEditableBody`）、`packages/core/src/projection.ts`（`canRerun`・`awaitingTicketTriage`・`isRepoless`）、`apps/web/src/components/rerun-dialog.tsx`
 

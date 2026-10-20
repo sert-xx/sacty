@@ -25,6 +25,7 @@ import {
   buildTicketPullRequestComment,
   CHAT_LOGS_IN_PROMPT,
   CHAT_PROMPT_MAX,
+  clip,
   commentableLines,
   extractBlocks,
   extractExport,
@@ -2314,5 +2315,17 @@ describe("オーケストレーターの答えの出し方（既定のスキル 
     expect(check).toBeGreaterThan(0);
     expect(check).toBeLessThan(format);
     expect(prompt.split("```json\n")).toHaveLength(3);
+  });
+});
+
+describe("長い文の切り詰め", () => {
+  it("切る位置がサロゲートペアの途中なら、1つ前で切り、文字を壊さない", () => {
+    const text = `${"a".repeat(2999)}😀b`;
+    const clipped = clip(text, 3000);
+    expect(clipped.startsWith(`${"a".repeat(2999)}\n…`)).toBe(true);
+    expect(clipped).not.toMatch(/[\ud800-\udbff](?![\udc00-\udfff])/);
+    // ペアの後ろで切れるときは、そのまま含める
+    expect(clip(`${"a".repeat(2998)}😀b`, 3000).startsWith(`${"a".repeat(2998)}😀\n…`)).toBe(true);
+    expect(clip("short", 3000)).toBe("short");
   });
 });

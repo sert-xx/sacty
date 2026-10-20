@@ -433,7 +433,7 @@ Code: `apps/daemon/src/service.ts` (`warnIfNeeded`, `checkBudget`, `pause`, `res
   like a task created without one, the Orchestrator chooses a repository, and a person chooses it if the Orchestrator can't
   (`isRepoless`, `awaitingRepository`, `chooseRepository`). A rerun of a task imported from a GitHub issue doesn't keep the source (`start` is `sacty`;
   the record has the issue URL).
-- The budget cap is `budget_per_task_usd` at creation (the amount used is not carried over).
+- The budget cap is `budget.default_per_task_usd` at the time the rerun task is created (the original task's cap and the amount used are not carried over).
 
 Code: `apps/daemon/src/service.ts` (`rerunTask`, `pinnedImage`, `chooseRepository`), `apps/daemon/src/prompts.ts` (`buildRerunBody`), `apps/daemon/src/server.ts` (`/api/tasks/:id/rerun`), `packages/core/src/events.ts` (`RerunTaskInput`, `rerunEditableBody`), `packages/core/src/projection.ts` (`canRerun`, `awaitingTicketTriage`, `isRepoless`), `apps/web/src/components/rerun-dialog.tsx`
 

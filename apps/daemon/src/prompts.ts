@@ -2345,9 +2345,12 @@ export function buildRerunBody(
   return [...lines, ...record].join("\n");
 }
 
-/** 長い文を先頭だけにする。 */
+/** 長い文を先頭だけにする。切る位置がサロゲートペアの途中なら、1つ前で切る（文字を壊さない）。 */
 export function clip(text: string, max: number): string {
-  return text.length > max ? `${text.slice(0, max)}\n…（長いため、先頭だけ）` : text;
+  if (text.length <= max) return text;
+  const last = text.charCodeAt(max - 1);
+  const end = last >= 0xd800 && last <= 0xdbff ? max - 1 : max;
+  return `${text.slice(0, end)}\n…（長いため、先頭だけ）`;
 }
 
 /** 作業履歴の1件を、指示に入れる1行にする（長い内容は切り詰める）。 */

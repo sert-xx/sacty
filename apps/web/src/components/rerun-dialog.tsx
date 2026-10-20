@@ -65,7 +65,8 @@ export function RerunDialog({
           </Button>
         }
       />
-      <DialogContent className="sm:max-w-lg">
+      {/* 説明と補足が長くても、見出しと操作へ届くように、ダイアログの中で縦にスクロールする */}
+      <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-lg">
         <form action={formAction} className="flex flex-col gap-4">
           <input type="hidden" name="taskId" value={taskId} />
           <DialogHeader>

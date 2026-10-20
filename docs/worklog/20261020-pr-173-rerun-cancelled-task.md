@@ -30,3 +30,13 @@
 - `npx vitest run`：追加したテストを含めて通過。ただし、この環境（root で動くコンテナ）では、`host-mcp-processes.test.ts`・
   `agent-sessions.test.ts`・`context-mcp.test.ts` の 8 件が、変更の前のコミットでも同じく失敗する（プロセスと読めないファイルの扱い）。
 - 実際のデーモンと画面を動かしての確認はしていない（手元に AI の認証と JIRA が無い）。
+
+## レビューの指摘と対応（PR #173、Codex の DA レビュー）
+
+| 指摘 | 対応 |
+| --- | --- |
+| [提案] 再実行のダイアログに最大の高さと縦のスクロールが無く、狭い画面・文字の拡大で見出しと操作が画面の外に出る | `rerun-dialog.tsx` の `DialogContent` に `max-h-[calc(100dvh-2rem)] overflow-y-auto` を付けた |
+| [提案] 予算の設定のキーは `budget_per_task_usd` ではなく `budget.default_per_task_usd` | 仕様書（日英）を正しいキーに直し、再実行のタスクを作った時点の設定値で、元のタスクの上限は引き継がないと書いた |
+| [提案] `clip` が UTF-16 のコード単位で切るので、境界でサロゲートペアが壊れる | `clip`（`apps/daemon/src/prompts.ts`）で、切る位置がペアの途中なら1つ前で切るようにし、`prompts.test.ts` にテストを足した |
+
+対応の後、`npm run lint`・`npm run typecheck`・`prompts.test.ts`・`rerun-dialog.test.ts`・`tests/docs`（174 件）・`daemon.test.ts`（632 件）が通過。
