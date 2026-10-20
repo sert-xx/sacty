@@ -165,7 +165,12 @@ class FakeGitHub implements GitHubAuth {
   async accounts() {
     return Object.keys(this.tokens).map((key) => {
       const [host, login] = key.includes("/") ? key.split("/") : ["github.com", key];
-      return { host: host ?? "", login: login ?? "", active: login === "me" };
+      return {
+        host: host ?? "",
+        login: login ?? "",
+        active: login === "me",
+        state: "success",
+      };
     });
   }
   async token(host: string, account: string) {
@@ -10912,8 +10917,8 @@ describe("API", () => {
     const body = await res.json();
     expect(body).toEqual({
       accounts: [
-        { host: "github.com", login: "me", active: true },
-        { host: "github.com", login: "side-job", active: false },
+        { host: "github.com", login: "me", active: true, state: "success" },
+        { host: "github.com", login: "side-job", active: false, state: "success" },
       ],
     });
     expect(JSON.stringify(body)).not.toContain("ghp_");

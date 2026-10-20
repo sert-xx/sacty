@@ -535,7 +535,7 @@ export function ProjectEditor({
                     {!required && <option value="">{t.githubNone}</option>}
                     {onHost.map((a) => (
                       <option key={a.login} value={a.login}>
-                        {a.login}
+                        {a.state === "success" ? a.login : t.githubUnverified(a.login)}
                       </option>
                     ))}
                     {/* 選んでいたアカウントが gh からログアウトしていても、そのまま見えるようにする */}
@@ -550,6 +550,62 @@ export function ProjectEditor({
               <p role="alert" className="text-sm text-warn">
                 {messages.labels.text(github.error)}
               </p>
+            )}
+            {/* Sacty が gh から読めたアカウントの一覧。ドメインが合うのに選べないときの切り分けに使う */}
+            {github && "accounts" in github && (
+              <details className="text-sm">
+                <summary className="cursor-pointer text-muted-foreground">
+                  {t.githubKnownTitle(accounts.length)}
+                </summary>
+                <div className="mt-2 flex flex-col gap-2">
+                  <p className="text-muted-foreground">{t.githubKnownHint}</p>
+                  {accounts.length === 0 ? (
+                    <p>{t.githubKnownNone}</p>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left">
+                        <thead className="text-muted-foreground">
+                          <tr>
+                            <th className="py-1 pr-4 font-normal">{t.githubKnownHost}</th>
+                            <th className="py-1 pr-4 font-normal">{t.githubKnownLogin}</th>
+                            <th className="py-1 font-normal">{t.githubKnownState}</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {accounts.map((a) => (
+                            <tr key={`${a.host}/${a.login}`} className="border-t border-border">
+                              <td className="py-1 pr-4 font-mono">{a.host}</td>
+                              <td className="py-1 pr-4">
+                                {a.login}
+                                {a.active && (
+                                  <span className="text-muted-foreground">
+                                    {" "}
+                                    ({t.githubStateActive})
+                                  </span>
+                                )}
+                              </td>
+                              <td className="py-1">
+                                {a.state === "success" ? (
+                                  t.githubStateOk
+                                ) : (
+                                  <span className="text-warn">
+                                    {t.githubStateFailed(a.state)}
+                                    {a.error && (
+                                      <span className="block break-all text-xs text-muted-foreground">
+                                        {a.error}
+                                      </span>
+                                    )}
+                                  </span>
+                                )}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              </details>
             )}
           </section>
 

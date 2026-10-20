@@ -130,10 +130,13 @@ JIRA の接続先は組織内 PF（`gateway.platforms`、無ければプロジ�
 ## GitHub のアカウントと API
 
 - 使うアカウントは、プロジェクトの `githubAccounts`（ホストごと）で選ぶ。gh のアクティブなアカウントは使わない。選んでいなければ止める。
-- 一覧は `gh auth status --json hosts`（ログインに成功しているものだけ）、トークンは使うたびに `gh auth token --hostname <ホスト> --user <アカウント>`。
-  gh には `GH_PROMPT_DISABLED=1`・`NO_COLOR=1` と限られたホストの環境変数だけを渡す（`GH_TOKEN`・`GITHUB_TOKEN` は渡さない）。
+- 一覧は `gh auth status --json hosts`、トークンは使うたびに `gh auth token --hostname <ホスト> --user <アカウント>`。
+  一覧には、gh がトークンを確かめられなかったアカウント（`state` が `error`・`timeout`）も、`state` と `error`（gh の理由）を添えて含める。
+  プロジェクトの設定の画面は、そのアカウントに「確認できず」と添えて選ばせ、読めたアカウントの一覧（ホスト・アカウント・状態）も見せる。
+  gh には `GH_PROMPT_DISABLED=1`・`NO_COLOR=1` と限られたホストの環境変数（設定・キーリング・プロキシ・CA の場所）だけを渡す
+  （`GH_TOKEN`・`GITHUB_TOKEN`・`GH_ENTERPRISE_TOKEN` は渡さない）。
 - API は、github.com なら `https://api.github.com`、それ以外（GitHub Enterprise Server）は `https://<ホスト>/api/v3`。
 - HTTPS のリポジトリの clone・プッシュは、そのホストのアカウントのトークンを `http.https://<ホスト>/.extraheader` で渡して行う。SSH・ローカルの
   パスはホストの認証を使う。
 
-コード: `apps/daemon/src/gh.ts`（`GhCliAuth`・`ghEnv`・`gitAuthEnv`）、`packages/core/src/github-url.ts`（`githubApiBase`）、`apps/daemon/src/github.ts`
+コード: `apps/daemon/src/gh.ts`（`GhCliAuth`・`ghEnv`・`gitAuthEnv`）、`apps/web/src/components/project-editor.tsx`、`packages/core/src/github-url.ts`（`githubApiBase`）、`apps/daemon/src/github.ts`

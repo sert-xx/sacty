@@ -57,6 +57,12 @@ gh auth login --hostname ghe.example.com      # Sign in to each GitHub Enterpris
 - HTTPS repositories are cloned and pushed with the token of that host's account (you do not need to set up git authentication on the host). SSH URLs and
   local paths use the host's authentication (ssh-agent and so on).
 - The token is fetched from `gh` each time it is used and never appears in the activity log, logs, the web UI, or containers.
+- Open "gh accounts Sacty can see" in the "GitHub account" section to check the accounts the daemon read from `gh auth status`, listed by host,
+  account, and status. If a host is missing, it is not signed in to `gh` for the user running the daemon
+  (also check differences such as `GH_CONFIG_DIR`).
+- An account with the status "Not verified" is one whose token `gh` could not verify (the reason is shown in the list). You can still choose it, but for a
+  GitHub Enterprise Server behind a corporate proxy, make sure `HTTPS_PROXY`, `NO_PROXY`, `SSL_CERT_FILE`, and similar are set in the shell that starts the daemon.
+  The daemon passes them to `gh`.
 
 ## Context repository
 
