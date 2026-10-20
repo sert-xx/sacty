@@ -2,7 +2,7 @@
 
 - 日付: 2026-10-20（UTC）
 - タスク: PBI-147
-- PR: なし
+- PR: #164
 - ブランチ: feat/pbi-147-update-check-releases
 - 関係する ADR: [sacty の最新版を、動いている版と GitHub Releases の最新のリリースで比べて知らせる](../adr/20261020-0008-update-check-against-releases.md)
 
