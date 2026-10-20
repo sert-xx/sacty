@@ -166,12 +166,20 @@ describe("監査のイベントの畳み込み（PBI-125）", () => {
         ...run,
       }),
       ev("AuditCompleted", { auditId: "a1" }),
-      ev("AuditProposalAdopted", { proposalId: "p1", target: { kind: "sacty" } }),
+      ev("AuditProposalAdopted", {
+        proposalId: "p1",
+        target: { kind: "sacty" },
+        note: { kind: "supplement", text: "既にある設定に足す" },
+      }),
     ];
     const task = project(events).get("t1");
     expect(task?.audit?.paused).toBeUndefined();
     expect(task?.audit?.capUsd).toBe(2);
-    expect(task?.audit?.findings[0]?.proposals[0]?.decision).toMatchObject({ kind: "adopted" });
+    // 採用に添えた人の手入れも畳み込む（PBI-151）
+    expect(task?.audit?.findings[0]?.proposals[0]?.decision).toMatchObject({
+      kind: "adopted",
+      note: { kind: "supplement", text: "既にある設定に足す" },
+    });
     expect(auditOpen(task as never)).toBe(false);
     expect(() =>
       project([...events, ev("AuditProposalRejected", { proposalId: "p1", reason: "r" })]),

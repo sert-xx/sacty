@@ -98,6 +98,8 @@ describe("タスクの詳細の監査の欄（PBI-124）", () => {
     expect(html).toMatch(/<option value="[^"]*ctx[^"]*" selected="">/);
     expect(html).toContain("採用する");
     expect(html).toContain("却下する");
+    // 採用のときに改善案へ手を入れられる（PBI-151）
+    expect(html).toContain("改善案に手を入れる");
   });
 
   it("判断した提案はフォームを出さず、採用なら改修のタスク（モックならリンクにしない）、却下なら理由を出す", () => {
@@ -134,6 +136,7 @@ describe("タスクの詳細の監査の欄（PBI-124）", () => {
                   at: "2026-10-01T00:00:00Z",
                   target: { kind: "sacty" },
                   task: { taskId: "real-1", title: "本物" },
+                  note: { kind: "replace", text: "人の案で直す" },
                 },
               },
             ],
@@ -147,6 +150,10 @@ describe("タスクの詳細の監査の欄（PBI-124）", () => {
     expect(html).not.toContain('href="/tasks/mock-a"');
     expect(html).toContain('href="/tasks/real-1"');
     expect(html).toContain("変えない");
+    // 採用に添えた手入れは、種類とともに出す（PBI-151）
+    expect(html).toContain('data-testid="audit-proposal-note-c"');
+    expect(html).toContain("人が差し替えた改善案");
+    expect(html).toContain("人の案で直す");
     // 採用した提案の宛先は、人が選んだ宛先
     expect(html).toContain("Sacty の既定のコンテキスト");
   });

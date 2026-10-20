@@ -1,6 +1,12 @@
 import { z } from "zod";
 import { formatUsd } from "./cost.js";
-import { QUESTION_MAX, RERUN_NOTE_MAX, TASK_BODY_MAX, TASK_TITLE_MAX } from "./events.js";
+import {
+  AUDIT_ADOPT_NOTE_MAX,
+  QUESTION_MAX,
+  RERUN_NOTE_MAX,
+  TASK_BODY_MAX,
+  TASK_TITLE_MAX,
+} from "./events.js";
 import { DaemonText } from "./message-code.js";
 import { PROJECT_EXPORT_VERSION } from "./projects.js";
 
@@ -72,6 +78,7 @@ const PARAMS = {
   "input.titleTooLong": null,
   "input.bodyTooLong": null,
   "input.noteTooLong": null,
+  "input.auditNoteTooLong": null,
   "input.remarkTooLong": null,
   // オーケストレーターへの質問（PBI-54）
   "input.questionRequired": null,
@@ -637,6 +644,7 @@ const ja: MessageDictionary = {
   "input.titleTooLong": `タイトルは${TASK_TITLE_MAX}文字以内で入力してください。`,
   "input.bodyTooLong": `内容は${TASK_BODY_MAX.toLocaleString("ja-JP")}文字以内で入力してください。`,
   "input.noteTooLong": `補足は${RERUN_NOTE_MAX.toLocaleString("ja-JP")}文字以内で入力してください。`,
+  "input.auditNoteTooLong": `採用に添える手入れは${AUDIT_ADOPT_NOTE_MAX.toLocaleString("ja-JP")}文字以内で入力してください。`,
   "input.remarkTooLong": "指摘は1件あたり2,000文字以内にしてください。",
   "input.questionRequired": "質問を入力してください。",
   "input.questionTooLong": `質問は${QUESTION_MAX.toLocaleString("ja-JP")}文字以内にしてください。`,
@@ -1181,6 +1189,7 @@ const en: MessageDictionary = {
   "input.titleTooLong": `Keep the title within ${TASK_TITLE_MAX} characters.`,
   "input.bodyTooLong": `Keep the details within ${TASK_BODY_MAX.toLocaleString("en-US")} characters.`,
   "input.noteTooLong": `Keep the additional notes within ${RERUN_NOTE_MAX.toLocaleString("en-US")} characters.`,
+  "input.auditNoteTooLong": `Keep the note you attach to the adoption within ${AUDIT_ADOPT_NOTE_MAX.toLocaleString("en-US")} characters.`,
   "input.remarkTooLong": "Keep each comment within 2,000 characters.",
   "input.questionRequired": "Enter a question.",
   "input.questionTooLong": `Keep the question within ${QUESTION_MAX.toLocaleString("en-US")} characters.`,

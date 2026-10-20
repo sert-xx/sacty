@@ -3,6 +3,7 @@ import {
   AUDIT_EVIDENCE_KINDS,
   AUDIT_TEXT_MAX,
   AUDIT_TITLE_MAX,
+  type AuditAdoptNoteKind,
   type AuditEvidenceKind,
   type AuditTarget,
   type DaemonText,
@@ -115,6 +116,14 @@ export type SurveyMemoryPromotion = {
 };
 /** 人が却下した提案と理由（同じ提案を繰り返さないため）。 */
 export type RejectedAuditProposal = { title: string; reason: string };
+/**
+ * 人が採用のときに手を入れた提案（補足か差し替え。同じ手入れが要る提案を繰り返さないため。PBI-151）。
+ */
+export type AdoptedAuditProposalNote = {
+  title: string;
+  kind: AuditAdoptNoteKind;
+  text: string;
+};
 
 /** 作業履歴を、上限に収まるように1行ずつにする（古い側を 4 割、新しい側を 6 割残す）。 */
 function activityLines(activity: readonly ActivityEvent[]): string[] {
@@ -433,7 +442,8 @@ export function extractAuditSurvey(
 
 /**
  * 懸念のある工程の深掘りの指示（PBI-125）。その工程で起きたことの原因を特定し、宛先付きの改修の提案を出させる。既存の原因と
- * 同じなら、その原因の鍵を使わせる。却下された提案は繰り返させない。
+ * 同じなら、その原因の鍵を使わせる。却下された提案は繰り返させない。人が採用のときに手を入れた提案は、その手入れを
+ * 踏まえた提案を出させる（PBI-151）。
  */
 export function buildAuditDivePrompt(
   task: Task,
@@ -447,6 +457,8 @@ export function buildAuditDivePrompt(
     candidates: readonly AuditTarget[];
     known: readonly KnownAuditCause[];
     rejected: readonly RejectedAuditProposal[];
+    /** 人が採用のときに手を入れた提案（PBI-151）。 */
+    adoptNotes: readonly AdoptedAuditProposalNote[];
     /** 既存のメモリーと、リポジトリのメモリーを登録できるか（PBI-126）。 */
     memories?: readonly KnownMemory[];
     repository?: string;
@@ -470,6 +482,7 @@ export function buildAuditDivePrompt(
     `- 提案は原因ごとに最大 ${AUDIT_MAX_PROPOSALS} つ。何をどう変えるかを、そのまま作業に移せる具体さで書く。宛先は下の候補の番号から選ぶ`,
     "- 下の既存の原因と同じ原因なら、sameAs にその鍵を書く（新しい原因なら書かない）",
     "- 却下された提案と同じ提案は出さない。却下の理由を踏まえ、別の手があれば出す",
+    "- 採用のときに人が手を入れた提案は、その手入れ（補足・差し替え）を踏まえ、同じ手入れが要らない具体さで出す",
     "- 改修が要る原因が無ければ、findings は空でよい",
     ...(dive.memories ? memoryRuleLines(dive.repository) : []),
     ...AUDIT_RULES,
@@ -486,6 +499,14 @@ export function buildAuditDivePrompt(
     "--- 却下された提案と理由（このプロジェクト） ---",
     ...(dive.rejected.length > 0
       ? dive.rejected.map((r) => `- ${r.title}：${clip(r.reason, 300).replace(/\n/g, " ")}`)
+      : ["（なし）"]),
+    "",
+    "--- 採用のときに人が手を入れた提案（このプロジェクト） ---",
+    ...(dive.adoptNotes.length > 0
+      ? dive.adoptNotes.map(
+          (n) =>
+            `- ${n.title}（${n.kind === "replace" ? "人の案に差し替え" : "補足"}）：${clip(n.text, 300).replace(/\n/g, " ")}`,
+        )
       : ["（なし）"]),
     "",
     ...(dive.memories ? knownMemoryLines(dive.memories) : []),

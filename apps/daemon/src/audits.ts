@@ -712,7 +712,7 @@ export class MockAuditService implements AuditService {
   }
 
   adopt(proposalId: string, input: unknown): ListedAuditProposal {
-    const { target } = AdoptAuditProposalInput.parse(input);
+    const { target, note } = AdoptAuditProposalInput.parse(input);
     const proposal = this.findProposal(proposalId);
     if (proposal.decision) throw new InvalidOperationError(message("audit.alreadyDecided"));
     if (!proposal.targetCandidates.some((c) => sameAuditTarget(c, target))) {
@@ -723,6 +723,7 @@ export class MockAuditService implements AuditService {
       at: new Date().toISOString(),
       target,
       task: { taskId: `mock-${proposalId}`, title: `改修：${proposal.title}`, mock: true },
+      ...(note ? { note } : {}),
     });
     return this.findProposal(proposalId);
   }

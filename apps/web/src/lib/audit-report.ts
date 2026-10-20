@@ -114,8 +114,16 @@ export function auditReport(
       `- ${m.target.label}: ${target.kind}${target.detail ? ` ${target.detail}` : ""}`,
       `- ${m.proposal.from}: ${p.taskTitle}`,
     );
-    if (p.decision?.kind === "adopted")
+    if (p.decision?.kind === "adopted") {
       lines.push(`- ${m.proposal.task}: ${p.decision.task?.title ?? m.proposal.noTaskForSacty}`);
+      // 人が改善案に手を入れていれば、その中身も出す（レポートで判断の中身が分かるように。PBI-151）
+      const note = p.decision.note;
+      if (note) {
+        lines.push(
+          `- ${note.kind === "replace" ? m.proposal.adoptedReplace : m.proposal.adoptedSupplement}: ${note.text.replace(/\n/g, " ")}`,
+        );
+      }
+    }
     if (p.decision?.kind === "rejected") {
       lines.push(`- ${m.proposal.rejectedReason}: ${p.decision.reason}`);
     }

@@ -223,6 +223,9 @@ describe("監査の指示（PBI-125）", () => {
         ],
         known: [{ causeKey: "k1", title: "既存の原因", status: "改修は未採用" }],
         rejected: [{ title: "前の提案", reason: "共有のため" }],
+        adoptNotes: [
+          { title: "採用した提案", kind: "replace" as const, text: "既にある設定に足す" },
+        ],
       },
     );
     expect(text).toContain("深掘りする工程：実装（implement）");
@@ -231,6 +234,7 @@ describe("監査の指示（PBI-125）", () => {
     expect(text).toContain("- 2：sacty の既定のコンテキスト");
     expect(text).toContain("- k1：既存の原因（改修は未採用）");
     expect(text).toContain("- 前の提案：共有のため");
+    expect(text).toContain("- 採用した提案（人の案に差し替え）：既にある設定に足す");
     expect(text).toContain("（残していない）");
     expect(text).toContain('"sacty-audit-findings"');
   });
@@ -378,6 +382,7 @@ describe("深掘りのメモリーの登録（PBI-126）", () => {
       candidates: [{ kind: "sacty" } as const],
       known: [],
       rejected: [],
+      adoptNotes: [],
     };
     const withRepo = buildAuditDivePrompt(
       task,

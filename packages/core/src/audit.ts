@@ -1,5 +1,8 @@
 import { z } from "zod";
 import {
+  AUDIT_ADOPT_NOTE_KINDS,
+  AUDIT_ADOPT_NOTE_MAX,
+  type AuditAdoptNote,
   type AuditEvidenceKind,
   AuditTarget,
   type MemoryDeleteReason,
@@ -39,8 +42,29 @@ export function sameAuditTarget(a: AuditTarget, b: AuditTarget): boolean {
   return a.repo === other.repo && a.depth === other.depth;
 }
 
-/** 提案を採用する。宛先は提案の宛先の候補から選ぶ。 */
-export const AdoptAuditProposalInput = z.object({ target: AuditTarget }).strict();
+/**
+ * 採用に添える人の手入れ（PBI-151）。種類は、監査の改善案に情報を足す（`supplement`）か、改善案を人の案に
+ * 差し替える（`replace`）か。どちらも改修のタスクの説明に入れ、監査の画面・レポートに出す。
+ */
+export const AuditAdoptNoteInput = z
+  .object({
+    kind: z.enum(AUDIT_ADOPT_NOTE_KINDS),
+    text: z
+      .string()
+      .trim()
+      .min(1, code("input.required"))
+      .max(AUDIT_ADOPT_NOTE_MAX, code("input.auditNoteTooLong")),
+  })
+  .strict();
+export type AuditAdoptNoteInput = z.infer<typeof AuditAdoptNoteInput>;
+
+/**
+ * 提案を採用する。宛先は提案の宛先の候補から選ぶ。note は、原因は認めつつ改善案に手を入れるときに添える
+ * （省略すれば、監査の改善案をそのまま採用する。PBI-151）。
+ */
+export const AdoptAuditProposalInput = z
+  .object({ target: AuditTarget, note: AuditAdoptNoteInput.optional() })
+  .strict();
 export type AdoptAuditProposalInput = z.infer<typeof AdoptAuditProposalInput>;
 
 /** 却下の理由の上限（文字数）。 */
@@ -90,6 +114,8 @@ export type AuditProposalDecision =
       target: AuditTarget;
       /** 作った改修のタスク。sacty の既定のコンテキストが宛先なら作らないので無い（PBI-125）。 */
       task?: { taskId: string; title: string; mock?: true };
+      /** 採用に添えた人の手入れ（補足か差し替え。添えなければ無い。PBI-151）。 */
+      note?: AuditAdoptNote;
     }
   | { kind: "rejected"; at: string; reason: string };
 

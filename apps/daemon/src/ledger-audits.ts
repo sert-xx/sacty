@@ -32,7 +32,7 @@ export type AuditLedger = {
   listProjects(): Project[];
   auditBudgetUsd(): number;
   auditRunning(taskId: string): boolean;
-  adoptAuditProposal(proposalId: string, raw: unknown): Task;
+  adoptAuditProposal(proposalId: string, raw: unknown): Promise<Task>;
   rejectAuditProposal(proposalId: string, raw: unknown): Promise<Task>;
   resumeAudit(taskId: string, raw: unknown): Task;
   deleteAuditMemory(memoryId: string): Task;
@@ -126,6 +126,10 @@ export class LedgerAuditService implements AuditService {
       target: decision.target,
       ...(decision.fixTaskId
         ? { task: { taskId: decision.fixTaskId, title: hide(fix?.title ?? decision.fixTaskId) } }
+        : {}),
+      // 手入れも記録する前に伏せている。それより前の記録のために、却下の理由と同じく画面に出す前にも伏せる（PBI-151）
+      ...(decision.note
+        ? { note: { ...decision.note, text: redactLog(decision.note.text, []) } }
         : {}),
     };
   }
@@ -390,7 +394,7 @@ export class LedgerAuditService implements AuditService {
   }
 
   async adopt(proposalId: string, input: unknown): Promise<ListedAuditProposal> {
-    return this.proposalAfter(this.ledger.adoptAuditProposal(proposalId, input), proposalId);
+    return this.proposalAfter(await this.ledger.adoptAuditProposal(proposalId, input), proposalId);
   }
 
   async reject(proposalId: string, input: unknown): Promise<ListedAuditProposal> {
