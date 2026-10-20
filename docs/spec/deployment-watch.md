@@ -143,7 +143,7 @@ CI/CD（GitHub Actions のワークフローの実行・チェック）を待ち
   ほかは（飛ばしたものだけでも）`healthy`。
 - 結果（`DeploymentChecked`。全体の結果と `ci`・`deployment` を持つ）：`healthy` は `passed`、`unhealthy` は `failed`、それ以外は `skipped`
   （`check_unknown`）。実行に失敗した（`deploy.checkFailed`）・答えを読めない（`deploy.unreadable`）・`unknown`（`deploy.undetermined`）も
-  `check_unknown`。実行が上限（`run_timeout` の `deployment`、無ければ既定の 30 分。[エージェントの実行](agent-execution.md)）を過ぎたら、ほかの実行と同じく止めて、
+  `check_unknown`。実行が上限（`run_timeout.roles.deployment`、未指定なら `run_timeout.agent_minutes`（既定 30 分）。[エージェントの実行](agent-execution.md)）を過ぎたら、ほかの実行と同じく止めて、
   実行の失敗にする。費用（失敗したときも）はタスクの予算に入れ、80% の通知を判定する。
 - 人が止めた（一時停止・中止）ときは、結果にせず、`retry` を付けた `DeploymentChecked`（`unknown`、`interrupted`、`deploy.stopped`、費用）を
   記録して、確認を待つ状態に戻す（再開で確かめ直す）。

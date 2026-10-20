@@ -34,8 +34,10 @@
 - 実際に長い工程を動かして、設定した上限で止まることは確かめていない（手元に AI の認証が無い）。運用の環境で、`run_timeout.roles` を書いて、
   その工程が設定した分まで続くことを確かめる。
 
-## レビューの指摘と対応
+## レビューの指摘と対応（PR #169、Codex の DA レビュー）
 
 | 指摘 | 対応 |
 | --- | --- |
-| （なし） | |
+| 【提案】マージの後の監視の上限の説明が実装と違う（`roles.deployment` が無ければ `agent_minutes` を使い、それも無ければ 30 分） | `deployment-watch` の日英を「`run_timeout.roles.deployment`、未指定なら `run_timeout.agent_minutes`（既定 30 分）」に直した |
+| 【提案】「起動し直さなくても次の実行から効く」ことと、既定でない `test_minutes` がテストの実行に渡ることを確かめていない | 同じサービスのまま設定を変えて、次の実行の上限が変わるテストと、`test_minutes: 7` がテストの実行に渡るテストを足した |
+| 【提案】1 分を設定できるので、英語の文言が「1 minutes」になる | `run.timeout`・`run.testTimeout`・`context.mcpTimeoutOverRun` の英語で、1 なら minute、それ以外は minutes にした（テストを足した） |

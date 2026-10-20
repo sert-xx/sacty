@@ -149,6 +149,14 @@ const configOf =
     },
   });
 
+/** run_timeout（PBI-150）を書いた設定。 */
+const configWithTimeouts =
+  (runTimeouts: { agentMinutes: number; testMinutes: number; roles: Record<string, number> }) =>
+  (): ConfigResult => {
+    const base = configOf(agent())();
+    return base.ok ? { ok: true, config: { ...base.config, runTimeouts } } : base;
+  };
+
 /** gh の偽物。ログイン済みのアカウントごとのトークンを返す。 */
 class FakeGitHub implements GitHubAuth {
   requested: string[] = [];
@@ -5544,6 +5552,18 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     expect(task?.outputs.implement).toBe("# 実装の説明");
     expect(task?.testMap.map((m) => m.viewpointId)).toEqual(["TV-1", "TV-2"]);
     expect(task?.verification).toBe("pending");
+    activity.close();
+  });
+
+  it("テストの実行に、config.yaml の run_timeout.test_minutes の上限を渡す（PR #169 レビュー提案。PBI-150）", async () => {
+    const tests = new FakeTests([{ exitCode: 0, output: "2 passed", durationMs: 1200 }]);
+    const { activity, service } = await toImplement([implement("# 実装の説明"), review()], {
+      tests,
+      config: configWithTimeouts({ agentMinutes: 30, testMinutes: 7, roles: {} }),
+    });
+    await drain(service);
+    expect(tests.calls).toHaveLength(1);
+    expect(tests.calls[0]).toMatchObject({ command: "npm test", timeoutMs: 7 * 60_000 });
     activity.close();
   });
 
@@ -24453,6 +24473,27 @@ describe("実行の上限（config.yaml の run_timeout。PBI-150）", () => {
         config: { ...base.config, runTimeouts: { agentMinutes: 45, testMinutes: 7, roles } },
       };
     };
+
+  it("設定は実行のたびに読む（デーモンを起動し直さなくても、次の実行から効く。PR #169 レビュー提案）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    let current = configWithTimeouts({ agentMinutes: 45, testMinutes: 20, roles: {} });
+    const { service, executor } = makeService(activity, [completed(1_000), completed(1_000)], {
+      config: () => current(),
+    });
+    const a = service.createTask({ projectId: "default", title: "A" });
+    await service.runNext(a.id);
+    expect(executor.timeouts[0]).toBe(45 * 60_000);
+    // 同じサービスのまま、設定を変える
+    current = configWithTimeouts({
+      agentMinutes: 45,
+      testMinutes: 20,
+      roles: { requirements: 120 },
+    });
+    const b = service.createTask({ projectId: "default", title: "B" });
+    await service.runNext(b.id);
+    expect(executor.timeouts[1]).toBe(120 * 60_000);
+    activity.close();
+  });
 
   it("工程の実行に、その役割の上限を渡す（上書きが無ければ既定、書かなければ 30 分）", async () => {
     const activity = new SqliteActivityStore(dbPath);

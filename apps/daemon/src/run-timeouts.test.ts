@@ -1,6 +1,7 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { message, renderMessage } from "@sacty/core";
 import { describe, expect, it } from "vitest";
 import { CONFIG_TEMPLATE, loadConfig } from "./config.js";
 import { AGENT_RUN_TIMEOUT_MS } from "./context.js";
@@ -119,5 +120,36 @@ describe("実行に使う上限", () => {
   it("設定を読めなければ、固定の既定", () => {
     expect(agentTimeoutMs(undefined, "implement")).toBe(30 * 60_000);
     expect(testTimeoutMs(undefined)).toBe(20 * 60_000);
+  });
+});
+
+describe("時間切れの英語の文言（PR #169 レビュー提案）", () => {
+  it("1 分なら minute、それ以外は minutes", () => {
+    const en = (code: "run.timeout" | "run.testTimeout", minutes: number) =>
+      renderMessage(message(code, { minutes }), "en");
+    expect(en("run.timeout", 1)).toBe("Stopped the agent because it ran longer than 1 minute.");
+    expect(en("run.timeout", 30)).toBe("Stopped the agent because it ran longer than 30 minutes.");
+    expect(en("run.testTimeout", 1)).toBe(
+      "Stopped the tests because they ran longer than 1 minute.",
+    );
+    expect(en("run.testTimeout", 20)).toBe(
+      "Stopped the tests because they ran longer than 20 minutes.",
+    );
+    const mcp = (minutes: number) =>
+      renderMessage(
+        message("context.mcpTimeoutOverRun", {
+          name: "x",
+          key: "tool_timeout_sec",
+          seconds: 60,
+          minutes,
+        }),
+        "en",
+      );
+    expect(mcp(1)).toContain("(1 minute)");
+    expect(mcp(30)).toContain("(30 minutes)");
+    // 日本語は変わらない
+    expect(renderMessage(message("run.timeout", { minutes: 1 }), "ja")).toBe(
+      "エージェントの実行が 1 分を超えたため止めました。",
+    );
   });
 });
