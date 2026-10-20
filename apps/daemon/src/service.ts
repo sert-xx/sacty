@@ -4073,9 +4073,25 @@ export class TaskService {
     return false;
   }
 
-  /** エージェントを使わないか（利用制限中か、このタスクで失敗したか）。 */
+  /**
+   * 失敗して代わりに切り替える間に、そのタスクで試したエージェント（タスクの ID ごと）。期限とは別に持ち、期限が過ぎても
+   * 試し終えたものには戻らない（代わりも失敗したら、元に戻らずに止める）。そのタスクの実行が成功したとき・再開したときに忘れる。
+   */
+  private readonly fallbackTried = new Map<string, Set<string>>();
+
+  /**
+   * コンテナが止まったことを確かめられなかった実行（実行の ID）。代わりのエージェントに切り替えない（元のコンテナが動いた
+   * ままかもしれず、同じ作業領域で代わりが始めると、変更や外への操作が重なりうるため）。
+   */
+  private readonly unconfirmedRuns = new Set<string>();
+
+  /** エージェントを使わないか（利用制限中か、このタスクで失敗したか、このタスクの切り替えの間に試したか）。 */
   private agentUnusable(taskId: string, id: string): boolean {
-    return this.agentLimited(id) || this.agentFailed(taskId, id);
+    return (
+      this.agentLimited(id) ||
+      this.agentFailed(taskId, id) ||
+      this.fallbackTried.get(taskId)?.has(id) === true
+    );
   }
 
   /** 使わない期限（config.yaml の agent_fallback.cooldown_minutes。ミリ秒）。 */
@@ -4103,8 +4119,8 @@ export class TaskService {
    * 失敗した実行を、止めずに代わりのエージェントでやり直すか（失敗の理由は問わない）。やり直すなら、切り替えた記録
    * （AgentFellBack）を返す。呼ぶ側は、止める記録（TaskPaused）の代わりにこれを記録する（失敗の記録が実行待ちに
    * 戻しているので、次の処理で usableAgent が代わりのエージェントを選ぶ）。利用制限なら、そのエージェントはすべての
-   * タスクで（execute が覚える）、ほかの失敗なら、このタスクでだけ、期限まで使わない。人間が止めた・中止した、代わりが
-   * 無い・すべて使わないものなら undefined。
+   * タスクで（execute が覚える）、ほかの失敗なら、このタスクでだけ、期限まで使わない。人間が止めた・中止した、コンテナが
+   * 止まったことを確かめられなかった、代わりが無い・すべて使わないもの（試し終えたものを含む）なら undefined。
    */
   private fallBack(
     taskId: string,
@@ -4115,6 +4131,7 @@ export class TaskService {
     tried?: ReadonlySet<string>,
   ): ActivityItem | undefined {
     if (this.pauseRequested.has(taskId) || this.cancelling.has(taskId)) return undefined;
+    if (this.unconfirmedRuns.delete(failed.runId)) return undefined;
     const read = config ? undefined : this.deps.config();
     const loaded = config ?? (read?.ok ? read.config : undefined);
     if (!loaded) return undefined;
@@ -4124,6 +4141,9 @@ export class TaskService {
       failedHere.set(failed.agent.id, this.now() + this.fallbackCooldownMs(loaded));
       this.failedAgents.set(taskId, failedHere);
     }
+    const triedHere = this.fallbackTried.get(taskId) ?? new Set<string>();
+    triedHere.add(failed.agent.id);
+    this.fallbackTried.set(taskId, triedHere);
     const skip = (id: string) => this.agentUnusable(taskId, id) || tried?.has(id) === true;
     const next = fallbackAgentFor(loaded, failed.selected ?? failed.agent, skip);
     if (next.id === failed.agent.id || skip(next.id)) return undefined;
@@ -7411,6 +7431,13 @@ export class TaskService {
     }
     // 利用制限に達したエージェントは、しばらく使わない（代わりのエージェントがあれば、次からそれを使う）
     this.markLimited(run.agent, executed.outcome);
+    if (executed.outcome.kind === "completed") {
+      // 成功したら、切り替えの間に試したエージェントを忘れる（次の失敗では、また代わりを順に試す）
+      this.fallbackTried.delete(run.taskId);
+    } else if (notConfirmed(executed.outcome)) {
+      this.unconfirmedRuns.add(run.runId);
+      this.unconfirmedRuns.add(executed.runId);
+    }
     return executed;
   }
 
@@ -9723,6 +9750,8 @@ export class TaskService {
       actor: "person",
       event: { type: "TaskResumed", payload: { retry: task.resumeTo === "queued" } },
     });
+    // 人が再開したら、代わりのエージェントを試し終えたことを忘れる（もう一度、選んだエージェントから順に試す）
+    this.fallbackTried.delete(id);
     return this.append(task, events);
   }
 
@@ -10140,4 +10169,13 @@ function bedrockOrigin(auth: { region: string; endpoint?: "runtime" | "mantle" }
   return (auth.endpoint ?? "runtime") === "runtime"
     ? `https://bedrock-runtime.${auth.region}.amazonaws.com`
     : `https://bedrock-mantle.${auth.region}.api.aws`;
+}
+
+/** コンテナが止まったことを確かめられずに失敗した実行の結果か（run.containerNotConfirmed）。 */
+function notConfirmed(outcome: AgentOutcome): boolean {
+  return (
+    outcome.kind === "failed" &&
+    typeof outcome.message === "object" &&
+    outcome.message.code === "run.containerNotConfirmed"
+  );
 }

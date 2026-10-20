@@ -94,7 +94,7 @@ Code: `apps/daemon/src/agents/parse.ts` (`ClaudeOutcomeReader`, `CodexOutcomeRea
 
 - When a run fails with `usage_limit`, the agent is remembered as limited for all tasks for `agent_fallback.cooldown_minutes` (60 minutes by default)
   (`markLimited`).
-- When a run fails for another reason (`auth`, `error`; including an answer that could not be read) and reaches `fallBack`, the agent is remembered as not
+- When a run fails for another reason (`auth`, `error`) and reaches `fallBack`, the agent is remembered as not
   to be used for the same time, for that task only (other tasks run with the original agent). Both are kept only in the daemon's memory (after a restart,
   the original agent is tried first).
 - Whether a run failed is decided from the exit code and the agent's output (`is_error` of Claude Code's `result`; Codex's `turn.failed` and `error`), not
@@ -103,17 +103,22 @@ Code: `apps/daemon/src/agents/parse.ts` (`ClaudeOutcomeReader`, `CodexOutcomeRea
 - When an agent is chosen (steps, the integration review, the Orchestrator, reading tickets, answering questions, the Goal Guardian, the final review,
   judging rework, exports, the post-merge watch, audits), if the chosen agent is limited or not to be used for that task, its `fallback` is looked at from the
   top (following each `fallback`'s own fallbacks too), and the first usable one is used (`fallbackAgentFor`). If none is usable, the chosen agent is kept.
-- When a step, the integration review, the Orchestrator's choice of steps, reading a ticket, or the final review fails (for any reason) and a usable fallback
+- When the run of a step, the integration review, the Orchestrator's choice of steps, reading a ticket, or the final review fails (for any reason) and a usable fallback
   exists, `AgentFellBack` (the failed run, the role, the original and fallback agents, the failure reason, and the time limit) is recorded instead of a pause (`TaskPaused`). The failure
-  record has put the task back to queued, so the fallback agent runs it again in the next pass.
+  record has put the task back to queued, so the fallback agent runs it again in the next pass. Switching when the run ended normally but its answer could not be read
+  applies only to the choice of steps and reading a ticket (an unreadable answer from the final review or the Goal Guardian's judgements is handled as before).
+- The agents tried while switching are remembered per task, separately from the time limit (`fallbackTried`), and an agent already tried is not used again
+  even after its time limit expires. When all have been tried, the task stops. They are forgotten when a run of that task succeeds or a person resumes the task.
+- A run whose container could not be confirmed as stopped (`run.containerNotConfirmed`) stops without switching (the original container may still be running, and
+  a fallback starting in the same workspace could duplicate changes or outside operations).
 - Judging change proposals and rework remarks is redone on the spot with the fallback agent; `AgentFellBack` is recorded, and the cost of the failed run is
   added to the judgement's cost (`runGuardianWithFallback`). Within one judgement, an agent already tried is not tried again even after its time limit expires, and when all have
   been tried the last failure is returned (retries are at most the number of fallbacks).
-- When a person paused or cancelled the task, or there is no fallback or none is usable, the task stops as before. Exports, the post-merge watch, audits, and answers to
+- When a person paused or cancelled the task, or there is no fallback or none is usable (including those already tried), the task stops as before. Exports, the post-merge watch, audits, and answers to
   questions handle the failure as before and use the fallback agent from the next run (only at a usage limit).
 - The secrets of fallback agents are also retrieved together at startup (`secretUses`).
 
-Code: `apps/daemon/src/service.ts` (`usableAgent`, `agentUnusable`, `markLimited`, `fallBack`, `pauseOrFallBack`, `runGuardianWithFallback`), `apps/daemon/src/config.ts` (`fallbackAgentFor`), `apps/daemon/src/secret-uses.ts` (`secretUses`)
+Code: `apps/daemon/src/service.ts` (`usableAgent`, `agentUnusable`, `markLimited`, `notConfirmed`, `fallBack`, `pauseOrFallBack`, `runGuardianWithFallback`), `apps/daemon/src/config.ts` (`fallbackAgentFor`), `apps/daemon/src/secret-uses.ts` (`secretUses`)
 
 ## Saving and reusing sessions
 

@@ -231,8 +231,9 @@ agent_fallback:
   cooldown_minutes: 60   # how long an agent that failed is not used (minutes; 1-1440)
 ```
 
-- When an agent's run fails, whatever the reason (usage limits, authentication errors, other errors, and answers that could not be read), the task is not paused;
-  the same step runs again with the fallback agent. Whether a run failed is judged from the agent's exit code and output, not from logs on standard error.
+- When an agent's run fails, whatever the reason (usage limits, authentication errors, other errors), the task is not paused;
+  the same step runs again with the fallback agent. Switching when the run ended normally but its answer was not in the right form applies only to the
+  Orchestrator's choice of steps and reading tickets. Whether a run failed is judged from the agent's exit code and output, not from logs on standard error.
   The activity log records the switch with the reason, such as "reached its usage limit", "failed to authenticate", or "failed". This retry without pausing applies to steps, the integration review,
   the Orchestrator's choice of steps, reading tickets, the final review, and the Goal Guardian's judgements (change proposals and rework remarks).
 - For exports, the post-merge watch, audits, and answers to questions, the failure of that run is handled as before (the task pauses, the check is recorded as not confirmed, and so on),
@@ -242,7 +243,9 @@ agent_fallback:
   When Sacty restarts, the original agent is tried first as well.
 - When the Orchestrator switches to a fallback agent (a different tool), the conversation of the previous agent's session is passed read-only so the new agent
   can take over (the session itself cannot be resumed by a different tool). The same handover happens when it switches back to the original agent.
-- If the fallback agent also fails, the task is paused as before. An agent without `fallback` is also paused as before.
+- If the fallback agent also fails (all agents in the list have been tried), the task is paused as before. An agent already tried is not used again
+  even after `cooldown_minutes`. Resuming tries again from the chosen agent in order. An agent without `fallback` is also paused as before.
+- When the agent's container could not be confirmed as stopped, the task is paused without switching (the original container may still be running).
 - Writing a name that does not exist, or the agent itself, in `fallback` is an error. When a fallback agent cannot be used (for example, there is no `providers` for its tool),
   a warning is shown in the web UI and Sacty does not switch to that agent.
 - Fallback agents apply to every agent in `default_agent`, `guardian_agent`, `audit_agent`, `step_agents`, and the agents chosen in task details.

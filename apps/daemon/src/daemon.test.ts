@@ -2373,6 +2373,52 @@ describe("工程の実行と費用", () => {
       activity.close();
     });
 
+    it("期限が過ぎても、試し終えたエージェントには戻らずに止め、再開したら選んだエージェントから試す", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      let now = Date.parse("2026-10-20T00:00:00Z");
+      const error: AgentOutcome = { kind: "failed", reason: "error", message: "timed out" };
+      const { service, executor } = makeService(activity, [error, error, error], {
+        config: withFallback(60_000),
+        secrets,
+        now: () => now,
+      });
+      const task = service.createTask({ projectId: "default", title: "A" });
+      await service.runNext(task.id); // 元のエージェント：失敗（代わりへ）
+      now += 61_000;
+      await service.runNext(task.id); // 代わり：失敗（元の期限は過ぎたが、試し終えたので止める）
+      expect(service.get(task.id)?.task.status).toBe("paused");
+      expect(executor.calls).toHaveLength(2);
+      expect(fellBack(service, task.id)).toHaveLength(1);
+      now += 61_000;
+      service.resume(task.id, {});
+      await service.runNext(task.id);
+      expect(executor.calls).toHaveLength(3);
+      expect(executor.calls[2]?.env.CLAUDE_CODE_OAUTH_TOKEN).toBe("oauth-secret");
+      activity.close();
+    });
+
+    it("コンテナが止まったことを確かめられなかった実行は、代わりに切り替えずに止める", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const { service, executor } = makeService(
+        activity,
+        [
+          {
+            kind: "failed",
+            reason: "error",
+            message: { code: "run.containerNotConfirmed", params: { name: "sacty-run" } },
+          },
+          completed(1_000),
+        ],
+        { config: withFallback(), secrets },
+      );
+      const task = service.createTask({ projectId: "default", title: "A" });
+      await service.runNext(task.id);
+      expect(service.get(task.id)?.task.status).toBe("paused");
+      expect(fellBack(service, task.id)).toEqual([]);
+      expect(executor.calls).toHaveLength(1);
+      activity.close();
+    });
+
     it("代わりのエージェントが無ければ、これまでどおり止める", async () => {
       const activity = new SqliteActivityStore(dbPath);
       const { service } = makeService(
