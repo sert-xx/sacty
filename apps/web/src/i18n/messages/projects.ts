@@ -153,6 +153,8 @@ const ja = {
       "gh auth login でログインしたアカウントから、ホストごとに選びます。gh でアカウントを切り替えても、ここで選んだものを使います。",
     githubAccount: (host: string) => `${host} のアカウント`,
     githubNoTargets: "対象を追加すると選べます。",
+    githubUnreadableTargets:
+      "URL を読めない対象があります。その対象のホストのアカウントは、URL を直すと選べるようになります。",
     githubForContext: "（コンテキストリポジトリ・任意）",
     githubForShared: "（共用の compose・任意）",
     sharedTitle: "共用の compose（任意）",
@@ -348,6 +350,8 @@ const en: ProjectsMessages = {
       "Choose, per host, from the accounts signed in with gh auth login. The account chosen here is used even if you switch accounts in gh.",
     githubAccount: (host) => `Account on ${host}`,
     githubNoTargets: "Add targets to choose accounts.",
+    githubUnreadableTargets:
+      "Some target URLs can't be read. You can choose an account for their host once the URL is fixed.",
     githubForContext: " (context repository, optional)",
     githubForShared: " (shared compose, optional)",
     sharedTitle: "Shared compose (optional)",

@@ -14,12 +14,18 @@
 先にあるオンプレの GitHub Enterprise Server では、利用者のシェルでは `gh auth status` が成功するのに、デーモンからは API に届かず `state` が
 `error` になり、ドメインが合うのにアカウントの選択肢に出なかった。何が読めているかを画面で確かめる手段も無かった。
 
+また、アカウントの欄に出るホストは対象の URL から読むが、URL が形に合わないと（全角の「：」・ゼロ幅の空白・`?tab=…`・`/tree/main`・http・
+Org とリポジトリの単位の取り違えなど）ホストにならず、アカウントの欄に出ない。そのときの文言は「URL で入力してください」だけで、見た目では
+正しい URL のどこが違うのか分からなかった。
+
 ## 決定
 
 - gh に、プロキシ（`HTTPS_PROXY`・`HTTP_PROXY`・`ALL_PROXY`・`NO_PROXY` とその小文字）、CA（`SSL_CERT_FILE`・`SSL_CERT_DIR`）、Linux のキーリング
   （`DBUS_SESSION_BUS_ADDRESS`・`XDG_RUNTIME_DIR`）の環境変数も渡す。`GH_TOKEN`・`GITHUB_TOKEN`・`GH_ENTERPRISE_TOKEN` は渡さない。
 - `state` が `success` でないアカウントも一覧から外さず、`state` と gh の理由（`error`）を添えて返す。画面では「確認できず」と添えて選ばせる。
 - プロジェクトの設定の画面に、デーモンが gh から読めたアカウントの一覧（ホスト・アカウント・状態・理由）を出す。
+- 対象の URL は、全角の文字（NFKC）・見えない文字・クエリ・フラグメントを直して読む。読めなければ、理由ごとの文言を入力の下と保存のときに示す。
+  http・SSH・余分なパスは直さずに理由を示す（http の GHES はトークンでの clone と API の URL が変わり、余分なパスは意図が一つに決まらないため）。
 
 ## 理由
 

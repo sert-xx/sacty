@@ -27,7 +27,9 @@ Slack の通知は、プロジェクトの設定ではなく「Sacty の設定�
 ## 対象
 
 対象（GitHub の Org またはリポジトリ）は、ホストを含めた `https://` の URL で書きます（例 `https://github.com/acme/app`、
-`https://ghe.example.com/acme`。github.com も GitHub Enterprise Server も同じ形です）。末尾の `/`・`.git` は無視します。
+`https://ghe.example.com/acme`。github.com も GitHub Enterprise Server も同じ形です）。末尾の `/`・`.git`、クエリ（`?…`）・`#…`、全角の文字、貼り付けで紛れ込む
+見えない文字は直して読みます。読めない URL は、入力の下に理由（http・SSH・余分な `/tree/…`・Org とリポジトリの単位の取り違えなど）が出ます。
+読めない対象のホストは、「GitHub アカウント」の欄に出ません。
 
 - 画面でタスクを作るときは、対象の中からリポジトリを選びます（Org の対象は、`gh` で読んだその Org のリポジトリから選びます）。
 - 対象の、取り込むラベルの付いた開いている Issue はタスクとして、レビュー用のラベルの付いた（またはレビューを依頼された）開いている

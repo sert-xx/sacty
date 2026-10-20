@@ -27,7 +27,9 @@ The after-merge watch is not turned on or off in project settings. If the target
 ## Targets
 
 Write each target (a GitHub org or repository) as an `https://` URL that includes the host (for example `https://github.com/acme/app` or
-`https://ghe.example.com/acme`. github.com and GitHub Enterprise Server use the same form). A trailing `/` or `.git` is ignored.
+`https://ghe.example.com/acme`. github.com and GitHub Enterprise Server use the same form). A trailing `/` or `.git`, a query (`?…`) or `#…`, full-width characters, and invisible
+characters that slip in when pasting are corrected when reading. For a URL that can't be read, the reason (http, SSH, an extra `/tree/…`, org and repository scope mixed up, and so on) is shown under the input.
+The host of a target that can't be read does not appear in the "GitHub account" section.
 
 - When you create a task in the web UI, you choose a repository from the targets (for an org target, you choose from that org's repositories read with `gh`).
 - Open issues in the targets that have the label to import are imported as tasks, and open PRs that have the review label (or that request your review)

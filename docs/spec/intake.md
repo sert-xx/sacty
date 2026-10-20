@@ -135,8 +135,11 @@ JIRA の接続先は組織内 PF（`gateway.platforms`、無ければプロジ�
   プロジェクトの設定の画面は、そのアカウントに「確認できず」と添えて選ばせ、読めたアカウントの一覧（ホスト・アカウント・状態）も見せる。
   gh には `GH_PROMPT_DISABLED=1`・`NO_COLOR=1` と限られたホストの環境変数（設定・キーリング・プロキシ・CA の場所）だけを渡す
   （`GH_TOKEN`・`GITHUB_TOKEN`・`GH_ENTERPRISE_TOKEN` は渡さない）。
+- 対象のホストは、対象の URL（`https://<ホスト>/<owner>[/<name>]`）から読む。読む前に、全角の文字を NFKC で半角にし、見えない文字（ゼロ幅の空白・BOM）・
+  クエリ・フラグメント・末尾の `/`・`.git` を除き、ホストを小文字にする。読めない対象はホストにならず、アカウントの欄にも出ない。
+  読めない理由（SSH・http・ユーザー名などを含む・ホストの文字・余分なパス・Org とリポジトリの取り違え）は、入力の下と保存のときに示す。
 - API は、github.com なら `https://api.github.com`、それ以外（GitHub Enterprise Server）は `https://<ホスト>/api/v3`。
 - HTTPS のリポジトリの clone・プッシュは、そのホストのアカウントのトークンを `http.https://<ホスト>/.extraheader` で渡して行う。SSH・ローカルの
   パスはホストの認証を使う。
 
-コード: `apps/daemon/src/gh.ts`（`GhCliAuth`・`ghEnv`・`gitAuthEnv`）、`apps/web/src/components/project-editor.tsx`、`packages/core/src/github-url.ts`（`githubApiBase`）、`apps/daemon/src/github.ts`
+コード: `apps/daemon/src/gh.ts`（`GhCliAuth`・`ghEnv`・`gitAuthEnv`）、`apps/web/src/components/project-editor.tsx`、`packages/core/src/github-url.ts`（`githubApiBase`・`targetUrlProblem`）、`apps/daemon/src/github.ts`

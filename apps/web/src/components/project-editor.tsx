@@ -1,6 +1,6 @@
 "use client";
 
-import type { Project, ProjectTarget } from "@sacty/core";
+import { type Project, type ProjectTarget, targetUrlProblem } from "@sacty/core";
 import { XIcon } from "lucide-react";
 import { startTransition, useActionState, useId, useState } from "react";
 import { type SaveProjectState, saveProjectAction } from "@/app/actions";
@@ -187,6 +187,8 @@ export function ProjectEditor({
                           target.target.trim().replace(/\/+$/, "").toLowerCase(),
                       )
                     : undefined;
+                // 読めない URL は、対象のホストにならず、アカウントの欄にも出ない。どこが違うのかをその場で示す
+                const urlProblem = targetUrlProblem(target.scope, target.target);
                 return (
                   <li
                     // biome-ignore lint/suspicious/noArrayIndexKey: 行は位置で編集する
@@ -261,6 +263,11 @@ export function ProjectEditor({
                         <XIcon aria-hidden="true" />
                       </Button>
                     </div>
+                    {urlProblem && (
+                      <p role="alert" className="text-xs text-warn">
+                        {messages.labels.text({ code: urlProblem })}
+                      </p>
+                    )}
                     {excluded && excluded.repos.length > 0 && (
                       <div className="text-xs leading-5 text-muted-foreground">
                         <p>{t.excluded}</p>
@@ -500,6 +507,9 @@ export function ProjectEditor({
             </h2>
             {!hosts.some((h) => h.required) && (
               <p className="text-sm text-muted-foreground">{t.githubNoTargets}</p>
+            )}
+            {targets.some((target) => targetUrlProblem(target.scope, target.target)) && (
+              <p className="text-sm text-warn">{t.githubUnreadableTargets}</p>
             )}
             {hosts.map(({ host, required, forContext, forShared }) => {
               const current = githubAccounts[host] ?? "";
