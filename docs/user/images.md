@@ -5,7 +5,7 @@
 # コンテナイメージ
 
 エージェントの実行とテストの実行に使うコンテナイメージを作ります。イメージは `npx sacty image build` で作ります
-（[CLI](cli.md#sacty-image-build)）。作ったイメージ（`image`。既定 `sacty-agent:1.3.0`）は、エージェントの実行とテストの実行の両方で使います。
+（[CLI](cli.md#sacty-image-build)）。作ったイメージ（`image`。既定 `sacty-agent:1.4.0`）は、エージェントの実行とテストの実行の両方で使います。
 
 ## プライベートのレジストリからイメージを作る
 
@@ -13,7 +13,7 @@ Docker Hub や npm の公開レジストリを使えない環境では、`config
 `sacty image build` を実行してください。書かなければ、Docker Hub の `node:22-bookworm-slim` と npm の公開レジストリから作ります。
 
 ```yaml
-image: registry.example.com/sacty-agent:1.3.0
+image: registry.example.com/sacty-agent:1.4.0
 image_build:
   base_image: registry.example.com/library/node:22-bookworm-slim   # Node.js 18 以上で node ユーザーがあること
   npm_registry: https://npm.example.com/repository/npm/
@@ -73,7 +73,7 @@ npx sacty image build java17     # 名前を指定して作る（default は既�
 | （名前） | 英小文字・数字で始まる、英小文字・数字・`_`・`-` の40文字まで。`default` は使えない | なし |
 | `description` | オーケストレーターが選ぶときに見る説明（200文字まで）。必須 | なし |
 | `base_image` | 元のイメージ。必須 | なし |
-| `image` | 作るイメージの名前 | `sacty-agent-<名前>:1.3.0` |
+| `image` | 作るイメージの名前 | `sacty-agent-<名前>:1.4.0` |
 | `node_image` | Node.js を写す元のイメージ（元のイメージに Node.js 18 以上と npm が無いとき） | `image_build.base_image`、無ければ `node:22-bookworm-slim` |
 | `env` | エージェントとテストのコンテナの環境変数 | なし |
 | `maven_mirror` | Maven・Gradle の取得先 | なし |
