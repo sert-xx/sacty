@@ -31,16 +31,19 @@ Code: `apps/daemon/src/agents/docker.ts` (`dockerRunArgs`, `dockerClientEnv`, `D
 
 | runtime | Command | Config location |
 | --- | --- | --- |
-| `claude-code` | `claude -p <instructions> --output-format stream-json --verbose` (`--add-dir <location>` if there is a location outside the workspace to read; only `/sacty-logs` for answers to questions. Resume is `--resume <ID>`, fork is `--fork-session`. With MCP, `--mcp-config …/mcp.json --strict-mcp-config --allowedTools mcp__<name>,…`. `--model` (on Bedrock, the environment variable `ANTHROPIC_MODEL`), `--effort`) | `CLAUDE_CONFIG_DIR=/tmp/sacty-claude-config`, `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` |
-| `codex` | `codex exec --json --skip-git-repo-check --sandbox danger-full-access` (the endpoint is specified with `-c model_provider=…` and the like. `--model`, `-c model_reasoning_effort=…`. Resume is `resume <ID>`. Last come `--` and the instructions, so that instructions starting with `-` are not read as an option) | `CODEX_HOME=/.codex` |
+| `claude-code` | `claude -p --output-format stream-json --verbose` (the instructions go to stdin. `--add-dir <location>` if there is a location outside the workspace to read; only `/sacty-logs` for answers to questions. Resume is `--resume <ID>`, fork is `--fork-session`. With MCP, `--mcp-config …/mcp.json --strict-mcp-config --allowedTools mcp__<name>,…`. `--model` (on Bedrock, the environment variable `ANTHROPIC_MODEL`), `--effort`) | `CLAUDE_CONFIG_DIR=/tmp/sacty-claude-config`, `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` |
+| `codex` | `codex exec --json --skip-git-repo-check --sandbox danger-full-access` (the endpoint is specified with `-c model_provider=…` and the like. `--model`, `-c model_reasoning_effort=…`. Resume is `resume <ID>`. Last come `--` and `-` (the instructions go to stdin)) | `CODEX_HOME=/.codex` |
 | `stub` | `sh -c 'printf "%s" "$SACTY_STUB_RESULT"'` (returns the output of the `stub` setting; no AI is called) | None |
 
+- The instructions (prompt) for the agent are not put in the command arguments; they are written to the container's stdin with `docker run -i` and then closed (PBI-149). In an argument,
+  a large prompt (such as the Goal Guardian's, which includes a diff) exceeds Linux's per-argument limit (128 KiB) and fails with `argument list too long`. The prompt itself is unchanged.
+  The output relay and localhost forwarding pass stdin through to the command. Runs without instructions (`stub`) get no `-i`, and stdin is closed at once.
 - A temporary directory per run is mounted read-write at the config location, and the composed context ([Context composition](context.en.md)),
   the saved session, and the auth files are copied into it before the run starts.
 - The command is wrapped in small Node.js scripts inside the container. The outer one relays output (the command writes its output to a temporary file, which is read and streamed,
   and every 8MB streamed is discarded; the exit code is unchanged); the inner one forwards localhost (only for runs that started compose services).
 
-Code: `apps/daemon/src/agents/invocation.ts` (`buildInvocation`, `CONTAINER_CLAUDE_CONFIG_DIR`, `CONTAINER_CODEX_HOME`), `apps/daemon/src/agents/output-relay.ts` (`withOutputRelay`, `RELAY_DISCARD_BYTES`), `apps/daemon/src/agents/forward.ts` (`withLocalForwards`)
+Code: `apps/daemon/src/agents/invocation.ts` (`buildInvocation`, `Invocation`, `CONTAINER_CLAUDE_CONFIG_DIR`, `CONTAINER_CODEX_HOME`), `apps/daemon/src/agents/docker.ts` (`dockerRunArgs`, `DockerExecutor`), `apps/daemon/src/agents/output-relay.ts` (`withOutputRelay`, `RELAY_DISCARD_BYTES`), `apps/daemon/src/agents/forward.ts` (`withLocalForwards`)
 
 ## Authentication
 

@@ -5,6 +5,21 @@ import { FORWARD_NOTICE_PREFIX, withLocalForwards } from "./forward.js";
 import { withOutputRelay } from "./output-relay.js";
 import { DockerTestRunner } from "./test-runner.js";
 
+/** 子プロセスの標準入力の偽物。書かれた内容と、閉じたかを記録する（PBI-149）。 */
+function fakeStdin() {
+  return {
+    written: "",
+    ended: false,
+    on() {
+      return this;
+    },
+    end(data?: string) {
+      this.written += data ?? "";
+      this.ended = true;
+    },
+  };
+}
+
 /** docker コマンドの偽物。docker run は止められるまで終わらず、docker kill は決めた終了コードを返す。 */
 function fakeDocker(killCodes: number[]) {
   const calls: string[][] = [];
@@ -188,16 +203,21 @@ describe("テストの実行の注記（PBI-11b）", () => {
 });
 
 describe("イメージの環境変数（PBI-41）", () => {
-  /** docker run の引数と、docker コマンドに渡した環境変数を記録し、すぐ終わる偽物。 */
+  /** docker run の引数と、docker コマンドに渡した環境変数・標準入力を記録し、すぐ終わる偽物。 */
   function recordingDocker() {
-    const runs: { args: string[]; env: Record<string, string> }[] = [];
+    const runs: {
+      args: string[];
+      env: Record<string, string>;
+      stdin: ReturnType<typeof fakeStdin>;
+    }[] = [];
     const spawnImpl = ((_cmd: string, args: string[], options: { env: Record<string, string> }) => {
       const child = Object.assign(new EventEmitter(), {
         stdout: new EventEmitter(),
         stderr: new EventEmitter(),
+        stdin: fakeStdin(),
         kill: () => true,
       });
-      if (args[0] === "run") runs.push({ args, env: options.env });
+      if (args[0] === "run") runs.push({ args, env: options.env, stdin: child.stdin });
       setTimeout(() => child.emit("close", 0), 0);
       return child;
     }) as never;
@@ -281,6 +301,7 @@ describe("イメージの環境変数（PBI-41）", () => {
       const child = Object.assign(new EventEmitter(), {
         stdout: new EventEmitter(),
         stderr: new EventEmitter(),
+        stdin: fakeStdin(),
         kill: () => true,
       });
       if (args[0] === "run") runs.push(args);
@@ -351,5 +372,70 @@ describe("イメージの環境変数（PBI-41）", () => {
     const dockerArgs = run?.args.slice(0, run.args.indexOf("sacty-agent-java:test")) ?? [];
     const names = dockerArgs.filter((_, i, a) => a[i - 1] === "-e");
     expect(names.sort()).toEqual(["CODEX_HOME", "PIP_INDEX_URL", "SHARED"]);
+  });
+});
+
+describe("エージェントへの指示を標準入力で渡す（PBI-149）", () => {
+  function recordingDocker() {
+    const runs: { args: string[]; stdin: ReturnType<typeof fakeStdin> }[] = [];
+    const spawnImpl = ((_cmd: string, args: string[]) => {
+      const child = Object.assign(new EventEmitter(), {
+        stdout: new EventEmitter(),
+        stderr: new EventEmitter(),
+        stdin: fakeStdin(),
+        kill: () => true,
+      });
+      if (args[0] === "run") runs.push({ args, stdin: child.stdin });
+      setTimeout(() => {
+        child.stdout.emit("data", '{"type":"result","subtype":"success","result":"done"}\n');
+        child.emit("close", 0);
+      }, 0);
+      return child;
+    }) as never;
+    return { spawnImpl, runs };
+  }
+
+  it("指示があれば docker run に -i を付け、標準入力に指示の全体を書いて閉じる。コマンドの引数には入れない", async () => {
+    const { DockerExecutor } = await import("./docker.js");
+    const docker = recordingDocker();
+    const executor = new DockerExecutor(60_000, docker.spawnImpl);
+    // 1つの引数の上限（128 KiB）を超える大きな指示
+    const prompt = `# ゴールガーディアン\n${"差分の行\n".repeat(30_000)}`;
+    expect(Buffer.byteLength(prompt)).toBeGreaterThan(128 * 1024);
+    const outcome = await executor.run({
+      runId: "s1",
+      image: "img",
+      workspaceDir: "/tmp",
+      invocation: {
+        command: ["claude", "-p", "--output-format", "stream-json", "--verbose"],
+        stdin: prompt,
+        env: {},
+        parser: "claude-json",
+      },
+    });
+    expect(outcome).toMatchObject({ kind: "completed", output: "done" });
+    const [run] = docker.runs;
+    const imageAt = run?.args.indexOf("img") ?? -1;
+    // -i はイメージより前（docker run のオプション）
+    expect(run?.args.slice(0, imageAt)).toContain("-i");
+    expect(run?.stdin.written).toBe(prompt);
+    expect(run?.stdin.ended).toBe(true);
+    expect(run?.args.some((a) => a.includes("差分の行"))).toBe(false);
+  });
+
+  it("指示が無ければ -i を付けず、標準入力はすぐ閉じる", async () => {
+    const { DockerExecutor } = await import("./docker.js");
+    const docker = recordingDocker();
+    const executor = new DockerExecutor(60_000, docker.spawnImpl);
+    await executor.run({
+      runId: "s2",
+      image: "img",
+      workspaceDir: "/tmp",
+      invocation: { command: ["sh", "-c", "true"], env: {}, parser: "claude-json" },
+    });
+    const [run] = docker.runs;
+    expect(run?.args).not.toContain("-i");
+    expect(run?.stdin.written).toBe("");
+    expect(run?.stdin.ended).toBe(true);
   });
 });
