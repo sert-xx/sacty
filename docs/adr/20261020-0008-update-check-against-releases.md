@@ -38,5 +38,6 @@
 
 - `main` の変更がマージされただけでは知らせは出ない。利用者に届けたい変更は、リリースを作って届ける（`CONTRIBUTING.md` の「リリース」）。
 - `main` を追っている開発中の環境（版がリリースより新しい、または同じ）では知らせが出ない。
-- `GET /api/status` の `update` の形が `behindBy`・`compareUrl` から `latest`・`current`・`releaseUrl` に変わる。古い画面と新しいデーモンの組み合わせでは
-  知らせが出ない（どちらも同じリポジトリから動かすので、通常は揃う）。
+- `GET /api/status` の `update` の形が `behindBy`・`compareUrl` から `latest`・`current`・`releaseUrl` に変わる。古い画面と新しいデーモンの組み合わせでは、
+  古い画面の条件（`behindBy <= 0`）が `undefined` で偽になり、件数が `undefined` の文言で知らせが出てしまう（正しく表示できない）。画面とデーモンは
+  同時に更新する（どちらも同じリポジトリから `npm run build` で作り、`sacty up` で一緒に起動するので、通常は揃う）。
