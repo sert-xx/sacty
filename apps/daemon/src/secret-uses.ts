@@ -1,5 +1,5 @@
 import type { Project, SactySettings } from "@sacty/core";
-import { type AgentConfig, providerKeyOf, type SactyConfig } from "./config.js";
+import { type AgentConfig, definedAgent, providerKeyOf, type SactyConfig } from "./config.js";
 import { GATEWAY_TOKEN_SECRET, type McpServer } from "./context.js";
 import type { Platform } from "./platforms.js";
 
@@ -31,6 +31,13 @@ export function secretUses(config: SactyConfig, settings: SactySettings): Secret
     ...Object.values(config.stepAgents ?? {}),
   ]) {
     if (agent) agents.set(agent.id, agent);
+  }
+  // 利用制限のときの代わりのエージェント（agents の fallback）も、その代わりも使う
+  for (const agent of agents.values()) {
+    for (const name of agent.fallback ?? []) {
+      const fallback = definedAgent(config, name);
+      if (fallback && !agents.has(fallback.id)) agents.set(fallback.id, fallback);
+    }
   }
   for (const agent of agents.values()) {
     // 認証・接続先は runtime ごとの providers に書く（PBI-134）

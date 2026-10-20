@@ -83,13 +83,42 @@ describe("オーケストレーターのセッションの置き場所（PBI-67�
     expect(await store.plan("t2", claude)).toEqual({ mode: "new", reason: "first" });
   });
 
-  it("エージェントの ID か AI の種類が違えば、新しく始める（agent_changed）", async () => {
+  it("エージェントの ID か AI の種類が違えば、前のセッションを引き継いで新しく始める（agent_changed）", async () => {
     await saveClaude("t1", "r1", "s-1");
+    const handoff = {
+      agentId: "claude",
+      runtime: "claude-code",
+      sessionId: "s-1",
+      mainFile: join(
+        dir,
+        "sessions",
+        "t1",
+        "orchestrator",
+        "generations",
+        "r1",
+        "files",
+        main("s-1"),
+      ),
+    };
     expect(await store.plan("t1", { ...claude, agentId: "other" })).toEqual({
       mode: "new",
       reason: "agent_changed",
+      handoff,
     });
     expect(await store.plan("t1", { ...claude, runtime: "codex" })).toEqual({
+      mode: "new",
+      reason: "agent_changed",
+      handoff,
+    });
+  });
+
+  it("前のエージェントのセッションの本体が記録と違えば、引き継がずに新しく始める", async () => {
+    await saveClaude("t1", "r1", "s-1");
+    writeFileSync(
+      join(dir, "sessions", "t1", "orchestrator", "generations", "r1", "files", main("s-1")),
+      "changed\n",
+    );
+    expect(await store.plan("t1", { ...claude, agentId: "other" })).toEqual({
       mode: "new",
       reason: "agent_changed",
     });

@@ -434,6 +434,13 @@ const PARAMS = {
   "gateway.mcpReadyTimeout": z.object({ name: z.string(), seconds: z.number() }),
   "gateway.unavailable": null,
   "config.agentMissing": z.object({ key: z.string(), id: z.string() }),
+  // 利用制限のときの代わりのエージェント
+  "config.agentFallbackSelf": z.object({ id: z.string() }),
+  "config.agentFallbackUnavailable": z.object({
+    id: z.string(),
+    fallback: z.string(),
+    reason: TextParam,
+  }),
   // 工程のエージェントを人が変える（PBI-121）
   "agent.stepMissing": null,
   "agent.stepNotChangeable": null,
@@ -1039,6 +1046,10 @@ const ja: MessageDictionary = {
   "gateway.unavailable":
     "ホストのゲートウェイが起動していないため、ゲートウェイ経由のエージェントを実行できません。Sacty を起動し直してください。",
   "config.agentMissing": ({ key, id }) => `${key} の "${id}" が agents にありません。`,
+  "config.agentFallbackSelf": ({ id }) =>
+    `エージェント「${id}」の fallback に、そのエージェント自身は書けません。`,
+  "config.agentFallbackUnavailable": ({ id, fallback, reason }, text) =>
+    `エージェント「${id}」の代わり（fallback）の「${fallback}」は使えないので、利用制限のときに切り替えません：${text(reason)}`,
   "agent.stepMissing": "その工程は、このタスクの工程にありません。",
   "agent.stepNotChangeable":
     "統合レビューは、ゴールガーディアン（config.yaml の guardian_agent）が実行するため、工程のエージェントを変えられません。",
@@ -1563,6 +1574,10 @@ const en: MessageDictionary = {
   "gateway.unavailable":
     "The host gateway is not running, so an agent that goes through it cannot run. Restart Sacty.",
   "config.agentMissing": ({ key, id }) => `${key} "${id}" is not in agents.`,
+  "config.agentFallbackSelf": ({ id }) =>
+    `The fallback of the agent "${id}" cannot be the agent itself.`,
+  "config.agentFallbackUnavailable": ({ id, fallback, reason }, text) =>
+    `The fallback "${fallback}" of the agent "${id}" cannot be used, so Sacty does not switch to it at a usage limit: ${text(reason)}`,
   "agent.stepMissing": "That step is not one of this task's steps.",
   "agent.stepNotChangeable":
     "The integration review is run by the goal guardian (guardian_agent in config.yaml), so its step agent cannot be changed.",

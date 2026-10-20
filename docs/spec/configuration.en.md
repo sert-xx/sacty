@@ -23,6 +23,7 @@ Related ADRs: [Keep the agent defaults in the repository, and limit config.yaml 
 | `default_agent` | The first usable one in `default_agent` of `config/agents.yaml` | The default AI. An agent name |
 | `guardian_agent` | `default_agent` | The Goal Guardian's AI |
 | `audit_agent` | `guardian_agent` (or `default_agent`) | The AI for audits of completed tasks ([Audit](audit.en.md)) |
+| `agent_fallback.cooldown_minutes` | `60` (`DEFAULT_FALLBACK_COOLDOWN_MINUTES`) | How long an agent that failed at a usage limit (`usage_limit`) is not used (minutes; an integer from 1 to 1440). During that time, the `fallback` in `agents` is used ([Agent execution](agent-execution.en.md#fallback-agents-at-a-usage-limit)) |
 | `step_agents` | `{}` | The AI per step (`StepKey`; `deployment` is the check in the after-merge watch step) and for `orchestrator`. If not written, `default_agent`; for Integration review (`integrate`), `guardian_agent` |
 | `agents` | `{}` | Overrides of and additions to the agent defaults ("Agent defaults and overrides" below) |
 | `budget.default_per_task_usd` | `1` (`DEFAULT_BUDGET_USD`) | The budget per task (US dollars; a positive number) |
@@ -106,6 +107,7 @@ If none is usable, it is an error (`config.noDefaultAgent`).
 | `runtime` | `claude-code`, `codex`, or `stub`. Can be omitted for a name in the defaults. Required for a name not in the defaults (`config.agentRuntimeRequired`) |
 | `model` | The model. For `claude-code` and `codex`, required in the result merged with the defaults (`config.agentModelRequired`; its price is looked up in `available_models`) |
 | `reasoning_effort` | The reasoning effort (optional; `^[a-z][a-z0-9_-]{0,30}$`). Passed to Codex as `model_reasoning_effort` and to Claude Code as `--effort` |
+| `fallback` | The names of the agents used instead at a usage limit (optional; one name or a list, tried from the top). A name not in `agents` is an error (`config.agentMissing`), and so is the agent itself (`config.agentFallbackSelf`). Agents that cannot be used are removed with a warning (`config.agentFallbackUnavailable`) |
 | `price_per_mtok_usd` | `runtime: stub` only. The price (written the same way as `available_models`; 0 if not written) |
 | `stub` | The output of `runtime: stub` (default outputs for steps, the Orchestrator, the Goal Guardian, and so on; token counts; and `fail: usage_limit｜auth` to reproduce failures) |
 
@@ -114,7 +116,7 @@ If none is usable, it is an error (`config.noDefaultAgent`).
   it says to write them in `auth`, `via_gateway`, and `available_models` of `providers`). The former format is not converted automatically.
 - Names in `agents` cannot be empty (`config.agentNameEmpty`; the name chosen in the task details is recorded in the Activity).
 
-Code: `apps/daemon/src/config.ts` (`DefaultsFile`, `AgentFile`, `LEGACY_AGENT_KEYS`, `loadDefaults`, `buildAgents`, `StubBehavior`)
+Code: `apps/daemon/src/config.ts` (`DefaultsFile`, `AgentFile`, `LEGACY_AGENT_KEYS`, `loadDefaults`, `buildAgents`, `StubBehavior`, `fallbackAgentFor`)
 
 ## Usable agents
 

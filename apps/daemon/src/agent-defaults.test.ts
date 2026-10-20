@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { type DaemonText, renderMessage } from "@sacty/core";
 import { afterEach, describe, expect, it } from "vitest";
 import { parse as parseYaml } from "yaml";
-import { DEFAULT_AGENTS_PATH, loadConfig, parseTierId } from "./config.js";
+import { DEFAULT_AGENTS_PATH, fallbackAgentFor, loadConfig, parseTierId } from "./config.js";
 
 /*
  * エージェントの既定をリポジトリ（config/agents.yaml）に持ち、config.yaml は接続先と単価だけで動く（PBI-134）。
@@ -317,5 +317,77 @@ agents:
     price_per_mtok_usd: { input: 3, cached_input: 0.3, cache_write: 3.75, output: 15 }
 `);
     expect(legacy.ok ? "" : ja(legacy.problem)).toContain("agents.claude-subscription.auth");
+  });
+});
+
+describe("利用制限のときの代わりのエージェント（agents の fallback）", () => {
+  it("名前1つか並びで書ける。書かなければ切り替えない。制限中の時間の既定は 60 分", () => {
+    const config = loaded(
+      `default_agent: claude_standard\nproviders:\n${claude()}${codex()}agents:\n  claude_standard:\n    fallback: codex_standard\n  claude_advanced:\n    fallback: [codex_advanced, claude_standard]\n`,
+    );
+    expect(config.agents?.claude_standard?.fallback).toEqual(["codex_standard"]);
+    expect(config.agents?.claude_advanced?.fallback).toEqual(["codex_advanced", "claude_standard"]);
+    // 既定のほかの項目（model など）は残る
+    expect(config.agents?.claude_standard?.model).toBe("claude-sonnet-5-5");
+    expect(config.defaultAgent.fallback).toEqual(["codex_standard"]);
+    expect(config.agents?.codex_standard?.fallback).toBeUndefined();
+    expect(config.fallbackCooldownMs).toBe(60 * 60_000);
+    expect(config.agentWarnings).toEqual([]);
+  });
+
+  it("agent_fallback.cooldown_minutes で制限中の時間を変えられる（1〜1440 分）", () => {
+    const base = `providers:\n${codex()}`;
+    expect(loaded(`${base}agent_fallback:\n  cooldown_minutes: 15\n`).fallbackCooldownMs).toBe(
+      15 * 60_000,
+    );
+    expect(problem(`${base}agent_fallback:\n  cooldown_minutes: 0\n`)).toContain(
+      "agent_fallback.cooldown_minutes",
+    );
+    expect(problem(`${base}agent_fallback:\n  cooldown_minutes: 1441\n`)).toContain(
+      "agent_fallback.cooldown_minutes",
+    );
+  });
+
+  it("agents に無い名前・自分自身は誤り", () => {
+    const base = `providers:\n${codex()}agents:\n  codex_standard:\n`;
+    expect(problem(`${base}    fallback: nothing\n`)).toContain(
+      'agents.codex_standard.fallback の "nothing" が agents にありません',
+    );
+    expect(problem(`${base}    fallback: codex_standard\n`)).toContain(
+      "そのエージェント自身は書けません",
+    );
+  });
+
+  it("代わりが使えない（接続先が無い）なら警告し、使えるものだけを残す", () => {
+    const config = loaded(
+      `providers:\n${codex()}agents:\n  codex_standard:\n    fallback: [claude_standard, codex_advanced]\n  codex_advanced:\n    fallback: claude_advanced\n`,
+    );
+    expect(config.agents?.codex_standard?.fallback).toEqual(["codex_advanced"]);
+    expect(config.agents?.codex_advanced?.fallback).toBeUndefined();
+    expect((config.agentWarnings ?? []).map(ja)).toEqual([
+      expect.stringContaining(
+        "「codex_standard」の代わり（fallback）の「claude_standard」は使えない",
+      ),
+      expect.stringContaining(
+        "「codex_advanced」の代わり（fallback）の「claude_advanced」は使えない",
+      ),
+    ]);
+  });
+
+  it("制限中なら、代わりを上から順に（その代わりも）たどり、制限中でない最初のもの。すべて制限中なら元のもの", () => {
+    const config = loaded(
+      `providers:\n${claude()}${codex()}agents:\n  claude_ultimate:\n    fallback: [claude_advanced, codex_ultimate]\n  claude_advanced:\n    fallback: codex_advanced\n`,
+    );
+    const main = config.agents?.claude_ultimate;
+    if (!main) throw new Error("unreachable");
+    const pick = (...limited: string[]) =>
+      fallbackAgentFor(config, main, (id) => limited.includes(id)).id;
+    expect(pick()).toBe("claude_ultimate");
+    expect(pick("claude_ultimate")).toBe("claude_advanced");
+    expect(pick("claude_ultimate", "claude_advanced")).toBe("codex_advanced");
+    expect(pick("claude_ultimate", "claude_advanced", "codex_advanced")).toBe("codex_ultimate");
+    expect(pick("claude_ultimate", "claude_advanced", "codex_advanced", "codex_ultimate")).toBe(
+      "claude_ultimate",
+    );
   });
 });

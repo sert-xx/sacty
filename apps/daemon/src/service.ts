@@ -151,8 +151,10 @@ import {
   agentFor,
   agentSetting,
   type ConfigResult,
+  DEFAULT_FALLBACK_COOLDOWN_MINUTES,
   DEFAULT_IMAGE_NAME,
   definedAgent,
+  fallbackAgentFor,
   githubRepoOf,
   resolveImage,
   type SactyConfig,
@@ -225,6 +227,7 @@ import {
   usefulCounts,
 } from "./memory.js";
 import { notificationFor, type SlackNotifier } from "./notifier.js";
+import { CONTAINER_HANDOFF_DIR, stageHandoff } from "./orchestrator-handoff.js";
 import type { OrchestratorSessionStore } from "./orchestrator-sessions.js";
 import {
   mergePlatforms,
@@ -1417,7 +1420,8 @@ export class TaskService {
       this.pauseForMissingAgent(task, "deployment", chosen.missing);
       return;
     }
-    const agent = chosen.agent;
+    // 利用制限中なら、代わりのエージェント（agents の fallback）で確かめる
+    const agent = this.usableAgent(config, chosen.agent);
     const runId = randomUUID();
     const setting = { agentId: agent.id, ...agentSetting(agent), runId };
     this.append(task, [
@@ -1682,6 +1686,39 @@ export class TaskService {
    * base は起点のコミットのコード、implemented は実装後のコード（実装の作業領域。.git を除く）。
    * コードは実行ごとのディレクトリに書き出し、終わったら消す。書き出せなければ、実行の失敗として返す。
    */
+  /**
+   * ゴールガーディアンの判定（変更の申し出・差し戻しの指摘。コンテキストを渡さない実行）を、利用制限なら代わりのエージェント
+   * （agents の fallback）でやり直して返す。切り替えたことは作業履歴に記録し、失敗した実行の費用は返す費用に足す。
+   */
+  private async runGuardianWithFallback(
+    task: Task,
+    run: Parameters<TaskService["runGuardian"]>[1],
+    code: "base" | "implemented",
+    config: SactyConfig,
+  ): Promise<Awaited<ReturnType<TaskService["runGuardian"]>> & { agent: AgentConfig }> {
+    const selected = run.agent;
+    let agent = this.usableAgent(config, selected);
+    let executed = await this.runGuardian(task, { ...run, agent }, code);
+    let spent = 0;
+    for (;;) {
+      if (executed.outcome.kind !== "failed") break;
+      const switched = this.fallBack(
+        task.id,
+        { runId: executed.runId, role: run.role, agent, selected },
+        executed.outcome.reason,
+        config,
+      );
+      if (switched?.event.type !== "AgentFellBack") break;
+      this.append(this.mustGet(task.id), [switched]);
+      spent += executed.costUsd;
+      const next = definedAgent(config, switched.event.payload.fallbackAgentId);
+      if (!next) break;
+      agent = next;
+      executed = await this.runGuardian(task, { ...run, agent, runId: undefined }, code);
+    }
+    return { ...executed, costUsd: executed.costUsd + spent, agent };
+  }
+
   private async runGuardian(
     task: Task,
     run: {
@@ -2621,8 +2658,9 @@ export class TaskService {
   ): Promise<
     PlannedSteps | { failure: Extract<EventInput, { type: "OrchestratorFailed" }>["payload"] }
   > {
-    // オーケストレーターに使う AI（step_agents.orchestrator か default_agent。PBI-40）。既定のイメージで動く
-    const agent = agentFor(config, "orchestrator");
+    // オーケストレーターに使う AI（step_agents.orchestrator か default_agent。PBI-40）。既定のイメージで動く。
+    // 利用制限中なら、代わりのエージェント（agents の fallback）。セッションは、前のエージェントのものを引き継ぐ
+    const agent = this.usableAgent(config, agentFor(config, "orchestrator"));
     // 工程の実行と同じく、既定のコンテキストとプロジェクトのコンテキスト（規則・スキル・MCP サーバー）を渡す（PBI-146。
     // 既定のスキル plan-steps で、答えの JSON を検査させる）。用意できなければ、実行せずに理由を返す（費用は無い）
     const runId = randomUUID();
@@ -2767,19 +2805,19 @@ export class TaskService {
     remarks: string[],
     config: SactyConfig,
   ): Promise<Extract<EventInput, { type: "ReworkJudged" }>["payload"]> {
-    const agent = config.guardianAgent;
     const targets = reworkTargets(task, gateStep);
     // 実装の PR は、指摘が実装で直せるかを判断するので実装後のコードを、要求要件・設計の PR（PBI-57）は
-    // 起点のコードを読ませる
-    const { outcome, costUsd, estimated, runId } = await this.runGuardian(
+    // 起点のコードを読ませる。利用制限なら、代わりのエージェントで判定し直す
+    const { outcome, costUsd, estimated, runId, agent } = await this.runGuardianWithFallback(
       task,
       {
-        agent,
+        agent: config.guardianAgent,
         image: config.image,
         prompt: buildReworkPrompt(task, remarks, targets, gateStep),
         role: "rework",
       },
       gateStep === "implement" ? "implemented" : "base",
+      config,
     );
     const judgement =
       outcome.kind === "completed"
@@ -3605,7 +3643,9 @@ export class TaskService {
       pause("error", message("ticket.triageFailed", { detail: message("ticket.noCandidates") }));
       return;
     }
-    const agent = agentFor(config, "orchestrator");
+    const selected = agentFor(config, "orchestrator");
+    // 利用制限中なら、代わりのエージェント（agents の fallback）で読む
+    const agent = this.usableAgent(config, selected);
     const { outcome, costUsd, estimated, runId } = await this.runGuardian(
       task,
       {
@@ -3641,7 +3681,14 @@ export class TaskService {
           actor: "orchestrator",
           event: { type: "OrchestratorFailed", payload: { reason, message: text, ...cost } },
         },
-        { actor: "sacty", event: { type: "TaskPaused", payload: { reason, message: text } } },
+        // 利用制限なら、止めずに代わりのエージェントで読み直す
+        this.pauseOrFallBack(
+          task.id,
+          { runId, role: "orchestrator", agent, selected },
+          reason,
+          { actor: "sacty", event: { type: "TaskPaused", payload: { reason, message: text } } },
+          config,
+        ),
       ]);
       this.warnIfNeeded(this.mustGet(task.id));
     };
@@ -3918,6 +3965,84 @@ export class TaskService {
   /** 実行待ちのタスク（古い順）。 */
   private now(): number {
     return (this.deps.now ?? Date.now)();
+  }
+
+  /**
+   * 利用制限に達したエージェントと、使わない期限（エポックからのミリ秒）。メモリーだけに持つ（デーモンを起動し直すと、
+   * 元のエージェントから試す）。
+   */
+  private readonly limitedAgents = new Map<string, number>();
+
+  /** エージェントが利用制限中か（期限を過ぎたら、制限中でなくする）。 */
+  private agentLimited(id: string): boolean {
+    const until = this.limitedAgents.get(id);
+    if (until === undefined) return false;
+    if (until > this.now()) return true;
+    this.limitedAgents.delete(id);
+    return false;
+  }
+
+  /**
+   * 実行に使うエージェント。選んだエージェントが利用制限中なら、代わりのエージェント（agents の fallback）。代わりも
+   * すべて制限中なら、選んだエージェント。
+   */
+  private usableAgent(config: SactyConfig, agent: AgentConfig): AgentConfig {
+    return fallbackAgentFor(config, agent, (id) => this.agentLimited(id));
+  }
+
+  /** 利用制限で失敗したエージェントを、期限（config.yaml の agent_fallback.cooldown_minutes）まで使わない。 */
+  private markLimited(agent: AgentConfig, outcome: AgentOutcome): void {
+    if (outcome.kind !== "failed" || outcome.reason !== "usage_limit") return;
+    const config = this.deps.config();
+    const cooldown =
+      (config.ok ? config.config.fallbackCooldownMs : undefined) ??
+      DEFAULT_FALLBACK_COOLDOWN_MINUTES * 60_000;
+    this.limitedAgents.set(agent.id, this.now() + cooldown);
+  }
+
+  /**
+   * 利用制限で失敗した実行を、止めずに代わりのエージェントでやり直すか。やり直すなら、切り替えた記録（AgentFellBack）を
+   * 返す。呼ぶ側は、止める記録（TaskPaused）の代わりにこれを記録する（失敗の記録が実行待ちに戻しているので、次の処理で
+   * usableAgent が代わりのエージェントを選ぶ）。人間が止めた・中止した、代わりが無い・すべて制限中なら undefined。
+   */
+  private fallBack(
+    taskId: string,
+    failed: { runId: string; role: string; agent: AgentConfig; selected?: AgentConfig },
+    reason: string,
+    config?: SactyConfig,
+  ): ActivityItem | undefined {
+    if (reason !== "usage_limit") return undefined;
+    if (this.pauseRequested.has(taskId) || this.cancelling.has(taskId)) return undefined;
+    const read = config ? undefined : this.deps.config();
+    const loaded = config ?? (read?.ok ? read.config : undefined);
+    if (!loaded) return undefined;
+    const next = this.usableAgent(loaded, failed.selected ?? failed.agent);
+    if (next.id === failed.agent.id || this.agentLimited(next.id)) return undefined;
+    const until = this.limitedAgents.get(failed.agent.id) ?? this.now();
+    return {
+      actor: "sacty",
+      event: {
+        type: "AgentFellBack",
+        payload: {
+          runId: failed.runId,
+          role: failed.role,
+          agentId: failed.agent.id,
+          fallbackAgentId: next.id,
+          until: new Date(until).toISOString(),
+        },
+      },
+    };
+  }
+
+  /** 利用制限で代わりのエージェントに切り替えるなら、その記録。そうでなければ、止める記録（pause）。 */
+  private pauseOrFallBack(
+    taskId: string,
+    failed: { runId: string; role: string; agent: AgentConfig; selected?: AgentConfig },
+    reason: string,
+    pause: ActivityItem,
+    config?: SactyConfig,
+  ): ActivityItem {
+    return this.fallBack(taskId, failed, reason, config) ?? pause;
   }
 
   queuedTaskIds(): string[] {
@@ -4420,9 +4545,23 @@ export class TaskService {
         const latest = this.mustGet(taskId);
         if (this.pauseRequested.has(taskId) || this.cancelling.has(taskId)) return;
         if (latest.status !== "queued" || latest.steps.length > 0) return;
+        const failedAgent = definedAgent(config.config, choice.failure.agentId);
         this.append(latest, [
           { actor: "orchestrator", event: { type: "OrchestratorFailed", payload: choice.failure } },
-          {
+          // 利用制限なら、止めずに代わりのエージェントで選び直す
+          (failedAgent &&
+            choice.failure.runId &&
+            this.fallBack(
+              taskId,
+              {
+                runId: choice.failure.runId,
+                role: "orchestrator",
+                agent: failedAgent,
+                selected: agentFor(config.config, "orchestrator"),
+              },
+              choice.failure.reason,
+              config.config,
+            )) || {
             actor: "sacty",
             event: {
               type: "TaskPaused",
@@ -4559,7 +4698,8 @@ export class TaskService {
       this.pauseForMissingAgent(task, step, chosen.missing);
       return;
     }
-    const agent = chosen.agent;
+    // 利用制限中なら、代わりのエージェント（agents の fallback）で実行する
+    const agent = this.usableAgent(config.config, chosen.agent);
     const runId = randomUUID();
     this.append(task, [
       {
@@ -4822,16 +4962,23 @@ export class TaskService {
             },
           },
         },
-        {
-          actor: "sacty",
-          event: {
-            type: "TaskPaused",
-            payload: {
-              reason: this.stopReason(task.id, outcome.reason),
-              ...manual,
+        // 利用制限なら、止めずに代わりのエージェントでやり直す
+        this.pauseOrFallBack(
+          task.id,
+          { runId, role: step, agent, selected: chosen.agent },
+          outcome.reason,
+          {
+            actor: "sacty",
+            event: {
+              type: "TaskPaused",
+              payload: {
+                reason: this.stopReason(task.id, outcome.reason),
+                ...manual,
+              },
             },
           },
-        },
+          config.config,
+        ),
       ]);
       // 失敗した実行の費用でも、80%の通知は判定する（一時停止はすでにしている）
       this.warnIfNeeded(this.mustGet(task.id));
@@ -5198,7 +5345,8 @@ export class TaskService {
       pause(message("agent.chosenMissing", { step, name: chosen.missing }));
       return;
     }
-    const agent = chosen.agent;
+    // 利用制限中なら、代わりのエージェント（agents の fallback）で実行する
+    const agent = this.usableAgent(config, chosen.agent);
     const image = resolveImage(config, task.images?.[step]);
     if (!image.ok) {
       pause(image.message);
@@ -5372,7 +5520,8 @@ export class TaskService {
     const config = loaded.config;
     // 書き出しは、その工程のエージェント（人が選んだもの。無ければ step_agents か default_agent。PBI-121）で行う
     const chosen = stepAgentFor(config, step, task.agents?.[step]);
-    const agent = chosen.ok ? chosen.agent : agentFor(config, step);
+    // 利用制限中なら、代わりのエージェント（agents の fallback）で書き出す
+    const agent = this.usableAgent(config, chosen.ok ? chosen.agent : agentFor(config, step));
     const runId = randomUUID();
     const previous = task.exports[step];
     const base = {
@@ -5698,7 +5847,8 @@ export class TaskService {
       ]);
       return;
     }
-    const agent = config.config.guardianAgent;
+    // 利用制限中なら、代わりのエージェント（agents の fallback）でレビューする
+    const agent = this.usableAgent(config.config, config.config.guardianAgent);
     // 最終レビューは、実装後のコードを使い捨ての写しで読ませる（差分もこれまでどおり渡す）
     const { outcome, costUsd, estimated, runId } = await this.runGuardian(
       current,
@@ -5731,17 +5881,29 @@ export class TaskService {
             },
           },
         },
-        {
-          actor: "sacty",
-          event: {
-            type: "TaskPaused",
-            payload: {
-              reason: this.stopReason(task.id, outcome.reason),
-              message: failure,
-              ...(await this.manualPauseInfo(task.id)),
+        // 利用制限なら、止めずに代わりのエージェントでレビューし直す
+        this.pauseOrFallBack(
+          task.id,
+          {
+            runId,
+            role: "final-review",
+            agent,
+            selected: config.config.guardianAgent,
+          },
+          outcome.reason,
+          {
+            actor: "sacty",
+            event: {
+              type: "TaskPaused",
+              payload: {
+                reason: this.stopReason(task.id, outcome.reason),
+                message: failure,
+                ...(await this.manualPauseInfo(task.id)),
+              },
             },
           },
-        },
+          config.config,
+        ),
       ]);
       this.warnIfNeeded(this.mustGet(task.id));
       return;
@@ -6776,7 +6938,9 @@ export class TaskService {
    */
   private async integrate(task: Task, config: SactyConfig): Promise<void> {
     const step = "integrate" as const;
-    const agent = agentFor(config, step);
+    const selected = agentFor(config, step);
+    // 利用制限中なら、代わりのエージェント（agents の fallback）で実行する
+    const agent = this.usableAgent(config, selected);
     const runId = randomUUID();
     this.append(task, [
       {
@@ -6878,13 +7042,19 @@ export class TaskService {
             },
           },
         },
-        {
-          actor: "sacty",
-          event: {
-            type: "TaskPaused",
-            payload: { reason: this.stopReason(task.id, outcome.reason), ...manual },
+        this.pauseOrFallBack(
+          task.id,
+          { runId, role: step, agent, selected },
+          outcome.reason,
+          {
+            actor: "sacty",
+            event: {
+              type: "TaskPaused",
+              payload: { reason: this.stopReason(task.id, outcome.reason), ...manual },
+            },
           },
-        },
+          config,
+        ),
       ]);
       this.warnIfNeeded(this.mustGet(task.id));
       return;
@@ -7112,13 +7282,19 @@ export class TaskService {
     original: ExecuteRun,
   ): Promise<{ outcome: AgentOutcome; costUsd: number; estimated: boolean; runId: string }> {
     const run = this.withMemory(original);
+    let executed: { outcome: AgentOutcome; costUsd: number; estimated: boolean; runId: string };
     if (run.role === "orchestrator") {
       // 同じタスクで、オーケストレーターの実行は同時に1つだけ（並ぶ）
-      return this.withOrchestratorLock(run.taskId, () => this.executeWithSession(run));
+      executed = await this.withOrchestratorLock(run.taskId, () => this.executeWithSession(run));
+    } else if (run.role === "chat") {
+      executed = await this.executeWithSession(run);
+    } else {
+      const { archived: _archived, ...rest } = await this.executeOnce(run);
+      executed = { ...rest, runId: run.runId };
     }
-    if (run.role === "chat") return this.executeWithSession(run);
-    const { archived: _archived, ...executed } = await this.executeOnce(run);
-    return { ...executed, runId: run.runId };
+    // 利用制限に達したエージェントは、しばらく使わない（代わりのエージェントがあれば、次からそれを使う）
+    this.markLimited(run.agent, executed.outcome);
+    return executed;
   }
 
   /** タスクごとの、オーケストレーターの実行の順番（PBI-67）。 */
@@ -7169,11 +7345,29 @@ export class TaskService {
       plan = { mode: "new", reason: "files_broken" };
     }
     let runId = run.runId;
-    let executed = await this.executeOnce(
-      plan.mode === "resume"
-        ? { ...run, session: { resume: plan.sessionId, filesDir: plan.filesDir, fork: chat } }
-        : run,
-    );
+    // 別のエージェントのセッション（利用制限で代わりのエージェントに切り替えたなど）は再開できないので、そのやり取りを
+    // 読み取り専用で渡して引き継ぐ
+    const handoffDir = join(this.deps.workspaceRoot, "_handoff", run.runId);
+    const handoff =
+      plan.mode === "new" && plan.handoff ? stageHandoff(handoffDir, plan.handoff) : undefined;
+    const fresh: ExecuteRun = handoff
+      ? {
+          ...run,
+          prompt: [run.prompt, ...handoff.promptLines].join("\n"),
+          mounts: [...(run.mounts ?? []), handoff.mount],
+          readDirs: [...(run.readDirs ?? []), CONTAINER_HANDOFF_DIR],
+        }
+      : run;
+    let executed: Awaited<ReturnType<TaskService["executeOnce"]>>;
+    try {
+      executed = await this.executeOnce(
+        plan.mode === "resume"
+          ? { ...run, session: { resume: plan.sessionId, filesDir: plan.filesDir, fork: chat } }
+          : fresh,
+      );
+    } finally {
+      if (handoff) rmSync(handoffDir, { recursive: true, force: true });
+    }
     let reason = plan.mode === "new" ? plan.reason : undefined;
     let failedRunId: string | undefined;
     // AI が再開を受け付けなかった（何も使わずに失敗した）なら、新しいセッションで始め直す（タスクは止めない）。
@@ -7246,6 +7440,15 @@ export class TaskService {
                 ...(failedRunId ? { failedRunId } : {}),
                 ...(saved ? { saved: saved.saved } : {}),
                 ...(saved?.notSaved ? { notSaved: saved.notSaved } : {}),
+                ...(handoff && plan.mode === "new" && plan.handoff
+                  ? {
+                      handoffFrom: {
+                        agentId: plan.handoff.agentId,
+                        sessionId: plan.handoff.sessionId,
+                        truncated: handoff.truncated,
+                      },
+                    }
+                  : {}),
               },
             },
           },
@@ -7561,12 +7764,18 @@ export class TaskService {
     proposal: TaskProposal,
     config: SactyConfig,
   ): Promise<Extract<EventInput, { type: "ChangeJudged" }>["payload"]> {
-    const agent = config.guardianAgent;
-    // 変更の申し出の判定は、起点のコミットのコードを使い捨ての写しで読ませる
-    const { outcome, costUsd, estimated, runId } = await this.runGuardian(
+    // 変更の申し出の判定は、起点のコミットのコードを使い捨ての写しで読ませる。利用制限なら、代わりのエージェントで
+    // 判定し直す
+    const { outcome, costUsd, estimated, runId, agent } = await this.runGuardianWithFallback(
       task,
-      { agent, image: config.image, prompt: buildGuardianPrompt(task, proposal), role: "guardian" },
+      {
+        agent: config.guardianAgent,
+        image: config.image,
+        prompt: buildGuardianPrompt(task, proposal),
+        role: "guardian",
+      },
       "base",
+      config,
     );
     const judgement =
       outcome.kind === "completed"
@@ -7866,8 +8075,9 @@ export class TaskService {
   ): Promise<void> {
     const question = task.questions.find((q) => q.id === questionId);
     if (!question) return;
-    // オーケストレーターに使う AI（step_agents.orchestrator か default_agent。PBI-40）
-    const agent = agentFor(config, "orchestrator");
+    // オーケストレーターに使う AI（step_agents.orchestrator か default_agent。PBI-40）。利用制限中なら、代わりの
+    // エージェント（agents の fallback）
+    const agent = this.usableAgent(config, agentFor(config, "orchestrator"));
     const setting = { agentId: agent.id, ...agentSetting(agent), runId: chat.runId };
     let payload: Extract<EventInput, { type: "QuestionAnswered" }>["payload"];
     // 各実行のセッションログを、答えの実行ごとの場所に並べて、読み取り専用でマウントする（PBI-91）
@@ -8106,7 +8316,8 @@ export class TaskService {
   ): Promise<void> {
     const audit = task.audit;
     if (!audit) return;
-    const agent = config.auditAgent;
+    // 利用制限中なら、代わりのエージェント（agents の fallback）で監査する
+    const agent = this.usableAgent(config, config.auditAgent);
     const runId = randomUUID();
     const logsDir = join(this.deps.workspaceRoot, "_audit-logs", runId);
     const ledgerDir = join(this.deps.workspaceRoot, "_audit-ledger", runId);

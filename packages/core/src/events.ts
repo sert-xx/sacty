@@ -1052,6 +1052,32 @@ const OrchestratorSessionUsed = z.object({
      * session_missing：セッションの本体のファイルが無い、copy_failed：保存の場所に書けなかった。
      */
     notSaved: z.enum(["not_archived", "no_session", "session_missing", "copy_failed"]).optional(),
+    /**
+     * 別のエージェントのセッションから引き継いだ（reason が agent_changed のとき）。保存してあった、前のエージェントの
+     * セッションのやり取りを書き出して、読み取り専用で渡した。
+     */
+    handoffFrom: z
+      .object({ agentId: z.string(), sessionId: z.string(), truncated: z.boolean() })
+      .optional(),
+  }),
+});
+
+/**
+ * エージェントが利用制限に達したので、代わりのエージェント（config.yaml の agents の fallback）に切り替えた。止めずに、
+ * 同じ実行（工程・オーケストレーター・ゴールガーディアンなど）を代わりのエージェントでやり直す。until までは、利用制限に
+ * 達したエージェントを使わない。失敗した実行と費用は、それぞれの失敗の記録（AgentRunFailed など）に残す。
+ */
+const AgentFellBack = z.object({
+  type: z.literal("AgentFellBack"),
+  payload: z.object({
+    /** 利用制限で失敗した実行。 */
+    runId: z.string().min(1),
+    /** 実行の役割（工程の名前・orchestrator・guardian など）。 */
+    role: z.string().min(1),
+    agentId: z.string().min(1),
+    fallbackAgentId: z.string().min(1),
+    /** 利用制限に達したエージェントを使わない期限。 */
+    until: z.string(),
   }),
 });
 
@@ -2113,6 +2139,7 @@ export const EventInput = z.discriminatedUnion("type", [
   FinalReviewFailed,
   OrchestratorFailed,
   AiRequestsRetried,
+  AgentFellBack,
   AgentSessionArchived,
   OrchestratorSessionUsed,
   IntegrationReviewed,

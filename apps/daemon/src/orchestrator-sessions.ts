@@ -68,9 +68,17 @@ export function sessionMainFile(
   })?.path;
 }
 
+/** 別のエージェントの、保存してあったセッション（やり取りを引き継ぐため）。mainFile はセッションの本体のファイル。 */
+export type OrchestratorHandoff = {
+  agentId: string;
+  runtime: AgentSessionRuntime;
+  sessionId: string;
+  mainFile: string;
+};
+
 export type OrchestratorSessionPlan =
   | { mode: "resume"; sessionId: string; filesDir: string }
-  | { mode: "new"; reason: OrchestratorSessionReason };
+  | { mode: "new"; reason: OrchestratorSessionReason; handoff?: OrchestratorHandoff };
 
 export type SaveResult =
   | { saved: true }
@@ -127,15 +135,34 @@ export class OrchestratorSessionStore {
     const dir = this.dir(taskId);
     if (stored === undefined || !dir) return { mode: "new", reason: "first" };
     if (stored === "broken") return { mode: "new", reason: "files_broken" };
+    const filesDir = join(dir, "generations", stored.runId, "files");
     if (stored.agentId !== agent.agentId || stored.runtime !== agent.runtime) {
-      return { mode: "new", reason: "agent_changed" };
+      // 別のエージェントのセッションは再開できないので、やり取りを引き継いで新しく始める。本体のファイルが記録どおりなら
+      // 引き継ぐ（間を省いたものも、残った発言を引き継ぐ）
+      const main = sessionMainFile(stored.runtime, stored.sessionId, stored.files);
+      const recorded = main ? stored.files.filter((f) => f.path === main) : [];
+      const checked = main ? await checkArchivedFiles(filesDir, recorded) : [];
+      const mainFile = main && archivedFilePath(filesDir, main);
+      return {
+        mode: "new",
+        reason: "agent_changed",
+        ...(mainFile && checked.length > 0 && checked.every((f) => f.status === "match")
+          ? {
+              handoff: {
+                agentId: stored.agentId,
+                runtime: stored.runtime,
+                sessionId: stored.sessionId,
+                mainFile,
+              },
+            }
+          : {}),
+      };
     }
     // 上限で間を省いたファイルは、そのまま戻しても再開できない
     if (stored.files.some((f) => f.truncated)) return { mode: "new", reason: "truncated" };
     if (!sessionMainFile(stored.runtime, stored.sessionId, stored.files)) {
       return { mode: "new", reason: "files_broken" };
     }
-    const filesDir = join(dir, "generations", stored.runId, "files");
     const checked = await checkArchivedFiles(filesDir, stored.files);
     if (!checked.every((f) => f.status === "match")) return { mode: "new", reason: "files_broken" };
     return { mode: "resume", sessionId: stored.sessionId, filesDir };

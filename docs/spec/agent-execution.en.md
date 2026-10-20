@@ -82,13 +82,31 @@ Code: `apps/daemon/src/agents/invocation.ts` (`buildInvocation`), `apps/daemon/s
 - A line can be at most 16M characters (longer lines are skipped).
 - Failure reasons are classified from the text (`classifyFailure`): usage limits (`usage limit`, `rate limit`, `429`, `quota`, and so on) are `usage_limit`, authentication
   (`401`, `403`, `unauthorized`, `expired`, `not logged in`, and so on) is `auth`, and anything else is `error`. When a task stopped on `usage_limit` or `auth`
-  is resumed, the step it stopped at runs again.
+  is resumed, the step it stopped at runs again (on `usage_limit`, the task does not stop if there is a fallback agent; see "Fallback agents at a usage limit" below).
 - Structured answers from an agent are JSON with a heading (`sacty-steps`, `sacty-verdict`, `sacty-final-review`, `sacty-split`,
   `sacty-export`, and so on); the JSON objects in the output are tried from the end, and the first one that parses is used.
 - Secrets used in the run (retrieved values, gateway tokens, values in auth files, and so on) are replaced with
   `[REDACTED]` in the run's result text and output before they are recorded.
 
 Code: `apps/daemon/src/agents/parse.ts` (`ClaudeOutcomeReader`, `CodexOutcomeReader`, `classifyFailure`, `MAX_LINE`), `apps/daemon/src/agent-json.ts` (`jsonCandidates`, `lastJsonAnswer`), `apps/daemon/src/agents/redact.ts` (`redact`, `redactText`)
+
+## Fallback agents at a usage limit
+
+- When a run fails with `usage_limit`, the agent is remembered as limited for `agent_fallback.cooldown_minutes` (60 minutes by default)
+  (kept only in the daemon's memory; after a restart, the original agent is tried first).
+- When an agent is chosen (steps, the integration review, the Orchestrator, reading tickets, answering questions, the Goal Guardian, the final review,
+  judging rework, exports, the post-merge watch, audits), if the chosen agent is limited, its `fallback` is looked at from the top (following each `fallback`'s
+  own fallbacks too), and the first one that is not limited is used (`fallbackAgentFor`). If all of them are limited, the chosen agent is kept.
+- When a step, the integration review, the Orchestrator's choice of steps, reading a ticket, or the final review fails with `usage_limit` and a fallback that is
+  not limited exists, `AgentFellBack` (the failed run, the role, the original and fallback agents, and the time limit) is recorded instead of a pause (`TaskPaused`). The failure
+  record has put the task back to queued, so the fallback agent runs it again in the next pass.
+- Judging change proposals and rework remarks is redone on the spot with the fallback agent; `AgentFellBack` is recorded, and the cost of the failed run is
+  added to the judgement's cost (`runGuardianWithFallback`).
+- When a person paused or cancelled the task, or there is no fallback or all are limited, the task stops as before. Exports, the post-merge watch, audits, and answers to
+  questions handle the failure as before and use the fallback agent from the next run.
+- The secrets of fallback agents are also retrieved together at startup (`secretUses`).
+
+Code: `apps/daemon/src/service.ts` (`usableAgent`, `markLimited`, `fallBack`, `pauseOrFallBack`, `runGuardianWithFallback`), `apps/daemon/src/config.ts` (`fallbackAgentFor`), `apps/daemon/src/secret-uses.ts` (`secretUses`)
 
 ## Saving and reusing sessions
 
@@ -100,6 +118,10 @@ Code: `apps/daemon/src/agents/parse.ts` (`ClaudeOutcomeReader`, `CodexOutcomeRea
   (the AI ID, runtime, session ID, run ID, and the file list) and `generations/<run ID>/files/` are placed in `SACTY_HOME/sessions/<task ID>/orchestrator/`; only the current one and the one before are kept.
   - The next run uses a new session when there is no saved session (`first`), it is broken (`files_broken`), the AI changed (`agent_changed`), or files were omitted (`truncated`);
     otherwise it resumes the saved session.
+  - When the AI changed (`agent_changed`) and the main file of the previous agent's saved session matches its record, its conversation is handed over.
+    Only the text of the instructions and the agent's messages (no tool calls or results; up to 8000 characters per message and 200,000 in total, dropping the oldest
+    messages beyond that) is written to `previous-session.md`, mounted read-only at `/sacty-handoff`, and its location is added to the end of the instructions. The handover is
+    recorded in `handoffFrom` of `OrchestratorSessionUsed`, and the written file is deleted after the run.
   - Orchestrator runs are one at a time per task (serial).
   - "Ask the Orchestrator" answers by forking the saved session (Claude Code uses `--fork-session`; Codex resumes in a throwaway location),
     and does not save it. Cancelled tasks are not saved either.
@@ -107,7 +129,7 @@ Code: `apps/daemon/src/agents/parse.ts` (`ClaudeOutcomeReader`, `CodexOutcomeRea
 - When a resume is refused (the AI failed without using anything and returned text saying the session was not found), the run is retried with a new run ID and a new session,
   and the cost of both attempts is recorded together (`resumeRejected`).
 
-Code: `apps/daemon/src/agent-sessions.ts` (`SOURCES`, `selectAgentSessionFiles`, `AGENT_FILES_LIMIT`), `apps/daemon/src/orchestrator-sessions.ts` (`OrchestratorSessionStore`, `plan`, `save`), `apps/daemon/src/service.ts` (`resumeRejected`, `RESUME_REJECTED`, `executeWithSession`)
+Code: `apps/daemon/src/agent-sessions.ts` (`SOURCES`, `selectAgentSessionFiles`, `AGENT_FILES_LIMIT`), `apps/daemon/src/orchestrator-sessions.ts` (`OrchestratorSessionStore`, `plan`, `save`), `apps/daemon/src/orchestrator-handoff.ts` (`sessionTranscript`, `stageHandoff`), `apps/daemon/src/service.ts` (`resumeRejected`, `RESUME_REJECTED`, `executeWithSession`)
 
 ## Images
 

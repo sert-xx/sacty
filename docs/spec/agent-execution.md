@@ -81,13 +81,31 @@ docker のコンテナの中で1回実行して行う。テストの実行も、
 - 1行の上限は 16M 文字（超えた行は読み飛ばす）。
 - 失敗の理由は文から分ける（`classifyFailure`）：利用上限（`usage limit`・`rate limit`・`429`・`quota` など）は `usage_limit`、認証
   （`401`・`403`・`unauthorized`・`expired`・`not logged in` など）は `auth`、それ以外は `error`。`usage_limit`・`auth` で止まったタスクは、
-  再開すると止まった工程を実行し直す。
+  再開すると止まった工程を実行し直す（`usage_limit` で、代わりのエージェントがあれば止めない。下の「利用制限のときの代わりのエージェント」）。
 - エージェントが返す決まった答えは、見出しの付いた JSON（`sacty-steps`・`sacty-verdict`・`sacty-final-review`・`sacty-split`・
   `sacty-export` など）で、出力の中の JSON のオブジェクトを後ろから順に試し、読めた最初のものを使う。
 - 実行の結果の文と出力からは、その実行で使った秘密情報（取り出した値・ゲートウェイのトークン・認証ファイルの中の値など）を
   `[REDACTED]` に置き換えてから記録する。
 
 コード: `apps/daemon/src/agents/parse.ts`（`ClaudeOutcomeReader`・`CodexOutcomeReader`・`classifyFailure`・`MAX_LINE`）、`apps/daemon/src/agent-json.ts`（`jsonCandidates`・`lastJsonAnswer`）、`apps/daemon/src/agents/redact.ts`（`redact`・`redactText`）
+
+## 利用制限のときの代わりのエージェント
+
+- 実行が `usage_limit` で失敗したら、そのエージェントを `agent_fallback.cooldown_minutes`（既定 60 分）の間、利用制限中として覚える
+  （デーモンのメモリーだけに持つ。起動し直すと、元のエージェントから試す）。
+- エージェントを選ぶとき（工程・統合レビュー・オーケストレーター・チケットの読み取り・質問への答え・ゴールガーディアン・最終レビュー・
+  差し戻しの判定・書き出し・マージの後の監視・監査）、選んだエージェントが制限中なら、その `fallback` を上から順に（その `fallback` も
+  たどって）見て、制限中でない最初のものを使う（`fallbackAgentFor`）。すべて制限中なら、選んだエージェントのまま。
+- 工程・統合レビュー・オーケストレーターの工程の選択・チケットの読み取り・最終レビューが `usage_limit` で失敗し、制限中でない代わりが
+  あれば、一時停止（`TaskPaused`）の代わりに `AgentFellBack`（失敗した実行・役割・元と代わりのエージェント・期限）を記録する。失敗の記録が
+  実行待ちに戻しているので、次の処理で代わりのエージェントがやり直す。
+- 変更の申し出と差し戻しの指摘の判定は、その場で代わりのエージェントで判定し直し、`AgentFellBack` を記録して、失敗した実行の費用を
+  判定の費用に足す（`runGuardianWithFallback`）。
+- 人が止めた・中止した、代わりが無い・すべて制限中なら、これまでどおり止める。書き出し・マージの後の監視・監査・質問への答えは、
+  失敗をこれまでどおり扱い、次の実行から代わりのエージェントを使う。
+- 代わりのエージェントの秘密情報も、起動のときにまとめて取り出す（`secretUses`）。
+
+コード: `apps/daemon/src/service.ts`（`usableAgent`・`markLimited`・`fallBack`・`pauseOrFallBack`・`runGuardianWithFallback`）、`apps/daemon/src/config.ts`（`fallbackAgentFor`）、`apps/daemon/src/secret-uses.ts`（`secretUses`）
 
 ## セッションの保存と使い回し
 
@@ -99,6 +117,10 @@ docker のコンテナの中で1回実行して行う。テストの実行も、
   （AI の ID・runtime・セッション ID・実行 ID・ファイルの一覧）と `generations/<実行 ID>/files/` を置き、いまのものと1つ前だけを残す。
   - 次の実行は、保存が無い（`first`）・壊れている（`files_broken`）・AI が変わった（`agent_changed`）・省いたファイルがある（`truncated`）
     ときは新しいセッションで、それ以外は保存したセッションを再開する。
+  - AI が変わった（`agent_changed`）ときは、保存してある前のエージェントのセッションの本体のファイルが記録どおりなら、そのやり取りを引き継ぐ。
+    指示とエージェントの発言の文だけ（ツールの呼び出し・結果は入れない。1つの発言は 8000 文字、全体は 20 万文字までで、超えたら古い発言から
+    省く）を `previous-session.md` に書き、`/sacty-handoff` に読み取り専用でマウントし、指示の末尾にその場所を足す。引き継いだことは
+    `OrchestratorSessionUsed` の `handoffFrom` に記録し、書いたファイルは実行の後に消す。
   - オーケストレーターの実行は、タスクごとに1つずつ（直列）にする。
   - 「オーケストレーターに質問」は、保存したセッションを複製して（Claude Code は `--fork-session`、Codex は使い捨ての場所で再開）答え、
     保存はしない。中止したタスクも保存しない。
@@ -106,7 +128,7 @@ docker のコンテナの中で1回実行して行う。テストの実行も、
 - 再開を断られた（AI が何も使わずに失敗し、セッションが見つからない旨の文を返した）ときは、新しい実行 ID で新しいセッションでやり直し、
   2回分の費用を合わせて記録する（`resumeRejected`）。
 
-コード: `apps/daemon/src/agent-sessions.ts`（`SOURCES`・`selectAgentSessionFiles`・`AGENT_FILES_LIMIT`）、`apps/daemon/src/orchestrator-sessions.ts`（`OrchestratorSessionStore`・`plan`・`save`）、`apps/daemon/src/service.ts`（`resumeRejected`・`RESUME_REJECTED`・`executeWithSession`）
+コード: `apps/daemon/src/agent-sessions.ts`（`SOURCES`・`selectAgentSessionFiles`・`AGENT_FILES_LIMIT`）、`apps/daemon/src/orchestrator-sessions.ts`（`OrchestratorSessionStore`・`plan`・`save`）、`apps/daemon/src/orchestrator-handoff.ts`（`sessionTranscript`・`stageHandoff`）、`apps/daemon/src/service.ts`（`resumeRejected`・`RESUME_REJECTED`・`executeWithSession`）
 
 ## イメージ
 
