@@ -31,16 +31,19 @@ docker のコンテナの中で1回実行して行う。テストの実行も、
 
 | runtime | コマンド | 設定の場所 |
 | --- | --- | --- |
-| `claude-code` | `claude -p <指示> --output-format stream-json --verbose`（作業領域の外で読ませる場所があれば `--add-dir <場所>`。質問への答えの `/sacty-logs` だけ。再開は `--resume <ID>`、複製は `--fork-session`。MCP があれば `--mcp-config …/mcp.json --strict-mcp-config --allowedTools mcp__<名前>,…`。`--model`（Bedrock では環境変数 `ANTHROPIC_MODEL`）・`--effort`） | `CLAUDE_CONFIG_DIR=/tmp/sacty-claude-config`、`CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` |
-| `codex` | `codex exec --json --skip-git-repo-check --sandbox danger-full-access`（接続先は `-c model_provider=…` などで指定。`--model`・`-c model_reasoning_effort=…`。再開は `resume <ID>`。最後に `--` と指示。指示が `-` で始まってもオプションとして読ませない） | `CODEX_HOME=/.codex` |
+| `claude-code` | `claude -p --output-format stream-json --verbose`（指示は標準入力。作業領域の外で読ませる場所があれば `--add-dir <場所>`。質問への答えの `/sacty-logs` だけ。再開は `--resume <ID>`、複製は `--fork-session`。MCP があれば `--mcp-config …/mcp.json --strict-mcp-config --allowedTools mcp__<名前>,…`。`--model`（Bedrock では環境変数 `ANTHROPIC_MODEL`）・`--effort`） | `CLAUDE_CONFIG_DIR=/tmp/sacty-claude-config`、`CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` |
+| `codex` | `codex exec --json --skip-git-repo-check --sandbox danger-full-access`（接続先は `-c model_provider=…` などで指定。`--model`・`-c model_reasoning_effort=…`。再開は `resume <ID>`。最後に `--` と `-`（指示は標準入力）） | `CODEX_HOME=/.codex` |
 | `stub` | `sh -c 'printf "%s" "$SACTY_STUB_RESULT"'`（設定の `stub` の出力を返す。AI は呼ばない） | なし |
 
+- エージェントへの指示（プロンプト）は、コマンドの引数に入れず、`docker run -i` でコンテナの標準入力に書いて閉じる（PBI-149）。引数に入れると、
+  Linux の1つの引数の上限（128 KiB）を超えた大きな指示（差分を含むゴールガーディアンなど）で `argument list too long` になるため。指示の中身は変えない。
+  出力の中継と localhost の転送は、標準入力をそのままコマンドに渡す。指示の無い実行（`stub`）は `-i` を付けず、標準入力をすぐ閉じる。
 - 設定の場所には、実行ごとの一時ディレクトリを読み書きでマウントし、合成したコンテキスト（[コンテキストの合成](context.md)）・
   保存したセッション・認証ファイルを写してから起動する。
 - コマンドは、コンテナの中で Node.js の小さなスクリプトで包む。外側が出力の中継（コマンドの出力を一時ファイルに書かせて読みながら流し、
   流した分を 8MB ごとに捨てる。終了コードは変えない）、内側が localhost の転送（compose のサービスを起動した実行だけ）。
 
-コード: `apps/daemon/src/agents/invocation.ts`（`buildInvocation`・`CONTAINER_CLAUDE_CONFIG_DIR`・`CONTAINER_CODEX_HOME`）、`apps/daemon/src/agents/output-relay.ts`（`withOutputRelay`・`RELAY_DISCARD_BYTES`）、`apps/daemon/src/agents/forward.ts`（`withLocalForwards`）
+コード: `apps/daemon/src/agents/invocation.ts`（`buildInvocation`・`Invocation`・`CONTAINER_CLAUDE_CONFIG_DIR`・`CONTAINER_CODEX_HOME`）、`apps/daemon/src/agents/docker.ts`（`dockerRunArgs`・`DockerExecutor`）、`apps/daemon/src/agents/output-relay.ts`（`withOutputRelay`・`RELAY_DISCARD_BYTES`）、`apps/daemon/src/agents/forward.ts`（`withLocalForwards`）
 
 ## 認証
 

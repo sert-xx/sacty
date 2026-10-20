@@ -269,10 +269,13 @@ export function dockerRunArgs(input: {
   hostGateway?: string;
   /** つなぐネットワーク（docker compose のサービスのネットワーク。PBI-47）。 */
   network?: string;
+  /** 標準入力をコンテナにつなぐ（エージェントへの指示を標準入力で渡す。PBI-149）。 */
+  interactive?: boolean;
 }): string[] {
   return [
     "run",
     "--rm",
+    ...(input.interactive ? ["-i"] : []),
     ...(input.network ? ["--network", input.network] : []),
     ...(input.hostGateway ? ["--add-host", `host.docker.internal:${input.hostGateway}`] : []),
     "--name",
@@ -433,6 +436,7 @@ export class DockerExecutor implements AgentExecutor {
       ...(invocation.hostGateway
         ? { hostGateway: invocation.hostAddress ?? DEFAULT_HOST_ADDRESS }
         : {}),
+      ...(invocation.stdin !== undefined ? { interactive: true } : {}),
     });
 
     const containerName = `sacty-run-${runId}`;
@@ -448,9 +452,13 @@ export class DockerExecutor implements AgentExecutor {
       }>((resolve, reject) => {
         const child = this.spawnImpl("docker", args, {
           env: { ...dockerClientEnv(), ...env },
-          stdio: ["ignore", "pipe", "pipe"],
+          stdio: ["pipe", "pipe", "pipe"],
         });
         this.containers.attach(containerName, child);
+        // エージェントへの指示を標準入力に書いて閉じる（PBI-149）。指示が無ければすぐ閉じる（-i を付けていないので docker は
+        // 読まない）。コンテナが先に終わって書けなくても、結果は終了コードと出力で判断する（書き込みの失敗で落とさない）
+        child.stdin.on("error", () => {});
+        child.stdin.end(invocation.stdin ?? "");
         const err = new HeadTailText(STDERR_HEAD, STDERR_TAIL);
         // 届いた分の境目で、複数バイトの文字が壊れないようにつなげて読む
         const outText = new StringDecoder("utf8");

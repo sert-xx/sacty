@@ -99,16 +99,17 @@ describe("認証方式ごとの環境変数", () => {
       undefined,
       ["/sacty-logs"],
     );
+    // 指示は引数に入れず、標準入力で渡す（PBI-149）
     expect(inv.command).toEqual([
       "claude",
       "-p",
-      "prompt",
       "--output-format",
       "stream-json",
       "--verbose",
       "--add-dir",
       "/sacty-logs",
     ]);
+    expect(inv.stdin).toBe("prompt");
     expect((await buildInvocation(claude, "prompt", secrets)).command).not.toContain("--add-dir");
     const codex: AgentConfig = {
       ...base,
@@ -128,7 +129,8 @@ describe("認証方式ごとの環境変数", () => {
       ["/sacty-logs"],
     );
     expect(codexInv.command).not.toContain("--add-dir");
-    expect(codexInv.command.at(-1)).toBe("prompt");
+    expect(codexInv.command.slice(-2)).toEqual(["--", "-"]);
+    expect(codexInv.stdin).toBe("prompt");
   });
 
   it("コンテキストの MCP サーバーの秘密情報は、実行時に環境変数で渡し、Claude Code にはそのサーバーだけを使わせる（PBI-6）", async () => {
@@ -159,7 +161,7 @@ describe("認証方式ごとの環境変数", () => {
     expect(claude.env.SACTY_MCP_SECRET_0).toBe("Bearer ghp-value");
     // 出力から取り除けるように、取り出した値を知らせる
     expect(used).toContain("ghp-value");
-    expect(claude.command.slice(6)).toEqual([
+    expect(claude.command.slice(5)).toEqual([
       "--mcp-config",
       "/tmp/sacty-claude-config/mcp.json",
       "--strict-mcp-config",
@@ -245,7 +247,7 @@ describe("認証方式ごとの環境変数", () => {
     });
     expect(inv.command.slice(0, 2)).toEqual(["claude", "-p"]);
     // 途中の出来事も出させる（セッションログ。PBI-62）。-p で stream-json を使うには --verbose が要る
-    expect(inv.command.slice(3, 6)).toEqual(["--output-format", "stream-json", "--verbose"]);
+    expect(inv.command.slice(2, 5)).toEqual(["--output-format", "stream-json", "--verbose"]);
   });
 
   it("APIキーではANTHROPIC_API_KEYだけを渡し、モデルは引数で指定する", async () => {
@@ -321,8 +323,9 @@ describe("認証方式ごとの環境変数", () => {
       "-c",
       'model_reasoning_effort="high"',
       "--",
-      "prompt",
+      "-",
     ]);
+    expect(direct.stdin).toBe("prompt");
     expect(direct.hostGateway).toBeUndefined();
     // 認証が要らない接続先には、API キーを渡さない
     const open = await buildInvocation(provider(), "prompt", secrets);
@@ -431,7 +434,7 @@ describe("認証方式ごとの環境変数", () => {
       "--model",
       "global.openai.gpt-6-sol",
       "--",
-      "prompt",
+      "-",
     ]);
     expect(runtime.parser).toBe("codex-jsonl");
     // ゲートウェイ経由（PBI-37）：API キーの代わりに実行ごとのトークンを渡し、向き先だけをゲートウェイにする
@@ -459,7 +462,7 @@ describe("認証方式ごとの環境変数", () => {
     const mantle = await bedrock("mantle");
     expect(mantle.command).toContain('model_provider="amazon-bedrock"');
     expect(mantle.command).not.toContain('web_search="disabled"');
-    expect(mantle.command.slice(-4)).toEqual(["--model", "openai.gpt-6-sol", "--", "prompt"]);
+    expect(mantle.command.slice(-4)).toEqual(["--model", "openai.gpt-6-sol", "--", "-"]);
   });
 });
 
@@ -1849,8 +1852,9 @@ describe("オーケストレーターのセッションの再開（PBI-67）", (
     const i = resumed.command.indexOf("--resume");
     expect(resumed.command[i + 1]).toBe("abc-123");
     expect(resumed.command).not.toContain("--fork-session");
-    // 指示は、これまでどおり -p で渡す
-    expect(resumed.command.slice(0, 3)).toEqual(["claude", "-p", "prompt"]);
+    // 指示は、これまでどおり -p の指示として、標準入力で渡す（PBI-149）
+    expect(resumed.command.slice(0, 3)).toEqual(["claude", "-p", "--output-format"]);
+    expect(resumed.stdin).toBe("prompt");
     expect(resumed.stage).toEqual({
       containerDir: "/tmp/sacty-claude-config",
       files: [],
@@ -1871,7 +1875,7 @@ describe("オーケストレーターのセッションの再開（PBI-67）", (
     expect(forked.command[forked.command.indexOf("--resume") + 1]).toBe("abc-123");
   });
 
-  it("Codex：`codex exec <オプション> resume <ID> -- <指示>` で再開する（複製の引数は無い）", async () => {
+  it("Codex：`codex exec <オプション> resume <ID> -- -` で再開し、指示は標準入力で渡す（複製の引数は無い）", async () => {
     const plain = await buildInvocation(codex, "prompt", secrets, () => {}, "orchestrator");
     expect(plain.command).not.toContain("resume");
     const resumed = await buildInvocation(
@@ -1885,7 +1889,8 @@ describe("オーケストレーターのセッションの再開（PBI-67）", (
       { ...session, fork: true },
     );
     expect(resumed.command.slice(0, 2)).toEqual(["codex", "exec"]);
-    expect(resumed.command.slice(-4)).toEqual(["resume", "abc-123", "--", "prompt"]);
+    expect(resumed.command.slice(-4)).toEqual(["resume", "abc-123", "--", "-"]);
+    expect(resumed.stdin).toBe("prompt");
     // オプションは resume より前（exec のオプションとして読ませる）
     const at = resumed.command.indexOf("resume");
     for (const option of ["--json", "--skip-git-repo-check", "--sandbox", "--model"]) {
@@ -1895,10 +1900,22 @@ describe("オーケストレーターのセッションの再開（PBI-67）", (
     expect(resumed.stage).toMatchObject({ containerDir: "/.codex", sessionDir: session.filesDir });
   });
 
-  it("Codex：`-` で始まる指示（`--- メモリー ---` など）は、`--` の後に置いてオプションとして読ませない", async () => {
+  it("Codex：`-` で始まる指示（`--- メモリー ---` など）も、引数に入れずに標準入力でそのまま渡す（PBI-149）", async () => {
     const prompt = "--- メモリー ---\n本文";
     const inv = await buildInvocation(codex, prompt, secrets, () => {}, "orchestrator");
-    expect(inv.command.slice(-2)).toEqual(["--", prompt]);
+    expect(inv.command.slice(-2)).toEqual(["--", "-"]);
+    expect(inv.command).not.toContain(prompt);
+    expect(inv.stdin).toBe(prompt);
+  });
+
+  it("大きな指示（1つの引数の上限 128 KiB を超える）も、引数に入れない（PBI-149）", async () => {
+    const prompt = "差分".repeat(100_000);
+    for (const agent of [claude, codex]) {
+      const inv = await buildInvocation(agent, prompt, secrets, () => {}, "final-review");
+      expect(inv.stdin).toBe(prompt);
+      // どの引数も上限より十分小さい
+      expect(Math.max(...inv.command.map((a) => Buffer.byteLength(a)))).toBeLessThan(10_000);
+    }
   });
 
   it("スタブは再開しない", async () => {

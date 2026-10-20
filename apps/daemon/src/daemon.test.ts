@@ -774,8 +774,26 @@ class FakeTests implements TestRunner {
 /** 止められるまで終わらない実行（一時停止・中止のテスト用）。 */
 const HOLD = { kind: "hold" } as const;
 
+/**
+ * 指示を引数に戻した形（PBI-149 より前の形）。本物はエージェントへの指示を標準入力（invocation.stdin）で渡すが、指示の中身を
+ * 確かめるテストがコマンドから読めるように、偽物の実行は戻した形で記録する（本物の形は agents.test.ts で確かめる）。
+ */
+function withPromptArg(invocation: Invocation): Invocation {
+  const { stdin, command } = invocation;
+  if (stdin === undefined) return invocation;
+  if (command[0] === "claude" && command[1] === "-p") {
+    return { ...invocation, command: ["claude", "-p", stdin, ...command.slice(2)] };
+  }
+  if (command.at(-1) === "-" && command.at(-2) === "--") {
+    return { ...invocation, command: [...command.slice(0, -1), stdin] };
+  }
+  return invocation;
+}
+
 class FakeExecutor implements AgentExecutor {
   calls: Invocation[] = [];
+  /** 実行ごとに標準入力で渡された指示（PBI-149）。 */
+  stdins: (string | undefined)[] = [];
   /** 実行ごとにマウントした作業領域。 */
   dirs: string[] = [];
   killed: string[] = [];
@@ -810,7 +828,7 @@ class FakeExecutor implements AgentExecutor {
   async run({
     runId,
     image,
-    invocation,
+    invocation: actual,
     workspaceDir,
     imageEnv,
     network,
@@ -826,6 +844,9 @@ class FakeExecutor implements AgentExecutor {
     forwards?: readonly LocalForward[];
     log?: SessionLogSink;
   }): Promise<AgentOutcome> {
+    // 本物は指示を標準入力で渡す（PBI-149）。標準入力に指示があることを記録し、指示は引数に戻した形で扱う
+    this.stdins.push(actual.stdin);
+    const invocation = withPromptArg(actual);
     this.calls.push(invocation);
     // セッションログ（PBI-62）には、渡された環境変数の値（秘密情報を含む）を出してみる（伏せられることを確かめる）
     log?.stdout(`${JSON.stringify({ type: "fake", env: Object.values(invocation.env) })}\n`);
@@ -12026,7 +12047,8 @@ describe("タスクの並行実行（PBI-30）", () => {
     held = new Map<string, { title: string; resolve: (o: AgentOutcome) => void }>();
     killed: string[] = [];
     async run(input: { runId: string; invocation: Invocation }): Promise<AgentOutcome> {
-      const prompt = input.invocation.command.join(" ");
+      // 指示は標準入力で渡る（PBI-149）
+      const prompt = input.invocation.stdin ?? input.invocation.command.join(" ");
       const title = /# (タスク\S+)/.exec(prompt)?.[1] ?? "?";
       return new Promise((resolve) => this.held.set(input.runId, { title, resolve }));
     }

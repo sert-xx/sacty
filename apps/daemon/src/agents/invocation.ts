@@ -33,6 +33,11 @@ export const CONTAINER_CODEX_HOME = "/.codex";
 /** コンテナで実行するコマンドと、コンテナに渡す環境変数・ファイル。 */
 export type Invocation = {
   command: string[];
+  /**
+   * コンテナの標準入力に書く内容（エージェントへの指示。PBI-149）。指示をコマンドの引数に入れると、Linux の1つの引数の上限
+   * （128 KiB）を超えた大きな指示で `argument list too long` になるので、Claude Code（`-p`）・Codex（`exec -`）には標準入力で渡す。
+   */
+  stdin?: string;
   /** コンテナに渡す環境変数。ここに無いホストの変数は渡さない。 */
   env: Record<string, string>;
   /**
@@ -145,8 +150,8 @@ export async function buildInvocation(
         CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1",
       };
       // 途中の出来事（考えたこと・ツールの呼び出しと結果）も出させ、セッションログに残す（PBI-62）。-p で stream-json を
-      // 使うには --verbose が要る。最終結果は、最後の result の出来事から読む
-      const command = ["claude", "-p", prompt, "--output-format", "stream-json", "--verbose"];
+      // 使うには --verbose が要る。最終結果は、最後の result の出来事から読む。指示は引数に入れず、標準入力で渡す（PBI-149）
+      const command = ["claude", "-p", "--output-format", "stream-json", "--verbose"];
       for (const dir of readDirs) command.push("--add-dir", dir);
       // 保存したセッションを再開する（PBI-67）。質問への答えは複製して、元のセッションに書き足さない
       if (session) {
@@ -184,6 +189,7 @@ export async function buildInvocation(
       if (agent.reasoning_effort) command.push("--effort", agent.reasoning_effort);
       return {
         command,
+        stdin: prompt,
         env,
         // 設定のディレクトリは実行ごとに空にし、コンテキストだけを置く（ホストの設定やメモリーは読ませない）。
         // コンテキストが無くても、実行ごとの場所をマウントする（元のセッションのファイルを、実行の後に写すため。PBI-66）
@@ -275,13 +281,15 @@ export async function buildInvocation(
       if (agent.reasoning_effort) {
         command.push("-c", `model_reasoning_effort=${tomlString(agent.reasoning_effort)}`);
       }
-      // 保存したセッションを再開する（PBI-67。`codex exec [オプション] resume <ID> -- <指示>`）。Codex には複製が無いので、
+      // 保存したセッションを再開する（PBI-67。`codex exec [オプション] resume <ID> -- -`）。Codex には複製が無いので、
       // 質問への答えも再開する（実行ごとの使い捨ての場所で再開し、元のセッションには書き戻さない）
       if (session) command.push("resume", session.resume);
-      // 指示は `--` の後に置く。指示が `-` で始まる（`--- メモリー ---` など）と、Codex がオプションとして読んで止まる
-      command.push("--", prompt);
+      // 指示は引数に入れず、標準入力で渡す（`-`。PBI-149）。`-` は `--` の後に置く（指示を引数で渡していたときと同じく、
+      // オプションの解釈を終えてから読ませる）
+      command.push("--", "-");
       return {
         command,
+        stdin: prompt,
         env,
         stage: {
           containerDir: CONTAINER_CODEX_HOME,
