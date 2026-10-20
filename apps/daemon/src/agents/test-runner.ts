@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { type DaemonText, message } from "@sacty/core";
+import { DEFAULT_TEST_TIMEOUT_MINUTES } from "../run-timeouts.js";
 import { dockerClientEnv, dockerRunArgs, RunningContainers } from "./docker.js";
 import { type LocalForward, withLocalForwards } from "./forward.js";
 import { withOutputRelay } from "./output-relay.js";
@@ -39,6 +40,8 @@ export interface TestRunner {
      * 転送しなかったポートの理由は、テストの出力（標準エラー出力）に出る。
      */
     forwards?: readonly LocalForward[];
+    /** この実行の上限（ミリ秒。config.yaml の run_timeout.test_minutes。PBI-150）。無ければ既定（20 分）。 */
+    timeoutMs?: number;
   }): Promise<TestRunResult>;
   /** 実行中のコンテナを止める（人間が一時停止・中止したとき）。無ければ何もしない。 */
   kill(runId: string): void;
@@ -56,7 +59,7 @@ export class DockerTestRunner implements TestRunner {
   private readonly spawnImpl: typeof spawn;
 
   constructor(
-    private readonly timeoutMs = 20 * 60_000,
+    private readonly timeoutMs = DEFAULT_TEST_TIMEOUT_MINUTES * 60_000,
     spawnImpl: typeof spawn = spawn,
   ) {
     this.containers = new RunningContainers(spawnImpl);
@@ -84,6 +87,7 @@ export class DockerTestRunner implements TestRunner {
     env = {},
     network,
     forwards = [],
+    timeoutMs = this.timeoutMs,
   }: Parameters<TestRunner["run"]>[0]) {
     const name = `sacty-run-${runId}`;
     const args = dockerRunArgs({
@@ -114,9 +118,9 @@ export class DockerTestRunner implements TestRunner {
         child.stderr.on("data", keep);
         let note: DaemonText | undefined;
         const timer = setTimeout(() => {
-          note = message("run.testTimeout", { minutes: this.timeoutMs / 60_000 });
+          note = message("run.testTimeout", { minutes: timeoutMs / 60_000 });
           this.containers.stop(name);
-        }, this.timeoutMs);
+        }, timeoutMs);
         child.on("error", (error) => {
           clearTimeout(timer);
           resolve({

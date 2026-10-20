@@ -244,6 +244,8 @@ export interface AgentExecutor {
     forwards?: readonly LocalForward[];
     /** 標準出力・標準エラー出力を、届くたびに渡す先（セッションログ。PBI-62）。 */
     log?: SessionLogSink;
+    /** この実行の上限（ミリ秒。config.yaml の run_timeout。PBI-150）。無ければ既定（AGENT_RUN_TIMEOUT_MS）。 */
+    timeoutMs?: number;
   }): Promise<AgentOutcome>;
   /** 実行中のコンテナを止める（人間が一時停止・中止したとき）。無ければ何もしない。 */
   kill(runId: string): void;
@@ -350,6 +352,7 @@ export class DockerExecutor implements AgentExecutor {
     network,
     forwards = [],
     log,
+    timeoutMs = this.timeoutMs,
   }: Parameters<AgentExecutor["run"]>[0]): Promise<AgentOutcome> {
     const env = { ...imageEnv, ...invocation.env };
     // コピーして渡すファイル（Codexの認証ファイルなど）は、実行ごとの一時ディレクトリに置き、
@@ -477,8 +480,8 @@ export class DockerExecutor implements AgentExecutor {
         });
         const timer = setTimeout(() => {
           this.containers.stop(containerName);
-          reject(new MessageError(message("run.timeout", { minutes: this.timeoutMs / 60_000 })));
-        }, this.timeoutMs);
+          reject(new MessageError(message("run.timeout", { minutes: timeoutMs / 60_000 })));
+        }, timeoutMs);
         child.on("error", (error) => {
           clearTimeout(timer);
           reject(new MessageError(message("run.dockerUnavailable", { detail: error.message })));

@@ -19,13 +19,15 @@ Related ADRs: none
 - For environment variables, the arguments contain only the name (`-e NAME`); the values are passed through the environment of the docker command's process (so they do not appear in `ps`).
   The only host environment variables kept in the docker command's process are `PATH`, `HOME`, `DOCKER_HOST`, `DOCKER_CONTEXT`, `DOCKER_CONFIG`, and `TMPDIR`;
   the container receives only variables sacty decides (authentication, the config location, the image's `env`, and so on). For the same name, the run's value takes precedence over the image's `env`.
-- The limit for the whole run is 30 minutes (`AGENT_RUN_TIMEOUT_MS`). When it passes, the container is stopped and the run times out (`run.timeout`).
+- The limit for the whole run is set by `run_timeout` in `config.yaml` (PBI-150): the role's override in `roles` (a step, `guardian`, `orchestrator`, and so on) if present,
+  otherwise `agent_minutes` (default 30 minutes; `AGENT_RUN_TIMEOUT_MS`). If the config cannot be read, 30 minutes. It is read for every run, so changes apply from the next run.
+  When it passes, the container is stopped and the run times out (`run.timeout`, with that run's limit in minutes).
 - To stop a container, sacty runs `docker kill` and checks up to 11 times, once per second, until `docker ps -aq --filter name=^/<name>$` is empty. If it cannot
   confirm the container stopped, the result is `run.containerNotConfirmed`, and the auth file is not written back and the session files are not saved.
 - If standard error contains `Unable to find image`, `No such image`, or `pull access denied`, the image is treated as missing (`run.imageMissing`).
 - Only the first 64KB and the last 256KB of standard error are kept.
 
-Code: `apps/daemon/src/agents/docker.ts` (`dockerRunArgs`, `dockerClientEnv`, `DockerExecutor`, `RunningContainers`), `apps/daemon/src/context.ts` (`AGENT_RUN_TIMEOUT_MS`)
+Code: `apps/daemon/src/agents/docker.ts` (`dockerRunArgs`, `dockerClientEnv`, `DockerExecutor`, `RunningContainers`), `apps/daemon/src/context.ts` (`AGENT_RUN_TIMEOUT_MS`), `apps/daemon/src/run-timeouts.ts` (`agentTimeoutMs`, `testTimeoutMs`, `RUN_TIMEOUT_ROLES`), `apps/daemon/src/service.ts` (`executeLogged`, `runTests`)
 
 ## Run commands
 
@@ -133,7 +135,7 @@ Code: `apps/daemon/src/config.ts` (`resolveImage`, `languageImageTag`, `DEFAULT_
 
 - `sh -c <test command>` runs with the same `docker run` form as agents (without secrets, auth files, or the gateway).
   The image's `env` is passed.
-- The limit is 20 minutes. When it passes, the run is stopped and treated as an infrastructure failure (`infrastructure`).
+- The limit is `run_timeout.test_minutes` in `config.yaml` (default 20 minutes; PBI-150). When it passes, the run is stopped and treated as an infrastructure failure (`infrastructure`).
 - Only the last 20,000 characters of combined standard output and standard error (`TEST_OUTPUT_TAIL`) are kept. Pass or fail is decided by the exit code
   (docker's failure code `125` is an infrastructure failure).
 

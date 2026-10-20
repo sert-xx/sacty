@@ -36,6 +36,9 @@ Related ADRs: [Keep the agent defaults in the repository, and limit config.yaml 
 | `gateway.platforms` | `{}` | Organization platforms (PF). Names match `^[a-z0-9][a-z0-9-]*$` ([Gateway](gateway.en.md)) |
 | `gateway.mcp_servers` | `{}` | MCP servers run on the host. Names match `^[A-Za-z0-9_-]+$` (same as above) |
 | `web.auth` | `true` | Web UI sign-in. `false` turns it off (booleans only; [Daemon startup and shutdown](daemon-lifecycle.en.md#web-ui-sign-in)) |
+| `run_timeout.agent_minutes` | `30` | Limit of one agent run (minutes; an integer from 1 to 720; PBI-150). When it passes, the container is stopped and the run times out (`run.timeout`) ([Agent execution](agent-execution.en.md#container)) |
+| `run_timeout.test_minutes` | `20` | Limit of one test command run (minutes; an integer from 1 to 720) |
+| `run_timeout.roles` | `{}` | Per-role overrides (minutes). Keys are steps (`investigate`, `requirements`, `design`, `implement`, and so on) and `guardian`, `final-review`, `rework`, `orchestrator`, `chat`, `export`, `audit`, `audit-dive`. Other keys are errors |
 | `update_check` | `true` | Check for a newer sacty (the latest GitHub release) and tell the web UI. `false` does not contact GitHub (booleans only; [Daemon startup and shutdown](daemon-lifecycle.en.md#checking-for-a-newer-version)) |
 
 Other checks: it is an error when a value of `default_agent`, `guardian_agent`, `audit_agent`, or `step_agents` is not an agent (`config.agentMissing`),

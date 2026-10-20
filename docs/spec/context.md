@@ -159,7 +159,7 @@ sacty が作るファイルの順に置く（同じパスは後のものが上�
 - ホストの MCP サーバー（`gateway.mcp_servers`）は `/mcp/<名前>` として渡す（[ゲートウェイ](gateway.md)）。
 - MCP の時間切れ：Codex は `config.toml` に同じ名前で書く。Claude Code は、`tool_timeout_sec` をサーバーごとの `timeout`（ミリ秒）にし、
   `startup_timeout_sec` をどれかに書いたときだけ、全体の環境変数 `MCP_TIMEOUT` を、各サーバーの値（書いていないサーバーは 30 秒）の
-  最大にする。どれかが実行全体の上限（30分）以上なら警告する（`context.mcpTimeoutOverRun`）。
+  最大にする。どれかがその実行の上限（`config.yaml` の `run_timeout` の役割の上限。既定 30 分。PBI-150）以上なら警告する（`context.mcpTimeoutOverRun`）。
 
 コード: `apps/daemon/src/context.ts`（`planContext`・`codexServer`・`timeoutWarnings`・`routeMcp`・`McpServer`・`CLAUDE_MCP_CONFIG`・`CLAUDE_MCP_STARTUP_DEFAULT_SEC`・`GATEWAY_TOKEN_SECRET`）、`apps/daemon/src/service.ts`（`contextContainerDir`・`mcpRouting`）
 

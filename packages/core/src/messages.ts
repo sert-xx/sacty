@@ -4,6 +4,9 @@ import { QUESTION_MAX, TASK_BODY_MAX, TASK_TITLE_MAX } from "./events.js";
 import { DaemonText } from "./message-code.js";
 import { PROJECT_EXPORT_VERSION } from "./projects.js";
 
+/** 英語の分の数（1 なら単数。PBI-150 で 1 分を設定できるようになったため。PR #169 レビュー提案）。 */
+const minutesEn = (n: number) => `${n} ${n === 1 ? "minute" : "minutes"}`;
+
 const Scope = z.enum(["org", "repo"]);
 const Count = z.number().int().nonnegative();
 
@@ -1326,9 +1329,9 @@ const en: MessageDictionary = {
     "The daemon stopped, so the Goal Guardian's judgement was interrupted.",
   "run.stoppedByPerson": "Not run because it was stopped by a person.",
   "run.timeout": ({ minutes }) =>
-    `Stopped the agent because it ran longer than ${minutes} minutes.`,
+    `Stopped the agent because it ran longer than ${minutesEn(minutes)}.`,
   "run.testTimeout": ({ minutes }) =>
-    `Stopped the tests because they ran longer than ${minutes} minutes.`,
+    `Stopped the tests because they ran longer than ${minutesEn(minutes)}.`,
   "run.dockerUnavailable": ({ detail }, text) =>
     `Cannot run docker. Check that Docker is running (${text(detail)}).`,
   "run.dockerFailed":
@@ -1509,7 +1512,7 @@ const en: MessageDictionary = {
   "context.duplicateSkill": ({ from, name, path, usedPath }) =>
     `${from} has the skill "${name}" in both skills/${usedPath} and skills/${path}, so skills/${usedPath} was used.`,
   "context.mcpTimeoutOverRun": ({ name, key, seconds, minutes }) =>
-    `${key} (${seconds}s) of the MCP server "${name}" is not shorter than the limit for a whole agent run (${minutes} minutes). The run stops first, so it has no effect unless it is shorter.`,
+    `${key} (${seconds}s) of the MCP server "${name}" is not shorter than the limit for a whole agent run (${minutesEn(minutes)}). The run stops first, so it has no effect unless it is shorter.`,
   "config.missing": ({ path }) =>
     `The config file is missing (${path}). Create it with \`sacty config init\`.`,
   "config.unreadable": ({ detail }) => `Cannot read the config file as YAML: ${detail}`,

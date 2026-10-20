@@ -29,6 +29,7 @@ function fakeDocker(killCodes: number[]) {
     const child = Object.assign(new EventEmitter(), {
       stdout: new EventEmitter(),
       stderr: new EventEmitter(),
+      stdin: fakeStdin(),
       killedWith: undefined as string | undefined,
       kill(signal: string) {
         this.killedWith = signal;
@@ -199,6 +200,38 @@ describe("テストの実行の注記（PBI-11b）", () => {
     expect(result.note).toEqual({ code: "run.testTimeout", params: { minutes: 10 / 60_000 } });
     expect(result.infrastructure).toBe(true);
     expect(result.output).not.toContain("[sacty]");
+  });
+
+  it("エージェントの実行も、実行ごとの上限（PBI-150）を既定より優先し、その分で時間切れにする", async () => {
+    const { DockerExecutor } = await import("./docker.js");
+    const docker = fakeDocker([0]);
+    const executor = new DockerExecutor(60_000, docker.spawnImpl);
+    (executor as unknown as { containers: { retryMs: number } }).containers.retryMs = 1;
+    // 時間切れは、上限の分を添えた誤りになる（呼ぶ側が実行の失敗として記録する）
+    await expect(
+      executor.run({
+        runId: "a",
+        image: "img",
+        workspaceDir: "/tmp",
+        invocation: { command: ["sh", "-c", "sleep 9"], env: {}, parser: "claude-json" },
+        timeoutMs: 15,
+      }),
+    ).rejects.toThrow(`エージェントの実行が ${15 / 60_000} 分を超えたため止めました。`);
+  });
+
+  it("実行ごとの上限（config.yaml の run_timeout。PBI-150）を、既定より優先する", async () => {
+    const docker = fakeDocker([0]);
+    // 既定は長いが、実行ごとの上限で止まる
+    const runner = new DockerTestRunner(60_000, docker.spawnImpl);
+    (runner as unknown as { containers: { retryMs: number } }).containers.retryMs = 1;
+    const result = await runner.run({
+      runId: "r",
+      image: "img",
+      workspaceDir: "/tmp",
+      command: "x",
+      timeoutMs: 15,
+    });
+    expect(result.note).toEqual({ code: "run.testTimeout", params: { minutes: 15 / 60_000 } });
   });
 });
 

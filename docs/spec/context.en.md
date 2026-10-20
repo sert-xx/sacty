@@ -159,7 +159,7 @@ files sacty generates (for the same path, the later one overwrites).
 - The host's MCP servers (`gateway.mcp_servers`) are passed as `/mcp/<name>` ([Gateway](gateway.en.md)).
 - MCP timeouts: for Codex, they are written in `config.toml` under the same names. For Claude Code, `tool_timeout_sec` becomes each server's `timeout` (milliseconds), and
   only when `startup_timeout_sec` is set on any server, the global environment variable `MCP_TIMEOUT` is set to the maximum of the servers' values (30 seconds for servers that do not set it).
-  If any is at or above the limit for the whole run (30 minutes), a warning is issued (`context.mcpTimeoutOverRun`).
+  If any is at or above that run's limit (the role's limit from `run_timeout` in `config.yaml`; default 30 minutes; PBI-150), a warning is issued (`context.mcpTimeoutOverRun`).
 
 Code: `apps/daemon/src/context.ts` (`planContext`, `codexServer`, `timeoutWarnings`, `routeMcp`, `McpServer`, `CLAUDE_MCP_CONFIG`, `CLAUDE_MCP_STARTUP_DEFAULT_SEC`, `GATEWAY_TOKEN_SECRET`), `apps/daemon/src/service.ts` (`contextContainerDir`, `mcpRouting`)
 

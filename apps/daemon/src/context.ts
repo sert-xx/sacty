@@ -26,6 +26,7 @@ import { AGENT_TIERS, tierFilePath } from "./agents/tier-names.js";
 import { errorText, MessageError } from "./errors.js";
 import { spawnStoppable } from "./fetch-processes.js";
 import { type Platform, PlatformFile, toPlatform } from "./platforms.js";
+import { DEFAULT_AGENT_TIMEOUT_MINUTES } from "./run-timeouts.js";
 import { SecretRef } from "./secrets.js";
 
 /**
@@ -977,7 +978,7 @@ export type PlacedContext = {
  * エージェントの実行全体の上限（ミリ秒）。コンテナは、開始からこの時間で止める（DockerExecutor の既定）。MCP の
  * 時間切れをこれ以上にしても意味が無いので、コンテキストの用意で警告する（PBI-75）。
  */
-export const AGENT_RUN_TIMEOUT_MS = 30 * 60_000;
+export const AGENT_RUN_TIMEOUT_MS = DEFAULT_AGENT_TIMEOUT_MINUTES * 60_000;
 
 /**
  * Claude Code が MCP サーバーの起動を待つ既定の上限（秒）。Claude Code にはサーバーごとの起動の時間切れが無く、
@@ -1337,11 +1338,15 @@ export type HostMcpEntry = {
 };
 
 /**
- * 実行全体の上限（AGENT_RUN_TIMEOUT_MS）以上の時間切れの警告（PBI-75）。実行全体が先に止まるので効かない。
- * ホストの MCP サーバーも含め、エージェントに渡すサーバーだけを見る。
+ * 実行全体の上限以上の時間切れの警告（PBI-75）。実行全体が先に止まるので効かない。上限は、その実行の上限（config.yaml の
+ * run_timeout。PBI-150）で、分からなければ既定（AGENT_RUN_TIMEOUT_MS）。ホストの MCP サーバーも含め、エージェントに渡す
+ * サーバーだけを見る。
  */
-function timeoutWarnings(mcp: { name: string; server: McpServer }[]): DaemonText[] {
-  const limitSec = AGENT_RUN_TIMEOUT_MS / 1000;
+function timeoutWarnings(
+  mcp: { name: string; server: McpServer }[],
+  limitMs = AGENT_RUN_TIMEOUT_MS,
+): DaemonText[] {
+  const limitSec = limitMs / 1000;
   return mcp.flatMap(({ name, server }) =>
     (["startup_timeout_sec", "tool_timeout_sec"] as const).flatMap((key) => {
       const seconds = server[key];
@@ -1364,6 +1369,8 @@ function pickTimeouts(from: { startup_timeout_sec?: number; tool_timeout_sec?: n
 
 /** 実行のときの、MCP サーバーの渡し方（PBI-36・49・56）。 */
 export type McpRouting = {
+  /** その実行の上限（ミリ秒。PBI-150）。MCP の時間切れがこれ以上なら警告する。無ければ既定（AGENT_RUN_TIMEOUT_MS）。 */
+  runLimitMs?: number;
   /**
    * ホストの MCP サーバー（PBI-36）。ゲートウェイの HTTP の MCP として、層の MCP サーバーに加える（同じ名前なら、
    * こちらを使い、警告を残す）。認証のヘッダーには、実行ごとのゲートウェイのトークンを入れる。
@@ -1468,7 +1475,7 @@ export function routeMcp(
     ];
   }
   if (onlyMcp !== undefined) mcp = mcp.filter((m) => m.name === onlyMcp);
-  warnings.push(...timeoutWarnings(mcp));
+  warnings.push(...timeoutWarnings(mcp, routing.runLimitMs));
   // ホストの MCP サーバーと同じ名前で置き換えられたもの・絞り込みで外したものは、中継しない（ホストで起動もしない）
   const kept = (g: { name: string }) =>
     mcp.some((c) => c.name === g.name && c.from !== HOST_MCP_FROM);
@@ -1548,6 +1555,8 @@ export async function prepareContext(
   hostCommands?: boolean,
   /** sacty が足して置くファイル（段階のサブエージェントの定義。PBI-119）。 */
   extraFiles: readonly PlannedFile[] = [],
+  /** その実行の上限（ミリ秒。PBI-150。McpRouting の runLimitMs）。 */
+  runLimitMs?: number,
 ): Promise<{
   dir: string;
   layers: { repo: string; ref?: string; commit: string }[];
@@ -1575,7 +1584,7 @@ export async function prepareContext(
       work,
       auth,
       defaultDir,
-      { hostMcp, gatewayOrigin, onlyMcp, hostCommands },
+      { hostMcp, gatewayOrigin, onlyMcp, hostCommands, runLimitMs },
       extraFiles,
     );
     const dir = join(work, "out");
