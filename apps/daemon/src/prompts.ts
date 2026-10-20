@@ -13,6 +13,7 @@ import {
   MIN_SPLIT_CHILDREN,
   message,
   OperationSettings,
+  RERUN_RECORD_HEADING,
   type RemarkResponse,
   type ReviewComment,
   type ReviewVerdict,
@@ -2281,9 +2282,89 @@ export function chatLogLines(logs: ChatLogs | undefined): string[] {
   ];
 }
 
-/** 長い文を先頭だけにする。 */
+/** 再実行のタスクの説明に入れる、前の試行の成果1件の長さの上限。 */
+const RERUN_OUTPUT_IN_BODY = 3_000;
+/** 再実行のタスクの説明に入れる、前の試行の質問と答え1件の長さの上限。 */
+const RERUN_QUESTION_IN_BODY = 1_000;
+
+/**
+ * 中止したタスクを再実行するときの、新しいタスクの説明。人が直した説明に、補足と、前の試行の記録（中止で消えなかった
+ * もの：進んだ工程・工程の成果・差し戻しの指摘・質問と答え・止まった理由・片付けたもの）を足す。中止で作業領域・
+ * ブランチ・PR は消えているので、後の工程は、この記録を手がかりに最初からやり直す。
+ */
+export function buildRerunBody(
+  previous: Task,
+  body: string,
+  note: string,
+  render: (text: DaemonText) => string,
+): string {
+  const lines: string[] = [body.trim() || "（内容なし）"];
+  if (note.trim()) lines.push("", "## 補足（再実行で人が足したもの）", "", note.trim());
+  const record: string[] = [
+    "",
+    RERUN_RECORD_HEADING,
+    "",
+    "このタスクは、中止したタスクのやり直しです。中止で、作業領域・ブランチ・PR は片付けてあり、前の試行の変更は残っていません。最初からやり直してください。以下は前の試行の参考の記録です（上の説明と補足が優先します）。",
+    "",
+    `- 中止したタスク：${previous.title}（${previous.id}）`,
+  ];
+  const repo = previous.source?.repo ?? previous.repo ?? previous.repository?.url;
+  if (repo) record.push(`- 作業したリポジトリ：${repo}`);
+  if (previous.ticket) record.push(`- チケット：${previous.ticket.key}（${previous.ticket.url}）`);
+  if (previous.source) record.push(`- 取り込み元：${previous.source.url}`);
+  if (previous.steps.length > 0) {
+    record.push(
+      `- 工程：${previous.steps.map((s) => `${STEP_NAME[s.key]}（${s.state}）`).join(" → ")}`,
+    );
+  }
+  if (previous.stepsChoice) {
+    record.push(`- 工程を選んだ理由：${render(previous.stepsChoice.reason)}`);
+  }
+  if (previous.pausedMessage) {
+    record.push(`- 最後に止まった理由：${render(previous.pausedMessage)}`);
+  }
+  if (previous.pullRequest?.url)
+    record.push(`- 作った PR（中止で閉じた）：${previous.pullRequest.url}`);
+  if (previous.cancelled) record.push(`- 中止した日時：${previous.cancelled.at}`);
+  for (const step of previous.steps) {
+    const output = previous.approved[step.key]?.output ?? previous.outputs[step.key];
+    if (!output?.trim()) continue;
+    const approved = previous.approved[step.key] ? "承認済み" : "未承認";
+    record.push(
+      "",
+      `### ${STEP_NAME[step.key]}の成果（${approved}）`,
+      "",
+      clip(output.trim(), RERUN_OUTPUT_IN_BODY),
+    );
+  }
+  const remarks = previous.remarks.filter((r) => !r.voided);
+  if (remarks.length > 0) {
+    record.push(
+      "",
+      "### 人の差し戻しの指摘",
+      "",
+      ...remarks.map((r) => `- ${STEP_NAME[r.step]}：${clip(r.text, RERUN_QUESTION_IN_BODY)}`),
+    );
+  }
+  const answered = previous.questions.filter((q) => q.answer?.text);
+  if (answered.length > 0) {
+    record.push("", "### 人の質問と、オーケストレーターの答え", "");
+    for (const q of answered) {
+      record.push(
+        `- 質問：${clip(q.text, RERUN_QUESTION_IN_BODY)}`,
+        `  答え：${clip(q.answer?.text ?? "", RERUN_QUESTION_IN_BODY).replaceAll("\n", "\n  ")}`,
+      );
+    }
+  }
+  return [...lines, ...record].join("\n");
+}
+
+/** 長い文を先頭だけにする。切る位置がサロゲートペアの途中なら、1つ前で切る（文字を壊さない）。 */
 export function clip(text: string, max: number): string {
-  return text.length > max ? `${text.slice(0, max)}\n…（長いため、先頭だけ）` : text;
+  if (text.length <= max) return text;
+  const last = text.charCodeAt(max - 1);
+  const end = last >= 0xd800 && last <= 0xdbff ? max - 1 : max;
+  return `${text.slice(0, end)}\n…（長いため、先頭だけ）`;
 }
 
 /** 作業履歴の1件を、指示に入れる1行にする（長い内容は切り詰める）。 */

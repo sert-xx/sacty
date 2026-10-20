@@ -216,6 +216,10 @@ For example, run only a step that stopped on an error or was sent back with a st
   [config.yaml settings](config.en.md#budget)).
 - Cancelling closes all open PRs that sacty created and deletes the task branch and the step branches (branches and PRs created by people are not touched).
   A cancelled task cannot be resumed.
+- A cancelled task can be started over from "Rerun" on its detail page. In the dialog, you can change the repository to work in (empty means no
+  repository), the image, the title, and the description, and add notes. It creates a new task that takes over the cancelled one, and adds the notes and
+  the record of the previous attempt (step outputs, remarks, questions and answers, why it stopped) after the description. A task imported from a ticket
+  keeps the ticket and doesn't read it again. A task can be rerun only once; afterwards, the cancelled task shows a link to the new task.
 - If you pause while the implementation PR is being opened, the PR is finished and Implement waits for approval; the task is not paused (the screen says it was not paused).
   Decide on the PR, or cancel the task to stop it.
 

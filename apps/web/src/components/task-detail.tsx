@@ -4,6 +4,7 @@ import {
   type ActivityEvent,
   appliedProposalFor,
   canRereview,
+  canRerun,
   canRetryExport,
   deliveredWithoutChanges,
   exportDue,
@@ -11,6 +12,7 @@ import {
   investigationIsGoal,
   isRepoless,
   openProposal,
+  rerunEditableBody,
   type StepKey,
   type Task,
 } from "@sacty/core";
@@ -31,6 +33,7 @@ import { Proposals } from "@/components/proposals";
 import { PullRequestCard } from "@/components/pull-request";
 import { ReproductionResult } from "@/components/reproduction";
 import { RereviewButton } from "@/components/rereview-button";
+import { RerunDialog } from "@/components/rerun-dialog";
 import { ResumeForm } from "@/components/resume-form";
 import { SelfReviewNote } from "@/components/self-review";
 import { StepAgentForm } from "@/components/step-agent-form";
@@ -232,6 +235,18 @@ export function TaskDetailView({ data }: { data: TaskDetailData }) {
               {m.deployment.fixDepth(task.fix.depth)}
             </>
           )}
+          {task.rerun && (
+            <>
+              {m.rerunOf}
+              <Link
+                href={`/tasks/${encodeURIComponent(task.rerun.taskId)}`}
+                className="text-accent-foreground underline"
+                data-testid="rerun-of"
+              >
+                {data.rerunOf?.title ?? task.rerun.taskId}
+              </Link>
+            </>
+          )}
           {task.parent && (
             <>
               {m.parent}
@@ -338,6 +353,29 @@ export function TaskDetailView({ data }: { data: TaskDetailData }) {
               </li>
             ))}
           </ul>
+          {/* 中止したタスクを、最初からやり直す（再実行）。再実行は1度だけ（作ったタスクへ案内する） */}
+          {task.rerunBy ? (
+            <p data-testid="rerun-by">
+              {parts.rerun.rerunBy}
+              <Link
+                href={`/tasks/${encodeURIComponent(task.rerunBy)}`}
+                className="text-accent-foreground underline"
+              >
+                {data.rerunBy?.title ?? task.rerunBy}
+              </Link>
+            </p>
+          ) : (
+            canRerun(task) && (
+              <RerunDialog
+                taskId={task.id}
+                projectId={task.projectId}
+                title={task.title}
+                body={rerunEditableBody(task)}
+                repo={task.source?.repo ?? task.repo ?? task.repository?.url ?? ""}
+                images={stepImageOptions(data.imageStatus, m.images.defaultDescription)}
+              />
+            )
+          )}
         </section>
       )}
 
@@ -637,13 +675,15 @@ function StepImages({
                   ? m.byPerson(formatStamp(row.source.at, locale), row.source.from)
                   : row.source.by === "project"
                     ? m.byProject
-                    : row.source.by === "orchestrator"
-                      ? row.source.default
-                        ? m.byOrchestratorDefault(row.source.default)
-                        : row.source.unexplained
-                          ? m.byOrchestratorUnexplained
-                          : m.byOrchestrator
-                      : m.none}
+                    : row.source.by === "rerun"
+                      ? m.byRerun
+                      : row.source.by === "orchestrator"
+                        ? row.source.default
+                          ? m.byOrchestratorDefault(row.source.default)
+                          : row.source.unexplained
+                            ? m.byOrchestratorUnexplained
+                            : m.byOrchestrator
+                        : m.none}
               </span>
             </span>
             <span className="text-xs text-muted-foreground">

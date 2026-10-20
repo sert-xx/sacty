@@ -307,6 +307,7 @@ function describeEventText(event: ActivityEvent, l: LabelMessages): string {
       return e.TaskCreated(
         actor,
         event.payload.template ? l.template[event.payload.template] : undefined,
+        event.payload.rerun !== undefined,
       );
     case "StepsChosen": {
       const chosen = e.StepsChosen(
@@ -803,6 +804,8 @@ export type StepImageRow = {
   source:
     | { by: "person"; at: string; from: string }
     | { by: "project" }
+    /** 再実行で人が指定した（すべての工程で同じイメージ）。 */
+    | { by: "rerun" }
     /** default は、既定のイメージにした理由（PBI-105）。unexplained は、理由が無いまま既定のイメージにした。 */
     | { by: "orchestrator"; default?: string; unexplained?: true }
     | { by: "none" };

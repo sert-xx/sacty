@@ -415,6 +415,28 @@ AI は `guardian_agent`（無ければ `default_agent`）。実行ごとに `wor
 
 コード: `apps/daemon/src/service.ts`（`warnIfNeeded`・`checkBudget`・`pause`・`resume`・`cancel`・`cleanupPlan`・`sactyBranches`・`stopReason`）、`packages/core/src/events.ts`（`PauseReason`・`CleanupTarget`・`ResumeTaskInput`）、`packages/core/src/cost.ts`（`budgetState`）
 
+### 中止したタスクの再実行
+
+- 中止したタスクは、詳細の「再実行」から最初からやり直せる（`POST /api/tasks/:id/rerun`）。中止したタスクの作業履歴には書き足せないので、
+  元のタスクを引き継いだ新しいタスクを作る（`TaskCreated` の `rerun`。元のタスクの ID と、人が指定したイメージ）。元のタスクには、作業履歴の
+  復元で再実行のタスク（`rerunBy`）を記録し、再実行は1度だけ（2度目・中止していないタスクは断る）。分割で作った子タスクと PR のレビューの
+  タスクは再実行できない（`canRerun`）。
+- 人が決めるもの（`RerunTaskInput`）：題・説明（元の説明。再実行のタスクなら sacty が足した記録を除いたもの。`rerunEditableBody`）・補足
+  （10000 文字まで）・作業するリポジトリ（プロジェクトの対象から。`null` はリポジトリ無しで、リポジトリを指定せずに作ったタスクと同じく進む）・
+  イメージ（`images` の名前か `default`。無ければいつもどおり決める）。対象に無いリポジトリ・`images` に無いイメージは断る。
+- 説明は、人が直した説明の後に、補足（`## 補足（再実行で人が足したもの）`）と、前の試行の記録（`## 前の試行の記録（中止したタスク）`）を足したもの
+  （`buildRerunBody`）。記録は、中止で消えなかったもの：元のタスク・作業したリポジトリ・チケットと取り込み元・工程とその状態・工程を選んだ理由・
+  最後に止まった理由・閉じた PR・中止した日時・工程の成果（承認済みなら承認したもの。1件 3000 文字まで）・無効にしていない差し戻しの指摘・
+  答えのある質問と答え。中止で作業領域・ブランチ・PR は消えているので、最初からやり直すよう書く。
+- 指定したイメージは、プロジェクトの対象の指定より優先して、すべての工程で使う（`StepsChosen` の `imageSource` は `rerun`）。
+- チケットから取り込んだタスクは、チケットを引き継ぐ（`start` は `jira`。PR の URL をチケットに返し、同じチケットを二重に取り込まない）。
+  チケットを読み直さない（`awaitingTicketTriage` に当たらない）で、人が決めたリポジトリで進める。リポジトリ無しなら、リポジトリを指定せずに
+  作ったタスクと同じく、オーケストレーターがリポジトリを選び、選べなければ人が選ぶ（`isRepoless`・`awaitingRepository`・`chooseRepository`）。
+  GitHub の Issue から取り込んだタスクの再実行は、取り込み元を引き継がない（`start` は `sacty`。記録に Issue の URL を書く）。
+- 予算の上限は、再実行のタスクを作った時点の `budget.default_per_task_usd`（元のタスクの上限・使った額は引き継がない）。
+
+コード: `apps/daemon/src/service.ts`（`rerunTask`・`pinnedImage`・`chooseRepository`）、`apps/daemon/src/prompts.ts`（`buildRerunBody`）、`apps/daemon/src/server.ts`（`/api/tasks/:id/rerun`）、`packages/core/src/events.ts`（`RerunTaskInput`・`rerunEditableBody`）、`packages/core/src/projection.ts`（`canRerun`・`awaitingTicketTriage`・`isRepoless`）、`apps/web/src/components/rerun-dialog.tsx`
+
 ## オーケストレーターに質問
 
 - 質問は 2000 文字まで（`QUESTION_MAX`）、答えは 20000 文字まで（`ANSWER_MAX`。超えたら切り詰める）。答えを待つ質問は1件まで。

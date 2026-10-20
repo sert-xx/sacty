@@ -39,6 +39,7 @@ import {
   rejectAuditProposal,
   requestChanges,
   rereviewTask,
+  rerunTask,
   resumeAudit,
   resumeTask,
   retryExport,
@@ -640,6 +641,44 @@ export async function cancelTaskAction(
   if (!result.ok) return { message: result.message };
   refresh();
   return {};
+}
+
+export type RerunTaskState = {
+  message?: string;
+  values?: { title: string; body: string; note: string; repo: string; image: string };
+};
+
+/**
+ * 中止したタスクを、最初からやり直す（再実行）。作ったタスクの詳細に移る。リポジトリが空欄なら、リポジトリを指定しない。
+ * イメージが空なら、いつもどおり決める。入力の検査・リポジトリとイメージの確かめは、デーモンが行う。
+ */
+export async function rerunTaskAction(
+  _prev: RerunTaskState,
+  formData: FormData,
+): Promise<RerunTaskState> {
+  const a = (await getMessages()).common.action;
+  const values = {
+    title: String(formData.get("title") ?? ""),
+    body: String(formData.get("body") ?? ""),
+    note: String(formData.get("note") ?? ""),
+    repo: String(formData.get("repo") ?? "").trim(),
+    image: String(formData.get("image") ?? "").trim(),
+  };
+  let result: Awaited<ReturnType<typeof rerunTask>>;
+  try {
+    result = await rerunTask(String(formData.get("taskId") ?? ""), {
+      title: values.title,
+      body: values.body,
+      note: values.note,
+      repo: values.repo || null,
+      ...(values.image ? { image: values.image } : {}),
+    });
+  } catch {
+    return { message: a.daemonDown, values };
+  }
+  if (!result.ok) return { message: result.message, values };
+  refresh();
+  redirect(`/tasks/${encodeURIComponent(result.task.id)}`);
 }
 
 export type AuditProposalState = { message?: string; reason?: string };

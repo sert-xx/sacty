@@ -470,6 +470,14 @@ const TaskCreated = z.object({
     fix: DeploymentFix.optional(),
     /** 監査の改修の提案を採用して作ったタスクの、元の提案（start: audit。PBI-125）。 */
     auditFix: AuditFixLink.optional(),
+    /**
+     * 中止したタスクを、人が最初からやり直すために作った（再実行）。元の（中止した）タスクと、人が指定したイメージ
+     * （config.yaml の images の名前か default。すべての工程で使う。無ければいつもどおり決める）。チケットから取り込んだ
+     * タスクのやり直しでも、作業するリポジトリは人が決めたもの（チケットを読み直してリポジトリを選ばない）。
+     */
+    rerun: z
+      .object({ taskId: z.string().min(1), image: z.string().min(1).max(100).optional() })
+      .optional(),
   }),
 });
 
@@ -579,8 +587,8 @@ const StepsChosen = z.object({
      * テストの実行は、確かめる工程（実装・再現）のイメージで行う。
      */
     images: z.partialRecord(StepKey, z.string().min(1)).optional(),
-    /** イメージを決めたのが、プロジェクトの対象の指定か、オーケストレーターか。 */
-    imageSource: z.enum(["project", "orchestrator"]).optional(),
+    /** イメージを決めたのが、プロジェクトの対象の指定か、オーケストレーターか、再実行で人が指定したものか。 */
+    imageSource: z.enum(["project", "orchestrator", "rerun"]).optional(),
     /** オーケストレーターがイメージを選んだ理由。 */
     imageReason: z.string().max(1000).optional(),
     /**
@@ -2233,6 +2241,42 @@ export const CreateTemplateTaskInput = z
   })
   .strict();
 export type CreateTemplateTaskInput = z.infer<typeof CreateTemplateTaskInput>;
+
+/** 再実行の補足の長さの上限。 */
+export const RERUN_NOTE_MAX = 10_000;
+
+/**
+ * 中止したタスクを最初からやり直す入力（再実行）。題と説明は元のタスクのものを直して渡し、補足は説明の後に足す。
+ * repo は作業するリポジトリ（プロジェクトの対象から選ぶ）。null は、リポジトリを指定しない。image は、すべての工程で
+ * 使うイメージ（config.yaml の images の名前か default）。省略すると、いつもどおり決める。
+ */
+export const RerunTaskInput = z
+  .object({
+    title: z
+      .string()
+      .trim()
+      .min(1, code("input.titleRequired"))
+      .max(TASK_TITLE_MAX, code("input.titleTooLong")),
+    body: z.string().trim().max(TASK_BODY_MAX, code("input.bodyTooLong")).default(""),
+    note: z.string().trim().max(RERUN_NOTE_MAX, code("input.noteTooLong")).default(""),
+    repo: z.string().trim().min(1).nullable(),
+    image: z.string().trim().min(1).max(100).optional(),
+  })
+  .strict();
+export type RerunTaskInput = z.input<typeof RerunTaskInput>;
+
+/** 再実行のタスクの説明で、sacty が足した前の試行の記録の見出し（ここから後は sacty が書いたもの）。 */
+export const RERUN_RECORD_HEADING = "## 前の試行の記録（中止したタスク）";
+
+/**
+ * 再実行の画面で、直す元にする説明。再実行で作ったタスクなら、sacty が足した前の試行の記録を除く（再実行を重ねても
+ * 記録が積み重ならず、説明の長さの上限を超えないように。記録は、再実行のたびに作り直す）。
+ */
+export function rerunEditableBody(task: { body: string; rerun?: unknown }): string {
+  if (!task.rerun) return task.body;
+  const at = task.body.indexOf(`\n${RERUN_RECORD_HEADING}`);
+  return (at >= 0 ? task.body.slice(0, at) : task.body).trimEnd();
+}
 
 /** 一時停止中のタスクを再開する入力。予算で止まった場合は新しい上限（累計）が必要。 */
 export const ResumeTaskInput = z.object({

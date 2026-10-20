@@ -382,6 +382,17 @@ export function createApp(
     }
   });
 
+  // 中止したタスクを、最初からやり直す（再実行）。元のタスクを引き継いだ新しいタスクを作る
+  app.post("/api/tasks/:id/rerun", async (c) => {
+    const json = await readJson(c);
+    if (!json.ok) return c.json({ error: "invalid_json" }, 400);
+    try {
+      return c.json({ task: service.rerunTask(c.req.param("id"), json.body) }, 201);
+    } catch (error) {
+      return handleError(c, error);
+    }
+  });
+
   // チケットから取り込んだタスク（PBI-52）・リポジトリを指定せずに作ったタスク（PBI-73）の、作業するリポジトリを人が選ぶ
   app.post("/api/tasks/:id/repository", async (c) => {
     const json = await readJson(c);
