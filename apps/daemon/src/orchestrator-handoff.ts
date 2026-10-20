@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { closeSync, fstatSync, mkdirSync, openSync, readSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentSessionRuntime } from "./agent-sessions.js";
 
@@ -20,6 +20,12 @@ export const HANDOFF_MESSAGE_LIMIT = 8_000;
 
 /** やり取り全体の上限（文字数）。超えたら、古い発言から省く。 */
 export const HANDOFF_TOTAL_LIMIT = 200_000;
+
+/**
+ * セッションの本体のファイルから読む上限（バイト）。保存するファイルは最大 200MiB なので、全体は読まず、末尾のこの分だけを
+ * 読む（引き継ぐのは新しい発言なので、最後に捨てる部分まで読まない。デーモンを長く止めないため。PR #172 レビュー提案）。
+ */
+export const HANDOFF_READ_LIMIT = 8 * 1024 * 1024;
 
 type Turn = { role: "user" | "assistant"; text: string };
 
@@ -67,9 +73,17 @@ function turnOf(runtime: AgentSessionRuntime, line: string): Turn | undefined {
   return text.trim() ? { role: item.role, text } : undefined;
 }
 
+/** 先頭から limit 文字（UTF-16 のコード単位）まで。サロゲートペアの途中では切らない（PR #172 レビュー提案）。 */
+export function headOf(text: string, limit: number): string {
+  if (text.length <= limit) return text;
+  const last = text.charCodeAt(limit - 1);
+  return text.slice(0, last >= 0xd800 && last <= 0xdbff ? limit - 1 : limit);
+}
+
 /**
  * セッションの本体のファイルから、やり取りを Markdown の文にする。1つの発言は HANDOFF_MESSAGE_LIMIT まで、全体は
- * HANDOFF_TOTAL_LIMIT まで（超えたら古い発言から省く）。発言が無ければ undefined。
+ * HANDOFF_TOTAL_LIMIT まで（超えたら古い発言から省く。読みながら省き、上限を超えて持たない）。headOmitted は、ファイルの
+ * 先頭を読まなかった（古い発言の数が分からない）とき。発言が無ければ undefined。
  */
 export function sessionTranscript(
   runtime: AgentSessionRuntime,
@@ -78,41 +92,70 @@ export function sessionTranscript(
     message: HANDOFF_MESSAGE_LIMIT,
     total: HANDOFF_TOTAL_LIMIT,
   },
+  headOmitted = false,
 ): { text: string; truncated: boolean } | undefined {
   const turns: string[] = [];
-  let truncated = false;
+  let total = 0;
+  let dropped = 0;
+  let truncated = headOmitted;
   for (const line of jsonl.split("\n")) {
     if (!line.trim()) continue;
     const turn = turnOf(runtime, line);
     if (!turn) continue;
     let text = turn.text.trim();
     if (text.length > limits.message) {
-      text = `${text.slice(0, limits.message)}\n\n（以下略）`;
+      text = `${headOf(text, limits.message)}\n\n（以下略）`;
       truncated = true;
     }
-    turns.push(`## ${turn.role === "user" ? "指示" : "エージェント"}\n\n${text}\n`);
+    const entry = `## ${turn.role === "user" ? "指示" : "エージェント"}\n\n${text}\n`;
+    turns.push(entry);
+    total += entry.length;
+    // 最後の発言は、上限を超えても残す
+    while (turns.length > 1 && total > limits.total) {
+      total -= (turns.shift() as string).length;
+      dropped++;
+    }
   }
   if (turns.length === 0) return undefined;
-  let total = 0;
-  let first = turns.length;
-  while (first > 0) {
-    const next = (turns[first - 1] as string).length;
-    // 最後の発言は、上限を超えても残す
-    if (first < turns.length && total + next > limits.total) break;
-    total += next;
-    first--;
-  }
-  if (first > 0) truncated = true;
-  const kept = turns.slice(first);
+  if (dropped > 0) truncated = true;
+  const note = headOmitted
+    ? "（古い発言は省いた）"
+    : dropped > 0
+      ? `（古い発言 ${dropped} 件は省いた）`
+      : undefined;
   return {
     text: [
       "# 前のエージェントのセッションのやり取り",
       "",
-      ...(first > 0 ? [`（古い発言 ${first} 件は省いた）`, ""] : []),
-      ...kept,
+      ...(note ? [note, ""] : []),
+      ...turns,
     ].join("\n"),
     truncated,
   };
+}
+
+/**
+ * ファイルの末尾の limit バイトまでを読む。全体を読まなかったら、途中から始まる最初の行を捨てる（headOmitted）。
+ */
+export function readTail(path: string, limit: number): { text: string; headOmitted: boolean } {
+  const fd = openSync(path, "r");
+  try {
+    const size = fstatSync(fd).size;
+    const length = Math.min(size, limit);
+    const buffer = Buffer.alloc(length);
+    let read = 0;
+    while (read < length) {
+      const n = readSync(fd, buffer, read, length - read, size - length + read);
+      if (n === 0) break;
+      read += n;
+    }
+    const text = buffer.subarray(0, read).toString("utf8");
+    if (length === size) return { text, headOmitted: false };
+    const newline = text.indexOf("\n");
+    return { text: newline >= 0 ? text.slice(newline + 1) : "", headOmitted: true };
+  } finally {
+    closeSync(fd);
+  }
 }
 
 /**
@@ -129,13 +172,13 @@ export function stageHandoff(
       truncated: boolean;
     }
   | undefined {
-  let jsonl: string;
+  let tail: ReturnType<typeof readTail>;
   try {
-    jsonl = readFileSync(previous.mainFile, "utf8");
+    tail = readTail(previous.mainFile, HANDOFF_READ_LIMIT);
   } catch {
     return undefined;
   }
-  const transcript = sessionTranscript(previous.runtime, jsonl);
+  const transcript = sessionTranscript(previous.runtime, tail.text, undefined, tail.headOmitted);
   if (!transcript) return undefined;
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   writeFileSync(join(dir, HANDOFF_FILE), transcript.text, { mode: 0o600 });

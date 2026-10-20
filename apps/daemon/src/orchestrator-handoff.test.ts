@@ -5,6 +5,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   CONTAINER_HANDOFF_DIR,
   HANDOFF_FILE,
+  headOf,
+  readTail,
   sessionTranscript,
   stageHandoff,
 } from "./orchestrator-handoff.js";
@@ -101,6 +103,36 @@ describe("前のエージェントのセッションのやり取りを引き継�
     const long = sessionTranscript("claude-code", jsonl, { message: 20, total: 1000 });
     expect(long?.text).toContain(`${"a".repeat(20)}\n\n（以下略）`);
     expect(long?.truncated).toBe(true);
+  });
+
+  it("長い発言を切るとき、サロゲートペアの途中では切らない（PR #172 レビュー提案）", () => {
+    const text = `${"a".repeat(7999)}😀b`;
+    expect(headOf(text, 8000)).toBe("a".repeat(7999));
+    expect(headOf(text, 8001)).toBe(`${"a".repeat(7999)}😀`);
+    expect(headOf("短い", 8000)).toBe("短い");
+    const jsonl = lines({ type: "user", message: { content: text } });
+    const transcript = sessionTranscript("claude-code", jsonl);
+    // UTF-8 にしても壊れない（置換文字にならない）
+    expect(Buffer.from(transcript?.text ?? "", "utf8").toString("utf8")).not.toContain("\uFFFD");
+    expect(transcript?.text).toContain(`${"a".repeat(7999)}\n\n（以下略）`);
+  });
+
+  it("大きなファイルは末尾だけを読み、途中から始まる最初の行は捨てる（PR #172 レビュー提案）", () => {
+    const path = join(dir, "big.jsonl");
+    const old = JSON.stringify({ type: "user", message: { content: "古い指示" } });
+    const recent = JSON.stringify({
+      type: "assistant",
+      message: { content: [{ type: "text", text: "新しい答え" }] },
+    });
+    writeFileSync(path, `${old}\n${recent}\n`);
+    expect(readTail(path, 1024)).toEqual({ text: `${old}\n${recent}\n`, headOmitted: false });
+    const tail = readTail(path, Buffer.byteLength(`${recent}\n`) + 5);
+    expect(tail).toEqual({ text: `${recent}\n`, headOmitted: true });
+    const transcript = sessionTranscript("claude-code", tail.text, undefined, tail.headOmitted);
+    expect(transcript?.text).toContain("（古い発言は省いた）");
+    expect(transcript?.text).toContain("新しい答え");
+    expect(transcript?.text).not.toContain("古い指示");
+    expect(transcript?.truncated).toBe(true);
   });
 
   it("発言が無い・読めないなら引き継がない", () => {

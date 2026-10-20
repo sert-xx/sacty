@@ -1688,7 +1688,8 @@ export class TaskService {
    */
   /**
    * ゴールガーディアンの判定（変更の申し出・差し戻しの指摘。コンテキストを渡さない実行）を、利用制限なら代わりのエージェント
-   * （agents の fallback）でやり直して返す。切り替えたことは作業履歴に記録し、失敗した実行の費用は返す費用に足す。
+   * （agents の fallback）でやり直して返す。切り替えたことは作業履歴に記録し、失敗した実行の費用は返す費用に足す。1回の判定の
+   * 中では、試したエージェントをもう一度は試さない（試し終えたら、最後の失敗を返す。やり直しの回数は代わりの数まで）。
    */
   private async runGuardianWithFallback(
     task: Task,
@@ -1700,6 +1701,7 @@ export class TaskService {
     let agent = this.usableAgent(config, selected);
     let executed = await this.runGuardian(task, { ...run, agent }, code);
     let spent = 0;
+    const tried = new Set([agent.id]);
     for (;;) {
       if (executed.outcome.kind !== "failed") break;
       const switched = this.fallBack(
@@ -1707,6 +1709,7 @@ export class TaskService {
         { runId: executed.runId, role: run.role, agent, selected },
         executed.outcome.reason,
         config,
+        tried,
       );
       if (switched?.event.type !== "AgentFellBack") break;
       this.append(this.mustGet(task.id), [switched]);
@@ -1714,6 +1717,7 @@ export class TaskService {
       const next = definedAgent(config, switched.event.payload.fallbackAgentId);
       if (!next) break;
       agent = next;
+      tried.add(agent.id);
       executed = await this.runGuardian(task, { ...run, agent, runId: undefined }, code);
     }
     return { ...executed, costUsd: executed.costUsd + spent, agent };
@@ -4010,14 +4014,17 @@ export class TaskService {
     failed: { runId: string; role: string; agent: AgentConfig; selected?: AgentConfig },
     reason: string,
     config?: SactyConfig,
+    /** この処理の中で、すでに試したエージェント（制限の期限が過ぎていても、もう一度は試さない）。 */
+    tried?: ReadonlySet<string>,
   ): ActivityItem | undefined {
     if (reason !== "usage_limit") return undefined;
     if (this.pauseRequested.has(taskId) || this.cancelling.has(taskId)) return undefined;
     const read = config ? undefined : this.deps.config();
     const loaded = config ?? (read?.ok ? read.config : undefined);
     if (!loaded) return undefined;
-    const next = this.usableAgent(loaded, failed.selected ?? failed.agent);
-    if (next.id === failed.agent.id || this.agentLimited(next.id)) return undefined;
+    const skip = (id: string) => this.agentLimited(id) || tried?.has(id) === true;
+    const next = fallbackAgentFor(loaded, failed.selected ?? failed.agent, skip);
+    if (next.id === failed.agent.id || skip(next.id)) return undefined;
     const until = this.limitedAgents.get(failed.agent.id) ?? this.now();
     return {
       actor: "sacty",

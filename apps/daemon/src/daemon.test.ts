@@ -3124,6 +3124,60 @@ describe("ゴールガーディアン：変更の申し出の判定（PBI-9）",
     activity.close();
   });
 
+  it("1回の判定の中では、制限の期限が過ぎても試したエージェントに戻らない（PR #172 レビュー指摘）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const main = agent({ fallback: ["claude-api"] });
+    const backup = agent({ id: "claude-api", auth: { mode: "api-key", secret: "anthropic-key" } });
+    const config = (): ConfigResult => {
+      const base = configOf(main)();
+      return base.ok
+        ? {
+            ok: true,
+            config: {
+              ...base.config,
+              agents: { [main.id]: main, [backup.id]: backup },
+              fallbackCooldownMs: 60_000,
+            },
+          }
+        : base;
+    };
+    const limited: AgentOutcome = {
+      kind: "failed",
+      reason: "usage_limit",
+      message: "429 Too Many Requests",
+    };
+    let now = Date.parse("2026-10-20T00:00:00Z");
+    const { service, executor } = makeService(
+      activity,
+      [out("# 要求要件 v1"), designWithProposal(), limited, limited, limited, limited],
+      {
+        config,
+        secrets: { "claude-oauth-token": "oauth-secret", "anthropic-key": "sk-ant-secret" },
+        now: () => now,
+      },
+    );
+    // 実行のたびに 61 秒進める（制限の期限 1 分が、次の実行の終わりには過ぎている）
+    executor.respond = () => {
+      now += 61_000;
+      return undefined;
+    };
+    const task = service.createTask({ projectId: "default", title: "決済API" });
+    await service.runNext(task.id);
+    service.approve(task.id, { step: "requirements", submission: 1 });
+    await service.runNext(task.id);
+    // 元（claude-subscription）と代わり（claude-api）を1回ずつ試したら、判定できなかったことにする
+    expect(executor.calls).toHaveLength(4);
+    const events = service.get(task.id)?.activity ?? [];
+    expect(events.filter((e) => e.type === "AgentFellBack")).toHaveLength(1);
+    expect(events.find((e) => e.type === "ChangeJudged")?.payload).toMatchObject({
+      verdict: "undecidable",
+      runResult: "failed",
+      agentId: "claude-api",
+    });
+    expect(service.get(task.id)?.task.status).toBe("escalated");
+    activity.close();
+  });
+
   it("ゴールガーディアンの実行に失敗したら、判定の記録に実行の失敗を残す（PBI-46 レビュー指摘）", async () => {
     const { activity, service, id } = await proposeAndJudge([
       designWithProposal(),

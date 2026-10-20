@@ -101,7 +101,8 @@ Code: `apps/daemon/src/agents/parse.ts` (`ClaudeOutcomeReader`, `CodexOutcomeRea
   not limited exists, `AgentFellBack` (the failed run, the role, the original and fallback agents, and the time limit) is recorded instead of a pause (`TaskPaused`). The failure
   record has put the task back to queued, so the fallback agent runs it again in the next pass.
 - Judging change proposals and rework remarks is redone on the spot with the fallback agent; `AgentFellBack` is recorded, and the cost of the failed run is
-  added to the judgement's cost (`runGuardianWithFallback`).
+  added to the judgement's cost (`runGuardianWithFallback`). Within one judgement, an agent already tried is not tried again even after its limit expires, and when all have
+  been tried the last failure is returned (retries are at most the number of fallbacks).
 - When a person paused or cancelled the task, or there is no fallback or all are limited, the task stops as before. Exports, the post-merge watch, audits, and answers to
   questions handle the failure as before and use the fallback agent from the next run.
 - The secrets of fallback agents are also retrieved together at startup (`secretUses`).
@@ -120,7 +121,7 @@ Code: `apps/daemon/src/service.ts` (`usableAgent`, `markLimited`, `fallBack`, `p
     otherwise it resumes the saved session.
   - When the AI changed (`agent_changed`) and the main file of the previous agent's saved session matches its record, its conversation is handed over.
     Only the text of the instructions and the agent's messages (no tool calls or results; up to 8000 characters per message and 200,000 in total, dropping the oldest
-    messages beyond that) is written to `previous-session.md`, mounted read-only at `/sacty-handoff`, and its location is added to the end of the instructions. The handover is
+    messages beyond that; only the last 8MiB of the file is read (`HANDOFF_READ_LIMIT`); messages are not cut in the middle of a surrogate pair) is written to `previous-session.md`, mounted read-only at `/sacty-handoff`, and its location is added to the end of the instructions. The handover is
     recorded in `handoffFrom` of `OrchestratorSessionUsed`, and the written file is deleted after the run.
   - Orchestrator runs are one at a time per task (serial).
   - "Ask the Orchestrator" answers by forking the saved session (Claude Code uses `--fork-session`; Codex resumes in a throwaway location),

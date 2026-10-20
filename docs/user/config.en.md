@@ -232,7 +232,10 @@ agent_fallback:
 ```
 
 - When an agent's run fails at a usage limit (including rate limits and `429`), the task is not paused; the same step runs again with the fallback agent.
-  The activity log records that the agent reached its usage limit and the run is being retried with the fallback.
+  The activity log records that the agent reached its usage limit and the run is being retried with the fallback. This retry without pausing applies to steps, the integration review,
+  the Orchestrator's choice of steps, reading tickets, the final review, and the Goal Guardian's judgements (change proposals and rework remarks).
+- For exports, the post-merge watch, audits, and answers to questions, the failure of that run is handled as before (the task pauses, the check is recorded as not confirmed, and so on),
+  and the fallback agent is used from the next run.
 - For `cooldown_minutes`, the fallback agent is also used for other tasks. After that, the original agent is used again. When Sacty restarts,
   the original agent is tried first as well.
 - When the Orchestrator switches to a fallback agent (a different tool), the conversation of the previous agent's session is passed read-only so the new agent
