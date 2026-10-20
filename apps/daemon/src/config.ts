@@ -21,7 +21,7 @@ import { HostMcpFile, type HostMcpSpec, toHostMcp } from "./host-mcp.js";
 import { type Platform, PlatformFile, toPlatform } from "./platforms.js";
 import { SecretRef } from "./secrets.js";
 
-export const DEFAULT_IMAGE = "sacty-agent:1.0.0";
+export const DEFAULT_IMAGE = "sacty-agent:1.1.0";
 
 /** 秘密情報：キーチェーンの名前か、1Password の参照（op://…。PBI-34）。 */
 const SecretName = SecretRef;
