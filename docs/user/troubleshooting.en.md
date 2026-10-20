@@ -21,6 +21,8 @@ This page lists common ways sacty stops and what to check.
 | --- | --- |
 | A warning at startup says a secret could not be retrieved | Prepare the secret for the setting named in the warning (for the Keychain, `npx sacty secret set <name>`; for 1Password, sign in and check the reference). Then press "Get secrets again" in "Sacty settings" ([Secrets](secrets.en.md)) |
 | A task stopped on a 1Password reference | Sign in with `op signin` (or through the 1Password app integration), then resume the task |
+| At startup or on the task list, "The agent image (…) is missing" appears | Create the image with the command shown (such as `npx sacty image build`). After raising the version, the image name changes, so it has to be rebuilt. Once created, the notice disappears in about a minute |
+| "Could not check whether the agent images exist because Docker is not reachable" appears | Start Docker (Docker Desktop and so on). Once it is running, the check runs again in about a minute |
 | `sacty image build` says there is no npm token | Save it with `npx sacty secret set <name>` (for a 1Password reference, check the sign-in and the reference) |
 
 ## Tasks stop or do not progress

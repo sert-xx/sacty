@@ -979,6 +979,7 @@ function makeService(
     secretStore?: ServiceDeps["secrets"];
     platformProblems?: ServiceDeps["platformProblems"];
     hostMcpProblems?: ServiceDeps["hostMcpProblems"];
+    imageProblems?: ServiceDeps["imageProblems"];
     hostMcpReady?: ServiceDeps["hostMcpReady"];
     contextMcp?: ServiceDeps["contextMcp"];
     notifier?: ServiceDeps["notifier"];
@@ -1048,6 +1049,7 @@ function makeService(
     ...(options.gateway ? { gateway: options.gateway } : {}),
     ...(options.platformProblems ? { platformProblems: options.platformProblems } : {}),
     ...(options.hostMcpProblems ? { hostMcpProblems: options.hostMcpProblems } : {}),
+    ...(options.imageProblems ? { imageProblems: options.imageProblems } : {}),
     ...(options.hostMcpReady ? { hostMcpReady: options.hostMcpReady } : {}),
     ...(options.contextMcp ? { contextMcp: options.contextMcp } : {}),
     ...(options.notifier ? { notifier: options.notifier } : {}),
@@ -24407,6 +24409,22 @@ describe("使えないエージェントの警告（PBI-134）", () => {
     const status = service.status();
     expect(status.warnings).toEqual([warning]);
     expect(status.agents.map((a) => a.id)).toEqual([agent().id]);
+    activity.close();
+  });
+});
+
+describe("手元に無いエージェントのイメージ（PBI-148）", () => {
+  it("確かめた注意を、画面の状態の注意に載せる（無ければ載せない）", () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const missing = message("image.missing", {
+      image: "sacty-agent:1.1.0",
+      command: "npx sacty image build",
+    });
+    let current = [missing];
+    const { service } = makeService(activity, [], { imageProblems: () => current });
+    expect(service.status().warnings).toContainEqual(missing);
+    current = [];
+    expect(service.status().warnings).not.toContainEqual(missing);
     activity.close();
   });
 });

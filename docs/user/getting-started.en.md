@@ -28,6 +28,7 @@ npx sacty config init   # creates ~/.sacty/config.yaml
    save your OpenAI API key using `npx sacty secret set openai-api-key`.
 3. Build the container image for running agents with `npx sacty image build`. If your environment cannot use Docker Hub or the public npm registry,
    write `image_build` before you build it ([Container images](images.en.md)).
+   If you start without the image, the output of `sacty up` and the notices on the task list show the command to create it.
 
 ## Start
 

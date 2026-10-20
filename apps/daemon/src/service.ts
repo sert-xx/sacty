@@ -480,6 +480,8 @@ export type ServiceDeps = {
   platformProblems?: (names: readonly string[]) => DaemonText[];
   /** 準備ができないホストの MCP サーバーの理由（画面の状態に出す。PBI-36）。 */
   hostMcpProblems?: () => DaemonText[];
+  /** 手元に無いエージェントのイメージ・Docker に接続できない（起動のときと1分ごとに確かめる。PBI-148）。 */
+  imageProblems?: () => DaemonText[];
   /**
    * 実行の前に、その実行が使うホストの MCP サーバーの準備を待つ（PBI-77。設定に足した直後でも使えるよう、設定と突き合わせて
    * 起動を待つ。上限あり）。準備ができないものの理由を返す。無ければ待たない。
@@ -2813,6 +2815,8 @@ export class TaskService {
         ...this.secretProblems.map((p) => p.text),
         ...(this.deps.platformProblems?.(config.config.platforms.map((p) => p.name)) ?? []),
         ...(this.deps.hostMcpProblems?.() ?? []),
+        // 手元に無いエージェントのイメージ（PBI-148）
+        ...(this.deps.imageProblems?.() ?? []),
         ...(this.deps.notifier?.problems() ?? []),
       ],
       // 取り込みは、設定ファイルを読めれば動く（PBI-100。以前は github: が要った）

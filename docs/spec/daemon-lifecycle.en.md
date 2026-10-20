@@ -114,6 +114,24 @@ Code: `apps/daemon/src/update-check.ts` (`UpdateChecker`, `packageVersion`, `par
 `apps/daemon/src/service.ts` (`TaskService.status`), `apps/web/src/components/shell/update-notice.tsx` (`UpdateNotice`),
 `apps/web/src/components/shell/update-notice-live.tsx` (`UpdateNoticeLive`, `UPDATE_LIVE_INTERVAL_MS`), `apps/web/src/components/shell/update-notice-view.tsx` (`UpdateNoticeView`, `safeGitHubUrl`, `UPDATE_COMMANDS`)
 
+## Checking the agent images
+
+At startup and then every minute (`IMAGE_CHECK_INTERVAL_MS`), the daemon checks whether the agent images exist locally (PBI-148).
+Raising the version changes the default image name (`sacty-agent:<version>`), so it tells you before a task runs and stops with `run.imageMissing`.
+
+- It checks `image` in `config.yaml` (default `sacty-agent:<version>`) and the images in `images.*` (each name once). Without a config file, only the default image;
+  with a config error, nothing (the config error is reported separately). The config is read on every check.
+- It runs `docker image inspect --format {{.Id}} <name>`. Exit code 0 means it exists. `No such image` or `No such object` on stderr means it is missing.
+  Anything else (Docker not reachable, no docker, or no response in 10 seconds (`IMAGE_INSPECT_TIMEOUT_MS`); it is stopped if it does not respond) means it cannot be checked.
+- For each missing image, the notice gives the name and the command to create it (`npx sacty image build` for the default image, `npx sacty image build <name>` for a per-language image)
+  (`image.missing`). For an image whose name includes a registry host (`.` or `:` before the first `/`, or `localhost`), it also says runs will try to pull it
+  (`image.notLocal`). If any image cannot be checked, a single "cannot check because Docker is not reachable" notice is shown (`image.dockerUnreachable`).
+- The notices are in `warnings` of `GET /api/status` (the web UI shows them in the notices on the task list). The result of the first check is also printed to the terminal (the output of `sacty up`).
+  Startup is not stopped and nothing is built automatically. Once built, the notice disappears at the next check. Checks do not overlap.
+
+Code: `apps/daemon/src/image-presence.ts` (`ImagePresenceChecker`, `inspectImage`, `imageTargets`, `isRegistryImage`, `buildCommand`, `startImagePresenceCheck`, `IMAGE_CHECK_INTERVAL_MS`, `IMAGE_INSPECT_TIMEOUT_MS`),
+`apps/daemon/src/service.ts` (`TaskService.status`), `apps/daemon/src/main.ts`
+
 ## Duplicate start
 
 - The lock file is `SACTY_HOME/daemon.lock`. The daemon takes an SQLite exclusive lock (`PRAGMA locking_mode = EXCLUSIVE; BEGIN EXCLUSIVE;`) and
