@@ -19,6 +19,14 @@ import { type AgentTier, parseTierId, type TierRuntime } from "./agents/tier-nam
 import { DEFAULT_HOST_ADDRESS, DEFAULT_RETRY_POLICY, type RetryPolicy } from "./gateway.js";
 import { HostMcpFile, type HostMcpSpec, toHostMcp } from "./host-mcp.js";
 import { type Platform, PlatformFile, toPlatform } from "./platforms.js";
+import {
+  DEFAULT_AGENT_TIMEOUT_MINUTES,
+  DEFAULT_TEST_TIMEOUT_MINUTES,
+  RUN_TIMEOUT_MAX_MINUTES,
+  RUN_TIMEOUT_MIN_MINUTES,
+  RUN_TIMEOUT_ROLES,
+  type RunTimeouts,
+} from "./run-timeouts.js";
 import { SecretRef } from "./secrets.js";
 
 export const DEFAULT_IMAGE = "sacty-agent:1.2.0";
@@ -508,6 +516,32 @@ const ConfigFile = z.object({
    * sacty の最新版を確かめる（PBI-135）。false なら GitHub に問い合わせない（インターネットに出られない環境など）。
    */
   update_check: z.boolean().default(true),
+  /**
+   * エージェントの実行とテストの実行の上限（分。PBI-150）。roles で役割（工程・guardian・orchestrator など）ごとに上書きする。
+   * 範囲は 1〜720 分の整数。
+   */
+  run_timeout: z
+    .object({
+      agent_minutes: z
+        .number()
+        .int()
+        .min(RUN_TIMEOUT_MIN_MINUTES)
+        .max(RUN_TIMEOUT_MAX_MINUTES)
+        .default(DEFAULT_AGENT_TIMEOUT_MINUTES),
+      test_minutes: z
+        .number()
+        .int()
+        .min(RUN_TIMEOUT_MIN_MINUTES)
+        .max(RUN_TIMEOUT_MAX_MINUTES)
+        .default(DEFAULT_TEST_TIMEOUT_MINUTES),
+      roles: z
+        .partialRecord(
+          z.enum(RUN_TIMEOUT_ROLES),
+          z.number().int().min(RUN_TIMEOUT_MIN_MINUTES).max(RUN_TIMEOUT_MAX_MINUTES),
+        )
+        .default({}),
+    })
+    .prefault({}),
   /** 画面（PBI-133）。 */
   web: z
     .object({
@@ -675,6 +709,8 @@ export type SactyConfig = {
   webAuth: boolean;
   /** sacty の最新版を確かめるか（PBI-135）。 */
   updateCheck: boolean;
+  /** エージェントの実行とテストの実行の上限（分。PBI-150）。 */
+  runTimeouts: RunTimeouts;
   /** 組織内 PF の API（PBI-35）。 */
   platforms: Platform[];
   /** ホストで動かす MCP サーバー（PBI-36）。 */
@@ -1029,6 +1065,11 @@ export function loadConfig(home: string, defaultsPath: string = DEFAULT_AGENTS_P
       hostAddress: file.gateway.host_address,
       webAuth: file.web.auth,
       updateCheck: file.update_check,
+      runTimeouts: {
+        agentMinutes: file.run_timeout.agent_minutes,
+        testMinutes: file.run_timeout.test_minutes,
+        roles: file.run_timeout.roles,
+      },
       gatewayRetry: {
         maxAttempts: file.gateway.retry.max_attempts,
         maxWaitMs: file.gateway.retry.max_wait_sec * 1000,
@@ -1194,6 +1235,15 @@ budget:
 # インターネットに出られない環境では false にする（GitHub に問い合わせない）
 # update_check: false
 
+# エージェントの1回の実行とテストのコマンドの上限（分。1〜720）。過ぎるとコンテナを止め、タスクを一時停止する。
+# roles で役割ごとに上書きする（工程の名前のほか guardian・final-review・rework・orchestrator・chat・export・audit・audit-dive）
+# run_timeout:
+#   agent_minutes: 30   # 既定 30
+#   test_minutes: 20    # 既定 20
+#   roles:
+#     implement: 90
+#     guardian: 45
+
 # ホストのゲートウェイ（via_gateway: true のエージェントの AI の呼び出しを中継する）。
 # レート制限（429）や一時的な失敗（5xx）は、Retry-After（無ければ1秒から倍にしていく間隔）で待ってリトライする
 # gateway:
@@ -1214,7 +1264,7 @@ budget:
 #       env: { CLOUD_REGION: ap-northeast-1 }
 #       restart_every_min: 240
 #       ready_timeout_sec: 300   # 起動してから認証が済むまで待つ上限
-#       tool_timeout_sec: 900    # エージェントがツールの呼び出しを待つ上限（任意。実行全体の上限の30分より短くする）
+#       tool_timeout_sec: 900    # エージェントがツールの呼び出しを待つ上限（任意。実行全体の上限（run_timeout。既定 30 分）より短くする）
 #   # 組織内 PF の API。エージェントは $SACTY_PF_URL/<名前>/… で呼び、ゲートウェイが認証を付けて転送する
 #   # （認証情報はエージェントに渡さない）。allow に無い API は拒否する（* は1階層、** はそれ以下すべて）
 #   platforms:

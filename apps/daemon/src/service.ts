@@ -298,6 +298,7 @@ import {
 } from "./prompts.js";
 import { CONTAINER_LOGS_DIR, stageQuestionLogs } from "./question-logs.js";
 import { NothingToCommitError, type RepositoryWorkspace } from "./repository.js";
+import { agentTimeoutMs, testTimeoutMs } from "./run-timeouts.js";
 import {
   contextSecretUses,
   type SecretUse,
@@ -1473,7 +1474,14 @@ export class TaskService {
         const authEnv = await this.gitAuth(current, current.repository?.url ?? "", usedSecrets);
         await this.deps.repos.fetchCommits(gitDir, [commit], authEnv);
         await this.deps.repos.snapshot(gitDir, commit, workspaceDir);
-        context = await this.runContext(current, agent, config, usedSecrets);
+        context = await this.runContext(
+          current,
+          agent,
+          config,
+          usedSecrets,
+          undefined,
+          "deployment",
+        );
       } catch (error) {
         return fail(errorText(error));
       }
@@ -2512,9 +2520,12 @@ export class TaskService {
     const services = await this.startServices(task, step, input.runId, input.workspaceDir, true);
     if (services && !services.ok) return services;
     try {
+      const config = this.deps.config();
       const result = await this.deps.tests.run({
         ...input,
         ...(services?.ok ? serviceConnection(services.started) : {}),
+        // テストのコマンドの上限（config.yaml の run_timeout.test_minutes。PBI-150）
+        timeoutMs: testTimeoutMs(config.ok ? config.config.runTimeouts : undefined),
       });
       return { ok: true, result };
     } finally {
@@ -2618,7 +2629,14 @@ export class TaskService {
     const contextSecrets: string[] = [];
     let context: RunContext | undefined;
     try {
-      context = await this.runContext(task, agent, config, contextSecrets);
+      context = await this.runContext(
+        task,
+        agent,
+        config,
+        contextSecrets,
+        undefined,
+        "orchestrator",
+      );
     } catch (error) {
       return {
         failure: {
@@ -4587,7 +4605,7 @@ export class TaskService {
     if (step !== "document") {
       const usedSecrets: string[] = [];
       try {
-        context = await this.runContext(task, agent, config.config, usedSecrets);
+        context = await this.runContext(task, agent, config.config, usedSecrets, undefined, step);
       } catch (error) {
         this.append(task, [
           {
@@ -5011,11 +5029,13 @@ export class TaskService {
     config: SactyConfig,
     usedSecrets: string[],
     /** 渡す MCP サーバーを、この名前の1つに絞る（成果の書き出し。PBI-56）。 */
-    onlyMcp?: string,
+    onlyMcp: string | undefined,
+    /** その実行の役割（MCP の時間切れの警告を、その役割の実行の上限で判断する。PBI-150）。 */
+    role: string,
   ): Promise<RunContext | undefined> {
     const contextSource = this.deps.projects.get(task.projectId)?.context;
     const defaultContext = this.deps.defaultContext;
-    const { hostMcp = [], gatewayOrigin, hostCommands } = this.mcpRouting(config);
+    const { hostMcp = [], gatewayOrigin, hostCommands, runLimitMs } = this.mcpRouting(config, role);
     // 段階のサブエージェントの定義（PBI-119）。置くものがあれば、コンテキストが無くても設定のディレクトリに置く
     const tiers = this.tiersFor(agent, config);
     if (
@@ -5054,6 +5074,7 @@ export class TaskService {
         onlyMcp,
         hostCommands,
         tierFiles(runtime, tiers.entries),
+        runLimitMs,
       )),
       tiers: tiers.entries,
     };
@@ -5113,11 +5134,17 @@ export class TaskService {
    * MCP サーバーは渡せず、層の HTTP の MCP サーバーはコンテナから直接つなぐ。実行（runContext）とプレビュー（PBI-76）で
    * 同じものを使う。
    */
-  private mcpRouting(config: Pick<SactyConfig, "hostMcp"> | undefined): McpRouting {
+  private mcpRouting(
+    config: Pick<SactyConfig, "hostMcp" | "runTimeouts"> | undefined,
+    /** その実行の役割（MCP の時間切れの警告を、その役割の実行の上限で判断する。PBI-150）。 */
+    role?: string,
+  ): McpRouting {
+    const runLimitMs = agentTimeoutMs(config?.runTimeouts, role);
     const gatewayForMcp = this.deps.gateway;
-    if (!gatewayForMcp) return {};
+    if (!gatewayForMcp) return { runLimitMs };
     const origin = gatewayForMcp.containerOrigin();
     return {
+      runLimitMs,
       hostMcp: (config?.hostMcp ?? []).map((m) => ({
         name: m.name,
         url: `${origin}/mcp/${m.name}`,
@@ -5196,7 +5223,7 @@ export class TaskService {
     };
     try {
       if (operation.via === "mcp") {
-        context = await this.runContext(task, agent, config, usedSecrets, operation.name);
+        context = await this.runContext(task, agent, config, usedSecrets, operation.name, step);
         if (!context?.placed.mcpServers.includes(operation.name))
           throw new MessageError(message("operation.connectionMissing"));
         // 用意したコンテキスト（層・注意・置いた段階）を、この実行の記録として残す（PBI-119）
@@ -5388,7 +5415,7 @@ export class TaskService {
     if (to.via === "mcp") {
       try {
         // 決めた接続先の MCP サーバーだけを渡す（ほかの MCP サーバーは使わせず、その認証も取り出さない）
-        context = await this.runContext(task, agent, config, usedSecrets, to.name);
+        context = await this.runContext(task, agent, config, usedSecrets, to.name, "export");
       } catch (error) {
         return fail(
           message("export.failed", { detail: redactText(errorText(error), usedSecrets) }),
@@ -7441,6 +7468,8 @@ export class TaskService {
         ...(run.network ? { network: run.network } : {}),
         ...(run.forwards ? { forwards: run.forwards } : {}),
         ...(log ? { log } : {}),
+        // その役割の実行の上限（config.yaml の run_timeout。PBI-150）
+        timeoutMs: agentTimeoutMs(config.ok ? config.config.runTimeouts : undefined, run.role),
       });
     } catch (error) {
       outcome = {

@@ -938,8 +938,57 @@ describe("MCP サーバーの時間切れ（PBI-75）", () => {
       join(dirname(DEFAULT_CONTEXT_DIR), "..", "..", "docs", "user", "context.md"),
       "utf8",
     );
-    expect(readme).toContain(`開始から${AGENT_RUN_TIMEOUT_MS / 60_000}分の上限`);
-    expect(readme).toContain(`どちらかを${AGENT_RUN_TIMEOUT_MS / 60_000}分以上にしたとき`);
+    // 既定の上限（config.yaml の run_timeout で変えられる。PBI-150）
+    expect(readme).toContain(`既定は開始から${AGENT_RUN_TIMEOUT_MS / 60_000}分の上限`);
+    expect(readme).toContain(`既定ではどちらかを${AGENT_RUN_TIMEOUT_MS / 60_000}分以上にしたとき`);
+    expect(readme).toContain("`run_timeout`");
+  });
+
+  it("警告は、その実行の上限（config.yaml の run_timeout。PBI-150）で判断する", async () => {
+    const files = {
+      "w.git": {
+        "mcp.yaml": ["servers:", "  long:", "    command: a", "    tool_timeout_sec: 3000"].join(
+          "\n",
+        ),
+      },
+    };
+    const run = (runLimitMs?: number) =>
+      prepareContext(
+        new FakeFetcher(files),
+        { repo: "w.git" },
+        "codex",
+        "/.codex",
+        undefined,
+        undefined,
+        [],
+        undefined,
+        undefined,
+        undefined,
+        [],
+        runLimitMs,
+      );
+    // 既定（30 分）なら 3000 秒は上限以上
+    const byDefault = await run();
+    expect(byDefault.warnings).toEqual([
+      {
+        code: "context.mcpTimeoutOverRun",
+        params: { name: "long", key: "tool_timeout_sec", seconds: 3000, minutes: 30 },
+      },
+    ]);
+    byDefault.dispose();
+    // 上限を 60 分にした実行では、警告しない
+    const longer = await run(60 * 60_000);
+    expect(longer.warnings).toEqual([]);
+    longer.dispose();
+    // 上限を 10 分にした実行では、10 分として警告する
+    const shorter = await run(10 * 60_000);
+    expect(shorter.warnings).toEqual([
+      {
+        code: "context.mcpTimeoutOverRun",
+        params: { name: "long", key: "tool_timeout_sec", seconds: 3000, minutes: 10 },
+      },
+    ]);
+    shorter.dispose();
   });
 
   it("範囲の外の値・整数でない値・数でない値は、理由つきで止める", async () => {

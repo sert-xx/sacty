@@ -794,6 +794,8 @@ class FakeExecutor implements AgentExecutor {
   calls: Invocation[] = [];
   /** 実行ごとに標準入力で渡された指示（PBI-149）。 */
   stdins: (string | undefined)[] = [];
+  /** 実行ごとの上限（ミリ秒。config.yaml の run_timeout。PBI-150）。 */
+  timeouts: (number | undefined)[] = [];
   /** 実行ごとにマウントした作業領域。 */
   dirs: string[] = [];
   killed: string[] = [];
@@ -834,6 +836,7 @@ class FakeExecutor implements AgentExecutor {
     network,
     forwards,
     log,
+    timeoutMs,
   }: {
     runId: string;
     image: string;
@@ -843,7 +846,9 @@ class FakeExecutor implements AgentExecutor {
     network?: string;
     forwards?: readonly LocalForward[];
     log?: SessionLogSink;
+    timeoutMs?: number;
   }): Promise<AgentOutcome> {
+    this.timeouts.push(timeoutMs);
     // 本物は指示を標準入力で渡す（PBI-149）。標準入力に指示があることを記録し、指示は引数に戻した形で扱う
     this.stdins.push(actual.stdin);
     const invocation = withPromptArg(actual);
@@ -5556,6 +5561,8 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         image: "sacty-agent:test",
         workspaceDir: join(dir, "workspaces", id, "repo"),
         command: "npm test",
+        // config.yaml に run_timeout が無ければ、テストの上限は既定の 20 分（PBI-150）
+        timeoutMs: 20 * 60_000,
       },
     ]);
     const guardian = promptOf(executor, 4);
@@ -24431,6 +24438,40 @@ describe("使えないエージェントの警告（PBI-134）", () => {
     const status = service.status();
     expect(status.warnings).toEqual([warning]);
     expect(status.agents.map((a) => a.id)).toEqual([agent().id]);
+    activity.close();
+  });
+});
+
+describe("実行の上限（config.yaml の run_timeout。PBI-150）", () => {
+  const withTimeouts =
+    (roles: Record<string, number>): (() => ConfigResult) =>
+    () => {
+      const base = configOf(agent())();
+      if (!base.ok) return base;
+      return {
+        ok: true,
+        config: { ...base.config, runTimeouts: { agentMinutes: 45, testMinutes: 7, roles } },
+      };
+    };
+
+  it("工程の実行に、その役割の上限を渡す（上書きが無ければ既定、書かなければ 30 分）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    for (const [roles, expected] of [
+      [{ requirements: 90 }, 90],
+      [{ implement: 90 }, 45],
+    ] as const) {
+      const { service, executor } = makeService(activity, [completed(1_000)], {
+        config: withTimeouts(roles),
+      });
+      const task = service.createTask({ projectId: "default", title: "A" });
+      await service.runNext(task.id);
+      // 最初の工程は要求要件
+      expect(executor.timeouts[0], JSON.stringify(roles)).toBe(expected * 60_000);
+    }
+    const plain = makeService(activity, [completed(1_000)]);
+    const task = plain.service.createTask({ projectId: "default", title: "B" });
+    await plain.service.runNext(task.id);
+    expect(plain.executor.timeouts[0]).toBe(30 * 60_000);
     activity.close();
   });
 });

@@ -172,9 +172,9 @@ servers:
     tool_timeout_sec: 900       # has tools that take 15 minutes
 ```
 
-A whole agent run has a limit of 30 minutes from its start (after that, the container is stopped). Setting MCP timeouts longer than that has no effect, because the whole
-run stops first. If you set either startup or tool calls to 30 minutes or more, a warning is recorded in the Activity when the context is prepared
-(it is not treated as a configuration error).
+A whole agent run has a limit from its start (by default 30 minutes; change it with `run_timeout` in `config.yaml`. [config.yaml settings](config.en.md)).
+After that, the container is stopped. Setting MCP timeouts longer than that has no effect, because the whole run stops first. If you set either startup or tool calls
+to that run's limit or more (by default, 30 minutes or more), a warning is recorded in the Activity when the context is prepared (it is not treated as a configuration error).
 
 - Codex: passed to `mcp_servers.<name>` in `config.toml` under the same names (`startup_timeout_sec`, `tool_timeout_sec`).
 - Claude Code: tool calls are passed as the per-server `timeout` in `mcp.json` (milliseconds; it takes precedence over the environment variable `MCP_TOOL_TIMEOUT`).

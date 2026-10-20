@@ -19,13 +19,15 @@ docker のコンテナの中で1回実行して行う。テストの実行も、
 - 環境変数は、引数には名前だけ（`-e NAME`）を書き、値は docker コマンドのプロセスの環境から渡す（`ps` に値を出さない）。
   docker コマンドのプロセスに残すホストの環境変数は `PATH`・`HOME`・`DOCKER_HOST`・`DOCKER_CONTEXT`・`DOCKER_CONFIG`・`TMPDIR` だけで、
   コンテナには、sacty が決めた変数（認証・設定の場所・イメージの `env` など）だけが入る。同じ名前は、実行の側がイメージの `env` より優先。
-- 実行全体の上限は30分（`AGENT_RUN_TIMEOUT_MS`）。過ぎたらコンテナを止め、時間切れ（`run.timeout`）にする。
+- 実行全体の上限は、`config.yaml` の `run_timeout`（PBI-150）で決める。役割（工程・`guardian`・`orchestrator` など）の `roles` の上書きがあればそれ、
+  無ければ `agent_minutes`（既定 30 分。`AGENT_RUN_TIMEOUT_MS`）。設定を読めなければ 30 分。実行ごとに読むので、次の実行から効く。
+  過ぎたらコンテナを止め、時間切れ（`run.timeout`。その実行の上限の分を添える）にする。
 - 止めるときは `docker kill` し、`docker ps -aq --filter name=^/<名前>$` が空になるまで、1秒おきに最大11回確かめる。止まったことを
   確かめられなければ、結果を `run.containerNotConfirmed` にし、認証ファイルの書き戻しとセッションのファイルの保存をしない。
 - 標準エラー出力に `Unable to find image`・`No such image`・`pull access denied` があれば、イメージが無い（`run.imageMissing`）とする。
 - 標準エラー出力は先頭 64KB と末尾 256KB だけを持つ。
 
-コード: `apps/daemon/src/agents/docker.ts`（`dockerRunArgs`・`dockerClientEnv`・`DockerExecutor`・`RunningContainers`）、`apps/daemon/src/context.ts`（`AGENT_RUN_TIMEOUT_MS`）
+コード: `apps/daemon/src/agents/docker.ts`（`dockerRunArgs`・`dockerClientEnv`・`DockerExecutor`・`RunningContainers`）、`apps/daemon/src/context.ts`（`AGENT_RUN_TIMEOUT_MS`）、`apps/daemon/src/run-timeouts.ts`（`agentTimeoutMs`・`testTimeoutMs`・`RUN_TIMEOUT_ROLES`）、`apps/daemon/src/service.ts`（`executeLogged`・`runTests`）
 
 ## 実行のコマンド
 
@@ -132,7 +134,7 @@ docker のコンテナの中で1回実行して行う。テストの実行も、
 
 - エージェントと同じ `docker run` の形（秘密情報・認証ファイル・ゲートウェイは渡さない）で、`sh -c <テストのコマンド>` を実行する。
   イメージの `env` は渡す。
-- 上限は20分。過ぎたら止め、基盤の失敗（`infrastructure`）にする。
+- 上限は `config.yaml` の `run_timeout.test_minutes`（既定 20 分。PBI-150）。過ぎたら止め、基盤の失敗（`infrastructure`）にする。
 - 出力は標準出力と標準エラー出力を合わせた末尾の 20,000 文字（`TEST_OUTPUT_TAIL`）だけを残す。合否は終了コードで決める
   （docker の失敗の `125` は基盤の失敗）。
 

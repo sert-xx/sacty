@@ -62,7 +62,7 @@ description: リリースの手順
 #     command: npx
 #     args: ["-y", "example-mcp-server"]
 #     startup_timeout_sec: 60   # 起動を待つ上限（秒。任意）
-#     tool_timeout_sec: 900     # ツールの呼び出しを待つ上限（秒。任意。実行全体の上限の30分より短くする）
+#     tool_timeout_sec: 900     # ツールの呼び出しを待つ上限（秒。任意。実行全体の上限（既定 30 分）より短くする）
 #   （次はコンテナの中で起動する例）
 #   container-tool:
 #     command: npx

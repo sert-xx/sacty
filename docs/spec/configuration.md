@@ -36,6 +36,9 @@
 | `gateway.platforms` | `{}` | 組織内 PF。名前は `^[a-z0-9][a-z0-9-]*$`（[ゲートウェイ](gateway.md)） |
 | `gateway.mcp_servers` | `{}` | ホストで動かす MCP サーバー。名前は `^[A-Za-z0-9_-]+$`（同上） |
 | `web.auth` | `true` | 画面の認証。`false` で OFF（真偽だけ。[デーモンの起動と終了](daemon-lifecycle.md#画面の認証)） |
+| `run_timeout.agent_minutes` | `30` | エージェントの1回の実行の上限（分。1〜720 の整数。PBI-150）。過ぎたらコンテナを止め、時間切れ（`run.timeout`）にする（[エージェントの実行](agent-execution.md#コンテナ)） |
+| `run_timeout.test_minutes` | `20` | テストのコマンドの1回の実行の上限（分。1〜720 の整数） |
+| `run_timeout.roles` | `{}` | 役割ごとの上書き（分）。キーは工程（`investigate`・`requirements`・`design`・`implement` など）と `guardian`・`final-review`・`rework`・`orchestrator`・`chat`・`export`・`audit`・`audit-dive`。ほかのキーは誤り |
 | `update_check` | `true` | sacty の最新版（GitHub Releases の最新のリリース）を確かめて画面に知らせる。`false` なら GitHub に問い合わせない（真偽だけ。[デーモンの起動と終了](daemon-lifecycle.md#最新版の確かめ)） |
 
 ほかの検査：`default_agent`・`guardian_agent`・`audit_agent`・`step_agents` の値が、エージェントに無いときは誤り（`config.agentMissing`）、

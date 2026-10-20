@@ -28,6 +28,7 @@
 | `onepassword.account` | 使う 1Password のアカウント（[秘密情報](secrets.md#1password)） | なし |
 | `gateway` | ホストのゲートウェイ（[ゲートウェイ](gateway.md)） | なし |
 | `web.auth` | 画面の認証。`false` にすると、入り口の URL を開かなくても画面を使える（危険と切り替え方は [CLI](cli.md#sacty-up)）。`sacty up` の起動のときだけ読む | `true` |
+| `run_timeout` | エージェントの1回の実行とテストのコマンドの上限（分。1〜720）。`agent_minutes`（エージェント）・`test_minutes`（テスト）と、役割ごとの上書きの `roles`（例：`implement: 90`・`guardian: 45`）。過ぎるとコンテナを止め、タスクを一時停止します。次の実行から効きます | `agent_minutes: 30`・`test_minutes: 20` |
 | `update_check` | sacty の新しいリリースを1日ごとに確かめ、あれば画面に出す（[sacty を更新する](getting-started.md#sacty-を更新する)）。インターネットに出られない環境では `false` にする（GitHub に問い合わせない） | `true` |
 
 取り込みの間隔は、config.yaml ではなく画面の「Sacty の設定」で、取り込みの種類ごとに決めます（[取り込み](intake.md#取り込みの間隔)）。

@@ -143,7 +143,7 @@ Code: `apps/daemon/src/deployment.ts` (`findDeploymentSkill`, `resolveInReposito
   otherwise (even if both were skipped) `healthy`.
 - Result (`DeploymentChecked`; holds the overall result and `ci` and `deployment`): `healthy` becomes `passed`, `unhealthy` becomes `failed`, and anything else becomes `skipped`
   (`check_unknown`). A failed run (`deploy.checkFailed`), an unreadable answer (`deploy.unreadable`), and `unknown` (`deploy.undetermined`) are also
-  `check_unknown`. If the run exceeds the limit (`AGENT_RUN_TIMEOUT_MS`, 30 minutes; [Agent execution](agent-execution.en.md)), it is stopped like other runs and
+  `check_unknown`. If the run exceeds the limit (`deployment` in `run_timeout`, otherwise the default 30 minutes; [Agent execution](agent-execution.en.md)), it is stopped like other runs and
   treated as a failed run. The cost (even on failure) counts toward the task's budget, and the 80% notification is evaluated.
 - When a person stops it (Pause or Cancel), it is not turned into a result: sacty records `DeploymentChecked` with `retry` (`unknown`, `interrupted`, `deploy.stopped`, and the cost)
   and goes back to waiting for the check (it is checked again on resume).
