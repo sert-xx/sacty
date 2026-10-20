@@ -1,6 +1,7 @@
 # sacty が推奨するエージェントの既定（PBI-134）。sacty を更新すると、ここのモデルも新しくなる。
 # 利用者の ~/.sacty/config.yaml には agents を書かなくてよい。書いたときは、同じ名前のエージェントを項目ごとに上書きする
 # （名前を足すこともできる）。認証と単価は、config.yaml の providers.codex・providers.claude に書く。
+# 利用制限のときに切り替える代わりのエージェント（fallback）は、利用者が config.yaml の agents に書く（ここには書かない）。
 # モデルの単価が providers.<runtime>.available_models に無いエージェントは、使えない扱いにして画面で警告する。
 
 # 工程を動かす AI の既定。上から順に、使えるもの（providers に接続先と単価がある）を選ぶ

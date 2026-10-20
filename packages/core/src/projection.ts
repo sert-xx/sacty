@@ -1428,6 +1428,10 @@ export function applyEvent(
       // 記録だけ（作業履歴で確かめる。PBI-37）
       break;
 
+    case "AgentFellBack":
+      // 記録だけ（代わりのエージェントでやり直す。状態は、失敗の記録が戻している）
+      break;
+
     case "AgentSessionArchived":
       // 記録だけ（写したファイルのハッシュを、画面と API で確かめる。PBI-66）。中止したタスクの状態は変えない
       if (current.status === "cancelled") return next;

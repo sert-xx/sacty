@@ -2199,6 +2199,112 @@ describe("工程の実行と費用", () => {
     activity.close();
   });
 
+  describe("利用制限のときの代わりのエージェント（agents の fallback）", () => {
+    const backup = agent({ id: "claude-api", auth: { mode: "api-key", secret: "anthropic-key" } });
+    const main = agent({ fallback: ["claude-api"] });
+    const withFallback =
+      (cooldownMs?: number): (() => ConfigResult) =>
+      () => {
+        const base = configOf(main)();
+        return base.ok
+          ? {
+              ok: true,
+              config: {
+                ...base.config,
+                agents: { [main.id]: main, [backup.id]: backup },
+                ...(cooldownMs ? { fallbackCooldownMs: cooldownMs } : {}),
+              },
+            }
+          : base;
+      };
+    const secrets = { "claude-oauth-token": "oauth-secret", "anthropic-key": "sk-ant-secret" };
+    const limited: AgentOutcome = {
+      kind: "failed",
+      reason: "usage_limit",
+      message: "You've hit your session limit",
+    };
+    const fellBack = (service: TaskService, id: string) =>
+      (service.get(id)?.activity ?? []).flatMap((e) =>
+        e.type === "AgentFellBack" ? [e.payload] : [],
+      );
+
+    it("利用制限で失敗したら、止めずに代わりのエージェントでやり直し、期限までは代わりを使う", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      let now = Date.parse("2026-10-20T00:00:00Z");
+      const { service, executor } = makeService(
+        activity,
+        [limited, completed(1_000), completed(1_000), completed(1_000)],
+        { config: withFallback(30 * 60_000), secrets, now: () => now },
+      );
+      const task = service.createTask({ projectId: "default", title: "A" });
+      await service.runNext(task.id);
+      // 止めずに、実行待ちのまま（次の処理で代わりのエージェントが実行する）
+      expect(service.get(task.id)?.task.status).toBe("queued");
+      expect(fellBack(service, task.id)).toEqual([
+        {
+          runId: expect.any(String),
+          role: "requirements",
+          agentId: "claude-subscription",
+          fallbackAgentId: "claude-api",
+          until: "2026-10-20T00:30:00.000Z",
+        },
+      ]);
+      await service.runNext(task.id);
+      expect(executor.calls).toHaveLength(2);
+      expect(executor.calls[0]?.env.CLAUDE_CODE_OAUTH_TOKEN).toBe("oauth-secret");
+      expect(executor.calls[1]?.env.ANTHROPIC_API_KEY).toBe("sk-ant-secret");
+      expect(executor.calls[1]?.env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
+      const started = (service.get(task.id)?.activity ?? []).flatMap((e) =>
+        e.type === "AgentRunStarted" ? [e.payload.agentId] : [],
+      );
+      expect(started).toEqual(["claude-subscription", "claude-api"]);
+      expect(service.get(task.id)?.task.status).toBe("awaiting_approval");
+
+      // 期限までは、ほかのタスクも代わりのエージェントで実行する
+      const other = service.createTask({ projectId: "default", title: "B" });
+      await service.runNext(other.id);
+      expect(executor.calls[2]?.env.ANTHROPIC_API_KEY).toBe("sk-ant-secret");
+      // 期限を過ぎたら、元のエージェントに戻す
+      now += 30 * 60_000;
+      const third = service.createTask({ projectId: "default", title: "C" });
+      await service.runNext(third.id);
+      expect(executor.calls[3]?.env.CLAUDE_CODE_OAUTH_TOKEN).toBe("oauth-secret");
+      activity.close();
+    });
+
+    it("代わりのエージェントも利用制限なら、これまでどおり止める", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const { service, executor } = makeService(activity, [limited, limited], {
+        config: withFallback(),
+        secrets,
+      });
+      const task = service.createTask({ projectId: "default", title: "A" });
+      await service.runNext(task.id);
+      expect(service.get(task.id)?.task.status).toBe("queued");
+      await service.runNext(task.id);
+      const paused = service.get(task.id)?.task;
+      expect(paused?.status).toBe("paused");
+      expect(paused?.pausedReason).toBe("usage_limit");
+      expect(executor.calls).toHaveLength(2);
+      expect(fellBack(service, task.id)).toHaveLength(1);
+      activity.close();
+    });
+
+    it("利用制限でない失敗（認証など）は、代わりに切り替えずに止める", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const { service } = makeService(
+        activity,
+        [{ kind: "failed", reason: "auth", message: "401" }],
+        { config: withFallback(), secrets },
+      );
+      const task = service.createTask({ projectId: "default", title: "A" });
+      await service.runNext(task.id);
+      expect(service.get(task.id)?.task.pausedReason).toBe("auth");
+      expect(fellBack(service, task.id)).toEqual([]);
+      activity.close();
+    });
+  });
+
   it("秘密情報が無ければ、認証エラーとして止める（値はどこにも出さない）", async () => {
     const activity = new SqliteActivityStore(dbPath);
     const { service, executor } = makeService(activity, [], { secrets: {} });
@@ -2971,6 +3077,104 @@ describe("ゴールガーディアン：変更の申し出の判定（PBI-9）",
       "--- 承認済みの要求要件 ---\n# 要求要件 v2（sacty側で重複を防ぐ）",
     );
     expect(service.get(id)?.task.gate).toEqual({ step: "design", submission: 1 });
+    activity.close();
+  });
+
+  it("ゴールガーディアンが利用制限なら、代わりのエージェント（agents の fallback）で判定し直す", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const main = agent({ fallback: ["claude-api"] });
+    const backup = agent({ id: "claude-api", auth: { mode: "api-key", secret: "anthropic-key" } });
+    const config = (): ConfigResult => {
+      const base = configOf(main)();
+      return base.ok
+        ? { ok: true, config: { ...base.config, agents: { [main.id]: main, [backup.id]: backup } } }
+        : base;
+    };
+    const { service, executor } = makeService(
+      activity,
+      [
+        out("# 要求要件 v1"),
+        designWithProposal(),
+        { kind: "failed", reason: "usage_limit", message: "429 Too Many Requests" },
+        verdict("rejected", "代替手段がある"),
+      ],
+      {
+        config,
+        secrets: { "claude-oauth-token": "oauth-secret", "anthropic-key": "sk-ant-secret" },
+      },
+    );
+    const task = service.createTask({ projectId: "default", title: "決済API" });
+    await service.runNext(task.id);
+    service.approve(task.id, { step: "requirements", submission: 1 });
+    await service.runNext(task.id);
+    expect(executor.calls[3]?.env.ANTHROPIC_API_KEY).toBe("sk-ant-secret");
+    const events = service.get(task.id)?.activity ?? [];
+    expect(events.find((e) => e.type === "AgentFellBack")?.payload).toMatchObject({
+      role: "guardian",
+      agentId: "claude-subscription",
+      fallbackAgentId: "claude-api",
+    });
+    expect(events.find((e) => e.type === "ChangeJudged")?.payload).toMatchObject({
+      verdict: "rejected",
+      runResult: "completed",
+      agentId: "claude-api",
+      authMode: "api-key",
+    });
+    expect(service.get(task.id)?.task.gate).toEqual({ step: "design", submission: 1 });
+    activity.close();
+  });
+
+  it("1回の判定の中では、制限の期限が過ぎても試したエージェントに戻らない（PR #172 レビュー指摘）", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const main = agent({ fallback: ["claude-api"] });
+    const backup = agent({ id: "claude-api", auth: { mode: "api-key", secret: "anthropic-key" } });
+    const config = (): ConfigResult => {
+      const base = configOf(main)();
+      return base.ok
+        ? {
+            ok: true,
+            config: {
+              ...base.config,
+              agents: { [main.id]: main, [backup.id]: backup },
+              fallbackCooldownMs: 60_000,
+            },
+          }
+        : base;
+    };
+    const limited: AgentOutcome = {
+      kind: "failed",
+      reason: "usage_limit",
+      message: "429 Too Many Requests",
+    };
+    let now = Date.parse("2026-10-20T00:00:00Z");
+    const { service, executor } = makeService(
+      activity,
+      [out("# 要求要件 v1"), designWithProposal(), limited, limited, limited, limited],
+      {
+        config,
+        secrets: { "claude-oauth-token": "oauth-secret", "anthropic-key": "sk-ant-secret" },
+        now: () => now,
+      },
+    );
+    // 実行のたびに 61 秒進める（制限の期限 1 分が、次の実行の終わりには過ぎている）
+    executor.respond = () => {
+      now += 61_000;
+      return undefined;
+    };
+    const task = service.createTask({ projectId: "default", title: "決済API" });
+    await service.runNext(task.id);
+    service.approve(task.id, { step: "requirements", submission: 1 });
+    await service.runNext(task.id);
+    // 元（claude-subscription）と代わり（claude-api）を1回ずつ試したら、判定できなかったことにする
+    expect(executor.calls).toHaveLength(4);
+    const events = service.get(task.id)?.activity ?? [];
+    expect(events.filter((e) => e.type === "AgentFellBack")).toHaveLength(1);
+    expect(events.find((e) => e.type === "ChangeJudged")?.payload).toMatchObject({
+      verdict: "undecidable",
+      runResult: "failed",
+      agentId: "claude-api",
+    });
+    expect(service.get(task.id)?.task.status).toBe("escalated");
     activity.close();
   });
 
@@ -16710,6 +16914,81 @@ describe("オーケストレーターのセッションの使い回し（PBI-67�
     // 作業履歴から復元できる
     const { service: restarted } = makeService(activity, []);
     expect(restarted.get(task.id)?.task.orchestratorSession?.uses).toBe(2);
+    activity.close();
+  });
+
+  it("利用制限で代わりのエージェント（別の AI）に切り替えたら、前のセッションのやり取りを読み取り専用で引き継ぐ", async () => {
+    const codex = agent({
+      id: "codex-key",
+      runtime: "codex",
+      auth: { mode: "api-key", secret: "openai-key" },
+    });
+    const claude = agent({ fallback: ["codex-key"] });
+    const config = (): ConfigResult => {
+      const base = configOf(claude)();
+      return base.ok
+        ? {
+            ok: true,
+            config: { ...base.config, agents: { [claude.id]: claude, [codex.id]: codex } },
+          }
+        : base;
+    };
+    const limited: AgentOutcome = {
+      kind: "failed",
+      reason: "usage_limit",
+      message: "You've hit your session limit",
+    };
+    const { service, executor, activity } = setup([unreadable, limited, plan, completed(1_000)], {
+      config,
+      secrets: { "claude-oauth-token": "oauth-secret", "openai-key": "sk-secret" },
+    });
+    executor.sessionIdOf = (inv, runId) =>
+      inv.parser === "codex-jsonl" ? `thread-${runId}` : `session-${runId}`;
+    executor.sessionFiles = (inv, runId) =>
+      inv.parser === "codex-jsonl"
+        ? { [`sessions/2026/10/20/rollout-2026-10-20T10-00-00-thread-${runId}.jsonl`]: "{}\n" }
+        : {
+            [`projects/-workspace/session-${runId}.jsonl`]: [
+              JSON.stringify({ type: "user", message: { content: "工程を選んで" } }),
+              JSON.stringify({
+                type: "assistant",
+                message: { content: [{ type: "text", text: "設計は要らないと考えた" }] },
+              }),
+            ].join("\n"),
+          };
+    // 実行の間に、引き継ぐやり取りを読んでおく（実行の後に消される）
+    const handoffs: (string | undefined)[] = [];
+    executor.respond = (inv) => {
+      const mount = inv.mounts?.find((m) => m.containerPath === "/sacty-handoff");
+      handoffs.push(
+        mount?.readOnly
+          ? readFileSync(join(mount.hostPath, "previous-session.md"), "utf8")
+          : undefined,
+      );
+      return undefined;
+    };
+    const task = service.createTask({ projectId: "default", title: "A" });
+    await service.runNext(task.id); // Claude Code：工程を読み取れずに止まる
+    await rerunOrchestrator(service, task.id); // Claude Code：利用制限（止めない）
+    expect(service.get(task.id)?.task.status).toBe("queued");
+    await service.runNext(task.id); // Codex：引き継いで工程を選ぶ
+    expect(executor.calls[2]?.command.slice(0, 2)).toEqual(["codex", "exec"]);
+    expect(handoffs[0]).toBeUndefined();
+    expect(handoffs[2]).toContain("設計は要らないと考えた");
+    expect(executor.stdins[2]).toContain("/sacty-handoff/previous-session.md");
+    expect(executor.stdins[2]).toContain("claude-subscription");
+    const used = usedOf(service, task.id)[2];
+    expect(used).toMatchObject({
+      agentId: "codex-key",
+      runtime: "codex",
+      mode: "new",
+      reason: "agent_changed",
+      handoffFrom: { agentId: "claude-subscription", truncated: false },
+    });
+    expect(used?.handoffFrom?.sessionId).toMatch(/^session-/);
+    expect(service.get(task.id)?.task.steps.length).toBeGreaterThan(0);
+    // 引き継ぎのために書いたファイルは、実行の後に消す
+    expect(readdirSync(join(dir, "workspaces", "_handoff"))).toEqual([]);
     activity.close();
   });
 

@@ -18,6 +18,7 @@ Per-project settings (targets, GitHub accounts, the context repository, and so o
 | `default_agent` | The AI that runs the steps (an agent name) | `codex_standard` (`claude_standard` if it cannot be used) |
 | `guardian_agent` | The AI used for the Goal Guardian | `default_agent` |
 | `audit_agent` | The AI used for audits of completed tasks ([Audits](audit.en.md)) | `guardian_agent` (or `default_agent`) |
+| `agent_fallback.cooldown_minutes` | How long an agent that reached its usage limit is not used and the fallback agent is used instead (minutes; an integer from 1 to 1440; [Switching agents at a usage limit](#switching-agents-at-a-usage-limit)) | `60` |
 | `step_agents` | The AI to use for each step (including the after-merge watch) and the Orchestrator ([Models per step](#models-per-step)) | `default_agent` if omitted (`guardian_agent` for Integration review) |
 | `agents` | Overrides of and additions to sacty's default agents ([Overriding agents](#overriding-agents)). Optional | None (sacty's defaults are used) |
 | `budget.default_per_task_usd` | Budget per task (US dollars. A number greater than 0) | `1` |
@@ -148,6 +149,7 @@ agents:
 | `reasoning_effort` | The reasoning effort (`model_reasoning_effort` for Codex, `--effort` for Claude Code). Lowercase letters, digits, `_`, and `-`, starting with a lowercase letter | The default agent's (or the tool's default) |
 | `price_per_mtok_usd` | `runtime: stub` only. The unit price per million tokens (US dollars), written the same way as in `available_models` | `0` |
 | `stub` | The output of `runtime: stub` | None |
+| `fallback` | The names of the agents used instead at a usage limit. One name or a list (tried from the top; [Switching agents at a usage limit](#switching-agents-at-a-usage-limit)) | None (no switching) |
 
 - Agents cannot contain authentication, connections, or prices (`auth`, `provider`, `via_gateway`, `price_per_mtok_usd`). Write them in `providers`
   (except `price_per_mtok_usd` of `runtime: stub`).
@@ -213,11 +215,41 @@ The format of earlier versions is not converted automatically. It is an error, s
   (`mode: openai-compatible`, `base_url`, `secret`).
 - You can delete agents from `agents` when the default models are enough. Change `default_agent` and the others to the names of default agents.
 
+## Switching agents at a usage limit
+
+You can, for example, use Claude Code as the main agent and switch to Codex when the subscription usage limit is reached.
+Write `fallback` (the name of the agent to use instead) on an agent.
+
+```yaml
+default_agent: claude_standard
+agents:
+  claude_standard:
+    fallback: codex_standard
+  claude_advanced:
+    fallback: [codex_advanced, codex_standard]   # with a list, tried from the top
+agent_fallback:
+  cooldown_minutes: 60   # how long an agent that hit its usage limit is not used (minutes; 1-1440)
+```
+
+- When an agent's run fails at a usage limit (including rate limits and `429`), the task is not paused; the same step runs again with the fallback agent.
+  The activity log records that the agent reached its usage limit and the run is being retried with the fallback. This retry without pausing applies to steps, the integration review,
+  the Orchestrator's choice of steps, reading tickets, the final review, and the Goal Guardian's judgements (change proposals and rework remarks).
+- For exports, the post-merge watch, audits, and answers to questions, the failure of that run is handled as before (the task pauses, the check is recorded as not confirmed, and so on),
+  and the fallback agent is used from the next run.
+- For `cooldown_minutes`, the fallback agent is also used for other tasks. After that, the original agent is used again. When Sacty restarts,
+  the original agent is tried first as well.
+- When the Orchestrator switches to a fallback agent (a different tool), the conversation of the previous agent's session is passed read-only so the new agent
+  can take over (the session itself cannot be resumed by a different tool). The same handover happens when it switches back to the original agent.
+- If the fallback agent also reaches its usage limit, the task is paused as before. Failures that are not usage limits, such as authentication errors, do not switch agents.
+- Writing a name that does not exist, or the agent itself, in `fallback` is an error. When a fallback agent cannot be used (for example, there is no `providers` for its tool),
+  a warning is shown in the web UI and Sacty does not switch to that agent.
+- Fallback agents apply to every agent in `default_agent`, `guardian_agent`, `audit_agent`, `step_agents`, and the agents chosen in task details.
+
 ## Budget
 
 - The default budget per task is `budget.default_per_task_usd` (default $1).
 - At 80% of the budget, a notice is recorded in the activity log, and when the limit is reached the task is paused (the work is kept). To resume, enter a new cumulative limit in the web UI.
-- The task is also paused on a subscription usage limit or an authentication error, and resuming runs the stopped step again. An Operation that has started cannot be resumed and stays paused.
+- The task is also paused on a subscription usage limit or an authentication error, and resuming runs the stopped step again (for usage limits, writing a fallback agent switches to it and continues; [Switching agents at a usage limit](#switching-agents-at-a-usage-limit)). An Operation that has started cannot be resumed and stays paused.
 
 ## Related pages
 

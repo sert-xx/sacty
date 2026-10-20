@@ -562,9 +562,17 @@ function describeEventText(event: ActivityEvent, l: LabelMessages): string {
           : p.mode === "resumed"
             ? e.OrchestratorSessionResumed(p.sessionId ?? p.resumedFrom ?? "")
             : e.OrchestratorSessionStarted(reason, p.sessionId);
+      const handoff = p.handoffFrom
+        ? e.sessionHandoff(p.handoffFrom.agentId, p.handoffFrom.sessionId, p.handoffFrom.truncated)
+        : "";
       return p.saved === false && p.notSaved
-        ? text + e.sessionNotSaved(os.notSaved[p.notSaved])
-        : text;
+        ? text + handoff + e.sessionNotSaved(os.notSaved[p.notSaved])
+        : text + handoff;
+    }
+    case "AgentFellBack": {
+      const p = event.payload;
+      const step = Object.hasOwn(l.step, p.role) ? l.step[p.role as StepKey] : p.role;
+      return e.AgentFellBack(p.agentId, p.fallbackAgentId, step, new Date(p.until));
     }
     case "OrchestratorFailed":
       return e.OrchestratorFailed(

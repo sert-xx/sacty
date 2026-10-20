@@ -31,6 +31,11 @@ import { SecretRef } from "./secrets.js";
 
 export const DEFAULT_IMAGE = "sacty-agent:1.3.0";
 
+/** 利用制限に達したエージェントを使わない時間（分）の既定と範囲（config.yaml の agent_fallback.cooldown_minutes）。 */
+export const DEFAULT_FALLBACK_COOLDOWN_MINUTES = 60;
+export const FALLBACK_COOLDOWN_MIN_MINUTES = 1;
+export const FALLBACK_COOLDOWN_MAX_MINUTES = 1440;
+
 /** 秘密情報：キーチェーンの名前か、1Password の参照（op://…。PBI-34）。 */
 const SecretName = SecretRef;
 
@@ -190,6 +195,10 @@ const AgentFile = z
     stub: StubBehavior.optional(),
     /** runtime: stub だけ（接続先が無いので、単価をここに書く。書かなければ 0）。 */
     price_per_mtok_usd: PriceFile.optional(),
+    /**
+     * 利用制限に達したときに代わりに使うエージェントの名前（1つか、上から順に試す並び）。書かなければ切り替えない。
+     */
+    fallback: z.union([z.string().min(1), z.array(z.string().min(1)).min(1)]).optional(),
   })
   .superRefine((agent, ctx) => {
     for (const key of LEGACY_AGENT_KEYS) {
@@ -287,6 +296,20 @@ const ConfigFile = z.object({
   guardian_agent: z.string().optional(),
   /** 完了したタスクの監査に使うAI（PBI-125）。省略すると guardian_agent（それも無ければ default_agent）。 */
   audit_agent: z.string().optional(),
+  /**
+   * 利用制限で代わりのエージェント（agents の fallback）に切り替えたときの扱い。cooldown_minutes の間は、利用制限に
+   * 達したエージェントを使わず、代わりのエージェントを使う（過ぎたら、元のエージェントに戻す）。
+   */
+  agent_fallback: z
+    .object({
+      cooldown_minutes: z
+        .number()
+        .int()
+        .min(FALLBACK_COOLDOWN_MIN_MINUTES)
+        .max(FALLBACK_COOLDOWN_MAX_MINUTES)
+        .default(DEFAULT_FALLBACK_COOLDOWN_MINUTES),
+    })
+    .prefault({}),
   budget: z
     .object({
       default_per_task_usd: z.number().positive().default(DEFAULT_BUDGET_USD),
@@ -632,6 +655,8 @@ export type AgentConfig = {
   price: PricePerMTok;
   /** OpenAI 互換の接続先（auth.mode が provider のとき。PBI-40）。 */
   endpoint?: { name: string; baseUrl: string; secret?: string; viaGateway: boolean };
+  /** 利用制限に達したときに代わりに使うエージェントの名前（上から順に。使えるものだけ）。 */
+  fallback?: string[];
 };
 
 /** 工程・オーケストレーターの役割（step_agents のキー。PBI-40）。 */
@@ -667,6 +692,31 @@ export function stepAgentFor(
 export function definedAgent(config: SactyConfig, name: string): AgentConfig | undefined {
   const agents = config.agents;
   return agents && Object.hasOwn(agents, name) ? agents[name] : undefined;
+}
+
+/**
+ * 利用制限に達したエージェントの代わりに使うエージェント。agent が制限中（limited）でなければ agent。制限中なら、
+ * fallback を上から順に（その fallback も、さらに上から順に）たどり、制限中でない最初のものを返す。どれも制限中なら
+ * agent（そのまま実行し、利用制限で止める）。
+ */
+export function fallbackAgentFor(
+  config: SactyConfig,
+  agent: AgentConfig,
+  limited: (id: string) => boolean,
+): AgentConfig {
+  const seen = new Set<string>();
+  const visit = (current: AgentConfig): AgentConfig | undefined => {
+    if (seen.has(current.id)) return undefined;
+    seen.add(current.id);
+    if (!limited(current.id)) return current;
+    for (const name of current.fallback ?? []) {
+      const next = definedAgent(config, name);
+      const found = next && visit(next);
+      if (found) return found;
+    }
+    return undefined;
+  };
+  return visit(agent) ?? agent;
 }
 
 /**
@@ -711,6 +761,8 @@ export type SactyConfig = {
   updateCheck: boolean;
   /** エージェントの実行とテストの実行の上限（分。PBI-150）。 */
   runTimeouts: RunTimeouts;
+  /** 利用制限に達したエージェントを使わず、代わりのエージェントを使う時間（ミリ秒。agent_fallback.cooldown_minutes）。 */
+  fallbackCooldownMs?: number;
   /** 組織内 PF の API（PBI-35）。 */
   platforms: Platform[];
   /** ホストで動かす MCP サーバー（PBI-36）。 */
@@ -889,10 +941,22 @@ function buildAgents(
         message("config.tierRuntime", { id, runtime: agent.runtime, expected: tier.runtime }),
       );
     }
+    const fallback = agent.fallback === undefined ? [] : [agent.fallback].flat();
+    if (fallback.includes(id)) {
+      return invalid(`agents.${id}.fallback`, message("config.agentFallbackSelf", { id }));
+    }
+    const missing = fallback.find((name) => !merged.has(name));
+    if (missing !== undefined) {
+      return invalid(
+        `agents.${id}.fallback`,
+        message("config.agentMissing", { key: `agents.${id}.fallback`, id: missing }),
+      );
+    }
     const common = {
       id,
       ...(agent.model ? { model: agent.model } : {}),
       ...(agent.reasoning_effort ? { reasoning_effort: agent.reasoning_effort } : {}),
+      ...(fallback.length > 0 ? { fallback } : {}),
     };
     if (agent.runtime === "stub") {
       agents[id] = {
@@ -943,6 +1007,21 @@ function buildAgents(
   }
   for (const { provider, model, ids } of unpriced.values()) {
     warnings.push(message("config.modelPriceMissing", { provider, model, agents: ids.join(", ") }));
+  }
+  // 代わりのエージェントは、使えるものだけを残す。書いた代わりが使えなければ、切り替えられないことを警告する
+  for (const agent of Object.values(agents)) {
+    if (!agent.fallback) continue;
+    for (const name of agent.fallback) {
+      const reason = unusable.get(name);
+      if (reason) {
+        warnings.push(
+          message("config.agentFallbackUnavailable", { id: agent.id, fallback: name, reason }),
+        );
+      }
+    }
+    const usable = agent.fallback.filter((name) => Object.hasOwn(agents, name));
+    if (usable.length > 0) agent.fallback = usable;
+    else delete agent.fallback;
   }
   return { ok: true, agents, unusable, warnings };
 }
@@ -1070,6 +1149,7 @@ export function loadConfig(home: string, defaultsPath: string = DEFAULT_AGENTS_P
         testMinutes: file.run_timeout.test_minutes,
         roles: file.run_timeout.roles,
       },
+      fallbackCooldownMs: file.agent_fallback.cooldown_minutes * 60_000,
       gatewayRetry: {
         maxAttempts: file.gateway.retry.max_attempts,
         maxWaitMs: file.gateway.retry.max_wait_sec * 1000,
@@ -1216,6 +1296,12 @@ providers:
 #   stub:
 #     runtime: stub
 #     price_per_mtok_usd: { input: 3, cached_input: 0.3, cache_write: 3.75, output: 15 }
+
+# 利用制限に達したら、代わりのエージェントに切り替えて続ける。agents のエージェントに fallback を書く
+# （例 Claude Code をメインにし、利用制限なら Codex にする：agents の claude_standard に fallback: codex_standard。並べると上から順に試す）。
+# cooldown_minutes は、利用制限に達したエージェントを使わず、代わりを使う時間（分。1〜1440）
+# agent_fallback:
+#   cooldown_minutes: 60
 
 budget:
   default_per_task_usd: ${DEFAULT_BUDGET_USD}
