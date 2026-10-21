@@ -2,7 +2,7 @@
 
 - 日付: 2026-10-21（UTC）
 - タスク: なし
-- PR: なし
+- PR: #185
 - ブランチ: claude/epic-goodall-qizmqt
 - 関係する ADR: なし
 
