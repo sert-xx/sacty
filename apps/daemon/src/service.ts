@@ -208,6 +208,14 @@ import {
   sactyReviewTask,
 } from "./github.js";
 import {
+  buildGitHubComment,
+  commentAllowed,
+  githubCommentMarker,
+  mentionsGitHubComments,
+  requestedGitHubComments,
+} from "./github-comments.js";
+import { githubPromptLines, githubRelayEnv } from "./github-relay.js";
+import {
   CONTAINER_PROJECT_MEMORY_DIR,
   CONTAINER_REPOSITORY_MEMORY_DIR,
   countOpenedMemories,
@@ -302,6 +310,7 @@ import {
   referencedPullRequest,
   reviewMarker,
   type SplitChild,
+  STEP_NAME,
   type SubtaskSummary,
   servicePromptLines,
 } from "./prompts.js";
@@ -488,7 +497,7 @@ export type ServiceDeps = {
   /** タスクごとの作業領域を作る場所。 */
   workspaceRoot: string;
   /** ホストのゲートウェイ（PBI-37）。無ければ、ゲートウェイ経由のエージェントは実行できない。 */
-  gateway?: Pick<AiGateway, "containerOrigin" | "register" | "platformsUrl">;
+  gateway?: Pick<AiGateway, "containerOrigin" | "register" | "platformsUrl" | "githubUrl">;
   /** 認証情報を用意できない組織内 PF の理由（画面の状態に出す。PBI-35）。 */
   platformProblems?: (names: readonly string[]) => DaemonText[];
   /** 準備ができないホストの MCP サーバーの理由（画面の状態に出す。PBI-36）。 */
@@ -1825,6 +1834,84 @@ export class TaskService {
   }
 
   /**
+   * 承認した工程の成果でエージェントが頼んだ、PR・Issue へのコメント（sacty-github-comments）を、プロジェクトの gh の
+   * アカウントで投稿する。投稿先は、プロジェクトの対象のリポジトリだけ。前に投稿の後・記録の前に止まっていたら、
+   * 目印で見つけたコメントを使う（二度投稿しない）。投稿できなくても、理由を記録してタスクは進める。
+   */
+  private async postGitHubComments(task: Task, step: StepKey): Promise<void> {
+    const approved = task.approved[step];
+    if (!approved) return;
+    const usedSecrets: string[] = [];
+    const requested = requestedGitHubComments(approved.output);
+    const results: { target: string; url?: string; failed?: DaemonText }[] = [];
+    let failed: DaemonText | undefined;
+    if (!requested) return;
+    // 待っている間（トークンの取り出し・既存のコメントの検索）に、止められた・承認が変わったら、新しく投稿しない
+    // （記録もしない。再開したら、目印で投稿済みのものを見つけて続ける）
+    const valid = () => {
+      if (this.cancelling.has(task.id) || this.pauseRequested.has(task.id)) return false;
+      const latest = this.tasks.get(task.id);
+      return (
+        latest !== undefined &&
+        awaitingGitHubComments(latest) === step &&
+        latest.approved[step]?.at === approved.at
+      );
+    };
+    if (!requested.ok) failed = requested.reason;
+    else {
+      const project = this.deps.projects.get(task.projectId);
+      for (const [index, comment] of requested.comments.entries()) {
+        if (!valid()) return;
+        const target = comment.target.slice(0, 2000);
+        if (!comment.repo || !comment.number) {
+          results.push({ target, failed: message("githubComments.targetInvalid") });
+          continue;
+        }
+        if (!commentAllowed(comment.repo, project?.targets ?? [], task)) {
+          results.push({ target, failed: message("githubComments.targetNotAllowed") });
+          continue;
+        }
+        try {
+          const token = await this.githubToken(task, comment.repo, usedSecrets);
+          const where = { repo: comment.repo, token, number: comment.number };
+          const existing = await this.deps.pulls.findIssueComment({
+            ...where,
+            marker: githubCommentMarker(task.id, step, approved.at, index),
+          });
+          if (!existing && !valid()) return;
+          const { url } =
+            existing ??
+            (await this.deps.pulls.commentIssue({
+              ...where,
+              body: buildGitHubComment({
+                taskId: task.id,
+                step,
+                stepName: STEP_NAME[step],
+                approvedAt: approved.at,
+                index,
+                body: comment.body,
+              }),
+            }));
+          results.push({ target, url });
+        } catch (error) {
+          results.push({ target, failed: redactText(errorText(error), usedSecrets) });
+        }
+      }
+    }
+    const latest = this.tasks.get(task.id);
+    if (!latest || !valid()) return;
+    this.append(latest, [
+      {
+        actor: "sacty",
+        event: {
+          type: "GitHubCommentsPosted",
+          payload: { step, approvedAt: approved.at, results, ...(failed ? { failed } : {}) },
+        },
+      },
+    ]);
+  }
+
+  /**
    * レビューの工程の対象の PR を確かめる（PBI-19）。タスクにある、タスクの対象リポジトリの PR を、
    * プロジェクトの gh のアカウントで読む。確かめられなければ理由を返す（トークンは含めない）。
    */
@@ -1997,6 +2084,7 @@ export class TaskService {
               }
             : {}),
           rules: exports.rules,
+          githubHosts: Object.keys(this.githubRelayHosts(task.id)),
         }
       : undefined;
     const planned = this.deps.planner
@@ -4314,6 +4402,8 @@ export class TaskService {
               awaitingTicketPrComment(t) ||
               // 承認した成果を、決めた書き出し先に書き出す（PBI-56）
               awaitingExport(t) !== undefined ||
+              // 承認した成果で頼まれた、PR・Issue へのコメントを投稿する
+              awaitingGitHubComments(t) !== undefined ||
               // 要求要件・設計の成果を、タスクブランチへの PR にする（PBI-57）
               this.awaitingStepPullRequest(t) !== undefined ||
               // マージの後のデプロイの確認（PBI-89）。一時停止中のタスクでは実行しない
@@ -4583,6 +4673,26 @@ export class TaskService {
     return token;
   }
 
+  /**
+   * GitHub の読み取りの中継で使える、ホストごとの gh のアカウント（タスクのプロジェクトで選んだもの）。タスクでない
+   * 実行や、アカウントを選んでいないプロジェクトでは空。
+   */
+  private githubRelayHosts(taskId: string): Record<string, string> {
+    const task = this.tasks.get(taskId);
+    const accounts = task ? this.deps.projects.get(task.projectId)?.githubAccounts : undefined;
+    return { ...accounts };
+  }
+
+  /** gh api の既定のホスト（タスクのリポジトリのホスト、無ければ github.com、無ければ最初のホスト）。 */
+  private githubDefaultHost(taskId: string, hosts: readonly string[]): string {
+    const task = this.tasks.get(taskId);
+    const repo = task?.source?.repo ?? task?.repo ?? task?.repository?.url;
+    const host = repo ? httpsHost(`${repo}/`) : undefined;
+    const bound = new Set(hosts);
+    if (host && bound.has(host)) return host;
+    return bound.has("github.com") ? "github.com" : (hosts[0] ?? "github.com");
+  }
+
   /** タスクのプロジェクトで、url のホストに選んだ gh のアカウント（選んでいなければ空）。 */
   private githubAccountOf(task: Task, url: string): { account?: string } {
     const host = httpsHost(`${url}/`) ?? "";
@@ -4708,6 +4818,9 @@ export class TaskService {
     // 承認した成果の書き出しは、次の工程と取り込み元へのコメントの前に行う（コメントに URL を添えるため。PBI-56）
     const exporting = initial && awaitingExport(initial);
     if (initial && exporting) return this.exportOutput(initial, exporting);
+    // 承認した成果で頼まれたコメントは、次の工程の前に投稿する
+    const commenting = initial && awaitingGitHubComments(initial);
+    if (initial && commenting) return this.postGitHubComments(initial, commenting);
     if (initial && awaitingVerification(initial)) return this.verify(initial);
     // 要求要件・設計の成果を、タスクブランチへの PR にして承認待ちにする（PBI-57）
     const waitingPr = initial && this.awaitingStepPullRequest(initial);
@@ -5573,10 +5686,21 @@ export class TaskService {
       return;
     }
     const operation = parsedOperation.data;
-    const available = await this.exportDestinations(task, config);
-    if (!available.destinations.some((d) => d.via === operation.via && d.name === operation.name)) {
-      pause(message("operation.connectionMissing"));
-      return;
+    if (operation.via === "github") {
+      // GitHub は、プロジェクトで gh のアカウントを選んだホストだけ（ゲートウェイが無ければ読めない）
+      const hosts = this.deps.gateway ? this.githubRelayHosts(task.id) : {};
+      if (!Object.hasOwn(hosts, operation.name.toLowerCase())) {
+        pause(message("operation.connectionMissing"));
+        return;
+      }
+    } else {
+      const available = await this.exportDestinations(task, config);
+      if (
+        !available.destinations.some((d) => d.via === operation.via && d.name === operation.name)
+      ) {
+        pause(message("operation.connectionMissing"));
+        return;
+      }
     }
     // 接続先を調べている間に人が選び直していれば、それで決める（消えた名前から選び直したのに、古い名前で止めない。
     // PR #131 再レビュー指摘）
@@ -5622,7 +5746,7 @@ export class TaskService {
         this.append(this.mustGet(task.id), [
           this.contextResolved(runId, context, { platforms: [], warnings: [] }),
         ]);
-      } else {
+      } else if (operation.via === "platform") {
         platform = await this.findPlatform(task, config, operation.name, usedSecrets);
         if (!platform) throw new MessageError(message("operation.connectionMissing"));
       }
@@ -7823,7 +7947,13 @@ export class TaskService {
         (s) => s.secret === GATEWAY_TOKEN_SECRET,
       );
       let gateway: { origin: string; token: string } | undefined;
-      if (viaGateway || platforms.length > 0 || tokenEnvs.length > 0) {
+      // GitHub の読み取りの中継は、タスクのプロジェクトで gh のアカウントを選んだホストなら、どの実行でも使える
+      // （設定で切れない）。トークンはゲートウェイがホストで付ける。文書作成は、承認の前に外部の接続を渡さない決まり
+      // （PBI-112）なので除く
+      const github =
+        this.deps.gateway && run.role !== "document" ? this.githubRelayHosts(run.taskId) : {};
+      const githubHosts = Object.keys(github);
+      if (viaGateway || platforms.length > 0 || tokenEnvs.length > 0 || githubHosts.length > 0) {
         if (!this.deps.gateway) throw new MessageError(message("gateway.unavailable"));
         let route: { base: string; apiKey?: string } | undefined;
         if (viaGateway && auth.mode === "bedrock") {
@@ -7876,6 +8006,7 @@ export class TaskService {
           run.role === "operation" || run.role === "document" || run.role === "export"
             ? { platforms: platforms.map((p) => p.name), hostMcp: run.context?.mcpServers ?? [] }
             : undefined,
+          github,
         );
         usedSecrets.push(gatewayRun.token);
         if (viaGateway) {
@@ -7884,7 +8015,9 @@ export class TaskService {
       }
       const invocation = await buildInvocation(
         run.agent,
-        run.prompt,
+        gatewayRun && githubHosts.length > 0
+          ? [run.prompt, "", ...githubPromptLines(githubHosts, run.role)].join("\n")
+          : run.prompt,
         this.deps.secrets,
         (value) => usedSecrets.push(value),
         run.role,
@@ -7895,6 +8028,17 @@ export class TaskService {
       );
       if (gatewayRun && platforms.length > 0 && this.deps.gateway) {
         invocation.env.SACTY_PF_URL = this.deps.gateway.platformsUrl(gatewayRun.token);
+        invocation.hostGateway = true;
+      }
+      if (gatewayRun && githubHosts.length > 0 && this.deps.gateway) {
+        Object.assign(
+          invocation.env,
+          githubRelayEnv(
+            this.deps.gateway.githubUrl(gatewayRun.token),
+            githubHosts,
+            this.githubDefaultHost(run.taskId, githubHosts),
+          ),
+        );
         invocation.hostGateway = true;
       }
       if (gatewayRun && tokenEnvs.length > 0) {
@@ -10260,6 +10404,27 @@ function awaitingReviewPost(task: Task): boolean {
 function awaitingExport(task: Task): StepKey | undefined {
   if (task.status === "paused" || task.status === "running") return undefined;
   return exportDue(task);
+}
+
+/**
+ * 承認した工程の成果で頼まれた PR・Issue へのコメントを、まだ投稿していない工程（承認し直したら、その版を投稿する）。
+ * レビューは、書いたレビューを投稿するので除く。中止・一時停止中・実行中は投稿しない。
+ */
+export function awaitingGitHubComments(task: Task): StepKey | undefined {
+  if (task.status === "cancelled" || task.status === "paused" || task.status === "running") {
+    return undefined;
+  }
+  return task.steps
+    .map((s) => s.key)
+    .find((step) => {
+      const approved = task.approved[step];
+      return (
+        step !== "review" &&
+        approved !== undefined &&
+        mentionsGitHubComments(approved.output) &&
+        task.githubComments?.[step]?.approvedAt !== approved.at
+      );
+    });
 }
 
 /** 完了した調査のタスクで、結果をまだ取り込み元の Issue に返していないか（PBI-18）。 */

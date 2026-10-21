@@ -281,6 +281,11 @@ const ja = {
     PullRequestReopened: (number: number) => `PR #${number} が開き直された・マージ待ち`,
     IssueCommented: (url: string) => `調査の結果を Issue にコメントした（${url}）`,
     IssueCommentFailed: (message: string) => `調査の結果を Issue に返せなかった：${message}`,
+    GitHubCommentsPosted: (step: string, results: string[]) =>
+      `${step}の成果で頼まれた GitHub へのコメントの投稿の結果：${results.join("、") || "なし"}`,
+    GitHubCommentPosted: (url: string) => `投稿した（${url}）`,
+    GitHubCommentFailed: (target: string, message: string) =>
+      `${target} に投稿できなかった（${message}）`,
     ReviewTargetResolved: (url: string, commit: string) =>
       `レビューの対象の PR を確認（${url}・${commit}）`,
     PullRequestReviewPosted: (url: string) => `レビューを PR に投稿した（${url}）`,
@@ -681,6 +686,10 @@ const en: LabelMessages = {
       `${text} (${reason === "pull_request_merged" ? "the PR was merged" : "the PR was closed"})`,
     IssueCommentFailed: (message) =>
       `Could not post the investigation result to the issue: ${message}`,
+    GitHubCommentsPosted: (step, results) =>
+      `Result of posting the GitHub comments requested in the ${step} output: ${results.join("; ") || "none"}`,
+    GitHubCommentPosted: (url) => `posted (${url})`,
+    GitHubCommentFailed: (target, message) => `could not post to ${target} (${message})`,
     GuardianMissed: "Goal Guardian miss: a deliverable that passed the final review was sent back",
     FinalReviewFailed: (message, cost) => `${message} (${cost})`,
     OrchestratorFailed: (message, cost) => `${message} (${cost})`,

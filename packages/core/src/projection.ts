@@ -507,6 +507,11 @@ export type Task = {
   };
   /** 調査の結果を、取り込み元の GitHub Issue に返したか（PBI-18）。 */
   issueComment?: { url: string } | { failed: DaemonText };
+  /**
+   * 承認した工程の成果でエージェントが頼んだ、GitHub の PR・Issue へのコメントを投稿した記録（工程ごとに、最後に
+   * 投稿した承認の版）。
+   */
+  githubComments?: Partial<Record<StepKey, PayloadOf<"GitHubCommentsPosted"> & { at: string }>>;
   /** レビューの工程の対象の PR（PBI-19）。 */
   reviewTarget?: PayloadOf<"ReviewTargetResolved">;
   /** レビューの工程が書いた、PR の行へのコメント（PBI-19）。 */
@@ -1359,6 +1364,18 @@ export function applyEvent(
           ? { url: event.payload.url }
           : { failed: event.payload.message };
       break;
+
+    case "GitHubCommentsPosted": {
+      const p = event.payload;
+      if (task.approved[p.step]?.at !== p.approvedAt) {
+        throw new ActivityIntegrityError(event, "not the approved output of the step");
+      }
+      if (task.githubComments?.[p.step]?.approvedAt === p.approvedAt) {
+        throw new ActivityIntegrityError(event, "already posted");
+      }
+      task.githubComments = { ...task.githubComments, [p.step]: { ...p, at: event.at } };
+      break;
+    }
 
     case "PullRequestMerged":
     case "PullRequestClosed":

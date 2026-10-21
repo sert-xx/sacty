@@ -162,6 +162,11 @@ docker のコンテナの中で1回実行して行う。テストの実行も、
     イメージに残す npm の設定（`registry` と `npm_config`）は別の secret で渡す。
   - secret の中身は BuildKit のキャッシュの判定に入らないので、中身のハッシュ（`NPM_CONFIG_HASH`・`SACTY_SETUP_HASH`）を build-arg で渡し、
     変えたときに作り直されるようにする。
+  - `gh` の代わりに `packages/cli/docker/gh-shim.cjs` を `/opt/sacty/bin/gh` に置き、`PATH` の先頭にする（元のイメージの `gh` より先に
+    使われる）。`gh api` だけを受け、REST の `GET`・`HEAD` と GraphQL を `$SACTY_GITHUB_URL/<ホスト>/…` に送る（ホストは `--hostname`、
+    無ければ `GH_HOST`）。フィールド（`-f`・`-F`）は、REST ではクエリ、GraphQL では `query` と変数にする。`--paginate`（REST は `link` を
+    たどって配列をまとめる。GraphQL は `$endCursor` と `pageInfo`）・`--jq`（`jq` があるとき）・`-i`・`-H`・`--input` を受ける。
+    書き込みのメソッドと、ほかのコマンドは、使い方を示して終了コード 1 で終わる（[ゲートウェイ](gateway.md#github-の読み取りの中継)）。
 - イメージの `env` は、エージェントとテストの両方のコンテナに渡す。
 
 コード: `apps/daemon/src/config.ts`（`resolveImage`・`languageImageTag`・`DEFAULT_IMAGE`）、`apps/daemon/src/image.ts`（`buildImage`・`imageBuildArgs`・`imageBuildSettings`・`imageBuildTargets`）、`packages/cli/docker/Dockerfile`

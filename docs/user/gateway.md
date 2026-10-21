@@ -1,4 +1,4 @@
-<!-- 対応するコード: apps/daemon/src/config.ts（gateway・providers・ProviderFile・ProviderAuth）、apps/daemon/src/gateway.ts（DEFAULT_RETRY_POLICY・DEFAULT_HOST_ADDRESS）、apps/daemon/src/host-mcp.ts（HostMcpFile）、apps/daemon/src/host-mcp-processes.ts、apps/daemon/src/platforms.ts（PlatformFile） -->
+<!-- 対応するコード: apps/daemon/src/config.ts（gateway・providers・ProviderFile・ProviderAuth）、apps/daemon/src/gateway.ts（DEFAULT_RETRY_POLICY・DEFAULT_HOST_ADDRESS）、apps/daemon/src/host-mcp.ts（HostMcpFile）、apps/daemon/src/host-mcp-processes.ts、apps/daemon/src/platforms.ts（PlatformFile）、apps/daemon/src/github-relay.ts、packages/cli/docker/gh-shim.cjs -->
 
 **日本語** | [English](gateway.en.md)
 
@@ -197,6 +197,20 @@ gateway:
   本文に、送ったキーがどんな形で写っていても出さないためです。原因は、窓口の側のログなどで確かめてください。
 - 認証情報はデーモンの起動時に用意します。用意できない PF は、タスクの一覧の画面に出します（ほかの PF は使えます）。
 - JIRA の取り込み（[取り込み](intake.md#jira-のチケット)）と成果の書き出し（[成果の書き出し](result-export.md)）の接続先にも使います。
+
+## GitHub の読み取り
+
+工程エージェントは、ゲートウェイ経由で GitHub の API を読めます。設定は要らず、切ることもできません。プロジェクトの設定で
+GitHub のアカウントを選んだホスト（[プロジェクトの設定](project-settings.md)）だけが使え、トークンはゲートウェイが付けます
+（エージェントのコンテナには渡しません）。
+
+- 読み取りだけです。REST の `GET`・`HEAD` と、GraphQL の `query` だけを送ります。書き込み（`POST`・`PATCH`・`mutation` など）は断ります。
+- エージェントのイメージの `gh` は、`gh api` だけを使えます（例 `gh api repos/acme/app/pulls/12/comments`）。`gh pr view` などのほかの
+  コマンドは使えません。curl では `$SACTY_GITHUB_URL/<ホスト>/<API のパス>` で読めます。
+- PR・Issue へのコメントは、エージェントが工程の出力に書き、人が承認した後に sacty が投稿します
+  （[タスクを進める](tasks.md#pr-と-issue-へのコメント)）。
+- 文書作成の工程では使えません（承認の前に外部の接続を使わないためです）。
+- `gh` を使うには、この版で作り直したイメージが要ります（`npx sacty image build`）。作り直す前のイメージでも、curl では読めます。
 
 ## 関係するページ
 

@@ -59,6 +59,7 @@ To create a user guide, meeting notes, or a translated draft, leave the reposito
 Document does not use external connections or project context and does not read drafts from external sources. Include the source text and any necessary rules in the task body; supply missing details through Request changes. Providing only a URL does not let this step retrieve the page’s contents to write the draft.
 
 You can also request a calendar, register, or existing external page update without choosing a repository. This covers one-off changes that use one configured destination.
+Apart from the chosen destination, GitHub can always be read (reading only; [Gateway](gateway.en.md#reading-github)).
 
 1. Include the specific target ID/URL, change and preconditions, and desired result in the request. The Orchestrator selects the destination, target, requested change, and verification method. Missing target or connection details stop the task before execution starts.
 2. The single Operation step performs the request once. There is no separate preparation step or pre-execution approval, so confirm the request is correct before starting the task.
@@ -70,7 +71,25 @@ If target details are missing, create a new task with the missing information in
 
 You cannot request changes after execution starts. Resume is rejected after interruption, restart, or failure, and the task stays paused. Check the actual state in the external service, cancel the task, and create a new task for only the changes that remain undone. The agent is instructed to write once and check the result, but this does not guarantee duplicate prevention by the external service.
 
+You can also request replies on GitHub PRs and issues as an operation (for example "Reply to the review comments on https://github.com/acme/app/pull/12").
+The hosts for which a GitHub account is chosen in the project settings become destination candidates. The agent reads the PR or issue and writes the reply in its
+output. When you approve the result, sacty posts the reply ([Comments on PRs and issues](#comments-on-prs-and-issues)). It cannot fix or push
+code. To fix a PR's code, create a task with the repository selected.
+
 Recurring updates, monitoring, and automation of long-running work across several destinations are outside this scope. Split requests with several deliverables, such as a draft and an external update, into units you can review and approve.
+
+## Comments on PRs and issues
+
+A step's agent can read GitHub but cannot write to it ([Gateway](gateway.en.md#reading-github)). When a comment on a PR or an issue
+is needed, the agent writes the comment in the step's output, and after a person approves the step's output, sacty posts it with the project's GitHub
+account. Nothing is posted unless you approve.
+
+- Before approving, you can check what will be posted in the `sacty-github-comments` JSON at the end of the output. If you request changes and then approve, the revised version is posted.
+- Only PRs and issues of the project's target repositories (and the task's source or working repository) can be targets. Other URLs are not posted to, and
+  the reason appears in the activity history.
+- The end of the comment notes that AI wrote it in a sacty task and a person approved it.
+- The result of posting (the comment's URL, or why it could not be posted) appears in the activity history. Even if posting fails, the task does not stop.
+- The review step, as before, has sacty post the written review to the PR.
 
 ## Repositories without tests
 

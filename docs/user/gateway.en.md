@@ -198,6 +198,20 @@ gateway:
 - Credentials are prepared when the daemon starts. Platforms whose credentials cannot be prepared are shown on the task list screen (other platforms remain usable).
 - They are also used as the connection for JIRA intake ([Intake](intake.en.md#jira-tickets)) and result export ([Exporting results](result-export.en.md)).
 
+## Reading GitHub
+
+Step agents can read the GitHub API through the gateway. No setting is needed, and it cannot be turned off. Only the hosts for which a GitHub account is chosen
+in the project settings ([Project settings](project-settings.en.md)) can be used, and the gateway adds the token
+(it is not passed to the agent's container).
+
+- It is read-only. Only REST `GET` and `HEAD` and GraphQL `query` are sent. Writes (`POST`, `PATCH`, `mutation`, and so on) are refused.
+- The `gh` in the agent image can use only `gh api` (for example `gh api repos/acme/app/pulls/12/comments`). Other commands such as `gh pr view`
+  cannot be used. With curl, read `$SACTY_GITHUB_URL/<host>/<API path>`.
+- For comments on PRs and issues, the agent writes them in the step's output, and sacty posts them after a person approves it
+  ([Working on tasks](tasks.en.md#comments-on-prs-and-issues)).
+- It is not available in the document writing step (no external connection is used before approval).
+- To use `gh`, you need an image rebuilt with this version (`npx sacty image build`). Even with an image built before that, curl can read.
+
 ## Related pages
 
 - [config.yaml settings](config.en.md)
