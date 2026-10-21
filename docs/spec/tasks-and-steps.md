@@ -194,8 +194,8 @@
 | --- | --- |
 | `plan`・`reason` | 組み合わせと理由 |
 | `baseBranch` | ベースブランチ。既定のブランチと違えば、そのブランチで用意し直す（用意できなければ既定のブランチのまま進め、理由を置き換える） |
-| `testCommand` | テストのコマンド（`sh -c` で実行し、終了コード 0 で合格。1〜1000 文字）。実装の工程があるのに無く、下の `noTests` も使えなければ一時停止する（`orchestrator.testCommandUnknown`） |
-| `noTests` | `testCommand` が空のときだけ読む、リポジトリにテストの仕組みが無いと判断した根拠（1〜2000 文字）。`StepsChosen` の `noTestsReason` に記録する（下の「テストの仕組みが無いタスク」） |
+| `testCommand` | テスト（検証）のコマンド（`sh -c` で実行し、終了コード 0 で合格。1〜1000 文字）。テストのコードが無くても、成果物を機械的に確かめる検証（`kustomize build`・`helm lint`・`kubeconform`・`terraform validate`・`yamllint` など）を CI・Makefile・pre-commit が実行しているか、リポジトリの形から決まる（`kustomization.yaml`・`Chart.yaml` など）なら、それを書かせる。使うツールがどのイメージにも無くても空にさせない（下の「実装の検証」）。実装の工程があるのに無く、下の `noTests` も使えなければ一時停止する（`orchestrator.testCommandUnknown`） |
+| `noTests` | `testCommand` が空のときだけ読む、リポジトリにテストの仕組みも検証のコマンドも無いと判断した根拠（1〜2000 文字）。`StepsChosen` の `noTestsReason` に記録する（下の「テストの仕組みが無いタスク」） |
 | `investigation` | 調査の種類（`content`：内容の調査、`bug`：不具合の調査） |
 | `images`・`imageReason` | 工程ごとのイメージ。プロジェクトの対象でイメージを指定していれば、選ばせずに全工程でそれを使う。`images` に無い名前なら止める |
 | `defaultReasons` | 既定のイメージ（`default`）を使う工程ごとの、`images` のどれも合わない理由（下の「工程のイメージ」） |
@@ -356,6 +356,15 @@
 - 再現の工程の後は、再現のテストを実行し、終了コードが 0 でなければ再現できたとして実装へ進む。0 なら（または再現のテストの申告が
   無ければ）、再現できなかったとして人間の判断を待つ（再現の工程は承認できない。差し戻すか中止する）。
 - テストのイメージは、検証は実装（無ければ再現）の工程のイメージ、再現の確かめは再現（無ければ実装）の工程のイメージ。
+- テスト（検証）のコマンドに書いたツールがテストのイメージに無いとき（終了コードが 127 で、出力に sh の `<名前>: not found`・
+  `<名前>: command not found` の行があり、その名前がテストのコマンドの中に語として書いてある）は、実装をやり直しても直らないので、
+  テストの結果（`TestsRun`）も再現の確かめ（`ReproductionChecked`）も記録せずに一時停止する（`verify.commandMissing`。ツールの名前・
+  イメージの名前・工程を示し、`images.<名前>` の `packages`・`run` で入れて `sacty image build` で作り直す・ほかのイメージに変える案内を出す。
+  既定のイメージなら、`images` にイメージを足す案内）。検証（再現の確かめ）を待ったまま止めるので、再開するとテストを実行し直す。
+  テストのコマンドに書いていない名前（`npm test` の中のスクリプトが使うツールなど）と、`/` を含む名前（`./scripts/check.sh` など）は
+  リポジトリの問題として当てず、ふつうのテストの失敗にする。
+
+  コード: `apps/daemon/src/agents/test-runner.ts`（`missingCommands`）、`apps/daemon/src/service.ts`（`verify`・`checkReproduction`・`commandMissingPause`）
 - 実装の成果物（タスクの画面と実装の承認の画面）は、テストの結果と最終レビューを、今の提出の検証のものだけ対応表に出す
   （`verificationResults`）。やり直した実装の検証が始まった（`verification` が `pending`）後のテストの結果と最終レビュー、最新の
   テストの結果（テストを飛ばしたなら、飛ばした時）より前の最終レビューは、前の提出のものとして、見出しを「前の提出のテストの実行」

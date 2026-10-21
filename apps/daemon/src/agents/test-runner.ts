@@ -24,6 +24,32 @@ export type TestRunResult = {
   durationMs: number;
 };
 
+/** sh が、コマンドが見つからなかったときに返す終了コード。 */
+const COMMAND_NOT_FOUND = 127;
+
+/** sh の「コマンドが見つからない」の行（dash・busybox：`sh: 1: <名前>: not found`、bash：`sh: line 1: <名前>: command not found`）。 */
+const NOT_FOUND_LINE = /^.*?:\s(\S+?):\s(?:command\s)?not found\s*$/gm;
+
+/**
+ * テスト（検証）のコマンドに書いたコマンドのうち、テストのイメージに無かったもの。終了コードが 127 で、出力に sh の
+ * 「見つからない」の行があり、その名前がテストのコマンドの中に語として書いてあるものだけを返す。コマンドに書いていない
+ * もの（npm test の中のスクリプトが使うツールなど）と、パスで書いたもの（./scripts/check.sh など）は、イメージではなく
+ * リポジトリの問題なので返さない（実装をやり直せば直りうる）。
+ */
+export function missingCommands(
+  command: string,
+  result: Pick<TestRunResult, "exitCode" | "output">,
+): string[] {
+  if (result.exitCode !== COMMAND_NOT_FOUND) return [];
+  const words = new Set(command.split(/[\s;&|()<>`$"'=]+/).filter(Boolean));
+  const found = new Set<string>();
+  for (const match of result.output.matchAll(NOT_FOUND_LINE)) {
+    const name = match[1];
+    if (name && !name.includes("/") && words.has(name)) found.add(name);
+  }
+  return [...found];
+}
+
 /** テストを実行する口。テストでは偽物に差し替える。 */
 export interface TestRunner {
   run(input: {

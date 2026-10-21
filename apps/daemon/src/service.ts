@@ -130,7 +130,7 @@ import {
 } from "./agents/invocation.js";
 import type { AgentOutcome } from "./agents/parse.js";
 import { redact, redactEscaped, redactText } from "./agents/redact.js";
-import type { TestRunner, TestRunResult } from "./agents/test-runner.js";
+import { missingCommands, type TestRunner, type TestRunResult } from "./agents/test-runner.js";
 import { type PlacedTier, selectTiers, tierFiles } from "./agents/tiers.js";
 import { auditCounts, countToolFailures, redactDeep, redactStagedFiles } from "./audit-evidence.js";
 import {
@@ -2689,6 +2689,28 @@ export class TaskService {
     } finally {
       await this.stopServices(task, step, input.runId);
     }
+  }
+
+  /** テスト（検証）のコマンドに書いたツールが、テストのイメージに無かったときの一時停止（イメージを直す案内）。 */
+  private commandMissingPause(
+    commands: readonly string[],
+    imageName: string | undefined,
+    step: "implement" | "reproduce",
+  ): ActivityItem {
+    return {
+      actor: "sacty",
+      event: {
+        type: "TaskPaused",
+        payload: {
+          reason: "error",
+          message: message("verify.commandMissing", {
+            commands: [...commands],
+            image: imageName ?? DEFAULT_IMAGE_NAME,
+            step,
+          }),
+        },
+      },
+    };
   }
 
   /** サービスを止めて消す（PBI-47）。使わない工程なら何もしない。止められなくても、工程の結果は変えない。 */
@@ -6281,6 +6303,19 @@ export class TaskService {
         return;
       }
       const result = ran.result;
+      // テスト（検証）のコマンドに書いたツールがイメージに無ければ、実装をやり直しても直らないので、テストの結果を
+      // 記録せずに、イメージを直す案内で止める（再開するとテストからやり直す）
+      const missing = missingCommands(testCommand, result);
+      if (missing.length > 0) {
+        this.append(this.mustGet(task.id), [
+          this.commandMissingPause(
+            missing,
+            task.images?.implement ?? task.images?.reproduce,
+            "implement",
+          ),
+        ]);
+        return;
+      }
       // テストの仕組みが無いタスク（PBI-94）は、観点にテストが対応していないことでは不合格にしない
       const passed =
         result.exitCode === 0 && (unmappedViewpoints.length === 0 || Boolean(task.noTestsReason));
@@ -7401,6 +7436,19 @@ export class TaskService {
             },
           },
         },
+      ]);
+      return;
+    }
+    // テストのコマンドに書いたツールがイメージに無いときは、再現できたとはみなさず、イメージを直す案内で止める
+    // （再現の確かめを待ったまま止めるので、再開するとテストを実行し直す）
+    const missing = missingCommands(testCommand, result);
+    if (missing.length > 0) {
+      this.append(this.mustGet(task.id), [
+        this.commandMissingPause(
+          missing,
+          task.images?.reproduce ?? task.images?.implement,
+          "reproduce",
+        ),
       ]);
       return;
     }

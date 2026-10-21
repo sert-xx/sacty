@@ -146,6 +146,8 @@ npx sacty image build java17     # build by name (default is the default image)
 - For a step that runs in the default image, the reason why none of `images` fits is recorded in the Activity (the task page). If the orchestrator gave no reason
   for a step, the task does not stop; the step runs in the default image and the Activity shows "Runs on the default image with no reason". When tests fail,
   check this and add the tools each image includes (such as Playwright) to its `description` in `images`.
+- If a tool written in the test (verification) command is not in the image that runs the tests, the task pauses and guides you to add the tool to
+  the image ([When the verification tool is not in the image](tasks.en.md#when-the-verification-tool-is-not-in-the-image)).
 - If you specify an image for a project target (a repository or an Org), the orchestrator does not choose and that image is used for every step
   (a repository's setting takes precedence over an Org's; see [Project settings](project-settings.en.md#targets)).
 - For a PR-review-only task ([Intake](intake.en.md)) too, if no image is specified, the orchestrator chooses the image for the review step

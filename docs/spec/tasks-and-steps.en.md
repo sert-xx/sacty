@@ -193,8 +193,8 @@ The following are read from the answer (JSON under the heading `sacty-steps`) an
 | --- | --- |
 | `plan`, `reason` | The plan and the reason |
 | `baseBranch` | The base branch. If it differs from the default branch, the workspace is prepared again on that branch (if it cannot be prepared, the task continues on the default branch and the reason is replaced) |
-| `testCommand` | The test command (run with `sh -c`; exit code 0 passes; 1 to 1000 characters). If there is an Implementation step but no command and `noTests` below cannot be used either, the task is paused (`orchestrator.testCommandUnknown`) |
-| `noTests` | Read only when `testCommand` is empty: the basis for judging that the repository has no tests (1 to 2000 characters). It is recorded in `noTestsReason` of `StepsChosen` ("Tasks without tests" below) |
+| `testCommand` | The test (verification) command (run with `sh -c`; exit code 0 passes; 1 to 1000 characters). Even without test code, a check that mechanically validates the artifacts (`kustomize build`, `helm lint`, `kubeconform`, `terraform validate`, `yamllint`, and so on) is asked for when CI, a Makefile or pre-commit runs it, or when the shape of the repository decides it (`kustomization.yaml`, `Chart.yaml`, and so on). It must not be left empty just because no image has the tool ("Verifying the implementation" below). If there is an Implementation step but no command and `noTests` below cannot be used either, the task is paused (`orchestrator.testCommandUnknown`) |
+| `noTests` | Read only when `testCommand` is empty: the basis for judging that the repository has neither tests nor a verification command (1 to 2000 characters). It is recorded in `noTestsReason` of `StepsChosen` ("Tasks without tests" below) |
 | `investigation` | The kind of investigation (`content`: investigating content, `bug`: investigating a bug) |
 | `images`, `imageReason` | The image per step. If the project's target specifies an image, it is used for all steps without asking. A name not in `images` stops the task |
 | `defaultReasons` | For each step that uses the default image (`default`), why none of `images` fits ("Step images" below) |
@@ -354,6 +354,15 @@ Code: `apps/daemon/src/activity.ts` (`purgeLegacyPrStepTasks`, `purgeLegacyTasks
 - After the Reproduce step, the reproduction test is run; if the exit code is not 0, the bug is treated as reproduced and the task moves to Implementation. If it is 0 (or no reproduction test
   was declared), the bug is treated as not reproduced and the task waits for a person's decision (the Reproduce step cannot be approved; request changes or cancel).
 - The test image is the Implementation step's image (or Reproduce's if absent) for verification, and the Reproduce step's image (or Implementation's if absent) for checking reproduction.
+- When a tool written in the test (verification) command is not in the test image (exit code 127, the output has an sh line `<name>: not found` or
+  `<name>: command not found`, and that name is written as a word in the test command), redoing the implementation would not fix it, so the task is
+  paused without recording the test result (`TestsRun`) or the reproduction check (`ReproductionChecked`) (`verify.commandMissing`. It shows the tool
+  names, the image name and the step, and guides to install them with `packages` or `run` of `images.<name>` and rebuild with `sacty image build`, or to
+  change to another image; for the default image, to add an image to `images`). It stops while still waiting for verification (the reproduction check),
+  so resuming runs the tests again. Names not written in the test command (such as tools used by scripts inside `npm test`) and names containing `/`
+  (such as `./scripts/check.sh`) are repository problems, are not matched, and count as ordinary test failures.
+
+  Code: `apps/daemon/src/agents/test-runner.ts` (`missingCommands`), `apps/daemon/src/service.ts` (`verify`, `checkReproduction`, `commandMissingPause`)
 - The implementation deliverable (the task screen and the Implement approval screen) shows the test results and the final review in the correspondence table only for the
   current submission's verification (`verificationResults`). Test results and final reviews after the verification of a redone implementation has started (`verification` is `pending`), and final
   reviews older than the latest test result (or, if tests were skipped, the time they were skipped), are treated as the previous submission's: they are shown under the headings "Test run for the

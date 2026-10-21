@@ -315,6 +315,11 @@ const PARAMS = {
   "run.guardianFailed": z.object({ detail: TextParam }),
   "verify.testsUnavailable": z.object({ detail: TextParam }),
   "verify.workspaceMissing": null,
+  "verify.commandMissing": z.object({
+    commands: z.array(z.string()).min(1),
+    image: z.string(),
+    step: z.enum(["implement", "reproduce"]),
+  }),
   "verify.diffUnavailable": z.object({ detail: TextParam }),
   "verify.finalReviewFailed": z.object({ detail: TextParam }),
   "verify.tooManyAttempts": z.object({ count: Count }),
@@ -983,6 +988,13 @@ const ja: MessageDictionary = {
     `ゴールガーディアンの実行に失敗しました：${text(detail)}`,
   "verify.testsUnavailable": ({ detail }, text) => `テストを実行できません：${text(detail)}`,
   "verify.workspaceMissing": "実装の作業領域が見つからないため、検証できません。",
+  "verify.commandMissing": ({ commands: names, image, step }) => {
+    const label = step === "reproduce" ? "再現" : "実装";
+    const commands = names.join("・");
+    return image === "default"
+      ? `テスト（検証）のコマンドに書いた ${commands} が、テストを実行するイメージ（既定のイメージ）に入っていません（終了コード 127）。既定のイメージは最低限のものです。config.yaml の images に、${commands} を入れたイメージ（packages に OS のパッケージを、無ければ run に導入のコマンドを書き、description にもそのツールを書く）を足し、npx sacty image build <名前> で作ってから、タスクの詳細の「工程のイメージ」で${label}の工程をそのイメージに変えて、再開してください（再開すると、テストからやり直します）。`
+      : `テスト（検証）のコマンドに書いた ${commands} が、テストを実行するイメージ（${image}）に入っていません（終了コード 127）。config.yaml の images.${image} の packages（OS のパッケージ）か run（導入のコマンド）で入れ、npx sacty image build ${image} で作り直してから、再開してください（再開すると、テストからやり直します）。入っているイメージがほかにあれば、タスクの詳細の「工程のイメージ」で${label}の工程のイメージを変えてから再開してもかまいません。`;
+  },
   "verify.diffUnavailable": ({ detail }, text) =>
     `差分を取得できないため、最終レビューをしていません：${text(detail)}`,
   "verify.finalReviewFailed": ({ detail }, text) =>
@@ -1547,6 +1559,13 @@ const en: MessageDictionary = {
   "verify.testsUnavailable": ({ detail }, text) => `Cannot run the tests: ${text(detail)}`,
   "verify.workspaceMissing":
     "The implementation workspace was not found, so it cannot be verified.",
+  "verify.commandMissing": ({ commands: names, image, step }) => {
+    const label = step === "reproduce" ? "reproduction" : "implementation";
+    const commands = names.join(", ");
+    return image === "default"
+      ? `The test (verification) command uses ${commands}, which is not in the image that runs the tests (the default image) (exit code 127). The default image is minimal. Add an image with ${commands} to images in config.yaml (list OS packages in packages, or the install commands in run, and name the tool in description), build it with npx sacty image build <name>, change the image of the ${label} step to it under "Step images" in the task details, and resume (resuming runs the tests again).`
+      : `The test (verification) command uses ${commands}, which is not in the image that runs the tests (${image}) (exit code 127). Install it with packages (OS packages) or run (install commands) of images.${image} in config.yaml, rebuild with npx sacty image build ${image}, and resume (resuming runs the tests again). If another image has it, you can instead change the image of the ${label} step under "Step images" in the task details and resume.`;
+  },
   "verify.diffUnavailable": ({ detail }, text) =>
     `Could not get the diff, so the final review was not done: ${text(detail)}`,
   "verify.finalReviewFailed": ({ detail }, text) =>

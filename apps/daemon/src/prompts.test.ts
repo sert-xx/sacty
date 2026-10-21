@@ -1572,6 +1572,18 @@ describe("テストの仕組みが無いタスク（PBI-94）", () => {
     expect(prompt).toContain('"noTests": ');
   });
 
+  it("オーケストレーターに、テストのコードが無くても検証のコマンド（マニフェストの検証など）を testCommand にさせる", () => {
+    const prompt = buildOrchestratorPrompt(task());
+    expect(prompt).toContain("このリポジトリのテスト（検証）を実行するコマンド");
+    expect(prompt).toContain("kustomize build・helm lint・kubeconform");
+    expect(prompt).toContain("kustomization.yaml があれば kustomize build");
+    // ツールがイメージに無くても空にしない（sacty が実行して、イメージを直す案内で止める）
+    expect(prompt).toContain(
+      "選べるイメージのどれにも入っていなくても、testCommand は書く（空にしない）",
+    );
+    expect(prompt).toContain("上の検証のコマンドも無いと判断したら");
+  });
+
   it("出力からは、テストのコマンドが無いときだけ、テストの無い根拠を読む", () => {
     expect(extractStepPlan(plan({ noTests: ` ${NO_TESTS} ` }))).toMatchObject({
       noTests: NO_TESTS,

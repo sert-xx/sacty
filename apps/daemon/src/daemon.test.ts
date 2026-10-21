@@ -6357,6 +6357,51 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     activity.close();
   });
 
+  it("テストのコマンドに書いたツールがイメージに無ければ、実装をやり直さずにイメージを直す案内で止め、再開するとテストからやり直す", async () => {
+    const tests = new FakeTests([
+      { exitCode: 127, output: "sh: 1: npm: not found\n", durationMs: 1 },
+      { exitCode: 0, output: "ok", durationMs: 1 },
+    ]);
+    const { activity, service, executor, id } = await toImplement([implement("# v1"), review()], {
+      tests,
+    });
+    await drain(service);
+    const paused = service.get(id)?.task;
+    expect(paused?.status).toBe("paused");
+    expect(paused?.pausedMessage).toEqual({
+      code: "verify.commandMissing",
+      params: { commands: ["npm"], image: "default", step: "implement" },
+    });
+    expect(ja(paused?.pausedMessage)).toContain("config.yaml の images に、npm を入れたイメージ");
+    // テストの結果は記録せず、実装もやり直さない
+    expect(types(service, id)).not.toContain("TestsRun");
+    expect(paused?.verifyFailures).toBe(0);
+    const runs = executor.calls.length;
+
+    service.resume(id, {});
+    await drain(service);
+    expect(tests.calls).toHaveLength(2);
+    // 再開すると、実装をやり直さずにテストを実行し直し、最終レビューへ進む
+    expect(executor.calls.length).toBe(runs + 1);
+    expect(service.get(id)?.task.gate?.step).toBe("implement");
+    activity.close();
+  });
+
+  it("テストのコマンドに書いていないツールが見つからないときは、ふつうのテストの失敗として実装をやり直す", async () => {
+    const tests = new FakeTests([
+      { exitCode: 127, output: "sh: 1: vitest: not found\n", durationMs: 1 },
+      { exitCode: 0, output: "ok", durationMs: 1 },
+    ]);
+    const { activity, service, executor, id } = await toImplement(
+      [implement("# v1"), implement("# v2"), review()],
+      { tests },
+    );
+    await drain(service);
+    expect(promptOf(executor, 4)).toContain("sh: 1: vitest: not found");
+    expect(service.get(id)?.task.gate?.step).toBe("implement");
+    activity.close();
+  });
+
   it("テストが通っても、テストの対応していない観点があれば不合格にする", async () => {
     const { activity, service, id } = await toImplement([
       implement("# v1", [{ viewpointId: "TV-1", tests: ["a"] }]),
@@ -12716,6 +12761,51 @@ describe("再現の工程（PBI-29）", () => {
       ["sacty-agent-go:test", { TOOL: "go" }],
       ["sacty-agent-node:test", { TOOL: "node" }],
     ]);
+    expect(service.get(id)?.task.reproduction).toMatchObject({ reproduced: true });
+    activity.close();
+  });
+
+  it("再現の確かめで、テストのコマンドに書いたツールが再現の工程のイメージに無ければ、再現できたとはみなさずに案内で止める", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const tests = new FakeTests([
+      { exitCode: 127, output: "sh: line 1: npm: command not found\n", durationMs: 1 },
+      { exitCode: 1, output: "FAIL", durationMs: 5 },
+    ]);
+    const go = {
+      name: "go",
+      image: "sacty-agent-go:test",
+      description: "go",
+      baseImage: "go",
+      env: {},
+    };
+    const { service } = makeService(
+      activity,
+      [out("# 前段の調査"), reproduce("# 再現", ["pay.test.ts › 二重送信"]), implement(), review()],
+      {
+        tests,
+        config: () => ({
+          ok: true,
+          config: {
+            ...(configOf(agent())() as { ok: true; config: SactyConfig }).config,
+            images: { go },
+          },
+        }),
+        planner: async () => ({ ...(await planner()), images: { reproduce: "go" } }),
+      },
+    );
+    const { id } = service.createTask({ projectId: "default", title: "二重に決済される" });
+    await drain(service);
+    const paused = service.get(id)?.task;
+    expect(paused?.status).toBe("paused");
+    expect(paused?.reproduction).toBeUndefined();
+    expect(paused?.pausedMessage).toEqual({
+      code: "verify.commandMissing",
+      params: { commands: ["npm"], image: "go", step: "reproduce" },
+    });
+    expect(ja(paused?.pausedMessage)).toContain("npx sacty image build go");
+    service.resume(id, {});
+    await drain(service);
+    expect(tests.calls).toHaveLength(3);
     expect(service.get(id)?.task.reproduction).toMatchObject({ reproduced: true });
     activity.close();
   });
