@@ -27,6 +27,7 @@
 | パス | 用途 | 認証 |
 | --- | --- | --- |
 | `/r/<トークン>/pf/<PF の名前>/<パス>` | 組織内 PF（エージェントには `SACTY_PF_URL` = `…/r/<トークン>/pf` を渡す） | URL の中のトークン |
+| `/r/<トークン>/github/<ホスト>/<パス>` | GitHub の読み取り（エージェントには `SACTY_GITHUB_URL` = `…/r/<トークン>/github` を渡す） | URL の中のトークン |
 | `/ctx-mcp/<名前>` | コンテキストリポジトリの MCP（URL 型の中継と、ホストで起動したコマンド型） | `Authorization: Bearer <トークン>` |
 | `/mcp/<名前>` | ホストの MCP サーバー | `Authorization: Bearer <トークン>` |
 | `/openai/v1/…` | AI の呼び出し（`providers.codex` の `bedrock`・`openai-compatible`） | `Authorization: Bearer <トークン>`（`AWS_BEARER_TOKEN_BEDROCK`・`SACTY_PROVIDER_API_KEY` に入れて渡す） |
@@ -105,6 +106,32 @@ URL に現れうる形は、文字ごとに、そのままか UTF-8 のパーセ
 - エージェントの指示に、そのタスクで使える PF と API の一覧を入れる。
 
 コード: `apps/daemon/src/platforms.ts`（`PlatformFile`・`TokenRequest`・`tokenUrl`・`hideSecret`・`pathPattern`・`isAllowed`・`PlatformCredentials`・`REASON_MAX`・`REFRESH_MARGIN_MS`・`platformPromptLines`）、`apps/daemon/src/gateway.ts`（`handlePlatform`・`sentUrl`）
+
+## GitHub の読み取りの中継
+
+GitHub の API を、読み取りだけ中継する。設定は無く、いつも使える（切れない）。
+
+- 実行を登録するとき、タスクのプロジェクトでホストごとに選んだ gh のアカウント（`githubAccounts`）を結びつける。アカウントを選んだ
+  ホストが無いプロジェクトのタスク・タスクでない実行・文書作成（`document`）の実行には結びつけない（文書作成は、承認の前に外部の
+  接続を渡さない決まりのため）。
+- トークンは、そのホストに初めて要求が来たときに、ホストの gh（`gh auth token --hostname <ホスト> --user <アカウント>`）で取り出し、
+  その実行の間だけ持つ。取り出せなければ 502（どのアカウントか）を返し、次の要求で取り出し直す。コンテナには渡さない。
+- 転送先は、REST が `https://api.github.com`（github.com）か `https://<ホスト>/api/v3`、GraphQL（パスが `/graphql`）が
+  `https://api.github.com/graphql` か `https://<ホスト>/api/graphql`。
+- 受け付けるのは、REST の `GET`・`HEAD` と、GraphQL の `POST` だけ。ほかのメソッドは 405。GraphQL は、本文（256 KiB まで）の `query` が
+  読み取りのとき（文字列・コメントを除いた括弧の外に `mutation`・`subscription` が無い。読めない・閉じていない・配列・`query` の
+  無いものは読み取りとみなさない）だけ送り、ほかは 403。
+- 結びつけていないホストは 404（使えるホストを返す）。`.`・`..` の階層・`%2e`・`%2f`・`\` を含むパスと、URL にすると変わるパスは 400。
+- 上流には `accept`・`content-type`・`x-github-api-version`・`if-none-match`・`if-modified-since`・`user-agent` だけを送り、
+  `Authorization: Bearer <トークン>` を付ける。リダイレクトはたどらない。
+- 応答の `link`（ページ送り）と `location` の、そのホストの REST の API の URL は、中継の URL（`…/r/<トークン>/github/<ホスト>`）に
+  書き換えて返す。
+- エージェントには `SACTY_GITHUB_URL`・`SACTY_GITHUB_HOSTS`（結びつけたホストを空白で区切ったもの）・`GH_HOST`（タスクのリポジトリの
+  ホスト、無ければ github.com、無ければ最初のホスト）を渡し、指示の末尾に読み方と、工程の実行なら PR・Issue へのコメントの頼み方を足す
+  （[タスクと工程](tasks-and-steps.md#pr-と-issue-へのコメントの頼み)）。
+- エージェントのイメージの `gh` は、`gh api`（REST の GET と GraphQL）だけをこの中継に送るもの（[エージェントの実行](agent-execution.md)）。
+
+コード: `apps/daemon/src/gateway.ts`（`handleGitHub`・`githubUrl`）、`apps/daemon/src/github-relay.ts`（`isReadOnlyGraphql`・`githubGraphqlUrl`・`relayHeaderValue`・`GITHUB_RELAY_REQUEST`・`GITHUB_GRAPHQL_BODY_MAX`・`githubRelayEnv`・`githubPromptLines`）、`apps/daemon/src/service.ts`（`executeLogged`・`githubRelayHosts`・`githubDefaultHost`）、`packages/cli/docker/gh-shim.cjs`
 
 ## コンテキストの MCP の中継
 

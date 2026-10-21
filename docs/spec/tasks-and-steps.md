@@ -145,11 +145,36 @@
 
 - `document` は要求要件・設計の形式を強制せず Markdown の原稿を作る。画面で差し戻し・承認できる。承認前は MCP/PF のアクセスとプロジェクトコンテキストを渡さず、外部原稿の読取も行わない。元の本文・規約等はタスク本文か人間の差し戻しで補う。任意の書き出しには既存の仕組みを使い、書き出し失敗はタスクの完了を止めない。既存の外部文書を直接更新する場合は `operation` を使う。
 - `operation` は単一の工程である。既存のオーケストレーターが、接続先1つ・一意の対象 ID/URL・依頼内容と前提・確認方法を選定する。追加の準備エージェント・準備成果物・実行前の承認ゲートは設けない。対象や接続先が不足しているときは実行開始前に停止する。
+- 作業の接続先の種類（`via`）は `platform`・`mcp`・`github`。`github` は、プロジェクトで gh のアカウントを選んだ GitHub のホストで、`name` がホスト。オーケストレーターの接続先の候補に、そのホストを出す。読み取りは [GitHub の読み取りの中継](gateway.md#github-の読み取りの中継)で行い、PR・Issue へのコメントはエージェントが出力に書いて、結果の承認の後に sacty が投稿する（[PR と Issue へのコメントの頼み](#pr-と-issue-へのコメントの頼み)）。コードの変更・プッシュはできない。実行の前に、そのホストのアカウントが選ばれていなければ止める（`operation.connectionMissing`）。
 - タスク詳細には選定済みの作業設定（`name`・`via`・`target`・`change`・`verification`）を読み取り専用で表示する。オーケストレーターが選んだ実行設定であり、新しい成果物や承認ゲートではない。
 - 作業には選定された接続先だけを渡し、依頼に従って実行する。対象と前提の確認、再送しない1回の書込、変更後の読戻確認を指示する。成功結果と根拠が返れば人間の結果承認を待つ。失敗・中断・再起動・結果不明では停止し、永続化した開始記録によって再開を拒否し、停止を維持する。実行開始後は差し戻せない。人間が外部状態を確認し、タスクを中止して、未実施分を新しいタスクにする。
 - 外部側の exactly-once を保証するものではない。1回の書込と読戻確認はエージェントへの指示である。定期実行・監視・任意の連携追加・複数接続先をまたぐ業務の制御は追加しない。複数種類の成果物を含む依頼は承認境界を明確にしてタスクを分ける。
 
 コード: `apps/daemon/src/prompts.ts`、`apps/daemon/src/service.ts`、`packages/core/src/events.ts`、`packages/core/src/projection.ts`、`apps/web/src/components/task-detail.tsx`
+
+## PR と Issue へのコメントの頼み
+
+工程のエージェントは、GitHub に書き込めない（[GitHub の読み取りの中継](gateway.md#github-の読み取りの中継)は読み取りだけ）。PR・Issue に
+コメントするときは、出力に次の JSON を1つだけ書く。人間がその工程の成果を承認した後に、sacty がプロジェクトの gh のアカウントで投稿する。
+
+```json
+{"sacty-github-comments": {"comments": [{"url": "https://github.com/acme/app/pull/12", "body": "Markdown の本文"}]}}
+```
+
+- 頼めるのは、レビューを除く工程（`review` は、書いたレビューを sacty が投稿する）。投稿は、承認した成果（`approved`）の頼みで行う。
+  承認し直したら（承認の日時が変わる）、その版の頼みを投稿する。中止・一時停止中・実行中のタスクでは投稿しない。次の工程の前に投稿する
+  （`awaitingGitHubComments`）。
+- 頼みを読めない（2つ以上ある・JSON として読めない・形が違う・本文が空）、コメントが 10 件（`GITHUB_COMMENTS_MAX`）より多い、
+  本文が 60000 文字（`GITHUB_COMMENT_BODY_MAX`）より長いときは、どれも投稿せずに理由を記録する。
+- 投稿先は、PR（`/pull/<番号>`）か Issue（`/issues/<番号>`）の URL で、プロジェクトの対象（リポジトリか、その Org）か、タスクの
+  取り込み元・作業するリポジトリのものだけ。ほかは、そのコメントだけを投稿せずに理由を記録する。
+- 本文の頭に目印（`<!-- sacty-comment:<タスク>:<工程>:<承認の日時>:<番号> -->`）を、末尾に AI が書き人間が承認した旨を付け、Issue の
+  コメントの API で投稿する。投稿の前に目印のあるコメントを探し、あれば使う（投稿の後・記録の前に止まっても、二度投稿しない）。
+- 結果は `GitHubCommentsPosted`（工程・承認の日時・コメントごとの URL か理由・読めなかった理由）に記録する。投稿できなくても、
+  タスクは止めない。
+- 取り込み元の Issue に返す調査の結果（`buildInvestigationComment`）からは、頼みの JSON を取り除く。
+
+コード: `apps/daemon/src/github-comments.ts`（`requestedGitHubComments`・`commentTarget`・`commentAllowed`・`buildGitHubComment`・`githubCommentMarker`・`withoutGitHubComments`）、`apps/daemon/src/github-relay.ts`（`GITHUB_COMMENTS_MAX`・`GITHUB_COMMENT_BODY_MAX`）、`apps/daemon/src/service.ts`（`postGitHubComments`・`awaitingGitHubComments`）、`packages/core/src/events.ts`（`GitHubCommentsPosted`・`OperationVia`）、`packages/core/src/projection.ts`
 
 ## オーケストレーター
 

@@ -1154,6 +1154,7 @@ const jiraPlatform = () =>
 const fakeGateway = (): NonNullable<ServiceDeps["gateway"]> => ({
   containerOrigin: () => "http://host.docker.internal:5001",
   platformsUrl: (token) => `http://host.docker.internal:5001/r/${token}/pf`,
+  githubUrl: (token) => `http://host.docker.internal:5001/r/${token}/github`,
   register: () => ({
     token: "sacty-gw-run",
     stats: () => ({ retries: 0, waitedMs: 0, statuses: [], gaveUp: false }),
@@ -1404,6 +1405,7 @@ describe("工程の実行と費用", () => {
     const gateway: NonNullable<ServiceDeps["gateway"]> = {
       containerOrigin: () => "http://host.docker.internal:5001",
       platformsUrl: (token) => `http://host.docker.internal:5001/r/${token}/pf`,
+      githubUrl: (token) => `http://host.docker.internal:5001/r/${token}/github`,
       register: () => ({
         token: "sacty-gw-run",
         stats: () => ({ retries: 0, waitedMs: 0, statuses: [], gaveUp: false }),
@@ -1539,6 +1541,7 @@ describe("工程の実行と費用", () => {
     const gateway: NonNullable<ServiceDeps["gateway"]> = {
       containerOrigin: () => "http://host.docker.internal:5001",
       platformsUrl: (token) => `http://host.docker.internal:5001/r/${token}/pf`,
+      githubUrl: (token) => `http://host.docker.internal:5001/r/${token}/github`,
       register: (_route, mcp) => {
         registered.push(mcp);
         return {
@@ -1603,6 +1606,7 @@ describe("工程の実行と費用", () => {
     const gateway: NonNullable<ServiceDeps["gateway"]> = {
       containerOrigin: () => "http://host.docker.internal:5001",
       platformsUrl: (token) => `http://host.docker.internal:5001/r/${token}/pf`,
+      githubUrl: (token) => `http://host.docker.internal:5001/r/${token}/github`,
       register: (_route, mcp) => {
         registered.push(mcp ?? {});
         return {
@@ -1707,6 +1711,7 @@ describe("工程の実行と費用", () => {
       const gateway: NonNullable<ServiceDeps["gateway"]> = {
         containerOrigin: () => "http://host.docker.internal:5001",
         platformsUrl: (token) => `http://host.docker.internal:5001/r/${token}/pf`,
+        githubUrl: (token) => `http://host.docker.internal:5001/r/${token}/github`,
         register: () => ({
           token: "sacty-gw-run",
           stats: () => ({ retries: 0, waitedMs: 0, statuses: [], gaveUp: false }),
@@ -1765,6 +1770,7 @@ describe("工程の実行と費用", () => {
     const gateway: NonNullable<ServiceDeps["gateway"]> = {
       containerOrigin: () => "http://host.docker.internal:5001",
       platformsUrl: (token) => `http://host.docker.internal:5001/r/${token}/pf`,
+      githubUrl: (token) => `http://host.docker.internal:5001/r/${token}/github`,
       register: () => ({
         token: "sacty-gw-run",
         stats: () => ({ retries: 0, waitedMs: 0, statuses: [], gaveUp: false }),
@@ -1819,6 +1825,7 @@ describe("工程の実行と費用", () => {
     const gateway: NonNullable<ServiceDeps["gateway"]> = {
       containerOrigin: () => "http://host.docker.internal:5001",
       platformsUrl: (token) => `http://host.docker.internal:5001/r/${token}/pf`,
+      githubUrl: (token) => `http://host.docker.internal:5001/r/${token}/github`,
       register: (_route, mcp) => {
         registered.push(mcp);
         return {
@@ -1901,6 +1908,7 @@ describe("工程の実行と費用", () => {
     const gateway: NonNullable<ServiceDeps["gateway"]> = {
       containerOrigin: () => "http://host.docker.internal:5001",
       platformsUrl: (token) => `http://host.docker.internal:5001/r/${token}/pf`,
+      githubUrl: (token) => `http://host.docker.internal:5001/r/${token}/github`,
       register: (route) => {
         // AI は中継しない（このエージェントはゲートウェイ経由ではない）
         expect(route).toBeUndefined();
@@ -1983,6 +1991,7 @@ describe("工程の実行と費用", () => {
     const gateway: NonNullable<ServiceDeps["gateway"]> = {
       containerOrigin: () => "http://host.docker.internal:5001",
       platformsUrl: (token) => `http://host.docker.internal:5001/r/${token}/pf`,
+      githubUrl: (token) => `http://host.docker.internal:5001/r/${token}/github`,
       register: (route) => {
         const entry = { ...route, closed: false };
         registered.push(entry);
@@ -5076,6 +5085,110 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       activity.close();
     });
 
+    it("工程のエージェントに GitHub の読み取りの中継を渡し、承認した成果で頼まれたコメントを、承認の後に1回だけ投稿する", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const pulls = new FakePulls();
+      const registered: unknown[][] = [];
+      const output = [
+        "# 指摘への対応の案",
+        "",
+        "```json",
+        JSON.stringify({
+          "sacty-github-comments": {
+            comments: [
+              { url: "https://github.com/acme/app/pull/12", body: "ご指摘の件は、こう直します。" },
+              { url: "https://github.com/other/app/pull/1", body: "対象の外" },
+              { url: "https://github.com/acme/app/commit/abc", body: "PR・Issue ではない" },
+            ],
+          },
+        }),
+        "```",
+      ].join("\n");
+      const { service, executor } = makeService(activity, [out(output)], {
+        pulls,
+        planner: investigatePlanner,
+        gateway: {
+          ...fakeGateway(),
+          register: (...args: unknown[]) => {
+            registered.push(args);
+            return fakeGateway().register();
+          },
+        },
+      });
+      service.saveProject("default", {
+        name: "デフォルト",
+        targets: [{ scope: "repo", target: "https://github.com/acme/app" }],
+        githubAccounts: { "github.com": "me" },
+      });
+      const { id } = service.createTask({
+        projectId: "default",
+        title: "https://github.com/acme/app/pull/12 の指摘に返信して",
+      });
+      await service.runNext(id);
+      // 設定に関わらず、プロジェクトで選んだアカウントのホストを中継に結びつけ、トークンはコンテナに渡さない
+      expect(registered[0]?.[4]).toEqual({ "github.com": "me" });
+      const env = executor.calls[0]?.env ?? {};
+      expect(env.SACTY_GITHUB_URL).toBe("http://host.docker.internal:5001/r/sacty-gw-run/github");
+      expect(env.SACTY_GITHUB_HOSTS).toBe("github.com");
+      expect(env.GH_HOST).toBe("github.com");
+      expect(JSON.stringify(env)).not.toContain("ghp_secret");
+      expect(executor.calls[0]?.hostGateway).toBe(true);
+      // 承認の前には投稿しない
+      expect(pulls.issueComments).toHaveLength(0);
+      service.approve(id, { step: "investigate", submission: 1 });
+      expect(service.queuedTaskIds()).toEqual([id]);
+      await service.runNext(id);
+      await service.runNext(id); // 二度は投稿しない
+      expect(pulls.issueComments).toHaveLength(1);
+      expect(pulls.issueComments[0]).toMatchObject({
+        repo: "https://github.com/acme/app",
+        number: 12,
+        token: "ghp_secret",
+      });
+      expect(pulls.issueComments[0]?.body).toContain("ご指摘の件は、こう直します。");
+      expect(pulls.issueComments[0]?.body).toContain(`sacty-comment:${id}:investigate:`);
+      const posted = service.get(id)?.task.githubComments?.investigate;
+      expect(posted?.results).toEqual([
+        {
+          target: "https://github.com/acme/app/pull/12",
+          url: "https://github.com/acme/app/issues/12#issuecomment-1",
+        },
+        { target: "https://github.com/other/app/pull/1", failed: expect.anything() },
+        { target: "https://github.com/acme/app/commit/abc", failed: expect.anything() },
+      ]);
+      expect(service.queuedTaskIds()).toEqual([]);
+      activity.close();
+    });
+
+    it("頼みの JSON を読めなければ、どれも投稿せずに理由を記録する", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const pulls = new FakePulls();
+      const output = [
+        '{"sacty-github-comments": {"comments": [{"url": "https://github.com/acme/app/pull/1", "body": "a"}]}}',
+        '{"sacty-github-comments": {"comments": [{"url": "https://github.com/acme/app/pull/2", "body": "b"}]}}',
+      ].join("\n");
+      const { service } = makeService(activity, [out(output)], {
+        pulls,
+        planner: investigatePlanner,
+      });
+      service.saveProject("default", {
+        name: "デフォルト",
+        targets: [{ scope: "repo", target: "https://github.com/acme/app" }],
+        githubAccounts: { "github.com": "me" },
+      });
+      const { id } = service.createTask({ projectId: "default", title: "返信して" });
+      await service.runNext(id);
+      service.approve(id, { step: "investigate", submission: 1 });
+      await service.runNext(id);
+      expect(pulls.issueComments).toHaveLength(0);
+      expect(service.get(id)?.task.githubComments?.investigate).toMatchObject({
+        results: [],
+        failed: expect.anything(),
+      });
+      expect(service.queuedTaskIds()).toEqual([]);
+      activity.close();
+    });
+
     it("投稿の後、記録の前に止まっても、次の実行で既存のコメントを使い、同じ結果を二度コメントしない", async () => {
       const activity = new SqliteActivityStore(dbPath);
       const pulls = new FakePulls();
@@ -8128,6 +8241,7 @@ describe("プロジェクトのコンテキストの秘密情報も、まとめ�
     const gateway: NonNullable<ServiceDeps["gateway"]> = {
       containerOrigin: () => "http://host.docker.internal:5001",
       platformsUrl: (token) => `http://host.docker.internal:5001/r/${token}/pf`,
+      githubUrl: (token) => `http://host.docker.internal:5001/r/${token}/github`,
       register: (_route, contextMcp, platforms) => {
         mcp.push(contextMcp ?? {});
         for (const platform of platforms ?? []) calls.push(credentials.header(platform));
@@ -10728,6 +10842,7 @@ describe("コンテキストの外部 PF（PBI-74）", () => {
   const recordingGateway = (registered: Registered[]): NonNullable<ServiceDeps["gateway"]> => ({
     containerOrigin: () => "http://host.docker.internal:5001",
     platformsUrl: (token) => `http://host.docker.internal:5001/r/${token}/pf`,
+    githubUrl: (token) => `http://host.docker.internal:5001/r/${token}/github`,
     register: (_route, _mcp, platforms) => {
       registered.push({ platforms });
       return {
@@ -18744,6 +18859,7 @@ describe("コンテキストのプレビュー（PBI-76）", () => {
       gateway: {
         containerOrigin: () => "http://host.docker.internal:5001",
         platformsUrl: (t) => `http://host.docker.internal:5001/r/${t}/pf`,
+        githubUrl: (t) => `http://host.docker.internal:5001/r/${t}/github`,
         register: (_route, mcp) => {
           registered.push(mcp);
           return {
@@ -21256,6 +21372,81 @@ describe("非コードの成果と単発作業（PBI-112）", () => {
     expect(restored.get(id)?.task.operation).toEqual(operation);
     restored.approve(id, { step: "operation", submission: 1 });
     expect(isCompleted(restored.get(id)?.task as Task)).toBe(true);
+    activity.close();
+  });
+
+  it("GitHub を接続先にした作業は、gh のアカウントのホストで実行し、頼まれたコメントを結果の承認の後に投稿する", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const github = {
+      via: "github" as const,
+      name: "github.com",
+      target: "https://github.com/acme/app/pull/12",
+      change: "レビューの指摘に、対応の方針を返信する",
+      verification: "PR のコメントを読み直して確かめる",
+    };
+    const selected = out(
+      block({
+        "sacty-steps": { plan: "operation", reason: "PR への返信", operation: github },
+      }),
+    );
+    const result = out(
+      [
+        block({
+          "sacty-operation-result": {
+            success: true,
+            evidence: "PR #12 の指摘を gh api で読み、返信の内容を頼んだ",
+          },
+        }),
+        block({
+          "sacty-github-comments": {
+            comments: [{ url: "https://github.com/acme/app/pull/12", body: "方針：こう直します" }],
+          },
+        }),
+      ].join("\n"),
+    );
+    const { service, executor, pulls } = makeService(activity, [selected, result], {
+      realPlanner: true,
+      gateway: fakeGateway(),
+    });
+    const { id } = service.createTask({
+      projectId: "default",
+      title: "https://github.com/acme/app/pull/12 のレビューの指摘に返信",
+      repo: null,
+    });
+    await service.runNext(id);
+    // 接続先の候補に、gh のアカウントを選んだ GitHub のホストを出す
+    expect(executor.calls[0]?.command.join(" ")).toContain("github/github.com");
+    expect(service.get(id)?.task.operation).toEqual(github);
+    expect(service.get(id)?.task.gate?.step).toBe("operation");
+    expect(executor.calls[1]?.command.join(" ")).toContain("接続先は GitHub");
+    expect(executor.calls[1]?.env.SACTY_GITHUB_URL).toContain("/github");
+    expect(pulls.issueComments).toHaveLength(0);
+    service.approve(id, { step: "operation", submission: 1 });
+    await service.runNext(id);
+    expect(pulls.issueComments).toHaveLength(1);
+    expect(pulls.issueComments[0]).toMatchObject({ number: 12, token: "ghp_secret" });
+    expect(isCompleted(service.get(id)?.task as Task)).toBe(true);
+    activity.close();
+  });
+
+  it("GitHub を接続先にした作業でも、アカウントを選んでいないホストなら始めずに止める", async () => {
+    const activity = new SqliteActivityStore(dbPath);
+    const { service, executor } = makeService(activity, [], {
+      planner: async () => ({
+        steps: [...STEP_PLANS.operation],
+        plan: "operation",
+        reason: "PR への返信",
+        operation: { ...operation, via: "github", name: "ghe.example.co.jp" },
+        fallback: false,
+        costUsd: 0,
+        estimated: false,
+      }),
+      gateway: fakeGateway(),
+    });
+    const { id } = service.createTask({ projectId: "default", title: "返信", repo: null });
+    await service.runNext(id);
+    expect(service.get(id)?.task.status).toBe("paused");
+    expect(executor.calls).toHaveLength(0);
     activity.close();
   });
 

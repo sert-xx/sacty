@@ -4,7 +4,7 @@
 - タスク: PBI-112
 - PR: #123
 - ブランチ: feat/issue-112-non-code-workflows
-- 関係する ADR: [文書原稿と単発の外部作業を独立した承認工程で扱う](../adr/20261015-2353-non-code-workflows.md)
+- 関係する ADR: [文書原稿と単発の外部作業を独立した承認工程で扱う](../adr/20261015-2353-superseded-non-code-workflows.md)
 
 ## 目的
 

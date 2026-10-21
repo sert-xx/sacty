@@ -149,6 +149,8 @@ const gateway = new AiGateway({
   },
   platforms,
   credentials,
+  // GitHub の読み取りの中継は、プロジェクトの gh のアカウントのトークンで行う（常に有効）
+  githubToken: (host, account) => github.token(host, account),
 });
 await gateway.listen();
 // 監査の画面をモックで確かめるとき（SACTY_AUDIT_MOCK=1）は、実際の監査を動かさない（PBI-124・PBI-125）

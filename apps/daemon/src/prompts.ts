@@ -41,6 +41,7 @@ import {
 } from "./agent-json.js";
 import { DEFAULT_IMAGE_NAME, githubRepoOf } from "./config.js";
 import { type PullRequestFeedback, REVIEW_MARKER_PREFIX, sactyReviewKey } from "./github.js";
+import { withoutGitHubComments } from "./github-comments.js";
 import { headOf } from "./orchestrator-handoff.js";
 import {
   CONTAINER_LOGS_DIR,
@@ -683,6 +684,12 @@ export function buildPrompt(
         content,
         "--- 工程選択時に決めた実行設定 ---",
         JSON.stringify(task.operation ?? {}),
+        ...(task.operation?.via === "github"
+          ? [
+              "",
+              `接続先は GitHub（${task.operation.name}）です。読み取りは gh api（下の「GitHub（読み取り）」）で行ってください。コメントの投稿は、あなたはしません。投稿する内容を sacty-github-comments の JSON で出力してください（人間が結果を承認した後に、sacty が1回だけ投稿します）。sacty-operation-result の evidence には、読み取って確かめた対象と、投稿を頼んだ内容を書いてください。`,
+            ]
+          : []),
         '結果と確認した根拠をMarkdownで報告し、最後に ```json のブロックで {"sacty-operation-result":{"success":true,"evidence":"対象ID/URLと確認済みの変更後状態"}} を出してください。失敗/未確認の場合はsuccess:falseとし、evidenceに理由を記載してください。',
       ].join("\n");
     case "investigate": {
@@ -2630,7 +2637,13 @@ export function buildOrchestratorPrompt(
      * 対象リポジトリの無いタスク（PBI-73）。プロジェクトの対象のリポジトリ（コードの変更が要るときに選ぶ候補）・
      * コンテキストリポジトリ・プロジェクトのコンテキストの規約。リポジトリの無いタスクでだけ渡す。
      */
-    repoless?: { repositories: readonly string[]; context?: string; rules?: string };
+    repoless?: {
+      repositories: readonly string[];
+      context?: string;
+      rules?: string;
+      /** 単発作業の接続先にできる GitHub のホスト（プロジェクトで gh のアカウントを選んだもの）。 */
+      githubHosts?: readonly string[];
+    };
   } = {},
 ): string {
   if (isRepoless(task) && options.repoless) return buildRepolessOrchestratorPrompt(task, options);
@@ -2746,6 +2759,7 @@ function buildRepolessOrchestratorPrompt(
   options: NonNullable<Parameters<typeof buildOrchestratorPrompt>[1]>,
 ): string {
   const repoless = options.repoless ?? { repositories: [] };
+  const githubHosts = repoless.githubHosts ?? [];
   const images = options.images ?? [];
   const destinations = options.exports?.destinations ?? [];
   const rules = repoless.rules ?? options.exports?.rules;
@@ -2778,7 +2792,7 @@ function buildRepolessOrchestratorPrompt(
     "",
     "あわせて、次のことを決めてください。",
     "- investigation：調査の工程の性質（PBI-43）。リポジトリの無いタスクでは content にする",
-    "- operation：operationを選ぶ場合だけ、依頼に基づく実行設定を同じ回答に書く。via（platformまたはmcp）、name（下記の設定済み接続先）、target（一意な対象ID/URL）、change（依頼された変更内容と前提条件）、verification（結果の確認方法）。対象や変更内容を特定できなければ推測せずoperationを省略し、reasonに不足情報を書く。実行前の独立した準備や承認は設けない。",
+    "- operation：operationを選ぶ場合だけ、依頼に基づく実行設定を同じ回答に書く。via（platform・mcp・github）、name（下記の設定済み接続先）、target（一意な対象ID/URL）、change（依頼された変更内容と前提条件）、verification（結果の確認方法）。対象や変更内容を特定できなければ推測せずoperationを省略し、reasonに不足情報を書く。実行前の独立した準備や承認は設けない。",
     ...(images.length > 0
       ? [
           "- images：工程ごとに使う実行のイメージ（PBI-41）。コードは無いので、ふつうは書かない（default）",
@@ -2790,8 +2804,14 @@ function buildRepolessOrchestratorPrompt(
     ...(destinations.length > 0 ? exportChoiceLines(task, destinations, undefined) : []),
     "",
     "--- 単発作業に使える接続先 ---",
-    ...(destinations.length
-      ? destinations.map((d) => `- ${d.via}/${d.name}：${d.description}`)
+    ...(destinations.length || githubHosts.length
+      ? [
+          ...destinations.map((d) => `- ${d.via}/${d.name}：${d.description}`),
+          ...githubHosts.map(
+            (host) =>
+              `- github/${host}：GitHub の PR・Issue（読み取りはゲートウェイ経由。コメントはエージェントが出力に書き、人間の承認の後に sacty が投稿する）。コードの変更・プッシュはできない（コードを変えるなら、リポジトリを選ぶ組み合わせにする）`,
+          ),
+        ]
       : ["（設定済みの接続先がありません。外部操作は開始できません）"]),
     "",
     "選べる工程の組み合わせ：",
@@ -2806,7 +2826,7 @@ function buildRepolessOrchestratorPrompt(
     "選んだ進め方を、次の形式で必ず出してください。",
     "operation の実行設定は operationの場合のみ。不足時は省略し、reasonに不足情報を書いてください。",
     "```json",
-    `{"${PLAN_HEADING}": {"plan": "${Object.keys(plans).join(" または ")}", "reason": "選んだ理由", "repo": "作業するリポジトリの URL（${REPO_PLANS.join("・")} のときだけ。決められなければ空）", "repoReason": "そのリポジトリを選んだ理由（決められなければ、その理由）", "operation": {"via": "platform または mcp", "name": "接続先名", "target": "一意な対象ID/URL", "change": "依頼された変更内容と前提条件", "verification": "確認方法"}, "investigation": "content"${images.length > 0 ? ', "images": {"requirements": "イメージの名前"}' : ""}${destinations.length > 0 ? ', "exports": {"document": {"to": "接続先の名前", "via": "platform または mcp", "location": "原稿の置き場所", "reason": "そこに書き出す理由"}, "requirements": {"to": "接続先の名前", "via": "platform または mcp", "location": "置き場所の手がかり", "reason": "そこに書き出す理由"}, "design": {"to": "", "reason": "書き出さない理由"}}' : ""}}}`,
+    `{"${PLAN_HEADING}": {"plan": "${Object.keys(plans).join(" または ")}", "reason": "選んだ理由", "repo": "作業するリポジトリの URL（${REPO_PLANS.join("・")} のときだけ。決められなければ空）", "repoReason": "そのリポジトリを選んだ理由（決められなければ、その理由）", "operation": {"via": "platform・mcp・github のどれか", "name": "接続先名（github ならホスト）", "target": "一意な対象ID/URL", "change": "依頼された変更内容と前提条件", "verification": "確認方法"}, "investigation": "content"${images.length > 0 ? ', "images": {"requirements": "イメージの名前"}' : ""}${destinations.length > 0 ? ', "exports": {"document": {"to": "接続先の名前", "via": "platform または mcp", "location": "原稿の置き場所", "reason": "そこに書き出す理由"}, "requirements": {"to": "接続先の名前", "via": "platform または mcp", "location": "置き場所の手がかり", "reason": "そこに書き出す理由"}, "design": {"to": "", "reason": "書き出さない理由"}}' : ""}}}`,
     "```",
   ].join("\n");
 }
@@ -3177,7 +3197,8 @@ export function investigationMarker(task: Task): string {
 
 /** 調査の結果を、取り込み元の Issue に返すコメント（PBI-18）。人間が承認した結果だけを返す。 */
 export function buildInvestigationComment(task: Task): string {
-  const report = task.approved.investigate?.output ?? "";
+  // コメントの頼み（sacty-github-comments）は、sacty が別に投稿するので返さない
+  const report = withoutGitHubComments(task.approved.investigate?.output ?? "");
   const body =
     report.length > ISSUE_COMMENT_MAX
       ? `${report.slice(0, ISSUE_COMMENT_MAX)}\n\n…（長いため省略しました）`

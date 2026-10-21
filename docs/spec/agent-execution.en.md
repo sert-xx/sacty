@@ -164,6 +164,11 @@ Code: `apps/daemon/src/agent-sessions.ts` (`SOURCES`, `selectAgentSessionFiles`,
     The npm settings that remain in the image (`registry` and `npm_config`) are passed through a separate secret.
   - Because secret contents are not part of BuildKit's cache key, hashes of the contents (`NPM_CONFIG_HASH`, `SACTY_SETUP_HASH`) are passed as build-args
     so that the image is rebuilt when they change.
+  - In place of `gh`, `packages/cli/docker/gh-shim.cjs` is placed at `/opt/sacty/bin/gh`, at the front of `PATH` (it is used before a `gh` in the base image).
+    It accepts only `gh api` and sends REST `GET` and `HEAD` and GraphQL to `$SACTY_GITHUB_URL/<host>/…` (the host is `--hostname`, else
+    `GH_HOST`). Fields (`-f`, `-F`) become the query for REST, and `query` and variables for GraphQL. It accepts `--paginate` (for REST it follows `link` and
+    merges the arrays; for GraphQL, `$endCursor` and `pageInfo`), `--jq` (when `jq` exists), `-i`, `-H`, and `--input`.
+    Write methods and other commands print the usage and exit with code 1 ([Gateway](gateway.en.md#relaying-github-reads)).
 - The image's `env` is passed to both agent and test containers.
 
 Code: `apps/daemon/src/config.ts` (`resolveImage`, `languageImageTag`, `DEFAULT_IMAGE`), `apps/daemon/src/image.ts` (`buildImage`, `imageBuildArgs`, `imageBuildSettings`, `imageBuildTargets`), `packages/cli/docker/Dockerfile`

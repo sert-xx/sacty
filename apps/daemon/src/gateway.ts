@@ -2,6 +2,14 @@ import { randomBytes } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { Readable } from "node:stream";
 import { Agent, fetch as undiciFetch } from "undici";
+import {
+  GITHUB_GRAPHQL_BODY_MAX,
+  GITHUB_RELAY_REQUEST,
+  githubGraphqlUrl,
+  githubRestBase,
+  isReadOnlyGraphql,
+  relayHeaderValue,
+} from "./github-relay.js";
 import type { HostMcpServers } from "./host-mcp.js";
 import { isAllowed, type Platform, type PlatformCredentials } from "./platforms.js";
 
@@ -127,6 +135,12 @@ type RunState = Partial<GatewayRoute> & {
    */
   platforms?: readonly Platform[];
   access?: { platforms: readonly string[]; hostMcp: readonly string[] };
+  /**
+   * GitHub の読み取りの中継で使える、ホストごとの gh のアカウント（タスクのプロジェクトで選んだもの）。トークンは
+   * 使うときにホストで取り出し、この実行の間だけ持つ。
+   */
+  github?: Record<string, string>;
+  githubTokens?: Map<string, Promise<string>>;
   stats: GatewayStats;
   /** いまの一続きの失敗で待った合計。成功すると0に戻る。 */
   streakWaitedMs: number;
@@ -147,6 +161,8 @@ export type GatewayDeps = {
   credentials?: Pick<PlatformCredentials, "header" | "invalidate">;
   /** ホストで動かす MCP サーバー（PBI-36）。 */
   hostMcp?: Pick<HostMcpServers, "handle">;
+  /** GitHub の読み取りの中継に付けるトークン（ホストの gh のアカウントから取り出す）。 */
+  githubToken?: (host: string, account: string) => Promise<string>;
   /**
    * ホストで起動した、コンテキストの command の MCP サーバー（PBI-84）。実行の登録で結びつけた名前（host）でだけ
    * 中継する（/mcp/ からは使えない）。
@@ -289,11 +305,20 @@ export class AiGateway {
     /** プロジェクトのコンテキストで定義した外部 PF（PBI-74）。この実行だけが使える。 */
     platforms?: readonly Platform[],
     access?: { platforms: readonly string[]; hostMcp: readonly string[] },
+    /** GitHub の読み取りの中継で使える、ホストごとの gh のアカウント。 */
+    github?: Record<string, string>,
   ): { token: string; stats: () => GatewayStats; close: () => void } {
     const token = `sacty-gw-${randomBytes(24).toString("hex")}`;
     const state: RunState = {
       ...route,
       ...(access ? { access } : {}),
+      ...(github && Object.keys(github).length > 0
+        ? {
+            github: Object.fromEntries(
+              Object.entries(github).map(([host, account]) => [host.toLowerCase(), account]),
+            ),
+          }
+        : {}),
       ...(mcp && Object.keys(mcp).length > 0 ? { mcp } : {}),
       ...(platforms && platforms.length > 0 ? { platforms: [...platforms] } : {}),
       stats: { retries: 0, waitedMs: 0, statuses: [], gaveUp: false },
@@ -305,6 +330,125 @@ export class AiGateway {
       stats: () => ({ ...state.stats, statuses: [...state.stats.statuses] }),
       close: () => this.runs.delete(token),
     };
+  }
+
+  /** コンテナから見た、実行の GitHub の読み取りの中継の起点（この下に <ホスト>/<API のパス>）。 */
+  githubUrl(token: string): string {
+    return `${this.containerOrigin()}/r/${token}/github`;
+  }
+
+  /**
+   * GitHub の API を、読み取りだけ中継する。REST は GET・HEAD、GraphQL（/graphql）は query の操作の POST だけを、
+   * そのホストに選んだ gh のアカウントのトークンを付けて転送する。ページ送り（link）とリダイレクト（location）の
+   * API の URL は、中継の URL に書き換えて返す。
+   */
+  private async handleGitHub(
+    req: IncomingMessage,
+    res: ServerResponse,
+    target: { token: string; host: string; path: string; query: string },
+  ): Promise<void> {
+    const run = this.runs.get(target.token);
+    if (!run) return fail(res, 401, "sacty gateway: unknown or expired run token");
+    const host = target.host.toLowerCase();
+    const account = run.github && Object.hasOwn(run.github, host) ? run.github[host] : undefined;
+    if (!account || !this.deps.githubToken) {
+      const hosts = Object.keys(run.github ?? {});
+      return fail(
+        res,
+        404,
+        `sacty gateway: no GitHub account is selected for "${host}" in the project settings${hosts.length > 0 ? ` (available: ${hosts.join(", ")})` : ""}`,
+      );
+    }
+    const method = (req.method ?? "GET").toUpperCase();
+    const graphql = target.path === "/graphql" || target.path === "/graphql/";
+    if (graphql ? method !== "POST" : method !== "GET" && method !== "HEAD") {
+      return fail(
+        res,
+        405,
+        `sacty gateway: the GitHub relay is read-only (GET and HEAD for the REST API, POST of a GraphQL query for /graphql). ${method} ${target.path} is not allowed. Write your comment to the output instead (sacty posts it after approval).`,
+      );
+    }
+    if (/(^|\/)\.{1,2}(\/|$)|%2e|%2f|\\/i.test(target.path)) {
+      return fail(res, 400, `sacty gateway: the path "${target.path}" is not allowed`);
+    }
+    const sent = graphql
+      ? target.query
+        ? undefined
+        : githubGraphqlUrl(host)
+      : sentUrl(githubRestBase(host), target.path, target.query);
+    if (!sent) {
+      return fail(
+        res,
+        400,
+        `sacty gateway: the path "${target.path}" changes when sent as a URL (remove characters such as #)`,
+      );
+    }
+    const aborter = new AbortController();
+    res.on("close", () => {
+      if (!res.writableFinished) aborter.abort();
+    });
+    let body: Buffer | undefined;
+    if (graphql) {
+      try {
+        body = await readBody(req, res, this.bodies);
+      } catch (error) {
+        return refuseBody(req, res, error);
+      }
+      if (body.length > GITHUB_GRAPHQL_BODY_MAX || !isReadOnlyGraphql(body.toString("utf8"))) {
+        return fail(
+          res,
+          403,
+          "sacty gateway: the GitHub relay is read-only. Only a GraphQL query (no mutation or subscription) can be sent.",
+        );
+      }
+    }
+    let token: string;
+    try {
+      run.githubTokens ??= new Map();
+      let pending = run.githubTokens.get(host);
+      if (!pending) {
+        pending = this.deps.githubToken(host, account);
+        run.githubTokens.set(host, pending);
+        // 取り出せなかったら、次の要求で取り出し直す
+        pending.catch(() => run.githubTokens?.delete(host));
+      }
+      token = await pending;
+    } catch (error) {
+      return fail(
+        res,
+        502,
+        `sacty gateway: cannot get the token of the GitHub account "${account}" on ${host}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    const headers = new Headers();
+    for (const [name, value] of Object.entries(req.headers)) {
+      if (value === undefined || !GITHUB_RELAY_REQUEST.has(name)) continue;
+      headers.set(name, Array.isArray(value) ? value.join(", ") : value);
+    }
+    if (!headers.has("accept")) headers.set("accept", "application/vnd.github+json");
+    if (!headers.has("user-agent")) headers.set("user-agent", "sacty-gateway");
+    headers.set("authorization", `Bearer ${token}`);
+    let upstream: Response;
+    try {
+      upstream = await (this.deps.fetchImpl ?? fetch)(sent, {
+        method,
+        headers,
+        ...(body ? { body: new Uint8Array(body) } : {}),
+        signal: aborter.signal,
+        redirect: "manual",
+      });
+    } catch (error) {
+      if (aborter.signal.aborted) return;
+      return fail(
+        res,
+        502,
+        `sacty gateway: could not reach GitHub (${host}): ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    const relayBase = `${this.githubUrl(target.token)}/${host}`;
+    return pipe(upstream, res, (name, value) =>
+      name === "link" || name === "location" ? relayHeaderValue(value, host, relayBase) : value,
+    );
   }
 
   /** コンテナから見た、実行の組織内 PF の API の起点（PBI-35）。 */
@@ -492,6 +636,16 @@ export class AiGateway {
   }
 
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    // GitHub の読み取り：/r/<実行のトークン>/github/<ホスト>/<API のパス>
+    const github = /^\/r\/([^/]+)\/github\/([^/?]+)(\/[^?]*)?(\?.*)?$/.exec(req.url ?? "");
+    if (github) {
+      return this.handleGitHub(req, res, {
+        token: github[1] ?? "",
+        host: github[2] ?? "",
+        path: github[3] || "/",
+        query: github[4] ?? "",
+      });
+    }
     // 組織内 PF の API：/r/<実行のトークン>/pf/<PF の名前>/<パス>（PBI-35）
     const pf = /^\/r\/([^/]+)\/pf\/([^/?]+)(\/[^?]*)?(\?.*)?$/.exec(req.url ?? "");
     if (pf) {
@@ -770,10 +924,13 @@ function fail(res: ServerResponse, status: number, message: string): void {
   res.end(JSON.stringify({ error: { message, type: "sacty_gateway" } }));
 }
 
-function responseHeaders(upstream: Response): Record<string, string> {
+function responseHeaders(
+  upstream: Response,
+  rewrite?: (name: string, value: string) => string,
+): Record<string, string> {
   const headers: Record<string, string> = {};
   upstream.headers.forEach((value, name) => {
-    if (!DROP_RESPONSE.has(name)) headers[name] = value;
+    if (!DROP_RESPONSE.has(name)) headers[name] = rewrite ? rewrite(name, value) : value;
   });
   return headers;
 }
@@ -786,9 +943,13 @@ function send(res: ServerResponse, upstream: Response, body: string): void {
 }
 
 /** 上流の応答を、ストリーミングのまま返す。 */
-function pipe(upstream: Response, res: ServerResponse): void {
+function pipe(
+  upstream: Response,
+  res: ServerResponse,
+  rewrite?: (name: string, value: string) => string,
+): void {
   if (res.headersSent || res.destroyed) return;
-  res.writeHead(upstream.status, responseHeaders(upstream));
+  res.writeHead(upstream.status, responseHeaders(upstream, rewrite));
   if (!upstream.body) {
     res.end();
     return;

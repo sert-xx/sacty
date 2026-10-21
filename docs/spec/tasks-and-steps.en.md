@@ -144,11 +144,36 @@ The Orchestrator compares the purpose, deliverable, change target, and scope rat
 
 - `document` produces a Markdown draft without enforcing the Requirements or Design format. A person can request changes and approve it in the web UI. Before approval, it receives no MCP/PF access or project context and does not read external drafts. Source text and rules must come from the task body or human feedback through Request changes. Optional export follows the existing export mechanism; an export failure does not stop task completion. Direct updates to existing external documents use `operation`.
 - `operation` is a single step. The existing Orchestrator selects one destination, a unique target ID or URL, the requested change and its preconditions, and how to verify it. This does not add a preparation agent, proposal deliverable, or pre-execution approval gate. If the target or connection is missing, the task stops before execution starts.
+- The destination kind of an operation (`via`) is `platform`, `mcp`, or `github`. `github` is a GitHub host for which the project chose a gh account, and `name` is the host. The host is listed among the Orchestrator's destination candidates. Reading uses [the GitHub read relay](gateway.en.md#relaying-github-reads), and comments on PRs and issues are written by the agent in its output and posted by sacty after the result is approved ([Requesting comments on PRs and issues](#requesting-comments-on-prs-and-issues)). It cannot change or push code. If no account is chosen for the host, the task stops before execution (`operation.connectionMissing`).
 - The task details display the selected operation settings (`name`, `via`, `target`, `change`, `verification`) as read-only information. They are execution settings selected by the Orchestrator, not a new deliverable or approval gate.
 - The operation receives only the selected destination and performs the request. Its prompt requires checking the target and preconditions, sending one write request without retrying, and reading back the result. A successful result with evidence waits for human approval. Failure, interruption, restart, or an unknown result stops execution; the persisted start record rejects Resume and keeps the task paused. After execution starts, Request changes is unavailable. A person checks external state, cancels the task, and creates a new task for any remaining work.
 - This is not an external exactly-once guarantee: one write and read-back verification are agent instructions. It does not add recurring work, monitoring, arbitrary integrations, or orchestration across several destinations. Separate mixed deliverables into tasks with explicit approval boundaries.
 
 Code: `apps/daemon/src/prompts.ts`, `apps/daemon/src/service.ts`, `packages/core/src/events.ts`, `packages/core/src/projection.ts`, `apps/web/src/components/task-detail.tsx`
+
+## Requesting comments on PRs and issues
+
+A step's agent cannot write to GitHub ([the GitHub read relay](gateway.en.md#relaying-github-reads) is read-only). To comment on a PR or an issue, it writes exactly
+one of the following JSON in its output. After a person approves the step's output, sacty posts it with the project's gh account.
+
+```json
+{"sacty-github-comments": {"comments": [{"url": "https://github.com/acme/app/pull/12", "body": "Markdown body"}]}}
+```
+
+- Every step except review can request comments (for `review`, sacty posts the written review). Posting uses the request in the approved output (`approved`).
+  When the output is approved again (the approval time changes), the request of that version is posted. Nothing is posted for a cancelled, paused, or running task.
+  It is posted before the next step (`awaitingGitHubComments`).
+- If the request cannot be read (two or more, not JSON, a wrong shape, an empty body), there are more than 10 comments (`GITHUB_COMMENTS_MAX`), or a
+  body is longer than 60000 characters (`GITHUB_COMMENT_BODY_MAX`), nothing is posted and the reason is recorded.
+- The target must be the URL of a PR (`/pull/<number>`) or an issue (`/issues/<number>`) in the project's targets (a repository or its organization), or in the
+  task's source or working repository. Otherwise only that comment is not posted, and the reason is recorded.
+- A marker (`<!-- sacty-comment:<task>:<step>:<approval time>:<index> -->`) is put at the top of the body and a note that AI wrote it and a person approved it at
+  the end, and it is posted with the issue comments API. Before posting, a comment with the marker is searched for and used if found (no double posting even if it stops after posting and before recording).
+- The result is recorded in `GitHubCommentsPosted` (the step, the approval time, the URL or the reason per comment, and the reason if unreadable). Even if
+  posting fails, the task does not stop.
+- The JSON request is removed from the investigation result returned to the source issue (`buildInvestigationComment`).
+
+Code: `apps/daemon/src/github-comments.ts` (`requestedGitHubComments`, `commentTarget`, `commentAllowed`, `buildGitHubComment`, `githubCommentMarker`, `withoutGitHubComments`), `apps/daemon/src/github-relay.ts` (`GITHUB_COMMENTS_MAX`, `GITHUB_COMMENT_BODY_MAX`), `apps/daemon/src/service.ts` (`postGitHubComments`, `awaitingGitHubComments`), `packages/core/src/events.ts` (`GitHubCommentsPosted`, `OperationVia`), `packages/core/src/projection.ts`
 
 ## Orchestrator
 

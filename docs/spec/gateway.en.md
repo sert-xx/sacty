@@ -27,6 +27,7 @@ Related ADRs: [Start command-type MCP servers in the context's mcp.yaml on the h
 | Path | Purpose | Authentication |
 | --- | --- | --- |
 | `/r/<token>/pf/<PF name>/<path>` | Organization platform (PF) (the agent receives `SACTY_PF_URL` = `…/r/<token>/pf`) | The token in the URL |
+| `/r/<token>/github/<host>/<path>` | Reading GitHub (the agent receives `SACTY_GITHUB_URL` = `…/r/<token>/github`) | The token in the URL |
 | `/ctx-mcp/<name>` | Context repository MCP (relaying the URL type, and the command type started on the host) | `Authorization: Bearer <token>` |
 | `/mcp/<name>` | Host MCP servers | `Authorization: Bearer <token>` |
 | `/openai/v1/…` | AI calls (`bedrock` and `openai-compatible` of `providers.codex`) | `Authorization: Bearer <token>` (passed in `AWS_BEARER_TOKEN_BEDROCK` or `SACTY_PROVIDER_API_KEY`) |
@@ -105,6 +106,31 @@ The forms that remain when relying only on the hiding rules are as follows.
 - The agent's instructions include the PFs and APIs usable in that task.
 
 Code: `apps/daemon/src/platforms.ts` (`PlatformFile`, `TokenRequest`, `tokenUrl`, `hideSecret`, `pathPattern`, `isAllowed`, `PlatformCredentials`, `REASON_MAX`, `REFRESH_MARGIN_MS`, `platformPromptLines`), `apps/daemon/src/gateway.ts` (`handlePlatform`, `sentUrl`)
+
+## Relaying GitHub reads
+
+Relays the GitHub API for reading only. It has no setting and is always available (it cannot be turned off).
+
+- When a run is registered, the gh accounts chosen per host in the task's project (`githubAccounts`) are bound to it. They are not bound for tasks of a project
+  with no host that has an account, for runs that are not tasks, or for runs of document writing (`document`) (document writing passes no external
+  connection before approval).
+- The token is taken out with the host's gh (`gh auth token --hostname <host> --user <account>`) when the first request for that host arrives, and kept only
+  for that run. If it cannot be taken out, 502 (naming the account) is returned, and the next request tries again. It is not passed to the container.
+- The destination is `https://api.github.com` (github.com) or `https://<host>/api/v3` for REST, and `https://api.github.com/graphql` or
+  `https://<host>/api/graphql` for GraphQL (the path is `/graphql`).
+- Only `GET` and `HEAD` for REST and `POST` for GraphQL are accepted. Other methods get 405. GraphQL is sent only when the `query` in the body (up to 256 KiB)
+  is a read (outside the brackets, excluding strings and comments, there is no `mutation` or `subscription`; anything unreadable, unclosed, an array, or without
+  `query` is not treated as a read); others get 403.
+- A host that is not bound gets 404 (the available hosts are returned). A path with `.` or `..` segments, `%2e`, `%2f`, or `\`, and a path that changes as a URL get 400.
+- Only `accept`, `content-type`, `x-github-api-version`, `if-none-match`, `if-modified-since`, and `user-agent` are sent upstream, with
+  `Authorization: Bearer <token>`. Redirects are not followed.
+- In the response's `link` (pagination) and `location`, the host's REST API URL is rewritten to the relay URL (`…/r/<token>/github/<host>`).
+- The agent receives `SACTY_GITHUB_URL`, `SACTY_GITHUB_HOSTS` (the bound hosts separated by spaces), and `GH_HOST` (the host of the task's repository, else
+  github.com, else the first host), and the end of the instructions gets how to read and, for a step's run, how to request comments on PRs and issues
+  ([Tasks and steps](tasks-and-steps.en.md#requesting-comments-on-prs-and-issues)).
+- The `gh` in the agent image sends only `gh api` (REST GET and GraphQL) to this relay ([Agent execution](agent-execution.en.md)).
+
+Code: `apps/daemon/src/gateway.ts` (`handleGitHub`, `githubUrl`), `apps/daemon/src/github-relay.ts` (`isReadOnlyGraphql`, `githubGraphqlUrl`, `relayHeaderValue`, `GITHUB_RELAY_REQUEST`, `GITHUB_GRAPHQL_BODY_MAX`, `githubRelayEnv`, `githubPromptLines`), `apps/daemon/src/service.ts` (`executeLogged`, `githubRelayHosts`, `githubDefaultHost`), `packages/cli/docker/gh-shim.cjs`
 
 ## Relaying context MCP
 

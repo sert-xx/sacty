@@ -7,6 +7,9 @@
 This page explains how to build the container images used to run agents and tests. Build images with `npx sacty image build`
 ([CLI](cli.en.md#sacty-image-build)). The built image (`image`; default `sacty-agent:1.7.1`) is used both for running agents and for running tests.
 
+The image includes a `gh` that can use only `gh api` (it is for reading GitHub through the gateway, and it is used before a `gh` in the base image;
+[Gateway](gateway.en.md#reading-github)). After updating sacty, rebuild the images.
+
 ## Building images from a private registry
 
 In environments where Docker Hub or the public npm registry cannot be used, write the base image and the npm registry in `image_build` in `config.yaml`, then

@@ -294,6 +294,12 @@ const PARAMS = {
   "github.accountRequired": z.object({ project: z.string(), host: z.string() }),
   "github.accountUnavailable": z.object({ account: z.string(), host: z.string() }),
   "github.ghFailed": z.object({ detail: z.string() }),
+  // 工程の出力で頼まれた、PR・Issue へのコメント（sacty-github-comments）
+  "githubComments.unreadable": null,
+  "githubComments.tooMany": z.object({ max: z.number() }),
+  "githubComments.tooLong": z.object({ max: z.number() }),
+  "githubComments.targetInvalid": null,
+  "githubComments.targetNotAllowed": null,
   "review.verdictMissing": null,
   "review.verdictIdMismatch": z.object({ expected: z.string(), answered: z.string() }),
   "review.unreadable": null,
@@ -944,6 +950,16 @@ const ja: MessageDictionary = {
   "github.accountUnavailable": ({ account, host }) =>
     `${host} のアカウント「${account}」で gh にログインしていません。gh auth login --hostname ${host} でログインするか、プロジェクトの設定でアカウントを選び直してください。`,
   "github.ghFailed": ({ detail }) => `gh コマンドが失敗しました：${detail}`,
+  "githubComments.unreadable":
+    '出力の sacty-github-comments を読めませんでした（1つだけ、{"comments": [{"url": …, "body": …}]} の形で書く）。どのコメントも投稿していません。',
+  "githubComments.tooMany": ({ max }) =>
+    `頼まれたコメントが ${max} 件より多いので、どれも投稿していません。`,
+  "githubComments.tooLong": ({ max }) =>
+    `コメントの本文が ${max} 文字より長いので、どれも投稿していません。`,
+  "githubComments.targetInvalid":
+    "投稿先が、PR（https://<ホスト>/<owner>/<repo>/pull/<番号>）か Issue（…/issues/<番号>）の URL ではありません。",
+  "githubComments.targetNotAllowed":
+    "投稿先が、プロジェクトの対象のリポジトリではありません（対象の外には投稿しません）。",
   "review.verdictMissing": "判定がありません。",
   "review.verdictIdMismatch": ({ expected, answered }) =>
     `観点 ${expected} の判定がありません（ゴールガーディアンは、判定する観点に無い ID ${answered} で答えました）。`,
@@ -1492,6 +1508,16 @@ const en: MessageDictionary = {
   "github.accountUnavailable": ({ account, host }) =>
     `The account "${account}" on ${host} is not signed in to gh. Sign in with gh auth login --hostname ${host}, or choose another account in the project settings.`,
   "github.ghFailed": ({ detail }) => `The gh command failed: ${detail}`,
+  "githubComments.unreadable":
+    'Could not read sacty-github-comments in the output (write exactly one, in the form {"comments": [{"url": …, "body": …}]}). No comment was posted.',
+  "githubComments.tooMany": ({ max }) =>
+    `More than ${max} comments were requested, so none was posted.`,
+  "githubComments.tooLong": ({ max }) =>
+    `A comment body is longer than ${max} characters, so none was posted.`,
+  "githubComments.targetInvalid":
+    "The target is not the URL of a PR (https://<host>/<owner>/<repo>/pull/<number>) or an issue (…/issues/<number>).",
+  "githubComments.targetNotAllowed":
+    "The target is not a repository of the project's targets (sacty does not post outside them).",
   "review.verdictMissing": "No verdict was given.",
   "review.verdictIdMismatch": ({ expected, answered }) =>
     `No verdict for the viewpoint ${expected} (the goal guardian answered with ${answered}, which is not a viewpoint under review).`,

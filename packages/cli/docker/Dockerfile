@@ -130,6 +130,12 @@ RUN --mount=type=secret,id=setup,target=/run/secrets/setup \
     else sh -ex /run/secrets/setup; fi; \
   fi
 
+# gh の代わり：gh api（REST の GET と GraphQL の query）だけを、sacty のゲートウェイの GitHub の読み取りの中継に送る。
+# トークンはコンテナに入れない（ゲートウェイが、プロジェクトの gh のアカウントで認証する）。元のイメージに本物の gh が
+# あっても、認証が無く使えないので、PATH の先頭に置いてこちらを使わせる
+COPY --chmod=755 gh-shim.cjs /opt/sacty/bin/gh
+ENV PATH=/opt/sacty/bin:$PATH
+
 # root で実行した手順（npm など）が HOME の下に作ったものを、node ユーザーの持ち物に戻す
 RUN if [ -d /home/node ]; then chown -R "node:$(id -g node)" /home/node; fi
 

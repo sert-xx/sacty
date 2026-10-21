@@ -1208,3 +1208,126 @@ describe("受け取る本文の上限（PBI-132）", () => {
     expect(up.calls[0]?.body).toHaveLength(50);
   });
 });
+
+describe("GitHub の読み取りの中継", () => {
+  async function startGitHub(
+    responses: Parameters<typeof upstream>[0],
+    accounts: Record<string, string> = { "github.com": "me", "ghe.example.co.jp": "me-corp" },
+  ) {
+    const up = upstream(responses);
+    const tokens: string[] = [];
+    gateway = new AiGateway({
+      fetchImpl: up.fetchImpl,
+      githubToken: async (host, account) => {
+        tokens.push(`${host}/${account}`);
+        if (account === "logged-out") throw new Error("not signed in");
+        return `ghp_${account}`;
+      },
+    });
+    const port = await gateway.listen();
+    const run = gateway.register(undefined, undefined, undefined, undefined, accounts);
+    const base = `http://127.0.0.1:${port}/r/${run.token}/github`;
+    return { ...up, tokens, run, port, base };
+  }
+
+  it("REST の GET を、そのホストに選んだアカウントのトークンを付けて API に送る（エージェントの認証は送らない）", async () => {
+    const g = await startGitHub([
+      json(200, [{ id: 1 }], {
+        link: '<https://api.github.com/repos/o/r/pulls/1/comments?page=2>; rel="next"',
+      }),
+      json(200, { id: 2 }),
+    ]);
+    const res = await fetch(`${g.base}/github.com/repos/o/r/pulls/1/comments?per_page=100`, {
+      headers: {
+        authorization: "Bearer agent",
+        cookie: "c=1",
+        "x-github-api-version": "2022-11-28",
+      },
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual([{ id: 1 }]);
+    expect(g.calls[0]?.url).toBe("https://api.github.com/repos/o/r/pulls/1/comments?per_page=100");
+    expect(g.calls[0]?.headers.get("authorization")).toBe("Bearer ghp_me");
+    expect(g.calls[0]?.headers.get("cookie")).toBeNull();
+    expect(g.calls[0]?.headers.get("x-github-api-version")).toBe("2022-11-28");
+    // ページ送りの URL は中継の URL にする（直接 API に送ると、認証が付かない）
+    expect(res.headers.get("link")).toBe(
+      `<http://host.docker.internal:${g.port}/r/${g.run.token}/github/github.com/repos/o/r/pulls/1/comments?page=2>; rel="next"`,
+    );
+    // GitHub Enterprise Server は /api/v3。トークンはホストとアカウントごと
+    await fetch(`${g.base}/ghe.example.co.jp/repos/o/r`);
+    expect(g.calls[1]?.url).toBe("https://ghe.example.co.jp/api/v3/repos/o/r");
+    expect(g.calls[1]?.headers.get("authorization")).toBe("Bearer ghp_me-corp");
+    expect(g.tokens).toEqual(["github.com/me", "ghe.example.co.jp/me-corp"]);
+  });
+
+  it("トークンは実行の間だけ使い回す", async () => {
+    const g = await startGitHub([json(200, {}), json(200, {})]);
+    await fetch(`${g.base}/github.com/user`);
+    await fetch(`${g.base}/github.com/user`);
+    expect(g.tokens).toEqual(["github.com/me"]);
+  });
+
+  it("GraphQL は query だけを送り、mutation は断る", async () => {
+    const g = await startGitHub([json(200, { data: { viewer: { login: "me" } } })]);
+    const ok = await fetch(`${g.base}/github.com/graphql`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ query: "{ viewer { login } }" }),
+    });
+    expect(ok.status).toBe(200);
+    expect(g.calls[0]?.url).toBe("https://api.github.com/graphql");
+    expect(g.calls[0]?.headers.get("authorization")).toBe("Bearer ghp_me");
+    const mutation = await fetch(`${g.base}/github.com/graphql`, {
+      method: "POST",
+      body: JSON.stringify({
+        query: 'mutation { addComment(input: {subjectId: "x", body: "y"}) { clientMutationId } }',
+      }),
+    });
+    expect(mutation.status).toBe(403);
+    expect(g.calls).toHaveLength(1);
+  });
+
+  it("書き込み・知らないホスト・おかしなパス・知らないトークンは、上流に送らずに断る", async () => {
+    const g = await startGitHub([]);
+    for (const method of ["POST", "PATCH", "PUT", "DELETE"]) {
+      const res = await fetch(`${g.base}/github.com/repos/o/r/issues/1/comments`, {
+        method,
+        body: "{}",
+      });
+      expect(res.status).toBe(405);
+    }
+    expect((await fetch(`${g.base}/github.com/graphql`)).status).toBe(405);
+    const unknown = await fetch(`${g.base}/other.example.com/repos/o/r`);
+    expect(unknown.status).toBe(404);
+    expect(await unknown.text()).toContain("github.com, ghe.example.co.jp");
+    // fetch はパスの %2e%2e をまとめてしまうので、そのまま送る
+    const raw = (path: string) =>
+      new Promise<number>((resolve, reject) => {
+        const req = request({ host: "127.0.0.1", port: g.port, method: "GET", path }, (res) => {
+          res.resume();
+          resolve(res.statusCode ?? 0);
+        });
+        req.on("error", reject);
+        req.end();
+      });
+    expect(await raw(`/r/${g.run.token}/github/github.com/repos/o/r/%2e%2e/x`)).toBe(400);
+    expect(await raw(`/r/${g.run.token}/github/github.com/repos/o/r/../../x`)).toBe(400);
+    expect(
+      (await fetch(`http://127.0.0.1:${g.port}/r/sacty-gw-unknown/github/github.com/user`)).status,
+    ).toBe(401);
+    g.run.close();
+    expect((await fetch(`${g.base}/github.com/user`)).status).toBe(401);
+    expect(g.calls).toHaveLength(0);
+  });
+
+  it("アカウントを選んでいない実行・トークンを取り出せないときは、理由を返す", async () => {
+    const none = await startGitHub([], {});
+    expect((await fetch(`${none.base}/github.com/user`)).status).toBe(404);
+    await gateway?.close();
+    const g = await startGitHub([], { "github.com": "logged-out" });
+    const res = await fetch(`${g.base}/github.com/user`);
+    expect(res.status).toBe(502);
+    expect(await res.text()).toContain("logged-out");
+  });
+});

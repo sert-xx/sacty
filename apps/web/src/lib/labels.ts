@@ -531,6 +531,19 @@ function describeEventText(event: ActivityEvent, l: LabelMessages): string {
       return e.IssueCommented(event.payload.url);
     case "IssueCommentFailed":
       return e.IssueCommentFailed(l.text(event.payload.message));
+    case "GitHubCommentsPosted": {
+      const p = event.payload;
+      return e.GitHubCommentsPosted(
+        l.step[p.step],
+        p.failed !== undefined
+          ? [l.text(p.failed)]
+          : p.results.map((r) =>
+              r.url
+                ? e.GitHubCommentPosted(r.url)
+                : e.GitHubCommentFailed(r.target, l.text(r.failed ?? "")),
+            ),
+      );
+    }
     case "ReviewTargetResolved":
       return e.ReviewTargetResolved(event.payload.url, event.payload.headCommit.slice(0, 7));
     case "PullRequestReviewPosted":

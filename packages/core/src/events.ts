@@ -561,8 +561,15 @@ const SplitCompleted = z.object({
 });
 
 /** 単発作業の実行設定。工程選択時に依頼から決める（独立した成果物や承認は作らない）。 */
+/**
+ * 単発作業の接続先の種類。github は、プロジェクトで gh のアカウントを選んだ GitHub のホスト（name がホスト）。読み取りは
+ * ゲートウェイの GitHub の中継で行い、PR・Issue へのコメントは、エージェントが出力に書いたものを承認の後に sacty が投稿する。
+ */
+export const OperationVia = z.enum(["platform", "mcp", "github"]);
+export type OperationVia = z.infer<typeof OperationVia>;
+
 export const OperationSettings = z.object({
-  via: ExportVia,
+  via: OperationVia,
   name: z.string().trim().min(1).max(100),
   target: z.string().trim().min(1).max(2000),
   change: z.string().trim().min(1).max(8000),
@@ -1603,6 +1610,31 @@ const IssueCommentFailed = z.object({
 });
 
 /**
+ * 承認した工程の成果でエージェントが頼んだ、GitHub の PR・Issue へのコメント（sacty-github-comments）を、sacty が
+ * 投稿した・投稿できなかった。コメントごとに結果を持つ。頼みの JSON を読めなければ、failed（理由）だけを持つ。
+ * 承認し直したら（approvedAt が変わる）、その版の頼みを投稿する。タスクの状態・工程は変えない（投稿できなくても止めない）。
+ */
+const GitHubCommentsPosted = z.object({
+  type: z.literal("GitHubCommentsPosted"),
+  payload: z.object({
+    step: StepKey,
+    approvedAt: z.string(),
+    results: z
+      .array(
+        z.object({
+          /** 投稿先の PR・Issue の URL（エージェントが書いたもの）。 */
+          target: z.string().max(2000),
+          /** 投稿したコメントの URL。 */
+          url: z.string().max(2000).optional(),
+          failed: DaemonText.optional(),
+        }),
+      )
+      .max(50),
+    failed: DaemonText.optional(),
+  }),
+});
+
+/**
  * sacty のブランチにプッシュした（PRの作成の前に記録する。PRの作成に失敗しても、
  * プッシュ済みのブランチを中止で片付けられるように）。
  */
@@ -2187,6 +2219,7 @@ export const EventInput = z.discriminatedUnion("type", [
   ReworkJudged,
   IssueCommented,
   IssueCommentFailed,
+  GitHubCommentsPosted,
   ReviewTargetResolved,
   PullRequestReviewPosted,
   ReviewRestarted,
