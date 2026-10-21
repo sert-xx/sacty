@@ -27,6 +27,7 @@ Related ADRs: [Keep the agent defaults in the repository, and limit config.yaml 
 | `step_agents` | `{}` | The AI per step (`StepKey`; `deployment` is the check in the after-merge watch step) and for `orchestrator`. If not written, `default_agent`; for Integration review (`integrate`), `guardian_agent` |
 | `agents` | `{}` | Overrides of and additions to the agent defaults ("Agent defaults and overrides" below) |
 | `budget.default_per_task_usd` | `1` (`DEFAULT_BUDGET_USD`) | The budget per task (US dollars; a positive number) |
+| `budget.per_plan_usd` | `{}` | The budget per step plan (`StepPlan`; US dollars; a positive number). When the orchestrator chooses that plan, it becomes the task's budget cap ([Tasks and steps](tasks-and-steps.en.md#budget-pause-resume-and-cancel)). Plans not listed use `budget.default_per_task_usd` |
 | `budget.default_per_audit_usd` | `1` (`DEFAULT_AUDIT_BUDGET_USD`) | The budget per audit (US dollars; a positive number; separate from the task budget; [Audit](audit.en.md)) |
 | `image_build` | none | The source for `sacty image build` ("Images" in [Agent execution](agent-execution.en.md)) |
 | `images` | `{}` | Images per language (same as above) |

@@ -4,7 +4,7 @@
 - タスク: PBI-118
 - PR: #128
 - ブランチ: feat/issue-118-dashboard-cards
-- 関係する ADR: [ダッシュボードを工場の管制室にし、人の出番・工場の健康・お金・品質の欄の定義と集計の置き場所を決める](../adr/20261016-1308-dashboard-control-room-cards.md)
+- 関係する ADR: [ダッシュボードを工場の管制室にし、人の出番・工場の健康・お金・品質の欄の定義と集計の置き場所を決める](../adr/20261016-1308-superseded-dashboard-control-room-cards.md)
 
 ## 目的
 

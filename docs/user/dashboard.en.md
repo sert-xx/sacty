@@ -16,7 +16,7 @@ Hover over or tap the mark (i) next to a heading to see what the numbers mean an
 | Needs you | Tasks awaiting approval, paused, or escalated, longest wait first. Press a title to go to the screen where you decide | "Nothing needs you right now." |
 | Why tasks are paused | Paused tasks counted by reason. Press a row to expand that reason's tasks inside the section. Usage limit and authentication are highlighted because one fix usually resumes all of them | "No tasks are paused." |
 | Open tasks | All tasks except completed and cancelled ones. With more than 5 tasks, the section scrolls inside | "There are no open tasks." |
-| Cost and budget | The cost for today and the last 7 days, billed and estimated separately. Also the tasks that used 80% or more of their budget or reached the cap | "No task is near its budget." |
+| Cost and budget | The cost for today and the last 7 days, as an estimate. Also the tasks that used 80% or more of their budget or reached the cap | "No task is near its budget." |
 | Step queue | The number of running tasks against the parallel limit, and the number of tasks waiting to run. When more tasks than the limit have been waiting for 10 minutes, it is highlighted with a link to the Sacty settings | 0 |
 | Intake | For issues, PR reviews, and tickets: the time of the last intake, how many tasks it created, and what could not be imported. "Run intake now" is also here | That intake is not set or cannot be read, with a link to the Sacty settings |
 | Throughput | Completed and cancelled counts for the last 7 and 30 days, and the median time from creation to completion | 0 and "—" |
@@ -28,7 +28,8 @@ Sections sit side by side when there is room and stack otherwise. The same secti
 ## Periods and counting
 
 - "Today", "last 7 days", and "last 30 days" are split by the date of the machine running sacty, not by the UI language. The last 7 and 30 days include today.
-- The cost includes completed and cancelled tasks. An estimate is a converted value (such as a subscription), not an actual charge.
+- The cost includes completed and cancelled tasks. The cost is an estimate that Sacty calculates from usage and prices (including converted values such as subscriptions).
+  It may differ from what you are actually billed; Sacty does not handle actual billed amounts.
 - The waiting time counts from the record that made the task await approval, pause, or escalate.
 - Tasks of deleted projects are neither shown nor counted in any section.
 - If the daemon cannot be reached when you open the page, the error is shown instead of the sections. The sections appear once it can be reached.

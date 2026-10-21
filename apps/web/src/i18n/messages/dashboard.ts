@@ -61,9 +61,9 @@ const ja = {
       `今日と、今日を含む直近7日の費用です。完了・中止したタスクの分も含みます。期間の境は、Sacty を動かしているマシンの日付（${timeZone}）です。`,
     today: "今日",
     days7: "直近7日",
-    actual: "実請求",
     estimated: "概算",
-    estimatedHint: "サブスクリプションなどの換算値で、実際の請求ではありません。",
+    estimatedHint:
+      "Sacty が使用量と単価から計算した値です（サブスクリプションなどの換算値も含みます）。実際の請求額とは異なることがあります。",
     table: "期間ごとの費用",
     nearBudget: "予算に近いタスク",
     nearBudgetHint: "終わっていないタスクのうち、予算の 80% 以上を使ったか、上限に達したものです。",
@@ -178,9 +178,9 @@ const en: DashboardMessages = {
       `Cost for today and the last 7 days including today, including completed and cancelled tasks. Days are split by the date of the machine running Sacty (${timeZone}).`,
     today: "Today",
     days7: "Last 7 days",
-    actual: "Billed",
     estimated: "Estimate",
-    estimatedHint: "Converted value (such as a subscription), not an actual charge.",
+    estimatedHint:
+      "Calculated by Sacty from usage and prices (including converted values such as subscriptions). It may differ from what you are actually billed.",
     table: "Cost by period",
     nearBudget: "Tasks near their budget",
     nearBudgetHint: "Open tasks that used 80% or more of their budget, or reached the cap.",

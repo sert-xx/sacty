@@ -95,8 +95,8 @@ describe("ダッシュボードの集計：期間の境（PBI-118）", () => {
 describe("ダッシュボードの集計：費用（PBI-118）", () => {
   it("何も無ければ 0", () => {
     const s = summarize(new DashboardStats());
-    expect(s.costs.today).toEqual({ actualUsd: 0, estimatedUsd: 0 });
-    expect(s.costs.days7).toEqual({ actualUsd: 0, estimatedUsd: 0 });
+    expect(s.costs.today).toBe(0);
+    expect(s.costs.days7).toBe(0);
     expect(s.costs.since.today).toBe(new Date(TODAY).toISOString());
     expect(s.costs.since.days7).toBe(new Date(day(6)).toISOString());
     expect(s.timeZone).toBe("Asia/Tokyo");
@@ -110,20 +110,20 @@ describe("ダッシュボードの集計：費用（PBI-118）", () => {
     stats.add(cost(day(6), 0.4), t, t); // 7日の始まりちょうど
     stats.add(cost(day(6) - 1, 0.8), t, t); // 7日の境の前
     const s = summarize(stats);
-    expect(s.costs.today.actualUsd).toBe(0.1);
-    expect(s.costs.days7.actualUsd).toBe(0.7);
+    expect(s.costs.today).toBe(0.1);
+    expect(s.costs.days7).toBe(0.7);
   });
 
-  it("概算（サブスクリプションなどの換算値）と実請求を分けて足す。1件・複数件", () => {
+  it("サブスクリプションなどの換算値も分けずに1つの概算に足す。1件・複数件", () => {
     const stats = new DashboardStats();
     const t = task();
     stats.add(cost(NOW, 0.3, true), t, t);
-    expect(summarize(stats).costs.today).toEqual({ actualUsd: 0, estimatedUsd: 0.3 });
+    expect(summarize(stats).costs.today).toBe(0.3);
     stats.add(cost(NOW, 0.1), t, t);
     stats.add(cost(NOW, 0.2), t, t);
     stats.add(cost(NOW, 0.4, true), t, t);
-    // 浮動小数の誤差を丸めて足す（0.1 + 0.2）
-    expect(summarize(stats).costs.today).toEqual({ actualUsd: 0.3, estimatedUsd: 0.7 });
+    // 浮動小数の誤差を丸めて足す（0.3 + 0.1 + 0.2 + 0.4）
+    expect(summarize(stats).costs.today).toBe(1);
   });
 
   it("費用を持つイベントの種類（CHARGED_EVENT_TYPES）だけを数え、0 の費用は持たない", () => {
@@ -134,7 +134,7 @@ describe("ダッシュボードの集計：費用（PBI-118）", () => {
     stats.add(cost(NOW, 0), t, t);
     // 費用の欄を持たないイベント
     stats.add(event("StepSubmitted", NOW, { step: "implement", submission: 1 }), t, t);
-    expect(summarize(stats).costs.today.actualUsd).toBe(0.75);
+    expect(summarize(stats).costs.today).toBe(0.75);
   });
 
   it("消したプロジェクトのタスクの費用は数えない（プロジェクトが戻れば数える）", () => {
@@ -142,9 +142,9 @@ describe("ダッシュボードの集計：費用（PBI-118）", () => {
     const t = task();
     stats.add(cost(NOW, 0.1), t, t);
     stats.add(cost(NOW, 0.2, false, { projectId: "gone" }), t, t);
-    expect(summarize(stats).costs.today.actualUsd).toBe(0.1);
-    expect(summarize(stats, { projects: new Set(["gone"]) }).costs.today.actualUsd).toBe(0.2);
-    expect(summarize(stats, { projects: new Set() }).costs.today.actualUsd).toBe(0);
+    expect(summarize(stats).costs.today).toBe(0.1);
+    expect(summarize(stats, { projects: new Set(["gone"]) }).costs.today).toBe(0.2);
+    expect(summarize(stats, { projects: new Set() }).costs.today).toBe(0);
   });
 });
 
@@ -408,7 +408,7 @@ describe("ダッシュボードの集計：対応待ちの時刻と待ち行列�
     stats.add(event("StepApproved", day(40)), task(), completed());
     stats.add(cost(NOW, 0.5), t, t);
     const s = summarize(stats);
-    expect(s.costs.days7.actualUsd).toBe(0.5);
+    expect(s.costs.days7).toBe(0.5);
     expect(s.flow.days30.completed).toBe(0);
     expect(s.quality.counts.guardianMissed).toBe(0);
   });
@@ -422,6 +422,6 @@ describe("ダッシュボードの集計：対応待ちの時刻と待ち行列�
     // 32 日より古いものは、集計を呼ぶ前に捨てられている（33 日分 ± 捨てる間隔の 1 日）
     expect(kept).toBeLessThanOrEqual(34);
     expect(kept).toBeGreaterThanOrEqual(32);
-    expect(summarize(stats).costs.days7.actualUsd).toBe(0.07);
+    expect(summarize(stats).costs.days7).toBe(0.07);
   });
 });

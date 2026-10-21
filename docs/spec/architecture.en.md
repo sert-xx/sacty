@@ -95,9 +95,9 @@ Code: `apps/daemon/src/server.ts` (`createApp`, `handleError`), `apps/web/src/li
     is not `completed` or `cancelled`), most recently updated first (`updatedAt`, newest first). There is no limit on the count. Each row
     shows the title (a link to the task details), the project name, and the state. When there are no projects or no open tasks, it says so.
   - Cost and budget: the cost for today and for the last 7 days including today (the aggregate's `costs`; including completed and cancelled
-    tasks). Billed cost (not `estimated`) and estimates (converted values such as a subscription) are shown separately; the estimate row
-    appears only when either period has an estimate. Tasks near their budget are the open tasks whose used amount is 80% (`BUDGET_WARN_RATIO`)
-    or more of the cap (including those that reached it), largest ratio first, with used / cap, the estimate mark, and the cap-reached mark
+    tasks). The cost is what sacty calculates from usage and prices, and actual billed amounts are not
+    handled, so it is shown as a single "Estimate" row without splitting by `estimated`. Tasks near their budget are the open tasks whose used amount is 80% (`BUDGET_WARN_RATIO`)
+    or more of the cap (including those that reached it), largest ratio first, with used / cap and the cap-reached mark
     (`nearBudgetRows`).
   - Step queue: the number of running tasks / the parallel limit (the sacty setting `maxParallelTasks`; the default when it is not set or
     cannot be read) and the number of waiting tasks. Running means the tasks the worker is processing (`inflight`, including work while the
@@ -144,12 +144,12 @@ Even though the UI refetches every 3 seconds, neither all tasks nor the activity
 - At startup, in the same single pass that reads the activity log to restore the state, the daemon folds each event into `DashboardStats` (the
   `applied` callback of `project`). When appending to the activity log, the applied events are folded in too.
 - What it keeps: per task, the time of the latest record that made it wait for a person (`StepSubmitted`, `TaskPaused`, `TaskEscalated`, or `ReproductionChecked` when not reproduced). For events
-  that carry a cost (`CHARGED_EVENT_TYPES`; zero costs are not kept), the time, the cost, and whether it is an estimate. The time a task finished (the
+  that carry a cost (`CHARGED_EVENT_TYPES`; zero costs are not kept), the time and the cost. The time a task finished (the
   event where `isFinished` went from false to true; removed when the task becomes unfinished again) and its time since creation. The time, kind, and step of
   quality-signal events. Records older than 32 days (`KEEP_DAYS`) are dropped once a day (by record time) while folding and when aggregating (the 30-day
   sections plus a margin for the date boundary; they do not keep growing when the daemon runs without the dashboard being opened).
 - When aggregating, the IDs of the existing projects and the current tasks are passed in; records of tasks of deleted projects are not counted (they count again if the project comes back).
-- What it returns: `timeZone`, `waitingSince` (only tasks waiting for a person), `costs` (`actualUsd` and `estimatedUsd` for `today` and `days7`, and the period
+- What it returns: `timeZone`, `waitingSince` (only tasks waiting for a person), `costs` (the cost in US dollars for `today` and `days7`, not split by `estimated`, and the period
   starts `since`), `flow` (`completed`, `cancelled`, `medianLeadMs` for `days7` and `days30`, and `since`), `quality` (`since`, `counts`,
   `reworkBySteps`), `queue` (`running`, `queued`, `max`, `overSince`). "Now" is not returned (the UI computes with its own clock).
 - Period boundaries follow the local date of the daemon's machine (`localDayStart`). Records with a future time are not excluded (only the daemon's clock writes them).

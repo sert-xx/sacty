@@ -5081,6 +5081,10 @@ export class TaskService {
       // 記録せずに止める（再開しても、テストを飛ばして通らないように）
       const noTests = this.checkNoTests(latest, chosen);
       if (noTests.stop) delete chosen.noTestsReason;
+      // 選んだ組み合わせに予算を設定していれば、タスクの予算の上限をそれにする。人が上限を上げた後は、その上限を残す
+      const planCap = chosen.plan && config.config.budgetPerPlanUsd?.[chosen.plan];
+      if (planCap && !latest.budget.raised) chosen.budgetCapUsd = planCap;
+      else delete chosen.budgetCapUsd;
       events.push({
         // レビューだけのタスクは、オーケストレーターがイメージを選んだときだけ、オーケストレーターの記録にする
         actor: review && chosen.imageSource !== "orchestrator" ? "sacty" : "orchestrator",

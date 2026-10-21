@@ -12,6 +12,7 @@ import {
   PricePerMTok,
   parseRepoUrl,
   StepKey,
+  StepPlan,
 } from "@sacty/core";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
@@ -314,6 +315,11 @@ const ConfigFile = z.object({
   budget: z
     .object({
       default_per_task_usd: z.number().positive().default(DEFAULT_BUDGET_USD),
+      /**
+       * 工程の組み合わせ（STEP_PLANS）ごとの予算。オーケストレーターがその組み合わせを選んだら、タスクの予算の上限をこの値に
+       * する。書いていない組み合わせは default_per_task_usd のまま。
+       */
+      per_plan_usd: nullAsMissing(z.partialRecord(StepPlan, z.number().positive()).default({})),
       /** 1回の監査の予算の既定の上限（PBI-124）。タスクの予算とは別に持つ。 */
       default_per_audit_usd: z.number().positive().default(DEFAULT_AUDIT_BUDGET_USD),
     })
@@ -750,6 +756,8 @@ export type SactyConfig = {
   /** 段階のエージェント（runtime ごと・段階ごと。使える段階だけ。PBI-119）。 */
   tierAgents?: Partial<Record<TierRuntime, Partial<Record<AgentTier, AgentConfig>>>>;
   budgetPerTaskUsd: number;
+  /** 工程の組み合わせごとの予算（書いてある組み合わせだけ）。無い組み合わせは budgetPerTaskUsd。 */
+  budgetPerPlanUsd?: Partial<Record<StepPlan, number>>;
   /** 1回の監査の予算の既定の上限（PBI-124）。 */
   budgetPerAuditUsd: number;
   /** ゲートウェイの AI の呼び出しのリトライの上限（PBI-37）。 */
@@ -1114,6 +1122,7 @@ export function loadConfig(home: string, defaultsPath: string = DEFAULT_AGENTS_P
     config: {
       image: file.image,
       budgetPerTaskUsd: file.budget.default_per_task_usd,
+      budgetPerPlanUsd: file.budget.per_plan_usd,
       budgetPerAuditUsd: file.budget.default_per_audit_usd,
       ...(file.onepassword?.account ? { onePasswordAccount: file.onepassword.account } : {}),
       imageBuild: {
@@ -1306,6 +1315,10 @@ providers:
 
 budget:
   default_per_task_usd: ${DEFAULT_BUDGET_USD}
+  # 工程の組み合わせごとの予算（書いていない組み合わせは default_per_task_usd）。オーケストレーターが組み合わせを選んだときに上限を変える
+  # per_plan_usd:
+  #   standard: 3
+  #   split: 10
   # 完了したタスクの監査の、1回あたりの上限（タスクの予算とは別）
   default_per_audit_usd: ${DEFAULT_AUDIT_BUDGET_USD}
 

@@ -133,6 +133,24 @@ describe("接続先と単価だけの config.yaml", () => {
     expect(Object.keys(config.agents ?? {})).toHaveLength(10);
   });
 
+  it("工程の組み合わせごとの予算（budget.per_plan_usd）を読み、無い組み合わせの名前・0 以下は誤りにする", () => {
+    const config = loaded(
+      `providers:\n${codex()}budget:\n  default_per_task_usd: 2\n  per_plan_usd:\n    standard: 5\n`,
+    );
+    expect(config.budgetPerTaskUsd).toBe(2);
+    expect(config.budgetPerPlanUsd).toEqual({ standard: 5 });
+    expect(loaded(`providers:\n${codex()}`).budgetPerPlanUsd).toEqual({});
+    // 中身をすべてコメントにしても（null）、書いていないのと同じ
+    expect(
+      loaded(`providers:\n${codex()}budget:\n  per_plan_usd:\n    # standard: 5\n`)
+        .budgetPerPlanUsd,
+    ).toEqual({});
+    expect(load(`providers:\n${codex()}budget:\n  per_plan_usd:\n    huge: 5\n`).ok).toBe(false);
+    expect(load(`providers:\n${codex()}budget:\n  per_plan_usd:\n    standard: 0\n`).ok).toBe(
+      false,
+    );
+  });
+
   it("providers・agents・available_models の下をすべてコメントにしても（null）、書いていないのと同じに読む", () => {
     expect(
       loaded(`providers:\n${codex()}agents:\n  # codex_ultimate:\n`).agents?.codex_ultimate,

@@ -8,9 +8,6 @@ import { isFinished, type Task } from "./projection.js";
  * 期間の境は、sacty を動かしているマシン（デーモン）のローカルの日付で決める。
  */
 
-/** 費用の合計。実請求（estimated でない）と概算（サブスクリプションなどの換算値）を分けて持つ。 */
-export type CostSum = { actualUsd: number; estimatedUsd: number };
-
 /** 完了・中止の件数と、完了したタスクの作成から完了までの時間の中央値（完了が無ければ null）。 */
 export type FlowSum = { completed: number; cancelled: number; medianLeadMs: number | null };
 
@@ -36,10 +33,13 @@ export type DashboardSummary = {
    */
   waitingSince: Record<string, string>;
   costs: {
-    /** 今日（ローカルの日付）の費用。 */
-    today: CostSum;
-    /** 今日を含む直近 7 日の費用。 */
-    days7: CostSum;
+    /**
+     * 今日（ローカルの日付）の費用（米ドル）。sacty が使用量と単価から計算した概算で、実際の請求とは分けない
+     * （サブスクリプションなどの換算値も足す）。
+     */
+    today: number;
+    /** 今日を含む直近 7 日の費用（米ドル。today と同じく概算）。 */
+    days7: number;
     /** 期間の始まり（ISO）。 */
     since: { today: string; days7: string };
   };
@@ -101,7 +101,7 @@ export function queueOverSince(
 const KEEP_DAYS = 32;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-type CostEntry = { at: number; projectId: string; usd: number; estimated: boolean };
+type CostEntry = { at: number; projectId: string; usd: number };
 type FinishEntry = { at: number; projectId: string; cancelled: boolean; leadMs: number };
 type QualityEntry = { at: number; projectId: string; kind: QualityKind; step?: StepKey };
 
@@ -171,7 +171,6 @@ export class DashboardStats {
         at,
         projectId: event.projectId,
         usd: event.payload.costUsd,
-        estimated: event.payload.estimated,
       });
     }
     const wasFinished = before ? isFinished(before) : false;
@@ -217,15 +216,12 @@ export class DashboardStats {
     const days7Start = localDayStart(now, 6);
     const days30Start = localDayStart(now, 29);
 
-    const costSum = (from: number): CostSum => {
-      let actualUsd = 0;
-      let estimatedUsd = 0;
+    const costSum = (from: number): number => {
+      let usd = 0;
       for (const c of live(this.costs)) {
-        if (c.at < from) continue;
-        if (c.estimated) estimatedUsd = addUsd(estimatedUsd, c.usd);
-        else actualUsd = addUsd(actualUsd, c.usd);
+        if (c.at >= from) usd = addUsd(usd, c.usd);
       }
-      return { actualUsd, estimatedUsd };
+      return usd;
     };
 
     const flowSum = (from: number): FlowSum => {
