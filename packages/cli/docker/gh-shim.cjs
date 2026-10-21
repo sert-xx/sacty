@@ -315,11 +315,20 @@ async function api(argv) {
         die(failed(res, text));
       }
       print(opts, res, text);
-      if (!opts.paginate || !/\$endCursor\b/.test(payload.query || "")) return;
-      let info;
+      let json;
       try {
-        info = pageInfo(JSON.parse(text).data);
+        json = JSON.parse(text);
       } catch {}
+      // GraphQL は、問い合わせの誤り・権限の不足でも 200 で errors を返す（本物の gh と同じく、失敗で終わる）
+      if (Array.isArray(json?.errors) && json.errors.length > 0) {
+        die(
+          json.errors
+            .map((e) => `gh: ${typeof e?.message === "string" ? e.message : JSON.stringify(e)}`)
+            .join("\n"),
+        );
+      }
+      if (!opts.paginate || !/\$endCursor\b/.test(payload.query || "")) return;
+      const info = pageInfo(json?.data);
       if (!info?.hasNextPage || !info.endCursor || page > 1000) return;
       payload = { ...payload, variables: { ...payload.variables, endCursor: info.endCursor } };
     }
@@ -334,6 +343,8 @@ async function api(argv) {
   const query = params.toString();
   let url = `${base}/${path}${query ? `?${query}` : ""}`;
   const pages = [];
+  // 配列の応答を受け取ったか（0 件でも [] を出すため）
+  let arrays = false;
   for (let page = 0; url; page++) {
     const { res, text } = await send(url, { method, headers });
     if (!res.ok) {
@@ -354,10 +365,11 @@ async function api(argv) {
     if (!Array.isArray(json)) {
       print(opts, res, text);
     } else {
+      arrays = true;
       pages.push(...json);
     }
     url = page < 1000 ? sameRelay(nextLink(res.headers.get("link"))) : undefined;
-    if (!url && pages.length > 0) print({ ...opts, include: false }, res, JSON.stringify(pages));
+    if (!url && arrays) print({ ...opts, include: false }, res, JSON.stringify(pages));
   }
 }
 

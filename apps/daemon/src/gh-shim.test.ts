@@ -88,6 +88,22 @@ describe("イメージの gh（gh api だけを中継に送る）", () => {
     ]);
   });
 
+  it("--paginate で 0 件なら [] を出す", async () => {
+    const { gh } = await setup([json([])]);
+    const res = await gh("api", "--paginate", "repos/acme/app/issues/1/comments");
+    expect(res.code).toBe(0);
+    expect(JSON.parse(res.stdout)).toEqual([]);
+  });
+
+  it("GraphQL の errors は、200 でも失敗で終わり、理由を出す（data があっても）", async () => {
+    const { gh } = await setup([
+      json({ data: { viewer: null }, errors: [{ message: "Resource not accessible" }] }),
+    ]);
+    const res = await gh("api", "graphql", "-f", "query={ viewer { login } }", "--silent");
+    expect(res.code).toBe(1);
+    expect(res.stderr).toContain("gh: Resource not accessible");
+  });
+
   it("graphql は query と変数を POST する", async () => {
     const { gh, calls } = await setup([json({ data: { viewer: { login: "me" } } })]);
     const res = await gh(

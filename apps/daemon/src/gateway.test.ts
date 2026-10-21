@@ -1288,6 +1288,27 @@ describe("GitHub の読み取りの中継", () => {
     expect(g.calls).toHaveLength(1);
   });
 
+  it("GraphQL の本文は 256 KiB を超えたら、受け取り終える前に断る（Content-Length でも chunked でも）", async () => {
+    const g = await startGitHub([]);
+    const big = JSON.stringify({ query: `{ viewer { login } } ${"#".repeat(300 * 1024)}` });
+    const declared = await fetch(`${g.base}/github.com/graphql`, { method: "POST", body: big });
+    expect(declared.status).toBe(413);
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(big));
+        controller.close();
+      },
+    });
+    const chunked = await fetch(`${g.base}/github.com/graphql`, {
+      method: "POST",
+      body: stream,
+      duplex: "half",
+    } as RequestInit);
+    expect(chunked.status).toBe(413);
+    expect(g.calls).toHaveLength(0);
+    expect(gateway?.bodiesInUse()).toBe(0);
+  });
+
   it("書き込み・知らないホスト・おかしなパス・知らないトークンは、上流に送らずに断る", async () => {
     const g = await startGitHub([]);
     for (const method of ["POST", "PATCH", "PUT", "DELETE"]) {

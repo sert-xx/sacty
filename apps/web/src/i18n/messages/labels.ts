@@ -282,7 +282,7 @@ const ja = {
     IssueCommented: (url: string) => `調査の結果を Issue にコメントした（${url}）`,
     IssueCommentFailed: (message: string) => `調査の結果を Issue に返せなかった：${message}`,
     GitHubCommentsPosted: (step: string, results: string[]) =>
-      `${step}の成果で頼まれたコメントを GitHub に投稿した：${results.join("、") || "なし"}`,
+      `${step}の成果で頼まれた GitHub へのコメントの投稿の結果：${results.join("、") || "なし"}`,
     GitHubCommentPosted: (url: string) => `投稿した（${url}）`,
     GitHubCommentFailed: (target: string, message: string) =>
       `${target} に投稿できなかった（${message}）`,
@@ -687,7 +687,7 @@ const en: LabelMessages = {
     IssueCommentFailed: (message) =>
       `Could not post the investigation result to the issue: ${message}`,
     GitHubCommentsPosted: (step, results) =>
-      `Posted the comments requested in the ${step} output to GitHub: ${results.join("; ") || "none"}`,
+      `Result of posting the GitHub comments requested in the ${step} output: ${results.join("; ") || "none"}`,
     GitHubCommentPosted: (url) => `posted (${url})`,
     GitHubCommentFailed: (target, message) => `could not post to ${target} (${message})`,
     GuardianMissed: "Goal Guardian miss: a deliverable that passed the final review was sent back",

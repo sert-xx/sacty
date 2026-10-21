@@ -5160,6 +5160,90 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       activity.close();
     });
 
+    it("投稿の後・記録の前に止まっても、目印で投稿済みのコメントを見つけて使い、二度投稿しない（複数のコメント）", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const pulls = new FakePulls();
+      const output = JSON.stringify({
+        "sacty-github-comments": {
+          comments: [
+            { url: "https://github.com/acme/app/pull/12", body: "一つめ" },
+            { url: "https://github.com/acme/app/issues/3", body: "二つめ" },
+          ],
+        },
+      });
+      const { service } = makeService(activity, [out(output)], {
+        pulls,
+        planner: investigatePlanner,
+      });
+      const { id } = service.createTask({ projectId: "default", title: "返信して" });
+      await service.runNext(id);
+      service.approve(id, { step: "investigate", submission: 1 });
+      // GitHubCommentsPosted の記録だけを一度失敗させる（外部のコメントだけが残る）
+      const append = activity.append.bind(activity);
+      let failOnce = true;
+      activity.append = (entry) => {
+        if (failOnce && entry.events.some((e) => e.event.type === "GitHubCommentsPosted")) {
+          failOnce = false;
+          throw new Error("disk full");
+        }
+        return append(entry);
+      };
+      await expect(service.runNext(id)).rejects.toThrow("disk full");
+      expect(pulls.issueComments).toHaveLength(2);
+      expect(service.get(id)?.task.githubComments).toBeUndefined();
+      await service.runNext(id);
+      expect(pulls.issueComments).toHaveLength(2);
+      expect(service.get(id)?.task.githubComments?.investigate?.results).toEqual([
+        {
+          target: "https://github.com/acme/app/pull/12",
+          url: "https://github.com/acme/app/issues/12#issuecomment-1",
+        },
+        {
+          target: "https://github.com/acme/app/issues/3",
+          url: "https://github.com/acme/app/issues/3#issuecomment-2",
+        },
+      ]);
+      activity.close();
+    });
+
+    it("既存のコメントを探す間に一時停止されたら、新しく投稿せず、記録もしない", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const hold = Promise.withResolvers<void>();
+      const entered = Promise.withResolvers<void>();
+      class HoldingPulls extends FakePulls {
+        holding = true;
+        override async findIssueComment(input: { repo: string; number: number; marker: string }) {
+          if (this.holding) {
+            entered.resolve();
+            await hold.promise;
+          }
+          return super.findIssueComment(input);
+        }
+      }
+      const pulls = new HoldingPulls();
+      const output = JSON.stringify({
+        "sacty-github-comments": {
+          comments: [{ url: "https://github.com/acme/app/pull/12", body: "返信" }],
+        },
+      });
+      const { service } = makeService(activity, [out(output)], {
+        pulls,
+        planner: investigatePlanner,
+      });
+      const { id } = service.createTask({ projectId: "default", title: "返信して" });
+      await service.runNext(id);
+      service.approve(id, { step: "investigate", submission: 1 });
+      const running = service.runNext(id);
+      await entered.promise;
+      const pausing = service.pause(id);
+      hold.resolve();
+      await running;
+      await pausing;
+      expect(pulls.issueComments).toHaveLength(0);
+      expect(service.get(id)?.task.githubComments).toBeUndefined();
+      activity.close();
+    });
+
     it("頼みの JSON を読めなければ、どれも投稿せずに理由を記録する", async () => {
       const activity = new SqliteActivityStore(dbPath);
       const pulls = new FakePulls();

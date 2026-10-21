@@ -118,9 +118,10 @@ Relays the GitHub API for reading only. It has no setting and is always availabl
   for that run. If it cannot be taken out, 502 (naming the account) is returned, and the next request tries again. It is not passed to the container.
 - The destination is `https://api.github.com` (github.com) or `https://<host>/api/v3` for REST, and `https://api.github.com/graphql` or
   `https://<host>/api/graphql` for GraphQL (the path is `/graphql`).
-- Only `GET` and `HEAD` for REST and `POST` for GraphQL are accepted. Other methods get 405. GraphQL is sent only when the `query` in the body (up to 256 KiB)
+- Only `GET` and `HEAD` for REST and `POST` for GraphQL are accepted. Other methods get 405. GraphQL is sent only when the `query` in the body
   is a read (outside the brackets, excluding strings and comments, there is no `mutation` or `subscription`; anything unreadable, unclosed, an array, or without
-  `query` is not treated as a read); others get 403.
+  `query` is not treated as a read); others get 403. A GraphQL body may be up to 256 KiB (`GITHUB_GRAPHQL_BODY_MAX`). Over that, 413 is returned before
+  the body is fully received (with `Content-Length` or chunked).
 - A host that is not bound gets 404 (the available hosts are returned). A path with `.` or `..` segments, `%2e`, `%2f`, or `\`, and a path that changes as a URL get 400.
 - Only `accept`, `content-type`, `x-github-api-version`, `if-none-match`, `if-modified-since`, and `user-agent` are sent upstream, with
   `Authorization: Bearer <token>`. Redirects are not followed.

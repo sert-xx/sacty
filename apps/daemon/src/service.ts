@@ -1846,10 +1846,22 @@ export class TaskService {
     const results: { target: string; url?: string; failed?: DaemonText }[] = [];
     let failed: DaemonText | undefined;
     if (!requested) return;
+    // 待っている間（トークンの取り出し・既存のコメントの検索）に、止められた・承認が変わったら、新しく投稿しない
+    // （記録もしない。再開したら、目印で投稿済みのものを見つけて続ける）
+    const valid = () => {
+      if (this.cancelling.has(task.id) || this.pauseRequested.has(task.id)) return false;
+      const latest = this.tasks.get(task.id);
+      return (
+        latest !== undefined &&
+        awaitingGitHubComments(latest) === step &&
+        latest.approved[step]?.at === approved.at
+      );
+    };
     if (!requested.ok) failed = requested.reason;
     else {
       const project = this.deps.projects.get(task.projectId);
       for (const [index, comment] of requested.comments.entries()) {
+        if (!valid()) return;
         const target = comment.target.slice(0, 2000);
         if (!comment.repo || !comment.number) {
           results.push({ target, failed: message("githubComments.targetInvalid") });
@@ -1866,6 +1878,7 @@ export class TaskService {
             ...where,
             marker: githubCommentMarker(task.id, step, approved.at, index),
           });
+          if (!existing && !valid()) return;
           const { url } =
             existing ??
             (await this.deps.pulls.commentIssue({
@@ -1886,8 +1899,7 @@ export class TaskService {
       }
     }
     const latest = this.tasks.get(task.id);
-    if (!latest || awaitingGitHubComments(latest) !== step) return;
-    if (latest.approved[step]?.at !== approved.at) return;
+    if (!latest || !valid()) return;
     this.append(latest, [
       {
         actor: "sacty",

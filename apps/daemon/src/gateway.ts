@@ -392,11 +392,12 @@ export class AiGateway {
     let body: Buffer | undefined;
     if (graphql) {
       try {
-        body = await readBody(req, res, this.bodies);
+        // GraphQL の問い合わせは小さいので、上限を超えたら受け取り終える前に断る
+        body = await readBody(req, res, this.bodies, GITHUB_GRAPHQL_BODY_MAX);
       } catch (error) {
         return refuseBody(req, res, error);
       }
-      if (body.length > GITHUB_GRAPHQL_BODY_MAX || !isReadOnlyGraphql(body.toString("utf8"))) {
+      if (!isReadOnlyGraphql(body.toString("utf8"))) {
         return fail(
           res,
           403,
@@ -826,7 +827,13 @@ export function sentUrl(upstream: string, path: string, query: string): string |
  * より多くのメモリーを使わない。PR #144 レビュー指摘）。ためた分は、応答を返し終える（接続が閉じる）まで合計に数える
  * （上流へ送っている間も、ホストのメモリーにあるため）。
  */
-function readBody(req: IncomingMessage, res: ServerResponse, bodies: BodyBudget): Promise<Buffer> {
+function readBody(
+  req: IncomingMessage,
+  res: ServerResponse,
+  bodies: BodyBudget,
+  /** 1 つの要求の上限（この経路だけ小さくするとき。無ければ bodies の上限）。 */
+  limit = bodies.perRequest,
+): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     /** 受け取った本文の量（1 つの要求の上限と比べる）。 */
     let held = 0;
@@ -846,14 +853,14 @@ function readBody(req: IncomingMessage, res: ServerResponse, bodies: BodyBudget)
       reject(error);
     };
     const declared = Number(req.headers["content-length"]);
-    if (Number.isFinite(declared) && declared > bodies.perRequest) {
-      return refuse(tooLarge(bodies));
+    if (Number.isFinite(declared) && declared > limit) {
+      return refuse(tooLarge(limit));
     }
     const blocks: Buffer[] = [];
     let current: Buffer | undefined;
     let offset = 0;
     function onData(chunk: Buffer) {
-      if (held + chunk.length > bodies.perRequest) return refuse(tooLarge(bodies));
+      if (held + chunk.length > limit) return refuse(tooLarge(limit));
       for (let from = 0; from < chunk.length; ) {
         if (!current || offset === current.length) {
           if (bodies.used + bodies.block > bodies.total) {
@@ -893,10 +900,10 @@ function readBody(req: IncomingMessage, res: ServerResponse, bodies: BodyBudget)
   });
 }
 
-function tooLarge(bodies: BodyBudget): BodyRefused {
+function tooLarge(limit: number): BodyRefused {
   return new BodyRefused(
     413,
-    `sacty gateway: the request body is larger than the limit (${bodies.perRequest} bytes)`,
+    `sacty gateway: the request body is larger than the limit (${limit} bytes)`,
   );
 }
 

@@ -118,9 +118,10 @@ GitHub の API を、読み取りだけ中継する。設定は無く、いつ�
   その実行の間だけ持つ。取り出せなければ 502（どのアカウントか）を返し、次の要求で取り出し直す。コンテナには渡さない。
 - 転送先は、REST が `https://api.github.com`（github.com）か `https://<ホスト>/api/v3`、GraphQL（パスが `/graphql`）が
   `https://api.github.com/graphql` か `https://<ホスト>/api/graphql`。
-- 受け付けるのは、REST の `GET`・`HEAD` と、GraphQL の `POST` だけ。ほかのメソッドは 405。GraphQL は、本文（256 KiB まで）の `query` が
+- 受け付けるのは、REST の `GET`・`HEAD` と、GraphQL の `POST` だけ。ほかのメソッドは 405。GraphQL は、本文の `query` が
   読み取りのとき（文字列・コメントを除いた括弧の外に `mutation`・`subscription` が無い。読めない・閉じていない・配列・`query` の
-  無いものは読み取りとみなさない）だけ送り、ほかは 403。
+  無いものは読み取りとみなさない）だけ送り、ほかは 403。GraphQL の本文は 256 KiB（`GITHUB_GRAPHQL_BODY_MAX`）まで。超えたら、
+  受け取り終える前に 413（`Content-Length` でも chunked でも）。
 - 結びつけていないホストは 404（使えるホストを返す）。`.`・`..` の階層・`%2e`・`%2f`・`\` を含むパスと、URL にすると変わるパスは 400。
 - 上流には `accept`・`content-type`・`x-github-api-version`・`if-none-match`・`if-modified-since`・`user-agent` だけを送り、
   `Authorization: Bearer <トークン>` を付ける。リダイレクトはたどらない。

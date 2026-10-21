@@ -59,6 +59,7 @@ To create a user guide, meeting notes, or a translated draft, leave the reposito
 Document does not use external connections or project context and does not read drafts from external sources. Include the source text and any necessary rules in the task body; supply missing details through Request changes. Providing only a URL does not let this step retrieve the page’s contents to write the draft.
 
 You can also request a calendar, register, or existing external page update without choosing a repository. This covers one-off changes that use one configured destination.
+Apart from the chosen destination, GitHub can always be read (reading only; [Gateway](gateway.en.md#reading-github)).
 
 1. Include the specific target ID/URL, change and preconditions, and desired result in the request. The Orchestrator selects the destination, target, requested change, and verification method. Missing target or connection details stop the task before execution starts.
 2. The single Operation step performs the request once. There is no separate preparation step or pre-execution approval, so confirm the request is correct before starting the task.
