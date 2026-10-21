@@ -22,7 +22,7 @@ Related ADRs: [The Goal Guardian runs the tests in the final review, and sacty n
   the container receives only variables sacty decides (authentication, the config location, the image's `env`, and so on). For the same name, the run's value takes precedence over the image's `env`.
 - The limit for the whole run is set by `run_timeout` in `config.yaml` (PBI-150): the role's override in `roles` (a step, `guardian`, `orchestrator`, and so on) if present,
   otherwise `agent_minutes` (default 30 minutes; `AGENT_RUN_TIMEOUT_MS`). For the roles that run tests (`final-review`, `reproduce`), without an override it is
-  `agent_minutes` plus `test_minutes` (default 20 minutes). If the config cannot be read, 30 minutes. It is read for every run, so changes apply from the next run.
+  `agent_minutes` plus `test_minutes` (default 20 minutes). If the config cannot be read, 30 minutes for ordinary roles and 50 minutes (30 plus 20) for the final review and reproduction. It is read for every run, so changes apply from the next run.
   When it passes, the container is stopped and the run times out (`run.timeout`, with that run's limit in minutes).
 - To stop a container, sacty runs `docker kill` and checks up to 11 times, once per second, until `docker ps -aq --filter name=^/<name>$` is empty. If it cannot
   confirm the container stopped, the result is `run.containerNotConfirmed`, and the auth file is not written back and the session files are not saved.

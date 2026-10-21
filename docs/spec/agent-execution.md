@@ -22,7 +22,7 @@ docker のコンテナの中で1回実行して行う。テストは、sacty が
   コンテナには、sacty が決めた変数（認証・設定の場所・イメージの `env` など）だけが入る。同じ名前は、実行の側がイメージの `env` より優先。
 - 実行全体の上限は、`config.yaml` の `run_timeout`（PBI-150）で決める。役割（工程・`guardian`・`orchestrator` など）の `roles` の上書きがあればそれ、
   無ければ `agent_minutes`（既定 30 分。`AGENT_RUN_TIMEOUT_MS`）。テストを実行する役割（`final-review`・`reproduce`）は、上書きが無ければ
-  `agent_minutes` に `test_minutes`（既定 20 分）を足した分。設定を読めなければ 30 分。実行ごとに読むので、次の実行から効く。
+  `agent_minutes` に `test_minutes`（既定 20 分）を足した分。設定を読めなければ、ふつうの役割は 30 分、最終レビュー・再現は 50 分（30 分に 20 分を足す）。実行ごとに読むので、次の実行から効く。
   過ぎたらコンテナを止め、時間切れ（`run.timeout`。その実行の上限の分を添える）にする。
 - 止めるときは `docker kill` し、`docker ps -aq --filter name=^/<名前>$` が空になるまで、1秒おきに最大11回確かめる。止まったことを
   確かめられなければ、結果を `run.containerNotConfirmed` にし、認証ファイルの書き戻しとセッションのファイルの保存をしない。
