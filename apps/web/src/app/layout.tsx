@@ -8,6 +8,7 @@ import "@fontsource/ibm-plex-sans-jp/700.css";
 import "@fontsource/ibm-plex-mono/latin-400.css";
 import "@fontsource/ibm-plex-mono/latin-500.css";
 import { Suspense } from "react";
+import { DockerNotice } from "@/components/shell/docker-notice";
 import { AppHeader, HeaderFallback } from "@/components/shell/header";
 import { Localized } from "@/components/shell/localized";
 import { ProjectGate, RailGate } from "@/components/shell/project-gate";
@@ -45,6 +46,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           </Suspense>
           <main className="min-w-0 flex-1 px-4 py-7 sm:px-8">
             <div className="mx-auto flex max-w-6xl flex-col gap-6">
+              {/* Docker を使えない・エージェントのイメージが無い（PBI-148）。タスクを実行できないので、どの画面でも中身の上に出す */}
+              <Suspense fallback={null}>
+                <Localized>
+                  <DockerNotice />
+                </Localized>
+              </Suspense>
               {/* sacty の新しい版（PBI-135）。どの画面でも、中身の上に出す */}
               <Suspense fallback={null}>
                 <Localized>

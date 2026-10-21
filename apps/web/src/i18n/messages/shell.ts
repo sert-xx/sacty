@@ -35,6 +35,11 @@ const ja = {
     release: "リリースの内容を見る",
     steps: "動いている sacty up を Ctrl+C で止めてから、Sacty のリポジトリで次を実行してください。",
   },
+  /** Docker とエージェントのイメージの注意（PBI-148）。 */
+  docker: {
+    title: "Docker を使える状態ではありません",
+    recheck: "Sacty は1分ごとに確かめ直します。直すと、この表示は消えます。",
+  },
   user: {
     label: "ユーザー設定",
     settings: "Sacty の設定",
@@ -79,6 +84,10 @@ const en: ShellMessages = {
       `Sacty ${latest} has been released (you are running ${current}). Updating brings the recommended models and fixes.`,
     release: "See the release notes",
     steps: "Stop the running sacty up with Ctrl+C, then run these in the Sacty repository.",
+  },
+  docker: {
+    title: "Docker is not ready",
+    recheck: "Sacty checks again every minute. This notice goes away once it is fixed.",
   },
   user: {
     label: "Preferences",

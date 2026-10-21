@@ -139,6 +139,8 @@ export type DaemonStatus = {
   problems: DaemonText[];
   /** 動くが、知らせたいこと（認証情報を用意できない組織内 PF など。PBI-35）。古いデーモンには無い。 */
   warnings?: DaemonText[];
+  /** Docker とエージェントのイメージの注意（Docker が動いていない・イメージが無い・版が違う。PBI-148）。古いデーモンには無い。 */
+  docker?: DaemonText[];
   /** 取り込みの状況（設定ファイルを読めなければ null）。 */
   intake: IntakeStatus | null;
   /** プロジェクトの対象で選べる、言語ごとのイメージ（PBI-41）。古いデーモンには無い。 */

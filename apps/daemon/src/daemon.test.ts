@@ -25251,8 +25251,8 @@ describe("実行の上限（config.yaml の run_timeout。PBI-150）", () => {
   });
 });
 
-describe("手元に無いエージェントのイメージ（PBI-148）", () => {
-  it("確かめた注意を、画面の状態の注意に載せる（無ければ載せない）", () => {
+describe("Docker とエージェントのイメージの注意（PBI-148）", () => {
+  it("確かめた注意を、画面の状態の docker に載せる（ほかの注意とは分ける。無ければ空）", () => {
     const activity = new SqliteActivityStore(dbPath);
     const missing = message("image.missing", {
       image: "sacty-agent:1.7.1",
@@ -25260,9 +25260,10 @@ describe("手元に無いエージェントのイメージ（PBI-148）", () => 
     });
     let current = [missing];
     const { service } = makeService(activity, [], { imageProblems: () => current });
-    expect(service.status().warnings).toContainEqual(missing);
-    current = [];
+    expect(service.status().docker).toEqual([missing]);
     expect(service.status().warnings).not.toContainEqual(missing);
+    current = [];
+    expect(service.status().docker).toEqual([]);
     activity.close();
   });
 
@@ -25278,11 +25279,11 @@ describe("手元に無いエージェントのイメージ（PBI-148）", () => 
       imageProblems: () => current,
       config: () => ({ ok: false, problem: message("config.missing", { path: "/x" }) }),
     });
-    expect(service.status()).toMatchObject({ agent: null, warnings: [missing] });
+    expect(service.status()).toMatchObject({ agent: null, warnings: [], docker: [missing] });
     current = [unreachable];
-    expect(service.status().warnings).toEqual([unreachable]);
+    expect(service.status().docker).toEqual([unreachable]);
     current = [];
-    expect(service.status().warnings).toEqual([]);
+    expect(service.status().docker).toEqual([]);
     activity.close();
   });
 });
