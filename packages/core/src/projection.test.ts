@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { budgetState, computeCostUsd } from "./cost.js";
 import type { ActivityEvent, EventInput } from "./events.js";
-import { EventInput as EventSchema, exportSteps, MVP_STEPS } from "./events.js";
+import { EventInput as EventSchema, exportSteps, MVP_STEPS, STEP_PLANS } from "./events.js";
 import {
   awaitingRepository,
   awaitingTicketTriage,
@@ -17,6 +17,8 @@ import {
   pendingQuestion,
   project,
   questionBlocked,
+  reworkTargets,
+  skippableSteps,
   stepRunning,
   type Task,
 } from "./projection.js";
@@ -1793,5 +1795,140 @@ describe("中止したタスクの再実行", () => {
     expect(canRerun({ ...cancelled, status: "paused" })).toBe(false);
     expect(canRerun({ ...cancelled, parent: { taskId: "p", dependsOn: [] } })).toBe(false);
     expect(canRerun({ ...cancelled, start: "github_pull_request" })).toBe(false);
+  });
+});
+
+describe("工程の見直し", () => {
+  const chosen = (id: string, plan: keyof typeof STEP_PLANS) =>
+    ev(id, {
+      type: "StepsChosen",
+      payload: { steps: [...STEP_PLANS[plan]], plan, testCommand: "npm test" },
+    });
+  const investigated = (id: string) => [
+    ev(id, {
+      type: "AgentRunStarted",
+      payload: { runId: "inv", step: "investigate", agentId: "a", authMode: "subscription" },
+    }),
+    ev(id, {
+      type: "AgentRunCompleted",
+      payload: {
+        runId: "inv",
+        step: "investigate",
+        agentId: "a",
+        authMode: "subscription",
+        usage,
+        costUsd: 0,
+        estimated: true,
+        output: "# 調査\n\n- isAdmin() が src/auth.ts:3 にある",
+      },
+    }),
+    ev(id, { type: "StepCompleted", payload: { step: "investigate", next: "queued" } }),
+  ];
+  const skipped = (id: string, steps: string[], after = "investigate") =>
+    ev(
+      id,
+      {
+        type: "StepsSkipped",
+        payload: { after, steps, reason: "既存の isAdmin で足りる", costUsd: 0.01 },
+      } as EventInput,
+      "orchestrator",
+    );
+  const stateOf = (task: Task | undefined) => task?.steps.map((s) => [s.key, s.state]);
+
+  it("前段の調査が終わると、飛ばせる工程（要求要件・設計）があるので見直しを待つ", () => {
+    seq = 0;
+    const task = project([created("a"), chosen("a", "standard"), ...investigated("a")]).get("a");
+    expect(task?.stepReview).toBe("investigate");
+    expect(task && skippableSteps(task)).toEqual(["requirements", "design"]);
+    expect(task?.status).toBe("queued");
+  });
+
+  it("要求要件・設計を飛ばすと、実装を実行対象にし、費用を予算に入れる。見直しは待たない", () => {
+    seq = 0;
+    const task = project([
+      created("a"),
+      chosen("a", "standard"),
+      ...investigated("a"),
+      skipped("a", ["requirements", "design"]),
+    ]).get("a") as Task;
+    expect(stateOf(task)).toEqual([
+      ["investigate", "done"],
+      ["requirements", "skip"],
+      ["design", "skip"],
+      ["implement", "active"],
+      ["deployment", "todo"],
+    ]);
+    expect(task.stepReview).toBeUndefined();
+    expect(task.budget.usedUsd).toBeCloseTo(0.01);
+    // 飛ばした工程には差し戻さない
+    expect(reworkTargets(task, "implement")).toEqual(["implement"]);
+  });
+
+  it("飛ばさないと決めたら、工程はそのままで見直しを終える。設計だけ飛ばすこともできる", () => {
+    seq = 0;
+    const kept = project([
+      created("a"),
+      chosen("a", "standard"),
+      ...investigated("a"),
+      skipped("a", []),
+    ]).get("a");
+    expect(stateOf(kept)?.slice(1, 3)).toEqual([
+      ["requirements", "active"],
+      ["design", "todo"],
+    ]);
+    expect(kept?.stepReview).toBeUndefined();
+
+    seq = 0;
+    const designSkipped = project([
+      created("b"),
+      chosen("b", "standard"),
+      ...investigated("b"),
+      skipped("b", ["design"]),
+    ]).get("b");
+    expect(stateOf(designSkipped)?.slice(1, 4)).toEqual([
+      ["requirements", "active"],
+      ["design", "skip"],
+      ["implement", "todo"],
+    ]);
+  });
+
+  it("飛ばせない工程（実装）・見直しを待っていない工程の記録は受け付けない", () => {
+    seq = 0;
+    const base = [created("a"), chosen("a", "standard"), ...investigated("a")];
+    expect(() => project([...base, skipped("a", ["implement"])])).toThrow(/cannot be skipped/);
+    seq = 0;
+    expect(() =>
+      project([created("b"), chosen("b", "standard"), skipped("b", ["requirements"])]),
+    ).toThrow(/not waiting for a review/);
+  });
+
+  it("組み合わせ direct（調査 → 実装）は、飛ばせる工程が無いので見直さない。実装の無い組み合わせも見直さない", () => {
+    seq = 0;
+    const direct = project([created("a"), chosen("a", "direct"), ...investigated("a")]).get("a");
+    expect(stateOf(direct)).toEqual([
+      ["investigate", "done"],
+      ["implement", "active"],
+      ["deployment", "todo"],
+    ]);
+    expect(direct?.stepReview).toBeUndefined();
+
+    seq = 0;
+    const split = project([created("b"), chosen("b", "split"), ...investigated("b")]).get("b");
+    expect(split && skippableSteps(split)).toEqual([]);
+    expect(split?.stepReview).toBeUndefined();
+  });
+
+  it("見直す前に工程を始めた作業履歴（見直しより前の版）では、見直しを待たない", () => {
+    seq = 0;
+    const task = project([
+      created("a"),
+      chosen("a", "standard"),
+      ...investigated("a"),
+      ev("a", {
+        type: "AgentRunStarted",
+        payload: { runId: "req", step: "requirements", agentId: "a", authMode: "subscription" },
+      }),
+    ]).get("a");
+    expect(task?.stepReview).toBeUndefined();
   });
 });

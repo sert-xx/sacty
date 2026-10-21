@@ -79,6 +79,8 @@ const REWORK_HEADING = "sacty-rework";
 const PLAN_HEADING = "sacty-steps";
 /** PR のレビューだけのタスクで、レビューの工程のイメージを選ぶ答えの見出し（PBI-44 の続き）。 */
 const REVIEW_IMAGE_HEADING = "sacty-review-image";
+/** 工程の見直しの答えの見出し（工程の見直し）。 */
+const STEP_REVIEW_HEADING = "sacty-step-review";
 const EXPORT_HEADING = "sacty-export";
 /** 設計を省いたタスクで、最終レビューの観点にする要求要件の受け入れ条件（PBI-17）。 */
 export const REQUIREMENTS_VIEWPOINT = "REQ";
@@ -128,12 +130,26 @@ function verdictFormatLines(
 
 /**
  * 実装の検証の基準。設計があればテスト観点、再現があれば再現のテスト（PBI-29）、
- * どちらも無ければ要求要件の受け入れ条件（PBI-17）。
+ * どちらも無ければ要求要件の受け入れ条件（PBI-17）。要求要件も無ければ、同じ観点（REQ）でタスクの目的（依頼の内容）を確かめる
+ * （withoutRequirements）。工程の見直しで飛ばした工程は、無いものとして扱う。
  */
 export function verificationBasis(task: Task): "design" | "reproduce" | "requirements" {
-  if (task.steps.some((s) => s.key === "design")) return "design";
-  if (task.steps.some((s) => s.key === "reproduce")) return "reproduce";
+  if (hasStep(task, "design")) return "design";
+  if (hasStep(task, "reproduce")) return "reproduce";
   return "requirements";
+}
+
+/** 工程を組み合わせに持ち、飛ばしていないか（工程の見直しで飛ばした工程・飛ばしたマージの後の監視は持たないものとする）。 */
+function hasStep(task: Task, step: StepKey): boolean {
+  return task.steps.some((s) => s.key === step && s.state !== "skip");
+}
+
+/**
+ * 要求要件の工程を経ないタスク（組み合わせ direct、または工程の見直しで飛ばした）。受け入れの基準は、タスクの内容（依頼）と
+ * 前段の調査の結果。
+ */
+export function withoutRequirements(task: Task): boolean {
+  return !hasStep(task, "requirements");
 }
 
 /** 再現の説明と、sacty が確かめた結果（実装・最終レビューに渡す）。 */
@@ -638,6 +654,79 @@ function selfReviewLines(kind: "design-doc" | "code", deliverable: string): stri
   ];
 }
 
+/**
+ * 要求要件・設計の工程を経ない実装（組み合わせ direct・工程の見直しで飛ばした）の指示。承認済みの要求要件の代わりに、
+ * タスクの内容（依頼）と前段の調査の結果に従わせ、タスクの目的を観点 REQ として確かめる。テストの仕組みが無いタスク
+ * （PBI-94）は、テストを書かせず、どう満たしたかを説明に書かせる。
+ */
+function directImplementLines(
+  task: Task,
+  content: string,
+  previous: string | undefined,
+  remarks: ReturnType<typeof humanRemarks>,
+): string[] {
+  const step: StepKey = "implement";
+  const noTests = task.noTestsReason;
+  const lines = [
+    "あなたはソフトウェア開発の工程エージェントです。",
+    "作業ディレクトリは実装の対象リポジトリです。下のタスクの内容（依頼）と前段の調査の結果に従って実装してください。",
+    "このタスクは、オーケストレーターの判断で要求要件・設計の工程を省いています（依頼が明確で、既存の仕組みに沿った変更のため）。",
+    "- 依頼に書かれたことを、調査で分かった既存の仕組み（関数・権限・設定・規約）を使って実現する。依頼に無い仕組み・画面・設定を新しく作らない",
+    "- 依頼から一意に決まらないことがあれば、既存の実装に合わせ、選んだことと理由を実装の説明に書く",
+    ...(noTests
+      ? [
+          "このリポジトリには、テストの仕組みがありません（オーケストレーターの判断。根拠は下のデータ）。sacty はテストを実行せず、",
+          `ゴールガーディアンが、タスクの目的と、実装後のコード・差分・あなたの実装の説明から、観点 ${REQUIREMENTS_VIEWPOINT}（タスクの目的）の受け入れを判定します。`,
+          "",
+          "- 依頼が求めることを、どう満たしたか（変えたファイル・箇所、確かめた方法）を実装の説明に書く。ゴールガーディアンは、コードと差分で裏付けられることだけを根拠にする",
+          "- 検証のためだけに、タスクが求めていないテストの仕組みを足さない",
+          "- タスクがテストの仕組みを用意することを求めていて、用意したなら、そのテストを実行するコマンドを、下の形式で付ける。sacty がそのコマンドを sh -c で実行し、終了コード0で合格とみなす（依存関係の取得も含める）。用意していなければ付けない",
+          `- テストのコマンドの申告は、言語の名前を ${TEST_COMMAND_FENCE} にしたコードブロックの中にだけ、JSON で書く。sacty はこのコードブロックだけを申告として読み、中身を JSON として読めなければ止める。このコードブロックの外に書いたものは申告として扱わない。説明の中で書き方を例に挙げるときは、言語の名前を ${TEST_COMMAND_FENCE} にしない`,
+          "- コミットやプッシュはしない（sacty が行います）",
+          NO_CHANGE_LINE,
+          "- 実装の説明をMarkdownで書く。テストの仕組みを用意したときだけ、そのあとに次の形式でテストのコマンドを付け、書いたテストがあれば観点との対応も付ける",
+          `\`\`\`${TEST_COMMAND_FENCE}`,
+          '{"command": "テストのコマンド"}',
+          "```",
+        ]
+      : [
+          `依頼が求める振る舞いを検証するテストを書き、観点とテストの対応は、タスクの目的の観点 ${REQUIREMENTS_VIEWPOINT} に、書いたテストを対応させてください。`,
+          "",
+          "- テストは、依頼が求める振る舞いを与えて確かめるものにする（形だけのテストにしない）",
+          "- 書いたテストは、リポジトリのテストのコマンドで実行されるようにする",
+          "- コミットやプッシュはしない（sacty が行います）",
+          NO_CHANGE_LINE,
+          "- 実装の説明をMarkdownで書き、そのあとに、観点とテストの対応を次の形式で必ず付ける",
+        ]),
+    "```json",
+    `{"${TEST_MAP_HEADING}": [{"viewpointId": "${REQUIREMENTS_VIEWPOINT}", "tests": ["テストのファイル › テストの名前"]}]}`,
+    "```",
+    "",
+    "--- タスク ---",
+    content,
+    ...investigationLines(task),
+    "",
+    noTests ? "--- 観点（すべてを満たす） ---" : "--- テスト観点（すべてにテストを対応させる） ---",
+    `- [${REQUIREMENTS_VIEWPOINT}] タスクの目的（依頼の内容）を満たす`,
+    ...(noTests ? ["", ...noTestsReasonLines(noTests)] : []),
+  ];
+  if (remarks.length > 0) {
+    lines.push(
+      "",
+      "--- これまでの人間の指摘（再発させないでください） ---",
+      ...remarks.map((r) => `- [${r.id}] ${r.text}`),
+    );
+  }
+  if (previous) lines.push("", "--- 前回の実装の説明 ---", previous);
+  lines.push(
+    ...feedbackLines(task),
+    ...remarkLines(task, step, "観点ごとのテストの対応"),
+    ...proposalLines(task, step),
+    ...selfReviewLines("code", "実装（コードとテスト）"),
+  );
+  return lines;
+}
+
 export function buildPrompt(
   task: Task,
   step: StepKey,
@@ -833,12 +922,16 @@ export function buildPrompt(
       return lines.join("\n");
     }
     case "design": {
-      // 設計は、人間が承認して凍結した要求要件だけを根拠にする
-      const requirements =
-        task.approved.requirements?.output ?? "（承認済みの要求要件がありません）";
+      // 設計は、人間が承認して凍結した要求要件だけを根拠にする。要求要件の工程を飛ばした（工程の見直し）なら、タスクの内容を
+      // 要求要件として扱う
+      const requirements = withoutRequirements(task)
+        ? "（オーケストレーターの判断で、要求要件の工程を省きました。下のタスクの内容を要求要件として扱ってください）"
+        : (task.approved.requirements?.output ?? "（承認済みの要求要件がありません）");
       const lines = [
         "あなたはソフトウェア開発の工程エージェントです。",
-        "人間が承認した要求要件から、設計とテスト観点を作ってください。",
+        withoutRequirements(task)
+          ? "タスクの内容と前段の調査の結果から、設計とテスト観点を作ってください。"
+          : "人間が承認した要求要件から、設計とテスト観点を作ってください。",
         "",
         "- 設計はMarkdownで書く（構成、データ、処理の流れ、エラー時の振る舞い、影響範囲）",
         "- テスト観点は、受け入れ条件をすべて網羅し、異常系と境界値を含める",
@@ -1037,6 +1130,10 @@ export function buildPrompt(
       }
       // テストの仕組みが無いタスク（PBI-94）は、テストを書かせず、観点ごとにどう満たしたかを説明に書かせる
       const noTests = task.noTestsReason;
+      // 要求要件・設計の工程を経ないタスク（direct・工程の見直し）は、タスクの内容と前段の調査の結果から実装する
+      if (!designed && withoutRequirements(task)) {
+        return directImplementLines(task, content, previous, remarks).join("\n");
+      }
       const lines = [
         "あなたはソフトウェア開発の工程エージェントです。",
         ...(noTests
@@ -1418,6 +1515,8 @@ export function buildFinalReviewPrompt(task: Task, diff: string): string {
   const tests = task.lastTests;
   // テストの仕組みが無いタスク（PBI-94）は、テストではなく、タスクの目的から観点ごとに判定する
   const noTests = task.noTestsReason;
+  // 要求要件・設計の工程を経ないタスク（direct・工程の見直し）は、タスクの目的（依頼の内容）を観点 REQ で判定する
+  const direct = !designed && basis !== "reproduce" && withoutRequirements(task);
   return [
     "あなたはゴールガーディアンです。人間が承認した成果物（ゴール）を守る立場で、実装を最終レビューしてください。",
     ...guardianCodeLines(task, "implemented"),
@@ -1459,13 +1558,21 @@ export function buildFinalReviewPrompt(task: Task, diff: string): string {
           "",
           ...reproductionLines(task),
         ]
-      : [
-          "--- 承認済みの要求要件 ---",
-          task.approved.requirements?.output ?? "（なし）",
-          "",
-          "--- 承認済みの設計 ---",
-          task.approved.design?.output ?? "（なし）",
-        ]),
+      : direct
+        ? [
+            "--- 要求要件・設計 ---",
+            "（オーケストレーターの判断で、要求要件・設計の工程を省きました。タスクの内容（依頼）が受け入れの基準です）",
+            ...(noTests
+              ? []
+              : ["", "--- タスク（目的） ---", `# ${task.title}`, "", task.body || "（内容なし）"]),
+          ]
+        : [
+            "--- 承認済みの要求要件 ---",
+            task.approved.requirements?.output ?? "（なし）",
+            "",
+            "--- 承認済みの設計 ---",
+            task.approved.design?.output ?? "（なし）",
+          ]),
     "",
     "--- テスト観点 ---",
     ...(designed
@@ -1474,11 +1581,17 @@ export function buildFinalReviewPrompt(task: Task, diff: string): string {
         ? [
             `- [${REPRODUCTION_VIEWPOINT}] 再現のテストが、不具合の振る舞いを確かめたまま通る（再現のテストを弱めて通していない・不具合が直っている）`,
           ]
-        : [
-            noTests
-              ? `- [${REQUIREMENTS_VIEWPOINT}] 承認済みの要求要件の受け入れ条件（設計の工程を省いたため、受け入れ条件をすべて実装が満たしているかを、この観点で判定する）`
-              : `- [${REQUIREMENTS_VIEWPOINT}] 承認済みの要求要件の受け入れ条件（設計の工程を省いたため、受け入れ条件をすべてテストが検証しているかを、この観点で判定する）`,
-          ]),
+        : direct
+          ? [
+              noTests
+                ? `- [${REQUIREMENTS_VIEWPOINT}] タスクの目的（依頼の内容）（要求要件・設計の工程を省いたため、依頼が求めることをすべて実装が満たしているか・依頼に無いものを作っていないかを、この観点で判定する）`
+                : `- [${REQUIREMENTS_VIEWPOINT}] タスクの目的（依頼の内容）（要求要件・設計の工程を省いたため、依頼が求める振る舞いをすべてテストが検証しているか・依頼に無いものを作っていないかを、この観点で判定する）`,
+            ]
+          : [
+              noTests
+                ? `- [${REQUIREMENTS_VIEWPOINT}] 承認済みの要求要件の受け入れ条件（設計の工程を省いたため、受け入れ条件をすべて実装が満たしているかを、この観点で判定する）`
+                : `- [${REQUIREMENTS_VIEWPOINT}] 承認済みの要求要件の受け入れ条件（設計の工程を省いたため、受け入れ条件をすべてテストが検証しているかを、この観点で判定する）`,
+            ]),
     "",
     ...(noTests
       ? ["--- 実装の説明（工程エージェントの申告） ---", task.outputs.implement ?? "（なし）", ""]
@@ -1729,14 +1842,23 @@ function resultTableLines(task: Task): string[] {
               expected: "不具合が直り、再現のテストが通る",
             },
           ]
-        : [
-            {
-              id: REQUIREMENTS_VIEWPOINT,
-              title: "要求要件の受け入れ条件",
-              input: "承認済みの要求要件",
-              expected: "受け入れ条件を満たす",
-            },
-          ];
+        : withoutRequirements(task)
+          ? [
+              {
+                id: REQUIREMENTS_VIEWPOINT,
+                title: "タスクの目的",
+                input: "タスクの内容（依頼。要求要件・設計の工程は省いた）",
+                expected: "依頼が求めることを満たす",
+              },
+            ]
+          : [
+              {
+                id: REQUIREMENTS_VIEWPOINT,
+                title: "要求要件の受け入れ条件",
+                input: "承認済みの要求要件",
+                expected: "受け入れ条件を満たす",
+              },
+            ];
   const review = task.lastReview;
   const tests = task.lastTests;
   const mapped = new Map(task.testMap.map((m) => [m.viewpointId, m.tests]));
@@ -1789,7 +1911,17 @@ function approvedBasisLines(task: Task, level: "##" | "bold"): string[] {
         "",
         task.approved.reproduce?.output ?? "（なし）",
       ]
-    : [heading("要求要件（人間が承認済み）"), "", task.approved.requirements?.output ?? "（なし）"];
+    : withoutRequirements(task)
+      ? [
+          heading("要求要件"),
+          "",
+          "（オーケストレーターの判断で、要求要件の工程を省きました。タスクの内容（依頼）を受け入れの基準にしています）",
+        ]
+      : [
+          heading("要求要件（人間が承認済み）"),
+          "",
+          task.approved.requirements?.output ?? "（なし）",
+        ];
 }
 
 /** 取り込んだ Issue を、マージで閉じる行（取り込んだ Issue と同じリポジトリの PR なら閉じる）。 */
@@ -2594,6 +2726,8 @@ const planDescriptions: Record<StepPlan, string> = {
     "調査 → 要求要件 → 設計（テスト観点）→ 実装（PR を作り、マージで承認）→ マージの後の監視（対象のリポジトリにデプロイの確認のスキルがあるときだけ。sacty が決める）。振る舞いが複数ある・影響範囲が広い・テスト観点を人間と合意したい変更",
   "skip-design":
     "調査 → 要求要件 → 実装（PR を作り、マージで承認）→ マージの後の監視（対象のリポジトリにデプロイの確認のスキルがあるときだけ。sacty が決める）。設計を省く。変更が小さく局所的で、要求要件の受け入れ条件だけで十分にテストできる変更（例：文言の修正、小さな関数の追加）",
+  direct:
+    "調査 → 実装（PR を作り、マージで承認）→ マージの後の監視（対象のリポジトリにデプロイの確認のスキルがあるときだけ。sacty が決める）。要求要件・設計を省く。依頼そのものが受け入れ条件として明確で（何を・どこに・どう変えるかが依頼から分かる）、既存の仕組み（関数・権限・設定・部品）を使う局所的な変更（例：既存の権限の判定でリンクの表示を切り替える、文言・設定値の修正）。受け入れは、依頼をテストで確かめ、ゴールガーディアンが最終レビューで判定し、人間が PR のマージで承認する",
   investigate:
     "調査だけ。コードを調べて結果を報告する（実装や PR は作らない）。タスクが質問・原因の調査・影響範囲の確認・見積もりなど、変更ではなく情報を求めているとき",
   review:
@@ -2730,7 +2864,7 @@ export function buildOrchestratorPrompt(
  * 対象リポジトリの無いタスク（PBI-73）で、コードを変える（作業するリポジトリが要る）工程の組み合わせ。これを選ぶときは、
  * オーケストレーターがプロジェクトの対象からリポジトリを選ぶ（リポジトリを用意してから、もう一度工程を選ぶ）。
  */
-export const REPO_PLANS: readonly StepPlan[] = ["standard", "skip-design", "bugfix"];
+export const REPO_PLANS: readonly StepPlan[] = ["standard", "skip-design", "direct", "bugfix"];
 
 /**
  * オーケストレーターが選べる工程の組み合わせ。レビューは、タスクに対象リポジトリの PR があるときだけ（PBI-19）。
@@ -3459,6 +3593,75 @@ export function extractReviewImage(
   })?.value;
 }
 
+/** 工程の見直しに渡す、終わった工程の成果の上限（文字数）。 */
+const STEP_REVIEW_OUTPUT_IN_PROMPT = 30_000;
+
+/**
+ * 工程の見直しの指示（工程の見直し）。工程が終わるごとに、終わった工程の成果を読ませ、まだの工程のうち飛ばせる工程
+ * （skippable）が要るかを決めさせる。工程を足す・並べ替えることはさせない。タスクのオーケストレーターのセッションを
+ * 再開して実行する（工程を選んだときの判断を引き継ぐ）。
+ */
+export function buildStepReviewPrompt(
+  task: Task,
+  after: StepKey,
+  skippable: readonly StepKey[],
+): string {
+  const remaining = task.steps
+    .filter((s) => s.state === "todo" || s.state === "active")
+    .map((s) => `${STEP_NAME[s.key]}（${s.key}）`)
+    .join(" → ");
+  const output = task.approved[after]?.output ?? task.outputs[after] ?? "";
+  return [
+    `あなたはオーケストレーターです。このタスクの工程「${STEP_NAME[after]}」が終わりました。`,
+    `残りの工程は ${remaining} です。終わった工程の成果を読んで、残りの工程のうち、要らない工程を飛ばしてください。`,
+    "",
+    `- 飛ばせるのは ${skippable.map((key) => `${STEP_NAME[key]}（${key}）`).join("・")} だけ。工程を足す・並べ替える・ほかの工程を飛ばすことはできない`,
+    "- 要求要件（requirements）：依頼がそのまま受け入れ条件になる（何を・どこに・どう変えるかが、依頼と調査の結果から一つに決まる）なら飛ばす。依頼の解釈が複数あり、人間と合意して決めるべきことが残るなら飛ばさない",
+    "- 設計（design）：既存の仕組み（関数・権限・設定・部品）に沿った局所的な変更で、構成・データ・処理の流れを新しく決めることが無いなら飛ばす",
+    "- 再現（reproduce）：調査で原因と直し方が明らかで、失敗するテストを先に書いて確かめる意味が無い（例：文言・設定値の誤り）なら飛ばす",
+    "- 依頼に書かれていない仕組み（新しい役割・管理画面・設定など）を、要るものと推測して工程を残さない。調査で既存の仕組みが見つかったなら、それを使う前提で判断する",
+    "- 飛ばした工程の分は、後の工程がタスクの内容と前段の調査の結果から決める。最終的な成果は、ゴールガーディアンが最終レビューで判定し、人間が PR のマージで承認する",
+    "- コードは変更しない（作業領域は使い捨ての写しで、変更は残らない）。セットアップ・ビルド・テストの実行もしない",
+    "",
+    "--- タスク ---",
+    `# ${task.title}`,
+    "",
+    task.body || "（内容なし）",
+    "",
+    `--- 終わった工程「${STEP_NAME[after]}」の成果 ---`,
+    output.length > STEP_REVIEW_OUTPUT_IN_PROMPT
+      ? `${output.slice(0, STEP_REVIEW_OUTPUT_IN_PROMPT)}\n…（長いため、先頭だけを渡しています）`
+      : output || "（なし）",
+    "",
+    "答えの JSON は、出す前にファイルに書き、jq などの道具（無ければ python3 や node）で JSON として読めるかを確かめ、通るまで直してください。答えは本文の最後に 1 回だけ出してください。",
+    "飛ばす工程（無ければ空の配列）と理由を、次の形式で必ず出してください。",
+    "```json",
+    `{"${STEP_REVIEW_HEADING}": {"skip": [${skippable.map((key) => `"${key}"`).join(", ")}], "reason": "飛ばす・飛ばさない理由（終わった工程の成果の、根拠にしたこと）"}}`,
+    "```",
+  ].join("\n");
+}
+
+/**
+ * 工程の見直しの答えを読む（工程の見直し）。skip は飛ばせる工程（skippable）だけ（重複は除く）。飛ばせない工程を書いた・
+ * 理由が無い・形が違うときは読めないものとする（呼び出し側が、飛ばさずに進める）。
+ */
+export function extractStepReview(
+  output: string,
+  skippable: readonly StepKey[],
+): { steps: StepKey[]; reason: string } | undefined {
+  return lastJsonAnswer(output, (value) => {
+    const v = headedObject(value, STEP_REVIEW_HEADING);
+    if (!v || !Array.isArray(v.skip)) return undefined;
+    const steps = [...new Set(v.skip)];
+    if (!steps.every((step): step is StepKey => skippable.includes(step as StepKey))) {
+      return undefined;
+    }
+    const reason = headOf(text(v.reason), 2000);
+    if (!reason) return undefined;
+    return { steps, reason };
+  })?.value;
+}
+
 /** PR のレビューの上限（GitHub の上限より小さく）。 */
 const REVIEW_BODY_MAX = 60_000;
 
@@ -3693,7 +3896,9 @@ const PLAN_SELECTION_LINES = [
   "実装する組み合わせは、先頭の調査（人間の承認なし）の結果を後の工程に渡します。",
   "目的・成果物・変更対象・規模の順に候補を比較してください。standardを無条件の既定や、不明な仕事の受け皿にしないでください。",
   "質問・原因調査・見積もりはinvestigate、PRレビューはreview、全体設計だけならdesign-only、原稿の作成はdocument、予定表更新など外部への単発変更はoperationです。選べない候補を選ばないでください。",
-  "リポジトリ内の文書変更もファイル変更です。小さく局所的ならskip-design、設計判断や広い影響範囲があるならstandard。文書という語だけでdocumentにしないでください。",
+  "要求要件を書く工程は、依頼から受け入れ条件が決まらないときのためのものです。依頼が明確で、既存の仕組みを使う局所的な変更ならdirect（要求要件・設計を省く）を選んでください。依頼に書かれていない仕組み（新しい役割・管理画面・設定など）を、要るものと推測して工程を増やさないでください。",
+  "リポジトリ内の文書変更もファイル変更です。小さく局所的ならdirectかskip-design、設計判断や広い影響範囲があるならstandard。文書という語だけでdocumentにしないでください。",
+  "工程を選んだ後も、工程が終わるごとに（前段の調査の後など）、残りの要求要件・設計・再現の工程が要るかを、あなたに見直してもらいます。調査の前で判断しきれないときは、要りそうな工程を含む組み合わせを選び、調査の結果で省いてください。",
   "期待動作が明確でテスト再現できる不具合はbugfix、設計判断が要る不具合はstandard。分割の候補がある場合は、1つのPRで扱えない変更に使います。",
   "reasonには成果物と変更対象、候補を比較して必要な工程・省ける工程の根拠を書いてください。不足情報を隠して標準工程で進めず、不明点を明記してください。",
 ];

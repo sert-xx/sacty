@@ -148,6 +148,15 @@ export function stepCosts(task: Task, activity: readonly ActivityEvent[]) {
       case "OrchestratorFailed":
         push("orchestrator", runOf(event, event.payload, "failed"));
         return;
+      // 工程の見直し：実行できなかったときも、費用があれば行にする
+      case "StepsSkipped":
+        if (!notRun(event.payload)) {
+          push(
+            "orchestrator",
+            runOf(event, event.payload, event.actor === "orchestrator" ? "completed" : "failed"),
+          );
+        }
+        return;
       case "AgentRunCompleted":
       case "AgentRunFailed": {
         const p = event.payload;

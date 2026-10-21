@@ -350,6 +350,12 @@ function describeEventText(event: ActivityEvent, l: LabelMessages): string {
           : "")
       );
     }
+    case "StepsSkipped":
+      return e.StepsSkipped(
+        l.step[event.payload.after],
+        event.payload.steps.map((s) => l.step[s]).join(e.imagesJoin),
+        l.text(event.payload.reason),
+      );
     case "TicketTriaged":
       return e.TicketTriaged(
         event.payload.repo,

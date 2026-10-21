@@ -48,6 +48,11 @@ export const STEP_PLANS = {
   standard: ["investigate", "requirements", "design", "implement", "deployment"],
   /** 小さな変更：設計を省く（要求要件の受け入れ条件をテストで確かめる） */
   "skip-design": ["investigate", "requirements", "implement", "deployment"],
+  /**
+   * 依頼がそのまま要求要件になる変更：要求要件・設計を省き、調査の結果とタスクの内容から実装する。
+   * 受け入れは、タスクの目的（依頼の内容）をテストで確かめ、ゴールガーディアンが最終レビューで判定する
+   */
+  direct: ["investigate", "implement", "deployment"],
   /** 調査だけ：コードを調べて報告する。実装や PR は作らない（PBI-18） */
   investigate: ["investigate"],
   /**
@@ -70,6 +75,13 @@ export const STEP_PLANS = {
 } as const satisfies Record<string, readonly StepKey[]>;
 export type StepPlan = keyof typeof STEP_PLANS;
 export const StepPlan = z.enum(Object.keys(STEP_PLANS) as [StepPlan, ...StepPlan[]]);
+
+/**
+ * 工程の完了の後に、オーケストレーターが飛ばせる工程（工程の見直し）。実装の前に置く、文書やテストを作る工程だけ。
+ * 飛ばせるのは、組み合わせに実装の工程があるときだけ（実装が成果物で、ゴールガーディアンが最終レビューで判定するため）。
+ * タスク分割の前の設計は、子タスクを作る根拠なので飛ばせない（組み合わせに実装が無い）。
+ */
+export const SKIPPABLE_STEPS: readonly StepKey[] = ["requirements", "design", "reproduce"];
 
 /**
  * 調査の工程の性質（PBI-43）。オーケストレーターが工程を選ぶときに判断する。
@@ -673,6 +685,27 @@ const StepsChosen = z.object({
     deployment: z
       .union([z.object({ skill: z.string().min(1) }), z.object({ skipped: DaemonText })])
       .optional(),
+    agentId: z.string().optional(),
+    ...AgentSetting,
+    ...RunRef,
+    usage: TokenUsage.optional(),
+    costUsd: z.number().nonnegative().default(0),
+    estimated: z.boolean().default(false),
+  }),
+});
+
+/**
+ * 工程の完了の後に、オーケストレーターが、まだの工程のうち要らない工程を飛ばした（工程の見直し）。after は終わった工程。
+ * steps は飛ばした工程（SKIPPABLE_STEPS のうち、まだの工程。空なら、飛ばさずにそのまま進めると決めた）。工程を足す・
+ * 並べ替えることはしない。オーケストレーターを実行できなかった・答えを読めなかったときも、止めずに飛ばさないで進め、
+ * sacty の記録にする（actor が sacty、理由は sacty の文言）。
+ */
+const StepsSkipped = z.object({
+  type: z.literal("StepsSkipped"),
+  payload: z.object({
+    after: StepKey,
+    steps: z.array(StepKey),
+    reason: DaemonText,
     agentId: z.string().optional(),
     ...AgentSetting,
     ...RunRef,
@@ -2169,6 +2202,7 @@ export const EventInput = z.discriminatedUnion("type", [
   ReproductionChecked,
   StepCompleted,
   StepsChosen,
+  StepsSkipped,
   StepImageChanged,
   StepAgentChanged,
   ServicesStarted,

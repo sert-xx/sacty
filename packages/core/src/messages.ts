@@ -270,6 +270,8 @@ const PARAMS = {
   "implement.testCommandInvalid": null,
   "orchestrator.failed": z.object({ detail: TextParam }),
   "orchestrator.baseBranchUnavailable": z.object({ branch: z.string(), detail: TextParam }),
+  // 工程の見直し：オーケストレーターを実行できなかった・答えを読めなかったので、飛ばさずに進める
+  "orchestrator.stepReviewFailed": z.object({ detail: TextParam }),
   // タスク分割（PBI-27）
   "split.unreadable": null,
   "split.childCount": z.object({ min: Count, max: Count, count: Count }),
@@ -933,6 +935,8 @@ const ja: MessageDictionary = {
     "実装の工程が申告したテストのコマンド（sacty-test-command）の形が正しくありません（JSON として読めない、または command が空・文字列でない・1000 文字を超える）。用意したテストを飛ばさないように止めます。再開すると、実装をやり直します。",
   "orchestrator.baseBranchUnavailable": ({ branch, detail }, text) =>
     `オーケストレーターが選んだベースブランチ（${branch}）を用意できなかったため、既定のブランチで進めます（${text(detail)}）。`,
+  "orchestrator.stepReviewFailed": ({ detail }, text) =>
+    `オーケストレーターが残りの工程を見直せなかったため、工程を飛ばさずに進めます（${text(detail).replace(/[。.]\s*$/, "")}）。`,
   "review.pullRequestMissing": ({ repo }) =>
     `タスクに、レビューする PR（${repo} の PR の URL）がありません。`,
   "review.reviewOnly": ({ via }) =>
@@ -1492,6 +1496,8 @@ const en: MessageDictionary = {
     "The test command the implementation reported (sacty-test-command) is malformed (not readable as JSON, or command is empty, not a string, or longer than 1000 characters). Stopping so that the added tests are not skipped. Resume to run the implementation again.",
   "orchestrator.baseBranchUnavailable": ({ branch, detail }, text) =>
     `Could not prepare the base branch the Orchestrator chose (${branch}), so the default branch is used (${text(detail)}).`,
+  "orchestrator.stepReviewFailed": ({ detail }, text) =>
+    `The Orchestrator could not review the remaining steps, so no step is skipped (${text(detail).replace(/[。.]\s*$/, "")}).`,
   "review.pullRequestMissing": ({ repo }) =>
     `The task has no PR to review (a URL of a PR in ${repo}).`,
   "review.reviewOnly": ({ via }) =>

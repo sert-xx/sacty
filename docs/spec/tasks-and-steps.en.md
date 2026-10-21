@@ -95,6 +95,7 @@ Step categories:
 - Steps that can be exported (`EXPORT_STEPS`): `investigate` (only when it is the last step), `requirements`, `design`, `document`.
 - Steps that are not run (not in `EXECUTABLE_STEPS`): `deployment`. After the previous step is approved, the task becomes idle and sacty advances it in the PR check. If the target repository
   has no skill, the step is skipped when the steps are chosen (`skip`. [After-merge watch](deployment-watch.en.md)). When moving to the next step, `skip` steps are passed over.
+- Steps that the step review can skip (`SKIPPABLE_STEPS`): `requirements`, `design`, `reproduce`. Only when the plan has an implementation ("Step review" below).
 
 Code: `packages/core/src/events.ts` (`StepKey`, `GATED_STEPS`, `REWORK_STEPS`, `EXPORT_STEPS`, `exportSteps`), `packages/core/src/projection.ts` (`investigationIsGoal`), `apps/daemon/src/service.ts` (`REPO_STEPS`, `submitEvents`), `apps/daemon/src/prompts.ts` (`SERVICE_STEPS`)
 
@@ -125,6 +126,7 @@ Code: `apps/daemon/src/prompts.ts` (`selfReviewLines`, `SELF_REVIEW_HEADING`, `e
 | --- | --- |
 | `standard` | `investigate` → `requirements` → `design` → `implement` → `deployment` |
 | `skip-design` | `investigate` → `requirements` → `implement` → `deployment` |
+| `direct` | `investigate` → `implement` → `deployment` (no requirements or design) |
 | `investigate` | `investigate` (investigation only) |
 | `design-only` | `requirements` → `design` (design only) |
 | `review` | `review` (review only) |
@@ -140,7 +142,7 @@ Code: `packages/core/src/events.ts` (`STEP_PLANS`), `apps/daemon/src/prompts.ts`
 
 ## Non-development work and plan selection
 
-The Orchestrator compares the purpose, deliverable, change target, and scope rather than recommending `standard` unconditionally. Questions and cause analysis use `investigate`, existing PR reviews use `review`, overall design uses `design-only`, and drafts use `document`. Repository file changes, including documentation, use `skip-design` for local changes, `standard` for broader design decisions, or `split` for work spanning multiple PRs. Reproducible bugs use `bugfix`; bugs requiring design decisions use `standard`.
+The Orchestrator compares the purpose, deliverable, change target, and scope rather than recommending `standard` unconditionally. Questions and cause analysis use `investigate`, existing PR reviews use `review`, overall design uses `design-only`, and drafts use `document`. Local changes whose request is already clear as acceptance criteria and that use existing mechanisms use `direct` (no requirements or design); the Orchestrator does not add steps by guessing at mechanisms the request does not mention (new roles, admin screens, and so on). Repository file changes, including documentation, use `direct` or `skip-design` for local changes, `standard` for broader design decisions, or `split` for work spanning multiple PRs. Reproducible bugs use `bugfix`; bugs requiring design decisions use `standard`.
 
 - `document` produces a Markdown draft without enforcing the Requirements or Design format. A person can request changes and approve it in the web UI. Before approval, it receives no MCP/PF access or project context and does not read external drafts. Source text and rules must come from the task body or human feedback through Request changes. Optional export follows the existing export mechanism; an export failure does not stop task completion. Direct updates to existing external documents use `operation`.
 - `operation` is a single step. The existing Orchestrator selects one destination, a unique target ID or URL, the requested change and its preconditions, and how to verify it. This does not add a preparation agent, proposal deliverable, or pre-execution approval gate. If the target or connection is missing, the task stops before execution starts.
@@ -232,6 +234,35 @@ The following are read from the answer (JSON under the heading `sacty-steps`) an
 
 Code: `apps/daemon/src/service.ts` (`askOrchestrator`, `runNextInner`, `withImages`, `defaultImagesOf`, `withSharedCompose`, `withExports`, `repositoryFromPlan`, `chooseRepository`, `triageTicket`, `chooseReviewSteps`, `runOrchestrator`, `reviewOnlySteps`), `apps/daemon/src/prompts.ts` (`extractStepPlan`, `planAnswerLines`, `PLAN_SKILL`, `buildReviewImagePrompt`, `extractReviewImage`), `apps/daemon/default-context/skills/plan-steps/SKILL.md`, `packages/core/src/events.ts` (`StepsChosen`)
 
+## Step review
+
+After the steps are chosen, each time a step finishes, the Orchestrator skips the remaining steps that are not needed. It does not add or reorder steps.
+The final deliverable is judged by the Goal Guardian's final review and approved by a person merging the PR.
+
+- Skippable steps (`skippableSteps`): the remaining steps (active or to do) that are in `SKIPPABLE_STEPS` (`requirements`, `design`, `reproduce`). Only when the plan
+  has an implementation (`implement`) that is not skipped. The design before a split and the design-only plan cannot be skipped.
+- When: when a step finishes (completion of the preliminary investigation `StepCompleted`, approval `StepApproved`, and so on; `advance`) and skippable steps remain,
+  the task holds the finished step in `stepReview`. On the next run (`runNextInner`), the steps are reviewed before running the step (`reviewSteps`).
+  For example, `standard` is reviewed after the preliminary investigation (requirements, design) and after the requirements are approved (design); `bugfix` after the preliminary investigation (reproduce). `direct` is not reviewed.
+- Prompt (`buildStepReviewPrompt`): it passes the task, the finished step's output (up to the first 30,000 characters), the remaining steps, and the skippable steps, and gives guidelines
+  (skip the requirements when the request itself is the acceptance criteria, the design for a local change that follows existing mechanisms, the reproduction when the cause and fix are clear),
+  and says not to keep steps by guessing at mechanisms the request does not mention. It runs as an Orchestrator run (`runOrchestrator`), resuming the task's
+  Orchestrator session.
+- The answer (`skip` and `reason` under the heading `sacty-step-review`; `extractStepReview`) is read and `StepsSkipped` (`after`, `steps`, `reason`, and the cost) is
+  recorded as the Orchestrator's. When `steps` is empty, nothing is skipped. An answer that names a step that cannot be skipped, has no reason, or has the wrong shape is treated as unreadable.
+- When the run fails or the answer cannot be read, the task does not stop: nothing is skipped and `StepsSkipped` (empty `steps`) is recorded by sacty (the reason is
+  `orchestrator.stepReviewFailed`). However, if the run failed without confirming that its container stopped (`run.containerNotConfirmed`), the task
+  then pauses (`TaskPaused`) so that the original container and the next step's run do not overlap. When the budget cap is reached, the review does not run (the task pauses before the next step and reviews after resuming). If a person pauses or cancels
+  during the review, nothing is recorded.
+- Projection: skipped steps become `skip`, and if the active step is skipped, the next step to do becomes active. `stepReview` is cleared by `StepsSkipped`, by redoing from
+  an earlier step (`reopen`), and by starting a step's run (`AgentRunStarted`). A record when no review is pending, or that skips a step that cannot be skipped, is rejected.
+- Changes are not sent back to skipped steps (`reworkTargets`). The task screen does not show the deliverables of skipped requirements, design, or reproduction.
+- Steps after skipping: a design whose requirements were skipped treats the task as the requirements. An implementation without requirements and design (`direct`, or both skipped)
+  follows the task and the preliminary investigation and verifies the viewpoint `REQ` as the task's purpose (the request) (`withoutRequirements`, `directImplementLines`).
+  The final review and the PR body also treat `REQ` as the task's purpose. The verification basis (`verificationBasis`) treats skipped steps as absent.
+
+Code: `packages/core/src/events.ts` (`SKIPPABLE_STEPS`, `StepsSkipped`), `packages/core/src/projection.ts` (`skippableSteps`, `advance`, `reworkTargets`), `apps/daemon/src/service.ts` (`runNextInner`, `reviewSteps`), `apps/daemon/src/prompts.ts` (`buildStepReviewPrompt`, `extractStepReview`, `withoutRequirements`, `directImplementLines`, `verificationBasis`)
+
 ## Changing a step's image
 
 - On the task detail, a person can change the image of each step (`POST /api/tasks/:id/images`, input `step` and `image` of `ChangeStepImageInput`).
@@ -308,7 +339,7 @@ Code: `apps/daemon/src/activity.ts` (`purgeLegacyPrStepTasks`, `purgeLegacyTasks
 ## Verifying the implementation
 
 - When the Implementation step finishes, the task waits for verification (`verification = "pending"`), and the test command is run in a test container. It passes when the exit code is 0 and
-  every verification viewpoint corresponds to a test. The viewpoints are the design's test viewpoints if there is a design, `REPRO` if there is a reproduction, and otherwise `REQ`.
+  every verification viewpoint corresponds to a test. The viewpoints are the design's test viewpoints if there is a design, `REPRO` if there is a reproduction, and otherwise `REQ` (the task's purpose when there are no requirements either; "Step review" above).
 - After the tests pass, the task moves to the Goal Guardian's final review. The final review reads the code after implementation and the diff, judges each viewpoint and each comment,
   and passes only when all are met. If it passes, the task stays in the Implementation step, and sacty opens the implementation PR and the task waits for the Implement approval ("The PR for a verified implementation" below).
   - The viewpoints are the same as for the test mapping (`finalReviewViewpointIds`). The output format example at the end of the instructions lists every

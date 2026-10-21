@@ -23,6 +23,10 @@ When you create a task, the Orchestrator and the Goal Guardian move it through t
     and you can choose the repository in the task details and resume.
 - The base branch and the test command are decided by the Orchestrator at the start of the task by reading the repository. In a repository without tests,
   the task proceeds without using tests ("Repositories without tests" below).
+- A small change whose request is clear and that uses existing mechanisms may proceed as "investigation → implementation", without requirements or design. Also, each time
+  a step finishes (after the preliminary investigation, after the requirements are approved, and so on), the Orchestrator reviews whether the remaining requirements, design, and
+  reproduction steps are needed and skips the ones that are not. Skipped steps are shown struck through in the list of steps, and the reason appears in the activity log. For what was skipped,
+  the Goal Guardian reviews the implementation against the task's purpose (the request), and you approve it by merging the PR.
 - Choosing the steps, and investigations that read and explain code or how things work, do not run the development setup (installing dependencies, building, and so on) (this takes precedence even if the repository's
   AGENTS.md or similar has setup instructions). Bug investigation, Reproduce, and Implementation set up the repository as its instructions say.
 
