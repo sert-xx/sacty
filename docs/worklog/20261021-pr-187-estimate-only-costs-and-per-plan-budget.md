@@ -2,7 +2,7 @@
 
 - 日付: 2026-10-21（UTC）
 - タスク: なし
-- PR: なし（作った後に番号を書き足す）
+- PR: #187
 - ブランチ: claude/happy-hamilton-wir01q
 - 関係する ADR: [費用は概算だけを出し、工程の組み合わせごとに予算を決められるようにする](../adr/20261021-1351-estimate-only-costs-and-per-plan-budget.md)
 
