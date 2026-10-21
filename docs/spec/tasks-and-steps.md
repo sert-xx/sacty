@@ -194,7 +194,7 @@
 | --- | --- |
 | `plan`・`reason` | 組み合わせと理由 |
 | `baseBranch` | ベースブランチ。既定のブランチと違えば、そのブランチで用意し直す（用意できなければ既定のブランチのまま進め、理由を置き換える） |
-| `testCommand` | テスト（検証）のコマンド（ゴールガーディアンが最終レビューの中で実行し、終了コード 0 で合格。1〜1000 文字）。テストのコードが無くても、成果物を機械的に確かめる検証（`kustomize build`・`helm lint`・`kubeconform`・`terraform validate`・`yamllint` など）を CI・Makefile・pre-commit が実行しているか、リポジトリの形から決まる（`kustomization.yaml`・`Chart.yaml` など）なら、それを書かせる。使うツールがどのイメージにも無くても空にさせない（下の「実装の検証」）。実装の工程があるのに無く、下の `noTests` も使えなければ一時停止する（`orchestrator.testCommandUnknown`） |
+| `testCommand` | テスト（検証）のコマンド（ゴールガーディアンが最終レビューの中で実行し、終了コード 0 で合格。1〜1000 文字）。テストのコードが無くても、成果物を機械的に確かめる検証（`kustomize build`・`helm lint`・`kubeconform`・`terraform validate`・`yamllint` など）を CI・Makefile・pre-commit が実行しているか、リポジトリの形から決まる（`kustomization.yaml`・`Chart.yaml` など）なら、それを書かせる。実行する検証が複数ある（テストの種類が複数・lint・型の検査・マニフェストの検証など）なら、CI・Makefile などが実行しているものをすべて `&&` でつないで1つにさせる（`;` ではつながせない。代表の1つだけを選ばせない）。使うツールがどのイメージにも無くても空にさせない（下の「実装の検証」）。実装の工程があるのに無く、下の `noTests` も使えなければ一時停止する（`orchestrator.testCommandUnknown`） |
 | `noTests` | `testCommand` が空のときだけ読む、リポジトリにテストの仕組みも検証のコマンドも無いと判断した根拠（1〜2000 文字）。`StepsChosen` の `noTestsReason` に記録する（下の「テストの仕組みが無いタスク」） |
 | `investigation` | 調査の種類（`content`：内容の調査、`bug`：不具合の調査） |
 | `images`・`imageReason` | 工程ごとのイメージ。プロジェクトの対象でイメージを指定していれば、選ばせずに全工程でそれを使う。`images` に無い名前なら止める |

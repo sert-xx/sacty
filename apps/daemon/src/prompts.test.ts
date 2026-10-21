@@ -1586,6 +1586,13 @@ describe("テストの仕組みが無いタスク（PBI-94）", () => {
     expect(prompt).toContain("上の検証のコマンドも無いと判断したら");
   });
 
+  it("オーケストレーターに、複数の検証は && でつないで1つの testCommand にさせる", () => {
+    const prompt = buildOrchestratorPrompt(task());
+    expect(prompt).toContain("すべて && でつないで1つの testCommand にする");
+    expect(prompt).toContain("; ではつながない");
+    expect(prompt).toContain("代表の1つだけを選ばない");
+  });
+
   it("出力からは、テストのコマンドが無いときだけ、テストの無い根拠を読む", () => {
     expect(extractStepPlan(plan({ noTests: ` ${NO_TESTS} ` }))).toMatchObject({
       noTests: NO_TESTS,
