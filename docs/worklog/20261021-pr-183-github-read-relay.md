@@ -2,7 +2,7 @@
 
 - 日付: 2026-10-21（UTC）
 - タスク: なし
-- PR: なし
+- PR: #183
 - ブランチ: claude/gracious-sagan-0c80hj
 - 関係する ADR: [工程のエージェントに GitHub の読み取りの中継をいつも渡し、PR・Issue へのコメントはエージェントが出力で頼んで承認の後に sacty が投稿する](../adr/20261021-1130-github-read-relay-and-comment-requests.md)
 
