@@ -216,6 +216,15 @@ function randomHistory(seed: number, taskId = "t1"): ActivityEvent[] {
   maybeAsk();
   add({ type: "StepSubmitted", payload: { step: "requirements", submission: 1 } });
   add({ type: "StepApproved", payload: { step: "requirements", next: "queued" } }, "person");
+  // 要求要件の後に、設計が要るかをオーケストレーターが見直す（工程の見直し。見直せなければ sacty の記録）
+  const reviewed = rand() < 0.8;
+  add(
+    {
+      type: "StepsSkipped",
+      payload: { after: "requirements", steps: [], reason: "要る", ...charged() },
+    },
+    reviewed ? "orchestrator" : "sacty",
+  );
   exportOutput("requirements");
   if (end === 1) return events;
 

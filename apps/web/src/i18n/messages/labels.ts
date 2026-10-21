@@ -174,6 +174,11 @@ const ja = {
     stepsNoTests: (reason: string) => ` / テストの仕組みが無い：${reason}`,
     stepsDeployment: (skill: string) => ` / マージの後の監視：する（スキル ${skill}）`,
     stepsDeploymentSkipped: (reason: string) => ` / マージの後の監視：飛ばす（${reason}）`,
+    /** 工程の見直しで、要らない工程を飛ばした（steps が空なら、飛ばさずに進める）。 */
+    StepsSkipped: (after: string, steps: string, reason: string) =>
+      steps
+        ? `「${after}」の後に工程を見直し、飛ばした：${steps}（${reason}）`
+        : `「${after}」の後に工程を見直し、飛ばさずに進める（${reason}）`,
     /** オーケストレーターが決めたサービス（PBI-47・PBI-70）。 */
     stepsServices: (names: string, source: string, steps: string, reason?: string) =>
       ` / サービス：${names || "すべて"}（${source}。${steps}で使う）${reason ? `：${reason}` : ""}`,
@@ -598,6 +603,10 @@ const en: LabelMessages = {
     stepsNoTests: (reason) => ` / No tests in the repository: ${reason}`,
     stepsDeployment: (skill) => ` / After-merge watch: yes (skill ${skill})`,
     stepsDeploymentSkipped: (reason) => ` / After-merge watch: skipped (${reason})`,
+    StepsSkipped: (after, steps, reason) =>
+      steps
+        ? `Steps reviewed after "${after}", skipped: ${steps} (${reason})`
+        : `Steps reviewed after "${after}", none skipped (${reason})`,
     stepsServices: (names, source, steps, reason) =>
       ` / Services: ${names || "all"} (${source}; used in ${steps})${reason ? `: ${reason}` : ""}`,
     stepsNoServices: (shared, reason) =>

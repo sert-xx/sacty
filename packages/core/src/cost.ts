@@ -44,6 +44,7 @@ export function budgetState(budget: Task["budget"]): BudgetState {
  */
 export const CHARGED_EVENT_TYPES = [
   "StepsChosen",
+  "StepsSkipped",
   "OrchestratorFailed",
   "TicketTriaged",
   "RepositoryChosen",

@@ -11,6 +11,7 @@ const RUN_EVENTS = new Set<ActivityEvent["type"]>([
   "AgentRunCompleted",
   "AgentRunFailed",
   "StepsChosen",
+  "StepsSkipped",
   "OrchestratorFailed",
   "TicketTriaged",
   "RepositoryChosen",

@@ -73,14 +73,14 @@ Code: `packages/core/src/projection.ts` (`project`, `applyEvent`, `Task`, `TaskS
 - Cost = (`input` × the `input` price + `cacheRead` × the `cachedInput` price + `cacheWrite` × the `cacheWrite` price + `output` × the `output` price) ÷ 10^6
   (the numerator is rounded to an integer before dividing).
 - Subscription and stub runs are treated as an estimated cost (`estimated`) converted at the same unit prices, and are used for budget checks.
-- The events that carry cost counted toward the task budget are the following 13 kinds (`CHARGED_EVENT_TYPES`). These are all the events that carry `costUsd`
+- The events that carry cost counted toward the task budget are the following 14 kinds (`CHARGED_EVENT_TYPES`). These are all the events that carry `costUsd`
   (the integration review's `IntegrationReviewed` carries no cost; it is recorded in the following `AgentRunCompleted`).
 
   | Event | Row in the per-step cost table |
   | --- | --- |
   | `TicketTriaged` | Ticket reading (`triage`) |
   | `RepositoryChosen` | Repository selection (`repository`) |
-  | `StepsChosen`, `OrchestratorFailed` | Orchestrator (`orchestrator`) |
+  | `StepsChosen`, `StepsSkipped`, `OrchestratorFailed` | Orchestrator (`orchestrator`) |
   | `AgentRunCompleted`, `AgentRunFailed` | That step |
   | `OutputExported` | Export (`export`) |
   | `QuestionAnswered` | Answers to questions (`chat`) |

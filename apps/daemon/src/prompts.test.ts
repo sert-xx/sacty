@@ -23,6 +23,7 @@ import {
   buildStepDocument,
   buildStepPullRequestBody,
   buildStepPullRequestTitle,
+  buildStepReviewPrompt,
   buildTicketPullRequestComment,
   CHAT_LOGS_IN_PROMPT,
   CHAT_PROMPT_MAX,
@@ -35,6 +36,7 @@ import {
   extractReviewImage,
   extractSplitPlan,
   extractStepPlan,
+  extractStepReview,
   operationSucceeded,
   postedLatestCommit,
   servicePromptLines,
@@ -1445,6 +1447,7 @@ describe("リポジトリを指定しないタスク（PBI-73）", () => {
       "operation",
       "standard",
       "skip-design",
+      "direct",
       "investigate",
       "design-only",
       "split",
@@ -2400,5 +2403,148 @@ describe("長い文の切り詰め", () => {
     // ペアの後ろで切れるときは、そのまま含める
     expect(clip(`${"a".repeat(2998)}😀b`, 3000).startsWith(`${"a".repeat(2998)}😀\n…`)).toBe(true);
     expect(clip("short", 3000)).toBe("short");
+  });
+});
+
+describe("工程の見直しと、要求要件・設計を経ない実装", () => {
+  let seq = 0;
+  const ev = (input: EventInput, actor: ActivityEvent["actor"] = "sacty") =>
+    ({
+      ...EventInput.parse(input),
+      seq: ++seq,
+      id: `e${seq}`,
+      taskId: "t1",
+      projectId: "default",
+      actor,
+      at: "2026-10-21T00:00:00.000Z",
+    }) as ActivityEvent;
+  const usage = { input: 0, cacheRead: 0, cacheWrite: 0, output: 1 };
+  const BODY = "/restricted へのリンクをサイドメニューに足す。管理者だけに出す";
+  const INVESTIGATION = "# 調査\n\n- 管理者の判定は isAdmin()（src/auth.ts:3）";
+  /** 前段の調査まで終えたタスク。skip を渡すと、工程の見直しでその工程を飛ばす。 */
+  const taskOf = (skip?: string[]) => {
+    seq = 0;
+    const events = [
+      ev(
+        { type: "TaskCreated", payload: { title: "管理者リンク", body: BODY, start: "sacty" } },
+        "person",
+      ),
+      ev({
+        type: "StepsChosen",
+        payload: {
+          steps: ["investigate", "requirements", "design", "implement", "deployment"],
+          plan: "standard",
+          testCommand: "npm test",
+        },
+      }),
+      ev({
+        type: "RepositoryPrepared",
+        payload: { url: "https://github.com/acme/app", baseBranch: "main", baseCommit: "b1" },
+      }),
+      ev({
+        type: "AgentRunStarted",
+        payload: { runId: "inv", step: "investigate", agentId: "a", authMode: "subscription" },
+      }),
+      ev({
+        type: "AgentRunCompleted",
+        payload: {
+          runId: "inv",
+          step: "investigate",
+          agentId: "a",
+          authMode: "subscription",
+          usage,
+          costUsd: 0,
+          estimated: true,
+          output: INVESTIGATION,
+        },
+      }),
+      ev({ type: "StepCompleted", payload: { step: "investigate", next: "queued" } }),
+      ...(skip
+        ? [
+            ev(
+              {
+                type: "StepsSkipped",
+                payload: { after: "investigate", steps: skip, reason: "isAdmin で足りる" },
+              } as EventInput,
+              "orchestrator",
+            ),
+          ]
+        : []),
+    ];
+    return project(events).get("t1") as Task;
+  };
+
+  it("見直しの指示に、終わった工程の成果・残りの工程・飛ばせる工程と、推測で工程を残さないことを書く", () => {
+    const prompt = buildStepReviewPrompt(taskOf(), "investigate", ["requirements", "design"]);
+    expect(prompt).toContain("このタスクの工程「調査」が終わりました");
+    expect(prompt).toContain(
+      "残りの工程は 要求要件（requirements） → 設計（design） → 実装（implement）",
+    );
+    expect(prompt).toContain("飛ばせるのは 要求要件（requirements）・設計（design） だけ");
+    expect(prompt).toContain("依頼に書かれていない仕組み（新しい役割・管理画面・設定など）");
+    expect(prompt).toContain(BODY);
+    expect(prompt).toContain("isAdmin()（src/auth.ts:3）");
+    expect(prompt).toContain('"sacty-step-review"');
+  });
+
+  it("見直しの答えは、飛ばせる工程だけを読み、重複を除く。飛ばせない工程・理由の無い答えは読めないものとする", () => {
+    const answer = (v: unknown) =>
+      `考えた\n\`\`\`json\n${JSON.stringify({ "sacty-step-review": v })}\n\`\`\``;
+    const skippable = ["requirements", "design"] as const;
+    expect(
+      extractStepReview(
+        answer({ skip: ["design", "design", "requirements"], reason: "r" }),
+        skippable,
+      ),
+    ).toEqual({ steps: ["design", "requirements"], reason: "r" });
+    expect(extractStepReview(answer({ skip: [], reason: "要る" }), skippable)).toEqual({
+      steps: [],
+      reason: "要る",
+    });
+    expect(
+      extractStepReview(answer({ skip: ["implement"], reason: "r" }), skippable),
+    ).toBeUndefined();
+    expect(extractStepReview(answer({ skip: ["design"] }), skippable)).toBeUndefined();
+    expect(extractStepReview(answer({ skip: "design", reason: "r" }), skippable)).toBeUndefined();
+    expect(extractStepReview("答えなし", skippable)).toBeUndefined();
+  });
+
+  it("要求要件・設計を飛ばした実装は、タスクの内容と調査の結果に従い、タスクの目的を観点 REQ として確かめる", () => {
+    const task = taskOf(["requirements", "design"]);
+    const prompt = buildPrompt(task, "implement");
+    expect(prompt).toContain("要求要件・設計の工程を省いています");
+    expect(prompt).toContain("依頼に無い仕組み・画面・設定を新しく作らない");
+    expect(prompt).toContain(BODY);
+    expect(prompt).toContain("isAdmin()（src/auth.ts:3）");
+    expect(prompt).toContain("- [REQ] タスクの目的（依頼の内容）を満たす");
+    expect(prompt).not.toContain("承認済みの要求要件");
+
+    const review = buildFinalReviewPrompt(task, "diff --git a/x b/x");
+    expect(review).toContain("要求要件・設計の工程を省きました");
+    expect(review).toContain("- [REQ] タスクの目的（依頼の内容）");
+    expect(review).toContain(BODY);
+    expect(review).not.toContain("--- 承認済みの要求要件 ---");
+
+    const body = buildPullRequestBody(task);
+    expect(body).toContain("要求要件の工程を省きました");
+    expect(body).toContain("REQ タスクの目的");
+  });
+
+  it("要求要件だけを飛ばした設計は、タスクの内容を要求要件として扱う。設計だけを飛ばした実装は、今までどおり要求要件に従う", () => {
+    const design = buildPrompt(taskOf(["requirements"]), "design");
+    expect(design).toContain(
+      "タスクの内容と前段の調査の結果から、設計とテスト観点を作ってください",
+    );
+    expect(design).toContain("下のタスクの内容を要求要件として扱ってください");
+
+    const implement = buildPrompt(taskOf(["design"]), "implement");
+    expect(implement).toContain("人間が承認した要求要件に従って実装し");
+    expect(implement).toContain("[REQ] 承認済みの要求要件の受け入れ条件");
+  });
+
+  it("組み合わせ direct をオーケストレーターに示し、工程の見直しがあることを伝える", () => {
+    const prompt = buildOrchestratorPrompt(taskOf());
+    expect(prompt).toContain("- direct：調査 → 実装");
+    expect(prompt).toContain("工程が終わるごとに");
   });
 });

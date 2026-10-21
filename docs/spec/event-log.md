@@ -73,14 +73,14 @@
 - 費用 = (`input`×`input` の単価 + `cacheRead`×`cachedInput` の単価 + `cacheWrite`×`cacheWrite` の単価 + `output`×`output` の単価) ÷ 10^6
   （分子を整数に丸めてから割る）。
 - サブスクリプションとスタブの実行は、同じ単価で換算した推定の費用（`estimated`）として扱い、予算の判定に使う。
-- タスクの予算に入れる費用を持つイベントは、次の13種類（`CHARGED_EVENT_TYPES`）。`costUsd` を持つイベントはこれですべて
+- タスクの予算に入れる費用を持つイベントは、次の14種類（`CHARGED_EVENT_TYPES`）。`costUsd` を持つイベントはこれですべて
   （統合レビューの `IntegrationReviewed` は費用を持たず、続く `AgentRunCompleted` に記録する）。
 
   | イベント | 工程ごとの費用の表の行 |
   | --- | --- |
   | `TicketTriaged` | チケットの読み取り（`triage`） |
   | `RepositoryChosen` | リポジトリの選択（`repository`） |
-  | `StepsChosen`・`OrchestratorFailed` | オーケストレーター（`orchestrator`） |
+  | `StepsChosen`・`StepsSkipped`・`OrchestratorFailed` | オーケストレーター（`orchestrator`） |
   | `AgentRunCompleted`・`AgentRunFailed` | その工程 |
   | `OutputExported` | 書き出し（`export`） |
   | `QuestionAnswered` | 質問への答え（`chat`） |

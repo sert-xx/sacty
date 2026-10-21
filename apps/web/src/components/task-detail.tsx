@@ -535,19 +535,20 @@ export function TaskDetailView({ data }: { data: TaskDetailData }) {
           {/* レビューの結果（PBI-19）。人間の承認は無く、そのまま PR に投稿する */}
           {task.steps.some((s) => s.key === "review") && <Deliverable task={task} step="review" />}
           {/* 再現の説明と、sacty が確かめた結果（PBI-29） */}
-          {task.steps.some((s) => s.key === "reproduce") && (
+          {task.steps.some((s) => s.key === "reproduce" && s.state !== "skip") && (
             <>
               <Deliverable task={task} step="reproduce" />
               <ReproductionResult task={task} />
             </>
           )}
-          {task.steps.some((s) => s.key === "requirements") && (
+          {/* 工程の見直しで飛ばした工程は、成果が無いので出さない */}
+          {task.steps.some((s) => s.key === "requirements" && s.state !== "skip") && (
             <Deliverable task={task} step="requirements" />
           )}
           {(task.outputs.design ||
-            task.steps.some((s) => s.key === "design" && s.state !== "todo")) && (
-            <Deliverable task={task} step="design" />
-          )}
+            task.steps.some(
+              (s) => s.key === "design" && s.state !== "todo" && s.state !== "skip",
+            )) && <Deliverable task={task} step="design" />}
           {(["document", "operation"] as const).map((step) =>
             task.steps.some((s) => s.key === step) ? (
               <Deliverable key={step} task={task} step={step} />

@@ -30,6 +30,7 @@ import {
   isDocumentsDir,
   MAX_INTEGRATION_ATTEMPTS,
   REWORK_STEPS,
+  SKIPPABLE_STEPS,
 } from "./events.js";
 import { type DaemonText, message } from "./message-code.js";
 import type { DaemonMessage } from "./messages.js";
@@ -329,6 +330,11 @@ export type Task = {
   deployment?: DeploymentWatch;
   /** マージの後の監視の工程をするか（工程を選んだときに sacty が決めた。PBI-116）。skipped なら飛ばした理由。 */
   deploymentChoice?: PayloadOf<"StepsChosen">["deployment"];
+  /**
+   * 工程の見直しを待っている、終わった工程。工程が終わり、まだの工程に飛ばせる工程（skippableSteps）があるときに持つ。
+   * 次の工程を実行する前に、オーケストレーターが要らない工程を飛ばすかを決める（StepsSkipped）と消える。
+   */
+  stepReview?: StepKey;
   /** 取り込み元（GitHub Issue）。 */
   source?: TaskSource;
   /** 取り込み元のチケット（JIRA など。PBI-52）。 */
@@ -608,7 +614,8 @@ function reopen(task: Task, target: StepKey) {
     if (i > to && s.state !== "skip") return { ...s, state: "todo" as const };
     return s;
   });
-  // 前の工程からやり直すので、実装の検証の途中経過と失敗の回数は持ち越さない
+  // 前の工程からやり直すので、実装の検証の途中経過と失敗の回数・工程の見直しは持ち越さない
+  task.stepReview = undefined;
   task.verification = undefined;
   task.verifyFeedback = undefined;
   task.verifyFailures = 0;
@@ -630,6 +637,21 @@ function advance(task: Task, index: number) {
     if (i === next) return { ...s, state: "active" as const };
     return s;
   });
+  // まだの工程に飛ばせる工程があれば、次の工程を実行する前に、オーケストレーターに見直させる（工程の見直し）
+  const done = task.steps[index]?.key;
+  task.stepReview = done && skippableSteps(task).length > 0 ? done : undefined;
+}
+
+/**
+ * オーケストレーターが、工程の見直しで飛ばせる工程（工程の見直し）。まだの工程（実行対象・まだ）のうち、実装の前に置く
+ * 文書やテストを作る工程（SKIPPABLE_STEPS）。組み合わせに実装の工程があるときだけ（成果物は実装で、ゴールガーディアンが
+ * 最終レビューで判定する）。
+ */
+export function skippableSteps(task: Task): StepKey[] {
+  if (!task.steps.some((s) => s.key === "implement" && s.state !== "skip")) return [];
+  return task.steps
+    .filter((s) => (s.state === "todo" || s.state === "active") && SKIPPABLE_STEPS.includes(s.key))
+    .map((s) => s.key);
 }
 
 /** 工程を終えた後の、次の工程（無ければ undefined。飛ばした工程は除く）。 */
@@ -837,6 +859,8 @@ export function applyEvent(
       }
       task.status = "running";
       task.currentRunId = event.payload.runId;
+      // 見直さずに工程を始めた（工程の見直しより前の作業履歴）なら、見直しは待たない
+      task.stepReview = undefined;
       break;
 
     case "AgentRunCompleted":
@@ -985,6 +1009,30 @@ export function applyEvent(
         },
       };
       task.status = event.payload.next;
+      break;
+    }
+
+    // 工程の見直しで、オーケストレーターが要らない工程を飛ばした（工程の見直し）。飛ばした工程が実行対象なら、その次の
+    // まだの工程を実行対象にする
+    case "StepsSkipped": {
+      if (task.stepReview !== event.payload.after) {
+        throw new ActivityIntegrityError(event, "the step is not waiting for a review");
+      }
+      const skippable = skippableSteps(task);
+      const skipped = event.payload.steps;
+      if (skipped.some((step) => !skippable.includes(step))) {
+        throw new ActivityIntegrityError(event, "the step cannot be skipped");
+      }
+      task.steps = task.steps.map((s) =>
+        skipped.includes(s.key) ? { ...s, state: "skip" as const } : s,
+      );
+      if (!task.steps.some((s) => s.state === "active")) {
+        const next = task.steps.findIndex((s) => s.state === "todo");
+        task.steps = task.steps.map((s, i) =>
+          i === next ? { ...s, state: "active" as const } : s,
+        );
+      }
+      task.stepReview = undefined;
       break;
     }
 
@@ -2287,7 +2335,8 @@ export function reworkTargets(task: Task, gateStep: StepKey): StepKey[] {
   const index = task.steps.findIndex((s) => s.key === gateStep);
   return (
     task.steps
-      .filter((s, i) => i <= index && REWORK_STEPS.includes(s.key))
+      // 飛ばした工程（工程の見直し）には戻さない
+      .filter((s, i) => i <= index && s.state !== "skip" && REWORK_STEPS.includes(s.key))
       // 再現は、実装した後のコードでは再現できないので、再現の判断待ちのときだけやり直せる。
       // 前段の調査は人間が承認しない工程なので、調査そのものが目的のとき（調査の承認待ち）だけ（PBI-29）
       .filter((s) => (s.key !== "reproduce" && s.key !== "investigate") || gateStep === s.key)

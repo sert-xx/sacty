@@ -95,6 +95,7 @@
 - 書き出せる工程（`EXPORT_STEPS`）：`investigate`（最後の工程のときだけ）・`requirements`・`design`・`document`。
 - 実行しない工程（`EXECUTABLE_STEPS` に無い）：`deployment`。前の工程の承認の後は待機になり、sacty が PR の確認で進める。対象のリポジトリに
   スキルが無ければ、工程を選ぶときに飛ばす（`skip`。[マージの後の監視](deployment-watch.md)）。工程を進めるときは、`skip` の工程を飛ばす。
+- 工程の見直しで飛ばせる工程（`SKIPPABLE_STEPS`）：`requirements`・`design`・`reproduce`。組み合わせに実装があるときだけ（下の「工程の見直し」）。
 
 コード: `packages/core/src/events.ts`（`StepKey`・`GATED_STEPS`・`REWORK_STEPS`・`EXPORT_STEPS`・`exportSteps`）、`packages/core/src/projection.ts`（`investigationIsGoal`）、`apps/daemon/src/service.ts`（`REPO_STEPS`・`submitEvents`）、`apps/daemon/src/prompts.ts`（`SERVICE_STEPS`）
 
@@ -126,6 +127,7 @@
 | --- | --- |
 | `standard` | `investigate` → `requirements` → `design` → `implement` → `deployment` |
 | `skip-design` | `investigate` → `requirements` → `implement` → `deployment` |
+| `direct` | `investigate` → `implement` → `deployment`（要求要件・設計を省く） |
 | `investigate` | `investigate`（調査だけ） |
 | `design-only` | `requirements` → `design`（設計だけ） |
 | `review` | `review`（レビューだけ） |
@@ -141,7 +143,7 @@
 
 ## 非開発作業と工程の選択
 
-オーケストレーターは `standard` を無条件に推奨せず、目的・成果物・変更対象・規模を比較する。質問・原因調査は `investigate`、既存 PR のレビューは `review`、全体設計は `design-only`、原稿作成は `document`。文書を含むリポジトリのファイル変更は、局所的なら `skip-design`、広い設計判断が必要なら `standard`、複数 PR に分けるなら `split`。再現可能な不具合は `bugfix`、設計判断が必要な不具合は `standard` とする。
+オーケストレーターは `standard` を無条件に推奨せず、目的・成果物・変更対象・規模を比較する。質問・原因調査は `investigate`、既存 PR のレビューは `review`、全体設計は `design-only`、原稿作成は `document`。依頼が受け入れ条件として明確で、既存の仕組みを使う局所的な変更は `direct`（要求要件・設計を省く）。依頼に書かれていない仕組み（新しい役割・管理画面など）を推測して工程を増やさない。文書を含むリポジトリのファイル変更は、局所的なら `direct` か `skip-design`、広い設計判断が必要なら `standard`、複数 PR に分けるなら `split`。再現可能な不具合は `bugfix`、設計判断が必要な不具合は `standard` とする。
 
 - `document` は要求要件・設計の形式を強制せず Markdown の原稿を作る。画面で差し戻し・承認できる。承認前は MCP/PF のアクセスとプロジェクトコンテキストを渡さず、外部原稿の読取も行わない。元の本文・規約等はタスク本文か人間の差し戻しで補う。任意の書き出しには既存の仕組みを使い、書き出し失敗はタスクの完了を止めない。既存の外部文書を直接更新する場合は `operation` を使う。
 - `operation` は単一の工程である。既存のオーケストレーターが、接続先1つ・一意の対象 ID/URL・依頼内容と前提・確認方法を選定する。追加の準備エージェント・準備成果物・実行前の承認ゲートは設けない。対象や接続先が不足しているときは実行開始前に停止する。
@@ -205,6 +207,34 @@
 - オーケストレーターのセッションの使い回しは [エージェントの実行](agent-execution.md) の「セッションの保存と使い回し」。
 
 コード: `apps/daemon/src/service.ts`（`askOrchestrator`・`runNextInner`・`withImages`・`defaultImagesOf`・`withSharedCompose`・`withExports`・`repositoryFromPlan`・`chooseRepository`・`triageTicket`・`chooseReviewSteps`・`runOrchestrator`・`reviewOnlySteps`）、`apps/daemon/src/prompts.ts`（`extractStepPlan`・`planAnswerLines`・`PLAN_SKILL`・`buildReviewImagePrompt`・`extractReviewImage`）、`apps/daemon/default-context/skills/plan-steps/SKILL.md`、`packages/core/src/events.ts`（`StepsChosen`）
+
+## 工程の見直し
+
+工程を選んだ後も、工程が終わるごとに、オーケストレーターがまだの工程のうち要らない工程を飛ばす。工程を足す・並べ替えることはしない。
+最終的な成果は、ゴールガーディアンが最終レビューで判定し、人間が PR のマージで承認する。
+
+- 飛ばせる工程（`skippableSteps`）：まだの工程（実行対象・まだ）のうち `SKIPPABLE_STEPS`（`requirements`・`design`・`reproduce`）。組み合わせに
+  飛ばしていない実装（`implement`）があるときだけ。タスク分割の前の設計・設計だけの組み合わせは飛ばせない。
+- いつ見直すか：工程が終わり（前段の調査の完了 `StepCompleted`、承認 `StepApproved` など。`advance`）、飛ばせる工程が残っていれば、
+  タスクは終わった工程を `stepReview` に持つ。次に実行するとき（`runNextInner`）、工程を実行する前に見直す（`reviewSteps`）。
+  例：`standard` では、前段の調査の後（要求要件・設計）と、要求要件の承認の後（設計）。`bugfix` では、前段の調査の後（再現）。`direct` は見直さない。
+- 指示（`buildStepReviewPrompt`）：タスクの内容・終わった工程の成果（先頭 30,000 文字まで）・残りの工程・飛ばせる工程を渡し、飛ばす判断の目安
+  （依頼がそのまま受け入れ条件になるなら要求要件、既存の仕組みに沿った局所的な変更なら設計、原因と直し方が明らかなら再現）と、依頼に
+  書かれていない仕組みを推測して工程を残さないことを書く。オーケストレーターの実行（`runOrchestrator`）で、タスクのオーケストレーターの
+  セッションを再開して行う。
+- 答え（見出し `sacty-step-review` の `skip`・`reason`。`extractStepReview`）を読み、`StepsSkipped`（`after`・`steps`・`reason`・費用）を
+  オーケストレーターの記録にする。`steps` が空なら飛ばさない。飛ばせない工程を書いた・理由が無い・形が違う答えは読めないものとする。
+- 実行に失敗した・答えを読めないときは、止めずに飛ばさないで進め、`StepsSkipped`（`steps` は空）を sacty の記録にする（理由は
+  `orchestrator.stepReviewFailed`）。予算の上限に達していれば見直さない（次の工程の前に一時停止し、再開したら見直す）。見直している間に
+  人間が止めた・中止したなら記録しない。
+- 投影：飛ばした工程を `skip` にし、実行対象を飛ばしたら次のまだの工程を実行対象にする。`stepReview` は `StepsSkipped`・前の工程からの
+  やり直し（`reopen`）・工程の実行の開始（`AgentRunStarted`）で消える。見直しを待っていない・飛ばせない工程の記録は受け付けない。
+- 飛ばした工程には差し戻さない（`reworkTargets`）。タスクの画面は、飛ばした要求要件・設計・再現の成果物を出さない。
+- 飛ばした後の工程：要求要件を飛ばした設計は、タスクの内容を要求要件として扱う。要求要件・設計を経ない実装（`direct`・両方を飛ばした）は、
+  タスクの内容と前段の調査の結果に従い、観点 `REQ` をタスクの目的（依頼の内容）として確かめる（`withoutRequirements`・`directImplementLines`）。
+  最終レビューと PR の本文も、`REQ` をタスクの目的として扱う。検証の基準（`verificationBasis`）は、飛ばした工程を無いものとして決める。
+
+コード: `packages/core/src/events.ts`（`SKIPPABLE_STEPS`・`StepsSkipped`）、`packages/core/src/projection.ts`（`skippableSteps`・`advance`・`reworkTargets`）、`apps/daemon/src/service.ts`（`runNextInner`・`reviewSteps`）、`apps/daemon/src/prompts.ts`（`buildStepReviewPrompt`・`extractStepReview`・`withoutRequirements`・`directImplementLines`・`verificationBasis`）
 
 ## 工程のイメージを人が変える
 
@@ -283,7 +313,7 @@
 ## 実装の検証
 
 - 実装の工程が終わると検証の待ち（`verification = "pending"`）になり、テストのコンテナでテストのコマンドを実行する。終了コード 0 で、
-  検証の観点がすべてテストに対応していれば合格。観点は、設計があれば設計のテスト観点、再現があれば `REPRO`、どちらも無ければ `REQ`。
+  検証の観点がすべてテストに対応していれば合格。観点は、設計があれば設計のテスト観点、再現があれば `REPRO`、どちらも無ければ `REQ`（要求要件も無ければ、タスクの目的。上の「工程の見直し」）。
 - テストに通ったら、ゴールガーディアンの最終レビューに進む。最終レビューは、実装後のコードと差分を読み、観点ごと・指摘ごとに判定し、
   すべて満たすときだけ合格。合格なら、実装の工程のまま、sacty が実装の PR を作り、実装の承認待ちにする（下の「検証に通った実装の PR」）。
   - 観点は、テストの対応と同じもの（`finalReviewViewpointIds`）。指示の最後の出力の形式の例には、判定する観点の ID をすべてそのまま

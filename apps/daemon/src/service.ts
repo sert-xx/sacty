@@ -103,6 +103,7 @@ import {
   StepPullRequestKey,
   sameAuditTarget,
   sameGitHubUrl,
+  skippableSteps,
   stepAgentChangeable,
   stepDocumentPath,
   TASK_BODY_MAX,
@@ -272,6 +273,7 @@ import {
   buildStepPullRequestBodyParts,
   buildStepPullRequestBodyText,
   buildStepPullRequestTitle,
+  buildStepReviewPrompt,
   buildTicketInvestigationComment,
   buildTicketPullRequestComment,
   buildTicketTriagePrompt,
@@ -290,6 +292,7 @@ import {
   extractRework,
   extractSplitPlan,
   extractStepPlan,
+  extractStepReview,
   extractTicketTriage,
   extractVerdict,
   finalReviewViewpointIds,
@@ -462,6 +465,15 @@ export type ServiceDeps = {
   now?: () => number;
   /** オーケストレーターの代わりに工程を選ぶ（テストで差し替える。PBI-17）。 */
   planner?: (task: Task) => Promise<PlannedSteps>;
+  /**
+   * オーケストレーターの代わりに工程を見直す（テストで差し替える。工程の見直し）。planner を差し替えて、これを差し替えない
+   * ときは見直さない（工程を選ぶオーケストレーターがいないため）。
+   */
+  stepReviewer?: (
+    task: Task,
+    after: StepKey,
+    skippable: readonly StepKey[],
+  ) => Promise<{ steps: StepKey[]; reason: string }>;
   /** チケット（JIRA など）の検索とコメント（PBI-52）。無ければ、チケットを扱わない。 */
   tickets?: TicketClient;
   /** docker compose のサービスを起動する口（PBI-47）。無ければ、サービスを使わない。 */
@@ -2829,6 +2841,76 @@ export class TaskService {
     );
   }
 
+  /**
+   * 工程の見直し：工程が終わった後、次の工程を実行する前に、オーケストレーターに終わった工程の成果を読ませ、まだの工程の
+   * うち飛ばせる工程（skippableSteps）が要るかを決めさせて、StepsSkipped を記録する。工程を足す・並べ替えることはさせない。
+   * 見直しは成果物を作らない補助の判断なので、実行できなかった・答えを読めなかったときは、止めずに飛ばさないで進める
+   * （sacty の記録）。予算の上限に達していれば見直さない（次の工程の実行の前に一時停止し、再開したら見直す）。
+   */
+  private async reviewSteps(task: Task, after: StepKey, config: SactyConfig): Promise<void> {
+    if (budgetState(task.budget) === "exceeded") return;
+    const skippable = skippableSteps(task);
+    if (skippable.length === 0) return;
+    if (this.deps.stepReviewer || this.deps.planner) {
+      if (!this.deps.stepReviewer) return;
+      const reviewed = await this.deps.stepReviewer(task, after, skippable);
+      const latest = this.mustGet(task.id);
+      if (latest.status !== "queued" || latest.stepReview !== after) return;
+      this.append(latest, [
+        { actor: "orchestrator", event: { type: "StepsSkipped", payload: { after, ...reviewed } } },
+      ]);
+      return;
+    }
+    const ran = await this.runOrchestrator(task, config, (platforms) =>
+      [buildStepReviewPrompt(task, after, skippable), ...platformPromptLines(platforms)].join("\n"),
+    );
+    // 見直している間に、人間が止めた・中止した・工程が変わったなら、記録しない（止めた記録は runNext の後始末で行う）
+    const latest = this.mustGet(task.id);
+    if (
+      this.pauseRequested.has(task.id) ||
+      this.cancelling.has(task.id) ||
+      latest.status !== "queued" ||
+      latest.stepReview !== after
+    ) {
+      return;
+    }
+    const chosen = "failure" in ran ? undefined : extractStepReview(ran.output, skippable);
+    if ("failure" in ran || !chosen) {
+      const {
+        reason: _reason,
+        message: detail,
+        ...cost
+      } = "failure" in ran
+        ? ran.failure
+        : { reason: "error", message: message("orchestrator.unreadable"), ...ran.cost };
+      this.append(latest, [
+        {
+          actor: "sacty",
+          event: {
+            type: "StepsSkipped",
+            payload: {
+              after,
+              steps: [],
+              reason: message("orchestrator.stepReviewFailed", { detail }),
+              ...cost,
+            },
+          },
+        },
+      ]);
+    } else {
+      this.append(latest, [
+        {
+          actor: "orchestrator",
+          event: {
+            type: "StepsSkipped",
+            payload: { after, steps: chosen.steps, reason: chosen.reason, ...ran.cost },
+          },
+        },
+      ]);
+    }
+    this.warnIfNeeded(this.mustGet(task.id));
+  }
+
   /** オーケストレーターに工程を選ばせる（PBI-17）。 */
   private async askOrchestrator(
     task: Task,
@@ -4886,6 +4968,11 @@ export class TaskService {
         });
       }
       this.append(latest, events);
+    }
+    // 工程が終わったら、次の工程を実行する前に、オーケストレーターが残りの工程を見直し、要らない工程を飛ばす（工程の見直し）
+    const reviewing = this.mustGet(taskId);
+    if (reviewing.status === "queued" && reviewing.stepReview) {
+      await this.reviewSteps(reviewing, reviewing.stepReview, config.config);
     }
     const task = this.mustGet(taskId);
     if (task.status !== "queued") return;
