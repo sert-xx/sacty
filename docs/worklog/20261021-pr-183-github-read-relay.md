@@ -45,7 +45,8 @@
 
 | 指摘 | 対応 |
 | --- | --- |
-| なし | なし |
+| CodeQL：Server-side request forgery（`gateway.ts` の GitHub の中継。上流の URL が要求の値に依る） | 転送先のホストを、要求の値ではなく、実行に結びつけたホストの一覧から取るようにした（パスは前から検査している） |
+| CodeQL：Incomplete URL substring sanitization（`service.ts` の `githubDefaultHost`） | 配列の照合で、部分一致ではない（誤検知）。紛れないよう `Set` の照合に書き換えた |
 
 ## 残したこと
 

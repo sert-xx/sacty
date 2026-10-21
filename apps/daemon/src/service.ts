@@ -4676,8 +4676,9 @@ export class TaskService {
     const task = this.tasks.get(taskId);
     const repo = task?.source?.repo ?? task?.repo ?? task?.repository?.url;
     const host = repo ? httpsHost(`${repo}/`) : undefined;
-    if (host && hosts.includes(host)) return host;
-    return hosts.includes("github.com") ? "github.com" : (hosts[0] ?? "github.com");
+    const bound = new Set(hosts);
+    if (host && bound.has(host)) return host;
+    return bound.has("github.com") ? "github.com" : (hosts[0] ?? "github.com");
   }
 
   /** タスクのプロジェクトで、url のホストに選んだ gh のアカウント（選んでいなければ空）。 */

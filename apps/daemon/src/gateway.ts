@@ -349,14 +349,16 @@ export class AiGateway {
   ): Promise<void> {
     const run = this.runs.get(target.token);
     if (!run) return fail(res, 401, "sacty gateway: unknown or expired run token");
-    const host = target.host.toLowerCase();
-    const account = run.github && Object.hasOwn(run.github, host) ? run.github[host] : undefined;
-    if (!account || !this.deps.githubToken) {
+    // 転送先のホストは、要求の値ではなく、実行に結びつけたホスト（プロジェクトで選んだもの）の中から取る
+    const requested = target.host.toLowerCase();
+    const host = Object.keys(run.github ?? {}).find((h) => h === requested);
+    const account = host !== undefined ? run.github?.[host] : undefined;
+    if (host === undefined || !account || !this.deps.githubToken) {
       const hosts = Object.keys(run.github ?? {});
       return fail(
         res,
         404,
-        `sacty gateway: no GitHub account is selected for "${host}" in the project settings${hosts.length > 0 ? ` (available: ${hosts.join(", ")})` : ""}`,
+        `sacty gateway: no GitHub account is selected for "${requested}" in the project settings${hosts.length > 0 ? ` (available: ${hosts.join(", ")})` : ""}`,
       );
     }
     const method = (req.method ?? "GET").toUpperCase();
