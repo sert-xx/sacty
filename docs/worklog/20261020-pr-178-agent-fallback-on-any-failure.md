@@ -20,6 +20,11 @@
 - `apps/daemon/src/config.ts`：`config init` のひな形の説明とコメントを直した。
 - docs：仕様書（エージェントの実行・設定ファイル）・ユーザードキュメント（設定・困ったとき）を日本語・英語で直し、ADR を足して前の ADR を
   置き換え済みにした。
+- 版を `1.6.0` に上げた（失敗したときの切り替えの振る舞いを広げる機能の追加なので MINOR）。4 つのパッケージとワークスペースの依存の版、
+  `package-lock.json` の版の行、既定のイメージの名前（`DEFAULT_IMAGE` を `sacty-agent:1.6.0`）、仕様書（`agent-execution`・`configuration`）・
+  ユーザードキュメント（`config`・`images`）の日英、イメージの名前を書いているテスト・コメント、ゲートウェイの MCP クライアントの版の文字列を
+  同じ版にした。更新の知らせのテスト（`update-check.test.ts`）の `1.5.0` は版の比較のための値、`package-lock.json` の
+  `@jridgewell/sourcemap-codec` の `^1.5.0` は外部の依存の版なので変えない。
 
 ## 確かめたこと
 
@@ -30,6 +35,8 @@
   （root で動かした環境によるもの）。
 - `npx vitest run tests/docs`：成功。
 - レビューの対応の後：同じコマンドで同じ結果。足した2つの回帰テストは、直す前のコードでは失敗することを確かめた。
+- 版を上げた後：`npm run lint`・`npm run typecheck`・`npm run build` が通過（`apps/daemon/dist/config.js` の `DEFAULT_IMAGE` が
+  `sacty-agent:1.6.0`）。`npx vitest run` は 2408 件が通過し、失敗は上と同じ 8 件だけ。
 
 ## レビューの指摘と対応
 

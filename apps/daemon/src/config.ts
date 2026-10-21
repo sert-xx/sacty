@@ -29,7 +29,7 @@ import {
 } from "./run-timeouts.js";
 import { SecretRef } from "./secrets.js";
 
-export const DEFAULT_IMAGE = "sacty-agent:1.5.0";
+export const DEFAULT_IMAGE = "sacty-agent:1.6.0";
 
 /** 失敗したエージェントを使わない時間（分）の既定と範囲（config.yaml の agent_fallback.cooldown_minutes）。 */
 export const DEFAULT_FALLBACK_COOLDOWN_MINUTES = 60;

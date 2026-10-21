@@ -146,7 +146,7 @@ docker のコンテナの中で1回実行して行う。テストの実行も、
 
 ## イメージ
 
-- 既定のイメージは `image`（既定 `sacty-agent:1.5.0`）。言語ごとのイメージは `images.<名前>`（タグの既定は `sacty-agent-<名前>:1.5.0`）。
+- 既定のイメージは `image`（既定 `sacty-agent:1.6.0`）。言語ごとのイメージは `images.<名前>`（タグの既定は `sacty-agent-<名前>:1.6.0`）。
   使うイメージは、名前が無いか `default` なら既定、`images` にあればそれ、無い名前なら止める（`image.unknown`）。
   工程のイメージは人がタスクの詳細で変えられ、その工程を次に実行するときから使う（[工程とタスク](tasks-and-steps.md)の「工程のイメージを人が変える」）。
 - `sacty image build [<名前>...]` は `packages/cli/docker/Dockerfile` を `docker build` する。名前を省くと既定と `images` のすべてを作る。
