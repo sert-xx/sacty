@@ -2883,6 +2883,9 @@ export class TaskService {
       } = "failure" in ran
         ? ran.failure
         : { reason: "error", message: message("orchestrator.unreadable"), ...ran.cost };
+      // コンテナが止まったことを確かめられなかった実行（元のコンテナが動いたままかもしれない）なら、次の工程の実行と
+      // 重ならないように止める（代わりのエージェントに切り替えないのと同じ。fallBack）
+      const unconfirmed = "failure" in ran && this.unconfirmedRuns.delete(ran.failure.runId ?? "");
       this.append(latest, [
         {
           actor: "sacty",
@@ -2896,6 +2899,17 @@ export class TaskService {
             },
           },
         },
+        ...(unconfirmed && "failure" in ran
+          ? [
+              {
+                actor: "sacty" as const,
+                event: {
+                  type: "TaskPaused" as const,
+                  payload: { reason: ran.failure.reason, message: ran.failure.message },
+                },
+              },
+            ]
+          : []),
       ]);
     } else {
       this.append(latest, [

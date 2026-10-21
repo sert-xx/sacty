@@ -3591,7 +3591,7 @@ export function buildStepReviewPrompt(
     .join(" → ");
   const output = task.approved[after]?.output ?? task.outputs[after] ?? "";
   return [
-    "あなたはオーケストレーターです。このタスクの工程「" + STEP_NAME[after] + "」が終わりました。",
+    `あなたはオーケストレーターです。このタスクの工程「${STEP_NAME[after]}」が終わりました。`,
     `残りの工程は ${remaining} です。終わった工程の成果を読んで、残りの工程のうち、要らない工程を飛ばしてください。`,
     "",
     `- 飛ばせるのは ${skippable.map((key) => `${STEP_NAME[key]}（${key}）`).join("・")} だけ。工程を足す・並べ替える・ほかの工程を飛ばすことはできない`,

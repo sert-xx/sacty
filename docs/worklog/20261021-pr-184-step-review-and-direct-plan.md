@@ -36,7 +36,7 @@
 
 ## 確かめたこと
 
-- `npm run lint`：通った（以前からの info が1件）。
+- `npm run lint`：通った。
 - `npm run typecheck`：通った。
 - `npx vitest run`：2427 件が通り、8 件が落ちた（`agent-sessions.test.ts`・`context-mcp.test.ts`・`host-mcp-processes.test.ts`）。
   この 8 件は、変更を外した状態（`git stash`）でも同じく落ちるので、この作業の環境（クラウドのコンテナ）によるもので、変更とは関係ない。
@@ -47,7 +47,8 @@
 
 | 指摘 | 対応 |
 | --- | --- |
-| （まだ無い） | — |
+| [要修正] 見直しの実行がコンテナの停止を確かめられずに失敗しても（`run.containerNotConfirmed`）、飛ばさずに次の工程を始めてしまい、元のコンテナと重なりうる | 直した。`reviewSteps` で、`unconfirmedRuns` にある実行の失敗なら、`StepsSkipped`（費用の記録）に続けて `TaskPaused` を記録して止める（`fallBack` と同じ判断）。次の工程を実行しないことを `daemon.test.ts` で確かめた（直す前の実装では落ちることも確かめた） |
+| [提案] 見直しの指示の文字列連結をテンプレートリテラルにする（Biome の `useTemplate`） | 直した。lint の info が無くなった |
 
 ## 残したこと
 

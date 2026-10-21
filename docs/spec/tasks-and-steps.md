@@ -225,7 +225,8 @@
 - 答え（見出し `sacty-step-review` の `skip`・`reason`。`extractStepReview`）を読み、`StepsSkipped`（`after`・`steps`・`reason`・費用）を
   オーケストレーターの記録にする。`steps` が空なら飛ばさない。飛ばせない工程を書いた・理由が無い・形が違う答えは読めないものとする。
 - 実行に失敗した・答えを読めないときは、止めずに飛ばさないで進め、`StepsSkipped`（`steps` は空）を sacty の記録にする（理由は
-  `orchestrator.stepReviewFailed`）。予算の上限に達していれば見直さない（次の工程の前に一時停止し、再開したら見直す）。見直している間に
+  `orchestrator.stepReviewFailed`）。ただし、コンテナが止まったことを確かめられずに失敗した（`run.containerNotConfirmed`）なら、
+  元のコンテナと次の工程の実行が重ならないように、続けて一時停止する（`TaskPaused`）。予算の上限に達していれば見直さない（次の工程の前に一時停止し、再開したら見直す）。見直している間に
   人間が止めた・中止したなら記録しない。
 - 投影：飛ばした工程を `skip` にし、実行対象を飛ばしたら次のまだの工程を実行対象にする。`stepReview` は `StepsSkipped`・前の工程からの
   やり直し（`reopen`）・工程の実行の開始（`AgentRunStarted`）で消える。見直しを待っていない・飛ばせない工程の記録は受け付けない。

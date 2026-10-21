@@ -224,7 +224,8 @@ The final deliverable is judged by the Goal Guardian's final review and approved
 - The answer (`skip` and `reason` under the heading `sacty-step-review`; `extractStepReview`) is read and `StepsSkipped` (`after`, `steps`, `reason`, and the cost) is
   recorded as the Orchestrator's. When `steps` is empty, nothing is skipped. An answer that names a step that cannot be skipped, has no reason, or has the wrong shape is treated as unreadable.
 - When the run fails or the answer cannot be read, the task does not stop: nothing is skipped and `StepsSkipped` (empty `steps`) is recorded by sacty (the reason is
-  `orchestrator.stepReviewFailed`). When the budget cap is reached, the review does not run (the task pauses before the next step and reviews after resuming). If a person pauses or cancels
+  `orchestrator.stepReviewFailed`). However, if the run failed without confirming that its container stopped (`run.containerNotConfirmed`), the task
+  then pauses (`TaskPaused`) so that the original container and the next step's run do not overlap. When the budget cap is reached, the review does not run (the task pauses before the next step and reviews after resuming). If a person pauses or cancels
   during the review, nothing is recorded.
 - Projection: skipped steps become `skip`, and if the active step is skipped, the next step to do becomes active. `stepReview` is cleared by `StepsSkipped`, by redoing from
   an earlier step (`reopen`), and by starting a step's run (`AgentRunStarted`). A record when no review is pending, or that skips a step that cannot be skipped, is rejected.

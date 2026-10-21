@@ -5776,6 +5776,36 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       activity.close();
     });
 
+    it("工程の見直しの実行が、コンテナが止まったことを確かめられずに失敗したら、次の工程を始めずに止める", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const { service, executor } = makeService(
+        activity,
+        [
+          plan("skip-design"),
+          out("# 前段の調査"),
+          {
+            kind: "failed",
+            reason: "error",
+            message: { code: "run.containerNotConfirmed", params: { name: "sacty-run" } },
+          },
+          out("# 要求要件"),
+        ],
+        { realPlanner: true },
+      );
+      const { id } = service.createTask({ projectId: "default", title: "A" });
+      await service.runNext(id);
+      await service.runNext(id);
+      // 元のコンテナが動いたままかもしれないので、要求要件を実行しない
+      expect(executor.calls).toHaveLength(3);
+      const task = service.get(id)?.task;
+      expect(task?.status).toBe("paused");
+      expect(task?.pausedReason).toBe("error");
+      expect(activeStep(task as Task)).toBe("requirements");
+      const types = service.get(id)?.activity.map((e) => e.type) ?? [];
+      expect(types.slice(-2)).toEqual(["StepsSkipped", "TaskPaused"]);
+      activity.close();
+    });
+
     it("工程の見直しの答えを読めなければ、止めずに工程を飛ばさないで進める。組み合わせ direct は見直さずに実装する", async () => {
       const activity = new SqliteActivityStore(dbPath);
       const { service, executor } = makeService(
