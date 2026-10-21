@@ -46,7 +46,9 @@ PRs are imported so that only their review is handed over ("PR review intake" in
 - The review label can have the same name as the label to import (for example, `sacty` for both; names that differ only in upper and lower case count as the same).
   Even then, issues with that label are taken in as ordinary tasks and PRs as review-only tasks. An issue is never taken in as a review, and a PR
   never as an ordinary task.
-- Imported PRs are only reviewed, without the Orchestrator, and the review is posted to the PR (as comments). No implementation or PR creation is done.
+- Imported PRs are only reviewed, without asking the Orchestrator to choose steps, and the review is posted to the PR (as comments). No implementation or PR creation is done.
+  When `images` is configured and the project's target does not specify an image, the Orchestrator chooses just the image for the review step
+  (because the review runs the project's verification such as tests; see [Container images](images.en.md#which-image-a-step-runs-in)).
 - If the PR description links to documents (such as a design written outside Git), the agent decides from the PR title, description, and diff whether each is a review target or only background.
   Documents judged to be targets are reviewed too, and their findings go in the body (they cannot be attached to PR lines), with the document and section.
   To let the agent read them, provide something that can read where the documents live, such as an MCP server, in the agent's environment. Documents it could not read are listed in the review's scope in the body.

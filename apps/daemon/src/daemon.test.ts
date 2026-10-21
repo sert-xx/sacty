@@ -9205,6 +9205,164 @@ describe("PR のレビューだけを行う取り込み（PBI-44）", () => {
     activity.close();
   });
 
+  describe("images があり、イメージを決めていないときは、レビューの工程のイメージだけをオーケストレーターに選ばせる", () => {
+    const java = {
+      name: "java",
+      image: "sacty-agent-java:test",
+      description: "Java 17・Maven",
+      baseImage: "java",
+      env: { MAVEN_OPTS: "-Xmx1g" },
+    };
+    const withImages = (): (() => ConfigResult) => () => ({
+      ok: true,
+      config: {
+        ...(configOf(agent())() as { ok: true; config: SactyConfig }).config,
+        images: { java },
+      },
+    });
+    const answer = (body: Record<string, unknown>) =>
+      out(`\`\`\`json\n${JSON.stringify({ "sacty-review-image": body })}\n\`\`\``);
+    const run = async (outcomes: AgentOutcome[], db = dbPath) => {
+      const activity = new SqliteActivityStore(db);
+      const pulls = new FakePulls();
+      pulls.prInfo = { ...pulls.prInfo, number: 40, url: "https://github.com/acme/app/pull/40" };
+      const made = makeService(activity, outcomes, {
+        pulls,
+        settings: new MemorySettingsStore({ reviewLabel: "sacty-review" }),
+        config: withImages(),
+      });
+      const [task] = made.service.importIssues([pr(40, ["sacty-review"])]);
+      const id = task?.id ?? "";
+      await made.service.runNext(id);
+      const chosen = made.service.get(id)?.activity.find((e) => e.type === "StepsChosen");
+      return { ...made, activity, id, chosen };
+    };
+
+    it("選んだイメージでレビューを実行し、オーケストレーターの記録にする（費用も記録する）", async () => {
+      const { service, executor, activity, id, chosen } = await run([
+        answer({ image: "java", reason: "pom.xml が Java 17" }),
+        out("# 評価"),
+      ]);
+      const prompt = executor.calls[0]?.command.join(" ") ?? "";
+      expect(prompt).toContain("レビューの工程で使う実行のイメージを選んでください");
+      expect(prompt).toContain("- java：Java 17・Maven");
+      expect(chosen?.actor).toBe("orchestrator");
+      expect(chosen?.type === "StepsChosen" && chosen.payload).toMatchObject({
+        steps: ["review"],
+        plan: "review",
+        images: { review: "java" },
+        imageSource: "orchestrator",
+        imageReason: "pom.xml が Java 17",
+      });
+      expect(chosen?.type === "StepsChosen" && chosen.payload).not.toHaveProperty(
+        "imagesUnexplained",
+      );
+      expect(ja(chosen?.type === "StepsChosen" ? chosen.payload.reason : undefined)).toBe(
+        "レビュー用のラベルの付いた PR なので、レビューだけを行います（オーケストレーターは、レビューの工程のイメージだけを選びます）。",
+      );
+      // オーケストレーターは既定のイメージ、レビューは選んだイメージ
+      expect(executor.images.slice(0, 2)).toEqual([
+        { image: "sacty-agent:test" },
+        { image: java.image, env: java.env },
+      ]);
+      expect(executor.calls[1]?.command.join(" ")).toContain("レビューエージェント");
+      expect(service.get(id)?.task.steps.map((step) => step.key)).toEqual(["review"]);
+      activity.close();
+    });
+
+    it("既定のイメージを選んだら、合わない理由か、理由が無いことを記録する（PBI-105）", async () => {
+      const first = await run([
+        answer({ image: "default", reason: "r", defaultReason: "Rust で、合うものが無い" }),
+      ]);
+      expect(first.chosen?.type === "StepsChosen" && first.chosen.payload).toMatchObject({
+        images: { review: "default" },
+        defaultImageReasons: { review: "Rust で、合うものが無い" },
+      });
+      first.activity.close();
+      const second = await run([answer({ image: "default" })], join(dir, "second.db"));
+      expect(second.chosen?.type === "StepsChosen" && second.chosen.payload).toMatchObject({
+        imagesUnexplained: ["review"],
+      });
+      second.activity.close();
+    });
+
+    it("答えを読めない・images に無い名前なら、工程を決めずに止まる", async () => {
+      const unreadable = await run([out("選べませんでした")]);
+      const stopped = unreadable.service.get(unreadable.id)?.task;
+      expect(stopped?.status).toBe("paused");
+      expect(stopped?.steps).toEqual([]);
+      expect(
+        unreadable.service
+          .get(unreadable.id)
+          ?.activity.some((e) => e.type === "OrchestratorFailed"),
+      ).toBe(true);
+      unreadable.activity.close();
+      const unknown = await run([answer({ image: "python" })], join(dir, "second.db"));
+      const paused = unknown.service.get(unknown.id)?.task;
+      expect(paused?.status).toBe("paused");
+      expect(paused?.steps).toEqual([]);
+      expect(ja(paused?.pausedMessage)).toContain("イメージ「python」");
+      unknown.activity.close();
+    });
+
+    it("images に無い名前を答えたら、代わりのエージェントで選び直してレビューする（PR #180 レビュー指摘）", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const main = agent({ fallback: ["claude-api"] });
+      const backup = agent({
+        id: "claude-api",
+        auth: { mode: "api-key", secret: "anthropic-key" },
+      });
+      const config = (): ConfigResult => {
+        const base = withImages()();
+        return base.ok
+          ? {
+              ok: true,
+              config: {
+                ...base.config,
+                defaultAgent: main,
+                guardianAgent: main,
+                agents: { [main.id]: main, [backup.id]: backup },
+              },
+            }
+          : base;
+      };
+      const pulls = new FakePulls();
+      pulls.prInfo = { ...pulls.prInfo, number: 41, url: "https://github.com/acme/app/pull/41" };
+      const { service, executor } = makeService(
+        activity,
+        [answer({ image: "python" }), answer({ image: "java", reason: "pom.xml" }), out("# 評価")],
+        {
+          pulls,
+          config,
+          settings: new MemorySettingsStore({ reviewLabel: "sacty-review" }),
+          secrets: { "claude-oauth-token": "oauth-secret", "anthropic-key": "sk-ant-secret" },
+        },
+      );
+      const [task] = service.importIssues([pr(41, ["sacty-review"])]);
+      const id = task?.id ?? "";
+      await service.runNext(id);
+      const events = service.get(id)?.activity ?? [];
+      const failed = events.find((e) => e.type === "OrchestratorFailed");
+      expect(failed?.type === "OrchestratorFailed" && failed.payload.runId).toBeTruthy();
+      expect(events.find((e) => e.type === "AgentFellBack")?.payload).toMatchObject({
+        role: "orchestrator",
+        agentId: "claude-subscription",
+        fallbackAgentId: "claude-api",
+      });
+      expect(service.get(id)?.task.status).toBe("queued");
+      await service.runNext(id);
+      const chosen = service.get(id)?.activity.find((e) => e.type === "StepsChosen");
+      expect(chosen?.type === "StepsChosen" && chosen.payload).toMatchObject({
+        images: { review: "java" },
+        agentId: "claude-api",
+      });
+      expect(executor.calls[1]?.env.ANTHROPIC_API_KEY).toBe("sk-ant-secret");
+      expect(executor.calls[2]?.command.join(" ")).toContain("レビューエージェント");
+      expect(executor.images[2]).toEqual({ image: java.image, env: java.env });
+      activity.close();
+    });
+  });
+
   it("取り込むラベルとレビュー用のラベルの両方が付いた PR は、レビューだけのタスクにする。Issue の取り込みはこれまでどおり", () => {
     const activity = new SqliteActivityStore(dbPath);
     const settings = new MemorySettingsStore({ intakeLabel: "sacty", reviewLabel: "sacty-review" });
@@ -25097,7 +25255,7 @@ describe("手元に無いエージェントのイメージ（PBI-148）", () => 
   it("確かめた注意を、画面の状態の注意に載せる（無ければ載せない）", () => {
     const activity = new SqliteActivityStore(dbPath);
     const missing = message("image.missing", {
-      image: "sacty-agent:1.6.0",
+      image: "sacty-agent:1.7.0",
       command: "npx sacty image build",
     });
     let current = [missing];
@@ -25111,7 +25269,7 @@ describe("手元に無いエージェントのイメージ（PBI-148）", () => 
   it("設定ファイルが無いとき（既定のイメージだけ確かめる）も、注意を載せる（PR #166 レビュー指摘）", () => {
     const activity = new SqliteActivityStore(dbPath);
     const missing = message("image.missing", {
-      image: "sacty-agent:1.6.0",
+      image: "sacty-agent:1.7.0",
       command: "npx sacty image build",
     });
     const unreachable = message("image.dockerUnreachable");

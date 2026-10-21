@@ -4,7 +4,7 @@
 - タスク: PBI-44
 - PR: #55
 - ブランチ: feat/issue-44-pr-review-intake
-- 関係する ADR: [レビューを依頼された PR とレビュー用のラベルの PR を取り込み、オーケストレーターを使わずにレビューだけを行う](../adr/20261013-0335-review-only-pr-intake.md)
+- 関係する ADR: [レビューを依頼された PR とレビュー用のラベルの PR を取り込み、オーケストレーターを使わずにレビューだけを行う](../adr/20261013-0335-superseded-review-only-pr-intake.md)
 
 ## 目的
 

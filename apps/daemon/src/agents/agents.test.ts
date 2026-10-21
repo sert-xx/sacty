@@ -865,7 +865,7 @@ ${extra}`,
           java17: {
             name: "java17",
             // 書かなければ sacty-agent-<名前>:<既定のイメージの版>
-            image: "sacty-agent-java17:1.6.0",
+            image: "sacty-agent-java17:1.7.0",
             description: "Java 17・Maven・Gradle",
             baseImage: "registry.example.com/ci/java:17",
             env: {

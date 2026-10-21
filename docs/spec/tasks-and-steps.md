@@ -184,8 +184,7 @@
   - 既定のイメージで動く工程（選んだ工程のうち、イメージが無いか `default` のもの）は、理由があれば
     `StepsChosen` の `defaultImageReasons` に、理由が無ければ（イメージを書かなかった・`default` と書いて理由が無い）`imagesUnexplained` に記録する。
     理由が無くても止めずに既定のイメージで進め、作業履歴（タスクの画面）に理由が無いことを出す。
-  - `images` を設定していない・プロジェクトの対象で指定している・リポジトリの無いまま進めるタスク・PR のレビューだけのタスクでは、
-    どちらも記録しない。
+  - `images` を設定していない・プロジェクトの対象で指定している・リポジトリの無いまま進めるタスクでは、どちらも記録しない。
 - リポジトリの無いタスクで、リポジトリが要る工程を選んだら、`repo` をプロジェクトの対象と照らして `RepositoryChosen` を記録し、
   リポジトリを用意してからもう一度選ばせる。対象に無い・空なら止まり、画面で人がリポジトリを選んで再開できる（一時停止中で
   リポジトリを待っているときだけ）。リポジトリの要らない組み合わせなら、`testCommand`・`baseBranch`・`services`・`documentsDir` を捨てる。
@@ -194,10 +193,18 @@
   変えず、壊れた答えは今までどおり読めないものとして止める。
 - 実行に失敗した・答えを読めないときは、`OrchestratorFailed` を記録して一時停止する（標準の組み合わせにはしない）。
 - チケットから取り込んだタスクは、工程を選ぶ前に、オーケストレーターがチケットを読んでリポジトリ・題・概要を決める（`TicketTriaged`）。
-- PR のレビューだけのタスクは、オーケストレーターを使わずに `review` の組み合わせにする（`reviewOnlySteps`）。
+- PR のレビューだけのタスクは、工程をオーケストレーターに選ばせずに `review` の組み合わせにする（`chooseReviewSteps`・`reviewOnlySteps`）。
+  - `images` を設定していて、プロジェクトの対象・再実行でイメージを決めていないときだけ、オーケストレーターに `review` の工程のイメージだけを
+    選ばせる（`buildReviewImagePrompt`。答えは `sacty-review-image` の `image`・`reason`・`defaultReason`、`extractReviewImage`）。指示では、PR が触る
+    コードの言語・版と、検証コマンドに要るもの（ブラウザのテスト・DB のクライアントなど）から選ばせ、既定のイメージは最後の手段にする。
+  - 選んだら `StepsChosen` をオーケストレーターの記録にし（`imageSource: orchestrator`・`imageReason`・実行の費用）、既定のイメージなら
+    上と同じく `defaultImageReasons` か `imagesUnexplained` を記録する。理由の文は `review.reviewOnlyImageChosen`。
+  - 実行に失敗した・答えを読めない・`images` に無い名前なら、工程の選択と同じく `OrchestratorFailed` を記録して止める（代わりのエージェントが
+    あれば、それで選び直す）。
+  - それ以外（`images` が無い・イメージを決めている）は、オーケストレーターを使わない（`StepsChosen` は sacty の記録で、費用は 0）。
 - オーケストレーターのセッションの使い回しは [エージェントの実行](agent-execution.md) の「セッションの保存と使い回し」。
 
-コード: `apps/daemon/src/service.ts`（`askOrchestrator`・`runNextInner`・`withImages`・`defaultImagesOf`・`withSharedCompose`・`withExports`・`repositoryFromPlan`・`chooseRepository`・`triageTicket`・`reviewOnlySteps`）、`apps/daemon/src/prompts.ts`（`extractStepPlan`・`planAnswerLines`・`PLAN_SKILL`）、`apps/daemon/default-context/skills/plan-steps/SKILL.md`、`packages/core/src/events.ts`（`StepsChosen`）
+コード: `apps/daemon/src/service.ts`（`askOrchestrator`・`runNextInner`・`withImages`・`defaultImagesOf`・`withSharedCompose`・`withExports`・`repositoryFromPlan`・`chooseRepository`・`triageTicket`・`chooseReviewSteps`・`runOrchestrator`・`reviewOnlySteps`）、`apps/daemon/src/prompts.ts`（`extractStepPlan`・`planAnswerLines`・`PLAN_SKILL`・`buildReviewImagePrompt`・`extractReviewImage`）、`apps/daemon/default-context/skills/plan-steps/SKILL.md`、`packages/core/src/events.ts`（`StepsChosen`）
 
 ## 工程のイメージを人が変える
 
