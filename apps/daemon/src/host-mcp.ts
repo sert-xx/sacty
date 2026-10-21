@@ -260,7 +260,7 @@ const stdioConnector =
     transport.stderr?.on("data", (chunk: Buffer) => {
       tail = `${tail}${chunk.toString()}`.slice(-STDERR_KEEP);
     });
-    const client = new Client({ name: "sacty-gateway", version: "1.5.0" });
+    const client = new Client({ name: "sacty-gateway", version: "1.6.0" });
     try {
       await withTimeout(client.connect(transport), spec.readyTimeoutSec * 1000, "initialize");
     } catch (error) {
@@ -605,7 +605,7 @@ export class HostMcpServers {
     const list = { timeout: listTimeout };
     const capabilities = client.getServerCapabilities() ?? {};
     const server = new Server(
-      { name: `sacty-gateway/${spec?.context?.name ?? name}`, version: "1.5.0" },
+      { name: `sacty-gateway/${spec?.context?.name ?? name}`, version: "1.6.0" },
       {
         capabilities: {
           ...(capabilities.tools ? { tools: {} } : {}),

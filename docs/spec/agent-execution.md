@@ -81,7 +81,7 @@ docker のコンテナの中で1回実行して行う。テストの実行も、
 - 1行の上限は 16M 文字（超えた行は読み飛ばす）。
 - 失敗の理由は文から分ける（`classifyFailure`）：利用上限（`usage limit`・`rate limit`・`429`・`quota` など）は `usage_limit`、認証
   （`401`・`403`・`unauthorized`・`expired`・`not logged in` など）は `auth`、それ以外は `error`。`usage_limit`・`auth` で止まったタスクは、
-  再開すると止まった工程を実行し直す（`usage_limit` で、代わりのエージェントがあれば止めない。下の「利用制限のときの代わりのエージェント」）。
+  再開すると止まった工程を実行し直す（代わりのエージェントがあれば、理由を問わず止めない。下の「失敗したときの代わりのエージェント」）。
 - エージェントが返す決まった答えは、見出しの付いた JSON（`sacty-steps`・`sacty-verdict`・`sacty-final-review`・`sacty-split`・
   `sacty-export` など）で、出力の中の JSON のオブジェクトを後ろから順に試し、読めた最初のものを使う。
 - 実行の結果の文と出力からは、その実行で使った秘密情報（取り出した値・ゲートウェイのトークン・認証ファイルの中の値など）を
@@ -89,24 +89,37 @@ docker のコンテナの中で1回実行して行う。テストの実行も、
 
 コード: `apps/daemon/src/agents/parse.ts`（`ClaudeOutcomeReader`・`CodexOutcomeReader`・`classifyFailure`・`MAX_LINE`）、`apps/daemon/src/agent-json.ts`（`jsonCandidates`・`lastJsonAnswer`）、`apps/daemon/src/agents/redact.ts`（`redact`・`redactText`）
 
-## 利用制限のときの代わりのエージェント
+## 失敗したときの代わりのエージェント
 
-- 実行が `usage_limit` で失敗したら、そのエージェントを `agent_fallback.cooldown_minutes`（既定 60 分）の間、利用制限中として覚える
-  （デーモンのメモリーだけに持つ。起動し直すと、元のエージェントから試す）。
+- 実行が `usage_limit` で失敗したら、そのエージェントを `agent_fallback.cooldown_minutes`（既定 60 分）の間、すべてのタスクで利用制限中と
+  して覚える（`markLimited`）。
+- 実行がそれ以外の理由（`auth`・`error`）で失敗し、`fallBack` に渡ったら、そのエージェントを同じ時間、
+  そのタスクでだけ使わないものとして覚える（ほかのタスクは、元のエージェントで実行する）。どちらもデーモンのメモリーだけに持つ（起動し直すと、
+  元のエージェントから試す）。
+- 失敗かどうかは、終了コードとエージェントの出力（Claude Code の `result` の `is_error`・Codex の `turn.failed`・`error`）で決め、標準エラー
+  出力の文では決めない（標準エラー出力は、失敗の文と理由の分類に使うだけ）。そのため、理由の分類を誤っても、代わりに切り替えるかどうかは
+  変わらない（変わるのは、使わないのが全タスクか、そのタスクだけか）。
 - エージェントを選ぶとき（工程・統合レビュー・オーケストレーター・チケットの読み取り・質問への答え・ゴールガーディアン・最終レビュー・
-  差し戻しの判定・書き出し・マージの後の監視・監査）、選んだエージェントが制限中なら、その `fallback` を上から順に（その `fallback` も
-  たどって）見て、制限中でない最初のものを使う（`fallbackAgentFor`）。すべて制限中なら、選んだエージェントのまま。
-- 工程・統合レビュー・オーケストレーターの工程の選択・チケットの読み取り・最終レビューが `usage_limit` で失敗し、制限中でない代わりが
-  あれば、一時停止（`TaskPaused`）の代わりに `AgentFellBack`（失敗した実行・役割・元と代わりのエージェント・期限）を記録する。失敗の記録が
-  実行待ちに戻しているので、次の処理で代わりのエージェントがやり直す。
+  差し戻しの判定・書き出し・マージの後の監視・監査）、選んだエージェントが利用制限中か、そのタスクで使わないものなら、その `fallback` を上から
+  順に（その `fallback` もたどって）見て、使える最初のものを使う（`fallbackAgentFor`）。すべて使えなければ、選んだエージェントのまま。
+- 工程・統合レビュー・オーケストレーターの工程の選択・チケットの読み取り・最終レビューの実行が失敗し（理由は問わない）、使える代わりがあれば、
+  一時停止（`TaskPaused`）の代わりに `AgentFellBack`（失敗した実行・役割・元と代わりのエージェント・失敗の理由・期限）を記録する。失敗の記録が
+  実行待ちに戻しているので、次の処理で代わりのエージェントがやり直す。実行が正常に終わった後に答えを読み取れなかったときに切り替えるのは、
+  工程の選択とチケットの読み取りだけ（最終レビュー・ゴールガーディアンの判定の答えが読めないときは、これまでどおり扱う）。
+- 切り替えの間に試したエージェントは、タスクと、やり直している処理の役割（工程の名前・`orchestrator`・`final-review` など。`fallBack` に
+  渡す役割）ごとに、期限とは別に覚え（`fallbackTried`）、期限が過ぎても試し終えたものには戻らない。すべて試し終えたら止める。切り替えた後の
+  実行が `fallBack` に戻らずに終わった（実行が成功し、答えも読み取れた）なら、その役割の次の実行を選ぶとき（`usableAgent`）に忘れる。
+  人が再開したときも忘れる。ほかの役割（質問への答えなど）の成功では忘れない。ゴールガーディアンの判定は、1回の判定が終わったら忘れる。
+- コンテナが止まったことを確かめられなかった実行（`run.containerNotConfirmed`）は、代わりに切り替えずに止める（元のコンテナが動いたままかも
+  しれず、同じ作業領域で代わりが始めると、変更や外への操作が重なりうるため）。
 - 変更の申し出と差し戻しの指摘の判定は、その場で代わりのエージェントで判定し直し、`AgentFellBack` を記録して、失敗した実行の費用を
-  判定の費用に足す（`runGuardianWithFallback`）。1回の判定の中では、試したエージェントは制限の期限が過ぎていても試さず、試し終えたら最後の
+  判定の費用に足す（`runGuardianWithFallback`）。1回の判定の中では、試したエージェントは期限が過ぎていても試さず、試し終えたら最後の
   失敗を返す（やり直しは代わりの数まで）。
-- 人が止めた・中止した、代わりが無い・すべて制限中なら、これまでどおり止める。書き出し・マージの後の監視・監査・質問への答えは、
-  失敗をこれまでどおり扱い、次の実行から代わりのエージェントを使う。
+- 人が止めた・中止した、代わりが無い・すべて使えない（試し終えたものを含む）なら、これまでどおり止める。書き出し・マージの後の監視・監査・質問への答えは、
+  失敗をこれまでどおり扱い、次の実行から代わりのエージェントを使う（利用制限のときだけ）。
 - 代わりのエージェントの秘密情報も、起動のときにまとめて取り出す（`secretUses`）。
 
-コード: `apps/daemon/src/service.ts`（`usableAgent`・`markLimited`・`fallBack`・`pauseOrFallBack`・`runGuardianWithFallback`）、`apps/daemon/src/config.ts`（`fallbackAgentFor`）、`apps/daemon/src/secret-uses.ts`（`secretUses`）
+コード: `apps/daemon/src/service.ts`（`usableAgent`・`agentUnusable`・`markLimited`・`notConfirmed`・`fallBack`・`pauseOrFallBack`・`runGuardianWithFallback`）、`apps/daemon/src/config.ts`（`fallbackAgentFor`）、`apps/daemon/src/secret-uses.ts`（`secretUses`）
 
 ## セッションの保存と使い回し
 
@@ -133,7 +146,7 @@ docker のコンテナの中で1回実行して行う。テストの実行も、
 
 ## イメージ
 
-- 既定のイメージは `image`（既定 `sacty-agent:1.5.0`）。言語ごとのイメージは `images.<名前>`（タグの既定は `sacty-agent-<名前>:1.5.0`）。
+- 既定のイメージは `image`（既定 `sacty-agent:1.6.0`）。言語ごとのイメージは `images.<名前>`（タグの既定は `sacty-agent-<名前>:1.6.0`）。
   使うイメージは、名前が無いか `default` なら既定、`images` にあればそれ、無い名前なら止める（`image.unknown`）。
   工程のイメージは人がタスクの詳細で変えられ、その工程を次に実行するときから使う（[工程とタスク](tasks-and-steps.md)の「工程のイメージを人が変える」）。
 - `sacty image build [<名前>...]` は `packages/cli/docker/Dockerfile` を `docker build` する。名前を省くと既定と `images` のすべてを作る。

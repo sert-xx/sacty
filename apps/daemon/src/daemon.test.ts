@@ -2208,7 +2208,7 @@ describe("工程の実行と費用", () => {
     activity.close();
   });
 
-  describe("利用制限のときの代わりのエージェント（agents の fallback）", () => {
+  describe("失敗したときの代わりのエージェント（agents の fallback）", () => {
     const backup = agent({ id: "claude-api", auth: { mode: "api-key", secret: "anthropic-key" } });
     const main = agent({ fallback: ["claude-api"] });
     const withFallback =
@@ -2255,6 +2255,7 @@ describe("工程の実行と費用", () => {
           role: "requirements",
           agentId: "claude-subscription",
           fallbackAgentId: "claude-api",
+          reason: "usage_limit",
           until: "2026-10-20T00:30:00.000Z",
         },
       ]);
@@ -2299,12 +2300,159 @@ describe("工程の実行と費用", () => {
       activity.close();
     });
 
-    it("利用制限でない失敗（認証など）は、代わりに切り替えずに止める", async () => {
+    it("利用制限でない失敗（認証など）も代わりでやり直し、期限まではこのタスクでだけ代わりを使う", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      let now = Date.parse("2026-10-20T00:00:00Z");
+      const { service, executor } = makeService(
+        activity,
+        [
+          { kind: "failed", reason: "auth", message: "401" },
+          completed(1_000),
+          completed(1_000),
+          completed(1_000),
+          completed(1_000),
+        ],
+        { config: withFallback(30 * 60_000), secrets, now: () => now },
+      );
+      const task = service.createTask({ projectId: "default", title: "A" });
+      await service.runNext(task.id);
+      expect(service.get(task.id)?.task.status).toBe("queued");
+      expect(fellBack(service, task.id)).toEqual([
+        {
+          runId: expect.any(String),
+          role: "requirements",
+          agentId: "claude-subscription",
+          fallbackAgentId: "claude-api",
+          reason: "auth",
+          until: "2026-10-20T00:30:00.000Z",
+        },
+      ]);
+      await service.runNext(task.id);
+      expect(executor.calls[1]?.env.ANTHROPIC_API_KEY).toBe("sk-ant-secret");
+      expect(service.get(task.id)?.task.status).toBe("awaiting_approval");
+      // ほかのタスクは、元のエージェントで実行する
+      const other = service.createTask({ projectId: "default", title: "B" });
+      await service.runNext(other.id);
+      expect(executor.calls[2]?.env.CLAUDE_CODE_OAUTH_TOKEN).toBe("oauth-secret");
+      // このタスクの次の実行も、期限までは代わりのエージェントで実行し、過ぎたら元に戻す
+      service.requestChanges(task.id, {
+        step: "requirements",
+        submission: 1,
+        comments: ["直して"],
+      });
+      await service.runNext(task.id);
+      expect(executor.calls[3]?.env.ANTHROPIC_API_KEY).toBe("sk-ant-secret");
+      now += 30 * 60_000;
+      service.requestChanges(task.id, {
+        step: "requirements",
+        submission: 2,
+        comments: ["直して"],
+      });
+      await service.runNext(task.id);
+      expect(executor.calls[4]?.env.CLAUDE_CODE_OAUTH_TOKEN).toBe("oauth-secret");
+      activity.close();
+    });
+
+    it("どんな失敗でも代わりでやり直し、代わりも失敗したら止める", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const error: AgentOutcome = { kind: "failed", reason: "error", message: "exit code 1" };
+      const { service, executor } = makeService(activity, [error, error], {
+        config: withFallback(),
+        secrets,
+      });
+      const task = service.createTask({ projectId: "default", title: "A" });
+      await service.runNext(task.id);
+      expect(service.get(task.id)?.task.status).toBe("queued");
+      expect(fellBack(service, task.id)).toMatchObject([{ reason: "error" }]);
+      await service.runNext(task.id);
+      const paused = service.get(task.id)?.task;
+      expect(paused?.status).toBe("paused");
+      expect(paused?.pausedReason).toBe("error");
+      expect(executor.calls).toHaveLength(2);
+      expect(fellBack(service, task.id)).toHaveLength(1);
+      activity.close();
+    });
+
+    it("期限が過ぎても、試し終えたエージェントには戻らずに止め、再開したら選んだエージェントから試す", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      let now = Date.parse("2026-10-20T00:00:00Z");
+      const error: AgentOutcome = { kind: "failed", reason: "error", message: "timed out" };
+      const { service, executor } = makeService(activity, [error, error, error], {
+        config: withFallback(60_000),
+        secrets,
+        now: () => now,
+      });
+      const task = service.createTask({ projectId: "default", title: "A" });
+      await service.runNext(task.id); // 元のエージェント：失敗（代わりへ）
+      now += 61_000;
+      await service.runNext(task.id); // 代わり：失敗（元の期限は過ぎたが、試し終えたので止める）
+      expect(service.get(task.id)?.task.status).toBe("paused");
+      expect(executor.calls).toHaveLength(2);
+      expect(fellBack(service, task.id)).toHaveLength(1);
+      now += 61_000;
+      service.resume(task.id, {});
+      await service.runNext(task.id);
+      expect(executor.calls).toHaveLength(3);
+      expect(executor.calls[2]?.env.CLAUDE_CODE_OAUTH_TOKEN).toBe("oauth-secret");
+      activity.close();
+    });
+
+    it("切り替えの間に同じタスクの質問に答えても、期限が過ぎても、試し終えたら止める", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      let now = Date.parse("2026-10-20T00:00:00Z");
+      const error: AgentOutcome = { kind: "failed", reason: "error", message: "timed out" };
+      const answer: AgentOutcome = {
+        kind: "completed",
+        output: "答えです",
+        usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 10 },
+      };
+      const { service, executor } = makeService(activity, [error, answer, error], {
+        config: withFallback(60_000),
+        secrets,
+        now: () => now,
+      });
+      const task = service.createTask({ projectId: "default", title: "A" });
+      await service.runNext(task.id); // 元のエージェント：工程が失敗（代わりへ）
+      expect(service.get(task.id)?.task.status).toBe("queued");
+      // 質問（chat）が成功しても、工程の切り替えの記録は消さない
+      await service.askQuestion(task.id, { text: "いまどこ？" }).answered;
+      now += 61_000;
+      await service.runNext(task.id); // 代わり：工程が失敗（元は期限が過ぎたが、試し終えたので止める）
+      expect(executor.calls).toHaveLength(3);
+      expect(executor.calls[2]?.env.ANTHROPIC_API_KEY).toBe("sk-ant-secret");
+      expect(service.get(task.id)?.task.status).toBe("paused");
+      expect(fellBack(service, task.id)).toHaveLength(1);
+      activity.close();
+    });
+
+    it("コンテナが止まったことを確かめられなかった実行は、代わりに切り替えずに止める", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const { service, executor } = makeService(
+        activity,
+        [
+          {
+            kind: "failed",
+            reason: "error",
+            message: { code: "run.containerNotConfirmed", params: { name: "sacty-run" } },
+          },
+          completed(1_000),
+        ],
+        { config: withFallback(), secrets },
+      );
+      const task = service.createTask({ projectId: "default", title: "A" });
+      await service.runNext(task.id);
+      expect(service.get(task.id)?.task.status).toBe("paused");
+      expect(fellBack(service, task.id)).toEqual([]);
+      expect(executor.calls).toHaveLength(1);
+      activity.close();
+    });
+
+    it("代わりのエージェントが無ければ、これまでどおり止める", async () => {
       const activity = new SqliteActivityStore(dbPath);
       const { service } = makeService(
         activity,
         [{ kind: "failed", reason: "auth", message: "401" }],
-        { config: withFallback(), secrets },
+        { secrets },
       );
       const task = service.createTask({ projectId: "default", title: "A" });
       await service.runNext(task.id);
@@ -16926,7 +17074,7 @@ describe("オーケストレーターのセッションの使い回し（PBI-67�
     activity.close();
   });
 
-  it("利用制限で代わりのエージェント（別の AI）に切り替えたら、前のセッションのやり取りを読み取り専用で引き継ぐ", async () => {
+  it("失敗して代わりのエージェント（別の AI）に切り替えたら、前のセッションのやり取りを読み取り専用で引き継ぐ", async () => {
     const codex = agent({
       id: "codex-key",
       runtime: "codex",
@@ -16942,12 +17090,7 @@ describe("オーケストレーターのセッションの使い回し（PBI-67�
           }
         : base;
     };
-    const limited: AgentOutcome = {
-      kind: "failed",
-      reason: "usage_limit",
-      message: "You've hit your session limit",
-    };
-    const { service, executor, activity } = setup([unreadable, limited, plan, completed(1_000)], {
+    const { service, executor, activity } = setup([unreadable, plan, completed(1_000)], {
       config,
       secrets: { "claude-oauth-token": "oauth-secret", "openai-key": "sk-secret" },
     });
@@ -16977,16 +17120,15 @@ describe("オーケストレーターのセッションの使い回し（PBI-67�
       return undefined;
     };
     const task = service.createTask({ projectId: "default", title: "A" });
-    await service.runNext(task.id); // Claude Code：工程を読み取れずに止まる
-    await rerunOrchestrator(service, task.id); // Claude Code：利用制限（止めない）
+    await service.runNext(task.id); // Claude Code：工程を読み取れない（止めずに、代わりのエージェントへ）
     expect(service.get(task.id)?.task.status).toBe("queued");
     await service.runNext(task.id); // Codex：引き継いで工程を選ぶ
-    expect(executor.calls[2]?.command.slice(0, 2)).toEqual(["codex", "exec"]);
+    expect(executor.calls[1]?.command.slice(0, 2)).toEqual(["codex", "exec"]);
     expect(handoffs[0]).toBeUndefined();
-    expect(handoffs[2]).toContain("設計は要らないと考えた");
-    expect(executor.stdins[2]).toContain("/sacty-handoff/previous-session.md");
-    expect(executor.stdins[2]).toContain("claude-subscription");
-    const used = usedOf(service, task.id)[2];
+    expect(handoffs[1]).toContain("設計は要らないと考えた");
+    expect(executor.stdins[1]).toContain("/sacty-handoff/previous-session.md");
+    expect(executor.stdins[1]).toContain("claude-subscription");
+    const used = usedOf(service, task.id)[1];
     expect(used).toMatchObject({
       agentId: "codex-key",
       runtime: "codex",
@@ -16998,6 +17140,43 @@ describe("オーケストレーターのセッションの使い回し（PBI-67�
     expect(service.get(task.id)?.task.steps.length).toBeGreaterThan(0);
     // 引き継ぎのために書いたファイルは、実行の後に消す
     expect(readdirSync(join(dir, "workspaces", "_handoff"))).toEqual([]);
+    activity.close();
+  });
+
+  it("代わりのエージェントが正常に終わって答えを読み取れなくても、期限が過ぎた元のエージェントには戻らずに止める", async () => {
+    const codex = agent({
+      id: "codex-key",
+      runtime: "codex",
+      auth: { mode: "api-key", secret: "openai-key" },
+    });
+    const claude = agent({ fallback: ["codex-key"] });
+    const config = (): ConfigResult => {
+      const base = configOf(claude)();
+      return base.ok
+        ? {
+            ok: true,
+            config: {
+              ...base.config,
+              agents: { [claude.id]: claude, [codex.id]: codex },
+              fallbackCooldownMs: 60_000,
+            },
+          }
+        : base;
+    };
+    let now = Date.parse("2026-10-20T00:00:00Z");
+    const { service, executor, activity } = setup([unreadable, unreadable, plan], {
+      config,
+      secrets: { "claude-oauth-token": "oauth-secret", "openai-key": "sk-secret" },
+      now: () => now,
+    });
+    const task = service.createTask({ projectId: "default", title: "A" });
+    await service.runNext(task.id); // Claude Code：工程を読み取れない（代わりへ）
+    expect(service.get(task.id)?.task.status).toBe("queued");
+    now += 61_000;
+    await service.runNext(task.id); // Codex：正常に終わったが、工程を読み取れない
+    expect(executor.calls).toHaveLength(2);
+    expect(executor.calls[1]?.command.slice(0, 2)).toEqual(["codex", "exec"]);
+    expect(service.get(task.id)?.task.status).toBe("paused");
     activity.close();
   });
 
@@ -24918,7 +25097,7 @@ describe("手元に無いエージェントのイメージ（PBI-148）", () => 
   it("確かめた注意を、画面の状態の注意に載せる（無ければ載せない）", () => {
     const activity = new SqliteActivityStore(dbPath);
     const missing = message("image.missing", {
-      image: "sacty-agent:1.5.0",
+      image: "sacty-agent:1.6.0",
       command: "npx sacty image build",
     });
     let current = [missing];
@@ -24932,7 +25111,7 @@ describe("手元に無いエージェントのイメージ（PBI-148）", () => 
   it("設定ファイルが無いとき（既定のイメージだけ確かめる）も、注意を載せる（PR #166 レビュー指摘）", () => {
     const activity = new SqliteActivityStore(dbPath);
     const missing = message("image.missing", {
-      image: "sacty-agent:1.5.0",
+      image: "sacty-agent:1.6.0",
       command: "npx sacty image build",
     });
     const unreachable = message("image.dockerUnreachable");

@@ -32,7 +32,7 @@ export function secretUses(config: SactyConfig, settings: SactySettings): Secret
   ]) {
     if (agent) agents.set(agent.id, agent);
   }
-  // 利用制限のときの代わりのエージェント（agents の fallback）も、その代わりも使う
+  // 失敗したときの代わりのエージェント（agents の fallback）も、その代わりも使う
   for (const agent of agents.values()) {
     for (const name of agent.fallback ?? []) {
       const fallback = definedAgent(config, name);

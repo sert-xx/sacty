@@ -82,7 +82,7 @@ Code: `apps/daemon/src/agents/invocation.ts` (`buildInvocation`), `apps/daemon/s
 - A line can be at most 16M characters (longer lines are skipped).
 - Failure reasons are classified from the text (`classifyFailure`): usage limits (`usage limit`, `rate limit`, `429`, `quota`, and so on) are `usage_limit`, authentication
   (`401`, `403`, `unauthorized`, `expired`, `not logged in`, and so on) is `auth`, and anything else is `error`. When a task stopped on `usage_limit` or `auth`
-  is resumed, the step it stopped at runs again (on `usage_limit`, the task does not stop if there is a fallback agent; see "Fallback agents at a usage limit" below).
+  is resumed, the step it stopped at runs again (if there is a fallback agent, the task does not stop whatever the reason; see "Fallback agents on failure" below).
 - Structured answers from an agent are JSON with a heading (`sacty-steps`, `sacty-verdict`, `sacty-final-review`, `sacty-split`,
   `sacty-export`, and so on); the JSON objects in the output are tried from the end, and the first one that parses is used.
 - Secrets used in the run (retrieved values, gateway tokens, values in auth files, and so on) are replaced with
@@ -90,24 +90,38 @@ Code: `apps/daemon/src/agents/invocation.ts` (`buildInvocation`), `apps/daemon/s
 
 Code: `apps/daemon/src/agents/parse.ts` (`ClaudeOutcomeReader`, `CodexOutcomeReader`, `classifyFailure`, `MAX_LINE`), `apps/daemon/src/agent-json.ts` (`jsonCandidates`, `lastJsonAnswer`), `apps/daemon/src/agents/redact.ts` (`redact`, `redactText`)
 
-## Fallback agents at a usage limit
+## Fallback agents on failure
 
-- When a run fails with `usage_limit`, the agent is remembered as limited for `agent_fallback.cooldown_minutes` (60 minutes by default)
-  (kept only in the daemon's memory; after a restart, the original agent is tried first).
+- When a run fails with `usage_limit`, the agent is remembered as limited for all tasks for `agent_fallback.cooldown_minutes` (60 minutes by default)
+  (`markLimited`).
+- When a run fails for another reason (`auth`, `error`) and reaches `fallBack`, the agent is remembered as not
+  to be used for the same time, for that task only (other tasks run with the original agent). Both are kept only in the daemon's memory (after a restart,
+  the original agent is tried first).
+- Whether a run failed is decided from the exit code and the agent's output (`is_error` of Claude Code's `result`; Codex's `turn.failed` and `error`), not
+  from the text on standard error (standard error is used only for the failure text and for classifying the reason). So a misclassified reason does not
+  change whether the fallback is used (it changes only whether the agent is avoided for all tasks or for that task).
 - When an agent is chosen (steps, the integration review, the Orchestrator, reading tickets, answering questions, the Goal Guardian, the final review,
-  judging rework, exports, the post-merge watch, audits), if the chosen agent is limited, its `fallback` is looked at from the top (following each `fallback`'s
-  own fallbacks too), and the first one that is not limited is used (`fallbackAgentFor`). If all of them are limited, the chosen agent is kept.
-- When a step, the integration review, the Orchestrator's choice of steps, reading a ticket, or the final review fails with `usage_limit` and a fallback that is
-  not limited exists, `AgentFellBack` (the failed run, the role, the original and fallback agents, and the time limit) is recorded instead of a pause (`TaskPaused`). The failure
-  record has put the task back to queued, so the fallback agent runs it again in the next pass.
+  judging rework, exports, the post-merge watch, audits), if the chosen agent is limited or not to be used for that task, its `fallback` is looked at from the
+  top (following each `fallback`'s own fallbacks too), and the first usable one is used (`fallbackAgentFor`). If none is usable, the chosen agent is kept.
+- When the run of a step, the integration review, the Orchestrator's choice of steps, reading a ticket, or the final review fails (for any reason) and a usable fallback
+  exists, `AgentFellBack` (the failed run, the role, the original and fallback agents, the failure reason, and the time limit) is recorded instead of a pause (`TaskPaused`). The failure
+  record has put the task back to queued, so the fallback agent runs it again in the next pass. Switching when the run ended normally but its answer could not be read
+  applies only to the choice of steps and reading a ticket (an unreadable answer from the final review or the Goal Guardian's judgements is handled as before).
+- The agents tried while switching are remembered per task and per role of the process being retried (the step name, `orchestrator`, `final-review`, and so on;
+  the role passed to `fallBack`), separately from the time limit (`fallbackTried`), and an agent already tried is not used again even after its time limit expires.
+  When all have been tried, the task stops. When the run after a switch ends without coming back to `fallBack` (the run succeeded and its answer could be read),
+  they are forgotten when the next run for that role is chosen (`usableAgent`). They are also forgotten when a person resumes the task. Success in another role
+  (such as answering a question) does not forget them. For the Goal Guardian's judgements, they are forgotten when one judgement ends.
+- A run whose container could not be confirmed as stopped (`run.containerNotConfirmed`) stops without switching (the original container may still be running, and
+  a fallback starting in the same workspace could duplicate changes or outside operations).
 - Judging change proposals and rework remarks is redone on the spot with the fallback agent; `AgentFellBack` is recorded, and the cost of the failed run is
-  added to the judgement's cost (`runGuardianWithFallback`). Within one judgement, an agent already tried is not tried again even after its limit expires, and when all have
+  added to the judgement's cost (`runGuardianWithFallback`). Within one judgement, an agent already tried is not tried again even after its time limit expires, and when all have
   been tried the last failure is returned (retries are at most the number of fallbacks).
-- When a person paused or cancelled the task, or there is no fallback or all are limited, the task stops as before. Exports, the post-merge watch, audits, and answers to
-  questions handle the failure as before and use the fallback agent from the next run.
+- When a person paused or cancelled the task, or there is no fallback or none is usable (including those already tried), the task stops as before. Exports, the post-merge watch, audits, and answers to
+  questions handle the failure as before and use the fallback agent from the next run (only at a usage limit).
 - The secrets of fallback agents are also retrieved together at startup (`secretUses`).
 
-Code: `apps/daemon/src/service.ts` (`usableAgent`, `markLimited`, `fallBack`, `pauseOrFallBack`, `runGuardianWithFallback`), `apps/daemon/src/config.ts` (`fallbackAgentFor`), `apps/daemon/src/secret-uses.ts` (`secretUses`)
+Code: `apps/daemon/src/service.ts` (`usableAgent`, `agentUnusable`, `markLimited`, `notConfirmed`, `fallBack`, `pauseOrFallBack`, `runGuardianWithFallback`), `apps/daemon/src/config.ts` (`fallbackAgentFor`), `apps/daemon/src/secret-uses.ts` (`secretUses`)
 
 ## Saving and reusing sessions
 
@@ -134,7 +148,7 @@ Code: `apps/daemon/src/agent-sessions.ts` (`SOURCES`, `selectAgentSessionFiles`,
 
 ## Images
 
-- The default image is `image` (default `sacty-agent:1.5.0`). Per-language images are `images.<name>` (the tag defaults to `sacty-agent-<name>:1.5.0`).
+- The default image is `image` (default `sacty-agent:1.6.0`). Per-language images are `images.<name>` (the tag defaults to `sacty-agent-<name>:1.6.0`).
   The image used is the default when there is no name or the name is `default`, the entry in `images` if it exists, and for an unknown name the run stops (`image.unknown`).
   A person can change a step's image on the task detail; it is used from the next run of the step ("Changing a step's image" in [Tasks and steps](tasks-and-steps.en.md)).
 - `sacty image build [<name>...]` runs `docker build` on `packages/cli/docker/Dockerfile`. Without names it builds the default and everything in `images`.

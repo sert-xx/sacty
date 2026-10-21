@@ -18,12 +18,12 @@ Related ADRs: [Keep the agent defaults in the repository, and limit config.yaml 
 
 | Item | Default | Meaning |
 | --- | --- | --- |
-| `image` | `sacty-agent:1.5.0` (`DEFAULT_IMAGE`) | The default image. Used to run agents and tests |
+| `image` | `sacty-agent:1.6.0` (`DEFAULT_IMAGE`) | The default image. Used to run agents and tests |
 | `providers` | `{}` | The endpoint per runtime ("Providers" below). Only the names `codex` and `claude` |
 | `default_agent` | The first usable one in `default_agent` of `config/agents.yaml` | The default AI. An agent name |
 | `guardian_agent` | `default_agent` | The Goal Guardian's AI |
 | `audit_agent` | `guardian_agent` (or `default_agent`) | The AI for audits of completed tasks ([Audit](audit.en.md)) |
-| `agent_fallback.cooldown_minutes` | `60` (`DEFAULT_FALLBACK_COOLDOWN_MINUTES`) | How long an agent that failed at a usage limit (`usage_limit`) is not used (minutes; an integer from 1 to 1440). During that time, the `fallback` in `agents` is used ([Agent execution](agent-execution.en.md#fallback-agents-at-a-usage-limit)) |
+| `agent_fallback.cooldown_minutes` | `60` (`DEFAULT_FALLBACK_COOLDOWN_MINUTES`) | How long an agent that failed is not used (minutes; an integer from 1 to 1440). During that time, the `fallback` in `agents` is used, for all tasks at a usage limit (`usage_limit`) and for that task on other failures ([Agent execution](agent-execution.en.md#fallback-agents-on-failure)) |
 | `step_agents` | `{}` | The AI per step (`StepKey`; `deployment` is the check in the after-merge watch step) and for `orchestrator`. If not written, `default_agent`; for Integration review (`integrate`), `guardian_agent` |
 | `agents` | `{}` | Overrides of and additions to the agent defaults ("Agent defaults and overrides" below) |
 | `budget.default_per_task_usd` | `1` (`DEFAULT_BUDGET_USD`) | The budget per task (US dollars; a positive number) |
@@ -107,7 +107,7 @@ If none is usable, it is an error (`config.noDefaultAgent`).
 | `runtime` | `claude-code`, `codex`, or `stub`. Can be omitted for a name in the defaults. Required for a name not in the defaults (`config.agentRuntimeRequired`) |
 | `model` | The model. For `claude-code` and `codex`, required in the result merged with the defaults (`config.agentModelRequired`; its price is looked up in `available_models`) |
 | `reasoning_effort` | The reasoning effort (optional; `^[a-z][a-z0-9_-]{0,30}$`). Passed to Codex as `model_reasoning_effort` and to Claude Code as `--effort` |
-| `fallback` | The names of the agents used instead at a usage limit (optional; one name or a list, tried from the top). A name not in `agents` is an error (`config.agentMissing`), and so is the agent itself (`config.agentFallbackSelf`). Agents that cannot be used are removed with a warning (`config.agentFallbackUnavailable`) |
+| `fallback` | The names of the agents used instead when a run fails (for any reason) (optional; one name or a list, tried from the top). A name not in `agents` is an error (`config.agentMissing`), and so is the agent itself (`config.agentFallbackSelf`). Agents that cannot be used are removed with a warning (`config.agentFallbackUnavailable`) |
 | `price_per_mtok_usd` | `runtime: stub` only. The price (written the same way as `available_models`; 0 if not written) |
 | `stub` | The output of `runtime: stub` (default outputs for steps, the Orchestrator, the Goal Guardian, and so on; token counts; and `fail: usage_limit｜auth` to reproduce failures) |
 

@@ -1666,3 +1666,33 @@ describe("マージの後の監視の工程の表示（PBI-116）", () => {
     ).toContain("スキルの確認を中断した。再開すると確かめ直す");
   });
 });
+
+describe("代わりのエージェントへの切り替え（AgentFellBack）", () => {
+  const fellBack = (reason?: "usage_limit" | "auth" | "error"): ActivityEvent =>
+    ({
+      type: "AgentFellBack",
+      payload: {
+        runId: "r1",
+        role: "requirements",
+        agentId: "claude",
+        fallbackAgentId: "codex",
+        ...(reason ? { reason } : {}),
+        until: "2026-10-20T01:00:00.000Z",
+      },
+    }) as ActivityEvent;
+
+  it("失敗の理由を書き、利用制限でなければ、このタスクでだけ使わないと書く", () => {
+    expect(describeEvent(fellBack("usage_limit"))).toMatch(/^claude が利用制限に達したので、codex/);
+    expect(describeEvent(fellBack("auth"))).toMatch(/^claude が認証に失敗したので、codex/);
+    expect(describeEvent(fellBack("error"))).toMatch(/^claude が失敗したので、codex/);
+    expect(describeEvent(fellBack("error"))).toContain("このタスクでは claude を使わない");
+    expect(describeEvent(fellBack("usage_limit"))).not.toContain("このタスクでは");
+  });
+
+  it("理由の無い記録（前の版）は、利用制限として書く", () => {
+    expect(describeEvent(fellBack())).toMatch(/^claude が利用制限に達したので/);
+    expect(describeIn(fellBack("auth"), labels.en)).toMatch(
+      /^claude failed to authenticate, so retrying with codex .* for this task until/,
+    );
+  });
+});

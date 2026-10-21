@@ -29,9 +29,9 @@ import {
 } from "./run-timeouts.js";
 import { SecretRef } from "./secrets.js";
 
-export const DEFAULT_IMAGE = "sacty-agent:1.5.0";
+export const DEFAULT_IMAGE = "sacty-agent:1.6.0";
 
-/** 利用制限に達したエージェントを使わない時間（分）の既定と範囲（config.yaml の agent_fallback.cooldown_minutes）。 */
+/** 失敗したエージェントを使わない時間（分）の既定と範囲（config.yaml の agent_fallback.cooldown_minutes）。 */
 export const DEFAULT_FALLBACK_COOLDOWN_MINUTES = 60;
 export const FALLBACK_COOLDOWN_MIN_MINUTES = 1;
 export const FALLBACK_COOLDOWN_MAX_MINUTES = 1440;
@@ -297,8 +297,9 @@ const ConfigFile = z.object({
   /** 完了したタスクの監査に使うAI（PBI-125）。省略すると guardian_agent（それも無ければ default_agent）。 */
   audit_agent: z.string().optional(),
   /**
-   * 利用制限で代わりのエージェント（agents の fallback）に切り替えたときの扱い。cooldown_minutes の間は、利用制限に
-   * 達したエージェントを使わず、代わりのエージェントを使う（過ぎたら、元のエージェントに戻す）。
+   * 失敗して代わりのエージェント（agents の fallback）に切り替えたときの扱い。cooldown_minutes の間は、失敗した
+   * エージェントを使わず、代わりのエージェントを使う（利用制限ならすべてのタスクで、ほかの失敗ならそのタスクで。過ぎたら、
+   * 元のエージェントに戻す）。
    */
   agent_fallback: z
     .object({
@@ -695,9 +696,9 @@ export function definedAgent(config: SactyConfig, name: string): AgentConfig | u
 }
 
 /**
- * 利用制限に達したエージェントの代わりに使うエージェント。agent が制限中（limited）でなければ agent。制限中なら、
- * fallback を上から順に（その fallback も、さらに上から順に）たどり、制限中でない最初のものを返す。どれも制限中なら
- * agent（そのまま実行し、利用制限で止める）。
+ * 使えないエージェント（利用制限中か、そのタスクで失敗したもの）の代わりに使うエージェント。agent が使えない（limited）
+ * のでなければ agent。使えないなら、fallback を上から順に（その fallback も、さらに上から順に）たどり、使える最初のものを
+ * 返す。どれも使えないなら agent（そのまま実行し、失敗で止める）。
  */
 export function fallbackAgentFor(
   config: SactyConfig,
@@ -761,7 +762,7 @@ export type SactyConfig = {
   updateCheck: boolean;
   /** エージェントの実行とテストの実行の上限（分。PBI-150）。 */
   runTimeouts: RunTimeouts;
-  /** 利用制限に達したエージェントを使わず、代わりのエージェントを使う時間（ミリ秒。agent_fallback.cooldown_minutes）。 */
+  /** 失敗したエージェントを使わず、代わりのエージェントを使う時間（ミリ秒。agent_fallback.cooldown_minutes）。 */
   fallbackCooldownMs?: number;
   /** 組織内 PF の API（PBI-35）。 */
   platforms: Platform[];
@@ -1297,9 +1298,9 @@ providers:
 #     runtime: stub
 #     price_per_mtok_usd: { input: 3, cached_input: 0.3, cache_write: 3.75, output: 15 }
 
-# 利用制限に達したら、代わりのエージェントに切り替えて続ける。agents のエージェントに fallback を書く
-# （例 Claude Code をメインにし、利用制限なら Codex にする：agents の claude_standard に fallback: codex_standard。並べると上から順に試す）。
-# cooldown_minutes は、利用制限に達したエージェントを使わず、代わりを使う時間（分。1〜1440）
+# 実行が失敗したら（利用制限・認証エラーなど、理由は問わない）、代わりのエージェントに切り替えて続ける。agents のエージェントに fallback を書く
+# （例 Claude Code をメインにし、失敗したら Codex にする：agents の claude_standard に fallback: codex_standard。並べると上から順に試す）。
+# cooldown_minutes は、失敗したエージェントを使わず、代わりを使う時間（分。1〜1440。利用制限ならすべてのタスクで、ほかの失敗ならそのタスクで）
 # agent_fallback:
 #   cooldown_minutes: 60
 
