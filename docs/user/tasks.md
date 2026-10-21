@@ -95,6 +95,43 @@ GitHub の PR・Issue への返信も、作業として依頼できます（例�
 - 投稿の結果（コメントの URL・投稿できなかった理由）は、作業履歴に出ます。投稿できなくても、タスクは止まりません。
 - レビューの工程は、これまでどおり、書いたレビューを sacty が PR に投稿します。
 
+## テスト（検証）のコマンド
+
+実装の検証では、オーケストレーターがリポジトリを読んで決めたテスト（検証）のコマンドを、テストのコンテナで実行します。
+テストのコードが無いリポジトリでも、成果物を機械的に確かめる検証があれば、それを使います。
+
+- Kubernetes のマニフェストのリポジトリなら `kustomize build`・`helm lint`・`kubeconform`、Terraform なら `terraform validate`、
+  YAML なら `yamllint` などです。CI・Makefile・pre-commit が実行しているもの、またはリポジトリの形から決まるもの（`kustomization.yaml`
+  があれば `kustomize build` など）を使います。
+- 決まったコマンドは、タスクの詳細の工程の欄の「テストのコマンド」に出ます。
+
+### 検証のツールがイメージに無いとき
+
+テストのコマンドに書いたツール（`kubeconform` など）が、テストを実行するイメージに入っていないと、実装をやり直さずに一時停止し、
+「テスト（検証）のコマンドに書いた … が、テストを実行するイメージ（…）に入っていません」と出ます。案内のとおりにイメージを直してから、
+「再開する」を押してください。再開すると、実装をやり直さずにテストから実行し直します。
+
+1. `config.yaml` の `images` で、そのイメージの `packages`（OS のパッケージ）か `run`（導入のコマンド）にツールを足します。
+   既定のイメージで止まったときは、ツールを入れたイメージを `images` に足し、`description` にもツールの名前を書きます
+   （[コンテナイメージ](images.md#言語ごとのイメージ)）。
+
+   ```yaml
+   images:
+     k8s:
+       description: kubectl・kustomize・helm・kubeconform
+       base_image: registry.example.com/ci/k8s-tools:1.31
+       run:
+         - curl -fsSL https://downloads.example.com/kubeconform-linux-amd64.tar.gz -o /tmp/kubeconform.tar.gz
+         - tar -xzf /tmp/kubeconform.tar.gz -C /usr/local/bin kubeconform
+   ```
+
+2. `npx sacty image build <名前>` でイメージを作り直します。
+3. 新しく足したイメージなら、タスクの詳細の「工程のイメージ」で、実装（不具合の修正の再現の確かめで止まったときは再現）の工程の
+   イメージを変えます（[工程のイメージを変える](images.md#工程のイメージを変える)）。
+
+テストのコマンドに直接書いていないツール（`npm test` の中のスクリプトが使うツールなど）が見つからないときは、リポジトリの依存の
+問題として、ふつうのテストの失敗と同じく実装をやり直します。
+
 ## テストの仕組みが無いリポジトリ
 
 README しかないリポジトリのように、テストの仕組みがそもそも無いリポジトリでも、タスクは止まらずに進みます。

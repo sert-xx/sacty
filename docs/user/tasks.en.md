@@ -95,6 +95,43 @@ account. Nothing is posted unless you approve.
 - The result of posting (the comment's URL, or why it could not be posted) appears in the activity history. Even if posting fails, the task does not stop.
 - The review step, as before, has sacty post the written review to the PR.
 
+## Test (verification) commands
+
+To verify the implementation, sacty runs the test (verification) command that the orchestrator chose by reading the repository, in a test container.
+Even a repository without test code uses a check that mechanically validates its artifacts, if there is one.
+
+- For a repository of Kubernetes manifests, that is `kustomize build`, `helm lint` or `kubeconform`; for Terraform, `terraform validate`;
+  for YAML, `yamllint`, and so on. sacty uses what CI, a Makefile or pre-commit runs, or what the shape of the repository decides (`kustomize build`
+  when there is a `kustomization.yaml`, and so on).
+- The chosen command appears as "Test command" in the Steps section of the task details.
+
+### When the verification tool is not in the image
+
+If a tool written in the test command (such as `kubeconform`) is not in the image that runs the tests, the task pauses without redoing the
+implementation and shows "The test (verification) command uses …, which is not in the image that runs the tests (…)". Fix the image as guided, then
+press "Resume". Resuming runs the tests again without redoing the implementation.
+
+1. In `images` of `config.yaml`, add the tool to that image's `packages` (OS packages) or `run` (install commands).
+   If it stopped on the default image, add an image with the tool to `images` and name the tool in its `description` too
+   ([Container images](images.en.md#per-language-images)).
+
+   ```yaml
+   images:
+     k8s:
+       description: kubectl・kustomize・helm・kubeconform
+       base_image: registry.example.com/ci/k8s-tools:1.31
+       run:
+         - curl -fsSL https://downloads.example.com/kubeconform-linux-amd64.tar.gz -o /tmp/kubeconform.tar.gz
+         - tar -xzf /tmp/kubeconform.tar.gz -C /usr/local/bin kubeconform
+   ```
+
+2. Rebuild the image with `npx sacty image build <name>`.
+3. If you added a new image, change the image of the Implementation step (the Reproduce step if it stopped while checking the reproduction of a
+   bug fix) under "Step images" in the task details ([Changing a step's image](images.en.md#changing-a-steps-image)).
+
+If a tool not written directly in the test command (such as a tool used by a script inside `npm test`) is not found, it is treated as a problem
+with the repository's dependencies, and the implementation is redone like any other test failure.
+
 ## Repositories without tests
 
 Even in a repository that has no tests at all, such as one with only a README, tasks proceed without stopping.
