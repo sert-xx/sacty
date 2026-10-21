@@ -28,7 +28,7 @@ function Pill({ tone, children }: { tone: string; children: React.ReactNode }) {
 
 /**
  * 実装の成果物。実装の説明と、「観点 → テスト → 実行結果」の対応、
- * sacty が実行したテストの結果、ゴールガーディアンの最終レビューを出す。
+ * ゴールガーディアンが最終レビューの中で実行したテストの結果（それより前の版では sacty が実行したもの）、最終レビューを出す。
  */
 export function Implementation({ task }: { task: Task }) {
   const messages = useMessages();
@@ -179,11 +179,23 @@ export function Implementation({ task }: { task: Task }) {
       {tests && (
         <details className="rounded-lg border border-border p-3.5 text-sm">
           <summary className="cursor-pointer">
-            <span className="font-semibold">{testsCurrent ? m.testRun : m.previousTestRun}</span>
+            <span className="font-semibold">
+              {tests.byGuardian
+                ? testsCurrent
+                  ? m.guardianTestRun
+                  : m.previousGuardianTestRun
+                : testsCurrent
+                  ? m.testRun
+                  : m.previousTestRun}
+            </span>
+            {tests.byGuardian && <Hint text={m.guardianTestRunHint} />}
             {!testsCurrent && <Hint text={m.previousHint} />}{" "}
             <Pill tone={tests.passed ? OK : NG}>{tests.passed ? m.pass : m.fail}</Pill>{" "}
             <span className="text-xs text-muted-foreground">
-              {m.runMeta(tests.exitCode, (tests.durationMs / 1000).toFixed(1))}
+              {m.runMeta(
+                tests.exitCode,
+                tests.durationMs === undefined ? undefined : (tests.durationMs / 1000).toFixed(1),
+              )}
               {formatStamp(tests.at, messages.locale)}
             </span>
           </summary>

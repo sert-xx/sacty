@@ -16,8 +16,8 @@ import {
 } from "./host-mcp-processes.js";
 
 /**
- * docker compose のサービス（DB・モック API など）を、工程の実行・テストの実行ごとに起動する（PBI-47）。
- * エージェントには Docker の権限を渡さず、sacty（ホスト）が起動し、エージェント・テストのコンテナを
+ * docker compose のサービス（DB・モック API など）を、工程の実行・テストを実行する最終レビューごとに起動する（PBI-47）。
+ * エージェントには Docker の権限を渡さず、sacty（ホスト）が起動し、エージェントのコンテナを
  * そのネットワークにつなぐ。compose ファイルは対象リポジトリ（信用できない入力）から来るので、
  * `docker compose config` で正規化してから危ない設定を拒否し、ホストのポート・固定の名前を外して起動する。
  */
@@ -37,7 +37,7 @@ export type ServicesSpec = {
 
 /** 起動したサービス。エージェントに伝える接続先。 */
 export type StartedServices = {
-  /** エージェント・テストのコンテナをつなぐネットワーク。 */
+  /** エージェントのコンテナをつなぐネットワーク。 */
   network: string;
   services: StartedService[];
 };
@@ -138,7 +138,7 @@ export function composePorts(
   return targets.map((target, i) => ({ target, published: published[i] as number }));
 }
 
-/** エージェント・テストのコンテナをつなぐ、sacty が足すネットワークの名前（compose の中の名前）。 */
+/** エージェントのコンテナをつなぐ、sacty が足すネットワークの名前（compose の中の名前）。 */
 const SACTY_NETWORK = "sacty";
 
 type Json = Record<string, unknown>;

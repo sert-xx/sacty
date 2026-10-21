@@ -4,7 +4,10 @@ import type { Task } from "@sacty/core";
 import { CardSection } from "@/components/card-section";
 import { useMessages } from "@/i18n/client";
 
-/** 再現の確かめの結果（PBI-29）。sacty が再現のテストを実行した結果と、申告された再現のテスト。 */
+/**
+ * 再現の確かめの結果（PBI-29）。再現のエージェントが自分でテストを実行して申告した結果（それより前の版では、sacty が再現のテストを
+ * 実行した結果）と、申告された再現のテスト。
+ */
 export function ReproductionResult({ task }: { task: Task }) {
   const { task: messages, labels } = useMessages();
   const r = task.reproduction;

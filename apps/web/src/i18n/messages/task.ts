@@ -138,13 +138,13 @@ const ja = {
   activity: "作業履歴",
   reproduction: {
     title: "再現の確かめ",
-    hint: "Sacty が再現のテストを実行した結果です。テストが失敗すれば再現できたとして、実装へ進みます。",
+    hint: "再現のエージェントが、書いたテストを自分で実行して確かめ、申告した結果です（以前の版では Sacty が実行した結果）。テストが不具合のために失敗したと申告すれば再現できたとして、実装へ進みます。",
     reproduced: "再現できた",
     notReproduced: "再現できなかった",
     command: (command: string, exitCode?: number) =>
       `コマンド：${command}${exitCode === undefined ? "" : `（終了コード ${exitCode}）`}`,
     tests: "再現のテスト",
-    output: "出力の末尾",
+    output: "結果",
   },
   orchestratorSession: {
     title: "オーケストレーターのセッション",
@@ -467,13 +467,13 @@ const en: TaskMessages = {
   activity: "Activity",
   reproduction: {
     title: "Reproduction check",
-    hint: "Result of Sacty running the reproduction test. If the test fails, the bug is reproduced and the task moves on to Implement.",
+    hint: "Reported by the reproduce agent, which ran its test itself (in earlier versions, Sacty ran it). If the agent reports that the test fails because of the bug, the bug is reproduced and the task moves on to Implement.",
     reproduced: "Reproduced",
     notReproduced: "Not reproduced",
     command: (command, exitCode) =>
       `Command: ${command}${exitCode === undefined ? "" : ` (exit code ${exitCode})`}`,
     tests: "Reproduction tests",
-    output: "End of output",
+    output: "Result",
   },
   orchestratorSession: {
     title: "Orchestrator session",

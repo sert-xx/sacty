@@ -893,7 +893,7 @@ function Deliverable({ task, step }: { task: Task; step: StepKey }) {
     task.status === "running" && task.steps.some((s) => s.key === step && s.state === "active");
   // 見出しの横の短い事実と、仕組みの補足（PBI-117）
   const [note, hint]: [string, string | undefined] =
-    // 再現は、sacty がテストで確かめて先へ進む（人間は承認しない。PBI-29）
+    // 再現は、再現のエージェントがテストで確かめて申告し、先へ進む（人間は承認しない。PBI-29）
     approved && step === "reproduce"
       ? [m.reproduced, undefined]
       : approved && step === "investigate" && !investigationIsGoal(task)

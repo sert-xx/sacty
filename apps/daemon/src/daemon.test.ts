@@ -1,5 +1,4 @@
 import { createHash, randomUUID } from "node:crypto";
-import { EventEmitter } from "node:events";
 import {
   appendFileSync,
   chmodSync,
@@ -56,7 +55,6 @@ import type { AgentExecutor } from "./agents/docker.js";
 import type { LocalForward } from "./agents/forward.js";
 import type { Invocation } from "./agents/invocation.js";
 import type { AgentOutcome } from "./agents/parse.js";
-import { DockerTestRunner, type TestRunner, type TestRunResult } from "./agents/test-runner.js";
 import type { CiSnapshot, CiStatusReader } from "./ci.js";
 import { type AgentConfig, type ConfigResult, loadConfig, type SactyConfig } from "./config.js";
 import {
@@ -744,49 +742,6 @@ class FakePulls implements PullRequests {
   }
 }
 
-/** 決まった結果を順に返す、テスト実行の偽物。 */
-class FakeTests implements TestRunner {
-  calls: {
-    workspaceDir: string;
-    command: string;
-    image: string;
-    env?: Record<string, string>;
-    network?: string;
-    forwards?: readonly LocalForward[];
-  }[] = [];
-  /** true なら、止められるまで終わらない（一時停止のテスト用）。 */
-  hold = false;
-  started = Promise.withResolvers<string>();
-  private held = new Map<string, (r: TestRunResult) => void>();
-  constructor(readonly results: TestRunResult[] = []) {}
-  async run(input: {
-    runId: string;
-    workspaceDir: string;
-    command: string;
-    image: string;
-    env?: Record<string, string>;
-    network?: string;
-    forwards?: readonly LocalForward[];
-  }) {
-    this.calls.push(input);
-    if (this.hold) {
-      this.hold = false;
-      return new Promise<TestRunResult>((resolve) => {
-        this.held.set(input.runId, resolve);
-        this.started.resolve(input.runId);
-      });
-    }
-    return this.results.shift() ?? { exitCode: 0, output: "ok", durationMs: 5 };
-  }
-  async ensureStopped() {
-    return true;
-  }
-  kill(runId: string) {
-    this.held.get(runId)?.({ exitCode: 137, output: "killed", durationMs: 1 });
-    this.held.delete(runId);
-  }
-}
-
 /** 決まった結果を順に返す偽物の実行器。渡された呼び出し内容も記録する。 */
 /** 止められるまで終わらない実行（一時停止・中止のテスト用）。 */
 const HOLD = { kind: "hold" } as const;
@@ -1013,7 +968,6 @@ function makeService(
     config?: () => ConfigResult;
     secrets?: Record<string, string>;
     repos?: FakeRepos;
-    tests?: FakeTests;
     pulls?: FakePulls;
     projects?: MemoryProjectStore;
     settings?: MemorySettingsStore;
@@ -1058,7 +1012,6 @@ function makeService(
 ) {
   const executor = new FakeExecutor(outcomes);
   const repos = options.repos ?? new FakeRepos();
-  const tests = options.tests ?? new FakeTests();
   const pulls = options.pulls ?? new FakePulls();
   const service = new TaskService({
     activity,
@@ -1070,7 +1023,6 @@ function makeService(
       ),
     executor,
     repos,
-    tests,
     pulls,
     projects: options.projects ?? projectsWithAccount(),
     // 取り込むラベルとレビュー用のラベル（sacty の設定。PBI-26・PBI-44。sacty の PR にはレビュー用のラベルを付ける。PBI-99）
@@ -1116,7 +1068,7 @@ function makeService(
     ...(options.memory ? { memoryRoot: join(dir, "memory") } : {}),
     ...(options.memoryLimit ? { memoryLimit: options.memoryLimit } : {}),
   });
-  return { service, executor, repos, tests, pulls };
+  return { service, executor, repos, pulls };
 }
 
 /** チケットの管理のサービス（JIRA）の偽物（PBI-52）。コメントを記録する。 */
@@ -2633,7 +2585,6 @@ describe("秘密情報と予算の通知（レビュー指摘）", () => {
         },
       },
       repos: new FakeRepos(),
-      tests: new FakeTests(),
       pulls: new FakePulls(),
       projects: projectsWithAccount(),
       contexts: new FakeContexts(),
@@ -2715,7 +2666,6 @@ describe("秘密情報と予算の通知（レビュー指摘）", () => {
       secrets: new MemorySecretStore({ "claude-oauth-token": "oauth-secret" }),
       executor: { run: () => new Promise<AgentOutcome>((resolve) => (finish = resolve)) },
       repos: new FakeRepos(),
-      tests: new FakeTests(),
       pulls: new FakePulls(),
       projects: projectsWithAccount(),
       contexts: new FakeContexts(),
@@ -3736,6 +3686,8 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     ],
     remarks: [string, boolean][] = [["requirements-1-1", true]],
     usageOutput = 1000,
+    /** ゴールガーディアンが実行したと申告するテストの終了コード。 */
+    testsExitCode = 0,
   ) =>
     out(
       block({
@@ -3750,6 +3702,11 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
             notRecurred,
             reason: `${id}の判定理由`,
           })),
+          tests: {
+            command: "npm test",
+            exitCode: testsExitCode,
+            output: testsExitCode === 0 ? "2 passed" : "1 failed: pay.test.ts › キーなし",
+          },
           summary: "所見",
         },
       }),
@@ -3763,7 +3720,6 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
   async function toImplement(
     outcomes: AgentOutcome[],
     options: {
-      tests?: FakeTests;
       repos?: FakeRepos;
       pulls?: FakePulls;
       config?: () => ConfigResult;
@@ -4070,10 +4026,8 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       second.close();
     });
 
-    it("実装の工程とテストは、選んだイメージとその環境変数で実行する", async () => {
-      const tests = new FakeTests([{ exitCode: 0, output: "ok", durationMs: 1 }]);
+    it("実装の工程と、テストを実行する最終レビューは、選んだイメージとその環境変数で実行する", async () => {
       const { activity, service, executor } = await toImplement([implement("# 実装"), review()], {
-        tests,
         config: withImages(),
         planner: async () => ({
           steps: [...MVP_STEPS],
@@ -4085,17 +4039,17 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         }),
       });
       await drain(service);
-      // 要求要件（2回）は既定、設計・実装は java、最終レビュー（ゴールガーディアン）は既定
+      // 要求要件（2回）は既定、設計・実装は java、最終レビュー（ゴールガーディアンがテストを実行する）も実装の java
       expect(executor.images.slice(0, 5)).toEqual([
         { image: "sacty-agent:test" },
         { image: "sacty-agent:test" },
         { image: java.image, env: java.env },
         { image: java.image, env: java.env },
-        { image: "sacty-agent:test" },
+        { image: java.image, env: java.env },
       ]);
-      expect(tests.calls).toEqual([
-        expect.objectContaining({ image: java.image, env: java.env, command: "mvn test" }),
-      ]);
+      // テストは sacty が別に実行せず、最終レビューの指示でゴールガーディアンに実行させる
+      expect(promptOf(executor, 4)).toContain("mvn test");
+      expect(executor.calls).toHaveLength(5);
       activity.close();
     });
 
@@ -4327,38 +4281,31 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       activity.close();
     });
 
-    it("実装の工程を変えたら、実装とそのテストを変えたイメージで実行する", async () => {
-      const tests = new FakeTests([{ exitCode: 0, output: "ok", durationMs: 1 }]);
+    it("実装の工程を変えたら、実装と、そのテストを実行する最終レビューを変えたイメージで実行する", async () => {
       const { activity, service, executor, id } = await toImplement(
         [implement("# 実装"), review()],
         {
-          tests,
           config: withImages(),
           planner: plan({ implement: "java" }),
         },
       );
       service.changeStepImage(id, { step: "implement", image: "playwright" });
       await drain(service);
-      // 要求要件（2回）・設計は既定、実装は変えたイメージ、最終レビュー（ゴールガーディアン）は既定
+      // 要求要件（2回）・設計は既定、実装と最終レビュー（ゴールガーディアンがテストを実行する）は変えたイメージ
       expect(executor.images.slice(0, 5)).toEqual([
         DEFAULT,
         DEFAULT,
         DEFAULT,
         used(playwright),
-        DEFAULT,
-      ]);
-      expect(tests.calls).toEqual([
-        expect.objectContaining({ image: playwright.image, env: playwright.env }),
+        used(playwright),
       ]);
       activity.close();
     });
 
-    it("実装の実行中に変えたら、今の実装は始めたときのイメージで動き、その後のテストは変えたイメージで動く（PR #116 レビュー指摘）", async () => {
-      const tests = new FakeTests([{ exitCode: 0, output: "ok", durationMs: 1 }]);
+    it("実装の実行中に変えたら、今の実装は始めたときのイメージで動き、その後のテスト（最終レビュー）は変えたイメージで動く（PR #116 レビュー指摘）", async () => {
       const { activity, service, executor, id } = await toImplement(
         [implement("# 実装"), review()],
         {
-          tests,
           config: withImages(),
           planner: plan({ implement: "java" }),
         },
@@ -4373,11 +4320,9 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       };
       await drain(service);
       expect(during && stepRunning(during, "implement")).toBe(true);
-      // 今の実装は始めたときのイメージ（java）、その後のテストは変えたイメージ（playwright）
+      // 今の実装は始めたときのイメージ（java）、その後のテスト（最終レビュー）は変えたイメージ（playwright）
       expect(executor.images[3]).toEqual(used(java));
-      expect(tests.calls).toEqual([
-        expect.objectContaining({ image: playwright.image, env: playwright.env }),
-      ]);
+      expect(executor.images[4]).toEqual(used(playwright));
       expect(changes(service, id)).toEqual([
         { actor: "person", step: "implement", from: "java", to: "playwright" },
       ]);
@@ -4526,31 +4471,33 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         ...extra,
       });
 
-    it("サービスを使う工程とそのテストの前に起動してネットワークにつなぎ、終わったら消す。ほかの工程では起動しない", async () => {
+    it("サービスを使う工程と、そのテストを実行する最終レビューの前に起動してネットワークにつなぎ、終わったら消す。ほかの工程では起動しない", async () => {
       const services = new FakeServices();
-      const tests = new FakeTests([{ exitCode: 0, output: "ok", durationMs: 1 }]);
       const { activity, service, executor, id } = await toImplement(
         [implement("# 実装"), review()],
-        { tests, services, planner: servicesPlan() },
+        { services, planner: servicesPlan() },
       );
       // 要求要件・設計では起動しない
       expect(services.started).toHaveLength(0);
       await drain(service);
-      // 実装の実行と、そのテストの実行で、それぞれ起動して消す（実行ごとに別のプロジェクト）
+      // 実装の実行と、そのテストを実行する最終レビューで、それぞれ起動して消す（実行ごとに別のプロジェクト）
       expect(services.started.map((s) => s.spec)).toEqual([
         { file: "compose.yaml", names: ["db"] },
         { file: "compose.yaml", names: ["db"] },
       ]);
-      const [agentRun, testRun] = services.started;
+      const [agentRun, reviewRun] = services.started;
       expect(agentRun?.workspaceDir).toBe(join(dir, "workspaces", id, "repo"));
-      expect(services.stopped).toEqual([agentRun?.runId, testRun?.runId]);
-      // 実装のエージェントとテストのコンテナを、サービスのネットワークにつなぐ
+      // 最終レビューのサービスも、実装の作業領域の compose で起動する（ゴールガーディアンは、その写しでテストを実行する）
+      expect(reviewRun?.workspaceDir).toBe(join(dir, "workspaces", id, "repo"));
+      expect(services.stopped).toEqual([agentRun?.runId, reviewRun?.runId]);
+      // 実装のエージェントと最終レビューのゴールガーディアンを、サービスのネットワークにつなぐ
       expect(executor.networks[3]).toBe(`sacty-svc-${agentRun?.runId}_sacty`);
-      expect(executor.networks.filter(Boolean)).toHaveLength(1);
-      expect(tests.calls[0]?.network).toBe(`sacty-svc-${testRun?.runId}_sacty`);
+      expect(executor.networks[4]).toBe(`sacty-svc-${reviewRun?.runId}_sacty`);
+      expect(executor.networks.filter(Boolean)).toHaveLength(2);
       // 接続先をエージェントに伝える
       expect(promptOf(executor, 3)).toContain("--- 起動しているサービス（docker compose） ---");
       expect(promptOf(executor, 3)).toContain("- db：db:5432");
+      expect(promptOf(executor, 4)).toContain("- db：db:5432");
       expect(promptOf(executor, 2)).not.toContain("起動しているサービス");
       // 起動したことを作業履歴に残す
       const started = service.get(id)?.activity.filter((e) => e.type === "ServicesStarted") ?? [];
@@ -4560,8 +4507,8 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       ]);
       // サービスのポートを localhost に転送する（PBI-60）。サービスを使わない工程では渡さない
       expect(executor.forwards[3]).toEqual([{ port: 5432, host: "db" }]);
-      expect(executor.forwards.filter(Boolean)).toHaveLength(1);
-      expect(tests.calls[0]?.forwards).toEqual([{ port: 5432, host: "db" }]);
+      expect(executor.forwards[4]).toEqual([{ port: 5432, host: "db" }]);
+      expect(executor.forwards.filter(Boolean)).toHaveLength(2);
       expect(started.every((e) => e.type === "ServicesStarted" && !e.payload.sharedPorts)).toBe(
         true,
       );
@@ -4572,9 +4519,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       const services = new FakeServices();
       const id = `sha256:${"b".repeat(64)}`;
       services.imageIds = { "sacty-agent:test": id };
-      const tests = new FakeTests([{ exitCode: 0, output: "ok", durationMs: 1 }]);
       const { activity, service, executor } = await toImplement([implement("# 実装"), review()], {
-        tests,
         services,
         planner: servicesPlan(),
       });
@@ -4583,9 +4528,16 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       expect(services.order.indexOf("imageId:sacty-agent:test")).toBeLessThan(
         services.order.indexOf("start"),
       );
-      // サービスを使わない工程（要求要件・設計）と、テストのためのサービスの起動では確かめない（PBI-130 レビュー指摘）
-      expect(services.order).toEqual(["imageId:sacty-agent:test", "start", "start"]);
+      // サービスを使わない工程（要求要件・設計）では確かめない（PBI-130 レビュー指摘）。テストを実行する最終レビューも、
+      // サービスを起動する前に確定させる
+      expect(services.order).toEqual([
+        "imageId:sacty-agent:test",
+        "start",
+        "imageId:sacty-agent:test",
+        "start",
+      ]);
       expect(executor.images[3]?.image).toBe(id);
+      expect(executor.images[4]?.image).toBe(id);
       activity.close();
     });
 
@@ -4612,14 +4564,13 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
 
     it("イメージ ID を確かめられなければ、名前のまま実行する（PBI-130）", async () => {
       const services = new FakeServices();
-      const tests = new FakeTests([{ exitCode: 0, output: "ok", durationMs: 1 }]);
       const { activity, service, executor } = await toImplement([implement("# 実装"), review()], {
-        tests,
         services,
         planner: servicesPlan(),
       });
       await drain(service);
       expect(executor.images[3]?.image).toBe("sacty-agent:test");
+      expect(executor.images[4]?.image).toBe("sacty-agent:test");
       activity.close();
     });
 
@@ -4629,14 +4580,13 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         { name: "mock", ports: [8080] },
         { name: "worker", ports: [] },
       ]);
-      const tests = new FakeTests([{ exitCode: 0, output: "ok", durationMs: 1 }]);
       const { activity, service, executor, id } = await toImplement(
         [implement("# 実装"), review()],
-        { tests, services, planner: servicesPlan() },
+        { services, planner: servicesPlan() },
       );
       await drain(service);
       expect(executor.forwards[3]).toEqual([{ port: 9000, host: "api" }]);
-      expect(tests.calls[0]?.forwards).toEqual([{ port: 9000, host: "api" }]);
+      expect(executor.forwards[4]).toEqual([{ port: 9000, host: "api" }]);
       const started = service.get(id)?.activity.filter((e) => e.type === "ServicesStarted") ?? [];
       expect(started.map((e) => e.type === "ServicesStarted" && e.payload.sharedPorts)).toEqual([
         [8080],
@@ -4649,16 +4599,13 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
 
       // 転送するポートが無ければ、転送を渡さない（コマンドはこれまでどおり）
       const portless = new FakeServices(undefined, [{ name: "worker", ports: [] }]);
-      const tests2 = new FakeTests([{ exitCode: 0, output: "ok", durationMs: 1 }]);
       const second = await toImplement([implement("# 実装"), review()], {
-        tests: tests2,
         services: portless,
         planner: servicesPlan(),
       });
       await drain(second.service);
       expect(second.executor.networks[3]).toBeDefined();
       expect(second.executor.forwards.filter(Boolean)).toHaveLength(0);
-      expect(tests2.calls[0]).not.toHaveProperty("forwards");
       second.activity.close();
     });
 
@@ -4681,11 +4628,9 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       activity.close();
     });
 
-    it("テストの前にサービスを起動できなければ、テストを実行せずに止まる", async () => {
+    it("テストを実行する最終レビューの前にサービスを起動できなければ、最終レビューをせずに止まる", async () => {
       const failing = new FakeServices();
-      const tests = new FakeTests();
-      const { activity, service, id } = await toImplement([implement("# 実装")], {
-        tests,
+      const { activity, service, executor, id } = await toImplement([implement("# 実装")], {
         services: failing,
         planner: servicesPlan(),
       });
@@ -4694,8 +4639,11 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         file: "compose.yaml",
         detail: "pull access denied",
       });
+      const before = executor.calls.length;
       await drain(service);
-      expect(tests.calls).toHaveLength(0);
+      // ゴールガーディアンを起動しない（代わりのエージェントにも切り替えない）
+      expect(executor.calls).toHaveLength(before);
+      expect(types(service, id)).not.toContain("FinalReviewFailed");
       expect(service.get(id)?.task.status).toBe("paused");
       expect(ja(service.get(id)?.task.pausedMessage)).toContain("pull access denied");
       activity.close();
@@ -4767,9 +4715,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     it("設定しただけでは取得も起動もしない。使わないと判断した理由と、選ばせた共用の compose を残す", async () => {
       const services = new FakeServices();
       const shared = new FakeSharedComposes();
-      const tests = new FakeTests([{ exitCode: 0, output: "ok", durationMs: 1 }]);
       const { activity, service, id } = await toImplement([implement("# 実装"), review()], {
-        tests,
         services,
         sharedComposes: shared,
         projects: projectsWithShared(),
@@ -4779,7 +4725,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       expect(shared.calls).toHaveLength(0);
       expect(services.started).toHaveLength(0);
       expect(services.stopped).toHaveLength(0);
-      expect(tests.calls).toHaveLength(1);
+      expect(types(service, id)).toContain("FinalReviewed");
       const chosen = service.get(id)?.activity.find((e) => e.type === "StepsChosen");
       expect(chosen?.type === "StepsChosen" && chosen.payload.sharedComposes).toEqual([
         "infra",
@@ -4792,14 +4738,12 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       activity.close();
     });
 
-    it("共用の compose を選ぶと、工程・テストの実行ごとに、実行専用のディレクトリに取得して起動し、終わったら消す", async () => {
+    it("共用の compose を選ぶと、工程・最終レビュー（テスト）の実行ごとに、実行専用のディレクトリに取得して起動し、終わったら消す", async () => {
       const services = new FakeServices(undefined, [{ name: "redis", ports: [6379] }]);
       const shared = new FakeSharedComposes();
-      const tests = new FakeTests([{ exitCode: 0, output: "ok", durationMs: 1 }]);
       const { activity, service, executor, id } = await toImplement(
         [implement("# 実装"), review()],
         {
-          tests,
           services,
           sharedComposes: shared,
           projects: projectsWithShared(),
@@ -4823,7 +4767,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         "結合テストが Redis を使う（README）",
       );
       await drain(service);
-      // 実装の実行と、そのテストの実行で、それぞれ取得する（実行ごとに別のディレクトリ）
+      // 実装の実行と、そのテストを実行する最終レビューで、それぞれ取得する（実行ごとに別のディレクトリ）
       expect(shared.calls).toHaveLength(2);
       const [agentRun, testRun] = services.started;
       expect(agentRun?.runId).not.toBe(testRun?.runId);
@@ -4849,7 +4793,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       for (const call of shared.calls) expect(existsSync(call.dest)).toBe(false);
       // サービス名でも localhost でも接続できる（PBI-60 と同じ）
       expect(executor.forwards[3]).toEqual([{ port: 6379, host: "redis" }]);
-      expect(tests.calls[0]?.forwards).toEqual([{ port: 6379, host: "redis" }]);
+      expect(executor.forwards[4]).toEqual([{ port: 6379, host: "redis" }]);
       expect(promptOf(executor, 3)).toContain("- redis：redis:6379 または localhost:6379");
       const started = service.get(id)?.activity.filter((e) => e.type === "ServicesStarted") ?? [];
       expect(started.map((e) => e.type === "ServicesStarted" && e.payload.compose)).toEqual([
@@ -4982,21 +4926,21 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       });
     }
 
-    it("テストの前のサービスの起動の待ちの間に一時停止されたら、テストを実行せず、失敗として記録しない（レビュー指摘）", async () => {
+    it("最終レビュー（テスト）の前のサービスの起動の待ちの間に一時停止されたら、最終レビューをせず、失敗として記録しない（レビュー指摘）", async () => {
       const services = new FakeServices();
-      const tests = new FakeTests();
-      const { activity, service, id } = await toImplement([implement("# 実装")], {
-        tests,
+      const { activity, service, executor, id } = await toImplement([implement("# 実装")], {
         services,
         planner: plan({ services: { file: "compose.yaml", names: ["db"], steps: ["implement"] } }),
       });
       await service.runNext(id); // 実装（起動できる）
       services.hold = true;
-      const running = service.runNext(id); // テスト
+      const before = executor.calls.length;
+      const running = service.runNext(id); // 最終レビュー（テスト）
       await services.entered.promise;
       await service.pause(id);
       await running;
-      expect(tests.calls).toHaveLength(0);
+      expect(executor.calls).toHaveLength(before);
+      expect(types(service, id)).not.toContain("FinalReviewFailed");
       expect(services.aborted).toHaveLength(1);
       const task = service.get(id)?.task;
       expect(task?.status).toBe("paused");
@@ -5028,9 +4972,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     it("共用の compose を設定していないプロジェクトでは、選ばせず、これまでどおり動く", async () => {
       const services = new FakeServices();
       const shared = new FakeSharedComposes();
-      const tests = new FakeTests([{ exitCode: 0, output: "ok", durationMs: 1 }]);
       const { activity, service, id } = await toImplement([implement("# 実装"), review()], {
-        tests,
         services,
         sharedComposes: shared,
         planner: plan({ services: { file: "compose.yaml", names: ["db"], steps: ["implement"] } }),
@@ -5996,6 +5938,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
               "sacty-final-review": {
                 viewpoints: [{ id: "REQ", verified: true, reason: "依頼どおり" }],
                 remarks: [],
+                tests: { command: "npm test", exitCode: 0, output: "ok" },
                 summary: "依頼を満たす",
               },
             }),
@@ -6260,11 +6203,16 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       activity.close();
     });
 
-    it("設計を省いたタスクで、受け入れ条件（REQ）にテストを対応させていなければ、テストの段階で通さない（レビュー指摘）", async () => {
+    it("設計を省いたタスクで、受け入れ条件（REQ）にテストを対応させていなければ、最終レビューの判定にかかわらず通さない（レビュー指摘）", async () => {
       const activity = new SqliteActivityStore(dbPath);
       const { service, executor } = makeService(
         activity,
-        [out("# 要求要件"), implement("# 実装の説明", []), implement("# 実装の説明 v2", [])],
+        [
+          out("# 要求要件"),
+          implement("# 実装の説明", []),
+          review([["REQ", true]], []),
+          implement("# 実装の説明 v2", []),
+        ],
         {
           planner: async () => ({
             steps: ["requirements", "implement"],
@@ -6281,16 +6229,16 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       await service.runNext(id);
       service.approve(id, { step: "requirements", submission: 1 });
       await service.runNext(id); // 実装
-      await service.runNext(id); // テスト
-      const tests = service.get(id)?.activity.find((e) => e.type === "TestsRun");
-      expect(tests?.type === "TestsRun" && tests.payload).toMatchObject({
+      await service.runNext(id); // 最終レビュー
+      // テストを対応させていない観点を、ゴールガーディアンに伝える
+      expect(promptOf(executor, 2)).toContain("観点 REQ には、実装がテストを対応させていません");
+      // ゴールガーディアンが検証したと判定しても、テストの対応が無い観点は不合格にして、実装をやり直す
+      expect(service.get(id)?.task.lastReview).toMatchObject({
         passed: false,
-        unmappedViewpoints: ["REQ"],
+        viewpoints: [
+          { viewpointId: "REQ", verified: false, reason: { code: "review.viewpointUnmapped" } },
+        ],
       });
-      // 最終レビューはせずに、実装をやり直す
-      expect(executor.calls.map((_, i) => promptOf(executor, i)).join()).not.toContain(
-        "sacty-final-review",
-      );
       expect(service.get(id)?.task.status).toBe("queued");
       activity.close();
     });
@@ -6337,41 +6285,37 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     activity.close();
   });
 
-  it("テストの実行に、config.yaml の run_timeout.test_minutes の上限を渡す（PR #169 レビュー提案。PBI-150）", async () => {
-    const tests = new FakeTests([{ exitCode: 0, output: "2 passed", durationMs: 1200 }]);
-    const { activity, service } = await toImplement([implement("# 実装の説明"), review()], {
-      tests,
-      config: configWithTimeouts({ agentMinutes: 30, testMinutes: 7, roles: {} }),
-    });
+  it("テストを実行する最終レビューの上限は、エージェントの上限に run_timeout.test_minutes を足したもの（PBI-150）", async () => {
+    const { activity, service, executor } = await toImplement(
+      [implement("# 実装の説明"), review()],
+      { config: configWithTimeouts({ agentMinutes: 30, testMinutes: 7, roles: {} }) },
+    );
     await drain(service);
-    expect(tests.calls).toHaveLength(1);
-    expect(tests.calls[0]).toMatchObject({ command: "npm test", timeoutMs: 7 * 60_000 });
+    // 実装は 30 分、最終レビュー（テストを含む）は 30 + 7 分
+    expect(executor.timeouts[3]).toBe(30 * 60_000);
+    expect(executor.timeouts[4]).toBe(37 * 60_000);
     activity.close();
   });
 
-  it("テストを別に実行して通れば、ゴールガーディアンが新しいセッションで最終レビューし、合格なら実装を完了にする", async () => {
-    const tests = new FakeTests([{ exitCode: 0, output: "2 passed", durationMs: 1200 }]);
-    const { activity, service, executor, id } = await toImplement(
-      [implement("# 実装の説明（ガーディアンには渡さない）"), review()],
-      { tests },
-    );
+  it("sacty はテストを別に実行せず、ゴールガーディアンが新しいセッションでテストを実行して最終レビューし、合格なら実装を完了にする", async () => {
+    const { activity, service, executor, id } = await toImplement([
+      implement("# 実装の説明（ガーディアンには渡さない）"),
+      review(),
+    ]);
     await drain(service);
 
-    expect(tests.calls).toEqual([
-      {
-        runId: expect.any(String),
-        image: "sacty-agent:test",
-        workspaceDir: join(dir, "workspaces", id, "repo"),
-        command: "npm test",
-        // config.yaml に run_timeout が無ければ、テストの上限は既定の 20 分（PBI-150）
-        timeoutMs: 20 * 60_000,
-      },
-    ]);
+    // 要求要件（2回）・設計・実装・最終レビューだけで、テストのコンテナは起動しない
+    expect(executor.calls).toHaveLength(5);
     const guardian = promptOf(executor, 4);
     expect(guardian).toContain("--- 承認済みの要求要件 ---\n# 要求要件 v2");
     expect(guardian).toContain("- [TV-2] キーなし");
     expect(guardian).toContain("- [TV-1] pay.test.ts › 同じキーの再送");
-    expect(guardian).toContain("コマンド：npm test（終了コード 0）\n出力の末尾：\n2 passed");
+    // テストのコマンドを、作業領域で実行させる。出力の全体（すべての種類のテスト）を確かめさせる
+    expect(guardian).toContain("--- テスト（検証）の実行 ---");
+    expect(guardian).toContain("```sh\nnpm test\n```");
+    expect(guardian).toContain("すべての種類の結果を確かめる");
+    expect(guardian).toContain('"tests":{"command":"npm test","exitCode":0');
+    expect(guardian).not.toContain("--- テストの結果（sacty が実行） ---");
     expect(guardian).toContain("- [requirements-1-1] 失敗時の再試行の条件が無い");
     expect(guardian).toContain("+export const pay = () => 1;");
     expect(guardian).not.toContain("ガーディアンには渡さない");
@@ -6383,11 +6327,15 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     // 実装の工程の中で、sacty が PR を作り、実装の承認待ちで止まる（PBI-110）
     expect(task?.steps.map((st) => st.state)).toEqual(["done", "done", "active"]);
     expect(task?.gate?.step).toBe("implement");
-    expect(task?.lastReview).toMatchObject({ passed: true, summary: "所見" });
-    expect(task?.lastTests).toMatchObject({ passed: true, exitCode: 0, durationMs: 1200 });
-    expect(types(service, id).slice(-7)).toEqual([
+    // ゴールガーディアンが申告したテストの結果を、最終レビューと一緒に記録する（コマンドは sacty が渡したもの）
+    expect(task?.lastReview).toMatchObject({
+      passed: true,
+      summary: "所見",
+      tests: { command: "npm test", exitCode: 0, output: "2 passed" },
+    });
+    expect(task?.lastTests).toBeUndefined();
+    expect(types(service, id).slice(-6)).toEqual([
       "AgentRunCompleted",
-      "TestsRun",
       "FinalReviewed",
       "BranchPushed",
       "PullRequestPublished",
@@ -6395,25 +6343,33 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       // 取り込むラベル（PBI-88）
       "PullRequestLabeled",
     ]);
+    expect(types(service, id)).not.toContain("TestsRun");
     expect(service.get(id)?.activity.find((e) => e.type === "FinalReviewed")?.actor).toBe(
       "guardian",
     );
     activity.close();
   });
 
-  it("テストが通らなければ、出力を渡して実装をやり直す", async () => {
-    const tests = new FakeTests([
-      { exitCode: 1, output: "AssertionError: expected 2 to be 1", durationMs: 10 },
-      { exitCode: 0, output: "ok", durationMs: 10 },
+  it("ゴールガーディアンが実行したテストが通らなければ、観点の判定にかかわらず不合格にし、結果を渡して実装をやり直す", async () => {
+    const { activity, service, executor, id } = await toImplement([
+      implement("# v1"),
+      // 観点はすべて検証していると判定しても、テストが通らなければ不合格
+      review(undefined, undefined, undefined, 1),
+      implement("# v2"),
+      review(),
     ]);
-    const { activity, service, executor, id } = await toImplement(
-      [implement("# v1"), implement("# v2"), review()],
-      { tests },
-    );
     await drain(service);
-    const retry = promptOf(executor, 4);
-    expect(retry).toContain("--- 前回の検証：テストが通りませんでした ---");
-    expect(retry).toContain("AssertionError: expected 2 to be 1");
+    const failed = service.get(id)?.activity.find((e) => e.type === "FinalReviewed");
+    expect(failed?.type === "FinalReviewed" && failed.payload).toMatchObject({
+      passed: false,
+      tests: { command: "npm test", exitCode: 1 },
+    });
+    const retry = promptOf(executor, 5);
+    expect(retry).toContain(
+      "--- 前回の検証：ゴールガーディアンの最終レビューに通りませんでした ---",
+    );
+    expect(retry).toContain("テスト：npm test（終了コード 1）");
+    expect(retry).toContain("1 failed: pay.test.ts › キーなし");
     expect(retry).toContain("--- 前回の実装の説明 ---\n# v1");
     const task = service.get(id)?.task;
     expect(task?.gate?.step).toBe("implement");
@@ -6421,14 +6377,52 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     activity.close();
   });
 
-  it("テストのコマンドに書いたツールがイメージに無ければ、実装をやり直さずにイメージを直す案内で止め、再開するとテストからやり直す", async () => {
-    const tests = new FakeTests([
-      { exitCode: 127, output: "sh: 1: npm: not found\n", durationMs: 1 },
-      { exitCode: 0, output: "ok", durationMs: 1 },
-    ]);
-    const { activity, service, executor, id } = await toImplement([implement("# v1"), review()], {
-      tests,
+  it("ゴールガーディアンがテストの結果を申告しなければ、不合格にする", async () => {
+    const silent = out(
+      block({
+        "sacty-final-review": {
+          viewpoints: [
+            { id: "TV-1", verified: true, reason: "理由" },
+            { id: "TV-2", verified: true, reason: "理由" },
+          ],
+          remarks: [{ id: "requirements-1-1", notRecurred: true, reason: "理由" }],
+          summary: "所見",
+        },
+      }),
+    );
+    const { activity, service, id } = await toImplement([implement("# v1"), silent]);
+    await drain(service, 2);
+    const reviewed = service.get(id)?.activity.find((e) => e.type === "FinalReviewed");
+    expect(reviewed?.type === "FinalReviewed" && reviewed.payload).toMatchObject({
+      passed: false,
+      tests: { command: "npm test", output: "" },
     });
+    expect(reviewed?.type === "FinalReviewed" && reviewed.payload.tests?.exitCode).toBeUndefined();
+    activity.close();
+  });
+
+  it("テストのコマンドに書いたツールがイメージに無いとゴールガーディアンが申告したら、実装をやり直さずにイメージを直す案内で止め、再開すると最終レビューからやり直す", async () => {
+    const missing = out(
+      block({
+        "sacty-final-review": {
+          viewpoints: [],
+          remarks: [],
+          // コマンドに語として書いていない名前（vitest）は、イメージの問題として扱わない
+          tests: {
+            command: "npm test",
+            exitCode: 127,
+            output: "sh: 1: npm: not found",
+            missingCommands: ["npm", "vitest"],
+          },
+          summary: "テストを実行できない",
+        },
+      }),
+    );
+    const { activity, service, executor, id } = await toImplement([
+      implement("# v1"),
+      missing,
+      review(),
+    ]);
     await drain(service);
     const paused = service.get(id)?.task;
     expect(paused?.status).toBe("paused");
@@ -6437,31 +6431,16 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       params: { commands: ["npm"], image: "default", step: "implement" },
     });
     expect(ja(paused?.pausedMessage)).toContain("config.yaml の images に、npm を入れたイメージ");
-    // テストの結果は記録せず、実装もやり直さない
-    expect(types(service, id)).not.toContain("TestsRun");
+    // 判定は記録せず（使った分の費用は記録する）、実装もやり直さない
+    expect(types(service, id)).not.toContain("FinalReviewed");
+    expect(types(service, id)).toContain("FinalReviewFailed");
     expect(paused?.verifyFailures).toBe(0);
     const runs = executor.calls.length;
 
     service.resume(id, {});
     await drain(service);
-    expect(tests.calls).toHaveLength(2);
-    // 再開すると、実装をやり直さずにテストを実行し直し、最終レビューへ進む
+    // 再開すると、実装をやり直さずに最終レビュー（テスト）からやり直す
     expect(executor.calls.length).toBe(runs + 1);
-    expect(service.get(id)?.task.gate?.step).toBe("implement");
-    activity.close();
-  });
-
-  it("テストのコマンドに書いていないツールが見つからないときは、ふつうのテストの失敗として実装をやり直す", async () => {
-    const tests = new FakeTests([
-      { exitCode: 127, output: "sh: 1: vitest: not found\n", durationMs: 1 },
-      { exitCode: 0, output: "ok", durationMs: 1 },
-    ]);
-    const { activity, service, executor, id } = await toImplement(
-      [implement("# v1"), implement("# v2"), review()],
-      { tests },
-    );
-    await drain(service);
-    expect(promptOf(executor, 4)).toContain("sh: 1: vitest: not found");
     expect(service.get(id)?.task.gate?.step).toBe("implement");
     activity.close();
   });
@@ -6469,14 +6448,18 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
   it("テストが通っても、テストの対応していない観点があれば不合格にする", async () => {
     const { activity, service, id } = await toImplement([
       implement("# v1", [{ viewpointId: "TV-1", tests: ["a"] }]),
+      review(),
     ]);
     await service.runNext(id);
     await service.runNext(id);
     const task = service.get(id)?.task;
-    expect(task?.lastTests).toMatchObject({
-      exitCode: 0,
+    expect(task?.lastReview).toMatchObject({
       passed: false,
-      unmappedViewpoints: ["TV-2"],
+      tests: { exitCode: 0 },
+      viewpoints: [
+        { viewpointId: "TV-1", verified: true },
+        { viewpointId: "TV-2", verified: false, reason: { code: "review.viewpointUnmapped" } },
+      ],
     });
     expect(task?.status).toBe("queued");
     activity.close();
@@ -6517,12 +6500,16 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
   });
 
   it("検証に3回続けて通らなければ一時停止し、再開すると数え直して実装をやり直す", async () => {
-    const fail = { exitCode: 1, output: "fail", durationMs: 1 };
-    const tests = new FakeTests([fail, fail, fail]);
-    const { activity, service, id } = await toImplement(
-      [implement("# v1"), implement("# v2"), implement("# v3"), implement("# v4")],
-      { tests },
-    );
+    const fail = review(undefined, undefined, undefined, 1);
+    const { activity, service, id } = await toImplement([
+      implement("# v1"),
+      fail,
+      implement("# v2"),
+      fail,
+      implement("# v3"),
+      fail,
+      implement("# v4"),
+    ]);
     await drain(service);
     const paused = service.get(id)?.task;
     expect(paused?.status).toBe("paused");
@@ -6536,26 +6523,23 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     activity.close();
   });
 
-  it("最終レビューを実行できなければ止め、再開するとテストを繰り返さずに最終レビューからやり直す", async () => {
-    const tests = new FakeTests();
-    const { activity, service, id } = await toImplement(
-      [
-        implement("# v1"),
-        { kind: "failed", reason: "usage_limit", message: "You've hit your session limit" },
-        review(),
-      ],
-      { tests },
-    );
+  it("最終レビューを実行できなければ止め、再開すると実装を繰り返さずに最終レビューからやり直す", async () => {
+    const { activity, service, executor, id } = await toImplement([
+      implement("# v1"),
+      { kind: "failed", reason: "usage_limit", message: "You've hit your session limit" },
+      review(),
+    ]);
     await service.runNext(id);
     await service.runNext(id);
     const paused = service.get(id)?.task;
     expect(paused?.pausedReason).toBe("usage_limit");
     expect(ja(paused?.pausedMessage)).toContain("session limit");
-    expect(paused?.verification).toBe("tests_passed");
+    expect(paused?.verification).toBe("pending");
 
     service.resume(id, {});
     await drain(service);
-    expect(tests.calls).toHaveLength(1);
+    // 実装は1回だけ（最終レビューは2回）
+    expect(executor.calls).toHaveLength(6);
     expect(service.get(id)?.task.gate?.step).toBe("implement");
     activity.close();
   });
@@ -6591,10 +6575,8 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
 
   it("差分を取得できなければ最終レビューをせずに止め、再開すると差分の取得からやり直す（レビュー指摘）", async () => {
     const repos = new FakeRepos();
-    const tests = new FakeTests();
     const { activity, service, executor, id } = await toImplement([implement("# v1"), review()], {
       repos,
-      tests,
     });
     repos.diffFail = "git diff に失敗しました：bad object";
     await service.runNext(id);
@@ -6604,14 +6586,14 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     expect(ja(paused?.pausedMessage)).toContain(
       "差分を取得できないため、最終レビューをしていません",
     );
-    expect(paused?.verification).toBe("tests_passed");
+    expect(paused?.verification).toBe("pending");
     expect(paused?.steps[2]?.state).toBe("active");
     expect(executor.calls).toHaveLength(4); // ゴールガーディアンは呼んでいない
 
     repos.diffFail = undefined;
     service.resume(id, {});
     await drain(service);
-    expect(tests.calls).toHaveLength(1);
+    expect(executor.calls).toHaveLength(5);
     expect(service.get(id)?.task.gate?.step).toBe("implement");
     activity.close();
   });
@@ -6662,7 +6644,6 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
   });
 
   it("前の工程に戻ったら、検証の失敗の回数と内容を持ち越さない", async () => {
-    const tests = new FakeTests([{ exitCode: 1, output: "fail", durationMs: 1 }]);
     const proposal = out(
       [
         "# v2",
@@ -6677,11 +6658,14 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
       ].join("\n\n"),
     );
     const verdict = out(block({ "sacty-verdict": { verdict: "approved", reason: "ok" } }));
-    const { activity, service, id } = await toImplement([implement("# v1"), proposal, verdict], {
-      tests,
-    });
+    const { activity, service, id } = await toImplement([
+      implement("# v1"),
+      review(undefined, undefined, undefined, 1),
+      proposal,
+      verdict,
+    ]);
     await service.runNext(id); // 実装
-    await service.runNext(id); // テストが通らない
+    await service.runNext(id); // 最終レビューで、テストが通らない
     expect(service.get(id)?.task.verifyFailures).toBe(1);
     await service.runNext(id); // 実装のやり直しで、要求要件の変更を申し出て認められる
     const task = service.get(id)?.task;
@@ -7730,22 +7714,21 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
         },
       ],
     });
-    const tests = new FakeTests();
     const pulls = new FakePulls();
-    const { service } = makeService(
+    const { service, executor } = makeService(
       activity,
       [
         implement("# v1", [{ viewpointId: "REQ", tests: ["a.test.ts › 受け入れ条件"] }]),
         review([["REQ", true]], []),
       ],
-      { tests, pulls },
+      { pulls },
     );
     for (let i = 0; i < 4 && service.queuedTaskIds().includes("t-old"); i++) {
       await service.runNext("t-old");
     }
     const task = service.get("t-old")?.task;
     // オーケストレーターが決めたテストのコマンドで検証し、記録した URL のリポジトリ（acme/app）に PR を作る
-    expect(tests.calls.map((c) => c.command)).toEqual(["npm test"]);
+    expect(promptOf(executor, 1)).toContain("```sh\nnpm test\n```");
     expect(pulls.calls[0]?.repo).toBe("https://github.com/acme/app");
     expect(task?.gate).toEqual({ step: "implement", submission: 1 });
     expect(task?.pausedMessage).toBeUndefined();
@@ -7858,22 +7841,25 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     activity.close();
   });
 
-  it("テストの実行中に止めたら、結果を記録せず、再開するとテストからやり直す（PBI-3）", async () => {
-    const tests = new FakeTests();
-    tests.hold = true;
-    const { activity, service, id } = await toImplement([implement("# v1"), review()], { tests });
+  it("テストを実行する最終レビューの途中で止めたら、判定を記録せず、再開すると最終レビューからやり直す（PBI-3）", async () => {
+    const { activity, service, executor, id } = await toImplement([
+      implement("# v1"),
+      HOLD,
+      review(),
+    ]);
     await service.runNext(id); // 実装
     const verifying = service.runNext(id);
-    await tests.started.promise;
+    await executor.started.promise;
     await service.pause(id);
     await verifying;
     const paused = service.get(id)?.task;
     expect(paused).toMatchObject({ pausedReason: "manual", verification: "pending" });
-    expect(types(service, id)).not.toContain("TestsRun");
+    expect(types(service, id)).not.toContain("FinalReviewed");
 
     service.resume(id, {});
     await drain(service);
-    expect(tests.calls).toHaveLength(2);
+    // 実装はやり直さず、最終レビューを始め直す
+    expect(executor.calls).toHaveLength(6);
     expect(service.get(id)?.task.gate?.step).toBe("implement");
     activity.close();
   });
@@ -8088,15 +8074,13 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
   });
 
   it("一時停止は、停止の確認と記録が終わってから返る（レビュー指摘）", async () => {
-    const tests = new FakeTests();
-    tests.hold = true;
-    const { activity, service, executor, id } = await toImplement([implement("# v1")], { tests });
+    const { activity, service, executor, id } = await toImplement([implement("# v1"), HOLD]);
     await service.runNext(id); // 実装
     // 停止の確認に時間がかかる
     const gate = Promise.withResolvers<boolean>();
     executor.ensureStopped = () => gate.promise;
-    const verifying = service.runNext(id);
-    await tests.started.promise;
+    const verifying = service.runNext(id); // 最終レビュー（テスト）
+    await executor.started.promise;
     let returned = false;
     const pausing = service.pause(id).then((t) => {
       returned = true;
@@ -10226,7 +10210,7 @@ describe("プロジェクトと GitHub Issue の取り込み（PBI-5a）", () =>
   });
 
   it("Issue から作ったタスクは、その Issue のリポジトリの既定のブランチを clone し、オーケストレーターが決めたテストのコマンドで検証する", async () => {
-    const { activity, service, repos, tests, id } = await (async () => {
+    const { activity, service, repos, executor, id } = await (async () => {
       const made = setup([
         {
           kind: "completed",
@@ -10257,7 +10241,8 @@ describe("プロジェクトと GitHub Issue の取り込み（PBI-5a）", () =>
     expect(repos.prepared[0]?.url).toBe("https://github.com/acme/payments.git");
     expect(repos.prepared[0]?.baseBranch).toBeUndefined();
     await service.runNext(id);
-    expect(tests.calls.map((c) => c.command)).toEqual(["npm test"]);
+    // 最終レビューで、オーケストレーターが決めたテストのコマンドを実行させる
+    expect(executor.calls[3]?.command.join(" ")).toContain("```sh\nnpm test\n```");
     activity.close();
   });
 
@@ -12751,8 +12736,19 @@ describe("再現の工程（PBI-29）", () => {
   const block = (b: Record<string, unknown>) => `\`\`\`json\n${JSON.stringify(b)}\n\`\`\``;
   const promptOf = (executor: FakeExecutor, i: number) =>
     executor.calls[i]?.command.join(" ") ?? "";
-  const reproduce = (text: string, tests: string[]) =>
-    out([text, block({ "sacty-reproduction": { tests } })].join("\n\n"));
+  /** 再現の工程の出力。テストを書いたら、既定では、自分で実行して失敗した（再現できた）と申告する。 */
+  const reproduce = (
+    text: string,
+    tests: string[],
+    check: Record<string, unknown> = tests.length > 0
+      ? {
+          reproduced: true,
+          command: "npm test",
+          exitCode: 1,
+          output: `FAIL ${tests[0]}`,
+        }
+      : {},
+  ) => out([text, block({ "sacty-reproduction": { tests, ...check } })].join("\n\n"));
   const implement = (tests: string[] = ["pay.test.ts › 二重送信"]) =>
     out(
       ["# 修正の説明", block({ "sacty-test-map": [{ viewpointId: "REPRO", tests }] })].join("\n\n"),
@@ -12763,6 +12759,7 @@ describe("再現の工程（PBI-29）", () => {
         "sacty-final-review": {
           viewpoints: [{ id: "REPRO", verified, reason: "判定" }],
           remarks: [],
+          tests: { command: "npm test", exitCode: 0, output: "ok" },
           summary: "所見",
         },
       }),
@@ -12784,12 +12781,8 @@ describe("再現の工程（PBI-29）", () => {
     }
   }
 
-  it("再現の確かめは再現の工程のイメージ、実装の検証は実装の工程のイメージで、テストを実行する（PBI-41）", async () => {
+  it("再現は再現の工程のイメージで、実装の検証（テストを実行する最終レビュー）は実装の工程のイメージで動く（PBI-41）", async () => {
     const activity = new SqliteActivityStore(dbPath);
-    const tests = new FakeTests([
-      { exitCode: 1, output: "FAIL", durationMs: 5 },
-      { exitCode: 0, output: "ok", durationMs: 5 },
-    ]);
     const image = (name: string) => ({
       name,
       image: `sacty-agent-${name}:test`,
@@ -12797,11 +12790,10 @@ describe("再現の工程（PBI-29）", () => {
       baseImage: name,
       env: { TOOL: name },
     });
-    const { service } = makeService(
+    const { service, executor } = makeService(
       activity,
       [out("# 前段の調査"), reproduce("# 再現", ["pay.test.ts › 二重送信"]), implement(), review()],
       {
-        tests,
         config: () => ({
           ok: true,
           config: {
@@ -12817,65 +12809,19 @@ describe("再現の工程（PBI-29）", () => {
     );
     const { id } = service.createTask({ projectId: "default", title: "二重に決済される" });
     await drain(service);
-    expect(tests.calls.map((c) => [c.image, c.env])).toEqual([
-      ["sacty-agent-go:test", { TOOL: "go" }],
-      ["sacty-agent-node:test", { TOOL: "node" }],
+    // 前段の調査・再現・実装・最終レビュー（テストのコンテナは起動しない）
+    expect(executor.images).toEqual([
+      { image: "sacty-agent:test" },
+      { image: "sacty-agent-go:test", env: { TOOL: "go" } },
+      { image: "sacty-agent-node:test", env: { TOOL: "node" } },
+      { image: "sacty-agent-node:test", env: { TOOL: "node" } },
     ]);
-    expect(service.get(id)?.task.reproduction).toMatchObject({ reproduced: true });
-    activity.close();
-  });
-
-  it("再現の確かめで、テストのコマンドに書いたツールが再現の工程のイメージに無ければ、再現できたとはみなさずに案内で止める", async () => {
-    const activity = new SqliteActivityStore(dbPath);
-    const tests = new FakeTests([
-      { exitCode: 127, output: "sh: line 1: npm: command not found\n", durationMs: 1 },
-      { exitCode: 1, output: "FAIL", durationMs: 5 },
-    ]);
-    const go = {
-      name: "go",
-      image: "sacty-agent-go:test",
-      description: "go",
-      baseImage: "go",
-      env: {},
-    };
-    const { service } = makeService(
-      activity,
-      [out("# 前段の調査"), reproduce("# 再現", ["pay.test.ts › 二重送信"]), implement(), review()],
-      {
-        tests,
-        config: () => ({
-          ok: true,
-          config: {
-            ...(configOf(agent())() as { ok: true; config: SactyConfig }).config,
-            images: { go },
-          },
-        }),
-        planner: async () => ({ ...(await planner()), images: { reproduce: "go" } }),
-      },
-    );
-    const { id } = service.createTask({ projectId: "default", title: "二重に決済される" });
-    await drain(service);
-    const paused = service.get(id)?.task;
-    expect(paused?.status).toBe("paused");
-    expect(paused?.reproduction).toBeUndefined();
-    expect(paused?.pausedMessage).toEqual({
-      code: "verify.commandMissing",
-      params: { commands: ["npm"], image: "go", step: "reproduce" },
-    });
-    expect(ja(paused?.pausedMessage)).toContain("npx sacty image build go");
-    service.resume(id, {});
-    await drain(service);
-    expect(tests.calls).toHaveLength(3);
     expect(service.get(id)?.task.reproduction).toMatchObject({ reproduced: true });
     activity.close();
   });
 
   it("再現のテストが失敗したら、人間の承認なしに実装へ進み、再現のテストを観点にして検証する", async () => {
     const activity = new SqliteActivityStore(dbPath);
-    const tests = new FakeTests([
-      { exitCode: 1, output: "FAIL pay.test.ts › 二重送信", durationMs: 5 },
-      { exitCode: 0, output: "ok", durationMs: 5 },
-    ]);
     const pulls = new FakePulls();
     const { service, executor } = makeService(
       activity,
@@ -12885,7 +12831,7 @@ describe("再現の工程（PBI-29）", () => {
         implement(),
         review(),
       ],
-      { planner, tests, pulls },
+      { planner, pulls },
     );
     const { id } = service.createTask({ projectId: "default", title: "二重に決済される" });
     // 前段の調査は、人間の承認なしに再現へ進む
@@ -12907,13 +12853,18 @@ describe("再現の工程（PBI-29）", () => {
     // 前段の調査の結果を、再現と実装に渡す
     expect(promptOf(executor, 0)).toContain("src/pay.ts:40 で冪等キーを見ていない");
     expect(promptOf(executor, 0)).toContain("npm test");
-    expect(tests.calls).toHaveLength(1);
+    // テストは sacty が実行せず、再現のエージェントが自分で実行して、失敗したことを申告する
+    expect(promptOf(executor, 0)).toContain("そのテストのコマンドを自分で実行し");
+    expect(executor.calls).toHaveLength(1);
     const task = service.get(id)?.task;
     expect(task?.reproduction).toMatchObject({
       reproduced: true,
+      command: "npm test",
       exitCode: 1,
+      output: "FAIL pay.test.ts › 二重送信",
       tests: ["pay.test.ts › 二重送信"],
     });
+    expect(task?.reproduction?.note).toBeUndefined();
     // 申告の形式のブロックは、再現の説明から取り除く
     expect(task?.outputs.reproduce).toBe("# 再現の説明");
     expect(task?.steps.map((s) => s.state)).toEqual(["done", "done", "active", "skip"]);
@@ -12959,19 +12910,20 @@ describe("再現の工程（PBI-29）", () => {
 
   it("テストが通った・再現のテストが無いなら、人間の判断を待つ。承認では進めず、差し戻すと再現をやり直す", async () => {
     const activity = new SqliteActivityStore(dbPath);
-    const tests = new FakeTests([
-      { exitCode: 0, output: "all passed", durationMs: 5 },
-      { exitCode: 1, output: "FAIL", durationMs: 5 },
-    ]);
     const { service, executor } = makeService(
       activity,
       [
         out("# 前段の調査"),
-        reproduce("# 再現できた？", ["pay.test.ts › 二重送信"]),
+        reproduce("# 再現できた？", ["pay.test.ts › 二重送信"], {
+          reproduced: false,
+          command: "npm test",
+          exitCode: 0,
+          output: "all passed",
+        }),
         reproduce("# テストでは再現できない", []),
         reproduce("# 再現した", ["pay.test.ts › 連打"]),
       ],
-      { planner, tests },
+      { planner },
     );
     const { id } = service.createTask({ projectId: "default", title: "二重に決済される" });
     await drain(service);
@@ -12987,10 +12939,10 @@ describe("再現の工程（PBI-29）", () => {
     await service.runNext(id);
     expect(promptOf(executor, 2)).toContain("[reproduce-1-1] 連打で起きる");
     expect(promptOf(executor, 2)).toContain("終了コード 0");
+    expect(promptOf(executor, 2)).toContain("all passed");
     task = service.get(id)?.task;
-    // 再現のテストが申告されなければ、テストを実行せずに再現できなかったとする
-    expect(tests.calls).toHaveLength(1);
-    expect(renderMessage(task?.reproduction?.note, "ja")).toMatch(/申告しませんでした/);
+    // 再現のテストが申告されなければ、再現できなかったとする
+    expect(renderMessage(task?.reproduction?.note, "ja")).toMatch(/テストを申告しませんでした/);
     expect(task?.gate).toEqual({ step: "reproduce", submission: 2 });
 
     service.requestChanges(id, { step: "reproduce", submission: 2, comments: ["決済ボタン"] });
@@ -13002,92 +12954,84 @@ describe("再現の工程（PBI-29）", () => {
     activity.close();
   });
 
-  it("テストの実行基盤の失敗は再現できたとせず、理由を示して止め、再開するとテストを実行し直す（レビュー指摘）", async () => {
-    const activity = new SqliteActivityStore(dbPath);
-    const tests = new FakeTests([
-      {
-        exitCode: 127,
-        output: "",
-        note: message("run.dockerUnavailable", { detail: "spawn docker ENOENT" }),
-        infrastructure: true,
-        durationMs: 1,
-      },
-      { exitCode: 1, output: "FAIL", durationMs: 5 },
-    ]);
-    const { service } = makeService(
-      activity,
-      [out("# 前段の調査"), reproduce("# 再現", ["a.test.ts › x"])],
-      { planner, tests },
-    );
-    const { id } = service.createTask({ projectId: "default", title: "不具合" });
-    await drain(service);
-    let task = service.get(id)?.task;
-    expect(task?.status).toBe("paused");
-    expect(task?.reproduction).toBeUndefined();
-    expect(task?.steps.find((s) => s.state === "active")?.key).toBe("reproduce");
-    expect(renderMessage(task?.pausedMessage, "ja")).toMatch(
-      /^再現のテストを実行できませんでした（.*spawn docker ENOENT.*）。再現できたかは確かめていません/,
-    );
-    service.resume(id, {});
-    await service.runNext(id);
-    task = service.get(id)?.task;
-    expect(tests.calls).toHaveLength(2);
-    expect(task?.reproduction?.reproduced).toBe(true);
-    expect(task?.steps.find((s) => s.state === "active")?.key).toBe("implement");
-    activity.close();
+  it("テストを実行して失敗したことを申告しなければ、再現できたとしない（終了コード 0 で再現できたと申告しても）", async () => {
+    for (const check of [
+      {},
+      { reproduced: true, command: "npm test", exitCode: 0, output: "1 passed" },
+      { reproduced: false, command: "npm test", exitCode: 1, output: "SyntaxError" },
+    ]) {
+      const activity = new SqliteActivityStore(dbPath);
+      const { service } = makeService(
+        activity,
+        [out("# 前段の調査"), reproduce("# 再現", ["a.test.ts › x"], check)],
+        { planner },
+      );
+      const { id } = service.createTask({ projectId: "default", title: "不具合" });
+      await drain(service);
+      const task = service.get(id)?.task;
+      expect(task?.reproduction?.reproduced).toBe(false);
+      expect(task?.reproduction?.note).toEqual({ code: "reproduce.notChecked" });
+      expect(task?.gate).toEqual({ step: "reproduce", submission: 1 });
+      activity.close();
+      rmSync(dbPath, { force: true });
+    }
   });
 
-  it("docker run が Docker 自身の失敗（終了コード 125）で終わっても、再現できたとせずに止める（レビュー指摘）", async () => {
+  it("それより前の版で、sacty の再現の確かめを待っていたタスクは、再起動の後に再現できなかったと記録して人間の判断を待つ", async () => {
     const activity = new SqliteActivityStore(dbPath);
-    // 実際のテストの実行基盤に、docker run が 125 で終わる docker を渡す
-    const spawnImpl = (() => {
-      const child = Object.assign(new EventEmitter(), {
-        stdout: new EventEmitter(),
-        stderr: new EventEmitter(),
-        kill: () => true,
-      });
-      setTimeout(() => child.emit("close", 125), 0);
-      return child;
-    }) as never;
-    const { service } = makeService(
-      activity,
-      [out("# 前段の調査"), reproduce("# 再現", ["a.test.ts › x"])],
-      { planner, tests: new DockerTestRunner(60_000, spawnImpl) as unknown as FakeTests },
-    );
+    const { service } = makeService(activity, [out("# 前段の調査")], { planner });
     const { id } = service.createTask({ projectId: "default", title: "不具合" });
-    await drain(service);
-    const task = service.get(id)?.task;
-    expect(task?.status).toBe("paused");
-    expect(task?.reproduction).toBeUndefined();
-    expect(task?.reproductionPending).toBe(true);
-    expect(renderMessage(task?.pausedMessage, "ja")).toMatch(/docker run の終了コード 125/);
-    activity.close();
-  });
-
-  it("再現の後、確かめる前にデーモンが止まっても、再起動の後に確かめる", async () => {
-    const activity = new SqliteActivityStore(dbPath);
-    const tests = new FakeTests([{ exitCode: 1, output: "FAIL", durationMs: 5 }]);
-    tests.hold = true;
-    const { service } = makeService(
-      activity,
-      [out("# 前段の調査"), reproduce("# 再現", ["a.test.ts › x"])],
-      { planner, tests },
-    );
-    const { id } = service.createTask({ projectId: "default", title: "不具合" });
-    await service.runNext(id);
-    const running = service.runNext(id);
-    await tests.started.promise;
-    // テストの実行中（確かめる前）の状態は、作業履歴から復元できる
+    await service.runNext(id); // 前段の調査（承認なしに再現へ進む）
+    const investigated = service.get(id)?.activity.find((e) => e.type === "AgentRunCompleted");
+    if (investigated?.type !== "AgentRunCompleted") throw new Error("no run");
+    const { agentId, authMode, usage } = investigated.payload;
+    // それより前の版の作業履歴：再現の工程の完了だけがあり、sacty がテストで確かめる前に止まった
+    activity.append({
+      taskId: id,
+      projectId: "default",
+      events: [
+        {
+          actor: "sacty",
+          event: {
+            type: "AgentRunStarted",
+            payload: { runId: "old-run", step: "reproduce", agentId, authMode },
+          },
+        },
+        {
+          actor: "agent",
+          event: {
+            type: "AgentRunCompleted",
+            payload: {
+              runId: "old-run",
+              step: "reproduce",
+              agentId,
+              authMode,
+              usage,
+              costUsd: 0,
+              estimated: false,
+              output: "# 再現",
+              responses: [],
+              reproductionTests: ["a.test.ts › x"],
+            },
+          },
+        },
+      ],
+    });
     const restored = new SqliteActivityStore(dbPath);
-    const { service: restarted, tests: retests } = makeService(restored, [], { planner });
+    const { service: restarted, executor } = makeService(restored, [], { planner });
     expect(restarted.get(id)?.task.reproductionPending).toBe(true);
     expect(restarted.queuedTaskIds()).toEqual([id]);
     await restarted.runNext(id);
-    expect(retests.calls).toHaveLength(1);
-    expect(restarted.get(id)?.task.reproduction).toBeDefined();
+    // テストは実行せず（エージェントも起動しない）、申告が無いものとして再現できなかったと記録する
+    expect(executor.calls).toHaveLength(0);
+    const task = restarted.get(id)?.task;
+    expect(task?.reproduction).toMatchObject({
+      reproduced: false,
+      tests: ["a.test.ts › x"],
+      note: { code: "reproduce.notChecked" },
+    });
+    expect(task?.gate).toEqual({ step: "reproduce", submission: 1 });
     restored.close();
-    tests.kill((await tests.started.promise) as string);
-    await running.catch(() => {});
     activity.close();
   });
 
@@ -13143,7 +13087,6 @@ describe("タスクの並行実行（PBI-30）", () => {
       secrets: new MemorySecretStore({ "claude-oauth-token": "oauth-secret" }),
       executor,
       repos: new FakeRepos(),
-      tests: new FakeTests(),
       pulls: new FakePulls(),
       projects: projectsWithAccount(),
       contexts: new FakeContexts(),
@@ -15206,6 +15149,7 @@ describe("要求要件・設計の PR（タスクブランチへのフロー。P
         "sacty-final-review": {
           viewpoints: viewpoints.map((id) => ({ id, verified: true, reason: `${id}の判定理由` })),
           remarks: remarks.map((id) => ({ id, notRecurred: true, reason: `${id}の判定理由` })),
+          tests: { command: "npm test", exitCode: 0, output: "ok" },
           summary: "所見",
         },
       }),
@@ -19813,6 +19757,7 @@ describe("PR テンプレート（PBI-87）", () => {
       "sacty-final-review": {
         viewpoints: [{ id: "TV-1", verified: true, reason: "TV-1の判定理由" }],
         remarks: [],
+        tests: { command: "npm test", exitCode: 0, output: "ok" },
         summary: "所見",
       },
     }),
@@ -19923,7 +19868,9 @@ describe("PR テンプレート（PBI-87）", () => {
     expect(impl).toContain("**要求要件（人間が承認済み）**\n\n# 要求要件 v1");
     expect(impl).toContain("## 変更内容\n\n# 実装の説明");
     expect(impl).toContain("## テスト\n\n| 観点 | 入力 | 期待結果 | テスト | 最終レビュー |");
-    expect(impl).toContain("テスト：`npm test` → 合格（終了コード 0）\n\n- [ ] 単体テストを足した");
+    expect(impl).toContain(
+      "テスト：`npm test` → 合格（ゴールガーディアンが実行。終了コード 0）\n\n- [ ] 単体テストを足した",
+    );
     expect(impl).toContain("<summary>sacty の記録</summary>");
     expect(impl).toContain("**ゴールガーディアンの最終レビュー**\n\n合格。所見");
     expect(impl).not.toMatch(/\[[xX]\]/);
@@ -20132,6 +20079,7 @@ describe("マージの後の CI/CD とデプロイの監視（PBI-89）", () => 
       "sacty-final-review": {
         viewpoints: [{ id: "REQ", verified: true, reason: "通る" }],
         remarks: [],
+        tests: { command: "npm test", exitCode: 0, output: "ok" },
         summary: "所見",
       },
     }),
@@ -21318,12 +21266,18 @@ describe("テストの仕組みが無いリポジトリ（PBI-94）", () => {
   const NO_TESTS = "README.md だけで、テストのコード・設定・CI が無い";
   const plan = (extra: Record<string, unknown> = {}, value = "skip-design") =>
     out(block({ "sacty-steps": { plan: value, reason: "小さい", noTests: NO_TESTS, ...extra } }));
-  const review = (verified = true) =>
+  const review = (verified = true, testsExitCode = 0) =>
     out(
       block({
         "sacty-final-review": {
           viewpoints: [{ id: "REQ", verified, reason: verified ? "目的を満たす" : "足りない" }],
           remarks: [],
+          // テストのコマンドがあるとき（実装が用意したとき）だけ、sacty が読む
+          tests: {
+            command: "make test",
+            exitCode: testsExitCode,
+            output: testsExitCode ? "FAIL" : "ok",
+          },
           summary: verified ? "目的から見て受け入れられる" : "受け入れられない",
         },
       }),
@@ -21359,7 +21313,7 @@ describe("テストの仕組みが無いリポジトリ（PBI-94）", () => {
 
   it("README だけのリポジトリで Sacty セットアップを実行すると、止まらずに実装の承認待ちまで進み、目的から判定したことがわかる", async () => {
     const activity = new SqliteActivityStore(dbPath);
-    const { service, executor, tests, pulls } = makeService(
+    const { service, executor, pulls } = makeService(
       activity,
       [
         plan(),
@@ -21386,10 +21340,9 @@ describe("テストの仕組みが無いリポジトリ（PBI-94）", () => {
     await drain(service);
     const task = taskOf(service, id);
     // テストは実行せず、最終レビューで目的から判定して、実装の承認待ちになる
-    expect(tests.calls).toEqual([]);
-    expect(typesOf(service, id)).toContain("TestsSkipped");
-    expect(task.testsSkippedAt).toBeDefined();
+    expect(typesOf(service, id)).not.toContain("TestsRun");
     expect(task.lastReview?.passed).toBe(true);
+    expect(task.lastReview?.tests).toBeUndefined();
     expect(task.gate).toEqual({ step: "implement", submission: 1 });
     expect(task.status).toBe("awaiting_approval");
     // 実装の指示は、テストを書かせず、目的から判定されることを伝える
@@ -21405,7 +21358,8 @@ describe("テストの仕組みが無いリポジトリ（PBI-94）", () => {
     expect(guardian).toContain(
       "テストが無い・観点にテストが対応していないことを理由に不合格にしない",
     );
-    expect(guardian).toContain("（テストのコマンドが無いため、実行していません）");
+    expect(guardian).toContain("テストのコマンドが無いので、テストは実行しません");
+    expect(guardian).not.toContain("--- テスト（検証）の実行 ---");
     // PR の本文で、テストで検証していないことがわかる
     expect(pulls.calls).toHaveLength(1);
     const body = pulls.calls[0]?.body ?? "";
@@ -21421,7 +21375,7 @@ describe("テストの仕組みが無いリポジトリ（PBI-94）", () => {
 
   it("テストのファイルがあるのにテストの仕組みが無いと答えたら、テストなしで進めずに止め、再開してもテストを飛ばさない", async () => {
     const activity = new SqliteActivityStore(dbPath);
-    const { service, executor, tests } = makeService(
+    const { service, executor } = makeService(
       activity,
       [plan(), out("# 前段の調査"), stepReview(), out("# 要求要件"), out("# 実装の説明")],
       {
@@ -21447,8 +21401,7 @@ describe("テストの仕組みが無いリポジトリ（PBI-94）", () => {
     await drain(service);
     service.approve(id, { step: "requirements", submission: 1 });
     await drain(service);
-    expect(tests.calls).toEqual([]);
-    expect(typesOf(service, id)).not.toContain("TestsSkipped");
+    expect(typesOf(service, id)).not.toContain("FinalReviewed");
     expect(taskOf(service, id).pausedMessage).toEqual({ code: "orchestrator.testCommandUnknown" });
     activity.close();
   });
@@ -21456,7 +21409,7 @@ describe("テストの仕組みが無いリポジトリ（PBI-94）", () => {
   it("申告を読むのはテストの仕組みが無いタスクの実装だけ。ほかの工程やテストのあるタスクでは、コードブロックを本文に残す（PR #105 再レビュー指摘）", async () => {
     const activity = new SqliteActivityStore(dbPath);
     const example = '```sacty-test-command\n{"command":"make test",}\n```';
-    const { service, tests } = makeService(
+    const { service, executor } = makeService(
       activity,
       [
         out(`# 要求要件\n\n申告の例：\n\n${example}`),
@@ -21486,7 +21439,7 @@ describe("テストの仕組みが無いリポジトリ（PBI-94）", () => {
     expect(task.pausedMessage).toBeUndefined();
     expect(task.outputs.implement).toContain(example);
     expect(task.addedTestCommand).toBeUndefined();
-    expect(tests.calls.map((c) => c.command)).toEqual(["npm test"]);
+    expect(promptOf(executor, 2)).toContain("```sh\nnpm test\n```");
     expect(task.gate).toEqual({ step: "implement", submission: 1 });
     activity.close();
   });
@@ -21573,7 +21526,7 @@ describe("テストの仕組みが無いリポジトリ（PBI-94）", () => {
     const activity = new SqliteActivityStore(dbPath);
     const implemented = (command: string) =>
       out(`# 実装の説明\n\n\`\`\`sacty-test-command\n${JSON.stringify({ command })}\n\`\`\``);
-    const { service, executor, tests, pulls } = makeService(
+    const { service, executor, pulls } = makeService(
       activity,
       [
         plan(),
@@ -21581,42 +21534,43 @@ describe("テストの仕組みが無いリポジトリ（PBI-94）", () => {
         stepReview(),
         out("# 要求要件\n\n- テストの仕組みを用意する"),
         implemented("make check"),
+        // 観点は満たしていると判定しても、用意したテストが通らなければ不合格
+        review(true, 1),
         implemented("make test"),
         review(),
       ],
       {
         realPlanner: true,
         repos: new FilesRepos({ "README.md": "# app" }),
-        tests: new FakeTests([
-          { exitCode: 1, output: "FAIL", durationMs: 5 },
-          { exitCode: 0, output: "ok", durationMs: 5 },
-        ]),
       },
     );
     const { id } = service.createTask({ projectId: "default", title: "テストを用意する" });
     await drain(service);
     service.approve(id, { step: "requirements", submission: 1 });
     await drain(service);
-    // 申告したコマンドで実行する。1回目は通らずにやり直し、2回目のコマンドで通る
-    expect(tests.calls.map((c) => c.command)).toEqual(["make check", "make test"]);
-    const runs = service
+    // 申告したコマンドを、最終レビューでゴールガーディアンに実行させる。1回目は通らずにやり直し、2回目のコマンドで通る
+    expect(promptOf(executor, 5)).toContain("```sh\nmake check\n```");
+    expect(promptOf(executor, 7)).toContain("```sh\nmake test\n```");
+    const reviews = service
       .get(id)
-      ?.activity.flatMap((e) => (e.type === "TestsRun" ? [e.payload] : []));
-    expect(runs?.map((r) => [r.passed, r.unmappedViewpoints])).toEqual([
-      [false, ["REQ"]],
-      [true, ["REQ"]],
+      ?.activity.flatMap((e) => (e.type === "FinalReviewed" ? [e.payload] : []));
+    // 観点にテストが対応していないことでは落とさない
+    expect(reviews?.map((r) => [r.passed, r.tests?.command, r.tests?.exitCode])).toEqual([
+      [false, "make check", 1],
+      [true, "make test", 0],
     ]);
-    // やり直しの指示に、テストの対応が無い観点を挙げない
-    expect(promptOf(executor, 5)).toContain("前回の検証：テストが通りませんでした");
-    expect(promptOf(executor, 5)).not.toContain("テストが対応していない観点");
+    // やり直しの指示に、テストの結果を渡し、テストの対応が無い観点を挙げない
+    expect(promptOf(executor, 6)).toContain("テスト：make check（終了コード 1）");
+    expect(promptOf(executor, 6)).not.toContain("観点を検証できていない");
     const task = taskOf(service, id);
     expect(task.addedTestCommand).toBe("make test");
-    expect(task.testsSkippedAt).toBeUndefined();
     expect(task.gate).toEqual({ step: "implement", submission: 1 });
     // 最終レビューと PR の本文で、実装で用意したテストを使ったことがわかる
-    expect(promptOf(executor, 6)).toContain("sacty は、実装が用意したテストを実行しました");
+    expect(promptOf(executor, 7)).toContain(
+      "実装がテストを用意したので、そのコマンドを実行して確かめてください",
+    );
     expect(pulls.calls[0]?.body).toContain(
-      "テスト：`make test` → 合格（終了コード 0）（実装で用意したテスト）",
+      "テスト：`make test` → 合格（ゴールガーディアンが実行。終了コード 0）（実装で用意したテスト）",
     );
     activity.close();
   });
@@ -21633,7 +21587,7 @@ describe("テストの仕組みが無いリポジトリ（PBI-94）", () => {
         review(false),
       ]).flat(),
     ];
-    const { service, tests } = makeService(activity, outcomes, {
+    const { service } = makeService(activity, outcomes, {
       realPlanner: true,
       repos: new FilesRepos({ "README.md": "# app" }),
     });
@@ -21644,27 +21598,25 @@ describe("テストの仕組みが無いリポジトリ（PBI-94）", () => {
     const task = taskOf(service, id);
     expect(task.status).toBe("paused");
     expect(task.pausedReason).toBe("verification");
-    expect(typesOf(service, id).filter((t) => t === "TestsSkipped")).toHaveLength(
+    expect(typesOf(service, id).filter((t) => t === "FinalReviewed")).toHaveLength(
       MAX_VERIFY_ATTEMPTS,
     );
-    expect(tests.calls).toEqual([]);
-    // 再起動（作業履歴から読み直す）して再開すると、テストを飛ばして目的から判定し直す
+    // 再起動（作業履歴から読み直す）して再開すると、テストなしで目的から判定し直す
     const restarted = makeService(activity, [out("# 実装の説明"), review()], {
       realPlanner: true,
-      tests,
     });
     expect(taskOf(restarted.service, id).noTestsReason).toBe(NO_TESTS);
     restarted.service.resume(id, {});
     await drain(restarted.service);
     const after = taskOf(restarted.service, id);
     expect(after.gate).toEqual({ step: "implement", submission: 1 });
-    expect(tests.calls).toEqual([]);
+    expect(after.lastReview?.tests).toBeUndefined();
     activity.close();
   });
 
   it("実装のテストのコマンドの申告の形が正しくなければ、テストを飛ばさずに止め、再開すると実装をやり直す（PR #105 レビュー指摘）", async () => {
     const activity = new SqliteActivityStore(dbPath);
-    const { service, tests } = makeService(
+    const { service, executor } = makeService(
       activity,
       [
         plan(),
@@ -21686,18 +21638,16 @@ describe("テストの仕組みが無いリポジトリ（PBI-94）", () => {
     const paused = taskOf(service, id);
     expect(paused.status).toBe("paused");
     expect(paused.pausedMessage).toEqual({ code: "implement.testCommandInvalid" });
-    expect(typesOf(service, id)).not.toContain("TestsSkipped");
-    expect(tests.calls).toEqual([]);
+    expect(typesOf(service, id)).not.toContain("FinalReviewed");
     // 再開すると実装をやり直す。読めない申告でも止まる
     service.resume(id, {});
     await drain(service);
     expect(taskOf(service, id).pausedMessage).toEqual({ code: "implement.testCommandInvalid" });
-    expect(typesOf(service, id)).not.toContain("TestsSkipped");
-    expect(tests.calls).toEqual([]);
+    expect(typesOf(service, id)).not.toContain("FinalReviewed");
     // もう一度再開すると、正しい申告のコマンドで検証する
     service.resume(id, {});
     await drain(service);
-    expect(tests.calls.map((c) => c.command)).toEqual(["make test"]);
+    expect(promptOf(executor, executor.calls.length - 1)).toContain("```sh\nmake test\n```");
     expect(taskOf(service, id).gate).toEqual({ step: "implement", submission: 1 });
     activity.close();
   });
@@ -21855,7 +21805,7 @@ describe("非コードの成果と単発作業（PBI-112）", () => {
 
   it("ユーザー文書を実装なしで作成し、差戻し後の成果を承認して完了できる", async () => {
     const activity = new SqliteActivityStore(dbPath);
-    const { service, executor, repos, tests, pulls } = makeService(
+    const { service, executor, repos, pulls } = makeService(
       activity,
       [out("# 利用手順 v1"), out("# 利用手順 v2")],
       { planner: planner("document") },
@@ -21877,7 +21827,6 @@ describe("非コードの成果と単発作業（PBI-112）", () => {
     expect(isCompleted(service.get(id)?.task as Task)).toBe(true);
     expect(executor.calls).toHaveLength(2);
     expect(repos.prepared).toEqual([]);
-    expect(tests.calls).toEqual([]);
     expect(pulls.calls).toEqual([]);
     activity.close();
   });

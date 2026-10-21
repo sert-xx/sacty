@@ -451,7 +451,8 @@ export type Task = {
   /** 実装の最新の提出が申告した、観点とテストの対応。 */
   testMap: TestMapping[];
   /**
-   * 実装の検証の進み具合。pending：テストの実行待ち、tests_passed：最終レビュー待ち。
+   * 実装の検証の進み具合。pending：最終レビュー（ゴールガーディアンがテストを実行して判定する）待ち。tests_passed は、それより
+   * 前の版の記録だけ（sacty がテストのコンテナで実行したテストに通り、最終レビュー待ち）。
    * 検証が終わる（合格・不合格）と undefined に戻る。
    */
   verification?: "pending" | "tests_passed";
@@ -462,7 +463,10 @@ export type Task = {
   publishPending?: true;
   /** 検証が続けて通らなかった回数。人間が再開するか、検証に通ると0に戻る。 */
   verifyFailures: number;
-  /** 最新のテストの実行結果と、最終レビュー。 */
+  /**
+   * 最新の、sacty がテストのコンテナで実行したテストの結果（それより前の版の記録だけ。今の版は、最終レビューの tests に
+   * ゴールガーディアンが実行したテストがある）と、最終レビュー。
+   */
   lastTests?: TestsRunResult;
   lastReview?: FinalReview;
   /** 最新の統合レビュー（PBI-31）。 */
@@ -908,6 +912,9 @@ export function applyEvent(
           task.testMap = event.payload.testMap;
           task.addedTestCommand = event.payload.testCommand;
           task.verification = "pending";
+          // 前の回のテストの結果を、今回の検証の結果に見せない（今の版は、テストを最終レビューの中で実行する）
+          task.lastTests = undefined;
+          task.testsSkippedAt = undefined;
         }
         task.outputs = { ...task.outputs, [event.payload.step]: event.payload.output };
         // 提出の前のセルフレビュー（PBI-120）。報告をさせない工程・それより前の記録では、前の報告を残さない
@@ -1214,7 +1221,7 @@ export function applyEvent(
       break;
 
     case "FinalReviewed": {
-      if (task.status !== "idle" || task.verification !== "tests_passed") {
+      if (task.status !== "idle" || task.verification === undefined) {
         throw new ActivityIntegrityError(event, "final review is not pending");
       }
       const review = { ...event.payload, at: event.at };
@@ -1697,7 +1704,7 @@ export function applyEvent(
       break;
 
     case "FinalReviewFailed":
-      if (task.status !== "idle" || task.verification !== "tests_passed") {
+      if (task.status !== "idle" || task.verification === undefined) {
         throw new ActivityIntegrityError(event, "final review is not pending");
       }
       break;

@@ -539,18 +539,19 @@ const TaskSplit = z.object({
 });
 
 /**
- * 再現の工程の後に、sacty がテストを実行して再現を確かめた（PBI-29）。テストが失敗したら再現できたとして
- * 実装へ進む（人間の承認なし）。通った・再現のテストが無いなら、再現できなかったとして人間の判断を待つ。
+ * 再現の工程の後に、再現を確かめた結果を記録した（PBI-29）。再現の工程のエージェントが自分でテストを実行し、失敗することを
+ * 確かめて申告したもの（それより前の版では、sacty がテストのコンテナで実行した結果）。再現できたら実装へ進む（人間の承認なし）。
+ * 再現できなかった・再現のテストが無い・申告が無いなら、再現できなかったとして人間の判断を待つ。
  */
 const ReproductionChecked = z.object({
   type: z.literal("ReproductionChecked"),
   payload: z.object({
     reproduced: z.boolean(),
     tests: z.array(z.string()),
-    /** 実行したテストのコマンド（再現のテストが無く、実行しなかったときは無い）。 */
+    /** 実行したテストのコマンド（再現のテストが無く、実行しなかったとき・申告が無いときは無い）。 */
     command: z.string().optional(),
     exitCode: z.number().int().optional(),
-    /** 出力の末尾。 */
+    /** 出力の末尾（再現の工程のエージェントの申告では、エージェントが写した失敗の抜粋）。 */
     output: z.string().default(""),
     note: DaemonText.optional(),
     durationMs: z.number().int().nonnegative().default(0),
@@ -952,8 +953,9 @@ const RepositoryPrepared = z.object({
 });
 
 /**
- * sacty がテストを実行した結果。終了コードが0で、すべての観点にテストが対応していれば合格。
+ * sacty がテストのコンテナでテストを実行した結果。終了コードが0で、すべての観点にテストが対応していれば合格。
  * 不合格なら実装をやり直す（続けて通らなければ一時停止）。
+ * 今の版は記録しない（テストはゴールガーディアンが最終レビューの中で実行する）。それより前の作業履歴を読むために残す。
  */
 const TestsRun = z.object({
   type: z.literal("TestsRun"),
@@ -974,6 +976,7 @@ const TestsRun = z.object({
 /**
  * テストの仕組みが無いタスク（StepsChosen の noTestsReason。PBI-94）で、テストのコマンドが無いので、テストを実行せずに
  * 最終レビューへ進めた。ゴールガーディアンが、タスクの目的から受け入れを判定する。
+ * 今の版は記録しない（最終レビューへそのまま進む）。それより前の作業履歴を読むために残す。
  */
 const TestsSkipped = z.object({
   type: z.literal("TestsSkipped"),
@@ -996,6 +999,15 @@ const RemarkReview = z.object({
 });
 
 /** ゴールガーディアンの最終レビュー。観点ごと・人間の指摘ごとに判定する。 */
+/** ゴールガーディアンが最終レビューの中で実行したテスト（ゴールガーディアンの申告）。 */
+export const GuardianTests = z.object({
+  command: z.string(),
+  /** 終了コード（申告が無い・読めなければ無い）。 */
+  exitCode: z.number().int().optional(),
+  /** ゴールガーディアンが写した、テストの結果の抜粋。 */
+  output: z.string().default(""),
+});
+
 const FinalReviewed = z.object({
   type: z.literal("FinalReviewed"),
   payload: z.object({
@@ -1004,6 +1016,8 @@ const FinalReviewed = z.object({
     remarks: z.array(RemarkReview),
     /** 全体への所見（形式を読めなかった場合の理由など）。 */
     summary: DaemonText,
+    /** ゴールガーディアンが実行したテスト（テストのコマンドがあるとき。それより前の版の記録には無い）。 */
+    tests: GuardianTests.optional(),
     agentId: z.string(),
     ...AgentSetting,
     ...RunRef,
@@ -1303,7 +1317,7 @@ const ServicesStarted = z.object({
     ),
     /** 共用の compose（PBI-70）から起動したとき、その名前と、取得したコミット。 */
     compose: z.object({ name: z.string(), commit: z.string() }).optional(),
-    /** テストの実行のための起動か（無ければ工程のエージェントの実行）。 */
+    /** 実装の検証（最終レビューの中のテスト）のための起動か（無ければ工程のエージェントの実行）。 */
     forTests: z.boolean().optional(),
     /** 複数のサービスが使うため、localhost に転送しなかった番号（ホスト・コンテナのポート。PBI-60）。 */
     sharedPorts: z.array(z.number().int()).optional(),
