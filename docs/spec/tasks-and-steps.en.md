@@ -8,7 +8,7 @@ judges change requests, the final review, where to send PR comments back to, and
 
 Approval and Request changes are in [Approval and request changes](approval.en.md); Task split and Integration review are in [Task split and integration review](split-and-integrate.en.md).
 
-Related ADRs: [Remove the "PR作成" step and open the PR and wait for approval inside the Implementation step](../adr/20261015-1430-implement-step-opens-pull-request.md), [Set up the agent configuration for handling a repository with sacty through the "Sacty setup" task template](../adr/20261014-1530-task-template-sacty-setup.md), [In a repository without tests, skip the tests and let the Goal Guardian judge acceptance from the task's goal](../adr/20261015-0000-verify-without-test-command.md)
+Related ADRs: [Remove the "PR作成" step and open the PR and wait for approval inside the Implementation step](../adr/20261015-1430-implement-step-opens-pull-request.md), [Set up the agent configuration for handling a repository with sacty through the "Sacty setup" task template](../adr/20261014-1530-task-template-sacty-setup.md), [In a repository without tests, skip the tests and let the Goal Guardian judge acceptance from the task's goal](../adr/20261015-0000-superseded-verify-without-test-command.md), [The Goal Guardian runs the tests in the final review, and sacty no longer uses a test container](../adr/20261021-1431-guardian-runs-tests.md)
 
 ## How tasks are created
 
@@ -193,7 +193,7 @@ The following are read from the answer (JSON under the heading `sacty-steps`) an
 | --- | --- |
 | `plan`, `reason` | The plan and the reason |
 | `baseBranch` | The base branch. If it differs from the default branch, the workspace is prepared again on that branch (if it cannot be prepared, the task continues on the default branch and the reason is replaced) |
-| `testCommand` | The test (verification) command (run with `sh -c`; exit code 0 passes; 1 to 1000 characters). Even without test code, a check that mechanically validates the artifacts (`kustomize build`, `helm lint`, `kubeconform`, `terraform validate`, `yamllint`, and so on) is asked for when CI, a Makefile or pre-commit runs it, or when the shape of the repository decides it (`kustomization.yaml`, `Chart.yaml`, and so on). It must not be left empty just because no image has the tool ("Verifying the implementation" below). If there is an Implementation step but no command and `noTests` below cannot be used either, the task is paused (`orchestrator.testCommandUnknown`) |
+| `testCommand` | The test (verification) command (the Goal Guardian runs it in the final review; exit code 0 passes; 1 to 1000 characters). Even without test code, a check that mechanically validates the artifacts (`kustomize build`, `helm lint`, `kubeconform`, `terraform validate`, `yamllint`, and so on) is asked for when CI, a Makefile or pre-commit runs it, or when the shape of the repository decides it (`kustomization.yaml`, `Chart.yaml`, and so on). It must not be left empty just because no image has the tool ("Verifying the implementation" below). If there is an Implementation step but no command and `noTests` below cannot be used either, the task is paused (`orchestrator.testCommandUnknown`) |
 | `noTests` | Read only when `testCommand` is empty: the basis for judging that the repository has neither tests nor a verification command (1 to 2000 characters). It is recorded in `noTestsReason` of `StepsChosen` ("Tasks without tests" below) |
 | `investigation` | The kind of investigation (`content`: investigating content, `bug`: investigating a bug) |
 | `images`, `imageReason` | The image per step. If the project's target specifies an image, it is used for all steps without asking. A name not in `images` stops the task |
@@ -276,8 +276,8 @@ Code: `packages/core/src/events.ts` (`SKIPPABLE_STEPS`, `StepsSkipped`), `packag
   The projection sets the step's `images` to `to` and keeps the last change of each step in `imageChanges` (`from`, `to`, time). `StepsChosen` is not rewritten.
 - The changed image is used from the next run of the step (starting a step that hasn't started, a retry, or a rerun after rework). The current run is not stopped.
   A step run fixes its image when `AgentRunStarted` is appended (a change while the run is being prepared does not change that run). The integration review works the same way.
-- Test runs also use the image at the time the tests start (the test image in "Verifying the implementation" below). If the Implementation image is
-  changed while the Implementation step runs, the tests after that run use the changed image.
+- The final review that runs the tests also uses the Implementation step's image at the time the final review starts ("Verifying the implementation" below). If the Implementation image is
+  changed while the Implementation step runs, the final review after that run uses the changed image.
 - Tasks whose project target specifies an image can be changed too. The person's change takes precedence for that step only (other steps keep the target's image).
   Changing the target's image does not change the images of a task whose steps are already chosen.
 - The screen shows, for each step, the image, where it came from (the time a person changed it and the previous name, the project target, the Orchestrator,
@@ -338,37 +338,68 @@ Code: `apps/daemon/src/activity.ts` (`purgeLegacyPrStepTasks`, `purgeLegacyTasks
 
 ## Verifying the implementation
 
-- When the Implementation step finishes, the task waits for verification (`verification = "pending"`), and the test command is run in a test container. It passes when the exit code is 0 and
-  every verification viewpoint corresponds to a test. The viewpoints are the design's test viewpoints if there is a design, `REPRO` if there is a reproduction, and otherwise `REQ` (the task's purpose when there are no requirements either; "Step review" above).
-- After the tests pass, the task moves to the Goal Guardian's final review. The final review reads the code after implementation and the diff, judges each viewpoint and each comment,
-  and passes only when all are met. If it passes, the task stays in the Implementation step, and sacty opens the implementation PR and the task waits for the Implement approval ("The PR for a verified implementation" below).
-  - The viewpoints are the same as for the test mapping (`finalReviewViewpointIds`). The output format example at the end of the instructions lists every
+- When the Implementation step finishes, the task waits for verification (`verification = "pending"`); sacty gets the diff and moves on to the Goal Guardian's final review.
+  sacty does not run the tests in a separate container (the Goal Guardian runs them inside the final review). If the diff cannot be obtained, the task is paused
+  without a final review (`verify.diffUnavailable`; resuming starts again from getting the diff).
+- The final review runs on a disposable copy of the implemented workspace, on the Implementation step's image (or the Reproduce step's image if absent), with that image's `env`.
+  If that image has been removed from `images`, the task is paused without running it (`verify.testsUnavailable`). If the Implementation step uses services, they are started
+  and connected before the tests ([Services](services.en.md#when-services-start)).
+- If there is a test (verification) command (the Orchestrator's `testCommand`, or for a task without tests, the command the implementation declared), the prompt
+  (`testRunLines`) has the Goal Guardian run that command in the workspace before judging. The prompt says that setup (fetching dependencies and so on) is allowed, that the
+  whole output must be checked, not just the end (every kind of test the command runs), that the tests count as passing only when the exit code is 0 with no failing or erroring tests,
+  and that tests and commands must not be changed to make them pass. It also has the Goal Guardian check that the tests mapped to each viewpoint actually ran and passed (were not skipped or excluded),
+  and the basis of judgment is the diff, plus the implemented code in the workspace and the results of the tests the Goal Guardian ran.
+- The tests it ran are reported in `tests` (`command`, `exitCode`, `output` (an excerpt of the result), `missingCommands`) inside the same `sacty-final-review` as the verdicts.
+  sacty records them in `tests` of `FinalReviewed` (`command` is the command sacty passed; `output` is up to 8,000 characters).
+- The final review judges each viewpoint and each comment, and passes only when all are met. On top of that, sacty applies the following (`extractFinalReview`).
+  - When there is a test command, it passes only when the Goal Guardian reported exit code 0 (no report, or a code other than 0, fails regardless of the viewpoint
+    verdicts).
+  - A viewpoint the implementation did not map to a test fails regardless of the Goal Guardian's verdict, with the reason `review.viewpointUnmapped`
+    (the prompt also says to fail that viewpoint). This does not apply to a task without tests.
+  - The viewpoints are the design's test viewpoints if there is a design, `REPRO` if there is a reproduction, and otherwise `REQ` (the task's purpose when there are no requirements either; "Step review" above),
+    the same as for the test mapping (`finalReviewViewpointIds`). The output format example at the end of the instructions lists every
     viewpoint ID under review as is (`REQ` for a task without a design, `REPRO` for a bug fix), and the instructions say to answer with those IDs (with the fixed
     example `TV-1`, a `REQ` task was answered with the example's ID and treated as having no verdict; PBI-137).
   - A viewpoint without a verdict fails. When the answer uses only IDs that are not under review, it is not reinterpreted: it fails with the reason
     `review.verdictIdMismatch` (the viewpoint and the answered ID differ). If there is no other ID either, the reason is `review.verdictMissing` (no verdict).
 
-  Code: `apps/daemon/src/prompts.ts` (`finalReviewViewpointIds`, `buildFinalReviewPrompt`, `extractFinalReview`)
-- If the tests or the final review do not pass, the implementation is redone. If they fail `MAX_VERIFY_ATTEMPTS` (3) times in a row, the task is paused (`verification`).
-  Resuming resets the count.
-- After the Reproduce step, the reproduction test is run; if the exit code is not 0, the bug is treated as reproduced and the task moves to Implementation. If it is 0 (or no reproduction test
-  was declared), the bug is treated as not reproduced and the task waits for a person's decision (the Reproduce step cannot be approved; request changes or cancel).
-- The test image is the Implementation step's image (or Reproduce's if absent) for verification, and the Reproduce step's image (or Implementation's if absent) for checking reproduction.
-- When a tool written in the test (verification) command is not in the test image (exit code 127, the output has an sh line `<name>: not found` or
-  `<name>: command not found`, and that name is written as a word in the test command), redoing the implementation would not fix it, so the task is
-  paused without recording the test result (`TestsRun`) or the reproduction check (`ReproductionChecked`) (`verify.commandMissing`. It shows the tool
-  names, the image name and the step, and guides to install them with `packages` or `run` of `images.<name>` and rebuild with `sacty image build`, or to
-  change to another image; for the default image, to add an image to `images`). It stops while still waiting for verification (the reproduction check),
-  so resuming runs the tests again. Names not written in the test command (such as tools used by scripts inside `npm test`) and names containing `/`
-  (such as `./scripts/check.sh`) are repository problems, are not matched, and count as ordinary test failures.
+  If it passes, the task stays in the Implementation step, and sacty opens the implementation PR and the task waits for the Implement approval ("The PR for a verified implementation" below).
 
-  Code: `apps/daemon/src/agents/test-runner.ts` (`missingCommands`), `apps/daemon/src/service.ts` (`verify`, `checkReproduction`, `commandMissingPause`)
-- The implementation deliverable (the task screen and the Implement approval screen) shows the test results and the final review in the correspondence table only for the
-  current submission's verification (`verificationResults`). Test results and final reviews after the verification of a redone implementation has started (`verification` is `pending`), and final
-  reviews older than the latest test result (or, if tests were skipped, the time they were skipped), are treated as the previous submission's: they are shown under the headings "Test run for the
-  previous submission" and "Final review of the previous submission" (that nothing has run or been judged for the current submission yet is shown in the hint (tooltip) next to the heading), and the result in the correspondence table is
+  Code: `apps/daemon/src/prompts.ts` (`finalReviewViewpointIds`, `buildFinalReviewPrompt`, `testRunLines`, `extractFinalReview`)
+- If the final review does not pass, the implementation is redone. The redo prompt gets the review's findings, the tests the Goal Guardian ran (command,
+  exit code, and excerpt), and the viewpoints that were not verified (`feedbackLines`). If it fails `MAX_VERIFY_ATTEMPTS` (3) times in a row, the task is paused
+  (`verification`). Resuming resets the count.
+- When a tool written in the test (verification) command is not in the image: if, among the names the Goal Guardian listed in `missingCommands`, there is one that is written
+  as a word in the test command and contains no `/`, redoing the implementation would not fix it, so no verdict is recorded; the cost spent is recorded in
+  `FinalReviewFailed` and the task is paused (`verify.commandMissing`. It shows the tool names, the image name and the step (Implementation), and guides to install them with `images.<name>`'s
+  `packages` or `run` and rebuild with `sacty image build`, or to change to another image; for the default image, to add an image to
+  `images`). Resuming redoes the final review (running the tests) without redoing the implementation. Names not written in the test command (such as tools used by scripts
+  inside `npm test`) and names containing `/` (such as `./scripts/check.sh`) are repository problems, are not matched, and the review is judged as usual.
+
+  Code: `apps/daemon/src/prompts.ts` (`extractFinalReview`), `apps/daemon/src/service.ts` (`verify`)
+- After the Reproduce step (PBI-29): sacty does not run the reproduction test. The reproduce agent's prompt has it run the test it wrote with the test command itself,
+  confirm that it fails because of the bug, and write `tests`, `reproduced`, `command`, `exitCode`, and `output` (an excerpt of the result) in `sacty-reproduction`
+  (`extractReproduction`). sacty records `ReproductionChecked` in the same append as the step's completion (`reproductionChecked`). Only when a reproduction
+  test was declared, `reproduced` is `true`, and the exit code is not 0 is the bug treated as reproduced, and the task moves to Implementation. Without a declared test it is
+  `reproduce.noTests`, otherwise `reproduce.notChecked`; the bug is treated as not reproduced and the task waits for a person's decision (the Reproduce step cannot be approved;
+  request changes or cancel).
+  - A task that was waiting for sacty's check in an older version (`reproductionPending`) is recorded as not reproduced (`reproduce.notChecked`) on resume or restart,
+    without running the tests (`checkReproduction`).
+
+  Code: `apps/daemon/src/prompts.ts` (`extractReproduction`), `apps/daemon/src/service.ts` (`reproductionChecked`, `checkReproduction`)
+- Activity logs from older versions: `TestsRun` (the result sacty ran in a test container), `TestsSkipped`, and `tests_passed` of `verification` are
+  kept only for reading them (the current version does not record them). `FinalReviewed` and `FinalReviewFailed` are accepted whether `verification` is `pending` or `tests_passed`.
+  The Implementation `AgentRunCompleted` clears the previous test results (`lastTests`, `testsSkippedAt`).
+- The implementation deliverable (the task screen and the Implement approval screen) shows the tests the Goal Guardian ran (`tests` of the final review) as "Tests run by the Goal
+  Guardian" (records from older versions as "Test run"). It shows the test results and the final review in the correspondence table only for the current submission's verification
+  (`verificationResults`). Test results and final reviews after the verification of a redone implementation has started (`verification` is `pending`), and, in records from older
+  versions, final reviews older than the latest test result (or, if tests were skipped, the time they were skipped), are treated as the previous submission's: they are shown under the headings "Tests run by
+  the Goal Guardian for the previous submission" (for records from older versions, "Test run for the previous submission") and "Final review of the previous submission" (that nothing has run
+  or been judged for the current submission yet is shown in the hint (tooltip) next to the heading), and the result in the correspondence table is
   "Not run". For a task without tests, a viewpoint without tests is shown as "Judged by the goal" only when there is a final review of the current submission; while waiting for
   verification (before the judgment by the goal), it is "Not run" (`judgedByGoalForCurrent`).
+- The test line of the PR body writes, after `テスト：`, the command, pass or fail, and `（ゴールガーディアンが実行。終了コード N）` (`resultTableLines`).
+  The chat's explanation of the judgment also shows the command and exit code of the tests the Goal Guardian ran (`chatJudgementLines`).
 
 ### The PR for a verified implementation
 
@@ -431,20 +462,20 @@ test command, and acceptance is judged from the task's goal instead of by tests.
 - The examples of answers to the Orchestrator are shown separately: one that writes `testCommand` and one that writes `noTests` (which cannot choose `bugfix`), and the Orchestrator is told not to
   write both.
 - Verification:
-  - If no test command was reported, the tests are not run; `TestsSkipped` is recorded and the task moves to the final review (`Task.testsSkippedAt`;
-    the previous round's test result is cleared).
-  - If there is a report, the tests are run with that command (the test image and services are the same as for a task with tests). Exit code 0 passes, and
-    a viewpoint not corresponding to a test does not cause a failure (the instructions for redoing do not list viewpoints without tests either).
-  - The final review judges each viewpoint from the task's goal (title and description), the approved requirements (and design, if any), the implementation's description, the diff, the test result (if any), and
+  - If no test command was reported, the task moves to the final review without having tests run (older versions recorded `TestsSkipped`;
+    `Task.testsSkippedAt`).
+  - If there is a report, the Goal Guardian runs that command in the final review (the image and services are the same as for a task with tests). A reported exit code 0 is
+    required, and a viewpoint not corresponding to a test does not cause a failure (the instructions for redoing do not list viewpoints without tests either).
+  - The final review judges each viewpoint from the task's goal (title and description), the approved requirements (and design, if any), the implementation's description, the diff, the results of the tests run (if any), and
     the code after implementation. It is told not to fail the task because there are no tests or because a viewpoint has no corresponding test, and to base its judgment only on what in the implementation's
     description is backed by the code and the diff. The viewpoints (the design's test viewpoints or `REQ`), pass or fail, and
     the redo limit of `MAX_VERIFY_ATTEMPTS` are the same as for a task with tests.
 - Display: the step field of the task screen (test command: none, judged by the goal; the basis is in a hint (tooltip). For tests set up in the implementation, "tests added in the implementation: command" if they passed,
   "failed; redoing" if they failed, and "will run next" while waiting. `testCommandOfNoTests`), the notice on the implementation deliverable (the task screen and the Implement approval screen)
-  ("Not verified by tests" if the latest verification skipped the tests, "Verified by the tests added in the implementation" (success color) if the tests set up in the implementation ran and passed,
+  ("Not verified by tests" if no tests were run (no test command was declared), "Verified by the tests added in the implementation" (success color) if the tests set up in the implementation ran and passed,
   "The tests added in the implementation failed" with the exit code (failure color) if they failed, and "Waiting to run the tests added in the implementation" if the current submission's tests have not run yet
   (`verification` is `pending` and there is a report; the previous submission's result is not shown). `addedTestsResult`), the test line of the PR body (`テスト：テストのコマンドが無いため、テストでは検証していません。
-  目的から判定しました。`, with `（実装で用意したテスト）` for tests set up in the implementation) and the basis line, and the Activity (`StepsChosen`, `TestsSkipped`).
+  目的から判定しました。`, with `（実装で用意したテスト）` for tests set up in the implementation) and the basis line, and the Activity (`StepsChosen`; in records from older versions, also `TestsSkipped`).
   A person's Implement approval is still required, as for a task with tests.
 
 Code: `apps/daemon/src/service.ts` (`checkNoTests`, `runNextInner`, `verify`), `apps/daemon/src/test-files.ts` (`findTestFiles`, `looksLikeTestFile`, `noTestsStop`, `TEST_FILE_SCAN_LIMIT`), `apps/daemon/src/prompts.ts` (`buildOrchestratorPrompt`, `extractStepPlan`, `buildPrompt`, `extractBlocks`, `extractTestCommandFences`, `buildFinalReviewPrompt`, `noTestsReasonLines`, `resultTableLines`), `packages/core/src/events.ts` (`StepsChosen`, `AgentRunCompleted`, `TestsSkipped`), `packages/core/src/projection.ts` (`noTestsReason`, `addedTestCommand`, `testsSkippedAt`), `apps/web/src/components/implementation.tsx`, `apps/web/src/lib/labels.ts` (`addedTestsResult`, `testCommandOfNoTests`)
@@ -456,7 +487,7 @@ The AI is `guardian_agent` (or `default_agent` if absent). For each run it makes
 | Role | What it reads | Verdict |
 | --- | --- | --- |
 | Judging change requests | The code at the base | `approved`, `rejected`, `undecidable`. If it cannot read or fails, `undecidable`, which goes to a person's decision (Escalation) |
-| Final review | The code after implementation and the diff (for a task without tests, also the task's goal and the implementation's description) | Pass or fail ("Verifying the implementation" above) |
+| Final review | The code after implementation and the diff, and the tests it runs itself (when there is a test (verification) command; it runs on the Implementation step's image) (for a task without tests, also the task's goal and the implementation's description) | Pass or fail ("Verifying the implementation" above) |
 | Deciding where to send PR comments back to | The code after implementation for the implementation PR; the code at the base for the Requirements and Design PRs | The step to go back to, or `undecidable` ([Approval and request changes](approval.en.md)) |
 | Integration review | The latest base branch | This AI if `step_agents.integrate` is absent ([Task split and integration review](split-and-integrate.en.md)) |
 
@@ -476,7 +507,7 @@ Code: `apps/daemon/src/service.ts` (`judge`, `settleEvents`, `runGuardian`, `ver
 - Pause reasons (`PauseReason`): `budget`, `usage_limit` (the AI's usage limit), `auth` (an authentication error or missing secret), `error`,
   `verification`, `manual` (a person paused it), `child_cancelled` (a child task was canceled). A failed AI run pauses the task with that reason
   (`manual` if a person had paused it). There is no mechanism to resume automatically after a while.
-- Pausing by a person: a task cannot be paused while waiting for approval, in Escalation, waiting for child tasks, or while the Goal Guardian is judging. If it is running, the container, tests,
+- Pausing by a person: a task cannot be paused while waiting for approval, in Escalation, waiting for child tasks, or while the Goal Guardian is judging. If it is running, the container
   and service startup are stopped before recording. If any container cannot be confirmed as stopped, the task does not resume until that is confirmed.
 - Resume: if the status before the pause was waiting to run, the stopped step is run again. Resume is rejected for an Operation that has started, keeping the task paused.
 - Cancel: a task cannot be canceled while the Goal Guardian is judging. Cleanup proceeds in the following order, and the result (`done`, `skipped`, `failed`) for each target (`container`, `workspace`, `session`, `branch`,

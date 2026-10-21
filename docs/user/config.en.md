@@ -24,13 +24,13 @@ Per-project settings (targets, GitHub accounts, the context repository, and so o
 | `budget.default_per_task_usd` | Budget per task (US dollars. A number greater than 0) | `1` |
 | `budget.per_plan_usd` | Budget per step plan (US dollars. A number greater than 0. [Budget](#budget)) | None (`budget.default_per_task_usd`) |
 | `budget.default_per_audit_usd` | Budget per audit (US dollars. A number greater than 0. Separate from the task budget. [Audits](audit.en.md#budget)) | `1` |
-| `image` | The image used to run agents and tests | `sacty-agent:1.7.1` |
+| `image` | The image used to run agents | `sacty-agent:1.7.1` |
 | `image_build` | The base image and npm settings for `sacty image build` ([Container images](images.en.md)) | None |
 | `images` | Images per language ([Container images](images.en.md#per-language-images)) | None |
 | `onepassword.account` | The 1Password account to use ([Secrets](secrets.en.md#1password)) | None |
 | `gateway` | The gateway on the host ([Gateway](gateway.en.md)) | None |
 | `web.auth` | Web UI sign-in. With `false`, you can use the web UI without opening the sign-in URL (for the risk and how to switch, see [CLI](cli.en.md#sacty-up)). Read only when `sacty up` starts | `true` |
-| `run_timeout` | Limits of one agent run and one test command run (minutes; 1 to 720). `agent_minutes` (agents), `test_minutes` (tests), and per-role overrides in `roles` (for example `implement: 90`, `guardian: 45`). When a limit passes, the container is stopped and the task is paused. Changes apply from the next run | `agent_minutes: 30`, `test_minutes: 20` |
+| `run_timeout` | Limit of one agent run (minutes; 1 to 720). `agent_minutes` (agents), `test_minutes` (added to `agent_minutes` for the final review `final-review` and the reproduction `reproduce`, which run tests), and per-role overrides in `roles` (for example `implement: 90`, `guardian: 45`; an override is used as is). When a limit passes, the container is stopped and the task is paused. Changes apply from the next run | `agent_minutes: 30`, `test_minutes: 20` |
 | `update_check` | Checks daily for a newer sacty release and shows it in the web UI ([Updating sacty](getting-started.en.md#updating-sacty)). Set `false` where the internet is not reachable (GitHub is not contacted) | `true` |
 
 You set the intake interval for each kind of intake in "Sacty settings" in the web UI, not in config.yaml ([Intake](intake.en.md#intake-intervals)).

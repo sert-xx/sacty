@@ -5,16 +5,16 @@
 # docker compose services (databases, mock APIs, and so on)
 
 For repositories that need a database or mock API started with docker compose for tests or manual checks, sacty starts the services on the host and connects
-the agent and test containers to their network (agents are not given Docker privileges). When you use the target repository's own compose file,
+the agent containers (including the final review that runs the tests) to their network (agents are not given Docker privileges). When you use the target repository's own compose file,
 no configuration is needed.
 
 ## How services are started
 
 - The Orchestrator decides which services in which compose file to use, and in which steps (Implementation, Reproduce, bug Investigation), when it chooses the steps,
   by reading the repository (compose files, README, AGENTS.md, and test configuration). Services are not started for an Investigation of content (as opposed to a bug Investigation).
-- For each agent run of a step and each test run, sacty starts the services under a separate project name (`docker compose up --wait`) and removes the containers,
+- For each agent run of a step and each final review that runs the tests (it uses the Implementation step's services), sacty starts the services under a separate project name (`docker compose up --wait`) and removes the containers,
   networks, and volumes when it finishes. Tasks in the same repository can run in parallel without colliding. Data is discarded after each run.
-- Agents and tests connect by service name and container port (for example `db:5432`). sacty starts the services with `ports` (host ports) and `container_name`
+- Agents (and the tests they run) connect by service name and container port (for example `db:5432`). sacty starts the services with `ports` (host ports) and `container_name`
   removed.
 - Images of services that do not build (only `image`) are pulled by the host's Docker, using the names written in the compose file (for images in your
   organization's registry, run `docker login` on the host beforehand). Services that build (`build`) do not use the written `image` name; they are built under a
@@ -25,7 +25,7 @@ no configuration is needed.
 ## Reaching services via localhost
 
 So that the repository's configuration still works when it points at localhost, in runs that start services, sacty forwards
-`127.0.0.1:<port>` (and `[::1]:<port>` when available) inside the agent and test containers to the same port of the service (`<service-name>:<port>`). The forwarding is a small TCP forwarder
+`127.0.0.1:<port>` (and `[::1]:<port>` when available) inside the agent containers to the same port of the service (`<service-name>:<port>`). The forwarding is a small TCP forwarder
 that sacty starts inside the container before the command (it runs on the Node.js in the image, so no extra packages are needed), and it
 stops when the command finishes. The command's exit code and output do not change. In runs that do not start services, nothing changes (the command is the same).
 
@@ -39,8 +39,8 @@ stops when the command finishes. The command's exit code and output do not chang
   the host takes priority (`localhost:8080` → `app:80`; `app:8080` is reached from `localhost:18080`).
 - When several services use the same number on localhost (host side or container side), that number is not forwarded (because sacty cannot decide
   which one to connect to; connect by service name instead). The number is shown in the service start record in the Activity and in the instructions to the agent.
-- When something else inside the container is already using the port, that port is not forwarded and the run continues (it does not fail). The reason is written to the test output
-  (standard error) or to the daemon log (agent runs).
+- When something else inside the container is already using the port, that port is not forwarded and the run continues (it does not fail). The reason is written to the daemon log
+  (from the standard error of the agent run).
 - Limitations: forwarding is TCP only. Clients such as the MySQL client that connect over a UNIX socket instead of TCP when the host is written as `localhost` cannot reach the service
   (writing `127.0.0.1` works). Also, if the app under test listens on the same port as a service, it collides with the forwarding and cannot listen
   (change the app's port, or connect by service name).
@@ -77,7 +77,7 @@ compose" in the project settings (you can add more than one; it is included in e
   and selects it by name only when needed (either it or the target repository's compose, not both). Tasks that do not need it neither fetch nor start it. The reason for using or not using it,
   and which shared compose (repository, ref, file) is used, are recorded in the Activity (the task page). In the description, writing which services it starts and which
   tests need them helps the decision.
-- Before a step or test run, sacty fetches the repository. It updates the per-repository cache (`$SACTY_HOME/cache/shared-compose`) to the latest commit of the ref on every
+- Before a step or final review run, sacty fetches the repository. It updates the per-repository cache (`$SACTY_HOME/cache/shared-compose`) to the latest commit of the ref on every
   run, writes that commit's contents to a per-run directory, starts the services from there, and removes it when finished (so that parallel tasks do not overwrite
   each other's initialization scripts). Startup and safety checks are the same as for the target repository's compose (a per-run project name,
   `up --wait` to wait for healthchecks, and no host ports published). Only paths inside the fetched repository can be mounted (mounts relative to the compose file

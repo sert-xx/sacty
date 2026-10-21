@@ -97,19 +97,28 @@ account. Nothing is posted unless you approve.
 
 ## Test (verification) commands
 
-To verify the implementation, sacty runs the test (verification) command that the orchestrator chose by reading the repository, in a test container.
+To verify the implementation, the Goal Guardian runs the test (verification) command that the orchestrator chose by reading the repository, inside the final review.
+The Goal Guardian uses the Implementation step's image and a copy of the implemented code, checks the whole output of the command (every kind of test the
+command runs, such as unit and integration tests), and judges from that result, the diff, and the code. sacty does not run the tests separately.
 Even a repository without test code uses a check that mechanically validates its artifacts, if there is one.
 
 - For a repository of Kubernetes manifests, that is `kustomize build`, `helm lint` or `kubeconform`; for Terraform, `terraform validate`;
   for YAML, `yamllint`, and so on. sacty uses what CI, a Makefile or pre-commit runs, or what the shape of the repository decides (`kustomize build`
   when there is a `kustomization.yaml`, and so on).
 - The chosen command appears as "Test command" in the Steps section of the task details.
+- The command, exit code, and an excerpt of the result of the tests the Goal Guardian ran appear under "Tests run by the Goal Guardian" in the implementation deliverable.
+  The test line of the PR body also shows "（ゴールガーディアンが実行。終了コード N）".
+- If the Goal Guardian does not report exit code 0, or if there is a viewpoint the implementation did not map to a test, the final review fails and
+  the implementation is redone (the redo receives the results of the tests the Goal Guardian ran).
+- In the Reproduce step of a bug fix, the reproduce agent runs the test it wrote itself and reports that it fails because of the bug.
+  If it does not report that it confirmed this, the task stops as not reproduced. Request changes with hints for reproducing it to redo the reproduction.
 
 ### When the verification tool is not in the image
 
-If a tool written in the test command (such as `kubeconform`) is not in the image that runs the tests, the task pauses without redoing the
-implementation and shows "The test (verification) command uses …, which is not in the image that runs the tests (…)". Fix the image as guided, then
-press "Resume". Resuming runs the tests again without redoing the implementation.
+If a tool written in the test command (such as `kubeconform`) is not in the image that runs the tests (the Implementation step's image), the Goal Guardian
+reports it, and the task pauses without redoing the implementation and shows "The test (verification) command uses …, which is not in the image that runs the tests (…)".
+Fix the image as guided, then press "Resume". Resuming redoes the final review (running the tests) without redoing the
+implementation.
 
 1. In `images` of `config.yaml`, add the tool to that image's `packages` (OS packages) or `run` (install commands).
    If it stopped on the default image, add an image with the tool to `images` and name the tool in its `description` too
@@ -126,11 +135,11 @@ press "Resume". Resuming runs the tests again without redoing the implementation
    ```
 
 2. Rebuild the image with `npx sacty image build <name>`.
-3. If you added a new image, change the image of the Implementation step (the Reproduce step if it stopped while checking the reproduction of a
-   bug fix) under "Step images" in the task details ([Changing a step's image](images.en.md#changing-a-steps-image)).
+3. If you added a new image, change the image of the Implementation step
+   under "Step images" in the task details ([Changing a step's image](images.en.md#changing-a-steps-image)).
 
 If a tool not written directly in the test command (such as a tool used by a script inside `npm test`) is not found, it is treated as a problem
-with the repository's dependencies, and the implementation is redone like any other test failure.
+with the repository's dependencies, and the implementation is redone like any other test failure (here too, the Goal Guardian runs the tests).
 
 ## Repositories without tests
 

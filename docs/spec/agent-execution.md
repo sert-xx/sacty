@@ -3,9 +3,10 @@
 # エージェントの実行
 
 工程・オーケストレーター・ゴールガーディアン・質問への答え・書き出しは、どれも AI のエージェント（Claude Code か Codex）を
-docker のコンテナの中で1回実行して行う。テストの実行も、同じイメージのコンテナで行う。
+docker のコンテナの中で1回実行して行う。テストは、sacty が別のコンテナで実行せず、ゴールガーディアン（最終レビュー）と再現の工程のエージェントが、
+それぞれのコンテナの中で実行する。
 
-関係する ADR: なし
+関係する ADR: [ゴールガーディアンが最終レビューの中でテストを実行し、sacty はテストのコンテナを使わない](../adr/20261021-1431-guardian-runs-tests.md)
 
 ## コンテナ
 
@@ -20,14 +21,15 @@ docker のコンテナの中で1回実行して行う。テストの実行も、
   docker コマンドのプロセスに残すホストの環境変数は `PATH`・`HOME`・`DOCKER_HOST`・`DOCKER_CONTEXT`・`DOCKER_CONFIG`・`TMPDIR` だけで、
   コンテナには、sacty が決めた変数（認証・設定の場所・イメージの `env` など）だけが入る。同じ名前は、実行の側がイメージの `env` より優先。
 - 実行全体の上限は、`config.yaml` の `run_timeout`（PBI-150）で決める。役割（工程・`guardian`・`orchestrator` など）の `roles` の上書きがあればそれ、
-  無ければ `agent_minutes`（既定 30 分。`AGENT_RUN_TIMEOUT_MS`）。設定を読めなければ 30 分。実行ごとに読むので、次の実行から効く。
+  無ければ `agent_minutes`（既定 30 分。`AGENT_RUN_TIMEOUT_MS`）。テストを実行する役割（`final-review`・`reproduce`）は、上書きが無ければ
+  `agent_minutes` に `test_minutes`（既定 20 分）を足した分。設定を読めなければ 30 分。実行ごとに読むので、次の実行から効く。
   過ぎたらコンテナを止め、時間切れ（`run.timeout`。その実行の上限の分を添える）にする。
 - 止めるときは `docker kill` し、`docker ps -aq --filter name=^/<名前>$` が空になるまで、1秒おきに最大11回確かめる。止まったことを
   確かめられなければ、結果を `run.containerNotConfirmed` にし、認証ファイルの書き戻しとセッションのファイルの保存をしない。
 - 標準エラー出力に `Unable to find image`・`No such image`・`pull access denied` があれば、イメージが無い（`run.imageMissing`）とする。
 - 標準エラー出力は先頭 64KB と末尾 256KB だけを持つ。
 
-コード: `apps/daemon/src/agents/docker.ts`（`dockerRunArgs`・`dockerClientEnv`・`DockerExecutor`・`RunningContainers`）、`apps/daemon/src/context.ts`（`AGENT_RUN_TIMEOUT_MS`）、`apps/daemon/src/run-timeouts.ts`（`agentTimeoutMs`・`testTimeoutMs`・`RUN_TIMEOUT_ROLES`）、`apps/daemon/src/service.ts`（`executeLogged`・`runTests`）
+コード: `apps/daemon/src/agents/docker.ts`（`dockerRunArgs`・`dockerClientEnv`・`DockerExecutor`・`RunningContainers`）、`apps/daemon/src/context.ts`（`AGENT_RUN_TIMEOUT_MS`）、`apps/daemon/src/run-timeouts.ts`（`agentTimeoutMs`・`RUN_TIMEOUT_ROLES`）、`apps/daemon/src/service.ts`（`executeLogged`）
 
 ## 実行のコマンド
 
@@ -167,16 +169,18 @@ docker のコンテナの中で1回実行して行う。テストの実行も、
     無ければ `GH_HOST`）。フィールド（`-f`・`-F`）は、REST ではクエリ、GraphQL では `query` と変数にする。`--paginate`（REST は `link` を
     たどって配列をまとめる。GraphQL は `$endCursor` と `pageInfo`）・`--jq`（`jq` があるとき）・`-i`・`-H`・`--input` を受ける。
     書き込みのメソッドと、ほかのコマンドは、使い方を示して終了コード 1 で終わる（[ゲートウェイ](gateway.md#github-の読み取りの中継)）。
-- イメージの `env` は、エージェントとテストの両方のコンテナに渡す。
+- イメージの `env` は、そのイメージで動くエージェントのコンテナ（テストを実行する最終レビューを含む）に渡す。
 
 コード: `apps/daemon/src/config.ts`（`resolveImage`・`languageImageTag`・`DEFAULT_IMAGE`）、`apps/daemon/src/image.ts`（`buildImage`・`imageBuildArgs`・`imageBuildSettings`・`imageBuildTargets`）、`packages/cli/docker/Dockerfile`
 
 ## テストの実行
 
-- エージェントと同じ `docker run` の形（秘密情報・認証ファイル・ゲートウェイは渡さない）で、`sh -c <テストのコマンド>` を実行する。
-  イメージの `env` は渡す。
-- 上限は `config.yaml` の `run_timeout.test_minutes`（既定 20 分。PBI-150）。過ぎたら止め、基盤の失敗（`infrastructure`）にする。
-- 出力は標準出力と標準エラー出力を合わせた末尾の 20,000 文字（`TEST_OUTPUT_TAIL`）だけを残す。合否は終了コードで決める
-  （docker の失敗の `125` は基盤の失敗）。
+- sacty は、テストのコマンドを自分のコンテナで実行しない。実装の検証のテストは、ゴールガーディアンが最終レビューの中で実行し、再現のテストは
+  再現の工程のエージェントが実行して、どちらも結果（コマンド・終了コード・結果の抜粋）を申告する（[タスクと工程](tasks-and-steps.md#実装の検証)）。
+- 最終レビューは、実装の工程のイメージ（無ければ再現の工程のイメージ）で、そのイメージの `env` を渡して、実装後の作業領域の使い捨ての写しで動かす。
+  サービスを使う実装なら、そのサービスにつなぐ（[サービス](services.md)）。
+- テストのコードは、エージェントのコンテナの中で動くので、ほかのエージェントの実行と同じく、コンテナにあるエージェントの認証の値と、
+  ゲートウェイを使う実行では実行ごとのゲートウェイのトークンに触れられる。
+- 時間の上限は、テストを実行する役割の上限（上の「コンテナ」。役割の上書きが無ければ `agent_minutes` + `test_minutes`）。
 
-コード: `apps/daemon/src/agents/test-runner.ts`（`DockerTestRunner`・`TEST_OUTPUT_TAIL`・`DOCKER_RUN_FAILED`）
+コード: `apps/daemon/src/service.ts`（`verify`・`runGuardian`）、`apps/daemon/src/run-timeouts.ts`（`agentTimeoutMs`）

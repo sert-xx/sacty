@@ -164,7 +164,7 @@ On SIGINT or SIGTERM, the daemon does the following, only once.
 1. It stops the git processes fetching contexts for retrieving secrets (they run in their own process groups) together with their groups (`stopFetchProcessesSync`).
 2. It starts stopping the worker (no new runs start, and it waits for in-progress work to clean up), intake, and PR watching.
 3. It starts stopping the host MCP servers and the context's command MCP servers (without waiting for cleanup; for the context's servers, the layer copies are also removed).
-4. It stops the running agent and test containers.
+4. It stops the running agent containers.
 5. It waits up to 20 seconds (`DRAIN_TIMEOUT_MS`) for the cleanup in step 2. After that, it shows a warning and continues.
 6. It closes the gateway, waits for the host MCP servers to stop, closes the API listener, then closes the DB, releases the lock (also removing the
    `daemon-owner.json` it wrote), and exits with exit code 0.

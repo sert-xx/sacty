@@ -3,9 +3,10 @@
 # Agent execution
 
 Steps, the Orchestrator, the Goal Guardian, answers to questions, and export are all carried out by running an AI agent (Claude Code or Codex)
-once inside a docker container. Tests also run in a container from the same image.
+once inside a docker container. sacty does not run tests in a separate container; the Goal Guardian (the final review) and the Reproduce step's agent
+run them inside their own containers.
 
-Related ADRs: none
+Related ADRs: [The Goal Guardian runs the tests in the final review, and sacty no longer uses a test container](../adr/20261021-1431-guardian-runs-tests.md)
 
 ## Container
 
@@ -20,14 +21,15 @@ Related ADRs: none
   The only host environment variables kept in the docker command's process are `PATH`, `HOME`, `DOCKER_HOST`, `DOCKER_CONTEXT`, `DOCKER_CONFIG`, and `TMPDIR`;
   the container receives only variables sacty decides (authentication, the config location, the image's `env`, and so on). For the same name, the run's value takes precedence over the image's `env`.
 - The limit for the whole run is set by `run_timeout` in `config.yaml` (PBI-150): the role's override in `roles` (a step, `guardian`, `orchestrator`, and so on) if present,
-  otherwise `agent_minutes` (default 30 minutes; `AGENT_RUN_TIMEOUT_MS`). If the config cannot be read, 30 minutes. It is read for every run, so changes apply from the next run.
+  otherwise `agent_minutes` (default 30 minutes; `AGENT_RUN_TIMEOUT_MS`). For the roles that run tests (`final-review`, `reproduce`), without an override it is
+  `agent_minutes` plus `test_minutes` (default 20 minutes). If the config cannot be read, 30 minutes. It is read for every run, so changes apply from the next run.
   When it passes, the container is stopped and the run times out (`run.timeout`, with that run's limit in minutes).
 - To stop a container, sacty runs `docker kill` and checks up to 11 times, once per second, until `docker ps -aq --filter name=^/<name>$` is empty. If it cannot
   confirm the container stopped, the result is `run.containerNotConfirmed`, and the auth file is not written back and the session files are not saved.
 - If standard error contains `Unable to find image`, `No such image`, or `pull access denied`, the image is treated as missing (`run.imageMissing`).
 - Only the first 64KB and the last 256KB of standard error are kept.
 
-Code: `apps/daemon/src/agents/docker.ts` (`dockerRunArgs`, `dockerClientEnv`, `DockerExecutor`, `RunningContainers`), `apps/daemon/src/context.ts` (`AGENT_RUN_TIMEOUT_MS`), `apps/daemon/src/run-timeouts.ts` (`agentTimeoutMs`, `testTimeoutMs`, `RUN_TIMEOUT_ROLES`), `apps/daemon/src/service.ts` (`executeLogged`, `runTests`)
+Code: `apps/daemon/src/agents/docker.ts` (`dockerRunArgs`, `dockerClientEnv`, `DockerExecutor`, `RunningContainers`), `apps/daemon/src/context.ts` (`AGENT_RUN_TIMEOUT_MS`), `apps/daemon/src/run-timeouts.ts` (`agentTimeoutMs`, `RUN_TIMEOUT_ROLES`), `apps/daemon/src/service.ts` (`executeLogged`)
 
 ## Run commands
 
@@ -169,16 +171,18 @@ Code: `apps/daemon/src/agent-sessions.ts` (`SOURCES`, `selectAgentSessionFiles`,
     `GH_HOST`). Fields (`-f`, `-F`) become the query for REST, and `query` and variables for GraphQL. It accepts `--paginate` (for REST it follows `link` and
     merges the arrays; for GraphQL, `$endCursor` and `pageInfo`), `--jq` (when `jq` exists), `-i`, `-H`, and `--input`.
     Write methods and other commands print the usage and exit with code 1 ([Gateway](gateway.en.md#relaying-github-reads)).
-- The image's `env` is passed to both agent and test containers.
+- The image's `env` is passed to the agent containers that run on that image (including the final review that runs the tests).
 
 Code: `apps/daemon/src/config.ts` (`resolveImage`, `languageImageTag`, `DEFAULT_IMAGE`), `apps/daemon/src/image.ts` (`buildImage`, `imageBuildArgs`, `imageBuildSettings`, `imageBuildTargets`), `packages/cli/docker/Dockerfile`
 
 ## Running tests
 
-- `sh -c <test command>` runs with the same `docker run` form as agents (without secrets, auth files, or the gateway).
-  The image's `env` is passed.
-- The limit is `run_timeout.test_minutes` in `config.yaml` (default 20 minutes; PBI-150). When it passes, the run is stopped and treated as an infrastructure failure (`infrastructure`).
-- Only the last 20,000 characters of combined standard output and standard error (`TEST_OUTPUT_TAIL`) are kept. Pass or fail is decided by the exit code
-  (docker's failure code `125` is an infrastructure failure).
+- sacty does not run the test command in a container of its own. The Goal Guardian runs the tests for verifying the implementation inside the final review,
+  and the Reproduce step's agent runs the reproduction test; both report the result (command, exit code, and an excerpt) ([Tasks and steps](tasks-and-steps.en.md#verifying-the-implementation)).
+- The final review runs on the Implementation step's image (or the Reproduce step's if absent), with that image's `env`, on a disposable copy of the implemented working tree.
+  If the implementation uses services, it is connected to them ([Services](services.en.md)).
+- The test code runs inside an agent container, so, as in any other agent run, it can reach the agent's authentication values in the container and,
+  in runs that use the gateway, the per-run gateway token.
+- The time limit is that of the role running the tests ("Container" above; without a role override, `agent_minutes` + `test_minutes`).
 
-Code: `apps/daemon/src/agents/test-runner.ts` (`DockerTestRunner`, `TEST_OUTPUT_TAIL`, `DOCKER_RUN_FAILED`)
+Code: `apps/daemon/src/service.ts` (`verify`, `runGuardian`), `apps/daemon/src/run-timeouts.ts` (`agentTimeoutMs`)
