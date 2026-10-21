@@ -872,7 +872,7 @@ const ja: MessageDictionary = {
   "image.dockerNotInstalled":
     "docker コマンドが見つかりません。Docker をインストールし、docker コマンドを PATH に通してください。それまで、タスクを実行できません。",
   "image.outdated": ({ image, expected, key, command }) =>
-    `config.yaml の ${key}（${image}）が、動いている Sacty の版のイメージ（${expected}）と違います。\`${key}: ${expected}\` に直してから \`${command}\` で作成してください。`,
+    `config.yaml の ${key}（${image}）が、動いている Sacty の版のイメージ（${expected}）と違います。config.yaml の ${key} の値を \`${expected}\` に直してから \`${command}\` で作成してください。`,
   "run.authFileUnreadable": ({ path }) =>
     `認証ファイル（${path}）を読めません。ログインしているか確認してください。`,
   "run.containerNotConfirmed": ({ name }) =>
@@ -1425,7 +1425,7 @@ const en: MessageDictionary = {
   "image.dockerNotInstalled":
     "The docker command was not found. Install Docker and put the docker command on PATH. Tasks cannot run until then.",
   "image.outdated": ({ image, expected, key, command }) =>
-    `${key} in config.yaml (${image}) does not match the image for the running version of Sacty (${expected}). Change it to \`${key}: ${expected}\`, then create it with \`${command}\`.`,
+    `${key} in config.yaml (${image}) does not match the image for the running version of Sacty (${expected}). Change the value of ${key} in config.yaml to \`${expected}\`, then create it with \`${command}\`.`,
   "run.authFileUnreadable": ({ path }) =>
     `Cannot read the auth file (${path}). Check that you are signed in.`,
   "run.containerNotConfirmed": ({ name }) =>

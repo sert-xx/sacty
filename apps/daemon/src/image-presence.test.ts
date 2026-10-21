@@ -386,8 +386,8 @@ describe("確かめた結果の注意", () => {
       },
     });
     expect(ja(await checker.check())).toEqual([
-      "config.yaml の image（sacty-agent:1.6.0）が、動いている Sacty の版のイメージ（sacty-agent:1.7.1）と違います。`image: sacty-agent:1.7.1` に直してから `npx sacty image build` で作成してください。",
-      "config.yaml の images.java.image（sacty-agent-java:1.6.0）が、動いている Sacty の版のイメージ（sacty-agent-java:1.7.1）と違います。`images.java.image: sacty-agent-java:1.7.1` に直してから `npx sacty image build java` で作成してください。",
+      "config.yaml の image（sacty-agent:1.6.0）が、動いている Sacty の版のイメージ（sacty-agent:1.7.1）と違います。config.yaml の image の値を `sacty-agent:1.7.1` に直してから `npx sacty image build` で作成してください。",
+      "config.yaml の images.java.image（sacty-agent-java:1.6.0）が、動いている Sacty の版のイメージ（sacty-agent-java:1.7.1）と違います。config.yaml の images.java.image の値を `sacty-agent-java:1.7.1` に直してから `npx sacty image build java` で作成してください。",
       "エージェント用のイメージ（sacty-agent-go:1.7.1）がありません。`npx sacty image build go` で作成してください。",
     ]);
     expect(asked).toEqual(["sacty-agent-go:1.7.1"]);
@@ -438,7 +438,7 @@ describe("確かめた結果の注意", () => {
         "en",
       ),
     ).toBe(
-      "image in config.yaml (sacty-agent:1.6.0) does not match the image for the running version of Sacty (sacty-agent:1.7.1). Change it to `image: sacty-agent:1.7.1`, then create it with `npx sacty image build`.",
+      "image in config.yaml (sacty-agent:1.6.0) does not match the image for the running version of Sacty (sacty-agent:1.7.1). Change the value of image in config.yaml to `sacty-agent:1.7.1`, then create it with `npx sacty image build`.",
     );
   });
 });

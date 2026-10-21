@@ -53,3 +53,9 @@ Sacty の起動中に、Docker を使える状態か（Docker デーモンが動
 ## 残したこと
 
 - `config.yaml` の古い `image` を自動では書き換えない（利用者の設定のため、直し方を示すだけにした）。
+
+## レビューの指摘と対応（PR #185）
+
+| 指摘 | 対応 |
+| --- | --- |
+| 【提案】言語ごとのイメージでは、`image.outdated` が `images.java.image: sacty-agent-java:<版>` を直す内容として出す。そのまま config.yaml に写すと、ドットを含む1つのキーになり、`images` → `java` → `image` は直らない（英語の版も） | YAML の書き方を示すのをやめ、「config.yaml の `images.java.image` の値を `sacty-agent-java:<版>` に直す」と、直す場所と値を分けて案内するようにした（日英）。テストの期待する文言も直した |
