@@ -2,7 +2,7 @@
 
 - 日付: 2026-10-21（UTC）
 - タスク: なし
-- PR: なし
+- PR: #184
 - ブランチ: claude/amazing-feynman-m1uk9n
 - 関係する ADR: [工程が終わるごとにオーケストレーターが要らない工程を飛ばし、要求要件・設計を省く組み合わせ direct を足す](../adr/20261021-1207-orchestrator-skips-steps-after-each-step.md)
 
