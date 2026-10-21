@@ -31,7 +31,9 @@ import {
   commentableLines,
   extractBlocks,
   extractExport,
+  extractFinalReview,
   extractIntegrationReview,
+  extractReproduction,
   extractReviewComments,
   extractReviewImage,
   extractSplitPlan,
@@ -1618,7 +1620,7 @@ describe("テストの仕組みが無いタスク（PBI-94）", () => {
     expect(implement).not.toContain("テスト観点ごとに、その観点を検証するテストを書いてください");
     const review = buildFinalReviewPrompt(t, "diff");
     expect(review).toContain("タスクの目的・承認済みの要求要件・設計を");
-    expect(review).toContain("sacty はテストを実行していません");
+    expect(review).toContain("テストのコマンドが無いので、テストは実行しません");
     expect(review).toContain("# セットアップ\n\nAGENTS.md を整える");
     expect(review).toContain("- AGENTS.md を足した");
     expect(review).not.toContain("判断の根拠は、下の差分とテストの結果だけにする");
@@ -1629,8 +1631,14 @@ describe("テストの仕組みが無いタスク（PBI-94）", () => {
     const implement = buildPrompt(t, "implement");
     expect(implement).toContain("テスト観点ごとに、その観点を検証するテストを書いてください");
     expect(implement).not.toContain("sacty-test-command");
-    const review = buildFinalReviewPrompt(t, "diff");
-    expect(review).toContain("判断の根拠は、下の差分とテストの結果だけにする");
+    const review = buildFinalReviewPrompt(t, "diff", { testCommand: "npm test" });
+    expect(review).toContain(
+      "判断の根拠は、下の差分と、作業領域の実装後のコード・あなたが実行したテストの結果だけにする",
+    );
+    // テストは sacty が実行せず、ゴールガーディアンに実行させる
+    expect(review).toContain("--- テスト（検証）の実行 ---");
+    expect(review).toContain("```sh\nnpm test\n```");
+    expect(review).not.toContain("--- テストの結果（sacty が実行） ---");
     expect(review).not.toContain("--- 実装の説明");
     expect(review).not.toContain("--- タスク（目的） ---");
   });
@@ -2558,5 +2566,40 @@ describe("工程の見直しと、要求要件・設計を経ない実装", () =
     const prompt = buildOrchestratorPrompt(taskOf());
     expect(prompt).toContain("- direct：調査 → 実装");
     expect(prompt).toContain("工程が終わるごとに");
+  });
+});
+
+describe("申告されたテストの結果の抜粋（PR #188 レビュー提案）", () => {
+  const block = (b: Record<string, unknown>) => `\`\`\`json\n${JSON.stringify(b)}\n\`\`\``;
+  // 8,000 文字目で、絵文字（サロゲートペア）が切れる長さ
+  const long = `${"a".repeat(7999)}😀tail`;
+  const lone = (text: string) => /[\ud800-\udbff]$/.test(text);
+
+  it("最終レビューの tests.output を、サロゲートペアの途中で切らない", () => {
+    const review = extractFinalReview(
+      block({
+        "sacty-final-review": {
+          viewpoints: [],
+          remarks: [],
+          tests: { command: "npm test", exitCode: 0, output: long },
+          summary: "ok",
+        },
+      }),
+      [],
+      [],
+      { testCommand: "npm test" },
+    );
+    expect(review.tests?.output).toHaveLength(7999);
+    expect(lone(review.tests?.output ?? "")).toBe(false);
+  });
+
+  it("再現の output を、サロゲートペアの途中で切らない", () => {
+    const { check } = extractReproduction(
+      block({
+        "sacty-reproduction": { tests: ["a"], reproduced: true, exitCode: 1, output: long },
+      }),
+    );
+    expect(check?.output).toHaveLength(7999);
+    expect(lone(check?.output ?? "")).toBe(false);
   });
 });

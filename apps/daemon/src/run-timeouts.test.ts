@@ -9,7 +9,6 @@ import {
   agentTimeoutMs,
   DEFAULT_AGENT_TIMEOUT_MINUTES,
   DEFAULT_TEST_TIMEOUT_MINUTES,
-  testTimeoutMs,
 } from "./run-timeouts.js";
 
 /*
@@ -114,12 +113,19 @@ describe("実行に使う上限", () => {
     expect(agentTimeoutMs(timeouts, "guardian")).toBe(15 * 60_000);
     expect(agentTimeoutMs(timeouts, "requirements")).toBe(45 * 60_000);
     expect(agentTimeoutMs(timeouts)).toBe(45 * 60_000);
-    expect(testTimeoutMs(timeouts)).toBe(7 * 60_000);
+  });
+
+  it("テストを実行する役割（最終レビュー・再現）は、上書きが無ければ、既定にテストの上限を足す", () => {
+    expect(agentTimeoutMs(timeouts, "final-review")).toBe((45 + 7) * 60_000);
+    expect(agentTimeoutMs(timeouts, "reproduce")).toBe((45 + 7) * 60_000);
+    expect(agentTimeoutMs({ ...timeouts, roles: { "final-review": 60 } }, "final-review")).toBe(
+      60 * 60_000,
+    );
   });
 
   it("設定を読めなければ、固定の既定", () => {
     expect(agentTimeoutMs(undefined, "implement")).toBe(30 * 60_000);
-    expect(testTimeoutMs(undefined)).toBe(20 * 60_000);
+    expect(agentTimeoutMs(undefined, "final-review")).toBe((30 + 20) * 60_000);
   });
 });
 

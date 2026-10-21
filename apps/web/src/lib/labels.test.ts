@@ -1430,6 +1430,40 @@ describe("今の提出の検証の結果か（PR #105 再レビュー指摘）",
   });
 });
 
+describe("ゴールガーディアンが最終レビューの中で実行したテスト", () => {
+  const review = (exitCode: number | undefined) => ({
+    passed: exitCode === 0,
+    viewpoints: [],
+    remarks: [],
+    summary: "所見",
+    agentId: "g",
+    runId: "r",
+    costUsd: 0,
+    estimated: false,
+    at: "2026-10-15T00:00:00.000Z",
+    tests: {
+      command: "make test",
+      ...(exitCode === undefined ? {} : { exitCode }),
+      output: "2 passed",
+    },
+  });
+  it("最終レビューの tests を、テストの実行として出す（終了コードを申告しなければ不合格）", () => {
+    expect(verificationResults(task({ lastReview: review(0) }))).toMatchObject({
+      tests: { command: "make test", exitCode: 0, passed: true, byGuardian: true },
+      testsCurrent: true,
+      reviewCurrent: true,
+    });
+    expect(verificationResults(task({ lastReview: review(undefined) })).tests?.passed).toBe(false);
+    // 実装で用意したテスト（PBI-94）の結果も、ゴールガーディアンが実行したものから決める
+    const m = taskMessages.ja;
+    const noTests = { noTestsReason: "無い", addedTestCommand: "make test" };
+    expect(addedTestsResult(task({ ...noTests, lastReview: review(1) }))).toBe("failed");
+    expect(testCommandOfNoTests(task({ ...noTests, lastReview: review(0) }), m)).toBe(
+      m.testCommandAdded("make test"),
+    );
+  });
+});
+
 describe("テストの無い観点を、今の提出について目的から判定し終えたか（PR #105 再レビュー指摘）", () => {
   const review = (at: string) => ({
     passed: true,

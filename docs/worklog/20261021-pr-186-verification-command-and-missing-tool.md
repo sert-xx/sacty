@@ -4,7 +4,7 @@
 - タスク: なし
 - PR: #186
 - ブランチ: claude/sweet-johnson-42au4y
-- 関係する ADR: [20261021-1330-verification-command-and-missing-tool](../adr/20261021-1330-verification-command-and-missing-tool.md)
+- 関係する ADR: [20261021-1330-verification-command-and-missing-tool](../adr/20261021-1330-superseded-verification-command-and-missing-tool.md)
 
 ## 目的
 

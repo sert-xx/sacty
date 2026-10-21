@@ -4,7 +4,6 @@ import { serve } from "@hono/node-server";
 import { renderMessage } from "@sacty/core";
 import { purgeLegacyTasksAtStartup, SqliteActivityStore } from "./activity.js";
 import { DockerExecutor } from "./agents/docker.js";
-import { DockerTestRunner } from "./agents/test-runner.js";
 import { MockAuditService } from "./audits.js";
 import { GitHubCiStatus } from "./ci.js";
 import { loadConfig, resolveHome } from "./config.js";
@@ -96,7 +95,6 @@ const secrets = new ResolvingSecretStore(
   }),
 );
 const executor = new DockerExecutor();
-const tests = new DockerTestRunner();
 // docker compose のサービス（PBI-47）。前回、止める前にデーモンが終わって残ったサービスを片付ける（起動したデーモンが
 // 動いているもの、つまりほかの sacty が使っているものは止めない。PBI-78 レビュー指摘）
 const composeServices = new DockerComposeServices();
@@ -187,7 +185,6 @@ const service = new TaskService({
   // マージの後の CI/CD の状態（PBI-89）
   ci: new GitHubCiStatus(),
   github,
-  tests,
   services: composeServices,
   sharedComposes: new GitSharedComposeFetcher(join(home, "cache", "shared-compose")),
   tickets,
@@ -306,7 +303,6 @@ const shutdown = async () => {
   // 止めるときの実行の終わりを、監査の失敗として記録しない（次の起動で、もう一度実行する。PBI-125）
   service.beginShutdown();
   executor.abortAll();
-  tests.abortAll();
   const timedOut = await Promise.race([
     draining.then(() => false),
     new Promise<boolean>((resolve) => setTimeout(() => resolve(true), DRAIN_TIMEOUT_MS).unref()),

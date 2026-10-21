@@ -1956,3 +1956,95 @@ describe("工程の見直し", () => {
     expect(task?.stepReview).toBeUndefined();
   });
 });
+
+describe("実装の検証（ゴールガーディアンがテストを実行する）", () => {
+  const implemented = (id: string, runId: string) => [
+    ev(id, {
+      type: "AgentRunStarted",
+      payload: { runId, step: "implement", agentId: "a", authMode: "subscription" },
+    }),
+    ev(id, {
+      type: "AgentRunCompleted",
+      payload: {
+        runId,
+        step: "implement",
+        agentId: "a",
+        authMode: "subscription",
+        usage,
+        costUsd: 0,
+        estimated: true,
+        output: "# 実装",
+      },
+    }),
+  ];
+  const reviewed = (id: string, exitCode: number) =>
+    ev(
+      id,
+      {
+        type: "FinalReviewed",
+        payload: {
+          passed: exitCode === 0,
+          viewpoints: [],
+          remarks: [],
+          summary: "ok",
+          agentId: "g",
+          tests: { command: "npm test", exitCode, output: exitCode ? "1 failed" : "2 passed" },
+        },
+      },
+      "guardian",
+    );
+
+  it("テストの記録なしに、実装の完了から最終レビューへ進み、ゴールガーディアンが実行したテストを最終レビューと一緒に持つ", () => {
+    seq = 0;
+    const id = "v1";
+    const events = [
+      created(id),
+      ev(id, { type: "StepsChosen", payload: { steps: ["implement"], testCommand: "npm test" } }),
+      ...implemented(id, "i1"),
+    ];
+    expect(project(events).get(id)?.verification).toBe("pending");
+    const failed = project([...events, reviewed(id, 1)]).get(id);
+    expect(failed?.verification).toBeUndefined();
+    expect(failed?.verifyFailures).toBe(1);
+    expect(failed?.verifyFeedback).toMatchObject({
+      kind: "review",
+      review: { tests: { exitCode: 1 } },
+    });
+    const passed = project([
+      ...events,
+      reviewed(id, 1),
+      ...implemented(id, "i2"),
+      reviewed(id, 0),
+    ]).get(id);
+    expect(passed?.publishPending).toBe(true);
+    expect(passed?.lastReview?.tests).toMatchObject({ command: "npm test", exitCode: 0 });
+    expect(passed?.lastTests).toBeUndefined();
+  });
+
+  it("それより前の版の記録（sacty がテストを実行した TestsRun）も読め、次の実装でその結果を持ち越さない", () => {
+    seq = 0;
+    const id = "v2";
+    const events = [
+      created(id),
+      ev(id, { type: "StepsChosen", payload: { steps: ["implement"], testCommand: "npm test" } }),
+      ...implemented(id, "i1"),
+      ev(id, {
+        type: "TestsRun",
+        payload: {
+          command: "npm test",
+          exitCode: 1,
+          unmappedViewpoints: [],
+          passed: false,
+          output: "fail",
+          durationMs: 1,
+        },
+      }),
+    ];
+    const legacy = project(events).get(id);
+    expect(legacy?.lastTests).toMatchObject({ passed: false });
+    expect(legacy?.verifyFeedback?.kind).toBe("tests");
+    const redone = project([...events, ...implemented(id, "i2")]).get(id);
+    expect(redone?.verification).toBe("pending");
+    expect(redone?.lastTests).toBeUndefined();
+  });
+});

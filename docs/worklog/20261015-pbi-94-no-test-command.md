@@ -4,7 +4,7 @@
 - タスク: PBI-94
 - PR: #105
 - ブランチ: feat/issue-94-no-test-command
-- 関係する ADR: [テストの仕組みが無いリポジトリでは、テストを飛ばし、ゴールガーディアンがタスクの目的から受け入れを判定する](../adr/20261015-0000-verify-without-test-command.md)
+- 関係する ADR: [テストの仕組みが無いリポジトリでは、テストを飛ばし、ゴールガーディアンがタスクの目的から受け入れを判定する](../adr/20261015-0000-superseded-verify-without-test-command.md)
 
 ## 目的
 

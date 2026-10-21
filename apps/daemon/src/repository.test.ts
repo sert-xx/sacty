@@ -203,6 +203,27 @@ describe("対象リポジトリの作業領域（git）", { timeout: 30_000 }, (
     await expect(workspace.copyWorkingTree(join(dir, "missing"), join(dir, "x"))).rejects.toThrow();
   });
 
+  it("退避したメタデータを渡すと、写しを git の作業ツリーにする（作業領域の .git は使わない。最終レビューのテスト）", async () => {
+    const origin = makeOrigin();
+    const workspace = new GitRepositoryWorkspace();
+    const clone = join(dir, "task", "repo");
+    const gitDir = join(dir, "_git", "task.git");
+    const prepared = await workspace.prepare(clone, gitDir, origin, "main");
+    writeFileSync(join(clone, "new.ts"), "new\n");
+    // エージェントが作業領域の .git を書き換えても、写しには使わない
+    writeFileSync(join(clone, ".git", "AGENT-MARK"), "x");
+    const out = join(dir, "copy");
+    await workspace.copyWorkingTree(clone, out, gitDir);
+    expect(git(out, "rev-parse", "--is-inside-work-tree")).toBe("true");
+    expect(git(out, "rev-parse", "HEAD")).toBe(prepared.baseCommit);
+    // 実装の変更は、起点からの変更として見える
+    expect(git(out, "status", "--porcelain")).toContain("new.ts");
+    expect(existsSync(join(out, ".git", "AGENT-MARK"))).toBe(false);
+    // 写しの中で書き換えても、退避したメタデータは変わらない
+    writeFileSync(join(out, ".git", "GUARDIAN-MARK"), "x");
+    expect(existsSync(join(gitDir, "GUARDIAN-MARK"))).toBe(false);
+  });
+
   it("起点のコミットのファイルだけを、.git や作業領域の変更を含めずに書き出す（PBI-15）", async () => {
     const origin = makeOrigin();
     const workspace = new GitRepositoryWorkspace();

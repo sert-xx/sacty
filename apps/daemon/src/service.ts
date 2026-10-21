@@ -130,7 +130,6 @@ import {
 } from "./agents/invocation.js";
 import type { AgentOutcome } from "./agents/parse.js";
 import { redact, redactEscaped, redactText } from "./agents/redact.js";
-import { missingCommands, type TestRunner, type TestRunResult } from "./agents/test-runner.js";
 import { type PlacedTier, selectTiers, tierFiles } from "./agents/tiers.js";
 import { auditCounts, countToolFailures, redactDeep, redactStagedFiles } from "./audit-evidence.js";
 import {
@@ -319,7 +318,7 @@ import {
 } from "./prompts.js";
 import { CONTAINER_LOGS_DIR, stageQuestionLogs } from "./question-logs.js";
 import { NothingToCommitError, type RepositoryWorkspace } from "./repository.js";
-import { agentTimeoutMs, testTimeoutMs } from "./run-timeouts.js";
+import { agentTimeoutMs } from "./run-timeouts.js";
 import {
   contextSecretUses,
   type SecretUse,
@@ -408,9 +407,9 @@ type CleanupResult = {
   detail?: DaemonText;
 };
 
-/** 実装の検証（テストか最終レビュー）を待っているか。変更の申し出の判断待ちの間は検証しない。 */
+/** 実装の検証（テストを実行する最終レビュー）を待っているか。変更の申し出の判断待ちの間は検証しない。 */
 /**
- * 起動したサービスに、エージェント・テストのコンテナからつなぐ設定（PBI-47）。ネットワークと、
+ * 起動したサービスに、エージェントのコンテナ（工程・テストを実行する最終レビュー）からつなぐ設定（PBI-47）。ネットワークと、
  * localhost に転送するポート（PBI-60。転送するものが無ければ渡さない）。
  */
 function serviceConnection(started: StartedServices): {
@@ -504,8 +503,6 @@ export type ServiceDeps = {
    * CONTEXT_SECRETS_TIMEOUT_MS。超えたプロジェクトのコンテキストの秘密情報は、使うときに取り出す。
    */
   contextSecretsTimeoutMs?: number;
-  /** テストの実行。 */
-  tests: TestRunner;
   /** タスクごとの作業領域を作る場所。 */
   workspaceRoot: string;
   /** ホストのゲートウェイ（PBI-37）。無ければ、ゲートウェイ経由のエージェントは実行できない。 */
@@ -1771,6 +1768,11 @@ export class TaskService {
       platforms?: readonly Platform[];
       /** 実行の ID（止めるために、呼ぶ側で決めるとき。PBI-54）。 */
       runId?: string;
+      /** イメージの環境変数（言語ごとのイメージの env。最終レビューは実装の工程のイメージで動く。PBI-41）。 */
+      imageEnv?: Record<string, string>;
+      /** つなぐネットワークと、localhost に転送するポート（最終レビューでテストに使うサービス。PBI-47・PBI-60）。 */
+      network?: ExecuteRun["network"];
+      forwards?: ExecuteRun["forwards"];
       /** true を返すと、コンテナを起動しない（準備の間に中止されたなど。PBI-54）。 */
       stopped?: () => boolean;
       /** 実行の ID が変わったら知らせる（セッションを新しく始め直したとき。止めるため。PBI-67）。 */
@@ -1797,7 +1799,12 @@ export class TaskService {
               workspaceDir,
             );
           } else {
-            await this.deps.repos.copyWorkingTree(this.repoDir(task), workspaceDir);
+            // テスト（検証）が git を参照できるように、退避したメタデータの写しを .git にする
+            await this.deps.repos.copyWorkingTree(
+              this.repoDir(task),
+              workspaceDir,
+              this.trustedGitDir(task),
+            );
           }
         } catch (error) {
           return {
@@ -2664,53 +2671,6 @@ export class TaskService {
       ]);
     }
     return result.ok && image ? { ...result, image } : result;
-  }
-
-  /**
-   * テストを実行する。確かめる工程でサービスを使うなら、テストの前に起動し、終わったら消す（PBI-47）。
-   * サービスを起動できなければ、テストを実行せずに理由を返す。
-   */
-  private async runTests(
-    task: Task,
-    step: StepKey,
-    input: Parameters<TestRunner["run"]>[0],
-  ): Promise<{ ok: true; result: TestRunResult } | { ok: false; message: DaemonText }> {
-    const services = await this.startServices(task, step, input.runId, input.workspaceDir, true);
-    if (services && !services.ok) return services;
-    try {
-      const config = this.deps.config();
-      const result = await this.deps.tests.run({
-        ...input,
-        ...(services?.ok ? serviceConnection(services.started) : {}),
-        // テストのコマンドの上限（config.yaml の run_timeout.test_minutes。PBI-150）
-        timeoutMs: testTimeoutMs(config.ok ? config.config.runTimeouts : undefined),
-      });
-      return { ok: true, result };
-    } finally {
-      await this.stopServices(task, step, input.runId);
-    }
-  }
-
-  /** テスト（検証）のコマンドに書いたツールが、テストのイメージに無かったときの一時停止（イメージを直す案内）。 */
-  private commandMissingPause(
-    commands: readonly string[],
-    imageName: string | undefined,
-    step: "implement" | "reproduce",
-  ): ActivityItem {
-    return {
-      actor: "sacty",
-      event: {
-        type: "TaskPaused",
-        payload: {
-          reason: "error",
-          message: message("verify.commandMissing", {
-            commands: [...commands],
-            image: imageName ?? DEFAULT_IMAGE_NAME,
-            step,
-          }),
-        },
-      },
-    };
   }
 
   /** サービスを止めて消す（PBI-47）。使わない工程なら何もしない。止められなくても、工程の結果は変えない。 */
@@ -5612,8 +5572,22 @@ export class TaskService {
       },
     ];
     if (!proposal) {
-      // 実行の完了と提出は、同じトランザクションで記録する
-      const submitted = this.append(task, [...events, ...this.submitEvents(latest, step)]);
+      // 実行の完了と提出は、同じトランザクションで記録する。再現の工程は、エージェントが確かめた結果も一緒に記録する（PBI-29）
+      const submitted = this.append(task, [
+        ...events,
+        ...this.submitEvents(latest, step),
+        ...(reproduction
+          ? [
+              {
+                actor: "sacty" as const,
+                event: {
+                  type: "ReproductionChecked" as const,
+                  payload: reproductionChecked(reproduction.tests, reproduction.check),
+                },
+              },
+            ]
+          : []),
+      ]);
       // PR で承認する工程（PBI-57）は、続けて成果を PR にしてから承認待ちにする（予算は、その後に判定する）
       const stepPr = this.awaitingStepPullRequest(submitted);
       if (stepPr) {
@@ -5622,8 +5596,6 @@ export class TaskService {
         return;
       }
       this.checkBudget(submitted);
-      // 再現は、続けて sacty がテストを実行して確かめる（PBI-29）
-      if (awaitingReproductionCheck(submitted)) return this.checkReproduction(submitted);
       return;
     }
 
@@ -6190,8 +6162,8 @@ export class TaskService {
   }
 
   /**
-   * 実装を検証する。sacty がテストを別のコンテナで実行し（終了コード0かつ、すべての観点に
-   * テストが対応していれば合格）、通ればゴールガーディアンが新しいセッションで最終レビューする。
+   * 実装を検証する。ゴールガーディアンが新しいセッションで、実装の工程のイメージ・サービスにつないだ実装後のコードの写しで
+   * テスト（検証）のコマンドを実行し、その結果と差分・コードから最終レビューする（sacty はテストを別に実行しない）。
    * 通らなければ失敗の内容を渡して実装をやり直し、続けて通らなければ一時停止する。
    */
   private async verify(task: Task): Promise<void> {
@@ -6231,10 +6203,11 @@ export class TaskService {
     // テストの仕組みが無いタスク（PBI-94）は、実装が用意して申告したテストのコマンドがあれば、それで検証する
     const testCommand =
       repo.testCommand ?? (task.noTestsReason ? task.addedTestCommand : undefined);
-    // テストのイメージが images から消えていれば、テストを実行せずに理由を示して止める（PBI-41）
-    const testImage = resolveImage(config.config, task.images?.implement ?? task.images?.reproduce);
-    // テストを飛ばすタスク（PBI-94）は、テストのイメージを使わない
-    if (!testImage.ok && (testCommand || !task.noTestsReason)) {
+    // 最終レビューは、実装（不具合の修正では再現）の工程のイメージで実行する（テストを実行するため。PBI-41）。
+    // images から消えていれば、実行せずに理由を示して止める
+    const imageName = task.images?.implement ?? task.images?.reproduce;
+    const testImage = resolveImage(config.config, imageName);
+    if (!testImage.ok) {
       this.append(task, [
         {
           actor: "sacty",
@@ -6250,7 +6223,7 @@ export class TaskService {
       return;
     }
     // テストのコマンドはオーケストレーターが決める（PBI-25）。分からなければ検証できないので止める。
-    // テストの仕組みが無いタスク（PBI-94）は、止めずにテストを飛ばし、最終レビューで目的から判定する
+    // テストの仕組みが無いタスク（PBI-94）は、止めずにテストなしで、最終レビューで目的から判定する
     if (!testCommand && !task.noTestsReason) {
       this.append(task, [
         {
@@ -6264,87 +6237,14 @@ export class TaskService {
       return;
     }
     // テストを対応させる観点。設計を省いたタスク（PBI-17）は、要求要件の受け入れ条件（REQ）を観点にする。
-    // テストの対応の確かめと、最終レビューの両方で同じ観点を使う
     // 不具合の修正（PBI-29）は、再現のテストが通ること（REPRO）を観点にする
     const viewpointIds = finalReviewViewpointIds(task);
-
-    let current = task;
-    if (current.verification === "pending" && !testCommand) {
-      current = this.append(current, [
-        { actor: "sacty", event: { type: "TestsSkipped", payload: {} } },
-      ]);
-    }
-    if (current.verification === "pending" && testCommand) {
-      const mapped = new Set(current.testMap.map((m) => m.viewpointId));
-      const unmappedViewpoints = viewpointIds.filter((id) => !mapped.has(id));
-      // 人間が止めたなら、テストのコンテナを起動しない（再開するとテストからやり直す）
-      if (this.pauseRequested.has(task.id)) return;
-      const testRunId = randomUUID();
-      this.track(testRunId);
-      const ran = await this.runTests(current, "implement", {
-        runId: testRunId,
-        image: repo.testImage,
-        ...(Object.keys(repo.testEnv).length > 0 ? { env: repo.testEnv } : {}),
-        workspaceDir: dir,
-        command: testCommand,
-      });
-      // 人間が止めたなら、記録しない（止めた記録は runNext の後始末で行う。再開するとテストからやり直す）
-      if (this.pauseRequested.has(task.id)) return;
-      // テストに使うサービスを起動できなければ、テストを実行せずに止める（再開するとテストからやり直す。PBI-47）
-      if (!ran.ok) {
-        this.append(this.mustGet(task.id), [
-          {
-            actor: "sacty",
-            event: {
-              type: "TaskPaused",
-              payload: {
-                reason: "error",
-                message: message("verify.testsUnavailable", { detail: ran.message }),
-              },
-            },
-          },
-        ]);
-        return;
-      }
-      const result = ran.result;
-      // テスト（検証）のコマンドに書いたツールがイメージに無ければ、実装をやり直しても直らないので、テストの結果を
-      // 記録せずに、イメージを直す案内で止める（再開するとテストからやり直す）
-      const missing = missingCommands(testCommand, result);
-      if (missing.length > 0) {
-        this.append(this.mustGet(task.id), [
-          this.commandMissingPause(
-            missing,
-            task.images?.implement ?? task.images?.reproduce,
-            "implement",
-          ),
-        ]);
-        return;
-      }
-      // テストの仕組みが無いタスク（PBI-94）は、観点にテストが対応していないことでは不合格にしない
-      const passed =
-        result.exitCode === 0 && (unmappedViewpoints.length === 0 || Boolean(task.noTestsReason));
-      current = this.append(current, [
-        {
-          actor: "sacty",
-          event: {
-            type: "TestsRun",
-            payload: {
-              command: testCommand,
-              exitCode: result.exitCode,
-              unmappedViewpoints,
-              passed,
-              output: result.output,
-              ...(result.note ? { note: result.note } : {}),
-              durationMs: result.durationMs,
-            },
-          },
-        },
-      ]);
-      if (!passed) {
-        this.pauseIfVerificationKeepsFailing(current);
-        return;
-      }
-    }
+    // テストの仕組みが無いタスク（PBI-94）は、観点にテストが対応していないことでは不合格にしない
+    const mapped = new Set(task.testMap.map((m) => m.viewpointId));
+    const unmappedViewpoints = task.noTestsReason
+      ? []
+      : viewpointIds.filter((id) => !mapped.has(id));
+    const current = task;
 
     // 差分は、テストが観点を検証しているかを判断するのに欠かせない。取れなければ最終レビューをせずに止める
     // （再開すると、差分の取得からやり直す）
@@ -6366,6 +6266,8 @@ export class TaskService {
       ]);
       return;
     }
+    // 人間が止めたなら、最終レビューを始めない（再開すると最終レビューからやり直す）
+    if (this.pauseRequested.has(task.id)) return;
     // 利用制限中か、このタスクで失敗したエージェントなら、代わりのエージェント（agents の fallback）でレビューする
     const agent = this.usableAgent(
       config.config,
@@ -6373,17 +6275,59 @@ export class TaskService {
       task.id,
       "final-review",
     );
-    // 最終レビューは、実装後のコードを使い捨ての写しで読ませる（差分もこれまでどおり渡す）
-    const { outcome, costUsd, estimated, runId } = await this.runGuardian(
-      current,
-      {
-        agent,
-        image: config.config.image,
-        prompt: buildFinalReviewPrompt(current, diff),
-        role: "final-review",
-      },
-      "implemented",
-    );
+    // 最終レビューは、実装後のコードを使い捨ての写しで読ませ、テストを実行させる（差分もこれまでどおり渡す）。
+    // テストを実行するなら、実装の工程で使うサービス（PBI-47）を、実行の前に起動してつなぎ、終わったら消す。
+    // 起動する前に、イメージを ID に確定させ、その ID で実行する（PBI-130）
+    const runId = randomUUID();
+    this.track(runId);
+    const services = testCommand
+      ? await this.startServices(current, "implement", runId, dir, true, testImage.image)
+      : undefined;
+    // 人間が止めたなら、記録しない（止めた記録は runNext の後始末で行う。再開すると最終レビューからやり直す）
+    if (this.pauseRequested.has(task.id)) {
+      if (services?.ok) await this.stopServices(current, "implement", runId);
+      return;
+    }
+    // サービスを起動できなければ、最終レビューをせずに止める（再開すると最終レビューからやり直す。PBI-47）
+    if (services && !services.ok) {
+      this.append(this.mustGet(task.id), [
+        {
+          actor: "sacty",
+          event: {
+            type: "TaskPaused",
+            payload: {
+              reason: "error",
+              message: message("verify.testsUnavailable", { detail: services.message }),
+            },
+          },
+        },
+      ]);
+      return;
+    }
+    const started = services?.started;
+    let executed: Awaited<ReturnType<TaskService["runGuardian"]>>;
+    try {
+      executed = await this.runGuardian(
+        current,
+        {
+          agent,
+          image: services?.image || testImage.image,
+          imageEnv: testImage.env,
+          runId,
+          prompt: [
+            buildFinalReviewPrompt(current, diff, testCommand ? { testCommand } : {}),
+            // 起動したサービスの接続先（PBI-47）
+            ...servicePromptLines(started?.services ?? []),
+          ].join("\n"),
+          role: "final-review",
+          ...(started ? serviceConnection(started) : {}),
+        },
+        "implemented",
+      );
+    } finally {
+      if (services?.ok) await this.stopServices(current, "implement", runId);
+    }
+    const { outcome, costUsd, estimated } = executed;
     if (outcome.kind === "failed") {
       // 実装の問題ではないので、やり直さずに止める。再開すると最終レビューからやり直す。
       // 使った分の費用は記録し、予算に入れる
@@ -6398,7 +6342,7 @@ export class TaskService {
               message: failure,
               agentId: agent.id,
               ...agentSetting(agent),
-              runId,
+              runId: executed.runId,
               usage: outcome.usage,
               costUsd,
               estimated,
@@ -6432,11 +6376,47 @@ export class TaskService {
       this.warnIfNeeded(this.mustGet(task.id));
       return;
     }
-    const review = extractFinalReview(
+    const { missingCommands, ...review } = extractFinalReview(
       outcome.output,
       viewpointIds,
       current.remarks.filter((r) => !r.voided).map((r) => r.id),
+      {
+        ...(testCommand ? { testCommand } : {}),
+        unmappedViewpoints,
+      },
     );
+    // テスト（検証）のコマンドに書いたツールがイメージに無ければ、実装をやり直しても直らないので、判定を記録せずに、
+    // イメージを直す案内で止める（使った分の費用は記録する。再開すると最終レビューからやり直す）
+    if (missingCommands.length > 0) {
+      const missing = message("verify.commandMissing", {
+        commands: missingCommands,
+        image: imageName ?? DEFAULT_IMAGE_NAME,
+        step: "implement",
+      });
+      this.append(current, [
+        {
+          actor: "guardian",
+          event: {
+            type: "FinalReviewFailed",
+            payload: {
+              reason: "error",
+              message: missing,
+              agentId: agent.id,
+              ...agentSetting(agent),
+              runId,
+              usage: outcome.usage,
+              costUsd,
+              estimated,
+            },
+          },
+        },
+        {
+          actor: "sacty",
+          event: { type: "TaskPaused", payload: { reason: "error", message: missing } },
+        },
+      ]);
+      return;
+    }
     const reviewed = this.append(current, [
       {
         actor: "guardian",
@@ -7109,7 +7089,6 @@ export class TaskService {
   private stopRuns(runIds: Iterable<string>): void {
     for (const runId of runIds) {
       this.deps.executor.kill(runId);
-      this.deps.tests.kill(runId);
       // サービスの起動の待ち（up --wait）も打ち切る（PBI-70 レビュー指摘）
       this.deps.services?.abort?.(runId);
     }
@@ -7358,113 +7337,20 @@ export class TaskService {
   }
 
   /**
-   * 再現の工程の後に、テストを実行して再現を確かめる（PBI-29）。再現のテストが失敗すれば再現できたとして
-   * 実装へ進む。通った・再現のテストが無いなら、再現できなかったとして人間の判断を待つ。
+   * 再現の確かめを待ったままのタスク（それより前の版で、再現の工程の後に sacty がテストを実行するのを待っていた。PBI-29）。
+   * 今の版は、再現の工程のエージェントの申告を工程の完了と一緒に記録するので、待っているものは申告が無いものとして、
+   * 再現できなかったと記録する（人間が差し戻すと、再現をやり直す）。
    */
-  private async checkReproduction(task: Task): Promise<void> {
-    const config = this.deps.config();
-    if (!config.ok) return;
-    const record = (payload: Extract<EventInput, { type: "ReproductionChecked" }>["payload"]) =>
-      this.append(this.mustGet(task.id), [
-        { actor: "sacty", event: { type: "ReproductionChecked", payload } },
-      ]);
-    const tests = task.reproductionTests;
-    if (tests.length === 0) {
-      record({ reproduced: false, tests, note: message("reproduce.noTests") });
-      return;
-    }
-    const found = this.targetRepository(task, config.config);
-    // 再現の確かめは、再現の工程のイメージで実行する（PBI-41）
-    const reproduceImage = resolveImage(
-      config.config,
-      task.images?.reproduce ?? task.images?.implement,
-    );
-    const target: typeof found = !found.ok
-      ? found
-      : !reproduceImage.ok
-        ? reproduceImage
-        : {
-            ok: true,
-            repo: { ...found.repo, testImage: reproduceImage.image, testEnv: reproduceImage.env },
-          };
-    const dir = this.repoDir(task);
-    const testCommand = target.ok ? target.repo.testCommand : undefined;
-    if (!target.ok || !testCommand || !existsSync(dir)) {
-      this.append(task, [
-        {
-          actor: "sacty",
-          event: {
-            type: "TaskPaused",
-            payload: {
-              reason: "error",
-              message: !target.ok
-                ? message("verify.testsUnavailable", { detail: target.message })
-                : !testCommand
-                  ? message("orchestrator.testCommandUnknown")
-                  : message("verify.workspaceMissing"),
-            },
-          },
+  private checkReproduction(task: Task): void {
+    this.append(task, [
+      {
+        actor: "sacty",
+        event: {
+          type: "ReproductionChecked",
+          payload: reproductionChecked(task.reproductionTests, undefined),
         },
-      ]);
-      return;
-    }
-    // 人間が止めたなら、テストのコンテナを起動しない（再開すると確かめ直す）
-    if (this.pauseRequested.has(task.id)) return;
-    const runId = randomUUID();
-    this.track(runId);
-    const ran = await this.runTests(task, "reproduce", {
-      runId,
-      image: target.repo.testImage,
-      ...(Object.keys(target.repo.testEnv).length > 0 ? { env: target.repo.testEnv } : {}),
-      workspaceDir: dir,
-      command: testCommand,
-    });
-    // サービスを起動できなければ、テストの実行基盤の失敗として扱う（再現できたとはみなさない。PBI-47）
-    const result: TestRunResult = ran.ok
-      ? ran.result
-      : { exitCode: 125, output: "", note: ran.message, infrastructure: true, durationMs: 0 };
-    if (this.pauseRequested.has(task.id)) return;
-    // テストの実行基盤の失敗は、テストの失敗（再現できた）と区別し、確かめずに止める。
-    // 再現の確かめを待ったまま止めるので、再開するとテストを実行し直す（PBI-29 レビュー指摘）
-    if (result.infrastructure) {
-      this.append(this.mustGet(task.id), [
-        {
-          actor: "sacty",
-          event: {
-            type: "TaskPaused",
-            payload: {
-              reason: "error",
-              message: message("reproduce.runFailed", {
-                detail: result.note ?? `exit ${result.exitCode}`,
-              }),
-            },
-          },
-        },
-      ]);
-      return;
-    }
-    // テストのコマンドに書いたツールがイメージに無いときは、再現できたとはみなさず、イメージを直す案内で止める
-    // （再現の確かめを待ったまま止めるので、再開するとテストを実行し直す）
-    const missing = missingCommands(testCommand, result);
-    if (missing.length > 0) {
-      this.append(this.mustGet(task.id), [
-        this.commandMissingPause(
-          missing,
-          task.images?.reproduce ?? task.images?.implement,
-          "reproduce",
-        ),
-      ]);
-      return;
-    }
-    record({
-      reproduced: result.exitCode !== 0,
-      tests,
-      command: testCommand,
-      exitCode: result.exitCode,
-      output: result.output,
-      ...(result.note ? { note: result.note } : {}),
-      durationMs: result.durationMs,
-    });
+      },
+    ]);
   }
 
   /**
@@ -10539,7 +10425,30 @@ function openStepPullRequests(task: Task) {
   return task.stepPullRequests.filter((p) => p.state === "open" && !p.superseded);
 }
 
-/** 再現の工程が終わり、テストでの再現の確かめを待っている（PBI-29）。 */
+/**
+ * 再現の工程のエージェントの申告から、再現の確かめの記録を作る（PBI-29）。再現のテストを申告し、そのテストが不具合のために
+ * 失敗したことを確かめたと申告したときだけ、再現できたとする。
+ */
+function reproductionChecked(
+  tests: string[],
+  check: ReturnType<typeof extractReproduction>["check"],
+): Extract<EventInput, { type: "ReproductionChecked" }>["payload"] {
+  if (tests.length === 0) return { reproduced: false, tests, note: message("reproduce.noTests") };
+  if (!check) return { reproduced: false, tests, note: message("reproduce.notChecked") };
+  // 失敗した（0 でない整数の）終了コードの申告があるときだけ、再現できたとする（申告が無い・0 なら確かめていない）
+  const reproduced = check.reproduced && check.exitCode !== undefined && check.exitCode !== 0;
+  return {
+    reproduced,
+    tests,
+    ...(check.command ? { command: check.command } : {}),
+    ...(check.exitCode !== undefined ? { exitCode: check.exitCode } : {}),
+    output: check.output,
+    ...(reproduced ? {} : { note: message("reproduce.notChecked") }),
+    durationMs: 0,
+  };
+}
+
+/** 再現の工程が終わり、再現の確かめの記録を待っている（PBI-29。それより前の版の記録だけ）。 */
 function awaitingReproductionCheck(task: Task): boolean {
   return (
     task.status === "idle" && activeStep(task) === "reproduce" && Boolean(task.reproductionPending)

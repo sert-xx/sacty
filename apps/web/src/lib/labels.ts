@@ -106,26 +106,54 @@ export function usesTestCommand(task: Task): boolean {
 }
 
 /**
+ * 画面に出すテストの実行。ゴールガーディアンが最終レビューの中で実行したもの（byGuardian。今の版）か、それより前の版で sacty が
+ * テストのコンテナで実行したもの。
+ */
+export type TestRunView = {
+  command: string;
+  /** 終了コード（ゴールガーディアンが申告しなかったときは無い）。 */
+  exitCode?: number;
+  passed: boolean;
+  output: string;
+  at: string;
+  durationMs?: number;
+  note?: NonNullable<Task["lastTests"]>["note"];
+  byGuardian?: true;
+};
+
+/**
  * 実装の成果物に出す、テストの結果と最終レビュー。それぞれ、今の提出の検証のものか（current）を返す（PR #105 再レビュー指摘）。
  * - 今の提出の検証が始まった（verification が pending）なら、どちらも前の提出のもの
- * - 最終レビューは、最新のテストの結果（テストを飛ばしたなら、飛ばした時）より後のものだけが今の検証のもの
+ * - テストの結果は、最終レビューの中でゴールガーディアンが実行したものがあればそれ、無ければそれより前の版で sacty が実行したもの
+ * - それより前の版の記録では、最終レビューは、最新のテストの結果（テストを飛ばしたなら、飛ばした時）より後のものだけが今の検証のもの
  * 前の提出のものは、隠さずに「前の提出の」と区別して出す。
  */
 export function verificationResults(task: Task): {
-  tests?: NonNullable<Task["lastTests"]>;
+  tests?: TestRunView;
   testsCurrent: boolean;
   review?: NonNullable<Task["lastReview"]>;
   reviewCurrent: boolean;
 } {
-  const tests = task.lastTests;
+  const legacy = task.lastTests;
   const review = task.lastReview;
   const started = task.verification === "pending";
-  const checkedAt = task.testsSkippedAt ?? tests?.at;
+  const tests: TestRunView | undefined = review?.tests
+    ? {
+        command: review.tests.command,
+        ...(review.tests.exitCode !== undefined ? { exitCode: review.tests.exitCode } : {}),
+        passed: review.tests.exitCode === 0,
+        output: review.tests.output,
+        at: review.at,
+        byGuardian: true,
+      }
+    : legacy;
+  // それより前の版で、sacty がテストを実行した（飛ばした）時。今の版の記録には無い
+  const checkedAt = task.testsSkippedAt ?? legacy?.at;
   return {
     ...(tests ? { tests } : {}),
     testsCurrent: Boolean(tests) && !started,
     ...(review ? { review } : {}),
-    reviewCurrent: Boolean(review && checkedAt && review.at >= checkedAt) && !started,
+    reviewCurrent: Boolean(review && (!checkedAt || review.at >= checkedAt)) && !started,
   };
 }
 
@@ -148,8 +176,9 @@ export function addedTestsResult(task: Task): "pending" | "passed" | "failed" | 
   if (!task.noTestsReason) return undefined;
   // 今の提出の検証が始まった（テストの実行待ち）なら、前の提出の結果は使わない
   if (task.verification === "pending") return task.addedTestCommand ? "pending" : undefined;
-  if (!task.lastTests || task.testsSkippedAt) return undefined;
-  return task.lastTests.passed ? "passed" : "failed";
+  const { tests } = verificationResults(task);
+  if (!tests || task.testsSkippedAt) return undefined;
+  return tests.passed ? "passed" : "failed";
 }
 
 /**
@@ -812,10 +841,9 @@ export function testCommandOfNoTests(
   >,
 ): string {
   const added = addedTestsResult(task);
-  if (added === "passed" && task.lastTests) return m.testCommandAdded(task.lastTests.command);
-  if (added === "failed" && task.lastTests) {
-    return m.testCommandAddedFailed(task.lastTests.command);
-  }
+  const { tests } = verificationResults(task);
+  if (added === "passed" && tests) return m.testCommandAdded(tests.command);
+  if (added === "failed" && tests) return m.testCommandAddedFailed(tests.command);
   if (added === "pending") return m.testCommandAddedPending(task.addedTestCommand ?? "");
   return m.testCommandNone;
 }

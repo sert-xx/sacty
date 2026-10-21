@@ -24,7 +24,7 @@ Code: `packages/core/package.json`, `apps/daemon/package.json`, `apps/web/packag
 sacty up (packages/cli)
  ├─ daemon (apps/daemon)  127.0.0.1:<--daemon-port; default 4710>
  │    ├─ gateway (AI relay, PF relay, MCP relay)  127.0.0.1
- │    └─ docker (agent and test containers, compose services)
+ │    └─ docker (agent containers, compose services)
  └─ web UI (apps/web, next start)  127.0.0.1:<--port; default 4700>
 ```
 
@@ -101,7 +101,7 @@ Code: `apps/daemon/src/server.ts` (`createApp`, `handleError`), `apps/web/src/li
     (`nearBudgetRows`).
   - Step queue: the number of running tasks / the parallel limit (the sacty setting `maxParallelTasks`; the default when it is not set or
     cannot be read) and the number of waiting tasks. Running means the tasks the worker is processing (`inflight`, including work while the
-    status is `idle`: tests after implementation, the final review, the reproduction check, exports). Waiting means the tasks the worker will
+    status is `idle`: the final review after implementation (including running the tests), exports). Waiting means the tasks the worker will
     process next (`queuedTaskIds`, the same decision as the worker) that it is not processing yet. When more tasks than the limit have been
     waiting for 10 minutes (`QUEUE_OVER_MS`), it is highlighted with a link to the sacty settings. The start of "has persisted" (`overSince`)
     is updated by the daemon whenever it writes to the activity log, starts or finishes a run, or saves the sacty settings or a project

@@ -37,9 +37,10 @@ export interface RepositoryWorkspace {
   snapshot(gitDir: string, baseCommit: string, outDir: string): Promise<void>;
   /**
    * 実装の作業領域の内容（.git を除く）を outDir に写す。ゴールガーディアンに、実装後のコードを使い捨ての写しで
-   * 読ませるため（PBI-16）。シンボリックリンクはたどらず、そのまま写す。
+   * 読ませるため（PBI-16）。シンボリックリンクはたどらず、そのまま写す。gitDir があれば、写しの .git は、作業領域の .git
+   * （エージェントが書き換えられる）ではなく、退避したメタデータの写しにする（最終レビューのテストが git を参照できるように）。
    */
-  copyWorkingTree(dir: string, outDir: string): Promise<void>;
+  copyWorkingTree(dir: string, outDir: string, gitDir?: string): Promise<void>;
   /**
    * 作業領域の内容をコミットし、ブランチにプッシュする。コミットは parent に積む
    * （前回プッシュしたコミットに積むので、強制プッシュはしない）。
@@ -154,7 +155,7 @@ function cloneEnv(authEnv: Record<string, string> = {}): Record<string, string> 
 }
 
 /**
- * 差分を作るときの環境。作業領域はエージェントとテストのコンテナが書き換えられるので、
+ * 差分を作るときの環境。作業領域はエージェントのコンテナが書き換えられるので、
  * そこにある git の設定は読まない（--git-dir で退避したメタデータを使う）。
  * 利用者やシステムの git の設定も読まない（フィルターなどの外部コマンドを、ホストで実行させないため）。
  */
@@ -321,15 +322,17 @@ export class GitRepositoryWorkspace implements RepositoryWorkspace {
     return { baseCommit, baseBranch: branch };
   }
 
-  async copyWorkingTree(dir: string, outDir: string) {
+  async copyWorkingTree(dir: string, outDir: string, gitDir?: string) {
     if (!existsSync(dir)) throw new MessageError(message("verify.workspaceMissing"));
     mkdirSync(dirname(outDir), { recursive: true });
     cpSync(dir, outDir, {
       recursive: true,
-      // リンクの先は写さない（ホストのファイルを取り込まない）。.git は渡さない
+      // リンクの先は写さない（ホストのファイルを取り込まない）。作業領域の .git は渡さない
       verbatimSymlinks: true,
       filter: (src) => relative(dir, src).split(sep)[0] !== ".git",
     });
+    // 退避したメタデータ（エージェントが触る前のもの）の写しを .git にする。写しなので、退避したものは書き換えられない
+    if (gitDir) cpSync(gitDir, join(outDir, ".git"), { recursive: true, verbatimSymlinks: true });
   }
 
   async snapshot(gitDir: string, baseCommit: string, outDir: string) {

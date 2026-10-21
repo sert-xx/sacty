@@ -36,11 +36,16 @@ const ja = {
     notVerified: "観点を検証していない",
     testRun: "テストの実行",
     previousTestRun: "前の提出のテストの実行",
+    guardianTestRun: "ゴールガーディアンが実行したテスト",
+    previousGuardianTestRun: "前の提出で、ゴールガーディアンが実行したテスト",
+    guardianTestRunHint:
+      "ゴールガーディアンが最終レビューの中で実行し、終了コードと結果の抜粋を申告したものです。",
     previousHint: "今の提出では、まだ実行・判定していません。",
     previousFinalReview: "前の提出の最終レビュー",
     pass: "合格",
     fail: "不合格",
-    runMeta: (exitCode: number, seconds: string) => `終了コード ${exitCode}・${seconds}秒・`,
+    runMeta: (exitCode: number | undefined, seconds?: string) =>
+      `終了コード ${exitCode ?? "申告なし"}${seconds === undefined ? "" : `・${seconds}秒`}・`,
     noOutput: "（出力なし）",
     finalReview: "最終レビュー",
     reviewer: "ゴールガーディアン・",
@@ -56,8 +61,8 @@ const ja = {
       `今の実装が用意したテスト（${command}）を、これから実行します。`,
     noTestsAddedPendingHint:
       "結果が出るまで、前の実装のテストの結果は今の実装のものではありません。",
-    noTestsAddedFailed: (command: string, exitCode: number) =>
-      `実装で用意したテスト（${command}）が通りませんでした。終了コード ${exitCode}。通るまで実装をやり直します。`,
+    noTestsAddedFailed: (command: string, exitCode: number | undefined) =>
+      `実装で用意したテスト（${command}）が通りませんでした。終了コード ${exitCode ?? "申告なし"}。通るまで実装をやり直します。`,
     noTestsSkipped:
       "テストのコマンドが無いため、テストでは検証していません。ゴールガーディアンが、目的・要求要件とコードから判定します。",
     noTestsAdded: (command: string) =>
@@ -227,11 +232,16 @@ const en: PartsMessages = {
     notVerified: "Does not verify the viewpoint",
     testRun: "Test run",
     previousTestRun: "Test run for the previous submission",
+    guardianTestRun: "Tests run by the Goal Guardian",
+    previousGuardianTestRun: "Tests run by the Goal Guardian for the previous submission",
+    guardianTestRunHint:
+      "The Goal Guardian ran them in the final review and reported the exit code and an excerpt of the result.",
     previousHint: "Not yet run or judged for the current submission.",
     previousFinalReview: "Final review of the previous submission",
     pass: "Passed",
     fail: "Failed",
-    runMeta: (exitCode, seconds) => `Exit code ${exitCode} · ${seconds}s · `,
+    runMeta: (exitCode, seconds) =>
+      `Exit code ${exitCode ?? "not reported"}${seconds === undefined ? "" : ` · ${seconds}s`} · `,
     noOutput: "(no output)",
     finalReview: "Final review",
     reviewer: "Goal Guardian · ",
@@ -247,7 +257,7 @@ const en: PartsMessages = {
     noTestsAddedPendingHint:
       "Until then, earlier test results do not apply to the current implementation.",
     noTestsAddedFailed: (command, exitCode) =>
-      `The tests added in the implementation (${command}) failed. Exit code ${exitCode}. The implementation is redone until they pass.`,
+      `The tests added in the implementation (${command}) failed. Exit code ${exitCode ?? "not reported"}. The implementation is redone until they pass.`,
     noTestsSkipped:
       "There is no test command, so the implementation is not verified by tests. The Goal Guardian judges from the goal, the requirements, and the code.",
     noTestsAdded: (command) =>

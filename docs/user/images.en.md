@@ -4,8 +4,8 @@
 
 # Container images
 
-This page explains how to build the container images used to run agents and tests. Build images with `npx sacty image build`
-([CLI](cli.en.md#sacty-image-build)). The built image (`image`; default `sacty-agent:1.7.1`) is used both for running agents and for running tests.
+This page explains how to build the container images used to run agents (tests also run inside agent containers). Build images with `npx sacty image build`
+([CLI](cli.en.md#sacty-image-build)). The built image (`image`; default `sacty-agent:1.7.1`) is used for running agents.
 
 The image includes a `gh` that can use only `gh api` (it is for reading GitHub through the gateway, and it is used before a `gh` in the base image;
 [Gateway](gateway.en.md#reading-github)). After updating sacty, rebuild the images.
@@ -57,7 +57,7 @@ images:
   python:
     description: Python 3.12, pip, uv
     base_image: registry.example.com/ci/python:3.12
-    env:                                          # passed to the agent and test containers
+    env:                                          # passed to the agent containers (including the final review that runs the tests)
       PIP_INDEX_URL: https://pypi.example.com/simple
   go:
     description: Go 1.23
@@ -78,7 +78,7 @@ npx sacty image build java17     # build by name (default is the default image)
 | `base_image` | The base image. Required | None |
 | `image` | The name of the image to build | `sacty-agent-<name>:1.7.1` |
 | `node_image` | The image to copy Node.js from (when the base image does not have Node.js 18 or later and npm) | `image_build.base_image`, or `node:22-bookworm-slim` if absent |
-| `env` | Environment variables for the agent and test containers | None |
+| `env` | Environment variables for the agent containers (including the final review that runs the tests) | None |
 | `maven_mirror` | Where Maven and Gradle fetch from | None |
 | `packages` | OS packages to install when building the image | None |
 | `enable_repos` | IDs of package repositories to enable when installing `packages` | None |
@@ -139,14 +139,14 @@ npx sacty image build java17     # build by name (default is the default image)
 
 - The image for each step is chosen by the orchestrator when it chooses the steps, by reading the repository (`pom.xml`, `go.mod`, `pyproject.toml`, `package.json`,
   and so on; in a monorepo, the directories the step touches), and it picks one from `images` for every step. Tests run in the image of
-  the Implementation step (Reproduce for bug fixes), so the image that runs the tests is chosen from the test command and the repository's dependencies
+  the Implementation step (the Goal Guardian runs them in the final review) and, for bug fixes, the Reproduce step (the reproduce agent runs them), so the image that runs the tests is chosen from the test command and the repository's dependencies
   (browser tests such as Playwright, DB clients, and so on). The orchestrator itself runs in the default image.
 - The default image (`image`) is the last resort when none of `images` fits. It is a minimal image with only Node.js and git to run Claude Code and Codex;
   it has no test browsers, DB clients, or tools for other languages. Even for a Node.js repository, a matching image in `images` is used instead.
 - For a step that runs in the default image, the reason why none of `images` fits is recorded in the Activity (the task page). If the orchestrator gave no reason
   for a step, the task does not stop; the step runs in the default image and the Activity shows "Runs on the default image with no reason". When tests fail,
   check this and add the tools each image includes (such as Playwright) to its `description` in `images`.
-- If a tool written in the test (verification) command is not in the image that runs the tests, the task pauses and guides you to add the tool to
+- If the Goal Guardian reports that a tool written in the test (verification) command is not in the image that runs the tests, the task pauses and guides you to add the tool to
   the image ([When the verification tool is not in the image](tasks.en.md#when-the-verification-tool-is-not-in-the-image)).
 - If you specify an image for a project target (a repository or an Org), the orchestrator does not choose and that image is used for every step
   (a repository's setting takes precedence over an Org's; see [Project settings](project-settings.en.md#targets)).
@@ -165,7 +165,7 @@ for each step in "Step images" in the "Steps" section of the task detail.
   fetched, the screen says the choices can't be checked and doesn't offer the change (wait a moment and reopen the page).
 - You can change a step in any state (yet to run, running, failed or paused, awaiting approval, or done). The changed image is used from the next
   run of the step. For a running step, the current run keeps its image and the next run uses the new one. Each step on the screen shows when a change takes effect.
-- Tests run in the image of the Implementation step (Reproduce for bug fixes). If you change the Implementation image, the next test run uses it.
+- The Goal Guardian runs the tests for verifying the implementation in the Implementation step's image. If you change the Implementation image, the next final review uses it.
 - For a step that stopped with a failure or a pause, change the image and then retry with "Resume"; the step runs with the changed image.
 - Tasks whose project target specifies an image can be changed too. Only the steps a person changed take precedence over the target's image.
 - A change is recorded in the Activity as who changed which step from what to what. The step images list shows when a person changed it and the previous name.

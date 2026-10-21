@@ -2,21 +2,25 @@
 
 # Services (docker compose)
 
-When tests or checks need a database, a mock API, or similar, sacty starts docker compose services on the host and connects the agent and test containers
-to their network (agents are not given Docker permissions). The compose file is either the target repository's own or a shared compose
+When tests or checks need a database, a mock API, or similar, sacty starts docker compose services on the host and connects the agent containers (steps, and the final review
+that runs the tests) to their network (agents are not given Docker permissions). The compose file is either the target repository's own or a shared compose
 (in another repository) written in the project, never both.
 
-Related ADR: [Service builds cannot tag shared images, and the agent image is pinned to an ID](../adr/20261018-0430-compose-build-image-isolation.md)
+Related ADRs: [Service builds cannot tag shared images, and the agent image is pinned to an ID](../adr/20261018-0430-compose-build-image-isolation.md), [The Goal Guardian runs the tests in the final review, and sacty no longer uses a test container](../adr/20261021-1431-guardian-runs-tests.md)
 
 ## When services start
 
 - Which services of which compose file are used in which step is decided by the Orchestrator when it chooses the steps ([Tasks and steps](tasks-and-steps.en.md)).
   The steps that can use them are `investigate` (only when investigating a bug), `reproduce`, and `implement`.
-- Services start for each step agent run and each test run, and are removed afterward.
+- Services start for each step agent run, and are removed afterward.
+- In verifying the implementation, for a final review with a test (verification) command, the Implementation step's services start before the Goal Guardian
+  runs (the workspace is the implementation's workspace; `forTests` of `ServicesStarted` is `true`, meaning a start for the verification (the tests in the final review)),
+  the Goal Guardian's container is connected, the connection details are added to the prompt, and they are removed when the run ends. If they cannot start, the task is
+  paused without running the Goal Guardian (`verify.testsUnavailable`; resuming redoes the final review). If a person stops the task while it waits for them, nothing is recorded.
 - A shared compose does not start just by being written in the project. It is fetched and started only when the Orchestrator chooses it by name (only for tasks
   that have a target repository). If a name not in the settings is chosen, the step stops (`services.sharedUnknown`).
 
-Code: `apps/daemon/src/service.ts` (`serviceSpec`, `startServices`, `stopServices`, `runTests`, `withSharedCompose`), `apps/daemon/src/prompts.ts` (`SERVICE_STEPS`, `composeServicesOf`)
+Code: `apps/daemon/src/service.ts` (`serviceSpec`, `startServices`, `stopServices`, `verify`, `withSharedCompose`), `apps/daemon/src/prompts.ts` (`SERVICE_STEPS`, `composeServicesOf`)
 
 ## Starting and stopping
 
@@ -29,13 +33,13 @@ Code: `apps/daemon/src/service.ts` (`serviceSpec`, `startServices`, `stopService
    as the agent image; compose names them `<project>-<service>`).
    The owner label `io.sacty.owner` (the PID and start time of the daemon that started it) is added.
 5. With the settings written to a temporary file, the services start with `docker compose -p sacty-svc-<name derived from the run ID> -f <settings> up -d --wait --wait-timeout 300 <services>`.
-   The agent and test containers connect with `--network sacty-svc-…_sacty`, and reach the services by service name and container port.
+   The agent containers connect with `--network sacty-svc-…_sacty`, and reach the services by service name and container port.
 6. Afterward (even on failure or timeout), `docker compose -p <name> down -v --remove-orphans --rmi local` removes the containers, networks, volumes,
    and built images.
 - In steps that use services, before starting them, the agent image (the step's image) is pinned to its image ID with `docker image inspect`, and the run uses
   that ID (it keeps the pinned image even if the tag changes after the services start). If the ID cannot be read or the check does not finish within 30 seconds
   (`IMAGE_ID_TIMEOUT_MS`), the run uses the name. If a person stops the task (pause or cancel) while it waits, `docker image inspect` is stopped and neither the
-  services nor the agent start. Steps that do not use services and service starts for tests do not check.
+  services nor the agent start. The final review that runs the tests also pins the Implementation step's image the same way before starting them. Steps that do not use services do not check.
 - Failure reasons are the last 2000 characters after redacting secrets.
 - At daemon startup, projects whose names start with `sacty-svc-` and whose owner-label daemon is not running (including those without the label) are
   removed. If `ps` cannot be read, nothing is removed.
@@ -57,7 +61,7 @@ Code: `apps/daemon/src/services.ts` (`sanitizeCompose`, `checkComposeSources`)
 
 ## Forwarding localhost
 
-In runs that started services, `127.0.0.1:<port>` (and `[::1]` if available) inside the agent and test containers is forwarded to the same port of the service
+In runs that started services, `127.0.0.1:<port>` (and `[::1]` if available) inside the agent containers is forwarded to the same port of the service
 (so that it is reachable even if the repository's settings still point to localhost).
 
 - What is forwarded: the services' TCP container ports (`ports`, `expose`) and the numbers published to the host in `ports` (for `"15432:5432"`, `localhost:15432` also goes

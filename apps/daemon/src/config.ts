@@ -1222,7 +1222,7 @@ image: ${DEFAULT_IMAGE}
 # 言語ごとのイメージ。工程ごとに、オーケストレーターが説明を見て選ぶ（プロジェクトの対象で指定もできる）。
 # 元のイメージは、言語のツールが入った Debian・Ubuntu 系か RHEL 系（Rocky Linux など）のイメージ（CI のイメージなど）。
 # sacty がエージェントの CLI を足して作る。元のイメージに Node.js 18 以上と npm が無ければ、node_image（無ければ image_build.base_image）から写す。
-# env はエージェントとテストのコンテナに渡す（認証の値は書けない）。maven_mirror は Maven・Gradle の取得先を向ける
+# env はエージェントのコンテナ（テストを実行する最終レビューを含む）に渡す（認証の値は書けない）。maven_mirror は Maven・Gradle の取得先を向ける
 # images:
 #   java17:
 #     description: Java 17・Maven・Gradle

@@ -1,9 +1,8 @@
 import { EventEmitter } from "node:events";
 import { describe, expect, it, vi } from "vitest";
-import { RunningContainers } from "./docker.js";
+import { DockerExecutor, RunningContainers } from "./docker.js";
 import { FORWARD_NOTICE_PREFIX, withLocalForwards } from "./forward.js";
 import { withOutputRelay } from "./output-relay.js";
-import { DockerTestRunner } from "./test-runner.js";
 
 /** 子プロセスの標準入力の偽物。書かれた内容と、閉じたかを記録する（PBI-149）。 */
 function fakeStdin() {
@@ -53,18 +52,26 @@ function fakeDocker(killCodes: number[]) {
   return { spawnImpl, calls, run: () => run };
 }
 
+/** すぐには終わらないエージェントの実行（止めたときの振る舞いを見る）。 */
+const invocation = {
+  command: ["sh", "-c", "sleep 9"],
+  env: {},
+  parser: "claude-json" as const,
+};
+
 describe("コンテナができる前に止めた場合（PBI-3 レビュー指摘）", () => {
   it("docker kill が対象なしで失敗したら、docker run 自体を止めて、kill を繰り返す", async () => {
     const docker = fakeDocker([1, 1, 0]);
-    const runner = new DockerTestRunner(60_000, docker.spawnImpl);
+    const runner = new DockerExecutor(60_000, docker.spawnImpl);
     // テスト用に、繰り返しの間隔を短くする
     (runner as unknown as { containers: { retryMs: number } }).containers.retryMs = 1;
-    const running = runner.run({ runId: "r1", image: "img", workspaceDir: "/tmp", command: "x" });
+    const running = runner
+      .run({ runId: "r1", image: "img", workspaceDir: "/tmp", invocation })
+      .catch(() => undefined);
     await new Promise((r) => setTimeout(r, 5));
     runner.kill("r1"); // イメージの取得中で、コンテナはまだ無い
-    const result = await running;
+    await running;
     expect(docker.run()?.killedWith).toBe("SIGKILL"); // docker run 自体を止めた
-    expect(result.exitCode).toBe(137);
     await new Promise((r) => setTimeout(r, 20));
     // 終わった後に、コンテナが残っていないことを docker ps で確かめた
     expect(docker.calls.some((a) => a[0] === "ps")).toBe(true);
@@ -72,7 +79,7 @@ describe("コンテナができる前に止めた場合（PBI-3 レビュー指�
 
   it("止める要求が子プロセスより先に来ても、起動したら止める", async () => {
     const docker = fakeDocker(Array(50).fill(1)); // コンテナは最後まで無い
-    const runner = new DockerTestRunner(60_000, docker.spawnImpl);
+    const runner = new DockerExecutor(60_000, docker.spawnImpl);
     (runner as unknown as { containers: { retryMs: number; retries: number } }).containers.retryMs =
       1;
     const containers = (
@@ -83,9 +90,11 @@ describe("コンテナができる前に止めた場合（PBI-3 レビュー指�
     // run() の register と spawn の間に止められた状況を再現する
     containers.register("sacty-run-r2");
     containers.stop("sacty-run-r2");
-    const running = runner.run({ runId: "r2", image: "img", workspaceDir: "/tmp", command: "x" });
-    const result = await running;
-    expect(result.exitCode).toBe(137);
+    await runner
+      .run({ runId: "r2", image: "img", workspaceDir: "/tmp", invocation })
+      .catch(() => undefined);
+    // 起動したら止めた（docker run 自体を止めた）
+    expect(docker.run()?.killedWith).toBe("SIGKILL");
   });
 });
 
@@ -135,75 +144,8 @@ describe("コンテナの停止の確認（PBI-3 レビュー指摘）", () => {
   });
 });
 
-describe("テストの実行の注記（PBI-11b）", () => {
-  const closing = (code: number) =>
-    (() => {
-      const child = Object.assign(new EventEmitter(), {
-        stdout: new EventEmitter(),
-        stderr: new EventEmitter(),
-        kill: () => true,
-      });
-      setTimeout(() => child.emit("close", code), 0);
-      return child;
-    }) as never;
-  const run = (runner: DockerTestRunner) =>
-    runner.run({ runId: "r", image: "img", workspaceDir: "/tmp", command: "x" });
-
-  it("docker run の終了コード 125 は Docker 自身の失敗として印を付け、テストの失敗（1 など）とは区別する（PBI-29 レビュー指摘）", async () => {
-    expect(await run(new DockerTestRunner(60_000, closing(125)))).toMatchObject({
-      exitCode: 125,
-      note: { code: "run.dockerFailed" },
-      infrastructure: true,
-    });
-    const failed = await run(new DockerTestRunner(60_000, closing(1)));
-    expect(failed.exitCode).toBe(1);
-    expect(failed.infrastructure).toBeUndefined();
-    expect(failed.note).toBeUndefined();
-  });
-
-  it("docker を実行できなければ、出力とは分けて、コードと引数の注記にする", async () => {
-    const spawnImpl = (() => {
-      const child = Object.assign(new EventEmitter(), {
-        stdout: new EventEmitter(),
-        stderr: new EventEmitter(),
-        kill: () => true,
-      });
-      setTimeout(() => child.emit("error", new Error("spawn docker ENOENT")), 0);
-      return child;
-    }) as never;
-    const runner = new DockerTestRunner(60_000, spawnImpl);
-    const result = await runner.run({
-      runId: "r",
-      image: "img",
-      workspaceDir: "/tmp",
-      command: "x",
-    });
-    expect(result).toMatchObject({
-      exitCode: 127,
-      output: "",
-      note: { code: "run.dockerUnavailable", params: { detail: "spawn docker ENOENT" } },
-      // 実行基盤の失敗（テストの結果ではない。PBI-29）
-      infrastructure: true,
-    });
-  });
-
-  it("時間を超えたら止めて、そのことを注記にする（テストの出力には混ぜない）", async () => {
-    const docker = fakeDocker([0]);
-    const runner = new DockerTestRunner(10, docker.spawnImpl);
-    (runner as unknown as { containers: { retryMs: number } }).containers.retryMs = 1;
-    const result = await runner.run({
-      runId: "r",
-      image: "img",
-      workspaceDir: "/tmp",
-      command: "x",
-    });
-    expect(result.note).toEqual({ code: "run.testTimeout", params: { minutes: 10 / 60_000 } });
-    expect(result.infrastructure).toBe(true);
-    expect(result.output).not.toContain("[sacty]");
-  });
-
+describe("実行の上限（PBI-150）", () => {
   it("エージェントの実行も、実行ごとの上限（PBI-150）を既定より優先し、その分で時間切れにする", async () => {
-    const { DockerExecutor } = await import("./docker.js");
     const docker = fakeDocker([0]);
     const executor = new DockerExecutor(60_000, docker.spawnImpl);
     (executor as unknown as { containers: { retryMs: number } }).containers.retryMs = 1;
@@ -217,21 +159,6 @@ describe("テストの実行の注記（PBI-11b）", () => {
         timeoutMs: 15,
       }),
     ).rejects.toThrow(`エージェントの実行が ${15 / 60_000} 分を超えたため止めました。`);
-  });
-
-  it("実行ごとの上限（config.yaml の run_timeout。PBI-150）を、既定より優先する", async () => {
-    const docker = fakeDocker([0]);
-    // 既定は長いが、実行ごとの上限で止まる
-    const runner = new DockerTestRunner(60_000, docker.spawnImpl);
-    (runner as unknown as { containers: { retryMs: number } }).containers.retryMs = 1;
-    const result = await runner.run({
-      runId: "r",
-      image: "img",
-      workspaceDir: "/tmp",
-      command: "x",
-      timeoutMs: 15,
-    });
-    expect(result.note).toEqual({ code: "run.testTimeout", params: { minutes: 15 / 60_000 } });
   });
 });
 
@@ -257,34 +184,21 @@ describe("イメージの環境変数（PBI-41）", () => {
     return { spawnImpl, runs };
   }
 
-  it("テストの実行に、イメージの環境変数を名前だけ渡す（値はコマンドラインに出さない）", async () => {
-    const docker = recordingDocker();
-    const runner = new DockerTestRunner(60_000, docker.spawnImpl);
-    await runner.run({
-      runId: "r1",
-      image: "sacty-agent-java:test",
-      workspaceDir: "/tmp",
-      command: "mvn test",
-      env: { GOPROXY: "https://proxy.example.com" },
-    });
-    const run = docker.runs[0];
-    expect(run?.args).toContain("GOPROXY");
-    expect(run?.args.join(" ")).not.toContain("proxy.example.com");
-    expect(run?.env.GOPROXY).toBe("https://proxy.example.com");
-    expect(run?.args).toContain("sacty-agent-java:test");
-  });
-
   it("サービスのネットワークにつなぐ（PBI-47）。指定が無ければ --network を付けない", async () => {
     const docker = recordingDocker();
-    const runner = new DockerTestRunner(60_000, docker.spawnImpl);
-    await runner.run({
-      runId: "r3",
-      image: "img",
-      workspaceDir: "/tmp",
-      command: "x",
-      network: "sacty-svc-r3_sacty",
-    });
-    await runner.run({ runId: "r4", image: "img", workspaceDir: "/tmp", command: "x" });
+    const runner = new DockerExecutor(60_000, docker.spawnImpl);
+    await runner
+      .run({
+        runId: "r3",
+        image: "img",
+        workspaceDir: "/tmp",
+        invocation,
+        network: "sacty-svc-r3_sacty",
+      })
+      .catch(() => undefined);
+    await runner
+      .run({ runId: "r4", image: "img", workspaceDir: "/tmp", invocation })
+      .catch(() => undefined);
     const args = docker.runs.map((r) => r.args);
     expect(args[0]?.slice(0, 4)).toEqual(["run", "--rm", "--network", "sacty-svc-r3_sacty"]);
     expect(args[1]).not.toContain("--network");
@@ -293,42 +207,7 @@ describe("イメージの環境変数（PBI-41）", () => {
     expect(args[0]?.join(" ")).not.toContain("docker.sock");
   });
 
-  it("サービスのポートを localhost に転送するときだけ、転送を起動してからテストのコマンドを動かす（PBI-60）", async () => {
-    const docker = recordingDocker();
-    const runner = new DockerTestRunner(60_000, docker.spawnImpl);
-    await runner.run({
-      runId: "r5",
-      image: "img",
-      workspaceDir: "/tmp",
-      command: "npm test",
-      network: "n",
-      forwards: [{ port: 5432, host: "db" }],
-    });
-    await runner.run({ runId: "r6", image: "img", workspaceDir: "/tmp", command: "npm test" });
-    await runner.run({
-      runId: "r7",
-      image: "img",
-      workspaceDir: "/tmp",
-      command: "npm test",
-      network: "n",
-      forwards: [],
-    });
-    const [forwarded, plain, none] = docker.runs.map((r) => r.args);
-    const afterImage = (args?: string[]) => args?.slice(args.indexOf("img") + 1);
-    // 出力の中継（PBI-64）の下で、転送を起動してからテストのコマンドを動かす
-    expect(afterImage(forwarded)).toEqual(
-      withOutputRelay(withLocalForwards(["sh", "-c", "npm test"], [{ port: 5432, host: "db" }])),
-    );
-    expect(
-      withLocalForwards(["sh", "-c", "npm test"], [{ port: 5432, host: "db" }]).slice(0, 2),
-    ).toEqual(["node", "-e"]);
-    // サービスを使わないテストは、転送を起動しない（中継の下で、コマンドをそのまま動かす）
-    expect(afterImage(plain)).toEqual(withOutputRelay(["sh", "-c", "npm test"]));
-    expect(afterImage(none)).toEqual(withOutputRelay(["sh", "-c", "npm test"]));
-  });
-
   it("エージェントの実行でも、転送するときだけ転送を起動し、転送しなかった理由をデーモンのログに出す（PBI-60）", async () => {
-    const { DockerExecutor } = await import("./docker.js");
     const runs: string[][] = [];
     const spawnImpl = ((_cmd: string, args: string[]) => {
       const child = Object.assign(new EventEmitter(), {
@@ -384,7 +263,6 @@ describe("イメージの環境変数（PBI-41）", () => {
   });
 
   it("エージェントの実行では、実行の環境変数がイメージの環境変数より優先する", async () => {
-    const { DockerExecutor } = await import("./docker.js");
     const docker = recordingDocker();
     const executor = new DockerExecutor(60_000, docker.spawnImpl);
     await executor.run({
@@ -429,7 +307,6 @@ describe("エージェントへの指示を標準入力で渡す（PBI-149）", 
   }
 
   it("指示があれば docker run に -i を付け、標準入力に指示の全体を書いて閉じる。コマンドの引数には入れない", async () => {
-    const { DockerExecutor } = await import("./docker.js");
     const docker = recordingDocker();
     const executor = new DockerExecutor(60_000, docker.spawnImpl);
     // 1つの引数の上限（128 KiB）を超える大きな指示
@@ -457,7 +334,6 @@ describe("エージェントへの指示を標準入力で渡す（PBI-149）", 
   });
 
   it("指示が無ければ -i を付けず、標準入力はすぐ閉じる", async () => {
-    const { DockerExecutor } = await import("./docker.js");
     const docker = recordingDocker();
     const executor = new DockerExecutor(60_000, docker.spawnImpl);
     await executor.run({
