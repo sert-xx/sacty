@@ -266,6 +266,7 @@ import {
   buildRerunBody,
   buildReviewBody,
   buildReviewComments,
+  buildReviewImagePrompt,
   buildReworkPrompt,
   buildStepDocument,
   buildStepPullRequestBodyParts,
@@ -285,6 +286,7 @@ import {
   extractIntegrationReview,
   extractReproduction,
   extractReviewComments,
+  extractReviewImage,
   extractRework,
   extractSplitPlan,
   extractStepPlan,
@@ -2665,17 +2667,23 @@ export class TaskService {
     };
   }
 
-  /** オーケストレーターに工程を選ばせる（PBI-17）。 */
-  private async askOrchestrator(
+  /**
+   * オーケストレーターを実行する（工程の選択・レビューのイメージの選択で共通。PBI-17）。実行に失敗したら、理由と使った分の費用を
+   * failure で返す。promptOf には、使える外部 PF を渡す（指示に API を書くため）。
+   */
+  private async runOrchestrator(
     task: Task,
     config: SactyConfig,
-    images: { name: string; description: string }[],
-    exports: { destinations: ExportDestination[]; rules: string },
-    sharedComposes: readonly SharedCompose[] = [],
-    /** 対象リポジトリの無いタスク（PBI-73）の、作業するリポジトリの候補・コンテキスト。 */
-    repoless?: { repositories: readonly string[]; context?: string; rules?: string },
+    promptOf: (platforms: readonly Platform[]) => string,
   ): Promise<
-    PlannedSteps | { failure: Extract<EventInput, { type: "OrchestratorFailed" }>["payload"] }
+    | {
+        output: string;
+        cost: Omit<
+          Extract<EventInput, { type: "OrchestratorFailed" }>["payload"],
+          "reason" | "message"
+        >;
+      }
+    | { failure: Extract<EventInput, { type: "OrchestratorFailed" }>["payload"] }
   > {
     // オーケストレーターに使う AI（step_agents.orchestrator か default_agent。PBI-40）。既定のイメージで動く。
     // 利用制限中か、このタスクで失敗したエージェントなら、代わりのエージェント（agents の fallback）。セッションは、前のエージェントのものを引き継ぐ
@@ -2737,29 +2745,7 @@ export class TaskService {
           context: context && { dir: context.dir, ...context.placed },
           ...(context && context.gatewayMcp.length > 0 ? { contextMcp: context.gatewayMcp } : {}),
           ...(context && context.tiers.length > 0 ? { estimateCost: true } : {}),
-          prompt: [
-            buildOrchestratorPrompt(task, {
-              images,
-              ...(exports.destinations.length > 0 ? { exports } : {}),
-              // 要求要件・設計を PR でレビューするなら、成果のファイルの置き場所を決めさせる（PBI-57）
-              ...(task.repository && this.deps.stepPullRequests !== false
-                ? { documents: { rules: exports.rules } }
-                : {}),
-              // 共用の compose（PBI-70）。要るかをタスクごとに判断させる
-              ...(sharedComposes.length > 0
-                ? {
-                    sharedComposes: sharedComposes.map((s) => ({
-                      name: s.name,
-                      file: s.file,
-                      ...(s.description ? { description: s.description } : {}),
-                    })),
-                  }
-                : {}),
-              ...(repoless ? { repoless } : {}),
-            }),
-            // 使える組織内 PF の API（PBI-35・PBI-74）
-            ...platformPromptLines(runPlatforms.platforms),
-          ].join("\n"),
+          prompt: promptOf(runPlatforms.platforms),
           role: "orchestrator",
         },
         "base",
@@ -2789,7 +2775,98 @@ export class TaskService {
         },
       };
     }
-    const chosen = extractStepPlan(outcome.output, allowedPlans(task));
+    return { output: outcome.output, cost };
+  }
+
+  /**
+   * PR のレビューだけのタスク（PBI-44）の工程。工程はレビューだけに決め、オーケストレーターには選ばせない。プロジェクトの
+   * 対象・再実行でイメージを決めておらず、images があるときだけ、レビューの工程のイメージをオーケストレーターに選ばせる
+   * （レビューは検証コマンドを実行するので、既定のイメージでは動かないことがある）。既定のイメージを選んだら、その理由
+   * （または理由が無いこと）を記録する（PBI-105）。
+   */
+  private async chooseReviewSteps(
+    task: Task,
+    config: SactyConfig,
+    via: "requested" | "label" | "sacty",
+  ): Promise<
+    ChosenSteps | { failure: Extract<EventInput, { type: "OrchestratorFailed" }>["payload"] }
+  > {
+    const pinned = this.pinnedImage(task);
+    const candidates = Object.values(config.images ?? {}).map(({ name, description }) => ({
+      name,
+      description,
+    }));
+    if (pinned || candidates.length === 0) {
+      return this.withImages(reviewOnlySteps(via), config, pinned);
+    }
+    const ran = await this.runOrchestrator(task, config, (platforms) =>
+      [buildReviewImagePrompt(task, candidates), ...platformPromptLines(platforms)].join("\n"),
+    );
+    if ("failure" in ran) return ran;
+    const chosen = extractReviewImage(ran.output);
+    if (!chosen) {
+      return {
+        failure: {
+          reason: "error",
+          message: message("orchestrator.failed", { detail: message("orchestrator.unreadable") }),
+          ...ran.cost,
+        },
+      };
+    }
+    return this.withImages(
+      {
+        ...reviewOnlySteps(via, true),
+        images: { review: chosen.image },
+        ...(chosen.reason ? { imageReason: chosen.reason } : {}),
+        ...(chosen.defaultReason ? { defaultImageReasons: { review: chosen.defaultReason } } : {}),
+        ...ran.cost,
+      },
+      config,
+      undefined,
+      true,
+    );
+  }
+
+  /** オーケストレーターに工程を選ばせる（PBI-17）。 */
+  private async askOrchestrator(
+    task: Task,
+    config: SactyConfig,
+    images: { name: string; description: string }[],
+    exports: { destinations: ExportDestination[]; rules: string },
+    sharedComposes: readonly SharedCompose[] = [],
+    /** 対象リポジトリの無いタスク（PBI-73）の、作業するリポジトリの候補・コンテキスト。 */
+    repoless?: { repositories: readonly string[]; context?: string; rules?: string },
+  ): Promise<
+    PlannedSteps | { failure: Extract<EventInput, { type: "OrchestratorFailed" }>["payload"] }
+  > {
+    const ran = await this.runOrchestrator(task, config, (platforms) =>
+      [
+        buildOrchestratorPrompt(task, {
+          images,
+          ...(exports.destinations.length > 0 ? { exports } : {}),
+          // 要求要件・設計を PR でレビューするなら、成果のファイルの置き場所を決めさせる（PBI-57）
+          ...(task.repository && this.deps.stepPullRequests !== false
+            ? { documents: { rules: exports.rules } }
+            : {}),
+          // 共用の compose（PBI-70）。要るかをタスクごとに判断させる
+          ...(sharedComposes.length > 0
+            ? {
+                sharedComposes: sharedComposes.map((s) => ({
+                  name: s.name,
+                  file: s.file,
+                  ...(s.description ? { description: s.description } : {}),
+                })),
+              }
+            : {}),
+          ...(repoless ? { repoless } : {}),
+        }),
+        // 使える組織内 PF の API（PBI-35・PBI-74）
+        ...platformPromptLines(platforms),
+      ].join("\n"),
+    );
+    if ("failure" in ran) return ran;
+    const { output, cost } = ran;
+    const chosen = extractStepPlan(output, allowedPlans(task));
     if (chosen) {
       return {
         steps: [...STEP_PLANS[chosen.plan]],
@@ -4682,12 +4759,9 @@ export class TaskService {
       // PR のレビューの取り込みのタスクは、工程をレビューだけにする（オーケストレーターに選ばせない。PBI-44）
       const review = this.mustGet(taskId).source?.review;
       // プロジェクトの対象で指定したイメージ（PBI-41）は、レビューだけの工程にも同じく使い、名前も確かめる（PBI-44 レビュー指摘）
+      // images があれば、レビューの工程のイメージだけをオーケストレーターに選ばせる（検証コマンドを実行するため）
       const choice = review
-        ? this.withImages(
-            reviewOnlySteps(review),
-            config.config,
-            this.pinnedImage(this.mustGet(taskId)),
-          )
+        ? await this.chooseReviewSteps(this.mustGet(taskId), config.config, review)
         : await this.chooseSteps(this.mustGet(taskId), config.config);
       // 対象リポジトリの無いタスクで、コードの変更が要り、分けないなら、選んだリポジトリを記録する（PBI-73）。
       // 次の実行でそのリポジトリを用意して、いつもどおり工程を選ぶ
@@ -4791,7 +4865,8 @@ export class TaskService {
       const noTests = this.checkNoTests(latest, chosen);
       if (noTests.stop) delete chosen.noTestsReason;
       events.push({
-        actor: review ? "sacty" : "orchestrator",
+        // レビューだけのタスクは、オーケストレーターがイメージを選んだときだけ、オーケストレーターの記録にする
+        actor: review && chosen.imageSource !== "orchestrator" ? "sacty" : "orchestrator",
         event: { type: "StepsChosen", payload: chosen },
       });
       // 実装を含むのにテストのコマンドが分からなければ、検証できないので費用をかける前に止める（PBI-25）。
@@ -10065,12 +10140,15 @@ function sameRepo(a: string, b: string): boolean {
   return repoKey(a) === repoKey(b);
 }
 
-/** PR のレビューの取り込みのタスクの工程（レビューだけ。オーケストレーターは使わないので費用は無い。PBI-44）。 */
-function reviewOnlySteps(via: "requested" | "label" | "sacty"): ChosenSteps {
+/**
+ * PR のレビューの取り込みのタスクの工程（レビューだけ。工程の選択にオーケストレーターは使わないので費用は無い。PBI-44）。
+ * imageChosen は、レビューの工程のイメージだけをオーケストレーターに選ばせたとき（費用は、選ばせた実行の分を足す）。
+ */
+function reviewOnlySteps(via: "requested" | "label" | "sacty", imageChosen = false): ChosenSteps {
   return {
     steps: [...STEP_PLANS.review],
     plan: "review",
-    reason: message("review.reviewOnly", { via }),
+    reason: message(imageChosen ? "review.reviewOnlyImageChosen" : "review.reviewOnly", { via }),
     fallback: false,
     costUsd: 0,
     estimated: false,

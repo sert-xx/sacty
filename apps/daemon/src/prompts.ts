@@ -75,6 +75,8 @@ const PROPOSAL_HEADING = "sacty-change-proposal";
 const VERDICT_HEADING = "sacty-verdict";
 const REWORK_HEADING = "sacty-rework";
 const PLAN_HEADING = "sacty-steps";
+/** PR のレビューだけのタスクで、レビューの工程のイメージを選ぶ答えの見出し（PBI-44 の続き）。 */
+const REVIEW_IMAGE_HEADING = "sacty-review-image";
 const EXPORT_HEADING = "sacty-export";
 /** 設計を省いたタスクで、最終レビューの観点にする要求要件の受け入れ条件（PBI-17）。 */
 export const REQUIREMENTS_VIEWPOINT = "REQ";
@@ -3374,6 +3376,62 @@ export function extractTicketTriage(
       title: text(v.title).slice(0, 200),
       summary: (typeof v.summary === "string" ? v.summary.trim() : "").slice(0, 20_000),
       reason: reason.slice(0, 2000),
+    };
+  })?.value;
+}
+
+/**
+ * PR のレビューだけのタスク（PBI-44）で、レビューの工程のイメージだけをオーケストレーターに選ばせる指示。工程はレビューに
+ * 決まっている。レビューは対象のプロジェクトの検証コマンド（テスト・lint など）を実行するので、そのツールが入ったイメージを
+ * images から選ばせる（既定のイメージは最後の手段。PBI-105 と同じ）。
+ */
+export function buildReviewImagePrompt(
+  task: Task,
+  images: readonly { name: string; description: string }[],
+): string {
+  return [
+    "あなたはオーケストレーターです。このタスクは PR のレビューだけを行います（工程はレビューに決まっています。選び直さないでください）。レビューの工程で使う実行のイメージを選んでください。",
+    ...(task.repository
+      ? [
+          "",
+          `作業領域（カレントディレクトリ）に、対象リポジトリ（${task.repository.url}）のベースブランチ（${task.repository.baseBranch}）の最新のコミット（${task.repository.baseCommit.slice(0, 7)}）のコードがあります。イメージを判断するために読んでください（使い捨ての写しです。変更は残りません）。`,
+          ...NO_SETUP_LINES,
+        ]
+      : []),
+    "",
+    "レビューの工程は、選んだイメージのコンテナで、PR のコードを読み、対象のプロジェクトで定められた検証コマンド（テスト・lint・型検査など）を実行します。",
+    "- PR が触るコード（モノレポなら、そのディレクトリ）の言語・版を、pom.xml・build.gradle・go.mod・pyproject.toml・package.json・.tool-versions などから判断し、検証に要るもの（例：Playwright・Cypress などのブラウザのテスト、DB のクライアント、ネイティブのビルドツール）が入っているイメージを、次の images から選ぶ",
+    ...images.map((image) => `  - ${image.name}：${image.description}`),
+    `- 既定のイメージ（${DEFAULT_IMAGE_NAME}）は、images のどれも合わないときの最後の手段。オーケストレーター用の最低限のもの（Claude Code・Codex を動かす Node.js と git だけ）で、テストのブラウザ・DB のクライアント・ほかの言語のツールは入っていない。リポジトリが Node.js でも、images に合うものがあれば、そちらを選ぶ。使うときは image に ${DEFAULT_IMAGE_NAME} と書き、defaultReason に images のどれも合わない理由を書く`,
+    "",
+    "--- タスク ---",
+    `# ${task.title}`,
+    "",
+    task.body || "（内容なし）",
+    "",
+    ...planAnswerLines(),
+    "選んだイメージを、次の形式で必ず出してください。",
+    "```json",
+    `{"${REVIEW_IMAGE_HEADING}": {"image": "イメージの名前", "reason": "イメージを選んだ理由（根拠にしたファイル）", "defaultReason": "images のどれも合わない理由（${DEFAULT_IMAGE_NAME} を選んだときだけ）"}}`,
+    "```",
+  ].join("\n");
+}
+
+/** レビューの工程のイメージの答えを読む（PBI-44 の続き）。名前が images にあるかは、呼び出し側が確かめる。 */
+export function extractReviewImage(
+  output: string,
+): { image: string; reason?: string; defaultReason?: string } | undefined {
+  return lastJsonAnswer(output, (value) => {
+    const v = headedObject(value, REVIEW_IMAGE_HEADING);
+    if (!v) return undefined;
+    const image = text(v.image);
+    if (!/^[a-z0-9][a-z0-9_-]{0,39}$/.test(image)) return undefined;
+    const reason = text(v.reason).slice(0, 1000);
+    const defaultReason = text(v.defaultReason).slice(0, 1000);
+    return {
+      image,
+      ...(reason ? { reason } : {}),
+      ...(defaultReason ? { defaultReason } : {}),
     };
   })?.value;
 }

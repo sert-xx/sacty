@@ -145,6 +145,9 @@ npx sacty image build java17     # build by name (default is the default image)
   check this and add the tools each image includes (such as Playwright) to its `description` in `images`.
 - If you specify an image for a project target (a repository or an Org), the orchestrator does not choose and that image is used for every step
   (a repository's setting takes precedence over an Org's; see [Project settings](project-settings.en.md#targets)).
+- For a PR-review-only task ([Intake](intake.en.md)) too, if no image is specified, the orchestrator chooses the image for the review step
+  from `images`. The review runs the project's verification such as tests and lint, so it is asked to choose an image that has those tools.
+  If `images` is not configured, the review runs in the default image without the orchestrator.
 - The chosen image and the reason are recorded in the Activity. If a name not in `images` is chosen or specified, sacty stops and shows the reason.
 
 ### Changing a step's image

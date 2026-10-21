@@ -285,6 +285,8 @@ const PARAMS = {
   "review.pullRequestMissing": z.object({ repo: z.string() }),
   // PR のレビューだけを行う取り込み（PBI-44）
   "review.reviewOnly": z.object({ via: z.enum(["requested", "label", "sacty"]) }),
+  // レビューだけのタスクで、レビューの工程のイメージだけをオーケストレーターが選んだ（PBI-44 の続き）
+  "review.reviewOnlyImageChosen": z.object({ via: z.enum(["requested", "label", "sacty"]) }),
   "review.notRereviewable": null,
   // 投稿の直前に PR の先頭を確かめられなかった（PBI-111）
   "review.headUnknown": null,
@@ -929,6 +931,8 @@ const ja: MessageDictionary = {
     `タスクに、レビューする PR（${repo} の PR の URL）がありません。`,
   "review.reviewOnly": ({ via }) =>
     `${via === "requested" ? "自分にレビューが依頼された" : via === "sacty" ? "Sacty がほかのタスクで作った" : "レビュー用のラベルの付いた"} PR なので、レビューだけを行います（オーケストレーターは使いません）。`,
+  "review.reviewOnlyImageChosen": ({ via }) =>
+    `${via === "requested" ? "自分にレビューが依頼された" : via === "sacty" ? "Sacty がほかのタスクで作った" : "レビュー用のラベルの付いた"} PR なので、レビューだけを行います（オーケストレーターは、レビューの工程のイメージだけを選びます）。`,
   "review.notRereviewable":
     "再レビューできるのは、レビューを PR に投稿して完了したタスクだけです。",
   "review.headUnknown":
@@ -1476,6 +1480,8 @@ const en: MessageDictionary = {
     `The task has no PR to review (a URL of a PR in ${repo}).`,
   "review.reviewOnly": ({ via }) =>
     `The PR ${via === "requested" ? "requests your review" : via === "sacty" ? "was created by Sacty in another task" : "has the review label"}, so Sacty only reviews it (the Orchestrator is not used).`,
+  "review.reviewOnlyImageChosen": ({ via }) =>
+    `The PR ${via === "requested" ? "requests your review" : via === "sacty" ? "was created by Sacty in another task" : "has the review label"}, so Sacty only reviews it (the Orchestrator only chooses the image for the review step).`,
   "review.notRereviewable": "Only a task that posted its review to the PR can be reviewed again.",
   "review.headUnknown":
     "Could not check the PR's head commit before posting (the GitHub response has no commit). Resuming checks again.",

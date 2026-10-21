@@ -18,6 +18,7 @@ import {
   buildPullRequestBody,
   buildPullRequestBodyParts,
   buildReviewBody,
+  buildReviewImagePrompt,
   buildReworkPrompt,
   buildStepDocument,
   buildStepPullRequestBody,
@@ -31,6 +32,7 @@ import {
   extractExport,
   extractIntegrationReview,
   extractReviewComments,
+  extractReviewImage,
   extractSplitPlan,
   extractStepPlan,
   operationSucceeded,
@@ -2337,6 +2339,52 @@ describe("オーケストレーターの答えの出し方（既定のスキル 
     expect(check).toBeGreaterThan(0);
     expect(check).toBeLessThan(format);
     expect(prompt.split("```json\n")).toHaveLength(3);
+  });
+});
+
+describe("PR のレビューだけのタスクで、レビューの工程のイメージを選ぶ（PBI-44 の続き）", () => {
+  const task = {
+    id: "t1",
+    title: "PR 40",
+    body: "本文",
+    steps: [],
+    remarks: [],
+    outputs: {},
+    approved: {},
+    repository: {
+      url: "https://github.com/acme/app",
+      baseBranch: "main",
+      baseCommit: "abcdef1234",
+    },
+  } as unknown as Task;
+
+  it("工程は選び直させず、images の候補を見せ、既定のイメージは最後の手段にする", () => {
+    const prompt = buildReviewImagePrompt(task, [{ name: "java", description: "Java 17" }]);
+    expect(prompt).toContain("選び直さないでください");
+    expect(prompt).toContain("- java：Java 17");
+    expect(prompt).toContain(
+      "既定のイメージ（default）は、images のどれも合わないときの最後の手段",
+    );
+    expect(prompt).toContain("検証コマンド（テスト・lint・型検査など）");
+    expect(prompt).toContain('"sacty-review-image"');
+    // 開発のセットアップはしない（読むだけ）
+    expect(prompt).toContain("開発のためのセットアップ");
+    expect(prompt.split("```json\n")).toHaveLength(2);
+  });
+
+  it("答えのイメージの名前と理由を読み、形の正しくない名前は読まない", () => {
+    const answer = (body: Record<string, unknown>) =>
+      `前置き\n\`\`\`json\n${JSON.stringify({ "sacty-review-image": body })}\n\`\`\``;
+    expect(extractReviewImage(answer({ image: "java", reason: "pom.xml" }))).toEqual({
+      image: "java",
+      reason: "pom.xml",
+    });
+    expect(
+      extractReviewImage(answer({ image: "default", defaultReason: "合うものが無い" })),
+    ).toEqual({ image: "default", defaultReason: "合うものが無い" });
+    expect(extractReviewImage(answer({ image: "Java 17" }))).toBeUndefined();
+    expect(extractReviewImage(answer({ reason: "r" }))).toBeUndefined();
+    expect(extractReviewImage("答えなし")).toBeUndefined();
   });
 });
 

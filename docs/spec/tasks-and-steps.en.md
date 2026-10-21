@@ -183,7 +183,7 @@ The following are read from the answer (JSON under the heading `sacty-steps`) an
   - For each step that runs in the default image (a chosen step whose image is absent or `default`), the reason is recorded in
     `defaultImageReasons` of `StepsChosen`; a step without a reason (no image written, or `default` without a reason) is recorded in `imagesUnexplained`.
     The task does not stop; it proceeds in the default image, and the Activity (the task page) shows that there is no reason.
-  - Neither is recorded when `images` is not configured, when the project's target specifies an image, for a task that proceeds without a repository, or for a PR-review-only task.
+  - Neither is recorded when `images` is not configured, when the project's target specifies an image, or for a task that proceeds without a repository.
 - When a task without a repository chooses steps that need a repository, `repo` is checked against the project's targets, `RepositoryChosen` is recorded,
   and the repository is prepared before asking to choose again. If it is not in the targets or is empty, the task stops, and a person can pick a repository in the web UI to resume (only while paused and
   waiting for a repository). If the plan does not need a repository, `testCommand`, `baseBranch`, `services`, and `documentsDir` are discarded.
@@ -192,10 +192,18 @@ The following are read from the answer (JSON under the heading `sacty-steps`) an
   unchanged: a broken answer still stops the task as unreadable.
 - When the run fails or the answer cannot be read, `OrchestratorFailed` is recorded and the task is paused (it does not fall back to the standard plan).
 - For a task taken in from a ticket, before choosing steps the Orchestrator reads the ticket and decides the repository, title, and summary (`TicketTriaged`).
-- A PR-review-only task uses the `review` plan without the Orchestrator (`reviewOnlySteps`).
+- A PR-review-only task uses the `review` plan without asking the Orchestrator to choose steps (`chooseReviewSteps`, `reviewOnlySteps`).
+  - Only when `images` is configured and neither the project's target nor a rerun decides the image, the Orchestrator chooses just the image for the `review` step
+    (`buildReviewImagePrompt`; the answer is `image`, `reason`, and `defaultReason` under `sacty-review-image`, read by `extractReviewImage`). The prompt asks it to choose from the language and version
+    of the code the PR touches and from what the verification commands need (browser tests, DB clients, and so on), with the default image as the last resort.
+  - When it chooses, `StepsChosen` is recorded as the Orchestrator's (`imageSource: orchestrator`, `imageReason`, and the cost of the run), and for the default image
+    `defaultImageReasons` or `imagesUnexplained` is recorded as above. The reason text is `review.reviewOnlyImageChosen`.
+  - When the run fails, the answer cannot be read, or the name is not in `images`, `OrchestratorFailed` is recorded and the task stops, as for choosing steps (if there is a fallback agent,
+    it chooses again with that agent).
+  - Otherwise (no `images`, or the image is decided), the Orchestrator is not used (`StepsChosen` is recorded by sacty, and the cost is 0).
 - Reuse of Orchestrator sessions is described in "Saving and reusing sessions" in [Agent execution](agent-execution.en.md).
 
-Code: `apps/daemon/src/service.ts` (`askOrchestrator`, `runNextInner`, `withImages`, `defaultImagesOf`, `withSharedCompose`, `withExports`, `repositoryFromPlan`, `chooseRepository`, `triageTicket`, `reviewOnlySteps`), `apps/daemon/src/prompts.ts` (`extractStepPlan`, `planAnswerLines`, `PLAN_SKILL`), `apps/daemon/default-context/skills/plan-steps/SKILL.md`, `packages/core/src/events.ts` (`StepsChosen`)
+Code: `apps/daemon/src/service.ts` (`askOrchestrator`, `runNextInner`, `withImages`, `defaultImagesOf`, `withSharedCompose`, `withExports`, `repositoryFromPlan`, `chooseRepository`, `triageTicket`, `chooseReviewSteps`, `runOrchestrator`, `reviewOnlySteps`), `apps/daemon/src/prompts.ts` (`extractStepPlan`, `planAnswerLines`, `PLAN_SKILL`, `buildReviewImagePrompt`, `extractReviewImage`), `apps/daemon/default-context/skills/plan-steps/SKILL.md`, `packages/core/src/events.ts` (`StepsChosen`)
 
 ## Changing a step's image
 
