@@ -2941,6 +2941,7 @@ export function buildOrchestratorPrompt(
     `- baseBranch：変更の起点にするブランチ。ふつうは既定のブランチ（${task.repository?.baseBranch ?? "既定のブランチ"}）。CONTRIBUTING などで別のブランチ（例：develop）に向けると決まっているときだけ、そのブランチ名を書く`,
     "- testCommand：このリポジトリのテスト（検証）を実行するコマンド（例：npm ci && npm test）。package.json・Makefile・CI の設定などから判断する（ここでは実行しない）。sh -c で実行し、終了コード0で合格とみなす。依存関係の取得も含める。分からなければ空にする（推測で書かない）",
     "  - テストのコードが無くても、リポジトリの成果物を機械的に確かめる検証（Kubernetes のマニフェストの kustomize build・helm lint・kubeconform、Terraform の terraform validate、YAML の yamllint など）を CI・Makefile・pre-commit の設定が実行しているなら、それを testCommand にする。そうした設定が無くても、リポジトリの形からその検証のツールが決まる（kustomization.yaml があれば kustomize build、Chart.yaml があれば helm lint など）なら、それを testCommand にしてよい",
+    "  - 実行する検証が複数ある（テストの種類が複数・テストのほかに lint・型の検査・マニフェストの検証など）なら、CI・Makefile などが実行しているものをすべて && でつないで1つの testCommand にする（例：npm ci && npm run lint && npm test）。; ではつながない（前の検証の失敗が終了コードに残らないため）。代表の1つだけを選ばない",
     "  - testCommand に使うツールが、選べるイメージのどれにも入っていなくても、testCommand は書く（空にしない）。ゴールガーディアンが最終レビューの中でテストを実行し、ツールがイメージに無ければ、イメージにパッケージを足すよう人に案内して止める",
     "- noTests：testCommand を空にしたときだけ書く（PBI-94）。リポジトリにテストの仕組み（テストのコード・テストを実行する設定やスクリプト・CI のテストの工程など）も、上の検証のコマンドも無いと判断したら、その根拠（どこを見て、何が無かったか）を書く。sacty はテストを実行せず、ゴールガーディアンがタスクの目的から受け入れを判定する。テストの仕組みはあるのにコマンドが分からないときは書かない（sacty が止めて、人に確かめる）。テストの仕組みが無いなら、不具合の修正（bugfix）は選ばない（再現をテストで確かめられないため）",
     "- investigation：調査の工程の性質（PBI-43）。content（内容の調査：コードや仕組みを読んで説明する。開発のセットアップをしない）か、bug（不具合の調査：不具合の再現や原因の特定のために、動かして確かめる。セットアップをする）。不具合の修正（bugfix）や、不具合の原因を調べる調査は bug。迷う場合は content にする",
