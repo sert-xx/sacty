@@ -41,6 +41,7 @@ import {
 } from "./agent-json.js";
 import { DEFAULT_IMAGE_NAME, githubRepoOf } from "./config.js";
 import { type PullRequestFeedback, REVIEW_MARKER_PREFIX, sactyReviewKey } from "./github.js";
+import { headOf } from "./orchestrator-handoff.js";
 import {
   CONTAINER_LOGS_DIR,
   QUESTION_LOG_FILES,
@@ -3426,8 +3427,9 @@ export function extractReviewImage(
     if (!v) return undefined;
     const image = text(v.image);
     if (!/^[a-z0-9][a-z0-9_-]{0,39}$/.test(image)) return undefined;
-    const reason = text(v.reason).slice(0, 1000);
-    const defaultReason = text(v.defaultReason).slice(0, 1000);
+    // 作業履歴に残すので、サロゲートペアの途中では切らない（PR #180 レビュー提案）
+    const reason = headOf(text(v.reason), 1000);
+    const defaultReason = headOf(text(v.defaultReason), 1000);
     return {
       image,
       ...(reason ? { reason } : {}),

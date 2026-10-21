@@ -9304,6 +9304,63 @@ describe("PR のレビューだけを行う取り込み（PBI-44）", () => {
       expect(ja(paused?.pausedMessage)).toContain("イメージ「python」");
       unknown.activity.close();
     });
+
+    it("images に無い名前を答えたら、代わりのエージェントで選び直してレビューする（PR #180 レビュー指摘）", async () => {
+      const activity = new SqliteActivityStore(dbPath);
+      const main = agent({ fallback: ["claude-api"] });
+      const backup = agent({
+        id: "claude-api",
+        auth: { mode: "api-key", secret: "anthropic-key" },
+      });
+      const config = (): ConfigResult => {
+        const base = withImages()();
+        return base.ok
+          ? {
+              ok: true,
+              config: {
+                ...base.config,
+                defaultAgent: main,
+                guardianAgent: main,
+                agents: { [main.id]: main, [backup.id]: backup },
+              },
+            }
+          : base;
+      };
+      const pulls = new FakePulls();
+      pulls.prInfo = { ...pulls.prInfo, number: 41, url: "https://github.com/acme/app/pull/41" };
+      const { service, executor } = makeService(
+        activity,
+        [answer({ image: "python" }), answer({ image: "java", reason: "pom.xml" }), out("# 評価")],
+        {
+          pulls,
+          config,
+          settings: new MemorySettingsStore({ reviewLabel: "sacty-review" }),
+          secrets: { "claude-oauth-token": "oauth-secret", "anthropic-key": "sk-ant-secret" },
+        },
+      );
+      const [task] = service.importIssues([pr(41, ["sacty-review"])]);
+      const id = task?.id ?? "";
+      await service.runNext(id);
+      const events = service.get(id)?.activity ?? [];
+      const failed = events.find((e) => e.type === "OrchestratorFailed");
+      expect(failed?.type === "OrchestratorFailed" && failed.payload.runId).toBeTruthy();
+      expect(events.find((e) => e.type === "AgentFellBack")?.payload).toMatchObject({
+        role: "orchestrator",
+        agentId: "claude-subscription",
+        fallbackAgentId: "claude-api",
+      });
+      expect(service.get(id)?.task.status).toBe("queued");
+      await service.runNext(id);
+      const chosen = service.get(id)?.activity.find((e) => e.type === "StepsChosen");
+      expect(chosen?.type === "StepsChosen" && chosen.payload).toMatchObject({
+        images: { review: "java" },
+        agentId: "claude-api",
+      });
+      expect(executor.calls[1]?.env.ANTHROPIC_API_KEY).toBe("sk-ant-secret");
+      expect(executor.calls[2]?.command.join(" ")).toContain("レビューエージェント");
+      expect(executor.images[2]).toEqual({ image: java.image, env: java.env });
+      activity.close();
+    });
   });
 
   it("取り込むラベルとレビュー用のラベルの両方が付いた PR は、レビューだけのタスクにする。Issue の取り込みはこれまでどおり", () => {

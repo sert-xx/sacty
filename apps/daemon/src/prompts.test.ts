@@ -2385,6 +2385,9 @@ describe("PR のレビューだけのタスクで、レビューの工程のイ�
     expect(extractReviewImage(answer({ image: "Java 17" }))).toBeUndefined();
     expect(extractReviewImage(answer({ reason: "r" }))).toBeUndefined();
     expect(extractReviewImage("答えなし")).toBeUndefined();
+    // サロゲートペアの途中では切らない（PR #180 レビュー提案）
+    const long = extractReviewImage(answer({ image: "java", reason: `${"a".repeat(999)}😀` }));
+    expect(long?.reason).toBe("a".repeat(999));
   });
 });
 

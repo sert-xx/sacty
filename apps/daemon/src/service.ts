@@ -2650,6 +2650,8 @@ export class TaskService {
           ...(choice.authMode ? { authMode: choice.authMode } : {}),
           ...(choice.model ? { model: choice.model } : {}),
           ...(choice.reasoningEffort ? { reasoningEffort: choice.reasoningEffort } : {}),
+          // 実行の ID を引き継ぐ（代わりのエージェントで選び直すため。PR #180 レビュー指摘）
+          ...(choice.runId ? { runId: choice.runId } : {}),
           ...(choice.usage ? { usage: choice.usage } : {}),
           costUsd: choice.costUsd,
           estimated: choice.estimated,
