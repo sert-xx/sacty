@@ -21,6 +21,7 @@ import {
   ImagePresenceChecker,
   imageTargets,
   inspectImage,
+  pingDocker,
   startImagePresenceCheck,
 } from "./image-presence.js";
 import { acquireInstanceLock, alreadyRunningMessage } from "./instance-lock.js";
@@ -163,9 +164,10 @@ const updates = new UpdateChecker({
     return c.ok ? c.config.updateCheck : true;
   },
 });
-// エージェントのイメージが手元にあるか（PBI-148）。起動のときと1分ごとに確かめ、無ければ端末と画面で作るコマンドを知らせる
+// Docker が動いているか・エージェントのイメージが手元にあるか（PBI-148）。起動のときと1分ごとに確かめ、端末と画面で知らせる
 const images = new ImagePresenceChecker({
   targets: () => imageTargets(config()),
+  ping: (signal) => pingDocker({ signal }),
   inspect: (image, signal) => inspectImage(image, { signal }),
 });
 const service = new TaskService({

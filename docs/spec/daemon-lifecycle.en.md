@@ -114,24 +114,36 @@ Code: `apps/daemon/src/update-check.ts` (`UpdateChecker`, `packageVersion`, `par
 `apps/daemon/src/service.ts` (`TaskService.status`), `apps/web/src/components/shell/update-notice.tsx` (`UpdateNotice`),
 `apps/web/src/components/shell/update-notice-live.tsx` (`UpdateNoticeLive`, `UPDATE_LIVE_INTERVAL_MS`), `apps/web/src/components/shell/update-notice-view.tsx` (`UpdateNoticeView`, `safeGitHubUrl`, `UPDATE_COMMANDS`)
 
-## Checking the agent images
+## Checking Docker and the agent images
 
-At startup and then every minute (`IMAGE_CHECK_INTERVAL_MS`), the daemon checks whether the agent images exist locally (PBI-148).
-Raising the version changes the default image name (`sacty-agent:<version>`), so it tells you before a task runs and stops with `run.imageMissing`.
+At startup and then every minute (`IMAGE_CHECK_INTERVAL_MS`), the daemon checks whether Docker is usable (PBI-148). It checks whether Docker is running,
+whether the agent images exist locally, and whether the configured images are the ones for the running version of sacty, and tells you before a task runs and stops with `run.imageMissing` or similar.
 
-- It checks `image` in `config.yaml` (default `sacty-agent:<version>`) and the images in `images.*` (each name once). Without a config file, only the default image;
-  with a config error, nothing (the config error is reported separately). The config is read on every check.
-- It runs `docker image inspect --format {{.Id}} <name>`. Exit code 0 means it exists. `No such image` or `No such object` on stderr means it is missing.
-  Anything else (Docker not reachable, no docker, or no response in 10 seconds (`IMAGE_INSPECT_TIMEOUT_MS`); it is stopped if it does not respond) means it cannot be checked.
+- First it runs `docker version --format {{.Server.Version}}` to check whether Docker (the daemon) is running. Exit code 0 means it is running. If the docker command
+  is not found (`ENOENT` on spawn), it shows a single `image.dockerNotInstalled` notice; otherwise (the daemon is not reachable, or no response in 10 seconds (`IMAGE_INSPECT_TIMEOUT_MS`);
+  it is stopped if it does not respond) a single `image.dockerUnreachable` notice, and it does not check the images.
+- The images checked are `image` in `config.yaml` (default `sacty-agent:<version>`) and the images in `images.*` (each name once). Without a config file, only the default image;
+  with a config error, no images (the config error is reported separately; whether Docker is running is still checked). The config is read on every check.
+- When a configured image is one sacty names (`sacty-agent` for the default, `sacty-agent-<name>` per language) and only its tag differs from the running version of sacty
+  (for example `image: sacty-agent:<previous version>` written by `sacty config init` is still there after an upgrade; a missing tag counts too), the notice gives the place to fix (`image` or
+  `images.<name>.image`), the image name for the running version, and the command to create it (`image.outdated`), and that image is not checked locally.
+  Other names (names you chose, registry images) are not compared.
+- For the other images, it runs `docker image inspect --format {{.Id}} <name>`. Exit code 0 means it exists. `No such image` or `No such object` on stderr means it is missing.
+  Anything else (Docker not reachable, no docker, or no response in 10 seconds; it is stopped if it does not respond) means it cannot be checked.
 - For each missing image, the notice gives the name and the command to create it (`npx sacty image build` for the default image, `npx sacty image build <name>` for a per-language image)
   (`image.missing`). For an image whose name includes a registry host (`.` or `:` before the first `/`, or `localhost`), it also says runs will try to pull it
-  (`image.notLocal`). If any image cannot be checked, a single "cannot check because Docker is not reachable" notice is shown (`image.dockerUnreachable`).
-- The notices are in `warnings` of `GET /api/status` (the web UI shows them in the notices on the task list), also when there is no config file (when `problems` has the config error).
-  The result of the first check is also printed to the terminal (the output of `sacty up`). Startup is not stopped and nothing is built automatically. Once built, the notice disappears at the next check. Checks do not overlap.
-- When the daemon stops, it stops the interval and the running `docker image inspect` (`SIGKILL`). The result of an aborted check is not kept, and no further checks run.
+  (`image.notLocal`). If any image cannot be checked, a single `image.dockerUnreachable` notice is shown.
+- The notices are in `docker` of `GET /api/status` (separate from `warnings`), also when there is no config file (when `problems` has the config error).
+  The web UI shows them above the content on every screen as "Docker is not ready" (`DockerNotice`) and refetches them from `/live/docker` every 30 seconds
+  (`DOCKER_LIVE_INTERVAL_MS`), so they disappear without a reload once fixed. If the refetch fails, the last shown notices stay.
+- The result of the first check is also printed to the terminal (the output of `sacty up`). Startup is not stopped, nothing is built automatically, and the config is not changed.
+  Once fixed, the notice disappears at the next check. Checks do not overlap.
+- When the daemon stops, it stops the interval and the running docker command (`SIGKILL`). The result of an aborted check is not kept, and no further checks run.
 
-Code: `apps/daemon/src/image-presence.ts` (`ImagePresenceChecker`, `inspectImage`, `imageTargets`, `isRegistryImage`, `buildCommand`, `startImagePresenceCheck`, `IMAGE_CHECK_INTERVAL_MS`, `IMAGE_INSPECT_TIMEOUT_MS`),
-`apps/daemon/src/service.ts` (`TaskService.status`), `apps/daemon/src/main.ts`
+Code: `apps/daemon/src/image-presence.ts` (`ImagePresenceChecker`, `pingDocker`, `inspectImage`, `imageTargets`, `isOutdatedImage`, `isRegistryImage`, `buildCommand`, `startImagePresenceCheck`, `IMAGE_CHECK_INTERVAL_MS`, `IMAGE_INSPECT_TIMEOUT_MS`),
+`apps/daemon/src/service.ts` (`TaskService.status`), `apps/daemon/src/main.ts`, `apps/web/src/components/shell/docker-notice.tsx` (`DockerNotice`),
+`apps/web/src/components/shell/docker-notice-live.tsx` (`DockerNoticeLive`, `DOCKER_LIVE_INTERVAL_MS`), `apps/web/src/components/shell/docker-notice-view.tsx` (`DockerNoticeView`),
+`apps/web/src/app/live/docker/route.ts`
 
 ## Duplicate start
 

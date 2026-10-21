@@ -514,7 +514,7 @@ export type ServiceDeps = {
   platformProblems?: (names: readonly string[]) => DaemonText[];
   /** 準備ができないホストの MCP サーバーの理由（画面の状態に出す。PBI-36）。 */
   hostMcpProblems?: () => DaemonText[];
-  /** 手元に無いエージェントのイメージ・Docker に接続できない（起動のときと1分ごとに確かめる。PBI-148）。 */
+  /** Docker が動いていない・手元に無い・版の違うエージェントのイメージ（起動のときと1分ごとに確かめる。PBI-148）。 */
   imageProblems?: () => DaemonText[];
   /**
    * 実行の前に、その実行が使うホストの MCP サーバーの準備を待つ（PBI-77。設定に足した直後でも使えるよう、設定と突き合わせて
@@ -557,6 +557,11 @@ export type DaemonStatus = {
   problems: DaemonText[];
   /** 動くが、知らせたいこと（認証情報を用意できない組織内 PF など。PBI-35）。 */
   warnings: DaemonText[];
+  /**
+   * Docker とエージェントのイメージの注意（Docker が動いていない・docker が無い・イメージが無い・版が違う。PBI-148）。
+   * 起動のときと1分ごとに確かめた結果。warnings と分けて、画面はどの画面でも出す。
+   */
+  docker: DaemonText[];
   /** 取り込みの状況（設定ファイルを読めなければ null）。 */
   intake: IntakeStatus | null;
   /** プロジェクトの対象で選べる、言語ごとのイメージ（名前と説明。PBI-41）。 */
@@ -3137,8 +3142,9 @@ export class TaskService {
       return {
         agent: null,
         problems: [config.problem],
-        // 設定ファイルが無くても既定のイメージは確かめるので、その注意は載せる（PR #166 レビュー指摘。PBI-148）
-        warnings: [...(this.deps.imageProblems?.() ?? [])],
+        warnings: [],
+        // 設定ファイルが無くても Docker と既定のイメージは確かめるので、その注意は載せる（PR #166 レビュー指摘。PBI-148）
+        docker: this.deps.imageProblems?.() ?? [],
         intake: null,
         images: [],
         platforms: [],
@@ -3159,10 +3165,10 @@ export class TaskService {
         ...this.secretProblems.map((p) => p.text),
         ...(this.deps.platformProblems?.(config.config.platforms.map((p) => p.name)) ?? []),
         ...(this.deps.hostMcpProblems?.() ?? []),
-        // 手元に無いエージェントのイメージ（PBI-148）
-        ...(this.deps.imageProblems?.() ?? []),
         ...(this.deps.notifier?.problems() ?? []),
       ],
+      // Docker が動いていない・手元に無い・版の違うエージェントのイメージ（PBI-148）。画面はどの画面でも出す
+      docker: this.deps.imageProblems?.() ?? [],
       // 取り込みは、設定ファイルを読めれば動く（PBI-100。以前は github: が要った）
       intake: this.intakeStatusOf(),
       images: Object.values(config.config.images ?? {}).map(({ name, description }) => ({

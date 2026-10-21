@@ -28,7 +28,7 @@ npx sacty config init   # creates ~/.sacty/config.yaml
    save your OpenAI API key using `npx sacty secret set openai-api-key`.
 3. Build the container image for running agents with `npx sacty image build`. If your environment cannot use Docker Hub or the public npm registry,
    write `image_build` before you build it ([Container images](images.en.md)).
-   If you start without the image, the output of `sacty up` and the notices on the task list show the command to create it.
+   If you start without the image, the output of `sacty up` and the top of the screen show the command to create it. They also tell you when Docker is not running.
 
 ## Start
 
@@ -85,7 +85,8 @@ npx sacty up
 `npm run build` deletes and recreates the web UI build output (`apps/web/.next`). Running it while `sacty up` is running can break the web UI,
 so always stop it first.
 `npx sacty image build` rebuilds the agent image. The default image name (`sacty-agent:<version>`) follows the version, so without rebuilding, runs stop
-because the image is missing. Even if you set your own name in `image` of `config.yaml`, rebuilding is the safe choice, because a new version may raise the
+because the image is missing. If `image` in `config.yaml` still has the previous version's name (`sacty-agent:<previous version>`), the output of `sacty up`
+and the top of the screen show how to fix it; change it as shown, then rebuild. Even if you set your own name in `image` of `config.yaml`, rebuilding is the safe choice, because a new version may raise the
 agent CLI versions.
 
 - "See the release notes" in the notice opens the release description on GitHub.

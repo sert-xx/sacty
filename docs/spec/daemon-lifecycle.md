@@ -110,24 +110,36 @@
 `apps/daemon/src/service.ts`（`TaskService.status`）、`apps/web/src/components/shell/update-notice.tsx`（`UpdateNotice`）、
 `apps/web/src/components/shell/update-notice-live.tsx`（`UpdateNoticeLive`・`UPDATE_LIVE_INTERVAL_MS`）、`apps/web/src/components/shell/update-notice-view.tsx`（`UpdateNoticeView`・`safeGitHubUrl`・`UPDATE_COMMANDS`）
 
-## エージェントのイメージの確かめ
+## Docker とエージェントのイメージの確かめ
 
-デーモンは、起動のときと、それから1分ごと（`IMAGE_CHECK_INTERVAL_MS`）に、エージェントのイメージが手元にあるかを確かめる（PBI-148）。
-版を上げると既定のイメージの名前（`sacty-agent:<版>`）が変わるので、タスクを実行して `run.imageMissing` で止まる前に知らせる。
+デーモンは、起動のときと、それから1分ごと（`IMAGE_CHECK_INTERVAL_MS`）に、Docker を使える状態かを確かめる（PBI-148）。Docker が動いているか、
+エージェントのイメージが手元にあるか、設定のイメージが動いている sacty の版のものかを確かめ、タスクを実行して `run.imageMissing` などで止まる前に知らせる。
 
-- 確かめるのは、`config.yaml` の `image`（既定 `sacty-agent:<版>`）と `images.*` のイメージ（同じ名前は1回だけ）。設定ファイルが無ければ既定のイメージだけ、
-  設定に誤りがあれば確かめない（設定の誤りは別に知らせている）。設定は確かめるたびに読む。
-- `docker image inspect --format {{.Id}} <名前>` を実行する。終了コード 0 ならある。標準エラー出力に `No such image`・`No such object` があれば無い。
-  それ以外（Docker に接続できない・docker が無い・10 秒（`IMAGE_INSPECT_TIMEOUT_MS`）で応答しない。応答しなければ止める）は確かめられない。
+- まず `docker version --format {{.Server.Version}}` で、Docker（デーモン）が動いているかを確かめる。終了コード 0 なら動いている。docker のコマンドが
+  見つからない（起動の `ENOENT`）なら `image.dockerNotInstalled`、それ以外（デーモンに接続できない・10 秒（`IMAGE_INSPECT_TIMEOUT_MS`）で応答しない。
+  応答しなければ止める）なら `image.dockerUnreachable` の注意を1つだけ出し、イメージは確かめない。
+- 確かめるイメージは、`config.yaml` の `image`（既定 `sacty-agent:<版>`）と `images.*` のイメージ（同じ名前は1回だけ）。設定ファイルが無ければ既定のイメージだけ、
+  設定に誤りがあればイメージは確かめない（設定の誤りは別に知らせている。Docker が動いているかは確かめる）。設定は確かめるたびに読む。
+- 設定のイメージが、sacty が名付けるイメージ（既定は `sacty-agent`、言語ごとは `sacty-agent-<名前>`）で、タグだけが動いている sacty の版と違う
+  （`sacty config init` が書いた `image: sacty-agent:<前の版>` が、版を上げても残っているなど。タグが無いものも含む）ときは、直す場所（`image` か
+  `images.<名前>.image`）・動いている版のイメージの名前・作るコマンドを注意にし（`image.outdated`）、そのイメージが手元にあるかは確かめない。
+  ほかの名前（利用者が付けた名前・レジストリのイメージ）は比べない。
+- ほかのイメージは `docker image inspect --format {{.Id}} <名前>` を実行する。終了コード 0 ならある。標準エラー出力に `No such image`・`No such object` があれば無い。
+  それ以外（Docker に接続できない・docker が無い・10 秒で応答しない。応答しなければ止める）は確かめられない。
 - 無いイメージごとに、名前と作るコマンド（既定のイメージは `npx sacty image build`、言語ごとのイメージは `npx sacty image build <名前>`）を注意にする
   （`image.missing`）。名前にレジストリのホストを含むイメージ（最初の `/` の前に `.`・`:` があるか `localhost`）は、実行のときに取得を試みることも添える
-  （`image.notLocal`）。確かめられないイメージが1つでもあれば、「Docker に接続できないので確かめられない」を1つだけ出す（`image.dockerUnreachable`）。
-- 注意は `GET /api/status` の `warnings` に載せる（画面はタスクの一覧の注意の欄に出す）。設定ファイルが無いとき（設定の誤りとして `problems` が出る）も載せる。
-  最初の確かめの結果は、端末（`sacty up` の出力）にも出す。起動は止めず、自動では作らない。作れば、次の確かめで注意が消える。確かめている最中に重ねて確かめない。
-- デーモンを止めるときは、間隔を止め、実行中の `docker image inspect` を止める（`SIGKILL`）。打ち切った確かめの結果は残さず、それからは確かめない。
+  （`image.notLocal`）。確かめられないイメージが1つでもあれば、`image.dockerUnreachable` を1つだけ出す。
+- 注意は `GET /api/status` の `docker` に載せる（`warnings` とは分ける）。設定ファイルが無いとき（設定の誤りとして `problems` が出る）も載せる。
+  画面は、どの画面でも中身の上に「Docker を使える状態ではありません」として出し（`DockerNotice`）、30 秒ごと（`DOCKER_LIVE_INTERVAL_MS`）に
+  `/live/docker` から取り直す（直れば、リロードせずに消える）。取り直せないときは、最後に取れた表示のまま。
+- 最初の確かめの結果は、端末（`sacty up` の出力）にも出す。起動は止めず、自動では作らない・設定を直さない。直せば、次の確かめで注意が消える。
+  確かめている最中に重ねて確かめない。
+- デーモンを止めるときは、間隔を止め、実行中の docker を止める（`SIGKILL`）。打ち切った確かめの結果は残さず、それからは確かめない。
 
-コード: `apps/daemon/src/image-presence.ts`（`ImagePresenceChecker`・`inspectImage`・`imageTargets`・`isRegistryImage`・`buildCommand`・`startImagePresenceCheck`・`IMAGE_CHECK_INTERVAL_MS`・`IMAGE_INSPECT_TIMEOUT_MS`）、
-`apps/daemon/src/service.ts`（`TaskService.status`）、`apps/daemon/src/main.ts`
+コード: `apps/daemon/src/image-presence.ts`（`ImagePresenceChecker`・`pingDocker`・`inspectImage`・`imageTargets`・`isOutdatedImage`・`isRegistryImage`・`buildCommand`・`startImagePresenceCheck`・`IMAGE_CHECK_INTERVAL_MS`・`IMAGE_INSPECT_TIMEOUT_MS`）、
+`apps/daemon/src/service.ts`（`TaskService.status`）、`apps/daemon/src/main.ts`、`apps/web/src/components/shell/docker-notice.tsx`（`DockerNotice`）、
+`apps/web/src/components/shell/docker-notice-live.tsx`（`DockerNoticeLive`・`DOCKER_LIVE_INTERVAL_MS`）、`apps/web/src/components/shell/docker-notice-view.tsx`（`DockerNoticeView`）、
+`apps/web/src/app/live/docker/route.ts`
 
 ## 二重の起動
 

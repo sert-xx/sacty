@@ -236,6 +236,13 @@ const PARAMS = {
   "image.missing": z.object({ image: z.string(), command: z.string() }),
   "image.notLocal": z.object({ image: z.string(), command: z.string() }),
   "image.dockerUnreachable": null,
+  "image.dockerNotInstalled": null,
+  "image.outdated": z.object({
+    image: z.string(),
+    expected: z.string(),
+    key: z.string(),
+    command: z.string(),
+  }),
   "run.authFileUnreadable": z.object({ path: z.string() }),
   "run.containerNotConfirmed": z.object({ name: z.string() }),
   // オーケストレーターのセッションを、実行の設定の場所に戻せなかった（PBI-67）
@@ -869,7 +876,11 @@ const ja: MessageDictionary = {
   "image.notLocal": ({ image, command }) =>
     `エージェント用のイメージ（${image}）が手元にありません。実行のときにレジストリから取得を試みます。取得できなければ \`${command}\` で作成してください。`,
   "image.dockerUnreachable":
-    "Docker に接続できないため、エージェント用のイメージがあるかを確かめられませんでした。Docker が起動しているか確認してください。",
+    "Docker に接続できません。Docker が起動しているか確認してください。接続できるまで、タスクを実行できません（エージェント用のイメージがあるかも確かめられません）。",
+  "image.dockerNotInstalled":
+    "docker コマンドが見つかりません。Docker をインストールし、docker コマンドを PATH に通してください。それまで、タスクを実行できません。",
+  "image.outdated": ({ image, expected, key, command }) =>
+    `config.yaml の ${key}（${image}）が、動いている Sacty の版のイメージ（${expected}）と違います。config.yaml の ${key} の値を \`${expected}\` に直してから \`${command}\` で作成してください。`,
   "run.authFileUnreadable": ({ path }) =>
     `認証ファイル（${path}）を読めません。ログインしているか確認してください。`,
   "run.containerNotConfirmed": ({ name }) =>
@@ -1430,7 +1441,11 @@ const en: MessageDictionary = {
   "image.notLocal": ({ image, command }) =>
     `The agent image (${image}) is not on this machine. Runs will try to pull it from the registry. If that fails, create it with \`${command}\`.`,
   "image.dockerUnreachable":
-    "Could not check whether the agent images exist because Docker is not reachable. Check that Docker is running.",
+    "Docker is not reachable. Check that Docker is running. Tasks cannot run until Sacty can reach Docker (and the agent images cannot be checked).",
+  "image.dockerNotInstalled":
+    "The docker command was not found. Install Docker and put the docker command on PATH. Tasks cannot run until then.",
+  "image.outdated": ({ image, expected, key, command }) =>
+    `${key} in config.yaml (${image}) does not match the image for the running version of Sacty (${expected}). Change the value of ${key} in config.yaml to \`${expected}\`, then create it with \`${command}\`.`,
   "run.authFileUnreadable": ({ path }) =>
     `Cannot read the auth file (${path}). Check that you are signed in.`,
   "run.containerNotConfirmed": ({ name }) =>
