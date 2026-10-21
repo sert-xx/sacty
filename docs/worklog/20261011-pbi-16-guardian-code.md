@@ -4,7 +4,7 @@
 - タスク: PBI-16
 - PR: #22
 - ブランチ: feat/issue-16-guardian-code
-- 関係する ADR: [ゴールガーディアンにも、対象リポジトリのコードを読み取り専用で渡す](../adr/20261011-0107-guardian-reads-target-code.md)
+- 関係する ADR: [ゴールガーディアンにも、対象リポジトリのコードを読み取り専用で渡す](../adr/20261011-0107-superseded-guardian-reads-target-code.md)
 
 ## 目的
 

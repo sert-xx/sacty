@@ -1799,7 +1799,12 @@ export class TaskService {
               workspaceDir,
             );
           } else {
-            await this.deps.repos.copyWorkingTree(this.repoDir(task), workspaceDir);
+            // テスト（検証）が git を参照できるように、退避したメタデータの写しを .git にする
+            await this.deps.repos.copyWorkingTree(
+              this.repoDir(task),
+              workspaceDir,
+              this.trustedGitDir(task),
+            );
           }
         } catch (error) {
           return {
@@ -10430,8 +10435,8 @@ function reproductionChecked(
 ): Extract<EventInput, { type: "ReproductionChecked" }>["payload"] {
   if (tests.length === 0) return { reproduced: false, tests, note: message("reproduce.noTests") };
   if (!check) return { reproduced: false, tests, note: message("reproduce.notChecked") };
-  // 終了コード 0（テストが通った）と申告したなら、再現できたとは申告どおりに受け取らない
-  const reproduced = check.reproduced && check.exitCode !== 0;
+  // 失敗した（0 でない整数の）終了コードの申告があるときだけ、再現できたとする（申告が無い・0 なら確かめていない）
+  const reproduced = check.reproduced && check.exitCode !== undefined && check.exitCode !== 0;
   return {
     reproduced,
     tests,

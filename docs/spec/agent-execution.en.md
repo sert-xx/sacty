@@ -179,7 +179,7 @@ Code: `apps/daemon/src/config.ts` (`resolveImage`, `languageImageTag`, `DEFAULT_
 
 - sacty does not run the test command in a container of its own. The Goal Guardian runs the tests for verifying the implementation inside the final review,
   and the Reproduce step's agent runs the reproduction test; both report the result (command, exit code, and an excerpt) ([Tasks and steps](tasks-and-steps.en.md#verifying-the-implementation)).
-- The final review runs on the Implementation step's image (or the Reproduce step's if absent), with that image's `env`, on a disposable copy of the implemented working tree.
+- The final review runs on the Implementation step's image (or the Reproduce step's if absent), with that image's `env`, on a disposable copy of the implemented working tree (the copy's .git is a copy of the saved metadata).
   If the implementation uses services, it is connected to them ([Services](services.en.md)).
 - The test code runs inside an agent container, so, as in any other agent run, it can reach the agent's authentication values in the container and,
   in runs that use the gateway, the per-run gateway token.

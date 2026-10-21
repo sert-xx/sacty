@@ -4,7 +4,7 @@
 - ステータス: 置き換え済み（superseded）
 - 関係する PR・タスク: #6、PBI-10
 - 置き換え元: なし
-- 置き換え先: [画面で作るタスクの対象リポジトリは、プロジェクトに登録したリポジトリの設定から選び、config.yaml の repository は廃止する](20261011-1035-superseded-task-repository-from-project.md)（対象リポジトリを config.yaml の repository で指定する部分）、[ゴールガーディアンにも、対象リポジトリのコードを読み取り専用で渡す](20261011-0107-guardian-reads-target-code.md)（最終レビューを空の作業領域で行う部分）、[ゴールガーディアンが最終レビューの中でテストを実行し、sacty はテストのコンテナを使わない](20261021-1431-guardian-runs-tests.md)（sacty がテストを別のコンテナで実行し、合格したら最終レビューへ進む部分）
+- 置き換え先: [画面で作るタスクの対象リポジトリは、プロジェクトに登録したリポジトリの設定から選び、config.yaml の repository は廃止する](20261011-1035-superseded-task-repository-from-project.md)（対象リポジトリを config.yaml の repository で指定する部分）、[ゴールガーディアンにも、対象リポジトリのコードを読み取り専用で渡す](20261011-0107-superseded-guardian-reads-target-code.md)（最終レビューを空の作業領域で行う部分）、[ゴールガーディアンが最終レビューの中でテストを実行し、sacty はテストのコンテナを使わない](20261021-1431-guardian-runs-tests.md)（sacty がテストを別のコンテナで実行し、合格したら最終レビューへ進む部分）
 
 ## 背景
 

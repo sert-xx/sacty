@@ -196,11 +196,11 @@ export function extractReproduction(output: string): {
   const command = text(raw.command);
   const check = {
     reproduced: raw.reproduced === true,
-    ...(command ? { command: command.slice(0, 2000) } : {}),
+    ...(command ? { command: headOf(command, 2000) } : {}),
     ...(typeof raw.exitCode === "number" && Number.isInteger(raw.exitCode)
       ? { exitCode: raw.exitCode }
       : {}),
-    output: text(raw.output).slice(0, REPRODUCTION_OUTPUT_MAX),
+    output: headOf(text(raw.output), REPRODUCTION_OUTPUT_MAX),
   };
   return { output: withoutCandidates(output, [found.candidate]).trim(), tests, check };
 }
@@ -1738,7 +1738,7 @@ export function extractFinalReview(
   const tests = {
     command,
     ...(exitCode !== undefined ? { exitCode } : {}),
-    output: text(raw.output).slice(0, GUARDIAN_TESTS_OUTPUT_MAX),
+    output: headOf(text(raw.output), GUARDIAN_TESTS_OUTPUT_MAX),
   };
   // テストのコマンドに語として書いてある名前だけを、イメージに無いツールとして扱う（コマンドに無いものは、リポジトリの問題）
   const words = new Set(command.split(/[\s;&|()<>`$"'=]+/).filter(Boolean));

@@ -365,13 +365,13 @@ class FakeRepos implements RepositoryWorkspace {
     return this.diffText;
   }
   /** 実装後のコードの写し（ゴールガーディアン。PBI-16）。 */
-  workingCopies: { dir: string; outDir: string }[] = [];
+  workingCopies: { dir: string; outDir: string; gitDir?: string }[] = [];
   copyFail?: string;
-  async copyWorkingTree(dir: string, outDir: string) {
+  async copyWorkingTree(dir: string, outDir: string, gitDir?: string) {
     if (this.copyFail) throw new Error(this.copyFail);
     mkdirSync(outDir, { recursive: true });
     writeFileSync(join(outDir, "IMPLEMENTED.md"), "implemented");
-    this.workingCopies.push({ dir, outDir });
+    this.workingCopies.push({ dir, outDir, ...(gitDir ? { gitDir } : {}) });
   }
   /** 起点のコードの書き出し（要求要件・設計の工程。PBI-15）。 */
   snapshots: { gitDir: string; baseCommit: string; outDir: string }[] = [];
@@ -6298,7 +6298,7 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
   });
 
   it("sacty はテストを別に実行せず、ゴールガーディアンが新しいセッションでテストを実行して最終レビューし、合格なら実装を完了にする", async () => {
-    const { activity, service, executor, id } = await toImplement([
+    const { activity, service, executor, repos, id } = await toImplement([
       implement("# 実装の説明（ガーディアンには渡さない）"),
       review(),
     ]);
@@ -6322,6 +6322,11 @@ describe("実装の工程と最終レビュー（PBI-10a）", () => {
     expect(guardian).not.toContain("タスクの本文");
     expect(executor.dirs[4]).toContain("_guardian");
     expect(existsSync(executor.dirs[4] ?? "")).toBe(false);
+    // テストが git を参照できるように、写しの .git は退避したメタデータから作る（PR #188 レビュー指摘）
+    expect(repos.workingCopies.at(-1)).toMatchObject({
+      dir: join(dir, "workspaces", id, "repo"),
+      gitDir: join(dir, "workspaces", "_git", `${id}.git`),
+    });
 
     const task = service.get(id)?.task;
     // 実装の工程の中で、sacty が PR を作り、実装の承認待ちで止まる（PBI-110）
@@ -12959,6 +12964,9 @@ describe("再現の工程（PBI-29）", () => {
       {},
       { reproduced: true, command: "npm test", exitCode: 0, output: "1 passed" },
       { reproduced: false, command: "npm test", exitCode: 1, output: "SyntaxError" },
+      // 終了コードの申告が無い・整数でないなら、確かめていない（PR #188 レビュー指摘）
+      { reproduced: true, command: "npm test", output: "FAIL" },
+      { reproduced: true, command: "npm test", exitCode: "1", output: "FAIL" },
     ]) {
       const activity = new SqliteActivityStore(dbPath);
       const { service } = makeService(

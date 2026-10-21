@@ -342,6 +342,7 @@ Code: `apps/daemon/src/activity.ts` (`purgeLegacyPrStepTasks`, `purgeLegacyTasks
   sacty does not run the tests in a separate container (the Goal Guardian runs them inside the final review). If the diff cannot be obtained, the task is paused
   without a final review (`verify.diffUnavailable`; resuming starts again from getting the diff).
 - The final review runs on a disposable copy of the implemented workspace, on the Implementation step's image (or the Reproduce step's image if absent), with that image's `env`.
+  The copy's .git is not the workspace's .git but a copy of the metadata saved before the agent touched it (tests can use git; the implementation shows as changes from the base).
   If that image has been removed from `images`, the task is paused without running it (`verify.testsUnavailable`). If the Implementation step uses services, they are started
   and connected before the tests ([Services](services.en.md#when-services-start)).
 - If there is a test (verification) command (the Orchestrator's `testCommand`, or for a task without tests, the command the implementation declared), the prompt
@@ -380,7 +381,7 @@ Code: `apps/daemon/src/activity.ts` (`purgeLegacyPrStepTasks`, `purgeLegacyTasks
 - After the Reproduce step (PBI-29): sacty does not run the reproduction test. The reproduce agent's prompt has it run the test it wrote with the test command itself,
   confirm that it fails because of the bug, and write `tests`, `reproduced`, `command`, `exitCode`, and `output` (an excerpt of the result) in `sacty-reproduction`
   (`extractReproduction`). sacty records `ReproductionChecked` in the same append as the step's completion (`reproductionChecked`). Only when a reproduction
-  test was declared, `reproduced` is `true`, and the exit code is not 0 is the bug treated as reproduced, and the task moves to Implementation. Without a declared test it is
+  test was declared, `reproduced` is `true`, and a non-zero integer exit code was declared is the bug treated as reproduced, and the task moves to Implementation. Without a declared test it is
   `reproduce.noTests`, otherwise `reproduce.notChecked`; the bug is treated as not reproduced and the task waits for a person's decision (the Reproduce step cannot be approved;
   request changes or cancel).
   - A task that was waiting for sacty's check in an older version (`reproductionPending`) is recorded as not reproduced (`reproduce.notChecked`) on resume or restart,

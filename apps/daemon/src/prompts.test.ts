@@ -31,7 +31,9 @@ import {
   commentableLines,
   extractBlocks,
   extractExport,
+  extractFinalReview,
   extractIntegrationReview,
+  extractReproduction,
   extractReviewComments,
   extractReviewImage,
   extractSplitPlan,
@@ -2564,5 +2566,40 @@ describe("工程の見直しと、要求要件・設計を経ない実装", () =
     const prompt = buildOrchestratorPrompt(taskOf());
     expect(prompt).toContain("- direct：調査 → 実装");
     expect(prompt).toContain("工程が終わるごとに");
+  });
+});
+
+describe("申告されたテストの結果の抜粋（PR #188 レビュー提案）", () => {
+  const block = (b: Record<string, unknown>) => `\`\`\`json\n${JSON.stringify(b)}\n\`\`\``;
+  // 8,000 文字目で、絵文字（サロゲートペア）が切れる長さ
+  const long = `${"a".repeat(7999)}😀tail`;
+  const lone = (text: string) => /[\ud800-\udbff]$/.test(text);
+
+  it("最終レビューの tests.output を、サロゲートペアの途中で切らない", () => {
+    const review = extractFinalReview(
+      block({
+        "sacty-final-review": {
+          viewpoints: [],
+          remarks: [],
+          tests: { command: "npm test", exitCode: 0, output: long },
+          summary: "ok",
+        },
+      }),
+      [],
+      [],
+      { testCommand: "npm test" },
+    );
+    expect(review.tests?.output).toHaveLength(7999);
+    expect(lone(review.tests?.output ?? "")).toBe(false);
+  });
+
+  it("再現の output を、サロゲートペアの途中で切らない", () => {
+    const { check } = extractReproduction(
+      block({
+        "sacty-reproduction": { tests: ["a"], reproduced: true, exitCode: 1, output: long },
+      }),
+    );
+    expect(check?.output).toHaveLength(7999);
+    expect(lone(check?.output ?? "")).toBe(false);
   });
 });
