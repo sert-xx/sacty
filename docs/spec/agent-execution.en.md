@@ -148,7 +148,7 @@ Code: `apps/daemon/src/agent-sessions.ts` (`SOURCES`, `selectAgentSessionFiles`,
 
 ## Images
 
-- The default image is `image` (default `sacty-agent:1.6.0`). Per-language images are `images.<name>` (the tag defaults to `sacty-agent-<name>:1.6.0`).
+- The default image is `image` (default `sacty-agent:1.7.0`). Per-language images are `images.<name>` (the tag defaults to `sacty-agent-<name>:1.7.0`).
   The image used is the default when there is no name or the name is `default`, the entry in `images` if it exists, and for an unknown name the run stops (`image.unknown`).
   A person can change a step's image on the task detail; it is used from the next run of the step ("Changing a step's image" in [Tasks and steps](tasks-and-steps.en.md)).
 - `sacty image build [<name>...]` runs `docker build` on `packages/cli/docker/Dockerfile`. Without names it builds the default and everything in `images`.
