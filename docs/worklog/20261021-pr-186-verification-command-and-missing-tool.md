@@ -2,7 +2,7 @@
 
 - 日付: 2026-10-21（UTC）
 - タスク: なし
-- PR: なし
+- PR: #186
 - ブランチ: claude/sweet-johnson-42au4y
 - 関係する ADR: [20261021-1330-verification-command-and-missing-tool](../adr/20261021-1330-verification-command-and-missing-tool.md)
 
